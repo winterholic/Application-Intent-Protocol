@@ -644,7 +644,17 @@ impl Parser {
                 "where" => a.where_ = Some(self.expr()?),
                 "callerFilter" => a.caller_filter = Some(self.ident()?),
                 "rowOutput" => a.row_output = Some(self.ident()?),
-                "release" => a.release = Some(self.ident()?),
+                "release" => {
+                    // `count` 또는 `sum(field)`/`min(field)`/`max(field)`. 호스트 형식과 같은 문자열로 남긴다.
+                    let f = self.ident()?;
+                    a.release = Some(if self.eat_sym("(") {
+                        let field = self.ident()?;
+                        self.expect_sym(")")?;
+                        format!("{f}({field})")
+                    } else {
+                        f
+                    });
+                }
                 o => return Err(Diag::new("PARSE_UNKNOWN_KEY", format!("aggregate 안 알 수 없는 키 `{o}`"), sp)),
             }
         }

@@ -10,7 +10,9 @@ const NOW: &str = "2026-10-04T00:00:00Z";
 
 /// Recruitment와 Club(루트 조회용 budget 포함)에 새 연산자를 허용한 정의.
 fn facts() -> Value {
+    // Ref 필터는 대상 행 정책을 따른다. School은 fixture에서 행 정책이 없어(denyAll) 열어 준다.
     let src = A
+        .replacen("fields { id: Id; name: Text }\n}", "fields { id: Id; name: Text }\n  rows read when true\n}", 1)
         .replacen("filter periodEnd.gte, periodEnd.lte", "filter periodEnd.gte, periodEnd.lte, club.eq, club.in, status.in, title.in", 1)
         .replacen(
             "expose read { select id, name, logo }",
@@ -242,11 +244,14 @@ async fn db_filters_return_expected_rows_and_never_bypass_row_policy() {
     check!("school.in 익명", run(&mut db, &f, None, club("school", "in", json!([1, 2]))).await, Vec::<i64>::new());
 
     // 정책 변형: Club 행 정책을 같은 학교만으로 좁히면 Club 루트 조회에서도 연합이 사라진다(필터가 정책을 대체하지 않음)
-    let strict_src = A.replacen("rows read when school = null or school = actor.school", "rows read when school = actor.school", 1).replacen(
-        "expose read { select id, name, logo }",
-        "expose read { select id, name, logo; filter school.isNull; budget { rows 50; depth 1; deadline 2s; cost 1000 } }",
-        1,
-    );
+    let strict_src = A
+        .replacen("fields { id: Id; name: Text }\n}", "fields { id: Id; name: Text }\n  rows read when true\n}", 1)
+        .replacen("rows read when school = null or school = actor.school", "rows read when school = actor.school", 1)
+        .replacen(
+            "expose read { select id, name, logo }",
+            "expose read { select id, name, logo; filter school.isNull; budget { rows 50; depth 1; deadline 2s; cost 1000 } }",
+            1,
+        );
     let strict = load_str(&strict_src, Form::A).unwrap().execution;
     check!("strict school.isNull true", run(&mut db, &strict, Some(1), club("school", "isNull", json!(true))).await, Vec::<i64>::new());
 

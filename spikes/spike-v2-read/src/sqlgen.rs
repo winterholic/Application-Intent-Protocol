@@ -475,11 +475,9 @@ pub fn create_ddl_in(namespace: &str, facts: &Value) -> R<Vec<String>> {
                         },
                         "Time" => "timestamptz".into(),
                         // 범위는 Text/Url과 같이 DDL CHECK로 집행한다. NULL은 CHECK가 통과시키므로 nullable도 그대로 둔다.
-                        "Int" => match fd["range"].as_array().map(|r| (r.first().and_then(Value::as_i64), r.get(1).and_then(Value::as_i64))) {
-                            Some((Some(lo), Some(hi))) => format!("bigint CHECK ({col} BETWEEN {lo} AND {hi})"),
-                            Some(_) => return Err(format!("`{col}` Int 범위 형식")),
-                            None => "bigint".into(),
-                        },
+                        // Int 범위는 DDL CHECK로 만들지 않는다. 이미 배포된 schema의 구조 지문이 바뀌어 마이그레이션 없이 막히기 때문이다.
+                        // 쓰기 경로(sema의 상수 대입 검사, v3 증감 뒤 검사)에서 집행한다.
+                        "Int" => "bigint".into(),
                         "Bool" => "boolean".into(),
                         b => return Err(format!("DDL 미지원 타입 {b}")),
                     }

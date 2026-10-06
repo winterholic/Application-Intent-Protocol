@@ -29,10 +29,9 @@ fn plan_rejects_policy_field_filter_and_sort_even_if_facts_allow_it() {
 }
 
 #[test]
-fn int_range_becomes_ddl_check() {
+fn int_range_does_not_change_deployed_ddl() {
+    // 범위 CHECK를 DDL에 넣으면 기존 배포가 SCHEMA_MISMATCH로 막힌다. 범위는 쓰기 경로에서 집행한다.
     let facts = load_str(&A.replacen("views: Int", "views: Int(0..10)", 1), Form::A).unwrap().execution;
-    let ddl = sqlgen::ddl(&facts).unwrap().join("\n");
-    assert!(ddl.contains("views bigint CHECK (views BETWEEN 0 AND 10) NOT NULL"), "{ddl}");
     let none: Value = load_str(A, Form::A).unwrap().execution;
-    assert!(!sqlgen::ddl(&none).unwrap().join("\n").contains("views BETWEEN"));
+    assert_eq!(sqlgen::ddl(&facts).unwrap(), sqlgen::ddl(&none).unwrap());
 }

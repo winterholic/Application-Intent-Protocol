@@ -678,6 +678,13 @@ impl<'a> Ctx<'a> {
                     }
                     continue;
                 }
+                let range = r.fields.iter().find(|x| &x.name == f).and_then(|x| x.ty.range);
+                if let (Expr::Int(n), Some((lo, hi))) = (val, range) {
+                    if *n < lo || *n > hi {
+                        self.d("BAD_RANGE", format!("transition `{}`: `{f}` = {n}은 범위 {lo}..{hi} 밖", t.name), t.span);
+                        continue;
+                    }
+                }
                 let res = self.expect(val, &sc, Some(&ft)).and_then(|(v, vt)| {
                     if (same_target(&vt.ty, &ft.ty) && (!vt.nullable || ft.nullable)) || (vt.ty == Ty::Null && ft.nullable) {
                         Ok(v)
@@ -997,20 +1004,57 @@ impl<'a> Ctx<'a> {
 
     fn aggregate(&mut self, r: &Resource, a: &Aggregate) -> Option<Value> {
         let tt = self.type_of(Some(&r.name), &a.ty)?;
-        for (k, v, allowed) in [("callerFilter", &a.caller_filter, "none"), ("rowOutput", &a.row_output, "none"), ("release", &a.release, "count")] {
+        for (k, v, allowed) in [("callerFilter", &a.caller_filter, "none"), ("rowOutput", &a.row_output, "none")] {
             match v.as_deref() {
                 None => self.d("MISSING_ITEM", format!("aggregate `{}`에 `{k}` 필요", a.name), a.span),
                 Some(x) if x != allowed => self.d("UNSUPPORTED", format!("`{k} {x}`는 spike에서 지원하지 않음(허용: {allowed})"), a.span),
                 _ => {}
             }
         }
-        if tt.ty != Ty::Int {
-            self.d("TYPE_MISMATCH", "count 집계 타입은 Int", a.span);
-        }
         let source = a.source.clone().unwrap_or_else(|| r.name.clone());
         if !self.res.contains_key(source.as_str()) {
             self.d("UNKNOWN_SYMBOL", format!("집계 source `{source}` 없음"), a.span);
             return None;
+        }
+        let (release, release_field) = match a.release.as_deref() {
+            None => {
+                self.d("MISSING_ITEM", format!("aggregate `{}`에 `release` 필요", a.name), a.span);
+                return None;
+            }
+            Some("count") => ("count", None),
+            Some(x) => match x.strip_suffix(')').and_then(|x| x.split_once('(')) {
+                Some((f @ ("sum" | "min" | "max"), field)) => (f, Some(field.trim().to_string())),
+                _ => {
+                    self.d("UNSUPPORTED", format!("`release {x}`는 지원하지 않음(허용: count, sum(f), min(f), max(f))"), a.span);
+                    return None;
+                }
+            },
+        };
+        match &release_field {
+            None if tt.ty != Ty::Int => self.d("TYPE_MISMATCH", "count 집계 타입은 Int", a.span),
+            None => {}
+            Some(field) => {
+                match self.field_tt(&source, field) {
+                    Some(TT { ty: Ty::Int, .. }) => {}
+                    Some(t) => self.d("TYPE_MISMATCH", format!("`{release}({field})`는 Int 필드만, `{}`", t.show()), a.span),
+                    None => self.d("UNKNOWN_FIELD", format!("집계 대상 `{source}.{field}` 없음"), a.span),
+                }
+                // count는 행 수만 내보내지만 sum/min/max는 값을 드러낸다. 가려진 필드의 합계로 값이 새지 않게 한다.
+                if self.res.get(source.as_str()).is_some_and(|s| s.field_read.iter().any(|x| &x.0 == field)) {
+                    self.d(
+                        "POLICY_FIELD_NOT_AGGREGATABLE",
+                        format!("`{source}.{field}`에는 field read 정책이 있어 {release}로 집계할 수 없음"),
+                        a.span,
+                    );
+                }
+                if tt.ty != Ty::Int {
+                    self.d("TYPE_MISMATCH", format!("{release} 집계 타입은 Int"), a.span);
+                }
+                // 빈 집합의 min/max는 NULL이다. 단독 집계는 NULL을 접근 거부로 읽으므로 행별(groupKey) 집계에서만 연다.
+                if release != "sum" && (a.group_key.is_none() || !tt.nullable) {
+                    self.d("UNSUPPORTED", format!("{release} 집계는 groupKey가 있고 타입이 `Int?`여야 함(빈 집합은 null)"), a.span);
+                }
+            }
         }
         if let Some(g) = &a.group_key {
             match self.field_tt(&source, g) {
@@ -1068,10 +1112,15 @@ impl<'a> Ctx<'a> {
                 self.run(w)?
             }
         };
-        Some(json!({
+        let mut out = json!({
             "ty": tt.show(), "tyRange": a.ty.range.map(|(x, y)| json!([x, y])), "input": ij, "source": source, "sourceAccess": access, "groupKey": a.group_key,
-            "where": where_, "callerFilter": a.caller_filter, "rowOutput": a.row_output, "release": a.release,
-        }))
+            "where": where_, "callerFilter": a.caller_filter, "rowOutput": a.row_output, "release": release,
+        });
+        // count 집계의 facts는 그대로 둔다. 키를 늘리면 기존 배포의 실행 digest가 바뀐다.
+        if let Some(f) = release_field {
+            out["releaseField"] = json!(f);
+        }
+        Some(out)
     }
 
     fn expose(&mut self, r: &Resource, e: &ExposeRead) -> Value {

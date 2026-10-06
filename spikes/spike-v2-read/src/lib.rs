@@ -207,7 +207,13 @@ pub async fn execute(client: &mut Client, plan: &Plan) -> Result<Vec<serde_json:
         .await
         .map_err(|_| Reject { code: "INTERNAL", msg: "세션 설정 실패".into() })?;
     let params: Vec<&(dyn ToSql + Sync)> = plan.params.iter().map(|p| p as &(dyn ToSql + Sync)).collect();
-    let rows = match tx.query(plan.sql.as_str(), &params).await {
+    // 모든 매개변수는 text로 보내고 SQL 안에서 캐스트한다. 타입을 명시해야 식에서 쓰이지 않은 매개변수도 42P18 없이 실행된다.
+    let types = vec![tokio_postgres::types::Type::TEXT; params.len()];
+    let result = match tx.prepare_typed(plan.sql.as_str(), &types).await {
+        Ok(statement) => tx.query(&statement, &params).await,
+        Err(e) => Err(e),
+    };
+    let rows = match result {
         Ok(r) => r,
         Err(e) => {
             let code = e.code().map(|c| c.code().to_string()).unwrap_or_default();

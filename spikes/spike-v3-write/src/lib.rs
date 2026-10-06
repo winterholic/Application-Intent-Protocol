@@ -169,6 +169,11 @@ fn parse_target(facts: &Value, res: &str, ex: &Value, tg: &Value, wire: IdWire) 
                     return rej("DUPLICATE_FILTER", format!("`{field}.{op}` 조건 중복"));
                 }
                 let ty = rf["fields"][field]["ty"].as_str().unwrap_or("").trim_end_matches('?');
+                // 읽기는 Ref 필터에 대상 행 정책을 함께 건다. 쓰기 대상 조건은 그 검사가 없어
+                // 변경 결과로 안 보이는 대상 id를 확인할 수 있으므로 Ref 조건을 받지 않는다.
+                if ty.starts_with("Ref<") {
+                    return rej("FILTER_NOT_ALLOWED", format!("`{field}.{op}`: 쓰기 대상 조건에는 참조 필드를 쓸 수 없음. ids 대상을 사용"));
+                }
                 let value = fo.get("value").unwrap_or(&Value::Null);
                 let (val, cast) = if wire != IdWire::Legacy && (ty.starts_with("Id<") || ty.starts_with("Ref<")) {
                     (parse_id(value, wire)?.to_string(), "bigint")
@@ -307,11 +312,25 @@ async fn update(tx: &Transaction<'_>, facts: &Value, res: &str, tr: &str, change
         }
         sets.push(format!("{col} = {}", cx.value(v, &env).map_err(internal)?));
     }
+    // 증감한 Int 필드의 선언 범위. DDL CHECK가 없으므로 같은 트랜잭션에서 UPDATE 결과로 확인한다.
+    let mut ranged = vec![];
+    for (f, v) in t["to"].as_object().unwrap() {
+        let range = &facts["resources"][res]["fields"][f]["range"];
+        if let (Some(_), Some(lo), Some(hi)) = (v.get("increment"), range[0].as_i64(), range[1].as_i64()) {
+            ranged.push(format!("t.{} NOT BETWEEN {lo} AND {hi}", column(facts, res, f).unwrap()));
+        }
+    }
     let ip = cx.params.bind(Some(id_array(change)), "bigint[]");
     // UPDATE에도 from 조건을 다시 건다. 잠금이 없거나 우회돼도 이미 바뀐 행을 두 번 바꾸지 않는다.
-    let up = format!("UPDATE {} t SET {} WHERE t.id = ANY({ip}) AND {from} RETURNING t.id", table(res), sets.join(", "));
+    let out_of_range = if ranged.is_empty() { "FALSE".to_string() } else { format!("({})", ranged.join(" OR ")) };
+    let up = format!("UPDATE {} t SET {} WHERE t.id = ANY({ip}) AND {from} RETURNING t.id, {out_of_range}", table(res), sets.join(", "));
     let params = cx.params.values.clone();
-    let n = tx.query(up.as_str(), &bind_all(&params)).await.map_err(|e| write_err("변경", e))?.len();
+    let rows = tx.query(up.as_str(), &bind_all(&params)).await.map_err(|e| write_err("변경", e))?;
+    // RETURNING은 갱신 뒤 값을 본다. 하나라도 범위를 벗어나면 전체 트랜잭션이 롤백된다.
+    if rows.iter().any(|r| r.get::<_, bool>(1)) {
+        return rej("BAD_VALUE", "증감 결과가 필드 범위를 벗어남");
+    }
+    let n = rows.len();
     if n != change.len() {
         return rej("CONFLICT", format!("판정 {}개와 실제 변경 {n}개가 다름. 전체 취소", change.len()));
     }

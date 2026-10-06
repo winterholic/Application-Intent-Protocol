@@ -76,6 +76,20 @@ fn out_ty(ty: &str, redactable: bool) -> Value {
     json!({ "ty": t, "nullable": nullable, "redactable": redactable })
 }
 
+/// count는 행 수, sum은 빈 집합이 0, min/max는 빈 집합이 NULL이다(sema가 min/max를 nullable 행별 집계로 제한).
+fn measure(facts: &Value, aggregate: &Value, alias: &str) -> Result<String, Reject> {
+    let source = aggregate["source"].as_str().unwrap();
+    let field = aggregate["releaseField"].as_str();
+    let col = |f: &str| column(facts, source, f).ok_or_else(|| internal(format!("집계 필드 `{f}` 없음")));
+    match (aggregate["release"].as_str(), field) {
+        (Some("count") | None, None) => Ok("count(*)".into()),
+        // bigint 합은 numeric이 된다. 범위를 넘으면 캐스트가 실패해 잘린 값 대신 오류가 난다.
+        (Some("sum"), Some(f)) => Ok(format!("coalesce(sum({alias}.{}), 0)::bigint", col(f)?)),
+        (Some(op @ ("min" | "max")), Some(f)) => Ok(format!("{op}({alias}.{})", col(f)?)),
+        (r, f) => Err(internal(format!("집계 release {r:?}({f:?}) 미지원"))),
+    }
+}
+
 fn aggregate_select_expr(
     facts: &Value,
     cx: &mut Ctx<'_>,
@@ -95,7 +109,7 @@ fn aggregate_select_expr(
         where_sql = format!("{where_sql} AND {}", cx.cond(&aggregate["where"], &source_env).map_err(internal)?);
     }
     // 집계 원본은 원본 행 정책을 자동 상속하지 않고 sourceAccess로만 읽는다.
-    let count = format!("(SELECT count(*) FROM {} {source_alias} WHERE {where_sql})", table(source));
+    let count = format!("(SELECT {} FROM {} {source_alias} WHERE {where_sql})", measure(facts, aggregate, &source_alias)?, table(source));
     let access_ref = aggregate["sourceAccess"]["ref"].as_str().unwrap_or("");
     let access = &facts["accesses"][access_ref];
     let (expression, guarded) = match access["kind"].as_str() {
@@ -296,11 +310,30 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
             let fty = rf["fields"][field]["ty"].as_str().unwrap();
             let col = column(facts, res, field).unwrap();
             let raw = fo.get("value").unwrap_or(&Value::Null);
+            // Ref는 traverse와 같게 대상 행 정책을 통과한 경우에만 값이 있는 것으로 본다.
+            // 아니면 traverse에서 null로 가린 대상 id를 eq/in으로 확인할 수 있다.
+            let visible = match fty.trim_end_matches('?').strip_prefix("Ref<").and_then(|x| x.strip_suffix('>')) {
+                Some(target) => {
+                    let ta = cx.alias("v");
+                    let tenv = Env { this: Some((ta.clone(), target.to_string())), ..Default::default() };
+                    let row = cx.cond(&facts["resources"][target]["rowRead"], &tenv).map_err(internal)?;
+                    Some(format!("EXISTS (SELECT 1 FROM {} {ta} WHERE {ta}.id = {t}.{col} AND {row})", table(target)))
+                }
+                None => None,
+            };
+            let and_visible = |cond: String| match &visible {
+                Some(v) => format!("({cond} AND {v})"),
+                None => cond,
+            };
             if op == "isNull" {
                 // 값은 bool 하나. 조건 문자열(IS NULL)은 고정이고 true/false만 매개변수로 비교한다.
                 let Value::Bool(b) = raw else { return rej("BAD_VALUE", "isNull 값은 bool") };
                 let p = cx.params.bind(Some(b.to_string()), "boolean");
-                wh.push(format!("(({t}.{col} IS NULL) = {p})"));
+                let is_null = match &visible {
+                    Some(v) => format!("({t}.{col} IS NULL OR NOT {v})"),
+                    None => format!("({t}.{col} IS NULL)"),
+                };
+                wh.push(format!("({is_null} = {p})"));
                 continue;
             }
             if op == "in" {
@@ -320,7 +353,7 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
                         marks.push(cx.params.bind(Some(v), cast));
                     }
                 }
-                wh.push(format!("({t}.{col} IN ({}))", marks.join(", ")));
+                wh.push(and_visible(format!("({t}.{col} IN ({}))", marks.join(", "))));
                 continue;
             }
             let (v, cast) = check_value(facts, fty, raw, wire)?;
@@ -339,7 +372,7 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
                 _ => return rej("FILTER_NOT_ALLOWED", format!("연산 `{op}` 미지원")),
             };
             let p = cx.params.bind(Some(v), cast);
-            wh.push(format!("({t}.{col} {sop} {p})"));
+            wh.push(and_visible(format!("({t}.{col} {sop} {p})")));
         }
     }
 
@@ -452,7 +485,7 @@ fn plan_aggregate(facts: &Value, o: &Map<String, Value>, caller: &Caller, wire: 
     let wenv = Env { this: Some((al.clone(), src.to_string())), vars: HashMap::new(), input };
     let w = if a["where"].is_null() { "TRUE".into() } else { cx.cond(&a["where"], &wenv).map_err(internal)? };
     // guard가 거짓이면 NULL을 돌려 ACCESS_DENIED로 바꾼다. 없는 동아리와 남의 동아리를 같은 결과로 만든다.
-    let sql = format!("SELECT (CASE WHEN {guard} THEN (SELECT count(*) FROM {} {al} WHERE {w}) END)::text", table(src));
+    let sql = format!("SELECT (CASE WHEN {guard} THEN (SELECT {} FROM {} {al} WHERE {w}) END)::text", measure(facts, a, &al)?, table(src));
     Ok(Plan {
         sql,
         params: cx.params.values,

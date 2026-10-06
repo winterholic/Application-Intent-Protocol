@@ -23,7 +23,13 @@ resource Product {
   }
   expose read { select id, stock, likes; budget { rows 10; depth 1; deadline 1s; cost 100 } }
   expose apply sell { target id; bulk maxRows 5 }
+  transition drain {
+    allow actor != null
+    from true
+    to stock = stock - 1
+  }
   expose apply like { target id; bulk maxRows 5 }
+  expose apply drain { target id; bulk maxRows 5 }
 }
 ";
 
@@ -52,6 +58,8 @@ fn only_same_field_plus_or_minus_a_constant_is_accepted() {
     assert!(facts(&unchanged).unwrap_err().contains("UNSUPPORTED"));
     let nullable = DEF.replacen("likes: Int }", "likes: Int? }", 1);
     assert!(facts(&nullable).unwrap_err().contains("TYPE_MISMATCH"));
+    let constant = DEF.replacen("to stock = stock - 1\n  }\n  transition like", "to stock = 2000\n  }\n  transition like", 1);
+    assert!(facts(&constant).unwrap_err().contains("BAD_RANGE"), "범위 밖 상수 대입");
     let f = facts(DEF).unwrap();
     assert_eq!(f["resources"]["Product"]["transitions"]["sell"]["to"]["stock"], json!({ "increment": -1 }));
 }
@@ -90,6 +98,11 @@ async fn concurrent_increments_and_stock_floor() {
     }
     let fourth = apply(&mut db, &f, &req("sell"), &who(Some(1)), &k).await.unwrap_err();
     assert_eq!(fourth.code, "INVALID_STATE", "{}", fourth.msg);
+    let stock: i64 = db.query_one(format!("SELECT stock FROM {s}.product WHERE id = 1").as_str(), &[]).await.unwrap().get(0);
+    assert_eq!(stock, 0);
+    // from 검사가 없는 감소도 선언 범위(0..1000) 밖으로는 못 간다. 전체 롤백.
+    let below = apply(&mut db, &f, &req("drain"), &who(Some(1)), &k).await.unwrap_err();
+    assert_eq!(below.code, "BAD_VALUE", "{}", below.msg);
     let stock: i64 = db.query_one(format!("SELECT stock FROM {s}.product WHERE id = 1").as_str(), &[]).await.unwrap().get(0);
     assert_eq!(stock, 0);
     // 익명은 증감할 수 없다.
