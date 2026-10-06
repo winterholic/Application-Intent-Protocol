@@ -57,7 +57,7 @@ SDK 생성 타입은 `in`에 배열, `isNull`에 bool, `contains`에 string을 �
 | 산술 카운터 | 5 | 7, 약 25 | 전이 증감 추가 |
 | 부분일치 검색 | 11 | 7, 약 20 | contains 추가. 전문 검색은 남음 |
 
-root PoC 문법(`spec/grammar.md`)에는 `+=`, `set = input`, insert, search, offset, webhook 같은 기능이 이미 있다는 관찰이 있다(실행 확인 필요). 제품 정의 문법에 검증된 기능을 이식하는 것이 커버리지를 가장 빨리 올리는 경로로 보인다.
+root PoC 문법에는 제품 문법에 없는 기능이 많고, 대표 e2e 10개가 오늘 통과했다. 기능별 근거·OPEN 의존·난이도는 [이식 지도](2026-10-07-poc-porting-map.md)에 있다. OPEN에 기대지 않으면서 싼 후보는 스칼라 타입(Email·Decimal·Date), 제약 확장, 멱등 선언, search, rate limit이다. 기본값은 create 규칙(OPEN 쓰기 조합)과 맞물린다.
 
 ## 5. 남은 패턴 빈칸 (감사 시점)
 
