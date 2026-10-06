@@ -571,6 +571,12 @@ impl Parser {
                 "sort" => e.sort.extend(self.ident_list()?),
                 "traverse" => {
                     let rel = self.ident()?;
+                    if self.is_kw("via") {
+                        self.next();
+                        let m = self.traverse_many(rel, sp)?;
+                        e.traverse_many.push(m);
+                        continue;
+                    }
                     self.expect_sym("{")?;
                     self.semis();
                     self.expect_kw("select")?;
@@ -605,6 +611,44 @@ impl Parser {
                     e.budget = Some(b);
                 }
                 o => return Err(Diag::new("PARSE_UNKNOWN_KEY", format!("expose read 안 알 수 없는 항목 `{o}`"), sp)),
+            }
+        }
+    }
+
+    /// `traverse <name> via <Child>.<field> { select ..; sort <f> [asc|desc]; limit <n> }` (via 이후부터).
+    fn traverse_many(&mut self, name: String, span: Span) -> R<TraverseMany> {
+        let child = self.ident()?;
+        self.expect_sym(".")?;
+        let via = self.ident()?;
+        let mut m = TraverseMany { name, child, via, select: vec![], sort: None, limit: None, span };
+        let mut seen = BTreeSet::new();
+        self.expect_sym("{")?;
+        loop {
+            self.semis();
+            if self.eat_sym("}") {
+                return Ok(m);
+            }
+            let sp = self.span();
+            let key = self.ident()?;
+            once(&mut seen, &key, sp, "traverse")?;
+            match key.as_str() {
+                "select" => m.select = self.ident_list()?,
+                "sort" => {
+                    let fsp = self.span();
+                    let f = self.ident()?;
+                    let desc = if self.is_kw("desc") {
+                        self.next();
+                        true
+                    } else {
+                        if self.is_kw("asc") {
+                            self.next();
+                        }
+                        false
+                    };
+                    m.sort = Some((f, desc, fsp));
+                }
+                "limit" => m.limit = Some(self.int()?),
+                o => return Err(Diag::new("PARSE_UNKNOWN_KEY", format!("traverse 안 알 수 없는 항목 `{o}`"), sp)),
             }
         }
     }

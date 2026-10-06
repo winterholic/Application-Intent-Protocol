@@ -202,6 +202,8 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
     }
     let (mut cols, mut joins, mut out) = (vec![], vec![], Map::new());
     let (mut n_trav, mut n_agg, mut n_fp) = (0usize, 0usize, 0usize);
+    // 1:N traverse가 부모 행 하나당 더하는 비용 합(자식 상한 x (1 + 자식 필드 정책 수)). 부모 limit를 곱해 estimate에 더한다.
+    let mut many_cost = 0i64;
     let mut seen_sel = std::collections::HashSet::new();
     for s in sel {
         let key = match s {
@@ -242,6 +244,14 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
             Value::Object(m) if m.len() == 1 => {
                 let (rel, sub) = m.iter().next().unwrap();
                 let tr = &ex["traverse"][rel];
+                if tr.is_null() && !ex["traverseMany"][rel].is_null() {
+                    let (join, col_expr, ty, per_parent) = plan_traverse_many(facts, &mut cx, res, rel, sub, &t, budget)?;
+                    joins.push(join);
+                    cols.push((rel.clone(), col_expr));
+                    out.insert(rel.clone(), ty);
+                    many_cost += per_parent;
+                    continue;
+                }
                 if tr.is_null() {
                     return rej("TRAVERSE_NOT_ALLOWED", format!("`{res}.{rel}` 관계 탐색이 계약에 없음"));
                 }
@@ -496,7 +506,7 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
         }
         (Some(v), _) => return rej("BAD_VALUE", format!("offset {v}")),
     };
-    let cost = estimate(limit, offset.unwrap_or(0), n_trav, n_agg, n_fp);
+    let cost = estimate(limit, offset.unwrap_or(0), n_trav, n_agg, n_fp) + limit * many_cost;
     let max_cost = budget["cost"].as_i64().unwrap();
     if cost > max_cost {
         return rej("COST_EXCEEDED", format!("추정 비용 {cost} > budget cost {max_cost}"));
@@ -524,6 +534,89 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
         null_is_denied: false,
         deps: vec![],
     })
+}
+
+/// 1:N traverse 하나를 LEFT JOIN LATERAL로 만든다. (join SQL, select 열 식, 출력 타입, 부모 행당 비용)을 돌려준다.
+/// 자식 행은 대상 resource의 rowRead로 먼저 거르고(안쪽), 상한은 그 뒤에 적용한다. 그래서 안 보이는 행이 상한을 차지하지 않는다.
+/// fieldRead는 바깥 alias에서 CASE로 가린다. 정렬은 정의가 고정하고 id가 마지막 키라 결정적이다.
+fn plan_traverse_many(
+    facts: &Value,
+    cx: &mut Ctx<'_>,
+    res: &str,
+    rel: &str,
+    sub: &Value,
+    t: &str,
+    budget: &Value,
+) -> Result<(String, String, Value, i64), Reject> {
+    let tm = &facts["resources"][res]["exposeRead"]["traverseMany"][rel];
+    let so = sub.as_object().ok_or(Reject { code: "BAD_REQUEST", msg: "traverse 값은 객체".into() })?;
+    // 정렬·필터·offset은 정의가 고정한다. 호출자가 고를 수 있는 것은 select와 더 작은 limit뿐이다.
+    keys(so, &["select", "limit"], "traverse")?;
+    let tsel = so.get("select").and_then(Value::as_array).ok_or(Reject { code: "BAD_REQUEST", msg: "traverse select 필요".into() })?;
+    if tsel.is_empty() {
+        return rej("BAD_REQUEST", "traverse select가 비었음");
+    }
+    // 자식의 자식은 이번 범위 밖이다. 중첩 select 항목은 모양과 무관하게 명시적으로 거부한다.
+    if tsel.iter().any(|x| x.is_object()) {
+        return rej("NESTED_TRAVERSE_NOT_ALLOWED", format!("`{res}.{rel}` 안에서 관계를 다시 탐색할 수 없음(1:N traverse 중첩 금지)"));
+    }
+    let depth = budget["depth"].as_i64().unwrap_or(1);
+    if depth < 2 {
+        return rej("DEPTH_EXCEEDED", format!("budget depth {depth}에서는 관계 탐색 불가"));
+    }
+    let def_limit = tm["limit"].as_i64().ok_or_else(|| internal("traverseMany limit 없음".into()))?;
+    let limit = match so.get("limit") {
+        None => def_limit,
+        Some(Value::Number(n)) if n.as_i64().is_some_and(|x| x >= 1) => n.as_i64().unwrap(),
+        Some(v) => return rej("BAD_VALUE", format!("limit {v}")),
+    };
+    if limit > def_limit {
+        return rej("ROWS_EXCEEDED", format!("`{res}.{rel}` limit {limit} > 정의 상한 {def_limit}"));
+    }
+    let target = tm["target"].as_str().unwrap();
+    let tf = &facts["resources"][target];
+    let (ta, ob) = (cx.alias("r"), cx.alias("o"));
+    let inner_env = Env { this: Some((ta.clone(), target.to_string())), ..Default::default() };
+    let outer_env = Env { this: Some((ob.clone(), target.to_string())), ..Default::default() };
+    let (mut pairs, mut tout, mut n_fp) = (vec![], Map::new(), 0i64);
+    let mut seen = std::collections::HashSet::new();
+    for x in tsel {
+        let f = x.as_str().ok_or(Reject { code: "BAD_REQUEST", msg: "traverse select는 문자열".into() })?;
+        if !seen.insert(f) {
+            return rej("DUPLICATE", format!("select `{f}` 중복"));
+        }
+        if !tm["select"].as_array().unwrap().iter().any(|y| y == f) {
+            return rej("FIELD_NOT_EXPOSED", format!("`{target}.{f}`는 `{res}.{rel}` 경로에 열려 있지 않음. 서버 정의 변경 필요"));
+        }
+        if tf["exposeRead"]["select"][f] == "aggregate" {
+            return rej("FIELD_NOT_EXPOSED", format!("`{target}.{f}`는 집계라 1:N traverse에서 쓸 수 없음"));
+        }
+        let col = format!("{ob}.{}", column(facts, target, f).unwrap());
+        let fty = tf["fields"][f]["ty"].as_str().unwrap();
+        let redact = !tf["fieldRead"][f].is_null();
+        let e = if redact {
+            n_fp += 1;
+            format!("CASE WHEN {} THEN {col} END", cx.cond(&tf["fieldRead"][f], &outer_env).map_err(internal)?)
+        } else {
+            col
+        };
+        pairs.push(format!("'{f}', {e}"));
+        tout.insert(f.to_string(), out_ty(fty, redact));
+    }
+    let row = cx.cond(&tf["rowRead"], &inner_env).map_err(internal)?;
+    let fk = column(facts, target, tm["via"].as_str().unwrap()).unwrap();
+    let sort_col = column(facts, target, tm["sort"]["field"].as_str().unwrap_or("id")).unwrap();
+    let dir = if tm["sort"]["desc"] == true { "DESC" } else { "ASC" };
+    let lp = cx.params.bind(Some(limit.to_string()), "bigint");
+    let jv = cx.alias("j");
+    let join = format!(
+        "LEFT JOIN LATERAL (SELECT coalesce(json_agg(json_build_object({pairs}) ORDER BY {ob}.{sort_col} {dir}, {ob}.id ASC), '[]'::json) AS v \
+         FROM (SELECT {ta}.* FROM {tbl} {ta} WHERE {ta}.{fk} = {t}.id AND {row} ORDER BY {ta}.{sort_col} {dir}, {ta}.id ASC LIMIT {lp}) {ob}) {jv} ON TRUE",
+        pairs = pairs.join(", "),
+        tbl = table(target),
+    );
+    let ty = json!({ "array": tout, "nullable": false, "maxItems": limit, "reason": "대상 행 정책으로 줄어든 목록. 없으면 빈 배열" });
+    Ok((join, format!("{jv}.v"), ty, limit * (1 + n_fp)))
 }
 
 fn plan_aggregate(facts: &Value, o: &Map<String, Value>, caller: &Caller, wire: crate::id_wire::IdWire) -> Result<Plan, Reject> {

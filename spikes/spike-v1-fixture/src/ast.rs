@@ -81,12 +81,26 @@ pub struct Budget {
 
 pub type TraverseSelection = (String, Vec<(String, Span)>, Span);
 
+/// 1:N traverse: 자식 resource의 `via` Ref 필드가 이 resource를 가리키는 행 목록.
+#[derive(Debug, Clone)]
+pub struct TraverseMany {
+    pub name: String,
+    pub child: String,
+    pub via: String,
+    pub select: Vec<(String, Span)>,
+    /// (필드, 내림차순). 정의가 고정한다. 없으면 id 오름차순.
+    pub sort: Option<(String, bool, Span)>,
+    pub limit: Option<i64>,
+    pub span: Span,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct ExposeRead {
     pub select: Vec<(String, Span)>,
     pub filter: Vec<(String, String, Span)>,
     pub sort: Vec<(String, Span)>,
     pub traverse: Vec<TraverseSelection>,
+    pub traverse_many: Vec<TraverseMany>,
     pub budget: Option<Budget>,
     pub span: Span,
 }

@@ -588,7 +588,8 @@ impl<'a> Ctx<'a> {
                 .map(|(n, sp)| (format!("select {n}"), *sp))
                 .chain(e.filter.iter().map(|(f, op, sp)| (format!("filter {f}.{op}"), *sp)))
                 .chain(e.sort.iter().map(|(n, sp)| (format!("sort {n}"), *sp)))
-                .chain(e.traverse.iter().map(|(n, _, sp)| (format!("traverse {n}"), *sp)));
+                .chain(e.traverse.iter().map(|(n, _, sp)| (format!("traverse {n}"), *sp)))
+                .chain(e.traverse_many.iter().map(|m| (format!("traverse {}", m.name), m.span)));
             for (k, sp) in items {
                 if !seen.insert(k.clone()) {
                     self.d("DUPLICATE", format!("expose read `{k}` 중복"), sp);
@@ -1211,6 +1212,79 @@ impl<'a> Ctx<'a> {
             }
             trav.insert(rel.clone(), json!({ "target": target, "select": ss, "reapply": ["rowRead", "fieldRead"] }));
         }
+        let mut many = Map::new();
+        for m in &e.traverse_many {
+            if self.field_tt(&r.name, &m.name).is_some() || e.select.iter().any(|(n, _)| n == &m.name) {
+                self.d("DUPLICATE", format!("traverse `{}`는 `{}`의 필드·select 이름과 겹침", m.name, r.name), m.span);
+                continue;
+            }
+            let Some(cres) = self.res.get(m.child.as_str()).copied() else {
+                self.d("UNKNOWN_RESOURCE", format!("traverse `{}`: resource `{}` 없음", m.name, m.child), m.span);
+                continue;
+            };
+            match self.field_tt(&m.child, &m.via) {
+                None => {
+                    self.d("UNKNOWN_FIELD", format!("traverse `{}`: `{}.{}` 필드 없음", m.name, m.child, m.via), m.span);
+                    continue;
+                }
+                Some(TT { ty: Ty::Ref(t), .. }) if t == r.name => {}
+                Some(_) => {
+                    self.d("TRAVERSE_VIA_NOT_REF", format!("`{}.{}`는 `{}`를 가리키는 참조 필드가 아님", m.child, m.via, r.name), m.span);
+                    continue;
+                }
+            }
+            // 자식 목록에 들어갔다는 사실 자체가 via 값(어느 부모에 속하는지)을 드러낸다.
+            if cres.field_read.iter().any(|x| x.0 == m.via) {
+                self.d(
+                    "POLICY_FIELD_NOT_FILTERABLE",
+                    format!("`{}.{}`에는 field read 정책이 있어 1:N traverse 기준으로 쓸 수 없음", m.child, m.via),
+                    m.span,
+                );
+                continue;
+            }
+            let Some(te) = &cres.expose_read else {
+                self.d("TRAVERSE_NOT_EXPOSED", format!("`{}`에 expose read가 없어 traverse 불가", m.child), m.span);
+                continue;
+            };
+            if m.select.is_empty() {
+                self.d("MISSING_ITEM", format!("traverse `{}`에 select 필요", m.name), m.span);
+            }
+            let mut ss = BTreeSet::new();
+            for (f, fsp) in &m.select {
+                if !te.select.iter().any(|x| &x.0 == f) {
+                    self.d("TRAVERSE_NOT_EXPOSED", format!("`{}.{f}`는 `{}`의 expose select에 없음", m.child, m.child), *fsp);
+                } else if cres.aggregates.iter().any(|a| &a.name == f) {
+                    // 자식 행마다 집계 하위조회가 붙으면 비용이 부모 수 x 상한 x 집계로 커진다. 보류.
+                    self.d("TRAVERSE_MANY_AGGREGATE", format!("1:N traverse 자식 select에는 집계 `{f}`를 쓸 수 없음(보류)"), *fsp);
+                }
+                ss.insert(f.clone());
+            }
+            let sort = match &m.sort {
+                None => json!({ "field": "id", "desc": false }),
+                Some((f, desc, fsp)) => {
+                    if cres.field_read.iter().any(|x| &x.0 == f) {
+                        self.d("POLICY_FIELD_NOT_FILTERABLE", format!("`{f}`에는 field read 정책이 있어 정렬에 쓸 수 없음"), *fsp);
+                    }
+                    match self.field_tt(&m.child, f) {
+                        Some(TT { ty: Ty::Ref(_), .. }) | Some(TT { ty: Ty::Bool, .. }) => {
+                            self.d("OP_TYPE_MISMATCH", format!("`{f}`는 정렬 불가 타입"), *fsp)
+                        }
+                        Some(_) => {}
+                        None => self.d("UNKNOWN_FIELD", format!("sort 대상 `{f}` 없음"), *fsp),
+                    }
+                    json!({ "field": f, "desc": desc })
+                }
+            };
+            match m.limit {
+                None => self.d("MISSING_ITEM", format!("traverse `{}`에는 자식 개수 상한 limit이 필요", m.name), m.span),
+                Some(n) if n < 1 => self.d("BAD_LIMIT", "traverse limit는 1 이상", m.span),
+                _ => {}
+            }
+            many.insert(
+                m.name.clone(),
+                json!({ "target": m.child, "via": m.via, "select": ss, "sort": sort, "limit": m.limit, "reapply": ["rowRead", "fieldRead"] }),
+            );
+        }
         // budget이 없으면 무제한 기본값을 두지 않고, 다른 resource의 traverse 대상으로만 쓴다(루트 조회 불가).
         let budget = match &e.budget {
             None => Value::Null,
@@ -1241,7 +1315,7 @@ impl<'a> Ctx<'a> {
                         self.d("CURSOR_ID_NOT_SELECTED", "cursor를 켜면 id가 select에 있어야 함(동률 경계)", b.span);
                     }
                 }
-                if !e.traverse.is_empty() && b.depth.unwrap_or(0) < 2 {
+                if (!e.traverse.is_empty() || !e.traverse_many.is_empty()) && b.depth.unwrap_or(0) < 2 {
                     self.d("BUDGET_DEPTH_TOO_SMALL", "traverse가 있으면 depth는 2 이상", b.span);
                 }
                 let mut bj = json!({ "rows": b.rows, "depth": b.depth, "deadlineMs": b.deadline_ms, "cost": b.cost });
@@ -1256,7 +1330,12 @@ impl<'a> Ctx<'a> {
             }
         };
         let root = !budget.is_null();
-        json!({ "select": kinds, "filter": filters, "sort": sorts, "traverse": trav, "budget": budget, "rootQueryable": root })
+        let mut out = json!({ "select": kinds, "filter": filters, "sort": sorts, "traverse": trav, "budget": budget, "rootQueryable": root });
+        // 1:N traverse는 opt-in이라 선언이 있을 때만 키를 넣는다(기존 facts 호환).
+        if !many.is_empty() {
+            out["traverseMany"] = Value::Object(many);
+        }
+        out
     }
 
     fn extension(&mut self, x: &Extension) -> Option<Value> {
