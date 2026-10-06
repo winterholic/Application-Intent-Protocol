@@ -17,7 +17,7 @@
 | 정합성 | `limit … atMost 2`(또는 시간·actor 의존 조건)가 check는 통과하고 `service init`에서 `UNSUPPORTED_SCHEMA`. v3도 이 형태를 집행하지 않음 | sema `UNSUPPORTED_INVARIANT`로 check 단계에서 거부 | `sema_fixes.rs`, `spike-v7-migrate/tests/v7.rs` |
 | 정합성 | `Int(0..10)` 범위가 선언만 되고 집행되지 않아 11·-1 저장 | 처음에는 DDL CHECK로 고쳤으나 기존 배포가 `SCHEMA_MISMATCH`로 막혀(독립 검토에서 재현) 되돌렸다. 상수 대입은 sema `BAD_RANGE`, 증감은 같은 트랜잭션의 `UPDATE … RETURNING` 검사로 `BAD_VALUE` | `audit_fixes.rs`, `spike-v3-write/tests/counters.rs` |
 | 권한 | 오늘 추가한 Ref `eq`/`in`/`isNull` 필터가 대상 행 정책을 거치지 않아 traverse에서 null로 가린 대상 id를 확인 가능, 쓰기 `where`로도 가능(독립 검토에서 재현) | Ref 필터는 대상 행이 보일 때만 값이 있는 것으로 계산(안 보이면 null 취급). 쓰기 `where`의 Ref 조건은 거부 | `spike-v2-read/tests/ref_filter_visibility.rs` |
-| 실행 | 식에 쓰이지 않은 바인드 매개변수(상수 guard `= true`)가 check 통과 후 `42P18` | 읽기 SQL을 text 매개변수 타입으로 prepare | `spike-v2-read/tests/unused_params.rs` |
+| 실행 | 식에 쓰이지 않은 바인드 매개변수(상수 guard `= true`, 인자를 안 쓰는 predicate)가 check 통과 후 `42P18` | 읽기·쓰기 SQL을 모두 text 매개변수 타입으로 prepare | `spike-v2-read/tests/unused_params.rs`, `spike-v3-write/tests/unused_params.rs` |
 | DoS | `/apply` `target.ids`의 O(n²) 중복 검사가 bulk 상한 검사보다 먼저 돎. 인증 없이 12만 id로 debug 32초 CPU, 요청 기한이 끊지 못함 | 상한 검사를 먼저 수행 | `spike-v3-write/tests/v3_1.rs` |
 | DoS | apply `where`의 같은 조건 반복에 상한 없음 | `DUPLICATE_FILTER`로 거부(조건 수 ≤ 허용 목록 크기) | `v3_1.rs` |
 | 누설 | 멱등 key에 NUL이 있으면 `INTERNAL "멱등 잠금 실패(sqlstate 22021)"` | 제어 문자 key는 `/apply`·`/status`·WRITE 확장에서 DB 전에 `BAD_REQUEST` | `spike-v6-transport/tests/key_validation.rs` |
@@ -34,6 +34,7 @@
 
 | 부분일치 검색 | `filter title.contains` | `value: "abc"` | Text만. `strpos` 리터럴 비교(와일드카드 없음), 빈 값 거부, 200자 상한. `icontains`는 collation 문제로 보류 |
 | offset 페이지네이션 | `budget { …; offset 1000 }` | `offset: 40` | 선언한 resource만. 0..=최대, cost에 offset 반영, id 타이브레이커 기존 유지 |
+| keyset cursor | `budget { …; cursor }` | `after: { periodEnd: "…", id: "100" }` | 경계 키는 이번 요청의 sort 필드 + id와 정확히 같아야 함. select에 있는 정책 없는 non-null 필드만(아니면 비교로 숨은 값 이분 탐색). offset과 동시 사용 불가. 동률 데이터·정렬 9조합·사용자 3종 순회에서 누락·중복 없음 |
 | 카운터·재고 증감 | `to stock = stock - 1` | 기존 전이 호출 | 같은 null 아닌 Int 필드 ± 정수 상수만. 다른 위치의 산술은 `ARITH_NOT_ALLOWED`, `repeat unchanged`와 함께 쓸 수 없음. 잠근 행에서 계산해 동시 20건 증가가 모두 반영 |
 | 로그인 사용자만 | `allow actor != null` | 없음 | 익명 actor는 런타임에 NULL. 이 비교만 null 비교 규칙의 예외 |
 | 합계·최소·최대 | `release sum(price)` / `min(price)` / `max(price)` | 기존 select | Int 필드만. field read 정책 필드는 `POLICY_FIELD_NOT_AGGREGATABLE`. 빈 집합 sum은 0. min/max는 `Int?` 행별 집계만(단독 집계는 NULL을 접근 거부로 읽음). avg는 Decimal 타입이 없어 보류 |
@@ -68,7 +69,7 @@ root PoC 문법(`spec/grammar.md`)에는 `+=`, `set = input`, insert, search, of
 | 1 | 호출자 값 수정(patch), 삭제 | 전이는 상수 대입만, delete 없음 | 같은 [OPEN] |
 | 해결 | 카운터·재고 증감 | 전이 증감 추가(§3) | 호출자 지정 금액(예: 송금액)은 여전히 불가 |
 | 2 | avg, 임의 group by, 시간 버킷 | sum/min/max는 추가(§3) | 대시보드 통계 |
-| 2 | cursor의 동률 처리, 목록 total | offset은 추가(§3). cursor는 id gt/lt 불가로 동률 누락 | 목록 화면 기본 |
+| 2 | 목록 total | offset·cursor는 추가(§3). total은 보류: v2 execute가 행 배열만 반환하고 v6 `/read` 응답·v5 Transport가 `Row[]` 기준이라 응답 envelope 변경이 필요 | 커밋 b7431a1 제목의 "list total"은 실제로 구현되지 않았다 |
 | 3 | 기본값, 계산 필드, Email 형식 | 없음 | root PoC 문법에는 일부 존재 |
 | 3 | 정원 N(atMost ≥ 2) | 이번에 check에서 명시 거부로 바꿈. 집행 기능은 없음 | 잠금 기반 count 검사 필요 |
 | 해결 | 상수 access guard(`= true`) | 원인이 미사용 바인드 매개변수였음을 확인하고 고침(§2) | 쓰기 경로(v3)는 같은 문제를 아직 실행 확인하지 않음 |
