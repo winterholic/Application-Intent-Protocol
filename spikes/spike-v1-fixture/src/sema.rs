@@ -1278,6 +1278,8 @@ impl<'a> Ctx<'a> {
             match m.limit {
                 None => self.d("MISSING_ITEM", format!("traverse `{}`에는 자식 개수 상한 limit이 필요", m.name), m.span),
                 Some(n) if n < 1 => self.d("BAD_LIMIT", "traverse limit는 1 이상", m.span),
+                // 부모 행 수 × 자식 상한이 비용 추정에 곱해진다. 한 응답의 자식 목록으로 의미 있는 크기만 받는다.
+                Some(n) if n > 1000 => self.d("BAD_LIMIT", "traverse limit는 1000 이하", m.span),
                 _ => {}
             }
             many.insert(

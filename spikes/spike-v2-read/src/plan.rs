@@ -81,15 +81,22 @@ fn out_ty(ty: &str, redactable: bool) -> Value {
 }
 
 /// count는 행 수, sum은 빈 집합이 0, min/max는 빈 집합이 NULL이다(sema가 min/max를 nullable 행별 집계로 제한).
-fn measure(facts: &Value, aggregate: &Value, alias: &str) -> Result<String, Reject> {
+/// count는 sourceAccess 선언대로 원본 행 정책 없이 센다. sum/min/max는 값을 내보내므로 원본 행 정책을
+/// FILTER로 다시 건다. 아니면 호출자에게 안 보이는 행의 값이 합계·최솟값으로 그대로 나온다.
+fn measure(facts: &Value, cx: &mut Ctx<'_>, aggregate: &Value, alias: &str) -> Result<String, Reject> {
     let source = aggregate["source"].as_str().unwrap();
     let field = aggregate["releaseField"].as_str();
     let col = |f: &str| column(facts, source, f).ok_or_else(|| internal(format!("집계 필드 `{f}` 없음")));
-    match (aggregate["release"].as_str(), field) {
-        (Some("count") | None, None) => Ok("count(*)".into()),
+    let release = aggregate["release"].as_str();
+    if matches!(release, Some("count") | None) && field.is_none() {
+        return Ok("count(*)".into());
+    }
+    let env = Env { this: Some((alias.to_string(), source.to_string())), ..Default::default() };
+    let visible = cx.cond(&facts["resources"][source]["rowRead"], &env).map_err(internal)?;
+    match (release, field) {
         // bigint 합은 numeric이 된다. 범위를 넘으면 캐스트가 실패해 잘린 값 대신 오류가 난다.
-        (Some("sum"), Some(f)) => Ok(format!("coalesce(sum({alias}.{}), 0)::bigint", col(f)?)),
-        (Some(op @ ("min" | "max")), Some(f)) => Ok(format!("{op}({alias}.{})", col(f)?)),
+        (Some("sum"), Some(f)) => Ok(format!("coalesce(sum({alias}.{}) FILTER (WHERE {visible}), 0)::bigint", col(f)?)),
+        (Some(op @ ("min" | "max")), Some(f)) => Ok(format!("{op}({alias}.{}) FILTER (WHERE {visible})", col(f)?)),
         (r, f) => Err(internal(format!("집계 release {r:?}({f:?}) 미지원"))),
     }
 }
@@ -113,7 +120,7 @@ fn aggregate_select_expr(
         where_sql = format!("{where_sql} AND {}", cx.cond(&aggregate["where"], &source_env).map_err(internal)?);
     }
     // 집계 원본은 원본 행 정책을 자동 상속하지 않고 sourceAccess로만 읽는다.
-    let count = format!("(SELECT {} FROM {} {source_alias} WHERE {where_sql})", measure(facts, aggregate, &source_alias)?, table(source));
+    let count = format!("(SELECT {} FROM {} {source_alias} WHERE {where_sql})", measure(facts, cx, aggregate, &source_alias)?, table(source));
     let access_ref = aggregate["sourceAccess"]["ref"].as_str().unwrap_or("");
     let access = &facts["accesses"][access_ref];
     let (expression, guarded) = match access["kind"].as_str() {
@@ -506,7 +513,7 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
         }
         (Some(v), _) => return rej("BAD_VALUE", format!("offset {v}")),
     };
-    let cost = estimate(limit, offset.unwrap_or(0), n_trav, n_agg, n_fp) + limit * many_cost;
+    let cost = estimate(limit, offset.unwrap_or(0), n_trav, n_agg, n_fp).saturating_add(limit.saturating_mul(many_cost));
     let max_cost = budget["cost"].as_i64().unwrap();
     if cost > max_cost {
         return rej("COST_EXCEEDED", format!("추정 비용 {cost} > budget cost {max_cost}"));
@@ -616,7 +623,7 @@ fn plan_traverse_many(
         tbl = table(target),
     );
     let ty = json!({ "array": tout, "nullable": false, "maxItems": limit, "reason": "대상 행 정책으로 줄어든 목록. 없으면 빈 배열" });
-    Ok((join, format!("{jv}.v"), ty, limit * (1 + n_fp)))
+    Ok((join, format!("{jv}.v"), ty, limit.saturating_mul(1 + n_fp)))
 }
 
 fn plan_aggregate(facts: &Value, o: &Map<String, Value>, caller: &Caller, wire: crate::id_wire::IdWire) -> Result<Plan, Reject> {
@@ -666,7 +673,7 @@ fn plan_aggregate(facts: &Value, o: &Map<String, Value>, caller: &Caller, wire: 
     let wenv = Env { this: Some((al.clone(), src.to_string())), vars: HashMap::new(), input };
     let w = if a["where"].is_null() { "TRUE".into() } else { cx.cond(&a["where"], &wenv).map_err(internal)? };
     // guard가 거짓이면 NULL을 돌려 ACCESS_DENIED로 바꾼다. 없는 동아리와 남의 동아리를 같은 결과로 만든다.
-    let sql = format!("SELECT (CASE WHEN {guard} THEN (SELECT {} FROM {} {al} WHERE {w}) END)::text", measure(facts, a, &al)?, table(src));
+    let sql = format!("SELECT (CASE WHEN {guard} THEN (SELECT {} FROM {} {al} WHERE {w}) END)::text", measure(facts, &mut cx, a, &al)?, table(src));
     Ok(Plan {
         sql,
         params: cx.params.values,

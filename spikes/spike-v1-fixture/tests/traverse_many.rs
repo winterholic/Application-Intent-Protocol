@@ -71,6 +71,7 @@ fn definition_errors_are_diagnosed() {
     assert!(has(&DEF.replacen("select id, body, secret;", "select id, body, post;", 1), "TRAVERSE_NOT_EXPOSED"));
     // via 필드는 부모를 가리키는 Ref여야 한다
     assert!(has(&DEF.replacen("via Comment.post", "via Comment.author", 1), "TRAVERSE_VIA_NOT_REF"));
+    assert!(has(&DEF.replacen("limit 20 }", "limit 9223372036854775807 }", 1), "BAD_LIMIT"));
     // 목록 소속이 곧 via 값이므로, 가려진 via 필드로는 묶지 않는다.
     assert!(has(
         &DEF.replacen("field secret read when author = actor", "field secret read when author = actor\n  field post read when author = actor", 1),
