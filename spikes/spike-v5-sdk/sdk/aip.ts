@@ -20,7 +20,7 @@ export function client(send: Transport) {
       readonly filter?: readonly FilterItem<R>[];
       readonly sort?: readonly SortItem<R>[];
       readonly limit?: number;
-    }): Promise<Row<R, S>[]> {
+    } & G.OffsetOpt<Contract, R>): Promise<Row<R, S>[]> {
       return send(q) as Promise<Row<R, S>[]>;
     },
   };

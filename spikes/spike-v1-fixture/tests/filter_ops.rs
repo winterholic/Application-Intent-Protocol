@@ -62,3 +62,51 @@ fn operators_are_rejected_on_types_that_do_not_fit() {
     assert!(codes(&with("filter internalNote.isNull", CLUB_EXPOSE)).iter().any(|g| g.contains("POLICY_FIELD_NOT_FILTERABLE")));
     assert_eq!(codes(&with(REC_FILTER, CLUB_OK)), Vec::<String>::new());
 }
+
+#[test]
+fn contains_is_text_only_and_icontains_stays_unknown() {
+    let ok = with("filter periodEnd.gte, periodEnd.lte, title.contains", CLUB_EXPOSE);
+    let facts = load_str(&ok, Form::A).unwrap_or_else(|e| panic!("{e:?}")).execution;
+    let rec = facts["resources"]["Recruitment"]["exposeRead"]["filter"].as_array().unwrap().clone();
+    assert!(rec.iter().any(|x| x == "title.contains"), "{rec:?}");
+    let cases: &[(&str, &str)] = &[
+        ("filter views.contains", "OP_TYPE_MISMATCH"),
+        ("filter periodEnd.contains", "OP_TYPE_MISMATCH"),
+        ("filter status.contains", "OP_TYPE_MISMATCH"),
+        ("filter club.contains", "OP_TYPE_MISMATCH"),
+        // 대소문자 무시는 이번 범위가 아니다(보류). 문법에도 열지 않는다.
+        ("filter title.icontains", "UNKNOWN_OPERATOR"),
+        ("filter title.contain", "UNKNOWN_OPERATOR"),
+        ("filter title.like", "UNKNOWN_OPERATOR"),
+        // field read 정책 필드는 부분일치로도 값을 추론할 수 있다
+        ("filter internalNote.contains", "POLICY_FIELD_NOT_FILTERABLE"),
+    ];
+    for (rec, want) in cases {
+        let got = codes(&with(rec, CLUB_EXPOSE));
+        assert!(got.iter().any(|g| g.contains(want)), "`{rec}`: 기대 {want}, 실제 {got:?}");
+    }
+}
+
+fn budget_src(budget: &str) -> String {
+    let old = "budget { rows 50; depth 2; deadline 2s; cost 1000 }";
+    assert_eq!(A.matches(old).count(), 1);
+    A.replacen(old, budget, 1)
+}
+
+#[test]
+fn offset_is_opt_in_budget_item() {
+    // 선언이 없으면 facts에 maxOffset 키 자체가 없다(기존 facts 호환).
+    let base = load_str(A, Form::A).unwrap().execution;
+    assert!(base["resources"]["Recruitment"]["exposeRead"]["budget"].get("maxOffset").is_none());
+    let f = load_str(&budget_src("budget { rows 50; depth 2; deadline 2s; cost 1000; offset 1000 }"), Form::A)
+        .unwrap_or_else(|e| panic!("{e:?}"))
+        .execution;
+    assert_eq!(f["resources"]["Recruitment"]["exposeRead"]["budget"]["maxOffset"], 1000);
+    for (b, want) in [
+        ("budget { rows 50; depth 2; deadline 2s; cost 1000; offset 0 }", "BAD_BUDGET"),
+        ("budget { rows 50; depth 2; deadline 2s; cost 1000; offset 10; offset 20 }", "DUPLICATE"),
+    ] {
+        let got = codes(&budget_src(b));
+        assert!(got.iter().any(|g| g.contains(want)), "`{b}`: 기대 {want}, 실제 {got:?}");
+    }
+}

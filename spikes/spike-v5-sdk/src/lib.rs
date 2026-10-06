@@ -174,12 +174,17 @@ fn generate_contract(facts: &Value, wire: IdWire) -> String {
         writeln!(s, "    }};").unwrap();
         writeln!(
             s,
-            "    filter: {};\n    sort: {};\n    maxRows: {};\n  }};",
+            "    filter: {};\n    sort: {};\n    maxRows: {};",
             union(&ex["filter"]),
             union(&ex["sort"]),
             ex["budget"]["rows"].as_i64().map(|x| x.to_string()).unwrap_or("0".into())
         )
         .unwrap();
+        // offset은 opt-in이다. 선언한 resource에만 계약에 나타나 Query 타입이 offset 키를 연다.
+        if let Some(max) = ex["budget"]["maxOffset"].as_i64() {
+            writeln!(s, "    maxOffset: {max};").unwrap();
+        }
+        writeln!(s, "  }};").unwrap();
     }
     s.push_str("}\n");
     s
