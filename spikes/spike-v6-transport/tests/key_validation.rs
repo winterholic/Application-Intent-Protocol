@@ -53,7 +53,7 @@ async fn control_character_keys_are_rejected_before_the_database() {
     )
     .await
     .expect("server");
-    for key in ["a\u{0}b", "line\nbreak", "\u{1}", "tab\t"] {
+    for key in ["a\u{0}b", "line\nbreak", "\u{1}", "tab\t", "order\u{202E}1", "\u{200B}k", "\u{FEFF}k"] {
         for path in ["/apply", "/status"] {
             let reply = post(server.address, path, &json!({"key": key, "request": {"apply": "X.y", "target": {"ids": ["1"]}}})).await;
             assert_eq!(reply["code"], "BAD_REQUEST", "{path} {key:?}: {reply}");

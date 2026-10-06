@@ -65,7 +65,12 @@ fn principal_key(actor: Option<i64>, wire: IdWire) -> String {
 
 // 제어 문자는 DB text에 들어가지 못하거나(NUL) 로그·화면을 오염시키므로 key에서 받지 않는다.
 fn valid_key(key: &str) -> bool {
-    !key.is_empty() && key.len() <= 100 && !key.chars().any(char::is_control)
+    !key.is_empty() && key.len() <= 100 && !key.chars().any(|c| c.is_control() || invisible_format(c))
+}
+
+// 화면에 안 보이거나 표시 방향을 바꾸는 서식 문자. 같아 보이는 다른 key를 만들 수 있다.
+fn invisible_format(c: char) -> bool {
+    matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2069}' | '\u{FEFF}')
 }
 
 async fn handle_apply(db: &mut Client, facts: &Value, body: &Value, caller: &Caller, wire: IdWire) -> Value {
@@ -99,7 +104,9 @@ async fn handle_apply(db: &mut Client, facts: &Value, body: &Value, caller: &Cal
             if stored_req != req_text {
                 return json!({ "ok": false, "code": "IDEMPOTENCY_MISMATCH", "msg": "같은 키에 다른 요청" });
             }
-            let mut v: Value = serde_json::from_str(&result).unwrap();
+            let Ok(mut v) = serde_json::from_str::<Value>(&result) else {
+                return json!({ "ok": false, "code": "INTERNAL", "msg": "저장된 멱등 결과를 읽을 수 없음" });
+            };
             v["replayed"] = json!(true);
             return v;
         }
