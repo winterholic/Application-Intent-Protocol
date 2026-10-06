@@ -74,6 +74,8 @@ pub struct Budget {
     pub cost: Option<i64>,
     /// opt-in 최대 offset. 없으면 호출자의 offset 키는 거부된다.
     pub offset: Option<i64>,
+    /// opt-in keyset cursor. 없으면 호출자의 after 키는 거부된다.
+    pub cursor: bool,
     pub span: Span,
 }
 

@@ -597,6 +597,8 @@ impl Parser {
                             "deadline" => b.deadline_ms = Some(self.dur()?),
                             "cost" => b.cost = Some(self.int()?),
                             "offset" => b.offset = Some(self.int()?),
+                            // 값 없는 선언 키. 있으면 켠다.
+                            "cursor" => b.cursor = true,
                             o => return Err(Diag::new("PARSE_UNKNOWN_KEY", format!("budget 안 알 수 없는 키 `{o}`"), sp)),
                         }
                     }

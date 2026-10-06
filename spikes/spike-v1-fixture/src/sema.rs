@@ -1225,6 +1225,22 @@ impl<'a> Ctx<'a> {
                         self.d("BAD_BUDGET", format!("budget {k}는 1 이상"), b.span);
                     }
                 }
+                if b.cursor {
+                    // cursor 경계로 쓰는 값은 호출자가 이미 select로 볼 수 있어야 한다. 아니면 after 비교로 숨은 값을 추론할 수 있다.
+                    let selected = |n: &str| e.select.iter().any(|(s, _)| s == n) && kinds.get(n).is_some_and(|k| k == "field");
+                    for (s, sp) in &e.sort {
+                        if !selected(s) {
+                            self.d("CURSOR_SORT_NOT_SELECTED", format!("cursor를 켜면 sort `{s}`도 정책 없는 select 필드여야 함"), *sp);
+                        }
+                        // NULL은 비교가 unknown이라 keyset 경계가 행을 빠뜨린다.
+                        if self.field_tt(&r.name, s).is_some_and(|t| t.nullable) {
+                            self.d("CURSOR_NULLABLE_SORT", format!("cursor를 켜면 nullable 필드 `{s}`는 sort에 쓸 수 없음"), *sp);
+                        }
+                    }
+                    if !selected("id") {
+                        self.d("CURSOR_ID_NOT_SELECTED", "cursor를 켜면 id가 select에 있어야 함(동률 경계)", b.span);
+                    }
+                }
                 if !e.traverse.is_empty() && b.depth.unwrap_or(0) < 2 {
                     self.d("BUDGET_DEPTH_TOO_SMALL", "traverse가 있으면 depth는 2 이상", b.span);
                 }
@@ -1232,6 +1248,9 @@ impl<'a> Ctx<'a> {
                 // offset은 opt-in이라 선언이 있을 때만 키를 넣는다(기존 facts 호환).
                 if let Some(o) = b.offset {
                     bj["maxOffset"] = json!(o);
+                }
+                if b.cursor {
+                    bj["cursor"] = json!(true);
                 }
                 bj
             }

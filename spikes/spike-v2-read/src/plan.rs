@@ -169,9 +169,16 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
     }
     // offset 키는 정의 budget이 opt-in(maxOffset)했을 때만 허용한다. 선언이 없으면 알 수 없는 키다.
     let max_offset = facts["resources"][o.get("read").and_then(Value::as_str).unwrap_or("")]["exposeRead"]["budget"]["maxOffset"].as_i64();
-    let allowed: &[&str] =
-        if max_offset.is_some() { &["read", "select", "filter", "sort", "limit", "offset"] } else { &["read", "select", "filter", "sort", "limit"] };
-    keys(o, allowed, "read 요청")?;
+    // after(keyset cursor)도 같은 방식으로 budget `cursor` 선언이 있을 때만 키를 연다.
+    let cursor_on = facts["resources"][o.get("read").and_then(Value::as_str).unwrap_or("")]["exposeRead"]["budget"]["cursor"] == true;
+    let mut allowed: Vec<&str> = vec!["read", "select", "filter", "sort", "limit"];
+    if max_offset.is_some() {
+        allowed.push("offset");
+    }
+    if cursor_on {
+        allowed.push("after");
+    }
+    keys(o, &allowed, "read 요청")?;
     let res = o.get("read").and_then(Value::as_str).ok_or(Reject { code: "BAD_REQUEST", msg: "read 필요".into() })?;
     let rf = &facts["resources"][res];
     if rf.is_null() {
@@ -400,6 +407,8 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
     }
 
     let mut order = vec![];
+    // keyset 경계 계산용: (필드, 내림차순 여부). 마지막에 id 타이브레이커가 없으면 붙인다.
+    let mut sort_keys: Vec<(String, bool)> = vec![];
     let mut seen_sort = std::collections::HashSet::new();
     if let Some(sl) = o.get("sort") {
         for s in sl.as_array().ok_or(Reject { code: "BAD_REQUEST", msg: "sort 배열".into() })? {
@@ -421,10 +430,51 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
                 d => return rej("BAD_REQUEST", format!("정렬 방향 `{d}`")),
             };
             order.push(format!("{t}.{} {dir}", column(facts, res, f).unwrap()));
+            sort_keys.push((f.to_string(), dir == "DESC"));
         }
     }
     // 같은 값이 많을 때 페이지가 흔들리지 않게 항상 id를 마지막 정렬 키로 둔다.
     order.push(format!("{t}.id ASC"));
+    if !sort_keys.iter().any(|(f, _)| f == "id") {
+        sort_keys.push(("id".to_string(), false));
+    }
+
+    if let Some(after) = o.get("after") {
+        if o.contains_key("offset") {
+            return rej("CURSOR_WITH_OFFSET", "after와 offset은 함께 쓸 수 없음");
+        }
+        let am = after.as_object().ok_or(Reject { code: "BAD_CURSOR", msg: "after는 객체".into() })?;
+        // 키 집합은 이 요청의 sort 필드 + id와 정확히 같아야 한다. 호출자가 다른 필드로 경계를 짜 맞출 수 없다.
+        let want: std::collections::BTreeSet<&str> = sort_keys.iter().map(|(f, _)| f.as_str()).collect();
+        let have: std::collections::BTreeSet<&str> = am.keys().map(String::as_str).collect();
+        if want != have {
+            return rej("BAD_CURSOR", format!("after 키는 sort 필드와 id여야 함: 기대 {want:?}, 받음 {have:?}"));
+        }
+        // 경계로 쓰는 필드는 호출자가 select로 이미 볼 수 있는 정책 없는 non-null 필드뿐이다(정의 검사를 건너뛴 facts 방어).
+        let mut bounds: Vec<(String, bool, String)> = vec![];
+        for (f, desc) in &sort_keys {
+            let fty = rf["fields"][f.as_str()]["ty"].as_str().unwrap_or("");
+            if ex["select"][f.as_str()] != "field" || fty.ends_with('?') {
+                return rej("CURSOR_FIELD_NOT_ALLOWED", format!("`{f}`는 cursor 경계로 쓸 수 없음(select에 없거나 nullable)"));
+            }
+            if !rf["fieldRead"][f.as_str()].is_null() {
+                return rej("POLICY_FIELD_NOT_FILTERABLE", format!("`{f}`에는 field read 정책이 있어 cursor에 쓸 수 없음"));
+            }
+            let (v, cast) = check_value(facts, fty, &am[f.as_str()], wire)?;
+            let p = cx.params.bind(Some(v), cast);
+            bounds.push((format!("{t}.{}", column(facts, res, f).unwrap()), *desc, p));
+        }
+        // (k1,k2,..) > (v1,v2,..)를 방향별로 전개한다: k1 op v1 OR (k1 = v1 AND k2 op v2) OR ...
+        // 모든 키가 non-null이라 NULL 비교로 행이 빠지지 않는다. 마지막 키는 id라 전체가 유일하다.
+        let mut ors = vec![];
+        for i in 0..bounds.len() {
+            let mut terms: Vec<String> = bounds[..i].iter().map(|(c, _, p)| format!("{c} = {p}")).collect();
+            let (c, desc, p) = &bounds[i];
+            terms.push(format!("{c} {} {p}", if *desc { "<" } else { ">" }));
+            ors.push(format!("({})", terms.join(" AND ")));
+        }
+        wh.push(format!("({})", ors.join(" OR ")));
+    }
 
     let max_rows = budget["rows"].as_i64().unwrap();
     let limit = match o.get("limit") {
