@@ -147,7 +147,8 @@ async fn a_ciphertext_moved_to_another_row_or_field_is_refused() {
     assert_eq!(err.code, "AIP.ENCRYPTION.DECRYPT_FAILED");
 
     // alice's own email moved into her phone column (another field, same row)
-    sql_one(&e, &format!("UPDATE member SET email = NULL, phone = (SELECT email FROM member WHERE id = '{bob}') WHERE id = '{alice}' RETURNING id")).await;
+    sql_one(&e, &format!("UPDATE member SET email = NULL, phone = (SELECT email FROM member WHERE id = '{bob}') WHERE id = '{alice}' RETURNING id"))
+        .await;
     let err = fails(&e, "Me", Some(&alice), json!({"m": alice}), None).await;
     assert_eq!(err.code, "AIP.ENCRYPTION.DECRYPT_FAILED");
 
@@ -220,7 +221,8 @@ async fn keys_rotate_and_rekey_reaches_every_copy() {
     let old = with_keys(&e, &key_spec(&[("k1", &k1)]));
     let alice = register(&old, "alice", Some("alice@example.com"), Some("01012345678")).await;
     let _bob = register(&old, "bob", Some("bob@example.com"), None).await;
-    let post = ok(&old, "AddPost", Some(&alice), json!({"title": "t", "body": "first body"}), Some("p1")).await["id"].as_str().expect("post").to_string();
+    let post =
+        ok(&old, "AddPost", Some(&alice), json!({"title": "t", "body": "first body"}), Some("p1")).await["id"].as_str().expect("post").to_string();
     ok(&old, "PublishPost", Some(&alice), json!({"post": post}), None).await;
     let diary = ok(&old, "AddDiary", Some(&alice), json!({"body": "day one"}), Some("d1")).await["id"].as_str().expect("diary").to_string();
     ok(&old, "EditDiary", Some(&alice), json!({"d": diary, "body": "day two"}), None).await;
@@ -289,7 +291,8 @@ async fn keys_rotate_and_rekey_reaches_every_copy() {
 async fn published_and_history_copies_hold_the_same_ciphertext() {
     let e = setup("aip_enc_copies").await;
     let alice = register(&e, "alice", Some("alice@example.com"), None).await;
-    let post = ok(&e, "AddPost", Some(&alice), json!({"title": "t", "body": "secret draft"}), Some("p1")).await["id"].as_str().expect("post").to_string();
+    let post =
+        ok(&e, "AddPost", Some(&alice), json!({"title": "t", "body": "secret draft"}), Some("p1")).await["id"].as_str().expect("post").to_string();
     assert_eq!(ok(&e, "Posts", None, json!({}), None).await, json!([]), "nothing is published yet");
     ok(&e, "PublishPost", Some(&alice), json!({"post": post}), None).await;
     let (work, copy) = (
@@ -310,8 +313,12 @@ async fn published_and_history_copies_hold_the_same_ciphertext() {
     ok(&e, "EditDiary", Some(&alice), json!({"d": diary, "body": "tuesday"}), None).await;
     let versions = sql_one(&e, &format!("SELECT jsonb_agg(data ->> 'body' ORDER BY version) FROM diary_history WHERE id = '{diary}'")).await;
     let keys = e.keys.as_ref().expect("keys");
-    let plain: Vec<String> =
-        versions.as_array().expect("versions").iter().map(|c| keys.decrypt("Diary.body", &diary, c.as_str().expect("text")).expect("opens")).collect();
+    let plain: Vec<String> = versions
+        .as_array()
+        .expect("versions")
+        .iter()
+        .map(|c| keys.decrypt("Diary.body", &diary, c.as_str().expect("text")).expect("opens"))
+        .collect();
     assert_eq!(plain, ["monday", "tuesday"]);
     assert!(!dump(&e).await.contains("monday"), "no version is kept in the clear");
 }

@@ -17,8 +17,8 @@ use aip_ir::codes;
 use aip_plan::{DecryptPath, Program};
 use base64::Engine as _;
 use hmac::{Hmac, Mac};
-use sha2::Sha256;
 use serde_json::Value;
+use sha2::Sha256;
 use std::sync::Arc;
 
 pub const ENV_KEYS: &str = "AIP_ENCRYPTION_KEYS";
@@ -65,14 +65,16 @@ impl Keys {
             if entries.iter().any(|e| e.id == id) {
                 return Err(format!("key id `{id}` appears twice"));
             }
-            let raw = base64::engine::general_purpose::STANDARD
-                .decode(b64.trim())
-                .map_err(|_| format!("key `{id}` is not valid base64"))?;
+            let raw = base64::engine::general_purpose::STANDARD.decode(b64.trim()).map_err(|_| format!("key `{id}` is not valid base64"))?;
             if raw.len() != 32 {
                 return Err(format!("key `{id}` is {} bytes, AES-256 needs 32", raw.len()));
             }
             let raw: [u8; 32] = raw.as_slice().try_into().map_err(|_| format!("key `{id}` is not 32 bytes"))?;
-            entries.push(Entry { id: id.to_string(), cipher: Aes256Gcm::new_from_slice(&raw).map_err(|_| format!("key `{id}` is not 32 bytes"))?, raw });
+            entries.push(Entry {
+                id: id.to_string(),
+                cipher: Aes256Gcm::new_from_slice(&raw).map_err(|_| format!("key `{id}` is not 32 bytes"))?,
+                raw,
+            });
         }
         if entries.is_empty() {
             return Err("no key given".into());
@@ -151,7 +153,10 @@ pub fn load(program: &Program, spec: Option<&str>) -> Result<Option<Arc<Keys>>, 
         AipError::new(
             codes::ENCRYPTION_KEYS_MISSING,
             "startup",
-            format!("the program has encrypted fields but {ENV_KEYS} is unusable: {why}; `aip explain-code {}` says how to set it", codes::ENCRYPTION_KEYS_MISSING),
+            format!(
+                "the program has encrypted fields but {ENV_KEYS} is unusable: {why}; `aip explain-code {}` says how to set it",
+                codes::ENCRYPTION_KEYS_MISSING
+            ),
         )
     };
     match spec.filter(|s| !s.trim().is_empty()) {

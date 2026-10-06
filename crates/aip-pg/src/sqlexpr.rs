@@ -211,14 +211,7 @@ impl<'x> Compiler<'x> {
     }
 
     fn fail_code(&mut self, code: &str, msg: impl Into<String>) -> Val {
-        self.errors.push(Diagnostic {
-            severity: Severity::Error,
-            code: code.into(),
-            message: msg.into(),
-            path: self.at.clone(),
-            line: 0,
-            col: 0,
-        });
+        self.errors.push(Diagnostic { severity: Severity::Error, code: code.into(), message: msg.into(), path: self.at.clone(), line: 0, col: 0 });
         Val::Scalar { sql: "NULL".into(), ty: Ty::Unknown }
     }
 

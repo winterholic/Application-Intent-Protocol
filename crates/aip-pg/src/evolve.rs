@@ -510,7 +510,9 @@ impl<'a> Planner<'a> {
             ),
             // the stored value is ciphertext whatever the limits say; the runtime checks the limits of what is written from now on
             TypeRelation::Narrows if self.new.entities.get(entity).is_some_and(|e| e.fields.iter().any(|f| f.name == field && f.encrypted)) => {
-                self.out.notes.push(format!("{entity}.{field} is encrypted and accepts fewer values than before; stored values are not checked against the new limits"));
+                self.out.notes.push(format!(
+                    "{entity}.{field} is encrypted and accepts fewer values than before; stored values are not checked against the new limits"
+                ));
             }
             TypeRelation::Narrows => {
                 // the database keeps the value as text or bigint whatever the limits are; the rows only have to fit the new limits

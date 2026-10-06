@@ -218,7 +218,11 @@ async fn run_step<C: GenericClient + Sync>(ctx: &mut ExecCtx<'_>, c: &C, s: &Ste
                 return Ok(());
             };
             let keys = ctx.keys.ok_or_else(|| {
-                AipError::new(codes::ENCRYPTION_KEYS_MISSING, ctx.intent, format!("{field} is encrypted and this process has no keys ({})", crate::crypto::ENV_KEYS))
+                AipError::new(
+                    codes::ENCRYPTION_KEYS_MISSING,
+                    ctx.intent,
+                    format!("{field} is encrypted and this process has no keys ({})", crate::crypto::ENV_KEYS),
+                )
             })?;
             let id = match row {
                 EncryptRow::New { id } => env.get(id),

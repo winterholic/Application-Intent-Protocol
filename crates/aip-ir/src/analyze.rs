@@ -545,12 +545,22 @@ impl<'p> A<'p> {
         }
         if f.encrypted {
             let at = format!("{path}.encrypted");
-            if !matches!(f.kind, FieldKind::Stored) || !matches!(f.ty, Type::Text { .. } | Type::RichText { .. } | Type::Email | Type::Url | Type::Phone { .. }) {
-                self.diag(codes::E318, &at, format!("{entity}.{} is encrypted and must be a stored text field, not {}", f.name, ty_name(&norm(&f.ty))))
-                    .help = Some("encrypt Text, Email, Url or Phone fields only".into());
+            if !matches!(f.kind, FieldKind::Stored)
+                || !matches!(f.ty, Type::Text { .. } | Type::RichText { .. } | Type::Email | Type::Url | Type::Phone { .. })
+            {
+                self.diag(
+                    codes::E318,
+                    &at,
+                    format!("{entity}.{} is encrypted and must be a stored text field, not {}", f.name, ty_name(&norm(&f.ty))),
+                )
+                .help = Some("encrypt Text, Email, Url or Phone fields only".into());
             }
             if f.default.is_some() || f.generated.is_some() {
-                self.diag(codes::E318, &at, format!("{entity}.{} is encrypted and cannot have a default or a generated value: it would be stored in the clear", f.name));
+                self.diag(
+                    codes::E318,
+                    &at,
+                    format!("{entity}.{} is encrypted and cannot have a default or a generated value: it would be stored in the clear", f.name),
+                );
             }
             for other in &e.fields {
                 if let Some(Generated::Slug { from, .. }) = &other.generated
@@ -610,7 +620,11 @@ impl<'p> A<'p> {
             Constraint::Unique { fields, filter, .. } => {
                 for col in fields {
                     if field(col).is_some_and(|f| f.encrypted) {
-                        self.diag(codes::E318, path, format!("'{col}' is encrypted and cannot be part of a unique constraint: equal values have different ciphertexts"));
+                        self.diag(
+                            codes::E318,
+                            path,
+                            format!("'{col}' is encrypted and cannot be part of a unique constraint: equal values have different ciphertexts"),
+                        );
                     }
                     if field(col).is_some_and(|f| matches!(f.kind, FieldKind::Inverse { .. } | FieldKind::Counter { .. })) {
                         self.diag(codes::E201, path, format!("'{col}' cannot be part of a unique constraint"));
@@ -1022,8 +1036,12 @@ impl<'p> A<'p> {
     fn values(&mut self, entity: &str, values: &[(String, Expr)], one_row: bool, path: &str) {
         for (f, v) in values {
             if self.encrypted(entity, f) && (!one_row || !plain_value(v)) {
-                self.diag(codes::E320, &format!("{path}.{f}"), format!("{entity}.{f} is encrypted: it can only be written to one new row from a parameter"))
-                    .help = Some("insert the row with the parameter as the value, or use `set row.field = param`".into());
+                self.diag(
+                    codes::E320,
+                    &format!("{path}.{f}"),
+                    format!("{entity}.{f} is encrypted: it can only be written to one new row from a parameter"),
+                )
+                .help = Some("insert the row with the parameter as the value, or use `set row.field = param`".into());
             }
             self.expr(v, &format!("{path}.{f}"));
         }
@@ -1034,7 +1052,9 @@ impl<'p> A<'p> {
         for (i, a) in assigns.iter().enumerate() {
             let target = format!("{path}.assigns[{i}].target");
             let enc = match &a.target.node {
-                Node::Field { base, entity, field } => row_entity(base, entity).filter(|e| self.encrypted(e, field)).map(|e| (e, field.clone(), Some(base))),
+                Node::Field { base, entity, field } => {
+                    row_entity(base, entity).filter(|e| self.encrypted(e, field)).map(|e| (e, field.clone(), Some(base)))
+                }
                 Node::RowField { entity, field } if self.encrypted(entity, field) => Some((entity.clone(), field.clone(), None)),
                 _ => None,
             };
@@ -1045,8 +1065,12 @@ impl<'p> A<'p> {
                         self.expr(b, &target);
                     }
                     if many || !matches!(a.op, AssignOp::Set) || !plain_value(&a.value) {
-                        self.diag(codes::E320, &target, format!("{entity}.{field} is encrypted: write it with `set row.{field} = <parameter>` on one row"))
-                            .help = Some("an update over many rows, `+=`, or a computed value cannot be encrypted for each row".into());
+                        self.diag(
+                            codes::E320,
+                            &target,
+                            format!("{entity}.{field} is encrypted: write it with `set row.{field} = <parameter>` on one row"),
+                        )
+                        .help = Some("an update over many rows, `+=`, or a computed value cannot be encrypted for each row".into());
                     }
                 }
                 None => self.expr(&a.target, &target),
@@ -1086,8 +1110,12 @@ impl<'p> A<'p> {
     }
 
     fn encrypted_read(&mut self, entity: &str, field: &str, path: &str) {
-        self.diag(codes::E319, path, format!("{entity}.{field} is encrypted: the database only holds ciphertext, so an expression cannot use its value")).help =
-            Some("select the field by name, or keep an unencrypted field for what you need to compare, filter or sort by".into());
+        self.diag(
+            codes::E319,
+            path,
+            format!("{entity}.{field} is encrypted: the database only holds ciphertext, so an expression cannot use its value"),
+        )
+        .help = Some("select the field by name, or keep an unencrypted field for what you need to compare, filter or sort by".into());
     }
 
     fn expr(&mut self, e: &Expr, path: &str) {

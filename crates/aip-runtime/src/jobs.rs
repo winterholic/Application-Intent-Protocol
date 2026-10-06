@@ -84,7 +84,16 @@ fn env_for(plan: &Job, job: &Claimed) -> Env {
 }
 
 fn ctx<'a>(engine: &'a Engine, name: &'a str, uploads: &'a HashMap<String, crate::objects::Upload>) -> ExecCtx<'a> {
-    ExecCtx { program: &engine.program, intent: name, uploads, objects: &engine.objects, staged: Vec::new(), partial: Vec::new(), has_actor: true, keys: engine.keys.as_deref() }
+    ExecCtx {
+        program: &engine.program,
+        intent: name,
+        uploads,
+        objects: &engine.objects,
+        staged: Vec::new(),
+        partial: Vec::new(),
+        has_actor: true,
+        keys: engine.keys.as_deref(),
+    }
 }
 
 async fn run_job(engine: &Engine, plan: &Job, job: &Claimed) -> Result<(), String> {
@@ -154,9 +163,9 @@ async fn run_job(engine: &Engine, plan: &Job, job: &Claimed) -> Result<(), Strin
                         let row = cells.first().cloned().unwrap_or_default();
                         if cells.get(d.column).is_some_and(|c| !c.is_empty()) {
                             let keys = engine.keys.as_deref().ok_or_else(|| format!("{} is encrypted and this process has no keys", d.field))?;
-                            cells[d.column] = keys.decrypt(&d.field, &row, &cells[d.column]).map_err(|why| {
-                                format!("{}: {} cannot be decrypted ({why:?})", aip_ir::codes::ENCRYPTION_DECRYPT_FAILED, d.field)
-                            })?;
+                            cells[d.column] = keys
+                                .decrypt(&d.field, &row, &cells[d.column])
+                                .map_err(|why| format!("{}: {} cannot be decrypted ({why:?})", aip_ir::codes::ENCRYPTION_DECRYPT_FAILED, d.field))?;
                         }
                     }
                     f.write_all(csv_line(&cells).as_bytes()).await.map_err(|x| e(&x))?;

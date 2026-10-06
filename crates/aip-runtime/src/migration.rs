@@ -59,7 +59,8 @@ async fn run_locked(client: &mut deadpool_postgres::Object, program: &Program) -
 async fn apply(client: &mut deadpool_postgres::Object, program: &Program, objects: &ObjectStore, m: &Migration) -> anyhow::Result<()> {
     let tx = client.transaction().await?;
     let uploads = HashMap::new();
-    let mut ctx = ExecCtx { program, intent: &m.name, uploads: &uploads, objects, staged: Vec::new(), partial: Vec::new(), has_actor: false, keys: None };
+    let mut ctx =
+        ExecCtx { program, intent: &m.name, uploads: &uploads, objects, staged: Vec::new(), partial: Vec::new(), has_actor: false, keys: None };
     let mut env = Env::default();
     exec::run_steps(&mut ctx, &*tx, &m.steps, &mut env).await.map_err(|e| anyhow::anyhow!(e.to_string()))?;
     exec::settle_rules(&mut ctx, &*tx, &env).await.map_err(|e| anyhow::anyhow!(e.to_string()))?;

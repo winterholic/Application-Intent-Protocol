@@ -116,14 +116,7 @@ impl<'x> Planner<'x> {
     }
 
     fn fail_code(&mut self, code: &str, msg: impl Into<String>) {
-        self.errors.push(Diagnostic {
-            severity: Severity::Error,
-            code: code.into(),
-            message: msg.into(),
-            path: self.at.clone(),
-            line: 0,
-            col: 0,
-        });
+        self.errors.push(Diagnostic { severity: Severity::Error, code: code.into(), message: msg.into(), path: self.at.clone(), line: 0, col: 0 });
     }
 
     /// Reports at the intent's name rather than at its keyword.
@@ -657,7 +650,10 @@ impl<'x> Planner<'x> {
                         self.validations.clear();
                         if !self.encrypts.is_empty() {
                             self.encrypts.clear();
-                            self.fail_code(codes::E320, format!("insert {entity} from a set writes many rows, and an encrypted value is encrypted for one row"));
+                            self.fail_code(
+                                codes::E320,
+                                format!("insert {entity} from a set writes many rows, and an encrypted value is encrypted for one row"),
+                            );
                         }
                         let (names, vals): (Vec<String>, Vec<String>) = cols.iter().map(|(a, b)| (q(a), b.clone())).unzip();
                         format!(
