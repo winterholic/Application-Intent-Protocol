@@ -1233,6 +1233,15 @@ impl<'a> Ctx<'a> {
                     continue;
                 }
             }
+            // 자식 목록에 들어갔다는 사실 자체가 via 값(어느 부모에 속하는지)을 드러낸다.
+            if cres.field_read.iter().any(|x| x.0 == m.via) {
+                self.d(
+                    "POLICY_FIELD_NOT_FILTERABLE",
+                    format!("`{}.{}`에는 field read 정책이 있어 1:N traverse 기준으로 쓸 수 없음", m.child, m.via),
+                    m.span,
+                );
+                continue;
+            }
             let Some(te) = &cres.expose_read else {
                 self.d("TRAVERSE_NOT_EXPOSED", format!("`{}`에 expose read가 없어 traverse 불가", m.child), m.span);
                 continue;
