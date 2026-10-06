@@ -70,7 +70,10 @@ fn valid_key(key: &str) -> bool {
 
 // 화면에 안 보이거나 표시 방향을 바꾸는 서식 문자. 같아 보이는 다른 key를 만들 수 있다.
 fn invisible_format(c: char) -> bool {
-    matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2069}' | '\u{FEFF}')
+    matches!(
+        c,
+        '\u{00AD}' | '\u{061C}' | '\u{180E}' | '\u{200B}'..='\u{200F}' | '\u{2028}'..='\u{202E}' | '\u{2060}'..='\u{206F}' | '\u{FEFF}' | '\u{E0000}'..='\u{E007F}'
+    )
 }
 
 async fn handle_apply(db: &mut Client, facts: &Value, body: &Value, caller: &Caller, wire: IdWire) -> Value {

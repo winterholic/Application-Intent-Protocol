@@ -405,6 +405,11 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
                 continue;
             }
             if op == "prefix" {
+                // contains와 같은 상한. 긴 값은 검색어가 아니라 비용만 키운다.
+                let n = v.chars().count();
+                if n > MAX_CONTAINS_CHARS {
+                    return rej("VALUE_TOO_LONG", format!("prefix 값 {n}자 > 상한 {MAX_CONTAINS_CHARS}자"));
+                }
                 let p = cx.params.bind(Some(v), cast);
                 // A prefix is a literal string; SQL wildcard and escape characters keep their meaning as text.
                 wh.push(format!("(left({t}.{col}, char_length({p})) = {p})"));
