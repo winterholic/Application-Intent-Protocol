@@ -27,7 +27,8 @@ node --test \
   spikes/spike-v6-transport/client/v12-contract.test.ts \
   spikes/spike-v6-transport/client/v13-binding.test.ts \
   spikes/spike-v6-transport/client/v14-envelope.test.ts \
-  product/tests/sdk-package.test.mjs
+  product/tests/sdk-package.test.mjs \
+  product/tests/package-boundaries.test.mjs
 
 # Test feature combinations can replace target/debug/aip; rebuild the product last.
 cargo build -p aip-cli --locked

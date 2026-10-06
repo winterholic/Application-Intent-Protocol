@@ -23,6 +23,7 @@
 npm ci --prefix spikes/spike-0-ts --ignore-scripts --no-audit --no-fund
 node product/tools/build-sdk.mjs --out /tmp/aip-sdk-0.1.0
 node --test product/tests/sdk-package.test.mjs
+node --test product/tests/package-boundaries.test.mjs
 node --test product/tests/service-smoke.test.mjs
 node product/tools/package.mjs
 ```
@@ -32,3 +33,7 @@ node product/tools/package.mjs
 테스트는 임시 디렉터리에서 offline pack/install과 독립 소비자를 구성하고 종료 시 임시 파일을 제거한다. 빌드 결과물은 호출자가 소유하는 fresh output 디렉터리에만 기록된다.
 
 `package.mjs`는 `product/dist/<UTC timestamp>/`를 새로 만들며 root `target/debug/aip`, 설치 가능한 SDK tarball, 비밀 없는 설정 예시, 정본 app/Node/Python extension 예제와 artifact/source SHA-256 manifest를 담는다. `--out <fresh-directory>`로 별도 위치를 지정할 수 있다. artifact README에는 worker 기본 off, `Event.confirm` opt-in, 현재 macOS `MacNetDeny` 제약을 적는다.
+
+패키징은 시작 시 소스 목록과 해시, 기존 실행 파일의 해시를 기록한다. SDK 빌드와 파일 복사 뒤 입력을 다시 확인하고, 복사한 실행 파일·예시의 해시도 비교한다. 입력 추가·삭제·수정이나 실행 파일 교체를 감지하면 변경 경로와 `SOURCE_CHANGED`를 반환하고 이번 실행의 출력을 정리한다. 필수 소스나 Cargo manifest가 없으면 SDK 빌드 전에 `SOURCE_MISSING`을 반환한다. `package-boundaries.test.mjs`는 독립 임시 저장소에서 이 경계를 재현하며 공용 DB와 `target/`를 사용하지 않는다.
+
+이 검사는 workspace 잠금이나 빌드 provenance를 제공하지 않는다. 검사 사이에서 변경됐다가 원복된 소스는 감지하지 못할 수 있으며, 기존 실행 파일이 현재 소스에서 빌드됐다는 보증은 별도 검증이 필요하다.

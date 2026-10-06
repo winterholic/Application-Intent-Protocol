@@ -83,6 +83,7 @@ function packageReadme() {
 이 번들은 현재 workspace의 로컬 빌드에서 가져온 실행 파일과 SDK tarball, 예시 입력을 포함합니다. 소스 전체, 공개 registry 배포, 빌드 서명 또는 외부 provenance는 포함하지 않습니다. 해시는 파일 무결성 확인용입니다.
 \`SOURCE_SHA256SUMS\`의 경로는 생성 시점의 source workspace에 상대적입니다. 이 artifact는 Git commit provenance를 주장하지 않습니다.
 원본 workspace가 있으면 workspace root에서 \`shasum -a 256 -c <artifact>/SOURCE_SHA256SUMS\`로 source 입력을 확인할 수 있습니다.
+패키징 전후의 입력 해시와 복사한 예시·실행 파일을 비교합니다. 중간에 소스 추가·삭제·수정 또는 실행 파일 교체를 감지하면 \`SOURCE_CHANGED\`로 실패하고 불완전한 출력을 정리합니다. 이 비교는 workspace 잠금이 아니며, 두 검사 사이에서 변경됐다가 원복된 소스까지 보장하지 않습니다. 실행 파일이 현재 소스에서 빌드됐다는 보증도 제공하지 않습니다.
 `;
 }
 
@@ -122,6 +123,14 @@ async function packageArtifacts(out) {
 
   let scratch;
   try {
+    const sourceFiles = await collectManifestSources();
+    const inputs = new Map();
+    for (const name of [...sourceFiles, "target/debug/aip"]) {
+      const digest = await fileDigest(join(repoDir, name)).catch((error) => {
+        throw new PackageFailure(error.code === "ENOENT" ? "SOURCE_MISSING" : "SOURCE_IO", `source 입력을 읽을 수 없습니다: ${name}`, "source-manifest");
+      });
+      inputs.set(name, digest);
+    }
     scratch = await mkdtemp(join(tmpdir(), "aip-product-package-"));
     const sdkDir = join(scratch, "sdk");
     const packDir = join(scratch, "pack");
@@ -150,12 +159,8 @@ async function packageArtifacts(out) {
     await writeFile(join(out, "config.example.json"), JSON.stringify(exampleConfig(), null, 2) + "\n", { flag: "wx" });
     await writeFile(join(out, "README.md"), packageReadme(), { flag: "wx" });
 
-    const sourceFiles = await collectManifestSources();
-    const sourceSums = [];
-    for (const name of sourceFiles) {
-      const digest = createHash("sha256").update(await readFile(join(repoDir, name))).digest("hex");
-      sourceSums.push(`${digest}  ${name}`);
-    }
+    await verifyInputs(inputs, out);
+    const sourceSums = sourceFiles.map((name) => `${inputs.get(name)}  ${name}`);
     await writeFile(join(out, "SOURCE_SHA256SUMS"), `${sourceSums.join("\n")}\n`, { flag: "wx" });
 
     const sums = [];
@@ -174,6 +179,38 @@ async function packageArtifacts(out) {
   }
 }
 
+async function fileDigest(path) {
+  return createHash("sha256").update(await readFile(path)).digest("hex");
+}
+
+function changedInput(name) {
+  return new PackageFailure("SOURCE_CHANGED", `패키징 중 입력이 변경됐습니다: ${name}`, "source-manifest");
+}
+
+async function verifyInputs(inputs, out) {
+  let sourceFiles;
+  try {
+    sourceFiles = await collectManifestSources();
+  } catch (error) {
+    if (error.code === "SOURCE_MISSING") throw changedInput(error.message);
+    throw error;
+  }
+  const currentNames = new Set([...sourceFiles, "target/debug/aip"]);
+  for (const name of new Set([...inputs.keys(), ...currentNames])) {
+    if (!inputs.has(name) || !currentNames.has(name)) throw changedInput(name);
+    const digest = await fileDigest(join(repoDir, name)).catch(() => { throw changedInput(name); });
+    if (digest !== inputs.get(name)) throw changedInput(name);
+  }
+  for (const [source, artifact] of [
+    ["target/debug/aip", "bin/aip"],
+    ["prototype/example/app.aip", "example.aip"],
+    ["prototype/example/extensions/event.mjs", "extensions/event.mjs"],
+    ["prototype/example/extensions/event.py", "extensions/event.py"],
+  ]) {
+    if (await fileDigest(join(out, artifact)) !== inputs.get(source)) throw changedInput(source);
+  }
+}
+
 async function collectManifestSources() {
   const files = new Set(["Cargo.toml", "Cargo.lock", "prototype/src/schema_catalog.sql"]);
   const directories = manifestFiles.filter((name) => !name.endsWith(".toml") && !name.endsWith(".lock") && !name.endsWith(".sql"));
@@ -189,7 +226,11 @@ async function collectManifestSources() {
       await collectSourceTree(join(path, subdir), files);
     }
     const cargoFile = join(path, "Cargo.toml");
-    if (await stat(cargoFile).then((value) => value.isFile()).catch(() => false)) files.add(relative(repoDir, cargoFile).split(sep).join("/"));
+    const cargoName = relative(repoDir, cargoFile).split(sep).join("/");
+    if (!await stat(cargoFile).then((value) => value.isFile()).catch(() => false)) {
+      throw new PackageFailure("SOURCE_MISSING", `source 입력이 없습니다: ${cargoName}`, "source-manifest");
+    }
+    files.add(cargoName);
   }
   for (const entry of manifestFiles.filter((name) => name.endsWith(".aip") || name.endsWith(".mjs") || name.endsWith(".py") || name.endsWith(".ts"))) {
     files.add(entry);
