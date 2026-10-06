@@ -46,6 +46,7 @@ cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --locked
 - CLI가 FIFO를 열며 멈추는 반례를 재현했다. Unix에서 nonblocking open 후 실제 descriptor의 일반 파일 여부를 검사한다. 정의·설정·migration·DB CA 입력에 회귀 검사를 연결했다. 정상 파일, 크기 상한과 생성 출력 원본 보호도 같은 테스트 모음에서 확인한다.
 - Compiler가 없는 checkout에서 SDK builder가 일반 `BUILD_FAILED`만 반환하던 반례를 재현했다. 이제 설치 명령과 구체 오류를 반환하고 출력 부모 디렉터리도 만들지 않는다. 기존 node_modules가 없는 임시 checkout에서 lockfile 설치와 SDK build를 별도로 실행했다.
 - 기존 root workspace의 포맷 차이를 정리하고 반복 검증 명령과 CI를 추가했다. 실제 결과는 [VERIFICATION](VERIFICATION.md)에 별도 회차로 남긴다.
+- V7 migration의 lockfile이 현재 읽기 엔진의 TLS 의존성과 맞지 않아 `--locked`가 검증 시작 전에 실패했다. 기존 패키지 버전을 유지하고 빠진 의존성을 동기화한 뒤 같은 `--locked` 명령으로 재검증했다.
 
 ## 다음 조사 순서
 
