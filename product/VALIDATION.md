@@ -52,7 +52,7 @@ cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --locked
 
 | 순서 | 영역 | 현재 근거와 다음 검증 |
 |---|---|---|
-| 1 | 깨끗한 Linux checkout | CI 결과 확인. local cache·미추적 파일에 의존하는 입력이 없는지 실패 원인별 확인 |
+| 1 | 깨끗한 Linux checkout | [첫 CI](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/37482679158)는 core Rust 230·Node 53개 통과. workspace 밖 엔진의 Linux 회귀와 worker 격리 지원은 별도 확인 |
 | 2 | HTTPS JWKS rotation·장애·동시성 | 파일 rotation과 HTTPS loader는 기존 테스트가 있으나 remote cache 갱신 전체 흐름은 별도 검증 필요. 새 kid, 같은 kid 교체, unknown-kid 연속 요청, timeout 뒤 복구를 검사 |
 | 3 | 실제 TLS reverse proxy | 현재 loopback와 HTTPS fixture까지만 검증. proxy 뒤 origin·header·body limit·종료 중 요청을 확인 |
 | 4 | migration 장애 복구 | rollback·동시 적용·재시도 테스트는 있음. 실제 backend/process 종료 및 커밋 응답 유실 시 journal/catalog/data 비교를 추가 |

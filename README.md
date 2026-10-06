@@ -18,7 +18,7 @@ AIP는 백엔드 서버를 없애려는 것이 아니다. 기능마다 반복되
 - [제품 검증 결과](product/VERIFICATION.md)와 [최신 macOS 실행 묶음](product/dist/2026-10-06T11-19-25-091Z/README.md): 실제 JWT·PostgreSQL·설치 SDK·두 wire·Node/Python 확장 실행.
 - [정의 한계](spikes/spike-v1-fixture/PRODUCTION-LIMITS.md)와 [정책 실행 한계](spikes/spike-v2-read/PRODUCTION-RUNTIME.md): 입력·AST·predicate 확장·SQL·복제 payload의 상한을 함께 검사한다.
 
-외부 IdP 계정·TLS reverse proxy 배포·다른 OS 검증은 별도 운영 환경이 필요하다. 현재 macOS의 실제 PostgreSQL과 통제된 HTTPS/JWT fixture를 사용한다. 대형 테이블 무중단 변경, 자동 역방향 migration, 최종 Id 표현·쓰기 조합 선택은 범위 밖이다.
+Core 검증은 GitHub Actions의 Ubuntu에서도 실행한다. 외부 IdP 계정·TLS reverse proxy 배포·다른 OS worker 검증은 별도 운영 환경이 필요하다. 로컬 제품 실행 검증은 macOS의 실제 PostgreSQL과 통제된 HTTPS/JWT fixture를 사용한다. 대형 테이블 무중단 변경, 자동 역방향 migration, 최종 Id 표현·쓰기 조합 선택은 범위 밖이다.
 
 ## 기존 PoC 구조
 
