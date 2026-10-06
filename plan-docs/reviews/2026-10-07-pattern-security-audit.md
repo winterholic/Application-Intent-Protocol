@@ -17,6 +17,8 @@
 | 정합성 | `limit … atMost 2`(또는 시간·actor 의존 조건)가 check는 통과하고 `service init`에서 `UNSUPPORTED_SCHEMA`. v3도 이 형태를 집행하지 않음 | sema `UNSUPPORTED_INVARIANT`로 check 단계에서 거부 | `sema_fixes.rs`, `spike-v7-migrate/tests/v7.rs` |
 | 정합성 | `Int(0..10)` 범위가 선언만 되고 집행되지 않아 11·-1 저장 | 처음에는 DDL CHECK로 고쳤으나 기존 배포가 `SCHEMA_MISMATCH`로 막혀(독립 검토에서 재현) 되돌렸다. 상수 대입은 sema `BAD_RANGE`, 증감은 같은 트랜잭션의 `UPDATE … RETURNING` 검사로 `BAD_VALUE` | `audit_fixes.rs`, `spike-v3-write/tests/counters.rs` |
 | 권한 | 오늘 추가한 Ref `eq`/`in`/`isNull` 필터가 대상 행 정책을 거치지 않아 traverse에서 null로 가린 대상 id를 확인 가능, 쓰기 `where`로도 가능(독립 검토에서 재현) | Ref 필터는 대상 행이 보일 때만 값이 있는 것으로 계산(안 보이면 null 취급). 쓰기 `where`의 Ref 조건은 거부 | `spike-v2-read/tests/ref_filter_visibility.rs` |
+| 권한 | 오늘 추가한 sum/min/max가 `sourceAccess totalOfVisible`이면 원본 행 정책 없이 집계해 숨은 행 값이 그대로 나옴(보이는 값 100, 응답 합계 7880, 두 번째 독립 검토에서 재현) | 값 집계는 `FILTER (WHERE 원본 rowRead)`. count는 선언대로 유지 | `spike-v2-read/tests/aggregate_row_policy.rs` |
+| 안정성 | 1:N traverse limit 곱셈이 overflow(debug panic, release는 음수 cost로 COST_EXCEEDED 통과) | limit 1..=1000, cost 계산 saturating | `spike-v1-fixture/tests/traverse_many.rs` |
 | 실행 | 식에 쓰이지 않은 바인드 매개변수(상수 guard `= true`, 인자를 안 쓰는 predicate)가 check 통과 후 `42P18` | 읽기·쓰기 SQL을 모두 text 매개변수 타입으로 prepare | `spike-v2-read/tests/unused_params.rs`, `spike-v3-write/tests/unused_params.rs` |
 | DoS | `/apply` `target.ids`의 O(n²) 중복 검사가 bulk 상한 검사보다 먼저 돎. 인증 없이 12만 id로 debug 32초 CPU, 요청 기한이 끊지 못함 | 상한 검사를 먼저 수행 | `spike-v3-write/tests/v3_1.rs` |
 | DoS | apply `where`의 같은 조건 반복에 상한 없음 | `DUPLICATE_FILTER`로 거부(조건 수 ≤ 허용 목록 크기) | `v3_1.rs` |
@@ -89,7 +91,15 @@ root PoC 문법에는 제품 문법에 없는 기능이 많고, 대표 e2e 10개
 
 인증(alg none·HS256 혼동·kid·typ·시각 경계·폐기 같은 초), actor 위조(헤더 8종·body·claims), SQL 매개변수화·prefix 리터럴 처리, JSON·본문·헤더 상한, CORS 정확 일치, loopback 강제, 로그·응답의 비밀 누설은 문제를 찾지 못했다.
 
+## 7. 남은 관찰 (두 번째 독립 검토, 미수정)
+
+- cursor `after`가 filter 허용 목록 밖 필드에 범위 조건처럼 동작한다. 경계 필드는 이미 select 가능하고 정책이 없어 새 노출은 없다.
+- FK 인덱스가 없어 자식 200만 행에서 1:N traverse가 2~4.5초 걸렸다. cost 추정은 테이블 크기를 모르며 statement_timeout이 최종 방어다. 참조 필드 인덱스 생성은 DDL 지문 변경이라 마이그레이션 설계와 함께 다룬다.
+- `prefix` 200자 상한은 이번에 넣었으나 전용 회귀 테스트는 아직 없다.
+- `/extension` 경로 `lib.rs`의 unwrap 사전 검증 범위는 확인하지 못했다.
+
 ## 변경 이력
 
 - 2026-10-07: 초안. 패턴 72개·보안 6영역 점검, 결함 9건 수정, 읽기 필터 3종 추가.
+- 2026-10-07: 두 번째 독립 검토 반영(값 집계 원본 행 정책, traverse limit 상한), 1:N traverse·cursor 기록, §7 남은 관찰.
 - 2026-10-07: 독립 검토 반영(Int CHECK 되돌림, Ref 필터 대상 정책, 미사용 매개변수). contains·offset·증감·`actor != null`·sum/min/max 추가. 오픈소스·로컬 근거 절 추가.
