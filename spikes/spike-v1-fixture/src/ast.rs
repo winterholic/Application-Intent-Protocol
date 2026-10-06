@@ -227,4 +227,6 @@ pub enum Expr {
     Str(String),
     Call(String, Vec<Expr>, Span),
     Exists(String, Box<Expr>, Span),
+    /// `+`/`-`. 의미 검사는 전이 `to`의 `필드 = 같은 필드 ± 정수`만 받는다.
+    Arith(&'static str, Box<Expr>, Box<Expr>, Span),
 }

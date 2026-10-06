@@ -322,6 +322,27 @@ impl<'a> Ctx<'a> {
         self.ex(e, sc)
     }
 
+    /// `f = f + n`/`f = f - n`. 대상 행 자신의 Int 필드를 정의에 적힌 상수만큼만 바꾼다.
+    /// 호출자 값이나 다른 필드를 섞으면 전이가 서버 정의 밖의 계산이 되므로 받지 않는다.
+    fn counter(&self, f: &str, ft: &TT, op: &str, l: &Expr, r: &Expr, sp: Span) -> Result<Value, Diag> {
+        if ft.ty != Ty::Int || ft.nullable {
+            return Err(Diag::new("TYPE_MISMATCH", format!("증감 대입은 null이 아닌 Int 필드만, `{f}`는 `{}`", ft.show()), sp));
+        }
+        let same = match l {
+            Expr::Path(segs, _) => (segs.len() == 1 && segs[0] == f) || (segs.len() == 2 && segs[0] == "this" && segs[1] == f),
+            _ => false,
+        };
+        let n = match r {
+            Expr::Int(n) => *n,
+            _ => 0,
+        };
+        if !same || n == 0 {
+            return Err(Diag::new("ARITH_NOT_ALLOWED", format!("증감 대입은 `{f} = {f} + 정수` 또는 `{f} = {f} - 정수`(0 제외)만"), sp));
+        }
+        let delta = if op == "-" { n.checked_neg().ok_or_else(|| Diag::new("BAD_RANGE", "증감 값 범위", sp))? } else { n };
+        Ok(json!({ "increment": delta }))
+    }
+
     fn bool_of(&self, e: &Expr, sc: &Scope) -> Result<Value, Diag> {
         let (v, t) = self.ex(e, sc)?;
         if t.ty != Ty::Bool {
@@ -339,6 +360,7 @@ impl<'a> Ctx<'a> {
                 Ok((json!({ op: args }), b))
             }
             Expr::Not(x) => Ok((json!({ "not": self.bool_of(x, sc)? }), b)),
+            Expr::Arith(_, _, _, sp) => Err(Diag::new("ARITH_NOT_ALLOWED", "산술식은 transition `to`의 `필드 = 필드 ± 정수`에서만 쓸 수 있음", *sp)),
             Expr::Cmp(op, l, r) => {
                 let (lv, lt, rv, rt) = match self.ex(l, sc) {
                     Ok((lv, lt)) => {
@@ -358,7 +380,9 @@ impl<'a> Ctx<'a> {
                     if !matches!(*op, "=" | "!=") {
                         return Err(Diag::new("TYPE_MISMATCH", "null은 = 또는 != 로만 비교", sp));
                     }
-                    if !other.nullable {
+                    // 익명 요청에서 actor는 실제로 NULL이다. `actor != null`이 "로그인한 사용자"를 표현하는 유일한 방법이다.
+                    let bare_actor = [l, r].iter().any(|x| matches!(x.as_ref(), Expr::Path(p, _) if p.len() == 1 && p[0] == "actor"));
+                    if !other.nullable && !bare_actor {
                         return Err(Diag::new("NULL_COMPARE_NON_NULLABLE", format!("null이 될 수 없는 `{}`를 null과 비교", other.show()), sp));
                     }
                 } else if !same_target(&lt.ty, &rt.ty) {
@@ -637,6 +661,7 @@ impl<'a> Ctx<'a> {
             let allow = self.bool_of(&t.allow, &sc);
             let allow = self.run(allow);
             let mut to = Map::new();
+            let mut counters = false;
             for (f, val) in &t.to {
                 if to.contains_key(f) {
                     self.d("DUPLICATE", format!("transition `{}`의 `{f}` 대입 중복", t.name), t.span);
@@ -646,6 +671,13 @@ impl<'a> Ctx<'a> {
                     self.d("UNKNOWN_FIELD", format!("transition 대상 필드 `{f}` 없음"), t.span);
                     continue;
                 };
+                if let Expr::Arith(op, l, r, sp) = val {
+                    if let Some(v) = self.run(self.counter(f, &ft, op, l, r, *sp)) {
+                        counters = true;
+                        to.insert(f.clone(), v);
+                    }
+                    continue;
+                }
                 let res = self.expect(val, &sc, Some(&ft)).and_then(|(v, vt)| {
                     if (same_target(&vt.ty, &ft.ty) && (!vt.nullable || ft.nullable)) || (vt.ty == Ty::Null && ft.nullable) {
                         Ok(v)
@@ -656,6 +688,10 @@ impl<'a> Ctx<'a> {
                 if let Some(v) = self.run(res) {
                     to.insert(f.clone(), v);
                 }
+            }
+            if counters && t.repeat.as_ref().is_some_and(|(r, _)| r == "unchanged") {
+                // 증감은 매번 값이 달라져 "이미 목표 상태"가 없다. unchanged는 재시도를 조용히 성공시키는 것으로 오해된다.
+                self.d("UNSUPPORTED", format!("transition `{}`: 증감 대입에는 repeat unchanged를 쓸 수 없음", t.name), t.span);
             }
             let repeat = match &t.repeat {
                 None => "reject".to_string(),
@@ -1484,7 +1520,7 @@ fn validate_policy_expansion(spec: &Spec) -> Vec<Diag> {
 
 fn span_of(e: &Expr) -> Span {
     match e {
-        Expr::Path(_, s) | Expr::Call(_, _, s) | Expr::Exists(_, _, s) => *s,
+        Expr::Path(_, s) | Expr::Call(_, _, s) | Expr::Exists(_, _, s) | Expr::Arith(_, _, _, s) => *s,
         Expr::Or(v) | Expr::And(v) => v.first().map(span_of).unwrap_or_default(),
         Expr::Not(x) => span_of(x),
         Expr::Cmp(_, l, _) | Expr::In(l, _) => span_of(l),

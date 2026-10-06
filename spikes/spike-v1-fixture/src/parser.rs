@@ -440,7 +440,7 @@ impl Parser {
                             "to" => loop {
                                 let f = self.ident()?;
                                 self.expect_sym("=")?;
-                                to.push((f, self.unary()?));
+                                to.push((f, self.additive()?));
                                 if !self.eat_sym(",") {
                                     break;
                                 }
@@ -776,10 +776,10 @@ impl Parser {
         self.cmp()
     }
     fn cmp(&mut self) -> R<Expr> {
-        let l = self.unary()?;
+        let l = self.additive()?;
         for op in ["=", "!=", ">=", "<=", ">", "<"] {
             if self.eat_sym(op) {
-                let r = self.unary()?;
+                let r = self.additive()?;
                 self.note_expression_node()?;
                 return Ok(Expr::Cmp(op, Box::new(l), Box::new(r)));
             }
@@ -799,6 +799,22 @@ impl Parser {
             return Ok(Expr::In(Box::new(l), v));
         }
         Ok(l)
+    }
+    fn additive(&mut self) -> R<Expr> {
+        let mut l = self.unary()?;
+        loop {
+            let sp = self.span();
+            let op = if self.eat_sym("+") {
+                "+"
+            } else if self.eat_sym("-") {
+                "-"
+            } else {
+                return Ok(l);
+            };
+            let r = self.unary()?;
+            self.note_expression_node()?;
+            l = Expr::Arith(op, Box::new(l), Box::new(r), sp);
+        }
     }
     fn unary(&mut self) -> R<Expr> {
         let sp = self.span();
@@ -876,7 +892,7 @@ fn ast_depth(root: &Expr) -> usize {
                 max_depth = max_depth.max(child_depth);
                 pending.push((child, child_depth));
             }
-            Expr::Cmp(_, left, right) => {
+            Expr::Cmp(_, left, right) | Expr::Arith(_, left, right, _) => {
                 let child_depth = depth + 1;
                 max_depth = max_depth.max(child_depth);
                 pending.push((left, child_depth));

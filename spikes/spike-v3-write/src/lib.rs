@@ -213,6 +213,11 @@ async fn judge(
     let mut done = vec![];
     for (f, v) in t["to"].as_object().unwrap() {
         let col = column(facts, res, f).unwrap();
+        if v.get("increment").is_some() {
+            // 증감은 "이미 목표 상태"가 없다. sema가 repeat unchanged와 함께 쓰지 못하게 막는다.
+            done.push("FALSE".into());
+            continue;
+        }
         let val = cx.value(v, &env).map_err(internal)?;
         done.push(format!("(t.{col} IS NOT DISTINCT FROM {val})"));
     }
@@ -292,7 +297,15 @@ async fn update(tx: &Transaction<'_>, facts: &Value, res: &str, tr: &str, change
     let from = cx.cond(&t["from"], &env).map_err(internal)?;
     let mut sets = vec![];
     for (f, v) in t["to"].as_object().unwrap() {
-        sets.push(format!("{} = {}", column(facts, res, f).unwrap(), cx.value(v, &env).map_err(internal)?));
+        let col = column(facts, res, f).unwrap();
+        if let Some(delta) = v.get("increment") {
+            let delta = delta.as_i64().ok_or_else(|| internal("증감 값".to_string()))?;
+            let p = cx.params.bind(Some(delta.to_string()), "bigint");
+            // 잠근 행의 현재 값에서 계산하므로 동시 증감이 서로를 덮어쓰지 않는다.
+            sets.push(format!("{col} = t.{col} + {p}"));
+            continue;
+        }
+        sets.push(format!("{col} = {}", cx.value(v, &env).map_err(internal)?));
     }
     let ip = cx.params.bind(Some(id_array(change)), "bigint[]");
     // UPDATE에도 from 조건을 다시 건다. 잠금이 없거나 우회돼도 이미 바뀐 행을 두 번 바꾸지 않는다.
@@ -312,6 +325,7 @@ fn write_err(stage: &str, e: tokio_postgres::Error) -> Reject {
         // 정의의 값 제약(길이·범위·필수)은 호출자 값 오류다. 내부 오류로 보고하지 않는다.
         Some("23514") => Reject { code: "BAD_VALUE", msg: format!("{stage}: 값 제약 위반") },
         Some("23502") => Reject { code: "BAD_VALUE", msg: format!("{stage}: 필수 값 누락") },
+        Some("22003") => Reject { code: "BAD_VALUE", msg: format!("{stage}: 숫자 범위 초과") },
         _ => db_err(stage, e),
     }
 }
