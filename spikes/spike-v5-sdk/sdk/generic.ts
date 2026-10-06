@@ -9,6 +9,8 @@ export type ResourceShape = {
   readonly maxRows: number;
   /** 정의 budget이 offset을 opt-in했을 때만 있다. */
   readonly maxOffset?: number;
+  /** 정의 budget이 cursor를 opt-in했을 때만 있다. */
+  readonly cursor?: true;
 };
 export type ContractShape<C> = { [R in keyof C]: ResourceShape };
 export type ContractBinding<C extends ContractShape<C>> = {
@@ -68,13 +70,18 @@ export type SortItem<C extends ContractShape<C>, R extends keyof C> = { readonly
 /** offset은 budget이 opt-in한 resource에만 연다. 값 범위(0..=maxOffset)는 타입이 아니라 서버가 검사한다. */
 export type OffsetOpt<C extends ContractShape<C>, R extends keyof C> = C[R] extends { readonly maxOffset: number } ? { readonly offset?: number } : {};
 
+/** after는 budget이 cursor를 opt-in한 resource에만 연다. 키는 sort 허용 필드와 id, 값은 필드 타입. 요청 sort와의 일치는 서버가 검사한다. */
+export type CursorOpt<C extends ContractShape<C>, R extends keyof C> = C[R] extends { readonly cursor: true }
+  ? { readonly after?: { readonly [K in ((C[R]["sort"] & string) | "id") & keyof C[R]["fields"]]: C[R]["fields"][K] } }
+  : {};
+
 export type Query<C extends ContractShape<C>, R extends Root<C>> = {
   readonly read: R;
   readonly select: readonly SelectItem<C, R>[];
   readonly filter?: readonly FilterItem<C, R>[];
   readonly sort?: readonly SortItem<C, R>[];
   readonly limit?: number;
-} & OffsetOpt<C, R>;
+} & OffsetOpt<C, R> & CursorOpt<C, R>;
 
 type U2I<U> = (U extends unknown ? (x: U) => void : never) extends (x: infer I) => void ? I : never;
 type Simplify<T> = { [K in keyof T]: T[K] } & {};

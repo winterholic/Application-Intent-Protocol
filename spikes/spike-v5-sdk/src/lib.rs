@@ -184,6 +184,10 @@ fn generate_contract(facts: &Value, wire: IdWire) -> String {
         if let Some(max) = ex["budget"]["maxOffset"].as_i64() {
             writeln!(s, "    maxOffset: {max};").unwrap();
         }
+        // cursor도 opt-in이다. 선언한 resource에만 나타나 Query 타입이 after 키를 연다.
+        if ex["budget"]["cursor"] == true {
+            writeln!(s, "    cursor: true;").unwrap();
+        }
         writeln!(s, "  }};").unwrap();
     }
     s.push_str("}\n");
