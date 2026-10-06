@@ -23,7 +23,7 @@ fn runtime_predicate_expansion_has_a_cumulative_work_limit() {
     let call = json!({"call":"p14","args":[]});
     let policy = json!({"and":[call.clone(),call]});
     let mut context = Ctx::new(&facts, None, "");
-    let error = context.cond(&policy, &Env::default()).err().expect("small source with repeated calls must not generate unbounded SQL");
+    let error = context.cond(&policy, &Env::default()).expect_err("small source with repeated calls must not generate unbounded SQL");
     assert!(error.contains("작업량"), "{error}");
 }
 
@@ -32,7 +32,7 @@ fn deeply_chained_reference_paths_are_rejected_before_building_nested_sql() {
     let facts = json!({"actor":"Member","resources":{"Member":{"fields":{"parent":{"ty":"Ref<Member>?"}}}}});
     let path = json!({"path":{"root":"actor","segs":vec!["parent";10_000]}});
     let mut context = Ctx::new(&facts, Some(1), "");
-    let error = context.path(&path, &Env::default()).err().expect("reference path must be bounded before SQL construction");
+    let error = context.path(&path, &Env::default()).expect_err("reference path must be bounded before SQL construction");
     assert!(error.contains("경로"), "{error}");
 }
 
@@ -59,6 +59,6 @@ fn predicate_diamond_cannot_amplify_source_literal_payloads() {
     let facts = load_str(&source, Form::A).expect("the V1-bounded policy definition is valid").execution;
     let policy = json!({"call":"p6","args":[]});
     let mut context = Ctx::new(&facts, None, "");
-    let error = context.cond(&policy, &Env::default()).err().expect("expanded payload copies must be bounded");
+    let error = context.cond(&policy, &Env::default()).expect_err("expanded payload copies must be bounded");
     assert!(error.contains("데이터"), "expected payload-data budget error, got {error}");
 }
