@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -13,6 +14,12 @@ async function build(args) {
   }
 
   const out = resolve(args[1]);
+  const compiler = resolve(root, "spikes/spike-0-ts/node_modules/.bin/tsc");
+  try {
+    await access(compiler, constants.X_OK);
+  } catch {
+    throw { code: "SDK_TOOLCHAIN_MISSING", msg: "저장소 루트에서 npm ci --prefix spikes/spike-0-ts 실행 후 SDK를 빌드하십시오" };
+  }
   await mkdir(dirname(out), { recursive: true });
   try {
     await mkdir(out);
@@ -21,7 +28,7 @@ async function build(args) {
   }
 
   try {
-    await execute(resolve(root, "spikes/spike-0-ts/node_modules/.bin/tsc"), [
+    await execute(compiler, [
       "--strict", "--declaration", "--rootDir", root, "--outDir", out,
       "--module", "esnext", "--moduleResolution", "bundler", "--rewriteRelativeImportExtensions",
       "--target", "es2022", "--noEmitOnError", resolve(root, "product/sdk/index.ts"),

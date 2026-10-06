@@ -153,7 +153,15 @@ fn error(code: &str, message: &str) -> Value {
     json!({"ok":false,"code":code,"message":message})
 }
 fn read_bounded(path: &Path, limit: usize, code: &str) -> Result<String, Value> {
-    let file = fs::File::open(path).map_err(|_| error(code, "파일을 열 수 없음"))?;
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        // A FIFO must not block before the opened descriptor can be checked.
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    let file = options.open(path).map_err(|_| error(code, "파일을 열 수 없음"))?;
     if !file.metadata().is_ok_and(|m| m.is_file()) {
         return Err(error(code, "일반 파일이 필요함"));
     }

@@ -208,3 +208,19 @@ test("invalid arguments and existing directories, files, or symlinks preserve ca
   }
   assert.deepEqual(readdirSync(directory), ["marker.txt"]);
 });
+
+test("a checkout without the SDK compiler reports the bootstrap command and creates no output", () => {
+  const checkout = join(suiteRoot, "fresh-checkout");
+  const isolatedBuilder = join(checkout, "product", "tools", "build-sdk.mjs");
+  mkdirSync(dirname(isolatedBuilder), { recursive: true });
+  writeFileSync(isolatedBuilder, readFileSync(buildScript));
+  const outputDir = join(checkout, "output-parent", "sdk");
+
+  const output = run(process.execPath, [isolatedBuilder, "--out", outputDir], { cwd: checkout });
+
+  assert.notEqual(output.status, 0);
+  const diagnostic = JSON.parse(output.stderr);
+  assert.equal(diagnostic.code, "SDK_TOOLCHAIN_MISSING");
+  assert.match(diagnostic.msg, /npm ci --prefix spikes\/spike-0-ts/u);
+  assert.equal(existsSync(dirname(outputDir)), false);
+});

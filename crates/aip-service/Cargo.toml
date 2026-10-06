@@ -18,5 +18,8 @@ spike-v5-sdk = { path = "../../spikes/spike-v5-sdk" }
 spike-v6-transport = { path = "../../spikes/spike-v6-transport" }
 spike-v11-dev-checks = { path = "../../spikes/spike-v11-dev-checks" }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 uuid = { version = "1", features = ["v4"] }

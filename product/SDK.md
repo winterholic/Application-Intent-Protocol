@@ -20,11 +20,14 @@
 저장소 루트 `aip/`에서 다음과 같이 실행한다.
 
 ```sh
+npm ci --prefix spikes/spike-0-ts --ignore-scripts --no-audit --no-fund
 node product/tools/build-sdk.mjs --out /tmp/aip-sdk-0.1.0
 node --test product/tests/sdk-package.test.mjs
 node --test product/tests/service-smoke.test.mjs
 node product/tools/package.mjs
 ```
+
+첫 명령은 lockfile에 기록된 로컬 compiler와 타입 의존성을 설치한다. SDK 소비자에게 이 빌드 의존성이 필요하지는 않다. Compiler가 없거나 실행할 수 없으면 builder는 출력 디렉터리를 만들기 전에 `SDK_TOOLCHAIN_MISSING`과 설치 명령을 반환한다. 초기 의존성 설치에는 registry 또는 준비된 npm cache가 필요하며, 설치된 도구를 사용하는 pack/install 검사는 offline으로 실행한다.
 
 테스트는 임시 디렉터리에서 offline pack/install과 독립 소비자를 구성하고 종료 시 임시 파일을 제거한다. 빌드 결과물은 호출자가 소유하는 fresh output 디렉터리에만 기록된다.
 

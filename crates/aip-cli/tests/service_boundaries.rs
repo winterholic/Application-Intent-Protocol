@@ -57,3 +57,38 @@ fn product_generator_preserves_definition_when_output_aliases_source() {
     assert_eq!(fail(&["gen", file.to_str().unwrap(), "--out", alias.to_str().unwrap()])["code"], "OUTPUT_CONFLICT");
     assert_eq!(std::fs::read_to_string(&file).unwrap(), APP);
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn product_file_inputs_reject_unconnected_fifos_without_waiting_for_a_writer() {
+    use std::time::Duration;
+
+    let dir = tempfile::tempdir().unwrap();
+    let fifo = dir.path().join("input.aip");
+    assert!(Command::new("mkfifo").arg(&fifo).status().unwrap().success());
+    let settings = dir.path().join("service.json");
+    let ca_settings = dir.path().join("service-ca.json");
+    let file = dir.path().join("app.aip");
+    config(&settings, json!({}));
+    config(&ca_settings, json!({"database_ca_file":fifo}));
+    std::fs::write(&file, APP).unwrap();
+
+    let cases = [
+        (vec!["check", fifo.to_str().unwrap()], "SOURCE_IO"),
+        (vec!["init", file.to_str().unwrap(), "--config", fifo.to_str().unwrap()], "CONFIG_IO"),
+        (vec!["migrate", file.to_str().unwrap(), "--config", settings.to_str().unwrap(), "--migration", fifo.to_str().unwrap()], "MIGRATION_IO"),
+        (vec!["init", file.to_str().unwrap(), "--config", ca_settings.to_str().unwrap()], "DB_CA_IO"),
+    ];
+    for (args, code) in cases {
+        let output = tokio::time::timeout(
+            Duration::from_secs(3),
+            tokio::process::Command::new(env!("CARGO_BIN_EXE_aip")).arg("service").args(&args).kill_on_drop(true).output(),
+        )
+        .await
+        .unwrap_or_else(|_| panic!("{args:?} waited for a FIFO writer"))
+        .unwrap();
+        assert!(!output.status.success());
+        let diagnostic: Value = serde_json::from_slice(&output.stderr).unwrap();
+        assert_eq!(diagnostic["code"], code);
+    }
+}

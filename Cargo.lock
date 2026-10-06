@@ -197,6 +197,7 @@ dependencies = [
  "aip-auth",
  "aip-migrate",
  "clap",
+ "libc",
  "serde",
  "serde_json",
  "spike-v1-fixture",
