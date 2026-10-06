@@ -161,7 +161,21 @@ fn generate_contract(facts: &Value, wire: IdWire) -> String {
         };
         // filter 입력 값 타입은 select 공개 여부와 별개로 facts 필드 타입에서 만든다(F03).
         // 요청의 Id는 숫자와 숫자 문자열을 모두 받는다(F04, 응답 Id는 숫자).
-        s.push_str("    };\n    filterFields: {\n");
+        s.push_str("    };\n");
+        // 1:N traverse는 opt-in이라 선언한 resource에만 나타난다. 정렬·재적용 표식은 공개 계약에 넣지 않는다.
+        if let Some(many) = ex["traverseMany"].as_object().filter(|m| !m.is_empty()) {
+            s.push_str("    traverseMany: { ");
+            let items: Vec<String> = many
+                .iter()
+                .map(|(rel, tm)| {
+                    let sel: Vec<String> = tm["select"].as_array().unwrap().iter().map(|x| format!("\"{}\"", x.as_str().unwrap())).collect();
+                    format!("{rel}: {{ target: \"{}\"; select: {}; maxLimit: {} }}", tm["target"].as_str().unwrap(), sel.join(" | "), tm["limit"])
+                })
+                .collect();
+            s.push_str(&items.join("; "));
+            s.push_str(" };\n");
+        }
+        s.push_str("    filterFields: {\n");
         let mut ff: Vec<String> =
             ex["filter"].as_array().into_iter().flatten().filter_map(|k| k.as_str()?.split('.').next().map(str::to_string)).collect();
         ff.dedup();
@@ -290,7 +304,15 @@ fn read_descriptors(facts: &Value) -> Value {
             .flatten()
             .map(|(name, relation)| (name.clone(), serde_json::json!({"target":relation["target"],"select":relation["select"]})))
             .collect();
-        resources.insert(resource.clone(), serde_json::json!({"root":ex["rootQueryable"].as_bool().unwrap_or(false),"fields":fields,"traverse":traverse,"maxRows":ex["budget"]["rows"].as_i64().unwrap_or(0)}));
+        let mut descriptor = serde_json::json!({"root":ex["rootQueryable"].as_bool().unwrap_or(false),"fields":fields,"traverse":traverse,"maxRows":ex["budget"]["rows"].as_i64().unwrap_or(0)});
+        if let Some(many) = ex["traverseMany"].as_object().filter(|m| !m.is_empty()) {
+            let many: serde_json::Map<String, Value> = many
+                .iter()
+                .map(|(name, tm)| (name.clone(), serde_json::json!({"target":tm["target"],"select":tm["select"],"maxLimit":tm["limit"]})))
+                .collect();
+            descriptor["traverseMany"] = Value::Object(many);
+        }
+        resources.insert(resource.clone(), descriptor);
     }
     Value::Object(resources)
 }
