@@ -1,0 +1,4 @@
+entity Thing {
+  a: Text
+  b: Text was a
+}

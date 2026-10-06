@@ -1,0 +1,15 @@
+[package]
+name = "spike-v7-migrate"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# V7 마이그레이션 실험(RK-10). 두 facts 버전의 차이를 분류하고, 정책 확대·기존 데이터 위반을 적용 전에 실제 DB로 확인한다.
+[workspace]
+
+[dependencies]
+spike-v1-fixture = { path = "../spike-v1-fixture" }
+spike-v2-read = { path = "../spike-v2-read" }
+serde_json = "1.0.151"
+tokio = { version = "1.53.1", features = ["rt", "macros"] }
+tokio-postgres = "0.7.18"

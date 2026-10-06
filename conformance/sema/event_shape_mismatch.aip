@@ -1,0 +1,8 @@
+command A(club: Club) {
+  allow authenticated
+  emit Touched { club }
+}
+command B(club: Club) {
+  allow authenticated
+  emit Touched { clubId: club.id }
+}

@@ -1,0 +1,5 @@
+// a field takes one value generator; the IR would keep only one of them
+entity Ticket {
+  club: Club
+  code: Text sequence per club format "T-{n}" position within club
+}

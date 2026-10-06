@@ -1,0 +1,9 @@
+// ciphertext order is random
+entity Vault { note: Text encrypted }
+query ListVault() {
+  allow authenticated
+  from Vault v
+  sort by v.note asc
+  page 20 by offset max page 5
+  select { id }
+}

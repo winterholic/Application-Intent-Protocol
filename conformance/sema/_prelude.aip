@@ -1,0 +1,22 @@
+use auth
+use s3
+use notify
+actor Member via auth.oidc(kakao)
+enum MemberRole { USER SUPER_ADMIN }
+enum ClubRole ordered { GENERAL < MANAGER < ADMIN }
+enum Status { ACTIVE ENDED }
+entity Member personal {
+  nickname: Text
+  role: MemberRole = USER
+}
+entity Club { name: Text }
+entity ClubMember {
+  club: Club
+  member: Member?  on erase anonymize
+  role: ClubRole = GENERAL
+  status: Status = ACTIVE
+  unique (club, member) else ALREADY_MEMBER
+}
+relation membership(m: Member, c: Club): ClubMember = the ClubMember cm where cm.club = c and cm.member = m
+relation managerOf(m: Member, c: Club) = membership(m, c).role >= MANAGER
+relation outranks(m: Member, t: ClubMember) = membership(m, t.club).role > t.role

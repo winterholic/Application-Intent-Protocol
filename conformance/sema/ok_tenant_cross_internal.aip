@@ -1,0 +1,11 @@
+// an internal intent may work across tenants when it says so
+entity Workspace { name: Text }
+entity Project {
+  workspace: Workspace
+  title: Text
+  tenant via workspace
+}
+internal cross tenant command RenameAll(title: Text) {
+  allow public
+  do { update Project p where p.title != "" set title = title }
+}

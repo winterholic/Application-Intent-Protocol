@@ -1,0 +1,3220 @@
+{
+  "diagnostics": [],
+  "program": {
+    "actor": {
+      "entity": "Member",
+      "provider": "auth.oidc",
+      "superuser": {
+        "params": [
+          "__actor",
+          "__imp"
+        ],
+        "text": "SELECT (coalesce((((SELECT t1.\"role\" FROM \"member\" t1 WHERE t1.\"id\" = ($1::text)::uuid) = 'ROOT')), false) AND ($2::text) IS NULL)"
+      },
+      "table": "member"
+    },
+    "constraint_errors": {
+      "_aip_approval_pending": {
+        "code": "AIP.CONFLICT.UNIQUE",
+        "reason": "APPROVAL_ALREADY_PENDING"
+      },
+      "_aip_approval_vote_once": {
+        "code": "AIP.CONFLICT.UNIQUE",
+        "reason": "ALREADY_VOTED"
+      },
+      "_aip_tenant_pin": {
+        "code": "AIP.TENANT.MISMATCH",
+        "reason": null
+      },
+      "article__tenant": {
+        "code": "AIP.TENANT.MISMATCH",
+        "reason": null
+      },
+      "editor__u3": {
+        "code": "AIP.CONFLICT.UNIQUE",
+        "reason": "ALREADY_EDITOR"
+      },
+      "member__u4": {
+        "code": "AIP.CONFLICT.UNIQUE",
+        "reason": "EMAIL_TAKEN"
+      }
+    },
+    "ddl": [
+      "CREATE EXTENSION IF NOT EXISTS btree_gist",
+      "CREATE EXTENSION IF NOT EXISTS pgcrypto",
+      "CREATE TABLE \"member\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"email\" text NOT NULL,\n  \"name\" text NOT NULL,\n  \"role\" text NOT NULL DEFAULT 'USER',\n  CONSTRAINT \"member__role_enum\" CHECK (\"role\" IN ('USER', 'SUPPORT', 'ROOT'))\n)",
+      "CREATE TABLE \"site\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"name\" text NOT NULL\n)",
+      "CREATE TABLE \"article\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"updated_at\" timestamptz NOT NULL DEFAULT now(),\n  \"deleted_at\" timestamptz,\n  \"site_id\" uuid NOT NULL,\n  \"author_id\" uuid,\n  \"title\" text NOT NULL,\n  \"body\" text NOT NULL,\n  \"reviewed\" boolean NOT NULL DEFAULT FALSE\n)",
+      "CREATE TABLE \"article_published\" (LIKE \"article\", \"published_at\" timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (\"id\"))",
+      "CREATE TABLE \"editor\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"site_id\" uuid NOT NULL,\n  \"member_id\" uuid NOT NULL\n)",
+      "CREATE UNIQUE INDEX \"member__u4\" ON \"member\" (\"email\")",
+      "ALTER TABLE \"article\" ADD CONSTRAINT \"article__site_id_fk\" FOREIGN KEY (\"site_id\") REFERENCES \"site\"(\"id\") DEFERRABLE INITIALLY IMMEDIATE",
+      "CREATE INDEX IF NOT EXISTS \"article__site_id_idx\" ON \"article\" (\"site_id\")",
+      "ALTER TABLE \"article\" ADD CONSTRAINT \"article__author_id_fk\" FOREIGN KEY (\"author_id\") REFERENCES \"member\"(\"id\") DEFERRABLE INITIALLY IMMEDIATE",
+      "CREATE INDEX IF NOT EXISTS \"article__author_id_idx\" ON \"article\" (\"author_id\")",
+      "CREATE INDEX IF NOT EXISTS \"article_published__author_id_idx\" ON \"article_published\" (\"author_id\")",
+      "CREATE INDEX IF NOT EXISTS \"article_published__site_id_idx\" ON \"article_published\" (\"site_id\")",
+      "CREATE OR REPLACE FUNCTION \"article__unpublish_fn\"() RETURNS trigger LANGUAGE plpgsql AS $aip$ BEGIN IF TG_OP = 'UPDATE' THEN IF NEW.\"deleted_at\" IS NOT NULL THEN DELETE FROM \"article_published\" WHERE \"id\" = OLD.\"id\"; END IF; ELSE DELETE FROM \"article_published\" WHERE \"id\" = OLD.\"id\"; END IF; RETURN NULL; END $aip$;\nCREATE TRIGGER \"article__unpublish\" AFTER DELETE OR UPDATE OF \"deleted_at\" ON \"article\" FOR EACH ROW EXECUTE FUNCTION \"article__unpublish_fn\"()",
+      "CREATE OR REPLACE FUNCTION \"article__touch_fn\"() RETURNS trigger LANGUAGE plpgsql AS $aip$ BEGIN NEW.\"updated_at\" := now(); RETURN NEW; END $aip$;\nCREATE TRIGGER \"article__touch\" BEFORE UPDATE ON \"article\" FOR EACH ROW EXECUTE FUNCTION \"article__touch_fn\"()",
+      "ALTER TABLE \"editor\" ADD CONSTRAINT \"editor__site_id_fk\" FOREIGN KEY (\"site_id\") REFERENCES \"site\"(\"id\") DEFERRABLE INITIALLY IMMEDIATE",
+      "CREATE INDEX IF NOT EXISTS \"editor__site_id_idx\" ON \"editor\" (\"site_id\")",
+      "ALTER TABLE \"editor\" ADD CONSTRAINT \"editor__member_id_fk\" FOREIGN KEY (\"member_id\") REFERENCES \"member\"(\"id\") DEFERRABLE INITIALLY IMMEDIATE",
+      "CREATE INDEX IF NOT EXISTS \"editor__member_id_idx\" ON \"editor\" (\"member_id\")",
+      "CREATE UNIQUE INDEX \"editor__u3\" ON \"editor\" (\"site_id\", \"member_id\")",
+      "CREATE OR REPLACE FUNCTION \"article__tenant_check\"(rid uuid, deep boolean, depth int) RETURNS void LANGUAGE plpgsql AS $aip$ DECLARE rec \"article\"%ROWTYPE; t uuid; r record; BEGIN IF depth > 16 THEN RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'aip:article__tenant'; END IF; SELECT * INTO rec FROM \"article\" WHERE \"id\" = rid; IF NOT FOUND THEN RETURN; END IF; t := rec.\"site_id\"; END $aip$",
+      "CREATE OR REPLACE FUNCTION \"article__tenant_fn\"() RETURNS trigger LANGUAGE plpgsql AS $aip$ BEGIN PERFORM \"article__tenant_check\"(NEW.\"id\", TG_OP = 'UPDATE', 0); RETURN NULL; END $aip$;\nCREATE TRIGGER \"article__tenant\" AFTER INSERT OR UPDATE OF \"site_id\" ON \"article\" FOR EACH ROW EXECUTE FUNCTION \"article__tenant_fn\"()",
+      "CREATE OR REPLACE FUNCTION \"_aip_tenant_pin\"(t uuid) RETURNS void LANGUAGE plpgsql AS $aip$ DECLARE cur text := nullif(current_setting('aip.tenant', true), ''); BEGIN IF t IS NULL THEN RETURN; END IF; IF cur IS NULL THEN PERFORM set_config('aip.tenant', t::text, true); ELSIF cur <> t::text THEN RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'aip:_aip_tenant_pin'; END IF; END $aip$",
+      "CREATE OR REPLACE FUNCTION \"article__tenant_pin_fn\"() RETURNS trigger LANGUAGE plpgsql AS $aip$ BEGIN IF coalesce(current_setting('aip.tenant_cross', true), '') = 'on' THEN RETURN NULL; END IF; IF TG_OP = 'DELETE' THEN PERFORM \"_aip_tenant_pin\"((OLD.\"site_id\")); RETURN NULL; END IF; PERFORM \"_aip_tenant_pin\"((NEW.\"site_id\")); IF TG_OP = 'UPDATE' AND OLD.\"site_id\" IS DISTINCT FROM NEW.\"site_id\" THEN PERFORM \"_aip_tenant_pin\"((OLD.\"site_id\")); END IF; RETURN NULL; END $aip$;\nCREATE TRIGGER \"article__tenant_pin\" AFTER INSERT OR UPDATE OR DELETE ON \"article\" FOR EACH ROW EXECUTE FUNCTION \"article__tenant_pin_fn\"()",
+      "CREATE OR REPLACE FUNCTION \"site__tenant_pin_fn\"() RETURNS trigger LANGUAGE plpgsql AS $aip$ BEGIN IF coalesce(current_setting('aip.tenant_cross', true), '') = 'on' THEN RETURN NULL; END IF; IF TG_OP = 'DELETE' THEN PERFORM \"_aip_tenant_pin\"((OLD.\"id\")); RETURN NULL; END IF; PERFORM \"_aip_tenant_pin\"((NEW.\"id\")); RETURN NULL; END $aip$;\nCREATE TRIGGER \"site__tenant_pin\" AFTER INSERT OR UPDATE OR DELETE ON \"site\" FOR EACH ROW EXECUTE FUNCTION \"site__tenant_pin_fn\"()",
+      "CREATE TABLE IF NOT EXISTS \"_aip_outbox\" (\n  \"id\" bigserial PRIMARY KEY,\n  \"kind\" text NOT NULL,\n  \"name\" text NOT NULL,\n  \"intent\" text,\n  \"key\" text,\n  \"payload\" jsonb NOT NULL,\n  \"available_at\" timestamptz NOT NULL DEFAULT now(),\n  \"attempts\" int NOT NULL DEFAULT 0,\n  \"last_error\" text,\n  \"done_at\" timestamptz,\n  \"created_at\" timestamptz NOT NULL DEFAULT now()\n)",
+      "CREATE INDEX IF NOT EXISTS \"_aip_outbox_pending\" ON \"_aip_outbox\" (\"available_at\") WHERE \"done_at\" IS NULL",
+      "CREATE TABLE IF NOT EXISTS \"_aip_idempotency\" (\n  \"intent\" text NOT NULL,\n  \"actor\" text NOT NULL,\n  \"key\" text NOT NULL,\n  \"request_hash\" text NOT NULL,\n  \"response\" jsonb,\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  PRIMARY KEY (\"intent\", \"actor\", \"key\")\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_audit\" (\n  \"id\" bigserial PRIMARY KEY,\n  \"intent\" text NOT NULL,\n  \"actor\" uuid,\n  \"superuser\" boolean NOT NULL DEFAULT false,\n  \"input\" jsonb NOT NULL,\n  \"at\" timestamptz NOT NULL DEFAULT now()\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_counter_seen\" (\n  \"key\" text PRIMARY KEY,\n  \"expires_at\" timestamptz NOT NULL\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_rate\" (\n  \"key\" text NOT NULL,\n  \"window_start\" timestamptz NOT NULL,\n  \"count\" int NOT NULL,\n  PRIMARY KEY (\"key\", \"window_start\")\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_schedule_run\" (\n  \"name\" text PRIMARY KEY,\n  \"last_run\" timestamptz NOT NULL\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_processed\" (\n  \"handler\" text NOT NULL,\n  \"outbox_id\" bigint NOT NULL,\n  PRIMARY KEY (\"handler\", \"outbox_id\")\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_notification\" (\n  \"id\" bigserial PRIMARY KEY,\n  \"recipient\" uuid NOT NULL,\n  \"template\" text NOT NULL,\n  \"data\" jsonb NOT NULL,\n  \"category\" text,\n  \"read_at\" timestamptz,\n  \"created_at\" timestamptz NOT NULL DEFAULT now()\n)",
+      "CREATE INDEX IF NOT EXISTS \"_aip_notification_recipient\" ON \"_aip_notification\" (\"recipient\", \"created_at\" DESC)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_mail\" (\n  \"id\" bigserial PRIMARY KEY,\n  \"template\" text NOT NULL,\n  \"to\" text,\n  \"data\" jsonb NOT NULL,\n  \"created_at\" timestamptz NOT NULL DEFAULT now()\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_grant\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"link\" text NOT NULL,\n  \"token_hash\" text NOT NULL UNIQUE,\n  \"scope\" jsonb NOT NULL,\n  \"to_member\" uuid,\n  \"issued_by\" uuid,\n  \"expires_at\" timestamptz NOT NULL,\n  \"uses_left\" int NOT NULL,\n  \"created_at\" timestamptz NOT NULL DEFAULT now()\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_verification\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"name\" text NOT NULL,\n  \"subject\" uuid NOT NULL,\n  \"target\" text NOT NULL,\n  \"code_hash\" text NOT NULL,\n  \"expires_at\" timestamptz NOT NULL,\n  \"attempts_left\" int NOT NULL,\n  \"created_at\" timestamptz NOT NULL DEFAULT now()\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_approval\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"name\" text NOT NULL,\n  \"subject\" uuid NOT NULL,\n  \"requested_by\" uuid,\n  \"status\" text NOT NULL DEFAULT 'PENDING' CHECK (\"status\" IN ('PENDING', 'APPROVED', 'REJECTED', 'CANCELLED', 'EXPIRED')),\n  \"required\" int NOT NULL,\n  \"expires_at\" timestamptz,\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"decided_at\" timestamptz\n)",
+      "CREATE UNIQUE INDEX IF NOT EXISTS \"_aip_approval_pending\" ON \"_aip_approval\" (\"name\", \"subject\") WHERE \"status\" = 'PENDING'",
+      "CREATE TABLE IF NOT EXISTS \"_aip_approval_vote\" (\n  \"approval\" uuid NOT NULL REFERENCES \"_aip_approval\" (\"id\") ON DELETE CASCADE,\n  \"voter\" uuid NOT NULL,\n  \"decision\" text NOT NULL CHECK (\"decision\" IN ('APPROVE', 'REJECT')),\n  \"comment\" text,\n  \"at\" timestamptz NOT NULL DEFAULT now(),\n  CONSTRAINT \"_aip_approval_vote_once\" PRIMARY KEY (\"approval\", \"voter\")\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_job\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"name\" text NOT NULL,\n  \"params\" jsonb NOT NULL,\n  \"requested_by\" uuid NOT NULL,\n  \"status\" text NOT NULL DEFAULT 'QUEUED' CHECK (\"status\" IN ('QUEUED', 'RUNNING', 'DONE', 'FAILED')),\n  \"items\" jsonb,\n  \"total\" int,\n  \"done\" int NOT NULL DEFAULT 0,\n  \"file\" text,\n  \"error\" text,\n  \"attempts\" int NOT NULL DEFAULT 0,\n  \"available_at\" timestamptz NOT NULL DEFAULT now(),\n  \"heartbeat\" timestamptz,\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"started_at\" timestamptz,\n  \"finished_at\" timestamptz\n)",
+      "CREATE UNIQUE INDEX IF NOT EXISTS \"_aip_job_active\" ON \"_aip_job\" (\"name\", \"requested_by\", \"params\") WHERE \"status\" IN ('QUEUED', 'RUNNING')",
+      "CREATE INDEX IF NOT EXISTS \"_aip_job_queue\" ON \"_aip_job\" (\"available_at\") WHERE \"status\" IN ('QUEUED', 'RUNNING')",
+      "CREATE TABLE IF NOT EXISTS \"_aip_webhook_seen\" (\n  \"webhook\" text NOT NULL,\n  \"event_id\" text NOT NULL,\n  \"received_at\" timestamptz NOT NULL DEFAULT now(),\n  PRIMARY KEY (\"webhook\", \"event_id\")\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_rule_pending\" (\n  \"rule\" text NOT NULL,\n  \"id\" uuid NOT NULL,\n  PRIMARY KEY (\"rule\", \"id\")\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_rule_state\" (\n  \"rule\" text NOT NULL,\n  \"id\" uuid NOT NULL,\n  PRIMARY KEY (\"rule\", \"id\")\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_sequence\" (\n  \"scope\" text PRIMARY KEY,\n  \"n\" bigint NOT NULL\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_object\" (\n  \"key\" text PRIMARY KEY,\n  \"bucket\" text NOT NULL,\n  \"content_type\" text,\n  \"size\" bigint NOT NULL,\n  \"state\" text NOT NULL DEFAULT 'staged',\n  \"created_at\" timestamptz NOT NULL DEFAULT now()\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_consent\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"name\" text NOT NULL,\n  \"actor\" uuid NOT NULL,\n  \"version\" int NOT NULL,\n  \"given_at\" timestamptz NOT NULL DEFAULT now(),\n  \"withdrawn_at\" timestamptz\n)",
+      "CREATE UNIQUE INDEX IF NOT EXISTS \"_aip_consent_active\" ON \"_aip_consent\" (\"name\", \"actor\", \"version\") WHERE \"withdrawn_at\" IS NULL",
+      "CREATE INDEX IF NOT EXISTS \"_aip_consent_actor\" ON \"_aip_consent\" (\"actor\", \"name\", \"given_at\" DESC)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_impersonation\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"operator\" uuid NOT NULL,\n  \"target\" uuid NOT NULL,\n  \"reason\" text NOT NULL,\n  \"started_at\" timestamptz NOT NULL DEFAULT now(),\n  \"expires_at\" timestamptz NOT NULL,\n  \"ended_at\" timestamptz\n)",
+      "CREATE INDEX IF NOT EXISTS \"_aip_impersonation_operator\" ON \"_aip_impersonation\" (\"operator\") WHERE \"ended_at\" IS NULL",
+      "ALTER TABLE \"_aip_audit\" ADD COLUMN IF NOT EXISTS \"impersonated_by\" uuid",
+      "ALTER TABLE \"_aip_audit\" ADD COLUMN IF NOT EXISTS \"impersonation\" uuid"
+    ],
+    "entities": {
+      "Article": {
+        "columns": [
+          {
+            "column": "id",
+            "field": "id",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "uuid"
+            }
+          },
+          {
+            "column": "created_at",
+            "field": "createdAt",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "time"
+            }
+          },
+          {
+            "column": "updated_at",
+            "field": "updatedAt",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "time"
+            }
+          },
+          {
+            "column": "deleted_at",
+            "field": "deletedAt",
+            "nullable": true,
+            "personal": false,
+            "ty": {
+              "kind": "time"
+            }
+          },
+          {
+            "column": "site_id",
+            "field": "site",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "entity": "Site",
+              "kind": "entity"
+            }
+          },
+          {
+            "column": "author_id",
+            "field": "author",
+            "nullable": true,
+            "personal": false,
+            "ty": {
+              "entity": "Member",
+              "kind": "entity"
+            }
+          },
+          {
+            "column": "title",
+            "field": "title",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            }
+          },
+          {
+            "column": "body",
+            "field": "body",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            }
+          },
+          {
+            "column": "reviewed",
+            "field": "reviewed",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "bool"
+            }
+          }
+        ],
+        "personal": false,
+        "table": "article"
+      },
+      "Editor": {
+        "columns": [
+          {
+            "column": "id",
+            "field": "id",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "uuid"
+            }
+          },
+          {
+            "column": "created_at",
+            "field": "createdAt",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "time"
+            }
+          },
+          {
+            "column": "site_id",
+            "field": "site",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "entity": "Site",
+              "kind": "entity"
+            }
+          },
+          {
+            "column": "member_id",
+            "field": "member",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "entity": "Member",
+              "kind": "entity"
+            }
+          }
+        ],
+        "personal": false,
+        "table": "editor"
+      },
+      "Member": {
+        "columns": [
+          {
+            "column": "id",
+            "field": "id",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "uuid"
+            }
+          },
+          {
+            "column": "created_at",
+            "field": "createdAt",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "time"
+            }
+          },
+          {
+            "column": "email",
+            "field": "email",
+            "nullable": false,
+            "personal": true,
+            "ty": {
+              "kind": "email"
+            }
+          },
+          {
+            "column": "name",
+            "field": "name",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            }
+          },
+          {
+            "column": "role",
+            "field": "role",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "enum",
+              "name": "MemberRole"
+            }
+          }
+        ],
+        "personal": true,
+        "table": "member"
+      },
+      "Site": {
+        "columns": [
+          {
+            "column": "id",
+            "field": "id",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "uuid"
+            }
+          },
+          {
+            "column": "created_at",
+            "field": "createdAt",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "time"
+            }
+          },
+          {
+            "column": "name",
+            "field": "name",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            }
+          }
+        ],
+        "personal": false,
+        "table": "site"
+      }
+    },
+    "enums": {
+      "ApprovalDecision": [
+        "APPROVE",
+        "REJECT"
+      ],
+      "ApprovalStatus": [
+        "NONE",
+        "PENDING",
+        "APPROVED",
+        "REJECTED",
+        "CANCELLED",
+        "EXPIRED"
+      ],
+      "ConsentStatus": [
+        "NONE",
+        "GIVEN",
+        "OUTDATED",
+        "WITHDRAWN"
+      ],
+      "MemberRole": [
+        "USER",
+        "SUPPORT",
+        "ROOT"
+      ]
+    },
+    "events": {},
+    "extensions": [
+      "auth",
+      "postgres",
+      "s3"
+    ],
+    "handlers": [],
+    "impersonation": {
+      "operator_check": {
+        "params": [],
+        "text": "SELECT coalesce((coalesce((((SELECT t1.\"role\" FROM \"member\" t1 WHERE t1.\"id\" = ((SELECT \"operator\"::text FROM s)::text)::uuid) = 'SUPPORT')), false) OR (coalesce((((SELECT t2.\"role\" FROM \"member\" t2 WHERE t2.\"id\" = ((SELECT \"operator\"::text FROM s)::text)::uuid) = 'ROOT')), false) AND (NULL::text) IS NULL)), false)"
+      },
+      "start": "StartMemberImpersonation",
+      "stop": "StopMemberImpersonation",
+      "ttl_seconds": 1800
+    },
+    "intents": {
+      "AddEditor": {
+        "audited": false,
+        "effects": [],
+        "emits": [],
+        "errors": [
+          {
+            "code": "AIP.AUTH.FORBIDDEN",
+            "reason": null
+          },
+          {
+            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "reason": null
+          },
+          {
+            "code": "AIP.CONCURRENCY.CONFLICT",
+            "reason": null
+          },
+          {
+            "code": "AIP.CONFLICT.UNIQUE",
+            "reason": "ALREADY_EDITOR"
+          },
+          {
+            "code": "AIP.INPUT.INVALID",
+            "reason": null
+          },
+          {
+            "code": "AIP.NOT_FOUND",
+            "reason": "MEMBER_NOT_FOUND"
+          },
+          {
+            "code": "AIP.NOT_FOUND",
+            "reason": "SITE_NOT_FOUND"
+          }
+        ],
+        "idempotency_key": null,
+        "idempotent": false,
+        "internal": false,
+        "kind": "command",
+        "name": "AddEditor",
+        "output": null,
+        "params": [
+          {
+            "default": null,
+            "name": "site",
+            "optional": false,
+            "ty": {
+              "entity": "Site",
+              "kind": "entity"
+            }
+          },
+          {
+            "default": null,
+            "name": "member",
+            "optional": false,
+            "ty": {
+              "entity": "Member",
+              "kind": "entity"
+            }
+          }
+        ],
+        "rate_limits": [],
+        "returns": null,
+        "steps": [
+          {
+            "entity": "Member",
+            "lock": false,
+            "many": false,
+            "op": "load",
+            "param": "member",
+            "sql": {
+              "params": [
+                "member"
+              ],
+              "text": "SELECT t2.\"id\" FROM \"member\" t2 WHERE t2.\"id\" = ($1::text)::uuid ORDER BY t2.\"id\" FOR SHARE OF t2"
+            }
+          },
+          {
+            "entity": "Site",
+            "lock": false,
+            "many": false,
+            "op": "load",
+            "param": "site",
+            "sql": {
+              "params": [
+                "site"
+              ],
+              "text": "SELECT t1.\"id\" FROM \"site\" t1 WHERE t1.\"id\" = ($1::text)::uuid ORDER BY t1.\"id\" FOR SHARE OF t1"
+            }
+          },
+          {
+            "bind": null,
+            "label": "tenant: pin to the context's tenant",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "site"
+              ],
+              "text": "SELECT set_config('aip.tenant', coalesce(((SELECT tn0.\"id\" AS t FROM \"site\" tn0 WHERE tn0.\"id\" = ($1::text)::uuid LIMIT 1))::text, ''), true), set_config('aip.tenant_cross', '', true)"
+            }
+          },
+          {
+            "code": null,
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "site",
+                "__actor",
+                "__imp"
+              ],
+              "text": "SELECT (coalesce((EXISTS (SELECT 1 FROM \"editor\" t3 WHERE coalesce(((coalesce(((t3.\"site_id\" = ($1::text)::uuid)), false) AND coalesce(((t3.\"member_id\" = ($2::text)::uuid)), false))), false))), false) OR (coalesce((((SELECT t4.\"role\" FROM \"member\" t4 WHERE t4.\"id\" = ($2::text)::uuid) = 'ROOT')), false) AND ($3::text) IS NULL))"
+            }
+          },
+          {
+            "bind": null,
+            "label": "insert Editor",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "site",
+                "member"
+              ],
+              "text": "INSERT INTO \"editor\" (\"site_id\", \"member_id\") VALUES ((($1::text)::uuid)::uuid, (($2::text)::uuid)::uuid) RETURNING \"id\""
+            }
+          }
+        ],
+        "writes": [
+          "Editor"
+        ]
+      },
+      "ApproveArticleReview": {
+        "audited": false,
+        "effects": [],
+        "emits": [],
+        "errors": [
+          {
+            "code": "AIP.AUTH.FORBIDDEN",
+            "reason": "IMPERSONATION_FORBIDDEN"
+          },
+          {
+            "code": "AIP.AUTH.FORBIDDEN",
+            "reason": "NOT_AN_APPROVER"
+          },
+          {
+            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "reason": null
+          },
+          {
+            "code": "AIP.CONCURRENCY.CONFLICT",
+            "reason": null
+          },
+          {
+            "code": "AIP.CONFLICT.UNIQUE",
+            "reason": "ALREADY_VOTED"
+          },
+          {
+            "code": "AIP.INPUT.INVALID",
+            "reason": null
+          },
+          {
+            "code": "AIP.NOT_FOUND",
+            "reason": "ARTICLE_NOT_FOUND"
+          },
+          {
+            "code": "AIP.PRECONDITION.FAILED",
+            "reason": "APPROVAL_NOT_PENDING"
+          },
+          {
+            "code": "AIP.TENANT.MISMATCH",
+            "reason": null
+          }
+        ],
+        "idempotency_key": null,
+        "idempotent": false,
+        "internal": false,
+        "kind": "command",
+        "name": "ApproveArticleReview",
+        "output": null,
+        "params": [
+          {
+            "default": null,
+            "name": "article",
+            "optional": false,
+            "ty": {
+              "entity": "Article",
+              "kind": "entity"
+            }
+          },
+          {
+            "default": null,
+            "name": "comment",
+            "optional": true,
+            "ty": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            }
+          }
+        ],
+        "rate_limits": [],
+        "returns": null,
+        "steps": [
+          {
+            "entity": "Article",
+            "lock": true,
+            "many": false,
+            "op": "load",
+            "param": "article",
+            "sql": {
+              "params": [
+                "article"
+              ],
+              "text": "SELECT t1.\"id\" FROM \"article\" t1 WHERE t1.\"id\" = ($1::text)::uuid AND t1.\"deleted_at\" IS NULL ORDER BY t1.\"id\" FOR UPDATE OF t1"
+            }
+          },
+          {
+            "bind": null,
+            "label": "tenant: pin to the context's tenant",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "article"
+              ],
+              "text": "SELECT set_config('aip.tenant', coalesce(((SELECT tn0.\"site_id\" AS t FROM \"article\" tn0 WHERE tn0.\"id\" = ($1::text)::uuid LIMIT 1))::text, ''), true), set_config('aip.tenant_cross', '', true)"
+            }
+          },
+          {
+            "code": "IMPERSONATION_FORBIDDEN",
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "__imp"
+              ],
+              "text": "SELECT ($1::text) IS NULL"
+            }
+          },
+          {
+            "code": "APPROVAL_NOT_PENDING",
+            "name": "__approval",
+            "op": "let",
+            "sql": {
+              "params": [
+                "article"
+              ],
+              "text": "SELECT \"id\"::text FROM \"_aip_approval\" WHERE \"name\" = 'ArticleReview' AND \"subject\" = ($1::text)::uuid AND \"status\" = 'PENDING' FOR UPDATE"
+            }
+          },
+          {
+            "code": "NOT_AN_APPROVER",
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "__actor"
+              ],
+              "text": "SELECT EXISTS (SELECT 1 FROM \"editor\" t2 WHERE t2.\"member_id\" = ($1::text)::uuid)"
+            }
+          },
+          {
+            "bind": null,
+            "label": "record vote",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "__approval",
+                "__actor",
+                "comment"
+              ],
+              "text": "INSERT INTO \"_aip_approval_vote\" (\"approval\", \"voter\", \"decision\", \"comment\") VALUES (($1::text)::uuid, ($2::text)::uuid, 'APPROVE', ($3::text))"
+            }
+          },
+          {
+            "cond": {
+              "params": [
+                "__approval"
+              ],
+              "text": "SELECT count(*) >= 1 FROM \"_aip_approval_vote\" WHERE \"approval\" = ($1::text)::uuid AND \"decision\" = 'APPROVE'"
+            },
+            "op": "when",
+            "steps": [
+              {
+                "bind": null,
+                "label": "mark approved",
+                "op": "exec",
+                "sql": {
+                  "params": [
+                    "__approval"
+                  ],
+                  "text": "UPDATE \"_aip_approval\" SET \"status\" = 'APPROVED', \"decided_at\" = now() WHERE \"id\" = ($1::text)::uuid"
+                }
+              },
+              {
+                "bind": null,
+                "label": "set Article",
+                "op": "exec",
+                "sql": {
+                  "params": [
+                    "article"
+                  ],
+                  "text": "UPDATE \"article\" SET \"reviewed\" = (TRUE)::boolean WHERE \"id\" = ($1::text)::uuid"
+                }
+              }
+            ]
+          }
+        ],
+        "writes": [
+          "Article"
+        ]
+      },
+      "ArticleDrafts": {
+        "cache_seconds": null,
+        "errors": [
+          {
+            "code": "AIP.AUTH.FORBIDDEN",
+            "reason": null
+          },
+          {
+            "code": "AIP.CONSENT.REQUIRED",
+            "reason": "Terms"
+          },
+          {
+            "code": "AIP.INPUT.INVALID",
+            "reason": null
+          },
+          {
+            "code": "AIP.NOT_FOUND",
+            "reason": "SITE_NOT_FOUND"
+          }
+        ],
+        "internal": false,
+        "kind": "query",
+        "name": "ArticleDrafts",
+        "output": {
+          "kind": "list",
+          "of": {
+            "fields": {
+              "body": {
+                "kind": "text",
+                "lower": false,
+                "max": null,
+                "min": null,
+                "pattern": null,
+                "trim": false
+              },
+              "id": {
+                "kind": "uuid"
+              },
+              "reviewed": {
+                "kind": "bool"
+              },
+              "title": {
+                "kind": "text",
+                "lower": false,
+                "max": null,
+                "min": null,
+                "pattern": null,
+                "trim": false
+              }
+            },
+            "kind": "object"
+          }
+        },
+        "page": {
+          "keyset": true,
+          "max_page": null,
+          "size": 50
+        },
+        "params": [
+          {
+            "default": null,
+            "name": "site",
+            "optional": false,
+            "ty": {
+              "entity": "Site",
+              "kind": "entity"
+            }
+          }
+        ],
+        "prelude": [
+          {
+            "entity": "Site",
+            "lock": false,
+            "many": false,
+            "op": "load",
+            "param": "site",
+            "sql": {
+              "params": [
+                "site"
+              ],
+              "text": "SELECT t1.\"id\" FROM \"site\" t1 WHERE t1.\"id\" = ($1::text)::uuid ORDER BY t1.\"id\""
+            }
+          },
+          {
+            "code": null,
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "site",
+                "__actor",
+                "__imp"
+              ],
+              "text": "SELECT (coalesce((EXISTS (SELECT 1 FROM \"editor\" t2 WHERE coalesce(((coalesce(((t2.\"site_id\" = ($1::text)::uuid)), false) AND coalesce(((t2.\"member_id\" = ($2::text)::uuid)), false))), false))), false) OR (coalesce((((SELECT t3.\"role\" FROM \"member\" t3 WHERE t3.\"id\" = ($2::text)::uuid) = 'ROOT')), false) AND ($3::text) IS NULL))"
+            }
+          },
+          {
+            "code": "Terms",
+            "kind": "consent",
+            "op": "check",
+            "sql": {
+              "params": [
+                "__actor"
+              ],
+              "text": "SELECT EXISTS (SELECT 1 FROM \"_aip_consent\" WHERE \"name\" = 'Terms' AND \"actor\" = ($1::text)::uuid AND \"version\" = 1 AND \"withdrawn_at\" IS NULL)"
+            }
+          }
+        ],
+        "rate_limits": [],
+        "single": false,
+        "sort_param": null,
+        "touches": [],
+        "variants": [
+          {
+            "key_count": 2,
+            "main": {
+              "params": [
+                "site",
+                "__cursor"
+              ],
+              "text": "SELECT coalesce(jsonb_agg(x.j || jsonb_build_object('__k', x.k) ORDER BY x.n), '[]'::jsonb) FROM (SELECT jsonb_build_object('id', to_jsonb(t4.\"id\"), 'title', to_jsonb(t4.\"title\"), 'body', to_jsonb(t4.\"body\"), 'reviewed', to_jsonb(t4.\"reviewed\")) AS j, jsonb_build_array((t4.\"created_at\"), (t4.\"id\")) AS k, row_number() OVER (ORDER BY t4.\"created_at\" DESC NULLS LAST, t4.\"id\" DESC NULLS LAST) AS n FROM \"article\" t4 WHERE coalesce(((t4.\"site_id\" = ($1::text)::uuid)), false) AND t4.\"deleted_at\" IS NULL AND t4.\"site_id\" = (SELECT tn0.\"id\" AS t FROM \"site\" tn0 WHERE tn0.\"id\" = ($1::text)::uuid LIMIT 1) AND (($2)::text IS NULL OR ((t4.\"created_at\") < ((((($2)::text)::jsonb ->> 0)))::timestamptz) OR ((t4.\"created_at\")::text IS NOT DISTINCT FROM ((($2)::text)::jsonb ->> 0) AND (t4.\"id\") < ((((($2)::text)::jsonb ->> 1)))::uuid)) ORDER BY t4.\"created_at\" DESC NULLS LAST, t4.\"id\" DESC NULLS LAST LIMIT 51) x"
+            },
+            "when": null
+          }
+        ]
+      },
+      "ArticleReviewStatus": {
+        "cache_seconds": null,
+        "errors": [
+          {
+            "code": "AIP.INPUT.INVALID",
+            "reason": null
+          },
+          {
+            "code": "AIP.NOT_FOUND",
+            "reason": "ARTICLE_NOT_FOUND"
+          }
+        ],
+        "internal": false,
+        "kind": "query",
+        "name": "ArticleReviewStatus",
+        "output": {
+          "fields": {
+            "approvals": {
+              "kind": "int",
+              "max": null,
+              "min": null
+            },
+            "canVote": {
+              "kind": "bool"
+            },
+            "decidedAt": {
+              "kind": "time",
+              "nullable": true
+            },
+            "expiresAt": {
+              "kind": "time",
+              "nullable": true
+            },
+            "requestedAt": {
+              "kind": "time",
+              "nullable": true
+            },
+            "requestedBy": {
+              "kind": "uuid",
+              "nullable": true
+            },
+            "required": {
+              "kind": "int",
+              "max": null,
+              "min": null
+            },
+            "status": {
+              "kind": "enum",
+              "name": "ApprovalStatus"
+            },
+            "votes": {
+              "kind": "list",
+              "of": {
+                "fields": {
+                  "at": {
+                    "kind": "time"
+                  },
+                  "comment": {
+                    "kind": "text",
+                    "lower": false,
+                    "max": null,
+                    "min": null,
+                    "nullable": true,
+                    "pattern": null,
+                    "trim": false
+                  },
+                  "decision": {
+                    "kind": "enum",
+                    "name": "ApprovalDecision"
+                  },
+                  "voter": {
+                    "kind": "uuid"
+                  }
+                },
+                "kind": "object"
+              }
+            }
+          },
+          "kind": "object"
+        },
+        "page": null,
+        "params": [
+          {
+            "default": null,
+            "name": "article",
+            "optional": false,
+            "ty": {
+              "entity": "Article",
+              "kind": "entity"
+            }
+          }
+        ],
+        "prelude": [
+          {
+            "entity": "Article",
+            "lock": false,
+            "many": false,
+            "op": "load",
+            "param": "article",
+            "sql": {
+              "params": [
+                "article"
+              ],
+              "text": "SELECT t1.\"id\" FROM \"article\" t1 WHERE t1.\"id\" = ($1::text)::uuid AND t1.\"deleted_at\" IS NULL ORDER BY t1.\"id\""
+            }
+          }
+        ],
+        "rate_limits": [],
+        "single": true,
+        "sort_param": null,
+        "touches": [],
+        "variants": [
+          {
+            "key_count": 0,
+            "main": {
+              "params": [
+                "__actor",
+                "article"
+              ],
+              "text": "SELECT coalesce((SELECT jsonb_build_object('status', CASE WHEN ap.\"status\" = 'PENDING' AND ap.\"expires_at\" <= now() THEN 'EXPIRED' ELSE ap.\"status\" END, 'required', ap.\"required\", 'approvals', (SELECT count(*) FROM \"_aip_approval_vote\" v WHERE v.\"approval\" = ap.\"id\" AND v.\"decision\" = 'APPROVE'), 'requestedBy', ap.\"requested_by\", 'requestedAt', ap.\"created_at\", 'expiresAt', ap.\"expires_at\", 'decidedAt', ap.\"decided_at\", 'canVote', ap.\"status\" = 'PENDING' AND coalesce(ap.\"expires_at\" > now(), true) AND EXISTS (SELECT 1 FROM \"editor\" t2 WHERE t2.\"member_id\" = ($1::text)::uuid) AND NOT EXISTS (SELECT 1 FROM \"_aip_approval_vote\" v WHERE v.\"approval\" = ap.\"id\" AND v.\"voter\" = ($1::text)::uuid), 'votes', coalesce((SELECT jsonb_agg(jsonb_build_object('voter', v.\"voter\", 'decision', v.\"decision\", 'comment', v.\"comment\", 'at', v.\"at\") ORDER BY v.\"at\") FROM \"_aip_approval_vote\" v WHERE v.\"approval\" = ap.\"id\"), '[]'::jsonb)) FROM \"_aip_approval\" ap WHERE ap.\"name\" = 'ArticleReview' AND ap.\"subject\" = ($2::text)::uuid ORDER BY ap.\"created_at\" DESC LIMIT 1), jsonb_build_object('status', 'NONE', 'required', 1, 'approvals', 0, 'requestedBy', NULL, 'requestedAt', NULL, 'expiresAt', NULL, 'decidedAt', NULL, 'canVote', false, 'votes', '[]'::jsonb))"
+            },
+            "when": null
+          }
+        ]
+      },
+      "Articles": {
+        "cache_seconds": null,
+        "errors": [
+          {
+            "code": "AIP.AUTH.FORBIDDEN",
+            "reason": null
+          },
+          {
+            "code": "AIP.INPUT.INVALID",
+            "reason": null
+          },
+          {
+            "code": "AIP.NOT_FOUND",
+            "reason": "SITE_NOT_FOUND"
+          }
+        ],
+        "internal": false,
+        "kind": "query",
+        "name": "Articles",
+        "output": {
+          "kind": "list",
+          "of": {
+            "fields": {
+              "body": {
+                "kind": "text",
+                "lower": false,
+                "max": null,
+                "min": null,
+                "pattern": null,
+                "trim": false
+              },
+              "id": {
+                "kind": "uuid"
+              },
+              "title": {
+                "kind": "text",
+                "lower": false,
+                "max": null,
+                "min": null,
+                "pattern": null,
+                "trim": false
+              }
+            },
+            "kind": "object"
+          }
+        },
+        "page": {
+          "keyset": true,
+          "max_page": null,
+          "size": 50
+        },
+        "params": [
+          {
+            "default": null,
+            "name": "site",
+            "optional": false,
+            "ty": {
+              "entity": "Site",
+              "kind": "entity"
+            }
+          }
+        ],
+        "prelude": [
+          {
+            "entity": "Site",
+            "lock": false,
+            "many": false,
+            "op": "load",
+            "param": "site",
+            "sql": {
+              "params": [
+                "site"
+              ],
+              "text": "SELECT t1.\"id\" FROM \"site\" t1 WHERE t1.\"id\" = ($1::text)::uuid ORDER BY t1.\"id\""
+            }
+          },
+          {
+            "code": null,
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "__actor",
+                "__imp"
+              ],
+              "text": "SELECT (coalesce((TRUE), false) OR (coalesce((((SELECT t2.\"role\" FROM \"member\" t2 WHERE t2.\"id\" = ($1::text)::uuid) = 'ROOT')), false) AND ($2::text) IS NULL))"
+            }
+          }
+        ],
+        "rate_limits": [],
+        "single": false,
+        "sort_param": null,
+        "touches": [],
+        "variants": [
+          {
+            "key_count": 2,
+            "main": {
+              "params": [
+                "site",
+                "__cursor"
+              ],
+              "text": "SELECT coalesce(jsonb_agg(x.j || jsonb_build_object('__k', x.k) ORDER BY x.n), '[]'::jsonb) FROM (SELECT jsonb_build_object('id', to_jsonb(t3.\"id\"), 'title', to_jsonb(t3.\"title\"), 'body', to_jsonb(t3.\"body\")) AS j, jsonb_build_array((t3.\"created_at\"), (t3.\"id\")) AS k, row_number() OVER (ORDER BY t3.\"created_at\" DESC NULLS LAST, t3.\"id\" DESC NULLS LAST) AS n FROM \"article_published\" t3 WHERE coalesce(((t3.\"site_id\" = ($1::text)::uuid)), false) AND t3.\"deleted_at\" IS NULL AND t3.\"site_id\" = (SELECT tn0.\"id\" AS t FROM \"site\" tn0 WHERE tn0.\"id\" = ($1::text)::uuid LIMIT 1) AND (($2)::text IS NULL OR ((t3.\"created_at\") < ((((($2)::text)::jsonb ->> 0)))::timestamptz) OR ((t3.\"created_at\")::text IS NOT DISTINCT FROM ((($2)::text)::jsonb ->> 0) AND (t3.\"id\") < ((((($2)::text)::jsonb ->> 1)))::uuid)) ORDER BY t3.\"created_at\" DESC NULLS LAST, t3.\"id\" DESC NULLS LAST LIMIT 51) x"
+            },
+            "when": null
+          }
+        ]
+      },
+      "CancelArticleReview": {
+        "audited": false,
+        "effects": [],
+        "emits": [],
+        "errors": [
+          {
+            "code": "AIP.AUTH.FORBIDDEN",
+            "reason": "ONLY_REQUESTER_CAN_CANCEL"
+          },
+          {
+            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "reason": null
+          },
+          {
+            "code": "AIP.CONCURRENCY.CONFLICT",
+            "reason": null
+          },
+          {
+            "code": "AIP.INPUT.INVALID",
+            "reason": null
+          },
+          {
+            "code": "AIP.NOT_FOUND",
+            "reason": "ARTICLE_NOT_FOUND"
+          },
+          {
+            "code": "AIP.PRECONDITION.FAILED",
+            "reason": "APPROVAL_NOT_PENDING"
+          }
+        ],
+        "idempotency_key": null,
+        "idempotent": false,
+        "internal": false,
+        "kind": "command",
+        "name": "CancelArticleReview",
+        "output": null,
+        "params": [
+          {
+            "default": null,
+            "name": "article",
+            "optional": false,
+            "ty": {
+              "entity": "Article",
+              "kind": "entity"
+            }
+          }
+        ],
+        "rate_limits": [],
+        "returns": null,
+        "steps": [
+          {
+            "entity": "Article",
+            "lock": false,
+            "many": false,
+            "op": "load",
+            "param": "article",
+            "sql": {
+              "params": [
+                "article"
+              ],
+              "text": "SELECT t1.\"id\" FROM \"article\" t1 WHERE t1.\"id\" = ($1::text)::uuid AND t1.\"deleted_at\" IS NULL ORDER BY t1.\"id\" FOR SHARE OF t1"
+            }
+          },
+          {
+            "bind": null,
+            "label": "tenant: pin to the context's tenant",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "article"
+              ],
+              "text": "SELECT set_config('aip.tenant', coalesce(((SELECT tn0.\"site_id\" AS t FROM \"article\" tn0 WHERE tn0.\"id\" = ($1::text)::uuid LIMIT 1))::text, ''), true), set_config('aip.tenant_cross', '', true)"
+            }
+          },
+          {
+            "code": "APPROVAL_NOT_PENDING",
+            "name": "__approval",
+            "op": "let",
+            "sql": {
+              "params": [
+                "article"
+              ],
+              "text": "SELECT \"id\"::text FROM \"_aip_approval\" WHERE \"name\" = 'ArticleReview' AND \"subject\" = ($1::text)::uuid AND \"status\" = 'PENDING' FOR UPDATE"
+            }
+          },
+          {
+            "code": "ONLY_REQUESTER_CAN_CANCEL",
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "__actor",
+                "__imp",
+                "__approval"
+              ],
+              "text": "SELECT coalesce(\"requested_by\" = ($1::text)::uuid, false) OR (coalesce((((SELECT t2.\"role\" FROM \"member\" t2 WHERE t2.\"id\" = ($1::text)::uuid) = 'ROOT')), false) AND ($2::text) IS NULL) FROM \"_aip_approval\" WHERE \"id\" = ($3::text)::uuid"
+            }
+          },
+          {
+            "bind": null,
+            "label": "cancel request",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "__approval"
+              ],
+              "text": "UPDATE \"_aip_approval\" SET \"status\" = 'CANCELLED', \"decided_at\" = now() WHERE \"id\" = ($1::text)::uuid"
+            }
+          }
+        ],
+        "writes": []
+      },
+      "CreateArticle": {
+        "audited": false,
+        "effects": [],
+        "emits": [],
+        "errors": [
+          {
+            "code": "AIP.AUTH.FORBIDDEN",
+            "reason": null
+          },
+          {
+            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "reason": null
+          },
+          {
+            "code": "AIP.CONCURRENCY.CONFLICT",
+            "reason": null
+          },
+          {
+            "code": "AIP.CONSENT.REQUIRED",
+            "reason": "Terms"
+          },
+          {
+            "code": "AIP.IDEMPOTENCY.KEY_REUSED",
+            "reason": null
+          },
+          {
+            "code": "AIP.INPUT.INVALID",
+            "reason": null
+          },
+          {
+            "code": "AIP.NOT_FOUND",
+            "reason": "SITE_NOT_FOUND"
+          },
+          {
+            "code": "AIP.TENANT.MISMATCH",
+            "reason": null
+          }
+        ],
+        "idempotency_key": null,
+        "idempotent": true,
+        "internal": false,
+        "kind": "command",
+        "name": "CreateArticle",
+        "output": {
+          "fields": {
+            "id": {
+              "kind": "uuid"
+            },
+            "title": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            }
+          },
+          "kind": "object"
+        },
+        "params": [
+          {
+            "default": null,
+            "name": "site",
+            "optional": false,
+            "ty": {
+              "entity": "Site",
+              "kind": "entity"
+            }
+          },
+          {
+            "default": null,
+            "name": "title",
+            "optional": false,
+            "ty": {
+              "kind": "text",
+              "lower": false,
+              "max": 200,
+              "min": 1,
+              "pattern": null,
+              "trim": true
+            }
+          },
+          {
+            "default": null,
+            "name": "body",
+            "optional": false,
+            "ty": {
+              "kind": "text",
+              "lower": false,
+              "max": 20000,
+              "min": 1,
+              "pattern": null,
+              "trim": false
+            }
+          }
+        ],
+        "rate_limits": [],
+        "returns": {
+          "params": [
+            "article"
+          ],
+          "text": "SELECT (SELECT jsonb_build_object('id', to_jsonb(t4.\"id\"), 'title', to_jsonb(t4.\"title\")) FROM \"article\" t4 WHERE t4.\"id\" = ($1::text)::uuid AND t4.\"deleted_at\" IS NULL)"
+        },
+        "steps": [
+          {
+            "entity": "Site",
+            "lock": false,
+            "many": false,
+            "op": "load",
+            "param": "site",
+            "sql": {
+              "params": [
+                "site"
+              ],
+              "text": "SELECT t1.\"id\" FROM \"site\" t1 WHERE t1.\"id\" = ($1::text)::uuid ORDER BY t1.\"id\" FOR SHARE OF t1"
+            }
+          },
+          {
+            "bind": null,
+            "label": "tenant: pin to the context's tenant",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "site"
+              ],
+              "text": "SELECT set_config('aip.tenant', coalesce(((SELECT tn0.\"id\" AS t FROM \"site\" tn0 WHERE tn0.\"id\" = ($1::text)::uuid LIMIT 1))::text, ''), true), set_config('aip.tenant_cross', '', true)"
+            }
+          },
+          {
+            "code": null,
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "site",
+                "__actor",
+                "__imp"
+              ],
+              "text": "SELECT (coalesce((EXISTS (SELECT 1 FROM \"editor\" t2 WHERE coalesce(((coalesce(((t2.\"site_id\" = ($1::text)::uuid)), false) AND coalesce(((t2.\"member_id\" = ($2::text)::uuid)), false))), false))), false) OR (coalesce((((SELECT t3.\"role\" FROM \"member\" t3 WHERE t3.\"id\" = ($2::text)::uuid) = 'ROOT')), false) AND ($3::text) IS NULL))"
+            }
+          },
+          {
+            "code": "Terms",
+            "kind": "consent",
+            "op": "check",
+            "sql": {
+              "params": [
+                "__actor"
+              ],
+              "text": "SELECT EXISTS (SELECT 1 FROM \"_aip_consent\" WHERE \"name\" = 'Terms' AND \"actor\" = ($1::text)::uuid AND \"version\" = 1 AND \"withdrawn_at\" IS NULL)"
+            }
+          },
+          {
+            "code": null,
+            "kind": "tenant",
+            "op": "check",
+            "sql": {
+              "params": [
+                "site"
+              ],
+              "text": "SELECT (($1::text)::uuid)::uuid IS NOT DISTINCT FROM (SELECT tn0.\"id\" AS t FROM \"site\" tn0 WHERE tn0.\"id\" = ($1::text)::uuid LIMIT 1)"
+            }
+          },
+          {
+            "bind": "article",
+            "label": "insert Article",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "site",
+                "__actor",
+                "title",
+                "body"
+              ],
+              "text": "INSERT INTO \"article\" (\"site_id\", \"author_id\", \"title\", \"body\") VALUES ((($1::text)::uuid)::uuid, (($2::text)::uuid)::uuid, (($3::text)::text)::text, (($4::text)::text)::text) RETURNING \"id\""
+            }
+          }
+        ],
+        "writes": [
+          "Article"
+        ]
+      },
+      "CreateSite": {
+        "audited": false,
+        "effects": [],
+        "emits": [],
+        "errors": [
+          {
+            "code": "AIP.AUTH.FORBIDDEN",
+            "reason": null
+          },
+          {
+            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "reason": null
+          },
+          {
+            "code": "AIP.CONCURRENCY.CONFLICT",
+            "reason": null
+          },
+          {
+            "code": "AIP.CONFLICT.UNIQUE",
+            "reason": "ALREADY_EDITOR"
+          },
+          {
+            "code": "AIP.IDEMPOTENCY.KEY_REUSED",
+            "reason": null
+          },
+          {
+            "code": "AIP.INPUT.INVALID",
+            "reason": null
+          }
+        ],
+        "idempotency_key": null,
+        "idempotent": true,
+        "internal": false,
+        "kind": "command",
+        "name": "CreateSite",
+        "output": {
+          "fields": {
+            "id": {
+              "kind": "uuid"
+            },
+            "name": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            }
+          },
+          "kind": "object"
+        },
+        "params": [
+          {
+            "default": null,
+            "name": "name",
+            "optional": false,
+            "ty": {
+              "kind": "text",
+              "lower": false,
+              "max": 100,
+              "min": 1,
+              "pattern": null,
+              "trim": true
+            }
+          }
+        ],
+        "rate_limits": [],
+        "returns": {
+          "params": [
+            "site"
+          ],
+          "text": "SELECT (SELECT jsonb_build_object('id', to_jsonb(t2.\"id\"), 'name', to_jsonb(t2.\"name\")) FROM \"site\" t2 WHERE t2.\"id\" = ($1::text)::uuid)"
+        },
+        "steps": [
+          {
+            "code": null,
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "__actor",
+                "__imp"
+              ],
+              "text": "SELECT (coalesce(((($1::text)::uuid IS NOT NULL)), false) OR (coalesce((((SELECT t1.\"role\" FROM \"member\" t1 WHERE t1.\"id\" = ($1::text)::uuid) = 'ROOT')), false) AND ($2::text) IS NULL))"
+            }
+          },
+          {
+            "bind": "site",
+            "label": "insert Site",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "name"
+              ],
+              "text": "INSERT INTO \"site\" (\"name\") VALUES ((($1::text)::text)::text) RETURNING \"id\""
+            }
+          },
+          {
+            "bind": null,
+            "label": "insert Editor",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "site",
+                "__actor"
+              ],
+              "text": "INSERT INTO \"editor\" (\"site_id\", \"member_id\") VALUES ((($1::text)::uuid)::uuid, (($2::text)::uuid)::uuid) RETURNING \"id\""
+            }
+          }
+        ],
+        "writes": [
+          "Editor",
+          "Site"
+        ]
+      },
+      "DeleteArticle": {
+        "audited": false,
+        "effects": [],
+        "emits": [],
+        "errors": [
+          {
+            "code": "AIP.AUTH.FORBIDDEN",
+            "reason": null
+          },
+          {
+            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "reason": null
+          },
+          {
+            "code": "AIP.CONCURRENCY.CONFLICT",
+            "reason": null
+          },
+          {
+            "code": "AIP.INPUT.INVALID",
+            "reason": null
+          },
+          {
+            "code": "AIP.NOT_FOUND",
+            "reason": "ARTICLE_NOT_FOUND"
+          },
+          {
+            "code": "AIP.TENANT.MISMATCH",
+            "reason": null
+          }
+        ],
+        "idempotency_key": null,
+        "idempotent": false,
+        "internal": false,
+        "kind": "command",
+        "name": "DeleteArticle",
+        "output": null,
+        "params": [
+          {
+            "default": null,
+            "name": "article",
+            "optional": false,
+            "ty": {
+              "entity": "Article",
+              "kind": "entity"
+            }
+          }
+        ],
+        "rate_limits": [],
+        "returns": null,
+        "steps": [
+          {
+            "entity": "Article",
+            "lock": true,
+            "many": false,
+            "op": "load",
+            "param": "article",
+            "sql": {
+              "params": [
+                "article"
+              ],
+              "text": "SELECT t1.\"id\" FROM \"article\" t1 WHERE t1.\"id\" = ($1::text)::uuid AND t1.\"deleted_at\" IS NULL ORDER BY t1.\"id\" FOR UPDATE OF t1"
+            }
+          },
+          {
+            "bind": null,
+            "label": "tenant: pin to the context's tenant",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "article"
+              ],
+              "text": "SELECT set_config('aip.tenant', coalesce(((SELECT tn0.\"site_id\" AS t FROM \"article\" tn0 WHERE tn0.\"id\" = ($1::text)::uuid LIMIT 1))::text, ''), true), set_config('aip.tenant_cross', '', true)"
+            }
+          },
+          {
+            "code": null,
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "article",
+                "__actor",
+                "__imp"
+              ],
+              "text": "SELECT (coalesce((EXISTS (SELECT 1 FROM \"editor\" t3 WHERE coalesce(((coalesce(((t3.\"site_id\" = (SELECT t2.\"site_id\" FROM \"article\" t2 WHERE t2.\"id\" = ($1::text)::uuid))), false) AND coalesce(((t3.\"member_id\" = ($2::text)::uuid)), false))), false))), false) OR (coalesce((((SELECT t4.\"role\" FROM \"member\" t4 WHERE t4.\"id\" = ($2::text)::uuid) = 'ROOT')), false) AND ($3::text) IS NULL))"
+            }
+          },
+          {
+            "bind": null,
+            "label": "delete Article",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "article"
+              ],
+              "text": "UPDATE \"article\" t5 SET \"deleted_at\" = now() WHERE t5.\"deleted_at\" IS NULL AND t5.\"site_id\" = (SELECT tn0.\"site_id\" AS t FROM \"article\" tn0 WHERE tn0.\"id\" = ($1::text)::uuid LIMIT 1) AND coalesce(((t5.\"id\" = ($1::text)::uuid)), false)"
+            }
+          }
+        ],
+        "writes": [
+          "Article"
+        ]
+      },
+      "DeleteMyAccount": {
+        "audited": false,
+        "effects": [],
+        "emits": [],
+        "errors": [
+          {
+            "code": "AIP.AUTH.FORBIDDEN",
+            "reason": null
+          },
+          {
+            "code": "AIP.AUTH.FORBIDDEN",
+            "reason": "IMPERSONATION_FORBIDDEN"
+          },
+          {
+            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "reason": null
+          },
+          {
+            "code": "AIP.CONCURRENCY.CONFLICT",
+            "reason": null
+          },
+          {
+            "code": "AIP.CONFLICT.UNIQUE",
+            "reason": "ALREADY_EDITOR"
+          },
+          {
+            "code": "AIP.CONFLICT.UNIQUE",
+            "reason": "EMAIL_TAKEN"
+          },
+          {
+            "code": "AIP.INPUT.INVALID",
+            "reason": null
+          },
+          {
+            "code": "AIP.TENANT.MISMATCH",
+            "reason": null
+          }
+        ],
+        "idempotency_key": null,
+        "idempotent": false,
+        "internal": false,
+        "kind": "command",
+        "name": "DeleteMyAccount",
+        "output": null,
+        "params": [],
+        "rate_limits": [],
+        "returns": null,
+        "steps": [
+          {
+            "code": "IMPERSONATION_FORBIDDEN",
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "__imp"
+              ],
+              "text": "SELECT ($1::text) IS NULL"
+            }
+          },
+          {
+            "code": null,
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "__actor",
+                "__imp"
+              ],
+              "text": "SELECT (coalesce(((($1::text)::uuid IS NOT NULL)), false) OR (coalesce((((SELECT t1.\"role\" FROM \"member\" t1 WHERE t1.\"id\" = ($1::text)::uuid) = 'ROOT')), false) AND ($2::text) IS NULL))"
+            }
+          },
+          {
+            "bind": null,
+            "label": "erase: anonymize Article.author",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "__actor"
+              ],
+              "text": "UPDATE \"article\" SET \"author_id\" = NULL WHERE \"author_id\" = ($1::text)::uuid"
+            }
+          },
+          {
+            "bind": null,
+            "label": "erase: delete Editor",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "__actor"
+              ],
+              "text": "DELETE FROM \"editor\" WHERE \"member_id\" = ($1::text)::uuid"
+            }
+          },
+          {
+            "bind": null,
+            "label": "erase: delete Member",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "__actor"
+              ],
+              "text": "DELETE FROM \"member\" WHERE \"id\" = ($1::text)::uuid"
+            }
+          }
+        ],
+        "writes": [
+          "Article",
+          "Editor",
+          "Member"
+        ]
+      },
+      "DiscardArticleDraft": {
+        "audited": false,
+        "effects": [],
+        "emits": [],
+        "errors": [
+          {
+            "code": "AIP.AUTH.FORBIDDEN",
+            "reason": null
+          },
+          {
+            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "reason": null
+          },
+          {
+            "code": "AIP.CONCURRENCY.CONFLICT",
+            "reason": null
+          },
+          {
+            "code": "AIP.INPUT.INVALID",
+            "reason": null
+          },
+          {
+            "code": "AIP.NOT_FOUND",
+            "reason": "ARTICLE_NOT_FOUND"
+          },
+          {
+            "code": "AIP.PRECONDITION.FAILED",
+            "reason": "NOT_PUBLISHED"
+          },
+          {
+            "code": "AIP.TENANT.MISMATCH",
+            "reason": null
+          }
+        ],
+        "idempotency_key": null,
+        "idempotent": false,
+        "internal": false,
+        "kind": "command",
+        "name": "DiscardArticleDraft",
+        "output": null,
+        "params": [
+          {
+            "default": null,
+            "name": "article",
+            "optional": false,
+            "ty": {
+              "entity": "Article",
+              "kind": "entity"
+            }
+          }
+        ],
+        "rate_limits": [],
+        "returns": null,
+        "steps": [
+          {
+            "entity": "Article",
+            "lock": true,
+            "many": false,
+            "op": "load",
+            "param": "article",
+            "sql": {
+              "params": [
+                "article"
+              ],
+              "text": "SELECT t1.\"id\" FROM \"article\" t1 WHERE t1.\"id\" = ($1::text)::uuid AND t1.\"deleted_at\" IS NULL ORDER BY t1.\"id\" FOR UPDATE OF t1"
+            }
+          },
+          {
+            "bind": null,
+            "label": "tenant: pin to the context's tenant",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "article"
+              ],
+              "text": "SELECT set_config('aip.tenant', coalesce(((SELECT tn0.\"site_id\" AS t FROM \"article\" tn0 WHERE tn0.\"id\" = ($1::text)::uuid LIMIT 1))::text, ''), true), set_config('aip.tenant_cross', '', true)"
+            }
+          },
+          {
+            "code": null,
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "article",
+                "__actor",
+                "__imp"
+              ],
+              "text": "SELECT (coalesce((EXISTS (SELECT 1 FROM \"editor\" t3 WHERE coalesce(((coalesce(((t3.\"site_id\" = (SELECT t2.\"site_id\" FROM \"article\" t2 WHERE t2.\"id\" = ($1::text)::uuid))), false) AND coalesce(((t3.\"member_id\" = ($2::text)::uuid)), false))), false))), false) OR (coalesce((((SELECT t4.\"role\" FROM \"member\" t4 WHERE t4.\"id\" = ($2::text)::uuid) = 'ROOT')), false) AND ($3::text) IS NULL))"
+            }
+          },
+          {
+            "code": "NOT_PUBLISHED",
+            "name": "__published",
+            "op": "let",
+            "sql": {
+              "params": [
+                "article"
+              ],
+              "text": "SELECT \"id\"::text FROM \"article_published\" WHERE \"id\" = ($1::text)::uuid"
+            }
+          },
+          {
+            "bind": null,
+            "label": "discard the draft of Article",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "article"
+              ],
+              "text": "UPDATE \"article\" SET \"author_id\" = p.\"author_id\", \"body\" = p.\"body\", \"created_at\" = p.\"created_at\", \"deleted_at\" = p.\"deleted_at\", \"reviewed\" = p.\"reviewed\", \"site_id\" = p.\"site_id\", \"title\" = p.\"title\", \"updated_at\" = p.\"updated_at\" FROM \"article_published\" p WHERE \"article\".\"id\" = p.\"id\" AND \"article\".\"id\" = ($1::text)::uuid"
+            }
+          }
+        ],
+        "writes": [
+          "Article"
+        ]
+      },
+      "EditArticle": {
+        "audited": false,
+        "effects": [],
+        "emits": [],
+        "errors": [
+          {
+            "code": "AIP.AUTH.FORBIDDEN",
+            "reason": null
+          },
+          {
+            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "reason": null
+          },
+          {
+            "code": "AIP.CONCURRENCY.CONFLICT",
+            "reason": null
+          },
+          {
+            "code": "AIP.INPUT.INVALID",
+            "reason": null
+          },
+          {
+            "code": "AIP.NOT_FOUND",
+            "reason": "ARTICLE_NOT_FOUND"
+          },
+          {
+            "code": "AIP.TENANT.MISMATCH",
+            "reason": null
+          }
+        ],
+        "idempotency_key": null,
+        "idempotent": false,
+        "internal": false,
+        "kind": "command",
+        "name": "EditArticle",
+        "output": null,
+        "params": [
+          {
+            "default": null,
+            "name": "article",
+            "optional": false,
+            "ty": {
+              "entity": "Article",
+              "kind": "entity"
+            }
+          },
+          {
+            "default": null,
+            "name": "title",
+            "optional": false,
+            "ty": {
+              "kind": "text",
+              "lower": false,
+              "max": 200,
+              "min": 1,
+              "pattern": null,
+              "trim": true
+            }
+          },
+          {
+            "default": null,
+            "name": "body",
+            "optional": false,
+            "ty": {
+              "kind": "text",
+              "lower": false,
+              "max": 20000,
+              "min": 1,
+              "pattern": null,
+              "trim": false
+            }
+          }
+        ],
+        "rate_limits": [],
+        "returns": null,
+        "steps": [
+          {
+            "entity": "Article",
+            "lock": true,
+            "many": false,
+            "op": "load",
+            "param": "article",
+            "sql": {
+              "params": [
+                "article"
+              ],
+              "text": "SELECT t1.\"id\" FROM \"article\" t1 WHERE t1.\"id\" = ($1::text)::uuid AND t1.\"deleted_at\" IS NULL ORDER BY t1.\"id\" FOR UPDATE OF t1"
+            }
+          },
+          {
+            "bind": null,
+            "label": "tenant: pin to the context's tenant",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "article"
+              ],
+              "text": "SELECT set_config('aip.tenant', coalesce(((SELECT tn0.\"site_id\" AS t FROM \"article\" tn0 WHERE tn0.\"id\" = ($1::text)::uuid LIMIT 1))::text, ''), true), set_config('aip.tenant_cross', '', true)"
+            }
+          },
+          {
+            "code": null,
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "article",
+                "__actor",
+                "__imp"
+              ],
+              "text": "SELECT (coalesce((EXISTS (SELECT 1 FROM \"editor\" t3 WHERE coalesce(((coalesce(((t3.\"site_id\" = (SELECT t2.\"site_id\" FROM \"article\" t2 WHERE t2.\"id\" = ($1::text)::uuid))), false) AND coalesce(((t3.\"member_id\" = ($2::text)::uuid)), false))), false))), false) OR (coalesce((((SELECT t4.\"role\" FROM \"member\" t4 WHERE t4.\"id\" = ($2::text)::uuid) = 'ROOT')), false) AND ($3::text) IS NULL))"
+            }
+          },
+          {
+            "bind": null,
+            "label": "set Article",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "title",
+                "body",
+                "article"
+              ],
+              "text": "UPDATE \"article\" SET \"title\" = (($1::text)::text)::text, \"body\" = (($2::text)::text)::text WHERE \"id\" = ($3::text)::uuid"
+            }
+          }
+        ],
+        "writes": [
+          "Article"
+        ]
+      },
+      "ExportMyData": {
+        "audited": false,
+        "effects": [
+          "export.personal"
+        ],
+        "emits": [],
+        "errors": [
+          {
+            "code": "AIP.AUTH.FORBIDDEN",
+            "reason": null
+          },
+          {
+            "code": "AIP.AUTH.FORBIDDEN",
+            "reason": "IMPERSONATION_FORBIDDEN"
+          },
+          {
+            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "reason": null
+          },
+          {
+            "code": "AIP.CONCURRENCY.CONFLICT",
+            "reason": null
+          },
+          {
+            "code": "AIP.INPUT.INVALID",
+            "reason": null
+          }
+        ],
+        "idempotency_key": null,
+        "idempotent": false,
+        "internal": false,
+        "kind": "command",
+        "name": "ExportMyData",
+        "output": null,
+        "params": [],
+        "rate_limits": [],
+        "returns": null,
+        "steps": [
+          {
+            "code": "IMPERSONATION_FORBIDDEN",
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "__imp"
+              ],
+              "text": "SELECT ($1::text) IS NULL"
+            }
+          },
+          {
+            "code": null,
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "__actor",
+                "__imp"
+              ],
+              "text": "SELECT (coalesce(((($1::text)::uuid IS NOT NULL)), false) OR (coalesce((((SELECT t1.\"role\" FROM \"member\" t1 WHERE t1.\"id\" = ($1::text)::uuid) = 'ROOT')), false) AND ($2::text) IS NULL))"
+            }
+          },
+          {
+            "args": {
+              "params": [
+                "__actor"
+              ],
+              "text": "SELECT jsonb_build_object('subject', ($1::text)::uuid)"
+            },
+            "effect": "export.personal",
+            "key": null,
+            "on_failure": [],
+            "op": "deferred"
+          }
+        ],
+        "writes": []
+      },
+      "GetArticle": {
+        "cache_seconds": null,
+        "errors": [
+          {
+            "code": "AIP.AUTH.FORBIDDEN",
+            "reason": null
+          },
+          {
+            "code": "AIP.INPUT.INVALID",
+            "reason": null
+          },
+          {
+            "code": "AIP.NOT_FOUND",
+            "reason": "ARTICLE_NOT_FOUND"
+          }
+        ],
+        "internal": false,
+        "kind": "query",
+        "name": "GetArticle",
+        "output": {
+          "fields": {
+            "body": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            },
+            "id": {
+              "kind": "uuid"
+            },
+            "title": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            }
+          },
+          "kind": "object"
+        },
+        "page": null,
+        "params": [
+          {
+            "default": null,
+            "name": "article",
+            "optional": false,
+            "ty": {
+              "entity": "Article",
+              "kind": "entity"
+            }
+          }
+        ],
+        "prelude": [
+          {
+            "entity": "Article",
+            "lock": false,
+            "many": false,
+            "op": "load",
+            "param": "article",
+            "sql": {
+              "params": [
+                "article"
+              ],
+              "text": "SELECT t1.\"id\" FROM \"article_published\" t1 WHERE t1.\"id\" = ($1::text)::uuid AND t1.\"deleted_at\" IS NULL ORDER BY t1.\"id\""
+            }
+          },
+          {
+            "code": null,
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "__actor",
+                "__imp"
+              ],
+              "text": "SELECT (coalesce((TRUE), false) OR (coalesce((((SELECT t2.\"role\" FROM \"member\" t2 WHERE t2.\"id\" = ($1::text)::uuid) = 'ROOT')), false) AND ($2::text) IS NULL))"
+            }
+          }
+        ],
+        "rate_limits": [],
+        "single": true,
+        "sort_param": null,
+        "touches": [],
+        "variants": [
+          {
+            "key_count": 0,
+            "main": {
+              "params": [
+                "article"
+              ],
+              "text": "SELECT jsonb_build_object('id', to_jsonb(t3.\"id\"), 'title', to_jsonb(t3.\"title\"), 'body', to_jsonb(t3.\"body\")) FROM \"article_published\" t3 WHERE t3.\"id\" = ($1::text)::uuid"
+            },
+            "when": null
+          }
+        ]
+      },
+      "GiveTermsConsent": {
+        "audited": false,
+        "effects": [],
+        "emits": [],
+        "errors": [
+          {
+            "code": "AIP.AUTH.FORBIDDEN",
+            "reason": "IMPERSONATION_FORBIDDEN"
+          },
+          {
+            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "reason": null
+          },
+          {
+            "code": "AIP.CONCURRENCY.CONFLICT",
+            "reason": null
+          },
+          {
+            "code": "AIP.INPUT.INVALID",
+            "reason": null
+          }
+        ],
+        "idempotency_key": null,
+        "idempotent": false,
+        "internal": false,
+        "kind": "command",
+        "name": "GiveTermsConsent",
+        "output": {
+          "fields": {
+            "givenAt": {
+              "kind": "time",
+              "nullable": true
+            },
+            "givenVersion": {
+              "kind": "int",
+              "max": null,
+              "min": null,
+              "nullable": true
+            },
+            "name": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            },
+            "status": {
+              "kind": "enum",
+              "name": "ConsentStatus"
+            },
+            "version": {
+              "kind": "int",
+              "max": null,
+              "min": null
+            },
+            "withdrawnAt": {
+              "kind": "time",
+              "nullable": true
+            }
+          },
+          "kind": "object"
+        },
+        "params": [],
+        "rate_limits": [],
+        "returns": {
+          "params": [
+            "__actor"
+          ],
+          "text": "SELECT jsonb_build_object('name', 'Terms', 'version', 1, 'status', CASE WHEN EXISTS (SELECT 1 FROM \"_aip_consent\" WHERE \"name\" = 'Terms' AND \"actor\" = ($1::text)::uuid AND \"version\" = 1 AND \"withdrawn_at\" IS NULL) THEN 'GIVEN' WHEN l.\"id\" IS NULL THEN 'NONE' WHEN l.\"withdrawn_at\" IS NOT NULL THEN 'WITHDRAWN' ELSE 'OUTDATED' END, 'givenVersion', l.\"version\", 'givenAt', l.\"given_at\", 'withdrawnAt', l.\"withdrawn_at\") FROM (SELECT 1) d LEFT JOIN LATERAL (SELECT * FROM \"_aip_consent\" WHERE \"name\" = 'Terms' AND \"actor\" = ($1::text)::uuid ORDER BY \"given_at\" DESC, \"id\" DESC LIMIT 1) l ON true"
+        },
+        "steps": [
+          {
+            "code": null,
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "__actor"
+              ],
+              "text": "SELECT ($1::text)::uuid IS NOT NULL"
+            }
+          },
+          {
+            "code": "IMPERSONATION_FORBIDDEN",
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "__imp"
+              ],
+              "text": "SELECT ($1::text) IS NULL"
+            }
+          },
+          {
+            "bind": null,
+            "label": "record consent to Terms v1",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "__actor"
+              ],
+              "text": "INSERT INTO \"_aip_consent\" (\"name\", \"actor\", \"version\") VALUES ('Terms', ($1::text)::uuid, 1) ON CONFLICT (\"name\", \"actor\", \"version\") WHERE \"withdrawn_at\" IS NULL DO NOTHING"
+            }
+          }
+        ],
+        "writes": []
+      },
+      "PublishArticle": {
+        "audited": false,
+        "effects": [],
+        "emits": [],
+        "errors": [
+          {
+            "code": "AIP.AUTH.FORBIDDEN",
+            "reason": null
+          },
+          {
+            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "reason": null
+          },
+          {
+            "code": "AIP.CONCURRENCY.CONFLICT",
+            "reason": null
+          },
+          {
+            "code": "AIP.INPUT.INVALID",
+            "reason": null
+          },
+          {
+            "code": "AIP.NOT_FOUND",
+            "reason": "ARTICLE_NOT_FOUND"
+          }
+        ],
+        "idempotency_key": null,
+        "idempotent": false,
+        "internal": false,
+        "kind": "command",
+        "name": "PublishArticle",
+        "output": {
+          "fields": {
+            "publishedAt": {
+              "kind": "time"
+            }
+          },
+          "kind": "object"
+        },
+        "params": [
+          {
+            "default": null,
+            "name": "article",
+            "optional": false,
+            "ty": {
+              "entity": "Article",
+              "kind": "entity"
+            }
+          }
+        ],
+        "rate_limits": [],
+        "returns": {
+          "params": [
+            "article"
+          ],
+          "text": "SELECT jsonb_build_object('publishedAt', \"published_at\") FROM \"article_published\" WHERE \"id\" = ($1::text)::uuid"
+        },
+        "steps": [
+          {
+            "entity": "Article",
+            "lock": true,
+            "many": false,
+            "op": "load",
+            "param": "article",
+            "sql": {
+              "params": [
+                "article"
+              ],
+              "text": "SELECT t1.\"id\" FROM \"article\" t1 WHERE t1.\"id\" = ($1::text)::uuid AND t1.\"deleted_at\" IS NULL ORDER BY t1.\"id\" FOR UPDATE OF t1"
+            }
+          },
+          {
+            "bind": null,
+            "label": "tenant: pin to the context's tenant",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "article"
+              ],
+              "text": "SELECT set_config('aip.tenant', coalesce(((SELECT tn0.\"site_id\" AS t FROM \"article\" tn0 WHERE tn0.\"id\" = ($1::text)::uuid LIMIT 1))::text, ''), true), set_config('aip.tenant_cross', '', true)"
+            }
+          },
+          {
+            "code": null,
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "article",
+                "__actor",
+                "__imp"
+              ],
+              "text": "SELECT (coalesce((EXISTS (SELECT 1 FROM \"editor\" t3 WHERE coalesce(((coalesce(((t3.\"site_id\" = (SELECT t2.\"site_id\" FROM \"article\" t2 WHERE t2.\"id\" = ($1::text)::uuid))), false) AND coalesce(((t3.\"member_id\" = ($2::text)::uuid)), false))), false))), false) OR (coalesce((((SELECT t4.\"role\" FROM \"member\" t4 WHERE t4.\"id\" = ($2::text)::uuid) = 'ROOT')), false) AND ($3::text) IS NULL))"
+            }
+          },
+          {
+            "bind": null,
+            "label": "publish Article",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "article"
+              ],
+              "text": "INSERT INTO \"article_published\" (\"author_id\", \"body\", \"created_at\", \"deleted_at\", \"id\", \"reviewed\", \"site_id\", \"title\", \"updated_at\", \"published_at\") SELECT \"author_id\", \"body\", \"created_at\", \"deleted_at\", \"id\", \"reviewed\", \"site_id\", \"title\", \"updated_at\", now() FROM \"article\" WHERE \"id\" = ($1::text)::uuid ON CONFLICT (\"id\") DO UPDATE SET \"author_id\" = EXCLUDED.\"author_id\", \"body\" = EXCLUDED.\"body\", \"created_at\" = EXCLUDED.\"created_at\", \"deleted_at\" = EXCLUDED.\"deleted_at\", \"reviewed\" = EXCLUDED.\"reviewed\", \"site_id\" = EXCLUDED.\"site_id\", \"title\" = EXCLUDED.\"title\", \"updated_at\" = EXCLUDED.\"updated_at\", \"published_at\" = now()"
+            }
+          }
+        ],
+        "writes": [
+          "Article"
+        ]
+      },
+      "PurgeDrafts": {
+        "audited": false,
+        "effects": [],
+        "emits": [],
+        "errors": [
+          {
+            "code": "AIP.AUTH.FORBIDDEN",
+            "reason": null
+          },
+          {
+            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "reason": null
+          },
+          {
+            "code": "AIP.CONCURRENCY.CONFLICT",
+            "reason": null
+          },
+          {
+            "code": "AIP.INPUT.INVALID",
+            "reason": null
+          },
+          {
+            "code": "AIP.NOT_FOUND",
+            "reason": "SITE_NOT_FOUND"
+          },
+          {
+            "code": "AIP.TENANT.MISMATCH",
+            "reason": null
+          }
+        ],
+        "idempotency_key": null,
+        "idempotent": false,
+        "internal": false,
+        "kind": "command",
+        "name": "PurgeDrafts",
+        "output": null,
+        "params": [
+          {
+            "default": null,
+            "name": "site",
+            "optional": false,
+            "ty": {
+              "entity": "Site",
+              "kind": "entity"
+            }
+          }
+        ],
+        "rate_limits": [],
+        "returns": null,
+        "steps": [
+          {
+            "entity": "Site",
+            "lock": true,
+            "many": false,
+            "op": "load",
+            "param": "site",
+            "sql": {
+              "params": [
+                "site"
+              ],
+              "text": "SELECT t1.\"id\" FROM \"site\" t1 WHERE t1.\"id\" = ($1::text)::uuid ORDER BY t1.\"id\" FOR UPDATE OF t1"
+            }
+          },
+          {
+            "bind": null,
+            "label": "tenant: pin to the context's tenant",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "site"
+              ],
+              "text": "SELECT set_config('aip.tenant', coalesce(((SELECT tn0.\"id\" AS t FROM \"site\" tn0 WHERE tn0.\"id\" = ($1::text)::uuid LIMIT 1))::text, ''), true), set_config('aip.tenant_cross', '', true)"
+            }
+          },
+          {
+            "code": null,
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "__actor",
+                "__imp"
+              ],
+              "text": "SELECT (coalesce((((SELECT t2.\"name\" FROM \"member\" t2 WHERE t2.\"id\" = ($1::text)::uuid) = '(nobody)')), false) OR (coalesce((((SELECT t3.\"role\" FROM \"member\" t3 WHERE t3.\"id\" = ($1::text)::uuid) = 'ROOT')), false) AND ($2::text) IS NULL))"
+            }
+          },
+          {
+            "bind": null,
+            "label": "update Article",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "site"
+              ],
+              "text": "UPDATE \"article\" t4 SET \"title\" = 'purged' WHERE t4.\"deleted_at\" IS NULL AND t4.\"site_id\" = (SELECT tn0.\"id\" AS t FROM \"site\" tn0 WHERE tn0.\"id\" = ($1::text)::uuid LIMIT 1) AND coalesce(((coalesce(((t4.\"site_id\" = ($1::text)::uuid)), false) AND coalesce(((t4.\"reviewed\" = FALSE)), false))), false)"
+            }
+          }
+        ],
+        "writes": [
+          "Article"
+        ]
+      },
+      "RejectArticleReview": {
+        "audited": false,
+        "effects": [],
+        "emits": [],
+        "errors": [
+          {
+            "code": "AIP.AUTH.FORBIDDEN",
+            "reason": "IMPERSONATION_FORBIDDEN"
+          },
+          {
+            "code": "AIP.AUTH.FORBIDDEN",
+            "reason": "NOT_AN_APPROVER"
+          },
+          {
+            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "reason": null
+          },
+          {
+            "code": "AIP.CONCURRENCY.CONFLICT",
+            "reason": null
+          },
+          {
+            "code": "AIP.CONFLICT.UNIQUE",
+            "reason": "ALREADY_VOTED"
+          },
+          {
+            "code": "AIP.INPUT.INVALID",
+            "reason": null
+          },
+          {
+            "code": "AIP.NOT_FOUND",
+            "reason": "ARTICLE_NOT_FOUND"
+          },
+          {
+            "code": "AIP.PRECONDITION.FAILED",
+            "reason": "APPROVAL_NOT_PENDING"
+          },
+          {
+            "code": "AIP.TENANT.MISMATCH",
+            "reason": null
+          }
+        ],
+        "idempotency_key": null,
+        "idempotent": false,
+        "internal": false,
+        "kind": "command",
+        "name": "RejectArticleReview",
+        "output": null,
+        "params": [
+          {
+            "default": null,
+            "name": "article",
+            "optional": false,
+            "ty": {
+              "entity": "Article",
+              "kind": "entity"
+            }
+          },
+          {
+            "default": null,
+            "name": "reason",
+            "optional": true,
+            "ty": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            }
+          }
+        ],
+        "rate_limits": [],
+        "returns": null,
+        "steps": [
+          {
+            "entity": "Article",
+            "lock": true,
+            "many": false,
+            "op": "load",
+            "param": "article",
+            "sql": {
+              "params": [
+                "article"
+              ],
+              "text": "SELECT t1.\"id\" FROM \"article\" t1 WHERE t1.\"id\" = ($1::text)::uuid AND t1.\"deleted_at\" IS NULL ORDER BY t1.\"id\" FOR UPDATE OF t1"
+            }
+          },
+          {
+            "bind": null,
+            "label": "tenant: pin to the context's tenant",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "article"
+              ],
+              "text": "SELECT set_config('aip.tenant', coalesce(((SELECT tn0.\"site_id\" AS t FROM \"article\" tn0 WHERE tn0.\"id\" = ($1::text)::uuid LIMIT 1))::text, ''), true), set_config('aip.tenant_cross', '', true)"
+            }
+          },
+          {
+            "code": "IMPERSONATION_FORBIDDEN",
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "__imp"
+              ],
+              "text": "SELECT ($1::text) IS NULL"
+            }
+          },
+          {
+            "code": "APPROVAL_NOT_PENDING",
+            "name": "__approval",
+            "op": "let",
+            "sql": {
+              "params": [
+                "article"
+              ],
+              "text": "SELECT \"id\"::text FROM \"_aip_approval\" WHERE \"name\" = 'ArticleReview' AND \"subject\" = ($1::text)::uuid AND \"status\" = 'PENDING' FOR UPDATE"
+            }
+          },
+          {
+            "code": "NOT_AN_APPROVER",
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "__actor"
+              ],
+              "text": "SELECT EXISTS (SELECT 1 FROM \"editor\" t2 WHERE t2.\"member_id\" = ($1::text)::uuid)"
+            }
+          },
+          {
+            "bind": null,
+            "label": "record vote",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "__approval",
+                "__actor",
+                "reason"
+              ],
+              "text": "INSERT INTO \"_aip_approval_vote\" (\"approval\", \"voter\", \"decision\", \"comment\") VALUES (($1::text)::uuid, ($2::text)::uuid, 'REJECT', ($3::text))"
+            }
+          },
+          {
+            "bind": null,
+            "label": "mark rejected",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "__approval"
+              ],
+              "text": "UPDATE \"_aip_approval\" SET \"status\" = 'REJECTED', \"decided_at\" = now() WHERE \"id\" = ($1::text)::uuid"
+            }
+          },
+          {
+            "bind": null,
+            "label": "set Article",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "article"
+              ],
+              "text": "UPDATE \"article\" SET \"reviewed\" = (FALSE)::boolean WHERE \"id\" = ($1::text)::uuid"
+            }
+          }
+        ],
+        "writes": [
+          "Article"
+        ]
+      },
+      "RenameMe": {
+        "audited": false,
+        "effects": [],
+        "emits": [],
+        "errors": [
+          {
+            "code": "AIP.AUTH.FORBIDDEN",
+            "reason": null
+          },
+          {
+            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "reason": null
+          },
+          {
+            "code": "AIP.CONCURRENCY.CONFLICT",
+            "reason": null
+          },
+          {
+            "code": "AIP.CONFLICT.UNIQUE",
+            "reason": "EMAIL_TAKEN"
+          },
+          {
+            "code": "AIP.INPUT.INVALID",
+            "reason": null
+          }
+        ],
+        "idempotency_key": null,
+        "idempotent": false,
+        "internal": false,
+        "kind": "command",
+        "name": "RenameMe",
+        "output": null,
+        "params": [
+          {
+            "default": null,
+            "name": "name",
+            "optional": false,
+            "ty": {
+              "kind": "text",
+              "lower": false,
+              "max": 100,
+              "min": 1,
+              "pattern": null,
+              "trim": true
+            }
+          }
+        ],
+        "rate_limits": [],
+        "returns": null,
+        "steps": [
+          {
+            "code": null,
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "__actor",
+                "__imp"
+              ],
+              "text": "SELECT (coalesce(((($1::text)::uuid IS NOT NULL)), false) OR (coalesce((((SELECT t1.\"role\" FROM \"member\" t1 WHERE t1.\"id\" = ($1::text)::uuid) = 'ROOT')), false) AND ($2::text) IS NULL))"
+            }
+          },
+          {
+            "bind": null,
+            "label": "set Member",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "name",
+                "__actor"
+              ],
+              "text": "UPDATE \"member\" SET \"name\" = (($1::text)::text)::text WHERE \"id\" = ($2::text)::uuid"
+            }
+          }
+        ],
+        "writes": [
+          "Member"
+        ]
+      },
+      "RequestArticleReview": {
+        "audited": false,
+        "effects": [],
+        "emits": [],
+        "errors": [
+          {
+            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "reason": null
+          },
+          {
+            "code": "AIP.CONCURRENCY.CONFLICT",
+            "reason": null
+          },
+          {
+            "code": "AIP.CONFLICT.UNIQUE",
+            "reason": "APPROVAL_ALREADY_PENDING"
+          },
+          {
+            "code": "AIP.INPUT.INVALID",
+            "reason": null
+          },
+          {
+            "code": "AIP.NOT_FOUND",
+            "reason": "ARTICLE_NOT_FOUND"
+          }
+        ],
+        "idempotency_key": null,
+        "idempotent": false,
+        "internal": false,
+        "kind": "command",
+        "name": "RequestArticleReview",
+        "output": null,
+        "params": [
+          {
+            "default": null,
+            "name": "article",
+            "optional": false,
+            "ty": {
+              "entity": "Article",
+              "kind": "entity"
+            }
+          }
+        ],
+        "rate_limits": [],
+        "returns": null,
+        "steps": [
+          {
+            "entity": "Article",
+            "lock": false,
+            "many": false,
+            "op": "load",
+            "param": "article",
+            "sql": {
+              "params": [
+                "article"
+              ],
+              "text": "SELECT t1.\"id\" FROM \"article\" t1 WHERE t1.\"id\" = ($1::text)::uuid AND t1.\"deleted_at\" IS NULL ORDER BY t1.\"id\" FOR SHARE OF t1"
+            }
+          },
+          {
+            "bind": null,
+            "label": "tenant: pin to the context's tenant",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "article"
+              ],
+              "text": "SELECT set_config('aip.tenant', coalesce(((SELECT tn0.\"site_id\" AS t FROM \"article\" tn0 WHERE tn0.\"id\" = ($1::text)::uuid LIMIT 1))::text, ''), true), set_config('aip.tenant_cross', '', true)"
+            }
+          },
+          {
+            "code": null,
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "__actor"
+              ],
+              "text": "SELECT ($1::text)::uuid IS NOT NULL"
+            }
+          },
+          {
+            "bind": null,
+            "label": "close expired request",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "article"
+              ],
+              "text": "UPDATE \"_aip_approval\" SET \"status\" = 'EXPIRED', \"decided_at\" = now() WHERE \"name\" = 'ArticleReview' AND \"subject\" = ($1::text)::uuid AND \"status\" = 'PENDING' AND \"expires_at\" <= now()"
+            }
+          },
+          {
+            "bind": null,
+            "label": "open ArticleReview",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "article",
+                "__actor"
+              ],
+              "text": "INSERT INTO \"_aip_approval\" (\"name\", \"subject\", \"requested_by\", \"required\", \"expires_at\") VALUES ('ArticleReview', ($1::text)::uuid, ($2::text)::uuid, 1, NULL)"
+            }
+          }
+        ],
+        "writes": []
+      },
+      "StartMemberImpersonation": {
+        "audited": true,
+        "effects": [],
+        "emits": [],
+        "errors": [
+          {
+            "code": "AIP.AUTH.FORBIDDEN",
+            "reason": null
+          },
+          {
+            "code": "AIP.AUTH.FORBIDDEN",
+            "reason": "IMPERSONATION_NESTED"
+          },
+          {
+            "code": "AIP.AUTH.FORBIDDEN",
+            "reason": "IMPERSONATION_SELF"
+          },
+          {
+            "code": "AIP.AUTH.FORBIDDEN",
+            "reason": "IMPERSONATION_TARGET_PRIVILEGED"
+          },
+          {
+            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "reason": null
+          },
+          {
+            "code": "AIP.CONCURRENCY.CONFLICT",
+            "reason": null
+          },
+          {
+            "code": "AIP.INPUT.INVALID",
+            "reason": null
+          },
+          {
+            "code": "AIP.NOT_FOUND",
+            "reason": "MEMBER_NOT_FOUND"
+          }
+        ],
+        "idempotency_key": null,
+        "idempotent": false,
+        "internal": false,
+        "kind": "command",
+        "name": "StartMemberImpersonation",
+        "output": {
+          "fields": {
+            "expiresAt": {
+              "kind": "time"
+            },
+            "session": {
+              "kind": "uuid"
+            },
+            "target": {
+              "kind": "uuid"
+            },
+            "token": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            }
+          },
+          "kind": "object"
+        },
+        "params": [
+          {
+            "default": null,
+            "name": "target",
+            "optional": false,
+            "ty": {
+              "entity": "Member",
+              "kind": "entity"
+            }
+          },
+          {
+            "default": null,
+            "name": "reason",
+            "optional": false,
+            "ty": {
+              "kind": "text",
+              "lower": false,
+              "max": 500,
+              "min": 1,
+              "pattern": null,
+              "trim": true
+            }
+          }
+        ],
+        "rate_limits": [],
+        "returns": {
+          "params": [
+            "__session"
+          ],
+          "text": "SELECT jsonb_build_object('session', \"id\", 'target', \"target\", 'expiresAt', \"expires_at\") FROM \"_aip_impersonation\" WHERE \"id\" = ($1::text)::uuid"
+        },
+        "steps": [
+          {
+            "code": "IMPERSONATION_NESTED",
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "__imp"
+              ],
+              "text": "SELECT ($1::text) IS NULL"
+            }
+          },
+          {
+            "entity": "Member",
+            "lock": false,
+            "many": false,
+            "op": "load",
+            "param": "target",
+            "sql": {
+              "params": [
+                "target"
+              ],
+              "text": "SELECT t1.\"id\" FROM \"member\" t1 WHERE t1.\"id\" = ($1::text)::uuid ORDER BY t1.\"id\""
+            }
+          },
+          {
+            "code": null,
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "__actor"
+              ],
+              "text": "SELECT ($1::text)::uuid IS NOT NULL"
+            }
+          },
+          {
+            "code": null,
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "__actor",
+                "__imp"
+              ],
+              "text": "SELECT (coalesce((((SELECT t2.\"role\" FROM \"member\" t2 WHERE t2.\"id\" = ($1::text)::uuid) = 'SUPPORT')), false) OR (coalesce((((SELECT t3.\"role\" FROM \"member\" t3 WHERE t3.\"id\" = ($1::text)::uuid) = 'ROOT')), false) AND ($2::text) IS NULL))"
+            }
+          },
+          {
+            "code": "IMPERSONATION_SELF",
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "target",
+                "__actor"
+              ],
+              "text": "SELECT ($1::text)::uuid IS DISTINCT FROM ($2::text)::uuid"
+            }
+          },
+          {
+            "code": "IMPERSONATION_TARGET_PRIVILEGED",
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "target",
+                "__imp"
+              ],
+              "text": "SELECT NOT coalesce((coalesce((((SELECT t4.\"role\" FROM \"member\" t4 WHERE t4.\"id\" = ($1::text)::uuid) = 'SUPPORT')), false) OR (coalesce((((SELECT t5.\"role\" FROM \"member\" t5 WHERE t5.\"id\" = ($1::text)::uuid) = 'ROOT')), false) AND ($2::text) IS NULL)), false)"
+            }
+          },
+          {
+            "bind": "__session",
+            "label": "open Member impersonation",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "__actor",
+                "target",
+                "reason"
+              ],
+              "text": "INSERT INTO \"_aip_impersonation\" (\"operator\", \"target\", \"reason\", \"expires_at\") VALUES (($1::text)::uuid, ($2::text)::uuid, ($3::text), now() + make_interval(secs => 1800)) RETURNING \"id\""
+            }
+          }
+        ],
+        "writes": []
+      },
+      "StopMemberImpersonation": {
+        "audited": true,
+        "effects": [],
+        "emits": [],
+        "errors": [
+          {
+            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "reason": null
+          },
+          {
+            "code": "AIP.CONCURRENCY.CONFLICT",
+            "reason": null
+          },
+          {
+            "code": "AIP.INPUT.INVALID",
+            "reason": null
+          }
+        ],
+        "idempotency_key": null,
+        "idempotent": false,
+        "internal": false,
+        "kind": "command",
+        "name": "StopMemberImpersonation",
+        "output": {
+          "fields": {
+            "ended": {
+              "kind": "int",
+              "max": null,
+              "min": null
+            }
+          },
+          "kind": "object"
+        },
+        "params": [],
+        "rate_limits": [],
+        "returns": {
+          "params": [
+            "__imp",
+            "__actor"
+          ],
+          "text": "WITH ended AS (UPDATE \"_aip_impersonation\" SET \"ended_at\" = now() WHERE \"ended_at\" IS NULL AND \"expires_at\" > now() AND (\"id\" = ($1::text)::uuid OR (($1::text) IS NULL AND \"operator\" = ($2::text)::uuid)) RETURNING 1) SELECT jsonb_build_object('ended', (SELECT count(*) FROM ended))"
+        },
+        "steps": [
+          {
+            "code": null,
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "__actor"
+              ],
+              "text": "SELECT ($1::text)::uuid IS NOT NULL"
+            }
+          }
+        ],
+        "writes": []
+      },
+      "TermsConsentStatus": {
+        "cache_seconds": null,
+        "errors": [
+          {
+            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "reason": null
+          },
+          {
+            "code": "AIP.INPUT.INVALID",
+            "reason": null
+          }
+        ],
+        "internal": false,
+        "kind": "query",
+        "name": "TermsConsentStatus",
+        "output": {
+          "fields": {
+            "givenAt": {
+              "kind": "time",
+              "nullable": true
+            },
+            "givenVersion": {
+              "kind": "int",
+              "max": null,
+              "min": null,
+              "nullable": true
+            },
+            "name": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            },
+            "status": {
+              "kind": "enum",
+              "name": "ConsentStatus"
+            },
+            "version": {
+              "kind": "int",
+              "max": null,
+              "min": null
+            },
+            "withdrawnAt": {
+              "kind": "time",
+              "nullable": true
+            }
+          },
+          "kind": "object"
+        },
+        "page": null,
+        "params": [],
+        "prelude": [
+          {
+            "code": null,
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "__actor"
+              ],
+              "text": "SELECT ($1::text)::uuid IS NOT NULL"
+            }
+          }
+        ],
+        "rate_limits": [],
+        "single": true,
+        "sort_param": null,
+        "touches": [],
+        "variants": [
+          {
+            "key_count": 0,
+            "main": {
+              "params": [
+                "__actor"
+              ],
+              "text": "SELECT jsonb_build_object('name', 'Terms', 'version', 1, 'status', CASE WHEN EXISTS (SELECT 1 FROM \"_aip_consent\" WHERE \"name\" = 'Terms' AND \"actor\" = ($1::text)::uuid AND \"version\" = 1 AND \"withdrawn_at\" IS NULL) THEN 'GIVEN' WHEN l.\"id\" IS NULL THEN 'NONE' WHEN l.\"withdrawn_at\" IS NOT NULL THEN 'WITHDRAWN' ELSE 'OUTDATED' END, 'givenVersion', l.\"version\", 'givenAt', l.\"given_at\", 'withdrawnAt', l.\"withdrawn_at\") FROM (SELECT 1) d LEFT JOIN LATERAL (SELECT * FROM \"_aip_consent\" WHERE \"name\" = 'Terms' AND \"actor\" = ($1::text)::uuid ORDER BY \"given_at\" DESC, \"id\" DESC LIMIT 1) l ON true"
+            },
+            "when": null
+          }
+        ]
+      },
+      "WithdrawTermsConsent": {
+        "audited": false,
+        "effects": [],
+        "emits": [],
+        "errors": [
+          {
+            "code": "AIP.AUTH.FORBIDDEN",
+            "reason": "IMPERSONATION_FORBIDDEN"
+          },
+          {
+            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "reason": null
+          },
+          {
+            "code": "AIP.CONCURRENCY.CONFLICT",
+            "reason": null
+          },
+          {
+            "code": "AIP.INPUT.INVALID",
+            "reason": null
+          }
+        ],
+        "idempotency_key": null,
+        "idempotent": false,
+        "internal": false,
+        "kind": "command",
+        "name": "WithdrawTermsConsent",
+        "output": {
+          "fields": {
+            "givenAt": {
+              "kind": "time",
+              "nullable": true
+            },
+            "givenVersion": {
+              "kind": "int",
+              "max": null,
+              "min": null,
+              "nullable": true
+            },
+            "name": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            },
+            "status": {
+              "kind": "enum",
+              "name": "ConsentStatus"
+            },
+            "version": {
+              "kind": "int",
+              "max": null,
+              "min": null
+            },
+            "withdrawnAt": {
+              "kind": "time",
+              "nullable": true
+            }
+          },
+          "kind": "object"
+        },
+        "params": [],
+        "rate_limits": [],
+        "returns": {
+          "params": [
+            "__actor"
+          ],
+          "text": "SELECT jsonb_build_object('name', 'Terms', 'version', 1, 'status', CASE WHEN EXISTS (SELECT 1 FROM \"_aip_consent\" WHERE \"name\" = 'Terms' AND \"actor\" = ($1::text)::uuid AND \"version\" = 1 AND \"withdrawn_at\" IS NULL) THEN 'GIVEN' WHEN l.\"id\" IS NULL THEN 'NONE' WHEN l.\"withdrawn_at\" IS NOT NULL THEN 'WITHDRAWN' ELSE 'OUTDATED' END, 'givenVersion', l.\"version\", 'givenAt', l.\"given_at\", 'withdrawnAt', l.\"withdrawn_at\") FROM (SELECT 1) d LEFT JOIN LATERAL (SELECT * FROM \"_aip_consent\" WHERE \"name\" = 'Terms' AND \"actor\" = ($1::text)::uuid ORDER BY \"given_at\" DESC, \"id\" DESC LIMIT 1) l ON true"
+        },
+        "steps": [
+          {
+            "code": null,
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "__actor"
+              ],
+              "text": "SELECT ($1::text)::uuid IS NOT NULL"
+            }
+          },
+          {
+            "code": "IMPERSONATION_FORBIDDEN",
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "__imp"
+              ],
+              "text": "SELECT ($1::text) IS NULL"
+            }
+          },
+          {
+            "bind": null,
+            "label": "withdraw consent to Terms",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "__actor"
+              ],
+              "text": "UPDATE \"_aip_consent\" SET \"withdrawn_at\" = now() WHERE \"name\" = 'Terms' AND \"actor\" = ($1::text)::uuid AND \"withdrawn_at\" IS NULL"
+            }
+          }
+        ],
+        "writes": []
+      }
+    },
+    "ir_version": "0.1",
+    "jobs": [],
+    "records": {},
+    "rules": [],
+    "schedules": [],
+    "webhooks": []
+  }
+}

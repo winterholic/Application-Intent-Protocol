@@ -1,0 +1,13 @@
+// a query over tenant-scoped rows needs a parameter that fixes the tenant
+entity Workspace { name: Text }
+entity Project {
+  workspace: Workspace
+  title: Text
+  tenant via workspace
+}
+query AllProjects() {
+  allow authenticated
+  from Project p
+  page 20 by keyset
+  select { id title }
+}

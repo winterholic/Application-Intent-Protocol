@@ -1,0 +1,16 @@
+[package]
+name = "spike-v4-worker"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# V4 공식 확장 worker 실험. Rust 서버 + Node/Python worker를 stdin/stdout JSON 줄로 연결한다.
+[workspace]
+
+[dependencies]
+spike-v1-fixture = { path = "../spike-v1-fixture" }
+spike-v2-read = { path = "../spike-v2-read" }
+serde_json = "1.0.151"
+tokio = { version = "1.53.1", features = ["rt", "rt-multi-thread", "macros", "time", "process", "io-util", "sync"] }
+tokio-postgres = "0.7.18"
+spike-v3-write = { path = "../spike-v3-write" }

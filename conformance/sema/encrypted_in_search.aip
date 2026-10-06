@@ -1,0 +1,3 @@
+// the index would hold ciphertext
+entity Vault { note: Text encrypted }
+search VaultSearch on Vault fields [note]

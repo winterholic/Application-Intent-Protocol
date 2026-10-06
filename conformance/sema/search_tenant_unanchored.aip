@@ -1,0 +1,14 @@
+entity Workspace { name: Text }
+entity Note {
+  workspace: Workspace
+  body: Text
+  tenant via workspace
+}
+search NoteSearch on Note fields [body]
+// nothing fixes the tenant: the search would span every workspace
+query SearchNotes(q: Text(1..50)) {
+  allow authenticated
+  from NoteSearch.match(q) r
+  page 20 by keyset
+  select { id }
+}

@@ -1,0 +1,4 @@
+command Promote(t: ClubMember) {
+  allow managerOf(actor, t.club)
+  do { set t.role = OWNER }
+}

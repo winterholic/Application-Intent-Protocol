@@ -1,0 +1,16 @@
+[package]
+name = "spike-v11-dev-checks"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# V11 선택형 개발 조언과 필수 정적·실행 검사의 경계를 확인하는 독립 spike.
+[workspace]
+
+[dependencies]
+spike-v1-fixture = { path = "../spike-v1-fixture" }
+spike-v2-read = { path = "../spike-v2-read" }
+spike-v5-sdk = { path = "../spike-v5-sdk" }
+serde_json = "1.0.151"
+tokio = { version = "1.53.1", features = ["rt", "macros"] }
+tokio-postgres = "0.7.18"

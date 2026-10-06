@@ -1,0 +1,2 @@
+// the actor of the prelude declares no scopes
+relation canRead(m: Member) = m has scope club.read

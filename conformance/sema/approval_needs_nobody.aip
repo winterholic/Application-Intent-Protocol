@@ -1,0 +1,7 @@
+entity Expense { club: Club  settled: Bool = false }
+approval Settle for Expense e {
+  approvers: ClubMember m where m.club = e.club and m.role >= MANAGER
+  require 0 approvals
+  on approved do { set e.settled = true }
+  on rejected do { set e.settled = false }
+}

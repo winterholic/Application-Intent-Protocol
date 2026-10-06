@@ -1,0 +1,6 @@
+query One(club: Club) {
+  allow public
+  from club
+  select { id }
+  touch club.name
+}

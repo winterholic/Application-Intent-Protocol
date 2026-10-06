@@ -1,0 +1,29 @@
+// declarations that have no caller may say `cross tenant` themselves, without `internal`
+use http
+entity Workspace { name: Text }
+entity Project {
+  workspace: Workspace
+  title: Text
+  tenant via workspace
+}
+record Ping { project: Uuid }
+event Renamed { project: Project }
+command Rename(project: Project, title: Text) {
+  allow authenticated
+  do { set project.title = title }
+  emit Renamed { project }
+}
+cross tenant on Renamed e do {
+  update Project p where p.title != "" set title = "x"
+}
+cross tenant schedule Tidy every day at 03:00 tz "Asia/Seoul" {
+  update Project p where p.title = "" set title = "untitled"
+}
+cross tenant rule Untitled on Project p when p.title = "" do {
+  update Project q where q.title = "" set title = "untitled"
+}
+webhook Hook via http.webhook(secret: "HOOK_SECRET") {
+  cross tenant on "all"(p: Ping) do {
+    update Project q where q.id = p.project set title = "x"
+  }
+}

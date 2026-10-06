@@ -1,0 +1,2 @@
+entity Form { title: Text }
+entity Answer { form: Snapshot<Form>  answers: Json validated by form }

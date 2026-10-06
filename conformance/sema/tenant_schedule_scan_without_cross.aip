@@ -1,0 +1,10 @@
+// a schedule that scans tenant-scoped rows without a `for` item to fix the tenant must say `cross tenant`
+entity Workspace { name: Text }
+entity Project {
+  workspace: Workspace
+  title: Text
+  tenant via workspace
+}
+schedule Tidy every day at 03:00 tz "Asia/Seoul" {
+  update Project p where p.title = "" set title = "untitled"
+}

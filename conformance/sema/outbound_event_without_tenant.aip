@@ -1,0 +1,17 @@
+entity Workspace { name: Text }
+entity Endpoint {
+  workspace: Workspace
+  url: Url
+  tenant via workspace
+}
+event Ping { note: Text }
+command Notify(note: Text) {
+  allow authenticated
+  do { }
+  emit Ping { note }
+}
+// the event names no row of a tenant: it would have to go to every tenant's endpoints
+outbound webhooks for Endpoint e {
+  events [Ping]
+  sign hmac_sha256 retry 3 over 1h
+}

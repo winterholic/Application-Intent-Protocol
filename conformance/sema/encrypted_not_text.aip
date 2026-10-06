@@ -1,0 +1,2 @@
+// an encrypted field is stored as text ciphertext; a number cannot be encrypted
+entity Vault { qty: Int encrypted }

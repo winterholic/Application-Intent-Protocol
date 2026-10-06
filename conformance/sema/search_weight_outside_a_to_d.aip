@@ -1,0 +1,7 @@
+search ClubSearch on Club fields [name weight E]
+query SearchClubs(q: Text(1..50)) {
+  allow public
+  from ClubSearch.match(q) r
+  page 20 by keyset
+  select { id }
+}

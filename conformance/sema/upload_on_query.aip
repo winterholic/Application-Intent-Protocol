@@ -1,0 +1,6 @@
+query Q(f: Upload(max 1MB)) {
+  allow public
+  from Club c
+  page 10 by keyset
+  select { id }
+}

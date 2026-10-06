@@ -1,0 +1,12 @@
+entity Article {
+  club: Club
+  title: Text
+  publishable by managerOf(actor, club)
+}
+search ArticleSearch on Article fields [title]
+query SearchArticles(q: Text(1..50)) {
+  allow public
+  from ArticleSearch.match(q) r
+  page 20 by keyset
+  select { id }
+}

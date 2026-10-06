@@ -1,0 +1,25 @@
+[package]
+name = "aip-auth"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+spike-v6-transport = { path = "../../spikes/spike-v6-transport" }
+spike-v2-read = { path = "../../spikes/spike-v2-read" }
+serde.workspace = true
+serde_json.workspace = true
+jsonwebtoken = { version = "11.1", default-features = false, features = ["rust_crypto"] }
+base64 = "0.22"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+tokio = { version = "1", features = ["fs", "io-util", "sync", "time", "rt", "macros"] }
+tokio-postgres = "0.7"
+
+[dev-dependencies]
+rsa = { version = "0.9", features = ["pem", "sha2"] }
+rand = "0.8"
+tempfile = "3"
+rustls = { version = "0.23.35", default-features = false, features = ["ring", "std", "tls12"] }
+
+[lints]
+workspace = true

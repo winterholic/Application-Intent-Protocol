@@ -1,0 +1,5 @@
+use http
+webhook Hook via http.webhook(secret: "S") {
+  on "e"(p: Json) do { delete ClubMember cm where cm.status = ENDED }
+  on "e"(p: Json) do { delete ClubMember cm where cm.status = ACTIVE }
+}

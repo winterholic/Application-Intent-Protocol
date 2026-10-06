@@ -1,0 +1,8 @@
+// the database compares ciphertext, which never equals the plaintext
+entity Vault { note: Text encrypted }
+query FindVault(q: Text) {
+  allow authenticated
+  from Vault v where v.note = q
+  page 20 by keyset
+  select { id }
+}

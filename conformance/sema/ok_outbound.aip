@@ -1,0 +1,20 @@
+entity Hook {
+  club: Club
+  url: Url
+}
+event Renamed { club: Club }
+command Rename(club: Club, name: Text) {
+  allow managerOf(actor, club)
+  do { set club.name = name }
+  emit Renamed { club }
+}
+// the endpoint row gets the event of its own club; the secret is shown once, by the command that creates the endpoint
+outbound webhooks for Hook h {
+  events [Renamed] where event.club = h.club
+  sign hmac_sha256 retry 8 over 24h disable after 3d failing
+}
+command AddHook(club: Club, url: Url) {
+  allow managerOf(actor, club)
+  do { insert Hook { club, url } as hook }
+  returns hook { id secret: hook.signingSecret }
+}

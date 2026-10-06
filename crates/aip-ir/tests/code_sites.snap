@@ -1,0 +1,114 @@
+AUTH_FORBIDDEN exec.rs=1 facts.rs=3 form_intents.rs=10 subscribe.rs=2
+AUTH_UNAUTHENTICATED engine.rs=3 exec.rs=2 facts.rs=1 form_intents.rs=2 http.rs=2 lib.rs=1 subscribe.rs=7 webhook.rs=1
+CONCURRENCY_CONFLICT engine.rs=1 exec.rs=1 facts.rs=1 subscribe.rs=1
+CONFLICT_CAPACITY ddl.rs=1 facts.rs=1
+CONFLICT_IN_USE exec.rs=1
+CONFLICT_OVERLAP ddl.rs=1 facts.rs=1
+CONFLICT_STALE_VERSION exec.rs=1 facts.rs=1
+CONFLICT_UNIQUE ddl.rs=5 exec.rs=1 facts.rs=2 form_intents.rs=2
+CONSENT_REQUIRED exec.rs=1 facts.rs=1
+E100 analyze.rs=2 lexer.rs=8 parser.rs=16
+E101 analyze.rs=4 check.rs=3 model.rs=7
+E102 check.rs=4 model.rs=3
+E103 analyze.rs=2 check.rs=14
+E104 check.rs=12
+E105 model.rs=1
+E106 analyze.rs=2 check.rs=2 model.rs=1
+E107 model.rs=1
+E108 model.rs=2
+E110 analyze.rs=6
+E111 check.rs=5
+E201 analyze.rs=8 check.rs=39 model.rs=3
+E202 check.rs=5
+E203 check.rs=3
+E204 analyze.rs=3 check.rs=1
+E205 analyze.rs=2 check.rs=1
+E206 check.rs=2
+E207 analyze.rs=3
+E208 analyze.rs=8 check.rs=1
+E209 check.rs=3
+E210 analyze.rs=6
+E211 check.rs=3
+E212 check.rs=5
+E213 check.rs=5
+E214 analyze.rs=5
+E216 analyze.rs=2
+E220 check.rs=2
+E221 analyze.rs=2
+E222 check.rs=1
+E301 analyze.rs=4
+E302 analyze.rs=2
+E306 analyze.rs=2
+E309 analyze.rs=3
+E310 analyze.rs=2
+E311 analyze.rs=2
+E312 analyze.rs=3 check.rs=1
+E313 analyze.rs=3
+E314 analyze.rs=3
+E315 analyze.rs=2
+E316 analyze.rs=7
+E317 analyze.rs=8
+E318 analyze.rs=9
+E319 analyze.rs=2 sqlexpr.rs=1
+E320 analyze.rs=3 plan.rs=7 plan/job.rs=1
+E501 check.rs=9 model.rs=1
+E502 check.rs=1
+E600 sqlexpr.rs=1
+E601 plan.rs=1
+E602 lib.rs=2
+ENCRYPTION_DECRYPT_FAILED crypto.rs=1 jobs.rs=1
+ENCRYPTION_KEYS_MISSING crypto.rs=3 exec.rs=1 lib.rs=1
+I101 validate.rs=1
+I102 validate.rs=1
+I103 validate.rs=1
+I104 validate.rs=2
+I105 validate.rs=1
+I106 validate.rs=2
+I107 validate.rs=2
+I108 validate.rs=2
+I109 validate.rs=1
+I110 validate.rs=2
+I111 validate.rs=5
+I112 validate.rs=3
+I113 validate.rs=3
+I114 validate.rs=1
+I115 validate.rs=2
+I116 validate.rs=1
+I117 validate.rs=2
+I118 validate.rs=1
+I119 validate.rs=1
+I120 validate.rs=1
+I121 validate.rs=1
+I122 validate.rs=2
+IDEMPOTENCY_KEY_REUSED engine.rs=1 facts.rs=1
+INPUT_IDEMPOTENCY_KEY_REQUIRED engine.rs=1
+INPUT_IDEMPOTENCY_KEY_UNSUPPORTED dispatch.rs=1 engine.rs=1
+INPUT_INVALID ddl.rs=1 engine.rs=7 exec.rs=4 facts.rs=2 form_intents.rs=3 validate.rs=1
+INPUT_REFERENCE_NOT_FOUND exec.rs=1
+INTERNAL crypto.rs=1 engine.rs=1 exec.rs=3 webhook.rs=2
+INVARIANT_VIOLATED ddl.rs=3 exec.rs=2 facts.rs=2
+MIGRATION_CHANGED migration.rs=1
+MIGRATION_FAILED migration.rs=1
+NOT_FOUND engine.rs=1 exec.rs=1 facts.rs=1 form_intents.rs=1 webhook.rs=1
+PRECONDITION_FAILED exec.rs=3 facts.rs=4 form_intents.rs=9
+RATE_LIMITED engine.rs=1
+REQUEST_MALFORMED http.rs=6 subscribe.rs=5 webhook.rs=3
+REQUEST_UNKNOWN_INTENT engine.rs=2 subscribe.rs=1
+S main.rs=1 validate.rs=1
+SCHEMA_DATA_CONFLICT schema.rs=1
+SCHEMA_ENCRYPTION_CHANGE evolve.rs=3
+SCHEMA_FAILED schema.rs=2
+SCHEMA_TYPE_CHANGE evolve.rs=4
+SCHEMA_UNDECLARED evolve.rs=2
+SCHEMA_UNRECORDED schema.rs=2
+SCHEMA_UNSUPPORTED evolve.rs=3
+SUBSCRIPTION_LIMIT lib.rs=1 subscribe.rs=2
+SUBSCRIPTION_TOO_LARGE lib.rs=1 subscribe.rs=1
+TENANT_MISMATCH exec.rs=1 facts.rs=1 tenant.rs=2
+UNAVAILABLE engine.rs=1 exec.rs=1 subscribe.rs=2
+W402 analyze.rs=3
+W403 analyze.rs=2
+W404 analyze.rs=2
+W501 analyze.rs=2
+W502 analyze.rs=2
+W603 lib.rs=1

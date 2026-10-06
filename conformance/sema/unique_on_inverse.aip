@@ -1,0 +1,2 @@
+entity Org { items: Item[] via org  unique (items) }
+entity Item { org: Org }

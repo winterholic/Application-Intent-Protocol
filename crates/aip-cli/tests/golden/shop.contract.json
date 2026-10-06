@@ -1,0 +1,451 @@
+{
+  "commands": {
+    "PlaceOrder": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.IDEMPOTENCY.KEY_REUSED",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.INVARIANT.VIOLATED",
+          "reason": "OUT_OF_STOCK"
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "PRODUCT_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "safe with the same key"
+      },
+      "idempotency": "Idempotency-Key header required",
+      "idempotent": true,
+      "input": [
+        {
+          "default": null,
+          "name": "product",
+          "optional": false,
+          "ty": {
+            "entity": "Product",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "quantity",
+          "optional": false,
+          "ty": {
+            "kind": "int",
+            "max": 100,
+            "min": 1
+          }
+        }
+      ],
+      "output": {
+        "fields": {
+          "amount": {
+            "kind": "int",
+            "max": null,
+            "min": null
+          },
+          "id": {
+            "kind": "uuid"
+          },
+          "status": {
+            "kind": "enum",
+            "name": "OrderStatus"
+          }
+        },
+        "kind": "object"
+      },
+      "writes": [
+        "Order",
+        "Product"
+      ]
+    },
+    "Restock": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.INVARIANT.VIOLATED",
+          "reason": "OUT_OF_STOCK"
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "PRODUCT_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "product",
+          "optional": false,
+          "ty": {
+            "entity": "Product",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "quantity",
+          "optional": false,
+          "ty": {
+            "kind": "int",
+            "max": 10000,
+            "min": 1
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "Product"
+      ]
+    },
+    "UpdateProduct": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.STALE_VERSION",
+          "reason": "PRODUCT_VERSION_STALE"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.INVARIANT.VIOLATED",
+          "reason": "OUT_OF_STOCK"
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "PRODUCT_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "product",
+          "optional": false,
+          "ty": {
+            "entity": "Product",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "name",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 100,
+            "min": 1,
+            "pattern": null,
+            "trim": false
+          }
+        },
+        {
+          "default": null,
+          "name": "price",
+          "optional": false,
+          "ty": {
+            "kind": "int",
+            "max": 100000000,
+            "min": 0
+          }
+        },
+        {
+          "default": null,
+          "name": "productVersion",
+          "optional": false,
+          "ty": {
+            "kind": "int",
+            "max": null,
+            "min": 1
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "Product"
+      ]
+    }
+  },
+  "core_ir": "aip-core/0.11",
+  "enums": {
+    "CustomerRole": [
+      "USER",
+      "STAFF"
+    ],
+    "OrderStatus": [
+      "PENDING",
+      "PAID",
+      "CANCELLED",
+      "REFUNDED"
+    ]
+  },
+  "events": {},
+  "jobs": [],
+  "protocol": "aip-protocol/0.1",
+  "queries": {
+    "Catalog": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [],
+      "output": {
+        "kind": "list",
+        "of": {
+          "fields": {
+            "featured": {
+              "kind": "bool"
+            },
+            "id": {
+              "kind": "uuid"
+            },
+            "name": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            },
+            "price": {
+              "kind": "int",
+              "max": null,
+              "min": null
+            },
+            "stock": {
+              "kind": "int",
+              "max": null,
+              "min": null
+            },
+            "version": {
+              "kind": "int",
+              "max": null,
+              "min": null
+            }
+          },
+          "kind": "object"
+        }
+      },
+      "page": {
+        "max_page": null,
+        "mode": "cursor",
+        "size": 50
+      },
+      "returns": "list"
+    },
+    "MyOrder": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "ORDER_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [
+        {
+          "default": null,
+          "name": "order",
+          "optional": false,
+          "ty": {
+            "entity": "Order",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": {
+        "fields": {
+          "amount": {
+            "kind": "int",
+            "max": null,
+            "min": null
+          },
+          "id": {
+            "kind": "uuid"
+          },
+          "paidAt": {
+            "kind": "time",
+            "nullable": true
+          },
+          "paymentRef": {
+            "kind": "text",
+            "lower": false,
+            "max": null,
+            "min": null,
+            "nullable": true,
+            "pattern": null,
+            "trim": false
+          },
+          "status": {
+            "kind": "enum",
+            "name": "OrderStatus"
+          }
+        },
+        "kind": "object"
+      },
+      "page": null,
+      "returns": "object"
+    }
+  },
+  "records": {
+    "PaymentMeta": [
+      {
+        "default": null,
+        "name": "orderId",
+        "optional": false,
+        "ty": {
+          "kind": "uuid"
+        }
+      }
+    ],
+    "StripePaymentIntent": [
+      {
+        "default": null,
+        "name": "id",
+        "optional": false,
+        "ty": {
+          "kind": "text",
+          "lower": false,
+          "max": null,
+          "min": null,
+          "pattern": null,
+          "trim": false
+        }
+      },
+      {
+        "default": null,
+        "name": "amount",
+        "optional": false,
+        "ty": {
+          "kind": "int",
+          "max": null,
+          "min": null
+        }
+      },
+      {
+        "default": null,
+        "name": "currency",
+        "optional": false,
+        "ty": {
+          "kind": "text",
+          "lower": false,
+          "max": null,
+          "min": null,
+          "pattern": null,
+          "trim": false
+        }
+      },
+      {
+        "default": null,
+        "name": "metadata",
+        "optional": false,
+        "ty": {
+          "kind": "record",
+          "name": "PaymentMeta"
+        }
+      }
+    ]
+  },
+  "transport": {
+    "auth": "Authorization: Bearer <token>",
+    "call": "POST /aip/{intent}",
+    "describe": "GET /aip/describe",
+    "idempotency": "Idempotency-Key: <key>",
+    "pagination": "cursor (keyset) or page (offset) in the input object",
+    "uploads": "multipart/form-data: part 'input' (JSON) + one part per file; the input refers to a file by its part name"
+  }
+}

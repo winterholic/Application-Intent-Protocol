@@ -1,0 +1,1 @@
+entity Price { amount: Money(1..5) }

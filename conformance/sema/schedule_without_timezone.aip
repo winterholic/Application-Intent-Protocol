@@ -1,0 +1,4 @@
+schedule Nightly every day at 03:00 {
+  for Club c
+  delete ClubMember cm where cm.status = ENDED
+}

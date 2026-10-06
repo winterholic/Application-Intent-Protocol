@@ -1,0 +1,1595 @@
+{
+  "commands": {
+    "AddEditor": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_EDITOR"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "MEMBER_NOT_FOUND"
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "SITE_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "site",
+          "optional": false,
+          "ty": {
+            "entity": "Site",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "member",
+          "optional": false,
+          "ty": {
+            "entity": "Member",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "Editor"
+      ]
+    },
+    "ApproveArticleReview": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": "IMPERSONATION_FORBIDDEN"
+        },
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": "NOT_AN_APPROVER"
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_VOTED"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "ARTICLE_NOT_FOUND"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "APPROVAL_NOT_PENDING"
+        },
+        {
+          "code": "AIP.TENANT.MISMATCH",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "article",
+          "optional": false,
+          "ty": {
+            "entity": "Article",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "comment",
+          "optional": true,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": null,
+            "min": null,
+            "pattern": null,
+            "trim": false
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "Article"
+      ]
+    },
+    "CancelArticleReview": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": "ONLY_REQUESTER_CAN_CANCEL"
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "ARTICLE_NOT_FOUND"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "APPROVAL_NOT_PENDING"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "article",
+          "optional": false,
+          "ty": {
+            "entity": "Article",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": null,
+      "writes": []
+    },
+    "CreateArticle": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONSENT.REQUIRED",
+          "reason": "Terms"
+        },
+        {
+          "code": "AIP.IDEMPOTENCY.KEY_REUSED",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "SITE_NOT_FOUND"
+        },
+        {
+          "code": "AIP.TENANT.MISMATCH",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "safe with the same key"
+      },
+      "idempotency": "Idempotency-Key header required",
+      "idempotent": true,
+      "input": [
+        {
+          "default": null,
+          "name": "site",
+          "optional": false,
+          "ty": {
+            "entity": "Site",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "title",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 200,
+            "min": 1,
+            "pattern": null,
+            "trim": true
+          }
+        },
+        {
+          "default": null,
+          "name": "body",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 20000,
+            "min": 1,
+            "pattern": null,
+            "trim": false
+          }
+        }
+      ],
+      "output": {
+        "fields": {
+          "id": {
+            "kind": "uuid"
+          },
+          "title": {
+            "kind": "text",
+            "lower": false,
+            "max": null,
+            "min": null,
+            "pattern": null,
+            "trim": false
+          }
+        },
+        "kind": "object"
+      },
+      "writes": [
+        "Article"
+      ]
+    },
+    "CreateSite": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_EDITOR"
+        },
+        {
+          "code": "AIP.IDEMPOTENCY.KEY_REUSED",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "safe with the same key"
+      },
+      "idempotency": "Idempotency-Key header required",
+      "idempotent": true,
+      "input": [
+        {
+          "default": null,
+          "name": "name",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 100,
+            "min": 1,
+            "pattern": null,
+            "trim": true
+          }
+        }
+      ],
+      "output": {
+        "fields": {
+          "id": {
+            "kind": "uuid"
+          },
+          "name": {
+            "kind": "text",
+            "lower": false,
+            "max": null,
+            "min": null,
+            "pattern": null,
+            "trim": false
+          }
+        },
+        "kind": "object"
+      },
+      "writes": [
+        "Editor",
+        "Site"
+      ]
+    },
+    "DeleteArticle": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "ARTICLE_NOT_FOUND"
+        },
+        {
+          "code": "AIP.TENANT.MISMATCH",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "article",
+          "optional": false,
+          "ty": {
+            "entity": "Article",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "Article"
+      ]
+    },
+    "DeleteMyAccount": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": "IMPERSONATION_FORBIDDEN"
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_EDITOR"
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "EMAIL_TAKEN"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.TENANT.MISMATCH",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [],
+      "output": null,
+      "writes": [
+        "Article",
+        "Editor",
+        "Member"
+      ]
+    },
+    "DiscardArticleDraft": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "ARTICLE_NOT_FOUND"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "NOT_PUBLISHED"
+        },
+        {
+          "code": "AIP.TENANT.MISMATCH",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "article",
+          "optional": false,
+          "ty": {
+            "entity": "Article",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "Article"
+      ]
+    },
+    "EditArticle": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "ARTICLE_NOT_FOUND"
+        },
+        {
+          "code": "AIP.TENANT.MISMATCH",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "article",
+          "optional": false,
+          "ty": {
+            "entity": "Article",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "title",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 200,
+            "min": 1,
+            "pattern": null,
+            "trim": true
+          }
+        },
+        {
+          "default": null,
+          "name": "body",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 20000,
+            "min": 1,
+            "pattern": null,
+            "trim": false
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "Article"
+      ]
+    },
+    "ExportMyData": {
+      "audited": false,
+      "effects": [
+        "export.personal"
+      ],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": "IMPERSONATION_FORBIDDEN"
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [],
+      "output": null,
+      "writes": []
+    },
+    "GiveTermsConsent": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": "IMPERSONATION_FORBIDDEN"
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [],
+      "output": {
+        "fields": {
+          "givenAt": {
+            "kind": "time",
+            "nullable": true
+          },
+          "givenVersion": {
+            "kind": "int",
+            "max": null,
+            "min": null,
+            "nullable": true
+          },
+          "name": {
+            "kind": "text",
+            "lower": false,
+            "max": null,
+            "min": null,
+            "pattern": null,
+            "trim": false
+          },
+          "status": {
+            "kind": "enum",
+            "name": "ConsentStatus"
+          },
+          "version": {
+            "kind": "int",
+            "max": null,
+            "min": null
+          },
+          "withdrawnAt": {
+            "kind": "time",
+            "nullable": true
+          }
+        },
+        "kind": "object"
+      },
+      "writes": []
+    },
+    "PublishArticle": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "ARTICLE_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "article",
+          "optional": false,
+          "ty": {
+            "entity": "Article",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": {
+        "fields": {
+          "publishedAt": {
+            "kind": "time"
+          }
+        },
+        "kind": "object"
+      },
+      "writes": [
+        "Article"
+      ]
+    },
+    "PurgeDrafts": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "SITE_NOT_FOUND"
+        },
+        {
+          "code": "AIP.TENANT.MISMATCH",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "site",
+          "optional": false,
+          "ty": {
+            "entity": "Site",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "Article"
+      ]
+    },
+    "RejectArticleReview": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": "IMPERSONATION_FORBIDDEN"
+        },
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": "NOT_AN_APPROVER"
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_VOTED"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "ARTICLE_NOT_FOUND"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "APPROVAL_NOT_PENDING"
+        },
+        {
+          "code": "AIP.TENANT.MISMATCH",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "article",
+          "optional": false,
+          "ty": {
+            "entity": "Article",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "reason",
+          "optional": true,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": null,
+            "min": null,
+            "pattern": null,
+            "trim": false
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "Article"
+      ]
+    },
+    "RenameMe": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "EMAIL_TAKEN"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "name",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 100,
+            "min": 1,
+            "pattern": null,
+            "trim": true
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "Member"
+      ]
+    },
+    "RequestArticleReview": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "APPROVAL_ALREADY_PENDING"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "ARTICLE_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "article",
+          "optional": false,
+          "ty": {
+            "entity": "Article",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": null,
+      "writes": []
+    },
+    "StartMemberImpersonation": {
+      "audited": true,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": "IMPERSONATION_NESTED"
+        },
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": "IMPERSONATION_SELF"
+        },
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": "IMPERSONATION_TARGET_PRIVILEGED"
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "MEMBER_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "target",
+          "optional": false,
+          "ty": {
+            "entity": "Member",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "reason",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 500,
+            "min": 1,
+            "pattern": null,
+            "trim": true
+          }
+        }
+      ],
+      "output": {
+        "fields": {
+          "expiresAt": {
+            "kind": "time"
+          },
+          "session": {
+            "kind": "uuid"
+          },
+          "target": {
+            "kind": "uuid"
+          },
+          "token": {
+            "kind": "text",
+            "lower": false,
+            "max": null,
+            "min": null,
+            "pattern": null,
+            "trim": false
+          }
+        },
+        "kind": "object"
+      },
+      "writes": []
+    },
+    "StopMemberImpersonation": {
+      "audited": true,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [],
+      "output": {
+        "fields": {
+          "ended": {
+            "kind": "int",
+            "max": null,
+            "min": null
+          }
+        },
+        "kind": "object"
+      },
+      "writes": []
+    },
+    "WithdrawTermsConsent": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": "IMPERSONATION_FORBIDDEN"
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [],
+      "output": {
+        "fields": {
+          "givenAt": {
+            "kind": "time",
+            "nullable": true
+          },
+          "givenVersion": {
+            "kind": "int",
+            "max": null,
+            "min": null,
+            "nullable": true
+          },
+          "name": {
+            "kind": "text",
+            "lower": false,
+            "max": null,
+            "min": null,
+            "pattern": null,
+            "trim": false
+          },
+          "status": {
+            "kind": "enum",
+            "name": "ConsentStatus"
+          },
+          "version": {
+            "kind": "int",
+            "max": null,
+            "min": null
+          },
+          "withdrawnAt": {
+            "kind": "time",
+            "nullable": true
+          }
+        },
+        "kind": "object"
+      },
+      "writes": []
+    }
+  },
+  "core_ir": "aip-core/0.11",
+  "enums": {
+    "ApprovalDecision": [
+      "APPROVE",
+      "REJECT"
+    ],
+    "ApprovalStatus": [
+      "NONE",
+      "PENDING",
+      "APPROVED",
+      "REJECTED",
+      "CANCELLED",
+      "EXPIRED"
+    ],
+    "ConsentStatus": [
+      "NONE",
+      "GIVEN",
+      "OUTDATED",
+      "WITHDRAWN"
+    ],
+    "MemberRole": [
+      "USER",
+      "SUPPORT",
+      "ROOT"
+    ]
+  },
+  "events": {},
+  "jobs": [],
+  "protocol": "aip-protocol/0.1",
+  "queries": {
+    "ArticleDrafts": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONSENT.REQUIRED",
+          "reason": "Terms"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "SITE_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [
+        {
+          "default": null,
+          "name": "site",
+          "optional": false,
+          "ty": {
+            "entity": "Site",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": {
+        "kind": "list",
+        "of": {
+          "fields": {
+            "body": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            },
+            "id": {
+              "kind": "uuid"
+            },
+            "reviewed": {
+              "kind": "bool"
+            },
+            "title": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            }
+          },
+          "kind": "object"
+        }
+      },
+      "page": {
+        "max_page": null,
+        "mode": "cursor",
+        "size": 50
+      },
+      "returns": "list"
+    },
+    "ArticleReviewStatus": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "ARTICLE_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [
+        {
+          "default": null,
+          "name": "article",
+          "optional": false,
+          "ty": {
+            "entity": "Article",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": {
+        "fields": {
+          "approvals": {
+            "kind": "int",
+            "max": null,
+            "min": null
+          },
+          "canVote": {
+            "kind": "bool"
+          },
+          "decidedAt": {
+            "kind": "time",
+            "nullable": true
+          },
+          "expiresAt": {
+            "kind": "time",
+            "nullable": true
+          },
+          "requestedAt": {
+            "kind": "time",
+            "nullable": true
+          },
+          "requestedBy": {
+            "kind": "uuid",
+            "nullable": true
+          },
+          "required": {
+            "kind": "int",
+            "max": null,
+            "min": null
+          },
+          "status": {
+            "kind": "enum",
+            "name": "ApprovalStatus"
+          },
+          "votes": {
+            "kind": "list",
+            "of": {
+              "fields": {
+                "at": {
+                  "kind": "time"
+                },
+                "comment": {
+                  "kind": "text",
+                  "lower": false,
+                  "max": null,
+                  "min": null,
+                  "nullable": true,
+                  "pattern": null,
+                  "trim": false
+                },
+                "decision": {
+                  "kind": "enum",
+                  "name": "ApprovalDecision"
+                },
+                "voter": {
+                  "kind": "uuid"
+                }
+              },
+              "kind": "object"
+            }
+          }
+        },
+        "kind": "object"
+      },
+      "page": null,
+      "returns": "object"
+    },
+    "Articles": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "SITE_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [
+        {
+          "default": null,
+          "name": "site",
+          "optional": false,
+          "ty": {
+            "entity": "Site",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": {
+        "kind": "list",
+        "of": {
+          "fields": {
+            "body": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            },
+            "id": {
+              "kind": "uuid"
+            },
+            "title": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            }
+          },
+          "kind": "object"
+        }
+      },
+      "page": {
+        "max_page": null,
+        "mode": "cursor",
+        "size": 50
+      },
+      "returns": "list"
+    },
+    "GetArticle": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "ARTICLE_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [
+        {
+          "default": null,
+          "name": "article",
+          "optional": false,
+          "ty": {
+            "entity": "Article",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": {
+        "fields": {
+          "body": {
+            "kind": "text",
+            "lower": false,
+            "max": null,
+            "min": null,
+            "pattern": null,
+            "trim": false
+          },
+          "id": {
+            "kind": "uuid"
+          },
+          "title": {
+            "kind": "text",
+            "lower": false,
+            "max": null,
+            "min": null,
+            "pattern": null,
+            "trim": false
+          }
+        },
+        "kind": "object"
+      },
+      "page": null,
+      "returns": "object"
+    },
+    "TermsConsentStatus": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [],
+      "output": {
+        "fields": {
+          "givenAt": {
+            "kind": "time",
+            "nullable": true
+          },
+          "givenVersion": {
+            "kind": "int",
+            "max": null,
+            "min": null,
+            "nullable": true
+          },
+          "name": {
+            "kind": "text",
+            "lower": false,
+            "max": null,
+            "min": null,
+            "pattern": null,
+            "trim": false
+          },
+          "status": {
+            "kind": "enum",
+            "name": "ConsentStatus"
+          },
+          "version": {
+            "kind": "int",
+            "max": null,
+            "min": null
+          },
+          "withdrawnAt": {
+            "kind": "time",
+            "nullable": true
+          }
+        },
+        "kind": "object"
+      },
+      "page": null,
+      "returns": "object"
+    }
+  },
+  "records": {},
+  "transport": {
+    "auth": "Authorization: Bearer <token>",
+    "call": "POST /aip/{intent}",
+    "describe": "GET /aip/describe",
+    "idempotency": "Idempotency-Key: <key>",
+    "pagination": "cursor (keyset) or page (offset) in the input object",
+    "uploads": "multipart/form-data: part 'input' (JSON) + one part per file; the input refers to a file by its part name"
+  }
+}

@@ -1,0 +1,10 @@
+entity Article {
+  title: Text
+  publishable by actor.role = SUPER_ADMIN
+}
+drafts query Drafts() {
+  allow public
+  from Article a
+  page 20 by keyset
+  select { id title }
+}

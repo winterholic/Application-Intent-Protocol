@@ -1,0 +1,18 @@
+search ClubSearch on Club fields [name weight A] language english
+query SearchClubs(q: Text(1..50, trim)) {
+  allow public
+  from ClubSearch.match(q) r
+  page 20 by keyset
+  select { id name rank: r.rank }
+}
+// every search field is text; weights are optional; no language means no stemming
+search MemberSearch on Member fields [nickname]
+query SearchMembers(q: Text(1..50)) {
+  allow authenticated
+  from MemberSearch.match(q) m
+  where m.role = USER
+  sort by m.nickname asc
+  page 20 by offset max page 5
+  select { id nickname }
+}
+// Korean is accepted; the backend warns that it matches by word prefix

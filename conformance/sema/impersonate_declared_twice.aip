@@ -1,0 +1,2 @@
+impersonate Member by actor.role = SUPER_ADMIN audited reason required ttl 30m
+impersonate Member by actor.role = SUPER_ADMIN audited reason required ttl 10m

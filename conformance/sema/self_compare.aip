@@ -1,0 +1,5 @@
+// ariari InviteService.createInviteAlarm: isHigherRoleTypeThan(clubMember, clubMember)
+command Invite(club: Club) {
+  allow membership(actor, club).role > membership(actor, club).role
+  do { set club.name = club.name }
+}

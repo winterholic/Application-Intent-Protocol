@@ -1,0 +1,1 @@
+entity Slot { club: Club  at: Time  no overlap (at) per club }

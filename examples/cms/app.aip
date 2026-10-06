@@ -1,0 +1,150 @@
+// CMS: a site's articles have a working version and a published one. Editors change the draft; readers only ever
+// see what was published, until an editor publishes again. Around that sit the rules that need the person to be
+// on record: terms they consented to (and must consent to again when the terms change), and support staff who
+// may act as a user for a limited time without being able to do what only the user may do.
+
+use postgres
+use auth
+use s3
+
+actor Member via auth.oidc(google) superuser when role = ROOT audited
+
+enum MemberRole { USER SUPPORT ROOT }
+
+entity Member personal {
+  track created
+  email: Email personal
+  name: Text(1..100)
+  role: MemberRole = USER
+  unique (email) else EMAIL_TAKEN
+}
+
+// the tenant: everything an article belongs to is inside one site
+entity Site {
+  track created
+  name: Text(1..100)
+  articles: Article[] via site
+}
+
+// who edits which site
+entity Editor {
+  track created
+  site: Site
+  member: Member  on erase cascade
+  unique (site, member) else ALREADY_EDITOR
+}
+
+relation editorOf(m: Member, s: Site) = exists Editor e where e.site = s and e.member = m
+
+// `publishable by` says who may publish and discard: PublishArticle and DiscardArticleDraft are generated
+entity Article {
+  track created, updated
+  site: Site
+  author: Member?  on erase anonymize
+  title: Text(1..200)
+  body: Text(1..20000)
+  reviewed: Bool = false
+  soft delete
+  tenant via site
+  publishable by editorOf(actor, site)
+}
+
+// ---------------------------------------------------------------- sites
+
+command CreateSite(name: Text(1..100, trim)) idempotent {
+  allow authenticated
+  do {
+    insert Site { name } as site
+    insert Editor { site, member: actor }
+  }
+  returns site { id name }
+}
+
+command AddEditor(site: Site, member: Member) {
+  allow editorOf(actor, site)
+  do { insert Editor { site, member } }
+}
+
+// ---------------------------------------------------------------- articles
+
+// writing needs the current terms (see `consent` below)
+command CreateArticle(site: Site, title: Text(1..200, trim), body: Text(1..20000)) idempotent {
+  allow editorOf(actor, site)
+  do { insert Article { site, author: actor, title, body } as article }
+  returns article { id title }
+}
+
+// edits the draft; readers keep seeing the published version
+command EditArticle(article: Article, title: Text(1..200, trim), body: Text(1..20000)) {
+  allow editorOf(actor, article.site)
+  do { set article.title = title, article.body = body }
+}
+
+// a deleted article is gone for readers at once: its published version goes with it
+command DeleteArticle(article: Article) {
+  allow editorOf(actor, article.site)
+  do { delete Article a where a = article }
+}
+
+// what readers see: the published versions
+query Articles(site: Site) {
+  allow public
+  from Article a
+  where a.site = site
+  sort by a.createdAt desc
+  page 50 by keyset
+  select { id title body }
+}
+
+query GetArticle(article: Article) {
+  allow public
+  from article
+  select { id title body }
+}
+
+// what editors see: the working versions, drafts included
+drafts query ArticleDrafts(site: Site) {
+  allow editorOf(actor, site)
+  from Article a
+  where a.site = site
+  sort by a.createdAt desc
+  page 50 by keyset
+  select { id title body reviewed }
+}
+
+approval ArticleReview for Article a {
+  approvers: Editor e
+  require 1 approvals
+  on approved do { set a.reviewed = true }
+  on rejected do { set a.reviewed = false }
+}
+
+// ---------------------------------------------------------------- the person on record
+
+// creating articles and listing drafts need the editor to have agreed to version 1 of the terms
+consent Terms version 1 required for [CreateArticle, ArticleDrafts]
+
+// support staff may act as a user for 30 minutes, with a reason that is kept; a session cannot be nested,
+// cannot lend the operator's own powers and cannot do what only the person may (consent, votes, their data)
+impersonate Member by actor.role = SUPPORT audited reason required ttl 30m
+
+command RenameMe(name: Text(1..100, trim)) {
+  allow authenticated
+  do { set actor.name = name }
+}
+
+command ExportMyData() {
+  allow authenticated
+  do { export personal data of actor to s3 notify actor }
+}
+
+command DeleteMyAccount() {
+  allow authenticated
+  do { erase actor }
+}
+
+// nobody passes this condition; only the superuser bypass does, and a session does not lend it
+command PurgeDrafts(site: Site) {
+  allow actor.name = "(nobody)"
+  do { update Article a where a.site = site and a.reviewed = false set title = "purged" }
+}

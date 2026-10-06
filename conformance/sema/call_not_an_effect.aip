@@ -1,0 +1,4 @@
+command C(club: Club) {
+  allow authenticated
+  do { notify_all(club.id) }
+}

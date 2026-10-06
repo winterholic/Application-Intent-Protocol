@@ -1,0 +1,115 @@
+// Shop: a small commerce backend, used to check AIP against a domain other
+// than AriAri (payments arrive by webhook, stock is shared, prices are edited
+// by several staff members).
+
+use postgres
+use auth
+use payments
+use notify
+
+actor Customer via auth.oidc(google) superuser when role = STAFF audited
+
+enum CustomerRole { USER STAFF }
+enum OrderStatus { PENDING PAID CANCELLED REFUNDED }
+
+// the part of Stripe's PaymentIntent this shop reads
+record PaymentMeta {
+  orderId: Uuid
+}
+
+record StripePaymentIntent {
+  id: Text
+  amount: Int
+  currency: Text
+  metadata: PaymentMeta
+}
+
+entity Customer {
+  track created
+  email: Email
+  role: CustomerRole = USER
+  unique (email) else EMAIL_TAKEN
+}
+
+entity Product {
+  track created, updated
+  // staff edit prices concurrently; a stale edit must not silently win
+  versioned
+  name: Text(1..100)
+  price: Int(0..100000000)
+  stock: Int(0..1000000)
+  featured: Bool = false
+  orders: Order[] via product
+  invariant out_of_stock: stock >= 0
+}
+
+// fires once when the last unit goes, and again only after a restock empties it anew
+rule SoldOut on Product p when p.stock = 0 do {
+  notify Customer c where c.role = STAFF via notify.template("sold-out") { product: p.name }
+}
+
+// the second paid order makes a product a bestseller; payments arrive by webhook
+rule Bestseller on Product p when count(p.orders o where o.status = PAID) >= 2 do {
+  set p.featured = true
+}
+
+command Restock(product: Product, quantity: Int(1..10000)) {
+  allow actor.role = STAFF
+  do { set product.stock += quantity }
+}
+
+entity Order {
+  track created
+  customer: Customer
+  product: Product  on delete restrict
+  quantity: Int(1..100)
+  amount: Int
+  status: OrderStatus = PENDING
+  paymentRef: Text?
+  paidAt: Time?
+  lifecycle status {
+    PENDING -> PAID, CANCELLED
+    PAID -> REFUNDED
+  }
+  visible to actor when customer = actor
+}
+
+query Catalog() {
+  allow public
+  from Product p
+  sort by p.name asc
+  page 50 by keyset
+  select { id version name price stock featured }
+}
+
+command PlaceOrder(product: Product, quantity: Int(1..100)) idempotent {
+  allow authenticated
+  do {
+    // relative update: concurrent orders never lose each other's decrement, and the CHECK refuses overselling
+    set product.stock -= quantity
+    insert Order { customer: actor, product, quantity, amount: product.price * quantity } as order
+  }
+  returns order { id amount status }
+}
+
+command UpdateProduct(product: Product, name: Text(1..100), price: Int(0..100000000)) {
+  allow actor.role = STAFF
+  do { set product.name = name, product.price = price }
+}
+
+query MyOrder(order: Order) {
+  allow authenticated
+  from order
+  select { id status amount paymentRef paidAt }
+}
+
+webhook StripePayments via payments.stripe.webhook {
+  on "payment_intent.succeeded"(pi: StripePaymentIntent) do {
+    update Order o where o.id = pi.metadata.orderId and o.status = PENDING
+      set status = PAID, paymentRef = pi.id, paidAt = now
+  }
+  on "payment_intent.payment_failed"(pi: StripePaymentIntent) do {
+    update Order o where o.id = pi.metadata.orderId and o.status = PENDING
+      set status = CANCELLED
+  }
+}

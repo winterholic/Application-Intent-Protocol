@@ -1,0 +1,4 @@
+command C(t: ClubMember) {
+  allow outranks(actor, t.club)
+  do { set t.status = ENDED }
+}

@@ -1,0 +1,32 @@
+// forms are anchored like intents: by the row an approval is about, and by the parameters of a job or a grant link
+entity Workspace { name: Text }
+entity Project {
+  workspace: Workspace
+  title: Text
+  tenant via workspace
+}
+entity Seat {
+  project: Project
+  member: Member  on erase cascade
+  role: ClubRole = GENERAL
+  tenant via project.workspace
+}
+relation seated(m: Member, p: Project): Seat = the Seat s where s.project = p and s.member = m
+grant link Invite {
+  grants: seated(holder, project) as GENERAL
+  scope: project: Project
+  issued by exists seated(actor, project)
+  expires 7d uses 5
+}
+job Tidy(workspace: Workspace) {
+  allow authenticated
+  progress over Project p where p.title = ""
+  do { set p.title = "untitled" }
+}
+approval Publish for Project p {
+  approvers: Seat s where s.role = ADMIN
+  requested by exists seated(actor, p)
+  require 1 approvals
+  on approved do { set p.title = "published" }
+  on rejected do { set p.title = "draft" }
+}

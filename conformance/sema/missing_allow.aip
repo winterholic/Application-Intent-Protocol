@@ -1,0 +1,4 @@
+// every intent must say who may call it
+command Rename(club: Club, name: Text) {
+  do { set club.name = name }
+}

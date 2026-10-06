@@ -1,0 +1,19 @@
+[package]
+name = "spike-v2-read"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# V2 호출자 읽기 수직 slice. 입력은 V1 typed facts뿐이다. 본 crates/에 의존하지 않는다.
+[workspace]
+
+[dependencies]
+chrono = { version = "0.4.45", default-features = false, features = ["std"] }
+spike-v1-fixture = { path = "../spike-v1-fixture" }
+serde_json = "1.0.151"
+tokio = { version = "1.53.1", features = ["rt", "macros"] }
+tokio-postgres = "0.7.18"
+tokio-postgres-rustls = { version = "0.14.0", default-features = false, features = ["ring"] }
+rustls = { version = "0.23.35", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "1.0.4"
+rustls-pemfile = "2.2.0"

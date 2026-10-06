@@ -1,0 +1,18 @@
+[package]
+name = "aip-prototype"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serde_json = "1.0.151"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "signal", "time"] }
+tokio-postgres = "0.7.18"
+spike-v1-fixture = { path = "../spikes/spike-v1-fixture" }
+spike-v2-read = { path = "../spikes/spike-v2-read" }
+spike-v5-sdk = { path = "../spikes/spike-v5-sdk" }
+spike-v11-dev-checks = { path = "../spikes/spike-v11-dev-checks" }
+spike-v6-transport = { path = "../spikes/spike-v6-transport" }

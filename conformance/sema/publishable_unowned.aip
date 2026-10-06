@@ -1,0 +1,4 @@
+entity Article {
+  title: Text
+  publishable
+}

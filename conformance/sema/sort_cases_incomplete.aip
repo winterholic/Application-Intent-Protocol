@@ -1,0 +1,8 @@
+enum Order2 { NEW OLD }
+query Clubs(sort: Order2) {
+  allow public
+  from Club c
+  sort by sort of { NEW: c.name asc }
+  page 20 by keyset
+  select { id name }
+}

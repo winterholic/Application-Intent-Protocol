@@ -1,0 +1,2 @@
+entity Post { comments: Comment[] via post }
+entity Comment { article: Post }

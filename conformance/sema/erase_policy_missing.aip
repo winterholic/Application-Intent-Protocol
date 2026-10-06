@@ -1,0 +1,2 @@
+// ariari UnregisterService: 8 repositories updated by hand; a new reference could be forgotten
+entity Comment { author: Member  body: Text }

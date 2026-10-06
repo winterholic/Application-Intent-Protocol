@@ -1,0 +1,5 @@
+// two equal values have two different ciphertexts, so the database cannot see the duplicate
+entity Vault {
+  note: Text encrypted
+  unique (note)
+}

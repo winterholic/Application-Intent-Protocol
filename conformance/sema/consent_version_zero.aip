@@ -1,0 +1,5 @@
+command Rename(club: Club, name: Text) {
+  allow authenticated
+  do { set club.name = name }
+}
+consent Terms version 0 required for [Rename]

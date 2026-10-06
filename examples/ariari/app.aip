@@ -1,0 +1,1075 @@
+// AriAri (동아리 모집·운영 플랫폼) backend, expressed in AIP.
+// Source of truth for behaviour: projects/ariari/ariari-backend (Spring, 2024).
+// Every intent here corresponds to a service method there; defects found in the
+// original are noted where the AIP form makes them inexpressible.
+
+use postgres
+use redis
+use s3
+use mail
+use auth
+use notify
+
+actor Member via auth.oidc(kakao) superuser when role = SUPER_ADMIN audited
+
+// ---------------------------------------------------------------- enums
+
+enum MemberRole { USER SUPER_ADMIN }
+enum ClubRole ordered { GENERAL < MANAGER < ADMIN }
+enum Settlement { OPEN SETTLED DISPUTED }
+enum MemberStatus { ACTIVE ENDED }
+enum Affiliation { INTERNAL UNION }
+enum Field { CULTURE VOLUNTEER ACADEMIC STARTUP CAREER SPORTS SOCIAL ETC }
+enum Region { ANY CAPITAL CHUNGCHEONG GYEONGNAM GYEONGBUK JEOLLA GANGWON JEONBUK JEJU OVERSEAS }
+enum Target { UNDERGRADUATE GRADUATE WORKER }
+enum RecruitmentStatus { PENDING_APPROVAL PUBLISHED CLOSED }
+enum ApplyStatus { PENDING INTERVIEW APPROVED REFUSED }
+enum AccessType { PUBLIC CLUB_ONLY }
+enum QuestionKind { TEXT CHOICE FILE }
+enum ReportTarget { CLUB_REVIEW PASS_REVIEW QUESTION COMMENT }
+enum ReportStatus { OPEN RESOLVED DISMISSED }
+enum RecruitmentSort { LATEST VIEWS SCRAPS OLDEST DEADLINE }
+
+record Question {
+  key: Text(1..40)
+  label: Text(1..200)
+  kind: QuestionKind
+  required: Bool
+  maxLength: Int(1..5000)?
+  choices: List<Text(1..100)> max 20
+  check when kind = CHOICE: count(choices) > 0 else CHOICE_QUESTION_NEEDS_CHOICES
+}
+
+record RecruitmentInput {
+  title: Text(1..100, trim)
+  body: RichText(policy: basic)
+  period: Range<Time>
+  field: Field
+  region: Region
+  target: Target
+  externalUrl: Url?
+}
+
+record RecruitmentFilter {
+  fields: List<Field> max 8
+  regions: List<Region> max 10
+  targets: List<Target> max 3
+  affiliations: List<Affiliation> max 2
+}
+
+// ---------------------------------------------------------------- members & schools
+
+entity School {
+  name: Text(1..50)
+  emailDomain: Text(3..100, lower)
+  unique (emailDomain) else SCHOOL_DOMAIN_TAKEN
+}
+
+entity Member personal {
+  track created, updated
+  email: Email personal encrypted visible to self
+  nickname: Text(2..20, trim)
+  kakaoId: Text personal
+  role: MemberRole = USER
+  school: School?  on delete set null
+  profile: s3.Object?
+  unique (nickname) else NICKNAME_TAKEN
+  unique (kakaoId) else ALREADY_REGISTERED
+}
+
+entity Block {
+  track created
+  blocker: Member  on erase cascade
+  blocked: Member  on erase cascade
+  unique (blocker, blocked) else ALREADY_BLOCKED
+  invariant not_self: blocker != blocked
+}
+
+relation blocked(a: Member, b: Member) = exists Block x where x.blocker = a and x.blocked = b
+
+verification SchoolEmail {
+  subject: Member
+  target: Email where exists School s where s.emailDomain = domain(target)
+  code: digits 6 ttl 10m attempts 5 resend after 60s
+  deliver via mail.template("school-code")
+  on verified(m, email) do {
+    set m.school = the School s where s.emailDomain = domain(email)
+  }
+}
+
+// ---------------------------------------------------------------- clubs
+
+entity Club {
+  track created
+  name: Text(1..30, trim)
+  intro: Text(0..1000)
+  school: School?  on delete restrict
+  affiliation: Affiliation
+  field: Field
+  region: Region
+  target: Target
+  profile: s3.Object?
+  banner: s3.Object?
+  views: Int counter via redis dedupe by client within 1d window 14d
+  members: ClubMember[] via club
+  bookmarks: ClubBookmark[] via club
+  invariant school_matches_affiliation: (affiliation = INTERNAL) = (school != null)
+  visible to actor when school = null or actor.school = school
+}
+
+entity ClubMember {
+  track created
+  club: Club  on delete cascade
+  // a membership means nothing without its member: erasing the member removes it,
+  // and the ADMIN invariant below repairs the club
+  member: Member?  on erase cascade
+  name: Text(1..20, trim)
+  role: ClubRole = GENERAL
+  status: MemberStatus = ACTIVE
+  unique (club, member) else ALREADY_CLUB_MEMBER
+  exactly one where role = ADMIN per club
+    repair on erase do {
+      let heir = first ClubMember m where m.club = club and m.status = ACTIVE and m.member != null
+                 order by m.role desc, m.createdAt asc
+      when heir != null: set heir.role = ADMIN
+      when heir = null: delete Club c where c = club
+    }
+}
+
+relation membership(m: Member, c: Club): ClubMember
+  = the ClubMember cm where cm.club = c and cm.member = m
+
+relation managerOf(m: Member, c: Club) = membership(m, c).role >= MANAGER
+relation adminOf(m: Member, c: Club) = membership(m, c).role = ADMIN
+relation outranks(m: Member, t: ClubMember) = membership(m, t.club).role > t.role
+
+entity ClubBookmark {
+  track created
+  club: Club  on delete cascade
+  member: Member  on erase cascade
+  unique (club, member) else ALREADY_BOOKMARKED
+}
+
+command CreateClub(input: ClubInput, adminName: Text(1..20), profile: Upload(max 5MB, types [png, jpg, webp])?) idempotent {
+  allow authenticated
+  require when input.affiliation = INTERNAL: actor.school != null else SCHOOL_AUTH_REQUIRED
+  do {
+    insert Club {
+      ...input,
+      school: if input.affiliation = INTERNAL then actor.school else null
+    } as club
+    insert ClubMember { club, member: actor, name: adminName, role: ADMIN }
+    insert ApplyForm { club, questions: [] }
+    when profile: s3.put(profile, bucket: "club") into club.profile
+  }
+  returns club { id name }
+}
+
+record ClubInput {
+  name: Text(1..30, trim)
+  intro: Text(0..1000)
+  affiliation: Affiliation
+  field: Field
+  region: Region
+  target: Target
+}
+
+command UpdateClub(club: Club, input: ClubInput,
+                   profile: Upload(max 5MB, types [png, jpg, webp])?,
+                   banner: Upload(max 5MB, types [png, jpg, webp])?) {
+  allow managerOf(actor, club)
+  require input.affiliation = club.affiliation else AFFILIATION_IMMUTABLE
+  do {
+    set club.name = input.name, club.intro = input.intro, club.field = input.field,
+        club.region = input.region, club.target = input.target
+    when profile: s3.put(profile, bucket: "club") into club.profile
+    when banner: s3.put(banner, bucket: "club") into club.banner
+  }
+}
+
+command DeleteClub(club: Club) {
+  allow adminOf(actor, club) else ONLY_ADMIN_CAN_DELETE
+  require count(club.members) = 1 else CLUB_HAS_OTHER_MEMBERS
+  do { delete Club c where c = club }
+  emit ClubClosed { club: club.id, name: club.name }
+}
+
+on ClubClosed e
+  notify ClubBookmark b where b.club = e.club via notify.template("club-closed") { name: e.name }
+
+query ClubDetail(club: Club) {
+  allow public
+  from club
+  select {
+    id name intro affiliation field region target profile banner views
+    school { name }
+    bookmarkCount: count(club.bookmarks)
+    myMembership: membership(actor, club) { id name role status }
+    isBookmarked: exists ClubBookmark b where b.club = club and b.member = actor
+  }
+  touch club.views
+}
+
+query ClubList(filter: RecruitmentFilter, sort: RecruitmentSort = LATEST) {
+  allow public
+  from Club c
+  where c.field in filter.fields and c.region in filter.regions
+    and c.target in filter.targets and c.affiliation in filter.affiliations
+  sort by sort of {
+    LATEST: c.createdAt desc
+    VIEWS: c.views desc
+    SCRAPS: count(c.bookmarks) desc
+    OLDEST: c.createdAt asc
+    DEADLINE: c.createdAt desc
+  }
+  page 20 by keyset
+  select { id name profile field region target affiliation bookmarkCount: count(c.bookmarks) }
+}
+
+query MyAdminSchoolClubs limit 50 per 1m per actor {
+  allow authenticated
+  from ClubMember cm
+  where cm.member = actor and cm.role = ADMIN and cm.club.school != null
+  page 50 by keyset
+  select { club { id name } }
+}
+
+command ToggleClubBookmark(club: Club) {
+  allow authenticated
+  do { toggle ClubBookmark { club, member: actor } }
+}
+
+// ---------------------------------------------------------------- club members
+
+query ClubMembers(club: Club, status: MemberStatus?, q: Text(0..20)?) {
+  allow managerOf(actor, club)
+  from ClubMember cm
+  where cm.club = club and (status = null or cm.status = status) and (q = null or contains(cm.name, q))
+  sort by cm.role desc, cm.name asc
+  page 30 by offset max page 100
+  select { id name role status member { nickname profile } }
+}
+
+command ChangeMemberRole(target: ClubMember, role: ClubRole) {
+  allow adminOf(actor, target.club)
+  require role != ADMIN else USE_ENTRUST_FOR_ADMIN
+  require target.member != actor else CANNOT_CHANGE_OWN_ROLE
+  do { set target.role = role }
+  emit ClubRoleChanged { member: target, role }
+}
+
+command EntrustAdmin(target: ClubMember) {
+  allow adminOf(actor, target.club)
+  require target.member != actor else CANNOT_ENTRUST_TO_SELF
+  require target.status = ACTIVE else ENTRUST_TARGET_INACTIVE
+  do {
+    set membership(actor, target.club).role = GENERAL
+    set target.role = ADMIN
+  }
+}
+
+command ChangeMemberStatus(targets: Set<ClubMember> max 200, newStatus: MemberStatus) {
+  let club = same(targets t: t.club) else MEMBERS_FROM_DIFFERENT_CLUBS
+  allow managerOf(actor, club) and all(targets t: outranks(actor, t))
+  do { update targets set status = newStatus }
+  emit ClubMemberStatusChanged { club, status: newStatus }
+}
+
+command RemoveClubMember(target: ClubMember) {
+  allow managerOf(actor, target.club) and outranks(actor, target)
+  do { delete ClubMember m where m = target }
+  emit ClubMemberRemoved { club: target.club, member: target.member }
+}
+
+command QuitClub(club: Club) {
+  let me = membership(actor, club) else NOT_CLUB_MEMBER
+  allow authenticated
+  require me.role != ADMIN else ADMIN_MUST_ENTRUST_FIRST
+  do { delete ClubMember m where m = me }
+  emit ClubMemberQuit { club, name: me.name }
+}
+
+command CancelSchoolAuth() {
+  allow authenticated
+  require not exists ClubMember cm where cm.member = actor and cm.club.school = actor.school and cm.role = ADMIN
+    else ADMIN_OF_SCHOOL_CLUB
+  do {
+    delete ClubMember cm where cm.member = actor and cm.club.school = actor.school
+    set actor.school = null
+  }
+}
+
+grant link ClubInvite {
+  grants: membership(holder, club) as GENERAL
+  scope: club: Club
+  issued by exists membership(actor, club)
+  expires 7d uses 100
+  redeem with (name: Text(1..20, trim))
+  require club.school = null or holder.school = club.school else SCHOOL_MISMATCH
+}
+
+grant link DirectInvite {
+  grants: membership(holder, club) as GENERAL
+  scope: club: Club, invitee: Member
+  issued by managerOf(actor, club)
+  to invitee
+  expires 7d uses 1
+  redeem with (name: Text(1..20, trim))
+  require club.school = null or invitee.school = club.school else SCHOOL_MISMATCH
+}
+
+// ---------------------------------------------------------------- recruitment
+
+entity ApplyForm {
+  track created
+  history
+  club: Club  on delete cascade
+  questions: List<Question> max 50
+  dynamic schema from questions
+}
+
+entity Recruitment {
+  track created
+  club: Club  on delete cascade
+  title: Text(1..100)
+  body: RichText(policy: basic)
+  poster: s3.Object?
+  period: Range<Time>
+  field: Field
+  region: Region
+  target: Target
+  externalUrl: Url?
+  status: RecruitmentStatus = PENDING_APPROVAL
+  earlyClosed: Bool = false
+  form: Snapshot<ApplyForm>
+  views: Int counter via redis dedupe by client within 1d window 14d
+  bookmarks: RecruitmentBookmark[] via recruitment
+  applies: Apply[] via recruitment
+  no overlap (period) per club else RECRUITMENT_PERIOD_OVERLAP
+  lifecycle status {
+    PENDING_APPROVAL -> PUBLISHED
+    PUBLISHED -> CLOSED
+  }
+  predicate open = status = PUBLISHED and not earlyClosed and now in period
+  visible to actor when club.school = null or actor.school = club.school
+}
+
+entity RecruitmentBookmark {
+  track created
+  recruitment: Recruitment  on delete cascade
+  member: Member  on erase cascade
+  unique (recruitment, member) else ALREADY_BOOKMARKED
+}
+
+command CreateRecruitment(club: Club, input: RecruitmentInput,
+                          poster: Upload(max 10MB, types [png, jpg, webp])?) idempotent {
+  allow managerOf(actor, club)
+  require exists ApplyForm f where f.club = club else NO_APPLY_FORM
+  do {
+    insert Recruitment {
+      club, ...input,
+      form: snapshot(latest ApplyForm f where f.club = club by f.createdAt)
+    } as r
+    when poster: s3.put(poster, bucket: "recruitment") into r.poster
+  }
+  emit RecruitmentCreated { recruitment: r }
+  returns r { id }
+}
+
+command ApproveRecruitment(r: Recruitment) audited {
+  allow actor.role = SUPER_ADMIN
+  do { set r.status = PUBLISHED }
+  emit RecruitmentOpened { recruitment: r }
+}
+
+on RecruitmentOpened e
+  notify ClubBookmark b where b.club = e.recruitment.club via notify.template("club-recruitment-opened")
+    { club: e.recruitment.club.name }
+    respecting preferences(category: RECRUITMENT)
+
+command CloseRecruitmentEarly(r: Recruitment) {
+  allow managerOf(actor, r.club)
+  require r is open else RECRUITMENT_NOT_OPEN
+  do { set r.earlyClosed = true }
+  emit RecruitmentClosed { recruitment: r }
+}
+
+on RecruitmentClosed e do {
+  notify RecruitmentBookmark b where b.recruitment = e.recruitment via notify.template("recruitment-closed")
+    { title: e.recruitment.title }
+  notify ApplyDraft d where d.recruitment = e.recruitment via notify.template("draft-recruitment-closed")
+    { title: e.recruitment.title }
+}
+
+command DeleteRecruitment(r: Recruitment) {
+  allow managerOf(actor, r.club)
+  require not exists Apply a where a.recruitment = r else RECRUITMENT_HAS_APPLIES
+  do { delete Recruitment x where x = r }
+}
+
+query RecruitmentDetail(r: Recruitment) {
+  allow public
+  from r
+  select {
+    id title body poster period field region target externalUrl status views
+    open: r is open
+    club { id name profile school { name } }
+    bookmarkCount: count(r.bookmarks)
+    isMyClub: exists membership(actor, r.club)
+    isMyApply: exists Apply a where a.recruitment = r and a.member = actor
+    myLatestDraft: (latest ApplyDraft d where d.recruitment = r and d.member = actor by d.createdAt).id
+  }
+  touch r.views
+}
+
+query RecruitmentList(filter: RecruitmentFilter, sort: RecruitmentSort = LATEST) {
+  allow public
+  from Recruitment r
+  where r is open and r.field in filter.fields and r.region in filter.regions
+    and r.target in filter.targets and r.club.affiliation in filter.affiliations
+  sort by sort of {
+    LATEST: r.createdAt desc
+    VIEWS: r.views desc
+    SCRAPS: count(r.bookmarks) desc
+    OLDEST: r.createdAt asc
+    DEADLINE: r.period.end asc
+  }
+  page 20 by keyset
+  select {
+    id title poster period field region target
+    club { name affiliation }
+    bookmarkCount: count(r.bookmarks)
+    isBookmarked: exists RecruitmentBookmark b where b.recruitment = r and b.member = actor
+  }
+}
+
+query ClubActiveRecruitment(club: Club) limit 30 per 1m per client {
+  allow public
+  from Recruitment r
+  where r.club = club and r is open
+  page 10 by keyset
+  select { id title period }
+}
+
+command ToggleRecruitmentBookmark(r: Recruitment) {
+  allow authenticated
+  do { toggle RecruitmentBookmark { recruitment: r, member: actor } }
+}
+
+schedule RecruitmentDeadlineReminder every day at 00:00 tz "Asia/Seoul" {
+  for Recruitment r where r is open and (r.period.end in [today + 1d, today + 2d) or r.period.end in [today + 7d, today + 8d))
+  notify RecruitmentBookmark b where b.recruitment = r via notify.template("recruitment-deadline")
+    { title: r.title, days: days_until(r.period.end) }
+}
+
+// ---------------------------------------------------------------- applications
+
+command UpdateApplyForm(club: Club, questions: List<Question> max 50) {
+  allow managerOf(actor, club)
+  do { update ApplyForm f where f.club = club set questions = questions }
+}
+
+entity Apply {
+  track created
+  member: Member  on erase cascade
+  recruitment: Recruitment  on delete restrict
+  form: Snapshot<ApplyForm>
+  answers: Json validated by form
+  portfolioUrl: Url?
+  file: s3.Object?
+  status: ApplyStatus = PENDING
+  unique (member, recruitment) else ALREADY_APPLIED
+  lifecycle status {
+    PENDING -> INTERVIEW
+    PENDING, INTERVIEW -> APPROVED, REFUSED
+  }
+  visible to actor when member = actor or managerOf(actor, recruitment.club)
+}
+
+// 지원자 목록 내보내기: 운영진만, 진행률 조회 가능, 파일은 7일 뒤 삭제, 끝나면 요청자에게 알림
+job ExportApplicants(recruitment: Recruitment) {
+  allow managerOf(actor, recruitment.club)
+  progress over Apply a where a.recruitment = recruitment
+  produce csv to s3 bucket "exports" expires 7d
+  notify actor via notify.template("export-ready")
+}
+
+// 대기 중인 지원을 일괄 불합격 처리. 건마다 lifecycle 규칙이 그대로 적용된다
+job RefuseRemaining(recruitment: Recruitment) {
+  allow managerOf(actor, recruitment.club)
+  progress over Apply a where a.recruitment = recruitment and a.status = PENDING
+  do { set a.status = REFUSED }
+  notify actor via notify.template("bulk-refused")
+}
+
+retain Apply for 6mo after recruitment.period.end
+  then purge
+  notify member 7d before via mail.template("apply-expiring")
+
+entity ApplyDraft {
+  track created, updated
+  member: Member  on erase cascade
+  recruitment: Recruitment  on delete cascade
+  answers: Json
+  portfolioUrl: Url?
+  file: s3.Object?
+  visible to actor when member = actor
+}
+
+relation schoolVerified(m: Member, s: School?) = s = null or m.school = s
+
+command SubmitApply(r: Recruitment, answers: Json, portfolioUrl: Url?,
+                    file: Upload(max 20MB, types [pdf, png, jpg, zip])?) idempotent {
+  allow schoolVerified(actor, r.club.school) and not exists membership(actor, r.club)
+  require r is open else RECRUITMENT_CLOSED
+  do {
+    insert Apply { member: actor, recruitment: r, form: r.form, answers, portfolioUrl } as apply
+    when file: s3.put(file, bucket: "apply") into apply.file
+  }
+  emit ApplySubmitted { apply }
+  returns apply { id status }
+}
+
+on ApplySubmitted e
+  notify ClubMember m where m.club = e.apply.recruitment.club and m.role >= MANAGER
+    via notify.template("new-apply") { title: e.apply.recruitment.title }
+    digest every 1h
+
+command SaveApplyDraft(r: Recruitment, answers: Json, portfolioUrl: Url?,
+                       file: Upload(max 20MB, types [pdf, png, jpg, zip])?) idempotent {
+  allow schoolVerified(actor, r.club.school) and not exists membership(actor, r.club)
+  require r is open else RECRUITMENT_CLOSED
+  do {
+    insert ApplyDraft { member: actor, recruitment: r, answers, portfolioUrl } as draft
+    when file: s3.put(file, bucket: "apply-draft") into draft.file
+  }
+  returns draft { id }
+}
+
+command UpdateApplyDraft(draft: ApplyDraft, answers: Json, portfolioUrl: Url?,
+                         file: Upload(max 20MB, types [pdf, png, jpg, zip])?) {
+  allow draft.member = actor
+  do {
+    set draft.answers = answers, draft.portfolioUrl = portfolioUrl
+    when portfolioUrl != null: set draft.file = null
+    when file: s3.put(file, bucket: "apply-draft") into draft.file
+  }
+}
+
+command DeleteApplyDraft(draft: ApplyDraft) {
+  allow draft.member = actor
+  do { delete ApplyDraft d where d = draft }
+}
+
+query MyApplyDrafts {
+  allow authenticated
+  from ApplyDraft d
+  where d.member = actor
+  sort by d.updatedAt desc
+  page 20 by keyset
+  select { id updatedAt recruitment { id title period } }
+}
+
+query ApplyDetail(apply: Apply) {
+  allow apply.member = actor or managerOf(actor, apply.recruitment.club)
+  from apply
+  select { id status answers portfolioUrl file createdAt member { nickname } recruitment { id title } form }
+}
+
+query RecruitmentApplies(r: Recruitment, status: ApplyStatus?) {
+  allow managerOf(actor, r.club)
+  from Apply a
+  where a.recruitment = r and (status = null or a.status = status)
+  sort by a.createdAt asc
+  page 50 by offset max page 200
+  select { id status createdAt member { nickname } }
+}
+
+query MyApplies {
+  allow authenticated
+  from Apply a
+  where a.member = actor
+  sort by a.createdAt desc
+  page 20 by keyset
+  select { id status createdAt recruitment { id title club { name } } }
+}
+
+command MoveToInterview(applies: Set<Apply> max 100, message: Text(0..500)) {
+  let club = same(applies a: a.recruitment.club) else APPLIES_FROM_DIFFERENT_CLUBS
+  allow managerOf(actor, club)
+  do { update applies set status = INTERVIEW }
+  emit AppliesDecided { club, status: INTERVIEW, message }
+}
+
+command ApproveApplies(applies: Set<Apply> max 100) {
+  let club = same(applies a: a.recruitment.club) else APPLIES_FROM_DIFFERENT_CLUBS
+  allow managerOf(actor, club)
+  do {
+    update applies set status = APPROVED
+    insert ClubMember from applies a { club, member: a.member, name: a.member.nickname, role: GENERAL }
+  }
+  emit AppliesDecided { club, status: APPROVED, message: "" }
+}
+
+command RefuseApplies(applies: Set<Apply> max 100) {
+  let club = same(applies a: a.recruitment.club) else APPLIES_FROM_DIFFERENT_CLUBS
+  allow managerOf(actor, club)
+  do { update applies set status = REFUSED }
+  emit AppliesDecided { club, status: REFUSED, message: "" }
+}
+
+command WithdrawApply(apply: Apply) {
+  allow apply.member = actor
+  require apply.createdAt + 1mo < now else WITHDRAW_TOO_EARLY
+  do { delete Apply a where a = apply }
+}
+
+schedule WeeklyPendingApplies every week on mon at 00:00 tz "Asia/Seoul" {
+  for Recruitment r where exists Apply a where a.recruitment = r and a.status = PENDING
+  notify ClubMember m where m.club = r.club and m.role >= MANAGER via notify.template("pending-applies")
+    { title: r.title, count: count(r.applies a where a.status = PENDING) }
+}
+
+schedule DraftDeadlineReminder every day at 00:00 tz "Asia/Seoul" {
+  for ApplyDraft d where d.recruitment is open and d.recruitment.period.end in [now, now + 1d)
+  notify d.member via notify.template("draft-deadline") { title: d.recruitment.title }
+}
+
+// ---------------------------------------------------------------- activities & comments
+
+entity ClubActivity {
+  track created, updated
+  club: Club  on delete cascade
+  author: Member?  on erase anonymize
+  access: AccessType
+  body: Text(1..5000)
+  images: ActivityImage[] via activity
+  likes: ActivityLike[] via activity
+  comments: ActivityComment[] via activity
+  visible to actor when access = PUBLIC or exists membership(actor, club)
+}
+
+entity ActivityImage {
+  activity: ClubActivity  on delete cascade
+  image: s3.Object
+  capacity count(ActivityImage i where i.activity = activity) <= 10 else TOO_MANY_IMAGES
+}
+
+entity ActivityLike {
+  activity: ClubActivity  on delete cascade
+  member: Member  on erase cascade
+  unique (activity, member) else ALREADY_LIKED
+}
+
+entity ActivityComment {
+  track created, updated
+  activity: ClubActivity  on delete cascade
+  author: Member?  on erase anonymize
+  parent: ActivityComment?  tree max depth 2  on delete cascade
+  body: Text(1..1000)
+  likes: CommentLike[] via comment
+  invariant same_activity: parent = null or parent.activity = activity
+  visible to actor unless blocked(actor, author) or blocked(author, actor)
+}
+
+entity CommentLike {
+  comment: ActivityComment  on delete cascade
+  member: Member  on erase cascade
+  unique (comment, member) else ALREADY_LIKED
+}
+
+command PostActivity(club: Club, access: AccessType, body: Text(1..5000),
+                     images: List<Upload(max 10MB, types [png, jpg, webp])> max 10) idempotent {
+  allow managerOf(actor, club)
+  do {
+    insert ClubActivity { club, author: actor, access, body } as activity
+    each images img partial {
+      insert ActivityImage { activity } as i
+      s3.put(img, bucket: "club-activity") into i.image
+    }
+  }
+  emit ActivityPosted { activity }
+}
+
+command EditActivity(activity: ClubActivity, access: AccessType, body: Text(1..5000),
+                     removeImages: Set<ActivityImage> max 10,
+                     addImages: List<Upload(max 10MB, types [png, jpg, webp])> max 10) {
+  allow managerOf(actor, activity.club)
+  require all(removeImages i: i.activity = activity) else IMAGE_NOT_IN_ACTIVITY
+  do {
+    set activity.access = access, activity.body = body
+    delete removeImages
+    each addImages img partial {
+      insert ActivityImage { activity } as i
+      s3.put(img, bucket: "club-activity") into i.image
+    }
+  }
+}
+
+command DeleteActivity(activity: ClubActivity) {
+  allow managerOf(actor, activity.club)
+  do { delete ClubActivity a where a = activity }
+}
+
+command ToggleActivityLike(activity: ClubActivity) {
+  allow authenticated
+  do { toggle ActivityLike { activity, member: actor } }
+}
+
+query ClubActivities(club: Club) {
+  allow public
+  from ClubActivity a
+  where a.club = club
+  sort by a.createdAt desc
+  page 10 by keyset
+  select {
+    id access body createdAt
+    author { nickname }
+    images { image }
+    likeCount: count(a.likes)
+    commentCount: count(a.comments)
+    liked: exists ActivityLike l where l.activity = a and l.member = actor
+  }
+}
+
+query ActivityDetail(activity: ClubActivity) {
+  allow public
+  from activity
+  select {
+    id access body createdAt
+    author { nickname }
+    images { image }
+    likeCount: count(activity.likes)
+    liked: exists ActivityLike l where l.activity = activity and l.member = actor
+    comments {
+      id body createdAt parent
+      author { nickname }
+      likeCount: count(likes)
+    }
+  }
+}
+
+command PostComment(activity: ClubActivity, parent: ActivityComment?, body: Text(1..1000)) idempotent {
+  allow exists membership(actor, activity.club)
+  do { insert ActivityComment { activity, parent, author: actor, body } as comment }
+  emit CommentPosted { comment }
+}
+
+on CommentPosted e when e.comment.parent != null
+  notify e.comment.parent.author via notify.template("comment-reply")
+
+command EditComment(comment: ActivityComment, body: Text(1..1000)) {
+  allow comment.author = actor
+  do { set comment.body = body }
+}
+
+command DeleteComment(comment: ActivityComment) {
+  allow comment.author = actor or managerOf(actor, comment.activity.club)
+  do { delete ActivityComment c where c = comment }
+}
+
+command ToggleCommentLike(comment: ActivityComment) {
+  allow exists membership(actor, comment.activity.club)
+  do { toggle CommentLike { comment, member: actor } }
+}
+
+command BlockAuthor(comment: ActivityComment) {
+  allow authenticated
+  require comment.author != null else AUTHOR_UNAVAILABLE
+  do { insert Block { blocker: actor, blocked: comment.author } }
+}
+
+// ---------------------------------------------------------------- notices, Q&A, FAQ
+
+entity ClubNotice {
+  track created, updated
+  // 운영진 여럿이 같은 공지를 고칠 때 나중 저장이 앞 저장을 조용히 덮지 않게 한다
+  versioned
+  club: Club  on delete cascade
+  author: Member?  on erase anonymize
+  title: Text(1..100)
+  body: Text(1..5000)
+  fixed: Bool = false
+  images: NoticeImage[] via notice
+  capacity count(ClubNotice n where n.club = club and n.fixed) <= 3 else TOO_MANY_FIXED_NOTICES
+  visible to actor when exists membership(actor, club)
+}
+
+entity NoticeImage {
+  notice: ClubNotice  on delete cascade
+  image: s3.Object
+}
+
+command PostNotice(club: Club, title: Text(1..100), body: Text(1..5000),
+                   images: List<Upload(max 10MB, types [png, jpg, webp])> max 10) idempotent {
+  allow managerOf(actor, club)
+  do {
+    insert ClubNotice { club, author: actor, title, body } as notice
+    each images img partial {
+      insert NoticeImage { notice } as i
+      s3.put(img, bucket: "club-notice") into i.image
+    }
+  }
+  emit NoticePosted { notice }
+}
+
+on NoticePosted e
+  notify ClubMember m where m.club = e.notice.club and m.member != null via notify.template("club-notice")
+    { club: e.notice.club.name }
+
+command EditNotice(notice: ClubNotice, title: Text(1..100), body: Text(1..5000)) {
+  allow managerOf(actor, notice.club)
+  do { set notice.title = title, notice.body = body }
+}
+
+command DeleteNotice(notice: ClubNotice) {
+  allow managerOf(actor, notice.club)
+  do { delete ClubNotice n where n = notice }
+}
+
+command ToggleNoticeFixed(notice: ClubNotice) {
+  allow managerOf(actor, notice.club)
+  do { set notice.fixed = not notice.fixed }
+}
+
+query ClubNotices(club: Club) {
+  allow exists membership(actor, club)
+  from ClubNotice n
+  where n.club = club
+  sort by n.fixed desc, n.createdAt desc
+  page 20 by offset max page 100
+  select { id title fixed createdAt author { nickname } }
+}
+
+query NoticeDetail(notice: ClubNotice) {
+  allow public
+  from notice
+  select { id version title body fixed createdAt author { nickname } images { image } }
+}
+
+entity ClubQuestion {
+  track created
+  club: Club  on delete cascade
+  author: Member?  on erase anonymize
+  title: Text(1..100)
+  body: Text(1..2000)
+  answer: Text(1..2000)?
+  answeredBy: Member?  on erase anonymize
+}
+
+command AskQuestion(club: Club, title: Text(1..100), body: Text(1..2000)) {
+  allow authenticated
+  do { insert ClubQuestion { club, author: actor, title, body } }
+}
+
+command AnswerQuestion(q: ClubQuestion, answer: Text(1..2000)) {
+  allow managerOf(actor, q.club)
+  require q.answer = null else ALREADY_ANSWERED
+  do { set q.answer = answer, q.answeredBy = actor }
+  emit QuestionAnswered { question: q }
+}
+
+on QuestionAnswered e when e.question.author != null
+  notify e.question.author via notify.template("question-answered")
+
+query ClubQuestions(club: Club) {
+  allow public
+  from ClubQuestion q
+  where q.club = club
+  sort by q.createdAt desc
+  page 20 by keyset
+  select { id title body answer createdAt author { nickname } }
+}
+
+entity ClubFaq {
+  club: Club  on delete cascade
+  question: Text(1..200)
+  answer: Text(1..2000)
+  rank: Text position within club
+}
+
+expose ClubFaq {
+  read: visible
+  create: adminOf(actor, club) fields [club, question, answer]
+  update: adminOf(actor, club) fields [question, answer]
+  delete: adminOf(actor, club)
+}
+
+// ---------------------------------------------------------------- reviews & reports
+
+entity ClubReview {
+  track created
+  club: Club  on delete cascade
+  author: Member?  on erase anonymize
+  title: Text(1..100)
+  body: Text(1..3000)
+  tags: List<Text(1..20)> max 10
+  soft delete retain 3mo
+}
+
+entity PassReview {
+  track created
+  recruitment: Recruitment  on delete cascade
+  author: Member?  on erase anonymize
+  title: Text(1..100)
+  body: Text(1..3000)
+  generation: Int(1..)
+  soft delete retain 3mo
+}
+
+command WriteClubReview(club: Club, title: Text(1..100), body: Text(1..3000), tags: List<Text(1..20)> max 10) {
+  allow exists membership(actor, club)
+  do { insert ClubReview { club, author: actor, title, body, tags } }
+}
+
+command WritePassReview(r: Recruitment, title: Text(1..100), body: Text(1..3000), generation: Int(1..)) {
+  allow exists Apply a where a.recruitment = r and a.member = actor and a.status = APPROVED
+  do { insert PassReview { recruitment: r, author: actor, title, body, generation } }
+}
+
+entity Report {
+  track created
+  reporter: Member?  on erase anonymize
+  target: ref ClubReview | PassReview | ClubQuestion | ActivityComment
+  reason: Text(1..500)
+  status: ReportStatus = OPEN
+  unique (reporter, target) else ALREADY_REPORTED
+  lifecycle status {
+    OPEN -> RESOLVED, DISMISSED
+  }
+}
+
+command ReportContent(target: ref ClubReview | PassReview | ClubQuestion | ActivityComment, reason: Text(1..500)) {
+  allow authenticated
+  do { insert Report { reporter: actor, target, reason } }
+}
+
+command ResolveReport(report: Report, remove: Bool) audited {
+  allow actor.role = SUPER_ADMIN
+  do {
+    set report.status = if remove then RESOLVED else DISMISSED
+    when remove: delete report.target
+  }
+}
+
+// ---------------------------------------------------------------- finance
+
+entity FinancialRecord {
+  track created
+  club: Club  on delete cascade
+  at: Time
+  amount: Money(KRW)
+  memo: Text(1..200)
+  settlement: Settlement = OPEN
+  history
+  visible to actor when exists membership(actor, club)
+}
+
+// 정산 확정은 요청자를 제외한 운영진 두 명의 승인이 필요하다. 한 명이라도 반려하면 이의 상태.
+approval FinancialSettlement for FinancialRecord r {
+  approvers: ClubMember m where m.club = r.club and m.role >= MANAGER
+  requested by managerOf(actor, r.club)
+  require 2 approvals, no self approval
+  on approved do { set r.settlement = SETTLED }
+  on rejected do { set r.settlement = DISPUTED }
+  expires 7d
+}
+
+command AddFinancialRecord(club: Club, at: Time, amount: Money(KRW), memo: Text(1..200)) {
+  allow managerOf(actor, club)
+  do { insert FinancialRecord { club, at, amount, memo } }
+}
+
+command EditFinancialRecord(record: FinancialRecord, at: Time, amount: Money(KRW), memo: Text(1..200)) {
+  allow managerOf(actor, record.club)
+  do { set record.at = at, record.amount = amount, record.memo = memo }
+}
+
+command DeleteFinancialRecord(record: FinancialRecord) {
+  allow managerOf(actor, record.club)
+  do { delete FinancialRecord f where f = record }
+}
+
+query FinancialLedger(club: Club) {
+  allow exists membership(actor, club)
+  from FinancialRecord f
+  where f.club = club
+  sort by f.at desc
+  page 30 by keyset
+  select { id at amount memo balance: running_sum(f.amount) over club order by f.at }
+}
+
+query ClubBalance(club: Club) {
+  allow exists membership(actor, club)
+  from club
+  select { balance: sum(FinancialRecord f where f.club = club: f.amount) }
+}
+
+// ---------------------------------------------------------------- events & attendance
+
+entity ClubEvent {
+  track created
+  club: Club  on delete cascade
+  title: Text(1..100)
+  at: Time
+  place: Text(0..200)
+  attendances: Attendance[] via event
+  visible to actor when exists membership(actor, club)
+}
+
+entity Attendance {
+  track created
+  event: ClubEvent  on delete cascade
+  member: Member?  on erase anonymize
+  unique (event, member) else ALREADY_ATTENDED
+}
+
+expose ClubEvent {
+  read: visible
+  create: managerOf(actor, club) fields [club, title, at, place]
+  update: managerOf(actor, club) fields [title, at, place]
+  delete: managerOf(actor, club)
+}
+
+grant link AttendanceCode {
+  scope: event: ClubEvent
+  issued by managerOf(actor, event.club)
+  expires 2h
+  require exists membership(holder, event.club) else NOT_CLUB_MEMBER
+  on redeem do { insert Attendance { event, member: holder } }
+}
+
+command MarkAttendance(event: ClubEvent, members: Set<ClubMember> max 300) {
+  allow managerOf(actor, event.club)
+  require all(members m: m.club = event.club) else MEMBER_NOT_IN_CLUB
+  do { insert Attendance from members m { event, member: m.member } }
+}
+
+command UnmarkAttendance(event: ClubEvent, members: Set<ClubMember> max 300) {
+  allow managerOf(actor, event.club)
+  do { delete Attendance a where a.event = event and a.member in members.member }
+}
+
+query EventAttendees(event: ClubEvent) {
+  allow exists membership(actor, event.club)
+  from Attendance a
+  where a.event = event
+  sort by a.createdAt asc
+  page 50 by offset max page 20
+  select { id createdAt member { nickname } }
+}
+
+// ---------------------------------------------------------------- account
+
+command Unregister() {
+  allow authenticated
+  do {
+    erase actor
+    auth.unlink(actor)
+  }
+}
+
+command ExportMyData() {
+  allow authenticated
+  do { export personal data of actor to s3 notify actor }
+}

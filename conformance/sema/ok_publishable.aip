@@ -1,0 +1,26 @@
+entity Article {
+  club: Club
+  title: Text
+  publishable by managerOf(actor, club)
+}
+// readers get the published version, editors the working one
+query Articles(club: Club) {
+  allow public
+  from Article a
+  where a.club = club
+  page 20 by keyset
+  select { id title }
+}
+drafts query ArticleDrafts(club: Club) {
+  allow managerOf(actor, club)
+  from Article a
+  where a.club = club
+  page 20 by keyset
+  select { id title }
+}
+command RenameArticle(article: Article, title: Text) {
+  allow managerOf(actor, article.club)
+  do { set article.title = title }
+}
+consent Terms version 2 required for [RenameArticle, ArticleDrafts]
+impersonate Member by actor.role = SUPER_ADMIN audited reason required ttl 30m

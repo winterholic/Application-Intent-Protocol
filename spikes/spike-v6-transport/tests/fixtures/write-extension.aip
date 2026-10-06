@@ -1,0 +1,17 @@
+resource Member { fields { id: Id } }
+actor Member
+resource Event {
+ fields { id: Id; member: Member; checked: Bool }
+ rows read when member = actor
+ transition mark { allow member = actor; from checked = false; to checked = true }
+ expose read { select id, checked; sort id; budget { rows 10; depth 1; deadline 1s; cost 100 } }
+ expose apply mark { target id; bulk maxRows 2 }
+ extension write run {
+  input { id: Event.Id }
+  output { id: Event.Id; count: Int }
+  access Event.mark
+  effect db
+  deadline 2s
+  implementation "write.run"
+ }
+}

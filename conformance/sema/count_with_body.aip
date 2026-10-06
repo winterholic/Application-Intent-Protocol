@@ -1,0 +1,1 @@
+relation r(c: Club) = count(ClubMember cm where cm.club = c : cm.id) > 0

@@ -1,0 +1,3 @@
+// the named field exists but does not point back at Post
+entity Post { comments: Comment[] via post }
+entity Comment { post: Text }

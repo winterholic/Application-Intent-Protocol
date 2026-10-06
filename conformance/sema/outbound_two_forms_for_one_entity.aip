@@ -1,0 +1,18 @@
+entity Hook {
+  club: Club
+  url: Url
+}
+event Renamed { club: Club }
+command Rename(club: Club, name: Text) {
+  allow managerOf(actor, club)
+  do { set club.name = name }
+  emit Renamed { club }
+}
+outbound webhooks for Hook h {
+  events [Renamed]
+  sign hmac_sha256 retry 3 over 1h
+}
+outbound webhooks for Hook g {
+  events [Renamed]
+  sign hmac_sha256 retry 3 over 1h
+}

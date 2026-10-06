@@ -1,0 +1,8 @@
+// `cross tenant` lifts the tenant rules, so only internal intents may carry it
+entity Workspace { name: Text }
+cross tenant query Workspaces() {
+  allow authenticated
+  from Workspace w
+  page 20 by keyset
+  select { id name }
+}

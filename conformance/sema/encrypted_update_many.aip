@@ -1,0 +1,6 @@
+// one ciphertext is bound to one row id, so an update over many rows cannot encrypt for each
+entity Vault { note: Text encrypted }
+command SetAll(note: Text) {
+  allow authenticated
+  do { update Vault v set note = note }
+}

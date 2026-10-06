@@ -1,0 +1,4 @@
+// answers must be validated against the form version they were written for
+record Q { key: Text }
+entity Form { questions: List<Q> max 10  dynamic schema from questions }
+entity Answer { form: Form  answers: Json validated by form }

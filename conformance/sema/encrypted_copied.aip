@@ -1,0 +1,9 @@
+// copying into another field would store the plaintext in the clear
+entity Vault {
+  note: Text encrypted
+  copy: Text?
+}
+command CopyNote(v: Vault) {
+  allow authenticated
+  do { set v.copy = v.note }
+}

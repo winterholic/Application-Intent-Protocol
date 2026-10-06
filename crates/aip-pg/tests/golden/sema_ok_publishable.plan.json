@@ -1,0 +1,1348 @@
+{
+  "diagnostics": [],
+  "program": {
+    "actor": {
+      "entity": "Member",
+      "provider": "auth.oidc",
+      "superuser": null,
+      "table": "member"
+    },
+    "constraint_errors": {
+      "_aip_approval_pending": {
+        "code": "AIP.CONFLICT.UNIQUE",
+        "reason": "APPROVAL_ALREADY_PENDING"
+      },
+      "_aip_approval_vote_once": {
+        "code": "AIP.CONFLICT.UNIQUE",
+        "reason": "ALREADY_VOTED"
+      },
+      "club_member__u4": {
+        "code": "AIP.CONFLICT.UNIQUE",
+        "reason": "ALREADY_MEMBER"
+      }
+    },
+    "ddl": [
+      "CREATE EXTENSION IF NOT EXISTS btree_gist",
+      "CREATE EXTENSION IF NOT EXISTS pgcrypto",
+      "CREATE TABLE \"club\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"name\" text NOT NULL\n)",
+      "CREATE TABLE \"member\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"nickname\" text NOT NULL,\n  \"role\" text NOT NULL DEFAULT 'USER',\n  CONSTRAINT \"member__role_enum\" CHECK (\"role\" IN ('USER', 'SUPER_ADMIN'))\n)",
+      "CREATE TABLE \"article\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"club_id\" uuid NOT NULL,\n  \"title\" text NOT NULL\n)",
+      "CREATE TABLE \"article_published\" (LIKE \"article\", \"published_at\" timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (\"id\"))",
+      "CREATE TABLE \"club_member\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"club_id\" uuid NOT NULL,\n  \"member_id\" uuid,\n  \"role\" text NOT NULL DEFAULT 'GENERAL',\n  \"status\" text NOT NULL DEFAULT 'ACTIVE',\n  CONSTRAINT \"club_member__role_enum\" CHECK (\"role\" IN ('GENERAL', 'MANAGER', 'ADMIN')),\n  CONSTRAINT \"club_member__status_enum\" CHECK (\"status\" IN ('ACTIVE', 'ENDED'))\n)",
+      "ALTER TABLE \"article\" ADD CONSTRAINT \"article__club_id_fk\" FOREIGN KEY (\"club_id\") REFERENCES \"club\"(\"id\") DEFERRABLE INITIALLY IMMEDIATE",
+      "CREATE INDEX IF NOT EXISTS \"article__club_id_idx\" ON \"article\" (\"club_id\")",
+      "CREATE INDEX IF NOT EXISTS \"article_published__club_id_idx\" ON \"article_published\" (\"club_id\")",
+      "CREATE OR REPLACE FUNCTION \"article__unpublish_fn\"() RETURNS trigger LANGUAGE plpgsql AS $aip$ BEGIN DELETE FROM \"article_published\" WHERE \"id\" = OLD.\"id\"; RETURN NULL; END $aip$;\nCREATE TRIGGER \"article__unpublish\" AFTER DELETE ON \"article\" FOR EACH ROW EXECUTE FUNCTION \"article__unpublish_fn\"()",
+      "ALTER TABLE \"club_member\" ADD CONSTRAINT \"club_member__club_id_fk\" FOREIGN KEY (\"club_id\") REFERENCES \"club\"(\"id\") DEFERRABLE INITIALLY IMMEDIATE",
+      "CREATE INDEX IF NOT EXISTS \"club_member__club_id_idx\" ON \"club_member\" (\"club_id\")",
+      "ALTER TABLE \"club_member\" ADD CONSTRAINT \"club_member__member_id_fk\" FOREIGN KEY (\"member_id\") REFERENCES \"member\"(\"id\") DEFERRABLE INITIALLY IMMEDIATE",
+      "CREATE INDEX IF NOT EXISTS \"club_member__member_id_idx\" ON \"club_member\" (\"member_id\")",
+      "CREATE UNIQUE INDEX \"club_member__u4\" ON \"club_member\" (\"club_id\", \"member_id\")",
+      "CREATE TABLE IF NOT EXISTS \"_aip_outbox\" (\n  \"id\" bigserial PRIMARY KEY,\n  \"kind\" text NOT NULL,\n  \"name\" text NOT NULL,\n  \"intent\" text,\n  \"key\" text,\n  \"payload\" jsonb NOT NULL,\n  \"available_at\" timestamptz NOT NULL DEFAULT now(),\n  \"attempts\" int NOT NULL DEFAULT 0,\n  \"last_error\" text,\n  \"done_at\" timestamptz,\n  \"created_at\" timestamptz NOT NULL DEFAULT now()\n)",
+      "CREATE INDEX IF NOT EXISTS \"_aip_outbox_pending\" ON \"_aip_outbox\" (\"available_at\") WHERE \"done_at\" IS NULL",
+      "CREATE TABLE IF NOT EXISTS \"_aip_idempotency\" (\n  \"intent\" text NOT NULL,\n  \"actor\" text NOT NULL,\n  \"key\" text NOT NULL,\n  \"request_hash\" text NOT NULL,\n  \"response\" jsonb,\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  PRIMARY KEY (\"intent\", \"actor\", \"key\")\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_audit\" (\n  \"id\" bigserial PRIMARY KEY,\n  \"intent\" text NOT NULL,\n  \"actor\" uuid,\n  \"superuser\" boolean NOT NULL DEFAULT false,\n  \"input\" jsonb NOT NULL,\n  \"at\" timestamptz NOT NULL DEFAULT now()\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_counter_seen\" (\n  \"key\" text PRIMARY KEY,\n  \"expires_at\" timestamptz NOT NULL\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_rate\" (\n  \"key\" text NOT NULL,\n  \"window_start\" timestamptz NOT NULL,\n  \"count\" int NOT NULL,\n  PRIMARY KEY (\"key\", \"window_start\")\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_schedule_run\" (\n  \"name\" text PRIMARY KEY,\n  \"last_run\" timestamptz NOT NULL\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_processed\" (\n  \"handler\" text NOT NULL,\n  \"outbox_id\" bigint NOT NULL,\n  PRIMARY KEY (\"handler\", \"outbox_id\")\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_notification\" (\n  \"id\" bigserial PRIMARY KEY,\n  \"recipient\" uuid NOT NULL,\n  \"template\" text NOT NULL,\n  \"data\" jsonb NOT NULL,\n  \"category\" text,\n  \"read_at\" timestamptz,\n  \"created_at\" timestamptz NOT NULL DEFAULT now()\n)",
+      "CREATE INDEX IF NOT EXISTS \"_aip_notification_recipient\" ON \"_aip_notification\" (\"recipient\", \"created_at\" DESC)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_mail\" (\n  \"id\" bigserial PRIMARY KEY,\n  \"template\" text NOT NULL,\n  \"to\" text,\n  \"data\" jsonb NOT NULL,\n  \"created_at\" timestamptz NOT NULL DEFAULT now()\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_grant\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"link\" text NOT NULL,\n  \"token_hash\" text NOT NULL UNIQUE,\n  \"scope\" jsonb NOT NULL,\n  \"to_member\" uuid,\n  \"issued_by\" uuid,\n  \"expires_at\" timestamptz NOT NULL,\n  \"uses_left\" int NOT NULL,\n  \"created_at\" timestamptz NOT NULL DEFAULT now()\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_verification\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"name\" text NOT NULL,\n  \"subject\" uuid NOT NULL,\n  \"target\" text NOT NULL,\n  \"code_hash\" text NOT NULL,\n  \"expires_at\" timestamptz NOT NULL,\n  \"attempts_left\" int NOT NULL,\n  \"created_at\" timestamptz NOT NULL DEFAULT now()\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_approval\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"name\" text NOT NULL,\n  \"subject\" uuid NOT NULL,\n  \"requested_by\" uuid,\n  \"status\" text NOT NULL DEFAULT 'PENDING' CHECK (\"status\" IN ('PENDING', 'APPROVED', 'REJECTED', 'CANCELLED', 'EXPIRED')),\n  \"required\" int NOT NULL,\n  \"expires_at\" timestamptz,\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"decided_at\" timestamptz\n)",
+      "CREATE UNIQUE INDEX IF NOT EXISTS \"_aip_approval_pending\" ON \"_aip_approval\" (\"name\", \"subject\") WHERE \"status\" = 'PENDING'",
+      "CREATE TABLE IF NOT EXISTS \"_aip_approval_vote\" (\n  \"approval\" uuid NOT NULL REFERENCES \"_aip_approval\" (\"id\") ON DELETE CASCADE,\n  \"voter\" uuid NOT NULL,\n  \"decision\" text NOT NULL CHECK (\"decision\" IN ('APPROVE', 'REJECT')),\n  \"comment\" text,\n  \"at\" timestamptz NOT NULL DEFAULT now(),\n  CONSTRAINT \"_aip_approval_vote_once\" PRIMARY KEY (\"approval\", \"voter\")\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_job\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"name\" text NOT NULL,\n  \"params\" jsonb NOT NULL,\n  \"requested_by\" uuid NOT NULL,\n  \"status\" text NOT NULL DEFAULT 'QUEUED' CHECK (\"status\" IN ('QUEUED', 'RUNNING', 'DONE', 'FAILED')),\n  \"items\" jsonb,\n  \"total\" int,\n  \"done\" int NOT NULL DEFAULT 0,\n  \"file\" text,\n  \"error\" text,\n  \"attempts\" int NOT NULL DEFAULT 0,\n  \"available_at\" timestamptz NOT NULL DEFAULT now(),\n  \"heartbeat\" timestamptz,\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"started_at\" timestamptz,\n  \"finished_at\" timestamptz\n)",
+      "CREATE UNIQUE INDEX IF NOT EXISTS \"_aip_job_active\" ON \"_aip_job\" (\"name\", \"requested_by\", \"params\") WHERE \"status\" IN ('QUEUED', 'RUNNING')",
+      "CREATE INDEX IF NOT EXISTS \"_aip_job_queue\" ON \"_aip_job\" (\"available_at\") WHERE \"status\" IN ('QUEUED', 'RUNNING')",
+      "CREATE TABLE IF NOT EXISTS \"_aip_webhook_seen\" (\n  \"webhook\" text NOT NULL,\n  \"event_id\" text NOT NULL,\n  \"received_at\" timestamptz NOT NULL DEFAULT now(),\n  PRIMARY KEY (\"webhook\", \"event_id\")\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_rule_pending\" (\n  \"rule\" text NOT NULL,\n  \"id\" uuid NOT NULL,\n  PRIMARY KEY (\"rule\", \"id\")\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_rule_state\" (\n  \"rule\" text NOT NULL,\n  \"id\" uuid NOT NULL,\n  PRIMARY KEY (\"rule\", \"id\")\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_sequence\" (\n  \"scope\" text PRIMARY KEY,\n  \"n\" bigint NOT NULL\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_object\" (\n  \"key\" text PRIMARY KEY,\n  \"bucket\" text NOT NULL,\n  \"content_type\" text,\n  \"size\" bigint NOT NULL,\n  \"state\" text NOT NULL DEFAULT 'staged',\n  \"created_at\" timestamptz NOT NULL DEFAULT now()\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_consent\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"name\" text NOT NULL,\n  \"actor\" uuid NOT NULL,\n  \"version\" int NOT NULL,\n  \"given_at\" timestamptz NOT NULL DEFAULT now(),\n  \"withdrawn_at\" timestamptz\n)",
+      "CREATE UNIQUE INDEX IF NOT EXISTS \"_aip_consent_active\" ON \"_aip_consent\" (\"name\", \"actor\", \"version\") WHERE \"withdrawn_at\" IS NULL",
+      "CREATE INDEX IF NOT EXISTS \"_aip_consent_actor\" ON \"_aip_consent\" (\"actor\", \"name\", \"given_at\" DESC)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_impersonation\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"operator\" uuid NOT NULL,\n  \"target\" uuid NOT NULL,\n  \"reason\" text NOT NULL,\n  \"started_at\" timestamptz NOT NULL DEFAULT now(),\n  \"expires_at\" timestamptz NOT NULL,\n  \"ended_at\" timestamptz\n)",
+      "CREATE INDEX IF NOT EXISTS \"_aip_impersonation_operator\" ON \"_aip_impersonation\" (\"operator\") WHERE \"ended_at\" IS NULL",
+      "ALTER TABLE \"_aip_audit\" ADD COLUMN IF NOT EXISTS \"impersonated_by\" uuid",
+      "ALTER TABLE \"_aip_audit\" ADD COLUMN IF NOT EXISTS \"impersonation\" uuid"
+    ],
+    "entities": {
+      "Article": {
+        "columns": [
+          {
+            "column": "id",
+            "field": "id",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "uuid"
+            }
+          },
+          {
+            "column": "club_id",
+            "field": "club",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "entity": "Club",
+              "kind": "entity"
+            }
+          },
+          {
+            "column": "title",
+            "field": "title",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            }
+          }
+        ],
+        "personal": false,
+        "table": "article"
+      },
+      "Club": {
+        "columns": [
+          {
+            "column": "id",
+            "field": "id",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "uuid"
+            }
+          },
+          {
+            "column": "name",
+            "field": "name",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            }
+          }
+        ],
+        "personal": false,
+        "table": "club"
+      },
+      "ClubMember": {
+        "columns": [
+          {
+            "column": "id",
+            "field": "id",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "uuid"
+            }
+          },
+          {
+            "column": "club_id",
+            "field": "club",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "entity": "Club",
+              "kind": "entity"
+            }
+          },
+          {
+            "column": "member_id",
+            "field": "member",
+            "nullable": true,
+            "personal": false,
+            "ty": {
+              "entity": "Member",
+              "kind": "entity"
+            }
+          },
+          {
+            "column": "role",
+            "field": "role",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "enum",
+              "name": "ClubRole"
+            }
+          },
+          {
+            "column": "status",
+            "field": "status",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "enum",
+              "name": "Status"
+            }
+          }
+        ],
+        "personal": false,
+        "table": "club_member"
+      },
+      "Member": {
+        "columns": [
+          {
+            "column": "id",
+            "field": "id",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "uuid"
+            }
+          },
+          {
+            "column": "nickname",
+            "field": "nickname",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            }
+          },
+          {
+            "column": "role",
+            "field": "role",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "enum",
+              "name": "MemberRole"
+            }
+          }
+        ],
+        "personal": true,
+        "table": "member"
+      }
+    },
+    "enums": {
+      "ClubRole": [
+        "GENERAL",
+        "MANAGER",
+        "ADMIN"
+      ],
+      "ConsentStatus": [
+        "NONE",
+        "GIVEN",
+        "OUTDATED",
+        "WITHDRAWN"
+      ],
+      "MemberRole": [
+        "USER",
+        "SUPER_ADMIN"
+      ],
+      "Status": [
+        "ACTIVE",
+        "ENDED"
+      ]
+    },
+    "events": {},
+    "extensions": [
+      "auth",
+      "notify",
+      "s3"
+    ],
+    "handlers": [],
+    "impersonation": {
+      "operator_check": {
+        "params": [],
+        "text": "SELECT coalesce(coalesce((((SELECT t1.\"role\" FROM \"member\" t1 WHERE t1.\"id\" = ((SELECT \"operator\"::text FROM s)::text)::uuid) = 'SUPER_ADMIN')), false), false)"
+      },
+      "start": "StartMemberImpersonation",
+      "stop": "StopMemberImpersonation",
+      "ttl_seconds": 1800
+    },
+    "intents": {
+      "ArticleDrafts": {
+        "cache_seconds": null,
+        "errors": [
+          {
+            "code": "AIP.AUTH.FORBIDDEN",
+            "reason": null
+          },
+          {
+            "code": "AIP.CONSENT.REQUIRED",
+            "reason": "Terms"
+          },
+          {
+            "code": "AIP.INPUT.INVALID",
+            "reason": null
+          },
+          {
+            "code": "AIP.NOT_FOUND",
+            "reason": "CLUB_NOT_FOUND"
+          }
+        ],
+        "internal": false,
+        "kind": "query",
+        "name": "ArticleDrafts",
+        "output": {
+          "kind": "list",
+          "of": {
+            "fields": {
+              "id": {
+                "kind": "uuid"
+              },
+              "title": {
+                "kind": "text",
+                "lower": false,
+                "max": null,
+                "min": null,
+                "pattern": null,
+                "trim": false
+              }
+            },
+            "kind": "object"
+          }
+        },
+        "page": {
+          "keyset": true,
+          "max_page": null,
+          "size": 20
+        },
+        "params": [
+          {
+            "default": null,
+            "name": "club",
+            "optional": false,
+            "ty": {
+              "entity": "Club",
+              "kind": "entity"
+            }
+          }
+        ],
+        "prelude": [
+          {
+            "entity": "Club",
+            "lock": false,
+            "many": false,
+            "op": "load",
+            "param": "club",
+            "sql": {
+              "params": [
+                "club"
+              ],
+              "text": "SELECT t1.\"id\" FROM \"club\" t1 WHERE t1.\"id\" = ($1::text)::uuid ORDER BY t1.\"id\""
+            }
+          },
+          {
+            "code": null,
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "club",
+                "__actor"
+              ],
+              "text": "SELECT coalesce(((array_position(ARRAY['GENERAL', 'MANAGER', 'ADMIN']::text[], ((SELECT t3.\"role\" FROM \"club_member\" t3 WHERE t3.\"id\" = (SELECT t2.\"id\" FROM \"club_member\" t2 WHERE coalesce(((coalesce(((t2.\"club_id\" = ($1::text)::uuid)), false) AND coalesce(((t2.\"member_id\" = ($2::text)::uuid)), false))), false) LIMIT 1)))::text) >= array_position(ARRAY['GENERAL', 'MANAGER', 'ADMIN']::text[], ('MANAGER')::text))), false)"
+            }
+          },
+          {
+            "code": "Terms",
+            "kind": "consent",
+            "op": "check",
+            "sql": {
+              "params": [
+                "__actor"
+              ],
+              "text": "SELECT EXISTS (SELECT 1 FROM \"_aip_consent\" WHERE \"name\" = 'Terms' AND \"actor\" = ($1::text)::uuid AND \"version\" = 2 AND \"withdrawn_at\" IS NULL)"
+            }
+          }
+        ],
+        "rate_limits": [],
+        "single": false,
+        "sort_param": null,
+        "touches": [],
+        "variants": [
+          {
+            "key_count": 1,
+            "main": {
+              "params": [
+                "club",
+                "__cursor"
+              ],
+              "text": "SELECT coalesce(jsonb_agg(x.j || jsonb_build_object('__k', x.k) ORDER BY x.n), '[]'::jsonb) FROM (SELECT jsonb_build_object('id', to_jsonb(t4.\"id\"), 'title', to_jsonb(t4.\"title\")) AS j, jsonb_build_array((t4.\"id\")) AS k, row_number() OVER (ORDER BY t4.\"id\" ASC NULLS LAST) AS n FROM \"article\" t4 WHERE coalesce(((t4.\"club_id\" = ($1::text)::uuid)), false) AND (($2)::text IS NULL OR ((t4.\"id\") > ((((($2)::text)::jsonb ->> 0)))::uuid)) ORDER BY t4.\"id\" ASC NULLS LAST LIMIT 21) x"
+            },
+            "when": null
+          }
+        ]
+      },
+      "Articles": {
+        "cache_seconds": null,
+        "errors": [
+          {
+            "code": "AIP.AUTH.FORBIDDEN",
+            "reason": null
+          },
+          {
+            "code": "AIP.INPUT.INVALID",
+            "reason": null
+          },
+          {
+            "code": "AIP.NOT_FOUND",
+            "reason": "CLUB_NOT_FOUND"
+          }
+        ],
+        "internal": false,
+        "kind": "query",
+        "name": "Articles",
+        "output": {
+          "kind": "list",
+          "of": {
+            "fields": {
+              "id": {
+                "kind": "uuid"
+              },
+              "title": {
+                "kind": "text",
+                "lower": false,
+                "max": null,
+                "min": null,
+                "pattern": null,
+                "trim": false
+              }
+            },
+            "kind": "object"
+          }
+        },
+        "page": {
+          "keyset": true,
+          "max_page": null,
+          "size": 20
+        },
+        "params": [
+          {
+            "default": null,
+            "name": "club",
+            "optional": false,
+            "ty": {
+              "entity": "Club",
+              "kind": "entity"
+            }
+          }
+        ],
+        "prelude": [
+          {
+            "entity": "Club",
+            "lock": false,
+            "many": false,
+            "op": "load",
+            "param": "club",
+            "sql": {
+              "params": [
+                "club"
+              ],
+              "text": "SELECT t1.\"id\" FROM \"club\" t1 WHERE t1.\"id\" = ($1::text)::uuid ORDER BY t1.\"id\""
+            }
+          },
+          {
+            "code": null,
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [],
+              "text": "SELECT coalesce((TRUE), false)"
+            }
+          }
+        ],
+        "rate_limits": [],
+        "single": false,
+        "sort_param": null,
+        "touches": [],
+        "variants": [
+          {
+            "key_count": 1,
+            "main": {
+              "params": [
+                "club",
+                "__cursor"
+              ],
+              "text": "SELECT coalesce(jsonb_agg(x.j || jsonb_build_object('__k', x.k) ORDER BY x.n), '[]'::jsonb) FROM (SELECT jsonb_build_object('id', to_jsonb(t2.\"id\"), 'title', to_jsonb(t2.\"title\")) AS j, jsonb_build_array((t2.\"id\")) AS k, row_number() OVER (ORDER BY t2.\"id\" ASC NULLS LAST) AS n FROM \"article_published\" t2 WHERE coalesce(((t2.\"club_id\" = ($1::text)::uuid)), false) AND (($2)::text IS NULL OR ((t2.\"id\") > ((((($2)::text)::jsonb ->> 0)))::uuid)) ORDER BY t2.\"id\" ASC NULLS LAST LIMIT 21) x"
+            },
+            "when": null
+          }
+        ]
+      },
+      "DiscardArticleDraft": {
+        "audited": false,
+        "effects": [],
+        "emits": [],
+        "errors": [
+          {
+            "code": "AIP.AUTH.FORBIDDEN",
+            "reason": null
+          },
+          {
+            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "reason": null
+          },
+          {
+            "code": "AIP.CONCURRENCY.CONFLICT",
+            "reason": null
+          },
+          {
+            "code": "AIP.INPUT.INVALID",
+            "reason": null
+          },
+          {
+            "code": "AIP.NOT_FOUND",
+            "reason": "ARTICLE_NOT_FOUND"
+          },
+          {
+            "code": "AIP.PRECONDITION.FAILED",
+            "reason": "NOT_PUBLISHED"
+          }
+        ],
+        "idempotency_key": null,
+        "idempotent": false,
+        "internal": false,
+        "kind": "command",
+        "name": "DiscardArticleDraft",
+        "output": null,
+        "params": [
+          {
+            "default": null,
+            "name": "article",
+            "optional": false,
+            "ty": {
+              "entity": "Article",
+              "kind": "entity"
+            }
+          }
+        ],
+        "rate_limits": [],
+        "returns": null,
+        "steps": [
+          {
+            "entity": "Article",
+            "lock": true,
+            "many": false,
+            "op": "load",
+            "param": "article",
+            "sql": {
+              "params": [
+                "article"
+              ],
+              "text": "SELECT t1.\"id\" FROM \"article\" t1 WHERE t1.\"id\" = ($1::text)::uuid ORDER BY t1.\"id\" FOR UPDATE OF t1"
+            }
+          },
+          {
+            "code": null,
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "article",
+                "__actor"
+              ],
+              "text": "SELECT coalesce(((array_position(ARRAY['GENERAL', 'MANAGER', 'ADMIN']::text[], ((SELECT t4.\"role\" FROM \"club_member\" t4 WHERE t4.\"id\" = (SELECT t3.\"id\" FROM \"club_member\" t3 WHERE coalesce(((coalesce(((t3.\"club_id\" = (SELECT t2.\"club_id\" FROM \"article\" t2 WHERE t2.\"id\" = ($1::text)::uuid))), false) AND coalesce(((t3.\"member_id\" = ($2::text)::uuid)), false))), false) LIMIT 1)))::text) >= array_position(ARRAY['GENERAL', 'MANAGER', 'ADMIN']::text[], ('MANAGER')::text))), false)"
+            }
+          },
+          {
+            "code": "NOT_PUBLISHED",
+            "name": "__published",
+            "op": "let",
+            "sql": {
+              "params": [
+                "article"
+              ],
+              "text": "SELECT \"id\"::text FROM \"article_published\" WHERE \"id\" = ($1::text)::uuid"
+            }
+          },
+          {
+            "bind": null,
+            "label": "discard the draft of Article",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "article"
+              ],
+              "text": "UPDATE \"article\" SET \"club_id\" = p.\"club_id\", \"title\" = p.\"title\" FROM \"article_published\" p WHERE \"article\".\"id\" = p.\"id\" AND \"article\".\"id\" = ($1::text)::uuid"
+            }
+          }
+        ],
+        "writes": [
+          "Article"
+        ]
+      },
+      "GiveTermsConsent": {
+        "audited": false,
+        "effects": [],
+        "emits": [],
+        "errors": [
+          {
+            "code": "AIP.AUTH.FORBIDDEN",
+            "reason": "IMPERSONATION_FORBIDDEN"
+          },
+          {
+            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "reason": null
+          },
+          {
+            "code": "AIP.CONCURRENCY.CONFLICT",
+            "reason": null
+          },
+          {
+            "code": "AIP.INPUT.INVALID",
+            "reason": null
+          }
+        ],
+        "idempotency_key": null,
+        "idempotent": false,
+        "internal": false,
+        "kind": "command",
+        "name": "GiveTermsConsent",
+        "output": {
+          "fields": {
+            "givenAt": {
+              "kind": "time",
+              "nullable": true
+            },
+            "givenVersion": {
+              "kind": "int",
+              "max": null,
+              "min": null,
+              "nullable": true
+            },
+            "name": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            },
+            "status": {
+              "kind": "enum",
+              "name": "ConsentStatus"
+            },
+            "version": {
+              "kind": "int",
+              "max": null,
+              "min": null
+            },
+            "withdrawnAt": {
+              "kind": "time",
+              "nullable": true
+            }
+          },
+          "kind": "object"
+        },
+        "params": [],
+        "rate_limits": [],
+        "returns": {
+          "params": [
+            "__actor"
+          ],
+          "text": "SELECT jsonb_build_object('name', 'Terms', 'version', 2, 'status', CASE WHEN EXISTS (SELECT 1 FROM \"_aip_consent\" WHERE \"name\" = 'Terms' AND \"actor\" = ($1::text)::uuid AND \"version\" = 2 AND \"withdrawn_at\" IS NULL) THEN 'GIVEN' WHEN l.\"id\" IS NULL THEN 'NONE' WHEN l.\"withdrawn_at\" IS NOT NULL THEN 'WITHDRAWN' ELSE 'OUTDATED' END, 'givenVersion', l.\"version\", 'givenAt', l.\"given_at\", 'withdrawnAt', l.\"withdrawn_at\") FROM (SELECT 1) d LEFT JOIN LATERAL (SELECT * FROM \"_aip_consent\" WHERE \"name\" = 'Terms' AND \"actor\" = ($1::text)::uuid ORDER BY \"given_at\" DESC, \"id\" DESC LIMIT 1) l ON true"
+        },
+        "steps": [
+          {
+            "code": null,
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "__actor"
+              ],
+              "text": "SELECT ($1::text)::uuid IS NOT NULL"
+            }
+          },
+          {
+            "code": "IMPERSONATION_FORBIDDEN",
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "__imp"
+              ],
+              "text": "SELECT ($1::text) IS NULL"
+            }
+          },
+          {
+            "bind": null,
+            "label": "record consent to Terms v2",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "__actor"
+              ],
+              "text": "INSERT INTO \"_aip_consent\" (\"name\", \"actor\", \"version\") VALUES ('Terms', ($1::text)::uuid, 2) ON CONFLICT (\"name\", \"actor\", \"version\") WHERE \"withdrawn_at\" IS NULL DO NOTHING"
+            }
+          }
+        ],
+        "writes": []
+      },
+      "PublishArticle": {
+        "audited": false,
+        "effects": [],
+        "emits": [],
+        "errors": [
+          {
+            "code": "AIP.AUTH.FORBIDDEN",
+            "reason": null
+          },
+          {
+            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "reason": null
+          },
+          {
+            "code": "AIP.CONCURRENCY.CONFLICT",
+            "reason": null
+          },
+          {
+            "code": "AIP.INPUT.INVALID",
+            "reason": null
+          },
+          {
+            "code": "AIP.NOT_FOUND",
+            "reason": "ARTICLE_NOT_FOUND"
+          }
+        ],
+        "idempotency_key": null,
+        "idempotent": false,
+        "internal": false,
+        "kind": "command",
+        "name": "PublishArticle",
+        "output": {
+          "fields": {
+            "publishedAt": {
+              "kind": "time"
+            }
+          },
+          "kind": "object"
+        },
+        "params": [
+          {
+            "default": null,
+            "name": "article",
+            "optional": false,
+            "ty": {
+              "entity": "Article",
+              "kind": "entity"
+            }
+          }
+        ],
+        "rate_limits": [],
+        "returns": {
+          "params": [
+            "article"
+          ],
+          "text": "SELECT jsonb_build_object('publishedAt', \"published_at\") FROM \"article_published\" WHERE \"id\" = ($1::text)::uuid"
+        },
+        "steps": [
+          {
+            "entity": "Article",
+            "lock": true,
+            "many": false,
+            "op": "load",
+            "param": "article",
+            "sql": {
+              "params": [
+                "article"
+              ],
+              "text": "SELECT t1.\"id\" FROM \"article\" t1 WHERE t1.\"id\" = ($1::text)::uuid ORDER BY t1.\"id\" FOR UPDATE OF t1"
+            }
+          },
+          {
+            "code": null,
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "article",
+                "__actor"
+              ],
+              "text": "SELECT coalesce(((array_position(ARRAY['GENERAL', 'MANAGER', 'ADMIN']::text[], ((SELECT t4.\"role\" FROM \"club_member\" t4 WHERE t4.\"id\" = (SELECT t3.\"id\" FROM \"club_member\" t3 WHERE coalesce(((coalesce(((t3.\"club_id\" = (SELECT t2.\"club_id\" FROM \"article\" t2 WHERE t2.\"id\" = ($1::text)::uuid))), false) AND coalesce(((t3.\"member_id\" = ($2::text)::uuid)), false))), false) LIMIT 1)))::text) >= array_position(ARRAY['GENERAL', 'MANAGER', 'ADMIN']::text[], ('MANAGER')::text))), false)"
+            }
+          },
+          {
+            "bind": null,
+            "label": "publish Article",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "article"
+              ],
+              "text": "INSERT INTO \"article_published\" (\"club_id\", \"id\", \"title\", \"published_at\") SELECT \"club_id\", \"id\", \"title\", now() FROM \"article\" WHERE \"id\" = ($1::text)::uuid ON CONFLICT (\"id\") DO UPDATE SET \"club_id\" = EXCLUDED.\"club_id\", \"title\" = EXCLUDED.\"title\", \"published_at\" = now()"
+            }
+          }
+        ],
+        "writes": [
+          "Article"
+        ]
+      },
+      "RenameArticle": {
+        "audited": false,
+        "effects": [],
+        "emits": [],
+        "errors": [
+          {
+            "code": "AIP.AUTH.FORBIDDEN",
+            "reason": null
+          },
+          {
+            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "reason": null
+          },
+          {
+            "code": "AIP.CONCURRENCY.CONFLICT",
+            "reason": null
+          },
+          {
+            "code": "AIP.CONSENT.REQUIRED",
+            "reason": "Terms"
+          },
+          {
+            "code": "AIP.INPUT.INVALID",
+            "reason": null
+          },
+          {
+            "code": "AIP.NOT_FOUND",
+            "reason": "ARTICLE_NOT_FOUND"
+          }
+        ],
+        "idempotency_key": null,
+        "idempotent": false,
+        "internal": false,
+        "kind": "command",
+        "name": "RenameArticle",
+        "output": null,
+        "params": [
+          {
+            "default": null,
+            "name": "article",
+            "optional": false,
+            "ty": {
+              "entity": "Article",
+              "kind": "entity"
+            }
+          },
+          {
+            "default": null,
+            "name": "title",
+            "optional": false,
+            "ty": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            }
+          }
+        ],
+        "rate_limits": [],
+        "returns": null,
+        "steps": [
+          {
+            "entity": "Article",
+            "lock": true,
+            "many": false,
+            "op": "load",
+            "param": "article",
+            "sql": {
+              "params": [
+                "article"
+              ],
+              "text": "SELECT t1.\"id\" FROM \"article\" t1 WHERE t1.\"id\" = ($1::text)::uuid ORDER BY t1.\"id\" FOR UPDATE OF t1"
+            }
+          },
+          {
+            "code": null,
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "article",
+                "__actor"
+              ],
+              "text": "SELECT coalesce(((array_position(ARRAY['GENERAL', 'MANAGER', 'ADMIN']::text[], ((SELECT t4.\"role\" FROM \"club_member\" t4 WHERE t4.\"id\" = (SELECT t3.\"id\" FROM \"club_member\" t3 WHERE coalesce(((coalesce(((t3.\"club_id\" = (SELECT t2.\"club_id\" FROM \"article\" t2 WHERE t2.\"id\" = ($1::text)::uuid))), false) AND coalesce(((t3.\"member_id\" = ($2::text)::uuid)), false))), false) LIMIT 1)))::text) >= array_position(ARRAY['GENERAL', 'MANAGER', 'ADMIN']::text[], ('MANAGER')::text))), false)"
+            }
+          },
+          {
+            "code": "Terms",
+            "kind": "consent",
+            "op": "check",
+            "sql": {
+              "params": [
+                "__actor"
+              ],
+              "text": "SELECT EXISTS (SELECT 1 FROM \"_aip_consent\" WHERE \"name\" = 'Terms' AND \"actor\" = ($1::text)::uuid AND \"version\" = 2 AND \"withdrawn_at\" IS NULL)"
+            }
+          },
+          {
+            "bind": null,
+            "label": "set Article",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "title",
+                "article"
+              ],
+              "text": "UPDATE \"article\" SET \"title\" = (($1::text)::text)::text WHERE \"id\" = ($2::text)::uuid"
+            }
+          }
+        ],
+        "writes": [
+          "Article"
+        ]
+      },
+      "StartMemberImpersonation": {
+        "audited": true,
+        "effects": [],
+        "emits": [],
+        "errors": [
+          {
+            "code": "AIP.AUTH.FORBIDDEN",
+            "reason": null
+          },
+          {
+            "code": "AIP.AUTH.FORBIDDEN",
+            "reason": "IMPERSONATION_NESTED"
+          },
+          {
+            "code": "AIP.AUTH.FORBIDDEN",
+            "reason": "IMPERSONATION_SELF"
+          },
+          {
+            "code": "AIP.AUTH.FORBIDDEN",
+            "reason": "IMPERSONATION_TARGET_PRIVILEGED"
+          },
+          {
+            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "reason": null
+          },
+          {
+            "code": "AIP.CONCURRENCY.CONFLICT",
+            "reason": null
+          },
+          {
+            "code": "AIP.INPUT.INVALID",
+            "reason": null
+          },
+          {
+            "code": "AIP.NOT_FOUND",
+            "reason": "MEMBER_NOT_FOUND"
+          }
+        ],
+        "idempotency_key": null,
+        "idempotent": false,
+        "internal": false,
+        "kind": "command",
+        "name": "StartMemberImpersonation",
+        "output": {
+          "fields": {
+            "expiresAt": {
+              "kind": "time"
+            },
+            "session": {
+              "kind": "uuid"
+            },
+            "target": {
+              "kind": "uuid"
+            },
+            "token": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            }
+          },
+          "kind": "object"
+        },
+        "params": [
+          {
+            "default": null,
+            "name": "target",
+            "optional": false,
+            "ty": {
+              "entity": "Member",
+              "kind": "entity"
+            }
+          },
+          {
+            "default": null,
+            "name": "reason",
+            "optional": false,
+            "ty": {
+              "kind": "text",
+              "lower": false,
+              "max": 500,
+              "min": 1,
+              "pattern": null,
+              "trim": true
+            }
+          }
+        ],
+        "rate_limits": [],
+        "returns": {
+          "params": [
+            "__session"
+          ],
+          "text": "SELECT jsonb_build_object('session', \"id\", 'target', \"target\", 'expiresAt', \"expires_at\") FROM \"_aip_impersonation\" WHERE \"id\" = ($1::text)::uuid"
+        },
+        "steps": [
+          {
+            "code": "IMPERSONATION_NESTED",
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "__imp"
+              ],
+              "text": "SELECT ($1::text) IS NULL"
+            }
+          },
+          {
+            "entity": "Member",
+            "lock": false,
+            "many": false,
+            "op": "load",
+            "param": "target",
+            "sql": {
+              "params": [
+                "target"
+              ],
+              "text": "SELECT t1.\"id\" FROM \"member\" t1 WHERE t1.\"id\" = ($1::text)::uuid ORDER BY t1.\"id\""
+            }
+          },
+          {
+            "code": null,
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "__actor"
+              ],
+              "text": "SELECT ($1::text)::uuid IS NOT NULL"
+            }
+          },
+          {
+            "code": null,
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "__actor"
+              ],
+              "text": "SELECT coalesce((((SELECT t2.\"role\" FROM \"member\" t2 WHERE t2.\"id\" = ($1::text)::uuid) = 'SUPER_ADMIN')), false)"
+            }
+          },
+          {
+            "code": "IMPERSONATION_SELF",
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "target",
+                "__actor"
+              ],
+              "text": "SELECT ($1::text)::uuid IS DISTINCT FROM ($2::text)::uuid"
+            }
+          },
+          {
+            "code": "IMPERSONATION_TARGET_PRIVILEGED",
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "target"
+              ],
+              "text": "SELECT NOT coalesce(coalesce((((SELECT t3.\"role\" FROM \"member\" t3 WHERE t3.\"id\" = ($1::text)::uuid) = 'SUPER_ADMIN')), false), false)"
+            }
+          },
+          {
+            "bind": "__session",
+            "label": "open Member impersonation",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "__actor",
+                "target",
+                "reason"
+              ],
+              "text": "INSERT INTO \"_aip_impersonation\" (\"operator\", \"target\", \"reason\", \"expires_at\") VALUES (($1::text)::uuid, ($2::text)::uuid, ($3::text), now() + make_interval(secs => 1800)) RETURNING \"id\""
+            }
+          }
+        ],
+        "writes": []
+      },
+      "StopMemberImpersonation": {
+        "audited": true,
+        "effects": [],
+        "emits": [],
+        "errors": [
+          {
+            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "reason": null
+          },
+          {
+            "code": "AIP.CONCURRENCY.CONFLICT",
+            "reason": null
+          },
+          {
+            "code": "AIP.INPUT.INVALID",
+            "reason": null
+          }
+        ],
+        "idempotency_key": null,
+        "idempotent": false,
+        "internal": false,
+        "kind": "command",
+        "name": "StopMemberImpersonation",
+        "output": {
+          "fields": {
+            "ended": {
+              "kind": "int",
+              "max": null,
+              "min": null
+            }
+          },
+          "kind": "object"
+        },
+        "params": [],
+        "rate_limits": [],
+        "returns": {
+          "params": [
+            "__imp",
+            "__actor"
+          ],
+          "text": "WITH ended AS (UPDATE \"_aip_impersonation\" SET \"ended_at\" = now() WHERE \"ended_at\" IS NULL AND \"expires_at\" > now() AND (\"id\" = ($1::text)::uuid OR (($1::text) IS NULL AND \"operator\" = ($2::text)::uuid)) RETURNING 1) SELECT jsonb_build_object('ended', (SELECT count(*) FROM ended))"
+        },
+        "steps": [
+          {
+            "code": null,
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "__actor"
+              ],
+              "text": "SELECT ($1::text)::uuid IS NOT NULL"
+            }
+          }
+        ],
+        "writes": []
+      },
+      "TermsConsentStatus": {
+        "cache_seconds": null,
+        "errors": [
+          {
+            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "reason": null
+          },
+          {
+            "code": "AIP.INPUT.INVALID",
+            "reason": null
+          }
+        ],
+        "internal": false,
+        "kind": "query",
+        "name": "TermsConsentStatus",
+        "output": {
+          "fields": {
+            "givenAt": {
+              "kind": "time",
+              "nullable": true
+            },
+            "givenVersion": {
+              "kind": "int",
+              "max": null,
+              "min": null,
+              "nullable": true
+            },
+            "name": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            },
+            "status": {
+              "kind": "enum",
+              "name": "ConsentStatus"
+            },
+            "version": {
+              "kind": "int",
+              "max": null,
+              "min": null
+            },
+            "withdrawnAt": {
+              "kind": "time",
+              "nullable": true
+            }
+          },
+          "kind": "object"
+        },
+        "page": null,
+        "params": [],
+        "prelude": [
+          {
+            "code": null,
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "__actor"
+              ],
+              "text": "SELECT ($1::text)::uuid IS NOT NULL"
+            }
+          }
+        ],
+        "rate_limits": [],
+        "single": true,
+        "sort_param": null,
+        "touches": [],
+        "variants": [
+          {
+            "key_count": 0,
+            "main": {
+              "params": [
+                "__actor"
+              ],
+              "text": "SELECT jsonb_build_object('name', 'Terms', 'version', 2, 'status', CASE WHEN EXISTS (SELECT 1 FROM \"_aip_consent\" WHERE \"name\" = 'Terms' AND \"actor\" = ($1::text)::uuid AND \"version\" = 2 AND \"withdrawn_at\" IS NULL) THEN 'GIVEN' WHEN l.\"id\" IS NULL THEN 'NONE' WHEN l.\"withdrawn_at\" IS NOT NULL THEN 'WITHDRAWN' ELSE 'OUTDATED' END, 'givenVersion', l.\"version\", 'givenAt', l.\"given_at\", 'withdrawnAt', l.\"withdrawn_at\") FROM (SELECT 1) d LEFT JOIN LATERAL (SELECT * FROM \"_aip_consent\" WHERE \"name\" = 'Terms' AND \"actor\" = ($1::text)::uuid ORDER BY \"given_at\" DESC, \"id\" DESC LIMIT 1) l ON true"
+            },
+            "when": null
+          }
+        ]
+      },
+      "WithdrawTermsConsent": {
+        "audited": false,
+        "effects": [],
+        "emits": [],
+        "errors": [
+          {
+            "code": "AIP.AUTH.FORBIDDEN",
+            "reason": "IMPERSONATION_FORBIDDEN"
+          },
+          {
+            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "reason": null
+          },
+          {
+            "code": "AIP.CONCURRENCY.CONFLICT",
+            "reason": null
+          },
+          {
+            "code": "AIP.INPUT.INVALID",
+            "reason": null
+          }
+        ],
+        "idempotency_key": null,
+        "idempotent": false,
+        "internal": false,
+        "kind": "command",
+        "name": "WithdrawTermsConsent",
+        "output": {
+          "fields": {
+            "givenAt": {
+              "kind": "time",
+              "nullable": true
+            },
+            "givenVersion": {
+              "kind": "int",
+              "max": null,
+              "min": null,
+              "nullable": true
+            },
+            "name": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            },
+            "status": {
+              "kind": "enum",
+              "name": "ConsentStatus"
+            },
+            "version": {
+              "kind": "int",
+              "max": null,
+              "min": null
+            },
+            "withdrawnAt": {
+              "kind": "time",
+              "nullable": true
+            }
+          },
+          "kind": "object"
+        },
+        "params": [],
+        "rate_limits": [],
+        "returns": {
+          "params": [
+            "__actor"
+          ],
+          "text": "SELECT jsonb_build_object('name', 'Terms', 'version', 2, 'status', CASE WHEN EXISTS (SELECT 1 FROM \"_aip_consent\" WHERE \"name\" = 'Terms' AND \"actor\" = ($1::text)::uuid AND \"version\" = 2 AND \"withdrawn_at\" IS NULL) THEN 'GIVEN' WHEN l.\"id\" IS NULL THEN 'NONE' WHEN l.\"withdrawn_at\" IS NOT NULL THEN 'WITHDRAWN' ELSE 'OUTDATED' END, 'givenVersion', l.\"version\", 'givenAt', l.\"given_at\", 'withdrawnAt', l.\"withdrawn_at\") FROM (SELECT 1) d LEFT JOIN LATERAL (SELECT * FROM \"_aip_consent\" WHERE \"name\" = 'Terms' AND \"actor\" = ($1::text)::uuid ORDER BY \"given_at\" DESC, \"id\" DESC LIMIT 1) l ON true"
+        },
+        "steps": [
+          {
+            "code": null,
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "__actor"
+              ],
+              "text": "SELECT ($1::text)::uuid IS NOT NULL"
+            }
+          },
+          {
+            "code": "IMPERSONATION_FORBIDDEN",
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "__imp"
+              ],
+              "text": "SELECT ($1::text) IS NULL"
+            }
+          },
+          {
+            "bind": null,
+            "label": "withdraw consent to Terms",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "__actor"
+              ],
+              "text": "UPDATE \"_aip_consent\" SET \"withdrawn_at\" = now() WHERE \"name\" = 'Terms' AND \"actor\" = ($1::text)::uuid AND \"withdrawn_at\" IS NULL"
+            }
+          }
+        ],
+        "writes": []
+      }
+    },
+    "ir_version": "0.1",
+    "jobs": [],
+    "records": {},
+    "rules": [],
+    "schedules": [],
+    "webhooks": []
+  }
+}

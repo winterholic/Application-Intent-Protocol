@@ -1,0 +1,2 @@
+// a default would be written to the database in the clear
+entity Vault { note: Text = "none" encrypted }

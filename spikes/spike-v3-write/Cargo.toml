@@ -1,0 +1,15 @@
+[package]
+name = "spike-v3-write"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# V3 표준 쓰기 실험. V1 facts + V2 정책 SQL 생성기를 재사용한다. 본 crates/에 의존하지 않는다.
+[workspace]
+
+[dependencies]
+spike-v1-fixture = { path = "../spike-v1-fixture" }
+spike-v2-read = { path = "../spike-v2-read" }
+serde_json = "1.0.151"
+tokio = { version = "1.53.1", features = ["rt", "rt-multi-thread", "macros", "time"] }
+tokio-postgres = "0.7.18"

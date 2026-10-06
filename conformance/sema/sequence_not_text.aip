@@ -1,0 +1,1 @@
+entity Ticket { club: Club  code: Int sequence per club format "T-{n}" }

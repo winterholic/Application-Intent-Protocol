@@ -1,0 +1,1 @@
+entity Node { parent: Club?  tree max depth 2 }

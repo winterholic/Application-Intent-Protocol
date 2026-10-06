@@ -1,0 +1,5 @@
+entity Setting { club: Club  theme: Text }
+command SetTheme(club: Club, theme: Text) {
+  allow authenticated
+  do { upsert Setting by (club) { club, theme } }
+}

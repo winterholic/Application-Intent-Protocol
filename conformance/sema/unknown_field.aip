@@ -1,0 +1,4 @@
+command Rename(club: Club, name: Text) {
+  allow managerOf(actor, club)
+  do { set club.title = name }
+}

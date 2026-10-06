@@ -1,0 +1,6 @@
+// only a value the caller sent is encrypted
+entity Vault { note: Text encrypted }
+command Reset(v: Vault) {
+  allow authenticated
+  do { set v.note = "none" }
+}

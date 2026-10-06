@@ -1,0 +1,28 @@
+resource Member { fields { id: Id } }
+actor Member
+resource Inbox {
+  fields { id: Id; member: Member; checked: Bool; count: Int; title: Text }
+  rows read when member = actor
+  transition mark { allow member = actor; from checked = false; to checked = true; repeat unchanged }
+  transition hidden { allow member = actor; from checked = false; to checked = true }
+  expose read {
+    select id, member, checked, count, title
+    filter id.eq, checked.eq, count.eq, count.gte, title.eq
+    sort id
+    budget { rows 50; depth 1; deadline 1s; cost 100 }
+  }
+  expose apply mark { target id, where; bulk maxRows 20 }
+}
+resource WriteOnly {
+  fields { id: Id; member: Member; checked: Bool }
+  rows read when member = actor
+  transition mark { allow member = actor; from checked = false; to checked = true; repeat unchanged }
+  expose apply mark { target id; bulk maxRows 2 }
+}
+resource WhereOnly {
+  fields { id: Id; member: Member; checked: Bool; title: Text }
+  rows read when member = actor
+  transition mark { allow member = actor; from checked = false; to checked = true; repeat unchanged }
+  expose read { select id, checked; filter title.eq; budget { rows 20; depth 1; deadline 1s; cost 100 } }
+  expose apply mark { target where; bulk maxRows 2 }
+}

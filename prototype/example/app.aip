@@ -1,0 +1,23 @@
+enum Phase { READY, DONE }
+resource Member { fields { id: Id } }
+actor Member
+resource Event {
+  fields { id: Id; member: Member; checked: Bool; title: Text; link: Url; phase: Phase; date: Time }
+  rows read when member = actor
+  transition mark { allow member = actor; from checked = false; to checked = true; repeat unchanged }
+  expose read {
+    select id, checked, title, link, phase, date
+    filter id.eq, title.eq, title.prefix, link.eq, phase.eq, date.eq, date.gte
+    sort id
+    budget { rows 50; depth 1; deadline 1s; cost 100 }
+  }
+  expose apply mark { target id, where; bulk maxRows 20 }
+  extension write confirm {
+    input { id: Event.Id }
+    output { id: Event.Id; count: Int }
+    access Event.mark
+    effect db
+    deadline 2s
+    implementation "event.confirm"
+  }
+}

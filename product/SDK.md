@@ -1,0 +1,31 @@
+# `@aip/sdk` 배포 빌드 계약
+
+이 문서는 운영 앱이 TypeScript SDK를 로컬 tarball로 설치할 수 있게 하는 빌더의 검수 기준이다. 공개 registry publish는 범위에 포함하지 않는다. 패키지 API는 기존 typed transport와 cache를 그대로 재사용하며 새 API 복제본이나 spike 소스 이동을 만들지 않는다.
+
+## 8개 검수 관문
+
+1. **공개 API**: `product/sdk/index.ts`는 기존 prototype SDK가 노출하는 `connect`, `WriteUnsettled`, 그리고 generic SDK 타입만 공개한다. `connect`는 base URL, 운영 JWT access token, 생성된 binding, 선택적 fetch 구현을 공통 `connectTypedExtensions`에 전달한다.
+2. **동일 구현 재사용**: 빌드 입력은 제품 entry와 기존 spike의 TypeScript 의존 closure다. SDK 로직을 복사하거나 spike 원본을 이동·수정하지 않는다.
+3. **완전한 산출물**: 로컬 TypeScript compiler로 JavaScript와 declaration을 함께 만들고, package에 필요한 runtime/type 의존 closure를 모두 담는다. 산출물의 상대 import가 package 밖으로 나가지 않는다.
+4. **설치 가능한 패키지 메타데이터**: tarball은 이름 `@aip/sdk`, 버전 `0.1.0`, ESM 형식이며 root `exports`가 JavaScript와 TypeScript declaration을 가리킨다. 빌드는 `npm publish`를 실행하지 않는다.
+5. **오프라인 소비자**: `npm pack --offline` 후 별도 소비자 디렉터리에서 `npm install --offline`이 가능하고, 설치된 root export를 Node가 import할 수 있다.
+6. **운영 인증과 전송 통합**: ephemeral RSA key로 만든 JWT access token을 설치 SDK가 전달하고 서비스가 검증한다. 테스트는 세션 확인, typed read, 두 번째 read의 공통 cache hit, typed write, write 뒤 cache 무효화, 멱등 키 재생을 실제 service endpoint로 확인한다.
+7. **엄격한 타입 공개**: 설치된 package declaration으로 NodeNext strict consumer가 통과하고, 계약에 없는 field/enum value를 사용하면 음성 대조 typecheck가 실패한다.
+8. **출력 소유권과 실패 처리**: `--out <fresh-directory>`만 허용한다. 기존 디렉터리·파일·symlink를 거부하고 내용을 보존한다. 빌드 중 실패하면 이번 실행이 만든 출력 디렉터리만 정리한다.
+
+운영 통합 확인은 임시 owned PostgreSQL schema와 임시 JWKS 파일을 사용한다. principal 폐기 뒤 같은 JWT가 `/session`에서 거부되는지 확인하고, 테스트가 초기화한 schema만 정리한다. JWT 개인키는 메모리에서 생성·사용하고 출력하거나 파일로 저장하지 않는다.
+
+## 실행
+
+저장소 루트 `aip/`에서 다음과 같이 실행한다.
+
+```sh
+node product/tools/build-sdk.mjs --out /tmp/aip-sdk-0.1.0
+node --test product/tests/sdk-package.test.mjs
+node --test product/tests/service-smoke.test.mjs
+node product/tools/package.mjs
+```
+
+테스트는 임시 디렉터리에서 offline pack/install과 독립 소비자를 구성하고 종료 시 임시 파일을 제거한다. 빌드 결과물은 호출자가 소유하는 fresh output 디렉터리에만 기록된다.
+
+`package.mjs`는 `product/dist/<UTC timestamp>/`를 새로 만들며 root `target/debug/aip`, 설치 가능한 SDK tarball, 비밀 없는 설정 예시, 정본 app/Node/Python extension 예제와 artifact/source SHA-256 manifest를 담는다. `--out <fresh-directory>`로 별도 위치를 지정할 수 있다. artifact README에는 worker 기본 off, `Event.confirm` opt-in, 현재 macOS `MacNetDeny` 제약을 적는다.

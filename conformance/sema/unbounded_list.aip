@@ -1,0 +1,5 @@
+query All {
+  allow public
+  from Club c
+  select { id }
+}

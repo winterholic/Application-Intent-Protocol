@@ -1,0 +1,6 @@
+query Clubs() {
+  allow public
+  from Club c
+  page 20 by keyset
+  select { id score: c.rank }
+}

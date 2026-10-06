@@ -1,0 +1,5 @@
+entity Like { club: Club  member: Member on erase cascade }
+command ToggleLike(club: Club) {
+  allow authenticated
+  do { toggle Like { club, member: actor } }
+}

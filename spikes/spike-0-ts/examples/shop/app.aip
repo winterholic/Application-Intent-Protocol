@@ -1,0 +1,129 @@
+// Small shop domain used to stress AIP semantics: ownership + roles,
+// state-dependent commands, stock races, bulk restore, events, idempotency.
+
+actor User
+
+enum Role { CUSTOMER ADMIN }
+enum OrderStatus { PENDING PAID PREPARING SHIPPING DELIVERED CANCELLED }
+
+entity User {
+  name: String
+  role: Role
+}
+
+entity Product {
+  name: String
+  price: Int
+  stock: Int
+  invariant stock_non_negative: stock >= 0
+  invariant price_positive: price > 0
+}
+
+entity Order {
+  user: User
+  status: OrderStatus
+  total: Int
+  items: OrderItem[] via order
+  invariant total_non_negative: total >= 0
+}
+
+entity OrderItem {
+  order: Order
+  product: Product
+  quantity: Int
+  invariant quantity_positive: quantity > 0
+}
+
+query MyOrders {
+  from Order as o
+  where o.user == actor
+  sort by o.total desc
+  limit 50
+  policy: authenticated
+  select {
+    id status total
+    items { quantity product { name price } }
+  }
+}
+
+query OrderDetail(orderId: UUID) {
+  from Order as o
+  by orderId
+  policy: owner(o.user) | role(ADMIN)
+  select {
+    id status total
+    user { name }
+    items { quantity product { name price } }
+  }
+}
+
+query OrdersByStatus(status: OrderStatus) {
+  from Order as o
+  where o.status == status
+  limit 100
+  policy: role(ADMIN)
+  select { id total user { name } }
+}
+
+command CreateOrder {
+  idempotent
+  policy: authenticated
+  transaction {
+    create Order { user: actor, status: PENDING, total: 0 } as order
+  }
+  emit OrderCreated { orderId: order.id }
+  returns order
+}
+
+command AddItem(orderId: UUID, productId: UUID, quantity: Int) {
+  idempotent
+  load order: Order by orderId lock
+  load product: Product by productId lock
+  policy: owner(order.user)
+  require quantity > 0 else INVALID_QUANTITY
+  require order.status == PENDING else ORDER_NOT_EDITABLE
+  require product.stock >= quantity else OUT_OF_STOCK
+  transaction {
+    decrement product.stock by quantity
+    create OrderItem { order: order, product: product, quantity: quantity }
+    increment order.total by product.price * quantity
+  }
+  returns order
+}
+
+command PayOrder(orderId: UUID) {
+  idempotent
+  load order: Order by orderId lock
+  policy: owner(order.user)
+  require order.status == PENDING else ORDER_NOT_PAYABLE
+  require order.total > 0 else ORDER_EMPTY
+  transaction {
+    set order.status = PAID
+  }
+  emit OrderPaid { orderId: order.id, amount: order.total }
+  returns order
+}
+
+command PrepareOrder(orderId: UUID) {
+  load order: Order by orderId lock
+  policy: role(ADMIN)
+  require order.status == PAID else ORDER_NOT_PAID
+  transaction {
+    set order.status = PREPARING
+  }
+  returns order
+}
+
+command CancelOrder(orderId: UUID) {
+  load order: Order by orderId lock
+  policy: owner(order.user) | role(ADMIN)
+  require order.status in [PENDING, PAID, PREPARING] else ORDER_NOT_CANCELLABLE
+  transaction {
+    each order.items as item {
+      increment item.product.stock by item.quantity
+    }
+    set order.status = CANCELLED
+  }
+  emit OrderCancelled { orderId: order.id }
+  returns order
+}

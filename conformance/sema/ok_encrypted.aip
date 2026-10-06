@@ -1,0 +1,21 @@
+// an encrypted field is written from a parameter, read by name, and used in nothing else
+entity Vault {
+  owner: Member  on erase cascade
+  title: Text(1..50)
+  note: Text encrypted
+  unique (owner, title)
+}
+command AddVault(title: Text(1..50), note: Text) {
+  allow authenticated
+  do { insert Vault { owner: actor, title, note } }
+}
+command ChangeNote(v: Vault, note: Text) {
+  allow v.owner = actor
+  do { set v.note = note }
+}
+query MyVaults() {
+  allow authenticated
+  from Vault v where v.owner = actor
+  page 20 by keyset
+  select { id title note }
+}

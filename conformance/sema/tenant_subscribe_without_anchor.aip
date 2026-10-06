@@ -1,0 +1,12 @@
+// a subscription reads like a query: scanning tenant-scoped rows needs a parameter that fixes the tenant
+entity Workspace { name: Text }
+entity Project {
+  workspace: Workspace
+  title: Text
+  tenant via workspace
+}
+subscribe LiveProjects() {
+  allow authenticated
+  from Project p
+  select { id title }
+}

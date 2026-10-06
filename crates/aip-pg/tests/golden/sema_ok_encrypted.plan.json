@@ -1,0 +1,593 @@
+{
+  "diagnostics": [],
+  "program": {
+    "actor": {
+      "entity": "Member",
+      "provider": "auth.oidc",
+      "superuser": null,
+      "table": "member"
+    },
+    "constraint_errors": {
+      "_aip_approval_pending": {
+        "code": "AIP.CONFLICT.UNIQUE",
+        "reason": "APPROVAL_ALREADY_PENDING"
+      },
+      "_aip_approval_vote_once": {
+        "code": "AIP.CONFLICT.UNIQUE",
+        "reason": "ALREADY_VOTED"
+      },
+      "club_member__u4": {
+        "code": "AIP.CONFLICT.UNIQUE",
+        "reason": "ALREADY_MEMBER"
+      },
+      "vault__u3": {
+        "code": "AIP.CONFLICT.UNIQUE",
+        "reason": null
+      }
+    },
+    "ddl": [
+      "CREATE EXTENSION IF NOT EXISTS btree_gist",
+      "CREATE EXTENSION IF NOT EXISTS pgcrypto",
+      "CREATE TABLE \"club\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"name\" text NOT NULL\n)",
+      "CREATE TABLE \"member\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"nickname\" text NOT NULL,\n  \"role\" text NOT NULL DEFAULT 'USER',\n  CONSTRAINT \"member__role_enum\" CHECK (\"role\" IN ('USER', 'SUPER_ADMIN'))\n)",
+      "CREATE TABLE \"vault\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"owner_id\" uuid NOT NULL,\n  \"title\" text NOT NULL,\n  \"note\" text NOT NULL\n)",
+      "CREATE TABLE \"club_member\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"club_id\" uuid NOT NULL,\n  \"member_id\" uuid,\n  \"role\" text NOT NULL DEFAULT 'GENERAL',\n  \"status\" text NOT NULL DEFAULT 'ACTIVE',\n  CONSTRAINT \"club_member__role_enum\" CHECK (\"role\" IN ('GENERAL', 'MANAGER', 'ADMIN')),\n  CONSTRAINT \"club_member__status_enum\" CHECK (\"status\" IN ('ACTIVE', 'ENDED'))\n)",
+      "ALTER TABLE \"vault\" ADD CONSTRAINT \"vault__owner_id_fk\" FOREIGN KEY (\"owner_id\") REFERENCES \"member\"(\"id\") DEFERRABLE INITIALLY IMMEDIATE",
+      "CREATE INDEX IF NOT EXISTS \"vault__owner_id_idx\" ON \"vault\" (\"owner_id\")",
+      "CREATE UNIQUE INDEX \"vault__u3\" ON \"vault\" (\"owner_id\", \"title\")",
+      "ALTER TABLE \"club_member\" ADD CONSTRAINT \"club_member__club_id_fk\" FOREIGN KEY (\"club_id\") REFERENCES \"club\"(\"id\") DEFERRABLE INITIALLY IMMEDIATE",
+      "CREATE INDEX IF NOT EXISTS \"club_member__club_id_idx\" ON \"club_member\" (\"club_id\")",
+      "ALTER TABLE \"club_member\" ADD CONSTRAINT \"club_member__member_id_fk\" FOREIGN KEY (\"member_id\") REFERENCES \"member\"(\"id\") DEFERRABLE INITIALLY IMMEDIATE",
+      "CREATE INDEX IF NOT EXISTS \"club_member__member_id_idx\" ON \"club_member\" (\"member_id\")",
+      "CREATE UNIQUE INDEX \"club_member__u4\" ON \"club_member\" (\"club_id\", \"member_id\")",
+      "CREATE TABLE IF NOT EXISTS \"_aip_outbox\" (\n  \"id\" bigserial PRIMARY KEY,\n  \"kind\" text NOT NULL,\n  \"name\" text NOT NULL,\n  \"intent\" text,\n  \"key\" text,\n  \"payload\" jsonb NOT NULL,\n  \"available_at\" timestamptz NOT NULL DEFAULT now(),\n  \"attempts\" int NOT NULL DEFAULT 0,\n  \"last_error\" text,\n  \"done_at\" timestamptz,\n  \"created_at\" timestamptz NOT NULL DEFAULT now()\n)",
+      "CREATE INDEX IF NOT EXISTS \"_aip_outbox_pending\" ON \"_aip_outbox\" (\"available_at\") WHERE \"done_at\" IS NULL",
+      "CREATE TABLE IF NOT EXISTS \"_aip_idempotency\" (\n  \"intent\" text NOT NULL,\n  \"actor\" text NOT NULL,\n  \"key\" text NOT NULL,\n  \"request_hash\" text NOT NULL,\n  \"response\" jsonb,\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  PRIMARY KEY (\"intent\", \"actor\", \"key\")\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_audit\" (\n  \"id\" bigserial PRIMARY KEY,\n  \"intent\" text NOT NULL,\n  \"actor\" uuid,\n  \"superuser\" boolean NOT NULL DEFAULT false,\n  \"input\" jsonb NOT NULL,\n  \"at\" timestamptz NOT NULL DEFAULT now()\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_counter_seen\" (\n  \"key\" text PRIMARY KEY,\n  \"expires_at\" timestamptz NOT NULL\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_rate\" (\n  \"key\" text NOT NULL,\n  \"window_start\" timestamptz NOT NULL,\n  \"count\" int NOT NULL,\n  PRIMARY KEY (\"key\", \"window_start\")\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_schedule_run\" (\n  \"name\" text PRIMARY KEY,\n  \"last_run\" timestamptz NOT NULL\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_processed\" (\n  \"handler\" text NOT NULL,\n  \"outbox_id\" bigint NOT NULL,\n  PRIMARY KEY (\"handler\", \"outbox_id\")\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_notification\" (\n  \"id\" bigserial PRIMARY KEY,\n  \"recipient\" uuid NOT NULL,\n  \"template\" text NOT NULL,\n  \"data\" jsonb NOT NULL,\n  \"category\" text,\n  \"read_at\" timestamptz,\n  \"created_at\" timestamptz NOT NULL DEFAULT now()\n)",
+      "CREATE INDEX IF NOT EXISTS \"_aip_notification_recipient\" ON \"_aip_notification\" (\"recipient\", \"created_at\" DESC)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_mail\" (\n  \"id\" bigserial PRIMARY KEY,\n  \"template\" text NOT NULL,\n  \"to\" text,\n  \"data\" jsonb NOT NULL,\n  \"created_at\" timestamptz NOT NULL DEFAULT now()\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_grant\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"link\" text NOT NULL,\n  \"token_hash\" text NOT NULL UNIQUE,\n  \"scope\" jsonb NOT NULL,\n  \"to_member\" uuid,\n  \"issued_by\" uuid,\n  \"expires_at\" timestamptz NOT NULL,\n  \"uses_left\" int NOT NULL,\n  \"created_at\" timestamptz NOT NULL DEFAULT now()\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_verification\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"name\" text NOT NULL,\n  \"subject\" uuid NOT NULL,\n  \"target\" text NOT NULL,\n  \"code_hash\" text NOT NULL,\n  \"expires_at\" timestamptz NOT NULL,\n  \"attempts_left\" int NOT NULL,\n  \"created_at\" timestamptz NOT NULL DEFAULT now()\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_approval\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"name\" text NOT NULL,\n  \"subject\" uuid NOT NULL,\n  \"requested_by\" uuid,\n  \"status\" text NOT NULL DEFAULT 'PENDING' CHECK (\"status\" IN ('PENDING', 'APPROVED', 'REJECTED', 'CANCELLED', 'EXPIRED')),\n  \"required\" int NOT NULL,\n  \"expires_at\" timestamptz,\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"decided_at\" timestamptz\n)",
+      "CREATE UNIQUE INDEX IF NOT EXISTS \"_aip_approval_pending\" ON \"_aip_approval\" (\"name\", \"subject\") WHERE \"status\" = 'PENDING'",
+      "CREATE TABLE IF NOT EXISTS \"_aip_approval_vote\" (\n  \"approval\" uuid NOT NULL REFERENCES \"_aip_approval\" (\"id\") ON DELETE CASCADE,\n  \"voter\" uuid NOT NULL,\n  \"decision\" text NOT NULL CHECK (\"decision\" IN ('APPROVE', 'REJECT')),\n  \"comment\" text,\n  \"at\" timestamptz NOT NULL DEFAULT now(),\n  CONSTRAINT \"_aip_approval_vote_once\" PRIMARY KEY (\"approval\", \"voter\")\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_job\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"name\" text NOT NULL,\n  \"params\" jsonb NOT NULL,\n  \"requested_by\" uuid NOT NULL,\n  \"status\" text NOT NULL DEFAULT 'QUEUED' CHECK (\"status\" IN ('QUEUED', 'RUNNING', 'DONE', 'FAILED')),\n  \"items\" jsonb,\n  \"total\" int,\n  \"done\" int NOT NULL DEFAULT 0,\n  \"file\" text,\n  \"error\" text,\n  \"attempts\" int NOT NULL DEFAULT 0,\n  \"available_at\" timestamptz NOT NULL DEFAULT now(),\n  \"heartbeat\" timestamptz,\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"started_at\" timestamptz,\n  \"finished_at\" timestamptz\n)",
+      "CREATE UNIQUE INDEX IF NOT EXISTS \"_aip_job_active\" ON \"_aip_job\" (\"name\", \"requested_by\", \"params\") WHERE \"status\" IN ('QUEUED', 'RUNNING')",
+      "CREATE INDEX IF NOT EXISTS \"_aip_job_queue\" ON \"_aip_job\" (\"available_at\") WHERE \"status\" IN ('QUEUED', 'RUNNING')",
+      "CREATE TABLE IF NOT EXISTS \"_aip_webhook_seen\" (\n  \"webhook\" text NOT NULL,\n  \"event_id\" text NOT NULL,\n  \"received_at\" timestamptz NOT NULL DEFAULT now(),\n  PRIMARY KEY (\"webhook\", \"event_id\")\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_rule_pending\" (\n  \"rule\" text NOT NULL,\n  \"id\" uuid NOT NULL,\n  PRIMARY KEY (\"rule\", \"id\")\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_rule_state\" (\n  \"rule\" text NOT NULL,\n  \"id\" uuid NOT NULL,\n  PRIMARY KEY (\"rule\", \"id\")\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_sequence\" (\n  \"scope\" text PRIMARY KEY,\n  \"n\" bigint NOT NULL\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_object\" (\n  \"key\" text PRIMARY KEY,\n  \"bucket\" text NOT NULL,\n  \"content_type\" text,\n  \"size\" bigint NOT NULL,\n  \"state\" text NOT NULL DEFAULT 'staged',\n  \"created_at\" timestamptz NOT NULL DEFAULT now()\n)"
+    ],
+    "entities": {
+      "Club": {
+        "columns": [
+          {
+            "column": "id",
+            "field": "id",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "uuid"
+            }
+          },
+          {
+            "column": "name",
+            "field": "name",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            }
+          }
+        ],
+        "personal": false,
+        "table": "club"
+      },
+      "ClubMember": {
+        "columns": [
+          {
+            "column": "id",
+            "field": "id",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "uuid"
+            }
+          },
+          {
+            "column": "club_id",
+            "field": "club",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "entity": "Club",
+              "kind": "entity"
+            }
+          },
+          {
+            "column": "member_id",
+            "field": "member",
+            "nullable": true,
+            "personal": false,
+            "ty": {
+              "entity": "Member",
+              "kind": "entity"
+            }
+          },
+          {
+            "column": "role",
+            "field": "role",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "enum",
+              "name": "ClubRole"
+            }
+          },
+          {
+            "column": "status",
+            "field": "status",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "enum",
+              "name": "Status"
+            }
+          }
+        ],
+        "personal": false,
+        "table": "club_member"
+      },
+      "Member": {
+        "columns": [
+          {
+            "column": "id",
+            "field": "id",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "uuid"
+            }
+          },
+          {
+            "column": "nickname",
+            "field": "nickname",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            }
+          },
+          {
+            "column": "role",
+            "field": "role",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "enum",
+              "name": "MemberRole"
+            }
+          }
+        ],
+        "personal": true,
+        "table": "member"
+      },
+      "Vault": {
+        "columns": [
+          {
+            "column": "id",
+            "field": "id",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "uuid"
+            }
+          },
+          {
+            "column": "owner_id",
+            "field": "owner",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "entity": "Member",
+              "kind": "entity"
+            }
+          },
+          {
+            "column": "title",
+            "field": "title",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            }
+          },
+          {
+            "column": "note",
+            "encrypted": true,
+            "field": "note",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            }
+          }
+        ],
+        "personal": false,
+        "table": "vault"
+      }
+    },
+    "enums": {
+      "ClubRole": [
+        "GENERAL",
+        "MANAGER",
+        "ADMIN"
+      ],
+      "MemberRole": [
+        "USER",
+        "SUPER_ADMIN"
+      ],
+      "Status": [
+        "ACTIVE",
+        "ENDED"
+      ]
+    },
+    "events": {},
+    "extensions": [
+      "auth",
+      "notify",
+      "s3"
+    ],
+    "handlers": [],
+    "intents": {
+      "AddVault": {
+        "audited": false,
+        "effects": [],
+        "emits": [],
+        "errors": [
+          {
+            "code": "AIP.AUTH.FORBIDDEN",
+            "reason": null
+          },
+          {
+            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "reason": null
+          },
+          {
+            "code": "AIP.CONCURRENCY.CONFLICT",
+            "reason": null
+          },
+          {
+            "code": "AIP.CONFLICT.UNIQUE",
+            "reason": null
+          },
+          {
+            "code": "AIP.INPUT.INVALID",
+            "reason": null
+          }
+        ],
+        "idempotency_key": null,
+        "idempotent": false,
+        "internal": false,
+        "kind": "command",
+        "name": "AddVault",
+        "output": null,
+        "params": [
+          {
+            "default": null,
+            "name": "title",
+            "optional": false,
+            "ty": {
+              "kind": "text",
+              "lower": false,
+              "max": 50,
+              "min": 1,
+              "pattern": null,
+              "trim": false
+            }
+          },
+          {
+            "default": null,
+            "name": "note",
+            "optional": false,
+            "ty": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            }
+          }
+        ],
+        "rate_limits": [],
+        "returns": null,
+        "steps": [
+          {
+            "code": null,
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "__actor"
+              ],
+              "text": "SELECT coalesce(((($1::text)::uuid IS NOT NULL)), false)"
+            }
+          },
+          {
+            "name": "__id.2",
+            "op": "new_id"
+          },
+          {
+            "bind": "__enc.1",
+            "field": "Vault.note",
+            "op": "encrypt",
+            "row": {
+              "id": "__id.2",
+              "row": "new"
+            },
+            "source": "note"
+          },
+          {
+            "bind": null,
+            "label": "insert Vault",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "__actor",
+                "title",
+                "__enc.1",
+                "__id.2"
+              ],
+              "text": "INSERT INTO \"vault\" (\"owner_id\", \"title\", \"note\", \"id\") VALUES ((($1::text)::uuid)::uuid, (($2::text)::text)::text, ($3::text), ($4::text)::uuid) RETURNING \"id\""
+            }
+          }
+        ],
+        "writes": [
+          "Vault"
+        ]
+      },
+      "ChangeNote": {
+        "audited": false,
+        "effects": [],
+        "emits": [],
+        "errors": [
+          {
+            "code": "AIP.AUTH.FORBIDDEN",
+            "reason": null
+          },
+          {
+            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "reason": null
+          },
+          {
+            "code": "AIP.CONCURRENCY.CONFLICT",
+            "reason": null
+          },
+          {
+            "code": "AIP.CONFLICT.UNIQUE",
+            "reason": null
+          },
+          {
+            "code": "AIP.INPUT.INVALID",
+            "reason": null
+          },
+          {
+            "code": "AIP.NOT_FOUND",
+            "reason": "VAULT_NOT_FOUND"
+          }
+        ],
+        "idempotency_key": null,
+        "idempotent": false,
+        "internal": false,
+        "kind": "command",
+        "name": "ChangeNote",
+        "output": null,
+        "params": [
+          {
+            "default": null,
+            "name": "v",
+            "optional": false,
+            "ty": {
+              "entity": "Vault",
+              "kind": "entity"
+            }
+          },
+          {
+            "default": null,
+            "name": "note",
+            "optional": false,
+            "ty": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            }
+          }
+        ],
+        "rate_limits": [],
+        "returns": null,
+        "steps": [
+          {
+            "entity": "Vault",
+            "lock": true,
+            "many": false,
+            "op": "load",
+            "param": "v",
+            "sql": {
+              "params": [
+                "v"
+              ],
+              "text": "SELECT t1.\"id\" FROM \"vault\" t1 WHERE t1.\"id\" = ($1::text)::uuid ORDER BY t1.\"id\" FOR UPDATE OF t1"
+            }
+          },
+          {
+            "code": null,
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "v",
+                "__actor"
+              ],
+              "text": "SELECT coalesce((((SELECT t2.\"owner_id\" FROM \"vault\" t2 WHERE t2.\"id\" = ($1::text)::uuid) = ($2::text)::uuid)), false)"
+            }
+          },
+          {
+            "bind": "__enc.3",
+            "field": "Vault.note",
+            "op": "encrypt",
+            "row": {
+              "id": {
+                "params": [
+                  "v"
+                ],
+                "text": "SELECT (($1::text)::uuid)::text"
+              },
+              "row": "existing"
+            },
+            "source": "note"
+          },
+          {
+            "bind": null,
+            "label": "set Vault",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "__enc.3",
+                "v"
+              ],
+              "text": "UPDATE \"vault\" SET \"note\" = ($1::text) WHERE \"id\" = ($2::text)::uuid"
+            }
+          }
+        ],
+        "writes": [
+          "Vault"
+        ]
+      },
+      "MyVaults": {
+        "cache_seconds": null,
+        "decrypt": [
+          {
+            "field": "Vault.note",
+            "path": [
+              "[]",
+              "note"
+            ]
+          }
+        ],
+        "errors": [
+          {
+            "code": "AIP.AUTH.FORBIDDEN",
+            "reason": null
+          },
+          {
+            "code": "AIP.INPUT.INVALID",
+            "reason": null
+          }
+        ],
+        "internal": false,
+        "kind": "query",
+        "name": "MyVaults",
+        "output": {
+          "kind": "list",
+          "of": {
+            "fields": {
+              "id": {
+                "kind": "uuid"
+              },
+              "note": {
+                "kind": "text",
+                "lower": false,
+                "max": null,
+                "min": null,
+                "pattern": null,
+                "trim": false
+              },
+              "title": {
+                "kind": "text",
+                "lower": false,
+                "max": null,
+                "min": null,
+                "pattern": null,
+                "trim": false
+              }
+            },
+            "kind": "object"
+          }
+        },
+        "page": {
+          "keyset": true,
+          "max_page": null,
+          "size": 20
+        },
+        "params": [],
+        "prelude": [
+          {
+            "code": null,
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "__actor"
+              ],
+              "text": "SELECT coalesce(((($1::text)::uuid IS NOT NULL)), false)"
+            }
+          }
+        ],
+        "rate_limits": [],
+        "single": false,
+        "sort_param": null,
+        "touches": [],
+        "variants": [
+          {
+            "key_count": 1,
+            "main": {
+              "params": [
+                "__actor",
+                "__cursor"
+              ],
+              "text": "SELECT coalesce(jsonb_agg(x.j || jsonb_build_object('__k', x.k) ORDER BY x.n), '[]'::jsonb) FROM (SELECT jsonb_build_object('id', to_jsonb(t1.\"id\"), 'title', to_jsonb(t1.\"title\"), 'note', (CASE WHEN t1.\"note\" IS NULL THEN NULL ELSE jsonb_build_object('c', t1.\"note\", 'i', t1.\"id\") END)) AS j, jsonb_build_array((t1.\"id\")) AS k, row_number() OVER (ORDER BY t1.\"id\" ASC NULLS LAST) AS n FROM \"vault\" t1 WHERE coalesce(((t1.\"owner_id\" = ($1::text)::uuid)), false) AND (($2)::text IS NULL OR ((t1.\"id\") > ((((($2)::text)::jsonb ->> 0)))::uuid)) ORDER BY t1.\"id\" ASC NULLS LAST LIMIT 21) x"
+            },
+            "when": null
+          }
+        ]
+      }
+    },
+    "ir_version": "0.1",
+    "jobs": [],
+    "records": {},
+    "rules": [],
+    "schedules": [],
+    "webhooks": []
+  }
+}

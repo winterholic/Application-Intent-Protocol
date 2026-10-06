@@ -1,0 +1,1 @@
+entity Comment { author: Member  on erase anonymize  body: Text }

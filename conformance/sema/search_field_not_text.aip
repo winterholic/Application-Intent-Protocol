@@ -1,0 +1,7 @@
+search MemberSearch on ClubMember fields [status]
+query SearchMembers(q: Text(1..50)) {
+  allow public
+  from MemberSearch.match(q) r
+  page 20 by keyset
+  select { id }
+}

@@ -1,0 +1,4 @@
+command Pay(club: Club) {
+  allow authenticated
+  do { payments.charge(club.id) }
+}

@@ -1,0 +1,5 @@
+// a query reads rows from somewhere: `from`, or `fetch` for external data
+query Nothing {
+  allow public
+  select { }
+}

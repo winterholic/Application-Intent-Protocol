@@ -1,0 +1,5 @@
+// ariari approveApplies used applies.get(0).getRecruitment().getClub()
+command Approve(targets: Set<ClubMember> max 100) {
+  allow managerOf(actor, targets.club)
+  do { update targets set status = ACTIVE }
+}

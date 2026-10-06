@@ -1,0 +1,1 @@
+{"alarmDeps":["MemberAlarm"],"listDeps":["Club","ClubMember","Member","Recruitment"],"writeTags":{"Apply.approve":["Apply","ClubMember"],"MemberAlarm.read":["MemberAlarm"]}}

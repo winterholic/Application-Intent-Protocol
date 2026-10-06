@@ -1,0 +1,29 @@
+node_modules/
+test/.generated/
+
+# Local build outputs and caches
+**/target/
+**/node_modules/
+**/__pycache__/
+**/.pytest_cache/
+**/.venv/
+**/.generated/
+.DS_Store
+
+# Local environment and credentials
+**/.env*
+**/credentials.json
+**/secrets.json
+**/*.p12
+**/*.pfx
+**/*.key
+**/*private*.pem
+
+# Generated executable bundles; keep small verification/provenance records
+/product/dist/*/*
+!/product/dist/*/README.md
+!/product/dist/*/SHA256SUMS
+!/product/dist/*/SOURCE_SHA256SUMS
+/prototype/dist/*/*
+!/prototype/dist/*/README.md
+!/prototype/dist/*/manifest.json

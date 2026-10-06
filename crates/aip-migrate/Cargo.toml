@@ -1,0 +1,18 @@
+[package]
+name = "aip-migrate"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.10"
+tokio = { version = "1", features = ["rt", "macros", "time"] }
+tokio-postgres = { version = "0.7", features = ["with-serde_json-1"] }
+spike-v2-read = { path = "../../spikes/spike-v2-read" }
+spike-v1-fixture = { path = "../../spikes/spike-v1-fixture" }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+futures-util = "0.3"

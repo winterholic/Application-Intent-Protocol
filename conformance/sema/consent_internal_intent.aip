@@ -1,0 +1,5 @@
+internal command Tidy(club: Club) {
+  allow authenticated
+  do { set club.name = "tidy" }
+}
+consent Terms version 1 required for [Tidy]

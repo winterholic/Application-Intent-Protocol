@@ -1,0 +1,102 @@
+use auth
+use s3
+actor Member via auth.oidc(kakao) superuser when role = SUPER_ADMIN audited
+enum MemberRole { USER SUPER_ADMIN }
+
+entity Member personal {
+  nickname: Text(2..20, trim)
+  role: MemberRole = USER
+  email: Email? personal encrypted masked unless self as mask.email
+  phone: Phone? personal encrypted visible to self
+  unique (nickname) else NICKNAME_TAKEN
+}
+
+// the working version is encrypted; publishing copies the ciphertext, readers decrypt it from the copy
+entity Post {
+  track created, updated
+  owner: Member  on erase cascade
+  title: Text(1..50)
+  body: Text(1..2000) encrypted
+  publishable by owner = actor
+}
+
+// every version is kept as a JSON document in diary_history
+entity Diary {
+  track created, updated
+  owner: Member  on erase cascade
+  body: Text(1..2000) encrypted
+  history
+}
+
+command Register(nickname: Text(2..20, trim), email: Email?, phone: Phone?) idempotent {
+  allow public
+  do { insert Member { nickname, email, phone } as m }
+  returns m { id nickname email phone }
+}
+
+command ChangeEmail(m: Member, email: Email) {
+  allow m = actor
+  do { set m.email = email }
+  returns m { id email }
+}
+
+command ChangeContact(m: Member, email: Email, phone: Phone) {
+  allow m = actor
+  do { set m.email = email, m.phone = phone }
+}
+
+query Me(m: Member) {
+  allow m = actor
+  from m
+  select { id nickname email phone }
+}
+
+query Members() {
+  allow authenticated
+  from Member m
+  sort by m.nickname asc
+  page 20 by keyset
+  select { id nickname email phone }
+}
+
+command AddPost(title: Text(1..50), body: Text(1..2000)) idempotent {
+  allow authenticated
+  do { insert Post { owner: actor, title, body } as p }
+  returns p { id title body }
+}
+
+command EditPost(post: Post, body: Text(1..2000)) {
+  allow post.owner = actor
+  do { set post.body = body }
+}
+
+query Posts() {
+  allow public
+  from Post p
+  page 20 by keyset
+  select { id title body owner { id nickname } }
+}
+
+drafts query DraftPosts() {
+  allow authenticated
+  from Post p where p.owner = actor
+  page 20 by keyset
+  select { id title body }
+}
+
+command AddDiary(body: Text(1..2000)) idempotent {
+  allow authenticated
+  do { insert Diary { owner: actor, body } as d }
+  returns d { id body }
+}
+
+command EditDiary(d: Diary, body: Text(1..2000)) {
+  allow d.owner = actor
+  do { set d.body = body }
+}
+
+job ExportMembers() {
+  allow actor.role = SUPER_ADMIN
+  progress over Member m
+  produce csv to s3 bucket "exports" expires 1d
+}

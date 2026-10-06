@@ -1,0 +1,6 @@
+// negative control: a correct program has no diagnostics
+command ChangeStatus(targets: Set<ClubMember> max 200, newStatus: Status) {
+  let club = same(targets t: t.club) else DIFFERENT_CLUBS
+  allow managerOf(actor, club) and all(targets t: outranks(actor, t))
+  do { update targets set status = newStatus }
+}

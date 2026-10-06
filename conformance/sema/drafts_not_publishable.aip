@@ -1,0 +1,6 @@
+drafts query ClubDrafts() {
+  allow authenticated
+  from Club c
+  page 20 by keyset
+  select { id name }
+}

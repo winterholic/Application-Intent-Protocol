@@ -1,0 +1,33 @@
+// the tenant of the parameter filters every read of tenant-scoped rows; rows reached from it need no filter
+entity Workspace {
+  name: Text
+  projects: Project[] via workspace
+}
+entity Project {
+  workspace: Workspace
+  title: Text
+  tasks: Task[] via project
+  tenant via workspace
+}
+entity Task {
+  project: Project
+  title: Text
+  assignee: Member?  on erase anonymize
+  tenant via project.workspace
+}
+query WorkspaceTasks(workspace: Workspace) {
+  allow authenticated
+  from Task t
+  where t.assignee = actor
+  page 20 by keyset
+  select { id title }
+}
+query ProjectTitles(workspace: Workspace) {
+  allow authenticated
+  from workspace
+  select { titles: count(workspace.projects p where p.title != "") open: count(Task t where t.title != "") }
+}
+command CloseProject(project: Project) {
+  allow authenticated
+  do { delete Task t where t in project.tasks }
+}

@@ -1,0 +1,2 @@
+use redis
+entity Page { club: Club  views: Text counter via redis }

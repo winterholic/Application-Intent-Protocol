@@ -1,0 +1,7732 @@
+{
+  "commands": {
+    "AddFinancialRecord": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "club",
+          "optional": false,
+          "ty": {
+            "entity": "Club",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "at",
+          "optional": false,
+          "ty": {
+            "kind": "time"
+          }
+        },
+        {
+          "default": null,
+          "name": "amount",
+          "optional": false,
+          "ty": {
+            "currency": "KRW",
+            "format": "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$",
+            "kind": "money",
+            "wire": "decimal_string"
+          }
+        },
+        {
+          "default": null,
+          "name": "memo",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 200,
+            "min": 1,
+            "pattern": null,
+            "trim": false
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "FinancialRecord"
+      ]
+    },
+    "AnswerQuestion": {
+      "audited": false,
+      "effects": [],
+      "emits": [
+        "QuestionAnswered"
+      ],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_QUESTION_NOT_FOUND"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "ALREADY_ANSWERED"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": "at-least-once via transactional outbox; consumers must tolerate duplicates",
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "q",
+          "optional": false,
+          "ty": {
+            "entity": "ClubQuestion",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "answer",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 2000,
+            "min": 1,
+            "pattern": null,
+            "trim": false
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "ClubQuestion"
+      ]
+    },
+    "ApproveApplies": {
+      "audited": false,
+      "effects": [],
+      "emits": [
+        "AppliesDecided"
+      ],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_APPLIED"
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_CLUB_MEMBER"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.INVARIANT.VIOLATED",
+          "reason": "CLUB_MEMBER_EXACTLY_ONE"
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "APPLY_NOT_FOUND"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "APPLIES_FROM_DIFFERENT_CLUBS"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "APPLY_STATUS_INVALID_TRANSITION"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": "at-least-once via transactional outbox; consumers must tolerate duplicates",
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "applies",
+          "optional": false,
+          "ty": {
+            "kind": "set",
+            "max": 100,
+            "of": {
+              "entity": "Apply",
+              "kind": "entity"
+            }
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "Apply",
+        "ClubMember"
+      ]
+    },
+    "ApproveFinancialSettlement": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": "NOT_AN_APPROVER"
+        },
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": "SELF_APPROVAL_FORBIDDEN"
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_VOTED"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "FINANCIAL_RECORD_NOT_FOUND"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "APPROVAL_EXPIRED"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "APPROVAL_NOT_PENDING"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "financialRecord",
+          "optional": false,
+          "ty": {
+            "entity": "FinancialRecord",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "comment",
+          "optional": true,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": null,
+            "min": null,
+            "pattern": null,
+            "trim": false
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "FinancialRecord"
+      ]
+    },
+    "ApproveRecruitment": {
+      "audited": true,
+      "effects": [],
+      "emits": [
+        "RecruitmentOpened"
+      ],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.OVERLAP",
+          "reason": "RECRUITMENT_PERIOD_OVERLAP"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "RECRUITMENT_NOT_FOUND"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "RECRUITMENT_STATUS_INVALID_TRANSITION"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": "at-least-once via transactional outbox; consumers must tolerate duplicates",
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "r",
+          "optional": false,
+          "ty": {
+            "entity": "Recruitment",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "Recruitment"
+      ]
+    },
+    "AskQuestion": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "club",
+          "optional": false,
+          "ty": {
+            "entity": "Club",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "title",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 100,
+            "min": 1,
+            "pattern": null,
+            "trim": false
+          }
+        },
+        {
+          "default": null,
+          "name": "body",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 2000,
+            "min": 1,
+            "pattern": null,
+            "trim": false
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "ClubQuestion"
+      ]
+    },
+    "BlockAuthor": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_BLOCKED"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.INVARIANT.VIOLATED",
+          "reason": "NOT_SELF"
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "ACTIVITY_COMMENT_NOT_FOUND"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "AUTHOR_UNAVAILABLE"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "comment",
+          "optional": false,
+          "ty": {
+            "entity": "ActivityComment",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "Block"
+      ]
+    },
+    "CancelFinancialSettlement": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": "ONLY_REQUESTER_CAN_CANCEL"
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "FINANCIAL_RECORD_NOT_FOUND"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "APPROVAL_EXPIRED"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "APPROVAL_NOT_PENDING"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "financialRecord",
+          "optional": false,
+          "ty": {
+            "entity": "FinancialRecord",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": null,
+      "writes": []
+    },
+    "CancelSchoolAuth": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_CLUB_MEMBER"
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_REGISTERED"
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "NICKNAME_TAKEN"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.INVARIANT.VIOLATED",
+          "reason": "CLUB_MEMBER_EXACTLY_ONE"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "ADMIN_OF_SCHOOL_CLUB"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [],
+      "output": null,
+      "writes": [
+        "ClubMember",
+        "Member"
+      ]
+    },
+    "ChangeMemberRole": {
+      "audited": false,
+      "effects": [],
+      "emits": [
+        "ClubRoleChanged"
+      ],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_CLUB_MEMBER"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.INVARIANT.VIOLATED",
+          "reason": "CLUB_MEMBER_EXACTLY_ONE"
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_MEMBER_NOT_FOUND"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "CANNOT_CHANGE_OWN_ROLE"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "USE_ENTRUST_FOR_ADMIN"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": "at-least-once via transactional outbox; consumers must tolerate duplicates",
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "target",
+          "optional": false,
+          "ty": {
+            "entity": "ClubMember",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "role",
+          "optional": false,
+          "ty": {
+            "kind": "enum",
+            "name": "ClubRole"
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "ClubMember"
+      ]
+    },
+    "ChangeMemberStatus": {
+      "audited": false,
+      "effects": [],
+      "emits": [
+        "ClubMemberStatusChanged"
+      ],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_CLUB_MEMBER"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.INVARIANT.VIOLATED",
+          "reason": "CLUB_MEMBER_EXACTLY_ONE"
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_MEMBER_NOT_FOUND"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "MEMBERS_FROM_DIFFERENT_CLUBS"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": "at-least-once via transactional outbox; consumers must tolerate duplicates",
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "targets",
+          "optional": false,
+          "ty": {
+            "kind": "set",
+            "max": 200,
+            "of": {
+              "entity": "ClubMember",
+              "kind": "entity"
+            }
+          }
+        },
+        {
+          "default": null,
+          "name": "newStatus",
+          "optional": false,
+          "ty": {
+            "kind": "enum",
+            "name": "MemberStatus"
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "ClubMember"
+      ]
+    },
+    "CloseRecruitmentEarly": {
+      "audited": false,
+      "effects": [],
+      "emits": [
+        "RecruitmentClosed"
+      ],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.OVERLAP",
+          "reason": "RECRUITMENT_PERIOD_OVERLAP"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "RECRUITMENT_NOT_FOUND"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "RECRUITMENT_NOT_OPEN"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": "at-least-once via transactional outbox; consumers must tolerate duplicates",
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "r",
+          "optional": false,
+          "ty": {
+            "entity": "Recruitment",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "Recruitment"
+      ]
+    },
+    "CreateClub": {
+      "audited": false,
+      "effects": [
+        "s3.put"
+      ],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_CLUB_MEMBER"
+        },
+        {
+          "code": "AIP.IDEMPOTENCY.KEY_REUSED",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.INVARIANT.VIOLATED",
+          "reason": "CLUB_MEMBER_EXACTLY_ONE"
+        },
+        {
+          "code": "AIP.INVARIANT.VIOLATED",
+          "reason": "SCHOOL_MATCHES_AFFILIATION"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "SCHOOL_AUTH_REQUIRED"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "safe with the same key"
+      },
+      "idempotency": "Idempotency-Key header required",
+      "idempotent": true,
+      "input": [
+        {
+          "default": null,
+          "name": "input",
+          "optional": false,
+          "ty": {
+            "kind": "record",
+            "name": "ClubInput"
+          }
+        },
+        {
+          "default": null,
+          "name": "adminName",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 20,
+            "min": 1,
+            "pattern": null,
+            "trim": false
+          }
+        },
+        {
+          "default": null,
+          "name": "profile",
+          "optional": true,
+          "ty": {
+            "kind": "upload",
+            "max_bytes": 5242880,
+            "types": [
+              "png",
+              "jpg",
+              "webp"
+            ]
+          }
+        }
+      ],
+      "output": {
+        "fields": {
+          "id": {
+            "kind": "uuid"
+          },
+          "name": {
+            "kind": "text",
+            "lower": false,
+            "max": null,
+            "min": null,
+            "pattern": null,
+            "trim": false
+          }
+        },
+        "kind": "object"
+      },
+      "writes": [
+        "ApplyForm",
+        "Club",
+        "ClubMember"
+      ]
+    },
+    "CreateClubEvent": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.IDEMPOTENCY.KEY_REUSED",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "safe with the same key"
+      },
+      "idempotency": "Idempotency-Key header required",
+      "idempotent": true,
+      "input": [
+        {
+          "default": null,
+          "name": "club",
+          "optional": false,
+          "ty": {
+            "entity": "Club",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "title",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 100,
+            "min": 1,
+            "pattern": null,
+            "trim": false
+          }
+        },
+        {
+          "default": null,
+          "name": "at",
+          "optional": false,
+          "ty": {
+            "kind": "time"
+          }
+        },
+        {
+          "default": null,
+          "name": "place",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 200,
+            "min": 0,
+            "pattern": null,
+            "trim": false
+          }
+        }
+      ],
+      "output": {
+        "fields": {
+          "id": {
+            "kind": "uuid"
+          }
+        },
+        "kind": "object"
+      },
+      "writes": [
+        "ClubEvent"
+      ]
+    },
+    "CreateClubFaq": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.IDEMPOTENCY.KEY_REUSED",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "safe with the same key"
+      },
+      "idempotency": "Idempotency-Key header required",
+      "idempotent": true,
+      "input": [
+        {
+          "default": null,
+          "name": "club",
+          "optional": false,
+          "ty": {
+            "entity": "Club",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "question",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 200,
+            "min": 1,
+            "pattern": null,
+            "trim": false
+          }
+        },
+        {
+          "default": null,
+          "name": "answer",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 2000,
+            "min": 1,
+            "pattern": null,
+            "trim": false
+          }
+        }
+      ],
+      "output": {
+        "fields": {
+          "id": {
+            "kind": "uuid"
+          }
+        },
+        "kind": "object"
+      },
+      "writes": [
+        "ClubFaq"
+      ]
+    },
+    "CreateRecruitment": {
+      "audited": false,
+      "effects": [
+        "s3.put"
+      ],
+      "emits": [
+        "RecruitmentCreated"
+      ],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.OVERLAP",
+          "reason": "RECRUITMENT_PERIOD_OVERLAP"
+        },
+        {
+          "code": "AIP.IDEMPOTENCY.KEY_REUSED",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_NOT_FOUND"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "NO_APPLY_FORM"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": "at-least-once via transactional outbox; consumers must tolerate duplicates",
+        "retry": "safe with the same key"
+      },
+      "idempotency": "Idempotency-Key header required",
+      "idempotent": true,
+      "input": [
+        {
+          "default": null,
+          "name": "club",
+          "optional": false,
+          "ty": {
+            "entity": "Club",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "input",
+          "optional": false,
+          "ty": {
+            "kind": "record",
+            "name": "RecruitmentInput"
+          }
+        },
+        {
+          "default": null,
+          "name": "poster",
+          "optional": true,
+          "ty": {
+            "kind": "upload",
+            "max_bytes": 10485760,
+            "types": [
+              "png",
+              "jpg",
+              "webp"
+            ]
+          }
+        }
+      ],
+      "output": {
+        "fields": {
+          "id": {
+            "kind": "uuid"
+          }
+        },
+        "kind": "object"
+      },
+      "writes": [
+        "Recruitment"
+      ]
+    },
+    "DeleteActivity": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_ACTIVITY_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "activity",
+          "optional": false,
+          "ty": {
+            "entity": "ClubActivity",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "ClubActivity"
+      ]
+    },
+    "DeleteApplyDraft": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "APPLY_DRAFT_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "draft",
+          "optional": false,
+          "ty": {
+            "entity": "ApplyDraft",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "ApplyDraft"
+      ]
+    },
+    "DeleteClub": {
+      "audited": false,
+      "effects": [],
+      "emits": [
+        "ClubClosed"
+      ],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": "ONLY_ADMIN_CAN_DELETE"
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.INVARIANT.VIOLATED",
+          "reason": "SCHOOL_MATCHES_AFFILIATION"
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_NOT_FOUND"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "CLUB_HAS_OTHER_MEMBERS"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": "at-least-once via transactional outbox; consumers must tolerate duplicates",
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "club",
+          "optional": false,
+          "ty": {
+            "entity": "Club",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "Club"
+      ]
+    },
+    "DeleteClubEvent": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_EVENT_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "target",
+          "optional": false,
+          "ty": {
+            "entity": "ClubEvent",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "ClubEvent"
+      ]
+    },
+    "DeleteClubFaq": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_FAQ_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "target",
+          "optional": false,
+          "ty": {
+            "entity": "ClubFaq",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "ClubFaq"
+      ]
+    },
+    "DeleteComment": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.INVARIANT.VIOLATED",
+          "reason": "SAME_ACTIVITY"
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "ACTIVITY_COMMENT_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "comment",
+          "optional": false,
+          "ty": {
+            "entity": "ActivityComment",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "ActivityComment"
+      ]
+    },
+    "DeleteFinancialRecord": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "FINANCIAL_RECORD_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "record",
+          "optional": false,
+          "ty": {
+            "entity": "FinancialRecord",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "FinancialRecord"
+      ]
+    },
+    "DeleteNotice": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.CAPACITY",
+          "reason": "TOO_MANY_FIXED_NOTICES"
+        },
+        {
+          "code": "AIP.CONFLICT.STALE_VERSION",
+          "reason": "CLUB_NOTICE_VERSION_STALE"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_NOTICE_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "notice",
+          "optional": false,
+          "ty": {
+            "entity": "ClubNotice",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "noticeVersion",
+          "optional": false,
+          "ty": {
+            "kind": "int",
+            "max": null,
+            "min": 1
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "ClubNotice"
+      ]
+    },
+    "DeleteRecruitment": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.OVERLAP",
+          "reason": "RECRUITMENT_PERIOD_OVERLAP"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "RECRUITMENT_NOT_FOUND"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "RECRUITMENT_HAS_APPLIES"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "r",
+          "optional": false,
+          "ty": {
+            "entity": "Recruitment",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "Recruitment"
+      ]
+    },
+    "EditActivity": {
+      "audited": false,
+      "effects": [
+        "s3.put"
+      ],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.CAPACITY",
+          "reason": "TOO_MANY_IMAGES"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "ACTIVITY_IMAGE_NOT_FOUND"
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_ACTIVITY_NOT_FOUND"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "IMAGE_NOT_IN_ACTIVITY"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "activity",
+          "optional": false,
+          "ty": {
+            "entity": "ClubActivity",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "access",
+          "optional": false,
+          "ty": {
+            "kind": "enum",
+            "name": "AccessType"
+          }
+        },
+        {
+          "default": null,
+          "name": "body",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 5000,
+            "min": 1,
+            "pattern": null,
+            "trim": false
+          }
+        },
+        {
+          "default": null,
+          "name": "removeImages",
+          "optional": false,
+          "ty": {
+            "kind": "set",
+            "max": 10,
+            "of": {
+              "entity": "ActivityImage",
+              "kind": "entity"
+            }
+          }
+        },
+        {
+          "default": null,
+          "name": "addImages",
+          "optional": false,
+          "ty": {
+            "kind": "list",
+            "max": 10,
+            "of": {
+              "kind": "upload",
+              "max_bytes": 10485760,
+              "types": [
+                "png",
+                "jpg",
+                "webp"
+              ]
+            }
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "ActivityImage",
+        "ClubActivity"
+      ]
+    },
+    "EditComment": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.INVARIANT.VIOLATED",
+          "reason": "SAME_ACTIVITY"
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "ACTIVITY_COMMENT_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "comment",
+          "optional": false,
+          "ty": {
+            "entity": "ActivityComment",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "body",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 1000,
+            "min": 1,
+            "pattern": null,
+            "trim": false
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "ActivityComment"
+      ]
+    },
+    "EditFinancialRecord": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "FINANCIAL_RECORD_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "record",
+          "optional": false,
+          "ty": {
+            "entity": "FinancialRecord",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "at",
+          "optional": false,
+          "ty": {
+            "kind": "time"
+          }
+        },
+        {
+          "default": null,
+          "name": "amount",
+          "optional": false,
+          "ty": {
+            "currency": "KRW",
+            "format": "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$",
+            "kind": "money",
+            "wire": "decimal_string"
+          }
+        },
+        {
+          "default": null,
+          "name": "memo",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 200,
+            "min": 1,
+            "pattern": null,
+            "trim": false
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "FinancialRecord"
+      ]
+    },
+    "EditNotice": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.CAPACITY",
+          "reason": "TOO_MANY_FIXED_NOTICES"
+        },
+        {
+          "code": "AIP.CONFLICT.STALE_VERSION",
+          "reason": "CLUB_NOTICE_VERSION_STALE"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_NOTICE_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "notice",
+          "optional": false,
+          "ty": {
+            "entity": "ClubNotice",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "title",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 100,
+            "min": 1,
+            "pattern": null,
+            "trim": false
+          }
+        },
+        {
+          "default": null,
+          "name": "body",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 5000,
+            "min": 1,
+            "pattern": null,
+            "trim": false
+          }
+        },
+        {
+          "default": null,
+          "name": "noticeVersion",
+          "optional": false,
+          "ty": {
+            "kind": "int",
+            "max": null,
+            "min": 1
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "ClubNotice"
+      ]
+    },
+    "EntrustAdmin": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_CLUB_MEMBER"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.INVARIANT.VIOLATED",
+          "reason": "CLUB_MEMBER_EXACTLY_ONE"
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_MEMBER_NOT_FOUND"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "CANNOT_ENTRUST_TO_SELF"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "ENTRUST_TARGET_INACTIVE"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "target",
+          "optional": false,
+          "ty": {
+            "entity": "ClubMember",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "ClubMember"
+      ]
+    },
+    "ExportApplicants": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "RECRUITMENT_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "recruitment",
+          "optional": false,
+          "ty": {
+            "entity": "Recruitment",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": {
+        "fields": {
+          "job": {
+            "kind": "uuid"
+          },
+          "status": {
+            "kind": "enum",
+            "name": "JobStatus"
+          }
+        },
+        "kind": "object"
+      },
+      "writes": []
+    },
+    "ExportMyData": {
+      "audited": false,
+      "effects": [
+        "export.personal"
+      ],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [],
+      "output": null,
+      "writes": []
+    },
+    "IssueAttendanceCode": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_EVENT_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "event",
+          "optional": false,
+          "ty": {
+            "entity": "ClubEvent",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": null,
+      "writes": []
+    },
+    "IssueClubInvite": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "club",
+          "optional": false,
+          "ty": {
+            "entity": "Club",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": null,
+      "writes": []
+    },
+    "IssueDirectInvite": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_NOT_FOUND"
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "MEMBER_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "club",
+          "optional": false,
+          "ty": {
+            "entity": "Club",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "invitee",
+          "optional": false,
+          "ty": {
+            "entity": "Member",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": null,
+      "writes": []
+    },
+    "MarkAttendance": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_ATTENDED"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_EVENT_NOT_FOUND"
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_MEMBER_NOT_FOUND"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "MEMBER_NOT_IN_CLUB"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "event",
+          "optional": false,
+          "ty": {
+            "entity": "ClubEvent",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "members",
+          "optional": false,
+          "ty": {
+            "kind": "set",
+            "max": 300,
+            "of": {
+              "entity": "ClubMember",
+              "kind": "entity"
+            }
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "Attendance"
+      ]
+    },
+    "MoveToInterview": {
+      "audited": false,
+      "effects": [],
+      "emits": [
+        "AppliesDecided"
+      ],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_APPLIED"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "APPLY_NOT_FOUND"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "APPLIES_FROM_DIFFERENT_CLUBS"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "APPLY_STATUS_INVALID_TRANSITION"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": "at-least-once via transactional outbox; consumers must tolerate duplicates",
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "applies",
+          "optional": false,
+          "ty": {
+            "kind": "set",
+            "max": 100,
+            "of": {
+              "entity": "Apply",
+              "kind": "entity"
+            }
+          }
+        },
+        {
+          "default": null,
+          "name": "message",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 500,
+            "min": 0,
+            "pattern": null,
+            "trim": false
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "Apply"
+      ]
+    },
+    "PostActivity": {
+      "audited": false,
+      "effects": [
+        "s3.put"
+      ],
+      "emits": [
+        "ActivityPosted"
+      ],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.CAPACITY",
+          "reason": "TOO_MANY_IMAGES"
+        },
+        {
+          "code": "AIP.IDEMPOTENCY.KEY_REUSED",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": "at-least-once via transactional outbox; consumers must tolerate duplicates",
+        "retry": "safe with the same key"
+      },
+      "idempotency": "Idempotency-Key header required",
+      "idempotent": true,
+      "input": [
+        {
+          "default": null,
+          "name": "club",
+          "optional": false,
+          "ty": {
+            "entity": "Club",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "access",
+          "optional": false,
+          "ty": {
+            "kind": "enum",
+            "name": "AccessType"
+          }
+        },
+        {
+          "default": null,
+          "name": "body",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 5000,
+            "min": 1,
+            "pattern": null,
+            "trim": false
+          }
+        },
+        {
+          "default": null,
+          "name": "images",
+          "optional": false,
+          "ty": {
+            "kind": "list",
+            "max": 10,
+            "of": {
+              "kind": "upload",
+              "max_bytes": 10485760,
+              "types": [
+                "png",
+                "jpg",
+                "webp"
+              ]
+            }
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "ActivityImage",
+        "ClubActivity"
+      ]
+    },
+    "PostComment": {
+      "audited": false,
+      "effects": [],
+      "emits": [
+        "CommentPosted"
+      ],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.IDEMPOTENCY.KEY_REUSED",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.INVARIANT.VIOLATED",
+          "reason": "SAME_ACTIVITY"
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "ACTIVITY_COMMENT_NOT_FOUND"
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_ACTIVITY_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": "at-least-once via transactional outbox; consumers must tolerate duplicates",
+        "retry": "safe with the same key"
+      },
+      "idempotency": "Idempotency-Key header required",
+      "idempotent": true,
+      "input": [
+        {
+          "default": null,
+          "name": "activity",
+          "optional": false,
+          "ty": {
+            "entity": "ClubActivity",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "parent",
+          "optional": true,
+          "ty": {
+            "entity": "ActivityComment",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "body",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 1000,
+            "min": 1,
+            "pattern": null,
+            "trim": false
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "ActivityComment"
+      ]
+    },
+    "PostNotice": {
+      "audited": false,
+      "effects": [
+        "s3.put"
+      ],
+      "emits": [
+        "NoticePosted"
+      ],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.CAPACITY",
+          "reason": "TOO_MANY_FIXED_NOTICES"
+        },
+        {
+          "code": "AIP.IDEMPOTENCY.KEY_REUSED",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": "at-least-once via transactional outbox; consumers must tolerate duplicates",
+        "retry": "safe with the same key"
+      },
+      "idempotency": "Idempotency-Key header required",
+      "idempotent": true,
+      "input": [
+        {
+          "default": null,
+          "name": "club",
+          "optional": false,
+          "ty": {
+            "entity": "Club",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "title",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 100,
+            "min": 1,
+            "pattern": null,
+            "trim": false
+          }
+        },
+        {
+          "default": null,
+          "name": "body",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 5000,
+            "min": 1,
+            "pattern": null,
+            "trim": false
+          }
+        },
+        {
+          "default": null,
+          "name": "images",
+          "optional": false,
+          "ty": {
+            "kind": "list",
+            "max": 10,
+            "of": {
+              "kind": "upload",
+              "max_bytes": 10485760,
+              "types": [
+                "png",
+                "jpg",
+                "webp"
+              ]
+            }
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "ClubNotice",
+        "NoticeImage"
+      ]
+    },
+    "QuitClub": {
+      "audited": false,
+      "effects": [],
+      "emits": [
+        "ClubMemberQuit"
+      ],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_CLUB_MEMBER"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.INVARIANT.VIOLATED",
+          "reason": "CLUB_MEMBER_EXACTLY_ONE"
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_NOT_FOUND"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "ADMIN_MUST_ENTRUST_FIRST"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "NOT_CLUB_MEMBER"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": "at-least-once via transactional outbox; consumers must tolerate duplicates",
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "club",
+          "optional": false,
+          "ty": {
+            "entity": "Club",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "ClubMember"
+      ]
+    },
+    "RedeemAttendanceCode": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_ATTENDED"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "INVALID_GRANT_LINK"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "NOT_CLUB_MEMBER"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "token",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": null,
+            "min": null,
+            "pattern": null,
+            "trim": false
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "Attendance"
+      ]
+    },
+    "RedeemClubInvite": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_CLUB_MEMBER"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.INVARIANT.VIOLATED",
+          "reason": "CLUB_MEMBER_EXACTLY_ONE"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "INVALID_GRANT_LINK"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "SCHOOL_MISMATCH"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "token",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": null,
+            "min": null,
+            "pattern": null,
+            "trim": false
+          }
+        },
+        {
+          "default": null,
+          "name": "name",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 20,
+            "min": 1,
+            "pattern": null,
+            "trim": true
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "ClubMember"
+      ]
+    },
+    "RedeemDirectInvite": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_CLUB_MEMBER"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.INVARIANT.VIOLATED",
+          "reason": "CLUB_MEMBER_EXACTLY_ONE"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "INVALID_GRANT_LINK"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "SCHOOL_MISMATCH"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "token",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": null,
+            "min": null,
+            "pattern": null,
+            "trim": false
+          }
+        },
+        {
+          "default": null,
+          "name": "name",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 20,
+            "min": 1,
+            "pattern": null,
+            "trim": true
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "ClubMember"
+      ]
+    },
+    "RefuseApplies": {
+      "audited": false,
+      "effects": [],
+      "emits": [
+        "AppliesDecided"
+      ],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_APPLIED"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "APPLY_NOT_FOUND"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "APPLIES_FROM_DIFFERENT_CLUBS"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "APPLY_STATUS_INVALID_TRANSITION"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": "at-least-once via transactional outbox; consumers must tolerate duplicates",
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "applies",
+          "optional": false,
+          "ty": {
+            "kind": "set",
+            "max": 100,
+            "of": {
+              "entity": "Apply",
+              "kind": "entity"
+            }
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "Apply"
+      ]
+    },
+    "RefuseRemaining": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "RECRUITMENT_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "recruitment",
+          "optional": false,
+          "ty": {
+            "entity": "Recruitment",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": {
+        "fields": {
+          "job": {
+            "kind": "uuid"
+          },
+          "status": {
+            "kind": "enum",
+            "name": "JobStatus"
+          }
+        },
+        "kind": "object"
+      },
+      "writes": []
+    },
+    "RejectFinancialSettlement": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": "NOT_AN_APPROVER"
+        },
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": "SELF_APPROVAL_FORBIDDEN"
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_VOTED"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "FINANCIAL_RECORD_NOT_FOUND"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "APPROVAL_EXPIRED"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "APPROVAL_NOT_PENDING"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "financialRecord",
+          "optional": false,
+          "ty": {
+            "entity": "FinancialRecord",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "reason",
+          "optional": true,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": null,
+            "min": null,
+            "pattern": null,
+            "trim": false
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "FinancialRecord"
+      ]
+    },
+    "RemoveClubMember": {
+      "audited": false,
+      "effects": [],
+      "emits": [
+        "ClubMemberRemoved"
+      ],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_CLUB_MEMBER"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.INVARIANT.VIOLATED",
+          "reason": "CLUB_MEMBER_EXACTLY_ONE"
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_MEMBER_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": "at-least-once via transactional outbox; consumers must tolerate duplicates",
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "target",
+          "optional": false,
+          "ty": {
+            "entity": "ClubMember",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "ClubMember"
+      ]
+    },
+    "ReportContent": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_REPORTED"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "target",
+          "optional": false,
+          "ty": {
+            "entities": [
+              "ClubReview",
+              "PassReview",
+              "ClubQuestion",
+              "ActivityComment"
+            ],
+            "kind": "union"
+          }
+        },
+        {
+          "default": null,
+          "name": "reason",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 500,
+            "min": 1,
+            "pattern": null,
+            "trim": false
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "Report"
+      ]
+    },
+    "RequestFinancialSettlement": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "APPROVAL_ALREADY_PENDING"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "FINANCIAL_RECORD_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "financialRecord",
+          "optional": false,
+          "ty": {
+            "entity": "FinancialRecord",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": null,
+      "writes": []
+    },
+    "RequestSchoolEmail": {
+      "audited": false,
+      "effects": [
+        "mail.template"
+      ],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "VERIFICATION_RESEND_TOO_SOON"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "VERIFICATION_TARGET_INVALID"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "target",
+          "optional": false,
+          "ty": {
+            "kind": "email"
+          }
+        }
+      ],
+      "output": null,
+      "writes": []
+    },
+    "ResolveReport": {
+      "audited": true,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_REPORTED"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.INVARIANT.VIOLATED",
+          "reason": "SAME_ACTIVITY"
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "REPORT_NOT_FOUND"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "REPORT_STATUS_INVALID_TRANSITION"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "report",
+          "optional": false,
+          "ty": {
+            "entity": "Report",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "remove",
+          "optional": false,
+          "ty": {
+            "kind": "bool"
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "ActivityComment",
+        "ClubQuestion",
+        "ClubReview",
+        "PassReview",
+        "Report"
+      ]
+    },
+    "SaveApplyDraft": {
+      "audited": false,
+      "effects": [
+        "s3.put"
+      ],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.IDEMPOTENCY.KEY_REUSED",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "RECRUITMENT_NOT_FOUND"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "RECRUITMENT_CLOSED"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "safe with the same key"
+      },
+      "idempotency": "Idempotency-Key header required",
+      "idempotent": true,
+      "input": [
+        {
+          "default": null,
+          "name": "r",
+          "optional": false,
+          "ty": {
+            "entity": "Recruitment",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "answers",
+          "optional": false,
+          "ty": {
+            "kind": "json"
+          }
+        },
+        {
+          "default": null,
+          "name": "portfolioUrl",
+          "optional": true,
+          "ty": {
+            "kind": "url"
+          }
+        },
+        {
+          "default": null,
+          "name": "file",
+          "optional": true,
+          "ty": {
+            "kind": "upload",
+            "max_bytes": 20971520,
+            "types": [
+              "pdf",
+              "png",
+              "jpg",
+              "zip"
+            ]
+          }
+        }
+      ],
+      "output": {
+        "fields": {
+          "id": {
+            "kind": "uuid"
+          }
+        },
+        "kind": "object"
+      },
+      "writes": [
+        "ApplyDraft"
+      ]
+    },
+    "SubmitApply": {
+      "audited": false,
+      "effects": [
+        "s3.put"
+      ],
+      "emits": [
+        "ApplySubmitted"
+      ],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_APPLIED"
+        },
+        {
+          "code": "AIP.IDEMPOTENCY.KEY_REUSED",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "RECRUITMENT_NOT_FOUND"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "RECRUITMENT_CLOSED"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": "at-least-once via transactional outbox; consumers must tolerate duplicates",
+        "retry": "safe with the same key"
+      },
+      "idempotency": "Idempotency-Key header required",
+      "idempotent": true,
+      "input": [
+        {
+          "default": null,
+          "name": "r",
+          "optional": false,
+          "ty": {
+            "entity": "Recruitment",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "answers",
+          "optional": false,
+          "ty": {
+            "kind": "json"
+          }
+        },
+        {
+          "default": null,
+          "name": "portfolioUrl",
+          "optional": true,
+          "ty": {
+            "kind": "url"
+          }
+        },
+        {
+          "default": null,
+          "name": "file",
+          "optional": true,
+          "ty": {
+            "kind": "upload",
+            "max_bytes": 20971520,
+            "types": [
+              "pdf",
+              "png",
+              "jpg",
+              "zip"
+            ]
+          }
+        }
+      ],
+      "output": {
+        "fields": {
+          "id": {
+            "kind": "uuid"
+          },
+          "status": {
+            "kind": "enum",
+            "name": "ApplyStatus"
+          }
+        },
+        "kind": "object"
+      },
+      "writes": [
+        "Apply"
+      ]
+    },
+    "ToggleActivityLike": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_LIKED"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_ACTIVITY_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "activity",
+          "optional": false,
+          "ty": {
+            "entity": "ClubActivity",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "ActivityLike"
+      ]
+    },
+    "ToggleClubBookmark": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_BOOKMARKED"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "club",
+          "optional": false,
+          "ty": {
+            "entity": "Club",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "ClubBookmark"
+      ]
+    },
+    "ToggleCommentLike": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_LIKED"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "ACTIVITY_COMMENT_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "comment",
+          "optional": false,
+          "ty": {
+            "entity": "ActivityComment",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "CommentLike"
+      ]
+    },
+    "ToggleNoticeFixed": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.CAPACITY",
+          "reason": "TOO_MANY_FIXED_NOTICES"
+        },
+        {
+          "code": "AIP.CONFLICT.STALE_VERSION",
+          "reason": "CLUB_NOTICE_VERSION_STALE"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_NOTICE_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "notice",
+          "optional": false,
+          "ty": {
+            "entity": "ClubNotice",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "noticeVersion",
+          "optional": false,
+          "ty": {
+            "kind": "int",
+            "max": null,
+            "min": 1
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "ClubNotice"
+      ]
+    },
+    "ToggleRecruitmentBookmark": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_BOOKMARKED"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "RECRUITMENT_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "r",
+          "optional": false,
+          "ty": {
+            "entity": "Recruitment",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "RecruitmentBookmark"
+      ]
+    },
+    "UnmarkAttendance": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_ATTENDED"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_EVENT_NOT_FOUND"
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_MEMBER_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "event",
+          "optional": false,
+          "ty": {
+            "entity": "ClubEvent",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "members",
+          "optional": false,
+          "ty": {
+            "kind": "set",
+            "max": 300,
+            "of": {
+              "entity": "ClubMember",
+              "kind": "entity"
+            }
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "Attendance"
+      ]
+    },
+    "Unregister": {
+      "audited": false,
+      "effects": [
+        "auth.unlink"
+      ],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.CAPACITY",
+          "reason": "TOO_MANY_FIXED_NOTICES"
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_APPLIED"
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_ATTENDED"
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_BLOCKED"
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_BOOKMARKED"
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_CLUB_MEMBER"
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_LIKED"
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_REGISTERED"
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_REPORTED"
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "NICKNAME_TAKEN"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.INVARIANT.VIOLATED",
+          "reason": "CLUB_MEMBER_EXACTLY_ONE"
+        },
+        {
+          "code": "AIP.INVARIANT.VIOLATED",
+          "reason": "NOT_SELF"
+        },
+        {
+          "code": "AIP.INVARIANT.VIOLATED",
+          "reason": "SAME_ACTIVITY"
+        },
+        {
+          "code": "AIP.INVARIANT.VIOLATED",
+          "reason": "SCHOOL_MATCHES_AFFILIATION"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [],
+      "output": null,
+      "writes": [
+        "ActivityComment",
+        "ActivityLike",
+        "Apply",
+        "ApplyDraft",
+        "Attendance",
+        "Block",
+        "Club",
+        "ClubActivity",
+        "ClubBookmark",
+        "ClubMember",
+        "ClubNotice",
+        "ClubQuestion",
+        "ClubReview",
+        "CommentLike",
+        "Member",
+        "PassReview",
+        "RecruitmentBookmark",
+        "Report"
+      ]
+    },
+    "UpdateApplyDraft": {
+      "audited": false,
+      "effects": [
+        "s3.put"
+      ],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "APPLY_DRAFT_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "draft",
+          "optional": false,
+          "ty": {
+            "entity": "ApplyDraft",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "answers",
+          "optional": false,
+          "ty": {
+            "kind": "json"
+          }
+        },
+        {
+          "default": null,
+          "name": "portfolioUrl",
+          "optional": true,
+          "ty": {
+            "kind": "url"
+          }
+        },
+        {
+          "default": null,
+          "name": "file",
+          "optional": true,
+          "ty": {
+            "kind": "upload",
+            "max_bytes": 20971520,
+            "types": [
+              "pdf",
+              "png",
+              "jpg",
+              "zip"
+            ]
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "ApplyDraft"
+      ]
+    },
+    "UpdateApplyForm": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "club",
+          "optional": false,
+          "ty": {
+            "entity": "Club",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "questions",
+          "optional": false,
+          "ty": {
+            "kind": "list",
+            "max": 50,
+            "of": {
+              "kind": "record",
+              "name": "Question"
+            }
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "ApplyForm"
+      ]
+    },
+    "UpdateClub": {
+      "audited": false,
+      "effects": [
+        "s3.put"
+      ],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.INVARIANT.VIOLATED",
+          "reason": "SCHOOL_MATCHES_AFFILIATION"
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_NOT_FOUND"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "AFFILIATION_IMMUTABLE"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "club",
+          "optional": false,
+          "ty": {
+            "entity": "Club",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "input",
+          "optional": false,
+          "ty": {
+            "kind": "record",
+            "name": "ClubInput"
+          }
+        },
+        {
+          "default": null,
+          "name": "profile",
+          "optional": true,
+          "ty": {
+            "kind": "upload",
+            "max_bytes": 5242880,
+            "types": [
+              "png",
+              "jpg",
+              "webp"
+            ]
+          }
+        },
+        {
+          "default": null,
+          "name": "banner",
+          "optional": true,
+          "ty": {
+            "kind": "upload",
+            "max_bytes": 5242880,
+            "types": [
+              "png",
+              "jpg",
+              "webp"
+            ]
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "Club"
+      ]
+    },
+    "UpdateClubEvent": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_EVENT_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "target",
+          "optional": false,
+          "ty": {
+            "entity": "ClubEvent",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "title",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 100,
+            "min": 1,
+            "pattern": null,
+            "trim": false
+          }
+        },
+        {
+          "default": null,
+          "name": "at",
+          "optional": false,
+          "ty": {
+            "kind": "time"
+          }
+        },
+        {
+          "default": null,
+          "name": "place",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 200,
+            "min": 0,
+            "pattern": null,
+            "trim": false
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "ClubEvent"
+      ]
+    },
+    "UpdateClubFaq": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_FAQ_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "target",
+          "optional": false,
+          "ty": {
+            "entity": "ClubFaq",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "question",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 200,
+            "min": 1,
+            "pattern": null,
+            "trim": false
+          }
+        },
+        {
+          "default": null,
+          "name": "answer",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 2000,
+            "min": 1,
+            "pattern": null,
+            "trim": false
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "ClubFaq"
+      ]
+    },
+    "VerifySchoolEmail": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_REGISTERED"
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "NICKNAME_TAKEN"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "VERIFICATION_CODE_MISMATCH"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "VERIFICATION_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "target",
+          "optional": false,
+          "ty": {
+            "kind": "email"
+          }
+        },
+        {
+          "default": null,
+          "name": "code",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": null,
+            "min": null,
+            "pattern": null,
+            "trim": false
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "Member"
+      ]
+    },
+    "WithdrawApply": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_APPLIED"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "APPLY_NOT_FOUND"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "WITHDRAW_TOO_EARLY"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "apply",
+          "optional": false,
+          "ty": {
+            "entity": "Apply",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "Apply"
+      ]
+    },
+    "WriteClubReview": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "club",
+          "optional": false,
+          "ty": {
+            "entity": "Club",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "title",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 100,
+            "min": 1,
+            "pattern": null,
+            "trim": false
+          }
+        },
+        {
+          "default": null,
+          "name": "body",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 3000,
+            "min": 1,
+            "pattern": null,
+            "trim": false
+          }
+        },
+        {
+          "default": null,
+          "name": "tags",
+          "optional": false,
+          "ty": {
+            "kind": "list",
+            "max": 10,
+            "of": {
+              "kind": "text",
+              "lower": false,
+              "max": 20,
+              "min": 1,
+              "pattern": null,
+              "trim": false
+            }
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "ClubReview"
+      ]
+    },
+    "WritePassReview": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "RECRUITMENT_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "r",
+          "optional": false,
+          "ty": {
+            "entity": "Recruitment",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "title",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 100,
+            "min": 1,
+            "pattern": null,
+            "trim": false
+          }
+        },
+        {
+          "default": null,
+          "name": "body",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 3000,
+            "min": 1,
+            "pattern": null,
+            "trim": false
+          }
+        },
+        {
+          "default": null,
+          "name": "generation",
+          "optional": false,
+          "ty": {
+            "kind": "int",
+            "max": null,
+            "min": 1
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "PassReview"
+      ]
+    }
+  },
+  "core_ir": "aip-core/0.11",
+  "enums": {
+    "AccessType": [
+      "PUBLIC",
+      "CLUB_ONLY"
+    ],
+    "Affiliation": [
+      "INTERNAL",
+      "UNION"
+    ],
+    "ApplyStatus": [
+      "PENDING",
+      "INTERVIEW",
+      "APPROVED",
+      "REFUSED"
+    ],
+    "ApprovalDecision": [
+      "APPROVE",
+      "REJECT"
+    ],
+    "ApprovalStatus": [
+      "NONE",
+      "PENDING",
+      "APPROVED",
+      "REJECTED",
+      "CANCELLED",
+      "EXPIRED"
+    ],
+    "ClubRole": [
+      "GENERAL",
+      "MANAGER",
+      "ADMIN"
+    ],
+    "Field": [
+      "CULTURE",
+      "VOLUNTEER",
+      "ACADEMIC",
+      "STARTUP",
+      "CAREER",
+      "SPORTS",
+      "SOCIAL",
+      "ETC"
+    ],
+    "JobStatus": [
+      "QUEUED",
+      "RUNNING",
+      "DONE",
+      "FAILED"
+    ],
+    "MemberRole": [
+      "USER",
+      "SUPER_ADMIN"
+    ],
+    "MemberStatus": [
+      "ACTIVE",
+      "ENDED"
+    ],
+    "QuestionKind": [
+      "TEXT",
+      "CHOICE",
+      "FILE"
+    ],
+    "RecruitmentSort": [
+      "LATEST",
+      "VIEWS",
+      "SCRAPS",
+      "OLDEST",
+      "DEADLINE"
+    ],
+    "RecruitmentStatus": [
+      "PENDING_APPROVAL",
+      "PUBLISHED",
+      "CLOSED"
+    ],
+    "Region": [
+      "ANY",
+      "CAPITAL",
+      "CHUNGCHEONG",
+      "GYEONGNAM",
+      "GYEONGBUK",
+      "JEOLLA",
+      "GANGWON",
+      "JEONBUK",
+      "JEJU",
+      "OVERSEAS"
+    ],
+    "ReportStatus": [
+      "OPEN",
+      "RESOLVED",
+      "DISMISSED"
+    ],
+    "ReportTarget": [
+      "CLUB_REVIEW",
+      "PASS_REVIEW",
+      "QUESTION",
+      "COMMENT"
+    ],
+    "Settlement": [
+      "OPEN",
+      "SETTLED",
+      "DISPUTED"
+    ],
+    "Target": [
+      "UNDERGRADUATE",
+      "GRADUATE",
+      "WORKER"
+    ]
+  },
+  "events": {
+    "ActivityPosted": [
+      [
+        "activity",
+        {
+          "entity": "ClubActivity",
+          "kind": "entity"
+        }
+      ]
+    ],
+    "AppliesDecided": [
+      [
+        "club",
+        {
+          "entity": "Club",
+          "kind": "entity"
+        }
+      ],
+      [
+        "status",
+        {
+          "kind": "enum",
+          "name": "ApplyStatus"
+        }
+      ],
+      [
+        "message",
+        {
+          "kind": "text",
+          "lower": false,
+          "max": null,
+          "min": null,
+          "pattern": null,
+          "trim": false
+        }
+      ]
+    ],
+    "ApplySubmitted": [
+      [
+        "apply",
+        {
+          "entity": "Apply",
+          "kind": "entity"
+        }
+      ]
+    ],
+    "ClubClosed": [
+      [
+        "club",
+        {
+          "kind": "uuid"
+        }
+      ],
+      [
+        "name",
+        {
+          "kind": "text",
+          "lower": false,
+          "max": null,
+          "min": null,
+          "pattern": null,
+          "trim": false
+        }
+      ]
+    ],
+    "ClubMemberQuit": [
+      [
+        "club",
+        {
+          "entity": "Club",
+          "kind": "entity"
+        }
+      ],
+      [
+        "name",
+        {
+          "kind": "text",
+          "lower": false,
+          "max": null,
+          "min": null,
+          "pattern": null,
+          "trim": false
+        }
+      ]
+    ],
+    "ClubMemberRemoved": [
+      [
+        "club",
+        {
+          "entity": "Club",
+          "kind": "entity"
+        }
+      ],
+      [
+        "member",
+        {
+          "entity": "Member",
+          "kind": "entity"
+        }
+      ]
+    ],
+    "ClubMemberStatusChanged": [
+      [
+        "club",
+        {
+          "entity": "Club",
+          "kind": "entity"
+        }
+      ],
+      [
+        "status",
+        {
+          "kind": "enum",
+          "name": "MemberStatus"
+        }
+      ]
+    ],
+    "ClubRoleChanged": [
+      [
+        "member",
+        {
+          "entity": "ClubMember",
+          "kind": "entity"
+        }
+      ],
+      [
+        "role",
+        {
+          "kind": "enum",
+          "name": "ClubRole"
+        }
+      ]
+    ],
+    "CommentPosted": [
+      [
+        "comment",
+        {
+          "entity": "ActivityComment",
+          "kind": "entity"
+        }
+      ]
+    ],
+    "NoticePosted": [
+      [
+        "notice",
+        {
+          "entity": "ClubNotice",
+          "kind": "entity"
+        }
+      ]
+    ],
+    "QuestionAnswered": [
+      [
+        "question",
+        {
+          "entity": "ClubQuestion",
+          "kind": "entity"
+        }
+      ]
+    ],
+    "RecruitmentClosed": [
+      [
+        "recruitment",
+        {
+          "entity": "Recruitment",
+          "kind": "entity"
+        }
+      ]
+    ],
+    "RecruitmentCreated": [
+      [
+        "recruitment",
+        {
+          "entity": "Recruitment",
+          "kind": "entity"
+        }
+      ]
+    ],
+    "RecruitmentOpened": [
+      [
+        "recruitment",
+        {
+          "entity": "Recruitment",
+          "kind": "entity"
+        }
+      ]
+    ]
+  },
+  "jobs": [
+    {
+      "produces": {
+        "expires_seconds": 604800,
+        "format": "csv"
+      },
+      "start": "ExportApplicants",
+      "status": "ExportApplicantsStatus"
+    },
+    {
+      "produces": null,
+      "start": "RefuseRemaining",
+      "status": "RefuseRemainingStatus"
+    }
+  ],
+  "protocol": "aip-protocol/0.1",
+  "queries": {
+    "ActivityDetail": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_ACTIVITY_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [
+        {
+          "default": null,
+          "name": "activity",
+          "optional": false,
+          "ty": {
+            "entity": "ClubActivity",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": {
+        "fields": {
+          "access": {
+            "kind": "enum",
+            "name": "AccessType"
+          },
+          "author": {
+            "fields": {
+              "nickname": {
+                "kind": "text",
+                "lower": false,
+                "max": null,
+                "min": null,
+                "pattern": null,
+                "trim": false
+              }
+            },
+            "kind": "object",
+            "nullable": true
+          },
+          "body": {
+            "kind": "text",
+            "lower": false,
+            "max": null,
+            "min": null,
+            "pattern": null,
+            "trim": false
+          },
+          "comments": {
+            "kind": "list",
+            "of": {
+              "fields": {
+                "author": {
+                  "fields": {
+                    "nickname": {
+                      "kind": "text",
+                      "lower": false,
+                      "max": null,
+                      "min": null,
+                      "pattern": null,
+                      "trim": false
+                    }
+                  },
+                  "kind": "object",
+                  "nullable": true
+                },
+                "body": {
+                  "kind": "text",
+                  "lower": false,
+                  "max": null,
+                  "min": null,
+                  "pattern": null,
+                  "trim": false
+                },
+                "createdAt": {
+                  "kind": "time"
+                },
+                "id": {
+                  "kind": "uuid"
+                },
+                "likeCount": {
+                  "kind": "int",
+                  "max": null,
+                  "min": null
+                },
+                "parent": {
+                  "entity": "ActivityComment",
+                  "kind": "entity",
+                  "nullable": true
+                }
+              },
+              "kind": "object"
+            }
+          },
+          "createdAt": {
+            "kind": "time"
+          },
+          "id": {
+            "kind": "uuid"
+          },
+          "images": {
+            "kind": "list",
+            "of": {
+              "fields": {
+                "image": {
+                  "kind": "url"
+                }
+              },
+              "kind": "object"
+            }
+          },
+          "likeCount": {
+            "kind": "int",
+            "max": null,
+            "min": null
+          },
+          "liked": {
+            "kind": "bool"
+          }
+        },
+        "kind": "object"
+      },
+      "page": null,
+      "returns": "object"
+    },
+    "ApplyDetail": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "APPLY_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [
+        {
+          "default": null,
+          "name": "apply",
+          "optional": false,
+          "ty": {
+            "entity": "Apply",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": {
+        "fields": {
+          "answers": {
+            "kind": "other",
+            "name": "Json"
+          },
+          "createdAt": {
+            "kind": "time"
+          },
+          "file": {
+            "kind": "url",
+            "nullable": true
+          },
+          "form": {
+            "kind": "snapshot"
+          },
+          "id": {
+            "kind": "uuid"
+          },
+          "member": {
+            "fields": {
+              "nickname": {
+                "kind": "text",
+                "lower": false,
+                "max": null,
+                "min": null,
+                "pattern": null,
+                "trim": false
+              }
+            },
+            "kind": "object",
+            "nullable": true
+          },
+          "portfolioUrl": {
+            "kind": "url",
+            "nullable": true
+          },
+          "recruitment": {
+            "fields": {
+              "id": {
+                "kind": "uuid"
+              },
+              "title": {
+                "kind": "text",
+                "lower": false,
+                "max": null,
+                "min": null,
+                "pattern": null,
+                "trim": false
+              }
+            },
+            "kind": "object",
+            "nullable": true
+          },
+          "status": {
+            "kind": "enum",
+            "name": "ApplyStatus"
+          }
+        },
+        "kind": "object"
+      },
+      "page": null,
+      "returns": "object"
+    },
+    "ClubActiveRecruitment": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [
+        {
+          "default": null,
+          "name": "club",
+          "optional": false,
+          "ty": {
+            "entity": "Club",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": {
+        "kind": "list",
+        "of": {
+          "fields": {
+            "id": {
+              "kind": "uuid"
+            },
+            "period": {
+              "kind": "range",
+              "of": {
+                "kind": "time"
+              }
+            },
+            "title": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            }
+          },
+          "kind": "object"
+        }
+      },
+      "page": {
+        "max_page": null,
+        "mode": "cursor",
+        "size": 10
+      },
+      "returns": "list"
+    },
+    "ClubActivities": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [
+        {
+          "default": null,
+          "name": "club",
+          "optional": false,
+          "ty": {
+            "entity": "Club",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": {
+        "kind": "list",
+        "of": {
+          "fields": {
+            "access": {
+              "kind": "enum",
+              "name": "AccessType"
+            },
+            "author": {
+              "fields": {
+                "nickname": {
+                  "kind": "text",
+                  "lower": false,
+                  "max": null,
+                  "min": null,
+                  "pattern": null,
+                  "trim": false
+                }
+              },
+              "kind": "object",
+              "nullable": true
+            },
+            "body": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            },
+            "commentCount": {
+              "kind": "int",
+              "max": null,
+              "min": null
+            },
+            "createdAt": {
+              "kind": "time"
+            },
+            "id": {
+              "kind": "uuid"
+            },
+            "images": {
+              "kind": "list",
+              "of": {
+                "fields": {
+                  "image": {
+                    "kind": "url"
+                  }
+                },
+                "kind": "object"
+              }
+            },
+            "likeCount": {
+              "kind": "int",
+              "max": null,
+              "min": null
+            },
+            "liked": {
+              "kind": "bool"
+            }
+          },
+          "kind": "object"
+        }
+      },
+      "page": {
+        "max_page": null,
+        "mode": "cursor",
+        "size": 10
+      },
+      "returns": "list"
+    },
+    "ClubBalance": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [
+        {
+          "default": null,
+          "name": "club",
+          "optional": false,
+          "ty": {
+            "entity": "Club",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": {
+        "fields": {
+          "balance": {
+            "currency": "KRW",
+            "format": "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$",
+            "kind": "money",
+            "wire": "decimal_string"
+          }
+        },
+        "kind": "object"
+      },
+      "page": null,
+      "returns": "object"
+    },
+    "ClubDetail": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [
+        {
+          "default": null,
+          "name": "club",
+          "optional": false,
+          "ty": {
+            "entity": "Club",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": {
+        "fields": {
+          "affiliation": {
+            "kind": "enum",
+            "name": "Affiliation"
+          },
+          "banner": {
+            "kind": "url",
+            "nullable": true
+          },
+          "bookmarkCount": {
+            "kind": "int",
+            "max": null,
+            "min": null
+          },
+          "field": {
+            "kind": "enum",
+            "name": "Field"
+          },
+          "id": {
+            "kind": "uuid"
+          },
+          "intro": {
+            "kind": "text",
+            "lower": false,
+            "max": null,
+            "min": null,
+            "pattern": null,
+            "trim": false
+          },
+          "isBookmarked": {
+            "kind": "bool"
+          },
+          "myMembership": {
+            "fields": {
+              "id": {
+                "kind": "uuid"
+              },
+              "name": {
+                "kind": "text",
+                "lower": false,
+                "max": null,
+                "min": null,
+                "pattern": null,
+                "trim": false
+              },
+              "role": {
+                "kind": "enum",
+                "name": "ClubRole"
+              },
+              "status": {
+                "kind": "enum",
+                "name": "MemberStatus"
+              }
+            },
+            "kind": "object",
+            "nullable": true
+          },
+          "name": {
+            "kind": "text",
+            "lower": false,
+            "max": null,
+            "min": null,
+            "pattern": null,
+            "trim": false
+          },
+          "profile": {
+            "kind": "url",
+            "nullable": true
+          },
+          "region": {
+            "kind": "enum",
+            "name": "Region"
+          },
+          "school": {
+            "fields": {
+              "name": {
+                "kind": "text",
+                "lower": false,
+                "max": null,
+                "min": null,
+                "pattern": null,
+                "trim": false
+              }
+            },
+            "kind": "object",
+            "nullable": true
+          },
+          "target": {
+            "kind": "enum",
+            "name": "Target"
+          },
+          "views": {
+            "kind": "int",
+            "max": null,
+            "min": null
+          }
+        },
+        "kind": "object"
+      },
+      "page": null,
+      "returns": "object"
+    },
+    "ClubList": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [
+        {
+          "default": null,
+          "name": "filter",
+          "optional": false,
+          "ty": {
+            "kind": "record",
+            "name": "RecruitmentFilter"
+          }
+        },
+        {
+          "default": "LATEST",
+          "name": "sort",
+          "optional": true,
+          "ty": {
+            "kind": "enum",
+            "name": "RecruitmentSort"
+          }
+        }
+      ],
+      "output": {
+        "kind": "list",
+        "of": {
+          "fields": {
+            "affiliation": {
+              "kind": "enum",
+              "name": "Affiliation"
+            },
+            "bookmarkCount": {
+              "kind": "int",
+              "max": null,
+              "min": null
+            },
+            "field": {
+              "kind": "enum",
+              "name": "Field"
+            },
+            "id": {
+              "kind": "uuid"
+            },
+            "name": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            },
+            "profile": {
+              "kind": "url",
+              "nullable": true
+            },
+            "region": {
+              "kind": "enum",
+              "name": "Region"
+            },
+            "target": {
+              "kind": "enum",
+              "name": "Target"
+            }
+          },
+          "kind": "object"
+        }
+      },
+      "page": {
+        "max_page": null,
+        "mode": "cursor",
+        "size": 20
+      },
+      "returns": "list"
+    },
+    "ClubMembers": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [
+        {
+          "default": null,
+          "name": "club",
+          "optional": false,
+          "ty": {
+            "entity": "Club",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "status",
+          "optional": true,
+          "ty": {
+            "kind": "enum",
+            "name": "MemberStatus"
+          }
+        },
+        {
+          "default": null,
+          "name": "q",
+          "optional": true,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 20,
+            "min": 0,
+            "pattern": null,
+            "trim": false
+          }
+        }
+      ],
+      "output": {
+        "kind": "list",
+        "of": {
+          "fields": {
+            "id": {
+              "kind": "uuid"
+            },
+            "member": {
+              "fields": {
+                "nickname": {
+                  "kind": "text",
+                  "lower": false,
+                  "max": null,
+                  "min": null,
+                  "pattern": null,
+                  "trim": false
+                },
+                "profile": {
+                  "kind": "url",
+                  "nullable": true
+                }
+              },
+              "kind": "object",
+              "nullable": true
+            },
+            "name": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            },
+            "role": {
+              "kind": "enum",
+              "name": "ClubRole"
+            },
+            "status": {
+              "kind": "enum",
+              "name": "MemberStatus"
+            }
+          },
+          "kind": "object"
+        }
+      },
+      "page": {
+        "max_page": 100,
+        "mode": "offset",
+        "size": 30
+      },
+      "returns": "list"
+    },
+    "ClubNotices": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [
+        {
+          "default": null,
+          "name": "club",
+          "optional": false,
+          "ty": {
+            "entity": "Club",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": {
+        "kind": "list",
+        "of": {
+          "fields": {
+            "author": {
+              "fields": {
+                "nickname": {
+                  "kind": "text",
+                  "lower": false,
+                  "max": null,
+                  "min": null,
+                  "pattern": null,
+                  "trim": false
+                }
+              },
+              "kind": "object",
+              "nullable": true
+            },
+            "createdAt": {
+              "kind": "time"
+            },
+            "fixed": {
+              "kind": "bool"
+            },
+            "id": {
+              "kind": "uuid"
+            },
+            "title": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            }
+          },
+          "kind": "object"
+        }
+      },
+      "page": {
+        "max_page": 100,
+        "mode": "offset",
+        "size": 20
+      },
+      "returns": "list"
+    },
+    "ClubQuestions": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [
+        {
+          "default": null,
+          "name": "club",
+          "optional": false,
+          "ty": {
+            "entity": "Club",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": {
+        "kind": "list",
+        "of": {
+          "fields": {
+            "answer": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "nullable": true,
+              "pattern": null,
+              "trim": false
+            },
+            "author": {
+              "fields": {
+                "nickname": {
+                  "kind": "text",
+                  "lower": false,
+                  "max": null,
+                  "min": null,
+                  "pattern": null,
+                  "trim": false
+                }
+              },
+              "kind": "object",
+              "nullable": true
+            },
+            "body": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            },
+            "createdAt": {
+              "kind": "time"
+            },
+            "id": {
+              "kind": "uuid"
+            },
+            "title": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            }
+          },
+          "kind": "object"
+        }
+      },
+      "page": {
+        "max_page": null,
+        "mode": "cursor",
+        "size": 20
+      },
+      "returns": "list"
+    },
+    "EventAttendees": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_EVENT_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [
+        {
+          "default": null,
+          "name": "event",
+          "optional": false,
+          "ty": {
+            "entity": "ClubEvent",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": {
+        "kind": "list",
+        "of": {
+          "fields": {
+            "createdAt": {
+              "kind": "time"
+            },
+            "id": {
+              "kind": "uuid"
+            },
+            "member": {
+              "fields": {
+                "nickname": {
+                  "kind": "text",
+                  "lower": false,
+                  "max": null,
+                  "min": null,
+                  "pattern": null,
+                  "trim": false
+                }
+              },
+              "kind": "object",
+              "nullable": true
+            }
+          },
+          "kind": "object"
+        }
+      },
+      "page": {
+        "max_page": 20,
+        "mode": "offset",
+        "size": 50
+      },
+      "returns": "list"
+    },
+    "ExportApplicantsStatus": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [
+        {
+          "default": null,
+          "name": "job",
+          "optional": false,
+          "ty": {
+            "kind": "uuid"
+          }
+        }
+      ],
+      "output": {
+        "fields": {
+          "createdAt": {
+            "kind": "time"
+          },
+          "done": {
+            "kind": "int",
+            "max": null,
+            "min": null
+          },
+          "error": {
+            "kind": "text",
+            "lower": false,
+            "max": null,
+            "min": null,
+            "nullable": true,
+            "pattern": null,
+            "trim": false
+          },
+          "file": {
+            "kind": "url",
+            "nullable": true
+          },
+          "finishedAt": {
+            "kind": "time",
+            "nullable": true
+          },
+          "startedAt": {
+            "kind": "time",
+            "nullable": true
+          },
+          "status": {
+            "kind": "enum",
+            "name": "JobStatus"
+          },
+          "total": {
+            "kind": "int",
+            "max": null,
+            "min": null,
+            "nullable": true
+          }
+        },
+        "kind": "object"
+      },
+      "page": null,
+      "returns": "object"
+    },
+    "FinancialLedger": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [
+        {
+          "default": null,
+          "name": "club",
+          "optional": false,
+          "ty": {
+            "entity": "Club",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": {
+        "kind": "list",
+        "of": {
+          "fields": {
+            "amount": {
+              "currency": "KRW",
+              "format": "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$",
+              "kind": "money",
+              "wire": "decimal_string"
+            },
+            "at": {
+              "kind": "time"
+            },
+            "balance": {
+              "currency": "KRW",
+              "format": "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$",
+              "kind": "money",
+              "wire": "decimal_string"
+            },
+            "id": {
+              "kind": "uuid"
+            },
+            "memo": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            }
+          },
+          "kind": "object"
+        }
+      },
+      "page": {
+        "max_page": null,
+        "mode": "cursor",
+        "size": 30
+      },
+      "returns": "list"
+    },
+    "FinancialSettlementStatus": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "FINANCIAL_RECORD_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [
+        {
+          "default": null,
+          "name": "financialRecord",
+          "optional": false,
+          "ty": {
+            "entity": "FinancialRecord",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": {
+        "fields": {
+          "approvals": {
+            "kind": "int",
+            "max": null,
+            "min": null
+          },
+          "canVote": {
+            "kind": "bool"
+          },
+          "decidedAt": {
+            "kind": "time",
+            "nullable": true
+          },
+          "expiresAt": {
+            "kind": "time",
+            "nullable": true
+          },
+          "requestedAt": {
+            "kind": "time",
+            "nullable": true
+          },
+          "requestedBy": {
+            "kind": "uuid",
+            "nullable": true
+          },
+          "required": {
+            "kind": "int",
+            "max": null,
+            "min": null
+          },
+          "status": {
+            "kind": "enum",
+            "name": "ApprovalStatus"
+          },
+          "votes": {
+            "kind": "list",
+            "of": {
+              "fields": {
+                "at": {
+                  "kind": "time"
+                },
+                "comment": {
+                  "kind": "text",
+                  "lower": false,
+                  "max": null,
+                  "min": null,
+                  "nullable": true,
+                  "pattern": null,
+                  "trim": false
+                },
+                "decision": {
+                  "kind": "enum",
+                  "name": "ApprovalDecision"
+                },
+                "voter": {
+                  "kind": "uuid"
+                }
+              },
+              "kind": "object"
+            }
+          }
+        },
+        "kind": "object"
+      },
+      "page": null,
+      "returns": "object"
+    },
+    "GetClubEvent": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_EVENT_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [
+        {
+          "default": null,
+          "name": "target",
+          "optional": false,
+          "ty": {
+            "entity": "ClubEvent",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": {
+        "fields": {
+          "at": {
+            "kind": "time"
+          },
+          "club": {
+            "entity": "Club",
+            "kind": "entity"
+          },
+          "id": {
+            "kind": "uuid"
+          },
+          "place": {
+            "kind": "text",
+            "lower": false,
+            "max": null,
+            "min": null,
+            "pattern": null,
+            "trim": false
+          },
+          "title": {
+            "kind": "text",
+            "lower": false,
+            "max": null,
+            "min": null,
+            "pattern": null,
+            "trim": false
+          }
+        },
+        "kind": "object"
+      },
+      "page": null,
+      "returns": "object"
+    },
+    "GetClubFaq": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_FAQ_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [
+        {
+          "default": null,
+          "name": "target",
+          "optional": false,
+          "ty": {
+            "entity": "ClubFaq",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": {
+        "fields": {
+          "answer": {
+            "kind": "text",
+            "lower": false,
+            "max": null,
+            "min": null,
+            "pattern": null,
+            "trim": false
+          },
+          "club": {
+            "entity": "Club",
+            "kind": "entity"
+          },
+          "id": {
+            "kind": "uuid"
+          },
+          "question": {
+            "kind": "text",
+            "lower": false,
+            "max": null,
+            "min": null,
+            "pattern": null,
+            "trim": false
+          },
+          "rank": {
+            "kind": "text",
+            "lower": false,
+            "max": null,
+            "min": null,
+            "pattern": null,
+            "trim": false
+          }
+        },
+        "kind": "object"
+      },
+      "page": null,
+      "returns": "object"
+    },
+    "ListClubEvent": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [
+        {
+          "default": null,
+          "name": "club",
+          "optional": false,
+          "ty": {
+            "entity": "Club",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": {
+        "kind": "list",
+        "of": {
+          "fields": {
+            "at": {
+              "kind": "time"
+            },
+            "club": {
+              "entity": "Club",
+              "kind": "entity"
+            },
+            "id": {
+              "kind": "uuid"
+            },
+            "place": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            },
+            "title": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            }
+          },
+          "kind": "object"
+        }
+      },
+      "page": {
+        "max_page": null,
+        "mode": "cursor",
+        "size": 50
+      },
+      "returns": "list"
+    },
+    "ListClubFaq": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [
+        {
+          "default": null,
+          "name": "club",
+          "optional": false,
+          "ty": {
+            "entity": "Club",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": {
+        "kind": "list",
+        "of": {
+          "fields": {
+            "answer": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            },
+            "club": {
+              "entity": "Club",
+              "kind": "entity"
+            },
+            "id": {
+              "kind": "uuid"
+            },
+            "question": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            },
+            "rank": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            }
+          },
+          "kind": "object"
+        }
+      },
+      "page": {
+        "max_page": null,
+        "mode": "cursor",
+        "size": 50
+      },
+      "returns": "list"
+    },
+    "MyAdminSchoolClubs": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [],
+      "output": {
+        "kind": "list",
+        "of": {
+          "fields": {
+            "club": {
+              "fields": {
+                "id": {
+                  "kind": "uuid"
+                },
+                "name": {
+                  "kind": "text",
+                  "lower": false,
+                  "max": null,
+                  "min": null,
+                  "pattern": null,
+                  "trim": false
+                }
+              },
+              "kind": "object",
+              "nullable": true
+            }
+          },
+          "kind": "object"
+        }
+      },
+      "page": {
+        "max_page": null,
+        "mode": "cursor",
+        "size": 50
+      },
+      "returns": "list"
+    },
+    "MyApplies": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [],
+      "output": {
+        "kind": "list",
+        "of": {
+          "fields": {
+            "createdAt": {
+              "kind": "time"
+            },
+            "id": {
+              "kind": "uuid"
+            },
+            "recruitment": {
+              "fields": {
+                "club": {
+                  "fields": {
+                    "name": {
+                      "kind": "text",
+                      "lower": false,
+                      "max": null,
+                      "min": null,
+                      "pattern": null,
+                      "trim": false
+                    }
+                  },
+                  "kind": "object",
+                  "nullable": true
+                },
+                "id": {
+                  "kind": "uuid"
+                },
+                "title": {
+                  "kind": "text",
+                  "lower": false,
+                  "max": null,
+                  "min": null,
+                  "pattern": null,
+                  "trim": false
+                }
+              },
+              "kind": "object",
+              "nullable": true
+            },
+            "status": {
+              "kind": "enum",
+              "name": "ApplyStatus"
+            }
+          },
+          "kind": "object"
+        }
+      },
+      "page": {
+        "max_page": null,
+        "mode": "cursor",
+        "size": 20
+      },
+      "returns": "list"
+    },
+    "MyApplyDrafts": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [],
+      "output": {
+        "kind": "list",
+        "of": {
+          "fields": {
+            "id": {
+              "kind": "uuid"
+            },
+            "recruitment": {
+              "fields": {
+                "id": {
+                  "kind": "uuid"
+                },
+                "period": {
+                  "kind": "range",
+                  "of": {
+                    "kind": "time"
+                  }
+                },
+                "title": {
+                  "kind": "text",
+                  "lower": false,
+                  "max": null,
+                  "min": null,
+                  "pattern": null,
+                  "trim": false
+                }
+              },
+              "kind": "object",
+              "nullable": true
+            },
+            "updatedAt": {
+              "kind": "time"
+            }
+          },
+          "kind": "object"
+        }
+      },
+      "page": {
+        "max_page": null,
+        "mode": "cursor",
+        "size": 20
+      },
+      "returns": "list"
+    },
+    "NoticeDetail": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "CLUB_NOTICE_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [
+        {
+          "default": null,
+          "name": "notice",
+          "optional": false,
+          "ty": {
+            "entity": "ClubNotice",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": {
+        "fields": {
+          "author": {
+            "fields": {
+              "nickname": {
+                "kind": "text",
+                "lower": false,
+                "max": null,
+                "min": null,
+                "pattern": null,
+                "trim": false
+              }
+            },
+            "kind": "object",
+            "nullable": true
+          },
+          "body": {
+            "kind": "text",
+            "lower": false,
+            "max": null,
+            "min": null,
+            "pattern": null,
+            "trim": false
+          },
+          "createdAt": {
+            "kind": "time"
+          },
+          "fixed": {
+            "kind": "bool"
+          },
+          "id": {
+            "kind": "uuid"
+          },
+          "images": {
+            "kind": "list",
+            "of": {
+              "fields": {
+                "image": {
+                  "kind": "url"
+                }
+              },
+              "kind": "object"
+            }
+          },
+          "title": {
+            "kind": "text",
+            "lower": false,
+            "max": null,
+            "min": null,
+            "pattern": null,
+            "trim": false
+          },
+          "version": {
+            "kind": "int",
+            "max": null,
+            "min": null
+          }
+        },
+        "kind": "object"
+      },
+      "page": null,
+      "returns": "object"
+    },
+    "RecruitmentApplies": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "RECRUITMENT_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [
+        {
+          "default": null,
+          "name": "r",
+          "optional": false,
+          "ty": {
+            "entity": "Recruitment",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "status",
+          "optional": true,
+          "ty": {
+            "kind": "enum",
+            "name": "ApplyStatus"
+          }
+        }
+      ],
+      "output": {
+        "kind": "list",
+        "of": {
+          "fields": {
+            "createdAt": {
+              "kind": "time"
+            },
+            "id": {
+              "kind": "uuid"
+            },
+            "member": {
+              "fields": {
+                "nickname": {
+                  "kind": "text",
+                  "lower": false,
+                  "max": null,
+                  "min": null,
+                  "pattern": null,
+                  "trim": false
+                }
+              },
+              "kind": "object",
+              "nullable": true
+            },
+            "status": {
+              "kind": "enum",
+              "name": "ApplyStatus"
+            }
+          },
+          "kind": "object"
+        }
+      },
+      "page": {
+        "max_page": 200,
+        "mode": "offset",
+        "size": 50
+      },
+      "returns": "list"
+    },
+    "RecruitmentDetail": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "RECRUITMENT_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [
+        {
+          "default": null,
+          "name": "r",
+          "optional": false,
+          "ty": {
+            "entity": "Recruitment",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": {
+        "fields": {
+          "body": {
+            "kind": "rich_text"
+          },
+          "bookmarkCount": {
+            "kind": "int",
+            "max": null,
+            "min": null
+          },
+          "club": {
+            "fields": {
+              "id": {
+                "kind": "uuid"
+              },
+              "name": {
+                "kind": "text",
+                "lower": false,
+                "max": null,
+                "min": null,
+                "pattern": null,
+                "trim": false
+              },
+              "profile": {
+                "kind": "url",
+                "nullable": true
+              },
+              "school": {
+                "fields": {
+                  "name": {
+                    "kind": "text",
+                    "lower": false,
+                    "max": null,
+                    "min": null,
+                    "pattern": null,
+                    "trim": false
+                  }
+                },
+                "kind": "object",
+                "nullable": true
+              }
+            },
+            "kind": "object",
+            "nullable": true
+          },
+          "externalUrl": {
+            "kind": "url",
+            "nullable": true
+          },
+          "field": {
+            "kind": "enum",
+            "name": "Field"
+          },
+          "id": {
+            "kind": "uuid"
+          },
+          "isMyApply": {
+            "kind": "bool"
+          },
+          "isMyClub": {
+            "kind": "bool"
+          },
+          "myLatestDraft": {
+            "kind": "uuid",
+            "nullable": true
+          },
+          "open": {
+            "kind": "bool"
+          },
+          "period": {
+            "kind": "range",
+            "of": {
+              "kind": "time"
+            }
+          },
+          "poster": {
+            "kind": "url",
+            "nullable": true
+          },
+          "region": {
+            "kind": "enum",
+            "name": "Region"
+          },
+          "status": {
+            "kind": "enum",
+            "name": "RecruitmentStatus"
+          },
+          "target": {
+            "kind": "enum",
+            "name": "Target"
+          },
+          "title": {
+            "kind": "text",
+            "lower": false,
+            "max": null,
+            "min": null,
+            "pattern": null,
+            "trim": false
+          },
+          "views": {
+            "kind": "int",
+            "max": null,
+            "min": null
+          }
+        },
+        "kind": "object"
+      },
+      "page": null,
+      "returns": "object"
+    },
+    "RecruitmentList": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [
+        {
+          "default": null,
+          "name": "filter",
+          "optional": false,
+          "ty": {
+            "kind": "record",
+            "name": "RecruitmentFilter"
+          }
+        },
+        {
+          "default": "LATEST",
+          "name": "sort",
+          "optional": true,
+          "ty": {
+            "kind": "enum",
+            "name": "RecruitmentSort"
+          }
+        }
+      ],
+      "output": {
+        "kind": "list",
+        "of": {
+          "fields": {
+            "bookmarkCount": {
+              "kind": "int",
+              "max": null,
+              "min": null
+            },
+            "club": {
+              "fields": {
+                "affiliation": {
+                  "kind": "enum",
+                  "name": "Affiliation"
+                },
+                "name": {
+                  "kind": "text",
+                  "lower": false,
+                  "max": null,
+                  "min": null,
+                  "pattern": null,
+                  "trim": false
+                }
+              },
+              "kind": "object",
+              "nullable": true
+            },
+            "field": {
+              "kind": "enum",
+              "name": "Field"
+            },
+            "id": {
+              "kind": "uuid"
+            },
+            "isBookmarked": {
+              "kind": "bool"
+            },
+            "period": {
+              "kind": "range",
+              "of": {
+                "kind": "time"
+              }
+            },
+            "poster": {
+              "kind": "url",
+              "nullable": true
+            },
+            "region": {
+              "kind": "enum",
+              "name": "Region"
+            },
+            "target": {
+              "kind": "enum",
+              "name": "Target"
+            },
+            "title": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            }
+          },
+          "kind": "object"
+        }
+      },
+      "page": {
+        "max_page": null,
+        "mode": "cursor",
+        "size": 20
+      },
+      "returns": "list"
+    },
+    "RefuseRemainingStatus": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [
+        {
+          "default": null,
+          "name": "job",
+          "optional": false,
+          "ty": {
+            "kind": "uuid"
+          }
+        }
+      ],
+      "output": {
+        "fields": {
+          "createdAt": {
+            "kind": "time"
+          },
+          "done": {
+            "kind": "int",
+            "max": null,
+            "min": null
+          },
+          "error": {
+            "kind": "text",
+            "lower": false,
+            "max": null,
+            "min": null,
+            "nullable": true,
+            "pattern": null,
+            "trim": false
+          },
+          "file": {
+            "kind": "url",
+            "nullable": true
+          },
+          "finishedAt": {
+            "kind": "time",
+            "nullable": true
+          },
+          "startedAt": {
+            "kind": "time",
+            "nullable": true
+          },
+          "status": {
+            "kind": "enum",
+            "name": "JobStatus"
+          },
+          "total": {
+            "kind": "int",
+            "max": null,
+            "min": null,
+            "nullable": true
+          }
+        },
+        "kind": "object"
+      },
+      "page": null,
+      "returns": "object"
+    }
+  },
+  "records": {
+    "ClubInput": [
+      {
+        "default": null,
+        "name": "name",
+        "optional": false,
+        "ty": {
+          "kind": "text",
+          "lower": false,
+          "max": 30,
+          "min": 1,
+          "pattern": null,
+          "trim": true
+        }
+      },
+      {
+        "default": null,
+        "name": "intro",
+        "optional": false,
+        "ty": {
+          "kind": "text",
+          "lower": false,
+          "max": 1000,
+          "min": 0,
+          "pattern": null,
+          "trim": false
+        }
+      },
+      {
+        "default": null,
+        "name": "affiliation",
+        "optional": false,
+        "ty": {
+          "kind": "enum",
+          "name": "Affiliation"
+        }
+      },
+      {
+        "default": null,
+        "name": "field",
+        "optional": false,
+        "ty": {
+          "kind": "enum",
+          "name": "Field"
+        }
+      },
+      {
+        "default": null,
+        "name": "region",
+        "optional": false,
+        "ty": {
+          "kind": "enum",
+          "name": "Region"
+        }
+      },
+      {
+        "default": null,
+        "name": "target",
+        "optional": false,
+        "ty": {
+          "kind": "enum",
+          "name": "Target"
+        }
+      }
+    ],
+    "Question": [
+      {
+        "default": null,
+        "name": "key",
+        "optional": false,
+        "ty": {
+          "kind": "text",
+          "lower": false,
+          "max": 40,
+          "min": 1,
+          "pattern": null,
+          "trim": false
+        }
+      },
+      {
+        "default": null,
+        "name": "label",
+        "optional": false,
+        "ty": {
+          "kind": "text",
+          "lower": false,
+          "max": 200,
+          "min": 1,
+          "pattern": null,
+          "trim": false
+        }
+      },
+      {
+        "default": null,
+        "name": "kind",
+        "optional": false,
+        "ty": {
+          "kind": "enum",
+          "name": "QuestionKind"
+        }
+      },
+      {
+        "default": null,
+        "name": "required",
+        "optional": false,
+        "ty": {
+          "kind": "bool"
+        }
+      },
+      {
+        "default": null,
+        "name": "maxLength",
+        "optional": true,
+        "ty": {
+          "kind": "int",
+          "max": 5000,
+          "min": 1
+        }
+      },
+      {
+        "default": null,
+        "name": "choices",
+        "optional": false,
+        "ty": {
+          "kind": "list",
+          "max": 20,
+          "of": {
+            "kind": "text",
+            "lower": false,
+            "max": 100,
+            "min": 1,
+            "pattern": null,
+            "trim": false
+          }
+        }
+      }
+    ],
+    "RecruitmentFilter": [
+      {
+        "default": null,
+        "name": "fields",
+        "optional": false,
+        "ty": {
+          "kind": "list",
+          "max": 8,
+          "of": {
+            "kind": "enum",
+            "name": "Field"
+          }
+        }
+      },
+      {
+        "default": null,
+        "name": "regions",
+        "optional": false,
+        "ty": {
+          "kind": "list",
+          "max": 10,
+          "of": {
+            "kind": "enum",
+            "name": "Region"
+          }
+        }
+      },
+      {
+        "default": null,
+        "name": "targets",
+        "optional": false,
+        "ty": {
+          "kind": "list",
+          "max": 3,
+          "of": {
+            "kind": "enum",
+            "name": "Target"
+          }
+        }
+      },
+      {
+        "default": null,
+        "name": "affiliations",
+        "optional": false,
+        "ty": {
+          "kind": "list",
+          "max": 2,
+          "of": {
+            "kind": "enum",
+            "name": "Affiliation"
+          }
+        }
+      }
+    ],
+    "RecruitmentInput": [
+      {
+        "default": null,
+        "name": "title",
+        "optional": false,
+        "ty": {
+          "kind": "text",
+          "lower": false,
+          "max": 100,
+          "min": 1,
+          "pattern": null,
+          "trim": true
+        }
+      },
+      {
+        "default": null,
+        "name": "body",
+        "optional": false,
+        "ty": {
+          "kind": "rich_text"
+        }
+      },
+      {
+        "default": null,
+        "name": "period",
+        "optional": false,
+        "ty": {
+          "kind": "range",
+          "of": {
+            "kind": "time"
+          }
+        }
+      },
+      {
+        "default": null,
+        "name": "field",
+        "optional": false,
+        "ty": {
+          "kind": "enum",
+          "name": "Field"
+        }
+      },
+      {
+        "default": null,
+        "name": "region",
+        "optional": false,
+        "ty": {
+          "kind": "enum",
+          "name": "Region"
+        }
+      },
+      {
+        "default": null,
+        "name": "target",
+        "optional": false,
+        "ty": {
+          "kind": "enum",
+          "name": "Target"
+        }
+      },
+      {
+        "default": null,
+        "name": "externalUrl",
+        "optional": true,
+        "ty": {
+          "kind": "url"
+        }
+      }
+    ]
+  },
+  "transport": {
+    "auth": "Authorization: Bearer <token>",
+    "call": "POST /aip/{intent}",
+    "describe": "GET /aip/describe",
+    "idempotency": "Idempotency-Key: <key>",
+    "pagination": "cursor (keyset) or page (offset) in the input object",
+    "uploads": "multipart/form-data: part 'input' (JSON) + one part per file; the input refers to a file by its part name"
+  }
+}

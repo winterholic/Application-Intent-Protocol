@@ -1,0 +1,46 @@
+[package]
+name = "aip-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "aip"
+path = "src/main.rs"
+
+[dependencies]
+aip-service = { path = "../aip-service" }
+aip-contract = { path = "../aip-contract" }
+aip-syntax = { path = "../aip-syntax" }
+aip-sema = { path = "../aip-sema" }
+aip-ir = { path = "../aip-ir" }
+aip-pg = { path = "../aip-pg" }
+aip-plan = { path = "../aip-plan" }
+aip-runtime = { path = "../aip-runtime" }
+tokio = { version = "1", features = ["full"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde_json.workspace = true
+anyhow.workspace = true
+clap = { version = "4", features = ["derive"] }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+spike-v6-transport = { path = "../../spikes/spike-v6-transport" }
+spike-v1-fixture = { path = "../../spikes/spike-v1-fixture" }
+aip-migrate = { path = "../aip-migrate" }
+jsonwebtoken = { version = "11.1", default-features = false, features = ["rust_crypto"] }
+rsa = { version = "0.9", features = ["pem", "sha2"] }
+rand = "0.8"
+tempfile = "3"
+spike-v2-read = { path = "../../spikes/spike-v2-read" }
+chrono = "0.4"
+bytes = "1"
+hmac = "0.12"
+sha2 = "0.10"
+base64 = "0.22"
+uuid = { version = "1", features = ["v4"] }
+axum = "0.8"
+tokio-tungstenite = "0.30.0"
+futures-util = "0.3.34"

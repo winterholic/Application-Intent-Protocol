@@ -1,0 +1,5 @@
+command NewClub(name: Text) {
+  allow authenticated
+  do { insert Club { name } as c }
+  returns c { id }
+}

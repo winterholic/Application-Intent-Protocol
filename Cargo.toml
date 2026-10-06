@@ -1,0 +1,31 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+exclude = [
+    "spikes/spike-v1-fixture",
+    "spikes/spike-v11-dev-checks",
+    "spikes/spike-v2-read",
+    "spikes/spike-v3-write",
+    "spikes/spike-v4-worker",
+    "spikes/spike-v5-sdk",
+    "spikes/spike-v6-transport",
+    "spikes/spike-v7-migrate",
+    "prototype",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "UNLICENSED"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+anyhow = "1"
+
+[workspace.lints.clippy]
+unwrap_used = "warn"
+# diagnostics are returned by value on purpose; they are cold-path and carry help text
+result_large_err = "allow"
+too_many_arguments = "allow"

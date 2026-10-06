@@ -1,0 +1,1 @@
+entity Poll { title: Text  dynamic schema from title }

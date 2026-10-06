@@ -1,0 +1,10 @@
+:p
+:p/:p
+:p/:p/bookmark
+:p/:p/club-faqs
+:p/:p/invite
+:p/close/:p
+:p/detail/:p
+:p/enter
+:p/key/:p
+/applies/:p

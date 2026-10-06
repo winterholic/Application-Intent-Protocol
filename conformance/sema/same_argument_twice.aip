@@ -1,0 +1,2 @@
+relation sameClub(a: Club, b: Club) = a = b
+relation r(c: Club) = sameClub(c, c)

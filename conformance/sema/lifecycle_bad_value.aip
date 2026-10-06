@@ -1,0 +1,4 @@
+entity Ticket {
+  status: Status
+  lifecycle status { ACTIVE -> CLOSED }
+}

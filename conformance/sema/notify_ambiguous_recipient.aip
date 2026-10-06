@@ -1,0 +1,5 @@
+entity Duel { a: Member on erase cascade  b: Member on erase cascade }
+command Ping(d: Duel) {
+  allow authenticated
+  do { notify Duel x where x = d via notify.template("ping") }
+}

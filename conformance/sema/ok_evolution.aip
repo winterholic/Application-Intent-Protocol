@@ -1,0 +1,6 @@
+// was renames, removed drops: stated intents of a deployment, accepted when they agree with the program
+entity Ticket was Task {
+  headline: Text was title
+  removed field legacy
+}
+removed entity Gone

@@ -1,0 +1,5 @@
+command GiveTermsConsent() {
+  allow authenticated
+  do { }
+}
+consent Terms version 1 required for [GiveTermsConsent]

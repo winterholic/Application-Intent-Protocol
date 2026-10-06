@@ -1,0 +1,21 @@
+// a subscription is planned as the list query it stands for, with the tables it reads; a migration runs in a cross tenant context
+entity Workspace { name: Text }
+entity Project {
+  workspace: Workspace
+  title: Text
+  tenant via workspace
+  visible to actor when exists Seat m where m.workspace = workspace and m.member = actor
+}
+entity Seat {
+  workspace: Workspace
+  member: Member  on erase cascade
+}
+subscribe LiveProjects(workspace: Workspace) {
+  allow authenticated
+  from Project p
+  where p.workspace = workspace
+  select { id title }
+}
+migration backfill_titles {
+  update Project p where p.title = "" set title = "untitled"
+}

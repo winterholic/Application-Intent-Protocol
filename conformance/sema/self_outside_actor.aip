@@ -1,0 +1,1 @@
+entity Note { owner: Member on erase cascade  body: Text visible to self }

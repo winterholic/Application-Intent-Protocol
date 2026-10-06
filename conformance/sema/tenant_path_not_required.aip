@@ -1,0 +1,7 @@
+// every row needs a tenant, so the path may not go through an optional reference
+entity Workspace { name: Text }
+entity Doc {
+  workspace: Workspace?
+  title: Text
+  tenant via workspace
+}

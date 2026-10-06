@@ -1,0 +1,4 @@
+entity Thing {
+  a: Text was old
+  removed field old
+}

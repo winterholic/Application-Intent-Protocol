@@ -1,0 +1,4 @@
+command NewClub() {
+  allow authenticated
+  do { insert Club { } }
+}

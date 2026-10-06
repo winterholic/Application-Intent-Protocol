@@ -1,0 +1,369 @@
+// SaaS: a multi-tenant backend. A Workspace is the tenant. Everything inside
+// one (Project, Task, Comment) carries `tenant via ...`, so a row's tenant is
+// the workspace its reference path ends at, and no query, update or reference
+// can reach across two of them. Who may act inside a workspace is still the
+// application's business (membership below); the tenant rules only keep the data
+// of different workspaces apart, even for a person who belongs to several.
+
+use postgres
+use auth
+use http
+
+actor Member via auth.oidc(google)
+
+enum WorkspaceRole { MEMBER ADMIN }
+enum TaskStatus { OPEN DONE ARCHIVED }
+
+entity Member {
+  track created
+  email: Email
+  // pointers into other tenants' rows from a person who is in no tenant
+  defaultProject: Project?
+  pinned: Task?
+  unique (email) else EMAIL_TAKEN
+}
+
+entity Workspace {
+  track created
+  name: Text(1..100)
+  projects: Project[] via workspace
+}
+
+// who belongs to which workspace; a person is in several, so this is not tenant-scoped
+entity Membership {
+  track created
+  member: Member
+  workspace: Workspace
+  role: WorkspaceRole = MEMBER
+  unique (member, workspace) else ALREADY_MEMBER
+}
+
+relation memberOf(m: Member, w: Workspace) = exists Membership x where x.member = m and x.workspace = w
+relation adminOf(m: Member, w: Workspace) = exists Membership x where x.member = m and x.workspace = w and x.role = ADMIN
+
+entity Project {
+  track created
+  workspace: Workspace
+  title: Text(1..100)
+  tasks: Task[] via project
+  tenant via workspace
+  visible to actor when memberOf(actor, workspace)
+}
+
+entity Task {
+  track created
+  project: Project
+  title: Text(1..200)
+  status: TaskStatus = OPEN
+  notes: Text(1..4000)?
+  parent: Task?
+  assignee: Member?
+  comments: Comment[] via task
+  tenant via project.workspace
+  visible to actor when memberOf(actor, project.workspace)
+}
+
+entity Comment {
+  track created
+  task: Task
+  author: Member
+  body: Text(1..2000)
+  tenant via task.project.workspace
+  visible to actor when memberOf(actor, task.project.workspace)
+}
+
+// who may sign off tasks of a project
+entity Reviewer {
+  track created
+  project: Project
+  member: Member
+  tenant via project.workspace
+  unique (project, member) else ALREADY_REVIEWER
+}
+
+// the part of a tracker's payload this app reads
+record TaskPair {
+  first: Uuid
+  second: Uuid
+}
+
+// ---------------------------------------------------------------- workspaces
+
+command CreateWorkspace(name: Text(1..100, trim)) idempotent {
+  allow authenticated
+  do {
+    insert Workspace { name } as ws
+    insert Membership { member: actor, workspace: ws, role: ADMIN }
+  }
+  returns ws { id name }
+}
+
+query MyWorkspaces() {
+  allow authenticated
+  from Membership m
+  where m.member = actor
+  page 50 by keyset
+  select { id role workspace { id name } }
+}
+
+command AddMember(workspace: Workspace, member: Member) {
+  allow adminOf(actor, workspace)
+  do { insert Membership { member, workspace } }
+}
+
+// the count has no workspace condition of its own: the tenant of the parameter supplies it
+query OpenTaskCount(workspace: Workspace) {
+  allow memberOf(actor, workspace)
+  from workspace
+  select { open: count(Task t where t.status = OPEN) }
+}
+
+// ---------------------------------------------------------------- projects
+
+command CreateProject(workspace: Workspace, title: Text(1..100, trim)) idempotent {
+  allow memberOf(actor, workspace)
+  do { insert Project { workspace, title } as project }
+  returns project { id title }
+}
+
+query GetProject(project: Project) {
+  allow authenticated
+  from project
+  select { id title workspace { id name } }
+}
+
+command RenameProject(project: Project, title: Text(1..100, trim)) {
+  allow memberOf(actor, project.workspace)
+  do { set project.title = title }
+}
+
+// ---------------------------------------------------------------- tasks
+
+command CreateTask(project: Project, title: Text(1..200, trim), notes: Text(1..4000, trim)?, parent: Task?, assignee: Member?) idempotent {
+  allow memberOf(actor, project.workspace)
+  do { insert Task { project, title, notes, parent, assignee } as task }
+  returns task { id title }
+}
+
+query ProjectTasks(project: Project) {
+  allow memberOf(actor, project.workspace)
+  from Task t
+  where t.project = project
+  sort by t.createdAt asc
+  page 50 by keyset
+  select { id title status }
+}
+
+// the same rows, kept open: whoever shows a project's tasks gets the list again whenever a member changes one. Every refresh is
+// checked again for the subscriber (membership, visibility, the project's workspace), so a member who is removed stops receiving
+subscribe LiveProjectTasks(project: Project) {
+  allow memberOf(actor, project.workspace)
+  from Task t
+  where t.project = project
+  select { id title status }
+}
+
+// no membership check in `allow`: `visible to` on Task decides which rows each subscriber is sent, so a stranger to the workspace
+// holds a subscription that stays empty, and a member who is removed starts receiving an empty list
+subscribe LiveWorkspaceTasks(workspace: Workspace) {
+  allow authenticated
+  from Task t
+  where t.project.workspace = workspace
+  select { id title status }
+}
+
+// tasks assigned to the caller: nothing says "in this workspace" except the parameter
+query MyTasks(workspace: Workspace) {
+  allow memberOf(actor, workspace)
+  from Task t
+  where t.assignee = actor
+  sort by t.createdAt asc
+  page 50 by keyset
+  select { id title project { id title } }
+}
+
+// full-text search: a title hit outranks a note hit. The tenant comes from the parameter and `visible to` decides which
+// rows the caller may see, so `allow authenticated` is enough: a stranger to the workspace finds nothing
+search TaskSearch on Task fields [title weight A, notes weight B] language english
+
+query SearchTasks(workspace: Workspace, q: Text(1..100, trim)) {
+  allow authenticated
+  from TaskSearch.match(q) r
+  page 20 by keyset
+  select { id title status rank: r.rank }
+}
+
+// Korean has no stemmer in the engine: words match by prefix, which the compiler warns about
+search ProjectSearch on Project fields [title weight A] language korean
+
+query SearchProjects(workspace: Workspace, q: Text(1..100, trim)) {
+  allow authenticated
+  from ProjectSearch.match(q) r
+  page 20 by offset max page 50
+  select { id title rank: r.rank }
+}
+
+command MoveTask(task: Task, project: Project) {
+  allow memberOf(actor, task.project.workspace)
+  do { set task.project = project }
+}
+
+// writes a project the caller did not name, so only the write itself can notice it is another tenant
+command MoveToMyDefault(task: Task) {
+  allow memberOf(actor, task.project.workspace)
+  require actor.defaultProject != null else NO_DEFAULT_PROJECT
+  do { set task.project = actor.defaultProject }
+}
+
+// creates a row in a project the caller did not name: the new row's tenant is compared with the call's
+command CloneToMyDefault(task: Task) idempotent {
+  allow memberOf(actor, task.project.workspace)
+  require actor.defaultProject != null else NO_DEFAULT_PROJECT
+  do { insert Task { project: actor.defaultProject, title: task.title } as copy }
+  returns copy { id }
+}
+
+// writes a reference that is not the one the tenant path starts with: the database refuses it
+command PinParent(task: Task) {
+  allow memberOf(actor, task.project.workspace)
+  require actor.pinned != null else NOTHING_PINNED
+  do { set task.parent = actor.pinned }
+}
+
+command CompleteTask(task: Task) {
+  allow memberOf(actor, task.project.workspace)
+  do { set task.status = DONE }
+  emit TaskCompleted { task: task, by: actor }
+}
+
+// runs after commit with nobody to ask: the task the event names fixes the tenant it writes in
+on TaskCompleted e do {
+  insert Comment { task: e.task, author: e.by, body: "completed" }
+}
+
+command AddComment(task: Task, body: Text(1..2000, trim)) idempotent {
+  allow memberOf(actor, task.project.workspace)
+  do { insert Comment { task, author: actor, body } as comment }
+  returns comment { id body }
+}
+
+query TaskComments(task: Task) {
+  allow memberOf(actor, task.project.workspace)
+  from Comment c
+  where c.task = task
+  sort by c.createdAt asc
+  page 50 by keyset
+  select { id body author { email } }
+}
+
+// housekeeping across every workspace; cannot be called by clients
+internal cross tenant command ArchiveDoneTasks() {
+  allow public
+  do { update Task t where t.status = DONE set status = ARCHIVED }
+}
+
+// ---------------------------------------------------------------- outbound webhooks
+
+// a customer's own server, subscribed to the events of one project
+entity Endpoint {
+  track created
+  project: Project
+  url: Url
+  tenant via project.workspace
+  visible to actor when memberOf(actor, project.workspace)
+  unique (project, url) else ENDPOINT_EXISTS
+}
+
+// the secret that signs this endpoint's deliveries is derived, never stored: it is in this response and nowhere else.
+// not `idempotent`: an idempotent command keeps its response, which would keep the secret
+command AddEndpoint(project: Project, url: Url) {
+  allow memberOf(actor, project.workspace)
+  do { insert Endpoint { project, url } as endpoint }
+  returns endpoint { id url secret: endpoint.signingSecret }
+}
+
+query ProjectEndpoints(project: Project) {
+  allow memberOf(actor, project.workspace)
+  from Endpoint e
+  where e.project = project
+  page 50 by keyset
+  select { id url }
+}
+
+// a completed task goes, signed, to the endpoints of its own project; an endpoint of another project or workspace gets nothing,
+// whatever the condition says. Delivery is at least once and unordered; the event id in the header lets the receiver dedupe
+outbound webhooks for Endpoint e {
+  events [TaskCompleted] where event.task.project = e.project
+  sign hmac_sha256 retry 8 over 24h disable after 3d failing
+}
+
+// ---------------------------------------------------------------- sign-off
+
+command AddReviewer(project: Project, member: Member) {
+  allow memberOf(actor, project.workspace)
+  do { insert Reviewer { project, member } }
+}
+
+// `Reviewer r` names every reviewer of every workspace; only the task's own workspace is meant
+approval TaskSignoff for Task t {
+  approvers: Reviewer r
+  requested by memberOf(actor, t.project.workspace)
+  require 1 approvals
+  on approved do { set t.status = DONE }
+  on rejected do { set t.status = OPEN }
+}
+
+// ---------------------------------------------------------------- background work
+
+// a job walks the tasks of the workspace it was started for, never those of another
+job ArchiveDone(workspace: Workspace) {
+  allow adminOf(actor, workspace)
+  progress over Task t where t.status = DONE
+  do { set t.status = ARCHIVED }
+}
+
+// one item per member, each written into the tenant of that member's default project: one batch holds several tenants
+job WelcomeDefaults() {
+  allow authenticated
+  progress over Member m where m.defaultProject != null
+  do { insert Task { project: m.defaultProject, title: "welcome" } }
+}
+
+// a tracker reports tasks by webhook; nothing names a tenant until the payload is read, so the
+// first row written fixes it and a payload that reaches into two workspaces is refused as a whole
+webhook Tracker via http.webhook(secret: "TRACKER_SECRET") {
+  on "tasks.closed"(p: TaskPair) do {
+    update Task t where t.id = p.first or t.id = p.second set status = DONE
+  }
+  // reopening is maintenance across workspaces
+  cross tenant on "tasks.reopened"(p: TaskPair) do {
+    update Task t where t.id = p.first or t.id = p.second set status = OPEN
+  }
+}
+
+// each item fixes the tenant of its own write, so one run archives the tasks of every workspace
+schedule ArchiveSweep every day at 03:00 tz "Asia/Seoul" {
+  for Task t where t.status = DONE
+  set t.status = ARCHIVED
+}
+
+// one statement across workspaces
+cross tenant schedule RestoreArchived every week on sun at 04:00 tz "Asia/Seoul" {
+  update Task t where t.status = ARCHIVED set status = DONE
+}
+
+// every row is settled in its own tenant, even when one transaction changed rows of several
+rule Retro on Project p when count(p.tasks t where t.status = DONE) >= 2 do {
+  insert Task { project: p, title: "retro" }
+}
+
+// closes every open task of every workspace in one go
+internal cross tenant command CloseAllOpen() {
+  allow public
+  do { update Task t where t.status = OPEN set status = DONE }
+}
+
+// runs once per deployment, in every workspace at once: nobody acts and the rows it touches belong to no particular tenant
+migration backfill_done_notes {
+  update Task t where t.status = DONE and t.notes = null set notes = "completed"
+}

@@ -1,0 +1,2406 @@
+{
+  "commands": {
+    "AddComment": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.IDEMPOTENCY.KEY_REUSED",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "TASK_NOT_FOUND"
+        },
+        {
+          "code": "AIP.TENANT.MISMATCH",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "safe with the same key"
+      },
+      "idempotency": "Idempotency-Key header required",
+      "idempotent": true,
+      "input": [
+        {
+          "default": null,
+          "name": "task",
+          "optional": false,
+          "ty": {
+            "entity": "Task",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "body",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 2000,
+            "min": 1,
+            "pattern": null,
+            "trim": true
+          }
+        }
+      ],
+      "output": {
+        "fields": {
+          "body": {
+            "kind": "text",
+            "lower": false,
+            "max": null,
+            "min": null,
+            "pattern": null,
+            "trim": false
+          },
+          "id": {
+            "kind": "uuid"
+          }
+        },
+        "kind": "object"
+      },
+      "writes": [
+        "Comment"
+      ]
+    },
+    "AddEndpoint": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ENDPOINT_EXISTS"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "PROJECT_NOT_FOUND"
+        },
+        {
+          "code": "AIP.TENANT.MISMATCH",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "project",
+          "optional": false,
+          "ty": {
+            "entity": "Project",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "url",
+          "optional": false,
+          "ty": {
+            "kind": "url"
+          }
+        }
+      ],
+      "output": {
+        "fields": {
+          "id": {
+            "kind": "uuid"
+          },
+          "secret": {
+            "kind": "text",
+            "lower": false,
+            "max": null,
+            "min": null,
+            "pattern": null,
+            "trim": false
+          },
+          "url": {
+            "kind": "url"
+          }
+        },
+        "kind": "object"
+      },
+      "writes": [
+        "Endpoint"
+      ]
+    },
+    "AddMember": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_MEMBER"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "MEMBER_NOT_FOUND"
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "WORKSPACE_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "workspace",
+          "optional": false,
+          "ty": {
+            "entity": "Workspace",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "member",
+          "optional": false,
+          "ty": {
+            "entity": "Member",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "Membership"
+      ]
+    },
+    "AddReviewer": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_REVIEWER"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "MEMBER_NOT_FOUND"
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "PROJECT_NOT_FOUND"
+        },
+        {
+          "code": "AIP.TENANT.MISMATCH",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "project",
+          "optional": false,
+          "ty": {
+            "entity": "Project",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "member",
+          "optional": false,
+          "ty": {
+            "entity": "Member",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "Reviewer"
+      ]
+    },
+    "ApproveTaskSignoff": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": "NOT_AN_APPROVER"
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_VOTED"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "TASK_NOT_FOUND"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "APPROVAL_NOT_PENDING"
+        },
+        {
+          "code": "AIP.TENANT.MISMATCH",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "task",
+          "optional": false,
+          "ty": {
+            "entity": "Task",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "comment",
+          "optional": true,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": null,
+            "min": null,
+            "pattern": null,
+            "trim": false
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "Task"
+      ]
+    },
+    "ArchiveDone": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "WORKSPACE_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "workspace",
+          "optional": false,
+          "ty": {
+            "entity": "Workspace",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": {
+        "fields": {
+          "job": {
+            "kind": "uuid"
+          },
+          "status": {
+            "kind": "enum",
+            "name": "JobStatus"
+          }
+        },
+        "kind": "object"
+      },
+      "writes": []
+    },
+    "CancelTaskSignoff": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": "ONLY_REQUESTER_CAN_CANCEL"
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "TASK_NOT_FOUND"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "APPROVAL_NOT_PENDING"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "task",
+          "optional": false,
+          "ty": {
+            "entity": "Task",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": null,
+      "writes": []
+    },
+    "CloneToMyDefault": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.IDEMPOTENCY.KEY_REUSED",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "TASK_NOT_FOUND"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "NO_DEFAULT_PROJECT"
+        },
+        {
+          "code": "AIP.TENANT.MISMATCH",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "safe with the same key"
+      },
+      "idempotency": "Idempotency-Key header required",
+      "idempotent": true,
+      "input": [
+        {
+          "default": null,
+          "name": "task",
+          "optional": false,
+          "ty": {
+            "entity": "Task",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": {
+        "fields": {
+          "id": {
+            "kind": "uuid"
+          }
+        },
+        "kind": "object"
+      },
+      "writes": [
+        "Task"
+      ]
+    },
+    "CompleteTask": {
+      "audited": false,
+      "effects": [],
+      "emits": [
+        "TaskCompleted"
+      ],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "TASK_NOT_FOUND"
+        },
+        {
+          "code": "AIP.TENANT.MISMATCH",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": "at-least-once via transactional outbox; consumers must tolerate duplicates",
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "task",
+          "optional": false,
+          "ty": {
+            "entity": "Task",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "Task"
+      ]
+    },
+    "CreateProject": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.IDEMPOTENCY.KEY_REUSED",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "WORKSPACE_NOT_FOUND"
+        },
+        {
+          "code": "AIP.TENANT.MISMATCH",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "safe with the same key"
+      },
+      "idempotency": "Idempotency-Key header required",
+      "idempotent": true,
+      "input": [
+        {
+          "default": null,
+          "name": "workspace",
+          "optional": false,
+          "ty": {
+            "entity": "Workspace",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "title",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 100,
+            "min": 1,
+            "pattern": null,
+            "trim": true
+          }
+        }
+      ],
+      "output": {
+        "fields": {
+          "id": {
+            "kind": "uuid"
+          },
+          "title": {
+            "kind": "text",
+            "lower": false,
+            "max": null,
+            "min": null,
+            "pattern": null,
+            "trim": false
+          }
+        },
+        "kind": "object"
+      },
+      "writes": [
+        "Project"
+      ]
+    },
+    "CreateTask": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.IDEMPOTENCY.KEY_REUSED",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "MEMBER_NOT_FOUND"
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "PROJECT_NOT_FOUND"
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "TASK_NOT_FOUND"
+        },
+        {
+          "code": "AIP.TENANT.MISMATCH",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "safe with the same key"
+      },
+      "idempotency": "Idempotency-Key header required",
+      "idempotent": true,
+      "input": [
+        {
+          "default": null,
+          "name": "project",
+          "optional": false,
+          "ty": {
+            "entity": "Project",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "title",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 200,
+            "min": 1,
+            "pattern": null,
+            "trim": true
+          }
+        },
+        {
+          "default": null,
+          "name": "notes",
+          "optional": true,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 4000,
+            "min": 1,
+            "pattern": null,
+            "trim": true
+          }
+        },
+        {
+          "default": null,
+          "name": "parent",
+          "optional": true,
+          "ty": {
+            "entity": "Task",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "assignee",
+          "optional": true,
+          "ty": {
+            "entity": "Member",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": {
+        "fields": {
+          "id": {
+            "kind": "uuid"
+          },
+          "title": {
+            "kind": "text",
+            "lower": false,
+            "max": null,
+            "min": null,
+            "pattern": null,
+            "trim": false
+          }
+        },
+        "kind": "object"
+      },
+      "writes": [
+        "Task"
+      ]
+    },
+    "CreateWorkspace": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_MEMBER"
+        },
+        {
+          "code": "AIP.IDEMPOTENCY.KEY_REUSED",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "safe with the same key"
+      },
+      "idempotency": "Idempotency-Key header required",
+      "idempotent": true,
+      "input": [
+        {
+          "default": null,
+          "name": "name",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 100,
+            "min": 1,
+            "pattern": null,
+            "trim": true
+          }
+        }
+      ],
+      "output": {
+        "fields": {
+          "id": {
+            "kind": "uuid"
+          },
+          "name": {
+            "kind": "text",
+            "lower": false,
+            "max": null,
+            "min": null,
+            "pattern": null,
+            "trim": false
+          }
+        },
+        "kind": "object"
+      },
+      "writes": [
+        "Membership",
+        "Workspace"
+      ]
+    },
+    "MoveTask": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "PROJECT_NOT_FOUND"
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "TASK_NOT_FOUND"
+        },
+        {
+          "code": "AIP.TENANT.MISMATCH",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "task",
+          "optional": false,
+          "ty": {
+            "entity": "Task",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "project",
+          "optional": false,
+          "ty": {
+            "entity": "Project",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "Task"
+      ]
+    },
+    "MoveToMyDefault": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "TASK_NOT_FOUND"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "NO_DEFAULT_PROJECT"
+        },
+        {
+          "code": "AIP.TENANT.MISMATCH",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "task",
+          "optional": false,
+          "ty": {
+            "entity": "Task",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "Task"
+      ]
+    },
+    "PinParent": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "TASK_NOT_FOUND"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "NOTHING_PINNED"
+        },
+        {
+          "code": "AIP.TENANT.MISMATCH",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "task",
+          "optional": false,
+          "ty": {
+            "entity": "Task",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "Task"
+      ]
+    },
+    "RejectTaskSignoff": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": "NOT_AN_APPROVER"
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "ALREADY_VOTED"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "TASK_NOT_FOUND"
+        },
+        {
+          "code": "AIP.PRECONDITION.FAILED",
+          "reason": "APPROVAL_NOT_PENDING"
+        },
+        {
+          "code": "AIP.TENANT.MISMATCH",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "task",
+          "optional": false,
+          "ty": {
+            "entity": "Task",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "reason",
+          "optional": true,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": null,
+            "min": null,
+            "pattern": null,
+            "trim": false
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "Task"
+      ]
+    },
+    "RenameProject": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "PROJECT_NOT_FOUND"
+        },
+        {
+          "code": "AIP.TENANT.MISMATCH",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "project",
+          "optional": false,
+          "ty": {
+            "entity": "Project",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "title",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 100,
+            "min": 1,
+            "pattern": null,
+            "trim": true
+          }
+        }
+      ],
+      "output": null,
+      "writes": [
+        "Project"
+      ]
+    },
+    "RequestTaskSignoff": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONFLICT.UNIQUE",
+          "reason": "APPROVAL_ALREADY_PENDING"
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "TASK_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [
+        {
+          "default": null,
+          "name": "task",
+          "optional": false,
+          "ty": {
+            "entity": "Task",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": null,
+      "writes": []
+    },
+    "WelcomeDefaults": {
+      "audited": false,
+      "effects": [],
+      "emits": [],
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.CONCURRENCY.CONFLICT",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "atomic": "one database transaction",
+        "events": null,
+        "retry": "a retry may apply twice"
+      },
+      "idempotency": "not idempotent",
+      "idempotent": false,
+      "input": [],
+      "output": {
+        "fields": {
+          "job": {
+            "kind": "uuid"
+          },
+          "status": {
+            "kind": "enum",
+            "name": "JobStatus"
+          }
+        },
+        "kind": "object"
+      },
+      "writes": []
+    }
+  },
+  "core_ir": "aip-core/0.11",
+  "enums": {
+    "ApprovalDecision": [
+      "APPROVE",
+      "REJECT"
+    ],
+    "ApprovalStatus": [
+      "NONE",
+      "PENDING",
+      "APPROVED",
+      "REJECTED",
+      "CANCELLED",
+      "EXPIRED"
+    ],
+    "JobStatus": [
+      "QUEUED",
+      "RUNNING",
+      "DONE",
+      "FAILED"
+    ],
+    "TaskStatus": [
+      "OPEN",
+      "DONE",
+      "ARCHIVED"
+    ],
+    "WorkspaceRole": [
+      "MEMBER",
+      "ADMIN"
+    ]
+  },
+  "events": {
+    "TaskCompleted": [
+      [
+        "task",
+        {
+          "entity": "Task",
+          "kind": "entity"
+        }
+      ],
+      [
+        "by",
+        {
+          "entity": "Member",
+          "kind": "entity"
+        }
+      ]
+    ]
+  },
+  "jobs": [
+    {
+      "produces": null,
+      "start": "ArchiveDone",
+      "status": "ArchiveDoneStatus"
+    },
+    {
+      "produces": null,
+      "start": "WelcomeDefaults",
+      "status": "WelcomeDefaultsStatus"
+    }
+  ],
+  "outbound_webhooks": [
+    {
+      "endpoint": "Endpoint",
+      "events": {
+        "TaskCompleted": {
+          "by": {
+            "entity": "Member",
+            "kind": "entity"
+          },
+          "task": {
+            "entity": "Task",
+            "kind": "entity"
+          }
+        }
+      },
+      "guarantees": {
+        "authenticity": "verify AIP-Signature with the endpoint's secret and refuse a timestamp more than 5 minutes old, which stops a replay",
+        "delivery": "at least once: a delivery without a 2xx answer is repeated, so receivers must tolerate duplicates",
+        "order": "none: events reach an endpoint independently, and a retried one arrives after later ones",
+        "secret": "shown once, in the response of the command that created the endpoint; the server stores it nowhere and cannot show it again",
+        "target": "only public http(s) addresses are called; redirects are not followed"
+      },
+      "request": {
+        "body": "{\"id\": \"evt_<n>\", \"type\": <event>, \"created_at\": <UTC time>, \"data\": <the event's fields; a row is its id>}",
+        "content_type": "application/json",
+        "headers": {
+          "AIP-Delivery-Attempt": "1 for the first attempt, then 2, 3, ...",
+          "AIP-Delivery-Id": "one per endpoint and event",
+          "AIP-Event": "the event name",
+          "AIP-Event-Id": "the same for every attempt and every endpoint of one event: dedupe on it",
+          "AIP-Signature": "t=<unix seconds>,v1=<hex HMAC-SHA256 over \"<t>.<body>\"> keyed with the endpoint's secret"
+        },
+        "method": "POST"
+      }
+    }
+  ],
+  "protocol": "aip-protocol/0.1",
+  "queries": {
+    "ArchiveDoneStatus": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [
+        {
+          "default": null,
+          "name": "job",
+          "optional": false,
+          "ty": {
+            "kind": "uuid"
+          }
+        }
+      ],
+      "output": {
+        "fields": {
+          "createdAt": {
+            "kind": "time"
+          },
+          "done": {
+            "kind": "int",
+            "max": null,
+            "min": null
+          },
+          "error": {
+            "kind": "text",
+            "lower": false,
+            "max": null,
+            "min": null,
+            "nullable": true,
+            "pattern": null,
+            "trim": false
+          },
+          "file": {
+            "kind": "url",
+            "nullable": true
+          },
+          "finishedAt": {
+            "kind": "time",
+            "nullable": true
+          },
+          "startedAt": {
+            "kind": "time",
+            "nullable": true
+          },
+          "status": {
+            "kind": "enum",
+            "name": "JobStatus"
+          },
+          "total": {
+            "kind": "int",
+            "max": null,
+            "min": null,
+            "nullable": true
+          }
+        },
+        "kind": "object"
+      },
+      "page": null,
+      "returns": "object"
+    },
+    "GetProject": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "PROJECT_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [
+        {
+          "default": null,
+          "name": "project",
+          "optional": false,
+          "ty": {
+            "entity": "Project",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": {
+        "fields": {
+          "id": {
+            "kind": "uuid"
+          },
+          "title": {
+            "kind": "text",
+            "lower": false,
+            "max": null,
+            "min": null,
+            "pattern": null,
+            "trim": false
+          },
+          "workspace": {
+            "fields": {
+              "id": {
+                "kind": "uuid"
+              },
+              "name": {
+                "kind": "text",
+                "lower": false,
+                "max": null,
+                "min": null,
+                "pattern": null,
+                "trim": false
+              }
+            },
+            "kind": "object",
+            "nullable": true
+          }
+        },
+        "kind": "object"
+      },
+      "page": null,
+      "returns": "object"
+    },
+    "MyTasks": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "WORKSPACE_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [
+        {
+          "default": null,
+          "name": "workspace",
+          "optional": false,
+          "ty": {
+            "entity": "Workspace",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": {
+        "kind": "list",
+        "of": {
+          "fields": {
+            "id": {
+              "kind": "uuid"
+            },
+            "project": {
+              "fields": {
+                "id": {
+                  "kind": "uuid"
+                },
+                "title": {
+                  "kind": "text",
+                  "lower": false,
+                  "max": null,
+                  "min": null,
+                  "pattern": null,
+                  "trim": false
+                }
+              },
+              "kind": "object",
+              "nullable": true
+            },
+            "title": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            }
+          },
+          "kind": "object"
+        }
+      },
+      "page": {
+        "max_page": null,
+        "mode": "cursor",
+        "size": 50
+      },
+      "returns": "list"
+    },
+    "MyWorkspaces": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [],
+      "output": {
+        "kind": "list",
+        "of": {
+          "fields": {
+            "id": {
+              "kind": "uuid"
+            },
+            "role": {
+              "kind": "enum",
+              "name": "WorkspaceRole"
+            },
+            "workspace": {
+              "fields": {
+                "id": {
+                  "kind": "uuid"
+                },
+                "name": {
+                  "kind": "text",
+                  "lower": false,
+                  "max": null,
+                  "min": null,
+                  "pattern": null,
+                  "trim": false
+                }
+              },
+              "kind": "object",
+              "nullable": true
+            }
+          },
+          "kind": "object"
+        }
+      },
+      "page": {
+        "max_page": null,
+        "mode": "cursor",
+        "size": 50
+      },
+      "returns": "list"
+    },
+    "OpenTaskCount": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "WORKSPACE_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [
+        {
+          "default": null,
+          "name": "workspace",
+          "optional": false,
+          "ty": {
+            "entity": "Workspace",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": {
+        "fields": {
+          "open": {
+            "kind": "int",
+            "max": null,
+            "min": null
+          }
+        },
+        "kind": "object"
+      },
+      "page": null,
+      "returns": "object"
+    },
+    "ProjectEndpoints": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "PROJECT_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [
+        {
+          "default": null,
+          "name": "project",
+          "optional": false,
+          "ty": {
+            "entity": "Project",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": {
+        "kind": "list",
+        "of": {
+          "fields": {
+            "id": {
+              "kind": "uuid"
+            },
+            "url": {
+              "kind": "url"
+            }
+          },
+          "kind": "object"
+        }
+      },
+      "page": {
+        "max_page": null,
+        "mode": "cursor",
+        "size": 50
+      },
+      "returns": "list"
+    },
+    "ProjectTasks": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "PROJECT_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [
+        {
+          "default": null,
+          "name": "project",
+          "optional": false,
+          "ty": {
+            "entity": "Project",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": {
+        "kind": "list",
+        "of": {
+          "fields": {
+            "id": {
+              "kind": "uuid"
+            },
+            "status": {
+              "kind": "enum",
+              "name": "TaskStatus"
+            },
+            "title": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            }
+          },
+          "kind": "object"
+        }
+      },
+      "page": {
+        "max_page": null,
+        "mode": "cursor",
+        "size": 50
+      },
+      "returns": "list"
+    },
+    "SearchProjects": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "WORKSPACE_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1,
+        "search": {
+          "approximate": true,
+          "language": "korean",
+          "match": "word prefix; not morphological analysis (a changed stem, a compound or the middle of a word is not found)",
+          "order": "best match first, ties by id",
+          "query_syntax": "web search: words are ANDed, `or`, \"quoted phrase\" and `-word` are understood"
+        }
+      },
+      "input": [
+        {
+          "default": null,
+          "name": "workspace",
+          "optional": false,
+          "ty": {
+            "entity": "Workspace",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "q",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 100,
+            "min": 1,
+            "pattern": null,
+            "trim": true
+          }
+        }
+      ],
+      "output": {
+        "kind": "list",
+        "of": {
+          "fields": {
+            "id": {
+              "kind": "uuid"
+            },
+            "rank": {
+              "format": "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$",
+              "kind": "decimal",
+              "wire": "decimal_string"
+            },
+            "title": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            }
+          },
+          "kind": "object"
+        }
+      },
+      "page": {
+        "max_page": 50,
+        "mode": "offset",
+        "size": 20
+      },
+      "returns": "list"
+    },
+    "SearchTasks": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "WORKSPACE_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1,
+        "search": {
+          "approximate": false,
+          "language": "english",
+          "match": "stemmed words",
+          "order": "best match first, ties by id",
+          "query_syntax": "web search: words are ANDed, `or`, \"quoted phrase\" and `-word` are understood"
+        }
+      },
+      "input": [
+        {
+          "default": null,
+          "name": "workspace",
+          "optional": false,
+          "ty": {
+            "entity": "Workspace",
+            "kind": "entity"
+          }
+        },
+        {
+          "default": null,
+          "name": "q",
+          "optional": false,
+          "ty": {
+            "kind": "text",
+            "lower": false,
+            "max": 100,
+            "min": 1,
+            "pattern": null,
+            "trim": true
+          }
+        }
+      ],
+      "output": {
+        "kind": "list",
+        "of": {
+          "fields": {
+            "id": {
+              "kind": "uuid"
+            },
+            "rank": {
+              "format": "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$",
+              "kind": "decimal",
+              "wire": "decimal_string"
+            },
+            "status": {
+              "kind": "enum",
+              "name": "TaskStatus"
+            },
+            "title": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            }
+          },
+          "kind": "object"
+        }
+      },
+      "page": {
+        "max_page": null,
+        "mode": "cursor",
+        "size": 20
+      },
+      "returns": "list"
+    },
+    "TaskComments": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "TASK_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [
+        {
+          "default": null,
+          "name": "task",
+          "optional": false,
+          "ty": {
+            "entity": "Task",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": {
+        "kind": "list",
+        "of": {
+          "fields": {
+            "author": {
+              "fields": {
+                "email": {
+                  "kind": "email"
+                }
+              },
+              "kind": "object",
+              "nullable": true
+            },
+            "body": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            },
+            "id": {
+              "kind": "uuid"
+            }
+          },
+          "kind": "object"
+        }
+      },
+      "page": {
+        "max_page": null,
+        "mode": "cursor",
+        "size": 50
+      },
+      "returns": "list"
+    },
+    "TaskSignoffStatus": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "TASK_NOT_FOUND"
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [
+        {
+          "default": null,
+          "name": "task",
+          "optional": false,
+          "ty": {
+            "entity": "Task",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": {
+        "fields": {
+          "approvals": {
+            "kind": "int",
+            "max": null,
+            "min": null
+          },
+          "canVote": {
+            "kind": "bool"
+          },
+          "decidedAt": {
+            "kind": "time",
+            "nullable": true
+          },
+          "expiresAt": {
+            "kind": "time",
+            "nullable": true
+          },
+          "requestedAt": {
+            "kind": "time",
+            "nullable": true
+          },
+          "requestedBy": {
+            "kind": "uuid",
+            "nullable": true
+          },
+          "required": {
+            "kind": "int",
+            "max": null,
+            "min": null
+          },
+          "status": {
+            "kind": "enum",
+            "name": "ApprovalStatus"
+          },
+          "votes": {
+            "kind": "list",
+            "of": {
+              "fields": {
+                "at": {
+                  "kind": "time"
+                },
+                "comment": {
+                  "kind": "text",
+                  "lower": false,
+                  "max": null,
+                  "min": null,
+                  "nullable": true,
+                  "pattern": null,
+                  "trim": false
+                },
+                "decision": {
+                  "kind": "enum",
+                  "name": "ApprovalDecision"
+                },
+                "voter": {
+                  "kind": "uuid"
+                }
+              },
+              "kind": "object"
+            }
+          }
+        },
+        "kind": "object"
+      },
+      "page": null,
+      "returns": "object"
+    },
+    "WelcomeDefaultsStatus": {
+      "cache_seconds": null,
+      "errors": [
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "consistency": "single snapshot (repeatable read)",
+        "round_trips": 1
+      },
+      "input": [
+        {
+          "default": null,
+          "name": "job",
+          "optional": false,
+          "ty": {
+            "kind": "uuid"
+          }
+        }
+      ],
+      "output": {
+        "fields": {
+          "createdAt": {
+            "kind": "time"
+          },
+          "done": {
+            "kind": "int",
+            "max": null,
+            "min": null
+          },
+          "error": {
+            "kind": "text",
+            "lower": false,
+            "max": null,
+            "min": null,
+            "nullable": true,
+            "pattern": null,
+            "trim": false
+          },
+          "file": {
+            "kind": "url",
+            "nullable": true
+          },
+          "finishedAt": {
+            "kind": "time",
+            "nullable": true
+          },
+          "startedAt": {
+            "kind": "time",
+            "nullable": true
+          },
+          "status": {
+            "kind": "enum",
+            "name": "JobStatus"
+          },
+          "total": {
+            "kind": "int",
+            "max": null,
+            "min": null,
+            "nullable": true
+          }
+        },
+        "kind": "object"
+      },
+      "page": null,
+      "returns": "object"
+    }
+  },
+  "records": {
+    "TaskPair": [
+      {
+        "default": null,
+        "name": "first",
+        "optional": false,
+        "ty": {
+          "kind": "uuid"
+        }
+      },
+      {
+        "default": null,
+        "name": "second",
+        "optional": false,
+        "ty": {
+          "kind": "uuid"
+        }
+      }
+    ]
+  },
+  "subscriptions": {
+    "LiveProjectTasks": {
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "PROJECT_NOT_FOUND"
+        },
+        {
+          "code": "AIP.SUBSCRIPTION.LIMIT",
+          "reason": null
+        },
+        {
+          "code": "AIP.SUBSCRIPTION.TOO_LARGE",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "consistency": "each update is one snapshot (repeatable read) of the whole result",
+        "delivery": "a snapshot first, then the whole result again after a change that alters it; an unchanged result is not sent, and changes closer together than the server's debounce may arrive as one update",
+        "order": "rows by id",
+        "permissions": "every update is computed for the subscriber with the allow condition, row and field visibility and the tenant filter of a query; when the subscriber loses access the server sends an error and ends that subscription"
+      },
+      "input": [
+        {
+          "default": null,
+          "name": "project",
+          "optional": false,
+          "ty": {
+            "entity": "Project",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": {
+        "kind": "list",
+        "of": {
+          "fields": {
+            "id": {
+              "kind": "uuid"
+            },
+            "status": {
+              "kind": "enum",
+              "name": "TaskStatus"
+            },
+            "title": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            }
+          },
+          "kind": "object"
+        }
+      }
+    },
+    "LiveWorkspaceTasks": {
+      "errors": [
+        {
+          "code": "AIP.AUTH.FORBIDDEN",
+          "reason": null
+        },
+        {
+          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "reason": null
+        },
+        {
+          "code": "AIP.INPUT.INVALID",
+          "reason": null
+        },
+        {
+          "code": "AIP.NOT_FOUND",
+          "reason": "WORKSPACE_NOT_FOUND"
+        },
+        {
+          "code": "AIP.SUBSCRIPTION.LIMIT",
+          "reason": null
+        },
+        {
+          "code": "AIP.SUBSCRIPTION.TOO_LARGE",
+          "reason": null
+        }
+      ],
+      "guarantees": {
+        "consistency": "each update is one snapshot (repeatable read) of the whole result",
+        "delivery": "a snapshot first, then the whole result again after a change that alters it; an unchanged result is not sent, and changes closer together than the server's debounce may arrive as one update",
+        "order": "rows by id",
+        "permissions": "every update is computed for the subscriber with the allow condition, row and field visibility and the tenant filter of a query; when the subscriber loses access the server sends an error and ends that subscription"
+      },
+      "input": [
+        {
+          "default": null,
+          "name": "workspace",
+          "optional": false,
+          "ty": {
+            "entity": "Workspace",
+            "kind": "entity"
+          }
+        }
+      ],
+      "output": {
+        "kind": "list",
+        "of": {
+          "fields": {
+            "id": {
+              "kind": "uuid"
+            },
+            "status": {
+              "kind": "enum",
+              "name": "TaskStatus"
+            },
+            "title": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            }
+          },
+          "kind": "object"
+        }
+      }
+    }
+  },
+  "transport": {
+    "auth": "Authorization: Bearer <token>",
+    "call": "POST /aip/{intent}",
+    "describe": "GET /aip/describe",
+    "idempotency": "Idempotency-Key: <key>",
+    "pagination": "cursor (keyset) or page (offset) in the input object",
+    "subscribe": "WebSocket GET /aip/subscribe: send {type:'auth', token} first, then {type:'subscribe', id, name, input}; receive {type:'snapshot', id, rows}, then {type:'changed', id, rows} (the whole result, only when it differs from the last one sent) or {type:'error', id, code}; send {type:'unsubscribe', id} to stop",
+    "uploads": "multipart/form-data: part 'input' (JSON) + one part per file; the input refers to a file by its part name"
+  }
+}

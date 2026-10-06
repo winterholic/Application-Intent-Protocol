@@ -1,0 +1,9 @@
+// no prelude
+// `authenticated` needs an actor to authenticate
+entity Note { body: Text }
+query AllNotes {
+  allow authenticated
+  from Note n
+  page 10 by keyset
+  select { id }
+}

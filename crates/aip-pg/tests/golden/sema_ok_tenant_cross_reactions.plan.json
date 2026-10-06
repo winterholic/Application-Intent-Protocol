@@ -1,0 +1,577 @@
+{
+  "diagnostics": [],
+  "program": {
+    "actor": {
+      "entity": "Member",
+      "provider": "auth.oidc",
+      "superuser": null,
+      "table": "member"
+    },
+    "constraint_errors": {
+      "_aip_approval_pending": {
+        "code": "AIP.CONFLICT.UNIQUE",
+        "reason": "APPROVAL_ALREADY_PENDING"
+      },
+      "_aip_approval_vote_once": {
+        "code": "AIP.CONFLICT.UNIQUE",
+        "reason": "ALREADY_VOTED"
+      },
+      "_aip_tenant_pin": {
+        "code": "AIP.TENANT.MISMATCH",
+        "reason": null
+      },
+      "club_member__u4": {
+        "code": "AIP.CONFLICT.UNIQUE",
+        "reason": "ALREADY_MEMBER"
+      },
+      "project__tenant": {
+        "code": "AIP.TENANT.MISMATCH",
+        "reason": null
+      }
+    },
+    "ddl": [
+      "CREATE EXTENSION IF NOT EXISTS btree_gist",
+      "CREATE EXTENSION IF NOT EXISTS pgcrypto",
+      "CREATE TABLE \"club\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"name\" text NOT NULL\n)",
+      "CREATE TABLE \"member\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"nickname\" text NOT NULL,\n  \"role\" text NOT NULL DEFAULT 'USER',\n  CONSTRAINT \"member__role_enum\" CHECK (\"role\" IN ('USER', 'SUPER_ADMIN'))\n)",
+      "CREATE TABLE \"workspace\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"name\" text NOT NULL\n)",
+      "CREATE TABLE \"club_member\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"club_id\" uuid NOT NULL,\n  \"member_id\" uuid,\n  \"role\" text NOT NULL DEFAULT 'GENERAL',\n  \"status\" text NOT NULL DEFAULT 'ACTIVE',\n  CONSTRAINT \"club_member__role_enum\" CHECK (\"role\" IN ('GENERAL', 'MANAGER', 'ADMIN')),\n  CONSTRAINT \"club_member__status_enum\" CHECK (\"status\" IN ('ACTIVE', 'ENDED'))\n)",
+      "CREATE TABLE \"project\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"workspace_id\" uuid NOT NULL,\n  \"title\" text NOT NULL\n)",
+      "ALTER TABLE \"club_member\" ADD CONSTRAINT \"club_member__club_id_fk\" FOREIGN KEY (\"club_id\") REFERENCES \"club\"(\"id\") DEFERRABLE INITIALLY IMMEDIATE",
+      "CREATE INDEX IF NOT EXISTS \"club_member__club_id_idx\" ON \"club_member\" (\"club_id\")",
+      "ALTER TABLE \"club_member\" ADD CONSTRAINT \"club_member__member_id_fk\" FOREIGN KEY (\"member_id\") REFERENCES \"member\"(\"id\") DEFERRABLE INITIALLY IMMEDIATE",
+      "CREATE INDEX IF NOT EXISTS \"club_member__member_id_idx\" ON \"club_member\" (\"member_id\")",
+      "CREATE UNIQUE INDEX \"club_member__u4\" ON \"club_member\" (\"club_id\", \"member_id\")",
+      "ALTER TABLE \"project\" ADD CONSTRAINT \"project__workspace_id_fk\" FOREIGN KEY (\"workspace_id\") REFERENCES \"workspace\"(\"id\") DEFERRABLE INITIALLY IMMEDIATE",
+      "CREATE INDEX IF NOT EXISTS \"project__workspace_id_idx\" ON \"project\" (\"workspace_id\")",
+      "CREATE OR REPLACE FUNCTION \"project__tenant_check\"(rid uuid, deep boolean, depth int) RETURNS void LANGUAGE plpgsql AS $aip$ DECLARE rec \"project\"%ROWTYPE; t uuid; r record; BEGIN IF depth > 16 THEN RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'aip:project__tenant'; END IF; SELECT * INTO rec FROM \"project\" WHERE \"id\" = rid; IF NOT FOUND THEN RETURN; END IF; t := rec.\"workspace_id\"; END $aip$",
+      "CREATE OR REPLACE FUNCTION \"project__tenant_fn\"() RETURNS trigger LANGUAGE plpgsql AS $aip$ BEGIN PERFORM \"project__tenant_check\"(NEW.\"id\", TG_OP = 'UPDATE', 0); RETURN NULL; END $aip$;\nCREATE TRIGGER \"project__tenant\" AFTER INSERT OR UPDATE OF \"workspace_id\" ON \"project\" FOR EACH ROW EXECUTE FUNCTION \"project__tenant_fn\"()",
+      "CREATE OR REPLACE FUNCTION \"_aip_tenant_pin\"(t uuid) RETURNS void LANGUAGE plpgsql AS $aip$ DECLARE cur text := nullif(current_setting('aip.tenant', true), ''); BEGIN IF t IS NULL THEN RETURN; END IF; IF cur IS NULL THEN PERFORM set_config('aip.tenant', t::text, true); ELSIF cur <> t::text THEN RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'aip:_aip_tenant_pin'; END IF; END $aip$",
+      "CREATE OR REPLACE FUNCTION \"project__tenant_pin_fn\"() RETURNS trigger LANGUAGE plpgsql AS $aip$ BEGIN IF coalesce(current_setting('aip.tenant_cross', true), '') = 'on' THEN RETURN NULL; END IF; IF TG_OP = 'DELETE' THEN PERFORM \"_aip_tenant_pin\"((OLD.\"workspace_id\")); RETURN NULL; END IF; PERFORM \"_aip_tenant_pin\"((NEW.\"workspace_id\")); IF TG_OP = 'UPDATE' AND OLD.\"workspace_id\" IS DISTINCT FROM NEW.\"workspace_id\" THEN PERFORM \"_aip_tenant_pin\"((OLD.\"workspace_id\")); END IF; RETURN NULL; END $aip$;\nCREATE TRIGGER \"project__tenant_pin\" AFTER INSERT OR UPDATE OR DELETE ON \"project\" FOR EACH ROW EXECUTE FUNCTION \"project__tenant_pin_fn\"()",
+      "CREATE OR REPLACE FUNCTION \"workspace__tenant_pin_fn\"() RETURNS trigger LANGUAGE plpgsql AS $aip$ BEGIN IF coalesce(current_setting('aip.tenant_cross', true), '') = 'on' THEN RETURN NULL; END IF; IF TG_OP = 'DELETE' THEN PERFORM \"_aip_tenant_pin\"((OLD.\"id\")); RETURN NULL; END IF; PERFORM \"_aip_tenant_pin\"((NEW.\"id\")); RETURN NULL; END $aip$;\nCREATE TRIGGER \"workspace__tenant_pin\" AFTER INSERT OR UPDATE OR DELETE ON \"workspace\" FOR EACH ROW EXECUTE FUNCTION \"workspace__tenant_pin_fn\"()",
+      "CREATE TABLE IF NOT EXISTS \"_aip_outbox\" (\n  \"id\" bigserial PRIMARY KEY,\n  \"kind\" text NOT NULL,\n  \"name\" text NOT NULL,\n  \"intent\" text,\n  \"key\" text,\n  \"payload\" jsonb NOT NULL,\n  \"available_at\" timestamptz NOT NULL DEFAULT now(),\n  \"attempts\" int NOT NULL DEFAULT 0,\n  \"last_error\" text,\n  \"done_at\" timestamptz,\n  \"created_at\" timestamptz NOT NULL DEFAULT now()\n)",
+      "CREATE INDEX IF NOT EXISTS \"_aip_outbox_pending\" ON \"_aip_outbox\" (\"available_at\") WHERE \"done_at\" IS NULL",
+      "CREATE TABLE IF NOT EXISTS \"_aip_idempotency\" (\n  \"intent\" text NOT NULL,\n  \"actor\" text NOT NULL,\n  \"key\" text NOT NULL,\n  \"request_hash\" text NOT NULL,\n  \"response\" jsonb,\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  PRIMARY KEY (\"intent\", \"actor\", \"key\")\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_audit\" (\n  \"id\" bigserial PRIMARY KEY,\n  \"intent\" text NOT NULL,\n  \"actor\" uuid,\n  \"superuser\" boolean NOT NULL DEFAULT false,\n  \"input\" jsonb NOT NULL,\n  \"at\" timestamptz NOT NULL DEFAULT now()\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_counter_seen\" (\n  \"key\" text PRIMARY KEY,\n  \"expires_at\" timestamptz NOT NULL\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_rate\" (\n  \"key\" text NOT NULL,\n  \"window_start\" timestamptz NOT NULL,\n  \"count\" int NOT NULL,\n  PRIMARY KEY (\"key\", \"window_start\")\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_schedule_run\" (\n  \"name\" text PRIMARY KEY,\n  \"last_run\" timestamptz NOT NULL\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_processed\" (\n  \"handler\" text NOT NULL,\n  \"outbox_id\" bigint NOT NULL,\n  PRIMARY KEY (\"handler\", \"outbox_id\")\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_notification\" (\n  \"id\" bigserial PRIMARY KEY,\n  \"recipient\" uuid NOT NULL,\n  \"template\" text NOT NULL,\n  \"data\" jsonb NOT NULL,\n  \"category\" text,\n  \"read_at\" timestamptz,\n  \"created_at\" timestamptz NOT NULL DEFAULT now()\n)",
+      "CREATE INDEX IF NOT EXISTS \"_aip_notification_recipient\" ON \"_aip_notification\" (\"recipient\", \"created_at\" DESC)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_mail\" (\n  \"id\" bigserial PRIMARY KEY,\n  \"template\" text NOT NULL,\n  \"to\" text,\n  \"data\" jsonb NOT NULL,\n  \"created_at\" timestamptz NOT NULL DEFAULT now()\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_grant\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"link\" text NOT NULL,\n  \"token_hash\" text NOT NULL UNIQUE,\n  \"scope\" jsonb NOT NULL,\n  \"to_member\" uuid,\n  \"issued_by\" uuid,\n  \"expires_at\" timestamptz NOT NULL,\n  \"uses_left\" int NOT NULL,\n  \"created_at\" timestamptz NOT NULL DEFAULT now()\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_verification\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"name\" text NOT NULL,\n  \"subject\" uuid NOT NULL,\n  \"target\" text NOT NULL,\n  \"code_hash\" text NOT NULL,\n  \"expires_at\" timestamptz NOT NULL,\n  \"attempts_left\" int NOT NULL,\n  \"created_at\" timestamptz NOT NULL DEFAULT now()\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_approval\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"name\" text NOT NULL,\n  \"subject\" uuid NOT NULL,\n  \"requested_by\" uuid,\n  \"status\" text NOT NULL DEFAULT 'PENDING' CHECK (\"status\" IN ('PENDING', 'APPROVED', 'REJECTED', 'CANCELLED', 'EXPIRED')),\n  \"required\" int NOT NULL,\n  \"expires_at\" timestamptz,\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"decided_at\" timestamptz\n)",
+      "CREATE UNIQUE INDEX IF NOT EXISTS \"_aip_approval_pending\" ON \"_aip_approval\" (\"name\", \"subject\") WHERE \"status\" = 'PENDING'",
+      "CREATE TABLE IF NOT EXISTS \"_aip_approval_vote\" (\n  \"approval\" uuid NOT NULL REFERENCES \"_aip_approval\" (\"id\") ON DELETE CASCADE,\n  \"voter\" uuid NOT NULL,\n  \"decision\" text NOT NULL CHECK (\"decision\" IN ('APPROVE', 'REJECT')),\n  \"comment\" text,\n  \"at\" timestamptz NOT NULL DEFAULT now(),\n  CONSTRAINT \"_aip_approval_vote_once\" PRIMARY KEY (\"approval\", \"voter\")\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_job\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"name\" text NOT NULL,\n  \"params\" jsonb NOT NULL,\n  \"requested_by\" uuid NOT NULL,\n  \"status\" text NOT NULL DEFAULT 'QUEUED' CHECK (\"status\" IN ('QUEUED', 'RUNNING', 'DONE', 'FAILED')),\n  \"items\" jsonb,\n  \"total\" int,\n  \"done\" int NOT NULL DEFAULT 0,\n  \"file\" text,\n  \"error\" text,\n  \"attempts\" int NOT NULL DEFAULT 0,\n  \"available_at\" timestamptz NOT NULL DEFAULT now(),\n  \"heartbeat\" timestamptz,\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"started_at\" timestamptz,\n  \"finished_at\" timestamptz\n)",
+      "CREATE UNIQUE INDEX IF NOT EXISTS \"_aip_job_active\" ON \"_aip_job\" (\"name\", \"requested_by\", \"params\") WHERE \"status\" IN ('QUEUED', 'RUNNING')",
+      "CREATE INDEX IF NOT EXISTS \"_aip_job_queue\" ON \"_aip_job\" (\"available_at\") WHERE \"status\" IN ('QUEUED', 'RUNNING')",
+      "CREATE TABLE IF NOT EXISTS \"_aip_webhook_seen\" (\n  \"webhook\" text NOT NULL,\n  \"event_id\" text NOT NULL,\n  \"received_at\" timestamptz NOT NULL DEFAULT now(),\n  PRIMARY KEY (\"webhook\", \"event_id\")\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_rule_pending\" (\n  \"rule\" text NOT NULL,\n  \"id\" uuid NOT NULL,\n  PRIMARY KEY (\"rule\", \"id\")\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_rule_state\" (\n  \"rule\" text NOT NULL,\n  \"id\" uuid NOT NULL,\n  PRIMARY KEY (\"rule\", \"id\")\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_sequence\" (\n  \"scope\" text PRIMARY KEY,\n  \"n\" bigint NOT NULL\n)",
+      "CREATE TABLE IF NOT EXISTS \"_aip_object\" (\n  \"key\" text PRIMARY KEY,\n  \"bucket\" text NOT NULL,\n  \"content_type\" text,\n  \"size\" bigint NOT NULL,\n  \"state\" text NOT NULL DEFAULT 'staged',\n  \"created_at\" timestamptz NOT NULL DEFAULT now()\n)",
+      "CREATE OR REPLACE FUNCTION \"project__rule_untitled_fn\"() RETURNS trigger LANGUAGE plpgsql AS $aip$ BEGIN INSERT INTO \"_aip_rule_pending\" VALUES ('Untitled', NEW.\"id\") ON CONFLICT DO NOTHING; RETURN NULL; END $aip$;\nCREATE TRIGGER \"project__rule_untitled\" AFTER INSERT OR UPDATE ON \"project\" FOR EACH ROW EXECUTE FUNCTION \"project__rule_untitled_fn\"()"
+    ],
+    "entities": {
+      "Club": {
+        "columns": [
+          {
+            "column": "id",
+            "field": "id",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "uuid"
+            }
+          },
+          {
+            "column": "name",
+            "field": "name",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            }
+          }
+        ],
+        "personal": false,
+        "table": "club"
+      },
+      "ClubMember": {
+        "columns": [
+          {
+            "column": "id",
+            "field": "id",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "uuid"
+            }
+          },
+          {
+            "column": "club_id",
+            "field": "club",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "entity": "Club",
+              "kind": "entity"
+            }
+          },
+          {
+            "column": "member_id",
+            "field": "member",
+            "nullable": true,
+            "personal": false,
+            "ty": {
+              "entity": "Member",
+              "kind": "entity"
+            }
+          },
+          {
+            "column": "role",
+            "field": "role",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "enum",
+              "name": "ClubRole"
+            }
+          },
+          {
+            "column": "status",
+            "field": "status",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "enum",
+              "name": "Status"
+            }
+          }
+        ],
+        "personal": false,
+        "table": "club_member"
+      },
+      "Member": {
+        "columns": [
+          {
+            "column": "id",
+            "field": "id",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "uuid"
+            }
+          },
+          {
+            "column": "nickname",
+            "field": "nickname",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            }
+          },
+          {
+            "column": "role",
+            "field": "role",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "enum",
+              "name": "MemberRole"
+            }
+          }
+        ],
+        "personal": true,
+        "table": "member"
+      },
+      "Project": {
+        "columns": [
+          {
+            "column": "id",
+            "field": "id",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "uuid"
+            }
+          },
+          {
+            "column": "workspace_id",
+            "field": "workspace",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "entity": "Workspace",
+              "kind": "entity"
+            }
+          },
+          {
+            "column": "title",
+            "field": "title",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            }
+          }
+        ],
+        "personal": false,
+        "table": "project"
+      },
+      "Workspace": {
+        "columns": [
+          {
+            "column": "id",
+            "field": "id",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "uuid"
+            }
+          },
+          {
+            "column": "name",
+            "field": "name",
+            "nullable": false,
+            "personal": false,
+            "ty": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            }
+          }
+        ],
+        "personal": false,
+        "table": "workspace"
+      }
+    },
+    "enums": {
+      "ClubRole": [
+        "GENERAL",
+        "MANAGER",
+        "ADMIN"
+      ],
+      "MemberRole": [
+        "USER",
+        "SUPER_ADMIN"
+      ],
+      "Status": [
+        "ACTIVE",
+        "ENDED"
+      ]
+    },
+    "events": {
+      "Renamed": [
+        [
+          "project",
+          {
+            "entity": "Project",
+            "kind": "entity"
+          }
+        ]
+      ]
+    },
+    "extensions": [
+      "auth",
+      "http",
+      "notify",
+      "s3"
+    ],
+    "handlers": [
+      {
+        "event": "Renamed",
+        "name": "on_Renamed_0",
+        "steps": [
+          {
+            "bind": null,
+            "label": "tenant: cross",
+            "op": "exec",
+            "sql": {
+              "params": [],
+              "text": "SELECT set_config('aip.tenant', '', true), set_config('aip.tenant_cross', 'on', true)"
+            }
+          },
+          {
+            "bind": null,
+            "label": "update Project",
+            "op": "exec",
+            "sql": {
+              "params": [],
+              "text": "UPDATE \"project\" t1 SET \"title\" = 'x' WHERE coalesce(((t1.\"title\" IS DISTINCT FROM '')), false)"
+            }
+          }
+        ],
+        "when": null
+      }
+    ],
+    "intents": {
+      "Rename": {
+        "audited": false,
+        "effects": [],
+        "emits": [
+          "Renamed"
+        ],
+        "errors": [
+          {
+            "code": "AIP.AUTH.FORBIDDEN",
+            "reason": null
+          },
+          {
+            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "reason": null
+          },
+          {
+            "code": "AIP.CONCURRENCY.CONFLICT",
+            "reason": null
+          },
+          {
+            "code": "AIP.INPUT.INVALID",
+            "reason": null
+          },
+          {
+            "code": "AIP.NOT_FOUND",
+            "reason": "PROJECT_NOT_FOUND"
+          },
+          {
+            "code": "AIP.TENANT.MISMATCH",
+            "reason": null
+          }
+        ],
+        "idempotency_key": null,
+        "idempotent": false,
+        "internal": false,
+        "kind": "command",
+        "name": "Rename",
+        "output": null,
+        "params": [
+          {
+            "default": null,
+            "name": "project",
+            "optional": false,
+            "ty": {
+              "entity": "Project",
+              "kind": "entity"
+            }
+          },
+          {
+            "default": null,
+            "name": "title",
+            "optional": false,
+            "ty": {
+              "kind": "text",
+              "lower": false,
+              "max": null,
+              "min": null,
+              "pattern": null,
+              "trim": false
+            }
+          }
+        ],
+        "rate_limits": [],
+        "returns": null,
+        "steps": [
+          {
+            "entity": "Project",
+            "lock": true,
+            "many": false,
+            "op": "load",
+            "param": "project",
+            "sql": {
+              "params": [
+                "project"
+              ],
+              "text": "SELECT t1.\"id\" FROM \"project\" t1 WHERE t1.\"id\" = ($1::text)::uuid ORDER BY t1.\"id\" FOR UPDATE OF t1"
+            }
+          },
+          {
+            "bind": null,
+            "label": "tenant: pin to the context's tenant",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "project"
+              ],
+              "text": "SELECT set_config('aip.tenant', coalesce(((SELECT tn0.\"workspace_id\" AS t FROM \"project\" tn0 WHERE tn0.\"id\" = ($1::text)::uuid LIMIT 1))::text, ''), true), set_config('aip.tenant_cross', '', true)"
+            }
+          },
+          {
+            "code": null,
+            "kind": "allow",
+            "op": "check",
+            "sql": {
+              "params": [
+                "__actor"
+              ],
+              "text": "SELECT coalesce(((($1::text)::uuid IS NOT NULL)), false)"
+            }
+          },
+          {
+            "bind": null,
+            "label": "set Project",
+            "op": "exec",
+            "sql": {
+              "params": [
+                "title",
+                "project"
+              ],
+              "text": "UPDATE \"project\" SET \"title\" = (($1::text)::text)::text WHERE \"id\" = ($2::text)::uuid"
+            }
+          },
+          {
+            "broker": null,
+            "event": "Renamed",
+            "op": "emit",
+            "payload": {
+              "params": [
+                "project"
+              ],
+              "text": "SELECT jsonb_build_object('project', ($1::text)::uuid)"
+            }
+          }
+        ],
+        "writes": [
+          "Project"
+        ]
+      }
+    },
+    "ir_version": "0.1",
+    "jobs": [],
+    "records": {
+      "Ping": [
+        {
+          "default": null,
+          "name": "project",
+          "optional": false,
+          "ty": {
+            "kind": "uuid"
+          }
+        }
+      ]
+    },
+    "rules": [
+      {
+        "binding": "p",
+        "entity": "Project",
+        "name": "Untitled",
+        "steps": [
+          {
+            "bind": null,
+            "label": "tenant: cross",
+            "op": "exec",
+            "sql": {
+              "params": [],
+              "text": "SELECT set_config('aip.tenant', '', true), set_config('aip.tenant_cross', 'on', true)"
+            }
+          },
+          {
+            "bind": null,
+            "label": "update Project",
+            "op": "exec",
+            "sql": {
+              "params": [],
+              "text": "UPDATE \"project\" t2 SET \"title\" = 'untitled' WHERE coalesce(((t2.\"title\" = '')), false)"
+            }
+          }
+        ],
+        "when": {
+          "params": [
+            "p"
+          ],
+          "text": "SELECT EXISTS (SELECT 1 FROM \"project\" WHERE \"id\" = ($1::text)::uuid) AND coalesce((((SELECT t1.\"title\" FROM \"project\" t1 WHERE t1.\"id\" = ($1::text)::uuid) = '')), false)"
+        }
+      }
+    ],
+    "schedules": [
+      {
+        "cron": "0 3 * * *",
+        "item": null,
+        "name": "Tidy",
+        "source": null,
+        "steps": [
+          {
+            "bind": null,
+            "label": "tenant: cross",
+            "op": "exec",
+            "sql": {
+              "params": [],
+              "text": "SELECT set_config('aip.tenant', '', true), set_config('aip.tenant_cross', 'on', true)"
+            }
+          },
+          {
+            "bind": null,
+            "label": "update Project",
+            "op": "exec",
+            "sql": {
+              "params": [],
+              "text": "UPDATE \"project\" t1 SET \"title\" = 'untitled' WHERE coalesce(((t1.\"title\" = '')), false)"
+            }
+          }
+        ],
+        "tz": "Asia/Seoul"
+      }
+    ],
+    "webhooks": [
+      {
+        "event_path": "type",
+        "handlers": [
+          {
+            "binding": "p",
+            "event": "all",
+            "steps": [
+              {
+                "bind": null,
+                "label": "tenant: cross",
+                "op": "exec",
+                "sql": {
+                  "params": [],
+                  "text": "SELECT set_config('aip.tenant', '', true), set_config('aip.tenant_cross', 'on', true)"
+                }
+              },
+              {
+                "bind": null,
+                "label": "update Project",
+                "op": "exec",
+                "sql": {
+                  "params": [
+                    "p"
+                  ],
+                  "text": "UPDATE \"project\" t1 SET \"title\" = 'x' WHERE coalesce(((t1.\"id\" = ((($1::text)::jsonb ->> 'project'))::uuid)), false)"
+                }
+              }
+            ]
+          }
+        ],
+        "header": "X-Signature",
+        "id_path": "id",
+        "name": "Hook",
+        "payload_path": "data",
+        "scheme": "hmac-sha256",
+        "secret_env": "HOOK_SECRET",
+        "source": "http.webhook"
+      }
+    ]
+  }
+}
