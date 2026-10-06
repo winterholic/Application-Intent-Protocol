@@ -35,6 +35,7 @@
 | 부분일치 검색 | `filter title.contains` | `value: "abc"` | Text만. `strpos` 리터럴 비교(와일드카드 없음), 빈 값 거부, 200자 상한. `icontains`는 collation 문제로 보류 |
 | offset 페이지네이션 | `budget { …; offset 1000 }` | `offset: 40` | 선언한 resource만. 0..=최대, cost에 offset 반영, id 타이브레이커 기존 유지 |
 | keyset cursor | `budget { …; cursor }` | `after: { periodEnd: "…", id: "100" }` | 경계 키는 이번 요청의 sort 필드 + id와 정확히 같아야 함. select에 있는 정책 없는 non-null 필드만(아니면 비교로 숨은 값 이분 탐색). offset과 동시 사용 불가. 동률 데이터·정렬 9조합·사용자 3종 순회에서 누락·중복 없음 |
+| 1:N 관계 포함(글+댓글) | `traverse comments via Comment.post { select id, body; sort id; limit 20 }` | `select: [{ comments: { select: ["id"] } }]` | 자식 행마다 rowRead를 limit 전에 적용, fieldRead는 CASE. limit 필수·정의 고정 정렬+id. cost에 부모×자식 상한. 중첩 금지(`NESTED_TRAVERSE_NOT_ALLOWED`). via 필드에 field read 정책이 있으면 거부. hmap 형식·자식 집계·호출자 정렬은 보류 |
 | 카운터·재고 증감 | `to stock = stock - 1` | 기존 전이 호출 | 같은 null 아닌 Int 필드 ± 정수 상수만. 다른 위치의 산술은 `ARITH_NOT_ALLOWED`, `repeat unchanged`와 함께 쓸 수 없음. 잠근 행에서 계산해 동시 20건 증가가 모두 반영 |
 | 로그인 사용자만 | `allow actor != null` | 없음 | 익명 actor는 런타임에 NULL. 이 비교만 null 비교 규칙의 예외 |
 | 합계·최소·최대 | `release sum(price)` / `min(price)` / `max(price)` | 기존 select | Int 필드만. field read 정책 필드는 `POLICY_FIELD_NOT_AGGREGATABLE`. 빈 집합 sum은 0. min/max는 `Int?` 행별 집계만(단독 집계는 NULL을 접근 거부로 읽음). avg는 Decimal 타입이 없어 보류 |
