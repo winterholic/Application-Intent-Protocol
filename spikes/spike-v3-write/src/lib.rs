@@ -112,6 +112,13 @@ fn bind_all(params: &[Option<String>]) -> Vec<&(dyn ToSql + Sync)> {
     params.iter().map(|p| p as &(dyn ToSql + Sync)).collect()
 }
 
+// 매개변수는 모두 text로 보내고 SQL 안에서 캐스트한다. 타입을 명시해야 식에서 쓰이지 않은
+// 매개변수(인자를 쓰지 않는 predicate 등)도 42P18 없이 실행된다.
+async fn typed_query(tx: &Transaction<'_>, sql: &str, params: &[Option<String>]) -> Result<Vec<tokio_postgres::Row>, tokio_postgres::Error> {
+    let statement = tx.prepare_typed(sql, &vec![tokio_postgres::types::Type::TEXT; params.len()]).await?;
+    tx.query(&statement, &bind_all(params)).await
+}
+
 pub enum TargetSpec {
     Ids(Vec<i64>),
     Where(Vec<(String, String, &'static str)>),
@@ -247,7 +254,7 @@ async fn judge(
         }
     };
     let params = cx.params.values.clone();
-    let rows = tx.query(sel.as_str(), &bind_all(&params)).await.map_err(|e| db_err("대상 조회", e))?;
+    let rows = typed_query(tx, sel.as_str(), &params).await.map_err(|e| db_err("대상 조회", e))?;
     if knobs.pause_after_lock_ms > 0 {
         tokio::time::sleep(Duration::from_millis(knobs.pause_after_lock_ms)).await;
     }
@@ -325,7 +332,7 @@ async fn update(tx: &Transaction<'_>, facts: &Value, res: &str, tr: &str, change
     let out_of_range = if ranged.is_empty() { "FALSE".to_string() } else { format!("({})", ranged.join(" OR ")) };
     let up = format!("UPDATE {} t SET {} WHERE t.id = ANY({ip}) AND {from} RETURNING t.id, {out_of_range}", table(res), sets.join(", "));
     let params = cx.params.values.clone();
-    let rows = tx.query(up.as_str(), &bind_all(&params)).await.map_err(|e| write_err("변경", e))?;
+    let rows = typed_query(tx, up.as_str(), &params).await.map_err(|e| write_err("변경", e))?;
     // RETURNING은 갱신 뒤 값을 본다. 하나라도 범위를 벗어나면 전체 트랜잭션이 롤백된다.
     if rows.iter().any(|r| r.get::<_, bool>(1)) {
         return rej("BAD_VALUE", "증감 결과가 필드 범위를 벗어남");
@@ -377,7 +384,7 @@ async fn effects(tx: &Transaction<'_>, facts: &Value, res: &str, tr: &str, chang
             );
             let params = cx.params.values.clone();
             let mut got: Vec<i64> =
-                tx.query(sql.as_str(), &bind_all(&params)).await.map_err(|e| write_err("전이 효과", e))?.iter().map(|r| r.get(0)).collect();
+                typed_query(tx, sql.as_str(), &params).await.map_err(|e| write_err("전이 효과", e))?.iter().map(|r| r.get(0)).collect();
             got.sort();
             if got != change {
                 return rej("EFFECT_TARGET_MISSING", format!("`{target}` 갱신 대상이 대상 행마다 하나가 아님"));
@@ -406,7 +413,7 @@ async fn effects(tx: &Transaction<'_>, facts: &Value, res: &str, tr: &str, chang
             )
         };
         let params = cx.params.values.clone();
-        tx.execute(sql.as_str(), &bind_all(&params)).await.map_err(|e| write_err("전이 효과", e))?;
+        typed_query(tx, sql.as_str(), &params).await.map_err(|e| write_err("전이 효과", e))?;
     }
     Ok(())
 }
@@ -457,7 +464,7 @@ async fn create_row(
         exprs.join(", ")
     );
     let params = cx.params.values.clone();
-    let n = tx.query(sql.as_str(), &bind_all(&params)).await.map_err(|e| write_err("생성", e))?.len();
+    let n = typed_query(tx, sql.as_str(), &params).await.map_err(|e| write_err("생성", e))?.len();
     if n != 1 {
         return rej("FORBIDDEN", format!("`{target}` 생성 권한 없음"));
     }
@@ -476,7 +483,7 @@ async fn run_checks(tx: &Transaction<'_>, facts: &Value, caller: &Caller, knobs:
             let c = cx.cond(cond, &env).map_err(internal)?;
             let sql = format!("SELECT count(*) FROM {} c WHERE c.xmin = pg_current_xact_id()::xid AND ({c}) IS NOT TRUE", table(res));
             let params = cx.params.values.clone();
-            let n: i64 = tx.query_one(sql.as_str(), &bind_all(&params)).await.map_err(|e| db_err("커밋 검사", e))?.get(0);
+            let n: i64 = typed_query(tx, sql.as_str(), &params).await.map_err(|e| db_err("커밋 검사", e))?[0].get(0);
             if n > 0 {
                 return rej("CHECK_FAILED", format!("`{res}.{name}`를 만족하지 않는 행 {n}개"));
             }
@@ -692,7 +699,7 @@ pub async fn compose(db: &mut Client, facts: &Value, req: &Value, caller: &Calle
             let p = cx.params.bind(Some(id_array(&ids)), "bigint[]");
             let sql = format!("SELECT t.id, {scope} FROM {} t WHERE t.id = ANY({p}) AND {vis} FOR UPDATE OF t", table(res));
             let params = cx.params.values.clone();
-            let rows = tx.query(sql.as_str(), &bind_all(&params)).await.map_err(|e| db_err("대상 조회", e))?;
+            let rows = typed_query(&tx, sql.as_str(), &params).await.map_err(|e| db_err("대상 조회", e))?;
             if rows.len() != ids.len() {
                 return rej("MISSING_TARGET", format!("대상 {}개를 찾을 수 없음", ids.len() - rows.len()));
             }
@@ -712,7 +719,7 @@ pub async fn compose(db: &mut Client, facts: &Value, req: &Value, caller: &Calle
                         let pb = cx.params.bind(scopes[0].clone(), "text");
                         let sql = format!("SELECT t.id FROM {} t WHERE t.{a_col} = {pa} AND t.{b_col}::text = {pb}", table(res));
                         let params = cx.params.values.clone();
-                        let rows = tx.query(sql.as_str(), &bind_all(&params)).await.map_err(|e| db_err("자기 행 조회", e))?;
+                        let rows = typed_query(&tx, sql.as_str(), &params).await.map_err(|e| db_err("자기 행 조회", e))?;
                         if rows.len() != 1 {
                             return rej("MISSING_TARGET", "같은 범위의 자기 행을 찾을 수 없음");
                         }
