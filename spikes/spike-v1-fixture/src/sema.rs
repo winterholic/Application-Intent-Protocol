@@ -1111,6 +1111,8 @@ impl<'a> Ctx<'a> {
                 "isNull" => tt.nullable,
                 "gte" | "lte" | "gt" | "lt" => matches!(tt.ty, Ty::Time | Ty::Int),
                 "prefix" => tt.ty == Ty::Text,
+                // contains: 리터럴 부분일치(Text만). 대소문자 무시(icontains)는 DB collation 의존이라 보류.
+                "contains" => tt.ty == Ty::Text,
                 _ => {
                     self.d("UNKNOWN_OPERATOR", format!("filter 연산 `{op}` 없음"), *sp);
                     continue;
@@ -1167,7 +1169,9 @@ impl<'a> Ctx<'a> {
                 if b.rows.is_none() || b.depth.is_none() || b.deadline_ms.is_none() || b.cost.is_none() {
                     self.d("MISSING_ITEM", "budget에는 rows/depth/deadline/cost가 모두 필요", b.span);
                 }
-                for (k, v) in [("rows", b.rows), ("depth", b.depth), ("cost", b.cost), ("deadline", b.deadline_ms.map(|x| x as i64))] {
+                for (k, v) in
+                    [("rows", b.rows), ("depth", b.depth), ("cost", b.cost), ("deadline", b.deadline_ms.map(|x| x as i64)), ("offset", b.offset)]
+                {
                     if v.is_some_and(|x| x < 1) {
                         self.d("BAD_BUDGET", format!("budget {k}는 1 이상"), b.span);
                     }
@@ -1175,7 +1179,12 @@ impl<'a> Ctx<'a> {
                 if !e.traverse.is_empty() && b.depth.unwrap_or(0) < 2 {
                     self.d("BUDGET_DEPTH_TOO_SMALL", "traverse가 있으면 depth는 2 이상", b.span);
                 }
-                json!({ "rows": b.rows, "depth": b.depth, "deadlineMs": b.deadline_ms, "cost": b.cost })
+                let mut bj = json!({ "rows": b.rows, "depth": b.depth, "deadlineMs": b.deadline_ms, "cost": b.cost });
+                // offset은 opt-in이라 선언이 있을 때만 키를 넣는다(기존 facts 호환).
+                if let Some(o) = b.offset {
+                    bj["maxOffset"] = json!(o);
+                }
+                bj
             }
         };
         let root = !budget.is_null();

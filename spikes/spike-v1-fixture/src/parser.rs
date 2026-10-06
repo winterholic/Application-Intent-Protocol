@@ -596,6 +596,7 @@ impl Parser {
                             "depth" => b.depth = Some(self.int()?),
                             "deadline" => b.deadline_ms = Some(self.dur()?),
                             "cost" => b.cost = Some(self.int()?),
+                            "offset" => b.offset = Some(self.int()?),
                             o => return Err(Diag::new("PARSE_UNKNOWN_KEY", format!("budget 안 알 수 없는 키 `{o}`"), sp)),
                         }
                     }

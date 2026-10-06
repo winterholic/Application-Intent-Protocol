@@ -72,6 +72,8 @@ pub struct Budget {
     pub depth: Option<i64>,
     pub deadline_ms: Option<u64>,
     pub cost: Option<i64>,
+    /// opt-in 최대 offset. 없으면 호출자의 offset 키는 거부된다.
+    pub offset: Option<i64>,
     pub span: Span,
 }
 

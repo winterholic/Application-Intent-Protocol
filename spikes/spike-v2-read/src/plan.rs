@@ -51,6 +51,9 @@ pub const MAX_OUTPUT_BYTES: usize = 1 << 20;
 /// `in` 필터의 배열 길이 상한. 중복 제거 전 길이로 센다. 값마다 매개변수 하나를 쓰므로 요청 크기와 SQL 크기를 함께 막는다.
 pub const MAX_IN_VALUES: usize = 50;
 
+/// `contains` 값의 최대 문자 수(바이트 아님). 기존 filter 값에 길이 관례가 없어 새로 정했다. 요청·SQL 매개변수 크기를 막는다.
+pub const MAX_CONTAINS_CHARS: usize = 200;
+
 pub struct Caller {
     pub actor_id: Option<i64>,
     pub now: String,
@@ -66,8 +69,9 @@ fn keys(o: &Map<String, Value>, allowed: &[&str], what: &str) -> Result<(), Reje
 }
 
 /// 비용 추정은 자리표시 휴리스틱이다: 행 상한 × (1 + 관계 + 집계 + 필드 정책 수). 실제 DB 비용과 같지 않다.
-fn estimate(limit: i64, traverse: usize, aggs: usize, field_policies: usize) -> i64 {
-    limit * (1 + traverse as i64 + aggs as i64 + field_policies as i64)
+/// offset은 건너뛰는 행을 읽는 비용이라 행 수만큼 더한다(관계·집계 가중은 반환 행에만 곱한다).
+fn estimate(limit: i64, offset: i64, traverse: usize, aggs: usize, field_policies: usize) -> i64 {
+    limit * (1 + traverse as i64 + aggs as i64 + field_policies as i64) + offset
 }
 
 fn out_ty(ty: &str, redactable: bool) -> Value {
@@ -149,7 +153,11 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
     if o.contains_key("aggregate") {
         return plan_aggregate(facts, o, caller, wire);
     }
-    keys(o, &["read", "select", "filter", "sort", "limit"], "read 요청")?;
+    // offset 키는 정의 budget이 opt-in(maxOffset)했을 때만 허용한다. 선언이 없으면 알 수 없는 키다.
+    let max_offset = facts["resources"][o.get("read").and_then(Value::as_str).unwrap_or("")]["exposeRead"]["budget"]["maxOffset"].as_i64();
+    let allowed: &[&str] =
+        if max_offset.is_some() { &["read", "select", "filter", "sort", "limit", "offset"] } else { &["read", "select", "filter", "sort", "limit"] };
+    keys(o, allowed, "read 요청")?;
     let res = o.get("read").and_then(Value::as_str).ok_or(Reject { code: "BAD_REQUEST", msg: "read 필요".into() })?;
     let rf = &facts["resources"][res];
     if rf.is_null() {
@@ -324,6 +332,21 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
                 continue;
             }
             let (v, cast) = check_value(facts, fty, raw, wire)?;
+            if op == "contains" {
+                let Value::String(text) = raw else { return rej("BAD_VALUE", "contains 값은 문자열") };
+                // 빈 문자열은 모든 행에 일치하므로 필터가 아니다.
+                if text.is_empty() {
+                    return rej("BAD_VALUE", "contains 값이 비었음. 조건이 없으면 필터를 빼야 함");
+                }
+                let n = text.chars().count();
+                if n > MAX_CONTAINS_CHARS {
+                    return rej("VALUE_TOO_LONG", format!("contains 값 {n}자 > 상한 {MAX_CONTAINS_CHARS}자"));
+                }
+                let p = cx.params.bind(Some(v), cast);
+                // strpos는 인자를 리터럴로 비교한다. LIKE와 달리 %, _, \\가 특별한 뜻을 갖지 않는다.
+                wh.push(format!("(strpos({t}.{col}, {p}) > 0)"));
+                continue;
+            }
             if op == "prefix" {
                 let p = cx.params.bind(Some(v), cast);
                 // A prefix is a literal string; SQL wildcard and escape characters keep their meaning as text.
@@ -379,15 +402,30 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
     if limit > max_rows {
         return rej("ROWS_EXCEEDED", format!("limit {limit} > budget rows {max_rows}"));
     }
-    let cost = estimate(limit, n_trav, n_agg, n_fp);
+    let offset = match (o.get("offset"), max_offset) {
+        (None, _) => None,
+        (Some(Value::Number(n)), Some(max)) if n.as_i64().is_some_and(|x| x >= 0) => {
+            let x = n.as_i64().unwrap();
+            if x > max {
+                return rej("OFFSET_EXCEEDED", format!("offset {x} > budget offset {max}"));
+            }
+            Some(x)
+        }
+        (Some(v), _) => return rej("BAD_VALUE", format!("offset {v}")),
+    };
+    let cost = estimate(limit, offset.unwrap_or(0), n_trav, n_agg, n_fp);
     let max_cost = budget["cost"].as_i64().unwrap();
     if cost > max_cost {
         return rej("COST_EXCEEDED", format!("추정 비용 {cost} > budget cost {max_cost}"));
     }
     let lp = cx.params.bind(Some(limit.to_string()), "bigint");
+    let offset_sql = match offset {
+        Some(x) => format!(" OFFSET {}", cx.params.bind(Some(x.to_string()), "bigint")),
+        None => String::new(),
+    };
     let obj: Vec<String> = cols.iter().map(|(k, v)| format!("'{k}', {v}")).collect();
     let sql = format!(
-        "SELECT json_build_object({})::text FROM {} {t} {} WHERE {} ORDER BY {} LIMIT {lp}",
+        "SELECT json_build_object({})::text FROM {} {t} {} WHERE {} ORDER BY {} LIMIT {lp}{offset_sql}",
         obj.join(", "),
         table(res),
         joins.join(" "),
