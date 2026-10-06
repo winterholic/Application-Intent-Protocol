@@ -14,6 +14,7 @@ AIP는 백엔드 서버를 없애려는 것이 아니다. 기능마다 반복되
 - [운영 인증](crates/aip-auth/README.md): RS256 API access token, 공개 JWKS, 서버의 지속 actor 연결과 폐기.
 - [일반 마이그레이션](crates/aip-migrate/README.md): 변경 계획, 정형 backfill/convert, 실제 DDL 트랜잭션과 배포 저널. [기존 데이터 이관](crates/aip-migrate/ADOPTION.md)은 prototype 구조 marker를 검증한다.
 - [설치 SDK](product/SDK.md): 기존 TypeScript 엔진을 `@aip/sdk`로 offline 설치하고 생성 binding과 함께 사용한다.
+- [검증 절차와 보완 목록](product/VALIDATION.md): 새 checkout 준비, 반복 검증 명령, 자동 검증 범위와 남은 확인 항목.
 - [제품 검증 결과](product/VERIFICATION.md)와 [최신 macOS 실행 묶음](product/dist/2026-10-06T11-19-25-091Z/README.md): 실제 JWT·PostgreSQL·설치 SDK·두 wire·Node/Python 확장 실행.
 - [정의 한계](spikes/spike-v1-fixture/PRODUCTION-LIMITS.md)와 [정책 실행 한계](spikes/spike-v2-read/PRODUCTION-RUNTIME.md): 입력·AST·predicate 확장·SQL·복제 payload의 상한을 함께 검사한다.
 
