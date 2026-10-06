@@ -120,11 +120,13 @@ fn r1_contract_loss_and_validation() {
             fails.push(format!("{n}: {e}"));
         }
     }
-    // F12 시간 의존 조건은 부분 인덱스로 표시하지 않음
-    let o = load_str(&sub(A, "atMost 1 where status = PUBLISHED", "atMost 1 where status = PUBLISHED and periodEnd >= now"), Form::A).unwrap();
-    let k = &o.execution["resources"]["Recruitment"]["invariants"]["atMostOnePublished"]["enforcement"]["kind"];
-    if k != "lockedCountCheck" {
-        fails.push(format!("F12 now 조건 집행 종류 {k}"));
+    // F12 시간 의존 조건은 부분 인덱스로 집행할 수 없고 V3도 집행하지 않으므로 check에서 거부한다(sema_fixes.rs 참고).
+    if let Some(e) = rejects(
+        &sub(A, "atMost 1 where status = PUBLISHED", "atMost 1 where status = PUBLISHED and periodEnd >= now"),
+        Form::A,
+        "UNSUPPORTED_INVARIANT",
+    ) {
+        fails.push(format!("F12 now 조건 불변식: {e}"));
     }
     // F05 같은 의미는 같은 facts
     if exec(&sub(A, "role in (ADMIN, MANAGER)", "role in (MANAGER, ADMIN)"), Form::A).as_ref() != Ok(&b) {

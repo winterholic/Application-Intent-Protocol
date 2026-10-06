@@ -56,8 +56,10 @@ export type SelectItem<C extends ContractShape<C>, R extends keyof C> =
 
 // filter 값 타입은 select 공개와 별개인 filterFields에서 온다(F03).
 type ValueOf<C extends ContractShape<C>, R extends keyof C, F extends string> = F extends keyof C[R]["filterFields"] ? C[R]["filterFields"][F] : never;
+// in은 값 배열(서버 상한 50), isNull은 bool이다. 나머지 연산은 필드 값 하나를 받는다.
+type OpValue<O extends string, V> = O extends "in" ? readonly V[] : O extends "isNull" ? boolean : V;
 export type FilterItem<C extends ContractShape<C>, R extends keyof C> = {
-  [K in C[R]["filter"] & string]: K extends `${infer F}.${infer O}` ? { readonly field: F; readonly op: O; readonly value: ValueOf<C, R, F> } : never;
+  [K in C[R]["filter"] & string]: K extends `${infer F}.${infer O}` ? { readonly field: F; readonly op: O; readonly value: OpValue<O, ValueOf<C, R, F>> } : never;
 }[C[R]["filter"] & string];
 export type SortItem<C extends ContractShape<C>, R extends keyof C> = { readonly field: C[R]["sort"] & string; readonly dir?: "asc" | "desc" };
 

@@ -122,6 +122,10 @@ fn parse_ids(raw: &Value, bulk: i64, wire: IdWire) -> Result<Vec<i64>, Reject> {
     if raw.is_empty() {
         return Err(bad("ids가 비었음"));
     }
+    // 상한을 먼저 본다. 큰 배열의 중복 검사가 기한 밖 CPU 시간을 쓰지 않게 한다.
+    if raw.len() as i64 > bulk {
+        return rej("BULK_LIMIT", format!("대상 {}개 > 상한 {bulk}", raw.len()));
+    }
     let mut v = vec![];
     for x in raw {
         let n = parse_id(x, wire)?;
@@ -129,9 +133,6 @@ fn parse_ids(raw: &Value, bulk: i64, wire: IdWire) -> Result<Vec<i64>, Reject> {
             return rej("DUPLICATE_TARGET", format!("id {n} 중복"));
         }
         v.push(n);
-    }
-    if v.len() as i64 > bulk {
-        return rej("BULK_LIMIT", format!("대상 {}개 > 상한 {bulk}", v.len()));
     }
     Ok(v)
 }
@@ -162,6 +163,10 @@ fn parse_target(facts: &Value, res: &str, ex: &Value, tg: &Value, wire: IdWire) 
                 // 쓰기 대상 조건도 읽기 filter 허용 목록을 따른다. 아니면 변경 개수로 숨은 값을 추론할 수 있다.
                 if !allow.iter().any(|x| x == &json!(format!("{field}.{op}"))) || op != "eq" {
                     return rej("FILTER_NOT_ALLOWED", format!("`{field}.{op}` 조건은 계약에 없음"));
+                }
+                // 같은 필드 eq를 반복하면 의미 없이 SQL만 커진다. 조건 수는 허용 목록 크기로 제한된다.
+                if v.iter().any(|(c, _, _): &(String, String, &str)| Some(c) == column(facts, res, field).as_ref()) {
+                    return rej("DUPLICATE_FILTER", format!("`{field}.{op}` 조건 중복"));
                 }
                 let ty = rf["fields"][field]["ty"].as_str().unwrap_or("").trim_end_matches('?');
                 let value = fo.get("value").unwrap_or(&Value::Null);
@@ -304,6 +309,9 @@ fn write_err(stage: &str, e: tokio_postgres::Error) -> Reject {
     match e.code().map(|c| c.code()) {
         Some("23505") => Reject { code: "ALREADY_EXISTS", msg: format!("{stage}: 유일 제약 위반") },
         Some("23P01") => Reject { code: "INVARIANT_VIOLATED", msg: format!("{stage}: 불변식 위반") },
+        // 정의의 값 제약(길이·범위·필수)은 호출자 값 오류다. 내부 오류로 보고하지 않는다.
+        Some("23514") => Reject { code: "BAD_VALUE", msg: format!("{stage}: 값 제약 위반") },
+        Some("23502") => Reject { code: "BAD_VALUE", msg: format!("{stage}: 필수 값 누락") },
         _ => db_err(stage, e),
     }
 }

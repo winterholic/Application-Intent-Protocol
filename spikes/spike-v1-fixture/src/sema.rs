@@ -74,6 +74,7 @@ struct Ctx<'a> {
 #[derive(Clone, Default)]
 struct Scope {
     this: Option<String>,
+    in_exists: bool,
     vars: Vec<(String, TT)>,
     input: Vec<(String, TT)>,
 }
@@ -251,6 +252,13 @@ impl<'a> Ctx<'a> {
         let this_field = sc.this.as_ref().and_then(|t| self.field_tt(t, first));
         let var = sc.vars.iter().find(|(n, _)| n == first).map(|x| x.1.clone());
         let (root, mut tt, rest) = match first {
+            "this" if sc.in_exists => {
+                return Err(Diag::new(
+                    "THIS_IN_EXISTS",
+                    "exists 조건 안의 `this`는 안쪽 행으로 다시 묶여 `team = this.team`이 항상 참이 된다. 안쪽 필드는 맨 이름으로 쓰고, 바깥 행 값은 predicate 인자로 넘겨라",
+                    sp,
+                ))
+            }
             "this" => match &sc.this {
                 Some(t) => ("this".to_string(), TT::new(Ty::Ref(t.clone())), &segs[1..]),
                 None => return Err(Diag::new(UNRESOLVED, "이 위치에는 `this`가 없음", sp)),
@@ -394,6 +402,7 @@ impl<'a> Ctx<'a> {
                 }
                 let mut inner = sc.clone();
                 inner.this = Some(r.clone());
+                inner.in_exists = true;
                 let cv = self.bool_of(cond, &inner)?;
                 // 정책 안 하위 조회는 서버 정의로서 대상 resource의 행 정책 없이 평가된다(spike 규칙, 명시 사실로 남김).
                 Ok((json!({ "exists": r, "where": cv, "evaluatedAs": "serverPolicy" }), b))
@@ -842,12 +851,17 @@ impl<'a> Ctx<'a> {
                 }
             }
             let deferred = r.deferred_invariants.contains(n);
-            let enforcement = if l["atMost"] == json!(1) && index_safe(&l["where"]) {
-                json!({ "kind": "partialUniqueIndex", "columns": [per], "where": l["where"], "deferred": deferred })
-            } else {
-                // 시간·actor·하위조회에 의존하는 조건은 부분 인덱스로 집행할 수 없다(F12). V3에서 잠금 검사로 다룬다.
-                json!({ "kind": "lockedCountCheck", "lockKey": [per], "where": l["where"], "max": l["atMost"] })
-            };
+            // lockedCountCheck는 V3(spike-v3-write)도 집행하지 않고 DDL 생성(sqlgen)도 거부한다.
+            // check 통과 후 init 실패가 없도록 여기서 같은 판정을 낸다.
+            if !(l["atMost"] == json!(1) && index_safe(&l["where"])) {
+                self.d(
+                    "UNSUPPORTED_INVARIANT",
+                    format!("`{n}`: atMost 1이고 조건이 이 행의 필드와 리터럴만 쓰는 형태만 집행할 수 있음(시간·actor·하위조회 의존이나 atMost 2 이상은 미지원). atMost 1 형태로 바꿔라"),
+                    *sp,
+                );
+                continue;
+            }
+            let enforcement = json!({ "kind": "partialUniqueIndex", "columns": [per], "where": l["where"], "deferred": deferred });
             inv.insert(n.clone(), json!({ "per": per, "enforcement": enforcement }));
         }
         o.insert("invariants".into(), Value::Object(inv));
@@ -1045,8 +1059,20 @@ impl<'a> Ctx<'a> {
                 self.d("UNKNOWN_FIELD", format!("filter 대상 `{f}` 없음"), *sp);
                 continue;
             };
+            if r.field_read.iter().any(|x| &x.0 == f) {
+                self.d(
+                    "POLICY_FIELD_NOT_FILTERABLE",
+                    format!("`{f}`에는 field read 정책이 있어 filter에 올릴 수 없음(가려진 값이 결과 유무로 추론됨)"),
+                    *sp,
+                );
+            }
             let ok = match op.as_str() {
-                "eq" => !matches!(tt.ty, Ty::Ref(_)),
+                // Ref는 대상 행의 Id로 비교한다(값은 Id wire를 따른다). 같은 검사를 필드 단위로 거치므로 filter 대상 규칙은 연산자와 무관하게 적용된다.
+                "eq" => true,
+                // in: 값 배열. 범위 비교 대상(Time/Int)과 Bool은 제외한다. 배열 길이 상한은 호출 시점(plan.rs MAX_IN_VALUES)에서 검사한다.
+                "in" => matches!(tt.ty, Ty::Text | Ty::Enum(_) | Ty::Id(_) | Ty::Ref(_)),
+                // isNull: bool 값. 항상 값이 있는 필드에는 의미가 없으므로 nullable 필드에만 연다.
+                "isNull" => tt.nullable,
                 "gte" | "lte" | "gt" | "lt" => matches!(tt.ty, Ty::Time | Ty::Int),
                 "prefix" => tt.ty == Ty::Text,
                 _ => {
@@ -1061,6 +1087,13 @@ impl<'a> Ctx<'a> {
         }
         let mut sorts = BTreeSet::new();
         for (s, sp) in &e.sort {
+            if r.field_read.iter().any(|x| &x.0 == s) {
+                self.d(
+                    "POLICY_FIELD_NOT_FILTERABLE",
+                    format!("`{s}`에는 field read 정책이 있어 sort에 올릴 수 없음(가려진 값이 정렬 순서로 추론됨)"),
+                    *sp,
+                );
+            }
             match self.field_tt(&r.name, s) {
                 Some(TT { ty: Ty::Ref(_), .. }) | Some(TT { ty: Ty::Bool, .. }) => self.d("OP_TYPE_MISMATCH", format!("`{s}`는 정렬 불가 타입"), *sp),
                 Some(_) => {}

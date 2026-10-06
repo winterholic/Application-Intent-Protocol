@@ -90,7 +90,7 @@ fn sensitivity_changes_change_execution_digest() {
         (Form::A, "sort periodEnd, views, id", "sort periodEnd, id"),
         (Form::A, "or club.school = actor.school)", "and club.school = actor.school)"),
         (Form::ETs, "field internalNote read when managerOf(actor, club)", "field title read when managerOf(actor, club)"),
-        (Form::EPy, "atMost 1 where", "atMost 2 where"),
+        (Form::EPy, "atMost 1 where status = PUBLISHED", "atMost 1 where status = CLOSED"),
         (Form::HTs, "role in (ADMIN, MANAGER)", "role in (ADMIN)"),
         (Form::HPy, "\"rowOutput\": \"none\", \"release\": \"count\",\n                },\n            },\n            \"transitions\"", "\"rowOutput\": \"none\", \"release\": \"count\",\n                },\n            },\n            \"invariants_\": [],\n            \"transitions\""),
     ];

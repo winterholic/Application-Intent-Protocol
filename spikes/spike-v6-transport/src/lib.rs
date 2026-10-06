@@ -63,8 +63,13 @@ fn principal_key(actor: Option<i64>, wire: IdWire) -> String {
     }
 }
 
+// 제어 문자는 DB text에 들어가지 못하거나(NUL) 로그·화면을 오염시키므로 key에서 받지 않는다.
+fn valid_key(key: &str) -> bool {
+    !key.is_empty() && key.len() <= 100 && !key.chars().any(char::is_control)
+}
+
 async fn handle_apply(db: &mut Client, facts: &Value, body: &Value, caller: &Caller, wire: IdWire) -> Value {
-    let Some(key) = body["key"].as_str().filter(|k| !k.is_empty() && k.len() <= 100) else {
+    let Some(key) = body["key"].as_str().filter(|k| valid_key(k)) else {
         return json!({ "ok": false, "code": "BAD_REQUEST", "msg": "key 필요" });
     };
     let req = &body["request"];
@@ -166,7 +171,9 @@ async fn handle(db: &mut Client, facts: &Value, path: &str, body: &Value, caller
         "/apply" => handle_apply(db, facts, body, caller, wire).await,
         "/status" => {
             let principal = principal_key(caller.actor_id, wire);
-            let key = body["key"].as_str().unwrap_or("");
+            let Some(key) = body["key"].as_str().filter(|k| valid_key(k)) else {
+                return json!({ "ok": false, "code": "BAD_REQUEST", "msg": "key 필요" });
+            };
             let request_text = body["request"].to_string();
             let q = format!("SELECT request, result::text FROM {}.aip_idem WHERE principal = $1 AND key = $2", sqlgen::schema());
             match tokio::time::timeout(server::DB_PREFLIGHT_TIMEOUT, db.query_opt(q.as_str(), &[&principal, &key])).await {
@@ -175,7 +182,9 @@ async fn handle(db: &mut Client, facts: &Value, path: &str, body: &Value, caller
                     json!({ "ok": false, "code": "IDEMPOTENCY_MISMATCH", "msg": "같은 키에 다른 요청" })
                 }
                 Ok(Ok(Some(r))) => {
-                    let mut v: Value = serde_json::from_str(&r.get::<_, String>(1)).unwrap();
+                    let Ok(mut v) = serde_json::from_str::<Value>(&r.get::<_, String>(1)) else {
+                        return json!({ "ok": false, "code": "INTERNAL", "msg": "저장된 멱등 결과를 읽을 수 없음" });
+                    };
                     v["replayed"] = json!(true);
                     v
                 }
@@ -397,7 +406,7 @@ async fn serve_conn(
         let request = &body["request"];
         let exact = body.as_object().is_some_and(|body| body.len() == 2 && body.contains_key("key") && body.contains_key("request"))
             && request.as_object().is_some_and(|request| request.len() == 2 && request.contains_key("extension") && request.contains_key("input"))
-            && body["key"].as_str().is_some_and(|key| !key.is_empty() && key.len() <= 100);
+            && body["key"].as_str().is_some_and(valid_key);
         let Some(name) = request["extension"].as_str().filter(|_| exact) else {
             return reply(&mut w, &err("BAD_REQUEST", "WRITE 요청은 key/request와 extension/input만 허용함")).await;
         };

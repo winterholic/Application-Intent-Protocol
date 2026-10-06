@@ -87,3 +87,10 @@ export async function f() {
         .unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stdout));
 }
+
+// in/isNull 연산의 값 타입(배열·bool)이 생성 계약 타입에서 강제되는지 본다.
+#[test]
+fn filter_operator_value_types() {
+    let (ok, out) = tsc("filter-op-types.ts");
+    assert!(ok, "{out}");
+}

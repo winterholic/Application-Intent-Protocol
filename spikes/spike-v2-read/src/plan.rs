@@ -48,6 +48,9 @@ pub fn deps_of(facts: &Value, sql: &str) -> Vec<String> {
 /// spike 출력 상한. budget에 출력 크기 위치가 아직 없어 고정값을 쓴다(R2B-03).
 pub const MAX_OUTPUT_BYTES: usize = 1 << 20;
 
+/// `in` 필터의 배열 길이 상한. 중복 제거 전 길이로 센다. 값마다 매개변수 하나를 쓰므로 요청 크기와 SQL 크기를 함께 막는다.
+pub const MAX_IN_VALUES: usize = 50;
+
 pub struct Caller {
     pub actor_id: Option<i64>,
     pub now: String,
@@ -119,8 +122,12 @@ fn check_value(facts: &Value, ty: &str, v: &Value, wire: crate::id_wire::IdWire)
     }
     match (base, v) {
         // 응답 Id는 숫자라 요청도 숫자를 받는다. 숫자 문자열도 받는다(r4b F04).
-        (b, Value::Number(n)) if b.starts_with("Id<") && n.as_i64().is_some_and(|x| x >= 0) => Ok((n.to_string(), "bigint")),
-        (b, Value::String(s)) if b.starts_with("Id<") && !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()) && s.len() <= 18 => {
+        (b, Value::Number(n)) if (b.starts_with("Id<") || b.starts_with("Ref<")) && n.as_i64().is_some_and(|x| x >= 0) => {
+            Ok((n.to_string(), "bigint"))
+        }
+        (b, Value::String(s))
+            if (b.starts_with("Id<") || b.starts_with("Ref<")) && !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()) && s.len() <= 18 =>
+        {
             Ok((s.clone(), "bigint"))
         }
         _ => crate::scalar::parse(facts, base, v),
@@ -282,12 +289,45 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
             if !ex["filter"].as_array().unwrap().iter().any(|x| x == &json!(key)) {
                 return rej("FILTER_NOT_ALLOWED", format!("`{key}` 필터는 계약에 없음(선택 가능 여부와 별개)"));
             }
+            // facts가 sema를 거치지 않고 들어와도, 정책으로 가려지는 값이 filter 결과 유무로 새지 않게 막는다.
+            if !rf["fieldRead"][field].is_null() {
+                return rej("POLICY_FIELD_NOT_FILTERABLE", format!("`{field}`에는 field read 정책이 있어 filter에 쓸 수 없음"));
+            }
             let fty = rf["fields"][field]["ty"].as_str().unwrap();
-            let (v, cast) = check_value(facts, fty, fo.get("value").unwrap_or(&Value::Null), wire)?;
+            let col = column(facts, res, field).unwrap();
+            let raw = fo.get("value").unwrap_or(&Value::Null);
+            if op == "isNull" {
+                // 값은 bool 하나. 조건 문자열(IS NULL)은 고정이고 true/false만 매개변수로 비교한다.
+                let Value::Bool(b) = raw else { return rej("BAD_VALUE", "isNull 값은 bool") };
+                let p = cx.params.bind(Some(b.to_string()), "boolean");
+                wh.push(format!("(({t}.{col} IS NULL) = {p})"));
+                continue;
+            }
+            if op == "in" {
+                let items = raw.as_array().ok_or(Reject { code: "BAD_VALUE", msg: "in 값은 배열".into() })?;
+                if items.is_empty() {
+                    return rej("BAD_VALUE", "in 배열이 비었음. 조건이 없으면 필터를 빼야 함");
+                }
+                if items.len() > MAX_IN_VALUES {
+                    return rej("IN_LIST_EXCEEDED", format!("in 배열 {}개 > 상한 {MAX_IN_VALUES}", items.len()));
+                }
+                // 같은 값은 한 번만 바인딩한다. 비교는 검사를 거친 정규 문자열 기준이라 `10`과 `"10"`은 같은 값이다.
+                let mut seen = std::collections::HashSet::new();
+                let mut marks = vec![];
+                for item in items {
+                    let (v, cast) = check_value(facts, fty, item, wire)?;
+                    if seen.insert(v.clone()) {
+                        marks.push(cx.params.bind(Some(v), cast));
+                    }
+                }
+                wh.push(format!("({t}.{col} IN ({}))", marks.join(", ")));
+                continue;
+            }
+            let (v, cast) = check_value(facts, fty, raw, wire)?;
             if op == "prefix" {
                 let p = cx.params.bind(Some(v), cast);
                 // A prefix is a literal string; SQL wildcard and escape characters keep their meaning as text.
-                wh.push(format!("(left({t}.{}, char_length({p})) = {p})", column(facts, res, field).unwrap()));
+                wh.push(format!("(left({t}.{col}, char_length({p})) = {p})"));
                 continue;
             }
             let sop = match op {
@@ -299,7 +339,7 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
                 _ => return rej("FILTER_NOT_ALLOWED", format!("연산 `{op}` 미지원")),
             };
             let p = cx.params.bind(Some(v), cast);
-            wh.push(format!("({t}.{} {sop} {p})", column(facts, res, field).unwrap()));
+            wh.push(format!("({t}.{col} {sop} {p})"));
         }
     }
 
@@ -315,6 +355,9 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
             }
             if !ex["sort"].as_array().unwrap().iter().any(|x| x == f) {
                 return rej("SORT_NOT_ALLOWED", format!("`{f}` 정렬은 계약에 없음(선택 가능 여부와 별개)"));
+            }
+            if !rf["fieldRead"][f].is_null() {
+                return rej("POLICY_FIELD_NOT_FILTERABLE", format!("`{f}`에는 field read 정책이 있어 sort에 쓸 수 없음"));
             }
             let dir = match so.get("dir").and_then(Value::as_str).unwrap_or("asc") {
                 "asc" => "ASC",

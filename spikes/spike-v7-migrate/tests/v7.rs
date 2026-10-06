@@ -37,17 +37,62 @@ async fn v7_migration_precheck() {
     let club_rows = "  rows read when school = null or school = actor.school\n  expose read { select id, name, logo }";
     // (이름, 새 facts, 기대 분류, 적용 가능)
     let cases: Vec<(&str, Value, &str, bool)> = vec![
-        ("nullable 필드 추가", v("fields { id: Id; name: Text; logo: Url?; school: School? }", "fields { id: Id; name: Text; logo: Url?; school: School?; description: Text? }"), "Safe", true),
-        ("필수 필드 추가(기존 행 있음)", v("fields { id: Id; name: Text; logo: Url?; school: School? }", "fields { id: Id; name: Text; logo: Url?; school: School?; code: Text }"), "Blocked", false),
-        ("공개 select에서 views 제거", v("select id, title, periodEnd, views, bookmarkCount, internalNote", "select id, title, periodEnd, bookmarkCount, internalNote"), "Breaking", true),
+        (
+            "nullable 필드 추가",
+            v(
+                "fields { id: Id; name: Text; logo: Url?; school: School? }",
+                "fields { id: Id; name: Text; logo: Url?; school: School?; description: Text? }",
+            ),
+            "Safe",
+            true,
+        ),
+        (
+            "필수 필드 추가(기존 행 있음)",
+            v("fields { id: Id; name: Text; logo: Url?; school: School? }", "fields { id: Id; name: Text; logo: Url?; school: School?; code: Text }"),
+            "Blocked",
+            false,
+        ),
+        (
+            "공개 select에서 views 제거",
+            v("select id, title, periodEnd, views, bookmarkCount, internalNote", "select id, title, periodEnd, bookmarkCount, internalNote"),
+            "Breaking",
+            true,
+        ),
         // 측정상 확대가 없어도 행 정책 변경은 검토 대상(r8 F8).
-        ("Club 행 정책 축소", v(club_rows, "  rows read when school = actor.school\n  expose read { select id, name, logo }"), "SecurityReview", false),
+        (
+            "Club 행 정책 축소",
+            v(club_rows, "  rows read when school = actor.school\n  expose read { select id, name, logo }"),
+            "SecurityReview",
+            false,
+        ),
         ("Club 행 정책 확대", v(club_rows, "  rows read when true\n  expose read { select id, name, logo }"), "SecurityReview", false),
         ("internalNote 필드 정책 제거", v("  field internalNote read when managerOf(actor, club)\n", ""), "SecurityReview", false),
-        ("기존 데이터가 어기는 불변식 추가", facts(&A.replacen("  invariant atMostOnePublished per club", "  invariant atMostOnePublished per club\n  invariant oneDraft per club", 1).replacen("limit atMostOnePublished", "limit oneDraft on Recruitment = atMost 1 where status = DRAFT\nlimit atMostOnePublished", 1)), "Blocked", false),
+        (
+            "기존 데이터가 어기는 불변식 추가",
+            facts(
+                &A.replacen("  invariant atMostOnePublished per club", "  invariant atMostOnePublished per club\n  invariant oneDraft per club", 1)
+                    .replacen(
+                        "limit atMostOnePublished",
+                        "limit oneDraft on Recruitment = atMost 1 where status = DRAFT\nlimit atMostOnePublished",
+                        1,
+                    ),
+            ),
+            "Blocked",
+            false,
+        ),
         // 정의가 쓰는 값(CLOSED) 제거는 V1 의미 검사에서 먼저 거부된다. 여기서는 데이터만 쓰는 값.
-        ("데이터가 쓰는 enum 값 제거(DRAFT)", v("enum RecruitmentStatus { DRAFT, PUBLISHED, CLOSED }", "enum RecruitmentStatus { PUBLISHED, CLOSED }"), "Blocked", false),
-        ("안 쓰이는 enum 값 제거(REJECT)", v("enum ApplyStatus { PENDING, APPROVE, REJECT }", "enum ApplyStatus { PENDING, APPROVE }"), "Breaking", true),
+        (
+            "데이터가 쓰는 enum 값 제거(DRAFT)",
+            v("enum RecruitmentStatus { DRAFT, PUBLISHED, CLOSED }", "enum RecruitmentStatus { PUBLISHED, CLOSED }"),
+            "Blocked",
+            false,
+        ),
+        (
+            "안 쓰이는 enum 값 제거(REJECT)",
+            v("enum ApplyStatus { PENDING, APPROVE, REJECT }", "enum ApplyStatus { PENDING, APPROVE }"),
+            "Breaking",
+            true,
+        ),
     ];
     let mut fails = vec![];
     for (name, new, want, want_apply) in &cases {
@@ -82,28 +127,81 @@ async fn v7_migration_precheck() {
 
     // Codex r8 반례: 분류하지 못한 차이는 모두 자동 적용 불가
     let r8: Vec<(&str, Value, &str)> = vec![
-        ("predicate 본문 변경", v("predicate active(r: Recruitment) = r.status = PUBLISHED and r.periodEnd >= now", "predicate active(r: Recruitment) = true"), "SecurityReview"),
-        ("traverse 변경(관계 공개 필드)", facts(&A.replacen("traverse club { select id, name, logo }", "traverse club { select id }", 1)), "SecurityReview"),
-        ("access 본문 변경", v("access clubManagerOnly(a: Member, c: Club.Id) = managerOf(a, c)", "access clubManagerOnly(a: Member, c: Club.Id) = a = a and c = c"), "SecurityReview"),
+        (
+            "predicate 본문 변경",
+            v("predicate active(r: Recruitment) = r.status = PUBLISHED and r.periodEnd >= now", "predicate active(r: Recruitment) = true"),
+            "SecurityReview",
+        ),
+        (
+            "traverse 변경(관계 공개 필드)",
+            facts(&A.replacen("traverse club { select id, name, logo }", "traverse club { select id }", 1)),
+            "SecurityReview",
+        ),
+        (
+            "access 본문 변경",
+            v("access clubManagerOnly(a: Member, c: Club.Id) = managerOf(a, c)", "access clubManagerOnly(a: Member, c: Club.Id) = a = a and c = c"),
+            "SecurityReview",
+        ),
         ("전이 allow 확대", v("allow managerOf(actor, club)\n  }", "allow true\n  }"), "SecurityReview"),
-        ("budget 추가로 루트 조회 공개", v("  expose read { select id, name, logo }", "  expose read { select id, name, logo; budget { rows 10; depth 1; deadline 2s; cost 100 } }"), "SecurityReview"),
-        ("기존 불변식 조건 변경", v("limit atMostOnePublished on Recruitment = atMost 1 where status = PUBLISHED", "limit atMostOnePublished on Recruitment = atMost 1 where status = DRAFT"), "SecurityReview"),
+        (
+            "budget 추가로 루트 조회 공개",
+            v(
+                "  expose read { select id, name, logo }",
+                "  expose read { select id, name, logo; budget { rows 10; depth 1; deadline 2s; cost 100 } }",
+            ),
+            "SecurityReview",
+        ),
+        (
+            "기존 불변식 조건 변경",
+            v(
+                "limit atMostOnePublished on Recruitment = atMost 1 where status = PUBLISHED",
+                "limit atMostOnePublished on Recruitment = atMost 1 where status = DRAFT",
+            ),
+            "SecurityReview",
+        ),
         ("unique 추가", v("  invariant atMostOnePublished per club", "  invariant atMostOnePublished per club\n  unique club"), "SecurityReview"),
         ("nullable 범위 강화", v("internalNote: Text?", "internalNote: Text(2..100)?"), "Blocked"),
-        ("숫자 조건 불변식 추가", facts(&A.replacen("  invariant atMostOnePublished per club", "  invariant atMostOnePublished per club\n  invariant twoNonneg per club", 1).replacen("limit atMostOnePublished", "limit twoNonneg on Recruitment = atMost 2 where views >= 0\nlimit atMostOnePublished", 1)), "Blocked"),
-        ("새 필드를 쓰는 정책과 필드 동시 추가", facts(&A.replacen(club_rows, "  rows read when school = null or school = actor.school or canRead = true\n  expose read { select id, name, logo }", 1).replacen("fields { id: Id; name: Text; logo: Url?; school: School? }", "fields { id: Id; name: Text; logo: Url?; school: School?; canRead: Bool? }", 1)), "SecurityReview"),
+        (
+            "새 필드를 쓰는 정책과 필드 동시 추가",
+            facts(
+                &A.replacen(
+                    club_rows,
+                    "  rows read when school = null or school = actor.school or canRead = true\n  expose read { select id, name, logo }",
+                    1,
+                )
+                .replacen(
+                    "fields { id: Id; name: Text; logo: Url?; school: School? }",
+                    "fields { id: Id; name: Text; logo: Url?; school: School?; canRead: Bool? }",
+                    1,
+                ),
+            ),
+            "SecurityReview",
+        ),
     ];
+    // 집행할 수 없는 숫자 조건 불변식은 이제 정의 검사에서 먼저 거부한다. 배포 계획까지 오지 않는다.
+    let unsupported = A
+        .replacen("  invariant atMostOnePublished per club", "  invariant atMostOnePublished per club\n  invariant twoNonneg per club", 1)
+        .replacen("limit atMostOnePublished", "limit twoNonneg on Recruitment = atMost 2 where views >= 0\nlimit atMostOnePublished", 1);
+    if !format!("{:?}", load_str(&unsupported, Form::A).err()).contains("UNSUPPORTED_INVARIANT") {
+        fails.push("r8 숫자 조건 불변식 추가: 정의 검사에서 UNSUPPORTED_INVARIANT 거부 기대".into());
+    }
     for (name, new, want) in &r8 {
         let (cs, applicable) = check(&db, &base, new, NOW).await;
         let classes: Vec<&str> = cs.iter().map(|c| c.class).collect();
-        eprintln!("r8 {name}: {classes:?} 적용 {applicable} {}", cs.iter().map(|c| c.detail.to_string()).collect::<Vec<_>>().join(" | ").chars().take(160).collect::<String>());
+        eprintln!(
+            "r8 {name}: {classes:?} 적용 {applicable} {}",
+            cs.iter().map(|c| c.detail.to_string()).collect::<Vec<_>>().join(" | ").chars().take(160).collect::<String>()
+        );
         if !classes.contains(want) || applicable {
             fails.push(format!("r8 {name}: 기대 {want}/불가, 실제 {classes:?}/{applicable}"));
         }
     }
 
     // 위반 없는 새 불변식은 자동 적용 가능(새 limit 선언만으로 검토로 가지 않음)
-    let clean = facts(&A.replacen("  invariant atMostOnePublished per club", "  invariant atMostOnePublished per club\n  invariant oneClosed per club", 1).replacen("limit atMostOnePublished", "limit oneClosed on Recruitment = atMost 1 where status = CLOSED\nlimit atMostOnePublished", 1));
+    let clean = facts(
+        &A.replacen("  invariant atMostOnePublished per club", "  invariant atMostOnePublished per club\n  invariant oneClosed per club", 1)
+            .replacen("limit atMostOnePublished", "limit oneClosed on Recruitment = atMost 1 where status = CLOSED\nlimit atMostOnePublished", 1),
+    );
     let (cs, applicable) = check(&db, &base, &clean, NOW).await;
     if !applicable || cs.iter().any(|c| c.class != "Safe") {
         fails.push(format!("위반 없는 불변식 추가: {:?}/{applicable}", cs.iter().map(|c| c.class).collect::<Vec<_>>()));

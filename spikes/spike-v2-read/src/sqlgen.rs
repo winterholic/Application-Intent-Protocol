@@ -474,7 +474,12 @@ pub fn create_ddl_in(namespace: &str, facts: &Value) -> R<Vec<String>> {
                             None => "text".into(),
                         },
                         "Time" => "timestamptz".into(),
-                        "Int" => "bigint".into(),
+                        // 범위는 Text/Url과 같이 DDL CHECK로 집행한다. NULL은 CHECK가 통과시키므로 nullable도 그대로 둔다.
+                        "Int" => match fd["range"].as_array().map(|r| (r.first().and_then(Value::as_i64), r.get(1).and_then(Value::as_i64))) {
+                            Some((Some(lo), Some(hi))) => format!("bigint CHECK ({col} BETWEEN {lo} AND {hi})"),
+                            Some(_) => return Err(format!("`{col}` Int 범위 형식")),
+                            None => "bigint".into(),
+                        },
                         "Bool" => "boolean".into(),
                         b => return Err(format!("DDL 미지원 타입 {b}")),
                     }

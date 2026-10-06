@@ -164,7 +164,11 @@ pub(crate) async fn listen_with_fingerprint(
                     Err(e)=>break Err(e),
                 },
                 Some(result)=requests.join_next(), if !requests.is_empty()=> {
-                    if let Err(e)=result {break Err(io::Error::other(e));}
+                    // 요청 하나의 panic이 다른 연결과 listener 전체를 내리지 않게 한다. 취소는 종료 중에만 생긴다.
+                    if let Err(e)=result {
+                        if !e.is_panic() {break Err(io::Error::other(e));}
+                        eprintln!("{{\"event\":\"request_panicked\"}}");
+                    }
                 }
             }
         };

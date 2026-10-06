@@ -92,6 +92,13 @@ async fn v3_1_standard_transition_write() {
     expect!("익명", simplify(apply(&mut db, &f, &alarm(ids(&[4])), &who(None), &k).await), Err("MISSING_TARGET"));
     expect!("중복 id", simplify(apply(&mut db, &f, &alarm(ids(&[5, 5])), &who(Some(1)), &k).await), Err("DUPLICATE_TARGET"));
     expect!("id bulk 초과", simplify(apply(&mut db, &f, &alarm(ids(&[5, 6, 7, 8])), &who(Some(1)), &k).await), Err("BULK_LIMIT"));
+    // 상한을 넘는 큰 배열은 중복 검사 전에 거부한다(전부 같은 id여도 BULK_LIMIT).
+    let huge: Vec<i64> = (1..=120_000).collect();
+    let started = std::time::Instant::now();
+    expect!("큰 ids 배열은 상한 먼저", simplify(apply(&mut db, &f, &alarm(ids(&huge)), &who(Some(1)), &k).await), Err("BULK_LIMIT"));
+    assert!(started.elapsed() < std::time::Duration::from_secs(2), "큰 ids 거부가 {:?} 걸림", started.elapsed());
+    let twice = json!({ "where": [{ "field": "isChecked", "op": "eq", "value": false }, { "field": "isChecked", "op": "eq", "value": false }] });
+    expect!("where 같은 조건 중복", simplify(apply(&mut db, &f, &alarm(twice), &who(Some(1)), &k).await), Err("DUPLICATE_FILTER"));
     // where 대상: 내 미읽음 전부. 상한을 넘으면 아무것도 안 바뀜
     let unread = json!({ "where": [{ "field": "isChecked", "op": "eq", "value": false }] });
     expect!("where 상한 초과", simplify(apply(&mut db, &f, &alarm(unread.clone()), &who(Some(1)), &k).await), Err("BULK_LIMIT"));
