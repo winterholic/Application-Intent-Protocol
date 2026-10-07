@@ -30,6 +30,36 @@
 
 검증: 실패 테스트를 먼저 실행한 뒤 5개 작성 형식·실제 PostgreSQL·쓰기 검증·SDK 타입·기존 제품 migration 회귀를 대조한다. Email의 수용 범위와 Date 캘린더 범위는 구현 결과에 명시한다.
 
-## 조사 중인 제약
+## 정원 제약 후속
 
-`atMost N`은 경쟁 쓰기의 그룹 잠금과 커밋 검사, 초기화·migration의 일관성이 필요하다. 단순 count 검사만으로 지원을 선언하지 않는다. 구현 결정과 설계 관문은 조사 결과를 확인한 뒤 추가한다.
+`atMost N`의 N≥2 집행과 제품 migration을 연결했다. 경쟁 쓰기의 resource 잠금·READ COMMITTED·전체 그룹 검사 및 보장 경계는 [정원 집행 설계](2026-10-07-capacity-enforcement.md)를 따른다. 기존 N=1의 facts와 DDL은 보존한다. 신규 resource·nullable 컬럼·backfill을 함께 추가하는 migration도 별도 회귀 테스트로 검사한다.
+
+Date는 0001~9999년의 엄격한 `YYYY-MM-DD` 달력 날짜다. Email은 NUL·Unicode White_Space·복수 `@`와 비어 있거나 점 경계가 잘못된 domain을 거부하는 기본 검증이다. 전체 RFC 이메일 문법 지원을 뜻하지 않는다. Rust 서버와 TypeScript typed client가 같은 White_Space 정의를 사용한다.
+
+Decimal의 자릿수·wire·migration 경계는 [별도 설계](2026-10-07-decimal-scalar.md)를 따른다. 정밀 저장과 읽기·쓰기 지원이 Decimal 산술이나 avg 지원을 의미하지는 않는다.
+
+## 설계 관문: Bool 식을 대입 값으로 실행
+
+1. 원칙 1·4: 의미 검사가 이미 허용하는 Bool 식을 실행에서도 처리해 별도 서버 분기를 줄인다.
+2. 전이 대입과 서버가 선언한 create/update 효과에서 비교·논리·predicate·exists의 결과를 Bool 필드에 저장한다.
+3. 기존 조건 표현식을 재사용하므로 앱 개발자가 같은 판단을 다시 구현할 필요가 줄어든다.
+4. 기존 의미 검사·SQL 매개변수·정책 식 깊이와 작업량 상한을 그대로 적용한다. NULL인 조건 결과는 조건 평가와 같이 false로 저장한다.
+5. 5개 작성 형식이 사용하는 공통 typed facts와 SQL 생성 경로에서 처리한다.
+6. 새 연산자나 표현 문법을 추가하지 않는다.
+7. 기존 조건 SQL 생성기를 값 위치에서도 재사용한다. 전이의 대입은 변경 전 행, 후속 효과는 변경 후 행을 본다는 기존 의미를 유지한다.
+8. 최종 작성 형식과 쓰기 조합의 OPEN을 확정하지 않는다.
+
+검증: PostgreSQL에서 비교·논리·predicate·exists 대입과 nullable 비교의 false 변환을 재현한다. 후속 create/update 효과가 변경 후 상태를 보고, 거부된 전이가 부수효과를 남기지 않는지도 대조한다.
+
+## 설계 관문: 생성 SDK의 1:N 읽기·offset·cursor 연결
+
+1. 원칙 1·3·4: v5가 생성한 공개 읽기 계약을 v6 typed client의 디코더와 호출 타입까지 연결해 서버 계약과 SDK 사이의 빈 구간을 없앤다.
+2. 선언된 `traverseMany` 배열 결과를 검증하고, root resource에 선언된 offset/cursor 요청을 타입으로 허용한다.
+3. 별도 호출 API나 실행 경로를 만들지 않고 기존 `connectTyped.read`, descriptor, 공통 generic 타입을 재사용한다.
+4. 1:N 관계명·자식 선택 필드·limit를 descriptor allowlist와 대조한다. 응답 배열 크기는 요청 limit 및 descriptor 상한 이하인지 검사한다. root offset은 `maxOffset`, cursor는 계약의 `cursor:true`가 있을 때만 타입에 연다. 요청 값 범위·after와 sort의 정합성은 기존 서버 검사가 최종 책임을 유지한다.
+5. wire 응답과 생성 binding 형식은 바꾸지 않는다. 1:N은 배열로 검증하고 기존 단일 traverse는 객체 또는 null로 계속 검증한다.
+6. 단일 traverse와 1:N traverse의 null/빈 배열 의미를 구분한다. offset/cursor는 root query 옵션에만 적용하고 1:N 자식에는 추가하지 않는다. cursor의 `after`는 `id`를 필수로 하고 허용 sort 키를 선택적으로 받으며, 요청 sort와 정확히 일치하는 키 검사는 서버가 한다.
+7. v5 `ReadDescriptors`와 `spike-v5-sdk/sdk/generic.ts`의 기존 공개 타입을 v6 runtime과 typed signature에서 공유한다. 새 facts 키·서버 분기·SQL 경로는 추가하지 않는다.
+8. 최종 작성 형식, 쓰기 조합, Id wire의 OPEN을 결정하지 않는다. 새 문법도 추가하지 않는다.
+
+검증: 구현 전 actual decoder 호출로 1:N 배열의 정상/초과 limit/잘못된 child·필드·임의 키를 재현한다. 실제 생성형 binding으로 offset/cursor 호출을 strict TypeScript에서 확인하고, 미선언 resource의 옵션과 잘못된 값은 컴파일 거부한다. 기존 단일 traverse의 object/null 결과와 facts projection은 회귀 테스트로 보존한다.

@@ -1,4 +1,4 @@
-//! V1 typed facts의 정책 식을 PostgreSQL 조건으로 옮긴다. 호출자 값은 모두 바인딩 매개변수로만 들어간다.
+//! V1 typed facts의 정책 식을 PostgreSQL 조건으로 옮긴다. 요청 값은 바인딩하고 DDL 상수는 안전한 SQL literal로 쓴다.
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -51,6 +51,35 @@ pub fn table(res: &str) -> String {
 pub fn ref_target(ty: &str) -> Option<&str> {
     let t = ty.trim_end_matches('?');
     t.strip_prefix("Ref<").or_else(|| t.strip_prefix("Id<")).and_then(|x| x.strip_suffix('>'))
+}
+
+fn decimal_type(ty: &str) -> Option<(u8, u8)> {
+    let inner = ty.strip_prefix("Decimal<")?.strip_suffix('>')?;
+    let (precision, scale) = inner.split_once(',')?;
+    let canonical_uint = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) && (s == "0" || !s.starts_with('0'));
+    if !canonical_uint(precision) || !canonical_uint(scale) {
+        return None;
+    }
+    let (precision, scale) = (precision.parse::<u8>().ok()?, scale.parse::<u8>().ok()?);
+    ((1..=38).contains(&precision) && scale <= precision).then_some((precision, scale))
+}
+
+fn ddl_string_literal(value: &str) -> R<String> {
+    if value.contains('\0') {
+        return Err("PostgreSQL text literal에 NUL은 허용되지 않음".into());
+    }
+    let escaped = value.replace('\\', "\\\\").replace('\'', "''");
+    Ok(format!("E'{escaped}'"))
+}
+
+/// PostgreSQL JSON constructors otherwise encode numeric values as JSON numbers, which JavaScript
+/// decodes through a binary float. Keep fixed-point values as decimal strings at every projection.
+pub fn json_scalar(ty: &str, sql: &str) -> String {
+    if decimal_type(ty.trim_end_matches('?')).is_some() {
+        format!("({sql})::text")
+    } else {
+        sql.to_string()
+    }
 }
 
 pub fn column(facts: &Value, res: &str, field: &str) -> Option<String> {
@@ -247,11 +276,19 @@ impl<'a> Ctx<'a> {
             }
             return Ok(self.now.clone().unwrap());
         }
+        if ["cmp", "and", "or", "not", "in", "call", "exists"].iter().any(|key| e.get(key).is_some()) {
+            // 조건 평가와 같이 UNKNOWN을 false로 바꿔 필수 Bool 필드의 NULL 대입을 막는다.
+            return Ok(format!("({} IS TRUE)", self.cond(e, env)?));
+        }
         match e.get("lit") {
             Some(Value::Number(n)) => {
                 let value = n.to_string();
                 self.charge_data_bytes(value.len())?;
-                Ok(self.params.bind(Some(value), "bigint"))
+                if self.inline {
+                    Ok(value)
+                } else {
+                    Ok(self.params.bind(Some(value), "bigint"))
+                }
             }
             Some(Value::Null) => Ok("NULL".into()),
             Some(Value::Bool(b)) if self.inline => Ok(b.to_string()),
@@ -262,7 +299,37 @@ impl<'a> Ctx<'a> {
             }
             Some(Value::String(s)) => {
                 self.charge_data_bytes(s.len())?;
-                Ok(self.params.bind(Some(s.clone()), "text"))
+                let ty = e.get("ty").and_then(Value::as_str);
+                let cast = match ty {
+                    Some("Text" | "Url" | "Email") => "text",
+                    Some("Date") => "date",
+                    Some(ty) if decimal_type(ty).is_some() => {
+                        crate::scalar::parse(self.facts, ty, &Value::String(s.clone())).map_err(|error| error.msg)?;
+                        "numeric"
+                    }
+                    Some(other) => return Err(format!("문자열 리터럴 타입 `{other}` 미지원")),
+                    None => "text",
+                };
+                if self.inline {
+                    if let Some(ty) = ty {
+                        if matches!(ty, "Email" | "Date") || decimal_type(ty).is_some() {
+                            crate::scalar::parse(self.facts, ty, &Value::String(s.clone())).map_err(|error| error.msg)?;
+                        }
+                    }
+                    let literal = ddl_string_literal(s)?;
+                    let ddl_cast = match ty {
+                        Some("Date") => "::date".to_string(),
+                        Some(ty) if decimal_type(ty).is_some() => {
+                            let (precision, scale) = decimal_type(ty).unwrap();
+                            format!("::numeric({precision},{scale})")
+                        }
+                        Some("Email" | "Text" | "Url") | None => "::text".to_string(),
+                        Some(other) => return Err(format!("DDL 문자열 리터럴 타입 `{other}` 미지원")),
+                    };
+                    Ok(format!("{literal}{ddl_cast}"))
+                } else {
+                    Ok(self.params.bind(Some(s.clone()), cast))
+                }
             }
             _ => Err(format!("값으로 쓸 수 없는 식 {e}")),
         }
@@ -467,13 +534,16 @@ pub fn create_ddl_in(namespace: &str, facts: &Value) -> R<Vec<String>> {
                 } else if let Some(e) = base.strip_prefix("Enum<").and_then(|x| x.strip_suffix('>')) {
                     let vs: Vec<String> = facts["enums"][e].as_array().unwrap().iter().map(|v| format!("'{}'", v.as_str().unwrap())).collect();
                     format!("text CHECK ({col} IN ({}))", vs.join(", "))
+                } else if let Some((precision, scale)) = decimal_type(base) {
+                    format!("numeric({precision},{scale})")
                 } else {
                     match base {
-                        "Text" | "Url" => match fd["range"].as_array() {
+                        "Text" | "Email" | "Url" => match fd["range"].as_array() {
                             Some(r) => format!("text CHECK (char_length({col}) BETWEEN {} AND {})", r[0], r[1]),
                             None => "text".into(),
                         },
                         "Time" => "timestamptz".into(),
+                        "Date" => "date".into(),
                         // 범위는 Text/Url과 같이 DDL CHECK로 집행한다. NULL은 CHECK가 통과시키므로 nullable도 그대로 둔다.
                         // Int 범위는 DDL CHECK로 만들지 않는다. 이미 배포된 schema의 구조 지문이 바뀌어 마이그레이션 없이 막히기 때문이다.
                         // 쓰기 경로(sema의 상수 대입 검사, v3 증감 뒤 검사)에서 집행한다.
@@ -525,6 +595,8 @@ pub fn create_ddl_in(namespace: &str, facts: &Value) -> R<Vec<String>> {
                 } else {
                     out.push(format!("CREATE UNIQUE INDEX {}_{} ON {} ({}) WHERE {cond}", snake(name), snake(inv), table(name), cols.join(", ")));
                 }
+            } else if enf["kind"] == "lockedCountCheck" {
+                // N>1 집행은 AIP 쓰기 경로가 advisory lock 뒤에서 검사한다. DDL은 기존 facts처럼 유지한다.
             } else {
                 return Err(format!("{inv}: {} 집행은 V3 범위", enf["kind"]));
             }

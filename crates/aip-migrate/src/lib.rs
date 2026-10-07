@@ -24,7 +24,10 @@ fn valid_ident(name: &str) -> bool {
 
 fn valid_field_type(ty: &str) -> bool {
     let base = ty.trim_end_matches('?');
-    if matches!(base, "Text" | "Url" | "Time" | "Int" | "Bool") {
+    if matches!(base, "Text" | "Email" | "Url" | "Time" | "Date" | "Int" | "Bool") {
+        return true;
+    }
+    if decimal_type(base).is_some() {
         return true;
     }
     for prefix in ["Id<", "Ref<", "Enum<"] {
@@ -33,6 +36,17 @@ fn valid_field_type(ty: &str) -> bool {
         }
     }
     false
+}
+
+fn decimal_type(ty: &str) -> Option<(u8, u8)> {
+    let inner = ty.strip_prefix("Decimal<")?.strip_suffix('>')?;
+    let (precision, scale) = inner.split_once(',')?;
+    let canonical_uint = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) && (s == "0" || !s.starts_with('0'));
+    if !canonical_uint(precision) || !canonical_uint(scale) {
+        return None;
+    }
+    let (precision, scale) = (precision.parse::<u8>().ok()?, scale.parse::<u8>().ok()?);
+    ((1..=38).contains(&precision) && scale <= precision).then_some((precision, scale))
 }
 
 fn validate_facts(facts: &Value) -> Result<(), Value> {
@@ -490,8 +504,14 @@ fn parse_directives(migration: &Option<Value>) -> Result<Directives, Value> {
 
 fn typed_literal(value: Value, ty: &str) -> Result<String, Value> {
     let base = ty.trim_end_matches('?');
+    if decimal_type(base).is_some() {
+        return spike_v2_read::scalar::parse(&json!({"enums":{}}), base, &value)
+            .map(|(value, _)| value)
+            .map_err(|_| err("BAD_MIGRATION", "backfill 값이 Decimal precision/scale과 맞지 않음"));
+    }
     match base {
         "Text" | "Url" | "Time" => value.as_str().map(str::to_string),
+        "Email" | "Date" => spike_v2_read::scalar::parse(&json!({"enums":{}}), base, &value).ok().map(|(value, _)| value),
         "Int" => value.as_i64().map(|n| n.to_string()),
         "Bool" => value.as_bool().map(|b| b.to_string()),
         t if t.starts_with("Enum<") && t.ends_with('>') => value.as_str().map(str::to_string),
@@ -501,26 +521,34 @@ fn typed_literal(value: Value, ty: &str) -> Result<String, Value> {
     .ok_or_else(|| err("BAD_MIGRATION", "backfill 값의 JSON 타입이 필드와 다름"))
 }
 
-fn backfill_cast(ty: &str) -> Option<&'static str> {
+fn backfill_cast(ty: &str) -> Option<String> {
+    if let Some((precision, scale)) = decimal_type(ty.trim_end_matches('?')) {
+        return Some(format!("numeric({precision},{scale})"));
+    }
     match ty.trim_end_matches('?') {
-        "Text" | "Url" => Some("text"),
-        "Int" => Some("bigint"),
-        "Bool" => Some("boolean"),
-        "Time" => Some("timestamptz"),
-        t if t.starts_with("Enum<") && t.ends_with('>') => Some("text"),
-        t if t.starts_with("Ref<") && t.ends_with('>') => Some("bigint"),
+        "Text" | "Email" | "Url" => Some("text".into()),
+        "Int" => Some("bigint".into()),
+        "Bool" => Some("boolean".into()),
+        "Time" => Some("timestamptz".into()),
+        "Date" => Some("date".into()),
+        t if t.starts_with("Enum<") && t.ends_with('>') => Some("text".into()),
+        t if (t.starts_with("Ref<") || t.starts_with("Id<")) && t.ends_with('>') => Some("bigint".into()),
         _ => None,
     }
 }
 
-fn physical_type(ty: &str) -> Option<&'static str> {
+fn physical_type(ty: &str) -> Option<String> {
+    if let Some((precision, scale)) = decimal_type(ty.trim_end_matches('?')) {
+        return Some(format!("numeric({precision},{scale})"));
+    }
     match ty.trim_end_matches('?') {
-        "Text" | "Url" => Some("text"),
-        "Int" => Some("bigint"),
-        "Bool" => Some("boolean"),
-        "Time" => Some("timestamptz"),
-        t if t.starts_with("Enum<") && t.ends_with('>') => Some("text"),
-        t if t.starts_with("Ref<") && t.ends_with('>') => Some("bigint"),
+        "Text" | "Email" | "Url" => Some("text".into()),
+        "Int" => Some("bigint".into()),
+        "Bool" => Some("boolean".into()),
+        "Time" => Some("timestamptz".into()),
+        "Date" => Some("date".into()),
+        t if t.starts_with("Enum<") && t.ends_with('>') => Some("text".into()),
+        t if (t.starts_with("Ref<") || t.starts_with("Id<")) && t.ends_with('>') => Some("bigint".into()),
         _ => None,
     }
 }
@@ -626,6 +654,78 @@ async fn lock_managed_tables(db: &impl GenericClient, schema: &str) -> Result<()
     Ok(())
 }
 
+async fn classify_capacity_changes(
+    db: &impl GenericClient,
+    schema: &str,
+    old_facts: &Value,
+    new_facts: &Value,
+    directives: &Directives,
+    changes: &mut Vec<Value>,
+    blocked: &mut bool,
+) -> Result<(), Value> {
+    for (res, new_resource) in new_facts["resources"].as_object().into_iter().flatten() {
+        let Some(old_resource) = old_facts["resources"].get(res) else {
+            // A resource added by this migration has no pre-existing rows to violate the new invariant.
+            continue;
+        };
+        let old_invariants = old_facts["resources"][res]["invariants"].as_object();
+        for (name, invariant) in new_resource["invariants"].as_object().into_iter().flatten() {
+            let enforcement = &invariant["enforcement"];
+            if enforcement["kind"] != "lockedCountCheck" || old_invariants.and_then(|invariants| invariants.get(name)) == Some(invariant) {
+                continue;
+            }
+            changes.push(json!({"class":"SecurityReview","reason":format!("{res}.{name} 정원 제약 추가 또는 변경")}));
+            let per = invariant["per"].as_str().ok_or_else(|| err("BAD_FACTS", "정원 그룹 필드 누락"))?;
+            let col = sqlgen::column(new_facts, res, per).ok_or_else(|| err("BAD_FACTS", "정원 그룹 열 누락"))?;
+            let max = enforcement["max"].as_i64().filter(|max| *max >= 1).ok_or_else(|| err("BAD_FACTS", "정원 상한 오류"))?;
+            let mut cx = sqlgen::Ctx::new(new_facts, None, "");
+            let env = sqlgen::Env { this: Some(("t".into(), res.clone())), ..Default::default() };
+            let condition = cx.cond(&enforcement["where"], &env).map_err(|_| err("BAD_FACTS", "정원 조건 SQL 생성 실패"))?;
+            let old_fields = old_resource["fields"].as_object().ok_or_else(|| err("BAD_FACTS", "기존 fields 객체 누락"))?;
+            let new_fields = new_resource["fields"].as_object().ok_or_else(|| err("BAD_FACTS", "새 fields 객체 누락"))?;
+            let mut projections = Vec::new();
+            let mut params = cx.params.values.clone();
+            for (field, descriptor) in new_fields {
+                let new_col = sqlgen::column(new_facts, res, field).ok_or_else(|| err("BAD_FACTS", "새 열 이름 오류"))?;
+                let new_type = physical_type(descriptor["ty"].as_str().unwrap_or("")).ok_or_else(|| err("BAD_FACTS", "정원 검사 물리 타입 오류"))?;
+                let expression = if let Some(old_descriptor) = old_fields.get(field) {
+                    let old_col = sqlgen::column(old_facts, res, field).ok_or_else(|| err("BAD_FACTS", "기존 열 이름 오류"))?;
+                    let old_type = physical_type(old_descriptor["ty"].as_str().unwrap_or(""))
+                        .ok_or_else(|| err("BAD_FACTS", "기존 정원 검사 물리 타입 오류"))?;
+                    if old_type == new_type { format!("src.{old_col}") } else { format!("src.{old_col}::text::{new_type}") }
+                } else if let Some(value) = directives.backfill.get(&(res.clone(), field.clone())) {
+                    let typed = typed_literal(value.clone(), descriptor["ty"].as_str().unwrap_or(""))?;
+                    params.push(Some(typed));
+                    format!("${}::text::{new_type}", params.len())
+                } else {
+                    format!("NULL::{new_type}")
+                };
+                projections.push(format!("{expression} AS {new_col}"));
+            }
+            let table = format!("{schema}.{}", sqlgen::snake(res));
+            let sql = format!(
+                "SELECT EXISTS (SELECT 1 FROM (SELECT {} FROM {table} src) t WHERE t.{col} IS NOT NULL AND ({condition}) IS TRUE GROUP BY t.{col} HAVING count(*) > {max})",
+                projections.join(", ")
+            );
+            let query_params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = params.iter().map(|value| value as _).collect();
+            let violated: bool = db.query_one(&sql, &query_params).await.map_err(|_| err("DB_CHECK", "기존 정원 데이터 검사 실패"))?.get(0);
+            if violated {
+                *blocked = true;
+                changes.push(json!({"class":"Blocked","reason":format!("{res}.{name} 기존 데이터가 정원 제약을 초과함")}));
+            }
+        }
+        for (name, old_invariant) in old_invariants.into_iter().flatten() {
+            if old_invariant["enforcement"]["kind"] == "lockedCountCheck"
+                && new_resource["invariants"].get(name) != Some(old_invariant)
+                && new_resource["invariants"].get(name).is_none()
+            {
+                changes.push(json!({"class":"SecurityReview","reason":format!("{res}.{name} 정원 제약 제거로 정책 완화")}));
+            }
+        }
+    }
+    Ok(())
+}
+
 async fn derive(db: &impl GenericClient, schema: &str, new_facts: &Value, migration: &Option<Value>) -> Result<(Value, Vec<Step>), Value> {
     let mut directives = parse_directives(migration)?;
     let old = verified_marker(db, schema).await?;
@@ -647,6 +747,7 @@ async fn derive(db: &impl GenericClient, schema: &str, new_facts: &Value, migrat
     if understood != *new_facts {
         changes.push(json!({"class":"SecurityReview","reason":"정책 또는 실행 facts 변경"}));
     }
+    classify_capacity_changes(db, schema, &old.facts, new_facts, &directives, &mut changes, &mut blocked).await?;
     for (res, old_res) in old_resources {
         let name = sqlgen::snake(res);
         let Some(new_res) = new_resources.get(res) else {
@@ -695,6 +796,22 @@ async fn derive(db: &impl GenericClient, schema: &str, new_facts: &Value, migrat
                 if fd != new_fd || old_def != new_def {
                     if old_def == new_def {
                         changes.push(json!({"class":"SecurityReview","reason":format!("{res}.{field} 의미 타입 변경")}));
+                        if new_fd["ty"].as_str().is_some_and(|ty| ty.trim_end_matches('?') == "Email")
+                            && fd["ty"].as_str().is_some_and(|ty| ty.trim_end_matches('?') != "Email")
+                        {
+                            let rows = db
+                                .query(&format!("SELECT {col} FROM {schema}.{name} WHERE {col} IS NOT NULL"), &[])
+                                .await
+                                .map_err(|_| err("DB_CHECK", "Email 기존 값 검사 실패"))?;
+                            let invalid = rows.iter().any(|row| {
+                                let value: String = row.get(0);
+                                spike_v2_read::scalar::parse(new_facts, "Email", &Value::String(value)).is_err()
+                            });
+                            if invalid {
+                                blocked = true;
+                                changes.push(json!({"class":"Blocked","reason":format!("{res}.{field} 기존 값이 Email 형식에 맞지 않음")}));
+                            }
+                        }
                     } else if let (Some(a), Some(b)) = (old_def, new_def) {
                         if a.replace(" NOT NULL", "") == b.replace(" NOT NULL", "") {
                             let adding = !a.contains(" NOT NULL") && b.contains(" NOT NULL");
@@ -761,14 +878,36 @@ async fn derive(db: &impl GenericClient, schema: &str, new_facts: &Value, migrat
                                 }
                                 if old_ty != new_ty {
                                     match directives.convert.remove(&(res.clone(), field.clone())) {
-                                        Some(to) if to == new_fd["ty"].as_str().unwrap_or("") => steps.push(Step {
-                                            sql: format!(
-                                                "ALTER TABLE {schema}.{name} ALTER COLUMN {new_col} TYPE {new_ty} USING ({new_col}::text::{new_ty})"
-                                            ),
-                                            class: "Destructive",
-                                            value: None,
-                                            reason: reason.clone(),
-                                        }),
+                                        Some(to) if to == new_fd["ty"].as_str().unwrap_or("") => {
+                                            let target_ty = new_fd["ty"].as_str().unwrap_or("");
+                                            let decimal_values_fit = if decimal_type(target_ty.trim_end_matches('?')).is_some() {
+                                                let rows = db
+                                                    .query(&format!("SELECT {new_col}::text FROM {schema}.{name} WHERE {new_col} IS NOT NULL"), &[])
+                                                    .await
+                                                    .map_err(|_| err("DB_CHECK", "Decimal 기존 값 검사 실패"))?;
+                                                let invalid = rows.iter().any(|row| {
+                                                    let value: String = row.get(0);
+                                                    spike_v2_read::scalar::parse(new_facts, target_ty, &Value::String(value)).is_err()
+                                                });
+                                                if invalid {
+                                                    blocked = true;
+                                                    changes.push(json!({"class":"Blocked","reason":format!("{res}.{field} 기존 값이 {target_ty} precision/scale을 벗어남")}));
+                                                }
+                                                !invalid
+                                            } else {
+                                                true
+                                            };
+                                            if decimal_values_fit {
+                                                steps.push(Step {
+                                                    sql: format!(
+                                                        "ALTER TABLE {schema}.{name} ALTER COLUMN {new_col} TYPE {new_ty} USING ({new_col}::text::{new_ty})"
+                                                    ),
+                                                    class: "Destructive",
+                                                    value: None,
+                                                    reason: reason.clone(),
+                                                });
+                                            }
+                                        }
                                         _ => {
                                             blocked = true;
                                             changes.push(json!({"class":"Blocked","reason":format!("{res}.{field} 명시 convert 필요")}));

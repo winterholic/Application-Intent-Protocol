@@ -77,9 +77,10 @@ fn ts_type(facts: &Value, ty: &str) -> String {
         facts["enums"][e].as_array().unwrap().iter().map(|v| format!("\"{}\"", v.as_str().unwrap())).collect::<Vec<_>>().join(" | ")
     } else {
         match base {
-            "Text" | "Url" | "Time" => "string".into(),
+            "Text" | "Email" | "Url" | "Time" | "Date" => "string".into(),
             "Int" => "number".into(),
             "Bool" => "boolean".into(),
+            decimal if decimal.starts_with("Decimal<") && decimal.ends_with('>') => "string".into(),
             other => format!("unknown /* {other} */"),
         }
     };

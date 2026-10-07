@@ -1,5 +1,5 @@
 //! 호출자 정형 읽기 요청을 facts의 허용 범위로 검증하고 매개변수 SQL 하나로 만든다.
-use crate::sqlgen::{column, table, Ctx, Env, Handle};
+use crate::sqlgen::{self, column, table, Ctx, Env, Handle};
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 
@@ -243,7 +243,7 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
                         } else {
                             col
                         };
-                        cols.push((f.clone(), expr));
+                        cols.push((f.clone(), sqlgen::json_scalar(fty, &expr)));
                         out.insert(f.clone(), out_ty(fty, k == "fieldWithPolicy"));
                     }
                 }
@@ -300,7 +300,7 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
                     } else {
                         col
                     };
-                    pairs.push(format!("'{f}', {e}"));
+                    pairs.push(format!("'{f}', {}", sqlgen::json_scalar(fty, &e)));
                     tout.insert(f.to_string(), out_ty(fty, redact));
                 }
                 // 대상 resource의 행 정책을 다시 적용한다. 안 보이는 관계는 null이 된다.
@@ -612,7 +612,7 @@ fn plan_traverse_many(
         } else {
             col
         };
-        pairs.push(format!("'{f}', {e}"));
+        pairs.push(format!("'{f}', {}", sqlgen::json_scalar(fty, &e)));
         tout.insert(f.to_string(), out_ty(fty, redact));
     }
     let row = cx.cond(&tf["rowRead"], &inner_env).map_err(internal)?;

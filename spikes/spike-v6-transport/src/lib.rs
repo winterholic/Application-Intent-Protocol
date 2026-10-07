@@ -91,7 +91,10 @@ async fn handle_apply(db: &mut Client, facts: &Value, body: &Value, caller: &Cal
             Ok(t) => t,
             Err(_) => return json!({ "ok": false, "code": "INTERNAL" }),
         };
-        if let Err(error) = tx.batch_execute("SET LOCAL statement_timeout = '2000ms'; SET LOCAL TimeZone = 'UTC'").await {
+        if let Err(error) = tx
+            .batch_execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED; SET LOCAL statement_timeout = '2000ms'; SET LOCAL TimeZone = 'UTC'")
+            .await
+        {
             return err(classify_write_error("세션 설정", error));
         }
         // 같은 키가 이미 커밋됐으면 다시 실행하지 않고 저장된 결과를 준다. 같은 키에 다른 요청이면 거부.

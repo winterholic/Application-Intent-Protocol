@@ -19,6 +19,10 @@ cargo fmt --all --check
 cargo clippy --workspace --lib --bins --locked -- -D warnings
 cargo clippy -p aip-auth -p aip-migrate -p aip-service --all-targets --locked -- -D warnings
 cargo test --workspace --locked
+# These product engines are path dependencies excluded from the root workspace.
+for engine in spike-v1-fixture spike-v2-read spike-v3-write spike-v5-sdk; do
+  cargo test --manifest-path "spikes/$engine/Cargo.toml" --locked --target-dir target
+done
 node --test \
   spikes/spike-v5-sdk/sdk/cache.test.ts \
   spikes/spike-v5-sdk/sdk/lifetime.test.ts \
@@ -27,6 +31,8 @@ node --test \
   spikes/spike-v6-transport/client/v12-contract.test.ts \
   spikes/spike-v6-transport/client/v13-binding.test.ts \
   spikes/spike-v6-transport/client/v14-envelope.test.ts \
+  spikes/spike-v6-transport/client/scalar-validation.test.ts \
+  spikes/spike-v6-transport/client/traverse-many.test.ts \
   product/tests/sdk-package.test.mjs \
   product/tests/package-boundaries.test.mjs
 

@@ -66,3 +66,17 @@ fn nullable_presence_enum_membership_and_exact_keys_are_preserved() {
         check_record(&facts, &decl, &json!({ "required": "ok", "optional": null, "role": "UNKNOWN" }), "출력").expect_err("invalid worker output");
     assert_eq!(output_err.code, "OUTPUT_INVALID");
 }
+
+#[test]
+fn decimal_worker_input_and_output_are_lossless_strings_with_declared_precision() {
+    let facts = json!({ "enums": {} });
+    let decl = json!([["amount", "Decimal<5,2>"]]);
+    check_record(&facts, &decl, &json!({ "amount": "123.45" }), "입력").expect("valid decimal input");
+    check_record(&facts, &decl, &json!({ "amount": "123.45" }), "출력").expect("valid decimal output");
+
+    for invalid in ["1234.56", "1.001", "NaN", "1e3", "+1", "01.00"] {
+        assert_eq!(check_record(&facts, &decl, &json!({ "amount": invalid }), "입력").unwrap_err().code, "BAD_VALUE", "{invalid}");
+        assert_eq!(check_record(&facts, &decl, &json!({ "amount": invalid }), "출력").unwrap_err().code, "OUTPUT_INVALID", "{invalid}");
+    }
+    assert_eq!(check_record(&facts, &decl, &json!({ "amount": 12.5 }), "입력").unwrap_err().code, "BAD_VALUE");
+}

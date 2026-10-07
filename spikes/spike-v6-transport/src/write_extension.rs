@@ -39,7 +39,14 @@ pub async fn apply(db: &mut Client, facts: &Value, body: &Value, caller: &Caller
             Ok(tx) => tx,
             Err(_) => return failure("INTERNAL"),
         };
-        if tx.batch_execute(&format!("SET LOCAL statement_timeout='{}ms'; SET LOCAL TimeZone='UTC'", deadline.as_millis())).await.is_err() {
+        if tx
+            .batch_execute(&format!(
+                "SET TRANSACTION ISOLATION LEVEL READ COMMITTED; SET LOCAL statement_timeout='{}ms'; SET LOCAL TimeZone='UTC'",
+                deadline.as_millis()
+            ))
+            .await
+            .is_err()
+        {
             return failure("INTERNAL");
         }
         if tx.execute("SELECT pg_advisory_xact_lock(hashtext($1))", &[&format!("{principal}:{key}")]).await.is_err() {

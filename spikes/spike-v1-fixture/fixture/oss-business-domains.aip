@@ -1,0 +1,37 @@
+enum TicketStatus { AVAILABLE, SOLD }
+enum BookingStatus { REQUESTED, CANCELLED }
+resource Member { fields { id: Id; email: Email } }
+actor Member
+resource Event { fields { id: Id; name: Text } }
+limit ticketCapacity on Ticket = atMost 2 where status = SOLD
+resource Ticket {
+  fields { id: Id; event: Event; status: TicketStatus }
+  rows read when true
+  transition sell { allow actor != null; from status = AVAILABLE; to status = SOLD }
+  expose apply sell { target id; bulk maxRows 1 }
+  invariant ticketCapacity per event
+}
+resource Appointment {
+  fields { id: Id; owner: Member; startsAt: Time; endsAt: Time; status: BookingStatus }
+  rows read when owner = actor
+  check validInterval when startsAt < endsAt
+  transition cancel {
+    allow owner = actor
+    from status = REQUESTED
+    to status = CANCELLED
+    notify owner "booking.cancelled"
+  }
+  expose apply cancel { target id; bulk maxRows 1 }
+}
+resource Submission { fields { id: Id; event: Event } }
+resource Signer {
+  fields { id: Id; submission: Submission; role: Text; email: Email }
+  unique submission, role
+}
+resource StockItem {
+  fields { id: Id; part: Text; onHand: Int(0..1000); allocated: Int(0..1000) }
+  rows read when true
+  check withinAvailableStock when allocated >= 0 and allocated <= onHand
+  transition reserve { allow actor != null; from true; to allocated = this.allocated + 1 }
+  expose apply reserve { target id; bulk maxRows 1 }
+}

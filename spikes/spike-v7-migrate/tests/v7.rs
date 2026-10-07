@@ -178,12 +178,18 @@ async fn v7_migration_precheck() {
             "SecurityReview",
         ),
     ];
-    // 집행할 수 없는 숫자 조건 불변식은 이제 정의 검사에서 먼저 거부한다. 배포 계획까지 오지 않는다.
+    // 숫자 조건도 정의 단계에서 거부하지 않고 기존 데이터 위반 개수를 검사한다.
     let unsupported = A
         .replacen("  invariant atMostOnePublished per club", "  invariant atMostOnePublished per club\n  invariant twoNonneg per club", 1)
         .replacen("limit atMostOnePublished", "limit twoNonneg on Recruitment = atMost 2 where views >= 0\nlimit atMostOnePublished", 1);
-    if !format!("{:?}", load_str(&unsupported, Form::A).err()).contains("UNSUPPORTED_INVARIANT") {
-        fails.push("r8 숫자 조건 불변식 추가: 정의 검사에서 UNSUPPORTED_INVARIANT 거부 기대".into());
+    let count_limit = facts(&unsupported);
+    let (cs, applicable) = check(&db, &base, &count_limit, NOW).await;
+    let count_check = cs.iter().find(|c| c.what.contains("불변식 twoNonneg 추가"));
+    if !matches!(count_check, Some(c) if c.class == "Blocked" && c.detail["violatingGroups"] == 1) || applicable {
+        fails.push(format!(
+            "r8 atMost 숫자 불변식은 기존 초과 그룹 1개로 Blocked 기대: {:?}/{applicable}",
+            count_check.map(|c| (&c.class, &c.detail))
+        ));
     }
     for (name, new, want) in &r8 {
         let (cs, applicable) = check(&db, &base, new, NOW).await;

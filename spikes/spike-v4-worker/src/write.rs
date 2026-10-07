@@ -97,9 +97,12 @@ async fn run_write_in(
     w.next_invoke += 1;
     let invoke_id = w.next_invoke;
     let token = format!("w{invoke_id}-{}", Instant::now().elapsed().as_nanos());
-    tx.batch_execute(&format!("SET LOCAL statement_timeout = '{}ms'; SET LOCAL TimeZone = 'UTC'", deadline.as_millis()))
-        .await
-        .map_err(|_| Reject { code: "INTERNAL", msg: "세션 설정 실패".into() })?;
+    tx.batch_execute(&format!(
+        "SET TRANSACTION ISOLATION LEVEL READ COMMITTED; SET LOCAL statement_timeout = '{}ms'; SET LOCAL TimeZone = 'UTC'",
+        deadline.as_millis()
+    ))
+    .await
+    .map_err(|_| Reject { code: "INTERNAL", msg: "세션 설정 실패".into() })?;
     w.send_before(&json!({ "type": "invoke", "invoke": invoke_id, "impl": x["implementation"], "input": input, "token": token }), expires).await?;
     // ctx 쓰기가 한 번이라도 실패하면 확장이 오류를 잡고 성공을 돌려줘도 커밋하지 않는다(트랜잭션 오염 방지).
     let mut poisoned: Option<&'static str> = None;

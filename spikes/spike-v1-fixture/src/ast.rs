@@ -23,6 +23,7 @@ pub struct TypeRef {
     pub id_of: bool,
     pub nullable: bool,
     pub range: Option<(i64, i64)>,
+    pub decimal: Option<(u8, u8)>,
     pub span: Span,
 }
 

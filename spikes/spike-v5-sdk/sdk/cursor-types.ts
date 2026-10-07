@@ -9,7 +9,7 @@ interface C {
     traverse: {};
     filterFields: {};
     filter: never;
-    sort: "views";
+    sort: "id" | "title";
     maxRows: 50;
     cursor: true;
   };
@@ -24,12 +24,16 @@ interface C {
   };
 }
 
-export const ok: Query<C, "Post"> = { read: "Post", select: ["id"], sort: [{ field: "views", dir: "desc" }], after: { views: 5, id: 9 } };
+export const ok: Query<C, "Post"> = { read: "Post", select: ["id"], sort: [{ field: "title", dir: "desc" }], after: { title: "post", id: 9 } };
 export const first: Query<C, "Post"> = { read: "Post", select: ["id"] };
+export const defaultIdCursor: Query<C, "Post"> = { read: "Post", select: ["id"], after: { id: 9 } };
+export const explicitIdCursor: Query<C, "Post"> = { read: "Post", select: ["id"], sort: [{ field: "id" }], after: { id: 9 } };
 // @ts-expect-error 값 타입은 필드 타입을 따른다
-export const badValue: Query<C, "Post"> = { read: "Post", select: ["id"], after: { views: "5", id: 9 } };
-// @ts-expect-error sort 허용 목록 밖 필드(title)는 cursor 키가 될 수 없다
-export const badKey: Query<C, "Post"> = { read: "Post", select: ["id"], after: { title: "a", id: 9 } };
+export const badValue: Query<C, "Post"> = { read: "Post", select: ["id"], after: { id: "9" } };
+// @ts-expect-error sort 허용 목록 밖 필드(views)는 cursor 키가 될 수 없다
+export const badKey: Query<C, "Post"> = { read: "Post", select: ["id"], after: { views: 5, id: 9 } };
+// @ts-expect-error after title follows the field's string value type
+export const badTitleValue: Query<C, "Post"> = { read: "Post", select: ["id"], after: { title: 5, id: 9 } };
 // @ts-expect-error id 누락
 export const noId: Query<C, "Post"> = { read: "Post", select: ["id"], after: { views: 5 } };
 // @ts-expect-error cursor를 선언하지 않은 resource는 after 키를 쓸 수 없다

@@ -77,9 +77,14 @@ export type SortItem<C extends ContractShape<C>, R extends keyof C> = { readonly
 /** offset은 budget이 opt-in한 resource에만 연다. 값 범위(0..=maxOffset)는 타입이 아니라 서버가 검사한다. */
 export type OffsetOpt<C extends ContractShape<C>, R extends keyof C> = C[R] extends { readonly maxOffset: number } ? { readonly offset?: number } : {};
 
-/** after는 budget이 cursor를 opt-in한 resource에만 연다. 키는 sort 허용 필드와 id, 값은 필드 타입. 요청 sort와의 일치는 서버가 검사한다. */
+/** after는 budget이 cursor를 opt-in한 resource에만 연다. id는 필수이고 정렬 필드는 선택 값이다. 정확한 키 조합은 서버가 요청 sort와 대조한다. */
+type CursorFields<C extends ContractShape<C>, R extends keyof C> = {
+  readonly id: C[R]["fields"]["id"];
+} & {
+  readonly [K in Exclude<((C[R]["sort"] & string) | "id") & keyof C[R]["fields"], "id">]?: C[R]["fields"][K];
+};
 export type CursorOpt<C extends ContractShape<C>, R extends keyof C> = C[R] extends { readonly cursor: true }
-  ? { readonly after?: { readonly [K in ((C[R]["sort"] & string) | "id") & keyof C[R]["fields"]]: C[R]["fields"][K] } }
+  ? { readonly after?: CursorFields<C, R> }
   : {};
 
 export type Query<C extends ContractShape<C>, R extends Root<C>> = {

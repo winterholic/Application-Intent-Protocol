@@ -210,3 +210,16 @@
 ## 변경 이력
 
 - 2026-10-07: 초안. 오픈소스 24개 조사.
+
+## 실제 소스에서 추출한 규칙의 실행 대조
+
+후속 작업에서는 API 문서 요약과 별개로 아래 공개 GitHub 소스·테스트의 commit을 고정해 읽었다. 외부 프로젝트 코드는 실행하지 않았다. 필요한 업무 규칙을 AIP 독립 도메인으로 옮겨 의미 검사와 실제 PostgreSQL 전이를 실행했다. 전체 프로젝트와의 동등성을 주장하는 비교는 아니다.
+
+| 원본 규칙과 근거 | AIP 실행 대조 | 남은 경계 |
+|---|---|---|
+| [pretix 정원 경쟁 테스트](https://github.com/pretix/pretix/blob/fe43862fa473c43b139bc00710aa1fc4a06ef726/src/tests/concurrency_tests/test_order_creation_locking.py#L91-L126) | Ticket의 정원 2 초과 시 전이 전체 취소, 같은 그룹 동시 쓰기의 하나만 커밋 | 원본의 cart·expired reservation·quota 종류 전체를 이식한 것은 아님 |
+| [django-appointment 시간 검증](https://github.com/adamspd/django-appointment/blob/3e176df7141d10ea9447730b5e4d7b7d5dfc4899/appointment/models.py#L468-L492) | 시작 < 종료 check, 잘못된 구간에서 취소·outbox까지 rollback | [구간 겹침 검사](https://github.com/adamspd/django-appointment/blob/3e176df7141d10ea9447730b5e4d7b7d5dfc4899/appointment/tests/test_services.py#L750-L780)는 실행 불변식으로 지원하지 않으며 UNSUPPORTED_INVARIANT 대조를 남김 |
+| [DocuSeal 서명자 role 중복 거부](https://github.com/docusealco/docuseal/blob/c6a7555f545ea8ea96207f198c2d8e42d16b091f/spec/requests/submissions_spec.rb#L172-L197) | 같은 submission·role의 복합 유일 제약 위반, 다른 submission의 같은 role 허용 | template별 서명자 수 상한 전체를 재현한 것은 아님 |
+| [InvenTree 오래된 주문 취소 재시도](https://github.com/inventree/InvenTree/blob/575fbdc9072dee89bc5624cb7b2604829826f552/src/backend/InvenTree/order/test_sales_order.py#L311-L341) | 주문 상태·단일 할당 상태·outbox를 원자 변경, 재시도 거부로 outbox 중복 방지 | 원본의 다중 할당 해제는 기존 exact-one update 효과로 거부됨. bounded 다중 효과를 별도 보완 대상으로 삼음 |
+
+테스트 정본은 `spike-v1-fixture/tests/oss_business_patterns.rs`, `spike-v3-write/tests/oss_business_domains.rs`, `oss_cancel_idempotence.rs` 및 정원 경쟁 전용 `cardinality_capacity.rs`다. 재고 예약은 별도 StockItem 정의에서 `allocated <= onHand`와 원자 증감·실패 rollback을 확인한다. 이 실행 대조로 앞의 24개 조사 빈도나 전체 지원 비율을 다시 계산하지 않는다.

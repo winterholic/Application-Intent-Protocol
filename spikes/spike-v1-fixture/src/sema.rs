@@ -7,9 +7,12 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 pub enum Ty {
     Id(String),
     Text,
+    Email,
     Url,
     Time,
+    Date,
     Int,
+    Decimal(u8, u8),
     Bool,
     Enum(String),
     Ref(String),
@@ -30,9 +33,12 @@ impl TT {
         let s = match &self.ty {
             Ty::Id(r) => format!("Id<{r}>"),
             Ty::Text => "Text".into(),
+            Ty::Email => "Email".into(),
             Ty::Url => "Url".into(),
             Ty::Time => "Time".into(),
+            Ty::Date => "Date".into(),
             Ty::Int => "Int".into(),
+            Ty::Decimal(precision, scale) => format!("Decimal<{precision},{scale}>"),
             Ty::Bool => "Bool".into(),
             Ty::Enum(e) => format!("Enum<{e}>"),
             Ty::Ref(r) => format!("Ref<{r}>"),
@@ -44,6 +50,67 @@ impl TT {
             s
         }
     }
+}
+
+fn valid_email(s: &str) -> bool {
+    if s.contains('\0') || s.chars().any(char::is_whitespace) {
+        return false;
+    }
+    let Some((local, domain)) = s.split_once('@') else {
+        return false;
+    };
+    !local.is_empty() && !domain.is_empty() && !domain.starts_with('.') && !domain.ends_with('.') && domain.contains('.') && !domain.contains('@')
+}
+
+fn valid_date(s: &str) -> bool {
+    let b = s.as_bytes();
+    if b.len() != 10
+        || !b.is_ascii()
+        || b[4] != b'-'
+        || b[7] != b'-'
+        || ![&b[..4], &b[5..7], &b[8..]].iter().all(|part| part.iter().all(u8::is_ascii_digit))
+    {
+        return false;
+    }
+    let number = |part: &[u8]| std::str::from_utf8(part).ok().and_then(|s| s.parse::<u32>().ok());
+    let (Some(year), Some(month), Some(day)) = (number(&b[..4]), number(&b[5..7]), number(&b[8..])) else {
+        return false;
+    };
+    if year == 0 || !(1..=12).contains(&month) {
+        return false;
+    }
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let days = match month {
+        2 if leap => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    };
+    (1..=days).contains(&day)
+}
+
+fn valid_decimal(s: &str, precision: u8, scale: u8) -> bool {
+    if s.len() > 41 || !s.is_ascii() {
+        return false;
+    }
+    let unsigned = s.strip_prefix('-').unwrap_or(s);
+    if unsigned.is_empty() || unsigned.starts_with('+') {
+        return false;
+    }
+    let mut parts = unsigned.split('.');
+    let integer = parts.next().unwrap_or_default();
+    let fraction = parts.next();
+    if parts.next().is_some() || integer.is_empty() || !integer.bytes().all(|b| b.is_ascii_digit()) || !(integer == "0" || !integer.starts_with('0'))
+    {
+        return false;
+    }
+    if let Some(fraction) = fraction {
+        if scale == 0 || fraction.is_empty() || fraction.len() > usize::from(scale) || !fraction.bytes().all(|b| b.is_ascii_digit()) {
+            return false;
+        }
+    }
+    let integer_digits = if integer == "0" { 0 } else { integer.len() };
+    integer_digits <= usize::from(precision - scale)
 }
 
 /// 참조와 그 참조의 Id는 같은 행을 가리키므로 비교·인자 전달에서 호환으로 본다(spike 규칙).
@@ -176,9 +243,18 @@ impl<'a> Ctx<'a> {
                     }
                 },
                 "Text" => Ty::Text,
+                "Email" => Ty::Email,
                 "Url" => Ty::Url,
                 "Time" => Ty::Time,
+                "Date" => Ty::Date,
                 "Int" => Ty::Int,
+                "Decimal" => match t.decimal {
+                    Some((precision, scale)) => Ty::Decimal(precision, scale),
+                    None => {
+                        self.d("BAD_DECIMAL_TYPE", "Decimal은 precision과 scale이 필요. `Decimal(p,s)` 형식을 쓴다", t.span);
+                        return None;
+                    }
+                },
                 "Bool" => Ty::Bool,
                 n if self.enums.contains_key(n) => Ty::Enum(n.to_string()),
                 n if self.res.contains_key(n) => Ty::Ref(n.to_string()),
@@ -210,9 +286,12 @@ impl<'a> Ctx<'a> {
             match t.name.as_str() {
                 "Id" => Ty::Id(r.to_string()),
                 "Text" => Ty::Text,
+                "Email" => Ty::Email,
                 "Url" => Ty::Url,
                 "Time" => Ty::Time,
+                "Date" => Ty::Date,
                 "Int" => Ty::Int,
+                "Decimal" => Ty::Decimal(t.decimal?.0, t.decimal?.1),
                 "Bool" => Ty::Bool,
                 n if self.enums.contains_key(n) => Ty::Enum(n.to_string()),
                 n => Ty::Ref(n.to_string()),
@@ -305,6 +384,23 @@ impl<'a> Ctx<'a> {
     }
 
     fn expect(&self, e: &Expr, sc: &Scope, want: Option<&TT>) -> Result<(Value, TT), Diag> {
+        if let (Expr::Str(value), Some(expected)) = (e, want) {
+            match &expected.ty {
+                Ty::Email if valid_email(value) => return Ok((json!({ "lit": value, "ty": "Email" }), TT::new(Ty::Email))),
+                Ty::Date if valid_date(value) => return Ok((json!({ "lit": value, "ty": "Date" }), TT::new(Ty::Date))),
+                Ty::Decimal(precision, scale) if valid_decimal(value, *precision, *scale) => {
+                    let ty = format!("Decimal<{precision},{scale}>");
+                    return Ok((json!({ "lit": value, "ty": ty }), TT::new(Ty::Decimal(*precision, *scale))));
+                }
+                Ty::Email | Ty::Date => {
+                    return Err(Diag::new("BAD_VALUE", format!("`{}` 형식의 문자열 리터럴 필요", expected.show()), span_of(e)));
+                }
+                Ty::Decimal(_, _) => {
+                    return Err(Diag::new("BAD_VALUE", format!("`{}` 형식의 문자열 리터럴 필요", expected.show()), span_of(e)));
+                }
+                _ => {}
+            }
+        }
         if let (Expr::Path(segs, sp), Some(TT { ty: Ty::Enum(en), .. })) = (e, want) {
             if segs.len() == 1 {
                 match self.path(segs, *sp, sc) {
@@ -362,17 +458,23 @@ impl<'a> Ctx<'a> {
             Expr::Not(x) => Ok((json!({ "not": self.bool_of(x, sc)? }), b)),
             Expr::Arith(_, _, _, sp) => Err(Diag::new("ARITH_NOT_ALLOWED", "산술식은 transition `to`의 `필드 = 필드 ± 정수`에서만 쓸 수 있음", *sp)),
             Expr::Cmp(op, l, r) => {
-                let (lv, lt, rv, rt) = match self.ex(l, sc) {
-                    Ok((lv, lt)) => {
-                        let (rv, rt) = self.expect(r, sc, Some(&lt))?;
-                        (lv, lt, rv, rt)
+                let (lv, lt, rv, rt) = if matches!(l.as_ref(), Expr::Str(_)) {
+                    let (rv, rt) = self.ex(r, sc)?;
+                    let (lv, lt) = self.expect(l, sc, Some(&rt))?;
+                    (lv, lt, rv, rt)
+                } else {
+                    match self.ex(l, sc) {
+                        Ok((lv, lt)) => {
+                            let (rv, rt) = self.expect(r, sc, Some(&lt))?;
+                            (lv, lt, rv, rt)
+                        }
+                        Err(d) if d.code == UNRESOLVED => {
+                            let (rv, rt) = self.ex(r, sc)?;
+                            let (lv, lt) = self.expect(l, sc, Some(&rt))?;
+                            (lv, lt, rv, rt)
+                        }
+                        Err(d) => return Err(d),
                     }
-                    Err(d) if d.code == UNRESOLVED => {
-                        let (rv, rt) = self.ex(r, sc)?;
-                        let (lv, lt) = self.expect(l, sc, Some(&rt))?;
-                        (lv, lt, rv, rt)
-                    }
-                    Err(d) => return Err(d),
                 };
                 let sp = span_of(e);
                 if lt.ty == Ty::Null || rt.ty == Ty::Null {
@@ -387,7 +489,7 @@ impl<'a> Ctx<'a> {
                     }
                 } else if !same_target(&lt.ty, &rt.ty) {
                     return Err(Diag::new("TYPE_MISMATCH", format!("`{}` {op} `{}`", lt.show(), rt.show()), sp));
-                } else if !matches!(*op, "=" | "!=") && !matches!(lt.ty, Ty::Time | Ty::Int | Ty::Text) {
+                } else if !matches!(*op, "=" | "!=") && !matches!(lt.ty, Ty::Time | Ty::Date | Ty::Int | Ty::Decimal(_, _) | Ty::Text) {
                     return Err(Diag::new("TYPE_MISMATCH", format!("`{}`는 크기 비교 불가", lt.show()), sp));
                 }
                 Ok((json!({ "cmp": op, "l": lv, "r": rv }), b))
@@ -456,9 +558,12 @@ impl<'a> Ctx<'a> {
         } else {
             match t.name.as_str() {
                 "Text" => Ty::Text,
+                "Email" => Ty::Email,
                 "Url" => Ty::Url,
                 "Time" => Ty::Time,
+                "Date" => Ty::Date,
                 "Int" => Ty::Int,
+                "Decimal" => Ty::Decimal(t.decimal?.0, t.decimal?.1),
                 "Bool" => Ty::Bool,
                 n if self.enums.contains_key(n) => Ty::Enum(n.into()),
                 n if self.res.contains_key(n) => Ty::Ref(n.into()),
@@ -895,17 +1000,17 @@ impl<'a> Ctx<'a> {
                 }
             }
             let deferred = r.deferred_invariants.contains(n);
-            // lockedCountCheck는 V3(spike-v3-write)도 집행하지 않고 DDL 생성(sqlgen)도 거부한다.
-            // check 통과 후 init 실패가 없도록 여기서 같은 판정을 낸다.
-            if !(l["atMost"] == json!(1) && index_safe(&l["where"])) {
-                self.d(
-                    "UNSUPPORTED_INVARIANT",
-                    format!("`{n}`: atMost 1이고 조건이 이 행의 필드와 리터럴만 쓰는 형태만 집행할 수 있음(시간·actor·하위조회 의존이나 atMost 2 이상은 미지원). atMost 1 형태로 바꿔라"),
-                    *sp,
-                );
+            // 조건은 DB가 행별로 평가할 수 있는 표현으로 제한한다. N=1은 부분 고유 인덱스,
+            // 더 큰 N은 쓰기 경로의 직렬화된 집계 검사로 집행한다.
+            if !index_safe(&l["where"]) {
+                self.d("UNSUPPORTED_INVARIANT", format!("`{n}`: 조건은 이 행의 필드와 리터럴만 사용해야 함(시간·actor·하위조회 의존은 미지원)"), *sp);
                 continue;
             }
-            let enforcement = json!({ "kind": "partialUniqueIndex", "columns": [per], "where": l["where"], "deferred": deferred });
+            let enforcement = if l["atMost"] == json!(1) {
+                json!({ "kind": "partialUniqueIndex", "columns": [per], "where": l["where"], "deferred": deferred })
+            } else {
+                json!({ "kind": "lockedCountCheck", "columns": [per], "where": l["where"], "max": l["atMost"], "deferred": deferred })
+            };
             inv.insert(n.clone(), json!({ "per": per, "enforcement": enforcement }));
         }
         o.insert("invariants".into(), Value::Object(inv));
@@ -1156,10 +1261,10 @@ impl<'a> Ctx<'a> {
                 // Ref는 대상 행의 Id로 비교한다(값은 Id wire를 따른다). 같은 검사를 필드 단위로 거치므로 filter 대상 규칙은 연산자와 무관하게 적용된다.
                 "eq" => true,
                 // in: 값 배열. 범위 비교 대상(Time/Int)과 Bool은 제외한다. 배열 길이 상한은 호출 시점(plan.rs MAX_IN_VALUES)에서 검사한다.
-                "in" => matches!(tt.ty, Ty::Text | Ty::Enum(_) | Ty::Id(_) | Ty::Ref(_)),
+                "in" => matches!(tt.ty, Ty::Text | Ty::Email | Ty::Enum(_) | Ty::Id(_) | Ty::Ref(_)),
                 // isNull: bool 값. 항상 값이 있는 필드에는 의미가 없으므로 nullable 필드에만 연다.
                 "isNull" => tt.nullable,
-                "gte" | "lte" | "gt" | "lt" => matches!(tt.ty, Ty::Time | Ty::Int),
+                "gte" | "lte" | "gt" | "lt" => matches!(tt.ty, Ty::Time | Ty::Date | Ty::Int | Ty::Decimal(_, _)),
                 "prefix" => tt.ty == Ty::Text,
                 // contains: 리터럴 부분일치(Text만). 대소문자 무시(icontains)는 DB collation 의존이라 보류.
                 "contains" => tt.ty == Ty::Text,

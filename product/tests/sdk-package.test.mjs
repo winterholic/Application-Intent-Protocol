@@ -151,11 +151,17 @@ test("the installed declarations preserve strict typed reads and reject hidden f
   const source = `
 import { connect, type ContractBinding } from "@aip/sdk";
 const contract = {
-  Event: { root: true, fields: { id: "" as string, title: "" as string }, traverse: {}, filterFields: {}, filter: "", sort: "", maxRows: 10 },
+  Event: { root: true, fields: { id: "" as string, title: "" as string }, traverse: {}, traverseMany: { comments: { target: "Comment", select: "body", maxLimit: 3 } }, filterFields: {}, filter: "", sort: "id" as "id" | "title", maxRows: 10, maxOffset: 20, cursor: true },
+  Comment: { root: false, fields: { body: "" as string }, traverse: {}, filterFields: {}, filter: "", sort: "", maxRows: 0 },
+  Audit: { root: true, fields: { id: "" as string }, traverse: {}, filterFields: {}, filter: "", sort: "id", maxRows: 5 },
 } as const;
 const binding = {
   fingerprint: "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
-  readDescriptors: { Event: { root: true, maxRows: 10, fields: { id: { type: "Id", nullable: false }, title: { type: "Text", nullable: false } }, traverse: {} } },
+  readDescriptors: {
+    Event: { root: true, maxRows: 10, fields: { id: { type: "Id", nullable: false }, title: { type: "Text", nullable: false } }, traverse: {}, traverseMany: { comments: { target: "Comment", select: ["body"], maxLimit: 3 } } },
+    Comment: { root: false, maxRows: 0, fields: { body: { type: "Text", nullable: false } }, traverse: {} },
+    Audit: { root: true, maxRows: 5, fields: { id: { type: "Id", nullable: false } }, traverse: {} },
+  },
   idWire: "decimal-string-v13",
   __contract: undefined as unknown as typeof contract,
   __apply: {},
@@ -164,6 +170,22 @@ const client = connect("https://aip.test", "jwt-access-token", binding);
 async function check() {
   const result = await client.read({ read: "Event", select: ["title"] as const });
   const title: string = result.rows[0].title;
+  const many = await client.read({ read: "Event", select: ["id", { comments: { select: ["body"], limit: 2 } }], offset: 20 });
+  await client.read({ read: "Event", select: ["id"], after: { id: "1" } });
+  await client.read({ read: "Event", select: ["id"], sort: [{ field: "id" }], after: { id: "1" } });
+  await client.read({ read: "Event", select: ["id", "title"], sort: [{ field: "title" }], after: { title: "next", id: "1" } });
+  // @ts-expect-error after values retain the generated field type
+  await client.read({ read: "Event", select: ["id"], after: { title: 5, id: "1" } });
+  // @ts-expect-error after keys are limited to id and allowed sort fields
+  await client.read({ read: "Event", select: ["id"], after: { body: "hidden", id: "1" } });
+  const commentBody: string = many.rows[0].comments[0].body;
+  void commentBody;
+  // @ts-expect-error child select is closed by the generated 1:N descriptor
+  await client.read({ read: "Event", select: [{ comments: { select: ["secret"] } }] });
+  // @ts-expect-error offset requires a generated opt-in
+  await client.read({ read: "Audit", select: ["id"], offset: 1 });
+  // @ts-expect-error cursor requires a generated opt-in
+  await client.read({ read: "Audit", select: ["id"], after: { id: "1" } });
   // @ts-expect-error fields omitted from the projection are inaccessible
   const absent: string = result.rows[0].id;
   return [title, absent];

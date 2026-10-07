@@ -1,4 +1,4 @@
-//! 감사 결함 회귀: 필드 정책 필드의 filter/sort 누설, exists 안 this 재바인딩, 지원 안 되는 limit 형태.
+//! 감사 결함 회귀: 필드 정책 필드의 filter/sort 누설, exists 안 this 재바인딩, invariant 집행 범위.
 use spike_v1_fixture::{load_str, Form};
 
 const A: &str = include_str!("../fixture/recruitment.aip");
@@ -38,9 +38,25 @@ fn this_inside_exists_is_rejected() {
 }
 
 #[test]
-fn unsupported_limit_shape_fails_at_check() {
-    let c = codes(&sub("atMost 1 where status = PUBLISHED", "atMost 2 where status = PUBLISHED"));
-    assert!(c.contains(&"UNSUPPORTED_INVARIANT".to_string()), "{c:?}");
+fn count_invariants_use_locked_checks_but_time_dependent_conditions_are_rejected() {
+    let source = sub("atMost 1 where status = PUBLISHED", "atMost 2 where status = PUBLISHED");
+    let output = load_str(&source, Form::A).unwrap_or_else(|diagnostics| panic!("{diagnostics:?}"));
+    let where_clause = &output.execution["limits"]["atMostOnePublished"]["where"];
+    assert_eq!(where_clause["cmp"], "=");
+    assert_eq!(where_clause["l"]["path"]["root"], "this");
+    assert_eq!(where_clause["l"]["path"]["segs"], serde_json::json!(["status"]));
+    assert_eq!(where_clause["r"], serde_json::json!({"enum":"RecruitmentStatus.PUBLISHED"}));
+    assert_eq!(
+        output.execution["resources"]["Recruitment"]["invariants"]["atMostOnePublished"]["enforcement"],
+        serde_json::json!({
+            "kind":"lockedCountCheck",
+            "columns":["club"],
+            "where":where_clause,
+            "max":2,
+            "deferred":false
+        })
+    );
+
     let c = codes(&sub("atMost 1 where status = PUBLISHED", "atMost 1 where status = PUBLISHED and periodEnd >= now"));
     assert!(c.contains(&"UNSUPPORTED_INVARIANT".to_string()), "{c:?}");
 }

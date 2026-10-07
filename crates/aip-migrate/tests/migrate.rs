@@ -202,6 +202,60 @@ async fn reviewed_type_change_preserves_convertible_rows() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn decimal_conversion_is_lossless_and_rejects_values_postgres_would_round() {
+    let schema = OwnedSchema::new();
+    let mut before = facts();
+    before["resources"]["Member"]["fields"]["score"] = json!({"ty":"Text?"});
+    init(DB, &schema.0, &before).await.unwrap();
+    let (client, connection) = tokio_postgres::connect(DB, tokio_postgres::NoTls).await.unwrap();
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    client.execute(&format!("INSERT INTO {}.member(id,score) VALUES(42,'12.30')", schema.0), &[]).await.unwrap();
+
+    let mut after = before.clone();
+    after["resources"]["Member"]["fields"]["score"] = json!({"ty":"Decimal<5,2>?"});
+    let migration = Some(json!({"convert":[{"resource":"Member","field":"score","to":"Decimal<5,2>?"}]}));
+    let report = plan(DB, &schema.0, &after, &migration).await.unwrap();
+    assert_eq!(report["blocked"], false, "{report}");
+    assert!(report["steps"].as_array().unwrap().iter().any(|s| s["sql"].as_str().unwrap().contains("TYPE numeric(5,2)")));
+    apply(DB, &schema.0, &after, &migration, report["digest"].as_str().unwrap()).await.unwrap();
+    let value: String = client.query_one(&format!("SELECT score::text FROM {}.member WHERE id=42", schema.0), &[]).await.unwrap().get(0);
+    assert_eq!(value, "12.30");
+
+    let invalid_schema = OwnedSchema::new();
+    init(DB, &invalid_schema.0, &before).await.unwrap();
+    let (invalid_client, invalid_connection) = tokio_postgres::connect(DB, tokio_postgres::NoTls).await.unwrap();
+    tokio::spawn(async move {
+        let _ = invalid_connection.await;
+    });
+    invalid_client.execute(&format!("INSERT INTO {}.member(id,score) VALUES(43,'1.234')", invalid_schema.0), &[]).await.unwrap();
+    let invalid_report = plan(DB, &invalid_schema.0, &after, &migration).await.unwrap();
+    assert_eq!(invalid_report["blocked"], true, "{invalid_report}");
+    assert!(invalid_report["steps"].as_array().unwrap().iter().all(|s| !s["sql"].as_str().unwrap().contains("TYPE numeric(5,2)")));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn decimal_backfill_uses_numeric_parameter_and_fixed_scale() {
+    let schema = OwnedSchema::new();
+    let before = facts();
+    init(DB, &schema.0, &before).await.unwrap();
+    let (client, connection) = tokio_postgres::connect(DB, tokio_postgres::NoTls).await.unwrap();
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    client.execute(&format!("INSERT INTO {}.member(id) VALUES(42)", schema.0), &[]).await.unwrap();
+    let mut after = before.clone();
+    after["resources"]["Member"]["fields"]["ledger"] = json!({"ty":"Decimal<5,2>"});
+    let migration = Some(json!({"backfill":[{"resource":"Member","field":"ledger","value":"0.99"}]}));
+    let report = plan(DB, &schema.0, &after, &migration).await.unwrap();
+    assert_eq!(report["blocked"], false, "{report}");
+    apply(DB, &schema.0, &after, &migration, report["digest"].as_str().unwrap()).await.unwrap();
+    let value: String = client.query_one(&format!("SELECT ledger::text FROM {}.member WHERE id=42", schema.0), &[]).await.unwrap().get(0);
+    assert_eq!(value, "0.99");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn reviewed_text_range_change_enforces_check() {
     let schema = OwnedSchema::new();
     let mut before = facts();

@@ -1,6 +1,8 @@
 # 2026-10-07 패턴 커버리지·보안 점검
 
 > 상태: 초안. 제품 경로(`aip service`, spikes v1~v7)의 "정의 문법만으로 조립되는 패턴" 범위와 보안·안정성을 실행으로 점검한 기록이다. 다른 세션의 제품 통합 작업과 별개 관점이다. 수치는 감사 시점 값이다.
+>
+> 후속 보완: 객체형 작성 형식·스칼라 타입·Bool 대입은 [문법 보완](2026-10-07-syntax-completion.md), N≥2 정원 집행은 [정원 제약](2026-10-07-capacity-enforcement.md), Decimal은 [정밀 스칼라](2026-10-07-decimal-scalar.md)를 따른다. 아래 표의 당시 미지원 판정과 수치는 후속 구현의 현재 상태표가 아니다.
 
 ## 1. 점검 방법
 
@@ -72,7 +74,7 @@ root PoC 문법에는 제품 문법에 없는 기능이 많고, 대표 e2e 10개
 | 1 | 호출자 값 수정(patch), 삭제 | 전이는 상수 대입만, delete 없음 | 같은 [OPEN] |
 | 해결 | 카운터·재고 증감 | 전이 증감 추가(§3) | 호출자 지정 금액(예: 송금액)은 여전히 불가 |
 | 2 | avg, 임의 group by, 시간 버킷 | sum/min/max는 추가(§3) | 대시보드 통계 |
-| 2 | 목록 total | offset·cursor는 추가(§3). total은 보류: v2 execute가 행 배열만 반환하고 v6 `/read` 응답·v5 Transport가 `Row[]` 기준이라 응답 envelope 변경이 필요 | 커밋 b7431a1 제목의 "list total"은 실제로 구현되지 않았다 |
+| 2 | 목록 total | offset·cursor는 추가(§3). total은 보류: v2 execute의 행 배열 반환과 SDK `Transport`·`ReadEnvelope`에 total의 타입·전달·동일 정책 count·스냅샷·비용 규칙을 연결해야 함. v6 `/read`에는 이미 rows·deps·maxAgeMs 응답 envelope가 있음 | 커밋 b7431a1 제목의 "list total"은 실제로 구현되지 않았다 |
 | 3 | 기본값, 계산 필드, Email 형식 | 없음 | root PoC 문법에는 일부 존재 |
 | 3 | 정원 N(atMost ≥ 2) | 이번에 check에서 명시 거부로 바꿈. 집행 기능은 없음 | 잠금 기반 count 검사 필요 |
 | 해결 | 상수 access guard(`= true`) | 원인이 미사용 바인드 매개변수였음을 확인하고 고침(§2) | 쓰기 경로(v3)는 같은 문제를 아직 실행 확인하지 않음 |

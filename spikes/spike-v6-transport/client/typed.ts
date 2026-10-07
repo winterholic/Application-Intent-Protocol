@@ -1,5 +1,5 @@
 import { connect, isIdWire, validResultId, type ApplyOptions } from "./transport.ts";
-import type { ContractBinding, ContractShape, Root, SelectItem, CheckSel, FilterItem, SortItem, Row, DeepReadonly, ApplyBinding, ApplyContractShape, ApplyRequest, ApplyResult, PendingResult, IdWireKind, ExtensionContractShape, ExtensionDescriptors, ScalarDescriptor, ReadDescriptors, WriteExtensionDescriptors, WriteExtensionResult } from "../../spike-v5-sdk/sdk/generic.ts";
+import type { ContractBinding, ContractShape, Root, SelectItem, CheckSel, FilterItem, SortItem, Row, DeepReadonly, ApplyBinding, ApplyContractShape, ApplyRequest, ApplyResult, PendingResult, IdWireKind, ExtensionContractShape, ExtensionDescriptors, ScalarDescriptor, ReadDescriptors, WriteExtensionDescriptors, WriteExtensionResult, OffsetOpt, CursorOpt } from "../../spike-v5-sdk/sdk/generic.ts";
 
 export function connectTypedApply<C extends ContractShape<C>, A extends ApplyContractShape<A>>(base: string, token: string | null, binding: ApplyBinding<C, A>, fetchImpl: typeof fetch = fetch) {
   const idWire = binding?.idWire;
@@ -49,7 +49,7 @@ function typedClient<C extends ContractShape<C>>(base: string, token: string | n
       readonly filter?: readonly FilterItem<C, R>[];
       readonly sort?: readonly SortItem<C, R>[];
       readonly limit?: number;
-    }): Promise<ReadEnvelope<Row<C, R, S>>> {
+    } & OffsetOpt<C, R> & CursorOpt<C, R>): Promise<ReadEnvelope<Row<C, R, S>>> {
       return client.read(query) as Promise<ReadEnvelope<Row<C, R, S>>>;
     },
   };
@@ -66,8 +66,41 @@ function validTime(value: string): boolean {
     (!m[7] || Number(m[8]) <= 23 && Number(m[9]) <= 59);
 }
 
+function validEmail(value: string): boolean {
+  if (value.includes("\0") || /\p{White_Space}/u.test(value)) return false;
+  const at = value.indexOf("@");
+  if (at <= 0 || at !== value.lastIndexOf("@")) return false;
+  const domain = value.slice(at + 1);
+  return domain.length > 0 && domain.includes(".") && !domain.startsWith(".") && !domain.endsWith(".");
+}
+
+function validDate(value: string): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!m) return false;
+  const [year, month, day] = m.slice(1).map(Number);
+  if (year === 0 || month < 1 || month > 12) return false;
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return day >= 1 && day <= days[month - 1];
+}
+
+function validDecimal(value: string, type: string): boolean {
+  const match = /^Decimal<(0|[1-9][0-9]*),(0|[1-9][0-9]*)>$/.exec(type);
+  if (!match) return false;
+  const precision = Number(match[1]);
+  const scale = Number(match[2]);
+  if (!Number.isInteger(precision) || precision < 1 || precision > 38 || !Number.isInteger(scale) || scale < 0 || scale > precision || value.length > 41) return false;
+  const valueMatch = /^(-?)(0|[1-9][0-9]*)(?:\.([0-9]+))?$/.exec(value);
+  if (!valueMatch) return false;
+  const [, , integer, fraction] = valueMatch;
+  if ((fraction?.length ?? 0) > scale || (scale === 0 && fraction !== undefined)) return false;
+  const integerDigits = integer === "0" ? 0 : integer.length;
+  return integerDigits <= precision - scale;
+}
+
 function validScalar(value: unknown, d: ScalarDescriptor, wire: IdWireKind): boolean {
   if (value === null) return d.nullable === true;
+  if (d.type.startsWith("Decimal<")) return typeof value === "string" && validDecimal(value, d.type);
   switch (d.type) {
     case "Id": case "Ref":
       return wire === "legacy" ? typeof value === "string" && /^[0-9]+$/.test(value) : validResultId(value, wire);
@@ -75,6 +108,8 @@ function validScalar(value: unknown, d: ScalarDescriptor, wire: IdWireKind): boo
     // The JS decoder rejects an Int that cannot retain its exact integer value.
     case "Int": return typeof value === "number" && Number.isSafeInteger(value);
     case "Text": case "Url": return typeof value === "string" && !value.includes("\0");
+    case "Email": return typeof value === "string" && validEmail(value);
+    case "Date": return typeof value === "string" && validDate(value);
     case "Time": return typeof value === "string" && validTime(value);
     case "Enum": return typeof value === "string" && Array.isArray(d.values) && d.values.includes(value);
     default: return false;
@@ -92,7 +127,13 @@ function validateRecord(value: unknown, fields: Readonly<Record<string, ScalarDe
   }
 }
 
-type ReadDescription = { readonly root: boolean; readonly maxRows: number; readonly fields: Readonly<Record<string, ScalarDescriptor>>; readonly traverse: Readonly<Record<string, {readonly target: string; readonly select: readonly string[]}>> };
+type ReadDescription = {
+  readonly root: boolean;
+  readonly maxRows: number;
+  readonly fields: Readonly<Record<string, ScalarDescriptor>>;
+  readonly traverse: Readonly<Record<string, {readonly target: string; readonly select: readonly string[]}>>;
+  readonly traverseMany?: Readonly<Record<string, {readonly target: string; readonly select: readonly string[]; readonly maxLimit: number}>>;
+};
 
 function validateReadRows(query: unknown, rows: unknown[], descriptors: Readonly<Record<string, ReadDescription>>, wire: IdWireKind) {
   function reject(): never { throw Object.assign(new Error("읽기 값이 생성 계약과 다름"), {code: "PROTOCOL_ERROR"}); }
@@ -119,14 +160,29 @@ function validateReadRows(query: unknown, rows: unknown[], descriptors: Readonly
           : validScalar(row[key], d, wire);
         if (!scalarValid) reject();
       } else {
-        if (allowed || !Object.hasOwn(description.traverse, key)) reject();
-        const relation = description.traverse[key];
-        const target = Object.hasOwn(descriptors, relation.target) ? descriptors[relation.target] : undefined;
+        if (allowed) reject();
         const sub = (item as Record<string, unknown>)[key];
-        if (!target || !sub || typeof sub !== "object" || Array.isArray(sub) || Object.keys(sub).length !== 1 || !Object.hasOwn(sub, "select")) reject();
+        if (!sub || typeof sub !== "object" || Array.isArray(sub) || !Object.hasOwn(sub, "select")) reject();
         const fields = (sub as {select: unknown[]}).select;
-        if (!Array.isArray(fields) || !fields.every(field => typeof field === "string" && relation.select.includes(field))) reject();
-        if (row[key] !== null) record(row[key], target, fields, relation.select);
+        if (!Array.isArray(fields)) reject();
+        if (Object.hasOwn(description.traverse, key)) {
+          const relation = description.traverse[key];
+          const target = Object.hasOwn(descriptors, relation.target) ? descriptors[relation.target] : undefined;
+          if (Object.keys(sub).length !== 1 || !target || !fields.every(field => typeof field === "string" && relation.select.includes(field))) reject();
+          if (row[key] !== null) record(row[key], target, fields, relation.select);
+        } else {
+          const relations = description.traverseMany;
+          if (!relations || !Object.hasOwn(relations, key)) reject();
+          const relation = relations[key];
+          const target = Object.hasOwn(descriptors, relation.target) ? descriptors[relation.target] : undefined;
+          const keys = Object.keys(sub);
+          if (!target || !Number.isSafeInteger(relation.maxLimit) || relation.maxLimit < 1 || keys.some(k => k !== "select" && k !== "limit")) reject();
+          const limit = (sub as {limit?: unknown}).limit ?? relation.maxLimit;
+          if (!Number.isSafeInteger(limit) || (limit as number) < 1 || (limit as number) > relation.maxLimit ||
+            !fields.every(field => typeof field === "string" && relation.select.includes(field)) ||
+            !Array.isArray(row[key]) || (row[key] as unknown[]).length > (limit as number)) reject();
+          for (const child of row[key] as unknown[]) record(child, target, fields, relation.select);
+        }
       }
     }
     if (Object.keys(row).length !== selected.size) reject();

@@ -58,11 +58,38 @@ fn keys(o: &Map<String, Value>, allowed: &[&str], what: &str) -> Result<(), Reje
 }
 
 fn filter_value(ty: &str, v: &Value) -> Result<(String, &'static str), Reject> {
+    let base = ty.trim_end_matches('?');
+    if matches!(base, "Email" | "Date") || base.starts_with("Decimal<") {
+        return spike_v2_read::scalar::parse(&json!({ "enums": {} }), ty, v);
+    }
     match (ty.trim_end_matches('?'), v) {
         ("Bool", Value::Bool(b)) => Ok((b.to_string(), "boolean")),
         ("Int", Value::Number(n)) if n.is_i64() => Ok((n.to_string(), "bigint")),
         ("Text", Value::String(s)) => Ok((s.clone(), "text")),
         (t, _) => rej("BAD_VALUE", format!("`{t}` 타입에 맞지 않는 값 {v}")),
+    }
+}
+
+#[cfg(test)]
+mod scalar_literal_tests {
+    use super::filter_value;
+    use serde_json::json;
+
+    #[test]
+    fn email_and_date_literals_are_validated_and_use_typed_sql_casts() {
+        assert_eq!(filter_value("Email", &json!("person@example.test")).unwrap(), ("person@example.test".into(), "text"));
+        assert!(filter_value("Email", &json!("not-an-email")).is_err());
+        assert_eq!(filter_value("Date", &json!("2024-02-29")).unwrap(), ("2024-02-29".into(), "date"));
+        assert!(filter_value("Date", &json!("2026-02-29")).is_err());
+    }
+
+    #[test]
+    fn decimal_create_values_are_validated_and_use_numeric_bindings() {
+        assert_eq!(filter_value("Decimal<5,2>", &json!("12.30")).unwrap(), ("12.30".into(), "numeric"));
+        for invalid in ["1234.56", "1.234", "NaN", "1e3", "+1", "01.00"] {
+            assert!(filter_value("Decimal<5,2>", &json!(invalid)).is_err(), "{invalid}");
+        }
+        assert!(filter_value("Decimal<5,2>", &json!(12.3)).is_err());
     }
 }
 
@@ -471,9 +498,84 @@ async fn create_row(
     Ok(())
 }
 
-/// 커밋 검사 = 이 트랜잭션이 만들거나 바꾼 행(xmin = 현재 트랜잭션)의 사후조건이다. 전역 관계 불변식이 아니다.
-/// 커밋 뒤 다른 쓰기가 근거 행을 바꿔도 다시 검사하지 않는다(R3-03). savepoint 안에서 쓴 행은 빠진다.
+/// `check`는 기존처럼 변경 행의 사후조건이고, locked count는 별도 잠금으로 직렬화한 그룹 제약이다.
+/// 일반 `check`의 교차 트랜잭션 근거 행은 잠기지 않는다(R3-03). savepoint 안에서 쓴 행은 변경 검사에서 빠진다.
 async fn run_checks(tx: &Transaction<'_>, facts: &Value, caller: &Caller, knobs: &Knobs) -> Result<(), Reject> {
+    let limited: Vec<(&str, &Value)> = facts["resources"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .filter(|(_, rf)| rf["invariants"].as_object().is_some_and(|invs| invs.values().any(|inv| inv["enforcement"]["kind"] == "lockedCountCheck")))
+        .map(|(res, rf)| (res.as_str(), rf))
+        .collect();
+
+    if !limited.is_empty() {
+        let isolation: String = tx.query_one("SELECT current_setting('transaction_isolation')", &[]).await.map_err(internal)?.get(0);
+        if isolation != "read committed" {
+            return rej("UNSUPPORTED_ISOLATION", "정원 제약 쓰기는 READ COMMITTED 트랜잭션이 필요함");
+        }
+    }
+
+    // 모든 변경 resource를 먼저 잠가 bundle/extension 안에서도 잠금 순서를 고정한다.
+    // 실제 정원 집계는 잠금 획득 뒤 별도 SQL에서 실행해 앞선 writer의 커밋을 관찰한다.
+    let mut touched = Vec::new();
+    for (res, _) in &limited {
+        let changed: bool = tx
+            .query_one(format!("SELECT EXISTS (SELECT 1 FROM {} WHERE xmin = pg_current_xact_id()::xid)", table(res)).as_str(), &[])
+            .await
+            .map_err(|e| db_err("정원 변경 확인", e))?
+            .get(0);
+        if changed {
+            let lock = format!("aip.capacity:{}:{res}", sqlgen::schema());
+            tx.query_one("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", &[&lock]).await.map_err(|e| db_err("정원 잠금", e))?;
+            touched.push(*res);
+        }
+    }
+
+    for res in touched {
+        let rf = &facts["resources"][res];
+        for (name, inv) in rf["invariants"].as_object().unwrap() {
+            let enf = &inv["enforcement"];
+            if enf["kind"] != "lockedCountCheck" {
+                continue;
+            }
+            let per = inv["per"].as_str().ok_or_else(|| internal("정원 그룹 필드 누락"))?;
+            let per_col = column(facts, res, per).ok_or_else(|| internal("정원 그룹 열 누락"))?;
+            let max = enf["max"].as_i64().filter(|n| *n >= 1).ok_or_else(|| internal("정원 상한 누락"))?;
+            let mut cx = Ctx::new(facts, None, "");
+            let env = Env { this: Some(("t".into(), res.to_string())), ..Default::default() };
+            let cond = cx.cond(&enf["where"], &env).map_err(internal)?;
+            let predicate_params = cx.params.values.clone();
+            let touched_groups = format!(
+                "SELECT DISTINCT t.{per_col} FROM {} t WHERE t.xmin = pg_current_xact_id()::xid AND ({cond}) IS TRUE AND t.{per_col} IS NOT NULL",
+                table(res)
+            );
+            let touched_params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = predicate_params.iter().map(|value| value as _).collect();
+            let groups: Vec<i64> = tx
+                .query(touched_groups.as_str(), &touched_params)
+                .await
+                .map_err(|e| db_err("정원 그룹 조회", e))?
+                .iter()
+                .map(|row| row.get(0))
+                .collect();
+            if groups.is_empty() {
+                continue;
+            }
+            let groups_idx = predicate_params.len() + 1;
+            let max_idx = groups_idx + 1;
+            let sql = format!(
+                "SELECT t.{per_col} FROM {} t WHERE t.{per_col} = ANY(${groups_idx}::bigint[]) AND ({cond}) IS TRUE GROUP BY t.{per_col} HAVING count(*) > ${max_idx} LIMIT 1",
+                table(res),
+            );
+            let mut query_params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = predicate_params.iter().map(|value| value as _).collect();
+            query_params.push(&groups);
+            query_params.push(&max);
+            if !tx.query(&sql, &query_params).await.map_err(|e| db_err("정원 집계", e))?.is_empty() {
+                return rej("INVARIANT_VIOLATED", format!("`{res}.{name}` 정원 제약 위반"));
+            }
+        }
+    }
+
     for (res, rf) in facts["resources"].as_object().unwrap() {
         for (name, cond) in rf["checks"].as_object().into_iter().flatten() {
             let mut cx = Ctx::new(facts, caller.actor_id, &caller.now);
@@ -494,7 +596,11 @@ async fn run_checks(tx: &Transaction<'_>, facts: &Value, caller: &Caller, knobs:
 
 async fn begin<'a>(db: &'a mut Client) -> Result<Transaction<'a>, Reject> {
     let tx = db.transaction().await.map_err(internal)?;
-    tx.batch_execute(&format!("SET LOCAL statement_timeout = '{WRITE_DEADLINE_MS}ms'; SET LOCAL TimeZone = 'UTC'")).await.map_err(internal)?;
+    tx.batch_execute(&format!(
+        "SET TRANSACTION ISOLATION LEVEL READ COMMITTED; SET LOCAL statement_timeout = '{WRITE_DEADLINE_MS}ms'; SET LOCAL TimeZone = 'UTC'"
+    ))
+    .await
+    .map_err(internal)?;
     Ok(tx)
 }
 

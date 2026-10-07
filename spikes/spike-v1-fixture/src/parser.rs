@@ -261,17 +261,28 @@ impl Parser {
     pub fn type_ref(&mut self) -> R<TypeRef> {
         let span = self.span();
         let name = self.ident()?;
-        let mut t = TypeRef { name, id_of: false, nullable: false, range: None, span };
+        let mut t = TypeRef { name, id_of: false, nullable: false, range: None, decimal: None, span };
         if self.eat_sym(".") {
             self.expect_kw("Id")?;
             t.id_of = true;
         }
         if self.eat_sym("(") {
-            let lo = self.int()?;
-            self.expect_sym("..")?;
-            let hi = self.int()?;
-            self.expect_sym(")")?;
-            t.range = Some((lo, hi));
+            if t.name == "Decimal" {
+                let precision = self.int()?;
+                self.expect_sym(",")?;
+                let scale = self.int()?;
+                self.expect_sym(")")?;
+                if !(1..=38).contains(&precision) || scale < 0 || scale > precision {
+                    return Err(Diag::new("BAD_DECIMAL_TYPE", "Decimal은 1 <= precision <= 38, 0 <= scale <= precision이어야 함", span));
+                }
+                t.decimal = Some((precision as u8, scale as u8));
+            } else {
+                let lo = self.int()?;
+                self.expect_sym("..")?;
+                let hi = self.int()?;
+                self.expect_sym(")")?;
+                t.range = Some((lo, hi));
+            }
         }
         if self.eat_sym("?") {
             t.nullable = true;
