@@ -42,6 +42,13 @@ pub fn parse_type_str(src: &str, span: Span) -> R<TypeRef> {
     Ok(t)
 }
 
+pub fn parse_assignments_str(src: &str, span: Span) -> R<Vec<(String, Expr)>> {
+    let mut p = Parser::from_str(src, span)?;
+    let values = p.assignments()?;
+    p.expect_eof()?;
+    Ok(values)
+}
+
 pub fn parse_duration_str(src: &str, span: Span) -> R<u64> {
     let mut p = Parser::from_str(src, span)?;
     let t = p.next();
@@ -437,14 +444,7 @@ impl Parser {
                         }
                         match key.as_str() {
                             "from" => from = Some(self.expr()?),
-                            "to" => loop {
-                                let f = self.ident()?;
-                                self.expect_sym("=")?;
-                                to.push((f, self.additive()?));
-                                if !self.eat_sym(",") {
-                                    break;
-                                }
-                            },
+                            "to" => to = self.assignments()?,
                             "allow" => allow = Some(self.expr()?),
                             "repeat" => repeat = Some((self.ident()?, ksp)),
                             "create" => {
@@ -857,6 +857,22 @@ impl Parser {
         }
         Ok(l)
     }
+    fn assignments(&mut self) -> R<Vec<(String, Expr)>> {
+        let mut values = vec![];
+        loop {
+            let field = self.ident()?;
+            self.expect_sym("=")?;
+            let value = self.additive()?;
+            if ast_depth(&value) > MAX_AST_DEPTH {
+                return Err(Diag::new("PARSE_NESTING", "대입식 AST 깊이 hard ceiling을 벗어남", self.span()));
+            }
+            values.push((field, value));
+            if !self.eat_sym(",") {
+                return Ok(values);
+            }
+        }
+    }
+
     fn additive(&mut self) -> R<Expr> {
         let mut l = self.unary()?;
         loop {
