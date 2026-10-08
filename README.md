@@ -18,6 +18,7 @@ AIP는 백엔드 서버를 없애려는 것이 아니다. 기능마다 반복되
 - [제품 검증 결과](product/VERIFICATION.md)와 [최신 macOS 실행 묶음](product/dist/2026-10-06T11-19-25-091Z/README.md): 실제 JWT·PostgreSQL·설치 SDK·두 wire·Node/Python 확장 실행.
 - [정의 한계](spikes/spike-v1-fixture/PRODUCTION-LIMITS.md)와 [정책 실행 한계](spikes/spike-v2-read/PRODUCTION-RUNTIME.md): 입력·AST·predicate 확장·SQL·복제 payload의 상한을 함께 검사한다.
 - [제품 문법 보완](plan-docs/reviews/2026-10-07-syntax-completion.md): 다섯 작성 형식의 선언 일치, Date·Email·정밀 Decimal, 정원 제약과 공식 SDK 연결. [공개 백엔드 규칙 대조](plan-docs/reviews/2026-10-07-oss-pattern-survey.md#실제-소스에서-추출한-규칙의-실행-대조)는 실행한 범위와 남은 제약을 구분한다.
+- [백엔드 기능 포괄성 감사 기준](plan-docs/sources/founder-backend-capability-directive-2026-10-09.md): SQL 외 비동기·이벤트·외부 연동·파일·실시간·운영까지 후속 보완의 원문 기준. 현재 단계는 분석·고도화 제안이며, 기존 PoC 기능을 제품 지원으로 합산하지 않는다.
 
 Core 검증은 GitHub Actions의 Ubuntu에서도 실행한다. 외부 IdP 계정·TLS reverse proxy 배포·다른 OS worker 검증은 별도 운영 환경이 필요하다. 로컬 제품 실행 검증은 macOS의 실제 PostgreSQL과 통제된 HTTPS/JWT fixture를 사용한다. 대형 테이블 무중단 변경, 자동 역방향 migration, 최종 Id 표현·쓰기 조합 선택은 범위 밖이다.
 

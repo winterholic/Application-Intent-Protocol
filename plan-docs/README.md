@@ -1,17 +1,18 @@
 # AIP plan-docs
 
-> 상태: 2026-10-03 통합 지침 반영. 창시자가 밝힌 목적·제품 구조와 에이전트의 미검증 상세 설계를 구분한다. 이번 지침이 설계안 전체 승인인 것은 아니다.
+> 상태: 2026-10-03 통합 지침과 2026-10-09 백엔드 기능 포괄성 지침을 따른다. 창시자가 밝힌 목적·제품 구조와 에이전트의 미검증 상세 설계를 구분한다. 지침 보관이나 감사 착수가 설계안 전체 승인인 것은 아니다.
 
 이 폴더는 AIP 설계와 실행 근거를 기록한다. 작은 실험의 실행 결과는 최종 설계 승인이 아니다. 2026-10-05 사용자가 운영 인증·일반 마이그레이션·제품 통합을 명시적으로 요청했으므로, 기존 `crates/` 보존 범위에서 새 `aip service` 조립층을 추가했다. 현재 경로와 한계는 [제품 서비스](../crates/aip-service/README.md), [진행 현황](STATUS.md)을 따른다.
 
 ## 기준 문서 (충돌하면 위가 이긴다)
 
-1. [창시자 의도 복구·설계 고도화 통합 지침](sources/founder-integrated-directive-2026-10-03.md): 이번 기준. [FOUNDER]/[DIRECTION]/[OPEN] 원문 표식을 보존한다.
-2. `sources/founder-intent-handoff-2026-10-03.md`: 이전 인계 원문. 토론 방식은 `sources/design-operating-rules-2026-10-03.md`(적용법은 `00-rules.md` §7). 통합 지침과 충돌하면 최신 지침을 따른다.
-3. `../docs/PRINCIPLES.md`: 창시자 원칙과 설계 관문. 최신 원문을 따라야 한다.
-4. `../docs/DECISIONS.md`: 이전 결정의 이력. 현재 질문 처리 상태는 [B](alignment/B-decision-reclassification.md).
-5. `../docs/design/11-founder-intent-audit.md`, `12-design-reset.md`: 감사와 재개 계획. 당시 조건의 근거 자료다.
-6. `../docs/origin/*`, `../docs/design/00~10`: 이전 기술 자료. 현 목적·원칙의 우선 근거가 아니다.
+1. [백엔드 기능 포괄성 감사 및 선언형 실행 모델 고도화](sources/founder-backend-capability-directive-2026-10-09.md): SQL 외 A~J 영역, Level 1~4, 여섯 실제 시나리오와 Claude Code·Codex 독립 대조를 요구한 최신 원문. 현재 단계는 분석·제안이며 승인 없는 대규모 구조 변경은 금지한다.
+2. [창시자 의도 복구·설계 고도화 통합 지침](sources/founder-integrated-directive-2026-10-03.md): 기존 목적·제품 구조 기준. [FOUNDER]/[DIRECTION]/[OPEN] 원문 표식을 보존한다.
+3. `sources/founder-intent-handoff-2026-10-03.md`: 이전 인계 원문. 토론 방식은 `sources/design-operating-rules-2026-10-03.md`(적용법은 `00-rules.md` §7). 통합 지침과 충돌하면 최신 지침을 따른다.
+4. `../docs/PRINCIPLES.md`: 창시자 원칙과 설계 관문. 최신 원문을 따라야 한다.
+5. `../docs/DECISIONS.md`: 이전 결정의 이력. 현재 질문 처리 상태는 [B](alignment/B-decision-reclassification.md).
+6. `../docs/design/11-founder-intent-audit.md`, `12-design-reset.md`: 감사와 재개 계획. 당시 조건의 근거 자료다.
+7. `../docs/origin/*`, `../docs/design/00~10`: 이전 기술 자료. 현 목적·원칙의 우선 근거가 아니다.
 
 ## 이번 결과물 A~E
 
