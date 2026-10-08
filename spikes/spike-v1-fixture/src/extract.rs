@@ -1,6 +1,7 @@
 //! E 형식: 호스트 파일을 실행하지 않고, 공식 import로 바인딩된 `aip` 선언 블록의 정적 리터럴만 읽는다.
 use crate::diag::{Diag, Span};
-use crate::host::{is_ident, is_punct, official_import, span_at, statement_ends, tokenize, K, T};
+use crate::host::{is_ident, is_punct, normalized_source, official_import, span_at, statement_ends, tokenize, K, T};
+use crate::string_literal::{decode_body, Flavor};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Host {
@@ -71,18 +72,17 @@ pub fn uses(src: &str, toks: &[T], host: Host, name: &str) -> Result<Vec<usize>,
 }
 
 pub fn extract(src: &str, host: Host) -> Result<Block, Diag> {
+    let normalized = normalized_source(src);
+    let src = normalized.as_ref();
     let toks = tokenize(src, host)?;
     let mut blocks = vec![];
     for i in uses(src, &toks, host, "aip")? {
         let at = span_at(src, toks[i].start);
         let (body, next) = match host {
             Host::Ts => match toks.get(i + 1).map(|t| &t.k) {
-                Some(K::Template { body, interp, escape }) => {
+                Some(K::Template { body, interp, .. }) => {
                     if *interp {
                         return Err(Diag::new("DYNAMIC_INTERPOLATION", "AIP 블록 안 `${...}` 보간 금지", at));
-                    }
-                    if *escape {
-                        return Err(Diag::new("ESCAPE_UNSUPPORTED", "AIP 블록 안 escape는 cooked/raw 차이를 만들어 금지", at));
                     }
                     (*body, i + 2)
                 }
@@ -91,15 +91,12 @@ pub fn extract(src: &str, host: Host) -> Result<Block, Diag> {
             Host::Py => {
                 let ok_shape = toks.get(i + 1).is_some_and(|t| is_punct(t, '(')) && toks.get(i + 3).is_some_and(|t| is_punct(t, ')'));
                 match (ok_shape, toks.get(i + 2).map(|t| &t.k)) {
-                    (true, Some(K::Str { prefix, triple, body, escape })) => {
+                    (true, Some(K::Str { prefix, triple, body, .. })) => {
                         if prefix.to_ascii_lowercase().contains('f') {
                             return Err(Diag::new("DYNAMIC_INTERPOLATION", "f-string 금지", at));
                         }
                         if !prefix.is_empty() || !triple {
                             return Err(Diag::new("NON_LITERAL", "접두사 없는 삼중 따옴표 문자열 하나만 허용", at));
-                        }
-                        if *escape {
-                            return Err(Diag::new("ESCAPE_UNSUPPORTED", "AIP 블록 안 escape 금지", at));
                         }
                         (*body, i + 4)
                     }
@@ -115,7 +112,8 @@ pub fn extract(src: &str, host: Host) -> Result<Block, Diag> {
             return Err(Diag::new("NON_LITERAL", "AIP 블록 뒤 결합·호출·가공 금지", sp));
         }
         let s = span_at(src, body.0);
-        blocks.push(Block { text: src[body.0..body.1].to_string(), line_base: s.line, col_base: s.col });
+        let text = decode_body(&src[body.0..body.1], Flavor::Host, true).map_err(|reason| Diag::new("ESCAPE_UNSUPPORTED", reason, s))?;
+        blocks.push(Block { text, line_base: s.line, col_base: s.col });
     }
     match blocks.len() {
         1 => Ok(blocks.pop().unwrap()),

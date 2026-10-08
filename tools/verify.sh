@@ -3,7 +3,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-for program in cargo node npm psql; do
+for program in cargo node npm psql python3; do
   if ! command -v "$program" >/dev/null 2>&1; then
     printf 'Missing verification tool: %s\n' "$program" >&2
     exit 1

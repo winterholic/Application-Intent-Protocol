@@ -3,6 +3,15 @@
 use crate::diag::{Diag, Span};
 use crate::extract::Host;
 use crate::limits::{check_source, token_limit, MAX_TOKENS};
+use std::borrow::Cow;
+
+pub fn normalized_source(src: &str) -> Cow<'_, str> {
+    if src.contains('\r') {
+        Cow::Owned(src.replace("\r\n", "\n").replace('\r', "\n"))
+    } else {
+        Cow::Borrowed(src)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum K {

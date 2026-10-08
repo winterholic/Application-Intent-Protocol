@@ -1,8 +1,9 @@
 //! H 형식: 호스트 언어의 `define({...})` 인자를 실행하지 않고 리터럴 부분집합으로 읽는다.
 use crate::diag::{Diag, Span};
 use crate::extract::{uses, Host};
-use crate::host::{is_punct, statement_ends, tokenize};
+use crate::host::{is_punct, normalized_source, statement_ends, tokenize};
 use crate::limits::MAX_LITERAL_DEPTH;
+use crate::string_literal::{decode_body, Flavor};
 
 #[derive(Debug, Clone)]
 pub enum Lit {
@@ -82,15 +83,22 @@ impl<'a> P<'a> {
         self.i += 1;
         let st = self.i;
         while self.i < self.s.len() && self.s[self.i] != q {
-            if self.s[self.i] == b'\\' || self.s[self.i] == b'\n' {
-                return self.err("ESCAPE_UNSUPPORTED", "정의 리터럴 문자열 안 escape/줄바꿈 금지");
+            if self.s[self.i] == b'\\' {
+                self.i += 1;
+                if self.i >= self.s.len() {
+                    return self.err("NON_LITERAL", "끝나지 않은 문자열 escape");
+                }
+                let next = self.src[self.i..].chars().next().unwrap();
+                self.i += next.len_utf8();
+                continue;
             }
-            self.i += 1;
+            let next = self.src[self.i..].chars().next().unwrap();
+            self.i += next.len_utf8();
         }
         if self.i >= self.s.len() {
             return self.err("NON_LITERAL", "닫히지 않은 문자열");
         }
-        let v = self.src[st..self.i].to_string();
+        let v = decode_body(&self.src[st..self.i], Flavor::Host, false).map_err(|reason| Diag::new("NON_LITERAL", reason, self.sp()))?;
         self.i += 1;
         Ok(v)
     }
@@ -200,6 +208,8 @@ impl<'a> P<'a> {
 }
 
 pub fn extract_define(src: &str, host: Host) -> R<(Lit, Span)> {
+    let normalized = normalized_source(src);
+    let src = normalized.as_ref();
     let toks = tokenize(src, host)?;
     let found = uses(src, &toks, host, "define")?;
     let i = match found.len() {

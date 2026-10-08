@@ -202,7 +202,7 @@ fn negative_controls_reject_with_expected_code() {
         (Form::ETs, "export default aip`", "export default aip(`", "NON_LITERAL"),
         (Form::ETs, "expose aggregate approvedCount\n  }\n`", "expose aggregate approvedCount\n  }\n` + extra", "NON_LITERAL"),
         (Form::ETs, "import { aip } from \"@aip/define\"\n", "import { aip } from \"@aip/define\"\nconst a = aip\n", "NON_LITERAL"),
-        (Form::ETs, "summary \"모집 정보\"", "summary \"모집\\n정보\"", "ESCAPE_UNSUPPORTED"),
+        (Form::ETs, "summary \"모집 정보\"", "summary \"모집\\n정보\"", "LEX_BAD_STRING"),
         (
             Form::ETs,
             "import { aip } from \"@aip/define\"\n",

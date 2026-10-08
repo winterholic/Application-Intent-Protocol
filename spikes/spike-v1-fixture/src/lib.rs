@@ -8,6 +8,7 @@ pub mod lexer;
 mod limits;
 pub mod parser;
 pub mod sema;
+mod string_literal;
 
 use diag::Diag;
 use extract::Host;

@@ -4,7 +4,7 @@
 
 ## 새 checkout 준비
 
-Rust/Cargo와 rustfmt·clippy, Node.js 26, npm, PostgreSQL client/server가 필요하다. 현재 검증은 Rust 1.98.1과 PostgreSQL 17에서 실행했다. 아래 명령은 저장소 루트에서 실행한다.
+Rust/Cargo와 rustfmt·clippy, Node.js 26, npm, Python 3, PostgreSQL client/server가 필요하다. 현재 검증은 Rust 1.98.1과 PostgreSQL 17에서 실행했다. Python 3은 호스트 문자열의 실제 의미와 정적 추출 결과를 대조하는 core 검사에도 사용한다. 아래 명령은 저장소 루트에서 실행한다.
 
 ```sh
 npm ci --prefix spikes/spike-0-ts --ignore-scripts --no-audit --no-fund

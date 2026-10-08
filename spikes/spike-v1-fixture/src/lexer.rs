@@ -1,5 +1,6 @@
 use crate::diag::{Diag, Span};
 use crate::limits::{check_source, token_limit, MAX_TOKENS};
+use crate::string_literal::{decode_body, Flavor};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Tok {
@@ -87,17 +88,17 @@ pub fn lex(src: &str, line_base: u32, col_base: u32) -> Result<Vec<Token>, Diag>
         if c == '"' {
             let start = i;
             i += 1;
-            let mut s = String::new();
             while i < chars.len() && chars[i] != '"' {
-                if chars[i] == '\\' || chars[i] == '\n' {
-                    return Err(Diag::new("LEX_BAD_STRING", "문자열 안 escape/줄바꿈은 spike에서 지원하지 않음", span));
+                if chars[i] == '\\' {
+                    i += 1;
                 }
-                s.push(chars[i]);
                 i += 1;
             }
             if i >= chars.len() {
                 return Err(Diag::new("LEX_BAD_STRING", "닫히지 않은 문자열", span));
             }
+            let body: String = chars[start + 1..i].iter().collect();
+            let s = decode_body(&body, Flavor::Aip, false).map_err(|reason| Diag::new("LEX_BAD_STRING", reason, span))?;
             i += 1;
             col += (i - start) as u32;
             push(&mut out, Token { tok: Tok::Str(s), span })?;
