@@ -711,6 +711,10 @@ impl<'a> Ctx<'a> {
                 fields.insert(f.name.clone(), json!({ "ty": tt.show(), "range": f.ty.range.map(|(a, b)| json!([a, b])) }));
             }
         }
+        // 비공개 관계 테이블은 id 없이도 exists의 원본이 될 수 있다.
+        if fields.get("id").is_some_and(|id| id["ty"] != format!("Id<{}>", r.name)) {
+            self.d("TYPE_MISMATCH", format!("`{}.id`는 non-null 자기 resource의 Id여야 함", r.name), r.span);
+        }
         o.insert("fields".into(), Value::Object(fields));
 
         let mut sc = self.base_scope();
@@ -820,8 +824,8 @@ impl<'a> Ctx<'a> {
                     effects.push(v);
                 }
             }
-            if to.contains_key("id") && effects.iter().any(|effect| effect.get("maxRows").is_some()) {
-                self.d("UNSUPPORTED_EFFECT", "many update가 있는 전이는 부모 id를 바꿀 수 없음", t.span);
+            if to.contains_key("id") {
+                self.d("UNSUPPORTED_EFFECT", "전이는 잠근 대상의 기본키 id를 바꿀 수 없음", t.span);
             }
             tr.insert(t.name.clone(), json!({ "from": from, "to": to, "allow": allow, "repeat": repeat, "effects": effects }));
         }

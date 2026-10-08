@@ -40,6 +40,10 @@ Decimal의 자릿수·wire·migration 경계는 [별도 설계](2026-10-07-decim
 
 서버가 범위와 총 행 수를 명시한 다중 자식 갱신은 [bounded update 효과](2026-10-07-bounded-update-effects.md)를 따른다. 기존 update의 정확히 한 행 의미는 유지한다.
 
+문자열의 따옴표·역슬래시·개행·Unicode와 호스트/AIP 해석 경계는 [문자열 리터럴 검토](2026-10-08-string-literals.md)를 따른다. 실제 Node·Python 문자열 값과 다섯 작성 형식의 facts·metadata를 대조한다.
+
+기본키가 아닌 `Resource.Id` 필드의 bigint 저장과 실제 Ref 의존성 분리는 [typed ID 컬럼 검토](2026-10-08-typed-id-columns.md)를 따른다. 명시적 기본키의 타입과 전이 중 ID 변경 거부는 [resource identity 경계](2026-10-08-resource-identity.md)를 따른다. 기존 id 없는 비공개 관계 resource는 유지한다.
+
 ## 설계 관문: Bool 식을 대입 값으로 실행
 
 1. 원칙 1·4: 의미 검사가 이미 허용하는 Bool 식을 실행에서도 처리해 별도 서버 분기를 줄인다.
