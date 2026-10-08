@@ -44,6 +44,8 @@ Decimal의 자릿수·wire·migration 경계는 [별도 설계](2026-10-07-decim
 
 기본키가 아닌 `Resource.Id` 필드의 bigint 저장과 실제 Ref 의존성 분리는 [typed ID 컬럼 검토](2026-10-08-typed-id-columns.md)를 따른다. 명시적 기본키의 타입과 전이 중 ID 변경 거부는 [resource identity 경계](2026-10-08-resource-identity.md)를 따른다. 기존 id 없는 비공개 관계 resource는 유지한다.
 
+기존 테이블이 새 리소스를 참조하는 변경의 실행 순서는 [참조 마이그레이션 검토](2026-10-08-migration-reference-order.md)를 따른다. 상호 `Ref<T>`의 생성·변경·삭제와 즉시 FK 집행은 [순환 참조 검토](2026-10-08-reference-cycles.md)를 따른다. 양쪽 필수 참조의 최초 행 생성까지 지원한다는 의미는 아니다.
+
 ## 설계 관문: Bool 식을 대입 값으로 실행
 
 1. 원칙 1·4: 의미 검사가 이미 허용하는 Bool 식을 실행에서도 처리해 별도 서버 분기를 줄인다.
