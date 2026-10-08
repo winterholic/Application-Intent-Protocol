@@ -1019,6 +1019,7 @@ async fn derive(db: &impl GenericClient, schema: &str, new_facts: &Value, migrat
             }
         }
     }
+    let mut new_table_steps = Vec::new();
     for ddl in &new_ddl {
         let Some(rest) = ddl.strip_prefix(&format!("CREATE TABLE {schema}.")) else { continue };
         let Some((name, _)) = rest.split_once(" (") else { continue };
@@ -1027,7 +1028,7 @@ async fn derive(db: &impl GenericClient, schema: &str, new_facts: &Value, migrat
             continue;
         }
         changes.push(json!({"class":"SecurityReview","reason":format!("resource {res} 추가 및 새 노출 검토")}));
-        steps.push(Step { sql: ddl.clone(), class: "SecurityReview", value: None, reason: format!("resource {res} 추가") });
+        new_table_steps.push(Step { sql: ddl.clone(), class: "SecurityReview", value: None, reason: format!("resource {res} 추가") });
     }
     let old_extra: BTreeMap<_, _> = old_ddl
         .iter()
@@ -1052,6 +1053,7 @@ async fn derive(db: &impl GenericClient, schema: &str, new_facts: &Value, migrat
             early.push(Step { sql: drop_sql.clone(), class: "SecurityReview", value: None, reason: format!("{key} 제거 또는 변경") });
         }
     }
+    early.extend(new_table_steps);
     early.extend(steps.iter().filter(|s| !s.sql.starts_with("DROP TABLE ")).cloned());
     let mut table_drops: Vec<_> = steps.iter().filter(|s| s.sql.starts_with("DROP TABLE ")).cloned().collect();
     table_drops.sort_by_key(|s| old_ddl.iter().position(|ddl| ddl.starts_with(&s.sql.replace("DROP TABLE ", "CREATE TABLE "))).unwrap_or(0));
