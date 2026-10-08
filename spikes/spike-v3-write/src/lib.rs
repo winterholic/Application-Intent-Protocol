@@ -472,6 +472,7 @@ async fn effects(tx: &Transaction<'_>, facts: &Value, res: &str, tr: &str, chang
 /// 생성할 행의 값 출처. 호출자 리터럴(W0) 또는 서버가 읽은 대상 행의 경로(W1).
 pub enum Src {
     Lit(String, &'static str),
+    Null,
     Item { res: String, id: i64, path: Value },
 }
 
@@ -493,6 +494,7 @@ async fn create_row(
         let col = column(facts, target, f).unwrap();
         let e = match src {
             Src::Lit(v, cast) => cx.params.bind(Some(v.clone()), cast),
+            Src::Null => format!("(NULL::{}).{col}", table(target)),
             Src::Item { res, id, path } => {
                 if from.is_empty() {
                     let p = cx.params.bind(Some(id.to_string()), "bigint");
@@ -505,12 +507,22 @@ async fn create_row(
         exprs.push(format!("{e} AS {col}"));
         cols.push(col);
     }
+    // 생략 필드도 allow가 볼 후보 행에 있어야 한다. 테이블 행 타입이 각 NULL의 SQL 타입을 결정한다.
+    for (field, _) in facts["resources"][target]["fields"].as_object().unwrap() {
+        if field != "id" && !values.iter().any(|(provided, _)| provided == field) {
+            let col = column(facts, target, field).unwrap();
+            exprs.push(format!("(NULL::{}).{col} AS {col}", table(target)));
+        }
+    }
+    if exprs.is_empty() {
+        exprs.push("1".into());
+    }
     let venv = Env { this: Some(("v".into(), target.to_string())), ..Default::default() };
     let allow = cx.cond(&ec["allow"], &venv).map_err(internal)?;
+    let insert_cols = if cols.is_empty() { String::new() } else { format!(" ({})", cols.join(", ")) };
     let sql = format!(
-        "INSERT INTO {} ({}) SELECT {} FROM (SELECT {}{from}) v WHERE {allow} RETURNING 1",
+        "INSERT INTO {}{insert_cols} SELECT {} FROM (SELECT {}{from}) v WHERE {allow} RETURNING 1",
         table(target),
-        cols.join(", "),
         cols.iter().map(|c| format!("v.{c}")).collect::<Vec<_>>().join(", "),
         exprs.join(", ")
     );
@@ -669,6 +681,9 @@ fn literal(facts: &Value, res: &str, field: &str, v: &Value) -> Result<Src, Reje
     let ty =
         facts["resources"][res]["fields"][field]["ty"].as_str().ok_or(Reject { code: "UNKNOWN_FIELD", msg: format!("`{res}.{field}` 없음") })?;
     let base = ty.trim_end_matches('?');
+    if v.is_null() {
+        return if ty.ends_with('?') { Ok(Src::Null) } else { rej("BAD_VALUE", format!("`{field}`는 null일 수 없음")) };
+    }
     if let Some(e) = base.strip_prefix("Enum<").and_then(|x| x.strip_suffix('>')) {
         let s = v.as_str().filter(|s| facts["enums"][e].as_array().unwrap().iter().any(|x| x == s));
         return s.map(|s| Src::Lit(s.to_string(), "text")).ok_or(Reject { code: "BAD_VALUE", msg: format!("`{field}`는 {e} 값") });

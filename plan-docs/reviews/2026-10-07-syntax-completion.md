@@ -46,6 +46,8 @@ Decimal의 자릿수·wire·migration 경계는 [별도 설계](2026-10-07-decim
 
 기존 테이블이 새 리소스를 참조하는 변경의 실행 순서는 [참조 마이그레이션 검토](2026-10-08-migration-reference-order.md)를 따른다. 상호 `Ref<T>`의 생성·변경·삭제와 즉시 FK 집행은 [순환 참조 검토](2026-10-08-reference-cycles.md)를 따른다. 양쪽 필수 참조의 최초 행 생성까지 지원한다는 의미는 아니다.
 
+ID 없는 내부 관계를 Ref 필드의 대상으로 쓰는 실행 불가능한 정의는 [Ref identity 검토](2026-10-09-reference-identity.md)에 따라 거부한다. 기존 `exists`·predicate 행 매개변수·비-primary typed ID 사용은 유지한다. W0/W1의 생성 후보 행에서 생략·명시적 null을 해석하는 규칙과 빈 생성 값은 [nullable 생성 검토](2026-10-09-create-nullable-values.md)를 따른다.
+
 ## 설계 관문: Bool 식을 대입 값으로 실행
 
 1. 원칙 1·4: 의미 검사가 이미 허용하는 Bool 식을 실행에서도 처리해 별도 서버 분기를 줄인다.

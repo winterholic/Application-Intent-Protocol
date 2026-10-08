@@ -14,3 +14,5 @@
 8. 최종 Id wire와 작성 형식은 OPEN으로 둔다. primary ID 수정 지원 여부를 새 API 설계로 확정하는 작업이 아니라, 현재 실행기가 안전하게 처리하지 못하는 선언을 명시 거부하는 보완이다.
 
 검증은 의미 검사를 통과하던 잘못된 명시적 ID 선언과 일반 전이의 ID 변경을 먼저 재현한다. A/E/H 다섯 형식, 같은 resource의 qualified ID 정상 선언, 비-primary typed ID 및 id 없는 내부 관계 resource의 정상 선언을 대조한다. 기존 전이·생성·관계·지문 검사를 전체 회귀한다.
+
+Ref 필드의 대상으로 사용하는 resource에는 명시적인 id가 있어야 한다. 이 후속 경계와 ID 없는 내부 관계의 predicate 사용 보존은 [Ref identity 검토](2026-10-09-reference-identity.md)를 따른다.

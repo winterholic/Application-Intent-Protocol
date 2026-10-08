@@ -708,6 +708,12 @@ impl<'a> Ctx<'a> {
                 self.d("DUPLICATE", format!("필드 `{}` 중복", f.name), f.span);
             }
             if let Some(tt) = self.type_of(Some(&r.name), &f.ty) {
+                if let Ty::Ref(target) = &tt.ty {
+                    if !self.res[target.as_str()].fields.iter().any(|field| field.name == "id") {
+                        self.d("TYPE_MISMATCH", format!("Ref 대상 resource `{target}`에는 명시적 id가 필요"), f.ty.span);
+                        continue;
+                    }
+                }
                 fields.insert(f.name.clone(), json!({ "ty": tt.show(), "range": f.ty.range.map(|(a, b)| json!([a, b])) }));
             }
         }
