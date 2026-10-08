@@ -462,11 +462,17 @@ fn transition_effect(value: &Lit, span: Span) -> R<Effect> {
         let (values, vs) = req(eo, "values", span, "create effect")?;
         Ok(Effect::Create { resource: s(target, ts, "create")?.to_string(), values: effect_values(values, vs, "values")?, span })
     } else if let Some((target, ts)) = get(eo, "update") {
-        keys(eo, &["update", "where", "values"], "update effect")?;
+        keys(eo, &["update", "where", "values", "many", "maxRows"], "update effect")?;
+        let max_rows = match (get(eo, "many"), get(eo, "maxRows")) {
+            (None, None) => None,
+            (Some((Lit::Bool(true), _)), Some((n, ns))) => Some(int(n, ns, "maxRows")?),
+            _ => return Err(Diag::new("H_SHAPE", "many update에는 many:true와 maxRows가 함께 필요", span)),
+        };
         let (matches, ms) = req(eo, "where", span, "update effect")?;
         let (values, vs) = req(eo, "values", span, "update effect")?;
         Ok(Effect::Update {
             resource: s(target, ts, "update")?.to_string(),
+            max_rows,
             matches: effect_values(matches, ms, "where")?,
             values: effect_values(values, vs, "values")?,
             span,

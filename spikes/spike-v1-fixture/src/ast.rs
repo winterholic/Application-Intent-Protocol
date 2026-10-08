@@ -146,9 +146,10 @@ pub enum Effect {
         values: Vec<(String, Expr)>,
         span: Span,
     },
-    /// 대상 행에서 계산한 값으로 다른 행 하나를 찾아 바꾼다(예: 위임 시 actor 자신의 역할). 찾은 행은 대상당 정확히 하나여야 한다.
+    /// max_rows가 없으면 대상당 정확히 한 행, 있으면 부모 참조로 한정한 자식들을 상한 안에서 바꾼다.
     Update {
         resource: String,
+        max_rows: Option<i64>,
         matches: Vec<(String, Expr)>,
         values: Vec<(String, Expr)>,
         span: Span,

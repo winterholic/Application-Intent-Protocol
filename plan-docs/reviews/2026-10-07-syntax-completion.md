@@ -38,6 +38,8 @@ Date는 0001~9999년의 엄격한 `YYYY-MM-DD` 달력 날짜다. Email은 NUL·U
 
 Decimal의 자릿수·wire·migration 경계는 [별도 설계](2026-10-07-decimal-scalar.md)를 따른다. 정밀 저장과 읽기·쓰기 지원이 Decimal 산술이나 avg 지원을 의미하지는 않는다.
 
+서버가 범위와 총 행 수를 명시한 다중 자식 갱신은 [bounded update 효과](2026-10-07-bounded-update-effects.md)를 따른다. 기존 update의 정확히 한 행 의미는 유지한다.
+
 ## 설계 관문: Bool 식을 대입 값으로 실행
 
 1. 원칙 1·4: 의미 검사가 이미 허용하는 Bool 식을 실행에서도 처리해 별도 서버 분기를 줄인다.

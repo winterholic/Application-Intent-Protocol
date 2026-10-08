@@ -820,6 +820,9 @@ impl<'a> Ctx<'a> {
                     effects.push(v);
                 }
             }
+            if to.contains_key("id") && effects.iter().any(|effect| effect.get("maxRows").is_some()) {
+                self.d("UNSUPPORTED_EFFECT", "many update가 있는 전이는 부모 id를 바꿀 수 없음", t.span);
+            }
             tr.insert(t.name.clone(), json!({ "from": from, "to": to, "allow": allow, "repeat": repeat, "effects": effects }));
         }
         o.insert("transitions".into(), Value::Object(tr));
@@ -1061,7 +1064,7 @@ impl<'a> Ctx<'a> {
                 let _ = r;
                 Some(json!({ "create": resource, "values": vals }))
             }
-            Effect::Update { resource, matches, values, span } => {
+            Effect::Update { resource, max_rows, matches, values, span } => {
                 if !self.res.contains_key(resource.as_str()) {
                     self.d("UNKNOWN_SYMBOL", format!("갱신 대상 `{resource}` 없음"), *span);
                     return None;
@@ -1095,7 +1098,27 @@ impl<'a> Ctx<'a> {
                 if m.is_empty() || v.is_empty() {
                     self.d("MISSING_ITEM", "update 효과에는 찾을 조건과 바꿀 값이 필요", *span);
                 }
-                Some(json!({ "update": resource, "match": m, "values": v }))
+                let mut effect = json!({ "update": resource, "match": m, "values": v });
+                if let Some(max) = max_rows {
+                    if !(1..=1000).contains(max) {
+                        self.d("BAD_BUDGET", "many update maxRows는 1..1000", *span);
+                    }
+                    let scope = m.iter().find_map(|(field, value)| {
+                        let ty = self.field_tt(resource, field)?;
+                        let parent = matches!(&ty.ty, Ty::Ref(target) if target == &r.name) && !ty.nullable;
+                        // this.id는 기존 경로 정규화에서 this와 같은 빈 segment가 된다.
+                        (parent && value["path"]["root"] == "this" && value["path"]["segs"] == json!([])).then_some(field)
+                    });
+                    match scope {
+                        None => self.d("UNSUPPORTED_EFFECT", "many update에는 non-null 부모 참조 = this.id 조건 필요", *span),
+                        Some(field) if v.contains_key(field) => {
+                            self.d("UNSUPPORTED_EFFECT", "many update의 부모 범위 참조는 바꿀 수 없음", *span);
+                        }
+                        Some(_) => {}
+                    }
+                    effect["maxRows"] = json!(max);
+                }
+                Some(effect)
             }
             Effect::Notify { to, topic, span } => {
                 let res = self.ex(to, sc).and_then(|(v, t)| match (&t.ty, &self.actor) {

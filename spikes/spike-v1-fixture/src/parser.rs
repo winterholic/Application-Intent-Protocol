@@ -474,7 +474,17 @@ impl Parser {
                                 effects.push(Effect::Create { resource, values, span: ksp });
                             }
                             "update" => {
+                                let many = self.is_kw("many");
+                                if many {
+                                    self.next();
+                                }
                                 let resource = self.ident()?;
+                                let max_rows = if many {
+                                    self.expect_kw("maxRows")?;
+                                    Some(self.int()?)
+                                } else {
+                                    None
+                                };
                                 self.expect_kw("where")?;
                                 let mut matches = vec![];
                                 loop {
@@ -497,7 +507,7 @@ impl Parser {
                                     self.expect_sym("=")?;
                                     values.push((f, self.unary()?));
                                 }
-                                effects.push(Effect::Update { resource, matches, values, span: ksp });
+                                effects.push(Effect::Update { resource, max_rows, matches, values, span: ksp });
                             }
                             "notify" => {
                                 let to = self.unary()?;

@@ -267,7 +267,7 @@ async fn judge(
         TargetSpec::Ids(ids) => {
             let p = cx.params.bind(Some(id_array(ids)), "bigint[]");
             // 행 정책을 WHERE에 둬서 안 보이는 행은 잠그지도 기다리지도 않는다(R2B-11).
-            format!("SELECT t.id, {allow}, {from}, {done}, {scope_sql} FROM {} t WHERE t.id = ANY({p}) AND {vis}{lock}", table(res))
+            format!("SELECT t.id, {allow}, {from}, {done}, {scope_sql} FROM {} t WHERE t.id = ANY({p}) AND {vis} ORDER BY t.id{lock}", table(res))
         }
         TargetSpec::Where(conds) => {
             let lim = cx.params.bind(Some((bulk + 1).to_string()), "bigint");
@@ -402,6 +402,30 @@ async fn effects(tx: &Transaction<'_>, facts: &Value, res: &str, tr: &str, chang
                 sets.push(format!("{} = {}", column(facts, target, f).unwrap(), cx.value(v, &env).map_err(internal)?));
             }
             let ip = cx.params.bind(Some(id_array(change)), "bigint[]");
+            let children = if let Some(max) = e.get("maxRows") {
+                let max = max.as_i64().filter(|n| (1..=1000).contains(n)).ok_or_else(|| internal("many update 상한 오류"))?;
+                // 부모 잠금 뒤 새 RC 스냅샷으로 FK 삽입을 관측하고 자식을 ID 순으로 잠근다.
+                let select = format!(
+                    "SELECT u.id FROM {} u JOIN {} t ON {} WHERE t.id = ANY({ip}) ORDER BY u.id LIMIT {} FOR UPDATE OF u",
+                    table(target),
+                    table(res),
+                    conds.join(" AND "),
+                    max + 1
+                );
+                let rows = typed_query(tx, &select, &cx.params.values).await.map_err(|err| write_err("전이 효과", err))?;
+                if rows.len() as i64 > max {
+                    return rej("EFFECT_TARGET_MISSING", "선언한 전이 효과 범위를 처리할 수 없음");
+                }
+                let ids: Vec<i64> = rows.iter().map(|row| row.get(0)).collect();
+                if ids.is_empty() {
+                    continue;
+                }
+                let bounded = cx.params.bind(Some(id_array(&ids)), "bigint[]");
+                conds.push(format!("u.id = ANY({bounded})"));
+                Some(ids.len())
+            } else {
+                None
+            };
             let sql = format!(
                 "UPDATE {} u SET {} FROM {} t WHERE t.id = ANY({ip}) AND {} RETURNING t.id",
                 table(target),
@@ -413,7 +437,7 @@ async fn effects(tx: &Transaction<'_>, facts: &Value, res: &str, tr: &str, chang
             let mut got: Vec<i64> =
                 typed_query(tx, sql.as_str(), &params).await.map_err(|e| write_err("전이 효과", e))?.iter().map(|r| r.get(0)).collect();
             got.sort();
-            if got != change {
+            if children.is_some_and(|count| count != got.len()) || (children.is_none() && got != change) {
                 return rej("EFFECT_TARGET_MISSING", format!("`{target}` 갱신 대상이 대상 행마다 하나가 아님"));
             }
             continue;
@@ -803,7 +827,7 @@ pub async fn compose(db: &mut Client, facts: &Value, req: &Value, caller: &Calle
                 format!("({})::text", cx.value(&cp["sameScope"], &env).map_err(internal)?)
             };
             let p = cx.params.bind(Some(id_array(&ids)), "bigint[]");
-            let sql = format!("SELECT t.id, {scope} FROM {} t WHERE t.id = ANY({p}) AND {vis} FOR UPDATE OF t", table(res));
+            let sql = format!("SELECT t.id, {scope} FROM {} t WHERE t.id = ANY({p}) AND {vis} ORDER BY t.id FOR UPDATE OF t", table(res));
             let params = cx.params.values.clone();
             let rows = typed_query(&tx, sql.as_str(), &params).await.map_err(|e| db_err("대상 조회", e))?;
             if rows.len() != ids.len() {
