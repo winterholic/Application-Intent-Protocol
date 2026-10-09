@@ -1,6 +1,12 @@
 # 진행 현황과 쌓인 질문
 
-> 현재 기준: [창시자 통합 지침](sources/founder-integrated-directive-2026-10-03.md). 2026-10-03 새 지침 반영.
+> 현재 기준: [2026-10-09 백엔드 기능 포괄성 지침](sources/founder-backend-capability-directive-2026-10-09.md)과 기존 [통합 지침](sources/founder-integrated-directive-2026-10-03.md). 충돌하면 최신 원문의 범위·표식을 따른다.
+
+## 현재 포괄성 감사 (2026-10-09)
+
+[백엔드 기능 감사 A~F](backend-capability/README.md)는 SQL 밖 기능을 포함한 105개 최소 항목·여섯 시나리오·Claude Code/Codex 상호 검토를 기록한다. 제품 지원과 별도 PoC를 구분했고, 업무 SQL 없는 Node/Python 계산·DB 불가·선언 deadline·6초 동기 실행을 실제 실험했다. 제품/PoC 재실행 범위와 미검증은 [검증 기록](backend-capability/validation.md)에 있다. 이 감사는 분석·제안이며 새 실행 모델의 대규모 변경을 수행하지 않았다. 최종 DSL·쓰기 모델·Id wire 등 기존 Open도 선점하지 않는다.
+
+직전 작은 보완은 Ref 대상 identity·nullable 생성 후보이며 `ecf3369`에 따로 커밋했다. 후속 작은 허점과 비SQL 실행 모델의 우선순위는 [로드맵](backend-capability/roadmap-and-risks.md)을 따른다. 아래 제품/실험 수치는 각 시점의 이력이다.
 
 ## 현재 제품 작업 (2026-10-05)
 

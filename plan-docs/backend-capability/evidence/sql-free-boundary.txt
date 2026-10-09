@@ -1,0 +1,9 @@
+Node | pure | OK | 108ms
+Node | db-unavailable | DB_UNAVAILABLE | 1ms
+Node | sync-over-five-seconds | OK | 6098ms
+Node | declaration-deadline | DEADLINE_EXCEEDED | 1014ms
+Python | pure | OK | 100ms
+Python | db-unavailable | DB_UNAVAILABLE | 1ms
+Python | sync-over-five-seconds | OK | 6083ms
+Python | declaration-deadline | DEADLINE_EXCEEDED | 1015ms
+resource namespace produces table DDL: true (DDL not executed)

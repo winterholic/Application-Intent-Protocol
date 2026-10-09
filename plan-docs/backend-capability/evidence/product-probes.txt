@@ -1,0 +1,28 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.04s
+     Running tests/cardinality_capacity.rs (spikes/spike-v3-write/target/debug/deps/cardinality_capacity-e74aa34d42199fe5)
+
+running 1 test
+test two_concurrent_activations_cannot_exceed_the_per_owner_capacity ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+     Running tests/oss_business_domains.rs (spikes/spike-v3-write/target/debug/deps/oss_business_domains-46220cab92e1325e)
+
+running 1 test
+test capacity_signer_uniqueness_booking_rollback_and_stock_floor_execute_in_postgres ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/oss_helpdesk_visibility.rs (spikes/spike-v3-write/target/debug/deps/oss_helpdesk_visibility-e1e824d69200b4bf)
+
+running 1 test
+test public_and_private_replies_preserve_text_without_leaking_or_repeating_effects ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/oss_product_variants.rs (spikes/spike-v3-write/target/debug/deps/oss_product_variants-e98c6f3e5fe2d98c)
+
+running 1 test
+test cyclic_default_variant_obeys_visibility_uniqueness_and_atomic_activation ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s

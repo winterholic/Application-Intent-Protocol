@@ -1,0 +1,61 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.11s
+     Running tests/ariari_e2e.rs (target/debug/deps/ariari_e2e-4d26614c4ace8f96)
+
+running 4 tests
+test ariari_uploads ... ok
+test ariari_approval ... ok
+test ariari_forms ... ok
+test ariari_end_to_end ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.33s
+
+     Running tests/cms_e2e.rs (target/debug/deps/cms_e2e-bdd2061f6ee1a204)
+
+running 8 tests
+test impersonation_tokens_over_http ... ok
+test publishable_hard_delete ... ok
+test impersonation_end_to_end ... ok
+test consent_end_to_end ... ok
+test publishable_end_to_end ... ok
+test impersonation_rechecks_the_operator ... ok
+test cms_negative_controls ... ok
+test impersonation_ttl_runs_out ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.51s
+
+     Running tests/outbound_e2e.rs (target/debug/deps/outbound_e2e-6328561543970fa1)
+
+running 5 tests
+test the_event_names_the_tenant_even_without_a_condition ... ok
+test private_addresses_are_not_called ... ok
+test outbound_webhooks_end_to_end ... ok
+test outbound_negative_controls ... ok
+test endpoint_that_only_fails_is_disabled ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.49s
+
+     Running tests/saas_e2e.rs (target/debug/deps/saas_e2e-662936c9fe4d1ff3)
+
+running 2 tests
+test saas_end_to_end ... ok
+test saas_negative_controls ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.98s
+
+     Running tests/shop_e2e.rs (target/debug/deps/shop_e2e-34a8d5eb6ded398d)
+
+running 1 test
+test shop_end_to_end ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+     Running tests/subscribe_e2e.rs (target/debug/deps/subscribe_e2e-728602c954876abc)
+
+running 5 tests
+test a_change_wakes_only_the_subscriptions_that_read_it ... ok
+test connections_must_authenticate_and_name_a_subscription ... ok
+test an_impersonation_token_is_only_good_while_its_session_is_open ... ok
+test limits_keep_one_client_from_using_up_the_server ... ok
+test subscriptions_end_to_end ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.93s
