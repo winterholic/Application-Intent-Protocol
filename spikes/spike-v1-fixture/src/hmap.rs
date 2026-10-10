@@ -65,7 +65,7 @@ fn expr(l: &Lit, sp: Span, what: &str) -> R<Expr> {
 
 pub fn to_spec(root: &Lit, sp: Span) -> R<Spec> {
     let o = obj(root, sp, "define 인자")?;
-    keys(o, &["enums", "actor", "predicates", "access", "limits", "resources"], "define")?;
+    keys(o, &["enums", "actor", "predicates", "access", "limits", "resources", "operations"], "define")?;
     let mut spec = Spec::default();
     if let Some((e, es)) = get(o, "enums") {
         for (n, v, vs) in obj(e, es, "enums")? {
@@ -127,6 +127,11 @@ pub fn to_spec(root: &Lit, sp: Span) -> R<Spec> {
     let (rs, rss) = req(o, "resources", sp, "define")?;
     for (n, v, vs) in obj(rs, rss, "resources")? {
         spec.resources.push(resource(n, v, *vs)?);
+    }
+    if let Some((operations, os)) = get(o, "operations") {
+        for (name, value, span) in obj(operations, os, "operations")? {
+            spec.operations.push(extension(name, value, *span, true)?);
+        }
     }
     Ok(spec)
 }
@@ -351,41 +356,7 @@ fn resource(name: &str, l: &Lit, span: Span) -> R<Resource> {
     }
     if let Some((x, xs)) = get(o, "extensions") {
         for (n, v, vs) in obj(x, xs, "extensions")? {
-            let eo = obj(v, *vs, "extension")?;
-            keys(eo, &["kind", "input", "output", "access", "effect", "deadline", "implementation"], "extension")?;
-            let mut ext = Extension {
-                kind: s(req(eo, "kind", *vs, "extension")?.0, *vs, "kind")?.to_string(),
-                name: n.clone(),
-                input: vec![],
-                output: vec![],
-                access: vec![],
-                effect: String::new(),
-                deadline_ms: None,
-                implementation: String::new(),
-                span: *vs,
-            };
-            if let Some((p, ps)) = get(eo, "input") {
-                ext.input = params(p, ps)?;
-            }
-            if let Some((p, ps)) = get(eo, "output") {
-                ext.output = params(p, ps)?;
-            }
-            if let Some((p, ps)) = get(eo, "access") {
-                for (a, asp) in strs(p, ps, "access")? {
-                    let (rn, an) = a.split_once('.').ok_or_else(|| Diag::new("H_SHAPE", "access는 `Resource.aggregate`", asp))?;
-                    ext.access.push((rn.to_string(), an.to_string()));
-                }
-            }
-            if let Some((p, ps)) = get(eo, "effect") {
-                ext.effect = s(p, ps, "effect")?.to_string();
-            }
-            if let Some((p, ps)) = get(eo, "deadline") {
-                ext.deadline_ms = Some(parse_duration_str(s(p, ps, "deadline")?, inner(ps))?);
-            }
-            if let Some((p, ps)) = get(eo, "implementation") {
-                ext.implementation = s(p, ps, "implementation")?.to_string();
-            }
-            r.extensions.push(ext);
+            r.extensions.push(extension(n, v, *vs, false)?);
         }
     }
     if let Some((x, xs)) = get(o, "docs") {
@@ -483,4 +454,50 @@ fn transition_effect(value: &Lit, span: Span) -> R<Effect> {
         let (topic, ps) = req(eo, "topic", span, "notify effect")?;
         Ok(Effect::Notify { to: expr(target, ts, "notify")?, topic: s(topic, ps, "topic")?.to_string(), span })
     }
+}
+
+fn extension(name: &str, value: &Lit, span: Span, operation: bool) -> R<Extension> {
+    let eo = obj(value, span, "extension")?;
+    let mut allowed = vec!["kind", "input", "output", "access", "effect", "deadline", "implementation"];
+    if operation {
+        allowed.push("allow");
+    }
+    keys(eo, &allowed, "extension")?;
+    let mut ext = Extension {
+        kind: s(req(eo, "kind", span, "extension")?.0, span, "kind")?.to_string(),
+        name: name.to_string(),
+        input: vec![],
+        output: vec![],
+        access: vec![],
+        effect: String::new(),
+        deadline_ms: None,
+        implementation: String::new(),
+        allow: None,
+        span: span,
+    };
+    if let Some((p, ps)) = get(eo, "input") {
+        ext.input = params(p, ps)?;
+    }
+    if let Some((p, ps)) = get(eo, "output") {
+        ext.output = params(p, ps)?;
+    }
+    if let Some((p, ps)) = get(eo, "access") {
+        for (a, asp) in strs(p, ps, "access")? {
+            let (rn, an) = a.split_once('.').ok_or_else(|| Diag::new("H_SHAPE", "access는 `Resource.aggregate`", asp))?;
+            ext.access.push((rn.to_string(), an.to_string()));
+        }
+    }
+    if let Some((p, ps)) = get(eo, "effect") {
+        ext.effect = s(p, ps, "effect")?.to_string();
+    }
+    if let Some((p, ps)) = get(eo, "deadline") {
+        ext.deadline_ms = Some(parse_duration_str(s(p, ps, "deadline")?, inner(ps))?);
+    }
+    if let Some((p, ps)) = get(eo, "implementation") {
+        ext.implementation = s(p, ps, "implementation")?.to_string();
+    }
+    if let Some((value, at)) = get(eo, "allow") {
+        ext.allow = Some(expr(value, at, "allow")?);
+    }
+    Ok(ext)
 }

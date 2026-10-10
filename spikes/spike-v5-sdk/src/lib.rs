@@ -340,6 +340,11 @@ pub fn contract_ts_with_extensions(facts: &Value, wire: IdWire) -> String {
     writeln!(s, "\nexport const readDescriptors = {} as const;", read_descriptors(facts)).unwrap();
     push_extension_types(&mut s, facts, wire, "ExtensionContract", &extensions);
     writeln!(s, "export const extensionDescriptors = {} as const;", extension_descriptors(facts)).unwrap();
+    if let Some(operations) = facts["operations"].as_object().filter(|operations| !operations.is_empty()) {
+        let declarations = operations.iter().map(|(name, operation)| (name.clone(), operation)).collect::<Vec<_>>();
+        push_extension_types(&mut s, facts, wire, "OperationContract", &declarations);
+        writeln!(s, "export const operationDescriptors = {} as const;", operation_descriptors(facts)).unwrap();
+    }
     s
 }
 
@@ -405,6 +410,9 @@ pub fn contract_fingerprint_with_all_extensions(facts: &Value, wire: IdWire) -> 
 }
 
 pub fn contract_module_with_all_extensions(facts: &Value, binding_import: &str, wire: IdWire) -> String {
+    if facts["operations"].as_object().is_some_and(|operations| !operations.is_empty()) {
+        return operation_binding_module(facts, binding_import, wire, true);
+    }
     if extensions_of_kind(facts, "write", "db").is_empty() {
         return contract_module_with_extensions(facts, binding_import, wire);
     }
@@ -418,6 +426,9 @@ pub fn contract_module_with_all_extensions(facts: &Value, binding_import: &str, 
 }
 
 pub fn contract_module_with_extensions(facts: &Value, binding_import: &str, wire: IdWire) -> String {
+    if facts["operations"].as_object().is_some_and(|operations| !operations.is_empty()) {
+        return operation_binding_module(facts, binding_import, wire, false);
+    }
     let mut module = contract_ts_with_extensions(facts, wire);
     let fingerprint = fingerprint_of(&module);
     let import = serde_json::to_string(binding_import).unwrap();
@@ -425,4 +436,43 @@ pub fn contract_module_with_extensions(facts: &Value, binding_import: &str, wire
     writeln!(module, "export const contractFingerprint = \"{fingerprint}\";").unwrap();
     writeln!(module, "export const contract: ExtensionBinding<Contract, ApplyContract, ExtensionContract> = {{ fingerprint: \"{fingerprint}\", idWire: \"{}\", extensions: extensionDescriptors, readDescriptors: readDescriptors }};", wire.label()).unwrap();
     module
+}
+
+fn operation_binding_module(facts: &Value, binding_import: &str, wire: IdWire, all: bool) -> String {
+    let mut module = if all { contract_ts_with_all_extensions(facts, wire) } else { contract_ts_with_extensions(facts, wire) };
+    let fingerprint = fingerprint_of(&module);
+    let import = serde_json::to_string(binding_import).unwrap();
+    let has_writes = all && !extensions_of_kind(facts, "write", "db").is_empty();
+    let writes_type = if has_writes { "WriteExtensionContract" } else { "{}" };
+    let writes = if has_writes { ", writeExtensions: writeExtensionDescriptors" } else { "" };
+    writeln!(module, "\nimport type {{ OperationBinding }} from {import};").unwrap();
+    writeln!(module, "export const contractFingerprint = \"{fingerprint}\";").unwrap();
+    writeln!(module, "export const contract: OperationBinding<Contract, ApplyContract, ExtensionContract, {writes_type}, OperationContract> = {{ fingerprint: \"{fingerprint}\", idWire: \"{}\", extensions: extensionDescriptors, readDescriptors: readDescriptors, operations: operationDescriptors{writes} }};", wire.label()).unwrap();
+    module
+}
+
+pub fn operation_descriptors(facts: &Value) -> Value {
+    let mut descriptors = serde_json::Map::new();
+    for (name, operation) in facts["operations"].as_object().into_iter().flatten() {
+        let mut descriptor =
+            serde_json::json!({"lifetime":"sync","effect":"none","deadlineMs":operation["deadlineMs"],"dependencies":operation["dependencies"]});
+        for side in ["input", "output"] {
+            descriptor[side] = Value::Object(
+                operation[side]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|field| {
+                        let mut descriptor = scalar_descriptor(facts, field[1].as_str().unwrap(), false);
+                        if !field[2].is_null() {
+                            descriptor["range"] = field[2].clone();
+                        }
+                        (field[0].as_str().unwrap().to_string(), descriptor)
+                    })
+                    .collect(),
+            );
+        }
+        descriptors.insert(name.clone(), descriptor);
+    }
+    Value::Object(descriptors)
 }

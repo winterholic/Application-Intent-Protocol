@@ -29,6 +29,28 @@ fn facts() -> serde_json::Value {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn operation_only_deployments_use_managed_identity_without_application_tables() {
+    let schema = OwnedSchema::new();
+    let facts = load_str(include_str!("../../../spikes/spike-v6-transport/tests/fixtures/operations.aip"), Form::A).unwrap().execution;
+    init_with_wire(DB, &schema.0, &facts, "safe").await.unwrap();
+    preflight(DB, &schema.0, &facts).await.unwrap();
+    let (db, connection) = tokio_postgres::connect(DB, tokio_postgres::NoTls).await.unwrap();
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    let tables = db.query("SELECT tablename FROM pg_tables WHERE schemaname=$1 ORDER BY tablename", &[&schema.0]).await.unwrap();
+    let names: Vec<String> = tables.iter().map(|row| row.get(0)).collect();
+    assert!(names.contains(&"aip_actors".to_string()), "{names:?}");
+    assert!(names.iter().all(|name| name.starts_with("aip_")), "application tables: {names:?}");
+    assert!(
+        db.execute(&format!("INSERT INTO {}.aip_principals(issuer,subject,actor_id) VALUES('issuer','unknown',42)", schema.0), &[]).await.is_err()
+    );
+    db.execute(&format!("INSERT INTO {}.aip_actors(id) VALUES(42)", schema.0), &[]).await.unwrap();
+    db.execute(&format!("INSERT INTO {}.aip_principals(issuer,subject,actor_id) VALUES('issuer','known',42)", schema.0), &[]).await.unwrap();
+    assert!(db.execute(&format!("UPDATE {}.aip_principals SET actor_id=43", schema.0), &[]).await.is_err());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn init_with_wire_persists_mode_in_creation_transaction() {
     let schema = OwnedSchema::new();
     init_with_wire(DB, &schema.0, &facts(), "safe").await.unwrap();
@@ -514,4 +536,25 @@ async fn competing_apply_calls_write_one_deployment() {
     });
     let count: i64 = client.query_one(&format!("SELECT count(*) FROM {}.aip_migrate_journal", schema.0), &[]).await.unwrap().get(0);
     assert_eq!(count, 2);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn managed_identity_cannot_replace_a_same_named_actor_resource() {
+    let schema = OwnedSchema::new();
+    let source = include_str!("../../../spikes/spike-v6-transport/tests/fixtures/operations.aip");
+    let before = load_str(&format!("resource principal {{ fields {{ id: Id }} }}\n{source}"), Form::A).unwrap().execution;
+    assert!(before.get("actorMode").is_none());
+    init_with_wire(DB, &schema.0, &before, "safe").await.unwrap();
+    preflight(DB, &schema.0, &before).await.unwrap();
+    let after = load_str(source, Form::A).unwrap().execution;
+    let report = plan(DB, &schema.0, &after, &None).await.unwrap();
+    assert_eq!(report["blocked"], true, "{report}");
+    assert!(
+        report["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|change| change["class"] == "Unsupported" && change["reason"].as_str().unwrap().contains("actor")),
+        "{report}"
+    );
 }

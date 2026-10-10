@@ -1,5 +1,8 @@
 # Backend Capability Matrix
 
+> 후속(2026-10-10): 이 문서의 감사 기준은 `ecf3369` 시점이다. 이후 [resource 독립 동기 operation](../../product/EXECUTION.md)을 제품에 연결했고 [durable Job 구조 제안](durable-job-proposal.md)을 구체화했다. 아래 역사적 미지원/제안 항목을 현재 구현으로 합산하지 않으며 최신 지원 범위는 후속 문서를 따른다.
+
+
 > 2026-10-09 코드 감사. 정본 데이터는 [CSV](capability-matrix.csv). 기능 존재, 제품 경로 도달, 실행 증거를 구분한다. 목표 Level은 채택 승인이나 현재 지원 점수가 아니다.
 
 원문 A~J의 최소 기능 105개를 행별로 대조했다. 범위 항목 수이며 지원율·생산성 측정치가 아니다. 일반 구현·프론트/서버/확장 역할·실행 제약·제거 후보·OSS는 CSV의 개별 열에 있다. 코드 근거 ID는 [근거 목록](sources.md), 시나리오 실행은 [검증 기록](validation.md)을 따른다.

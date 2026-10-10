@@ -305,21 +305,42 @@ pub async fn run(command: Command) -> Result<Value, Value> {
 }
 
 async fn principal(config: Config, command: Principal) -> Result<Value, Value> {
-    let db = tokio::time::timeout(std::time::Duration::from_secs(5), spike_v2_read::connect_owned_with_url(&database_url(&config)?))
+    let mut db = tokio::time::timeout(std::time::Duration::from_secs(5), spike_v2_read::connect_owned_with_url(&database_url(&config)?))
         .await
         .map_err(|_| error("DB_CONNECT", "DB 연결 기한 초과"))?
         .map_err(|_| error("DB_CONNECT", "DB 연결 실패"))?;
     let issuer = &config.auth.issuer;
     let binding = matches!(&command, Principal::Bind { .. });
     let operation = async {
+        let tx = db.transaction().await.map_err(|_| error("PRINCIPAL_FAILED", "사용자 연결 트랜잭션 시작 실패"))?;
+        tx.execute("SELECT pg_advisory_xact_lock_shared(1095323725, hashtext($1))", &[&config.schema])
+            .await
+            .map_err(|_| error("PRINCIPAL_FAILED", "배포 신원 계약 잠금 실패"))?;
+        let marker = tx
+            .query_one(&format!("SELECT facts, runtime_wire FROM {}.aip_migrate_meta WHERE singleton=true FOR SHARE", config.schema), &[])
+            .await
+            .map_err(|_| error("PRINCIPAL_FAILED", "배포 신원 계약 조회 실패"))?;
+        let facts: Value = marker.get(0);
+        let stored_wire: Option<String> = marker.get(1);
+        if stored_wire.as_deref().is_some_and(|wire| wire != config.wire.deployment_label()) {
+            return Err(error("WIRE_MODE_MISMATCH", "기존 배포 wire와 설정 wire가 다름"));
+        }
+        let managed = facts["actorMode"] == "principal";
         let count=match command {
             Principal::Bind{subject,actor,not_before}=>{
                 if subject.is_empty()||subject.len()>256||actor<=0||not_before<0{return Err(error("BAD_PRINCIPAL","subject·actor·not-before 값 오류"));}
-                db.execute(&format!("INSERT INTO {}.aip_principals(issuer,subject,actor_id,enabled,min_iat) VALUES($1,$2,$3,true,$4) ON CONFLICT(issuer,subject) DO UPDATE SET enabled=true,min_iat=GREATEST(aip_principals.min_iat,EXCLUDED.min_iat) WHERE aip_principals.actor_id=EXCLUDED.actor_id",config.schema),&[issuer,&subject,&actor,&not_before]).await
+                if managed {
+                    if config.wire.id_wire() == IdWire::SafeNumber && actor > spike_v2_read::id_wire::MAX_SAFE_ID {
+                        return Err(error("BAD_PRINCIPAL", "safe wire의 actor 안전 정수 상한 초과"));
+                    }
+                    tx.execute(&format!("INSERT INTO {}.aip_actors(id) VALUES($1) ON CONFLICT DO NOTHING", config.schema), &[&actor])
+                        .await.map_err(|_| error("PRINCIPAL_FAILED", "운영 신원 등록 실패"))?;
+                }
+                tx.execute(&format!("INSERT INTO {}.aip_principals(issuer,subject,actor_id,enabled,min_iat) VALUES($1,$2,$3,true,$4) ON CONFLICT(issuer,subject) DO UPDATE SET enabled=true,min_iat=GREATEST(aip_principals.min_iat,EXCLUDED.min_iat) WHERE aip_principals.actor_id=EXCLUDED.actor_id",config.schema),&[issuer,&subject,&actor,&not_before]).await
             },
             Principal::Revoke{subject}=>{
                 if subject.is_empty()||subject.len()>256{return Err(error("BAD_PRINCIPAL","subject 값 오류"));}
-                db.execute(&format!("UPDATE {}.aip_principals SET enabled=false,min_iat=GREATEST(min_iat,floor(extract(epoch FROM clock_timestamp()))::bigint+1) WHERE issuer=$1 AND subject=$2",config.schema),&[issuer,&subject]).await
+                tx.execute(&format!("UPDATE {}.aip_principals SET enabled=false,min_iat=GREATEST(min_iat,floor(extract(epoch FROM clock_timestamp()))::bigint+1) WHERE issuer=$1 AND subject=$2",config.schema),&[issuer,&subject]).await
             },
         }.map_err(|_|error("PRINCIPAL_FAILED","actor 존재·매핑 테이블·DB 권한을 확인해야 함"))?;
         if count == 0 && binding {
@@ -328,6 +349,7 @@ async fn principal(config: Config, command: Principal) -> Result<Value, Value> {
         if count == 0 {
             return Err(error("PRINCIPAL_NOT_FOUND", "연결된 신원이 없음"));
         }
+        tx.commit().await.map_err(|_| error("PRINCIPAL_UNSETTLED", "사용자 연결 커밋 결과 불명; 상태 확인 필요"))?;
         Ok(json!({"ok":true,"affected":count}))
     };
     tokio::time::timeout(std::time::Duration::from_secs(5), operation)

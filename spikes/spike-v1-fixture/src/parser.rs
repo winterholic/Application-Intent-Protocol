@@ -219,6 +219,7 @@ impl Parser {
                             spec.limits.push(Limit { name, on, at_most, cond, span: sp });
                         }
                         "resource" => spec.resources.push(self.resource(sp)?),
+                        "operation" => spec.operations.push(self.extension_with_policy(sp, true)?),
                         other => return Err(Diag::new("PARSE_UNKNOWN_DECL", format!("알 수 없는 선언 `{other}`"), sp)),
                     }
                 }
@@ -729,6 +730,10 @@ impl Parser {
     }
 
     fn extension(&mut self, span: Span) -> R<Extension> {
+        self.extension_with_policy(span, false)
+    }
+
+    fn extension_with_policy(&mut self, span: Span, operation: bool) -> R<Extension> {
         let kind = self.ident()?;
         let name = self.ident()?;
         let mut x = Extension {
@@ -740,6 +745,7 @@ impl Parser {
             effect: String::new(),
             deadline_ms: None,
             implementation: String::new(),
+            allow: None,
             span,
         };
         let mut xseen = BTreeSet::new();
@@ -753,6 +759,7 @@ impl Parser {
             let key = self.ident()?;
             once(&mut xseen, &key, sp, "extension")?;
             match key.as_str() {
+                "allow" if operation => x.allow = Some(self.expr()?),
                 "input" => x.input = self.params_block()?,
                 "output" => x.output = self.params_block()?,
                 "access" => loop {

@@ -1,0 +1,59 @@
+actor principal
+operation read length {
+  input { text: Text; owner: principal.Id; optional: Int? }
+  output { length: Int }
+  allow actor != null and actor.id = input.owner
+  effect none
+  deadline 2s
+  implementation "compute.length"
+}
+operation read forbidden {
+  input {}
+  output { length: Int }
+  allow false
+  effect none
+  deadline 2s
+  implementation "compute.length"
+}
+operation read invalid {
+  input {}
+  output { length: Int }
+  allow actor != null
+  effect none
+  deadline 2s
+  implementation "compute.invalid"
+}
+operation read ctxProbe {
+  input {}
+  output { length: Int }
+  allow actor != null
+  effect none
+  deadline 2s
+  implementation "compute.ctxProbe"
+}
+operation read slow {
+  input {}
+  output { length: Int }
+  allow actor != null
+  effect none
+  deadline 100ms
+  implementation "compute.slow"
+}
+
+operation read ranged {
+  input { text: Text(1..3); count: Int(1..3) }
+  output { length: Int(1..3) }
+  allow actor != null
+  effect none
+  deadline 2s
+  implementation "compute.ranged"
+}
+
+operation read unsafeInteger {
+  input {}
+  output { length: Int }
+  allow actor != null
+  effect none
+  deadline 2s
+  implementation "compute.unsafeInteger"
+}

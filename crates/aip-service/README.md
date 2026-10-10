@@ -19,7 +19,7 @@ HTTP listener는 loopback에서 TLS reverse proxy 뒤에 둔다. 제품은 개�
 
 마이그레이션은 owned schema에서 테스트한다. 실행 전 plan으로 SQL·변경 분류·데이터 영향을 확인하고 plan digest로 적용 대상을 고정한다. 일반 변환의 미지원 형태는 임의 SQL로 추측하지 않고 구체 오류로 거부한다.
 
-서비스 기동 때 정본 정의와 실제 schema를 preflight로 확인한다. 실행 중인 서비스는 각 `/read`·`/apply`·`/status`·`/extension` 작업 전 작업용 DB 연결에서 배포 shared advisory lock을 잡고 `aip_migrate_meta.facts_digest`를 기동 시 정의와 다시 비교한다. 이 잠금은 결과가 준비될 때까지 유지된다. 마이그레이션의 exclusive 잠금과 직렬화되므로 진행 중인 작업을 마친 뒤 새 배포가 적용되고, 이전 정의를 든 listener의 후속 요청은 `DEPLOYMENT_CHANGED`로 거부된다. DB 잠금·marker 조회 실패는 실행 없이 거부한다. `/session`은 정책 데이터를 실행하지 않아 이 배포 잠금을 잡지 않는다. 이 요청별 비교는 기동 시 catalog preflight를 대체하지 않으며, 외부의 임의 DDL 변경을 매 요청 검출한다는 보장은 아니다.
+서비스 기동 때 정본 정의와 실제 schema를 preflight로 확인한다. 실행 중인 서비스는 각 `/read`·`/apply`·`/status`·`/extension`·`/operation`·`/capabilities` 작업 전 작업용 DB 연결에서 배포 shared advisory lock을 잡고 `aip_migrate_meta.facts_digest`를 기동 시 정의와 다시 비교한다. 이 잠금은 결과가 준비될 때까지 유지된다. 마이그레이션의 exclusive 잠금과 직렬화되므로 진행 중인 작업을 마친 뒤 새 배포가 적용되고, 이전 정의를 든 listener의 후속 요청은 `DEPLOYMENT_CHANGED`로 거부된다. DB 잠금·marker 조회 실패는 실행 없이 거부한다. `/session`은 정책 데이터를 실행하지 않아 이 배포 잠금을 잡지 않는다. 이 요청별 비교는 기동 시 catalog preflight를 대체하지 않으며, 외부의 임의 DDL 변경을 매 요청 검출한다는 보장은 아니다.
 
 ## 실행과 재검증
 
@@ -28,3 +28,7 @@ HTTP listener는 loopback에서 TLS reverse proxy 뒤에 둔다. 제품은 개�
 정의 변경 뒤 새 binding과 새 정의로 서버를 재시작한다.
 
 `principal revoke`는 연결을 비활성화하고 폐기 시각까지 발급한 JWT를 제외한다. 같은 actor 재활성화가 과거 토큰을 되살리지 않는다. 없는 신원의 폐기는 성공으로 보고하지 않는다. 현재 root CLI의 제품 테스트는 JWT 권한·재기동·live 정책 migration·폐기·원본 보존·설정 음성 대조와 실제 기존 서버의 멱등 결과 이관을 포함한다.
+
+## resource 독립 실행 후속
+
+현재 제품은 top-level `operation read`와 업무 resource가 없는 `actor principal` 모드를 지원한다. 같은 형식·SDK·Node/Python worker를 사용하며 별도 컨트롤러를 요구하지 않는다. 운영 PostgreSQL·인증·배포 fence는 유지한다. 실제 문법과 지원 범위는 [동기 operation](../../product/EXECUTION.md), 다음 durable 실행기의 미구현 설계는 [Job 제안](../../plan-docs/backend-capability/durable-job-proposal.md)에 구분한다.

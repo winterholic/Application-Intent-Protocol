@@ -93,6 +93,23 @@ fn time_binding(s: &str) -> Result<String, Reject> {
     Ok(format!("{year:04}-{:02}-{:02}T{:02}:{:02}:{second:02}{fraction}+00:00{era}", utc.month(), utc.day(), utc.hour(), utc.minute()))
 }
 
+pub fn validate_range(field: &Value, value: &Value, code: &'static str) -> Result<(), Reject> {
+    if field[2].is_null() || value.is_null() {
+        return Ok(());
+    }
+    let bounds = field[2].as_array().filter(|bounds| bounds.len() == 2);
+    let bounds = bounds.and_then(|bounds| Some((bounds[0].as_i64()?, bounds[1].as_i64()?)));
+    let measured = match value {
+        Value::String(text) => i64::try_from(text.chars().count()).ok(),
+        Value::Number(number) => number.as_i64(),
+        _ => None,
+    };
+    if !matches!((bounds, measured), (Some((lo, hi)), Some(measured)) if lo <= measured && measured <= hi) {
+        return Err(Reject { code, msg: "선언한 값 범위 초과".into() });
+    }
+    Ok(())
+}
+
 pub fn parse(facts: &Value, ty: &str, value: &Value) -> Result<(String, &'static str), Reject> {
     let base = ty.trim_end_matches('?');
     if let Some((precision, scale)) = decimal_type(base) {

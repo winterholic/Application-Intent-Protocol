@@ -271,10 +271,22 @@ fn check_read_value(facts: &Value, ty: &str, value: &Value, wire: IdWire, output
             .map(|_| ())
             .map_err(|error| if output { Reject { code, msg: error.msg } } else { error });
     }
+    if base == "Int" && !value.as_i64().is_some_and(|n| (-spike_v2_read::id_wire::MAX_SAFE_ID..=spike_v2_read::id_wire::MAX_SAFE_ID).contains(&n)) {
+        return rej(code, "Int는 JavaScript 안전 정수 범위여야 함");
+    }
     spike_v2_read::scalar::parse(facts, base, value).map(|_| ()).map_err(|error| Reject { code, msg: error.msg })
 }
 
 fn check_read_record(facts: &Value, decl: &Value, value: &Value, what: &str, wire: IdWire) -> Result<(), Reject> {
+    check_read_record_types(facts, decl, value, what, wire)?;
+    let code = if what == "출력" { "OUTPUT_INVALID" } else { "BAD_VALUE" };
+    for field in decl.as_array().unwrap() {
+        spike_v2_read::scalar::validate_range(field, &value[field[0].as_str().unwrap()], code)?;
+    }
+    Ok(())
+}
+
+fn check_read_record_types(facts: &Value, decl: &Value, value: &Value, what: &str, wire: IdWire) -> Result<(), Reject> {
     if wire == IdWire::Legacy {
         return check_record(facts, decl, value, what);
     }
@@ -328,6 +340,34 @@ pub async fn invoke_with_wire(
     validate_read(facts, name, input, wire)?;
     let (res, ext) = name.split_once('.').ok_or(Reject { code: "BAD_REQUEST", msg: "확장은 `Resource.name`".into() })?;
     let x = &facts["resources"][res]["extensions"][ext];
+    invoke_contract(Some(db), w, facts, x, input, caller, wire).await
+}
+
+pub fn validate_operation(facts: &Value, name: &str, input: &Value, wire: IdWire) -> Result<(), Reject> {
+    let operation = &facts["operations"][name];
+    if !operation.is_object() {
+        return rej("NOT_EXPOSED", "등록된 operation이 없음");
+    }
+    if operation["kind"] != "read" || operation["effect"] != "none" || !operation["access"].as_object().is_some_and(|access| access.is_empty()) {
+        return rej("UNSUPPORTED", "operation 실행 계약 불일치");
+    }
+    check_read_record(facts, &operation["input"], input, "입력", wire)
+}
+
+pub async fn invoke_operation(worker: &mut Worker, facts: &Value, name: &str, input: &Value, caller: &Caller, wire: IdWire) -> Result<Value, Reject> {
+    validate_operation(facts, name, input, wire)?;
+    invoke_contract(None, worker, facts, &facts["operations"][name], input, caller, wire).await
+}
+
+async fn invoke_contract(
+    mut db: Option<&mut Client>,
+    w: &mut Worker,
+    facts: &Value,
+    x: &Value,
+    input: &Value,
+    caller: &Caller,
+    wire: IdWire,
+) -> Result<Value, Reject> {
     let deadline = Duration::from_millis(x["deadlineMs"].as_u64().unwrap_or(1000));
     // 집계 입력은 확장 계약의 binding대로 확장 입력 값에 고정한다. worker가 다른 값을 넣으면 거부한다.
     let mut access = HashMap::new();
@@ -345,7 +385,9 @@ pub async fn invoke_with_wire(
     let token = format!("g{invoke_id}-{}", Instant::now().elapsed().as_nanos() ^ (invoke_id as u128).wrapping_mul(0x9E37_79B9_7F4A_7C15));
     let expires = Instant::now() + deadline;
     w.tokens.insert(token.clone(), Grant { actor_id: caller.actor_id, now: caller.now.clone(), access, id_wire: wire, expires, active: true });
-    if let Err(error) = w.send(&json!({ "type": "invoke", "invoke": invoke_id, "impl": x["implementation"], "input": input, "token": token })).await {
+    if let Err(error) =
+        w.send_before(&json!({ "type": "invoke", "invoke": invoke_id, "impl": x["implementation"], "input": input, "token": token }), expires).await
+    {
         w.retire(&token);
         return Err(error);
     }
@@ -365,6 +407,9 @@ pub async fn invoke_with_wire(
         };
         match m["type"].as_str() {
             Some("call") => {
+                let Some(db) = db.as_deref_mut() else {
+                    break rej("ACCESS_NOT_DECLARED", "순수 operation은 ctx 호출을 허용하지 않음");
+                };
                 // ctx 작업도 호출 전체 기한 안에서만 기다린다. DB 대기 중 기한을 넘기면 호출 전체가 실패한다(F05).
                 let left = expires.saturating_duration_since(Instant::now());
                 let reply = match tokio::time::timeout(left, serve_call(db, w, facts, &m)).await {
@@ -375,7 +420,7 @@ pub async fn invoke_with_wire(
                     Ok(v) => json!({ "type": "reply", "call": m["call"], "value": v }),
                     Err(e) => json!({ "type": "reply", "call": m["call"], "error": { "code": e.code } }),
                 };
-                if let Err(e) = w.send(&msg).await {
+                if let Err(e) = w.send_before(&msg, expires).await {
                     break Err(e);
                 }
             }

@@ -1,5 +1,8 @@
 # SQL 편향 감사
 
+> 후속(2026-10-10): 이 문서의 감사 기준은 `ecf3369` 시점이다. 이후 [resource 독립 동기 operation](../../product/EXECUTION.md)을 제품에 연결했고 [durable Job 구조 제안](durable-job-proposal.md)을 구체화했다. 아래 역사적 미지원/제안 항목을 현재 구현으로 합산하지 않으며 최신 지원 범위는 후속 문서를 따른다.
+
+
 2026-10-09. 제품 코드 기준 `ecf3369`. [최신 창시자 지침](../sources/founder-backend-capability-directive-2026-10-09.md)이 기준이며, 현재 parser를 최종 AIP 사양으로 정당화하지 않는다. 코드 근거 ID는 [sources](sources.md), 실행 증거는 [validation](validation.md).
 
 ## 판정

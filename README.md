@@ -43,6 +43,8 @@ Core 검증은 GitHub Actions의 Ubuntu에서도 실행한다. 외부 IdP 계정
 
 ## 상태
 
+2026-10-10 후속: [resource 독립 동기 operation](product/EXECUTION.md)을 제품 경로에 연결했다. 업무 resource 없는 신원·typed SDK·capability 발견과 실행 전후 인가를 제공한다. [다음 durable Job 구조 제안](plan-docs/backend-capability/durable-job-proposal.md)은 아직 미구현이며 기존 PoC Job과 구분한다. 검증 결과와 제한은 [제품 검증](product/VERIFICATION.md)을 따른다.
+
 **제품 서비스 통합 및 실행 검증 중(2026-10-05).** 기준은 [창시자 통합 지침](plan-docs/sources/founder-integrated-directive-2026-10-03.md)이며 결과물은 [plan-docs A~E](plan-docs/README.md#이번-결과물-ae)에 있다. 자체 포트 AIP 서버+공식 프론트 라이브러리, Rust 엔진, JS/TS·Python 확장, 선택적 구조화 설명·개발 검증이 제품 기준이다.
 
 기존 `aip check/run/gen-ts` 등의 PoC Core IR 경로는 보존한다. 새 제품 진입점은 `aip service`이며 caller read/direct apply 정본을 사용한다. 독립 spike의 검증된 엔진을 path dependency로 재사용한다. `.aip` 파일 여부와 최종 문법·쓰기 조합 선택은 이번 조립만으로 확정하지 않는다.

@@ -7,6 +7,7 @@
 //! `x-spike-drop-response: 1`이면 커밋 뒤 응답 없이 연결을 끊는다(시험용).
 pub mod auth;
 mod cors;
+mod operation;
 pub mod server;
 pub mod write_extension;
 use serde_json::{json, Value};
@@ -350,7 +351,7 @@ async fn serve_conn(
     if let Some(m) = bad {
         return reply(&mut w, &err("BAD_REQUEST", m)).await;
     }
-    if !["/session", "/read", "/apply", "/status", "/extension"].contains(&path.as_str()) {
+    if !["/session", "/read", "/apply", "/status", "/extension", "/operation", "/capabilities"].contains(&path.as_str()) {
         return reply(&mut w, &err("NOT_FOUND", "알 수 없는 경로")).await;
     }
     if method == "OPTIONS" {
@@ -445,6 +446,32 @@ async fn serve_conn(
             return reply(&mut w, &err(e.code, &e.msg)).await;
         }
     }
+    if path == "/operation" {
+        if runtime.extensions.is_none() {
+            return reply(&mut w, &err("NOT_FOUND", "operation은 서버 worker 설정이 필요함")).await;
+        }
+        if session.is_none() {
+            return reply(&mut w, &err("UNAUTHENTICATED", "operation은 검증된 세션이 필요함")).await;
+        }
+        if expected_contract.is_none() || expected_contract.as_deref() != contract_fingerprint.as_deref() {
+            return reply(&mut w, &err("CONTRACT_MISMATCH", "생성 operation 계약 지문이 필요함")).await;
+        }
+        let exact = body.as_object().is_some_and(|body| body.len() == 2 && body.contains_key("operation") && body.contains_key("input"));
+        let Some(name) = body["operation"].as_str().filter(|_| exact) else {
+            return reply(&mut w, &err("BAD_REQUEST", "operation 본문은 operation/input만 허용함")).await;
+        };
+        if let Err(error) = spike_v4_worker::validate_operation(&facts, name, &body["input"], wire) {
+            return reply(&mut w, &err(error.code, &error.msg)).await;
+        }
+    }
+    if path == "/capabilities" {
+        if session.is_none() {
+            return reply(&mut w, &err("UNAUTHENTICATED", "capability 탐색은 검증된 세션이 필요함")).await;
+        }
+        if !body.as_object().is_some_and(|body| body.is_empty()) {
+            return reply(&mut w, &err("BAD_REQUEST", "capabilities 본문은 빈 객체")).await;
+        }
+    }
     if path == "/session" {
         if !body.as_object().is_some_and(|body| body.is_empty()) {
             return reply(&mut w, &err("BAD_REQUEST", "session 본문은 빈 객체")).await;
@@ -460,7 +487,7 @@ async fn serve_conn(
         });
         return reply(&mut w, &result.to_string()).await;
     }
-    let _extension_slot = if path == "/extension" || write_extension {
+    let _extension_slot = if path == "/extension" || path == "/operation" || write_extension {
         match runtime.extension_slots.try_acquire() {
             Ok(slot) => Some(slot),
             Err(_) => return reply(&mut w, &err("WORKER_BUSY", "로컬 확장 동시 호출 상한")).await,
@@ -505,7 +532,41 @@ async fn serve_conn(
         }
     };
     let caller = Caller { actor_id: session.as_ref().map(|s| s.actor_id), now };
-    let mut result = if write_extension {
+    let mut result = if path == "/capabilities" {
+        let mut operations = spike_v5_sdk::operation_descriptors(&facts);
+        for operation in operations.as_object_mut().unwrap().values_mut() {
+            operation["available"] = json!(runtime.extensions.is_some());
+            operation["authorization"] = json!("checked-on-call");
+        }
+        json!({"ok":true,"catalogVersion":"aip-capabilities/1","operations":operations})
+    } else if path == "/operation" {
+        let operation_deadline =
+            std::time::Duration::from_millis(facts["operations"][body["operation"].as_str().unwrap()]["deadlineMs"].as_u64().unwrap());
+        let execution = async {
+            let output = operation::invoke(&mut db, &facts, &body, &caller, wire, runtime.extensions.as_ref().unwrap()).await;
+            if output["ok"] != true {
+                return output;
+            }
+            let token = token.as_deref().unwrap();
+            let current = match &runtime.authenticator {
+                None => keys.verify_session(token),
+                Some(provider) => match tokio::time::timeout(server::DB_PREFLIGHT_TIMEOUT, provider.verify_session(token)).await {
+                    Ok(result) => result,
+                    Err(_) => Err(auth::AuthError::Unavailable),
+                },
+            };
+            match current {
+                Ok(current) if Some(current.actor_id) == caller.actor_id => output,
+                Err(auth::AuthError::Expired) => json!({"ok":false,"code":"TOKEN_EXPIRED"}),
+                Err(auth::AuthError::Unavailable) => json!({"ok":false,"code":"DB_UNAVAILABLE"}),
+                _ => json!({"ok":false,"code":"UNAUTHENTICATED"}),
+            }
+        };
+        match tokio::time::timeout(operation_deadline, execution).await {
+            Ok(output) => output,
+            Err(_) => json!({"ok":false,"code":"DEADLINE_EXCEEDED"}),
+        }
+    } else if write_extension {
         let mut result = write_extension::apply(&mut db, &facts, &body, &caller, wire, runtime.extensions.as_ref().unwrap()).await;
         if result["ok"] == false {
             result["msg"] = json!("공식 WRITE 확장 호출 거부");
@@ -546,12 +607,12 @@ async fn serve_conn(
         handle(&mut db, &facts, &path, &body, &caller, wire).await
     };
     let write_status = path == "/status" && body["request"].get("extension").is_some();
-    if (["/read", "/extension"].contains(&path.as_str()) || write_extension || write_status) && result["ok"] == true {
+    if (["/read", "/extension", "/operation", "/capabilities"].contains(&path.as_str()) || write_extension || write_status) && result["ok"] == true {
         if let Some(fingerprint) = contract_fingerprint {
             result["contractFingerprint"] = json!(&*fingerprint);
         }
         // 커밋된 결과를 인증 거부로 바꾸면 클라이언트가 실제 쓰기 효과를 놓친다.
-        if let Some(session) = session.filter(|_| ["/read", "/extension"].contains(&path.as_str())) {
+        if let Some(session) = session.filter(|_| ["/read", "/extension", "/operation", "/capabilities"].contains(&path.as_str())) {
             let remaining = session.remaining_ms();
             if remaining == 0 {
                 std::mem::drop(db);

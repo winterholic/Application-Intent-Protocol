@@ -1,5 +1,8 @@
 # 선언형 실행 모델 고도화 제안
 
+> 후속(2026-10-10): 이 문서의 감사 기준은 `ecf3369` 시점이다. 이후 [resource 독립 동기 operation](../../product/EXECUTION.md)을 제품에 연결했고 [durable Job 구조 제안](durable-job-proposal.md)을 구체화했다. 아래 역사적 미지원/제안 항목을 현재 구현으로 합산하지 않으며 최신 지원 범위는 후속 문서를 따른다.
+
+
 > **제안 문서. 신규 문법·API·실행 보장을 구현하거나 승인받은 결과가 아니다.** 기존 read/apply/extension과 제품의 보안·멱등·배포 계약을 유지하면서 필요한 경계를 추가하는 방향이다. [SQL 편향 감사](sql-bias-audit.md)와 [시나리오](scenarios.md)의 반례가 출발점이다.
 
 ## 설계 관문 8개

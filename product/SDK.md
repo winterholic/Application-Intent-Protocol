@@ -24,6 +24,7 @@ npm ci --prefix spikes/spike-0-ts --ignore-scripts --no-audit --no-fund
 node product/tools/build-sdk.mjs --out /tmp/aip-sdk-0.1.0
 node --test product/tests/sdk-package.test.mjs
 node --test product/tests/package-boundaries.test.mjs
+cargo build -p aip-cli --locked
 node --test product/tests/service-smoke.test.mjs
 node product/tools/package.mjs
 ```
@@ -37,3 +38,9 @@ node product/tools/package.mjs
 패키징은 시작 시 소스 목록과 해시, 기존 실행 파일의 해시를 기록한다. SDK 빌드와 파일 복사 뒤 입력을 다시 확인하고, 복사한 실행 파일·예시의 해시도 비교한다. 입력 추가·삭제·수정이나 실행 파일 교체를 감지하면 변경 경로와 `SOURCE_CHANGED`를 반환하고 이번 실행의 출력을 정리한다. 필수 소스나 Cargo manifest가 없으면 SDK 빌드 전에 `SOURCE_MISSING`을 반환한다. `package-boundaries.test.mjs`는 독립 임시 저장소에서 이 경계를 재현하며 공용 DB와 `target/`를 사용하지 않는다.
 
 이 검사는 workspace 잠금이나 빌드 provenance를 제공하지 않는다. 검사 사이에서 변경됐다가 원복된 소스는 감지하지 못할 수 있으며, 기존 실행 파일이 현재 소스에서 빌드됐다는 보증은 별도 검증이 필요하다.
+
+## resource 독립 operation
+
+생성 binding에 operation이 있으면 같은 `connect`가 `.operation(name, input)`을 제공한다. `OperationBinding`과 `OperationDescriptors`를 package root에서 export한다. 입력·출력·범위·계약 지문과 세션 교체 검사를 공통 transport에 연결한다. 실제 문법·인증·DB 의존·실패 경계는 [EXECUTION](EXECUTION.md)을 따른다. 설치 SDK smoke는 Node/Python과 safe/decimal 조합에서 Unicode 계산과 범위 밖 입력 거부도 확인한다.
+
+CLI나 compiler 변경 뒤 service smoke·패키징 전에 위 `cargo build`를 실행한다. package 도구는 기존 실행 파일을 복사하므로 SDK 소스만 최신이라고 해서 생성 계약도 최신인 것은 아니다.

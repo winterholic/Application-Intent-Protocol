@@ -100,6 +100,11 @@ function validDecimal(value: string, type: string): boolean {
 
 function validScalar(value: unknown, d: ScalarDescriptor, wire: IdWireKind): boolean {
   if (value === null) return d.nullable === true;
+  if (d.range !== undefined) {
+    if (!Array.isArray(d.range) || d.range.length !== 2 || !d.range.every(Number.isSafeInteger)) return false;
+    const measured = typeof value === "string" ? [...value].length : typeof value === "number" ? value : NaN;
+    if (!Number.isSafeInteger(measured) || measured < d.range[0] || measured > d.range[1]) return false;
+  }
   if (d.type.startsWith("Decimal<")) return typeof value === "string" && validDecimal(value, d.type);
   switch (d.type) {
     case "Id": case "Ref":
@@ -192,9 +197,9 @@ function validateReadRows(query: unknown, rows: unknown[], descriptors: Readonly
 
 type PendingWriteExtension<W extends ExtensionContractShape<W>> = keyof W extends never ? never : WriteExtensionResult<W[keyof W]["output"]>;
 
-export function connectTypedExtensions<C extends ContractShape<C>, A extends ApplyContractShape<A>, E extends ExtensionContractShape<E> = {}, W extends ExtensionContractShape<W> = {}>(
+export function connectTypedExtensions<C extends ContractShape<C>, A extends ApplyContractShape<A>, E extends ExtensionContractShape<E> = {}, W extends ExtensionContractShape<W> = {}, O extends ExtensionContractShape<O> = {}>(
   base: string, token: string | null,
-  binding: ApplyBinding<C, A> & { readonly readDescriptors: ReadDescriptors<C>; readonly __extensions?: E; readonly extensions?: ExtensionDescriptors<E>; readonly __writes?: W; readonly writeExtensions?: WriteExtensionDescriptors<W> },
+  binding: ApplyBinding<C, A> & { readonly readDescriptors: ReadDescriptors<C>; readonly __extensions?: E; readonly extensions?: ExtensionDescriptors<E>; readonly __writes?: W; readonly writeExtensions?: WriteExtensionDescriptors<W>; readonly __operations?: O; readonly operations?: ExtensionDescriptors<O> },
   fetchImpl: typeof fetch = fetch,
 ) {
   if (!binding?.readDescriptors || typeof binding.readDescriptors !== "object" || Array.isArray(binding.readDescriptors)) {
@@ -205,6 +210,7 @@ export function connectTypedExtensions<C extends ContractShape<C>, A extends App
   const fingerprint = binding.fingerprint;
   const descriptors = structuredClone(binding.extensions ?? {}) as ExtensionDescriptors<E>;
   const writes = structuredClone(binding.writeExtensions ?? {}) as WriteExtensionDescriptors<W>;
+  const operations = structuredClone(binding.operations ?? {}) as ExtensionDescriptors<O>;
   const stable = {fingerprint, idWire:wire, readDescriptors:structuredClone(binding.readDescriptors)};
   const raw = typedClient<C>(base, token, stable, fetchImpl, wire, (request, response) => {
     const req = request as Record<string, unknown>;
@@ -215,7 +221,7 @@ export function connectTypedExtensions<C extends ContractShape<C>, A extends App
     }
     validateRecord(res.output, writes[name as keyof W].output, wire, "PROTOCOL_ERROR");
   });
-  const { callExtension, ...client } = applyFacade<C,A>(raw);
+  const { callExtension, callOperation, ...client } = applyFacade<C,A>(raw);
   return {
     ...client,
     async extension<const K extends keyof E & string>(name: K, input: E[K]["input"]): Promise<DeepReadonly<E[K]["output"]>> {
@@ -226,6 +232,15 @@ export function connectTypedExtensions<C extends ContractShape<C>, A extends App
       const output = await callExtension(name, snapshot);
       validateRecord(output, descriptor.output, wire, "PROTOCOL_ERROR");
       return Object.freeze(output) as DeepReadonly<E[K]["output"]>;
+    },
+    async operation<const K extends keyof O & string>(name: K, input: O[K]["input"]): Promise<DeepReadonly<O[K]["output"]>> {
+      if (!Object.hasOwn(operations, name)) throw Object.assign(new Error("생성 계약에 없는 operation"), {code:"NOT_EXPOSED"});
+      const descriptor = operations[name];
+      const snapshot = structuredClone(input);
+      validateRecord(snapshot, descriptor.input, wire, "BAD_VALUE");
+      const output = await callOperation(name, snapshot);
+      validateRecord(output, descriptor.output, wire, "PROTOCOL_ERROR");
+      return Object.freeze(output) as DeepReadonly<O[K]["output"]>;
     },
     async writeExtension<const K extends keyof W & string>(name: K, input: W[K]["input"], options?: ApplyOptions): Promise<WriteExtensionResult<W[K]["output"]>> {
       if (!Object.hasOwn(writes, name)) throw Object.assign(new Error("생성 계약에 없는 WRITE 확장"), {code:"NOT_EXPOSED"});

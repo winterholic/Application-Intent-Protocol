@@ -205,6 +205,9 @@ impl<'a> Ctx<'a> {
             seen(&r.name, r.span, &mut self.diags);
             self.res.insert(&r.name, r);
         }
+        for operation in &spec.operations {
+            seen(&operation.name, operation.span, &mut self.diags);
+        }
         for p in &spec.predicates {
             seen(&p.name, p.span, &mut self.diags);
             self.preds.insert(&p.name, p);
@@ -219,6 +222,7 @@ impl<'a> Ctx<'a> {
         }
         self.diags.extend(validate_policy_expansion(spec));
         match &spec.actor {
+            Some((a, _)) if a == "principal" && spec.resources.is_empty() && !spec.operations.is_empty() => self.actor = Some(a.clone()),
             Some((a, sp)) if !self.res.contains_key(a.as_str()) => self.d("UNKNOWN_SYMBOL", format!("actor 대상 resource `{a}` 없음"), *sp),
             Some((a, _)) => self.actor = Some(a.clone()),
             None => self.d("MISSING_ITEM", "actor 선언 필요", Span::default()),
@@ -227,7 +231,7 @@ impl<'a> Ctx<'a> {
 
     fn type_of(&mut self, owner: Option<&str>, t: &TypeRef) -> Option<TT> {
         let base = if t.id_of {
-            if self.res.contains_key(t.name.as_str()) {
+            if self.res.contains_key(t.name.as_str()) || (t.name == "principal" && self.principal_actor()) {
                 Ty::Id(t.name.clone())
             } else {
                 self.d("UNKNOWN_TYPE", format!("`{}.Id`의 resource 없음", t.name), t.span);
@@ -276,6 +280,9 @@ impl<'a> Ctx<'a> {
     }
 
     fn field_tt(&self, r: &str, f: &str) -> Option<TT> {
+        if r == "principal" && f == "id" && self.principal_actor() {
+            return Some(TT::new(Ty::Id("principal".into())));
+        }
         let res = self.res.get(r)?;
         let fd = res.fields.iter().find(|x| x.name == f)?;
         // 여기서는 진단을 내지 않는다. 필드 타입 오류는 resource 검사에서 한 번만 낸다.
@@ -324,6 +331,10 @@ impl<'a> Ctx<'a> {
             s.vars.push(("actor".into(), TT::new(Ty::Ref(a.clone()))));
         }
         s
+    }
+
+    fn principal_actor(&self) -> bool {
+        self.actor.as_deref() == Some("principal") && self.spec.resources.is_empty()
     }
 
     fn path(&self, segs: &[String], sp: Span, sc: &Scope) -> Result<(Value, TT), Diag> {
@@ -649,6 +660,18 @@ impl<'a> Ctx<'a> {
             rs.insert(r.name.clone(), v);
         }
         out.insert("resources".into(), Value::Object(rs));
+        if self.principal_actor() {
+            out.insert("actorMode".into(), json!("principal"));
+        }
+        if !spec.operations.is_empty() {
+            let mut operations = Map::new();
+            for operation in &spec.operations {
+                if let Some(value) = self.operation(operation) {
+                    operations.insert(operation.name.clone(), value);
+                }
+            }
+            out.insert("operations".into(), Value::Object(operations));
+        }
         Value::Object(out)
     }
 
@@ -1478,6 +1501,38 @@ impl<'a> Ctx<'a> {
         out
     }
 
+    fn operation(&mut self, operation: &Extension) -> Option<Value> {
+        if operation.kind != "read" || operation.effect != "none" || !operation.access.is_empty() {
+            self.d("UNSUPPORTED", "동기 operation은 read/effect none과 빈 access만 지원", operation.span);
+            return None;
+        }
+        if !operation.deadline_ms.is_some_and(|deadline| deadline > 0 && deadline <= 30_000) {
+            self.d("BAD_BUDGET", "동기 operation deadline은 1ms 이상 30s 이하여야 함", operation.span);
+        }
+        for (_, ty) in operation.input.iter().chain(&operation.output) {
+            if ty.range.is_some_and(|(lo, hi)| lo < -9_007_199_254_740_991 || hi > 9_007_199_254_740_991) {
+                self.d("BAD_RANGE", "operation 범위 경계는 JavaScript 안전 정수로 표현 가능해야 함", ty.span);
+            }
+        }
+        let (input, _) = self.params(&operation.input);
+        let mut scope = self.base_scope();
+        scope.input = input;
+        let allow = match &operation.allow {
+            Some(allow) => {
+                let result = self.bool_of(allow, &scope);
+                self.run(result)
+            }
+            None => {
+                self.d("MISSING_ITEM", "operation에 allow 정책 필요", operation.span);
+                None
+            }
+        };
+        let mut value = self.extension(operation)?;
+        value["allow"] = allow?;
+        value["dependencies"] = json!({"worker":[],"authorization":["database","principal","deployment"]});
+        Some(value)
+    }
+
     fn extension(&mut self, x: &Extension) -> Option<Value> {
         if x.kind == "write" {
             // 쓰기 확장: 서버 트랜잭션 안에서 공개 전이만 부른다. 효과는 DB 쓰기(db)로 명시한다.
@@ -1782,6 +1837,9 @@ fn validate_policy_expansion(spec: &Spec) -> Vec<Diag> {
         }
     }
 
+    for operation in &spec.operations {
+        add_expr_root(&mut roots, operation.allow.as_ref(), operation.span);
+    }
     for (expr, owner_span) in roots {
         let metric = expression_metrics(expr);
         if metric.max_path_segments > MAX_POLICY_PATH_SEGMENTS {

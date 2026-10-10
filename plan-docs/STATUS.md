@@ -2,6 +2,10 @@
 
 > 현재 기준: [2026-10-09 백엔드 기능 포괄성 지침](sources/founder-backend-capability-directive-2026-10-09.md)과 기존 [통합 지침](sources/founder-integrated-directive-2026-10-03.md). 충돌하면 최신 원문의 범위·표식을 따른다.
 
+## resource 독립 실행 고도화 (2026-10-10)
+
+후속 요청으로 [동기 operation](../product/EXECUTION.md)을 제품 V1/V2/V4/V5/V6와 운영 신원·배포·설치 SDK에 연결했다. 업무 resource 0개 모드와 기존 actor resource 모드를 구분하며, allow·입출력 범위·기한·ctx 거부·현재 principal 재검사를 유지한다. 다음 [durable Job 제안](backend-capability/durable-job-proposal.md)은 실행권 세대·권한 회수·취소/완료 경합·결과 ACL·schema 업그레이드 접점까지 구체화했지만 아직 구현하지 않았다. 현재 실행 근거는 [제품 검증](../product/VERIFICATION.md)을 따른다.
+
 ## 현재 포괄성 감사 (2026-10-09)
 
 [백엔드 기능 감사 A~F](backend-capability/README.md)는 SQL 밖 기능을 포함한 105개 최소 항목·여섯 시나리오·Claude Code/Codex 상호 검토를 기록한다. 제품 지원과 별도 PoC를 구분했고, 업무 SQL 없는 Node/Python 계산·DB 불가·선언 deadline·6초 동기 실행을 실제 실험했다. 제품/PoC 재실행 범위와 미검증은 [검증 기록](backend-capability/validation.md)에 있다. 이 감사는 분석·제안이며 새 실행 모델의 대규모 변경을 수행하지 않았다. 최종 DSL·쓰기 모델·Id wire 등 기존 Open도 선점하지 않는다.

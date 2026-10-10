@@ -78,7 +78,7 @@ export function connect(base: string, initialToken: string | null, fetchImpl: ty
   async function postWithToken(path: string, body: unknown, credential: string | null, extra: Record<string, string> = {}) {
     const headers: Record<string, string> = { "content-type": "application/json", ...extra };
     if (credential) headers["authorization"] = `Bearer ${credential}`;
-    if (expectedFingerprint !== undefined && ["/read", "/apply", "/status", "/extension"].includes(path)) {
+    if (expectedFingerprint !== undefined && ["/read", "/apply", "/status", "/extension", "/operation"].includes(path)) {
       headers["x-aip-contract"] = expectedFingerprint;
     }
     const r = await fetchImpl(base + path, { method: "POST", headers, body: JSON.stringify(body) });
@@ -185,6 +185,23 @@ export function connect(base: string, initialToken: string | null, fetchImpl: ty
     renewalQueue = operation.catch(() => {});
     return operation;
   }
+  async function callPure(path: "/extension" | "/operation", field: "extension" | "operation", name: string, input: unknown): Promise<unknown> {
+      const snapshot = structuredClone(input);
+      await ensurePrincipal();
+      const auth = { token, generation };
+      const r = await postWithToken(path, { [field]: name, input: snapshot }, auth.token);
+      if (auth.generation !== generation) throw new ScopeChanged("확장을 읽는 동안 세션이 바뀜");
+      if (r?.ok === false && typeof r.code === "string") {
+        if (r.code === "CONTRACT_MISMATCH") cache.invalidate();
+        throw Object.assign(new Error(r.code), { code: r.code });
+      }
+      if (r?.ok !== true) throw Object.assign(new Error("확장 응답 형식 오류"), { code: "PROTOCOL_ERROR" });
+      if (expectedFingerprint === undefined || r.contractFingerprint !== expectedFingerprint) {
+        cache.invalidate();
+        throw Object.assign(new Error("생성 확장 계약과 서버 계약이 다름"), { code: "CONTRACT_MISMATCH" });
+      }
+      return r.output as unknown;
+  }
   return {
     cache,
     post,
@@ -214,23 +231,8 @@ export function connect(base: string, initialToken: string | null, fetchImpl: ty
         return { rows: r.rows, deps: r.deps, maxAgeMs: r.maxAgeMs };
       });
     },
-    async callExtension(name: string, input: unknown): Promise<unknown> {
-      const snapshot = structuredClone(input);
-      await ensurePrincipal();
-      const auth = { token, generation };
-      const r = await postWithToken("/extension", { extension: name, input: snapshot }, auth.token);
-      if (auth.generation !== generation) throw new ScopeChanged("확장을 읽는 동안 세션이 바뀜");
-      if (r?.ok === false && typeof r.code === "string") {
-        if (r.code === "CONTRACT_MISMATCH") cache.invalidate();
-        throw Object.assign(new Error(r.code), { code: r.code });
-      }
-      if (r?.ok !== true) throw Object.assign(new Error("확장 응답 형식 오류"), { code: "PROTOCOL_ERROR" });
-      if (expectedFingerprint === undefined || r.contractFingerprint !== expectedFingerprint) {
-        cache.invalidate();
-        throw Object.assign(new Error("생성 확장 계약과 서버 계약이 다름"), { code: "CONTRACT_MISMATCH" });
-      }
-      return r.output as unknown;
-    },
+    callExtension: (name: string, input: unknown) => callPure("/extension", "extension", name, input),
+    callOperation: (name: string, input: unknown) => callPure("/operation", "operation", name, input),
     apply,
     replaceSession,
     /** 미확정 쓰기를 같은 키로 다시 확정한다(네트워크 복구 뒤). */

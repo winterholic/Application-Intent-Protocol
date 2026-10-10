@@ -1,5 +1,8 @@
 # 실행 검증과 미검증 경계
 
+> 후속(2026-10-10): 이 문서의 감사 기준은 `ecf3369` 시점이다. 이후 [resource 독립 동기 operation](../../product/EXECUTION.md)을 제품에 연결했고 [durable Job 구조 제안](durable-job-proposal.md)을 구체화했다. 아래 역사적 미지원/제안 항목을 현재 구현으로 합산하지 않으며 최신 지원 범위는 후속 문서를 따른다.
+
+
 2026-10-09. 제품 코드 기준 `ecf3369`. macOS·로컬 PG·Node·Python 환경의 실행 결과다. 라이브 PSP/메일/cloud storage/broker 서비스나 다른 OS에 대한 검증이 아니다. 검토자의 소스 판독과 부모가 실행한 실험을 구분한다.
 
 ## T01 — 업무 SQL 없는 계산의 실제 경계

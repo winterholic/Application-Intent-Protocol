@@ -8,6 +8,7 @@ pub struct Spec {
     pub accesses: Vec<Access>,
     pub limits: Vec<Limit>,
     pub resources: Vec<Resource>,
+    pub operations: Vec<Extension>,
 }
 
 #[derive(Debug, Clone)]
@@ -199,6 +200,7 @@ pub struct Extension {
     pub effect: String,
     pub deadline_ms: Option<u64>,
     pub implementation: String,
+    pub allow: Option<Expr>,
     pub span: Span,
 }
 

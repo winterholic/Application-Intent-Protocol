@@ -13,7 +13,7 @@ const repoDir = resolve(productDir, "..");
 const smokeScript = join(productDir, "tools", "smoke.mjs");
 const packageScript = join(productDir, "tools", "package.mjs");
 
-test("the installed SDK completes authenticated service reads, cache and writes for both Id wires", { timeout: 240_000 }, () => {
+test("the installed SDK completes authenticated reads, cache, writes and operations for both Id wires", { timeout: 240_000 }, () => {
   const testRoot = mkdtempSync(join(tmpdir(), `aip-release-test-${process.pid}-`));
   const outputDir = join(testRoot, "artifact");
   try {
@@ -144,6 +144,7 @@ test("the installed SDK completes authenticated service reads, cache and writes 
           revokedRequestsDenied: 1,
         });
         assert.deepEqual(item.extension, { writesApplied: 1, unchangedCount: 0, replayedWrites: 1 });
+        assert.deepEqual(item.operation, { length: 3, invalidInputRejected: 1 });
       }
       assert.ok(!JSON.stringify(extensionReport).includes("eyJ"), "worker smoke report must not contain the generated JWT");
     }

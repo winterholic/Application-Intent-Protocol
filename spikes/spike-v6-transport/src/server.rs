@@ -327,30 +327,34 @@ impl ReadExtensions {
         if !dir.is_dir() || dir.to_str().is_none() {
             return Err(invalid());
         }
-        for rf in facts["resources"].as_object().into_iter().flatten().map(|(_, rf)| rf) {
-            for ext in rf["extensions"].as_object().into_iter().flatten().map(|(_, ext)| ext) {
-                let read = ext["kind"] == "read" && ext["effect"] == "none";
-                let write = include_write && ext["kind"] == "write" && ext["effect"] == "db";
-                if !read && !write {
-                    continue;
-                }
-                let implementation = ext["implementation"].as_str().ok_or_else(invalid)?;
-                let (module, function) = implementation.split_once('.').ok_or_else(invalid)?;
-                let identifier = |part: &str| {
-                    let mut bytes = part.bytes();
-                    bytes.next().is_some_and(|b| b.is_ascii_alphabetic() || b == b'_') && bytes.all(|b| b.is_ascii_alphanumeric() || b == b'_')
-                };
-                if !identifier(module) || !identifier(function) {
-                    return Err(invalid());
-                }
-                let suffix = match self.lang {
-                    WorkerLang::Node => "mjs",
-                    WorkerLang::Python => "py",
-                };
-                let file = dir.join(format!("{module}.{suffix}")).canonicalize().map_err(|_| invalid())?;
-                if !file.starts_with(&dir) || !file.is_file() {
-                    return Err(invalid());
-                }
+        let resource_extensions = facts["resources"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .flat_map(|(_, resource)| resource["extensions"].as_object().into_iter().flatten().map(|(_, extension)| extension));
+        let operations = facts["operations"].as_object().into_iter().flatten().map(|(_, operation)| operation);
+        for ext in resource_extensions.chain(operations) {
+            let read = ext["kind"] == "read" && ext["effect"] == "none";
+            let write = include_write && ext["kind"] == "write" && ext["effect"] == "db";
+            if !read && !write {
+                continue;
+            }
+            let implementation = ext["implementation"].as_str().ok_or_else(invalid)?;
+            let (module, function) = implementation.split_once('.').ok_or_else(invalid)?;
+            let identifier = |part: &str| {
+                let mut bytes = part.bytes();
+                bytes.next().is_some_and(|b| b.is_ascii_alphabetic() || b == b'_') && bytes.all(|b| b.is_ascii_alphanumeric() || b == b'_')
+            };
+            if !identifier(module) || !identifier(function) {
+                return Err(invalid());
+            }
+            let suffix = match self.lang {
+                WorkerLang::Node => "mjs",
+                WorkerLang::Python => "py",
+            };
+            let file = dir.join(format!("{module}.{suffix}")).canonicalize().map_err(|_| invalid())?;
+            if !file.starts_with(&dir) || !file.is_file() {
+                return Err(invalid());
             }
         }
         Ok(Self { lang: self.lang, dir })

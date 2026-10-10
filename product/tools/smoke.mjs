@@ -217,6 +217,12 @@ const base = process.env.AIP_SMOKE_BASE;
 const token = process.env.AIP_SMOKE_TOKEN;
 if (!base || !token) throw new Error("smoke runtime configuration missing");
 const client = connect(base, token, contract);
+if (false) {
+  // @ts-expect-error operation names come from the generated contract
+  void client.operation("missing", {});
+  // @ts-expect-error operation input is generated from its declaration
+  void client.operation("textLength", { text: 42 });
+}
 const query = { read: "Event", select: ["id", "checked", "title", "phase"] as const } as const;
 const first = await client.read(query);
 if (first.rows.length !== 1 || first.rows[0].id !== ${idValue} || first.rows[0].checked !== false) throw new Error("initial typed read mismatch");
@@ -231,6 +237,7 @@ if (afterWrite.cached || afterWrite.rows[0]?.checked !== true) throw new Error("
 const replay = await client.apply(request, { key: "product-sdk-smoke-write" });
 if (!replay.ok || replay.replayed !== true) throw new Error("idempotent write replay was not reported");
 let extension;
+let operation;
 if (process.env.AIP_SMOKE_WORKER) {
   const extensionResult = await client.writeExtension("Event.confirm", { id: targetId }, { key: "product-sdk-smoke-extension" });
   if (!extensionResult.ok) throw new Error("Event.confirm extension write failed");
@@ -238,9 +245,17 @@ if (process.env.AIP_SMOKE_WORKER) {
   const extensionReplay = await client.writeExtension("Event.confirm", { id: targetId }, { key: "product-sdk-smoke-extension" });
   if (!extensionReplay.ok || extensionReplay.replayed !== true || extensionReplay.output.count !== 0) throw new Error("Event.confirm idempotent replay failed");
   extension = { writesApplied: 1, unchangedCount: extensionResult.output.count, replayedWrites: Number(extensionReplay.replayed === true) };
+  const calculated = await client.operation("textLength", { text: "가😀A" });
+  if (calculated.length !== 3) throw new Error("operation Unicode calculation failed");
+  let rejected = false;
+  try { await client.operation("textLength", { text: "" }); }
+  catch (error) { rejected = (error as {code?:string}).code === "BAD_VALUE"; }
+  if (!rejected) throw new Error("operation range validation failed");
+  operation = { length: calculated.length, invalidInputRejected: Number(rejected) };
 }
 const report: Record<string, unknown> = { wire: ${JSON.stringify(wire)}, firstReadRows: first.rows.length, cacheHits: Number(second.cached), writesApplied: Number(applied.ok && applied.changed.length === 1), postWriteCacheMisses: Number(!afterWrite.cached), replayedWrites: Number(replay.ok && replay.replayed === true) };
 if (extension) report.extension = extension;
+if (operation) report.operation = operation;
 if (process.env.AIP_SMOKE_WORKER) report.worker = process.env.AIP_SMOKE_WORKER;
 console.log(JSON.stringify(report));
 `;
@@ -304,6 +319,9 @@ async function runWire({ binary, wire, workRoot, tarball, worker, extensionDir }
     if (worker && (results.worker !== worker || results.extension?.writesApplied !== 1 || results.extension.unchangedCount !== 0 || results.extension.replayedWrites !== 1)) {
       throw new SmokeFailure("consumer-runtime", "EXTENSION_BEHAVIOR", "Event.confirm 확장 쓰기 결과가 기대와 다릅니다");
     }
+    if (worker && (results.operation?.length !== 3 || results.operation.invalidInputRejected !== 1)) {
+      throw new SmokeFailure("consumer-runtime", "OPERATION_BEHAVIOR", "설치 SDK의 operation 호출과 범위 검증 결과가 기대와 다릅니다");
+    }
     const revoked = runJson(binary, ["service", "principal", "--config", configPath, "revoke", "--subject", "user-42"], "principal-revoke");
     if (revoked.affected !== 1) throw new SmokeFailure("principal-revoke", "PRINCIPAL_NOT_REVOKED", "principal 폐기가 적용되지 않았습니다");
     const response = await fetch(`${base}/session`, {
@@ -324,6 +342,7 @@ async function runWire({ binary, wire, workRoot, tarball, worker, extensionDir }
         revokedRequestsDenied: 1,
       },
       ...(worker ? { extension: results.extension } : {}),
+      ...(worker ? { operation: results.operation } : {}),
     };
   } catch (error) {
     failure = error;

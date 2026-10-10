@@ -73,3 +73,9 @@ cargo test -p aip-auth -p aip-migrate
 cargo test -p aip-cli --test service --test service_boundaries --test service_flow --test adoption_flow
 node --test product/tests/*.test.mjs
 ```
+
+## 업무 resource가 없는 operation 서버
+
+실제 선언·SDK·HTTP·관리형 신원과 실행 제한은 [EXECUTION](EXECUTION.md)을 따른다. `actor principal`과 top-level operation만 있는 정의에도 같은 check→gen→init→principal bind→serve 절차를 사용한다. 업무 resource 테이블은 필요 없지만 운영 인증·배포·권한 검사용 PostgreSQL은 필요하다. worker directory/language를 명시해야 호출할 수 있으며 `enable_writes`는 순수 operation에 필요하지 않다.
+
+배포 fence는 `/operation`과 `/capabilities`에도 적용한다. operation은 실행 전후 allow를 평가하고 반환 직전 현재 principal을 다시 검증한다. principal 명령도 배포에 저장된 wire와 설정 wire가 다르면 거부한다. 관리형 actor로의 전환은 기존 actor resource FK 의미를 바꾸므로 일반 자동 migration에서 차단한다.

@@ -159,6 +159,41 @@ fn check_value(facts: &Value, ty: &str, v: &Value, wire: crate::id_wire::IdWire)
     }
 }
 
+pub fn plan_operation_authorization(facts: &Value, name: &str, input: &Value, caller: &Caller, wire: crate::id_wire::IdWire) -> Result<Plan, Reject> {
+    let operation = &facts["operations"][name];
+    let declared = operation["input"].as_array().ok_or(Reject { code: "NOT_EXPOSED", msg: "operation 계약 없음".into() })?;
+    let given = input.as_object().ok_or(Reject { code: "BAD_VALUE", msg: "operation 입력은 객체".into() })?;
+    let mut cx = Ctx::new(facts, caller.actor_id, &caller.now);
+    let mut env = Env::default();
+    for key in given.keys() {
+        if !declared.iter().any(|field| field[0] == *key) {
+            return rej("BAD_VALUE", "operation에 선언되지 않은 입력");
+        }
+    }
+    for field in declared {
+        let (name, ty) = (field[0].as_str().unwrap(), field[1].as_str().unwrap());
+        let value = given.get(name).ok_or(Reject { code: "BAD_VALUE", msg: "operation 입력 누락".into() })?;
+        crate::scalar::validate_range(field, value, "BAD_VALUE")?;
+        let bound = if value.is_null() && ty.ends_with('?') {
+            "NULL".to_string()
+        } else {
+            let (value, cast) = check_value(facts, ty, value, wire)?;
+            cx.params.bind(Some(value), cast)
+        };
+        let handle = match sqlgen::ref_target(ty) {
+            Some(target) => Handle::Id { sql: bound, res: target.to_string() },
+            None => Handle::Scalar(bound),
+        };
+        env.input.insert(name.to_string(), handle);
+    }
+    let allow = cx.cond(&operation["allow"], &env).map_err(internal)?;
+    // Even unused inputs need a text parameter type in PostgreSQL's parse phase.
+    let bindings = (1..=cx.params.values.len()).map(|n| format!("${n}::text AS p{n}")).collect::<Vec<_>>().join(",");
+    let source = if bindings.is_empty() { String::new() } else { format!(" FROM (SELECT {bindings}) _aip_input") };
+    let sql = format!("SELECT COALESCE(({allow}),false){source}");
+    Ok(Plan { deps: deps_of(facts, &sql), sql, params: cx.params.values, deadline_ms: 2000, output_type: json!({}), cost: 1, null_is_denied: false })
+}
+
 pub fn plan_read(facts: &Value, req: &Value, caller: &Caller) -> Result<Plan, Reject> {
     plan_read_with_wire(facts, req, caller, crate::id_wire::IdWire::Legacy)
 }

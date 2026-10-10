@@ -63,3 +63,11 @@ v1·v2·v3·v5의 전체 독립 suite는 `tools/verify.sh`에서도 실행한다
 | 8 | 배포 메타데이터 | 현재 LICENSE는 MIT, Cargo workspace는 UNLICENSED로 불일치. 공개 배포 메타데이터 정합성을 별도 확인 |
 
 외부 IdP 계정·운영 proxy·다른 OS worker 격리·대형 테이블 운영 변경은 이 로컬 검증으로 확인하지 않았다. 최종 문법·Id wire·쓰기 조합의 Open 결정을 테스트 결과만으로 확정하지 않는다.
+
+## 2026-10-10 operation 회귀
+
+현재 지원과 실제 예시는 [EXECUTION](EXECUTION.md)을 따른다. `tools/verify.sh`에 client `operations.test.ts`를 연결했다. V1의 다섯 작성 형식·실제 principal resource 호환·범위 metadata, migration의 관리형 신원·actorMode 전환 차단, CLI의 실제 JWT·worker 실행 중 revoke·배포 wire 불일치·정책 migration이 core 검사에 포함된다. CLI operation worker 회귀는 macOS에서만 실행하므로 Linux core가 이 worker 경계를 증명하지 않는다.
+
+V6의 별도 `operations` 테스트는 Node/Python × safe/decimal에서 계약·입출력·Unicode 범위·정수 안전성·false allow·ctx 호출·deadline·다른 사용자·catalog를 검사한다. 설치 SDK smoke도 같은 네 조합에서 typed operation을 호출하고 범위 밖 입력을 거부한다. strict 소비자에는 잘못된 operation 이름/입력의 타입 음성 대조를 포함한다. worker·transport 전체 suite와 설치 smoke는 위와 같이 core 뒤 순서대로 실행한다.
+
+아직 durable acceptance·HTTP disconnect 뒤 실행/정리·crash/reclaim·Job 취소·파일 ACL·tenant 전 경로는 이 검사 범위가 아니다. [다음 Job 제안](../plan-docs/backend-capability/durable-job-proposal.md)의 별도 장애 실험으로 닫는다.

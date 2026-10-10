@@ -1,6 +1,14 @@
 enum Phase { READY, DONE }
 resource Member { fields { id: Id } }
 actor Member
+operation read textLength {
+  input { text: Text(1..1000) }
+  output { length: Int(1..1000) }
+  allow actor != null
+  effect none
+  deadline 2s
+  implementation "event.textLength"
+}
 resource Event {
   fields { id: Id; member: Member; checked: Bool; title: Text; link: Url; phase: Phase; date: Time }
   rows read when member = actor

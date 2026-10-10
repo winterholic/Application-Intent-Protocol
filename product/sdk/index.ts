@@ -3,4 +3,5 @@ export { WriteUnsettled } from "../../spikes/spike-v6-transport/client/transport
 export type {
   ExtensionBinding, ExtensionContractShape, ScalarDescriptor, ApplyBinding, ApplyRequest, ApplyResult, ContractBinding, PendingResult,
   PrototypeBinding, WriteExtensionDescriptors, WriteExtensionResult,
+  OperationBinding, OperationDescriptors,
 } from "../../spikes/spike-v5-sdk/sdk/generic.ts";

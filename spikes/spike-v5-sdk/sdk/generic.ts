@@ -130,7 +130,7 @@ export type CheckSel<S extends readonly unknown[]> = S extends readonly [] ? nev
 
 export type ExtensionShape = { readonly input: Record<string, unknown>; readonly output: Record<string, unknown> };
 export type ExtensionContractShape<E> = { [K in keyof E]: ExtensionShape };
-export type ScalarDescriptor = { readonly type: string; readonly nullable: boolean; readonly values?: readonly string[] };
+export type ScalarDescriptor = { readonly type: string; readonly nullable: boolean; readonly values?: readonly string[]; readonly range?: readonly [number, number] };
 export type ExtensionDescriptors<E> = { readonly [K in keyof E]: { readonly input: Readonly<Record<string, ScalarDescriptor>>; readonly output: Readonly<Record<string, ScalarDescriptor>> } };
 export type ExtensionBinding<C extends ContractShape<C>, A extends ApplyContractShape<A>, E extends ExtensionContractShape<E>> = ApplyBinding<C, A> & {
   readonly __extensions?: E;
@@ -144,6 +144,15 @@ export type WriteExtensionDescriptors<W> = ExtensionDescriptors<W> & {
 export type PrototypeBinding<C extends ContractShape<C>, A extends ApplyContractShape<A>, E extends ExtensionContractShape<E>, W extends ExtensionContractShape<W>> = ExtensionBinding<C, A, E> & {
   readonly __writes?: W;
   readonly writeExtensions: WriteExtensionDescriptors<W>;
+};
+export type OperationDescriptors<O> = ExtensionDescriptors<O> & {
+  readonly [K in keyof O]: { readonly lifetime: "sync"; readonly effect: "none"; readonly deadlineMs: number; readonly dependencies: { readonly worker: readonly string[]; readonly authorization: readonly string[] } };
+};
+export type OperationBinding<C extends ContractShape<C>, A extends ApplyContractShape<A>, E extends ExtensionContractShape<E>, W extends ExtensionContractShape<W>, O extends ExtensionContractShape<O>> = ExtensionBinding<C, A, E> & {
+  readonly __writes?: W;
+  readonly writeExtensions?: WriteExtensionDescriptors<W>;
+  readonly __operations?: O;
+  readonly operations: OperationDescriptors<O>;
 };
 export type WriteExtensionResult<O> =
   | { readonly ok: true; readonly output: DeepReadonly<O>; readonly tags: readonly string[]; readonly replayed?: boolean; readonly recovered?: boolean }
