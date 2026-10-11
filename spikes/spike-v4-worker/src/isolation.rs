@@ -352,7 +352,15 @@ mod tests {
         let config = WorkerLaunchConfig { environment, read_only_paths, ..WorkerLaunchConfig::default() };
         let mut worker = Worker::try_start_configured(lang, &ext_dir.to_string_lossy(), config).await.expect("isolated worker starts");
         worker.send(&json!({"type":"invoke","invoke":1,"impl":"probe.run","input":{},"token":"fixture"})).await.unwrap();
-        let line = worker.read_line().await.unwrap().expect("worker invocation response");
+        let line = match worker.read_line().await.unwrap() {
+            Some(line) => line,
+            None => {
+                let stderr_task = tokio::time::timeout(std::time::Duration::from_millis(100), &mut worker.stderr_task).await;
+                let child_status = worker.child.try_wait();
+                let stderr_tail = worker.stderr_tail.lock().unwrap().clone();
+                panic!("worker stdout reached EOF; stderr_task={stderr_task:?}, child_status={child_status:?}, stderr_tail={stderr_tail:?}");
+            }
+        };
         worker.stop().await;
         serde_json::from_str(&line).unwrap()
     }
