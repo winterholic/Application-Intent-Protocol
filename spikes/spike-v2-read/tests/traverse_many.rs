@@ -3,6 +3,7 @@ use serde_json::{json, Value};
 use spike_v1_fixture::{load_str, Form};
 use spike_v2_read::plan::{plan_read, Caller, Plan, Reject};
 use spike_v2_read::{connect, execute, sqlgen};
+use std::sync::Once;
 
 const DEF: &str = "
 enum CommentState { VISIBLE, HIDDEN }
@@ -26,6 +27,12 @@ resource Comment {
 }
 ";
 
+static SCHEMA_INIT: Once = Once::new();
+
+fn ensure_test_schema() {
+    SCHEMA_INIT.call_once(|| sqlgen::set_schema(&format!("aip_v2_many_{}", std::process::id())));
+}
+
 fn facts() -> Value {
     load_str(DEF, Form::A).unwrap_or_else(|e| panic!("{e:?}")).execution
 }
@@ -47,6 +54,7 @@ fn req(sub: Value) -> Value {
 
 #[test]
 fn plan_rejects_what_the_definition_does_not_allow() {
+    ensure_test_schema();
     let f = facts();
     let c = who(Some(1));
     // 허용 목록 밖 필드(자식의 state는 expose에 있지만 이 경로 select에 없다)
@@ -71,6 +79,7 @@ fn plan_rejects_what_the_definition_does_not_allow() {
 
 #[test]
 fn cost_counts_parents_times_child_limit_and_depth_is_checked() {
+    ensure_test_schema();
     let f = facts();
     let c = who(Some(1));
     // 부모 10 x (1 + 자식 3 x (1 + secret 정책 1)) = 70, 호출자 limit를 줄이면 줄어든다.
@@ -90,6 +99,7 @@ fn cost_counts_parents_times_child_limit_and_depth_is_checked() {
 
 #[test]
 fn sql_binds_every_value_and_aggregates_to_json_array() {
+    ensure_test_schema();
     let f = facts();
     let p = plan_read(&f, &req(json!({ "select": ["id", "body"], "limit": 2 })), &who(Some(7))).unwrap();
     assert!(p.sql.contains("LEFT JOIN LATERAL"), "{}", p.sql);
@@ -103,7 +113,7 @@ fn sql_binds_every_value_and_aggregates_to_json_array() {
 
 #[tokio::test]
 async fn pg_policy_redaction_limit_and_empty_array() {
-    sqlgen::set_schema(&format!("aip_v2_many_{}", std::process::id()));
+    ensure_test_schema();
     let f = facts();
     let mut db = connect().await;
     for stmt in sqlgen::ddl(&f).unwrap() {

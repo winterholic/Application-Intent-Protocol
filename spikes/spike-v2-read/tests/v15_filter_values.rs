@@ -3,9 +3,17 @@ use spike_v1_fixture::{load_str, Form};
 use spike_v2_read::{
     id_wire::IdWire,
     plan::{plan_read_with_wire, Caller},
+    sqlgen,
 };
+use std::sync::Once;
 
 const SOURCE: &str = include_str!("../../../prototype/example/app.aip");
+
+static SCHEMA_INIT: Once = Once::new();
+
+fn ensure_test_schema() {
+    SCHEMA_INIT.call_once(|| sqlgen::set_schema("aip_v15_scalar"));
+}
 
 fn query(field: &str, value: Value) -> Value {
     json!({"read":"Event","select":["id"],"filter":[{"field":field,"op":"eq","value":value}]})
@@ -13,6 +21,7 @@ fn query(field: &str, value: Value) -> Value {
 
 #[test]
 fn declared_url_and_enum_filters_accept_strings_and_members_only() {
+    ensure_test_schema();
     let facts = load_str(SOURCE, Form::A).unwrap().execution;
     let caller = Caller { actor_id: Some(1), now: "2026-10-04T00:00:00Z".into() };
     for wire in [IdWire::Legacy, IdWire::SafeNumber, IdWire::DecimalString] {
@@ -29,6 +38,7 @@ fn declared_url_and_enum_filters_accept_strings_and_members_only() {
 
 #[test]
 fn time_filters_reject_invalid_calendar_and_offset_before_sql() {
+    ensure_test_schema();
     let facts = load_str(SOURCE, Form::A).unwrap().execution;
     let caller = Caller { actor_id: Some(1), now: "2026-10-04T00:00:00Z".into() };
     let invalid = [
@@ -56,6 +66,7 @@ fn time_filters_reject_invalid_calendar_and_offset_before_sql() {
 
 #[test]
 fn time_filters_accept_real_calendar_utc_offsets_and_language_iso_outputs() {
+    ensure_test_schema();
     let facts = load_str(SOURCE, Form::A).unwrap().execution;
     let caller = Caller { actor_id: Some(1), now: "2026-10-04T00:00:00Z".into() };
     for value in [
@@ -72,8 +83,8 @@ fn time_filters_accept_real_calendar_utc_offsets_and_language_iso_outputs() {
 
 #[tokio::test]
 async fn time_binding_preserves_postgres_fraction_rounding_and_normalizes_offsets() {
-    use spike_v2_read::{connect, execute, sqlgen};
-    sqlgen::set_schema("aip_v15_scalar");
+    use spike_v2_read::{connect, execute};
+    ensure_test_schema();
     let schema = sqlgen::schema();
     let facts = load_str(SOURCE, Form::A).unwrap().execution;
     let mut db = connect().await;
@@ -112,6 +123,7 @@ async fn time_binding_preserves_postgres_fraction_rounding_and_normalizes_offset
 
 #[test]
 fn postgres_text_nul_is_rejected_by_the_planner_before_sql() {
+    ensure_test_schema();
     let facts = load_str(SOURCE, Form::A).unwrap().execution;
     let caller = Caller { actor_id: Some(1), now: "2026-10-04T00:00:00Z".into() };
     for field in ["title", "link"] {
@@ -124,6 +136,7 @@ fn postgres_text_nul_is_rejected_by_the_planner_before_sql() {
 
 #[test]
 fn time_retains_the_existing_scalar_length_budget() {
+    ensure_test_schema();
     let facts = load_str(SOURCE, Form::A).unwrap().execution;
     let caller = Caller { actor_id: Some(1), now: "2026-10-04T00:00:00Z".into() };
     for input in ["2026-10-04T00:00:00.12345678901234Z", "2026-10-04T00:00:00.123456789+09:00"] {
@@ -137,6 +150,7 @@ fn time_retains_the_existing_scalar_length_budget() {
 
 #[test]
 fn declared_prefix_is_a_parameterized_literal_text_operation() {
+    ensure_test_schema();
     let facts = load_str(SOURCE, Form::A).unwrap().execution;
     let caller = Caller { actor_id: Some(1), now: "2026-10-04T00:00:00Z".into() };
     for input in ["서울", "100%_\\'", ""] {

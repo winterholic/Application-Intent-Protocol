@@ -4,9 +4,16 @@ use spike_v1_fixture::{load_str, Form};
 use spike_v2_read::id_wire::IdWire;
 use spike_v2_read::plan::{plan_read, plan_read_with_wire, Caller, Plan, MAX_IN_VALUES};
 use spike_v2_read::{connect, execute, sqlgen};
+use std::sync::Once;
 
 const A: &str = include_str!("../../spike-v1-fixture/fixture/recruitment.aip");
 const NOW: &str = "2026-10-04T00:00:00Z";
+
+static SCHEMA_INIT: Once = Once::new();
+
+fn ensure_test_schema() {
+    SCHEMA_INIT.call_once(|| sqlgen::set_schema("aip_read_patterns"));
+}
 
 /// Recruitment와 Club(루트 조회용 budget 포함)에 새 연산자를 허용한 정의.
 fn facts() -> Value {
@@ -44,6 +51,7 @@ fn code(r: Result<Plan, spike_v2_read::plan::Reject>) -> &'static str {
 
 #[test]
 fn operators_outside_the_definition_allow_list_are_rejected() {
+    ensure_test_schema();
     // 기본 fixture는 club.eq / status.in / school.isNull 어느 것도 열지 않았다.
     let base = load_str(A, Form::A).unwrap().execution;
     let c = who(Some(1));
@@ -62,6 +70,7 @@ fn operators_outside_the_definition_allow_list_are_rejected() {
 
 #[test]
 fn ref_eq_follows_the_id_wire_and_rejects_bad_values() {
+    ensure_test_schema();
     let f = facts();
     let c = who(Some(1));
     for (wire, ok, bad) in [
@@ -86,6 +95,7 @@ fn ref_eq_follows_the_id_wire_and_rejects_bad_values() {
 
 #[test]
 fn in_filter_bounds_dedupes_and_binds_every_element() {
+    ensure_test_schema();
     let f = facts();
     let c = who(Some(1));
     assert_eq!(MAX_IN_VALUES, 50);
@@ -124,6 +134,7 @@ fn in_filter_bounds_dedupes_and_binds_every_element() {
 
 #[test]
 fn safe_number_wire_rejects_ids_beyond_js_safe_range() {
+    ensure_test_schema();
     let f = facts();
     let c = who(Some(1));
     let big = json!(9_007_199_254_740_992_i64);
@@ -133,6 +144,7 @@ fn safe_number_wire_rejects_ids_beyond_js_safe_range() {
 
 #[test]
 fn in_filter_on_ref_follows_wire_and_unknown_op_shapes_stay_rejected() {
+    ensure_test_schema();
     let f = facts();
     let c = who(Some(1));
     assert_eq!(code(plan_read_with_wire(&f, &rec("club", "in", json!(["10", "11"])), &c, IdWire::DecimalString)), "OK");
@@ -150,6 +162,7 @@ fn in_filter_on_ref_follows_wire_and_unknown_op_shapes_stay_rejected() {
 
 #[test]
 fn is_null_takes_only_a_bool_and_binds_it() {
+    ensure_test_schema();
     let f = facts();
     let c = who(Some(1));
     for bad in [json!("true"), json!(1), json!(null), json!([true]), json!({"a":1})] {
@@ -188,7 +201,7 @@ async fn run(db: &mut tokio_postgres::Client, f: &Value, actor: Option<i64>, req
 
 #[tokio::test(flavor = "current_thread")]
 async fn db_filters_return_expected_rows_and_never_bypass_row_policy() {
-    sqlgen::set_schema("aip_read_patterns");
+    ensure_test_schema();
     let f = facts();
     let mut db = connect().await;
     db.batch_execute(&format!("DROP SCHEMA IF EXISTS {} CASCADE", sqlgen::schema())).await.ok();

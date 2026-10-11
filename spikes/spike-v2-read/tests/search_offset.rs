@@ -3,11 +3,17 @@ use serde_json::{json, Value};
 use spike_v1_fixture::{load_str, Form};
 use spike_v2_read::plan::{plan_read, Caller, Plan, Reject, MAX_CONTAINS_CHARS};
 use spike_v2_read::{connect, execute, sqlgen};
+use std::sync::Once;
 
 const A: &str = include_str!("../../spike-v1-fixture/fixture/recruitment.aip");
 const NOW: &str = "2026-10-04T00:00:00Z";
 const FILTER: &str = "filter periodEnd.gte, periodEnd.lte";
 const BUDGET: &str = "budget { rows 50; depth 2; deadline 2s; cost 1000 }";
+static SCHEMA_INIT: Once = Once::new();
+
+fn ensure_test_schema() {
+    SCHEMA_INIT.call_once(|| sqlgen::set_schema("aip_search_offset"));
+}
 
 fn load(filter: &str, budget: &str) -> Value {
     load_str(&A.replacen(FILTER, filter, 1).replacen(BUDGET, budget, 1), Form::A).unwrap_or_else(|e| panic!("{e:?}")).execution
@@ -39,6 +45,7 @@ fn code(r: Result<Plan, Reject>) -> &'static str {
 
 #[test]
 fn contains_requires_declaration() {
+    ensure_test_schema();
     let c = who(Some(1));
     // 선언 없는 정의(기본 fixture)에서는 거부, 선언이 있어도 다른 필드·연산 조합은 거부
     let base = load_str(A, Form::A).unwrap().execution;
@@ -53,6 +60,7 @@ fn contains_requires_declaration() {
 
 #[test]
 fn contains_value_rules() {
+    ensure_test_schema();
     let f = open();
     let c = who(Some(1));
     assert_eq!(MAX_CONTAINS_CHARS, 200);
@@ -71,6 +79,7 @@ fn contains_value_rules() {
 
 #[test]
 fn contains_binds_literal_and_never_uses_like() {
+    ensure_test_schema();
     let f = open();
     let c = who(Some(1));
     for v in ["100%", "a_b", "\\", "x'); DROP TABLE y; --", "%", "_"] {
@@ -85,6 +94,7 @@ fn contains_binds_literal_and_never_uses_like() {
 
 #[test]
 fn contains_on_policy_field_is_rejected_even_if_facts_skip_sema() {
+    ensure_test_schema();
     let mut f = open();
     f["resources"]["Recruitment"]["exposeRead"]["filter"].as_array_mut().unwrap().push(json!("internalNote.contains"));
     let req = json!({ "read": "Recruitment", "select": ["id"], "filter": [{ "field": "internalNote", "op": "contains", "value": "x" }] });
@@ -93,6 +103,7 @@ fn contains_on_policy_field_is_rejected_even_if_facts_skip_sema() {
 
 #[test]
 fn offset_rejected_without_budget_opt_in() {
+    ensure_test_schema();
     let base = load_str(A, Form::A).unwrap().execution;
     for v in [json!(0), json!(10), json!("a")] {
         assert_eq!(code(plan_read(&base, &paged(v.clone()), &who(Some(1)))), "UNKNOWN_KEY", "{v}");
@@ -101,6 +112,7 @@ fn offset_rejected_without_budget_opt_in() {
 
 #[test]
 fn offset_value_rules_and_binding() {
+    ensure_test_schema();
     let f = open();
     let c = who(Some(1));
     for ok in [json!(0), json!(1), json!(100)] {
@@ -122,6 +134,7 @@ fn offset_value_rules_and_binding() {
 
 #[test]
 fn offset_order_is_deterministic_and_cost_counts_skipped_rows() {
+    ensure_test_schema();
     let f = open();
     let c = who(Some(1));
     // 사용자 정렬에 id 타이브레이커가 항상 뒤에 붙는다.
@@ -161,7 +174,7 @@ async fn run(db: &mut tokio_postgres::Client, f: &Value, actor: Option<i64>, req
 
 #[tokio::test(flavor = "current_thread")]
 async fn db_contains_and_offset_never_bypass_row_policy() {
-    sqlgen::set_schema("aip_search_offset");
+    ensure_test_schema();
     let f = open();
     let mut db = connect().await;
     db.batch_execute(&format!("DROP SCHEMA IF EXISTS {} CASCADE", sqlgen::schema())).await.ok();

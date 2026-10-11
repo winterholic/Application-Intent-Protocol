@@ -5,8 +5,15 @@ use spike_v2_read::{
     plan::{plan_read_with_wire, Caller},
     sqlgen,
 };
+use std::sync::Once;
 
 const SOURCE: &str = include_str!("../../spike-v1-fixture/fixture/recruitment.aip");
+
+static SCHEMA_INIT: Once = Once::new();
+
+fn ensure_test_schema() {
+    SCHEMA_INIT.call_once(|| sqlgen::set_schema("aip_scalar_email_date"));
+}
 
 fn facts() -> Value {
     let mut facts = load_str(SOURCE, Form::A).unwrap().execution;
@@ -23,6 +30,7 @@ fn facts() -> Value {
 
 #[test]
 fn email_and_date_filters_are_validated_and_remain_bound_parameters() {
+    ensure_test_schema();
     let facts = facts();
     let caller = Caller { actor_id: Some(1), now: "2026-10-04T00:00:00Z".into() };
     for wire in [IdWire::Legacy, IdWire::SafeNumber, IdWire::DecimalString] {
@@ -46,6 +54,7 @@ fn email_and_date_filters_are_validated_and_remain_bound_parameters() {
 
 #[test]
 fn email_filter_and_schema_use_text_while_date_schema_uses_postgres_date() {
+    ensure_test_schema();
     let facts = facts();
     let ddl = sqlgen::ddl(&facts).unwrap().join("\n");
     assert!(ddl.contains("title text"), "{ddl}");
@@ -55,7 +64,7 @@ fn email_filter_and_schema_use_text_while_date_schema_uses_postgres_date() {
 
 #[tokio::test]
 async fn postgres_accepts_date_filter_and_preserves_email_and_date_json_values() {
-    sqlgen::set_schema("aip_scalar_email_date");
+    ensure_test_schema();
     let schema = sqlgen::schema();
     let facts = facts();
     let mut db = spike_v2_read::connect().await;
