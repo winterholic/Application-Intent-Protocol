@@ -142,6 +142,9 @@ pub(crate) async fn listen_with_fingerprint(
     if !address.ip().is_loopback() {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "prototype server requires loopback"));
     }
+    if let Some(extensions) = &runtime.extensions {
+        runtime.infrastructure.worker_launch.probe(extensions.lang, &extensions.dir).await?;
+    }
     let listener = TcpListener::bind(address).await?;
     let address = listener.local_addr()?;
     let facts = Arc::new(facts);
@@ -356,9 +359,6 @@ pub async fn listen_with_infrastructure(
 ) -> io::Result<Server> {
     infrastructure.validate()?;
     let resource_limits = infrastructure.resource_limits;
-    if extensions.is_some() {
-        infrastructure.worker_launch.isolation.validate_available()?;
-    }
     options.validate_product()?;
     validate_job_broker(&facts, extensions.is_some(), broker.as_deref())?;
     if enable_write && extensions.is_none() {
@@ -366,9 +366,6 @@ pub async fn listen_with_infrastructure(
     }
     let extensions =
         extensions.map(|config| if enable_write { config.validate_with_writes(&facts, wire) } else { config.validate(&facts, wire) }).transpose()?;
-    if let Some(config) = &extensions {
-        infrastructure.worker_launch.probe(config.lang, &config.dir).await?;
-    }
     let fingerprint = facts["resources"].is_object().then(|| spike_v5_sdk::contract_fingerprint_with_all_extensions(&facts, wire).into());
     listen_with_fingerprint(
         facts,
@@ -427,9 +424,6 @@ impl ReadExtensions {
         if !cfg!(any(target_os = "macos", target_os = "linux")) || wire == IdWire::Legacy {
             return Err(invalid());
         }
-        if spike_v4_worker::Isolation::Auto.validate_available().is_err() {
-            return Err(invalid());
-        }
         let dir = self.dir.canonicalize().map_err(|_| invalid())?;
         if !dir.is_dir() || dir.to_str().is_none() {
             return Err(invalid());
@@ -472,16 +466,16 @@ impl ReadExtensions {
 mod extension_config_tests {
     use super::*;
     use serde_json::json;
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     static NEXT_PROBE_DIR: AtomicU64 = AtomicU64::new(0);
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     struct ProbeAuth;
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     impl crate::auth::Authenticator for ProbeAuth {
         fn verify_session<'a>(
             &'a self,
@@ -491,10 +485,10 @@ mod extension_config_tests {
         }
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     struct ProbeDir(std::path::PathBuf);
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     impl ProbeDir {
         fn new() -> Self {
             let path = std::env::temp_dir().join(format!(
@@ -509,7 +503,7 @@ mod extension_config_tests {
         }
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     impl Drop for ProbeDir {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
@@ -560,6 +554,64 @@ mod extension_config_tests {
         std::fs::set_permissions(&runtime, permissions).unwrap();
         let result = start_with_probe_runtime(runtime, &dir).await;
         assert!(result.is_err(), "product startup must reject a worker runtime that exits nonzero");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn worker_isolation_selection_respects_custom_mode_without_bwrap_in_path() {
+        const CHILD_MODE: &str = "AIP_ISOLATION_SELECTION_TEST_CHILD";
+        if let Ok(mode) = std::env::var(CHILD_MODE) {
+            use std::os::unix::fs::PermissionsExt;
+            let dir = ProbeDir::new();
+            let runtime = dir.0.join("node-runtime");
+            std::fs::write(&runtime, "#!/bin/sh\necho node-fixture-1\n").unwrap();
+            let mut permissions = std::fs::metadata(&runtime).unwrap().permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(&runtime, permissions).unwrap();
+
+            let mut infrastructure = crate::infrastructure::Infrastructure::default();
+            infrastructure.worker_launch.isolation = if mode == "none" { spike_v4_worker::Isolation::None } else { spike_v4_worker::Isolation::Auto };
+            infrastructure.worker_launch.runtime_executable = Some(runtime);
+            let result = listen_with_infrastructure(
+                json!({}),
+                IdWire::SafeNumber,
+                "127.0.0.1:0".parse().unwrap(),
+                "host=127.0.0.1 port=1 dbname=postgres connect_timeout=1".into(),
+                Some(ReadExtensions { lang: WorkerLang::Node, dir: dir.0.clone() }),
+                ServerOptions::default(),
+                false,
+                Arc::new(ProbeAuth),
+                None,
+                None,
+                false,
+                infrastructure,
+            )
+            .await;
+            if mode == "none" {
+                result.expect("explicit trusted None mode must start without bubblewrap").shutdown().await.unwrap();
+            } else {
+                assert!(result.is_err(), "Auto mode must fail closed when bubblewrap is missing");
+            }
+            return;
+        }
+
+        let dir = ProbeDir::new();
+        let empty_path = dir.0.join("empty-path");
+        std::fs::create_dir(&empty_path).unwrap();
+        let test_executable = std::env::current_exe().unwrap();
+        for mode in ["none", "auto"] {
+            let mut command = tokio::process::Command::new(&test_executable);
+            command
+                .args(["--exact", "server::extension_config_tests::worker_isolation_selection_respects_custom_mode_without_bwrap_in_path"])
+                .env(CHILD_MODE, mode)
+                .env("PATH", &empty_path)
+                .kill_on_drop(true);
+            let status = tokio::time::timeout(std::time::Duration::from_secs(5), command.status())
+                .await
+                .expect("isolation selection subprocess exceeded its deadline")
+                .unwrap();
+            assert!(status.success(), "{mode} isolation subprocess failed with {status}");
+        }
     }
 
     #[test]
