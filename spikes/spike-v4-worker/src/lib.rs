@@ -125,29 +125,8 @@ impl Worker {
             return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "worker frame limits must be positive"));
         }
         config.isolation.validate_available()?;
-        let default_prog = match lang {
-            Lang::Node => "node",
-            Lang::Python => "python3",
-        };
-        let requested_prog = config.runtime_executable.as_deref().unwrap_or_else(|| std::path::Path::new(default_prog));
-        #[cfg(target_os = "linux")]
-        let prog = isolation::resolve_runtime(requested_prog)?;
-        #[cfg(not(target_os = "linux"))]
-        let prog = if requested_prog.is_absolute() || requested_prog.components().count() > 1 {
-            let parent =
-                requested_prog.parent().ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "worker runtime path has no parent"))?;
-            parent.canonicalize()?.join(
-                requested_prog
-                    .file_name()
-                    .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "worker runtime path has no executable name"))?,
-            )
-        } else {
-            requested_prog.to_path_buf()
-        };
-        let ext_dir = match config.isolation {
-            Isolation::None | Isolation::MacNetDeny => std::path::PathBuf::from(ext_dir),
-            Isolation::Auto | Isolation::LinuxBubblewrap => std::path::Path::new(ext_dir).canonicalize()?,
-        };
+        let prog = isolation::runtime_path(lang, &config)?;
+        let ext_dir = isolation::extension_path(config.isolation, std::path::Path::new(ext_dir))?;
         let ext_dir = ext_dir.to_string_lossy();
         let mut runtime_args = Vec::new();
         match lang {
@@ -166,13 +145,8 @@ impl Worker {
             &config.read_only_paths,
         )?;
         let mut cmd = Command::new(spec.program);
-        cmd.args(spec.args).env_clear().env("PATH", std::env::var("PATH").unwrap_or_default());
-        for (key, value) in config.environment {
-            if key.is_empty() || key.contains('=') || key.as_bytes().contains(&0) || value.as_bytes().contains(&0) {
-                return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "worker environment contains an invalid key or value"));
-            }
-            cmd.env(key, value);
-        }
+        cmd.args(spec.args);
+        isolation::configure_environment(&mut cmd, &config)?;
         cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
         let mut child = cmd.spawn().map_err(|error| std::io::Error::new(error.kind(), format!("worker 실행 실패: {error}")))?;
         let missing_pipe = || std::io::Error::other("worker pipe 생성 실패");

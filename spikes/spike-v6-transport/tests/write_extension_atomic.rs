@@ -22,6 +22,19 @@ impl Drop for OwnedDir {
     }
 }
 
+async fn apply_observed_fixture(
+    db: &mut tokio_postgres::Client,
+    facts: &Value,
+    body: &Value,
+    caller: &Caller,
+    wire: IdWire,
+    config: &ReadExtensions,
+) -> Value {
+    // 호출 횟수 관찰 파일을 쓰는 신뢰된 fixture에 한해 sandbox를 끈다.
+    let launch = spike_v4_worker::WorkerLaunchConfig { isolation: spike_v4_worker::Isolation::None, ..Default::default() };
+    write_extension::apply_with_launch(db, facts, body, caller, wire, config, &launch).await
+}
+
 #[tokio::test]
 async fn write_effects_and_idempotent_result_commit_together_without_worker_replay() {
     let unique = format!("{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
@@ -56,7 +69,7 @@ async fn write_effects_and_idempotent_result_commit_together_without_worker_repl
                 let body = json!({"key":key,"request":request});
                 db.batch_execute(&format!("UPDATE {schema}.event SET checked=false; TRUNCATE {schema}.aip_idem")).await?;
                 fs::write(owned.0.join("counter"), "").unwrap();
-                let first = write_extension::apply(&mut db, &facts, &body, &caller, wire, &config).await;
+                let first = apply_observed_fixture(&mut db, &facts, &body, &caller, wire, &config).await;
                 if first["ok"] != true || first["output"] != json!({"id":id,"count":1}) || first["tags"] != json!(["Event"]) {
                     failures.push(format!("{lang:?} {wire:?} first: {first}"));
                 }
@@ -64,7 +77,7 @@ async fn write_effects_and_idempotent_result_commit_together_without_worker_repl
                 let module = owned.0.join(format!("write.{suffix}"));
                 let hidden = owned.0.join(format!("write.{suffix}.hidden"));
                 fs::rename(&module, &hidden).unwrap();
-                let replay = write_extension::apply(&mut db, &facts, &body, &caller, wire, &config).await;
+                let replay = apply_observed_fixture(&mut db, &facts, &body, &caller, wire, &config).await;
                 fs::rename(&hidden, &module).unwrap();
                 if replay["ok"] != true || replay["replayed"] != true || replay["output"] != first["output"] {
                     failures.push(format!("{lang:?} {wire:?} replay without module: {replay}"));
@@ -74,7 +87,7 @@ async fn write_effects_and_idempotent_result_commit_together_without_worker_repl
                     failures.push(format!("{lang:?} {wire:?} worker invoked {count} times"));
                 }
                 let different = json!({"key":key,"request":{"extension":"Event.run","input":{"id":emit_id(99,wire).unwrap()}}});
-                let mismatch = write_extension::apply(&mut db, &facts, &different, &caller, wire, &config).await;
+                let mismatch = apply_observed_fixture(&mut db, &facts, &different, &caller, wire, &config).await;
                 if mismatch["code"] != "IDEMPOTENCY_MISMATCH" {
                     failures.push(format!("{lang:?} {wire:?} key mismatch: {mismatch}"));
                 }
@@ -89,8 +102,8 @@ async fn write_effects_and_idempotent_result_commit_together_without_worker_repl
                 let mut parallel = connect_with_url("host=localhost dbname=postgres").await.expect("local PostgreSQL");
                 let concurrent_body = json!({"key":"concurrent","request":request});
                 let (left,right) = tokio::join!(
-                    write_extension::apply(&mut db,&facts,&concurrent_body,&caller,wire,&config),
-                    write_extension::apply(&mut parallel,&facts,&concurrent_body,&caller,wire,&config)
+                    apply_observed_fixture(&mut db,&facts,&concurrent_body,&caller,wire,&config),
+                    apply_observed_fixture(&mut parallel,&facts,&concurrent_body,&caller,wire,&config)
                 );
                 if left["ok"]!=true || right["ok"]!=true || (left["replayed"]!=true && right["replayed"]!=true) {
                     failures.push(format!("{lang:?} {wire:?} concurrent replay: {left} / {right}"));
@@ -98,19 +111,19 @@ async fn write_effects_and_idempotent_result_commit_together_without_worker_repl
                 if fs::read_to_string(owned.0.join("counter")).unwrap().lines().count()!=1 { failures.push(format!("{lang:?} {wire:?} concurrent duplicate execution")); }
                 let other_actor = Caller { actor_id:Some(2),now:caller.now.clone() };
                 let other_body = json!({"key":"concurrent","request":{"extension":"Event.run","input":{"id":emit_id(99,wire).unwrap()}}});
-                let other_result = write_extension::apply(&mut db,&facts,&other_body,&other_actor,wire,&config).await;
+                let other_result = apply_observed_fixture(&mut db,&facts,&other_body,&other_actor,wire,&config).await;
                 if other_result["ok"]!=true || other_result["replayed"]==true { failures.push(format!("{lang:?} {wire:?} principal scope: {other_result}")); }
                 let other_wire = if wire==IdWire::SafeNumber { IdWire::DecimalString } else { IdWire::SafeNumber };
                 db.batch_execute(&format!("UPDATE {schema}.event SET checked=false WHERE id=11")).await?;
                 let wire_body = json!({"key":"concurrent","request":{"extension":"Event.run","input":{"id":emit_id(11,other_wire).unwrap()}}});
-                let other_result = write_extension::apply(&mut db,&facts,&wire_body,&caller,other_wire,&config).await;
+                let other_result = apply_observed_fixture(&mut db,&facts,&wire_body,&caller,other_wire,&config).await;
                 if other_result["ok"]!=true || other_result["replayed"]==true { failures.push(format!("{lang:?} {wire:?} wire scope: {other_result}")); }
                 let scopes:i64 = db.query_one(&format!("SELECT count(*) FROM {schema}.aip_idem"),&[]).await?.get(0);
                 if scopes!=3 { failures.push(format!("{lang:?} {wire:?} scope records: {scopes}")); }
 
                 db.batch_execute(&format!("UPDATE {schema}.event SET checked=false; TRUNCATE {schema}.aip_idem; ALTER TABLE {schema}.aip_idem ADD CONSTRAINT reject_result CHECK(key<>'insert-fail')")).await?;
                 let insert_body = json!({"key":"insert-fail","request":request});
-                let failed_insert = write_extension::apply(&mut db,&facts,&insert_body,&caller,wire,&config).await;
+                let failed_insert = apply_observed_fixture(&mut db,&facts,&insert_body,&caller,wire,&config).await;
                 if failed_insert["code"]!="INTERNAL" { failures.push(format!("{lang:?} {wire:?} insert failure: {failed_insert}")); }
                 let row = db.query_one(&format!("SELECT (SELECT count(*) FROM {schema}.event WHERE checked),(SELECT count(*) FROM {schema}.aip_idem)"),&[]).await?;
                 if row.get::<_,i64>(0)!=0 || row.get::<_,i64>(1)!=0 { failures.push(format!("{lang:?} {wire:?} failed idem insert leaked effect")); }
@@ -120,9 +133,9 @@ async fn write_effects_and_idempotent_result_commit_together_without_worker_repl
                 fs::write(owned.0.join("counter"), "").unwrap();
                 let mut delayed_facts = facts.clone();delayed_facts["resources"]["Event"]["extensions"]["run"]["implementation"]=json!("write.delayed");
                 let delayed_body = json!({"key":"commit-unknown","request":request});
-                let unknown = write_extension::apply(&mut db,&delayed_facts,&delayed_body,&caller,wire,&config).await;
+                let unknown = apply_observed_fixture(&mut db,&delayed_facts,&delayed_body,&caller,wire,&config).await;
                 if unknown["code"]!="COMMIT_UNKNOWN" { failures.push(format!("{lang:?} {wire:?} slow commit: {unknown}")); }
-                let recovered = write_extension::apply(&mut db,&delayed_facts,&delayed_body,&caller,wire,&config).await;
+                let recovered = apply_observed_fixture(&mut db,&delayed_facts,&delayed_body,&caller,wire,&config).await;
                 if recovered["ok"]!=true || recovered["replayed"]!=true { failures.push(format!("{lang:?} {wire:?} unknown commit replay: {recovered}")); }
                 if fs::read_to_string(owned.0.join("counter")).unwrap().lines().count()!=1 { failures.push(format!("{lang:?} {wire:?} unknown commit reran worker")); }
                 db.batch_execute(&format!("DROP TRIGGER slow_idem ON {schema}.aip_idem; DROP FUNCTION {schema}.slow_idem()")).await?;
@@ -131,7 +144,7 @@ async fn write_effects_and_idempotent_result_commit_together_without_worker_repl
                     db.batch_execute(&format!("UPDATE {schema}.event SET checked=false; TRUNCATE {schema}.aip_idem")).await?;
                     let mut rejected_facts = facts.clone();
                     rejected_facts["resources"]["Event"]["extensions"]["run"]["implementation"] = json!(implementation);
-                    let rejected = write_extension::apply(&mut db, &rejected_facts, &body, &caller, wire, &config).await;
+                    let rejected = apply_observed_fixture(&mut db, &rejected_facts, &body, &caller, wire, &config).await;
                     if rejected["code"] != code {
                         failures.push(format!("{lang:?} {wire:?} {implementation}: {rejected}"));
                     }

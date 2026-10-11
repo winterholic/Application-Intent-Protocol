@@ -115,6 +115,106 @@ impl Default for WorkerLaunchConfig {
     }
 }
 
+impl WorkerLaunchConfig {
+    /// Verify the selected runtime, mounts, environment, and isolation before accepting work.
+    pub async fn probe(&self, lang: crate::Lang, ext_dir: &std::path::Path) -> std::io::Result<()> {
+        self.isolation.validate_available()?;
+        let program = runtime_path(lang, self)?;
+        let ext_dir = extension_path(self.isolation, ext_dir)?;
+        let args = [OsString::from("--version")];
+        let spec = command_spec(self.isolation, program.as_os_str(), &args, &ext_dir, &self.read_only_paths)?;
+        let mut command = tokio::process::Command::new(spec.program);
+        command.args(spec.args);
+        configure_environment(&mut command, self)?;
+        command.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).kill_on_drop(true);
+        let mut child = command.spawn()?;
+        let stdout = child.stdout.take().ok_or_else(|| std::io::Error::other("worker runtime probe stdout pipe was not created"))?;
+        let stderr = child.stderr.take().ok_or_else(|| std::io::Error::other("worker runtime probe stderr pipe was not created"))?;
+        let probe = async {
+            let (status, stdout, stderr) = tokio::join!(child.wait(), capture_bounded(stdout, 4096), capture_bounded(stderr, 4096));
+            let status = status?;
+            let stdout = stdout?;
+            let stderr = stderr?;
+            if !status.success() {
+                return Err(std::io::Error::other(format!(
+                    "worker runtime probe exited with {status}; stdout={:?}; stderr={:?}",
+                    String::from_utf8_lossy(&stdout),
+                    String::from_utf8_lossy(&stderr)
+                )));
+            }
+            if stdout.is_empty() && stderr.is_empty() {
+                return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "worker runtime probe produced no version output"));
+            }
+            Ok(())
+        };
+        match tokio::time::timeout(std::time::Duration::from_secs(2), probe).await {
+            Ok(result) => result,
+            Err(_) => {
+                let _ = child.start_kill();
+                Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "worker runtime probe exceeded 2 seconds"))
+            }
+        }
+    }
+}
+
+pub(crate) fn runtime_path(lang: crate::Lang, config: &WorkerLaunchConfig) -> std::io::Result<std::path::PathBuf> {
+    let default_program = match lang {
+        crate::Lang::Node => "node",
+        crate::Lang::Python => "python3",
+    };
+    let requested = config.runtime_executable.as_deref().unwrap_or_else(|| std::path::Path::new(default_program));
+    #[cfg(target_os = "linux")]
+    {
+        resolve_runtime(requested)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        if requested.is_absolute() || requested.components().count() > 1 {
+            let parent =
+                requested.parent().ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "worker runtime path has no parent"))?;
+            Ok(parent.canonicalize()?.join(
+                requested
+                    .file_name()
+                    .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "worker runtime path has no executable name"))?,
+            ))
+        } else {
+            Ok(requested.to_path_buf())
+        }
+    }
+}
+
+pub(crate) fn extension_path(isolation: Isolation, ext_dir: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
+    match isolation {
+        Isolation::None | Isolation::MacNetDeny => Ok(ext_dir.to_path_buf()),
+        Isolation::Auto | Isolation::LinuxBubblewrap => ext_dir.canonicalize(),
+    }
+}
+
+pub(crate) fn configure_environment(command: &mut tokio::process::Command, config: &WorkerLaunchConfig) -> std::io::Result<()> {
+    command.env_clear().env("PATH", std::env::var("PATH").unwrap_or_default());
+    for (key, value) in &config.environment {
+        if key.is_empty() || key.contains('=') || key.as_bytes().contains(&0) || value.as_bytes().contains(&0) {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "worker environment contains an invalid key or value"));
+        }
+        command.env(key, value);
+    }
+    Ok(())
+}
+
+async fn capture_bounded<R: tokio::io::AsyncRead + Unpin>(mut reader: R, limit: usize) -> std::io::Result<Vec<u8>> {
+    use tokio::io::AsyncReadExt;
+    let mut output = Vec::with_capacity(limit.min(1024));
+    let mut buffer = [0u8; 1024];
+    loop {
+        let read = reader.read(&mut buffer).await?;
+        if read == 0 {
+            return Ok(output);
+        }
+        let remaining = limit.saturating_sub(output.len());
+        output.extend_from_slice(&buffer[..read.min(remaining)]);
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct CommandSpec {
     pub program: OsString,
@@ -343,6 +443,17 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    fn probe_runtime(dir: &TempDir, script: &str) -> WorkerLaunchConfig {
+        use std::os::unix::fs::PermissionsExt;
+        let runtime = dir.path().join("runtime");
+        std::fs::write(&runtime, script).unwrap();
+        let mut permissions = std::fs::metadata(&runtime).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&runtime, permissions).unwrap();
+        WorkerLaunchConfig { isolation: Isolation::None, runtime_executable: Some(runtime), ..WorkerLaunchConfig::default() }
+    }
+
     async fn invoke_worker(
         lang: Lang,
         ext_dir: &std::path::Path,
@@ -350,6 +461,7 @@ mod tests {
         read_only_paths: Vec<PathBuf>,
     ) -> Value {
         let config = WorkerLaunchConfig { environment, read_only_paths, ..WorkerLaunchConfig::default() };
+        config.probe(lang, ext_dir).await.expect("isolated worker runtime probe succeeds");
         let mut worker = Worker::try_start_configured(lang, &ext_dir.to_string_lossy(), config).await.expect("isolated worker starts");
         worker.send(&json!({"type":"invoke","invoke":1,"impl":"probe.run","input":{},"token":"fixture"})).await.unwrap();
         let line = match worker.read_line().await.unwrap() {
@@ -430,6 +542,46 @@ mod tests {
         assert!(config.runtime_executable.is_none());
         assert!(config.environment.is_empty());
         assert!(config.read_only_paths.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn runtime_probe_rejects_success_without_version_output() {
+        let dir = TempDir::new("probe-empty");
+        let config = probe_runtime(&dir, "#!/bin/sh\nexit 0\n");
+        let error = config.probe(Lang::Node, dir.path()).await.unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::UnexpectedEof);
+        assert!(error.to_string().contains("no version output"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn runtime_probe_reports_nonzero_status_and_bounded_diagnostics() {
+        let dir = TempDir::new("probe-nonzero");
+        let config = probe_runtime(&dir, "#!/bin/sh\nprintf 'probe-failed\\n' >&2\nexit 42\n");
+        let error = config.probe(Lang::Node, dir.path()).await.unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::Other);
+        assert!(error.to_string().contains("42"));
+        assert!(error.to_string().contains("probe-failed"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn runtime_probe_drains_output_larger_than_capture_limit() {
+        let dir = TempDir::new("probe-large-output");
+        let config = probe_runtime(&dir, "#!/bin/sh\n/usr/bin/head -c 131072 /dev/zero\n");
+        config.probe(Lang::Node, dir.path()).await.unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn runtime_probe_deadline_kills_a_hung_runtime() {
+        let dir = TempDir::new("probe-hang");
+        let config = probe_runtime(&dir, "#!/bin/sh\nexec /bin/sleep 10\n");
+        let started = tokio::time::Instant::now();
+        let error = config.probe(Lang::Node, dir.path()).await.unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert!(started.elapsed() < std::time::Duration::from_secs(3));
     }
 
     #[test]

@@ -366,6 +366,9 @@ pub async fn listen_with_infrastructure(
     }
     let extensions =
         extensions.map(|config| if enable_write { config.validate_with_writes(&facts, wire) } else { config.validate(&facts, wire) }).transpose()?;
+    if let Some(config) = &extensions {
+        infrastructure.worker_launch.probe(config.lang, &config.dir).await?;
+    }
     let fingerprint = facts["resources"].is_object().then(|| spike_v5_sdk::contract_fingerprint_with_all_extensions(&facts, wire).into());
     listen_with_fingerprint(
         facts,
@@ -469,6 +472,95 @@ impl ReadExtensions {
 mod extension_config_tests {
     use super::*;
     use serde_json::json;
+    #[cfg(target_os = "macos")]
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[cfg(target_os = "macos")]
+    static NEXT_PROBE_DIR: AtomicU64 = AtomicU64::new(0);
+
+    #[cfg(target_os = "macos")]
+    struct ProbeAuth;
+
+    #[cfg(target_os = "macos")]
+    impl crate::auth::Authenticator for ProbeAuth {
+        fn verify_session<'a>(
+            &'a self,
+            _token: &'a str,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<crate::auth::Session, crate::auth::AuthError>> + Send + 'a>> {
+            Box::pin(async { Err(crate::auth::AuthError::Unavailable) })
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    struct ProbeDir(std::path::PathBuf);
+
+    #[cfg(target_os = "macos")]
+    impl ProbeDir {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "aip-worker-probe-{}-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+                NEXT_PROBE_DIR.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir(&path).unwrap();
+            std::fs::write(path.join("probe.mjs"), "export function run() { return {}; }\n").unwrap();
+            Self(path)
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    impl Drop for ProbeDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    async fn start_with_probe_runtime(runtime: std::path::PathBuf, dir: &ProbeDir) -> io::Result<Server> {
+        let mut infrastructure = crate::infrastructure::Infrastructure::default();
+        infrastructure.worker_launch.runtime_executable = Some(runtime);
+        let mut facts =
+            spike_v1_fixture::load_str(include_str!("../../spike-v1-fixture/fixture/recruitment.aip"), spike_v1_fixture::Form::A).unwrap().execution;
+        facts["resources"]["Recruitment"]["extensions"]["stats"]["implementation"] = json!("probe.run");
+        listen_with_infrastructure(
+            facts,
+            IdWire::SafeNumber,
+            "127.0.0.1:0".parse().unwrap(),
+            "host=127.0.0.1 port=1 dbname=postgres connect_timeout=1".into(),
+            Some(ReadExtensions { lang: WorkerLang::Node, dir: dir.0.clone() }),
+            ServerOptions::default(),
+            false,
+            Arc::new(ProbeAuth),
+            None,
+            None,
+            false,
+            infrastructure,
+        )
+        .await
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn product_start_fails_when_worker_runtime_is_missing() {
+        let dir = ProbeDir::new();
+        let result = start_with_probe_runtime(dir.0.join("missing-node"), &dir).await;
+        assert!(result.is_err(), "product startup must reject a missing worker runtime");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn product_start_fails_when_worker_runtime_exits_nonzero() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = ProbeDir::new();
+        let runtime = dir.0.join("broken-node");
+        std::fs::write(&runtime, "#!/bin/sh\necho probe-failed >&2\nexit 42\n").unwrap();
+        let mut permissions = std::fs::metadata(&runtime).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&runtime, permissions).unwrap();
+        let result = start_with_probe_runtime(runtime, &dir).await;
+        assert!(result.is_err(), "product startup must reject a worker runtime that exits nonzero");
+    }
 
     #[test]
     fn configured_job_workers_require_each_declared_http_broker() {

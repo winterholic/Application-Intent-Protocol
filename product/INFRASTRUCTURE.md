@@ -125,7 +125,9 @@ ACK/NACK는 owner·queue·worker·epoch·token·lease 만료를 검사한다. at
 
 ## Linux 격리와 JS/Python 의존성
 
-`auto`는 macOS에서 network-deny sandbox, Linux에서 Bubblewrap을 선택하고 필요한 도구가 없으면 실행을 거부한다. Linux는 빈 mount namespace에 시스템 runtime·확장 폴더·지정한 dependency 디렉터리만 읽기 전용으로 노출한다. 네트워크와 PID namespace를 분리하고 private tmp를 사용한다. HOME 전체나 `/` mount는 거부한다. Ubuntu CI에서 실제 읽기·쓰기·네트워크 경계를 검사한다. 현재 개발 host가 macOS여서 Linux 실실행 검증은 CI 결과 확인이 필요하다.
+`auto`는 macOS에서 network-deny sandbox, Linux에서 Bubblewrap을 선택하고 필요한 도구가 없으면 실행을 거부한다. Linux는 빈 mount namespace에 시스템 runtime·확장 폴더·지정한 dependency 디렉터리만 읽기 전용으로 노출한다. 네트워크와 PID namespace를 분리하고 private tmp를 사용한다. HOME 전체나 `/` mount는 거부한다. [Ubuntu CI의 Linux 격리 검사](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/38133412454)에서 실제 읽기·쓰기·네트워크 경계와 Node/Python 의존성 import를 확인했다. 전체 transport와 core 회귀 검사는 [Verify workflow](https://github.com/winterholic/Application-Intent-Protocol/actions/workflows/verify.yml)에서 함께 실행한다.
+
+확장을 사용하는 서버는 요청 수신 전에 실제 worker와 같은 runtime·sandbox·mount·환경 설정으로 `--version`을 실행한다. 실행 파일의 존재만 확인하는 대신 namespace 권한이나 runtime 실행 실패도 시작 시 거부한다. 검사는 2초로 제한하고 stdout/stderr는 각각 최대 4KiB만 보관한다. 이는 애플리케이션 확장의 모든 import나 외부 서비스 연결을 보증하는 readiness 검사는 아니다.
 
 Linux 호스트는 Bubblewrap의 user namespace와 namespace 내부 초기화 권한을 허용해야 한다. Ubuntu 24.04 계열 CI에서 `loopback: Failed RTM_NEWADDR: Operation not permitted`로 실행이 종료되는 것을 확인했다. 필요한 AppArmor 프로필은 배포 관리자가 해당 Bubblewrap 실행 파일에 적용하며, AIP는 호스트의 전역 보안 정책을 자동 변경하지 않는다. CI는 배포판 바이너리의 별도 복사본에만 `userns` 프로필을 적용하고 전역 sysctl 제한을 유지한다. [Ubuntu 공식 user namespace 정책과 프로필 설명](https://documentation.ubuntu.com/release-notes/24.04/#unprivileged-user-namespace-restrictions)을 참고한다.
 
