@@ -37,6 +37,8 @@ pub struct EndpointConfig {
     pub resolved: Vec<SocketAddr>,
     /// Test/development-only escape hatch for a loopback HTTP endpoint.
     pub allow_loopback: bool,
+    /// Explicitly permits private unicast and loopback destinations for this endpoint.
+    pub allow_private_networks: bool,
 }
 
 struct Endpoint {
@@ -145,6 +147,7 @@ fn fingerprint(configs: &[EndpointConfig]) -> Result<String, Error> {
             "secret": secret,
             "resolved": resolved,
             "allow_loopback": config.allow_loopback,
+            "allow_private_networks": config.allow_private_networks,
         }));
     }
     entries.sort_by(|left, right| left["name"].as_str().cmp(&right["name"].as_str()));
@@ -182,12 +185,15 @@ fn build_endpoint(config: EndpointConfig) -> Result<(String, Endpoint), Error> {
         if address.port() != port {
             return Err(Error::InvalidConfiguration);
         }
-        let permitted = is_public_address(address.ip()) || (config.allow_loopback && loopback_url && address.ip().is_loopback());
+        let permitted = is_public_address(address.ip())
+            || (config.allow_private_networks && is_private_network_address(address.ip()))
+            || (config.allow_loopback && loopback_url && address.ip().is_loopback());
         if !permitted {
             return Err(Error::InvalidConfiguration);
         }
     }
-    if loopback_url && (!config.allow_loopback || config.resolved.iter().any(|address| !address.ip().is_loopback())) {
+    let loopback_allowed = config.allow_loopback || (scheme == "https" && config.allow_private_networks);
+    if loopback_url && (!loopback_allowed || config.resolved.iter().any(|address| !address.ip().is_loopback())) {
         return Err(Error::InvalidConfiguration);
     }
     if let Ok(literal) = host.parse::<IpAddr>()
@@ -305,6 +311,18 @@ fn is_public_address(ip: IpAddr) -> bool {
                     || (segments[0] == 0x3fff && segments[1] & 0xf000 == 0) // documentation
                     || segments[0] == 0x5f00 // SRv6 segment identifiers
                     || (segments[0] == 0x0064 && segments[1] == 0xff9b)) // NAT64
+        }
+    }
+}
+
+fn is_private_network_address(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ip) => ip.is_private() || ip.is_loopback(),
+        IpAddr::V6(ip) => {
+            if let Some(mapped) = ip.to_ipv4_mapped() {
+                return is_private_network_address(IpAddr::V4(mapped));
+            }
+            ip.is_loopback() || (ip.segments()[0] & 0xfe00) == 0xfc00
         }
     }
 }

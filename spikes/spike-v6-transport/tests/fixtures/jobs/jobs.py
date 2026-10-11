@@ -46,3 +46,8 @@ async def catchKnownChildFailure(inp, ctx):
                 raise
             recovered += 1
     return {"length": recovered}
+
+async def message(inp, ctx):
+    await ctx.messages.publish("notifications", {"text": inp["text"]}, "dispatch")
+    await ctx.messages.publish("notifications", {"text": inp["text"]}, "dispatch")
+    return {"length": len(inp["text"])}

@@ -8,7 +8,12 @@
 pub mod auth;
 mod cors;
 mod durable;
+pub mod hosting;
+pub mod infrastructure;
+mod messaging_transport;
+mod object_transport;
 mod operation;
+pub mod realtime;
 pub mod server;
 pub mod write_extension;
 use serde_json::{json, Value};
@@ -27,6 +32,13 @@ fn capability_available(operation: &Value, worker_configured: bool, authenticato
     } else {
         worker_configured
     }
+}
+
+async fn run_object_transfer<F>(lifetime: std::time::Duration, transfer: F) -> Result<bool, tokio::time::error::Elapsed>
+where
+    F: std::future::Future<Output = bool>,
+{
+    tokio::time::timeout(lifetime, transfer).await
 }
 
 /// 신선도 비교 실험의 상한. 제품 기본값이나 즉시 권한 회수 보장이 아니다.
@@ -76,6 +88,31 @@ fn principal_key(actor: Option<i64>, wire: IdWire) -> String {
 // 제어 문자는 DB text에 들어가지 못하거나(NUL) 로그·화면을 오염시키므로 key에서 받지 않는다.
 fn valid_key(key: &str) -> bool {
     !key.is_empty() && key.len() <= 100 && !key.chars().any(|c| c.is_control() || invisible_format(c))
+}
+
+fn managed_file_id<'a>(mount: &hosting::ManagedFileMount, target: &'a str) -> Result<&'a str, ()> {
+    let path = target.split_once('?').map_or(target, |(path, _)| path);
+    let rest = path.strip_prefix(&mount.prefix).ok_or(())?.strip_prefix('/').ok_or(())?;
+    if rest.len() != 36
+        || !rest.bytes().enumerate().all(|(index, byte)| {
+            if [8, 13, 18, 23].contains(&index) {
+                byte == b'-'
+            } else {
+                byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()
+            }
+        })
+    {
+        return Err(());
+    }
+    Ok(rest)
+}
+
+fn valid_managed_media_type(value: &str) -> bool {
+    let Some((kind, subtype)) = value.split_once('/') else { return false };
+    !kind.is_empty()
+        && !subtype.is_empty()
+        && value.len() <= 127
+        && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'+' | b'.' | b'-'))
 }
 
 // 화면에 안 보이거나 표시 방향을 바꾸는 서식 문자. 같아 보이는 다른 key를 만들 수 있다.
@@ -241,20 +278,91 @@ fn v_length_over_limit(header: &str) -> bool {
 struct Response<W> {
     writer: W,
     origin: Option<String>,
+    private_object: bool,
+    head_only: bool,
+    deadline: tokio::time::Instant,
 }
 
 async fn reply(w: &mut Response<impl AsyncWriteExt + Unpin>, out: &str) {
-    reply_with_headers(w, out, "vary: Origin\r\n").await;
+    if w.private_object {
+        reply_object(w, out).await;
+    } else {
+        reply_with_headers(w, out, "vary: Origin\r\n").await;
+    }
+}
+
+async fn reply_object(w: &mut Response<impl AsyncWriteExt + Unpin>, out: &str) {
+    reply_with_headers(w, out, "cache-control: private, no-store\r\nx-content-type-options: nosniff\r\nvary: Origin\r\n").await;
 }
 
 async fn reply_with_headers(w: &mut Response<impl AsyncWriteExt + Unpin>, out: &str, extra: &str) {
     let origin = w.origin.as_ref().map(|origin| format!("access-control-allow-origin: {origin}\r\n")).unwrap_or_default();
-    let resp = format!(
-        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n{origin}{extra}\r\n{out}",
-        out.len()
+    let headers =
+        format!("HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n{origin}{extra}\r\n", out.len());
+    let deadline = w.deadline;
+    let private_object = w.private_object;
+    if private_object && tokio::time::Instant::now() >= deadline {
+        return;
+    }
+    let head_only = w.head_only;
+    let write = async {
+        w.writer.write_all(headers.as_bytes()).await?;
+        if !head_only {
+            w.writer.write_all(out.as_bytes()).await?;
+        }
+        w.writer.flush().await
+    };
+    // Private data stays within its ingress deadline; other routes retain their send window.
+    if private_object {
+        let _ = tokio::time::timeout_at(deadline, write).await;
+    } else {
+        let _ = tokio::time::timeout(server::REQUEST_TIMEOUT, write).await;
+    }
+}
+
+async fn reply_managed_file<W: AsyncWriteExt + Unpin>(
+    writer: &mut W,
+    method: &str,
+    id: &str,
+    media_type: &str,
+    bytes: &[u8],
+    origin: Option<&str>,
+    deadline: tokio::time::Instant,
+) -> std::io::Result<()> {
+    if !valid_managed_media_type(media_type) {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid stored media type"));
+    }
+    let extra = cors::actual_response_headers(origin);
+    let head = format!(
+        "HTTP/1.1 200 OK\r\ncontent-type: {media_type}\r\ncontent-length: {}\r\ncontent-disposition: attachment; filename=\"{id}\"\r\ncache-control: private, no-store\r\nx-content-type-options: nosniff\r\n{extra}connection: close\r\n\r\n",
+        bytes.len()
     );
-    // A stalled response may be lost after commit; it never cancels DB execution.
-    let _ = tokio::time::timeout(server::REQUEST_TIMEOUT, w.writer.write_all(resp.as_bytes())).await;
+    tokio::time::timeout_at(deadline, async {
+        writer.write_all(head.as_bytes()).await?;
+        if method != "HEAD" {
+            writer.write_all(bytes).await?;
+        }
+        writer.flush().await
+    })
+    .await
+    .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "managed file response deadline exceeded"))?
+}
+
+async fn verify_session(
+    token: Option<&str>,
+    keys: &auth::Keyring,
+    runtime: &server::Runtime,
+    deadline: tokio::time::Instant,
+) -> Result<Option<auth::Session>, auth::AuthError> {
+    let Some(token) = token else { return Ok(None) };
+    let verification = match &runtime.authenticator {
+        None => keys.verify_session(token),
+        Some(provider) => match tokio::time::timeout_at(deadline, provider.verify_session(token)).await {
+            Ok(result) => result,
+            Err(_) => Err(auth::AuthError::Unavailable),
+        },
+    };
+    verification.map(Some)
 }
 
 async fn serve_conn(
@@ -270,7 +378,7 @@ async fn serve_conn(
         return;
     };
     let (r, w) = sock.split();
-    let mut w = Response { writer: w, origin: None };
+    let mut w = Response { writer: w, origin: None, private_object: false, head_only: false, deadline };
     let mut rd = BufReader::new(r);
     let mut line = String::new();
     if let Err(code) = header_line(&mut rd, &mut line, deadline).await {
@@ -278,11 +386,16 @@ async fn serve_conn(
     }
     let mut parts = line.split_whitespace();
     let (method, path) = (parts.next().unwrap_or("").to_string(), parts.next().unwrap_or("").to_string());
+    w.head_only = method == "HEAD";
+    w.private_object = path.starts_with("/objects/") || runtime.infrastructure.file_mounts.iter().any(|mount| mount.matches(&path));
     if parts.next() != Some("HTTP/1.1") || parts.next().is_some() {
         return reply(&mut w, &json!({"ok":false,"code":"BAD_REQUEST"}).to_string()).await;
     }
     let (mut origin, mut host, mut request_method, mut request_headers) = (None::<String>, None::<String>, None::<String>, None::<String>);
+    let (mut accept, mut content_type, mut upgrade, mut connection, mut ws_key, mut ws_version, mut ws_extensions) =
+        (None::<String>, None::<String>, None::<String>, None::<String>, None::<String>, None::<String>, None::<String>);
     let (mut len, mut token, mut drop) = (None::<usize>, None::<String>, false);
+    let mut header_values = Vec::<(String, String)>::new();
     let mut expected_contract: Option<String> = None;
     let mut bad: Option<&str> = None;
     let mut invalid_browser_headers = false;
@@ -303,6 +416,7 @@ async fn serve_conn(
             bad = Some("잘못된 헤더 형식");
         }
         let (k, v) = h.split_once(':').map(|(k, v)| (k.trim().to_ascii_lowercase(), v.trim().to_string())).unwrap_or_default();
+        header_values.push((k.clone(), v.clone()));
         if k.is_empty() || !k.bytes().all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b)) {
             bad = Some("잘못된 헤더 이름");
         }
@@ -331,6 +445,22 @@ async fn serve_conn(
                 (false, Some(t)) if t.len() <= MAX_TOKEN => token = Some(t.to_string()),
                 _ => bad = Some("잘못되거나 중복된 authorization"),
             },
+            "accept" | "content-type" | "upgrade" | "connection" | "sec-websocket-key" | "sec-websocket-version" | "sec-websocket-extensions" => {
+                let target = match k.as_str() {
+                    "accept" => &mut accept,
+                    "content-type" => &mut content_type,
+                    "upgrade" => &mut upgrade,
+                    "connection" => &mut connection,
+                    "sec-websocket-key" => &mut ws_key,
+                    "sec-websocket-version" => &mut ws_version,
+                    _ => &mut ws_extensions,
+                };
+                if target.is_some() {
+                    bad = Some("중복된 실시간 전송 헤더");
+                } else {
+                    *target = Some(v);
+                }
+            }
             "x-aip-contract" => {
                 if expected_contract.is_some() || v.len() != 64 || !v.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
                     bad = Some("잘못되거나 중복된 계약 식별값");
@@ -360,6 +490,13 @@ async fn serve_conn(
     if let Some(m) = bad {
         return reply(&mut w, &err("BAD_REQUEST", m)).await;
     }
+    let mount = runtime.infrastructure.mounts.iter().find(|mount| mount.matches(&path));
+    let file_mount = runtime.infrastructure.file_mounts.iter().find(|mount| mount.matches(&path));
+    if file_mount.is_some() {
+        w.private_object = true;
+    }
+    let object_path = path.starts_with("/objects/");
+    let messages_path = path.starts_with("/messages/");
     if ![
         "/session",
         "/read",
@@ -376,37 +513,141 @@ async fn serve_conn(
         "/files/get",
         "/files/delete",
         "/events/read",
+        "/events/subscribe",
+        "/events/socket",
     ]
     .contains(&path.as_str())
+        && mount.is_none()
+        && file_mount.is_none()
+        && !object_path
+        && !messages_path
     {
         return reply(&mut w, &err("NOT_FOUND", "알 수 없는 경로")).await;
     }
     if method == "OPTIONS" {
-        if w.origin.is_none()
-            || request_method.as_deref() != Some("POST")
-            || !cors::allowed_request_headers(request_headers.as_deref())
-            || len.is_some_and(|len| len != 0)
-        {
+        let Some(requested_method) = request_method.as_deref() else {
+            return reply(&mut w, &err("BAD_REQUEST", "잘못된 preflight")).await;
+        };
+        let Some(methods) = cors::allowed_methods(&path, mount.is_some() || file_mount.is_some())
+            .filter(|methods| cors::method_is_allowed(methods, requested_method))
+        else {
+            return reply(&mut w, &err("BAD_REQUEST", "이 경로에서 허용하지 않는 preflight method")).await;
+        };
+        if w.origin.is_none() || !cors::allowed_request_headers(request_headers.as_deref()) || len.is_some_and(|len| len != 0) {
             return reply(&mut w, &err("BAD_REQUEST", "잘못된 preflight")).await;
         }
-        return reply_with_headers(&mut w, &json!({"ok":true}).to_string(), "vary: Origin, Access-Control-Request-Method, Access-Control-Request-Headers\r\naccess-control-allow-methods: POST\r\naccess-control-allow-headers: authorization, content-type, x-aip-contract\r\n").await;
+        let extra = format!(
+            "vary: Origin, Access-Control-Request-Method, Access-Control-Request-Headers\r\naccess-control-allow-methods: {methods}\r\naccess-control-allow-headers: authorization, content-type, x-aip-contract\r\n"
+        );
+        return reply_with_headers(&mut w, &json!({"ok":true}).to_string(), &extra).await;
     }
-    if method != "POST" {
-        return reply(&mut w, &err("BAD_REQUEST", "POST만")).await;
+    if let Some(mount) = mount {
+        let session = match verify_session(token.as_deref(), &keys, &runtime, deadline).await {
+            Ok(session) => session,
+            Err(auth::AuthError::Expired) => return reply(&mut w, &err("TOKEN_EXPIRED", "세션 만료")).await,
+            Err(auth::AuthError::Unavailable) => return reply(&mut w, &err("DB_UNAVAILABLE", "인증 제공자 또는 사용자 연결 조회 실패")).await,
+            Err(_) => return reply(&mut w, &err("UNAUTHENTICATED", "토큰 검증 실패")).await,
+        };
+        if mount.access == hosting::MountAccess::Authenticated && session.is_none() {
+            return reply(&mut w, &err("UNAUTHENTICATED", "인증된 정적 mount입니다")).await;
+        }
+        if len.is_some_and(|length| length != 0) {
+            return reply(&mut w, &err("BAD_REQUEST", "정적 파일 요청 본문은 비어 있어야 함")).await;
+        }
+        let headers: Vec<(&str, &str)> = header_values.iter().map(|(key, value)| (key.as_str(), value.as_str())).collect();
+        let _ = hosting::serve_with_origin(&mut w.writer, mount, &method, &path, &headers, w.origin.as_deref()).await;
+        return;
     }
-    let Some(len) = len else { return reply(&mut w, &err("BAD_REQUEST", "content-length 필요")).await };
-    // 상한을 넘는 본문은 읽기 전에 거부한다. 잘라서 처리하지 않는다(r7 R7-04).
-    if len > MAX_BODY {
-        return reply(&mut w, &err("PAYLOAD_TOO_LARGE", "본문 1MiB 초과")).await;
+    if object_path && path != "/objects/sign" && !path.starts_with("/objects/multipart/") {
+        if expected_contract.as_deref() != contract_fingerprint.as_deref() || expected_contract.is_none() {
+            return reply_object(&mut w, &err("CONTRACT_MISMATCH", "object API 계약 지문 필요")).await;
+        }
+        let session = match verify_session(token.as_deref(), &keys, &runtime, deadline).await {
+            Ok(session) => session,
+            Err(auth::AuthError::Expired) => return reply_object(&mut w, &err("TOKEN_EXPIRED", "세션 만료")).await,
+            Err(auth::AuthError::Unavailable) => return reply_object(&mut w, &err("DB_UNAVAILABLE", "인증 제공자 또는 사용자 연결 조회 실패")).await,
+            Err(_) => return reply_object(&mut w, &err("UNAUTHENTICATED", "토큰 검증 실패")).await,
+        };
+        match run_object_transfer(
+            runtime.infrastructure.object_transfer_lifetime,
+            object_transport::serve(
+                &mut rd,
+                &mut w.writer,
+                &method,
+                &path,
+                &header_values,
+                len,
+                session.as_ref(),
+                &runtime,
+                &facts,
+                wire,
+                w.origin.as_deref(),
+            ),
+        )
+        .await
+        {
+            Ok(true) | Err(_) => return,
+            Ok(false) => {}
+        }
     }
-    let mut buf = vec![0u8; len];
-    match tokio::time::timeout_at(deadline, rd.read_exact(&mut buf)).await {
-        Err(_) => return reply(&mut w, &err("REQUEST_TIMEOUT", "요청 본문 수신 기한 초과")).await,
-        Ok(Err(_)) => return,
-        Ok(Ok(_)) => {}
-    }
-    let Ok(body) = serde_json::from_slice::<Value>(&buf) else {
-        return reply(&mut w, &err("BAD_REQUEST", "JSON 형식 오류")).await;
+    let websocket = path == "/events/socket";
+    let sse = path == "/events/subscribe";
+    let mut raw_body = Vec::new();
+    let body = if websocket {
+        let valid_connection = connection.as_deref().is_some_and(|value| value.split(',').any(|token| token.trim().eq_ignore_ascii_case("upgrade")));
+        let key_valid = ws_key.as_deref().is_some_and(|key| {
+            use base64::Engine;
+            base64::engine::general_purpose::STANDARD
+                .decode(key)
+                .is_ok_and(|decoded| decoded.len() == 16 && base64::engine::general_purpose::STANDARD.encode(decoded) == key)
+        });
+        if method != "GET"
+            || len.is_some_and(|length| length != 0)
+            || upgrade.as_deref().is_none_or(|value| !value.eq_ignore_ascii_case("websocket"))
+            || !valid_connection
+            || !key_valid
+            || ws_version.as_deref() != Some("13")
+            || ws_extensions.is_some()
+            || origin.is_none()
+            || host.is_none()
+        {
+            return reply(&mut w, &err("BAD_REQUEST", "잘못된 WebSocket handshake")).await;
+        }
+        json!({})
+    } else if file_mount.is_some() {
+        if !matches!(method.as_str(), "GET" | "HEAD") || len.is_some_and(|length| length != 0) {
+            return reply_object(&mut w, &err("BAD_REQUEST", "관리 파일 mount는 본문 없는 GET/HEAD만 지원함").to_string()).await;
+        }
+        json!({})
+    } else {
+        if method != "POST" {
+            return reply(&mut w, &err("BAD_REQUEST", "POST만")).await;
+        }
+        if sse && accept.as_deref() != Some("text/event-stream") {
+            return reply(&mut w, &err("BAD_REQUEST", "Accept: text/event-stream 필요")).await;
+        }
+        if sse
+            && content_type
+                .as_deref()
+                .is_none_or(|value| !value.split(';').next().is_some_and(|media| media.trim().eq_ignore_ascii_case("application/json")))
+        {
+            return reply(&mut w, &err("BAD_REQUEST", "Content-Type: application/json 필요")).await;
+        }
+        let Some(len) = len else { return reply(&mut w, &err("BAD_REQUEST", "content-length 필요")).await };
+        // 상한을 넘는 본문은 읽기 전에 거부한다. 잘라서 처리하지 않는다(r7 R7-04).
+        if len > MAX_BODY {
+            return reply(&mut w, &err("PAYLOAD_TOO_LARGE", "본문 1MiB 초과")).await;
+        }
+        raw_body.resize(len, 0);
+        match tokio::time::timeout_at(deadline, rd.read_exact(&mut raw_body)).await {
+            Err(_) => return reply(&mut w, &err("REQUEST_TIMEOUT", "요청 본문 수신 기한 초과")).await,
+            Ok(Err(_)) => return,
+            Ok(Ok(_)) => {}
+        }
+        let Ok(body) = serde_json::from_slice::<Value>(&raw_body) else {
+            return reply(&mut w, &err("BAD_REQUEST", "JSON 형식 오류")).await;
+        };
+        body
     };
     let verification = match token.as_deref() {
         None => None,
@@ -425,6 +666,13 @@ async fn serve_conn(
         Some(Err(auth::AuthError::Unavailable)) => return reply(&mut w, &err("DB_UNAVAILABLE", "인증 제공자 또는 사용자 연결 조회 실패")).await,
         Some(Err(_)) => return reply(&mut w, &err("UNAUTHENTICATED", "토큰 검증 실패")).await,
     };
+    if path == "/objects/sign" || path.starts_with("/objects/multipart/") {
+        if expected_contract.as_deref() != contract_fingerprint.as_deref() || expected_contract.is_none() {
+            return reply_object(&mut w, &err("CONTRACT_MISMATCH", "object API 계약 지문 필요")).await;
+        }
+        let result = object_transport::control(&runtime, &facts, wire, session.as_ref(), &body, &path).await;
+        return reply_object(&mut w, &result.to_string()).await;
+    }
     // 기대 계약은 권한을 부여하지 않는다. 불일치면 DB·멱등 재생·쓰기 실행 전에 거부한다.
     let write_extension = path == "/apply" && body["request"].get("extension").is_some();
     if ["/read", "/apply", "/status"].contains(&path.as_str()) && !write_extension {
@@ -499,14 +747,65 @@ async fn serve_conn(
             return reply(&mut w, &err("BAD_REQUEST", "capabilities 본문은 빈 객체")).await;
         }
     }
-    let managed = path.starts_with("/jobs/") || path.starts_with("/files/") || path == "/events/read";
+    let managed = path.starts_with("/jobs/")
+        || path.starts_with("/files/")
+        || file_mount.is_some()
+        || path == "/events/read"
+        || messages_path
+        || sse
+        || websocket;
     if managed {
         if session.as_ref().and_then(|s| s.durable.as_ref()).is_none() {
             return reply(&mut w, &err("UNAUTHENTICATED", "관리 실행은 제품 principal 세션이 필요함")).await;
         }
-        if expected_contract.is_none() || expected_contract.as_deref() != contract_fingerprint.as_deref() {
+        if !sse && !websocket && (expected_contract.is_none() || expected_contract.as_deref() != contract_fingerprint.as_deref()) {
             return reply(&mut w, &err("CONTRACT_MISMATCH", "관리 실행 계약 지문 필요")).await;
         }
+    }
+    if sse || websocket {
+        if !runtime.infrastructure.realtime.enabled {
+            return reply(&mut w, &err("NOT_AVAILABLE", "실시간 전송이 비활성화됨")).await;
+        }
+        let Some(fingerprint) = contract_fingerprint.as_deref() else {
+            return reply(&mut w, &err("NOT_AVAILABLE", "이벤트 계약 지문 없음")).await;
+        };
+        let subscription = if sse {
+            let subscription = match realtime::Subscription::parse(&raw_body) {
+                Ok(subscription) => subscription,
+                Err(code) => return reply(&mut w, &err(code, "잘못된 이벤트 구독 본문")).await,
+            };
+            if subscription.contract_fingerprint != fingerprint {
+                return reply(&mut w, &err("CONTRACT_MISMATCH", "이벤트 구독 계약 지문이 다름")).await;
+            }
+            Some(subscription)
+        } else {
+            None
+        };
+        let Some(token) = token else {
+            return reply(&mut w, &err("UNAUTHENTICATED", "실시간 구독은 Bearer 세션이 필요함")).await;
+        };
+        let Ok(_slot) = runtime.realtime_slots.try_acquire() else {
+            return reply(&mut w, &err("SERVER_BUSY", "실시간 연결 상한")).await;
+        };
+        if sse {
+            if let Err(error) = realtime::send_sse_headers(&mut w.writer, w.origin.as_deref()).await {
+                eprintln!("{{\"event\":\"realtime_write_failed\",\"transport\":\"sse\",\"kind\":\"{:?}\"}}", error.kind());
+                return;
+            }
+            let _ = realtime::stream_sse(&mut w.writer, subscription.unwrap(), token, fingerprint.to_owned(), facts, runtime.clone(), wire).await;
+            return;
+        }
+        let ws_key = ws_key.as_deref().unwrap();
+        let accept_key = tokio_tungstenite::tungstenite::handshake::derive_accept_key(ws_key.as_bytes());
+        let response =
+            format!("HTTP/1.1 101 Switching Protocols\r\nupgrade: websocket\r\nconnection: Upgrade\r\nsec-websocket-accept: {accept_key}\r\n\r\n");
+        match tokio::time::timeout(server::REQUEST_TIMEOUT, w.writer.write_all(response.as_bytes())).await {
+            Ok(Ok(())) => {}
+            Ok(Err(_)) | Err(_) => return,
+        }
+        let io = tokio::io::join(rd, w.writer);
+        let _ = realtime::stream_ws(io, token, fingerprint.to_owned(), facts, runtime.clone(), wire).await;
+        return;
     }
     if path == "/session" {
         if !body.as_object().is_some_and(|body| body.is_empty()) {
@@ -568,6 +867,43 @@ async fn serve_conn(
         }
     };
     let caller = Caller { actor_id: session.as_ref().map(|s| s.actor_id), now };
+    if let Some(mount) = file_mount {
+        let Ok(id) = managed_file_id(mount, &path) else {
+            return reply_object(&mut w, &err("NOT_FOUND", "관리 파일 경로가 올바르지 않음").to_string()).await;
+        };
+        let result = match tokio::time::timeout_at(
+            deadline,
+            durable::handle(
+                &mut db,
+                &runtime,
+                &facts,
+                wire,
+                "/files/mount-get",
+                &json!({"id":id,"bucket":mount.bucket}),
+                session.as_ref().and_then(|s| s.durable.as_ref()).unwrap(),
+            ),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => return reply_object(&mut w, &err("REQUEST_TIMEOUT", "관리 파일 조회 기한 초과").to_string()).await,
+        };
+        if result["ok"] != true {
+            return reply_object(&mut w, &result.to_string()).await;
+        }
+        let Some(media_type) = result["file"]["mediaType"].as_str() else {
+            return reply_object(&mut w, &err("INTERNAL", "관리 파일 metadata 오류").to_string()).await;
+        };
+        use base64::Engine;
+        let Some(encoded) = result["base64"].as_str() else {
+            return reply_object(&mut w, &err("INTERNAL", "관리 파일 payload 오류").to_string()).await;
+        };
+        let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(encoded) else {
+            return reply_object(&mut w, &err("INTERNAL", "관리 파일 payload 오류").to_string()).await;
+        };
+        let _ = reply_managed_file(&mut w.writer, &method, id, media_type, &bytes, w.origin.as_deref(), deadline).await;
+        return;
+    }
     let mut result = if managed {
         durable::handle(&mut db, &runtime, &facts, wire, &path, &body, session.as_ref().unwrap().durable.as_ref().unwrap()).await
     } else if path == "/capabilities" {
@@ -577,12 +913,21 @@ async fn serve_conn(
                 json!(capability_available(operation, runtime.extensions.is_some(), runtime.authenticator.is_some(), runtime.deployment.is_some()));
             operation["authorization"] = json!("checked-on-call");
         }
-        json!({"ok":true,"catalogVersion":"aip-capabilities/1","operations":operations})
+        json!({"ok":true,"catalogVersion":"aip-capabilities/1","operations":operations,"infrastructure":runtime.infrastructure.catalog()})
     } else if path == "/operation" {
         let operation_deadline =
             std::time::Duration::from_millis(facts["operations"][body["operation"].as_str().unwrap()]["deadlineMs"].as_u64().unwrap());
         let execution = async {
-            let output = operation::invoke(&mut db, &facts, &body, &caller, wire, runtime.extensions.as_ref().unwrap()).await;
+            let output = operation::invoke_with_launch(
+                &mut db,
+                &facts,
+                &body,
+                &caller,
+                wire,
+                runtime.extensions.as_ref().unwrap(),
+                &runtime.infrastructure.worker_launch,
+            )
+            .await;
             if output["ok"] != true {
                 return output;
             }
@@ -606,18 +951,26 @@ async fn serve_conn(
             Err(_) => json!({"ok":false,"code":"DEADLINE_EXCEEDED"}),
         }
     } else if write_extension {
-        let mut result = write_extension::apply(&mut db, &facts, &body, &caller, wire, runtime.extensions.as_ref().unwrap()).await;
+        let mut result = write_extension::apply_with_launch(
+            &mut db,
+            &facts,
+            &body,
+            &caller,
+            wire,
+            runtime.extensions.as_ref().unwrap(),
+            &runtime.infrastructure.worker_launch,
+        )
+        .await;
         if result["ok"] == false {
             result["msg"] = json!("공식 WRITE 확장 호출 거부");
         }
         result
     } else if path == "/extension" {
         let config = runtime.extensions.as_ref().unwrap();
-        let mut worker = match spike_v4_worker::Worker::try_start_with(
+        let mut worker = match spike_v4_worker::Worker::try_start_configured(
             config.lang,
             config.dir.to_str().unwrap(),
-            spike_v4_worker::Isolation::MacNetDeny,
-            spike_v4_worker::WorkerLimits::default(),
+            runtime.infrastructure.worker_launch.clone(),
         )
         .await
         {
@@ -695,6 +1048,9 @@ async fn start_with_fingerprint(facts: Value, wire: IdWire, contract_fingerprint
         wire,
         "127.0.0.1:0".parse().unwrap(),
         server::Runtime {
+            infrastructure: crate::infrastructure::Infrastructure::default(),
+            realtime_slots: tokio::sync::Semaphore::new(32),
+            object_slots: tokio::sync::Semaphore::new(4),
             db_url: spike_v2_read::DB_URL.into(),
             broker: None,
             enable_file_uploads: false,
@@ -730,5 +1086,39 @@ mod capability_tests {
         assert!(!capability_available(&durable, true, false, true));
         assert!(!capability_available(&durable, true, true, false));
         assert!(capability_available(&durable, true, true, true));
+    }
+
+    #[tokio::test]
+    async fn object_transfer_timeout_ends_a_stalled_transfer() {
+        let result = run_object_transfer(std::time::Duration::from_millis(10), std::future::pending::<bool>()).await;
+        assert!(result.is_err(), "a stalled transfer must reach its configured lifetime");
+    }
+
+    #[tokio::test]
+    async fn regular_reply_keeps_send_window_after_ingress_deadline() {
+        let (mut client, server) = tokio::io::duplex(1024);
+        let deadline = tokio::time::Instant::now() - std::time::Duration::from_millis(1);
+        let mut response = Response { writer: server, origin: None, private_object: false, head_only: false, deadline };
+
+        reply_with_headers(&mut response, "{\"ok\":true}", "").await;
+
+        let mut received = vec![0; 128];
+        let count = tokio::time::timeout(std::time::Duration::from_millis(10), client.read(&mut received))
+            .await
+            .expect("regular reply should use its send window")
+            .expect("duplex read should succeed");
+        assert!(count > 0);
+    }
+
+    #[tokio::test]
+    async fn private_reply_respects_expired_ingress_deadline() {
+        let (mut client, server) = tokio::io::duplex(1024);
+        let deadline = tokio::time::Instant::now() - std::time::Duration::from_millis(1);
+        let mut response = Response { writer: server, origin: None, private_object: true, head_only: false, deadline };
+
+        reply_with_headers(&mut response, "{\"ok\":true}", "").await;
+
+        let mut received = vec![0; 128];
+        assert!(tokio::time::timeout(std::time::Duration::from_millis(1), client.read(&mut received)).await.is_err());
     }
 }

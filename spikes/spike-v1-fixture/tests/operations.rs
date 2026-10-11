@@ -151,3 +151,16 @@ fn durable_jobs_are_explicit_and_managed_capabilities_are_server_scoped() {
         assert!(load_str(&invalid, Form::A).is_err(), "accepted: {invalid}");
     }
 }
+
+#[test]
+fn managed_jobs_can_declare_message_queue_capabilities() {
+    let job = SOURCE.replace("operation read", "operation job").replace("deadline 2s", "deadline 120s");
+    let managed = job.replace("effect none", "access messages.invoice_events\n effect managed");
+    let facts = load_str(&managed, Form::A).unwrap().execution;
+    assert_eq!(facts["operations"]["count"]["access"]["messages.invoice_events"], true);
+
+    let invalid_queue = managed.replace("messages.invoice_events", "messages.인보이스");
+    assert!(load_str(&invalid_queue, Form::A).is_err(), "queue names must stay ASCII identifiers");
+    let non_job = managed.replace("operation job", "operation read");
+    assert!(load_str(&non_job, Form::A).is_err(), "message queues are a durable job capability");
+}

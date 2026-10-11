@@ -23,6 +23,8 @@ sha2 = "0.10.9"
 base64 = "0.22.1"
 getrandom = "0.2.17"
 url = "2"
+futures-util = "0.3.34"
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect", "handshake"] }
 
 [dev-dependencies]
 aip-migrate = { path = "../../crates/aip-migrate" }

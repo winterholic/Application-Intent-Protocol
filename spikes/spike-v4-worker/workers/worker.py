@@ -41,6 +41,10 @@ class Events:
     def __init__(self, ctx): self.ctx = ctx
     async def publish(self, stream, key, payload): return await self.ctx.call("events", stream, {"key": key, "payload": payload})
 
+class Messages:
+    def __init__(self, ctx): self.ctx = ctx
+    async def publish(self, queue, payload, key): return await self.ctx.call("messages", queue, {"payload": payload, "key": key})
+
 class Jobs:
     def __init__(self, ctx): self.ctx = ctx
     async def run(self, name, inp, key): return await self.ctx.call("jobs", name, {"input": inp, "key": key})
@@ -53,6 +57,7 @@ class Ctx:
         self.files = Files(self)
         self.events = Events(self)
         self.jobs = Jobs(self)
+        self.messages = Messages(self)
 
     async def call(self, op, name, inp, **extra):
         global seq

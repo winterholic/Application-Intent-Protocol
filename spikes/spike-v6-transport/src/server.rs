@@ -9,7 +9,7 @@ use tokio::{
 };
 
 pub use crate::cors::ServerOptions;
-pub use spike_v4_worker::Lang as WorkerLang;
+pub use spike_v4_worker::{Isolation as WorkerIsolation, Lang as WorkerLang, WorkerLaunchConfig};
 
 pub const MAX_CONNECTIONS: usize = 64;
 pub const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
@@ -45,6 +45,9 @@ impl DeploymentFence {
 }
 
 pub(crate) struct Runtime {
+    pub infrastructure: crate::infrastructure::Infrastructure,
+    pub realtime_slots: tokio::sync::Semaphore,
+    pub object_slots: tokio::sync::Semaphore,
     pub db_url: String,
     pub broker: Option<Arc<aip_execution::integrations::Broker>>,
     pub enable_file_uploads: bool,
@@ -110,6 +113,9 @@ pub async fn listen_with_apply_contract(facts: Value, wire: IdWire, address: Soc
         wire,
         address,
         Runtime {
+            infrastructure: crate::infrastructure::Infrastructure::default(),
+            realtime_slots: tokio::sync::Semaphore::new(32),
+            object_slots: tokio::sync::Semaphore::new(4),
             db_url,
             broker: None,
             enable_file_uploads: false,
@@ -149,7 +155,7 @@ pub(crate) async fn listen_with_fingerprint(
         if crate::durable::enabled(&facts) && runtime.authenticator.is_some() && runtime.deployment.is_some() {
             background.spawn(crate::durable::supervisor(runtime.clone(), facts.clone(), wire));
         }
-        let connections = Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS));
+        let connections = Arc::new(tokio::sync::Semaphore::new(runtime.infrastructure.resource_limits.connections));
         let mut stop_open = true;
         let result = loop {
             tokio::select! {
@@ -214,6 +220,9 @@ pub async fn listen_with_options(
         wire,
         address,
         Runtime {
+            infrastructure: crate::infrastructure::Infrastructure::default(),
+            realtime_slots: tokio::sync::Semaphore::new(32),
+            object_slots: tokio::sync::Semaphore::new(4),
             db_url,
             broker: None,
             enable_file_uploads: false,
@@ -251,6 +260,9 @@ pub async fn listen_with_prototype_options(
         wire,
         address,
         Runtime {
+            infrastructure: crate::infrastructure::Infrastructure::default(),
+            realtime_slots: tokio::sync::Semaphore::new(32),
+            object_slots: tokio::sync::Semaphore::new(4),
             db_url,
             broker: None,
             enable_file_uploads: false,
@@ -310,6 +322,43 @@ pub async fn listen_with_managed(
     broker: Option<Arc<aip_execution::integrations::Broker>>,
     enable_file_uploads: bool,
 ) -> io::Result<Server> {
+    listen_with_infrastructure(
+        facts,
+        wire,
+        address,
+        db_url,
+        extensions,
+        options,
+        enable_write,
+        authenticator,
+        deployment,
+        broker,
+        enable_file_uploads,
+        crate::infrastructure::Infrastructure::default(),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn listen_with_infrastructure(
+    facts: Value,
+    wire: IdWire,
+    address: SocketAddr,
+    db_url: String,
+    extensions: Option<ReadExtensions>,
+    options: ServerOptions,
+    enable_write: bool,
+    authenticator: Arc<dyn crate::auth::Authenticator>,
+    deployment: Option<DeploymentFence>,
+    broker: Option<Arc<aip_execution::integrations::Broker>>,
+    enable_file_uploads: bool,
+    infrastructure: crate::infrastructure::Infrastructure,
+) -> io::Result<Server> {
+    infrastructure.validate()?;
+    let resource_limits = infrastructure.resource_limits;
+    if extensions.is_some() {
+        infrastructure.worker_launch.isolation.validate_available()?;
+    }
     options.validate_product()?;
     validate_job_broker(&facts, extensions.is_some(), broker.as_deref())?;
     if enable_write && extensions.is_none() {
@@ -323,13 +372,16 @@ pub async fn listen_with_managed(
         wire,
         address,
         Runtime {
+            realtime_slots: tokio::sync::Semaphore::new(resource_limits.realtime_capacity(infrastructure.realtime.max_connections)),
+            object_slots: tokio::sync::Semaphore::new(resource_limits.uploads),
+            infrastructure,
             db_url,
             broker,
             enable_file_uploads,
             fault_injection: false,
             extensions,
             write_extensions: enable_write,
-            extension_slots: tokio::sync::Semaphore::new(4),
+            extension_slots: tokio::sync::Semaphore::new(resource_limits.workers),
             options,
             authenticator: Some(authenticator),
             deployment,
@@ -369,10 +421,10 @@ impl ReadExtensions {
 
     fn validate_kinds(&self, facts: &Value, wire: IdWire, include_write: bool) -> io::Result<Self> {
         let invalid = || io::Error::new(io::ErrorKind::InvalidInput, "invalid local READ extension configuration");
-        if !cfg!(target_os = "macos") || wire == IdWire::Legacy {
+        if !cfg!(any(target_os = "macos", target_os = "linux")) || wire == IdWire::Legacy {
             return Err(invalid());
         }
-        if !std::path::Path::new("/usr/bin/sandbox-exec").is_file() {
+        if spike_v4_worker::Isolation::Auto.validate_available().is_err() {
             return Err(invalid());
         }
         let dir = self.dir.canonicalize().map_err(|_| invalid())?;
@@ -434,6 +486,7 @@ mod extension_config_tests {
             secret_header: None,
             resolved: vec!["127.0.0.1:9000".parse().unwrap()],
             allow_loopback: true,
+            allow_private_networks: false,
         }])
         .unwrap();
         assert!(validate_job_broker(&facts, true, Some(&broker)).is_err());
@@ -448,6 +501,7 @@ mod extension_config_tests {
             secret_header: None,
             resolved: vec!["127.0.0.1:9000".parse().unwrap()],
             allow_loopback: true,
+            allow_private_networks: false,
         }])
         .unwrap();
         assert!(validate_job_broker(&facts, true, Some(&broker)).is_ok());

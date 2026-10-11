@@ -91,8 +91,8 @@ async fn concurrent_claims_skip_locked_rows_and_stale_epoch_cannot_finish() {
     let replacement = store.claim(&db.client, "worker-c").await.unwrap().unwrap();
     assert_eq!(one.run_id, replacement.run_id);
     assert!(replacement.epoch > one.epoch);
-    assert_eq!(store.finish(&db.client, &one, json!({"stale":true})).await.unwrap(), false);
-    assert_eq!(store.finish(&db.client, &replacement, json!({"ok":true})).await.unwrap(), true);
+    assert!(!store.finish(&db.client, &one, json!({"stale":true})).await.unwrap());
+    assert!(store.finish(&db.client, &replacement, json!({"ok":true})).await.unwrap());
 }
 
 #[tokio::test]

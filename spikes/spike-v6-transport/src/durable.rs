@@ -33,6 +33,19 @@ fn store_error(e: aip_execution::Error) -> &'static str {
 pub(crate) fn enabled(facts: &Value) -> bool {
     facts["operations"].as_object().is_some_and(|ops| ops.values().any(|op| op["kind"] == "job"))
 }
+fn declares_message_access(facts: &Value) -> bool {
+    facts["operations"].as_object().is_some_and(|ops| {
+        ops.values().any(|operation| {
+            operation["kind"] == "job"
+                && operation["access"].as_object().is_some_and(|access| {
+                    access.iter().any(|(capability, enabled)| capability.starts_with("messages.") && enabled.as_bool() == Some(true))
+                })
+        })
+    })
+}
+fn should_cleanup_messages(messaging_enabled: bool, facts: &Value) -> bool {
+    messaging_enabled && declares_message_access(facts)
+}
 fn schema(rt: &Runtime) -> Result<&str> {
     rt.deployment.as_ref().map(|f| f.schema.as_str()).ok_or("NOT_AVAILABLE")
 }
@@ -76,7 +89,11 @@ pub(crate) fn bundle(rt: &Runtime) -> Result<String> {
         format!("{:?}", config.lang),
         spike_v4_worker::worker_abi_digest(),
         files,
-        rt.broker.as_ref().map(|b| b.fingerprint())
+        rt.broker.as_ref().map(|b| b.fingerprint()),
+        format!("{:?}", rt.infrastructure.worker_launch.isolation),
+        rt.infrastructure.worker_launch.runtime_executable,
+        rt.infrastructure.worker_launch.read_only_paths,
+        rt.infrastructure.worker_launch.environment.iter().collect::<std::collections::BTreeMap<_, _>>()
     ])))
 }
 
@@ -184,6 +201,7 @@ async fn put_file(
             _ => "DB_UNAVAILABLE",
         })
 }
+#[allow(clippy::too_many_arguments)]
 async fn submit(
     db: &impl GenericClient,
     rt: &Runtime,
@@ -238,6 +256,42 @@ async fn submit(
         )
         .await
         .map_err(store_error)
+}
+
+pub(crate) async fn validate_principal(rt: &Runtime, _facts: &Value, _wire: IdWire, session: &crate::auth::Session) -> Result<String> {
+    if session.remaining_ms() == 0 {
+        return Err("TOKEN_EXPIRED");
+    }
+    let grant = session.durable.as_ref().ok_or("UNAUTHENTICATED")?;
+    let mut db = connect(rt).await?;
+    let tx = db.transaction().await.map_err(db_error)?;
+    guard(&tx, rt, grant).await?;
+    tx.commit().await.map_err(db_error)?;
+    Ok(owner(grant))
+}
+
+pub(crate) async fn read_events(
+    rt: &Runtime,
+    facts: &Value,
+    wire: IdWire,
+    session: &crate::auth::Session,
+    stream: &str,
+    after: &str,
+    limit: i64,
+) -> Value {
+    if session.remaining_ms() == 0 {
+        return json!({"ok":false,"code":"TOKEN_EXPIRED"});
+    }
+    let Some(grant) = session.durable.as_ref() else {
+        return json!({"ok":false,"code":"UNAUTHENTICATED"});
+    };
+    let mut db = match connect(rt).await {
+        Ok(db) => db,
+        Err(code) => return json!({"ok":false,"code":code}),
+    };
+    let mut response = handle(&mut db, rt, facts, wire, "/events/read", &json!({"stream":stream,"after":after,"limit":limit}), grant).await;
+    response["contractFingerprint"] = json!(spike_v5_sdk::contract_fingerprint_with_all_extensions(facts, wire));
+    response
 }
 
 pub(crate) async fn handle(db: &mut Client, rt: &Runtime, facts: &Value, wire: IdWire, path: &str, body: &Value, grant: &DurablePrincipal) -> Value {
@@ -358,6 +412,23 @@ pub(crate) async fn handle(db: &mut Client, rt: &Runtime, facts: &Value, wire: I
                     json!({"ok":true,"file":file_json(&file),"base64":B64.encode(&file.bytes)})
                 }
             }
+            "/files/mount-get" => {
+                if !exact(body, &["id", "bucket"]) {
+                    return Err("BAD_REQUEST");
+                }
+                let bucket = text(body, "bucket")?;
+                if !allowed(facts, "files", bucket) {
+                    return Err("NOT_EXPOSED");
+                }
+                let id = text(body, "id")?.parse().map_err(|_| "BAD_VALUE")?;
+                let file = aip_execution::files::Store::new(s)
+                    .map_err(db_error)?
+                    .get_in_bucket(&tx, &owner, &id, bucket)
+                    .await
+                    .map_err(db_error)?
+                    .ok_or("NOT_FOUND")?;
+                json!({"ok":true,"file":file_json(&file),"base64":B64.encode(&file.bytes)})
+            }
             "/events/read" => {
                 if !exact(body, &["stream", "after", "limit"]) {
                     return Err("BAD_REQUEST");
@@ -377,6 +448,7 @@ pub(crate) async fn handle(db: &mut Client, rt: &Runtime, facts: &Value, wire: I
                     )?;
                 json!({"ok":true,"events":page.events.iter().map(|e|json!({"cursor":e.cursor,"payload":e.payload})).collect::<Vec<_>>(),"cursor":page.next_cursor})
             }
+            path if path.starts_with("/messages/") => crate::messaging_transport::handle(&tx, rt, facts, s, &owner, path, body).await?,
             _ => return Err("NOT_FOUND"),
         };
         tx.commit().await.map_err(|_| "COMMIT_UNKNOWN")?;
@@ -389,7 +461,7 @@ pub(crate) async fn handle(db: &mut Client, rt: &Runtime, facts: &Value, wire: I
     }
 }
 
-async fn collect_expired(db: &mut Client, s: &str) -> Result<()> {
+async fn collect_expired(db: &mut Client, s: &str, cleanup_messages: bool) -> Result<()> {
     let tx = db.transaction().await.map_err(db_error)?;
     tx.batch_execute("SET LOCAL lock_timeout='2s'; SET LOCAL statement_timeout='5s'").await.map_err(db_error)?;
     tx.query_one("SELECT pg_advisory_xact_lock_shared(1095323725,hashtext($1))", &[&s]).await.map_err(db_error)?;
@@ -404,6 +476,13 @@ async fn collect_expired(db: &mut Client, s: &str) -> Result<()> {
     )
     .await
     .map_err(db_error)?;
+    if cleanup_messages {
+        aip_execution::messages::MessageStore::new(s)
+            .map_err(|_| "DB_UNAVAILABLE")?
+            .cleanup_expired(&tx, 1000)
+            .await
+            .map_err(|_| "DB_UNAVAILABLE")?;
+    }
     let old=tx.query(&format!("SELECT id::text FROM {s}.aip_jobs WHERE state IN ('SUCCEEDED','FAILED','CANCELLED') AND result_expires_at<clock_timestamp()-interval '30 days' LIMIT 100 FOR UPDATE SKIP LOCKED"),&[]).await.map_err(db_error)?;
     for row in old {
         let id: String = row.get(0);
@@ -415,6 +494,7 @@ async fn collect_expired(db: &mut Client, s: &str) -> Result<()> {
 
 pub(crate) async fn supervisor(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire) {
     let mut tasks = tokio::task::JoinSet::new();
+    let cleanup_messages = should_cleanup_messages(rt.infrastructure.messaging, &facts);
     let worker =
         format!("{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos());
     let mut gc = tokio::time::Instant::now();
@@ -422,14 +502,14 @@ pub(crate) async fn supervisor(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire
         if gc.elapsed() >= Duration::from_secs(60) {
             if let Ok(mut db) = connect(&rt).await {
                 if let Ok(s) = schema(&rt) {
-                    if collect_expired(&mut db, s).await.is_err() {
+                    if collect_expired(&mut db, s, cleanup_messages).await.is_err() {
                         eprintln!("{{\"event\":\"job_gc_failed\"}}");
                     }
                 }
             }
             gc = tokio::time::Instant::now();
         }
-        while tasks.len() < 2 {
+        while tasks.len() < rt.infrastructure.resource_limits.jobs {
             let Ok(mut db) = connect(&rt).await else { break };
             let Ok(tx) = db.transaction().await else { break };
             let Ok(store) = schema(&rt).and_then(|s| Store::new(s).map_err(store_error)) else { return };
@@ -504,22 +584,17 @@ async fn execute(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire, lease: Lease
         }
     };
     let config = rt.extensions.as_ref().unwrap();
-    let mut worker = match spike_v4_worker::Worker::try_start_with(
-        config.lang,
-        config.dir.to_str().unwrap(),
-        spike_v4_worker::Isolation::MacNetDeny,
-        spike_v4_worker::WorkerLimits::default(),
-    )
-    .await
-    {
-        Ok(w) => w,
-        Err(_) => {
-            if let Ok(db) = connect(&rt).await {
-                let _ = store.retry(&*db, &lease, "WORKER_FAILED").await;
+    let mut worker =
+        match spike_v4_worker::Worker::try_start_configured(config.lang, config.dir.to_str().unwrap(), rt.infrastructure.worker_launch.clone()).await
+        {
+            Ok(w) => w,
+            Err(_) => {
+                if let Ok(db) = connect(&rt).await {
+                    let _ = store.retry(&*db, &lease, "WORKER_FAILED").await;
+                }
+                return;
             }
-            return;
-        }
-    };
+        };
     let mut host = Host {
         rt: rt.clone(),
         facts: facts.clone(),
@@ -719,6 +794,13 @@ impl Host {
         .await
         .map_err(db_error)?;
         let output = match op {
+            "messages" => {
+                if !self.rt.infrastructure.messaging {
+                    return Err("NOT_EXPOSED");
+                }
+                let key = spike_v1_fixture::digest(&json!([self.lease.run_id.to_string(), self.prefix, text(input, "key")?]));
+                crate::messaging_transport::publish(&tx, &s, &self.lease.owner, name, &key, input["payload"].clone(), 0, 86_400_000, 3).await?
+            }
             "files" => {
                 let files = aip_execution::files::Store::new(&s).map_err(db_error)?;
                 match text(input, "action")? {
@@ -792,11 +874,10 @@ impl Host {
                 let caller = authorize(&tx, &self.facts, name, &input["input"], self.lease.actor, self.wire).await?;
                 tx.commit().await.map_err(db_error)?;
                 let config = self.rt.extensions.as_ref().unwrap();
-                let mut worker = spike_v4_worker::Worker::try_start_with(
+                let mut worker = spike_v4_worker::Worker::try_start_configured(
                     config.lang,
                     config.dir.to_str().unwrap(),
-                    spike_v4_worker::Isolation::MacNetDeny,
-                    spike_v4_worker::WorkerLimits::default(),
+                    self.rt.infrastructure.worker_launch.clone(),
                 )
                 .await
                 .map_err(|_| "WORKER_FAILED")?;
@@ -850,14 +931,26 @@ impl Host {
 #[cfg(test)]
 mod safety_tests {
     use super::*;
+
+    #[test]
+    fn message_gc_requires_enabled_infrastructure_and_declared_access() {
+        let active = json!({"operations":{"dispatch":{"kind":"job","access":{"messages.notifications":true}}}});
+        let inactive = json!({"operations":{"read":{"kind":"query","access":{"messages.notifications":true}}}});
+        assert!(should_cleanup_messages(true, &active));
+        assert!(!should_cleanup_messages(false, &active));
+        assert!(!should_cleanup_messages(true, &inactive));
+        assert!(!should_cleanup_messages(true, &json!({"operations":{}})));
+    }
+
     #[tokio::test]
     async fn collector_removes_payloads_files_and_old_tombstones() {
         let s = format!("aip_job_gc_{}", std::process::id());
         let mut db = spike_v2_read::connect_owned_with_url(spike_v2_read::DB_URL).await.unwrap();
         db.batch_execute(&format!(
-            "CREATE SCHEMA {s}; {}; {}; CREATE TABLE {s}.aip_effects(run_id uuid REFERENCES {s}.aip_jobs(id),result jsonb)",
+            "CREATE SCHEMA {s}; {}; {}; {}; CREATE TABLE {s}.aip_effects(run_id uuid REFERENCES {s}.aip_jobs(id),result jsonb)",
             aip_execution::ddl(&s).unwrap(),
-            aip_execution::files::Store::new(&s).unwrap().ddl()
+            aip_execution::files::Store::new(&s).unwrap().ddl(),
+            aip_execution::messages::ddl(&s).unwrap()
         ))
         .await
         .unwrap();
@@ -888,7 +981,27 @@ mod safety_tests {
             ids.push(run.id);
         }
         db.batch_execute(&format!("UPDATE {s}.aip_jobs SET state='SUCCEEDED',output='{{\"secret\":true}}',result_expires_at=clock_timestamp()-interval '1 second' WHERE idempotency_key='expired'; UPDATE {s}.aip_jobs SET state='FAILED',result_expires_at=clock_timestamp()-interval '31 days' WHERE idempotency_key='old'; INSERT INTO {s}.aip_effects SELECT id,'{{\"secret\":true}}' FROM {s}.aip_jobs; INSERT INTO {s}.aip_files(handle,owner,bucket,name,media_type,content,expires_at) VALUES(md5('file')::uuid,'owner','reports','old','text/plain','private',clock_timestamp()-interval '1 second')")).await.unwrap();
-        collect_expired(&mut db, &s).await.unwrap();
+        let message_store = aip_execution::messages::MessageStore::new(&s).unwrap();
+        message_store
+            .enqueue(
+                &*db,
+                aip_execution::messages::NewMessage {
+                    owner: "owner".into(),
+                    queue: "notifications".into(),
+                    key: "expired-message".into(),
+                    payload: json!({"private":true}),
+                    max_deliveries: 3,
+                    ttl_ms: 60_000,
+                    delay_ms: 0,
+                },
+            )
+            .await
+            .unwrap();
+        db.execute(&format!("UPDATE {s}.aip_messages SET expires_at=clock_timestamp()-interval '1 second'"), &[]).await.unwrap();
+        collect_expired(&mut db, &s, false).await.unwrap();
+        assert_eq!(db.query_one(&format!("SELECT count(*) FROM {s}.aip_messages"), &[]).await.unwrap().get::<_, i64>(0), 1);
+        collect_expired(&mut db, &s, true).await.unwrap();
+        assert_eq!(db.query_one(&format!("SELECT count(*) FROM {s}.aip_messages"), &[]).await.unwrap().get::<_, i64>(0), 0);
         let rows =
             db.query(&format!("SELECT idempotency_key,input,grant_data,output FROM {s}.aip_jobs ORDER BY idempotency_key"), &[]).await.unwrap();
         assert_eq!(rows.len(), 2);

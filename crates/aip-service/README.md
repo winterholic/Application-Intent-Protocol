@@ -31,4 +31,4 @@ HTTP listener는 loopback에서 TLS reverse proxy 뒤에 둔다. 제품은 개�
 
 ## resource 독립 실행 후속
 
-현재 제품은 top-level `operation read`와 업무 resource가 없는 `actor principal` 모드를 지원한다. 같은 형식·SDK·Node/Python worker를 사용하며 별도 컨트롤러를 요구하지 않는다. 운영 PostgreSQL·인증·배포 fence는 유지한다. 실제 문법과 지원 범위는 [동기 operation](../../product/EXECUTION.md), 다음 durable 실행기의 미구현 설계는 [Job 제안](../../plan-docs/backend-capability/durable-job-proposal.md)에 구분한다.
+현재 제품은 top-level `operation read`와 업무 resource가 없는 `actor principal` 모드를 지원한다. 같은 형식·SDK·Node/Python worker를 사용하며 별도 컨트롤러를 요구하지 않는다. 운영 PostgreSQL·인증·배포 fence는 유지한다. 실제 문법과 지원 범위는 [동기 operation](../../product/EXECUTION.md), 현재 durable 실행은 [관리형 실행](../../product/MANAGED-EXECUTION.md), 파일 hosting·실시간·스토리지·메시징·Linux 설정은 [서버 인프라](../../product/INFRASTRUCTURE.md)를 따른다. 이전 [Job 제안](../../plan-docs/backend-capability/durable-job-proposal.md)은 설계 이력이다.

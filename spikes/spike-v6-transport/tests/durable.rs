@@ -27,7 +27,7 @@ impl Drop for SchemaCleanup {
         let schema = self.0.clone();
         let cleanup = std::thread::Builder::new().name("aip-test-schema-cleanup".into()).spawn(move || {
             let Ok(runtime) = tokio::runtime::Builder::new_current_thread().enable_all().build() else { return };
-            let _ = runtime.block_on(async move {
+            runtime.block_on(async move {
                 if let Ok(db) = spike_v2_read::connect_owned_with_url(spike_v2_read::DB_URL).await {
                     let _ = db.batch_execute(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE")).await;
                 }
@@ -224,6 +224,7 @@ fn endpoint(name: &str, url: String, address: SocketAddr) -> EndpointConfig {
         secret_header: None,
         resolved: vec![address],
         allow_loopback: true,
+        allow_private_networks: false,
     }
 }
 
@@ -727,4 +728,115 @@ operation job catchKnownChildFailure {
         server.shutdown().await.unwrap();
     }
     db.batch_execute(&format!("DROP SCHEMA {schema} CASCADE")).await.unwrap();
+}
+
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn messages_share_atomic_job_effects_and_reject_foreign_acknowledgements() {
+    let _lock = SCHEMA_LOCK.lock().await;
+    let schema_name = format!("aip_durable_{}", std::process::id());
+    let schema = schema_name.as_str();
+    let _cleanup = SchemaCleanup(schema.into());
+    sqlgen::set_schema(schema);
+    let source=format!("{}\noperation job dispatch {{ input {{ text: Text }} output {{ length: Int }} allow actor != null access messages.notifications effect managed deadline 5s implementation \"jobs.message\" }}",include_str!("fixtures/jobs.aip"));
+    let facts = load_str(&source, Form::A).unwrap().execution;
+    aip_migrate::init(spike_v2_read::DB_URL, schema, &facts).await.unwrap();
+    let db = spike_v2_read::connect_owned_with_url(spike_v2_read::DB_URL).await.unwrap();
+    db.batch_execute(&format!("INSERT INTO {schema}.aip_actors VALUES(1); INSERT INTO {schema}.aip_principals(issuer,subject,actor_id) VALUES('test','owner',1),('test','other',1)")).await.unwrap();
+    let iat: i64 = db.query_one("SELECT floor(extract(epoch from clock_timestamp()))::bigint", &[]).await.unwrap().get(0);
+    let fp = spike_v5_sdk::contract_fingerprint_with_all_extensions(&facts, IdWire::DecimalString);
+    for lang in [WorkerLang::Node, WorkerLang::Python] {
+        let infra = spike_v6_transport::infrastructure::Infrastructure { messaging: true, client_consume: true, ..Default::default() };
+        let server = spike_v6_transport::server::listen_with_infrastructure(
+            facts.clone(),
+            IdWire::DecimalString,
+            "127.0.0.1:0".parse().unwrap(),
+            spike_v2_read::DB_URL.into(),
+            Some(ReadExtensions { lang, dir: concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/jobs").into() }),
+            ServerOptions::default(),
+            false,
+            Arc::new(Auth { schema: schema.into(), iat }),
+            Some(DeploymentFence::new(schema.into(), spike_v1_fixture::digest(&facts)).unwrap()),
+            None,
+            false,
+            infra,
+        )
+        .await
+        .unwrap();
+        let direct_publish = post(
+            server.address,
+            "/messages/enqueue",
+            "owner",
+            &fp,
+            json!({"queue":"notifications","key":"client-forbidden","payload":{"text":"injected"}}),
+        )
+        .await;
+        assert_eq!(direct_publish["code"], "NOT_EXPOSED", "job queue declaration must not grant client publishing: {direct_publish}");
+        let run = post(
+            server.address,
+            "/jobs/enqueue",
+            "owner",
+            &fp,
+            json!({"operation":"dispatch","input":{"text":"가😀A"},"key":format!("messages-{lang:?}"),"delayMs":0}),
+        )
+        .await;
+        assert_eq!(run["ok"], true, "{run}");
+        let done = wait(server.address, &fp, run["run"]["id"].as_str().unwrap()).await;
+        assert_eq!(done["run"]["state"], "SUCCEEDED", "{done}");
+        let claimed = post(server.address, "/messages/claim", "owner", &fp, json!({"queue":"notifications","worker":"mailer"})).await;
+        assert_eq!(claimed["ok"], true, "{claimed}");
+        assert_eq!(claimed["lease"]["payload"]["text"], "가😀A");
+        let lease = claimed["lease"].clone();
+        let foreign = post(server.address, "/messages/ack", "other", &fp, json!({"queue":"notifications","lease":lease})).await;
+        assert_eq!(foreign["acknowledged"], false, "{foreign}");
+        let ack = post(server.address, "/messages/ack", "owner", &fp, json!({"queue":"notifications","lease":lease})).await;
+        assert_eq!(ack["acknowledged"], true, "{ack}");
+        let empty = post(server.address, "/messages/claim", "owner", &fp, json!({"queue":"notifications","worker":"mailer"})).await;
+        assert!(empty["lease"].is_null(), "{empty}");
+        let sdk_run = post(
+            server.address,
+            "/jobs/enqueue",
+            "owner",
+            &fp,
+            json!({"operation":"dispatch","input":{"text":"SDK 실서버"},"key":format!("messages-sdk-{lang:?}"),"delayMs":0}),
+        )
+        .await;
+        assert_eq!(sdk_run["ok"], true, "{sdk_run}");
+        let done = wait(server.address, &fp, sdk_run["run"]["id"].as_str().unwrap()).await;
+        assert_eq!(done["run"]["state"], "SUCCEEDED", "{done}");
+        let script = r#"
+            import assert from 'node:assert/strict';
+            const {createInfrastructureClient} = await import(process.argv[1]);
+            const [base, fingerprint] = process.argv.slice(2);
+            const client = createInfrastructureClient(async (path, body) => {
+                const response = await fetch(base + path, {method:'POST', headers:{
+                    authorization:'Bearer owner', 'x-aip-contract':fingerprint,
+                    'content-type':'application/json'
+                }, body:JSON.stringify(body)});
+                return response.json();
+            }, fingerprint);
+            const lease = await client.messages.claim({queue:'notifications', worker:'sdk-worker'});
+            assert.equal(lease.payload.text, 'SDK 실서버');
+            assert.match(lease.leaseUntil, /Z$/u);
+            assert.equal(await client.messages.ack({queue:'notifications', lease}), true);
+            assert.deepEqual(await client.messages.dead({queue:'notifications', cursor:lease.id}), {items:[],nextCursor:null});
+            console.log('SDK messaging HTTP contract verified');
+        "#;
+        let sdk_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("client/infrastructure.ts");
+        let output = tokio::time::timeout(
+            Duration::from_secs(10),
+            tokio::process::Command::new("node")
+                .args(["--input-type=module", "-e", script])
+                .arg(sdk_path)
+                .arg(format!("http://{}", server.address))
+                .arg(&fp)
+                .kill_on_drop(true)
+                .output(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(output.status.success(), "SDK HTTP regression: {}", String::from_utf8_lossy(&output.stderr));
+        server.shutdown().await.unwrap();
+    }
 }

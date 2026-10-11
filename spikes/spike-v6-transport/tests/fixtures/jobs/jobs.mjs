@@ -56,3 +56,9 @@ export async function catchKnownChildFailure(input, ctx) {
   }
   return {length: recovered};
 }
+
+export async function message(input, ctx) {
+  await ctx.messages.publish("notifications", {text:input.text}, "dispatch");
+  await ctx.messages.publish("notifications", {text:input.text}, "dispatch");
+  return {length:[...input.text].length};
+}

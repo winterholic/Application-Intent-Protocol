@@ -158,6 +158,30 @@ impl Store {
         }))
     }
 
+    /// Fetches a live file only when it belongs to the expected bucket.
+    pub async fn get_in_bucket<C: GenericClient>(&self, client: &C, owner: &str, handle: &Uuid, bucket: &str) -> Result<Option<ManagedFile>, Error> {
+        if !valid_owner(owner) || !valid_component(bucket) {
+            return Ok(None);
+        }
+        let row = client
+            .query_opt(
+                &format!(
+                    "SELECT handle,bucket,name,media_type,content,extract(epoch from expires_at)::bigint FROM {} WHERE handle=$1 AND owner=$2 AND bucket=$3 AND (expires_at IS NULL OR expires_at > clock_timestamp())",
+                    self.table()
+                ),
+                &[handle, &owner, &bucket],
+            )
+            .await?;
+        Ok(row.map(|row| ManagedFile {
+            handle: row.get(0),
+            bucket: row.get(1),
+            name: row.get(2),
+            media_type: row.get(3),
+            bytes: row.get(4),
+            expires_at: row.get(5),
+        }))
+    }
+
     /// Removes only a file owned by the current principal.
     pub async fn delete<C: GenericClient>(&self, client: &C, owner: &str, handle: &Uuid) -> Result<bool, Error> {
         if !valid_owner(owner) {

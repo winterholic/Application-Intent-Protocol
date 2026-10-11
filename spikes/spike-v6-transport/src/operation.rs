@@ -16,28 +16,39 @@ async fn authorize(db: &Client, facts: &Value, name: &str, input: &Value, caller
     }
 }
 
-pub async fn invoke(db: &mut Client, facts: &Value, body: &Value, caller: &Caller, wire: IdWire, config: &super::server::ReadExtensions) -> Value {
+#[allow(clippy::too_many_arguments)]
+pub async fn invoke_with_launch(
+    db: &mut Client,
+    facts: &Value,
+    body: &Value,
+    caller: &Caller,
+    wire: IdWire,
+    config: &super::server::ReadExtensions,
+    launch: &spike_v4_worker::WorkerLaunchConfig,
+) -> Value {
     let deadline = facts["operations"][body["operation"].as_str().unwrap()]["deadlineMs"].as_u64().unwrap();
-    match tokio::time::timeout(std::time::Duration::from_millis(deadline), invoke_inner(db, facts, body, caller, wire, config)).await {
+    match tokio::time::timeout(std::time::Duration::from_millis(deadline), invoke_inner(db, facts, body, caller, wire, config, launch)).await {
         Ok(result) => result,
         Err(_) => json!({"ok":false,"code":"DEADLINE_EXCEEDED"}),
     }
 }
 
-async fn invoke_inner(db: &mut Client, facts: &Value, body: &Value, caller: &Caller, wire: IdWire, config: &super::server::ReadExtensions) -> Value {
+#[allow(clippy::too_many_arguments)]
+async fn invoke_inner(
+    db: &mut Client,
+    facts: &Value,
+    body: &Value,
+    caller: &Caller,
+    wire: IdWire,
+    config: &super::server::ReadExtensions,
+    launch: &spike_v4_worker::WorkerLaunchConfig,
+) -> Value {
     let name = body["operation"].as_str().unwrap();
     let input = &body["input"];
     if let Err(error) = authorize(db, facts, name, input, caller, wire).await {
         return json!({"ok":false,"code":error.code});
     }
-    let mut worker = match spike_v4_worker::Worker::try_start_with(
-        config.lang,
-        config.dir.to_str().unwrap(),
-        spike_v4_worker::Isolation::MacNetDeny,
-        spike_v4_worker::WorkerLimits::default(),
-    )
-    .await
-    {
+    let mut worker = match spike_v4_worker::Worker::try_start_configured(config.lang, config.dir.to_str().unwrap(), launch.clone()).await {
         Ok(worker) => worker,
         Err(_) => return json!({"ok":false,"code":"WORKER_FAILED"}),
     };

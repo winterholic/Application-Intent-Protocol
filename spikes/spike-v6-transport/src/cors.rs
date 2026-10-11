@@ -115,3 +115,28 @@ pub(crate) fn allowed_request_headers(value: Option<&str>) -> bool {
                 .all(|header| matches!(header.trim().to_ascii_lowercase().as_str(), "authorization" | "content-type" | "x-aip-contract"))
     })
 }
+
+/// Route-level preflight methods. A caller must first validate and echo the request origin.
+pub(crate) fn allowed_methods(path: &str, is_mount: bool) -> Option<&'static str> {
+    if is_mount {
+        return Some("GET, HEAD");
+    }
+    match path {
+        "/objects/put" | "/objects/sign" => Some("POST"),
+        "/events/socket" => Some("GET"),
+        "/events/subscribe" => Some("POST"),
+        _ if path.starts_with("/objects/multipart/") => Some("POST"),
+        _ if path.starts_with("/objects/") => Some("GET, HEAD, DELETE"),
+        _ => Some("POST"),
+    }
+}
+
+pub(crate) fn method_is_allowed(methods: &str, requested: &str) -> bool {
+    methods.split(',').any(|method| method.trim().eq_ignore_ascii_case(requested))
+}
+
+/// The origin is safe to echo only after `ServerOptions::allows` accepted it.
+pub(crate) fn actual_response_headers(origin: Option<&str>) -> String {
+    let allow_origin = origin.map(|origin| format!("access-control-allow-origin: {origin}\r\n")).unwrap_or_default();
+    format!("{allow_origin}vary: Origin\r\n")
+}

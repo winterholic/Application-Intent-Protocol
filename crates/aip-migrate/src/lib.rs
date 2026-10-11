@@ -11,7 +11,7 @@ const VERSION: i32 = 1;
 const CATALOG: &str = include_str!("../../../prototype/src/schema_catalog.sql");
 const META: &str = "aip_migrate_meta";
 const JOURNAL: &str = "aip_migrate_journal";
-const EXECUTION_TABLES: &[&str] = &["aip_jobs", "aip_files", "aip_events", "aip_event_streams", "aip_event_keys", "aip_effects"];
+const EXECUTION_TABLES: &[&str] = &["aip_jobs", "aip_files", "aip_events", "aip_event_streams", "aip_event_keys", "aip_effects", "aip_messages"];
 static NEXT_SHADOW: AtomicU64 = AtomicU64::new(0);
 
 fn err(code: &str, message: &str) -> Value {
@@ -106,6 +106,22 @@ fn validate_facts(facts: &Value) -> Result<(), Value> {
             }
         }
     }
+    if let Some(operations) = facts["operations"].as_object() {
+        for operation in operations.values() {
+            if let Some(accesses) = operation["access"].as_object() {
+                for (access, enabled) in accesses {
+                    if let Some(queue) = access.strip_prefix("messages.")
+                        && (operation["kind"] != "job"
+                            || operation["effect"] != "managed"
+                            || *enabled != Value::Bool(true)
+                            || !valid_message_queue(queue))
+                    {
+                        return Err(err("BAD_FACTS", "messages capability는 managed job의 안전한 queue 이름이어야 함"));
+                    }
+                }
+            }
+        }
+    }
     let mut pending = vec![facts];
     let mut visited = 0usize;
     while let Some(node) = pending.pop() {
@@ -152,6 +168,20 @@ pub fn creation(schema: &str, facts: &Value) -> Result<(Vec<String>, String), Va
     let ddl = sqlgen::create_ddl_in(schema, facts).map_err(|_| err("UNSUPPORTED_SCHEMA", "정의의 SQL 구조를 생성할 수 없음"))?;
     let hash = digest(&json!(ddl));
     Ok((ddl, hash))
+}
+
+fn valid_message_queue(value: &str) -> bool {
+    let mut bytes = value.bytes();
+    let Some(first) = bytes.next() else { return false };
+    value.len() <= 128 && (first.is_ascii_alphabetic() || first == b'_') && bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+}
+
+fn has_message_access(facts: &Value) -> bool {
+    facts["operations"].as_object().is_some_and(|operations| {
+        operations
+            .values()
+            .any(|operation| operation["access"].as_object().is_some_and(|access| access.keys().any(|name| name.starts_with("messages."))))
+    })
 }
 
 async fn connect(db_url: &str) -> Result<spike_v2_read::OwnedConnection, Value> {
@@ -746,6 +776,12 @@ async fn derive(db: &impl GenericClient, schema: &str, new_facts: &Value, migrat
     let new_resources = new_facts["resources"].as_object().ok_or_else(|| err("BAD_FACTS", "새 resources 오류"))?;
     let had_jobs = old.facts["operations"].as_object().is_some_and(|ops| ops.values().any(|op| op["kind"] == "job"));
     let has_jobs = new_facts["operations"].as_object().is_some_and(|ops| ops.values().any(|op| op["kind"] == "job"));
+    if has_message_access(&old.facts) && !has_message_access(new_facts) {
+        blocked = true;
+        changes.push(
+            json!({"class":"Unsupported","reason":"마지막 messages capability 제거는 큐 데이터 보존을 위해 차단됨; 명시적 보존/정리 계획이 필요함"}),
+        );
+    }
     if had_jobs && !has_jobs {
         blocked = true;
         changes

@@ -5,7 +5,7 @@ use spike_v2_read::{id_wire::IdWire, plan::Caller};
 use spike_v3_write::classify_write_error;
 use spike_v4_worker::{
     write::{prepare_write_in_with_wire, validate_write},
-    Isolation, Worker, WorkerLimits,
+    Worker,
 };
 use std::time::{Duration, Instant};
 use tokio_postgres::Client;
@@ -15,6 +15,19 @@ fn failure(code: &str) -> Value {
 }
 
 pub async fn apply(db: &mut Client, facts: &Value, body: &Value, caller: &Caller, wire: IdWire, config: &ReadExtensions) -> Value {
+    apply_with_launch(db, facts, body, caller, wire, config, &spike_v4_worker::WorkerLaunchConfig::default()).await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn apply_with_launch(
+    db: &mut Client,
+    facts: &Value,
+    body: &Value,
+    caller: &Caller,
+    wire: IdWire,
+    config: &ReadExtensions,
+    launch: &spike_v4_worker::WorkerLaunchConfig,
+) -> Value {
     let exact_body = body.as_object().is_some_and(|object| object.len() == 2 && object.contains_key("key") && object.contains_key("request"));
     let request = &body["request"];
     let exact_request =
@@ -74,8 +87,7 @@ pub async fn apply(db: &mut Client, facts: &Value, body: &Value, caller: &Caller
             Ok(config) => config,
             Err(_) => return failure("WORKER_CONFIG"),
         };
-        let mut worker = match Worker::try_start_with(config.lang, config.dir.to_str().unwrap(), Isolation::MacNetDeny, WorkerLimits::default()).await
-        {
+        let mut worker = match Worker::try_start_configured(config.lang, config.dir.to_str().unwrap(), launch.clone()).await {
             Ok(worker) => worker,
             Err(_) => return failure("WORKER_FAILED"),
         };

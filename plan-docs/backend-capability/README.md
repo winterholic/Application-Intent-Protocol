@@ -5,6 +5,8 @@
 
 > 2026-10-09 분석·제안 단계. [창시자 원문](../sources/founder-backend-capability-directive-2026-10-09.md)을 보관하고 제품/PoC 코드·공식 자료·실행 반례로 대조했다. 새 실행 모델의 대규모 구조 변경은 수행하지 않았다.
 
+현재 서버 인프라 구현과 미지원 경계는 [INFRASTRUCTURE](../../product/INFRASTRUCTURE.md)를 따른다.
+
 이 문단의 “현재 제품” 판정은 2026-10-09 감사 시점이다. 당시 데이터·정책·전이·제한 확장의 지원과 durable Job·외부 효과·managed file·realtime·catalog의 gap을 비교했다. 이후 구현 범위는 위의 현재 문서 링크를 확인한다. 짧은 순수 계산·일부 사용량 집계는 감사 당시에도 가능했으므로 “SQL 밖 기능은 전부 불가”라고 단정하지 않았다.
 
 ## 요청 결과물

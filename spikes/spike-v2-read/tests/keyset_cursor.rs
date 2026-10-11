@@ -3,10 +3,16 @@ use serde_json::{json, Value};
 use spike_v1_fixture::{load_str, Form};
 use spike_v2_read::plan::{plan_read, Caller, Plan, Reject};
 use spike_v2_read::{connect, execute, sqlgen};
+use std::sync::Once;
 
 const A: &str = include_str!("../../spike-v1-fixture/fixture/recruitment.aip");
 const NOW: &str = "2026-10-04T00:00:00Z";
 const BUDGET: &str = "budget { rows 50; depth 2; deadline 2s; cost 1000 }";
+static SCHEMA_INIT: Once = Once::new();
+
+fn ensure_test_schema() {
+    SCHEMA_INIT.call_once(|| sqlgen::set_schema("aip_keyset_cursor"));
+}
 
 fn open() -> Value {
     load_str(&A.replacen(BUDGET, "budget { rows 50; depth 2; deadline 2s; cost 1000; cursor }", 1), Form::A)
@@ -31,6 +37,7 @@ fn req(sort: Value, after: Value) -> Value {
 
 #[test]
 fn after_requires_budget_opt_in() {
+    ensure_test_schema();
     let base = load_str(A, Form::A).unwrap().execution;
     let r = req(json!([{ "field": "views" }]), json!({ "views": 1, "id": 1 }));
     assert_eq!(code(plan_read(&base, &r, &who(Some(1)))), "UNKNOWN_KEY");
@@ -39,6 +46,7 @@ fn after_requires_budget_opt_in() {
 
 #[test]
 fn after_keys_must_match_sort_fields_plus_id() {
+    ensure_test_schema();
     let f = open();
     let c = who(Some(1));
     let sort = json!([{ "field": "views", "dir": "desc" }]);
@@ -66,6 +74,7 @@ fn after_keys_must_match_sort_fields_plus_id() {
 
 #[test]
 fn after_values_are_type_checked_and_bound() {
+    ensure_test_schema();
     let f = open();
     let c = who(Some(1));
     let sort = json!([{ "field": "views" }, { "field": "periodEnd", "dir": "desc" }]);
@@ -89,6 +98,7 @@ fn after_values_are_type_checked_and_bound() {
 
 #[test]
 fn after_cannot_combine_with_offset_and_is_cheap() {
+    ensure_test_schema();
     let f = load_str(&A.replacen(BUDGET, "budget { rows 50; depth 2; deadline 2s; cost 1000; offset 100; cursor }", 1), Form::A).unwrap().execution;
     let c = who(Some(1));
     let mut r = req(json!([{ "field": "views" }]), json!({ "views": 1, "id": 1 }));
@@ -104,6 +114,7 @@ fn after_cannot_combine_with_offset_and_is_cheap() {
 
 #[test]
 fn defensive_checks_when_facts_skip_sema() {
+    ensure_test_schema();
     let c = who(Some(1));
     let ok = json!({ "views": 1, "id": 1 });
     let req = |sort: Value, after: Value| json!({ "read": "Recruitment", "select": ["id"], "sort": sort, "after": after });
@@ -135,6 +146,7 @@ fn defensive_checks_when_facts_skip_sema() {
 
 #[test]
 fn sql_shape_expands_mixed_directions() {
+    ensure_test_schema();
     let f = open();
     let c = who(Some(1));
     let sort = json!([{ "field": "views", "dir": "desc" }, { "field": "periodEnd", "dir": "asc" }]);
@@ -209,7 +221,7 @@ async fn walk(db: &mut tokio_postgres::Client, f: &Value, actor: Option<i64>, so
 
 #[tokio::test(flavor = "current_thread")]
 async fn db_keyset_walk_equals_full_list_with_ties_and_never_leaks_hidden_rows() {
-    sqlgen::set_schema("aip_keyset_cursor");
+    ensure_test_schema();
     let f = open();
     let mut db = connect().await;
     db.batch_execute(&format!("DROP SCHEMA IF EXISTS {} CASCADE", sqlgen::schema())).await.ok();

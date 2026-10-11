@@ -15,6 +15,7 @@ fn config(url: String, resolved: Vec<SocketAddr>, allow_loopback: bool) -> Endpo
         secret_header: Some(("x-api-key".into(), "server-secret-value".into())),
         resolved,
         allow_loopback,
+        allow_private_networks: false,
     }
 }
 
@@ -45,6 +46,30 @@ fn endpoint_configuration_rejects_user_controlled_or_private_destinations() {
 }
 
 #[test]
+fn private_networks_require_endpoint_opt_in_and_allow_loopback_https_when_enabled() {
+    let loopback = "127.0.0.1:443".parse().unwrap();
+    let private = "10.24.0.8:443".parse().unwrap();
+    for address in [loopback, private] {
+        let endpoint = config("https://internal.example/health".into(), vec![address], false);
+        assert!(Broker::new(vec![endpoint]).is_err(), "private destination must default to denied");
+
+        let mut endpoint = config("https://internal.example/health".into(), vec![address], false);
+        endpoint.allow_private_networks = true;
+        assert!(Broker::new(vec![endpoint]).is_ok(), "explicit private-network opt-in should permit internal HTTPS");
+    }
+
+    let mut localhost = config("https://127.0.0.1/health".into(), vec![loopback], false);
+    localhost.allow_private_networks = true;
+    assert!(Broker::new(vec![localhost]).is_ok());
+
+    for special in ["169.254.1.2:443", "224.0.0.1:443", "0.0.0.0:443", "[fe80::1]:443", "[ff02::1]:443"] {
+        let mut endpoint = config("https://internal.example/health".into(), vec![special.parse().unwrap()], false);
+        endpoint.allow_private_networks = true;
+        assert!(Broker::new(vec![endpoint]).is_err(), "private-network opt-in must not permit special-use destinations");
+    }
+}
+
+#[test]
 fn fingerprint_is_order_independent_and_changes_with_effective_configuration() {
     let a = config("https://api.example/v1".into(), vec!["1.1.1.1:443".parse().unwrap()], false);
     let mut b = config("https://api.example/other".into(), vec!["8.8.8.8:443".parse().unwrap()], false);
@@ -60,6 +85,11 @@ fn fingerprint_is_order_independent_and_changes_with_effective_configuration() {
     rotated.secret_header = Some(("x-api-key".into(), "rotated-secret".into()));
     let unchanged = config("https://api.example/v1".into(), vec!["1.1.1.1:443".parse().unwrap()], false);
     assert_ne!(Broker::new(vec![unchanged]).unwrap().fingerprint(), Broker::new(vec![rotated]).unwrap().fingerprint());
+
+    let mut private_networks = config("https://api.example/v1".into(), vec!["1.1.1.1:443".parse().unwrap()], false);
+    private_networks.allow_private_networks = true;
+    let default_policy = config("https://api.example/v1".into(), vec!["1.1.1.1:443".parse().unwrap()], false);
+    assert_ne!(Broker::new(vec![default_policy]).unwrap().fingerprint(), Broker::new(vec![private_networks]).unwrap().fingerprint());
 }
 
 #[tokio::test]

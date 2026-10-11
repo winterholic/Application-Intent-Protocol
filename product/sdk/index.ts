@@ -1,4 +1,9 @@
 export { connectTypedExtensions as connect } from "../../spikes/spike-v6-transport/client/typed.ts";
+export { createInfrastructureClient, readSse } from "../../spikes/spike-v6-transport/client/infrastructure.ts";
+export type {
+  DeadLetter, DeadLetterPage, InfrastructureClient, ManagedSend, Message, MessageLease, MultipartPart, MultipartUpload,
+  ObjectMethod, SignedObject, SignedPart, SseEvent,
+} from "../../spikes/spike-v6-transport/client/infrastructure.ts";
 export { WriteUnsettled } from "../../spikes/spike-v6-transport/client/transport.ts";
 export type { EnqueueOptions, EventPage, FileMetadata, JobReceipt, JobResult, JobStatus, RetrievedFile } from "../../spikes/spike-v6-transport/client/jobs.ts";
 export type {

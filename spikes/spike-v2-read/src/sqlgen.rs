@@ -646,6 +646,15 @@ pub fn create_ddl_in(namespace: &str, facts: &Value) -> R<Vec<String>> {
         for sql in [jobs, files, events] {
             out.extend(sql.split(';').map(str::trim).filter(|s| !s.is_empty()).map(|s| s.replace("CREATE TABLE IF NOT EXISTS ", "CREATE TABLE ")));
         }
+        let has_messages = facts["operations"].as_object().is_some_and(|operations| {
+            operations
+                .values()
+                .any(|operation| operation["access"].as_object().is_some_and(|access| access.keys().any(|name| name.starts_with("messages."))))
+        });
+        if has_messages {
+            let messages = aip_execution::messages::ddl(namespace).map_err(|_| "message schema")?;
+            out.extend(messages.split(';').map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned));
+        }
         out.push(format!("CREATE TABLE {namespace}.aip_effects (run_id uuid NOT NULL REFERENCES {namespace}.aip_jobs(id), effect_key text NOT NULL, request_digest text NOT NULL, state text NOT NULL CHECK(state IN ('PENDING','SUCCEEDED','UNKNOWN','FAILED')), result jsonb, PRIMARY KEY(run_id,effect_key))"));
     }
     Ok(out)

@@ -21,7 +21,9 @@ fn psql(sql: &str) -> std::process::Output {
 
 fn mapped_schema() -> SchemaGuard {
     let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("test setup").as_nanos();
-    let schema = format!("aip_durable_auth_{}_{}", std::process::id(), stamp);
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let sequence = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let schema = format!("aip_durable_auth_{}_{}_{}", std::process::id(), stamp, sequence);
     let created = psql(&format!(
         "CREATE SCHEMA {schema}; CREATE TABLE {schema}.actor(id bigint PRIMARY KEY); INSERT INTO {schema}.actor VALUES(42), (43); CREATE TABLE {schema}.aip_principals(issuer text NOT NULL,subject text NOT NULL,actor_id bigint NOT NULL REFERENCES {schema}.actor(id),enabled boolean NOT NULL,min_iat bigint NOT NULL DEFAULT 0,PRIMARY KEY(issuer,subject)); INSERT INTO {schema}.aip_principals(issuer,subject,actor_id,enabled) VALUES('https://issuer.example','user-1',42,true)"
     ));

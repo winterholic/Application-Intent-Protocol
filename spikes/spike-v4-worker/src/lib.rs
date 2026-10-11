@@ -1,5 +1,7 @@
 //! V4-1 공식 읽기 확장. 서버가 actor·허용 집계·입력 바인딩·기한을 ctx 토큰에 묶고, worker는 토큰으로만 데이터를 요청한다.
 mod framing;
+mod isolation;
+pub use isolation::{Isolation, WorkerLaunchConfig};
 
 pub mod outbox;
 pub mod write;
@@ -8,6 +10,21 @@ pub mod write;
 mod grant_tests;
 #[cfg(test)]
 mod value_tests;
+#[cfg(test)]
+mod stable_key_tests {
+    use super::requires_stable_key;
+    use serde_json::json;
+
+    #[test]
+    fn managed_effect_capabilities_require_stable_keys() {
+        for op in ["http", "integrations", "operations", "jobs", "events", "messages"] {
+            assert!(requires_stable_key(op, &json!({})), "{op} requires a stable key");
+        }
+        assert!(requires_stable_key("files", &json!({"action":"put"})));
+        assert!(!requires_stable_key("files", &json!({"action":"get"})));
+        assert!(!requires_stable_key("data", &json!({})));
+    }
+}
 
 use framing::BoundedLines;
 use serde_json::{json, Map, Value};
@@ -25,13 +42,6 @@ use tokio_postgres::Client;
 pub enum Lang {
     Node,
     Python,
-}
-
-/// worker 격리 방식. NetDeny는 macOS sandbox-exec로 네트워크만 막는다(실험용, 플랫폼 한정).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Isolation {
-    None,
-    MacNetDeny,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -81,11 +91,14 @@ pub(crate) fn rej<T>(code: &'static str, msg: impl Into<String>) -> Result<T, Re
     Err(Reject { code, msg: msg.into() })
 }
 
+fn requires_stable_key(op: &str, input: &Value) -> bool {
+    ["http", "integrations", "operations", "jobs", "events", "messages"].contains(&op) || op == "files" && input["action"] == "put"
+}
+
 impl Worker {
-    /// worker 환경 변수는 PATH만 남긴다. DB 연결 정보를 넘기지 않는다.
-    /// 한계: 환경 변수를 지워도 네트워크 접근은 막지 않는다(tests의 probeDb 참고).
+    /// 기본 실행은 PATH만 전달하고 OS 네트워크 격리를 켠다.
     pub async fn start(lang: Lang, ext_dir: &str) -> Worker {
-        Self::start_with(lang, ext_dir, Isolation::None).await
+        Self::start_with(lang, ext_dir, Isolation::Auto).await
     }
 
     pub async fn start_with(lang: Lang, ext_dir: &str, iso: Isolation) -> Worker {
@@ -93,37 +106,75 @@ impl Worker {
     }
 
     pub async fn try_start_with(lang: Lang, ext_dir: &str, iso: Isolation, limits: WorkerLimits) -> std::io::Result<Worker> {
+        let config = WorkerLaunchConfig { isolation: iso, ..WorkerLaunchConfig::default() };
+        Self::try_start_configured_with_limits(lang, ext_dir, config, limits).await
+    }
+
+    /// Launch with a trusted explicit runtime and explicitly selected environment entries.
+    pub async fn try_start_configured(lang: Lang, ext_dir: &str, config: WorkerLaunchConfig) -> std::io::Result<Worker> {
+        Self::try_start_configured_with_limits(lang, ext_dir, config, WorkerLimits::default()).await
+    }
+
+    pub async fn try_start_configured_with_limits(
+        lang: Lang,
+        ext_dir: &str,
+        config: WorkerLaunchConfig,
+        limits: WorkerLimits,
+    ) -> std::io::Result<Worker> {
         if limits.stdout_frame_bytes == 0 || limits.stderr_frame_bytes == 0 {
             return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "worker frame limits must be positive"));
         }
-        let prog = match lang {
+        config.isolation.validate_available()?;
+        let default_prog = match lang {
             Lang::Node => "node",
             Lang::Python => "python3",
         };
-        let mut cmd = match iso {
-            Isolation::None => Command::new(prog),
-            Isolation::MacNetDeny => {
-                // ctx는 stdin/stdout으로만 오가므로 네트워크를 막아도 확장 호출은 동작해야 한다.
-                let mut c = Command::new("/usr/bin/sandbox-exec");
-                c.args(["-p", "(version 1)(allow default)(deny network*)", prog]);
-                c
-            }
+        let requested_prog = config.runtime_executable.as_deref().unwrap_or_else(|| std::path::Path::new(default_prog));
+        #[cfg(target_os = "linux")]
+        let prog = isolation::resolve_runtime(requested_prog)?;
+        #[cfg(not(target_os = "linux"))]
+        let prog = if requested_prog.is_absolute() || requested_prog.components().count() > 1 {
+            let parent =
+                requested_prog.parent().ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "worker runtime path has no parent"))?;
+            parent.canonicalize()?.join(
+                requested_prog
+                    .file_name()
+                    .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "worker runtime path has no executable name"))?,
+            )
+        } else {
+            requested_prog.to_path_buf()
         };
+        let ext_dir = match config.isolation {
+            Isolation::None | Isolation::MacNetDeny => std::path::PathBuf::from(ext_dir),
+            Isolation::Auto | Isolation::LinuxBubblewrap => std::path::Path::new(ext_dir).canonicalize()?,
+        };
+        let ext_dir = ext_dir.to_string_lossy();
+        let mut runtime_args = Vec::new();
         match lang {
             Lang::Node => {
-                cmd.args(["--input-type=module", "-e", NODE_WORKER, "--", ext_dir]);
+                runtime_args.extend(["--input-type=module".into(), "-e".into(), NODE_WORKER.into(), "--".into(), ext_dir.to_string().into()]);
             }
             Lang::Python => {
-                cmd.args(["-P", "-c", PYTHON_WORKER, ext_dir]);
+                runtime_args.extend(["-P".into(), "-c".into(), PYTHON_WORKER.into(), ext_dir.to_string().into()]);
             }
         }
-        cmd.env_clear()
-            .env("PATH", std::env::var("PATH").unwrap_or_default())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
-        let mut child = cmd.spawn().map_err(|error| std::io::Error::new(error.kind(), "worker 실행 실패"))?;
+        let spec = isolation::command_spec(
+            config.isolation,
+            prog.as_os_str(),
+            &runtime_args,
+            std::path::Path::new(ext_dir.as_ref()),
+            &config.read_only_paths,
+        )?;
+        let mut cmd = Command::new(spec.program);
+        cmd.args(spec.args).env_clear().env("PATH", std::env::var("PATH").unwrap_or_default());
+        for (key, value) in config.environment {
+            if key.is_empty() || key.contains('=') || key.as_bytes().contains(&0) || value.as_bytes().contains(&0) {
+                return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "worker environment contains an invalid key or value"));
+            }
+            cmd.env(key, value);
+        }
+        cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
+        let mut child = cmd.spawn().map_err(|error| std::io::Error::new(error.kind(), format!("worker 실행 실패: {error}")))?;
         let missing_pipe = || std::io::Error::other("worker pipe 생성 실패");
         let stdin = child.stdin.take().ok_or_else(missing_pipe)?;
         let lines = BoundedLines::new(BufReader::new(child.stdout.take().ok_or_else(missing_pipe)?), limits.stdout_frame_bytes);
@@ -396,6 +447,7 @@ pub async fn invoke_job(
     invoke_contract(None, worker, facts, &facts["operations"][name], input, caller, wire, Some(host)).await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn invoke_contract(
     mut db: Option<&mut Client>,
     w: &mut Worker,
@@ -464,14 +516,14 @@ async fn invoke_contract(
                         if m["token"] != token || x["access"][format!("{op}.{name}")] != true {
                             return rej("ACCESS_NOT_DECLARED", "선언되지 않은 job capability");
                         }
-                        if ["http", "jobs", "events"].contains(&op) || op == "files" && m["input"]["action"] == "put" {
-                            if !m["input"]["key"].as_str().is_some_and(|key| {
+                        if requires_stable_key(op, &m["input"])
+                            && !m["input"]["key"].as_str().is_some_and(|key| {
                                 !key.is_empty()
                                     && key.len() <= 100
                                     && key.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-' | b'.' | b':'))
-                            }) {
-                                return rej("BAD_VALUE", "managed effect에는 안정적인 key가 필요함");
-                            }
+                            })
+                        {
+                            return rej("BAD_VALUE", "managed effect에는 안정적인 key가 필요함");
                         }
                         host.call(op, name, &m["input"]).await
                     } else if let Some(db) = db.as_deref_mut() {

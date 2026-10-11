@@ -114,6 +114,7 @@ dependencies = [
 name = "aip-execution"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "reqwest",
  "serde",
  "serde_json",
@@ -2440,6 +2441,7 @@ version = "0.0.0"
 dependencies = [
  "aip-execution",
  "base64 0.22.1",
+ "futures-util",
  "getrandom 0.2.17",
  "hmac 0.12.1",
  "serde",
@@ -2452,6 +2454,7 @@ dependencies = [
  "spike-v5-sdk",
  "tokio",
  "tokio-postgres",
+ "tokio-tungstenite 0.30.0",
  "url",
 ]
 

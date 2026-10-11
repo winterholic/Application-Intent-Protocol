@@ -1,4 +1,5 @@
 //! Product assembly reuses the validated definition, authorization, SQL and SDK engines.
+mod infrastructure;
 use clap::{Subcommand, ValueEnum};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -116,6 +117,9 @@ fn default_wire() -> Wire {
 fn default_listen() -> SocketAddr {
     SocketAddr::from(([127, 0, 0, 1], 8080))
 }
+fn default_object_transfer_lifetime_ms() -> u64 {
+    15 * 60 * 1_000
+}
 fn default_env() -> String {
     "AIP_DATABASE_URL".into()
 }
@@ -134,6 +138,19 @@ pub struct Config {
     #[serde(default)]
     pub allowed_origins: Vec<String>,
     pub workers: Option<Workers>,
+    #[serde(default)]
+    pub static_mounts: Vec<infrastructure::MountConfig>,
+    #[serde(default)]
+    pub file_mounts: Vec<infrastructure::FileMountConfig>,
+    pub objects: Option<infrastructure::ObjectsConfig>,
+    #[serde(default)]
+    pub realtime: infrastructure::RealtimeConfig,
+    #[serde(default)]
+    pub messaging: infrastructure::MessagingConfig,
+    #[serde(default)]
+    pub limits: Option<infrastructure::ResourceLimitsConfig>,
+    #[serde(default = "default_object_transfer_lifetime_ms")]
+    pub object_transfer_lifetime_ms: u64,
     pub database_ca_file: Option<PathBuf>,
 }
 #[derive(Deserialize)]
@@ -147,6 +164,13 @@ pub struct Workers {
     pub enable_file_uploads: bool,
     #[serde(default)]
     pub integrations: Vec<IntegrationConfig>,
+    pub runtime_executable: Option<PathBuf>,
+    #[serde(default)]
+    pub read_only_paths: Vec<PathBuf>,
+    #[serde(default = "infrastructure::empty_environment")]
+    pub environment: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub isolation: infrastructure::WorkerIsolation,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -161,6 +185,8 @@ pub struct IntegrationConfig {
     pub secret_header_env: Option<SecretHeaderEnv>,
     #[serde(default)]
     pub allow_loopback: bool,
+    #[serde(default)]
+    pub allow_private_networks: bool,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -306,6 +332,7 @@ async fn resolve_integrations(configs: &[IntegrationConfig]) -> Result<Vec<aip_e
             secret_header,
             resolved,
             allow_loopback: config.allow_loopback,
+            allow_private_networks: config.allow_private_networks,
         });
     }
     Ok(endpoints)
@@ -477,6 +504,7 @@ async fn principal(config: Config, command: Principal) -> Result<Value, Value> {
 
 async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
     let facts = load(file, false)?.output.execution;
+    let infrastructure = infrastructure::build(&config)?;
     let integrations = config.workers.as_ref().map(|workers| workers.integrations.as_slice()).unwrap_or_default();
     let broker = build_broker(integrations).await?;
     let db_url = database_url(&config)?;
@@ -503,7 +531,7 @@ async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
     #[cfg(unix)]
     let mut termination =
         tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).map_err(|_| error("SIGNAL_CONFIG", "종료 signal 등록 실패"))?;
-    let mut server = spike_v6_transport::server::listen_with_managed(
+    let mut server = spike_v6_transport::server::listen_with_infrastructure(
         facts.clone(),
         config.wire.id_wire(),
         config.listen,
@@ -515,6 +543,7 @@ async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
         Some(deployment),
         broker,
         enable_file_uploads,
+        infrastructure,
     )
     .await
     .map_err(|_| error("SERVER_CONFIG", "listener·공식 확장 설정 실패"))?;
@@ -560,6 +589,150 @@ mod managed_config_tests {
     use serde_json::json;
 
     #[test]
+    fn server_infrastructure_accepts_explicit_backends_and_runtime_overrides() {
+        let value = json!({
+            "schema":"aip_test",
+            "auth":{"issuer":"https://issuer.example","audience":"aip","jwks":{"kind":"file","path":"jwks.json"}},
+            "static_mounts":[{"prefix":"/media","directory":"./public","access":"public"}],
+            "file_mounts":[{"prefix":"/reports","bucket":"reports"}],
+            "objects":{"kind":"local","directory":"./objects","max_bytes":1073741824},
+            "realtime":{"enabled":true,"max_connections":12,"max_lifetime_ms":60000,"heartbeat_ms":1000,"poll_ms":100},
+            "messaging":{"enabled":true},
+            "workers":{"directory":"extensions","language":"python","runtime_executable":"./.venv/bin/python","environment":{"PYTHONPATH":"./plugins"},"isolation":"auto"}
+        });
+        assert!(serde_json::from_value::<Config>(value).is_ok(), "explicit infrastructure configuration must be supported");
+    }
+
+    #[test]
+    fn managed_file_mount_config_is_built_and_rejects_reserved_routes() {
+        let config: Config = serde_json::from_value(json!({
+            "schema":"aip_test",
+            "auth":{"issuer":"https://issuer.example","audience":"aip","jwks":{"kind":"file","path":"jwks.json"}},
+            "file_mounts":[{"prefix":"/reports","bucket":"reports"}]
+        }))
+        .unwrap();
+        let built = infrastructure::build(&config).unwrap();
+        assert_eq!(built.file_mounts.len(), 1);
+        assert_eq!(built.file_mounts[0].prefix, "/reports");
+        assert_eq!(built.file_mounts[0].bucket, "reports");
+
+        let reserved: Config = serde_json::from_value(json!({
+            "schema":"aip_test",
+            "auth":{"issuer":"https://issuer.example","audience":"aip","jwks":{"kind":"file","path":"jwks.json"}},
+            "file_mounts":[{"prefix":"/files","bucket":"reports"}]
+        }))
+        .unwrap();
+        assert_eq!(infrastructure::build(&reserved).err().unwrap()["code"], "INFRASTRUCTURE_CONFIG");
+    }
+
+    #[test]
+    fn resource_limit_overrides_are_honored_and_zero_values_are_rejected() {
+        let defaults: Config = serde_json::from_value(json!({
+            "schema":"aip_test",
+            "auth":{"issuer":"https://issuer.example","audience":"aip","jwks":{"kind":"file","path":"jwks.json"}}
+        }))
+        .unwrap();
+        let defaults = infrastructure::build(&defaults).unwrap();
+        assert_eq!(defaults.resource_limits, spike_v6_transport::infrastructure::ResourceLimits::default());
+
+        let config: Config = serde_json::from_value(json!({
+            "schema":"aip_test",
+            "auth":{"issuer":"https://issuer.example","audience":"aip","jwks":{"kind":"file","path":"jwks.json"}},
+            "limits":{"connections":20,"workers":3,"jobs":5,"uploads":2}
+        }))
+        .unwrap();
+        let built = infrastructure::build(&config).unwrap();
+        assert_eq!(built.resource_limits.connections, 20);
+        assert_eq!(built.resource_limits.workers, 3);
+        assert_eq!(built.resource_limits.jobs, 5);
+        assert_eq!(built.resource_limits.uploads, 2);
+
+        let partial: Config = serde_json::from_value(json!({
+            "schema":"aip_test",
+            "auth":{"issuer":"https://issuer.example","audience":"aip","jwks":{"kind":"file","path":"jwks.json"}},
+            "limits":{"jobs":5}
+        }))
+        .unwrap();
+        let partial = infrastructure::build(&partial).unwrap();
+        assert_eq!(partial.resource_limits, spike_v6_transport::infrastructure::ResourceLimits { connections: 64, workers: 4, jobs: 5, uploads: 4 });
+
+        for invalid_limits in [json!({"connections":0}), json!({"workers":0}), json!({"jobs":0}), json!({"uploads":0})] {
+            let invalid: Config = serde_json::from_value(json!({
+                "schema":"aip_test",
+                "auth":{"issuer":"https://issuer.example","audience":"aip","jwks":{"kind":"file","path":"jwks.json"}},
+                "limits":invalid_limits
+            }))
+            .unwrap();
+            assert_eq!(infrastructure::build(&invalid).err().unwrap()["code"], "INFRASTRUCTURE_CONFIG");
+        }
+    }
+
+    #[test]
+    fn client_messaging_access_defaults_to_denied_and_can_be_enabled_separately() {
+        let config: Config = serde_json::from_value(json!({
+            "schema":"aip_test",
+            "auth":{"issuer":"https://issuer.example","audience":"aip","jwks":{"kind":"file","path":"jwks.json"}},
+            "messaging":{"enabled":true}
+        }))
+        .unwrap();
+        let built = infrastructure::build(&config).unwrap();
+        assert!(built.messaging);
+        assert!(!built.client_publish);
+        assert!(!built.client_consume);
+
+        let config: Config = serde_json::from_value(json!({
+            "schema":"aip_test",
+            "auth":{"issuer":"https://issuer.example","audience":"aip","jwks":{"kind":"file","path":"jwks.json"}},
+            "messaging":{"enabled":true,"client_publish":true}
+        }))
+        .unwrap();
+        let built = infrastructure::build(&config).unwrap();
+        assert!(built.client_publish);
+        assert!(!built.client_consume);
+
+        let config: Config = serde_json::from_value(json!({
+            "schema":"aip_test",
+            "auth":{"issuer":"https://issuer.example","audience":"aip","jwks":{"kind":"file","path":"jwks.json"}},
+            "messaging":{"enabled":true,"client_consume":true}
+        }))
+        .unwrap();
+        let built = infrastructure::build(&config).unwrap();
+        assert!(!built.client_publish);
+        assert!(built.client_consume);
+    }
+
+    #[test]
+    fn object_transfer_lifetime_defaults_and_overrides_are_applied_and_bounded() {
+        use std::time::Duration;
+
+        let defaults: Config = serde_json::from_value(json!({
+            "schema":"aip_test",
+            "auth":{"issuer":"https://issuer.example","audience":"aip","jwks":{"kind":"file","path":"jwks.json"}}
+        }))
+        .unwrap();
+        assert_eq!(defaults.object_transfer_lifetime_ms, 900_000);
+        assert_eq!(infrastructure::build(&defaults).unwrap().object_transfer_lifetime, Duration::from_secs(900));
+
+        let custom: Config = serde_json::from_value(json!({
+            "schema":"aip_test",
+            "auth":{"issuer":"https://issuer.example","audience":"aip","jwks":{"kind":"file","path":"jwks.json"}},
+            "object_transfer_lifetime_ms": 3000
+        }))
+        .unwrap();
+        assert_eq!(infrastructure::build(&custom).unwrap().object_transfer_lifetime, Duration::from_secs(3));
+
+        for invalid_ms in [0, 999, 86_400_001] {
+            let invalid: Config = serde_json::from_value(json!({
+                "schema":"aip_test",
+                "auth":{"issuer":"https://issuer.example","audience":"aip","jwks":{"kind":"file","path":"jwks.json"}},
+                "object_transfer_lifetime_ms": invalid_ms
+            }))
+            .unwrap();
+            assert_eq!(infrastructure::build(&invalid).err().unwrap()["code"], "INFRASTRUCTURE_CONFIG");
+        }
+    }
+
+    #[test]
     fn old_worker_settings_keep_new_capabilities_disabled_by_default() {
         let workers: Workers = serde_json::from_value(json!({
             "directory": "extensions",
@@ -600,6 +773,32 @@ mod managed_config_tests {
         assert_eq!(validate_integrations_shape(&[invalid]).unwrap_err()["code"], "INTEGRATION_CONFIG");
     }
 
+    #[test]
+    fn private_network_access_defaults_to_denied_and_is_endpoint_configurable() {
+        let defaulted: IntegrationConfig = serde_json::from_value(json!({
+            "name": "internal.billing",
+            "url": "https://billing.internal/api",
+            "method": "POST",
+            "timeout_ms": 1000,
+            "max_request_bytes": 1024,
+            "max_response_bytes": 1024
+        }))
+        .unwrap();
+        assert!(!defaulted.allow_private_networks);
+
+        let enabled: IntegrationConfig = serde_json::from_value(json!({
+            "name": "internal.billing",
+            "url": "https://billing.internal/api",
+            "method": "POST",
+            "timeout_ms": 1000,
+            "max_request_bytes": 1024,
+            "max_response_bytes": 1024,
+            "allow_private_networks": true
+        }))
+        .unwrap();
+        assert!(enabled.allow_private_networks);
+    }
+
     #[tokio::test]
     async fn configured_broker_pins_loopback_only_when_explicitly_enabled() {
         let mut config: IntegrationConfig = serde_json::from_value(json!({
@@ -625,6 +824,32 @@ mod managed_config_tests {
         .unwrap();
         let broker = build_broker(&[config]).await.unwrap().unwrap();
         assert_eq!(broker.fingerprint().len(), 64);
+    }
+
+    #[tokio::test]
+    async fn private_https_broker_requires_and_honors_endpoint_opt_in() {
+        let endpoint = json!({
+            "name": "billing.internal",
+            "url": "https://10.24.0.8/api",
+            "method": "POST",
+            "timeout_ms": 1000,
+            "max_request_bytes": 1024,
+            "max_response_bytes": 1024
+        });
+        let defaulted: IntegrationConfig = serde_json::from_value(endpoint.clone()).unwrap();
+        assert!(build_broker(&[defaulted]).await.is_err());
+
+        let configured: IntegrationConfig = serde_json::from_value(json!({
+            "name": "billing.internal",
+            "url": "https://10.24.0.8/api",
+            "method": "POST",
+            "timeout_ms": 1000,
+            "max_request_bytes": 1024,
+            "max_response_bytes": 1024,
+            "allow_private_networks": true
+        }))
+        .unwrap();
+        assert!(build_broker(&[configured]).await.unwrap().is_some());
     }
 
     #[tokio::test]

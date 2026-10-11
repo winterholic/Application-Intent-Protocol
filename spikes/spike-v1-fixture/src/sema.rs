@@ -1540,8 +1540,11 @@ impl<'a> Ctx<'a> {
         if managed {
             let mut capabilities = Map::new();
             for (domain, name) in &operation.access {
-                if !["http", "files", "events", "jobs"].contains(&domain.as_str()) {
+                if !["http", "files", "events", "jobs", "messages"].contains(&domain.as_str()) {
                     self.d("UNKNOWN_SYMBOL", format!("알 수 없는 managed capability `{domain}.{name}`"), operation.span);
+                }
+                if domain == "messages" && !valid_message_queue(name) {
+                    self.d("BAD_CAPABILITY", format!("메시지 queue 이름 `{name}`은 ASCII 식별자여야 함"), operation.span);
                 }
                 if domain == "jobs"
                     && !self.spec.operations.iter().any(|target| target.name == *name && matches!(target.kind.as_str(), "read" | "job"))
@@ -1627,6 +1630,12 @@ impl<'a> Ctx<'a> {
 /// 호출자나 효과가 반드시 값을 줘야 하는 필드. id는 서버가 만든다.
 fn required_fields(r: &Resource) -> Vec<String> {
     r.fields.iter().filter(|f| !f.ty.nullable && f.name != "id").map(|f| f.name.clone()).collect()
+}
+
+fn valid_message_queue(value: &str) -> bool {
+    let mut bytes = value.bytes();
+    let Some(first) = bytes.next() else { return false };
+    value.len() <= 128 && (first.is_ascii_alphabetic() || first == b'_') && bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
 }
 
 /// 부분 인덱스 조건으로 쓸 수 있는 식인지: 자기 행의 직접 열과 상수 비교만.

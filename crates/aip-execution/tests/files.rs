@@ -52,7 +52,7 @@ async fn managed_file_round_trip_uses_opaque_handle_and_owner_scope() {
     assert_eq!(store.get(&db.client, owner, &file.handle).await.unwrap(), Some(file.clone()));
     assert!(store.put(&db.client, owner, "reports", "monthly.csv", "text/csv", b"different", None).await.is_err());
     assert_eq!(store.get(&db.client, "issuer-a|subject-2", &file.handle).await.unwrap(), None);
-    assert!(store.delete(&db.client, "issuer-a|subject-2", &file.handle).await.unwrap() == false);
+    assert!(!store.delete(&db.client, "issuer-a|subject-2", &file.handle).await.unwrap());
     assert_eq!(store.get(&db.client, owner, &file.handle).await.unwrap(), Some(file.clone()));
     assert!(store.delete(&db.client, owner, &file.handle).await.unwrap());
     assert_eq!(store.get(&db.client, owner, &file.handle).await.unwrap(), None);

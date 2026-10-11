@@ -49,7 +49,9 @@ async fn v4_1_read_extension_node_and_python() {
     let c10 = json!({ "clubId": "10" });
 
     for lang in [Lang::Node, Lang::Python] {
-        let mut w = Worker::start(lang, ext_dir).await;
+        // This section is the deliberately unisolated RK-05 baseline: verify that
+        // direct DB access is possible when the test explicitly opts out of sandboxing.
+        let mut w = Worker::start_with(lang, ext_dir, Isolation::None).await;
         let cases: Vec<(&str, &str, Option<i64>, Value, &str)> = vec![
             ("정상: 관리자 자기 동아리", "stats", Some(1), c10.clone(), "OK {\"approvedApplicants\":1}"),
             ("다른 동아리 관리자는 자기 동아리만", "stats", Some(3), json!({ "clubId": "11" }), "OK {\"approvedApplicants\":2}"),
@@ -99,7 +101,7 @@ async fn v4_1_read_extension_node_and_python() {
             fails.push(format!("{lang:?} worker 종료: {crash}"));
         }
         w.stop().await;
-        let mut w2 = Worker::start(lang, ext_dir).await;
+        let mut w2 = Worker::start_with(lang, ext_dir, Isolation::None).await;
         let again = short(invoke(&mut db, &mut w2, &base, "Recruitment.stats", &c10, &who(Some(1))).await);
         if again != "OK {\"approvedApplicants\":1}" {
             fails.push(format!("{lang:?} 재기동 후: {again}"));
@@ -121,7 +123,7 @@ async fn v4_1_read_extension_node_and_python() {
     .unwrap()
     .execution;
     for lang in [Lang::Node, Lang::Python] {
-        let mut w = Worker::start(lang, ext_dir).await;
+        let mut w = Worker::start_with(lang, ext_dir, Isolation::None).await;
         let locker = connect().await;
         locker.batch_execute(&format!("BEGIN; LOCK TABLE {s}.apply IN ACCESS EXCLUSIVE MODE")).await.unwrap();
         let rel = tokio::spawn(async move {
@@ -137,7 +139,7 @@ async fn v4_1_read_extension_node_and_python() {
             fails.push(format!("{lang:?} F05 DB 대기 기한: {r} {ms}ms"));
         }
         w.stop().await;
-        let mut w = Worker::start(lang, ext_dir).await;
+        let mut w = Worker::start_with(lang, ext_dir, Isolation::None).await;
         let r = short(invoke(&mut db, &mut w, &fnote, "Recruitment.stats", &c10, &who(Some(1))).await);
         if r != "OUTPUT_INVALID" {
             fails.push(format!("{lang:?} F08 nullable 키 생략: {r}"));

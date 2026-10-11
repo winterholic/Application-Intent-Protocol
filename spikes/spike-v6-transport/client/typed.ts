@@ -1,5 +1,6 @@
 import { connect, isIdWire, validResultId, type ApplyOptions } from "./transport.ts";
 import { createJobsClient } from "./jobs.ts";
+import { createInfrastructureClient } from "./infrastructure.ts";
 import type { ContractBinding, ContractShape, Root, SelectItem, CheckSel, FilterItem, SortItem, Row, DeepReadonly, ApplyBinding, ApplyContractShape, ApplyRequest, ApplyResult, PendingResult, IdWireKind, ExtensionContractShape, ExtensionDescriptors, OperationDescriptors, ScalarDescriptor, ReadDescriptors, WriteExtensionDescriptors, WriteExtensionResult, OffsetOpt, CursorOpt } from "../../spike-v5-sdk/sdk/generic.ts";
 
 export function connectTypedApply<C extends ContractShape<C>, A extends ApplyContractShape<A>>(base: string, token: string | null, binding: ApplyBinding<C, A>, fetchImpl: typeof fetch = fetch) {
@@ -233,6 +234,7 @@ export function connectTypedExtensions<C extends ContractShape<C>, A extends App
   const managedApi = managed ? (({ files, events, ...jobs }) => ({ jobs, files, events }))(managed) : undefined;
   return {
     ...client,
+    ...createInfrastructureClient((route, body) => raw.callManaged(route, body), fingerprint),
     ...(managedApi ?? {}),
     async extension<const K extends keyof E & string>(name: K, input: E[K]["input"]): Promise<DeepReadonly<E[K]["output"]>> {
       if (!Object.hasOwn(descriptors, name)) throw Object.assign(new Error("생성 계약에 없는 확장"), { code: "NOT_EXPOSED" });
