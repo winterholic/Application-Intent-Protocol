@@ -127,6 +127,8 @@ ACK/NACK는 owner·queue·worker·epoch·token·lease 만료를 검사한다. at
 
 `auto`는 macOS에서 network-deny sandbox, Linux에서 Bubblewrap을 선택하고 필요한 도구가 없으면 실행을 거부한다. Linux는 빈 mount namespace에 시스템 runtime·확장 폴더·지정한 dependency 디렉터리만 읽기 전용으로 노출한다. 네트워크와 PID namespace를 분리하고 private tmp를 사용한다. HOME 전체나 `/` mount는 거부한다. Ubuntu CI에서 실제 읽기·쓰기·네트워크 경계를 검사한다. 현재 개발 host가 macOS여서 Linux 실실행 검증은 CI 결과 확인이 필요하다.
 
+Linux 호스트는 Bubblewrap의 user namespace와 namespace 내부 초기화 권한을 허용해야 한다. Ubuntu 24.04 계열 CI에서 `loopback: Failed RTM_NEWADDR: Operation not permitted`로 실행이 종료되는 것을 확인했다. 필요한 AppArmor 프로필은 배포 관리자가 해당 Bubblewrap 실행 파일에 적용하며, AIP는 호스트의 전역 보안 정책을 자동 변경하지 않는다. CI는 배포판 바이너리의 별도 복사본에만 `userns` 프로필을 적용하고 전역 sysctl 제한을 유지한다. [Ubuntu 공식 user namespace 정책과 프로필 설명](https://documentation.ubuntu.com/release-notes/24.04/#unprivileged-user-namespace-restrictions)을 참고한다.
+
 Python venv interpreter, 명시적 PYTHONPATH, Node extension 폴더의 node_modules를 사용한다. 패키지 설치는 배포 과정에서 한다. worker가 임의 패키지를 다운로드하지 않는다. AI/RAG용 파서·토크나이저·계산 라이브러리도 이 경로를 사용하고 외부 API는 이름 기반 `ctx.http` endpoint를 통한다. 모델 서버·vector DB URL이나 secret을 프론트 입력으로 받지 않는다. endpoint별 `allow_private_networks:true`로 MSA HTTPS 사설 주소를 명시적으로 허용할 수 있다. DNS 고정·TLS 검증·redirect/proxy 차단은 유지한다.
 
 macOS는 네트워크만 차단하며 filesystem 격리는 보장하지 않는다. worker는 신뢰한 서버 코드다. 의존성 전체 내용은 현재 implementation fingerprint에 들어가지 않으므로 immutable deployment와 lockfile을 사용한다. npm/pip 생태계의 모든 라이브러리 호환성이나 native GPU·subprocess·메모리 상한은 보장하지 않는다. 고위험 코드에는 별도 컨테이너·cgroup·운영 격리가 필요하다.

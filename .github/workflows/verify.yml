@@ -42,11 +42,30 @@ jobs:
       - name: Install verification tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y postgresql-client bubblewrap
+          sudo apt-get install -y postgresql-client bubblewrap apparmor
           rustup update stable
           rustup default stable
           rustup component add rustfmt clippy
           npm ci --prefix spikes/spike-0-ts --ignore-scripts --no-audit --no-fund
+      - name: Configure CI Bubblewrap user namespace policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -r /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]] && [[ $(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns) == 1 ]]; then
+            # A separate attachment avoids overriding distribution or third-party bwrap profiles.
+            sandbox_bin="$RUNNER_TEMP/aip-ci-bwrap"
+            mkdir -p "$sandbox_bin"
+            cp "$(command -v bwrap)" "$sandbox_bin/bwrap"
+            sudo tee /etc/apparmor.d/aip-ci-bwrap >/dev/null <<EOF
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile aip-ci-bwrap "$sandbox_bin/bwrap" flags=(unconfined) {
+            userns,
+          }
+          EOF
+            sudo apparmor_parser -r /etc/apparmor.d/aip-ci-bwrap
+            echo "$sandbox_bin" >> "$GITHUB_PATH"
+          fi
       - name: Verify Linux worker isolation boundaries
         run: AIP_TEST_BWRAP=1 cargo test --manifest-path spikes/spike-v4-worker/Cargo.toml --lib isolation::tests --locked --target-dir target
       - name: Verify v6 transport regressions
