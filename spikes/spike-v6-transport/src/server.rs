@@ -46,6 +46,8 @@ impl DeploymentFence {
 
 pub(crate) struct Runtime {
     pub db_url: String,
+    pub broker: Option<Arc<aip_execution::integrations::Broker>>,
+    pub enable_file_uploads: bool,
     pub fault_injection: bool,
     pub extensions: Option<ReadExtensions>,
     pub write_extensions: bool,
@@ -109,6 +111,8 @@ pub async fn listen_with_apply_contract(facts: Value, wire: IdWire, address: Soc
         address,
         Runtime {
             db_url,
+            broker: None,
+            enable_file_uploads: false,
             fault_injection: false,
             extensions: None,
             write_extensions: false,
@@ -141,6 +145,10 @@ pub(crate) async fn listen_with_fingerprint(
     let (shutdown, mut stop) = oneshot::channel();
     let task = tokio::spawn(async move {
         let mut requests = JoinSet::new();
+        let mut background = JoinSet::new();
+        if crate::durable::enabled(&facts) && runtime.authenticator.is_some() && runtime.deployment.is_some() {
+            background.spawn(crate::durable::supervisor(runtime.clone(), facts.clone(), wire));
+        }
         let connections = Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS));
         let mut stop_open = true;
         let result = loop {
@@ -174,6 +182,7 @@ pub(crate) async fn listen_with_fingerprint(
         };
         drop(listener);
         requests.shutdown().await;
+        background.shutdown().await;
         result
     });
     Ok(Server { address, keys, task: Some(task), shutdown: Some(shutdown) })
@@ -206,6 +215,8 @@ pub async fn listen_with_options(
         address,
         Runtime {
             db_url,
+            broker: None,
+            enable_file_uploads: false,
             fault_injection: false,
             extensions,
             write_extensions: false,
@@ -241,6 +252,8 @@ pub async fn listen_with_prototype_options(
         address,
         Runtime {
             db_url,
+            broker: None,
+            enable_file_uploads: false,
             fault_injection: false,
             extensions,
             write_extensions: enable_write,
@@ -280,7 +293,25 @@ pub async fn listen_with_authenticator_and_deployment(
     authenticator: Arc<dyn crate::auth::Authenticator>,
     deployment: Option<DeploymentFence>,
 ) -> io::Result<Server> {
+    listen_with_managed(facts, wire, address, db_url, extensions, options, enable_write, authenticator, deployment, None, false).await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn listen_with_managed(
+    facts: Value,
+    wire: IdWire,
+    address: SocketAddr,
+    db_url: String,
+    extensions: Option<ReadExtensions>,
+    options: ServerOptions,
+    enable_write: bool,
+    authenticator: Arc<dyn crate::auth::Authenticator>,
+    deployment: Option<DeploymentFence>,
+    broker: Option<Arc<aip_execution::integrations::Broker>>,
+    enable_file_uploads: bool,
+) -> io::Result<Server> {
     options.validate_product()?;
+    validate_job_broker(&facts, extensions.is_some(), broker.as_deref())?;
     if enable_write && extensions.is_none() {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "WRITE extensions require configured workers"));
     }
@@ -293,6 +324,8 @@ pub async fn listen_with_authenticator_and_deployment(
         address,
         Runtime {
             db_url,
+            broker,
+            enable_file_uploads,
             fault_injection: false,
             extensions,
             write_extensions: enable_write,
@@ -304,6 +337,25 @@ pub async fn listen_with_authenticator_and_deployment(
         fingerprint,
     )
     .await
+}
+
+fn validate_job_broker(facts: &Value, workers_configured: bool, broker: Option<&aip_execution::integrations::Broker>) -> io::Result<()> {
+    if !workers_configured {
+        return Ok(());
+    }
+    let invalid = || io::Error::new(io::ErrorKind::InvalidInput, "durable job references an unconfigured HTTP integration");
+    for operation in facts["operations"].as_object().into_iter().flatten().map(|(_, operation)| operation) {
+        if operation["kind"] != "job" {
+            continue;
+        }
+        for capability in operation["access"].as_object().into_iter().flatten().map(|(capability, _)| capability) {
+            let Some(name) = capability.strip_prefix("http.") else { continue };
+            if !broker.is_some_and(|configured| configured.contains(name)) {
+                return Err(invalid());
+            }
+        }
+    }
+    Ok(())
 }
 
 impl ReadExtensions {
@@ -334,7 +386,8 @@ impl ReadExtensions {
             .flat_map(|(_, resource)| resource["extensions"].as_object().into_iter().flatten().map(|(_, extension)| extension));
         let operations = facts["operations"].as_object().into_iter().flatten().map(|(_, operation)| operation);
         for ext in resource_extensions.chain(operations) {
-            let read = ext["kind"] == "read" && ext["effect"] == "none";
+            let read = (ext["kind"] == "read" && ext["effect"] == "none")
+                || (ext["kind"] == "job" && (ext["effect"] == "none" || ext["effect"] == "managed"));
             let write = include_write && ext["kind"] == "write" && ext["effect"] == "db";
             if !read && !write {
                 continue;
@@ -364,6 +417,41 @@ impl ReadExtensions {
 mod extension_config_tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn configured_job_workers_require_each_declared_http_broker() {
+        let facts = json!({"operations":{"root":{"kind":"job","access":{"http.billing":true}}}});
+        assert!(validate_job_broker(&facts, false, None).is_ok());
+        assert!(validate_job_broker(&facts, true, None).is_err());
+
+        let broker = aip_execution::integrations::Broker::new(vec![aip_execution::integrations::EndpointConfig {
+            name: "other".into(),
+            url: "http://127.0.0.1:9000/call".into(),
+            method: "POST".into(),
+            timeout: std::time::Duration::from_secs(1),
+            max_request_bytes: 1024,
+            max_response_bytes: 1024,
+            secret_header: None,
+            resolved: vec!["127.0.0.1:9000".parse().unwrap()],
+            allow_loopback: true,
+        }])
+        .unwrap();
+        assert!(validate_job_broker(&facts, true, Some(&broker)).is_err());
+
+        let broker = aip_execution::integrations::Broker::new(vec![aip_execution::integrations::EndpointConfig {
+            name: "billing".into(),
+            url: "http://127.0.0.1:9000/call".into(),
+            method: "POST".into(),
+            timeout: std::time::Duration::from_secs(1),
+            max_request_bytes: 1024,
+            max_response_bytes: 1024,
+            secret_header: None,
+            resolved: vec!["127.0.0.1:9000".parse().unwrap()],
+            allow_loopback: true,
+        }])
+        .unwrap();
+        assert!(validate_job_broker(&facts, true, Some(&broker)).is_ok());
+    }
     #[cfg(target_os = "macos")]
     #[test]
     fn rejects_an_extension_module_symlink_outside_its_directory() {

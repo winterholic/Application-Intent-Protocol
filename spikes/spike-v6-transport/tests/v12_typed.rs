@@ -24,7 +24,7 @@ INSERT INTO S.recruitment (id, title, period_end, status, views, club_id, intern
 INSERT INTO S.apply (id, recruitment_id, member_id, status) VALUES (300, 100, 5, 'PENDING');
 INSERT INTO S.member_alarm (id, member_id, is_checked) VALUES (1, 1, false), (2, 1, false);
 ";
-const TSC: &str = "/Users/winterholic/development/projects/aip/spikes/spike-0-ts/node_modules/typescript/bin/tsc";
+const TSC: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../spike-0-ts/node_modules/typescript/bin/tsc");
 
 async fn read(port: u16, token: &str, query: Value) -> Value {
     let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();

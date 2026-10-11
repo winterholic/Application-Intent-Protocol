@@ -21,6 +21,30 @@ root의 `aip service`는 caller 정의와 공통 Rust 실행 엔진, 설치형 T
 
 issuer·audience·JWKS URL은 실제 제공자에 맞춰 설정한다. 인증 프로필은 RS256, `typ=at+jwt`, 정확한 API audience와 issuer, `sub/iat/nbf/exp`, 최대 900초 수명이다. 이 프로필을 발급하도록 제공자를 설정해야 한다. 로그인·refresh token은 제공자와 앱이 담당한다. 토큰의 role이나 actorId는 AIP 권한으로 사용하지 않는다.
 
+Durable job이나 서버 확장이 필요한 경우에만 선택적으로 `workers`를 추가한다. 생략하면 worker와 HTTP integration이 비활성화되고 SDK 직접 파일 업로드도 사용할 수 없다. `enable_file_uploads`는 SDK route 설정이며 worker의 `ctx.files`는 선언된 capability로 제한된다. 전체 설정 필드와 outbound 제한은 [관리형 durable execution](MANAGED-EXECUTION.md)을 따른다.
+
+```json
+{
+  "workers": {
+    "directory": "./extensions",
+    "language": "node",
+    "enable_writes": false,
+    "enable_file_uploads": false,
+    "integrations": [{
+      "name": "echo",
+      "url": "https://api.example.com/echo",
+      "method": "POST",
+      "timeout_ms": 5000,
+      "max_request_bytes": 65536,
+      "max_response_bytes": 65536,
+      "secret_header_env": {"name": "x-api-key", "env": "REPORTS_API_KEY"}
+    }]
+  }
+}
+```
+
+`secret_header_env.env`는 서비스 process environment에서 명시적으로 읽는다. 서비스는 `.env`를 자동 로드하지 않는다. endpoint는 startup에서 DNS 검증·고정하고 설정 불일치는 generic `INTEGRATION_CONFIG` 오류로 보고한다. secret이나 URL은 startup 오류에 기록하지 않는다.
+
 DB 연결 문자열은 설정의 환경 변수로 전달한다. 서비스는 `.env`를 자동으로 읽지 않는다. 원격 DB는 `sslmode=require`와 인증서·호스트명 검증이 필요하다. 사설 DB CA는 `database_ca_file`로 설정하며 설정 파일 기준 상대 경로와 최대 64KiB 인증서 PEM만 허용한다. 공개 JWKS 파일을 사용할 때는 `{"kind":"file","path":"./jwks.json"}`이며 역시 설정 파일 기준 경로다.
 
 listener는 loopback HTTP에 한정된다. 외부 HTTPS는 reverse proxy를 구성한다. `allowed_origins`는 정규화된 정확한 HTTPS origin 또는 로컬 HTTP origin만 받는다. 알려지지 않은 설정 키는 오류다. 토큰·개인키·실제 DB 비밀번호를 설정 예제나 로그에 남기지 않는다.
@@ -79,3 +103,7 @@ node --test product/tests/*.test.mjs
 실제 선언·SDK·HTTP·관리형 신원과 실행 제한은 [EXECUTION](EXECUTION.md)을 따른다. `actor principal`과 top-level operation만 있는 정의에도 같은 check→gen→init→principal bind→serve 절차를 사용한다. 업무 resource 테이블은 필요 없지만 운영 인증·배포·권한 검사용 PostgreSQL은 필요하다. worker directory/language를 명시해야 호출할 수 있으며 `enable_writes`는 순수 operation에 필요하지 않다.
 
 배포 fence는 `/operation`과 `/capabilities`에도 적용한다. operation은 실행 전후 allow를 평가하고 반환 직전 현재 principal을 다시 검증한다. principal 명령도 배포에 저장된 wire와 설정 wire가 다르면 거부한다. 관리형 actor로의 전환은 기존 actor resource FK 의미를 바꾸므로 일반 자동 migration에서 차단한다.
+
+## Durable job과 서버 broker
+
+`operation job`은 연결과 분리되어 PostgreSQL에 수락·lease·상태·결과를 기록한다. enqueue/status/cancel/result 및 SDK polling watcher, file/event/HTTP capability 제한과 보존 정책은 [관리형 durable execution](MANAGED-EXECUTION.md)을 따른다. durable schema는 해당 capability를 가진 정의를 init/migrate할 때 만들어진다. 이 기능을 켜도 기존 SQL 동기 operation과 read/apply 요청 경로는 그대로다.

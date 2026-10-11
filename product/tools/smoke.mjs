@@ -217,11 +217,14 @@ const base = process.env.AIP_SMOKE_BASE;
 const token = process.env.AIP_SMOKE_TOKEN;
 if (!base || !token) throw new Error("smoke runtime configuration missing");
 const client = connect(base, token, contract);
+if (!client.jobs) throw new Error("generated durable job client missing");
 if (false) {
   // @ts-expect-error operation names come from the generated contract
   void client.operation("missing", {});
   // @ts-expect-error operation input is generated from its declaration
   void client.operation("textLength", { text: 42 });
+  // @ts-expect-error job names come from the generated contract
+  void client.jobs.enqueue("missing", {}, { key: "invalid-job" });
 }
 const query = { read: "Event", select: ["id", "checked", "title", "phase"] as const } as const;
 const first = await client.read(query);
@@ -237,7 +240,7 @@ if (afterWrite.cached || afterWrite.rows[0]?.checked !== true) throw new Error("
 const replay = await client.apply(request, { key: "product-sdk-smoke-write" });
 if (!replay.ok || replay.replayed !== true) throw new Error("idempotent write replay was not reported");
 let extension;
-let operation;
+let operation: Record<string, unknown> | undefined;
 if (process.env.AIP_SMOKE_WORKER) {
   const extensionResult = await client.writeExtension("Event.confirm", { id: targetId }, { key: "product-sdk-smoke-extension" });
   if (!extensionResult.ok) throw new Error("Event.confirm extension write failed");
@@ -252,6 +255,20 @@ if (process.env.AIP_SMOKE_WORKER) {
   catch (error) { rejected = (error as {code?:string}).code === "BAD_VALUE"; }
   if (!rejected) throw new Error("operation range validation failed");
   operation = { length: calculated.length, invalidInputRejected: Number(rejected) };
+  const jobInput = { text: "가😀A" };
+  const job = await client.jobs.enqueue("textLengthJob", jobInput, { key: "product-sdk-smoke-job" });
+  const jobReplay = await client.jobs.enqueue("textLengthJob", jobInput, { key: "product-sdk-smoke-job" });
+  if (job.id !== jobReplay.id) throw new Error("durable job idempotency replay returned a different id");
+  let jobStatus = await client.jobs.status(job.id);
+  for (let attempt = 0; jobStatus.status !== "SUCCEEDED" && attempt < 200; attempt++) {
+    if (jobStatus.status === "FAILED" || jobStatus.status === "CANCELLED") throw new Error("durable job ended in " + jobStatus.status);
+    await new Promise(resolve => setTimeout(resolve, 50));
+    jobStatus = await client.jobs.status(job.id);
+  }
+  if (jobStatus.status !== "SUCCEEDED") throw new Error("durable job did not complete before the smoke deadline");
+  const jobResult = await client.jobs.result(job.id, "textLengthJob");
+  if (jobResult.length !== 3) throw new Error("durable job Unicode result mismatch");
+  operation.job = { status: jobStatus.status, length: jobResult.length, replayedId: Number(job.id === jobReplay.id) };
 }
 const report: Record<string, unknown> = { wire: ${JSON.stringify(wire)}, firstReadRows: first.rows.length, cacheHits: Number(second.cached), writesApplied: Number(applied.ok && applied.changed.length === 1), postWriteCacheMisses: Number(!afterWrite.cached), replayedWrites: Number(replay.ok && replay.replayed === true) };
 if (extension) report.extension = extension;
@@ -319,7 +336,7 @@ async function runWire({ binary, wire, workRoot, tarball, worker, extensionDir }
     if (worker && (results.worker !== worker || results.extension?.writesApplied !== 1 || results.extension.unchangedCount !== 0 || results.extension.replayedWrites !== 1)) {
       throw new SmokeFailure("consumer-runtime", "EXTENSION_BEHAVIOR", "Event.confirm 확장 쓰기 결과가 기대와 다릅니다");
     }
-    if (worker && (results.operation?.length !== 3 || results.operation.invalidInputRejected !== 1)) {
+    if (worker && (results.operation?.length !== 3 || results.operation.invalidInputRejected !== 1 || results.operation.job?.status !== "SUCCEEDED" || results.operation.job.length !== 3 || results.operation.job.replayedId !== 1)) {
       throw new SmokeFailure("consumer-runtime", "OPERATION_BEHAVIOR", "설치 SDK의 operation 호출과 범위 검증 결과가 기대와 다릅니다");
     }
     const revoked = runJson(binary, ["service", "principal", "--config", configPath, "revoke", "--subject", "user-42"], "principal-revoke");

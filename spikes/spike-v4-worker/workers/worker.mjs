@@ -21,6 +21,10 @@ function makeCtx(token) {
       // 쓰기 확장: 공개 전이를 서버 트랜잭션 안에서 부른다. 커밋은 서버가 한다.
       apply: (res, name, ids) => call("apply", `${res}.${name}`, { ids: ids.map(String) }),
     },
+    http: { call: (name, input, key) => call("http", name, {input,key}) },
+    files: { put: (bucket, input, key) => call("files", bucket, {...input,action:"put",key}), get: (bucket, id) => call("files", bucket, {action:"get", id}) },
+    events: { publish: (stream, key, payload) => call("events", stream, {key,payload}) },
+    jobs: { run: (name, input, key) => call("jobs", name, {input,key}) },
     // 시험용: 서버가 허용하지 않은 원시 요청을 보내 본다.
     _raw: (m) => new Promise((resolve, reject) => { const id = ++seq; pending.set(id, { resolve, reject }); send({ ...m, type: "call", call: id, token }); }),
   };

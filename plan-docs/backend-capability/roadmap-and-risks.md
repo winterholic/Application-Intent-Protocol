@@ -1,6 +1,6 @@
 # 우선순위·위험·미해결 문제
 
-> 후속(2026-10-10): 이 문서의 감사 기준은 `ecf3369` 시점이다. 이후 [resource 독립 동기 operation](../../product/EXECUTION.md)을 제품에 연결했고 [durable Job 구조 제안](durable-job-proposal.md)을 구체화했다. 아래 역사적 미지원/제안 항목을 현재 구현으로 합산하지 않으며 최신 지원 범위는 후속 문서를 따른다.
+> 후속(2026-10-11): 이 문서는 `ecf3369` 시점의 감사·제안 로드맵이다. durable job, managed file/event, named HTTP broker의 현재 구현 범위와 한계는 [관리형 durable execution](../../product/MANAGED-EXECUTION.md)에 정리했다. 아래 우선순위와 gap은 당시 판단이며 최신 지원표가 아니다.
 
 
 2026-10-09 **제안 로드맵**. 이번 감사가 대규모 구조 변경의 승인은 아니다. 기능 개수나 미학적 통합보다 [시나리오](scenarios.md)의 반복 glue를 가장 많이 제거하는 단위를 먼저 검증한다. 수치화한 생산성·성능 향상이나 공수 견적은 아직 없다.

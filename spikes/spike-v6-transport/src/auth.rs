@@ -4,6 +4,7 @@
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use base64::Engine;
 use hmac::{Hmac, Mac};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::Sha256;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -25,10 +26,27 @@ pub enum AuthError {
 
 pub trait Authenticator: Send + Sync {
     fn verify_session<'a>(&'a self, token: &'a str) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Session, AuthError>> + Send + 'a>>;
+
+    fn verify_durable<'a>(
+        &'a self,
+        _grant: &'a DurablePrincipal,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), AuthError>> + Send + 'a>> {
+        Box::pin(async { Err(AuthError::Unavailable) })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DurablePrincipal {
+    pub issuer: String,
+    pub subject: String,
+    pub actor_id: i64,
+    pub issued_at: i64,
+    pub min_iat: i64,
 }
 
 pub struct Session {
     pub actor_id: i64,
+    pub durable: Option<DurablePrincipal>,
     expires_at: i64,
 }
 
@@ -40,7 +58,15 @@ impl Session {
         if expires_at <= now_secs() {
             return Err(AuthError::Expired);
         }
-        Ok(Self { actor_id, expires_at })
+        Ok(Self { actor_id, durable: None, expires_at })
+    }
+    pub fn new_durable(grant: DurablePrincipal, expires_at: i64) -> Result<Self, AuthError> {
+        let mut session = Self::new(grant.actor_id, expires_at)?;
+        if grant.issuer.is_empty() || grant.subject.is_empty() || grant.issued_at < 0 || grant.min_iat < 0 || grant.issued_at < grant.min_iat {
+            return Err(AuthError::Malformed);
+        }
+        session.durable = Some(grant);
+        Ok(session)
     }
     pub fn remaining_ms(&self) -> u64 {
         let Ok(now) = SystemTime::now().duration_since(UNIX_EPOCH) else { return 0 };
@@ -88,6 +114,6 @@ impl Keyring {
         if exp <= now_secs() {
             return Err(AuthError::Expired);
         }
-        Ok(Session { actor_id: sub, expires_at: exp })
+        Ok(Session { actor_id: sub, durable: None, expires_at: exp })
     }
 }

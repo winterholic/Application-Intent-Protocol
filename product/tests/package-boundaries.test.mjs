@@ -9,7 +9,7 @@ import { test } from "node:test";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const sourceDirectories = [
-  "crates/aip-cli", "crates/aip-service", "crates/aip-auth", "crates/aip-migrate", "crates/aip-contract",
+  "crates/aip-execution", "crates/aip-cli", "crates/aip-service", "crates/aip-auth", "crates/aip-migrate", "crates/aip-contract",
   "crates/aip-syntax", "crates/aip-sema", "crates/aip-ir", "crates/aip-pg", "crates/aip-plan", "crates/aip-runtime",
   "spikes/spike-v1-fixture", "spikes/spike-v2-read", "spikes/spike-v3-write", "spikes/spike-v4-worker",
   "spikes/spike-v5-sdk", "spikes/spike-v6-transport", "spikes/spike-v11-dev-checks",
@@ -76,6 +76,7 @@ test("unchanged inputs produce a real SDK tarball and verifiable bundle manifest
   assert.equal(result.status, 0, result.stderr);
   assert.equal(JSON.parse(result.stdout).files, 8);
   assertManifest(root, "SOURCE_SHA256SUMS", root);
+  assert.ok(readFileSync(join(root, "bundle/SOURCE_SHA256SUMS"), "utf8").includes("  crates/aip-execution/src/jobs.rs\n"));
   assertManifest(root, "SHA256SUMS", join(root, "bundle"));
   const tar = spawnSync("tar", ["-tzf", join(root, "bundle/sdk/aip-sdk-0.1.0.tgz")], { encoding: "utf8" });
   assert.equal(tar.status, 0, tar.stderr);

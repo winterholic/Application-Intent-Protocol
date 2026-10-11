@@ -1,19 +1,19 @@
 # Backend Capability Matrix
 
-> 후속(2026-10-10): 이 문서의 감사 기준은 `ecf3369` 시점이다. 이후 [resource 독립 동기 operation](../../product/EXECUTION.md)을 제품에 연결했고 [durable Job 구조 제안](durable-job-proposal.md)을 구체화했다. 아래 역사적 미지원/제안 항목을 현재 구현으로 합산하지 않으며 최신 지원 범위는 후속 문서를 따른다.
+> 후속(2026-10-11): 이 표와 원본 [CSV](capability-matrix.csv)는 `ecf3369` 기준의 역사적 감사다. 이후 동기 operation과 durable job·managed file/event·named HTTP broker가 제품 경로에 추가됐다. 최신 실행 계약은 [관리형 durable execution](../../product/MANAGED-EXECUTION.md), [동기 operation](../../product/EXECUTION.md)을 따른다. 아래 행의 당시 제품 지원 상태를 현재 판정으로 사용하지 않는다.
 
 
 > 2026-10-09 코드 감사. 정본 데이터는 [CSV](capability-matrix.csv). 기능 존재, 제품 경로 도달, 실행 증거를 구분한다. 목표 Level은 채택 승인이나 현재 지원 점수가 아니다.
 
 원문 A~J의 최소 기능 105개를 행별로 대조했다. 범위 항목 수이며 지원율·생산성 측정치가 아니다. 일반 구현·프론트/서버/확장 역할·실행 제약·제거 후보·OSS는 CSV의 개별 열에 있다. 코드 근거 ID는 [근거 목록](sources.md), 시나리오 실행은 [검증 기록](validation.md)을 따른다.
 
-현재 Level의 `—`는 해당 공통 계약이 제품에서 확인되지 않았음을 뜻한다. `L4(로컬)`은 관리형 파일·네트워크·durable capability를 뜻하지 않는다. 세부 PoC 기능 미확인은 제품 부재 판정과 별개다. 모든 제거 후보는 구현·비교 실험 전 가설이다.
+감사 당시 Level의 `—`는 해당 공통 계약이 제품에서 확인되지 않았음을 뜻한다. `L4(로컬)`은 관리형 파일·네트워크·durable capability를 뜻하지 않는다. 세부 PoC 기능 미확인은 제품 부재 판정과 별개다. 모든 제거 후보는 구현·비교 실험 전 가설이다.
 
 최소 목록 밖의 본인 확인·동의/개인 데이터 수명은 [추가 기능 경계](additional-capabilities.md)에 별도로 정리했다. 105개 최소 항목에 더하거나 제품 지원율로 계산하지 않는다.
 
 ## A
 
-| ID | 기능 | 제품 현재 지원 | 현재 Level | 목표 Level | 우선순위 |
+| ID | 기능 | 제품 지원 (감사 시점) | 감사 당시 Level | 목표 Level | 우선순위 |
 |---|---|---|---|---|---|
 | A01 | CRUD | 부분: read/create/공개 전이; 임의 필드 update/delete 없음 [P02,P03] | L1+L2+L3 | L1+L2+L3 | P1 |
 | A02 | 관계 데이터 조회 | 지원: 노출 관계의 단일·다중 traverse [P02] | L1+L2+L3 | L1+L2+L3 | P2 |
@@ -30,7 +30,7 @@
 
 ## B
 
-| ID | 기능 | 제품 현재 지원 | 현재 Level | 목표 Level | 우선순위 |
+| ID | 기능 | 제품 지원 (감사 시점) | 감사 당시 Level | 목표 Level | 우선순위 |
 |---|---|---|---|---|---|
 | B01 | 인증과 인가 | 부분: JWT/지속 principal/행·필드 정책 [P07,P01] | L1+L3 | L1+L3 | P0 |
 | B02 | RBAC / ABAC | 부분: predicate로 role/속성 조건; 전용 policy catalog 아님 [P01] | L2+L3 | L1+L2+L3 | P0 |
@@ -46,7 +46,7 @@
 
 ## C
 
-| ID | 기능 | 제품 현재 지원 | 현재 Level | 목표 Level | 우선순위 |
+| ID | 기능 | 제품 지원 (감사 시점) | 감사 당시 Level | 목표 Level | 우선순위 |
 |---|---|---|---|---|---|
 | C01 | 조건문과 분기 | 부분: predicate/from/allow/repeat; 일반 flow branch 없음 [P01,P03] | L2+L3+L4 | L2+L3+L4 | P1 |
 | C02 | 반복 처리 | 부분: bounded bulk/many; 임의 loop 아님 [P03] | L2+L3+L4 | L1+L2+L3+L4 | P1 |
@@ -64,7 +64,7 @@
 
 ## D
 
-| ID | 기능 | 제품 현재 지원 | 현재 Level | 목표 Level | 우선순위 |
+| ID | 기능 | 제품 지원 (감사 시점) | 감사 당시 Level | 목표 Level | 우선순위 |
 |---|---|---|---|---|---|
 | D01 | Job Queue | 제품 durable queue 없음 [P06] | — | L1+L3 | P0 |
 | D02 | Scheduler | 제품 scheduler 없음 [P06] | — | L1+L3 | P1 |
@@ -81,7 +81,7 @@
 
 ## E
 
-| ID | 기능 | 제품 현재 지원 | 현재 Level | 목표 Level | 우선순위 |
+| ID | 기능 | 제품 지원 (감사 시점) | 감사 당시 Level | 목표 Level | 우선순위 |
 |---|---|---|---|---|---|
 | E01 | Domain Event | 부분: notify 제한 형식; 일반 payload event 없음 [P03,P09] | L3(제한) | L1+L2+L3 | P0 |
 | E02 | Event Handler | 제품 handler 연결 없음 [P06,P09] | — | L1+L3+L4 | P1 |
@@ -95,7 +95,7 @@
 
 ## F
 
-| ID | 기능 | 제품 현재 지원 | 현재 Level | 목표 Level | 우선순위 |
+| ID | 기능 | 제품 지원 (감사 시점) | 감사 당시 Level | 목표 Level | 우선순위 |
 |---|---|---|---|---|---|
 | F01 | HTTP API 호출 | 제품 broker 없음; 확장 network deny [P04,P06] | — | L1+L3+L4 | P0 |
 | F02 | OAuth 기반 외부 서비스 연동 | 제품 외부 OAuth 계약 없음 [P04] | — | L1+L3+L4 | P2 |
@@ -111,7 +111,7 @@
 
 ## G
 
-| ID | 기능 | 제품 현재 지원 | 현재 Level | 목표 Level | 우선순위 |
+| ID | 기능 | 제품 지원 (감사 시점) | 감사 당시 Level | 목표 Level | 우선순위 |
 |---|---|---|---|---|---|
 | G01 | 파일 검증 | 관리형 file validator 없음 [P06] | — | L1+L3+L4 | P1 |
 | G02 | 이미지 처리 | 제품 표준 이미지 계약 없음; 로컬 확장 가능 [P04] | L4(로컬 제한) | L1+L2+L3+L4 | P2 |
@@ -125,7 +125,7 @@
 
 ## H
 
-| ID | 기능 | 제품 현재 지원 | 현재 Level | 목표 Level | 우선순위 |
+| ID | 기능 | 제품 지원 (감사 시점) | 감사 당시 Level | 목표 Level | 우선순위 |
 |---|---|---|---|---|---|
 | H01 | WebSocket | 제품 WS 경로 없음 [P06] | — | L1+L3 | P1 |
 | H02 | Server-Sent Events | 제품 SSE 없음 [P06] | — | L1+L3 | P2 |
@@ -137,7 +137,7 @@
 
 ## I
 
-| ID | 기능 | 제품 현재 지원 | 현재 Level | 목표 Level | 우선순위 |
+| ID | 기능 | 제품 지원 (감사 시점) | 감사 당시 Level | 목표 Level | 우선순위 |
 |---|---|---|---|---|---|
 | I01 | Logging | 부분: 기동/정지 report·panic 로그; 요청 공통 로그 부족 [P11] | L1(일부) | L1+L3 | P1 |
 | I02 | Metrics | 제품 metrics endpoint 없음 [P06,P11] | — | L1+L3 | P1 |
@@ -153,7 +153,7 @@
 
 ## J
 
-| ID | 기능 | 제품 현재 지원 | 현재 Level | 목표 Level | 우선순위 |
+| ID | 기능 | 제품 지원 (감사 시점) | 감사 당시 Level | 목표 Level | 우선순위 |
 |---|---|---|---|---|---|
 | J01 | 정형화된 계약 탐색 | 부분: 생성 SDK/정적 descriptor; runtime describe 없음 [P05,P06] | L1+L3 | L1+L3 | P1 |
 | J02 | 표준 기능 카탈로그 | 제품 공통 backend capability catalog 없음 [P05,P06] | — | L1+L3 | P1 |

@@ -1,6 +1,6 @@
 # 데이터 resource와 독립된 동기 operation
 
-2026-10-10 후속 구현. 아래 `operation read`와 SDK 호출은 현재 제품 경로의 실제 문법이다. durable Job·관리형 파일·외부 효과·workflow는 [다음 구조 변경 제안](../plan-docs/backend-capability/durable-job-proposal.md)이며 아직 이 문법으로 실행할 수 없다.
+2026-10-10 resource 독립 동기 operation 회차의 기록이다. 아래 `operation read`와 SDK 호출은 현재 제품 경로의 동기 문법과 경계를 설명한다. durable `operation job`, 파일·이벤트·HTTP effect의 실제 계약은 [관리형 durable execution](MANAGED-EXECUTION.md)을 따른다. 기존 SQL 동기 경로는 그대로 유지된다.
 
 ## 선언과 호출
 
@@ -58,7 +58,7 @@ caller는 등록된 이름과 typed 입력을 고른다. 구현 경로·정책·
 
 | 항목 | 현재 계약 |
 |---|---|
-| 종류·효과 | `read`, `effect none`, 빈 `access`만 허용 |
+| 종류·효과 | 이 절의 동기 operation은 `read`, `effect none`, 빈 `access`만 허용. durable operation은 별도 문서 참고 |
 | 입력·출력 | 정확한 키, scalar 타입, nullable 값, Text/Int 범위 검사. nullable도 키 생략은 불가 |
 | 정수 | 제품 worker 입출력의 Int는 JS 안전 정수 범위. Id는 설정된 safe/decimal wire를 별도로 사용 |
 | 범위 metadata | 경계 숫자도 JS 안전 정수로 표현 가능해야 함. Text 길이는 Unicode 코드 포인트 수 |
@@ -66,9 +66,9 @@ caller는 등록된 이름과 typed 입력을 고른다. 구현 경로·정책·
 | 반환 전 검사 | 새 DB clock으로 allow 재평가, 인증 provider로 현재 principal·토큰 재검증. 검사 시점 이후의 경쟁까지 원자적으로 잠그는 보장은 없음 |
 | 기한 | 선언은 1ms 이상 30s 이하. operation 인가·worker 시작/전송/실행/종료·사후 인가·최종 인증을 포함. 앞선 HTTP 수신·초기 인증·DB 연결/fence는 기존 별도 기한 사용 |
 | 자원 | 기존 worker 동시 실행 slot, 본문 상한, stdout/stderr framing 상한 재사용 |
-| ctx | 데이터 ctx 호출 시 즉시 `ACCESS_NOT_DECLARED`. 확장에서 예외를 잡아도 성공으로 바뀌지 않음 |
+| ctx | 이 동기 operation의 데이터 ctx 호출은 즉시 `ACCESS_NOT_DECLARED`. durable worker의 managed capability는 [관리형 execution](MANAGED-EXECUTION.md) 참고 |
 | 배포 | 기존 shared deployment fence 유지. 오래된 listener는 정책 변경 뒤 `DEPLOYMENT_CHANGED` |
-| 수명 | 동기 결과만 반환. 연결 유실 뒤 status 복구·지속 실행·자동 retry·cancel 계약 없음 |
+| 수명 | 동기 결과만 반환. 이 호출 자체에는 연결 유실 뒤 status 복구·지속 실행·자동 retry·cancel 계약이 없음 |
 
 Worker는 macOS `MacNetDeny`를 사용한다. 네트워크 차단은 파일 접근 격리나 순수성 증명이 아니다. 신뢰한 서버 extension만 등록한다. `effect none`은 요청자가 DB/외부 효과 capability를 얻지 않는다는 선언이며 임의 extension의 파일 부작용까지 막는 보장은 아니다. 다른 OS의 worker 격리는 아직 제공하지 않는다.
 

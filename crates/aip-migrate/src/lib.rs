@@ -11,6 +11,7 @@ const VERSION: i32 = 1;
 const CATALOG: &str = include_str!("../../../prototype/src/schema_catalog.sql");
 const META: &str = "aip_migrate_meta";
 const JOURNAL: &str = "aip_migrate_journal";
+const EXECUTION_TABLES: &[&str] = &["aip_jobs", "aip_files", "aip_events", "aip_event_streams", "aip_event_keys", "aip_effects"];
 static NEXT_SHADOW: AtomicU64 = AtomicU64::new(0);
 
 fn err(code: &str, message: &str) -> Value {
@@ -743,6 +744,13 @@ async fn derive(db: &impl GenericClient, schema: &str, new_facts: &Value, migrat
     let mut blocked = false;
     let old_resources = old.facts["resources"].as_object().ok_or_else(|| err("BAD_FACTS", "기존 resources 오류"))?;
     let new_resources = new_facts["resources"].as_object().ok_or_else(|| err("BAD_FACTS", "새 resources 오류"))?;
+    let had_jobs = old.facts["operations"].as_object().is_some_and(|ops| ops.values().any(|op| op["kind"] == "job"));
+    let has_jobs = new_facts["operations"].as_object().is_some_and(|ops| ops.values().any(|op| op["kind"] == "job"));
+    if had_jobs && !has_jobs {
+        blocked = true;
+        changes
+            .push(json!({"class":"Unsupported","reason":"마지막 durable job 제거는 저장소를 보존하기 위해 차단됨; 명시적 보존/정리 계획이 필요함"}));
+    }
     if old.facts["actor"] != new_facts["actor"] || old.facts["actorMode"] != new_facts["actorMode"] {
         blocked = true;
         changes.push(json!({"class":"Unsupported","reason":"actor 변경은 principal FK 재매핑 계획이 필요함"}));
@@ -1028,12 +1036,21 @@ async fn derive(db: &impl GenericClient, schema: &str, new_facts: &Value, migrat
     for ddl in &new_ddl {
         let Some(rest) = ddl.strip_prefix(&format!("CREATE TABLE {schema}.")) else { continue };
         let Some((name, _)) = rest.split_once(" (") else { continue };
-        let Some((res, _)) = new_resources.iter().find(|(r, _)| sqlgen::snake(r) == name) else { continue };
-        if old_resources.contains_key(res) {
-            continue;
+        if let Some((res, _)) = new_resources.iter().find(|(r, _)| sqlgen::snake(r) == name) {
+            if old_resources.contains_key(res) {
+                continue;
+            }
+            changes.push(json!({"class":"SecurityReview","reason":format!("resource {res} 추가 및 새 노출 검토")}));
+            new_table_steps.push(Step { sql: ddl.clone(), class: "SecurityReview", value: None, reason: format!("resource {res} 추가") });
+        } else if has_jobs && EXECUTION_TABLES.contains(&name) && !old_tables.contains_key(name) {
+            changes.push(json!({"class":"SecurityReview","reason":format!("durable execution table {name} 추가")}));
+            new_table_steps.push(Step {
+                sql: ddl.clone(),
+                class: "SecurityReview",
+                value: None,
+                reason: format!("durable execution table {name} 추가"),
+            });
         }
-        changes.push(json!({"class":"SecurityReview","reason":format!("resource {res} 추가 및 새 노출 검토")}));
-        new_table_steps.push(Step { sql: ddl.clone(), class: "SecurityReview", value: None, reason: format!("resource {res} 추가") });
     }
     let old_extra: BTreeMap<_, _> = old_ddl
         .iter()

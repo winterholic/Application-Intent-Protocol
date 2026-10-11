@@ -1,11 +1,11 @@
 # AIP 백엔드 기능 포괄성 감사
 
-> 후속(2026-10-10): 이 문서의 감사 기준은 `ecf3369` 시점이다. 이후 [resource 독립 동기 operation](../../product/EXECUTION.md)을 제품에 연결했고 [durable Job 구조 제안](durable-job-proposal.md)을 구체화했다. 아래 역사적 미지원/제안 항목을 현재 구현으로 합산하지 않으며 최신 지원 범위는 후속 문서를 따른다.
+> 후속(2026-10-11): 이 문서와 아래 matrix는 `ecf3369` 기준의 역사적 감사다. 이후 동기 operation과 durable job·managed file/event·named HTTP broker가 제품 경로에 추가됐다. 최신 실행 계약은 [관리형 durable execution](../../product/MANAGED-EXECUTION.md), [동기 operation](../../product/EXECUTION.md)을 따른다. 당시의 미지원 판정과 제안은 현재 상태로 읽지 않는다.
 
 
 > 2026-10-09 분석·제안 단계. [창시자 원문](../sources/founder-backend-capability-directive-2026-10-09.md)을 보관하고 제품/PoC 코드·공식 자료·실행 반례로 대조했다. 새 실행 모델의 대규모 구조 변경은 수행하지 않았다.
 
-AIP의 목표는 SQL/CRUD 간소화에 머물지 않고 백엔드 반복 로직 전반을 선언·공통 Runtime으로 흡수하는 것이다. 현재 제품은 데이터·정책·전이·제한된 확장에 강점이 있지만 durable Job, 외부 효과, 관리형 파일, realtime, 운영·기능 catalog에는 제품 계약의 빈틈이 있다. 짧은 순수 계산·일부 사용량 집계는 이미 가능하므로 “SQL 밖 기능은 전부 불가”라고 단정하지 않는다.
+이 문단의 “현재 제품” 판정은 2026-10-09 감사 시점이다. 당시 데이터·정책·전이·제한 확장의 지원과 durable Job·외부 효과·managed file·realtime·catalog의 gap을 비교했다. 이후 구현 범위는 위의 현재 문서 링크를 확인한다. 짧은 순수 계산·일부 사용량 집계는 감사 당시에도 가능했으므로 “SQL 밖 기능은 전부 불가”라고 단정하지 않았다.
 
 ## 요청 결과물
 

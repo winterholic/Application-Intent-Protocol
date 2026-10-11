@@ -13,7 +13,7 @@ const artifactNames = [
 ];
 const manifestFiles = [
   "Cargo.toml", "Cargo.lock",
-  "crates/aip-cli", "crates/aip-service", "crates/aip-auth", "crates/aip-migrate", "crates/aip-contract",
+  "crates/aip-execution", "crates/aip-cli", "crates/aip-service", "crates/aip-auth", "crates/aip-migrate", "crates/aip-contract",
   "crates/aip-syntax", "crates/aip-sema", "crates/aip-ir", "crates/aip-pg", "crates/aip-plan", "crates/aip-runtime",
   "spikes/spike-v1-fixture", "spikes/spike-v2-read", "spikes/spike-v3-write", "spikes/spike-v4-worker",
   "spikes/spike-v5-sdk", "spikes/spike-v6-transport", "spikes/spike-v11-dev-checks",

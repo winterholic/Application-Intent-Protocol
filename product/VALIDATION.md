@@ -70,4 +70,12 @@ v1·v2·v3·v5의 전체 독립 suite는 `tools/verify.sh`에서도 실행한다
 
 V6의 별도 `operations` 테스트는 Node/Python × safe/decimal에서 계약·입출력·Unicode 범위·정수 안전성·false allow·ctx 호출·deadline·다른 사용자·catalog를 검사한다. 설치 SDK smoke도 같은 네 조합에서 typed operation을 호출하고 범위 밖 입력을 거부한다. strict 소비자에는 잘못된 operation 이름/입력의 타입 음성 대조를 포함한다. worker·transport 전체 suite와 설치 smoke는 위와 같이 core 뒤 순서대로 실행한다.
 
-아직 durable acceptance·HTTP disconnect 뒤 실행/정리·crash/reclaim·Job 취소·파일 ACL·tenant 전 경로는 이 검사 범위가 아니다. [다음 Job 제안](../plan-docs/backend-capability/durable-job-proposal.md)의 별도 장애 실험으로 닫는다.
+위 문장은 2026-10-10 동기 operation 회차의 검사 범위다. 그 뒤 durable job·file·event·HTTP broker 경로가 추가됐다. 현재 경로와 검증 범위는 아래 회차 및 [관리형 durable execution](MANAGED-EXECUTION.md)을 본다.
+
+## 관리형 durable execution 회차
+
+이 회차는 durable enqueue/status/cancel/result, lease reclaim과 worker restart, owner 및 operation scope 재검사, managed file quota/expiry, event replay cursor와 pruning, named outbound HTTP configuration 및 outcome journal 경계를 추가 검증 대상으로 삼는다. 구체적인 테스트 경로는 `spikes/spike-v6-transport/tests/durable.rs`, `crates/aip-execution/tests/{jobs,files,events,integrations}.rs`, `crates/aip-service/src/lib.rs` unit tests, `spikes/spike-v6-transport/client/jobs.test.ts`, 그리고 `product/tests/service-smoke.test.mjs`다.
+
+2026-10-11에는 core, 전체 v4 worker 및 v6 transport suite를 실행해 exit 0을 확인했다. 별도 artifact의 설치 SDK smoke도 Node/Python × decimal/safe 네 조합에서 Job 성공·멱등 재생과 기존 read/write 경로를 검사했다. 실제 명령·결과와 환경은 [VERIFICATION의 해당 회차](VERIFICATION.md#관리형-durable-execution-2026-10-11)에 기록했다. v12 타입 회귀 테스트의 개발자 절대 경로도 제거해 이동한 저장소에서 재실행했다.
+
+이 검사는 외부 provider의 실제 운영 계정·exactly-once 효과·SSE/WebSocket·대용량 object storage·Linux filesystem 격리를 증명하지 않는다. effect가 PENDING/UNKNOWN인 상태에서 자동으로 외부 mutation을 다시 보내지 않으며, 외부 요청과 PostgreSQL commit 사이의 crash ambiguity는 `EFFECT_UNKNOWN`으로 남길 수 있다. 자세한 범위·보존 상한·설정 방법은 [관리형 execution 문서](MANAGED-EXECUTION.md)를 따른다.

@@ -5,8 +5,9 @@ use serde_json::{Value, json};
 use spike_v2_read::{id_wire::IdWire, sqlgen};
 use std::{
     fs,
+    future::Future,
     io::{Read, Write},
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
     process::ExitCode,
     sync::Arc,
@@ -14,6 +15,7 @@ use std::{
 
 const SOURCE_BYTES: usize = 1 << 20;
 const CONFIG_BYTES: usize = 64 << 10;
+const INTEGRATION_DNS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
 #[derive(Subcommand)]
 pub enum Command {
@@ -141,6 +143,30 @@ pub struct Workers {
     pub language: Language,
     #[serde(default)]
     pub enable_writes: bool,
+    #[serde(default)]
+    pub enable_file_uploads: bool,
+    #[serde(default)]
+    pub integrations: Vec<IntegrationConfig>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IntegrationConfig {
+    pub name: String,
+    pub url: String,
+    pub method: String,
+    pub timeout_ms: u64,
+    pub max_request_bytes: usize,
+    pub max_response_bytes: usize,
+    #[serde(default)]
+    pub secret_header_env: Option<SecretHeaderEnv>,
+    #[serde(default)]
+    pub allow_loopback: bool,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SecretHeaderEnv {
+    pub name: String,
+    pub env: String,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -206,7 +232,99 @@ fn configuration(path: &Path) -> Result<Config, Value> {
     {
         worker.directory = parent.join(&worker.directory);
     }
+    if let Some(worker) = &config.workers {
+        validate_integrations_shape(&worker.integrations)?;
+    }
     Ok(config)
+}
+
+fn valid_env_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 128
+        && (name.as_bytes()[0].is_ascii_uppercase() || name.as_bytes()[0] == b'_')
+        && name.bytes().all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
+}
+
+fn validate_integrations_shape(configs: &[IntegrationConfig]) -> Result<(), Value> {
+    if configs.len() > 64
+        || configs.iter().any(|item| {
+            item.name.is_empty()
+                || item.name.len() > 128
+                || !item.name.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+                || item.timeout_ms == 0
+                || item.timeout_ms > 30_000
+                || item.max_request_bytes == 0
+                || item.max_request_bytes > aip_execution::integrations::MAX_BODY_BYTES
+                || item.max_response_bytes == 0
+                || item.max_response_bytes > aip_execution::integrations::MAX_BODY_BYTES
+                || item.secret_header_env.as_ref().is_some_and(|secret| !valid_env_name(&secret.env))
+        })
+    {
+        return Err(error("INTEGRATION_CONFIG", "외부 연동 설정 형식 오류"));
+    }
+    Ok(())
+}
+
+async fn resolve_integrations(configs: &[IntegrationConfig]) -> Result<Vec<aip_execution::integrations::EndpointConfig>, Value> {
+    validate_integrations_shape(configs)?;
+    let mut endpoints = Vec::with_capacity(configs.len());
+    for config in configs {
+        let parsed = url::Url::parse(&config.url).map_err(|_| error("INTEGRATION_CONFIG", "외부 연동 설정 또는 DNS 검증 실패"))?;
+        let port = parsed.port_or_known_default().ok_or_else(|| error("INTEGRATION_CONFIG", "외부 연동 설정 또는 DNS 검증 실패"))?;
+        let mut resolved = match parsed.host().ok_or_else(|| error("INTEGRATION_CONFIG", "외부 연동 설정 또는 DNS 검증 실패"))? {
+            url::Host::Ipv4(ip) => vec![SocketAddr::new(IpAddr::V4(ip), port)],
+            url::Host::Ipv6(ip) => vec![SocketAddr::new(IpAddr::V6(ip), port)],
+            url::Host::Domain(domain) => tokio::net::lookup_host((domain, port))
+                .await
+                .map_err(|_| error("INTEGRATION_CONFIG", "외부 연동 설정 또는 DNS 검증 실패"))?
+                .collect::<Vec<_>>(),
+        };
+        resolved.sort_unstable();
+        resolved.dedup();
+        if resolved.is_empty() || resolved.len() > 32 {
+            return Err(error("INTEGRATION_CONFIG", "외부 연동 설정 또는 DNS 검증 실패"));
+        }
+        let secret_header = config
+            .secret_header_env
+            .as_ref()
+            .map(|secret| {
+                std::env::var(&secret.env)
+                    .map(|value| (secret.name.clone(), value))
+                    .map_err(|_| error("INTEGRATION_CONFIG", "외부 연동 설정 또는 DNS 검증 실패"))
+            })
+            .transpose()?;
+        if secret_header.as_ref().is_some_and(|(_, value)| value.is_empty() || value.len() > 8192) {
+            return Err(error("INTEGRATION_CONFIG", "외부 연동 설정 또는 DNS 검증 실패"));
+        }
+        endpoints.push(aip_execution::integrations::EndpointConfig {
+            name: config.name.clone(),
+            url: config.url.clone(),
+            method: config.method.clone(),
+            timeout: std::time::Duration::from_millis(config.timeout_ms),
+            max_request_bytes: config.max_request_bytes,
+            max_response_bytes: config.max_response_bytes,
+            secret_header,
+            resolved,
+            allow_loopback: config.allow_loopback,
+        });
+    }
+    Ok(endpoints)
+}
+
+async fn build_broker(configs: &[IntegrationConfig]) -> Result<Option<Arc<aip_execution::integrations::Broker>>, Value> {
+    if configs.is_empty() {
+        return Ok(None);
+    }
+    let endpoints = with_resolution_deadline(INTEGRATION_DNS_TIMEOUT, resolve_integrations(configs)).await?;
+    let broker = aip_execution::integrations::Broker::new(endpoints).map_err(|_| error("INTEGRATION_CONFIG", "외부 연동 설정 또는 DNS 검증 실패"))?;
+    Ok(Some(Arc::new(broker)))
+}
+
+async fn with_resolution_deadline<T, F>(deadline: std::time::Duration, future: F) -> Result<T, Value>
+where
+    F: Future<Output = Result<T, Value>>,
+{
+    tokio::time::timeout(deadline, future).await.map_err(|_| error("INTEGRATION_CONFIG", "외부 연동 설정 또는 DNS 검증 실패"))?
 }
 fn database_url(config: &Config) -> Result<String, Value> {
     if let Some(path) = &config.database_ca_file {
@@ -359,6 +477,8 @@ async fn principal(config: Config, command: Principal) -> Result<Value, Value> {
 
 async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
     let facts = load(file, false)?.output.execution;
+    let integrations = config.workers.as_ref().map(|workers| workers.integrations.as_slice()).unwrap_or_default();
+    let broker = build_broker(integrations).await?;
     let db_url = database_url(&config)?;
     aip_migrate::preflight(&db_url, &config.schema, &facts).await?;
     aip_migrate::bind_wire(&db_url, &config.schema, config.wire.deployment_label()).await?;
@@ -371,6 +491,7 @@ async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
             .map_err(|_| error("AUTH_CONFIG", "인증 설정 또는 공개키 집합 검증 실패"))?,
     );
     let enable_writes = config.workers.as_ref().is_some_and(|w| w.enable_writes);
+    let enable_file_uploads = config.workers.as_ref().is_some_and(|w| w.enable_file_uploads);
     let extensions = config.workers.map(|w| spike_v6_transport::server::ReadExtensions {
         dir: w.directory,
         lang: match w.language {
@@ -382,7 +503,7 @@ async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
     #[cfg(unix)]
     let mut termination =
         tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).map_err(|_| error("SIGNAL_CONFIG", "종료 signal 등록 실패"))?;
-    let mut server = spike_v6_transport::server::listen_with_authenticator_and_deployment(
+    let mut server = spike_v6_transport::server::listen_with_managed(
         facts.clone(),
         config.wire.id_wire(),
         config.listen,
@@ -392,6 +513,8 @@ async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
         enable_writes,
         auth,
         Some(deployment),
+        broker,
+        enable_file_uploads,
     )
     .await
     .map_err(|_| error("SERVER_CONFIG", "listener·공식 확장 설정 실패"))?;
@@ -428,5 +551,120 @@ pub fn execute(command: Command) -> ExitCode {
             output_error(&value);
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod managed_config_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn old_worker_settings_keep_new_capabilities_disabled_by_default() {
+        let workers: Workers = serde_json::from_value(json!({
+            "directory": "extensions",
+            "language": "node",
+            "enable_writes": true
+        }))
+        .unwrap();
+        assert!(workers.enable_writes);
+        assert!(!workers.enable_file_uploads);
+        assert!(workers.integrations.is_empty());
+    }
+
+    #[test]
+    fn integration_settings_reject_unknown_fields_and_bad_secret_environment_names() {
+        assert!(
+            serde_json::from_value::<IntegrationConfig>(json!({
+                "name": "crm.lookup",
+                "url": "https://crm.example/api",
+                "method": "GET",
+                "timeout_ms": 1000,
+                "max_request_bytes": 1024,
+                "max_response_bytes": 1024,
+                "arbitrary_header": "not allowed"
+            }))
+            .is_err()
+        );
+
+        let invalid: IntegrationConfig = serde_json::from_value(json!({
+            "name": "crm.lookup",
+            "url": "https://crm.example/api",
+            "method": "GET",
+            "timeout_ms": 1000,
+            "max_request_bytes": 1024,
+            "max_response_bytes": 1024,
+            "secret_header_env": {"name":"x-api-key", "env":"bad-name"}
+        }))
+        .unwrap();
+        assert_eq!(validate_integrations_shape(&[invalid]).unwrap_err()["code"], "INTEGRATION_CONFIG");
+    }
+
+    #[tokio::test]
+    async fn configured_broker_pins_loopback_only_when_explicitly_enabled() {
+        let mut config: IntegrationConfig = serde_json::from_value(json!({
+            "name": "local.test",
+            "url": "http://127.0.0.1:32123/hook",
+            "method": "POST",
+            "timeout_ms": 1000,
+            "max_request_bytes": 1024,
+            "max_response_bytes": 1024
+        }))
+        .unwrap();
+        assert!(build_broker(&[config]).await.is_err());
+
+        config = serde_json::from_value(json!({
+            "name": "local.test",
+            "url": "http://127.0.0.1:32123/hook",
+            "method": "POST",
+            "timeout_ms": 1000,
+            "max_request_bytes": 1024,
+            "max_response_bytes": 1024,
+            "allow_loopback": true
+        }))
+        .unwrap();
+        let broker = build_broker(&[config]).await.unwrap().unwrap();
+        assert_eq!(broker.fingerprint().len(), 64);
+    }
+
+    #[tokio::test]
+    async fn secret_is_loaded_only_from_explicit_environment_reference() {
+        let config: IntegrationConfig = serde_json::from_value(json!({
+            "name": "local.test",
+            "url": "http://127.0.0.1:32124/hook",
+            "method": "POST",
+            "timeout_ms": 1000,
+            "max_request_bytes": 1024,
+            "max_response_bytes": 1024,
+            "secret_header_env": {"name":"x-api-key", "env":"AIP_TEST_MISSING_INTEGRATION_SECRET_9371"},
+            "allow_loopback": true
+        }))
+        .unwrap();
+        let error = build_broker(&[config]).await.err().unwrap();
+        assert_eq!(error["code"], "INTEGRATION_CONFIG");
+        assert!(!error.to_string().contains("AIP_TEST_MISSING_INTEGRATION_SECRET_9371"));
+
+        let configured_secret: IntegrationConfig = serde_json::from_value(json!({
+            "name": "local.test",
+            "url": "http://127.0.0.1:32124/hook",
+            "method": "POST",
+            "timeout_ms": 1000,
+            "max_request_bytes": 1024,
+            "max_response_bytes": 1024,
+            "secret_header_env": {"name":"x-api-key", "env":"PATH"},
+            "allow_loopback": true
+        }))
+        .unwrap();
+        assert!(build_broker(&[configured_secret]).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn dns_resolution_deadline_returns_a_generic_configuration_error() {
+        let result = with_resolution_deadline(std::time::Duration::from_millis(1), async {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            Ok(())
+        })
+        .await;
+        assert_eq!(result.unwrap_err()["code"], "INTEGRATION_CONFIG");
     }
 }

@@ -295,10 +295,51 @@ impl AuthenticatorImpl {
         if !enabled || claims.issued_at < min_iat {
             return Err(AuthError::Invalid);
         }
-        spike_v6_transport::auth::Session::new(actor_id, claims.expires_at).map_err(|error| match error {
+        let grant = spike_v6_transport::auth::DurablePrincipal {
+            issuer: claims.issuer,
+            subject: claims.subject,
+            actor_id,
+            issued_at: claims.issued_at,
+            min_iat,
+        };
+        spike_v6_transport::auth::Session::new_durable(grant, claims.expires_at).map_err(|error| match error {
             spike_v6_transport::auth::AuthError::Expired => AuthError::Expired,
             _ => AuthError::Invalid,
         })
+    }
+
+    pub async fn verify_durable_principal(&self, grant: &spike_v6_transport::auth::DurablePrincipal) -> Result<(), AuthError> {
+        if grant.issuer != self.config.issuer
+            || grant.subject.is_empty()
+            || grant.subject.len() > 256
+            || grant.subject.chars().any(char::is_control)
+            || grant.actor_id <= 0
+            || grant.issued_at < 0
+            || grant.min_iat < 0
+        {
+            return Err(AuthError::Invalid);
+        }
+        let db = tokio::time::timeout(DB_TIMEOUT, spike_v2_read::connect_owned_with_url(&self.db_url))
+            .await
+            .map_err(|_| AuthError::Unavailable)?
+            .map_err(|_| AuthError::Unavailable)?;
+        let sql = format!(
+            "SELECT actor_id, enabled, min_iat, floor(extract(epoch FROM clock_timestamp()))::bigint FROM \"{}\".aip_principals WHERE issuer=$1 AND subject=$2",
+            self.schema
+        );
+        let row = tokio::time::timeout(DB_TIMEOUT, db.query_opt(&sql, &[&grant.issuer, &grant.subject]))
+            .await
+            .map_err(|_| AuthError::Unavailable)?
+            .map_err(|_| AuthError::Unavailable)?;
+        let row = row.ok_or(AuthError::Invalid)?;
+        let actor_id: i64 = row.try_get(0).map_err(|_| AuthError::Unavailable)?;
+        let enabled: bool = row.try_get(1).map_err(|_| AuthError::Unavailable)?;
+        let min_iat: i64 = row.try_get(2).map_err(|_| AuthError::Unavailable)?;
+        let now: i64 = row.try_get(3).map_err(|_| AuthError::Unavailable)?;
+        if !enabled || actor_id != grant.actor_id || min_iat != grant.min_iat || grant.issued_at < min_iat || grant.issued_at > now {
+            return Err(AuthError::Invalid);
+        }
+        Ok(())
     }
 }
 
@@ -318,6 +359,19 @@ impl spike_v6_transport::auth::Authenticator for AuthenticatorImpl {
     ) -> Pin<Box<dyn Future<Output = Result<spike_v6_transport::auth::Session, spike_v6_transport::auth::AuthError>> + Send + 'a>> {
         Box::pin(async move {
             self.session_for(token).await.map_err(|error| match error {
+                AuthError::Invalid => spike_v6_transport::auth::AuthError::BadSignature,
+                AuthError::Expired => spike_v6_transport::auth::AuthError::Expired,
+                AuthError::Unavailable => spike_v6_transport::auth::AuthError::Unavailable,
+            })
+        })
+    }
+
+    fn verify_durable<'a>(
+        &'a self,
+        grant: &'a spike_v6_transport::auth::DurablePrincipal,
+    ) -> Pin<Box<dyn Future<Output = Result<(), spike_v6_transport::auth::AuthError>> + Send + 'a>> {
+        Box::pin(async move {
+            self.verify_durable_principal(grant).await.map_err(|error| match error {
                 AuthError::Invalid => spike_v6_transport::auth::AuthError::BadSignature,
                 AuthError::Expired => spike_v6_transport::auth::AuthError::Expired,
                 AuthError::Unavailable => spike_v6_transport::auth::AuthError::Unavailable,

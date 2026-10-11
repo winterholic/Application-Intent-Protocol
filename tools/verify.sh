@@ -33,6 +33,7 @@ node --test \
   spikes/spike-v6-transport/client/v14-envelope.test.ts \
   spikes/spike-v6-transport/client/scalar-validation.test.ts \
   spikes/spike-v6-transport/client/operations.test.ts \
+  spikes/spike-v6-transport/client/jobs.test.ts \
   spikes/spike-v6-transport/client/traverse-many.test.ts \
   product/tests/sdk-package.test.mjs \
   product/tests/package-boundaries.test.mjs

@@ -1,6 +1,6 @@
 # 다음 구조 변경: resource 독립 durable Job 실행기
 
-2026-10-10 **설계 제안, 미구현**. 첫 동기 경계의 실제 문법은 [제품 operation](../../product/EXECUTION.md)이다. 아래 상태·테이블·HTTP·SDK 이름은 구현 후보다. SQL 없는 계산부터 검증하고, 파일이나 외부 효과의 미해결 보장을 Job 지원에 합산하지 않는다.
+2026-10-10 **당시 설계 제안, 미구현 상태 스냅샷**. 이 문서는 제안 단계의 근거를 보존한다. durable job과 managed file/event/HTTP의 현재 동작은 [관리형 durable execution](../../product/MANAGED-EXECUTION.md), 동기 경계는 [제품 operation](../../product/EXECUTION.md)을 따른다. 아래 후보 API와 용량 가정은 현재 계약으로 간주하지 않는다.
 
 ## 현재 코드에서 재사용할 것과 바꿀 것
 

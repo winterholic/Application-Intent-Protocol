@@ -454,8 +454,7 @@ fn operation_binding_module(facts: &Value, binding_import: &str, wire: IdWire, a
 pub fn operation_descriptors(facts: &Value) -> Value {
     let mut descriptors = serde_json::Map::new();
     for (name, operation) in facts["operations"].as_object().into_iter().flatten() {
-        let mut descriptor =
-            serde_json::json!({"lifetime":"sync","effect":"none","deadlineMs":operation["deadlineMs"],"dependencies":operation["dependencies"]});
+        let mut descriptor = serde_json::json!({"lifetime":if operation["kind"] == "job" { "durable" } else { "sync" },"effect":operation["effect"],"deadlineMs":operation["deadlineMs"],"dependencies":operation["dependencies"]});
         for side in ["input", "output"] {
             descriptor[side] = Value::Object(
                 operation[side]

@@ -146,7 +146,7 @@ export type PrototypeBinding<C extends ContractShape<C>, A extends ApplyContract
   readonly writeExtensions: WriteExtensionDescriptors<W>;
 };
 export type OperationDescriptors<O> = ExtensionDescriptors<O> & {
-  readonly [K in keyof O]: { readonly lifetime: "sync"; readonly effect: "none"; readonly deadlineMs: number; readonly dependencies: { readonly worker: readonly string[]; readonly authorization: readonly string[] } };
+  readonly [K in keyof O]: { readonly lifetime: "sync" | "durable"; readonly effect: "none" | "managed"; readonly deadlineMs: number; readonly dependencies: { readonly worker: readonly string[]; readonly authorization: readonly string[] } };
 };
 export type OperationBinding<C extends ContractShape<C>, A extends ApplyContractShape<A>, E extends ExtensionContractShape<E>, W extends ExtensionContractShape<W>, O extends ExtensionContractShape<O>> = ExtensionBinding<C, A, E> & {
   readonly __writes?: W;

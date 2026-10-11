@@ -639,5 +639,14 @@ pub fn create_ddl_in(namespace: &str, facts: &Value) -> R<Vec<String>> {
             }
         }
     }
+    if facts["operations"].as_object().is_some_and(|ops| ops.values().any(|op| op["kind"] == "job")) {
+        let jobs = aip_execution::ddl(namespace).map_err(|_| "execution schema")?;
+        let files = aip_execution::files::Store::new(namespace).map_err(|_| "file schema")?.ddl();
+        let events = aip_execution::events::Store::new(namespace).map_err(|_| "event schema")?.ddl();
+        for sql in [jobs, files, events] {
+            out.extend(sql.split(';').map(str::trim).filter(|s| !s.is_empty()).map(|s| s.replace("CREATE TABLE IF NOT EXISTS ", "CREATE TABLE ")));
+        }
+        out.push(format!("CREATE TABLE {namespace}.aip_effects (run_id uuid NOT NULL REFERENCES {namespace}.aip_jobs(id), effect_key text NOT NULL, request_digest text NOT NULL, state text NOT NULL CHECK(state IN ('PENDING','SUCCEEDED','UNKNOWN','FAILED')), result jsonb, PRIMARY KEY(run_id,effect_key))"));
+    }
     Ok(out)
 }

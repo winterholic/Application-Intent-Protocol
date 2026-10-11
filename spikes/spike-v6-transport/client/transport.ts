@@ -78,7 +78,7 @@ export function connect(base: string, initialToken: string | null, fetchImpl: ty
   async function postWithToken(path: string, body: unknown, credential: string | null, extra: Record<string, string> = {}) {
     const headers: Record<string, string> = { "content-type": "application/json", ...extra };
     if (credential) headers["authorization"] = `Bearer ${credential}`;
-    if (expectedFingerprint !== undefined && ["/read", "/apply", "/status", "/extension", "/operation"].includes(path)) {
+    if (expectedFingerprint !== undefined && ["/read", "/apply", "/status", "/extension", "/operation", "/jobs/enqueue", "/jobs/status", "/jobs/cancel", "/jobs/result", "/events/read", "/files/put", "/files/get", "/files/delete"].includes(path)) {
       headers["x-aip-contract"] = expectedFingerprint;
     }
     const r = await fetchImpl(base + path, { method: "POST", headers, body: JSON.stringify(body) });
@@ -202,6 +202,25 @@ export function connect(base: string, initialToken: string | null, fetchImpl: ty
       }
       return r.output as unknown;
   }
+  async function callManaged(path: string, body: unknown): Promise<unknown> {
+    if (!["/jobs/enqueue", "/jobs/status", "/jobs/cancel", "/jobs/result", "/events/read", "/files/put", "/files/get", "/files/delete"].includes(path)) {
+      throw Object.assign(new Error("지원하지 않는 관리 경로"), { code: "PROTOCOL_ERROR" });
+    }
+    await ensurePrincipal();
+    const auth = { token, generation };
+    const response = await postWithToken(path, structuredClone(body), auth.token);
+    if (auth.generation !== generation) throw new ScopeChanged("관리 요청 중 세션이 바뀜");
+    if (response?.ok === false && typeof response.code === "string") {
+      if (response.code === "CONTRACT_MISMATCH") cache.invalidate();
+      throw Object.assign(new Error(response.code), { code: response.code });
+    }
+    if (response?.ok !== true) throw Object.assign(new Error("관리 응답 형식 오류"), { code: "PROTOCOL_ERROR" });
+    if (expectedFingerprint === undefined || response.contractFingerprint !== expectedFingerprint) {
+      cache.invalidate();
+      throw Object.assign(new Error("생성 관리 계약과 서버 계약이 다름"), { code: "CONTRACT_MISMATCH" });
+    }
+    return response;
+  }
   return {
     cache,
     post,
@@ -233,6 +252,7 @@ export function connect(base: string, initialToken: string | null, fetchImpl: ty
     },
     callExtension: (name: string, input: unknown) => callPure("/extension", "extension", name, input),
     callOperation: (name: string, input: unknown) => callPure("/operation", "operation", name, input),
+    callManaged,
     apply,
     replaceSession,
     /** 미확정 쓰기를 같은 키로 다시 확정한다(네트워크 복구 뒤). */

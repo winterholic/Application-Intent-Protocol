@@ -7,6 +7,7 @@
 //! `x-spike-drop-response: 1`이면 커밋 뒤 응답 없이 연결을 끊는다(시험용).
 pub mod auth;
 mod cors;
+mod durable;
 mod operation;
 pub mod server;
 pub mod write_extension;
@@ -19,6 +20,14 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio_postgres::Client;
+
+fn capability_available(operation: &Value, worker_configured: bool, authenticator_configured: bool, deployment_configured: bool) -> bool {
+    if operation["lifetime"] == "durable" {
+        worker_configured && authenticator_configured && deployment_configured
+    } else {
+        worker_configured
+    }
+}
 
 /// 신선도 비교 실험의 상한. 제품 기본값이나 즉시 권한 회수 보장이 아니다.
 pub const READ_CACHE_MS: u64 = 1000;
@@ -351,7 +360,25 @@ async fn serve_conn(
     if let Some(m) = bad {
         return reply(&mut w, &err("BAD_REQUEST", m)).await;
     }
-    if !["/session", "/read", "/apply", "/status", "/extension", "/operation", "/capabilities"].contains(&path.as_str()) {
+    if ![
+        "/session",
+        "/read",
+        "/apply",
+        "/status",
+        "/extension",
+        "/operation",
+        "/capabilities",
+        "/jobs/enqueue",
+        "/jobs/status",
+        "/jobs/result",
+        "/jobs/cancel",
+        "/files/put",
+        "/files/get",
+        "/files/delete",
+        "/events/read",
+    ]
+    .contains(&path.as_str())
+    {
         return reply(&mut w, &err("NOT_FOUND", "알 수 없는 경로")).await;
     }
     if method == "OPTIONS" {
@@ -472,6 +499,15 @@ async fn serve_conn(
             return reply(&mut w, &err("BAD_REQUEST", "capabilities 본문은 빈 객체")).await;
         }
     }
+    let managed = path.starts_with("/jobs/") || path.starts_with("/files/") || path == "/events/read";
+    if managed {
+        if session.as_ref().and_then(|s| s.durable.as_ref()).is_none() {
+            return reply(&mut w, &err("UNAUTHENTICATED", "관리 실행은 제품 principal 세션이 필요함")).await;
+        }
+        if expected_contract.is_none() || expected_contract.as_deref() != contract_fingerprint.as_deref() {
+            return reply(&mut w, &err("CONTRACT_MISMATCH", "관리 실행 계약 지문 필요")).await;
+        }
+    }
     if path == "/session" {
         if !body.as_object().is_some_and(|body| body.is_empty()) {
             return reply(&mut w, &err("BAD_REQUEST", "session 본문은 빈 객체")).await;
@@ -532,10 +568,13 @@ async fn serve_conn(
         }
     };
     let caller = Caller { actor_id: session.as_ref().map(|s| s.actor_id), now };
-    let mut result = if path == "/capabilities" {
+    let mut result = if managed {
+        durable::handle(&mut db, &runtime, &facts, wire, &path, &body, session.as_ref().unwrap().durable.as_ref().unwrap()).await
+    } else if path == "/capabilities" {
         let mut operations = spike_v5_sdk::operation_descriptors(&facts);
         for operation in operations.as_object_mut().unwrap().values_mut() {
-            operation["available"] = json!(runtime.extensions.is_some());
+            operation["available"] =
+                json!(capability_available(operation, runtime.extensions.is_some(), runtime.authenticator.is_some(), runtime.deployment.is_some()));
             operation["authorization"] = json!("checked-on-call");
         }
         json!({"ok":true,"catalogVersion":"aip-capabilities/1","operations":operations})
@@ -607,7 +646,9 @@ async fn serve_conn(
         handle(&mut db, &facts, &path, &body, &caller, wire).await
     };
     let write_status = path == "/status" && body["request"].get("extension").is_some();
-    if (["/read", "/extension", "/operation", "/capabilities"].contains(&path.as_str()) || write_extension || write_status) && result["ok"] == true {
+    if (["/read", "/extension", "/operation", "/capabilities"].contains(&path.as_str()) || write_extension || write_status || managed)
+        && result["ok"] == true
+    {
         if let Some(fingerprint) = contract_fingerprint {
             result["contractFingerprint"] = json!(&*fingerprint);
         }
@@ -655,6 +696,8 @@ async fn start_with_fingerprint(facts: Value, wire: IdWire, contract_fingerprint
         "127.0.0.1:0".parse().unwrap(),
         server::Runtime {
             db_url: spike_v2_read::DB_URL.into(),
+            broker: None,
+            enable_file_uploads: false,
             fault_injection: true,
             extensions: None,
             write_extensions: false,
@@ -671,4 +714,21 @@ async fn start_with_fingerprint(facts: Value, wire: IdWire, contract_fingerprint
     let keys = server.keys.clone();
     server.detach();
     (port, keys)
+}
+
+#[cfg(test)]
+mod capability_tests {
+    use super::*;
+
+    #[test]
+    fn durable_operation_capabilities_require_worker_authenticator_and_deployment() {
+        let sync = json!({"lifetime":"sync"});
+        let durable = json!({"lifetime":"durable"});
+        assert!(capability_available(&sync, true, false, false));
+        assert!(!capability_available(&sync, false, true, true));
+        assert!(!capability_available(&durable, false, true, true));
+        assert!(!capability_available(&durable, true, false, true));
+        assert!(!capability_available(&durable, true, true, false));
+        assert!(capability_available(&durable, true, true, true));
+    }
 }

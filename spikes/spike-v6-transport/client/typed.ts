@@ -1,5 +1,6 @@
 import { connect, isIdWire, validResultId, type ApplyOptions } from "./transport.ts";
-import type { ContractBinding, ContractShape, Root, SelectItem, CheckSel, FilterItem, SortItem, Row, DeepReadonly, ApplyBinding, ApplyContractShape, ApplyRequest, ApplyResult, PendingResult, IdWireKind, ExtensionContractShape, ExtensionDescriptors, ScalarDescriptor, ReadDescriptors, WriteExtensionDescriptors, WriteExtensionResult, OffsetOpt, CursorOpt } from "../../spike-v5-sdk/sdk/generic.ts";
+import { createJobsClient } from "./jobs.ts";
+import type { ContractBinding, ContractShape, Root, SelectItem, CheckSel, FilterItem, SortItem, Row, DeepReadonly, ApplyBinding, ApplyContractShape, ApplyRequest, ApplyResult, PendingResult, IdWireKind, ExtensionContractShape, ExtensionDescriptors, OperationDescriptors, ScalarDescriptor, ReadDescriptors, WriteExtensionDescriptors, WriteExtensionResult, OffsetOpt, CursorOpt } from "../../spike-v5-sdk/sdk/generic.ts";
 
 export function connectTypedApply<C extends ContractShape<C>, A extends ApplyContractShape<A>>(base: string, token: string | null, binding: ApplyBinding<C, A>, fetchImpl: typeof fetch = fetch) {
   const idWire = binding?.idWire;
@@ -9,8 +10,9 @@ export function connectTypedApply<C extends ContractShape<C>, A extends ApplyCon
 }
 
 function applyFacade<C extends ContractShape<C>, A extends ApplyContractShape<A>>(client: ReturnType<typeof typedClient<C>>) {
+  const { callManaged, ...publicClient } = client;
   return {
-    ...client,
+    ...publicClient,
     apply<const K extends keyof A & string>(request: ApplyRequest<A, K> & { readonly apply: K }, options?: ApplyOptions): Promise<ApplyResult<A[K]["idOutput"]>> {
       return client.apply(request, options);
     },
@@ -210,7 +212,8 @@ export function connectTypedExtensions<C extends ContractShape<C>, A extends App
   const fingerprint = binding.fingerprint;
   const descriptors = structuredClone(binding.extensions ?? {}) as ExtensionDescriptors<E>;
   const writes = structuredClone(binding.writeExtensions ?? {}) as WriteExtensionDescriptors<W>;
-  const operations = structuredClone(binding.operations ?? {}) as ExtensionDescriptors<O>;
+  const operations = structuredClone(binding.operations ?? {}) as ExtensionDescriptors<O> & Partial<Record<keyof O, { readonly lifetime?: "sync" | "durable" }>>;
+  const hasDurableOperations = Object.values(operations as Record<string, { readonly lifetime?: string }>).some((descriptor) => descriptor?.lifetime === "durable");
   const stable = {fingerprint, idWire:wire, readDescriptors:structuredClone(binding.readDescriptors)};
   const raw = typedClient<C>(base, token, stable, fetchImpl, wire, (request, response) => {
     const req = request as Record<string, unknown>;
@@ -222,8 +225,15 @@ export function connectTypedExtensions<C extends ContractShape<C>, A extends App
     validateRecord(res.output, writes[name as keyof W].output, wire, "PROTOCOL_ERROR");
   });
   const { callExtension, callOperation, ...client } = applyFacade<C,A>(raw);
+  const managed = hasDurableOperations
+    ? createJobsClient((path, body) => raw.callManaged(path, body), {
+      fingerprint, idWire: wire, operations: operations as OperationDescriptors<O>,
+    })
+    : undefined;
+  const managedApi = managed ? (({ files, events, ...jobs }) => ({ jobs, files, events }))(managed) : undefined;
   return {
     ...client,
+    ...(managedApi ?? {}),
     async extension<const K extends keyof E & string>(name: K, input: E[K]["input"]): Promise<DeepReadonly<E[K]["output"]>> {
       if (!Object.hasOwn(descriptors, name)) throw Object.assign(new Error("생성 계약에 없는 확장"), { code: "NOT_EXPOSED" });
       const descriptor = descriptors[name];

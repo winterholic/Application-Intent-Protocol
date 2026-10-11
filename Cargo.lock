@@ -111,6 +111,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "aip-execution"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tokio",
+ "tokio-postgres",
+ "uuid",
+]
+
+[[package]]
 name = "aip-ir"
 version = "0.1.0"
 dependencies = [
@@ -195,6 +208,7 @@ name = "aip-service"
 version = "0.1.0"
 dependencies = [
  "aip-auth",
+ "aip-execution",
  "aip-migrate",
  "clap",
  "libc",
@@ -207,6 +221,7 @@ dependencies = [
  "spike-v6-transport",
  "tokio",
  "tokio-postgres",
+ "url",
  "uuid",
 ]
 
@@ -2372,6 +2387,7 @@ dependencies = [
 name = "spike-v2-read"
 version = "0.0.0"
 dependencies = [
+ "aip-execution",
  "chrono",
  "rustls",
  "rustls-pemfile",
@@ -2422,9 +2438,11 @@ dependencies = [
 name = "spike-v6-transport"
 version = "0.0.0"
 dependencies = [
+ "aip-execution",
  "base64 0.22.1",
  "getrandom 0.2.17",
  "hmac 0.12.1",
+ "serde",
  "serde_json",
  "sha2 0.10.9",
  "spike-v1-fixture",

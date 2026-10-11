@@ -1502,12 +1502,15 @@ impl<'a> Ctx<'a> {
     }
 
     fn operation(&mut self, operation: &Extension) -> Option<Value> {
-        if operation.kind != "read" || operation.effect != "none" || !operation.access.is_empty() {
-            self.d("UNSUPPORTED", "동기 operation은 read/effect none과 빈 access만 지원", operation.span);
+        let job = operation.kind == "job";
+        let managed = job && operation.effect == "managed";
+        if (!job && operation.kind != "read") || (!managed && (operation.effect != "none" || !operation.access.is_empty())) {
+            self.d("UNSUPPORTED", "operation은 read/none 또는 job/none·managed 계약이 필요", operation.span);
             return None;
         }
-        if !operation.deadline_ms.is_some_and(|deadline| deadline > 0 && deadline <= 30_000) {
-            self.d("BAD_BUDGET", "동기 operation deadline은 1ms 이상 30s 이하여야 함", operation.span);
+        let max_deadline = if job { 3_600_000 } else { 30_000 };
+        if !operation.deadline_ms.is_some_and(|deadline| deadline > 0 && deadline <= max_deadline) {
+            self.d("BAD_BUDGET", "operation deadline은 read 30s, job 1h 이내의 양수여야 함", operation.span);
         }
         for (_, ty) in operation.input.iter().chain(&operation.output) {
             if ty.range.is_some_and(|(lo, hi)| lo < -9_007_199_254_740_991 || hi > 9_007_199_254_740_991) {
@@ -1527,7 +1530,30 @@ impl<'a> Ctx<'a> {
                 None
             }
         };
-        let mut value = self.extension(operation)?;
+        let mut base = operation.clone();
+        base.kind = "read".into();
+        base.effect = "none".into();
+        base.access.clear();
+        let mut value = self.extension(&base)?;
+        value["kind"] = json!(operation.kind);
+        value["effect"] = json!(operation.effect);
+        if managed {
+            let mut capabilities = Map::new();
+            for (domain, name) in &operation.access {
+                if !["http", "files", "events", "jobs"].contains(&domain.as_str()) {
+                    self.d("UNKNOWN_SYMBOL", format!("알 수 없는 managed capability `{domain}.{name}`"), operation.span);
+                }
+                if domain == "jobs"
+                    && !self.spec.operations.iter().any(|target| target.name == *name && matches!(target.kind.as_str(), "read" | "job"))
+                {
+                    self.d("UNKNOWN_SYMBOL", format!("managed jobs 대상 operation `{name}`이 없거나 read/job이 아님"), operation.span);
+                }
+                if capabilities.insert(format!("{domain}.{name}"), json!(true)).is_some() {
+                    self.d("DUPLICATE", "managed capability 중복", operation.span);
+                }
+            }
+            value["access"] = Value::Object(capabilities);
+        }
         value["allow"] = allow?;
         value["dependencies"] = json!({"worker":[],"authorization":["database","principal","deployment"]});
         Some(value)

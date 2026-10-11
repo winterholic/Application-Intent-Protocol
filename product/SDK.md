@@ -4,7 +4,7 @@
 
 ## 8개 검수 관문
 
-1. **공개 API**: `product/sdk/index.ts`는 기존 prototype SDK가 노출하는 `connect`, `WriteUnsettled`, 그리고 generic SDK 타입만 공개한다. `connect`는 base URL, 운영 JWT access token, 생성된 binding, 선택적 fetch 구현을 공통 `connectTypedExtensions`에 전달한다.
+1. **공개 API**: `product/sdk/index.ts`는 `connect`, `WriteUnsettled`, generic SDK 타입과 durable contract 타입을 공개한다. `connect`는 base URL, 운영 JWT access token, 생성된 binding, 선택적 fetch 구현을 공통 typed transport에 전달한다. Durable descriptor가 있을 때 `jobs`, `files`, `events` client를 붙인다.
 2. **동일 구현 재사용**: 빌드 입력은 제품 entry와 기존 spike의 TypeScript 의존 closure다. SDK 로직을 복사하거나 spike 원본을 이동·수정하지 않는다.
 3. **완전한 산출물**: 로컬 TypeScript compiler로 JavaScript와 declaration을 함께 만들고, package에 필요한 runtime/type 의존 closure를 모두 담는다. 산출물의 상대 import가 package 밖으로 나가지 않는다.
 4. **설치 가능한 패키지 메타데이터**: tarball은 이름 `@aip/sdk`, 버전 `0.1.0`, ESM 형식이며 root `exports`가 JavaScript와 TypeScript declaration을 가리킨다. 빌드는 `npm publish`를 실행하지 않는다.
@@ -44,3 +44,26 @@ node product/tools/package.mjs
 생성 binding에 operation이 있으면 같은 `connect`가 `.operation(name, input)`을 제공한다. `OperationBinding`과 `OperationDescriptors`를 package root에서 export한다. 입력·출력·범위·계약 지문과 세션 교체 검사를 공통 transport에 연결한다. 실제 문법·인증·DB 의존·실패 경계는 [EXECUTION](EXECUTION.md)을 따른다. 설치 SDK smoke는 Node/Python과 safe/decimal 조합에서 Unicode 계산과 범위 밖 입력 거부도 확인한다.
 
 CLI나 compiler 변경 뒤 service smoke·패키징 전에 위 `cargo build`를 실행한다. package 도구는 기존 실행 파일을 복사하므로 SDK 소스만 최신이라고 해서 생성 계약도 최신인 것은 아니다.
+
+## durable Job, file, event API
+
+`operation job`이 생성 binding에 있으면 `connect` 결과가 `jobs`, `files`, `events`를 제공한다. API 호출 예시와 제한, 오류 경계는 [관리형 durable execution](MANAGED-EXECUTION.md)을 따른다.
+
+```ts
+if (!client.jobs || !client.files || !client.events) throw new Error("durable binding이 필요합니다");
+const receipt = await client.jobs.enqueue("report", input, { key: "report-42" });
+const status = await client.jobs.status(receipt.id);
+if (status.error) console.error(status.error);
+if (status.status === "SUCCEEDED") {
+  const output = await client.jobs.result(receipt.id, "report");
+}
+const stored = await client.files.put("reports", "report.txt", bytes, "text/plain");
+const file = await client.files.get(stored.id);
+for await (const event of client.events.watch("notifications", { after: "0", signal })) {
+  consume(event.cursor, event.payload);
+}
+```
+
+SDK surface에는 `jobs.enqueue/status/cancel/result`, `files.put/get/delete`, `events.read/watch`가 있다. `watch`는 polling async iterator이며 SSE가 아니다. 앱 SDK는 outbound HTTP broker를 직접 노출하지 않는다. 등록 endpoint 호출은 서버 worker의 `ctx.http.call(name,input,key)`만 가능하다.
+
+`JobReceipt.error`는 선택 필드다. 실행 중 cancel은 우선 `CANCEL_REQUESTED`이며, unresolved HTTP effect가 남으면 `FAILED`와 `CANCELLATION_UNCONFIRMED`로 표시한다. status 응답에 `EFFECT_UNKNOWN`이 있으면 외부 provider 처리 여부가 불확실한 상태다. 현재 owner ACL과 권한 변경의 효과는 [managed execution 경계](MANAGED-EXECUTION.md)에 설명했다.

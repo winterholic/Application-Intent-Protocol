@@ -1,6 +1,6 @@
 # 여섯 백엔드 시나리오 대조
 
-2026-10-09. **`실제 제품 문법`은 현재 parser/runtime가 받는 일부 동작, `PoC 실제 문법`은 별도 root engine, `가상 제안`은 미구현 설명용 계약이다.** 아래 전체 업무 계약의 JSON/YAML은 가상이며 최종 SDK나 DSL을 결정하지 않는다. 기존 검증 범위는 [validation](validation.md), 외부 코드 근거는 [sources](sources.md).
+2026-10-09 역사적 시나리오 분석. 이후 durable job·managed file/event·named HTTP broker의 제품 구현이 추가됐다. 현재 지원 경계는 [관리형 durable execution](../../product/MANAGED-EXECUTION.md)과 [제품 검증](../../product/VALIDATION.md)을 본다. 아래의 `가상 제안`은 당시 설명용 문법이며 현재 SDK 문법을 나타내지 않는다. 외부 코드 근거는 [sources](sources.md).
 
 | 시나리오 | 현재 제품으로 가능한 부분 | PoC 실행 근거 | 아직 제품에서 증명 못한 핵심 |
 |---|---|---|---|

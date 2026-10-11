@@ -6,12 +6,14 @@ license.workspace = true
 
 [dependencies]
 aip-auth = { path = "../aip-auth" }
+aip-execution = { path = "../aip-execution" }
 aip-migrate = { path = "../aip-migrate" }
 clap = { version = "4", features = ["derive"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time", "net"] }
 tokio-postgres = "0.7"
+url = "2"
 spike-v1-fixture = { path = "../../spikes/spike-v1-fixture" }
 spike-v2-read = { path = "../../spikes/spike-v2-read" }
 spike-v5-sdk = { path = "../../spikes/spike-v5-sdk" }

@@ -1,5 +1,5 @@
 # AIP 확장 worker(Python). 서버와 stdin/stdout JSON 줄로만 통신한다. DB 연결 정보는 받지 않는다.
-import asyncio, importlib.util, json, os, sys
+import asyncio, importlib.util, inspect, json, os, sys
 
 ext_dir = sys.argv[1]
 pending = {}
@@ -28,10 +28,31 @@ class Data:
         return await self.ctx.call("apply", f"{res}.{name}", {"ids": [str(i) for i in ids]})
 
 
+class Http:
+    def __init__(self, ctx): self.ctx = ctx
+    async def call(self, name, inp, key=None): return await self.ctx.call("http", name, {"input": inp, "key": key})
+
+class Files:
+    def __init__(self, ctx): self.ctx = ctx
+    async def put(self, bucket, inp, key=None): return await self.ctx.call("files", bucket, {**inp, "action": "put", "key": key})
+    async def get(self, bucket, id): return await self.ctx.call("files", bucket, {"action": "get", "id": id})
+
+class Events:
+    def __init__(self, ctx): self.ctx = ctx
+    async def publish(self, stream, key, payload): return await self.ctx.call("events", stream, {"key": key, "payload": payload})
+
+class Jobs:
+    def __init__(self, ctx): self.ctx = ctx
+    async def run(self, name, inp, key): return await self.ctx.call("jobs", name, {"input": inp, "key": key})
+
 class Ctx:
     def __init__(self, token):
         self.token = token
         self.data = Data(self)
+        self.http = Http(self)
+        self.files = Files(self)
+        self.events = Events(self)
+        self.jobs = Jobs(self)
 
     async def call(self, op, name, inp, **extra):
         global seq
@@ -58,7 +79,9 @@ def load(mod):
 async def run_invoke(m):
     mod, fn = m["impl"].split(".")
     try:
-        out = await getattr(load(mod), fn)(m["input"], Ctx(m["token"]))
+        out = getattr(load(mod), fn)(m["input"], Ctx(m["token"]))
+        if inspect.isawaitable(out):
+            out = await out
         send({"type": "done", "invoke": m["invoke"], "output": out})
     except AipError as e:
         send({"type": "done", "invoke": m["invoke"], "error": {"code": e.code, "message": e.code}})

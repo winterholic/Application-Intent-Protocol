@@ -50,6 +50,10 @@ const MAX_RETIRED_TOKENS: usize = 64;
 const NODE_WORKER: &str = include_str!("../workers/worker.mjs");
 const PYTHON_WORKER: &str = include_str!("../workers/worker.py");
 
+pub fn worker_abi_digest() -> String {
+    spike_v1_fixture::digest(&json!([NODE_WORKER, PYTHON_WORKER]))
+}
+
 pub struct Worker {
     child: Child,
     /// worker stderr 마지막 줄들. 기동·실행 실패 원인을 서버 쪽에 남긴다(R4-01).
@@ -340,7 +344,7 @@ pub async fn invoke_with_wire(
     validate_read(facts, name, input, wire)?;
     let (res, ext) = name.split_once('.').ok_or(Reject { code: "BAD_REQUEST", msg: "확장은 `Resource.name`".into() })?;
     let x = &facts["resources"][res]["extensions"][ext];
-    invoke_contract(Some(db), w, facts, x, input, caller, wire).await
+    invoke_contract(Some(db), w, facts, x, input, caller, wire, None).await
 }
 
 pub fn validate_operation(facts: &Value, name: &str, input: &Value, wire: IdWire) -> Result<(), Reject> {
@@ -356,7 +360,40 @@ pub fn validate_operation(facts: &Value, name: &str, input: &Value, wire: IdWire
 
 pub async fn invoke_operation(worker: &mut Worker, facts: &Value, name: &str, input: &Value, caller: &Caller, wire: IdWire) -> Result<Value, Reject> {
     validate_operation(facts, name, input, wire)?;
-    invoke_contract(None, worker, facts, &facts["operations"][name], input, caller, wire).await
+    invoke_contract(None, worker, facts, &facts["operations"][name], input, caller, wire, None).await
+}
+
+pub trait JobHost: Send {
+    fn call<'a>(
+        &'a mut self,
+        operation: &'a str,
+        name: &'a str,
+        input: &'a Value,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, Reject>> + Send + 'a>>;
+}
+
+pub fn validate_job(facts: &Value, name: &str, input: &Value, wire: IdWire) -> Result<(), Reject> {
+    let job = &facts["operations"][name];
+    if job["kind"] != "job" {
+        return rej("NOT_EXPOSED", "등록된 job이 없음");
+    }
+    if job["effect"] != "none" && job["effect"] != "managed" {
+        return rej("UNSUPPORTED", "job 효과 계약 불일치");
+    }
+    check_read_record(facts, &job["input"], input, "입력", wire)
+}
+
+pub async fn invoke_job(
+    worker: &mut Worker,
+    facts: &Value,
+    name: &str,
+    input: &Value,
+    caller: &Caller,
+    wire: IdWire,
+    host: &mut dyn JobHost,
+) -> Result<Value, Reject> {
+    validate_job(facts, name, input, wire)?;
+    invoke_contract(None, worker, facts, &facts["operations"][name], input, caller, wire, Some(host)).await
 }
 
 async fn invoke_contract(
@@ -367,11 +404,15 @@ async fn invoke_contract(
     input: &Value,
     caller: &Caller,
     wire: IdWire,
+    mut host: Option<&mut dyn JobHost>,
 ) -> Result<Value, Reject> {
     let deadline = Duration::from_millis(x["deadlineMs"].as_u64().unwrap_or(1000));
     // 집계 입력은 확장 계약의 binding대로 확장 입력 값에 고정한다. worker가 다른 값을 넣으면 거부한다.
     let mut access = HashMap::new();
     for (agg, binding) in x["access"].as_object().unwrap() {
+        if host.is_some() {
+            continue;
+        }
         let mut fixed = Map::new();
         for (param, src) in binding.as_object().unwrap() {
             let key = src.as_str().unwrap().trim_start_matches("input.");
@@ -392,6 +433,7 @@ async fn invoke_contract(
         return Err(error);
     }
 
+    let mut managed_calls = 0;
     let result = loop {
         let left = expires.saturating_duration_since(Instant::now());
         let line = match tokio::time::timeout(left, w.read_line()).await {
@@ -407,15 +449,48 @@ async fn invoke_contract(
         };
         match m["type"].as_str() {
             Some("call") => {
-                let Some(db) = db.as_deref_mut() else {
+                if host.is_none() && db.is_none() {
                     break rej("ACCESS_NOT_DECLARED", "순수 operation은 ctx 호출을 허용하지 않음");
-                };
-                // ctx 작업도 호출 전체 기한 안에서만 기다린다. DB 대기 중 기한을 넘기면 호출 전체가 실패한다(F05).
+                }
                 let left = expires.saturating_duration_since(Instant::now());
-                let reply = match tokio::time::timeout(left, serve_call(db, w, facts, &m)).await {
+                let call = async {
+                    if let Some(host) = host.as_deref_mut() {
+                        managed_calls += 1;
+                        if managed_calls > 64 {
+                            return rej("COST_EXCEEDED", "job capability 호출 상한");
+                        }
+                        let op = m["op"].as_str().unwrap_or("");
+                        let name = m["name"].as_str().unwrap_or("");
+                        if m["token"] != token || x["access"][format!("{op}.{name}")] != true {
+                            return rej("ACCESS_NOT_DECLARED", "선언되지 않은 job capability");
+                        }
+                        if ["http", "jobs", "events"].contains(&op) || op == "files" && m["input"]["action"] == "put" {
+                            if !m["input"]["key"].as_str().is_some_and(|key| {
+                                !key.is_empty()
+                                    && key.len() <= 100
+                                    && key.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-' | b'.' | b':'))
+                            }) {
+                                return rej("BAD_VALUE", "managed effect에는 안정적인 key가 필요함");
+                            }
+                        }
+                        host.call(op, name, &m["input"]).await
+                    } else if let Some(db) = db.as_deref_mut() {
+                        serve_call(db, w, facts, &m).await
+                    } else {
+                        rej("ACCESS_NOT_DECLARED", "순수 operation은 ctx 호출을 허용하지 않음")
+                    }
+                };
+                let reply = match tokio::time::timeout(left, call).await {
                     Ok(r) => r,
                     Err(_) => break rej("DEADLINE_EXCEEDED", format!("확장 ctx 작업이 {}ms 안에 끝나지 않음", deadline.as_millis())),
                 };
+                if host.is_some()
+                    && reply
+                        .as_ref()
+                        .is_err_and(|e| ["ACCESS_NOT_DECLARED", "COST_EXCEEDED", "LEASE_LOST", "EFFECT_UNKNOWN", "BAD_VALUE"].contains(&e.code))
+                {
+                    break reply;
+                }
                 let msg = match reply {
                     Ok(v) => json!({ "type": "reply", "call": m["call"], "value": v }),
                     Err(e) => json!({ "type": "reply", "call": m["call"], "error": { "code": e.code } }),

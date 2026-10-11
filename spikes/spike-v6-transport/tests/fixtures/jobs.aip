@@ -1,0 +1,34 @@
+actor principal
+operation job count {
+  input { text: Text(1..1000) }
+  output { length: Int }
+  allow actor != null
+  effect none
+  deadline 10s
+  implementation "jobs.count"
+}
+operation job slow {
+  input {}
+  output { length: Int }
+  allow actor != null
+  effect none
+  deadline 10s
+  implementation "jobs.slow"
+}
+operation read length {
+  input { text: Text }
+  output { length: Int }
+  allow actor != null
+  effect none
+  deadline 2s
+  implementation "jobs.count"
+}
+operation job report {
+  input { text: Text }
+  output { file: Text; length: Int }
+  allow actor != null
+  access files.reports, events.notifications, jobs.length
+  effect managed
+  deadline 10s
+  implementation "jobs.report"
+}

@@ -1,0 +1,146 @@
+use aip_execution::integrations::{Broker, EndpointConfig};
+use serde_json::json;
+use std::io::{Read, Write};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
+use std::time::Duration;
+
+fn config(url: String, resolved: Vec<SocketAddr>, allow_loopback: bool) -> EndpointConfig {
+    EndpointConfig {
+        name: "crm.createTicket".into(),
+        url,
+        method: "POST".into(),
+        timeout: Duration::from_secs(2),
+        max_request_bytes: 1024,
+        max_response_bytes: 1024,
+        secret_header: Some(("x-api-key".into(), "server-secret-value".into())),
+        resolved,
+        allow_loopback,
+    }
+}
+
+#[test]
+fn endpoint_configuration_rejects_user_controlled_or_private_destinations() {
+    let private = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 443);
+    assert!(Broker::new(vec![config("https://api.example/v1".into(), vec![private], false)]).is_err());
+    for special in [
+        "[2002:0808:0808::1]:443",
+        "[::ffff:127.0.0.1]:443",
+        "[2001:20::1]:443",
+        "[2001:2f::1]:443",
+        "[2001:2::1]:443",
+        "[3fff:100::1]:443",
+        "[5f00::1]:443",
+    ] {
+        let address = special.parse().unwrap();
+        assert!(Broker::new(vec![config("https://api.example/v1".into(), vec![address], false)]).is_err());
+    }
+    assert!(Broker::new(vec![config("http://api.example/v1".into(), vec!["1.1.1.1:443".parse().unwrap()], false)]).is_err());
+    assert!(Broker::new(vec![config("https://user:pass@api.example/v1".into(), vec!["1.1.1.1:443".parse().unwrap()], false)]).is_err());
+    assert!(Broker::new(vec![config("https://api.example/v1".into(), vec![], false)]).is_err());
+    let loopback_http = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 80);
+    assert!(Broker::new(vec![config("http://127.0.0.1/v1".into(), vec![loopback_http], true)]).is_ok());
+    let mut reserved = config("https://api.example/v1".into(), vec!["1.1.1.1:443".parse().unwrap()], false);
+    reserved.secret_header = Some(("Idempotency-Key".into(), "must-not-override".into()));
+    assert!(Broker::new(vec![reserved]).is_err());
+}
+
+#[test]
+fn fingerprint_is_order_independent_and_changes_with_effective_configuration() {
+    let a = config("https://api.example/v1".into(), vec!["1.1.1.1:443".parse().unwrap()], false);
+    let mut b = config("https://api.example/other".into(), vec!["8.8.8.8:443".parse().unwrap()], false);
+    b.name = "crm.lookup".into();
+    let first = Broker::new(vec![a, b]).unwrap();
+    let a = config("https://api.example/v1".into(), vec!["1.1.1.1:443".parse().unwrap()], false);
+    let mut b = config("https://api.example/other".into(), vec!["8.8.8.8:443".parse().unwrap()], false);
+    b.name = "crm.lookup".into();
+    let same = Broker::new(vec![b, a]).unwrap();
+    assert_eq!(first.fingerprint(), same.fingerprint());
+
+    let mut rotated = config("https://api.example/v1".into(), vec!["1.1.1.1:443".parse().unwrap()], false);
+    rotated.secret_header = Some(("x-api-key".into(), "rotated-secret".into()));
+    let unchanged = config("https://api.example/v1".into(), vec!["1.1.1.1:443".parse().unwrap()], false);
+    assert_ne!(Broker::new(vec![unchanged]).unwrap().fingerprint(), Broker::new(vec![rotated]).unwrap().fingerprint());
+}
+
+#[tokio::test]
+async fn named_call_uses_server_endpoint_secret_and_returns_only_bounded_json() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = std::thread::spawn(move || {
+        let mut keys = Vec::new();
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().unwrap();
+            let request = read_request(&mut stream);
+            assert!(request.to_ascii_lowercase().contains("x-api-key: server-secret-value"));
+            assert!(request.contains("\"ticket\":\"T-1\""));
+            let key = request
+                .lines()
+                .find_map(|line| {
+                    line.to_ascii_lowercase().strip_prefix("idempotency-key:").map(|_| line.split_once(':').unwrap().1.trim().to_owned())
+                })
+                .unwrap();
+            keys.push(key);
+            let body = br#"{"ok":true,"ticket":"T-1"}"#;
+            write!(
+                stream,
+                "HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nRetry-After: 7200\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            )
+            .unwrap();
+            stream.write_all(body).unwrap();
+        }
+        keys
+    });
+
+    let broker = Broker::new(vec![config(format!("http://{address}/tickets"), vec![address], true)]).unwrap();
+    assert!(broker.contains("crm.createTicket"));
+    assert!(!broker.contains("crm.deleteTicket"));
+    let response = broker.call_with_key("crm.createTicket", &json!({"ticket":"T-1"}), Some("run-1/effect-1")).await.unwrap();
+    let retry = broker.call_with_key("crm.createTicket", &json!({"ticket":"T-1"}), Some("run-1/effect-1")).await.unwrap();
+    let keys = server.join().unwrap();
+
+    assert_eq!(response.status, 201);
+    assert_eq!(response.body, json!({"ok":true,"ticket":"T-1"}));
+    assert_eq!(response.retry_after_seconds, Some(3600));
+    assert_eq!(retry, response);
+    assert_eq!(keys.len(), 2);
+    assert_eq!(keys[0], keys[1]);
+    assert!(!keys[0].contains("run-1"));
+    assert!(broker.call("https://attacker.example", &json!({})).await.is_err());
+    assert!(broker.call("crm.createTicket", &json!("x".repeat(1025))).await.is_err());
+}
+
+#[tokio::test]
+async fn endpoint_response_over_limit_is_rejected() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let _ = read_request(&mut stream);
+        let body = br#"{"this":"is too long"}"#;
+        write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).unwrap();
+        stream.write_all(body).unwrap();
+    });
+    let mut endpoint = config(format!("http://{address}/large"), vec![address], true);
+    endpoint.max_response_bytes = 8;
+    let broker = Broker::new(vec![endpoint]).unwrap();
+
+    assert!(broker.call("crm.createTicket", &json!({})).await.is_err());
+    server.join().unwrap();
+}
+
+fn read_request(stream: &mut std::net::TcpStream) -> String {
+    let mut bytes = Vec::new();
+    let mut one = [0; 1];
+    while !bytes.ends_with(b"\r\n\r\n") {
+        stream.read_exact(&mut one).unwrap();
+        bytes.push(one[0]);
+    }
+    let headers = String::from_utf8_lossy(&bytes).to_ascii_lowercase();
+    let content_length =
+        headers.lines().find_map(|line| line.strip_prefix("content-length:")).and_then(|value| value.trim().parse::<usize>().ok()).unwrap_or(0);
+    let mut body = vec![0; content_length];
+    stream.read_exact(&mut body).unwrap();
+    bytes.extend_from_slice(&body);
+    String::from_utf8_lossy(&bytes).into_owned()
+}
