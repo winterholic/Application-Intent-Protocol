@@ -392,6 +392,11 @@ impl<'a> Ctx<'a> {
             }
         }
         if let Some(x) = e.get("not") {
+            // `not <Bool 경로>`를 `NOT (경로 IS TRUE)`로 쓰면 NULL이 참이 된다. 익명 actor의 `actor.suspended`가 NULL이어도
+            // `allow not actor.suspended`가 열리므로, 명백히 FALSE일 때만 참으로 본다(DDL 부분 인덱스 조건은 기존 의미를 유지한다).
+            if !self.inline && x.get("path").is_some() && x["ty"].as_str().is_some_and(|t| t.trim_end_matches('?') == "Bool") {
+                return Ok(format!("({} IS FALSE)", self.value(x, env)?));
+            }
             return Ok(format!("(NOT {})", self.cond(x, env)?));
         }
         // 단독 Bool 리터럴·Bool 경로도 조건이다(R2B-02). NULL은 IS TRUE로 거짓이 된다.
