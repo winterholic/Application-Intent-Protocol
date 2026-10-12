@@ -245,7 +245,7 @@ fn read_bounded(path: &Path, limit: usize, code: &str) -> Result<String, Value> 
     String::from_utf8(bytes).map_err(|_| error(code, "UTF-8 파일이 필요함"))
 }
 /// The definition diagnostic registry of the product path, for `aip explain-code` and `aip diagnostics --definition`.
-pub use spike_v1_fixture::codes as definition_codes;
+pub use spike_v1_fixture::codes as definition_registry;
 pub fn load(file: &Path, dev_checks: bool) -> Result<spike_v11_dev_checks::Checked, Value> {
     let form = file.to_str().and_then(spike_v1_fixture::form_of).ok_or_else(|| error("UNSUPPORTED_FORM", "지원하는 작성 형식이 아님"))?;
     let source = read_bounded(file, SOURCE_BYTES, "SOURCE_IO")?;

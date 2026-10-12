@@ -352,12 +352,12 @@ fn run() -> Result<ExitCode> {
                 }
                 Ok(ExitCode::SUCCESS)
             }
-            None => match aip_service::definition_codes::lookup(&code.to_uppercase()) {
+            None => match aip_service::definition_registry::lookup(&code.to_uppercase()) {
                 Some(c) => {
                     if json {
                         println!("{}", serde_json::to_string_pretty(&definition_entry(c))?);
                     } else {
-                        print!("{}", aip_service::definition_codes::render_text(c));
+                        print!("{}", aip_service::definition_registry::render_text(c));
                     }
                     Ok(ExitCode::SUCCESS)
                 }
@@ -372,12 +372,12 @@ fn run() -> Result<ExitCode> {
         Cmd::Diagnostics { markdown, json, definition } => {
             if definition {
                 if markdown {
-                    print!("{}", aip_service::definition_codes::render_markdown());
+                    print!("{}", aip_service::definition_registry::render_markdown());
                 } else if json {
-                    let all: Vec<_> = aip_service::definition_codes::all().iter().map(definition_entry).collect();
+                    let all: Vec<_> = aip_service::definition_registry::all().iter().map(definition_entry).collect();
                     println!("{}", serde_json::to_string_pretty(&all)?);
                 } else {
-                    for c in aip_service::definition_codes::all() {
+                    for c in aip_service::definition_registry::all() {
                         println!("{:<36} {}", c.code, c.title);
                     }
                 }
@@ -418,7 +418,13 @@ fn run() -> Result<ExitCode> {
     }
 }
 
+<<<<<<< Updated upstream
 fn definition_entry(c: &aip_service::definition_codes::Info) -> serde_json::Value {
+=======
+/// The PoC runtime commands need the optional `poc-runtime` build; the product path is `aip service`.
+#[cfg(not(feature = "poc-runtime"))]
+fn definition_entry(c: &aip_service::definition_registry::Info) -> serde_json::Value {
+>>>>>>> Stashed changes
     serde_json::json!({"code": c.code, "title": c.title, "explain": c.explain, "fix": c.fix, "example": c.example})
 }
 

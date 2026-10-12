@@ -40,10 +40,12 @@ impl Checked {
 }
 
 pub fn check_source(src: &str) -> Checked {
-    match aip_syntax::parse_file(src) {
+    let mut checked = match aip_syntax::parse_file(src) {
         Ok(ast) => check_ast(&ast),
         Err(d) => Checked { diagnostics: vec![d], parsed: false, lowered: None },
-    }
+    };
+    crate::hints::add(&mut checked.diagnostics, src);
+    checked
 }
 
 pub fn check_ast(ast: &File) -> Checked {

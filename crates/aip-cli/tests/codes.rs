@@ -154,6 +154,53 @@ fn semantic_rule_stops_every_command_that_needs_a_program() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// Every diagnostic of the conformance suite tells how to repair it: either the site wrote a help text, or the
+/// checker adds the repair of the registry the first time a code appears in an answer. A typo of a name gets
+/// the close spelling.
+#[test]
+fn every_checker_diagnostic_carries_help() {
+    let dir = std::env::temp_dir().join(format!("aip-help-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("tmp dir");
+    let prelude = std::fs::read_to_string(root().join("conformance/sema/_prelude.aip")).expect("prelude");
+    let mut checked = 0;
+    for e in std::fs::read_dir(root().join("conformance/sema")).expect("conformance dir") {
+        let p = e.expect("entry").path();
+        if p.extension().is_none_or(|x| x != "aip") || p.ends_with("_prelude.aip") {
+            continue;
+        }
+        let file = dir.join("t.aip");
+        std::fs::write(&file, format!("{prelude}\n{}", std::fs::read_to_string(&p).expect("case"))).expect("write");
+        let v: Value = serde_json::from_slice(&aip(&["check", &file.to_string_lossy(), "--json"]).stdout).expect("json");
+        let mut seen = BTreeSet::new();
+        for d in v.as_array().expect("diagnostics") {
+            let code = d["code"].as_str().expect("code");
+            assert!(
+                d["help"].as_str().is_some_and(|h| !h.is_empty()) || !seen.insert(code.to_string()) || codes::lookup(code).is_none(),
+                "{}: {code} has no help: {d}",
+                p.display()
+            );
+            seen.insert(code.to_string());
+            checked += 1;
+        }
+    }
+    std::fs::remove_dir_all(&dir).ok();
+    assert!(checked > 50, "only {checked} diagnostics were checked");
+}
+
+#[test]
+fn a_misspelled_name_gets_the_close_spelling() {
+    let dir = std::env::temp_dir().join(format!("aip-typo-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("tmp dir");
+    let file = dir.join("t.aip");
+    let prelude = std::fs::read_to_string(root().join("conformance/sema/_prelude.aip")).expect("prelude");
+    let body = std::fs::read_to_string(root().join("conformance/sema/outbound_unknown_event.aip")).expect("case");
+    std::fs::write(&file, format!("{prelude}\n{body}")).expect("write");
+    let v: Value = serde_json::from_slice(&aip(&["check", &file.to_string_lossy(), "--json"]).stdout).expect("json");
+    std::fs::remove_dir_all(&dir).ok();
+    let help = v[0]["help"].as_str().expect("help");
+    assert!(help.contains("'Renamed'"), "{help}");
+}
+
 /// The product path (`aip service check`) answers a wrong definition with a position, the declaration it is
 /// in, close spellings and the repair, and its codes are explainable like the PoC codes.
 #[test]

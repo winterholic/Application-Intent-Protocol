@@ -2,6 +2,7 @@
 //! `docs/design/04-safety-matrix.md` that can be decided per declaration.
 
 pub mod check;
+mod hints;
 pub mod lower;
 pub mod model;
 pub mod pipeline;
