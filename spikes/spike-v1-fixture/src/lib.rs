@@ -11,6 +11,7 @@ mod limits;
 pub mod parser;
 pub mod sema;
 mod string_literal;
+pub mod syntax_card;
 
 use diag::Diag;
 use extract::Host;

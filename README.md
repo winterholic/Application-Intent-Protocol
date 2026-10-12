@@ -86,5 +86,8 @@ cargo test -q -p aip-cli --features poc-runtime   # PoC runtime e2e(run/migrate 
 | `docs/design/11-founder-intent-audit.md` | 창시자 의도 대비 감사 |
 | `docs/design/12-design-reset.md` | 설계 재개 계획 |
 | `spec/grammar.md` | 현재 PoC `.aip` 문법 (EBNF). 최종 작성 형식 여부는 미정 |
+| `spec/definition-syntax.md` | 제품 경로(`aip service`)가 읽는 정의 언어의 작성 카드. PoC `.aip`와는 다른 언어이며 확장자만 같다. 블록·키·가정하지 않는 기본값·작성 예. 생성 문서 |
+| `spec/definition-diagnostics.md` | 제품 정의 진단 코드와 고치는 방법(`aip explain-code`). 생성 문서 |
+| `spec/diagnostics.md` | PoC 진단·오류 코드. 생성 문서 |
 
 `spikes/spike-0-ts/`는 첫 iteration의 TypeScript 스파이크다. 설계 판단의 근거로 보존하며 본 구현의 출발점은 아니다.

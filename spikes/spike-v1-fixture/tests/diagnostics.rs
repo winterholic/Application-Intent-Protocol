@@ -219,3 +219,82 @@ fn every_registered_code_points_to_its_explanation() {
         assert_eq!(d.json()["explain"], format!("aip explain-code {}", c.code));
     }
 }
+
+#[test]
+fn the_card_notes_cover_exactly_the_keys_the_parser_reads() {
+    use spike_v1_fixture::syntax_card::NOTES;
+    for (block, keys) in codes::BLOCK_KEYS {
+        for key in *keys {
+            let n = NOTES.iter().filter(|(b, k, _, _)| b == block && k == key).count();
+            assert_eq!(n, 1, "`{block}` key `{key}` needs exactly one note in src/syntax_card.rs, has {n}");
+        }
+    }
+    for (block, key, shape, meaning) in NOTES {
+        let known = codes::BLOCK_KEYS.iter().any(|(b, keys)| b == block && keys.contains(key));
+        assert!(known, "a note for `{block}` `{key}`, which the parser does not read");
+        assert!(!shape.is_empty() && !meaning.is_empty(), "`{block}` `{key}` needs a shape and a meaning");
+    }
+}
+
+#[test]
+fn spec_definition_syntax_is_generated_from_the_card() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../spec/definition-syntax.md");
+    let generated = spike_v1_fixture::syntax_card::render_markdown();
+    if std::env::var("AIP_UPDATE_GOLDEN").is_ok_and(|v| v == "1") {
+        std::fs::write(&path, &generated).expect("write spec/definition-syntax.md");
+    }
+    let on_disk = std::fs::read_to_string(&path).unwrap_or_default();
+    assert!(on_disk == generated, "spec/definition-syntax.md differs from the card (AIP_UPDATE_GOLDEN=1 regenerates it)");
+}
+
+#[test]
+fn the_worked_examples_of_the_card_are_accepted() {
+    for (what, src) in [("recruitment.aip", A), ("prototype/example/app.aip", include_str!("../../../prototype/example/app.aip"))] {
+        if let Err(ds) = load_str(src, Form::A) {
+            panic!("{what}: {}", ds.iter().map(|d| d.to_string()).collect::<Vec<_>>().join("; "));
+        }
+    }
+}
+
+/// Each sentence of "언어가 가정하지 않는 것" in the card, shown by a definition.
+#[test]
+fn the_defaults_the_card_denies_hold() {
+    let facts = load_str(A, Form::A).expect("fixture").execution;
+    let resources = &facts["resources"];
+    // no `rows read`: no row is readable; no `expose read`: no read exposure
+    assert_eq!(resources["School"]["rowRead"], serde_json::json!({"default": "denyAll"}));
+    assert!(resources["School"].get("exposeRead").is_none());
+    // no `budget`: not readable as a root
+    assert_eq!(resources["Club"]["exposeRead"]["rootQueryable"], false);
+    assert_eq!(resources["Recruitment"]["exposeRead"]["rootQueryable"], true);
+
+    let budget = "budget { rows 50; depth 2; deadline 2s; cost 1000 }";
+    for partial in [
+        "budget { depth 2; deadline 2s; cost 1000 }",
+        "budget { rows 50; deadline 2s; cost 1000 }",
+        "budget { rows 50; depth 2; cost 1000 }",
+        "budget { rows 50; depth 2; deadline 2s }",
+    ] {
+        let ds = diagnostics(&sub(A, budget, partial), Form::A);
+        assert!(ds.iter().any(|d| text(d, "code") == "MISSING_ITEM" && text(d, "message").contains("rows/depth/deadline/cost")), "{partial}: {ds:?}");
+    }
+
+    // `expose apply` without `bulk maxRows`
+    let apply = "resource Note {\n  fields { id: Id; done: Bool; owner: Member }\n  rows read when owner = actor\n  transition finish { from done = false; to done = true; allow owner = actor }\n  expose apply finish { target id }\n}\n";
+    let base = "actor Member\nresource Member { fields { id: Id } }\n";
+    let ds = diagnostics(&format!("{base}{apply}"), Form::A);
+    assert!(ds.iter().any(|d| text(d, "code") == "MISSING_ITEM" && text(d, "message").contains("bulk maxRows")), "{ds:?}");
+    assert!(load_str(&format!("{base}{}", apply.replace("target id }", "target id; bulk maxRows 5 }")), Form::A).is_ok());
+
+    // an aggregate without `sourceAccess`
+    let ds = diagnostics(&sub(A, "    sourceAccess fixedTotalOfVisibleRecruitment\n", ""), Form::A);
+    assert!(ds.iter().any(|d| text(d, "code") == "MISSING_ITEM" && text(d, "message").contains("sourceAccess")), "{ds:?}");
+
+    // a field with a read policy cannot be filtered
+    let ds = diagnostics(&sub(A, "filter periodEnd.gte, periodEnd.lte", "filter periodEnd.gte, internalNote.eq"), Form::A);
+    assert!(ds.iter().any(|d| text(d, "code") == "POLICY_FIELD_NOT_FILTERABLE"));
+
+    // an unknown key is an error, and a syntax error stops at the first one
+    let ds = diagnostics(&sub(A, "sort periodEnd, views, id", "sorts periodEnd, views, id"), Form::A);
+    assert_eq!((ds.len(), text(&ds[0], "code")), (1, "PARSE_UNKNOWN_KEY"));
+}

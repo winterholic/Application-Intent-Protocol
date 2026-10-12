@@ -99,14 +99,14 @@ resource Note {
 a top-level word that starts no declaration
 
 - 원인: A definition is a list of declarations. The first word of each must be one of the declaration keywords.
-- 수정: Start the declaration with `enum`, `actor`, `predicate`, `access`, `limit`, `resource` or `operation`; check the spelling of the word reported.
+- 수정: Start the declaration with `enum`, `actor`, `predicate`, `access`, `limit`, `resource` or `operation`; check the spelling of the word reported. Every declaration is described in spec/definition-syntax.md.
 
 ### `PARSE_UNKNOWN_KEY`
 
 a key that the block does not accept
 
 - 원인: Unknown keys are never ignored silently: a misspelled key would otherwise leave a policy or a limit out of the definition without a sign.
-- 수정: Use one of the keys listed in the help (the same block is documented in product/EXECUTION.md and the fixture spikes/spike-v1-fixture/fixture/recruitment.aip).
+- 수정: Use one of the keys listed in the help. Every block and key is described in spec/definition-syntax.md.
 
 ```aip
 actor Member

@@ -172,14 +172,14 @@ pub static REGISTRY: &[Info] = &[
         "PARSE_UNKNOWN_DECL",
         "a top-level word that starts no declaration",
         "A definition is a list of declarations. The first word of each must be one of the declaration keywords.",
-        "Start the declaration with `enum`, `actor`, `predicate`, `access`, `limit`, `resource` or `operation`; check the spelling of the word reported.",
+        "Start the declaration with `enum`, `actor`, `predicate`, `access`, `limit`, `resource` or `operation`; check the spelling of the word reported. Every declaration is described in spec/definition-syntax.md.",
         "",
     ),
     i(
         "PARSE_UNKNOWN_KEY",
         "a key that the block does not accept",
         "Unknown keys are never ignored silently: a misspelled key would otherwise leave a policy or a limit out of the definition without a sign.",
-        "Use one of the keys listed in the help (the same block is documented in product/EXECUTION.md and the fixture spikes/spike-v1-fixture/fixture/recruitment.aip).",
+        "Use one of the keys listed in the help. Every block and key is described in spec/definition-syntax.md.",
         concat!(base!(), "resource Note {\n  fields { id: Id; body: Text; owner: Member }\n  expose read { select id, body; sort id\n    budget { rows 10; depth 1; deadline 2s; cost 100 } }\n}\n"),
     ),
     i(
