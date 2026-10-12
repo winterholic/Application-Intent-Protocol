@@ -339,6 +339,27 @@ async function runWire({ binary, wire, workRoot, tarball, worker, extensionDir }
     if (worker && (results.operation?.length !== 3 || results.operation.invalidInputRejected !== 1 || results.operation.job?.status !== "SUCCEEDED" || results.operation.job.length !== 3 || results.operation.job.replayedId !== 1)) {
       throw new SmokeFailure("consumer-runtime", "OPERATION_BEHAVIOR", "설치 SDK의 operation 호출과 범위 검증 결과가 기대와 다릅니다");
     }
+    const fingerprint = (await readFile(bindingPath, "utf8")).match(/export const contractFingerprint = "([a-f0-9]{64})";/u)?.[1];
+    if (!fingerprint) throw new SmokeFailure("python-consumer", "BINDING_FINGERPRINT", "생성 binding에서 계약 지문을 찾지 못했습니다");
+    const pythonOutput = run("python3", [join(productDir, "tools", "python_consumer.py")], "python-consumer", {
+      cwd: wireDir,
+      env: childEnv({
+        PYTHONPATH: join(productDir, "python"), AIP_SMOKE_BASE: base, AIP_SMOKE_TOKEN: token, AIP_SMOKE_FINGERPRINT: fingerprint,
+        AIP_SMOKE_WIRE: wire, ...(worker ? { AIP_SMOKE_WORKER: worker } : {}),
+      }),
+    }).trim();
+    let python;
+    try {
+      python = JSON.parse(pythonOutput);
+    } catch {
+      throw new SmokeFailure("python-consumer", "BAD_CONSUMER_OUTPUT", "Python SDK 소비자가 결과 JSON을 반환하지 않았습니다");
+    }
+    if (!python.catalog || python.readRows !== 1 || !python.sharedReplay || !python.statusReplay || !python.driftRejected) {
+      throw new SmokeFailure("python-consumer", "PYTHON_SDK_BEHAVIOR", "Python SDK의 발견/읽기/멱등 재생/계약 고정 결과가 기대와 다릅니다");
+    }
+    if (worker && (python.operation?.length !== 3 || python.operation.invalidInputRejected !== true || python.operation.job?.status !== "SUCCEEDED" || python.operation.job.length !== 3 || python.operation.job.replayedId !== true)) {
+      throw new SmokeFailure("python-consumer", "PYTHON_OPERATION_BEHAVIOR", "Python SDK의 operation·job 결과가 기대와 다릅니다");
+    }
     const revoked = runJson(binary, ["service", "principal", "--config", configPath, "revoke", "--subject", "user-42"], "principal-revoke");
     if (revoked.affected !== 1) throw new SmokeFailure("principal-revoke", "PRINCIPAL_NOT_REVOKED", "principal 폐기가 적용되지 않았습니다");
     const response = await fetch(`${base}/session`, {
@@ -360,6 +381,7 @@ async function runWire({ binary, wire, workRoot, tarball, worker, extensionDir }
       },
       ...(worker ? { extension: results.extension } : {}),
       ...(worker ? { operation: results.operation } : {}),
+      python,
     };
   } catch (error) {
     failure = error;

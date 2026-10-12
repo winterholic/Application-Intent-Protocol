@@ -114,6 +114,7 @@ test("the installed SDK completes authenticated reads, cache, writes and operati
         replayedWrites: 1,
         revokedRequestsDenied: 1,
       });
+      assert.deepEqual(item.python, { catalog: true, readRows: 1, sharedReplay: true, statusReplay: true, driftRejected: true });
     }
     assert.ok(!JSON.stringify(report).includes("eyJ"), "the report must not contain the generated JWT");
 
@@ -147,6 +148,10 @@ test("the installed SDK completes authenticated reads, cache, writes and operati
         assert.deepEqual(item.operation, {
           length: 3, invalidInputRejected: 1,
           job: { status: "SUCCEEDED", length: 3, replayedId: 1 },
+        });
+        assert.deepEqual(item.python.operation, {
+          length: 3, invalidInputRejected: true,
+          job: { status: "SUCCEEDED", length: 3, replayedId: true },
         });
       }
       assert.ok(!JSON.stringify(extensionReport).includes("eyJ"), "worker smoke report must not contain the generated JWT");

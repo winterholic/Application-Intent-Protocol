@@ -208,6 +208,20 @@
 - trusted worker의 파일시스템은 macOS에서 격리되지 않는다. Linux는 Bubblewrap으로 격리한다. 확장 코드는 서버 배포자가 신뢰하는 코드라는 전제를 유지한다.
 - job의 여러 데이터 전이는 각자 commit된다. 여러 전이를 원자적으로 묶어야 하면 전이 effects나 동기 쓰기 확장으로 표현해야 한다.
 
+## Python 경로 점검 (2026-10-13 후속)
+
+원칙 7은 표준 밖 로직을 JS/TS·Python 공식 확장으로 처리하라고 한다. Python 경로를 쓰임새별로 코드와 테스트로 확인했다.
+
+| 경로 | 상태 | 근거 |
+|---|---|---|
+| 서버 확장(예외 로직) | 지원 | `spikes/spike-v4-worker/workers/worker.py`가 `operation read`·쓰기 확장·durable job을 실행하고 `ctx.data`·`http`·`files`·`events`·`messages`·`jobs`를 Node와 같은 계약으로 제공. v4·v6 suite와 service smoke의 Python worker 실행 |
+| 정의 작성 | 지원 | 다섯 작성 형식 중 `.h.py`(host 블록)와 `.e.py`(정형 데이터). `spike-v1-fixture`의 형식 일치 테스트 |
+| 확장 작성 편의 | 부분 | worker가 주입하는 `ctx`에 타입 stub·설치형 모듈이 없다. 오류는 `except Exception as e: e.code`로 다룬다. JS도 같은 수준이다 |
+| 호출 측 SDK | 부분(이번에 추가) | 이전에는 TypeScript `@aip/sdk`뿐이었다. `product/python/aip_sdk`를 추가했다. 계약 지문 고정, 쓰기 복구, 세션 교체, operation, job·file·event를 제공한다. 생성 binding 기반 정적 타입과 read 캐시, SSE/WebSocket helper, wheel 배포는 없다 |
+| 서버 bridge 어댑터 | 부분 | `product/providers/google_storage.py`(GCS ADC) 하나 |
+
+의존성 패키지화 작업자가 "Python SDK 패키지가 없다"고 보고한 것은 호출 측 SDK를 가리킨다. 서버 확장 경로는 처음부터 있었다. 다음 단계는 `aip service gen --lang python`으로 TypedDict binding을 생성해 정적 타입을 맞추는 것과, 작업자 A의 패키지 구조에 맞춘 wheel 배포다.
+
 ## 이번 회차 설계 선택의 근거
 
 [PRINCIPLES 설계 관문](../../docs/PRINCIPLES.md#4-설계-관문-모든-설계구현-단위가-통과해야-한다)과 [2026-10-13 심층 감사 지침](../sources/founder-deep-audit-directive-2026-10-13.md) §7(문법 증가 통제)에 대한 답이다.

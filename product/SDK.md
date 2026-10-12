@@ -67,3 +67,34 @@ for await (const event of client.events.watch("notifications", { after: "0", sig
 SDK surface에는 `jobs.enqueue/status/cancel/result`, `files.put/get/delete`, `events.read/watch`가 있다. `watch`는 polling async iterator이며 SSE가 아니다. 앱 SDK는 outbound HTTP broker를 직접 노출하지 않는다. 등록 endpoint 호출은 서버 worker의 `ctx.http.call(name,input,key)`만 가능하다.
 
 `JobReceipt.error`는 선택 필드다. 실행 중 cancel은 우선 `CANCEL_REQUESTED`이며, unresolved HTTP effect가 남으면 `FAILED`와 `CANCELLATION_UNCONFIRMED`로 표시한다. status 응답에 `EFFECT_UNKNOWN`이 있으면 외부 provider 처리 여부가 불확실한 상태다. 현재 owner ACL과 권한 변경의 효과는 [managed execution 경계](MANAGED-EXECUTION.md)에 설명했다.
+
+## Python 호출 SDK
+
+`product/python/aip_sdk`는 Python 백엔드·배치·AI agent가 AIP 서비스를 호출하는 공식 SDK다. 표준 라이브러리만 쓰며 Python 3.9 이상에서 동작한다. 서버 쪽 Python 확장(worker의 `ctx`)과는 다른 패키지다.
+
+```python
+from aip_sdk import AipError, WriteUnsettled, connect
+
+# 생성 binding의 `export const contractFingerprint = "..."` 값을 고정하면 배포가 바뀐 것을 감지한다.
+client = connect("https://api.example.com", access_token, contract_fingerprint)
+rows = client.read({"read": "Event", "select": ["id", "checked"]})
+try:
+    result = client.apply({"apply": "Event.mark", "target": {"ids": ["11"]}}, key="mark-11")
+except WriteUnsettled as pending:
+    client.retry_pending()  # 같은 key와 본문으로 다시 확정
+length = client.operation("textLength", {"text": "가😀A"})["length"]
+job = client.jobs.enqueue("report", {"text": "hello"}, key="report-42")
+run = client.jobs.wait(job["id"])
+```
+
+| 기능 | TypeScript SDK와의 관계 |
+|---|---|
+| 계약 지문 | 고정한 지문을 `x-aip-contract`로 보내고 응답 지문과 비교한다. 지문을 주지 않으면 `/capabilities`가 알려 준 값을 쓴다. 이 경우 배포 변경 감지는 고정했을 때만 의미가 있다 |
+| 쓰기 복구 | 통신 실패·`COMMIT_UNKNOWN`·`INTERNAL`이면 같은 key·같은 본문으로 다시 보낸다. 재시도에서 실행 전 거부를 받으면 확정으로 보지 않고 `WriteUnsettled`를 던진다. 같은 key에 다른 본문은 `IDEMPOTENCY_MISMATCH` |
+| 세션 교체 | `replace_session(token)`은 같은 principal일 때만 바꾸고 미확정 쓰기를 다시 확정한다. 다른 사용자면 `ScopeConflict` |
+| 관리 API | `jobs.enqueue/status/result/cancel/wait`, `files.put/get/delete`, `events.read/watch`. SSE·WebSocket helper는 없다 |
+| 타입 | 생성 binding 기반 정적 타입이 없다. 입력·출력 계약은 서버가 검사하고 오류 코드를 `AipError.code`로 돌려준다 |
+| 캐시 | read 캐시가 없다 |
+
+설치는 `pip install ./product/python`이다(배포용 wheel·PyPI 게시는 아직 없음). 단위 검증은 `python3 -m unittest product.tests.python_sdk_test`, 실제 서비스 검증은 `node --test product/tests/service-smoke.test.mjs`다. smoke는 TypeScript 소비자가 커밋한 쓰기를 Python 소비자가 같은 key로 재생하는지까지 확인한다.
+
