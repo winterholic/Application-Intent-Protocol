@@ -24,6 +24,8 @@ await storage.download(id, binaryWritable);
 
 Python은 `create_google_storage_provider(bucket="app-files").for_owner(verified_principal)`로 만들고 `upload(id, source, size=..., content_type=...)`, `download(id, destination)`, `head(id)`, `delete(id)`를 사용한다. 동기 API이므로 async 서버에서는 제한된 thread executor나 별도 작업 queue로 실행한다.
 
+패키지가 설치되지 않은 서버에서 `createGoogleStorageProvider`/`create_google_storage_provider`를 호출하면 `PROVIDER_PACKAGE_MISSING`과 설치 명령으로 실패한다. 이미 만든 client를 주입하는 `createGoogleStorageAdapter`는 SDK를 import하지 않는다.
+
 SDK의 기본 인증 체인이 attached service identity·WIF·로컬 ADC를 처리한다. credential 파일·private key·access token을 프론트에 전달하지 않는다. 배포 identity에 필요한 bucket 권한을 별도로 부여해야 한다. SDK 패키지 버전은 소비자 프로젝트 lockfile로 고정한다.
 
 두 어댑터는 owner namespace, UUID object ID, 업로드 크기, resumable upload, CRC32C 검사와 generation 조건을 사용한다. 업로드는 `ifGenerationMatch=0`으로 덮어쓰기를 거부하며, 다운로드와 삭제는 조회한 generation에 한정한다. 요청별 timeout을 적용하지만 스트림 입력 자체가 멈추는 경우 전체 작업 수명은 호출한 서버에서 제한해야 한다. owner별 누적 quota·비용 예산·미완료 업로드 수명 주기는 bucket 운영 정책의 책임이다.

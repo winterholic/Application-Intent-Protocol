@@ -169,6 +169,8 @@ macOS는 네트워크만 차단하며 filesystem 격리는 보장하지 않는�
 
 `aip-cli`의 의존 crate 수는 기본 빌드 293개, `external-brokers` 392개, `poc-runtime` 358개, 둘 다 켜면 450개다(`cargo tree -p aip-cli --locked -e normal --prefix none --features <목록> | sort -u | wc -l`, 2026-10-13 측정). `poc-runtime` 분리 전 기본 빌드는 358개였다.
 
+Python 공급 경로도 같은 구조다. 호출자 SDK는 TypeScript `@aip/sdk` 하나이며 Python SDK 패키지는 없다. Python은 서버 extension 언어이고, 그 worker 스크립트(`spikes/spike-v4-worker/workers/worker.py`)는 `asyncio`, `json` 등 표준 라이브러리만 쓰며 Rust 바이너리에 포함된다. extension이 필요로 하는 서드파티 패키지는 배포자가 venv에 설치하고 `workers.runtime_executable`, `workers.environment`의 `PYTHONPATH`, `read_only_paths`로 지정한다. 선택 어댑터(`product/providers/google_storage.py`)는 공식 SDK를 호출 시점에 import하며 없으면 `PROVIDER_PACKAGE_MISSING`이다. `pyproject.toml`이나 pip extras는 만들지 않았다. 배포 가능한 Python 패키지가 생기는 시점에 다시 정한다.
+
 패키지가 없는데 설정이 그 기능을 쓰면 **기동 시점**에 거부한다. 기본 빌드에서 `broker` 설정을 주면 DB 접속 전에 `BROKER_FEATURE_DISABLED`로 종료한다(`require_built_features`, `broker_config_is_rejected_when_the_feature_is_not_built` 테스트). PoC runtime 명령도 기본 빌드에서는 `RUNTIME_FEATURE_DISABLED`와 재빌드 명령을 출력하고 종료 코드 1이다(`crates/aip-cli/tests/runtime_disabled.rs`). 선택 패키지를 추가하는 기준은 새 외부 C/C++ 빌드 의존성이나 큰 전이 의존성을 끌어오는지다. PostgreSQL과 이미 포함된 crate만으로 구현되는 기능은 feature로 나누지 않고 서버 설정으로 켠다.
 
 새 직접 의존성의 로컬 Cargo package metadata를 확인했다: `tokio-tungstenite 0.30.0`은 MIT, `futures-util 0.3.34`와 `libc 0.2.189`는 MIT OR Apache-2.0이다. 선택 broker 의존성의 locked metadata는 `lapin 4.12.1`, `rdkafka 0.39.0`, `rdkafka-sys 4.10.0+2.12.1`이 MIT이며 `cmake 0.1.58`은 MIT OR Apache-2.0이다. 전체 transitive 의존성의 별도 특허 검토를 끝냈다는 뜻은 아니다.

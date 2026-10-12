@@ -32,7 +32,12 @@ def create_google_storage_adapter(*, storage, bucket, max_bytes=DEFAULT_MAX_BYTE
 
 def create_google_storage_provider(*, bucket, max_bytes=DEFAULT_MAX_BYTES, timeout_seconds=DEFAULT_TIMEOUT_SECONDS):
     """Load the optional official SDK and use ADC (attached identity/WIF/local ADC)."""
-    from google.cloud import storage
+    try:
+        from google.cloud import storage
+    except ImportError as error:
+        raise RuntimeError(
+            "PROVIDER_PACKAGE_MISSING: install google-cloud-storage in the server environment (python -m pip install google-cloud-storage)"
+        ) from error
 
     client = storage.Client()
     return create_google_storage_adapter(storage=client, bucket=bucket, max_bytes=max_bytes, timeout_seconds=timeout_seconds)

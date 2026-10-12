@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { Readable, Writable } from "node:stream";
 import { test } from "node:test";
-import { createGoogleStorageAdapter } from "../providers/google-storage.mjs";
+import { createGoogleStorageAdapter, createGoogleStorageProvider } from "../providers/google-storage.mjs";
 
 function fakeStorage() {
   const objects = new Map();
@@ -88,4 +88,10 @@ test("rejects invalid IDs and streams whose byte count violates declared size", 
   await assert.rejects(provider.upload(uuid, Readable.from([Buffer.from("too long")]), { size: 2, contentType: "text/plain" }), /size/i);
   await assert.rejects(provider.upload(uuid, Readable.from([Buffer.from("x")]), { size: 1025, contentType: "text/plain" }), /limit/i);
   assert.equal(storage.objects.size, 0);
+});
+
+test("a missing official SDK reports the optional package instead of a raw module error", async (t) => {
+  const installed = await import("@google-cloud/storage").then(() => true, () => false);
+  if (installed) return t.skip("official SDK is installed");
+  await assert.rejects(createGoogleStorageProvider({ bucket: "bucket-a" }), { code: "PROVIDER_PACKAGE_MISSING" });
 });

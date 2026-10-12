@@ -42,7 +42,9 @@ node --test \
   spikes/spike-v6-transport/client/rag.test.ts \
   spikes/spike-v6-transport/client/traverse-many.test.ts \
   product/tests/sdk-package.test.mjs \
-  product/tests/package-boundaries.test.mjs
+  product/tests/package-boundaries.test.mjs \
+  product/tests/google-storage-provider.test.mjs
+python3 -m unittest product.tests.google_storage_provider_test
 
 # Test feature combinations can replace target/debug/aip; rebuild the product last.
 cargo build -p aip-cli --locked

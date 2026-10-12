@@ -22,8 +22,20 @@ export function createGoogleStorageAdapter({ storage, bucket, maxBytes = DEFAULT
 
 /** Loads the official SDK lazily; its Storage() constructor uses ADC. */
 export async function createGoogleStorageProvider(options) {
-  const sdk = await import("@google-cloud/storage");
-  return createGoogleStorageAdapter({ ...options, storage: options.storage ?? new sdk.Storage() });
+  if (options.storage) return createGoogleStorageAdapter(options);
+  let sdk;
+  try {
+    sdk = await import("@google-cloud/storage");
+  } catch (error) {
+    if (error?.code === "ERR_MODULE_NOT_FOUND" && String(error.message).includes("@google-cloud/storage")) {
+      throw Object.assign(new Error("PROVIDER_PACKAGE_MISSING: install @google-cloud/storage in the server project (npm install @google-cloud/storage)"), {
+        code: "PROVIDER_PACKAGE_MISSING",
+        cause: error,
+      });
+    }
+    throw error;
+  }
+  return createGoogleStorageAdapter({ ...options, storage: new sdk.Storage() });
 }
 
 function scopedAdapter({ storage, bucket, maxBytes, uploadTimeoutMs, prefix }) {

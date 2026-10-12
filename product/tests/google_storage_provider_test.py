@@ -1,7 +1,9 @@
 import io
+import sys
 import unittest
+from unittest import mock
 
-from product.providers.google_storage import create_google_storage_adapter
+from product.providers.google_storage import create_google_storage_adapter, create_google_storage_provider
 
 
 class FakeStorage:
@@ -97,6 +99,12 @@ class GoogleStorageProviderTest(unittest.TestCase):
             provider.upload("7de0de57-f817-43f6-9de0-715e92310acd", io.BytesIO(b"x"), size=17, content_type="text/plain")
         with self.assertRaisesRegex(ValueError, "content type"):
             provider.upload("7de0de57-f817-43f6-9de0-715e92310acd", io.BytesIO(b"x"), size=1, content_type="text/plain\r\n")
+
+
+    def test_missing_official_sdk_reports_the_optional_package(self):
+        with mock.patch.dict(sys.modules, {"google": None, "google.cloud": None}):
+            with self.assertRaisesRegex(RuntimeError, "PROVIDER_PACKAGE_MISSING.*google-cloud-storage"):
+                create_google_storage_provider(bucket="bucket-a")
 
 
 if __name__ == "__main__":
