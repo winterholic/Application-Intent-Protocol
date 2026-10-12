@@ -18,6 +18,9 @@ const KEY_TTL: Duration = Duration::from_secs(60);
 const UNKNOWN_KID_REFRESH: Duration = Duration::from_secs(5);
 const REMOTE_TIMEOUT: Duration = Duration::from_secs(2);
 const DB_TIMEOUT: Duration = Duration::from_secs(5);
+/// Principal lookups open their own connection. Without a bound, a flood of correctly signed tokens for unknown
+/// subjects (checked before any rate limit) opens one PostgreSQL connection per request until `max_connections`.
+const MAX_LOOKUP_CONNECTIONS: usize = 16;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -62,6 +65,7 @@ pub struct AuthenticatorImpl {
     schema: String,
     http: reqwest::Client,
     keys: Mutex<KeyState>,
+    lookups: tokio::sync::Semaphore,
 }
 
 fn now_secs() -> Result<i64, AuthError> {
@@ -206,7 +210,27 @@ impl AuthenticatorImpl {
             .map_err(|_| AuthError::Unavailable)?;
         let keys = parse_jwks(&read_jwks(&config.jwks, &http).await?)?;
         let now = Instant::now();
-        Ok(Self { config, db_url, schema, http, keys: Mutex::new(KeyState { keys, loaded: now, last_attempt: None, failed_until: None }) })
+        Ok(Self {
+            config,
+            db_url,
+            schema,
+            http,
+            keys: Mutex::new(KeyState { keys, loaded: now, last_attempt: None, failed_until: None }),
+            lookups: tokio::sync::Semaphore::new(MAX_LOOKUP_CONNECTIONS),
+        })
+    }
+
+    /// A bounded principal-lookup connection; the permit is held while the connection lives.
+    async fn lookup_connection(&self) -> Result<(spike_v2_read::OwnedConnection, tokio::sync::SemaphorePermit<'_>), AuthError> {
+        let permit = tokio::time::timeout(DB_TIMEOUT, self.lookups.acquire())
+            .await
+            .map_err(|_| AuthError::Unavailable)?
+            .map_err(|_| AuthError::Unavailable)?;
+        let db = tokio::time::timeout(DB_TIMEOUT, spike_v2_read::connect_owned_with_url(&self.db_url))
+            .await
+            .map_err(|_| AuthError::Unavailable)?
+            .map_err(|_| AuthError::Unavailable)?;
+        Ok((db, permit))
     }
 
     async fn key_for(&self, kid: &str) -> Result<Arc<DecodingKey>, AuthError> {
@@ -287,10 +311,7 @@ impl AuthenticatorImpl {
 
     pub async fn session_for(&self, token: &str) -> Result<spike_v6_transport::auth::Session, AuthError> {
         let claims = self.verify_token(token).await?;
-        let db = tokio::time::timeout(DB_TIMEOUT, spike_v2_read::connect_owned_with_url(&self.db_url))
-            .await
-            .map_err(|_| AuthError::Unavailable)?
-            .map_err(|_| AuthError::Unavailable)?;
+        let (db, _lookup_slot) = self.lookup_connection().await?;
         let sql = format!("SELECT actor_id, enabled, min_iat FROM \"{}\".aip_principals WHERE issuer=$1 AND subject=$2", self.schema);
         let row = tokio::time::timeout(DB_TIMEOUT, db.query_opt(&sql, &[&claims.issuer, &claims.subject]))
             .await
@@ -327,10 +348,7 @@ impl AuthenticatorImpl {
         {
             return Err(AuthError::Invalid);
         }
-        let db = tokio::time::timeout(DB_TIMEOUT, spike_v2_read::connect_owned_with_url(&self.db_url))
-            .await
-            .map_err(|_| AuthError::Unavailable)?
-            .map_err(|_| AuthError::Unavailable)?;
+        let (db, _lookup_slot) = self.lookup_connection().await?;
         let sql = format!(
             "SELECT actor_id, enabled, min_iat, floor(extract(epoch FROM clock_timestamp()))::bigint FROM \"{}\".aip_principals WHERE issuer=$1 AND subject=$2",
             self.schema
