@@ -515,7 +515,19 @@ async fn principal(config: Config, command: Principal) -> Result<Value, Value> {
         .map_err(|_| error("PRINCIPAL_UNSETTLED", "사용자 연결 변경 결과 불명; 상태 확인 필요"))?
 }
 
+/// Rejects configuration that needs an optional package this binary was built without.
+/// Runs before any database or network access so the operator sees the missing feature first.
+fn require_built_features(config: &Config) -> Result<(), Value> {
+    #[cfg(not(feature = "external-brokers"))]
+    if config.broker.is_some() {
+        return Err(error("BROKER_FEATURE_DISABLED", "broker 설정을 사용하려면 external-brokers feature로 빌드해야 함"));
+    }
+    let _ = config;
+    Ok(())
+}
+
 async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
+    require_built_features(&config)?;
     let facts = load(file, false)?.output.execution;
     let mut infrastructure = infrastructure::build(&config)?;
     let integrations = config.workers.as_ref().map(|workers| workers.integrations.as_slice()).unwrap_or_default();
@@ -546,10 +558,6 @@ async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
     } else {
         None
     };
-    #[cfg(not(feature = "external-brokers"))]
-    if config.broker.is_some() {
-        return Err(error("BROKER_FEATURE_DISABLED", "broker 설정을 사용하려면 external-brokers feature로 빌드해야 함"));
-    }
     #[cfg(not(feature = "external-brokers"))]
     let mut broker_worker: Option<brokers::Worker> = None;
     let deployment = spike_v6_transport::server::DeploymentFence::new(config.schema.clone(), spike_v1_fixture::digest(&facts))
@@ -797,6 +805,19 @@ mod managed_config_tests {
             .unwrap();
             assert_eq!(infrastructure::build(&invalid).err().unwrap()["code"], "INFRASTRUCTURE_CONFIG");
         }
+    }
+
+    #[cfg(not(feature = "external-brokers"))]
+    #[test]
+    fn broker_config_is_rejected_when_the_feature_is_not_built() {
+        let config: Config = serde_json::from_value(json!({
+            "schema":"aip_test",
+            "auth":{"issuer":"https://issuer.example","audience":"aip","jwks":{"kind":"file","path":"jwks.json"}},
+            "broker":{"providers":[],"outbound":[],"inbound":[]}
+        }))
+        .unwrap();
+        let rejected = require_built_features(&config).unwrap_err();
+        assert_eq!(rejected["code"], "BROKER_FEATURE_DISABLED");
     }
 
     #[test]
