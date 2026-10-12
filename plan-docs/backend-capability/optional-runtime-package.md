@@ -54,3 +54,7 @@ feature 이름을 `external-brokers`처럼 기능 단위로 하지 않은 이유
 
 - `aip-runtime` 내부의 axum 분리와 crate 분할. 필요해지면 보안·포괄성 작업이 `aip-runtime`을 끝낸 뒤 별도 설계한다.
 - 제품 경로의 동작·계약·권한 변경.
+
+## 구현 결과 (2026-10-13)
+
+단계 2·3을 구현했다. `cargo tree` 기준 `aip-cli` 기본 빌드는 358개에서 293개로 줄었고 `axum`, `deadpool-postgres`, `chrono-tz`, `aes-gcm`이 빠졌다. 어긋난 가정이 하나 있었다. `golden` 테스트도 `tests/common`을 통해 `aip_runtime`을 쓰므로 `required-features` 목록에 추가했다. 기본 빌드 오류 경로는 `crates/aip-cli/tests/runtime_disabled.rs`가 검사한다. 단계 4는 [INFRASTRUCTURE](../../product/INFRASTRUCTURE.md#선택적-패키지-구조)에 기록했다.
