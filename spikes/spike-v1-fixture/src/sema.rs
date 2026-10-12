@@ -147,6 +147,8 @@ struct Scope {
 }
 
 const UNRESOLVED: &str = "UNRESOLVED_NAME";
+/// `expose apply`가 한 요청에서 다룰 수 있는 행 수의 상한.
+const MAX_BULK_ROWS: i64 = 10_000;
 const MAX_POLICY_EXPANDED_DEPTH: usize = 64;
 const MAX_POLICY_EXPANDED_NODES: usize = 16_384;
 const MAX_POLICY_PATH_SEGMENTS: usize = 64;
@@ -887,8 +889,9 @@ impl<'a> Ctx<'a> {
                 self.d("MISSING_ITEM", "where 대상에는 expose read filter 허용 목록이 필요", ea.span);
             }
             match ea.bulk {
-                Some(n) if n >= 1 => {}
-                Some(_) => self.d("BAD_BUDGET", "bulk maxRows는 1 이상", ea.span),
+                // 상한이 없으면 id 중복 검사와 행 잠금 비용이 요청 하나에 무한히 늘고 `bulk + 1`이 i64를 넘길 수 있다.
+                Some(n) if (1..=MAX_BULK_ROWS).contains(&n) => {}
+                Some(_) => self.d("BAD_BUDGET", format!("bulk maxRows는 1 이상 {MAX_BULK_ROWS} 이하"), ea.span),
                 None => self.d("MISSING_ITEM", "expose apply에 bulk maxRows 필요(무제한 기본값 없음)", ea.span),
             }
             let scope = match &ea.same_scope {

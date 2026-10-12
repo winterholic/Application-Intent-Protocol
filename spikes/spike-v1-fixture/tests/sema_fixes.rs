@@ -60,3 +60,14 @@ fn count_invariants_use_locked_checks_but_time_dependent_conditions_are_rejected
     let c = codes(&sub("atMost 1 where status = PUBLISHED", "atMost 1 where status = PUBLISHED and periodEnd >= now"));
     assert!(c.contains(&"UNSUPPORTED_INVARIANT".to_string()), "{c:?}");
 }
+
+#[test]
+fn bulk_max_rows_has_an_upper_bound() {
+    const DOMAINS: &str = include_str!("../fixture/oss-business-domains.aip");
+    let with = |n: i64| DOMAINS.replacen("expose apply sell { target id; bulk maxRows 1 }", &format!("expose apply sell {{ target id; bulk maxRows {n} }}"), 1);
+    assert_eq!(codes(&with(10_000)), vec!["OK".to_string()]);
+    for n in [10_001, i64::MAX] {
+        let c = codes(&with(n));
+        assert!(c.contains(&"BAD_BUDGET".to_string()), "{n}: {c:?}");
+    }
+}
