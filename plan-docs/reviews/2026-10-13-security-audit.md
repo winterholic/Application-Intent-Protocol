@@ -72,12 +72,20 @@
 | S-14 | 높음 | PoC | select의 계산 항목(`p: m.phone`)·where·정렬 키·group 키가 필드 `visible to`/`masked unless`를 우회해 숨긴 값을 드러냄(P-01·P-02 일부) | 실제 PG, 본인·타인 | 클라이언트 읽기 경로에서 필드 읽기를 정책 조건으로 감쌈(`guard_projection`). 정책식 안의 읽기는 다시 감싸지 않음 | `aip-cli/tests/field_policy_e2e.rs` | 34360be |
 | S-15 | 중간 | 제품 | 서명이 유효한 토큰의 principal 조회가 요청마다 새 PG 연결을 열어 rate limit보다 먼저 연결 수를 늘림(O-04) | 코드 추적 | 조회 연결 동시 16개로 제한, 대기 5초 | 없음(미실행: 공유 DB에서 동시 연결 수 측정이 불안정) | 0b5b8df |
 | S-16 | 낮음 | 제품 | 헤더 이름 뒤 공백(`Content-Length : 5`)을 수용(O-12) | 테스트 | `BAD_REQUEST` | `spike-v6-transport/tests/v8_headers.rs` | 72e191a |
+| S-17 | 중간 | 제품 | `rows read when not actor.suspended` 같은 `not <Bool 경로>`가 `NOT (경로 IS TRUE)`로 컴파일되어 익명 actor(행 없음, 경로가 NULL)가 통과(fail-open). 같은 의미의 `actor.suspended = false`는 거부되어 일관되지 않음 | 실제 PG: 결과 `[1,0,1]`(기대 `[1,0,0]`) | `not <Bool 경로>`는 `경로 IS FALSE`로 컴파일. DDL 부분 인덱스 조건은 기존 의미 유지. 복합식(`not (a and b)`)과 `not exists`는 바꾸지 않았다(O-26 참고) | `spike-v2-read/tests/negated_policy.rs` | 87208a5 |
+| S-18 | 낮음 | 제품 | TS 클라이언트가 redirect를 따라가고(307/308은 본문 재전송), signed URL 검증이 `//host`·`/\host`를 통과시키며 signed 헤더에 `authorization`·`cookie`가 들어갈 수 있음 | 테스트 | `redirect:"error"`, `credentials:"omit"`, 프로토콜 상대·역슬래시 URL 거부, 자격 증명 헤더 거부 | `client/infrastructure.test.ts` | 04977cd |
+| S-19 | 낮음 | 제품 | Python SDK(`urllib`)가 302 redirect에서 `Authorization`을 새 origin으로 보냄, `file://`·`ftp://`·원격 평문 http 허용 | 테스트로 토큰 유출 재현 | redirect 거부, https 또는 loopback http만 허용 | `product/tests/python_sdk_test.py` | 8b6d9d8 |
+| S-20 | 낮음 | 제품 | 읽기·operation 확장의 ctx DB 호출 횟수 상한 없음(O-09) | 테스트(Node·Python) | 64회 초과 시 `CALL_LIMIT` | `spike-v4-worker/tests/v4_1.rs` | 2d93c09 |
+| S-21 | 중간 | 제품 | 사용자 경로 `/jobs/enqueue`가 `schedule:`·`webhook:`·`outbox:` 접두어 key를 받아 서비스 주체가 사람 subject일 때 정식 slot·배달을 `IDEMPOTENCY_MISMATCH`로 선점 가능 | 테스트 | 사용자 경로에서 예약 접두어 거부 | `spike-v6-transport/tests/durable.rs` | 75d602c |
+| S-22 | 낮음 | 제품 | cron step `59/4294967295`가 release에서 wrap되어 매 분 실행, debug에서 panic | 테스트(`attempt to add with overflow`) | `checked_add` | `schedule.rs` 단위 테스트 | 75d602c |
+| S-23 | 낮음 | 제품 | `expose apply bulk maxRows`에 상한이 없어 id 중복 검사 O(n²)와 `bulk + 1` overflow | 테스트 | 1~10000 | `spike-v1-fixture/tests/sema_fixes.rs` | 49dcb91 |
+| S-24 | 정보 | 제품 | S-07 변경이 `spike-v6-transport` lib 테스트 빌드를 깨뜨림(`Runtime` 필드 추가). `tools/verify.sh`는 v4·v6 테스트를 돌리지 않아 못 잡았고 GitHub CI(`verify.yml`)만 잡는 구조. `hosting.rs` 임시 디렉터리 이름이 macOS 시계 해상도로 충돌해 간헐 실패 | 실행 | 필드 추가, 이름에 카운터 | 〃 | 04977cd, 2b6d977 |
 
 ### 3.2 열려 있는 항목(제품 경로)
 
 | ID | 심각도 | 발견 | 상태 |
 |---|---|---|---|
-| O-01 | 중간 [OPEN] | 루트 select에 Ref 필드를 직접 열면 대상 행 정책과 무관하게 원시 FK Id가 나감. traverse·Ref filter는 안 보이는 대상을 null로 취급하므로 "숨은 대상 Id 확인" 방어가 select 경로에서는 무의미해짐 | 코드 추적. 고치면 Ref 출력이 nullable로 바뀌어 SDK 타입과 계약 지문이 달라지므로 창시자 결정 필요. 권고: 정의 작성자가 FK 노출을 선언(`expose`)하거나 기본을 정책 적용으로 |
+| O-01 | 중간 [OPEN] | **실제 PG로 재현**: `Task.team: Team?`, `Team rows read when owner = actor`, `expose read { select id, team }`에서 member 1이 읽으면 자기 팀이 아닌 task 2의 `team: 11`도 받음. 루트 select에 Ref 필드를 직접 열면 대상 행 정책과 무관하게 원시 FK Id가 나감. traverse·Ref filter는 안 보이는 대상을 null로 취급하므로 "숨은 대상 Id 확인" 방어가 select 경로에서는 무의미해짐 | 코드 추적. 고치면 Ref 출력이 nullable로 바뀌어 SDK 타입과 계약 지문이 달라지므로 창시자 결정 필요. 권고: 정의 작성자가 FK 노출을 선언(`expose`)하거나 기본을 정책 적용으로 |
 | O-02 | 낮음 | `transition`의 `from`/`to`/`repeat unchanged`가 field read 정책 필드를 참조하면 `/apply` 응답의 `changed`/`unchanged`·`INVALID_STATE`로 이전 값을 추론할 수 있음 | 미재현. sema가 이 조합을 막는지 확인 필요 |
 | O-03 | 낮음 [OPEN] | `/read`·`/apply`·`/status`는 `X-AIP-Contract` 헤더가 없어도 통과(다른 경로는 필수). 권한 우회는 아님 | 설계 결정. raw 클라이언트 호환과 맞바꿈 |
 | O-04 | 낮음 | 위 S-15로 연결 수는 16개로 묶였다. 인증 조회 자체는 여전히 admission 앞에서 실행되므로 풀 연결·rate limit 통합은 남음 | 부분 조치 |
@@ -94,6 +102,19 @@
 | O-15 | 정보 | 의존성: `rsa 0.9.10`(RUSTSEC-2023-0071, Marvin)은 `jsonwebtoken`을 통해 들어오고 이 코드는 검증만 하므로 개인키 연산 노출은 없음. `rustls-pemfile 2.2.0`(RUSTSEC-2025-0134)은 유지보수 중단 공지. 나머지 436개 crates.io 패키지는 OSV 조회에서 알려진 취약점 없음(`cargo audit` 미설치, OSV `querybatch`로 대체). `npm audit` 0건, install script 없음 | 2026-10-13 조회 |
 | O-16 | 낮음 | 63바이트 초과 식별자 검증 없음(`aip-pg` DDL, 이름 충돌 시 인덱스 누락·제약 오류 사유 대체). `aip-migrate`는 63바이트 검증 있음 | 코드 추적 |
 | O-17 | 낮음 | `evolve`가 `public` 스키마의 AIP 소유가 아닌 `__` 포함 트리거·`__…_fn` 함수를 삭제할 수 있음 | 코드 추적 (PoC 마이그레이션) |
+| O-19 | 중간 | trigger(webhook·schedule·outbox) 대상 operation은 일반 job이라 `allow`가 열려 있으면 인증된 사용자가 `/jobs/enqueue`로 `{body:"위조"}`를 직접 넣어 HMAC 검증을 우회할 수 있음. 실행은 호출자 자신의 권한이지만 확장이 body 출처를 신뢰하면 업무 규칙이 깨짐 | 코드 추적. trigger 전용 operation 표식이나 `allow actor = 서비스 actor` 강제와 문서 경고 필요 |
+| O-20 | 중간 | 서비스 주체 job 이력은 보존 상한 면제인데 만료 정리는 분당 100건, 이벤트 key ledger·`aip_outbox_dispatch`·`aip_outbox`는 정리가 없고 job 입출력 바이트 quota도 없음(files 10MiB·messages 64MiB와 불일치). outbox relay는 매초 topic별 전체 이력을 anti-join | 코드 추적(부하 미측정) |
+| O-21 | 낮음 | 실행 중 job의 250ms heartbeat가 principal 재검증에서 한 번 `DB_UNAVAILABLE`을 받으면 worker가 종료되고, PENDING http effect가 있으면 영구 `EFFECT_UNKNOWN`. S-15의 조회 연결 상한(16)과 겹치면 포화 시 증폭 | 코드 추적 |
+| O-22 | 중간 | 런타임과 migration이 같은 DB 역할을 씀. `serve`가 시작할 때 `CREATE SCHEMA/TABLE`을 하므로 서버 프로세스가 사실상 owner. 최소 권한 가이드 없음 | 코드 추적. migrate 전용 URL과 runtime 전용 URL 분리 권고 |
+| O-23 | 낮음 | `/ready`가 인증 없이 전역 `Semaphore(1)`을 쓰고 `DEPLOYMENT_CHANGED`/`DB_UNAVAILABLE`을 구분해 응답. 공개 프록시에 노출되면 flood가 LB의 정상 probe를 막음 | 코드 추적. probe는 내부 listener 권고 |
+| O-24 | 낮음 | migration `plan_digest UNIQUE`가 A→B→A→B 순환의 두 번째 적용을 롤백시킴. `requiresReview`는 보고만 하고 apply에서 강제하지 않음. Time→Date 변환이 세션 TimeZone에 의존 | 코드 추적 |
+| O-25 | 중간(가용성) | `check`/정원 제약이 선언된 resource가 있으면 관련 없는 전이의 `/apply`마다 각 resource에 `xmin = pg_current_xact_id()` 전체 스캔(인덱스 불가). 테이블이 커지면 `statement_timeout` 2초에 걸려 전 쓰기가 `DEADLINE_EXCEEDED` | 코드 추적. 이번 트랜잭션이 건드린 resource만 검사하도록 추적 필요 |
+| O-26 | 중간 | 행의 부재에 의존하는 정책(`allow not exists Booking b where b.room = r.room and b.status = CONFIRMED`)은 서로 다른 행을 동시에 바꾸는 요청을 막지 못함(이중 예약). `atMost 1` 불변식만 막음. sema가 경고하지 않음. 설계 문서 V3-R5에 한계로만 있음. `not exists`가 익명 actor에게 열리는 것은 의미상 옳지만 정의 작성자가 `actor != null`을 써야 함 | 코드 추적. sema 경고 권고 |
+| O-27 | 낮음 | 불변식 위반 코드(`ALREADY_EXISTS`, `INVARIANT_VIOLATED`)로 `rows read`에 가려진 행의 존재·정원 상태를 추론할 수 있음 | 코드 추적. 설계상 허용 여부 결정 필요 |
+| O-28 | 낮음 | 쓰기 판정의 `now`가 트랜잭션 전에 고정되어 멱등·행 잠금 대기(최대 2초)만큼 마감을 지난 뒤에도 `allow now < deadline`이 통과할 수 있음. 비-`maxRows` update effect의 락 순서 비고정(교착 시 `CONFLICT` 재시도). advisory lock 키가 32비트 해시를 공유 | 코드 추적 |
+| O-29 | 낮음 | TS 클라이언트: 응답 크기·content-type 검사 없음, 응답 유실 뒤 `BAD_REQUEST`를 받은 pending 쓰기를 버릴 방법 없음, `WriteUnsettled` 뒤 키 없이 `apply`를 다시 부르면 새 키로 중복 쓰기. 배포 artifact의 `bin/aip`에 로컬 경로(`~/.cargo/registry`)가 들어가고 `SHA256SUMS`는 서명 없음 | 코드 추적, `strings` 확인 |
+| O-30 | 낮음 | `__proto__`라는 필드·resource 이름은 생성 descriptor에서 own key가 아니라 prototype 설정으로 해석되어 해당 이름을 쓰는 읽기·확장 호출이 항상 거부됨(실패는 닫힌 방향) | 코드 추적 |
+| O-31 | 낮음 | cron 일·요일 필드가 `*/2` 형태면 OR로 평가(Vixie는 AND). webhook 본문이 JSON escape 뒤 1MiB를 넘으면 영구 실패인데 503+`Retry-After`로 재시도 유도. job key에 deployment digest가 있어 배포 중 provider 재전송이 새 job이 될 수 있음 | 코드 추적 |
 | O-18 | 낮음 | `predicate` 인라이닝으로 20단계 정의가 118MB DDL·RSS 1.3GB(`aip ddl`) | 재현됨(독립 검토). 제품 경로 `spike-v1`은 노드 4096 한도 |
 
 ### 3.3 열려 있는 항목(PoC 런타임, `poc-runtime` feature)
