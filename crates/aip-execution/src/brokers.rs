@@ -392,34 +392,9 @@ fn host_is_private_literal(host: &str) -> bool {
     }) || host.eq_ignore_ascii_case("localhost")
 }
 
+// HTTP broker와 같은 공개 주소 정책을 쓴다. 정책이 갈라지면 전환 대역(6to4·NAT64·IPv4-compatible)으로 사설 대상을 우회한다.
 fn is_public_address(ip: std::net::IpAddr) -> bool {
-    match ip {
-        std::net::IpAddr::V4(ip) => {
-            let [a, b, c, _] = ip.octets();
-            !(ip.is_private()
-                || ip.is_loopback()
-                || ip.is_link_local()
-                || ip.is_unspecified()
-                || ip.is_multicast()
-                || ip.is_broadcast()
-                || a == 0
-                || (a == 100 && (64..=127).contains(&b))
-                || (a == 192 && b == 0 && (c == 0 || c == 2))
-                || (a == 198 && (b == 18 || b == 19 || b == 51 && c == 100))
-                || (a == 203 && b == 0 && c == 113)
-                || a >= 240)
-        }
-        std::net::IpAddr::V6(ip) => {
-            let segments = ip.segments();
-            !(ip.is_loopback()
-                || ip.is_unique_local()
-                || ip.is_unicast_link_local()
-                || ip.is_unspecified()
-                || ip.is_multicast()
-                || ip.to_ipv4_mapped().is_some_and(|v4| !is_public_address(v4.into()))
-                || (segments[0] == 0x2001 && segments[1] == 0x0db8))
-        }
-    }
+    crate::integrations::is_public_address(ip)
 }
 
 async fn verify_configured_endpoints(config: &BrokerConfig) -> Result<(), RelayError> {
@@ -931,5 +906,20 @@ mod quarantine_tests {
         assert_eq!(value["originalBytes"], raw.len());
         assert_eq!(value["truncated"], true);
         assert_eq!(value["sha256"], format!("{:x}", Sha256::digest(&raw)));
+    }
+}
+
+#[cfg(test)]
+mod address_policy_tests {
+    use super::is_public_address;
+
+    #[test]
+    fn transition_and_special_use_ranges_are_not_public_broker_destinations() {
+        for address in ["2002:7f00:1::", "64:ff9b::7f00:1", "::7f00:1", "2001::1", "192.88.99.1", "0.1.2.3", "3fff::1"] {
+            assert!(!is_public_address(address.parse().unwrap()), "{address}");
+        }
+        for address in ["1.1.1.1", "2606:4700:4700::1111"] {
+            assert!(is_public_address(address.parse().unwrap()), "{address}");
+        }
     }
 }

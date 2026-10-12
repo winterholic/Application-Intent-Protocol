@@ -275,7 +275,7 @@ fn parse_retry_after(value: &HeaderValue) -> Option<u64> {
     value.to_str().ok()?.parse::<u64>().ok().map(|seconds| seconds.min(MAX_RETRY_AFTER_SECONDS))
 }
 
-fn is_public_address(ip: IpAddr) -> bool {
+pub(crate) fn is_public_address(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(ip) => {
             let octets = ip.octets();
