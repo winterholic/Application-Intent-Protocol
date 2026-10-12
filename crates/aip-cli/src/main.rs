@@ -418,12 +418,12 @@ fn run() -> Result<ExitCode> {
     }
 }
 
-/// The PoC runtime commands need the optional `poc-runtime` build; the product path is `aip service`.
-#[cfg(not(feature = "poc-runtime"))]
 fn definition_entry(c: &aip_service::definition_codes::Info) -> serde_json::Value {
     serde_json::json!({"code": c.code, "title": c.title, "explain": c.explain, "fix": c.fix, "example": c.example})
 }
 
+/// The PoC runtime commands need the optional `poc-runtime` build; the product path is `aip service`.
+#[cfg(not(feature = "poc-runtime"))]
 fn poc_runtime_disabled() -> Result<ExitCode> {
     eprintln!(
         "RUNTIME_FEATURE_DISABLED: this command belongs to the PoC runtime, which this binary was built without. \
