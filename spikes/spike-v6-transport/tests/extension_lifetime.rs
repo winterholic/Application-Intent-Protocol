@@ -16,6 +16,11 @@ mod macos {
     use tokio::time::{sleep, timeout};
 
     const FIXTURE: &str = include_str!("../../spike-v1-fixture/fixture/recruitment.aip");
+    // The worker is spawned per request and the deadline clock includes interpreter cold start and
+    // module import, which the test does not control (Node alone takes ~60ms idle and 130-210ms under
+    // CPU load). The worker spins forever, so any deadline proves the same reap invariant; it only has
+    // to be long enough for the handler to start and write its PID before the server kills it.
+    const TIMEOUT_CASE_DEADLINE_MS: u64 = 1000;
     static NEXT_DIR: AtomicU64 = AtomicU64::new(0);
 
     struct OwnedDir(PathBuf);
@@ -207,14 +212,14 @@ mod macos {
                 return;
             }
         };
-        let server = match start_server(100, config).await {
+        let server = match start_server(TIMEOUT_CASE_DEADLINE_MS, config).await {
             Ok(server) => server,
             Err(error) => {
                 failures.push(format!("{lang:?} timeout server startup: {:?}", error.kind()));
                 return;
             }
         };
-        let facts = facts(100);
+        let facts = facts(TIMEOUT_CASE_DEADLINE_MS);
         let fingerprint = contract_fingerprint_with_extensions(&facts, IdWire::SafeNumber);
         let token = server.keys.issue(1, 600);
         let result = post(server.address, &token, &fingerprint).await;
