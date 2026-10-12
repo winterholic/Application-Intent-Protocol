@@ -335,3 +335,17 @@ async fn oauth_client_credentials_token_is_fetched_cached_refreshed_on_401_and_n
     leaked.oauth.as_mut().unwrap().resolved = vec!["10.0.0.5:443".parse().unwrap()];
     assert!(Broker::new(vec![leaked]).is_err(), "the token endpoint follows the same private-network rule");
 }
+
+#[test]
+fn oauth_config_debug_output_never_contains_the_client_secret() {
+    let oauth = aip_execution::integrations::OAuthConfig {
+        token_url: "https://auth.example/token".into(),
+        resolved: vec!["1.1.1.1:443".parse().unwrap()],
+        client_id: "client".into(),
+        client_secret: "super-secret-value".into(),
+        scope: None,
+        basic_auth: true,
+    };
+    let text = format!("{oauth:?}");
+    assert!(!text.contains("super-secret-value"), "{text}");
+}

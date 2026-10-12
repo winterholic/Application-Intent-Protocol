@@ -32,7 +32,7 @@ pub enum Error {
 
 /// OAuth 2.0 client-credentials grant (RFC 6749 §4.4) for an endpoint, like Spring OAuth2 Client or
 /// authlib. The server fetches and caches the access token; the extension never sees it.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct OAuthConfig {
     pub token_url: String,
     /// Vetted DNS answers for the token endpoint, pinned like the API endpoint's.
@@ -42,6 +42,18 @@ pub struct OAuthConfig {
     pub scope: Option<String>,
     /// `client_secret_basic` (HTTP Basic) when true, otherwise `client_secret_post` (form fields).
     pub basic_auth: bool,
+}
+
+// A derived Debug would print the client secret into any log line that formats the config.
+impl std::fmt::Debug for OAuthConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OAuthConfig")
+            .field("token_url", &self.token_url)
+            .field("client_id", &self.client_id)
+            .field("client_secret", &"<redacted>")
+            .field("scope", &self.scope)
+            .finish_non_exhaustive()
+    }
 }
 
 struct OAuthClient {
