@@ -178,6 +178,24 @@ endpoint마다 `circuit_breaker`를 설정하면 Resilience4j·opossum과 같은
 - `open_ms`가 지나면 요청 하나만 시험으로 보낸다(half-open). 성공하면 닫고, 실패하면 다시 연다. 시험 요청이 끝나지 않으면 `open_ms` 뒤에 다른 시험을 허용한다.
 - 상태는 서버 process마다 따로 둔다. 여러 instance가 상태를 공유하지 않는다. 설정값은 요청의 의미를 바꾸지 않으므로 implementation fingerprint에 넣지 않는다.
 
+### OAuth client credentials
+
+endpoint가 OAuth 2.0 access token을 요구하면 `oauth2`를 설정한다. Spring OAuth2 Client의 `client_credentials` 등록, authlib `OAuth2Session`에 해당한다. 서버가 token을 받아 캐시하고 `Authorization: Bearer` header로 붙인다. 확장은 token을 보지 못한다.
+
+```json
+{"name":"crm","url":"https://api.crm.example/v1/tickets","method":"POST","timeout_ms":5000,
+ "max_request_bytes":65536,"max_response_bytes":65536,
+ "oauth2":{"token_url":"https://auth.crm.example/oauth/token","client_id_env":"CRM_CLIENT_ID",
+           "client_secret_env":"CRM_CLIENT_SECRET","scope":"tickets.write","auth_method":"client_secret_basic"}}
+```
+
+- client id와 secret은 지정한 환경 변수에서만 읽는다. `auth_method`는 `client_secret_basic`(기본, HTTP Basic)이나 `client_secret_post`(form 필드)다.
+- token endpoint도 API endpoint와 같은 규칙을 거친다. 시작할 때 DNS를 고정하고, HTTPS여야 하며, 사설 주소는 `allow_private_networks`가 있을 때만 허용한다. redirect와 proxy는 따르지 않는다.
+- token은 `expires_in`(없으면 5분, 최대 24시간)보다 30초 먼저 갱신한다. API가 401을 돌려주면 캐시를 버려 다음 호출이 새 token을 받는다. 401 응답 자체는 확장에 그대로 돌려준다.
+- token을 받지 못하면 API 요청을 보내지 않고 `INTEGRATION_AUTH_FAILED`를 던진다. `CIRCUIT_OPEN`처럼 확정 미전송이므로 journal에 기록을 남기지 않고 같은 key로 다시 보낼 수 있다.
+- `oauth2`를 쓰는 endpoint는 `secret_header_env`로 `authorization` header를 설정할 수 없다. token endpoint·client id·secret digest·scope는 implementation fingerprint에 들어간다. 어느 계정으로 호출하는지가 바뀌기 때문이다.
+- authorization code 흐름(사용자별 token 저장과 refresh)은 지원하지 않는다. 사용자 계정 연동은 앱이 token을 업무 데이터로 저장하고 확장에서 쓰는 방식이 필요하며, 저장 암호화는 아직 제품 기능이 아니다.
+
 ## 스케줄과 웹훅 수신
 
 요청한 사용자가 없는 작업(정기 정산, 외부 서비스 webhook 처리)은 서비스 설정의 `schedules`, `webhooks`로 선언한다. 둘 다 별도 controller 없이 durable job을 수락하며, 운영자가 `aip service principal bind`로 등록한 **서비스 주체**로 실행한다. job은 사용자가 수락한 job과 같은 배포 fence, 주체 활성 검사, operation `allow`, capability 선언, 비용 상한을 거친다. 서비스 주체를 `revoke`하거나 비활성화하면 다음 trigger부터 수락하지 않는다.

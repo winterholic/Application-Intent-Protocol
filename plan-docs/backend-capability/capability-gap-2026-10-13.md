@@ -31,6 +31,7 @@
 | D09 DLQ, I10 운영 진단 | 부분 / 부분 | 지원 / 부분 | `aip service jobs list`(payload 미출력)·`retry`(같은 run 재큐, 미확정 효과·다른 배포·만료는 거부). [OPERATIONS](../../product/OPERATIONS.md#실패-job-조회와-재처리) |
 | F10 외부 실패 처리, F11 Circuit Breaker | 부분 / 부분 | 지원 / 지원 | endpoint별 `circuit_breaker`, 열린 동안 `CIRCUIT_OPEN`(journal 기록 없음, 같은 key 재전송 가능). [Circuit breaker](../../product/MANAGED-EXECUTION.md#circuit-breaker) |
 | E02 Event Handler, E04 메시지 브로커 | 부분 / 부분 | 지원 / 지원 | 서비스 설정 `message_handlers`, 메시지당 job 하나(`message:<id>` key), 수락 실패는 nack 후 DLQ. [메시지 큐 소비 job](../../product/MANAGED-EXECUTION.md#메시지-큐-소비-job) |
+| F02 OAuth 외부 연동 | 미지원 | 부분 | integration `oauth2` client credentials. [OAuth client credentials](../../product/MANAGED-EXECUTION.md#oauth-client-credentials) |
 
 ## A. 데이터
 
@@ -119,7 +120,7 @@
 | ID | 기능 | 타 프레임워크 대표 구현 | AIP 현재 | 근거·남은 갭 |
 |---|---|---|---|---|
 | F01 | HTTP API 호출 | RestClient/WebClient, HttpModule, requests/httpx, Faraday | 지원 | 이름 기반 endpoint, SSRF·DNS 고정, effect key |
-| F02 | OAuth 외부 연동 | Spring OAuth2 Client, authlib | 미지원 | token 저장·갱신 계약 없음. 고정 secret header만 |
+| F02 | OAuth 외부 연동 | Spring OAuth2 Client, authlib | 부분 | endpoint별 `oauth2` client credentials(token 캐시·만료 전 갱신·401 시 폐기, token 실패는 확정 미전송). 사용자별 authorization code·refresh token 저장은 없음 |
 | F03 | 결제 | Stripe SDK + webhook controller | 확장 | `ctx.http`(멱등 key) + Stripe webhook 수신 + 상태 전이. PSP 어댑터·대사 없음 |
 | F04 | 이메일 | JavaMailSender, ActionMailer | 확장 | provider HTTP API. 템플릿·수신 동의 계약 없음 |
 | F05 | SMS | provider SDK | 확장 | 같은 경로 |
@@ -194,9 +195,9 @@
 | 판정 | 개수 |
 |---|---|
 | 지원 | 36 |
-| 부분 | 48 |
+| 부분 | 49 |
 | 확장 | 12 |
-| 미지원 | 9 |
+| 미지원 | 8 |
 
 ## JS/TS·Python 확장 경로 점검
 
@@ -260,7 +261,7 @@
 | 3 | I02·I03 Metrics·Tracing | 운영 가시성 | metrics는 의존성 없이 기본 빌드에 구현. 남은 것: 내부 상태 metric, `traceparent` 전파, OpenTelemetry exporter(선택 패키지) |
 | 4 | ~~D08·C09 retry 정책~~ | 2026-10-13 구현(`job_policies`, `ctx.retryLater`, `ctx.job`) | 남은 것: 확장이 대기 시간을 지정하는 `retryLater(reason, {afterMs})` |
 | 5 | E05 발신 webhook | 고객 구독형 SaaS | PoC `outbound.rs` 서명·재시도·SSRF 규칙을 job effect로 이식 |
-| 6 | ~~F11 circuit breaker~~, F02 OAuth token | breaker는 2026-10-13 구현 | 남은 것: integration 설정에 OAuth client-credentials token provider |
+| 6 | ~~F11 circuit breaker, F02 client credentials~~ | 2026-10-13 구현 | 남은 것: 사용자별 OAuth token 저장(저장 암호화 B10과 함께) |
 | 7 | H04 데이터 변경 push | 협업 UI | PoC subscribe의 재조회·가시성 재평가 모델 이식 |
 
 선택 의존성 메모(작업자 A 구조 참고): 이번 회차의 schedule·webhook·outbox 릴레이·health·`ctx.data`는 추가 외부 서비스 없이 PostgreSQL만 쓰는 core 기능이라 기본 빌드에 둔다. cron 시간대 계산에 `chrono`(이미 transitive)와 `chrono-tz`를 transport에 직접 의존으로 추가했다. 3번 metrics·tracing exporter와 5번 발신 webhook의 HTTP client는 선택 패키지 후보다.

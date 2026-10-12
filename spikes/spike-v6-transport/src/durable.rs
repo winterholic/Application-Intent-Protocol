@@ -1185,9 +1185,9 @@ impl Host {
                 locked_lease(&tx, &self.rt, &self.lease).await?;
                 let result = match response {
                     Ok(r) => json!({"status":r.status,"body":r.body,"retryAfterSeconds":r.retry_after_seconds}),
-                    Err(aip_execution::integrations::Error::CircuitOpen) => {
-                        // Nothing was sent, so drop the intent instead of leaving an unknown effect; the
-                        // extension can catch CIRCUIT_OPEN or throw ctx.retryLater() and resend the same key.
+                    Err(rejected @ (aip_execution::integrations::Error::CircuitOpen | aip_execution::integrations::Error::TokenUnavailable)) => {
+                        // Nothing was sent, so drop the intent instead of leaving an unknown effect; the extension can
+                        // catch the code or throw ctx.retryLater() and resend the same key.
                         tx.execute(
                             &format!("DELETE FROM {s}.aip_effects WHERE run_id=$1 AND effect_key=$2 AND state='PENDING'"),
                             &[&self.lease.run_id, &effect_key],
@@ -1196,7 +1196,11 @@ impl Host {
                         .map_err(db_error)?;
                         tx.commit().await.map_err(db_error)?;
                         db.release().await.map_err(db_error)?;
-                        return Err("CIRCUIT_OPEN");
+                        return Err(if rejected == aip_execution::integrations::Error::CircuitOpen {
+                            "CIRCUIT_OPEN"
+                        } else {
+                            "INTEGRATION_AUTH_FAILED"
+                        });
                     }
                     Err(_) => {
                         tx.execute(

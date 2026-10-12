@@ -140,6 +140,7 @@ async fn an_open_circuit_rejects_without_sending_and_leaves_no_unknown_effect() 
             allow_loopback: true,
             allow_private_networks: false,
             circuit_breaker: Some(CircuitBreaker { failure_threshold: 1, open_for: Duration::from_secs(60) }),
+            oauth: None,
         }])
         .unwrap();
         let before = requests.load(std::sync::atomic::Ordering::SeqCst);
@@ -179,4 +180,54 @@ async fn an_open_circuit_rejects_without_sending_and_leaves_no_unknown_effect() 
         assert_eq!(effects[0].1, "SUCCEEDED", "{lang:?}: {effects:?}");
         server.shutdown().await.unwrap();
     }
+
+    // An OAuth token endpoint that refuses to issue a token: the API call is never sent and no effect remains.
+    let broker = Broker::new(vec![EndpointConfig {
+        name: "crm".into(),
+        url: format!("http://127.0.0.1:{}/crm", address.port()),
+        method: "POST".into(),
+        timeout: Duration::from_secs(2),
+        max_request_bytes: 4096,
+        max_response_bytes: 4096,
+        secret_header: None,
+        resolved: vec![address],
+        allow_loopback: true,
+        allow_private_networks: false,
+        circuit_breaker: None,
+        oauth: Some(aip_execution::integrations::OAuthConfig {
+            token_url: format!("http://127.0.0.1:{}/token", address.port()),
+            resolved: vec![address],
+            client_id: "client".into(),
+            client_secret: "secret".into(),
+            scope: None,
+            basic_auth: true,
+        }),
+    }])
+    .unwrap();
+    let server = listen_with_infrastructure(
+        facts.clone(),
+        IdWire::SafeNumber,
+        "127.0.0.1:0".parse().unwrap(),
+        spike_v2_read::DB_URL.into(),
+        Some(ReadExtensions { lang: WorkerLang::Node, dir: concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/job-retry").into() }),
+        ServerOptions::default(),
+        false,
+        auth.clone(),
+        Some(DeploymentFence::new(schema.clone(), digest.clone()).unwrap()),
+        Some(Arc::new(broker)),
+        false,
+        Infrastructure::default(),
+    )
+    .await
+    .unwrap();
+    let before = requests.load(std::sync::atomic::Ordering::SeqCst);
+    let queued = post(server.address, "/jobs/enqueue", &fp, json!({"operation":"callout","input":{},"key":"callout-oauth","delayMs":0})).await;
+    let id = queued["run"]["id"].as_str().unwrap().to_string();
+    let status = settle(server.address, &fp, &id).await;
+    assert_eq!(status["run"]["state"], "FAILED", "{status}");
+    // Only the token endpoint was contacted.
+    assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst) - before, 1);
+    let effects: i64 = db.query_one(&format!("SELECT count(*) FROM {schema}.aip_effects WHERE run_id=$1::text::uuid"), &[&id]).await.unwrap().get(0);
+    assert_eq!(effects, 0, "a call refused for want of a token must not leave an effect");
+    server.shutdown().await.unwrap();
 }

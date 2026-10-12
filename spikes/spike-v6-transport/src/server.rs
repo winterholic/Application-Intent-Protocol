@@ -748,6 +748,7 @@ mod extension_config_tests {
             allow_loopback: true,
             allow_private_networks: false,
             circuit_breaker: None,
+            oauth: None,
         }])
         .unwrap();
         assert!(validate_job_broker(&facts, true, Some(&broker)).is_err());
@@ -764,6 +765,7 @@ mod extension_config_tests {
             allow_loopback: true,
             allow_private_networks: false,
             circuit_breaker: None,
+            oauth: None,
         }])
         .unwrap();
         assert!(validate_job_broker(&facts, true, Some(&broker)).is_ok());

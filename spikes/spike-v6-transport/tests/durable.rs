@@ -226,6 +226,7 @@ fn endpoint(name: &str, url: String, address: SocketAddr) -> EndpointConfig {
         allow_loopback: true,
         allow_private_networks: false,
         circuit_breaker: None,
+        oauth: None,
     }
 }
 

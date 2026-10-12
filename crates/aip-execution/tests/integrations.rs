@@ -17,6 +17,7 @@ fn config(url: String, resolved: Vec<SocketAddr>, allow_loopback: bool) -> Endpo
         allow_loopback,
         allow_private_networks: false,
         circuit_breaker: None,
+        oauth: None,
     }
 }
 
@@ -247,4 +248,90 @@ async fn circuit_breaker_stops_sending_after_consecutive_failures_and_closes_aft
     let mut invalid = config("https://api.example/v1".into(), vec!["1.1.1.1:443".parse().unwrap()], false);
     invalid.circuit_breaker = Some(CircuitBreaker { failure_threshold: 0, open_for: Duration::from_secs(1) });
     assert!(Broker::new(vec![invalid]).is_err());
+}
+
+#[tokio::test]
+async fn oauth_client_credentials_token_is_fetched_cached_refreshed_on_401_and_never_sent_without_one() {
+    use aip_execution::integrations::{Error, OAuthConfig};
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    };
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    // Which token the provider currently issues and accepts; None makes the token endpoint fail.
+    let current = Arc::new(Mutex::new(Some("t1".to_string())));
+    let (fetches, api_calls) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+    let token_requests = Arc::new(Mutex::new(Vec::<String>::new()));
+    let (issued, fetched, called, seen) = (current.clone(), fetches.clone(), api_calls.clone(), token_requests.clone());
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let mut stream = stream.unwrap();
+            let mut buffer = vec![0_u8; 8192];
+            let read = stream.read(&mut buffer).unwrap_or(0);
+            let request = String::from_utf8_lossy(&buffer[..read]).to_string();
+            let token = issued.lock().unwrap().clone();
+            let (status, body) = if request.starts_with("POST /token") {
+                fetched.fetch_add(1, Ordering::SeqCst);
+                seen.lock().unwrap().push(request.clone());
+                match token {
+                    Some(token) => ("200 OK", format!("{{\"access_token\":\"{token}\",\"token_type\":\"Bearer\",\"expires_in\":3600}}")),
+                    None => ("500 Internal Server Error", "{}".to_string()),
+                }
+            } else {
+                called.fetch_add(1, Ordering::SeqCst);
+                let authorized = token.is_some_and(|token| request.to_ascii_lowercase().contains(&format!("authorization: bearer {token}")));
+                if authorized { ("200 OK", "{\"ok\":true}".to_string()) } else { ("401 Unauthorized", "{}".to_string()) }
+            };
+            let _ = stream.write_all(
+                format!("HTTP/1.1 {status}\r\ncontent-type: application/json\r\nconnection: close\r\ncontent-length: {}\r\n\r\n{body}", body.len())
+                    .as_bytes(),
+            );
+        }
+    });
+    let endpoint = |basic: bool| {
+        let mut endpoint = config(format!("http://127.0.0.1:{}/api", address.port()), vec![address], true);
+        endpoint.secret_header = None;
+        endpoint.oauth = Some(OAuthConfig {
+            token_url: format!("http://127.0.0.1:{}/token", address.port()),
+            resolved: vec![address],
+            client_id: "client-a".into(),
+            client_secret: "secret-a".into(),
+            scope: Some("tickets.write".into()),
+            basic_auth: basic,
+        });
+        endpoint
+    };
+    let broker = Broker::new(vec![endpoint(true)]).unwrap();
+    assert_eq!(broker.call("crm.createTicket", &json!({})).await.unwrap().status, 200);
+    assert_eq!(broker.call("crm.createTicket", &json!({})).await.unwrap().status, 200);
+    assert_eq!(fetches.load(Ordering::SeqCst), 1, "a valid token is cached");
+    let first = token_requests.lock().unwrap()[0].clone();
+    assert!(first.contains("grant_type=client_credentials") && first.contains("scope=tickets.write"), "{first}");
+    // client_secret_basic: base64("client-a:secret-a"), and the secret is not in the form body.
+    assert!(first.contains("authorization: Basic Y2xpZW50LWE6c2VjcmV0LWE="), "{first}");
+    assert!(!first.contains("client_secret="), "{first}");
+
+    // The provider rotates its token: the stale one is rejected once, then a fresh one is fetched.
+    *current.lock().unwrap() = Some("t2".into());
+    assert_eq!(broker.call("crm.createTicket", &json!({})).await.unwrap().status, 401);
+    assert_eq!(broker.call("crm.createTicket", &json!({})).await.unwrap().status, 200);
+    assert_eq!(fetches.load(Ordering::SeqCst), 2);
+
+    // Without a token the API is never contacted, which is a certain not-sent outcome.
+    *current.lock().unwrap() = None;
+    let before = api_calls.load(Ordering::SeqCst);
+    let post = Broker::new(vec![endpoint(false)]).unwrap();
+    assert_eq!(post.call("crm.createTicket", &json!({})).await, Err(Error::TokenUnavailable));
+    assert_eq!(api_calls.load(Ordering::SeqCst), before);
+    let last = token_requests.lock().unwrap().last().unwrap().clone();
+    assert!(last.contains("client_id=client-a") && last.contains("client_secret=secret-a"), "client_secret_post sends form fields: {last}");
+
+    let mut clash = endpoint(true);
+    clash.secret_header = Some(("Authorization".into(), "Bearer static".into()));
+    assert!(Broker::new(vec![clash]).is_err(), "a static authorization header cannot shadow the OAuth token");
+    let mut leaked = endpoint(true);
+    leaked.oauth.as_mut().unwrap().token_url = "https://10.0.0.5/token".into();
+    leaked.oauth.as_mut().unwrap().resolved = vec!["10.0.0.5:443".parse().unwrap()];
+    assert!(Broker::new(vec![leaked]).is_err(), "the token endpoint follows the same private-network rule");
 }

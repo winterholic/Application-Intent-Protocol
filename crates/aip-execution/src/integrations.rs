@@ -1,7 +1,7 @@
 //! Server-configured outbound HTTP broker. Extension input selects a registered
 //! name and supplies JSON only; it cannot choose a URL, method, header, or key.
 
-use reqwest::header::{CONTENT_TYPE, HeaderName, HeaderValue, RETRY_AFTER};
+use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderName, HeaderValue, RETRY_AFTER};
 use reqwest::{Client, Method, Url};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -26,6 +26,29 @@ pub enum Error {
     /// The endpoint's circuit breaker is open, so the request was not sent. Unlike a transport
     /// error this outcome is certain, so a durable caller can retry it without reconciliation.
     CircuitOpen,
+    /// The OAuth token endpoint did not issue a token, so the request was not sent.
+    TokenUnavailable,
+}
+
+/// OAuth 2.0 client-credentials grant (RFC 6749 §4.4) for an endpoint, like Spring OAuth2 Client or
+/// authlib. The server fetches and caches the access token; the extension never sees it.
+#[derive(Clone, Debug)]
+pub struct OAuthConfig {
+    pub token_url: String,
+    /// Vetted DNS answers for the token endpoint, pinned like the API endpoint's.
+    pub resolved: Vec<SocketAddr>,
+    pub client_id: String,
+    pub client_secret: String,
+    pub scope: Option<String>,
+    /// `client_secret_basic` (HTTP Basic) when true, otherwise `client_secret_post` (form fields).
+    pub basic_auth: bool,
+}
+
+struct OAuthClient {
+    config: OAuthConfig,
+    token_url: Url,
+    client: Client,
+    cached: Mutex<Option<(HeaderValue, Instant)>>,
 }
 
 /// Per-endpoint circuit breaker, like Resilience4j or opossum, kept per server process.
@@ -102,6 +125,7 @@ pub struct EndpointConfig {
     pub allow_private_networks: bool,
     /// Not part of the fingerprint: it changes when requests are sent, not what a request means.
     pub circuit_breaker: Option<CircuitBreaker>,
+    pub oauth: Option<OAuthConfig>,
 }
 
 struct Endpoint {
@@ -113,6 +137,7 @@ struct Endpoint {
     secret_header: Option<(HeaderName, HeaderValue)>,
     client: Client,
     breaker: Option<Breaker>,
+    oauth: Option<OAuthClient>,
 }
 
 pub struct Broker {
@@ -185,6 +210,9 @@ impl Broker {
         if endpoint.breaker.as_ref().is_some_and(|breaker| !breaker.admit()) {
             return Err(Error::CircuitOpen);
         }
+        if let Some(oauth) = &endpoint.oauth {
+            request = request.header(AUTHORIZATION, oauth.bearer().await?);
+        }
         let outcome = async {
             let response = request.send().await.map_err(|error| Error::Transport(error.to_string()))?;
             let status = response.status();
@@ -197,6 +225,12 @@ impl Broker {
         if let Some(breaker) = &endpoint.breaker {
             // Body-shape errors mean the provider answered, so only an unreachable or failing provider counts.
             breaker.record(matches!(&outcome, Err(Error::Transport(_))) || outcome.as_ref().is_ok_and(|response| response.status >= 500));
+        }
+        // A rejected token (revoked or rotated early) is dropped so the next call fetches a new one.
+        if let Some(oauth) = &endpoint.oauth
+            && outcome.as_ref().is_ok_and(|response| response.status == 401)
+        {
+            oauth.invalidate();
         }
         outcome
     }
@@ -223,6 +257,13 @@ fn fingerprint(configs: &[EndpointConfig]) -> Result<String, Error> {
             "resolved": resolved,
             "allow_loopback": config.allow_loopback,
             "allow_private_networks": config.allow_private_networks,
+            // The token identity decides whose account a call acts on, so it is part of the meaning.
+            "oauth": config.oauth.as_ref().map(|oauth| {
+                let mut resolved = oauth.resolved.iter().map(ToString::to_string).collect::<Vec<_>>();
+                resolved.sort();
+                let secret = Sha256::digest(oauth.client_secret.as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+                serde_json::json!({"token_url":oauth.token_url,"resolved":resolved,"client_id":oauth.client_id,"secret":secret,"scope":oauth.scope,"basic":oauth.basic_auth})
+            }),
         }));
     }
     entries.sort_by(|left, right| left["name"].as_str().cmp(&right["name"].as_str()));
@@ -245,41 +286,7 @@ fn build_endpoint(config: EndpointConfig) -> Result<(String, Endpoint), Error> {
     {
         return Err(Error::InvalidConfiguration);
     }
-    let url = Url::parse(&config.url).map_err(|_| Error::InvalidConfiguration)?;
-    if !url.username().is_empty() || url.password().is_some() || url.fragment().is_some() {
-        return Err(Error::InvalidConfiguration);
-    }
-    let scheme = url.scheme();
-    let host = url.host_str().ok_or(Error::InvalidConfiguration)?;
-    // host_str() includes brackets for IPv6; parsing it as IpAddr would skip
-    // literal validation while reqwest still connects directly to that literal.
-    let literal_host = host.strip_prefix('[').and_then(|value| value.strip_suffix(']')).unwrap_or(host);
-    let literal = literal_host.parse::<IpAddr>().ok();
-    let port = url.port_or_known_default().ok_or(Error::InvalidConfiguration)?;
-    let loopback_url = literal.is_some_and(|ip| ip.is_loopback()) || host.eq_ignore_ascii_case("localhost");
-    if scheme != "https" && !(config.allow_loopback && loopback_url && scheme == "http") {
-        return Err(Error::InvalidConfiguration);
-    }
-    for address in &config.resolved {
-        if address.port() != port {
-            return Err(Error::InvalidConfiguration);
-        }
-        let permitted = is_public_address(address.ip())
-            || (config.allow_private_networks && is_private_network_address(address.ip()))
-            || (config.allow_loopback && loopback_url && address.ip().is_loopback());
-        if !permitted {
-            return Err(Error::InvalidConfiguration);
-        }
-    }
-    let loopback_allowed = config.allow_loopback || (scheme == "https" && config.allow_private_networks);
-    if loopback_url && (!loopback_allowed || config.resolved.iter().any(|address| !address.ip().is_loopback())) {
-        return Err(Error::InvalidConfiguration);
-    }
-    if let Some(literal) = literal
-        && config.resolved.iter().any(|address| address.ip() != literal)
-    {
-        return Err(Error::InvalidConfiguration);
-    }
+    let url = vet_destination(&config.url, &config.resolved, config.allow_loopback, config.allow_private_networks)?;
     let method = Method::from_bytes(config.method.as_bytes()).map_err(|_| Error::InvalidConfiguration)?;
     if !matches!(method, Method::GET | Method::POST | Method::PUT | Method::PATCH | Method::DELETE) {
         return Err(Error::InvalidConfiguration);
@@ -292,7 +299,8 @@ fn build_endpoint(config: EndpointConfig) -> Result<(String, Endpoint), Error> {
             if matches!(
                 lower_name,
                 "content-type" | "retry-after" | "idempotency-key" | "host" | "content-length" | "transfer-encoding" | "connection"
-            ) {
+            ) || (config.oauth.is_some() && lower_name == "authorization")
+            {
                 return Err(Error::InvalidConfiguration);
             }
             let mut value = HeaderValue::from_bytes(value.as_bytes()).map_err(|_| Error::InvalidConfiguration)?;
@@ -300,19 +308,28 @@ fn build_endpoint(config: EndpointConfig) -> Result<(String, Endpoint), Error> {
             Ok((name, value))
         })
         .transpose()?;
-    let mut builder = Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .retry(reqwest::retry::never())
-        .no_proxy()
-        .timeout(config.timeout)
-        .no_gzip()
-        .no_brotli()
-        .no_deflate()
-        .no_zstd();
-    if let Some(domain) = url.domain() {
-        builder = builder.resolve_to_addrs(domain, &config.resolved);
-    }
-    let client = builder.build().map_err(|error| Error::Transport(error.to_string()))?;
+    let client = pinned_client(&url, &config.resolved, config.timeout)?;
+    let oauth = config
+        .oauth
+        .map(|oauth| {
+            if oauth.client_id.is_empty()
+                || oauth.client_id.len() > 512
+                || oauth.client_secret.is_empty()
+                || oauth.client_secret.len() > 8192
+                || oauth.scope.as_ref().is_some_and(|scope| scope.is_empty() || scope.len() > 1024 || scope.chars().any(char::is_control))
+            {
+                return Err(Error::InvalidConfiguration);
+            }
+            // The token endpoint passes the same destination rules as the API it authorizes.
+            let token_url = vet_destination(&oauth.token_url, &oauth.resolved, config.allow_loopback, config.allow_private_networks)?;
+            Ok(OAuthClient {
+                client: pinned_client(&token_url, &oauth.resolved, config.timeout)?,
+                token_url,
+                config: oauth,
+                cached: Mutex::new(None),
+            })
+        })
+        .transpose()?;
     let breaker = match config.circuit_breaker {
         Some(breaker)
             if breaker.failure_threshold == 0
@@ -336,8 +353,115 @@ fn build_endpoint(config: EndpointConfig) -> Result<(String, Endpoint), Error> {
             secret_header,
             client,
             breaker,
+            oauth,
         },
     ))
+}
+
+fn vet_destination(raw: &str, resolved: &[SocketAddr], allow_loopback: bool, allow_private_networks: bool) -> Result<Url, Error> {
+    if resolved.is_empty() {
+        return Err(Error::InvalidConfiguration);
+    }
+    let url = Url::parse(raw).map_err(|_| Error::InvalidConfiguration)?;
+    if !url.username().is_empty() || url.password().is_some() || url.fragment().is_some() {
+        return Err(Error::InvalidConfiguration);
+    }
+    let scheme = url.scheme();
+    let host = url.host_str().ok_or(Error::InvalidConfiguration)?;
+    // host_str() includes brackets for IPv6; parsing it as IpAddr would skip
+    // literal validation while reqwest still connects directly to that literal.
+    let literal_host = host.strip_prefix('[').and_then(|value| value.strip_suffix(']')).unwrap_or(host);
+    let literal = literal_host.parse::<IpAddr>().ok();
+    let port = url.port_or_known_default().ok_or(Error::InvalidConfiguration)?;
+    let loopback_url = literal.is_some_and(|ip| ip.is_loopback()) || host.eq_ignore_ascii_case("localhost");
+    if scheme != "https" && !(allow_loopback && loopback_url && scheme == "http") {
+        return Err(Error::InvalidConfiguration);
+    }
+    for address in resolved {
+        if address.port() != port {
+            return Err(Error::InvalidConfiguration);
+        }
+        let permitted = is_public_address(address.ip())
+            || (allow_private_networks && is_private_network_address(address.ip()))
+            || (allow_loopback && loopback_url && address.ip().is_loopback());
+        if !permitted {
+            return Err(Error::InvalidConfiguration);
+        }
+    }
+    let loopback_allowed = allow_loopback || (scheme == "https" && allow_private_networks);
+    if loopback_url && (!loopback_allowed || resolved.iter().any(|address| !address.ip().is_loopback())) {
+        return Err(Error::InvalidConfiguration);
+    }
+    if let Some(literal) = literal
+        && resolved.iter().any(|address| address.ip() != literal)
+    {
+        return Err(Error::InvalidConfiguration);
+    }
+    Ok(url)
+}
+
+fn pinned_client(url: &Url, resolved: &[SocketAddr], timeout: Duration) -> Result<Client, Error> {
+    let mut builder = Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .retry(reqwest::retry::never())
+        .no_proxy()
+        .timeout(timeout)
+        .no_gzip()
+        .no_brotli()
+        .no_deflate()
+        .no_zstd();
+    if let Some(domain) = url.domain() {
+        builder = builder.resolve_to_addrs(domain, resolved);
+    }
+    builder.build().map_err(|error| Error::Transport(error.to_string()))
+}
+
+const MAX_TOKEN_RESPONSE_BYTES: usize = 64 * 1024;
+const DEFAULT_TOKEN_LIFETIME: Duration = Duration::from_secs(300);
+const MAX_TOKEN_LIFETIME: Duration = Duration::from_secs(24 * 3600);
+
+impl OAuthClient {
+    /// A cached token is reused until shortly before it expires. Fetching happens without holding the
+    /// lock, so two concurrent misses may fetch twice; both tokens are valid and the later one is kept.
+    async fn bearer(&self) -> Result<HeaderValue, Error> {
+        if let Some((token, expires)) = self.cached.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).as_ref()
+            && Instant::now() < *expires
+        {
+            return Ok(token.clone());
+        }
+        let mut form = vec![("grant_type", "client_credentials")];
+        if let Some(scope) = &self.config.scope {
+            form.push(("scope", scope));
+        }
+        let mut request = self.client.post(self.token_url.clone()).header(ACCEPT, "application/json");
+        if self.config.basic_auth {
+            request = request.basic_auth(&self.config.client_id, Some(&self.config.client_secret));
+        } else {
+            form.push(("client_id", &self.config.client_id));
+            form.push(("client_secret", &self.config.client_secret));
+        }
+        let response = request.form(&form).send().await.map_err(|_| Error::TokenUnavailable)?;
+        if !response.status().is_success() {
+            return Err(Error::TokenUnavailable);
+        }
+        let body = read_bounded(response, MAX_TOKEN_RESPONSE_BYTES).await.map_err(|_| Error::TokenUnavailable)?;
+        let body: Value = serde_json::from_slice(&body).map_err(|_| Error::TokenUnavailable)?;
+        let token = body["access_token"].as_str().filter(|token| !token.is_empty() && token.len() <= 8192).ok_or(Error::TokenUnavailable)?;
+        if body["token_type"].as_str().is_some_and(|kind| !kind.eq_ignore_ascii_case("bearer")) {
+            return Err(Error::TokenUnavailable);
+        }
+        let lifetime = body["expires_in"].as_u64().map_or(DEFAULT_TOKEN_LIFETIME, Duration::from_secs).min(MAX_TOKEN_LIFETIME);
+        // Refresh before expiry so a token does not lapse in flight to the provider.
+        let expires = Instant::now() + lifetime.saturating_sub(Duration::from_secs(30).min(lifetime / 2));
+        let mut value = HeaderValue::from_str(&format!("Bearer {token}")).map_err(|_| Error::TokenUnavailable)?;
+        value.set_sensitive(true);
+        *self.cached.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some((value.clone(), expires));
+        Ok(value)
+    }
+
+    fn invalidate(&self) {
+        *self.cached.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+    }
 }
 
 fn effect_key(endpoint: &str, key: &str) -> String {

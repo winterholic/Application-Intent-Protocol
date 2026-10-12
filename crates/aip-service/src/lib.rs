@@ -239,6 +239,26 @@ pub struct IntegrationConfig {
     pub allow_private_networks: bool,
     #[serde(default)]
     pub circuit_breaker: Option<CircuitBreakerConfig>,
+    #[serde(default)]
+    pub oauth2: Option<OAuthClientCredentialsConfig>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OAuthClientCredentialsConfig {
+    pub token_url: String,
+    pub client_id_env: String,
+    pub client_secret_env: String,
+    #[serde(default)]
+    pub scope: Option<String>,
+    #[serde(default)]
+    pub auth_method: OAuthClientAuth,
+}
+#[derive(Clone, Copy, Default, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum OAuthClientAuth {
+    #[default]
+    ClientSecretBasic,
+    ClientSecretPost,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -400,6 +420,17 @@ fn integration_shape_problem(item: &IntegrationConfig) -> Option<String> {
             return Some(format!("'{name}': circuit_breaker.open_ms는 1~{max_open}이어야 함(받은 값 {})", breaker.open_ms));
         }
     }
+    if let Some(oauth) = &item.oauth2 {
+        if !valid_env_name(&oauth.client_id_env) || !valid_env_name(&oauth.client_secret_env) {
+            return Some(format!("'{name}': oauth2.client_id_env·client_secret_env는 대문자·숫자·'_'로 된 환경 변수 이름이어야 함"));
+        }
+        if oauth.scope.as_ref().is_some_and(|scope| scope.is_empty() || scope.len() > 1024 || scope.chars().any(char::is_control)) {
+            return Some(format!("'{name}': oauth2.scope는 1~1024자이고 제어 문자가 없어야 함"));
+        }
+        if item.secret_header_env.as_ref().is_some_and(|secret| secret.name.eq_ignore_ascii_case("authorization")) {
+            return Some(format!("'{name}': oauth2를 쓰면 secret_header_env로 authorization 헤더를 설정할 수 없음"));
+        }
+    }
     None
 }
 
@@ -423,24 +454,28 @@ async fn resolve_integrations(configs: &[IntegrationConfig]) -> Result<Vec<aip_e
     validate_integrations_shape(configs)?;
     let mut endpoints = Vec::with_capacity(configs.len());
     for config in configs {
-        let parsed =
-            url::Url::parse(&config.url).map_err(|_| integration_resolution_error(&config.name, "url을 해석할 수 없음(절대 URL이어야 함)"))?;
-        let port = parsed
-            .port_or_known_default()
-            .ok_or_else(|| integration_resolution_error(&config.name, "url의 포트를 정할 수 없음(https 또는 명시한 포트가 필요)"))?;
-        let mut resolved = match parsed.host().ok_or_else(|| integration_resolution_error(&config.name, "url에 호스트가 없음"))? {
-            url::Host::Ipv4(ip) => vec![SocketAddr::new(IpAddr::V4(ip), port)],
-            url::Host::Ipv6(ip) => vec![SocketAddr::new(IpAddr::V6(ip), port)],
-            url::Host::Domain(domain) => tokio::net::lookup_host((domain, port))
-                .await
-                .map_err(|_| integration_resolution_error(&config.name, "호스트의 DNS 조회에 실패함(호스트 이름과 서버의 DNS 접근을 확인)"))?
-                .collect::<Vec<_>>(),
+        let resolved = resolve_destination(&config.name, "url", &config.url).await?;
+        let oauth = match &config.oauth2 {
+            Some(oauth) => {
+                let secret = |env: &str, field: &str| {
+                    std::env::var(env).ok().filter(|value| !value.is_empty() && value.len() <= 8192).ok_or_else(|| {
+                        integration_resolution_error(
+                            &config.name,
+                            &format!("oauth2.{field}가 가리키는 환경 변수가 없거나 1~8192바이트가 아님(값은 출력하지 않음)"),
+                        )
+                    })
+                };
+                Some(aip_execution::integrations::OAuthConfig {
+                    resolved: resolve_destination(&config.name, "oauth2.token_url", &oauth.token_url).await?,
+                    token_url: oauth.token_url.clone(),
+                    client_id: secret(&oauth.client_id_env, "client_id_env")?,
+                    client_secret: secret(&oauth.client_secret_env, "client_secret_env")?,
+                    scope: oauth.scope.clone(),
+                    basic_auth: oauth.auth_method == OAuthClientAuth::ClientSecretBasic,
+                })
+            }
+            None => None,
         };
-        resolved.sort_unstable();
-        resolved.dedup();
-        if resolved.is_empty() || resolved.len() > 32 {
-            return Err(integration_resolution_error(&config.name, "호스트가 1~32개의 주소로 해석되어야 함"));
-        }
         let secret_header = config
             .secret_header_env
             .as_ref()
@@ -471,9 +506,31 @@ async fn resolve_integrations(configs: &[IntegrationConfig]) -> Result<Vec<aip_e
                 failure_threshold: breaker.failure_threshold,
                 open_for: std::time::Duration::from_millis(breaker.open_ms),
             }),
+            oauth,
         });
     }
     Ok(endpoints)
+}
+
+async fn resolve_destination(name: &str, field: &str, raw: &str) -> Result<Vec<SocketAddr>, Value> {
+    let parsed = url::Url::parse(raw).map_err(|_| integration_resolution_error(name, &format!("{field}을 해석할 수 없음(절대 URL이어야 함)")))?;
+    let port = parsed
+        .port_or_known_default()
+        .ok_or_else(|| integration_resolution_error(name, &format!("{field}의 포트를 정할 수 없음(https 또는 명시한 포트가 필요)")))?;
+    let mut resolved = match parsed.host().ok_or_else(|| integration_resolution_error(name, &format!("{field}에 호스트가 없음")))? {
+        url::Host::Ipv4(ip) => vec![SocketAddr::new(IpAddr::V4(ip), port)],
+        url::Host::Ipv6(ip) => vec![SocketAddr::new(IpAddr::V6(ip), port)],
+        url::Host::Domain(domain) => tokio::net::lookup_host((domain, port))
+            .await
+            .map_err(|_| integration_resolution_error(name, &format!("{field} 호스트의 DNS 조회에 실패함(호스트 이름과 서버의 DNS 접근을 확인)")))?
+            .collect::<Vec<_>>(),
+    };
+    resolved.sort_unstable();
+    resolved.dedup();
+    if resolved.is_empty() || resolved.len() > 32 {
+        return Err(integration_resolution_error(name, &format!("{field} 호스트가 1~32개의 주소로 해석되어야 함")));
+    }
+    Ok(resolved)
 }
 
 async fn build_broker(configs: &[IntegrationConfig]) -> Result<Option<Arc<aip_execution::integrations::Broker>>, Value> {
@@ -941,6 +998,7 @@ mod managed_config_tests {
             allow_loopback: false,
             allow_private_networks: false,
             circuit_breaker: None,
+            oauth2: None,
         };
         let error = validate_integrations_shape(&[item("crm", 90_000)]).unwrap_err();
         let message = error["message"].as_str().expect("message");
