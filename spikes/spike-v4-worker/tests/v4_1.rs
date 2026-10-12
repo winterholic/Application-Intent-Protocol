@@ -57,6 +57,7 @@ async fn v4_1_read_extension_node_and_python() {
             ("다른 동아리 관리자는 자기 동아리만", "stats", Some(3), json!({ "clubId": "11" }), "OK {\"approvedApplicants\":2}"),
             ("일반 회원", "stats", Some(2), c10.clone(), "EXTENSION_ERROR(ACCESS_DENIED)"),
             ("익명", "stats", None, c10.clone(), "EXTENSION_ERROR(ACCESS_DENIED)"),
+            ("ctx 호출 폭주", "statsFlood", Some(1), c10.clone(), "CALL_LIMIT"),
             ("확장이 동아리 id를 바꿈", "statsOtherClub", Some(1), c10.clone(), "EXTENSION_ERROR(INPUT_BINDING)"),
             ("계약에 없는 집계 접근", "statsUndeclared", Some(1), c10.clone(), "EXTENSION_ERROR(ACCESS_NOT_DECLARED)"),
             ("ctx 요청에 actor 끼워 넣기", "statsImpersonate", Some(2), c10.clone(), "EXTENSION_ERROR(UNKNOWN_KEY)"),

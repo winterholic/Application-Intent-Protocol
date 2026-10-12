@@ -7,6 +7,12 @@ export async function stats(input, ctx) {
   const r = await ctx.data.aggregate("Apply", "approvedCount", { clubId: input.clubId });
   return { approvedApplicants: r.value };
 }
+export async function statsFlood(input, ctx) {
+  // 한 호출 안에서 ctx DB 호출을 상한 너머로 반복하는 확장
+  let r = { value: 0 };
+  for (let i = 0; i < 200; i++) r = await ctx.data.aggregate("Apply", "approvedCount", { clubId: input.clubId });
+  return { approvedApplicants: r.value };
+}
 export async function statsOtherClub(input, ctx) {
   const r = await ctx.data.aggregate("Apply", "approvedCount", { clubId: "11" });
   return { approvedApplicants: r.value };

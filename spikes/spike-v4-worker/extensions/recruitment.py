@@ -9,6 +9,14 @@ async def stats(input, ctx):
     return {"approvedApplicants": r["value"]}
 
 
+async def statsFlood(input, ctx):
+    # 한 호출 안에서 ctx DB 호출을 상한 너머로 반복하는 확장
+    r = {"value": 0}
+    for _ in range(200):
+        r = await ctx.data.aggregate("Apply", "approvedCount", {"clubId": input["clubId"]})
+    return {"approvedApplicants": r["value"]}
+
+
 async def statsOtherClub(input, ctx):
     r = await ctx.data.aggregate("Apply", "approvedCount", {"clubId": "11"})
     return {"approvedApplicants": r["value"]}

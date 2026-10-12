@@ -58,6 +58,8 @@ impl Default for WorkerLimits {
     }
 }
 
+/// 읽기·operation 확장 하나가 한 호출 안에서 보낼 수 있는 ctx DB 호출 수.
+const MAX_READ_CTX_CALLS: usize = 64;
 const MAX_RETIRED_TOKENS: usize = 64;
 const NODE_WORKER: &str = include_str!("../workers/worker.mjs");
 const PYTHON_WORKER: &str = include_str!("../workers/worker.py");
@@ -495,6 +497,7 @@ async fn invoke_contract(
     }
 
     let mut managed_calls = 0;
+    let mut db_calls = 0usize;
     let result = loop {
         let left = expires.saturating_duration_since(Instant::now());
         let line = match tokio::time::timeout(left, w.read_line()).await {
@@ -536,6 +539,11 @@ async fn invoke_contract(
                         }
                         host.call(op, name, &m["input"]).await
                     } else if let Some(db) = db.as_deref_mut() {
+                        // 읽기·operation 확장도 deadline 안에서 DB 호출을 무한히 보낼 수 없게 한다(쓰기 20, job 64와 같은 취지).
+                        db_calls += 1;
+                        if db_calls > MAX_READ_CTX_CALLS {
+                            return rej("CALL_LIMIT", "ctx 호출 상한");
+                        }
                         serve_call(db, w, facts, &m).await
                     } else {
                         rej("ACCESS_NOT_DECLARED", "순수 operation은 ctx 호출을 허용하지 않음")
@@ -545,6 +553,9 @@ async fn invoke_contract(
                     Ok(r) => r,
                     Err(_) => break rej("DEADLINE_EXCEEDED", format!("확장 ctx 작업이 {}ms 안에 끝나지 않음", deadline.as_millis())),
                 };
+                if reply.as_ref().is_err_and(|e| e.code == "CALL_LIMIT") {
+                    break reply;
+                }
                 if host.is_some()
                     && reply
                         .as_ref()
@@ -580,7 +591,6 @@ async fn invoke_contract(
     result
 }
 
-/// worker의 ctx 요청 하나를 처리한다. actor는 토큰에서만 온다.
 /// ctx grant 토큰. 확장 코드가 다른 호출의 grant를 추측하지 못하도록 OS 난수 128비트를 쓴다.
 pub(crate) fn grant_token(kind: char, invoke_id: u64) -> String {
     let mut bytes = [0u8; 16];
@@ -591,6 +601,7 @@ pub(crate) fn grant_token(kind: char, invoke_id: u64) -> String {
     format!("{kind}{invoke_id}-{hex}")
 }
 
+/// worker의 ctx 요청 하나를 처리한다. actor는 토큰에서만 온다.
 async fn serve_call(db: &mut Client, w: &mut Worker, facts: &Value, m: &Value) -> Result<Value, Reject> {
     let o = m.as_object().unwrap();
     if let Some(k) = o.keys().find(|k| !["type", "call", "token", "op", "name", "input"].contains(&k.as_str())) {
