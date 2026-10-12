@@ -1,5 +1,7 @@
 # Backend Capability Matrix
 
+> 현재 판정은 [2026-10-13 기능 갭 표](capability-gap-2026-10-13.md)를 따른다.
+
 > 후속(2026-10-11): 이 표와 원본 [CSV](capability-matrix.csv)는 `ecf3369` 기준의 역사적 감사다. 이후 동기 operation과 durable job·managed file/event·named HTTP broker가 제품 경로에 추가됐다. 최신 실행 계약은 [관리형 durable execution](../../product/MANAGED-EXECUTION.md), [동기 operation](../../product/EXECUTION.md)을 따른다. 아래 행의 당시 제품 지원 상태를 현재 판정으로 사용하지 않는다.
 
 

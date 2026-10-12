@@ -43,6 +43,8 @@ Core 검증은 GitHub Actions의 Ubuntu에서도 실행한다. 외부 IdP 계정
 
 ## 상태
 
+2026-10-13 후속: durable job이 선언한 resource에 한해 업무 데이터를 읽고 공개 전이를 실행한다(`ctx.data.read/apply`, 전이와 effect journal이 한 transaction). 서비스 설정만으로 cron 스케줄, 서명 검증 webhook 수신, 전이 `notify` outbox 행을 서비스 주체 job으로 연결하고, `/health`·`/ready` probe를 제공한다. 현재 105개 항목 판정과 남은 갭은 [기능 갭 표](plan-docs/backend-capability/capability-gap-2026-10-13.md)를 따른다.
+
 2026-10-10 후속: [resource 독립 동기 operation](product/EXECUTION.md)을 제품 경로에 연결했다. 업무 resource 없는 신원·typed SDK·capability 발견과 실행 전후 인가를 제공한다. [다음 durable Job 구조 제안](plan-docs/backend-capability/durable-job-proposal.md)은 아직 미구현이며 기존 PoC Job과 구분한다. 검증 결과와 제한은 [제품 검증](product/VERIFICATION.md)을 따른다.
 
 **제품 서비스 통합 및 실행 검증 중(2026-10-05).** 기준은 [창시자 통합 지침](plan-docs/sources/founder-integrated-directive-2026-10-03.md)이며 결과물은 [plan-docs A~E](plan-docs/README.md#이번-결과물-ae)에 있다. 자체 포트 AIP 서버+공식 프론트 라이브러리, Rust 엔진, JS/TS·Python 확장, 선택적 구조화 설명·개발 검증이 제품 기준이다.

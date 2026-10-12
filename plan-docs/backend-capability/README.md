@@ -1,5 +1,7 @@
 # AIP 백엔드 기능 포괄성 감사
 
+> 최신 판정(2026-10-13): [기능 갭 표](capability-gap-2026-10-13.md)가 105개 항목을 현재 제품 코드로 다시 판정하고 Spring·NestJS·Django/FastAPI·Rails의 대표 구현과 비교한다. JS/TS·Python 확장 경로의 통제 점검과 남은 우선순위도 그 문서에 있다. 아래 감사와 matrix는 역사적 기록이다.
+
 > 후속(2026-10-11): 이 문서와 아래 matrix는 `ecf3369` 기준의 역사적 감사다. 이후 동기 operation과 durable job·managed file/event·named HTTP broker가 제품 경로에 추가됐다. 최신 실행 계약은 [관리형 durable execution](../../product/MANAGED-EXECUTION.md), [동기 operation](../../product/EXECUTION.md)을 따른다. 당시의 미지원 판정과 제안은 현재 상태로 읽지 않는다.
 
 
