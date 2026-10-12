@@ -66,6 +66,8 @@ pub struct Infrastructure {
     pub rag: Option<Arc<aip_execution::rag::RagEngine>>,
     pub rag_client_index: bool,
     pub triggers: Arc<crate::triggers::Triggers>,
+    /// Bearer token for `GET /metrics`. Without one the path is not served.
+    pub metrics_token: Option<String>,
 }
 
 impl Default for Infrastructure {
@@ -86,6 +88,7 @@ impl Default for Infrastructure {
             rag: None,
             rag_client_index: false,
             triggers: Arc::default(),
+            metrics_token: None,
         }
     }
 }

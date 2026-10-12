@@ -13,6 +13,7 @@ mod health;
 pub mod hosting;
 pub mod infrastructure;
 mod messaging_transport;
+mod metrics;
 mod object_transport;
 mod operation;
 pub mod pool;
@@ -306,6 +307,25 @@ async fn reply_object(w: &mut Response<impl AsyncWriteExt + Unpin>, out: &str) {
 
 async fn reply_with_headers(w: &mut Response<impl AsyncWriteExt + Unpin>, out: &str, extra: &str) {
     reply_with_status(w, "200 OK", out, extra).await;
+}
+
+/// Prometheus scrapes read text, not the JSON envelope; the body never carries request data.
+async fn reply_metrics(w: &mut Response<impl AsyncWriteExt + Unpin>, body: String) {
+    w.trace.record("200 OK", "");
+    let headers = format!(
+        "HTTP/1.1 200 OK\r\ncontent-type: text/plain; version=0.0.4\r\ncontent-length: {}\r\nconnection: close\r\ncache-control: no-store\r\nx-request-id: {}\r\n\r\n",
+        body.len(),
+        w.trace.id()
+    );
+    let head_only = w.head_only;
+    let write = async {
+        w.writer.write_all(headers.as_bytes()).await?;
+        if !head_only {
+            w.writer.write_all(body.as_bytes()).await?;
+        }
+        w.writer.flush().await
+    };
+    let _ = tokio::time::timeout_at(w.deadline, write).await;
 }
 
 async fn reply_with_status(w: &mut Response<impl AsyncWriteExt + Unpin>, status: &str, out: &str, extra: &str) {
@@ -622,6 +642,17 @@ async fn serve_conn(
         }
         let (status, body) = health::probe(&path, &runtime).await;
         return reply_with_status(&mut w, status, &body, "cache-control: no-store\r\n").await;
+    }
+    if let Some(token) = runtime.infrastructure.metrics_token.as_deref().filter(|_| path == "/metrics") {
+        if !matches!(method.as_str(), "GET" | "HEAD") || len.is_some_and(|length| length != 0) {
+            return reply_with_status(&mut w, "405 Method Not Allowed", &err("BAD_REQUEST", "GET/HEAD만"), "allow: GET, HEAD\r\n").await;
+        }
+        let authorization = header_values.iter().find(|(key, _)| key == "authorization").map(|(_, value)| value.as_str());
+        if !metrics::token_matches(token, authorization) {
+            return reply_with_status(&mut w, "401 Unauthorized", &err("UNAUTHENTICATED", "metrics token 필요"), "www-authenticate: Bearer\r\n")
+                .await;
+        }
+        return reply_metrics(&mut w, metrics::render()).await;
     }
     if let Some(webhook) = runtime.infrastructure.triggers.webhooks.iter().find(|hook| hook.path == path) {
         return serve_webhook(&mut w, &mut rd, webhook, &method, len, &header_values, &facts, wire, &runtime, deadline).await;

@@ -41,14 +41,16 @@ pub fn set_audit_table(table: Option<String>) -> Result<(), &'static str> {
 }
 
 /// 감사 테이블 DDL. 전이가 쓰는 열과 같은 순서로 유지한다. 행은 추가만 하고 고치지 않는다.
+/// 여러 instance가 동시에 시작해도 catalog 경합이 없도록 transaction advisory lock 뒤에서 만든다.
 pub fn audit_ddl(schema: &str) -> String {
     format!(
-        "CREATE TABLE IF NOT EXISTS {schema}.aip_audit(id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, recorded_at timestamptz NOT NULL DEFAULT now(), \
+        "BEGIN; SELECT pg_advisory_xact_lock(hashtext('{schema}.aip_audit')); \
+         CREATE TABLE IF NOT EXISTS {schema}.aip_audit(id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, recorded_at timestamptz NOT NULL DEFAULT now(), \
          actor_id bigint, via text NOT NULL, request_key text, resource text NOT NULL, transition text NOT NULL, target_id bigint NOT NULL, \
          before jsonb NOT NULL, after jsonb NOT NULL); \
          CREATE INDEX IF NOT EXISTS aip_audit_target ON {schema}.aip_audit(resource, target_id, id); \
          CREATE OR REPLACE FUNCTION {schema}.aip_audit_append_only() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'aip_audit rows are append-only' USING ERRCODE='42501'; END $$; \
-         CREATE OR REPLACE TRIGGER aip_audit_append_only BEFORE UPDATE ON {schema}.aip_audit FOR EACH ROW EXECUTE FUNCTION {schema}.aip_audit_append_only()"
+         CREATE OR REPLACE TRIGGER aip_audit_append_only BEFORE UPDATE ON {schema}.aip_audit FOR EACH ROW EXECUTE FUNCTION {schema}.aip_audit_append_only(); COMMIT"
     )
 }
 
@@ -396,7 +398,13 @@ async fn update(tx: &Transaction<'_>, facts: &Value, res: &str, tr: &str, change
             let snapshot = |alias: &str| {
                 let pairs: Vec<String> =
                     t["to"].as_object().unwrap().keys().map(|f| format!("'{f}', to_jsonb({alias}.{})", column(facts, res, f).unwrap())).collect();
-                format!("jsonb_build_object({})", pairs.join(", "))
+                // jsonb_build_object takes at most 100 arguments, so wide transitions are built in parts.
+                let parts: Vec<String> = pairs.chunks(50).map(|chunk| format!("jsonb_build_object({})", chunk.join(", "))).collect();
+                if parts.is_empty() {
+                    "'{}'::jsonb".to_string()
+                } else {
+                    parts.join(" || ")
+                }
             };
             let actor = cx.params.bind(caller.actor_id.map(|id| id.to_string()), "bigint");
             let via = cx.params.bind(Some(knobs.audit_via.unwrap_or("apply").to_string()), "text");

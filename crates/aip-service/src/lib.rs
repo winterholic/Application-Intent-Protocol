@@ -168,6 +168,7 @@ pub struct Config {
     pub webhooks: Vec<triggers::WebhookConfig>,
     #[serde(default)]
     pub outbox_handlers: Vec<triggers::OutboxHandlerConfig>,
+    pub metrics: Option<infrastructure::MetricsConfig>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

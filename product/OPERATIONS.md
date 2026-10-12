@@ -114,7 +114,18 @@ SDK는 `npm install --offline <aip-sdk.tgz>`로 별도 소비자에 설치한다
 | `resource`, `transition`, `target_id` | 바뀐 행 하나 |
 | `before`, `after` | 전이의 `to`가 바꾸는 필드만 `{필드: 값}`으로. 다른 필드는 남기지 않는다 |
 
-테이블은 배포 schema가 아니라 서버가 시작할 때 만드는 infra schema(`aip_infra_<hash>.aip_audit`)에 있어 기존 배포를 migrate하지 않아도 된다. `UPDATE`는 trigger가 거부한다. 보존 기한 정리는 운영자가 `DELETE`로 한다. 멱등 재생, 안 보이는 대상, 일부 대상 실패로 전체가 취소된 bulk는 아무것도 바꾸지 않았으므로 기록하지 않는다. 전이의 선언 효과(`update`·`create` 효과가 바꾼 다른 행, `notify` outbox 행)는 따로 기록하지 않는다. 조회 API·CLI는 아직 없고 SQL로 읽는다. 근거 테스트는 `spikes/spike-v6-transport/tests/audit.rs`다.
+테이블은 배포 schema가 아니라 서버가 시작할 때 만드는 infra schema(`aip_infra_<hash>.aip_audit`)에 있어 기존 배포를 migrate하지 않아도 된다. `UPDATE`는 trigger가 거부한다. 보존 기한 정리는 운영자가 `DELETE`로 한다. 이 trigger는 실수 방지이지 변조 방지가 아니다. 테이블 소유 role은 trigger를 끄거나 행을 지울 수 있으므로, 규제 감사에는 서비스 실행 role과 소유 role을 나누고 외부 보관소로 복제한다. `target_id`와 Ref 값은 내부 bigint id이며 `wire: decimal` 같은 API 표현으로 바꾸지 않는다. 멱등 재생, 안 보이는 대상, 일부 대상 실패로 전체가 취소된 bulk는 아무것도 바꾸지 않았으므로 기록하지 않는다. 전이의 선언 효과(`update`·`create` 효과가 바꾼 다른 행, `notify` outbox 행)는 따로 기록하지 않는다. 조회 API·CLI는 아직 없고 SQL로 읽는다. 근거 테스트는 `spikes/spike-v6-transport/tests/audit.rs`다.
+
+## 요청 metrics
+
+`{"metrics":{"token_env":"AIP_METRICS_TOKEN"}}`을 설정하면 `GET /metrics`가 Prometheus text 형식(0.0.4)으로 열린다. 설정이 없으면 이 경로는 없는 경로와 같다. scrape는 그 환경 변수 값을 `Authorization: Bearer`로 보내야 하며, 값은 공백 없는 ASCII 32~256자여야 시작된다. 별도 exporter 의존성이 없어 기본 빌드에 포함된다.
+
+| metric | label | 뜻 |
+|---|---|---|
+| `aip_requests_total` | `route`, `status`, `code` | 끝난 요청 수. `route`는 고정 이름(`read`, `apply`, `jobs` 등, 그 밖은 `other`), `code`는 실패 응답의 AIP 오류 코드 |
+| `aip_request_duration_seconds` | `route` | 요청 수락부터 응답 완료까지(histogram, 5ms~30s) |
+
+label에는 경로·query·본문·principal이 들어가지 않으므로 호출자가 series 수를 늘릴 수 없다. AIP의 많은 거부는 HTTP 200 본문의 `code`로 오므로 오류율은 `status`가 아니라 `code!=""`로 계산한다. job 상태별 수, DB pool 대기, outbox 적체 같은 내부 상태 metric과 OpenTelemetry trace 전송은 아직 없다. trace exporter는 외부 SDK 의존성이 커서 [선택적 패키지](INFRASTRUCTURE.md#선택적-패키지-구조) 후보로 둔다. 요청 상관 ID는 응답의 `x-request-id`와 요청 로그 줄이 함께 가진다. 근거 테스트는 `spikes/spike-v6-transport/tests/metrics.rs`다.
 
 ## 확장과 검증 범위
 

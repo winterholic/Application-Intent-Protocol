@@ -172,6 +172,7 @@ pub(crate) async fn listen_with_fingerprint(
             "/messages",
             "/health",
             "/ready",
+            "/metrics",
         ];
         reserved.extend(runtime.infrastructure.mounts.iter().map(|mount| mount.prefix.as_str()));
         reserved.extend(runtime.infrastructure.file_mounts.iter().map(|mount| mount.prefix.as_str()));
@@ -235,6 +236,9 @@ pub(crate) async fn listen_with_fingerprint(
         .await
         .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "audit installation timed out"))??;
         spike_v3_write::set_audit_table(Some(format!("{infra}.aip_audit"))).map_err(io::Error::other)?;
+    } else {
+        // 같은 process에서 먼저 뜬 배포 서버의 감사 테이블을 배포 없는 서버가 물려받지 않게 한다.
+        spike_v3_write::set_audit_table(None).map_err(io::Error::other)?;
     }
     let listener = TcpListener::bind(address).await?;
     let address = listener.local_addr()?;

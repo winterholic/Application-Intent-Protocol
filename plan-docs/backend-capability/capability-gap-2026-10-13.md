@@ -26,6 +26,7 @@
 | I04 Health Check | 미지원 | 지원 | `/health`(liveness), `/ready`(DB·배포 digest). `tests/health.rs` |
 | B03 테넌트 격리 | 미지원 | 부분 | 제품 경로 행 정책·기본 거부·trigger 서비스 주체 확인. [결정 문서](tenant-isolation-decision-2026-10-13.md) |
 | B09 Audit Logging | 미지원 | 부분 | 전이마다 같은 문장의 감사 행. `tests/audit.rs`, [OPERATIONS](../../product/OPERATIONS.md#업무-감사-기록) |
+| I02 Metrics | 미지원 | 부분 | token 보호 `/metrics`. [OPERATIONS](../../product/OPERATIONS.md#요청-metrics) |
 
 ## A. 데이터
 
@@ -155,9 +156,9 @@
 
 | ID | 기능 | 타 프레임워크 대표 구현 | AIP 현재 | 근거·남은 갭 |
 |---|---|---|---|---|
-| I01 | Logging | Logback MDC, pino, structlog, lograge | 부분 | JSON 이벤트 로그. 요청 접근 로그·상관 ID 없음 |
-| I02 | Metrics | Micrometer/Actuator, prom-client, django-prometheus | 미지원 | metrics endpoint 없음 |
-| I03 | Tracing | OpenTelemetry | 미지원 | trace 전파 없음 |
+| I01 | Logging | Logback MDC, pino, structlog, lograge | 부분 | JSON 이벤트 로그, 요청마다 한 줄 접근 로그와 `x-request-id`(71cfba5). 상관 ID를 job·worker 로그로 넘기는 MDC식 전파는 없음 |
+| I02 | Metrics | Micrometer/Actuator, prom-client, django-prometheus | 부분 | token 보호 `/metrics`(Prometheus text), route·status·code별 요청 수와 지연 histogram. job·pool·outbox 내부 metric 없음. `tests/metrics.rs` |
+| I03 | Tracing | OpenTelemetry | 미지원 | 요청 ID만 있고 `traceparent` 전파·span export 없음. exporter는 선택 패키지 후보 |
 | I04 | Health Check | Actuator health, `@nestjs/terminus`, django-health-check, `/up`(Rails 7.1) | 지원 | `/health`, `/ready` |
 | I05 | Configuration | `application.yml`, ConfigModule, settings.py | 지원 | 알 수 없는 필드 거부, 시작 시 검증 |
 | I06 | Feature Flag | Unleash/OpenFeature, Flipper | 미지원 | 정적 설정 스위치만 |
@@ -189,9 +190,9 @@
 | 판정 | 개수 |
 |---|---|
 | 지원 | 29 |
-| 부분 | 54 |
+| 부분 | 55 |
 | 확장 | 12 |
-| 미지원 | 10 |
+| 미지원 | 9 |
 
 ## JS/TS·Python 확장 경로 점검
 
@@ -252,7 +253,7 @@
 |---|---|---|---|
 | 1 | B03 테넌트 격리 | SaaS의 기본 요구. 현재는 predicate 관례에 의존 | [결정 문서](tenant-isolation-decision-2026-10-13.md): 현행 유지 권장, 활성 테넌트(세션 claim)와 생성 경로 Ref 가시성은 창시자 결정 대기 |
 | 2 | B09 Audit | 규제·운영 요구 | 기본 기록은 구현(아래 설계 선택). 남은 것: 조회 CLI, 쓰기 확장 key, 효과 행 |
-| 3 | I02·I03 Metrics·Tracing | 운영 가시성 | 선택 패키지로 OpenTelemetry/Prometheus exporter. 작업자 A의 선택 의존성 구조에 배치 |
+| 3 | I02·I03 Metrics·Tracing | 운영 가시성 | metrics는 의존성 없이 기본 빌드에 구현. 남은 것: 내부 상태 metric, `traceparent` 전파, OpenTelemetry exporter(선택 패키지) |
 | 4 | D08·C09 retry 정책 선언 | job별 재시도 횟수·backoff·재시도 대상 오류 | operation job에 `retry { attempts; backoff }` |
 | 5 | E05 발신 webhook | 고객 구독형 SaaS | PoC `outbound.rs` 서명·재시도·SSRF 규칙을 job effect로 이식 |
 | 6 | F11 circuit breaker, F02 OAuth token | 외부 연동 안정성 | integration 설정에 breaker·token provider |

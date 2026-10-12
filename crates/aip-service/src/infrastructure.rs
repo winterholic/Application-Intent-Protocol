@@ -190,6 +190,24 @@ impl WorkerIsolation {
 fn configuration_error() -> Value {
     super::error("INFRASTRUCTURE_CONFIG", "저장소·마운트·실시간 또는 worker 설정 오류")
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetricsConfig {
+    pub token_env: String,
+}
+
+/// A scrape token must be long enough that guessing it over HTTP is hopeless; the rate limiter does not cover `/metrics`.
+fn metrics_token(name: &str, lookup: &impl Fn(&str) -> Option<String>) -> Result<String, Value> {
+    if !super::valid_env_name(name) {
+        return Err(super::error("METRICS_CONFIG", "metrics.token_env는 대문자·숫자·_ 환경 변수 이름이어야 함"));
+    }
+    match lookup(name) {
+        Some(token) if token.len() >= 32 && token.len() <= 256 && token.bytes().all(|b| b.is_ascii_graphic()) => Ok(token),
+        Some(_) => Err(super::error("METRICS_CONFIG", &format!("{name}의 metrics token은 공백 없는 ASCII 32~256자여야 함"))),
+        None => Err(super::error("METRICS_CONFIG", &format!("metrics.token_env가 가리키는 {name} 환경 변수가 없음"))),
+    }
+}
+
 fn credential(name: &str, lookup: &impl Fn(&str) -> Option<String>) -> Result<String, Value> {
     if !super::valid_env_name(name) {
         return Err(configuration_error());
@@ -319,6 +337,7 @@ pub(super) fn build_with_environment(config: &super::Config, lookup: &impl Fn(&s
         rag: None,
         rag_client_index: false,
         triggers: Default::default(),
+        metrics_token: config.metrics.as_ref().map(|metrics| metrics_token(&metrics.token_env, lookup)).transpose()?,
     };
     result.validate().map_err(|_| configuration_error())?;
     Ok(result)
@@ -326,4 +345,25 @@ pub(super) fn build_with_environment(config: &super::Config, lookup: &impl Fn(&s
 
 pub fn empty_environment() -> HashMap<String, String> {
     HashMap::new()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::metrics_token;
+
+    #[test]
+    fn a_metrics_token_must_come_from_a_named_variable_and_be_long() {
+        let env = |name: &str| match name {
+            "AIP_METRICS_TOKEN" => Some("t".repeat(32)),
+            "SHORT_TOKEN" => Some("short".to_string()),
+            "SPACED_TOKEN" => Some(format!("{} x", "t".repeat(32))),
+            _ => None,
+        };
+        assert_eq!(metrics_token("AIP_METRICS_TOKEN", &env).unwrap(), "t".repeat(32));
+        for name in ["SHORT_TOKEN", "SPACED_TOKEN", "MISSING_TOKEN", "lower_case"] {
+            let error = metrics_token(name, &env).unwrap_err();
+            assert_eq!(error["code"], "METRICS_CONFIG", "{name}");
+            assert!(!error["message"].as_str().unwrap().contains("ttttt"), "the token value never appears in the message");
+        }
+    }
 }
