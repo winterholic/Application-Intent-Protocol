@@ -109,7 +109,7 @@
 | E02 | Event Handler | `@EventListener`, `@OnEvent`, signal receiver | 지원 | 전이 `notify`(outbox)·webhook·schedule·메시지 큐를 서비스 설정으로 job handler에 연결. 클라이언트용 event stream은 handler 대상이 아님 |
 | E03 | Pub/Sub | Redis pub/sub, ActionCable | 부분 | owner 범위 event stream·SSE·WS |
 | E04 | 메시지 브로커 | Spring Kafka, `@nestjs/microservices`, Celery broker | 지원 | 선택 빌드 Kafka/RabbitMQ relay가 관리 큐로 넣고 `message_handlers`가 job으로 소비(수락과 ack 한 transaction, 실패는 nack·DLQ). `tests/message_handlers.rs` |
-| E05 | Webhook | 수신: controller + 서명 검증 / 발신: 별도 라이브러리 | 부분 | 수신은 설정만으로 서명 검증·멱등 job 수락. 발신 구독·서명·재시도 전달은 PoC만 |
+| E05 | Webhook | 수신: controller + 서명 검증 / 발신: 별도 라이브러리 | 지원 | 수신은 설정만으로 서명 검증·멱등 job 수락. 발신은 job의 `ctx.webhooks.deliver`(Standard Webhooks 서명, 공개 주소만, 안정 webhook-id, 실패 재전송). 구독 관리·자동 비활성화는 앱 선언 |
 | E06 | 이벤트 기반 후속 작업 | `@TransactionalEventListener`, `on_commit`, `after_commit` | 지원 | 전이의 `notify` 효과 + `outbox_handlers`. commit 뒤 crash에도 후속 job을 잃지 않음 |
 | E07 | Outbox | Debezium outbox, transactional outbox | 지원 | 전이와 같은 transaction의 outbox 행, dispatch 표시와 job 수락이 한 transaction. outbox 자동 정리 없음 |
 | E08 | 중복 처리 | inbox table | 부분 | 발행·job·effect·webhook delivery key. consumer inbox 없음 |
@@ -194,8 +194,8 @@
 
 | 판정 | 개수 |
 |---|---|
-| 지원 | 36 |
-| 부분 | 49 |
+| 지원 | 37 |
+| 부분 | 48 |
 | 확장 | 12 |
 | 미지원 | 8 |
 
