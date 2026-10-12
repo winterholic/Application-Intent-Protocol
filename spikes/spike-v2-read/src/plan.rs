@@ -340,10 +340,18 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
                 }
                 // 대상 resource의 행 정책을 다시 적용한다. 안 보이는 관계는 null이 된다.
                 let row = cx.cond(&tf["rowRead"], &tenv).map_err(internal)?;
+                // Traversal must not reveal a relation whose source reference
+                // field is redacted, even when the target row itself is public.
+                let origin = if rf["fieldRead"][rel].is_null() {
+                    "TRUE".to_string()
+                } else {
+                    n_fp += 1;
+                    cx.cond(&rf["fieldRead"][rel], &env).map_err(internal)?
+                };
                 let fk = column(facts, res, rel).unwrap();
                 let jv = cx.alias("j");
                 joins.push(format!(
-                    "LEFT JOIN LATERAL (SELECT json_build_object({}) AS v FROM {} {ta} WHERE {ta}.id = {t}.{fk} AND {row}) {jv} ON TRUE",
+                    "LEFT JOIN LATERAL (SELECT json_build_object({}) AS v FROM {} {ta} WHERE {ta}.id = {t}.{fk} AND ({origin}) AND ({row})) {jv} ON TRUE",
                     pairs.join(", "),
                     table(target)
                 ));
