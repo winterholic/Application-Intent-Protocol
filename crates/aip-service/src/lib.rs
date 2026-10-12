@@ -224,6 +224,38 @@ pub enum Language {
 fn error(code: &str, message: &str) -> Value {
     json!({"ok":false,"code":code,"message":message})
 }
+
+/// The error of a JSON document that does not parse into its type, with the reason and the position. The
+/// reason of serde names keys and types (`unknown field`, `missing field`, `invalid type`), which a person
+/// or an AI needs to repair the file; the value that was wrong is dropped, because a configuration file can
+/// hold a secret and the output of a failed start is logged.
+fn json_error(code: &str, what: &str, e: &serde_json::Error) -> Value {
+    let reason = redact_json_reason(&e.to_string());
+    error(code, &format!("{what}: {reason} (줄 {}, 열 {})", e.line(), e.column()))
+}
+
+fn redact_json_reason(full: &str) -> String {
+    // serde_json appends " at line L column C"; the position is reported on its own.
+    let msg = full.rsplit_once(" at line ").map_or(full, |(m, _)| m);
+    let structural =
+        ["unknown field", "missing field", "unknown variant", "duplicate field", "invalid length", "EOF while", "trailing characters", "expected "];
+    if let Some(rest) = msg.strip_prefix("invalid type: ").or_else(|| msg.strip_prefix("invalid value: ")) {
+        // `invalid type: string "abc", expected u64` -> `invalid type: string, expected u64`
+        let kind = rest.split([' ', ',']).next().unwrap_or("");
+        let expected = rest.split_once(", expected ").map_or("", |(_, x)| x);
+        let label = if msg.starts_with("invalid type") { "invalid type" } else { "invalid value" };
+        return format!("{label}: {kind}, expected {expected}");
+    }
+    // The value of an unknown variant is what was typed; the list of the accepted ones is what repairs it.
+    if let Some((_, accepted)) = msg.strip_prefix("unknown variant ").and_then(|rest| rest.split_once(", expected ")) {
+        return format!("unknown variant, expected {accepted}");
+    }
+    if structural.iter().any(|p| msg.starts_with(p)) {
+        return msg.to_string();
+    }
+    // A message written by a `Deserialize` implementation may quote the value: say only that it is wrong.
+    "a value is not accepted".to_string()
+}
 fn read_bounded(path: &Path, limit: usize, code: &str) -> Result<String, Value> {
     let mut options = fs::OpenOptions::new();
     options.read(true);
@@ -255,17 +287,20 @@ pub fn load(file: &Path, dev_checks: bool) -> Result<spike_v11_dev_checks::Check
 }
 fn configuration(path: &Path) -> Result<Config, Value> {
     let source = read_bounded(path, CONFIG_BYTES, "CONFIG_IO")?;
-    let mut config: Config = serde_json::from_str(&source).map_err(|_| error("BAD_CONFIG", "제품 설정 형식 오류"))?;
+    let mut config: Config = serde_json::from_str(&source).map_err(|e| json_error("BAD_CONFIG", "제품 설정 형식 오류", &e))?;
     aip_migrate::configure_schema(&config.schema)?;
     if !config.listen.ip().is_loopback() {
         return Err(error("BAD_LISTEN", "TLS reverse proxy 뒤의 loopback listener가 필요함"));
     }
     if config.database_url_env.is_empty() || !config.database_url_env.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
-        return Err(error("BAD_CONFIG", "DB 환경 변수 이름 오류"));
+        return Err(error("BAD_CONFIG", "database_url_env는 영문자·숫자·'_'로 된 환경 변수 이름이어야 함(DB URL 자체가 아님)"));
     }
-    spike_v6_transport::server::ServerOptions { allowed_origins: config.allowed_origins.clone() }
-        .validate_product()
-        .map_err(|_| error("BAD_ORIGIN", "정규화된 HTTPS 또는 로컬 HTTP origin이 필요함"))?;
+    spike_v6_transport::server::ServerOptions { allowed_origins: config.allowed_origins.clone() }.validate_product().map_err(|_| {
+        error(
+            "BAD_ORIGIN",
+            "allowed_origins는 정규화된 HTTPS origin(또는 로컬 HTTP origin)이어야 함: 경로·끝 슬래시·와일드카드 없이 scheme://host[:port]",
+        )
+    })?;
     let parent = path.parent().unwrap_or(Path::new("."));
     if let aip_auth::JwksSource::File { path } = &mut config.auth.jwks
         && path.is_relative()
@@ -295,56 +330,84 @@ fn valid_env_name(name: &str) -> bool {
         && name.bytes().all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
 }
 
-fn validate_integrations_shape(configs: &[IntegrationConfig]) -> Result<(), Value> {
-    if configs.len() > 64
-        || configs.iter().any(|item| {
-            item.name.is_empty()
-                || item.name.len() > 128
-                || !item.name.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
-                || item.timeout_ms == 0
-                || item.timeout_ms > 30_000
-                || item.max_request_bytes == 0
-                || item.max_request_bytes > aip_execution::integrations::MAX_BODY_BYTES
-                || item.max_response_bytes == 0
-                || item.max_response_bytes > aip_execution::integrations::MAX_BODY_BYTES
-                || item.secret_header_env.as_ref().is_some_and(|secret| !valid_env_name(&secret.env))
-        })
+/// The first rule an integration breaks, in words: which setting and what is allowed. Names and limits are
+/// not secrets; the URL and secret values are never part of the text.
+fn integration_shape_problem(item: &IntegrationConfig) -> Option<String> {
+    let max_body = aip_execution::integrations::MAX_BODY_BYTES;
+    let name = &item.name;
+    if item.name.is_empty()
+        || item.name.len() > 128
+        || !item.name.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
     {
-        return Err(error("INTEGRATION_CONFIG", "외부 연동 설정 형식 오류"));
+        return Some("name은 1~128자의 영문자·숫자·'.'·'_'·'-'여야 함".to_string());
     }
-    Ok(())
+    if item.timeout_ms == 0 || item.timeout_ms > 30_000 {
+        return Some(format!("'{name}': timeout_ms는 1~30000이어야 함(받은 값 {})", item.timeout_ms));
+    }
+    if item.max_request_bytes == 0 || item.max_request_bytes > max_body {
+        return Some(format!("'{name}': max_request_bytes는 1~{max_body}이어야 함(받은 값 {})", item.max_request_bytes));
+    }
+    if item.max_response_bytes == 0 || item.max_response_bytes > max_body {
+        return Some(format!("'{name}': max_response_bytes는 1~{max_body}이어야 함(받은 값 {})", item.max_response_bytes));
+    }
+    if item.secret_header_env.as_ref().is_some_and(|secret| !valid_env_name(&secret.env)) {
+        return Some(format!("'{name}': secret_header_env.env는 대문자·숫자·'_'로 된 환경 변수 이름이어야 함"));
+    }
+    None
+}
+
+fn validate_integrations_shape(configs: &[IntegrationConfig]) -> Result<(), Value> {
+    if configs.len() > 64 {
+        return Err(error("INTEGRATION_CONFIG", &format!("외부 연동 설정 형식 오류: integrations는 64개 이하여야 함(받은 수 {})", configs.len())));
+    }
+    match configs.iter().find_map(integration_shape_problem) {
+        Some(problem) => Err(error("INTEGRATION_CONFIG", &format!("외부 연동 설정 형식 오류: {problem}"))),
+        None => Ok(()),
+    }
+}
+
+/// An integration that cannot be resolved, named by its configured name (never by its URL, which may carry a
+/// credential) and with the step that failed.
+fn integration_resolution_error(name: &str, step: &str) -> Value {
+    error("INTEGRATION_CONFIG", &format!("외부 연동 '{name}' 검증 실패: {step}"))
 }
 
 async fn resolve_integrations(configs: &[IntegrationConfig]) -> Result<Vec<aip_execution::integrations::EndpointConfig>, Value> {
     validate_integrations_shape(configs)?;
     let mut endpoints = Vec::with_capacity(configs.len());
     for config in configs {
-        let parsed = url::Url::parse(&config.url).map_err(|_| error("INTEGRATION_CONFIG", "외부 연동 설정 또는 DNS 검증 실패"))?;
-        let port = parsed.port_or_known_default().ok_or_else(|| error("INTEGRATION_CONFIG", "외부 연동 설정 또는 DNS 검증 실패"))?;
-        let mut resolved = match parsed.host().ok_or_else(|| error("INTEGRATION_CONFIG", "외부 연동 설정 또는 DNS 검증 실패"))? {
+        let parsed =
+            url::Url::parse(&config.url).map_err(|_| integration_resolution_error(&config.name, "url을 해석할 수 없음(절대 URL이어야 함)"))?;
+        let port = parsed
+            .port_or_known_default()
+            .ok_or_else(|| integration_resolution_error(&config.name, "url의 포트를 정할 수 없음(https 또는 명시한 포트가 필요)"))?;
+        let mut resolved = match parsed.host().ok_or_else(|| integration_resolution_error(&config.name, "url에 호스트가 없음"))? {
             url::Host::Ipv4(ip) => vec![SocketAddr::new(IpAddr::V4(ip), port)],
             url::Host::Ipv6(ip) => vec![SocketAddr::new(IpAddr::V6(ip), port)],
             url::Host::Domain(domain) => tokio::net::lookup_host((domain, port))
                 .await
-                .map_err(|_| error("INTEGRATION_CONFIG", "외부 연동 설정 또는 DNS 검증 실패"))?
+                .map_err(|_| integration_resolution_error(&config.name, "호스트의 DNS 조회에 실패함(호스트 이름과 서버의 DNS 접근을 확인)"))?
                 .collect::<Vec<_>>(),
         };
         resolved.sort_unstable();
         resolved.dedup();
         if resolved.is_empty() || resolved.len() > 32 {
-            return Err(error("INTEGRATION_CONFIG", "외부 연동 설정 또는 DNS 검증 실패"));
+            return Err(integration_resolution_error(&config.name, "호스트가 1~32개의 주소로 해석되어야 함"));
         }
         let secret_header = config
             .secret_header_env
             .as_ref()
             .map(|secret| {
-                std::env::var(&secret.env)
-                    .map(|value| (secret.name.clone(), value))
-                    .map_err(|_| error("INTEGRATION_CONFIG", "외부 연동 설정 또는 DNS 검증 실패"))
+                std::env::var(&secret.env).map(|value| (secret.name.clone(), value)).map_err(|_| {
+                    integration_resolution_error(
+                        &config.name,
+                        "secret_header_env가 가리키는 환경 변수가 설정되어 있지 않음(변수 이름은 출력하지 않음)",
+                    )
+                })
             })
             .transpose()?;
         if secret_header.as_ref().is_some_and(|(_, value)| value.is_empty() || value.len() > 8192) {
-            return Err(error("INTEGRATION_CONFIG", "외부 연동 설정 또는 DNS 검증 실패"));
+            return Err(integration_resolution_error(&config.name, "secret_header_env의 값은 1~8192바이트여야 함(값은 출력하지 않음)"));
         }
         endpoints.push(aip_execution::integrations::EndpointConfig {
             name: config.name.clone(),
@@ -367,7 +430,13 @@ async fn build_broker(configs: &[IntegrationConfig]) -> Result<Option<Arc<aip_ex
         return Ok(None);
     }
     let endpoints = with_resolution_deadline(INTEGRATION_DNS_TIMEOUT, resolve_integrations(configs)).await?;
-    let broker = aip_execution::integrations::Broker::new(endpoints).map_err(|_| error("INTEGRATION_CONFIG", "외부 연동 설정 또는 DNS 검증 실패"))?;
+    let broker = aip_execution::integrations::Broker::new(endpoints).map_err(|_| {
+        error(
+            "INTEGRATION_CONFIG",
+            "외부 연동 설정 검증 실패: url은 자격 증명·fragment가 없는 https여야 하고(http는 allow_loopback과 loopback 주소일 때만), method는 GET·POST·PUT·PATCH·DELETE이며, \
+             해석된 주소는 공개 주소여야 하고(사설 주소는 allow_private_networks, loopback은 allow_loopback), secret 헤더 이름은 예약어가 아니고, name은 중복되지 않아야 함",
+        )
+    })?;
     Ok(Some(Arc::new(broker)))
 }
 
@@ -375,7 +444,9 @@ async fn with_resolution_deadline<T, F>(deadline: std::time::Duration, future: F
 where
     F: Future<Output = Result<T, Value>>,
 {
-    tokio::time::timeout(deadline, future).await.map_err(|_| error("INTEGRATION_CONFIG", "외부 연동 설정 또는 DNS 검증 실패"))?
+    tokio::time::timeout(deadline, future)
+        .await
+        .map_err(|_| error("INTEGRATION_CONFIG", "외부 연동 DNS 조회가 기한 안에 끝나지 않음(호스트 이름과 서버의 DNS 접근을 확인)"))?
 }
 fn database_url(config: &Config) -> Result<String, Value> {
     if let Some(path) = &config.database_ca_file {
@@ -452,7 +523,7 @@ pub async fn run(command: Command) -> Result<Value, Value> {
             let migration = migration
                 .map(|p| {
                     read_bounded(&p, SOURCE_BYTES, "MIGRATION_IO")
-                        .and_then(|text| serde_json::from_str(&text).map_err(|_| error("BAD_MIGRATION", "이행 선언 JSON 형식 오류")))
+                        .and_then(|text| serde_json::from_str(&text).map_err(|e| json_error("BAD_MIGRATION", "이행 선언 JSON 형식 오류", &e)))
                 })
                 .transpose()?;
             match apply {
@@ -675,6 +746,81 @@ pub fn execute(command: Command) -> ExitCode {
 mod managed_config_tests {
     use super::*;
     use serde_json::json;
+
+    fn config_error(text: &str) -> String {
+        let dir = std::env::temp_dir().join(format!("aip-config-error-{}-{}", std::process::id(), text.len()));
+        std::fs::create_dir_all(&dir).expect("tmp dir");
+        let file = dir.join("service.json");
+        std::fs::write(&file, text).expect("write");
+        let result = configuration(&file);
+        std::fs::remove_dir_all(&dir).ok();
+        let error = result.err().expect("the configuration is rejected");
+        assert_eq!(error["ok"], false);
+        error["message"].as_str().expect("message").to_string()
+    }
+
+    /// The reason of a rejected configuration names the key, so that the file can be repaired from the output.
+    #[test]
+    fn a_rejected_configuration_names_the_key_and_the_position() {
+        let unknown = config_error("{\n\"schema\":\"app\",\n\"lissten\":\"127.0.0.1:1\"\n}");
+        assert!(unknown.contains("unknown field `lissten`") && unknown.contains("listen"), "{unknown}");
+        assert!(unknown.contains("줄 3"), "{unknown}");
+        let missing = config_error("{\"auth\":{\"issuer\":\"i\",\"audience\":\"a\",\"jwks\":{\"kind\":\"file\",\"path\":\"j\"}}}");
+        assert!(missing.contains("missing field `schema`"), "{missing}");
+        let wrong_type = config_error("{\"schema\":5}");
+        assert!(wrong_type.contains("invalid type: integer, expected a string"), "{wrong_type}");
+        let broken = config_error("{\"schema\":\"app\"");
+        assert!(broken.starts_with("제품 설정 형식 오류: EOF while parsing"), "{broken}");
+    }
+
+    /// The failed start is logged, and a configuration file may hold a secret: the offending value never appears.
+    #[test]
+    fn a_rejected_configuration_never_echoes_the_value() {
+        let secret = "s3cr3t-VALUE-0123456789";
+        for text in [
+            format!("{{\"schema\":\"{secret}\",\"database_url_env\":7}}"),
+            format!("{{\"schema\":\"app\",\"listen\":\"{secret}\"}}"),
+            format!("{{\"schema\":\"app\",\"wire\":\"{secret}\"}}"),
+            format!("{{\"schema\":\"app\",\"auth\":\"{secret}\"}}"),
+            format!("{{\"schema\":\"app\",\"object_transfer_lifetime_ms\":\"{secret}\"}}"),
+        ] {
+            let message = config_error(&text);
+            assert!(!message.contains(secret), "{text}: {message}");
+        }
+    }
+
+    #[test]
+    fn json_reasons_keep_structure_and_drop_values() {
+        assert_eq!(redact_json_reason("invalid type: string \"abc\", expected u64 at line 1 column 9"), "invalid type: string, expected u64");
+        assert_eq!(
+            redact_json_reason("invalid value: string \"abc\", expected a socket address at line 1 column 9"),
+            "invalid value: string, expected a socket address"
+        );
+        assert_eq!(redact_json_reason("missing field `schema` at line 1 column 2"), "missing field `schema`");
+        assert_eq!(redact_json_reason("invalid socket address syntax at line 2 column 5"), "a value is not accepted");
+    }
+
+    #[test]
+    fn an_integration_error_names_the_setting_and_never_the_url() {
+        let item = |name: &str, timeout_ms: u64| IntegrationConfig {
+            name: name.to_string(),
+            url: "https://user:pass@api.example/hook?token=hunter2".to_string(),
+            method: "POST".to_string(),
+            timeout_ms,
+            max_request_bytes: 1024,
+            max_response_bytes: 1024,
+            secret_header_env: None,
+            allow_loopback: false,
+            allow_private_networks: false,
+        };
+        let error = validate_integrations_shape(&[item("crm", 90_000)]).unwrap_err();
+        let message = error["message"].as_str().expect("message");
+        assert!(message.contains("'crm'") && message.contains("timeout_ms") && message.contains("90000"), "{message}");
+        assert!(!message.contains("hunter2") && !message.contains("user:pass"), "{message}");
+        let error = validate_integrations_shape(&[item("bad name", 1000)]).unwrap_err();
+        assert!(error["message"].as_str().expect("message").contains("name은"), "{error}");
+        assert!(validate_integrations_shape(&[item("crm", 1000)]).is_ok());
+    }
 
     #[test]
     fn server_infrastructure_accepts_explicit_backends_and_runtime_overrides() {
