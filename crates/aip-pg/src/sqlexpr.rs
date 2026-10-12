@@ -113,6 +113,9 @@ pub struct Compiler<'x> {
     counter: usize,
     /// Apply `visible to` when reading rows (data returned to clients).
     pub apply_visibility: bool,
+    /// Field reads inside client-facing filters, sort keys, group keys and computed selections honour the field's `visible to` and
+    /// `masked unless`. Without it a computed item (`p: m.phone`) or a sort/filter on the field would reveal what the projection hides.
+    pub guard_projection: bool,
     /// When set, `self` means "this row is the actor".
     self_row: Option<Val>,
     /// Inside `group by`: `count()` is an aggregate of the group.
@@ -158,6 +161,7 @@ impl<'x> Compiler<'x> {
             rows: Vec::new(),
             counter: 0,
             apply_visibility: false,
+            guard_projection: false,
             self_row: None,
             group_context: false,
             via_alias: None,
@@ -352,9 +356,20 @@ impl<'x> Compiler<'x> {
                 format!("(SELECT {a}.{} FROM {} {a} WHERE {a}.\"id\" = {base})", q(col), q(&table))
             }
         };
+        let guard = if self.guard_projection {
+            let row =
+                if is_alias { Val::Row { entity: entity.into(), alias: base.into() } } else { Val::Id { entity: entity.into(), sql: base.into() } };
+            crate::select::field_guard_condition(self, entity, &row, f)
+        } else {
+            None
+        };
+        let hide = |sql: String| match &guard {
+            Some(cond) => format!("(CASE WHEN {cond} THEN {sql} END)"),
+            None => sql,
+        };
         match col {
             Col::Scalar { col, ty } => {
-                let sql = access(self, &col);
+                let sql = hide(access(self, &col));
                 match ty {
                     Ty::Coll(elem) => Val::JsonArray { sql, elem: *elem },
                     Ty::Record(r) => Val::Json { sql, record: Some(r) },
@@ -362,8 +377,8 @@ impl<'x> Compiler<'x> {
                     ty => Val::Scalar { sql, ty },
                 }
             }
-            Col::Counter { col } => Val::Scalar { sql: access(self, &col), ty: Ty::Int },
-            Col::Ref { col, target } => Val::Id { entity: target, sql: access(self, &col) },
+            Col::Counter { col } => Val::Scalar { sql: hide(access(self, &col)), ty: Ty::Int },
+            Col::Ref { col, target } => Val::Id { entity: target, sql: hide(access(self, &col)) },
             Col::Union { id_col, .. } => Val::Scalar { sql: access(self, &id_col), ty: Ty::Uuid },
             Col::Snapshot { id_col, ver_col, target } => {
                 let id = access(self, &id_col);

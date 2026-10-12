@@ -23,7 +23,9 @@ pub fn object(c: &mut Compiler<'_>, row: &Val, sel: &Selection) -> String {
         c.path_stack.push(it.name.clone());
         let value = match &it.value {
             Some(e) => {
+                let outer = std::mem::replace(&mut c.guard_projection, c.apply_visibility);
                 let v = c.expr(e);
+                c.guard_projection = outer;
                 value_json(c, v, it.sub.as_ref())
             }
             None => field_json(c, &entity, row, &it.name, it.sub.as_ref()),
@@ -121,6 +123,29 @@ fn field_json(c: &mut Compiler<'_>, entity: &str, row: &Val, field: &str, sub: O
         }
     };
     guard_field(c, entity, row, field, raw)
+}
+
+/// The condition under which the caller may see the raw value of `field`, or `None` when it has no field-level policy. Used where the
+/// value feeds an expression (computed selection, sort, filter) instead of the projection, so a masked value counts as hidden.
+pub fn field_guard_condition(c: &mut Compiler<'_>, entity: &str, row: &Val, field: &str) -> Option<String> {
+    let core = c.core;
+    let f = core.entities.get(entity).and_then(|e| e.fields.iter().find(|f| f.name == field))?;
+    let is_actor = c.actor_entity() == Some(entity);
+    let mut conds = Vec::new();
+    // The policy itself reads other fields; those reads must not be guarded again.
+    let outer = std::mem::replace(&mut c.guard_projection, false);
+    if let Some(cond) = &f.visible_to {
+        c.set_self_row(if is_actor { Some(row.clone()) } else { None });
+        conds.push(c.pred(cond));
+        c.set_self_row(None);
+    }
+    if let Some(m) = &f.masked {
+        c.set_self_row(if is_actor { Some(row.clone()) } else { None });
+        conds.push(c.pred(&m.unless));
+        c.set_self_row(None);
+    }
+    c.guard_projection = outer;
+    (!conds.is_empty()).then(|| conds.join(" AND "))
 }
 
 /// Field-level `visible to` and `masked unless`.

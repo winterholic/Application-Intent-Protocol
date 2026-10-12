@@ -15,6 +15,10 @@ name = "aip"
 path = "src/main.rs"
 
 [[test]]
+name = "field_policy_e2e"
+required-features = ["poc-runtime"]
+
+[[test]]
 name = "ariari_e2e"
 required-features = ["poc-runtime"]
 

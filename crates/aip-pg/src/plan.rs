@@ -1464,7 +1464,10 @@ impl<'x> Planner<'x> {
         }
         let keys = keys.as_slice();
         if let Some(f) = &qd.filter {
+            // a field hidden from the caller must not decide which rows match
+            c.guard_projection = true;
             conds.push(c.pred(f));
+            c.guard_projection = false;
         }
         if t.soft_delete {
             conds.push(format!("{a}.\"deleted_at\" IS NULL"));
@@ -1479,9 +1482,11 @@ impl<'x> Planner<'x> {
         if let Some(v) = c.visibility_sql(entity, &row) {
             conds.push(v);
         }
+        c.guard_projection = true;
         if !qd.group_by.is_empty() {
             let text = self.group_sql(c, qd, &t.table, &a, &conds);
             c.apply_visibility = false;
+            c.guard_projection = false;
             c.pop();
             return text;
         }
@@ -1533,6 +1538,7 @@ impl<'x> Planner<'x> {
         let obj = select::object(c, &row, &qd.select);
         c.path_stack.pop();
         c.apply_visibility = false;
+        c.guard_projection = false;
         c.pop();
         let key_array = format!("jsonb_build_array({})", key_sql.iter().map(|(s, _)| format!("({s})")).collect::<Vec<_>>().join(", "));
         let w = Compiler::where_sql(&conds);
