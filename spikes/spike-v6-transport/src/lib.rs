@@ -959,9 +959,12 @@ async fn serve_conn(
         } else {
             None
         };
-        let Ok(_slot) = runtime.realtime_slots.try_acquire() else {
+        // 토큰 없는 브라우저 WebSocket은 첫 프레임 인증 전까지 pre-auth 슬롯만 쓴다. 인증 뒤에 `stream_ws`가 정식 슬롯을 잡는다.
+        let browser_slots = if websocket && token.is_none() { realtime::BrowserSlots::acquire_preauth(&runtime) } else { None };
+        let _slot = if websocket && token.is_none() { None } else { runtime.realtime_slots.try_acquire().ok() };
+        if browser_slots.is_none() && _slot.is_none() {
             return reply(&mut w, &err("SERVER_BUSY", "실시간 연결 상한")).await;
-        };
+        }
         if sse {
             if let Err(error) = realtime::send_sse_headers(&mut w.writer, w.origin.as_deref()).await {
                 eprintln!("{{\"event\":\"realtime_write_failed\",\"transport\":\"sse\",\"kind\":\"{:?}\"}}", error.kind());
@@ -980,7 +983,7 @@ async fn serve_conn(
             Ok(Err(_)) | Err(_) => return,
         }
         let io = tokio::io::join(rd, w.writer);
-        let _ = realtime::stream_ws(io, token, fingerprint.to_owned(), facts, runtime.clone(), wire).await;
+        let _ = realtime::stream_ws(io, token, browser_slots, fingerprint.to_owned(), facts, runtime.clone(), wire).await;
         return;
     }
     if path == "/session" {
@@ -1236,6 +1239,7 @@ async fn start_with_fingerprint(facts: Value, wire: IdWire, contract_fingerprint
             db_pool: None,
             admission: None,
             realtime_slots: tokio::sync::Semaphore::new(32),
+            realtime_preauth: tokio::sync::Semaphore::new(32),
             object_slots: tokio::sync::Semaphore::new(4),
             db_url: spike_v2_read::DB_URL.into(),
             broker: None,

@@ -281,9 +281,48 @@ where
     run_ws(&mut socket, subscription, &token, options, deadline, &mut poll).await
 }
 
+/// 토큰 없는 브라우저 WebSocket의 슬롯 상태. 인증 전에는 `realtime_preauth`만 쓰고, 인증이 끝나면 `realtime_slots`로 옮긴다.
+/// 연결이 어떻게 끝나든(취소 포함) Drop이 쥔 슬롯을 돌려준다.
+pub(crate) struct BrowserSlots {
+    runtime: Arc<crate::server::Runtime>,
+    preauth: std::sync::atomic::AtomicBool,
+    main: std::sync::atomic::AtomicBool,
+}
+
+impl BrowserSlots {
+    pub(crate) fn acquire_preauth(runtime: &Arc<crate::server::Runtime>) -> Option<Arc<Self>> {
+        runtime.realtime_preauth.try_acquire().ok()?.forget();
+        Some(Arc::new(Self { runtime: runtime.clone(), preauth: true.into(), main: false.into() }))
+    }
+
+    fn promote(&self) -> bool {
+        use std::sync::atomic::Ordering::SeqCst;
+        let Ok(permit) = self.runtime.realtime_slots.try_acquire() else { return false };
+        permit.forget();
+        self.main.store(true, SeqCst);
+        if self.preauth.swap(false, SeqCst) {
+            self.runtime.realtime_preauth.add_permits(1);
+        }
+        true
+    }
+}
+
+impl Drop for BrowserSlots {
+    fn drop(&mut self) {
+        use std::sync::atomic::Ordering::SeqCst;
+        if self.preauth.swap(false, SeqCst) {
+            self.runtime.realtime_preauth.add_permits(1);
+        }
+        if self.main.swap(false, SeqCst) {
+            self.runtime.realtime_slots.add_permits(1);
+        }
+    }
+}
+
 pub(crate) async fn stream_ws<S>(
     io: S,
     token: Option<String>,
+    slots: Option<Arc<BrowserSlots>>,
     expected_fingerprint: String,
     facts: Arc<Value>,
     runtime: Arc<crate::server::Runtime>,
@@ -297,6 +336,7 @@ where
     let mut authenticate = move |token: &str| -> AuthFuture {
         let token = token.to_owned();
         let runtime = auth_runtime.clone();
+        let slots = slots.clone();
         Box::pin(async move {
             let provider = runtime.authenticator.as_ref().ok_or("UNAUTHENTICATED")?;
             match tokio::time::timeout(crate::server::DB_PREFLIGHT_TIMEOUT, provider.verify_session(&token)).await {
@@ -316,6 +356,11 @@ where
                             Ok(crate::admission::Outcome::Allowed) => {}
                             Ok(crate::admission::Outcome::Limited { .. }) => return Err("RATE_LIMITED"),
                             Err(_) => return Err("DB_UNAVAILABLE"),
+                        }
+                    }
+                    if let Some(slots) = &slots {
+                        if !slots.promote() {
+                            return Err("SERVER_BUSY");
                         }
                     }
                     Ok(())

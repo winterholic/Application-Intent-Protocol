@@ -49,6 +49,8 @@ pub(crate) struct Runtime {
     pub db_pool: Option<Arc<crate::pool::ConnectionPool>>,
     pub admission: Option<Arc<crate::admission::Admission>>,
     pub realtime_slots: tokio::sync::Semaphore,
+    /// 인증 전 브라우저 WebSocket 핸드셰이크 전용 슬롯. 익명 연결이 인증된 연결의 `realtime_slots`를 점유하지 못하게 분리한다.
+    pub realtime_preauth: tokio::sync::Semaphore,
     pub object_slots: tokio::sync::Semaphore,
     pub db_url: String,
     pub broker: Option<Arc<aip_execution::integrations::Broker>>,
@@ -119,6 +121,7 @@ pub async fn listen_with_apply_contract(facts: Value, wire: IdWire, address: Soc
             db_pool: None,
             admission: None,
             realtime_slots: tokio::sync::Semaphore::new(32),
+            realtime_preauth: tokio::sync::Semaphore::new(32),
             object_slots: tokio::sync::Semaphore::new(4),
             db_url,
             broker: None,
@@ -251,7 +254,11 @@ pub(crate) async fn listen_with_fingerprint(
                             });
                         }
                     }
-                    Err(e)=>break Err(e),
+                    Err(e)=>{
+                        // EMFILE·ECONNABORTED 같은 일시 오류가 진행 중인 요청과 listener 전체를 내리면 한 연결 폭주로 서비스가 멈춘다.
+                        eprintln!("{{\"event\":\"accept_failed\",\"kind\":\"{:?}\"}}", e.kind());
+                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    }
                 },
                 Some(result)=requests.join_next(), if !requests.is_empty()=> {
                     // 요청 하나의 panic이 다른 연결과 listener 전체를 내리지 않게 한다. 취소는 종료 중에만 생긴다.
@@ -303,6 +310,7 @@ pub async fn listen_with_options(
             db_pool: None,
             admission: None,
             realtime_slots: tokio::sync::Semaphore::new(32),
+            realtime_preauth: tokio::sync::Semaphore::new(32),
             object_slots: tokio::sync::Semaphore::new(4),
             db_url,
             broker: None,
@@ -345,6 +353,7 @@ pub async fn listen_with_prototype_options(
             db_pool: None,
             admission: None,
             realtime_slots: tokio::sync::Semaphore::new(32),
+            realtime_preauth: tokio::sync::Semaphore::new(32),
             object_slots: tokio::sync::Semaphore::new(4),
             db_url,
             broker: None,
@@ -453,6 +462,7 @@ pub async fn listen_with_infrastructure(
         address,
         Runtime {
             realtime_slots: tokio::sync::Semaphore::new(resource_limits.realtime_capacity(infrastructure.realtime.max_connections)),
+            realtime_preauth: tokio::sync::Semaphore::new(resource_limits.realtime_capacity(infrastructure.realtime.max_connections)),
             object_slots: tokio::sync::Semaphore::new(resource_limits.uploads),
             infrastructure,
             db_pool: None,

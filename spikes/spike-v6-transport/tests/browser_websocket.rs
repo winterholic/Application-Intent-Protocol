@@ -212,3 +212,16 @@ async fn browser_auth_frame_is_bounded_and_invalid_auth_never_reaches_subscripti
     assert!(matches!(oversized_reply, None | Some(Err(_)) | Some(Ok(Message::Close(_)))), "oversized first frame must close: {oversized_reply:?}");
     server.shutdown().await.unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn unauthenticated_browser_sockets_do_not_consume_authenticated_realtime_slots() {
+    let _schema_lock = SCHEMA_LOCK.lock().await;
+    let (server, _fingerprint, _cleanup) = start_server().await;
+    // max_connections = 1: 인증 프레임을 보내지 않는 익명 소켓이 정식 슬롯을 쥐면 인증된 사용자가 SERVER_BUSY를 받는다.
+    let (_anonymous, _) = tokio_tungstenite::connect_async(browser_request(server.address, true)).await.unwrap();
+    let mut authenticated = browser_request(server.address, true);
+    authenticated.headers_mut().insert("authorization", "Bearer browser-owner".parse().unwrap());
+    let result = tokio_tungstenite::connect_async(authenticated).await;
+    assert!(result.is_ok(), "an authenticated socket must not be starved by anonymous pre-auth sockets: {:?}", result.err());
+    server.shutdown().await.unwrap();
+}
