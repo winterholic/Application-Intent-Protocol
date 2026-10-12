@@ -80,6 +80,8 @@
 | S-22 | 낮음 | 제품 | cron step `59/4294967295`가 release에서 wrap되어 매 분 실행, debug에서 panic | 테스트(`attempt to add with overflow`) | `checked_add` | `schedule.rs` 단위 테스트 | 75d602c |
 | S-23 | 낮음 | 제품 | `expose apply bulk maxRows`에 상한이 없어 id 중복 검사 O(n²)와 `bulk + 1` overflow | 테스트 | 1~10000 | `spike-v1-fixture/tests/sema_fixes.rs` | 49dcb91 |
 | S-24 | 정보 | 제품 | S-07 변경이 `spike-v6-transport` lib 테스트 빌드를 깨뜨림(`Runtime` 필드 추가). `tools/verify.sh`는 v4·v6 테스트를 돌리지 않아 못 잡았고 GitHub CI(`verify.yml`)만 잡는 구조. `hosting.rs` 임시 디렉터리 이름이 macOS 시계 해상도로 충돌해 간헐 실패 | 실행 | 필드 추가, 이름에 카운터 | 〃 | 04977cd, 2b6d977 |
+| S-25 | 낮음 | 제품 | 새로 추가된 OAuth client credentials 설정(`OAuthConfig`)이 `Debug`를 derive해 로그에 `client_secret`이 찍힐 수 있음 | 단위 테스트 | Debug를 직접 구현해 secret을 `<redacted>`로 | `aip-execution/tests/integrations.rs` | e145643 |
+| S-26 | 낮음 | PoC | Text에 NUL이 들어가면 DB 오류가 `INTERNAL`로 나옴, CSV export 셀이 수식으로 실행됨, 읽기에 `statement_timeout` 없음, 제약 위반 메시지가 DB 원문 | 단위 테스트, e2e 전체 | NUL 거부, 수식 접두 셀에 `'`, 읽기 10초 timeout(`UNAVAILABLE`), 일반 문구 | `validate.rs`·`jobs.rs` 단위 테스트, `poc-runtime` e2e 전체 통과 | f7dccb3 |
 
 ### 3.2 열려 있는 항목(제품 경로)
 
@@ -154,11 +156,16 @@ PoC 항목은 제품 경로로 승격할 때 [PoC 이식 지도](2026-10-07-poc-
 
 ## 5. 남은 위험 요약
 
-1. [OPEN] O-01 Ref 직접 select의 대상 가시성: 창시자 결정이 필요한 가장 큰 인가 간극이다.
-2. 제품 경로 가용성: O-04 인증 DB 조회, O-05 슬롯 공평성, O-06 JWKS 락.
+1. [OPEN] O-01 Ref 직접 select의 대상 가시성(실제 PG로 재현됨): 창시자 결정이 필요한 가장 큰 인가 간극이다. 고치려면 Ref select를 정책 필드처럼 취급해 대상이 안 보이면 null로 만들어야 하고, 이는 출력 타입 nullable과 계약 지문을 바꾼다. 구현 위치는 `sema.rs`의 `expose()` kind 분류, `plan.rs`의 select 식 3곳(루트·단일 traverse·1:N), `spike-v5-sdk`의 타입 생성 2곳이다.
+2. 제품 경로 가용성: O-04·O-05·O-06, O-20 저장소 증가, O-25 쓰기마다 `check` 전체 스캔. rate limit이 기본 꺼져 있다는 점(O-05)이 대부분의 가용성 항목을 증폭한다.
+3. 권한 설계: O-19 trigger 대상 operation의 직접 호출, O-22 DB 역할 분리 없음, O-26 `not exists` 경합.
 3. 격리: O-13 macOS worker 격리 한계. 확장은 신뢰한 코드만 쓴다는 전제가 깨지면 영향이 크다.
 4. PoC 런타임은 P-01~P-03을 고치기 전에 제품으로 승격하면 안 된다.
 
 ## 6. 검증 기록
 
-각 조치의 검증 명령과 출력은 커밋별 보고에 남겼다. 최종 보고는 이 절에 갱신한다.
+- 모든 조치는 먼저 실패하는 테스트로 재현했고, 수정 전 코드로 되돌려 같은 테스트가 실패함을 확인한 뒤 수정했다. 재현하지 못한 조치는 표에 "없음(미실행: 사유)"로 적었다(S-08, S-15).
+- 검증은 다른 작업자의 미완성 변경이 섞이지 않도록 `origin/main`의 격리 worktree에서 실행했다. 최종 실행은 이 문서를 마지막으로 갱신한 시점의 `origin/main`이다: `bash tools/verify.sh`(종료 코드 0, 마지막 줄 `AIP core verification passed`), `cargo test --manifest-path spikes/spike-v4-worker/Cargo.toml`, `cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml`, `cargo test -p aip-cli --features poc-runtime`.
+- `tools/verify.sh`는 spike-v4·v6 테스트를 돌리지 않는다. 이 때문에 S-07 변경이 v6 lib 테스트 빌드를 깨뜨린 것을 verify로는 잡지 못했다(S-24). GitHub CI `verify.yml`이 v6 테스트를 돌린다.
+- 읽기 전용 독립 검토 7개 영역과, 실행형 공격 시도 3개(읽기 인가, 쓰기 동시성, HTTP black-box)를 계획했다. 실행형 3개는 계정 사용 한도(04:30 초기화)로 중간에 끝났다. 쓰기 정책 의미 행렬(`adv_policy_semantics`: allow의 NULL·not·enum·now 조합)은 실행해 문제 없음을 확인했고 나머지는 미실행이다. 다음 감사 회차의 첫 일이다.
+- 의존성: OSV 조회로 crates.io 438개 중 취약점 2건(O-15), `npm audit` 0건. `cargo audit`·`cargo deny`는 설치되어 있지 않다.
