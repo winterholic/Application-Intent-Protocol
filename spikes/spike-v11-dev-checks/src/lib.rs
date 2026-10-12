@@ -90,6 +90,30 @@ fn unreachable_read_advice(execution: &Value) -> Vec<Advisory> {
         .collect()
 }
 
+/// `club: Club` is a reference (`club_id bigint REFERENCES club(id)`, joinable, checked by the database);
+/// `club: Club.Id` is only a number that happens to be a club id: no foreign key, nothing to traverse, and a
+/// deleted club leaves it dangling. Both read as "this row belongs to a club", and the second is chosen by mistake.
+fn unconstrained_id_advice(execution: &Value) -> Vec<Advisory> {
+    let Some(resources) = execution["resources"].as_object() else { return Vec::new() };
+    let mut out = Vec::new();
+    for (name, resource) in resources {
+        for (field, decl) in resource["fields"].as_object().into_iter().flatten() {
+            let ty = decl["ty"].as_str().unwrap_or("").trim_end_matches('?');
+            if field != "id" && ty.starts_with("Id<") {
+                let target = ty.trim_start_matches("Id<").trim_end_matches('>');
+                out.push(Advisory {
+                    code: "ADVISORY_ID_WITHOUT_REFERENCE",
+                    anchor: format!("resource:{name}.{field}"),
+                    msg: format!(
+                        "`{name}.{field}`는 `{target}.Id`라 외래 키가 없는 id 값이다. `{target}` 행에 속한다는 뜻이면 `{field}: {target}`(참조)로 쓴다. 외부 id를 일부러 저장하는 것이면 무시한다"
+                    ),
+                });
+            }
+        }
+    }
+    out
+}
+
 pub fn load_checked(src: &str, form: Form, options: &Value) -> Result<Checked, Vec<Diag>> {
     let enabled = dev_checks_enabled(options)?;
     // 개발 조언을 꺼도 실행 계약의 구조·타입 검사는 생략할 수 없다.
@@ -98,6 +122,7 @@ pub fn load_checked(src: &str, form: Form, options: &Value) -> Result<Checked, V
     if enabled {
         advisories.extend(direct_reference_advice(&output.execution));
         advisories.extend(unreachable_read_advice(&output.execution));
+        advisories.extend(unconstrained_id_advice(&output.execution));
     }
     Ok(Checked { output, advisories })
 }

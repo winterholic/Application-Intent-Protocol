@@ -567,6 +567,24 @@ resource Note {
 }
 ```
 
+### `ADVISORY_ID_WITHOUT_REFERENCE`
+
+a field that stores a resource id without a foreign key (advisory)
+
+- 원인: Not an error: the definition is accepted. `club: Club` is a reference (a foreign key the database checks, joinable and traversable). `club: Club.Id` is only a number that is a club id: nothing keeps it valid, and a deleted club leaves it dangling. Both read as "this row belongs to a club", and the second is usually chosen by mistake.
+- 수정: Write `club: Club` when the row belongs to a club. Keep `club: Club.Id` only to store an id on purpose without a constraint.
+
+```aip
+actor Member
+resource Member { fields { id: Id; name: Text } }
+resource Club {
+  fields { id: Id; name: Text }
+}
+resource Note {
+  fields { id: Id; body: Text; club: Club }
+}
+```
+
 ### `ADVISORY_UNUSED_PREDICATE`
 
 a predicate that nothing uses (advisory)

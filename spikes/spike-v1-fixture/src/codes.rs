@@ -567,6 +567,13 @@ pub static REGISTRY: &[Info] = &[
         concat!(base!(), "resource Note {\n  fields { id: Id; body: Text; owner: Member }\n  expose read { select id, body\n    budget { rows 10; depth 1; deadline 2s; cost 100 } }\n}\n"),
     ),
     i(
+        "ADVISORY_ID_WITHOUT_REFERENCE",
+        "a field that stores a resource id without a foreign key (advisory)",
+        "Not an error: the definition is accepted. `club: Club` is a reference (a foreign key the database checks, joinable and traversable). `club: Club.Id` is only a number that is a club id: nothing keeps it valid, and a deleted club leaves it dangling. Both read as \"this row belongs to a club\", and the second is usually chosen by mistake.",
+        "Write `club: Club` when the row belongs to a club. Keep `club: Club.Id` only to store an id on purpose without a constraint.",
+        concat!(base!(), "resource Club {\n  fields { id: Id; name: Text }\n}\nresource Note {\n  fields { id: Id; body: Text; club: Club }\n}\n"),
+    ),
+    i(
         "ADVISORY_UNUSED_PREDICATE",
         "a predicate that nothing uses (advisory)",
         "Not an error: the definition is accepted. An unused predicate is usually a rule that was meant to be applied and is not.",
