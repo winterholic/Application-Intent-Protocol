@@ -418,13 +418,7 @@ fn run() -> Result<ExitCode> {
     }
 }
 
-<<<<<<< Updated upstream
-fn definition_entry(c: &aip_service::definition_codes::Info) -> serde_json::Value {
-=======
-/// The PoC runtime commands need the optional `poc-runtime` build; the product path is `aip service`.
-#[cfg(not(feature = "poc-runtime"))]
 fn definition_entry(c: &aip_service::definition_registry::Info) -> serde_json::Value {
->>>>>>> Stashed changes
     serde_json::json!({"code": c.code, "title": c.title, "explain": c.explain, "fix": c.fix, "example": c.example})
 }
 
