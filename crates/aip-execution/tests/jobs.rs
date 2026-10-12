@@ -1,4 +1,4 @@
-use aip_execution::{Error, NewRun, Store, ddl};
+use aip_execution::{Error, NewRun, Redrive, Store, ddl};
 use serde_json::json;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio_postgres::{Client, NoTls};
@@ -360,4 +360,62 @@ async fn oversized_result_is_rejected_without_finishing_lease() {
     assert_eq!(store.finish(&db.client, &lease, output).await.unwrap_err(), Error::PayloadTooLarge);
     assert!(store.check_lease(&db.client, &lease).await.unwrap());
     assert_eq!(store.status(&db.client, &run.id, "https://issuer.example|subject-1").await.unwrap().unwrap().state, "RUNNING");
+}
+
+#[tokio::test]
+async fn operator_lists_without_payloads_and_redrives_a_failed_run_as_the_same_fenced_run() {
+    let db = Db::new().await;
+    let store = db.store();
+    let mut input = new_run("dead", json!({"secret":"payload"}));
+    input.max_attempts = 1;
+    let run = store.enqueue(&db.client, input).await.unwrap();
+    store.enqueue(&db.client, new_run("alive", json!({"x":1}))).await.unwrap();
+    let first = store.claim(&db.client, "worker-a").await.unwrap().unwrap();
+    assert_eq!(first.run_id.to_string(), run.id);
+    assert!(store.fail(&db.client, &first, "EXTENSION_ERROR").await.unwrap());
+
+    let failed = store.list(&db.client, Some("FAILED"), None, 50).await.unwrap();
+    assert_eq!(failed.len(), 1);
+    assert_eq!((failed[0].id.as_str(), failed[0].error.as_deref(), failed[0].redrivable), (run.id.as_str(), Some("EXTENSION_ERROR"), true));
+    assert!(!serde_json::to_string(&failed).unwrap().contains("payload"), "operator listing must not expose job input");
+    assert_eq!(store.list(&db.client, None, Some("normalize"), 50).await.unwrap().len(), 2);
+    assert!(store.list(&db.client, Some("DONE"), None, 50).await.is_err());
+
+    assert_eq!(store.redrive(&db.client, &run.id, "deployment-b").await.unwrap(), Redrive::DeploymentChanged);
+    assert_eq!(store.redrive(&db.client, &uuid_like(), "deployment-a").await.unwrap(), Redrive::NotFound);
+    assert_eq!(store.redrive(&db.client, &run.id, "deployment-a").await.unwrap(), Redrive::Queued);
+    assert_eq!(store.redrive(&db.client, &run.id, "deployment-a").await.unwrap(), Redrive::NotFailed);
+    let status = store.status(&db.client, &run.id, OWNER).await.unwrap().unwrap();
+    assert_eq!((status.state.as_str(), status.attempt, status.error), ("QUEUED", 0, None));
+
+    // The redriven run is claimable again with a newer epoch, so the earlier lease can no longer settle it.
+    let mut again = None;
+    for _ in 0..2 {
+        let lease = store.claim(&db.client, "worker-b").await.unwrap().unwrap();
+        if lease.run_id == first.run_id {
+            again = Some(lease);
+            break;
+        }
+    }
+    let again = again.expect("redriven run claimed");
+    assert!(again.epoch > first.epoch);
+    assert_eq!(again.input, json!({"secret":"payload"}));
+    assert!(!store.finish(&db.client, &first, json!({"stale":true})).await.unwrap());
+    assert!(store.finish(&db.client, &again, json!({"ok":true})).await.unwrap());
+
+    // Once the payload is collected, the run is a tombstone and cannot be redriven.
+    let mut gone = new_run("gone", json!({"x":2}));
+    gone.max_attempts = 1;
+    gone.ttl_ms = 1;
+    let gone = store.enqueue(&db.client, gone).await.unwrap();
+    let lease = store.claim(&db.client, "worker-c").await.unwrap().unwrap();
+    assert_eq!(lease.run_id.to_string(), gone.id);
+    assert!(store.fail(&db.client, &lease, "EXTENSION_ERROR").await.unwrap());
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    store.expire_payloads(&db.client).await.unwrap();
+    assert_eq!(store.redrive(&db.client, &gone.id, "deployment-a").await.unwrap(), Redrive::Expired);
+}
+
+fn uuid_like() -> String {
+    "00000000-0000-4000-8000-000000000000".into()
 }

@@ -318,6 +318,119 @@ impl Store {
             .await?;
         Ok(rows.into_iter().map(|row| row.get(0)).collect())
     }
+
+    /// Operator view across every owner, newest first. It never returns input, output or grant
+    /// payloads, so listing jobs does not expose business data to whoever runs the CLI.
+    pub async fn list(
+        &self,
+        client: &impl GenericClient,
+        state: Option<&str>,
+        operation: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<RunSummary>, Error> {
+        if !(1..=500).contains(&limit) || state.is_some_and(|state| !STATES.contains(&state)) {
+            return Err(Error::InvalidRun);
+        }
+        let table = self.table();
+        let rows = client
+            .query(
+                &format!(
+                    "SELECT id,owner,operation,idempotency_key,state,attempt,max_attempts,error,created_at::text,result_expires_at::text, \
+                       state='FAILED' AND result_expires_at>clock_timestamp() AND grant_data<>'{{}}'::jsonb \
+                     FROM {table} WHERE ($1::text IS NULL OR state=$1) AND ($2::text IS NULL OR operation=$2) \
+                     ORDER BY created_at DESC,id LIMIT $3"
+                ),
+                &[&state, &operation, &limit],
+            )
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|row| RunSummary {
+                id: row.get::<_, Uuid>(0).to_string(),
+                owner: row.get(1),
+                operation: row.get(2),
+                key: row.get(3),
+                state: row.get(4),
+                attempt: row.get(5),
+                max_attempts: row.get(6),
+                error: row.get(7),
+                created_at: row.get(8),
+                result_expires_at: row.get(9),
+                redrivable: row.get(10),
+            })
+            .collect())
+    }
+
+    /// Puts a FAILED run back in the queue as the same run, the way an operator redrives a dead
+    /// letter. The run keeps its id, key, owner and effect journal, so recorded effects replay instead
+    /// of repeating; `lease_epoch` keeps growing so a stale worker of an earlier attempt stays fenced.
+    /// Only runs whose payload is still retained and that belong to the given deployment qualify,
+    /// because a run accepted under another deployment would only fail `IMPLEMENTATION_CHANGED`.
+    pub async fn redrive(&self, client: &impl GenericClient, id: &str, deployment: &str) -> Result<Redrive, Error> {
+        let id = parse_id(id)?;
+        let table = self.table();
+        let Some(row) = client
+            .query_opt(
+                &format!(
+                    "SELECT state,deployment_digest,result_expires_at>clock_timestamp() AND grant_data<>'{{}}'::jsonb,timeout_ms,max_attempts \
+                     FROM {table} WHERE id=$1 FOR UPDATE"
+                ),
+                &[&id],
+            )
+            .await?
+        else {
+            return Ok(Redrive::NotFound);
+        };
+        if row.get::<_, String>(0) != "FAILED" {
+            return Ok(Redrive::NotFailed);
+        }
+        if !row.get::<_, bool>(2) {
+            return Ok(Redrive::Expired);
+        }
+        if row.get::<_, String>(1) != deployment {
+            return Ok(Redrive::DeploymentChanged);
+        }
+        let budget = run_budget_ms(row.get(3), row.get(4), 0);
+        client
+            .execute(
+                &format!(
+                    "UPDATE {table} SET state='QUEUED',attempt=0,error=NULL,output=NULL,lease_owner=NULL,lease_until=NULL,attempt_deadline=NULL, \
+                       cancel_requested_at=NULL,result_expires_at=NULL,next_run_at=clock_timestamp(), \
+                       run_deadline=clock_timestamp()+($2::bigint*interval '1 millisecond') \
+                     WHERE id=$1 AND state='FAILED'"
+                ),
+                &[&id, &budget],
+            )
+            .await?;
+        Ok(Redrive::Queued)
+    }
+}
+
+const STATES: [&str; 6] = ["QUEUED", "RUNNING", "CANCEL_REQUESTED", "SUCCEEDED", "FAILED", "CANCELLED"];
+
+#[derive(Clone, Debug, Serialize, PartialEq)]
+pub struct RunSummary {
+    pub id: String,
+    pub owner: String,
+    pub operation: String,
+    pub key: String,
+    pub state: String,
+    pub attempt: i32,
+    pub max_attempts: i32,
+    pub error: Option<String>,
+    pub created_at: String,
+    pub result_expires_at: Option<String>,
+    /// FAILED and still holding its input and grant, so `redrive` can requeue it.
+    pub redrivable: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Redrive {
+    Queued,
+    NotFound,
+    NotFailed,
+    Expired,
+    DeploymentChanged,
 }
 
 #[derive(Clone, Debug)]

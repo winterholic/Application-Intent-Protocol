@@ -1,6 +1,6 @@
 mod jobs;
 
-pub use jobs::{Error, JobResult, Lease, NewRun, Run, Store, ddl};
+pub use jobs::{Error, JobResult, Lease, NewRun, Redrive, Run, RunSummary, Store, ddl};
 
 pub mod files;
 

@@ -148,3 +148,18 @@ node --test product/tests/*.test.mjs
 ## Durable job과 서버 broker
 
 `operation job`은 연결과 분리되어 PostgreSQL에 수락·lease·상태·결과를 기록한다. enqueue/status/cancel/result 및 SDK polling watcher, file/event/HTTP capability 제한과 보존 정책은 [관리형 durable execution](MANAGED-EXECUTION.md)을 따른다. durable schema는 해당 capability를 가진 정의를 init/migrate할 때 만들어진다. 이 기능을 켜도 기존 SQL 동기 operation과 read/apply 요청 경로는 그대로다.
+
+### 실패 job 조회와 재처리
+
+운영자는 모든 owner의 job을 조회하고 `FAILED` job을 다시 큐에 넣을 수 있다. Sidekiq dead set의 retry, SQS DLQ redrive에 해당한다. 두 명령 모두 DB에 직접 연결하므로 서비스 설정의 DB 권한을 가진 운영자만 실행할 수 있다.
+
+```bash
+aip service jobs --config service.json list --state FAILED --operation syncOrders --limit 50
+aip service jobs --config service.json retry --id 7f3c...
+```
+
+- `list`는 최신순으로 id·owner·operation·key·상태·시도 횟수·마지막 오류·`unsettledEffects`(결과를 모르는 외부 효과 수)·`redrivable`을 돌려준다. job 입력·출력·grant는 출력하지 않는다.
+- `retry`는 새 job을 만들지 않고 **같은 run**을 `QUEUED`로 되돌린다. id·key·owner·effect journal을 유지하므로 이미 기록된 파일·이벤트·메시지·HTTP·데이터 전이는 반복하지 않고 재생한다. 시도 횟수는 0부터 다시 세고 run 기한은 run에 기록된 시도 횟수로 다시 계산한다. lease epoch는 계속 증가하므로 이전 시도의 worker는 결과를 기록하지 못한다.
+- 실행할 때 principal 활성·배포 fence·`allow`를 다시 검사한다. 비활성화한 주체의 job은 재처리해도 다시 실패한다.
+- 거부하는 경우는 네 가지다. `FAILED`가 아니면 `JOB_NOT_FAILED`, 결과 보존 기간(24시간)이 지나 입력이 지워졌으면 `JOB_EXPIRED`, 다른 배포에서 수락했으면 `DEPLOYMENT_CHANGED`, 결과를 모르는 외부 효과가 있으면 `EFFECT_UNKNOWN`이다. 마지막 경우는 provider에서 실제 결과를 확인한 뒤 새 job으로 처리한다. 미확정 효과를 운영자가 확정하는 명령은 아직 없다.
+- 재처리는 owner의 active job 상한(100)을 다시 검사하지 않는다. 대량 재처리는 운영자가 나눠서 실행한다.

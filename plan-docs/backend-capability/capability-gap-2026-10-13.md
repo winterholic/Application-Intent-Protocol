@@ -28,6 +28,7 @@
 | B09 Audit Logging | 미지원 | 부분 | 전이마다 같은 문장의 감사 행. `tests/audit.rs`, [OPERATIONS](../../product/OPERATIONS.md#업무-감사-기록) |
 | I02 Metrics | 미지원 | 부분 | token 보호 `/metrics`. [OPERATIONS](../../product/OPERATIONS.md#요청-metrics) |
 | C09 재시도, D08 Retry/Backoff | 부분 / 부분 | 지원 / 지원 | 설정 `job_policies`(1회에서 10회, 미처리 예외 재시도 선택), 확장의 `ctx.retryLater()`, `ctx.job.attempt`. `tests/job_retry.rs`, [재시도 정책](../../product/MANAGED-EXECUTION.md#재시도-정책) |
+| D09 DLQ, I10 운영 진단 | 부분 / 부분 | 지원 / 부분 | `aip service jobs list`(payload 미출력)·`retry`(같은 run 재큐, 미확정 효과·다른 배포·만료는 거부). [OPERATIONS](../../product/OPERATIONS.md#실패-job-조회와-재처리) |
 
 ## A. 데이터
 
@@ -92,7 +93,7 @@
 | D06 | 상태 조회 | JobRunr dashboard, AsyncResult | 지원 | owner 범위 status/result |
 | D07 | 취소 | revoke, job cancel | 지원 | CANCEL_REQUESTED와 미확정 효과 보고 |
 | D08 | Retry/Backoff | `@Retryable`, BullMQ backoff, `retry_on wait:` | 지원 | 설정 `job_policies`로 job별 1회에서 10회, `retry_uncaught_errors`. backoff는 1초에서 30초 지수 고정(사용자 지정 대기 없음) |
-| D09 | DLQ | SQS DLQ, Sidekiq dead set | 부분 | message queue DLQ·redrive. job은 FAILED 보존뿐 재처리 도구 없음 |
+| D09 | DLQ | SQS DLQ, Sidekiq dead set | 지원 | message queue DLQ·redrive. job은 `aip service jobs list/retry`로 FAILED run을 같은 run으로 재처리(journal 재생). 미확정 효과 확정 명령은 없음. `crates/aip-service/tests/jobs_cli.rs` |
 | D10 | 작업 의존성 | Celery chain/chord, BullMQ flow | 확장 | `ctx.jobs.run` 인라인 자식(depth 8, 호출 64). 독립 lease DAG 없음 |
 | D11 | 병렬 실행 | `@Async`, Celery group | 확장 | worker 내부 병렬. durable fan-out 없음 |
 | D12 | 분산 작업 | 다중 worker 노드 | 부분 | 여러 instance가 lease를 나눠 가짐. 배치 위치 제어 없음 |
@@ -166,7 +167,7 @@
 | I07 | 장애 복구 | 재시도·재처리 도구 | 부분 | lease·epoch·COMMIT_UNKNOWN·EFFECT_UNKNOWN. provider 대사는 앱 책임 |
 | I08 | 실행 비용 제한 | 서버 timeout·pool | 부분 | deadline·budget·동시성·cgroup. tenant 공정성 없음 |
 | I09 | Resource Quota | 앱 코드 | 부분 | 행 limit, owner별 job·file·object 상한 |
-| I10 | 운영 진단 | Actuator, admin | 부분 | `/capabilities`, migrate plan, readiness. 운영자 job 조회 없음 |
+| I10 | 운영 진단 | Actuator, admin | 부분 | `/capabilities`, migrate plan, readiness, 운영자 job 조회(`aip service jobs list`, payload 미출력). 감사 행·outbox 조회 CLI 없음 |
 | I11 | 버전·호환성 | API versioning | 부분 | 계약 지문·배포 fence·journal |
 
 ## J. 계약 탐색
@@ -190,8 +191,8 @@
 
 | 판정 | 개수 |
 |---|---|
-| 지원 | 31 |
-| 부분 | 53 |
+| 지원 | 32 |
+| 부분 | 52 |
 | 확장 | 12 |
 | 미지원 | 9 |
 

@@ -76,6 +76,31 @@ pub enum Command {
         #[command(subcommand)]
         command: Principal,
     },
+    /// Operator-only durable job inspection and dead-letter redrive across every owner
+    Jobs {
+        #[arg(long)]
+        config: PathBuf,
+        #[command(subcommand)]
+        command: Jobs,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum Jobs {
+    /// List runs newest first without input, output or grant payloads
+    List {
+        #[arg(long)]
+        state: Option<String>,
+        #[arg(long)]
+        operation: Option<String>,
+        #[arg(long, default_value_t = 50)]
+        limit: i64,
+    },
+    /// Requeue a FAILED run as the same run; recorded effects replay instead of repeating
+    Retry {
+        #[arg(long)]
+        id: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -544,7 +569,82 @@ pub async fn run(command: Command) -> Result<Value, Value> {
         }
         Command::Serve { file, config } => serve(&file, configuration(&config)?).await,
         Command::Principal { config, command } => principal(configuration(&config)?, command).await,
+        Command::Jobs { config, command } => jobs(configuration(&config)?, command).await,
     }
+}
+
+async fn jobs(config: Config, command: Jobs) -> Result<Value, Value> {
+    let mut db = tokio::time::timeout(std::time::Duration::from_secs(5), spike_v2_read::connect_owned_with_url(&database_url(&config)?))
+        .await
+        .map_err(|_| error("DB_CONNECT", "DB 연결 기한 초과"))?
+        .map_err(|_| error("DB_CONNECT", "DB 연결 실패"))?;
+    let schema = config.schema.clone();
+    let store = aip_execution::Store::new(&schema).map_err(|_| error("JOBS_FAILED", "schema 이름 오류"))?;
+    let operation = async {
+        let tx = db.transaction().await.map_err(|_| error("JOBS_FAILED", "트랜잭션 시작 실패"))?;
+        // The shared deployment lock keeps a concurrent migrate from changing the digest mid-command.
+        tx.execute("SELECT pg_advisory_xact_lock_shared(1095323725, hashtext($1))", &[&schema])
+            .await
+            .map_err(|_| error("JOBS_FAILED", "배포 잠금 실패"))?;
+        let facts: Value = tx
+            .query_one(&format!("SELECT facts FROM {schema}.aip_migrate_meta WHERE singleton=true FOR SHARE"), &[])
+            .await
+            .map_err(|_| error("JOBS_FAILED", "배포 정의 조회 실패"))?
+            .get(0);
+        let jobs_table: bool = tx
+            .query_one(
+                "SELECT to_regclass($1) IS NOT NULL AND to_regclass($2) IS NOT NULL",
+                &[&format!("{schema}.aip_jobs"), &format!("{schema}.aip_effects")],
+            )
+            .await
+            .map_err(|_| error("JOBS_FAILED", "job 테이블 확인 실패"))?
+            .get(0);
+        if !jobs_table {
+            return Err(error("JOBS_UNAVAILABLE", "이 배포에는 durable job이 없음"));
+        }
+        let unsettled = format!("SELECT count(*) FROM {schema}.aip_effects WHERE run_id=$1::text::uuid AND state IN ('PENDING','UNKNOWN')");
+        let result = match command {
+            Jobs::List { state, operation, limit } => {
+                let runs = store
+                    .list(&tx, state.as_deref(), operation.as_deref(), limit)
+                    .await
+                    .map_err(|_| error("BAD_JOBS_QUERY", "state는 QUEUED·RUNNING·CANCEL_REQUESTED·SUCCEEDED·FAILED·CANCELLED, limit은 1에서 500"))?;
+                let mut out = Vec::with_capacity(runs.len());
+                for run in runs {
+                    let pending: i64 = tx.query_one(&unsettled, &[&run.id]).await.map_err(|_| error("JOBS_FAILED", "effect 조회 실패"))?.get(0);
+                    let mut value = serde_json::to_value(&run).map_err(|_| error("JOBS_FAILED", "결과 직렬화 실패"))?;
+                    value["unsettledEffects"] = json!(pending);
+                    out.push(value);
+                }
+                json!({"ok":true,"jobs":out})
+            }
+            Jobs::Retry { id } => {
+                // A redrive would hit the same uncertain provider call; the operator reconciles it first.
+                let pending: i64 = tx.query_one(&unsettled, &[&id]).await.map_err(|_| error("BAD_JOB_ID", "job id는 UUID여야 함"))?.get(0);
+                if pending > 0 {
+                    return Err(error("EFFECT_UNKNOWN", "결과를 모르는 외부 효과가 있어 재처리하지 않음; provider에서 결과를 확인해야 함"));
+                }
+                let outcome =
+                    store.redrive(&tx, &id, &spike_v1_fixture::digest(&facts)).await.map_err(|_| error("BAD_JOB_ID", "job id는 UUID여야 함"))?;
+                match outcome {
+                    aip_execution::Redrive::Queued => json!({"ok":true,"id":id,"state":"QUEUED"}),
+                    aip_execution::Redrive::NotFound => return Err(error("JOB_NOT_FOUND", "job이 없음")),
+                    aip_execution::Redrive::NotFailed => return Err(error("JOB_NOT_FAILED", "FAILED 상태의 job만 재처리할 수 있음")),
+                    aip_execution::Redrive::Expired => {
+                        return Err(error("JOB_EXPIRED", "입력 보존 기간이 지나 재처리할 수 없음; 새 job으로 제출해야 함"));
+                    }
+                    aip_execution::Redrive::DeploymentChanged => {
+                        return Err(error("DEPLOYMENT_CHANGED", "다른 배포에서 수락한 job이라 재처리할 수 없음; 새 job으로 제출해야 함"));
+                    }
+                }
+            }
+        };
+        tx.commit().await.map_err(|_| error("JOBS_UNSETTLED", "커밋 결과 불명; 상태 확인 필요"))?;
+        Ok(result)
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(5), operation)
+        .await
+        .map_err(|_| error("JOBS_UNSETTLED", "job 명령 결과 불명; 상태 확인 필요"))?
 }
 
 async fn principal(config: Config, command: Principal) -> Result<Value, Value> {
