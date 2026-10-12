@@ -251,6 +251,11 @@ async fn submit(
     if !crate::valid_key(key) || !(0..=86_400_000).contains(&delay) {
         return Err("BAD_VALUE");
     }
+    // Trigger keys are minted by the server. A caller who is also the configured service subject must not be able to claim a
+    // schedule slot, webhook delivery or outbox row in advance and turn the real trigger into an IDEMPOTENCY_MISMATCH.
+    if !service && crate::triggers::RESERVED_KEY_PREFIXES.iter().any(|prefix| key.starts_with(prefix)) {
+        return Err("BAD_VALUE");
+    }
     authorize(db, facts, name, input, grant.actor_id, wire).await?;
     let s = schema(rt)?;
     // Admission is bounded per principal, independently of HTTP and worker slots.

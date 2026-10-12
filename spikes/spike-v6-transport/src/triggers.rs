@@ -153,6 +153,9 @@ fn declares_notify_topic(facts: &Value, topic: &str) -> bool {
     })
 }
 
+/// Prefixes of the keys below. User-submitted jobs may not use them.
+pub const RESERVED_KEY_PREFIXES: [&str; 3] = ["outbox:", "schedule:", "webhook:"];
+
 /// The job key for one committed outbox row; every instance derives the same key.
 pub fn outbox_key(id: i64, created_micros: i64) -> String {
     format!("outbox:{id}:{created_micros}")

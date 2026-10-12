@@ -63,7 +63,9 @@ fn field<const N: usize>(text: &str, min: u32, max: u32, names: &[&str]) -> Resu
         let mut n = start;
         while n <= end {
             set[fold(n) as usize] = true;
-            n += step;
+            // A step near u32::MAX would wrap in release builds and select every value, or panic in debug builds.
+            let Some(next) = n.checked_add(step) else { break };
+            n = next;
         }
     }
     Ok((set, restricted))
@@ -151,6 +153,12 @@ mod tests {
 
     fn at(text: &str) -> DateTime<Utc> {
         DateTime::parse_from_rfc3339(text).map(|t| t.with_timezone(&Utc)).expect("test instant")
+    }
+
+    #[test]
+    fn a_huge_step_selects_only_its_start_value() {
+        let cron = Cron::parse("59/4294967295 * * * *", "UTC").expect("cron");
+        assert_eq!(cron.latest_at_or_before(at("2026-10-13T10:07:00Z")), Ok(at("2026-10-13T09:59:00Z")));
     }
 
     #[test]
