@@ -24,12 +24,26 @@ pub fn q(ident: &str) -> String {
 }
 
 pub fn lit(s: &str) -> String {
+    // Trigger and function bodies are wrapped in `$aip$ ... $aip$`. A literal containing `$aip$` would end that quote early
+    // and let the rest of the text run as DDL, so a `$` is emitted as a Unicode escape that stays one literal token.
+    if s.contains('$') {
+        return format!("U&'{}'", s.replace('\\', "\\\\").replace('\'', "''").replace('$', "\\0024"));
+    }
     format!("'{}'", s.replace('\'', "''"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::snake;
+
+    #[test]
+    fn dollar_signs_cannot_close_a_dollar_quoted_body() {
+        let literal = super::lit("T-$aip$; CREATE TABLE pwned(x int); SELECT $aip$-{n}");
+        assert!(!literal.contains('$'), "{literal}");
+        assert!(literal.starts_with("U&'"), "{literal}");
+        assert_eq!(super::lit("it's"), "'it''s'");
+        assert_eq!(super::lit("a\\b$"), "U&'a\\\\b\\0024'");
+    }
 
     #[test]
     fn snake_case() {
