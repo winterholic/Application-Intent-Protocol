@@ -61,14 +61,17 @@
 | S-03 | 낮음 | 제품 | JWKS RSA 키의 공개 지수 e=1·짝수·선행 0 허용 | 단위 테스트 | 구성 단계에서 거부 | `aip-auth/tests/jwt.rs` | c90a77b |
 | S-04 | 낮음 | 제품·PoC | webhook·outbound 서명 timestamp 극단값(i64::MIN)에서 `abs()` overflow(debug panic, release wrap), Decimal 입력 `i64::MIN.abs()` overflow | 단위 테스트 | `abs_diff`, 범위 비교 | `outbound.rs`, `webhook.rs`, `validate.rs` 테스트 | ffcc9b1 |
 | S-05 | 낮음 | PoC | outbound 공개 IP 정책이 6to4·Teredo·3fff::/20·5f00::/16·192.88.99.0/24를 막지 않음 | 단위 테스트 | global unicast만 허용 | `outbound.rs` 테스트 | ffcc9b1 |
-| S-06 | 중간 | 제품 | 비-legacy Id wire에서 1:N traverse 자식 Id가 변환되지 않아 2^53 초과 Id가 JS에서 인접 Id로 반올림됨(다른 행을 가리킴, SafeNumber 범위 검사도 건너뜀) | 단위 테스트로 재현 | 출력 타입 `array`도 Id wire 변환 | `spike-v2-read/tests/v13_idwire.rs` | 이 문서 갱신 시 기록 |
-| S-07 | 중간 | 제품 | 인증 프레임을 보내지 않는 익명 브라우저 WebSocket이 realtime 슬롯(기본 32)을 5초씩 점유해 인증된 사용자가 `SERVER_BUSY`를 받음 | 통합 테스트(슬롯 1개 서버) | 인증 전용 pre-auth 슬롯을 분리하고 인증 뒤 정식 슬롯으로 승격, Drop으로 반환 | `spike-v6-transport/tests/browser_websocket.rs` | 〃 |
-| S-08 | 중간 | 제품 | `accept()` 오류 한 번(EMFILE 등)이 listener와 진행 중 요청 전체를 종료 | 코드 추적(EMFILE 재현은 프로세스 한도 변경이 필요해 미실행) | 오류를 기록하고 50ms 쉰 뒤 계속 | 없음(미실행: EMFILE 재현) | 〃 |
-| S-09 | 낮음 | 제품 | ctx grant 토큰이 호출 번호와 `Instant::now().elapsed()`(수십 ns)라서 사실상 예측 가능. worker를 재사용하면 시간 초과된 이전 호출의 코드가 다음 호출의 grant를 추측할 수 있음 | 코드 추적. 현재는 요청마다 새 worker라 도달 불가 | OS 난수 128비트 | `spike-v4-worker/src/grant_tests.rs` | 〃 |
-| S-10 | 낮음 | 제품 | 단일 traverse select에 같은 필드를 반복해도 거부하지 않아 SQL이 부풀고 PG 인수 한도에 걸림 | 테스트 | `DUPLICATE` | `security_authorization.rs` | 〃 |
-| S-11 | 낮음 | 제품 | `brokers.rs`의 공개 주소 정책이 `integrations.rs`와 갈라져 6to4·NAT64·IPv4-compatible·Teredo를 공개로 판정 | 단위 테스트 | 정책을 한 함수로 통일 | `brokers.rs` 단위 테스트 | 〃 |
-| S-12 | 낮음 | CLI(PoC 겸용) | `aip check`가 괄호·단항 연산 중첩 500단계에서 스택 오버플로 abort, `99999999999GB`·`99999999999y`에서 산술 overflow panic(release는 조용히 wrap) | 테스트로 SIGABRT 재현 | 중첩 64단계 한도, 포화 곱셈 | `aip-syntax/tests/hostile_input.rs` | 〃 |
-| S-13 | 낮음 | PoC | 문자열 리터럴 안의 `$aip$`가 트리거 본문의 dollar-quote를 끝냄(기본 PG 설정에서는 마이그레이션 실패, `check_function_bodies=off`면 임의 SQL 가능성은 미확인) | DDL 출력 확인 | `$`를 `U&'\0024'`로 출력 | `aip-pg/src/names.rs` 단위 테스트 | 〃 |
+| S-06 | 중간 | 제품 | 비-legacy Id wire에서 1:N traverse 자식 Id가 변환되지 않아 2^53 초과 Id가 JS에서 인접 Id로 반올림됨(다른 행을 가리킴, SafeNumber 범위 검사도 건너뜀) | 단위 테스트로 재현 | 출력 타입 `array`도 Id wire 변환 | `spike-v2-read/tests/v13_idwire.rs` | 5a3f1b0 |
+| S-07 | 중간 | 제품 | 인증 프레임을 보내지 않는 익명 브라우저 WebSocket이 realtime 슬롯(기본 32)을 5초씩 점유해 인증된 사용자가 `SERVER_BUSY`를 받음 | 통합 테스트(슬롯 1개 서버) | 인증 전용 pre-auth 슬롯을 분리하고 인증 뒤 정식 슬롯으로 승격, Drop으로 반환 | `spike-v6-transport/tests/browser_websocket.rs` | 881a858 |
+| S-08 | 중간 | 제품 | `accept()` 오류 한 번(EMFILE 등)이 listener와 진행 중 요청 전체를 종료 | 코드 추적(EMFILE 재현은 프로세스 한도 변경이 필요해 미실행) | 오류를 기록하고 50ms 쉰 뒤 계속 | 없음(미실행: EMFILE 재현) | 881a858 |
+| S-09 | 낮음 | 제품 | ctx grant 토큰이 호출 번호와 `Instant::now().elapsed()`(수십 ns)라서 사실상 예측 가능. worker를 재사용하면 시간 초과된 이전 호출의 코드가 다음 호출의 grant를 추측할 수 있음 | 코드 추적. 현재는 요청마다 새 worker라 도달 불가 | OS 난수 128비트 | `spike-v4-worker/src/grant_tests.rs` | d2aee36 |
+| S-10 | 낮음 | 제품 | 단일 traverse select에 같은 필드를 반복해도 거부하지 않아 SQL이 부풀고 PG 인수 한도에 걸림 | 테스트 | `DUPLICATE` | `security_authorization.rs` | 5a3f1b0 |
+| S-11 | 낮음 | 제품 | `brokers.rs`의 공개 주소 정책이 `integrations.rs`와 갈라져 6to4·NAT64·IPv4-compatible·Teredo를 공개로 판정 | 단위 테스트 | 정책을 한 함수로 통일 | `brokers.rs` 단위 테스트 | cd7d252 |
+| S-12 | 낮음 | CLI(PoC 겸용) | `aip check`가 괄호·단항 연산 중첩 500단계에서 스택 오버플로 abort, `99999999999GB`·`99999999999y`에서 산술 overflow panic(release는 조용히 wrap) | 테스트로 SIGABRT 재현 | 중첩 64단계 한도, 포화 곱셈 | `aip-syntax/tests/hostile_input.rs` | 4fdcfda |
+| S-13 | 낮음 | PoC | 문자열 리터럴 안의 `$aip$`가 트리거 본문의 dollar-quote를 끝냄(기본 PG 설정에서는 마이그레이션 실패, `check_function_bodies=off`면 임의 SQL 가능성은 미확인) | DDL 출력 확인 | `$`를 `U&'\0024'`로 출력 | `aip-pg/src/names.rs` 단위 테스트 | 544300b |
+| S-14 | 높음 | PoC | select의 계산 항목(`p: m.phone`)·where·정렬 키·group 키가 필드 `visible to`/`masked unless`를 우회해 숨긴 값을 드러냄(P-01·P-02 일부) | 실제 PG, 본인·타인 | 클라이언트 읽기 경로에서 필드 읽기를 정책 조건으로 감쌈(`guard_projection`). 정책식 안의 읽기는 다시 감싸지 않음 | `aip-cli/tests/field_policy_e2e.rs` | 34360be |
+| S-15 | 중간 | 제품 | 서명이 유효한 토큰의 principal 조회가 요청마다 새 PG 연결을 열어 rate limit보다 먼저 연결 수를 늘림(O-04) | 코드 추적 | 조회 연결 동시 16개로 제한, 대기 5초 | 없음(미실행: 공유 DB에서 동시 연결 수 측정이 불안정) | 0b5b8df |
+| S-16 | 낮음 | 제품 | 헤더 이름 뒤 공백(`Content-Length : 5`)을 수용(O-12) | 테스트 | `BAD_REQUEST` | `spike-v6-transport/tests/v8_headers.rs` | 72e191a |
 
 ### 3.2 열려 있는 항목(제품 경로)
 
@@ -77,15 +80,15 @@
 | O-01 | 중간 [OPEN] | 루트 select에 Ref 필드를 직접 열면 대상 행 정책과 무관하게 원시 FK Id가 나감. traverse·Ref filter는 안 보이는 대상을 null로 취급하므로 "숨은 대상 Id 확인" 방어가 select 경로에서는 무의미해짐 | 코드 추적. 고치면 Ref 출력이 nullable로 바뀌어 SDK 타입과 계약 지문이 달라지므로 창시자 결정 필요. 권고: 정의 작성자가 FK 노출을 선언(`expose`)하거나 기본을 정책 적용으로 |
 | O-02 | 낮음 | `transition`의 `from`/`to`/`repeat unchanged`가 field read 정책 필드를 참조하면 `/apply` 응답의 `changed`/`unchanged`·`INVALID_STATE`로 이전 값을 추론할 수 있음 | 미재현. sema가 이 조합을 막는지 확인 필요 |
 | O-03 | 낮음 [OPEN] | `/read`·`/apply`·`/status`는 `X-AIP-Contract` 헤더가 없어도 통과(다른 경로는 필수). 권한 우회는 아님 | 설계 결정. raw 클라이언트 호환과 맞바꿈 |
-| O-04 | 중간 | 서명은 유효하지만 principal이 없거나 폐기된 토큰의 인증 DB 조회가 풀 밖 새 PG 연결을 요청마다 열고 rate limit보다 먼저 실행 | 코드 추적. 풀 사용·admission 앞단 정리 필요 |
+| O-04 | 낮음 | 위 S-15로 연결 수는 16개로 묶였다. 인증 조회 자체는 여전히 admission 앞에서 실행되므로 풀 연결·rate limit 통합은 남음 | 부분 조치 |
 | O-05 | 낮음 | 슬롯(realtime·worker·업로드)이 전역 공유라 인증된 한 명이 독점 가능. rate limit 기본 꺼짐 | 코드 추적. principal별 상한 설계 필요 |
 | O-06 | 낮음 | JWKS 파일 모드가 토큰마다 파일을 읽어 전역 mutex 안에서 파싱, HTTPS 모드는 서명 검증 전 알 수 없는 kid가 5초 간격 갱신을 유발해 캐시된 키까지 5초 `Unavailable` | 코드 추적 |
 | O-07 | 낮음 | owner 해시에 `min_iat`가 들어가 revoke 뒤 재바인드하면 기존 파일·job·event 접근 불가(정합성) | 코드 추적. 보안 우회 아님 |
 | O-08 | 낮음 | rate limiter scope 10만 행 한계에서 신규 principal이 503 | 코드 추적, 운영 규모 의존 |
 | O-09 | 낮음 | 읽기 확장 ctx 호출 횟수 상한 없음(쓰기 20, job 64) | deadline·slot이 상한 역할 |
 | O-10 | 낮음 | 응답을 쓰는 동안 DB 풀 연결을 보유 | TLS proxy 버퍼링으로 대부분 완화 |
-| O-11 | 낮음 | `spike-v3-write`의 `internal(e)`가 일부 DB 오류 원문을 응답 msg로 보냄 | 발현 조건부, 미재현 |
-| O-12 | 낮음 | 요청 헤더 이름 `trim()`으로 `Content-Length : 5` 수용(연결당 1요청, `connection: close`라 smuggling 경로 없음) | 위생 수준 |
+| O-11 | 해당 없음 | `spike-v3-write`의 `internal(e)`가 DB 오류 원문을 보낸다는 지적 | 확인 결과 `internal`에 들어가는 것은 정의 컴파일 단계 문장뿐이고 DB 오류는 sqlstate만 응답. 조치 없음 |
+| O-12 | 완료 | 헤더 이름 공백 수용 | S-16으로 조치 |
 | O-13 | 중간 | macOS 기본 worker 격리는 네트워크만 차단. 파일 읽기·쓰기와 `start_new_session` 손자 프로세스는 막지 못함. `stop()`은 직계 자식만 정리 | 문서가 "신뢰한 확장만"을 전제. Linux는 bwrap/cgroup |
 | O-14 | 낮음 | RAG corpus 용량이 owner 합산이라 한 principal이 다른 principal의 색인을 막을 수 있음(`client_index:true`일 때). 검색은 owner 파티션 전체를 메모리에 올림 | 코드 추적 |
 | O-15 | 정보 | 의존성: `rsa 0.9.10`(RUSTSEC-2023-0071, Marvin)은 `jsonwebtoken`을 통해 들어오고 이 코드는 검증만 하므로 개인키 연산 노출은 없음. `rustls-pemfile 2.2.0`(RUSTSEC-2025-0134)은 유지보수 중단 공지. 나머지 436개 crates.io 패키지는 OSV 조회에서 알려진 취약점 없음(`cargo audit` 미설치, OSV `querybatch`로 대체). `npm audit` 0건, install script 없음 | 2026-10-13 조회 |
@@ -99,9 +102,9 @@ PoC 런타임은 개발용이며 127.0.0.1에만 바인딩한다. 제품 경로�
 
 | ID | 심각도 | 발견 |
 |---|---|---|
-| P-01 | 높음 | select의 계산 항목(`p: m.phone`)이 필드 단위 `visible to`/`masked unless`를 우회하고 관계 경로 필드 접근도 대상 행·필드 가시성 검사가 없음 |
-| P-02 | 중간 | 정책 필드가 where·sort·group by·search에서 추론 채널이 됨(제품 경로의 `POLICY_FIELD_NOT_FILTERABLE`에 해당하는 진단 없음) |
-| P-03 | 중간 | `next_cursor`가 정렬 키 원본을 서명 없이 base64로 노출, 들어오는 cursor도 검증 없음 |
+| P-01 | 높음(일부 조치) | 계산 항목은 S-14로 조치. 관계 경로(`c.author.phone`)의 필드 정책은 같은 경로로 감싸지만 대상 행의 `visible to`는 아직 확인하지 못함 |
+| P-02 | 중간(일부 조치) | where·sort·group은 S-14로 조치. `search` 색인에 정책 필드를 넣는 경우는 남음 |
+| P-03 | 낮음(일부 조치) | S-14로 숨긴 값은 cursor에 NULL로 들어간다. cursor가 서명되지 않아 위조할 수 있다는 점은 남음 |
 | P-04 | 중간 | 쿼리 `where`가 `apply_visibility=false`로 컴파일되어 관계 집합 `visible to`가 빠짐 |
 | P-05 | 중간 | 읽기 트랜잭션에 `statement_timeout` 없음, 중첩 관계 배열에 LIMIT 없음 |
 | P-06 | 중간 | 익명 rate limit·카운터 dedupe 키를 `x-aip-client`/`X-Forwarded-For` 맨 왼쪽 값(호출자 입력)으로 정함 |
