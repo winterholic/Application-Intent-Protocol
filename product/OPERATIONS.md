@@ -101,6 +101,21 @@ SDK는 `npm install --offline <aip-sdk.tgz>`로 별도 소비자에 설치한다
 
 먼저 기존 prototype을 중지한다. 기존 앱 행과 커밋된 멱등 결과는 유지하고 제품 저널·principal 연결을 만든다. 정의의 DDL과 기존 catalog marker가 다르면 이관을 거부한다. 원래 marker에는 정책 본문이 없으므로 제출한 정의의 execution digest가 새 정책 정본이다. 개발 토큰은 이관하지 않는다. 이전 wire와 같은 제품 설정을 사용한다. 구조 지문 없는 구형 marker나 임의 운영 schema를 자동으로 채택하지 않는다.
 
+## 업무 감사 기록
+
+배포 schema로 시작한 서버(`aip service run`)는 commit된 전이마다 감사 행을 하나 남긴다. 정의에 따로 쓸 것은 없다. 전이 UPDATE와 같은 SQL 문장에서 기록하므로 전이가 rollback되면 감사 행도 없고, 감사 기록이 실패하면 전이도 commit되지 않는다. Hibernate Envers·django-auditlog·PaperTrail이 엔티티 변경을 남기는 것과 같은 역할이다.
+
+| 열 | 뜻 |
+|---|---|
+| `recorded_at` | 전이 transaction 시각 |
+| `actor_id` | 전이를 실행한 주체의 actor. job은 job 주체, schedule·webhook은 서비스 주체 |
+| `via` | `apply`(호출자 `/apply`), `extension`(쓰기 확장 `ctx.data.apply`), `job`(durable job `ctx.data.apply`) |
+| `request_key` | `apply`는 호출자의 멱등 key, `job`은 `<run id>:<effect key>`로 `aip_effects`와 조인된다. `extension`은 비어 있다 |
+| `resource`, `transition`, `target_id` | 바뀐 행 하나 |
+| `before`, `after` | 전이의 `to`가 바꾸는 필드만 `{필드: 값}`으로. 다른 필드는 남기지 않는다 |
+
+테이블은 배포 schema가 아니라 서버가 시작할 때 만드는 infra schema(`aip_infra_<hash>.aip_audit`)에 있어 기존 배포를 migrate하지 않아도 된다. `UPDATE`는 trigger가 거부한다. 보존 기한 정리는 운영자가 `DELETE`로 한다. 멱등 재생, 안 보이는 대상, 일부 대상 실패로 전체가 취소된 bulk는 아무것도 바꾸지 않았으므로 기록하지 않는다. 전이의 선언 효과(`update`·`create` 효과가 바꾼 다른 행, `notify` outbox 행)는 따로 기록하지 않는다. 조회 API·CLI는 아직 없고 SQL로 읽는다. 근거 테스트는 `spikes/spike-v6-transport/tests/audit.rs`다.
+
 ## 확장과 검증 범위
 
 공식 확장은 `workers: {"directory":"./extensions","language":"node","enable_writes":true}`를 명시해 활성화한다. Python은 `language:"python"`이다. 기존 공통 엔진과 정본 구현을 사용하며 서버가 입력·권한·시간·출력·트랜잭션을 검사한다. 기본 worker 격리는 OS별 `auto`이며 macOS는 네트워크 차단, Linux는 Bubblewrap을 사용한다. DB pool, 분산 rate limit, cgroup, 디렉터리 hosting, local/S3/GCS 객체, 브라우저 WebSocket과 사용자 지정 한도는 [서버 인프라 설정](INFRASTRUCTURE.md)을 따른다. 외부 메시지 relay는 [BROKERS](BROKERS.md), 관리형 검색·생성은 [RAG](RAG.md)를 따른다.

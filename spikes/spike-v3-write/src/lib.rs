@@ -19,6 +19,37 @@ pub struct Knobs {
     pub skip_row_lock: bool,
     pub skip_policy_lock: bool,
     pub pause_before_commit_ms: u64,
+    /// 감사 행에 남길 쓰기 경로(`apply`, `extension`, `job`)와 요청 키. 감사 테이블이 설정된 때만 쓰인다.
+    pub audit_via: Option<&'static str>,
+    pub audit_key: Option<String>,
+}
+
+static AUDIT_TABLE: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
+
+/// 업무 감사 테이블(`<schema>.aip_audit`)을 지정한다. 지정하면 모든 전이 변경이 같은 문장에서 감사 행을 남긴다.
+/// 이름은 서버가 배포 schema에서 만든 식별자만 받는다.
+pub fn set_audit_table(table: Option<String>) -> Result<(), &'static str> {
+    if let Some(name) = &table {
+        let valid = name.split('.').count() == 2
+            && name.split('.').all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_'));
+        if !valid {
+            return Err("invalid audit table");
+        }
+    }
+    *AUDIT_TABLE.write().map_err(|_| "audit table lock poisoned")? = table;
+    Ok(())
+}
+
+/// 감사 테이블 DDL. 전이가 쓰는 열과 같은 순서로 유지한다. 행은 추가만 하고 고치지 않는다.
+pub fn audit_ddl(schema: &str) -> String {
+    format!(
+        "CREATE TABLE IF NOT EXISTS {schema}.aip_audit(id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, recorded_at timestamptz NOT NULL DEFAULT now(), \
+         actor_id bigint, via text NOT NULL, request_key text, resource text NOT NULL, transition text NOT NULL, target_id bigint NOT NULL, \
+         before jsonb NOT NULL, after jsonb NOT NULL); \
+         CREATE INDEX IF NOT EXISTS aip_audit_target ON {schema}.aip_audit(resource, target_id, id); \
+         CREATE OR REPLACE FUNCTION {schema}.aip_audit_append_only() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'aip_audit rows are append-only' USING ERRCODE='42501'; END $$; \
+         CREATE OR REPLACE TRIGGER aip_audit_append_only BEFORE UPDATE ON {schema}.aip_audit FOR EACH ROW EXECUTE FUNCTION {schema}.aip_audit_append_only()"
+    )
 }
 
 /// 커밋 직전 남은 기한이 이보다 적으면 커밋하지 않고 rollback한다. 커밋을 보낸 뒤의 기한 초과와 구분하기 위해서다(R3-05).
@@ -326,7 +357,7 @@ async fn judge(
     Ok(j)
 }
 
-async fn update(tx: &Transaction<'_>, facts: &Value, res: &str, tr: &str, change: &[i64], caller: &Caller) -> Result<(), Reject> {
+async fn update(tx: &Transaction<'_>, facts: &Value, res: &str, tr: &str, change: &[i64], caller: &Caller, knobs: &Knobs) -> Result<(), Reject> {
     if change.is_empty() {
         return Ok(());
     }
@@ -357,7 +388,34 @@ async fn update(tx: &Transaction<'_>, facts: &Value, res: &str, tr: &str, change
     let ip = cx.params.bind(Some(id_array(change)), "bigint[]");
     // UPDATE에도 from 조건을 다시 건다. 잠금이 없거나 우회돼도 이미 바뀐 행을 두 번 바꾸지 않는다.
     let out_of_range = if ranged.is_empty() { "FALSE".to_string() } else { format!("({})", ranged.join(" OR ")) };
-    let up = format!("UPDATE {} t SET {} WHERE t.id = ANY({ip}) AND {from} RETURNING t.id, {out_of_range}", table(res), sets.join(", "));
+    let audit_table = AUDIT_TABLE.read().map_err(|_| internal("감사 테이블 잠금"))?.clone();
+    let up = match audit_table {
+        None => format!("UPDATE {} t SET {} WHERE t.id = ANY({ip}) AND {from} RETURNING t.id, {out_of_range}", table(res), sets.join(", ")),
+        Some(audit) => {
+            // 바뀌는 필드의 이전 값은 같은 문장의 스냅숏에서, 이후 값은 RETURNING에서 읽는다. 감사 행은 전이와 함께만 commit된다.
+            let snapshot = |alias: &str| {
+                let pairs: Vec<String> =
+                    t["to"].as_object().unwrap().keys().map(|f| format!("'{f}', to_jsonb({alias}.{})", column(facts, res, f).unwrap())).collect();
+                format!("jsonb_build_object({})", pairs.join(", "))
+            };
+            let actor = cx.params.bind(caller.actor_id.map(|id| id.to_string()), "bigint");
+            let via = cx.params.bind(Some(knobs.audit_via.unwrap_or("apply").to_string()), "text");
+            let key = cx.params.bind(knobs.audit_key.clone(), "text");
+            let resource = cx.params.bind(Some(res.to_string()), "text");
+            let transition = cx.params.bind(Some(tr.to_string()), "text");
+            format!(
+                "WITH changed AS (UPDATE {table} t SET {sets} FROM (SELECT aip_p.id, {before} AS before FROM {table} aip_p WHERE aip_p.id = ANY({ip})) aip_prior \
+                 WHERE t.id = aip_prior.id AND t.id = ANY({ip}) AND {from} RETURNING t.id, {out_of_range} AS out_of_range, aip_prior.before, {after} AS after), \
+                 recorded AS (INSERT INTO {audit}(actor_id, via, request_key, resource, transition, target_id, before, after) \
+                 SELECT {actor}, {via}, {key}, {resource}, {transition}, id, before, after FROM changed) \
+                 SELECT id, out_of_range FROM changed",
+                table = table(res),
+                sets = sets.join(", "),
+                before = snapshot("aip_p"),
+                after = snapshot("t"),
+            )
+        }
+    };
     let params = cx.params.values.clone();
     let rows = typed_query(tx, up.as_str(), &params).await.map_err(|e| write_err("변경", e))?;
     // RETURNING은 갱신 뒤 값을 본다. 하나라도 범위를 벗어나면 전체 트랜잭션이 롤백된다.
@@ -663,7 +721,7 @@ async fn apply_op(
     let (res, tr, ex) = exposed(facts, o.get("apply").and_then(Value::as_str).unwrap_or(""))?;
     let target = parse_target(facts, res, ex, o.get("target").unwrap_or(&Value::Null), wire)?;
     let j = judge(tx, facts, res, tr, &target, ex["bulkMaxRows"].as_i64().unwrap_or(1), &ex["sameScope"], caller, knobs).await?;
-    update(tx, facts, res, tr, &j.change, caller).await?;
+    update(tx, facts, res, tr, &j.change, caller, knobs).await?;
     effects(tx, facts, res, tr, &j.change, caller).await?;
     Ok(Applied { changed: j.change, unchanged: j.unchanged })
 }
@@ -873,7 +931,7 @@ pub async fn compose(db: &mut Client, facts: &Value, req: &Value, caller: &Calle
                         ids.clone()
                     };
                     let j = judge(&tx, facts, res, t, &TargetSpec::Ids(step_ids), bulk, &Value::Null, caller, knobs).await?;
-                    update(&tx, facts, res, t, &j.change, caller).await?;
+                    update(&tx, facts, res, t, &j.change, caller, knobs).await?;
                     effects(&tx, facts, res, t, &j.change, caller).await?;
                     out.applied.push(Applied { changed: j.change, unchanged: j.unchanged });
                 }

@@ -1008,7 +1008,11 @@ impl Host {
         let output = match op {
             "apply" => {
                 let request = spike_v4_worker::write::job_apply_request(name, input, self.wire).map_err(|e| e.code)?;
-                let knobs = spike_v3_write::Knobs::default();
+                let knobs = spike_v3_write::Knobs {
+                    audit_via: Some("job"),
+                    audit_key: Some(format!("{}:{effect_key}", self.lease.run_id)),
+                    ..spike_v3_write::Knobs::default()
+                };
                 tx.batch_execute("SET LOCAL TimeZone='UTC'").await.map_err(db_error)?;
                 // The transition, deferred checks and the effect journal commit in one transaction.
                 let applied = match spike_v3_write::apply_in_with_wire(&tx, &self.facts, &request, &caller, &knobs, self.wire).await {

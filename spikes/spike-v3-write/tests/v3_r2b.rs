@@ -116,7 +116,7 @@ async fn revoke_race(f: &Value, skip_policy_lock: bool) -> (String, bool) {
     let f1 = f.clone();
     let t1 = tokio::spawn(async move {
         let mut db = connect().await;
-        let k = Knobs { pause_after_lock_ms: 600, skip_row_lock: false, skip_policy_lock, pause_before_commit_ms: 0 };
+        let k = Knobs { pause_after_lock_ms: 600, skip_row_lock: false, skip_policy_lock, pause_before_commit_ms: 0, ..Knobs::default() };
         short(apply(&mut db, &f1, &req("Recruitment.close", &[103]), &who(1), &k).await)
     });
     tokio::time::sleep(Duration::from_millis(150)).await;

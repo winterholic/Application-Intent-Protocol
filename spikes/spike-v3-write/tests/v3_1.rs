@@ -133,9 +133,12 @@ async fn v3_1_standard_transition_write() {
 
     // 동시 실행: 잠금이 있으면 두 번째는 기다렸다가 unchanged
     db.batch_execute(&format!("UPDATE {}.member_alarm SET is_checked = false WHERE id = 9", sqlgen::schema())).await.unwrap();
-    let (r1, r2, waited) =
-        race(&f, Knobs { pause_after_lock_ms: 400, skip_row_lock: false, skip_policy_lock: false, pause_before_commit_ms: 0 }, Knobs::default())
-            .await;
+    let (r1, r2, waited) = race(
+        &f,
+        Knobs { pause_after_lock_ms: 400, skip_row_lock: false, skip_policy_lock: false, pause_before_commit_ms: 0, ..Knobs::default() },
+        Knobs::default(),
+    )
+    .await;
     expect!("잠금 T1", r1, ok(&[9], &[]));
     expect!("잠금 T2", r2, ok(&[], &[9]));
     expect!("T2가 잠금을 기다림", waited >= 300, true);
@@ -143,8 +146,8 @@ async fn v3_1_standard_transition_write() {
     db.batch_execute(&format!("UPDATE {}.member_alarm SET is_checked = false WHERE id = 9", sqlgen::schema())).await.unwrap();
     let (r1, r2, _) = race(
         &f,
-        Knobs { pause_after_lock_ms: 400, skip_row_lock: true, skip_policy_lock: false, pause_before_commit_ms: 0 },
-        Knobs { pause_after_lock_ms: 0, skip_row_lock: true, skip_policy_lock: false, pause_before_commit_ms: 0 },
+        Knobs { pause_after_lock_ms: 400, skip_row_lock: true, skip_policy_lock: false, pause_before_commit_ms: 0, ..Knobs::default() },
+        Knobs { pause_after_lock_ms: 0, skip_row_lock: true, skip_policy_lock: false, pause_before_commit_ms: 0, ..Knobs::default() },
     )
     .await;
     let outcomes = [&r1, &r2];

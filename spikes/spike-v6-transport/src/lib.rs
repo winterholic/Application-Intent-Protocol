@@ -170,7 +170,7 @@ async fn handle_apply(db: &mut Client, facts: &Value, body: &Value, caller: &Cal
             v["replayed"] = json!(true);
             return v;
         }
-        let knobs = Knobs::default();
+        let knobs = Knobs { audit_via: Some("apply"), audit_key: Some(key.to_string()), ..Knobs::default() };
         let applied = match apply_in_with_wire(&tx, facts, req, caller, &knobs, wire).await {
             Ok(a) => a,
             Err(e) => return err(e),

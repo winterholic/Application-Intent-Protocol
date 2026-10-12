@@ -221,6 +221,21 @@ pub(crate) async fn listen_with_fingerprint(
         .await
         .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "outbox relay installation timed out"))??;
     }
+    if let Some(deployment) = &runtime.deployment {
+        // 배포된 서비스의 전이는 모두 업무 감사 행을 남긴다. 기존 배포 schema를 바꾸지 않도록 infra schema에 둔다.
+        let infra = aip_execution::infrastructure_schema(&deployment.schema).map_err(|_| io::Error::other("invalid deployment schema"))?;
+        let pool = runtime.db_pool.as_ref().expect("pool initialized");
+        tokio::time::timeout(DB_PREFLIGHT_TIMEOUT, async {
+            let db = pool.acquire().await.map_err(|_| io::Error::other("audit database unavailable"))?;
+            db.batch_execute(&format!("CREATE SCHEMA IF NOT EXISTS {infra}; {}", spike_v3_write::audit_ddl(&infra)))
+                .await
+                .map_err(|_| io::Error::other("audit installation failed"))?;
+            db.release().await.map_err(|_| io::Error::other("audit connection reset failed"))
+        })
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "audit installation timed out"))??;
+        spike_v3_write::set_audit_table(Some(format!("{infra}.aip_audit"))).map_err(io::Error::other)?;
+    }
     let listener = TcpListener::bind(address).await?;
     let address = listener.local_addr()?;
     let facts = Arc::new(facts);

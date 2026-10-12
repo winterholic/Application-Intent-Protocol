@@ -25,6 +25,7 @@
 | F09 외부 데이터 동기화 | 확장(데이터 쓰기 불가) | 확장 | schedule + `ctx.http` + `ctx.data.apply`로 끝까지 처리 가능 |
 | I04 Health Check | 미지원 | 지원 | `/health`(liveness), `/ready`(DB·배포 digest). `tests/health.rs` |
 | B03 테넌트 격리 | 미지원 | 부분 | 제품 경로 행 정책·기본 거부·trigger 서비스 주체 확인. [결정 문서](tenant-isolation-decision-2026-10-13.md) |
+| B09 Audit Logging | 미지원 | 부분 | 전이마다 같은 문장의 감사 행. `tests/audit.rs`, [OPERATIONS](../../product/OPERATIONS.md#업무-감사-기록) |
 
 ## A. 데이터
 
@@ -55,7 +56,7 @@
 | B06 | API Key | API key filter, DRF TokenAuthentication | 미지원 | 기계 간 호출은 IdP client-credentials JWT로 대체 가능. 제품 API key 계약 없음 |
 | B07 | 위임 접근 | `SwitchUserFilter`, django-hijack | 미지원 | PoC impersonate만 있음 |
 | B08 | Rate Limiting | Bucket4j, `@nestjs/throttler`, DRF throttling, Rack::Attack | 지원 | DB 공유 fixed window, principal·경로 분류. IP별 제한은 proxy |
-| B09 | Audit Logging | Hibernate Envers, django-auditlog, PaperTrail | 미지원 | 업무 감사 계약 없음. job·effect journal은 운영 기록이며 감사 대체 아님 |
+| B09 | Audit Logging | Hibernate Envers, django-auditlog, PaperTrail | 부분 | 배포 서버의 모든 전이가 같은 SQL 문장에서 append-only `aip_audit` 행(actor·경로·key·바뀐 필드 전후 값)을 남김. 조회 API·CLI, 쓰기 확장 요청 key, 선언 효과 행 기록은 없음. `tests/audit.rs` |
 | B10 | 민감 정보 | Jackson `@JsonIgnore`, 필드 암호화 | 부분 | 필드 가시성·redaction. 저장 암호화는 PoC |
 | B11 | 비밀 관리 | Spring Cloud Vault, django-environ | 부분 | 명시한 env만 읽음(`.env` 미사용). vault 연동 없음 |
 
@@ -188,9 +189,9 @@
 | 판정 | 개수 |
 |---|---|
 | 지원 | 29 |
-| 부분 | 53 |
+| 부분 | 54 |
 | 확장 | 12 |
-| 미지원 | 11 |
+| 미지원 | 10 |
 
 ## JS/TS·Python 확장 경로 점검
 
@@ -231,6 +232,7 @@
 |---|---|---|---|
 | job 데이터 접근을 `access read.<Resource>`, `access <Resource>.<transition>`으로 선언 | 기존 `access` 문법 재사용. 다섯 작성 형식 parser 변경 없음 | 쓰기 확장의 `Resource.transition` 접근과 같은 표기. 실행은 기존 `/read` planner와 `expose apply`를 그대로 써서 권한 의미가 하나다 | 임의 SQL·ORM ctx: 서버 정책 우회 위험으로 기각. 별도 `data` 영역 3단 표기: parser 변경 비용 대비 이점 없음 |
 | 스케줄·webhook·outbox handler를 서비스 설정에 둠 | 설정 필드만 추가 | 서비스 주체, secret 환경 변수, provider 경로는 운영 사실이다. Celery beat, solid_queue `recurring.yml`, Sidekiq-cron도 설정으로 둔다. 업무 의미(입력 계약·권한·효과)는 기존 `operation job` 선언이 그대로 책임진다 | `operation job` 안의 `schedule` 문법: 같은 job을 환경마다 다른 주기로 돌리기 어렵고 서비스 주체를 선언에 넣게 되어 기각. 다만 정의만 보고 trigger를 알 수 없는 단점이 있어 `/capabilities` 노출 여부는 후속 결정 |
+| 업무 감사를 선언 없이 모든 전이에 기록 | 없음 | 지침 §7: 1) 기존 문법으로는 감사 행을 같은 transaction에 남길 수 없다(`notify`+job은 commit 뒤 별도 transaction). 2) 조합으로 만들면 앱마다 같은 감사 job을 반복한다. 3) 모든 전이 경로(`/apply`·쓰기 확장·job)가 `apply_in_with_wire` 하나를 지나므로 한 곳에서 전부 덮는다. 4) 정의 작성자가 배울 개념이 없다. 5) 전이 의미는 그대로다. 6) AI가 생성할 것이 없다. 7) 변형(조회·보존·제외 필드)은 운영 설정·CLI로 붙일 수 있다 | 전이마다 `audit` 선언: 빠뜨리기 쉽고 감사가 기본이 아니게 되어 보류. 앱 테이블 trigger: 주체·경로·요청 key를 알 수 없어 기각 |
 | 전이 후속 작업을 기존 `notify` 효과 + 릴레이로 처리 | 새 효과 없음 | `notify`는 이미 같은 transaction의 outbox 행이었다. 소비자만 없었으므로 개념을 늘리지 않고 연결만 추가했다 | 전이에 `then job` 효과 추가: 개념 하나가 늘고 `notify`와 책임이 겹쳐 보류 |
 | webhook·outbox 입력을 `{ body: Text }`, `{ event: Text }`로 고정 | 없음 | 외부 payload 구조는 provider마다 달라 선언 타입으로 고정할 이득이 적다. 파싱은 확장 책임으로 둔다 | payload를 typed 입력으로 매핑: 매핑 문법이 필요해 보류 |
 
@@ -249,7 +251,7 @@
 | 순위 | 항목 | 이유 | 권장 형태 |
 |---|---|---|---|
 | 1 | B03 테넌트 격리 | SaaS의 기본 요구. 현재는 predicate 관례에 의존 | [결정 문서](tenant-isolation-decision-2026-10-13.md): 현행 유지 권장, 활성 테넌트(세션 claim)와 생성 경로 Ref 가시성은 창시자 결정 대기 |
-| 2 | B09 Audit | 규제·운영 요구 | 전이 선언에 `audit`, 같은 transaction의 append-only 감사 테이블 |
+| 2 | B09 Audit | 규제·운영 요구 | 기본 기록은 구현(아래 설계 선택). 남은 것: 조회 CLI, 쓰기 확장 key, 효과 행 |
 | 3 | I02·I03 Metrics·Tracing | 운영 가시성 | 선택 패키지로 OpenTelemetry/Prometheus exporter. 작업자 A의 선택 의존성 구조에 배치 |
 | 4 | D08·C09 retry 정책 선언 | job별 재시도 횟수·backoff·재시도 대상 오류 | operation job에 `retry { attempts; backoff }` |
 | 5 | E05 발신 webhook | 고객 구독형 SaaS | PoC `outbound.rs` 서명·재시도·SSRF 규칙을 job effect로 이식 |

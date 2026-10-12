@@ -107,7 +107,7 @@ async fn run_write_in(
     // ctx 쓰기가 한 번이라도 실패하면 확장이 오류를 잡고 성공을 돌려줘도 커밋하지 않는다(트랜잭션 오염 방지).
     let mut poisoned: Option<&'static str> = None;
     let mut calls = 0usize;
-    let knobs = Knobs::default();
+    let knobs = Knobs { audit_via: Some("extension"), ..Knobs::default() };
     let result: Result<Value, Reject> = loop {
         let left = expires.saturating_duration_since(Instant::now());
         let line = match tokio::time::timeout(left, w.read_line()).await {
