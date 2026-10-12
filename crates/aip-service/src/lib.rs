@@ -195,6 +195,8 @@ pub struct Config {
     pub outbox_handlers: Vec<triggers::OutboxHandlerConfig>,
     #[serde(default)]
     pub job_policies: Vec<triggers::JobPolicyConfig>,
+    #[serde(default)]
+    pub message_handlers: Vec<triggers::MessageHandlerConfig>,
     pub metrics: Option<infrastructure::MetricsConfig>,
 }
 #[derive(Deserialize)]
@@ -736,10 +738,11 @@ async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
     require_built_features(&config)?;
     let facts = load(file, false)?.output.execution;
     let mut infrastructure = infrastructure::build(&config)?;
-    infrastructure.triggers = Arc::new(
+    let mut built =
         triggers::build(&config.schedules, &config.webhooks, &config.outbox_handlers, &config.auth.issuer, &|name| std::env::var(name).ok())
-            .map_err(|message| error("TRIGGER_CONFIG", message))?,
-    );
+            .map_err(|message| error("TRIGGER_CONFIG", message))?;
+    built.messages = triggers::build_message_handlers(&config.message_handlers, &config.auth.issuer);
+    infrastructure.triggers = Arc::new(built);
     infrastructure.job_policies = triggers::build_job_policies(&config.job_policies).map_err(|message| error("JOB_POLICY_CONFIG", message))?;
     let integrations = config.workers.as_ref().map(|workers| workers.integrations.as_slice()).unwrap_or_default();
     let broker = build_broker(integrations).await?;

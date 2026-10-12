@@ -253,6 +253,33 @@ export async function fulfil(input, ctx) {
 - 설정한 topic은 정의의 `notify` 효과가 실제로 내보내는 것이어야 하고, job 입력은 정확히 `{ event: Text }`여야 한다.
 - `aip_outbox`는 아직 자동 정리하지 않으며 처리 대상 조회는 미처리 행 anti-join이다. outbox가 매우 커지는 서비스는 보존 정책을 별도로 정해야 한다.
 
+### 메시지 큐 소비 job
+
+`message_handlers`는 관리 메시지 큐의 메시지 하나를 durable job 하나로 넘긴다. Spring `@KafkaListener`·`@RabbitListener`, NestJS `@MessagePattern`, Celery consumer에 해당한다. 별도 consumer 프로세스나 ack 코드를 쓰지 않는다.
+
+```json
+{"messaging":{"enabled":true},
+ "message_handlers":[
+   {"queue":"orders","operation":"handleOrder","principal":"svc-orders"},
+   {"queue":"partner_events","operation":"handlePartner","principal":"svc-partner","owner":"principal-owner-key"}
+ ]}
+```
+
+```js
+export async function handleOrder(input, ctx) {
+  const message = JSON.parse(input.message); // {id, queue, payload, deliveries}
+  const result = await ctx.data.apply("Order", "pay", [message.payload.order], `pay-${message.id}`);
+  return { paid: result.changed.length };
+}
+```
+
+- 메시지는 owner 범위로 나뉜다. `owner`를 생략하면 서비스 주체 자신의 범위를 소비한다. 그 주체로 실행되는 job이 `ctx.messages.publish`로 보낸 메시지가 여기에 들어간다. Kafka·RabbitMQ inbound route([BROKERS](BROKERS.md))로 들어온 메시지는 route에 적은 owner key를 같이 적는다.
+- 각 instance가 1초마다 handler별로 메시지를 최대 50개 lease하고 `message:<메시지 id>` key로 job을 수락한다. job 수락과 메시지 ack가 한 transaction이다. 수락 뒤 ack 전에 process가 죽으면 lease가 만료되어 다시 전달되지만 같은 key라 job은 하나다. 여러 instance가 경쟁해도 메시지당 job은 하나다. `message:` key는 사용자가 쓸 수 없다.
+- 수락이 실패하면(서비스 주체 비활성, quota 초과 등) 메시지를 nack한다. 메시지 큐의 backoff를 거쳐 `max_deliveries`를 넘으면 DLQ(`DEAD`)로 옮기고 `last_error`에 이유를 남긴다. DLQ 조회와 redrive는 기존 메시지 API를 쓴다.
+- 메시지 처리 실패(확장 예외)는 메시지가 아니라 job의 재시도 정책을 따른다. 메시지는 job 수락 시점에 ack된다.
+- 시작 시 `messaging.enabled`, 정의의 `messages.<queue>` 선언, job 입력이 정확히 `{ message: Text }`인지를 확인한다. 같은 queue·owner·주체 조합은 한 번만 쓸 수 있다.
+- 메시지 사이의 실행 순서는 보장하지 않는다(E09).
+
 ## 재시도 정책
 
 job은 다음 경우에만 같은 run을 다시 시도한다. 시도 사이는 1초부터 두 배씩 늘려 최대 30초를 기다린다(exponential backoff).

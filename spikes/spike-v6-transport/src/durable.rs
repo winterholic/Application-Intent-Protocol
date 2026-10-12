@@ -13,6 +13,8 @@ type Result<T> = std::result::Result<T, &'static str>;
 /// Schedules are evaluated at least this often; replays of an already enqueued slot are cheap.
 const SCHEDULE_TICK: Duration = Duration::from_secs(5);
 const OUTBOX_TICK: Duration = Duration::from_secs(1);
+const MESSAGES_PER_TICK: usize = 50;
+const MESSAGE_LEASE_MS: i64 = 30_000;
 fn db_error<T>(_: T) -> &'static str {
     "DB_UNAVAILABLE"
 }
@@ -323,13 +325,25 @@ pub(crate) async fn submit_as_service(
     key: &str,
     outbox_marker: Option<(&str, i64)>,
 ) -> Result<aip_execution::Run> {
-    if !enabled(facts) || rt.extensions.is_none() {
-        return Err("NOT_AVAILABLE");
-    }
-    let s = schema(rt)?.to_string();
-    let mut db = connect(rt).await?;
-    let tx = db.transaction().await.map_err(db_error)?;
-    let row = tx
+    let marker = match outbox_marker {
+        Some((infra, id)) => Marker::Outbox(infra, id),
+        None => Marker::None,
+    };
+    submit_as_service_marked(rt, facts, wire, principal, name, input, key, marker).await
+}
+
+/// What else commits together with a trigger's job acceptance.
+enum Marker<'a> {
+    None,
+    /// The outbox row is marked dispatched.
+    Outbox(&'a str, i64),
+    /// The consumed message is acked.
+    Message(&'a aip_execution::messages::MessageLease),
+}
+
+/// The service principal's grant as of now. A disabled or unbound principal accepts nothing.
+async fn service_grant(db: &impl GenericClient, s: &str, principal: &crate::triggers::ServicePrincipal) -> Result<DurablePrincipal> {
+    let row = db
         .query_opt(
             &format!(
                 "SELECT actor_id,enabled,min_iat,floor(extract(epoch FROM clock_timestamp()))::bigint FROM {s}.aip_principals WHERE issuer=$1 AND subject=$2"
@@ -340,16 +354,43 @@ pub(crate) async fn submit_as_service(
         .map_err(db_error)?
         .filter(|row| row.get::<_, bool>(1))
         .ok_or("PRINCIPAL_UNAVAILABLE")?;
-    let grant = DurablePrincipal {
+    Ok(DurablePrincipal {
         issuer: principal.issuer.clone(),
         subject: principal.subject.clone(),
         actor_id: row.get(0),
         min_iat: row.get(2),
         issued_at: row.get(3),
-    };
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn submit_as_service_marked(
+    rt: &Runtime,
+    facts: &Value,
+    wire: IdWire,
+    principal: &crate::triggers::ServicePrincipal,
+    name: &str,
+    input: &Value,
+    key: &str,
+    marker: Marker<'_>,
+) -> Result<aip_execution::Run> {
+    if !enabled(facts) || rt.extensions.is_none() {
+        return Err("NOT_AVAILABLE");
+    }
+    let s = schema(rt)?.to_string();
+    let mut db = connect(rt).await?;
+    let tx = db.transaction().await.map_err(db_error)?;
+    let grant = service_grant(&tx, &s, principal).await?;
     guard(&tx, rt, &grant).await?;
     let run = submit(&tx, rt, facts, wire, &grant, name, input, key, 0, true).await?;
-    if let Some((infra, outbox_id)) = outbox_marker {
+    if let Marker::Message(lease) = marker {
+        // A lost lease means another consumer owns the message now; roll back so only one acks it.
+        let store = aip_execution::messages::MessageStore::new(&s).map_err(db_error)?;
+        if !store.ack(&tx, lease).await.map_err(db_error)? {
+            return Err("LEASE_LOST");
+        }
+    }
+    if let Marker::Outbox(infra, outbox_id) = marker {
         // The dispatch marker commits with the job acceptance, so a row is never marked without its job.
         tx.execute(
             &format!(
@@ -424,6 +465,50 @@ async fn relay_outbox(rt: &Runtime, facts: &Value, wire: IdWire) -> Result<()> {
             let key = crate::triggers::outbox_key(id, row.get(5));
             if let Err(code) = submit_as_service(rt, facts, wire, &handler.principal, &handler.operation, &input, &key, Some((&infra, id))).await {
                 eprintln!("{}", json!({"event":"outbox_dispatch_failed","topic":handler.topic,"code":code}));
+                break;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Turns ready messages of configured queues into jobs, at least once. The job key is the message id,
+/// so a message redelivered after a crash between acceptance and ack converges on the same job.
+/// A failed acceptance nacks with backoff; after `max_deliveries` the message moves to the DLQ.
+async fn relay_messages(rt: &Runtime, facts: &Value, wire: IdWire, worker: &str) -> Result<()> {
+    let s = schema(rt)?.to_string();
+    let store = aip_execution::messages::MessageStore::new(&s).map_err(db_error)?;
+    for handler in &rt.infrastructure.triggers.messages {
+        let owner = match &handler.owner {
+            Some(owner) => owner.clone(),
+            None => {
+                let db = connect(rt).await?;
+                let grant = service_grant(&*db, &s, &handler.principal).await;
+                db.release().await.map_err(db_error)?;
+                match grant {
+                    Ok(grant) => self::owner(&grant),
+                    Err(code) => {
+                        eprintln!("{}", json!({"event":"message_relay_failed","queue":handler.queue,"code":code}));
+                        continue;
+                    }
+                }
+            }
+        };
+        for _ in 0..MESSAGES_PER_TICK {
+            let db = connect(rt).await?;
+            let lease = store.claim(&*db, &owner, &handler.queue, worker, MESSAGE_LEASE_MS).await.map_err(db_error)?;
+            db.release().await.map_err(db_error)?;
+            let Some(lease) = lease else { break };
+            let message = json!({"id":lease.id,"queue":lease.queue,"payload":lease.payload,"deliveries":lease.deliveries});
+            let input = json!({"message": message.to_string()});
+            let key = crate::triggers::message_key(&lease.id);
+            let accepted =
+                submit_as_service_marked(rt, facts, wire, &handler.principal, &handler.operation, &input, &key, Marker::Message(&lease)).await;
+            if let Err(code) = accepted {
+                eprintln!("{}", json!({"event":"message_dispatch_failed","queue":handler.queue,"code":code}));
+                let db = connect(rt).await?;
+                let _ = store.nack(&*db, &lease, code).await;
+                db.release().await.map_err(db_error)?;
                 break;
             }
         }
@@ -677,9 +762,13 @@ pub(crate) async fn supervisor(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire
     let mut scheduled: Option<tokio::time::Instant> = None;
     let mut relayed: Option<tokio::time::Instant> = None;
     loop {
-        if !rt.infrastructure.triggers.outbox.is_empty() && relayed.is_none_or(|at| at.elapsed() >= OUTBOX_TICK) {
+        let triggers = &rt.infrastructure.triggers;
+        if !(triggers.outbox.is_empty() && triggers.messages.is_empty()) && relayed.is_none_or(|at| at.elapsed() >= OUTBOX_TICK) {
             if let Err(code) = relay_outbox(&rt, &facts, wire).await {
                 eprintln!("{}", json!({"event":"outbox_relay_failed","code":code}));
+            }
+            if let Err(code) = relay_messages(&rt, &facts, wire, &worker).await {
+                eprintln!("{}", json!({"event":"message_relay_failed","code":code}));
             }
             relayed = Some(tokio::time::Instant::now());
         }

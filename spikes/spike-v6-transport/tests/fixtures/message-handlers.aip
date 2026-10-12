@@ -1,0 +1,11 @@
+resource Member { fields { id: Id } }
+actor Member
+operation job consume {
+  input { message: Text }
+  output { order: Int; deliveries: Int }
+  allow actor != null
+  access messages.orders, messages.partner
+  effect managed
+  deadline 10s
+  implementation "handlers.consume"
+}

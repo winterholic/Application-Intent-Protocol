@@ -143,6 +143,7 @@ async fn schedules_and_signed_webhooks_run_jobs_as_the_bound_service_principal()
                 max_body_bytes: 4096,
             }],
             outbox: vec![],
+            messages: vec![],
         })
     };
     let start = |lang: WorkerLang, schedules: bool| {
@@ -264,7 +265,7 @@ async fn trigger_configuration_is_rejected_before_listening() {
         max_body_bytes: 4096,
     };
     let check = |webhooks: Vec<Webhook>, schedules: Vec<Schedule>| {
-        Triggers { webhooks, schedules, outbox: vec![] }.validate(&facts, IdWire::SafeNumber, &["/jobs", "/assets"])
+        Triggers { webhooks, schedules, outbox: vec![], messages: vec![] }.validate(&facts, IdWire::SafeNumber, &["/jobs", "/assets"])
     };
     assert!(check(vec![base()], vec![]).is_ok());
     assert!(check(vec![Webhook { path: "/jobs/hook".into(), ..base() }], vec![]).is_err());

@@ -6,7 +6,8 @@
 use serde::Deserialize;
 use serde_json::Value;
 use spike_v6_transport::triggers::{
-    JobPolicy, MAX_MISFIRE_GRACE, MIN_MISFIRE_GRACE, OutboxHandler, Schedule, ServicePrincipal, Signature, Triggers, Webhook, decode_secret,
+    JobPolicy, MAX_MISFIRE_GRACE, MIN_MISFIRE_GRACE, MessageHandler, OutboxHandler, Schedule, ServicePrincipal, Signature, Triggers, Webhook,
+    decode_secret,
 };
 use std::time::Duration;
 
@@ -47,6 +48,29 @@ pub struct OutboxHandlerConfig {
     pub topic: String,
     pub operation: String,
     pub principal: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MessageHandlerConfig {
+    pub queue: String,
+    pub operation: String,
+    pub principal: String,
+    /// Owner key of the consumed scope; defaults to the service principal's own messages.
+    #[serde(default)]
+    pub owner: Option<String>,
+}
+
+pub fn build_message_handlers(configs: &[MessageHandlerConfig], issuer: &str) -> Vec<MessageHandler> {
+    configs
+        .iter()
+        .map(|config| MessageHandler {
+            queue: config.queue.clone(),
+            operation: config.operation.clone(),
+            principal: ServicePrincipal { issuer: issuer.to_string(), subject: config.principal.clone() },
+            owner: config.owner.clone(),
+        })
+        .collect()
 }
 
 #[derive(Deserialize)]
@@ -169,6 +193,18 @@ pub fn build(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn message_handlers_bind_the_configured_issuer_and_reject_unknown_fields() {
+        let configs: Vec<MessageHandlerConfig> =
+            serde_json::from_value(serde_json::json!([{"queue":"orders","operation":"handle","principal":"svc"}])).expect("config");
+        let handlers = build_message_handlers(&configs, "https://issuer.example");
+        assert_eq!((handlers[0].principal.issuer.as_str(), handlers[0].owner.as_ref()), ("https://issuer.example", None));
+        assert!(
+            serde_json::from_value::<Vec<MessageHandlerConfig>>(serde_json::json!([{"queue":"q","operation":"o","principal":"p","ack":"early"}]))
+                .is_err()
+        );
+    }
 
     #[test]
     fn job_policies_name_each_operation_once_and_default_to_retrying_only_on_request() {

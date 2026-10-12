@@ -83,11 +83,23 @@ pub fn validate_job_policies(policies: &std::collections::HashMap<String, JobPol
     Ok(())
 }
 
+/// Consumes one managed message queue into durable jobs, like a Spring `@KafkaListener`,
+/// `@RabbitListener` or a Celery consumer. Accepting the job and acking the message commit together.
+pub struct MessageHandler {
+    pub queue: String,
+    pub operation: String,
+    pub principal: ServicePrincipal,
+    /// Message owner scope to consume. `None` consumes the service principal's own scope, which is
+    /// where its jobs publish with `ctx.messages.publish`. Broker inbound routes name an explicit owner.
+    pub owner: Option<String>,
+}
+
 #[derive(Default)]
 pub struct Triggers {
     pub schedules: Vec<Schedule>,
     pub webhooks: Vec<Webhook>,
     pub outbox: Vec<OutboxHandler>,
+    pub messages: Vec<MessageHandler>,
 }
 
 pub const MAX_WEBHOOK_BODY: usize = 1 << 20;
@@ -102,7 +114,7 @@ fn valid_name(name: &str) -> bool {
 
 impl Triggers {
     pub fn is_empty(&self) -> bool {
-        self.schedules.is_empty() && self.webhooks.is_empty() && self.outbox.is_empty()
+        self.schedules.is_empty() && self.webhooks.is_empty() && self.outbox.is_empty() && self.messages.is_empty()
     }
 
     /// Rejects configuration that could never run before the listener accepts traffic.
@@ -139,6 +151,24 @@ impl Triggers {
             }
             if handler.principal.subject.is_empty() || handler.principal.subject.len() > 256 {
                 return Err("outbox handler principal subject is invalid");
+            }
+        }
+        let mut scopes = std::collections::HashSet::new();
+        for handler in &self.messages {
+            if !scopes.insert((handler.queue.clone(), handler.owner.clone(), handler.principal.subject.clone())) {
+                return Err("message handler must consume each queue and owner scope once");
+            }
+            if !declares_message_queue(facts, &handler.queue) {
+                return Err("message handler queue must be declared as messages.<queue> by a job");
+            }
+            if handler.owner.as_ref().is_some_and(|owner| owner.is_empty() || owner.len() > 256) {
+                return Err("message handler owner must be 1 to 256 bytes");
+            }
+            if spike_v4_worker::validate_job(facts, &handler.operation, &json!({"message":"{}"}), wire).is_err() {
+                return Err("message handler operation must be a declared job whose input is exactly { message: Text }");
+            }
+            if handler.principal.subject.is_empty() || handler.principal.subject.len() > 256 {
+                return Err("message handler principal subject is invalid");
             }
         }
         let mut paths = std::collections::HashSet::new();
@@ -185,7 +215,18 @@ fn declares_notify_topic(facts: &Value, topic: &str) -> bool {
 }
 
 /// Prefixes of the keys below. User-submitted jobs may not use them.
-pub const RESERVED_KEY_PREFIXES: [&str; 3] = ["outbox:", "schedule:", "webhook:"];
+pub const RESERVED_KEY_PREFIXES: [&str; 4] = ["outbox:", "schedule:", "webhook:", "message:"];
+
+/// The job key for one managed message; a redelivery after a crash converges on the same job.
+pub fn message_key(id: &str) -> String {
+    format!("message:{id}")
+}
+
+fn declares_message_queue(facts: &Value, queue: &str) -> bool {
+    facts["operations"]
+        .as_object()
+        .is_some_and(|operations| operations.values().any(|operation| operation["access"][format!("messages.{queue}")] == true))
+}
 
 /// The job key for one committed outbox row; every instance derives the same key.
 pub fn outbox_key(id: i64, created_micros: i64) -> String {

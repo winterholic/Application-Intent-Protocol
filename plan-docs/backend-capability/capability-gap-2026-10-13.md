@@ -30,6 +30,7 @@
 | C09 재시도, D08 Retry/Backoff | 부분 / 부분 | 지원 / 지원 | 설정 `job_policies`(1회에서 10회, 미처리 예외 재시도 선택), 확장의 `ctx.retryLater()`, `ctx.job.attempt`. `tests/job_retry.rs`, [재시도 정책](../../product/MANAGED-EXECUTION.md#재시도-정책) |
 | D09 DLQ, I10 운영 진단 | 부분 / 부분 | 지원 / 부분 | `aip service jobs list`(payload 미출력)·`retry`(같은 run 재큐, 미확정 효과·다른 배포·만료는 거부). [OPERATIONS](../../product/OPERATIONS.md#실패-job-조회와-재처리) |
 | F10 외부 실패 처리, F11 Circuit Breaker | 부분 / 부분 | 지원 / 지원 | endpoint별 `circuit_breaker`, 열린 동안 `CIRCUIT_OPEN`(journal 기록 없음, 같은 key 재전송 가능). [Circuit breaker](../../product/MANAGED-EXECUTION.md#circuit-breaker) |
+| E02 Event Handler, E04 메시지 브로커 | 부분 / 부분 | 지원 / 지원 | 서비스 설정 `message_handlers`, 메시지당 job 하나(`message:<id>` key), 수락 실패는 nack 후 DLQ. [메시지 큐 소비 job](../../product/MANAGED-EXECUTION.md#메시지-큐-소비-job) |
 
 ## A. 데이터
 
@@ -104,9 +105,9 @@
 | ID | 기능 | 타 프레임워크 대표 구현 | AIP 현재 | 근거·남은 갭 |
 |---|---|---|---|---|
 | E01 | Domain Event | `ApplicationEventPublisher`, `EventEmitter2`, Django signals | 부분 | job의 `ctx.events.publish`. apply commit이 자동 발행하지 않음 |
-| E02 | Event Handler | `@EventListener`, `@OnEvent`, signal receiver | 부분 | webhook·schedule·outbox topic을 job handler로 연결. 내부 event stream·message를 handler에 바인딩하는 선언 없음 |
+| E02 | Event Handler | `@EventListener`, `@OnEvent`, signal receiver | 지원 | 전이 `notify`(outbox)·webhook·schedule·메시지 큐를 서비스 설정으로 job handler에 연결. 클라이언트용 event stream은 handler 대상이 아님 |
 | E03 | Pub/Sub | Redis pub/sub, ActionCable | 부분 | owner 범위 event stream·SSE·WS |
-| E04 | 메시지 브로커 | Spring Kafka, `@nestjs/microservices`, Celery broker | 부분 | 선택 빌드 Kafka/RabbitMQ relay. inbound 메시지를 job으로 바인딩하지 않음 |
+| E04 | 메시지 브로커 | Spring Kafka, `@nestjs/microservices`, Celery broker | 지원 | 선택 빌드 Kafka/RabbitMQ relay가 관리 큐로 넣고 `message_handlers`가 job으로 소비(수락과 ack 한 transaction, 실패는 nack·DLQ). `tests/message_handlers.rs` |
 | E05 | Webhook | 수신: controller + 서명 검증 / 발신: 별도 라이브러리 | 부분 | 수신은 설정만으로 서명 검증·멱등 job 수락. 발신 구독·서명·재시도 전달은 PoC만 |
 | E06 | 이벤트 기반 후속 작업 | `@TransactionalEventListener`, `on_commit`, `after_commit` | 지원 | 전이의 `notify` 효과 + `outbox_handlers`. commit 뒤 crash에도 후속 job을 잃지 않음 |
 | E07 | Outbox | Debezium outbox, transactional outbox | 지원 | 전이와 같은 transaction의 outbox 행, dispatch 표시와 job 수락이 한 transaction. outbox 자동 정리 없음 |
@@ -192,8 +193,8 @@
 
 | 판정 | 개수 |
 |---|---|
-| 지원 | 34 |
-| 부분 | 50 |
+| 지원 | 36 |
+| 부분 | 48 |
 | 확장 | 12 |
 | 미지원 | 9 |
 

@@ -156,6 +156,9 @@ pub(crate) async fn listen_with_fingerprint(
         if runtime.authenticator.is_none() || runtime.deployment.is_none() || runtime.extensions.is_none() || !crate::durable::enabled(&facts) {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "schedules and webhooks require durable jobs, workers and authentication"));
         }
+        if !runtime.infrastructure.triggers.messages.is_empty() && !runtime.infrastructure.messaging {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "message handlers require messaging to be enabled"));
+        }
         let mut reserved: Vec<&str> = vec![
             "/session",
             "/read",
