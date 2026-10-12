@@ -313,8 +313,13 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
                 let tenv = Env { this: Some((ta.clone(), target.to_string())), ..Default::default() };
                 let mut pairs = vec![];
                 let mut tout = Map::new();
+                let mut seen_target = std::collections::HashSet::new();
                 for x in tsel {
                     let f = x.as_str().ok_or(Reject { code: "BAD_REQUEST", msg: "traverse select는 문자열".into() })?;
+                    // 같은 필드를 반복하면 정책 없는 필드는 비용에 안 잡힌 채 SQL만 부풀고 json_build_object 인수 한도에 걸린다.
+                    if !seen_target.insert(f) {
+                        return rej("DUPLICATE", format!("select `{f}` 중복"));
+                    }
                     if !tr["select"].as_array().unwrap().iter().any(|y| y == f) {
                         return rej("FIELD_NOT_EXPOSED", format!("`{target}.{f}`는 `{res}.{rel}` 경로에 열려 있지 않음. 서버 정의 변경 필요"));
                     }

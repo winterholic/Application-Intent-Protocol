@@ -72,6 +72,12 @@ fn encode_value(value: &mut Value, ty: &Value, wire: IdWire) -> Result<(), Rejec
     if let Some(fields) = ty["object"].as_object() {
         return encode_object(value, fields, wire);
     }
+    if let Some(fields) = ty["array"].as_object() {
+        for item in value.as_array_mut().ok_or_else(malformed_output)? {
+            encode_object(item, fields, wire)?;
+        }
+        return Ok(());
+    }
     let base = ty["ty"].as_str().unwrap_or("");
     if base.starts_with("Id<") || base.starts_with("Ref<") {
         *value = emit_id(value.as_i64().ok_or_else(malformed_output)?, wire)?;

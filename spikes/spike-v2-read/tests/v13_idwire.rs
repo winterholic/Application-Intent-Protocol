@@ -160,3 +160,19 @@ fn string_conversion_is_included_in_the_serialized_output_byte_limit() {
     let error = error_code(encode_rows(vec![row], &output_type, IdWire::DecimalString));
     assert_eq!(error, "OUTPUT_TOO_LARGE", "문자열 ID의 JSON 따옴표 증가분을 포함해 거부해야 함");
 }
+
+#[test]
+fn one_to_many_children_are_encoded_with_the_selected_wire() {
+    // 1:N traverse의 출력 타입은 `array`다. 변환을 건너뛰면 JS가 2^53 넘는 자식 Id를 인접 값으로 반올림해 다른 행을 가리킨다.
+    let output_type = json!({
+        "rows": {
+            "id": { "ty": "Id<Post>", "nullable": false },
+            "comments": { "array": { "id": { "ty": "Id<Comment>", "nullable": false }, "body": { "ty": "Text", "nullable": false } }, "nullable": false }
+        }
+    });
+    let rows = vec![json!({ "id": 1, "comments": [{ "id": 9_007_199_254_740_993i64, "body": "a" }, { "id": 2, "body": "b" }] })];
+    let decimal = encode_rows(rows.clone(), &output_type, IdWire::DecimalString).unwrap();
+    assert_eq!(decimal[0]["comments"][0]["id"], json!("9007199254740993"));
+    assert_eq!(decimal[0]["comments"][1]["id"], json!("2"));
+    assert_eq!(error_code(encode_rows(rows, &output_type, IdWire::SafeNumber)), "ID_OUT_OF_RANGE");
+}

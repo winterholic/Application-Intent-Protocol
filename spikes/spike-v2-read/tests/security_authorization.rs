@@ -50,3 +50,13 @@ async fn single_reference_traverse_respects_origin_field_policy() {
     assert!(actual[1][0]["team"].is_null(), "field policy must hide the association for another member: {:?}", actual[1]);
     assert!(actual[2][0]["team"].is_null(), "field policy must hide the association for anonymous callers: {:?}", actual[2]);
 }
+
+#[test]
+fn single_traverse_rejects_repeated_select_fields() {
+    let facts = load_str(DEF, Form::A).expect("valid relation policy").execution;
+    let ids = vec![json!("id"); 60];
+    let request = json!({"read":"Task","select":["id",{"team":{"select":ids}}]});
+    let caller = Caller { actor_id: Some(1), now: "2026-10-13T00:00:00Z".into() };
+    let error = plan_read(&facts, &request, &caller).err().expect("repeated traverse select must be rejected");
+    assert_eq!(error.code, "DUPLICATE");
+}
