@@ -10,6 +10,9 @@ use std::{sync::Arc, time::Duration};
 use tokio_postgres::{types::ToSql, Client, GenericClient};
 
 type Result<T> = std::result::Result<T, &'static str>;
+/// Schedules are evaluated at least this often; replays of an already enqueued slot are cheap.
+const SCHEDULE_TICK: Duration = Duration::from_secs(5);
+const OUTBOX_TICK: Duration = Duration::from_secs(1);
 fn db_error<T>(_: T) -> &'static str {
     "DB_UNAVAILABLE"
 }
@@ -28,6 +31,9 @@ fn data_error(code: &str) -> &'static str {
     match code {
         "ACCESS_DENIED" => "ACCESS_DENIED",
         "NOT_FOUND" => "NOT_FOUND",
+        "INVALID_STATE" => "INVALID_STATE",
+        "CHECK_FAILED" => "CHECK_FAILED",
+        "DUPLICATE_TARGET" => "DUPLICATE_TARGET",
         "CONFLICT" => "CONFLICT",
         "ALREADY_EXISTS" => "ALREADY_EXISTS",
         "INVARIANT_VIOLATED" => "INVARIANT_VIOLATED",
@@ -239,6 +245,7 @@ async fn submit(
     input: &Value,
     key: &str,
     delay: i64,
+    service: bool,
 ) -> Result<aip_execution::Run> {
     spike_v4_worker::validate_job(facts, name, input, wire).map_err(|e| e.code)?;
     if !crate::valid_key(key) || !(0..=86_400_000).contains(&delay) {
@@ -258,7 +265,9 @@ async fn submit(
     let deployment = &rt.deployment.as_ref().unwrap().expected_digest;
     let replay:bool=db.query_one(&format!("SELECT EXISTS(SELECT 1 FROM {s}.aip_jobs WHERE owner=$1 AND operation=$2 AND idempotency_key=$3 AND contract_digest=$4 AND deployment_digest=$5)"),&[&owner,&name,&key,&contract,&deployment]).await.map_err(db_error)?.get(0);
     let total: i64 = db.query_one(&format!("SELECT count(*) FROM {s}.aip_jobs WHERE owner=$1"), &[&owner]).await.map_err(db_error)?.get(0);
-    if (active >= 100 || total >= 10_000) && !replay {
+    // Trigger traffic is unbounded over time; a retained-history cap would silently stop every trigger
+    // sharing the service principal. The active bound still limits concurrent load.
+    if (active >= 100 || (!service && total >= 10_000)) && !replay {
         return Err("QUOTA_EXCEEDED");
     }
     Store::new(s)
@@ -283,6 +292,127 @@ async fn submit(
         )
         .await
         .map_err(store_error)
+}
+
+/// Enqueues a job for a server trigger as an operator-bound principal. The principal row is read at
+/// submission time, so revoking or disabling it stops future triggers without a restart.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn submit_as_service(
+    rt: &Runtime,
+    facts: &Value,
+    wire: IdWire,
+    principal: &crate::triggers::ServicePrincipal,
+    name: &str,
+    input: &Value,
+    key: &str,
+    outbox_marker: Option<(&str, i64)>,
+) -> Result<aip_execution::Run> {
+    if !enabled(facts) || rt.extensions.is_none() {
+        return Err("NOT_AVAILABLE");
+    }
+    let s = schema(rt)?.to_string();
+    let mut db = connect(rt).await?;
+    let tx = db.transaction().await.map_err(db_error)?;
+    let row = tx
+        .query_opt(
+            &format!(
+                "SELECT actor_id,enabled,min_iat,floor(extract(epoch FROM clock_timestamp()))::bigint FROM {s}.aip_principals WHERE issuer=$1 AND subject=$2"
+            ),
+            &[&principal.issuer, &principal.subject],
+        )
+        .await
+        .map_err(db_error)?
+        .filter(|row| row.get::<_, bool>(1))
+        .ok_or("PRINCIPAL_UNAVAILABLE")?;
+    let grant = DurablePrincipal {
+        issuer: principal.issuer.clone(),
+        subject: principal.subject.clone(),
+        actor_id: row.get(0),
+        min_iat: row.get(2),
+        issued_at: row.get(3),
+    };
+    guard(&tx, rt, &grant).await?;
+    let run = submit(&tx, rt, facts, wire, &grant, name, input, key, 0, true).await?;
+    if let Some((infra, outbox_id)) = outbox_marker {
+        // The dispatch marker commits with the job acceptance, so a row is never marked without its job.
+        tx.execute(
+            &format!(
+                "INSERT INTO {infra}.aip_outbox_dispatch(outbox_id,outbox_created_at,run_id) SELECT id,created_at,$2::text::uuid FROM {s}.aip_outbox WHERE id=$1 ON CONFLICT DO NOTHING"
+            ),
+            &[&outbox_id, &run.id],
+        )
+        .await
+        .map_err(db_error)?;
+    }
+    tx.commit().await.map_err(|_| "COMMIT_UNKNOWN")?;
+    db.release().await.map_err(db_error)?;
+    Ok(run)
+}
+
+/// Fires the latest due slot of each schedule once. Older missed slots are skipped by design (coalesced),
+/// and the per-slot job key makes concurrent instances and restarts converge on one run.
+async fn fire_schedules(rt: &Runtime, facts: &Value, wire: IdWire) {
+    let now = chrono::Utc::now();
+    for schedule in &rt.infrastructure.triggers.schedules {
+        let Ok(slot) = schedule.cron.latest_at_or_before(now) else { continue };
+        if (now - slot).to_std().unwrap_or_default() > schedule.misfire_grace {
+            continue;
+        }
+        let key = crate::triggers::schedule_key(&schedule.name, slot.timestamp());
+        if let Err(code) = submit_as_service(rt, facts, wire, &schedule.principal, &schedule.operation, &schedule.input, &key, None).await {
+            eprintln!("{}", json!({"event":"schedule_submit_failed","schedule":schedule.name,"code":code}));
+        }
+    }
+}
+
+/// Table recording which committed outbox rows already became jobs. It lives in the infrastructure
+/// schema so the application schema keeps its migration fingerprint. The creation time is part of the
+/// identity so a recreated application schema whose sequence restarts is not mistaken for old rows.
+pub(crate) fn outbox_dispatch_ddl(infra: &str) -> String {
+    format!(
+        "CREATE TABLE IF NOT EXISTS {infra}.aip_outbox_dispatch(outbox_id bigint NOT NULL, outbox_created_at timestamptz NOT NULL, run_id uuid NOT NULL, dispatched_at timestamptz NOT NULL DEFAULT clock_timestamp(), PRIMARY KEY(outbox_id,outbox_created_at))"
+    )
+}
+
+/// Turns committed `notify` rows of configured topics into jobs. Each topic is scanned separately so a
+/// handler that keeps failing cannot starve other topics. Delivery order across rows is not guaranteed;
+/// each row becomes exactly one job via its key.
+async fn relay_outbox(rt: &Runtime, facts: &Value, wire: IdWire) -> Result<()> {
+    let s = schema(rt)?.to_string();
+    let infra = aip_execution::infrastructure_schema(&s).map_err(|_| "BAD_CONFIGURATION")?;
+    for handler in &rt.infrastructure.triggers.outbox {
+        let db = connect(rt).await?;
+        let rows = db
+            .query(
+                &format!(
+                    "SELECT o.id,o.source,o.source_id,o.recipient_id,o.created_at::text,(extract(epoch FROM o.created_at)*1000000)::bigint FROM {s}.aip_outbox o \
+                     WHERE o.topic=$1 AND NOT EXISTS (SELECT 1 FROM {infra}.aip_outbox_dispatch d WHERE d.outbox_id=o.id AND d.outbox_created_at=o.created_at) \
+                     ORDER BY o.id LIMIT 50"
+                ),
+                &[&handler.topic],
+            )
+            .await
+            .map_err(db_error)?;
+        db.release().await.map_err(db_error)?;
+        for row in rows {
+            let id: i64 = row.get(0);
+            let event = json!({
+                "id": id.to_string(),
+                "topic": handler.topic,
+                "source": row.get::<_, String>(1),
+                "sourceId": row.get::<_, Option<i64>>(2).map(|v| v.to_string()),
+                "recipientId": row.get::<_, Option<i64>>(3).map(|v| v.to_string()),
+                "createdAt": row.get::<_, String>(4),
+            });
+            let input = json!({"event": event.to_string()});
+            let key = crate::triggers::outbox_key(id, row.get(5));
+            if let Err(code) = submit_as_service(rt, facts, wire, &handler.principal, &handler.operation, &input, &key, Some((&infra, id))).await {
+                eprintln!("{}", json!({"event":"outbox_dispatch_failed","topic":handler.topic,"code":code}));
+                break;
+            }
+        }
+    }
+    Ok(())
 }
 
 pub(crate) async fn validate_principal(rt: &Runtime, _facts: &Value, _wire: IdWire, session: &crate::auth::Session) -> Result<String> {
@@ -348,6 +478,7 @@ pub(crate) async fn handle(db: &mut Client, rt: &Runtime, facts: &Value, wire: I
                     &body["input"],
                     text(body, "key")?,
                     body["delayMs"].as_i64().ok_or("BAD_REQUEST")?,
+                    false,
                 )
                 .await?;
                 json!({"ok":true,"run":run})
@@ -527,7 +658,19 @@ pub(crate) async fn supervisor(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire
     let worker =
         format!("{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos());
     let mut gc = tokio::time::Instant::now();
+    let mut scheduled: Option<tokio::time::Instant> = None;
+    let mut relayed: Option<tokio::time::Instant> = None;
     loop {
+        if !rt.infrastructure.triggers.outbox.is_empty() && relayed.is_none_or(|at| at.elapsed() >= OUTBOX_TICK) {
+            if let Err(code) = relay_outbox(&rt, &facts, wire).await {
+                eprintln!("{}", json!({"event":"outbox_relay_failed","code":code}));
+            }
+            relayed = Some(tokio::time::Instant::now());
+        }
+        if !rt.infrastructure.triggers.schedules.is_empty() && scheduled.is_none_or(|at| at.elapsed() >= SCHEDULE_TICK) {
+            fire_schedules(&rt, &facts, wire).await;
+            scheduled = Some(tokio::time::Instant::now());
+        }
         if gc.elapsed() >= Duration::from_secs(60) {
             if let Ok(mut db) = connect(&rt).await {
                 if let Ok(s) = schema(&rt) {

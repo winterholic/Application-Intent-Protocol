@@ -28,3 +28,21 @@ export async function crashy(input, ctx) {
   if (!seenPaid) process.exit(1);
   return { seenPaid, changed: result.changed.length };
 }
+export async function receive(input, ctx) {
+  const event = JSON.parse(input.body);
+  const result = await ctx.data.apply("Order", "pay", [event.order], `hook-${event.order}`);
+  return { paid: result.changed.length };
+}
+export async function sweep(input, ctx) {
+  const page = await ctx.data.read({ read: "Order", select: ["id", "paid"] });
+  let paid = 0;
+  for (const row of page.rows.filter((row) => !row.paid)) {
+    paid += (await ctx.data.apply("Order", "pay", [row.id], `sweep-${row.id}`)).changed.length;
+  }
+  return { paid };
+}
+export async function fulfil(input, ctx) {
+  const event = JSON.parse(input.event);
+  const result = await ctx.data.apply("Order", "ship", [event.sourceId], `ship-${event.id}`);
+  return { shipped: result.changed.length };
+}

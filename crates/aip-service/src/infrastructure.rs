@@ -318,6 +318,7 @@ pub(super) fn build_with_environment(config: &super::Config, lookup: &impl Fn(&s
         object_transfer_lifetime: Duration::from_millis(config.object_transfer_lifetime_ms),
         rag: None,
         rag_client_index: false,
+        triggers: Default::default(),
     };
     result.validate().map_err(|_| configuration_error())?;
     Ok(result)

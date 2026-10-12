@@ -149,6 +149,31 @@ pub(crate) async fn listen_with_fingerprint(
     if let Some(extensions) = &runtime.extensions {
         runtime.infrastructure.worker_launch.probe(extensions.lang, &extensions.dir).await?;
     }
+    if !runtime.infrastructure.triggers.is_empty() {
+        if runtime.authenticator.is_none() || runtime.deployment.is_none() || runtime.extensions.is_none() || !crate::durable::enabled(&facts) {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "schedules and webhooks require durable jobs, workers and authentication"));
+        }
+        let mut reserved: Vec<&str> = vec![
+            "/session",
+            "/read",
+            "/apply",
+            "/status",
+            "/extension",
+            "/operation",
+            "/capabilities",
+            "/jobs",
+            "/files",
+            "/events",
+            "/rag",
+            "/objects",
+            "/messages",
+            "/health",
+            "/ready",
+        ];
+        reserved.extend(runtime.infrastructure.mounts.iter().map(|mount| mount.prefix.as_str()));
+        reserved.extend(runtime.infrastructure.file_mounts.iter().map(|mount| mount.prefix.as_str()));
+        runtime.infrastructure.triggers.validate(&facts, wire, &reserved).map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?;
+    }
     if runtime.db_pool.is_none() {
         let pool = crate::pool::ConnectionPool::new(runtime.db_url.clone(), runtime.infrastructure.db_pool)
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid database pool options"))?;
@@ -178,6 +203,20 @@ pub(crate) async fn listen_with_fingerprint(
         .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "rate limiter installation timed out"))?;
         install?;
         runtime.admission = Some(Arc::new(admission));
+    }
+    if !runtime.infrastructure.triggers.outbox.is_empty() {
+        let schema = &runtime.deployment.as_ref().expect("triggers require deployment").schema;
+        let infra = aip_execution::infrastructure_schema(schema).map_err(|_| io::Error::other("invalid deployment schema"))?;
+        let pool = runtime.db_pool.as_ref().expect("pool initialized");
+        tokio::time::timeout(DB_PREFLIGHT_TIMEOUT, async {
+            let db = pool.acquire().await.map_err(|_| io::Error::other("outbox relay database unavailable"))?;
+            db.batch_execute(&format!("CREATE SCHEMA IF NOT EXISTS {infra}; {}", crate::durable::outbox_dispatch_ddl(&infra)))
+                .await
+                .map_err(|_| io::Error::other("outbox relay installation failed"))?;
+            db.release().await.map_err(|_| io::Error::other("outbox relay connection reset failed"))
+        })
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "outbox relay installation timed out"))??;
     }
     let listener = TcpListener::bind(address).await?;
     let address = listener.local_addr()?;

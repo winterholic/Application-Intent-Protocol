@@ -30,3 +30,26 @@ async def crashy(input, ctx):
     if not seen_paid:
         os._exit(1)
     return {"seenPaid": seen_paid, "changed": len(result["changed"])}
+
+
+async def receive(input, ctx):
+    import json
+    event = json.loads(input["body"])
+    result = await ctx.data.apply("Order", "pay", [event["order"]], f"hook-{event['order']}")
+    return {"paid": len(result["changed"])}
+
+
+async def sweep(input, ctx):
+    page = await ctx.data.read({"read": "Order", "select": ["id", "paid"]})
+    paid = 0
+    for row in page["rows"]:
+        if not row["paid"]:
+            paid += len((await ctx.data.apply("Order", "pay", [row["id"]], f"sweep-{row['id']}"))["changed"])
+    return {"paid": paid}
+
+
+async def fulfil(input, ctx):
+    import json
+    event = json.loads(input["event"])
+    result = await ctx.data.apply("Order", "ship", [event["sourceId"]], f"ship-{event['id']}")
+    return {"shipped": len(result["changed"])}

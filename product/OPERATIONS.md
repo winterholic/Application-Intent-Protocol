@@ -66,6 +66,21 @@ actor 행은 실제 앱의 사용자 데이터가 먼저 존재해야 한다. `b
 
 SDK는 `npm install --offline <aip-sdk.tgz>`로 별도 소비자에 설치한다. `connect(baseUrl, accessToken, generatedBinding)`는 기존 typed transport·캐시·미확정 쓰기 복구를 사용한다. `wire` 설정과 binding 생성의 `--wire`를 맞춘다. 배포의 wire는 최초 연결 시 영속 고정하며 이후 설정만 바꿔 전환하지 않는다. 이 제한은 멱등 principal namespace가 바뀌어 이미 커밋한 쓰기가 재실행되는 것을 막는다.
 
+### 상태 확인 probe
+
+`GET /health`와 `GET /ready`는 인증 없이 응답한다(HEAD도 허용). load balancer·Kubernetes probe에 쓴다.
+
+| 경로 | 200 조건 | 503 조건 |
+|---|---|---|
+| `/health` | listener가 요청을 처리함. DB를 확인하지 않음 | 없음 |
+| `/ready` | pool에서 DB 연결을 얻고, 저장된 배포 digest가 이 process의 정의와 같음 | `DB_UNAVAILABLE`, 다른 배포가 migration한 뒤의 `DEPLOYMENT_CHANGED` |
+
+응답은 `cache-control: no-store`이며 digest·버전·DB 주소·오류 원문을 포함하지 않는다. readiness 검사는 2초로 제한한다. 인증 없는 probe가 요청 pool을 고갈시키지 않도록 process당 동시에 하나의 readiness 검사만 DB 연결을 사용한다. probe 경로는 webhook 경로로 설정할 수 없다. readiness가 worker 확장 import나 외부 provider 연결까지 보증하지는 않는다.
+
+### 서비스 주체와 trigger
+
+스케줄과 webhook은 요청 사용자가 없으므로 운영자가 별도 subject를 bind해 서비스 주체로 쓴다. 예: `aip service principal --config service.json bind --subject svc-scheduler --actor 9000`. 이 주체의 actor에 필요한 행 정책·`allow` 권한만 주고, 사용자 subject와 공유하지 않는다. 설정 형식과 실행 경계는 [관리형 execution의 스케줄과 웹훅 수신](MANAGED-EXECUTION.md#스케줄과-웹훅-수신)을 따른다.
+
 ## 변경 배포와 기존 데이터 이관
 
 ```sh

@@ -65,6 +65,7 @@ pub struct Infrastructure {
     pub object_transfer_lifetime: std::time::Duration,
     pub rag: Option<Arc<aip_execution::rag::RagEngine>>,
     pub rag_client_index: bool,
+    pub triggers: Arc<crate::triggers::Triggers>,
 }
 
 impl Default for Infrastructure {
@@ -84,6 +85,7 @@ impl Default for Infrastructure {
             object_transfer_lifetime: std::time::Duration::from_secs(15 * 60),
             rag: None,
             rag_client_index: false,
+            triggers: Arc::default(),
         }
     }
 }

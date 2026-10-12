@@ -1,0 +1,27 @@
+resource Member { fields { id: Id } }
+actor Member
+resource Order {
+ fields { id: Id; member: Member; paid: Bool }
+ rows read when member = actor
+ transition pay { allow member = actor; from paid = false; to paid = true }
+ expose read { select id, paid; sort id; budget { rows 10; depth 1; deadline 1s; cost 100 } }
+ expose apply pay { target id; bulk maxRows 5 }
+}
+operation job receive {
+  input { body: Text(1..4096) }
+  output { paid: Int }
+  allow actor != null
+  access Order.pay
+  effect managed
+  deadline 10s
+  implementation "data.receive"
+}
+operation job sweep {
+  input {}
+  output { paid: Int }
+  allow actor != null
+  access read.Order, Order.pay
+  effect managed
+  deadline 10s
+  implementation "data.sweep"
+}

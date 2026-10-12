@@ -9,6 +9,7 @@ mod admission;
 pub mod auth;
 mod cors;
 mod durable;
+mod health;
 pub mod hosting;
 pub mod infrastructure;
 mod messaging_transport;
@@ -17,7 +18,9 @@ mod operation;
 pub mod pool;
 pub mod rag_transport;
 pub mod realtime;
+pub mod schedule;
 pub mod server;
+pub mod triggers;
 pub mod write_extension;
 use serde_json::{json, Value};
 use spike_v2_read::id_wire::{emit_id, encode_rows, IdWire};
@@ -421,6 +424,53 @@ async fn verify_session(
     verification.map(Some)
 }
 
+/// Inbound webhook: authenticate the provider by signature over the exact bytes, then accept a durable job
+/// as the configured service principal. Status codes follow provider retry conventions (2xx accepted,
+/// 4xx permanent, 503 retry later) instead of the JSON-only envelope used by AIP clients.
+#[allow(clippy::too_many_arguments)]
+async fn serve_webhook<R: tokio::io::AsyncRead + Unpin>(
+    w: &mut Response<impl AsyncWriteExt + Unpin>,
+    rd: &mut R,
+    webhook: &triggers::Webhook,
+    method: &str,
+    len: Option<usize>,
+    headers: &[(String, String)],
+    facts: &Value,
+    wire: IdWire,
+    runtime: &server::Runtime,
+    deadline: tokio::time::Instant,
+) {
+    let fail = |code: &str| json!({"ok":false,"code":code}).to_string();
+    if method != "POST" {
+        return reply_with_status(w, "405 Method Not Allowed", &fail("BAD_REQUEST"), "allow: POST\r\n").await;
+    }
+    let Some(len) = len else { return reply_with_status(w, "411 Length Required", &fail("BAD_REQUEST"), "").await };
+    if len > webhook.max_body_bytes {
+        return reply_with_status(w, "413 Payload Too Large", &fail("PAYLOAD_TOO_LARGE"), "").await;
+    }
+    let mut body = vec![0; len];
+    match tokio::time::timeout_at(deadline, rd.read_exact(&mut body)).await {
+        Err(_) => return reply_with_status(w, "408 Request Timeout", &fail("REQUEST_TIMEOUT"), "").await,
+        Ok(Err(_)) => return,
+        Ok(Ok(_)) => {}
+    }
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+    let delivery = match triggers::verify(webhook, headers, &body, now) {
+        Ok(delivery) => delivery,
+        Err(triggers::Rejection::Stale) => return reply_with_status(w, "401 Unauthorized", &fail("SIGNATURE_EXPIRED"), "").await,
+        Err(triggers::Rejection::Signature) => return reply_with_status(w, "401 Unauthorized", &fail("SIGNATURE_INVALID"), "").await,
+    };
+    let Ok(text) = String::from_utf8(body) else { return reply_with_status(w, "400 Bad Request", &fail("BAD_VALUE"), "").await };
+    let key = triggers::webhook_key(&webhook.name, &delivery);
+    match durable::submit_as_service(runtime, facts, wire, &webhook.principal, &webhook.operation, &json!({"body":text}), &key, None).await {
+        Ok(run) => reply_with_status(w, "202 Accepted", &json!({"ok":true,"id":run.id,"state":run.state}).to_string(), "").await,
+        Err("IDEMPOTENCY_MISMATCH") => reply_with_status(w, "409 Conflict", &fail("IDEMPOTENCY_MISMATCH"), "").await,
+        Err("BAD_VALUE") => reply_with_status(w, "400 Bad Request", &fail("BAD_VALUE"), "").await,
+        Err("QUOTA_EXCEEDED") => reply_with_status(w, "429 Too Many Requests", &fail("QUOTA_EXCEEDED"), "retry-after: 60\r\n").await,
+        Err(code) => reply_with_status(w, "503 Service Unavailable", &fail(code), "retry-after: 30\r\n").await,
+    }
+}
+
 async fn serve_conn(
     mut sock: TcpStream,
     facts: Arc<Value>,
@@ -546,6 +596,16 @@ async fn serve_conn(
     }
     if let Some(m) = bad {
         return reply(&mut w, &err("BAD_REQUEST", m)).await;
+    }
+    if health::is_probe(&path) {
+        if !matches!(method.as_str(), "GET" | "HEAD") || len.is_some_and(|length| length != 0) {
+            return reply_with_status(&mut w, "405 Method Not Allowed", &err("BAD_REQUEST", "GET/HEAD만"), "allow: GET, HEAD\r\n").await;
+        }
+        let (status, body) = health::probe(&path, &runtime).await;
+        return reply_with_status(&mut w, status, &body, "cache-control: no-store\r\n").await;
+    }
+    if let Some(webhook) = runtime.infrastructure.triggers.webhooks.iter().find(|hook| hook.path == path) {
+        return serve_webhook(&mut w, &mut rd, webhook, &method, len, &header_values, &facts, wire, &runtime, deadline).await;
     }
     let mount = runtime.infrastructure.mounts.iter().find(|mount| mount.matches(&path));
     let file_mount = runtime.infrastructure.file_mounts.iter().find(|mount| mount.matches(&path));

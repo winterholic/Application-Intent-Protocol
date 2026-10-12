@@ -163,6 +163,81 @@ for await (const event of client.events.watch("notifications", { after: "0", int
 
 secret은 명시한 process environment variable에서만 읽고 `.env`는 불러오지 않는다. startup은 DNS를 최대 2초 동안 조회하고 결과 주소를 고정한다. HTTPS를 사용하며 기본적으로 private/special-use 주소와 redirect, proxy를 차단한다. 서버 endpoint별 `allow_private_networks:true`는 사설 unicast HTTPS 연동을 허용하지만 link-local 등 특수 주소는 계속 거부한다. 명시적으로 `allow_loopback:true`인 개발 설정만 loopback HTTP를 쓸 수 있다. endpoint, DNS 답, method, 제한값, secret의 digest가 implementation bundle fingerprint에 포함되므로 값이 바뀐 worker 설정으로 기존 job을 이어 실행하지 않는다. 설정 오류 출력은 endpoint URL이나 secret 값을 노출하지 않는다.
 
+## 스케줄과 웹훅 수신
+
+요청한 사용자가 없는 작업(정기 정산, 외부 서비스 webhook 처리)은 서비스 설정의 `schedules`, `webhooks`로 선언한다. 둘 다 별도 controller 없이 durable job을 수락하며, 운영자가 `aip service principal bind`로 등록한 **서비스 주체**로 실행한다. job은 사용자가 수락한 job과 같은 배포 fence, 주체 활성 검사, operation `allow`, capability 선언, 비용 상한을 거친다. 서비스 주체를 `revoke`하거나 비활성화하면 다음 trigger부터 수락하지 않는다.
+
+```json
+{
+  "schedules": [
+    {"name":"nightly-sweep","operation":"sweep","cron":"0 3 * * *","timezone":"Asia/Seoul","input":{},"principal":"svc-scheduler","misfire_grace_ms":60000}
+  ],
+  "webhooks": [
+    {"name":"stripe","path":"/hooks/stripe","operation":"receive","principal":"svc-webhooks","secret_env":"STRIPE_WEBHOOK_SECRET",
+     "signature":{"kind":"stripe","tolerance_seconds":300},"max_body_bytes":262144},
+    {"name":"github","path":"/hooks/github","operation":"receive","principal":"svc-webhooks","secret_env":"GITHUB_WEBHOOK_SECRET",
+     "signature":{"kind":"hmac-sha256","header":"x-hub-signature-256","prefix":"sha256="}}
+  ]
+}
+```
+
+`principal`은 설정한 `auth.issuer` 아래의 subject다. 서비스 주체가 수락한 job은 owner당 active 100개 상한을 그대로 받지만, 보존 job 10,000개 상한은 적용하지 않는다. trigger는 시간이 지나면 끝없이 쌓이므로 보존 상한이 있으면 한 달 뒤 모든 trigger가 멈추기 때문이다. 서버 시작 시 operation 존재, 입력 계약, cron·시간대, 경로 충돌, secret을 검사하고 문제가 있으면 `TRIGGER_CONFIG`로 시작을 거부한다. trigger는 durable job·worker·인증이 설정된 서버에서만 켤 수 있다.
+
+**스케줄**
+
+- cron은 5필드(`분 시 일 월 요일`)와 `@hourly`·`@daily`·`@weekly`·`@monthly`·`@yearly`를 지원한다. 목록·범위·step·영문 월/요일 이름을 쓸 수 있고, 일과 요일을 모두 제한하면 둘 중 하나만 맞아도 실행한다(Vixie cron 규칙). 시간대는 IANA 이름이다. DST로 건너뛴 지역 시각은 실행하지 않는다. 두 번 나타나는 시간대에서 시(hour)를 지정한 스케줄은 첫 번째만, 시가 `*`인 스케줄은 두 번 모두 실행해 주기를 유지한다.
+- 각 instance는 5초마다 가장 최근 slot 하나를 확인한다. slot마다 `schedule:<name>:<unix초>` job key를 쓰므로 여러 instance와 재시작이 있어도 한 slot은 job 하나로 수렴한다. 다운타임 동안 놓친 slot 중 `misfire_grace_ms`(기본 60초, 10초 이상 24시간 이하) 안의 가장 최근 것만 실행하고 이전 slot을 몰아서 실행하지 않는다(APScheduler의 coalesce와 같은 선택).
+- job 입력은 설정의 고정 `input`이며 job 입력 계약으로 검사한다.
+
+**웹훅 수신**
+
+- 서버 route는 설정한 `path`의 POST만 받는다. job 입력 계약은 정확히 `{ body: Text }`여야 하며 원문 UTF-8 본문이 그대로 전달된다. 파싱과 업무 분기는 확장에서 한다.
+- 서명은 받은 바이트 그대로 검증한다. `hmac-sha256`(GitHub·Shopify 계열, hex 또는 `base64:true`), `stripe`(`t=`/`v1=`, 회전 중 여러 v1 허용), `standard-webhooks`(`webhook-id`·`webhook-timestamp`·`webhook-signature`, `whsec_` secret)를 지원한다. 비교는 constant-time이고, 시간 기반 방식은 허용 오차를 넘는 timestamp를 거부한다. 같은 서명 header가 중복되면 거부한다.
+- job key는 서명된 값에서만 만든다. Standard Webhooks는 `webhook-id`, `stripe`와 `hmac-sha256`은 본문 SHA-256이다. 서명 범위 밖의 delivery header로 key를 만들면 가로챈 요청의 header만 바꿔 job을 복제할 수 있기 때문이다. provider 재전송은 같은 job을 돌려주고, 같은 `webhook-id`에 다른 본문은 `409`로 거부한다.
+- `hmac-sha256`에는 timestamp가 없어 재전송 시간 창이 없다. 같은 본문의 재전송은 job metadata가 남아 있는 동안(결과 만료 후 30일) 같은 job으로 수렴하지만 그 뒤에는 새 job이 된다. 재전송 방어가 중요하면 timestamp를 서명하는 `stripe`·`standard-webhooks` 방식을 쓰거나 handler에서 업무 키로 중복을 막는다.
+- 응답은 provider 재시도 관례를 따른다. 수락 `202`(`{"ok":true,"id":...}`), 서명 실패 `401`, 형식·입력 오류 `400`, 본문 상한 초과 `413`, quota 초과 `429`, DB·주체·배포 문제는 `503`과 `Retry-After`다.
+- 이 route는 세션 rate limit 대상이 아니다. 서명 검증은 DB 접근 전에 끝나지만 provider IP 제한과 본문·연결 상한은 TLS proxy에서 함께 설정한다. 서명 secret은 환경 변수로만 읽고 출력하지 않는다.
+
+**전이 commit 뒤 후속 job (outbox 릴레이)**
+
+전이 선언의 `notify <수신자> "<topic>"` 효과는 전이와 같은 transaction에서 `aip_outbox` 행을 남긴다. 전이가 rollback되면 행도 없다. `outbox_handlers`는 이 행을 durable job으로 넘긴다. Spring의 `@TransactionalEventListener(AFTER_COMMIT)`, Django의 `transaction.on_commit`, Rails의 `after_commit` + ActiveJob에 해당하지만, commit 직후 process가 죽어도 행이 남아 있으므로 후속 작업을 잃지 않는다.
+
+```aip
+resource Order {
+ fields { id: Id; member: Member; paid: Bool; shipped: Bool }
+ transition pay { allow member = actor; from paid = false; to paid = true; notify member "order.paid" }
+ transition ship { allow member = actor; from shipped = false; to shipped = true }
+ expose apply pay { target id }
+ expose apply ship { target id }
+}
+operation job fulfil {
+  input { event: Text(1..4096) }
+  output { shipped: Int }
+  allow actor != null
+  access Order.ship
+  effect managed
+  deadline 10s
+  implementation "orders.fulfil"
+}
+```
+
+```json
+{"outbox_handlers":[{"topic":"order.paid","operation":"fulfil","principal":"svc-relay"}]}
+```
+
+```js
+export async function fulfil(input, ctx) {
+  const event = JSON.parse(input.event); // {id, topic, source, sourceId, recipientId, createdAt}
+  const result = await ctx.data.apply("Order", "ship", [event.sourceId], `ship-${event.id}`);
+  return { shipped: result.changed.length };
+}
+```
+
+- 각 instance가 1초마다 topic별로 처리하지 않은 행을 id 순으로 최대 50개 읽고 `outbox:<행 id>:<생성 시각>` key로 job을 수락한다. 같은 transaction에서 dispatch 표시를 남기므로 표시만 있고 job이 없는 상태는 생기지 않는다. 여러 instance가 경쟁해도 행당 job은 하나다. 이 표시 테이블은 앱 migration 지문을 바꾸지 않도록 `aip_infra_<digest>` schema에 둔다.
+- 전달은 at-least-once 수락, 실행은 job 계약(재시도·journal)을 따른다. 행 사이의 실행 순서는 보장하지 않는다. topic의 job 수락이 실패하면(주체 비활성 등) 그 tick에서 해당 topic의 나머지 행만 미루고 다른 topic은 계속 처리한다. 같은 행이 계속 실패하면 그 topic은 운영자가 원인을 고칠 때까지 진행하지 않는다(dead 표시는 아직 없다). dispatch 기록은 행의 생성 시각까지 묶으므로 앱 schema를 다시 만들어 sequence가 처음부터 시작해도 옛 기록과 섞이지 않는다.
+- 설정한 topic은 정의의 `notify` 효과가 실제로 내보내는 것이어야 하고, job 입력은 정확히 `{ event: Text }`여야 한다.
+- `aip_outbox`는 아직 자동 정리하지 않으며 처리 대상 조회는 미처리 행 anti-join이다. outbox가 매우 커지는 서비스는 보존 정책을 별도로 정해야 한다.
+
 ## 저장과 운영 경계
 
 - Job 수락, 상태, lease, 실행 결과와 effect journal은 PostgreSQL에 영속화된다. 입력·출력 JSON은 각각 최대 1MiB, 선언 deadline은 최대 1시간, 요청 지연은 최대 24시간이다. 기본 최대 시도는 3회이고 시도별 lease는 30초 단위 heartbeat를 사용한다. 선언 deadline과 전체 run deadline을 넘긴 실행은 완료로 기록할 수 없다. active job은 owner당 100개, 보존 job metadata는 owner당 10,000개로 제한된다.
