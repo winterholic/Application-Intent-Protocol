@@ -23,6 +23,7 @@ pub mod schedule;
 pub mod server;
 mod trace;
 pub mod triggers;
+pub mod wire_codes;
 pub mod write_extension;
 use serde_json::{json, Value};
 use spike_v2_read::id_wire::{emit_id, encode_rows, IdWire};

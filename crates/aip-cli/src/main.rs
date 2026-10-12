@@ -361,12 +361,23 @@ fn run() -> Result<ExitCode> {
                     }
                     Ok(ExitCode::SUCCESS)
                 }
-                None => {
-                    eprintln!(
-                        "unknown code {code}; `aip diagnostics` lists the registered codes and `aip diagnostics --definition` those of the product definition checker"
-                    );
-                    Ok(ExitCode::FAILURE)
-                }
+                None => match aip_service::wire_registry::lookup(&code.to_uppercase()) {
+                    Some(c) => {
+                        if json {
+                            let entry = serde_json::json!({"code": c.code, "class": c.class.name(), "retry": c.retry.name(), "explain": c.explain, "fix": c.fix});
+                            println!("{}", serde_json::to_string_pretty(&entry)?);
+                        } else {
+                            print!("{}", aip_service::wire_registry::render_text(c));
+                        }
+                        Ok(ExitCode::SUCCESS)
+                    }
+                    None => {
+                        eprintln!(
+                            "unknown code {code}; `aip diagnostics` lists the registered codes, `aip diagnostics --definition` those of the product definition checker; product HTTP codes are in spec/wire-errors.md"
+                        );
+                        Ok(ExitCode::FAILURE)
+                    }
+                },
             },
         },
         Cmd::Diagnostics { markdown, json, definition } => {
