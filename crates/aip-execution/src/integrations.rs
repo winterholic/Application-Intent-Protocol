@@ -176,8 +176,12 @@ fn build_endpoint(config: EndpointConfig) -> Result<(String, Endpoint), Error> {
     }
     let scheme = url.scheme();
     let host = url.host_str().ok_or(Error::InvalidConfiguration)?;
+    // host_str() includes brackets for IPv6; parsing it as IpAddr would skip
+    // literal validation while reqwest still connects directly to that literal.
+    let literal_host = host.strip_prefix('[').and_then(|value| value.strip_suffix(']')).unwrap_or(host);
+    let literal = literal_host.parse::<IpAddr>().ok();
     let port = url.port_or_known_default().ok_or(Error::InvalidConfiguration)?;
-    let loopback_url = host.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback()) || host.eq_ignore_ascii_case("localhost");
+    let loopback_url = literal.is_some_and(|ip| ip.is_loopback()) || host.eq_ignore_ascii_case("localhost");
     if scheme != "https" && !(config.allow_loopback && loopback_url && scheme == "http") {
         return Err(Error::InvalidConfiguration);
     }
@@ -196,7 +200,7 @@ fn build_endpoint(config: EndpointConfig) -> Result<(String, Endpoint), Error> {
     if loopback_url && (!loopback_allowed || config.resolved.iter().any(|address| !address.ip().is_loopback())) {
         return Err(Error::InvalidConfiguration);
     }
-    if let Ok(literal) = host.parse::<IpAddr>()
+    if let Some(literal) = literal
         && config.resolved.iter().any(|address| address.ip() != literal)
     {
         return Err(Error::InvalidConfiguration);
@@ -282,6 +286,7 @@ fn is_public_address(ip: IpAddr) -> bool {
                 || ip.is_broadcast()
                 || ip.is_multicast()
                 || ip.is_documentation()
+                || octets[0] == 0 // "this network" is never a public destination
                 // Carrier-grade NAT, IETF protocol assignments and benchmarking ranges.
                 || (octets[0] == 100 && (octets[1] & 0xc0) == 64)
                 || (octets[0] == 192 && octets[1] == 0 && octets[2] == 0)

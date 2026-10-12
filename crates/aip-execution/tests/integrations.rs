@@ -31,6 +31,7 @@ fn endpoint_configuration_rejects_user_controlled_or_private_destinations() {
         "[2001:2::1]:443",
         "[3fff:100::1]:443",
         "[5f00::1]:443",
+        "0.1.2.3:443",
     ] {
         let address = special.parse().unwrap();
         assert!(Broker::new(vec![config("https://api.example/v1".into(), vec![address], false)]).is_err());
@@ -67,6 +68,25 @@ fn private_networks_require_endpoint_opt_in_and_allow_loopback_https_when_enable
         endpoint.allow_private_networks = true;
         assert!(Broker::new(vec![endpoint]).is_err(), "private-network opt-in must not permit special-use destinations");
     }
+}
+
+#[test]
+fn ipv6_literal_cannot_bypass_the_vetted_destination_set() {
+    for url in ["https://[::1]/", "https://[::ffff:127.0.0.1]/", "https://[fe80::1]/"] {
+        let endpoint = config(url.into(), vec!["1.1.1.1:443".parse().unwrap()], false);
+        assert!(Broker::new(vec![endpoint]).is_err(), "unvetted literal accepted: {url}");
+    }
+}
+
+#[test]
+fn ipv6_loopback_requires_opt_in_and_matching_addresses() {
+    let address = "[::1]:80".parse().unwrap();
+    assert!(Broker::new(vec![config("http://[::1]/".into(), vec![address], false)]).is_err());
+    assert!(Broker::new(vec![config("http://[::1]/".into(), vec![address], true)]).is_ok());
+    let address = "[::1]:443".parse().unwrap();
+    let mut endpoint = config("https://[::1]/".into(), vec![address], false);
+    endpoint.allow_private_networks = true;
+    assert!(Broker::new(vec![endpoint]).is_ok());
 }
 
 #[test]
