@@ -1,0 +1,40 @@
+name: Object storage
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: object-storage-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  object-storage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '26'
+      - name: Select stable Rust
+        run: |
+          rustup update stable
+          rustup default stable
+      - name: Verify Rust object-storage contracts
+        run: |
+          cargo test -p aip-execution --lib --locked
+          cargo test -p aip-execution --test cloud_storage --locked
+      - name: Verify official Google SDK adapters with injected clients
+        run: |
+          node --test product/tests/google-storage-provider.test.mjs
+          python3 -m unittest product.tests.google_storage_provider_test
+      - name: Verify S3-compatible storage against TLS MinIO
+        run: scripts/test-minio-object-storage.sh

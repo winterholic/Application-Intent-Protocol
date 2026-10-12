@@ -72,7 +72,7 @@ where
             Ok(Ok(store)) => Arc::new(store),
             _ => return send_json(writer, 503, "STORAGE_UNAVAILABLE", "object storage 준비 실패", &cors_headers, head_only).await,
         },
-        ObjectStorage::S3(_) => {
+        ObjectStorage::S3(_) | ObjectStorage::GcsHmac(_) => {
             return send_json(writer, 405, "METHOD_NOT_ALLOWED", "S3 객체는 presigned URL로 전송해야 함", &cors_headers, head_only).await;
         }
     };
@@ -249,8 +249,10 @@ pub(crate) async fn control(rt: &Runtime, facts: &Value, wire: IdWire, session: 
         Ok(owner) => owner,
         Err(code) => return failure(code),
     };
-    let Some(ObjectStorage::S3(base)) = &rt.infrastructure.objects else {
-        return failure("NOT_AVAILABLE");
+    let base = match &rt.infrastructure.objects {
+        Some(ObjectStorage::S3(base)) => base.as_ref().clone(),
+        Some(ObjectStorage::GcsHmac(base)) => base.s3_compatible_store().clone(),
+        _ => return failure("NOT_AVAILABLE"),
     };
     let store = match base.for_owner(&owner) {
         Ok(store) => store,

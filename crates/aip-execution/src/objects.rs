@@ -447,6 +447,7 @@ pub struct S3Config {
     access_key: String,
     secret_key: String,
     session_token: Option<String>,
+    root_certificates_pem: Vec<Vec<u8>>,
 }
 impl S3Config {
     pub fn new(
@@ -463,10 +464,19 @@ impl S3Config {
             access_key: access_key.into(),
             secret_key: secret_key.into(),
             session_token: None,
+            root_certificates_pem: Vec::new(),
         }
     }
     pub fn with_session_token(mut self, token: impl Into<String>) -> Self {
         self.session_token = Some(token.into());
+        self
+    }
+
+    /// Adds a PEM trust anchor while preserving normal certificate validation.
+    /// This supports private S3-compatible endpoints with an explicitly trusted
+    /// CA; it does not disable hostname or chain verification.
+    pub fn with_root_certificate_pem(mut self, certificate: &[u8]) -> Self {
+        self.root_certificates_pem.push(certificate.to_vec());
         self
     }
 }
@@ -509,13 +519,22 @@ impl S3Store {
         {
             return Err(Error::InvalidConfig);
         }
-        let client = reqwest::Client::builder()
+        let mut builder = reqwest::Client::builder()
             .https_only(true)
             .redirect(reqwest::redirect::Policy::none())
             .no_proxy()
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .map_err(|e| Error::Http(e.to_string()))?;
+            .timeout(std::time::Duration::from_secs(30));
+        for certificate_bundle in &config.root_certificates_pem {
+            validate_certificate_pem_bundle(certificate_bundle)?;
+            let certificates = reqwest::Certificate::from_pem_bundle(certificate_bundle).map_err(|_| Error::InvalidConfig)?;
+            if certificates.is_empty() {
+                return Err(Error::InvalidConfig);
+            }
+            for certificate in certificates {
+                builder = builder.add_root_certificate(certificate);
+            }
+        }
+        let client = builder.build().map_err(|e| Error::Http(e.to_string()))?;
         Ok(Self { config, endpoint, client, owner_prefix: None })
     }
 
@@ -728,6 +747,96 @@ impl S3Store {
         url.set_path(&format!("{base}/{}/{owner}{}", aws_encode(&self.config.bucket), key.as_str()));
         Ok(url)
     }
+}
+
+fn validate_certificate_pem_bundle(bundle: &[u8]) -> Result<(), Error> {
+    const BEGIN: &str = "-----BEGIN CERTIFICATE-----";
+    const END: &str = "-----END CERTIFICATE-----";
+    let text = std::str::from_utf8(bundle).map_err(|_| Error::InvalidConfig)?;
+    let mut rest = text.trim();
+    let mut count = 0;
+    while !rest.is_empty() {
+        let Some(after_begin) = rest.strip_prefix(BEGIN) else {
+            return Err(Error::InvalidConfig);
+        };
+        let (body, after_end) = after_begin.split_once(END).ok_or(Error::InvalidConfig)?;
+        let encoded: Vec<u8> = body.bytes().filter(|byte| !byte.is_ascii_whitespace()).collect();
+        let der = decode_base64(&encoded).ok_or(Error::InvalidConfig)?;
+        if !der_is_sequence(&der) {
+            return Err(Error::InvalidConfig);
+        }
+        count += 1;
+        rest = after_end.trim();
+    }
+    if count == 0 {
+        return Err(Error::InvalidConfig);
+    }
+    Ok(())
+}
+
+fn decode_base64(encoded: &[u8]) -> Option<Vec<u8>> {
+    if encoded.is_empty() || !encoded.len().is_multiple_of(4) {
+        return None;
+    }
+    let mut decoded = Vec::with_capacity(encoded.len() / 4 * 3);
+    let (quartets, remainder) = encoded.as_chunks::<4>();
+    if !remainder.is_empty() {
+        return None;
+    }
+    for (index, quartet) in quartets.iter().enumerate() {
+        let last = index + 1 == encoded.len() / 4;
+        let a = base64_digit(quartet[0])? as u32;
+        let b = base64_digit(quartet[1])? as u32;
+        let c = if quartet[2] == b'=' { 0 } else { base64_digit(quartet[2])? as u32 };
+        let d = if quartet[3] == b'=' { 0 } else { base64_digit(quartet[3])? as u32 };
+        if (!last && (quartet[2] == b'=' || quartet[3] == b'=')) || (quartet[2] == b'=' && quartet[3] != b'=') {
+            return None;
+        }
+        let value = (a << 18) | (b << 12) | (c << 6) | d;
+        decoded.push((value >> 16) as u8);
+        if quartet[2] != b'=' {
+            decoded.push((value >> 8) as u8);
+        }
+        if quartet[3] != b'=' {
+            decoded.push(value as u8);
+        }
+    }
+    Some(decoded)
+}
+
+fn base64_digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'A'..=b'Z' => Some(byte - b'A'),
+        b'a'..=b'z' => Some(byte - b'a' + 26),
+        b'0'..=b'9' => Some(byte - b'0' + 52),
+        b'+' => Some(62),
+        b'/' => Some(63),
+        _ => None,
+    }
+}
+
+fn der_is_sequence(der: &[u8]) -> bool {
+    if der.len() < 2 || der[0] != 0x30 {
+        return false;
+    }
+    let first_length = der[1];
+    let (header, content_length) = if first_length & 0x80 == 0 {
+        (2, usize::from(first_length))
+    } else {
+        let octets = usize::from(first_length & 0x7f);
+        if octets == 0 || octets > std::mem::size_of::<usize>() || der.len() < 2 + octets || der[2] == 0 {
+            return false;
+        }
+        let mut length = 0usize;
+        for byte in &der[2..2 + octets] {
+            let Some(next) = length.checked_mul(256).and_then(|n| n.checked_add(usize::from(*byte))) else {
+                return false;
+            };
+            length = next;
+        }
+        (2 + octets, length)
+    };
+    header.checked_add(content_length) == Some(der.len())
 }
 
 async fn bounded_body(response: reqwest::Response) -> Result<Vec<u8>, Error> {
@@ -1182,6 +1291,16 @@ mod sigv4_tests {
         assert!(url.contains("response-content-disposition=attachment"));
         assert!(url.contains("X-Amz-Signature="));
         assert!(!url.contains("response-content-type="));
+    }
+
+    #[test]
+    fn custom_ca_is_explicit_and_invalid_certificates_are_rejected() {
+        for (index, certificate) in
+            [b"not a certificate".as_slice(), b"-----BEGIN CERTIFICATE-----\ninvalid\n-----END CERTIFICATE-----".as_slice()].into_iter().enumerate()
+        {
+            let config = S3Config::new("https://localhost:9000", "bucket", "us-east-1", "ak", "sk").with_root_certificate_pem(certificate);
+            assert!(matches!(S3Store::new(config), Err(Error::InvalidConfig)), "invalid certificate #{index} was accepted");
+        }
     }
 
     #[test]

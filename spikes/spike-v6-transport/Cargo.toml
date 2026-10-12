@@ -7,6 +7,10 @@ publish = false
 # V6 전송 계층 실험. V8 인증·V9 캐시 수명·V10 세션 복구 경계를 포함한다.
 [workspace]
 
+[features]
+default = []
+external-brokers = ["aip-execution/external-brokers"]
+
 [dependencies]
 aip-execution = { path = "../../crates/aip-execution" }
 serde = { version = "1", features = ["derive"] }

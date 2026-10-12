@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = []
+external-brokers = ["aip-service/external-brokers"]
+
 [[bin]]
 name = "aip"
 path = "src/main.rs"

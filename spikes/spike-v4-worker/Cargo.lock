@@ -1211,6 +1211,7 @@ dependencies = [
 name = "spike-v4-worker"
 version = "0.0.0"
 dependencies = [
+ "libc",
  "serde_json",
  "spike-v1-fixture",
  "spike-v2-read",

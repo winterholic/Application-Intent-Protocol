@@ -16,8 +16,10 @@ use tokio_tungstenite::{
 const MAX_SUBSCRIPTION_BYTES: usize = 16 * 1024;
 const MAX_STREAM_LENGTH: usize = 128;
 const MAX_CURSOR_LENGTH: usize = 256;
+const MAX_AUTH_TOKEN_LENGTH: usize = 4096;
 const MAX_LIFETIME: Duration = Duration::from_secs(24 * 60 * 60);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+const WS_AUTH_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Debug)]
 pub struct RealTimeOptions {
@@ -100,6 +102,7 @@ pub(crate) struct EventBatch {
 
 pub(crate) type PollError = &'static str;
 type PollFuture = std::pin::Pin<Box<dyn Future<Output = Result<EventBatch, PollError>> + Send + 'static>>;
+type AuthFuture = std::pin::Pin<Box<dyn Future<Output = Result<(), PollError>> + Send + 'static>>;
 
 pub(crate) async fn send_sse_headers(writer: &mut (impl AsyncWriteExt + Unpin), origin: Option<&str>) -> io::Result<()> {
     let origin = origin.map(|origin| format!("access-control-allow-origin: {origin}\r\n")).unwrap_or_default();
@@ -201,10 +204,25 @@ async fn write_sse(writer: &mut (impl AsyncWriteExt + Unpin), frame: &str) -> io
     .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "slow realtime client"))?
 }
 
-pub(crate) async fn serve_ws<S, F>(io: S, options: &RealTimeOptions, mut poll: F) -> Result<(), tokio_tungstenite::tungstenite::Error>
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BrowserAuthFrame {
+    #[serde(rename = "type")]
+    kind: String,
+    token: String,
+}
+
+pub(crate) async fn serve_ws<S, A, F>(
+    io: S,
+    options: &RealTimeOptions,
+    header_token: Option<String>,
+    mut authenticate: A,
+    mut poll: F,
+) -> Result<(), tokio_tungstenite::tungstenite::Error>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
-    F: FnMut(&Subscription, &str) -> PollFuture,
+    A: FnMut(&str) -> AuthFuture,
+    F: FnMut(&Subscription, &str, &str) -> PollFuture,
 {
     let mut config = WebSocketConfig::default();
     config.max_message_size = Some(MAX_SUBSCRIPTION_BYTES);
@@ -212,32 +230,60 @@ where
     config.max_write_buffer_size = 64 * 1024;
     config.write_buffer_size = 4 * 1024;
     let mut socket = WebSocketStream::from_raw_socket(io, tokio_tungstenite::tungstenite::protocol::Role::Server, Some(config)).await;
-    let deadline = tokio::time::Instant::now() + options.max_lifetime;
-    let subscription = match tokio::time::timeout_at(deadline, socket.next()).await {
-        Ok(Some(Ok(Message::Text(text)))) => match Subscription::parse(text.as_bytes()) {
-            Ok(subscription) => subscription,
-            Err(code) => {
-                let _ = socket.send(Message::Text(json!({"type":"error","code":code}).to_string().into())).await;
-                socket.send(Message::Close(Some(CloseFrame { code: CloseCode::Policy, reason: code.into() }))).await?;
+    let start = tokio::time::Instant::now();
+    let deadline = start + options.max_lifetime;
+    let browser_deadline = (start + WS_AUTH_TIMEOUT).min(deadline);
+    let browser_mode = header_token.is_none();
+    let token = if let Some(token) = header_token {
+        token
+    } else {
+        let Some(frame) = read_ws_text(&mut socket, browser_deadline).await? else {
+            close_ws(&mut socket, "authentication required").await?;
+            return Ok(());
+        };
+        let auth: BrowserAuthFrame = match serde_json::from_str::<BrowserAuthFrame>(&frame) {
+            Ok(auth) if auth.kind == "auth" && !auth.token.is_empty() && auth.token.len() <= MAX_AUTH_TOKEN_LENGTH => auth,
+            _ => {
+                send_ws_error(&mut socket, "UNAUTHENTICATED").await?;
                 return Ok(());
             }
-        },
-        Ok(Some(Ok(Message::Close(frame)))) => {
-            socket.send(Message::Close(frame)).await?;
-            return Ok(());
+        };
+        match tokio::time::timeout_at(browser_deadline, authenticate(&auth.token)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(code)) => {
+                send_ws_error(&mut socket, code).await?;
+                return Ok(());
+            }
+            Err(_) => {
+                send_ws_error(&mut socket, "DB_UNAVAILABLE").await?;
+                return Ok(());
+            }
         }
-        Ok(Some(Err(error))) => return Err(error),
-        _ => {
-            socket.send(Message::Close(Some(CloseFrame { code: CloseCode::Policy, reason: "subscription required".into() }))).await?;
+        send_ws(&mut socket, Message::Text(json!({"type":"authenticated"}).to_string().into())).await?;
+        auth.token
+    };
+
+    let subscription_text = match read_ws_text(&mut socket, if browser_mode { browser_deadline } else { deadline }).await? {
+        Some(text) => text,
+        None => {
+            close_ws(&mut socket, "subscription required").await?;
             return Ok(());
         }
     };
-    run_ws(&mut socket, subscription, options, &mut poll).await
+    let subscription = if browser_mode { parse_browser_subscription(&subscription_text) } else { Subscription::parse(subscription_text.as_bytes()) };
+    let subscription = match subscription {
+        Ok(subscription) => subscription,
+        Err(code) => {
+            send_ws_error(&mut socket, code).await?;
+            return Ok(());
+        }
+    };
+    run_ws(&mut socket, subscription, &token, options, deadline, &mut poll).await
 }
 
 pub(crate) async fn stream_ws<S>(
     io: S,
-    token: String,
+    token: Option<String>,
     expected_fingerprint: String,
     facts: Arc<Value>,
     runtime: Arc<crate::server::Runtime>,
@@ -247,12 +293,94 @@ where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
     let options = runtime.infrastructure.realtime.clone();
-    let mut poll = |subscription: &Subscription, after: &str| -> PollFuture {
+    let auth_runtime = runtime.clone();
+    let mut authenticate = move |token: &str| -> AuthFuture {
+        let token = token.to_owned();
+        let runtime = auth_runtime.clone();
+        Box::pin(async move {
+            let provider = runtime.authenticator.as_ref().ok_or("UNAUTHENTICATED")?;
+            match tokio::time::timeout(crate::server::DB_PREFLIGHT_TIMEOUT, provider.verify_session(&token)).await {
+                Ok(Ok(session)) if session.remaining_ms() > 0 && session.durable.is_some() => {
+                    if let Some(admission) = runtime.admission.as_ref() {
+                        let Some(pool) = runtime.db_pool.as_ref() else { return Err("DB_UNAVAILABLE") };
+                        let principal = crate::admission::principal(Some(&session));
+                        match admission
+                            .check(
+                                pool,
+                                &principal,
+                                crate::admission::Route::Realtime,
+                                tokio::time::Instant::now() + crate::server::DB_PREFLIGHT_TIMEOUT,
+                            )
+                            .await
+                        {
+                            Ok(crate::admission::Outcome::Allowed) => {}
+                            Ok(crate::admission::Outcome::Limited { .. }) => return Err("RATE_LIMITED"),
+                            Err(_) => return Err("DB_UNAVAILABLE"),
+                        }
+                    }
+                    Ok(())
+                }
+                Ok(Ok(_)) | Ok(Err(crate::auth::AuthError::Expired)) => Err("TOKEN_EXPIRED"),
+                Ok(Err(crate::auth::AuthError::Unavailable)) | Err(_) => Err("DB_UNAVAILABLE"),
+                Ok(Err(_)) => Err("UNAUTHENTICATED"),
+            }
+        })
+    };
+    let mut poll = |subscription: &Subscription, after: &str, token: &str| -> PollFuture {
         let (subscription, after, token, fingerprint, facts, runtime) =
-            (subscription.clone(), after.to_owned(), token.clone(), expected_fingerprint.clone(), facts.clone(), runtime.clone());
+            (subscription.clone(), after.to_owned(), token.to_owned(), expected_fingerprint.clone(), facts.clone(), runtime.clone());
         Box::pin(async move { poll_events(runtime, facts, wire, token, fingerprint, subscription, after).await })
     };
-    serve_ws(io, &options, &mut poll).await
+    serve_ws(io, &options, token, &mut authenticate, &mut poll).await
+}
+
+async fn read_ws_text<S>(
+    socket: &mut WebSocketStream<S>,
+    deadline: tokio::time::Instant,
+) -> Result<Option<String>, tokio_tungstenite::tungstenite::Error>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    loop {
+        match tokio::time::timeout_at(deadline, socket.next()).await {
+            Ok(Some(Ok(Message::Text(text)))) if text.len() <= MAX_SUBSCRIPTION_BYTES => return Ok(Some(text.to_string())),
+            Ok(Some(Ok(Message::Close(frame)))) => {
+                socket.send(Message::Close(frame)).await?;
+                return Ok(None);
+            }
+            Ok(Some(Ok(Message::Ping(payload)))) => send_ws(socket, Message::Pong(payload)).await?,
+            Ok(Some(Ok(_))) | Ok(None) | Err(_) => return Ok(None),
+            Ok(Some(Err(error))) => return Err(error),
+        }
+    }
+}
+
+fn parse_browser_subscription(text: &str) -> Result<Subscription, &'static str> {
+    if text.len() > MAX_SUBSCRIPTION_BYTES {
+        return Err("PAYLOAD_TOO_LARGE");
+    }
+    let mut value: Value = serde_json::from_str(text).map_err(|_| "BAD_REQUEST")?;
+    if value["type"] != "subscribe" {
+        return Err("BAD_REQUEST");
+    }
+    value.as_object_mut().ok_or("BAD_REQUEST")?.remove("type");
+    Subscription::parse(value.to_string().as_bytes())
+}
+
+async fn close_ws<S>(socket: &mut WebSocketStream<S>, reason: &'static str) -> Result<(), tokio_tungstenite::tungstenite::Error>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    send_ws(socket, Message::Close(Some(CloseFrame { code: CloseCode::Policy, reason: reason.into() }))).await
+}
+
+async fn send_ws_error<S>(socket: &mut WebSocketStream<S>, code: &'static str) -> Result<(), tokio_tungstenite::tungstenite::Error>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    let text = json!({"type":"error","code":code}).to_string();
+    let _ = send_ws(socket, Message::Text(text.into())).await;
+    close_ws(socket, code).await
 }
 
 async fn poll_events(
@@ -305,15 +433,16 @@ async fn poll_events(
 async fn run_ws<S, F>(
     socket: &mut WebSocketStream<S>,
     subscription: Subscription,
+    token: &str,
     options: &RealTimeOptions,
+    deadline: tokio::time::Instant,
     poll: &mut F,
 ) -> Result<(), tokio_tungstenite::tungstenite::Error>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
-    F: FnMut(&Subscription, &str) -> PollFuture,
+    F: FnMut(&Subscription, &str, &str) -> PollFuture,
 {
     let start = tokio::time::Instant::now();
-    let deadline = start + options.max_lifetime;
     let mut cursor = subscription.after.clone();
     let mut polling = tokio::time::interval_at(start, options.poll_interval);
     polling.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -338,7 +467,7 @@ where
                 }
             },
             _ = polling.tick() => {
-                match tokio::time::timeout_at(deadline, poll(&subscription, &cursor)).await {
+                match tokio::time::timeout_at(deadline, poll(&subscription, &cursor, token)).await {
                     Ok(Ok(batch)) => {
                         for event in batch.events {
                             let text = json!({"type":"event", "cursor":event.cursor, "payload":event.payload}).to_string();

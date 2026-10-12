@@ -4,16 +4,23 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = []
+external-brokers = ["dep:futures-util", "dep:lapin", "dep:rdkafka"]
+
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"
-tokio = { version = "1", features = ["time", "net"] }
+tokio = { version = "1", features = ["time", "net", "rt"] }
 tokio-postgres = { version = "0.7", features = ["with-serde_json-1", "with-uuid-1"] }
 uuid = { version = "1", features = ["v4"] }
 libc = "0.2"
 
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+futures-util = { version = "0.3", optional = true }
+lapin = { version = "4.12.1", default-features = false, features = ["tokio", "rustls", "rustls-platform-verifier"], optional = true }
+rdkafka = { version = "0.39.0", default-features = false, features = ["cmake-build", "tokio", "ssl"], optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }

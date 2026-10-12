@@ -1,0 +1,97 @@
+name: External brokers
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: brokers-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  kafka-rabbitmq:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: runner
+          POSTGRES_DB: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - '127.0.0.1:5432:5432'
+        options: >-
+          --health-cmd "pg_isready -U runner -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      kafka:
+        image: apache/kafka:4.1.0
+        env:
+          KAFKA_NODE_ID: 1
+          KAFKA_PROCESS_ROLES: broker,controller
+          KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+          KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+          KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+          KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+          KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+          KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+          KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+          KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+          KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+          KAFKA_NUM_PARTITIONS: 1
+          KAFKA_MESSAGE_MAX_BYTES: 4194304
+          KAFKA_REPLICA_FETCH_MAX_BYTES: 4194304
+        ports:
+          - '127.0.0.1:9092:9092'
+        options: >-
+          --health-cmd "bash -c '/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null'"
+          --health-interval 5s
+          --health-timeout 10s
+          --health-retries 20
+      rabbitmq:
+        image: rabbitmq:4.2
+        env:
+          RABBITMQ_DEFAULT_USER: aiptest
+          RABBITMQ_DEFAULT_PASS: aip-fixture-password
+        ports:
+          - '127.0.0.1:5672:5672'
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      AIP_TEST_KAFKA_BOOTSTRAP: 127.0.0.1:9092
+      AIP_TEST_KAFKA_OUT_TOPIC: aip-ci-outbound
+      AIP_TEST_KAFKA_IN_TOPIC: aip-ci-inbound
+      AIP_TEST_RABBITMQ_URI: amqp://aiptest:aip-fixture-password@127.0.0.1:5672/%2f
+      AIP_TEST_RABBITMQ_OUT_QUEUE: aip-ci-outbound
+      AIP_TEST_RABBITMQ_IN_QUEUE: aip-ci-inbound
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Install native build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake libssl-dev pkg-config postgresql-client
+          rustup update stable
+          rustup default stable
+      - name: Create Kafka test topics
+        run: |
+          docker exec '${{ job.services.kafka.id }}' /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --if-not-exists --topic "$AIP_TEST_KAFKA_OUT_TOPIC" --partitions 1 --replication-factor 1
+          docker exec '${{ job.services.kafka.id }}' /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --if-not-exists --topic "$AIP_TEST_KAFKA_IN_TOPIC" --partitions 1 --replication-factor 1
+          docker exec '${{ job.services.kafka.id }}' /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --if-not-exists --topic "${AIP_TEST_KAFKA_IN_TOPIC}-dead" --partitions 1 --replication-factor 1
+      - name: Test live Kafka and RabbitMQ protocols
+        run: cargo test --locked -p aip-execution --features external-brokers --test brokers_live -- --ignored
+      - name: Check service feature propagation
+        run: cargo check --locked -p aip-cli --features external-brokers
+      - name: Verify service broker worker recovers from database disconnect
+        run: cargo test --locked -p aip-service --features external-brokers broker_worker_recovers -- --ignored

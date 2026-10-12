@@ -1,4 +1,4 @@
-const MANAGED_PATHS = new Set(["/jobs/enqueue", "/jobs/status", "/jobs/cancel", "/jobs/result", "/events/read", "/files/put", "/files/get", "/files/delete", "/objects/sign", "/objects/multipart/start", "/objects/multipart/part", "/objects/multipart/complete", "/objects/multipart/abort", "/messages/enqueue", "/messages/claim", "/messages/ack", "/messages/nack", "/messages/dead", "/messages/redrive"]);
+const MANAGED_PATHS = new Set(["/rag/search", "/rag/answer", "/rag/index", "/rag/delete", "/jobs/enqueue", "/jobs/status", "/jobs/cancel", "/jobs/result", "/events/read", "/files/put", "/files/get", "/files/delete", "/objects/sign", "/objects/multipart/start", "/objects/multipart/part", "/objects/multipart/complete", "/objects/multipart/abort", "/messages/enqueue", "/messages/claim", "/messages/ack", "/messages/nack", "/messages/dead", "/messages/redrive"]);
 // V6 클라이언트(실험). 전송 + V5 캐시.
 // 쓰기 응답을 확정하지 못하면(통신 실패, COMMIT_UNKNOWN·INTERNAL) 같은 키·같은 본문으로 다시 보낸다.
 // 서버는 키 단위로 직렬화하므로 커밋됐으면 저장 결과, 진행 중이면 끝난 뒤 결과, 롤백됐으면 새 실행을 돌려준다.

@@ -28,7 +28,14 @@ use tokio::{
 };
 
 // Relay actual authentication and SQL. Hold only a successful COMMIT reply, after PostgreSQL commits.
-async fn hold_commit(socket: TcpStream, remaining: Arc<AtomicUsize>, held: Arc<AtomicUsize>, allow_commit: bool, after_clock: bool) {
+async fn hold_commit(
+    socket: TcpStream,
+    remaining: Arc<AtomicUsize>,
+    held: Arc<AtomicUsize>,
+    sdk_case: Arc<AtomicBool>,
+    block_next_clock: Arc<AtomicBool>,
+    after_clock: bool,
+) {
     let db = TcpStream::connect("127.0.0.1:5432").await.unwrap();
     let (mut input, mut output) = socket.into_split();
     let (mut db_input, mut db_output) = db.into_split();
@@ -36,6 +43,7 @@ async fn hold_commit(socket: TcpStream, remaining: Arc<AtomicUsize>, held: Arc<A
     let backend = async {
         let mut holding = false;
         let mut clock_row = false;
+        let mut wrote = false;
         loop {
             let kind = db_input.read_u8().await?;
             let length = db_input.read_u32().await?;
@@ -44,13 +52,23 @@ async fn hold_commit(socket: TcpStream, remaining: Arc<AtomicUsize>, held: Arc<A
             }
             let mut bytes = vec![0; (length - 4) as usize];
             db_input.read_exact(&mut bytes).await?;
-            if allow_commit
-                && kind == b'C'
+            if kind == b'C' && [b"INSERT ".as_slice(), b"UPDATE ".as_slice(), b"DELETE ".as_slice()].iter().any(|tag| bytes.starts_with(tag)) {
+                wrote = true;
+            }
+            // Reads also commit; inject uncertainty only after an actual write, independently of pooled connection order.
+            if kind == b'C'
                 && bytes == b"COMMIT\0"
+                && wrote
                 && remaining.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1)).is_ok()
             {
                 holding = true;
                 held.fetch_add(1, Ordering::SeqCst);
+                if sdk_case.load(Ordering::SeqCst) {
+                    block_next_clock.store(true, Ordering::SeqCst);
+                }
+            }
+            if kind == b'C' && (bytes == b"COMMIT\0" || bytes == b"ROLLBACK\0") {
+                wrote = false;
             }
             if !holding {
                 output.write_u8(kind).await?;
@@ -100,13 +118,13 @@ async fn committed_but_missing_reply_stays_unknown_and_recovers_without_duplicat
     let held = Arc::new(AtomicUsize::new(0));
     let (r, h) = (remaining.clone(), held.clone());
     let sdk_case = Arc::new(AtomicBool::new(false));
-    let connections = Arc::new(AtomicUsize::new(0));
-    let (s, n) = (sdk_case.clone(), connections.clone());
+    let block_next_clock = Arc::new(AtomicBool::new(false));
+    let (s, next_clock) = (sdk_case.clone(), block_next_clock.clone());
     let proxy = tokio::spawn(async move {
         let mut peers = JoinSet::new();
         loop {
             tokio::select! {
-                socket=listener.accept()=>{let(socket,_)=socket.unwrap();let number=n.fetch_add(1,Ordering::SeqCst)+1;let sdk=s.load(Ordering::SeqCst);peers.spawn(hold_commit(socket,r.clone(),h.clone(),!sdk||number==2,sdk&&number==3));}
+                socket=listener.accept()=>{let(socket,_)=socket.unwrap();let after_clock=s.load(Ordering::SeqCst)&&next_clock.swap(false,Ordering::SeqCst);peers.spawn(hold_commit(socket,r.clone(),h.clone(),s.clone(),next_clock.clone(),after_clock));}
                 _=peers.join_next(),if !peers.is_empty()=>{}
             }
         }
@@ -168,7 +186,7 @@ async fn committed_but_missing_reply_stays_unknown_and_recovers_without_duplicat
             }
             db.batch_execute(&format!("UPDATE {schema}.event SET checked=false;TRUNCATE {schema}.aip_idem")).await?;
             fs::write(path.join("counter"), "").unwrap();
-            connections.store(0, Ordering::SeqCst);
+            block_next_clock.store(false, Ordering::SeqCst);
             sdk_case.store(true, Ordering::SeqCst);
             remaining.store(1, Ordering::SeqCst);
             let sdk = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prototype/sdk/index.ts").canonicalize().unwrap();

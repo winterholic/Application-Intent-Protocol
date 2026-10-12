@@ -1,5 +1,7 @@
 //! Product assembly reuses the validated definition, authorization, SQL and SDK engines.
+mod brokers;
 mod infrastructure;
+mod rag;
 use clap::{Subcommand, ValueEnum};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -130,6 +132,8 @@ pub struct Config {
     pub schema: String,
     #[serde(default = "default_env")]
     pub database_url_env: String,
+    #[serde(default)]
+    pub db_pool: infrastructure::DbPoolConfig,
     #[serde(default = "default_listen")]
     pub listen: SocketAddr,
     #[serde(default = "default_wire")]
@@ -148,10 +152,15 @@ pub struct Config {
     #[serde(default)]
     pub messaging: infrastructure::MessagingConfig,
     #[serde(default)]
+    pub broker: Option<brokers::BrokerConfig>,
+    #[serde(default)]
+    pub rate_limit: Option<infrastructure::RateLimitConfig>,
+    #[serde(default)]
     pub limits: Option<infrastructure::ResourceLimitsConfig>,
     #[serde(default = "default_object_transfer_lifetime_ms")]
     pub object_transfer_lifetime_ms: u64,
     pub database_ca_file: Option<PathBuf>,
+    pub rag: Option<rag::Config>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -171,6 +180,10 @@ pub struct Workers {
     pub environment: std::collections::HashMap<String, String>,
     #[serde(default)]
     pub isolation: infrastructure::WorkerIsolation,
+    #[serde(default)]
+    pub cgroup_root: Option<PathBuf>,
+    #[serde(default)]
+    pub resource_limits: Option<infrastructure::WorkerResourceLimitsConfig>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -504,12 +517,41 @@ async fn principal(config: Config, command: Principal) -> Result<Value, Value> {
 
 async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
     let facts = load(file, false)?.output.execution;
-    let infrastructure = infrastructure::build(&config)?;
+    let mut infrastructure = infrastructure::build(&config)?;
     let integrations = config.workers.as_ref().map(|workers| workers.integrations.as_slice()).unwrap_or_default();
     let broker = build_broker(integrations).await?;
     let db_url = database_url(&config)?;
     aip_migrate::preflight(&db_url, &config.schema, &facts).await?;
     aip_migrate::bind_wire(&db_url, &config.schema, config.wire.deployment_label()).await?;
+    if let Some(rag_config) = &config.rag {
+        let (engine, client_index) =
+            tokio::time::timeout(std::time::Duration::from_secs(5), rag::build(rag_config, &db_url, &config.schema, infrastructure.db_pool))
+                .await
+                .map_err(|_| error("RAG_CONFIG", "RAG 초기화 기한 초과"))?
+                .map_err(|_| error("RAG_CONFIG", "RAG corpus, provider 또는 저장소 설정 오류"))?;
+        infrastructure.rag = Some(engine);
+        infrastructure.rag_client_index = client_index;
+    }
+
+    #[cfg(feature = "external-brokers")]
+    let mut broker_worker = if let Some(broker_config) = config.broker {
+        if broker_config.declared_queues().any(|queue| !facts_declare_message_queue(&facts, queue)) {
+            return Err(error("BROKER_CAPABILITY", "broker route는 배포에 선언된 messages.<queue> capability여야 함"));
+        }
+        Some(
+            brokers::Worker::start(broker_config, db_url.clone(), config.schema.clone())
+                .await
+                .map_err(|_| error("BROKER_CONFIG", "broker 설정, 외부 연결 또는 worker 시작 실패"))?,
+        )
+    } else {
+        None
+    };
+    #[cfg(not(feature = "external-brokers"))]
+    if config.broker.is_some() {
+        return Err(error("BROKER_FEATURE_DISABLED", "broker 설정을 사용하려면 external-brokers feature로 빌드해야 함"));
+    }
+    #[cfg(not(feature = "external-brokers"))]
+    let mut broker_worker: Option<brokers::Worker> = None;
     let deployment = spike_v6_transport::server::DeploymentFence::new(config.schema.clone(), spike_v1_fixture::digest(&facts))
         .map_err(|_| error("SCHEMA_CONTEXT", "배포 fence 설정 실패"))?;
     sqlgen::try_set_schema(&config.schema).map_err(|_| error("SCHEMA_CONTEXT", "프로세스당 한 schema만 실행할 수 있음"))?;
@@ -550,13 +592,36 @@ async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
     let event = json!({"ok":true,"event":"listening","address":server.address.to_string(),"fingerprint":spike_v5_sdk::contract_fingerprint_with_all_extensions(&facts,config.wire.id_wire()),"idWire":config.wire.id_wire().label(),"authentication":"jwt-access-token"});
     if report(&event).is_err() {
         server.shutdown().await.map_err(|_| error("SERVER_STOP", "출력 실패 후 종료 실패"))?;
+        #[cfg(feature = "external-brokers")]
+        if let Some(worker) = broker_worker.as_mut() {
+            worker.shutdown().await.map_err(|_| error("BROKER_STOP", "출력 실패 후 broker worker 종료 실패"))?;
+        }
         return Err(error("OUTPUT_IO", "기동 결과 출력 실패"));
     }
     #[cfg(unix)]
-    tokio::select! {result=tokio::signal::ctrl_c()=>{result.map_err(|_|error("SIGNAL_FAILED","종료 signal 실패"))?;server.shutdown().await.map_err(|_|error("SERVER_STOP","서버 종료 실패"))?;},_=termination.recv()=>{server.shutdown().await.map_err(|_|error("SERVER_STOP","서버 종료 실패"))?;},result=server.wait()=>{result.map_err(|_|error("SERVER_FAILED","서버 실행 실패"))?;}}
+    tokio::select! {result=tokio::signal::ctrl_c()=>{result.map_err(|_|error("SIGNAL_FAILED","종료 signal 실패"))?;server.shutdown().await.map_err(|_|error("SERVER_STOP","서버 종료 실패"))?;},_=termination.recv()=>{server.shutdown().await.map_err(|_|error("SERVER_STOP","서버 종료 실패"))?;},result=server.wait()=>{result.map_err(|_|error("SERVER_FAILED","서버 실행 실패"))?;},result=async { match broker_worker.as_mut() { Some(worker)=>worker.wait().await, None=>std::future::pending().await } }=>{server.shutdown().await.map_err(|_|error("SERVER_STOP","broker 종료 후 서버 종료 실패"))?;result.map_err(|_|error("BROKER_FAILED","broker worker 실패"))?;return Err(error("BROKER_FAILED","broker worker가 예기치 않게 종료됨"));}}
     #[cfg(not(unix))]
-    tokio::select! {result=tokio::signal::ctrl_c()=>{result.map_err(|_|error("SIGNAL_FAILED","종료 signal 실패"))?;server.shutdown().await.map_err(|_|error("SERVER_STOP","서버 종료 실패"))?;},result=server.wait()=>{result.map_err(|_|error("SERVER_FAILED","서버 실행 실패"))?;}}
+    tokio::select! {result=tokio::signal::ctrl_c()=>{result.map_err(|_|error("SIGNAL_FAILED","종료 signal 실패"))?;server.shutdown().await.map_err(|_|error("SERVER_STOP","서버 종료 실패"))?;},result=server.wait()=>{result.map_err(|_|error("SERVER_FAILED","서버 실행 실패"))?;},result=async { match broker_worker.as_mut() { Some(worker)=>worker.wait().await, None=>std::future::pending().await } }=>{server.shutdown().await.map_err(|_|error("SERVER_STOP","broker 종료 후 서버 종료 실패"))?;result.map_err(|_|error("BROKER_FAILED","broker worker 실패"))?;return Err(error("BROKER_FAILED","broker worker가 예기치 않게 종료됨"));}}
+    #[cfg(feature = "external-brokers")]
+    if let Some(worker) = broker_worker.as_mut() {
+        worker.shutdown().await.map_err(|_| error("BROKER_STOP", "broker worker bounded 종료 실패"))?;
+    }
     Ok(json!({"ok":true,"event":"stopped"}))
+}
+
+#[cfg(feature = "external-brokers")]
+fn facts_declare_message_queue(facts: &Value, queue: &str) -> bool {
+    fn visit(value: &Value, key: &str) -> bool {
+        match value {
+            Value::Object(object) => {
+                object.get("access").and_then(Value::as_object).is_some_and(|access| access.get(key) == Some(&Value::Bool(true)))
+                    || object.values().any(|child| visit(child, key))
+            }
+            Value::Array(array) => array.iter().any(|child| visit(child, key)),
+            _ => false,
+        }
+    }
+    visit(facts, &format!("messages.{queue}"))
 }
 
 pub fn execute(command: Command) -> ExitCode {
@@ -623,6 +688,73 @@ mod managed_config_tests {
         }))
         .unwrap();
         assert_eq!(infrastructure::build(&reserved).err().unwrap()["code"], "INFRASTRUCTURE_CONFIG");
+    }
+
+    #[test]
+    fn db_pool_rate_limit_gcs_and_worker_cgroups_are_configurable() {
+        let defaults: Config = serde_json::from_value(json!({
+            "schema":"aip_test",
+            "auth":{"issuer":"https://issuer.example","audience":"aip","jwks":{"kind":"file","path":"jwks.json"}}
+        }))
+        .unwrap();
+        let baseline = infrastructure::build(&defaults).unwrap();
+        assert_eq!(baseline.db_pool, spike_v6_transport::pool::PoolOptions::default());
+        assert!(baseline.rate_limit.is_none());
+
+        let access_env = format!("AIP_TEST_GCS_ACCESS_{}", std::process::id());
+        let secret_env = format!("AIP_TEST_GCS_SECRET_{}", std::process::id());
+        let config: Config = serde_json::from_value(json!({
+            "schema":"aip_test",
+            "auth":{"issuer":"https://issuer.example","audience":"aip","jwks":{"kind":"file","path":"jwks.json"}},
+            "db_pool":{"max_size":24,"acquire_timeout_ms":3500,"idle_timeout_ms":120000},
+            "rate_limit":{"limit":70,"window_ms":60000},
+            "objects":{"kind":"gcs_hmac","bucket":"reports","access_key_env":access_env,"secret_key_env":secret_env},
+            "workers":{
+                "directory":"extensions",
+                "language":"python",
+                "cgroup_root":"/sys/fs/cgroup/aip-workers",
+                "resource_limits":{"memory_bytes":67108864,"pids_max":16,"cpu_quota_micros":50000,"cpu_period_micros":100000}
+            }
+        }))
+        .unwrap();
+        let built = infrastructure::build_with_environment(&config, &|name| match name {
+            n if n == access_env => Some("test-access-id".to_owned()),
+            n if n == secret_env => Some("test-secret-key".to_owned()),
+            _ => None,
+        })
+        .unwrap();
+        assert_eq!(built.db_pool.max_size, 24);
+        assert_eq!(built.db_pool.acquire_timeout, std::time::Duration::from_millis(3500));
+        assert_eq!(built.db_pool.idle_timeout, std::time::Duration::from_millis(120000));
+        assert_eq!(built.rate_limit.unwrap().limit, 70);
+        assert!(matches!(built.objects, Some(spike_v6_transport::infrastructure::ObjectStorage::GcsHmac(_))));
+        assert_eq!(built.worker_launch.cgroup_root.as_deref(), Some(std::path::Path::new("/sys/fs/cgroup/aip-workers")));
+        let resource_limits = built.worker_launch.resource_limits.unwrap();
+        assert_eq!(resource_limits.memory_bytes, 67108864);
+        assert_eq!(resource_limits.pids_max, 16);
+        assert_eq!(resource_limits.cpu_quota_micros, 50000);
+        assert_eq!(resource_limits.cpu_period_micros, 100000);
+    }
+
+    #[test]
+    fn invalid_db_pool_rate_limit_and_unpaired_cgroup_settings_are_rejected() {
+        for invalid in [
+            json!({"db_pool":{"max_size":0}}),
+            json!({"db_pool":{"acquire_timeout_ms":30001}}),
+            json!({"rate_limit":{"limit":0,"window_ms":1000}}),
+            json!({"workers":{"directory":"extensions","language":"python","cgroup_root":"/sys/fs/cgroup/aip-workers"}}),
+            json!({"workers":{"directory":"extensions","language":"python","resource_limits":{"memory_bytes":64,"pids_max":1,"cpu_quota_micros":1,"cpu_period_micros":1}}}),
+        ] {
+            let mut value = json!({
+                "schema":"aip_test",
+                "auth":{"issuer":"https://issuer.example","audience":"aip","jwks":{"kind":"file","path":"jwks.json"}}
+            });
+            for (key, field) in invalid.as_object().unwrap() {
+                value[key] = field.clone();
+            }
+            let config: Config = serde_json::from_value(value).unwrap();
+            assert_eq!(infrastructure::build(&config).err().unwrap()["code"], "INFRASTRUCTURE_CONFIG");
+        }
     }
 
     #[test]

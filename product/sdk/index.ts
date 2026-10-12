@@ -1,5 +1,9 @@
 export { connectTypedExtensions as connect } from "../../spikes/spike-v6-transport/client/typed.ts";
 export { createInfrastructureClient, readSse } from "../../spikes/spike-v6-transport/client/infrastructure.ts";
+export { connectEventWebSocket } from "../../spikes/spike-v6-transport/client/websocket.ts";
+export { createRagClient } from "../../spikes/spike-v6-transport/client/rag.ts";
+export type { RagCitation, RagHit, RagAnswer, RagSearchOptions } from "../../spikes/spike-v6-transport/client/rag.ts";
+export type { BrowserEventSocket, BrowserEventSocketOptions, EventSubscription, RealtimeEvent } from "../../spikes/spike-v6-transport/client/websocket.ts";
 export type {
   DeadLetter, DeadLetterPage, InfrastructureClient, ManagedSend, Message, MessageLease, MultipartPart, MultipartUpload,
   ObjectMethod, SignedObject, SignedPart, SseEvent,

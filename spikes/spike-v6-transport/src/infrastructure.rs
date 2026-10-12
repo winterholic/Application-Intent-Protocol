@@ -46,10 +46,13 @@ impl ResourceLimits {
 pub enum ObjectStorage {
     Local(Arc<aip_execution::objects::LocalStore>),
     S3(Arc<aip_execution::objects::S3Store>),
+    GcsHmac(Arc<aip_execution::gcs::GcsStore>),
 }
 
 #[derive(Clone)]
 pub struct Infrastructure {
+    pub db_pool: crate::pool::PoolOptions,
+    pub rate_limit: Option<aip_execution::rate_limit::Policy>,
     pub mounts: Vec<crate::hosting::StaticMount>,
     pub file_mounts: Vec<crate::hosting::ManagedFileMount>,
     pub objects: Option<ObjectStorage>,
@@ -60,11 +63,15 @@ pub struct Infrastructure {
     pub client_consume: bool,
     pub resource_limits: ResourceLimits,
     pub object_transfer_lifetime: std::time::Duration,
+    pub rag: Option<Arc<aip_execution::rag::RagEngine>>,
+    pub rag_client_index: bool,
 }
 
 impl Default for Infrastructure {
     fn default() -> Self {
         Self {
+            db_pool: crate::pool::PoolOptions::default(),
+            rate_limit: None,
             mounts: Vec::new(),
             file_mounts: Vec::new(),
             objects: None,
@@ -75,6 +82,8 @@ impl Default for Infrastructure {
             client_consume: false,
             resource_limits: ResourceLimits::default(),
             object_transfer_lifetime: std::time::Duration::from_secs(15 * 60),
+            rag: None,
+            rag_client_index: false,
         }
     }
 }
@@ -85,6 +94,7 @@ impl Infrastructure {
         let backend = self.objects.as_ref().map(|store| match store {
             ObjectStorage::Local(_) => "local",
             ObjectStorage::S3(_) => "s3",
+            ObjectStorage::GcsHmac(_) => "gcs_hmac",
         });
         let static_mounts: Vec<_> = self.mounts.iter().map(|mount| json!({"prefix":mount.prefix,"access":match mount.access {crate::hosting::MountAccess::Public=>"public", crate::hosting::MountAccess::Authenticated=>"authenticated"}})).collect();
         let file_mounts: Vec<_> =
@@ -94,11 +104,16 @@ impl Infrastructure {
             "objects":{"backend":backend,"transferLifetimeMs":self.object_transfer_lifetime.as_millis()},
             "events":{"polling":true,"sse":self.realtime.enabled,"websocket":self.realtime.enabled,"maxConnections":self.resource_limits.realtime_capacity(self.realtime.max_connections)},
             "messages":{"enabled":self.messaging,"clientPublish":self.client_publish,"clientConsume":self.client_consume,"delivery":"at-least-once"},
-            "limits":{"connections":self.resource_limits.connections,"workers":self.resource_limits.workers,"jobs":self.resource_limits.jobs,"uploads":self.resource_limits.uploads}
+            "limits":{"connections":self.resource_limits.connections,"workers":self.resource_limits.workers,"jobs":self.resource_limits.jobs,"uploads":self.resource_limits.uploads},
+            "rag":{"enabled":self.rag.is_some(),"clientIndex":self.rag.is_some() && self.rag_client_index}
         })
     }
 
     pub fn validate(&self) -> std::io::Result<()> {
+        self.db_pool.validate().map_err(|message| std::io::Error::new(std::io::ErrorKind::InvalidInput, message))?;
+        if let Some(policy) = self.rate_limit {
+            policy.validate().map_err(|message| std::io::Error::new(std::io::ErrorKind::InvalidInput, message))?;
+        }
         self.realtime.validate()?;
         self.resource_limits.validate()?;
         if !(std::time::Duration::from_secs(1)..=std::time::Duration::from_secs(24 * 60 * 60)).contains(&self.object_transfer_lifetime) {
@@ -119,6 +134,7 @@ impl Infrastructure {
                     "/events",
                     "/objects",
                     "/messages",
+                    "/rag",
                 ]
                 .iter()
                 .any(|route| prefixes_overlap(&mount.prefix, route))
@@ -143,6 +159,7 @@ impl Infrastructure {
                     "/events",
                     "/objects",
                     "/messages",
+                    "/rag",
                 ]
                 .iter()
                 .any(|route| prefixes_overlap(&mount.prefix, route))

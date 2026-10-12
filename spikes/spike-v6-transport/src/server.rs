@@ -9,7 +9,7 @@ use tokio::{
 };
 
 pub use crate::cors::ServerOptions;
-pub use spike_v4_worker::{Isolation as WorkerIsolation, Lang as WorkerLang, WorkerLaunchConfig};
+pub use spike_v4_worker::{Isolation as WorkerIsolation, Lang as WorkerLang, WorkerLaunchConfig, WorkerResourceLimits};
 
 pub const MAX_CONNECTIONS: usize = 64;
 pub const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
@@ -46,6 +46,8 @@ impl DeploymentFence {
 
 pub(crate) struct Runtime {
     pub infrastructure: crate::infrastructure::Infrastructure,
+    pub db_pool: Option<Arc<crate::pool::ConnectionPool>>,
+    pub admission: Option<Arc<crate::admission::Admission>>,
     pub realtime_slots: tokio::sync::Semaphore,
     pub object_slots: tokio::sync::Semaphore,
     pub db_url: String,
@@ -114,6 +116,8 @@ pub async fn listen_with_apply_contract(facts: Value, wire: IdWire, address: Soc
         address,
         Runtime {
             infrastructure: crate::infrastructure::Infrastructure::default(),
+            db_pool: None,
+            admission: None,
             realtime_slots: tokio::sync::Semaphore::new(32),
             object_slots: tokio::sync::Semaphore::new(4),
             db_url,
@@ -136,7 +140,7 @@ pub(crate) async fn listen_with_fingerprint(
     facts: Value,
     wire: IdWire,
     address: SocketAddr,
-    runtime: Runtime,
+    mut runtime: Runtime,
     fingerprint: Option<Arc<str>>,
 ) -> io::Result<Server> {
     if !address.ip().is_loopback() {
@@ -144,6 +148,36 @@ pub(crate) async fn listen_with_fingerprint(
     }
     if let Some(extensions) = &runtime.extensions {
         runtime.infrastructure.worker_launch.probe(extensions.lang, &extensions.dir).await?;
+    }
+    if runtime.db_pool.is_none() {
+        let pool = crate::pool::ConnectionPool::new(runtime.db_url.clone(), runtime.infrastructure.db_pool)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid database pool options"))?;
+        runtime.db_pool = Some(Arc::new(pool));
+    }
+    if let Some(policy) = runtime.infrastructure.rate_limit {
+        if runtime.authenticator.is_none() || runtime.deployment.is_none() {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "rate limiting requires durable authentication and deployment fencing"));
+        }
+        let schema = &runtime.deployment.as_ref().expect("deployment checked").schema;
+        let storage_schema = aip_execution::infrastructure_schema(schema).map_err(|_| io::Error::other("invalid deployment schema"))?;
+        let limiter = aip_execution::rate_limit::RateLimiter::new(&storage_schema)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid rate limiter schema"))?;
+        let admission = crate::admission::Admission::new(limiter.clone(), policy)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid rate limiter policy"))?;
+        let pool = runtime.db_pool.as_ref().expect("pool initialized");
+        let install = tokio::time::timeout(DB_PREFLIGHT_TIMEOUT, async {
+            let db = pool.acquire().await.map_err(|_| io::Error::other("rate limiter database unavailable"))?;
+            db.batch_execute(&format!("CREATE SCHEMA IF NOT EXISTS {storage_schema}"))
+                .await
+                .map_err(|_| io::Error::other("rate limiter schema initialization failed"))?;
+            limiter.install(&*db).await.map_err(|_| io::Error::other("rate limiter installation failed"))?;
+            db.release().await.map_err(|_| io::Error::other("rate limiter connection reset failed"))?;
+            Ok::<_, io::Error>(())
+        })
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "rate limiter installation timed out"))?;
+        install?;
+        runtime.admission = Some(Arc::new(admission));
     }
     let listener = TcpListener::bind(address).await?;
     let address = listener.local_addr()?;
@@ -192,6 +226,9 @@ pub(crate) async fn listen_with_fingerprint(
         drop(listener);
         requests.shutdown().await;
         background.shutdown().await;
+        if let Some(pool) = &runtime.db_pool {
+            pool.close();
+        }
         result
     });
     Ok(Server { address, keys, task: Some(task), shutdown: Some(shutdown) })
@@ -224,6 +261,8 @@ pub async fn listen_with_options(
         address,
         Runtime {
             infrastructure: crate::infrastructure::Infrastructure::default(),
+            db_pool: None,
+            admission: None,
             realtime_slots: tokio::sync::Semaphore::new(32),
             object_slots: tokio::sync::Semaphore::new(4),
             db_url,
@@ -264,6 +303,8 @@ pub async fn listen_with_prototype_options(
         address,
         Runtime {
             infrastructure: crate::infrastructure::Infrastructure::default(),
+            db_pool: None,
+            admission: None,
             realtime_slots: tokio::sync::Semaphore::new(32),
             object_slots: tokio::sync::Semaphore::new(4),
             db_url,
@@ -375,6 +416,8 @@ pub async fn listen_with_infrastructure(
             realtime_slots: tokio::sync::Semaphore::new(resource_limits.realtime_capacity(infrastructure.realtime.max_connections)),
             object_slots: tokio::sync::Semaphore::new(resource_limits.uploads),
             infrastructure,
+            db_pool: None,
+            admission: None,
             db_url,
             broker,
             enable_file_uploads,

@@ -52,11 +52,8 @@ fn schema(rt: &Runtime) -> Result<&str> {
 fn owner(g: &DurablePrincipal) -> String {
     spike_v1_fixture::digest(&json!([g.issuer, g.subject, g.actor_id, g.min_iat]))
 }
-async fn connect(rt: &Runtime) -> Result<spike_v2_read::OwnedConnection> {
-    tokio::time::timeout(crate::server::DB_CONNECT_TIMEOUT, spike_v2_read::connect_owned_with_url(&rt.db_url))
-        .await
-        .map_err(db_error)?
-        .map_err(db_error)
+async fn connect(rt: &Runtime) -> Result<crate::pool::PooledConnection> {
+    rt.db_pool.as_ref().ok_or("DB_UNAVAILABLE")?.acquire().await.map_err(db_error)
 }
 
 pub(crate) fn bundle(rt: &Runtime) -> Result<String> {
@@ -93,7 +90,14 @@ pub(crate) fn bundle(rt: &Runtime) -> Result<String> {
         format!("{:?}", rt.infrastructure.worker_launch.isolation),
         rt.infrastructure.worker_launch.runtime_executable,
         rt.infrastructure.worker_launch.read_only_paths,
-        rt.infrastructure.worker_launch.environment.iter().collect::<std::collections::BTreeMap<_, _>>()
+        rt.infrastructure.worker_launch.environment.iter().collect::<std::collections::BTreeMap<_, _>>(),
+        rt.infrastructure.worker_launch.cgroup_root,
+        rt.infrastructure.worker_launch.resource_limits.map(|limits| json!({
+            "memoryBytes": limits.memory_bytes,
+            "pidsMax": limits.pids_max,
+            "cpuQuotaMicros": limits.cpu_quota_micros,
+            "cpuPeriodMicros": limits.cpu_period_micros
+        }))
     ])))
 }
 
@@ -267,6 +271,7 @@ pub(crate) async fn validate_principal(rt: &Runtime, _facts: &Value, _wire: IdWi
     let tx = db.transaction().await.map_err(db_error)?;
     guard(&tx, rt, grant).await?;
     tx.commit().await.map_err(db_error)?;
+    db.release().await.map_err(db_error)?;
     Ok(owner(grant))
 }
 
@@ -290,6 +295,7 @@ pub(crate) async fn read_events(
         Err(code) => return json!({"ok":false,"code":code}),
     };
     let mut response = handle(&mut db, rt, facts, wire, "/events/read", &json!({"stream":stream,"after":after,"limit":limit}), grant).await;
+    let _ = db.release().await;
     response["contractFingerprint"] = json!(spike_v5_sdk::contract_fingerprint_with_all_extensions(facts, wire));
     response
 }
@@ -504,6 +510,8 @@ pub(crate) async fn supervisor(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire
                 if let Ok(s) = schema(&rt) {
                     if collect_expired(&mut db, s, cleanup_messages).await.is_err() {
                         eprintln!("{{\"event\":\"job_gc_failed\"}}");
+                    } else {
+                        let _ = db.release().await;
                     }
                 }
             }
@@ -521,7 +529,13 @@ pub(crate) async fn supervisor(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire
             }
             let lease = match store.claim(&tx, &worker).await {
                 Ok(Some(lease)) => lease,
-                _ => break,
+                Ok(None) => {
+                    if tx.commit().await.is_ok() {
+                        let _ = db.release().await;
+                    }
+                    break;
+                }
+                Err(_) => break,
             };
             let admission = async {
                 let grant: DurablePrincipal = serde_json::from_value(lease.grant.clone()).map_err(|_| "UNAUTHENTICATED")?;
@@ -539,11 +553,13 @@ pub(crate) async fn supervisor(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire
                     eprintln!("{{\"event\":\"job_admission_failed\"}}");
                     break;
                 }
+                let _ = db.release().await;
                 continue;
             }
             if tx.commit().await.is_err() {
                 break;
             }
+            let _ = db.release().await;
             let (rt, facts) = (rt.clone(), facts.clone());
             tasks.spawn(async move {
                 execute(rt, facts, wire, lease).await;
@@ -571,6 +587,7 @@ async fn execute(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire, lease: Lease
         }
         let caller = authorize(&tx, &facts, &lease.operation, &lease.input, lease.actor, wire).await?;
         tx.commit().await.map_err(db_error)?;
+        db.release().await.map_err(db_error)?;
         Ok(caller)
     }
     .await;
@@ -578,7 +595,10 @@ async fn execute(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire, lease: Lease
         Ok(c) => c,
         Err(code) => {
             if let Ok(db) = connect(&rt).await {
-                let _ = if code == "DB_UNAVAILABLE" { store.retry(&*db, &lease, code).await } else { store.fail(&*db, &lease, code).await };
+                let result = if code == "DB_UNAVAILABLE" { store.retry(&*db, &lease, code).await } else { store.fail(&*db, &lease, code).await };
+                if result.is_ok() {
+                    let _ = db.release().await;
+                }
             }
             return;
         }
@@ -590,7 +610,9 @@ async fn execute(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire, lease: Lease
             Ok(w) => w,
             Err(_) => {
                 if let Ok(db) = connect(&rt).await {
-                    let _ = store.retry(&*db, &lease, "WORKER_FAILED").await;
+                    if store.retry(&*db, &lease, "WORKER_FAILED").await.is_ok() {
+                        let _ = db.release().await;
+                    }
                 }
                 return;
             }
@@ -620,6 +642,7 @@ async fn execute(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire, lease: Lease
                     return Err::<(), _>("LEASE_LOST");
                 }
                 tx.commit().await.map_err(db_error)?;
+                db.release().await.map_err(db_error)?;
             }
         };
         tokio::pin!(monitor);
@@ -664,6 +687,7 @@ async fn execute(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire, lease: Lease
             }
 
             let _ = tx.commit().await;
+            let _ = db.release().await;
             return;
         }
     }
@@ -700,6 +724,8 @@ async fn execute(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire, lease: Lease
     }
     if tx.commit().await.is_err() {
         eprintln!("{{\"event\":\"job_outcome_commit_unknown\",\"id\":\"{}\"}}", lease.run_id);
+    } else {
+        let _ = db.release().await;
     }
 }
 
@@ -764,7 +790,10 @@ impl Host {
                 .map_err(db_error)?
                 .filter(|f| f.bucket == name)
                 .ok_or("NOT_FOUND")?;
-            return Ok(json!({"file":file_json(&f),"base64":B64.encode(&f.bytes)}));
+            let output = json!({"file":file_json(&f),"base64":B64.encode(&f.bytes)});
+            tx.commit().await.map_err(db_error)?;
+            db.release().await.map_err(db_error)?;
+            return Ok(output);
         }
         if let Some(row) = tx
             .query_opt(
@@ -778,7 +807,10 @@ impl Host {
                 return Err("IDEMPOTENCY_MISMATCH");
             }
             if row.get::<_, String>(1) == "SUCCEEDED" {
-                return Ok(row.get(2));
+                let output = row.get(2);
+                tx.commit().await.map_err(db_error)?;
+                db.release().await.map_err(db_error)?;
+                return Ok(output);
             }
             if row.get::<_, String>(1) == "FAILED" {
                 return Err(step_error(row.get::<_, Value>(2)["code"].as_str().unwrap_or("")));
@@ -833,8 +865,10 @@ impl Host {
             }
             "http" => {
                 tx.commit().await.map_err(db_error)?;
+                db.release().await.map_err(db_error)?;
                 let key = format!("{}:{effect_key}", self.lease.run_id);
                 let response = self.rt.broker.as_ref().ok_or("NOT_EXPOSED")?.call_with_key(name, &input["input"], Some(&key)).await;
+                let mut db = connect(&self.rt).await?;
                 let tx = db.transaction().await.map_err(db_error)?;
                 guard(&tx, &self.rt, &self.grant).await?;
                 locked_lease(&tx, &self.rt, &self.lease).await?;
@@ -858,6 +892,7 @@ impl Host {
                 .await
                 .map_err(db_error)?;
                 tx.commit().await.map_err(db_error)?;
+                db.release().await.map_err(db_error)?;
                 return Ok(result);
             }
             "jobs" => {
@@ -873,6 +908,7 @@ impl Host {
                 }
                 let caller = authorize(&tx, &self.facts, name, &input["input"], self.lease.actor, self.wire).await?;
                 tx.commit().await.map_err(db_error)?;
+                db.release().await.map_err(db_error)?;
                 let config = self.rt.extensions.as_ref().unwrap();
                 let mut worker = spike_v4_worker::Worker::try_start_configured(
                     config.lang,
@@ -898,6 +934,7 @@ impl Host {
                     spike_v4_worker::invoke_job(&mut worker, &self.facts, name, &input["input"], &caller, self.wire, &mut child).await
                 };
                 worker.stop().await;
+                let mut db = connect(&self.rt).await?;
                 let tx = db.transaction().await.map_err(db_error)?;
                 guard(&tx, &self.rt, &self.grant).await?;
                 locked_lease(&tx, &self.rt, &self.lease).await?;
@@ -913,6 +950,7 @@ impl Host {
                 .await
                 .map_err(db_error)?;
                 tx.commit().await.map_err(db_error)?;
+                db.release().await.map_err(db_error)?;
                 return out.map_err(|e| step_error(e.code));
             }
             _ => return Err("ACCESS_NOT_DECLARED"),
@@ -924,6 +962,7 @@ impl Host {
         .await
         .map_err(db_error)?;
         tx.commit().await.map_err(db_error)?;
+        db.release().await.map_err(db_error)?;
         Ok(output)
     }
 }

@@ -1,6 +1,8 @@
 //! V4-1 공식 읽기 확장. 서버가 actor·허용 집계·입력 바인딩·기한을 ctx 토큰에 묶고, worker는 토큰으로만 데이터를 요청한다.
+mod cgroup;
 mod framing;
 mod isolation;
+pub use cgroup::WorkerResourceLimits;
 pub use isolation::{Isolation, WorkerLaunchConfig};
 
 pub mod outbox;
@@ -66,6 +68,7 @@ pub fn worker_abi_digest() -> String {
 
 pub struct Worker {
     child: Child,
+    cgroup: Option<cgroup::CgroupGuard>,
     /// worker stderr 마지막 줄들. 기동·실행 실패 원인을 서버 쪽에 남긴다(R4-01).
     stderr_tail: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
     stdin: ChildStdin,
@@ -124,6 +127,7 @@ impl Worker {
         if limits.stdout_frame_bytes == 0 || limits.stderr_frame_bytes == 0 {
             return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "worker frame limits must be positive"));
         }
+        cgroup::validate_config(config.cgroup_root.as_deref(), config.resource_limits)?;
         config.isolation.validate_available()?;
         let prog = isolation::runtime_path(lang, &config)?;
         let ext_dir = isolation::extension_path(config.isolation, std::path::Path::new(ext_dir))?;
@@ -148,6 +152,10 @@ impl Worker {
         cmd.args(spec.args);
         isolation::configure_environment(&mut cmd, &config)?;
         cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
+        let cgroup = cgroup::create(config.cgroup_root.as_deref(), config.resource_limits)?;
+        if let Some(cgroup) = &cgroup {
+            cgroup.attach(&mut cmd)?;
+        }
         let mut child = cmd.spawn().map_err(|error| std::io::Error::new(error.kind(), format!("worker 실행 실패: {error}")))?;
         let missing_pipe = || std::io::Error::other("worker pipe 생성 실패");
         let stdin = child.stdin.take().ok_or_else(missing_pipe)?;
@@ -179,7 +187,7 @@ impl Worker {
                 }
             }
         });
-        Ok(Worker { child, stderr_tail, stdin, lines, stderr_task, next_invoke: 0, tokens: HashMap::new(), retired_tokens: VecDeque::new() })
+        Ok(Worker { child, cgroup, stderr_tail, stdin, lines, stderr_task, next_invoke: 0, tokens: HashMap::new(), retired_tokens: VecDeque::new() })
     }
 
     fn remember_expired(&mut self, token: String) {
@@ -208,6 +216,9 @@ impl Worker {
             self.lines.discard();
             self.tokens.clear();
             let _ = self.child.start_kill();
+            if let Some(cgroup) = &self.cgroup {
+                let _ = cgroup.kill();
+            }
         }
         result
     }
@@ -231,11 +242,25 @@ impl Worker {
         self.lines.discard();
         self.tokens.clear();
         let _ = self.child.start_kill();
+        if let Some(cgroup) = &self.cgroup {
+            let _ = cgroup.kill();
+        }
         rej("DEADLINE_EXCEEDED", "worker 입력 전송이 기한 안에 끝나지 않음")
     }
 
     pub async fn stop(mut self) {
+        if let Some(cgroup) = &self.cgroup {
+            if let Err(error) = cgroup.kill() {
+                eprintln!("worker cgroup kill failed during stop: {error}");
+            }
+        }
         let _ = self.child.kill().await;
+        let _ = self.child.wait().await;
+        if let Some(cgroup) = self.cgroup.take() {
+            if let Err(error) = cgroup.terminate().await {
+                eprintln!("worker cgroup cleanup failed during stop: {error}");
+            }
+        }
         self.stderr_task.abort();
         let _ = (&mut self.stderr_task).await;
     }

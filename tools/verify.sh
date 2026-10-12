@@ -35,6 +35,8 @@ node --test \
   spikes/spike-v6-transport/client/operations.test.ts \
   spikes/spike-v6-transport/client/jobs.test.ts \
   spikes/spike-v6-transport/client/infrastructure.test.ts \
+  spikes/spike-v6-transport/client/websocket.test.ts \
+  spikes/spike-v6-transport/client/rag.test.ts \
   spikes/spike-v6-transport/client/traverse-many.test.ts \
   product/tests/sdk-package.test.mjs \
   product/tests/package-boundaries.test.mjs

@@ -219,6 +219,23 @@ impl MessageStore {
         Ok(changed == 1)
     }
 
+    /// Transport failures do not mean the application rejected the payload.
+    /// Refund only this active claim, retaining its identity and expiry.
+    pub async fn retry_transport_after(&self, client: &impl GenericClient, lease: &MessageLease, delay_ms: i64) -> Result<bool, Error> {
+        if !(0..=MAX_DELAY_MS).contains(&delay_ms) {
+            return Err(Error::InvalidMessage);
+        }
+        let id = parse_lease_id(&lease.id)?;
+        let token = parse_lease_id(&lease.token)?;
+        let changed = client.execute(&format!(
+            "UPDATE {} SET state='READY',deliveries=GREATEST(0,deliveries-1), \
+             available_at=clock_timestamp()+($7::bigint*interval '1 millisecond'), \
+             last_error='BROKER_PUBLISH_FAILED',lease_owner=NULL,lease_token=NULL,lease_until=NULL \
+             WHERE id=$1 AND owner=$2 AND queue=$3 AND state='CLAIMED' AND lease_epoch=$4 AND lease_token=$5 AND lease_owner=$6 AND lease_until>clock_timestamp()",
+            self.table()), &[&id,&lease.owner,&lease.queue,&lease.epoch,&token,&lease.worker,&delay_ms]).await?;
+        Ok(changed == 1)
+    }
+
     /// Lists a bounded page from the queue's dead-letter set.
     pub async fn dead_letters(&self, client: &impl GenericClient, owner: &str, queue: &str, limit: i64) -> Result<Vec<DeadLetter>, Error> {
         Ok(self.dead_letters_after(client, owner, queue, None, limit).await?.items)

@@ -129,6 +129,26 @@ async fn delayed_message_is_not_claimed_early() {
 }
 
 #[tokio::test]
+async fn transport_outage_preserves_delivery_budget_and_rejects_stale_release() {
+    let db = Db::new().await;
+    let store = db.store();
+    let mut input = message("relay", "outage", json!({"valid":true}));
+    input.max_deliveries = 1;
+    let msg = store.enqueue(&db.client, input).await.unwrap();
+    for _ in 0..5 {
+        let lease =
+            store.claim(&db.client, OWNER, "relay", "broker", 5_000).await.unwrap().expect("transport outages must not exhaust job deliveries");
+        assert_eq!(lease.id, msg.id);
+        assert_eq!(lease.deliveries, 1);
+        assert!(store.retry_transport_after(&db.client, &lease, 0).await.unwrap());
+        assert!(!store.retry_transport_after(&db.client, &lease, 0).await.unwrap());
+    }
+    assert!(store.dead_letters(&db.client, OWNER, "relay", 10).await.unwrap().is_empty());
+    let lease = store.claim(&db.client, OWNER, "relay", "broker", 5_000).await.unwrap().unwrap();
+    assert!(store.ack(&db.client, &lease).await.unwrap());
+}
+
+#[tokio::test]
 async fn nack_uses_bounded_backoff_then_moves_message_to_dlq() {
     let db = Db::new().await;
     let store = db.store();

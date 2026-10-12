@@ -79,3 +79,25 @@ V6의 별도 `operations` 테스트는 Node/Python × safe/decimal에서 계약�
 2026-10-11에는 core, 전체 v4 worker 및 v6 transport suite를 실행해 exit 0을 확인했다. 별도 artifact의 설치 SDK smoke도 Node/Python × decimal/safe 네 조합에서 Job 성공·멱등 재생과 기존 read/write 경로를 검사했다. 실제 명령·결과와 환경은 [VERIFICATION의 해당 회차](VERIFICATION.md#관리형-durable-execution-2026-10-11)에 기록했다. v12 타입 회귀 테스트의 개발자 절대 경로도 제거해 이동한 저장소에서 재실행했다.
 
 이 검사는 외부 provider의 실제 운영 계정·exactly-once 효과·SSE/WebSocket·대용량 object storage·Linux filesystem 격리를 증명하지 않는다. effect가 PENDING/UNKNOWN인 상태에서 자동으로 외부 mutation을 다시 보내지 않으며, 외부 요청과 PostgreSQL commit 사이의 crash ambiguity는 `EFFECT_UNKNOWN`으로 남길 수 있다. 자세한 범위·보존 상한·설정 방법은 [관리형 execution 문서](MANAGED-EXECUTION.md)를 따른다.
+
+
+## 2026-10-12 인프라 보완
+
+현재 설정은 [INFRASTRUCTURE](INFRASTRUCTURE.md), broker는 [BROKERS](BROKERS.md), RAG는 [RAG](RAG.md)를 따른다. 이전 회차의 “pool·분산 제한·cgroup·직접 브라우저 인증·외부 broker·RAG 미구현”은 당시 상태다. 이번 회차는 bounded pool과 취소 시 폐기, PostgreSQL 분산 fixed-window 제한, 선택 cgroup v2, 첫 프레임 WebSocket 인증, Kafka/RabbitMQ route, GCS HMAC 및 공식 SDK 서버 어댑터, 기본 PostgreSQL RAG를 추가한다.
+
+재검증 명령:
+
+```sh
+bash tools/verify.sh
+cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --locked --target-dir target
+cargo clippy -p aip-service -p aip-execution --features external-brokers --all-targets --locked -- -D warnings
+cargo test -p aip-execution --features external-brokers --test brokers --locked
+node --test product/tests/google-storage-provider.test.mjs
+python3 -m unittest product.tests.google_storage_provider_test
+```
+
+v6 production_faults는 혼합 요청의 quota·연결 회수, 부분 upload disconnect, 느린 WebSocket 소비자와 권한 폐기를 검사한다. db_commit_lifetime은 실제 PG COMMIT 성공 응답만 유실시켜 결과 불명확성과 SDK pending 복구를 검사하며, 연결 순서 대신 실제 쓰기 여부로 장애를 주입한다. rag_transport는 실제 HTTP·PG·rate limit을 활성화한 서비스의 권한 재검사와 재기동 preflight를 검사한다.
+
+Linux cgroup 강제 제한은 cgroup workflow, Kafka/RabbitMQ 실제 전달은 brokers workflow, TLS MinIO는 object-storage workflow에서 별도 실행한다. live fixture 검사는 기본 ignored 상태이며, 명시 실행 시 환경 변수가 없으면 실패한다. 기본 test 성공을 실제 cloud/broker 연결 성공으로 기록하지 않는다. 실제 AWS/GCP IAM·CORS·ADC·운영 계정, broker SASL/TLS cluster failover, 운영 장시간 부하와 SLO는 별도 검증 대상이다.
+
+독립 Sol high 검토 뒤 broker 전송 실패의 업무 delivery 예산 소모, 빈 inbound 순차 대기, 일시 장애의 서버 전파, 큰 poison 입력과 ID 충돌 반복, RAG 동기 점수화, admission 전체 기한을 보완했다. `messages`는 delivery budget=1로 전송 실패를 5회 반복하고 stale release를 거부하는 회귀를 추가했다. `rag_engine`은 단일 runtime에서 다른 요청 진행과 동점 순서를, admission은 실제 PG lock 대기 중 절대기한을 검사한다. 실제 broker 장애·DLQ는 위 외부 workflow에서 별도로 실행한다.

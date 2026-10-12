@@ -88,7 +88,7 @@ SDK는 `npm install --offline <aip-sdk.tgz>`로 별도 소비자에 설치한다
 
 ## 확장과 검증 범위
 
-공식 확장은 `workers: {"directory":"./extensions","language":"node","enable_writes":true}`를 명시해 활성화한다. Python은 `language:"python"`이다. 기존 공통 엔진과 정본 구현을 사용하며 서버가 입력·권한·시간·출력·트랜잭션을 검사한다. 기본 worker 격리는 OS별 `auto`이며 macOS는 네트워크 차단, Linux는 Bubblewrap을 사용한다. 디렉터리 hosting, local/S3 대용량 객체, SSE/WebSocket, 메시징, runtime 의존성 및 사용자 지정 한도는 [서버 인프라 설정](INFRASTRUCTURE.md)을 따른다.
+공식 확장은 `workers: {"directory":"./extensions","language":"node","enable_writes":true}`를 명시해 활성화한다. Python은 `language:"python"`이다. 기존 공통 엔진과 정본 구현을 사용하며 서버가 입력·권한·시간·출력·트랜잭션을 검사한다. 기본 worker 격리는 OS별 `auto`이며 macOS는 네트워크 차단, Linux는 Bubblewrap을 사용한다. DB pool, 분산 rate limit, cgroup, 디렉터리 hosting, local/S3/GCS 객체, 브라우저 WebSocket과 사용자 지정 한도는 [서버 인프라 설정](INFRASTRUCTURE.md)을 따른다. 외부 메시지 relay는 [BROKERS](BROKERS.md), 관리형 검색·생성은 [RAG](RAG.md)를 따른다.
 
 실제 PostgreSQL의 소유 테스트 schema, 통제된 HTTPS 서버와 메모리 생성 RSA 키, offline 설치 SDK, 재배치 macOS binary로 검증한다. 외부 IdP 계정과 실제 reverse proxy 배포는 이 환경에서 실행하지 않았다. 대형 테이블 무중단 변경·자동 역방향 migration·actor resource 교체·임의 데이터 변환은 지원하지 않는다. 좁은 검증은 다음 명령으로 재실행한다.
 

@@ -5,6 +5,7 @@
 //! POST /session {}                    → 서버가 검증한 principal과 남은 수명. 토큰 발급은 하지 않는다.
 //! actor는 `authorization: Bearer <서명 토큰>`에서만 온다(V8, auth.rs). 토큰이 없으면 익명, 있는데 틀리면 거부.
 //! `x-spike-drop-response: 1`이면 커밋 뒤 응답 없이 연결을 끊는다(시험용).
+mod admission;
 pub mod auth;
 mod cors;
 mod durable;
@@ -13,6 +14,8 @@ pub mod infrastructure;
 mod messaging_transport;
 mod object_transport;
 mod operation;
+pub mod pool;
+pub mod rag_transport;
 pub mod realtime;
 pub mod server;
 pub mod write_extension;
@@ -296,9 +299,13 @@ async fn reply_object(w: &mut Response<impl AsyncWriteExt + Unpin>, out: &str) {
 }
 
 async fn reply_with_headers(w: &mut Response<impl AsyncWriteExt + Unpin>, out: &str, extra: &str) {
+    reply_with_status(w, "200 OK", out, extra).await;
+}
+
+async fn reply_with_status(w: &mut Response<impl AsyncWriteExt + Unpin>, status: &str, out: &str, extra: &str) {
     let origin = w.origin.as_ref().map(|origin| format!("access-control-allow-origin: {origin}\r\n")).unwrap_or_default();
     let headers =
-        format!("HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n{origin}{extra}\r\n", out.len());
+        format!("HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n{origin}{extra}\r\n", out.len());
     let deadline = w.deadline;
     let private_object = w.private_object;
     if private_object && tokio::time::Instant::now() >= deadline {
@@ -317,6 +324,55 @@ async fn reply_with_headers(w: &mut Response<impl AsyncWriteExt + Unpin>, out: &
         let _ = tokio::time::timeout_at(deadline, write).await;
     } else {
         let _ = tokio::time::timeout(server::REQUEST_TIMEOUT, write).await;
+    }
+}
+
+async fn enforce_admission(
+    w: &mut Response<impl AsyncWriteExt + Unpin>,
+    runtime: &server::Runtime,
+    session: Option<&auth::Session>,
+    route: admission::Route,
+    deadline: tokio::time::Instant,
+) -> bool {
+    let Some(admission) = runtime.admission.as_ref() else { return false };
+    let Some(pool) = runtime.db_pool.as_ref() else {
+        reply_with_status(
+            w,
+            "503 Service Unavailable",
+            &json!({"ok":false,"code":"DB_UNAVAILABLE","msg":"rate limit 저장소를 사용할 수 없음"}).to_string(),
+            "cache-control: no-store\r\nvary: Origin\r\n",
+        )
+        .await;
+        return true;
+    };
+    match admission.check(pool, &admission::principal(session), route, deadline).await {
+        Ok(admission::Outcome::Allowed) => false,
+        Ok(admission::Outcome::Limited { retry_after_ms }) => {
+            let retry_after_secs = retry_after_ms.saturating_add(999).saturating_div(1000).max(1);
+            let extra = if w.private_object {
+                format!("cache-control: private, no-store\r\nx-content-type-options: nosniff\r\nvary: Origin\r\nRetry-After: {retry_after_secs}\r\n")
+            } else {
+                format!("vary: Origin\r\nRetry-After: {retry_after_secs}\r\n")
+            };
+            reply_with_status(w, "429 Too Many Requests", &json!({"ok":false,"code":"RATE_LIMITED","msg":"요청 한도 초과"}).to_string(), &extra)
+                .await;
+            true
+        }
+        Err(_) => {
+            let extra = if w.private_object {
+                "cache-control: private, no-store\r\nx-content-type-options: nosniff\r\nvary: Origin\r\n"
+            } else {
+                "cache-control: no-store\r\nvary: Origin\r\n"
+            };
+            reply_with_status(
+                w,
+                "503 Service Unavailable",
+                &json!({"ok":false,"code":"DB_UNAVAILABLE","msg":"rate limit 저장소를 사용할 수 없음"}).to_string(),
+                extra,
+            )
+            .await;
+            true
+        }
     }
 }
 
@@ -387,7 +443,8 @@ async fn serve_conn(
     let mut parts = line.split_whitespace();
     let (method, path) = (parts.next().unwrap_or("").to_string(), parts.next().unwrap_or("").to_string());
     w.head_only = method == "HEAD";
-    w.private_object = path.starts_with("/objects/") || runtime.infrastructure.file_mounts.iter().any(|mount| mount.matches(&path));
+    w.private_object =
+        path.starts_with("/objects/") || path.starts_with("/rag/") || runtime.infrastructure.file_mounts.iter().any(|mount| mount.matches(&path));
     if parts.next() != Some("HTTP/1.1") || parts.next().is_some() {
         return reply(&mut w, &json!({"ok":false,"code":"BAD_REQUEST"}).to_string()).await;
     }
@@ -515,6 +572,10 @@ async fn serve_conn(
         "/events/read",
         "/events/subscribe",
         "/events/socket",
+        "/rag/search",
+        "/rag/answer",
+        "/rag/index",
+        "/rag/delete",
     ]
     .contains(&path.as_str())
         && mount.is_none()
@@ -551,6 +612,9 @@ async fn serve_conn(
         if mount.access == hosting::MountAccess::Authenticated && session.is_none() {
             return reply(&mut w, &err("UNAUTHENTICATED", "인증된 정적 mount입니다")).await;
         }
+        if enforce_admission(&mut w, &runtime, session.as_ref(), admission::Route::Static, deadline).await {
+            return;
+        }
         if len.is_some_and(|length| length != 0) {
             return reply(&mut w, &err("BAD_REQUEST", "정적 파일 요청 본문은 비어 있어야 함")).await;
         }
@@ -568,6 +632,9 @@ async fn serve_conn(
             Err(auth::AuthError::Unavailable) => return reply_object(&mut w, &err("DB_UNAVAILABLE", "인증 제공자 또는 사용자 연결 조회 실패")).await,
             Err(_) => return reply_object(&mut w, &err("UNAUTHENTICATED", "토큰 검증 실패")).await,
         };
+        if enforce_admission(&mut w, &runtime, session.as_ref(), admission::Route::Objects, deadline).await {
+            return;
+        }
         match run_object_transfer(
             runtime.infrastructure.object_transfer_lifetime,
             object_transport::serve(
@@ -666,6 +733,12 @@ async fn serve_conn(
         Some(Err(auth::AuthError::Unavailable)) => return reply(&mut w, &err("DB_UNAVAILABLE", "인증 제공자 또는 사용자 연결 조회 실패")).await,
         Some(Err(_)) => return reply(&mut w, &err("UNAUTHENTICATED", "토큰 검증 실패")).await,
     };
+    if !(websocket && token.is_none()) {
+        let route = if file_mount.is_some() { admission::Route::ManagedFiles } else { admission::Route::from_request(&path, &method) };
+        if enforce_admission(&mut w, &runtime, session.as_ref(), route, deadline).await {
+            return;
+        }
+    }
     if path == "/objects/sign" || path.starts_with("/objects/multipart/") {
         if expected_contract.as_deref() != contract_fingerprint.as_deref() || expected_contract.is_none() {
             return reply_object(&mut w, &err("CONTRACT_MISMATCH", "object API 계약 지문 필요")).await;
@@ -675,6 +748,13 @@ async fn serve_conn(
     }
     // 기대 계약은 권한을 부여하지 않는다. 불일치면 DB·멱등 재생·쓰기 실행 전에 거부한다.
     let write_extension = path == "/apply" && body["request"].get("extension").is_some();
+    let rag_path = path.starts_with("/rag/");
+    if rag_path && (expected_contract.is_none() || expected_contract.as_deref() != contract_fingerprint.as_deref()) {
+        return reply(&mut w, &err("CONTRACT_MISMATCH", "RAG API 계약 지문 필요")).await;
+    }
+    if rag_path && method != "POST" {
+        return reply(&mut w, &err("BAD_REQUEST", "RAG API는 POST만 허용함")).await;
+    }
     if ["/read", "/apply", "/status"].contains(&path.as_str()) && !write_extension {
         if let Some(expected) = expected_contract.as_deref() {
             if contract_fingerprint.as_deref() != Some(expected) {
@@ -747,20 +827,58 @@ async fn serve_conn(
             return reply(&mut w, &err("BAD_REQUEST", "capabilities 본문은 빈 객체")).await;
         }
     }
+    let browser_ws = websocket && token.is_none();
     let managed = path.starts_with("/jobs/")
         || path.starts_with("/files/")
         || file_mount.is_some()
+        || rag_path
         || path == "/events/read"
         || messages_path
         || sse
         || websocket;
     if managed {
-        if session.as_ref().and_then(|s| s.durable.as_ref()).is_none() {
+        if !browser_ws && session.as_ref().and_then(|s| s.durable.as_ref()).is_none() {
             return reply(&mut w, &err("UNAUTHENTICATED", "관리 실행은 제품 principal 세션이 필요함")).await;
         }
         if !sse && !websocket && (expected_contract.is_none() || expected_contract.as_deref() != contract_fingerprint.as_deref()) {
             return reply(&mut w, &err("CONTRACT_MISMATCH", "관리 실행 계약 지문 필요")).await;
         }
+    }
+    if rag_path {
+        let Ok(_slot) = runtime.extension_slots.try_acquire() else {
+            return reply(&mut w, &err("SERVER_BUSY", "RAG 동시 실행 상한")).await;
+        };
+        let Some(engine) = runtime.infrastructure.rag.as_ref() else {
+            return reply(&mut w, &err("NOT_AVAILABLE", "RAG 서비스가 비활성화됨")).await;
+        };
+        let Some(session) = session.as_ref() else {
+            return reply(&mut w, &err("UNAUTHENTICATED", "RAG에는 제품 principal 세션이 필요함")).await;
+        };
+        let owner = match tokio::time::timeout_at(deadline, durable::validate_principal(&runtime, &facts, wire, session)).await {
+            Ok(Ok(owner)) => owner,
+            Ok(Err("UNAUTHENTICATED" | "TOKEN_EXPIRED")) => return reply(&mut w, &err("UNAUTHENTICATED", "RAG 제품 principal 검증 실패")).await,
+            Ok(Err(_)) | Err(_) => return reply(&mut w, &err("DB_UNAVAILABLE", "RAG 제품 principal 검증 실패")).await,
+        };
+        let fingerprint = contract_fingerprint.as_deref().unwrap_or_default();
+        let result = match tokio::time::timeout_at(
+            deadline,
+            rag_transport::handle(engine, &owner, &path, &body, runtime.infrastructure.rag_client_index, fingerprint),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => json!({"ok":false,"code":"REQUEST_TIMEOUT"}),
+        };
+        if result["ok"] == true {
+            match tokio::time::timeout_at(deadline, durable::validate_principal(&runtime, &facts, wire, session)).await {
+                Ok(Ok(current_owner)) if current_owner == owner => {}
+                Ok(Err("UNAUTHENTICATED" | "TOKEN_EXPIRED")) => {
+                    return reply(&mut w, &err("UNAUTHENTICATED", "RAG 처리 중 신원 폐기 또는 만료")).await
+                }
+                _ => return reply(&mut w, &err("DB_UNAVAILABLE", "RAG 반환 전 신원 검증 실패")).await,
+            }
+        }
+        return reply(&mut w, &result.to_string()).await;
     }
     if sse || websocket {
         if !runtime.infrastructure.realtime.enabled {
@@ -781,9 +899,6 @@ async fn serve_conn(
         } else {
             None
         };
-        let Some(token) = token else {
-            return reply(&mut w, &err("UNAUTHENTICATED", "실시간 구독은 Bearer 세션이 필요함")).await;
-        };
         let Ok(_slot) = runtime.realtime_slots.try_acquire() else {
             return reply(&mut w, &err("SERVER_BUSY", "실시간 연결 상한")).await;
         };
@@ -792,6 +907,7 @@ async fn serve_conn(
                 eprintln!("{{\"event\":\"realtime_write_failed\",\"transport\":\"sse\",\"kind\":\"{:?}\"}}", error.kind());
                 return;
             }
+            let Some(token) = token else { return };
             let _ = realtime::stream_sse(&mut w.writer, subscription.unwrap(), token, fingerprint.to_owned(), facts, runtime.clone(), wire).await;
             return;
         }
@@ -830,9 +946,12 @@ async fn serve_conn(
     } else {
         None
     };
-    let mut db = match tokio::time::timeout(server::DB_CONNECT_TIMEOUT, spike_v2_read::connect_owned_with_url(&runtime.db_url)).await {
-        Ok(Ok(db)) => db,
-        Ok(Err(_)) | Err(_) => return reply(&mut w, &err("DB_UNAVAILABLE", "DB 연결 실패 또는 기한 초과")).await,
+    let Some(pool) = runtime.db_pool.as_ref() else {
+        return reply(&mut w, &err("DB_UNAVAILABLE", "DB pool 설정 없음")).await;
+    };
+    let mut db = match pool.acquire_until(deadline).await {
+        Ok(db) => db,
+        Err(_) => return reply(&mut w, &err("DB_UNAVAILABLE", "DB 연결 또는 pool checkout 기한 초과")).await,
     };
     if let Some(fence) = &runtime.deployment {
         let checked = tokio::time::timeout_at(deadline, async {
@@ -902,6 +1021,7 @@ async fn serve_conn(
             return reply_object(&mut w, &err("INTERNAL", "관리 파일 payload 오류").to_string()).await;
         };
         let _ = reply_managed_file(&mut w.writer, &method, id, media_type, &bytes, w.origin.as_deref(), deadline).await;
+        let _ = db.release().await;
         return;
     }
     let mut result = if managed {
@@ -1018,12 +1138,16 @@ async fn serve_conn(
         }
     }
     let out = result.to_string();
-    std::mem::drop(db);
+    if result["ok"] != true {
+        std::mem::drop(db);
+        return reply(&mut w, &out).await;
+    }
     if drop {
         // 응답 유실 흉내: 처리(커밋 포함)는 끝났지만 클라이언트는 응답을 받지 못한다.
         return;
     }
     reply(&mut w, &out).await;
+    let _ = db.release().await;
 }
 
 /// 서버를 띄우고 (포트, 토큰 발급기)를 돌려준다. 발급기는 시험에서 로그인 제공자 역할을 한다.
@@ -1049,6 +1173,8 @@ async fn start_with_fingerprint(facts: Value, wire: IdWire, contract_fingerprint
         "127.0.0.1:0".parse().unwrap(),
         server::Runtime {
             infrastructure: crate::infrastructure::Infrastructure::default(),
+            db_pool: None,
+            admission: None,
             realtime_slots: tokio::sync::Semaphore::new(32),
             object_slots: tokio::sync::Semaphore::new(4),
             db_url: spike_v2_read::DB_URL.into(),

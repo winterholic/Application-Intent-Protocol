@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = []
+external-brokers = ["aip-execution/external-brokers", "spike-v6-transport/external-brokers"]
+
 [dependencies]
 aip-auth = { path = "../aip-auth" }
 aip-execution = { path = "../aip-execution" }

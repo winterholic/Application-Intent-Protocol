@@ -107,17 +107,29 @@ pub struct WorkerLaunchConfig {
     /// Server-trusted dependency directories mounted read-only inside Linux workers.
     /// Keep each entry scoped to dependencies; broad host directories are rejected.
     pub read_only_paths: Vec<std::path::PathBuf>,
+    /// Server-trusted delegated cgroup v2 directory. Its cpu, memory, and pids controllers must be enabled for children.
+    pub cgroup_root: Option<std::path::PathBuf>,
+    /// Per-worker hard limits. Requires `cgroup_root`; unsupported outside Linux.
+    pub resource_limits: Option<crate::WorkerResourceLimits>,
 }
 
 impl Default for WorkerLaunchConfig {
     fn default() -> Self {
-        Self { isolation: Isolation::Auto, runtime_executable: None, environment: std::collections::HashMap::new(), read_only_paths: Vec::new() }
+        Self {
+            isolation: Isolation::Auto,
+            runtime_executable: None,
+            environment: std::collections::HashMap::new(),
+            read_only_paths: Vec::new(),
+            cgroup_root: None,
+            resource_limits: None,
+        }
     }
 }
 
 impl WorkerLaunchConfig {
     /// Verify the selected runtime, mounts, environment, and isolation before accepting work.
     pub async fn probe(&self, lang: crate::Lang, ext_dir: &std::path::Path) -> std::io::Result<()> {
+        crate::cgroup::validate_config(self.cgroup_root.as_deref(), self.resource_limits)?;
         self.isolation.validate_available()?;
         let program = runtime_path(lang, self)?;
         let ext_dir = extension_path(self.isolation, ext_dir)?;
@@ -127,6 +139,10 @@ impl WorkerLaunchConfig {
         command.args(spec.args);
         configure_environment(&mut command, self)?;
         command.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).kill_on_drop(true);
+        let cgroup = crate::cgroup::create(self.cgroup_root.as_deref(), self.resource_limits)?;
+        if let Some(cgroup) = &cgroup {
+            cgroup.attach(&mut command)?;
+        }
         let mut child = command.spawn()?;
         let stdout = child.stdout.take().ok_or_else(|| std::io::Error::other("worker runtime probe stdout pipe was not created"))?;
         let stderr = child.stderr.take().ok_or_else(|| std::io::Error::other("worker runtime probe stderr pipe was not created"))?;
@@ -147,13 +163,19 @@ impl WorkerLaunchConfig {
             }
             Ok(())
         };
-        match tokio::time::timeout(std::time::Duration::from_secs(2), probe).await {
+        let result = match tokio::time::timeout(std::time::Duration::from_secs(2), probe).await {
             Ok(result) => result,
             Err(_) => {
                 let _ = child.start_kill();
                 Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "worker runtime probe exceeded 2 seconds"))
             }
+        };
+        if let Some(cgroup) = cgroup {
+            if let Err(error) = cgroup.terminate().await {
+                return Err(std::io::Error::new(error.kind(), format!("worker cgroup cleanup failed: {error}")));
+            }
         }
+        result
     }
 }
 
@@ -542,6 +564,8 @@ mod tests {
         assert!(config.runtime_executable.is_none());
         assert!(config.environment.is_empty());
         assert!(config.read_only_paths.is_empty());
+        assert!(config.cgroup_root.is_none());
+        assert!(config.resource_limits.is_none());
     }
 
     #[cfg(unix)]

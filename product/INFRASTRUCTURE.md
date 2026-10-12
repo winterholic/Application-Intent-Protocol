@@ -18,6 +18,8 @@
     "max_total_bytes":10737418240, "max_objects":1000
   },
   "object_transfer_lifetime_ms":900000,
+  "db_pool":{"max_size":16,"acquire_timeout_ms":2000,"idle_timeout_ms":60000},
+  "rate_limit":{"limit":120,"window_ms":60000},
   "limits":{"connections":64,"workers":4,"jobs":2,"uploads":4},
   "realtime":{"enabled":true,"max_connections":32,"max_lifetime_ms":900000,"heartbeat_ms":15000,"poll_ms":250},
   "messaging":{"enabled":true,"client_publish":false,"client_consume":false},
@@ -31,6 +33,12 @@
 ```
 
 알 수 없는 설정 필드는 거부하며, `limits`는 프로세스별 제한이다. 여러 인스턴스의 합계 제한은 배포 환경에서 별도로 관리한다. `connections` 기본 64, 동기 worker 4, durable job 2, object transfer/control 4다. 실시간 연결도 전체 HTTP 연결 수에 포함된다. 실시간 연결 상한은 일반 요청을 위한 연결 한 개를 남기도록 전체 연결 수보다 작게 제한한다. 설정값 0이나 허용 상한을 넘긴 값은 시작 시 거부한다.
+
+`connections:1`은 실시간 연결을 허용하지 않는다. HTTP·durable DB 연결은 `db_pool`의 프로세스별 pool을 공유한다. 정상 반환 때 `ROLLBACK`과 `DISCARD ALL`로 세션 상태를 초기화하며, 취소·오류·reset 실패 연결은 재사용하지 않는다. 대기 시간이 지나면 요청을 거부한다. idle 만료는 다음 checkout 때 정리한다. 인증 제공자·마이그레이션·별도 RAG pool·broker relay의 연결도 PostgreSQL 전체 연결 예산에 포함해야 한다.
+
+선택적 `rate_limit`은 같은 PostgreSQL schema를 쓰는 인스턴스 사이에서 계정과 고정 경로 분류별 quota를 공유한다. DB 시계와 원자적 갱신을 쓰는 fixed window 방식이며, 세션 재발급으로 계정 quota를 초기화하지 않는다. 초과하면 HTTP 429와 `Retry-After`, DB 오류면 실행 거부다. 브라우저 WebSocket은 첫 인증 프레임 뒤 검사하므로 초과 오류는 WebSocket error frame이다. 정적 공개 mount의 익명 quota는 공유 bucket이다. IP별 DDoS 방어나 sliding-window의 균일한 유량 보장은 아니며, TLS proxy의 요청 크기·연결 제한도 필요하다. 생략하면 기존 동작을 유지한다.
+
+rate limiting과 RAG는 앱 schema 이름의 digest로 파생한 별도 `aip_infra_<digest>` schema에 저장한다. 앱 migration의 구조 지문을 유지하기 위한 분리다. 시작 시 schema/table 생성 권한이 필요하며 권한이 없으면 시작을 거부한다. 앱 schema만 선택하는 백업에는 이 데이터가 포함되지 않는다. 인프라 schema도 함께 백업하고, 앱 삭제·owner 폐기 시 데이터 보존과 정리를 별도로 수행한다. 앱 schema 삭제만으로 자동 삭제하지 않는다.
 
 ## 디렉터리 hosting
 
@@ -72,18 +80,20 @@ const part = await client.objects.part({...upload, partNumber:1, size:chunk.size
 // 각 PUT 응답의 ETag를 모아서 complete({ ...upload, parts:[{number:1,etag}] }) 호출.
 ```
 
-SigV4는 Content-Length를 서명해 선언한 크기보다 큰 PUT/part를 막는다. URL 수명은 300초다. presigned URL은 소지자가 사용할 수 있고 발급 이후 principal 폐기가 즉시 URL을 취소하지 않는다. S3 control에는 동시 실행 제한이 있지만 **owner별 S3 합계 quota와 미완료 multipart 자동 정리는 아직 없다**. 배포 시 bucket 정책·수명 주기·비용 제한을 설정해야 한다. provider에서 Content-Length 서명, path-style URL, ETag, CORS 동작을 검증해야 한다. AWS SigV4 공식 fixture 검증과 실제 S3 provider 연동 검증은 서로 다르다. 공급자 자격증명이 없어 후자는 미실행이다.
+SigV4는 Content-Length를 서명해 선언한 크기보다 큰 PUT/part를 막는다. URL 수명은 300초다. presigned URL은 소지자가 사용할 수 있고 발급 이후 principal 폐기가 즉시 URL을 취소하지 않는다. S3 control에는 동시 실행 제한이 있지만 **owner별 S3 합계 quota와 미완료 multipart 자동 정리는 아직 없다**. 배포 시 bucket 정책·수명 주기·비용 제한을 설정해야 한다. provider에서 Content-Length 서명, path-style URL, ETag, CORS 동작을 검증해야 한다. [TLS MinIO 통합 workflow](../.github/workflows/object-storage.yml)는 실제 S3 호환 HTTP와 multipart를 검사한다. 이는 AWS 계정에서의 IAM·CORS·운영 연동 확인을 대체하지 않는다.
+
+Google Cloud Storage XML API의 HMAC 호환 backend도 같은 객체 API를 사용한다. 실제 설정은 `{"kind":"gcs_hmac","bucket":"app-files","access_key_env":"AIP_GCS_HMAC_ACCESS_ID","secret_key_env":"AIP_GCS_HMAC_SECRET"}`다. endpoint는 Google Storage로 고정하고 서명 scope는 `auto/s3/aws4_request`를 사용한다. ADC·Workload Identity를 사용하는 공식 Node/Python SDK 어댑터는 [providers](providers/README.md)를 참고한다. 이 어댑터는 신뢰한 서버 bridge용이며 `gcs_hmac` 인증과 구분한다. 실제 AWS/GCP 계정 검증은 자격증명 없이 실행할 수 없다.
 
 ## SSE와 WebSocket
 
 기존 `events.read/watch` polling을 유지하면서 같은 owner stream과 cursor를 push로 전달한다.
 
 - SSE: `POST /events/subscribe`, Bearer, `Accept: text/event-stream`, JSON `{stream,after,contractFingerprint}`.
-- WebSocket: `GET /events/socket`, Bearer와 허용 Origin으로 upgrade, 첫 text frame에 같은 구독 JSON.
+- WebSocket: `GET /events/socket`, 허용 Origin으로 upgrade. Bearer header가 있으면 첫 text frame은 구독 JSON이다. 브라우저는 첫 frame에 `{type:"auth",token}`, `{type:"authenticated"}` ACK 뒤 `{type:"subscribe",stream,after,contractFingerprint}`를 보낸다. 인증·구독 제한 시간은 합계 5초이고 frame 크기는 제한된다.
 
 SDK의 `readSse(response,signal)`는 streaming UTF-8·multiline·cursor·취소를 처리하며 line/event 버퍼 상한을 적용한다. 소비자 코드가 연결 종료 뒤 마지막 event ID/cursor로 다시 구독해야 한다. `readSse`는 자동 재연결하지 않는다. 서버가 보존 범위를 벗어난 cursor에 대해 `CURSOR_EXPIRED`를 error event로 보내면 소비자가 최신 상태를 다시 조회해야 한다. 서버는 poll마다 인증·배포·generation을 재검증하고 세션 만료나 폐기 시 연결을 끝낸다. 이벤트 조회용 DB 연결이나 배포 lock을 연결 수명 동안 잡고 있지 않는다.
 
-브라우저 기본 WebSocket 생성자는 Authorization header를 지정할 수 없다. 현재 WS는 Bearer header를 지원하는 클라이언트나 인증 gateway에 적합하다. 토큰을 query string에 넣는 우회는 제공하지 않는다. 브라우저는 fetch SSE 또는 기존 polling을 사용할 수 있다. 조직 전체 broadcast나 record별 subscription ACL은 아직 별도 기능이다.
+브라우저는 제품 SDK의 `connectEventWebSocket`으로 직접 인증할 수 있다. 토큰을 URL query나 subprotocol에 넣지 않으며 별도 인증 gateway는 필수가 아니다. 외부 연결의 WSS 종료는 기존 TLS reverse proxy가 담당한다. SDK helper는 취소·세션 만료·마지막 cursor를 제공하며 재연결은 호출자가 결정한다. 조직 전체 broadcast나 record별 subscription ACL은 아직 별도 기능이다.
 
 ## 메시지 큐와 업무 effect
 
@@ -121,7 +131,7 @@ if (lease) {
 
 ACK/NACK는 owner·queue·worker·epoch·token·lease 만료를 검사한다. at-least-once 전달이므로 consumer 부작용의 멱등성이 필요하다. 재시도·지연·TTL·DLQ·redrive와 페이지 cursor를 제공한다. payload는 최대 512KiB, DLQ 페이지 합계는 1MiB, owner live 메시지는 최대 1,000개·64MiB다. TTL 이후 idempotency 기록도 GC되므로 같은 key의 영구 중복 방지를 주장하지 않는다.
 
-`messages.<queue>`가 있는 정의에만 테이블을 생성한다. 기존 배포에는 migrate plan/apply로 추가하며 마지막 queue capability를 제거할 때 테이블을 자동 삭제하지 않는다. Kafka/RabbitMQ 클라이언트 구현은 포함하지 않았다. Rust `Broker`/`BrokerRegistry`는 adapter 경계지만 제품 HTTP queue의 backend 선택 설정으로 연결된 것은 아니다. 외부 broker와 DB의 원자적 commit은 자동 보장하지 않는다.
+`messages.<queue>`가 있는 정의에만 테이블을 생성한다. 기존 배포에는 migrate plan/apply로 추가하며 마지막 queue capability를 제거할 때 테이블을 자동 삭제하지 않는다. 선택적 `external-brokers` 빌드는 Kafka/RabbitMQ relay와 inbound consumer를 제공한다. 서버 route가 owner·queue·topic/exchange를 결정하며, 확인된 발행 뒤 PostgreSQL lease를 ACK한다. 외부 broker와 DB의 원자적 commit은 보장하지 않으므로 안정 message ID로 소비자 멱등성을 구현한다. 설정과 장애 경계는 [BROKERS](BROKERS.md)를 따른다.
 
 ## Linux 격리와 JS/Python 의존성
 
@@ -133,16 +143,20 @@ Linux 호스트는 Bubblewrap의 user namespace와 namespace 내부 초기화 �
 
 Python venv interpreter, 명시적 PYTHONPATH, Node extension 폴더의 node_modules를 사용한다. 패키지 설치는 배포 과정에서 한다. worker가 임의 패키지를 다운로드하지 않는다. AI/RAG용 파서·토크나이저·계산 라이브러리도 이 경로를 사용하고 외부 API는 이름 기반 `ctx.http` endpoint를 통한다. 모델 서버·vector DB URL이나 secret을 프론트 입력으로 받지 않는다. endpoint별 `allow_private_networks:true`로 MSA HTTPS 사설 주소를 명시적으로 허용할 수 있다. DNS 고정·TLS 검증·redirect/proxy 차단은 유지한다.
 
-macOS는 네트워크만 차단하며 filesystem 격리는 보장하지 않는다. worker는 신뢰한 서버 코드다. 의존성 전체 내용은 현재 implementation fingerprint에 들어가지 않으므로 immutable deployment와 lockfile을 사용한다. npm/pip 생태계의 모든 라이브러리 호환성이나 native GPU·subprocess·메모리 상한은 보장하지 않는다. 고위험 코드에는 별도 컨테이너·cgroup·운영 격리가 필요하다.
+Linux의 선택적 `workers.cgroup_root`와 `workers.resource_limits`는 함께 설정한다. 예: `"cgroup_root":"/sys/fs/cgroup/aip.service/workers", "resource_limits":{"memory_bytes":268435456,"pids_max":64,"cpu_quota_micros":50000,"cpu_period_micros":100000}`. 운영자가 cpu/memory/pids controller를 활성화한 cgroup v2 subtree를 미리 위임해야 한다. worker는 exec 전에 leaf cgroup에 들어가며 `memory.max`, `pids.max`, `cpu.max`가 적용된다. 취소·종료는 해당 cgroup의 descendants를 함께 정리한다. 필요한 interface나 권한이 없으면 시작을 거부하고 전역 cgroup·sysctl을 자동 변경하지 않는다. [Linux cgroup workflow](../.github/workflows/cgroup.yml)가 실제 강제 제한을 검사한다.
+
+macOS는 네트워크만 차단하며 filesystem 격리는 보장하지 않는다. cgroup 제한을 설정하면 macOS에서는 시작을 거부한다. worker는 신뢰한 서버 코드다. 의존성 전체 내용은 현재 implementation fingerprint에 들어가지 않으므로 immutable deployment와 lockfile을 사용한다. npm/pip 생태계의 모든 라이브러리 호환성이나 native GPU 사용을 보장하지 않는다.
+
+이름 기반 corpus·embedding/answer provider, owner 격리·문서 분할·색인·검색·출처 반환을 제공하는 RAG 엔진은 [RAG](RAG.md)를 따른다. JS/TS·Python의 특수 파서나 모델은 custom provider/서버 bridge로 연결한다. 프론트에 모델 endpoint·credential·SQL 실행 권한을 주지 않는다.
 
 ## 발견과 의존성
 
 인증된 `/capabilities` 응답의 `infrastructure`는 backend 선택, 전송 지원, 공개 URL prefix와 실행 한도를 설명한다. 서버 디렉터리·환경 변수·credential은 노출하지 않는다. 개별 호출의 권한·계약 검사는 계속 수행한다.
 
-새 직접 의존성의 로컬 Cargo package metadata를 확인했다: `tokio-tungstenite 0.30.0`은 MIT, `futures-util 0.3.34`와 `libc 0.2.189`는 MIT OR Apache-2.0이다. 전체 transitive 의존성의 별도 특허 검토를 끝냈다는 뜻은 아니다.
+새 직접 의존성의 로컬 Cargo package metadata를 확인했다: `tokio-tungstenite 0.30.0`은 MIT, `futures-util 0.3.34`와 `libc 0.2.189`는 MIT OR Apache-2.0이다. 선택 broker 의존성의 locked metadata는 `lapin 4.12.1`, `rdkafka 0.39.0`, `rdkafka-sys 4.10.0+2.12.1`이 MIT이며 `cmake 0.1.58`은 MIT OR Apache-2.0이다. 전체 transitive 의존성의 별도 특허 검토를 끝냈다는 뜻은 아니다.
 
 ## 확인된 미해결 운영 경계
 
-전역 rate limiting, DB pool, 다중 프로세스 schema 분리, cgroup CPU/메모리 quota, 운영 tracing/metrics, 외부 broker relay, tenant 전체 broadcast, S3 누적 quota는 후속 검증·구현 대상이다. 기능 테스트가 실제 대규모 부하나 장애 주입 검증을 대신하지 않는다. 기존 HTTP listener는 loopback TLS reverse proxy 뒤에 두는 모델을 유지한다.
+다중 프로세스 schema 분리, 운영 tracing/metrics, tenant 전체 broadcast, S3 누적 quota는 후속 검증·구현 대상이다. 현재 동시 quota·lease 경쟁·부분 요청 disconnect·느린 WebSocket 소비자·pool 취소를 검사하지만, 실제 운영 트래픽의 장시간 부하나 가용성 SLO를 보증하지 않는다. 기존 HTTP listener는 loopback TLS reverse proxy 뒤에 두는 모델을 유지한다.
 
 참고한 공식 자료: [Bubblewrap README](https://github.com/containers/bubblewrap/blob/main/README.md), [AWS multipart 의미와 수명 주기](https://docs.aws.amazon.com/AmazonS3/latest/userguide/mpuoverview.html). 타 프로젝트 소스를 복사하지 않았으며 Bubblewrap은 배포 환경의 별도 도구로 실행한다.
