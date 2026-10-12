@@ -1,4 +1,4 @@
-use super::{invoke, serve_call, Isolation, Lang, Worker, MAX_RETIRED_TOKENS};
+use super::{invoke, invoke_operation, serve_call, Isolation, Lang, Worker, MAX_RETIRED_TOKENS};
 use serde_json::{json, Value};
 use spike_v1_fixture::{load_str, Form};
 use spike_v2_read::connect_with_url;
@@ -141,8 +141,14 @@ async fn externally_cancelled_grant_is_retired_before_the_next_valid_call() {
         std::fs::create_dir(&path).unwrap();
         let dir = OwnedDir(path);
         let (name, source) = match lang {
-            Lang::Node => ("values.mjs", "export async function echo(input) { if (input.value === 'cancel') await new Promise(() => {}); return {value: input.value}; }"),
-            Lang::Python => ("values.py", "import asyncio\nasync def echo(input, ctx):\n    if input['value'] == 'cancel':\n        await asyncio.Event().wait()\n    return {'value': input['value']}\n"),
+            Lang::Node => (
+                "values.mjs",
+                "export async function echo(input) { if (input.value === 'cancel') await new Promise(() => {}); return {value: input.value}; }",
+            ),
+            Lang::Python => (
+                "values.py",
+                "import asyncio\nasync def echo(input, ctx):\n    if input['value'] == 'cancel':\n        await asyncio.Event().wait()\n    return {'value': input['value']}\n",
+            ),
         };
         std::fs::write(dir.0.join(name), source).unwrap();
         let mut worker = Worker::start_with(lang, &dir.0.to_string_lossy(), isolation()).await;
@@ -166,6 +172,112 @@ async fn externally_cancelled_grant_is_retired_before_the_next_valid_call() {
             failures.push(format!("{lang:?} cancelled grant was not retired"));
         }
         worker.stop().await;
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn explicitly_unisolated_busy_workers_are_reaped_by_stop_and_drop() {
+    use std::path::Path;
+    use std::process::{Command, Stdio};
+    use std::time::Duration;
+
+    async fn wait_for(path: &Path) -> bool {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if path.exists() {
+                    return true;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap_or(false)
+    }
+
+    async fn wait_dead(pid: u32) -> bool {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let alive = Command::new("kill")
+                    .args(["-0", &pid.to_string()])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status()
+                    .is_ok_and(|status| status.success());
+                if !alive {
+                    return true;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap_or(false)
+    }
+
+    let mut failures = Vec::new();
+    for lang in [Lang::Node, Lang::Python] {
+        for cleanup in ["stop", "drop"] {
+            let path = std::env::temp_dir().join(format!("aip-unsafe-worker-{cleanup}-{}-{lang:?}", std::process::id()));
+            std::fs::create_dir(&path).unwrap();
+            let dir = OwnedDir(path.clone());
+            let marker = path.join("started");
+            let marker_literal = serde_json::to_string(&marker.to_string_lossy()).unwrap();
+            let (filename, source) = match lang {
+                Lang::Node => (
+                    "spin.mjs",
+                    format!(
+                        "import {{ writeFileSync }} from 'node:fs';\nexport async function run() {{ writeFileSync({marker_literal}, 'started'); while (true) {{}} }}\n"
+                    ),
+                ),
+                Lang::Python => (
+                    "spin.py",
+                    format!(
+                        "from pathlib import Path\nasync def run(input, ctx):\n    Path({marker_literal}).write_text('started')\n    while True: pass\n"
+                    ),
+                ),
+            };
+            std::fs::write(path.join(filename), source).unwrap();
+            let facts: Value = load_str(
+                "actor principal\noperation read spin { input { value: Text } output { value: Text } allow actor != null effect none deadline 100ms implementation \"spin.run\" }",
+                Form::A,
+            )
+            .unwrap_or_else(|error| panic!("unsafe worker operation fixture invalid: {error:?}"))
+            .execution;
+            let mut worker = Worker::start_with(lang, &path.to_string_lossy(), Isolation::None).await;
+            let Some(pid) = worker.child.id() else {
+                failures.push(format!("{lang:?} {cleanup}: worker PID was unavailable"));
+                worker.stop().await;
+                continue;
+            };
+            let result =
+                invoke_operation(&mut worker, &facts, "spin", &json!({"value":"busy"}), &caller(), spike_v2_read::id_wire::IdWire::Legacy).await;
+            if result.as_ref().err().map(|error| error.code) != Some("DEADLINE_EXCEEDED") || !wait_for(&marker).await {
+                failures.push(format!("{lang:?} {cleanup}: expected a started busy extension and deadline, got {result:?}"));
+            }
+            if worker.tokens.len() != 0 || worker.retired_tokens.len() != 1 {
+                failures.push(format!("{lang:?} {cleanup}: timed-out grant was not invalidated"));
+            }
+            let alive_after_timeout = Command::new("kill")
+                .args(["-0", &pid.to_string()])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .is_ok_and(|status| status.success());
+            if !alive_after_timeout {
+                failures.push(format!("{lang:?} {cleanup}: expected the low-level worker to remain reusable until owner cleanup"));
+            }
+            if cleanup == "stop" {
+                worker.stop().await;
+            } else {
+                drop(worker);
+            }
+            if !wait_dead(pid).await {
+                failures.push(format!("{lang:?} {cleanup}: worker process {pid} remained alive"));
+                let _ = Command::new("kill").args(["-KILL", &pid.to_string()]).status();
+            }
+            drop(dir);
+        }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
