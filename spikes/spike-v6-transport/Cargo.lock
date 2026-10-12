@@ -17,7 +17,9 @@ dependencies = [
 name = "aip-execution"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "futures-util",
+ "hmac 0.12.1",
  "lapin",
  "libc",
  "rdkafka",
@@ -27,6 +29,7 @@ dependencies = [
  "sha2 0.10.9",
  "tokio",
  "tokio-postgres",
+ "url",
  "uuid",
 ]
 

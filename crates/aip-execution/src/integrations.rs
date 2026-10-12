@@ -28,6 +28,35 @@ pub enum Error {
     CircuitOpen,
     /// The OAuth token endpoint did not issue a token, so the request was not sent.
     TokenUnavailable,
+    /// A subscriber URL was malformed, not HTTPS or resolved to a non-public address; nothing was sent.
+    DestinationRejected,
+}
+
+const DNS_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// An outbound webhook sender: the server signs and sends events to subscriber URLs from business data.
+pub struct WebhookSenderConfig {
+    pub name: String,
+    /// Raw signing key bytes (a `whsec_` secret already base64-decoded).
+    pub secret: Vec<u8>,
+    pub timeout: Duration,
+    pub max_request_bytes: usize,
+    /// Test/development-only escape hatch for loopback HTTP subscribers.
+    pub allow_loopback: bool,
+}
+
+struct WebhookSender {
+    config: WebhookSenderConfig,
+}
+
+/// `base64(HMAC-SHA256(secret, "{id}.{timestamp}.{body}"))`, the Standard Webhooks v1 signature.
+pub fn standard_webhook_signature(secret: &[u8], id: &str, timestamp: u64, body: &[u8]) -> String {
+    use base64::Engine;
+    use hmac::Mac;
+    let mut mac = <hmac::Hmac<Sha256> as Mac>::new_from_slice(secret).expect("HMAC accepts any key length");
+    mac.update(format!("{id}.{timestamp}.").as_bytes());
+    mac.update(body);
+    base64::engine::general_purpose::STANDARD.encode(mac.finalize().into_bytes())
 }
 
 /// OAuth 2.0 client-credentials grant (RFC 6749 §4.4) for an endpoint, like Spring OAuth2 Client or
@@ -155,6 +184,7 @@ struct Endpoint {
 pub struct Broker {
     endpoints: HashMap<String, Endpoint>,
     fingerprint: String,
+    webhooks: HashMap<String, WebhookSender>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -175,7 +205,7 @@ impl Broker {
                 return Err(Error::InvalidConfiguration);
             }
         }
-        Ok(Self { endpoints, fingerprint })
+        Ok(Self { endpoints, fingerprint, webhooks: HashMap::new() })
     }
 
     /// Stable digest of the effective server-side endpoint configuration.
@@ -186,7 +216,93 @@ impl Broker {
 
     /// Checks whether an exact server-configured endpoint name is registered.
     pub fn contains(&self, name: &str) -> bool {
-        self.endpoints.contains_key(name)
+        self.endpoints.contains_key(name) || self.webhooks.contains_key(name)
+    }
+
+    /// Adds outbound webhook senders. Their names share the endpoint namespace (`access http.<name>`),
+    /// and their configuration joins the fingerprint so a changed signing secret fences old jobs.
+    pub fn with_webhooks(mut self, senders: Vec<WebhookSenderConfig>) -> Result<Self, Error> {
+        let mut entries = Vec::new();
+        for sender in senders {
+            if sender.name.is_empty()
+                || sender.name.len() > 128
+                || !sender.name.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+                || self.endpoints.contains_key(&sender.name)
+                || sender.secret.len() < 16
+                || sender.timeout.is_zero()
+                || sender.timeout > MAX_TIMEOUT
+                || sender.max_request_bytes == 0
+                || sender.max_request_bytes > MAX_BODY_BYTES
+            {
+                return Err(Error::InvalidConfiguration);
+            }
+            let secret = Sha256::digest(&sender.secret).iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+            entries.push(serde_json::json!([sender.name, secret, sender.timeout.as_millis(), sender.max_request_bytes, sender.allow_loopback]));
+            let name = sender.name.clone();
+            if self.webhooks.insert(name, WebhookSender { config: sender }).is_some() {
+                return Err(Error::InvalidConfiguration);
+            }
+        }
+        if !entries.is_empty() {
+            entries.sort_by_key(|entry| entry[0].as_str().unwrap_or_default().to_string());
+            let canonical = serde_json::to_vec(&(&self.fingerprint, "aip-webhook-sender-v1", entries)).map_err(|_| Error::InvalidConfiguration)?;
+            self.fingerprint = Sha256::digest(canonical).iter().map(|byte| format!("{byte:02x}")).collect();
+        }
+        Ok(self)
+    }
+
+    /// Whether `name` is an outbound webhook sender rather than a fixed endpoint.
+    pub fn is_webhook(&self, name: &str) -> bool {
+        self.webhooks.contains_key(name)
+    }
+
+    /// Delivers one signed event to a subscriber URL taken from business data, following the Standard
+    /// Webhooks spec (`webhook-id`, `webhook-timestamp`, `webhook-signature`). The destination must be
+    /// HTTPS on public addresses only; DNS is resolved per call and pinned for the connection, and
+    /// redirects are never followed, so a subscriber URL cannot reach internal services.
+    /// Receivers dedupe on `webhook-id`, so a delivery that failed in transport may be sent again.
+    pub async fn deliver_webhook(&self, name: &str, url: &str, payload: &Value, id: &str) -> Result<u16, Error> {
+        let sender = self.webhooks.get(name).ok_or(Error::UnknownEndpoint)?;
+        let config = &sender.config;
+        if url.len() > 2048 || id.is_empty() || id.len() > 256 {
+            return Err(Error::DestinationRejected);
+        }
+        let parsed = Url::parse(url).map_err(|_| Error::DestinationRejected)?;
+        let port = parsed.port_or_known_default().ok_or(Error::DestinationRejected)?;
+        let resolved: Vec<SocketAddr> = match parsed.host() {
+            Some(url::Host::Ipv4(ip)) => vec![SocketAddr::new(IpAddr::V4(ip), port)],
+            Some(url::Host::Ipv6(ip)) => vec![SocketAddr::new(IpAddr::V6(ip), port)],
+            Some(url::Host::Domain(domain)) => tokio::time::timeout(DNS_TIMEOUT, tokio::net::lookup_host((domain, port)))
+                .await
+                .map_err(|_| Error::DestinationRejected)?
+                .map_err(|_| Error::DestinationRejected)?
+                .take(32)
+                .collect(),
+            None => return Err(Error::DestinationRejected),
+        };
+        // Same rules as a configured endpoint, but private networks are never allowed for subscriber URLs.
+        let destination = vet_destination(url, &resolved, config.allow_loopback, false).map_err(|_| Error::DestinationRejected)?;
+        let body = serde_json::to_vec(payload).map_err(|_| Error::RequestTooLarge)?;
+        if body.len() > config.max_request_bytes {
+            return Err(Error::RequestTooLarge);
+        }
+        let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|_| Error::InvalidConfiguration)?.as_secs();
+        let signature = standard_webhook_signature(&config.secret, id, timestamp, &body);
+        let client = pinned_client(&destination, &resolved, config.timeout)?;
+        let response = client
+            .post(destination)
+            .header(CONTENT_TYPE, "application/json")
+            .header("webhook-id", id)
+            .header("webhook-timestamp", timestamp.to_string())
+            .header("webhook-signature", format!("v1,{signature}"))
+            .body(body)
+            .send()
+            .await
+            .map_err(|error| Error::Transport(error.to_string()))?;
+        let status = response.status().as_u16();
+        // The receiver's body is not part of the contract; read a bounded amount so the connection closes cleanly.
+        let _ = read_bounded(response, 64 * 1024).await;
+        Ok(status)
     }
 
     /// Performs one bounded JSON request to a server-registered endpoint.

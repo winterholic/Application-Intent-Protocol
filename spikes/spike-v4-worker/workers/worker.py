@@ -39,6 +39,11 @@ class Http:
     def __init__(self, ctx): self.ctx = ctx
     async def call(self, name, inp, key=None): return await self.ctx.call("http", name, {"input": inp, "key": key})
 
+# durable job 전용: 업무 데이터의 구독자 URL로 서명한 이벤트를 보낸다(access http.<name>, 서버 설정 outbound_webhooks).
+class Webhooks:
+    def __init__(self, ctx): self.ctx = ctx
+    async def deliver(self, name, url, payload, key): return await self.ctx.call("http", name, {"input": payload, "key": key, "url": url})
+
 class Files:
     def __init__(self, ctx): self.ctx = ctx
     async def put(self, bucket, inp, key=None): return await self.ctx.call("files", bucket, {**inp, "action": "put", "key": key})
@@ -63,6 +68,7 @@ class Ctx:
         self.job = job
         self.data = Data(self)
         self.http = Http(self)
+        self.webhooks = Webhooks(self)
         self.files = Files(self)
         self.events = Events(self)
         self.jobs = Jobs(self)

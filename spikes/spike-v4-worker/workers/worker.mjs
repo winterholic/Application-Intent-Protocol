@@ -24,6 +24,8 @@ function makeCtx(token, job) {
       read: (query) => call("read", query?.read, query),
     },
     http: { call: (name, input, key) => call("http", name, {input,key}) },
+    // durable job 전용: 업무 데이터의 구독자 URL로 서명한 이벤트를 보낸다(access http.<name>, 서버 설정 outbound_webhooks).
+    webhooks: { deliver: (name, url, payload, key) => call("http", name, {input: payload, key, url}) },
     files: { put: (bucket, input, key) => call("files", bucket, {...input,action:"put",key}), get: (bucket, id) => call("files", bucket, {action:"get", id}) },
     events: { publish: (stream, key, payload) => call("events", stream, {key,payload}) },
     messages: { publish: (queue, payload, key) => call("messages", queue, {payload,key}) },

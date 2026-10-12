@@ -12,6 +12,9 @@ external-brokers = ["dep:futures-util", "dep:lapin", "dep:rdkafka"]
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"
+hmac = "0.12.1"
+base64 = "0.22.1"
+url = "2"
 tokio = { version = "1", features = ["time", "net", "rt"] }
 tokio-postgres = { version = "0.7", features = ["with-serde_json-1", "with-uuid-1"] }
 uuid = { version = "1", features = ["v4"] }

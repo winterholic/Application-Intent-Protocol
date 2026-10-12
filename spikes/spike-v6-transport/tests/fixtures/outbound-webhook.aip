@@ -1,0 +1,11 @@
+resource Member { fields { id: Id } }
+actor Member
+operation job notify {
+  input { url: Text; private: Text; failing: Text }
+  output { status: Int; id: Text; same: Bool; privateCode: Text; failingCode: Text }
+  allow actor != null
+  access http.subscribers
+  effect managed
+  deadline 10s
+  implementation "hooks.notify"
+}

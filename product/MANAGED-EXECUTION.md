@@ -231,6 +231,10 @@ endpoint가 OAuth 2.0 access token을 요구하면 `oauth2`를 설정한다. Spr
 - 응답은 provider 재시도 관례를 따른다. 수락 `202`(`{"ok":true,"id":...}`), 서명 실패 `401`, 형식·입력 오류 `400`, 본문 상한 초과 `413`, quota 초과 `429`, DB·주체·배포 문제는 `503`과 `Retry-After`다.
 - 이 route는 세션 rate limit 대상이 아니다. 서명 검증은 DB 접근 전에 끝나지만 provider IP 제한과 본문·연결 상한은 TLS proxy에서 함께 설정한다. 서명 secret은 환경 변수로만 읽고 출력하지 않는다.
 
+**웹훅 발신 (구독자 URL로 전달)**
+
+`workers.outbound_webhooks`에 `{"name":"subscribers","signing_secret_env":"...","timeout_ms":5000,"max_request_bytes":65536}`을 두고 job에 `access http.subscribers`를 선언하면 `ctx.webhooks.deliver(name, url, payload, key)`로 업무 데이터에 저장된 구독자 URL에 보낸다. 요청은 Standard Webhooks 형식(`webhook-id`·`webhook-timestamp`·`webhook-signature: v1,<base64>`)으로 서명하고, `webhook-id`는 run과 effect key에서 만들어 재시도에도 같다. URL은 매번 DNS를 해석해 공개 주소만 허용하며 사설 주소는 설정으로도 열 수 없다(`allow_loopback`은 개발용). 2xx는 journal에 기록하고 같은 key는 재전송하지 않는다. 거부(`DESTINATION_REJECTED`)·비2xx·전송 실패(`DELIVERY_FAILED`)는 기록을 지우고 오류를 돌려주므로 확장이 잡거나 `ctx.retryLater()`로 같은 key를 다시 보낼 수 있다. 수신자는 `webhook-id`로 중복을 걸러야 한다. 구독 관리 resource와 자동 비활성화 정책은 앱 선언으로 둔다.
+
 **전이 commit 뒤 후속 job (outbox 릴레이)**
 
 전이 선언의 `notify <수신자> "<topic>"` 효과는 전이와 같은 transaction에서 `aip_outbox` 행을 남긴다. 전이가 rollback되면 행도 없다. `outbox_handlers`는 이 행을 durable job으로 넘긴다. Spring의 `@TransactionalEventListener(AFTER_COMMIT)`, Django의 `transaction.on_commit`, Rails의 `after_commit` + ActiveJob에 해당하지만, commit 직후 process가 죽어도 행이 남아 있으므로 후속 작업을 잃지 않는다.

@@ -210,6 +210,8 @@ pub struct Workers {
     pub enable_file_uploads: bool,
     #[serde(default)]
     pub integrations: Vec<IntegrationConfig>,
+    #[serde(default)]
+    pub outbound_webhooks: Vec<OutboundWebhookConfig>,
     pub runtime_executable: Option<PathBuf>,
     #[serde(default)]
     pub read_only_paths: Vec<PathBuf>,
@@ -259,6 +261,24 @@ pub enum OAuthClientAuth {
     #[default]
     ClientSecretBasic,
     ClientSecretPost,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OutboundWebhookConfig {
+    pub name: String,
+    pub signing_secret_env: String,
+    #[serde(default = "default_webhook_timeout_ms")]
+    pub timeout_ms: u64,
+    #[serde(default = "default_webhook_body")]
+    pub max_request_bytes: usize,
+    #[serde(default)]
+    pub allow_loopback: bool,
+}
+fn default_webhook_timeout_ms() -> u64 {
+    10_000
+}
+fn default_webhook_body() -> usize {
+    256 * 1024
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -533,11 +553,21 @@ async fn resolve_destination(name: &str, field: &str, raw: &str) -> Result<Vec<S
     Ok(resolved)
 }
 
+#[cfg(test)]
 async fn build_broker(configs: &[IntegrationConfig]) -> Result<Option<Arc<aip_execution::integrations::Broker>>, Value> {
-    if configs.is_empty() {
+    build_broker_with_webhooks(configs, &[]).await
+}
+
+async fn build_broker_with_webhooks(
+    configs: &[IntegrationConfig],
+    webhooks: &[OutboundWebhookConfig],
+) -> Result<Option<Arc<aip_execution::integrations::Broker>>, Value> {
+    if configs.is_empty() && webhooks.is_empty() {
         return Ok(None);
     }
-    let endpoints = with_resolution_deadline(INTEGRATION_DNS_TIMEOUT, resolve_integrations(configs)).await?;
+    let senders = webhooks.iter().map(webhook_sender).collect::<Result<Vec<_>, _>>()?;
+    let endpoints =
+        if configs.is_empty() { Vec::new() } else { with_resolution_deadline(INTEGRATION_DNS_TIMEOUT, resolve_integrations(configs)).await? };
     let broker = aip_execution::integrations::Broker::new(endpoints).map_err(|_| {
         error(
             "INTEGRATION_CONFIG",
@@ -545,7 +575,32 @@ async fn build_broker(configs: &[IntegrationConfig]) -> Result<Option<Arc<aip_ex
              해석된 주소는 공개 주소여야 하고(사설 주소는 allow_private_networks, loopback은 allow_loopback), secret 헤더 이름은 예약어가 아니고, name은 중복되지 않아야 함",
         )
     })?;
+    let broker = broker.with_webhooks(senders).map_err(|_| {
+        error("WEBHOOK_CONFIG", "발신 webhook 설정 검증 실패: name은 외부 연동과 겹치지 않는 1~128자, 서명 secret은 16바이트 이상, timeout_ms는 1~30000, max_request_bytes는 1~1048576이어야 함")
+    })?;
     Ok(Some(Arc::new(broker)))
+}
+
+fn webhook_sender(config: &OutboundWebhookConfig) -> Result<aip_execution::integrations::WebhookSenderConfig, Value> {
+    use base64::Engine;
+    let fail = |step: &str| error("WEBHOOK_CONFIG", &format!("발신 webhook '{}' 검증 실패: {step}", config.name));
+    if !valid_env_name(&config.signing_secret_env) {
+        return Err(fail("signing_secret_env는 대문자·숫자·'_'로 된 환경 변수 이름이어야 함"));
+    }
+    let raw =
+        std::env::var(&config.signing_secret_env).map_err(|_| fail("signing_secret_env가 가리키는 환경 변수가 없음(변수 이름은 출력하지 않음)"))?;
+    // Standard Webhooks secrets are written whsec_<base64>; anything else is used as raw key bytes.
+    let secret = match raw.strip_prefix("whsec_") {
+        Some(encoded) => base64::engine::general_purpose::STANDARD.decode(encoded).map_err(|_| fail("whsec_ secret의 base64가 올바르지 않음"))?,
+        None => raw.into_bytes(),
+    };
+    Ok(aip_execution::integrations::WebhookSenderConfig {
+        name: config.name.clone(),
+        secret,
+        timeout: std::time::Duration::from_millis(config.timeout_ms),
+        max_request_bytes: config.max_request_bytes,
+        allow_loopback: config.allow_loopback,
+    })
 }
 
 async fn with_resolution_deadline<T, F>(deadline: std::time::Duration, future: F) -> Result<T, Value>
@@ -802,7 +857,8 @@ async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
     infrastructure.triggers = Arc::new(built);
     infrastructure.job_policies = triggers::build_job_policies(&config.job_policies).map_err(|message| error("JOB_POLICY_CONFIG", message))?;
     let integrations = config.workers.as_ref().map(|workers| workers.integrations.as_slice()).unwrap_or_default();
-    let broker = build_broker(integrations).await?;
+    let outbound_webhooks = config.workers.as_ref().map(|workers| workers.outbound_webhooks.as_slice()).unwrap_or_default();
+    let broker = build_broker_with_webhooks(integrations, outbound_webhooks).await?;
     let db_url = database_url(&config)?;
     aip_migrate::preflight(&db_url, &config.schema, &facts).await?;
     aip_migrate::bind_wire(&db_url, &config.schema, config.wire.deployment_label()).await?;

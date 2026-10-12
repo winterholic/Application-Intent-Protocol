@@ -1098,7 +1098,8 @@ impl Host {
                 let code = row.get::<_, Value>(2)["code"].as_str().unwrap_or("").to_string();
                 return Err(if op == "apply" { data_error(&code) } else { step_error(&code) });
             }
-            if op == "http" {
+            // A webhook subscriber dedupes on webhook-id, so a delivery whose outcome was lost is sent again.
+            if op == "http" && !self.rt.broker.as_ref().is_some_and(|broker| broker.is_webhook(name)) {
                 return Err("EFFECT_UNKNOWN");
             }
         }
@@ -1175,19 +1176,39 @@ impl Host {
                 json!({"cursor":cursor})
             }
             "http" => {
+                let broker = self.rt.broker.as_ref().ok_or("NOT_EXPOSED")?;
+                let webhook = broker.is_webhook(name).then(|| text(input, "url")).transpose()?;
                 tx.commit().await.map_err(db_error)?;
                 db.release().await.map_err(db_error)?;
-                let key = format!("{}:{effect_key}", self.lease.run_id);
-                let response = self.rt.broker.as_ref().ok_or("NOT_EXPOSED")?.call_with_key(name, &input["input"], Some(&key)).await;
+                // Err(Some(code)) is a certain not-sent (or safely resendable) outcome; Err(None) is unknown.
+                let response: std::result::Result<Value, Option<&'static str>> = if let Some(url) = webhook {
+                    use aip_execution::integrations::Error as E;
+                    // Stable across attempts, so the subscriber's dedupe on webhook-id absorbs a resend.
+                    let id = format!("msg_{}", spike_v1_fixture::digest(&json!([self.lease.run_id.to_string(), effect_key])));
+                    match broker.deliver_webhook(name, url, &input["input"], &id).await {
+                        Ok(status) if (200..300).contains(&status) => Ok(json!({"status":status,"id":id})),
+                        Err(E::DestinationRejected) => Err(Some("DESTINATION_REJECTED")),
+                        Err(E::RequestTooLarge) => Err(Some("BAD_VALUE")),
+                        Ok(_) | Err(_) => Err(Some("DELIVERY_FAILED")),
+                    }
+                } else {
+                    let key = format!("{}:{effect_key}", self.lease.run_id);
+                    match broker.call_with_key(name, &input["input"], Some(&key)).await {
+                        Ok(r) => Ok(json!({"status":r.status,"body":r.body,"retryAfterSeconds":r.retry_after_seconds})),
+                        Err(aip_execution::integrations::Error::CircuitOpen) => Err(Some("CIRCUIT_OPEN")),
+                        Err(aip_execution::integrations::Error::TokenUnavailable) => Err(Some("INTEGRATION_AUTH_FAILED")),
+                        Err(_) => Err(None),
+                    }
+                };
                 let mut db = connect(&self.rt).await?;
                 let tx = db.transaction().await.map_err(db_error)?;
                 guard(&tx, &self.rt, &self.grant).await?;
                 locked_lease(&tx, &self.rt, &self.lease).await?;
                 let result = match response {
-                    Ok(r) => json!({"status":r.status,"body":r.body,"retryAfterSeconds":r.retry_after_seconds}),
-                    Err(rejected @ (aip_execution::integrations::Error::CircuitOpen | aip_execution::integrations::Error::TokenUnavailable)) => {
-                        // Nothing was sent, so drop the intent instead of leaving an unknown effect; the extension can
-                        // catch the code or throw ctx.retryLater() and resend the same key.
+                    Ok(result) => result,
+                    Err(Some(code)) => {
+                        // Drop the intent instead of leaving an unknown effect; the extension can catch the code or
+                        // throw ctx.retryLater() and send the same key again.
                         tx.execute(
                             &format!("DELETE FROM {s}.aip_effects WHERE run_id=$1 AND effect_key=$2 AND state='PENDING'"),
                             &[&self.lease.run_id, &effect_key],
@@ -1196,13 +1217,9 @@ impl Host {
                         .map_err(db_error)?;
                         tx.commit().await.map_err(db_error)?;
                         db.release().await.map_err(db_error)?;
-                        return Err(if rejected == aip_execution::integrations::Error::CircuitOpen {
-                            "CIRCUIT_OPEN"
-                        } else {
-                            "INTEGRATION_AUTH_FAILED"
-                        });
+                        return Err(code);
                     }
-                    Err(_) => {
+                    Err(None) => {
                         tx.execute(
                             &format!("UPDATE {s}.aip_effects SET state='UNKNOWN' WHERE run_id=$1 AND effect_key=$2"),
                             &[&self.lease.run_id, &effect_key],
