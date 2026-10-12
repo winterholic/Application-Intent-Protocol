@@ -90,11 +90,12 @@ impl Store {
                     &[&new.owner, &new.operation, &new.contract, &new.deployment, &new.key],
                 )
                 .await?;
+            // max_attempts is server retry policy, not part of the request. An operator changing it must
+            // not turn a provider's webhook redelivery into a conflict; the stored run keeps its own.
             let same = row.get::<_, String>(1) == input_digest
                 && row.get::<_, String>(2) == new.implementation
                 && row.get::<_, i64>(3) == new.actor
                 && row.get::<_, i64>(4) == new.timeout_ms
-                && row.get::<_, i32>(5) == new.max_attempts
                 && row.get::<_, i64>(6) == new.ttl_ms
                 && row.get::<_, i64>(7) == new.delay_ms;
             if !same {

@@ -178,6 +178,8 @@ pub(crate) async fn listen_with_fingerprint(
         reserved.extend(runtime.infrastructure.file_mounts.iter().map(|mount| mount.prefix.as_str()));
         runtime.infrastructure.triggers.validate(&facts, wire, &reserved).map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?;
     }
+    crate::triggers::validate_job_policies(&runtime.infrastructure.job_policies, &facts)
+        .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?;
     if runtime.db_pool.is_none() {
         let pool = crate::pool::ConnectionPool::new(runtime.db_url.clone(), runtime.infrastructure.db_pool)
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid database pool options"))?;

@@ -6,7 +6,7 @@
 use serde::Deserialize;
 use serde_json::Value;
 use spike_v6_transport::triggers::{
-    MAX_MISFIRE_GRACE, MIN_MISFIRE_GRACE, OutboxHandler, Schedule, ServicePrincipal, Signature, Triggers, Webhook, decode_secret,
+    JobPolicy, MAX_MISFIRE_GRACE, MIN_MISFIRE_GRACE, OutboxHandler, Schedule, ServicePrincipal, Signature, Triggers, Webhook, decode_secret,
 };
 use std::time::Duration;
 
@@ -47,6 +47,27 @@ pub struct OutboxHandlerConfig {
     pub topic: String,
     pub operation: String,
     pub principal: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JobPolicyConfig {
+    pub operation: String,
+    pub max_attempts: i32,
+    #[serde(default)]
+    pub retry_uncaught_errors: bool,
+}
+
+/// Duplicate entries are rejected so one operation never has two silently merged policies.
+pub fn build_job_policies(configs: &[JobPolicyConfig]) -> Result<std::collections::HashMap<String, JobPolicy>, &'static str> {
+    let mut policies = std::collections::HashMap::new();
+    for config in configs {
+        let policy = JobPolicy { max_attempts: config.max_attempts, retry_uncaught: config.retry_uncaught_errors };
+        if policies.insert(config.operation.clone(), policy).is_some() {
+            return Err("job_policies must name each operation once");
+        }
+    }
+    Ok(policies)
 }
 
 #[derive(Deserialize)]
@@ -148,6 +169,16 @@ pub fn build(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn job_policies_name_each_operation_once_and_default_to_retrying_only_on_request() {
+        let configs: Vec<JobPolicyConfig> = serde_json::from_value(serde_json::json!([{"operation":"sync","max_attempts":5}])).expect("config");
+        assert_eq!(build_job_policies(&configs).expect("policy")["sync"], JobPolicy { max_attempts: 5, retry_uncaught: false });
+        let twice: Vec<JobPolicyConfig> =
+            serde_json::from_value(serde_json::json!([{"operation":"sync","max_attempts":5},{"operation":"sync","max_attempts":2}])).expect("config");
+        assert!(build_job_policies(&twice).is_err());
+        assert!(serde_json::from_value::<Vec<JobPolicyConfig>>(serde_json::json!([{"operation":"sync","max_attempts":2,"backoff":1}])).is_err());
+    }
 
     #[test]
     fn reads_secrets_only_from_the_named_variable_and_rejects_bad_values() {

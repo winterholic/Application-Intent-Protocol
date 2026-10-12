@@ -1,0 +1,34 @@
+resource Member { fields { id: Id } }
+actor Member
+operation job flaky {
+  input {}
+  output { attempt: Int; id: Text }
+  allow actor != null
+  effect none
+  deadline 10s
+  implementation "retry.flaky"
+}
+operation job exhausted {
+  input {}
+  output { attempt: Int }
+  allow actor != null
+  effect none
+  deadline 10s
+  implementation "retry.exhausted"
+}
+operation job boom {
+  input {}
+  output { attempt: Int }
+  allow actor != null
+  effect none
+  deadline 10s
+  implementation "retry.boom"
+}
+operation job boomRetry {
+  input {}
+  output { attempt: Int }
+  allow actor != null
+  effect none
+  deadline 10s
+  implementation "retry.boom"
+}

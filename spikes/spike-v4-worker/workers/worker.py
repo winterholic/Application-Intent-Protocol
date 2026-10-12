@@ -57,14 +57,20 @@ class Jobs:
     async def run(self, name, inp, key): return await self.ctx.call("jobs", name, {"input": inp, "key": key})
 
 class Ctx:
-    def __init__(self, token):
+    def __init__(self, token, job=None):
         self.token = token
+        # durable job 전용: 실행 id와 몇 번째 시도인지(1부터). job이 아니면 None이다.
+        self.job = job
         self.data = Data(self)
         self.http = Http(self)
         self.files = Files(self)
         self.events = Events(self)
         self.jobs = Jobs(self)
         self.messages = Messages(self)
+
+    # durable job 전용: `raise ctx.retry_later("이유")`로 같은 job을 backoff 뒤 다시 시도하게 한다.
+    def retry_later(self, reason=None):
+        return AipError("RETRY_LATER")
 
     async def call(self, op, name, inp, **extra):
         global seq
@@ -91,7 +97,7 @@ def load(mod):
 async def run_invoke(m):
     mod, fn = m["impl"].split(".")
     try:
-        out = getattr(load(mod), fn)(m["input"], Ctx(m["token"]))
+        out = getattr(load(mod), fn)(m["input"], Ctx(m["token"], m.get("job")))
         if inspect.isawaitable(out):
             out = await out
         send({"type": "done", "invoke": m["invoke"], "output": out})

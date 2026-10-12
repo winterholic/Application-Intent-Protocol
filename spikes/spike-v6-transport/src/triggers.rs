@@ -52,6 +52,37 @@ pub struct OutboxHandler {
     pub principal: ServicePrincipal,
 }
 
+/// Per-operation retry policy for durable jobs, set in service configuration like Celery `max_retries`
+/// or Sidekiq `retry:`. Every retry replays the effect journal, so it never repeats a recorded effect.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct JobPolicy {
+    /// Total attempts including the first, 1..=10.
+    pub max_attempts: i32,
+    /// Also retry an uncaught extension error (`EXTENSION_ERROR`), not only `ctx.retryLater()`.
+    pub retry_uncaught: bool,
+}
+
+impl Default for JobPolicy {
+    fn default() -> Self {
+        Self { max_attempts: 3, retry_uncaught: false }
+    }
+}
+
+pub const MAX_JOB_ATTEMPTS: i32 = 10;
+
+/// Rejects a policy for an operation that is not a declared job or an attempt count the store refuses.
+pub fn validate_job_policies(policies: &std::collections::HashMap<String, JobPolicy>, facts: &Value) -> Result<(), &'static str> {
+    for (operation, policy) in policies {
+        if facts["operations"][operation]["kind"] != "job" {
+            return Err("job policy operation must be a declared durable job");
+        }
+        if !(1..=MAX_JOB_ATTEMPTS).contains(&policy.max_attempts) {
+            return Err("job policy max_attempts must be between 1 and 10");
+        }
+    }
+    Ok(())
+}
+
 #[derive(Default)]
 pub struct Triggers {
     pub schedules: Vec<Schedule>,

@@ -27,6 +27,7 @@
 | B03 테넌트 격리 | 미지원 | 부분 | 제품 경로 행 정책·기본 거부·trigger 서비스 주체 확인. [결정 문서](tenant-isolation-decision-2026-10-13.md) |
 | B09 Audit Logging | 미지원 | 부분 | 전이마다 같은 문장의 감사 행. `tests/audit.rs`, [OPERATIONS](../../product/OPERATIONS.md#업무-감사-기록) |
 | I02 Metrics | 미지원 | 부분 | token 보호 `/metrics`. [OPERATIONS](../../product/OPERATIONS.md#요청-metrics) |
+| C09 재시도, D08 Retry/Backoff | 부분 / 부분 | 지원 / 지원 | 설정 `job_policies`(1회에서 10회, 미처리 예외 재시도 선택), 확장의 `ctx.retryLater()`, `ctx.job.attempt`. `tests/job_retry.rs`, [재시도 정책](../../product/MANAGED-EXECUTION.md#재시도-정책) |
 
 ## A. 데이터
 
@@ -73,7 +74,7 @@
 | C06 | 업무 규칙 | domain service | 부분 | check/unique/invariant/limit, 특수 규칙은 확장 |
 | C07 | 유효성 검사 | Bean Validation, Pydantic | 부분 | 타입·범위·필수·참조 |
 | C08 | 승인·반려 | workflow 엔진, django-river | 부분 | 전이 조합. 다단계 quorum·기한은 PoC |
-| C09 | 재시도 | Spring Retry, Celery `autoretry_for`, ActiveJob `retry_on` | 부분 | apply 멱등 재생, job 최대 3회·지수 backoff. 정책 선언 없음 |
+| C09 | 재시도 | Spring Retry, Celery `autoretry_for`, ActiveJob `retry_on` | 지원 | apply 멱등 재생. job은 `ctx.retryLater()`·인프라 실패·선택한 미처리 예외를 journal 재생으로 재시도. `tests/job_retry.rs` |
 | C10 | 보상 작업 | saga, Temporal compensation | 확장 | job이 알려진 단계 실패를 받아 보상 전이를 `ctx.data.apply`로 실행. 외부 효과 불확실 시 `EFFECT_UNKNOWN`에서 정지 |
 | C11 | 멱등성 | idempotency key filter | 지원 | apply·job·effect key |
 | C12 | 복합 트랜잭션 | XA/분산 tx(드묾), outbox | 부분 | 같은 DB 쓰기 확장은 원자적. job 단계별 transaction, 분산 원자성 없음 |
@@ -90,7 +91,7 @@
 | D05 | 장기 실행 | batch step, Celery long task | 지원 | job deadline 최대 1시간, heartbeat |
 | D06 | 상태 조회 | JobRunr dashboard, AsyncResult | 지원 | owner 범위 status/result |
 | D07 | 취소 | revoke, job cancel | 지원 | CANCEL_REQUESTED와 미확정 효과 보고 |
-| D08 | Retry/Backoff | `@Retryable`, BullMQ backoff, `retry_on wait:` | 부분 | 고정 3회·지수 backoff. operation별 정책 선언 없음 |
+| D08 | Retry/Backoff | `@Retryable`, BullMQ backoff, `retry_on wait:` | 지원 | 설정 `job_policies`로 job별 1회에서 10회, `retry_uncaught_errors`. backoff는 1초에서 30초 지수 고정(사용자 지정 대기 없음) |
 | D09 | DLQ | SQS DLQ, Sidekiq dead set | 부분 | message queue DLQ·redrive. job은 FAILED 보존뿐 재처리 도구 없음 |
 | D10 | 작업 의존성 | Celery chain/chord, BullMQ flow | 확장 | `ctx.jobs.run` 인라인 자식(depth 8, 호출 64). 독립 lease DAG 없음 |
 | D11 | 병렬 실행 | `@Async`, Celery group | 확장 | worker 내부 병렬. durable fan-out 없음 |
@@ -189,8 +190,8 @@
 
 | 판정 | 개수 |
 |---|---|
-| 지원 | 29 |
-| 부분 | 55 |
+| 지원 | 31 |
+| 부분 | 53 |
 | 확장 | 12 |
 | 미지원 | 9 |
 
@@ -254,7 +255,7 @@
 | 1 | B03 테넌트 격리 | SaaS의 기본 요구. 현재는 predicate 관례에 의존 | [결정 문서](tenant-isolation-decision-2026-10-13.md): 현행 유지 권장, 활성 테넌트(세션 claim)와 생성 경로 Ref 가시성은 창시자 결정 대기 |
 | 2 | B09 Audit | 규제·운영 요구 | 기본 기록은 구현(아래 설계 선택). 남은 것: 조회 CLI, 쓰기 확장 key, 효과 행 |
 | 3 | I02·I03 Metrics·Tracing | 운영 가시성 | metrics는 의존성 없이 기본 빌드에 구현. 남은 것: 내부 상태 metric, `traceparent` 전파, OpenTelemetry exporter(선택 패키지) |
-| 4 | D08·C09 retry 정책 선언 | job별 재시도 횟수·backoff·재시도 대상 오류 | operation job에 `retry { attempts; backoff }` |
+| 4 | ~~D08·C09 retry 정책~~ | 2026-10-13 구현(`job_policies`, `ctx.retryLater`, `ctx.job`) | 남은 것: 확장이 대기 시간을 지정하는 `retryLater(reason, {afterMs})` |
 | 5 | E05 발신 webhook | 고객 구독형 SaaS | PoC `outbound.rs` 서명·재시도·SSRF 규칙을 job effect로 이식 |
 | 6 | F11 circuit breaker, F02 OAuth token | 외부 연동 안정성 | integration 설정에 breaker·token provider |
 | 7 | H04 데이터 변경 push | 협업 UI | PoC subscribe의 재조회·가시성 재평가 모델 이식 |

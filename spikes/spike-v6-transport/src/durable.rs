@@ -75,6 +75,17 @@ fn declares_message_access(facts: &Value) -> bool {
 fn should_cleanup_messages(messaging_enabled: bool, facts: &Value) -> bool {
     messaging_enabled && declares_message_access(facts)
 }
+fn policy(rt: &Runtime, operation: &str) -> crate::triggers::JobPolicy {
+    rt.infrastructure.job_policies.get(operation).copied().unwrap_or_default()
+}
+
+/// Infrastructure failures always retry. Extension failures retry only when the extension asked for it
+/// (`RETRY_LATER`) or the operator opted the job into retrying uncaught errors. Contract, permission,
+/// cost and uncertain-effect errors never retry because another attempt would not change them.
+fn retryable(rt: &Runtime, operation: &str, code: &str) -> bool {
+    matches!(code, "WORKER_FAILED" | "DB_UNAVAILABLE" | "RETRY_LATER") || (code == "EXTENSION_ERROR" && policy(rt, operation).retry_uncaught)
+}
+
 fn schema(rt: &Runtime) -> Result<&str> {
     rt.deployment.as_ref().map(|f| f.schema.as_str()).ok_or("NOT_AVAILABLE")
 }
@@ -290,7 +301,7 @@ async fn submit(
                 input: input.clone(),
                 key: key.into(),
                 timeout_ms: facts["operations"][name]["deadlineMs"].as_i64().ok_or("BAD_CONFIGURATION")?,
-                max_attempts: 3,
+                max_attempts: policy(rt, name).max_attempts,
                 ttl_ms: 86_400_000,
                 delay_ms: delay,
             },
@@ -887,7 +898,7 @@ async fn execute(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire, lease: Lease
     .await;
     let updated = match settled {
         Ok(out) => store.finish(&tx, &lease, out).await,
-        Err(code) if code == "WORKER_FAILED" || code == "DB_UNAVAILABLE" => store.retry(&tx, &lease, code).await,
+        Err(code) if retryable(&rt, &lease.operation, code) => store.retry(&tx, &lease, code).await,
         Err(code) => store.fail(&tx, &lease, code).await,
     };
     if !matches!(updated, Ok(true)) {
@@ -919,6 +930,9 @@ impl spike_v4_worker::JobHost for Host {
         input: &'a Value,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = std::result::Result<Value, Reject>> + Send + 'a>> {
         Box::pin(async move { self.dispatch(op, name, input).await.map_err(|code| Reject { code, msg: "managed capability 호출 거부".into() }) })
+    }
+    fn job(&self) -> Value {
+        json!({"id": self.lease.run_id.to_string(), "attempt": self.lease.attempt})
     }
 }
 impl Host {

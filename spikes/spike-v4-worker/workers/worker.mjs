@@ -8,7 +8,7 @@ const pending = new Map();
 let seq = 0;
 const send = (m) => process.stdout.write(JSON.stringify(m) + "\n");
 
-function makeCtx(token) {
+function makeCtx(token, job) {
   const call = (op, name, input) =>
     new Promise((resolve, reject) => {
       const id = ++seq;
@@ -28,6 +28,10 @@ function makeCtx(token) {
     events: { publish: (stream, key, payload) => call("events", stream, {key,payload}) },
     messages: { publish: (queue, payload, key) => call("messages", queue, {payload,key}) },
     jobs: { run: (name, input, key) => call("jobs", name, {input,key}) },
+    // durable job 전용: 실행 id와 몇 번째 시도인지(1부터). job이 아니면 null이다.
+    job: job ?? null,
+    // durable job 전용: `throw ctx.retryLater("이유")`로 같은 job을 backoff 뒤 다시 시도하게 한다.
+    retryLater: (reason) => Object.assign(new Error(String(reason ?? "RETRY_LATER")), { code: "RETRY_LATER" }),
     // 시험용: 서버가 허용하지 않은 원시 요청을 보내 본다.
     _raw: (m) => new Promise((resolve, reject) => { const id = ++seq; pending.set(id, { resolve, reject }); send({ ...m, type: "call", call: id, token }); }),
   };
@@ -47,7 +51,7 @@ rl.on("line", async (line) => {
     const [mod, fn] = m.impl.split(".");
     try {
       const ext = await import(pathToFileURL(path.join(extDir, `${mod}.mjs`)).href);
-      const out = await ext[fn](m.input, makeCtx(m.token));
+      const out = await ext[fn](m.input, makeCtx(m.token, m.job));
       send({ type: "done", invoke: m.invoke, output: out });
     } catch (e) {
       send({ type: "done", invoke: m.invoke, error: { code: e.code ?? "EXTENSION_ERROR", message: String(e.message ?? e) } });

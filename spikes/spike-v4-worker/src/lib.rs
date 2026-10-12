@@ -432,6 +432,10 @@ pub trait JobHost: Send {
         name: &'a str,
         input: &'a Value,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, Reject>> + Send + 'a>>;
+    /// Run identity the extension sees as `ctx.job` (e.g. `{id, attempt}`), so a retry can tell itself apart.
+    fn job(&self) -> Value {
+        Value::Null
+    }
 }
 
 pub fn validate_job(facts: &Value, name: &str, input: &Value, wire: IdWire) -> Result<(), Reject> {
@@ -489,9 +493,11 @@ async fn invoke_contract(
     let token = grant_token('g', invoke_id);
     let expires = Instant::now() + deadline;
     w.tokens.insert(token.clone(), Grant { actor_id: caller.actor_id, now: caller.now.clone(), access, id_wire: wire, expires, active: true });
-    if let Err(error) =
-        w.send_before(&json!({ "type": "invoke", "invoke": invoke_id, "impl": x["implementation"], "input": input, "token": token }), expires).await
-    {
+    let mut invoke = json!({ "type": "invoke", "invoke": invoke_id, "impl": x["implementation"], "input": input, "token": token });
+    if let Some(host) = host.as_deref() {
+        invoke["job"] = host.job();
+    }
+    if let Err(error) = w.send_before(&invoke, expires).await {
         w.retire(&token);
         return Err(error);
     }
@@ -573,6 +579,10 @@ async fn invoke_contract(
             }
             Some("done") if m["invoke"] == json!(invoke_id) => {
                 if let Some(e) = m.get("error") {
+                    // Only a durable job can be retried, so only there does the explicit request keep its code.
+                    if host.is_some() && e["code"] == "RETRY_LATER" {
+                        break rej("RETRY_LATER", "확장이 job 재시도를 요청함");
+                    }
                     break rej("EXTENSION_ERROR", format!("확장 실패: {}", e["code"].as_str().unwrap_or("?")));
                 }
                 // 기한 뒤 도착한 완료는 성공으로 전달하지 않는다(F05).

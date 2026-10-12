@@ -168,6 +168,8 @@ pub struct Config {
     pub webhooks: Vec<triggers::WebhookConfig>,
     #[serde(default)]
     pub outbox_handlers: Vec<triggers::OutboxHandlerConfig>,
+    #[serde(default)]
+    pub job_policies: Vec<triggers::JobPolicyConfig>,
     pub metrics: Option<infrastructure::MetricsConfig>,
 }
 #[derive(Deserialize)]
@@ -617,6 +619,7 @@ async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
         triggers::build(&config.schedules, &config.webhooks, &config.outbox_handlers, &config.auth.issuer, &|name| std::env::var(name).ok())
             .map_err(|message| error("TRIGGER_CONFIG", message))?,
     );
+    infrastructure.job_policies = triggers::build_job_policies(&config.job_policies).map_err(|message| error("JOB_POLICY_CONFIG", message))?;
     let integrations = config.workers.as_ref().map(|workers| workers.integrations.as_slice()).unwrap_or_default();
     let broker = build_broker(integrations).await?;
     let db_url = database_url(&config)?;

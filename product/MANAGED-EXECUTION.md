@@ -238,9 +238,32 @@ export async function fulfil(input, ctx) {
 - 설정한 topic은 정의의 `notify` 효과가 실제로 내보내는 것이어야 하고, job 입력은 정확히 `{ event: Text }`여야 한다.
 - `aip_outbox`는 아직 자동 정리하지 않으며 처리 대상 조회는 미처리 행 anti-join이다. outbox가 매우 커지는 서비스는 보존 정책을 별도로 정해야 한다.
 
+## 재시도 정책
+
+job은 다음 경우에만 같은 run을 다시 시도한다. 시도 사이는 1초부터 두 배씩 늘려 최대 30초를 기다린다(exponential backoff).
+
+| 실패 | 재시도 | 이유 |
+|---|---|---|
+| worker 비정상 종료(`WORKER_FAILED`), DB 장애(`DB_UNAVAILABLE`) | 항상 | 인프라 실패라 다시 하면 결과가 달라질 수 있다 |
+| 확장이 `throw ctx.retryLater("이유")`(Python `raise ctx.retry_later("이유")`)로 요청 | 항상 | 외부 서비스 준비 대기, rate limit 같은 일시 실패를 확장이 알고 있다. Celery `self.retry()`, ActiveJob `retry_job`에 해당한다 |
+| 잡지 않은 확장 예외(`EXTENSION_ERROR`) | 설정한 job만 | Sidekiq처럼 모든 예외를 재시도하면 코드 버그가 비용만 늘린다. 운영자가 `retry_uncaught_errors`로 고른다 |
+| 계약·권한·비용·`EFFECT_UNKNOWN`·배포 변경 | 안 함 | 다시 시도해도 결과가 같거나, 외부 효과를 반복할 위험이 있다 |
+
+재시도는 effect journal을 재생하므로 이미 기록된 파일·이벤트·메시지·HTTP·데이터 전이를 반복하지 않는다. 확장은 `ctx.job`(`{id, attempt}`, attempt는 1부터)으로 몇 번째 시도인지 알 수 있다. 시도 횟수는 서비스 설정으로 job마다 정한다. 기본은 3회, 최대 10회다.
+
+```json
+{"job_policies":[{"operation":"syncOrders","max_attempts":6,"retry_uncaught_errors":true}]}
+```
+
+- 시도를 다 쓰면 `FAILED`가 되고 `error`에 마지막 실패 코드(`RETRY_LATER` 등)가 남는다.
+- 정책은 job을 수락할 때 run에 기록한다. 운영자가 정책을 바꿔도 이미 수락한 run은 원래 횟수를 쓰고, 같은 key 재요청은 기존 run을 돌려준다(충돌이 아니다).
+- 정의에 없는 operation이나 job이 아닌 operation, 1회 미만·10회 초과는 서버 시작 시 거부한다. 같은 operation을 두 번 적어도 거부한다.
+- 자식 `ctx.jobs.run`이 `retryLater`를 던지면 부모는 `STEP_FAILED`를 받는다. 부모가 다시 `ctx.retryLater()`를 던져야 run 전체가 재시도된다.
+- 시도 횟수를 정의 문법이 아니라 서비스 설정에 둔 이유: 재시도 횟수는 업무 의미가 아니라 운영 조정값이고 환경마다 다를 수 있다. 스케줄·webhook과 같은 위치에 두어 정의 문법을 늘리지 않았다. 재시도 여부를 고르는 판단(`retryLater`)은 업무 코드가 하므로 확장 코드에 둔다.
+
 ## 저장과 운영 경계
 
-- Job 수락, 상태, lease, 실행 결과와 effect journal은 PostgreSQL에 영속화된다. 입력·출력 JSON은 각각 최대 1MiB, 선언 deadline은 최대 1시간, 요청 지연은 최대 24시간이다. 기본 최대 시도는 3회이고 시도별 lease는 30초 단위 heartbeat를 사용한다. 선언 deadline과 전체 run deadline을 넘긴 실행은 완료로 기록할 수 없다. active job은 owner당 100개, 보존 job metadata는 owner당 10,000개로 제한된다.
+- Job 수락, 상태, lease, 실행 결과와 effect journal은 PostgreSQL에 영속화된다. 입력·출력 JSON은 각각 최대 1MiB, 선언 deadline은 최대 1시간, 요청 지연은 최대 24시간이다. 기본 최대 시도는 3회(설정으로 1회에서 10회, [재시도 정책](#재시도-정책))이고 시도별 lease는 30초 단위 heartbeat를 사용한다. 선언 deadline과 전체 run deadline을 넘긴 실행은 완료로 기록할 수 없다. active job은 owner당 100개, 보존 job metadata는 owner당 10,000개로 제한된다.
 - 성공/실패 결과와 effect result는 완료 후 24시간 보존한다. 60초마다 collector가 advisory lock을 얻은 한 인스턴스만 GC를 실행한다. 만료 job payload·effect result·파일을 종류별 최대 1,000개씩, 완료 job metadata는 최대 100개씩 지우며 해당 job의 effect metadata도 함께 정리한다. 결과 만료 30일 뒤 metadata를 제거하며 그 후 같은 Job key는 새 수락에 재사용될 수 있다.
 - 기존 `/files/*` 관리 파일 bytes는 PostgreSQL `bytea`에 보관한다. 별도 `/objects/*` 대용량 저장은 [서버 인프라](INFRASTRUCTURE.md)를 따른다. owner당 live object 최대 100개·총 10MiB, object 상한 767KiB다. 같은 effect의 재실행은 안정 key, run/effect scope와 이름을 이용해 같은 content를 복구한다. 만료 시각은 실행 중 생성 파일의 경우 run deadline + 24시간, 직접 SDK 업로드의 경우 생성 시각 + 24시간이다. 이 기능은 대용량 업로드 저장소를 대체하지 않는다.
 - Event는 owner+stream 순서의 append-only cursor를 제공하고 payload는 최대 64KiB, page aggregate는 최대 1MiB다. stream당 최근 1,000개 payload만 재생할 수 있으며 key ledger는 재생 구간 밖에서도 중복 발행을 막는다. 이 key ledger에는 자동 만료가 없으므로 운영자는 장기 저장 증가를 고려해야 한다. 만료된 cursor에 대해 빈 성공을 반환하지 않는다. SSE/WebSocket 전송을 지원한다. 외부 broker relay와 일반 webhook delivery는 아직 없다.
