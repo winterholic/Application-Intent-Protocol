@@ -90,15 +90,16 @@ pub fn db_error(program: &Program, intent: &str, e: &tokio_postgres::Error) -> A
             let name = db.constraint().unwrap_or_default();
             match lookup(name) {
                 Some(spec) => from_spec(spec, db.message()),
-                None if code == "23505" => AipError::new(codes::CONFLICT_UNIQUE, intent, db.message()),
-                None => AipError::new(codes::INVARIANT_VIOLATED, intent, db.message()),
+                // The database message names the constraint and table; the caller gets the class of failure only.
+                None if code == "23505" => AipError::new(codes::CONFLICT_UNIQUE, intent, "a unique constraint is violated"),
+                None => AipError::new(codes::INVARIANT_VIOLATED, intent, "a constraint is violated"),
             }
         }
         "P0001" => {
             let name = db.message().strip_prefix("aip:").unwrap_or(db.message());
             match lookup(name) {
                 Some(spec) => from_spec(spec, name),
-                None => AipError::new(codes::INVARIANT_VIOLATED, intent, db.message()),
+                None => AipError::new(codes::INVARIANT_VIOLATED, intent, "a constraint is violated"),
             }
         }
         "23503" => {
@@ -109,7 +110,10 @@ pub fn db_error(program: &Program, intent: &str, e: &tokio_postgres::Error) -> A
             }
         }
         "23502" => AipError::new(codes::INPUT_INVALID, intent, format!("missing value for {}", db.column().unwrap_or("a required field"))),
-        "22P02" | "22007" | "22008" | "22003" => AipError::new(codes::INPUT_INVALID, intent, db.message()),
+        "22P02" | "22007" | "22008" | "22003" | "22021" => {
+            AipError::new(codes::INPUT_INVALID, intent, "a value has the wrong format or is out of range")
+        }
+        "57014" => AipError::new(codes::UNAVAILABLE, intent, "the query took too long"),
         "40001" | "40P01" => AipError::new(codes::CONCURRENCY_CONFLICT, intent, "concurrent update; retry").retryable(),
         _ => {
             tracing::error!(intent, sqlstate = code, error = %db.message(), "unexpected database error");

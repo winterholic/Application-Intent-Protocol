@@ -98,6 +98,10 @@ pub fn value(ctx: &Ctx<'_>, ty: &TypeSpec, v: Value, path: &str) -> Result<Value
         }
         TypeSpec::Text { min, max, trim, lower, pattern } => {
             let mut s = v.as_str().ok_or_else(|| bad(ctx, path, "must be a string"))?.to_string();
+            // PostgreSQL cannot store NUL in text; letting it through ends as an internal database error.
+            if s.contains('\0') {
+                return Err(bad(ctx, path, "must not contain NUL"));
+            }
             if *trim {
                 s = s.trim().to_string();
             }
@@ -256,6 +260,13 @@ mod tests {
 
     fn money() -> TypeSpec {
         TypeSpec::Money { currency: "KRW".into() }
+    }
+
+    #[test]
+    fn text_with_a_nul_is_rejected_before_it_reaches_the_database() {
+        let text = TypeSpec::Text { min: None, max: None, trim: false, lower: false, pattern: None };
+        assert!(check(&text, json!("a\u{0}b")).is_err());
+        assert_eq!(check(&text, json!("ab")).expect("plain text is valid"), json!("ab"));
     }
 
     #[test]

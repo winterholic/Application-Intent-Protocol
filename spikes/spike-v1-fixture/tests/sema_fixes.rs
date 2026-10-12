@@ -64,7 +64,9 @@ fn count_invariants_use_locked_checks_but_time_dependent_conditions_are_rejected
 #[test]
 fn bulk_max_rows_has_an_upper_bound() {
     const DOMAINS: &str = include_str!("../fixture/oss-business-domains.aip");
-    let with = |n: i64| DOMAINS.replacen("expose apply sell { target id; bulk maxRows 1 }", &format!("expose apply sell {{ target id; bulk maxRows {n} }}"), 1);
+    let with = |n: i64| {
+        DOMAINS.replacen("expose apply sell { target id; bulk maxRows 1 }", &format!("expose apply sell {{ target id; bulk maxRows {n} }}"), 1)
+    };
     assert_eq!(codes(&with(10_000)), vec!["OK".to_string()]);
     for n in [10_001, i64::MAX] {
         let c = codes(&with(n));

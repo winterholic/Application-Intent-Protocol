@@ -227,7 +227,11 @@ async fn run_job(engine: &Engine, plan: &Job, job: &Claimed) -> Result<(), Strin
 fn csv_line(cells: &[String]) -> String {
     let mut out = cells
         .iter()
-        .map(|c| if c.contains([',', '"', '\n', '\r']) { format!("\"{}\"", c.replace('"', "\"\"")) } else { c.clone() })
+        .map(|c| {
+            // A cell that starts like a formula runs in Excel and Sheets when the export is opened; a leading quote keeps it text.
+            let c = if c.starts_with(['=', '+', '-', '@', '\t', '\r']) { format!("'{c}") } else { c.clone() };
+            if c.contains([',', '"', '\n', '\r']) { format!("\"{}\"", c.replace('"', "\"\"")) } else { c }
+        })
         .collect::<Vec<_>>()
         .join(",");
     out.push_str("\r\n");
@@ -239,5 +243,9 @@ mod tests {
     #[test]
     fn csv_quoting() {
         assert_eq!(super::csv_line(&["a".into(), "b,c".into(), "say \"hi\"".into()]), "a,\"b,c\",\"say \"\"hi\"\"\"\r\n");
+        assert_eq!(
+            super::csv_line(&["=HYPERLINK(\"x\")".into(), "+1".into(), "-1".into(), "@SUM(A1)".into(), "ok".into()]),
+            "\"'=HYPERLINK(\"\"x\"\")\",'+1,'-1,'@SUM(A1),ok\r\n"
+        );
     }
 }

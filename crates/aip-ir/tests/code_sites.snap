@@ -105,7 +105,7 @@ SCHEMA_UNSUPPORTED evolve.rs=3
 SUBSCRIPTION_LIMIT lib.rs=1 subscribe.rs=2
 SUBSCRIPTION_TOO_LARGE lib.rs=1 subscribe.rs=1
 TENANT_MISMATCH exec.rs=1 facts.rs=1 tenant.rs=2
-UNAVAILABLE engine.rs=1 exec.rs=1 subscribe.rs=2
+UNAVAILABLE engine.rs=1 exec.rs=2 subscribe.rs=2
 W402 analyze.rs=3
 W403 analyze.rs=2
 W404 analyze.rs=2

@@ -272,6 +272,8 @@ impl Engine {
             .start()
             .await
             .map_err(|e| exec::db_error(&self.program, &q.name, &e))?;
+        // A read has no deadline of its own otherwise: one expensive query pins a connection until the client gives up.
+        tx.batch_execute("SET LOCAL statement_timeout = '10s'").await.map_err(|e| exec::db_error(&self.program, &q.name, &e))?;
         let uploads = HashMap::new();
         let mut ctx = ExecCtx {
             program: &self.program,
