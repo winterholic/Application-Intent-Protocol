@@ -24,8 +24,11 @@ impl Drop for TempDir {
 }
 
 fn getrandom_id() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos() as u64
+    // The clock alone has microsecond granularity on macOS; tests starting together then shared one directory and one test's Drop deleted the other's files.
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos() as u64 ^ (NEXT.fetch_add(1, Ordering::SeqCst) << 48)
 }
 
 async fn get(mount: StaticMount, method: &str, target: &str, headers: &[(&str, &str)]) -> Vec<u8> {
