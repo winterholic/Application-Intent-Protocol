@@ -163,6 +163,21 @@ for await (const event of client.events.watch("notifications", { after: "0", int
 
 secret은 명시한 process environment variable에서만 읽고 `.env`는 불러오지 않는다. startup은 DNS를 최대 2초 동안 조회하고 결과 주소를 고정한다. HTTPS를 사용하며 기본적으로 private/special-use 주소와 redirect, proxy를 차단한다. 서버 endpoint별 `allow_private_networks:true`는 사설 unicast HTTPS 연동을 허용하지만 link-local 등 특수 주소는 계속 거부한다. 명시적으로 `allow_loopback:true`인 개발 설정만 loopback HTTP를 쓸 수 있다. endpoint, DNS 답, method, 제한값, secret의 digest가 implementation bundle fingerprint에 포함되므로 값이 바뀐 worker 설정으로 기존 job을 이어 실행하지 않는다. 설정 오류 출력은 endpoint URL이나 secret 값을 노출하지 않는다.
 
+### Circuit breaker
+
+endpoint마다 `circuit_breaker`를 설정하면 Resilience4j·opossum과 같은 방식으로 장애 provider에 요청을 계속 보내지 않는다.
+
+```json
+{"name":"crm","url":"https://crm.example/v1/tickets","method":"POST","timeout_ms":5000,
+ "max_request_bytes":65536,"max_response_bytes":65536,
+ "circuit_breaker":{"failure_threshold":5,"open_ms":30000}}
+```
+
+- 연속 `failure_threshold`회(1회에서 1000회) 연결 실패나 5xx 응답이 나면 `open_ms`(최대 1시간) 동안 그 endpoint로 요청을 보내지 않는다. 5xx 응답 자체는 지금처럼 확장에 status로 돌려준다.
+- 열린 동안의 `ctx.http.call`은 `CIRCUIT_OPEN`을 던진다. 요청을 보내지 않은 것이 확실하므로 effect journal에 기록을 남기지 않고, `EFFECT_UNKNOWN`과 달리 확장이 잡아서 분기하거나 `throw ctx.retryLater()`로 같은 key를 나중에 다시 보낼 수 있다. 이미 journal에 기록된 같은 key 호출은 circuit과 무관하게 재생된다.
+- `open_ms`가 지나면 요청 하나만 시험으로 보낸다(half-open). 성공하면 닫고, 실패하면 다시 연다. 시험 요청이 끝나지 않으면 `open_ms` 뒤에 다른 시험을 허용한다.
+- 상태는 서버 process마다 따로 둔다. 여러 instance가 상태를 공유하지 않는다. 설정값은 요청의 의미를 바꾸지 않으므로 implementation fingerprint에 넣지 않는다.
+
 ## 스케줄과 웹훅 수신
 
 요청한 사용자가 없는 작업(정기 정산, 외부 서비스 webhook 처리)은 서비스 설정의 `schedules`, `webhooks`로 선언한다. 둘 다 별도 controller 없이 durable job을 수락하며, 운영자가 `aip service principal bind`로 등록한 **서비스 주체**로 실행한다. job은 사용자가 수락한 job과 같은 배포 fence, 주체 활성 검사, operation `allow`, capability 선언, 비용 상한을 거친다. 서비스 주체를 `revoke`하거나 비활성화하면 다음 trigger부터 수락하지 않는다.

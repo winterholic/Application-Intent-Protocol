@@ -16,6 +16,7 @@ fn config(url: String, resolved: Vec<SocketAddr>, allow_loopback: bool) -> Endpo
         resolved,
         allow_loopback,
         allow_private_networks: false,
+        circuit_breaker: None,
     }
 }
 
@@ -193,4 +194,57 @@ fn read_request(stream: &mut std::net::TcpStream) -> String {
     stream.read_exact(&mut body).unwrap();
     bytes.extend_from_slice(&body);
     String::from_utf8_lossy(&bytes).into_owned()
+}
+
+#[tokio::test]
+async fn circuit_breaker_stops_sending_after_consecutive_failures_and_closes_after_a_good_trial() {
+    use aip_execution::integrations::{CircuitBreaker, Error};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    };
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let requests = Arc::new(AtomicUsize::new(0));
+    let healthy = Arc::new(AtomicBool::new(false));
+    let (seen, ok) = (requests.clone(), healthy.clone());
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let mut stream = stream.unwrap();
+            let mut buffer = [0_u8; 4096];
+            let _ = stream.read(&mut buffer);
+            seen.fetch_add(1, Ordering::SeqCst);
+            let status = if ok.load(Ordering::SeqCst) { "200 OK" } else { "503 Service Unavailable" };
+            let _ = stream.write_all(
+                format!("HTTP/1.1 {status}\r\ncontent-type: application/json\r\nconnection: close\r\ncontent-length: 2\r\n\r\n{{}}").as_bytes(),
+            );
+        }
+    });
+    let mut endpoint = config(format!("http://127.0.0.1:{}/hook", address.port()), vec![address], true);
+    endpoint.secret_header = None;
+    endpoint.circuit_breaker = Some(CircuitBreaker { failure_threshold: 2, open_for: Duration::from_millis(300) });
+    let broker = Broker::new(vec![endpoint]).unwrap();
+
+    // A 5xx is still returned to the caller; it only counts toward opening the circuit.
+    assert_eq!(broker.call("crm.createTicket", &json!({})).await.unwrap().status, 503);
+    assert_eq!(broker.call("crm.createTicket", &json!({})).await.unwrap().status, 503);
+    assert_eq!(broker.call("crm.createTicket", &json!({})).await, Err(Error::CircuitOpen));
+    assert_eq!(requests.load(Ordering::SeqCst), 2, "an open circuit must not contact the provider");
+
+    // After the open period one trial goes through; a failing trial reopens the circuit.
+    tokio::time::sleep(Duration::from_millis(350)).await;
+    assert_eq!(broker.call("crm.createTicket", &json!({})).await.unwrap().status, 503);
+    assert_eq!(broker.call("crm.createTicket", &json!({})).await, Err(Error::CircuitOpen));
+    assert_eq!(requests.load(Ordering::SeqCst), 3);
+
+    // A successful trial closes it again.
+    healthy.store(true, Ordering::SeqCst);
+    tokio::time::sleep(Duration::from_millis(350)).await;
+    assert_eq!(broker.call("crm.createTicket", &json!({})).await.unwrap().status, 200);
+    assert_eq!(broker.call("crm.createTicket", &json!({})).await.unwrap().status, 200);
+    assert_eq!(requests.load(Ordering::SeqCst), 5);
+
+    let mut invalid = config("https://api.example/v1".into(), vec!["1.1.1.1:443".parse().unwrap()], false);
+    invalid.circuit_breaker = Some(CircuitBreaker { failure_threshold: 0, open_for: Duration::from_secs(1) });
+    assert!(Broker::new(vec![invalid]).is_err());
 }

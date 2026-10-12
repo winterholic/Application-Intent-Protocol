@@ -235,6 +235,14 @@ pub struct IntegrationConfig {
     pub allow_loopback: bool,
     #[serde(default)]
     pub allow_private_networks: bool,
+    #[serde(default)]
+    pub circuit_breaker: Option<CircuitBreakerConfig>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CircuitBreakerConfig {
+    pub failure_threshold: u32,
+    pub open_ms: u64,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -381,6 +389,15 @@ fn integration_shape_problem(item: &IntegrationConfig) -> Option<String> {
     if item.secret_header_env.as_ref().is_some_and(|secret| !valid_env_name(&secret.env)) {
         return Some(format!("'{name}': secret_header_env.env는 대문자·숫자·'_'로 된 환경 변수 이름이어야 함"));
     }
+    if let Some(breaker) = &item.circuit_breaker {
+        let max_open = aip_execution::integrations::MAX_BREAKER_OPEN.as_millis();
+        if breaker.failure_threshold == 0 || breaker.failure_threshold > aip_execution::integrations::MAX_BREAKER_THRESHOLD {
+            return Some(format!("'{name}': circuit_breaker.failure_threshold는 1~1000이어야 함(받은 값 {})", breaker.failure_threshold));
+        }
+        if breaker.open_ms == 0 || u128::from(breaker.open_ms) > max_open {
+            return Some(format!("'{name}': circuit_breaker.open_ms는 1~{max_open}이어야 함(받은 값 {})", breaker.open_ms));
+        }
+    }
     None
 }
 
@@ -448,6 +465,10 @@ async fn resolve_integrations(configs: &[IntegrationConfig]) -> Result<Vec<aip_e
             resolved,
             allow_loopback: config.allow_loopback,
             allow_private_networks: config.allow_private_networks,
+            circuit_breaker: config.circuit_breaker.as_ref().map(|breaker| aip_execution::integrations::CircuitBreaker {
+                failure_threshold: breaker.failure_threshold,
+                open_for: std::time::Duration::from_millis(breaker.open_ms),
+            }),
         });
     }
     Ok(endpoints)
@@ -916,6 +937,7 @@ mod managed_config_tests {
             secret_header_env: None,
             allow_loopback: false,
             allow_private_networks: false,
+            circuit_breaker: None,
         };
         let error = validate_integrations_shape(&[item("crm", 90_000)]).unwrap_err();
         let message = error["message"].as_str().expect("message");

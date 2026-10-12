@@ -7,7 +7,8 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
-use std::time::Duration;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 pub const MAX_BODY_BYTES: usize = 1024 * 1024;
 pub const MAX_TIMEOUT: Duration = Duration::from_secs(30);
@@ -22,6 +23,66 @@ pub enum Error {
     ResponseTooLarge,
     InvalidJsonResponse,
     Transport(String),
+    /// The endpoint's circuit breaker is open, so the request was not sent. Unlike a transport
+    /// error this outcome is certain, so a durable caller can retry it without reconciliation.
+    CircuitOpen,
+}
+
+/// Per-endpoint circuit breaker, like Resilience4j or opossum, kept per server process.
+/// Consecutive transport failures or 5xx responses open it; after `open_for` one trial request
+/// is let through (half-open) and its outcome closes or reopens the circuit.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CircuitBreaker {
+    pub failure_threshold: u32,
+    pub open_for: Duration,
+}
+
+pub const MAX_BREAKER_THRESHOLD: u32 = 1000;
+pub const MAX_BREAKER_OPEN: Duration = Duration::from_secs(3600);
+
+enum BreakerState {
+    Closed {
+        failures: u32,
+    },
+    Open {
+        until: Instant,
+    },
+    /// A trial request is in flight. If it never reports (its future was dropped), another trial
+    /// is allowed after `open_for`, so a lost trial cannot hold the circuit open forever.
+    HalfOpen {
+        trial_expires: Instant,
+    },
+}
+
+struct Breaker {
+    config: CircuitBreaker,
+    state: Mutex<BreakerState>,
+}
+
+impl Breaker {
+    fn admit(&self) -> bool {
+        let now = Instant::now();
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        match *state {
+            BreakerState::Closed { .. } => true,
+            BreakerState::Open { until } | BreakerState::HalfOpen { trial_expires: until } if now < until => false,
+            _ => {
+                *state = BreakerState::HalfOpen { trial_expires: now + self.config.open_for };
+                true
+            }
+        }
+    }
+
+    fn record(&self, failed: bool) {
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        *state = match (&*state, failed) {
+            (_, false) => BreakerState::Closed { failures: 0 },
+            (BreakerState::Closed { failures }, true) if failures + 1 < self.config.failure_threshold => {
+                BreakerState::Closed { failures: failures + 1 }
+            }
+            (_, true) => BreakerState::Open { until: Instant::now() + self.config.open_for },
+        };
+    }
 }
 
 /// Trusted server configuration, built at startup. `resolved` must contain the
@@ -39,6 +100,8 @@ pub struct EndpointConfig {
     pub allow_loopback: bool,
     /// Explicitly permits private unicast and loopback destinations for this endpoint.
     pub allow_private_networks: bool,
+    /// Not part of the fingerprint: it changes when requests are sent, not what a request means.
+    pub circuit_breaker: Option<CircuitBreaker>,
 }
 
 struct Endpoint {
@@ -49,6 +112,7 @@ struct Endpoint {
     max_response_bytes: usize,
     secret_header: Option<(HeaderName, HeaderValue)>,
     client: Client,
+    breaker: Option<Breaker>,
 }
 
 pub struct Broker {
@@ -118,12 +182,23 @@ impl Broker {
         if let Some(key) = key {
             request = request.header("Idempotency-Key", effect_key(name, key));
         }
-        let response = request.send().await.map_err(|error| Error::Transport(error.to_string()))?;
-        let status = response.status();
-        let retry_after_seconds = response.headers().get(RETRY_AFTER).and_then(parse_retry_after);
-        let body = read_bounded(response, endpoint.max_response_bytes).await?;
-        let value = if body.is_empty() { Value::Null } else { serde_json::from_slice(&body).map_err(|_| Error::InvalidJsonResponse)? };
-        Ok(IntegrationResponse { status: status.as_u16(), body: value, retry_after_seconds })
+        if endpoint.breaker.as_ref().is_some_and(|breaker| !breaker.admit()) {
+            return Err(Error::CircuitOpen);
+        }
+        let outcome = async {
+            let response = request.send().await.map_err(|error| Error::Transport(error.to_string()))?;
+            let status = response.status();
+            let retry_after_seconds = response.headers().get(RETRY_AFTER).and_then(parse_retry_after);
+            let body = read_bounded(response, endpoint.max_response_bytes).await?;
+            let value = if body.is_empty() { Value::Null } else { serde_json::from_slice(&body).map_err(|_| Error::InvalidJsonResponse)? };
+            Ok(IntegrationResponse { status: status.as_u16(), body: value, retry_after_seconds })
+        }
+        .await;
+        if let Some(breaker) = &endpoint.breaker {
+            // Body-shape errors mean the provider answered, so only an unreachable or failing provider counts.
+            breaker.record(matches!(&outcome, Err(Error::Transport(_))) || outcome.as_ref().is_ok_and(|response| response.status >= 500));
+        }
+        outcome
     }
 }
 
@@ -238,6 +313,18 @@ fn build_endpoint(config: EndpointConfig) -> Result<(String, Endpoint), Error> {
         builder = builder.resolve_to_addrs(domain, &config.resolved);
     }
     let client = builder.build().map_err(|error| Error::Transport(error.to_string()))?;
+    let breaker = match config.circuit_breaker {
+        Some(breaker)
+            if breaker.failure_threshold == 0
+                || breaker.failure_threshold > MAX_BREAKER_THRESHOLD
+                || breaker.open_for.is_zero()
+                || breaker.open_for > MAX_BREAKER_OPEN =>
+        {
+            return Err(Error::InvalidConfiguration);
+        }
+        Some(breaker) => Some(Breaker { config: breaker, state: Mutex::new(BreakerState::Closed { failures: 0 }) }),
+        None => None,
+    };
     Ok((
         config.name,
         Endpoint {
@@ -248,6 +335,7 @@ fn build_endpoint(config: EndpointConfig) -> Result<(String, Endpoint), Error> {
             max_response_bytes: config.max_response_bytes,
             secret_header,
             client,
+            breaker,
         },
     ))
 }

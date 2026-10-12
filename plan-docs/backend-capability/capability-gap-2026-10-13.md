@@ -29,6 +29,7 @@
 | I02 Metrics | 미지원 | 부분 | token 보호 `/metrics`. [OPERATIONS](../../product/OPERATIONS.md#요청-metrics) |
 | C09 재시도, D08 Retry/Backoff | 부분 / 부분 | 지원 / 지원 | 설정 `job_policies`(1회에서 10회, 미처리 예외 재시도 선택), 확장의 `ctx.retryLater()`, `ctx.job.attempt`. `tests/job_retry.rs`, [재시도 정책](../../product/MANAGED-EXECUTION.md#재시도-정책) |
 | D09 DLQ, I10 운영 진단 | 부분 / 부분 | 지원 / 부분 | `aip service jobs list`(payload 미출력)·`retry`(같은 run 재큐, 미확정 효과·다른 배포·만료는 거부). [OPERATIONS](../../product/OPERATIONS.md#실패-job-조회와-재처리) |
+| F10 외부 실패 처리, F11 Circuit Breaker | 부분 / 부분 | 지원 / 지원 | endpoint별 `circuit_breaker`, 열린 동안 `CIRCUIT_OPEN`(journal 기록 없음, 같은 key 재전송 가능). [Circuit breaker](../../product/MANAGED-EXECUTION.md#circuit-breaker) |
 
 ## A. 데이터
 
@@ -125,8 +126,8 @@
 | F07 | 파일 업·다운로드 | MultipartFile, Multer, Active Storage | 지원 | managed file, local·S3·GCS object, signed URL |
 | F08 | Object Storage | Spring Cloud AWS, django-storages | 지원 | local/S3/GCS HMAC. 실제 클라우드 계정 검증은 별도 |
 | F09 | 외부 데이터 동기화 | 스케줄 + client + repository | 확장 | schedule → job → `ctx.http` → `ctx.data.apply`. 동기화 cursor 저장 선언은 없음 |
-| F10 | 외부 실패 처리 | Resilience4j, tenacity | 부분 | EFFECT_UNKNOWN 정지, Retry-After 노출. 자동 재시도 정책 없음 |
-| F11 | Timeout/Circuit Breaker | Resilience4j, opossum, pybreaker | 부분 | endpoint timeout. circuit breaker 없음 |
+| F10 | 외부 실패 처리 | Resilience4j, tenacity | 지원 | EFFECT_UNKNOWN 정지, Retry-After 노출, `ctx.retryLater()`로 job 재시도, `CIRCUIT_OPEN`은 확정 미전송이라 같은 key로 다시 보냄. 확장이 대기 시간을 지정하지는 못함 |
+| F11 | Timeout/Circuit Breaker | Resilience4j, opossum, pybreaker | 지원 | endpoint timeout, endpoint별 `circuit_breaker`(연속 실패·5xx 기준, half-open 시험). process별 상태(instance 간 공유 없음). `aip-execution/tests/integrations.rs`, `tests/job_breaker.rs` |
 
 ## G. 파일
 
@@ -191,8 +192,8 @@
 
 | 판정 | 개수 |
 |---|---|
-| 지원 | 32 |
-| 부분 | 52 |
+| 지원 | 34 |
+| 부분 | 50 |
 | 확장 | 12 |
 | 미지원 | 9 |
 
@@ -258,7 +259,7 @@
 | 3 | I02·I03 Metrics·Tracing | 운영 가시성 | metrics는 의존성 없이 기본 빌드에 구현. 남은 것: 내부 상태 metric, `traceparent` 전파, OpenTelemetry exporter(선택 패키지) |
 | 4 | ~~D08·C09 retry 정책~~ | 2026-10-13 구현(`job_policies`, `ctx.retryLater`, `ctx.job`) | 남은 것: 확장이 대기 시간을 지정하는 `retryLater(reason, {afterMs})` |
 | 5 | E05 발신 webhook | 고객 구독형 SaaS | PoC `outbound.rs` 서명·재시도·SSRF 규칙을 job effect로 이식 |
-| 6 | F11 circuit breaker, F02 OAuth token | 외부 연동 안정성 | integration 설정에 breaker·token provider |
+| 6 | ~~F11 circuit breaker~~, F02 OAuth token | breaker는 2026-10-13 구현 | 남은 것: integration 설정에 OAuth client-credentials token provider |
 | 7 | H04 데이터 변경 push | 협업 UI | PoC subscribe의 재조회·가시성 재평가 모델 이식 |
 
 선택 의존성 메모(작업자 A 구조 참고): 이번 회차의 schedule·webhook·outbox 릴레이·health·`ctx.data`는 추가 외부 서비스 없이 PostgreSQL만 쓰는 core 기능이라 기본 빌드에 둔다. cron 시간대 계산에 `chrono`(이미 transitive)와 `chrono-tz`를 transport에 직접 의존으로 추가했다. 3번 metrics·tracing exporter와 5번 발신 webhook의 HTTP client는 선택 패키지 후보다.

@@ -9,3 +9,15 @@ export async function boom(input, ctx) {
   if (ctx.job.attempt < 2) throw new Error("transient bug");
   return { attempt: ctx.job.attempt };
 }
+export async function callout(input, ctx) {
+  const first = await ctx.http.call("crm", {}, "first");
+  let second = "sent";
+  try {
+    await ctx.http.call("crm", {}, "second");
+  } catch (error) {
+    second = error.code;
+  }
+  // The recorded 503 replays from the journal even while the circuit is open.
+  const replayed = await ctx.http.call("crm", {}, "first");
+  return { first: first.status, second, replayed: replayed.status };
+}

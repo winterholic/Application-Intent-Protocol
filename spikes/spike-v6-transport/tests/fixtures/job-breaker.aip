@@ -1,0 +1,11 @@
+resource Member { fields { id: Id } }
+actor Member
+operation job callout {
+  input {}
+  output { first: Int; second: Text; replayed: Int }
+  allow actor != null
+  access http.crm
+  effect managed
+  deadline 10s
+  implementation "retry.callout"
+}
