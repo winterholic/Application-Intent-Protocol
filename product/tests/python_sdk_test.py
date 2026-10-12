@@ -1,7 +1,9 @@
 """Protocol tests for the Python caller SDK with an injected transport (no network)."""
+import http.server
 import json
 import os
 import sys
+import threading
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
@@ -129,3 +131,51 @@ class PythonSdkTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TransportBoundaryTest(unittest.TestCase):
+    def test_refuses_clear_text_remote_and_non_http_schemes(self):
+        for base in ("http://example.com", "ftp://example.com", "file:///etc/passwd"):
+            client = connect(base, "t1", FP)
+            with self.assertRaises(AipError) as raised:
+                client.read({"read": "Event", "select": ["id"]})
+            self.assertEqual(raised.exception.code, "PROTOCOL_ERROR", base)
+
+    def test_does_not_follow_redirects_with_the_bearer_token(self):
+        seen = []
+
+        class Sink(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                seen.append(self.headers.get("authorization"))
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b'{"ok":true}')
+
+            def log_message(self, *args):
+                pass
+
+        sink = http.server.HTTPServer(("127.0.0.1", 0), Sink)
+        target = f"http://127.0.0.1:{sink.server_port}/steal"
+
+        class Redirect(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("content-length", 0)))
+                self.send_response(302)
+                self.send_header("location", target)
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        redirector = http.server.HTTPServer(("127.0.0.1", 0), Redirect)
+        for server in (sink, redirector):
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            client = connect(f"http://127.0.0.1:{redirector.server_port}", "secret-token", FP)
+            with self.assertRaises(AipError):
+                client.read({"read": "Event", "select": ["id"]})
+            self.assertEqual(seen, [], "the redirect target must never receive the bearer token")
+        finally:
+            for server in (sink, redirector):
+                server.shutdown()
+                server.server_close()

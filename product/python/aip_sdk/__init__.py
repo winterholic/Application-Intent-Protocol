@@ -13,6 +13,7 @@ import copy
 import json
 import re
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from typing import Any, Callable, Iterator, Optional
@@ -58,13 +59,36 @@ class ScopeConflict(AipError):
 Transport = Callable[[str, dict, bytes, float], bytes]
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """urllib keeps the Authorization header across redirects, including to another origin. An AIP service never
+    redirects an API call, so a 3xx is refused instead of followed and the bearer token stays with the configured origin."""
+
+    def redirect_request(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+
+def _check_url(url: str) -> None:
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme == "https":
+        return
+    # The service listens on loopback behind a TLS proxy; a bearer token must not cross a network in clear text.
+    if parts.scheme == "http" and parts.hostname in _LOOPBACK_HOSTS:
+        return
+    raise AipError("PROTOCOL_ERROR", "https 또는 loopback http 주소만 사용할 수 있음")
+
+
 def _urllib_transport(url: str, headers: dict, body: bytes, timeout: float) -> bytes:
+    _check_url(url)
     request = urllib.request.Request(url, data=body, headers=headers, method="POST")
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with _OPENER.open(request, timeout=timeout) as response:
             return response.read()
     except urllib.error.HTTPError as error:
-        # Webhook-style status codes still carry the JSON envelope.
+        # Webhook-style status codes still carry the JSON envelope. A refused redirect has no JSON and ends as PROTOCOL_ERROR.
         return error.read()
 
 
