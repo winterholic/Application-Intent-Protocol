@@ -493,14 +493,9 @@ async fn durable_jobs_survive_restart_cancel_and_isolate_files_events_in_both_la
         );
         // Keys of schedules, webhooks and outbox rows belong to the server; a caller cannot claim one in advance.
         for reserved in ["schedule:nightly:1", "webhook:hook:0123", "outbox:7:1"] {
-            let claimed = post(
-                server.address,
-                "/jobs/enqueue",
-                "owner",
-                &fp,
-                json!({"operation":"count","input":{"text":"x"},"key":reserved,"delayMs":0}),
-            )
-            .await;
+            let claimed =
+                post(server.address, "/jobs/enqueue", "owner", &fp, json!({"operation":"count","input":{"text":"x"},"key":reserved,"delayMs":0}))
+                    .await;
             assert_eq!(claimed["code"], "BAD_VALUE", "{reserved}: {claimed}");
         }
         let body = json!({"operation":"count","input":{"text":"가😀A"},"key":format!("count-{lang:?}"),"delayMs":500});
