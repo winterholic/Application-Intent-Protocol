@@ -524,6 +524,11 @@ async fn serve_conn(
         }
         let (k, v) = h.split_once(':').map(|(k, v)| (k.trim().to_ascii_lowercase(), v.trim().to_string())).unwrap_or_default();
         header_values.push((k.clone(), v.clone()));
+        // RFC 9112 §5.1: whitespace between the field name and the colon makes the message invalid. A proxy that reads
+        // `Content-Length : 5` differently from this parser is a request-smuggling primitive.
+        if h.split_once(':').is_some_and(|(raw, _)| raw.bytes().any(|b| b == b' ' || b == b'\t')) {
+            bad = Some("헤더 이름과 콜론 사이 공백");
+        }
         if k.is_empty() || !k.bytes().all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b)) {
             bad = Some("잘못된 헤더 이름");
         }

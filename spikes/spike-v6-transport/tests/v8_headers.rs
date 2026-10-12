@@ -68,3 +68,21 @@ async fn v8_rejects_oversized_headers_before_reading_the_body() {
 
     assert!(failures.is_empty(), "\n{}", failures.join("\n"));
 }
+
+async fn probe(port: u16, header: &str) -> String {
+    let mut stream = connect(port).await;
+    stream.write_all(format!("GET /health HTTP/1.1\r\nhost: localhost\r\n{header}\r\n\r\n").as_bytes()).await.unwrap();
+    let mut response = Vec::new();
+    timeout(Duration::from_secs(2), stream.read_to_end(&mut response)).await.unwrap().unwrap();
+    String::from_utf8_lossy(&response).into_owned()
+}
+
+#[tokio::test]
+async fn v8_rejects_whitespace_between_header_name_and_colon() {
+    let (port, _) = spike_v6_transport::start(json!({})).await;
+    assert!(probe(port, "x-probe: 1").await.contains("\"live\""), "a well-formed header must still be accepted");
+    for header in ["x-probe : 1", "x-probe\t: 1"] {
+        let response = probe(port, header).await;
+        assert!(response.contains("BAD_REQUEST"), "{header:?} must be rejected: {response}");
+    }
+}
