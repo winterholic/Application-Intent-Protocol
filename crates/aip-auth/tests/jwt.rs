@@ -147,3 +147,14 @@ async fn rsa_modulus_below_2048_bits_cannot_be_padded_into_acceptance() {
     std::fs::write(path, jwks.to_string()).expect("test setup");
     assert!(AuthenticatorImpl::new(config, "host=localhost dbname=postgres".into(), "aip_example".into()).await.is_err());
 }
+
+#[tokio::test]
+async fn rsa_public_exponent_one_is_rejected_from_jwks() {
+    let (dir, config, _key) = fixture();
+    let path = dir.path().join("jwks.json");
+    let mut jwks: Value = serde_json::from_slice(&std::fs::read(&path).expect("test setup")).expect("test setup");
+    jwks["keys"][0]["e"] = json!(URL_SAFE_NO_PAD.encode([1_u8]));
+    std::fs::write(path, jwks.to_string()).expect("test setup");
+    let result = AuthenticatorImpl::new(config, "host=localhost dbname=postgres".into(), "aip_example".into()).await;
+    assert!(result.is_err(), "a JWKS RSA key with invalid public exponent e=1 must be rejected during configuration");
+}

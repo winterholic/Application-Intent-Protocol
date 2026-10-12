@@ -115,7 +115,15 @@ fn parse_jwks(bytes: &[u8]) -> Result<HashMap<String, Arc<DecodingKey>>, AuthErr
         let modulus = URL_SAFE_NO_PAD.decode(n).map_err(|_| AuthError::Unavailable)?;
         let exponent = URL_SAFE_NO_PAD.decode(e).map_err(|_| AuthError::Unavailable)?;
         let bits = modulus.first().map(|first| (modulus.len() - 1) * 8 + (8 - first.leading_zeros() as usize)).unwrap_or(0);
-        if modulus.first() == Some(&0) || !(2048..=4096).contains(&bits) || exponent.is_empty() || exponent.len() > 8 {
+        let exponent_value = exponent.iter().fold(0u64, |value, byte| (value << 8) | u64::from(*byte));
+        if modulus.first() == Some(&0)
+            || !(2048..=4096).contains(&bits)
+            || exponent.is_empty()
+            || exponent.len() > 8
+            || exponent.first() == Some(&0)
+            || exponent_value < 3
+            || exponent_value % 2 == 0
+        {
             return Err(AuthError::Unavailable);
         }
         let key = DecodingKey::from_rsa_components(n, e).map_err(|_| AuthError::Unavailable)?;
