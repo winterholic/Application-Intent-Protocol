@@ -115,6 +115,9 @@
 | O-29 | 낮음 | TS 클라이언트: 응답 크기·content-type 검사 없음, 응답 유실 뒤 `BAD_REQUEST`를 받은 pending 쓰기를 버릴 방법 없음, `WriteUnsettled` 뒤 키 없이 `apply`를 다시 부르면 새 키로 중복 쓰기. 배포 artifact의 `bin/aip`에 로컬 경로(`~/.cargo/registry`)가 들어가고 `SHA256SUMS`는 서명 없음 | 코드 추적, `strings` 확인 |
 | O-30 | 낮음 | `__proto__`라는 필드·resource 이름은 생성 descriptor에서 own key가 아니라 prototype 설정으로 해석되어 해당 이름을 쓰는 읽기·확장 호출이 항상 거부됨(실패는 닫힌 방향) | 코드 추적 |
 | O-31 | 낮음 | cron 일·요일 필드가 `*/2` 형태면 OR로 평가(Vixie는 AND). webhook 본문이 JSON escape 뒤 1MiB를 넘으면 영구 실패인데 503+`Retry-After`로 재시도 유도. job key에 deployment digest가 있어 배포 중 provider 재전송이 새 job이 될 수 있음 | 코드 추적 |
+| O-32 | 낮음 | 오늘 추가된 업무 감사 테이블(`aip_audit`)이 "append-only"라고 하지만 `BEFORE UPDATE` 트리거만 있다. `DELETE`·`TRUNCATE`는 막지 않아 런타임 역할(O-22: owner 권한)이 행을 지울 수 있고, 트리거는 owner가 끌 수 있음 | 코드 추적(daf3e63). 삭제를 막으려면 `BEFORE DELETE`·`TRUNCATE` 트리거나 별도 역할이 필요하고, 보존 기간 정책과 함께 결정해야 함 |
+| O-33 | 낮음 | 감사 행은 전이의 to-필드 이전·이후 값을 영구 보존한다. 개인정보 필드가 전이 대상이면 삭제 요청(erase)과 충돌하고, bulk 요청마다 대상 행 수만큼 행이 쌓여(최대 `bulk maxRows` 10000) 인증된 사용자가 저장소를 늘릴 수 있음(O-20과 같은 유형). field read 정책 필드의 값도 기록됨(운영자 전용 테이블이라 API로는 안 나감) | 코드 추적 |
+| O-34 | 정보 | 오늘 추가된 요청 추적(`trace.rs`)과 `/metrics`: 로그 줄은 route 이름·상태·오류 코드·시간만 담고 토큰·주체·본문·쿼리는 담지 않음. 인바운드 `x-request-id`는 8~64자 안전 문자일 때만 수용. `/metrics`는 토큰이 설정된 때만 열리고 상수 시간 비교. label은 고정 집합이라 카디널리티가 호출자 입력으로 늘지 않음 | 코드 읽기, 문제 없음 확인 |
 | O-18 | 낮음 | `predicate` 인라이닝으로 20단계 정의가 118MB DDL·RSS 1.3GB(`aip ddl`) | 재현됨(독립 검토). 제품 경로 `spike-v1`은 노드 4096 한도 |
 
 ### 3.3 열려 있는 항목(PoC 런타임, `poc-runtime` feature)
