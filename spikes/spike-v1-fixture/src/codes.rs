@@ -560,6 +560,13 @@ pub static REGISTRY: &[Info] = &[
         "",
     ),
     i(
+        "ADVISORY_UNREACHABLE_READ",
+        "an expose read that no caller can reach (advisory)",
+        "Not an error: the definition is accepted. An `expose read` without `budget` is only a target of another resource's `traverse`; when no resource traverses it, every read of it fails at run time with NOT_ROOT_QUERYABLE. The usual cause is a forgotten `budget`.",
+        "Add `budget { rows N; depth 1; deadline 2s; cost N }` to the `expose read` to make it readable on its own, or traverse it from the resource that should embed it.",
+        concat!(base!(), "resource Note {\n  fields { id: Id; body: Text; owner: Member }\n  expose read { select id, body\n    budget { rows 10; depth 1; deadline 2s; cost 100 } }\n}\n"),
+    ),
+    i(
         "ADVISORY_UNUSED_PREDICATE",
         "a predicate that nothing uses (advisory)",
         "Not an error: the definition is accepted. An unused predicate is usually a rule that was meant to be applied and is not.",

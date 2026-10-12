@@ -201,6 +201,32 @@ fn a_misspelled_name_gets_the_close_spelling() {
     assert!(help.contains("'Renamed'"), "{help}");
 }
 
+/// Both languages are written in `.aip` files. Given a file of the other one, each checker says which checker
+/// reads it instead of reporting typos in a file that has none.
+#[test]
+fn a_file_of_the_other_language_is_named_as_such() {
+    let product = root().join("spikes/spike-v1-fixture/fixture/recruitment.aip");
+    let out = aip(&["check", &product.to_string_lossy(), "--json"]);
+    let v: Value = serde_json::from_slice(&out.stdout).expect("json");
+    let help = v[0]["help"].as_str().expect("help");
+    assert!(help.starts_with("language: this file looks like a product definition") && help.contains("aip service check"), "{help}");
+
+    let poc = root().join("examples/shop/app.aip");
+    let out = aip(&["service", "check", &poc.to_string_lossy()]);
+    let v: Value = serde_json::from_slice(&out.stderr).expect("json");
+    let help = v["diagnostics"][0]["help"].as_str().expect("help");
+    assert!(help.starts_with("language: this file looks like a PoC program") && help.contains("`aip check`"), "{help}");
+
+    // a PoC program with an ordinary mistake keeps its ordinary help
+    let ordinary = std::env::temp_dir().join(format!("aip-lang-{}.aip", std::process::id()));
+    let prelude = std::fs::read_to_string(root().join("conformance/sema/_prelude.aip")).expect("prelude");
+    let body = std::fs::read_to_string(root().join("conformance/sema/unknown_field.aip")).expect("case");
+    std::fs::write(&ordinary, format!("{prelude}\n{body}")).expect("write");
+    let v: Value = serde_json::from_slice(&aip(&["check", &ordinary.to_string_lossy(), "--json"]).stdout).expect("json");
+    std::fs::remove_file(&ordinary).ok();
+    assert!(!v[0]["help"].as_str().expect("help").starts_with("language:"), "{v}");
+}
+
 /// The product path (`aip service check`) answers a wrong definition with a position, the declaration it is
 /// in, close spellings and the repair, and its codes are explainable like the PoC codes.
 #[test]

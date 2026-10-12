@@ -58,7 +58,6 @@ E601 plan.rs=1
 E602 lib.rs=2
 ENCRYPTION_DECRYPT_FAILED crypto.rs=1 jobs.rs=1
 ENCRYPTION_KEYS_MISSING crypto.rs=3 exec.rs=1 lib.rs=1
-I main.rs=1
 I101 validate.rs=1
 I102 validate.rs=1
 I103 validate.rs=1

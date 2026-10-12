@@ -550,6 +550,23 @@ a check option that does not exist
 - 원인: Unknown options are rejected, not ignored.
 - 수정: Use only `devChecks`.
 
+### `ADVISORY_UNREACHABLE_READ`
+
+an expose read that no caller can reach (advisory)
+
+- 원인: Not an error: the definition is accepted. An `expose read` without `budget` is only a target of another resource's `traverse`; when no resource traverses it, every read of it fails at run time with NOT_ROOT_QUERYABLE. The usual cause is a forgotten `budget`.
+- 수정: Add `budget { rows N; depth 1; deadline 2s; cost N }` to the `expose read` to make it readable on its own, or traverse it from the resource that should embed it.
+
+```aip
+actor Member
+resource Member { fields { id: Id; name: Text } }
+resource Note {
+  fields { id: Id; body: Text; owner: Member }
+  expose read { select id, body
+    budget { rows 10; depth 1; deadline 2s; cost 100 } }
+}
+```
+
 ### `ADVISORY_UNUSED_PREDICATE`
 
 a predicate that nothing uses (advisory)

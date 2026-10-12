@@ -32,6 +32,14 @@ pub fn enrich(mut diags: Vec<Diag>, src: &str, form: Form) -> Vec<Diag> {
     let universe = universe(src);
     let first_root: Option<(String, u32)> = diags.iter().find(|d| is_root(d.code)).map(|d| (d.code.to_string(), d.span.line));
     let mut told: BTreeSet<&'static str> = BTreeSet::new();
+    // Two different languages are both written in `.aip` files; a file of the other one fails with errors
+    // that look like typos. Say so once, on the first error.
+    if let Some(first) = diags.first_mut().filter(|_| looks_like_poc_program(src)) {
+        let note = "language: this file looks like a PoC program (top-level entity/command/query/use), whose checker is `aip check`; \
+                    `aip service` reads the product definition language (resource, expose, transition; see spikes/spike-v1-fixture/fixture/recruitment.aip)."
+            .to_string();
+        first.set_help(Some(note));
+    }
     for d in &mut diags {
         if let Some(scopes) = &scopes {
             let scope = scope_of(scopes, src, d);
@@ -58,6 +66,12 @@ pub fn enrich(mut diags: Vec<Diag>, src: &str, form: Form) -> Vec<Diag> {
         }
     }
     diags
+}
+
+/// The PoC language declares `entity`, `command`, `query` and `use` at the top level; the product language has
+/// none of these words as declarations, so one such line at column 0 is enough.
+fn looks_like_poc_program(src: &str) -> bool {
+    src.lines().any(|l| ["entity ", "command ", "query ", "use "].iter().any(|k| l.starts_with(k)))
 }
 
 /// The words a spelling can be compared with: every identifier of the definition, the keys of every

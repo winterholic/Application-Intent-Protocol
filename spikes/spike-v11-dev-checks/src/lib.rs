@@ -62,10 +62,42 @@ fn direct_reference_advice(execution: &Value) -> Vec<Advisory> {
         .collect()
 }
 
+/// An `expose read` without `budget` can only be read as the target of another resource's `traverse`; if no
+/// resource traverses it, no caller can read it at all, and the first read fails at run time with
+/// `NOT_ROOT_QUERYABLE`. The usual cause is a forgotten `budget`, so it is said at check time.
+fn unreachable_read_advice(execution: &Value) -> Vec<Advisory> {
+    let Some(resources) = execution["resources"].as_object() else { return Vec::new() };
+    let mut targets = BTreeSet::new();
+    for resource in resources.values() {
+        let read = &resource["exposeRead"];
+        let one = read["traverse"].as_object().into_iter().flatten().filter_map(|(_, t)| t["target"].as_str());
+        let many = read["traverseMany"].as_object().into_iter().flatten().filter_map(|(_, t)| t["target"].as_str());
+        targets.extend(one.chain(many));
+    }
+    resources
+        .iter()
+        .filter(|(name, resource)| {
+            let read = &resource["exposeRead"];
+            read.is_object() && read["rootQueryable"] != true && !targets.contains(name.as_str())
+        })
+        .map(|(name, _)| Advisory {
+            code: "ADVISORY_UNREACHABLE_READ",
+            anchor: format!("resource:{name}"),
+            msg: format!(
+                "`{name}`의 expose read에 budget이 없어 루트로 읽을 수 없고 다른 resource의 traverse 대상도 아님. 루트 조회가 목적이면 budget을 추가"
+            ),
+        })
+        .collect()
+}
+
 pub fn load_checked(src: &str, form: Form, options: &Value) -> Result<Checked, Vec<Diag>> {
     let enabled = dev_checks_enabled(options)?;
     // 개발 조언을 꺼도 실행 계약의 구조·타입 검사는 생략할 수 없다.
     let output = spike_v1_fixture::load_str(src, form)?;
-    let advisories = if enabled { direct_reference_advice(&output.execution) } else { Vec::new() };
+    let mut advisories = Vec::new();
+    if enabled {
+        advisories.extend(direct_reference_advice(&output.execution));
+        advisories.extend(unreachable_read_advice(&output.execution));
+    }
     Ok(Checked { output, advisories })
 }

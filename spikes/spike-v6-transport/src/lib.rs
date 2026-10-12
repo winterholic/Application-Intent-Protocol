@@ -20,6 +20,7 @@ pub mod rag_transport;
 pub mod realtime;
 pub mod schedule;
 pub mod server;
+mod trace;
 pub mod triggers;
 pub mod write_extension;
 use serde_json::{json, Value};
@@ -287,6 +288,8 @@ struct Response<W> {
     private_object: bool,
     head_only: bool,
     deadline: tokio::time::Instant,
+    /// Request id and the line logged when the request ends (dropped with the response).
+    trace: trace::Trace,
 }
 
 async fn reply(w: &mut Response<impl AsyncWriteExt + Unpin>, out: &str) {
@@ -306,9 +309,18 @@ async fn reply_with_headers(w: &mut Response<impl AsyncWriteExt + Unpin>, out: &
 }
 
 async fn reply_with_status(w: &mut Response<impl AsyncWriteExt + Unpin>, status: &str, out: &str, extra: &str) {
-    let origin = w.origin.as_ref().map(|origin| format!("access-control-allow-origin: {origin}\r\n")).unwrap_or_default();
-    let headers =
-        format!("HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n{origin}{extra}\r\n", out.len());
+    w.trace.record(status, out);
+    // A browser reads x-request-id only when the reply exposes it.
+    let origin = w
+        .origin
+        .as_ref()
+        .map(|origin| format!("access-control-allow-origin: {origin}\r\naccess-control-expose-headers: x-request-id\r\n"))
+        .unwrap_or_default();
+    let request_id = w.trace.id();
+    let headers = format!(
+        "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\nx-request-id: {request_id}\r\n{origin}{extra}\r\n",
+        out.len()
+    );
     let deadline = w.deadline;
     let private_object = w.private_object;
     if private_object && tokio::time::Instant::now() >= deadline {
@@ -484,7 +496,7 @@ async fn serve_conn(
         return;
     };
     let (r, w) = sock.split();
-    let mut w = Response { writer: w, origin: None, private_object: false, head_only: false, deadline };
+    let mut w = Response { writer: w, origin: None, private_object: false, head_only: false, deadline, trace: trace::Trace::default() };
     let mut rd = BufReader::new(r);
     let mut line = String::new();
     if let Err(code) = header_line(&mut rd, &mut line, deadline).await {
@@ -493,6 +505,7 @@ async fn serve_conn(
     let mut parts = line.split_whitespace();
     let (method, path) = (parts.next().unwrap_or("").to_string(), parts.next().unwrap_or("").to_string());
     w.head_only = method == "HEAD";
+    w.trace.begin(&method, &path);
     w.private_object =
         path.starts_with("/objects/") || path.starts_with("/rag/") || runtime.infrastructure.file_mounts.iter().any(|mount| mount.matches(&path));
     if parts.next() != Some("HTTP/1.1") || parts.next().is_some() {
@@ -580,6 +593,7 @@ async fn serve_conn(
                     expected_contract = Some(v);
                 }
             }
+            "x-request-id" => w.trace.accept_inbound(&v),
             "x-spike-drop-response" => drop = runtime.fault_injection && v == "1",
             _ => {}
         }
@@ -1293,7 +1307,8 @@ mod capability_tests {
     async fn regular_reply_keeps_send_window_after_ingress_deadline() {
         let (mut client, server) = tokio::io::duplex(1024);
         let deadline = tokio::time::Instant::now() - std::time::Duration::from_millis(1);
-        let mut response = Response { writer: server, origin: None, private_object: false, head_only: false, deadline };
+        let mut response =
+            Response { writer: server, origin: None, private_object: false, head_only: false, deadline, trace: trace::Trace::default() };
 
         reply_with_headers(&mut response, "{\"ok\":true}", "").await;
 
@@ -1309,7 +1324,8 @@ mod capability_tests {
     async fn private_reply_respects_expired_ingress_deadline() {
         let (mut client, server) = tokio::io::duplex(1024);
         let deadline = tokio::time::Instant::now() - std::time::Duration::from_millis(1);
-        let mut response = Response { writer: server, origin: None, private_object: true, head_only: false, deadline };
+        let mut response =
+            Response { writer: server, origin: None, private_object: true, head_only: false, deadline, trace: trace::Trace::default() };
 
         reply_with_headers(&mut response, "{\"ok\":true}", "").await;
 

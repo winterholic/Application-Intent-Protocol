@@ -19,6 +19,15 @@ const UNKNOWN_NAME_CODES: &[&str] = &["AIP-E102", "AIP-E103", "AIP-E104"];
 pub fn add(diags: &mut [Diagnostic], src: &str) {
     let words = words(src);
     let mut told: BTreeSet<String> = BTreeSet::new();
+    // Two different languages are both written in .aip files; a file of the other one fails with errors that
+    // look like typos. Say so once, on the first error.
+    if let Some(first) = diags.first_mut().filter(|_| looks_like_product_definition(src)) {
+        first.help = Some(
+            "language: this file looks like a product definition (top-level resource with fields/expose/transition), whose checker is \
+             'aip service check'; 'aip check' reads the PoC language (entity, command, query; see spec/grammar.md)."
+                .to_string(),
+        );
+    }
     for d in diags.iter_mut() {
         if d.help.is_some() {
             continue;
@@ -36,6 +45,12 @@ pub fn add(diags: &mut [Diagnostic], src: &str) {
             d.help = Some(parts.join(" "));
         }
     }
+}
+
+/// The product language declares `resource X { fields { ... } }`; the PoC language has no `resource` and no
+/// `fields` block (its entities list their fields directly), so the pair identifies it.
+fn looks_like_product_definition(src: &str) -> bool {
+    src.lines().any(|l| l.starts_with("resource ")) && src.lines().any(|l| l.trim_start().starts_with("fields {"))
 }
 
 /// Every identifier of the source with the number of times it occurs.
