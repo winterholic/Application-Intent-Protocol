@@ -59,8 +59,9 @@ const ROUTES: &[&str] = &[
     "rag",
     "objects",
     "messages",
-    "healthz",
-    "readyz",
+    "health",
+    "ready",
+    "metrics",
 ];
 
 pub struct Trace {
@@ -130,6 +131,7 @@ impl Trace {
 
 impl Drop for Trace {
     fn drop(&mut self) {
+        crate::metrics::observe(self.route, self.status, self.code.as_deref(), self.started.elapsed());
         if let Some(tx) = sink() {
             if let Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) = tx.try_send(self.line()) {
                 DROPPED.fetch_add(1, Ordering::Relaxed);

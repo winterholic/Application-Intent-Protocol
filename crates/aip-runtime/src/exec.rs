@@ -381,9 +381,19 @@ pub async fn settle_rules<C: GenericClient + Sync>(ctx: &mut ExecCtx<'_>, c: &C,
         if pending.is_empty() {
             return Ok(());
         }
-        for row in pending {
-            let name: String = row.get(0);
-            let id: uuid::Uuid = row.get(1);
+        // Rules that became true together run in the order they are declared, then by row id. The order of
+        // `DELETE ... RETURNING` is whatever the heap gives, and the trigger that marks a row pending fires in
+        // the alphabetical order of its name, so neither is a rule the definition can state.
+        let mut due: Vec<(usize, uuid::Uuid, String)> = pending
+            .iter()
+            .map(|row| {
+                let name: String = row.get(0);
+                let declared = ctx.program.rules.iter().position(|r| r.name == name).unwrap_or(usize::MAX);
+                (declared, row.get::<_, uuid::Uuid>(1), name)
+            })
+            .collect();
+        due.sort();
+        for (_, id, name) in due {
             let Some(rule) = ctx.program.rules.iter().find(|r| r.name == name) else { continue };
             let mut renv = Env::default();
             renv.set("__actor", env.get("__actor"));

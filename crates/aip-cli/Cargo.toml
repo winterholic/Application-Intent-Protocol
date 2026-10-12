@@ -59,6 +59,10 @@ name = "subscribe_e2e"
 required-features = ["poc-runtime"]
 
 [[test]]
+name = "rule_order_e2e"
+required-features = ["poc-runtime"]
+
+[[test]]
 name = "unavailable"
 required-features = ["poc-runtime"]
 
