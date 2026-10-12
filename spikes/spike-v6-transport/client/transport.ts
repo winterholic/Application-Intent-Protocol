@@ -82,7 +82,8 @@ export function connect(base: string, initialToken: string | null, fetchImpl: ty
     if (expectedFingerprint !== undefined && (["/read", "/apply", "/status", "/extension", "/operation"].includes(path) || MANAGED_PATHS.has(path))) {
       headers["x-aip-contract"] = expectedFingerprint;
     }
-    const r = await fetchImpl(base + path, { method: "POST", headers, body: JSON.stringify(body) });
+    // A service never redirects an API call; following one would resend the body (and for 307/308 the whole request) to another origin.
+    const r = await fetchImpl(base + path, { method: "POST", headers, body: JSON.stringify(body), redirect: "error", credentials: "omit" });
     return (await r.json()) as any;
   }
   const post = (path: string, body: unknown, extra: Record<string, string> = {}) => postWithToken(path, body, token, extra);

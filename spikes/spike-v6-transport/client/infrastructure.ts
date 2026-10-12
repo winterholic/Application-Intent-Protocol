@@ -235,6 +235,8 @@ function validContentType(value: unknown): value is string {
 
 function validateObjectUrl(value: unknown): asserts value is string {
   if (typeof value !== "string" || value.length > 8192 || value.includes("\r") || value.includes("\n")) protocolError();
+  // `//host` and `/\host` are parsed as another origin by URL, so a "relative" value must be a plain absolute path.
+  if (value.includes("\\") || value.startsWith("//") || !(value.startsWith("/") || /^https:\/\//i.test(value))) protocolError();
   try {
     const url = new URL(value, "https://managed.invalid");
     if (url.protocol !== "https:" && !(value.startsWith("/") && url.origin === "https://managed.invalid")) protocolError();
@@ -244,12 +246,16 @@ function validateObjectUrl(value: unknown): asserts value is string {
   }
 }
 
+const FORBIDDEN_SIGNED_HEADERS = new Set(["authorization", "proxy-authorization", "cookie"]);
+
 function validateHeaders(value: unknown): Readonly<Record<string, string>> {
   if (value === undefined) return Object.freeze({});
   if (!plainRecord(value) || Object.keys(value).length > 32) protocolError();
   const headers: Record<string, string> = {};
   for (const [name, header] of Object.entries(value)) {
     if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}$/.test(name) || typeof header !== "string" || header.length > 4096 || /[\r\n\0]/.test(header)) protocolError();
+    // A signed-request header list may carry content metadata, never credentials.
+    if (FORBIDDEN_SIGNED_HEADERS.has(name.toLowerCase())) protocolError();
     headers[name.toLowerCase()] = header;
   }
   return Object.freeze(headers);

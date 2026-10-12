@@ -202,3 +202,16 @@ test("product client shares session replacement and fingerprint with infrastruct
   await assert.rejects(pending, (error:any) => error.name === "ScopeChanged");
   assert.equal((client as any).callManaged, undefined);
 });
+
+test("a signed URL cannot point at another origin through protocol-relative or backslash forms, and signed headers carry no credentials", async () => {
+  const respond = (url: string, headers: Record<string, string> = {}) =>
+    createInfrastructureClient(async () => ok({ id, method: "PUT", url, headers: { "content-type": "application/octet-stream", "content-length": "1", ...headers }, expiresIn: 300 }), fingerprint);
+  const sign = (client: ReturnType<typeof respond>) => client.objects.sign({ method: "PUT", size: 1, contentType: "application/octet-stream" });
+  for (const url of ["//evil.example/up", "/\\evil.example/up", "\\\\evil.example/up", "http://objects.example/up", "ftp://objects.example/up", "relative/up"]) {
+    await assert.rejects(sign(respond(url)), (error: any) => error.code === "PROTOCOL_ERROR", url);
+  }
+  for (const headers of [{ authorization: "Bearer stolen" }, { Cookie: "a=b" }, { "Proxy-Authorization": "x" }]) {
+    await assert.rejects(sign(respond("https://objects.example/up", headers)), (error: any) => error.code === "PROTOCOL_ERROR", JSON.stringify(headers));
+  }
+  assert.equal((await sign(respond("/objects/local-put"))).url, "/objects/local-put");
+});
