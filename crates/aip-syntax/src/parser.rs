@@ -12,8 +12,30 @@ use crate::diag::{Diagnostic, Span};
 use crate::lexer::{Tok, Token, lex};
 use aip_ir::codes;
 
-pub fn parse_file(src: &str) -> Result<File, Diagnostic> {
+/// Nesting limit for brackets and prefix operators. The parser is recursive descent, so unbounded nesting in a
+/// hostile definition would overflow the stack and abort the process instead of reporting a diagnostic.
+const MAX_NESTING: usize = 64;
+
+fn lex_bounded(src: &str) -> Result<Vec<Token>, Diagnostic> {
     let toks = lex(src)?;
+    let (mut depth, mut prefix) = (0usize, 0usize);
+    for token in &toks {
+        let text = Parser::text_of(token);
+        match text {
+            Some("(" | "[" | "{") => depth += 1,
+            Some(")" | "]" | "}") => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        prefix = if matches!(text, Some("-" | "not")) { prefix + 1 } else { 0 };
+        if depth > MAX_NESTING || prefix > MAX_NESTING {
+            return Err(Diagnostic::error(codes::E100, format!("nesting deeper than {MAX_NESTING} levels"), token.span));
+        }
+    }
+    Ok(toks)
+}
+
+pub fn parse_file(src: &str) -> Result<File, Diagnostic> {
+    let toks = lex_bounded(src)?;
     let mut p = Parser { toks, pos: 0 };
     let mut decls = Vec::new();
     while !p.at_eof() {
@@ -29,7 +51,7 @@ pub fn parse_snippet(src: &str) -> Result<File, Diagnostic> {
         Ok(f) => return Ok(f),
         Err(e) => e,
     };
-    let toks = lex(src)?;
+    let toks = lex_bounded(src)?;
     let mut p = Parser { toks: toks.clone(), pos: 0 };
     let mut ok = true;
     while !p.at_eof() {

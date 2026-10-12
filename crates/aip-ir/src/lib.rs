@@ -1067,16 +1067,15 @@ pub enum DurUnit {
 impl Dur {
     /// Length in seconds; a month counts as 30 days and a year as 365 days.
     pub fn seconds(self) -> i64 {
-        self.n.max(0)
-            * match self.unit {
-                DurUnit::Second => 1,
-                DurUnit::Minute => 60,
-                DurUnit::Hour => 3600,
-                DurUnit::Day => 86_400,
-                DurUnit::Week => 604_800,
-                DurUnit::Month => 2_592_000,
-                DurUnit::Year => 31_536_000,
-            }
+        self.n.max(0).saturating_mul(match self.unit {
+            DurUnit::Second => 1,
+            DurUnit::Minute => 60,
+            DurUnit::Hour => 3600,
+            DurUnit::Day => 86_400,
+            DurUnit::Week => 604_800,
+            DurUnit::Month => 2_592_000,
+            DurUnit::Year => 31_536_000,
+        })
     }
 }
 

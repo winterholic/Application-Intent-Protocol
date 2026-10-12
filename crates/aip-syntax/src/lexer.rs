@@ -189,9 +189,9 @@ impl Lexer<'_> {
             "w" => Tok::Duration(n, DurUnit::Week),
             "mo" => Tok::Duration(n, DurUnit::Month),
             "y" => Tok::Duration(n, DurUnit::Year),
-            "KB" => Tok::Size(n as u64 * 1024),
-            "MB" => Tok::Size(n as u64 * 1024 * 1024),
-            "GB" => Tok::Size(n as u64 * 1024 * 1024 * 1024),
+            "KB" => Tok::Size((n as u64).saturating_mul(1024)),
+            "MB" => Tok::Size((n as u64).saturating_mul(1024 * 1024)),
+            "GB" => Tok::Size((n as u64).saturating_mul(1024 * 1024 * 1024)),
             _ => {
                 return Err(Diagnostic::error(codes::E100, format!("unknown unit '{unit}' in '{}'", &self.text[s..self.pos]), start)
                     .with_help("durations: 30s 10m 2h 7d 2w 6mo 1y; sizes: 512KB 10MB 1GB"));

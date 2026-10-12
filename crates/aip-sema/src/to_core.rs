@@ -89,16 +89,15 @@ fn is_upper_name(s: &str) -> bool {
 // same factors as aip-pg `duration_seconds` (month = 30 days, year = 365 days)
 fn dur_secs(d: &ast::Duration) -> i64 {
     use aip_syntax::lexer::DurUnit::*;
-    d.n.max(0)
-        * match d.unit {
-            Sec => 1,
-            Min => 60,
-            Hour => 3600,
-            Day => 86_400,
-            Week => 604_800,
-            Month => 2_592_000,
-            Year => 31_536_000,
-        }
+    d.n.max(0).saturating_mul(match d.unit {
+        Sec => 1,
+        Min => 60,
+        Hour => 3600,
+        Day => 86_400,
+        Week => 604_800,
+        Month => 2_592_000,
+        Year => 31_536_000,
+    })
 }
 
 fn dur(d: &ast::Duration) -> ir::Dur {

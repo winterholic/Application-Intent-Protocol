@@ -7,7 +7,7 @@ CONFLICT_OVERLAP ddl.rs=1 facts.rs=1
 CONFLICT_STALE_VERSION exec.rs=1 facts.rs=1
 CONFLICT_UNIQUE ddl.rs=5 exec.rs=1 facts.rs=2 form_intents.rs=2
 CONSENT_REQUIRED exec.rs=1 facts.rs=1
-E100 analyze.rs=2 lexer.rs=8 parser.rs=16
+E100 analyze.rs=2 lexer.rs=8 parser.rs=17
 E101 analyze.rs=4 check.rs=3 model.rs=7
 E102 check.rs=4 model.rs=3
 E103 analyze.rs=2 check.rs=14
