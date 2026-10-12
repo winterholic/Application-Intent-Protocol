@@ -82,8 +82,8 @@
 | OI-D1 | lifecycle 위반이 프런트엔드 코드(E2xx)와 IR 구조 코드(I113) 두 가지로 표현된다. 한 의미 두 코드 | Pass 6 S2 |
 | OI-D2 | E212가 아직 서로 다른 구문 오용 다섯 가지를 묶는다 | Pass 6 |
 | OI-D3 | F 오류가 있을 때도 S 규칙을 함께 보고할지(오류 복구 하강, Unknown 오탐 방지 필요) | Pass 6 S2 |
-| OI-TN1 | actor 없는 문맥(webhook, 핸들러)의 읽기에 테넌트 필터를 걸지. 지금은 쓰기만 트랜잭션 단위로 한 테넌트에 고정 | Pass 6 |
-| OI-TN2 | actor를 테넌트에 묶을지(요청 단위 활성 테넌트). 지금 멤버십 확인은 앱의 `allow` 책임 | Pass 6 |
+| OI-TN1 | actor 없는 문맥(webhook, 핸들러)의 읽기에 테넌트 필터를 걸지. 지금은 쓰기만 트랜잭션 단위로 한 테넌트에 고정 | Pass 6. **창시자 확인 대기**(2026-10-13): 제품 경로에는 actor 없는 데이터 접근이 없어 현행(서비스 주체의 행 정책, 넓히는 조건은 predicate에 명시) 유지로 닫기를 권장. [결정 문서](../plan-docs/backend-capability/tenant-isolation-decision-2026-10-13.md) |
+| OI-TN2 | actor를 테넌트에 묶을지(요청 단위 활성 테넌트). 지금 멤버십 확인은 앱의 `allow` 책임 | Pass 6. **창시자 확인 대기**(2026-10-13): 현행(소속 테넌트 전체 + 호출자 Ref filter) 유지 권장. 세션 claim 활성 테넌트는 공개 계약을 바꾸므로 다음 결정 후보. 생성 경로 HTTP 공개 전 Ref 가시성 규칙도 결정 필요. 같은 문서 |
 | OI-E1 | Custom Extension 단계(Pure / Effect-Declared / Unsafe)와 각 단계의 보장 범위 | 철학 §7 |
 | OI-E2 | `fn … wasm` 실행 여부와 그 전까지 막을지 | 10 §3.7 |
 | OI-P1 | 프로토콜 의미와 전송(HTTP/WebSocket) 분리, 프로토콜 버전 | 10 §3.6 |

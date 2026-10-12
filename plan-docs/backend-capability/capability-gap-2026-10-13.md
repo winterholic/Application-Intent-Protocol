@@ -24,6 +24,7 @@
 | C04 다단계 업무, C10 보상 | 부분 / 확장(데이터 불가) | 부분 / 확장 | job이 `ctx.data.read/apply`로 업무 데이터를 읽고 전이·보상 전이를 실행. 전이와 journal이 한 transaction. `tests/job_data.rs` |
 | F09 외부 데이터 동기화 | 확장(데이터 쓰기 불가) | 확장 | schedule + `ctx.http` + `ctx.data.apply`로 끝까지 처리 가능 |
 | I04 Health Check | 미지원 | 지원 | `/health`(liveness), `/ready`(DB·배포 digest). `tests/health.rs` |
+| B03 테넌트 격리 | 미지원 | 부분 | 제품 경로 행 정책·기본 거부·trigger 서비스 주체 확인. [결정 문서](tenant-isolation-decision-2026-10-13.md) |
 
 ## A. 데이터
 
@@ -48,7 +49,7 @@
 |---|---|---|---|---|
 | B01 | 인증·인가 | Spring Security, Passport, Django auth, Devise | 지원 | RS256 access token·JWKS, 지속 principal, 반환 직전 재검증. 실제 외부 IdP 연동 검증은 별도 |
 | B02 | RBAC/ABAC | `@PreAuthorize`, CASL, django-guardian, Pundit | 부분 | predicate·allow로 표현. 전용 policy catalog 없음 |
-| B03 | 테넌트 격리 | Hibernate multitenancy, django-tenants, acts_as_tenant | 미지원 | 제품 경로에는 principal owner 격리만 있음. tenant 의미는 PoC(`aip-pg/tenant.rs`)와 OI-TN1·OI-TN2 Open |
+| B03 | 테넌트 격리 | Hibernate multitenancy, django-tenants, acts_as_tenant | 부분 | 행 정책 predicate(`org = actor.org`, membership `exists`)로 표현하고 정책 없는 resource는 기본 거부. traverse·Ref filter·전이·job도 같은 정책을 쓴다. 요청 단위 활성 테넌트와 테넌트 선언 검사는 없음. [결정 문서](tenant-isolation-decision-2026-10-13.md), OI-TN1·TN2 창시자 확인 대기 |
 | B04 | 리소스 정책 | method security, DRF permissions | 지원 | rows/field/expose/allow |
 | B05 | 세션·토큰 | JWT filter, session store | 부분 | 최대 900초 세션, revoke generation. refresh는 IdP 책임 |
 | B06 | API Key | API key filter, DRF TokenAuthentication | 미지원 | 기계 간 호출은 IdP client-credentials JWT로 대체 가능. 제품 API key 계약 없음 |
@@ -187,9 +188,9 @@
 | 판정 | 개수 |
 |---|---|
 | 지원 | 29 |
-| 부분 | 52 |
+| 부분 | 53 |
 | 확장 | 12 |
-| 미지원 | 12 |
+| 미지원 | 11 |
 
 ## JS/TS·Python 확장 경로 점검
 
@@ -247,7 +248,7 @@
 
 | 순위 | 항목 | 이유 | 권장 형태 |
 |---|---|---|---|
-| 1 | B03 테넌트 격리 | SaaS의 기본 요구. 현재는 predicate 관례에 의존 | OI-TN1·OI-TN2 결정 후 PoC tenant 의미를 제품 planner에 이식 |
+| 1 | B03 테넌트 격리 | SaaS의 기본 요구. 현재는 predicate 관례에 의존 | [결정 문서](tenant-isolation-decision-2026-10-13.md): 현행 유지 권장, 활성 테넌트(세션 claim)와 생성 경로 Ref 가시성은 창시자 결정 대기 |
 | 2 | B09 Audit | 규제·운영 요구 | 전이 선언에 `audit`, 같은 transaction의 append-only 감사 테이블 |
 | 3 | I02·I03 Metrics·Tracing | 운영 가시성 | 선택 패키지로 OpenTelemetry/Prometheus exporter. 작업자 A의 선택 의존성 구조에 배치 |
 | 4 | D08·C09 retry 정책 선언 | job별 재시도 횟수·backoff·재시도 대상 오류 | operation job에 `retry { attempts; backoff }` |
