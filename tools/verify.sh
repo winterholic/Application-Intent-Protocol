@@ -18,7 +18,10 @@ psql -X -q -d 'host=localhost dbname=postgres' -Atc 'SELECT 1'
 cargo fmt --all --check
 cargo clippy --workspace --lib --bins --locked -- -D warnings
 cargo clippy -p aip-auth -p aip-migrate -p aip-service --all-targets --locked -- -D warnings
+# The PoC runtime is an optional aip-cli package; its end-to-end tests only build with the feature.
+cargo clippy -p aip-cli --features poc-runtime --bins --locked -- -D warnings
 cargo test --workspace --locked
+cargo test -p aip-cli --features poc-runtime --locked
 # These product engines are path dependencies excluded from the root workspace.
 for engine in spike-v1-fixture spike-v2-read spike-v3-write spike-v5-sdk; do
   cargo test --manifest-path "spikes/$engine/Cargo.toml" --locked --target-dir target

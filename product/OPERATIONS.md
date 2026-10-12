@@ -1,6 +1,6 @@
 # 제품 서비스 실행
 
-root의 `aip service`는 caller 정의와 공통 Rust 실행 엔진, 설치형 TypeScript SDK를 연결한다. 기존 `aip run/gen-ts` Core IR 경로와 `aip-prototype` 개발 토큰 경로는 이전 구현이다. 제품에서 개발 토큰을 발급하지 않는다.
+root의 `aip service`는 caller 정의와 공통 Rust 실행 엔진, 설치형 TypeScript SDK를 연결한다. 기존 `aip run/gen-ts` Core IR 경로와 `aip-prototype` 개발 토큰 경로는 이전 구현이다. `aip run/migrate/rekey/token`은 `cargo build -p aip-cli --features poc-runtime`으로 만든 바이너리에서만 동작하며, 기본 빌드에서는 `RUNTIME_FEATURE_DISABLED`로 거부한다. 제품에서 개발 토큰을 발급하지 않는다.
 
 ## 설정
 

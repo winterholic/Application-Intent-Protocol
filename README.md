@@ -38,8 +38,8 @@ Core 검증은 GitHub Actions의 Ubuntu에서도 실행한다. 외부 IdP 계정
 | `aip-plan` | 실행 계획 타입 |
 | `aip-contract` | 공개 계약, TS 클라이언트 생성, 호환성 비교 |
 | `aip-pg` | PostgreSQL 백엔드: DDL과 실행 계획 생성 |
-| `aip-runtime` | HTTP, 트랜잭션, 잠금, outbox, 멱등, 타이머, job, webhook, rule |
-| `aip-cli` | `aip check / core / ddl / ir / explain / contract / gen-ts / run …` |
+| `aip-runtime` | HTTP, 트랜잭션, 잠금, outbox, 멱등, 타이머, job, webhook, rule. `aip-cli`의 선택적 feature `poc-runtime`일 때만 포함 |
+| `aip-cli` | `aip check / core / ddl / ir / explain / contract / gen-ts / service …`. `run / migrate / rekey / token`은 `--features poc-runtime` 빌드에서만 동작 |
 
 ## 상태
 
@@ -58,6 +58,7 @@ PoC 현황: Rust 구현이 네 예제(`examples/ariari`, `shop`, `saas`, `cms`)�
 ```bash
 export PATH="$HOME/.cargo/bin:$PATH"
 cargo test -q --workspace            # 로컬 PostgreSQL 필요(postgres://localhost/postgres)
+cargo test -q -p aip-cli --features poc-runtime   # PoC runtime e2e(run/migrate 등)는 이 feature가 필요
 ./target/debug/aip check examples/ariari/app.aip
 ./target/debug/aip core examples/ariari/app.aip --digest
 ```

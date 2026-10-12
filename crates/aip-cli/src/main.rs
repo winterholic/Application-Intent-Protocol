@@ -127,6 +127,8 @@ fn run() -> Result<ExitCode> {
     let cli = Cli::parse();
     match cli.cmd {
         Cmd::Service { command } => Ok(aip_service::execute(command)),
+        #[cfg(not(feature = "poc-runtime"))]
+        Cmd::Token { .. } | Cmd::Migrate { .. } | Cmd::Rekey { .. } | Cmd::Run { .. } => poc_runtime_disabled(),
         Cmd::Parse { file } => {
             let src = read(&file)?;
             match aip_syntax::parse_file(&src) {
@@ -160,12 +162,17 @@ fn run() -> Result<ExitCode> {
         Cmd::Diff { file, against, json } => {
             let Some((core, _)) = lower_core_with_map(&file)? else { return Ok(ExitCode::FAILURE) };
             let old: aip_ir::Program = if against == "deployed" {
-                let url = database_url()?;
-                let rt = tokio::runtime::Runtime::new()?;
-                let pool = aip_runtime::pool(&url, 1)?;
-                rt.block_on(aip_runtime::deployed_core(&pool))?.ok_or_else(|| {
-                    anyhow::anyhow!("the database of DATABASE_URL has no deployment record (_aip_deployment); nothing to compare with")
-                })?
+                #[cfg(not(feature = "poc-runtime"))]
+                return poc_runtime_disabled();
+                #[cfg(feature = "poc-runtime")]
+                {
+                    let url = database_url()?;
+                    let rt = tokio::runtime::Runtime::new()?;
+                    let pool = aip_runtime::pool(&url, 1)?;
+                    rt.block_on(aip_runtime::deployed_core(&pool))?.ok_or_else(|| {
+                        anyhow::anyhow!("the database of DATABASE_URL has no deployment record (_aip_deployment); nothing to compare with")
+                    })?
+                }
             } else {
                 serde_json::from_str(&read(Path::new(&against))?).with_context(|| format!("{against} is not a Core IR document (`aip core`)"))?
             };
@@ -187,11 +194,13 @@ fn run() -> Result<ExitCode> {
             }
             Ok(if breaking { ExitCode::FAILURE } else { ExitCode::SUCCESS })
         }
+        #[cfg(feature = "poc-runtime")]
         Cmd::Token { actor, ttl } => {
             let secret = std::env::var("AIP_SECRET").map_err(|_| anyhow::anyhow!("AIP_SECRET is not set"))?;
             println!("{}", aip_runtime::auth::issue(secret.as_bytes(), &actor, ttl));
             Ok(ExitCode::SUCCESS)
         }
+        #[cfg(feature = "poc-runtime")]
         Cmd::Migrate { file, reset, plan, json } => {
             let Some((core, program)) = compile_full(&file)? else { return Ok(ExitCode::FAILURE) };
             let url = database_url()?;
@@ -213,6 +222,7 @@ fn run() -> Result<ExitCode> {
                 Ok(ExitCode::SUCCESS)
             })
         }
+        #[cfg(feature = "poc-runtime")]
         Cmd::Rekey { file } => {
             let Some((_, program)) = compile_full(&file)? else { return Ok(ExitCode::FAILURE) };
             let keys = aip_runtime::crypto::load(&program, std::env::var(aip_runtime::crypto::ENV_KEYS).ok().as_deref())
@@ -245,6 +255,7 @@ fn run() -> Result<ExitCode> {
                 Ok(if bad { ExitCode::FAILURE } else { ExitCode::SUCCESS })
             })
         }
+        #[cfg(feature = "poc-runtime")]
         Cmd::Run { file, port, reset, dev_auth, allow_private_webhook_targets } => {
             tracing_subscriber::fmt().with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into())).init();
             let Some((core, program)) = compile_full(&file)? else { return Ok(ExitCode::FAILURE) };
@@ -382,7 +393,18 @@ fn run() -> Result<ExitCode> {
     }
 }
 
+/// The PoC runtime commands need the optional `poc-runtime` build; the product path is `aip service`.
+#[cfg(not(feature = "poc-runtime"))]
+fn poc_runtime_disabled() -> Result<ExitCode> {
+    eprintln!(
+        "RUNTIME_FEATURE_DISABLED: this command belongs to the PoC runtime, which this binary was built without. \
+         Rebuild with `cargo build -p aip-cli --features poc-runtime`, or use `aip service` for the product path."
+    );
+    Ok(ExitCode::FAILURE)
+}
+
 /// Prints what `aip migrate --plan` found; the exit code is 1 when applying would be refused.
+#[cfg(feature = "poc-runtime")]
 fn print_plan(report: &aip_runtime::PlanReport, json: bool) -> Result<ExitCode> {
     if json {
         println!("{}", serde_json::to_string_pretty(report)?);
@@ -447,6 +469,7 @@ fn lower_core_with_map(file: &Path) -> Result<Option<(aip_ir::Program, aip_ir::S
     Ok(checked.into_core())
 }
 
+#[cfg(feature = "poc-runtime")]
 fn database_url() -> Result<String> {
     Ok(std::env::var("DATABASE_URL").unwrap_or_else(|_| "postgres://localhost/aip_dev".into()))
 }

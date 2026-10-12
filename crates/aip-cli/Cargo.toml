@@ -7,10 +7,60 @@ license.workspace = true
 [features]
 default = []
 external-brokers = ["aip-service/external-brokers"]
+# The PoC runtime behind `aip run/migrate/rekey/token/diff --against deployed`: HTTP server, outbox, jobs, encrypted fields.
+poc-runtime = ["dep:aip-runtime", "dep:tracing-subscriber"]
 
 [[bin]]
 name = "aip"
 path = "src/main.rs"
+
+[[test]]
+name = "ariari_e2e"
+required-features = ["poc-runtime"]
+
+[[test]]
+name = "cms_e2e"
+required-features = ["poc-runtime"]
+
+[[test]]
+name = "evolve_e2e"
+required-features = ["poc-runtime"]
+
+[[test]]
+name = "encrypt_e2e"
+required-features = ["poc-runtime"]
+
+[[test]]
+name = "saas_e2e"
+required-features = ["poc-runtime"]
+
+[[test]]
+name = "migration_e2e"
+required-features = ["poc-runtime"]
+
+[[test]]
+name = "outbound_e2e"
+required-features = ["poc-runtime"]
+
+[[test]]
+name = "search_e2e"
+required-features = ["poc-runtime"]
+
+[[test]]
+name = "shop_e2e"
+required-features = ["poc-runtime"]
+
+[[test]]
+name = "subscribe_e2e"
+required-features = ["poc-runtime"]
+
+[[test]]
+name = "unavailable"
+required-features = ["poc-runtime"]
+
+[[test]]
+name = "golden"
+required-features = ["poc-runtime"]
 
 [dependencies]
 aip-service = { path = "../aip-service" }
@@ -20,9 +70,9 @@ aip-sema = { path = "../aip-sema" }
 aip-ir = { path = "../aip-ir" }
 aip-pg = { path = "../aip-pg" }
 aip-plan = { path = "../aip-plan" }
-aip-runtime = { path = "../aip-runtime" }
+aip-runtime = { path = "../aip-runtime", optional = true }
 tokio = { version = "1", features = ["full"] }
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 serde_json.workspace = true
 anyhow.workspace = true
 clap = { version = "4", features = ["derive"] }
