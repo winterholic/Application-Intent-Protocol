@@ -74,7 +74,7 @@ fn decimal_text(v: &Value) -> Option<String> {
             let int_ok = digits(int) && (int == "0" || !int.starts_with('0'));
             (int_ok && frac.is_none_or(digits)).then(|| s.clone())
         }
-        Value::Number(n) => n.as_i64().filter(|i| i.abs() <= MAX_SAFE_INT).map(|i| i.to_string()),
+        Value::Number(n) => n.as_i64().filter(|i| (-MAX_SAFE_INT..=MAX_SAFE_INT).contains(i)).map(|i| i.to_string()),
         _ => None,
     }
 }
@@ -309,6 +309,7 @@ mod tests {
             json!(9007199254740992_i64),
             json!(-9007199254740992_i64),
             json!(u64::MAX),
+            json!(i64::MIN),
             json!(true),
             json!([]),
         ];

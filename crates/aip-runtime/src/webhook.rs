@@ -45,7 +45,7 @@ pub fn verify(w: &Webhook, secret: &[u8], headers: &HashMap<String, String>, bod
                 }
             }
             let t = t.ok_or("signature header has no timestamp")?;
-            if (now - t).abs() > TOLERANCE_SECS {
+            if now.abs_diff(t) > TOLERANCE_SECS as u64 {
                 return Err("signature timestamp outside the tolerance window".into());
             }
             let mut signed = format!("{t}.").into_bytes();
@@ -150,5 +150,14 @@ mod tests {
         assert!(verify(&w, b"k", &HashMap::from([("x-signature".into(), format!("sha256={sig}"))]), body, 0).is_ok());
         assert!(verify(&w, b"k", &HashMap::from([("x-signature".into(), sig)]), b"{ }", 0).is_err());
         assert!(verify(&w, b"k", &HashMap::new(), body, 0).is_err());
+    }
+
+    #[test]
+    fn stripe_extreme_timestamps_are_rejected_without_overflow() {
+        let w = hook("stripe", "Stripe-Signature");
+        for (now, timestamp) in [(1700000000, i64::MIN), (i64::MIN, i64::MAX), (0, i64::MIN)] {
+            let headers = HashMap::from([("stripe-signature".into(), format!("t={timestamp},v1=00"))]);
+            assert!(verify(&w, b"secret", &headers, b"{}", now).is_err());
+        }
     }
 }

@@ -90,12 +90,20 @@ pub fn verify_signature(secret: &str, header: &str, body: &[u8], now: i64) -> Re
         }
     }
     let t = t.ok_or("signature header has no timestamp")?;
-    if (now - t).abs() > TOLERANCE_SECS {
+    if now.abs_diff(t) > TOLERANCE_SECS as u64 {
         return Err("signature timestamp outside the tolerance window".into());
     }
     let want = mac(secret.as_bytes(), &[format!("{t}.").as_bytes(), body]);
     let same = |a: &str| a.len() == want.len() && a.bytes().zip(want.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0;
     if sigs.iter().any(|s| same(s.trim())) { Ok(()) } else { Err("no matching signature".into()) }
+}
+
+#[cfg(test)]
+#[test]
+fn extreme_signature_timestamps_are_rejected_without_overflow() {
+    for (now, timestamp) in [(1700000000, i64::MIN), (i64::MIN, i64::MAX), (0, i64::MIN)] {
+        assert!(verify_signature("secret", &format!("t={timestamp},v1=00"), b"{}", now).is_err());
+    }
 }
 
 /// When retry `attempt` (1-based) of `retry` is due, as milliseconds after the event: the waits double and the last retry falls
@@ -122,6 +130,7 @@ fn public_v4(a: Ipv4Addr) -> bool {
         // carrier-grade NAT 100.64.0.0/10, IETF protocol assignments 192.0.0.0/24, benchmarking 198.18.0.0/15, reserved 240.0.0.0/4
         || (o[0] == 100 && (o[1] & 0xc0) == 64)
         || (o[0] == 192 && o[1] == 0 && o[2] == 0)
+        || (o[0] == 192 && o[1] == 88 && o[2] == 99)
         || (o[0] == 198 && (o[1] & 0xfe) == 18)
         || o[0] >= 240)
 }
@@ -131,7 +140,9 @@ fn public_v6(a: Ipv6Addr) -> bool {
         return public_v4(v4);
     }
     let s = a.segments();
-    !(a.is_unspecified()
+    // Match the managed HTTP broker's conservative global-unicast policy.
+    (s[0] & 0xe000) == 0x2000
+        && !(a.is_unspecified()
         || a.is_loopback()
         || a.is_multicast()
         // IPv4-compatible ::a.b.c.d
@@ -141,8 +152,9 @@ fn public_v6(a: Ipv6Addr) -> bool {
         || (s[0] & 0xffc0) == 0xfe80
         || (s[0] & 0xffc0) == 0xfec0
         // documentation 2001:db8::/32, Teredo 2001::/32, 6to4 2002::/16 and NAT64 64:ff9b::/96 embed an IPv4 address we would have to vet
-        || (s[0] == 0x2001 && (s[1] == 0x0db8 || s[1] == 0))
+        || (s[0] == 0x2001 && (s[1] == 0x0db8 || s[1] <= 0x01ff))
         || s[0] == 0x2002
+        || (s[0] == 0x3fff && s[1] & 0xf000 == 0)
         || (s[0] == 0x64 && s[1] == 0xff9b))
 }
 
@@ -430,6 +442,12 @@ mod tests {
             "::ffff:10.0.0.1",
             "64:ff9b::7f00:1",
             "2002:7f00:1::",
+            "192.88.99.1",
+            "2001:2::1",
+            "2001:20::1",
+            "3fff::1",
+            "5f00::1",
+            "4000::1",
         ] {
             assert!(!is_public(ip.parse().expect("ip")), "{ip} must be refused");
         }
