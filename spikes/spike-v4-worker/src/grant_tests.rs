@@ -281,3 +281,15 @@ async fn explicitly_unisolated_busy_workers_are_reaped_by_stop_and_drop() {
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+#[test]
+fn grant_tokens_carry_128_bits_of_os_randomness() {
+    let (a, b) = (super::grant_token('g', 1), super::grant_token('g', 1));
+    for token in [&a, &b] {
+        let (prefix, random) = token.split_once('-').unwrap();
+        assert_eq!(prefix, "g1");
+        assert_eq!(random.len(), 32, "{token}");
+        assert!(random.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    }
+    assert_ne!(a, b, "같은 호출 번호의 토큰도 추측할 수 없어야 한다");
+}

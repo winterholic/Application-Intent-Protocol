@@ -96,7 +96,7 @@ async fn run_write_in(
     let allowed: Vec<String> = x["access"].as_object().unwrap().keys().cloned().collect();
     w.next_invoke += 1;
     let invoke_id = w.next_invoke;
-    let token = format!("w{invoke_id}-{}", Instant::now().elapsed().as_nanos());
+    let token = crate::grant_token('w', invoke_id);
     tx.batch_execute(&format!(
         "SET TRANSACTION ISOLATION LEVEL READ COMMITTED; SET LOCAL statement_timeout = '{}ms'; SET LOCAL TimeZone = 'UTC'",
         deadline.as_millis()

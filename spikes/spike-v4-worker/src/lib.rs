@@ -484,7 +484,7 @@ async fn invoke_contract(
     w.retire_previous();
     w.next_invoke += 1;
     let invoke_id = w.next_invoke;
-    let token = format!("g{invoke_id}-{}", Instant::now().elapsed().as_nanos() ^ (invoke_id as u128).wrapping_mul(0x9E37_79B9_7F4A_7C15));
+    let token = grant_token('g', invoke_id);
     let expires = Instant::now() + deadline;
     w.tokens.insert(token.clone(), Grant { actor_id: caller.actor_id, now: caller.now.clone(), access, id_wire: wire, expires, active: true });
     if let Err(error) =
@@ -581,6 +581,16 @@ async fn invoke_contract(
 }
 
 /// worker의 ctx 요청 하나를 처리한다. actor는 토큰에서만 온다.
+/// ctx grant 토큰. 확장 코드가 다른 호출의 grant를 추측하지 못하도록 OS 난수 128비트를 쓴다.
+pub(crate) fn grant_token(kind: char, invoke_id: u64) -> String {
+    let mut bytes = [0u8; 16];
+    // SAFETY: getentropy는 256바이트 이하 버퍼를 채운다. 실패하면 난수 없는 토큰을 쓰지 않고 중단한다.
+    let rc = unsafe { libc::getentropy(bytes.as_mut_ptr().cast(), bytes.len()) };
+    assert!(rc == 0, "OS 난수를 얻지 못함");
+    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    format!("{kind}{invoke_id}-{hex}")
+}
+
 async fn serve_call(db: &mut Client, w: &mut Worker, facts: &Value, m: &Value) -> Result<Value, Reject> {
     let o = m.as_object().unwrap();
     if let Some(k) = o.keys().find(|k| !["type", "call", "token", "op", "name", "input"].contains(&k.as_str())) {
