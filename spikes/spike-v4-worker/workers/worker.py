@@ -24,8 +24,15 @@ class Data:
     async def aggregate(self, res, name, inp):
         return await self.ctx.call("aggregate", f"{res}.{name}", inp)
 
-    async def apply(self, res, name, ids):
-        return await self.ctx.call("apply", f"{res}.{name}", {"ids": [str(i) for i in ids]})
+    async def apply(self, res, name, ids, key=None):
+        inp = {"ids": [str(i) for i in ids]}
+        if key is not None:
+            inp["key"] = key
+        return await self.ctx.call("apply", f"{res}.{name}", inp)
+
+    # durable job 전용: 공개 read 요청을 job 주체의 정책으로 실행한다.
+    async def read(self, query):
+        return await self.ctx.call("read", query.get("read") if isinstance(query, dict) else None, query)
 
 
 class Http:

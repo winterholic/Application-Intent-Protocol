@@ -19,7 +19,9 @@ function makeCtx(token) {
     data: {
       aggregate: (res, name, input) => call("aggregate", `${res}.${name}`, input),
       // 쓰기 확장: 공개 전이를 서버 트랜잭션 안에서 부른다. 커밋은 서버가 한다.
-      apply: (res, name, ids) => call("apply", `${res}.${name}`, { ids: ids.map(String) }),
+      apply: (res, name, ids, key) => call("apply", `${res}.${name}`, key === undefined ? { ids: ids.map(String) } : { ids: ids.map(String), key }),
+      // durable job 전용: 공개 read 요청을 job 주체의 정책으로 실행한다.
+      read: (query) => call("read", query?.read, query),
     },
     http: { call: (name, input, key) => call("http", name, {input,key}) },
     files: { put: (bucket, input, key) => call("files", bucket, {...input,action:"put",key}), get: (bucket, id) => call("files", bucket, {action:"get", id}) },

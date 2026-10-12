@@ -61,6 +61,54 @@ async def create(input, ctx):
 
 확장 입력은 URL·HTTP method·header·파일 경로·owner를 정하지 못한다. 외부 HTTP와 worker file write에는 안정된 idempotency key를 명시해야 하며, 재시작 후 같은 key에 다른 input을 주면 conflict다. Worker effect key는 ASCII 영숫자와 `_`, `-`, `.`, `:`로 구성한 1바이트 이상 100바이트 이하 문자열이다. 호출마다 현재 durable operation의 선언 capability와 principal, deployment, lease를 다시 검사한다. 결과 반환 직전에도 인증 신원과 operation 권한을 다시 확인한다. 각 managed file/event effect와 해당 effect journal 기록은 자체 PostgreSQL transaction에서 함께 commit되며, Job 최종 output과 한 transaction으로 묶이지는 않는다. HTTP 요청은 먼저 PENDING intent를 commit한 뒤 전송하고 응답 뒤 결과를 journal에 기록하므로 provider 호출과 DB commit은 원자적이지 않다. 자식 `ctx.jobs.run`은 선언된 operation을 같은 worker attempt 안에서 실행하며 별도 queue submission이 아니다. 자식 접근은 부모가 선언한 capability subset으로 제한한다. 중첩 depth는 8, 부모와 자식을 합한 attempt당 broker call은 최대 64회다. 재시도 attempt는 새 예산을 사용하며 최대 시도 횟수로 전체 실행 비용을 제한한다. 알려진 자식 업무 실패는 `STEP_FAILED`로 재생할 수 있어 확장에서 분기·보상할 수 있고, capability 선언 위반·비용·lease·불확실한 효과 오류는 잡아서 성공으로 바꿀 수 없다.
 
+## 업무 데이터 읽기와 전이
+
+Job은 선언한 resource에 한해 업무 데이터를 읽고 공개 전이를 실행할 수 있다. 예약 작업·웹훅 처리·후속 정산처럼 요청 연결과 분리된 로직이 Spring의 `@Transactional` service 호출과 같은 일을 하되, 호출자가 직접 할 수 있는 범위를 넘지 않게 하는 경로다.
+
+```aip
+resource Order {
+ fields { id: Id; member: Member; paid: Bool }
+ rows read when member = actor
+ transition pay { allow member = actor; from paid = false; to paid = true }
+ expose read { select id, paid; sort id; budget { rows 10; depth 1; deadline 1s; cost 100 } }
+ expose apply pay { target id; bulk maxRows 5 }
+}
+operation job settle {
+  input { other: Order.Id }
+  output { paid: Int }
+  allow actor != null
+  access read.Order, Order.pay
+  effect managed
+  deadline 10s
+  implementation "data.settle"
+}
+```
+
+```js
+export async function settle(input, ctx) {
+  const page = await ctx.data.read({ read: "Order", select: ["id", "paid"] });
+  let paid = 0;
+  for (const row of page.rows.filter((row) => !row.paid)) {
+    const result = await ctx.data.apply("Order", "pay", [row.id], `pay-${row.id}`);
+    paid += result.changed.length;
+  }
+  return { paid };
+}
+```
+
+Python은 `await ctx.data.read({...})`, `await ctx.data.apply("Order", "pay", [id], key)`다.
+
+| capability | 선언 | ctx 호출 | 실행 계약 |
+|---|---|---|---|
+| 읽기 | `read.<Resource>` | `ctx.data.read(query)`, `ctx.data.aggregate(resource, name, input)` | `/read`와 같은 planner·행/필드 정책·budget을 job 주체로 실행한다. 효과 journal은 남기지 않는다 |
+| 전이 | `<Resource>.<transition>` (공개 `expose apply`만) | `ctx.data.apply(resource, transition, ids, key)` | 전이, deferred 검사, effect journal 기록이 **하나의 PostgreSQL transaction**에서 commit된다 |
+
+- 권한은 job을 수락한 principal의 것이다. 행 정책에서 보이지 않는 행에 대한 전이는 동기 `/apply`와 같은 `MISSING_TARGET`으로 끝나 행 존재 여부를 알리지 않는다. 선언하지 않은 전이는 job 전체가 `ACCESS_NOT_DECLARED`로 실패한다.
+- `apply`에는 다른 managed effect처럼 안정 key가 필요하다. 같은 run에서 같은 key를 다시 부르거나 worker가 commit 뒤에 죽어 재시도되면, 전이를 다시 실행하지 않고 journal의 결과를 그대로 돌려준다. 실행 결과를 모르는 상태가 생기지 않으므로 외부 HTTP와 달리 `EFFECT_UNKNOWN`이 없다.
+- 전이가 `MISSING_TARGET`, `ACCESS_DENIED`, `INVARIANT_VIOLATED`처럼 업무 규칙으로 거부되면 그 결과를 journal에 남겨 재시도에서도 같은 오류를 재생한다. 확장은 이 오류를 잡아 분기·보상할 수 있다. `CONFLICT`(교착·직렬화)와 DB 장애는 아무것도 commit하지 않았으므로 기록하지 않고 다시 시도할 수 있다.
+- 각 `apply`는 자체 transaction이다. job 전체를 한 transaction으로 묶지 않으므로 여러 전이 사이의 원자성이 필요하면 하나의 전이 effects나 동기 쓰기 확장으로 표현한다. attempt당 managed 호출 64회 상한과 `expose apply`의 bulk 상한이 함께 적용된다.
+- 이 capability가 있는 job의 descriptor는 `dependencies.worker`에 `database`를 표시한다.
+
 ## SDK 사용
 
 Durable job descriptor가 생성 binding에 있을 때 `connect`가 `jobs`, `files`, `events` client를 노출한다.

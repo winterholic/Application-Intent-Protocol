@@ -95,7 +95,17 @@ pub(crate) fn rej<T>(code: &'static str, msg: impl Into<String>) -> Result<T, Re
 }
 
 fn requires_stable_key(op: &str, input: &Value) -> bool {
-    ["http", "integrations", "operations", "jobs", "events", "messages"].contains(&op) || op == "files" && input["action"] == "put"
+    ["http", "integrations", "operations", "jobs", "events", "messages", "apply"].contains(&op) || op == "files" && input["action"] == "put"
+}
+
+/// Maps a worker ctx request to the declared job capability key.
+/// Data reads and aggregates share `read.<Resource>`; transitions use `apply.<Resource>.<transition>`.
+pub fn job_capability(op: &str, name: &str) -> String {
+    match op {
+        "read" => format!("read.{name}"),
+        "aggregate" => format!("read.{}", name.split_once('.').map_or(name, |(resource, _)| resource)),
+        _ => format!("{op}.{name}"),
+    }
 }
 
 impl Worker {
@@ -512,7 +522,7 @@ async fn invoke_contract(
                         }
                         let op = m["op"].as_str().unwrap_or("");
                         let name = m["name"].as_str().unwrap_or("");
-                        if m["token"] != token || x["access"][format!("{op}.{name}")] != true {
+                        if m["token"] != token || x["access"][job_capability(op, name)] != true {
                             return rej("ACCESS_NOT_DECLARED", "선언되지 않은 job capability");
                         }
                         if requires_stable_key(op, &m["input"])

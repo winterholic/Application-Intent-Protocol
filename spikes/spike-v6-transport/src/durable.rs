@@ -23,6 +23,29 @@ fn step_error(code: &str) -> &'static str {
         _ => "STEP_FAILED",
     }
 }
+/// Business outcomes of data capabilities stay distinguishable so an extension can branch or compensate.
+fn data_error(code: &str) -> &'static str {
+    match code {
+        "ACCESS_DENIED" => "ACCESS_DENIED",
+        "NOT_FOUND" => "NOT_FOUND",
+        "CONFLICT" => "CONFLICT",
+        "ALREADY_EXISTS" => "ALREADY_EXISTS",
+        "INVARIANT_VIOLATED" => "INVARIANT_VIOLATED",
+        "DEADLINE_EXCEEDED" => "DEADLINE_EXCEEDED",
+        "NOT_EXPOSED" => "NOT_EXPOSED",
+        "OUTPUT_TOO_LARGE" => "OUTPUT_TOO_LARGE",
+        "FORBIDDEN" => "FORBIDDEN",
+        "MISSING_TARGET" => "MISSING_TARGET",
+        "TARGET_NOT_ALLOWED" => "TARGET_NOT_ALLOWED",
+        "EFFECT_TARGET_MISSING" => "EFFECT_TARGET_MISSING",
+        "NOT_SAME_SCOPE" => "NOT_SAME_SCOPE",
+        "BULK_LIMIT" => "BULK_LIMIT",
+        "ROWS_EXCEEDED" => "ROWS_EXCEEDED",
+        "DUPLICATE" => "DUPLICATE",
+        "BAD_REQUEST" => "BAD_REQUEST",
+        code => step_error(code),
+    }
+}
 fn store_error(e: aip_execution::Error) -> &'static str {
     match e {
         aip_execution::Error::IdempotencyConflict => "IDEMPOTENCY_MISMATCH",
@@ -755,10 +778,11 @@ impl Host {
         if self.depth > 8 || self.budget.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= 64 {
             return Err("COST_EXCEEDED");
         }
-        if !self.capabilities.contains(&format!("{op}.{name}")) {
+        if !self.capabilities.contains(&spike_v4_worker::job_capability(op, name)) {
             return Err("ACCESS_NOT_DECLARED");
         }
-        let suffix = if op == "files" && input["action"] == "get" {
+        let read_only = op == "read" || op == "aggregate" || op == "files" && input["action"] == "get";
+        let suffix = if read_only {
             String::new()
         } else {
             let key = text(input, "key")?;
@@ -774,9 +798,16 @@ impl Host {
         let tx = db.transaction().await.map_err(db_error)?;
         guard(&tx, &self.rt, &self.grant).await?;
         locked_lease(&tx, &self.rt, &self.lease).await?;
-        authorize(&tx, &self.facts, &self.lease.operation, &self.lease.input, self.lease.actor, self.wire).await?;
+        let caller = authorize(&tx, &self.facts, &self.lease.operation, &self.lease.input, self.lease.actor, self.wire).await?;
         if bundle(&self.rt)? != self.lease.implementation {
             return Err("IMPLEMENTATION_CHANGED");
+        }
+        if op == "read" || op == "aggregate" {
+            // Reads have no effect journal. They run as the job principal with the same planner and budgets as /read.
+            tx.commit().await.map_err(db_error)?;
+            let output = data_read(&mut db, &self.facts, op, name, input, &caller, self.wire).await;
+            db.release().await.map_err(db_error)?;
+            return output;
         }
         if op == "jobs" {
             authorize(&tx, &self.facts, name, &input["input"], self.lease.actor, self.wire).await?;
@@ -813,7 +844,8 @@ impl Host {
                 return Ok(output);
             }
             if row.get::<_, String>(1) == "FAILED" {
-                return Err(step_error(row.get::<_, Value>(2)["code"].as_str().unwrap_or("")));
+                let code = row.get::<_, Value>(2)["code"].as_str().unwrap_or("").to_string();
+                return Err(if op == "apply" { data_error(&code) } else { step_error(&code) });
             }
             if op == "http" {
                 return Err("EFFECT_UNKNOWN");
@@ -826,6 +858,30 @@ impl Host {
         .await
         .map_err(db_error)?;
         let output = match op {
+            "apply" => {
+                let request = spike_v4_worker::write::job_apply_request(name, input, self.wire).map_err(|e| e.code)?;
+                let knobs = spike_v3_write::Knobs::default();
+                tx.batch_execute("SET LOCAL TimeZone='UTC'").await.map_err(db_error)?;
+                // The transition, deferred checks and the effect journal commit in one transaction.
+                let applied = match spike_v3_write::apply_in_with_wire(&tx, &self.facts, &request, &caller, &knobs, self.wire).await {
+                    Ok(applied) => spike_v3_write::checks_in(&tx, &self.facts, &caller, &knobs).await.map(|_| applied),
+                    Err(e) => Err(e),
+                };
+                let applied = match applied {
+                    Ok(applied) => applied,
+                    Err(e) => {
+                        drop(tx);
+                        return self.reject_data_effect(db, &effect_key, &digest, e.code).await;
+                    }
+                };
+                let encode = |ids: Vec<i64>| {
+                    ids.into_iter().map(|id| spike_v2_read::id_wire::emit_id(id, self.wire)).collect::<std::result::Result<Vec<_>, _>>()
+                };
+                json!({
+                    "changed": encode(applied.changed).map_err(|e| e.code)?,
+                    "unchanged": encode(applied.unchanged).map_err(|e| e.code)?
+                })
+            }
             "messages" => {
                 if !self.rt.infrastructure.messaging {
                     return Err("NOT_EXPOSED");
@@ -951,7 +1007,7 @@ impl Host {
                 .map_err(db_error)?;
                 tx.commit().await.map_err(db_error)?;
                 db.release().await.map_err(db_error)?;
-                return out.map_err(|e| step_error(e.code));
+                return out.map_err(|e| data_error(e.code));
             }
             _ => return Err("ACCESS_NOT_DECLARED"),
         };
@@ -965,6 +1021,57 @@ impl Host {
         db.release().await.map_err(db_error)?;
         Ok(output)
     }
+}
+
+impl Host {
+    /// Records a deterministic business rejection so a retried attempt replays it instead of re-running the transition.
+    /// Transient failures leave no journal row because the rolled-back transaction changed nothing.
+    async fn reject_data_effect(&self, db: crate::pool::PooledConnection, effect_key: &str, digest: &str, code: &'static str) -> Result<Value> {
+        drop(db);
+        if matches!(code, "CONFLICT" | "DEADLINE_EXCEEDED" | "INTERNAL" | "DB_UNAVAILABLE") {
+            return Err(if code == "CONFLICT" { "CONFLICT" } else { "DB_UNAVAILABLE" });
+        }
+        let s = schema(&self.rt)?.to_string();
+        let mut db = connect(&self.rt).await?;
+        let tx = db.transaction().await.map_err(db_error)?;
+        guard(&tx, &self.rt, &self.grant).await?;
+        locked_lease(&tx, &self.rt, &self.lease).await?;
+        tx.execute(
+            &format!(
+                "INSERT INTO {s}.aip_effects(run_id,effect_key,request_digest,state,result) VALUES($1,$2,$3,'FAILED',$4) ON CONFLICT DO NOTHING"
+            ),
+            &[&self.lease.run_id, &effect_key, &digest, &json!({"code":code})],
+        )
+        .await
+        .map_err(db_error)?;
+        tx.commit().await.map_err(db_error)?;
+        db.release().await.map_err(db_error)?;
+        Err(data_error(code))
+    }
+}
+
+async fn data_read(db: &mut Client, facts: &Value, op: &str, name: &str, input: &Value, caller: &Caller, wire: IdWire) -> Result<Value> {
+    let request = if op == "aggregate" {
+        if !input.is_object() {
+            return Err("BAD_VALUE");
+        }
+        json!({"aggregate": name, "input": input})
+    } else {
+        if input["read"].as_str() != Some(name) {
+            return Err("BAD_VALUE");
+        }
+        input.clone()
+    };
+    let plan = spike_v2_read::plan::plan_read_with_wire(facts, &request, caller, wire).map_err(|e| data_error(e.code))?;
+    let rows = match tokio::time::timeout(Duration::from_millis(plan.deadline_ms), spike_v2_read::execute(db, &plan)).await {
+        Ok(rows) => rows.map_err(|e| data_error(e.code))?,
+        Err(_) => return Err("DEADLINE_EXCEEDED"),
+    };
+    if op == "aggregate" {
+        return Ok(json!({"value": rows.first().cloned().unwrap_or(Value::Null)}));
+    }
+    let rows = spike_v2_read::id_wire::encode_rows(rows, &plan.output_type, wire).map_err(|e| data_error(e.code))?;
+    Ok(json!({"rows": rows}))
 }
 
 #[cfg(test)]

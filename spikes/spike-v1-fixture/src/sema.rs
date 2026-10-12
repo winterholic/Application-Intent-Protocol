@@ -1539,7 +1539,34 @@ impl<'a> Ctx<'a> {
         value["effect"] = json!(operation.effect);
         if managed {
             let mut capabilities = Map::new();
+            let mut data_access = false;
             for (domain, name) in &operation.access {
+                // 업무 데이터 접근은 job 주체의 기존 read/apply 정책을 그대로 거친다. 선언 없이 열리지 않는다.
+                if domain == "read" || self.res.contains_key(domain.as_str()) {
+                    if ["http", "files", "events", "jobs", "messages", "read"].contains(&domain.as_str()) && self.res.contains_key(domain.as_str()) {
+                        self.d("AMBIGUOUS", format!("resource 이름 `{domain}`이 managed capability 영역과 겹침"), operation.span);
+                        continue;
+                    }
+                    let key = if domain == "read" {
+                        if !self.res.contains_key(name.as_str()) {
+                            self.d("UNKNOWN_SYMBOL", format!("read 대상 resource `{name}`이 없음"), operation.span);
+                            continue;
+                        }
+                        format!("read.{name}")
+                    } else {
+                        let exposed = self.res.get(domain.as_str()).is_some_and(|r| r.expose_apply.iter().any(|e| &e.transition == name));
+                        if !exposed {
+                            self.d("UNKNOWN_SYMBOL", format!("job 쓰기 access `{domain}.{name}`는 공개된 전이(expose apply)여야 함"), operation.span);
+                            continue;
+                        }
+                        format!("apply.{domain}.{name}")
+                    };
+                    data_access = true;
+                    if capabilities.insert(key, json!(true)).is_some() {
+                        self.d("DUPLICATE", "managed capability 중복", operation.span);
+                    }
+                    continue;
+                }
                 if !["http", "files", "events", "jobs", "messages"].contains(&domain.as_str()) {
                     self.d("UNKNOWN_SYMBOL", format!("알 수 없는 managed capability `{domain}.{name}`"), operation.span);
                 }
@@ -1556,9 +1583,14 @@ impl<'a> Ctx<'a> {
                 }
             }
             value["access"] = Value::Object(capabilities);
+            if data_access {
+                value["dependencies"] = json!({"worker":["database"],"authorization":["database","principal","deployment"]});
+            }
         }
         value["allow"] = allow?;
-        value["dependencies"] = json!({"worker":[],"authorization":["database","principal","deployment"]});
+        if value["dependencies"].is_null() {
+            value["dependencies"] = json!({"worker":[],"authorization":["database","principal","deployment"]});
+        }
         Some(value)
     }
 

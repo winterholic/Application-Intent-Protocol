@@ -205,6 +205,15 @@ fn check_write_record(facts: &Value, declaration: &Value, value: &Value, what: &
     Ok(())
 }
 
+/// Builds the transition request for a durable job's `ctx.data.apply`, using the same Id conversion as write extensions.
+pub fn job_apply_request(name: &str, input: &Value, wire: IdWire) -> Result<Value, Reject> {
+    let exact = input.as_object().is_some_and(|object| object.keys().all(|key| key == "ids" || key == "key") && object.contains_key("ids"));
+    if !exact || !input["ids"].is_array() {
+        return rej("BAD_VALUE", "ctx.data.apply 입력은 ids와 key만 허용");
+    }
+    ctx_request(&json!({"name": name, "input": {"ids": input["ids"]}}), wire)
+}
+
 fn ctx_request(message: &Value, wire: IdWire) -> Result<Value, Reject> {
     let mut target = message["input"].clone();
     if wire != IdWire::Legacy {
