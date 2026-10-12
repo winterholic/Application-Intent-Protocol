@@ -92,7 +92,7 @@ impl Parser {
         }
     }
     fn err<T>(&self, what: &str) -> R<T> {
-        Err(Diag::new("PARSE_EXPECTED", format!("{what} 필요, `{:?}` 발견", self.peek()), self.span()))
+        Err(Diag::new("PARSE_EXPECTED", format!("{what} 필요, `{}` 발견", self.peek().show()), self.span()))
     }
     fn expect_sym(&mut self, s: &str) -> R<()> {
         if self.eat_sym(s) {

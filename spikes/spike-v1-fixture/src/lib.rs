@@ -1,5 +1,7 @@
 pub mod ast;
+pub mod codes;
 pub mod diag;
+mod enrich;
 pub mod extract;
 pub mod hlit;
 pub mod hmap;
@@ -32,8 +34,8 @@ pub fn form_of(path: &str) -> Option<Form> {
 }
 
 pub fn load_str(src: &str, form: Form) -> Result<sema::Output, Vec<Diag>> {
-    limits::check_source(src).map_err(|d| vec![d])?;
-    let spec = match form {
+    limits::check_source(src).map_err(|d| enrich::enrich(vec![d], src, form))?;
+    match form {
         Form::A => parser::parse_spec(src, 1, 1),
         Form::ETs | Form::EPy => {
             let host = if form == Form::ETs { Host::Ts } else { Host::Py };
@@ -44,8 +46,9 @@ pub fn load_str(src: &str, form: Form) -> Result<sema::Output, Vec<Diag>> {
             hlit::extract_define(src, host).and_then(|(lit, sp)| hmap::to_spec(&lit, sp))
         }
     }
-    .map_err(|d| vec![d])?;
-    sema::analyze(&spec)
+    .map_err(|d| vec![d])
+    .and_then(|spec| sema::analyze(&spec))
+    .map_err(|ds| enrich::enrich(ds, src, form))
 }
 
 pub fn digest(v: &Value) -> String {

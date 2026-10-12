@@ -46,12 +46,14 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
-    /// List every diagnostic and error code of the registry (`--markdown` is the text of spec/diagnostics.md, `--json` the entries)
+    /// List every diagnostic and error code of the registry (`--markdown` is the text of spec/diagnostics.md, `--json` the entries; `--definition` lists the codes of the product definition checker instead)
     Diagnostics {
         #[arg(long)]
         markdown: bool,
         #[arg(long)]
         json: bool,
+        #[arg(long)]
+        definition: bool,
     },
     /// Apply the schema to DATABASE_URL: the first time everything is created, later the change from the deployed program is planned and applied
     /// in one transaction (`--plan` only prints it; `--reset` drops and recreates)
@@ -350,13 +352,36 @@ fn run() -> Result<ExitCode> {
                 }
                 Ok(ExitCode::SUCCESS)
             }
-            None => {
-                eprintln!("unknown code {code}; `aip diagnostics` lists the registered codes");
-                Ok(ExitCode::FAILURE)
-            }
+            None => match aip_service::definition_codes::lookup(&code.to_uppercase()) {
+                Some(c) => {
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&definition_entry(c))?);
+                    } else {
+                        print!("{}", aip_service::definition_codes::render_text(c));
+                    }
+                    Ok(ExitCode::SUCCESS)
+                }
+                None => {
+                    eprintln!(
+                        "unknown code {code}; `aip diagnostics` lists the registered codes and `aip diagnostics --definition` those of the product definition checker"
+                    );
+                    Ok(ExitCode::FAILURE)
+                }
+            },
         },
-        Cmd::Diagnostics { markdown, json } => {
-            if markdown {
+        Cmd::Diagnostics { markdown, json, definition } => {
+            if definition {
+                if markdown {
+                    print!("{}", aip_service::definition_codes::render_markdown());
+                } else if json {
+                    let all: Vec<_> = aip_service::definition_codes::all().iter().map(definition_entry).collect();
+                    println!("{}", serde_json::to_string_pretty(&all)?);
+                } else {
+                    for c in aip_service::definition_codes::all() {
+                        println!("{:<36} {}", c.code, c.title);
+                    }
+                }
+            } else if markdown {
                 print!("{}", aip_ir::codes::render_markdown());
             } else if json {
                 println!("{}", serde_json::to_string_pretty(aip_ir::codes::all())?);
@@ -395,6 +420,10 @@ fn run() -> Result<ExitCode> {
 
 /// The PoC runtime commands need the optional `poc-runtime` build; the product path is `aip service`.
 #[cfg(not(feature = "poc-runtime"))]
+fn definition_entry(c: &aip_service::definition_codes::Info) -> serde_json::Value {
+    serde_json::json!({"code": c.code, "title": c.title, "explain": c.explain, "fix": c.fix, "example": c.example})
+}
+
 fn poc_runtime_disabled() -> Result<ExitCode> {
     eprintln!(
         "RUNTIME_FEATURE_DISABLED: this command belongs to the PoC runtime, which this binary was built without. \

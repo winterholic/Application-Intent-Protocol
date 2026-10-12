@@ -35,7 +35,7 @@ fn main() -> ExitCode {
         }
         Err(ds) => {
             for d in ds {
-                println!("{path}:{d}");
+                println!("{}", d.render(path));
             }
             ExitCode::from(1)
         }

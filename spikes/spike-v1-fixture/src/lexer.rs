@@ -18,6 +18,21 @@ pub struct Token {
     pub span: Span,
 }
 
+impl Tok {
+    /// The token as the user wrote it, for messages. The Debug form (Ident("x")) is compiler
+    /// internals and means nothing to someone fixing the definition.
+    pub fn show(&self) -> String {
+        match self {
+            Tok::Ident(s) => s.clone(),
+            Tok::Int(n) => n.to_string(),
+            Tok::Str(s) => format!("\"{s}\""),
+            Tok::Dur(ms) => format!("{ms}ms"),
+            Tok::Sym(s) => (*s).to_string(),
+            Tok::Eof => "파일 끝".to_string(),
+        }
+    }
+}
+
 const SYMS: [&str; 19] = ["..", "!=", ">=", "<=", "{", "}", "(", ")", ":", ";", ",", ".", "=", ">", "<", "?", "[", "+", "-"];
 
 /// `line_base`는 호스트 파일 안 블록 시작 줄이다. E 추출 시 진단 위치를 원 파일 기준으로 맞춘다.

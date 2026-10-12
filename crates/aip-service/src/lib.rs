@@ -244,10 +244,14 @@ fn read_bounded(path: &Path, limit: usize, code: &str) -> Result<String, Value> 
     }
     String::from_utf8(bytes).map_err(|_| error(code, "UTF-8 파일이 필요함"))
 }
+/// The definition diagnostic registry of the product path, for `aip explain-code` and `aip diagnostics --definition`.
+pub use spike_v1_fixture::codes as definition_codes;
 pub fn load(file: &Path, dev_checks: bool) -> Result<spike_v11_dev_checks::Checked, Value> {
     let form = file.to_str().and_then(spike_v1_fixture::form_of).ok_or_else(|| error("UNSUPPORTED_FORM", "지원하는 작성 형식이 아님"))?;
     let source = read_bounded(file, SOURCE_BYTES, "SOURCE_IO")?;
-    spike_v11_dev_checks::load_checked(&source,form,&json!({"devChecks":dev_checks})).map_err(|ds|json!({"ok":false,"code":"INVALID_DEFINITION","diagnostics":ds.iter().map(|d|json!({"code":d.code,"message":d.msg,"line":d.span.line,"column":d.span.col})).collect::<Vec<_>>()}))
+    spike_v11_dev_checks::load_checked(&source, form, &json!({"devChecks":dev_checks})).map_err(
+        |ds| json!({"ok":false,"code":"INVALID_DEFINITION","diagnostics":ds.iter().map(spike_v1_fixture::diag::Diag::json).collect::<Vec<_>>()}),
+    )
 }
 fn configuration(path: &Path) -> Result<Config, Value> {
     let source = read_bounded(path, CONFIG_BYTES, "CONFIG_IO")?;

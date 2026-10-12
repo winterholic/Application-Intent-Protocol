@@ -153,3 +153,37 @@ fn semantic_rule_stops_every_command_that_needs_a_program() {
     }
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// The product path (`aip service check`) answers a wrong definition with a position, the declaration it is
+/// in, close spellings and the repair, and its codes are explainable like the PoC codes.
+#[test]
+fn product_definition_errors_carry_scope_help_and_an_explanation() {
+    let dir = std::env::temp_dir().join(format!("aip-product-diag-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("tmp dir");
+    let fixture = std::fs::read_to_string(root().join("spikes/spike-v1-fixture/fixture/recruitment.aip")).expect("fixture");
+    let file = dir.join("app.aip");
+    std::fs::write(&file, fixture.replacen("sort periodEnd, views, id", "sorts periodEnd, views, id", 1)).expect("write");
+    let out = aip(&["service", "check", &file.to_string_lossy()]);
+    std::fs::remove_dir_all(&dir).ok();
+    assert!(!out.status.success());
+    let v: Value = serde_json::from_slice(&out.stderr).expect("a failed service command prints its JSON error on stderr");
+    assert_eq!(v["code"], "INVALID_DEFINITION");
+    let d = &v["diagnostics"][0];
+    assert_eq!(d["code"], "PARSE_UNKNOWN_KEY");
+    assert_eq!(d["line"], 56);
+    assert_eq!(d["scope"], "resource Recruitment > expose read");
+    assert!(d["help"].as_str().is_some_and(|h| h.contains("did you mean `sort`?")), "{d}");
+    assert_eq!(d["explain"], "aip explain-code PARSE_UNKNOWN_KEY");
+
+    let explain = aip(&["explain-code", "PARSE_UNKNOWN_KEY"]);
+    assert!(explain.status.success());
+    let text = String::from_utf8(explain.stdout).expect("utf8");
+    assert!(text.contains("why:") && text.contains("fix:") && text.contains("example"), "{text}");
+    assert!(aip(&["explain-code", "parse_unknown_key", "--json"]).status.success(), "lookup ignores case like the PoC codes");
+
+    let listed: Value = serde_json::from_slice(&aip(&["diagnostics", "--definition", "--json"]).stdout).expect("json");
+    assert!(listed.as_array().is_some_and(|a| a.iter().any(|c| c["code"] == "PARSE_UNKNOWN_KEY")));
+    let md = String::from_utf8(aip(&["diagnostics", "--definition", "--markdown"]).stdout).expect("utf8");
+    let on_disk = std::fs::read_to_string(root().join("spec/definition-diagnostics.md")).expect("spec/definition-diagnostics.md");
+    assert_eq!(md, on_disk, "the CLI prints the registry rendering that spec/definition-diagnostics.md holds");
+}
