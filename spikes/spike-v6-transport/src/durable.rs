@@ -61,6 +61,8 @@ fn store_error(e: aip_execution::Error) -> &'static str {
     match e {
         aip_execution::Error::IdempotencyConflict => "WIRE.IDEMPOTENCY_MISMATCH",
         aip_execution::Error::InvalidRun => "WIRE.BAD_VALUE",
+        // The input is too large once serialised; no retry will change that, so it must not look like a database outage.
+        aip_execution::Error::PayloadTooLarge => "WIRE.PAYLOAD_TOO_LARGE",
         _ => "WIRE.DB_UNAVAILABLE",
     }
 }

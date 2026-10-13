@@ -546,6 +546,8 @@ async fn serve_webhook<R: tokio::io::AsyncRead + Unpin>(
         Ok(run) => reply_with_status(w, "202 Accepted", &json!({"ok":true,"id":run.id,"state":run.state}).to_string(), "").await,
         Err("WIRE.IDEMPOTENCY_MISMATCH") => reply_with_status(w, "409 Conflict", &fail("WIRE.IDEMPOTENCY_MISMATCH"), "").await,
         Err("WIRE.BAD_VALUE") => reply_with_status(w, "400 Bad Request", &fail("WIRE.BAD_VALUE"), "").await,
+        // The delivery fits the body limit but not the job input limit once JSON escaping is applied; retrying cannot help.
+        Err("WIRE.PAYLOAD_TOO_LARGE") => reply_with_status(w, "413 Payload Too Large", &fail("WIRE.PAYLOAD_TOO_LARGE"), "").await,
         Err("WIRE.QUOTA_EXCEEDED") => reply_with_status(w, "429 Too Many Requests", &fail("WIRE.QUOTA_EXCEEDED"), "retry-after: 60\r\n").await,
         Err(code) => reply_with_status(w, "503 Service Unavailable", &fail(code), "retry-after: 30\r\n").await,
     }

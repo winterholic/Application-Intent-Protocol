@@ -93,9 +93,12 @@ impl Cron {
         const DAYS: [&str; 7] = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
         let (minutes, _) = field::<60>(minute, 0, 59, &[])?;
         let (hours, hour_restricted) = field::<24>(hour, 0, 23, &[])?;
-        let (days, day_restricted) = field::<32>(day, 1, 31, &[])?;
+        let (days, _) = field::<32>(day, 1, 31, &[])?;
+        // Vixie: a field that merely starts with `*` (`*/2`) still counts as starred for the day-or-weekday rule.
+        let day_restricted = !day.starts_with('*');
         let (months, _) = field::<13>(month, 1, 12, &MONTHS)?;
-        let (weekdays, weekday_restricted) = field::<7>(weekday, 0, 6, &DAYS)?;
+        let (weekdays, _) = field::<7>(weekday, 0, 6, &DAYS)?;
+        let weekday_restricted = !weekday.starts_with('*');
         let cron = Cron { minutes, hours, days, months, weekdays, day_restricted, weekday_restricted, hour_restricted, zone };
         cron.latest_at_or_before(Utc::now()).map(|_| cron).map_err(|_| Error::NoSlot)
     }
@@ -106,12 +109,11 @@ impl Cron {
         }
         let day = self.days[date.day() as usize];
         let weekday = self.weekdays[date.weekday().num_days_from_sunday() as usize];
-        // Vixie cron: when both day fields are restricted, either one may match.
-        match (self.day_restricted, self.weekday_restricted) {
-            (true, true) => day || weekday,
-            (true, false) => day,
-            (false, true) => weekday,
-            (false, false) => true,
+        // Vixie cron: only when neither day field starts with `*` may either one match; otherwise both must.
+        if self.day_restricted && self.weekday_restricted {
+            day || weekday
+        } else {
+            day && weekday
         }
     }
 
@@ -174,6 +176,23 @@ mod tests {
         assert_eq!(either.latest_at_or_before(at("2026-10-13T00:00:00Z")), Ok(at("2026-10-11T00:00:00Z")));
         let sunday_seven = Cron::parse("0 0 * * 7", "UTC").expect("cron");
         assert_eq!(sunday_seven.latest_at_or_before(at("2026-10-13T00:00:00Z")), Ok(at("2026-10-11T00:00:00Z")));
+    }
+
+    /// Vixie cron: a day-of-month or weekday field that starts with `*` (`*`, `*/2`) means "not restricted by this field alone",
+    /// and then the two fields must both match. Only when neither starts with `*` does either one suffice.
+    #[test]
+    fn a_starred_step_in_a_day_field_makes_the_two_day_fields_both_apply() {
+        // 2026-10-13 is a Tuesday. Mondays in October 2026 are the 5th, 12th, 19th, 26th; odd days of the month start at 1.
+        let both = Cron::parse("0 0 */2 * mon", "UTC").expect("cron");
+        // Monday AND an odd day: the 5th. The 13th is odd but a Tuesday, and the 12th is a Monday but even.
+        assert_eq!(both.latest_at_or_before(at("2026-10-13T10:07:00Z")), Ok(at("2026-10-05T00:00:00Z")));
+        let weekday_starred = Cron::parse("0 0 15 * */3", "UTC").expect("cron");
+        // The 15th AND a weekday divisible by 3 (sun, wed, sat): 2026-10-15 is a Thursday, so no October slot matches;
+        // the latest one is 2026-08-15 (a Saturday).
+        assert_eq!(weekday_starred.latest_at_or_before(at("2026-10-31T00:00:00Z")), Ok(at("2026-08-15T00:00:00Z")));
+        // Neither field starts with `*`: either may match (unchanged).
+        let either = Cron::parse("0 0 1,15 * mon", "UTC").expect("cron");
+        assert_eq!(either.latest_at_or_before(at("2026-10-13T10:07:00Z")), Ok(at("2026-10-12T00:00:00Z")));
     }
 
     #[test]
