@@ -172,7 +172,16 @@ async fn disconnecting_partial_request_releases_the_only_admission_slot() {
     assert!(rejected.is_empty(), "a second request must be rejected while the only connection slot is occupied");
 
     drop(stalled);
-    let recovered = session_request(server.address).await;
+    // The permit returns when the server notices the closed peer, which takes a moment under load; the claim is that it
+    // does return, not that it returns before the very next packet.
+    let mut recovered = Vec::new();
+    for _ in 0..40 {
+        recovered = session_request(server.address).await;
+        if recovered.starts_with(b"HTTP/1.1 200 OK\r\n") {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
     assert!(
         recovered.starts_with(b"HTTP/1.1 200 OK\r\n"),
         "connection permit should return after peer disconnect: {}",
