@@ -149,7 +149,7 @@ test("the installed declarations preserve strict typed reads and reject hidden f
   assertCommandOk(run("npm", ["install", "--offline", "--ignore-scripts", "--no-audit", "--no-fund", tarballPath], { cwd: consumerDir }), "offline type consumer npm install");
 
   const source = `
-import { connect, type ContractBinding } from "@aip/sdk";
+import { connect, type ContractBinding, type ApplyResult, type BundleResult, type ComposeResult, type WriteExtensionResult } from "@aip/sdk";
 const contract = {
   Event: { root: true, fields: { id: "" as string, title: "" as string }, traverse: {}, traverseMany: { comments: { target: "Comment", select: "body", maxLimit: 3 } }, filterFields: {}, filter: "", sort: "id" as "id" | "title", maxRows: 10, maxOffset: 20, cursor: true },
   Comment: { root: false, fields: { body: "" as string }, traverse: {}, filterFields: {}, filter: "", sort: "", maxRows: 0 },
@@ -167,6 +167,16 @@ const binding = {
   __apply: {},
 } as const satisfies ContractBinding<typeof contract> & { readonly idWire: "decimal-string-v13"; readonly __apply: {} };
 const client = connect("https://aip.test", "jwt-access-token", binding);
+function retryGuidance(result: ApplyResult<number> | BundleResult<{}> | ComposeResult<{}> | WriteExtensionResult<{}>) {
+  if (!result.ok) {
+    const retry: "never" | "later" | "check-first" | "reauthenticate" | undefined = result.retry;
+    return retry;
+  }
+}
+void retryGuidance;
+// @ts-expect-error retry is the four-value server guidance, not an arbitrary string
+const invalidRetry: ApplyResult<number> = { ok: false, code: "WIRE.BAD_VALUE", retry: "sometimes" };
+void invalidRetry;
 async function check() {
   const result = await client.read({ read: "Event", select: ["title"] as const });
   const title: string = result.rows[0].title;

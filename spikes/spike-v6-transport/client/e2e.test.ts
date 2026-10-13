@@ -2,6 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { connect, WriteUnsettled } from "./transport.ts";
 import net from "node:net";
+// /read, /apply and /status need the contract header; the Rust harness passes the served fingerprint.
+const OPTIONS = { contractFingerprint: process.env.AIP_FINGERPRINT };
 
 const URL = process.env.AIP_URL!;
 const T1 = process.env.AIP_TOKEN_1!;
@@ -10,7 +12,7 @@ const alarms = { read: "MemberAlarm", select: ["id", "isChecked"], sort: [{ fiel
 const list = { read: "Recruitment", select: ["id", "internalNote"], sort: [{ field: "id" }] };
 
 test("쓰기 태그로 캐시 무효화가 실제 서버 응답에서 동작", async () => {
-  const c = connect(URL, T1);
+  const c = connect(URL, T1, fetch, OPTIONS);
   const a1 = await c.read(alarms);
   assert.equal(a1.cached, false);
   assert.deepEqual(a1.rows.slice(0, 2), [{ id: 1, isChecked: false }, { id: 2, isChecked: false }]);
@@ -27,7 +29,7 @@ test("쓰기 태그로 캐시 무효화가 실제 서버 응답에서 동작", a
 });
 
 test("쓰기 응답 유실: 상태 확인으로 복구, 두 번 실행되지 않음", async () => {
-  const c = connect(URL, T1);
+  const c = connect(URL, T1, fetch, OPTIONS);
   await c.read(list);
   const key = "approve-300";
   const r = await c.apply({ apply: "Apply.approve", target: { ids: ["300"] } }, { key, dropResponse: true });
@@ -45,7 +47,7 @@ test("쓰기 응답 유실: 상태 확인으로 복구, 두 번 실행되지 않
 });
 
 test("같은 키에 다른 요청은 거부, 없는 키 상태는 NOT_FOUND", async () => {
-  const c = connect(URL, T1);
+  const c = connect(URL, T1, fetch, OPTIONS);
   await c.apply({ apply: "MemberAlarm.read", target: { ids: ["2"] } }, { key: "k-x" });
   const bad = await c.apply({ apply: "MemberAlarm.read", target: { ids: ["1"] } }, { key: "k-x" });
   assert.equal(bad.code, "WIRE.IDEMPOTENCY_MISMATCH");
@@ -53,13 +55,13 @@ test("같은 키에 다른 요청은 거부, 없는 키 상태는 NOT_FOUND", as
 });
 
 test("키는 actor별: 다른 사용자가 같은 키를 써도 남의 결과를 받지 않음", async () => {
-  const c2 = connect(URL, T2);
+  const c2 = connect(URL, T2, fetch, OPTIONS);
   const r = await c2.post("/status", { key: "approve-300", request: { apply: "Apply.approve", target: { ids: ["300"] } } });
   assert.equal(r.code, "WIRE.NOT_FOUND");
 });
 
 test("키 불일치 응답이 유실돼도 이전 요청의 성공으로 복구하지 않음(r7 R7-01)", async () => {
-  const c = connect(URL, T1);
+  const c = connect(URL, T1, fetch, OPTIONS);
   await c.apply({ apply: "MemberAlarm.read", target: { ids: ["3"] } }, { key: "k-y" });
   const r = await c.apply({ apply: "MemberAlarm.read", target: { ids: ["4"] } }, { key: "k-y", dropResponse: true });
   assert.equal(r.code, "WIRE.IDEMPOTENCY_MISMATCH");
@@ -69,7 +71,7 @@ test("키 불일치 응답이 유실돼도 이전 요청의 성공으로 복구�
 test("재요청까지 통신 실패하면 미확정으로 남고, 복구 뒤 같은 키로 확정(r7 R7-02·R7-03)", async () => {
   let down = false;
   const flaky: typeof fetch = (u, o) => (down && String(u).endsWith("/apply") ? Promise.reject(new TypeError("network")) : fetch(u, o));
-  const c = connect(URL, T1, flaky);
+  const c = connect(URL, T1, flaky, OPTIONS);
   down = true;
   await assert.rejects(c.apply({ apply: "MemberAlarm.read", target: { ids: ["5"] } }, { key: "k-z" }), WriteUnsettled);
   assert.deepEqual(c.pending(), ["k-z"]);
@@ -104,7 +106,7 @@ test("HTTP 경계: 초과 본문·잘못된 길이·GET·잘못된 JSON은 처�
   const badJson = await raw(`POST /status HTTP/1.1\r\ncontent-length: 7\r\n\r\n{"key":`);
   assert.match(badJson, /JSON/);
   // 위 요청들은 알림 6을 바꾸지 않았다
-  const c = connect(URL, T1);
+  const c = connect(URL, T1, fetch, OPTIONS);
   const rows = (await c.read(alarms)).rows as { id: number; isChecked: boolean }[];
   assert.equal(rows.find((r) => r.id === 6)?.isChecked, false);
 });

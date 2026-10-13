@@ -2,7 +2,7 @@
 
 > 이 문서는 `spikes/spike-v6-transport/src/wire_codes.rs`의 레지스트리에서 생성된다. 손으로 고치지 않는다. 다시 만들려면 `AIP_UPDATE_GOLDEN=1 cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --test wire_codes`를 실행한다.
 
-제품 HTTP API(`/read`, `/apply`, `/operation`, `/jobs/*`, `/files/*`, `/events/*` 등)의 응답에서 호출자가 받는 `code`다. 대부분의 실패가 HTTP 200과 `{"ok":false,"code":...,"msg":...}`로 오므로 상태 줄로는 재시도 여부를 알 수 없고, 이 표가 그것을 말한다. 메시지 문장은 계약이 아니고 코드가 계약이다. 모든 AIP 오류 코드는 `영역.이름` 형식이다. 이 문서의 영역은 `WIRE`이고, 정의 검사기의 `DEF` 코드는 [definition-diagnostics.md](definition-diagnostics.md), PoC의 `POC` 코드는 [diagnostics.md](diagnostics.md)에 있다. 2026-10-13 이전에는 접두 없는 이름(`WIRE.BAD_VALUE`)이었고 정의 진단 코드와 이름이 겹쳤다. 조회: `aip explain-code <CODE>`. 작업 상태 값(`QUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCEL_REQUESTED`, `CANCELLED`)은 오류 코드가 아니므로 접두 없이 그대로다.
+제품 HTTP API(`/read`, `/apply`, `/operation`, `/jobs/*`, `/files/*`, `/events/*` 등)의 응답에서 호출자가 받는 `code`다. 대부분의 실패가 HTTP 200과 `{"ok":false,"code":...,"msg":...}`로 오므로 상태 줄로는 재시도 여부를 알 수 없고, 이 표가 그것을 말한다. 메시지 문장은 계약이 아니고 코드가 계약이다. 모든 AIP 오류 코드는 `영역.이름` 형식이다. 이 문서의 영역은 `WIRE`이고, 정의 검사기의 `DEF` 코드는 [definition-diagnostics.md](definition-diagnostics.md), PoC의 `POC` 코드는 [diagnostics.md](diagnostics.md)에 있다. 2026-10-13 이전에는 접두 없는 이름(`BAD_VALUE`)이었고 정의 진단 코드와 이름이 겹쳤다. 조회: `aip explain-code <CODE>`. 작업 상태 값(`QUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCEL_REQUESTED`, `CANCELLED`)은 오류 코드가 아니므로 접두 없이 그대로다.
 
 ## 분류와 재시도
 
@@ -24,7 +24,7 @@
 | check-first | 무슨 일이 있었는지 확인한 뒤에만 다시 보낸다. 모르고 보내면 효과가 반복될 수 있다 |
 | reauthenticate | 새 토큰을 받은 뒤 다시 보낸다 |
 
-응답 헤더 `x-request-id`를 신고에 함께 준다. 운영자는 같은 id의 로그 줄을 찾는다.
+JSON 실패 본문은 `requestId`와 이 레지스트리의 `retry`를 싣는다. `requestId`는 응답 헤더 `x-request-id`와 같으며, 신고에 함께 주면 운영자가 같은 id의 로그 줄을 찾는다. 성공 본문에는 두 필드를 추가하지 않는다. 재시도 지침은 쓰기의 확정 여부를 대신하지 않으므로 미확정 쓰기는 같은 멱등 키를 유지한다.
 
 ### `WIRE.ACCESS_DENIED`
 
@@ -163,8 +163,15 @@
 
 `class` contract, `retry` never
 
-- 원인: The `x-aip-contract` fingerprint of the request is not the server's: the client was generated from another definition.
+- 원인: The request's `x-aip-contract` fingerprint differs from the server's deployed definition.
 - 수정: Regenerate the client binding (`aip service gen`) from the deployed definition.
+
+### `WIRE.CONTRACT_REQUIRED`
+
+`class` contract, `retry` never
+
+- 원인: The request has no `x-aip-contract` header on `/read`, `/apply` or `/status`.
+- 수정: Send the deployed fingerprint from `/capabilities` in `x-aip-contract`; generated clients send it automatically.
 
 ### `WIRE.COST_EXCEEDED`
 

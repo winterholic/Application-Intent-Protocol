@@ -27,7 +27,7 @@ _ACTOR_ID = re.compile(r"^(0|[1-9][0-9]*|-[1-9][0-9]*)$")
 _UNSETTLED = {"WIRE.COMMIT_UNKNOWN", "WIRE.INTERNAL"}
 # Rejections before execution say nothing about whether an earlier attempt with the key committed.
 _NOT_EXECUTED = {
-    "WIRE.TOKEN_EXPIRED", "WIRE.UNAUTHENTICATED", "WIRE.BAD_REQUEST", "WIRE.PAYLOAD_TOO_LARGE", "WIRE.NOT_FOUND", "WIRE.CONTRACT_MISMATCH",
+    "WIRE.TOKEN_EXPIRED", "WIRE.UNAUTHENTICATED", "WIRE.BAD_REQUEST", "WIRE.PAYLOAD_TOO_LARGE", "WIRE.NOT_FOUND", "WIRE.CONTRACT_MISMATCH", "WIRE.CONTRACT_REQUIRED",
     "WIRE.ORIGIN_NOT_ALLOWED", "WIRE.REQUEST_TIMEOUT", "WIRE.DB_UNAVAILABLE", "WIRE.WORKER_BUSY", "WIRE.DEADLINE_EXCEEDED", "WIRE.CONFLICT",
 }
 _CONTRACT_PATHS = {"/read", "/apply", "/status", "/extension", "/operation"}
@@ -35,20 +35,23 @@ _MANAGED_PREFIXES = ("/jobs/", "/files/", "/events/read", "/messages/", "/rag/",
 
 
 class AipError(Exception):
-    """A typed server or protocol rejection. `code` is the stable AIP error code. `request_id` is the server's
-    `x-request-id` response header (None when the reply had none); report it so the operator can find the log line."""
+    """A typed server or protocol rejection. `code` is the stable AIP error code. `request_id` is the `requestId` of
+    the failure body (the same value as the `x-request-id` response header; None when the reply had neither); report
+    it so the operator can find the log line. `retry` is the server's guidance for the code, one of `never`, `later`,
+    `check-first` or `reauthenticate` (None when the failure did not come from a server reply)."""
 
-    def __init__(self, code: str, message: Optional[str] = None, request_id: Optional[str] = None):
+    def __init__(self, code: str, message: Optional[str] = None, request_id: Optional[str] = None, retry: Optional[str] = None):
         super().__init__(message or code)
         self.code = code
         self.request_id = request_id
+        self.retry = retry
 
 
 class WriteUnsettled(AipError):
     """The write may or may not have committed. Retry with `client.retry_pending()` or the same key."""
 
-    def __init__(self, key: str, request: Any, request_id: Optional[str] = None):
-        super().__init__("CLIENT.WRITE_UNSETTLED", "쓰기 결과를 아직 확정하지 못함", request_id)
+    def __init__(self, key: str, request: Any, request_id: Optional[str] = None, retry: Optional[str] = None):
+        super().__init__("CLIENT.WRITE_UNSETTLED", "쓰기 결과를 아직 확정하지 못함", request_id, retry)
         self.key = key
         self.request = request
 
@@ -62,6 +65,7 @@ class ScopeConflict(AipError):
 Transport = Callable[[str, dict, bytes, float], Any]
 
 _SAFE_REQUEST_ID = re.compile(r"^[A-Za-z0-9._-]{8,64}$")
+_RETRY_GUIDANCE = {"never", "later", "check-first", "reauthenticate"}
 
 
 def _well_formed_bundle_result(response: dict) -> bool:
@@ -79,6 +83,12 @@ class _Body(dict):
     """A parsed JSON object that remembers the request id of its reply. The body itself is the server's, unchanged."""
 
     request_id: Optional[str] = None
+    retry: Optional[str] = None
+
+
+def _retry(response: Any) -> Optional[str]:
+    value = response.get("retry") if isinstance(response, dict) else None
+    return value if isinstance(value, str) and value in _RETRY_GUIDANCE else None
 
 
 def _request_id(response: Any) -> Optional[str]:
@@ -161,12 +171,16 @@ class Client:
             raise AipError("CLIENT.PROTOCOL_ERROR", "JSON 응답이 아님", request_id) from None
         if isinstance(parsed, dict):
             parsed = _Body(parsed)
-            parsed.request_id = request_id
+            # The failure body names its request (same value as the header) and says whether to send it again.
+            body_id = parsed.get("requestId")
+            parsed.request_id = body_id if isinstance(body_id, str) and _SAFE_REQUEST_ID.match(body_id) else request_id
+            if parsed.get("ok") is False and isinstance(parsed.get("retry"), str) and parsed["retry"] in _RETRY_GUIDANCE:
+                parsed.retry = parsed["retry"]
         return parsed
 
     def _checked(self, response: Any, expect_contract: bool) -> dict:
         if isinstance(response, dict) and response.get("ok") is False and isinstance(response.get("code"), str):
-            raise AipError(response["code"], response.get("msg") if isinstance(response.get("msg"), str) else None, _request_id(response))
+            raise AipError(response["code"], response.get("msg") if isinstance(response.get("msg"), str) else None, _request_id(response), _retry(response))
         if not isinstance(response, dict) or response.get("ok") is not True:
             raise AipError("CLIENT.PROTOCOL_ERROR", "응답 형식 오류", _request_id(response))
         if expect_contract and response.get("contractFingerprint") != self.contract_fingerprint:
@@ -176,7 +190,7 @@ class Client:
     def _describe(self, token: Optional[str]) -> Optional[str]:
         response = self._post("/session", {}, token=token, contract=False)
         if isinstance(response, dict) and response.get("ok") is False and isinstance(response.get("code"), str):
-            raise AipError(response["code"], None, _request_id(response))
+            raise AipError(response["code"], None, _request_id(response), _retry(response))
         actor = (response.get("principal") or {}).get("actorId") if isinstance(response, dict) else None
         if response.get("ok") is not True or (token and not (isinstance(actor, str) and _ACTOR_ID.match(actor))):
             raise AipError("CLIENT.PROTOCOL_ERROR", "세션 응답 계약 오류", _request_id(response))
@@ -225,12 +239,14 @@ class Client:
             return {"ok": False, "code": "WIRE.IDEMPOTENCY_MISMATCH"}
         self._pending[key] = snapshot
         last_request_id: Optional[str] = None
+        last_retry: Optional[str] = None
         for attempt in range(retries + 1):
             try:
                 response = self._post("/apply", {"request": snapshot, "key": key})
             except (OSError, AipError) as failure:
                 last_request_id = getattr(failure, "request_id", None) or last_request_id
                 continue
+            last_retry = _retry(response) or last_retry
             last_request_id = _request_id(response) or last_request_id
             code = response.get("code") if isinstance(response, dict) else None
             if not isinstance(response, dict) or (response.get("ok") is not True and not isinstance(code, str)):
@@ -248,8 +264,10 @@ class Client:
             # A failed outcome names its request so that the rejection can be reported; a success carries nothing extra.
             if request_id and response.get("ok") is False and "requestId" not in response:
                 response = {**response, "requestId": request_id}
+            if response.get("ok") is False and "retry" in response and _retry(response) is None:
+                response = {k: v for k, v in response.items() if k != "retry"}
             return response
-        raise WriteUnsettled(key, copy.deepcopy(snapshot), last_request_id)
+        raise WriteUnsettled(key, copy.deepcopy(snapshot), last_request_id, last_retry)
 
     def bundle(self, operations: list, key: Optional[str] = None, retries: int = 2) -> dict:
         """Runs exposed transitions (`{"apply": "R.t", "target": {...}}`) and exposed creates

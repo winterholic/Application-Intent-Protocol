@@ -44,9 +44,16 @@ async fn post_apply(address: SocketAddr, token: &str, key: &str, id: i64) -> Val
 
 async fn post_apply_once(address: SocketAddr, token: &str, key: &str, id: i64) -> Value {
     let body = json!({"key": key, "request": {"apply": "Booking.confirm", "target": {"ids": [id.to_string()]}}}).to_string();
+    let fingerprint = spike_v5_sdk::contract_fingerprint_with_apply(&load_str(SPEC, Form::A).unwrap().execution, IdWire::DecimalString);
     let mut socket = TcpStream::connect(address).await.unwrap();
     socket
-        .write_all(format!("POST /apply HTTP/1.1\r\nauthorization: Bearer {token}\r\ncontent-length: {}\r\n\r\n{body}", body.len()).as_bytes())
+        .write_all(
+            format!(
+                "POST /apply HTTP/1.1\r\nauthorization: Bearer {token}\r\nx-aip-contract: {fingerprint}\r\ncontent-length: {}\r\n\r\n{body}",
+                body.len()
+            )
+            .as_bytes(),
+        )
         .await
         .unwrap();
     let mut response = String::new();

@@ -9,7 +9,7 @@ use spike_v2_read::{
 use spike_v5_sdk::contract_fingerprint_with_all_extensions;
 use spike_v6_transport::{
     idempotency_ddl,
-    server::{listen_with_prototype_options, ReadExtensions, ServerOptions, WorkerLang},
+    server::{ReadExtensions, ServerOptions, WorkerLang},
 };
 use std::{
     fs,

@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { connect } from "./transport.ts";
+// /read, /apply and /status need the contract header; the Rust harness passes the served fingerprint.
+const OPTIONS = { contractFingerprint: process.env.AIP_FINGERPRINT };
 
 const URL = process.env.AIP_URL!;
 const TOKEN = process.env.AIP_TOKEN!;
@@ -11,7 +13,7 @@ const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Run first: Rust issues this token immediately before starting the Node test process.
 test("만료 뒤에는 캐시 hit로 토큰 만료를 숨기지 않음", async () => {
-  const expiring = connect(URL, EXPIRING_TOKEN);
+  const expiring = connect(URL, EXPIRING_TOKEN, fetch, OPTIONS);
   const first = await expiring.read(alarms);
   assert.equal(first.cached, false);
   assert.equal(first.stored, true);
@@ -20,8 +22,8 @@ test("만료 뒤에는 캐시 hit로 토큰 만료를 숨기지 않음", async (
 });
 
 test("알림 캐시 hit 뒤 다른 연결의 쓰기는 최대 수명 안에 반영", async () => {
-  const reader = connect(URL, TOKEN);
-  const writer = connect(URL, TOKEN);
+  const reader = connect(URL, TOKEN, fetch, OPTIONS);
+  const writer = connect(URL, TOKEN, fetch, OPTIONS);
   const first = await reader.read(alarms);
   assert.equal(first.stored, true);
   assert.equal((await reader.read(alarms)).cached, true);
@@ -40,7 +42,7 @@ test("알림 캐시 hit 뒤 다른 연결의 쓰기는 최대 수명 안에 반�
 });
 
 test("시간 의존 모집 조회는 저장하지 않고 현재 마감 상태를 다시 계산", async () => {
-  const client = connect(URL, TOKEN);
+  const client = connect(URL, TOKEN, fetch, OPTIONS);
   const first = await client.read(recruitment);
   assert.deepEqual(first.rows, [{ id: 100 }]);
   assert.equal(first.stored, false);
@@ -52,8 +54,8 @@ test("시간 의존 모집 조회는 저장하지 않고 현재 마감 상태를
 });
 
 test("다른 연결의 권한 회수는 유효 수명 뒤 서버 정책을 다시 적용", async () => {
-  const reader = connect(URL, TOKEN);
-  const writer = connect(URL, TOKEN);
+  const reader = connect(URL, TOKEN, fetch, OPTIONS);
+  const writer = connect(URL, TOKEN, fetch, OPTIONS);
   const query = { read: "ManagerNote", select: ["id", "note"] };
   assert.deepEqual((await reader.read(query)).rows, [{ id: 1, note: "secret" }]);
   const response = await writer.apply({ apply: "Permission.revoke", target: { ids: ["1"] } }, { key: "revoke" });

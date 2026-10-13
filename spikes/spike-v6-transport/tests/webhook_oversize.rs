@@ -1,7 +1,7 @@
 //! O-31: a webhook body that fits the configured limit but is too large once it becomes a job input (JSON escaping
 //! doubles every quote) can never succeed. The provider must get a permanent 4xx, not a 503 it will retry forever.
 use hmac::{Hmac, Mac};
-use serde_json::{json, Value};
+use serde_json::Value;
 use sha2::Sha256;
 use spike_v1_fixture::{load_str, Form};
 use spike_v2_read::{id_wire::IdWire, sqlgen};

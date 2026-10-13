@@ -5,7 +5,7 @@ const MANAGED_PATHS = new Set(["/rag/search", "/rag/answer", "/rag/index", "/rag
 // 확정 응답을 받기 전까지 그 키는 미확정으로 남고 캐시 저장도 보류된다(r7 R7-02·R7-03).
 import { createCache, ScopeChanged } from "../../spike-v5-sdk/sdk/cache.ts";
 import type { IdWireKind } from "../../spike-v5-sdk/sdk/generic.ts";
-import { failure, rememberRequestId, requestIdOf } from "./request-id.ts";
+import { failure, rememberRequestId, requestIdOf, retryOf, type RetryGuidance } from "./request-id.ts";
 
 export type ApplyOptions = { key?: string; dropResponse?: boolean; retries?: number };
 export function isIdWire(value: unknown): value is IdWireKind {
@@ -39,18 +39,20 @@ function validWriteResponse(res: any, wire?: IdWireKind, extensionWrite = false)
 
 const UNSETTLED = new Set(["WIRE.COMMIT_UNKNOWN", "WIRE.INTERNAL"]);
 // 실행 전 거부나 이번 시도의 rollback은 같은 키의 이전 커밋 여부를 알려 주지 않는다.
-const NOT_EXECUTED = new Set(["WIRE.TOKEN_EXPIRED", "WIRE.UNAUTHENTICATED", "WIRE.BAD_REQUEST", "WIRE.PAYLOAD_TOO_LARGE", "WIRE.NOT_FOUND", "WIRE.CONTRACT_MISMATCH", "WIRE.ORIGIN_NOT_ALLOWED", "WIRE.REQUEST_TIMEOUT", "WIRE.DB_UNAVAILABLE", "WIRE.WORKER_BUSY", "WIRE.DEADLINE_EXCEEDED", "WIRE.CONFLICT"]);
+const NOT_EXECUTED = new Set(["WIRE.TOKEN_EXPIRED", "WIRE.UNAUTHENTICATED", "WIRE.BAD_REQUEST", "WIRE.PAYLOAD_TOO_LARGE", "WIRE.NOT_FOUND", "WIRE.CONTRACT_MISMATCH", "WIRE.CONTRACT_REQUIRED", "WIRE.ORIGIN_NOT_ALLOWED", "WIRE.REQUEST_TIMEOUT", "WIRE.DB_UNAVAILABLE", "WIRE.WORKER_BUSY", "WIRE.DEADLINE_EXCEEDED", "WIRE.CONFLICT"]);
 
 export class WriteUnsettled extends Error {
   key: string;
   request: unknown;
   /** 서버가 마지막으로 답한 요청의 ID. 한 번도 응답을 받지 못했으면 없다. */
   requestId?: string;
-  constructor(key: string, request: unknown, requestId?: string) {
+  retry?: RetryGuidance;
+  constructor(key: string, request: unknown, requestId?: string, retry?: RetryGuidance) {
     super("쓰기 결과를 아직 확정하지 못함");
     this.key = key;
     this.request = request;
     if (requestId !== undefined) this.requestId = requestId;
+    if (retry !== undefined) this.retry = retry;
   }
 }
 
@@ -58,7 +60,7 @@ export class ScopeConflict extends Error {
   name = "ScopeConflict";
 }
 
-type Pending = { request: unknown; attempts: number; outcome?: any; lastRequestId?: string };
+type Pending = { request: unknown; attempts: number; outcome?: any; lastRequestId?: string; lastRetry?: RetryGuidance };
 type AuthContext = { token: string | null; generation: number };
 
 // 미확정 쓰기는 서버 검증 principal에, 캐시·진행 중 요청은 인증 세대에 귀속한다.
@@ -175,6 +177,7 @@ export function connect(base: string, initialToken: string | null, fetchImpl: ty
     try {
       const res = await postWithToken("/apply", { request: record.request, key }, auth.token, extra);
       if (auth.generation !== generation) return null;
+      record.lastRetry = retryOf(res) ?? record.lastRetry;
       const attemptId = requestIdOf(res);
       if (attemptId !== undefined) record.lastRequestId = attemptId;
       const extensionWrite = record.request !== null && typeof record.request === "object" && Object.hasOwn(record.request, "extension");
@@ -192,6 +195,10 @@ export function connect(base: string, initialToken: string | null, fetchImpl: ty
     // A failed outcome names its request so that the rejection can be reported; a success carries nothing extra.
     const requestId = requestIdOf(res);
     if (res?.ok === false && requestId !== undefined && res.requestId === undefined) res = { ...res, requestId };
+    if (res?.ok === false && Object.hasOwn(res, "retry") && retryOf(res) === undefined) {
+      res = { ...res };
+      delete res.retry;
+    }
     res = freezeOutcome(res);
     record.outcome = res;
     if (pending.get(key) === record) {
@@ -211,7 +218,7 @@ export function connect(base: string, initialToken: string | null, fetchImpl: ty
       if (record.outcome) return record.outcome;
       if (res) return freezeOutcome({ ...settle(key, record, res), recovered: true });
     }
-    throw new WriteUnsettled(key, structuredClone(record.request), record.lastRequestId);
+    throw new WriteUnsettled(key, structuredClone(record.request), record.lastRequestId, record.lastRetry);
   }
   async function apply(request: unknown, opts: ApplyOptions = {}) {
     // 전송 전 직렬화 오류는 미확정 쓰기가 아니다. JSON으로 고정해 호출자 변경과 재시도를 분리한다.

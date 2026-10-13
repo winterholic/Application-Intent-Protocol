@@ -1,11 +1,13 @@
 # D. 핵심 개발 경험 비교와 검증 범위
 
+> 비교표는 초기 PoC와 독립 spike의 검증 이력이다. 현재 제품의 호출자 read·공개 동작 apply와 별개로 읽는다. 현재 SDK 계약은 [SDK](../../product/SDK.md), 제품 검증은 [VERIFICATION](../../product/VERIFICATION.md)을 따른다. 생산성 절감 수치는 이 기록으로 입증되지 않는다.
+
 > 기준: [통합 지침](../sources/founder-integrated-directive-2026-10-03.md) §1.3·13.
 > 결과 수준: 실제 소스 대조 + 설계 변경 영향 분석. 2026-10-04 기준 문법·읽기·쓰기·공식 worker·SDK를 독립 spike에서 실행했다([V1](V1-semantic-fixture-results.md)·[V2](V2-caller-read-results.md)·[V3](V3-standard-write-results.md)·[V4](V4-official-extension-results.md)·[V5](V5-sdk-results.md)). 전송·수명·세션 복구는 [V6](V6-transport-results.md)·[V9](V9-cache-lifetime-results.md)·[V10](V10-session-recovery-results.md) 결과를 따른다. [V12](V12-typed-transport-results.md)는 선택형 read 타입과 실제 HTTP·캐시를 연결했다. [V13](V13-id-boundary-results.md)은 공통 서버 경계에서 숫자 제한·십진 문자열 Id 왕복을 비교해 화면별 변환 없이 같은 행을 변경하는 후보를 검증했다. [V14](V14-typed-apply-results.md)는 direct 공개 전이 입력·결과·복구 타입을 생성 binding에 연결했다. [V15](V15-filter-value-results.md)는 공개 scalar 필터와 prefix 실행을 연결했다. 설치부터 정의 변경까지 실제 개발자 흐름을 잇는 통합 검증은 남는다. 이 문서의 DX·생산성 비교 자체는 미실행이다. 아래 ‘줄어든다’는 측정 결과가 아니라 전제부 설계 예측이다.
 
 ## 1. 비교 기준과 실제 표본
 
-아리아리 원본은 `ariari/ariari` 한 트리만 사용했다. TEST·backup 복제본은 측정 분모에 섞지 않았다. 기존 endpoint/줄 수 총계는 재측정하지 않는다.
+표본 서비스는 동아리 모집 목록·지원 승인·알림 읽음·관리자 위임·외부 OAuth 인증을 다룬다. 모집 조회에는 학교·인증 상태·행 가시성이 함께 적용되고, 승인과 위임은 여러 행을 한 트랜잭션에서 바꾼다. 출처는 `ariari/ariari` 원본 트리다. TEST·backup 복제본은 측정에 포함하지 않았으며 기존 endpoint·줄 수 총계는 당시 기록을 유지한다.
 
 | 근거 | 이번에 확인한 내용 |
 |---|---|
@@ -17,7 +19,7 @@
 | [승인 mutation hook](../../../../ariari/ariari/ariari-frontend/app/hooks/apply/useApplicationMutation.tsx) 30행 | 지원 목록·각 상세 무효화. 이 hook에서는 새 회원으로 인한 회원 목록 갱신을 찾지 못함. 앱 전체의 최종 UI 오동작은 미재현 |
 | [ClubMemberService](../../../../ariari/ariari/ariari-backend/src/main/java/com/ariari/ariari/domain/club/clubmember/ClubMemberService.java) 74행 | 위임 대상 ADMIN, 요청자 GENERAL 두 쓰기. 자기 위임의 실제 오류는 미재현 |
 | [KakaoAuthManager](../../../../ariari/ariari/ariari-backend/src/main/java/com/ariari/ariari/commons/auth/oauth/KakaoAuthManager.java) 58·87·121행 | 외부 OAuth HTTP 연동 코드 경로 존재. 외부 호출 성공·보안·성능은 미검증 |
-| [현 AIP 모집 query](../../examples/ariari/app.aip) 425행, [tsgen](../../crates/aip-contract/src/tsgen.rs) 238행 | 서버 select 고정·정렬 enum·이름 호출. 프론트 선택을 바꾸는 새 모델은 구현되지 않음 |
+| [당시 PoC 모집 query](../../examples/ariari/app.aipoc) 425행, [tsgen](../../crates/aip-contract/src/tsgen.rs) 238행 | 서버 select 고정·정렬 enum·이름 호출. 당시 PoC에는 호출자가 select를 조합하는 경로가 없었음 |
 
 ‘파일 수정 필요’는 검토해야 할 계층과 구분한다. 현재 요청·결과·정책으로 충분하면 controller나 service가 반드시 바뀌는 것은 아니다. 기존 코드가 허용하는 임의 sort는 AIP가 새로 만든 유연성으로 계산하지 않는다.
 

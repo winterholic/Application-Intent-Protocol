@@ -29,9 +29,10 @@ fn tsc(dir: &str, file: &str) -> std::process::Output {
 
 async fn raw_read(port: u16, token: &str) -> Value {
     let mut socket = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
-    let body = json!({"query":{"read":"Inbox","select":["id"],"filter":[{"field":"title","op":"eq","value":"ids"}]}}).to_string();
+    // /read needs the contract header, so a raw client learns the served fingerprint from /capabilities
+    let body = "{}".to_string();
     socket
-        .write_all(format!("POST /read HTTP/1.1\r\nauthorization: Bearer {token}\r\ncontent-length: {}\r\n\r\n{body}", body.len()).as_bytes())
+        .write_all(format!("POST /capabilities HTTP/1.1\r\nauthorization: Bearer {token}\r\ncontent-length: {}\r\n\r\n{body}", body.len()).as_bytes())
         .await
         .unwrap();
     let mut response = String::new();

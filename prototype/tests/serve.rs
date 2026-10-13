@@ -184,12 +184,17 @@ impl Drop for ServerChild {
 }
 
 fn post(address: &str, path: &str, token: Option<&str>, body: &Value) -> Value {
+    post_with_contract(address, path, token, None, body)
+}
+
+fn post_with_contract(address: &str, path: &str, token: Option<&str>, contract: Option<&str>, body: &Value) -> Value {
     let addr: SocketAddr = address.parse().expect("listening address must be a socket address");
     let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(2)).expect("connect to prototype server");
     stream.set_read_timeout(Some(Duration::from_secs(3))).expect("set HTTP read timeout");
     let body = body.to_string();
     let authorization = token.map(|token| format!("authorization: Bearer {token}\r\n")).unwrap_or_default();
-    write!(stream, "POST {path} HTTP/1.1\r\nhost: {addr}\r\n{authorization}content-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len())
+    let contract = contract.map(|fingerprint| format!("x-aip-contract: {fingerprint}\r\n")).unwrap_or_default();
+    write!(stream, "POST {path} HTTP/1.1\r\nhost: {addr}\r\n{authorization}{contract}content-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len())
         .expect("write HTTP request");
     let mut response = String::new();
     stream.read_to_string(&mut response).expect("read HTTP response");
@@ -246,7 +251,8 @@ fn serve_runs_the_token_read_and_shutdown_lifecycle_on_the_requested_socket() {
     let session = post(address, "/session", Some(token), &json!({}));
     assert_eq!(session["ok"], true);
     assert_eq!(session["principal"]["actorId"], "1");
-    let rows = post(address, "/read", Some(token), &json!({ "query": { "read": "Event", "select": ["id", "title"] } }));
+    let rows =
+        post_with_contract(address, "/read", Some(token), Some(fingerprint), &json!({ "query": { "read": "Event", "select": ["id", "title"] } }));
     assert_eq!(rows["ok"], true);
     assert_eq!(rows["rows"], json!([{ "id": "1", "title": "hello" }]));
 

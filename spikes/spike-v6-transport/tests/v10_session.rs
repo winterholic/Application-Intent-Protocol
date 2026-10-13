@@ -15,11 +15,18 @@ resource MemberAlarm {
 }
 ";
 
+/// /read, /apply and /status need the contract header; set once the application facts are loaded.
+static FINGERPRINT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
 async fn post(port: u16, path: &str, token: Option<&str>, body: &Value) -> Value {
     let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
     let body = body.to_string();
     let authorization = token.map(|token| format!("authorization: Bearer {token}\r\n")).unwrap_or_default();
-    stream.write_all(format!("POST {path} HTTP/1.1\r\n{authorization}content-length: {}\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+    let contract = FINGERPRINT.get().filter(|_| path != "/session").map(|fp| format!("x-aip-contract: {fp}\r\n")).unwrap_or_default();
+    stream
+        .write_all(format!("POST {path} HTTP/1.1\r\n{authorization}{contract}content-length: {}\r\n\r\n{body}", body.len()).as_bytes())
+        .await
+        .unwrap();
     let mut response = String::new();
     stream.read_to_string(&mut response).await.unwrap();
     serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap()
@@ -91,6 +98,7 @@ async fn v10_session_confirmation_and_pending_retry_keep_principal_scope() {
     .await
     .unwrap();
 
+    FINGERPRINT.set(spike_v5_sdk::contract_fingerprint_with_wire(&facts, spike_v2_read::id_wire::IdWire::Legacy)).unwrap();
     let (port, keys) = spike_v6_transport::start(facts).await;
     let actor_minus_one = keys.issue(-1, 600);
     let body = json!({ "request": { "apply": "MemberAlarm.read", "target": { "ids": ["7"] } }, "key": "signed-minus-one" });
@@ -117,6 +125,7 @@ async fn v10_session_confirmation_and_pending_retry_keep_principal_scope() {
         Command::new("node")
             .current_dir(dir)
             .env("AIP_URL", format!("http://127.0.0.1:{port}"))
+            .env("AIP_FINGERPRINT", FINGERPRINT.get().unwrap())
             .env("AIP_TOKEN_1", &t1)
             .env("AIP_TOKEN_1_NEW", &t1_new)
             .env("AIP_TOKEN_1_SHORT", &t1_short)

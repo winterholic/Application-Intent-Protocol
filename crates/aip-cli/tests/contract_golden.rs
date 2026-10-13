@@ -75,3 +75,42 @@ fn operator_view_has_the_webhook_signing_setup() {
     assert_eq!(sig["secret_env"], "STRIPE_WEBHOOK_SECRET");
     assert_eq!(sig["header"], "Stripe-Signature");
 }
+
+#[test]
+fn contract_is_compact_by_default_and_pretty_preserves_its_meaning() {
+    let src = root().join("examples/shop/app.aipoc");
+    let compact = aip(&["contract", &src.to_string_lossy()]);
+    assert!(compact.status.success());
+    let text = String::from_utf8(compact.stdout).expect("compact JSON is UTF-8");
+    assert_eq!(text.lines().count(), 1, "default contract must be one JSON line");
+    let doc: serde_json::Value = serde_json::from_str(&text).expect("compact contract is JSON");
+    let table = doc["errors"].as_array().expect("top-level error table");
+    assert!(!table.is_empty());
+    let unique: std::collections::BTreeSet<String> = table.iter().map(ToString::to_string).collect();
+    assert_eq!(unique.len(), table.len(), "each error definition occurs once");
+    let core_output = aip(&["core", &src.to_string_lossy()]);
+    assert!(core_output.status.success());
+    let core: aip_ir::Program = serde_json::from_slice(&core_output.stdout).expect("core output is a program");
+    let expanded = aip_contract::describe(&core);
+    for kind in ["queries", "commands", "subscriptions"] {
+        if let Some(operations) = doc[kind].as_object() {
+            for (name, operation) in operations {
+                let references = operation["errors"].as_array().expect("error references");
+                let resolved: Vec<&serde_json::Value> =
+                    references.iter().map(|reference| &table[reference.as_u64().expect("error table index") as usize]).collect();
+                let expected: Vec<&serde_json::Value> =
+                    expanded[kind][name]["errors"].as_array().expect("expanded error definitions").iter().collect();
+                assert_eq!(resolved, expected, "{name}: code and reason must survive table compaction");
+                for reference in references {
+                    let index = reference.as_u64().expect("error table index") as usize;
+                    assert!(table.get(index).is_some(), "{name}: dangling error reference {index}");
+                }
+            }
+        }
+    }
+    let pretty = aip(&["contract", &src.to_string_lossy(), "--pretty"]);
+    assert!(pretty.status.success());
+    let formatted = String::from_utf8(pretty.stdout).expect("pretty JSON is UTF-8");
+    assert!(formatted.lines().count() > 1);
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&formatted).expect("pretty contract is JSON"), doc);
+}

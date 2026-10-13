@@ -20,6 +20,7 @@ export type ContractBinding<C extends ContractShape<C>> = {
   readonly __contract?: C;
   readonly readDescriptors?: ReadDescriptors<C>;
 };
+export type RetryGuidance = "never" | "later" | "check-first" | "reauthenticate";
 export type IdWireKind = "legacy" | "safe-number-v13" | "decimal-string-v13";
 export type ApplyActionShape = {
   readonly idInput: unknown;
@@ -44,7 +45,7 @@ export type ApplyRequest<A extends ApplyContractShape<A>, K extends keyof A & st
 }[K];
 export type ApplyResult<I> =
   | { readonly ok: true; readonly changed: readonly I[]; readonly unchanged: readonly I[]; readonly tags: readonly string[]; readonly replayed?: boolean; readonly recovered?: boolean }
-  | { readonly ok: false; readonly code: string; readonly msg?: string; readonly recovered?: boolean; readonly requestId?: string };
+  | { readonly ok: false; readonly code: string; readonly msg?: string; readonly recovered?: boolean; readonly requestId?: string; readonly retry?: RetryGuidance };
 export type PendingResult<A extends ApplyContractShape<A>> = ApplyResult<A[keyof A]["idOutput"]> & { readonly key: string };
 
 /** 생성 binding에 create·compose 계약이 있을 때만 붙는다. 값은 타입 추론용이고 런타임에는 없다. */
@@ -71,7 +72,7 @@ export type CreatedRow<Cr extends CreateContractShape<Cr>> = {
 type AppliedRow<I> = { readonly changed: readonly I[]; readonly unchanged: readonly I[] };
 export type BundleResult<A extends ApplyContractShape<A>, Cr extends CreateContractShape<Cr> = {}> =
   | { readonly ok: true; readonly applied: readonly AppliedRow<A[keyof A]["idOutput"]>[]; readonly created: readonly CreatedRow<Cr>[]; readonly tags: readonly string[]; readonly replayed?: boolean; readonly recovered?: boolean }
-  | { readonly ok: false; readonly code: string; readonly msg?: string; readonly recovered?: boolean; readonly requestId?: string };
+  | { readonly ok: false; readonly code: string; readonly msg?: string; readonly recovered?: boolean; readonly requestId?: string; readonly retry?: RetryGuidance };
 
 /** `expose compose`: 대상 목록 하나에 서버가 허용한 전이·생성 단계를 조합한다. 값은 서버가 읽은 대상 행의 경로(`item`)나 상수(`const`)다. */
 export type ComposeCreateShape = { readonly idOutput: unknown; readonly fields: Record<string, unknown>; readonly optional: string; readonly sources: Record<string, unknown>; readonly constants: string };
@@ -92,7 +93,7 @@ export type ComposeRequest<Cp extends ComposeContractShape<Cp>, K extends keyof 
 type ComposeCreated<S extends ComposeShape> = { [T in keyof S["creates"] & string]: { readonly resource: T; readonly id: S["creates"][T]["idOutput"] } }[keyof S["creates"] & string];
 export type ComposeResult<Cp extends ComposeContractShape<Cp>, K extends keyof Cp & string = keyof Cp & string> =
   | { readonly ok: true; readonly applied: readonly AppliedRow<Cp[K]["idOutput"]>[]; readonly created: readonly ComposeCreated<Cp[K]>[]; readonly tags: readonly string[]; readonly replayed?: boolean; readonly recovered?: boolean }
-  | { readonly ok: false; readonly code: string; readonly msg?: string; readonly recovered?: boolean; readonly requestId?: string };
+  | { readonly ok: false; readonly code: string; readonly msg?: string; readonly recovered?: boolean; readonly requestId?: string; readonly retry?: RetryGuidance };
 export type PendingWrite<A extends ApplyContractShape<A>, Cr extends CreateContractShape<Cr> = {}, Cp extends ComposeContractShape<Cp> = {}> =
   | PendingResult<A>
   | (BundleResult<A, Cr> & { readonly key: string })
@@ -208,7 +209,7 @@ export type OperationBinding<C extends ContractShape<C>, A extends ApplyContract
 };
 export type WriteExtensionResult<O> =
   | { readonly ok: true; readonly output: DeepReadonly<O>; readonly tags: readonly string[]; readonly replayed?: boolean; readonly recovered?: boolean }
-  | { readonly ok: false; readonly code: string; readonly msg?: string; readonly recovered?: boolean; readonly requestId?: string };
+  | { readonly ok: false; readonly code: string; readonly msg?: string; readonly recovered?: boolean; readonly requestId?: string; readonly retry?: RetryGuidance };
 
 
 export type ReadDescriptors<C extends ContractShape<C>> = {

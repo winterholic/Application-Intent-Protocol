@@ -105,12 +105,14 @@ async fn v13_id_modes_preserve_identity_or_reject_before_commit() {
         failures.push("V13 marker 제거 음성 대조 미검출".into());
     }
     fs::remove_file(control_file).unwrap();
+    let legacy_fingerprint = spike_v5_sdk::contract_fingerprint_with_wire(&facts, IdWire::Legacy);
     let (legacy_port, legacy_keys) = spike_v6_transport::start(facts.clone()).await;
     let (safe_port, safe_keys) = spike_v6_transport::start_with_id_wire(facts.clone(), IdWire::SafeNumber).await;
     let (string_port, string_keys) = spike_v6_transport::start_with_id_wire(facts, IdWire::DecimalString).await;
     let tokens = [legacy_keys.issue(1, 600), safe_keys.issue(1, 600), string_keys.issue(1, 600), string_keys.issue(2, 600)];
     for phase in ["legacy", "safe", "string"] {
         let tokens = tokens.clone();
+        let legacy_fingerprint = legacy_fingerprint.clone();
         let node = tokio::task::spawn_blocking(move || {
             Command::new("node")
                 .current_dir(dir)
@@ -118,6 +120,7 @@ async fn v13_id_modes_preserve_identity_or_reject_before_commit() {
                 .env("AIP_SAFE_URL", format!("http://127.0.0.1:{safe_port}"))
                 .env("AIP_STRING_URL", format!("http://127.0.0.1:{string_port}"))
                 .env("AIP_LEGACY_TOKEN", &tokens[0])
+                .env("AIP_FINGERPRINT", &legacy_fingerprint)
                 .env("AIP_SAFE_TOKEN", &tokens[1])
                 .env("AIP_STRING_TOKEN", &tokens[2])
                 .env("AIP_OTHER_TOKEN", &tokens[3])

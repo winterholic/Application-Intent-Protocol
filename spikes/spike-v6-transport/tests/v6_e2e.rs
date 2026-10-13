@@ -53,6 +53,7 @@ async fn v6_transport_e2e() {
     }
     spike_v6_transport::prepare(&db).await;
     db.batch_execute(&SEED.replace("S.", &format!("{s}."))).await.unwrap();
+    let fingerprint = spike_v5_sdk::contract_fingerprint_with_wire(&facts, spike_v2_read::id_wire::IdWire::Legacy);
     let (port, keys) = spike_v6_transport::start(facts).await;
     let (t1, t2) = (keys.issue(1, 600), keys.issue(2, 600));
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/client");
@@ -60,6 +61,7 @@ async fn v6_transport_e2e() {
         Command::new("node")
             .current_dir(dir)
             .env("AIP_URL", format!("http://127.0.0.1:{port}"))
+            .env("AIP_FINGERPRINT", &fingerprint)
             .env("AIP_TOKEN_1", &t1)
             .env("AIP_TOKEN_2", &t2)
             .args(["--test", "--test-concurrency=1", "e2e.test.ts"])

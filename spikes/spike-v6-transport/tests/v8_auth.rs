@@ -16,10 +16,14 @@ resource MemberAlarm {
 }
 ";
 
+// /read requires the contract header; the fingerprint is set once the facts are loaded.
+static FINGERPRINT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
 async fn http(port: u16, body: &Value, headers: &str) -> Value {
     let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
     let b = body.to_string();
-    s.write_all(format!("POST /read HTTP/1.1\r\n{headers}content-length: {}\r\n\r\n{b}", b.len()).as_bytes()).await.unwrap();
+    let contract = FINGERPRINT.get().map(|fp| format!("x-aip-contract: {fp}\r\n")).unwrap_or_default();
+    s.write_all(format!("POST /read HTTP/1.1\r\n{headers}{contract}content-length: {}\r\n\r\n{b}", b.len()).as_bytes()).await.unwrap();
     let mut out = String::new();
     s.read_to_string(&mut out).await.unwrap();
     serde_json::from_str(out.split("\r\n\r\n").nth(1).unwrap_or("null")).unwrap_or(Value::Null)
@@ -55,6 +59,7 @@ async fn v8_server_auth() {
     ))
     .await
     .unwrap();
+    FINGERPRINT.set(spike_v5_sdk::contract_fingerprint_with_wire(&facts, spike_v2_read::id_wire::IdWire::Legacy)).unwrap();
     let (port, keys) = spike_v6_transport::start(facts).await;
     let q = json!({ "query": { "read": "MemberAlarm", "select": ["id"] } });
     let ids = |v: &Value| v["rows"].as_array().map(|a| a.iter().map(|r| r["id"].as_i64().unwrap()).collect::<Vec<_>>());

@@ -425,7 +425,16 @@ async fn reply_metrics(w: &mut Response<impl AsyncWriteExt + Unpin>, body: Strin
 }
 
 async fn reply_with_status(w: &mut Response<impl AsyncWriteExt + Unpin>, status: &str, out: &str, extra: &str) {
-    w.trace.record(status, out);
+    let out = match serde_json::from_str::<serde_json::Value>(out) {
+        Ok(serde_json::Value::Object(mut body)) if body.get("ok").and_then(serde_json::Value::as_bool) == Some(false) => {
+            let retry = body.get("code").and_then(serde_json::Value::as_str).and_then(wire_codes::lookup).map_or("never", |info| info.retry.name());
+            body.insert("retry".into(), retry.into());
+            body.insert("requestId".into(), w.trace.id().into());
+            std::borrow::Cow::Owned(serde_json::Value::Object(body).to_string())
+        }
+        _ => std::borrow::Cow::Borrowed(out),
+    };
+    w.trace.record(status, &out);
     // A browser reads x-request-id only when the reply exposes it.
     let origin = w
         .origin
@@ -970,10 +979,16 @@ async fn serve_conn(
         return reply(&mut w, &err("WIRE.BAD_REQUEST", "RAG API는 POST만 허용함")).await;
     }
     if ["/read", "/apply", "/status"].contains(&path.as_str()) && !write_extension {
-        if let Some(expected) = expected_contract.as_deref() {
-            if contract_fingerprint.as_deref() != Some(expected) {
+        // O-03: 다른 경로와 같이 헤더 없는 요청도 거부한다. 지문을 모르는 raw 클라이언트는 /capabilities에서 얻는다.
+        // 계약이 없는 서버(resources 없는 facts)는 서비스가 만들 수 없는 상태라 기존 동작을 유지한다.
+        match expected_contract.as_deref() {
+            None if contract_fingerprint.is_some() => {
+                return reply(&mut w, &err("WIRE.CONTRACT_REQUIRED", "x-aip-contract 헤더 필요(계약 지문은 /capabilities에서 얻음)")).await;
+            }
+            Some(expected) if contract_fingerprint.as_deref() != Some(expected) => {
                 return reply(&mut w, &err("WIRE.CONTRACT_MISMATCH", "생성 계약과 서버 계약이 다름")).await;
             }
+            _ => {}
         }
     }
     if write_extension {

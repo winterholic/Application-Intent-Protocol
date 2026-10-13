@@ -214,6 +214,23 @@ class RequestIdTest(unittest.TestCase):
                 self.serve({"ok": False, "code": "WIRE.NOT_FOUND"}, header=header).read({"read": "Event", "select": ["id"]})
             self.assertIsNone(caught.exception.request_id, header)
 
+    def test_the_body_requestId_and_retry_win_over_the_header_and_reach_the_error(self):
+        body_id = "req_aaaaaaaaaaaaaaaaaaaaaaaa"
+        # CD-2: the failure body names its request and says whether to send it again; the body value is preferred
+        with self.assertRaises(AipError) as caught:
+            self.serve({"ok": False, "code": "WIRE.DB_UNAVAILABLE", "requestId": body_id, "retry": "later"}, header=None).read({"read": "Event", "select": ["id"]})
+        self.assertEqual((caught.exception.code, caught.exception.request_id, caught.exception.retry), ("WIRE.DB_UNAVAILABLE", body_id, "later"))
+        with self.assertRaises(AipError) as caught:
+            self.serve({"ok": False, "code": "WIRE.NOT_FOUND", "requestId": body_id, "retry": "never"}).read({"read": "Event", "select": ["id"]})
+        self.assertEqual((caught.exception.request_id, caught.exception.retry), (body_id, "never"))
+        # a failed write outcome keeps both fields in its body; an unknown or malformed retry value is not trusted
+        outcome = self.serve({"ok": False, "code": "WIRE.BAD_VALUE", "requestId": body_id, "retry": "never"}).apply({"apply": "A.b"}, key="k9")
+        self.assertEqual((outcome["requestId"], outcome["retry"]), (body_id, "never"))
+        for bad in ("sometimes", ["later"], None):
+            with self.assertRaises(AipError) as caught:
+                self.serve({"ok": False, "code": "WIRE.NOT_FOUND", "retry": bad}).read({"read": "Event", "select": ["id"]})
+            self.assertIsNone(caught.exception.retry, bad)
+
     def test_the_default_transport_reads_the_header_of_a_real_reply(self):
         outer = self
 
@@ -291,3 +308,19 @@ class TransportBoundaryTest(unittest.TestCase):
             for server in (sink, redirector):
                 server.shutdown()
                 server.server_close()
+
+class RetryMetadataTest(unittest.TestCase):
+    def test_unsettled_write_keeps_server_retry_guidance(self):
+        server = FakeServer()
+        server.script('/apply', {'ok': False, 'code': 'WIRE.COMMIT_UNKNOWN', 'retry': 'check-first', 'requestId': 'req_0123456789abcdef01234567'})
+        client = connect('http://aip', 't1', FP, transport=server)
+        with self.assertRaises(WriteUnsettled) as caught:
+            client.apply({'apply': 'Event.mark'}, key='retry-metadata', retries=0)
+        self.assertEqual(caught.exception.retry, 'check-first')
+        self.assertEqual(caught.exception.request_id, 'req_0123456789abcdef01234567')
+
+    def test_rejected_write_discards_unknown_retry_value(self):
+        server = FakeServer()
+        server.script('/apply', {'ok': False, 'code': 'WIRE.BAD_VALUE', 'retry': 'sometimes'})
+        client = connect('http://aip', 't1', FP, transport=server)
+        self.assertNotIn('retry', client.apply({'apply': 'Event.mark'}, key='bad-retry'))

@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { connect, ScopeConflict, WriteUnsettled } from "./transport.ts";
+// /read, /apply and /status need the contract header; the Rust harness passes the served fingerprint.
+const OPTIONS = { contractFingerprint: process.env.AIP_FINGERPRINT };
 
 const URL = process.env.AIP_URL!;
 const T1 = process.env.AIP_TOKEN_1!;
@@ -11,7 +13,7 @@ const EXPIRED = process.env.AIP_TOKEN_EXPIRED!;
 const request = { apply: "Apply.approve", target: { ids: ["300"] } };
 
 test("세션 확인은 서버가 토큰에서 principal과 남은 수명을 결정", async () => {
-  const client = connect(URL, T1);
+  const client = connect(URL, T1, fetch, OPTIONS);
   const session = await client.post("/session", {});
   assert.equal(session.ok, true);
   assert.equal(session.principal.actorId, "1");
@@ -25,7 +27,7 @@ test("처음부터 만료된 토큰은 apply 사전 확인에서 거부되고 pe
     if (String(input).endsWith("/apply")) applyCalls++;
     return fetch(input, init);
   };
-  const expired = connect(URL, EXPIRED, fetcher);
+  const expired = connect(URL, EXPIRED, fetcher, OPTIONS);
   await assert.rejects(expired.apply(request, { key: "expired-before-apply" }), (error: any) => error.code === "WIRE.TOKEN_EXPIRED");
   assert.deepEqual(expired.pending(), []);
   assert.equal(applyCalls, 0);
@@ -48,7 +50,7 @@ test("응답 유실 뒤 같은 principal 갱신으로 같은 키를 재확정하
     return fetch(input, init);
   };
 
-  const client = connect(URL, T1_SHORT, fetcher);
+  const client = connect(URL, T1_SHORT, fetcher, OPTIONS);
   const key = "v10-approve-300";
   await assert.rejects(client.apply(request, { key, retries: 0 }), WriteUnsettled);
   await new Promise((resolve) => setTimeout(resolve, 3100));

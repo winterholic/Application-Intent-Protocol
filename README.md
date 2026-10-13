@@ -99,3 +99,7 @@ MIT. [LICENSE](LICENSE)를 따른다(D-A27).
 오류 코드는 모두 `영역.이름` 형식이다(`DEF`, `WIRE`, `CLIENT`, `POC`). `aip explain-code <코드>`와 `aip diagnostics [--area ...]`가 네 영역을 함께 조회한다.
 
 `spikes/spike-0-ts/`는 첫 iteration의 TypeScript 스파이크다. 설계 판단의 근거로 보존하며 본 구현의 출발점은 아니다.
+
+### 계약 JSON 출력
+
+`aip contract <program.aipoc>`는 JSON 한 줄을 출력한다. 사람이 읽을 때는 `--pretty`를 붙인다. 공통 오류 정의는 최상위 `errors` 배열에 있고 각 query·command·subscription의 `errors` 배열은 해당 정의의 인덱스를 참조한다. 이 명령은 PoC 언어의 계약 출력이며 제품 언어의 생성 binding은 `aip service gen`을 사용한다.

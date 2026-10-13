@@ -108,6 +108,9 @@ enum Cmd {
         file: PathBuf,
         #[arg(long)]
         operator: bool,
+        /// Format the JSON for human reading (the default is one compact line)
+        #[arg(long)]
+        pretty: bool,
     },
     /// Generate a typed TypeScript client from the contract
     GenTs { file: PathBuf, out: PathBuf },
@@ -162,10 +165,13 @@ fn run() -> Result<ExitCode> {
             println!("wrote {}", out.display());
             Ok(ExitCode::SUCCESS)
         }
-        Cmd::Contract { file, operator } => {
+        Cmd::Contract { file, operator, pretty } => {
             let Some((core, _)) = compile_full(&file)? else { return Ok(ExitCode::FAILURE) };
-            let doc = if operator { aip_contract::operator(&core) } else { aip_contract::describe(&core) };
-            println!("{}", serde_json::to_string_pretty(&doc)?);
+            let mut doc = if operator { aip_contract::operator(&core) } else { aip_contract::describe(&core) };
+            if !operator {
+                aip_contract::compact_error_table(&mut doc);
+            }
+            println!("{}", if pretty { serde_json::to_string_pretty(&doc)? } else { serde_json::to_string(&doc)? });
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Diff { file, against, json } => {

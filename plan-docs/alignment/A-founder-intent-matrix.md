@@ -1,5 +1,7 @@
 # A. 창시자 의도 반영표
 
+> 이 문서는 2026-10-03 PoC 구현을 통합 지침과 대조한 이력이다. 표의 미구현·미결 판정을 현재 제품 상태로 해석하지 않는다. 이후 결정은 [DECISIONS](../../docs/DECISIONS.md), 제품 실행과 검증은 [EXECUTION](../../product/EXECUTION.md)·[VERIFICATION](../../product/VERIFICATION.md)을 따른다.
+
 > 기준: [통합 지침 원문](../sources/founder-integrated-directive-2026-10-03.md). [FOUNDER]는 제품 기준, 아래 구현 관찰은 2026-10-03 코드 읽기 결과다.
 > 코드 실행·성능·공격 재현은 하지 않았다. 구현 경로 존재와 안전성 보장을 구분한다. 기존 테스트 수를 새 검증 결과로 인용하지 않는다.
 
@@ -7,7 +9,7 @@
 
 | 원칙 | 현재 코드 근거 | 기존 설계 반영 | 판정과 수정 방향 |
 |---|---|---|---|
-| 1 백엔드 개별 개발 최소화 | [폼 계약](../../crates/aip-contract/src/forms.rs), [모집 정의](../../examples/ariari/app.aip)의 query 고정 select | DD-01·02의 capability 후보, 01-purpose | 부분 반영. 표준 폼은 반복을 흡수하지만 결과 모양은 서버 정의에 고정. [C](C-syntax-proposal.md) read/apply로 화면별 서버 선언 감소 검증 |
+| 1 백엔드 개별 개발 최소화 | [폼 계약](../../crates/aip-contract/src/forms.rs), [모집 정의](../../examples/ariari/app.aipoc)의 query 고정 select | DD-01·02의 capability 후보, 01-purpose | 부분 반영. 표준 폼은 반복을 흡수하지만 결과 모양은 서버 정의에 고정. [C](C-syntax-proposal.md) read/apply로 화면별 서버 선언 감소 검증 |
 | 2 Application Intent Protocol·서버 최종 통제 | [HTTP](../../crates/aip-runtime/src/http.rs) 43·123행의 이름 경로, [엔진](../../crates/aip-runtime/src/engine.rs) 140·159행의 계획/입력 조회 | DD-01·03·08·14 | 정책 실행 경로는 있지만 조합 요청 의미가 없음. 선언 이름 호출만 허용하는 현 구조와 목적이 충돌. 기존 경로를 확장/업무 동작용으로 재사용할 수 있는지 비교 |
 | 3 Rust와 JS/TS·Python | [서버 시작](../../crates/aip-runtime/src/lib.rs) 99행, [TS 생성](../../crates/aip-contract/src/tsgen.rs) 238·257행 | DD-04·06, T03 | Rust 서버·생성 TS는 존재. 현재 제품 crates에서 host 정의/공식 Node/Python worker 연결 경로 찾지 못함. 설치·진단·기동 연결 설계 필요 |
 | 4 정형화·선택 최소화 | [AST](../../crates/aip-syntax/src/ast.rs), [IR](../../crates/aip-ir/src/lib.rs), [표준 폼](../../crates/aip-ir/src/forms.rs) | DD-04·08·13 | 부분 반영. 정형 모델은 있으나 작성 방식/선택 수의 실제 이점 미측정. 정확한 한 작성 흐름 후보를 비교하고 IR 자체를 목표로 두지 않음 |

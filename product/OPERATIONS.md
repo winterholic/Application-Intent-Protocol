@@ -136,7 +136,13 @@ aip service audit --config service.json list --before-id 3411                  #
 | `aip_requests_total` | `route`, `status`, `code` | 끝난 요청 수. `route`는 고정 이름(`read`, `apply`, `jobs` 등, 그 밖은 `other`), `code`는 실패 응답의 AIP 오류 코드 |
 | `aip_request_duration_seconds` | `route` | 요청 수락부터 응답 완료까지(histogram, 5ms~30s) |
 
-label에는 경로·query·본문·principal이 들어가지 않으므로 호출자가 series 수를 늘릴 수 없다. AIP의 많은 거부는 HTTP 200 본문의 `code`로 오므로 오류율은 `status`가 아니라 `code!=""`로 계산한다. job 상태별 수, DB pool 대기, outbox 적체 같은 내부 상태 metric과 OpenTelemetry trace 전송은 아직 없다. trace exporter는 외부 SDK 의존성이 커서 [선택적 패키지](INFRASTRUCTURE.md#선택적-패키지-구조) 후보로 둔다. 요청 상관 ID는 응답의 `x-request-id`와 요청 로그 줄이 함께 가진다. JSON 응답뿐 아니라 정적 파일·객체 스트림·managed file·SSE·WebSocket 업그레이드 응답도 같은 헤더를 싣고 로그 줄에 상태를 남기며, 공식 TypeScript·Python SDK는 이 값을 실패 객체의 `requestId`(Python 예외는 `request_id`)로 돌려준다. W3C `traceparent` 요청 헤더가 올바른 하나로 오면 그 trace id를 요청 로그 줄의 `traceId`에 남기고(없거나 틀리거나 둘 이상이면 서버가 새 trace id를 만든다), 그 요청을 처리하는 동안 서버가 보내는 외부 HTTP 호출(RAG embedding·answer provider, 객체 저장소)에 같은 trace id와 새 span id, 호출자의 sampled flag로 `traceparent`를 붙인다. 서버는 span을 기록하거나 내보내지 않는다. durable job 단계의 호출에는 아직 붙지 않으며 exporter 설계는 [INFRASTRUCTURE](INFRASTRUCTURE.md#opentelemetry-exporter-설계-메모)에 있다. 근거 테스트는 `spikes/spike-v6-transport/tests/metrics.rs`다.
+label에는 경로·query·본문·principal을 넣지 않아 호출자 입력이 metric series 수를 늘리지 않는다. 오류율은 `status`가 아니라 `code!=""`로 계산한다. 많은 거부가 HTTP 200 본문의 오류 코드로 전달되기 때문이다. job 상태별 수, DB pool 대기, outbox 적체 metric은 아직 없다.
+
+요청 ID는 응답의 `x-request-id`, JSON 실패 본문의 `requestId`, 요청 로그 줄에 동일하게 기록된다. 오류 본문에는 코드별 `retry`도 있어 운영자가 본문만 받아도 로그와 재시도 지침을 확인할 수 있다. SDK의 실패 객체도 이 정보를 보존한다(Python 예외의 ID 속성은 `request_id`). 미확정 쓰기의 처리 규칙은 [SDK](SDK.md#계약-헤더와-실패-응답)를 따른다. 정적 파일·객체 스트림·managed file·SSE·WebSocket 업그레이드에도 같은 요청 ID 헤더와 상태 로그가 남는다.
+
+W3C `traceparent`가 유효한 헤더 하나로 들어오면 요청 로그의 `traceId`는 호출자의 trace id다. 헤더가 없거나 잘못됐거나 둘 이상이면 서버가 새 trace id를 만든다. 요청 중 외부 HTTP 호출(RAG embedding·answer provider, 객체 저장소)은 같은 trace id, 새 span id, 호출자의 sampled flag를 전달한다. 서버는 span을 기록하거나 내보내지 않으며 durable job 단계의 호출에는 아직 전파하지 않는다.
+
+OpenTelemetry exporter는 현재 구현에 포함되지 않는다. 외부 SDK 의존성을 선택적 패키지로 둘 설계는 [INFRASTRUCTURE](INFRASTRUCTURE.md#opentelemetry-exporter-설계-메모)에 있다. metric 검증은 `spikes/spike-v6-transport/tests/metrics.rs`, trace 전파 검증은 `tests/trace_propagation.rs`를 따른다.
 
 ## 확장과 검증 범위
 

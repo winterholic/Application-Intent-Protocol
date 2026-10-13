@@ -40,3 +40,18 @@ async fn v13_contract_header_validation_and_auth_precede_database_access() {
         assert_eq!(response["code"], "WIRE.CONTRACT_MISMATCH");
     }
 }
+
+/// O-03 closed: /read, /apply and /status need x-aip-contract like every other path.
+/// A missing header is rejected after authentication and before any database access.
+#[tokio::test]
+async fn contract_header_is_required_on_read_apply_and_status() {
+    let (port, keys) = spike_v6_transport::start(json!({"resources": {}})).await;
+    for path in ["/read", "/apply", "/status"] {
+        let token = keys.issue(1, 60);
+        let response = request(port, &format!("POST {path} HTTP/1.1\r\ncontent-length: 2\r\nauthorization: Bearer {token}\r\n\r\n{{}}")).await;
+        assert_eq!(response["code"], "WIRE.CONTRACT_REQUIRED", "{path} without x-aip-contract: {response}");
+        assert!(response["msg"].as_str().unwrap().contains("x-aip-contract"), "{path}: {response}");
+        let response = request(port, &format!("POST {path} HTTP/1.1\r\ncontent-length: 2\r\nauthorization: Bearer invalid\r\n\r\n{{}}")).await;
+        assert_eq!(response["code"], "WIRE.UNAUTHENTICATED", "{path}: authentication still comes first");
+    }
+}

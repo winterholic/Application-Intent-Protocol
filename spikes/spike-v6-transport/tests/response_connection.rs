@@ -31,7 +31,8 @@ fn facts() -> Value {
 
 fn read_request(select: &str) -> String {
     let body = format!(r#"{{"query":{{"read":"Event","select":[{select}]}}}}"#);
-    format!("POST /read HTTP/1.1\r\nauthorization: Bearer any\r\ncontent-length: {}\r\n\r\n{body}", body.len())
+    let fingerprint = spike_v5_sdk::contract_fingerprint_with_all_extensions(&facts(), IdWire::DecimalString);
+    format!("POST /read HTTP/1.1\r\nauthorization: Bearer any\r\nx-aip-contract: {fingerprint}\r\ncontent-length: {}\r\n\r\n{body}", body.len())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

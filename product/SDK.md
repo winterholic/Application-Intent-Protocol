@@ -77,9 +77,22 @@ composed = client.compose("Project", ["11"], [{"transition": "archive"},
 | 타입 | TypeScript는 생성 binding의 `CreateContract`·`ComposeContract`로 값·id·`item` 출처를 검사한다. Python SDK는 정적 타입이 없고 서버가 검사한다. 성공 결과의 모양이 틀리면 둘 다 확정으로 보지 않고 같은 키로 다시 확인한다 |
 | 한계 | 계약이 create·compose를 공개하지 않고 전이만 있으면 `retryPending()` 결과 타입은 전이 하나의 것 그대로다. 그 계약에서 `bundle()`을 쓰면 pending 결과를 `applied` 유무로 좁혀 읽는다. 연산 사이로 값을 넘기는 일반 조합은 없다(`compose`의 `item`만). create는 Url·Time 필드를 받지 않는다 |
 
-## 실패 추적: requestId
+## 계약 헤더와 실패 응답
 
-서버는 모든 응답의 `x-request-id` 헤더에 요청 ID를 싣는다. 응답 본문 계약은 바뀌지 않는다. TypeScript SDK는 던지는 오류, `ok:false` 쓰기 결과, `WriteUnsettled`에 `requestId`를 싣고, Python SDK는 `AipError.request_id`(`WriteUnsettled` 포함)와 `ok:false` 쓰기 결과의 `requestId` 키를 준다. 헤더가 없거나 8~64자의 안전 문자(`A-Za-z0-9._-`)가 아니면 필드를 만들지 않으며 성공 결과에는 아무것도 더하지 않는다. 실패를 신고할 때 이 값을 함께 주면 운영자가 같은 ID의 서버 로그 줄을 찾는다. 근거 테스트는 `spikes/spike-v6-transport/client/request-id.test.ts`와 `product/tests/python_sdk_test.py`의 `RequestIdTest`다.
+생성 TypeScript binding과 Python SDK는 계약을 사용하는 요청에 `x-aip-contract`를 보낸다. `/read`, `/apply`, `/status`에서 헤더가 없으면 `WIRE.CONTRACT_REQUIRED`, 서버 지문과 다르면 `WIRE.CONTRACT_MISMATCH`다. 인증 검사가 먼저 실행된다. 직접 HTTP를 호출하는 클라이언트는 `/capabilities`에서 배포된 지문을 얻어 헤더에 넣는다. 지문을 고정한 클라이언트는 배포가 바뀌면 binding을 다시 생성해야 한다.
+
+JSON 실패 본문은 `requestId`와 `retry`를 싣는다. `requestId`는 응답 헤더 `x-request-id`와 같으며, 운영자는 같은 ID의 요청 로그를 찾는다. 성공 본문에는 이 두 필드를 추가하지 않는다. TypeScript의 오류·실패 결과와 Python의 `AipError`는 서버의 재시도 지침을 보존한다. Python 예외의 요청 ID 속성은 `request_id`다.
+
+| `retry` | 호출자가 할 일 |
+|---|---|
+| `never` | 입력·설정·계약을 고친 뒤 다시 호출한다 |
+| `later` | 잠시 기다린 뒤 같은 요청을 보낸다. 쓰기는 같은 멱등 키를 유지한다 |
+| `check-first` | 실제 효과나 저장된 결과를 확인한다. 미확정 쓰기는 새 키를 발급하지 않고 같은 키로 결과를 다시 확인한다 |
+| `reauthenticate` | 유효한 토큰을 얻어 다시 호출한다 |
+
+`WriteUnsettled`에는 마지막 서버 응답의 요청 ID와 재시도 지침이 남는다. 네트워크 오류만 있었으면 이 정보가 없을 수 있다. 재시도 지침은 커밋 여부를 보증하지 않는다. SDK의 멱등 키·미확정 상태 관리가 계속 적용된다. SDK는 목록 밖의 `retry`를 노출하지 않으며, 본문에 유효한 요청 ID가 없을 때는 응답 헤더의 8~64자 안전 문자(`A-Za-z0-9._-`) 값을 사용한다.
+
+근거 테스트: `spikes/spike-v6-transport/tests/error_body.rs`, `tests/v13_headers.rs`, `client/request-id.test.ts`, `product/tests/python_sdk_test.py`.
 
 ## durable Job, file, event API
 

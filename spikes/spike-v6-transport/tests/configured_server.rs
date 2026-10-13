@@ -12,6 +12,11 @@ fn facts() -> Value {
     spike_v1_fixture::load_str(include_str!("../../../prototype/example/app.aip"), spike_v1_fixture::Form::A).unwrap().execution
 }
 
+/// /read needs the contract header of the server's definition.
+fn fingerprint() -> String {
+    spike_v5_sdk::contract_fingerprint_with_apply(&facts(), IdWire::DecimalString)
+}
+
 const BAD_DB: &str = "host=127.0.0.1 port=1 dbname=postgres password=never_print_me connect_timeout=1";
 
 async fn post(address: SocketAddr, path: &str, token: &str, contract: Option<&str>, fault: bool) -> Value {
@@ -46,7 +51,9 @@ async fn ordinary_server_ignores_fault_header_after_a_successful_database_read()
         listen_with_apply_contract(facts(), IdWire::DecimalString, "127.0.0.1:0".parse().unwrap(), spike_v2_read::DB_URL.into()).await.unwrap();
     let token = server.keys.issue(1, 60);
     let address = server.address;
-    let request = tokio::spawn(async move { post_body(address, "/read", &token, None, true, r#"{"query":{"read":"Event","select":["id"]}}"#).await });
+    let request = tokio::spawn(async move {
+        post_body(address, "/read", &token, Some(&fingerprint()), true, r#"{"query":{"read":"Event","select":["id"]}}"#).await
+    });
     let outcome = request.await;
     server.shutdown().await.unwrap();
     db.batch_execute(&format!("DROP SCHEMA {schema} CASCADE")).await.unwrap();
@@ -62,7 +69,7 @@ async fn configured_database_and_authentication_order_are_observable() {
     assert_eq!(post(server.address, "/session", &token, None, false).await["principal"]["actorId"], "1");
     assert_eq!(post(server.address, "/read", "invalid", None, false).await["code"], "WIRE.UNAUTHENTICATED");
     assert_eq!(post(server.address, "/read", &token, Some(&"0".repeat(64)), false).await["code"], "WIRE.CONTRACT_MISMATCH");
-    let result = post(server.address, "/read", &token, None, true).await;
+    let result = post(server.address, "/read", &token, Some(&fingerprint()), true).await;
     assert_eq!(result["code"], "WIRE.DB_UNAVAILABLE", "configured failing database cannot silently use the default database");
     assert!(!result.to_string().contains("never_print_me"));
     server.shutdown().await.unwrap();

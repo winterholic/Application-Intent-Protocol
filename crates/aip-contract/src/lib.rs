@@ -92,6 +92,35 @@ pub fn describe(core: &ir::Program) -> Value {
     doc
 }
 
+/// Deduplicate the errors of the exported CLI contract. Each intent stores zero-based indices into
+/// the top-level `errors` array; both code and optional reason belong to the entry's identity.
+/// The expanded semantic contract used by compatibility analysis and client generation is unchanged.
+pub fn compact_error_table(doc: &mut Value) {
+    let kinds = ["queries", "commands", "subscriptions"];
+    let definitions: BTreeMap<String, Value> = kinds
+        .iter()
+        .filter_map(|kind| doc[*kind].as_object())
+        .flat_map(|operations| operations.values())
+        .filter_map(|operation| operation["errors"].as_array())
+        .flatten()
+        .map(|error| (error.to_string(), error.clone()))
+        .collect();
+    let indices: BTreeMap<String, usize> = definitions.keys().enumerate().map(|(index, key)| (key.clone(), index)).collect();
+    for kind in kinds {
+        if let Some(operations) = doc[kind].as_object_mut() {
+            for operation in operations.values_mut() {
+                if let Some(errors) = operation["errors"].as_array_mut() {
+                    for error in errors {
+                        // The table and indices were derived from these exact entries above.
+                        *error = json!(indices[&error.to_string()]);
+                    }
+                }
+            }
+        }
+    }
+    doc["errors"] = Value::Array(definitions.into_values().collect());
+}
+
 /// How a client opens a subscription; the message protocol is in `spec/grammar.md`.
 const SUBSCRIBE_TRANSPORT: &str = "WebSocket GET /aip/subscribe: send {type:'auth', token} first, then {type:'subscribe', id, name, input}; receive {type:'snapshot', id, rows}, then {type:'changed', id, rows} (the whole result, only when it differs from the last one sent) or {type:'error', id, code}; send {type:'unsubscribe', id} to stop";
 

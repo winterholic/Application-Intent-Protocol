@@ -40,9 +40,14 @@ resource Task {
 
 async fn post(address: SocketAddr, token: &str, extra: &str, body: &Value) -> Value {
     let body = body.to_string();
+    // the contract header is required; a test that sends its own (a mismatching one) replaces the real one
+    let fingerprint = spike_v5_sdk::contract_fingerprint_with_apply(&load_str(SPEC, Form::A).unwrap().execution, IdWire::DecimalString);
+    let own = if extra.contains("x-aip-contract") { String::new() } else { format!("x-aip-contract: {fingerprint}\r\n") };
     let mut socket = TcpStream::connect(address).await.unwrap();
     socket
-        .write_all(format!("POST /apply HTTP/1.1\r\nauthorization: Bearer {token}\r\n{extra}content-length: {}\r\n\r\n{body}", body.len()).as_bytes())
+        .write_all(
+            format!("POST /apply HTTP/1.1\r\nauthorization: Bearer {token}\r\n{own}{extra}content-length: {}\r\n\r\n{body}", body.len()).as_bytes(),
+        )
         .await
         .unwrap();
     let mut response = String::new();

@@ -98,13 +98,13 @@ pub fn render_markdown() -> String {
     let mut out = String::from(
         "# 제품 wire 오류 코드\n\n\
          > 이 문서는 `spikes/spike-v6-transport/src/wire_codes.rs`의 레지스트리에서 생성된다. 손으로 고치지 않는다. 다시 만들려면 `AIP_UPDATE_GOLDEN=1 cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --test wire_codes`를 실행한다.\n\n\
-         제품 HTTP API(`/read`, `/apply`, `/operation`, `/jobs/*`, `/files/*`, `/events/*` 등)의 응답에서 호출자가 받는 `code`다. 대부분의 실패가 HTTP 200과 `{\"ok\":false,\"code\":...,\"msg\":...}`로 오므로 상태 줄로는 재시도 여부를 알 수 없고, 이 표가 그것을 말한다. 메시지 문장은 계약이 아니고 코드가 계약이다. 모든 AIP 오류 코드는 `영역.이름` 형식이다. 이 문서의 영역은 `WIRE`이고, 정의 검사기의 `DEF` 코드는 [definition-diagnostics.md](definition-diagnostics.md), PoC의 `POC` 코드는 [diagnostics.md](diagnostics.md)에 있다. 2026-10-13 이전에는 접두 없는 이름(`WIRE.BAD_VALUE`)이었고 정의 진단 코드와 이름이 겹쳤다. 조회: `aip explain-code <CODE>`. 작업 상태 값(`QUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCEL_REQUESTED`, `CANCELLED`)은 오류 코드가 아니므로 접두 없이 그대로다.\n\n\
+         제품 HTTP API(`/read`, `/apply`, `/operation`, `/jobs/*`, `/files/*`, `/events/*` 등)의 응답에서 호출자가 받는 `code`다. 대부분의 실패가 HTTP 200과 `{\"ok\":false,\"code\":...,\"msg\":...}`로 오므로 상태 줄로는 재시도 여부를 알 수 없고, 이 표가 그것을 말한다. 메시지 문장은 계약이 아니고 코드가 계약이다. 모든 AIP 오류 코드는 `영역.이름` 형식이다. 이 문서의 영역은 `WIRE`이고, 정의 검사기의 `DEF` 코드는 [definition-diagnostics.md](definition-diagnostics.md), PoC의 `POC` 코드는 [diagnostics.md](diagnostics.md)에 있다. 2026-10-13 이전에는 접두 없는 이름(`BAD_VALUE`)이었고 정의 진단 코드와 이름이 겹쳤다. 조회: `aip explain-code <CODE>`. 작업 상태 값(`QUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCEL_REQUESTED`, `CANCELLED`)은 오류 코드가 아니므로 접두 없이 그대로다.\n\n\
          ## 분류와 재시도\n\n\
          | `class` | 뜻 |\n|---|---|\n\
          | request | 요청이 틀렸다. 고친다 |\n| authentication | 유효한 신원이 없다. 다시 로그인한다 |\n| authorization | 신원은 알지만 정의가 허용하지 않는다 |\n| contract | 클라이언트와 서버의 정의·배포가 다르다 |\n| limit | 한도에 걸렸다 |\n| availability | 의존 대상이나 용량이 일시적으로 없다 |\n| outcome | 쓰기·작업의 결과가 불명이거나 충돌했다 |\n| server | 서버나 확장의 실패. 운영자가 고친다 |\n\n\
          | `retry` | 뜻 |\n|---|---|\n\
          | never | 같은 요청은 같은 이유로 다시 실패한다 |\n| later | 시간이 지나면 같은 요청이 성공할 수 있다. 쓰기는 같은 멱등 키를 쓴다 |\n| check-first | 무슨 일이 있었는지 확인한 뒤에만 다시 보낸다. 모르고 보내면 효과가 반복될 수 있다 |\n| reauthenticate | 새 토큰을 받은 뒤 다시 보낸다 |\n\n\
-         응답 헤더 `x-request-id`를 신고에 함께 준다. 운영자는 같은 id의 로그 줄을 찾는다.\n",
+         JSON 실패 본문은 `requestId`와 이 레지스트리의 `retry`를 싣는다. `requestId`는 응답 헤더 `x-request-id`와 같으며, 신고에 함께 주면 운영자가 같은 id의 로그 줄을 찾는다. 성공 본문에는 두 필드를 추가하지 않는다. 재시도 지침은 쓰기의 확정 여부를 대신하지 않으므로 미확정 쓰기는 같은 멱등 키를 유지한다.\n",
     );
     for c in REGISTRY {
         out.push_str(&format!(
@@ -139,7 +139,8 @@ pub static REGISTRY: &[Info] = &[
     w("WIRE.INTEGRATION_AUTH_FAILED", Sv, Never, "The token for an outbound integration could not be obtained.", "Operator: fix the integration's credential configuration."),
     w("WIRE.RETRY_LATER", Av, Later, "An extension asked the job to be retried later.", "None for the caller; the server retries the job step."),
     w("WIRE.CONSUMER_FAILED", Sv, Later, "The reason recorded when a message consumer released a message without giving one; the message is delivered again.", "Consumer: pass an `error` text when releasing a message."),
-    w("WIRE.CONTRACT_MISMATCH", Co, Never, "The `x-aip-contract` fingerprint of the request is not the server's: the client was generated from another definition.", "Regenerate the client binding (`aip service gen`) from the deployed definition."),
+    w("WIRE.CONTRACT_MISMATCH", Co, Never, "The request's `x-aip-contract` fingerprint differs from the server's deployed definition.", "Regenerate the client binding (`aip service gen`) from the deployed definition."),
+    w("WIRE.CONTRACT_REQUIRED", Co, Never, "The request has no `x-aip-contract` header on `/read`, `/apply` or `/status`.", "Send the deployed fingerprint from `/capabilities` in `x-aip-contract`; generated clients send it automatically."),
     w("WIRE.COST_EXCEEDED", Li, Never, "The estimated cost exceeds the `cost` of the budget.", "Select fewer fields, traverse less or use a smaller limit; or raise `cost` in the definition."),
     w("WIRE.CURSOR_EXPIRED", Rq, Never, "The event cursor is older than the retained events.", "Start from the current position and read the state again."),
     w("WIRE.CURSOR_FIELD_NOT_ALLOWED", Rq, Never, "A cursor boundary field is not selected, is nullable or has a field policy.", "Select the sort fields and `id`, and sort on non-null fields without a field policy."),

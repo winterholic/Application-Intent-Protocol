@@ -26,16 +26,25 @@ resource ManagerNote {
 }
 ";
 
-async fn read(port: u16, token: &str, query: Value) -> Value {
+async fn post(port: u16, path: &str, token: &str, contract: Option<&str>, body: &str) -> Value {
     let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
-    let body = json!({ "query": query }).to_string();
+    let contract = contract.map(|fp| format!("x-aip-contract: {fp}\r\n")).unwrap_or_default();
     stream
-        .write_all(format!("POST /read HTTP/1.1\r\nauthorization: Bearer {token}\r\ncontent-length: {}\r\n\r\n{body}", body.len()).as_bytes())
+        .write_all(
+            format!("POST {path} HTTP/1.1\r\nauthorization: Bearer {token}\r\n{contract}content-length: {}\r\n\r\n{body}", body.len()).as_bytes(),
+        )
         .await
         .unwrap();
     let mut response = String::new();
     stream.read_to_string(&mut response).await.unwrap();
     serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap()
+}
+
+/// /read needs the contract header, so a raw client first learns the served fingerprint from /capabilities.
+async fn read(port: u16, token: &str, query: Value) -> Value {
+    let capabilities = post(port, "/capabilities", token, None, "{}").await;
+    let fingerprint = capabilities["contractFingerprint"].as_str().expect("fingerprint from /capabilities").to_string();
+    post(port, "/read", token, Some(&fingerprint), &json!({ "query": query }).to_string()).await
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -63,6 +72,7 @@ async fn v9_read_lifetimes_and_expiry_cross_the_http_sdk_boundary() {
     .await
     .unwrap();
 
+    let fingerprint = spike_v5_sdk::contract_fingerprint_with_wire(&facts, spike_v2_read::id_wire::IdWire::Legacy);
     let (port, keys) = spike_v6_transport::start(facts).await;
     let token = keys.issue(1, 600);
     let alarm = read(port, &token, json!({ "read": "MemberAlarm", "select": ["id", "isChecked"], "sort": [{ "field": "id" }] })).await;
@@ -85,6 +95,7 @@ async fn v9_read_lifetimes_and_expiry_cross_the_http_sdk_boundary() {
             .current_dir(dir)
             .env("AIP_URL", format!("http://127.0.0.1:{port}"))
             .env("AIP_TOKEN", &token)
+            .env("AIP_FINGERPRINT", &fingerprint)
             .env("AIP_EXPIRING_TOKEN", &expiring)
             .args(["--test", "--test-concurrency=1", "lifetime.e2e.test.ts"])
             .output()

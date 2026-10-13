@@ -26,16 +26,25 @@ INSERT INTO S.member_alarm (id, member_id, is_checked) VALUES (1, 1, false), (2,
 ";
 const TSC: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../spike-0-ts/node_modules/typescript/bin/tsc");
 
-async fn read(port: u16, token: &str, query: Value) -> Value {
+async fn post(port: u16, path: &str, token: &str, contract: Option<&str>, body: &str) -> Value {
     let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
-    let body = json!({ "query": query }).to_string();
+    let contract = contract.map(|fp| format!("x-aip-contract: {fp}\r\n")).unwrap_or_default();
     stream
-        .write_all(format!("POST /read HTTP/1.1\r\nauthorization: Bearer {token}\r\ncontent-length: {}\r\n\r\n{body}", body.len()).as_bytes())
+        .write_all(
+            format!("POST {path} HTTP/1.1\r\nauthorization: Bearer {token}\r\n{contract}content-length: {}\r\n\r\n{body}", body.len()).as_bytes(),
+        )
         .await
         .unwrap();
     let mut response = String::new();
     stream.read_to_string(&mut response).await.unwrap();
     serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap()
+}
+
+/// /read needs the contract header, so a raw client first learns the served fingerprint from /capabilities.
+async fn read(port: u16, token: &str, query: Value) -> Value {
+    let capabilities = post(port, "/capabilities", token, None, "{}").await;
+    let fingerprint = capabilities["contractFingerprint"].as_str().expect("fingerprint from /capabilities").to_string();
+    post(port, "/read", token, Some(&fingerprint), &json!({ "query": query }).to_string()).await
 }
 
 fn tsc(dir: &str, file: &str) -> std::process::Output {
