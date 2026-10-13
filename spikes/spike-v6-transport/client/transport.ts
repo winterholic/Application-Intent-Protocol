@@ -62,11 +62,58 @@ type Pending = { request: unknown; attempts: number; outcome?: any; lastRequestI
 type AuthContext = { token: string | null; generation: number };
 
 // 미확정 쓰기는 서버 검증 principal에, 캐시·진행 중 요청은 인증 세대에 귀속한다.
-export function connect(base: string, initialToken: string | null, fetchImpl: typeof fetch = fetch, options: { contractFingerprint?: string; idWire?: IdWireKind; validateRead?: (query: unknown, rows: unknown[]) => void; validateWrite?: (request: unknown, response: unknown) => void } = {}) {
+/** Largest response body the client will read; the server never answers with more than a few MiB. */
+export const DEFAULT_MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
+
+// A reverse proxy or an auth portal answers with an HTML page, and a broken server can answer without end. Both must fail as
+// a protocol error before the body is parsed, not as a SyntaxError or by exhausting memory. A missing or text/plain type is
+// accepted (some stacks omit or default it); anything else that is not JSON is not an AIP response.
+async function readJsonBounded(response: Response, limit: number): Promise<any> {
+  const media = (response.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+  if (media !== "" && media !== "application/json" && media !== "text/plain" && !media.endsWith("+json")) {
+    await response.body?.cancel().catch(() => {});
+    throw failure("CLIENT.PROTOCOL_ERROR", "응답이 JSON이 아님");
+  }
+  const declared = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > limit) {
+    await response.body?.cancel().catch(() => {});
+    throw failure("CLIENT.PROTOCOL_ERROR", "응답이 크기 상한을 넘음");
+  }
+  const reader = response.body?.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (reader) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > limit) {
+      await reader.cancel().catch(() => {});
+      throw failure("CLIENT.PROTOCOL_ERROR", "응답이 크기 상한을 넘음");
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  try {
+    return JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    throw failure("CLIENT.PROTOCOL_ERROR", "응답 본문이 JSON이 아님");
+  }
+}
+
+export function connect(base: string, initialToken: string | null, fetchImpl: typeof fetch = fetch, options: { contractFingerprint?: string; idWire?: IdWireKind; maxResponseBytes?: number; validateRead?: (query: unknown, rows: unknown[]) => void; validateWrite?: (request: unknown, response: unknown) => void } = {}) {
   const expectedFingerprint = options.contractFingerprint;
   const resultWire = options.idWire;
   const validateRead = options.validateRead;
   const validateWrite = options.validateWrite;
+  const maxResponseBytes = options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
+  if (!Number.isSafeInteger(maxResponseBytes) || maxResponseBytes <= 0) {
+    throw Object.assign(new Error("응답 크기 상한 형식 오류"), { code: "CLIENT.PROTOCOL_ERROR" });
+  }
   if (resultWire !== undefined && !isIdWire(resultWire)) {
     throw Object.assign(new Error("Id wire 형식 오류"), { code: "CLIENT.PROTOCOL_ERROR" });
   }
@@ -101,7 +148,7 @@ export function connect(base: string, initialToken: string | null, fetchImpl: ty
     }
     // A service never redirects an API call; following one would resend the body (and for 307/308 the whole request) to another origin.
     const r = await fetchImpl(base + path, { method: "POST", headers, body: JSON.stringify(body), redirect: "error", credentials: "omit" });
-    const parsed = (await r.json()) as any;
+    const parsed = await readJsonBounded(r, maxResponseBytes);
     // The body contract is untouched; the id travels in a header and is linked to the parsed body for the failures built from it.
     rememberRequestId(parsed, r);
     return parsed;
@@ -167,10 +214,21 @@ export function connect(base: string, initialToken: string | null, fetchImpl: ty
     throw new WriteUnsettled(key, structuredClone(record.request), record.lastRequestId);
   }
   async function apply(request: unknown, opts: ApplyOptions = {}) {
-    const key = opts.key ?? crypto.randomUUID();
     // 전송 전 직렬화 오류는 미확정 쓰기가 아니다. JSON으로 고정해 호출자 변경과 재시도를 분리한다.
     const text = JSON.stringify(request);
     const snapshot = JSON.parse(text);
+    // WriteUnsettled 뒤에 키 없이 같은 요청을 다시 부르면 새 키는 이미 커밋된 쓰기를 한 번 더 실행한다. 같은 본문의
+    // 미확정 쓰기가 있으면 그 키를 쓴다. 같은 요청을 의도적으로 두 번 쓰려면 호출자가 서로 다른 key를 준다.
+    let key = opts.key;
+    if (key === undefined) {
+      for (const [pendingKey, record] of pending) {
+        if (JSON.stringify(record.request) === text) {
+          key = pendingKey;
+          break;
+        }
+      }
+    }
+    key ??= crypto.randomUUID();
     await ensurePrincipal();
     const flightKey = `${generation}:${key}`;
     const flight = flights.get(flightKey);
@@ -252,6 +310,16 @@ export function connect(base: string, initialToken: string | null, fetchImpl: ty
     cache,
     post,
     pending: () => [...pending.keys()],
+    /**
+     * 미확정 쓰기를 버린다. 서버가 그 요청을 실행하지 않았다고 확신할 때만 쓴다(예: 같은 키에 `BAD_REQUEST`를 받았다).
+     * 커밋됐을 수 있는 쓰기를 버리면 결과를 영영 알 수 없다. 알 수 없는 키면 false다.
+     */
+    discardPending(key: string) {
+      if (!pending.delete(key)) return false;
+      flights.delete(`${generation}:${key}`);
+      cache.resolveUnknown();
+      return true;
+    },
     async read(query: unknown) {
       const snapshot = structuredClone(query);
       await ensurePrincipal();
