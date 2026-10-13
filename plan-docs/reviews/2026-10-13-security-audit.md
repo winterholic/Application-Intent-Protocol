@@ -82,6 +82,8 @@
 | S-24 | 정보 | 제품 | S-07 변경이 `spike-v6-transport` lib 테스트 빌드를 깨뜨림(`Runtime` 필드 추가). `tools/verify.sh`는 v4·v6 테스트를 돌리지 않아 못 잡았고 GitHub CI(`verify.yml`)만 잡는 구조. `hosting.rs` 임시 디렉터리 이름이 macOS 시계 해상도로 충돌해 간헐 실패 | 실행 | 필드 추가, 이름에 카운터 | 〃 | 04977cd, 2b6d977 |
 | S-25 | 낮음 | 제품 | 새로 추가된 OAuth client credentials 설정(`OAuthConfig`)이 `Debug`를 derive해 로그에 `client_secret`이 찍힐 수 있음 | 단위 테스트 | Debug를 직접 구현해 secret을 `<redacted>`로 | `aip-execution/tests/integrations.rs` | e145643 |
 | S-26 | 낮음 | PoC | Text에 NUL이 들어가면 DB 오류가 `INTERNAL`로 나옴, CSV export 셀이 수식으로 실행됨, 읽기에 `statement_timeout` 없음, 제약 위반 메시지가 DB 원문 | 단위 테스트, e2e 전체 | NUL 거부, 수식 접두 셀에 `'`, 읽기 10초 timeout(`UNAVAILABLE`), 일반 문구 | `validate.rs`·`jobs.rs` 단위 테스트, `poc-runtime` e2e 전체 통과 | f7dccb3 |
+| S-27 | 정보 | 제품 | `aip-execution`에 `hmac`·`base64`·`url`이 추가된 뒤 `spike-v3-write`·`spike-v4-worker`·`spike-v5-sdk`의 `Cargo.lock`이 갱신되지 않아 `verify.sh`가 spike-v3 단계에서 `--locked` 오류로 멈추고 CI의 v4 단계도 같은 오류를 낼 상태였음 | 실행(`bash tools/verify.sh`, exit 101) | lock 3개 오프라인 갱신(추가만), verify.sh에 v4·v6 포함 | `tools/verify.sh` 전체 | b7c2b7c |
+| S-28 | 중간 | 제품 | O-19: trigger 대상 operation을 인증된 사용자가 `/jobs/enqueue`로 직접 넣어 HMAC 검증을 우회 | 실제 PG: 위조 body enqueue가 `ok:true`로 QUEUED | 사용자 경로에서 webhook·schedule·outbox·message 대상 operation이면 `ACCESS_DENIED`(`Triggers::targets_operation`). trigger 경로(`submit_as_service`)는 그대로 | `spike-v6-transport/tests/trigger_guard.rs`, `tests/triggers.rs` | 9feb20b |
 
 ### 3.2 열려 있는 항목(제품 경로)
 
@@ -104,7 +106,7 @@
 | O-15 | 정보 | 의존성: `rsa 0.9.10`(RUSTSEC-2023-0071, Marvin)은 `jsonwebtoken`을 통해 들어오고 이 코드는 검증만 하므로 개인키 연산 노출은 없음. `rustls-pemfile 2.2.0`(RUSTSEC-2025-0134)은 유지보수 중단 공지. 나머지 436개 crates.io 패키지는 OSV 조회에서 알려진 취약점 없음(`cargo audit` 미설치, OSV `querybatch`로 대체). `npm audit` 0건, install script 없음 | 2026-10-13 조회 |
 | O-16 | 낮음 | 63바이트 초과 식별자 검증 없음(`aip-pg` DDL, 이름 충돌 시 인덱스 누락·제약 오류 사유 대체). `aip-migrate`는 63바이트 검증 있음 | 코드 추적 |
 | O-17 | 낮음 | `evolve`가 `public` 스키마의 AIP 소유가 아닌 `__` 포함 트리거·`__…_fn` 함수를 삭제할 수 있음 | 코드 추적 (PoC 마이그레이션) |
-| O-19 | 중간 | trigger(webhook·schedule·outbox) 대상 operation은 일반 job이라 `allow`가 열려 있으면 인증된 사용자가 `/jobs/enqueue`로 `{body:"위조"}`를 직접 넣어 HMAC 검증을 우회할 수 있음. 실행은 호출자 자신의 권한이지만 확장이 body 출처를 신뢰하면 업무 규칙이 깨짐 | 코드 추적. trigger 전용 operation 표식이나 `allow actor = 서비스 actor` 강제와 문서 경고 필요 |
+| O-19 | 완료 | trigger 대상 operation의 직접 enqueue로 HMAC 검증 우회 | S-28로 조치(trigger 대상 operation은 사용자 `/jobs/enqueue`에서 `ACCESS_DENIED`; 같은 operation을 사용자가 수동 실행해야 하면 trigger 없는 별도 operation을 둬야 함) |
 | O-20 | 중간 | 서비스 주체 job 이력은 보존 상한 면제인데 만료 정리는 분당 100건, 이벤트 key ledger·`aip_outbox_dispatch`·`aip_outbox`는 정리가 없고 job 입출력 바이트 quota도 없음(files 10MiB·messages 64MiB와 불일치). outbox relay는 매초 topic별 전체 이력을 anti-join | 코드 추적(부하 미측정) |
 | O-21 | 낮음 | 실행 중 job의 250ms heartbeat가 principal 재검증에서 한 번 `DB_UNAVAILABLE`을 받으면 worker가 종료되고, PENDING http effect가 있으면 영구 `EFFECT_UNKNOWN`. S-15의 조회 연결 상한(16)과 겹치면 포화 시 증폭 | 코드 추적 |
 | O-22 | 중간 | 런타임과 migration이 같은 DB 역할을 씀. `serve`가 시작할 때 `CREATE SCHEMA/TABLE`을 하므로 서버 프로세스가 사실상 owner. 최소 권한 가이드 없음 | 코드 추적. migrate 전용 URL과 runtime 전용 URL 분리 권고 |
