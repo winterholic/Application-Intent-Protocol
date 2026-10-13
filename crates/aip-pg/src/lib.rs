@@ -34,6 +34,62 @@ fn diag(map: &ir::SourceMap, severity: Severity, code: &str, message: String, pa
     Diagnostic { severity, code: code.into(), message, path: path.into(), line, col }
 }
 
+/// PostgreSQL's identifier limit in bytes. Longer names are cut silently, which can make two names collide.
+const MAX_IDENTIFIER_BYTES: usize = 63;
+
+/// Double-quoted identifiers in generated DDL that exceed the limit. Single-quoted literals are skipped, so a long
+/// string value in a default or a message does not count.
+pub fn long_identifiers(statements: &[String]) -> Vec<String> {
+    let mut found = Vec::new();
+    for statement in statements {
+        let bytes = statement.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'\'' => {
+                    i += 1;
+                    while i < bytes.len() {
+                        if bytes[i] == b'\'' {
+                            if bytes.get(i + 1) == Some(&b'\'') {
+                                i += 2;
+                                continue;
+                            }
+                            break;
+                        }
+                        i += 1;
+                    }
+                    i += 1;
+                }
+                b'"' => {
+                    let mut name = Vec::new();
+                    i += 1;
+                    while i < bytes.len() {
+                        if bytes[i] == b'"' {
+                            if bytes.get(i + 1) == Some(&b'"') {
+                                name.push(b'"');
+                                i += 2;
+                                continue;
+                            }
+                            break;
+                        }
+                        name.push(bytes[i]);
+                        i += 1;
+                    }
+                    i += 1;
+                    if name.len() > MAX_IDENTIFIER_BYTES {
+                        let name = String::from_utf8_lossy(&name).into_owned();
+                        if !found.contains(&name) {
+                            found.push(name);
+                        }
+                    }
+                }
+                _ => i += 1,
+            }
+        }
+    }
+    found
+}
+
 pub fn compile(core: &ir::Program, map: &ir::SourceMap) -> Compiled {
     let s = schema::Schema::build(core);
     let published = s.published();
@@ -289,10 +345,43 @@ pub fn compile(core: &ir::Program, map: &ir::SourceMap) -> Compiled {
         extensions: core.uses.clone(),
         constraint_errors: ddl.codes.clone(),
     };
+    for name in long_identifiers(&program.ddl) {
+        let shown: String = name.chars().take(48).collect();
+        unsupported.push(diag(
+            map,
+            Severity::Error,
+            codes::E603,
+            format!("the generated name \"{shown}...\" is {} bytes; PostgreSQL allows at most {MAX_IDENTIFIER_BYTES}", name.len()),
+            "entities",
+        ));
+    }
     // planner errors in source order, then what the runtime does not support
     by_decl.sort_by_key(|(pos, _)| *pos);
     let mut diagnostics: Vec<Diagnostic> = by_decl.into_iter().flat_map(|(_, d)| d).collect();
     unsupported.sort_by_key(|d| (d.line, d.col));
     diagnostics.extend(unsupported);
     Compiled { program, diagnostics }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::long_identifiers;
+
+    #[test]
+    fn only_quoted_identifiers_over_63_bytes_are_reported() {
+        let long = "a".repeat(64);
+        let exact = "b".repeat(63);
+        let statements = vec![
+            format!("CREATE TABLE \"{exact}\" (\"{long}\" text DEFAULT '{}')", "x".repeat(200)),
+            format!("COMMENT ON TABLE \"t\" IS 'it''s \"{}\" quoted'", "y".repeat(100)),
+        ];
+        assert_eq!(long_identifiers(&statements), vec![long]);
+    }
+
+    #[test]
+    fn doubled_quotes_inside_an_identifier_count_once() {
+        let name = format!("a\"\"{}", "z".repeat(61));
+        assert_eq!(name.len(), 64, "doubled quote spelled in SQL, 63 bytes as an identifier");
+        assert!(long_identifiers(&[format!("SELECT \"{name}\"")]).is_empty());
+    }
 }

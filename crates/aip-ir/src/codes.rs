@@ -148,6 +148,7 @@ pub const E502: &str = "POC.E502";
 pub const E600: &str = "POC.E600";
 pub const E601: &str = "POC.E601";
 pub const E602: &str = "POC.E602";
+pub const E603: &str = "POC.E603";
 pub const W402: &str = "POC.W402";
 pub const W403: &str = "POC.W403";
 pub const W404: &str = "POC.W404";
@@ -646,6 +647,13 @@ pub static REGISTRY: &[CodeInfo] = &[
         "checked but not executable yet",
         "The frontend accepts the construct (a consumer, a projection, a search, a subscription or another form) but this runtime has no executable plan for it, so it is refused instead of silently ignored.",
         "Remove the construct, or wait for a runtime that supports it.",
+        "",
+    ),
+    err(
+        E603,
+        "generated name longer than 63 bytes",
+        "PostgreSQL cuts identifiers at 63 bytes. A table, column, index, constraint or trigger name that the backend generates from your declarations is longer, so two names that share their first 63 bytes would collide: an index silently not created, or a constraint error that names the wrong thing.",
+        "Shorten the entity, field or constraint name so every generated name stays within 63 bytes.",
         "",
     ),
     // ---- POC.W: warnings ----

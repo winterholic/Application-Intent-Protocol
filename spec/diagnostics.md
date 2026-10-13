@@ -602,6 +602,13 @@ checked but not executable yet
 - 원인: The frontend accepts the construct (a consumer, a projection, a search, a subscription or another form) but this runtime has no executable plan for it, so it is refused instead of silently ignored.
 - 수정: Remove the construct, or wait for a runtime that supports it.
 
+### `POC.E603`
+
+generated name longer than 63 bytes
+
+- 원인: PostgreSQL cuts identifiers at 63 bytes. A table, column, index, constraint or trigger name that the backend generates from your declarations is longer, so two names that share their first 63 bytes would collide: an index silently not created, or a constraint error that names the wrong thing.
+- 수정: Shorten the entity, field or constraint name so every generated name stays within 63 bytes.
+
 ## 경고 (POC.W)
 
 ### `POC.W402`
