@@ -158,3 +158,31 @@ async fn rsa_public_exponent_one_is_rejected_from_jwks() {
     let result = AuthenticatorImpl::new(config, "host=localhost dbname=postgres".into(), "aip_example".into()).await;
     assert!(result.is_err(), "a JWKS RSA key with invalid public exponent e=1 must be rejected during configuration");
 }
+
+#[tokio::test]
+async fn principal_lookups_share_the_server_pool_and_its_limit() {
+    use spike_v6_transport::auth::Authenticator;
+    use spike_v6_transport::pool::{ConnectionPool, PoolOptions};
+    let schema = mapped_schema();
+    let (_dir, config, key) = fixture();
+    let auth = AuthenticatorImpl::new(config, "host=localhost dbname=postgres".into(), schema.0.clone()).await.expect("test setup");
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("test setup").as_secs();
+    let claims = json!({"iss":"https://issuer.example","aud":"aip-api","sub":"user-1","iat":now,"nbf":now,"exp":now+300});
+    let token = token(&key, claims, "at+jwt", "current");
+
+    // The server hands its pool to the authenticator. With the only slot checked out, a lookup has to wait for the
+    // pool and give up at its acquire deadline instead of opening a private connection that bypasses the limit.
+    let options = PoolOptions { max_size: 1, acquire_timeout: std::time::Duration::from_millis(200), ..PoolOptions::default() };
+    let pool = std::sync::Arc::new(ConnectionPool::new("host=localhost dbname=postgres", options).expect("test setup"));
+    auth.use_pool(pool.clone());
+    let held = pool.acquire().await.expect("test setup");
+    let started = std::time::Instant::now();
+    let blocked = auth.session_for(&token).await;
+    assert_eq!(blocked.err(), Some(aip_auth::AuthError::Unavailable), "lookup must use the shared pool");
+    assert!(started.elapsed() < std::time::Duration::from_secs(3));
+    drop(held);
+
+    // Once the slot is free the lookup works, and the connection goes back to the pool for the next lookup.
+    assert_eq!(auth.session_for(&token).await.expect("lookup through the pool").actor_id, 42);
+    assert_eq!(auth.session_for(&token).await.expect("second lookup").actor_id, 42);
+}

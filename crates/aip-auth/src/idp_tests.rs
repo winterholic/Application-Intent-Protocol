@@ -18,6 +18,7 @@ struct Idp {
     jwks: Arc<std::sync::Mutex<String>>,
     hits: Arc<AtomicUsize>,
     stop: Arc<AtomicBool>,
+    failing: Arc<AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
@@ -32,7 +33,8 @@ impl Idp {
         let jwks = Arc::new(std::sync::Mutex::new(initial_jwks));
         let hits = Arc::new(AtomicUsize::new(0));
         let stop = Arc::new(AtomicBool::new(false));
-        let (shared, counter, flag) = (jwks.clone(), hits.clone(), stop.clone());
+        let failing = Arc::new(AtomicBool::new(false));
+        let (shared, counter, flag, down) = (jwks.clone(), hits.clone(), stop.clone(), failing.clone());
         let thread = std::thread::spawn(move || {
             while let Ok((stream, _)) = listener.accept() {
                 if flag.load(Ordering::SeqCst) {
@@ -53,6 +55,12 @@ impl Idp {
                         "id_token_signing_alg_values_supported": ["RS256"],
                     })
                     .to_string(),
+                    "/jwks" if down.load(Ordering::SeqCst) => {
+                        counter.fetch_add(1, Ordering::SeqCst);
+                        let _ = tls.write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                        let _ = tls.flush();
+                        continue;
+                    }
                     "/jwks" => {
                         counter.fetch_add(1, Ordering::SeqCst);
                         shared.lock().expect("mock IdP state").clone()
@@ -68,11 +76,15 @@ impl Idp {
                 let _ = tls.flush();
             }
         });
-        Self { port, jwks, hits, stop, thread: Some(thread) }
+        Self { port, jwks, hits, stop, failing, thread: Some(thread) }
     }
 
     fn publish(&self, jwks: String) {
         *self.jwks.lock().expect("mock IdP state") = jwks;
+    }
+
+    fn set_failing(&self, failing: bool) {
+        self.failing.store(failing, Ordering::SeqCst);
     }
 
     fn fetches(&self) -> usize {
@@ -102,8 +114,10 @@ impl Idp {
             db_url: "host=unused".into(),
             schema: "aip_app".into(),
             http,
-            keys: Mutex::new(KeyState { keys, loaded: Instant::now(), last_attempt: None, failed_until: None }),
+            keys: Mutex::new(KeyState { keys, loaded: Instant::now(), last_attempt: None, failed_until: None, file_stamp: None }),
+            refresh: Mutex::new(()),
             lookups: tokio::sync::Semaphore::new(MAX_LOOKUP_CONNECTIONS),
+            pool: std::sync::OnceLock::new(),
         }
     }
 }
@@ -202,4 +216,74 @@ async fn a_forged_token_for_an_unknown_kid_is_rejected_and_never_accepts_the_att
     let impostor = SigningKey { kid: "key-a", private: attacker.private.clone() };
     assert_eq!(auth.verify_token(&impostor.token()).await, Err(AuthError::Invalid));
     assert!(auth.verify_token(&a.token()).await.is_ok(), "legitimate tokens are unaffected");
+}
+
+#[tokio::test]
+async fn a_failed_refresh_for_an_unknown_kid_does_not_block_tokens_for_cached_keys() {
+    let (a, stranger) = (SigningKey::new("key-a"), SigningKey::new("key-unknown"));
+    let idp = Idp::start(jwks(&[&a]));
+    let auth = idp.authenticator(&format!("https://localhost:{}/jwks", idp.port)).await;
+    idp.set_failing(true);
+    // An unauthenticated sender picks an unknown kid, which makes the service try to refresh while the IdP is down.
+    assert_eq!(auth.verify_token(&stranger.token()).await, Err(AuthError::Unavailable));
+    let after_failure = idp.fetches();
+    // Tokens signed by a key that is already cached must keep working; they need no refresh.
+    assert!(auth.verify_token(&a.token()).await.is_ok(), "a cached key was blocked by someone else's failed refresh");
+    assert_eq!(idp.fetches(), after_failure, "a cached key must not trigger another fetch");
+}
+
+#[tokio::test]
+async fn a_known_key_is_still_served_for_a_while_when_the_idp_is_down_after_the_cache_expired() {
+    let a = SigningKey::new("key-a");
+    let idp = Idp::start(jwks(&[&a]));
+    let auth = idp.authenticator(&format!("https://localhost:{}/jwks", idp.port)).await;
+    idp.set_failing(true);
+    auth.keys.lock().await.loaded = Instant::now().checked_sub(KEY_TTL + Duration::from_secs(1)).expect("clock");
+    assert!(auth.verify_token(&a.token()).await.is_ok(), "an IdP outage right after the TTL must not log everyone out");
+    // The grace is bounded: a key older than the stale limit is refused instead of trusted forever.
+    auth.keys.lock().await.loaded = Instant::now().checked_sub(MAX_STALE_KEYS + Duration::from_secs(1)).expect("clock");
+    auth.keys.lock().await.failed_until = None;
+    assert_eq!(auth.verify_token(&a.token()).await, Err(AuthError::Unavailable));
+}
+
+async fn file_auth(path: &std::path::Path, document: &[u8]) -> AuthenticatorImpl {
+    let keys = parse_jwks(document).expect("initial JWKS parses");
+    AuthenticatorImpl {
+        config: Config { issuer: ISSUER.into(), audience: AUDIENCE.into(), jwks: JwksSource::File { path: path.to_owned() } },
+        db_url: "host=unused".into(),
+        schema: "aip_app".into(),
+        http: reqwest::Client::new(),
+        refresh: Mutex::new(()),
+        keys: Mutex::new(KeyState { keys, loaded: Instant::now(), last_attempt: None, failed_until: None, file_stamp: file_stamp(path) }),
+        lookups: tokio::sync::Semaphore::new(MAX_LOOKUP_CONNECTIONS),
+        pool: std::sync::OnceLock::new(),
+    }
+}
+
+#[tokio::test]
+async fn file_jwks_is_parsed_once_until_the_file_changes() {
+    let (a, b) = (SigningKey::new("key-a"), SigningKey::new("key-b"));
+    let (mut doc_a, mut doc_b) = (jwks(&[&a]).into_bytes(), jwks(&[&b]).into_bytes());
+    let width = doc_a.len().max(doc_b.len());
+    doc_a.resize(width, b' ');
+    doc_b.resize(width, b' ');
+    let dir = std::env::temp_dir().join(format!("aip-jwks-cache-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let path = dir.join("jwks.json");
+    std::fs::write(&path, &doc_a).expect("write JWKS");
+    let auth = file_auth(&path, &doc_a).await;
+    let original = std::fs::metadata(&path).expect("metadata").modified().expect("mtime");
+    assert!(auth.verify_token(&a.token()).await.is_ok());
+
+    // Same size and same mtime: the file is considered unchanged, so the cached keys are used and the file is not parsed again.
+    std::fs::write(&path, &doc_b).expect("rewrite JWKS");
+    std::fs::File::options().write(true).open(&path).expect("open").set_modified(original).expect("restore mtime");
+    assert_eq!(auth.verify_token(&b.token()).await, Err(AuthError::Invalid), "an unchanged file stamp must not trigger a re-read");
+    assert!(auth.verify_token(&a.token()).await.is_ok(), "the cached key is still in use");
+
+    // A new mtime is a change: the next token reloads the file.
+    std::fs::File::options().write(true).open(&path).expect("open").set_modified(original + Duration::from_secs(5)).expect("bump mtime");
+    assert!(auth.verify_token(&b.token()).await.is_ok(), "a changed file is picked up");
+    assert_eq!(auth.verify_token(&a.token()).await, Err(AuthError::Invalid), "and the removed key stops working");
+    let _ = std::fs::remove_dir_all(&dir);
 }

@@ -188,6 +188,9 @@ pub(crate) async fn listen_with_fingerprint(
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid database pool options"))?;
         runtime.db_pool = Some(Arc::new(pool));
     }
+    if let (Some(authenticator), Some(pool)) = (&runtime.authenticator, &runtime.db_pool) {
+        authenticator.use_pool(pool.clone());
+    }
     if let Some(policy) = runtime.infrastructure.rate_limit {
         if runtime.authenticator.is_none() || runtime.deployment.is_none() {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "rate limiting requires durable authentication and deployment fencing"));

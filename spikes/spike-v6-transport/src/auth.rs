@@ -33,6 +33,10 @@ pub trait Authenticator: Send + Sync {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), AuthError>> + Send + 'a>> {
         Box::pin(async { Err(AuthError::Unavailable) })
     }
+
+    /// Called once when the server builds its database pool. An authenticator that looks principals up in the
+    /// database should use it so those lookups share the pool's size limit and acquire deadline.
+    fn use_pool(&self, _pool: std::sync::Arc<crate::pool::ConnectionPool>) {}
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

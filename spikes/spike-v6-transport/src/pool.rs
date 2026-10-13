@@ -37,7 +37,7 @@ impl PoolOptions {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum PoolError {
+pub enum PoolError {
     Timeout,
     Closed,
     InvalidOptions,
@@ -59,10 +59,10 @@ struct PoolInner {
 }
 
 #[derive(Clone)]
-pub(crate) struct ConnectionPool(Arc<PoolInner>);
+pub struct ConnectionPool(Arc<PoolInner>);
 
 impl ConnectionPool {
-    pub(crate) fn new(url: impl Into<Arc<str>>, options: PoolOptions) -> Result<Self, PoolError> {
+    pub fn new(url: impl Into<Arc<str>>, options: PoolOptions) -> Result<Self, PoolError> {
         let options = options.validate().map_err(|_| PoolError::InvalidOptions)?;
         Ok(Self(Arc::new(PoolInner {
             url: url.into(),
@@ -73,11 +73,11 @@ impl ConnectionPool {
         })))
     }
 
-    pub(crate) async fn acquire(&self) -> Result<PooledConnection, PoolError> {
+    pub async fn acquire(&self) -> Result<PooledConnection, PoolError> {
         self.acquire_until(Instant::now() + self.0.options.acquire_timeout).await
     }
 
-    pub(crate) async fn acquire_until(&self, deadline: Instant) -> Result<PooledConnection, PoolError> {
+    pub async fn acquire_until(&self, deadline: Instant) -> Result<PooledConnection, PoolError> {
         if self.0.closed.load(Ordering::Acquire) {
             return Err(PoolError::Closed);
         }
@@ -123,7 +123,7 @@ impl ConnectionPool {
         Ok(PooledConnection { connection: Some(connection), pool: self.0.clone(), permit: Some(permit) })
     }
 
-    pub(crate) fn close(&self) {
+    pub fn close(&self) {
         if self.0.closed.swap(true, Ordering::AcqRel) {
             return;
         }
@@ -132,14 +132,14 @@ impl ConnectionPool {
     }
 }
 
-pub(crate) struct PooledConnection {
+pub struct PooledConnection {
     connection: Option<OwnedConnection>,
     pool: Arc<PoolInner>,
     permit: Option<OwnedSemaphorePermit>,
 }
 
 impl PooledConnection {
-    pub(crate) async fn release(mut self) -> Result<(), PoolError> {
+    pub async fn release(mut self) -> Result<(), PoolError> {
         let Some(connection) = self.connection.take() else { return Err(PoolError::Closed) };
         if self.pool.closed.load(Ordering::Acquire) {
             drop(connection);

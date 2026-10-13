@@ -16,6 +16,8 @@ const MAX_JWKS_BYTES: usize = 256 * 1024;
 const MAX_TOKEN_BYTES: usize = 4096;
 const KEY_TTL: Duration = Duration::from_secs(60);
 const UNKNOWN_KID_REFRESH: Duration = Duration::from_secs(5);
+/// Oldest cached key set that may still verify tokens while the key endpoint is unreachable.
+const MAX_STALE_KEYS: Duration = Duration::from_secs(300);
 const REMOTE_TIMEOUT: Duration = Duration::from_secs(2);
 const DB_TIMEOUT: Duration = Duration::from_secs(5);
 /// Principal lookups open their own connection. Without a bound, a flood of correctly signed tokens for unknown
@@ -57,6 +59,50 @@ struct KeyState {
     loaded: Instant,
     last_attempt: Option<Instant>,
     failed_until: Option<Instant>,
+    /// Size, modification time and inode of the JWKS file the cached keys came from.
+    file_stamp: Option<FileStamp>,
+}
+
+type FileStamp = (u64, SystemTime, u64);
+
+/// A cheap change detector for the JWKS file, so tokens do not re-read and re-parse it every time.
+fn stamp_of(metadata: &std::fs::Metadata) -> Option<FileStamp> {
+    #[cfg(unix)]
+    let inode = std::os::unix::fs::MetadataExt::ino(metadata);
+    #[cfg(not(unix))]
+    let inode = 0;
+    Some((metadata.len(), metadata.modified().ok()?, inode))
+}
+
+fn file_stamp(path: &std::path::Path) -> Option<FileStamp> {
+    std::fs::metadata(path).ok().and_then(|metadata| stamp_of(&metadata))
+}
+
+enum Lookup<'a> {
+    Pooled(spike_v6_transport::pool::PooledConnection),
+    Private(spike_v2_read::OwnedConnection, tokio::sync::SemaphorePermit<'a>),
+}
+
+impl Lookup<'_> {
+    fn client(&self) -> &tokio_postgres::Client {
+        match self {
+            Self::Pooled(connection) => connection,
+            Self::Private(connection, _) => connection,
+        }
+    }
+
+    /// Returns a pooled connection for reuse; a private one is simply dropped.
+    async fn finish(self) {
+        if let Self::Pooled(connection) = self {
+            let _ = connection.release().await;
+        }
+    }
+}
+
+enum CacheDecision {
+    Use(Arc<DecodingKey>),
+    Reject(AuthError),
+    Refresh,
 }
 
 pub struct AuthenticatorImpl {
@@ -65,7 +111,11 @@ pub struct AuthenticatorImpl {
     schema: String,
     http: reqwest::Client,
     keys: Mutex<KeyState>,
+    /// Single flight for remote key refreshes; the network fetch must not run under the `keys` lock.
+    refresh: Mutex<()>,
     lookups: tokio::sync::Semaphore,
+    /// The server's own pool, handed over by `use_pool`; principal lookups prefer it to private connections.
+    pool: std::sync::OnceLock<Arc<spike_v6_transport::pool::ConnectionPool>>,
 }
 
 fn now_secs() -> Result<i64, AuthError> {
@@ -242,18 +292,38 @@ impl AuthenticatorImpl {
         let keys = parse_jwks(&document)
             .map_err(|_| unavailable("공개키 집합(JWKS) 형식 오류: 키가 하나 이상이고 각 키가 RSA 서명용 kid·n·e와 지원 알고리즘을 가져야 함"))?;
         let now = Instant::now();
+        let config_for_stamp = config.jwks.clone();
         Ok(Self {
             config,
             db_url,
             schema,
             http,
-            keys: Mutex::new(KeyState { keys, loaded: now, last_attempt: None, failed_until: None }),
+            keys: Mutex::new(KeyState {
+                keys,
+                loaded: now,
+                last_attempt: None,
+                failed_until: None,
+                file_stamp: match &config_for_stamp {
+                    JwksSource::File { path } => file_stamp(path),
+                    JwksSource::Https { .. } => None,
+                },
+            }),
+            refresh: Mutex::new(()),
             lookups: tokio::sync::Semaphore::new(MAX_LOOKUP_CONNECTIONS),
+            pool: std::sync::OnceLock::new(),
         })
     }
 
-    /// A bounded principal-lookup connection; the permit is held while the connection lives.
-    async fn lookup_connection(&self) -> Result<(spike_v2_read::OwnedConnection, tokio::sync::SemaphorePermit<'_>), AuthError> {
+    /// A bounded principal-lookup connection. `shared_pool` is true only where the caller holds no pool connection of
+    /// its own: a durable re-check runs while a job already holds one, and waiting for a second could starve the pool.
+    /// Through the server pool it shares that pool's size limit, acquire
+    /// deadline and connection reuse; without one (tests, tools) it falls back to a private, semaphore-bounded connection.
+    async fn lookup_connection(&self, shared_pool: bool) -> Result<Lookup<'_>, AuthError> {
+        if let Some(pool) = self.pool.get().filter(|_| shared_pool) {
+            let connection =
+                tokio::time::timeout(DB_TIMEOUT, pool.acquire()).await.map_err(|_| AuthError::Unavailable)?.map_err(|_| AuthError::Unavailable)?;
+            return Ok(Lookup::Pooled(connection));
+        }
         let permit = tokio::time::timeout(DB_TIMEOUT, self.lookups.acquire())
             .await
             .map_err(|_| AuthError::Unavailable)?
@@ -262,35 +332,84 @@ impl AuthenticatorImpl {
             .await
             .map_err(|_| AuthError::Unavailable)?
             .map_err(|_| AuthError::Unavailable)?;
-        Ok((db, permit))
+        Ok(Lookup::Private(db, permit))
     }
 
     async fn key_for(&self, kid: &str) -> Result<Arc<DecodingKey>, AuthError> {
-        let mut state = self.keys.lock().await;
-        let file = matches!(self.config.jwks, JwksSource::File { .. });
-        let expired = state.loaded.elapsed() >= KEY_TTL;
-        let unknown = !state.keys.contains_key(kid);
-        if !file && state.failed_until.is_some_and(|until| Instant::now() < until) {
-            return Err(AuthError::Unavailable);
+        match &self.config.jwks {
+            JwksSource::File { path } => self.file_key(path, kid).await,
+            JwksSource::Https { .. } => self.remote_key(kid).await,
         }
-        let refresh_unknown = unknown && state.last_attempt.is_none_or(|at| at.elapsed() >= UNKNOWN_KID_REFRESH);
-        if file || expired || refresh_unknown {
-            state.last_attempt = Some(Instant::now());
-            match read_jwks(&self.config.jwks, &self.http).await.and_then(|bytes| parse_jwks(&bytes)) {
-                Ok(fresh) => {
-                    state.keys = fresh;
-                    state.loaded = Instant::now();
-                    state.failed_until = None;
-                }
-                Err(error) => {
-                    if !file {
-                        state.failed_until = Some(Instant::now() + UNKNOWN_KID_REFRESH);
-                    }
-                    return Err(error);
+    }
+
+    /// File mode re-reads the file only when its size, modification time or inode changed, so a token costs one `stat`.
+    async fn file_key(&self, path: &std::path::Path, kid: &str) -> Result<Arc<DecodingKey>, AuthError> {
+        let stamp = tokio::fs::metadata(path).await.ok().and_then(|metadata| stamp_of(&metadata));
+        let mut state = self.keys.lock().await;
+        if stamp.is_none() || stamp != state.file_stamp {
+            let fresh = read_jwks(&self.config.jwks, &self.http).await.and_then(|bytes| parse_jwks(&bytes))?;
+            state.keys = fresh;
+            state.loaded = Instant::now();
+            state.file_stamp = stamp;
+        }
+        state.keys.get(kid).cloned().ok_or(AuthError::Invalid)
+    }
+
+    /// Decides whether `kid` can be answered from the cache or needs a fetch. Never touches the network.
+    async fn cache_decision(&self, kid: &str) -> CacheDecision {
+        let state = self.keys.lock().await;
+        let age = state.loaded.elapsed();
+        let known = state.keys.get(kid).cloned();
+        if let Some(key) = &known {
+            if age < KEY_TTL {
+                return CacheDecision::Use(key.clone());
+            }
+        }
+        if state.failed_until.is_some_and(|until| Instant::now() < until) {
+            // The key endpoint just failed. A key we already hold keeps working for a bounded time; nothing else can be decided.
+            return match known {
+                Some(key) if age < MAX_STALE_KEYS => CacheDecision::Use(key),
+                _ => CacheDecision::Reject(AuthError::Unavailable),
+            };
+        }
+        if known.is_none() && state.last_attempt.is_some_and(|at| at.elapsed() < UNKNOWN_KID_REFRESH) {
+            // Unauthenticated senders choose the kid, so unknown kids may trigger a fetch only every few seconds.
+            return CacheDecision::Reject(AuthError::Invalid);
+        }
+        CacheDecision::Refresh
+    }
+
+    async fn remote_key(&self, kid: &str) -> Result<Arc<DecodingKey>, AuthError> {
+        match self.cache_decision(kid).await {
+            CacheDecision::Use(key) => return Ok(key),
+            CacheDecision::Reject(error) => return Err(error),
+            CacheDecision::Refresh => {}
+        }
+        let _single_flight = self.refresh.lock().await;
+        // Another request may have refreshed (or failed) while this one waited for its turn.
+        match self.cache_decision(kid).await {
+            CacheDecision::Use(key) => return Ok(key),
+            CacheDecision::Reject(error) => return Err(error),
+            CacheDecision::Refresh => {}
+        }
+        self.keys.lock().await.last_attempt = Some(Instant::now());
+        let fetched = read_jwks(&self.config.jwks, &self.http).await.and_then(|bytes| parse_jwks(&bytes));
+        let mut state = self.keys.lock().await;
+        match fetched {
+            Ok(fresh) => {
+                state.keys = fresh;
+                state.loaded = Instant::now();
+                state.failed_until = None;
+                state.keys.get(kid).cloned().ok_or(AuthError::Invalid)
+            }
+            Err(error) => {
+                state.failed_until = Some(Instant::now() + UNKNOWN_KID_REFRESH);
+                match state.keys.get(kid) {
+                    Some(key) if state.loaded.elapsed() < MAX_STALE_KEYS => Ok(key.clone()),
+                    _ => Err(error),
                 }
             }
         }
-        state.keys.get(kid).cloned().ok_or(AuthError::Invalid)
     }
 
     pub async fn verify_token(&self, token: &str) -> Result<VerifiedClaims, AuthError> {
@@ -343,12 +462,14 @@ impl AuthenticatorImpl {
 
     pub async fn session_for(&self, token: &str) -> Result<spike_v6_transport::auth::Session, AuthError> {
         let claims = self.verify_token(token).await?;
-        let (db, _lookup_slot) = self.lookup_connection().await?;
+        let lookup = self.lookup_connection(true).await?;
+        let db = lookup.client();
         let sql = format!("SELECT actor_id, enabled, min_iat FROM \"{}\".aip_principals WHERE issuer=$1 AND subject=$2", self.schema);
         let row = tokio::time::timeout(DB_TIMEOUT, db.query_opt(&sql, &[&claims.issuer, &claims.subject]))
             .await
             .map_err(|_| AuthError::Unavailable)?
             .map_err(|_| AuthError::Unavailable)?;
+        lookup.finish().await;
         let row = row.ok_or(AuthError::Invalid)?;
         let actor_id: i64 = row.try_get(0).map_err(|_| AuthError::Unavailable)?;
         let enabled: bool = row.try_get(1).map_err(|_| AuthError::Unavailable)?;
@@ -380,7 +501,8 @@ impl AuthenticatorImpl {
         {
             return Err(AuthError::Invalid);
         }
-        let (db, _lookup_slot) = self.lookup_connection().await?;
+        let lookup = self.lookup_connection(false).await?;
+        let db = lookup.client();
         let sql = format!(
             "SELECT actor_id, enabled, min_iat, floor(extract(epoch FROM clock_timestamp()))::bigint FROM \"{}\".aip_principals WHERE issuer=$1 AND subject=$2",
             self.schema
@@ -389,6 +511,7 @@ impl AuthenticatorImpl {
             .await
             .map_err(|_| AuthError::Unavailable)?
             .map_err(|_| AuthError::Unavailable)?;
+        lookup.finish().await;
         let row = row.ok_or(AuthError::Invalid)?;
         let actor_id: i64 = row.try_get(0).map_err(|_| AuthError::Unavailable)?;
         let enabled: bool = row.try_get(1).map_err(|_| AuthError::Unavailable)?;
@@ -411,6 +534,10 @@ struct Claims {
 }
 
 impl spike_v6_transport::auth::Authenticator for AuthenticatorImpl {
+    fn use_pool(&self, pool: Arc<spike_v6_transport::pool::ConnectionPool>) {
+        let _ = self.pool.set(pool);
+    }
+
     fn verify_session<'a>(
         &'a self,
         token: &'a str,
