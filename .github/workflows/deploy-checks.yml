@@ -1,0 +1,59 @@
+name: Deployment checks
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'product/tools/proxy-check.mjs'
+      - 'spikes/spike-v6-transport/src/**'
+      - 'crates/aip-service/**'
+      - '.github/workflows/deploy-checks.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tls-proxy:
+    # The service listens on loopback HTTP; a TLS reverse proxy must keep Origin, headers, request ids, SSE and WebSocket intact.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: runner
+          POSTGRES_DB: postgres
+          # The checks use passwordless connections to this disposable local fixture.
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - '127.0.0.1:5432:5432'
+        options: >-
+          --health-cmd "pg_isready -U runner -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '26'
+      - name: Install Caddy and PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y caddy postgresql-client openssl
+          # The package starts its own service on port 80/443; the check starts a private instance.
+          sudo systemctl stop caddy || true
+          rustup update stable
+          rustup default stable
+          caddy version
+      - name: Build the service
+        run: cargo build -p aip-cli --locked
+      - name: Verify Origin, headers, request id, SSE and WebSocket through Caddy
+        run: node product/tools/proxy-check.mjs
