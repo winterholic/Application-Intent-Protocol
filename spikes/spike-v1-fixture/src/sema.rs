@@ -739,7 +739,9 @@ impl<'a> Ctx<'a> {
             }
             out.insert("operations".into(), Value::Object(operations));
         }
-        Value::Object(out)
+        let mut facts = Value::Object(out);
+        crate::isolation::mark(&mut facts);
+        facts
     }
 
     fn resource(&mut self, r: &Resource, limits: &Map<String, Value>) -> Value {

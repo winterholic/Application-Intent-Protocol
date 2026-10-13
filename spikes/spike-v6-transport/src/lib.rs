@@ -140,83 +140,129 @@ async fn handle_apply(db: &mut Client, facts: &Value, body: &Value, caller: &Cal
     let req = &body["request"];
     let req_text = req.to_string();
     let principal = principal_key(caller.actor_id, wire);
-    let s = sqlgen::schema();
+    // 다른 행을 읽는 정책에 의존하는 전이는 SERIALIZABLE로 실행하고, 직렬화 실패는 같은 요청을 서버가 다시 실행한다(O-26).
+    let serializable = spike_v3_write::apply_needs_serializable(facts, req);
     let started = std::time::Instant::now();
-    let mut commit_sent = false;
+    let commit_sent = std::sync::atomic::AtomicBool::new(false);
     let operation = async {
-        let tx = match db.transaction().await {
-            Ok(t) => t,
-            Err(_) => return json!({ "ok": false, "code": "INTERNAL" }),
-        };
-        if let Err(error) = tx
-            .batch_execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED; SET LOCAL statement_timeout = '2000ms'; SET LOCAL TimeZone = 'UTC'")
-            .await
-        {
-            return err(classify_write_error("세션 설정", error));
-        }
-        // 같은 키가 이미 커밋됐으면 다시 실행하지 않고 저장된 결과를 준다. 같은 키에 다른 요청이면 거부.
-        // 동시에 같은 키가 오면 키 행 잠금으로 하나씩 처리한다.
-        if let Err(error) = tx.execute("SELECT pg_advisory_xact_lock(hashtext($1))", &[&format!("{principal}:{key}")]).await {
-            return err(classify_write_error("멱등 잠금", error));
-        }
-        if let Ok(Some(row)) = tx
-            .query_opt(format!("SELECT request, result::text FROM {s}.aip_idem WHERE principal = $1 AND key = $2").as_str(), &[&principal, &key])
-            .await
-        {
-            let (stored_req, result): (String, String) = (row.get(0), row.get(1));
-            if stored_req != req_text {
-                return json!({ "ok": false, "code": "IDEMPOTENCY_MISMATCH", "msg": "같은 키에 다른 요청" });
+        let mut attempt = 0;
+        loop {
+            let result = apply_attempt(db, facts, key, req, &req_text, &principal, caller, wire, serializable, &commit_sent, started).await;
+            let retry = serializable
+                && result["code"] == "CONFLICT"
+                && result["msg"].as_str().is_some_and(|msg| spike_v3_write::is_retryable(&Reject { code: "CONFLICT", msg: msg.to_string() }))
+                && attempt < spike_v3_write::SERIALIZATION_RETRIES;
+            if !retry {
+                return result;
             }
-            let Ok(mut v) = serde_json::from_str::<Value>(&result) else {
-                return json!({ "ok": false, "code": "INTERNAL", "msg": "저장된 멱등 결과를 읽을 수 없음" });
-            };
-            v["replayed"] = json!(true);
-            return v;
-        }
-        let knobs = Knobs { audit_via: Some("apply"), audit_key: Some(key.to_string()), ..Knobs::default() };
-        let applied = match apply_in_with_wire(&tx, facts, req, caller, &knobs, wire).await {
-            Ok(a) => a,
-            Err(e) => return err(e),
-        };
-        if let Err(e) = checks_in(&tx, facts, caller, &knobs).await {
-            return err(e);
-        }
-        // wire에 표현할 수 없는 결과면 멱등 결과 기록·commit 전 전체 transaction이 rollback된다.
-        let changed = match applied.changed.into_iter().map(|id| emit_id(id, wire)).collect::<Result<Vec<_>, _>>() {
-            Ok(ids) => ids,
-            Err(e) => return err(e),
-        };
-        let unchanged = match applied.unchanged.into_iter().map(|id| emit_id(id, wire)).collect::<Result<Vec<_>, _>>() {
-            Ok(ids) => ids,
-            Err(e) => return err(e),
-        };
-        let result = json!({
-            "ok": true, "changed": changed, "unchanged": unchanged,
-            "tags": write_tags(facts, req["apply"].as_str().unwrap_or("")),
-        });
-        if tx
-            .execute(
-                format!("INSERT INTO {s}.aip_idem (principal, key, request, result) VALUES ($1, $2, $3, $4::text::jsonb)").as_str(),
-                &[&principal, &key, &req_text, &result.to_string()],
-            )
-            .await
-            .is_err()
-        {
-            return json!({ "ok": false, "code": "INTERNAL" });
-        }
-        if started.elapsed().as_millis() + u128::from(spike_v3_write::COMMIT_MARGIN_MS) >= u128::from(spike_v3_write::WRITE_DEADLINE_MS) {
-            return json!({"ok":false,"code":"DEADLINE_EXCEEDED"});
-        }
-        commit_sent = true;
-        match tx.commit().await {
-            Ok(()) => result,
-            Err(e) => err(classify_write_error("커밋", e)),
+            attempt += 1;
+            spike_v3_write::retry_backoff(attempt).await;
         }
     };
     match tokio::time::timeout(std::time::Duration::from_millis(spike_v3_write::WRITE_DEADLINE_MS), operation).await {
         Ok(result) => result,
-        Err(_) if commit_sent => json!({"ok":false,"code":"COMMIT_UNKNOWN"}),
+        Err(_) if commit_sent.load(std::sync::atomic::Ordering::SeqCst) => json!({"ok":false,"code":"COMMIT_UNKNOWN"}),
         Err(_) => json!({"ok":false,"code":"DEADLINE_EXCEEDED"}),
+    }
+}
+
+/// 트랜잭션 한 번의 시도. 실패하면 트랜잭션이 drop되며 rollback되므로 멱등 결과는 최종 성공 한 번만 저장된다.
+#[allow(clippy::too_many_arguments)]
+async fn apply_attempt(
+    db: &mut Client,
+    facts: &Value,
+    key: &str,
+    req: &Value,
+    req_text: &str,
+    principal: &str,
+    caller: &Caller,
+    wire: IdWire,
+    serializable: bool,
+    commit_sent: &std::sync::atomic::AtomicBool,
+    started: std::time::Instant,
+) -> Value {
+    let s = sqlgen::schema();
+    let tx = match db.transaction().await {
+        Ok(t) => t,
+        Err(_) => return json!({ "ok": false, "code": "INTERNAL" }),
+    };
+    if let Err(error) = tx
+        .batch_execute(&format!(
+            "{}; SET LOCAL statement_timeout = '2000ms'; SET LOCAL TimeZone = 'UTC'",
+            spike_v3_write::isolation_sql(serializable)
+        ))
+        .await
+    {
+        return err(classify_write_error("세션 설정", error));
+    }
+    // 같은 키가 이미 커밋됐으면 다시 실행하지 않고 저장된 결과를 준다. 같은 키에 다른 요청이면 거부.
+    // 동시에 같은 키가 오면 키 행 잠금으로 하나씩 처리한다.
+    if let Err(error) = tx.execute("SELECT pg_advisory_xact_lock(hashtext($1))", &[&format!("{principal}:{key}")]).await {
+        return err(classify_write_error("멱등 잠금", error));
+    }
+    if let Ok(Some(row)) = tx
+        .query_opt(format!("SELECT request, result::text FROM {s}.aip_idem WHERE principal = $1 AND key = $2").as_str(), &[&principal, &key])
+        .await
+    {
+        let (stored_req, result): (String, String) = (row.get(0), row.get(1));
+        if stored_req != req_text {
+            return json!({ "ok": false, "code": "IDEMPOTENCY_MISMATCH", "msg": "같은 키에 다른 요청" });
+        }
+        let Ok(mut v) = serde_json::from_str::<Value>(&result) else {
+            return json!({ "ok": false, "code": "INTERNAL", "msg": "저장된 멱등 결과를 읽을 수 없음" });
+        };
+        v["replayed"] = json!(true);
+        return v;
+    }
+    let knobs = Knobs { audit_via: Some("apply"), audit_key: Some(key.to_string()), ..Knobs::default() };
+    let applied = match apply_in_with_wire(&tx, facts, req, caller, &knobs, wire).await {
+        Ok(a) => a,
+        Err(e) => return err(e),
+    };
+    if let Err(e) = checks_in(&tx, facts, caller, &knobs).await {
+        return err(e);
+    }
+    // wire에 표현할 수 없는 결과면 멱등 결과 기록·commit 전 전체 transaction이 rollback된다.
+    let changed = match applied.changed.into_iter().map(|id| emit_id(id, wire)).collect::<Result<Vec<_>, _>>() {
+        Ok(ids) => ids,
+        Err(e) => return err(e),
+    };
+    let unchanged = match applied.unchanged.into_iter().map(|id| emit_id(id, wire)).collect::<Result<Vec<_>, _>>() {
+        Ok(ids) => ids,
+        Err(e) => return err(e),
+    };
+    let result = json!({
+        "ok": true, "changed": changed, "unchanged": unchanged,
+        "tags": write_tags(facts, req["apply"].as_str().unwrap_or("")),
+    });
+    if let Err(error) = tx
+        .execute(
+            format!("INSERT INTO {s}.aip_idem (principal, key, request, result) VALUES ($1, $2, $3, $4::text::jsonb)").as_str(),
+            &[&principal, &key, &req_text, &result.to_string()],
+        )
+        .await
+    {
+        // SERIALIZABLE에서는 락을 기다린 뒤에도 옛 스냅샷으로 키를 조회하므로, 같은 키의 먼저 끝난 요청과 여기서 부딪친다.
+        // 재시도하면 저장된 결과를 재생한다.
+        return match error.code().map(|c| c.code()) {
+            Some("23505") if serializable => err(spike_v3_write::serialization_conflict("멱등 기록")),
+            Some("40001") | Some("40P01") => err(classify_write_error("멱등 기록", error)),
+            _ => json!({ "ok": false, "code": "INTERNAL" }),
+        };
+    }
+    if started.elapsed().as_millis() + u128::from(spike_v3_write::COMMIT_MARGIN_MS) >= u128::from(spike_v3_write::WRITE_DEADLINE_MS) {
+        return json!({"ok":false,"code":"DEADLINE_EXCEEDED"});
+    }
+    commit_sent.store(true, std::sync::atomic::Ordering::SeqCst);
+    match tx.commit().await {
+        Ok(()) => result,
+        Err(e) => {
+            // 직렬화 실패로 커밋이 거절되면 커밋되지 않았다. 재시도 구간에서 다시 보내기 전에 표지를 내린다.
+            if matches!(e.code().map(|c| c.code()), Some("40001") | Some("40P01")) {
+                commit_sent.store(false, std::sync::atomic::Ordering::SeqCst);
+            }
+            err(classify_write_error("커밋", e))
+        }
     }
 }
 

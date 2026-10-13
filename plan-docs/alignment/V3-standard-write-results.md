@@ -68,7 +68,7 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 | V3-R2 | 보이지만 allow 거짓이면 `FORBIDDEN` | 이미 보이는 행이라 존재 정보는 새로 드러나지 않음 |
 | V3-R3 | where 대상은 행 정책·allow·from을 모두 만족하는 행 집합. 권한 없는 행·이미 목표 상태인 행은 오류 없이 대상 밖. `repeat`는 id 대상에만 의미 | "보이는데 권한 없는 행"이 섞였는지 호출자는 모름. id 집합과 정책 교차 집합의 '모두'는 다른 의미 |
 | V3-R4 | where 대상 조건은 expose read filter 허용 목록 + eq만 | 범위 연산은 미지원 |
-| V3-R5 | 대상 판정과 변경은 READ COMMITTED 트랜잭션 + 대상 행 `FOR UPDATE` + 정책 의존 행 `FOR SHARE` + from 재검사. 판정 근거가 된 권한 행은 커밋까지 바뀌지 않아, 진행 중 쓰기 뒤에 회수가 반영된다 | 행의 **부재**에 기대는 정책(`not exists`)은 행 잠금으로 보호되지 않는다(새 행 삽입). SERIALIZABLE 비교는 미실행 |
+| V3-R5 | 대상 판정과 변경은 READ COMMITTED 트랜잭션 + 대상 행 `FOR UPDATE` + 정책 의존 행 `FOR SHARE` + from 재검사. 판정 근거가 된 권한 행은 커밋까지 바뀌지 않아, 진행 중 쓰기 뒤에 회수가 반영된다 | 행의 **부재**에 기대는 정책(`not exists`)은 행 잠금으로 보호되지 않는다(새 행 삽입). **보완됨(2026-10-13, D-A23, 감사 O-26)**: 다른 행의 부재에 의존하는(`not exists`) `allow`·`from`·`check`가 걸린 전이·create는 정의 컴파일 단계가 facts에 `isolation: "serializable"`을 표시하고, 서버가 SERIALIZABLE로 실행하며 40001·40P01을 최대 3회 내부 재시도한다. 이중 예약은 실제 PG에서 둘 다 성공하던 것을 하나만 성공하도록 고쳤다. 확장·job 경로(`apply_in`)는 호출 시점의 격리를 그대로 쓴다(미착수) |
 | V3-R6 | 쓰기 요청 전체 기한 2s + 문장별 statement_timeout. 커밋 직전 남은 기한이 300ms 미만이면 rollback 후 `DEADLINE_EXCEEDED`(rollback 보장). 커밋을 보낸 뒤 기한을 넘기면 `COMMIT_UNKNOWN`(커밋됐을 수 있음, 상태 조회 필요) | 쓰기 budget 위치 미정. 2s·300ms는 spike 값. 재시도용 멱등 키·상태 조회 API는 미구현(R3-05) |
 
 ## 5. 독립 검토와 반영

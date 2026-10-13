@@ -90,6 +90,69 @@ fn unreachable_read_advice(execution: &Value) -> Vec<Advisory> {
         .collect()
 }
 
+/// True when the condition says "no such row exists": a `not` over an `exists`, directly or inside a predicate it calls.
+fn negates_exists(cond: &Value, predicates: &Value, seen: &mut BTreeSet<String>) -> bool {
+    match cond {
+        Value::Object(o) => {
+            if let Some(inner) = o.get("not") {
+                if contains_exists(inner, predicates, &mut BTreeSet::new()) {
+                    return true;
+                }
+            }
+            if let Some(name) = o.get("call").and_then(Value::as_str) {
+                if seen.insert(name.to_string()) && negates_exists(&predicates[name]["body"], predicates, seen) {
+                    return true;
+                }
+            }
+            o.values().any(|v| negates_exists(v, predicates, seen))
+        }
+        Value::Array(a) => a.iter().any(|v| negates_exists(v, predicates, seen)),
+        _ => false,
+    }
+}
+
+fn contains_exists(cond: &Value, predicates: &Value, seen: &mut BTreeSet<String>) -> bool {
+    match cond {
+        Value::Object(o) => {
+            if o.contains_key("exists") {
+                return true;
+            }
+            if let Some(name) = o.get("call").and_then(Value::as_str) {
+                if seen.insert(name.to_string()) && contains_exists(&predicates[name]["body"], predicates, seen) {
+                    return true;
+                }
+            }
+            o.values().any(|v| contains_exists(v, predicates, seen))
+        }
+        Value::Array(a) => a.iter().any(|v| contains_exists(v, predicates, seen)),
+        _ => false,
+    }
+}
+
+/// A transition or create whose `allow`/`from` needs some other row to be absent runs in SERIALIZABLE and is retried
+/// when two requests collide (security audit O-26). When the goal is uniqueness or a capacity, a `unique` field or a
+/// `limit ... atMost` with `invariant` says it directly and is enforced by the database at a lower cost.
+fn absence_policy_advice(execution: &Value) -> Vec<Advisory> {
+    let predicates = &execution["predicates"];
+    let message = |what: &str| {
+        format!(
+            "{what}의 조건이 다른 행의 부재(`not exists`)에 의존해 SERIALIZABLE로 실행되고 충돌 시 재시도됨. 목적이 유일성이나 정원이면 `unique`나 `limit ... atMost`와 `invariant`가 더 싸다"
+        )
+    };
+    let mut out = vec![];
+    for (res, rf) in execution["resources"].as_object().into_iter().flatten() {
+        for (tr, t) in rf["transitions"].as_object().into_iter().flatten() {
+            if negates_exists(&t["allow"], predicates, &mut BTreeSet::new()) || negates_exists(&t["from"], predicates, &mut BTreeSet::new()) {
+                out.push(Advisory { code: "ADVISORY_ABSENCE_POLICY", anchor: format!("transition:{res}.{tr}"), msg: message(&format!("`{res}.{tr}`")) });
+            }
+        }
+        if negates_exists(&rf["exposeCreate"]["allow"], predicates, &mut BTreeSet::new()) {
+            out.push(Advisory { code: "ADVISORY_ABSENCE_POLICY", anchor: format!("create:{res}"), msg: message(&format!("`{res}` 생성")) });
+        }
+    }
+    out
+}
+
 pub fn load_checked(src: &str, form: Form, options: &Value) -> Result<Checked, Vec<Diag>> {
     let enabled = dev_checks_enabled(options)?;
     // 개발 조언을 꺼도 실행 계약의 구조·타입 검사는 생략할 수 없다.
@@ -98,6 +161,7 @@ pub fn load_checked(src: &str, form: Form, options: &Value) -> Result<Checked, V
     if enabled {
         advisories.extend(direct_reference_advice(&output.execution));
         advisories.extend(unreachable_read_advice(&output.execution));
+        advisories.extend(absence_policy_advice(&output.execution));
     }
     Ok(Checked { output, advisories })
 }

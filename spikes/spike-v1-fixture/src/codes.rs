@@ -581,6 +581,13 @@ pub static REGISTRY: &[Info] = &[
         concat!(base!(), "resource Note {\n  fields { id: Id; body: Text; owner: Member }\n  expose read { select id, body\n    budget { rows 10; depth 1; deadline 2s; cost 100 } }\n}\n"),
     ),
     i(
+        "ADVISORY_ABSENCE_POLICY",
+        "a write whose condition needs another row to be absent (advisory)",
+        "Not an error: the definition is accepted. A transition or create whose `allow`/`from` says `not exists ...` is decided on a snapshot, so two requests that change different rows could both pass it. The server therefore runs it in a SERIALIZABLE transaction and retries a collision, which costs more than the plain path.",
+        "If the goal is uniqueness or a capacity, declare `unique a, b` or `limit name on X = atMost N where ...` with `invariant name per field`; the database enforces those directly and cheaper. Keep the `not exists` rule when it expresses something those cannot.",
+        "",
+    ),
+    i(
         "ADVISORY_UNUSED_PREDICATE",
         "a predicate that nothing uses (advisory)",
         "Not an error: the definition is accepted. An unused predicate is usually a rule that was meant to be applied and is not.",

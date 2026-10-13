@@ -6,6 +6,7 @@ pub mod extract;
 pub mod hlit;
 pub mod hmap;
 pub mod host;
+pub mod isolation;
 pub mod lexer;
 mod limits;
 pub mod parser;

@@ -67,11 +67,33 @@ pub struct Ctl {
 /// 쓰기 요청 전체 기한. 계획·잠금 대기·변경·커밋을 모두 포함한다(R2B-07).
 pub const WRITE_DEADLINE_MS: u64 = 2000;
 
+/// 직렬화 실패(40001)·교착(40P01)으로 전체 rollback된 요청의 메시지 꼬리말. 서버가 같은 요청을 다시 실행해도 되는지의 표지다.
+const RETRY_MARK: &str = "다시 시도 가능";
+
+/// SERIALIZABLE 쓰기(O-26)를 서버가 내부에서 다시 실행하는 최대 횟수. 첫 실행 뒤 재시도 횟수이며 같은 쓰기 기한 안에서 돈다.
+pub const SERIALIZATION_RETRIES: usize = 3;
+
+/// 이 거절이 직렬화 실패·교착으로 전체 rollback된 것인지. 다른 `CONFLICT`(판정과 실제 변경 수 불일치)는 해당하지 않는다.
+pub fn is_retryable(reject: &Reject) -> bool {
+    reject.code == "CONFLICT" && reject.msg.ends_with(RETRY_MARK)
+}
+
+/// 호출자가 정한 쓰기 단계에서 직렬화 충돌과 같게 다룰 거절(예: SERIALIZABLE에서 멱등 키 행 삽입 충돌). 재시도 대상이다.
+pub fn serialization_conflict(stage: &str) -> Reject {
+    Reject { code: "CONFLICT", msg: format!("{stage}: 동시 쓰기와 충돌. {RETRY_MARK}") }
+}
+
+/// 재시도 사이 대기. 같은 두 요청이 같은 박자로 다시 부딪치지 않게 시도마다 늘리고 흩뜨린다.
+pub async fn retry_backoff(attempt: usize) {
+    let jitter = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| u64::from(d.subsec_nanos())) % 20;
+    tokio::time::sleep(Duration::from_millis(5 * (attempt as u64 + 1) + jitter)).await;
+}
+
 fn db_err(stage: &str, e: tokio_postgres::Error) -> Reject {
     match e.code().map(|c| c.code()) {
         Some("57014") => Reject { code: "DEADLINE_EXCEEDED", msg: format!("{stage}: {WRITE_DEADLINE_MS}ms 안에 끝나지 않음") },
         // 교착·직렬화 실패는 전체 rollback된 상태라 다시 시도할 수 있다.
-        Some("40P01") | Some("40001") => Reject { code: "CONFLICT", msg: format!("{stage}: 동시 쓰기와 충돌. 다시 시도 가능") },
+        Some("40P01") | Some("40001") => Reject { code: "CONFLICT", msg: format!("{stage}: 동시 쓰기와 충돌. {RETRY_MARK}") },
         c => Reject { code: "INTERNAL", msg: format!("{stage} 실패(sqlstate {})", c.unwrap_or("?")) },
     }
 }
@@ -127,7 +149,20 @@ mod scalar_literal_tests {
 }
 
 pub async fn apply(db: &mut Client, facts: &Value, req: &Value, caller: &Caller, knobs: &Knobs) -> Result<Applied, Reject> {
-    with_deadline(|ctl| apply_inner(db, facts, req, caller, knobs, ctl)).await
+    let serializable = apply_needs_serializable(facts, req);
+    with_deadline(|ctl| async move {
+        let mut attempt = 0;
+        loop {
+            match apply_inner(&mut *db, facts, req, caller, knobs, ctl.clone(), serializable).await {
+                Err(e) if serializable && is_retryable(&e) && attempt < SERIALIZATION_RETRIES => {
+                    attempt += 1;
+                    retry_backoff(attempt).await;
+                }
+                other => return other,
+            }
+        }
+    })
+    .await
 }
 
 async fn with_deadline<T, F, Fut>(f: F) -> Result<T, Reject>
@@ -669,8 +704,9 @@ async fn run_checks(tx: &Transaction<'_>, facts: &Value, caller: &Caller, knobs:
 
     if !limited.is_empty() {
         let isolation: String = tx.query_one("SELECT current_setting('transaction_isolation')", &[]).await.map_err(internal)?.get(0);
-        if isolation != "read committed" {
-            return rej("UNSUPPORTED_ISOLATION", "정원 제약 쓰기는 READ COMMITTED 트랜잭션이 필요함");
+        // SERIALIZABLE도 직렬성을 보장하므로 허용한다(O-26). 충돌은 40001로 드러나고 서버가 재시도한다.
+        if isolation != "read committed" && isolation != "serializable" {
+            return rej("UNSUPPORTED_ISOLATION", "정원 제약 쓰기는 READ COMMITTED 또는 SERIALIZABLE 트랜잭션이 필요함");
         }
     }
 
@@ -753,10 +789,45 @@ async fn run_checks(tx: &Transaction<'_>, facts: &Value, caller: &Caller, knobs:
     Ok(())
 }
 
-async fn begin<'a>(db: &'a mut Client) -> Result<Transaction<'a>, Reject> {
+/// 다른 행을 읽는 정책에 의존하는 쓰기는 SERIALIZABLE로 실행한다(O-26). 컴파일 단계가 facts에 `isolation`을 표시한다.
+pub fn isolation_sql(serializable: bool) -> &'static str {
+    if serializable {
+        "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE"
+    } else {
+        "SET TRANSACTION ISOLATION LEVEL READ COMMITTED"
+    }
+}
+
+fn is_serializable(marker: &Value) -> bool {
+    marker == "serializable"
+}
+
+/// 전이 하나를 SERIALIZABLE로 실행해야 하는지. 요청 형식 오류는 여기서 판단하지 않고 false로 둔다(이후 검사가 거절한다).
+pub fn apply_needs_serializable(facts: &Value, req: &Value) -> bool {
+    let name = req["apply"].as_str().unwrap_or("");
+    name.split_once('.').is_some_and(|(res, tr)| is_serializable(&facts["resources"][res]["transitions"][tr]["isolation"]))
+}
+
+/// 묶음의 연산 중 하나라도 SERIALIZABLE이 필요하면 묶음 전체가 그렇다(한 트랜잭션이다).
+pub fn bundle_needs_serializable(facts: &Value, req: &Value) -> bool {
+    req["atomic"].as_array().into_iter().flatten().any(|op| {
+        if op.get("apply").is_some() {
+            apply_needs_serializable(facts, op)
+        } else {
+            op["create"].as_str().is_some_and(|res| is_serializable(&facts["resources"][res]["exposeCreate"]["isolation"]))
+        }
+    })
+}
+
+pub fn compose_needs_serializable(facts: &Value, req: &Value) -> bool {
+    req["compose"].as_str().is_some_and(|res| is_serializable(&facts["resources"][res]["exposeCompose"]["isolation"]))
+}
+
+async fn begin<'a>(db: &'a mut Client, serializable: bool) -> Result<Transaction<'a>, Reject> {
     let tx = db.transaction().await.map_err(internal)?;
     tx.batch_execute(&format!(
-        "SET TRANSACTION ISOLATION LEVEL READ COMMITTED; SET LOCAL statement_timeout = '{WRITE_DEADLINE_MS}ms'; SET LOCAL TimeZone = 'UTC'"
+        "{}; SET LOCAL statement_timeout = '{WRITE_DEADLINE_MS}ms'; SET LOCAL TimeZone = 'UTC'",
+        isolation_sql(serializable)
     ))
     .await
     .map_err(internal)?;
@@ -791,9 +862,9 @@ async fn apply_op(
     Ok(Applied { changed: j.change, unchanged: j.unchanged })
 }
 
-async fn apply_inner(db: &mut Client, facts: &Value, req: &Value, caller: &Caller, knobs: &Knobs, ctl: Ctl) -> Result<Applied, Reject> {
+async fn apply_inner(db: &mut Client, facts: &Value, req: &Value, caller: &Caller, knobs: &Knobs, ctl: Ctl, serializable: bool) -> Result<Applied, Reject> {
     let o = req.as_object().ok_or(bad("요청은 객체"))?;
-    let tx = begin(db).await?;
+    let tx = begin(db, serializable).await?;
     let a = apply_op(&tx, facts, o, caller, knobs, IdWire::Legacy).await?;
     run_checks(&tx, facts, caller, knobs).await?;
     commit(tx, &ctl, knobs).await?;
@@ -827,45 +898,59 @@ pub struct BundleResult {
 
 /// W0: 이미 공개된 동작(전이 apply, expose create)을 한 트랜잭션으로 묶는다. 연산 사이 값 전달은 없다.
 pub async fn bundle(db: &mut Client, facts: &Value, req: &Value, caller: &Caller, knobs: &Knobs) -> Result<BundleResult, Reject> {
+    let serializable = bundle_needs_serializable(facts, req);
     with_deadline(|ctl| async move {
-        let o = req.as_object().ok_or(bad("요청은 객체"))?;
-        keys(o, &["atomic"], "묶음 요청")?;
-        let ops = o.get("atomic").and_then(Value::as_array).ok_or(bad("atomic 배열 필요"))?;
-        if ops.is_empty() || ops.len() > 20 {
-            return Err(bad("연산은 1~20개"));
-        }
-        let tx = begin(db).await?;
-        let mut out = BundleResult { applied: vec![], created: 0 };
-        for op in ops {
-            let m = op.as_object().ok_or(bad("연산은 객체"))?;
-            if m.contains_key("apply") {
-                out.applied.push(apply_op(&tx, facts, m, caller, knobs, IdWire::Legacy).await?);
-            } else {
-                keys(m, &["create", "values"], "create 연산")?;
-                let res = m.get("create").and_then(Value::as_str).unwrap_or("");
-                let ec = &facts["resources"][res]["exposeCreate"];
-                if ec.is_null() {
-                    return rej("NOT_EXPOSED", format!("`{res}` 생성은 공개되지 않음"));
+        let mut attempt = 0;
+        loop {
+            match bundle_once(&mut *db, facts, req, caller, knobs, ctl.clone(), serializable).await {
+                Err(e) if serializable && is_retryable(&e) && attempt < SERIALIZATION_RETRIES => {
+                    attempt += 1;
+                    retry_backoff(attempt).await;
                 }
-                let vals = m.get("values").and_then(Value::as_object).ok_or(bad("values 객체 필요"))?;
-                let allowed: Vec<&str> = ec["fields"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
-                let mut row = vec![];
-                for (f, v) in vals {
-                    if !allowed.contains(&f.as_str()) {
-                        return rej("FIELD_NOT_EXPOSED", format!("`{res}.{f}`는 생성 계약에 없음"));
-                    }
-                    row.push((f.clone(), literal(facts, res, f, v)?));
-                }
-                ensure_refs_readable(&tx, facts, res, &row, caller, knobs).await?;
-                create_row(&tx, facts, res, &row, caller, knobs).await?;
-                out.created += 1;
+                other => return other,
             }
         }
-        run_checks(&tx, facts, caller, knobs).await?;
-        commit(tx, &ctl, knobs).await?;
-        Ok(out)
     })
     .await
+}
+
+async fn bundle_once(db: &mut Client, facts: &Value, req: &Value, caller: &Caller, knobs: &Knobs, ctl: Ctl, serializable: bool) -> Result<BundleResult, Reject> {
+    let o = req.as_object().ok_or(bad("요청은 객체"))?;
+    keys(o, &["atomic"], "묶음 요청")?;
+    let ops = o.get("atomic").and_then(Value::as_array).ok_or(bad("atomic 배열 필요"))?;
+    if ops.is_empty() || ops.len() > 20 {
+        return Err(bad("연산은 1~20개"));
+    }
+    let tx = begin(db, serializable).await?;
+    let mut out = BundleResult { applied: vec![], created: 0 };
+    for op in ops {
+        let m = op.as_object().ok_or(bad("연산은 객체"))?;
+        if m.contains_key("apply") {
+            out.applied.push(apply_op(&tx, facts, m, caller, knobs, IdWire::Legacy).await?);
+        } else {
+            keys(m, &["create", "values"], "create 연산")?;
+            let res = m.get("create").and_then(Value::as_str).unwrap_or("");
+            let ec = &facts["resources"][res]["exposeCreate"];
+            if ec.is_null() {
+                return rej("NOT_EXPOSED", format!("`{res}` 생성은 공개되지 않음"));
+            }
+            let vals = m.get("values").and_then(Value::as_object).ok_or(bad("values 객체 필요"))?;
+            let allowed: Vec<&str> = ec["fields"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
+            let mut row = vec![];
+            for (f, v) in vals {
+                if !allowed.contains(&f.as_str()) {
+                    return rej("FIELD_NOT_EXPOSED", format!("`{res}.{f}`는 생성 계약에 없음"));
+                }
+                row.push((f.clone(), literal(facts, res, f, v)?));
+            }
+            ensure_refs_readable(&tx, facts, res, &row, caller, knobs).await?;
+            create_row(&tx, facts, res, &row, caller, knobs).await?;
+            out.created += 1;
+        }
+    }
+    run_checks(&tx, facts, caller, knobs).await?;
+    commit(tx, &ctl, knobs).await?;
+    Ok(out)
 }
 
 fn path_text(p: &Value) -> Option<String> {
@@ -875,158 +960,172 @@ fn path_text(p: &Value) -> Option<String> {
 
 /// W1: 호출자가 대상 목록과 항목별 단계를 조합한다. 허용 단계·값 출처는 서버의 expose compose가 정한다.
 pub async fn compose(db: &mut Client, facts: &Value, req: &Value, caller: &Caller, knobs: &Knobs) -> Result<BundleResult, Reject> {
+    let serializable = compose_needs_serializable(facts, req);
     with_deadline(|ctl| async move {
-        let o = req.as_object().ok_or(bad("요청은 객체"))?;
-        keys(o, &["compose", "targets", "steps"], "조합 요청")?;
-        let res = o.get("compose").and_then(Value::as_str).unwrap_or("");
-        let cp = &facts["resources"][res]["exposeCompose"];
-        if cp.is_null() {
-            return rej("NOT_EXPOSED", format!("`{res}` 조합은 공개되지 않음"));
-        }
-        let res = facts["resources"].as_object().unwrap().keys().find(|k| *k == res).unwrap().as_str();
-        let bulk = cp["bulkMaxRows"].as_i64().unwrap_or(1);
-        let tg = o.get("targets").and_then(Value::as_object).ok_or(bad("targets 객체 필요"))?;
-        keys(tg, &["ids"], "targets")?;
-        let ids = parse_ids(tg.get("ids").unwrap_or(&Value::Null), bulk, IdWire::Legacy)?;
-        let steps = o.get("steps").and_then(Value::as_array).ok_or(bad("steps 배열 필요"))?;
-        if steps.is_empty() || steps.len() > 10 {
-            return Err(bad("단계는 1~10개"));
-        }
-        // 단계 형식을 트랜잭션 전에 모두 검사한다.
-        enum Step<'a> {
-            Tr(&'a str, bool),
-            Create(&'a str, Vec<(String, Value, Option<Value>)>),
-        }
-        let mut plan = vec![];
-        for st in steps {
-            let m = st.as_object().ok_or(bad("단계는 객체"))?;
-            if let Some(t) = m.get("transition").and_then(Value::as_str) {
-                keys(m, &["transition", "on"], "transition 단계")?;
-                let on_self = match m.get("on").and_then(Value::as_str) {
-                    None | Some("targets") => false,
-                    Some("self") if !cp["selfRow"].is_null() => true,
-                    _ => return rej("STEP_NOT_ALLOWED", "on은 targets 또는 계약에 selfRow가 있을 때 self"),
-                };
-                let allowed = cp["transitions"].as_array().unwrap();
-                let Some(t) = allowed.iter().filter_map(Value::as_str).find(|x| *x == t) else {
-                    return rej("STEP_NOT_ALLOWED", format!("전이 `{t}`는 조합 계약에 없음"));
-                };
-                plan.push(Step::Tr(t, on_self));
-            } else {
-                keys(m, &["create", "values"], "create 단계")?;
-                let target = m.get("create").and_then(Value::as_str).unwrap_or("");
-                let decl = &cp["creates"][target];
-                if decl.is_null() {
-                    return rej("STEP_NOT_ALLOWED", format!("`{target}` 생성은 조합 계약에 없음"));
+        let mut attempt = 0;
+        loop {
+            match compose_once(&mut *db, facts, req, caller, knobs, ctl.clone(), serializable).await {
+                Err(e) if serializable && is_retryable(&e) && attempt < SERIALIZATION_RETRIES => {
+                    attempt += 1;
+                    retry_backoff(attempt).await;
                 }
-                let target = cp["creates"].as_object().unwrap().keys().find(|k| *k == target).unwrap().as_str();
-                let allowed_fields = &facts["resources"][target]["exposeCreate"]["fields"];
-                let mut vals = vec![];
-                for (f, v) in m.get("values").and_then(Value::as_object).ok_or(bad("values 객체 필요"))? {
-                    if !allowed_fields.as_array().unwrap().iter().any(|x| x == f) {
-                        return rej("FIELD_NOT_EXPOSED", format!("`{target}.{f}`는 생성 계약에 없음"));
-                    }
-                    let vo = v.as_object().ok_or(bad("값은 {item} 또는 {const}"))?;
-                    let fty = facts["resources"][target]["fields"][f]["ty"].as_str().unwrap();
-                    if let Some(p) = vo.get("item").and_then(Value::as_str) {
-                        // 값은 서버가 선언한 출처 경로에서만 온다. 호출자가 임의 경로로 숨은 값을 옮기지 못하게 한다.
-                        let Some(src) = decl["sources"].as_array().unwrap().iter().find(|s| path_text(s).as_deref() == Some(p)) else {
-                            return rej("VALUE_SOURCE_NOT_ALLOWED", format!("출처 `{p}`는 조합 계약에 없음"));
-                        };
-                        let sty = src["ty"].as_str().unwrap();
-                        if sty.trim_end_matches('?') != fty.trim_end_matches('?') || (sty.ends_with('?') && !fty.ends_with('?')) {
-                            return rej("TYPE_MISMATCH", format!("`{p}`({sty})를 `{target}.{f}`({fty})에 넣을 수 없음"));
-                        }
-                        vals.push((f.clone(), Value::Null, Some(src.clone())));
-                    } else if let Some(c) = vo.get("const") {
-                        // 참조 필드는 상수로 받지 않는다. 대상 행에서 온 값만 연결할 수 있다.
-                        if fty.starts_with("Ref<") || fty.starts_with("Id<") {
-                            return rej("VALUE_SOURCE_NOT_ALLOWED", format!("참조 필드 `{f}`는 상수로 줄 수 없음"));
-                        }
-                        vals.push((f.clone(), c.clone(), None));
-                    } else {
-                        return Err(bad("값은 {item} 또는 {const}"));
-                    }
-                }
-                plan.push(Step::Create(target, vals));
+                other => return other,
             }
         }
-        let tx = begin(&mut *db).await?;
-        // 모든 대상을 먼저 잠그고 가시성을 확인한다. 같은 범위 검사는 단계별 권한 판정 뒤에 한다(R3-01).
-        let scopes: Vec<Option<String>>;
-        {
-            let rf = &facts["resources"][res];
-            let mut cx = Ctx::new(facts, caller.actor_id, &caller.now);
-            cx.lock_reads = !knobs.skip_policy_lock;
-            let env = Env { this: Some(("t".into(), res.to_string())), ..Default::default() };
-            let vis = cx.cond(&rf["rowRead"], &env).map_err(internal)?;
-            let scope = if cp["sameScope"].is_null() {
-                "NULL::text".into()
-            } else {
-                format!("({})::text", cx.value(&cp["sameScope"], &env).map_err(internal)?)
-            };
-            let p = cx.params.bind(Some(id_array(&ids)), "bigint[]");
-            let sql = format!("SELECT t.id, {scope} FROM {} t WHERE t.id = ANY({p}) AND {vis} ORDER BY t.id FOR UPDATE OF t", table(res));
-            let params = cx.params.values.clone();
-            let rows = typed_query(&tx, sql.as_str(), &params).await.map_err(|e| db_err("대상 조회", e))?;
-            if rows.len() != ids.len() {
-                return rej("MISSING_TARGET", format!("대상 {}개를 찾을 수 없음", ids.len() - rows.len()));
-            }
-            scopes = rows.iter().map(|r| r.get(1)).collect();
-        }
-        let mut out = BundleResult { applied: vec![], created: 0 };
-        for st in &plan {
-            match st {
-                Step::Tr(t, on_self) => {
-                    let step_ids = if *on_self {
-                        // 자기 행: actor를 가리키고 대상과 같은 범위의 행 하나. 없으면 대상 없음과 같게.
-                        let sr = &cp["selfRow"];
-                        let a_col = column(facts, res, sr["actorField"].as_str().unwrap()).unwrap();
-                        let b_col = column(facts, res, sr["by"].as_str().unwrap()).unwrap();
-                        let mut cx = Ctx::new(facts, caller.actor_id, &caller.now);
-                        let pa = cx.params.bind(caller.actor_id.map(|x| x.to_string()), "bigint");
-                        let pb = cx.params.bind(scopes[0].clone(), "text");
-                        let sql = format!("SELECT t.id FROM {} t WHERE t.{a_col} = {pa} AND t.{b_col}::text = {pb}", table(res));
-                        let params = cx.params.values.clone();
-                        let rows = typed_query(&tx, sql.as_str(), &params).await.map_err(|e| db_err("자기 행 조회", e))?;
-                        if rows.len() != 1 {
-                            return rej("MISSING_TARGET", "같은 범위의 자기 행을 찾을 수 없음");
-                        }
-                        vec![rows[0].get::<_, i64>(0)]
-                    } else {
-                        ids.clone()
-                    };
-                    let j = judge(&tx, facts, res, t, &TargetSpec::Ids(step_ids), bulk, &Value::Null, caller, knobs).await?;
-                    update(&tx, facts, res, t, &j.change, caller, knobs).await?;
-                    effects(&tx, facts, res, t, &j.change, caller).await?;
-                    out.applied.push(Applied { changed: j.change, unchanged: j.unchanged });
-                }
-                Step::Create(target, vals) => {
-                    for id in &ids {
-                        let mut row = vec![];
-                        for (f, c, src) in vals {
-                            row.push((
-                                f.clone(),
-                                match src {
-                                    Some(p) => Src::Item { res: res.to_string(), id: *id, path: p.clone() },
-                                    None => literal(facts, target, f, c)?,
-                                },
-                            ));
-                        }
-                        create_row(&tx, facts, target, &row, caller, knobs).await?;
-                        out.created += 1;
-                    }
-                }
-            }
-        }
-        if !cp["sameScope"].is_null() && (scopes[0].is_none() || scopes.iter().any(|s| *s != scopes[0])) {
-            return rej("NOT_SAME_SCOPE", "대상들이 같은 범위가 아님");
-        }
-        run_checks(&tx, facts, caller, knobs).await?;
-        commit(tx, &ctl, knobs).await?;
-        Ok(out)
     })
     .await
+}
+
+async fn compose_once(db: &mut Client, facts: &Value, req: &Value, caller: &Caller, knobs: &Knobs, ctl: Ctl, serializable: bool) -> Result<BundleResult, Reject> {
+    let o = req.as_object().ok_or(bad("요청은 객체"))?;
+    keys(o, &["compose", "targets", "steps"], "조합 요청")?;
+    let res = o.get("compose").and_then(Value::as_str).unwrap_or("");
+    let cp = &facts["resources"][res]["exposeCompose"];
+    if cp.is_null() {
+        return rej("NOT_EXPOSED", format!("`{res}` 조합은 공개되지 않음"));
+    }
+    let res = facts["resources"].as_object().unwrap().keys().find(|k| *k == res).unwrap().as_str();
+    let bulk = cp["bulkMaxRows"].as_i64().unwrap_or(1);
+    let tg = o.get("targets").and_then(Value::as_object).ok_or(bad("targets 객체 필요"))?;
+    keys(tg, &["ids"], "targets")?;
+    let ids = parse_ids(tg.get("ids").unwrap_or(&Value::Null), bulk, IdWire::Legacy)?;
+    let steps = o.get("steps").and_then(Value::as_array).ok_or(bad("steps 배열 필요"))?;
+    if steps.is_empty() || steps.len() > 10 {
+        return Err(bad("단계는 1~10개"));
+    }
+    // 단계 형식을 트랜잭션 전에 모두 검사한다.
+    enum Step<'a> {
+        Tr(&'a str, bool),
+        Create(&'a str, Vec<(String, Value, Option<Value>)>),
+    }
+    let mut plan = vec![];
+    for st in steps {
+        let m = st.as_object().ok_or(bad("단계는 객체"))?;
+        if let Some(t) = m.get("transition").and_then(Value::as_str) {
+            keys(m, &["transition", "on"], "transition 단계")?;
+            let on_self = match m.get("on").and_then(Value::as_str) {
+                None | Some("targets") => false,
+                Some("self") if !cp["selfRow"].is_null() => true,
+                _ => return rej("STEP_NOT_ALLOWED", "on은 targets 또는 계약에 selfRow가 있을 때 self"),
+            };
+            let allowed = cp["transitions"].as_array().unwrap();
+            let Some(t) = allowed.iter().filter_map(Value::as_str).find(|x| *x == t) else {
+                return rej("STEP_NOT_ALLOWED", format!("전이 `{t}`는 조합 계약에 없음"));
+            };
+            plan.push(Step::Tr(t, on_self));
+        } else {
+            keys(m, &["create", "values"], "create 단계")?;
+            let target = m.get("create").and_then(Value::as_str).unwrap_or("");
+            let decl = &cp["creates"][target];
+            if decl.is_null() {
+                return rej("STEP_NOT_ALLOWED", format!("`{target}` 생성은 조합 계약에 없음"));
+            }
+            let target = cp["creates"].as_object().unwrap().keys().find(|k| *k == target).unwrap().as_str();
+            let allowed_fields = &facts["resources"][target]["exposeCreate"]["fields"];
+            let mut vals = vec![];
+            for (f, v) in m.get("values").and_then(Value::as_object).ok_or(bad("values 객체 필요"))? {
+                if !allowed_fields.as_array().unwrap().iter().any(|x| x == f) {
+                    return rej("FIELD_NOT_EXPOSED", format!("`{target}.{f}`는 생성 계약에 없음"));
+                }
+                let vo = v.as_object().ok_or(bad("값은 {item} 또는 {const}"))?;
+                let fty = facts["resources"][target]["fields"][f]["ty"].as_str().unwrap();
+                if let Some(p) = vo.get("item").and_then(Value::as_str) {
+                    // 값은 서버가 선언한 출처 경로에서만 온다. 호출자가 임의 경로로 숨은 값을 옮기지 못하게 한다.
+                    let Some(src) = decl["sources"].as_array().unwrap().iter().find(|s| path_text(s).as_deref() == Some(p)) else {
+                        return rej("VALUE_SOURCE_NOT_ALLOWED", format!("출처 `{p}`는 조합 계약에 없음"));
+                    };
+                    let sty = src["ty"].as_str().unwrap();
+                    if sty.trim_end_matches('?') != fty.trim_end_matches('?') || (sty.ends_with('?') && !fty.ends_with('?')) {
+                        return rej("TYPE_MISMATCH", format!("`{p}`({sty})를 `{target}.{f}`({fty})에 넣을 수 없음"));
+                    }
+                    vals.push((f.clone(), Value::Null, Some(src.clone())));
+                } else if let Some(c) = vo.get("const") {
+                    // 참조 필드는 상수로 받지 않는다. 대상 행에서 온 값만 연결할 수 있다.
+                    if fty.starts_with("Ref<") || fty.starts_with("Id<") {
+                        return rej("VALUE_SOURCE_NOT_ALLOWED", format!("참조 필드 `{f}`는 상수로 줄 수 없음"));
+                    }
+                    vals.push((f.clone(), c.clone(), None));
+                } else {
+                    return Err(bad("값은 {item} 또는 {const}"));
+                }
+            }
+            plan.push(Step::Create(target, vals));
+        }
+    }
+    let tx = begin(&mut *db, serializable).await?;
+    // 모든 대상을 먼저 잠그고 가시성을 확인한다. 같은 범위 검사는 단계별 권한 판정 뒤에 한다(R3-01).
+    let scopes: Vec<Option<String>>;
+    {
+        let rf = &facts["resources"][res];
+        let mut cx = Ctx::new(facts, caller.actor_id, &caller.now);
+        cx.lock_reads = !knobs.skip_policy_lock;
+        let env = Env { this: Some(("t".into(), res.to_string())), ..Default::default() };
+        let vis = cx.cond(&rf["rowRead"], &env).map_err(internal)?;
+        let scope = if cp["sameScope"].is_null() {
+            "NULL::text".into()
+        } else {
+            format!("({})::text", cx.value(&cp["sameScope"], &env).map_err(internal)?)
+        };
+        let p = cx.params.bind(Some(id_array(&ids)), "bigint[]");
+        let sql = format!("SELECT t.id, {scope} FROM {} t WHERE t.id = ANY({p}) AND {vis} ORDER BY t.id FOR UPDATE OF t", table(res));
+        let params = cx.params.values.clone();
+        let rows = typed_query(&tx, sql.as_str(), &params).await.map_err(|e| db_err("대상 조회", e))?;
+        if rows.len() != ids.len() {
+            return rej("MISSING_TARGET", format!("대상 {}개를 찾을 수 없음", ids.len() - rows.len()));
+        }
+        scopes = rows.iter().map(|r| r.get(1)).collect();
+    }
+    let mut out = BundleResult { applied: vec![], created: 0 };
+    for st in &plan {
+        match st {
+            Step::Tr(t, on_self) => {
+                let step_ids = if *on_self {
+                    // 자기 행: actor를 가리키고 대상과 같은 범위의 행 하나. 없으면 대상 없음과 같게.
+                    let sr = &cp["selfRow"];
+                    let a_col = column(facts, res, sr["actorField"].as_str().unwrap()).unwrap();
+                    let b_col = column(facts, res, sr["by"].as_str().unwrap()).unwrap();
+                    let mut cx = Ctx::new(facts, caller.actor_id, &caller.now);
+                    let pa = cx.params.bind(caller.actor_id.map(|x| x.to_string()), "bigint");
+                    let pb = cx.params.bind(scopes[0].clone(), "text");
+                    let sql = format!("SELECT t.id FROM {} t WHERE t.{a_col} = {pa} AND t.{b_col}::text = {pb}", table(res));
+                    let params = cx.params.values.clone();
+                    let rows = typed_query(&tx, sql.as_str(), &params).await.map_err(|e| db_err("자기 행 조회", e))?;
+                    if rows.len() != 1 {
+                        return rej("MISSING_TARGET", "같은 범위의 자기 행을 찾을 수 없음");
+                    }
+                    vec![rows[0].get::<_, i64>(0)]
+                } else {
+                    ids.clone()
+                };
+                let j = judge(&tx, facts, res, t, &TargetSpec::Ids(step_ids), bulk, &Value::Null, caller, knobs).await?;
+                update(&tx, facts, res, t, &j.change, caller, knobs).await?;
+                effects(&tx, facts, res, t, &j.change, caller).await?;
+                out.applied.push(Applied { changed: j.change, unchanged: j.unchanged });
+            }
+            Step::Create(target, vals) => {
+                for id in &ids {
+                    let mut row = vec![];
+                    for (f, c, src) in vals {
+                        row.push((
+                            f.clone(),
+                            match src {
+                                Some(p) => Src::Item { res: res.to_string(), id: *id, path: p.clone() },
+                                None => literal(facts, target, f, c)?,
+                            },
+                        ));
+                    }
+                    create_row(&tx, facts, target, &row, caller, knobs).await?;
+                    out.created += 1;
+                }
+            }
+        }
+    }
+    if !cp["sameScope"].is_null() && (scopes[0].is_none() || scopes.iter().any(|s| *s != scopes[0])) {
+        return rej("NOT_SAME_SCOPE", "대상들이 같은 범위가 아님");
+    }
+    run_checks(&tx, facts, caller, knobs).await?;
+    commit(tx, &ctl, knobs).await?;
+    Ok(out)
 }
 
 /// 쓰기 확장(V4)용: 호출자가 가진 트랜잭션 안에서 공개 전이 하나를 실행한다. 커밋은 호출자가 한다.
