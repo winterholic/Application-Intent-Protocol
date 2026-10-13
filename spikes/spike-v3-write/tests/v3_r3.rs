@@ -18,6 +18,12 @@ fn facts(row_read_true: bool) -> Value {
     if row_read_true {
         s = s.replacen("  rows read when managerOf(actor, recruitment.club)", "  rows read when true", 1);
     }
+    // 2026-10-13: caller-supplied Refs must point at readable rows; managers read members of their own school.
+    s = s.replacen(
+        "resource Member {\n  fields { id: Id; school: School? }\n}",
+        "resource Member {\n  fields { id: Id; school: School? }\n  rows read when school = actor.school\n}",
+        1,
+    );
     let apply_add = "  transition approve { allow managerOf(actor, recruitment.club); from status = PENDING; to status = APPROVE
     create ClubMember { club = recruitment.club; member = member; role = MEMBER } }
   expose apply approve { target id; bulk maxRows 100; sameScope recruitment.club }

@@ -29,6 +29,7 @@
 | D-A14 | 선언에 귀속된 선택적 구조화 설명. 자연어 의미 검증 비필수, 실행 권한/보안 판단 근거 금지 | 통합 지침 §2 원칙 5·§6. OI-N1은 스키마 상세만 남음 |
 | D-A15 | 모든 설계·구현 단위는 `PRINCIPLES.md` §4 관문을 통과해야 한다 | 창시자 정정 10-02 |
 | D-A16 | 제품 정의의 `resource ... fields { }` 안에서 `X.Id` 타입은 정의 오류(`ID_FIELD_NEEDS_REFERENCE`)다. 다른 resource를 가리키는 필드는 참조 `X` 하나뿐이다(외래 키가 생긴다). `X.Id`는 `input`·`access` 인자·operation 입출력처럼 DB 열이 아닌 자리에서는 계속 쓴다. 개발 조언 `ADVISORY_ID_WITHOUT_REFERENCE`는 오류로 대체돼 제거했다 | 창시자 2026-10-13: "3번도 너 말대로 추천대로 하자 어차피 객체 그래프탐색이 되는데, 괜히 선택지를 또 주는거 자체가 내가 지향한설계와 다른 거 같아". 감사 F8(`plan-docs/reviews/2026-10-13-ai-friendliness-runtime-reliability-audit.md`). 이미 `X.Id` 열(외래 키 없는 bigint)을 가진 DB는 참조로 바꾸는 migration 경로가 있다(`new_resource_references`) |
+| D-A17 | 테넌트 격리(B03): OI-TN1은 T1-A(여러 테넌트를 다루는 시스템 작업은 전용 actor로 실행하고 행 정책에 넓히는 조건을 명시, 코드 변경 없음). OI-TN2는 T2-A 유지(소속 테넌트 전체 + 호출자 Ref filter), T2-B(세션 claim의 활성 테넌트)는 후속 결정 후보. 생성 경로: 호출자가 준 Ref 값은 호출자가 읽을 수 있는(대상 `rows read`를 통과하는) 행이어야 하고, actor 자기 행 참조만 예외다. 안 보이는 대상은 `MISSING_TARGET`. 라이브러리 `spike-v3-write`에서 강제 | 창시자 2026-10-13: "테넌트는 너 추천대로하는게 좋을듯". [결정 문서](../plan-docs/backend-capability/tenant-isolation-decision-2026-10-13.md) |
 | D-A11 | 장기 일관성과 완성도를 단기 구현 속도보다 우선한다 | 철학 문서 §0, §12 |
 | D-A18 | enum 값의 순서는 계약이 아니다. 값 순서만 바꾼 변경은 digest·DDL·생성 타입을 바꾸지 않고, 값을 더하거나 빼면 바꾼다. 제품 정의는 모든 enum 값을 정렬해 facts에 싣고, PoC Core IR은 `ordered`가 아닌 enum만 정렬한다(`ordered`는 위치가 서열이라 순서가 의미다) | 창시자 2026-10-13 결정을 전달한 작업 지시("값 순서만 바꿔도 계약 변경이 되지 않도록 digest 계산 시 열거형 값을 정규화(정렬)"). 사용자 원문 그대로의 인용은 없다. 감사 F12. 이 결정으로 기존 배포와 비교하면 순서가 정렬되지 않은 enum의 digest가 한 번 바뀐다 |
 
@@ -84,8 +85,8 @@
 | OI-D1 | lifecycle 위반이 프런트엔드 코드(E2xx)와 IR 구조 코드(I113) 두 가지로 표현된다. 한 의미 두 코드 | Pass 6 S2 |
 | OI-D2 | E212가 아직 서로 다른 구문 오용 다섯 가지를 묶는다 | Pass 6 |
 | OI-D3 | F 오류가 있을 때도 S 규칙을 함께 보고할지(오류 복구 하강, Unknown 오탐 방지 필요) | Pass 6 S2 |
-| OI-TN1 | actor 없는 문맥(webhook, 핸들러)의 읽기에 테넌트 필터를 걸지. 지금은 쓰기만 트랜잭션 단위로 한 테넌트에 고정 | Pass 6. **창시자 확인 대기**(2026-10-13): 제품 경로에는 actor 없는 데이터 접근이 없어 현행(서비스 주체의 행 정책, 넓히는 조건은 predicate에 명시) 유지로 닫기를 권장. [결정 문서](../plan-docs/backend-capability/tenant-isolation-decision-2026-10-13.md) |
-| OI-TN2 | actor를 테넌트에 묶을지(요청 단위 활성 테넌트). 지금 멤버십 확인은 앱의 `allow` 책임 | Pass 6. **창시자 확인 대기**(2026-10-13): 현행(소속 테넌트 전체 + 호출자 Ref filter) 유지 권장. 세션 claim 활성 테넌트는 공개 계약을 바꾸므로 다음 결정 후보. 생성 경로 HTTP 공개 전 Ref 가시성 규칙도 결정 필요. 같은 문서 |
+| OI-TN1 | actor 없는 문맥(webhook, 핸들러)의 읽기에 테넌트 필터를 걸지. 지금은 쓰기만 트랜잭션 단위로 한 테넌트에 고정 | Pass 6. **결정됨**(2026-10-13, D-A17): T1-A, 현행(서비스 주체의 행 정책, 넓히는 조건은 predicate에 명시) 유지. [결정 문서](../plan-docs/backend-capability/tenant-isolation-decision-2026-10-13.md) |
+| OI-TN2 | actor를 테넌트에 묶을지(요청 단위 활성 테넌트). 지금 멤버십 확인은 앱의 `allow` 책임 | Pass 6. **결정됨**(2026-10-13, D-A17): T2-A 현행(소속 테넌트 전체 + 호출자 Ref filter) 유지. 세션 claim 활성 테넌트(T2-B)는 공개 계약을 바꾸므로 다음 결정 후보. 생성 경로 Ref 가시성 규칙은 구현됨. 같은 문서 |
 | OI-E1 | Custom Extension 단계(Pure / Effect-Declared / Unsafe)와 각 단계의 보장 범위 | 철학 §7 |
 | OI-E2 | `fn … wasm` 실행 여부와 그 전까지 막을지 | 10 §3.7 |
 | OI-P1 | 프로토콜 의미와 전송(HTTP/WebSocket) 분리, 프로토콜 버전 | 10 §3.6 |

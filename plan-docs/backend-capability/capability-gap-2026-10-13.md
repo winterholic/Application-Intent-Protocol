@@ -24,7 +24,7 @@
 | C04 다단계 업무, C10 보상 | 부분 / 확장(데이터 불가) | 부분 / 확장 | job이 `ctx.data.read/apply`로 업무 데이터를 읽고 전이·보상 전이를 실행. 전이와 journal이 한 transaction. `tests/job_data.rs` |
 | F09 외부 데이터 동기화 | 확장(데이터 쓰기 불가) | 확장 | schedule + `ctx.http` + `ctx.data.apply`로 끝까지 처리 가능 |
 | I04 Health Check | 미지원 | 지원 | `/health`(liveness), `/ready`(DB·배포 digest). `tests/health.rs` |
-| B03 테넌트 격리 | 미지원 | 부분 | 제품 경로 행 정책·기본 거부·trigger 서비스 주체 확인. [결정 문서](tenant-isolation-decision-2026-10-13.md) |
+| B03 테넌트 격리 | 미지원 | 부분 | 제품 경로 행 정책·기본 거부·trigger 서비스 주체 확인, 생성 Ref 가시성 규칙(결정됨). [결정 문서](tenant-isolation-decision-2026-10-13.md) |
 | B09 Audit Logging | 미지원 | 부분 | 전이마다 같은 문장의 감사 행. `tests/audit.rs`, [OPERATIONS](../../product/OPERATIONS.md#업무-감사-기록) |
 | I02 Metrics | 미지원 | 부분 | token 보호 `/metrics`. [OPERATIONS](../../product/OPERATIONS.md#요청-metrics) |
 | C09 재시도, D08 Retry/Backoff | 부분 / 부분 | 지원 / 지원 | 설정 `job_policies`(1회에서 10회, 미처리 예외 재시도 선택), 확장의 `ctx.retryLater()`, `ctx.job.attempt`. `tests/job_retry.rs`, [재시도 정책](../../product/MANAGED-EXECUTION.md#재시도-정책) |
@@ -56,7 +56,7 @@
 |---|---|---|---|---|
 | B01 | 인증·인가 | Spring Security, Passport, Django auth, Devise | 지원 | RS256 access token·JWKS, 지속 principal, 반환 직전 재검증. 실제 외부 IdP 연동 검증은 별도 |
 | B02 | RBAC/ABAC | `@PreAuthorize`, CASL, django-guardian, Pundit | 부분 | predicate·allow로 표현. 전용 policy catalog 없음 |
-| B03 | 테넌트 격리 | Hibernate multitenancy, django-tenants, acts_as_tenant | 부분 | 행 정책 predicate(`org = actor.org`, membership `exists`)로 표현하고 정책 없는 resource는 기본 거부. traverse·Ref filter·전이·job도 같은 정책을 쓴다. 요청 단위 활성 테넌트와 테넌트 선언 검사는 없음. [결정 문서](tenant-isolation-decision-2026-10-13.md), OI-TN1·TN2 창시자 확인 대기 |
+| B03 | 테넌트 격리 | Hibernate multitenancy, django-tenants, acts_as_tenant | 부분 | 행 정책 predicate(`org = actor.org`, membership `exists`)로 표현하고 정책 없는 resource는 기본 거부. traverse·Ref filter·전이·job도 같은 정책을 쓴다. 호출자 생성의 Ref 값도 호출자가 읽을 수 있는 행이어야 한다(actor 자기 행 예외, 라이브러리 `bundle`에서 강제). 요청 단위 활성 테넌트(T2-B)와 테넌트 선언 검사는 없고 후속 후보. [결정 문서](tenant-isolation-decision-2026-10-13.md), OI-TN1·TN2 결정됨(2026-10-13) |
 | B04 | 리소스 정책 | method security, DRF permissions | 지원 | rows/field/expose/allow |
 | B05 | 세션·토큰 | JWT filter, session store | 부분 | 최대 900초 세션, revoke generation. refresh는 IdP 책임 |
 | B06 | API Key | API key filter, DRF TokenAuthentication | 미지원 | 기계 간 호출은 IdP client-credentials JWT로 대체 가능. 제품 API key 계약 없음 |
@@ -256,7 +256,7 @@
 
 | 순위 | 항목 | 이유 | 권장 형태 |
 |---|---|---|---|
-| 1 | B03 테넌트 격리 | SaaS의 기본 요구. 현재는 predicate 관례에 의존 | [결정 문서](tenant-isolation-decision-2026-10-13.md): 현행 유지 권장, 활성 테넌트(세션 claim)와 생성 경로 Ref 가시성은 창시자 결정 대기 |
+| 1 | B03 테넌트 격리 | SaaS의 기본 요구. 현재는 predicate 관례에 의존 | [결정 문서](tenant-isolation-decision-2026-10-13.md): 결정됨(2026-10-13). 현행 유지(T1-A·T2-A) + 생성 경로 Ref 가시성 규칙 구현. 활성 테넌트(세션 claim, T2-B)는 후속 결정 후보 |
 | 2 | B09 Audit | 규제·운영 요구 | 기본 기록은 구현(아래 설계 선택). 남은 것: 조회 CLI, 쓰기 확장 key, 효과 행 |
 | 3 | I02·I03 Metrics·Tracing | 운영 가시성 | metrics는 의존성 없이 기본 빌드에 구현. 남은 것: 내부 상태 metric, `traceparent` 전파, OpenTelemetry exporter(선택 패키지) |
 | 4 | ~~D08·C09 retry 정책~~ | 2026-10-13 구현(`job_policies`, `ctx.retryLater`, `ctx.job`) | 남은 것: 확장이 대기 시간을 지정하는 `retryLater(reason, {afterMs})` |

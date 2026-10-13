@@ -1,6 +1,6 @@
 # 테넌트 격리 의사결정 (B03, OI-TN1·OI-TN2) — 2026-10-13
 
-> 상태: **창시자 확인 대기**. 권장안은 공개 문법을 바꾸지 않고 현재 제품 기본값을 유지하는 것이라 이번 회차에 구현할 변경이 없다. 생성 경로의 참조 검사 강화는 호환을 깨므로 문서로만 남긴다.
+> 상태: **결정됨**(2026-10-13). 창시자 답: "테넌트는 너 추천대로하는게 좋을듯". OI-TN1 = T1-A, OI-TN2 = T2-A 유지(T2-B는 후속 후보), 생성 경로 규칙 = 호출자가 준 Ref 값은 호출자가 읽을 수 있는 행이어야 한다(actor 자기 행은 예외). 규칙은 라이브러리 `spike-v3-write`의 `bundle` create에 구현·테스트했다(`tests/create_ref_visibility.rs`). 아래 4절은 결정 전 권장안을 그대로 둔 기록이고, 결정 결과는 4절 끝의 "결정 결과"에 있다.
 > 범위: `aip service` 제품 경로(`spike-v1-fixture` sema, `spike-v2-read` planner, `spike-v3-write`, `spike-v6-transport`). root `aip-runtime`·`aip-pg`의 `tenant via`(D-P18)는 PoC이며 제품 지원으로 세지 않는다.
 
 ## 1. 현재 제품 경로의 사실
@@ -51,6 +51,20 @@
 1. **OI-TN1은 T1-A로 닫기를 제안한다.** 제품 경로에는 이미 actor 없는 데이터 접근이 없고, 여러 테넌트를 다루는 작업은 행 정책에 넓히는 조건을 명시하는 것이 가장 안전한 기본값이다. 코드 변경이 없다.
 2. **OI-TN2는 T2-A를 유지하고 T2-B를 다음 결정 후보로 둔다.** T2-B는 공개 계약(세션 필드·식 변수)을 바꾸므로 이번 회차 지시 범위(호환을 깨면 문서로만)에 따라 구현하지 않는다. T2-C는 행 정책과 책임이 겹쳐 권장하지 않는다.
 3. **생성 경로 공개 전 필수 조건(결정 필요).** create를 HTTP에 연결할 때 "호출자가 준 Ref 값은 호출자가 읽을 수 있는 행이어야 한다"를 기본 규칙으로 두기를 권한다. 지금은 `allow`가 참조 행을 검사하지 않으면 다른 테넌트의 Task에 Comment를 만들어 그 테넌트 화면에 끼워 넣을 수 있다(라이브러리 경로 코드 추적, HTTP 미노출이라 실제 경로 재현은 없음). 다만 actor resource에 `rows read`가 없는 흔한 정의(`author = actor`)가 이 규칙으로 거부되므로 호환을 깬다. 대안은 (a) actor 자기 행 참조는 예외, (b) `expose create`에 Ref 필드별 출처(`author from actor`)를 선언하게 하는 것이다. 창시자 확인 대상이다.
+
+### 결정 결과 (2026-10-13)
+
+| 항목 | 결정 | 코드 변경 |
+|---|---|---|
+| OI-TN1 | T1-A. 시스템 작업은 전용 actor(서비스 주체)로 실행하고 행 정책에 넓히는 조건을 명시한다 | 없음 |
+| OI-TN2 | T2-A 유지. T2-B(세션 claim의 활성 테넌트)는 공개 계약을 바꾸므로 **후속 결정 후보**로 남긴다 | 없음 |
+| 생성 경로 Ref 가시성 | 호출자가 준 Ref 값은 대상 resource의 `rows read`를 통과하는 행이어야 한다. 예외는 actor 자기 행(actor resource의 id가 호출자 actor id와 같은 값). 3절 대안 (b)(`author from actor` 선언)는 채택하지 않았다 | `ensure_refs_readable`(`spikes/spike-v3-write/src/lib.rs`)을 `bundle` create 앞에 둔다 |
+
+구현 메모:
+- 안 보이는 대상은 없는 대상과 같은 `MISSING_TARGET`이다(전이와 같은 코드라 존재 여부가 새지 않고 wire 코드도 늘지 않는다).
+- compose의 create는 값을 서버가 읽은 대상 행 경로에서만 받고(상수 Ref는 `VALUE_SOURCE_NOT_ALLOWED`) `sameScope`가 범위를 강제하므로 이 검사 대상이 아니다. 회귀 테스트(`v3_2`, `v3_r3`, `create_nullable_values`)가 그대로 통과한다.
+- 기존 `v3_2`·`v3_r3` fixture는 Member에 `rows read`가 없어 "관리자가 다른 회원을 ClubMember로 만든다"가 새 규칙에 걸렸다. 두 fixture에 `rows read when school = actor.school`(관리자는 같은 학교 회원을 읽는다)을 더했다. 반례의 의미(업무 규칙 CHECK_FAILED/OK)는 그대로다. 실제 정의가 같은 형태라면 Ref 대상 resource에 읽기 정책이 있어야 한다는 뜻이다.
+- HTTP에는 create가 아직 연결돼 있지 않다. 연결할 때 이 규칙이 이미 라이브러리에 있으므로 그대로 따라온다.
 
 ## 5. 지침 §7 체크(권장안 기준)
 

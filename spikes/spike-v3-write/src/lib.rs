@@ -542,6 +542,40 @@ pub enum Src {
     Item { res: String, id: i64, path: Value },
 }
 
+/// 호출자가 준 Ref 값은 호출자가 읽을 수 있는 행이어야 한다(창시자 결정 2026-10-13, 테넌트 격리 T2-A).
+/// 그렇지 않으면 `allow`가 참조 행을 보지 않는 한 다른 테넌트의 행에 자기 행을 끼워 넣을 수 있다.
+/// 예외는 actor 자기 행이다. actor resource에는 `rows read`가 없는 정의가 흔하고 `author = actor`가 정상 사용이다.
+/// 안 보이는 행은 없는 행과 같은 MISSING_TARGET이라 존재 여부도 새지 않는다.
+async fn ensure_refs_readable(
+    tx: &Transaction<'_>,
+    facts: &Value,
+    target: &str,
+    values: &[(String, Src)],
+    caller: &Caller,
+    knobs: &Knobs,
+) -> Result<(), Reject> {
+    for (field, src) in values {
+        let Src::Lit(id, _) = src else { continue };
+        let ty = facts["resources"][target]["fields"][field.as_str()]["ty"].as_str().unwrap_or("");
+        let Some(referenced) = ty.trim_end_matches('?').strip_prefix("Ref<").and_then(|t| t.strip_suffix('>')) else { continue };
+        let id: i64 = id.parse().map_err(|_| bad(format!("`{field}` id 형식")))?;
+        if facts["actor"].as_str() == Some(referenced) && caller.actor_id == Some(id) {
+            continue;
+        }
+        let mut cx = Ctx::new(facts, caller.actor_id, &caller.now);
+        cx.lock_reads = !knobs.skip_policy_lock;
+        let env = Env { this: Some(("t".into(), referenced.to_string())), ..Default::default() };
+        let vis = cx.cond(&facts["resources"][referenced]["rowRead"], &env).map_err(internal)?;
+        let p = cx.params.bind(Some(id.to_string()), "bigint");
+        let sql = format!("SELECT 1 FROM {} t WHERE t.id = {p} AND {vis}", table(referenced));
+        let params = cx.params.values.clone();
+        if typed_query(tx, sql.as_str(), &params).await.map_err(|e| write_err("참조 행 확인", e))?.is_empty() {
+            return rej("MISSING_TARGET", format!("`{target}.{field}`가 가리키는 `{referenced}` 행을 찾을 수 없음"));
+        }
+    }
+    Ok(())
+}
+
 /// expose create의 allow를 새 행에 대해 평가하며 한 행씩 넣는다. allow 거짓이면 FORBIDDEN.
 async fn create_row(
     tx: &Transaction<'_>,
@@ -799,6 +833,7 @@ pub async fn bundle(db: &mut Client, facts: &Value, req: &Value, caller: &Caller
                     }
                     row.push((f.clone(), literal(facts, res, f, v)?));
                 }
+                ensure_refs_readable(&tx, facts, res, &row, caller, knobs).await?;
                 create_row(&tx, facts, res, &row, caller, knobs).await?;
                 out.created += 1;
             }

@@ -44,6 +44,14 @@ fn facts(with_check: bool) -> Value {
         "  fields { id: Id; recruitment: Recruitment; member: Member; status: ApplyStatus }",
         1,
     );
+    // 2026-10-13: a caller-supplied Ref must point at a row the caller can read, and the base fixture's Member has no
+    // `rows read`. Managers can read members of their own school, which keeps the "forged member" counterexamples
+    // about the business rule (CHECK_FAILED / OK) and not about visibility.
+    s = s.replacen(
+        "resource Member {\n  fields { id: Id; school: School? }\n}",
+        "resource Member {\n  fields { id: Id; school: School? }\n  rows read when school = actor.school\n}",
+        1,
+    );
     let apply_check = if with_check { APPLY_CHECK } else { "" };
     s = s.replacen("  expose aggregate approvedCount\n", &format!("  expose aggregate approvedCount\n{W2_DEF}{W0_DEF}{W1_DEF}{apply_check}"), 1);
     let cm = format!("  rows read when member = actor\n  unique club, member\n{CM_CREATE}{}", if with_check { CM_CHECK } else { "" });
