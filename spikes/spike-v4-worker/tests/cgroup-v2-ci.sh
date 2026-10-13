@@ -14,7 +14,7 @@ fi
 
 unit="aip-worker-cgroup-test-$$"
 systemd-run --quiet --scope --collect --unit="${unit}" \
-  --property=Delegate=cpu,memory,pids \
+  --property="Delegate=cpu memory pids" \
   --property=DelegateSubgroup=init \
   bash -euo pipefail -c '
     cgroup_path="$(awk -F: '\''$1 == "0" { print $3 }'\'' /proc/self/cgroup)"

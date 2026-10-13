@@ -360,10 +360,8 @@ impl AuthenticatorImpl {
         let state = self.keys.lock().await;
         let age = state.loaded.elapsed();
         let known = state.keys.get(kid).cloned();
-        if let Some(key) = &known {
-            if age < KEY_TTL {
-                return CacheDecision::Use(key.clone());
-            }
+        if let Some(key) = known.as_ref().filter(|_| age < KEY_TTL) {
+            return CacheDecision::Use(key.clone());
         }
         if state.failed_until.is_some_and(|until| Instant::now() < until) {
             // The key endpoint just failed. A key we already hold keeps working for a bounded time; nothing else can be decided.
