@@ -297,15 +297,15 @@ mod linux {
 
     #[cfg(test)]
     impl CgroupGuard {
-        fn from_existing(path: PathBuf) -> io::Result<Self> {
+        pub(crate) fn from_existing(path: PathBuf) -> io::Result<Self> {
             Ok(Self { path, removed: true })
         }
 
-        fn apply_limits_for_test(&self, limits: &WorkerResourceLimits) -> io::Result<()> {
+        pub(crate) fn apply_limits_for_test(&self, limits: &WorkerResourceLimits) -> io::Result<()> {
             self.apply_limits(limits)
         }
 
-        fn attach_std_for_test(&self, command: &mut std::process::Command) -> io::Result<()> {
+        pub(crate) fn attach_std_for_test(&self, command: &mut std::process::Command) -> io::Result<()> {
             CgroupGuard::attach_std(self, command)
         }
     }
