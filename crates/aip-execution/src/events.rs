@@ -11,6 +11,10 @@ pub const MAX_SCAN_LIMIT: i64 = 1000;
 pub const MAX_PAYLOAD_BYTES: usize = 64 * 1024;
 pub const MAX_SCAN_BYTES: i64 = 1024 * 1024;
 const MAX_RETAINED_EVENTS: i64 = 1000;
+/// Idempotency keys outlive the replay window by this many cursors, then are dropped so the ledger stays bounded (O-20).
+const DEFAULT_LEDGER_WINDOW: i64 = 10_000;
+/// The ledger is trimmed once per this many events of a stream, so the range delete cost is amortized.
+const LEDGER_PRUNE_INTERVAL: i64 = 100;
 
 #[derive(Debug, PartialEq)]
 pub enum Error {
@@ -44,6 +48,7 @@ pub struct Page {
 #[derive(Clone, Debug)]
 pub struct Store {
     schema: String,
+    ledger_window: i64,
 }
 
 impl Store {
@@ -52,7 +57,14 @@ impl Store {
         if !valid_schema(&schema) {
             return Err(Error::InvalidSchema);
         }
-        Ok(Self { schema })
+        Ok(Self { schema, ledger_window: DEFAULT_LEDGER_WINDOW })
+    }
+
+    /// How many cursors of idempotency keys are kept beyond the replay window. A key older than that no longer
+    /// deduplicates, so a publisher retrying that late appends a new event instead of getting the old cursor.
+    pub fn with_ledger_window(mut self, cursors: i64) -> Self {
+        self.ledger_window = cursors.max(0);
+        self
     }
 
     fn table(&self, name: &str) -> String {
@@ -75,7 +87,8 @@ impl Store {
     }
 
     /// Appends once per idempotency key. Reusing the key with another payload
-    /// is a conflict, including after the event has left the replay window.
+    /// is a conflict, including after the event has left the replay window, until the key itself is
+    /// trimmed (`with_ledger_window` cursors later).
     pub async fn publish(&self, client: &mut Client, owner: &str, stream: &str, idempotency_key: &str, payload: Value) -> Result<String, Error> {
         let tx = client.transaction().await?;
         match self.publish_in(&tx, owner, stream, idempotency_key, payload).await {
@@ -145,6 +158,10 @@ impl Store {
             )
             .await?;
         client.execute(&format!("DELETE FROM {events} WHERE owner=$1 AND stream=$2 AND cursor<$3"), &[&owner, &stream, &retained_from]).await?;
+        if cursor % LEDGER_PRUNE_INTERVAL == 0 {
+            let ledger_floor = retained_from.saturating_sub(self.ledger_window);
+            client.execute(&format!("DELETE FROM {keys} WHERE owner=$1 AND stream=$2 AND cursor<$3"), &[&owner, &stream, &ledger_floor]).await?;
+        }
         Ok(cursor.to_string())
     }
 

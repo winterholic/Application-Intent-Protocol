@@ -182,3 +182,23 @@ async fn automatic_retention_keeps_last_thousand_and_preserves_idempotency_ledge
     assert_eq!(store.publish(&mut db.client, "owner", "busy", "k0", json!({"n":0})).await.unwrap(), "1");
     assert!(store.publish(&mut db.client, "owner", "busy", "k0", json!({"n":999})).await.is_err());
 }
+
+/// O-20: the idempotency ledger used to grow forever, one row per event ever published, because only the replay
+/// payloads were trimmed. Keys now stay for a bounded window of cursors beyond the replay window.
+#[tokio::test]
+async fn idempotency_ledger_is_bounded_beyond_the_replay_window() {
+    let mut db = Db::new().await;
+    let store = db.store().with_ledger_window(100);
+    for index in 0..1300 {
+        store.publish(&mut db.client, "owner", "busy", &format!("k{index}"), json!({"n":index})).await.unwrap();
+    }
+    let keys: i64 = db.client.query_one(&format!("SELECT count(*) FROM {}.aip_event_keys", db.schema), &[]).await.unwrap().get(0);
+    // 1000 replayable events + 100 extra cursors + at most one prune interval of lag.
+    assert!(keys <= 1000 + 100 + 100, "ledger kept {keys} keys");
+    // Recent keys, including ones that already left the replay window, still deduplicate.
+    assert_eq!(store.publish(&mut db.client, "owner", "busy", "k299", json!({"n":299})).await.unwrap(), "300");
+    assert!(store.publish(&mut db.client, "owner", "busy", "k299", json!({"n":1})).await.is_err());
+    // Another stream's ledger is untouched.
+    store.publish(&mut db.client, "owner", "quiet", "only", json!({})).await.unwrap();
+    assert_eq!(store.publish(&mut db.client, "owner", "quiet", "only", json!({})).await.unwrap(), "1");
+}

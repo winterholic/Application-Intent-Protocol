@@ -293,6 +293,26 @@ async fn submit(
     if (active >= 100 || (!service && total >= 10_000)) && !replay {
         return Err("QUOTA_EXCEEDED");
     }
+    // Retained payload bytes (queued and unexpired inputs and outputs) are bounded like managed files and messages. Unlike the
+    // row cap this applies to trigger principals too: payloads are cleared when a result expires, so the bound does not stall
+    // triggers for long, and it stops one principal from filling the database with 1 MiB inputs.
+    if !replay {
+        let retained: i64 = db
+            .query_one(
+                &format!(
+                    "SELECT coalesce(sum(octet_length(input::text)+coalesce(octet_length(output::text),0)),0)::bigint FROM {s}.aip_jobs \
+                     WHERE owner=$1 AND (state IN ('QUEUED','RUNNING','CANCEL_REQUESTED') OR result_expires_at>clock_timestamp())"
+                ),
+                &[&owner],
+            )
+            .await
+            .map_err(db_error)?
+            .get(0);
+        let incoming = serde_json::to_vec(input).map_or(i64::MAX, |bytes| bytes.len() as i64);
+        if retained.saturating_add(incoming) > MAX_RETAINED_JOB_BYTES {
+            return Err("QUOTA_EXCEEDED");
+        }
+    }
     Store::new(s)
         .map_err(store_error)?
         .enqueue(
@@ -727,7 +747,13 @@ pub(crate) async fn handle(db: &mut Client, rt: &Runtime, facts: &Value, wire: I
     }
 }
 
-async fn collect_expired(db: &mut Client, s: &str, cleanup_messages: bool) -> Result<()> {
+/// Per principal, matching the 64 MiB message quota. Counted at submission, so outputs written afterwards by jobs that are
+/// already running can overshoot by at most the 100 active jobs' 1 MiB result limit.
+const MAX_RETAINED_JOB_BYTES: i64 = 64 * 1024 * 1024;
+const GC_BATCH: i64 = 1000;
+const GC_BATCHES_PER_SWEEP: usize = 10;
+
+async fn collect_expired(db: &mut Client, s: &str, cleanup_messages: bool, cleanup_outbox: bool) -> Result<()> {
     let tx = db.transaction().await.map_err(db_error)?;
     tx.batch_execute("SET LOCAL lock_timeout='2s'; SET LOCAL statement_timeout='5s'").await.map_err(db_error)?;
     tx.query_one("SELECT pg_advisory_xact_lock_shared(1095323725,hashtext($1))", &[&s]).await.map_err(db_error)?;
@@ -749,11 +775,47 @@ async fn collect_expired(db: &mut Client, s: &str, cleanup_messages: bool) -> Re
             .await
             .map_err(|_| "DB_UNAVAILABLE")?;
     }
-    let old=tx.query(&format!("SELECT id::text FROM {s}.aip_jobs WHERE state IN ('SUCCEEDED','FAILED','CANCELLED') AND result_expires_at<clock_timestamp()-interval '30 days' LIMIT 100 FOR UPDATE SKIP LOCKED"),&[]).await.map_err(db_error)?;
-    for row in old {
-        let id: String = row.get(0);
-        tx.execute(&format!("DELETE FROM {s}.aip_effects WHERE run_id=$1::text::uuid"), &[&id]).await.map_err(db_error)?;
-        tx.execute(&format!("DELETE FROM {s}.aip_jobs WHERE id=$1::text::uuid"), &[&id]).await.map_err(db_error)?;
+    // Trigger principals have no retained-history cap, so tombstones must be removed at least as fast as triggers create them.
+    // A sweep runs every minute; several batches per sweep keep up with far more than the former 100 jobs per minute.
+    for _ in 0..GC_BATCHES_PER_SWEEP {
+        let old: Vec<String> = tx
+            .query(
+                &format!("SELECT id::text FROM {s}.aip_jobs WHERE state IN ('SUCCEEDED','FAILED','CANCELLED') AND result_expires_at<clock_timestamp()-interval '30 days' LIMIT {GC_BATCH} FOR UPDATE SKIP LOCKED"),
+                &[],
+            )
+            .await
+            .map_err(db_error)?
+            .iter()
+            .map(|row| row.get(0))
+            .collect();
+        if old.is_empty() {
+            break;
+        }
+        tx.execute(&format!("DELETE FROM {s}.aip_effects WHERE run_id=ANY($1::text[]::uuid[])"), &[&old]).await.map_err(db_error)?;
+        tx.execute(&format!("DELETE FROM {s}.aip_jobs WHERE id=ANY($1::text[]::uuid[])"), &[&old]).await.map_err(db_error)?;
+        if (old.len() as i64) < GC_BATCH {
+            break;
+        }
+    }
+    if cleanup_outbox {
+        // A dispatch row means the relay already turned the outbox row into a job; both are history once the job record is gone.
+        let infra = aip_execution::infrastructure_schema(s).map_err(|_| "BAD_CONFIGURATION")?;
+        for _ in 0..GC_BATCHES_PER_SWEEP {
+            let removed = tx
+                .execute(
+                    &format!(
+                        "WITH old AS (SELECT outbox_id,outbox_created_at FROM {infra}.aip_outbox_dispatch WHERE dispatched_at<clock_timestamp()-interval '30 days' ORDER BY dispatched_at LIMIT {GC_BATCH} FOR UPDATE SKIP LOCKED), \
+                         gone AS (DELETE FROM {s}.aip_outbox o USING old WHERE o.id=old.outbox_id AND o.created_at=old.outbox_created_at) \
+                         DELETE FROM {infra}.aip_outbox_dispatch d USING old WHERE d.outbox_id=old.outbox_id AND d.outbox_created_at=old.outbox_created_at"
+                    ),
+                    &[],
+                )
+                .await
+                .map_err(db_error)?;
+            if (removed as i64) < GC_BATCH {
+                break;
+            }
+        }
     }
     tx.commit().await.map_err(db_error)
 }
@@ -761,6 +823,7 @@ async fn collect_expired(db: &mut Client, s: &str, cleanup_messages: bool) -> Re
 pub(crate) async fn supervisor(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire) {
     let mut tasks = tokio::task::JoinSet::new();
     let cleanup_messages = should_cleanup_messages(rt.infrastructure.messaging, &facts);
+    let cleanup_outbox = !rt.infrastructure.triggers.outbox.is_empty();
     let worker =
         format!("{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos());
     let mut gc = tokio::time::Instant::now();
@@ -784,7 +847,7 @@ pub(crate) async fn supervisor(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire
         if gc.elapsed() >= Duration::from_secs(60) {
             if let Ok(mut db) = connect(&rt).await {
                 if let Ok(s) = schema(&rt) {
-                    if collect_expired(&mut db, s, cleanup_messages).await.is_err() {
+                    if collect_expired(&mut db, s, cleanup_messages, cleanup_outbox).await.is_err() {
                         eprintln!("{{\"event\":\"job_gc_failed\"}}");
                     } else {
                         let _ = db.release().await;
@@ -1440,9 +1503,9 @@ mod safety_tests {
             .await
             .unwrap();
         db.execute(&format!("UPDATE {s}.aip_messages SET expires_at=clock_timestamp()-interval '1 second'"), &[]).await.unwrap();
-        collect_expired(&mut db, &s, false).await.unwrap();
+        collect_expired(&mut db, &s, false, false).await.unwrap();
         assert_eq!(db.query_one(&format!("SELECT count(*) FROM {s}.aip_messages"), &[]).await.unwrap().get::<_, i64>(0), 1);
-        collect_expired(&mut db, &s, true).await.unwrap();
+        collect_expired(&mut db, &s, true, false).await.unwrap();
         assert_eq!(db.query_one(&format!("SELECT count(*) FROM {s}.aip_messages"), &[]).await.unwrap().get::<_, i64>(0), 0);
         let rows =
             db.query(&format!("SELECT idempotency_key,input,grant_data,output FROM {s}.aip_jobs ORDER BY idempotency_key"), &[]).await.unwrap();
@@ -1473,5 +1536,67 @@ mod safety_tests {
         assert!(file_budget(&tx, &s, "owner", "reports", "new", 1, "").await.is_ok());
         tx.commit().await.unwrap();
         db.batch_execute(&format!("DROP SCHEMA {s} CASCADE")).await.unwrap();
+    }
+
+    /// O-20: expired history of busy (service) principals piled up faster than the old 100-per-minute sweep removed it,
+    /// and the dispatch ledger plus the outbox rows it covers were never removed at all.
+    #[tokio::test]
+    async fn collector_keeps_up_with_bulk_history_and_trims_the_outbox_ledger() {
+        let s = format!("aip_job_gc_bulk_{}", std::process::id());
+        let infra = aip_execution::infrastructure_schema(&s).unwrap();
+        let mut db = spike_v2_read::connect_owned_with_url(spike_v2_read::DB_URL).await.unwrap();
+        db.batch_execute(&format!(
+            "DROP SCHEMA IF EXISTS {infra} CASCADE; CREATE SCHEMA {s}; CREATE SCHEMA {infra}; {}; {}; CREATE TABLE {s}.aip_effects(run_id uuid REFERENCES {s}.aip_jobs(id),result jsonb); \
+             CREATE TABLE {s}.aip_outbox (id bigserial PRIMARY KEY, topic text NOT NULL, recipient_id bigint, source text NOT NULL, source_id bigint, created_at timestamptz NOT NULL DEFAULT now()); {}",
+            aip_execution::ddl(&s).unwrap(),
+            aip_execution::files::Store::new(&s).unwrap().ddl(),
+            outbox_dispatch_ddl(&infra)
+        ))
+        .await
+        .unwrap();
+        let store = Store::new(&s).unwrap();
+        for index in 0..250 {
+            store
+                .enqueue(
+                    &*db,
+                    NewRun {
+                        owner: "service".into(),
+                        actor: 1,
+                        grant: json!({}),
+                        operation: "count".into(),
+                        contract: "c".into(),
+                        deployment: "d".into(),
+                        implementation: "i".into(),
+                        input: json!({}),
+                        key: format!("old-{index}"),
+                        timeout_ms: 1000,
+                        max_attempts: 1,
+                        ttl_ms: 1000,
+                        delay_ms: 0,
+                    },
+                )
+                .await
+                .unwrap();
+        }
+        // 250 outbox rows: 200 dispatched long ago, 20 dispatched recently, 30 still pending.
+        db.batch_execute(&format!(
+            "UPDATE {s}.aip_jobs SET state='SUCCEEDED',result_expires_at=clock_timestamp()-interval '31 days'; \
+             INSERT INTO {s}.aip_effects SELECT id,NULL FROM {s}.aip_jobs; \
+             INSERT INTO {s}.aip_outbox(topic,source,source_id,created_at) SELECT 't','x',i,clock_timestamp()-interval '40 days' FROM generate_series(1,250) i; \
+             INSERT INTO {infra}.aip_outbox_dispatch(outbox_id,outbox_created_at,run_id,dispatched_at) \
+               SELECT id,created_at,(SELECT id FROM {s}.aip_jobs LIMIT 1),CASE WHEN id<=200 THEN clock_timestamp()-interval '31 days' ELSE clock_timestamp()-interval '1 day' END FROM {s}.aip_outbox WHERE id<=220"
+        ))
+        .await
+        .unwrap();
+        collect_expired(&mut db, &s, false, true).await.unwrap();
+        let count = |table: String| {
+            let db = &db;
+            async move { db.query_one(&format!("SELECT count(*) FROM {table}"), &[]).await.unwrap().get::<_, i64>(0) }
+        };
+        assert_eq!(count(format!("{s}.aip_jobs")).await, 0, "one sweep must clear more than 100 expired jobs");
+        assert_eq!(count(format!("{s}.aip_effects")).await, 0);
+        assert_eq!(count(format!("{infra}.aip_outbox_dispatch")).await, 20, "recent dispatch rows stay for replay protection");
+        assert_eq!(count(format!("{s}.aip_outbox")).await, 50, "undelivered and recently delivered rows stay");
+        db.batch_execute(&format!("DROP SCHEMA {s} CASCADE; DROP SCHEMA {infra} CASCADE")).await.unwrap();
     }
 }
