@@ -89,7 +89,8 @@ pub fn serialization_conflict(stage: &str) -> Reject {
 /// 재시도 사이 대기. 같은 두 요청이 같은 박자로 다시 부딪치지 않게 시도마다 늘리고 흩뜨린다.
 pub async fn retry_backoff(attempt: usize) {
     let jitter = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| u64::from(d.subsec_nanos())) % 20;
-    tokio::time::sleep(Duration::from_millis(5 * (attempt as u64 + 1) + jitter)).await;
+    // 20, 40, 80ms 안팎: 충돌 상대 트랜잭션이 끝날 시간을 주되 3회가 한 번에 소진되지 않게 한다.
+    tokio::time::sleep(Duration::from_millis(10 * (1u64 << attempt.min(6)) + jitter)).await;
 }
 
 fn db_err(stage: &str, e: tokio_postgres::Error) -> Reject {
@@ -155,8 +156,9 @@ pub async fn apply(db: &mut Client, facts: &Value, req: &Value, caller: &Caller,
     let serializable = apply_needs_serializable(facts, req);
     with_deadline(|ctl| async move {
         let mut attempt = 0;
+        let retry_knobs = Knobs { pause_after_lock_ms: 0, pause_before_commit_ms: 0, ..knobs.clone() };
         loop {
-            match apply_inner(&mut *db, facts, req, caller, knobs, ctl.clone(), serializable).await {
+            match apply_inner(&mut *db, facts, req, caller, if attempt == 0 { knobs } else { &retry_knobs }, ctl.clone(), serializable).await {
                 Err(e) if serializable && is_retryable(&e) && attempt < SERIALIZATION_RETRIES => {
                     attempt += 1;
                     retry_backoff(attempt).await;
@@ -965,8 +967,9 @@ pub async fn bundle(db: &mut Client, facts: &Value, req: &Value, caller: &Caller
     let serializable = bundle_needs_serializable(facts, req);
     with_deadline(|ctl| async move {
         let mut attempt = 0;
+        let retry_knobs = Knobs { pause_after_lock_ms: 0, pause_before_commit_ms: 0, ..knobs.clone() };
         loop {
-            match bundle_once(&mut *db, facts, req, caller, knobs, ctl.clone(), serializable).await {
+            match bundle_once(&mut *db, facts, req, caller, if attempt == 0 { knobs } else { &retry_knobs }, ctl.clone(), serializable).await {
                 Err(e) if serializable && is_retryable(&e) && attempt < SERIALIZATION_RETRIES => {
                     attempt += 1;
                     retry_backoff(attempt).await;
@@ -1089,8 +1092,9 @@ pub async fn compose(db: &mut Client, facts: &Value, req: &Value, caller: &Calle
     let serializable = compose_needs_serializable(facts, req);
     with_deadline(|ctl| async move {
         let mut attempt = 0;
+        let retry_knobs = Knobs { pause_after_lock_ms: 0, pause_before_commit_ms: 0, ..knobs.clone() };
         loop {
-            match compose_once(&mut *db, facts, req, caller, knobs, ctl.clone(), serializable).await {
+            match compose_once(&mut *db, facts, req, caller, if attempt == 0 { knobs } else { &retry_knobs }, ctl.clone(), serializable).await {
                 Err(e) if serializable && is_retryable(&e) && attempt < SERIALIZATION_RETRIES => {
                     attempt += 1;
                     retry_backoff(attempt).await;
