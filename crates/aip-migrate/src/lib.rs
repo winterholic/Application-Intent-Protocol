@@ -1041,6 +1041,27 @@ async fn derive(db: &impl GenericClient, schema: &str, new_facts: &Value, migrat
             }
             let class = if backfill.is_some() { "SecurityReview" } else { "Safe" };
             changes.push(json!({"class":class,"reason":format!("{res}.{field} 추가")}));
+            if let Some(value) = backfill {
+                // A constant backfill is a catalog-only change: ADD COLUMN ... DEFAULT <constant> stores the value
+                // once (PostgreSQL 11+) and does not rewrite or update the rows, so the exclusive lock lasts
+                // milliseconds on a table of any size. The old ADD / UPDATE / SET NOT NULL sequence rewrote every
+                // row inside one transaction and could not finish within the 20s statement limit on large tables.
+                let cast = backfill_cast(fd["ty"].as_str().unwrap_or("")).ok_or_else(|| err("BAD_MIGRATION", "backfill 타입 미지원"))?;
+                let value = typed_literal(value, fd["ty"].as_str().unwrap_or(""))?;
+                steps.push(Step {
+                    sql: format!("ALTER TABLE {schema}.{name} ADD COLUMN {def} DEFAULT $1::text::{cast}"),
+                    class,
+                    value: Some(value),
+                    reason: format!("{res}.{field} 추가와 backfill"),
+                });
+                steps.push(Step {
+                    sql: format!("ALTER TABLE {schema}.{name} ALTER COLUMN {col} DROP DEFAULT"),
+                    class,
+                    value: None,
+                    reason: format!("{res}.{field} backfill 기본값 제거"),
+                });
+                continue;
+            }
             let nullable_def = if required { def.replace(" NOT NULL", "") } else { def.clone() };
             steps.push(Step {
                 sql: format!("ALTER TABLE {schema}.{name} ADD COLUMN {nullable_def}"),
@@ -1048,16 +1069,6 @@ async fn derive(db: &impl GenericClient, schema: &str, new_facts: &Value, migrat
                 value: None,
                 reason: format!("{res}.{field} 추가"),
             });
-            if let Some(value) = backfill {
-                let cast = backfill_cast(fd["ty"].as_str().unwrap_or("")).ok_or_else(|| err("BAD_MIGRATION", "backfill 타입 미지원"))?;
-                let value = typed_literal(value, fd["ty"].as_str().unwrap_or(""))?;
-                steps.push(Step {
-                    sql: format!("UPDATE {schema}.{name} SET {col}=$1::text::{cast} WHERE {col} IS NULL"),
-                    class: "SecurityReview",
-                    value: Some(value),
-                    reason: format!("{res}.{field} backfill"),
-                });
-            }
             if required {
                 steps.push(Step {
                     sql: format!("ALTER TABLE {schema}.{name} ALTER COLUMN {col} SET NOT NULL"),
@@ -1195,7 +1206,19 @@ async fn apply_inner(db_url: &str, schema: &str, new_facts: &Value, migration: &
     }
     for step in &steps {
         if let Some(value) = &step.value {
-            tx.execute(&step.sql, &[value]).await.map_err(|_| err("MIGRATION_FAILED", "backfill 실패; 트랜잭션 취소"))?;
+            if step.sql.contains(" DEFAULT $1::text::") {
+                // DDL cannot take bind parameters, so the server quotes the value as a literal.
+                let literal: String = tx
+                    .query_one("SELECT quote_literal($1::text)", &[value])
+                    .await
+                    .map_err(|_| err("MIGRATION_FAILED", "backfill 값 인용 실패; 트랜잭션 취소"))?
+                    .get(0);
+                tx.batch_execute(&step.sql.replace("$1::text::", &format!("{literal}::text::")))
+                    .await
+                    .map_err(|_| err("MIGRATION_FAILED", "backfill 실패; 트랜잭션 취소"))?;
+            } else {
+                tx.execute(&step.sql, &[value]).await.map_err(|_| err("MIGRATION_FAILED", "backfill 실패; 트랜잭션 취소"))?;
+            }
         } else {
             tx.batch_execute(&step.sql).await.map_err(|_| err("MIGRATION_FAILED", "DDL 실패; 트랜잭션 취소"))?;
         }

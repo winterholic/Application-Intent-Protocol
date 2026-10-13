@@ -19,7 +19,9 @@
 
 배포 설정의 ID wire는 facts 바깥의 영속 설정이다. 제품 CLI의 `init_with_wire`와 prototype 이관 `apply_with_wire`는 metadata·wire·저널을 한 트랜잭션으로 저장한다. wire를 선택하지 않는 라이브러리 `init`/`adopt::apply`는 `runtime_wire=NULL`을 허용하며, 이 경우 운영 기동 전 `bind_wire(db_url,schema,"safe"|"decimal")`이 현재 정의·catalog를 잠금 안에서 검사한 뒤 한 번 고정한다. 이미 고정된 값과 다른 wire는 거부한다. 최초 고정 시 기존 멱등성 principal은 실제 전송 계층의 `actor:<id>:ids:safe-number-v13` 또는 `actor:<id>:ids:decimal-string-v13`, 같은 모드의 `anonymous:ids:<label>` 형식과 요청 wire가 일치해야 한다. 다른 wire나 알 수 없는 principal이 한 건이라도 있으면 고정을 거부해 미확정 쓰기의 다른 key 재시도를 막는다. `bind_wire` 호출은 metadata 데이터만 갱신하고 DDL이나 facts digest를 바꾸지 않는다.
 
-현재 제약: 일반적인 애플리케이션 정책 호환성 증명, 권한 확대의 수학적 판정, 대형 테이블 무중단 backfill, 구버전 클라이언트 공존, 임의 데이터 변환, 자동 역방향 rollback은 제공하지 않는다. PostgreSQL의 `lock_timeout`과 전체 작업 기한이 적용된다. 운영 DB 연결 권한은 별도 배포 계정으로 제한해야 하며, 이 크레이트의 plan digest는 인증 주체 확인을 대신하지 않는다.
+상수 `backfill`은 `ADD COLUMN ... DEFAULT <상수>`(PostgreSQL 11 이상)로 적용한 뒤 기본값을 제거한다. 행을 갱신하거나 테이블을 다시 쓰지 않으므로 잠금 시간이 행 수와 무관하다. 합성 데이터 1200만 행에서 이전 방식(ADD→UPDATE→SET NOT NULL)은 20초 statement 한도에서 취소됐고 그동안 읽기가 약 20초 막혔다. 현재 방식은 적용 0.8초, 점 조회 최대 대기 0.76초였다(로컬 PostgreSQL 17, 좁은 테이블, 측정 코드 `tests/large_backfill.rs`). 적용은 한 트랜잭션이라 중간에 끊기면 전부 취소되고 같은 plan digest로 다시 적용할 수 있다. 잠금을 못 얻으면 2초 뒤 `DB_LOCK`으로 실패한다. 상수가 아닌 변환(`convert`)은 테이블을 다시 쓴다. 1200만 행 Text→Int 변환은 4.5초였고 20초 한도를 넘는 크기에서는 안전하게 취소되며 배치 변환은 제공하지 않는다.
+
+현재 제약: 일반적인 애플리케이션 정책 호환성 증명, 권한 확대의 수학적 판정, 한도를 넘는 대형 테이블의 배치 변환, 구버전 클라이언트 공존, 임의 데이터 변환, 자동 역방향 rollback은 제공하지 않는다. PostgreSQL의 `lock_timeout`과 전체 작업 기한이 적용된다. 운영 DB 연결 권한은 별도 배포 계정으로 제한해야 하며, 이 크레이트의 plan digest는 인증 주체 확인을 대신하지 않는다.
 
 이 라이브러리의 facts 인자는 V1 sema가 산출한 execution facts를 전제로 한다. 직접 만든 JSON을 받는 공개 API에는 식별자·enum 값·비교 연산자·`exists` 대상 등의 최소 검사를 두었지만, 임의 정책 AST의 의미와 모든 표현식을 독립적으로 검증하지는 않는다. 제품 CLI는 사용자 정의를 sema로 분석한 결과만 전달해야 한다.
 
