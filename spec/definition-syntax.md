@@ -39,7 +39,7 @@
 |---|---|---|
 | `fields` | `fields { id: Id; name: Text(1..100); owner: Member? }` | 열. ?는 null 허용. owner: Member는 외래 키가 있는 참조(조인·traverse 가능). fields 안에서 `X.Id`는 쓸 수 없고 오류다(ID_FIELD_NEEDS_REFERENCE). 참조 `X`를 쓴다. resource마다 한 번 |
 | `rows` | `rows read when condition` | 호출자가 읽을 수 있는 행. 쓰지 않으면 읽을 수 있는 행이 없다 |
-| `field` | `field name read when condition` | 필드별 읽기 조건. 이 필드는 filter·sort·집계에 쓸 수 없다 |
+| `field` | `field name read when condition` | 필드별 읽기 조건. 조건이 거짓인 행에서 select하면 null이고 출력 타입은 nullable이다(열이 필수여도). 이 필드는 filter·sort·집계에 쓸 수 없다 |
 | `expose` | `expose read {..} \| expose apply T {..} \| expose create {..} \| expose compose {..} \| expose aggregate name` | 호출자에게 여는 것. 쓰지 않은 것은 열리지 않는다 |
 | `aggregate` | `aggregate name: Int { source R; sourceAccess a; groupKey ref; release count }` | 행별 또는 단독 집계 |
 | `transition` | `transition name { from cond; to f = v; allow cond }` | 상태 전이. from·to·allow가 모두 필요하다. 숫자는 f = f + 1처럼만 바꾼다 |

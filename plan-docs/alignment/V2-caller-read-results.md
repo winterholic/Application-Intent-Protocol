@@ -65,7 +65,7 @@ planner는 facts만 읽는다. V1 AST·소스에 접근하지 않는다. 이 fix
 
 | ID | 규칙 | 열린 점 |
 |---|---|---|
-| V2-R1 | 필드 정책 불충족 값은 null. 출력 타입에 `redactable: true`, nullable 표시 | null이 "값 없음"과 "권한 없음"을 섞는다. 별도 표시·필드 생략·요청 거부 중 선택 필요 |
+| V2-R1 | 필드 정책 불충족 값은 null. 출력 타입에 `redactable: true`, nullable 표시 | 결정됨(2026-10-13 사용자 위임, D-A21): null 유지. 필드를 빼거나 요청을 거부하지 않는다. 필수 열도 출력은 nullable. 테스트 `hidden_field_null.rs`, `hidden_field_codegen.rs`. "값 없음"과 "권한 없음"이 같은 null인 점은 O-01 기본 가림과 같은 수용된 규칙이다 |
 | V2-R2 | 안 보이는 관계 대상은 null, 출력 타입 nullable | 관계 필수 필드가 정책 때문에 null이 될 수 있음을 SDK 타입에 반영해야 함 |
 | V2-R3 | 경로끼리 `=`/`!=`는 SQL 3치 논리. 한쪽이 NULL이면 UNKNOWN이고, 최종 WHERE·CASE에서 TRUE가 아니면 허용하지 않는다. `not (a = b)`도 UNKNOWN이라 허용되지 않는다. 명시적 `x = null`은 `IS NULL`로 따로 번역한다 | 익명 actor가 학교 행에 매칭되지 않는 근거. null-safe 비교를 택할지는 별도 의미 결정(R2B-12) |
 | V2-R4 | limit 미지정은 budget rows, 초과는 잘라내지 않고 거부 | 조용한 절단보다 명시 거부를 택함 |

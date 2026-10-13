@@ -34,7 +34,7 @@ pub const NOTES: &[(&str, &str, &str, &str)] = &[
         "열. ?는 null 허용. owner: Member는 외래 키가 있는 참조(조인·traverse 가능). fields 안에서 `X.Id`는 쓸 수 없고 오류다(ID_FIELD_NEEDS_REFERENCE). 참조 `X`를 쓴다. resource마다 한 번",
     ),
     ("resource", "rows", "rows read when condition", "호출자가 읽을 수 있는 행. 쓰지 않으면 읽을 수 있는 행이 없다"),
-    ("resource", "field", "field name read when condition", "필드별 읽기 조건. 이 필드는 filter·sort·집계에 쓸 수 없다"),
+    ("resource", "field", "field name read when condition", "필드별 읽기 조건. 조건이 거짓인 행에서 select하면 null이고 출력 타입은 nullable이다(열이 필수여도). 이 필드는 filter·sort·집계에 쓸 수 없다"),
     (
         "resource",
         "expose",

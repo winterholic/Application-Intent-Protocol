@@ -34,6 +34,7 @@
 | D-A18 | enum 값의 순서는 계약이 아니다. 값 순서만 바꾼 변경은 digest·DDL·생성 타입을 바꾸지 않고, 값을 더하거나 빼면 바꾼다. 제품 정의는 모든 enum 값을 정렬해 facts에 싣고, PoC Core IR은 `ordered`가 아닌 enum만 정렬한다(`ordered`는 위치가 서열이라 순서가 의미다) | 창시자 2026-10-13 결정을 전달한 작업 지시("값 순서만 바꿔도 계약 변경이 되지 않도록 digest 계산 시 열거형 값을 정규화(정렬)"). 사용자 원문 그대로의 인용은 없다. 감사 F12. 이 결정으로 기존 배포와 비교하면 순서가 정렬되지 않은 enum의 digest가 한 번 바뀐다 |
 | D-A19 | 제품 경로에서 Ref 필드를 `expose read`로 직접 select하면 기본은 대상 resource의 행 정책을 적용한다. 호출자가 대상 행을 볼 수 없으면 null이고 출력 타입은 nullable이다(필수 참조 포함, 계약 지문 변경 허용). 정의 작성자가 `expose read { refIds a, b }`로 선언한 참조만 대상 가시성과 무관하게 원시 FK id를 낸다(선언한 필드는 원래 nullability 유지). 선언 철자는 `refIds` 하나뿐이다 | 창시자 2026-10-13: "c가 좋을듯 기본은 a로하고 선언따로하도록". 보안 감사 O-01(`plan-docs/reviews/2026-10-13-security-audit.md`). 구현: `spike-v1-fixture` sema, `spike-v2-read` plan, `spike-v5-sdk` 타입 생성 |
 | D-A20 | 기본 키는 `id: Id` 한 가지 표기만 허용한다. `id: Item.Id`는 `ID_FIELD_NEEDS_REFERENCE` 정의 오류이고 메시지가 `id: Id`로 고치라고 알려 준다(D-A16과 같은 원칙: 같은 뜻에 두 표기 금지). 이전에는 열 이름 `id` 예외 때문에 `id: Item.Id`가 통과했다 | 2026-10-13 사용자 위임에 따른 결정. 사용자 원문: "너가 곰곰히 설계해보고, 너가 결정해서 바로 다 고쳐". D-A16이 남긴 기본 키 표기의 빈틈 |
+| D-A21 | 필드 읽기 정책(`field x read when cond`)으로 가려진 필드를 호출자가 select하면 cond가 거짓인 행에서 **null**이다. 필드를 응답에서 빼지 않고 요청을 거부하지 않는다. 출력 타입은 nullable이고(열이 필수여도) 생성 TS 타입이 `T \| null`로 맞는다. O-01 기본 가림 null과 같은 규칙이다(V2-R1 종결) | 2026-10-13 사용자 위임에 따른 결정. 사용자 원문: "너가 곰곰히 설계해보고, 너가 결정해서 바로 다 고쳐". 기존 동작이 이미 이 규칙이었고 root·to-one·1:N traverse 모두 테스트로 고정했다 |
 
 ## Proposed
 
