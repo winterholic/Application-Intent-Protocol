@@ -92,13 +92,13 @@ pub async fn build(
 ) -> Result<(Arc<RagEngine>, bool), String> {
     // With client indexing every principal writes into the corpus, so without a per-owner share the first one to fill the
     // corpus makes indexing fail for everyone else. The share is a capacity decision, so it has to be stated.
-    if config.client_index {
-        if let Some(corpus) = config.corpora.iter().find(|corpus| corpus.max_owner_chunks.is_none()) {
-            return Err(format!(
-                "client_index가 켜져 있으면 corpus '{}'에 max_owner_chunks(principal 하나가 쓸 수 있는 chunk 수)를 지정해야 함",
-                corpus.name
-            ));
-        }
+    if config.client_index
+        && let Some(corpus) = config.corpora.iter().find(|corpus| corpus.max_owner_chunks.is_none())
+    {
+        return Err(format!(
+            "client_index가 켜져 있으면 corpus '{}'에 max_owner_chunks(principal 하나가 쓸 수 있는 chunk 수)를 지정해야 함",
+            corpus.name
+        ));
     }
     let mut embeddings: HashMap<String, Arc<dyn EmbeddingProvider>> = HashMap::new();
     for provider in &config.embedding_providers {
