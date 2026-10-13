@@ -127,6 +127,7 @@
 | O-32 | 낮음 | 오늘 추가된 업무 감사 테이블(`aip_audit`)이 "append-only"라고 하지만 `BEFORE UPDATE` 트리거만 있다. `DELETE`·`TRUNCATE`는 막지 않아 런타임 역할(O-22: owner 권한)이 행을 지울 수 있고, 트리거는 owner가 끌 수 있음 | 코드 추적(daf3e63). 삭제를 막으려면 `BEFORE DELETE`·`TRUNCATE` 트리거나 별도 역할이 필요하고, 보존 기간 정책과 함께 결정해야 함 |
 | O-33 | 낮음 | 감사 행은 전이의 to-필드 이전·이후 값을 영구 보존한다. 개인정보 필드가 전이 대상이면 삭제 요청(erase)과 충돌하고, bulk 요청마다 대상 행 수만큼 행이 쌓여(최대 `bulk maxRows` 10000) 인증된 사용자가 저장소를 늘릴 수 있음(O-20과 같은 유형). field read 정책 필드의 값도 기록됨(운영자 전용 테이블이라 API로는 안 나감) | 코드 추적 |
 | O-34 | 정보 | 오늘 추가된 요청 추적(`trace.rs`)과 `/metrics`: 로그 줄은 route 이름·상태·오류 코드·시간만 담고 토큰·주체·본문·쿼리는 담지 않음. 인바운드 `x-request-id`는 8~64자 안전 문자일 때만 수용. `/metrics`는 토큰이 설정된 때만 열리고 상수 시간 비교. label은 고정 집합이라 카디널리티가 호출자 입력으로 늘지 않음 | 코드 읽기, 문제 없음 확인 |
+| O-35 | 낮음 | 직접 노출된 listener에 응답 없는 연결 90개를 열어 두면 정상 호출이 요청 제한 시간(5초) 동안 응답을 받지 못함(연결 상한 64, 실측 5.0초 뒤 회복). 계속 다시 열면 지속됨. 서버는 loopback listener라 TLS reverse proxy가 헤더를 끝까지 받은 요청만 넘기는 배치에서는 도달하지 않음 | 실행(`aip-cli/tests/http_blackbox.rs`). 이미 [인프라 문서](../../product/INFRASTRUCTURE.md)가 연결·요청 크기 제한은 proxy가 맡는다고 적음 |
 | O-18 | 낮음 | `predicate` 인라이닝으로 20단계 정의가 118MB DDL·RSS 1.3GB(`aip ddl`) | 재현됨(독립 검토). 제품 경로 `spike-v1`은 노드 4096 한도 |
 
 ### 3.3 열려 있는 항목(PoC 런타임, `poc-runtime` feature)
@@ -174,5 +175,25 @@ PoC 항목은 제품 경로로 승격할 때 [PoC 이식 지도](2026-10-07-poc-
 - 모든 조치는 먼저 실패하는 테스트로 재현했고, 수정 전 코드로 되돌려 같은 테스트가 실패함을 확인한 뒤 수정했다. 재현하지 못한 조치는 표에 "없음(미실행: 사유)"로 적었다(S-08, S-15).
 - 검증은 다른 작업자의 미완성 변경이 섞이지 않도록 `origin/main`의 격리 worktree에서 실행했다. 최종 실행은 이 문서를 마지막으로 갱신한 시점의 `origin/main`이다: `bash tools/verify.sh`(종료 코드 0, 마지막 줄 `AIP core verification passed`), `cargo test --manifest-path spikes/spike-v4-worker/Cargo.toml`, `cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml`, `cargo test -p aip-cli --features poc-runtime`.
 - `tools/verify.sh`는 spike-v4·v6 테스트를 돌리지 않는다. 이 때문에 S-07 변경이 v6 lib 테스트 빌드를 깨뜨린 것을 verify로는 잡지 못했다(S-24). GitHub CI `verify.yml`이 v6 테스트를 돌린다.
-- 읽기 전용 독립 검토 7개 영역과, 실행형 공격 시도 3개(읽기 인가, 쓰기 동시성, HTTP black-box)를 계획했다. 실행형 3개는 계정 사용 한도(04:30 초기화)로 중간에 끝났다. 쓰기 정책 의미 행렬(`adv_policy_semantics`: allow의 NULL·not·enum·now 조합)은 실행해 문제 없음을 확인했고 나머지는 미실행이다. 다음 감사 회차의 첫 일이다.
+- 읽기 전용 독립 검토 7개 영역과, 실행형 공격 시도 3개(읽기 인가, 쓰기 동시성, HTTP black-box)를 계획했다. 첫 회차는 계정 사용 한도(04:30 초기화)로 쓰기 정책 의미 행렬(`adv_policy_semantics`)만 끝났고, 나머지 셋은 후속 회차에서 실행했다(아래 6.1).
+
+### 6.1 실행형 공격 검증 결과(후속 회차)
+
+**새 발견: 없음.** 조치가 필요한 취약점은 만들어지지 않았다. 관찰 하나(O-35, 직접 노출 시 연결 점유)와 의도 확인 두 가지(아래 "관찰")만 기록한다. 세 검증 모두 회귀 테스트로 남겼고 `bash tools/verify.sh`가 돌린다.
+
+| 영역 | 시도한 것 | 방법 | 결과 | 테스트 |
+|---|---|---|---|---|
+| 읽기 인가 | 숨은 행의 값·존재, 정책 숨김 필드, 숨은 문서만 가진 그룹의 집계·1:N traverse, 숨은 대상을 가리키는 Ref를 eq·gt·lt·gte·lte·in·contains·prefix 프로브, 정렬 asc/desc×limit, offset 0~10, keyset cursor, id 직접 조회, 숨은 필드 select·filter·sort, 정책 숨김 필드의 sum 집계 정의, 없는 resource·필드 이름. 정의는 숨은 필드 외 모두 filter·sort·offset·cursor 개방 | 비간섭 오라클: 공격자가 읽을 수 없는 데이터만 다른 두 DB에서 응답이 요청 92개 모두 같아야 함 | 이상 없음(멤버 2와 익명 모두 동일, 응답 74개·거부 18개). 대조: 소유자는 20개 이상 요청에서 차이를 봄, 일부러 `rows read when true`로 누출을 심으면 같은 테스트가 실패함을 확인 | `spike-v2-read/tests/adv_read_noninterference.rs` |
+| 쓰기 동시성 | 같은 행을 24명이 동시에 claim, 한 소유자의 카운터 60회 동시 증가, 같은 팀의 12개 행이 정원 3의 남은 2칸을 경쟁, 같은 행 3개를 반대 순서로 겹치는 bulk 16개, 전이와 그 전제를 없애는 전이(release)의 경쟁. 각각 3회 반복(연결마다 별도 세션, 동시 출발) | 실제 PG, 최종 상태와 응답의 일치 검사 | 이상 없음: claim 승자는 정확히 1명이고 행이 그 승자를 가리킴, 증가 누락·중복 없음(응답 OK 수 = 저장된 값), 정원 초과 없음(남은 칸 모두 사용), bulk는 한 호출자에게 전부 귀속, 교착·멈춤 없음, 거부 코드는 `INVALID_STATE`·`INVARIANT_VIOLATED`뿐 | `spike-v3-write/tests/adv_write_concurrency.rs` |
+| HTTP black-box | 위조 토큰 23종(alg none 2, HS256 공개키 혼동, 서명 비트 반전, payload 교체, 다른 RSA 키, 모르는 kid, kid 경로 순회, jku, typ, 만료, nbf 미래, 수명 초과, aud·iss 불일치, sub 없음, 미연결 subject, 형식 오류 4, 100kB 토큰, NUL), Authorization 헤더 8종(없음, Basic, 스킴 없음, 중복 2, 쿼리·쿠키·X-Forwarded), 프레임·라우팅 35종(CL.TE, 이중 Content-Length, 형식 이상 Content-Length 5, chunked, obs-fold, 개행만 LF, 콜론 없음, NUL, 절대 URI, `//`·`%72ead`·`/read/`·`/x/../read`·대문자, 경로 순회, GET·PUT·TRACE·메서드 재정의, HTTP/1.0·/2 preface·/0.9, Expect, 70kB 줄, 헤더 500·30000·300000개, 2MiB 본문), 본문 14종(100000단계 중첩, 중복 키, 배열, 빈 본문, 잘못된 UTF-8, BOM, 꼬리 쓰레기, 거대·음수 limit, 키릴 유사 이름, SQL 문자열, select 100000개, `__proto__`), CORS 6개 출처×(요청, preflight), 응답 없는 연결 90개 | 실제 `aip service serve` 바이너리와 JWKS 검증 토큰, 소켓 바이트만 사용 | 이상 없음: 잘못된 토큰은 모두 `UNAUTHENTICATED`·`TOKEN_EXPIRED`·`BAD_REQUEST`로 거부(익명으로 격하되어 서빙되지 않음), 숨은 두 번째 요청으로 쓰기가 일어나지 않음(데이터 불변), 오류 본문에 DB 문자열·SQL·경로·스택·토큰·schema 이름 없음, 신뢰하지 않는 Origin은 어떤 변형도 반영되지 않음, 모든 공격 뒤 정상 호출이 계속 응답 | `aip-cli/tests/http_blackbox.rs` |
+
+관찰(결함 아님):
+
+- 토큰 없는 `/read`는 익명 actor로 처리되어 200과 정책이 허용한 행(샘플에서는 없음)을 돌려준다. 익명 접근 자체가 설계이고(S-17의 NULL actor 항목과 같은 모델), 유효하지 않은 토큰이 붙은 요청은 익명으로 격하되지 않고 거부된다.
+- `aud`가 배열이고 이 API를 포함하면 수락한다(RFC 7519에서 유효). "정확한 API audience"를 단일 값으로 강제할지는 IdP 정책이다.
+- 헤더 값 끝의 공백은 같은 토큰으로 본다(RFC 9110의 선택적 공백).
+- 오류는 HTTP 200과 `{"ok":false,"code"}`로 온다(DD-14, F4·F13 참고).
+
+미실행·한계: 공격은 로컬 PG 17과 macOS에서만 실행했다. Linux worker 격리(bwrap)를 거치는 공격과 TLS reverse proxy 뒤의 공격(Caddy 경유 검증은 별도 테스트가 있음)은 이번에 하지 않았다. 쓰기 동시성은 READ COMMITTED 기본 경로이고 `not exists` 의존 정책(SERIALIZABLE 경로)과 O-26은 건드리지 않았다. 두 번째 PG 인스턴스·다중 서버 인스턴스 경쟁은 미실행이다.
+
 - 의존성: OSV 조회로 crates.io 438개 중 취약점 2건(O-15), `npm audit` 0건. `cargo audit`·`cargo deny`는 설치되어 있지 않다.
