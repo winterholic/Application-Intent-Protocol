@@ -23,3 +23,9 @@ async def callout(input, ctx):
         second = getattr(error, "code", "UNKNOWN")
     replayed = await ctx.http.call("crm", {}, "first")
     return {"first": first["status"], "second": second, "replayed": replayed["status"]}
+
+
+async def later(input, ctx):
+    if ctx.job["attempt"] < 2:
+        raise ctx.retry_later("rate limited", after_ms=3000)
+    return {"attempt": ctx.job["attempt"]}

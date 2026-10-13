@@ -12,9 +12,10 @@ def send(m):
 
 
 class AipError(Exception):
-    def __init__(self, code):
+    def __init__(self, code, after_ms=None):
         super().__init__(code)
         self.code = code
+        self.after_ms = after_ms
 
 
 class Data:
@@ -75,8 +76,9 @@ class Ctx:
         self.messages = Messages(self)
 
     # durable job 전용: `raise ctx.retry_later("이유")`로 같은 job을 backoff 뒤 다시 시도하게 한다.
-    def retry_later(self, reason=None):
-        return AipError("RETRY_LATER")
+    # `after_ms`를 주면 기본 backoff 대신 그 시간(서버가 1초~1시간으로 맞춘다) 뒤에 다시 시도한다.
+    def retry_later(self, reason=None, after_ms=None):
+        return AipError("RETRY_LATER", after_ms)
 
     async def call(self, op, name, inp, **extra):
         global seq
@@ -108,7 +110,10 @@ async def run_invoke(m):
             out = await out
         send({"type": "done", "invoke": m["invoke"], "output": out})
     except AipError as e:
-        send({"type": "done", "invoke": m["invoke"], "error": {"code": e.code, "message": e.code}})
+        error = {"code": e.code, "message": e.code}
+        if e.code == "RETRY_LATER" and isinstance(e.after_ms, int) and not isinstance(e.after_ms, bool) and e.after_ms >= 0:
+            error["afterMs"] = e.after_ms
+        send({"type": "done", "invoke": m["invoke"], "error": error})
     except Exception as e:  # noqa: BLE001 확장 코드의 모든 실패를 서버에 보고한다
         send({"type": "done", "invoke": m["invoke"], "error": {"code": "EXTENSION_ERROR", "message": str(e)}})
 

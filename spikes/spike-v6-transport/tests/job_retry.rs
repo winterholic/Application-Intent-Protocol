@@ -147,6 +147,33 @@ async fn jobs_retry_on_request_within_the_configured_attempts_and_uncaught_error
         let ((flaky_id, flaky), (_, exhausted), (_, boom), (retry_id, boom_retry)) =
             tokio::join!(run("flaky"), run("exhausted"), run("boom"), run("boomRetry"));
 
+        // `ctx.retryLater(reason, {afterMs})`: the extension chooses the wait, so the second attempt is not due after the
+        // default one second of backoff but after the three seconds it asked for.
+        let started = std::time::Instant::now();
+        let queued = post(addr, "/jobs/enqueue", &fp, json!({"operation":"later","input":{},"key":format!("later-{label}"),"delayMs":0})).await;
+        let later_id = queued["run"]["id"].as_str().unwrap_or_else(|| panic!("later enqueue: {queued}")).to_string();
+        let mut wait_ms = None;
+        for _ in 0..200 {
+            let row = db
+                .query_one(
+                    &format!("SELECT state, attempt, (extract(epoch FROM next_run_at - clock_timestamp())*1000)::bigint FROM {schema}.aip_jobs WHERE id=$1::text::uuid"),
+                    &[&later_id],
+                )
+                .await
+                .unwrap();
+            if row.get::<_, String>(0) == "QUEUED" && row.get::<_, i32>(1) >= 1 {
+                wait_ms = Some(row.get::<_, i64>(2));
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        let wait_ms = wait_ms.unwrap_or_else(|| panic!("{lang:?}: the first attempt never asked for a retry"));
+        assert!((2_000..=3_000).contains(&wait_ms), "{lang:?}: the requested 3s wait, not the default 1s: {wait_ms}ms");
+        let later = settle(addr, &fp, &later_id).await;
+        assert_eq!(later["run"]["state"], "SUCCEEDED", "{lang:?}: {later}");
+        assert_eq!(later["run"]["attempt"], 2, "{lang:?}: {later}");
+        assert!(started.elapsed() >= Duration::from_millis(2_500), "{lang:?}: the second attempt waited for the requested time");
+
         // The extension saw its own run id and attempt number, and the policy allowed a third attempt.
         assert_eq!(flaky["run"]["state"], "SUCCEEDED", "{lang:?}: {flaky}");
         let result = post(addr, "/jobs/result", &fp, json!({"id":flaky_id})).await;

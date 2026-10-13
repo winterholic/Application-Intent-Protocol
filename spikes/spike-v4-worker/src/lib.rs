@@ -17,7 +17,7 @@ mod grant_tests;
 mod value_tests;
 #[cfg(test)]
 mod stable_key_tests {
-    use super::requires_stable_key;
+    use super::{rej, requires_stable_key, retry_after_ms, Reject, RETRY_AFTER_KEY, RETRY_LATER_MESSAGE};
     use serde_json::json;
 
     #[test]
@@ -28,6 +28,18 @@ mod stable_key_tests {
         assert!(requires_stable_key("files", &json!({"action":"put"})));
         assert!(!requires_stable_key("files", &json!({"action":"get"})));
         assert!(!requires_stable_key("data", &json!({})));
+    }
+
+    #[test]
+    fn the_wait_an_extension_asked_for_is_read_back_only_from_its_own_retry_request() {
+        let ask = |code: &'static str, msg: &str| Reject { code, msg: msg.to_owned() };
+        let asked: Result<(), Reject> = rej("RETRY_LATER", format!("{RETRY_LATER_MESSAGE}; {RETRY_AFTER_KEY}2500"));
+        assert_eq!(retry_after_ms(&asked.unwrap_err()), Some(2500));
+        let plain: Result<(), Reject> = rej("RETRY_LATER", RETRY_LATER_MESSAGE);
+        assert_eq!(retry_after_ms(&plain.unwrap_err()), None);
+        // A message that merely mentions the key, from any other rejection, is not a request.
+        assert_eq!(retry_after_ms(&ask("EXTENSION_ERROR", "afterMs=9")), None);
+        assert_eq!(retry_after_ms(&ask("RETRY_LATER", "afterMs=-1")), None);
     }
 }
 
@@ -93,6 +105,17 @@ struct Grant {
     id_wire: IdWire,
     expires: Instant,
     active: bool,
+}
+
+const RETRY_LATER_MESSAGE: &str = "확장이 job 재시도를 요청함";
+const RETRY_AFTER_KEY: &str = "afterMs=";
+
+/// The wait an extension asked for with `ctx.retryLater(reason, {afterMs})`, in milliseconds, when this rejection is its request.
+pub fn retry_after_ms(reject: &Reject) -> Option<i64> {
+    if reject.code != "RETRY_LATER" {
+        return None;
+    }
+    reject.msg.split_once(RETRY_AFTER_KEY).and_then(|(_, value)| value.parse::<u64>().ok()).and_then(|value| i64::try_from(value).ok())
 }
 
 pub(crate) fn rej<T>(code: &'static str, msg: impl Into<String>) -> Result<T, Reject> {
@@ -600,7 +623,11 @@ async fn invoke_contract(
                 if let Some(e) = m.get("error") {
                     // Only a durable job can be retried, so only there does the explicit request keep its code.
                     if host.is_some() && e["code"] == "RETRY_LATER" {
-                        break rej("RETRY_LATER", "확장이 job 재시도를 요청함");
+                        // The extension may choose the wait (`afterMs`); it rides in the message because `Reject` is shared by every path.
+                        break match e["afterMs"].as_u64() {
+                            Some(after_ms) => rej("RETRY_LATER", format!("{RETRY_LATER_MESSAGE}; {RETRY_AFTER_KEY}{after_ms}")),
+                            None => rej("RETRY_LATER", RETRY_LATER_MESSAGE),
+                        };
                     }
                     break rej("EXTENSION_ERROR", format!("확장 실패: {}", e["code"].as_str().unwrap_or("?")));
                 }

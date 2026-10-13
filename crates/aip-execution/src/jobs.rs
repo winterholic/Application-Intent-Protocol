@@ -175,18 +175,30 @@ impl Store {
     }
 
     pub async fn retry(&self, client: &impl GenericClient, lease: &Lease, error: &str) -> Result<bool, Error> {
+        self.retry_after(client, lease, error, None).await
+    }
+
+    /// Like `retry`, with the wait before the next attempt chosen by the extension (`ctx.retryLater(reason, {afterMs})`).
+    /// A requested wait replaces the default exponential backoff, is raised to one second and cut to one hour, and
+    /// extends the run's deadline by what it adds over the default so that the retry is not born expired. The attempt
+    /// limit still ends the run.
+    pub async fn retry_after(&self, client: &impl GenericClient, lease: &Lease, error: &str, after_ms: Option<i64>) -> Result<bool, Error> {
         let table = self.table();
+        let default_wait = "LEAST(30000,1000*power(2,LEAST(attempt-1,15)))::bigint";
+        let wait = format!("(CASE WHEN $6::bigint IS NULL THEN {default_wait} ELSE LEAST(3600000,GREATEST(1000,$6::bigint)) END)");
+        let exhausted = "attempt>=max_attempts OR run_deadline<=clock_timestamp()";
         let changed = client
             .execute(
                 &format!(
                     "UPDATE {table} SET \
-                       state=CASE WHEN attempt>=max_attempts OR run_deadline<=clock_timestamp() THEN 'FAILED' ELSE 'QUEUED' END, \
-                       next_run_at=CASE WHEN attempt>=max_attempts OR run_deadline<=clock_timestamp() THEN next_run_at ELSE clock_timestamp()+(LEAST(30000,1000*power(2,LEAST(attempt-1,15)))::bigint*interval '1 millisecond') END, \
+                       state=CASE WHEN {exhausted} THEN 'FAILED' ELSE 'QUEUED' END, \
+                       next_run_at=CASE WHEN {exhausted} THEN next_run_at ELSE clock_timestamp()+({wait}*interval '1 millisecond') END, \
+                       run_deadline=CASE WHEN {exhausted} OR $6::bigint IS NULL THEN run_deadline ELSE run_deadline+(GREATEST(0,{wait}-{default_wait})*interval '1 millisecond') END, \
                        error=$5,lease_owner=NULL,lease_until=NULL, \
-                       result_expires_at=CASE WHEN attempt>=max_attempts OR run_deadline<=clock_timestamp() THEN clock_timestamp()+(result_ttl_ms::text||' milliseconds')::interval ELSE NULL END \
+                       result_expires_at=CASE WHEN {exhausted} THEN clock_timestamp()+(result_ttl_ms::text||' milliseconds')::interval ELSE NULL END \
                      WHERE id=$1 AND lease_epoch=$2 AND lease_owner=$3 AND owner=$4 AND state='RUNNING' AND lease_until>clock_timestamp() AND attempt_deadline>clock_timestamp() AND run_deadline>clock_timestamp()"
                 ),
-                &[&lease.run_id, &lease.epoch, &lease.worker, &lease.owner, &error],
+                &[&lease.run_id, &lease.epoch, &lease.worker, &lease.owner, &error, &after_ms],
             )
             .await?;
         Ok(changed == 1)

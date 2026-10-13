@@ -320,6 +320,7 @@ job은 다음 경우에만 같은 run을 다시 시도한다. 시도 사이는 1
 ```
 
 - 시도를 다 쓰면 `FAILED`가 되고 `error`에 마지막 실패 코드(`RETRY_LATER` 등)가 남는다.
+- 확장이 대기 시간을 정할 수 있다: `throw ctx.retryLater("rate limited", { afterMs: 60000 })`(Python `raise ctx.retry_later("rate limited", after_ms=60000)`). 외부 서비스가 `Retry-After`를 알려 준 경우처럼 확장이 다음 시도 시점을 더 잘 안다. 이 값은 기본 backoff를 대신하고, 서버가 1초 이상 1시간 이하로 맞춘다(그보다 짧거나 긴 값, 음수·정수가 아닌 값은 각각 올리거나 자르거나 무시해 기본 backoff를 쓴다). 늘어난 대기만큼 run의 전체 기한도 늘려 재시도가 시작도 전에 만료되지 않게 한다. 시도 횟수 상한은 그대로 적용된다. 근거 테스트는 `spikes/spike-v6-transport/tests/job_retry.rs`(Node·Python, 3초 요청이 기본 1초가 아닌 3초 뒤에 다시 실행됨)와 `crates/aip-execution/tests/jobs.rs`의 `an_extension_can_choose_the_wait_before_the_next_attempt`다.
 - 정책은 job을 수락할 때 run에 기록한다. 운영자가 정책을 바꿔도 이미 수락한 run은 원래 횟수를 쓰고, 같은 key 재요청은 기존 run을 돌려준다(충돌이 아니다).
 - 정의에 없는 operation이나 job이 아닌 operation, 1회 미만·10회 초과는 서버 시작 시 거부한다. 같은 operation을 두 번 적어도 거부한다.
 - 자식 `ctx.jobs.run`이 `retryLater`를 던지면 부모는 `STEP_FAILED`를 받는다. 부모가 다시 `ctx.retryLater()`를 던져야 run 전체가 재시도된다.

@@ -8,6 +8,14 @@ operation job flaky {
   deadline 10s
   implementation "retry.flaky"
 }
+operation job later {
+  input {}
+  output { attempt: Int }
+  allow actor != null
+  effect none
+  deadline 10s
+  implementation "retry.later"
+}
 operation job exhausted {
   input {}
   output { attempt: Int }

@@ -904,6 +904,8 @@ async fn execute(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire, lease: Lease
         budget: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         capabilities: facts["operations"][&lease.operation]["access"].as_object().unwrap().keys().cloned().collect(),
     };
+    // The wait `ctx.retryLater(reason, {afterMs})` asked for; the store bounds it.
+    let mut retry_after_ms: Option<i64> = None;
     let result = {
         let future = spike_v4_worker::invoke_job(&mut worker, &facts, &lease.operation, &lease.input, &caller, wire, &mut host);
         tokio::pin!(future);
@@ -924,7 +926,7 @@ async fn execute(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire, lease: Lease
         tokio::pin!(monitor);
         // Poll both futures while heartbeat waits for a capability transaction's row lock.
         tokio::select! {
-            result=&mut future=>result.map_err(|e|e.code),
+            result=&mut future=>result.map_err(|e| { retry_after_ms = spike_v4_worker::retry_after_ms(&e); e.code }),
             result=&mut monitor=>result.and(Err("LEASE_LOST")),
         }
     };
@@ -992,7 +994,7 @@ async fn execute(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire, lease: Lease
     .await;
     let updated = match settled {
         Ok(out) => store.finish(&tx, &lease, out).await,
-        Err(code) if retryable(&rt, &lease.operation, code) => store.retry(&tx, &lease, code).await,
+        Err(code) if retryable(&rt, &lease.operation, code) => store.retry_after(&tx, &lease, code, retry_after_ms).await,
         Err(code) => store.fail(&tx, &lease, code).await,
     };
     if !matches!(updated, Ok(true)) {

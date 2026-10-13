@@ -27,7 +27,7 @@
 | B03 테넌트 격리 | 미지원 | 부분 | 제품 경로 행 정책·기본 거부·trigger 서비스 주체 확인, 생성 Ref 가시성 규칙(결정됨). [결정 문서](tenant-isolation-decision-2026-10-13.md) |
 | B09 Audit Logging | 미지원 | 부분 | 전이마다 같은 문장의 감사 행. `tests/audit.rs`, [OPERATIONS](../../product/OPERATIONS.md#업무-감사-기록) |
 | I02 Metrics | 미지원 | 부분 | token 보호 `/metrics`. [OPERATIONS](../../product/OPERATIONS.md#요청-metrics) |
-| C09 재시도, D08 Retry/Backoff | 부분 / 부분 | 지원 / 지원 | 설정 `job_policies`(1회에서 10회, 미처리 예외 재시도 선택), 확장의 `ctx.retryLater()`, `ctx.job.attempt`. `tests/job_retry.rs`, [재시도 정책](../../product/MANAGED-EXECUTION.md#재시도-정책) |
+| C09 재시도, D08 Retry/Backoff | 부분 / 부분 | 지원 / 지원 | 설정 `job_policies`(1회에서 10회, 미처리 예외 재시도 선택), 확장의 `ctx.retryLater(reason, {afterMs})`, `ctx.job.attempt`. `tests/job_retry.rs`, [재시도 정책](../../product/MANAGED-EXECUTION.md#재시도-정책) |
 | D09 DLQ, I10 운영 진단 | 부분 / 부분 | 지원 / 부분 | `aip service jobs list`(payload 미출력)·`retry`(같은 run 재큐, 미확정 효과·다른 배포·만료는 거부). [OPERATIONS](../../product/OPERATIONS.md#실패-job-조회와-재처리) |
 | F10 외부 실패 처리, F11 Circuit Breaker | 부분 / 부분 | 지원 / 지원 | endpoint별 `circuit_breaker`, 열린 동안 `CIRCUIT_OPEN`(journal 기록 없음, 같은 key 재전송 가능). [Circuit breaker](../../product/MANAGED-EXECUTION.md#circuit-breaker) |
 | E02 Event Handler, E04 메시지 브로커 | 부분 / 부분 | 지원 / 지원 | 서비스 설정 `message_handlers`, 메시지당 job 하나(`message:<id>` key), 수락 실패는 nack 후 DLQ. [메시지 큐 소비 job](../../product/MANAGED-EXECUTION.md#메시지-큐-소비-job) |
@@ -128,7 +128,7 @@
 | F07 | 파일 업·다운로드 | MultipartFile, Multer, Active Storage | 지원 | managed file, local·S3·GCS object, signed URL |
 | F08 | Object Storage | Spring Cloud AWS, django-storages | 지원 | local/S3/GCS HMAC. 실제 클라우드 계정 검증은 별도 |
 | F09 | 외부 데이터 동기화 | 스케줄 + client + repository | 확장 | schedule → job → `ctx.http` → `ctx.data.apply`. 동기화 cursor 저장 선언은 없음 |
-| F10 | 외부 실패 처리 | Resilience4j, tenacity | 지원 | EFFECT_UNKNOWN 정지, Retry-After 노출, `ctx.retryLater()`로 job 재시도, `CIRCUIT_OPEN`은 확정 미전송이라 같은 key로 다시 보냄. 확장이 대기 시간을 지정하지는 못함 |
+| F10 | 외부 실패 처리 | Resilience4j, tenacity | 지원 | EFFECT_UNKNOWN 정지, Retry-After 노출, `ctx.retryLater(reason, {afterMs})`로 확장이 대기 시간을 정해 job 재시도, `CIRCUIT_OPEN`은 확정 미전송이라 같은 key로 다시 보냄 |
 | F11 | Timeout/Circuit Breaker | Resilience4j, opossum, pybreaker | 지원 | endpoint timeout, endpoint별 `circuit_breaker`(연속 실패·5xx 기준, half-open 시험). process별 상태(instance 간 공유 없음). `aip-execution/tests/integrations.rs`, `tests/job_breaker.rs` |
 
 ## G. 파일
@@ -259,7 +259,7 @@
 | 1 | B03 테넌트 격리 | SaaS의 기본 요구. 현재는 predicate 관례에 의존 | [결정 문서](tenant-isolation-decision-2026-10-13.md): 결정됨(2026-10-13). 현행 유지(T1-A·T2-A) + 생성 경로 Ref 가시성 규칙 구현. 활성 테넌트(세션 claim, T2-B)는 후속 결정 후보 |
 | 2 | B09 Audit | 규제·운영 요구 | 기본 기록과 조회 CLI(`aip service audit list`)는 구현(아래 설계 선택). 남은 것: 쓰기 확장 key, 효과 행 |
 | 3 | I02·I03 Metrics·Tracing | 운영 가시성 | metrics와 `traceparent` 수신·전파는 의존성 없이 기본 빌드에 구현. 남은 것: 내부 상태 metric, job 단계로의 trace 연결(schema 변경), OpenTelemetry exporter(선택 패키지, 설계 메모만) |
-| 4 | ~~D08·C09 retry 정책~~ | 2026-10-13 구현(`job_policies`, `ctx.retryLater`, `ctx.job`) | 남은 것: 확장이 대기 시간을 지정하는 `retryLater(reason, {afterMs})` |
+| 4 | ~~D08·C09 retry 정책~~ | 2026-10-13 구현(`job_policies`, `ctx.retryLater(reason, {afterMs})`, `ctx.job`) | 남은 것 없음 |
 | 5 | ~~E05 발신 webhook~~ | 2026-10-13 구현(ctx.webhooks.deliver) | 남은 것: 구독 resource 예제, 연속 실패 자동 비활성화 정책 |
 | 6 | ~~F11 circuit breaker, F02 client credentials~~ | 2026-10-13 구현 | 남은 것: 사용자별 OAuth token 저장(저장 암호화 B10과 함께) |
 | 7 | H04 데이터 변경 push | 협업 UI | PoC subscribe의 재조회·가시성 재평가 모델 이식 |

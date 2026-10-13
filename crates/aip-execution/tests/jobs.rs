@@ -119,6 +119,66 @@ async fn retry_limit_and_run_deadline_make_run_terminal() {
     assert_eq!(store.status(&db.client, &run.id, "https://issuer.example|subject-1").await.unwrap().unwrap().state, "FAILED");
 }
 
+/// Milliseconds from now until the next attempt and the extra run budget, read from the row.
+async fn next_attempt(db: &Db, id: &str) -> (i64, i64, String) {
+    let row = db
+        .client
+        .query_one(
+            &format!(
+                "SELECT (extract(epoch FROM next_run_at - clock_timestamp())*1000)::bigint, \
+                        (extract(epoch FROM run_deadline - clock_timestamp())*1000)::bigint, state FROM {}.aip_jobs WHERE id=$1::text::uuid",
+                db.schema
+            ),
+            &[&id],
+        )
+        .await
+        .unwrap();
+    (row.get(0), row.get(1), row.get(2))
+}
+
+#[tokio::test]
+async fn an_extension_can_choose_the_wait_before_the_next_attempt() {
+    let db = Db::new().await;
+    let store = db.store();
+
+    // Without a requested wait the first retry waits the default one second.
+    let plain = store.enqueue(&db.client, new_run("plain", json!({"x":1}))).await.unwrap();
+    let lease = store.claim(&db.client, "w").await.unwrap().unwrap();
+    assert!(store.retry(&db.client, &lease, "RETRY_LATER").await.unwrap());
+    let (plain_wait, plain_budget, state) = next_attempt(&db, &plain.id).await;
+    assert_eq!(state, "QUEUED");
+    assert!((0..=1000).contains(&plain_wait), "{plain_wait}");
+
+    // A requested wait replaces it, and the run budget grows by the extra wait so the retry is not born expired.
+    let asked = store.enqueue(&db.client, new_run("asked", json!({"x":2}))).await.unwrap();
+    let lease = store.claim(&db.client, "w").await.unwrap().unwrap();
+    assert!(store.retry_after(&db.client, &lease, "RETRY_LATER", Some(20_000)).await.unwrap());
+    let (wait, budget, state) = next_attempt(&db, &asked.id).await;
+    assert_eq!(state, "QUEUED");
+    assert!((19_000..=20_000).contains(&wait), "{wait}");
+    assert!(budget >= plain_budget + 18_000, "the run budget follows the wait: {budget} vs {plain_budget}");
+
+    // Too short a wait is raised to one second, too long a one is cut to an hour.
+    let short = store.enqueue(&db.client, new_run("short", json!({"x":3}))).await.unwrap();
+    let lease = store.claim(&db.client, "w").await.unwrap().unwrap();
+    assert!(store.retry_after(&db.client, &lease, "RETRY_LATER", Some(5)).await.unwrap());
+    let (wait, _, _) = next_attempt(&db, &short.id).await;
+    assert!((0..=1000).contains(&wait) && wait > 0, "{wait}");
+    let long = store.enqueue(&db.client, new_run("long", json!({"x":4}))).await.unwrap();
+    let lease = store.claim(&db.client, "w").await.unwrap().unwrap();
+    assert!(store.retry_after(&db.client, &lease, "RETRY_LATER", Some(i64::MAX)).await.unwrap());
+    let (wait, _, _) = next_attempt(&db, &long.id).await;
+    assert!((3_599_000..=3_600_000).contains(&wait), "{wait}");
+
+    // The attempt limit still wins over a requested wait.
+    let mut last = new_run("last", json!({"x":5}));
+    last.max_attempts = 1;
+    let run = store.enqueue(&db.client, last).await.unwrap();
+    let lease = store.claim(&db.client, "w").await.unwrap().unwrap();
+    store.retry_after(&db.client, &lease, "RETRY_LATER", Some(20_000)).await.unwrap();
+    assert_eq!(next_attempt(&db, &run.id).await.2, "FAILED");
+}
+
 #[tokio::test]
 async fn expired_result_payload_is_hidden_while_status_tombstone_remains() {
     let db = Db::new().await;

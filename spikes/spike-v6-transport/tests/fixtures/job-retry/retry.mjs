@@ -21,3 +21,7 @@ export async function callout(input, ctx) {
   const replayed = await ctx.http.call("crm", {}, "first");
   return { first: first.status, second, replayed: replayed.status };
 }
+export async function later(input, ctx) {
+  if (ctx.job.attempt < 2) throw ctx.retryLater("rate limited", { afterMs: 3000 });
+  return { attempt: ctx.job.attempt };
+}
