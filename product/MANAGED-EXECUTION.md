@@ -233,7 +233,32 @@ endpoint가 OAuth 2.0 access token을 요구하면 `oauth2`를 설정한다. Spr
 
 **웹훅 발신 (구독자 URL로 전달)**
 
-`workers.outbound_webhooks`에 `{"name":"subscribers","signing_secret_env":"...","timeout_ms":5000,"max_request_bytes":65536}`을 두고 job에 `access http.subscribers`를 선언하면 `ctx.webhooks.deliver(name, url, payload, key)`로 업무 데이터에 저장된 구독자 URL에 보낸다. 요청은 Standard Webhooks 형식(`webhook-id`·`webhook-timestamp`·`webhook-signature: v1,<base64>`)으로 서명하고, `webhook-id`는 run과 effect key에서 만들어 재시도에도 같다. URL은 매번 DNS를 해석해 공개 주소만 허용하며 사설 주소는 설정으로도 열 수 없다(`allow_loopback`은 개발용). 2xx는 journal에 기록하고 같은 key는 재전송하지 않는다. 거부(`DESTINATION_REJECTED`)·비2xx·전송 실패(`DELIVERY_FAILED`)는 기록을 지우고 오류를 돌려주므로 확장이 잡거나 `ctx.retryLater()`로 같은 key를 다시 보낼 수 있다. 수신자는 `webhook-id`로 중복을 걸러야 한다. 구독 관리 resource와 자동 비활성화 정책은 앱 선언으로 둔다.
+`workers.outbound_webhooks`에 `{"name":"subscribers","signing_secret_env":"...","timeout_ms":5000,"max_request_bytes":65536}`을 두고 job에 `access http.subscribers`를 선언하면 `ctx.webhooks.deliver(name, url, payload, key)`로 업무 데이터에 저장된 구독자 URL에 보낸다. 요청은 Standard Webhooks 형식(`webhook-id`·`webhook-timestamp`·`webhook-signature: v1,<base64>`)으로 서명하고, `webhook-id`는 run과 effect key에서 만들어 재시도에도 같다. URL은 매번 DNS를 해석해 공개 주소만 허용하며 사설 주소는 설정으로도 열 수 없다(`allow_loopback`은 개발용). 2xx는 journal에 기록하고 같은 key는 재전송하지 않는다. 거부(`DESTINATION_REJECTED`)·비2xx·전송 실패(`DELIVERY_FAILED`)는 기록을 지우고 오류를 돌려주므로 확장이 잡거나 `ctx.retryLater()`로 같은 key를 다시 보낼 수 있다. 수신자는 `webhook-id`로 중복을 걸러야 한다. 구독 관리 resource와 자동 비활성화 정책은 앱 선언으로 두고, 아래 정책 예제를 따른다.
+
+### 구독 관리와 연속 실패 자동 비활성화
+
+구독자 URL은 업무 데이터이고 실패를 어떻게 셀지는 업무 판단이라 플랫폼이 비활성화를 대신하지 않는다. 대신 이미 있는 것(전이, `ctx.data`, `ctx.webhooks.deliver`의 오류 코드)만으로 같은 정책을 쓰는 방법을 정하고 시험으로 고정했다. 정의에 구독 행이 연속 실패 수를 세고, 확장이 전달 결과에 따라 전이를 부른다.
+
+```
+resource Subscription {
+ fields { id: Id; member: Member; url: Text; active: Bool; failures: Int }
+ rows read when member = actor
+ transition failed    { allow member = actor; from active = true; to failures = failures + 1 }
+ transition recovered { allow member = actor; from failures > 0;  to failures = 0 }
+ transition disable   { allow member = actor; from active = true; to active = false }
+ expose apply failed { target id; bulk maxRows 5 }  // recovered, disable도 같게
+}
+operation job fanout { input { event: Text } access read.Subscription, Subscription.failed, Subscription.recovered, Subscription.disable, http.subscribers  ... }
+```
+
+| 전달 결과 | 정책 | 이유 |
+|---|---|---|
+| 2xx | 연속 실패 수가 0보다 크면 `recovered`로 0으로 되돌린다 | 한 번의 성공이 연속 실패를 끊는다 |
+| `DELIVERY_FAILED`(비2xx·전송 실패) | `failed`로 센다. 연속 N번째면 `disable`한다 | 수신자 장애는 잠깐일 수 있어 몇 번은 기다린다 |
+| `DESTINATION_REJECTED`(공개 주소가 아니거나 URL이 틀림) | 한 번에 `disable`한다 | 기다려도 유효해지지 않는다 |
+| 그 밖의 오류(`EFFECT_UNKNOWN` 등) | 잡지 않고 던진다 | 결과를 모르는 전달을 실패로 세면 안 된다 |
+
+`active`가 거짓인 구독은 다음 전달부터 건너뛴다. N은 확장의 상수이고 예제는 3이다(운영에서는 5~10처럼 수신자의 복구 시간을 보고 고른다). 다시 켜는 전이(`from active = false; to active = true`와 `failures = 0`)와 소유자에게 알리는 일(`disable` 직후 같은 확장에서 `ctx.messages.publish`나 `ctx.events.publish`)은 앱이 필요에 따라 더한다. 예제에는 없고 시험하지 않았다. 구독 행의 전이는 모두 job 주체의 정책으로 실행되고 감사 행에도 남는다. 근거 테스트는 `spikes/spike-v6-transport/tests/webhook_subscriptions.rs`(Node·Python)이고 예제 정의와 확장은 `spikes/spike-v6-transport/tests/fixtures/webhook-subscriptions*`에 있다.
 
 **전이 commit 뒤 후속 job (outbox 릴레이)**
 

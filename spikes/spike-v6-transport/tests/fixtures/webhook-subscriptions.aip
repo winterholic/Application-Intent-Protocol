@@ -1,0 +1,22 @@
+resource Member { fields { id: Id } }
+actor Member
+resource Subscription {
+ fields { id: Id; member: Member; url: Text; active: Bool; failures: Int }
+ rows read when member = actor
+ transition failed { allow member = actor; from active = true; to failures = failures + 1 }
+ transition recovered { allow member = actor; from failures > 0; to failures = 0 }
+ transition disable { allow member = actor; from active = true; to active = false }
+ expose read { select id, url, active, failures; sort id; budget { rows 50; depth 1; deadline 1s; cost 100 } }
+ expose apply failed { target id; bulk maxRows 5 }
+ expose apply recovered { target id; bulk maxRows 5 }
+ expose apply disable { target id; bulk maxRows 5 }
+}
+operation job fanout {
+  input { event: Text }
+  output { delivered: Int; failed: Int; disabled: Int }
+  allow actor != null
+  access read.Subscription, Subscription.failed, Subscription.recovered, Subscription.disable, http.subscribers
+  effect managed
+  deadline 10s
+  implementation "hooks.fanout"
+}

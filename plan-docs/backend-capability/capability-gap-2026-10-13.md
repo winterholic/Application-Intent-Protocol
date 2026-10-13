@@ -18,7 +18,7 @@
 | 항목 | 이전(2026-10-09 → 10-12 구현 후) | 현재 | 근거 |
 |---|---|---|---|
 | D02 Scheduler, D03 Cron | 미지원 | 지원 | 서비스 설정 `schedules`, slot별 job key로 다중 instance 중복 방지. `tests/triggers.rs` |
-| E05 Webhook | 미지원 | 부분 | 수신 지원(`hmac-sha256`·`stripe`·`standard-webhooks`). 구독자 URL로의 발신 전달은 미지원 |
+| E05 Webhook | 미지원 | 지원 | 수신(`hmac-sha256`·`stripe`·`standard-webhooks`)과 구독자 URL로의 서명 발신(`ctx.webhooks.deliver`), 구독 연속 실패 비활성화 정책 예제. `tests/outbound_webhook.rs`, `tests/webhook_subscriptions.rs` |
 | E02 Event handler | 미지원 | 부분 | webhook·schedule·outbox topic을 job handler로 연결. 내부 event stream·message queue를 handler에 바인딩하는 선언은 없음 |
 | E06 이벤트 기반 후속 작업, E07 Outbox | 미지원 / 부분 | 지원 / 지원 | 선언된 `notify` 효과의 outbox 행을 `outbox_handlers`가 행당 job 하나로 넘김. `tests/outbox.rs` |
 | C04 다단계 업무, C10 보상 | 부분 / 확장(데이터 불가) | 부분 / 확장 | job이 `ctx.data.read/apply`로 업무 데이터를 읽고 전이·보상 전이를 실행. 전이와 journal이 한 transaction. `tests/job_data.rs` |
@@ -109,7 +109,7 @@
 | E02 | Event Handler | `@EventListener`, `@OnEvent`, signal receiver | 지원 | 전이 `notify`(outbox)·webhook·schedule·메시지 큐를 서비스 설정으로 job handler에 연결. 클라이언트용 event stream은 handler 대상이 아님 |
 | E03 | Pub/Sub | Redis pub/sub, ActionCable | 부분 | owner 범위 event stream·SSE·WS |
 | E04 | 메시지 브로커 | Spring Kafka, `@nestjs/microservices`, Celery broker | 지원 | 선택 빌드 Kafka/RabbitMQ relay가 관리 큐로 넣고 `message_handlers`가 job으로 소비(수락과 ack 한 transaction, 실패는 nack·DLQ). `tests/message_handlers.rs` |
-| E05 | Webhook | 수신: controller + 서명 검증 / 발신: 별도 라이브러리 | 지원 | 수신은 설정만으로 서명 검증·멱등 job 수락. 발신은 job의 `ctx.webhooks.deliver`(Standard Webhooks 서명, 공개 주소만, 안정 webhook-id, 실패 재전송). 구독 관리·자동 비활성화는 앱 선언 |
+| E05 | Webhook | 수신: controller + 서명 검증 / 발신: 별도 라이브러리 | 지원 | 수신은 설정만으로 서명 검증·멱등 job 수락. 발신은 job의 `ctx.webhooks.deliver`(Standard Webhooks 서명, 공개 주소만, 안정 webhook-id, 실패 재전송). 구독 관리·자동 비활성화는 앱 선언이며 정책 예제와 시험이 있음(`tests/webhook_subscriptions.rs`) |
 | E06 | 이벤트 기반 후속 작업 | `@TransactionalEventListener`, `on_commit`, `after_commit` | 지원 | 전이의 `notify` 효과 + `outbox_handlers`. commit 뒤 crash에도 후속 job을 잃지 않음 |
 | E07 | Outbox | Debezium outbox, transactional outbox | 지원 | 전이와 같은 transaction의 outbox 행, dispatch 표시와 job 수락이 한 transaction. outbox 자동 정리 없음 |
 | E08 | 중복 처리 | inbox table | 부분 | 발행·job·effect·webhook delivery key. consumer inbox 없음 |
@@ -260,7 +260,7 @@
 | 2 | B09 Audit | 규제·운영 요구 | 기본 기록과 조회 CLI(`aip service audit list`)는 구현(아래 설계 선택). 남은 것: 쓰기 확장 key, 효과 행 |
 | 3 | I02·I03 Metrics·Tracing | 운영 가시성 | metrics와 `traceparent` 수신·전파는 의존성 없이 기본 빌드에 구현. 남은 것: 내부 상태 metric, job 단계로의 trace 연결(schema 변경), OpenTelemetry exporter(선택 패키지, 설계 메모만) |
 | 4 | ~~D08·C09 retry 정책~~ | 2026-10-13 구현(`job_policies`, `ctx.retryLater(reason, {afterMs})`, `ctx.job`) | 남은 것 없음 |
-| 5 | ~~E05 발신 webhook~~ | 2026-10-13 구현(ctx.webhooks.deliver) | 남은 것: 구독 resource 예제, 연속 실패 자동 비활성화 정책 |
+| 5 | ~~E05 발신 webhook~~ | 2026-10-13 구현(ctx.webhooks.deliver), 구독 resource 예제와 연속 실패 자동 비활성화 정책(앱 선언 + 시험, [MANAGED-EXECUTION](../../product/MANAGED-EXECUTION.md#구독-관리와-연속-실패-자동-비활성화)) | 남은 것 없음 |
 | 6 | ~~F11 circuit breaker, F02 client credentials~~ | 2026-10-13 구현 | 남은 것: 사용자별 OAuth token 저장(저장 암호화 B10과 함께) |
 | 7 | H04 데이터 변경 push | 협업 UI | PoC subscribe의 재조회·가시성 재평가 모델 이식 |
 
