@@ -13,7 +13,7 @@
 //! those the program no longer has are dropped, so they cannot be out of date.
 
 use crate::ddl;
-use crate::names::q;
+use crate::names::{lit, q};
 use crate::schema::{Col, Schema, published_table};
 use aip_ir::diff::{self, Change, TypeRelation};
 use aip_ir::{self as ir, Type, codes};
@@ -847,13 +847,18 @@ impl<'a> Planner<'a> {
         }
         let trig_names: Vec<String> = nc.routines.iter().flat_map(|r| r.triggers.iter().map(|t| format!("'{}'", t.0))).collect();
         let fn_names: Vec<String> = nc.routines.iter().flat_map(|r| r.functions.iter().map(|f| format!("'{f}'"))).collect();
+        // The generator names its triggers and functions `<table>__<name>`. Only objects in that namespace of a table this
+        // program (old or new) manages are cleaned up; a `__` name on another application's table is not ours to drop.
+        let managed: BTreeSet<&str> = oc.tables.iter().chain(nc.tables.iter()).map(|t| t.name.as_str()).collect();
+        let managed_list = if managed.is_empty() { "''".to_string() } else { managed.iter().map(|t| lit(t)).collect::<Vec<_>>().join(", ") };
         steps.push(step(
             format!(
                 "DO $aip$ DECLARE r record; BEGIN FOR r IN SELECT t.tgname, c.relname FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace \
-                 WHERE NOT t.tgisinternal AND n.nspname = 'public' AND t.tgname LIKE '%\\_\\_%' AND t.tgname NOT IN ({}) \
+                 WHERE NOT t.tgisinternal AND n.nspname = 'public' AND c.relname IN ({managed_list}) AND t.tgname LIKE replace(replace(c.relname, '\\', '\\\\'), '_', '\\_') || '\\_\\_%' AND t.tgname NOT IN ({}) \
                  LOOP EXECUTE format('DROP TRIGGER IF EXISTS %I ON %I', r.tgname, r.relname); END LOOP; END $aip$;\n\
                  DO $aip$ DECLARE r record; BEGIN FOR r IN SELECT p.oid::regprocedure AS sig FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace \
                  WHERE n.nspname = 'public' AND p.proname LIKE '%\\_\\_%\\_fn' AND p.proname NOT IN ({}) \
+                 AND EXISTS (SELECT 1 FROM unnest(ARRAY[{managed_list}]) AS m(name) WHERE p.proname LIKE replace(replace(m.name, '\\', '\\\\'), '_', '\\_') || '\\_\\_%\\_fn') \
                  LOOP EXECUTE format('DROP FUNCTION IF EXISTS %s', r.sig); END LOOP; END $aip$",
                 if trig_names.is_empty() { "''".to_string() } else { trig_names.join(", ") },
                 if fn_names.is_empty() { "''".to_string() } else { fn_names.join(", ") },

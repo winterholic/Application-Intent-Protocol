@@ -444,3 +444,31 @@ async fn renamed_fields_carry_their_constraints_indexes_and_references() {
     assert!(pool.get().await.expect("conn").batch_execute("INSERT INTO task (headline) VALUES ('t')").await.is_err(), "unique rule");
     assert!(pool.get().await.expect("conn").batch_execute("INSERT INTO task (headline, state) VALUES ('u', 'NOPE')").await.is_err(), "enum rule");
 }
+
+/// The generator names its triggers and functions `<table>__<name>`. Evolution may clean up its own, but a trigger or
+/// function that merely contains `__` and belongs to another application sharing the schema must survive.
+#[tokio::test]
+async fn evolution_never_drops_triggers_or_functions_of_tables_it_does_not_manage() {
+    let pool = fresh("aip_e2e_evolve_foreign").await;
+    let base = format!("{V1}\ncommand AddTask(title: Text(1..30)) {{\n  allow public\n  do {{ insert Task {{ title }} }}\n}}\n");
+    deploy(&pool, &build(&base), false).await.expect("first deployment");
+    sql(
+        &pool,
+        "CREATE TABLE audit_log (id int);
+         CREATE FUNCTION audit_log__stamp_fn() RETURNS trigger LANGUAGE plpgsql AS $f$ BEGIN RETURN NEW; END $f$;
+         CREATE TRIGGER audit_log__stamp BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION audit_log__stamp_fn();
+         CREATE FUNCTION billing__round_fn() RETURNS int LANGUAGE sql AS 'SELECT 1';",
+    )
+    .await;
+    deploy(&pool, &build(&format!("{base}\nconfig unused: Int = 1\n")), false).await.expect("another change");
+    assert_eq!(
+        num(&pool, "SELECT count(*) FROM pg_trigger WHERE tgname = 'audit_log__stamp'").await,
+        1,
+        "a trigger on a table the program does not manage is not the generator's to drop"
+    );
+    assert_eq!(
+        num(&pool, "SELECT count(*) FROM pg_proc WHERE proname IN ('audit_log__stamp_fn', 'billing__round_fn')").await,
+        2,
+        "functions named like generated ones but for tables outside the program are kept"
+    );
+}
