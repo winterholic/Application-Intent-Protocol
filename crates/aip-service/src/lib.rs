@@ -225,7 +225,8 @@ pub struct Config {
     pub messaging: infrastructure::MessagingConfig,
     #[serde(default)]
     pub broker: Option<brokers::BrokerConfig>,
-    #[serde(default)]
+    /// Absent means the safe default (`infrastructure::default_rate_limit`); an explicit `null` turns the limiter off.
+    #[serde(default = "infrastructure::default_rate_limit")]
     pub rate_limit: Option<infrastructure::RateLimitConfig>,
     #[serde(default)]
     pub limits: Option<infrastructure::ResourceLimitsConfig>,
@@ -1321,7 +1322,16 @@ mod managed_config_tests {
         .unwrap();
         let baseline = infrastructure::build(&defaults).unwrap();
         assert_eq!(baseline.db_pool, spike_v6_transport::pool::PoolOptions::default());
-        assert!(baseline.rate_limit.is_none());
+        // A service that says nothing about rate limiting still gets one (O-05); only an explicit null opts out.
+        let default_limit = baseline.rate_limit.expect("rate limiting is on by default");
+        assert_eq!((default_limit.limit, default_limit.window), (600, std::time::Duration::from_secs(60)));
+        let opted_out: Config = serde_json::from_value(json!({
+            "schema":"aip_test",
+            "auth":{"issuer":"https://issuer.example","audience":"aip","jwks":{"kind":"file","path":"jwks.json"}},
+            "rate_limit":null
+        }))
+        .unwrap();
+        assert!(infrastructure::build(&opted_out).unwrap().rate_limit.is_none());
 
         let access_env = format!("AIP_TEST_GCS_ACCESS_{}", std::process::id());
         let secret_env = format!("AIP_TEST_GCS_SECRET_{}", std::process::id());
@@ -1408,9 +1418,28 @@ mod managed_config_tests {
         }))
         .unwrap();
         let partial = infrastructure::build(&partial).unwrap();
-        assert_eq!(partial.resource_limits, spike_v6_transport::infrastructure::ResourceLimits { connections: 64, workers: 4, jobs: 5, uploads: 4 });
+        assert_eq!(
+            partial.resource_limits,
+            spike_v6_transport::infrastructure::ResourceLimits { jobs: 5, ..spike_v6_transport::infrastructure::ResourceLimits::default() }
+        );
+        let per_principal: Config = serde_json::from_value(json!({
+            "schema":"aip_test",
+            "auth":{"issuer":"https://issuer.example","audience":"aip","jwks":{"kind":"file","path":"jwks.json"}},
+            "limits":{"per_principal_realtime":1,"per_principal_workers":1,"per_principal_uploads":3}
+        }))
+        .unwrap();
+        let per_principal = infrastructure::build(&per_principal).unwrap().resource_limits;
+        assert_eq!((per_principal.per_principal_realtime, per_principal.per_principal_workers, per_principal.per_principal_uploads), (1, 1, 3));
 
-        for invalid_limits in [json!({"connections":0}), json!({"workers":0}), json!({"jobs":0}), json!({"uploads":0})] {
+        for invalid_limits in [
+            json!({"connections":0}),
+            json!({"workers":0}),
+            json!({"jobs":0}),
+            json!({"uploads":0}),
+            json!({"per_principal_realtime":0}),
+            json!({"per_principal_workers":0}),
+            json!({"per_principal_uploads":0}),
+        ] {
             let invalid: Config = serde_json::from_value(json!({
                 "schema":"aip_test",
                 "auth":{"issuer":"https://issuer.example","audience":"aip","jwks":{"kind":"file","path":"jwks.json"}},

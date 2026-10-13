@@ -59,6 +59,9 @@ where
     if session.remaining_ms() == 0 {
         return send_json(writer, 401, "TOKEN_EXPIRED", "세션 만료", &cors_headers, head_only).await;
     }
+    let Some(_principal_slot) = rt.principal_slots.uploads.try_acquire(&crate::admission::principal(Some(session))) else {
+        return send_json(writer, 503, "OBJECT_CAPACITY", "principal별 동시 객체 전송 상한에 도달함", &cors_headers, head_only).await;
+    };
     let owner = match validate_owner(rt, facts, wire, session).await {
         Ok(owner) => owner,
         Err(code) => return send_json(writer, status_for(code), code, "principal 또는 배포 상태 확인 실패", &cors_headers, head_only).await,
@@ -245,6 +248,9 @@ pub(crate) async fn control(rt: &Runtime, facts: &Value, wire: IdWire, session: 
     if session.remaining_ms() == 0 {
         return failure("TOKEN_EXPIRED");
     }
+    let Some(_principal_slot) = rt.principal_slots.uploads.try_acquire(&crate::admission::principal(Some(session))) else {
+        return failure("OBJECT_CAPACITY");
+    };
     let owner = match validate_owner(rt, facts, wire, session).await {
         Ok(owner) => owner,
         Err(code) => return failure(code),

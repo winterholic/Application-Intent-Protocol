@@ -12,11 +12,16 @@ pub struct ResourceLimits {
     pub workers: usize,
     pub jobs: usize,
     pub uploads: usize,
+    /// How many realtime connections, workers and uploads one principal may hold at once. Without these a single
+    /// authenticated principal could occupy every shared slot and lock the others out (O-05).
+    pub per_principal_realtime: usize,
+    pub per_principal_workers: usize,
+    pub per_principal_uploads: usize,
 }
 
 impl Default for ResourceLimits {
     fn default() -> Self {
-        Self { connections: 64, workers: 4, jobs: 2, uploads: 4 }
+        Self { connections: 64, workers: 4, jobs: 2, uploads: 4, per_principal_realtime: 4, per_principal_workers: 2, per_principal_uploads: 2 }
     }
 }
 
@@ -35,6 +40,9 @@ impl ResourceLimits {
             || self.jobs > 32
             || self.uploads == 0
             || self.uploads > 32
+            || self.per_principal_realtime == 0
+            || self.per_principal_workers == 0
+            || self.per_principal_uploads == 0
         {
             return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid resource limits"));
         }

@@ -20,7 +20,7 @@
   "object_transfer_lifetime_ms":900000,
   "db_pool":{"max_size":16,"acquire_timeout_ms":2000,"idle_timeout_ms":60000},
   "rate_limit":{"limit":120,"window_ms":60000},
-  "limits":{"connections":64,"workers":4,"jobs":2,"uploads":4},
+  "limits":{"connections":64,"workers":4,"jobs":2,"uploads":4,"per_principal_realtime":4,"per_principal_workers":2,"per_principal_uploads":2},
   "realtime":{"enabled":true,"max_connections":32,"max_lifetime_ms":900000,"heartbeat_ms":15000,"poll_ms":250,"query_poll_ms":5000},
   "messaging":{"enabled":true,"client_publish":false,"client_consume":false},
   "workers":{
@@ -34,9 +34,11 @@
 
 알 수 없는 설정 필드는 거부하며, `limits`는 프로세스별 제한이다. 여러 인스턴스의 합계 제한은 배포 환경에서 별도로 관리한다. `connections` 기본 64, 동기 worker 4, durable job 2, object transfer/control 4다. 실시간 연결도 전체 HTTP 연결 수에 포함된다. 실시간 연결 상한은 일반 요청을 위한 연결 한 개를 남기도록 전체 연결 수보다 작게 제한한다. 설정값 0이나 허용 상한을 넘긴 값은 시작 시 거부한다.
 
+`per_principal_realtime`(기본 4)·`per_principal_workers`(기본 2)·`per_principal_uploads`(기본 2)는 한 principal이 동시에 쥘 수 있는 실시간 연결·동기 worker(RAG 포함)·object 전송 수다. 전역 상한과 함께 적용되므로 인증된 한 사용자가 전역 슬롯을 모두 차지해 다른 사용자를 막을 수 없다. 0은 시작 시 거부한다. 초과하면 `SERVER_BUSY`/`WORKER_BUSY`/`OBJECT_CAPACITY`다. durable job 실행 슬롯(`jobs`)은 principal별로 나누지 않으며 principal당 활성 job 100개 상한만 있다.
+
 `connections:1`은 실시간 연결을 허용하지 않는다. HTTP·durable DB 연결은 `db_pool`의 프로세스별 pool을 공유한다. 정상 반환 때 `ROLLBACK`과 `DISCARD ALL`로 세션 상태를 초기화하며, 취소·오류·reset 실패 연결은 재사용하지 않는다. 대기 시간이 지나면 요청을 거부한다. idle 만료는 다음 checkout 때 정리한다. 인증 제공자·마이그레이션·별도 RAG pool·broker relay의 연결도 PostgreSQL 전체 연결 예산에 포함해야 한다.
 
-선택적 `rate_limit`은 같은 PostgreSQL schema를 쓰는 인스턴스 사이에서 계정과 고정 경로 분류별 quota를 공유한다. DB 시계와 원자적 갱신을 쓰는 fixed window 방식이며, 세션 재발급으로 계정 quota를 초기화하지 않는다. 초과하면 HTTP 429와 `Retry-After`, DB 오류면 실행 거부다. 브라우저 WebSocket은 첫 인증 프레임 뒤 검사하므로 초과 오류는 WebSocket error frame이다. 정적 공개 mount의 익명 quota는 공유 bucket이다. IP별 DDoS 방어나 sliding-window의 균일한 유량 보장은 아니며, TLS proxy의 요청 크기·연결 제한도 필요하다. 생략하면 기존 동작을 유지한다.
+선택적 `rate_limit`은 같은 PostgreSQL schema를 쓰는 인스턴스 사이에서 계정과 고정 경로 분류별 quota를 공유한다. DB 시계와 원자적 갱신을 쓰는 fixed window 방식이며, 세션 재발급으로 계정 quota를 초기화하지 않는다. 초과하면 HTTP 429와 `Retry-After`, DB 오류면 실행 거부다. 브라우저 WebSocket은 첫 인증 프레임 뒤 검사하므로 초과 오류는 WebSocket error frame이다. 정적 공개 mount의 익명 quota는 공유 bucket이다. IP별 DDoS 방어나 sliding-window의 균일한 유량 보장은 아니며, TLS proxy의 요청 크기·연결 제한도 필요하다. `rate_limit`를 생략하면 principal·경로 분류별 분당 600회의 기본값이 켜진다(앱 사용 패턴에 맞게 올리거나, 필요하면 `"rate_limit":null`로 명시적으로 끈다). 시작할 때 인프라 schema에 limiter 테이블을 만든다.
 
 rate limiting과 RAG는 앱 schema 이름의 digest로 파생한 별도 `aip_infra_<digest>` schema에 저장한다. 앱 migration의 구조 지문을 유지하기 위한 분리다. 시작 시 schema/table 생성 권한이 필요하며 권한이 없으면 시작을 거부한다. 앱 schema만 선택하는 백업에는 이 데이터가 포함되지 않는다. 인프라 schema도 함께 백업하고, 앱 삭제·owner 폐기 시 데이터 보존과 정리를 별도로 수행한다. 앱 schema 삭제만으로 자동 삭제하지 않는다.
 

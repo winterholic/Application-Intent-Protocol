@@ -21,6 +21,7 @@ pub mod rag_transport;
 pub mod realtime;
 pub mod schedule;
 pub mod server;
+pub(crate) mod slots;
 mod trace;
 pub mod triggers;
 pub mod wire_codes;
@@ -969,6 +970,9 @@ async fn serve_conn(
         let Some(session) = session.as_ref() else {
             return reply(&mut w, &err("UNAUTHENTICATED", "RAG에는 제품 principal 세션이 필요함")).await;
         };
+        let Some(_principal_slot) = runtime.principal_slots.workers.try_acquire(&admission::principal(Some(session))) else {
+            return reply(&mut w, &err("SERVER_BUSY", "principal별 RAG 동시 실행 상한")).await;
+        };
         let owner = match tokio::time::timeout_at(deadline, durable::validate_principal(&runtime, &facts, wire, session)).await {
             Ok(Ok(owner)) => owner,
             Ok(Err("UNAUTHENTICATED" | "TOKEN_EXPIRED")) => return reply(&mut w, &err("UNAUTHENTICATED", "RAG 제품 principal 검증 실패")).await,
@@ -1020,6 +1024,16 @@ async fn serve_conn(
         if browser_slots.is_none() && _slot.is_none() {
             return reply(&mut w, &err("SERVER_BUSY", "실시간 연결 상한")).await;
         }
+        // A token-bearing connection holds its principal's share for as long as the stream runs. Browser sockets take theirs
+        // when the auth frame identifies the principal.
+        let _principal_slot = if browser_slots.is_none() {
+            match runtime.principal_slots.realtime.try_acquire(&admission::principal(session.as_ref())) {
+                Some(permit) => Some(permit),
+                None => return reply(&mut w, &err("SERVER_BUSY", "principal별 실시간 연결 상한")).await,
+            }
+        } else {
+            None
+        };
         if sse {
             if let Err(error) = realtime::send_sse_headers(&mut trace::HeadTap::new(&mut w.writer, &mut w.trace), w.origin.as_deref()).await {
                 eprintln!("{{\"event\":\"realtime_write_failed\",\"transport\":\"sse\",\"kind\":\"{:?}\"}}", error.kind());
@@ -1065,6 +1079,14 @@ async fn serve_conn(
         match runtime.extension_slots.try_acquire() {
             Ok(slot) => Some(slot),
             Err(_) => return reply(&mut w, &err("WORKER_BUSY", "로컬 확장 동시 호출 상한")).await,
+        }
+    } else {
+        None
+    };
+    let _extension_principal_slot = if _extension_slot.is_some() {
+        match runtime.principal_slots.workers.try_acquire(&admission::principal(session.as_ref())) {
+            Some(permit) => Some(permit),
+            None => return reply(&mut w, &err("WORKER_BUSY", "principal별 로컬 확장 동시 호출 상한")).await,
         }
     } else {
         None
@@ -1314,6 +1336,7 @@ async fn start_with_fingerprint(facts: Value, wire: IdWire, contract_fingerprint
             extensions: None,
             write_extensions: false,
             extension_slots: tokio::sync::Semaphore::new(4),
+            principal_slots: crate::slots::PrincipalSlotSet::unlimited(),
             options: server::ServerOptions::default(),
             authenticator: None,
             deployment: None,

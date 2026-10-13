@@ -40,6 +40,12 @@ pub struct RateLimitConfig {
     pub window_ms: u64,
 }
 
+/// Per principal and route class. High enough for an interactive client, low enough that one credential cannot saturate
+/// the database. Services with heavier legitimate traffic raise it; `"rate_limit": null` disables it.
+pub(crate) fn default_rate_limit() -> Option<RateLimitConfig> {
+    Some(RateLimitConfig { limit: 600, window_ms: 60_000 })
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MountConfig {
@@ -141,6 +147,9 @@ pub struct ResourceLimitsConfig {
     pub workers: usize,
     pub jobs: usize,
     pub uploads: usize,
+    pub per_principal_realtime: usize,
+    pub per_principal_workers: usize,
+    pub per_principal_uploads: usize,
 }
 
 #[derive(Deserialize)]
@@ -166,7 +175,15 @@ impl WorkerResourceLimitsConfig {
 impl Default for ResourceLimitsConfig {
     fn default() -> Self {
         let limits = spike_v6_transport::infrastructure::ResourceLimits::default();
-        Self { connections: limits.connections, workers: limits.workers, jobs: limits.jobs, uploads: limits.uploads }
+        Self {
+            connections: limits.connections,
+            workers: limits.workers,
+            jobs: limits.jobs,
+            uploads: limits.uploads,
+            per_principal_realtime: limits.per_principal_realtime,
+            per_principal_workers: limits.per_principal_workers,
+            per_principal_uploads: limits.per_principal_uploads,
+        }
     }
 }
 
@@ -314,6 +331,9 @@ pub(super) fn build_with_environment(config: &super::Config, lookup: &impl Fn(&s
             workers: limits.workers,
             jobs: limits.jobs,
             uploads: limits.uploads,
+            per_principal_realtime: limits.per_principal_realtime,
+            per_principal_workers: limits.per_principal_workers,
+            per_principal_uploads: limits.per_principal_uploads,
         }
     });
     let db_pool = config.db_pool.build()?;

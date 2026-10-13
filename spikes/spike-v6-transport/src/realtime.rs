@@ -355,18 +355,23 @@ pub(crate) struct BrowserSlots {
     runtime: Arc<crate::server::Runtime>,
     preauth: std::sync::atomic::AtomicBool,
     main: std::sync::atomic::AtomicBool,
+    /// The principal's share of the realtime slots, taken together with the main slot once the auth frame names a principal.
+    principal: std::sync::Mutex<Option<crate::slots::PrincipalPermit>>,
 }
 
 impl BrowserSlots {
     pub(crate) fn acquire_preauth(runtime: &Arc<crate::server::Runtime>) -> Option<Arc<Self>> {
         runtime.realtime_preauth.try_acquire().ok()?.forget();
-        Some(Arc::new(Self { runtime: runtime.clone(), preauth: true.into(), main: false.into() }))
+        Some(Arc::new(Self { runtime: runtime.clone(), preauth: true.into(), main: false.into(), principal: Default::default() }))
     }
 
-    fn promote(&self) -> bool {
+    fn promote(&self, principal: &str) -> bool {
         use std::sync::atomic::Ordering::SeqCst;
+        // The principal's share first, so a refused principal does not briefly hold a server-wide slot.
+        let Some(share) = self.runtime.principal_slots.realtime.try_acquire(principal) else { return false };
         let Ok(permit) = self.runtime.realtime_slots.try_acquire() else { return false };
         permit.forget();
+        *self.principal.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(share);
         self.main.store(true, SeqCst);
         if self.preauth.swap(false, SeqCst) {
             self.runtime.realtime_preauth.add_permits(1);
@@ -384,6 +389,7 @@ impl Drop for BrowserSlots {
         if self.main.swap(false, SeqCst) {
             self.runtime.realtime_slots.add_permits(1);
         }
+        self.principal.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).take();
     }
 }
 
@@ -427,7 +433,7 @@ where
                         }
                     }
                     if let Some(slots) = &slots {
-                        if !slots.promote() {
+                        if !slots.promote(&crate::admission::principal(Some(&session))) {
                             return Err("SERVER_BUSY");
                         }
                     }
