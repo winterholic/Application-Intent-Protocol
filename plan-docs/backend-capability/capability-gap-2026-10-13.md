@@ -163,7 +163,7 @@
 |---|---|---|---|---|
 | I01 | Logging | Logback MDC, pino, structlog, lograge | 부분 | JSON 이벤트 로그, 요청마다 한 줄 접근 로그와 `x-request-id`(71cfba5). 상관 ID를 job·worker 로그로 넘기는 MDC식 전파는 없음 |
 | I02 | Metrics | Micrometer/Actuator, prom-client, django-prometheus | 부분 | token 보호 `/metrics`(Prometheus text), route·status·code별 요청 수와 지연 histogram. job·pool·outbox 내부 metric 없음. `tests/metrics.rs` |
-| I03 | Tracing | OpenTelemetry | 미지원 | 요청 ID만 있고 `traceparent` 전파·span export 없음. exporter는 선택 패키지 후보 |
+| I03 | Tracing | OpenTelemetry | 부분 | 요청 ID와 `traceparent` 수신·전파(로그 줄의 `traceId`, 요청 중 외부 HTTP 호출에 같은 trace id)는 기본 빌드에 있다. span export는 없고 선택 패키지 후보(설계 메모는 [INFRASTRUCTURE](../../product/INFRASTRUCTURE.md#opentelemetry-exporter-설계-메모)). durable job 단계 호출은 trace를 잇지 못함(job 행 `trace_id` 저장이 필요한 schema 변경). `crates/aip-execution/tests/trace_context.rs`, `spikes/spike-v6-transport/tests/trace_propagation.rs` |
 | I04 | Health Check | Actuator health, `@nestjs/terminus`, django-health-check, `/up`(Rails 7.1) | 지원 | `/health`, `/ready` |
 | I05 | Configuration | `application.yml`, ConfigModule, settings.py | 지원 | 알 수 없는 필드 거부, 시작 시 검증 |
 | I06 | Feature Flag | Unleash/OpenFeature, Flipper | 미지원 | 정적 설정 스위치만 |
@@ -258,7 +258,7 @@
 |---|---|---|---|
 | 1 | B03 테넌트 격리 | SaaS의 기본 요구. 현재는 predicate 관례에 의존 | [결정 문서](tenant-isolation-decision-2026-10-13.md): 결정됨(2026-10-13). 현행 유지(T1-A·T2-A) + 생성 경로 Ref 가시성 규칙 구현. 활성 테넌트(세션 claim, T2-B)는 후속 결정 후보 |
 | 2 | B09 Audit | 규제·운영 요구 | 기본 기록과 조회 CLI(`aip service audit list`)는 구현(아래 설계 선택). 남은 것: 쓰기 확장 key, 효과 행 |
-| 3 | I02·I03 Metrics·Tracing | 운영 가시성 | metrics는 의존성 없이 기본 빌드에 구현. 남은 것: 내부 상태 metric, `traceparent` 전파, OpenTelemetry exporter(선택 패키지) |
+| 3 | I02·I03 Metrics·Tracing | 운영 가시성 | metrics와 `traceparent` 수신·전파는 의존성 없이 기본 빌드에 구현. 남은 것: 내부 상태 metric, job 단계로의 trace 연결(schema 변경), OpenTelemetry exporter(선택 패키지, 설계 메모만) |
 | 4 | ~~D08·C09 retry 정책~~ | 2026-10-13 구현(`job_policies`, `ctx.retryLater`, `ctx.job`) | 남은 것: 확장이 대기 시간을 지정하는 `retryLater(reason, {afterMs})` |
 | 5 | ~~E05 발신 webhook~~ | 2026-10-13 구현(ctx.webhooks.deliver) | 남은 것: 구독 resource 예제, 연속 실패 자동 비활성화 정책 |
 | 6 | ~~F11 circuit breaker, F02 client credentials~~ | 2026-10-13 구현 | 남은 것: 사용자별 OAuth token 저장(저장 암호화 B10과 함께) |

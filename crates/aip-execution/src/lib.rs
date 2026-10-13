@@ -18,6 +18,7 @@ pub mod brokers;
 pub mod gcs;
 pub mod rag;
 pub mod rate_limit;
+pub mod trace_context;
 
 /// Runtime storage is kept outside the application catalog managed by migrations.
 pub fn infrastructure_schema(deployment_schema: &str) -> Result<String, &'static str> {

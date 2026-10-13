@@ -551,6 +551,8 @@ async fn serve_conn(
             return reply(&mut w, &json!({ "ok": false, "code": "BAD_REQUEST", "msg": "헤더 총량 상한" }).to_string()).await;
         }
         if h == "\r\n" {
+            // Outbound calls made while this request is handled carry its trace id.
+            aip_execution::trace_context::set(w.trace.context().clone());
             break;
         }
         if !h.contains(':') || h.starts_with([' ', '\t']) || h.trim_end_matches("\r\n").bytes().any(|b| b.is_ascii_control() && b != b'\t') {
@@ -615,6 +617,7 @@ async fn serve_conn(
                 }
             }
             "x-request-id" => w.trace.accept_inbound(&v),
+            "traceparent" => w.trace.accept_traceparent(&v),
             "x-spike-drop-response" => drop = runtime.fault_injection && v == "1",
             _ => {}
         }

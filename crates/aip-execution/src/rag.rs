@@ -459,10 +459,7 @@ impl EmbeddingProvider for OpenAiCompatibleEmbedder {
             if inputs.is_empty() || inputs.len() > self.max_batch_items || inputs.iter().any(String::is_empty) {
                 return Err(RagError::LimitExceeded);
             }
-            let response = self
-                .client
-                .post(self.endpoint.clone())
-                .bearer_auth(&self.api_key)
+            let response = crate::trace_context::propagate(self.client.post(self.endpoint.clone()).bearer_auth(&self.api_key))
                 .json(&json!({"model":self.model,"input":inputs}))
                 .send()
                 .await
@@ -536,10 +533,7 @@ impl AnswerProvider for OpenAiCompatibleGenerator {
             if max_tokens == 0 || max_tokens > MAX_COMPLETION_TOKENS || system.len().saturating_add(user.len()) > 1_000_000 {
                 return Err(RagError::LimitExceeded);
             }
-            let response = self
-                .client
-                .post(self.endpoint.clone())
-                .bearer_auth(&self.api_key)
+            let response = crate::trace_context::propagate(self.client.post(self.endpoint.clone()).bearer_auth(&self.api_key))
                 .json(&json!({
                     "model": self.model,
                     "messages": [{"role":"system","content":system},{"role":"user","content":user}],

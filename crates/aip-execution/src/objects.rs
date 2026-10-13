@@ -727,7 +727,8 @@ impl S3Store {
         let signature = hex(&hmac(&signing_key(&self.config.secret_key, &short_date, &self.config.region), to_sign.as_bytes()));
         let authorization =
             format!("AWS4-HMAC-SHA256 Credential={}/{scope}, SignedHeaders={signed_headers}, Signature={signature}", self.config.access_key);
-        let mut request = self.client.request(method, url).body(body).header("authorization", authorization);
+        // The trace header is not one of the signed headers, so adding it does not change the signature.
+        let mut request = crate::trace_context::propagate(self.client.request(method, url)).body(body).header("authorization", authorization);
         for (name, value) in headers {
             if name != "host" {
                 request = request.header(name, value);

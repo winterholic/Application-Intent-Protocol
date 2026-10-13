@@ -166,10 +166,21 @@ macOS는 네트워크만 차단하며 filesystem 격리는 보장하지 않는�
 | 기존 PoC runtime (`aip run/migrate/rekey/token`, `diff --against deployed`: `axum`, `deadpool-postgres`, `chrono-tz`, `aes-gcm`) | **제외** | Cargo feature `poc-runtime` (`aip-cli`). 제품 경로 `aip service`는 쓰지 않는다. | `aip-cli/Cargo.toml`, [설계](../plan-docs/backend-capability/optional-runtime-package.md) |
 | GCS ADC 어댑터 (Node/Python) | 제외 | `product/providers/`. 소비자 서버 프로젝트가 `@google-cloud/storage` 또는 `google-cloud-storage`를 직접 설치한다. | [providers](providers/README.md) |
 | JS/TS SDK `@aip/sdk` | 런타임 의존성 없음 | 없음 | `product/tools/build-sdk.mjs`의 package.json |
+| W3C `traceparent` 수신·전파 | 포함. 헤더 파싱과 task-local뿐이라 의존성이 늘지 않는다. | 없음 | `crates/aip-execution/src/trace_context.rs` |
+| OpenTelemetry exporter(span 전송) | **제외**. 아직 구현하지 않았다. | Cargo feature 후보 `otel`. 아래 설계 메모. | [설계 메모](#opentelemetry-exporter-설계-메모) |
 
 `aip-cli`의 의존 crate 수는 기본 빌드 293개, `external-brokers` 392개, `poc-runtime` 358개, 둘 다 켜면 450개다(`cargo tree -p aip-cli --locked -e normal --prefix none --features <목록> | sort -u | wc -l`, 2026-10-13 측정). `poc-runtime` 분리 전 기본 빌드는 358개였다.
 
 Python 공급 경로도 같은 구조다. 호출자 SDK는 TypeScript `@aip/sdk` 하나이며 Python SDK 패키지는 없다. Python은 서버 extension 언어이고, 그 worker 스크립트(`spikes/spike-v4-worker/workers/worker.py`)는 `asyncio`, `json` 등 표준 라이브러리만 쓰며 Rust 바이너리에 포함된다. extension이 필요로 하는 서드파티 패키지는 배포자가 venv에 설치하고 `workers.runtime_executable`, `workers.environment`의 `PYTHONPATH`, `read_only_paths`로 지정한다. 선택 어댑터(`product/providers/google_storage.py`)는 공식 SDK를 호출 시점에 import하며 없으면 `PROVIDER_PACKAGE_MISSING`이다. `pyproject.toml`이나 pip extras는 만들지 않았다. 배포 가능한 Python 패키지가 생기는 시점에 다시 정한다.
+
+### OpenTelemetry exporter 설계 메모
+
+구현하지 않은 설계이며 기본 빌드에 의존성을 더하지 않는다. 서버는 이미 요청마다 `traceId`가 든 로그 줄과 `traceparent` 전파를 가지므로, exporter가 없어도 호출자의 tracing 백엔드와 AIP 로그는 trace id로 이어진다. exporter는 그 위에 span을 보내는 일만 더한다.
+
+- 형태: `aip-service`의 Cargo feature `otel`(기본 꺼짐). 의존성은 `opentelemetry`, `opentelemetry_sdk`, `opentelemetry-otlp`(http/protobuf, `reqwest` 재사용)로 한정하고 gRPC(`tonic`)는 쓰지 않는다. 켜지 않은 빌드에서 설정이 `otel`을 쓰면 `BROKER_FEATURE_DISABLED`와 같은 방식으로 기동 시점에 거부한다.
+- span의 원천: `trace::Trace`가 끝나는 `Drop` 한 곳. 요청 span 하나를 `traceId`, 호출자의 parent span id(지금은 로그에 남기지 않음), route, 상태, `code`, 소요 시간으로 만든다. 경로·본문·principal은 span에도 넣지 않는다(로그 줄과 같은 금지).
+- 전송: 로그 줄처럼 유한 큐와 별도 thread로 보내고, 가득 차면 버리며 센다. exporter가 느려도 요청과 연결 허용(permit) 해제를 늦추지 않는다.
+- 남은 설계 결정: durable job은 enqueue 요청의 trace에서 이어져야 job 단계의 외부 호출과 로그가 한 trace가 된다. 이를 위해서는 job 행에 `trace_id`를 저장해야 하고 이는 배포 schema 변경(마이그레이션)이라 지금은 하지 않았다. 지금은 job 단계에서 시작한 호출에 `traceparent`가 없다.
 
 패키지가 없는데 설정이 그 기능을 쓰면 **기동 시점**에 거부한다. 기본 빌드에서 `broker` 설정을 주면 DB 접속 전에 `BROKER_FEATURE_DISABLED`로 종료한다(`require_built_features`, `broker_config_is_rejected_when_the_feature_is_not_built` 테스트). PoC runtime 명령도 기본 빌드에서는 `RUNTIME_FEATURE_DISABLED`와 재빌드 명령을 출력하고 종료 코드 1이다(`crates/aip-cli/tests/runtime_disabled.rs`). 선택 패키지를 추가하는 기준은 새 외부 C/C++ 빌드 의존성이나 큰 전이 의존성을 끌어오는지다. PostgreSQL과 이미 포함된 crate만으로 구현되는 기능은 feature로 나누지 않고 서버 설정으로 켠다.
 

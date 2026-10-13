@@ -66,6 +66,9 @@ const ROUTES: &[&str] = &[
 
 pub struct Trace {
     id: String,
+    context: aip_execution::trace_context::TraceContext,
+    /// `traceparent` headers seen. A request with more than one has an invalid trace context and starts a new trace.
+    traceparents: u8,
     started: Instant,
     method: String,
     route: &'static str,
@@ -75,7 +78,16 @@ pub struct Trace {
 
 impl Default for Trace {
     fn default() -> Self {
-        Trace { id: generate_id(), started: Instant::now(), method: String::new(), route: "other", status: None, code: None }
+        Trace {
+            id: generate_id(),
+            context: aip_execution::trace_context::TraceContext::generate(),
+            traceparents: 0,
+            started: Instant::now(),
+            method: String::new(),
+            route: "other",
+            status: None,
+            code: None,
+        }
     }
 }
 
@@ -91,6 +103,22 @@ impl Trace {
         if (8..=64).contains(&value.len()) && value.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-')) {
             self.id = value.to_string();
         }
+    }
+
+    /// The W3C trace context of this request: the caller's when it sent one `traceparent`, otherwise a trace that
+    /// starts here. Outbound calls of the request carry its trace id, and the log line names it.
+    pub fn context(&self) -> &aip_execution::trace_context::TraceContext {
+        &self.context
+    }
+
+    /// Takes an inbound `traceparent`. Only a well-formed single header counts: a malformed one is ignored and a
+    /// second one discards both, as the W3C specification says, so the trace id in the log is always one the caller meant.
+    pub fn accept_traceparent(&mut self, value: &str) {
+        self.traceparents = self.traceparents.saturating_add(1);
+        self.context = match (self.traceparents, aip_execution::trace_context::TraceContext::parse(value)) {
+            (1, Some(inbound)) => inbound,
+            _ => aip_execution::trace_context::TraceContext::generate(),
+        };
     }
 
     pub fn begin(&mut self, method: &str, path: &str) {
@@ -118,6 +146,7 @@ impl Trace {
         let mut line = serde_json::Map::new();
         line.insert("event".into(), "request".into());
         line.insert("requestId".into(), self.id.clone().into());
+        line.insert("traceId".into(), self.context.trace_id().into());
         line.insert("method".into(), self.method.clone().into());
         line.insert("route".into(), self.route.into());
         line.insert("status".into(), self.status.map_or(serde_json::Value::Null, Into::into));
@@ -372,5 +401,31 @@ mod tests {
         assert_eq!(text, "data: x\n\nHTTP/1.1 200 OK\r\n\r\n");
         let v: serde_json::Value = serde_json::from_str(&line).expect("one JSON object");
         assert!(v["status"].is_null(), "{line}");
+    }
+
+    #[test]
+    fn the_log_line_names_the_callers_trace_and_a_second_header_discards_it() {
+        let trace_id = "0af7651916cd43dd8448eb211c80319c";
+        let mut t = Trace::default();
+        t.begin("GET", "/read");
+        let generated: serde_json::Value = serde_json::from_str(&t.line()).expect("one JSON object");
+        let own = generated["traceId"].as_str().expect("a request without traceparent still has a trace id").to_owned();
+        assert!(own.len() == 32 && own != trace_id && own.bytes().all(|b| b.is_ascii_hexdigit()), "{own}");
+
+        let mut t = Trace::default();
+        t.accept_traceparent(&format!("00-{trace_id}-b7ad6b7169203331-01"));
+        let line: serde_json::Value = serde_json::from_str(&t.line()).expect("one JSON object");
+        assert_eq!(line["traceId"], trace_id);
+        assert!(!t.line().contains("b7ad6b7169203331"), "the caller's span id is not logged: {}", t.line());
+
+        let mut malformed = Trace::default();
+        malformed.accept_traceparent("not-a-traceparent");
+        assert_ne!(malformed.context().trace_id(), "not-a-traceparent");
+        assert_eq!(malformed.context().trace_id().len(), 32);
+
+        let mut twice = Trace::default();
+        twice.accept_traceparent(&format!("00-{trace_id}-b7ad6b7169203331-01"));
+        twice.accept_traceparent(&format!("00-{trace_id}-b7ad6b7169203331-01"));
+        assert_ne!(twice.context().trace_id(), trace_id, "two headers are an invalid context and start a new trace");
     }
 }

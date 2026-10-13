@@ -274,7 +274,8 @@ pub(crate) async fn listen_with_fingerprint(
                             let (facts, keys, fingerprint, runtime) = (facts.clone(), request_keys.clone(), fingerprint.clone(), runtime.clone());
                             requests.spawn(async move {
                                 let _permit = permit;
-                                crate::serve_conn(sock, facts, keys, fingerprint, wire, runtime, deadline).await;
+                                // The scope holds the W3C trace context of this request for the outbound calls it makes.
+                                aip_execution::trace_context::scope(crate::serve_conn(sock, facts, keys, fingerprint, wire, runtime, deadline)).await;
                             });
                         }
                     }
