@@ -746,14 +746,15 @@ impl<'a> Ctx<'a> {
             if !seen.insert(&f.name) {
                 self.d("DUPLICATE", format!("필드 `{}` 중복", f.name), f.span);
             }
-            // 기본 키 `id`의 타입 검사는 별도 규칙(TYPE_MISMATCH)이 맡는다. 여기서는 다른 resource를 가리키는 필드만 막는다.
-            if f.ty.id_of && f.name != "id" {
+            if f.ty.id_of {
                 // 창시자 결정(2026-10-13): 객체 그래프 탐색이 되므로 "X에 속한다"의 철자는 참조 `X` 하나만 둔다.
-                self.d(
-                    "ID_FIELD_NEEDS_REFERENCE",
-                    format!("필드 `{}`는 `{}.Id`로 선언할 수 없음. `{}: {}`(참조)로 쓴다", f.name, f.ty.name, f.name, f.ty.name),
-                    f.ty.span,
-                );
+                // 기본 키도 같은 원칙이다(같은 뜻에 두 표기 금지): `id: Note.Id`는 맨 `Id`와 같은 열이라 철자만 둘이 된다.
+                let msg = if f.name == "id" {
+                    format!("기본 키는 `id: Id` 한 가지로만 선언한다. `id: {}.Id`는 쓸 수 없음", f.ty.name)
+                } else {
+                    format!("필드 `{}`는 `{}.Id`로 선언할 수 없음. `{}: {}`(참조)로 쓴다", f.name, f.ty.name, f.name, f.ty.name)
+                };
+                self.d("ID_FIELD_NEEDS_REFERENCE", msg, f.ty.span);
                 continue;
             }
             if let Some(tt) = self.type_of(Some(&r.name), &f.ty) {

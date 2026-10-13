@@ -372,8 +372,8 @@ a range that cannot be satisfied or a value outside it
 
 a resource field declared as `X.Id`
 
-- 원인: A field in `resource ... fields { }` is a database column. `club: Club` is a reference: a foreign key the database checks, joinable and traversable. `club: Club.Id` would be a bare number that merely happens to be a club id, with nothing keeping it valid. The language keeps one spelling for "this row belongs to a club", so the second is rejected. `X.Id` stays valid where no column is involved: `input`, `access` parameters, operation inputs and outputs.
-- 수정: Write `club: Club` (add `?` when it may be null). Adding the reference also adds a foreign key to the table.
+- 원인: A field in `resource ... fields { }` is a database column. `club: Club` is a reference: a foreign key the database checks, joinable and traversable. `club: Club.Id` would be a bare number that merely happens to be a club id, with nothing keeping it valid. The language keeps one spelling for "this row belongs to a club", so the second is rejected. The primary key follows the same rule: it is `id: Id` and nothing else, so `id: Note.Id` is rejected too. `X.Id` stays valid where no column is involved: `input`, `access` parameters, operation inputs and outputs.
+- 수정: Write `club: Club` (add `?` when it may be null). Adding the reference also adds a foreign key to the table. For the key, write `id: Id`.
 
 ```aip
 actor Member

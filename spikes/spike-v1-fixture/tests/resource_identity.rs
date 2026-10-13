@@ -14,7 +14,8 @@ fn assert_rejected(source: &str, code: &str) {
 
 #[test]
 fn explicitly_declared_ids_are_non_nullable_and_belong_to_their_resource() {
-    for ty in ["Int", "Text", "Id?", "Member.Id", "Item"] {
+    // `X.Id` spellings of the key are covered by id_field_rejected.rs (ID_FIELD_NEEDS_REFERENCE, D-A16).
+    for ty in ["Int", "Text", "Id?", "Item"] {
         let source = format!("resource Member {{ fields {{ id: Id }} }} actor Member resource Item {{ fields {{ id: {ty} }} }}");
         assert_rejected(&source, "TYPE_MISMATCH");
         let object = json!({"actor":"Member","resources":{"Member":{"fields":{"id":"Id"}},"Item":{"fields":{"id":ty}}}});
@@ -26,7 +27,7 @@ fn explicitly_declared_ids_are_non_nullable_and_belong_to_their_resource() {
             assert!(errors.iter().any(|error| error.code == "TYPE_MISMATCH"), "{form:?}: {errors:?}");
         }
     }
-    let valid = "resource Member { fields { id: Member.Id } } actor Member resource Item { fields { id: Item.Id; previous: Item? } }";
+    let valid = "resource Member { fields { id: Id } } actor Member resource Item { fields { id: Id; previous: Item? } }";
     assert!(load_str(valid, Form::A).is_ok());
     let join = "resource Member { fields { id: Id } } actor Member resource Membership { fields { member: Member; active: Bool } }";
     assert!(load_str(join, Form::A).is_ok(), "private relationship resources may omit id");

@@ -25,3 +25,15 @@ fn a_reference_and_non_column_places_still_accept_x_id() {
                access pick(a: Member, c: Club.Id) = a.id = a.id\n";
     load(src).expect("access argument keeps X.Id");
 }
+
+#[test]
+fn the_primary_key_is_spelled_id_and_nothing_else() {
+    // D-A16 applies to the key too: one meaning, one spelling. `id: Note.Id` used to pass because the
+    // column-name exemption skipped the check; the bare `Id` is the only accepted spelling.
+    for field in ["id: Note.Id", "id: Club.Id"] {
+        let errs = load(&format!("resource Note {{ fields {{ {field} }} }}\n")).expect_err(field);
+        let d = errs.iter().find(|d| d.code == "ID_FIELD_NEEDS_REFERENCE").unwrap_or_else(|| panic!("{field}: {errs:?}"));
+        assert!(d.msg.contains("id: Id"), "the message names the fix `id: Id`: {}", d.msg);
+    }
+    load("resource Note { fields { id: Id } }\n").expect("bare Id is the key");
+}
