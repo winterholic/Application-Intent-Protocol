@@ -5,7 +5,7 @@ use spike_v2_read::{connect_with_url, id_wire::IdWire, sqlgen};
 use spike_v5_sdk::contract_fingerprint_with_all_extensions;
 use spike_v6_transport::{
     idempotency_ddl,
-    server::{listen_with_prototype_options, ReadExtensions, ServerOptions, WorkerLang},
+    server::{listen_with_prototype_launch, ReadExtensions, ServerOptions, WorkerLang},
 };
 use std::{
     fs,
@@ -75,7 +75,9 @@ async fn write_slots_deadlines_and_shutdown_release_children_and_uncommitted_eff
             let quoted=serde_json::to_string(root.to_str().unwrap()).unwrap();
             fs::write(root.join("write.mjs"),format!("import fs from 'node:fs';\nconst root={quoted};\nexport async function run(input,ctx){{const r=await ctx.data.apply('Event','mark',[input.id]);fs.appendFileSync(root+'/pids',process.pid+'\\n');if(!fs.existsSync(root+'/finish')){{while(true){{}}}}return {{id:r.changed[0]??r.unchanged[0],count:1}};}}\n")).unwrap();
             fs::write(root.join("write.py"),format!("import os\nfrom pathlib import Path\nroot=Path({quoted})\nasync def run(input,ctx):\n    r=await ctx.data.apply('Event','mark',[input['id']])\n    with (root/'pids').open('a') as f: f.write(str(os.getpid())+'\\n')\n    if not (root/'finish').exists():\n        while True: pass\n    return {{'id':(r['changed']+r['unchanged'])[0],'count':1}}\n")).unwrap();
-            let server=listen_with_prototype_options(facts.clone(),IdWire::SafeNumber,"127.0.0.1:0".parse().unwrap(),"host=localhost dbname=postgres".into(),Some(ReadExtensions{lang,dir:root.clone()}),ServerOptions::default(),true).await.unwrap();
+            let server=listen_with_prototype_launch(facts.clone(),IdWire::SafeNumber,"127.0.0.1:0".parse().unwrap(),"host=localhost dbname=postgres".into(),Some(ReadExtensions{lang,dir:root.clone()}),ServerOptions::default(),true,
+                // The fixture writes PID logs and spawns busy loops, which the default macOS worker sandbox forbids.
+                spike_v4_worker::WorkerLaunchConfig{isolation:spike_v4_worker::Isolation::None,..Default::default()}).await.unwrap();
             let fp=contract_fingerprint_with_all_extensions(&facts,IdWire::SafeNumber);
             let token=server.keys.issue(1,60);
             let mut calls=vec![];
