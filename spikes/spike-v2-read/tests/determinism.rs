@@ -134,11 +134,26 @@ fn member_order_comments_and_spacing_do_not_change_the_digest() {
     }
 }
 
-/// Recorded, not endorsed: the order of an enum's values is part of the contract digest, although it is stored as a
-/// `CHECK (col IN (...))` where order means nothing. A reorder is therefore a contract change (a new digest, a
-/// migration plan) with no change of behavior. See the audit, F12.
+const ENUM_DECL: &str = "enum RecruitmentStatus { DRAFT, PUBLISHED, CLOSED }";
+
+/// The order of an enum's values carries no meaning: the database stores `CHECK (col IN (...))`. The founder decided
+/// on 2026-10-13 that a reorder must not be a contract change, so values are sorted when the facts are built and
+/// the digest, the DDL and the generated types all see one order (audit F12).
 #[test]
-fn enum_value_order_is_part_of_the_digest() {
-    let reordered = A.replacen("enum RecruitmentStatus { DRAFT, PUBLISHED, CLOSED }", "enum RecruitmentStatus { CLOSED, PUBLISHED, DRAFT }", 1);
-    assert_ne!(digest(&facts_of(&reordered)), digest(&facts_of(A)));
+fn enum_value_order_does_not_change_the_digest_or_the_ddl() {
+    let base = facts_of(A);
+    let reordered_src = A.replacen(ENUM_DECL, "enum RecruitmentStatus { CLOSED, PUBLISHED, DRAFT }", 1);
+    assert_ne!(reordered_src, A, "the sample must contain `{ENUM_DECL}`");
+    let reordered = facts_of(&reordered_src);
+    assert_eq!(digest(&reordered), digest(&base));
+    assert_eq!(ddl(&reordered), ddl(&base));
+    assert_eq!(reordered["enums"], base["enums"], "the facts hold one canonical order");
+    assert_eq!(base["enums"]["RecruitmentStatus"], json!(["CLOSED", "DRAFT", "PUBLISHED"]));
+}
+
+#[test]
+fn adding_an_enum_value_changes_the_digest() {
+    let added = A.replacen(ENUM_DECL, "enum RecruitmentStatus { DRAFT, PUBLISHED, CLOSED, ARCHIVED }", 1);
+    assert_ne!(added, A);
+    assert_ne!(digest(&facts_of(&added)), digest(&facts_of(A)));
 }

@@ -30,6 +30,7 @@
 | D-A15 | 모든 설계·구현 단위는 `PRINCIPLES.md` §4 관문을 통과해야 한다 | 창시자 정정 10-02 |
 | D-A16 | 제품 정의의 `resource ... fields { }` 안에서 `X.Id` 타입은 정의 오류(`ID_FIELD_NEEDS_REFERENCE`)다. 다른 resource를 가리키는 필드는 참조 `X` 하나뿐이다(외래 키가 생긴다). `X.Id`는 `input`·`access` 인자·operation 입출력처럼 DB 열이 아닌 자리에서는 계속 쓴다. 개발 조언 `ADVISORY_ID_WITHOUT_REFERENCE`는 오류로 대체돼 제거했다 | 창시자 2026-10-13: "3번도 너 말대로 추천대로 하자 어차피 객체 그래프탐색이 되는데, 괜히 선택지를 또 주는거 자체가 내가 지향한설계와 다른 거 같아". 감사 F8(`plan-docs/reviews/2026-10-13-ai-friendliness-runtime-reliability-audit.md`). 이미 `X.Id` 열(외래 키 없는 bigint)을 가진 DB는 참조로 바꾸는 migration 경로가 있다(`new_resource_references`) |
 | D-A11 | 장기 일관성과 완성도를 단기 구현 속도보다 우선한다 | 철학 문서 §0, §12 |
+| D-A18 | enum 값의 순서는 계약이 아니다. 값 순서만 바꾼 변경은 digest·DDL·생성 타입을 바꾸지 않고, 값을 더하거나 빼면 바꾼다. 제품 정의는 모든 enum 값을 정렬해 facts에 싣고, PoC Core IR은 `ordered`가 아닌 enum만 정렬한다(`ordered`는 위치가 서열이라 순서가 의미다) | 창시자 2026-10-13 결정을 전달한 작업 지시("값 순서만 바꿔도 계약 변경이 되지 않도록 digest 계산 시 열거형 값을 정규화(정렬)"). 사용자 원문 그대로의 인용은 없다. 감사 F12. 이 결정으로 기존 배포와 비교하면 순서가 정렬되지 않은 enum의 digest가 한 번 바뀐다 |
 
 ## Proposed
 

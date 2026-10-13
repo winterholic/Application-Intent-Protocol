@@ -11,7 +11,7 @@ export interface Contract {
       date: string;
       id: Id<"Event">;
       link: string;
-      phase: "READY" | "DONE";
+      phase: "DONE" | "READY";
       title: string;
     };
     traverse: {
@@ -20,7 +20,7 @@ export interface Contract {
       date: string;
       id: Id<"Event">;
       link: string;
-      phase: "READY" | "DONE";
+      phase: "DONE" | "READY";
       title: string;
     };
     filter: "date.eq" | "date.gte" | "id.eq" | "link.eq" | "phase.eq" | "title.eq" | "title.prefix";
@@ -47,4 +47,4 @@ export interface ApplyContract {
 }
 
 import type {ApplyBinding} from '../../spike-v5-sdk/sdk/generic.ts';
-export const contract: ApplyBinding<Contract, ApplyContract> = {fingerprint:'f1f1979006a2e937f26c50d725e0e16bc1dbb3ec20472687147270777b9bc101',idWire:'decimal-string-v13'};
+export const contract: ApplyBinding<Contract, ApplyContract> = {fingerprint:'867ff94ff54a4bf1b821eeebc181024c9c514c57bd8b380760a9c14c807ec02a',idWire:'decimal-string-v13'};

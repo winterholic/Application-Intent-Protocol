@@ -1329,13 +1329,13 @@
       "FAILED"
     ],
     "TaskStatus": [
-      "OPEN",
+      "ARCHIVED",
       "DONE",
-      "ARCHIVED"
+      "OPEN"
     ],
     "WorkspaceRole": [
-      "MEMBER",
-      "ADMIN"
+      "ADMIN",
+      "MEMBER"
     ]
   },
   "events": {

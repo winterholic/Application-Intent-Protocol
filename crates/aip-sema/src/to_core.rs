@@ -443,8 +443,13 @@ impl<'x, 'a> Lower<'x, 'a> {
                 ast::Decl::Actor(x) => p.actor = Some(self.actor(x)),
                 ast::Decl::Enum(x) => {
                     self.mark(format!("enums.{}", x.name.name), x.span);
-                    p.enums
-                        .insert(x.name.name.clone(), ir::EnumDef { ordered: x.ordered, values: x.values.iter().map(|v| v.name.clone()).collect() });
+                    let mut values: Vec<String> = x.values.iter().map(|v| v.name.clone()).collect();
+                    // 서열이 없는 enum의 값 순서는 의미가 없다(DB는 CHECK IN). 순서만 바꾼 변경이 digest를 바꾸지 않도록
+                    // 정렬한다(창시자 결정 2026-10-13, 감사 F12). `ordered`는 위치가 서열이라 그대로 둔다.
+                    if !x.ordered {
+                        values.sort();
+                    }
+                    p.enums.insert(x.name.name.clone(), ir::EnumDef { ordered: x.ordered, values });
                 }
                 ast::Decl::Record(x) => {
                     self.mark(format!("records.{}", x.name.name), x.span);

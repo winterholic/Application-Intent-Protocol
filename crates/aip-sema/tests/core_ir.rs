@@ -110,7 +110,7 @@ fn a_different_meaning_changes_the_digest() {
     let (a, _, _) = lower(&src);
     let (b, _, _) = lower(&changed);
     assert_ne!(aip_ir::digest(&a), aip_ir::digest(&b));
-    assert_eq!(b.enums["OrderStatus"].values.last().map(String::as_str), Some("ARCHIVED"));
+    assert!(b.enums["OrderStatus"].values.contains(&"ARCHIVED".to_string()), "a new value is part of the enum");
 }
 
 #[test]
@@ -489,4 +489,15 @@ fn cross_tenant_reaches_core_ir_on_declarations_without_a_caller() {
     // without the modifier the key is absent, so existing programs serialize as before
     let (p, _, _) = lower("record Ping { id: Uuid }\nevent E { n: Int }\non E e do { }\n");
     assert!(json(&p)["reactions"][0].get("cross_tenant").is_none());
+}
+
+/// The values of an unordered enum have no order: the database stores `CHECK (col IN (...))`. A reorder must not
+/// change the Core IR digest (founder decision 2026-10-13, audit F12). An `ordered` enum ranks by position, so
+/// its order stays meaningful and a reorder is still a change.
+#[test]
+fn unordered_enum_value_order_does_not_change_the_core_digest() {
+    let digest_of = |decl: &str| aip_ir::digest(&lower(&format!("{decl}\nrecord Ping {{ id: Uuid role: Role }}\n")).0);
+    assert_eq!(digest_of("enum Role { A B C }"), digest_of("enum Role { C B A }"));
+    assert_ne!(digest_of("enum Role { A B C }"), digest_of("enum Role { A B C D }"), "adding a value is a change");
+    assert_ne!(digest_of("enum Role ordered { A < B < C }"), digest_of("enum Role ordered { C < B < A }"), "rank is part of an ordered enum");
 }

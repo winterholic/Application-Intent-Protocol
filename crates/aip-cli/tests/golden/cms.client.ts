@@ -4,7 +4,7 @@
 export type ApprovalDecision = 'APPROVE' | 'REJECT';
 export type ApprovalStatus = 'NONE' | 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED' | 'EXPIRED';
 export type ConsentStatus = 'NONE' | 'GIVEN' | 'OUTDATED' | 'WITHDRAWN';
-export type MemberRole = 'USER' | 'SUPPORT' | 'ROOT';
+export type MemberRole = 'ROOT' | 'SUPPORT' | 'USER';
 
 
 export type ArticleDraftsInput = { site: string };

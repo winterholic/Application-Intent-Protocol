@@ -26,7 +26,7 @@ fn where_contract_uses_v15_scalar_types_without_expanding_read_projection() {
     let apply = types.split("export interface ApplyContract").nth(1).expect("ApplyContract projection");
 
     assert!(read.contains("link: string;"), "Url remains a string in the read contract");
-    assert!(read.contains("phase: \"READY\" | \"DONE\";"), "Enum variants remain a literal union in the read contract");
+    assert!(read.contains("phase: \"DONE\" | \"READY\";"), "Enum variants remain a literal union in the read contract");
     assert!(read.contains("date: string;"), "Time remains a string in the read contract");
     assert!(read.contains("title: string;"), "title remains publicly readable");
     assert!(!types.contains("privateNote:"), "a field absent from public select/filter stays out of both projections");
@@ -35,7 +35,7 @@ fn where_contract_uses_v15_scalar_types_without_expanding_read_projection() {
     assert!(apply.contains("maxRows: 20;"));
     assert!(apply.contains("targets: \"id\" | \"where\";"));
     assert!(apply.contains("link: string;"), "Url eq is executable as a text value");
-    assert!(apply.contains("phase: \"READY\" | \"DONE\";"), "Enum where is restricted to declared variants");
+    assert!(apply.contains("phase: \"DONE\" | \"READY\";"), "Enum where is restricted to declared variants");
     assert!(apply.contains("date: string;"), "Time eq is represented as a string input");
     assert!(!apply.contains("title:"), "title.prefix alone is not an apply where value");
 }
@@ -58,7 +58,7 @@ fn adding_a_public_enum_member_changes_read_and_apply_fingerprints() {
             contract_fingerprint_with_apply(&changed, wire),
             "a public where enum change must change the combined contract fingerprint"
         );
-        assert!(contract_ts_with_apply(&changed, wire).contains("\"READY\" | \"DONE\" | \"PAUSED\";"));
+        assert!(contract_ts_with_apply(&changed, wire).contains("\"DONE\" | \"PAUSED\" | \"READY\";"));
     }
 }
 

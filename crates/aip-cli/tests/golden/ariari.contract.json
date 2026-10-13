@@ -4944,17 +4944,17 @@
   "core_ir": "aip-core/0.11",
   "enums": {
     "AccessType": [
-      "PUBLIC",
-      "CLUB_ONLY"
+      "CLUB_ONLY",
+      "PUBLIC"
     ],
     "Affiliation": [
       "INTERNAL",
       "UNION"
     ],
     "ApplyStatus": [
-      "PENDING",
-      "INTERVIEW",
       "APPROVED",
+      "INTERVIEW",
+      "PENDING",
       "REFUSED"
     ],
     "ApprovalDecision": [
@@ -4975,14 +4975,14 @@
       "ADMIN"
     ],
     "Field": [
-      "CULTURE",
-      "VOLUNTEER",
       "ACADEMIC",
-      "STARTUP",
       "CAREER",
-      "SPORTS",
+      "CULTURE",
+      "ETC",
       "SOCIAL",
-      "ETC"
+      "SPORTS",
+      "STARTUP",
+      "VOLUNTEER"
     ],
     "JobStatus": [
       "QUEUED",
@@ -4991,61 +4991,61 @@
       "FAILED"
     ],
     "MemberRole": [
-      "USER",
-      "SUPER_ADMIN"
+      "SUPER_ADMIN",
+      "USER"
     ],
     "MemberStatus": [
       "ACTIVE",
       "ENDED"
     ],
     "QuestionKind": [
-      "TEXT",
       "CHOICE",
-      "FILE"
+      "FILE",
+      "TEXT"
     ],
     "RecruitmentSort": [
+      "DEADLINE",
       "LATEST",
-      "VIEWS",
-      "SCRAPS",
       "OLDEST",
-      "DEADLINE"
+      "SCRAPS",
+      "VIEWS"
     ],
     "RecruitmentStatus": [
+      "CLOSED",
       "PENDING_APPROVAL",
-      "PUBLISHED",
-      "CLOSED"
+      "PUBLISHED"
     ],
     "Region": [
       "ANY",
       "CAPITAL",
       "CHUNGCHEONG",
-      "GYEONGNAM",
-      "GYEONGBUK",
-      "JEOLLA",
       "GANGWON",
-      "JEONBUK",
+      "GYEONGBUK",
+      "GYEONGNAM",
       "JEJU",
+      "JEOLLA",
+      "JEONBUK",
       "OVERSEAS"
     ],
     "ReportStatus": [
+      "DISMISSED",
       "OPEN",
-      "RESOLVED",
-      "DISMISSED"
+      "RESOLVED"
     ],
     "ReportTarget": [
       "CLUB_REVIEW",
+      "COMMENT",
       "PASS_REVIEW",
-      "QUESTION",
-      "COMMENT"
+      "QUESTION"
     ],
     "Settlement": [
+      "DISPUTED",
       "OPEN",
-      "SETTLED",
-      "DISPUTED"
+      "SETTLED"
     ],
     "Target": [
-      "UNDERGRADUATE",
       "GRADUATE",
+      "UNDERGRADUATE",
       "WORKER"
     ]
   },

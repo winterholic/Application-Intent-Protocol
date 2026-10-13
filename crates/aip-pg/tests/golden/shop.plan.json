@@ -33,9 +33,9 @@
     "ddl": [
       "CREATE EXTENSION IF NOT EXISTS btree_gist",
       "CREATE EXTENSION IF NOT EXISTS pgcrypto",
-      "CREATE TABLE \"customer\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"email\" text NOT NULL,\n  \"role\" text NOT NULL DEFAULT 'USER',\n  CONSTRAINT \"customer__role_enum\" CHECK (\"role\" IN ('USER', 'STAFF'))\n)",
+      "CREATE TABLE \"customer\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"email\" text NOT NULL,\n  \"role\" text NOT NULL DEFAULT 'USER',\n  CONSTRAINT \"customer__role_enum\" CHECK (\"role\" IN ('STAFF', 'USER'))\n)",
       "CREATE TABLE \"product\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"updated_at\" timestamptz NOT NULL DEFAULT now(),\n  \"version\" bigint NOT NULL DEFAULT 1,\n  \"name\" text NOT NULL,\n  \"price\" bigint NOT NULL,\n  \"stock\" bigint NOT NULL,\n  \"featured\" boolean NOT NULL DEFAULT FALSE\n)",
-      "CREATE TABLE \"order\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"customer_id\" uuid NOT NULL,\n  \"product_id\" uuid NOT NULL,\n  \"quantity\" bigint NOT NULL,\n  \"amount\" bigint NOT NULL,\n  \"status\" text NOT NULL DEFAULT 'PENDING',\n  \"payment_ref\" text,\n  \"paid_at\" timestamptz,\n  CONSTRAINT \"order__status_enum\" CHECK (\"status\" IN ('PENDING', 'PAID', 'CANCELLED', 'REFUNDED'))\n)",
+      "CREATE TABLE \"order\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"customer_id\" uuid NOT NULL,\n  \"product_id\" uuid NOT NULL,\n  \"quantity\" bigint NOT NULL,\n  \"amount\" bigint NOT NULL,\n  \"status\" text NOT NULL DEFAULT 'PENDING',\n  \"payment_ref\" text,\n  \"paid_at\" timestamptz,\n  CONSTRAINT \"order__status_enum\" CHECK (\"status\" IN ('CANCELLED', 'PAID', 'PENDING', 'REFUNDED'))\n)",
       "CREATE UNIQUE INDEX \"customer__u3\" ON \"customer\" (\"email\")",
       "CREATE OR REPLACE FUNCTION \"product__touch_fn\"() RETURNS trigger LANGUAGE plpgsql AS $aip$ BEGIN NEW.\"updated_at\" := now(); RETURN NEW; END $aip$;\nCREATE TRIGGER \"product__touch\" BEFORE UPDATE ON \"product\" FOR EACH ROW EXECUTE FUNCTION \"product__touch_fn\"()",
       "CREATE OR REPLACE FUNCTION \"product__version_fn\"() RETURNS trigger LANGUAGE plpgsql AS $aip$ BEGIN IF (to_jsonb(NEW) - ARRAY['stock', 'updated_at', 'version']::text[]) IS DISTINCT FROM (to_jsonb(OLD) - ARRAY['stock', 'updated_at', 'version']::text[]) THEN NEW.\"version\" := OLD.\"version\" + 1; END IF; RETURN NEW; END $aip$;\nCREATE TRIGGER \"product__version\" BEFORE UPDATE ON \"product\" FOR EACH ROW EXECUTE FUNCTION \"product__version_fn\"()",
@@ -307,13 +307,13 @@
     },
     "enums": {
       "CustomerRole": [
-        "USER",
-        "STAFF"
+        "STAFF",
+        "USER"
       ],
       "OrderStatus": [
-        "PENDING",
-        "PAID",
         "CANCELLED",
+        "PAID",
+        "PENDING",
         "REFUNDED"
       ]
     },

@@ -33,7 +33,7 @@
       "CREATE EXTENSION IF NOT EXISTS btree_gist",
       "CREATE EXTENSION IF NOT EXISTS pgcrypto",
       "CREATE TABLE \"club\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"name\" text NOT NULL\n)",
-      "CREATE TABLE \"member\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"nickname\" text NOT NULL,\n  \"role\" text NOT NULL DEFAULT 'USER',\n  CONSTRAINT \"member__role_enum\" CHECK (\"role\" IN ('USER', 'SUPER_ADMIN'))\n)",
+      "CREATE TABLE \"member\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"nickname\" text NOT NULL,\n  \"role\" text NOT NULL DEFAULT 'USER',\n  CONSTRAINT \"member__role_enum\" CHECK (\"role\" IN ('SUPER_ADMIN', 'USER'))\n)",
       "CREATE TABLE \"workspace\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"name\" text NOT NULL\n)",
       "CREATE TABLE \"club_member\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"club_id\" uuid NOT NULL,\n  \"member_id\" uuid,\n  \"role\" text NOT NULL DEFAULT 'GENERAL',\n  \"status\" text NOT NULL DEFAULT 'ACTIVE',\n  CONSTRAINT \"club_member__role_enum\" CHECK (\"role\" IN ('GENERAL', 'MANAGER', 'ADMIN')),\n  CONSTRAINT \"club_member__status_enum\" CHECK (\"status\" IN ('ACTIVE', 'ENDED'))\n)",
       "CREATE TABLE \"project\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"workspace_id\" uuid NOT NULL,\n  \"title\" text NOT NULL\n)",
@@ -318,8 +318,8 @@
         "ADMIN"
       ],
       "MemberRole": [
-        "USER",
-        "SUPER_ADMIN"
+        "SUPER_ADMIN",
+        "USER"
       ],
       "Status": [
         "ACTIVE",

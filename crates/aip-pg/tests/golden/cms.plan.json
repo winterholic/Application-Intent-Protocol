@@ -42,7 +42,7 @@
     "ddl": [
       "CREATE EXTENSION IF NOT EXISTS btree_gist",
       "CREATE EXTENSION IF NOT EXISTS pgcrypto",
-      "CREATE TABLE \"member\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"email\" text NOT NULL,\n  \"name\" text NOT NULL,\n  \"role\" text NOT NULL DEFAULT 'USER',\n  CONSTRAINT \"member__role_enum\" CHECK (\"role\" IN ('USER', 'SUPPORT', 'ROOT'))\n)",
+      "CREATE TABLE \"member\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"email\" text NOT NULL,\n  \"name\" text NOT NULL,\n  \"role\" text NOT NULL DEFAULT 'USER',\n  CONSTRAINT \"member__role_enum\" CHECK (\"role\" IN ('ROOT', 'SUPPORT', 'USER'))\n)",
       "CREATE TABLE \"site\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"name\" text NOT NULL\n)",
       "CREATE TABLE \"article\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"updated_at\" timestamptz NOT NULL DEFAULT now(),\n  \"deleted_at\" timestamptz,\n  \"site_id\" uuid NOT NULL,\n  \"author_id\" uuid,\n  \"title\" text NOT NULL,\n  \"body\" text NOT NULL,\n  \"reviewed\" boolean NOT NULL DEFAULT FALSE\n)",
       "CREATE TABLE \"article_published\" (LIKE \"article\", \"published_at\" timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (\"id\"))",
@@ -358,9 +358,9 @@
         "WITHDRAWN"
       ],
       "MemberRole": [
-        "USER",
+        "ROOT",
         "SUPPORT",
-        "ROOT"
+        "USER"
       ]
     },
     "events": {},

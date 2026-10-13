@@ -62,11 +62,11 @@ fn lexically_earlier_tail_keeps_its_inline_fk() {
 }
 
 #[test]
-fn existing_acyclic_fixture_ddl_digest_is_unchanged() {
+fn existing_acyclic_fixture_ddl_digest_is_pinned() {
     let source = include_str!("../../spike-v1-fixture/fixture/recruitment.aip");
     let ddl = sqlgen::create_ddl_in("aip_ref_baseline", &facts(source)).unwrap();
     let actual = digest(&json!(ddl));
-    assert_eq!(actual, "e8297a345d46f6b2399ca194720e5f7e663e3772a53c5975e33f27126ce2ade5");
+    assert_eq!(actual, "1c7684a2ac974f1f05de5a0749f5586129557ae3eb27d8bdaf63a2ad633b1eba");
     assert!(!ddl.iter().any(|s| s.contains("ADD CONSTRAINT aip_fk_")));
 }
 

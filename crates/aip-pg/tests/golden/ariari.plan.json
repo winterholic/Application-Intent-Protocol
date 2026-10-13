@@ -106,22 +106,22 @@
       "CREATE EXTENSION IF NOT EXISTS btree_gist",
       "CREATE EXTENSION IF NOT EXISTS pgcrypto",
       "CREATE TABLE \"school\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"name\" text NOT NULL,\n  \"email_domain\" text NOT NULL\n)",
-      "CREATE TABLE \"club\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"name\" text NOT NULL,\n  \"intro\" text NOT NULL,\n  \"school_id\" uuid,\n  \"affiliation\" text NOT NULL,\n  \"field\" text NOT NULL,\n  \"region\" text NOT NULL,\n  \"target\" text NOT NULL,\n  \"profile\" text,\n  \"banner\" text,\n  \"views\" bigint NOT NULL DEFAULT 0,\n  CONSTRAINT \"club__affiliation_enum\" CHECK (\"affiliation\" IN ('INTERNAL', 'UNION')),\n  CONSTRAINT \"club__field_enum\" CHECK (\"field\" IN ('CULTURE', 'VOLUNTEER', 'ACADEMIC', 'STARTUP', 'CAREER', 'SPORTS', 'SOCIAL', 'ETC')),\n  CONSTRAINT \"club__region_enum\" CHECK (\"region\" IN ('ANY', 'CAPITAL', 'CHUNGCHEONG', 'GYEONGNAM', 'GYEONGBUK', 'JEOLLA', 'GANGWON', 'JEONBUK', 'JEJU', 'OVERSEAS')),\n  CONSTRAINT \"club__target_enum\" CHECK (\"target\" IN ('UNDERGRADUATE', 'GRADUATE', 'WORKER'))\n)",
+      "CREATE TABLE \"club\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"name\" text NOT NULL,\n  \"intro\" text NOT NULL,\n  \"school_id\" uuid,\n  \"affiliation\" text NOT NULL,\n  \"field\" text NOT NULL,\n  \"region\" text NOT NULL,\n  \"target\" text NOT NULL,\n  \"profile\" text,\n  \"banner\" text,\n  \"views\" bigint NOT NULL DEFAULT 0,\n  CONSTRAINT \"club__affiliation_enum\" CHECK (\"affiliation\" IN ('INTERNAL', 'UNION')),\n  CONSTRAINT \"club__field_enum\" CHECK (\"field\" IN ('ACADEMIC', 'CAREER', 'CULTURE', 'ETC', 'SOCIAL', 'SPORTS', 'STARTUP', 'VOLUNTEER')),\n  CONSTRAINT \"club__region_enum\" CHECK (\"region\" IN ('ANY', 'CAPITAL', 'CHUNGCHEONG', 'GANGWON', 'GYEONGBUK', 'GYEONGNAM', 'JEJU', 'JEOLLA', 'JEONBUK', 'OVERSEAS')),\n  CONSTRAINT \"club__target_enum\" CHECK (\"target\" IN ('GRADUATE', 'UNDERGRADUATE', 'WORKER'))\n)",
       "CREATE TABLE \"club_event\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"club_id\" uuid NOT NULL,\n  \"title\" text NOT NULL,\n  \"at\" timestamptz NOT NULL,\n  \"place\" text NOT NULL\n)",
       "CREATE TABLE \"club_faq\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"club_id\" uuid NOT NULL,\n  \"question\" text NOT NULL,\n  \"answer\" text NOT NULL,\n  \"rank\" text NOT NULL\n)",
-      "CREATE TABLE \"financial_record\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"version\" bigint NOT NULL DEFAULT 1,\n  \"club_id\" uuid NOT NULL,\n  \"at\" timestamptz NOT NULL,\n  \"amount\" numeric NOT NULL,\n  \"memo\" text NOT NULL,\n  \"settlement\" text NOT NULL DEFAULT 'OPEN',\n  CONSTRAINT \"financial_record__settlement_enum\" CHECK (\"settlement\" IN ('OPEN', 'SETTLED', 'DISPUTED'))\n)",
+      "CREATE TABLE \"financial_record\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"version\" bigint NOT NULL DEFAULT 1,\n  \"club_id\" uuid NOT NULL,\n  \"at\" timestamptz NOT NULL,\n  \"amount\" numeric NOT NULL,\n  \"memo\" text NOT NULL,\n  \"settlement\" text NOT NULL DEFAULT 'OPEN',\n  CONSTRAINT \"financial_record__settlement_enum\" CHECK (\"settlement\" IN ('DISPUTED', 'OPEN', 'SETTLED'))\n)",
       "CREATE TABLE \"financial_record_history\" (\n  \"id\" uuid NOT NULL,\n  \"version\" bigint NOT NULL,\n  \"data\" jsonb NOT NULL,\n  \"at\" timestamptz NOT NULL DEFAULT now(),\n  PRIMARY KEY (\"id\", \"version\")\n)",
-      "CREATE TABLE \"member\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"updated_at\" timestamptz NOT NULL DEFAULT now(),\n  \"email\" text NOT NULL,\n  \"nickname\" text NOT NULL,\n  \"kakao_id\" text NOT NULL,\n  \"role\" text NOT NULL DEFAULT 'USER',\n  \"school_id\" uuid,\n  \"profile\" text,\n  CONSTRAINT \"member__role_enum\" CHECK (\"role\" IN ('USER', 'SUPER_ADMIN'))\n)",
-      "CREATE TABLE \"recruitment\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"club_id\" uuid NOT NULL,\n  \"title\" text NOT NULL,\n  \"body\" text NOT NULL,\n  \"poster\" text,\n  \"period\" tstzrange NOT NULL,\n  \"field\" text NOT NULL,\n  \"region\" text NOT NULL,\n  \"target\" text NOT NULL,\n  \"external_url\" text,\n  \"status\" text NOT NULL DEFAULT 'PENDING_APPROVAL',\n  \"early_closed\" boolean NOT NULL DEFAULT FALSE,\n  \"form_id\" uuid NOT NULL,\n  \"form_version\" bigint NOT NULL,\n  \"views\" bigint NOT NULL DEFAULT 0,\n  CONSTRAINT \"recruitment__field_enum\" CHECK (\"field\" IN ('CULTURE', 'VOLUNTEER', 'ACADEMIC', 'STARTUP', 'CAREER', 'SPORTS', 'SOCIAL', 'ETC')),\n  CONSTRAINT \"recruitment__region_enum\" CHECK (\"region\" IN ('ANY', 'CAPITAL', 'CHUNGCHEONG', 'GYEONGNAM', 'GYEONGBUK', 'JEOLLA', 'GANGWON', 'JEONBUK', 'JEJU', 'OVERSEAS')),\n  CONSTRAINT \"recruitment__target_enum\" CHECK (\"target\" IN ('UNDERGRADUATE', 'GRADUATE', 'WORKER')),\n  CONSTRAINT \"recruitment__status_enum\" CHECK (\"status\" IN ('PENDING_APPROVAL', 'PUBLISHED', 'CLOSED'))\n)",
+      "CREATE TABLE \"member\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"updated_at\" timestamptz NOT NULL DEFAULT now(),\n  \"email\" text NOT NULL,\n  \"nickname\" text NOT NULL,\n  \"kakao_id\" text NOT NULL,\n  \"role\" text NOT NULL DEFAULT 'USER',\n  \"school_id\" uuid,\n  \"profile\" text,\n  CONSTRAINT \"member__role_enum\" CHECK (\"role\" IN ('SUPER_ADMIN', 'USER'))\n)",
+      "CREATE TABLE \"recruitment\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"club_id\" uuid NOT NULL,\n  \"title\" text NOT NULL,\n  \"body\" text NOT NULL,\n  \"poster\" text,\n  \"period\" tstzrange NOT NULL,\n  \"field\" text NOT NULL,\n  \"region\" text NOT NULL,\n  \"target\" text NOT NULL,\n  \"external_url\" text,\n  \"status\" text NOT NULL DEFAULT 'PENDING_APPROVAL',\n  \"early_closed\" boolean NOT NULL DEFAULT FALSE,\n  \"form_id\" uuid NOT NULL,\n  \"form_version\" bigint NOT NULL,\n  \"views\" bigint NOT NULL DEFAULT 0,\n  CONSTRAINT \"recruitment__field_enum\" CHECK (\"field\" IN ('ACADEMIC', 'CAREER', 'CULTURE', 'ETC', 'SOCIAL', 'SPORTS', 'STARTUP', 'VOLUNTEER')),\n  CONSTRAINT \"recruitment__region_enum\" CHECK (\"region\" IN ('ANY', 'CAPITAL', 'CHUNGCHEONG', 'GANGWON', 'GYEONGBUK', 'GYEONGNAM', 'JEJU', 'JEOLLA', 'JEONBUK', 'OVERSEAS')),\n  CONSTRAINT \"recruitment__target_enum\" CHECK (\"target\" IN ('GRADUATE', 'UNDERGRADUATE', 'WORKER')),\n  CONSTRAINT \"recruitment__status_enum\" CHECK (\"status\" IN ('CLOSED', 'PENDING_APPROVAL', 'PUBLISHED'))\n)",
       "CREATE TABLE \"recruitment_bookmark\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"recruitment_id\" uuid NOT NULL,\n  \"member_id\" uuid NOT NULL\n)",
-      "CREATE TABLE \"report\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"reporter_id\" uuid,\n  \"target_type\" text NOT NULL,\n  \"target_id\" uuid NOT NULL,\n  \"reason\" text NOT NULL,\n  \"status\" text NOT NULL DEFAULT 'OPEN',\n  CONSTRAINT \"report__target_type_enum\" CHECK (\"target_type\" IN ('ClubReview', 'PassReview', 'ClubQuestion', 'ActivityComment')),\n  CONSTRAINT \"report__status_enum\" CHECK (\"status\" IN ('OPEN', 'RESOLVED', 'DISMISSED'))\n)",
-      "CREATE TABLE \"apply\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"member_id\" uuid NOT NULL,\n  \"recruitment_id\" uuid NOT NULL,\n  \"form_id\" uuid NOT NULL,\n  \"form_version\" bigint NOT NULL,\n  \"answers\" jsonb NOT NULL,\n  \"portfolio_url\" text,\n  \"file\" text,\n  \"status\" text NOT NULL DEFAULT 'PENDING',\n  CONSTRAINT \"apply__status_enum\" CHECK (\"status\" IN ('PENDING', 'INTERVIEW', 'APPROVED', 'REFUSED'))\n)",
+      "CREATE TABLE \"report\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"reporter_id\" uuid,\n  \"target_type\" text NOT NULL,\n  \"target_id\" uuid NOT NULL,\n  \"reason\" text NOT NULL,\n  \"status\" text NOT NULL DEFAULT 'OPEN',\n  CONSTRAINT \"report__target_type_enum\" CHECK (\"target_type\" IN ('ClubReview', 'PassReview', 'ClubQuestion', 'ActivityComment')),\n  CONSTRAINT \"report__status_enum\" CHECK (\"status\" IN ('DISMISSED', 'OPEN', 'RESOLVED'))\n)",
+      "CREATE TABLE \"apply\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"member_id\" uuid NOT NULL,\n  \"recruitment_id\" uuid NOT NULL,\n  \"form_id\" uuid NOT NULL,\n  \"form_version\" bigint NOT NULL,\n  \"answers\" jsonb NOT NULL,\n  \"portfolio_url\" text,\n  \"file\" text,\n  \"status\" text NOT NULL DEFAULT 'PENDING',\n  CONSTRAINT \"apply__status_enum\" CHECK (\"status\" IN ('APPROVED', 'INTERVIEW', 'PENDING', 'REFUSED'))\n)",
       "CREATE TABLE \"apply_draft\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"updated_at\" timestamptz NOT NULL DEFAULT now(),\n  \"member_id\" uuid NOT NULL,\n  \"recruitment_id\" uuid NOT NULL,\n  \"answers\" jsonb NOT NULL,\n  \"portfolio_url\" text,\n  \"file\" text\n)",
       "CREATE TABLE \"apply_form\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"version\" bigint NOT NULL DEFAULT 1,\n  \"club_id\" uuid NOT NULL,\n  \"questions\" jsonb NOT NULL\n)",
       "CREATE TABLE \"apply_form_history\" (\n  \"id\" uuid NOT NULL,\n  \"version\" bigint NOT NULL,\n  \"data\" jsonb NOT NULL,\n  \"at\" timestamptz NOT NULL DEFAULT now(),\n  PRIMARY KEY (\"id\", \"version\")\n)",
       "CREATE TABLE \"attendance\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"event_id\" uuid NOT NULL,\n  \"member_id\" uuid\n)",
       "CREATE TABLE \"block\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"blocker_id\" uuid NOT NULL,\n  \"blocked_id\" uuid NOT NULL\n)",
-      "CREATE TABLE \"club_activity\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"updated_at\" timestamptz NOT NULL DEFAULT now(),\n  \"club_id\" uuid NOT NULL,\n  \"author_id\" uuid,\n  \"access\" text NOT NULL,\n  \"body\" text NOT NULL,\n  CONSTRAINT \"club_activity__access_enum\" CHECK (\"access\" IN ('PUBLIC', 'CLUB_ONLY'))\n)",
+      "CREATE TABLE \"club_activity\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"updated_at\" timestamptz NOT NULL DEFAULT now(),\n  \"club_id\" uuid NOT NULL,\n  \"author_id\" uuid,\n  \"access\" text NOT NULL,\n  \"body\" text NOT NULL,\n  CONSTRAINT \"club_activity__access_enum\" CHECK (\"access\" IN ('CLUB_ONLY', 'PUBLIC'))\n)",
       "CREATE TABLE \"club_bookmark\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"club_id\" uuid NOT NULL,\n  \"member_id\" uuid NOT NULL\n)",
       "CREATE TABLE \"club_member\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"club_id\" uuid NOT NULL,\n  \"member_id\" uuid,\n  \"name\" text NOT NULL,\n  \"role\" text NOT NULL DEFAULT 'GENERAL',\n  \"status\" text NOT NULL DEFAULT 'ACTIVE',\n  CONSTRAINT \"club_member__role_enum\" CHECK (\"role\" IN ('GENERAL', 'MANAGER', 'ADMIN')),\n  CONSTRAINT \"club_member__status_enum\" CHECK (\"status\" IN ('ACTIVE', 'ENDED'))\n)",
       "CREATE TABLE \"club_notice\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"updated_at\" timestamptz NOT NULL DEFAULT now(),\n  \"version\" bigint NOT NULL DEFAULT 1,\n  \"club_id\" uuid NOT NULL,\n  \"author_id\" uuid,\n  \"title\" text NOT NULL,\n  \"body\" text NOT NULL,\n  \"fixed\" boolean NOT NULL DEFAULT FALSE\n)",
@@ -2176,17 +2176,17 @@
     },
     "enums": {
       "AccessType": [
-        "PUBLIC",
-        "CLUB_ONLY"
+        "CLUB_ONLY",
+        "PUBLIC"
       ],
       "Affiliation": [
         "INTERNAL",
         "UNION"
       ],
       "ApplyStatus": [
-        "PENDING",
-        "INTERVIEW",
         "APPROVED",
+        "INTERVIEW",
+        "PENDING",
         "REFUSED"
       ],
       "ApprovalDecision": [
@@ -2207,14 +2207,14 @@
         "ADMIN"
       ],
       "Field": [
-        "CULTURE",
-        "VOLUNTEER",
         "ACADEMIC",
-        "STARTUP",
         "CAREER",
-        "SPORTS",
+        "CULTURE",
+        "ETC",
         "SOCIAL",
-        "ETC"
+        "SPORTS",
+        "STARTUP",
+        "VOLUNTEER"
       ],
       "JobStatus": [
         "QUEUED",
@@ -2223,61 +2223,61 @@
         "FAILED"
       ],
       "MemberRole": [
-        "USER",
-        "SUPER_ADMIN"
+        "SUPER_ADMIN",
+        "USER"
       ],
       "MemberStatus": [
         "ACTIVE",
         "ENDED"
       ],
       "QuestionKind": [
-        "TEXT",
         "CHOICE",
-        "FILE"
+        "FILE",
+        "TEXT"
       ],
       "RecruitmentSort": [
+        "DEADLINE",
         "LATEST",
-        "VIEWS",
-        "SCRAPS",
         "OLDEST",
-        "DEADLINE"
+        "SCRAPS",
+        "VIEWS"
       ],
       "RecruitmentStatus": [
+        "CLOSED",
         "PENDING_APPROVAL",
-        "PUBLISHED",
-        "CLOSED"
+        "PUBLISHED"
       ],
       "Region": [
         "ANY",
         "CAPITAL",
         "CHUNGCHEONG",
-        "GYEONGNAM",
-        "GYEONGBUK",
-        "JEOLLA",
         "GANGWON",
-        "JEONBUK",
+        "GYEONGBUK",
+        "GYEONGNAM",
         "JEJU",
+        "JEOLLA",
+        "JEONBUK",
         "OVERSEAS"
       ],
       "ReportStatus": [
+        "DISMISSED",
         "OPEN",
-        "RESOLVED",
-        "DISMISSED"
+        "RESOLVED"
       ],
       "ReportTarget": [
         "CLUB_REVIEW",
+        "COMMENT",
         "PASS_REVIEW",
-        "QUESTION",
-        "COMMENT"
+        "QUESTION"
       ],
       "Settlement": [
+        "DISPUTED",
         "OPEN",
-        "SETTLED",
-        "DISPUTED"
+        "SETTLED"
       ],
       "Target": [
-        "UNDERGRADUATE",
         "GRADUATE",
+        "UNDERGRADUATE",
         "WORKER"
       ]
     },

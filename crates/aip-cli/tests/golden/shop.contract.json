@@ -241,13 +241,13 @@
   "core_ir": "aip-core/0.11",
   "enums": {
     "CustomerRole": [
-      "USER",
-      "STAFF"
+      "STAFF",
+      "USER"
     ],
     "OrderStatus": [
-      "PENDING",
-      "PAID",
       "CANCELLED",
+      "PAID",
+      "PENDING",
       "REFUNDED"
     ]
   },

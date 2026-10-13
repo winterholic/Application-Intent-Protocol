@@ -11,7 +11,7 @@ export interface Contract {
       date: string;
       id: Id<"Event">;
       link: string;
-      phase: "READY" | "DONE";
+      phase: "DONE" | "READY";
       title: string;
     };
     traverse: {
@@ -20,7 +20,7 @@ export interface Contract {
       date: string;
       id: Id<"Event">;
       link: string;
-      phase: "READY" | "DONE";
+      phase: "DONE" | "READY";
       title: string;
     };
     filter: "date.eq" | "date.gte" | "id.eq" | "link.eq" | "phase.eq" | "title.eq" | "title.prefix";
@@ -40,12 +40,12 @@ export interface ApplyContract {
       date: string;
       id: Id<"Event">;
       link: string;
-      phase: "READY" | "DONE";
+      phase: "DONE" | "READY";
       title: string;
     };
   };
 }
 
 import type { ApplyBinding } from "../../spike-v5-sdk/sdk/generic.ts";
-export const contractFingerprint = "b405d53f06ad02a30d3addada30c9490f8d0ac13cfd7dc4d4baed32da6dfa5a4";
-export const contract: ApplyBinding<Contract, ApplyContract> = { fingerprint: "b405d53f06ad02a30d3addada30c9490f8d0ac13cfd7dc4d4baed32da6dfa5a4", idWire: "safe-number-v13" };
+export const contractFingerprint = "bc569b3cd06684dbc893fc41d8b84e8d72bc28422de3993d0de6924275cd7ad4";
+export const contract: ApplyBinding<Contract, ApplyContract> = { fingerprint: "bc569b3cd06684dbc893fc41d8b84e8d72bc28422de3993d0de6924275cd7ad4", idWire: "safe-number-v13" };

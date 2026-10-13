@@ -1227,9 +1227,9 @@
       "WITHDRAWN"
     ],
     "MemberRole": [
-      "USER",
+      "ROOT",
       "SUPPORT",
-      "ROOT"
+      "USER"
     ]
   },
   "events": {},

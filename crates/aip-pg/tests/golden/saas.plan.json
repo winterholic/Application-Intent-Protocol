@@ -77,9 +77,9 @@
       "CREATE TABLE \"endpoint\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"project_id\" uuid NOT NULL,\n  \"url\" text NOT NULL\n)",
       "CREATE TABLE \"comment\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"task_id\" uuid NOT NULL,\n  \"author_id\" uuid NOT NULL,\n  \"body\" text NOT NULL\n)",
       "CREATE TABLE \"member\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"email\" text NOT NULL,\n  \"default_project_id\" uuid,\n  \"pinned_id\" uuid\n)",
-      "CREATE TABLE \"membership\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"member_id\" uuid NOT NULL,\n  \"workspace_id\" uuid NOT NULL,\n  \"role\" text NOT NULL DEFAULT 'MEMBER',\n  CONSTRAINT \"membership__role_enum\" CHECK (\"role\" IN ('MEMBER', 'ADMIN'))\n)",
+      "CREATE TABLE \"membership\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"member_id\" uuid NOT NULL,\n  \"workspace_id\" uuid NOT NULL,\n  \"role\" text NOT NULL DEFAULT 'MEMBER',\n  CONSTRAINT \"membership__role_enum\" CHECK (\"role\" IN ('ADMIN', 'MEMBER'))\n)",
       "CREATE TABLE \"reviewer\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"project_id\" uuid NOT NULL,\n  \"member_id\" uuid NOT NULL\n)",
-      "CREATE TABLE \"task\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"project_id\" uuid NOT NULL,\n  \"title\" text NOT NULL,\n  \"status\" text NOT NULL DEFAULT 'OPEN',\n  \"notes\" text,\n  \"parent_id\" uuid,\n  \"assignee_id\" uuid,\n  CONSTRAINT \"task__status_enum\" CHECK (\"status\" IN ('OPEN', 'DONE', 'ARCHIVED'))\n)",
+      "CREATE TABLE \"task\" (\n  \"id\" uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  \"created_at\" timestamptz NOT NULL DEFAULT now(),\n  \"project_id\" uuid NOT NULL,\n  \"title\" text NOT NULL,\n  \"status\" text NOT NULL DEFAULT 'OPEN',\n  \"notes\" text,\n  \"parent_id\" uuid,\n  \"assignee_id\" uuid,\n  CONSTRAINT \"task__status_enum\" CHECK (\"status\" IN ('ARCHIVED', 'DONE', 'OPEN'))\n)",
       "ALTER TABLE \"project\" ADD CONSTRAINT \"project__workspace_id_fk\" FOREIGN KEY (\"workspace_id\") REFERENCES \"workspace\"(\"id\") DEFERRABLE INITIALLY IMMEDIATE",
       "CREATE INDEX IF NOT EXISTS \"project__workspace_id_idx\" ON \"project\" (\"workspace_id\")",
       "ALTER TABLE \"project\" ADD COLUMN \"__search_project_search\" tsvector GENERATED ALWAYS AS (setweight(to_tsvector('simple'::regconfig, coalesce(\"title\"::text, '')), 'A')) STORED",
@@ -619,13 +619,13 @@
         "FAILED"
       ],
       "TaskStatus": [
-        "OPEN",
+        "ARCHIVED",
         "DONE",
-        "ARCHIVED"
+        "OPEN"
       ],
       "WorkspaceRole": [
-        "MEMBER",
-        "ADMIN"
+        "ADMIN",
+        "MEMBER"
       ]
     },
     "events": {

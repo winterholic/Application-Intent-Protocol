@@ -4,8 +4,8 @@
 export type ApprovalDecision = 'APPROVE' | 'REJECT';
 export type ApprovalStatus = 'NONE' | 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED' | 'EXPIRED';
 export type JobStatus = 'QUEUED' | 'RUNNING' | 'DONE' | 'FAILED';
-export type TaskStatus = 'OPEN' | 'DONE' | 'ARCHIVED';
-export type WorkspaceRole = 'MEMBER' | 'ADMIN';
+export type TaskStatus = 'ARCHIVED' | 'DONE' | 'OPEN';
+export type WorkspaceRole = 'ADMIN' | 'MEMBER';
 
 export type TaskPair = { first: string; second: string };
 

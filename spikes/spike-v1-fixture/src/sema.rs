@@ -600,7 +600,21 @@ impl<'a> Ctx<'a> {
         let spec = self.spec;
         let mut out = Map::new();
         out.insert("actor".into(), json!(self.actor));
-        out.insert("enums".into(), Value::Object(spec.enums.iter().map(|e| (e.name.clone(), json!(e.variants))).collect()));
+        // 값 순서는 의미가 없다(DB는 `CHECK (col IN (...))`). 순서만 바꾼 변경이 계약 변경이 되지 않도록 정렬해
+        // digest, DDL, 생성 타입이 모두 같은 순서를 본다(창시자 결정 2026-10-13, 감사 F12).
+        out.insert(
+            "enums".into(),
+            Value::Object(
+                spec.enums
+                    .iter()
+                    .map(|e| {
+                        let mut values = e.variants.clone();
+                        values.sort();
+                        (e.name.clone(), json!(values))
+                    })
+                    .collect(),
+            ),
+        );
 
         let mut preds = Map::new();
         for p in &spec.predicates {

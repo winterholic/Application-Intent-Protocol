@@ -141,7 +141,8 @@
   - 선언 순서: 제품 정의는 최상위 선언 블록을 8번 섞어도 `executionDigest`가 같았다(0/8 차이). PoC는 `shop`, `saas`, `cms`에서 섞을 때마다 Core IR digest가 달랐다. 원인을 찾아 보니 차이는 `reactions`(rule·이벤트 처리기·스케줄·webhook) 배열 하나뿐이었다(IR 헤더의 규약: 맵은 `BTreeMap`, 목록은 선언 순서).
 - 판단: 선언 순서가 digest를 바꾸는 것은 `reactions`가 선언 순서를 의미로 삼기 때문이다. 이것이 의도인지는 문서에 없다. 그래서 F7로 이어졌다.
 - 테스트(`spikes/spike-v2-read/tests/determinism.rs`, 4개): 한 프로세스 안에서 40번 로드·계획해도 digest, 읽기 계획 SQL·매개변수·비용, DDL이 같다(`HashMap` 인스턴스마다 시드가 달라 순회 순서가 새면 드러난다). 선언 블록을 뒤집기·회전·고정 시드 섞기로 바꿔도 digest·SQL·DDL이 같다. 필드·멤버·select·filter 순서와 주석·공백도 digest 불변이다. 결함은 찾지 못했다.
-- 기록(결함 아님): 열거형 값의 순서는 제품 digest에 들어간다. DB에서는 `CHECK (col IN (...))`라 순서에 의미가 없으므로 순서만 바꿔도 계약 변경(새 digest, 이행 계획)이 된다. 의도 문서가 없어 `enum_value_order_is_part_of_the_digest`로 현재 동작만 고정했고, digest 호환 때문에 정렬 여부는 결정 대상으로 남긴다.
+- 기록(결함 아님): 열거형 값의 순서는 제품 digest에 들어간다. DB에서는 `CHECK (col IN (...))`라 순서에 의미가 없으므로 순서만 바꿔도 계약 변경(새 digest, 이행 계획)이 된다. 의도 문서가 없어 `enum_value_order_is_part_of_the_digest`로 현재 동작만 고정했고, 정렬 여부는 결정 대상으로 남겼다.
+- **결정(창시자 2026-10-13, D-A18)**: 값 순서는 계약이 아니다. 제품 정의는 facts를 만들 때 enum 값을 정렬해 digest·DDL·생성 타입이 한 순서를 보게 했고(digest 함수 안에서만 정렬하면 순서만 바꾼 정의가 같은 digest인데 다른 `ddl_digest`가 되어 `aip-migrate`의 배포 검증(`facts_digest`와 `ddl_digest`를 함께 비교, `crates/aip-migrate/src/lib.rs`)이 실패한다), PoC Core IR은 `ordered`가 아닌 enum만 정렬한다. 위 테스트는 `enum_value_order_does_not_change_the_digest_or_the_ddl`과 `adding_an_enum_value_changes_the_digest`로 바뀌었다. 이전 배포와 비교하면 정렬되지 않은 enum의 digest가 한 번 바뀐다.
 
 ## 결정 대상 (확정하지 않음, 창시자 결정 필요)
 
@@ -153,7 +154,7 @@
 | `club: Club.Id`(외래 키 없음) 허용 여부(F8) | 오류로 금지, 별도 철자 | 결정됨(2026-10-13): 오류로 금지, 별도 철자 없음 |
 | 오류 본문에 `requestId`·`retryable`·`explain` 추가(F4, F13) | 본문 필드 추가(DD-14), 헤더만 유지 | 헤더 `x-request-id`, `spec/wire-errors.md` |
 | 오류 코드 두 체계 통합(F9) | 접두 도입, 현행 유지 | 세 레지스트리를 `aip explain-code` 하나로 조회 |
-| 열거형 값 순서의 digest 반영(F12) | 정렬해서 digest | 현재 동작을 테스트로 고정 |
+| 열거형 값 순서의 digest 반영(F12) | 정렬해서 digest | **결정·반영됨(D-A18)**: 값 정렬 |
 | 계약 JSON의 공통 `errors` 분리와 compact 출력(F10) | 계약 형식 변경 | 측정만 |
 
 ## 검증 기록
