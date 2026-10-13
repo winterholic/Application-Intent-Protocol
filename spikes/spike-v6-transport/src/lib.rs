@@ -1215,10 +1215,10 @@ async fn serve_conn(
         let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(encoded) else {
             return reply_object(&mut w, &err("WIRE.INTERNAL", "관리 파일 payload 오류").to_string()).await;
         };
+        let _ = db.release().await;
         let _ =
             reply_managed_file(&mut trace::HeadTap::new(&mut w.writer, &mut w.trace), &method, id, media_type, &bytes, w.origin.as_deref(), deadline)
                 .await;
-        let _ = db.release().await;
         return;
     }
     let mut result = if managed {
@@ -1347,8 +1347,10 @@ async fn serve_conn(
         // 응답 유실 흉내: 처리(커밋 포함)는 끝났지만 클라이언트는 응답을 받지 못한다.
         return;
     }
-    reply(&mut w, &out).await;
+    // Return the connection, and with it the deployment fence's shared lock, before writing: a client that reads slowly
+    // must not keep a pool slot or block a migration for as long as the write timeout.
     let _ = db.release().await;
+    reply(&mut w, &out).await;
 }
 
 /// 서버를 띄우고 (포트, 토큰 발급기)를 돌려준다. 발급기는 시험에서 로그인 제공자 역할을 한다.
