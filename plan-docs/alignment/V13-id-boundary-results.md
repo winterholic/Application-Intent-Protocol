@@ -20,7 +20,7 @@ PG 숫자 JSON은 Rust에서 i64로 보존된다. V2의 계획 출력 타입을 
 
 ## 쓰기·재생·계약 불일치 경계
 
-V3의 direct HTTP apply에 쓰는 `ids`와 허용된 `where`의 Id/Ref 조건에 같은 parser를 연결했다. 기존 bulk·중복 대상·타입·권한 검사는 유지한다. bundle·compose는 2026-10-13에 같은 parser를 쓰도록 연결됐고(D-A24) 공식 worker 경로는 Legacy로 남아 있으며 모든 쓰기 경로를 변환했다고 표시하지 않는다.
+V3의 direct HTTP apply에 쓰는 `ids`와 허용된 `where`의 Id/Ref 조건에 같은 parser를 연결했다. 기존 bulk·중복 대상·타입·권한 검사는 유지한다. bundle·compose는 2026-10-13에 같은 parser를 쓰도록 연결됐고(D-A26) 공식 worker 경로는 Legacy로 남아 있으며 모든 쓰기 경로를 변환했다고 표시하지 않는다.
 
 V6는 `changed`·`unchanged`를 wire로 변환한 뒤에만 멱등 결과를 기록하고 커밋한다. 숫자 후보에서 `where`가 큰 Id를 변경하려 해도 출력 범위 검사에 실패하면 트랜잭션을 되돌린다. 응답 유실 뒤 재생도 같은 표현을 유지한다. 후보별 principal namespace를 분리해 같은 actor·key·본문이 다른 wire 결과를 재생하지 않게 했다. 이는 모드를 넘나드는 전역 단일 실행이나 pending 이전을 보장하지 않는다.
 

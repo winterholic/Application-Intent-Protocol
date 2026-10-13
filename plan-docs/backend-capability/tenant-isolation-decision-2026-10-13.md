@@ -15,7 +15,7 @@
 | 전이(`/apply`)는 대상 행을 rowRead와 함께 잠그고, 안 보이는 행은 존재하지 않는 행과 같은 `MISSING_TARGET`이다 | `spike-v3-write/src/lib.rs` `judge` |
 | job의 `ctx.data.read/apply`는 같은 planner와 전이를 job 주체로 실행한다 | `spike-v6-transport/tests/job_data.rs`(다른 회원 주문 `MISSING_TARGET`) |
 | schedule·webhook·outbox trigger는 운영자가 `aip service principal bind`로 등록한 서비스 주체(actor id가 있는 principal)로 실행된다. 제품 경로에는 actor가 없는 데이터 접근 문맥이 없다 | `product/MANAGED-EXECUTION.md` 168행, `src/triggers.rs` |
-| 호출자 생성(`expose create`, bundle, compose)은 라이브러리(`spike-v3-write`)에만 있고 HTTP 경로에 연결돼 있지 않았다(2026-10-13 D-A24로 `/apply`에 연결됨) | `server.rs` 경로 목록, 보안 감사 표 API3 행 |
+| 호출자 생성(`expose create`, bundle, compose)은 라이브러리(`spike-v3-write`)에만 있고 HTTP 경로에 연결돼 있지 않았다(2026-10-13 D-A26으로 `/apply`에 연결됨) | `server.rs` 경로 목록, 보안 감사 표 API3 행 |
 | 라이브러리 create는 Ref 필드에 호출자가 준 id를 받고, 대상 행의 가시성은 따로 검사하지 않는다. 막는 것은 `expose create`의 `allow`뿐이다 | `spike-v3-write/src/lib.rs` `literal`, `create_row` |
 | compose의 생성 값은 상수 Ref를 받지 않고 대상 행 경로에서만 온다. `sameScope`가 대상들의 같은 범위를 강제한다 | 같은 파일 `VALUE_SOURCE_NOT_ALLOWED`, `sameScope` |
 
