@@ -1,0 +1,51 @@
+# cargo-deny policy. Run per lock file (the workspace and each spike have their own):
+#   cargo deny --manifest-path <Cargo.toml> check
+# tools/dependency-check.sh runs the same set that CI runs.
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+# A yanked release must not be built from; an unmaintained advisory on a workspace dependency is a failure too.
+yanked = "deny"
+unmaintained = "workspace"
+ignore = [
+    # Marvin timing attack on RSA private-key operations (PKCS#1 v1.5 decryption and signing). There is no fixed version.
+    # jsonwebtoken's rust_crypto backend pulls `rsa`, but AIP only VERIFIES RS256 signatures with public keys from a JWKS;
+    # no private-key operation runs in the service. The dev-dependency in aip-auth signs test tokens with throwaway keys.
+    # Revisit when jsonwebtoken offers a verify-only RSA backend, or when `rsa` ships the constant-time fix.
+    { id = "RUSTSEC-2023-0071", reason = "rsa is used only to verify RS256 signatures with public keys; the attack needs private-key operations" },
+]
+
+[licenses]
+version = 2
+# The repository's own crates carry the placeholder license UNLICENSED until the license is decided (docs/DECISIONS.md),
+# and are marked publish = false; only third-party crates are checked against the allow list.
+private = { ignore = true }
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CC0-1.0",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Zlib",
+    "CDLA-Permissive-2.0",
+    "OpenSSL",
+]
+confidence-threshold = 0.9
+
+[bans]
+# Duplicate versions come from the transitive tree of tokio, rustls and chrono; they are reported, not blocked.
+multiple-versions = "warn"
+wildcards = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
