@@ -288,3 +288,38 @@ async fn trigger_configuration_is_rejected_before_listening() {
     assert!(check(vec![], vec![Schedule { misfire_grace: Duration::from_secs(90_000), ..schedule() }]).is_err());
     assert!(check(vec![], vec![Schedule { misfire_grace: Duration::from_secs(1), ..schedule() }]).is_err());
 }
+
+#[test]
+fn triggers_report_every_operation_they_target() {
+    let principal = || ServicePrincipal { issuer: "test".into(), subject: "svc".into() };
+    let triggers = Triggers {
+        schedules: vec![Schedule {
+            name: "sweep".into(),
+            operation: "sweep_op".into(),
+            cron: Cron::parse("0 3 * * *", "UTC").unwrap(),
+            input: json!({}),
+            principal: principal(),
+            misfire_grace: Duration::from_secs(60),
+        }],
+        webhooks: vec![Webhook {
+            name: "orders".into(),
+            path: "/hooks/orders".into(),
+            operation: "hook_op".into(),
+            principal: principal(),
+            secret: SECRET.to_vec(),
+            signature: Signature::Stripe { tolerance: Duration::from_secs(300) },
+            max_body_bytes: 4096,
+        }],
+        outbox: vec![spike_v6_transport::triggers::OutboxHandler { topic: "t".into(), operation: "outbox_op".into(), principal: principal() }],
+        messages: vec![spike_v6_transport::triggers::MessageHandler {
+            queue: "q".into(),
+            operation: "message_op".into(),
+            principal: principal(),
+            owner: None,
+        }],
+    };
+    for operation in ["sweep_op", "hook_op", "outbox_op", "message_op"] {
+        assert!(triggers.targets_operation(operation), "{operation}");
+    }
+    assert!(!triggers.targets_operation("other"));
+}

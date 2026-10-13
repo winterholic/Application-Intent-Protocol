@@ -269,6 +269,11 @@ async fn submit(
     if !service && crate::triggers::RESERVED_KEY_PREFIXES.iter().any(|prefix| key.starts_with(prefix)) {
         return Err("BAD_VALUE");
     }
+    // O-19: a trigger's operation trusts its input because the server verified its source (HMAC body, schedule input, committed
+    // outbox row). A user who passes the operation's `allow` could otherwise enqueue a forged body and skip that verification.
+    if !service && rt.infrastructure.triggers.targets_operation(name) {
+        return Err("ACCESS_DENIED");
+    }
     authorize(db, facts, name, input, grant.actor_id, wire).await?;
     let s = schema(rt)?;
     // Admission is bounded per principal, independently of HTTP and worker slots.

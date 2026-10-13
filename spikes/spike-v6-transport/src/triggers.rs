@@ -117,6 +117,15 @@ impl Triggers {
         self.schedules.is_empty() && self.webhooks.is_empty() && self.outbox.is_empty() && self.messages.is_empty()
     }
 
+    /// Whether a configured trigger starts this operation. Such an operation takes its input from a source the server verified
+    /// (signed webhook body, configured schedule input, committed outbox row, consumed message), so users may not enqueue it.
+    pub fn targets_operation(&self, operation: &str) -> bool {
+        self.schedules.iter().any(|trigger| trigger.operation == operation)
+            || self.webhooks.iter().any(|trigger| trigger.operation == operation)
+            || self.outbox.iter().any(|trigger| trigger.operation == operation)
+            || self.messages.iter().any(|trigger| trigger.operation == operation)
+    }
+
     /// Rejects configuration that could never run before the listener accepts traffic.
     pub fn validate(&self, facts: &Value, wire: IdWire, reserved: &[&str]) -> Result<(), &'static str> {
         let mut names = std::collections::HashSet::new();
