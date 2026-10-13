@@ -584,3 +584,6 @@ mod tests {
         assert!(failure.reason.contains("(JWKS) 형식 오류"), "{}", failure.reason);
     }
 }
+
+#[cfg(test)]
+mod idp_tests;

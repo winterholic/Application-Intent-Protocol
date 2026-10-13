@@ -172,3 +172,11 @@ aip service jobs --config service.json retry --id 7f3c...
 - 실행할 때 principal 활성·배포 fence·`allow`를 다시 검사한다. 비활성화한 주체의 job은 재처리해도 다시 실패한다.
 - 거부하는 경우는 네 가지다. `FAILED`가 아니면 `JOB_NOT_FAILED`, 결과 보존 기간(24시간)이 지나 입력이 지워졌으면 `JOB_EXPIRED`, 다른 배포에서 수락했으면 `DEPLOYMENT_CHANGED`, 결과를 모르는 외부 효과가 있으면 `EFFECT_UNKNOWN`이다. 마지막 경우는 provider에서 실제 결과를 확인한 뒤 새 job으로 처리한다. 미확정 효과를 운영자가 확정하는 명령은 아직 없다.
 - 재처리는 owner의 active job 상한(100)을 다시 검사하지 않는다. 대량 재처리는 운영자가 나눠서 실행한다.
+
+## TLS reverse proxy 검증
+
+서비스는 loopback HTTP만 연다. 외부 HTTPS는 reverse proxy가 종단한다. `node product/tools/proxy-check.mjs`는 실제 Caddy를 앞에 두고 임시 schema의 서비스에 16개 검사를 실행한다: Authorization·본문 통과, CORS preflight의 Origin 일치와 외부 Origin 거부, `x-request-id` 유지·생성, `X-Forwarded-*`가 인증에 영향을 주지 않음, 1MiB 초과 본문의 서비스 거부, SSE 첫 keepalive가 버퍼링 없이 도착, WebSocket의 Origin 필수·외부 Origin 거부·101 업그레이드·첫 프레임 인증. 필요한 것은 `caddy`(`brew install caddy`), `openssl`, `psql`, 빌드된 `target/debug/aip`다.
+
+최소 Caddy 설정은 `reverse_proxy 127.0.0.1:<서비스 포트>` 한 줄이다. Caddy는 WebSocket 업그레이드와 `text/event-stream` flush를 자동 처리한다. nginx를 쓰면 SSE 경로에 `proxy_buffering off`, WebSocket 경로에 `proxy_http_version 1.1`과 `Upgrade`·`Connection` 헤더 전달이 필요하다. 이 설정은 nginx로 실행해 보지 않았다(`확인 못함: nginx 미설치`).
+
+실제 외부 IdP 연결은 [IdP runbook](IDP-RUNBOOK.md)을 따른다.
