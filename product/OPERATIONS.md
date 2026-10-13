@@ -114,7 +114,16 @@ SDK는 `npm install --offline <aip-sdk.tgz>`로 별도 소비자에 설치한다
 | `resource`, `transition`, `target_id` | 바뀐 행 하나 |
 | `before`, `after` | 전이의 `to`가 바꾸는 필드만 `{필드: 값}`으로. 다른 필드는 남기지 않는다 |
 
-테이블은 배포 schema가 아니라 서버가 시작할 때 만드는 infra schema(`aip_infra_<hash>.aip_audit`)에 있어 기존 배포를 migrate하지 않아도 된다. `UPDATE`는 trigger가 거부한다. 보존 기한 정리는 운영자가 `DELETE`로 한다. 이 trigger는 실수 방지이지 변조 방지가 아니다. 테이블 소유 role은 trigger를 끄거나 행을 지울 수 있으므로, 규제 감사에는 서비스 실행 role과 소유 role을 나누고 외부 보관소로 복제한다. `target_id`와 Ref 값은 내부 bigint id이며 `wire: decimal` 같은 API 표현으로 바꾸지 않는다. 멱등 재생, 안 보이는 대상, 일부 대상 실패로 전체가 취소된 bulk는 아무것도 바꾸지 않았으므로 기록하지 않는다. 전이의 선언 효과(`update`·`create` 효과가 바꾼 다른 행, `notify` outbox 행)는 따로 기록하지 않는다. 조회 API·CLI는 아직 없고 SQL로 읽는다. 근거 테스트는 `spikes/spike-v6-transport/tests/audit.rs`다.
+테이블은 배포 schema가 아니라 서버가 시작할 때 만드는 infra schema(`aip_infra_<hash>.aip_audit`)에 있어 기존 배포를 migrate하지 않아도 된다. `UPDATE`는 trigger가 거부한다. 보존 기한 정리는 운영자가 `DELETE`로 한다. 이 trigger는 실수 방지이지 변조 방지가 아니다. 테이블 소유 role은 trigger를 끄거나 행을 지울 수 있으므로, 규제 감사에는 서비스 실행 role과 소유 role을 나누고 외부 보관소로 복제한다. `target_id`와 Ref 값은 내부 bigint id이며 `wire: decimal` 같은 API 표현으로 바꾸지 않는다. 멱등 재생, 안 보이는 대상, 일부 대상 실패로 전체가 취소된 bulk는 아무것도 바꾸지 않았으므로 기록하지 않는다. 전이의 선언 효과(`update`·`create` 효과가 바꾼 다른 행, `notify` outbox 행)는 따로 기록하지 않는다. 호출자가 쓰는 조회 API는 없다. 운영자는 CLI로 읽는다. 근거 테스트는 `spikes/spike-v6-transport/tests/audit.rs`와 `crates/aip-service/tests/audit_cli.rs`다.
+
+```sh
+aip service audit --config service.json list --resource Order --target-id 11   # 한 행의 이력
+aip service audit --config service.json list --actor 2 --since 2026-10-01T00:00:00Z --limit 100
+aip service audit --config service.json list --request-key 'k-1'               # 멱등 key 또는 <run id>:<effect key>
+aip service audit --config service.json list --before-id 3411                  # 이전 쪽의 nextBeforeId부터 이어서
+```
+
+필터는 `--resource`, `--target-id`, `--actor`, `--via apply|extension|job`, `--request-key`, `--since`(RFC 3339), `--before-id`이고 모두 AND다. 최신 id 순이며 `--limit`은 1~500(기본 50)이다. 출력은 `{"ok":true,"audit":[{id, recordedAt, actorId, via, requestKey, resource, transition, targetId, before, after}],"nextBeforeId":다음 쪽이 있으면 그 커서, 없으면 null}`이다. 읽기 전용이고 DB 접근 권한이 있는 운영자 도구라 호출자 인증이 없으며, 값이 bind 매개변수로만 들어가 SQL을 조립하지 않는다. 서버가 한 번도 시작되지 않아 테이블이 없으면 `AUDIT_UNAVAILABLE`, 필터 값이 틀리면 `BAD_AUDIT_QUERY`다.
 
 ## 요청 metrics
 
@@ -125,7 +134,7 @@ SDK는 `npm install --offline <aip-sdk.tgz>`로 별도 소비자에 설치한다
 | `aip_requests_total` | `route`, `status`, `code` | 끝난 요청 수. `route`는 고정 이름(`read`, `apply`, `jobs` 등, 그 밖은 `other`), `code`는 실패 응답의 AIP 오류 코드 |
 | `aip_request_duration_seconds` | `route` | 요청 수락부터 응답 완료까지(histogram, 5ms~30s) |
 
-label에는 경로·query·본문·principal이 들어가지 않으므로 호출자가 series 수를 늘릴 수 없다. AIP의 많은 거부는 HTTP 200 본문의 `code`로 오므로 오류율은 `status`가 아니라 `code!=""`로 계산한다. job 상태별 수, DB pool 대기, outbox 적체 같은 내부 상태 metric과 OpenTelemetry trace 전송은 아직 없다. trace exporter는 외부 SDK 의존성이 커서 [선택적 패키지](INFRASTRUCTURE.md#선택적-패키지-구조) 후보로 둔다. 요청 상관 ID는 응답의 `x-request-id`와 요청 로그 줄이 함께 가진다. 근거 테스트는 `spikes/spike-v6-transport/tests/metrics.rs`다.
+label에는 경로·query·본문·principal이 들어가지 않으므로 호출자가 series 수를 늘릴 수 없다. AIP의 많은 거부는 HTTP 200 본문의 `code`로 오므로 오류율은 `status`가 아니라 `code!=""`로 계산한다. job 상태별 수, DB pool 대기, outbox 적체 같은 내부 상태 metric과 OpenTelemetry trace 전송은 아직 없다. trace exporter는 외부 SDK 의존성이 커서 [선택적 패키지](INFRASTRUCTURE.md#선택적-패키지-구조) 후보로 둔다. 요청 상관 ID는 응답의 `x-request-id`와 요청 로그 줄이 함께 가진다. JSON 응답뿐 아니라 정적 파일·객체 스트림·managed file·SSE·WebSocket 업그레이드 응답도 같은 헤더를 싣고 로그 줄에 상태를 남기며, 공식 TypeScript·Python SDK는 이 값을 실패 객체의 `requestId`(Python 예외는 `request_id`)로 돌려준다. 근거 테스트는 `spikes/spike-v6-transport/tests/metrics.rs`다.
 
 ## 확장과 검증 범위
 

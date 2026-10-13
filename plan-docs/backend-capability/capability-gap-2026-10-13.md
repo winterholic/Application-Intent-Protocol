@@ -62,7 +62,7 @@
 | B06 | API Key | API key filter, DRF TokenAuthentication | 미지원 | 기계 간 호출은 IdP client-credentials JWT로 대체 가능. 제품 API key 계약 없음 |
 | B07 | 위임 접근 | `SwitchUserFilter`, django-hijack | 미지원 | PoC impersonate만 있음 |
 | B08 | Rate Limiting | Bucket4j, `@nestjs/throttler`, DRF throttling, Rack::Attack | 지원 | DB 공유 fixed window, principal·경로 분류. IP별 제한은 proxy |
-| B09 | Audit Logging | Hibernate Envers, django-auditlog, PaperTrail | 부분 | 배포 서버의 모든 전이가 같은 SQL 문장에서 append-only `aip_audit` 행(actor·경로·key·바뀐 필드 전후 값)을 남김. 조회 API·CLI, 쓰기 확장 요청 key, 선언 효과 행 기록은 없음. `tests/audit.rs` |
+| B09 | Audit Logging | Hibernate Envers, django-auditlog, PaperTrail | 부분 | 배포 서버의 모든 전이가 같은 SQL 문장에서 append-only `aip_audit` 행(actor·경로·key·바뀐 필드 전후 값)을 남김. 운영자 조회 CLI는 `aip service audit list`(`crates/aip-service/tests/audit_cli.rs`). 호출자용 조회 API, 쓰기 확장 요청 key, 선언 효과 행 기록은 없음. `tests/audit.rs` |
 | B10 | 민감 정보 | Jackson `@JsonIgnore`, 필드 암호화 | 부분 | 필드 가시성·redaction. 저장 암호화는 PoC |
 | B11 | 비밀 관리 | Spring Cloud Vault, django-environ | 부분 | 명시한 env만 읽음(`.env` 미사용). vault 연동 없음 |
 
@@ -257,7 +257,7 @@
 | 순위 | 항목 | 이유 | 권장 형태 |
 |---|---|---|---|
 | 1 | B03 테넌트 격리 | SaaS의 기본 요구. 현재는 predicate 관례에 의존 | [결정 문서](tenant-isolation-decision-2026-10-13.md): 결정됨(2026-10-13). 현행 유지(T1-A·T2-A) + 생성 경로 Ref 가시성 규칙 구현. 활성 테넌트(세션 claim, T2-B)는 후속 결정 후보 |
-| 2 | B09 Audit | 규제·운영 요구 | 기본 기록은 구현(아래 설계 선택). 남은 것: 조회 CLI, 쓰기 확장 key, 효과 행 |
+| 2 | B09 Audit | 규제·운영 요구 | 기본 기록과 조회 CLI(`aip service audit list`)는 구현(아래 설계 선택). 남은 것: 쓰기 확장 key, 효과 행 |
 | 3 | I02·I03 Metrics·Tracing | 운영 가시성 | metrics는 의존성 없이 기본 빌드에 구현. 남은 것: 내부 상태 metric, `traceparent` 전파, OpenTelemetry exporter(선택 패키지) |
 | 4 | ~~D08·C09 retry 정책~~ | 2026-10-13 구현(`job_policies`, `ctx.retryLater`, `ctx.job`) | 남은 것: 확장이 대기 시간을 지정하는 `retryLater(reason, {afterMs})` |
 | 5 | ~~E05 발신 webhook~~ | 2026-10-13 구현(ctx.webhooks.deliver) | 남은 것: 구독 resource 예제, 연속 실패 자동 비활성화 정책 |

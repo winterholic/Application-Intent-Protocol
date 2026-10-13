@@ -83,6 +83,52 @@ pub enum Command {
         #[command(subcommand)]
         command: Jobs,
     },
+    /// Operator-only read of the business audit rows (who changed which row, through which path, before and after)
+    Audit {
+        #[arg(long)]
+        config: PathBuf,
+        #[command(subcommand)]
+        command: Audit,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum Audit {
+    /// List audit rows newest first; every filter narrows the result
+    List(AuditQuery),
+}
+
+#[derive(clap::Args)]
+pub struct AuditQuery {
+    /// Resource name, for example Order
+    #[arg(long)]
+    pub resource: Option<String>,
+    /// The changed row, with --resource for one row's history
+    #[arg(long)]
+    pub target_id: Option<i64>,
+    /// The actor that ran the transition
+    #[arg(long)]
+    pub actor: Option<i64>,
+    /// apply, extension or job
+    #[arg(long)]
+    pub via: Option<String>,
+    /// The caller's idempotency key, or `<run id>:<effect key>` for a job
+    #[arg(long)]
+    pub request_key: Option<String>,
+    /// Only rows recorded at or after this RFC 3339 time
+    #[arg(long)]
+    pub since: Option<String>,
+    /// Continue after a page: only rows with a smaller id (the `nextBeforeId` of the previous page)
+    #[arg(long)]
+    pub before_id: Option<i64>,
+    #[arg(long, default_value_t = 50)]
+    pub limit: i64,
+}
+
+impl Default for AuditQuery {
+    fn default() -> Self {
+        Self { resource: None, target_id: None, actor: None, via: None, request_key: None, since: None, before_id: None, limit: 50 }
+    }
 }
 
 #[derive(Subcommand)]
@@ -727,7 +773,129 @@ pub async fn run(command: Command) -> Result<Value, Value> {
         Command::Serve { file, config } => serve(&file, configuration(&config)?).await,
         Command::Principal { config, command } => principal(configuration(&config)?, command).await,
         Command::Jobs { config, command } => jobs(configuration(&config)?, command).await,
+        Command::Audit { config, command } => audit(configuration(&config)?, command).await,
     }
+}
+
+const AUDIT_BAD_QUERY: &str = "via는 apply·extension·job, limit은 1에서 500, since는 RFC 3339 시각(예: 2026-10-01T00:00:00Z)이어야 함";
+
+/// The shape `YYYY-MM-DDTHH:MM:SS[.fraction](Z|+HH:MM|-HH:MM)`. PostgreSQL also accepts words such as `yesterday`, and a
+/// filter whose meaning depends on the server's clock and settings is not one an operator can reproduce; the ranges of
+/// the fields are left to the database.
+fn looks_like_rfc3339(value: &str) -> bool {
+    let b = value.as_bytes();
+    let digits = |range: std::ops::Range<usize>| b.get(range).is_some_and(|part| part.iter().all(u8::is_ascii_digit));
+    if b.len() < 20 || b.len() > 35 || !digits(0..4) || !digits(5..7) || !digits(8..10) || !digits(11..13) || !digits(14..16) || !digits(17..19) {
+        return false;
+    }
+    if b[4] != b'-' || b[7] != b'-' || !matches!(b[10], b'T' | b't') || b[13] != b':' || b[16] != b':' {
+        return false;
+    }
+    let mut at = 19;
+    if b[at] == b'.' {
+        let start = at + 1;
+        at = start + b[start..].iter().take_while(|c| c.is_ascii_digit()).count();
+        if at == start {
+            return false;
+        }
+    }
+    match b.get(at) {
+        Some(b'Z' | b'z') => at + 1 == b.len(),
+        Some(b'+' | b'-') => b.len() == at + 6 && digits(at + 1..at + 3) && b[at + 3] == b':' && digits(at + 4..at + 6),
+        _ => false,
+    }
+}
+
+/// Reads the business audit table the server installs in the infrastructure schema. The table only grows, so the
+/// read needs no lock; a page is cut by id so that rows recorded while the operator pages are never repeated.
+async fn audit(config: Config, command: Audit) -> Result<Value, Value> {
+    let Audit::List(AuditQuery { resource, target_id, actor, via, request_key, since, before_id, limit }) = command;
+    if !(1..=500).contains(&limit)
+        || via.as_deref().is_some_and(|v| !["apply", "extension", "job"].contains(&v))
+        || since.as_deref().is_some_and(|v| !looks_like_rfc3339(v))
+    {
+        return Err(error("BAD_AUDIT_QUERY", AUDIT_BAD_QUERY));
+    }
+    let infra = aip_execution::infrastructure_schema(&config.schema).map_err(|_| error("AUDIT_FAILED", "schema 이름 오류"))?;
+    let db = tokio::time::timeout(std::time::Duration::from_secs(5), spike_v2_read::connect_owned_with_url(&database_url(&config)?))
+        .await
+        .map_err(|_| error("DB_CONNECT", "DB 연결 기한 초과"))?
+        .map_err(|_| error("DB_CONNECT", "DB 연결 실패"))?;
+    let present: bool = db
+        .query_one("SELECT to_regclass($1) IS NOT NULL", &[&format!("{infra}.aip_audit")])
+        .await
+        .map_err(|_| error("AUDIT_FAILED", "감사 테이블 확인 실패"))?
+        .get(0);
+    if !present {
+        return Err(error("AUDIT_UNAVAILABLE", "감사 기록이 없음: 이 배포 schema로 서버(aip service run)가 한 번도 시작되지 않았음"));
+    }
+    let mut clauses: Vec<String> = Vec::new();
+    let mut params: Vec<Box<dyn tokio_postgres::types::ToSql + Sync + Send>> = Vec::new();
+    let mut add = |clause: &str, value: Box<dyn tokio_postgres::types::ToSql + Sync + Send>| {
+        params.push(value);
+        clauses.push(clause.replace('?', &format!("${}", params.len())));
+    };
+    if let Some(value) = resource {
+        add("resource = ?", Box::new(value));
+    }
+    if let Some(value) = target_id {
+        add("target_id = ?", Box::new(value));
+    }
+    if let Some(value) = actor {
+        add("actor_id = ?", Box::new(value));
+    }
+    if let Some(value) = via {
+        add("via = ?", Box::new(value));
+    }
+    if let Some(value) = request_key {
+        add("request_key = ?", Box::new(value));
+    }
+    if let Some(value) = since {
+        add("recorded_at >= ?::text::timestamptz", Box::new(value));
+    }
+    if let Some(value) = before_id {
+        add("id < ?", Box::new(value));
+    }
+    let filter = if clauses.is_empty() { String::new() } else { format!("WHERE {}", clauses.join(" AND ")) };
+    // One more row than the page tells whether another page exists.
+    let sql = format!(
+        "SELECT id, to_char(recorded_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'), actor_id, via, request_key, resource, transition, target_id, before, after \
+         FROM {infra}.aip_audit {filter} ORDER BY id DESC LIMIT {}",
+        limit + 1
+    );
+    let refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = params.iter().map(|p| &**p as &(dyn tokio_postgres::types::ToSql + Sync)).collect();
+    let rows = tokio::time::timeout(std::time::Duration::from_secs(10), db.query(&sql, &refs))
+        .await
+        .map_err(|_| error("AUDIT_FAILED", "감사 기록 조회 기한 초과"))?
+        .map_err(|e| {
+            // 22007 and 22008 are PostgreSQL's invalid datetime format and field value: the caller's `since`.
+            if e.code().is_some_and(|c| c.code().starts_with("2200")) {
+                error("BAD_AUDIT_QUERY", AUDIT_BAD_QUERY)
+            } else {
+                error("AUDIT_FAILED", "감사 기록 조회 실패")
+            }
+        })?;
+    let more = rows.len() as i64 > limit;
+    let page: Vec<Value> = rows
+        .iter()
+        .take(limit as usize)
+        .map(|row| {
+            json!({
+                "id": row.get::<_, i64>(0),
+                "recordedAt": row.get::<_, String>(1),
+                "actorId": row.get::<_, Option<i64>>(2),
+                "via": row.get::<_, String>(3),
+                "requestKey": row.get::<_, Option<String>>(4),
+                "resource": row.get::<_, String>(5),
+                "transition": row.get::<_, String>(6),
+                "targetId": row.get::<_, i64>(7),
+                "before": row.get::<_, Value>(8),
+                "after": row.get::<_, Value>(9),
+            })
+        })
+        .collect();
+    let next = if more { page.last().and_then(|row| row["id"].as_i64()) } else { None };
+    Ok(json!({"ok":true,"audit":page,"nextBeforeId":next}))
 }
 
 async fn jobs(config: Config, command: Jobs) -> Result<Value, Value> {
@@ -1499,5 +1667,22 @@ mod managed_config_tests {
         assert_eq!(sentences.len(), causes.len(), "each cause has its own sentence");
         let validation = server_start_error(&causes[0])["message"].as_str().unwrap().to_owned();
         assert!(validation.contains("stats.mjs"), "{validation}");
+    }
+}
+
+#[cfg(test)]
+mod audit_query_tests {
+    use super::looks_like_rfc3339;
+
+    #[test]
+    fn since_is_an_rfc3339_time_and_not_a_database_word() {
+        for good in ["2026-10-01T00:00:00Z", "2026-10-01T09:30:15.123456+09:00", "2026-10-01t00:00:00-05:30"] {
+            assert!(looks_like_rfc3339(good), "{good}");
+        }
+        for bad in
+            ["yesterday", "now", "2026-10-01", "2026-10-01 00:00:00Z", "2026-10-01T00:00:00", "2026-10-01T00:00:00.Z", "2026-10-01T00:00:00+0900", ""]
+        {
+            assert!(!looks_like_rfc3339(bad), "{bad}");
+        }
     }
 }
