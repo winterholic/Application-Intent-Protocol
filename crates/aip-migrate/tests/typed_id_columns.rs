@@ -4,11 +4,11 @@ use spike_v1_fixture::{Form, load_str};
 const DB: &str = "host=localhost dbname=postgres";
 
 #[tokio::test]
-async fn migration_adds_nullable_typed_id_as_plain_bigint() {
+async fn migration_adds_a_nullable_self_reference_with_a_foreign_key() {
     let before =
         load_str("resource Member { fields { id: Id } } actor Member resource Item { fields { id: Id; owner: Member } }", Form::A).unwrap().execution;
     let after =
-        load_str("resource Member { fields { id: Id } } actor Member resource Item { fields { id: Id; owner: Member; next: Item.Id? } }", Form::A)
+        load_str("resource Member { fields { id: Id } } actor Member resource Item { fields { id: Id; owner: Member; next: Item? } }", Form::A)
             .unwrap()
             .execution;
     let schema = format!(
@@ -27,13 +27,17 @@ async fn migration_adds_nullable_typed_id_as_plain_bigint() {
     let digest = report["digest"].as_str().unwrap();
     apply(DB, &schema, &after, &None, digest).await.unwrap();
     let column: String = db
-        .query_one("SELECT data_type FROM information_schema.columns WHERE table_schema=$1 AND table_name='item' AND column_name='next'", &[&schema])
+        .query_one(
+            "SELECT data_type FROM information_schema.columns WHERE table_schema=$1 AND table_name='item' AND column_name='next_id'",
+            &[&schema],
+        )
         .await
         .unwrap()
         .get(0);
     assert_eq!(column, "bigint");
-    let old_value: Option<i64> = db.query_one(&format!("SELECT next FROM {schema}.item WHERE id=10"), &[]).await.unwrap().get(0);
+    let old_value: Option<i64> = db.query_one(&format!("SELECT next_id FROM {schema}.item WHERE id=10"), &[]).await.unwrap().get(0);
     assert_eq!(old_value, None);
-    db.execute(&format!("UPDATE {schema}.item SET next=999 WHERE id=10"), &[]).await.unwrap();
+    let dangling = db.execute(&format!("UPDATE {schema}.item SET next_id=999 WHERE id=10"), &[]).await.unwrap_err();
+    assert_eq!(dangling.as_db_error().unwrap().code().code(), "23503");
     db.batch_execute(&format!("DROP SCHEMA {schema} CASCADE")).await.unwrap();
 }

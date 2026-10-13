@@ -55,7 +55,10 @@ async fn existing_table_can_reference_new_resource_chain() {
 
 #[tokio::test]
 async fn ref_conversion_waits_for_new_resource_table() {
-    let before = facts("resource Member { fields { id: Id; team: Member.Id? } } actor Member");
+    // Definitions can no longer declare `team: Member.Id?` (founder decision 2026-10-13), but databases created before
+    // that still hold the plain column, so the deployed state is built from facts directly.
+    let mut before = facts("resource Member { fields { id: Id } } actor Member");
+    before["resources"]["Member"]["fields"]["team"] = json!({"ty": "Id<Member>?", "range": null});
     let after = facts("resource Member { fields { id: Id; team: Team? } } actor Member resource Team { fields { id: Id } }");
     let schema = schema("convert");
     init(DB, &schema, &before).await.unwrap();

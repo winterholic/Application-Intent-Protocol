@@ -732,6 +732,16 @@ impl<'a> Ctx<'a> {
             if !seen.insert(&f.name) {
                 self.d("DUPLICATE", format!("필드 `{}` 중복", f.name), f.span);
             }
+            // 기본 키 `id`의 타입 검사는 별도 규칙(TYPE_MISMATCH)이 맡는다. 여기서는 다른 resource를 가리키는 필드만 막는다.
+            if f.ty.id_of && f.name != "id" {
+                // 창시자 결정(2026-10-13): 객체 그래프 탐색이 되므로 "X에 속한다"의 철자는 참조 `X` 하나만 둔다.
+                self.d(
+                    "ID_FIELD_NEEDS_REFERENCE",
+                    format!("필드 `{}`는 `{}.Id`로 선언할 수 없음. `{}: {}`(참조)로 쓴다", f.name, f.ty.name, f.name, f.ty.name),
+                    f.ty.span,
+                );
+                continue;
+            }
             if let Some(tt) = self.type_of(Some(&r.name), &f.ty) {
                 if let Ty::Ref(target) = &tt.ty {
                     if !self.res[target.as_str()].fields.iter().any(|field| field.name == "id") {

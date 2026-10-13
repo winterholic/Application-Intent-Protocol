@@ -368,6 +368,24 @@ a range that cannot be satisfied or a value outside it
 - 원인: A range such as `Text(1..100)` needs `lo <= hi`, and values assigned by a transition must lie inside the range of the field.
 - 수정: Fix the bounds or the value.
 
+### `ID_FIELD_NEEDS_REFERENCE`
+
+a resource field declared as `X.Id`
+
+- 원인: A field in `resource ... fields { }` is a database column. `club: Club` is a reference: a foreign key the database checks, joinable and traversable. `club: Club.Id` would be a bare number that merely happens to be a club id, with nothing keeping it valid. The language keeps one spelling for "this row belongs to a club", so the second is rejected. `X.Id` stays valid where no column is involved: `input`, `access` parameters, operation inputs and outputs.
+- 수정: Write `club: Club` (add `?` when it may be null). Adding the reference also adds a foreign key to the table.
+
+```aip
+actor Member
+resource Member { fields { id: Id; name: Text } }
+resource Club {
+  fields { id: Id; name: Text }
+}
+resource Note {
+  fields { id: Id; body: Text; club: Club }
+}
+```
+
 ### `ARITH_NOT_ALLOWED`
 
 arithmetic outside the one place it is allowed
@@ -564,24 +582,6 @@ resource Note {
   fields { id: Id; body: Text; owner: Member }
   expose read { select id, body
     budget { rows 10; depth 1; deadline 2s; cost 100 } }
-}
-```
-
-### `ADVISORY_ID_WITHOUT_REFERENCE`
-
-a field that stores a resource id without a foreign key (advisory)
-
-- 원인: Not an error: the definition is accepted. `club: Club` is a reference (a foreign key the database checks, joinable and traversable). `club: Club.Id` is only a number that is a club id: nothing keeps it valid, and a deleted club leaves it dangling. Both read as "this row belongs to a club", and the second is usually chosen by mistake.
-- 수정: Write `club: Club` when the row belongs to a club. Keep `club: Club.Id` only to store an id on purpose without a constraint.
-
-```aip
-actor Member
-resource Member { fields { id: Id; name: Text } }
-resource Club {
-  fields { id: Id; name: Text }
-}
-resource Note {
-  fields { id: Id; body: Text; club: Club }
 }
 ```
 

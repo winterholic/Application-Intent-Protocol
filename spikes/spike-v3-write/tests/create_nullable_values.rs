@@ -9,7 +9,7 @@ resource Member { fields { id: Id } }
 actor Member
 resource Item {
   fields { id: Id; title: Text; archived: Bool?; reviewer: Member?; status: ReviewStatus?;
-    count: Int?; memo: Text?; email: Email?; openedAt: Time?; day: Date?; amount: Decimal(9,2)?; legacy: Member.Id? }
+    count: Int?; memo: Text?; email: Email?; openedAt: Time?; day: Date?; amount: Decimal(9,2)?; legacy: Member? }
   expose create {
     allow actor != null and archived = null and reviewer = null and status = null and count = null
       and memo = null and email = null and openedAt = null and day = null and amount = null and legacy = null
@@ -74,7 +74,7 @@ async fn omitted_and_explicit_null_values_have_the_same_create_policy_meaning() 
         db.batch_execute(&format!("DROP SCHEMA {schema} CASCADE")).await.unwrap();
         panic!("{}", failures.join("\n"));
     }
-    let all_null: i64 = db.query_one(&format!("SELECT count(*) FROM {schema}.item WHERE archived IS NULL AND reviewer_id IS NULL AND status IS NULL AND count IS NULL AND memo IS NULL AND email IS NULL AND opened_at IS NULL AND day IS NULL AND amount IS NULL AND legacy IS NULL"), &[]).await.unwrap().get(0);
+    let all_null: i64 = db.query_one(&format!("SELECT count(*) FROM {schema}.item WHERE archived IS NULL AND reviewer_id IS NULL AND status IS NULL AND count IS NULL AND memo IS NULL AND email IS NULL AND opened_at IS NULL AND day IS NULL AND amount IS NULL AND legacy_id IS NULL"), &[]).await.unwrap().get(0);
     assert_eq!(all_null, 3);
     for (values, code) in [
         (json!({"title":"denied","archived":true}), "FORBIDDEN"),

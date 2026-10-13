@@ -28,6 +28,7 @@
 | D-A13 | 표준 범위 밖에서는 JS/Python을 자연스럽게 활용한다 | 창시자 정정 10-02 |
 | D-A14 | 선언에 귀속된 선택적 구조화 설명. 자연어 의미 검증 비필수, 실행 권한/보안 판단 근거 금지 | 통합 지침 §2 원칙 5·§6. OI-N1은 스키마 상세만 남음 |
 | D-A15 | 모든 설계·구현 단위는 `PRINCIPLES.md` §4 관문을 통과해야 한다 | 창시자 정정 10-02 |
+| D-A16 | 제품 정의의 `resource ... fields { }` 안에서 `X.Id` 타입은 정의 오류(`ID_FIELD_NEEDS_REFERENCE`)다. 다른 resource를 가리키는 필드는 참조 `X` 하나뿐이다(외래 키가 생긴다). `X.Id`는 `input`·`access` 인자·operation 입출력처럼 DB 열이 아닌 자리에서는 계속 쓴다. 개발 조언 `ADVISORY_ID_WITHOUT_REFERENCE`는 오류로 대체돼 제거했다 | 창시자 2026-10-13: "3번도 너 말대로 추천대로 하자 어차피 객체 그래프탐색이 되는데, 괜히 선택지를 또 주는거 자체가 내가 지향한설계와 다른 거 같아". 감사 F8(`plan-docs/reviews/2026-10-13-ai-friendliness-runtime-reliability-audit.md`). 이미 `X.Id` 열(외래 키 없는 bigint)을 가진 DB는 참조로 바꾸는 migration 경로가 있다(`new_resource_references`) |
 | D-A11 | 장기 일관성과 완성도를 단기 구현 속도보다 우선한다 | 철학 문서 §0, §12 |
 
 ## Proposed

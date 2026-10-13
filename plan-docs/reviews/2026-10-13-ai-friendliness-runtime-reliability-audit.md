@@ -109,7 +109,7 @@
 - 분류·영향도: 불필요한 복잡도(토큰), 중복 표현. 중간.
 - 재현 근거: `spec/grammar.md`(51KB)는 PoC 언어의 문법이고 제품 언어(`resource`/`expose`/`transition`)에는 정본이 없었다. AI가 제품 정의 하나를 쓰려면 제안 문서 `plan-docs/alignment/C-syntax-proposal.md`(24KB)와 V1~V15 결과 문서를 읽어야 했다. 같은 뜻의 두 표기도 찾았다: 필드 `club: Club`(참조, `REFERENCES` 외래 키)와 `club: Club.Id`(외래 키 없는 bigint)는 둘 다 "어느 동아리에 속한다"로 읽힌다(`spikes/spike-v2-read/tests/reference_vs_id.rs`가 DDL 차이를 고정). `;`와 줄바꿈이 목록 구분자로 모두 허용되지만 제품 언어에는 포매터가 없어 문체가 갈린다(관찰만).
 - 수정: `spec/definition-syntax.md`(약 13KB, 그중 4KB는 작성 예 둘): 블록·키·형태·뜻의 표, 언어가 가정하지 않는 기본값 목록, 정의 두 개. 키 표는 파서와 같은 표에서 나오며 양방향으로 검사하고, 기본값 문장은 각각 정의를 로드해 보이는 테스트로 고정했다(`spikes/spike-v1-fixture/tests/diagnostics.rs`). `X.Id`는 `devChecks` 조언 `ADVISORY_ID_WITHOUT_REFERENCE`로 알린다(오류로 올리면 공개 문법 변경이라 결정 대상).
-- 결정 대상: `X.Id` 필드 선언을 오류로 막을지, 외래 키 없는 id를 다른 철자로 분리할지.
+- 결정과 조치(2026-10-13, D-A16): 창시자가 `fields` 안의 `X.Id`를 정의 오류로 막기로 했다(별도 철자는 두지 않음: "괜히 선택지를 또 주는거 자체가 내가 지향한설계와 다른 거 같아"). 위 개발 조언은 오류 `ID_FIELD_NEEDS_REFERENCE`로 대체해 제거했고 레지스트리·생성 문서·작성 카드·`reference_vs_id.rs`를 새 의미로 바꿨다. 기본 키 `id` 필드는 기존 `TYPE_MISMATCH` 규칙이 계속 맡는다.
 
 ## F13. 제품 wire 오류 코드에 재시도 지침이 없음
 
@@ -150,7 +150,7 @@
 | 사안 | 대안 | 지금의 완화 |
 |---|---|---|
 | 제품 언어와 PoC 언어의 확장자 공유(F5) | 별도 확장자, 파일 머리 언어 표지, 현행 유지 | 두 검사기의 `language:` 안내 |
-| `club: Club.Id`(외래 키 없음) 허용 여부(F8) | 오류로 금지, 별도 철자 | 개발 조언과 작성 카드 |
+| `club: Club.Id`(외래 키 없음) 허용 여부(F8) | 오류로 금지, 별도 철자 | 결정됨(2026-10-13): 오류로 금지, 별도 철자 없음 |
 | 오류 본문에 `requestId`·`retryable`·`explain` 추가(F4, F13) | 본문 필드 추가(DD-14), 헤더만 유지 | 헤더 `x-request-id`, `spec/wire-errors.md` |
 | 오류 코드 두 체계 통합(F9) | 접두 도입, 현행 유지 | 세 레지스트리를 `aip explain-code` 하나로 조회 |
 | 열거형 값 순서의 digest 반영(F12) | 정렬해서 digest | 현재 동작을 테스트로 고정 |

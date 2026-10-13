@@ -374,6 +374,13 @@ pub static REGISTRY: &[Info] = &[
         "",
     ),
     i(
+        "ID_FIELD_NEEDS_REFERENCE",
+        "a resource field declared as `X.Id`",
+        "A field in `resource ... fields { }` is a database column. `club: Club` is a reference: a foreign key the database checks, joinable and traversable. `club: Club.Id` would be a bare number that merely happens to be a club id, with nothing keeping it valid. The language keeps one spelling for \"this row belongs to a club\", so the second is rejected. `X.Id` stays valid where no column is involved: `input`, `access` parameters, operation inputs and outputs.",
+        "Write `club: Club` (add `?` when it may be null). Adding the reference also adds a foreign key to the table.",
+        concat!(base!(), "resource Club {\n  fields { id: Id; name: Text }\n}\nresource Note {\n  fields { id: Id; body: Text; club: Club }\n}\n"),
+    ),
+    i(
         "ARITH_NOT_ALLOWED",
         "arithmetic outside the one place it is allowed",
         "Only the `to` block of a transition may change a number, written `field = field + 1` or `field = field - 1`. Conditions never compute.",
@@ -565,13 +572,6 @@ pub static REGISTRY: &[Info] = &[
         "Not an error: the definition is accepted. An `expose read` without `budget` is only a target of another resource's `traverse`; when no resource traverses it, every read of it fails at run time with NOT_ROOT_QUERYABLE. The usual cause is a forgotten `budget`.",
         "Add `budget { rows N; depth 1; deadline 2s; cost N }` to the `expose read` to make it readable on its own, or traverse it from the resource that should embed it.",
         concat!(base!(), "resource Note {\n  fields { id: Id; body: Text; owner: Member }\n  expose read { select id, body\n    budget { rows 10; depth 1; deadline 2s; cost 100 } }\n}\n"),
-    ),
-    i(
-        "ADVISORY_ID_WITHOUT_REFERENCE",
-        "a field that stores a resource id without a foreign key (advisory)",
-        "Not an error: the definition is accepted. `club: Club` is a reference (a foreign key the database checks, joinable and traversable). `club: Club.Id` is only a number that is a club id: nothing keeps it valid, and a deleted club leaves it dangling. Both read as \"this row belongs to a club\", and the second is usually chosen by mistake.",
-        "Write `club: Club` when the row belongs to a club. Keep `club: Club.Id` only to store an id on purpose without a constraint.",
-        concat!(base!(), "resource Club {\n  fields { id: Id; name: Text }\n}\nresource Note {\n  fields { id: Id; body: Text; club: Club }\n}\n"),
     ),
     i(
         "ADVISORY_UNUSED_PREDICATE",

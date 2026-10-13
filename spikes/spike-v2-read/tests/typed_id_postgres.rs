@@ -10,14 +10,14 @@ use spike_v2_read::{
 const DB: &str = "host=localhost dbname=postgres";
 
 #[tokio::test]
-async fn typed_id_columns_store_values_without_fk_and_keep_all_three_wire_forms() {
+async fn reference_columns_keep_all_three_id_wire_forms() {
     let source = r#"
 resource First {
-  fields { id: Id; second: Second.Id? }
+  fields { id: Id; second: Second? }
   rows read when true
   expose read { select id, second; filter second.eq; sort id; budget { rows 10; depth 1; deadline 2s; cost 100 } }
 }
-resource Second { fields { id: Id; first: First.Id? } }
+resource Second { fields { id: Id; first: First? } rows read when true }
 resource Child { fields { id: Id; parent: First } }
 actor First
 "#;
@@ -30,8 +30,9 @@ actor First
         db.batch_execute(&statement).await.unwrap_or_else(|error| panic!("{statement}: {error}"));
     }
     db.batch_execute(&format!(
-        "INSERT INTO {schema}.first(id,second) VALUES (10,20),(11,9223372036854775807),(12,NULL); \
-         INSERT INTO {schema}.second(id,first) VALUES (20,10)"
+        "INSERT INTO {schema}.second(id,first_id) VALUES (20,NULL),(9223372036854775807,NULL); \
+         INSERT INTO {schema}.first(id,second_id) VALUES (10,20),(11,9223372036854775807),(12,NULL); \
+         UPDATE {schema}.second SET first_id=10 WHERE id=20"
     ))
     .await
     .unwrap();

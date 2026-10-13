@@ -26,7 +26,7 @@ fn explicitly_declared_ids_are_non_nullable_and_belong_to_their_resource() {
             assert!(errors.iter().any(|error| error.code == "TYPE_MISMATCH"), "{form:?}: {errors:?}");
         }
     }
-    let valid = "resource Member { fields { id: Member.Id } } actor Member resource Item { fields { id: Item.Id; previous: Item.Id? } }";
+    let valid = "resource Member { fields { id: Member.Id } } actor Member resource Item { fields { id: Item.Id; previous: Item? } }";
     assert!(load_str(valid, Form::A).is_ok());
     let join = "resource Member { fields { id: Id } } actor Member resource Membership { fields { member: Member; active: Bool } }";
     assert!(load_str(join, Form::A).is_ok(), "private relationship resources may omit id");

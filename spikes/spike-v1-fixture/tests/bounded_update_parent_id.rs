@@ -6,7 +6,7 @@ fn bounded_update_rejects_transition_that_changes_parent_id() {
 resource Member { fields { id: Id } }
 actor Member
 resource SalesOrder {
-  fields { id: Id; successor: SalesOrder.Id }
+  fields { id: Id; successor: SalesOrder }
   transition cancel {
     from true
     to id = successor

@@ -26,8 +26,12 @@ fn references_require_an_explicit_target_identity_in_every_definition_form() {
 
 #[test]
 fn private_relationships_remain_usable_without_id() {
-    let source = "resource Member { fields { id: Id } } actor Member predicate owned(link: Link) = link.member = actor resource Link { fields { member: Member } check ownedLink when owned(this) } resource Item { fields { id: Id; legacy: Link.Id? } rows read when exists Link where member = actor }";
-    assert!(load_str(source, Form::A).is_ok(), "exists sources and opaque typed IDs do not require a target FK");
+    let source = "resource Member { fields { id: Id } } actor Member predicate owned(link: Link) = link.member = actor resource Link { fields { member: Member } check ownedLink when owned(this) } resource Item { fields { id: Id } rows read when exists Link where member = actor }";
+    assert!(load_str(source, Form::A).is_ok(), "exists sources do not require a target id");
+    // founder decision 2026-10-13: a field never stores an opaque `X.Id`; without an id there is no reference either
+    let opaque = source.replace("fields { id: Id } rows read when exists", "fields { id: Id; legacy: Link.Id? } rows read when exists");
+    let errors = load_str(&opaque, Form::A).err().expect("X.Id field is rejected");
+    assert!(errors.iter().any(|e| e.code == "ID_FIELD_NEEDS_REFERENCE"), "{errors:?}");
     let referenced = "resource Member { fields { id: Id } } actor Member resource Link { fields { id: Id; member: Member } } resource Item { fields { id: Id; link: Link? } }";
     assert!(load_str(referenced, Form::A).is_ok());
 }

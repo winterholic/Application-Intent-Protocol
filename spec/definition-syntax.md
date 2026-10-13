@@ -15,7 +15,7 @@
 - `expose apply`에는 `bulk maxRows`가 필요하다.
 - `aggregate`에는 `sourceAccess`가 필요하다. 원본 행의 읽기 정책을 물려받지 않는다.
 - 필드 읽기 정책(`field ... read when`)이 있는 필드는 filter·sort·집계에 쓸 수 없다.
-- 필드 타입 `X`(참조)는 외래 키를 만들고 `X.Id`는 만들지 않는다. 같은 뜻처럼 보이지만 다른 계약이며, `X.Id`는 `devChecks` 조언(`ADVISORY_ID_WITHOUT_REFERENCE`)이 알려 준다.
+- `fields` 안에서 다른 resource를 가리키는 타입은 참조 `X` 하나뿐이다(외래 키가 생긴다). `X.Id`는 `input`·`access` 인자·operation 입출력처럼 DB 열이 아닌 자리에서만 쓰며, `fields` 안에서는 정의 오류(`ID_FIELD_NEEDS_REFERENCE`)다.
 - 알 수 없는 키는 무시하지 않고 오류다.
 - 문법 오류는 첫 번째에서 멈춘다. 의미 오류는 모아서 보고하며 원인을 먼저 둔다.
 
@@ -37,7 +37,7 @@
 
 | 키 | 형태 | 뜻 |
 |---|---|---|
-| `fields` | `fields { id: Id; name: Text(1..100); owner: Member? }` | 열. ?는 null 허용. owner: Member는 외래 키가 있는 참조(조인·traverse 가능), owner: Member.Id는 외래 키 없는 id 값이다. 어느 행에 속한다는 뜻이면 앞의 것을 쓴다. resource마다 한 번 |
+| `fields` | `fields { id: Id; name: Text(1..100); owner: Member? }` | 열. ?는 null 허용. owner: Member는 외래 키가 있는 참조(조인·traverse 가능). fields 안에서 `X.Id`는 쓸 수 없고 오류다(ID_FIELD_NEEDS_REFERENCE). 참조 `X`를 쓴다. resource마다 한 번 |
 | `rows` | `rows read when condition` | 호출자가 읽을 수 있는 행. 쓰지 않으면 읽을 수 있는 행이 없다 |
 | `field` | `field name read when condition` | 필드별 읽기 조건. 이 필드는 filter·sort·집계에 쓸 수 없다 |
 | `expose` | `expose read {..} \| expose apply T {..} \| expose create {..} \| expose compose {..} \| expose aggregate name` | 호출자에게 여는 것. 쓰지 않은 것은 열리지 않는다 |
