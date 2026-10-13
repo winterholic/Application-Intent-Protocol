@@ -10,7 +10,7 @@ export interface Contract {
       checked: boolean;
       count: number;
       id: Id<"Inbox">;
-      member: Id<"Member">;
+      member: Id<"Member"> | null;
       title: string;
     };
     traverse: {
@@ -76,5 +76,5 @@ export interface ApplyContract {
 }
 
 import type { ApplyBinding } from "../../spike-v5-sdk/sdk/generic.ts";
-export const contractFingerprint = "8b643565eeec5da88d1ddf93a729751134099e8eabe50e468353949622b5aa40";
-export const contract: ApplyBinding<Contract, ApplyContract> = { fingerprint: "8b643565eeec5da88d1ddf93a729751134099e8eabe50e468353949622b5aa40", idWire: "decimal-string-v13" };
+export const contractFingerprint = "773826eb213a38982a35398aed51c5f64c077361377c66c237b3a3470c006db3";
+export const contract: ApplyBinding<Contract, ApplyContract> = { fingerprint: "773826eb213a38982a35398aed51c5f64c077361377c66c237b3a3470c006db3", idWire: "decimal-string-v13" };

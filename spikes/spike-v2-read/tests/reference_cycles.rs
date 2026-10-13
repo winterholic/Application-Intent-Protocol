@@ -15,7 +15,7 @@ resource Member {
   expose read { select id, dept; budget { rows 10; depth 1; deadline 2s; cost 100 } }
 }
 actor Member
-resource Dept { fields { id: Id; lead: Member? } }
+resource Dept { fields { id: Id; lead: Member? } rows read when true }
 "#;
 
 fn facts(source: &str) -> serde_json::Value {

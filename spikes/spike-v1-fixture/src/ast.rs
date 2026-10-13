@@ -99,6 +99,8 @@ pub struct TraverseMany {
 #[derive(Debug, Clone, Default)]
 pub struct ExposeRead {
     pub select: Vec<(String, Span)>,
+    /// 대상 행 가시성과 무관하게 원시 FK id를 공개하겠다고 선언한 Ref 필드(select 안에 있어야 한다).
+    pub ref_ids: Vec<(String, Span)>,
     pub filter: Vec<(String, String, Span)>,
     pub sort: Vec<(String, Span)>,
     pub traverse: Vec<TraverseSelection>,

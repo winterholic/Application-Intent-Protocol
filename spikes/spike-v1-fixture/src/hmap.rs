@@ -175,10 +175,13 @@ fn resource(name: &str, l: &Lit, span: Span) -> R<Resource> {
     }
     if let Some((rd, rds)) = get(o, "read") {
         let ro = obj(rd, rds, "read")?;
-        keys(ro, &["select", "filter", "sort", "traverse", "budget"], "read")?;
+        keys(ro, &["select", "refIds", "filter", "sort", "traverse", "budget"], "read")?;
         let mut e = ExposeRead { span: rds, ..Default::default() };
         if let Some((x, xs)) = get(ro, "select") {
             e.select = strs(x, xs, "select")?;
+        }
+        if let Some((x, xs)) = get(ro, "refIds") {
+            e.ref_ids = strs(x, xs, "refIds")?;
         }
         if let Some((x, xs)) = get(ro, "filter") {
             for (f, fsp) in strs(x, xs, "filter")? {

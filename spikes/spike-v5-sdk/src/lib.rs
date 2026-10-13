@@ -91,6 +91,12 @@ fn ts_type(facts: &Value, ty: &str) -> String {
     }
 }
 
+/// select 종류가 null이 될 수 있는 출력인지. 필드 읽기 정책이 있거나, 대상 행 정책으로 가려질 수 있는 참조(`refVisible*`)다.
+/// `refIds`로 선언한 참조는 `field`로 남아 선언한 nullability를 그대로 갖는다.
+fn may_be_null(kind: &str) -> bool {
+    matches!(kind, "fieldWithPolicy" | "refVisible" | "refVisibleWithPolicy")
+}
+
 /// 필드별 출력 타입. 정책으로 가려질 수 있는 필드(redactable)는 null을 더한다.
 fn field_types(facts: &Value, res: &str) -> Vec<(String, String)> {
     let rf = &facts["resources"][res];
@@ -110,7 +116,7 @@ fn field_types(facts: &Value, res: &str) -> Vec<(String, String)> {
             }
             k => {
                 let t = ts_type(facts, rf["fields"][name]["ty"].as_str().unwrap());
-                if k == "fieldWithPolicy" && !t.ends_with("| null") {
+                if may_be_null(k) && !t.ends_with("| null") {
                     format!("{t} | null")
                 } else {
                     t
@@ -295,7 +301,7 @@ fn read_descriptors(facts: &Value) -> Value {
                 let aggregate = &rf["aggregates"][field];
                 (aggregate["ty"].as_str().unwrap(), facts["accesses"][aggregate["sourceAccess"]["ref"].as_str().unwrap_or("")]["kind"] == "guard")
             } else {
-                (rf["fields"][field]["ty"].as_str().unwrap(), kind == "fieldWithPolicy")
+                (rf["fields"][field]["ty"].as_str().unwrap(), kind.as_str().is_some_and(may_be_null))
             };
             fields.insert(field.clone(), scalar_descriptor(facts, ty, redacted));
         }

@@ -59,6 +59,12 @@ pub const NOTES: &[(&str, &str, &str, &str)] = &[
     ),
     ("resource", "docs", "docs { summary \"...\"; visibility internal }", "사람이 읽는 설명. 실행·권한에 쓰이지 않는다"),
     ("expose read", "select", "select a, b", "읽을 수 있는 필드·집계 이름"),
+    (
+        "expose read",
+        "refIds",
+        "refIds a, b",
+        "select한 참조 필드 가운데 원시 외래 키 id를 대상 행의 가시성과 무관하게 공개할 것. 쓰지 않은 참조 select는 대상 resource의 `rows read`를 적용해 호출자가 대상 행을 볼 수 없으면 null이 된다(출력 타입도 nullable)",
+    ),
     ("expose read", "filter", "filter f.op, g.op", "필터 허용 목록. 연산 eq in isNull gte lte gt lt prefix contains 중 필드 타입이 지원하는 것"),
     ("expose read", "sort", "sort a, b", "정렬 허용 목록"),
     (

@@ -39,7 +39,7 @@
 |---|---|
 | 객체 수준 인가 BOLA(API1) | `/apply` 대상 행에 rowRead를 WHERE로 걸고 없는 행과 안 보이는 행을 구분하지 않음. 관계 확장·필터·정렬·집계는 S-01과 2026-10-07 항목으로 막음 |
 | 인증(API2) | RS256 고정, iss·aud·exp·nbf·kid·jku 검사, 매 요청 DB에서 principal 재확인. 남은 것은 O-06 |
-| 속성 수준 인가·mass assignment(API3) | `/apply`는 `{apply,target}`만 받고 `to` 값은 계약에 고정. create/bundle은 HTTP에 없음. O-01·O-02는 [OPEN] |
+| 속성 수준 인가·mass assignment(API3) | `/apply`는 `{apply,target}`만 받고 `to` 값은 계약에 고정. create/bundle은 HTTP에 없음. O-01은 조치 완료, O-02는 [OPEN] |
 | 자원 소비(API4) | 본문 1MiB·헤더·IN 50·limit·cost·깊이·deadline·연결 상한. S-07·S-08 보강. O-04·O-05 남음 |
 | 기능 수준 인가(API5) | 경로별 세션 요구, `/capabilities`는 세션 필요 |
 | 민감 흐름(API6) | 멱등 키는 (principal,key) 범위 |
@@ -87,7 +87,7 @@
 
 | ID | 심각도 | 발견 | 상태 |
 |---|---|---|---|
-| O-01 | 중간 [OPEN] | **실제 PG로 재현**: `Task.team: Team?`, `Team rows read when owner = actor`, `expose read { select id, team }`에서 member 1이 읽으면 자기 팀이 아닌 task 2의 `team: 11`도 받음. 루트 select에 Ref 필드를 직접 열면 대상 행 정책과 무관하게 원시 FK Id가 나감. traverse·Ref filter는 안 보이는 대상을 null로 취급하므로 "숨은 대상 Id 확인" 방어가 select 경로에서는 무의미해짐 | 코드 추적. 고치면 Ref 출력이 nullable로 바뀌어 SDK 타입과 계약 지문이 달라지므로 창시자 결정 필요. 권고: 정의 작성자가 FK 노출을 선언(`expose`)하거나 기본을 정책 적용으로 |
+| O-01 | 중간, **조치 완료**(2026-10-13) | **실제 PG로 재현**: `Task.team: Team?`, `Team rows read when owner = actor`, `expose read { select id, team }`에서 member 1이 읽으면 자기 팀이 아닌 task 2의 `team: 11`도 받음. 루트 select에 Ref 필드를 직접 열면 대상 행 정책과 무관하게 원시 FK Id가 나감. traverse·Ref filter는 안 보이는 대상을 null로 취급하므로 "숨은 대상 Id 확인" 방어가 select 경로에서는 무의미해짐 | 창시자 결정("c가 좋을듯 기본은 a로하고 선언따로하도록"): 기본은 대상 resource의 행 정책을 적용해 호출자가 대상 행을 볼 수 없으면 null, 정의 작성자가 `expose read` 안 `refIds team`으로 선언한 FK만 원시 id를 non-null로 공개. 구현: `sema.rs` `expose()`가 select 종류를 `refVisible`/`refVisibleWithPolicy`로 분류(선언하면 `field`), `plan.rs`의 루트·단일 traverse·1:N select 3곳이 `guard_ref`로 대상 `rowRead`를 적용, `spike-v5-sdk` 타입·descriptor 2곳이 nullable로 생성. 필수 참조(`team: Team`)도 기본 출력은 `Id<"Team"> \| null`, 선언하면 `Id<"Team">`. 계약 지문이 바뀐다. 테스트: `spike-v2-read/tests/ref_select_visibility.rs`(감사 시나리오를 PG로 재현, 수정 전 실패 확인), `spike-v5-sdk/tests/ref_select_codegen.rs` |
 | O-02 | 낮음 | `transition`의 `from`/`to`/`repeat unchanged`가 field read 정책 필드를 참조하면 `/apply` 응답의 `changed`/`unchanged`·`INVALID_STATE`로 이전 값을 추론할 수 있음 | 미재현. sema가 이 조합을 막는지 확인 필요 |
 | O-03 | 낮음 [OPEN] | `/read`·`/apply`·`/status`는 `X-AIP-Contract` 헤더가 없어도 통과(다른 경로는 필수). 권한 우회는 아님 | 설계 결정. raw 클라이언트 호환과 맞바꿈 |
 | O-04 | 낮음 | 위 S-15로 연결 수는 16개로 묶였다. 인증 조회 자체는 여전히 admission 앞에서 실행되므로 풀 연결·rate limit 통합은 남음 | 부분 조치 |
@@ -156,7 +156,7 @@ PoC 항목은 제품 경로로 승격할 때 [PoC 이식 지도](2026-10-07-poc-
 
 ## 5. 남은 위험 요약
 
-1. [OPEN] O-01 Ref 직접 select의 대상 가시성(실제 PG로 재현됨): 창시자 결정이 필요한 가장 큰 인가 간극이다. 고치려면 Ref select를 정책 필드처럼 취급해 대상이 안 보이면 null로 만들어야 하고, 이는 출력 타입 nullable과 계약 지문을 바꾼다. 구현 위치는 `sema.rs`의 `expose()` kind 분류, `plan.rs`의 select 식 3곳(루트·단일 traverse·1:N), `spike-v5-sdk`의 타입 생성 2곳이다.
+1. [조치 완료 2026-10-13] O-01 Ref 직접 select의 대상 가시성(실제 PG로 재현됨): 가장 큰 인가 간극이었고 창시자 결정(기본은 대상 행 정책 적용, 선언 시 원시 id 공개)대로 구현했다. 아래는 결정 전 기록이다. 고치려면 Ref select를 정책 필드처럼 취급해 대상이 안 보이면 null로 만들어야 하고, 이는 출력 타입 nullable과 계약 지문을 바꾼다. 구현 위치는 `sema.rs`의 `expose()` kind 분류, `plan.rs`의 select 식 3곳(루트·단일 traverse·1:N), `spike-v5-sdk`의 타입 생성 2곳이다.
 2. 제품 경로 가용성: O-04·O-05·O-06, O-20 저장소 증가, O-25 쓰기마다 `check` 전체 스캔. rate limit이 기본 꺼져 있다는 점(O-05)이 대부분의 가용성 항목을 증폭한다.
 3. 권한 설계: O-19 trigger 대상 operation의 직접 호출, O-22 DB 역할 분리 없음, O-26 `not exists` 경합.
 3. 격리: O-13 macOS worker 격리 한계. 확장은 신뢰한 코드만 쓴다는 전제가 깨지면 영향이 크다.

@@ -1314,9 +1314,28 @@ impl<'a> Ctx<'a> {
 
     fn expose(&mut self, r: &Resource, e: &ExposeRead) -> Value {
         let mut kinds = Map::new();
+        let mut open_ids = BTreeSet::new();
+        for (n, sp) in &e.ref_ids {
+            if !open_ids.insert(n.as_str()) {
+                self.d("DUPLICATE", format!("refIds `{n}` 중복"), *sp);
+            } else if !e.select.iter().any(|(s, _)| s == n) || !r.fields.iter().any(|f| &f.name == n) {
+                self.d("UNKNOWN_FIELD", format!("refIds `{n}`: `{}`의 expose select에 있는 필드여야 함", r.name), *sp);
+            } else if !matches!(self.field_tt(&r.name, n), Some(TT { ty: Ty::Ref(_), .. })) {
+                self.d("TYPE_MISMATCH", format!("refIds `{n}`는 참조 필드가 아님"), *sp);
+            }
+        }
         for (s, sp) in &e.select {
             if r.fields.iter().any(|f| &f.name == s) {
-                let k = if r.field_read.iter().any(|x| &x.0 == s) { "fieldWithPolicy" } else { "field" };
+                let policy = r.field_read.iter().any(|x| &x.0 == s);
+                // 창시자 결정(2026-10-13, O-01): 참조를 직접 select하면 기본은 대상 행 정책을 적용한다(안 보이면 null).
+                // refIds로 선언한 참조만 원시 id를 그대로 공개한다.
+                let guarded = matches!(self.field_tt(&r.name, s), Some(TT { ty: Ty::Ref(_), .. })) && !open_ids.contains(s.as_str());
+                let k = match (guarded, policy) {
+                    (true, true) => "refVisibleWithPolicy",
+                    (true, false) => "refVisible",
+                    (false, true) => "fieldWithPolicy",
+                    (false, false) => "field",
+                };
                 kinds.insert(s.clone(), json!(k));
             } else if let Some(a) = r.aggregates.iter().find(|a| &a.name == s) {
                 if a.group_key.is_none() || !a.input.is_empty() {

@@ -11,7 +11,7 @@ export interface Contract {
       id: Id<"Item">;
       isChecked: boolean;
       label: string;
-      member: Id<"Member">;
+      member: Id<"Member"> | null;
       parent: Id<"Parent"> | null;
     };
     traverse: {
@@ -42,5 +42,5 @@ export interface Contract {
 }
 
 import type { ContractBinding } from "../../spike-v5-sdk/sdk/generic.ts";
-export const contractFingerprint = "5112b9a2771420056a5e77fa5ff4365973bcccf9a909cd7cd9cbb72710bc968d";
-export const contract: ContractBinding<Contract> = { fingerprint: "5112b9a2771420056a5e77fa5ff4365973bcccf9a909cd7cd9cbb72710bc968d" };
+export const contractFingerprint = "197a3fb43b582dfc21271c85b848c66f6efdc433030fb93d06beca084bb45f29";
+export const contract: ContractBinding<Contract> = { fingerprint: "197a3fb43b582dfc21271c85b848c66f6efdc433030fb93d06beca084bb45f29" };

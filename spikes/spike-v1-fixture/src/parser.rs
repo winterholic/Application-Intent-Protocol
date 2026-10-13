@@ -591,6 +591,7 @@ impl Parser {
                     }
                 },
                 "sort" => e.sort.extend(self.ident_list()?),
+                "refIds" => e.ref_ids.extend(self.ident_list()?),
                 "traverse" => {
                     let rel = self.ident()?;
                     if self.is_kw("via") {

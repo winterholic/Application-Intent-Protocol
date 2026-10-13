@@ -51,7 +51,7 @@ fn an_unknown_key_lists_what_the_block_accepts() {
     assert_eq!(text(d, "scope"), "resource Recruitment > expose read");
     let help = text(d, "help");
     assert!(help.contains("did you mean `sort`?"), "{help}");
-    assert!(help.contains("`expose read` accepts: select, filter, sort, traverse, budget."), "{help}");
+    assert!(help.contains("`expose read` accepts: select, refIds, filter, sort, traverse, budget."), "{help}");
 }
 
 #[test]

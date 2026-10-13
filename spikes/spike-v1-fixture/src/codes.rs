@@ -76,7 +76,7 @@ pub fn render_markdown() -> String {
 pub const BLOCK_KEYS: &[(&str, &[&str])] = &[
     ("선언", &["enum", "actor", "predicate", "access", "limit", "resource", "operation"]),
     ("resource", &["fields", "rows", "field", "expose", "aggregate", "transition", "unique", "check", "invariant", "extension", "docs"]),
-    ("expose read", &["select", "filter", "sort", "traverse", "budget"]),
+    ("expose read", &["select", "refIds", "filter", "sort", "traverse", "budget"]),
     ("budget", &["rows", "depth", "deadline", "cost", "offset", "cursor"]),
     ("traverse", &["select", "sort", "limit"]),
     ("aggregate", &["input", "source", "sourceAccess", "groupKey", "where", "callerFilter", "rowOutput", "release"]),

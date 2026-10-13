@@ -88,6 +88,21 @@ fn estimate(limit: i64, offset: i64, traverse: usize, aggs: usize, field_policie
     limit * (1 + traverse as i64 + aggs as i64 + field_policies as i64) + offset
 }
 
+/// select 종류가 대상 행 정책으로 가려지는 참조인지(sema의 `refVisible*`). `refIds`로 선언한 참조는 해당하지 않는다.
+fn ref_guarded(kind: Option<&str>) -> bool {
+    matches!(kind, Some("refVisible" | "refVisibleWithPolicy"))
+}
+
+/// 참조 select의 가시성 가드(창시자 결정 2026-10-13, 보안 감사 O-01). 호출자가 대상 행을 읽을 수 없으면 원시 FK id 대신 null이다.
+/// traverse·Ref filter가 안 보이는 대상을 null로 취급하는 것과 같은 규칙이라, select로 숨은 대상의 id를 확인할 수 없다.
+fn guard_ref(facts: &Value, cx: &mut Ctx<'_>, ty: &str, col: &str, value: &str) -> Result<String, Reject> {
+    let target = sqlgen::ref_target(ty).ok_or_else(|| internal(format!("참조 가드 대상 아님 `{ty}`")))?;
+    let ta = cx.alias("v");
+    let tenv = Env { this: Some((ta.clone(), target.to_string())), ..Default::default() };
+    let row = cx.cond(&facts["resources"][target]["rowRead"], &tenv).map_err(internal)?;
+    Ok(format!("CASE WHEN EXISTS (SELECT 1 FROM {} {ta} WHERE {ta}.id = {col} AND {row}) THEN {value} END", table(target)))
+}
+
 fn out_ty(ty: &str, redactable: bool) -> Value {
     let t = ty.trim_end_matches('?');
     let nullable = ty.ends_with('?') || redactable;
@@ -285,15 +300,20 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
                     Some(k) => {
                         let col = format!("{t}.{}", column(facts, res, f).unwrap());
                         let fty = rf["fields"][f]["ty"].as_str().unwrap();
-                        let expr = if k == "fieldWithPolicy" {
+                        let guarded = ref_guarded(Some(k));
+                        let policy = matches!(k, "fieldWithPolicy" | "refVisibleWithPolicy");
+                        let mut expr = col.clone();
+                        if guarded {
+                            n_fp += 1;
+                            expr = guard_ref(facts, &mut cx, fty, &col, &expr)?;
+                        }
+                        if policy {
                             n_fp += 1;
                             let c = cx.cond(&rf["fieldRead"][f], &env).map_err(internal)?;
-                            format!("CASE WHEN {c} THEN {col} END")
-                        } else {
-                            col
-                        };
+                            expr = format!("CASE WHEN {c} THEN {expr} END");
+                        }
                         cols.push((f.clone(), sqlgen::json_scalar(fty, &expr)));
-                        out.insert(f.clone(), out_ty(fty, k == "fieldWithPolicy"));
+                        out.insert(f.clone(), out_ty(fty, policy || guarded));
                     }
                 }
             }
@@ -348,14 +368,18 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
                     let col = format!("{ta}.{}", column(facts, target, f).unwrap());
                     let fty = tf["fields"][f]["ty"].as_str().unwrap();
                     let redact = !tf["fieldRead"][f].is_null();
-                    let e = if redact {
+                    let guarded = ref_guarded(tf["exposeRead"]["select"][f].as_str());
+                    let mut e = col.clone();
+                    if guarded {
                         n_fp += 1;
-                        format!("CASE WHEN {} THEN {col} END", cx.cond(&tf["fieldRead"][f], &tenv).map_err(internal)?)
-                    } else {
-                        col
-                    };
+                        e = guard_ref(facts, &mut cx, fty, &col, &e)?;
+                    }
+                    if redact {
+                        n_fp += 1;
+                        e = format!("CASE WHEN {} THEN {e} END", cx.cond(&tf["fieldRead"][f], &tenv).map_err(internal)?);
+                    }
                     pairs.push(format!("'{f}', {}", sqlgen::json_scalar(fty, &e)));
-                    tout.insert(f.to_string(), out_ty(fty, redact));
+                    tout.insert(f.to_string(), out_ty(fty, redact || guarded));
                 }
                 // 대상 resource의 행 정책을 다시 적용한다. 안 보이는 관계는 null이 된다.
                 let row = cx.cond(&tf["rowRead"], &tenv).map_err(internal)?;
@@ -670,14 +694,18 @@ fn plan_traverse_many(
         let col = format!("{ob}.{}", column(facts, target, f).unwrap());
         let fty = tf["fields"][f]["ty"].as_str().unwrap();
         let redact = !tf["fieldRead"][f].is_null();
-        let e = if redact {
+        let guarded = ref_guarded(tf["exposeRead"]["select"][f].as_str());
+        let mut e = col.clone();
+        if guarded {
             n_fp += 1;
-            format!("CASE WHEN {} THEN {col} END", cx.cond(&tf["fieldRead"][f], &outer_env).map_err(internal)?)
-        } else {
-            col
-        };
+            e = guard_ref(facts, cx, fty, &col, &e)?;
+        }
+        if redact {
+            n_fp += 1;
+            e = format!("CASE WHEN {} THEN {e} END", cx.cond(&tf["fieldRead"][f], &outer_env).map_err(internal)?);
+        }
         pairs.push(format!("'{f}', {}", sqlgen::json_scalar(fty, &e)));
-        tout.insert(f.to_string(), out_ty(fty, redact));
+        tout.insert(f.to_string(), out_ty(fty, redact || guarded));
     }
     let row = cx.cond(&tf["rowRead"], &inner_env).map_err(internal)?;
     let fk = column(facts, target, tm["via"].as_str().unwrap()).unwrap();

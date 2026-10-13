@@ -57,7 +57,10 @@ fn legacy_codegen_is_byte_identical_and_candidate_modes_type_ids_and_filter_inpu
     assert!(id_alias(&decimal).contains("= string &"), "DecimalString ID alias must be string-based: {}", id_alias(&decimal));
     assert!(decimal.contains("id: Id<\"Recruitment\">;"), "Id filter input uses the decimal-string ID alias");
     assert!(!decimal.contains("${number}"), "DecimalString filter input must not widen to numbers");
-    assert!(decimal.contains("club: Id<\"Club\">;"), "Ref<Club> field uses the selected ID wire type");
+    assert!(
+        decimal.contains("club: Id<\"Club\"> | null;"),
+        "Ref<Club> field uses the selected ID wire type (nullable: Club rows are policy-guarded)"
+    );
 
     assert!(id_alias(&legacy).contains("= number &"));
     assert!(legacy.contains("id: Id<\"Recruitment\"> | `${number}`;"), "legacy filter keeps its existing number/string input bytes");
