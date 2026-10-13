@@ -40,8 +40,7 @@ fn assert_clean(what: &str, error: &spike_v2_read::plan::Reject) {
 #[tokio::test]
 async fn invariant_errors_admit_existence_but_never_carry_a_hidden_rows_id_or_values() {
     let facts = load_str(SOURCE, Form::A).unwrap_or_else(|errors| panic!("{errors:?}")).execution;
-    let schema =
-        format!("aip_o27_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let schema = format!("aip_o27_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
     sqlgen::set_schema(&schema);
     let mut db = connect_with_url("host=localhost dbname=postgres").await.unwrap();
     for statement in sqlgen::create_ddl_in(&schema, &facts).unwrap() {
@@ -57,14 +56,9 @@ async fn invariant_errors_admit_existence_but_never_carry_a_hidden_rows_id_or_va
     let knobs = Knobs::default();
 
     // unique collision on create with a row member 1 cannot read: allowed to fail, never to explain with the hidden row
-    let created = bundle(
-        &mut db,
-        &facts,
-        &json!({"atomic":[{"create":"Seat","values":{"code":SECRET_CODE,"note":"x","held":false}}]}),
-        &caller(1),
-        &knobs,
-    )
-    .await;
+    let created =
+        bundle(&mut db, &facts, &json!({"atomic":[{"create":"Seat","values":{"code":SECRET_CODE,"note":"x","held":false}}]}), &caller(1), &knobs)
+            .await;
     let error = created.expect_err("a duplicate code must be rejected");
     assert_eq!(error.code, "ALREADY_EXISTS", "{error:?}");
     assert_clean("unique create", &error);

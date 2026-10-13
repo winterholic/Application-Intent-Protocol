@@ -41,7 +41,8 @@ resource Note {
 
 async fn setup() -> (Value, tokio_postgres::Client) {
     let facts = load_str(DEF, Form::A).unwrap_or_else(|e| panic!("{e:?}")).execution;
-    let schema = format!("aip_hidden_null_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let schema =
+        format!("aip_hidden_null_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
     sqlgen::set_schema(&schema);
     let mut db = connect_with_url(DB).await.unwrap();
     for statement in sqlgen::create_ddl_in(&schema, &facts).unwrap() {
