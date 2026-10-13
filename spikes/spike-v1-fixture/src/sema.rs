@@ -586,6 +586,57 @@ impl<'a> Ctx<'a> {
         Some(TT { ty, nullable: t.nullable })
     }
 
+    /// 전이의 `from`·`to` 값 식이 field read 정책 필드를 읽으면 막는다(감사 O-02). 결과(`INVALID_STATE`, `changed`/`unchanged`,
+    /// 복사된 값)로 가려진 값이 추론되기 때문이다. facts의 path를 따라 참조 이동과 exists 안쪽 resource까지 본다.
+    fn reject_hidden_reads(&mut self, v: &Value, res: &str, what: &str, sp: Span) {
+        let mut hits = vec![];
+        self.hidden_reads(v, res, &mut hits);
+        hits.sort();
+        hits.dedup();
+        for h in hits {
+            self.d(
+                "POLICY_FIELD_NOT_USABLE_IN_TRANSITION",
+                format!("{what}가 field read 정책이 있는 `{h}`를 읽을 수 없음(결과로 가려진 값이 추론됨). 가려지지 않은 필드로 조건을 쓴다"),
+                sp,
+            );
+        }
+    }
+
+    fn hidden_reads(&self, v: &Value, cur: &str, out: &mut Vec<String>) {
+        match v {
+            Value::Object(o) => {
+                if let Some(p) = o.get("path") {
+                    if p["root"] == "this" {
+                        let mut at = cur.to_string();
+                        for seg in p["segs"].as_array().into_iter().flatten().filter_map(Value::as_str) {
+                            let Some(rs) = self.res.get(at.as_str()) else { break };
+                            if rs.field_read.iter().any(|x| x.0 == seg) {
+                                out.push(format!("{at}.{seg}"));
+                                break;
+                            }
+                            match self.field_tt(&at, seg) {
+                                Some(TT { ty: Ty::Ref(next), .. }) => at = next,
+                                _ => break,
+                            }
+                        }
+                    }
+                    return;
+                }
+                if let Some(inner) = o.get("exists").and_then(Value::as_str) {
+                    if let Some(w) = o.get("where") {
+                        self.hidden_reads(w, inner, out);
+                    }
+                    return;
+                }
+                for x in o.values() {
+                    self.hidden_reads(x, cur, out);
+                }
+            }
+            Value::Array(a) => a.iter().for_each(|x| self.hidden_reads(x, cur, out)),
+            _ => {}
+        }
+    }
+
     fn run<T>(&mut self, r: Result<T, Diag>) -> Option<T> {
         match r {
             Ok(v) => Some(v),
@@ -824,6 +875,9 @@ impl<'a> Ctx<'a> {
         for t in &r.transitions {
             let from = self.bool_of(&t.from, &sc);
             let from = self.run(from);
+            if let Some(from) = &from {
+                self.reject_hidden_reads(from, &r.name, &format!("transition `{}`의 from", t.name), t.span);
+            }
             let allow = self.bool_of(&t.allow, &sc);
             let allow = self.run(allow);
             let mut to = Map::new();
@@ -859,7 +913,19 @@ impl<'a> Ctx<'a> {
                     }
                 });
                 if let Some(v) = self.run(res) {
+                    // 값 쪽이 가려진 필드를 읽으면 그 값이 보이는 필드로 복사된다.
+                    self.reject_hidden_reads(&v, &r.name, &format!("transition `{}`의 to `{f}` 값", t.name), t.span);
                     to.insert(f.clone(), v);
+                }
+            }
+            // repeat unchanged는 "이미 목표 값"을 `unchanged`로 돌려주므로 가려진 필드에 쓰면 같음 여부가 새어 나간다.
+            if t.repeat.as_ref().is_some_and(|(x, _)| x == "unchanged") {
+                if let Some(f) = t.to.iter().map(|(f, _)| f).find(|f| r.field_read.iter().any(|x| &x.0 == *f)) {
+                    self.d(
+                        "POLICY_FIELD_NOT_USABLE_IN_TRANSITION",
+                        format!("transition `{}`: `{f}`에는 field read 정책이 있어 repeat unchanged와 함께 쓸 수 없음(`unchanged`가 가려진 값과 같음을 알려 줌). repeat를 빼거나 reject로 쓴다", t.name),
+                        t.span,
+                    );
                 }
             }
             if counters && t.repeat.as_ref().is_some_and(|(r, _)| r == "unchanged") {

@@ -431,6 +431,13 @@ pub static REGISTRY: &[Info] = &[
         "",
     ),
     i(
+        "POLICY_FIELD_NOT_USABLE_IN_TRANSITION",
+        "a field with a read policy in a transition's `from`, the value of `to`, or under `repeat unchanged`",
+        "A caller who cannot read the field still sees the outcome of a transition: `INVALID_STATE` when `from` is false, `unchanged` when the row already holds the target value, and a copied value when `to` reads the field into a visible one. Each of those would reveal the hidden value, so the definition is rejected. `allow` is the author's authorization rule and a write to a hidden field without `repeat unchanged` reveals nothing, so those stay valid.",
+        "Express the condition on a field without a read policy, or remove the field's `field ... read when` policy. For a hidden target field, drop `repeat unchanged`.",
+        "",
+    ),
+    i(
         "POLICY_FIELD_NOT_AGGREGATABLE",
         "a field with a read policy cannot be aggregated",
         "An aggregate such as `sum(field)` would reveal the hidden values.",

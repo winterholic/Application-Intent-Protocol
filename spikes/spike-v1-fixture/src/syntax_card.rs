@@ -148,6 +148,8 @@ pub fn render_markdown() -> String {
          - `expose apply`에는 `bulk maxRows`가 필요하다.\n\
          - `aggregate`에는 `sourceAccess`가 필요하다. 원본 행의 읽기 정책을 물려받지 않는다.\n\
          - 필드 읽기 정책(`field ... read when`)이 있는 필드는 filter·sort·집계에 쓸 수 없다.\n\
+         - 필드 읽기 정책이 있는 필드는 전이의 `from`, `to`의 값 식, `repeat unchanged`가 걸린 `to` 대상에도 쓸 수 없다(`POLICY_FIELD_NOT_USABLE_IN_TRANSITION`). 결과로 가려진 값이 추론되기 때문이다. `allow`와 `repeat unchanged` 없는 `to` 쓰기는 가능하다.\n\
+         - `unique`·`limit`·`invariant` 위반(`ALREADY_EXISTS`, `INVARIANT_VIOLATED`)은 호출자가 볼 수 없는 행과 충돌해도 같은 코드로 실패한다. 존재는 알려도 오류 본문에 그 행의 id나 값은 싣지 않는다.\n\
          - `fields` 안에서 다른 resource를 가리키는 타입은 참조 `X` 하나뿐이다(외래 키가 생긴다). `X.Id`는 `input`·`access` 인자·operation 입출력처럼 DB 열이 아닌 자리에서만 쓰며, `fields` 안에서는 정의 오류(`ID_FIELD_NEEDS_REFERENCE`)다. 기본 키도 `id: Id` 한 가지뿐이고 `id: Item.Id`는 같은 오류다.\n\
          - 알 수 없는 키는 무시하지 않고 오류다.\n\
          - 문법 오류는 첫 번째에서 멈춘다. 의미 오류는 모아서 보고하며 원인을 먼저 둔다.\n",

@@ -39,7 +39,7 @@
 |---|---|
 | 객체 수준 인가 BOLA(API1) | `/apply` 대상 행에 rowRead를 WHERE로 걸고 없는 행과 안 보이는 행을 구분하지 않음. 관계 확장·필터·정렬·집계는 S-01과 2026-10-07 항목으로 막음 |
 | 인증(API2) | RS256 고정, iss·aud·exp·nbf·kid·jku 검사, 매 요청 DB에서 principal 재확인. 남은 것은 O-06 |
-| 속성 수준 인가·mass assignment(API3) | `/apply`는 `{apply,target}`만 받고 `to` 값은 계약에 고정. create/bundle은 HTTP에 없음. O-01은 조치 완료, O-02는 [OPEN] |
+| 속성 수준 인가·mass assignment(API3) | `/apply`는 `{apply,target}`만 받고 `to` 값은 계약에 고정. create/bundle은 HTTP에 없음. O-01·O-02는 조치 완료 |
 | 자원 소비(API4) | 본문 1MiB·헤더·IN 50·limit·cost·깊이·deadline·연결 상한. S-07·S-08 보강. O-04·O-05 남음 |
 | 기능 수준 인가(API5) | 경로별 세션 요구, `/capabilities`는 세션 필요 |
 | 민감 흐름(API6) | 멱등 키는 (principal,key) 범위 |
@@ -91,7 +91,7 @@
 | ID | 심각도 | 발견 | 상태 |
 |---|---|---|---|
 | O-01 | 중간, **조치 완료**(2026-10-13) | **실제 PG로 재현**: `Task.team: Team?`, `Team rows read when owner = actor`, `expose read { select id, team }`에서 member 1이 읽으면 자기 팀이 아닌 task 2의 `team: 11`도 받음. 루트 select에 Ref 필드를 직접 열면 대상 행 정책과 무관하게 원시 FK Id가 나감. traverse·Ref filter는 안 보이는 대상을 null로 취급하므로 "숨은 대상 Id 확인" 방어가 select 경로에서는 무의미해짐 | 창시자 결정("c가 좋을듯 기본은 a로하고 선언따로하도록"): 기본은 대상 resource의 행 정책을 적용해 호출자가 대상 행을 볼 수 없으면 null, 정의 작성자가 `expose read` 안 `refIds team`으로 선언한 FK만 원시 id를 non-null로 공개. 구현: `sema.rs` `expose()`가 select 종류를 `refVisible`/`refVisibleWithPolicy`로 분류(선언하면 `field`), `plan.rs`의 루트·단일 traverse·1:N select 3곳이 `guard_ref`로 대상 `rowRead`를 적용, `spike-v5-sdk` 타입·descriptor 2곳이 nullable로 생성. 필수 참조(`team: Team`)도 기본 출력은 `Id<"Team"> \| null`, 선언하면 `Id<"Team">`. 계약 지문이 바뀐다. 테스트: `spike-v2-read/tests/ref_select_visibility.rs`(감사 시나리오를 PG로 재현, 수정 전 실패 확인), `spike-v5-sdk/tests/ref_select_codegen.rs` |
-| O-02 | 낮음 | `transition`의 `from`/`to`/`repeat unchanged`가 field read 정책 필드를 참조하면 `/apply` 응답의 `changed`/`unchanged`·`INVALID_STATE`로 이전 값을 추론할 수 있음 | 미재현. sema가 이 조합을 막는지 확인 필요 |
+| O-02 | 낮음, **조치 완료**(2026-10-13) | `transition`의 `from`/`to`/`repeat unchanged`가 field read 정책 필드를 참조하면 `/apply` 응답의 `changed`/`unchanged`·`INVALID_STATE`로 이전 값을 추론하거나 `to` 값 식으로 값을 보이는 필드에 복사할 수 있었음 | sema가 막지 않음을 `spike-v1-fixture/tests/policy_field_transition.rs`로 확인(수정 전 컴파일 통과). 이제 `from`, `to` 값 식(참조 이동·`exists` 안쪽 포함), `repeat unchanged`가 걸린 `to` 대상에서 field read 정책 필드를 쓰면 정의 오류 `POLICY_FIELD_NOT_USABLE_IN_TRANSITION`(D-A22). `allow`와 `repeat unchanged` 없는 `to` 쓰기는 가능하다. `check`·`invariant` 조건은 막지 않는다(O-27과 같은 이유로 존재 추론은 허용) |
 | O-03 | 낮음 [OPEN] | `/read`·`/apply`·`/status`는 `X-AIP-Contract` 헤더가 없어도 통과(다른 경로는 필수). 권한 우회는 아님 | 설계 결정. raw 클라이언트 호환과 맞바꿈 |
 | O-04 | 낮음 | 위 S-15로 연결 수는 16개로 묶였다. 인증 조회 자체는 여전히 admission 앞에서 실행되므로 풀 연결·rate limit 통합은 남음 | 부분 조치 |
 | O-05 | 낮음 | 슬롯(realtime·worker·업로드)이 전역 공유라 인증된 한 명이 독점 가능. rate limit 기본 꺼짐 | 코드 추적. principal별 상한 설계 필요 |
@@ -115,7 +115,7 @@
 | O-24 | 낮음 | migration `plan_digest UNIQUE`가 A→B→A→B 순환의 두 번째 적용을 롤백시킴. `requiresReview`는 보고만 하고 apply에서 강제하지 않음. Time→Date 변환이 세션 TimeZone에 의존 | 코드 추적 |
 | O-25 | 완료 | `check`·정원 제약 검사가 관련 없는 `/apply`마다 전체 스캔 | S-29으로 조치. 변경된 resource에는 여전히 xmin 스캔이 돈다(그 테이블이 클 때의 비용은 남음) |
 | O-26 | 중간 | 행의 부재에 의존하는 정책(`allow not exists Booking b where b.room = r.room and b.status = CONFIRMED`)은 서로 다른 행을 동시에 바꾸는 요청을 막지 못함(이중 예약). `atMost 1` 불변식만 막음. sema가 경고하지 않음. 설계 문서 V3-R5에 한계로만 있음. `not exists`가 익명 actor에게 열리는 것은 의미상 옳지만 정의 작성자가 `actor != null`을 써야 함 | 코드 추적. sema 경고 권고 |
-| O-27 | 낮음 | 불변식 위반 코드(`ALREADY_EXISTS`, `INVARIANT_VIOLATED`)로 `rows read`에 가려진 행의 존재·정원 상태를 추론할 수 있음 | 코드 추적. 설계상 허용 여부 결정 필요 |
+| O-27 | 낮음, **조치 완료**(2026-10-13) | 불변식 위반 코드(`ALREADY_EXISTS`, `INVARIANT_VIOLATED`)로 `rows read`에 가려진 행의 존재·정원 상태를 추론할 수 있음 | **결정(D-A22): 허용한다.** 유일성·정원 위반은 본질적으로 충돌 행의 존재를 알린다. 대신 오류 본문·메시지에 호출자가 볼 수 없는 행의 id·필드 값이 실리지 않음을 `spike-v3-write/tests/invariant_error_privacy.rs`로 고정했다(DB 오류의 `DETAIL`을 메시지에 넣는 변형이 이 테스트에서 실패함을 확인). 숨은 대상 행은 없는 행과 같은 `MISSING_TARGET`이다. `spec/definition-syntax.md`에 명시 |
 | O-28 | 낮음 | 쓰기 판정의 `now`가 트랜잭션 전에 고정되어 멱등·행 잠금 대기(최대 2초)만큼 마감을 지난 뒤에도 `allow now < deadline`이 통과할 수 있음. 비-`maxRows` update effect의 락 순서 비고정(교착 시 `CONFLICT` 재시도). advisory lock 키가 32비트 해시를 공유 | 코드 추적 |
 | O-29 | 낮음 | TS 클라이언트: 응답 크기·content-type 검사 없음, 응답 유실 뒤 `BAD_REQUEST`를 받은 pending 쓰기를 버릴 방법 없음, `WriteUnsettled` 뒤 키 없이 `apply`를 다시 부르면 새 키로 중복 쓰기. 배포 artifact의 `bin/aip`에 로컬 경로(`~/.cargo/registry`)가 들어가고 `SHA256SUMS`는 서명 없음 | 코드 추적, `strings` 확인 |
 | O-30 | 낮음 | `__proto__`라는 필드·resource 이름은 생성 descriptor에서 own key가 아니라 prototype 설정으로 해석되어 해당 이름을 쓰는 읽기·확장 호출이 항상 거부됨(실패는 닫힌 방향) | 코드 추적 |
