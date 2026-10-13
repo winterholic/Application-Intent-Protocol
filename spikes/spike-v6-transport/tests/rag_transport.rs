@@ -42,7 +42,7 @@ fn engine() -> RagEngine {
 async fn owner_is_server_derived_and_index_requires_opt_in() {
     let engine = engine();
     let doc = json!({"corpus":"manuals","documentId":"doc","source":"manual","text":"backend operations"});
-    assert_eq!(handle(&engine, "alice", "/rag/index", &doc, false, "contract").await["code"], "NOT_AVAILABLE");
+    assert_eq!(handle(&engine, "alice", "/rag/index", &doc, false, "contract").await["code"], "WIRE.NOT_AVAILABLE");
     assert_eq!(handle(&engine, "alice", "/rag/index", &doc, true, "contract").await["chunks"], 1);
     let query = json!({"corpus":"manuals","query":"operations"});
     assert_eq!(handle(&engine, "alice", "/rag/search", &query, false, "contract").await["hits"].as_array().unwrap().len(), 1);
@@ -57,7 +57,7 @@ async fn invalid_optional_top_k_is_rejected_instead_of_using_the_default() {
     let engine = engine();
     for value in [Value::Null, json!("five"), json!(-1), json!(1.5)] {
         let result = handle(&engine, "alice", "/rag/search", &json!({"corpus":"manuals","query":"test","topK":value}), false, "contract").await;
-        assert_eq!(result["code"], "BAD_REQUEST", "{result}");
+        assert_eq!(result["code"], "WIRE.BAD_REQUEST", "{result}");
     }
 }
 
@@ -218,6 +218,6 @@ async fn real_http_rag_rechecks_principal_after_provider_work() {
     aip_migrate::preflight(spike_v2_read::DB_URL, &schema, &facts).await.expect("runtime tables must not cause application catalog drift on restart");
     db.batch_execute(&format!("DROP SCHEMA {schema} CASCADE; DROP SCHEMA {storage_schema} CASCADE")).await.unwrap();
     let body: Value = serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
-    assert_eq!(body["code"], "UNAUTHENTICATED", "{body}");
+    assert_eq!(body["code"], "WIRE.UNAUTHENTICATED", "{body}");
     assert!(body.get("hits").is_none());
 }

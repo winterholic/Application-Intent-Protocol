@@ -45,7 +45,7 @@ class Parser {
   }
 
   fail(message: string, loc: Loc = this.tok.loc, help?: string): never {
-    throw new CompileError([{ severity: 'error', code: 'AIP-E100', message, loc, help }]);
+    throw new CompileError([{ severity: 'error', code: 'POC.E100', message, loc, help }]);
   }
 
   is(text: string): boolean {

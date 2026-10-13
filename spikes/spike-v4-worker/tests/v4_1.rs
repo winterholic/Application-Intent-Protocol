@@ -18,7 +18,7 @@ fn who(id: Option<i64>) -> Caller {
 fn short(r: Result<Value, spike_v2_read::plan::Reject>) -> String {
     match r {
         Ok(v) => format!("OK {v}"),
-        Err(e) if e.code == "EXTENSION_ERROR" => format!("EXTENSION_ERROR({})", e.msg.rsplit(": ").next().unwrap_or("")),
+        Err(e) if e.code == "WIRE.EXTENSION_ERROR" => format!("EXTENSION_ERROR({})", e.msg.rsplit(": ").next().unwrap_or("")),
         Err(e) => e.code.to_string(),
     }
 }
@@ -55,16 +55,16 @@ async fn v4_1_read_extension_node_and_python() {
         let cases: Vec<(&str, &str, Option<i64>, Value, &str)> = vec![
             ("정상: 관리자 자기 동아리", "stats", Some(1), c10.clone(), "OK {\"approvedApplicants\":1}"),
             ("다른 동아리 관리자는 자기 동아리만", "stats", Some(3), json!({ "clubId": "11" }), "OK {\"approvedApplicants\":2}"),
-            ("일반 회원", "stats", Some(2), c10.clone(), "EXTENSION_ERROR(ACCESS_DENIED)"),
-            ("익명", "stats", None, c10.clone(), "EXTENSION_ERROR(ACCESS_DENIED)"),
-            ("ctx 호출 폭주", "statsFlood", Some(1), c10.clone(), "CALL_LIMIT"),
-            ("확장이 동아리 id를 바꿈", "statsOtherClub", Some(1), c10.clone(), "EXTENSION_ERROR(INPUT_BINDING)"),
-            ("계약에 없는 집계 접근", "statsUndeclared", Some(1), c10.clone(), "EXTENSION_ERROR(ACCESS_NOT_DECLARED)"),
-            ("ctx 요청에 actor 끼워 넣기", "statsImpersonate", Some(2), c10.clone(), "EXTENSION_ERROR(UNKNOWN_KEY)"),
-            ("출력 타입 위반", "statsBadOutput", Some(1), c10.clone(), "OUTPUT_INVALID"),
-            ("선언 안 된 출력 키", "statsExtraOutput", Some(1), c10.clone(), "OUTPUT_INVALID"),
-            ("입력 타입 위반", "stats", Some(1), json!({ "clubId": 10 }), "BAD_VALUE"),
-            ("선언 안 된 입력 키", "stats", Some(1), json!({ "clubId": "10", "all": true }), "BAD_VALUE"),
+            ("일반 회원", "stats", Some(2), c10.clone(), "EXTENSION_ERROR(WIRE.ACCESS_DENIED)"),
+            ("익명", "stats", None, c10.clone(), "EXTENSION_ERROR(WIRE.ACCESS_DENIED)"),
+            ("ctx 호출 폭주", "statsFlood", Some(1), c10.clone(), "WIRE.CALL_LIMIT"),
+            ("확장이 동아리 id를 바꿈", "statsOtherClub", Some(1), c10.clone(), "EXTENSION_ERROR(WIRE.INPUT_BINDING)"),
+            ("계약에 없는 집계 접근", "statsUndeclared", Some(1), c10.clone(), "EXTENSION_ERROR(WIRE.ACCESS_NOT_DECLARED)"),
+            ("ctx 요청에 actor 끼워 넣기", "statsImpersonate", Some(2), c10.clone(), "EXTENSION_ERROR(WIRE.UNKNOWN_KEY)"),
+            ("출력 타입 위반", "statsBadOutput", Some(1), c10.clone(), "WIRE.OUTPUT_INVALID"),
+            ("선언 안 된 출력 키", "statsExtraOutput", Some(1), c10.clone(), "WIRE.OUTPUT_INVALID"),
+            ("입력 타입 위반", "stats", Some(1), json!({ "clubId": 10 }), "WIRE.BAD_VALUE"),
+            ("선언 안 된 입력 키", "stats", Some(1), json!({ "clubId": "10", "all": true }), "WIRE.BAD_VALUE"),
             ("worker 환경의 DB 변수", "probeEnv", Some(1), c10.clone(), "OK {\"approvedApplicants\":0}"),
             // 격리 없음: 환경 변수를 지워도 확장은 로컬 DB 포트에 직접 연결할 수 있다(RK-05).
             ("worker의 DB 포트 직접 연결", "probeDb", Some(1), c10.clone(), "OK {\"approvedApplicants\":1}"),
@@ -81,12 +81,12 @@ async fn v4_1_read_extension_node_and_python() {
         let slow = short(invoke(&mut db, &mut w, &facts("statsSlow"), "Recruitment.stats", &c10, &who(Some(1))).await);
         let ms = st.elapsed().as_millis();
         table.push(format!("{lang:?} | 기한 초과 | {slow} ({ms}ms)"));
-        if slow != "DEADLINE_EXCEEDED" || !(1900..2600).contains(&ms) {
+        if slow != "WIRE.DEADLINE_EXCEEDED" || !(1900..2600).contains(&ms) {
             fails.push(format!("{lang:?} 기한 초과: {slow} {ms}ms"));
         }
         let reuse = short(invoke(&mut db, &mut w, &facts("statsReuse"), "Recruitment.stats", &c10, &who(Some(1))).await);
         table.push(format!("{lang:?} | 끝난 호출의 ctx 재사용 | {reuse}"));
-        if reuse != "EXTENSION_ERROR(TOKEN_EXPIRED)" {
+        if reuse != "EXTENSION_ERROR(WIRE.TOKEN_EXPIRED)" {
             fails.push(format!("{lang:?} ctx 재사용: {reuse}"));
         }
         // 느린 호출의 늦은 done이 섞여도 다음 호출은 정상
@@ -98,7 +98,7 @@ async fn v4_1_read_extension_node_and_python() {
         // worker 비정상 종료
         let crash = short(invoke(&mut db, &mut w, &facts("statsCrash"), "Recruitment.stats", &c10, &who(Some(1))).await);
         table.push(format!("{lang:?} | worker 종료 | {crash}"));
-        if crash != "WORKER_FAILED" {
+        if crash != "WIRE.WORKER_FAILED" {
             fails.push(format!("{lang:?} worker 종료: {crash}"));
         }
         w.stop().await;
@@ -136,13 +136,13 @@ async fn v4_1_read_extension_node_and_python() {
         let ms = st.elapsed().as_millis();
         rel.await.unwrap();
         table.push(format!("{lang:?} | DB 대기 중 기한(100ms) | {r} ({ms}ms)"));
-        if r != "DEADLINE_EXCEEDED" || ms > 300 {
+        if r != "WIRE.DEADLINE_EXCEEDED" || ms > 300 {
             fails.push(format!("{lang:?} F05 DB 대기 기한: {r} {ms}ms"));
         }
         w.stop().await;
         let mut w = Worker::start_with(lang, ext_dir, Isolation::None).await;
         let r = short(invoke(&mut db, &mut w, &fnote, "Recruitment.stats", &c10, &who(Some(1))).await);
-        if r != "OUTPUT_INVALID" {
+        if r != "WIRE.OUTPUT_INVALID" {
             fails.push(format!("{lang:?} F08 nullable 키 생략: {r}"));
         }
         let r = short(invoke(&mut db, &mut w, &fenum, "Recruitment.stats", &c10, &who(Some(1))).await);

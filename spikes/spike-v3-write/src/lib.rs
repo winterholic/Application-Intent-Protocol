@@ -73,14 +73,14 @@ const RETRY_MARK: &str = "다시 시도 가능";
 /// SERIALIZABLE 쓰기(O-26)를 서버가 내부에서 다시 실행하는 최대 횟수. 첫 실행 뒤 재시도 횟수이며 같은 쓰기 기한 안에서 돈다.
 pub const SERIALIZATION_RETRIES: usize = 3;
 
-/// 이 거절이 직렬화 실패·교착으로 전체 rollback된 것인지. 다른 `CONFLICT`(판정과 실제 변경 수 불일치)는 해당하지 않는다.
+/// 이 거절이 직렬화 실패·교착으로 전체 rollback된 것인지. 다른 `WIRE.CONFLICT`(판정과 실제 변경 수 불일치)는 해당하지 않는다.
 pub fn is_retryable(reject: &Reject) -> bool {
-    reject.code == "CONFLICT" && reject.msg.ends_with(RETRY_MARK)
+    reject.code == "WIRE.CONFLICT" && reject.msg.ends_with(RETRY_MARK)
 }
 
 /// 호출자가 정한 쓰기 단계에서 직렬화 충돌과 같게 다룰 거절(예: SERIALIZABLE에서 멱등 키 행 삽입 충돌). 재시도 대상이다.
 pub fn serialization_conflict(stage: &str) -> Reject {
-    Reject { code: "CONFLICT", msg: format!("{stage}: 동시 쓰기와 충돌. {RETRY_MARK}") }
+    Reject { code: "WIRE.CONFLICT", msg: format!("{stage}: 동시 쓰기와 충돌. {RETRY_MARK}") }
 }
 
 /// 재시도 사이 대기. 같은 두 요청이 같은 박자로 다시 부딪치지 않게 시도마다 늘리고 흩뜨린다.
@@ -91,10 +91,10 @@ pub async fn retry_backoff(attempt: usize) {
 
 fn db_err(stage: &str, e: tokio_postgres::Error) -> Reject {
     match e.code().map(|c| c.code()) {
-        Some("57014") => Reject { code: "DEADLINE_EXCEEDED", msg: format!("{stage}: {WRITE_DEADLINE_MS}ms 안에 끝나지 않음") },
+        Some("57014") => Reject { code: "WIRE.DEADLINE_EXCEEDED", msg: format!("{stage}: {WRITE_DEADLINE_MS}ms 안에 끝나지 않음") },
         // 교착·직렬화 실패는 전체 rollback된 상태라 다시 시도할 수 있다.
-        Some("40P01") | Some("40001") => Reject { code: "CONFLICT", msg: format!("{stage}: 동시 쓰기와 충돌. {RETRY_MARK}") },
-        c => Reject { code: "INTERNAL", msg: format!("{stage} 실패(sqlstate {})", c.unwrap_or("?")) },
+        Some("40P01") | Some("40001") => Reject { code: "WIRE.CONFLICT", msg: format!("{stage}: 동시 쓰기와 충돌. {RETRY_MARK}") },
+        c => Reject { code: "WIRE.INTERNAL", msg: format!("{stage} 실패(sqlstate {})", c.unwrap_or("?")) },
     }
 }
 
@@ -102,12 +102,12 @@ fn rej<T>(code: &'static str, msg: impl Into<String>) -> Result<T, Reject> {
     Err(Reject { code, msg: msg.into() })
 }
 fn internal(e: impl ToString) -> Reject {
-    Reject { code: "INTERNAL", msg: e.to_string() }
+    Reject { code: "WIRE.INTERNAL", msg: e.to_string() }
 }
 
 fn keys(o: &Map<String, Value>, allowed: &[&str], what: &str) -> Result<(), Reject> {
     match o.keys().find(|k| !allowed.contains(&k.as_str())) {
-        Some(k) => rej("UNKNOWN_KEY", format!("{what}에 알 수 없는 키 `{k}`")),
+        Some(k) => rej("WIRE.UNKNOWN_KEY", format!("{what}에 알 수 없는 키 `{k}`")),
         None => Ok(()),
     }
 }
@@ -121,7 +121,7 @@ fn filter_value(ty: &str, v: &Value) -> Result<(String, &'static str), Reject> {
         ("Bool", Value::Bool(b)) => Ok((b.to_string(), "boolean")),
         ("Int", Value::Number(n)) if n.is_i64() => Ok((n.to_string(), "bigint")),
         ("Text", Value::String(s)) => Ok((s.clone(), "text")),
-        (t, _) => rej("BAD_VALUE", format!("`{t}` 타입에 맞지 않는 값 {v}")),
+        (t, _) => rej("WIRE.BAD_VALUE", format!("`{t}` 타입에 맞지 않는 값 {v}")),
     }
 }
 
@@ -175,9 +175,9 @@ where
     match tokio::time::timeout(Duration::from_millis(WRITE_DEADLINE_MS), f(ctl)).await {
         Ok(r) => r,
         // 커밋을 보낸 뒤라면 커밋됐을 수도 있다. 실패로 단정하지 않고 결과 미확정으로 알린다(R3-05).
-        Err(_) if sent.load(std::sync::atomic::Ordering::SeqCst) => rej("COMMIT_UNKNOWN", "커밋 결과를 기한 안에 확인하지 못함. 상태 조회 필요"),
+        Err(_) if sent.load(std::sync::atomic::Ordering::SeqCst) => rej("WIRE.COMMIT_UNKNOWN", "커밋 결과를 기한 안에 확인하지 못함. 상태 조회 필요"),
         // 커밋을 보내기 전이면 트랜잭션은 drop되며 rollback된다.
-        Err(_) => rej("DEADLINE_EXCEEDED", format!("쓰기 요청이 {WRITE_DEADLINE_MS}ms 안에 끝나지 않음")),
+        Err(_) => rej("WIRE.DEADLINE_EXCEEDED", format!("쓰기 요청이 {WRITE_DEADLINE_MS}ms 안에 끝나지 않음")),
     }
 }
 
@@ -188,7 +188,7 @@ async fn commit(tx: Transaction<'_>, ctl: &Ctl, knobs: &Knobs) -> Result<(), Rej
     let left = WRITE_DEADLINE_MS.saturating_sub(ctl.started.elapsed().as_millis() as u64);
     if left < COMMIT_MARGIN_MS {
         tx.rollback().await.ok();
-        return rej("DEADLINE_EXCEEDED", format!("커밋 전 남은 기한 {left}ms. rollback함"));
+        return rej("WIRE.DEADLINE_EXCEEDED", format!("커밋 전 남은 기한 {left}ms. rollback함"));
     }
     ctl.commit_sent.store(true, std::sync::atomic::Ordering::SeqCst);
     // 지연 제약(커밋 시점 불변식) 위반은 커밋에서 드러난다.
@@ -196,7 +196,7 @@ async fn commit(tx: Transaction<'_>, ctl: &Ctl, knobs: &Knobs) -> Result<(), Rej
 }
 
 fn bad(msg: impl Into<String>) -> Reject {
-    Reject { code: "BAD_REQUEST", msg: msg.into() }
+    Reject { code: "WIRE.BAD_REQUEST", msg: msg.into() }
 }
 
 fn id_array(ids: &[i64]) -> String {
@@ -226,13 +226,13 @@ fn parse_ids(raw: &Value, bulk: i64, wire: IdWire) -> Result<Vec<i64>, Reject> {
     }
     // 상한을 먼저 본다. 큰 배열의 중복 검사가 기한 밖 CPU 시간을 쓰지 않게 한다.
     if raw.len() as i64 > bulk {
-        return rej("BULK_LIMIT", format!("대상 {}개 > 상한 {bulk}", raw.len()));
+        return rej("WIRE.BULK_LIMIT", format!("대상 {}개 > 상한 {bulk}", raw.len()));
     }
     let mut v = vec![];
     for x in raw {
         let n = parse_id(x, wire)?;
         if v.contains(&n) {
-            return rej("DUPLICATE_TARGET", format!("id {n} 중복"));
+            return rej("WIRE.DUPLICATE_TARGET", format!("id {n} 중복"));
         }
         v.push(n);
     }
@@ -248,13 +248,13 @@ fn parse_target(facts: &Value, res: &str, ex: &Value, tg: &Value, wire: IdWire) 
     match (tg.get("ids"), tg.get("where")) {
         (Some(ids), None) => {
             if !forms.contains(&"id") {
-                return rej("TARGET_NOT_ALLOWED", "id 대상은 계약에 없음");
+                return rej("WIRE.TARGET_NOT_ALLOWED", "id 대상은 계약에 없음");
             }
             Ok(TargetSpec::Ids(parse_ids(ids, bulk, wire)?))
         }
         (None, Some(w)) => {
             if !forms.contains(&"where") {
-                return rej("TARGET_NOT_ALLOWED", "where 대상은 계약에 없음");
+                return rej("WIRE.TARGET_NOT_ALLOWED", "where 대상은 계약에 없음");
             }
             let allow = rf["exposeRead"]["filter"].as_array().cloned().unwrap_or_default();
             let mut v = vec![];
@@ -264,17 +264,17 @@ fn parse_target(facts: &Value, res: &str, ex: &Value, tg: &Value, wire: IdWire) 
                 let (field, op) = (fo.get("field").and_then(Value::as_str).unwrap_or(""), fo.get("op").and_then(Value::as_str).unwrap_or(""));
                 // 쓰기 대상 조건도 읽기 filter 허용 목록을 따른다. 아니면 변경 개수로 숨은 값을 추론할 수 있다.
                 if !allow.iter().any(|x| x == &json!(format!("{field}.{op}"))) || op != "eq" {
-                    return rej("FILTER_NOT_ALLOWED", format!("`{field}.{op}` 조건은 계약에 없음"));
+                    return rej("WIRE.FILTER_NOT_ALLOWED", format!("`{field}.{op}` 조건은 계약에 없음"));
                 }
                 // 같은 필드 eq를 반복하면 의미 없이 SQL만 커진다. 조건 수는 허용 목록 크기로 제한된다.
                 if v.iter().any(|(c, _, _): &(String, String, &str)| Some(c) == column(facts, res, field).as_ref()) {
-                    return rej("DUPLICATE_FILTER", format!("`{field}.{op}` 조건 중복"));
+                    return rej("WIRE.DUPLICATE_FILTER", format!("`{field}.{op}` 조건 중복"));
                 }
                 let ty = rf["fields"][field]["ty"].as_str().unwrap_or("").trim_end_matches('?');
                 // 읽기는 Ref 필터에 대상 행 정책을 함께 건다. 쓰기 대상 조건은 그 검사가 없어
                 // 변경 결과로 안 보이는 대상 id를 확인할 수 있으므로 Ref 조건을 받지 않는다.
                 if ty.starts_with("Ref<") {
-                    return rej("FILTER_NOT_ALLOWED", format!("`{field}.{op}`: 쓰기 대상 조건에는 참조 필드를 쓸 수 없음. ids 대상을 사용"));
+                    return rej("WIRE.FILTER_NOT_ALLOWED", format!("`{field}.{op}`: 쓰기 대상 조건에는 참조 필드를 쓸 수 없음. ids 대상을 사용"));
                 }
                 let value = fo.get("value").unwrap_or(&Value::Null);
                 let (val, cast) = if wire != IdWire::Legacy && (ty.starts_with("Id<") || ty.starts_with("Ref<")) {
@@ -359,7 +359,7 @@ async fn judge(
         let (id, a, f, d, sc): (i64, Option<bool>, Option<bool>, Option<bool>, Option<String>) = (r.get(0), r.get(1), r.get(2), r.get(3), r.get(4));
         seen.push(id);
         if a != Some(true) {
-            return rej("FORBIDDEN", format!("{id}에 `{tr}` 권한 없음"));
+            return rej("WIRE.FORBIDDEN", format!("{id}에 `{tr}` 권한 없음"));
         }
         // 이미 목표 상태면 from보다 먼저 본다(R2B-10).
         if d == Some(true) && t["repeat"] == "unchanged" {
@@ -367,7 +367,7 @@ async fn judge(
         } else if f == Some(true) {
             j.change.push(id);
         } else {
-            return rej("INVALID_STATE", format!("{id}는 `{tr}` 이전 상태가 아님"));
+            return rej("WIRE.INVALID_STATE", format!("{id}는 `{tr}` 이전 상태가 아님"));
         }
         j.scopes.push(sc);
     }
@@ -376,17 +376,17 @@ async fn judge(
             let missing = ids.iter().filter(|x| !seen.contains(x)).count();
             if missing > 0 {
                 // 없는 행과 안 보이는 행을 구분하지 않는다.
-                return rej("MISSING_TARGET", format!("대상 {missing}개를 찾을 수 없음"));
+                return rej("WIRE.MISSING_TARGET", format!("대상 {missing}개를 찾을 수 없음"));
             }
         }
-        TargetSpec::Where(_) if seen.len() as i64 > bulk => return rej("BULK_LIMIT", format!("대상이 상한 {bulk}을 넘음")),
+        TargetSpec::Where(_) if seen.len() as i64 > bulk => return rej("WIRE.BULK_LIMIT", format!("대상이 상한 {bulk}을 넘음")),
         _ => {}
     }
     // 같은 범위(예: 같은 동아리) 검사는 가시성·권한 판정 뒤에 한다. 권한 없는 호출자는 범위 일치 여부를 알 수 없다.
     if !scope.is_null() {
         let first = j.scopes.first().cloned().flatten();
         if first.is_none() || j.scopes.iter().any(|x| *x != first) {
-            return rej("NOT_SAME_SCOPE", "대상들이 같은 범위가 아님");
+            return rej("WIRE.NOT_SAME_SCOPE", "대상들이 같은 범위가 아님");
         }
     }
     j.change.sort();
@@ -463,23 +463,23 @@ async fn update(tx: &Transaction<'_>, facts: &Value, res: &str, tr: &str, change
     let rows = typed_query(tx, up.as_str(), &params).await.map_err(|e| write_err("변경", e))?;
     // RETURNING은 갱신 뒤 값을 본다. 하나라도 범위를 벗어나면 전체 트랜잭션이 롤백된다.
     if rows.iter().any(|r| r.get::<_, bool>(1)) {
-        return rej("BAD_VALUE", "증감 결과가 필드 범위를 벗어남");
+        return rej("WIRE.BAD_VALUE", "증감 결과가 필드 범위를 벗어남");
     }
     let n = rows.len();
     if n != change.len() {
-        return rej("CONFLICT", format!("판정 {}개와 실제 변경 {n}개가 다름. 전체 취소", change.len()));
+        return rej("WIRE.CONFLICT", format!("판정 {}개와 실제 변경 {n}개가 다름. 전체 취소", change.len()));
     }
     Ok(())
 }
 
 fn write_err(stage: &str, e: tokio_postgres::Error) -> Reject {
     match e.code().map(|c| c.code()) {
-        Some("23505") => Reject { code: "ALREADY_EXISTS", msg: format!("{stage}: 유일 제약 위반") },
-        Some("23P01") => Reject { code: "INVARIANT_VIOLATED", msg: format!("{stage}: 불변식 위반") },
+        Some("23505") => Reject { code: "WIRE.ALREADY_EXISTS", msg: format!("{stage}: 유일 제약 위반") },
+        Some("23P01") => Reject { code: "WIRE.INVARIANT_VIOLATED", msg: format!("{stage}: 불변식 위반") },
         // 정의의 값 제약(길이·범위·필수)은 호출자 값 오류다. 내부 오류로 보고하지 않는다.
-        Some("23514") => Reject { code: "BAD_VALUE", msg: format!("{stage}: 값 제약 위반") },
-        Some("23502") => Reject { code: "BAD_VALUE", msg: format!("{stage}: 필수 값 누락") },
-        Some("22003") => Reject { code: "BAD_VALUE", msg: format!("{stage}: 숫자 범위 초과") },
+        Some("23514") => Reject { code: "WIRE.BAD_VALUE", msg: format!("{stage}: 값 제약 위반") },
+        Some("23502") => Reject { code: "WIRE.BAD_VALUE", msg: format!("{stage}: 필수 값 누락") },
+        Some("22003") => Reject { code: "WIRE.BAD_VALUE", msg: format!("{stage}: 숫자 범위 초과") },
         _ => db_err(stage, e),
     }
 }
@@ -515,7 +515,7 @@ async fn effects(tx: &Transaction<'_>, facts: &Value, res: &str, tr: &str, chang
                 );
                 let rows = typed_query(tx, &select, &cx.params.values).await.map_err(|err| write_err("전이 효과", err))?;
                 if rows.len() as i64 > max {
-                    return rej("EFFECT_TARGET_MISSING", "선언한 전이 효과 범위를 처리할 수 없음");
+                    return rej("WIRE.EFFECT_TARGET_MISSING", "선언한 전이 효과 범위를 처리할 수 없음");
                 }
                 let ids: Vec<i64> = rows.iter().map(|row| row.get(0)).collect();
                 if ids.is_empty() {
@@ -539,7 +539,7 @@ async fn effects(tx: &Transaction<'_>, facts: &Value, res: &str, tr: &str, chang
                 typed_query(tx, sql.as_str(), &params).await.map_err(|e| write_err("전이 효과", e))?.iter().map(|r| r.get(0)).collect();
             got.sort();
             if children.is_some_and(|count| count != got.len()) || (children.is_none() && got != change) {
-                return rej("EFFECT_TARGET_MISSING", format!("`{target}` 갱신 대상이 대상 행마다 하나가 아님"));
+                return rej("WIRE.EFFECT_TARGET_MISSING", format!("`{target}` 갱신 대상이 대상 행마다 하나가 아님"));
             }
             continue;
         }
@@ -605,7 +605,7 @@ async fn ensure_refs_readable(
         let sql = format!("SELECT 1 FROM {} t WHERE t.id = {p} AND {vis}", table(referenced));
         let params = cx.params.values.clone();
         if typed_query(tx, sql.as_str(), &params).await.map_err(|e| write_err("참조 행 확인", e))?.is_empty() {
-            return rej("MISSING_TARGET", format!("`{target}.{field}`가 가리키는 `{referenced}` 행을 찾을 수 없음"));
+            return rej("WIRE.MISSING_TARGET", format!("`{target}.{field}`가 가리키는 `{referenced}` 행을 찾을 수 없음"));
         }
     }
     Ok(())
@@ -664,7 +664,7 @@ async fn create_row(
     let params = cx.params.values.clone();
     let n = typed_query(tx, sql.as_str(), &params).await.map_err(|e| write_err("생성", e))?.len();
     if n != 1 {
-        return rej("FORBIDDEN", format!("`{target}` 생성 권한 없음"));
+        return rej("WIRE.FORBIDDEN", format!("`{target}` 생성 권한 없음"));
     }
     Ok(())
 }
@@ -706,7 +706,7 @@ async fn run_checks(tx: &Transaction<'_>, facts: &Value, caller: &Caller, knobs:
         let isolation: String = tx.query_one("SELECT current_setting('transaction_isolation')", &[]).await.map_err(internal)?.get(0);
         // SERIALIZABLE도 직렬성을 보장하므로 허용한다(O-26). 충돌은 40001로 드러나고 서버가 재시도한다.
         if isolation != "read committed" && isolation != "serializable" {
-            return rej("UNSUPPORTED_ISOLATION", "정원 제약 쓰기는 READ COMMITTED 또는 SERIALIZABLE 트랜잭션이 필요함");
+            return rej("WIRE.UNSUPPORTED_ISOLATION", "정원 제약 쓰기는 READ COMMITTED 또는 SERIALIZABLE 트랜잭션이 필요함");
         }
     }
 
@@ -760,7 +760,7 @@ async fn run_checks(tx: &Transaction<'_>, facts: &Value, caller: &Caller, knobs:
             query_params.push(&groups);
             query_params.push(&max);
             if !tx.query(&sql, &query_params).await.map_err(|e| db_err("정원 집계", e))?.is_empty() {
-                return rej("INVARIANT_VIOLATED", format!("`{res}.{name}` 정원 제약 위반"));
+                return rej("WIRE.INVARIANT_VIOLATED", format!("`{res}.{name}` 정원 제약 위반"));
             }
         }
     }
@@ -782,7 +782,7 @@ async fn run_checks(tx: &Transaction<'_>, facts: &Value, caller: &Caller, knobs:
             let params = cx.params.values.clone();
             let n: i64 = typed_query(tx, sql.as_str(), &params).await.map_err(|e| db_err("커밋 검사", e))?[0].get(0);
             if n > 0 {
-                return rej("CHECK_FAILED", format!("`{res}.{name}`를 만족하지 않는 행 {n}개"));
+                return rej("WIRE.CHECK_FAILED", format!("`{res}.{name}`를 만족하지 않는 행 {n}개"));
             }
         }
     }
@@ -835,7 +835,7 @@ fn exposed<'a>(facts: &'a Value, name: &str) -> Result<(&'a str, &'a str, &'a Va
     let (res, tr) = name.split_once('.').ok_or(bad("apply는 `Resource.transition`"))?;
     let ex = &facts["resources"][res]["exposeApply"][tr];
     if ex.is_null() {
-        return rej("NOT_EXPOSED", format!("`{name}`는 공개된 쓰기 동작이 아님"));
+        return rej("WIRE.NOT_EXPOSED", format!("`{name}`는 공개된 쓰기 동작이 아님"));
     }
     let res = facts["resources"].as_object().unwrap().keys().find(|k| *k == res).unwrap();
     let tr = facts["resources"][res.as_str()]["transitions"].as_object().unwrap().keys().find(|k| *k == tr).unwrap();
@@ -877,19 +877,20 @@ async fn apply_inner(
 }
 
 fn literal(facts: &Value, res: &str, field: &str, v: &Value) -> Result<Src, Reject> {
-    let ty =
-        facts["resources"][res]["fields"][field]["ty"].as_str().ok_or(Reject { code: "UNKNOWN_FIELD", msg: format!("`{res}.{field}` 없음") })?;
+    let ty = facts["resources"][res]["fields"][field]["ty"]
+        .as_str()
+        .ok_or(Reject { code: "WIRE.UNKNOWN_FIELD", msg: format!("`{res}.{field}` 없음") })?;
     let base = ty.trim_end_matches('?');
     if v.is_null() {
-        return if ty.ends_with('?') { Ok(Src::Null) } else { rej("BAD_VALUE", format!("`{field}`는 null일 수 없음")) };
+        return if ty.ends_with('?') { Ok(Src::Null) } else { rej("WIRE.BAD_VALUE", format!("`{field}`는 null일 수 없음")) };
     }
     if let Some(e) = base.strip_prefix("Enum<").and_then(|x| x.strip_suffix('>')) {
         let s = v.as_str().filter(|s| facts["enums"][e].as_array().unwrap().iter().any(|x| x == s));
-        return s.map(|s| Src::Lit(s.to_string(), "text")).ok_or(Reject { code: "BAD_VALUE", msg: format!("`{field}`는 {e} 값") });
+        return s.map(|s| Src::Lit(s.to_string(), "text")).ok_or(Reject { code: "WIRE.BAD_VALUE", msg: format!("`{field}`는 {e} 값") });
     }
     if base.starts_with("Ref<") || base.starts_with("Id<") {
         let s = v.as_str().filter(|s| !s.is_empty() && s.len() <= 18 && s.chars().all(|c| c.is_ascii_digit()));
-        return s.map(|s| Src::Lit(s.to_string(), "bigint")).ok_or(Reject { code: "BAD_VALUE", msg: format!("`{field}` id 형식") });
+        return s.map(|s| Src::Lit(s.to_string(), "bigint")).ok_or(Reject { code: "WIRE.BAD_VALUE", msg: format!("`{field}` id 형식") });
     }
     let (s, cast) = filter_value(base, v)?;
     Ok(Src::Lit(s, cast))
@@ -945,14 +946,14 @@ async fn bundle_once(
             let res = m.get("create").and_then(Value::as_str).unwrap_or("");
             let ec = &facts["resources"][res]["exposeCreate"];
             if ec.is_null() {
-                return rej("NOT_EXPOSED", format!("`{res}` 생성은 공개되지 않음"));
+                return rej("WIRE.NOT_EXPOSED", format!("`{res}` 생성은 공개되지 않음"));
             }
             let vals = m.get("values").and_then(Value::as_object).ok_or(bad("values 객체 필요"))?;
             let allowed: Vec<&str> = ec["fields"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
             let mut row = vec![];
             for (f, v) in vals {
                 if !allowed.contains(&f.as_str()) {
-                    return rej("FIELD_NOT_EXPOSED", format!("`{res}.{f}`는 생성 계약에 없음"));
+                    return rej("WIRE.FIELD_NOT_EXPOSED", format!("`{res}.{f}`는 생성 계약에 없음"));
                 }
                 row.push((f.clone(), literal(facts, res, f, v)?));
             }
@@ -1003,7 +1004,7 @@ async fn compose_once(
     let res = o.get("compose").and_then(Value::as_str).unwrap_or("");
     let cp = &facts["resources"][res]["exposeCompose"];
     if cp.is_null() {
-        return rej("NOT_EXPOSED", format!("`{res}` 조합은 공개되지 않음"));
+        return rej("WIRE.NOT_EXPOSED", format!("`{res}` 조합은 공개되지 않음"));
     }
     let res = facts["resources"].as_object().unwrap().keys().find(|k| *k == res).unwrap().as_str();
     let bulk = cp["bulkMaxRows"].as_i64().unwrap_or(1);
@@ -1027,11 +1028,11 @@ async fn compose_once(
             let on_self = match m.get("on").and_then(Value::as_str) {
                 None | Some("targets") => false,
                 Some("self") if !cp["selfRow"].is_null() => true,
-                _ => return rej("STEP_NOT_ALLOWED", "on은 targets 또는 계약에 selfRow가 있을 때 self"),
+                _ => return rej("WIRE.STEP_NOT_ALLOWED", "on은 targets 또는 계약에 selfRow가 있을 때 self"),
             };
             let allowed = cp["transitions"].as_array().unwrap();
             let Some(t) = allowed.iter().filter_map(Value::as_str).find(|x| *x == t) else {
-                return rej("STEP_NOT_ALLOWED", format!("전이 `{t}`는 조합 계약에 없음"));
+                return rej("WIRE.STEP_NOT_ALLOWED", format!("전이 `{t}`는 조합 계약에 없음"));
             };
             plan.push(Step::Tr(t, on_self));
         } else {
@@ -1039,31 +1040,31 @@ async fn compose_once(
             let target = m.get("create").and_then(Value::as_str).unwrap_or("");
             let decl = &cp["creates"][target];
             if decl.is_null() {
-                return rej("STEP_NOT_ALLOWED", format!("`{target}` 생성은 조합 계약에 없음"));
+                return rej("WIRE.STEP_NOT_ALLOWED", format!("`{target}` 생성은 조합 계약에 없음"));
             }
             let target = cp["creates"].as_object().unwrap().keys().find(|k| *k == target).unwrap().as_str();
             let allowed_fields = &facts["resources"][target]["exposeCreate"]["fields"];
             let mut vals = vec![];
             for (f, v) in m.get("values").and_then(Value::as_object).ok_or(bad("values 객체 필요"))? {
                 if !allowed_fields.as_array().unwrap().iter().any(|x| x == f) {
-                    return rej("FIELD_NOT_EXPOSED", format!("`{target}.{f}`는 생성 계약에 없음"));
+                    return rej("WIRE.FIELD_NOT_EXPOSED", format!("`{target}.{f}`는 생성 계약에 없음"));
                 }
                 let vo = v.as_object().ok_or(bad("값은 {item} 또는 {const}"))?;
                 let fty = facts["resources"][target]["fields"][f]["ty"].as_str().unwrap();
                 if let Some(p) = vo.get("item").and_then(Value::as_str) {
                     // 값은 서버가 선언한 출처 경로에서만 온다. 호출자가 임의 경로로 숨은 값을 옮기지 못하게 한다.
                     let Some(src) = decl["sources"].as_array().unwrap().iter().find(|s| path_text(s).as_deref() == Some(p)) else {
-                        return rej("VALUE_SOURCE_NOT_ALLOWED", format!("출처 `{p}`는 조합 계약에 없음"));
+                        return rej("WIRE.VALUE_SOURCE_NOT_ALLOWED", format!("출처 `{p}`는 조합 계약에 없음"));
                     };
                     let sty = src["ty"].as_str().unwrap();
                     if sty.trim_end_matches('?') != fty.trim_end_matches('?') || (sty.ends_with('?') && !fty.ends_with('?')) {
-                        return rej("TYPE_MISMATCH", format!("`{p}`({sty})를 `{target}.{f}`({fty})에 넣을 수 없음"));
+                        return rej("WIRE.TYPE_MISMATCH", format!("`{p}`({sty})를 `{target}.{f}`({fty})에 넣을 수 없음"));
                     }
                     vals.push((f.clone(), Value::Null, Some(src.clone())));
                 } else if let Some(c) = vo.get("const") {
                     // 참조 필드는 상수로 받지 않는다. 대상 행에서 온 값만 연결할 수 있다.
                     if fty.starts_with("Ref<") || fty.starts_with("Id<") {
-                        return rej("VALUE_SOURCE_NOT_ALLOWED", format!("참조 필드 `{f}`는 상수로 줄 수 없음"));
+                        return rej("WIRE.VALUE_SOURCE_NOT_ALLOWED", format!("참조 필드 `{f}`는 상수로 줄 수 없음"));
                     }
                     vals.push((f.clone(), c.clone(), None));
                 } else {
@@ -1089,7 +1090,7 @@ async fn compose_once(
         let params = cx.params.values.clone();
         let rows = typed_query(&tx, sql.as_str(), &params).await.map_err(|e| db_err("대상 조회", e))?;
         if rows.len() != ids.len() {
-            return rej("MISSING_TARGET", format!("대상 {}개를 찾을 수 없음", ids.len() - rows.len()));
+            return rej("WIRE.MISSING_TARGET", format!("대상 {}개를 찾을 수 없음", ids.len() - rows.len()));
         }
         scopes = rows.iter().map(|r| r.get(1)).collect();
     }
@@ -1109,7 +1110,7 @@ async fn compose_once(
                     let params = cx.params.values.clone();
                     let rows = typed_query(&tx, sql.as_str(), &params).await.map_err(|e| db_err("자기 행 조회", e))?;
                     if rows.len() != 1 {
-                        return rej("MISSING_TARGET", "같은 범위의 자기 행을 찾을 수 없음");
+                        return rej("WIRE.MISSING_TARGET", "같은 범위의 자기 행을 찾을 수 없음");
                     }
                     vec![rows[0].get::<_, i64>(0)]
                 } else {
@@ -1139,7 +1140,7 @@ async fn compose_once(
         }
     }
     if !cp["sameScope"].is_null() && (scopes[0].is_none() || scopes.iter().any(|s| *s != scopes[0])) {
-        return rej("NOT_SAME_SCOPE", "대상들이 같은 범위가 아님");
+        return rej("WIRE.NOT_SAME_SCOPE", "대상들이 같은 범위가 아님");
     }
     run_checks(&tx, facts, caller, knobs).await?;
     commit(tx, &ctl, knobs).await?;

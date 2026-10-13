@@ -75,7 +75,7 @@ async fn metrics_need_the_configured_token_and_count_requests_by_route_status_an
     assert_ne!(status, 0);
     // A header without the Bearer scheme never reaches a route: the header parser rejects it first.
     let (_, _, body) = get(addr, "/metrics", Some(TOKEN)).await;
-    assert!(body.contains("\"BAD_REQUEST\"") && !body.contains("aip_requests_total"), "{body}");
+    assert!(body.contains("\"WIRE.BAD_REQUEST\"") && !body.contains("aip_requests_total"), "{body}");
     for authorization in [None, Some("Bearer wrong")] {
         let (status, head, body) = get(addr, "/metrics", authorization).await;
         assert_eq!(status, 401, "{authorization:?}: {body}");
@@ -86,7 +86,7 @@ async fn metrics_need_the_configured_token_and_count_requests_by_route_status_an
     assert!(head.contains("content-type: text/plain; version=0.0.4"), "{head}");
     assert!(body.contains("aip_requests_total{route=\"health\",status=\"200\",code=\"\"}"), "{body}");
     assert!(body.contains("aip_request_duration_seconds_count{route=\"health\"}"), "{body}");
-    assert!(body.contains("aip_requests_total{route=\"metrics\",status=\"401\",code=\"UNAUTHENTICATED\"} 2"), "{body}");
+    assert!(body.contains("aip_requests_total{route=\"metrics\",status=\"401\",code=\"WIRE.UNAUTHENTICATED\"} 2"), "{body}");
     assert!(body.lines().any(|line| line.starts_with("aip_requests_total{route=\"read\"")), "{body}");
     assert!(!body.contains("secret"), "{body}");
     open.shutdown().await.unwrap();

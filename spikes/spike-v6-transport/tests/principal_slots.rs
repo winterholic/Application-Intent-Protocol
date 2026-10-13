@@ -119,7 +119,7 @@ async fn one_principal_cannot_take_every_realtime_slot() {
     assert_eq!(reply, json!({"type":"authenticated"}));
     // The third connection is within the server's capacity of 3 but beyond the principal's share of 2.
     let (_third, reply) = authenticate(server.address, "hog").await;
-    assert_eq!((reply["type"].as_str(), reply["code"].as_str()), (Some("error"), Some("SERVER_BUSY")), "{reply}");
+    assert_eq!((reply["type"].as_str(), reply["code"].as_str()), (Some("error"), Some("WIRE.SERVER_BUSY")), "{reply}");
     // The remaining capacity still serves everybody else.
     let (_other, reply) = authenticate(server.address, "other").await;
     assert_eq!(reply, json!({"type":"authenticated"}), "another principal was locked out by one that held every slot");

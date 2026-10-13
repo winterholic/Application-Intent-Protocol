@@ -19,7 +19,7 @@ mock은 저장소 테스트 CA로 서명한 HTTPS 서버다. 서비스 바이너
 - 서명: RS256, 공개키는 JWKS의 RSA 키(2048~4096비트, `kid` 필수, 공개 지수는 3 이상 홀수).
 - header: `typ` 정확히 `at+jwt`, `kid` 있음. `jku`·`x5u`·`x5c`·`crit`·`zip`·`cty`는 거부한다.
 - claim: `iss`(설정의 issuer와 문자 그대로 일치, 끝 슬래시 포함), `aud`(설정의 audience), `sub`, `iat`, `nbf`, `exp`. `exp - iat`는 1~900초. 시계 여유(leeway)는 0이므로 서버와 IdP의 시계를 맞춘다.
-- `sub`는 `aip service principal bind`로 actor에 연결된 값이어야 한다. 연결이 없으면 인증은 `UNAUTHENTICATED`다.
+- `sub`는 `aip service principal bind`로 actor에 연결된 값이어야 한다. 연결이 없으면 인증은 `WIRE.UNAUTHENTICATED`다.
 
 ## 연결 절차
 
@@ -64,6 +64,6 @@ mock은 저장소 테스트 CA로 서명한 HTTPS 서버다. 서비스 바이너
 
 | 증상 | 확인 |
 |---|---|
-| 모든 요청이 `UNAUTHENTICATED` | `iss`가 설정과 한 글자라도 다른지(끝 슬래시), `typ`, `aud`, 시계 오차, `sub`의 principal 연결 |
-| 특정 시점부터 일부 사용자만 `UNAUTHENTICATED` | 회전으로 `kid`가 바뀌었는데 JWKS에 새 키가 없는지 |
+| 모든 요청이 `WIRE.UNAUTHENTICATED` | `iss`가 설정과 한 글자라도 다른지(끝 슬래시), `typ`, `aud`, 시계 오차, `sub`의 principal 연결 |
+| 특정 시점부터 일부 사용자만 `WIRE.UNAUTHENTICATED` | 회전으로 `kid`가 바뀌었는데 JWKS에 새 키가 없는지 |
 | `UNAVAILABLE` | 서버에서 JWKS URL 도달 여부, IdP 인증서, 응답 크기(256KiB), 키 개수(32개) |

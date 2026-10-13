@@ -63,17 +63,17 @@ async fn two_concurrent_activations_cannot_exceed_the_per_owner_capacity() {
     let (a, b) = tokio::join!(apply(&mut first, &facts, &request_a, &caller_a, &knobs), apply(&mut second, &facts, &request_b, &caller_b, &knobs),);
     let mut outcomes = [code(a), code(b)];
     outcomes.sort();
-    assert_eq!(outcomes, ["INVARIANT_VIOLATED", "OK"]);
+    assert_eq!(outcomes, ["OK", "WIRE.INVARIANT_VIOLATED"]);
     let active: i64 = first.query_one(&format!("SELECT count(*) FROM {schema}.item WHERE owner_id=1 AND active"), &[]).await.unwrap().get(0);
     assert_eq!(active, 2);
     let hidden = apply(&mut first, &facts, &request(23), &who(1), &Knobs::default()).await;
     let violation = hidden.unwrap_err();
-    assert_eq!(violation.code, "INVARIANT_VIOLATED");
+    assert_eq!(violation.code, "WIRE.INVARIANT_VIOLATED");
     assert_eq!(violation.msg, "`Item.maxItems` 정원 제약 위반");
     let nullable_a = apply(&mut first, &facts, &request(24), &who(1), &Knobs::default()).await;
     let nullable_b = apply(&mut first, &facts, &request(25), &who(1), &Knobs::default()).await;
     assert!(nullable_a.is_ok() && nullable_b.is_ok(), "nullable groups should not be counted");
     let moved_into_full_group = apply(&mut first, &facts, &move_request(11), &who(3), &Knobs::default()).await;
-    assert_eq!(moved_into_full_group.unwrap_err().code, "INVARIANT_VIOLATED");
+    assert_eq!(moved_into_full_group.unwrap_err().code, "WIRE.INVARIANT_VIOLATED");
     first.batch_execute(&format!("DROP SCHEMA {schema} CASCADE")).await.unwrap();
 }

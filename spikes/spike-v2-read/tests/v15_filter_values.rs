@@ -31,7 +31,7 @@ fn declared_url_and_enum_filters_accept_strings_and_members_only() {
             assert!(!plan.sql.contains(value), "caller values must stay parameters");
         }
         for (field, value) in [("phase", json!("UNKNOWN")), ("phase", json!(true)), ("link", json!(1)), ("link", json!(null))] {
-            assert_eq!(plan_read_with_wire(&facts, &query(field, value), &caller, wire).err().unwrap().code, "BAD_VALUE");
+            assert_eq!(plan_read_with_wire(&facts, &query(field, value), &caller, wire).err().unwrap().code, "WIRE.BAD_VALUE");
         }
     }
 }
@@ -58,7 +58,7 @@ fn time_filters_reject_invalid_calendar_and_offset_before_sql() {
     for value in invalid {
         match plan_read_with_wire(&facts, &query("date", json!(value)), &caller, IdWire::DecimalString) {
             Ok(_) => accepted.push(value),
-            Err(error) => assert_eq!(error.code, "BAD_VALUE", "{value}"),
+            Err(error) => assert_eq!(error.code, "WIRE.BAD_VALUE", "{value}"),
         }
     }
     assert!(accepted.is_empty(), "invalid Time reached SQL: {accepted:?}");
@@ -129,7 +129,7 @@ fn postgres_text_nul_is_rejected_by_the_planner_before_sql() {
     for field in ["title", "link"] {
         assert_eq!(
             plan_read_with_wire(&facts, &query(field, json!("bad\u{0000}text")), &caller, IdWire::DecimalString).err().unwrap().code,
-            "BAD_VALUE"
+            "WIRE.BAD_VALUE"
         );
     }
 }
@@ -145,7 +145,7 @@ fn time_retains_the_existing_scalar_length_budget() {
     }
     let input = "2026-10-04T00:00:00.123456789012345Z";
     assert_eq!(input.len(), 36);
-    assert_eq!(plan_read_with_wire(&facts, &query("date", json!(input)), &caller, IdWire::DecimalString).err().unwrap().code, "BAD_VALUE");
+    assert_eq!(plan_read_with_wire(&facts, &query("date", json!(input)), &caller, IdWire::DecimalString).err().unwrap().code, "WIRE.BAD_VALUE");
 }
 
 #[test]
@@ -161,5 +161,5 @@ fn declared_prefix_is_a_parameterized_literal_text_operation() {
         assert!(!plan.sql.contains(" LIKE "));
     }
     let request = json!({"read":"Event","select":["id"],"filter":[{"field":"title","op":"prefix","value":1}]});
-    assert_eq!(plan_read_with_wire(&facts, &request, &caller, IdWire::DecimalString).err().unwrap().code, "BAD_VALUE");
+    assert_eq!(plan_read_with_wire(&facts, &request, &caller, IdWire::DecimalString).err().unwrap().code, "WIRE.BAD_VALUE");
 }

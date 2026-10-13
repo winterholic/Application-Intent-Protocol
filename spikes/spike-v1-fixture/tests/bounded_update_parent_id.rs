@@ -21,5 +21,5 @@ resource Allocation { fields { id: Id; order: SalesOrder; active: Bool } }
         Ok(_) => panic!("bounded effect cannot follow a changed parent ID"),
         Err(errors) => errors,
     };
-    assert!(errors.iter().any(|error| error.code == "UNSUPPORTED_EFFECT"), "{errors:?}");
+    assert!(errors.iter().any(|error| error.code == "DEF.UNSUPPORTED_EFFECT"), "{errors:?}");
 }

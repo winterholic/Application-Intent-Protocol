@@ -350,10 +350,10 @@ async fn drift_and_journal_tamper_stop_planning() {
         let _ = connection.await;
     });
     client.batch_execute(&format!("ALTER TABLE {}.member ADD COLUMN rogue text", schema.0)).await.unwrap();
-    assert_eq!(plan(DB, &schema.0, &before, &None).await.unwrap_err()["code"], "SCHEMA_MISMATCH");
+    assert_eq!(plan(DB, &schema.0, &before, &None).await.unwrap_err()["code"], "WIRE.SCHEMA_MISMATCH");
     client.batch_execute(&format!("ALTER TABLE {}.member DROP COLUMN rogue", schema.0)).await.unwrap();
     client.batch_execute(&format!("UPDATE {}.aip_migrate_journal SET new_digest='bad'", schema.0)).await.unwrap();
-    assert_eq!(plan(DB, &schema.0, &before, &None).await.unwrap_err()["code"], "SCHEMA_MISMATCH");
+    assert_eq!(plan(DB, &schema.0, &before, &None).await.unwrap_err()["code"], "WIRE.SCHEMA_MISMATCH");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -439,7 +439,7 @@ async fn actor_change_and_function_body_drift_are_rejected() {
         ))
         .await
         .unwrap();
-    assert_eq!(preflight(DB, &schema.0, &before).await.unwrap_err()["code"], "SCHEMA_MISMATCH");
+    assert_eq!(preflight(DB, &schema.0, &before).await.unwrap_err()["code"], "WIRE.SCHEMA_MISMATCH");
 }
 
 #[test]

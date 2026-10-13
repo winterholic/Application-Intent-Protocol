@@ -43,8 +43,8 @@ test("enqueue snapshots typed input and sends the declared operation with defaul
 test("enqueue rejects invalid input before transport and validates the returned job", async () => {
   let calls = 0;
   const client = createJobsClient(async () => { calls++; return ok({ run: { id: "bad", operation: "summarize", state: "QUEUED" } }); }, binding);
-  await assert.rejects(client.enqueue("summarize", { text: "" }, { key: "request-1" }), (error: any) => error.code === "BAD_VALUE");
-  await assert.rejects(client.enqueue("summarize", { text: "valid" }, { key: "request-1" }), (error: any) => error.code === "PROTOCOL_ERROR");
+  await assert.rejects(client.enqueue("summarize", { text: "" }, { key: "request-1" }), (error: any) => error.code === "WIRE.BAD_VALUE");
+  await assert.rejects(client.enqueue("summarize", { text: "valid" }, { key: "request-1" }), (error: any) => error.code === "CLIENT.PROTOCOL_ERROR");
   assert.equal(calls, 1);
 });
 
@@ -52,7 +52,7 @@ test("enqueue rejects operations declared with sync lifetime", async () => {
   let calls = 0;
   const syncBinding = { ...binding, operations: { summarize: { ...binding.operations.summarize, lifetime: "sync" as const } } };
   const client = createJobsClient(async () => { calls++; return ok(); }, syncBinding);
-  await assert.rejects(client.enqueue("summarize", { text: "hello" }, { key: "request-1" }), (error: any) => error.code === "NOT_DURABLE");
+  await assert.rejects(client.enqueue("summarize", { text: "hello" }, { key: "request-1" }), (error: any) => error.code === "CLIENT.NOT_DURABLE");
   assert.equal(calls, 0);
 });
 
@@ -74,7 +74,7 @@ test("status, cancel, and result use job routes and validate operation output", 
 
 test("result rejects an output outside the declared descriptor", async () => {
   const client = createJobsClient(async () => ok({ id: jobId, operation: "summarize", output: { length: 21 } }), binding);
-  await assert.rejects(client.result(jobId, "summarize"), (error: any) => error.code === "PROTOCOL_ERROR");
+  await assert.rejects(client.result(jobId, "summarize"), (error: any) => error.code === "CLIENT.PROTOCOL_ERROR");
 });
 
 test("events validates cursor and page size and preserves opaque cursors", async () => {
@@ -88,7 +88,7 @@ test("events validates cursor and page size and preserves opaque cursors", async
   assert.deepEqual(calls, [["/events/read", { stream: "notifications", after: "cursor/from-server", limit: 10 }]]);
   await client.events.read("notifications");
   assert.deepEqual(calls[1], ["/events/read", { stream: "notifications", after: "0", limit: 100 }]);
-  await assert.rejects(client.events.read("notifications", { limit: 101 }), (error: any) => error.code === "BAD_VALUE");
+  await assert.rejects(client.events.read("notifications", { limit: 101 }), (error: any) => error.code === "WIRE.BAD_VALUE");
 });
 
 test("file operations encode and decode base64 JSON within the request size limit", async () => {
@@ -104,14 +104,14 @@ test("file operations encode and decode base64 JSON within the request size limi
   assert.deepEqual([...file.bytes], [104, 101, 108, 108, 111]);
   assert.equal(await client.files.delete("file-1"), true);
   assert.deepEqual(calls[0], ["/files/put", { bucket: "reports", name: "a.txt", mediaType: "text/plain", base64: "aGVsbG8=" }]);
-  await assert.rejects(client.files.put("reports", "large.bin", new Uint8Array(768 * 1024 - 1024 + 1), "application/octet-stream"), (error: any) => error.code === "BAD_VALUE");
+  await assert.rejects(client.files.put("reports", "large.bin", new Uint8Array(768 * 1024 - 1024 + 1), "application/octet-stream"), (error: any) => error.code === "WIRE.BAD_VALUE");
 });
 
 test("server errors and contract mismatches are surfaced with stable codes", async () => {
-  const denied = createJobsClient(async () => ({ ok: false, code: "FORBIDDEN" }), binding);
-  await assert.rejects(denied.status(jobId), (error: any) => error.code === "FORBIDDEN");
+  const denied = createJobsClient(async () => ({ ok: false, code: "WIRE.FORBIDDEN" }), binding);
+  await assert.rejects(denied.status(jobId), (error: any) => error.code === "WIRE.FORBIDDEN");
   const mismatch = createJobsClient(async () => ({ ...ok({ run: { id: jobId, state: "QUEUED" } }), contractFingerprint: "b".repeat(64) }), binding);
-  await assert.rejects(mismatch.status(jobId), (error: any) => error.code === "CONTRACT_MISMATCH");
+  await assert.rejects(mismatch.status(jobId), (error: any) => error.code === "WIRE.CONTRACT_MISMATCH");
 });
 
 test("typed jobs share the authenticated contract transport and reject responses after session replacement", async () => {
@@ -207,7 +207,7 @@ test("events.watch retries temporary errors but immediately surfaces expired cur
   let calls = 0;
   const client = createJobsClient(async () => {
     calls++;
-    if (calls === 1) throw Object.assign(new Error("offline"), { code: "DB_UNAVAILABLE" });
+    if (calls === 1) throw Object.assign(new Error("offline"), { code: "WIRE.DB_UNAVAILABLE" });
     return ok({ events: [{ cursor: "cursor:ok", payload: { n: 1 } }], cursor: "cursor:ok" });
   }, binding);
   const watch = client.events.watch("notifications", { intervalMs: 50 });
@@ -216,21 +216,21 @@ test("events.watch retries temporary errors but immediately surfaces expired cur
   await watch.return();
 
   calls = 0;
-  const expired = createJobsClient(async () => { calls++; return { ok: false, code: "CURSOR_EXPIRED" }; }, binding);
+  const expired = createJobsClient(async () => { calls++; return { ok: false, code: "WIRE.CURSOR_EXPIRED" }; }, binding);
   const expiredWatch = expired.events.watch("notifications", { intervalMs: 50 });
-  await assert.rejects(expiredWatch.next(), (error: any) => error.code === "CURSOR_EXPIRED");
+  await assert.rejects(expiredWatch.next(), (error: any) => error.code === "WIRE.CURSOR_EXPIRED");
   assert.equal(calls, 1);
 });
 
 test("events.watch validates interval bounds before reading", async () => {
   let calls = 0;
   const client = createJobsClient(async () => { calls++; return ok({ events: [], cursor: "0" }); }, binding);
-  await assert.rejects(client.events.watch("notifications", { intervalMs: 49 }).next(), (error: any) => error.code === "BAD_VALUE");
-  await assert.rejects(client.events.watch("notifications", { intervalMs: 30001 }).next(), (error: any) => error.code === "BAD_VALUE");
+  await assert.rejects(client.events.watch("notifications", { intervalMs: 49 }).next(), (error: any) => error.code === "WIRE.BAD_VALUE");
+  await assert.rejects(client.events.watch("notifications", { intervalMs: 30001 }).next(), (error: any) => error.code === "WIRE.BAD_VALUE");
   assert.equal(calls, 0);
 });
 
 test("failed job receipts preserve uncertain effect diagnostics", async () => {
-  const client = createJobsClient(async () => ok({ run: { id: jobId, operation: "summarize", state: "FAILED", attempt: 1, error: "CANCELLATION_UNCONFIRMED" } }), binding);
-  assert.deepEqual(await client.status(jobId), { id: jobId, status: "FAILED", error: "CANCELLATION_UNCONFIRMED" });
+  const client = createJobsClient(async () => ok({ run: { id: jobId, operation: "summarize", state: "FAILED", attempt: 1, error: "WIRE.CANCELLATION_UNCONFIRMED" } }), binding);
+  assert.deepEqual(await client.status(jobId), { id: jobId, status: "FAILED", error: "WIRE.CANCELLATION_UNCONFIRMED" });
 });

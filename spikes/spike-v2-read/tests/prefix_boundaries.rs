@@ -13,13 +13,13 @@ fn prefix_limits_count_characters_and_reject_invalid_values_before_sql() {
     for wire in [IdWire::Legacy, IdWire::SafeNumber, IdWire::DecimalString] {
         for (value, expected) in [
             (json!("가".repeat(200)), None),
-            (json!("가".repeat(201)), Some("VALUE_TOO_LONG")),
+            (json!("가".repeat(201)), Some("WIRE.VALUE_TOO_LONG")),
             (json!("a".repeat(200)), None),
-            (json!("a".repeat(201)), Some("VALUE_TOO_LONG")),
+            (json!("a".repeat(201)), Some("WIRE.VALUE_TOO_LONG")),
             (json!(""), None),
-            (json!("bad\u{0000}value"), Some("BAD_VALUE")),
-            (json!(null), Some("BAD_VALUE")),
-            (json!(["x"]), Some("BAD_VALUE")),
+            (json!("bad\u{0000}value"), Some("WIRE.BAD_VALUE")),
+            (json!(null), Some("WIRE.BAD_VALUE")),
+            (json!(["x"]), Some("WIRE.BAD_VALUE")),
         ] {
             let request = json!({"read":"Event","select":["id"],"filter":[{"field":"title","op":"prefix","value":value}]});
             match (plan_read_with_wire(&facts, &request, &caller, wire), expected) {

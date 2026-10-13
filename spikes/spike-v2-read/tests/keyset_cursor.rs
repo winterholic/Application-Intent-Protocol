@@ -40,7 +40,7 @@ fn after_requires_budget_opt_in() {
     ensure_test_schema();
     let base = load_str(A, Form::A).unwrap().execution;
     let r = req(json!([{ "field": "views" }]), json!({ "views": 1, "id": 1 }));
-    assert_eq!(code(plan_read(&base, &r, &who(Some(1)))), "UNKNOWN_KEY");
+    assert_eq!(code(plan_read(&base, &r, &who(Some(1)))), "WIRE.UNKNOWN_KEY");
     assert_eq!(code(plan_read(&open(), &r, &who(Some(1)))), "OK");
 }
 
@@ -61,7 +61,7 @@ fn after_keys_must_match_sort_fields_plus_id() {
         json!([1, 2]),
         json!("abc"),
     ] {
-        assert_eq!(code(plan_read(&f, &req(sort.clone(), bad.clone()), &c)), "BAD_CURSOR", "{bad}");
+        assert_eq!(code(plan_read(&f, &req(sort.clone(), bad.clone()), &c)), "WIRE.BAD_CURSOR", "{bad}");
     }
     // sort가 없으면 id만 받는다.
     let no_sort = json!({ "read": "Recruitment", "select": ["id"], "after": { "id": 5 } });
@@ -86,7 +86,7 @@ fn after_values_are_type_checked_and_bound() {
         json!({ "views": 1, "periodEnd": "2026-10-10T00:00:00Z", "id": -1 }),
         json!({ "views": 1, "periodEnd": "2026-10-10T00:00:00Z", "id": "x'; DROP TABLE y; --" }),
     ] {
-        assert_eq!(code(plan_read(&f, &req(sort.clone(), bad.clone()), &c)), "BAD_VALUE", "{bad}");
+        assert_eq!(code(plan_read(&f, &req(sort.clone(), bad.clone()), &c)), "WIRE.BAD_VALUE", "{bad}");
     }
     let p = plan_read(&f, &req(sort, json!({ "views": 777, "periodEnd": "2026-10-10T00:00:00Z", "id": 4242 })), &c).unwrap();
     // Time은 정규화되어 바인딩된다(+00:00).
@@ -103,7 +103,7 @@ fn after_cannot_combine_with_offset_and_is_cheap() {
     let c = who(Some(1));
     let mut r = req(json!([{ "field": "views" }]), json!({ "views": 1, "id": 1 }));
     r["offset"] = json!(1);
-    assert_eq!(code(plan_read(&f, &r, &c)), "CURSOR_WITH_OFFSET");
+    assert_eq!(code(plan_read(&f, &r, &c)), "WIRE.CURSOR_WITH_OFFSET");
     // 비용은 건너뛰는 행을 세지 않는다: cursor 읽기는 같은 limit의 offset 0 읽기와 같다.
     let a = plan_read(&f, &req(json!([{ "field": "views" }]), json!({ "views": 1, "id": 1 })), &c).unwrap().cost;
     let b = plan_read(&f, &json!({ "read": "Recruitment", "select": ["id", "views", "periodEnd"], "sort": [{ "field": "views" }], "limit": 2 }), &c)
@@ -121,18 +121,18 @@ fn defensive_checks_when_facts_skip_sema() {
     // select에 없는 sort 필드(정의 검사를 건너뛴 facts)
     let mut f = open();
     f["resources"]["Recruitment"]["exposeRead"]["select"].as_object_mut().unwrap().remove("views");
-    assert_eq!(code(plan_read(&f, &req(json!([{ "field": "views" }]), ok.clone()), &c)), "CURSOR_FIELD_NOT_ALLOWED");
+    assert_eq!(code(plan_read(&f, &req(json!([{ "field": "views" }]), ok.clone()), &c)), "WIRE.CURSOR_FIELD_NOT_ALLOWED");
     // id가 select에 없음
     let mut f = open();
     f["resources"]["Recruitment"]["exposeRead"]["select"].as_object_mut().unwrap().remove("id");
     let mut r = req(json!([{ "field": "views" }]), ok.clone());
     r["select"] = json!(["title"]);
-    assert_eq!(code(plan_read(&f, &r, &c)), "CURSOR_FIELD_NOT_ALLOWED");
+    assert_eq!(code(plan_read(&f, &r, &c)), "WIRE.CURSOR_FIELD_NOT_ALLOWED");
     // field read 정책이 있는 필드를 sort에 억지로 올림
     let mut f = open();
     f["resources"]["Recruitment"]["exposeRead"]["sort"].as_array_mut().unwrap().push(json!("internalNote"));
     let r = req(json!([{ "field": "internalNote" }]), json!({ "internalNote": "x", "id": 1 }));
-    assert_eq!(code(plan_read(&f, &r, &c)), "POLICY_FIELD_NOT_FILTERABLE");
+    assert_eq!(code(plan_read(&f, &r, &c)), "WIRE.POLICY_FIELD_NOT_FILTERABLE");
     // nullable 필드를 sort에 억지로 올리고 select kind를 field로 속임
     let mut f = open();
     f["resources"]["Recruitment"]["fieldRead"].as_object_mut().unwrap().remove("internalNote");
@@ -140,7 +140,7 @@ fn defensive_checks_when_facts_skip_sema() {
     f["resources"]["Recruitment"]["exposeRead"]["select"]["internalNote"] = json!("field");
     assert_eq!(
         code(plan_read(&f, &req(json!([{ "field": "internalNote" }]), json!({ "internalNote": "x", "id": 1 })), &c)),
-        "CURSOR_FIELD_NOT_ALLOWED"
+        "WIRE.CURSOR_FIELD_NOT_ALLOWED"
     );
 }
 

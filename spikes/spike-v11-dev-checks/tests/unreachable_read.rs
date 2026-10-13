@@ -20,7 +20,7 @@ fn the_fixture_has_no_unreachable_read() {
 #[test]
 fn a_read_without_budget_that_nothing_traverses_is_reported() {
     let src = format!("{A}\nresource Tag {{\n  fields {{ id: Id; name: Text }}\n  expose read {{ select id, name }}\n}}\n");
-    assert_eq!(advisories(&src, true), vec![("ADVISORY_UNREACHABLE_READ".to_string(), "resource:Tag".to_string())]);
+    assert_eq!(advisories(&src, true), vec![("DEF.ADVISORY_UNREACHABLE_READ".to_string(), "resource:Tag".to_string())]);
     assert!(advisories(&src, false).is_empty(), "advice is opt-in");
     let with = load_checked(&src, Form::A, &json!({"devChecks": true})).expect("valid");
     let without = load_checked(&src, Form::A, &json!({"devChecks": false})).expect("valid");

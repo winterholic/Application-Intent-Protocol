@@ -18,15 +18,15 @@ fn a_rejected_filter_or_sort_lists_what_the_contract_allows() {
     let facts = load_str(A, Form::A).expect("fixture").execution;
 
     let filter = rejected(&facts, json!({"read":"Recruitment","select":["id"],"filter":[{"field":"title","op":"eq","value":"x"}]}));
-    assert_eq!(filter.code, "FILTER_NOT_ALLOWED");
+    assert_eq!(filter.code, "WIRE.FILTER_NOT_ALLOWED");
     assert!(filter.msg.contains("periodEnd.gte") && filter.msg.contains("periodEnd.lte"), "{}", filter.msg);
 
     let sort = rejected(&facts, json!({"read":"Recruitment","select":["id"],"sort":[{"field":"title"}]}));
-    assert_eq!(sort.code, "SORT_NOT_ALLOWED");
+    assert_eq!(sort.code, "WIRE.SORT_NOT_ALLOWED");
     assert!(sort.msg.contains("periodEnd") && sort.msg.contains("views") && sort.msg.contains("id"), "{}", sort.msg);
 
     let key = rejected(&facts, json!({"read":"Recruitment","select":["id"],"filters":[]}));
-    assert_eq!(key.code, "UNKNOWN_KEY");
+    assert_eq!(key.code, "WIRE.UNKNOWN_KEY");
     for allowed in ["read", "select", "filter", "sort", "limit"] {
         assert!(key.msg.contains(allowed), "{}", key.msg);
     }
@@ -34,7 +34,7 @@ fn a_rejected_filter_or_sort_lists_what_the_contract_allows() {
     assert!(!key.msg.contains("offset") && !key.msg.contains("after"), "{}", key.msg);
 
     let item = rejected(&facts, json!({"read":"Recruitment","select":["id"],"filter":[{"field":"periodEnd","op":"gte","value":1,"extra":1}]}));
-    assert_eq!(item.code, "UNKNOWN_KEY");
+    assert_eq!(item.code, "WIRE.UNKNOWN_KEY");
     assert!(item.msg.contains("field") && item.msg.contains("op") && item.msg.contains("value"), "{}", item.msg);
 }
 

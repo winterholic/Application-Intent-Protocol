@@ -25,7 +25,7 @@ type JobRun = { id: string; state?: JobStatus; status?: JobStatus; operation: st
 const MAX_FILE_BYTES = 768 * 1024 - 1024;
 const JOB_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const JOB_STATUSES = new Set<JobStatus>(["QUEUED", "RUNNING", "CANCEL_REQUESTED", "SUCCEEDED", "FAILED", "CANCELLED"]);
-const RETRYABLE_EVENT_ERRORS = new Set(["DB_UNAVAILABLE", "REQUEST_TIMEOUT", "COMMIT_UNKNOWN", "WORKER_BUSY", "INTERNAL", "OFFLINE", "NETWORK_ERROR", "SERVICE_UNAVAILABLE"]);
+const RETRYABLE_EVENT_ERRORS = new Set(["WIRE.DB_UNAVAILABLE", "WIRE.REQUEST_TIMEOUT", "WIRE.COMMIT_UNKNOWN", "WIRE.WORKER_BUSY", "WIRE.INTERNAL", "CLIENT.OFFLINE", "CLIENT.NETWORK_ERROR", "CLIENT.SERVICE_UNAVAILABLE"]);
 
 function error(code: string, message = code): Error & { code: string } {
   return Object.assign(new Error(message), { code });
@@ -119,16 +119,16 @@ function validateRecord(value: unknown, fields: Readonly<Record<string, ScalarDe
   if (!value || typeof value !== "object" || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null ||
       Object.keys(value).length !== Object.keys(fields).length ||
       !Object.entries(fields).every(([key, descriptor]) => Object.hasOwn(value, key) && validScalar((value as Record<string, unknown>)[key], descriptor, wire))) {
-    throw error(code, code === "BAD_VALUE" ? "입력이 operation 계약과 다릅니다" : "응답이 operation 계약과 다릅니다");
+    throw error(code, code === "WIRE.BAD_VALUE" ? "입력이 operation 계약과 다릅니다" : "응답이 operation 계약과 다릅니다");
   }
 }
 
 function contractResponse<T extends Record<string, unknown>>(value: unknown, fingerprint: string): T {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw error("PROTOCOL_ERROR", "jobs 응답 형식이 잘못되었습니다");
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw error("CLIENT.PROTOCOL_ERROR", "jobs 응답 형식이 잘못되었습니다");
   const response = value as Record<string, unknown>;
   if (response.ok === false && typeof response.code === "string") throw failure(response.code, typeof response.msg === "string" ? response.msg : response.code, response);
-  if (response.ok !== true) throw failure("PROTOCOL_ERROR", "jobs 응답 형식이 잘못되었습니다", response);
-  if (response.contractFingerprint !== fingerprint) throw failure("CONTRACT_MISMATCH", "서버와 생성 계약이 다릅니다", response);
+  if (response.ok !== true) throw failure("CLIENT.PROTOCOL_ERROR", "jobs 응답 형식이 잘못되었습니다", response);
+  if (response.contractFingerprint !== fingerprint) throw failure("WIRE.CONTRACT_MISMATCH", "서버와 생성 계약이 다릅니다", response);
   return response as T;
 }
 
@@ -137,12 +137,12 @@ function validJobId(value: unknown): value is string {
 }
 
 function validateStatus(value: unknown): asserts value is JobRun {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw error("PROTOCOL_ERROR", "job 상태 응답이 잘못되었습니다");
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw error("CLIENT.PROTOCOL_ERROR", "job 상태 응답이 잘못되었습니다");
   const job = value as Record<string, unknown>;
   const status = job.status ?? job.state;
   if (!validJobId(job.id) || typeof status !== "string" || !JOB_STATUSES.has(status as JobStatus) ||
       typeof job.operation !== "string" || job.error != null && (typeof job.error !== "string" || job.error.length > 256) || !Number.isSafeInteger(job.attempt) || (job.attempt as number) < 0) {
-    throw error("PROTOCOL_ERROR", "job 상태 응답이 잘못되었습니다");
+    throw error("CLIENT.PROTOCOL_ERROR", "job 상태 응답이 잘못되었습니다");
   }
 }
 
@@ -162,12 +162,12 @@ function encodeBase64(bytes: Uint8Array): string {
 
 function decodeBase64(value: unknown): Uint8Array {
   if (typeof value !== "string" || value.length > Math.ceil(MAX_FILE_BYTES / 3) * 4 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) {
-    throw error("PROTOCOL_ERROR", "파일 응답의 base64가 잘못되었습니다");
+    throw error("CLIENT.PROTOCOL_ERROR", "파일 응답의 base64가 잘못되었습니다");
   }
   const binary = atob(value);
-  if (binary.length > MAX_FILE_BYTES) throw error("PROTOCOL_ERROR", "파일 응답이 허용 크기를 초과했습니다");
+  if (binary.length > MAX_FILE_BYTES) throw error("CLIENT.PROTOCOL_ERROR", "파일 응답이 허용 크기를 초과했습니다");
   const bytes = Uint8Array.from(binary, char => char.charCodeAt(0));
-  if (encodeBase64(bytes) !== value) throw error("PROTOCOL_ERROR", "파일 응답의 base64가 정규 형식이 아닙니다");
+  if (encodeBase64(bytes) !== value) throw error("CLIENT.PROTOCOL_ERROR", "파일 응답의 base64가 정규 형식이 아닙니다");
   return bytes;
 }
 
@@ -175,7 +175,7 @@ function decodeBase64(value: unknown): Uint8Array {
 export function createJobsClient<O extends ExtensionContractShape<O>>(post: JobsTransport, binding: JobsBinding<O>) {
   if (!binding || typeof binding.fingerprint !== "string" || !/^[a-f0-9]{64}$/.test(binding.fingerprint) || !isIdWire(binding.idWire) ||
       !binding.operations || typeof binding.operations !== "object" || Array.isArray(binding.operations)) {
-    throw error("PROTOCOL_ERROR", "생성 jobs 계약 형식이 잘못되었습니다");
+    throw error("CLIENT.PROTOCOL_ERROR", "생성 jobs 계약 형식이 잘못되었습니다");
   }
   const fingerprint = binding.fingerprint;
   const wire = binding.idWire;
@@ -185,20 +185,20 @@ export function createJobsClient<O extends ExtensionContractShape<O>>(post: Jobs
   }
 
   async function status(id: string): Promise<JobReceipt> {
-    if (!validJobId(id)) throw error("BAD_VALUE", "job id 형식이 잘못되었습니다");
+    if (!validJobId(id)) throw error("WIRE.BAD_VALUE", "job id 형식이 잘못되었습니다");
     const response = await send<Record<string, unknown>>("/jobs/status", { id });
     const run = response.run;
     validateStatus(run);
-    if (run.id !== id || !Object.hasOwn(operations, run.operation)) throw error("PROTOCOL_ERROR", "응답 job id 또는 operation이 요청과 다릅니다");
+    if (run.id !== id || !Object.hasOwn(operations, run.operation)) throw error("CLIENT.PROTOCOL_ERROR", "응답 job id 또는 operation이 요청과 다릅니다");
     return deepFreeze({ id, status: jobStatus(run), ...(run.error ? { error: run.error } : {}) });
   }
 
   async function cancel(id: string): Promise<JobReceipt> {
-    if (!validJobId(id)) throw error("BAD_VALUE", "job id 형식이 잘못되었습니다");
+    if (!validJobId(id)) throw error("WIRE.BAD_VALUE", "job id 형식이 잘못되었습니다");
     const response = await send<Record<string, unknown>>("/jobs/cancel", { id });
     const run = response.run;
     validateStatus(run);
-    if (run.id !== id || !Object.hasOwn(operations, run.operation)) throw error("PROTOCOL_ERROR", "응답 job id 또는 operation이 요청과 다릅니다");
+    if (run.id !== id || !Object.hasOwn(operations, run.operation)) throw error("CLIENT.PROTOCOL_ERROR", "응답 job id 또는 operation이 요청과 다릅니다");
     return deepFreeze({ id, status: jobStatus(run), ...(run.error ? { error: run.error } : {}) });
   }
 
@@ -206,12 +206,12 @@ export function createJobsClient<O extends ExtensionContractShape<O>>(post: Jobs
     const after = options.after ?? "0";
     const limit = options.limit ?? 100;
     if (typeof stream !== "string" || !/^[A-Za-z][A-Za-z0-9_.-]{0,127}$/.test(stream) || typeof after !== "string" || after.length > 1024 || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
-      throw error("BAD_VALUE", "event cursor 또는 limit 형식이 잘못되었습니다");
+      throw error("WIRE.BAD_VALUE", "event cursor 또는 limit 형식이 잘못되었습니다");
     }
     const response = await send<Record<string, unknown>>("/events/read", { stream, after, limit });
     if (!Array.isArray(response.events) || typeof response.cursor !== "string" || response.cursor.length > 1024 ||
         !response.events.every(event => !!event && typeof event === "object" && !Array.isArray(event) && typeof (event as any).cursor === "string" && Object.hasOwn(event, "payload"))) {
-      throw error("PROTOCOL_ERROR", "event 응답 형식이 잘못되었습니다");
+      throw error("CLIENT.PROTOCOL_ERROR", "event 응답 형식이 잘못되었습니다");
     }
     return deepFreeze({ events: structuredClone(response.events), cursor: response.cursor }) as EventPage;
   }
@@ -223,7 +223,7 @@ export function createJobsClient<O extends ExtensionContractShape<O>>(post: Jobs
     if (typeof stream !== "string" || !/^[A-Za-z][A-Za-z0-9_.-]{0,127}$/.test(stream) || typeof after !== "string" || after.length > 1024 ||
         !Number.isSafeInteger(intervalMs) || intervalMs < 50 || intervalMs > 30_000 ||
         (signal !== undefined && (!signal || typeof signal.aborted !== "boolean" || typeof signal.addEventListener !== "function"))) {
-      throw error("BAD_VALUE", "event watch 인수가 잘못되었습니다");
+      throw error("WIRE.BAD_VALUE", "event watch 인수가 잘못되었습니다");
     }
     let consecutiveFailures = 0;
     while (!signal?.aborted) {
@@ -256,55 +256,55 @@ export function createJobsClient<O extends ExtensionContractShape<O>>(post: Jobs
 
   return {
     async enqueue<const K extends keyof O & string>(operation: K, input: O[K]["input"], options: EnqueueOptions): Promise<JobReceipt> {
-      if (!Object.hasOwn(operations, operation)) throw error("NOT_EXPOSED", "생성 계약에 없는 operation입니다");
+      if (!Object.hasOwn(operations, operation)) throw error("WIRE.NOT_EXPOSED", "생성 계약에 없는 operation입니다");
       const descriptor = operations[operation];
-      if (descriptor.lifetime !== "durable") throw error("NOT_DURABLE", "durable로 선언되지 않은 operation입니다");
+      if (descriptor.lifetime !== "durable") throw error("CLIENT.NOT_DURABLE", "durable로 선언되지 않은 operation입니다");
       const snapshot = structuredClone(input);
-      validateRecord(snapshot, descriptor.input, wire, "BAD_VALUE");
+      validateRecord(snapshot, descriptor.input, wire, "WIRE.BAD_VALUE");
       const key = options.key;
       const delayMs = options.delayMs ?? 0;
-      if (!validText(key, 200) || !Number.isSafeInteger(delayMs) || delayMs < 0) throw error("BAD_VALUE", "job key 또는 delayMs 형식이 잘못되었습니다");
+      if (!validText(key, 200) || !Number.isSafeInteger(delayMs) || delayMs < 0) throw error("WIRE.BAD_VALUE", "job key 또는 delayMs 형식이 잘못되었습니다");
       const response = await send<Record<string, unknown>>("/jobs/enqueue", { operation, input: snapshot, key, delayMs });
       const run = response.run;
       validateStatus(run);
-      if (run.operation !== operation) throw error("PROTOCOL_ERROR", "응답 operation이 요청과 다릅니다");
+      if (run.operation !== operation) throw error("CLIENT.PROTOCOL_ERROR", "응답 operation이 요청과 다릅니다");
       return deepFreeze({ id: run.id, status: jobStatus(run), ...(run.error ? { error: run.error } : {}) });
     },
     status,
     cancel,
     async result<const K extends keyof O & string>(id: string, operation: K): Promise<JobResult<O, K>> {
-      if (!validJobId(id)) throw error("BAD_VALUE", "job id 형식이 잘못되었습니다");
-      if (!Object.hasOwn(operations, operation)) throw error("NOT_EXPOSED", "생성 계약에 없는 operation입니다");
+      if (!validJobId(id)) throw error("WIRE.BAD_VALUE", "job id 형식이 잘못되었습니다");
+      if (!Object.hasOwn(operations, operation)) throw error("WIRE.NOT_EXPOSED", "생성 계약에 없는 operation입니다");
       const response = await send<Record<string, unknown>>("/jobs/result", { id });
-      if (response.id !== id || response.operation !== operation || !Object.hasOwn(response, "output")) throw error("PROTOCOL_ERROR", "job 결과 응답이 잘못되었습니다");
+      if (response.id !== id || response.operation !== operation || !Object.hasOwn(response, "output")) throw error("CLIENT.PROTOCOL_ERROR", "job 결과 응답이 잘못되었습니다");
       const output = structuredClone(response.output);
-      validateRecord(output, operations[operation].output, wire, "PROTOCOL_ERROR");
+      validateRecord(output, operations[operation].output, wire, "CLIENT.PROTOCOL_ERROR");
       return deepFreeze(output) as JobResult<O, K>;
     },
     events: { read: readEvents, watch: watchEvents },
     files: {
       async put(bucket: string, name: string, bytes: Uint8Array, mediaType: string): Promise<FileMetadata> {
         if (!validText(bucket) || !validText(name) || !validText(mediaType, 255) || !(bytes instanceof Uint8Array) || bytes.byteLength > MAX_FILE_BYTES) {
-          throw error("BAD_VALUE", "파일 정보가 유효하지 않거나 업로드 크기가 허용 범위를 초과했습니다");
+          throw error("WIRE.BAD_VALUE", "파일 정보가 유효하지 않거나 업로드 크기가 허용 범위를 초과했습니다");
         }
         const response = await send<Record<string, unknown>>("/files/put", { bucket, name, mediaType, base64: encodeBase64(bytes) });
         const file = response.file as Record<string, unknown> | undefined;
-        if (!file || !validText(file.id) || file.bucket !== bucket || file.name !== name || file.mediaType !== mediaType || file.size !== bytes.byteLength) throw error("PROTOCOL_ERROR", "파일 응답 메타데이터가 잘못되었습니다");
+        if (!file || !validText(file.id) || file.bucket !== bucket || file.name !== name || file.mediaType !== mediaType || file.size !== bytes.byteLength) throw error("CLIENT.PROTOCOL_ERROR", "파일 응답 메타데이터가 잘못되었습니다");
         return deepFreeze({ id: file.id, bucket, name, mediaType, size: bytes.byteLength });
       },
       async get(id: string): Promise<RetrievedFile> {
-        if (!validText(id)) throw error("BAD_VALUE", "파일 id 형식이 잘못되었습니다");
+        if (!validText(id)) throw error("WIRE.BAD_VALUE", "파일 id 형식이 잘못되었습니다");
         const response = await send<Record<string, unknown>>("/files/get", { id });
         const file = response.file as Record<string, unknown> | undefined;
-        if (!file || file.id !== id || !validText(file.bucket) || !validText(file.name) || !validText(file.mediaType)) throw error("PROTOCOL_ERROR", "파일 메타데이터 응답이 잘못되었습니다");
+        if (!file || file.id !== id || !validText(file.bucket) || !validText(file.name) || !validText(file.mediaType)) throw error("CLIENT.PROTOCOL_ERROR", "파일 메타데이터 응답이 잘못되었습니다");
         const bytes = decodeBase64(response.base64);
-        if (file.size !== bytes.byteLength) throw error("PROTOCOL_ERROR", "파일 크기 metadata와 본문 길이가 다릅니다");
+        if (file.size !== bytes.byteLength) throw error("CLIENT.PROTOCOL_ERROR", "파일 크기 metadata와 본문 길이가 다릅니다");
         return deepFreeze({ id, bucket: file.bucket, name: file.name, mediaType: file.mediaType, size: bytes.byteLength, bytes });
       },
       async delete(id: string): Promise<boolean> {
-        if (!validText(id)) throw error("BAD_VALUE", "파일 id 형식이 잘못되었습니다");
+        if (!validText(id)) throw error("WIRE.BAD_VALUE", "파일 id 형식이 잘못되었습니다");
         const response = await send<Record<string, unknown>>("/files/delete", { id });
-        if (response.deleted !== true) throw error("PROTOCOL_ERROR", "파일 삭제 응답이 잘못되었습니다");
+        if (response.deleted !== true) throw error("CLIENT.PROTOCOL_ERROR", "파일 삭제 응답이 잘못되었습니다");
         return true;
       },
     },

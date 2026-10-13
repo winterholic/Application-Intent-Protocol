@@ -16,7 +16,7 @@ fn ordinary_parentheses_negations_and_call_arguments_keep_their_meaning() {
         format!("{}x{}", "p(".repeat(512), ")".repeat(512)),
     ] {
         let error = parse_expr_str(&expression, span).unwrap_err();
-        assert_eq!(error.code, "PARSE_NESTING");
+        assert_eq!(error.code, "DEF.PARSE_NESTING");
         assert_eq!(error.span.line, 17);
         assert!(error.span.col >= 6);
     }
@@ -29,5 +29,5 @@ fn supported_host_literal_depth_reaches_the_existing_shape_diagnostic() {
     let value = format!("{}1{}", "[".repeat(63), "]".repeat(63));
     let source = format!("{} nestedTest: {value},\n{}", &ts[..index], &ts[index..]);
     let errors = load_str(&source, Form::HTs).err().expect("unknown key after parsing the supported literal");
-    assert_eq!(errors[0].code, "UNKNOWN_KEY");
+    assert_eq!(errors[0].code, "DEF.UNKNOWN_KEY");
 }

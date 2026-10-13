@@ -218,7 +218,7 @@ async fn search_end_to_end() {
     // --- a query with nothing to search for: below the length limit it is invalid, with only punctuation or a stop word it finds nothing
     for q in ["", "   "] {
         let err = fails(e, "SearchTasks", Some(&w.alice), json!({"workspace": w.wa, "q": q}), None).await;
-        assert_eq!(err.code, "AIP.INPUT.INVALID", "{q:?}: {err}");
+        assert_eq!(err.code, "POC.INPUT.INVALID", "{q:?}: {err}");
     }
     for q in ["!!!", "the", "- \"\""] {
         assert!(search(e, &w.alice, &w.wa, q).await.is_empty(), "{q:?} has no searchable word, so it finds nothing (not everything)");
@@ -271,13 +271,13 @@ async fn search_end_to_end() {
     let reply = call(e, "SearchProjects", Some(&w.alice), json!({"workspace": w.wa, "q": "프로그래밍", "page": 1}), None).await.expect("offset page");
     assert_eq!(reply.page.as_ref().map(|p| p["has_more"].clone()), Some(json!(false)));
     let beyond = fails(e, "SearchProjects", Some(&w.alice), json!({"workspace": w.wa, "q": "프로그래밍", "page": 51}), None).await;
-    assert_eq!(beyond.code, "AIP.INPUT.INVALID");
+    assert_eq!(beyond.code, "POC.INPUT.INVALID");
 
     // the compiler said so too
     let src = std::fs::read_to_string(format!("{}/../../examples/saas/app.aip", env!("CARGO_MANIFEST_DIR"))).expect("source");
     let (core, map) = aip_sema::pipeline::check_source(&src).into_core().expect("clean");
     let warned: Vec<String> = aip_pg::compile(&core, &map).diagnostics.iter().map(|d| d.code.clone()).collect();
-    assert!(warned.iter().any(|c| c == "AIP-W603"), "{warned:?}");
+    assert!(warned.iter().any(|c| c == "POC.W603"), "{warned:?}");
 }
 
 /// The example compiled with one check removed from the plan or the IR.

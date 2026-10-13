@@ -52,13 +52,13 @@ fn exact_keys(body: &Value, required: &[&str], optional: &[&str]) -> bool {
 
 fn err(error: RagError) -> Value {
     let code = match error {
-        RagError::Forbidden => "FORBIDDEN",
-        RagError::InvalidInput => "BAD_REQUEST",
-        RagError::NotFound => "NOT_FOUND",
-        RagError::LimitExceeded => "LIMIT_EXCEEDED",
-        RagError::Provider => "PROVIDER_UNAVAILABLE",
-        RagError::Storage => "DB_UNAVAILABLE",
-        RagError::Timeout => "REQUEST_TIMEOUT",
+        RagError::Forbidden => "WIRE.FORBIDDEN",
+        RagError::InvalidInput => "WIRE.BAD_REQUEST",
+        RagError::NotFound => "WIRE.NOT_FOUND",
+        RagError::LimitExceeded => "WIRE.LIMIT_EXCEEDED",
+        RagError::Provider => "WIRE.PROVIDER_UNAVAILABLE",
+        RagError::Storage => "WIRE.DB_UNAVAILABLE",
+        RagError::Timeout => "WIRE.REQUEST_TIMEOUT",
     };
     json!({"ok":false,"code":code})
 }
@@ -161,7 +161,7 @@ pub async fn handle(
                 Err(error) => err(error),
             }
         }
-        "/rag/index" | "/rag/delete" if !client_index => json!({"ok":false,"code":"NOT_AVAILABLE"}),
-        _ => json!({"ok":false,"code":"NOT_FOUND"}),
+        "/rag/index" | "/rag/delete" if !client_index => json!({"ok":false,"code":"WIRE.NOT_AVAILABLE"}),
+        _ => json!({"ok":false,"code":"WIRE.NOT_FOUND"}),
     }
 }

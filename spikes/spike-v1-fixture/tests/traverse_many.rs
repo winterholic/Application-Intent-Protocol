@@ -61,32 +61,32 @@ fn sort_is_optional_and_may_be_descending() {
 
 #[test]
 fn limit_is_required_and_positive() {
-    assert!(has(&DEF.replacen("; limit 20", "", 1), "MISSING_ITEM"));
-    assert!(has(&DEF.replacen("limit 20", "limit 0", 1), "BAD_LIMIT"));
+    assert!(has(&DEF.replacen("; limit 20", "", 1), "DEF.MISSING_ITEM"));
+    assert!(has(&DEF.replacen("limit 20", "limit 0", 1), "DEF.BAD_LIMIT"));
 }
 
 #[test]
 fn definition_errors_are_diagnosed() {
     // 자식 select는 자식의 expose select 안이어야 한다
-    assert!(has(&DEF.replacen("select id, body, secret;", "select id, body, post;", 1), "TRAVERSE_NOT_EXPOSED"));
+    assert!(has(&DEF.replacen("select id, body, secret;", "select id, body, post;", 1), "DEF.TRAVERSE_NOT_EXPOSED"));
     // via 필드는 부모를 가리키는 Ref여야 한다
-    assert!(has(&DEF.replacen("via Comment.post", "via Comment.author", 1), "TRAVERSE_VIA_NOT_REF"));
-    assert!(has(&DEF.replacen("limit 20 }", "limit 9223372036854775807 }", 1), "BAD_LIMIT"));
+    assert!(has(&DEF.replacen("via Comment.post", "via Comment.author", 1), "DEF.TRAVERSE_VIA_NOT_REF"));
+    assert!(has(&DEF.replacen("limit 20 }", "limit 9223372036854775807 }", 1), "DEF.BAD_LIMIT"));
     // 목록 소속이 곧 via 값이므로, 가려진 via 필드로는 묶지 않는다.
     assert!(has(
         &DEF.replacen("field secret read when author = actor", "field secret read when author = actor\n  field post read when author = actor", 1),
-        "POLICY_FIELD_NOT_FILTERABLE"
+        "DEF.POLICY_FIELD_NOT_FILTERABLE"
     ));
-    assert!(has(&DEF.replacen("via Comment.post", "via Comment.nope", 1), "UNKNOWN_FIELD"));
-    assert!(has(&DEF.replacen("via Comment.post", "via Nope.post", 1), "UNKNOWN_RESOURCE"));
+    assert!(has(&DEF.replacen("via Comment.post", "via Comment.nope", 1), "DEF.UNKNOWN_FIELD"));
+    assert!(has(&DEF.replacen("via Comment.post", "via Nope.post", 1), "DEF.UNKNOWN_RESOURCE"));
     // 자식에 expose read가 없으면 불가
-    assert!(has(&DEF.replacen("expose read { select id, body, secret, state }", "", 1), "TRAVERSE_NOT_EXPOSED"));
+    assert!(has(&DEF.replacen("expose read { select id, body, secret, state }", "", 1), "DEF.TRAVERSE_NOT_EXPOSED"));
     // field read 정책이 있는 필드는 정렬에 쓸 수 없다
-    assert!(has(&DEF.replacen("sort id; limit 20", "sort secret; limit 20", 1), "POLICY_FIELD_NOT_FILTERABLE"));
+    assert!(has(&DEF.replacen("sort id; limit 20", "sort secret; limit 20", 1), "DEF.POLICY_FIELD_NOT_FILTERABLE"));
     // depth는 2 이상
-    assert!(has(&DEF.replacen("depth 2", "depth 1", 1), "BUDGET_DEPTH_TOO_SMALL"));
+    assert!(has(&DEF.replacen("depth 2", "depth 1", 1), "DEF.BUDGET_DEPTH_TOO_SMALL"));
     // 이름은 부모 필드와 겹칠 수 없다
-    assert!(has(&DEF.replacen("traverse comments via", "traverse title via", 1), "DUPLICATE"));
+    assert!(has(&DEF.replacen("traverse comments via", "traverse title via", 1), "DEF.DUPLICATE"));
 }
 
 #[test]
@@ -112,5 +112,5 @@ fn aggregate_in_child_select_is_held_back() {
         )
         .replacen("select id, body, secret; sort id; limit 20", "select id, reactions; sort id; limit 20", 1)
         + "resource Reaction { fields { id: Id; comment: Comment } }\naccess allReactions = totalOfVisible(Reaction)\n";
-    assert!(has(&d, "TRAVERSE_MANY_AGGREGATE"), "{:?}", codes(&d));
+    assert!(has(&d, "DEF.TRAVERSE_MANY_AGGREGATE"), "{:?}", codes(&d));
 }

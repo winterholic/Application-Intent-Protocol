@@ -90,7 +90,7 @@ async fn readiness_tracks_database_and_deployment_while_liveness_stays_up() {
     let db = spike_v2_read::connect_owned_with_url(spike_v2_read::DB_URL).await.unwrap();
     db.batch_execute(&format!("UPDATE {schema}.aip_migrate_meta SET facts_digest='{}'", "0".repeat(64))).await.unwrap();
     let (status, _, body) = request(addr, "GET", "/ready").await;
-    assert_eq!((status, body["code"].as_str()), (503, Some("DEPLOYMENT_CHANGED")), "{body}");
+    assert_eq!((status, body["code"].as_str()), (503, Some("WIRE.DEPLOYMENT_CHANGED")), "{body}");
     let (status, _, _) = request(addr, "GET", "/health").await;
     assert_eq!(status, 200);
     server.shutdown().await.unwrap();
@@ -107,7 +107,7 @@ async fn readiness_tracks_database_and_deployment_while_liveness_stays_up() {
     let (status, _, _) = request(offline.address, "GET", "/health").await;
     assert_eq!(status, 200);
     let (status, _, body) = request(offline.address, "GET", "/ready").await;
-    assert_eq!((status, body["code"].as_str()), (503, Some("DB_UNAVAILABLE")), "{body}");
+    assert_eq!((status, body["code"].as_str()), (503, Some("WIRE.DB_UNAVAILABLE")), "{body}");
     assert!(!body.to_string().contains("127.0.0.1"));
     offline.shutdown().await.unwrap();
 }

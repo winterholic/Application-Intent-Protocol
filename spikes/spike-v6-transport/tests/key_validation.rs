@@ -56,13 +56,13 @@ async fn control_character_keys_are_rejected_before_the_database() {
     for key in ["a\u{0}b", "line\nbreak", "\u{1}", "tab\t", "order\u{202E}1", "\u{200B}k", "\u{FEFF}k", "soft\u{00AD}hyphen", "tag\u{E0041}"] {
         for path in ["/apply", "/status"] {
             let reply = post(server.address, path, &json!({"key": key, "request": {"apply": "X.y", "target": {"ids": ["1"]}}})).await;
-            assert_eq!(reply["code"], "BAD_REQUEST", "{path} {key:?}: {reply}");
+            assert_eq!(reply["code"], "WIRE.BAD_REQUEST", "{path} {key:?}: {reply}");
             assert!(!reply.to_string().contains("sqlstate"), "{reply}");
         }
     }
     // 한글·이모지 같은 일반 문자는 그대로 key로 쓸 수 있다.
     let reply = post(server.address, "/status", &json!({"key": "주문-🙂", "request": {}})).await;
-    assert_eq!(reply["code"], "NOT_FOUND", "{reply}");
+    assert_eq!(reply["code"], "WIRE.NOT_FOUND", "{reply}");
     drop(server);
     db.batch_execute(&format!("DROP SCHEMA {schema} CASCADE")).await.expect("drop test schema");
 }

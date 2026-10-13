@@ -44,11 +44,11 @@ fn email_and_date_filters_are_validated_and_remain_bound_parameters() {
     }
     for invalid in ["0000-01-01", "2026-02-29", "2026-2-09", "2026-13-01", "2026-01-01x", "2026-01-٠١", "10000-01-01"] {
         let request = json!({"read":"Recruitment","select":["periodEnd"],"filter":[{"field":"periodEnd","op":"gte","value":invalid}]});
-        assert_eq!(plan_read_with_wire(&facts, &request, &caller, IdWire::DecimalString).err().unwrap().code, "BAD_VALUE");
+        assert_eq!(plan_read_with_wire(&facts, &request, &caller, IdWire::DecimalString).err().unwrap().code, "WIRE.BAD_VALUE");
     }
     for invalid in ["not-an-email", "person@.test", "person@example.test ", "person\u{0000}@example.test"] {
         let request = json!({"read":"Recruitment","select":["periodEnd"],"filter":[{"field":"title","op":"eq","value":invalid}]});
-        assert_eq!(plan_read_with_wire(&facts, &request, &caller, IdWire::DecimalString).err().unwrap().code, "BAD_VALUE");
+        assert_eq!(plan_read_with_wire(&facts, &request, &caller, IdWire::DecimalString).err().unwrap().code, "WIRE.BAD_VALUE");
     }
 }
 

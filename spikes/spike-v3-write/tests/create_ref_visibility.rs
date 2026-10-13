@@ -1,7 +1,7 @@
 //! Founder decision 2026-10-13 (tenant isolation, create path): a Ref value the caller supplies on create must point
 //! at a row the caller can read (the target resource's `rows read`). A reference to the actor's own row is the one
 //! exception, because an actor resource often has no `rows read` at all (`author = actor`).
-//! Compose creates take Ref values from server-read rows (`VALUE_SOURCE_NOT_ALLOWED` for constants), so they are
+//! Compose creates take Ref values from server-read rows (`WIRE.VALUE_SOURCE_NOT_ALLOWED` for constants), so they are
 //! covered by the existing compose tests and are not touched by this rule.
 use serde_json::{json, Value};
 use spike_v1_fixture::{load_str, Form};
@@ -51,7 +51,7 @@ async fn a_created_row_may_only_reference_rows_the_caller_can_read() {
 
     // the tenant-crossing create: member 1 (org 1) attaches a comment to org 2's task
     let crossing = bundle(&mut db, &facts, &comment("20", "1"), &caller(1), &knobs).await;
-    assert_eq!(crossing.as_ref().err().map(|e| e.code), Some("MISSING_TARGET"), "{crossing:?}");
+    assert_eq!(crossing.as_ref().err().map(|e| e.code), Some("WIRE.MISSING_TARGET"), "{crossing:?}");
     let none: i64 = db.query_one(comments.as_str(), &[]).await.unwrap().get(0);
     assert_eq!(none, 0, "a rejected create leaves no row");
 
@@ -61,7 +61,7 @@ async fn a_created_row_may_only_reference_rows_the_caller_can_read() {
 
     // another member's row is not readable (Member has no `rows read`); only the actor's own row is excepted
     let other = bundle(&mut db, &facts, &comment("10", "3"), &caller(1), &knobs).await;
-    assert_eq!(other.as_ref().err().map(|e| e.code), Some("MISSING_TARGET"), "{other:?}");
+    assert_eq!(other.as_ref().err().map(|e| e.code), Some("WIRE.MISSING_TARGET"), "{other:?}");
     let one: i64 = db.query_one(comments.as_str(), &[]).await.unwrap().get(0);
     assert_eq!(one, 1);
     db.batch_execute(&format!("DROP SCHEMA {schema} CASCADE")).await.unwrap();

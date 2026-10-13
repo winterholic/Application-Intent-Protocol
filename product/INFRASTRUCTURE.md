@@ -34,7 +34,7 @@
 
 알 수 없는 설정 필드는 거부하며, `limits`는 프로세스별 제한이다. 여러 인스턴스의 합계 제한은 배포 환경에서 별도로 관리한다. `connections` 기본 64, 동기 worker 4, durable job 2, object transfer/control 4다. 실시간 연결도 전체 HTTP 연결 수에 포함된다. 실시간 연결 상한은 일반 요청을 위한 연결 한 개를 남기도록 전체 연결 수보다 작게 제한한다. 설정값 0이나 허용 상한을 넘긴 값은 시작 시 거부한다.
 
-`per_principal_realtime`(기본 4)·`per_principal_workers`(기본 2)·`per_principal_uploads`(기본 2)는 한 principal이 동시에 쥘 수 있는 실시간 연결·동기 worker(RAG 포함)·object 전송 수다. 전역 상한과 함께 적용되므로 인증된 한 사용자가 전역 슬롯을 모두 차지해 다른 사용자를 막을 수 없다. 0은 시작 시 거부한다. 초과하면 `SERVER_BUSY`/`WORKER_BUSY`/`OBJECT_CAPACITY`다. durable job 실행 슬롯(`jobs`)은 principal별로 나누지 않으며 principal당 활성 job 100개 상한만 있다.
+`per_principal_realtime`(기본 4)·`per_principal_workers`(기본 2)·`per_principal_uploads`(기본 2)는 한 principal이 동시에 쥘 수 있는 실시간 연결·동기 worker(RAG 포함)·object 전송 수다. 전역 상한과 함께 적용되므로 인증된 한 사용자가 전역 슬롯을 모두 차지해 다른 사용자를 막을 수 없다. 0은 시작 시 거부한다. 초과하면 `WIRE.SERVER_BUSY`/`WIRE.WORKER_BUSY`/`WIRE.OBJECT_CAPACITY`다. durable job 실행 슬롯(`jobs`)은 principal별로 나누지 않으며 principal당 활성 job 100개 상한만 있다.
 
 `connections:1`은 실시간 연결을 허용하지 않는다. HTTP·durable DB 연결은 `db_pool`의 프로세스별 pool을 공유한다. 정상 반환 때 `ROLLBACK`과 `DISCARD ALL`로 세션 상태를 초기화하며, 취소·오류·reset 실패 연결은 재사용하지 않는다. 대기 시간이 지나면 요청을 거부한다. idle 만료는 다음 checkout 때 정리한다. 인증 제공자·마이그레이션·별도 RAG pool·broker relay의 연결도 PostgreSQL 전체 연결 예산에 포함해야 한다.
 
@@ -93,7 +93,7 @@ Google Cloud Storage XML API의 HMAC 호환 backend도 같은 객체 API를 사�
 - SSE: `POST /events/subscribe`, Bearer, `Accept: text/event-stream`, JSON `{stream,after,contractFingerprint}`.
 - WebSocket: `GET /events/socket`, 허용 Origin으로 upgrade. Bearer header가 있으면 첫 text frame은 구독 JSON이다. 브라우저는 첫 frame에 `{type:"auth",token}`, `{type:"authenticated"}` ACK 뒤 `{type:"subscribe",stream,after,contractFingerprint}`를 보낸다. 인증·구독 제한 시간은 합계 5초이고 frame 크기는 제한된다.
 
-SDK의 `readSse(response,signal)`는 streaming UTF-8·multiline·cursor·취소를 처리하며 line/event 버퍼 상한을 적용한다. 소비자 코드가 연결 종료 뒤 마지막 event ID/cursor로 다시 구독해야 한다. `readSse`는 자동 재연결하지 않는다. 서버가 보존 범위를 벗어난 cursor에 대해 `CURSOR_EXPIRED`를 error event로 보내면 소비자가 최신 상태를 다시 조회해야 한다. 서버는 poll마다 인증·배포·generation을 재검증하고 세션 만료나 폐기 시 연결을 끝낸다. 이벤트 조회용 DB 연결이나 배포 lock을 연결 수명 동안 잡고 있지 않는다.
+SDK의 `readSse(response,signal)`는 streaming UTF-8·multiline·cursor·취소를 처리하며 line/event 버퍼 상한을 적용한다. 소비자 코드가 연결 종료 뒤 마지막 event ID/cursor로 다시 구독해야 한다. `readSse`는 자동 재연결하지 않는다. 서버가 보존 범위를 벗어난 cursor에 대해 `WIRE.CURSOR_EXPIRED`를 error event로 보내면 소비자가 최신 상태를 다시 조회해야 한다. 서버는 poll마다 인증·배포·generation을 재검증하고 세션 만료나 폐기 시 연결을 끝낸다. 이벤트 조회용 DB 연결이나 배포 lock을 연결 수명 동안 잡고 있지 않는다.
 
 ### 읽기 결과 구독
 
@@ -105,7 +105,7 @@ SDK의 `readSse(response,signal)`는 streaming UTF-8·multiline·cursor·취소�
 
 - `query`는 `/read`의 요청 본문과 같고 `expose read`로 열린 것만 구독할 수 있다. `stream`·`after`와 함께 쓸 수 없고 `after`도 받지 않는다. 계약 밖 요청은 읽기와 같은 코드로 거부한다.
 - 이벤트 payload는 `{"type":"snapshot","rows":[...]}`가 한 번, 이후 `{"type":"changed","rows":[...]}`다. 항상 결과 전체이고 직전에 보낸 것과 같으면 보내지 않는다. 클라이언트는 diff를 적용하지 않고 결과를 통째로 바꾼다. 재연결하면 새 snapshot부터 받는다. SSE `id`와 WebSocket `cursor`는 결과의 digest이며 재개용이 아니다.
-- 재조회는 구독자의 세션으로 서버가 한다. 주체 재검증과 배포 fence를 먼저 통과해야 하고, 행·필드 정책은 읽기와 같다. 그래서 다른 구성원의 행은 snapshot에 없고, 접근을 잃은 구독자는 `UNAUTHENTICATED` 같은 오류 이벤트를 받고 연결이 끝난다.
+- 재조회는 구독자의 세션으로 서버가 한다. 주체 재검증과 배포 fence를 먼저 통과해야 하고, 행·필드 정책은 읽기와 같다. 그래서 다른 구성원의 행은 snapshot에 없고, 접근을 잃은 구독자는 `WIRE.UNAUTHENTICATED` 같은 오류 이벤트를 받고 연결이 끝난다.
 - 이 프로세스에서 커밋된 쓰기(`/apply`, 쓰기 확장, durable job의 `ctx.data.apply`)는 100ms 안의 것을 모아 한 번 재조회한다. 다른 인스턴스나 스크립트의 쓰기는 설정 `realtime.query_poll_ms`(기본 5000, 1~3600000)마다의 재조회가 찾는다. 연결 수·수명·heartbeat는 위 이벤트 구독과 같은 상한을 쓴다.
 - SDK helper(`connectEventWebSocket`, `readSse`)는 아직 stream cursor 구독만 안다. 읽기 구독은 SSE/WebSocket을 직접 쓴다.
 

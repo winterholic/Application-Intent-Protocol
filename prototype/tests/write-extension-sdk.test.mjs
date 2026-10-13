@@ -44,8 +44,8 @@ for (const wire of ['safe-number-v13','decimal-string-v13']) {
   test(`${wire}: WRITE input/name rejection happens before network`,async()=>{
     let calls=0;const client=connect('http://write.invalid','token',binding(wire),async()=>{calls++;throw new Error('should not send');});
     const wrong=wire==='safe-number-v13'?'11':11;
-    await assert.rejects(client.writeExtension('Event.run',{id:wrong}),error=>error.code==='BAD_VALUE');
-    await assert.rejects(client.writeExtension('Event.missing',{id}),error=>error.code==='NOT_EXPOSED');assert.equal(calls,0);assert.deepEqual(client.pending(),[]);
+    await assert.rejects(client.writeExtension('Event.run',{id:wrong}),error=>error.code==='WIRE.BAD_VALUE');
+    await assert.rejects(client.writeExtension('Event.missing',{id}),error=>error.code==='WIRE.NOT_EXPOSED');assert.equal(calls,0);assert.deepEqual(client.pending(),[]);
   });
   test(`${wire}: wrong WRITE response fingerprint cannot settle a write`,async()=>{
     const client=connect('http://write.invalid','token',binding(wire),async url=>response(url.endsWith('/session')?session:{ok:true,output:{id,count:1},tags:['Event'],contractFingerprint:'d'.repeat(64)}));

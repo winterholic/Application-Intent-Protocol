@@ -12,7 +12,7 @@ fn load(extra: &str) -> Result<(), Vec<spike_v1_fixture::diag::Diag>> {
 fn a_field_declared_as_x_id_is_a_definition_error_with_the_fix() {
     for field in ["club: Club.Id", "club: Club.Id?"] {
         let errs = load(&format!("resource Note {{ fields {{ id: Id; {field} }} }}\n")).expect_err(field);
-        let d = errs.iter().find(|d| d.code == "ID_FIELD_NEEDS_REFERENCE").unwrap_or_else(|| panic!("{field}: {errs:?}"));
+        let d = errs.iter().find(|d| d.code == "DEF.ID_FIELD_NEEDS_REFERENCE").unwrap_or_else(|| panic!("{field}: {errs:?}"));
         assert!(d.msg.contains("club: Club"), "the message names the fix: {}", d.msg);
     }
 }
@@ -32,7 +32,7 @@ fn the_primary_key_is_spelled_id_and_nothing_else() {
     // column-name exemption skipped the check; the bare `Id` is the only accepted spelling.
     for field in ["id: Note.Id", "id: Club.Id"] {
         let errs = load(&format!("resource Note {{ fields {{ {field} }} }}\n")).expect_err(field);
-        let d = errs.iter().find(|d| d.code == "ID_FIELD_NEEDS_REFERENCE").unwrap_or_else(|| panic!("{field}: {errs:?}"));
+        let d = errs.iter().find(|d| d.code == "DEF.ID_FIELD_NEEDS_REFERENCE").unwrap_or_else(|| panic!("{field}: {errs:?}"));
         assert!(d.msg.contains("id: Id"), "the message names the fix `id: Id`: {}", d.msg);
     }
     load("resource Note { fields { id: Id } }\n").expect("bare Id is the key");

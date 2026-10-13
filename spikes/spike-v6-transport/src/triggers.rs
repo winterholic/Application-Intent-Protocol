@@ -58,7 +58,7 @@ pub struct OutboxHandler {
 pub struct JobPolicy {
     /// Total attempts including the first, 1..=10.
     pub max_attempts: i32,
-    /// Also retry an uncaught extension error (`EXTENSION_ERROR`), not only `ctx.retryLater()`.
+    /// Also retry an uncaught extension error (`WIRE.EXTENSION_ERROR`), not only `ctx.retryLater()`.
     pub retry_uncaught: bool,
 }
 

@@ -90,9 +90,9 @@ fn numeric_overflow_reports_definition_diagnostics_and_preserves_the_binding() {
     let out = dir.path().join("contract.ts");
     let original = "existing usable binding";
     for (old, new, diagnostic) in [
-        ("rows 50", "rows 9223372036854775808", "LEX_NUMBER_RANGE"),
-        ("deadline 1s", "deadline 9223372036854775807s", "LEX_DURATION_RANGE"),
-        ("deadline 1s", "deadline 307445734561826m", "LEX_DURATION_RANGE"),
+        ("rows 50", "rows 9223372036854775808", "DEF.LEX_NUMBER_RANGE"),
+        ("deadline 1s", "deadline 9223372036854775807s", "DEF.LEX_DURATION_RANGE"),
+        ("deadline 1s", "deadline 307445734561826m", "DEF.LEX_DURATION_RANGE"),
     ] {
         assert!(fixture().contains(old));
         let source = write_source(&dir, "overflow.aip", &fixture().replace(old, new));
@@ -101,7 +101,7 @@ fn numeric_overflow_reports_definition_diagnostics_and_preserves_the_binding() {
             assert_eq!(output.status.code(), Some(1), "definition error must not panic: {}", String::from_utf8_lossy(&output.stderr));
             assert!(output.stdout.is_empty());
             let error: Value = serde_json::from_slice(&output.stderr).expect("structured definition diagnostic");
-            assert_eq!(error["code"], "INVALID_DEFINITION");
+            assert_eq!(error["code"], "DEF.INVALID_DEFINITION");
             assert_eq!(error["diagnostics"][0]["code"], diagnostic);
             assert!(error["diagnostics"][0]["line"].as_u64().unwrap() > 0);
             assert!(error["diagnostics"][0]["col"].as_u64().unwrap() > 0);
@@ -159,14 +159,14 @@ fn excessive_definition_nesting_is_a_diagnostic_instead_of_a_process_abort() {
     let negations = format!("{}m.id = m.id", "not ".repeat(1000));
     let with_predicate = |expression: &str| format!("{}\npredicate deep(m: Member) = {expression}\n", fixture());
     let mut cases: Vec<(String, String, &str)> = vec![
-        ("parentheses.aip".into(), with_predicate(&parentheses), "PARSE_NESTING"),
-        ("not.aip".into(), with_predicate(&negations), "PARSE_NESTING"),
+        ("parentheses.aip".into(), with_predicate(&parentheses), "DEF.PARSE_NESTING"),
+        ("not.aip".into(), with_predicate(&negations), "DEF.PARSE_NESTING"),
         (
             "parentheses.e.ts".into(),
             format!("import {{aip}} from '@aip/define';\nexport default aip`{}`;", with_predicate(&parentheses)),
-            "PARSE_NESTING",
+            "DEF.PARSE_NESTING",
         ),
-        ("not.e.py".into(), format!("from aip.define import aip\nSPEC = aip(\"\"\"{}\"\"\")", with_predicate(&negations)), "PARSE_NESTING"),
+        ("not.e.py".into(), format!("from aip.define import aip\nSPEC = aip(\"\"\"{}\"\"\")", with_predicate(&negations)), "DEF.PARSE_NESTING"),
     ];
     for (suffix, key) in [("ts", "nestedTest"), ("py", "\"nestedTest\"")] {
         let source =
@@ -177,7 +177,7 @@ fn excessive_definition_nesting_is_a_diagnostic_instead_of_a_process_abort() {
             ("arrays", format!("{}1{}", "[".repeat(10000), "]".repeat(10000))),
             ("objects", format!("{}1{}", "{\"a\":".repeat(5000), "}".repeat(5000))),
         ] {
-            cases.push((format!("{kind}.h.{suffix}"), format!("{} {key}: {value},\n{}", &source[..index], &source[index..]), "H_LITERAL_NESTING"));
+            cases.push((format!("{kind}.h.{suffix}"), format!("{} {key}: {value},\n{}", &source[..index], &source[index..]), "DEF.H_LITERAL_NESTING"));
         }
     }
     let out = dir.path().join("contract.ts");
@@ -188,7 +188,7 @@ fn excessive_definition_nesting_is_a_diagnostic_instead_of_a_process_abort() {
         for output in [check(&source, false), gen(&source, &out, "safe", false)] {
             let error = serde_json::from_slice::<Value>(&output.stderr).ok();
             if output.status.code() != Some(1)
-                || error.as_ref().is_none_or(|e| e["code"] != "INVALID_DEFINITION" || e["diagnostics"][0]["code"] != diagnostic)
+                || error.as_ref().is_none_or(|e| e["code"] != "DEF.INVALID_DEFINITION" || e["diagnostics"][0]["code"] != diagnostic)
             {
                 failures.push(format!("{name}: exit {:?}, stderr {}", output.status.code(), String::from_utf8_lossy(&output.stderr)));
             }
@@ -213,7 +213,7 @@ fn check_dev_advisories_do_not_change_execution_or_read_docs_as_calls() {
     assert!(off_json["advisories"].as_array().unwrap().is_empty());
     let advisories = on_json["advisories"].as_array().unwrap();
     assert_eq!(advisories.len(), 1);
-    assert_eq!(advisories[0]["code"], "ADVISORY_UNUSED_PREDICATE");
+    assert_eq!(advisories[0]["code"], "DEF.ADVISORY_UNUSED_PREDICATE");
     assert_eq!(advisories[0]["anchor"], "predicate:orphan");
 
     let docs_text = source_text.replace(

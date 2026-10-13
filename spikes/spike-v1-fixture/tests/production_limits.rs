@@ -10,7 +10,7 @@ fn rejects_source_over_the_byte_budget_before_parsing_any_form() {
     let src = format!("{}x", " ".repeat(MAX_SOURCE_BYTES));
     for form in [Form::A, Form::ETs, Form::EPy, Form::HTs, Form::HPy] {
         let errors = load_str(&src, form).err().expect("oversized source must fail");
-        assert_eq!(errors[0].code, "SOURCE_TOO_LARGE", "{form:?}");
+        assert_eq!(errors[0].code, "DEF.SOURCE_TOO_LARGE", "{form:?}");
     }
 }
 
@@ -21,7 +21,7 @@ fn lexer_rejects_the_token_that_would_exceed_the_budget() {
         Err(error) => error,
         Ok(_) => panic!("lexer accepted more than {MAX_TOKENS} significant tokens"),
     };
-    assert_eq!(error.code, "TOKEN_LIMIT");
+    assert_eq!(error.code, "DEF.TOKEN_LIMIT");
 }
 
 #[test]
@@ -35,7 +35,7 @@ fn host_tokenizer_rejects_tokens_before_building_an_unbounded_vector() {
     let src = "x ".repeat(MAX_TOKENS + 1);
     for host in [Host::Ts, Host::Py] {
         let error = tokenize(&src, host).unwrap_err();
-        assert_eq!(error.code, "TOKEN_LIMIT", "{host:?}");
+        assert_eq!(error.code, "DEF.TOKEN_LIMIT", "{host:?}");
     }
 }
 
@@ -47,10 +47,10 @@ fn expression_depth_accepts_63_wrappers_and_rejects_the_64th() {
 
     let rejected = format!("{}x = x{}", "(".repeat(64), ")".repeat(64));
     let error = parse_expr_str(&rejected, span).unwrap_err();
-    assert_eq!(error.code, "PARSE_NESTING");
+    assert_eq!(error.code, "DEF.PARSE_NESTING");
 
     let not_rejected = format!("{}x = x", "not ".repeat(64));
-    assert_eq!(parse_expr_str(&not_rejected, span).unwrap_err().code, "PARSE_NESTING");
+    assert_eq!(parse_expr_str(&not_rejected, span).unwrap_err().code, "DEF.PARSE_NESTING");
 }
 
 #[test]
@@ -59,18 +59,18 @@ fn host_literal_depth_accepts_the_existing_shape_and_rejects_one_more_level() {
     let index = source.rfind("})").unwrap();
     let accepted = format!("{} nestedTest: {}1{},\n{}", &source[..index], "[".repeat(63), "]".repeat(63), &source[index..]);
     let errors = load_str(&accepted, Form::HTs).err().expect("unknown key after literal parse");
-    assert_eq!(errors[0].code, "UNKNOWN_KEY");
+    assert_eq!(errors[0].code, "DEF.UNKNOWN_KEY");
 
     let rejected = format!("{} nestedTest: {}1{},\n{}", &source[..index], "[".repeat(64), "]".repeat(64), &source[index..]);
     let errors = load_str(&rejected, Form::HTs).err().expect("literal depth limit");
-    assert_eq!(errors[0].code, "H_LITERAL_NESTING");
+    assert_eq!(errors[0].code, "DEF.H_LITERAL_NESTING");
 }
 
 #[test]
 fn flat_boolean_expression_is_bounded_by_expression_nodes() {
     let src = std::iter::repeat_n("true", MAX_EXPR_NODES + 1).collect::<Vec<_>>().join(" and ");
     let error = parse_expr_str(&src, Span { line: 1, col: 1 }).unwrap_err();
-    assert_eq!(error.code, "PARSE_NESTING");
+    assert_eq!(error.code, "DEF.PARSE_NESTING");
 }
 
 #[test]
@@ -80,17 +80,17 @@ fn expression_node_budget_boundary_is_enforced_while_parsing() {
     assert!(parse_expr_str(&at_limit, span).is_ok());
 
     let over_limit = std::iter::repeat_n("true", MAX_EXPR_NODES).collect::<Vec<_>>().join(" and ");
-    assert_eq!(parse_expr_str(&over_limit, span).unwrap_err().code, "PARSE_NESTING");
+    assert_eq!(parse_expr_str(&over_limit, span).unwrap_err().code, "DEF.PARSE_NESTING");
 }
 
 #[test]
 fn call_and_in_operand_nodes_share_the_expression_node_budget() {
     let span = Span { line: 1, col: 1 };
     let args = std::iter::repeat_n("true", MAX_EXPR_NODES).collect::<Vec<_>>().join(", ");
-    assert_eq!(parse_expr_str(&format!("f({args})"), span).unwrap_err().code, "PARSE_NESTING");
+    assert_eq!(parse_expr_str(&format!("f({args})"), span).unwrap_err().code, "DEF.PARSE_NESTING");
 
     let items = std::iter::repeat_n("1", MAX_EXPR_NODES).collect::<Vec<_>>().join(", ");
-    assert_eq!(parse_expr_str(&format!("x in ({items})"), span).unwrap_err().code, "PARSE_NESTING");
+    assert_eq!(parse_expr_str(&format!("x in ({items})"), span).unwrap_err().code, "DEF.PARSE_NESTING");
 }
 
 #[test]
@@ -123,14 +123,14 @@ fn executable_policy_path_has_a_segment_budget_even_though_flat_syntax_parses() 
         1,
     );
     let errors = load_str(&source, Form::A).err().expect("runtime-expensive path must be rejected semantically");
-    assert_eq!(errors[0].code, "POLICY_EXPANSION_LIMIT", "{errors:?}");
+    assert_eq!(errors[0].code, "DEF.POLICY_EXPANSION_LIMIT", "{errors:?}");
 }
 
 #[test]
 fn actual_recursive_ast_depth_is_measured_after_parse() {
     let span = Span { line: 1, col: 1 };
     let nested_chain = format!("{}x = x and true", "not ".repeat(63));
-    assert_eq!(parse_expr_str(&nested_chain, span).unwrap_err().code, "PARSE_NESTING");
+    assert_eq!(parse_expr_str(&nested_chain, span).unwrap_err().code, "DEF.PARSE_NESTING");
 }
 
 #[test]
@@ -144,7 +144,7 @@ fn flat_chain_predicate_child_probe() {
         assert!(source.len() < MAX_SOURCE_BYTES, "{} source bytes", source.len());
         assert!(lex(&source, 1, 1).unwrap().len() < MAX_TOKENS);
         let errors = load_str(&source, Form::A).err().expect("oversized flat chain must be rejected");
-        assert_eq!(errors[0].code, "PARSE_NESTING");
+        assert_eq!(errors[0].code, "DEF.PARSE_NESTING");
         return;
     }
 
@@ -171,7 +171,7 @@ fn predicate_call_chain_child_probe() {
         assert!(source.len() < MAX_SOURCE_BYTES, "{} source bytes", source.len());
         assert!(lex(&source, 1, 1).unwrap().len() < MAX_TOKENS);
         let errors = load_str(&source, Form::A).err().expect("long predicate call chain must be rejected");
-        assert_eq!(errors[0].code, "POLICY_EXPANSION_LIMIT");
+        assert_eq!(errors[0].code, "DEF.POLICY_EXPANSION_LIMIT");
         return;
     }
 
@@ -197,7 +197,7 @@ fn predicate_diamond_child_probe() {
         assert!(source.len() < MAX_SOURCE_BYTES, "{} source bytes", source.len());
         assert!(lex(&source, 1, 1).unwrap().len() < MAX_TOKENS);
         let errors = load_str(&source, Form::A).err().expect("predicate diamond expansion must be rejected");
-        assert_eq!(errors[0].code, "POLICY_EXPANSION_LIMIT");
+        assert_eq!(errors[0].code, "DEF.POLICY_EXPANSION_LIMIT");
         return;
     }
 
@@ -233,7 +233,7 @@ fn small_stack_child_process_parses_supported_nesting_without_overflow() {
                 let index = host.rfind("})").unwrap();
                 let nested = format!("{} nestedTest: {}1{},\n{}", &host[..index], "[".repeat(63), "]".repeat(63), &host[index..]);
                 let error = load_str(&nested, Form::HTs).err().expect("unknown nested host key");
-                assert_eq!(error[0].code, "UNKNOWN_KEY");
+                assert_eq!(error[0].code, "DEF.UNKNOWN_KEY");
                 let wide = std::iter::repeat_n("true", MAX_EXPR_NODES - 1).collect::<Vec<_>>().join(" and ");
                 assert!(parse_expr_str(&wide, span).is_ok());
                 let base = include_str!("../fixture/recruitment.aip");

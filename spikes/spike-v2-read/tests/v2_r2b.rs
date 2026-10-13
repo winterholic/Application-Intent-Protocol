@@ -68,15 +68,15 @@ async fn r2b_read_regressions() {
 
     // R2B-03 요청 구조 중복과 출력 크기
     let dup = json!({ "read": "Recruitment", "select": ["id", "id"], "limit": 1 });
-    check("select 중복", plan_read(&base, &dup, &who(Some(1))).err().map(|e| e.code.to_string()).unwrap_or("OK".into()), "DUPLICATE");
+    check("select 중복", plan_read(&base, &dup, &who(Some(1))).err().map(|e| e.code.to_string()).unwrap_or("OK".into()), "WIRE.DUPLICATE");
     let dupf = json!({ "read": "Recruitment", "select": ["id"], "limit": 1,
         "filter": [{ "field": "periodEnd", "op": "gte", "value": NOW }, { "field": "periodEnd", "op": "gte", "value": NOW }] });
-    check("filter 중복", plan_read(&base, &dupf, &who(Some(1))).err().map(|e| e.code.to_string()).unwrap_or("OK".into()), "DUPLICATE");
+    check("filter 중복", plan_read(&base, &dupf, &who(Some(1))).err().map(|e| e.code.to_string()).unwrap_or("OK".into()), "WIRE.DUPLICATE");
     let dups = json!({ "read": "Recruitment", "select": ["id"], "limit": 1, "sort": [{ "field": "id" }, { "field": "id" }] });
-    check("sort 중복", plan_read(&base, &dups, &who(Some(1))).err().map(|e| e.code.to_string()).unwrap_or("OK".into()), "DUPLICATE");
+    check("sort 중복", plan_read(&base, &dups, &who(Some(1))).err().map(|e| e.code.to_string()).unwrap_or("OK".into()), "WIRE.DUPLICATE");
     db.batch_execute(&format!("UPDATE {}.recruitment SET internal_note = repeat('x', 1048576) WHERE id = 100", sqlgen::schema())).await.unwrap();
     let big = json!({ "read": "Recruitment", "select": ["internalNote"], "limit": 1, "filter": [{ "field": "periodEnd", "op": "gte", "value": "2026-10-09T00:00:00Z" }] });
-    check("출력 상한", code(execute(&mut db, &plan_read(&base, &big, &who(Some(1))).unwrap()).await), "OUTPUT_TOO_LARGE");
+    check("출력 상한", code(execute(&mut db, &plan_read(&base, &big, &who(Some(1))).unwrap()).await), "WIRE.OUTPUT_TOO_LARGE");
 
     // R2B-05 읽기 Bool filter
     let unread = json!({ "read": "MemberAlarm", "select": ["id"], "filter": [{ "field": "isChecked", "op": "eq", "value": false }] });

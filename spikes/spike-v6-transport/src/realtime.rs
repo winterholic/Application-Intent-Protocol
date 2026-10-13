@@ -89,13 +89,13 @@ const QUERY_START: &str = "0";
 impl Subscription {
     pub(crate) fn parse(bytes: &[u8]) -> Result<Self, &'static str> {
         if bytes.len() > MAX_SUBSCRIPTION_BYTES {
-            return Err("PAYLOAD_TOO_LARGE");
+            return Err("WIRE.PAYLOAD_TOO_LARGE");
         }
-        let subscription: Self = serde_json::from_slice(bytes).map_err(|_| "BAD_REQUEST")?;
+        let subscription: Self = serde_json::from_slice(bytes).map_err(|_| "WIRE.BAD_REQUEST")?;
         if subscription.contract_fingerprint.len() != 64
             || !subscription.contract_fingerprint.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
         {
-            return Err("BAD_REQUEST");
+            return Err("WIRE.BAD_REQUEST");
         }
         match (&subscription.stream, &subscription.after, &subscription.query) {
             (Some(stream), Some(after), None) => {
@@ -106,12 +106,12 @@ impl Subscription {
                     || after.len() > MAX_CURSOR_LENGTH
                     || after.chars().any(char::is_control)
                 {
-                    return Err("BAD_REQUEST");
+                    return Err("WIRE.BAD_REQUEST");
                 }
             }
             // Exactly one of the two kinds, and a query has no cursor.
             (None, None, Some(query)) if query.is_object() => {}
-            _ => return Err("BAD_REQUEST"),
+            _ => return Err("WIRE.BAD_REQUEST"),
         }
         Ok(subscription)
     }
@@ -312,7 +312,7 @@ where
         let auth: BrowserAuthFrame = match serde_json::from_str::<BrowserAuthFrame>(&frame) {
             Ok(auth) if auth.kind == "auth" && !auth.token.is_empty() && auth.token.len() <= MAX_AUTH_TOKEN_LENGTH => auth,
             _ => {
-                send_ws_error(&mut socket, "UNAUTHENTICATED").await?;
+                send_ws_error(&mut socket, "WIRE.UNAUTHENTICATED").await?;
                 return Ok(());
             }
         };
@@ -323,7 +323,7 @@ where
                 return Ok(());
             }
             Err(_) => {
-                send_ws_error(&mut socket, "DB_UNAVAILABLE").await?;
+                send_ws_error(&mut socket, "WIRE.DB_UNAVAILABLE").await?;
                 return Ok(());
             }
         }
@@ -412,11 +412,11 @@ where
         let runtime = auth_runtime.clone();
         let slots = slots.clone();
         Box::pin(async move {
-            let provider = runtime.authenticator.as_ref().ok_or("UNAUTHENTICATED")?;
+            let provider = runtime.authenticator.as_ref().ok_or("WIRE.UNAUTHENTICATED")?;
             match tokio::time::timeout(crate::server::DB_PREFLIGHT_TIMEOUT, provider.verify_session(&token)).await {
                 Ok(Ok(session)) if session.remaining_ms() > 0 && session.durable.is_some() => {
                     if let Some(admission) = runtime.admission.as_ref() {
-                        let Some(pool) = runtime.db_pool.as_ref() else { return Err("DB_UNAVAILABLE") };
+                        let Some(pool) = runtime.db_pool.as_ref() else { return Err("WIRE.DB_UNAVAILABLE") };
                         let principal = crate::admission::principal(Some(&session));
                         match admission
                             .check(
@@ -428,20 +428,20 @@ where
                             .await
                         {
                             Ok(crate::admission::Outcome::Allowed) => {}
-                            Ok(crate::admission::Outcome::Limited { .. }) => return Err("RATE_LIMITED"),
-                            Err(_) => return Err("DB_UNAVAILABLE"),
+                            Ok(crate::admission::Outcome::Limited { .. }) => return Err("WIRE.RATE_LIMITED"),
+                            Err(_) => return Err("WIRE.DB_UNAVAILABLE"),
                         }
                     }
                     if let Some(slots) = &slots {
                         if !slots.promote(&crate::admission::principal(Some(&session))) {
-                            return Err("SERVER_BUSY");
+                            return Err("WIRE.SERVER_BUSY");
                         }
                     }
                     Ok(())
                 }
-                Ok(Ok(_)) | Ok(Err(crate::auth::AuthError::Expired)) => Err("TOKEN_EXPIRED"),
-                Ok(Err(crate::auth::AuthError::Unavailable)) | Err(_) => Err("DB_UNAVAILABLE"),
-                Ok(Err(_)) => Err("UNAUTHENTICATED"),
+                Ok(Ok(_)) | Ok(Err(crate::auth::AuthError::Expired)) => Err("WIRE.TOKEN_EXPIRED"),
+                Ok(Err(crate::auth::AuthError::Unavailable)) | Err(_) => Err("WIRE.DB_UNAVAILABLE"),
+                Ok(Err(_)) => Err("WIRE.UNAUTHENTICATED"),
             }
         })
     };
@@ -477,13 +477,13 @@ where
 
 fn parse_browser_subscription(text: &str) -> Result<Subscription, &'static str> {
     if text.len() > MAX_SUBSCRIPTION_BYTES {
-        return Err("PAYLOAD_TOO_LARGE");
+        return Err("WIRE.PAYLOAD_TOO_LARGE");
     }
-    let mut value: Value = serde_json::from_str(text).map_err(|_| "BAD_REQUEST")?;
+    let mut value: Value = serde_json::from_str(text).map_err(|_| "WIRE.BAD_REQUEST")?;
     if value["type"] != "subscribe" {
-        return Err("BAD_REQUEST");
+        return Err("WIRE.BAD_REQUEST");
     }
-    value.as_object_mut().ok_or("BAD_REQUEST")?.remove("type");
+    value.as_object_mut().ok_or("WIRE.BAD_REQUEST")?.remove("type");
     Subscription::parse(value.to_string().as_bytes())
 }
 
@@ -513,44 +513,44 @@ async fn poll_events(
     after: String,
 ) -> Result<EventBatch, PollError> {
     if subscription.contract_fingerprint != expected_fingerprint {
-        return Err("CONTRACT_MISMATCH");
+        return Err("WIRE.CONTRACT_MISMATCH");
     }
-    let provider = runtime.authenticator.as_ref().ok_or("UNAUTHENTICATED")?;
+    let provider = runtime.authenticator.as_ref().ok_or("WIRE.UNAUTHENTICATED")?;
     let session = match tokio::time::timeout(crate::server::DB_PREFLIGHT_TIMEOUT, provider.verify_session(&token)).await {
         Ok(Ok(session)) if session.remaining_ms() > 0 => session,
-        Ok(Ok(_)) | Ok(Err(crate::auth::AuthError::Expired)) => return Err("TOKEN_EXPIRED"),
-        Ok(Err(crate::auth::AuthError::Unavailable)) | Err(_) => return Err("DB_UNAVAILABLE"),
-        Ok(Err(_)) => return Err("UNAUTHENTICATED"),
+        Ok(Ok(_)) | Ok(Err(crate::auth::AuthError::Expired)) => return Err("WIRE.TOKEN_EXPIRED"),
+        Ok(Err(crate::auth::AuthError::Unavailable)) | Err(_) => return Err("WIRE.DB_UNAVAILABLE"),
+        Ok(Err(_)) => return Err("WIRE.UNAUTHENTICATED"),
     };
     if let Some(query) = &subscription.query {
         return poll_query(&runtime, &facts, wire, &session, query, &after).await;
     }
-    let stream = subscription.stream.as_deref().ok_or("BAD_REQUEST")?;
+    let stream = subscription.stream.as_deref().ok_or("WIRE.BAD_REQUEST")?;
     let response = crate::durable::read_events(&runtime, &facts, wire, &session, stream, &after, 100).await;
     if response["ok"] != true {
         return Err(match response["code"].as_str() {
-            Some("CURSOR_EXPIRED") => "CURSOR_EXPIRED",
-            Some("BAD_VALUE") => "BAD_VALUE",
-            Some("TOKEN_EXPIRED") => "TOKEN_EXPIRED",
-            Some("DEPLOYMENT_CHANGED") => "DEPLOYMENT_CHANGED",
-            Some("UNAUTHENTICATED") => "UNAUTHENTICATED",
-            Some("NOT_EXPOSED") => "NOT_EXPOSED",
-            Some("NOT_AVAILABLE") => "NOT_AVAILABLE",
-            Some("CONTRACT_MISMATCH") => "CONTRACT_MISMATCH",
-            _ => "DB_UNAVAILABLE",
+            Some("WIRE.CURSOR_EXPIRED") => "WIRE.CURSOR_EXPIRED",
+            Some("WIRE.BAD_VALUE") => "WIRE.BAD_VALUE",
+            Some("WIRE.TOKEN_EXPIRED") => "WIRE.TOKEN_EXPIRED",
+            Some("WIRE.DEPLOYMENT_CHANGED") => "WIRE.DEPLOYMENT_CHANGED",
+            Some("WIRE.UNAUTHENTICATED") => "WIRE.UNAUTHENTICATED",
+            Some("WIRE.NOT_EXPOSED") => "WIRE.NOT_EXPOSED",
+            Some("WIRE.NOT_AVAILABLE") => "WIRE.NOT_AVAILABLE",
+            Some("WIRE.CONTRACT_MISMATCH") => "WIRE.CONTRACT_MISMATCH",
+            _ => "WIRE.DB_UNAVAILABLE",
         });
     }
-    let Some(cursor) = response["cursor"].as_str().filter(|cursor| valid_cursor(cursor)) else { return Err("DB_UNAVAILABLE") };
+    let Some(cursor) = response["cursor"].as_str().filter(|cursor| valid_cursor(cursor)) else { return Err("WIRE.DB_UNAVAILABLE") };
     let events = response["events"]
         .as_array()
-        .ok_or("DB_UNAVAILABLE")?
+        .ok_or("WIRE.DB_UNAVAILABLE")?
         .iter()
         .map(|event| {
             let cursor = event["cursor"].as_str()?;
             valid_cursor(cursor).then(|| RealtimeEvent { cursor: cursor.to_owned(), payload: event["payload"].clone() })
         })
         .collect::<Option<Vec<_>>>()
-        .ok_or("DB_UNAVAILABLE")?;
+        .ok_or("WIRE.DB_UNAVAILABLE")?;
     Ok(EventBatch { events, cursor: cursor.to_owned() })
 }
 

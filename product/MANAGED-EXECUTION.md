@@ -59,7 +59,7 @@ async def create(input, ctx):
     return {"summary": remote["body"]["text"]}
 ```
 
-확장 입력은 URL·HTTP method·header·파일 경로·owner를 정하지 못한다. 외부 HTTP와 worker file write에는 안정된 idempotency key를 명시해야 하며, 재시작 후 같은 key에 다른 input을 주면 conflict다. Worker effect key는 ASCII 영숫자와 `_`, `-`, `.`, `:`로 구성한 1바이트 이상 100바이트 이하 문자열이다. 호출마다 현재 durable operation의 선언 capability와 principal, deployment, lease를 다시 검사한다. 결과 반환 직전에도 인증 신원과 operation 권한을 다시 확인한다. 각 managed file/event effect와 해당 effect journal 기록은 자체 PostgreSQL transaction에서 함께 commit되며, Job 최종 output과 한 transaction으로 묶이지는 않는다. HTTP 요청은 먼저 PENDING intent를 commit한 뒤 전송하고 응답 뒤 결과를 journal에 기록하므로 provider 호출과 DB commit은 원자적이지 않다. 자식 `ctx.jobs.run`은 선언된 operation을 같은 worker attempt 안에서 실행하며 별도 queue submission이 아니다. 자식 접근은 부모가 선언한 capability subset으로 제한한다. 중첩 depth는 8, 부모와 자식을 합한 attempt당 broker call은 최대 64회다. 재시도 attempt는 새 예산을 사용하며 최대 시도 횟수로 전체 실행 비용을 제한한다. 알려진 자식 업무 실패는 `STEP_FAILED`로 재생할 수 있어 확장에서 분기·보상할 수 있고, capability 선언 위반·비용·lease·불확실한 효과 오류는 잡아서 성공으로 바꿀 수 없다.
+확장 입력은 URL·HTTP method·header·파일 경로·owner를 정하지 못한다. 외부 HTTP와 worker file write에는 안정된 idempotency key를 명시해야 하며, 재시작 후 같은 key에 다른 input을 주면 conflict다. Worker effect key는 ASCII 영숫자와 `_`, `-`, `.`, `:`로 구성한 1바이트 이상 100바이트 이하 문자열이다. 호출마다 현재 durable operation의 선언 capability와 principal, deployment, lease를 다시 검사한다. 결과 반환 직전에도 인증 신원과 operation 권한을 다시 확인한다. 각 managed file/event effect와 해당 effect journal 기록은 자체 PostgreSQL transaction에서 함께 commit되며, Job 최종 output과 한 transaction으로 묶이지는 않는다. HTTP 요청은 먼저 PENDING intent를 commit한 뒤 전송하고 응답 뒤 결과를 journal에 기록하므로 provider 호출과 DB commit은 원자적이지 않다. 자식 `ctx.jobs.run`은 선언된 operation을 같은 worker attempt 안에서 실행하며 별도 queue submission이 아니다. 자식 접근은 부모가 선언한 capability subset으로 제한한다. 중첩 depth는 8, 부모와 자식을 합한 attempt당 broker call은 최대 64회다. 재시도 attempt는 새 예산을 사용하며 최대 시도 횟수로 전체 실행 비용을 제한한다. 알려진 자식 업무 실패는 `WIRE.STEP_FAILED`로 재생할 수 있어 확장에서 분기·보상할 수 있고, capability 선언 위반·비용·lease·불확실한 효과 오류는 잡아서 성공으로 바꿀 수 없다.
 
 ## 업무 데이터 읽기와 전이
 
@@ -103,9 +103,9 @@ Python은 `await ctx.data.read({...})`, `await ctx.data.apply("Order", "pay", [i
 | 읽기 | `read.<Resource>` | `ctx.data.read(query)`, `ctx.data.aggregate(resource, name, input)` | `/read`와 같은 planner·행/필드 정책·budget을 job 주체로 실행한다. 효과 journal은 남기지 않는다 |
 | 전이 | `<Resource>.<transition>` (공개 `expose apply`만) | `ctx.data.apply(resource, transition, ids, key)` | 전이, deferred 검사, effect journal 기록이 **하나의 PostgreSQL transaction**에서 commit된다 |
 
-- 권한은 job을 수락한 principal의 것이다. 행 정책에서 보이지 않는 행에 대한 전이는 동기 `/apply`와 같은 `MISSING_TARGET`으로 끝나 행 존재 여부를 알리지 않는다. 선언하지 않은 전이는 job 전체가 `ACCESS_NOT_DECLARED`로 실패한다.
-- `apply`에는 다른 managed effect처럼 안정 key가 필요하다. 같은 run에서 같은 key를 다시 부르거나 worker가 commit 뒤에 죽어 재시도되면, 전이를 다시 실행하지 않고 journal의 결과를 그대로 돌려준다. 실행 결과를 모르는 상태가 생기지 않으므로 외부 HTTP와 달리 `EFFECT_UNKNOWN`이 없다.
-- 전이가 `MISSING_TARGET`, `ACCESS_DENIED`, `INVARIANT_VIOLATED`처럼 업무 규칙으로 거부되면 그 결과를 journal에 남겨 재시도에서도 같은 오류를 재생한다. 확장은 이 오류를 잡아 분기·보상할 수 있다. `CONFLICT`(교착·직렬화)와 DB 장애는 아무것도 commit하지 않았으므로 기록하지 않고 다시 시도할 수 있다.
+- 권한은 job을 수락한 principal의 것이다. 행 정책에서 보이지 않는 행에 대한 전이는 동기 `/apply`와 같은 `WIRE.MISSING_TARGET`으로 끝나 행 존재 여부를 알리지 않는다. 선언하지 않은 전이는 job 전체가 `WIRE.ACCESS_NOT_DECLARED`로 실패한다.
+- `apply`에는 다른 managed effect처럼 안정 key가 필요하다. 같은 run에서 같은 key를 다시 부르거나 worker가 commit 뒤에 죽어 재시도되면, 전이를 다시 실행하지 않고 journal의 결과를 그대로 돌려준다. 실행 결과를 모르는 상태가 생기지 않으므로 외부 HTTP와 달리 `WIRE.EFFECT_UNKNOWN`이 없다.
+- 전이가 `WIRE.MISSING_TARGET`, `WIRE.ACCESS_DENIED`, `WIRE.INVARIANT_VIOLATED`처럼 업무 규칙으로 거부되면 그 결과를 journal에 남겨 재시도에서도 같은 오류를 재생한다. 확장은 이 오류를 잡아 분기·보상할 수 있다. `WIRE.CONFLICT`(교착·직렬화)와 DB 장애는 아무것도 commit하지 않았으므로 기록하지 않고 다시 시도할 수 있다.
 - 각 `apply`는 자체 transaction이다. job 전체를 한 transaction으로 묶지 않으므로 여러 전이 사이의 원자성이 필요하면 하나의 전이 effects나 동기 쓰기 확장으로 표현한다. attempt당 managed 호출 64회 상한과 `expose apply`의 bulk 상한이 함께 적용된다.
 - 이 capability가 있는 job의 descriptor는 `dependencies.worker`에 `database`를 표시한다.
 
@@ -131,9 +131,9 @@ for await (const event of client.events.watch("notifications", { after: "0", int
 
 `jobs.enqueue(operation,input,{key,delayMs?})`는 id와 상태를 반환한다. 영수증에는 선택적 `error`가 포함될 수 있으며 FAILED job의 원인을 확인할 때 사용한다. 같은 owner·operation·contract·deployment·key의 같은 입력은 기존 job을 재사용하며 다른 입력이나 실행 조건은 idempotency conflict다. owner는 issuer·subject·관리형 actor·revocation generation을 묶은 인증 principal scope다. `status`, `cancel`, `result`는 호출자의 소유 job만 조회한다. `result`는 typed output 검증을 수행한다. Job id와 file handle은 접근 권한 자체가 아니다. 이 owner 격리는 일반적인 tenant/organization model을 대신하지 않는다. 결과는 완료 후 기본 24시간 보존된다.
 
-대기 중인 작업 취소는 `CANCELLED`가 되고, 실행 중 취소 요청은 우선 `CANCEL_REQUESTED`가 된다. 실행 중 HTTP effect 결과가 PENDING/UNKNOWN이면 취소 요청은 안전한 취소로 확정하지 않고 `FAILED`와 `CANCELLATION_UNCONFIRMED`로 끝난다. 다른 실패나 worker 종료 뒤 unresolved effect가 남아도 `jobs.status()`/`cancel()` 응답의 선택적 `error`는 `EFFECT_UNKNOWN`을 우선 표시한다. 이 상태는 외부 provider가 작업을 처리했는지 모른다는 뜻이다.
+대기 중인 작업 취소는 `CANCELLED`가 되고, 실행 중 취소 요청은 우선 `CANCEL_REQUESTED`가 된다. 실행 중 HTTP effect 결과가 PENDING/UNKNOWN이면 취소 요청은 안전한 취소로 확정하지 않고 `FAILED`와 `WIRE.CANCELLATION_UNCONFIRMED`로 끝난다. 다른 실패나 worker 종료 뒤 unresolved effect가 남아도 `jobs.status()`/`cancel()` 응답의 선택적 `error`는 `WIRE.EFFECT_UNKNOWN`을 우선 표시한다. 이 상태는 외부 provider가 작업을 처리했는지 모른다는 뜻이다.
 
-`events.read(stream,{after?,limit?})`는 decimal string cursor와 최대 100개 이벤트를 반환한다. `events.watch`는 read를 주기적으로 polling하는 async iterator다. 기본 간격은 1초, 허용 범위는 50ms에서 30초이며 AbortSignal로 끝낼 수 있다. 같은 cursor를 사용하는 SSE/WebSocket 전송도 제공하며 연결·인증 경계는 [서버 인프라](INFRASTRUCTURE.md)에 설명한다. 보존 범위보다 오래된 cursor는 `CURSOR_EXPIRED`를 반환한다. Event ACL도 enabled principal owner와 현재 revocation generation에 기반하며, publisher operation의 `allow`를 reader에게 재평가하지 않는다. role 변경만으로 저장 event에 대한 접근이 회수되지 않는다. principal revoke/generation 변경은 이전 owner scope의 접근을 막지만 저장된 데이터 자체를 즉시 삭제하지는 않는다. 사용자별 record subscription이나 일반 tenant/organization ACL은 제공하지 않는다.
+`events.read(stream,{after?,limit?})`는 decimal string cursor와 최대 100개 이벤트를 반환한다. `events.watch`는 read를 주기적으로 polling하는 async iterator다. 기본 간격은 1초, 허용 범위는 50ms에서 30초이며 AbortSignal로 끝낼 수 있다. 같은 cursor를 사용하는 SSE/WebSocket 전송도 제공하며 연결·인증 경계는 [서버 인프라](INFRASTRUCTURE.md)에 설명한다. 보존 범위보다 오래된 cursor는 `WIRE.CURSOR_EXPIRED`를 반환한다. Event ACL도 enabled principal owner와 현재 revocation generation에 기반하며, publisher operation의 `allow`를 reader에게 재평가하지 않는다. role 변경만으로 저장 event에 대한 접근이 회수되지 않는다. principal revoke/generation 변경은 이전 owner scope의 접근을 막지만 저장된 데이터 자체를 즉시 삭제하지는 않는다. 사용자별 record subscription이나 일반 tenant/organization ACL은 제공하지 않는다.
 
 `files.put(bucket,name,Uint8Array,mediaType)`는 handle metadata를 반환하고, `get(id)`는 바이트를 `Uint8Array`로 돌려준다. 제품 호출 상한은 767KiB다. 다운로드와 삭제는 enabled principal owner 및 현재 revocation generation으로 인증된 호출만 가능하다. ACL은 producer operation의 동적 `allow`를 재평가하지 않는다. role 변경만으로 owner의 파일 접근이 회수되지 않는다. principal revoke/generation 변경은 기존 owner scope의 접근을 막지만 bytes는 삭제 또는 만료 때까지 남는다.
 
@@ -174,7 +174,7 @@ endpoint마다 `circuit_breaker`를 설정하면 Resilience4j·opossum과 같은
 ```
 
 - 연속 `failure_threshold`회(1회에서 1000회) 연결 실패나 5xx 응답이 나면 `open_ms`(최대 1시간) 동안 그 endpoint로 요청을 보내지 않는다. 5xx 응답 자체는 지금처럼 확장에 status로 돌려준다.
-- 열린 동안의 `ctx.http.call`은 `CIRCUIT_OPEN`을 던진다. 요청을 보내지 않은 것이 확실하므로 effect journal에 기록을 남기지 않고, `EFFECT_UNKNOWN`과 달리 확장이 잡아서 분기하거나 `throw ctx.retryLater()`로 같은 key를 나중에 다시 보낼 수 있다. 이미 journal에 기록된 같은 key 호출은 circuit과 무관하게 재생된다.
+- 열린 동안의 `ctx.http.call`은 `WIRE.CIRCUIT_OPEN`을 던진다. 요청을 보내지 않은 것이 확실하므로 effect journal에 기록을 남기지 않고, `WIRE.EFFECT_UNKNOWN`과 달리 확장이 잡아서 분기하거나 `throw ctx.retryLater()`로 같은 key를 나중에 다시 보낼 수 있다. 이미 journal에 기록된 같은 key 호출은 circuit과 무관하게 재생된다.
 - `open_ms`가 지나면 요청 하나만 시험으로 보낸다(half-open). 성공하면 닫고, 실패하면 다시 연다. 시험 요청이 끝나지 않으면 `open_ms` 뒤에 다른 시험을 허용한다.
 - 상태는 서버 process마다 따로 둔다. 여러 instance가 상태를 공유하지 않는다. 설정값은 요청의 의미를 바꾸지 않으므로 implementation fingerprint에 넣지 않는다.
 
@@ -192,7 +192,7 @@ endpoint가 OAuth 2.0 access token을 요구하면 `oauth2`를 설정한다. Spr
 - client id와 secret은 지정한 환경 변수에서만 읽는다. `auth_method`는 `client_secret_basic`(기본, HTTP Basic)이나 `client_secret_post`(form 필드)다.
 - token endpoint도 API endpoint와 같은 규칙을 거친다. 시작할 때 DNS를 고정하고, HTTPS여야 하며, 사설 주소는 `allow_private_networks`가 있을 때만 허용한다. redirect와 proxy는 따르지 않는다.
 - token은 `expires_in`(없으면 5분, 최대 24시간)보다 30초 먼저 갱신한다. API가 401을 돌려주면 캐시를 버려 다음 호출이 새 token을 받는다. 401 응답 자체는 확장에 그대로 돌려준다.
-- token을 받지 못하면 API 요청을 보내지 않고 `INTEGRATION_AUTH_FAILED`를 던진다. `CIRCUIT_OPEN`처럼 확정 미전송이므로 journal에 기록을 남기지 않고 같은 key로 다시 보낼 수 있다.
+- token을 받지 못하면 API 요청을 보내지 않고 `WIRE.INTEGRATION_AUTH_FAILED`를 던진다. `WIRE.CIRCUIT_OPEN`처럼 확정 미전송이므로 journal에 기록을 남기지 않고 같은 key로 다시 보낼 수 있다.
 - `oauth2`를 쓰는 endpoint는 `secret_header_env`로 `authorization` header를 설정할 수 없다. token endpoint·client id·secret digest·scope는 implementation fingerprint에 들어간다. 어느 계정으로 호출하는지가 바뀌기 때문이다.
 - authorization code 흐름(사용자별 token 저장과 refresh)은 지원하지 않는다. 사용자 계정 연동은 앱이 token을 업무 데이터로 저장하고 확장에서 쓰는 방식이 필요하며, 저장 암호화는 아직 제품 기능이 아니다.
 
@@ -233,7 +233,7 @@ endpoint가 OAuth 2.0 access token을 요구하면 `oauth2`를 설정한다. Spr
 
 **웹훅 발신 (구독자 URL로 전달)**
 
-`workers.outbound_webhooks`에 `{"name":"subscribers","signing_secret_env":"...","timeout_ms":5000,"max_request_bytes":65536}`을 두고 job에 `access http.subscribers`를 선언하면 `ctx.webhooks.deliver(name, url, payload, key)`로 업무 데이터에 저장된 구독자 URL에 보낸다. 요청은 Standard Webhooks 형식(`webhook-id`·`webhook-timestamp`·`webhook-signature: v1,<base64>`)으로 서명하고, `webhook-id`는 run과 effect key에서 만들어 재시도에도 같다. URL은 매번 DNS를 해석해 공개 주소만 허용하며 사설 주소는 설정으로도 열 수 없다(`allow_loopback`은 개발용). 2xx는 journal에 기록하고 같은 key는 재전송하지 않는다. 거부(`DESTINATION_REJECTED`)·비2xx·전송 실패(`DELIVERY_FAILED`)는 기록을 지우고 오류를 돌려주므로 확장이 잡거나 `ctx.retryLater()`로 같은 key를 다시 보낼 수 있다. 수신자는 `webhook-id`로 중복을 걸러야 한다. 구독 관리 resource와 자동 비활성화 정책은 앱 선언으로 두고, 아래 정책 예제를 따른다.
+`workers.outbound_webhooks`에 `{"name":"subscribers","signing_secret_env":"...","timeout_ms":5000,"max_request_bytes":65536}`을 두고 job에 `access http.subscribers`를 선언하면 `ctx.webhooks.deliver(name, url, payload, key)`로 업무 데이터에 저장된 구독자 URL에 보낸다. 요청은 Standard Webhooks 형식(`webhook-id`·`webhook-timestamp`·`webhook-signature: v1,<base64>`)으로 서명하고, `webhook-id`는 run과 effect key에서 만들어 재시도에도 같다. URL은 매번 DNS를 해석해 공개 주소만 허용하며 사설 주소는 설정으로도 열 수 없다(`allow_loopback`은 개발용). 2xx는 journal에 기록하고 같은 key는 재전송하지 않는다. 거부(`WIRE.DESTINATION_REJECTED`)·비2xx·전송 실패(`WIRE.DELIVERY_FAILED`)는 기록을 지우고 오류를 돌려주므로 확장이 잡거나 `ctx.retryLater()`로 같은 key를 다시 보낼 수 있다. 수신자는 `webhook-id`로 중복을 걸러야 한다. 구독 관리 resource와 자동 비활성화 정책은 앱 선언으로 두고, 아래 정책 예제를 따른다.
 
 ### 구독 관리와 연속 실패 자동 비활성화
 
@@ -254,9 +254,9 @@ operation job fanout { input { event: Text } access read.Subscription, Subscript
 | 전달 결과 | 정책 | 이유 |
 |---|---|---|
 | 2xx | 연속 실패 수가 0보다 크면 `recovered`로 0으로 되돌린다 | 한 번의 성공이 연속 실패를 끊는다 |
-| `DELIVERY_FAILED`(비2xx·전송 실패) | `failed`로 센다. 연속 N번째면 `disable`한다 | 수신자 장애는 잠깐일 수 있어 몇 번은 기다린다 |
-| `DESTINATION_REJECTED`(공개 주소가 아니거나 URL이 틀림) | 한 번에 `disable`한다 | 기다려도 유효해지지 않는다 |
-| 그 밖의 오류(`EFFECT_UNKNOWN` 등) | 잡지 않고 던진다 | 결과를 모르는 전달을 실패로 세면 안 된다 |
+| `WIRE.DELIVERY_FAILED`(비2xx·전송 실패) | `failed`로 센다. 연속 N번째면 `disable`한다 | 수신자 장애는 잠깐일 수 있어 몇 번은 기다린다 |
+| `WIRE.DESTINATION_REJECTED`(공개 주소가 아니거나 URL이 틀림) | 한 번에 `disable`한다 | 기다려도 유효해지지 않는다 |
+| 그 밖의 오류(`WIRE.EFFECT_UNKNOWN` 등) | 잡지 않고 던진다 | 결과를 모르는 전달을 실패로 세면 안 된다 |
 
 `active`가 거짓인 구독은 다음 전달부터 건너뛴다. N은 확장의 상수이고 예제는 3이다(운영에서는 5~10처럼 수신자의 복구 시간을 보고 고른다). 다시 켜는 전이(`from active = false; to active = true`와 `failures = 0`)와 소유자에게 알리는 일(`disable` 직후 같은 확장에서 `ctx.messages.publish`나 `ctx.events.publish`)은 앱이 필요에 따라 더한다. 예제에는 없고 시험하지 않았다. 구독 행의 전이는 모두 job 주체의 정책으로 실행되고 감사 행에도 남는다. 근거 테스트는 `spikes/spike-v6-transport/tests/webhook_subscriptions.rs`(Node·Python)이고 예제 정의와 확장은 `spikes/spike-v6-transport/tests/fixtures/webhook-subscriptions*`에 있다.
 
@@ -333,10 +333,10 @@ job은 다음 경우에만 같은 run을 다시 시도한다. 시도 사이는 1
 
 | 실패 | 재시도 | 이유 |
 |---|---|---|
-| worker 비정상 종료(`WORKER_FAILED`), DB 장애(`DB_UNAVAILABLE`) | 항상 | 인프라 실패라 다시 하면 결과가 달라질 수 있다 |
+| worker 비정상 종료(`WIRE.WORKER_FAILED`), DB 장애(`WIRE.DB_UNAVAILABLE`) | 항상 | 인프라 실패라 다시 하면 결과가 달라질 수 있다 |
 | 확장이 `throw ctx.retryLater("이유")`(Python `raise ctx.retry_later("이유")`)로 요청 | 항상 | 외부 서비스 준비 대기, rate limit 같은 일시 실패를 확장이 알고 있다. Celery `self.retry()`, ActiveJob `retry_job`에 해당한다 |
-| 잡지 않은 확장 예외(`EXTENSION_ERROR`) | 설정한 job만 | Sidekiq처럼 모든 예외를 재시도하면 코드 버그가 비용만 늘린다. 운영자가 `retry_uncaught_errors`로 고른다 |
-| 계약·권한·비용·`EFFECT_UNKNOWN`·배포 변경 | 안 함 | 다시 시도해도 결과가 같거나, 외부 효과를 반복할 위험이 있다 |
+| 잡지 않은 확장 예외(`WIRE.EXTENSION_ERROR`) | 설정한 job만 | Sidekiq처럼 모든 예외를 재시도하면 코드 버그가 비용만 늘린다. 운영자가 `retry_uncaught_errors`로 고른다 |
+| 계약·권한·비용·`WIRE.EFFECT_UNKNOWN`·배포 변경 | 안 함 | 다시 시도해도 결과가 같거나, 외부 효과를 반복할 위험이 있다 |
 
 재시도는 effect journal을 재생하므로 이미 기록된 파일·이벤트·메시지·HTTP·데이터 전이를 반복하지 않는다. 확장은 `ctx.job`(`{id, attempt}`, attempt는 1부터)으로 몇 번째 시도인지 알 수 있다. 시도 횟수는 서비스 설정으로 job마다 정한다. 기본은 3회, 최대 10회다.
 
@@ -344,11 +344,11 @@ job은 다음 경우에만 같은 run을 다시 시도한다. 시도 사이는 1
 {"job_policies":[{"operation":"syncOrders","max_attempts":6,"retry_uncaught_errors":true}]}
 ```
 
-- 시도를 다 쓰면 `FAILED`가 되고 `error`에 마지막 실패 코드(`RETRY_LATER` 등)가 남는다.
+- 시도를 다 쓰면 `FAILED`가 되고 `error`에 마지막 실패 코드(`WIRE.RETRY_LATER` 등)가 남는다.
 - 확장이 대기 시간을 정할 수 있다: `throw ctx.retryLater("rate limited", { afterMs: 60000 })`(Python `raise ctx.retry_later("rate limited", after_ms=60000)`). 외부 서비스가 `Retry-After`를 알려 준 경우처럼 확장이 다음 시도 시점을 더 잘 안다. 이 값은 기본 backoff를 대신하고, 서버가 1초 이상 1시간 이하로 맞춘다(그보다 짧거나 긴 값, 음수·정수가 아닌 값은 각각 올리거나 자르거나 무시해 기본 backoff를 쓴다). 늘어난 대기만큼 run의 전체 기한도 늘려 재시도가 시작도 전에 만료되지 않게 한다. 시도 횟수 상한은 그대로 적용된다. 근거 테스트는 `spikes/spike-v6-transport/tests/job_retry.rs`(Node·Python, 3초 요청이 기본 1초가 아닌 3초 뒤에 다시 실행됨)와 `crates/aip-execution/tests/jobs.rs`의 `an_extension_can_choose_the_wait_before_the_next_attempt`다.
 - 정책은 job을 수락할 때 run에 기록한다. 운영자가 정책을 바꿔도 이미 수락한 run은 원래 횟수를 쓰고, 같은 key 재요청은 기존 run을 돌려준다(충돌이 아니다).
 - 정의에 없는 operation이나 job이 아닌 operation, 1회 미만·10회 초과는 서버 시작 시 거부한다. 같은 operation을 두 번 적어도 거부한다.
-- 자식 `ctx.jobs.run`이 `retryLater`를 던지면 부모는 `STEP_FAILED`를 받는다. 부모가 다시 `ctx.retryLater()`를 던져야 run 전체가 재시도된다.
+- 자식 `ctx.jobs.run`이 `retryLater`를 던지면 부모는 `WIRE.STEP_FAILED`를 받는다. 부모가 다시 `ctx.retryLater()`를 던져야 run 전체가 재시도된다.
 - 시도 횟수를 정의 문법이 아니라 서비스 설정에 둔 이유: 재시도 횟수는 업무 의미가 아니라 운영 조정값이고 환경마다 다를 수 있다. 스케줄·webhook과 같은 위치에 두어 정의 문법을 늘리지 않았다. 재시도 여부를 고르는 판단(`retryLater`)은 업무 코드가 하므로 확장 코드에 둔다.
 
 ## 저장과 운영 경계
@@ -358,7 +358,7 @@ job은 다음 경우에만 같은 run을 다시 시도한다. 시도 사이는 1
 - 기존 `/files/*` 관리 파일 bytes는 PostgreSQL `bytea`에 보관한다. 별도 `/objects/*` 대용량 저장은 [서버 인프라](INFRASTRUCTURE.md)를 따른다. owner당 live object 최대 100개·총 10MiB, object 상한 767KiB다. 같은 effect의 재실행은 안정 key, run/effect scope와 이름을 이용해 같은 content를 복구한다. 만료 시각은 실행 중 생성 파일의 경우 run deadline + 24시간, 직접 SDK 업로드의 경우 생성 시각 + 24시간이다. 이 기능은 대용량 업로드 저장소를 대체하지 않는다.
 - Event는 owner+stream 순서의 append-only cursor를 제공하고 payload는 최대 64KiB, page aggregate는 최대 1MiB다. stream당 최근 1,000개 payload만 재생할 수 있으며 key ledger는 재생 구간 밖에서도 중복 발행을 막는다. 이 key ledger에는 자동 만료가 없으므로 운영자는 장기 저장 증가를 고려해야 한다. 만료된 cursor에 대해 빈 성공을 반환하지 않는다. SSE/WebSocket 전송을 지원한다. 외부 broker relay와 일반 webhook delivery는 아직 없다.
 - Outbound HTTP는 등록 이름으로만 호출한다. 설정 endpoint는 최대 64개다. 요청과 응답은 JSON, 각각 최대 1MiB 및 endpoint별 더 작은 제한을 적용하며 timeout은 최대 30초다. status와 최대 1시간으로 제한한 `Retry-After`를 반환하고 redirect와 HTTP 자동 retry는 하지 않는다. 비밀 header는 출력하지 않는다.
-- 외부 provider 요청과 PostgreSQL commit은 하나의 원자적 transaction이 아니다. provider가 처리한 뒤 응답이 유실될 수 있어 결과를 모르는 상태에서는 `EFFECT_UNKNOWN`으로 멈추며 다음 자동 재시도로 같은 외부 mutation을 반복하지 않는다. 설정한 provider가 idempotency header를 올바르게 지원하는 경우에도 end-to-end exactly-once를 보장한다고 주장하지 않는다. 앱은 provider의 idempotency·조회 기능에 맞춘 복구 절차를 정해야 한다.
+- 외부 provider 요청과 PostgreSQL commit은 하나의 원자적 transaction이 아니다. provider가 처리한 뒤 응답이 유실될 수 있어 결과를 모르는 상태에서는 `WIRE.EFFECT_UNKNOWN`으로 멈추며 다음 자동 재시도로 같은 외부 mutation을 반복하지 않는다. 설정한 provider가 idempotency header를 올바르게 지원하는 경우에도 end-to-end exactly-once를 보장한다고 주장하지 않는다. 앱은 provider의 idempotency·조회 기능에 맞춘 복구 절차를 정해야 한다.
 - Node/Python worker의 기본 `auto`는 macOS에서 `MacSandbox`(네트워크·파일 쓰기·사용자 디렉터리 읽기·프로세스 생성 거부), Linux에서 Bubblewrap을 선택한다. macOS 프로파일은 deny 목록 방식이라 시스템 경로 읽기는 열려 있다. 이전의 네트워크 전용 동작은 `isolation: "mac_net_deny"`다. Linux mount·의존성·검증 경계는 [서버 인프라](INFRASTRUCTURE.md)를 따른다. bundle fingerprint는 확장 폴더 최상위 `.mjs`/`.py` 파일을 포함하지만 nested imports와 설치된 package dependency를 해시하지 않는다. 확장 모듈과 의존성은 배포자가 신뢰하고 immutable하게 고정해야 한다.
 - Job/file/event/effect 테이블은 durable capability가 있는 정의를 init/migrate할 때 생성된다. SQL 동기 read/write의 기존 요청·transaction 경로는 바뀌지 않는다.
 

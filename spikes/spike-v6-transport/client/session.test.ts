@@ -13,7 +13,7 @@ function backend(effect: (path: string, token: string, body: any) => Promise<Res
     const path = new URL(String(url)).pathname;
     const token = new Headers(opts?.headers).get("authorization")?.slice(7) ?? "";
     if (path === "/session") {
-      if (token === "invalid") return reply({ ok: false, code: "UNAUTHENTICATED" });
+      if (token === "invalid") return reply({ ok: false, code: "WIRE.UNAUTHENTICATED" });
       return reply({ ok: true, principal: { actorId: token === "other" ? "2" : token ? "1" : null }, remainingMs: token ? 60_000 : null });
     }
     return effect(path, token, JSON.parse(String(opts?.body)));
@@ -45,7 +45,7 @@ test("다른 사용자·잘못된 토큰은 원래 연결과 복구 정보를 �
   }));
   await assert.rejects(client.apply(request, { key: "one", retries: 0 }), WriteUnsettled);
   await assert.rejects(client.replaceSession("other"), (e: any) => e.name === "ScopeConflict");
-  await assert.rejects(client.replaceSession("invalid"), (e: any) => e.code === "UNAUTHENTICATED");
+  await assert.rejects(client.replaceSession("invalid"), (e: any) => e.code === "WIRE.UNAUTHENTICATED");
   await client.retryPending();
   assert.deepEqual(client.pending(), ["one"]);
   assert.ok(seen.every((token) => token === "old"));
@@ -75,7 +75,7 @@ test("이전 세대 쓰기가 늦게 끝나도 새 토큰 복구 결과를 지�
   const client = connect("http://spike.invalid", "old", backend(async (_path, token) => {
     if (token === "old") {
       await gate;
-      return reply({ ok: false, code: "TOKEN_EXPIRED" });
+      return reply({ ok: false, code: "WIRE.TOKEN_EXPIRED" });
     }
     newCalls++;
     return reply({ ok: true, tags: ["MemberAlarm"], replayed: true });
@@ -126,7 +126,7 @@ test("첫 세션 확인 실패는 apply를 보내거나 pending을 만들지 않
 test("세션 actor는 정밀도 손실 없는 i64 문자열로 검증", async () => {
   for (const actorId of [1, "01", "-0", "9223372036854775808", "-9223372036854775809", null]) {
     const client = connect("http://spike.invalid", "old", async () => reply({ ok: true, principal: { actorId }, remainingMs: 1000 }));
-    await assert.rejects(client.apply(request, { retries: 0 }), (e: any) => e.code === "PROTOCOL_ERROR");
+    await assert.rejects(client.apply(request, { retries: 0 }), (e: any) => e.code === "CLIENT.PROTOCOL_ERROR");
     assert.deepEqual(client.pending(), []);
   }
   for (const actorId of ["9223372036854775807", "-9223372036854775808"]) {

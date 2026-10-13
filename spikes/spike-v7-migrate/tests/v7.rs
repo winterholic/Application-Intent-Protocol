@@ -217,7 +217,7 @@ async fn v7_migration_precheck() {
     let narrowed = &cases[2].1;
     let old_req = json!({ "read": "Recruitment", "select": ["id", "views"] });
     let r = plan_read(narrowed, &old_req, &Caller { actor_id: Some(1), now: "2026-10-04T00:00:00Z".into() }).err().map(|e| e.code);
-    if r != Some("FIELD_NOT_EXPOSED") {
+    if r != Some("WIRE.FIELD_NOT_EXPOSED") {
         fails.push(format!("옛 요청 거부: {r:?}"));
     }
     db.batch_execute(&format!("DROP SCHEMA IF EXISTS {s} CASCADE")).await.ok();

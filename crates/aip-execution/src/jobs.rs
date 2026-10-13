@@ -114,7 +114,7 @@ impl Store {
         client
             .execute(
                 &format!(
-                    "UPDATE {table} SET state='FAILED',error=CASE WHEN state='CANCEL_REQUESTED' THEN 'CANCELLATION_UNCONFIRMED' WHEN run_deadline<=clock_timestamp() THEN 'deadline_exceeded' ELSE 'attempts_exhausted' END,lease_owner=NULL,lease_until=NULL,result_expires_at=clock_timestamp()+(result_ttl_ms::text||' milliseconds')::interval \
+                    "UPDATE {table} SET state='FAILED',error=CASE WHEN state='CANCEL_REQUESTED' THEN 'WIRE.CANCELLATION_UNCONFIRMED' WHEN run_deadline<=clock_timestamp() THEN 'deadline_exceeded' ELSE 'attempts_exhausted' END,lease_owner=NULL,lease_until=NULL,result_expires_at=clock_timestamp()+(result_ttl_ms::text||' milliseconds')::interval \
                      WHERE (state IN ('QUEUED','RUNNING') AND run_deadline<=clock_timestamp()) \
                         OR (state='RUNNING' AND lease_until<=clock_timestamp() AND attempt>=max_attempts) \
                         OR (state='CANCEL_REQUESTED' AND lease_until<=clock_timestamp())"
@@ -377,7 +377,7 @@ impl Store {
     /// letter. The run keeps its id, key, owner and effect journal, so recorded effects replay instead
     /// of repeating; `lease_epoch` keeps growing so a stale worker of an earlier attempt stays fenced.
     /// Only runs whose payload is still retained and that belong to the given deployment qualify,
-    /// because a run accepted under another deployment would only fail `IMPLEMENTATION_CHANGED`.
+    /// because a run accepted under another deployment would only fail `WIRE.IMPLEMENTATION_CHANGED`.
     pub async fn redrive(&self, client: &impl GenericClient, id: &str, deployment: &str) -> Result<Redrive, Error> {
         let id = parse_id(id)?;
         let table = self.table();

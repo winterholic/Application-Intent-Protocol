@@ -83,7 +83,7 @@ class Analyzer {
     for (const e of this.app.entities) this.resolveFields(e);
     for (const e of this.app.entities) this.checkEntity(e);
     if (this.app.actor && !this.model.entities.has(this.app.actor.entity)) {
-      this.err('AIP-E110', `actor entity '${this.app.actor.entity}' is not defined`, this.app.actor.loc);
+      this.err('POC.E110', `actor entity '${this.app.actor.entity}' is not defined`, this.app.actor.loc);
     }
     for (const q of this.app.queries) this.checkQuery(q);
     for (const c of this.app.commands) this.checkCommand(c);
@@ -94,21 +94,21 @@ class Analyzer {
   checkNames() {
     const types = new Map<string, Loc>();
     for (const d of [...this.app.enums, ...this.app.entities]) {
-      if (types.has(d.name)) this.err('AIP-E101', `duplicate type name '${d.name}'`, d.loc);
+      if (types.has(d.name)) this.err('POC.E101', `duplicate type name '${d.name}'`, d.loc);
       types.set(d.name, d.loc);
     }
     const ops = new Map<string, Loc>();
     for (const d of [...this.app.queries, ...this.app.commands]) {
-      if (ops.has(d.name)) this.err('AIP-E101', `duplicate operation name '${d.name}'`, d.loc, 'queries and commands share one namespace');
+      if (ops.has(d.name)) this.err('POC.E101', `duplicate operation name '${d.name}'`, d.loc, 'queries and commands share one namespace');
       ops.set(d.name, d.loc);
     }
     for (const en of this.app.enums) {
       const seen = new Set<string>();
       for (const v of en.values) {
-        if (seen.has(v)) this.err('AIP-E101', `duplicate value '${v}' in enum ${en.name}`, en.loc);
+        if (seen.has(v)) this.err('POC.E101', `duplicate value '${v}' in enum ${en.name}`, en.loc);
         seen.add(v);
       }
-      if (en.values.length === 0) this.err('AIP-E101', `enum ${en.name} has no values`, en.loc);
+      if (en.values.length === 0) this.err('POC.E101', `enum ${en.name} has no values`, en.loc);
     }
   }
 
@@ -125,20 +125,20 @@ class Analyzer {
     const seen = new Set<string>();
     for (const f of e.fields) {
       if (f.name === 'id') {
-        this.err('AIP-E105', `field 'id' is implicit on every entity`, f.loc, `remove the 'id' declaration from ${e.name}`);
+        this.err('POC.E105', `field 'id' is implicit on every entity`, f.loc, `remove the 'id' declaration from ${e.name}`);
         continue;
       }
-      if (seen.has(f.name)) this.err('AIP-E101', `duplicate field '${f.name}' in ${e.name}`, f.loc);
+      if (seen.has(f.name)) this.err('POC.E101', `duplicate field '${f.name}' in ${e.name}`, f.loc);
       seen.add(f.name);
       if (f.kind === 'ref' && !this.model.entities.has(f.target)) {
-        this.err('AIP-E102', `unknown type '${f.target}' for field ${e.name}.${f.name}`, f.loc);
+        this.err('POC.E102', `unknown type '${f.target}' for field ${e.name}.${f.name}`, f.loc);
       }
       if (f.kind === 'many') {
         const back = this.model.entities.has(f.target) ? this.model.field(f.target, f.via) : undefined;
         if (!this.model.entities.has(f.target)) {
-          this.err('AIP-E102', `unknown type '${f.target}' for field ${e.name}.${f.name}`, f.loc);
+          this.err('POC.E102', `unknown type '${f.target}' for field ${e.name}.${f.name}`, f.loc);
         } else if (!back || back.kind !== 'ref' || back.target !== e.name) {
-          this.err('AIP-E106', `${e.name}.${f.name} is 'via ${f.via}', but ${f.target}.${f.via} is not a reference to ${e.name}`, f.loc,
+          this.err('POC.E106', `${e.name}.${f.name} is 'via ${f.via}', but ${f.target}.${f.via} is not a reference to ${e.name}`, f.loc,
             `declare '${f.via}: ${e.name}' on ${f.target}`);
         }
       }
@@ -150,7 +150,7 @@ class Analyzer {
     }
     const names = new Set<string>();
     for (const inv of e.invariants) {
-      if (names.has(inv.name)) this.err('AIP-E101', `duplicate invariant '${inv.name}'`, inv.loc);
+      if (names.has(inv.name)) this.err('POC.E101', `duplicate invariant '${inv.name}'`, inv.loc);
       names.add(inv.name);
       this.expectType(inv.expr, scope, BOOL, `invariant ${inv.name}`);
     }
@@ -164,7 +164,7 @@ class Analyzer {
 
   expectType(e: Expr, scope: Scope, want: ValueType, what: string): ValueType | undefined {
     const t = this.typeExpr(e, scope, want);
-    if (t && !compatible(t, want)) this.err('AIP-E201', `${what} must be ${typeName(want)}, got ${typeName(t)}`, e.loc);
+    if (t && !compatible(t, want)) this.err('POC.E201', `${what} must be ${typeName(want)}, got ${typeName(t)}`, e.loc);
     return t;
   }
 
@@ -193,10 +193,10 @@ class Analyzer {
         return BOOL;
       case 'in': {
         const te = this.typeExpr(e.e, scope);
-        if (e.list.length === 0) this.err('AIP-E201', "'in' needs at least one value", e.loc);
+        if (e.list.length === 0) this.err('POC.E201', "'in' needs at least one value", e.loc);
         for (const item of e.list) {
           const ti = this.typeExpr(item, scope, te);
-          if (te && ti && !compatible(te, ti)) this.err('AIP-E201', `'in' list item is ${typeName(ti)}, expected ${typeName(te)}`, item.loc);
+          if (te && ti && !compatible(te, ti)) this.err('POC.E201', `'in' list item is ${typeName(ti)}, expected ${typeName(te)}`, item.loc);
         }
         return BOOL;
       }
@@ -231,7 +231,7 @@ class Analyzer {
               tl = this.typeExpr(e.l, scope);
               tr = this.typeExpr(e.r, scope, tl);
             }
-            if (tl && tr && !compatible(tl, tr)) this.err('AIP-E201', `cannot compare ${typeName(tl)} with ${typeName(tr)}`, e.loc);
+            if (tl && tr && !compatible(tl, tr)) this.err('POC.E201', `cannot compare ${typeName(tl)} with ${typeName(tr)}`, e.loc);
             return BOOL;
           }
         }
@@ -253,19 +253,19 @@ class Analyzer {
           return expected;
         }
         if (en) {
-          this.err('AIP-E202', `'${e.root}' is not a value of enum ${en.name}`, e.loc, `values: ${en.values.join(', ')}`);
+          this.err('POC.E202', `'${e.root}' is not a value of enum ${en.name}`, e.loc, `values: ${en.values.join(', ')}`);
           return undefined;
         }
       }
       if (e.root === 'actor') {
-        this.err('AIP-E110', "'actor' used but no actor entity is declared", e.loc, "add 'actor <Entity>' at top level");
+        this.err('POC.E110', "'actor' used but no actor entity is declared", e.loc, "add 'actor <Entity>' at top level");
         return undefined;
       }
-      this.err('AIP-E104', `unknown name '${e.root}'`, e.loc, `in scope: ${[...scope.keys()].join(', ') || '(nothing)'}`);
+      this.err('POC.E104', `unknown name '${e.root}'`, e.loc, `in scope: ${[...scope.keys()].join(', ') || '(nothing)'}`);
       return undefined;
     }
     if (e.fields.length > sym.maxDepth) {
-      this.err('AIP-E213', `'${pathText(e)}' reads through a relation; AIP never loads data implicitly`, e.loc,
+      this.err('POC.E213', `'${pathText(e)}' reads through a relation; AIP never loads data implicitly`, e.loc,
         sym.kind === 'param' ? 'parameters are plain values and have no fields'
           : `load the related row explicitly (e.g. 'load x: <Entity> by ${[e.root, ...e.fields.slice(0, sym.maxDepth)].join('.')}')`);
       return undefined;
@@ -273,12 +273,12 @@ class Analyzer {
     let t: ValueType = sym.type;
     for (const name of e.fields) {
       if (t.k !== 'ref') {
-        this.err('AIP-E103', `cannot access '.${name}' on ${typeName(t)}`, e.loc);
+        this.err('POC.E103', `cannot access '.${name}' on ${typeName(t)}`, e.loc);
         return undefined;
       }
       const f = this.model.field(t.entity, name);
       if (!f) {
-        this.err('AIP-E103', `${t.entity} has no field '${name}'`, e.loc, `fields: id, ${this.model.entity(t.entity).fields.map((x) => x.name).join(', ')}`);
+        this.err('POC.E103', `${t.entity} has no field '${name}'`, e.loc, `fields: id, ${this.model.entity(t.entity).fields.map((x) => x.name).join(', ')}`);
         return undefined;
       }
       t = fieldType(f);
@@ -290,7 +290,7 @@ class Analyzer {
 
   checkPolicy(p: Policy | null, scope: Scope, owner: string, loc: Loc, isCommand: boolean) {
     if (!p) {
-      this.err('AIP-E301', `${owner} has no policy`, loc, "nothing is exposed implicitly; add 'policy: public | authenticated | owner(<path>) | role(<ROLE>)'");
+      this.err('POC.E301', `${owner} has no policy`, loc, "nothing is exposed implicitly; add 'policy: public | authenticated | owner(<path>) | role(<ROLE>)'");
       return;
     }
     const actor = this.app.actor ? this.model.entities.get(this.app.actor.entity) : undefined;
@@ -302,39 +302,39 @@ class Analyzer {
           walk(x.r);
           return;
         case 'public':
-          if (isCommand) this.warn('AIP-W302', `${owner} is callable without authentication`, x.loc, 'make sure an anonymous caller may perform this change');
+          if (isCommand) this.warn('POC.W302', `${owner} is callable without authentication`, x.loc, 'make sure an anonymous caller may perform this change');
           return;
         case 'authenticated':
-          if (!this.app.actor) this.err('AIP-E110', "'authenticated' used but no actor entity is declared", x.loc, "add 'actor <Entity>' at top level");
+          if (!this.app.actor) this.err('POC.E110', "'authenticated' used but no actor entity is declared", x.loc, "add 'actor <Entity>' at top level");
           return;
         case 'role': {
           if (!actor) {
-            this.err('AIP-E110', "'role' used but no actor entity is declared", x.loc);
+            this.err('POC.E110', "'role' used but no actor entity is declared", x.loc);
             return;
           }
           const rf = this.model.field(actor.name, 'role');
           if (!rf || rf.kind !== 'enum') {
-            this.err('AIP-E304', `role(${x.role}) needs an enum field 'role' on ${actor.name}`, x.loc);
+            this.err('POC.E304', `role(${x.role}) needs an enum field 'role' on ${actor.name}`, x.loc);
             return;
           }
           if (!this.model.enums.get(rf.enum)?.values.includes(x.role)) {
-            this.err('AIP-E304', `'${x.role}' is not a value of ${rf.enum}`, x.loc, `values: ${this.model.enums.get(rf.enum)?.values.join(', ')}`);
+            this.err('POC.E304', `'${x.role}' is not a value of ${rf.enum}`, x.loc, `values: ${this.model.enums.get(rf.enum)?.values.join(', ')}`);
           }
           return;
         }
         case 'owner': {
           if (!actor) {
-            this.err('AIP-E110', "'owner' used but no actor entity is declared", x.loc);
+            this.err('POC.E110', "'owner' used but no actor entity is declared", x.loc);
             return;
           }
           const sym = scope.get(x.path.root);
           if (sym && sym.kind === 'binding' && !sym.fromLoad) {
-            this.err('AIP-E305', `owner(${pathText(x.path)}) refers to '${x.path.root}', which does not exist yet when the policy is checked`, x.loc);
+            this.err('POC.E305', `owner(${pathText(x.path)}) refers to '${x.path.root}', which does not exist yet when the policy is checked`, x.loc);
             return;
           }
           const t = this.typeExpr(x.path, scope);
           if (t && !(t.k === 'ref' && t.entity === actor.name)) {
-            this.err('AIP-E303', `owner(${pathText(x.path)}) must point to a ${actor.name}, got ${typeName(t)}`, x.loc);
+            this.err('POC.E303', `owner(${pathText(x.path)}) must point to a ${actor.name}, got ${typeName(t)}`, x.loc);
           }
           return;
         }
@@ -351,9 +351,9 @@ class Analyzer {
       scope.set('actor', { kind: 'actor', type: { k: 'ref', entity: this.app.actor.entity }, maxDepth: 1 });
     }
     for (const p of params) {
-      if (scope.has(p.name)) this.err('AIP-E101', `'${p.name}' is reserved or already defined`, p.loc);
+      if (scope.has(p.name)) this.err('POC.E101', `'${p.name}' is reserved or already defined`, p.loc);
       if (p.type.k === 'enum' && !this.model.enums.has(p.type.name)) {
-        this.err('AIP-E102', `unknown parameter type '${p.type.name}'`, p.loc, 'parameters are scalars (UUID, String, Int, Bool) or enums; pass entity ids as UUID');
+        this.err('POC.E102', `unknown parameter type '${p.type.name}'`, p.loc, 'parameters are scalars (UUID, String, Int, Bool) or enums; pass entity ids as UUID');
       }
       scope.set(p.name, { kind: 'param', type: p.type, maxDepth: 0 });
     }
@@ -363,24 +363,24 @@ class Analyzer {
   checkQuery(q: Query) {
     const scope = this.baseScope(q.params);
     if (!this.model.entities.has(q.entity)) {
-      this.err('AIP-E102', `unknown entity '${q.entity}'`, q.loc);
+      this.err('POC.E102', `unknown entity '${q.entity}'`, q.loc);
       return;
     }
-    if (scope.has(q.as)) this.err('AIP-E101', `alias '${q.as}' shadows another name`, q.loc);
+    if (scope.has(q.as)) this.err('POC.E101', `alias '${q.as}' shadows another name`, q.loc);
     scope.set(q.as, { kind: 'alias', type: { k: 'ref', entity: q.entity }, maxDepth: 1 });
     if (q.by) {
       const t = this.typeExpr(q.by, scope);
-      if (t && !compatible(t, { k: 'ref', entity: q.entity })) this.err('AIP-E212', `'by' must be a UUID, got ${typeName(t)}`, q.by.loc);
+      if (t && !compatible(t, { k: 'ref', entity: q.entity })) this.err('POC.E212', `'by' must be a UUID, got ${typeName(t)}`, q.by.loc);
     }
     if (q.where) this.expectType(q.where, scope, BOOL, "'where'");
     if (q.sort) {
       const f = this.model.field(q.entity, q.sort.field);
-      if (!f) this.err('AIP-E103', `${q.entity} has no field '${q.sort.field}'`, q.sort.loc);
-      else if (f.kind === 'many' || f.kind === 'ref') this.err('AIP-E201', `cannot sort by relation '${q.sort.field}'`, q.sort.loc);
+      if (!f) this.err('POC.E103', `${q.entity} has no field '${q.sort.field}'`, q.sort.loc);
+      else if (f.kind === 'many' || f.kind === 'ref') this.err('POC.E201', `cannot sort by relation '${q.sort.field}'`, q.sort.loc);
     }
-    if (q.limit !== null && (q.limit < 1 || q.limit > 1000)) this.err('AIP-E201', 'limit must be between 1 and 1000', q.loc);
+    if (q.limit !== null && (q.limit < 1 || q.limit > 1000)) this.err('POC.E201', 'limit must be between 1 and 1000', q.loc);
     if (!q.by && q.limit === null) {
-      this.warn('AIP-W403', `query ${q.name} returns an unbounded list`, q.loc, "add 'limit <n>'");
+      this.warn('POC.W403', `query ${q.name} returns an unbounded list`, q.loc, "add 'limit <n>'");
     }
     this.checkPolicy(q.policy, scope, `query ${q.name}`, q.loc, false);
     this.checkSelection(q.entity, q.select, q.name);
@@ -388,20 +388,20 @@ class Analyzer {
 
   checkSelection(entity: string, sel: Selection, owner: string) {
     const seen = new Set<string>();
-    if (sel.fields.length === 0) this.err('AIP-E220', `empty selection on ${entity} in ${owner}`, { line: 0, col: 0 });
+    if (sel.fields.length === 0) this.err('POC.E220', `empty selection on ${entity} in ${owner}`, { line: 0, col: 0 });
     for (const n of sel.fields) {
-      if (seen.has(n.name)) this.err('AIP-E101', `'${n.name}' selected twice`, n.loc);
+      if (seen.has(n.name)) this.err('POC.E101', `'${n.name}' selected twice`, n.loc);
       seen.add(n.name);
       const f = this.model.field(entity, n.name);
       if (!f) {
-        this.err('AIP-E103', `${entity} has no field '${n.name}'`, n.loc);
+        this.err('POC.E103', `${entity} has no field '${n.name}'`, n.loc);
         continue;
       }
       const isRel = f.kind === 'ref' || f.kind === 'many';
       if (isRel && !n.sub) {
-        this.err('AIP-E220', `relation '${entity}.${n.name}' needs a sub-selection`, n.loc, `write '${n.name} { id ... }'`);
+        this.err('POC.E220', `relation '${entity}.${n.name}' needs a sub-selection`, n.loc, `write '${n.name} { id ... }'`);
       } else if (!isRel && n.sub) {
-        this.err('AIP-E220', `'${entity}.${n.name}' is not a relation and cannot have a sub-selection`, n.loc);
+        this.err('POC.E220', `'${entity}.${n.name}' is not a relation and cannot have a sub-selection`, n.loc);
       } else if (isRel && n.sub) {
         this.checkSelection(f.target, n.sub, owner);
       }
@@ -417,12 +417,12 @@ class Analyzer {
 
     for (const l of c.loads) {
       if (!this.model.entities.has(l.entity)) {
-        this.err('AIP-E102', `unknown entity '${l.entity}'`, l.loc);
+        this.err('POC.E102', `unknown entity '${l.entity}'`, l.loc);
         continue;
       }
       const t = this.typeExpr(l.by, scope);
-      if (t && !compatible(t, { k: 'ref', entity: l.entity })) this.err('AIP-E212', `'load ${l.name}' must be by a UUID, got ${typeName(t)}`, l.by.loc);
-      if (scope.has(l.name)) this.err('AIP-E101', `'${l.name}' is already defined`, l.loc);
+      if (t && !compatible(t, { k: 'ref', entity: l.entity })) this.err('POC.E212', `'load ${l.name}' must be by a UUID, got ${typeName(t)}`, l.by.loc);
+      if (scope.has(l.name)) this.err('POC.E101', `'${l.name}' is already defined`, l.loc);
       scope.set(l.name, { kind: 'binding', type: { k: 'ref', entity: l.entity }, maxDepth: 1, lock: l.lock, fromLoad: true });
     }
 
@@ -443,14 +443,14 @@ class Analyzer {
         if (!sym || sym.kind !== 'binding' || !sym.fromLoad || sym.lock) continue;
         const w = writes.find((x) => x.root === p.root && x.field === p.fields[0]);
         if (w) {
-          this.err('AIP-E401', `check-then-act race on '${p.root}.${p.fields[0]}': it is checked in 'require' and modified in 'transaction', but '${p.root}' is not locked`,
+          this.err('POC.E401', `check-then-act race on '${p.root}.${p.fields[0]}': it is checked in 'require' and modified in 'transaction', but '${p.root}' is not locked`,
             w.loc, `write 'load ${p.root}: ${typeName(sym.type)} by ... lock'`);
         }
       }
     }
 
     if (info.creates.length > 0 && !c.idempotent) {
-      this.warn('AIP-W501', `command ${c.name} creates ${info.creates.join(', ')} but is not idempotent; a client retry creates duplicates`, c.loc,
+      this.warn('POC.W501', `command ${c.name} creates ${info.creates.join(', ')} but is not idempotent; a client retry creates duplicates`, c.loc,
         "add 'idempotent' so callers can send an Idempotency-Key");
     }
 
@@ -458,7 +458,7 @@ class Analyzer {
 
     if (c.returns) {
       const sym = scope.get(c.returns.name);
-      if (!sym || sym.kind !== 'binding') this.err('AIP-E211', `'returns ${c.returns.name}' does not name a loaded or created row`, c.returns.loc);
+      if (!sym || sym.kind !== 'binding') this.err('POC.E211', `'returns ${c.returns.name}' does not name a loaded or created row`, c.returns.loc);
     }
   }
 
@@ -471,17 +471,17 @@ class Analyzer {
           if (!target) break;
           const f = this.model.field(target.entity, target.field);
           if (!f) {
-            this.err('AIP-E103', `${target.entity} has no field '${target.field}'`, s.target.loc);
+            this.err('POC.E103', `${target.entity} has no field '${target.field}'`, s.target.loc);
             break;
           }
           if (f.name === 'id' || f.kind === 'many') {
-            this.err('AIP-E203', `'${pathText(s.target)}' cannot be assigned`, s.target.loc);
+            this.err('POC.E203', `'${pathText(s.target)}' cannot be assigned`, s.target.loc);
             break;
           }
           if (s.k === 'set') {
             this.expectType(s.value, scope, fieldType(f), `value for ${target.entity}.${f.name}`);
           } else {
-            if (!(f.kind === 'scalar' && f.type === 'Int')) this.err('AIP-E204', `${s.sign > 0 ? 'increment' : 'decrement'} needs an Int field, '${pathText(s.target)}' is ${typeName(fieldType(f))}`, s.loc);
+            if (!(f.kind === 'scalar' && f.type === 'Int')) this.err('POC.E204', `${s.sign > 0 ? 'increment' : 'decrement'} needs an Int field, '${pathText(s.target)}' is ${typeName(fieldType(f))}`, s.loc);
             this.expectType(s.by, scope, INT, 'increment amount');
           }
           writes.push({ root: s.target.root, field: target.field, entity: target.entity, loc: s.loc });
@@ -489,32 +489,32 @@ class Analyzer {
         }
         case 'create': {
           if (iter) {
-            this.err('AIP-E215', "'create' is not allowed inside 'each'", s.loc);
+            this.err('POC.E215', "'create' is not allowed inside 'each'", s.loc);
             break;
           }
           if (!this.model.entities.has(s.entity)) {
-            this.err('AIP-E102', `unknown entity '${s.entity}'`, s.loc);
+            this.err('POC.E102', `unknown entity '${s.entity}'`, s.loc);
             break;
           }
           const given = new Set<string>();
           for (const fv of s.fields) {
             const f = this.model.field(s.entity, fv.name);
             if (!f) {
-              this.err('AIP-E103', `${s.entity} has no field '${fv.name}'`, fv.loc);
+              this.err('POC.E103', `${s.entity} has no field '${fv.name}'`, fv.loc);
               continue;
             }
             if (f.name === 'id' || f.kind === 'many') {
-              this.err('AIP-E203', `'${fv.name}' cannot be assigned`, fv.loc);
+              this.err('POC.E203', `'${fv.name}' cannot be assigned`, fv.loc);
               continue;
             }
-            if (given.has(fv.name)) this.err('AIP-E101', `'${fv.name}' given twice`, fv.loc);
+            if (given.has(fv.name)) this.err('POC.E101', `'${fv.name}' given twice`, fv.loc);
             given.add(fv.name);
             this.expectType(fv.value, scope, fieldType(f), `value for ${s.entity}.${f.name}`);
           }
           const missing = this.model.entity(s.entity).fields.filter((f) => f.kind !== 'many' && !f.optional && !given.has(f.name));
-          if (missing.length) this.err('AIP-E205', `create ${s.entity} is missing ${missing.map((f) => f.name).join(', ')}`, s.loc);
+          if (missing.length) this.err('POC.E205', `create ${s.entity} is missing ${missing.map((f) => f.name).join(', ')}`, s.loc);
           if (s.as) {
-            if (scope.has(s.as)) this.err('AIP-E101', `'${s.as}' is already defined`, s.loc);
+            if (scope.has(s.as)) this.err('POC.E101', `'${s.as}' is already defined`, s.loc);
             scope.set(s.as, { kind: 'binding', type: { k: 'ref', entity: s.entity }, maxDepth: 1 });
           }
           info.creates.push(s.entity);
@@ -522,20 +522,20 @@ class Analyzer {
         }
         case 'each': {
           if (iter) {
-            this.err('AIP-E214', "nested 'each' is not supported", s.loc);
+            this.err('POC.E214', "nested 'each' is not supported", s.loc);
             break;
           }
           const sym = scope.get(s.source.root);
           if (!sym || sym.kind !== 'binding' || s.source.fields.length !== 1) {
-            this.err('AIP-E206', `'each' must iterate over a list field of a loaded row, like 'each order.items as item'`, s.source.loc);
+            this.err('POC.E206', `'each' must iterate over a list field of a loaded row, like 'each order.items as item'`, s.source.loc);
             break;
           }
           const t = sym.type.k === 'ref' ? this.model.field(sym.type.entity, s.source.fields[0]) : undefined;
           if (!t || t.kind !== 'many') {
-            this.err('AIP-E206', `'${pathText(s.source)}' is not a list relation`, s.source.loc);
+            this.err('POC.E206', `'${pathText(s.source)}' is not a list relation`, s.source.loc);
             break;
           }
-          if (scope.has(s.as)) this.err('AIP-E101', `'${s.as}' is already defined`, s.loc);
+          if (scope.has(s.as)) this.err('POC.E101', `'${s.as}' is already defined`, s.loc);
           const inner: Scope = new Map(scope);
           inner.set(s.as, { kind: 'iter', type: { k: 'ref', entity: t.target }, maxDepth: 1 });
           this.checkStmts(s.body, inner, writes, s.as, info);
@@ -549,12 +549,12 @@ class Analyzer {
   mutationTarget(p: PathExpr, scope: Scope, iter: string | null, isSet: boolean): { entity: string; field: string } | undefined {
     const sym = scope.get(p.root);
     if (!sym || (sym.kind !== 'binding' && sym.kind !== 'iter')) {
-      this.err('AIP-E209', `'${pathText(p)}' is not a field of a loaded or created row`, p.loc,
+      this.err('POC.E209', `'${pathText(p)}' is not a field of a loaded or created row`, p.loc,
         sym?.kind === 'actor' ? "load the actor's row explicitly to modify it" : undefined);
       return undefined;
     }
     if (iter && p.root !== iter) {
-      this.err('AIP-E208', `inside 'each', only '${iter}' and rows reached from it can be modified`, p.loc);
+      this.err('POC.E208', `inside 'each', only '${iter}' and rows reached from it can be modified`, p.loc);
       return undefined;
     }
     if (sym.type.k !== 'ref') return undefined;
@@ -562,17 +562,17 @@ class Analyzer {
     if (sym.kind === 'iter' && p.fields.length === 2) {
       const rel = this.model.field(sym.type.entity, p.fields[0]);
       if (!rel || rel.kind !== 'ref') {
-        this.err('AIP-E103', `'${p.root}.${p.fields[0]}' is not a reference`, p.loc);
+        this.err('POC.E103', `'${p.root}.${p.fields[0]}' is not a reference`, p.loc);
         return undefined;
       }
       if (isSet) {
-        this.err('AIP-E207', `'set ${pathText(p)}' is ambiguous when several ${sym.type.entity} rows point to the same ${rel.target}`, p.loc,
+        this.err('POC.E207', `'set ${pathText(p)}' is ambiguous when several ${sym.type.entity} rows point to the same ${rel.target}`, p.loc,
           'only increment/decrement (which add up) may write through a reference inside each');
         return undefined;
       }
       return { entity: rel.target, field: p.fields[1] };
     }
-    this.err('AIP-E213', `'${pathText(p)}' writes through a relation`, p.loc, 'load the row explicitly and modify it directly');
+    this.err('POC.E213', `'${pathText(p)}' writes through a relation`, p.loc, 'load the row explicitly and modify it directly');
     return undefined;
   }
 
@@ -589,7 +589,7 @@ class Analyzer {
     }
     const sig = (s: EventSchema) => s.fields.map((f) => `${f.name}:${typeName(f.type)}`).sort().join(',');
     if (sig(prev) !== sig(schema)) {
-      this.err('AIP-E216', `event ${event} is emitted with a different shape than at line ${prev.loc.line}`, loc, `expected { ${sig(prev)} }`);
+      this.err('POC.E216', `event ${event} is emitted with a different shape than at line ${prev.loc.line}`, loc, `expected { ${sig(prev)} }`);
     }
   }
 }

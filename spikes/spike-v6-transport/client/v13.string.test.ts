@@ -9,7 +9,7 @@ test("첫 호출이 where 쓰기여도 생성 계약 모드가 다르면 commit 
   const mismatched = connectTyped(process.env.AIP_SAFE_URL!,process.env.AIP_SAFE_TOKEN!,contract);
   for (const key of ["first-wrong-wire","shared-profile"]) {
     const result = await mismatched.apply({apply:"Item.read",target:{where:[{field:"label",op:"eq",value:"small"}]}},{key});
-    assert.equal(result.code,"CONTRACT_MISMATCH");
+    assert.equal(result.code,"WIRE.CONTRACT_MISMATCH");
     assert.equal(result.ok,false);
   }
   assert.deepEqual(mismatched.pending(),[]);
@@ -57,13 +57,13 @@ test("문자열 후보의 형식·권한 검사와 원자성은 raw 요청에도
   const client = connectTyped(process.env.AIP_STRING_URL!,process.env.AIP_STRING_TOKEN!,contract);
   for (const value of ["", "00", "01", "-1", "+1", " 1", "1.0", "9223372036854775808",42]) {
     const read = await client.post("/read",{query:{read:"Item",select:["id"],filter:[{field:"id",op:"eq",value}]}});
-    assert.equal(read.code,"BAD_VALUE",String(value));
+    assert.equal(read.code,"WIRE.BAD_VALUE",String(value));
     const write = await client.apply({apply:"Item.read",target:{ids:[value]}},{key:`invalid:${String(value)}`});
-    assert.equal(write.code,"BAD_VALUE",String(value));
+    assert.equal(write.code,"WIRE.BAD_VALUE",String(value));
   }
   const other = connectTyped(process.env.AIP_STRING_URL!,process.env.AIP_OTHER_TOKEN!,contract);
   const denied = await other.apply({apply:"Item.read",target:{ids:["9223372036854775807"]}},{key:"wrong-actor"});
   assert.equal(denied.ok,false);
   const mismatch = connectTyped(process.env.AIP_SAFE_URL!,process.env.AIP_SAFE_TOKEN!,contract);
-  await assert.rejects(mismatch.read({read:"Item",select:["id"],filter:[{field:"id",op:"eq",value:"42"}]}),(e:any)=>e.code==="CONTRACT_MISMATCH");
+  await assert.rejects(mismatch.read({read:"Item",select:["id"],filter:[{field:"id",op:"eq",value:"42"}]}),(e:any)=>e.code==="WIRE.CONTRACT_MISMATCH");
 });

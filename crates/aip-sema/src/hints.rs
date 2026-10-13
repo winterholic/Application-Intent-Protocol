@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, BTreeSet};
 ///
 /// Written as strings, not as constants of the registry: `aip-ir/tests/code_sites.snap` pins where a code is
 /// emitted, and this file only refers to codes.
-const UNKNOWN_NAME_CODES: &[&str] = &["AIP-E102", "AIP-E103", "AIP-E104"];
+const UNKNOWN_NAME_CODES: &[&str] = &["POC.E102", "POC.E103", "POC.E104"];
 
 pub fn add(diags: &mut [Diagnostic], src: &str) {
     let words = words(src);

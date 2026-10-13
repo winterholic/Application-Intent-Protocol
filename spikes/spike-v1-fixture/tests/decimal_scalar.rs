@@ -58,7 +58,7 @@ fn decimal_contextual_literals_are_typed_and_enforce_their_declared_digits() {
 
     for invalid in ["1000.00", "1.234", "NaN", "1e3", "+1", "01.00", "1.", ".5", "١.0"] {
         let bad = source.replace("123.45", invalid);
-        assert!(matches!(load_str(&bad, Form::A), Err(errors) if errors.iter().any(|diag| diag.code == "BAD_VALUE")), "{invalid}");
+        assert!(matches!(load_str(&bad, Form::A), Err(errors) if errors.iter().any(|diag| diag.code == "DEF.BAD_VALUE")), "{invalid}");
     }
 }
 

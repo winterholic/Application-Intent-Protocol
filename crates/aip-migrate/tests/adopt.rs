@@ -37,7 +37,7 @@ async fn adoption_preserves_data_and_committed_idempotency() {
     tx.commit().await.unwrap();
     let outcome = AssertUnwindSafe(async {
         db.batch_execute(&format!("ALTER TABLE {schema}.member ADD COLUMN unexpected text")).await.unwrap();
-        assert_eq!(adopt::plan(DB, &schema, &facts).await.unwrap_err()["code"], "SCHEMA_MISMATCH");
+        assert_eq!(adopt::plan(DB, &schema, &facts).await.unwrap_err()["code"], "WIRE.SCHEMA_MISMATCH");
         db.batch_execute(&format!("ALTER TABLE {schema}.member DROP COLUMN unexpected")).await.unwrap();
         assert_eq!(adopt::plan_with_wire(DB, &schema, &facts, "safe").await.unwrap_err()["code"], "WIRE_MODE_MISMATCH");
         assert!(db.query_one("SELECT to_regclass($1) IS NOT NULL", &[&format!("{schema}.aip_proto_meta")]).await.unwrap().get::<_, bool>(0));

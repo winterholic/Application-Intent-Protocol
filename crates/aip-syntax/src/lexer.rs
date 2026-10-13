@@ -291,7 +291,7 @@ mod tests {
     fn bad_unit() {
         assert!(lex("3 days").is_ok());
         let e = lex("3days").expect_err("unit");
-        assert_eq!(e.code, "AIP-E100");
+        assert_eq!(e.code, "POC.E100");
     }
 
     #[test]

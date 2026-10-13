@@ -16,7 +16,7 @@ test("만료 뒤에는 캐시 hit로 토큰 만료를 숨기지 않음", async (
   assert.equal(first.cached, false);
   assert.equal(first.stored, true);
   await pause(2100);
-  await assert.rejects(expiring.read(alarms), (error: any) => error.code === "TOKEN_EXPIRED");
+  await assert.rejects(expiring.read(alarms), (error: any) => error.code === "WIRE.TOKEN_EXPIRED");
 });
 
 test("알림 캐시 hit 뒤 다른 연결의 쓰기는 최대 수명 안에 반영", async () => {

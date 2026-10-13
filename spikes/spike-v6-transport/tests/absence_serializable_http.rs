@@ -1,7 +1,7 @@
 //! Delegated decision CD-5 (security audit O-26) over real HTTP: pairs of simultaneous `/apply` requests that each pass
 //! `allow not exists ...` on a snapshot. The server runs the transition in SERIALIZABLE and retries a serialization
-//! failure itself, so exactly one request of each pair succeeds and the loser sees the business answer (`FORBIDDEN`),
-//! not a `CONFLICT` the caller would have to retry. The winner's key replays after the fact.
+//! failure itself, so exactly one request of each pair succeeds and the loser sees the business answer (`WIRE.FORBIDDEN`),
+//! not a `WIRE.CONFLICT` the caller would have to retry. The winner's key replays after the fact.
 use serde_json::{json, Value};
 use spike_v1_fixture::{load_str, Form};
 use spike_v2_read::{id_wire::IdWire, sqlgen};
@@ -81,7 +81,7 @@ async fn simultaneous_requests_for_one_room_over_http_confirm_exactly_one() {
         let ok: Vec<_> = results.iter().filter(|(_, r)| r["ok"] == true).collect();
         let losers: Vec<_> = results.iter().filter(|(_, r)| r["ok"] != true).collect();
         assert_eq!((ok.len(), losers.len()), (1, 1), "room {room}: {results:?}");
-        assert_eq!(losers[0].1["code"], "FORBIDDEN", "the loser gets the business answer, not a retryable CONFLICT: {results:?}");
+        assert_eq!(losers[0].1["code"], "WIRE.FORBIDDEN", "the loser gets the business answer, not a retryable CONFLICT: {results:?}");
         winners.push((*room, ok[0].0));
     }
     let confirmed: i64 = db.query_one(&format!("SELECT count(*) FROM {schema}.booking WHERE status='CONFIRMED'"), &[]).await.unwrap().get(0);

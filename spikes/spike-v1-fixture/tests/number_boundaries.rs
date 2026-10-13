@@ -4,7 +4,7 @@ use spike_v1_fixture::lexer::{lex, Tok};
 fn an_out_of_range_integer_is_a_positioned_diagnostic() {
     for number in ["9223372036854775808", "999999999999999999999999999999999999"] {
         let error = lex(number, 17, 9).expect_err("integer overflow is a definition error");
-        assert_eq!(error.code, "LEX_NUMBER_RANGE");
+        assert_eq!(error.code, "DEF.LEX_NUMBER_RANGE");
         assert_eq!((error.span.line, error.span.col), (17, 9));
     }
 }
@@ -13,7 +13,7 @@ fn an_out_of_range_integer_is_a_positioned_diagnostic() {
 fn duration_conversion_checks_millisecond_overflow() {
     for literal in ["18446744073709552s", "307445734561826m", "9223372036854775807s", "9223372036854775807m"] {
         let error = lex(literal, 23, 4).expect_err("duration multiplication cannot wrap");
-        assert_eq!(error.code, "LEX_DURATION_RANGE", "{literal}");
+        assert_eq!(error.code, "DEF.LEX_DURATION_RANGE", "{literal}");
         assert_eq!((error.span.line, error.span.col), (23, 4));
     }
 }
@@ -28,5 +28,5 @@ fn the_existing_maximum_values_units_and_following_spans_are_preserved() {
     assert_eq!(tokens[4].tok, Tok::Dur(1000));
     assert_eq!((tokens[4].span.line, tokens[4].span.col), (4, 1));
     let error = lex("1h", 2, 8).unwrap_err();
-    assert_eq!(error.code, "LEX_BAD_DURATION");
+    assert_eq!(error.code, "DEF.LEX_BAD_DURATION");
 }

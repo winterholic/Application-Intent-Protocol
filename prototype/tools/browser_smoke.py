@@ -122,11 +122,11 @@ try {
   let authCode = null;
   try { await connect(cfg.api, 'invalid-token', contract).read(query); }
   catch (error) { authCode = codeOf(error); }
-  if (authCode !== 'UNAUTHENTICATED') throw new Error('auth error code was not readable: ' + authCode);
+  if (authCode !== 'WIRE.UNAUTHENTICATED') throw new Error('auth error code was not readable: ' + authCode);
   let contractCode = null;
   try { await connect(cfg.api, cfg.token, {...contract, fingerprint:'0'.repeat(64)}).read(query); }
   catch (error) { contractCode = codeOf(error); }
-  if (contractCode !== 'CONTRACT_MISMATCH') throw new Error('contract error code was not readable: ' + contractCode);
+  if (contractCode !== 'WIRE.CONTRACT_MISMATCH') throw new Error('contract error code was not readable: ' + contractCode);
   const writeId=cfg.wire==='safe'?12:'12';
   const writeKey='browser-write-'+cfg.wire+'-'+cfg.lang;
   dropNext=true;
@@ -140,13 +140,13 @@ try {
   const written=await client.read(query);
   if(written.cached || written.rows.some(row=>!row.checked))throw new Error('WRITE cache invalidation mismatch');
   const foreign=await client.writeExtension('Event.confirm',{id:cfg.wire==='safe'?99:'99'},{key:'browser-foreign'});
-  if(foreign.ok || foreign.code!=='EXTENSION_ERROR')throw new Error('foreign WRITE denial mismatch');
+  if(foreign.ok || foreign.code!=='WIRE.EXTENSION_ERROR')throw new Error('foreign WRITE denial mismatch');
   let writeAuthCode=null;
   try {await connect(cfg.api,'invalid-token',contract).writeExtension('Event.confirm',{id:writeId},{key:'browser-write-unauth'});}
   catch(error){writeAuthCode=codeOf(error);}
-  if(writeAuthCode!=='UNAUTHENTICATED')throw new Error('WRITE auth response hidden by CORS');
+  if(writeAuthCode!=='WIRE.UNAUTHENTICATED')throw new Error('WRITE auth response hidden by CORS');
   const stale=await connect(cfg.api,cfg.token,{...contract,fingerprint:'0'.repeat(64)}).writeExtension('Event.confirm',{id:writeId},{key:'browser-write-stale'});
-  if(stale.ok || stale.code!=='CONTRACT_MISMATCH' || client.pending().length)throw new Error('WRITE contract/pending mismatch');
+  if(stale.ok || stale.code!=='WIRE.CONTRACT_MISMATCH' || client.pending().length)throw new Error('WRITE contract/pending mismatch');
   report({ok:true, wire:cfg.wire, lang:cfg.lang,flow:'read-cache-apply-write-recovery', authCode, contractCode,writeRecovered:recovered.replayed,writeDenied:foreign.code});
 } catch (error) {
   report({ok:false, error:String(error), code:codeOf(error)});
@@ -177,11 +177,11 @@ try {
   let authCode = null;
   try { await connect(cfg.api, 'invalid-token', contract).read(query); }
   catch (error) { authCode = codeOf(error); }
-  if (authCode !== 'UNAUTHENTICATED') throw new Error('auth error code was not readable: ' + authCode);
+  if (authCode !== 'WIRE.UNAUTHENTICATED') throw new Error('auth error code was not readable: ' + authCode);
   let contractCode = null;
   try { await connect(cfg.api, cfg.token, {...contract, fingerprint:'0'.repeat(64)}).read(query); }
   catch (error) { contractCode = codeOf(error); }
-  if (contractCode !== 'CONTRACT_MISMATCH') throw new Error('contract error code was not readable: ' + contractCode);
+  if (contractCode !== 'WIRE.CONTRACT_MISMATCH') throw new Error('contract error code was not readable: ' + contractCode);
   report({ok:true, wire:cfg.wire, lang:cfg.lang, flow:'read-cache-extension', approvedApplicants:first.approvedApplicants, authCode, contractCode});
 } catch (error) {
   report({ok:false, error:String(error), code:codeOf(error)});
@@ -225,7 +225,7 @@ def post_denied_origin(api, denied_origin, token, fingerprint, wire, extension_a
         payload = json.loads(body)
     except ValueError:
         payload = {}
-    if payload.get("ok") is not False or payload.get("code") != "ORIGIN_NOT_ALLOWED":
+    if payload.get("ok") is not False or payload.get("code") != "WIRE.ORIGIN_NOT_ALLOWED":
         raise RuntimeError("unauthorized raw origin POST was not rejected")
     return {"status": status, "code": payload.get("code")}
 

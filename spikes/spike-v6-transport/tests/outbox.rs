@@ -140,7 +140,7 @@ async fn committed_notify_rows_become_one_job_per_row_across_instances() {
         let rejected =
             post(first.address, "/apply", &fp, json!({"key":format!("again-{order}"),"request":{"apply":"Order.pay","target":{"ids":[order]}}}))
                 .await;
-        assert_eq!(rejected["code"], "INVALID_STATE", "{lang:?}: {rejected}");
+        assert_eq!(rejected["code"], "WIRE.INVALID_STATE", "{lang:?}: {rejected}");
 
         let mut shipped = false;
         for _ in 0..200 {

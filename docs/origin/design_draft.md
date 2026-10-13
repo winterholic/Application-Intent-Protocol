@@ -773,7 +773,7 @@ command Payment {
 Compiler는 위험한 조합을 검출해야 한다.
 
 ``` text
-AIP-E3021
+POC.E3021
 
 Unsafe external side effect detected.
 
@@ -1029,7 +1029,7 @@ AIP 표준 오류 예:
 
 ``` json
 {
-  "code": "AIP.AUTH.FORBIDDEN",
+  "code": "POC.AUTH.FORBIDDEN",
   "operation": "Order.Cancel",
   "reason": "OWNER_REQUIRED",
   "path": "order.owner",

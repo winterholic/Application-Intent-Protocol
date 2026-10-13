@@ -43,5 +43,5 @@ fn worker_configuration_is_explicit_and_checked_before_database_access() {
         .unwrap();
     assert!(!run.status.success());
     let event: serde_json::Value = serde_json::from_slice(&run.stderr).unwrap();
-    assert_eq!(event["code"], "WORKER_CONFIG", "invalid extension path precedes the failing database");
+    assert_eq!(event["code"], "WIRE.WORKER_CONFIG", "invalid extension path precedes the failing database");
 }

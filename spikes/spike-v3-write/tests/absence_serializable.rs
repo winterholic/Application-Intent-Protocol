@@ -75,7 +75,7 @@ async fn concurrent_confirmations_of_one_room_cannot_both_succeed_while_other_ro
     outcomes.sort();
     let confirmed: i64 =
         first.query_one(&format!("SELECT count(*) FROM {schema}.booking WHERE room_id=1 AND status='CONFIRMED'"), &[]).await.unwrap().get(0);
-    assert_eq!((outcomes, confirmed), (["FORBIDDEN", "OK"], 1), "exactly one booking per room: {outcomes:?}, confirmed={confirmed}");
+    assert_eq!((outcomes, confirmed), (["WIRE.FORBIDDEN", "OK"], 1), "exactly one booking per room: {outcomes:?}, confirmed={confirmed}");
 
     // different rooms never conflict, even with the same overlap
     let (request_a, request_b, caller) = (confirm(21), confirm(31), who(1));

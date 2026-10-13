@@ -49,11 +49,11 @@ test("생성 계약 typed connect가 HTTP read/cache/apply/세션과 관계 타�
 
   const raw = await client.post("/read", { query: { read: "Recruitment", select: ["status"] } });
   assert.equal(raw.ok, false);
-  assert.equal(raw.code, "FIELD_NOT_EXPOSED", "타입 SDK를 건너뛴 raw 요청도 서버 정책 검사를 받아야 함");
+  assert.equal(raw.code, "WIRE.FIELD_NOT_EXPOSED", "타입 SDK를 건너뛴 raw 요청도 서버 정책 검사를 받아야 함");
 
   const wrongBinding = { ...contract, fingerprint: "0".repeat(64) };
   const wrong = connectTyped(URL, T1, wrongBinding);
-  await assert.rejects(wrong.read(alarmQuery), isCode("CONTRACT_MISMATCH"));
+  await assert.rejects(wrong.read(alarmQuery), isCode("WIRE.CONTRACT_MISMATCH"));
   void cardTitle;
   void clubName;
 });

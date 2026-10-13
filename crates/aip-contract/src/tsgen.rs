@@ -276,7 +276,7 @@ export interface Subscription {
   close(): void;
 }
 
-/** What the server says when it ends a subscription, or the connection drops (`AIP.UNAVAILABLE`). */
+/** What the server says when it ends a subscription, or the connection drops (`POC.UNAVAILABLE`). */
 export type SubscriptionFailure<E> = AipErrorBody & E;
 
 function makeSubscribe<M extends Record<string, { input: unknown; output: unknown; error: unknown }>>(opts: SubscribeClientOptions) {
@@ -311,8 +311,8 @@ function makeSubscribe<M extends Record<string, { input: unknown; output: unknow
         fail(msg);
       }
     };
-    ws.onerror = () => fail({ code: 'AIP.UNAVAILABLE', intent: name, message: 'the connection failed', retryable: true });
-    ws.onclose = () => fail({ code: 'AIP.UNAVAILABLE', intent: name, message: 'the connection was closed', retryable: true });
+    ws.onerror = () => fail({ code: 'POC.UNAVAILABLE', intent: name, message: 'the connection failed', retryable: true });
+    ws.onclose = () => fail({ code: 'POC.UNAVAILABLE', intent: name, message: 'the connection was closed', retryable: true });
     return {
       close() {
         if (done) return;

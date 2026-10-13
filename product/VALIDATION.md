@@ -78,7 +78,7 @@ V6의 별도 `operations` 테스트는 Node/Python × safe/decimal에서 계약�
 
 2026-10-11에는 core, 전체 v4 worker 및 v6 transport suite를 실행해 exit 0을 확인했다. 별도 artifact의 설치 SDK smoke도 Node/Python × decimal/safe 네 조합에서 Job 성공·멱등 재생과 기존 read/write 경로를 검사했다. 실제 명령·결과와 환경은 [VERIFICATION의 해당 회차](VERIFICATION.md#관리형-durable-execution-2026-10-11)에 기록했다. v12 타입 회귀 테스트의 개발자 절대 경로도 제거해 이동한 저장소에서 재실행했다.
 
-이 검사는 외부 provider의 실제 운영 계정·exactly-once 효과·SSE/WebSocket·대용량 object storage·Linux filesystem 격리를 증명하지 않는다. effect가 PENDING/UNKNOWN인 상태에서 자동으로 외부 mutation을 다시 보내지 않으며, 외부 요청과 PostgreSQL commit 사이의 crash ambiguity는 `EFFECT_UNKNOWN`으로 남길 수 있다. 자세한 범위·보존 상한·설정 방법은 [관리형 execution 문서](MANAGED-EXECUTION.md)를 따른다.
+이 검사는 외부 provider의 실제 운영 계정·exactly-once 효과·SSE/WebSocket·대용량 object storage·Linux filesystem 격리를 증명하지 않는다. effect가 PENDING/UNKNOWN인 상태에서 자동으로 외부 mutation을 다시 보내지 않으며, 외부 요청과 PostgreSQL commit 사이의 crash ambiguity는 `WIRE.EFFECT_UNKNOWN`으로 남길 수 있다. 자세한 범위·보존 상한·설정 방법은 [관리형 execution 문서](MANAGED-EXECUTION.md)를 따른다.
 
 
 ## 2026-10-12 인프라 보완

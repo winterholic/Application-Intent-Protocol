@@ -322,7 +322,7 @@ fn schema_changes_and_missing_tables_are_rejected_without_ddl_or_data_reset() {
     changed.arg("serve").arg(&file).args(["--schema", schema.name(), "--db-url", LOCAL_DB, "--listen", "127.0.0.1:0", "--wire", "decimal"]);
     let output = run_bounded(changed, Duration::from_secs(5));
     std::fs::remove_dir_all(&dir).unwrap();
-    assert_eq!(result_json(&output)["code"], "SCHEMA_MISMATCH");
+    assert_eq!(result_json(&output)["code"], "WIRE.SCHEMA_MISMATCH");
     assert!(psql(&format!("DROP TABLE {}.aip_idem", schema.name())).status.success());
     let missing = run_bounded(serve_command(schema.name(), LOCAL_DB, "127.0.0.1:0"), Duration::from_secs(5));
     assert_eq!(result_json(&missing)["code"], "SCHEMA_NOT_READY");
@@ -363,7 +363,7 @@ fn same_named_objects_with_changed_structure_are_rejected_before_binding() {
         assert!(altered.status.success(), "mutation failed: {mutation}: {}", String::from_utf8_lossy(&altered.stderr));
         let output = run_bounded(serve_command(schema.name(), LOCAL_DB, &address), Duration::from_secs(5));
         let result = result_json(&output);
-        if result["code"] != "SCHEMA_MISMATCH" {
+        if result["code"] != "WIRE.SCHEMA_MISMATCH" {
             failures.push(format!("{mutation}: {result}"));
         }
         let retained = psql(&format!("SELECT id FROM {}.member", schema.name()));
@@ -417,6 +417,6 @@ fn inheritance_from_outside_the_managed_schema_is_rejected_before_binding() {
     );
     let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let output = run_bounded(serve_command(schema.name(), LOCAL_DB, &occupied.local_addr().unwrap().to_string()), Duration::from_secs(5));
-    assert_eq!(result_json(&output)["code"], "SCHEMA_MISMATCH");
+    assert_eq!(result_json(&output)["code"], "WIRE.SCHEMA_MISMATCH");
     assert_eq!(String::from_utf8_lossy(&psql(&format!("SELECT count(*) FROM {}.inherited", external.name())).stdout).trim(), "1");
 }

@@ -100,12 +100,12 @@ async fn unrelated_writes_do_not_scan_checked_tables_and_related_writes_are_stil
 
     // Behavior is unchanged where Allocation is written, directly or through an effect of another resource.
     // check through an effect: ticket 11's effect releases allocation 20, which has no note; Allocation is not the apply target.
-    assert_eq!(outcome(&mut db, &facts, 1, "Ticket.closeAndRelease", 11).await, "CHECK_FAILED");
+    assert_eq!(outcome(&mut db, &facts, 1, "Ticket.closeAndRelease", 11).await, "WIRE.CHECK_FAILED");
     // capacity through an effect: ticket 12's two allocations plus the two already released by owner 1 exceed atMost 3.
-    assert_eq!(outcome(&mut db, &facts, 1, "Ticket.closeAndRelease", 12).await, "INVARIANT_VIOLATED");
+    assert_eq!(outcome(&mut db, &facts, 1, "Ticket.closeAndRelease", 12).await, "WIRE.INVARIANT_VIOLATED");
     // capacity directly: the third release fits, the fourth does not.
     assert_eq!(outcome(&mut db, &facts, 1, "Allocation.release", 25).await, "OK");
-    assert_eq!(outcome(&mut db, &facts, 1, "Allocation.release", 26).await, "INVARIANT_VIOLATED");
+    assert_eq!(outcome(&mut db, &facts, 1, "Allocation.release", 26).await, "WIRE.INVARIANT_VIOLATED");
     // Refused requests leave nothing behind: owner 1 has its two preloaded rows plus allocation 25.
     let released: i64 =
         db.query_one(&format!("SELECT count(*) FROM {schema}.allocation WHERE owner_id=1 AND status='RELEASED'"), &[]).await.unwrap().get(0);

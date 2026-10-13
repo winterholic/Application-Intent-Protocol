@@ -17,11 +17,11 @@ async def fanout(input, ctx):
                 await ctx.data.apply("Subscription", "recovered", [subscription["id"]], f"recovered-{key}")
         except Exception as error:  # noqa: BLE001
             code = getattr(error, "code", "UNKNOWN")
-            if code not in ("DELIVERY_FAILED", "DESTINATION_REJECTED"):
+            if code not in ("WIRE.DELIVERY_FAILED", "WIRE.DESTINATION_REJECTED"):
                 raise
             failed += 1
             # A rejected destination (a private address, a malformed URL) never becomes valid by waiting; a failed delivery may.
-            hopeless = code == "DESTINATION_REJECTED" or subscription["failures"] + 1 >= MAX_CONSECUTIVE_FAILURES
+            hopeless = code == "WIRE.DESTINATION_REJECTED" or subscription["failures"] + 1 >= MAX_CONSECUTIVE_FAILURES
             await ctx.data.apply("Subscription", "failed", [subscription["id"]], f"failed-{key}")
             if hopeless:
                 await ctx.data.apply("Subscription", "disable", [subscription["id"]], f"disable-{key}")

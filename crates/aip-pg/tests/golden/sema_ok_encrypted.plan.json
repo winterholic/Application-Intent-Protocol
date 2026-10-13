@@ -9,19 +9,19 @@
     },
     "constraint_errors": {
       "_aip_approval_pending": {
-        "code": "AIP.CONFLICT.UNIQUE",
+        "code": "POC.CONFLICT.UNIQUE",
         "reason": "APPROVAL_ALREADY_PENDING"
       },
       "_aip_approval_vote_once": {
-        "code": "AIP.CONFLICT.UNIQUE",
+        "code": "POC.CONFLICT.UNIQUE",
         "reason": "ALREADY_VOTED"
       },
       "club_member__u4": {
-        "code": "AIP.CONFLICT.UNIQUE",
+        "code": "POC.CONFLICT.UNIQUE",
         "reason": "ALREADY_MEMBER"
       },
       "vault__u3": {
-        "code": "AIP.CONFLICT.UNIQUE",
+        "code": "POC.CONFLICT.UNIQUE",
         "reason": null
       }
     },
@@ -273,23 +273,23 @@
         "emits": [],
         "errors": [
           {
-            "code": "AIP.AUTH.FORBIDDEN",
+            "code": "POC.AUTH.FORBIDDEN",
             "reason": null
           },
           {
-            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "code": "POC.AUTH.UNAUTHENTICATED",
             "reason": null
           },
           {
-            "code": "AIP.CONCURRENCY.CONFLICT",
+            "code": "POC.CONCURRENCY.CONFLICT",
             "reason": null
           },
           {
-            "code": "AIP.CONFLICT.UNIQUE",
+            "code": "POC.CONFLICT.UNIQUE",
             "reason": null
           },
           {
-            "code": "AIP.INPUT.INVALID",
+            "code": "POC.INPUT.INVALID",
             "reason": null
           }
         ],
@@ -380,27 +380,27 @@
         "emits": [],
         "errors": [
           {
-            "code": "AIP.AUTH.FORBIDDEN",
+            "code": "POC.AUTH.FORBIDDEN",
             "reason": null
           },
           {
-            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "code": "POC.AUTH.UNAUTHENTICATED",
             "reason": null
           },
           {
-            "code": "AIP.CONCURRENCY.CONFLICT",
+            "code": "POC.CONCURRENCY.CONFLICT",
             "reason": null
           },
           {
-            "code": "AIP.CONFLICT.UNIQUE",
+            "code": "POC.CONFLICT.UNIQUE",
             "reason": null
           },
           {
-            "code": "AIP.INPUT.INVALID",
+            "code": "POC.INPUT.INVALID",
             "reason": null
           },
           {
-            "code": "AIP.NOT_FOUND",
+            "code": "POC.NOT_FOUND",
             "reason": "VAULT_NOT_FOUND"
           }
         ],
@@ -507,11 +507,11 @@
         ],
         "errors": [
           {
-            "code": "AIP.AUTH.FORBIDDEN",
+            "code": "POC.AUTH.FORBIDDEN",
             "reason": null
           },
           {
-            "code": "AIP.INPUT.INVALID",
+            "code": "POC.INPUT.INVALID",
             "reason": null
           }
         ],

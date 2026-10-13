@@ -48,7 +48,7 @@ pub fn scoped(p: &Program, entity: &str) -> bool {
 }
 
 /// The hops from a scoped entity to its root. `Err` says why the path is not usable
-/// (reported by analysis as `AIP-E313`); backends treat an `Err` as "not scoped".
+/// (reported by analysis as `POC.E313`); backends treat an `Err` as "not scoped".
 pub fn path(p: &Program, entity: &str) -> Result<Vec<Hop>, String> {
     let Some(via) = p.entities.get(entity).and_then(|e| e.traits.tenant.as_ref()) else {
         return Err(format!("{entity} has no tenant path"));

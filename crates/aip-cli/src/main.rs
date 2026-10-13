@@ -5,6 +5,7 @@ use std::process::ExitCode;
 
 mod docs;
 mod explain;
+mod registry;
 
 #[derive(Parser)]
 #[command(name = "aip", version, about = "AIP compiler and runtime")]
@@ -40,20 +41,22 @@ enum Cmd {
     },
     /// Explain one intent: its steps and exact SQL
     Explain { file: PathBuf, intent: String },
-    /// Explain a diagnostic or error code (for example AIP-E103 or AIP.CONFLICT.UNIQUE): meaning, fix, HTTP status
+    /// Explain an error code (for example POC.E103, DEF.UNKNOWN_FIELD or WIRE.BAD_VALUE): meaning, fix, and for the wire and runtime codes the retry
+    /// guidance. A code of an old scheme (an `AIP-` or `AIP.` prefix, or a bare product name such as UNKNOWN_FIELD) is mapped to its new name
     ExplainCode {
         code: String,
         #[arg(long)]
         json: bool,
     },
-    /// List every diagnostic and error code of the registry (`--markdown` is the text of spec/diagnostics.md, `--json` the entries; `--definition` lists the codes of the product definition checker instead)
+    /// List every error code. Codes are AREA.NAME: DEF (product definition checker), WIRE (product HTTP API), CLIENT (raised by the SDKs), POC (PoC language and runtime).
+    /// `--area poc|def|wire|client` limits the listing (default all), `--json` prints the entries, `--markdown` the generated spec document of one area
     Diagnostics {
         #[arg(long)]
         markdown: bool,
         #[arg(long)]
         json: bool,
-        #[arg(long)]
-        definition: bool,
+        #[arg(long, default_value = "all")]
+        area: String,
     },
     /// Apply the schema to DATABASE_URL: the first time everything is created, later the change from the deployed program is planned and applied
     /// in one transaction (`--plan` only prints it; `--reset` drops and recreates)
@@ -343,62 +346,38 @@ fn run() -> Result<ExitCode> {
                 }
             }
         }
-        Cmd::ExplainCode { code, json } => match aip_ir::codes::lookup(&code.to_uppercase()) {
-            Some(c) => {
-                if json {
-                    println!("{}", serde_json::to_string_pretty(c)?);
-                } else {
-                    print!("{}", aip_ir::codes::render_text(c));
-                }
+        Cmd::ExplainCode { code, json } => match registry::explain(&code, json) {
+            Some(text) => {
+                print!("{text}");
                 Ok(ExitCode::SUCCESS)
             }
-            None => match aip_service::definition_registry::lookup(&code.to_uppercase()) {
-                Some(c) => {
-                    if json {
-                        println!("{}", serde_json::to_string_pretty(&definition_entry(c))?);
-                    } else {
-                        print!("{}", aip_service::definition_registry::render_text(c));
-                    }
-                    Ok(ExitCode::SUCCESS)
-                }
-                None => match aip_service::wire_registry::lookup(&code.to_uppercase()) {
-                    Some(c) => {
-                        if json {
-                            let entry = serde_json::json!({"code": c.code, "class": c.class.name(), "retry": c.retry.name(), "explain": c.explain, "fix": c.fix});
-                            println!("{}", serde_json::to_string_pretty(&entry)?);
-                        } else {
-                            print!("{}", aip_service::wire_registry::render_text(c));
-                        }
-                        Ok(ExitCode::SUCCESS)
-                    }
-                    None => {
-                        eprintln!(
-                            "unknown code {code}; `aip diagnostics` lists the registered codes, `aip diagnostics --definition` those of the product definition checker; product HTTP codes are in spec/wire-errors.md"
-                        );
-                        Ok(ExitCode::FAILURE)
-                    }
-                },
-            },
+            None => {
+                eprintln!("unknown code {code}; `aip diagnostics` lists every registered code (codes are AREA.NAME: DEF, WIRE, CLIENT or POC)");
+                Ok(ExitCode::FAILURE)
+            }
         },
-        Cmd::Diagnostics { markdown, json, definition } => {
-            if definition {
-                if markdown {
-                    print!("{}", aip_service::definition_registry::render_markdown());
-                } else if json {
-                    let all: Vec<_> = aip_service::definition_registry::all().iter().map(definition_entry).collect();
-                    println!("{}", serde_json::to_string_pretty(&all)?);
-                } else {
-                    for c in aip_service::definition_registry::all() {
-                        println!("{:<36} {}", c.code, c.title);
+        Cmd::Diagnostics { markdown, json, area } => {
+            let area = area.to_lowercase();
+            if markdown {
+                match registry::render_markdown(&area) {
+                    Some(text) => print!("{text}"),
+                    None => {
+                        eprintln!("--markdown needs one area: --area poc|def|wire|client");
+                        return Ok(ExitCode::FAILURE);
                     }
                 }
-            } else if markdown {
-                print!("{}", aip_ir::codes::render_markdown());
-            } else if json {
-                println!("{}", serde_json::to_string_pretty(aip_ir::codes::all())?);
+                return Ok(ExitCode::SUCCESS);
+            }
+            let entries = if area == "all" { registry::all_entries() } else { registry::entries(&area) };
+            if entries.is_empty() {
+                eprintln!("unknown area {area}; use poc, def, wire, client or all");
+                return Ok(ExitCode::FAILURE);
+            }
+            if json {
+                println!("{}", serde_json::to_string_pretty(&entries)?);
             } else {
-                for c in aip_ir::codes::all() {
-                    println!("{:<36} {:<8} {}", c.code, if c.severity == aip_ir::codes::Severity::Warning { "warning" } else { "error" }, c.title);
+                for e in &entries {
+                    println!("{:<44} {:<5} {}", e["code"].as_str().unwrap_or_default(), e["area"].as_str().unwrap_or_default(), registry::summary(e));
                 }
             }
             Ok(ExitCode::SUCCESS)
@@ -427,10 +406,6 @@ fn run() -> Result<ExitCode> {
             Ok(if checked.has_errors() { ExitCode::FAILURE } else { ExitCode::SUCCESS })
         }
     }
-}
-
-fn definition_entry(c: &aip_service::definition_registry::Info) -> serde_json::Value {
-    serde_json::json!({"code": c.code, "title": c.title, "explain": c.explain, "fix": c.fix, "example": c.example})
 }
 
 /// The PoC runtime commands need the optional `poc-runtime` build; the product path is `aip service`.

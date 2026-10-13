@@ -6,23 +6,23 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_NOT_FOUND"
         }
       ],
@@ -89,27 +89,27 @@
       ],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_QUESTION_NOT_FOUND"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "ALREADY_ANSWERED"
         }
       ],
@@ -157,43 +157,43 @@
       ],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ALREADY_APPLIED"
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ALREADY_CLUB_MEMBER"
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.INVARIANT.VIOLATED",
+          "code": "POC.INVARIANT.VIOLATED",
           "reason": "CLUB_MEMBER_EXACTLY_ONE"
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "APPLY_NOT_FOUND"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "APPLIES_FROM_DIFFERENT_CLUBS"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "APPLY_STATUS_INVALID_TRANSITION"
         }
       ],
@@ -231,39 +231,39 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": "NOT_AN_APPROVER"
         },
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": "SELF_APPROVAL_FORBIDDEN"
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ALREADY_VOTED"
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "FINANCIAL_RECORD_NOT_FOUND"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "APPROVAL_EXPIRED"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "APPROVAL_NOT_PENDING"
         }
       ],
@@ -311,31 +311,31 @@
       ],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.OVERLAP",
+          "code": "POC.CONFLICT.OVERLAP",
           "reason": "RECRUITMENT_PERIOD_OVERLAP"
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "RECRUITMENT_NOT_FOUND"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "RECRUITMENT_STATUS_INVALID_TRANSITION"
         }
       ],
@@ -368,23 +368,23 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_NOT_FOUND"
         }
       ],
@@ -443,35 +443,35 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ALREADY_BLOCKED"
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.INVARIANT.VIOLATED",
+          "code": "POC.INVARIANT.VIOLATED",
           "reason": "NOT_SELF"
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "ACTIVITY_COMMENT_NOT_FOUND"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "AUTHOR_UNAVAILABLE"
         }
       ],
@@ -504,31 +504,31 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": "ONLY_REQUESTER_CAN_CANCEL"
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "FINANCIAL_RECORD_NOT_FOUND"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "APPROVAL_EXPIRED"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "APPROVAL_NOT_PENDING"
         }
       ],
@@ -559,39 +559,39 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ALREADY_CLUB_MEMBER"
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ALREADY_REGISTERED"
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "NICKNAME_TAKEN"
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.INVARIANT.VIOLATED",
+          "code": "POC.INVARIANT.VIOLATED",
           "reason": "CLUB_MEMBER_EXACTLY_ONE"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "ADMIN_OF_SCHOOL_CLUB"
         }
       ],
@@ -617,39 +617,39 @@
       ],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ALREADY_CLUB_MEMBER"
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.INVARIANT.VIOLATED",
+          "code": "POC.INVARIANT.VIOLATED",
           "reason": "CLUB_MEMBER_EXACTLY_ONE"
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_MEMBER_NOT_FOUND"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "CANNOT_CHANGE_OWN_ROLE"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "USE_ENTRUST_FOR_ADMIN"
         }
       ],
@@ -693,35 +693,35 @@
       ],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ALREADY_CLUB_MEMBER"
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.INVARIANT.VIOLATED",
+          "code": "POC.INVARIANT.VIOLATED",
           "reason": "CLUB_MEMBER_EXACTLY_ONE"
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_MEMBER_NOT_FOUND"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "MEMBERS_FROM_DIFFERENT_CLUBS"
         }
       ],
@@ -769,31 +769,31 @@
       ],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.OVERLAP",
+          "code": "POC.CONFLICT.OVERLAP",
           "reason": "RECRUITMENT_PERIOD_OVERLAP"
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "RECRUITMENT_NOT_FOUND"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "RECRUITMENT_NOT_OPEN"
         }
       ],
@@ -828,39 +828,39 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ALREADY_CLUB_MEMBER"
         },
         {
-          "code": "AIP.IDEMPOTENCY.KEY_REUSED",
+          "code": "POC.IDEMPOTENCY.KEY_REUSED",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.INVARIANT.VIOLATED",
+          "code": "POC.INVARIANT.VIOLATED",
           "reason": "CLUB_MEMBER_EXACTLY_ONE"
         },
         {
-          "code": "AIP.INVARIANT.VIOLATED",
+          "code": "POC.INVARIANT.VIOLATED",
           "reason": "SCHOOL_MATCHES_AFFILIATION"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "SCHOOL_AUTH_REQUIRED"
         }
       ],
@@ -937,27 +937,27 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.IDEMPOTENCY.KEY_REUSED",
+          "code": "POC.IDEMPOTENCY.KEY_REUSED",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_NOT_FOUND"
         }
       ],
@@ -1031,27 +1031,27 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.IDEMPOTENCY.KEY_REUSED",
+          "code": "POC.IDEMPOTENCY.KEY_REUSED",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_NOT_FOUND"
         }
       ],
@@ -1121,35 +1121,35 @@
       ],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.OVERLAP",
+          "code": "POC.CONFLICT.OVERLAP",
           "reason": "RECRUITMENT_PERIOD_OVERLAP"
         },
         {
-          "code": "AIP.IDEMPOTENCY.KEY_REUSED",
+          "code": "POC.IDEMPOTENCY.KEY_REUSED",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_NOT_FOUND"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "NO_APPLY_FORM"
         }
       ],
@@ -1212,23 +1212,23 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_ACTIVITY_NOT_FOUND"
         }
       ],
@@ -1261,23 +1261,23 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "APPLY_DRAFT_NOT_FOUND"
         }
       ],
@@ -1312,31 +1312,31 @@
       ],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": "ONLY_ADMIN_CAN_DELETE"
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.INVARIANT.VIOLATED",
+          "code": "POC.INVARIANT.VIOLATED",
           "reason": "SCHOOL_MATCHES_AFFILIATION"
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_NOT_FOUND"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "CLUB_HAS_OTHER_MEMBERS"
         }
       ],
@@ -1369,23 +1369,23 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_EVENT_NOT_FOUND"
         }
       ],
@@ -1418,23 +1418,23 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_FAQ_NOT_FOUND"
         }
       ],
@@ -1467,27 +1467,27 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.INVARIANT.VIOLATED",
+          "code": "POC.INVARIANT.VIOLATED",
           "reason": "SAME_ACTIVITY"
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "ACTIVITY_COMMENT_NOT_FOUND"
         }
       ],
@@ -1520,23 +1520,23 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "FINANCIAL_RECORD_NOT_FOUND"
         }
       ],
@@ -1569,31 +1569,31 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.CAPACITY",
+          "code": "POC.CONFLICT.CAPACITY",
           "reason": "TOO_MANY_FIXED_NOTICES"
         },
         {
-          "code": "AIP.CONFLICT.STALE_VERSION",
+          "code": "POC.CONFLICT.STALE_VERSION",
           "reason": "CLUB_NOTICE_VERSION_STALE"
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_NOTICE_NOT_FOUND"
         }
       ],
@@ -1636,31 +1636,31 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.OVERLAP",
+          "code": "POC.CONFLICT.OVERLAP",
           "reason": "RECRUITMENT_PERIOD_OVERLAP"
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "RECRUITMENT_NOT_FOUND"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "RECRUITMENT_HAS_APPLIES"
         }
       ],
@@ -1695,35 +1695,35 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.CAPACITY",
+          "code": "POC.CONFLICT.CAPACITY",
           "reason": "TOO_MANY_IMAGES"
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "ACTIVITY_IMAGE_NOT_FOUND"
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_ACTIVITY_NOT_FOUND"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "IMAGE_NOT_IN_ACTIVITY"
         }
       ],
@@ -1810,27 +1810,27 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.INVARIANT.VIOLATED",
+          "code": "POC.INVARIANT.VIOLATED",
           "reason": "SAME_ACTIVITY"
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "ACTIVITY_COMMENT_NOT_FOUND"
         }
       ],
@@ -1876,23 +1876,23 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "FINANCIAL_RECORD_NOT_FOUND"
         }
       ],
@@ -1957,31 +1957,31 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.CAPACITY",
+          "code": "POC.CONFLICT.CAPACITY",
           "reason": "TOO_MANY_FIXED_NOTICES"
         },
         {
-          "code": "AIP.CONFLICT.STALE_VERSION",
+          "code": "POC.CONFLICT.STALE_VERSION",
           "reason": "CLUB_NOTICE_VERSION_STALE"
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_NOTICE_NOT_FOUND"
         }
       ],
@@ -2050,39 +2050,39 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ALREADY_CLUB_MEMBER"
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.INVARIANT.VIOLATED",
+          "code": "POC.INVARIANT.VIOLATED",
           "reason": "CLUB_MEMBER_EXACTLY_ONE"
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_MEMBER_NOT_FOUND"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "CANNOT_ENTRUST_TO_SELF"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "ENTRUST_TARGET_INACTIVE"
         }
       ],
@@ -2115,23 +2115,23 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "RECRUITMENT_NOT_FOUND"
         }
       ],
@@ -2175,19 +2175,19 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         }
       ],
@@ -2208,23 +2208,23 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_EVENT_NOT_FOUND"
         }
       ],
@@ -2255,23 +2255,23 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_NOT_FOUND"
         }
       ],
@@ -2302,27 +2302,27 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_NOT_FOUND"
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "MEMBER_NOT_FOUND"
         }
       ],
@@ -2362,35 +2362,35 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ALREADY_ATTENDED"
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_EVENT_NOT_FOUND"
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_MEMBER_NOT_FOUND"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "MEMBER_NOT_IN_CLUB"
         }
       ],
@@ -2438,35 +2438,35 @@
       ],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ALREADY_APPLIED"
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "APPLY_NOT_FOUND"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "APPLIES_FROM_DIFFERENT_CLUBS"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "APPLY_STATUS_INVALID_TRANSITION"
         }
       ],
@@ -2520,31 +2520,31 @@
       ],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.CAPACITY",
+          "code": "POC.CONFLICT.CAPACITY",
           "reason": "TOO_MANY_IMAGES"
         },
         {
-          "code": "AIP.IDEMPOTENCY.KEY_REUSED",
+          "code": "POC.IDEMPOTENCY.KEY_REUSED",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_NOT_FOUND"
         }
       ],
@@ -2620,35 +2620,35 @@
       ],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.IDEMPOTENCY.KEY_REUSED",
+          "code": "POC.IDEMPOTENCY.KEY_REUSED",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.INVARIANT.VIOLATED",
+          "code": "POC.INVARIANT.VIOLATED",
           "reason": "SAME_ACTIVITY"
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "ACTIVITY_COMMENT_NOT_FOUND"
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_ACTIVITY_NOT_FOUND"
         }
       ],
@@ -2707,31 +2707,31 @@
       ],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.CAPACITY",
+          "code": "POC.CONFLICT.CAPACITY",
           "reason": "TOO_MANY_FIXED_NOTICES"
         },
         {
-          "code": "AIP.IDEMPOTENCY.KEY_REUSED",
+          "code": "POC.IDEMPOTENCY.KEY_REUSED",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_NOT_FOUND"
         }
       ],
@@ -2811,39 +2811,39 @@
       ],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ALREADY_CLUB_MEMBER"
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.INVARIANT.VIOLATED",
+          "code": "POC.INVARIANT.VIOLATED",
           "reason": "CLUB_MEMBER_EXACTLY_ONE"
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_NOT_FOUND"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "ADMIN_MUST_ENTRUST_FIRST"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "NOT_CLUB_MEMBER"
         }
       ],
@@ -2876,27 +2876,27 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ALREADY_ATTENDED"
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "INVALID_GRANT_LINK"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "NOT_CLUB_MEMBER"
         }
       ],
@@ -2933,31 +2933,31 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ALREADY_CLUB_MEMBER"
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.INVARIANT.VIOLATED",
+          "code": "POC.INVARIANT.VIOLATED",
           "reason": "CLUB_MEMBER_EXACTLY_ONE"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "INVALID_GRANT_LINK"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "SCHOOL_MISMATCH"
         }
       ],
@@ -3007,31 +3007,31 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ALREADY_CLUB_MEMBER"
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.INVARIANT.VIOLATED",
+          "code": "POC.INVARIANT.VIOLATED",
           "reason": "CLUB_MEMBER_EXACTLY_ONE"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "INVALID_GRANT_LINK"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "SCHOOL_MISMATCH"
         }
       ],
@@ -3083,35 +3083,35 @@
       ],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ALREADY_APPLIED"
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "APPLY_NOT_FOUND"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "APPLIES_FROM_DIFFERENT_CLUBS"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "APPLY_STATUS_INVALID_TRANSITION"
         }
       ],
@@ -3148,23 +3148,23 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "RECRUITMENT_NOT_FOUND"
         }
       ],
@@ -3206,39 +3206,39 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": "NOT_AN_APPROVER"
         },
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": "SELF_APPROVAL_FORBIDDEN"
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ALREADY_VOTED"
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "FINANCIAL_RECORD_NOT_FOUND"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "APPROVAL_EXPIRED"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "APPROVAL_NOT_PENDING"
         }
       ],
@@ -3286,31 +3286,31 @@
       ],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ALREADY_CLUB_MEMBER"
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.INVARIANT.VIOLATED",
+          "code": "POC.INVARIANT.VIOLATED",
           "reason": "CLUB_MEMBER_EXACTLY_ONE"
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_MEMBER_NOT_FOUND"
         }
       ],
@@ -3343,23 +3343,23 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ALREADY_REPORTED"
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         }
       ],
@@ -3410,27 +3410,27 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "APPROVAL_ALREADY_PENDING"
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "FINANCIAL_RECORD_NOT_FOUND"
         }
       ],
@@ -3463,23 +3463,23 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "VERIFICATION_RESEND_TOO_SOON"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "VERIFICATION_TARGET_INVALID"
         }
       ],
@@ -3509,35 +3509,35 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ALREADY_REPORTED"
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.INVARIANT.VIOLATED",
+          "code": "POC.INVARIANT.VIOLATED",
           "reason": "SAME_ACTIVITY"
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "REPORT_NOT_FOUND"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "REPORT_STATUS_INVALID_TRANSITION"
         }
       ],
@@ -3584,31 +3584,31 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.IDEMPOTENCY.KEY_REUSED",
+          "code": "POC.IDEMPOTENCY.KEY_REUSED",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "RECRUITMENT_NOT_FOUND"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "RECRUITMENT_CLOSED"
         }
       ],
@@ -3683,35 +3683,35 @@
       ],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ALREADY_APPLIED"
         },
         {
-          "code": "AIP.IDEMPOTENCY.KEY_REUSED",
+          "code": "POC.IDEMPOTENCY.KEY_REUSED",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "RECRUITMENT_NOT_FOUND"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "RECRUITMENT_CLOSED"
         }
       ],
@@ -3786,27 +3786,27 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ALREADY_LIKED"
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_ACTIVITY_NOT_FOUND"
         }
       ],
@@ -3839,27 +3839,27 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ALREADY_BOOKMARKED"
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_NOT_FOUND"
         }
       ],
@@ -3892,27 +3892,27 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ALREADY_LIKED"
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "ACTIVITY_COMMENT_NOT_FOUND"
         }
       ],
@@ -3945,31 +3945,31 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.CAPACITY",
+          "code": "POC.CONFLICT.CAPACITY",
           "reason": "TOO_MANY_FIXED_NOTICES"
         },
         {
-          "code": "AIP.CONFLICT.STALE_VERSION",
+          "code": "POC.CONFLICT.STALE_VERSION",
           "reason": "CLUB_NOTICE_VERSION_STALE"
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_NOTICE_NOT_FOUND"
         }
       ],
@@ -4012,27 +4012,27 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ALREADY_BOOKMARKED"
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "RECRUITMENT_NOT_FOUND"
         }
       ],
@@ -4065,31 +4065,31 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ALREADY_ATTENDED"
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_EVENT_NOT_FOUND"
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_MEMBER_NOT_FOUND"
         }
       ],
@@ -4137,75 +4137,75 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.CAPACITY",
+          "code": "POC.CONFLICT.CAPACITY",
           "reason": "TOO_MANY_FIXED_NOTICES"
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ALREADY_APPLIED"
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ALREADY_ATTENDED"
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ALREADY_BLOCKED"
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ALREADY_BOOKMARKED"
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ALREADY_CLUB_MEMBER"
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ALREADY_LIKED"
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ALREADY_REGISTERED"
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ALREADY_REPORTED"
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "NICKNAME_TAKEN"
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.INVARIANT.VIOLATED",
+          "code": "POC.INVARIANT.VIOLATED",
           "reason": "CLUB_MEMBER_EXACTLY_ONE"
         },
         {
-          "code": "AIP.INVARIANT.VIOLATED",
+          "code": "POC.INVARIANT.VIOLATED",
           "reason": "NOT_SELF"
         },
         {
-          "code": "AIP.INVARIANT.VIOLATED",
+          "code": "POC.INVARIANT.VIOLATED",
           "reason": "SAME_ACTIVITY"
         },
         {
-          "code": "AIP.INVARIANT.VIOLATED",
+          "code": "POC.INVARIANT.VIOLATED",
           "reason": "SCHOOL_MATCHES_AFFILIATION"
         }
       ],
@@ -4247,23 +4247,23 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "APPLY_DRAFT_NOT_FOUND"
         }
       ],
@@ -4327,23 +4327,23 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_NOT_FOUND"
         }
       ],
@@ -4391,31 +4391,31 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.INVARIANT.VIOLATED",
+          "code": "POC.INVARIANT.VIOLATED",
           "reason": "SCHOOL_MATCHES_AFFILIATION"
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_NOT_FOUND"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "AFFILIATION_IMMUTABLE"
         }
       ],
@@ -4485,23 +4485,23 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_EVENT_NOT_FOUND"
         }
       ],
@@ -4568,23 +4568,23 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_FAQ_NOT_FOUND"
         }
       ],
@@ -4643,31 +4643,31 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ALREADY_REGISTERED"
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "NICKNAME_TAKEN"
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "VERIFICATION_CODE_MISMATCH"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "VERIFICATION_NOT_FOUND"
         }
       ],
@@ -4712,31 +4712,31 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ALREADY_APPLIED"
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "APPLY_NOT_FOUND"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "WITHDRAW_TOO_EARLY"
         }
       ],
@@ -4769,23 +4769,23 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_NOT_FOUND"
         }
       ],
@@ -4861,23 +4861,23 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "RECRUITMENT_NOT_FOUND"
         }
       ],
@@ -5258,15 +5258,15 @@
       "cache_seconds": null,
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_ACTIVITY_NOT_FOUND"
         }
       ],
@@ -5394,15 +5394,15 @@
       "cache_seconds": null,
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "APPLY_NOT_FOUND"
         }
       ],
@@ -5489,15 +5489,15 @@
       "cache_seconds": null,
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_NOT_FOUND"
         }
       ],
@@ -5552,15 +5552,15 @@
       "cache_seconds": null,
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_NOT_FOUND"
         }
       ],
@@ -5654,15 +5654,15 @@
       "cache_seconds": null,
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_NOT_FOUND"
         }
       ],
@@ -5699,15 +5699,15 @@
       "cache_seconds": null,
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_NOT_FOUND"
         }
       ],
@@ -5833,11 +5833,11 @@
       "cache_seconds": null,
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         }
       ],
@@ -5920,15 +5920,15 @@
       "cache_seconds": null,
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_NOT_FOUND"
         }
       ],
@@ -6025,15 +6025,15 @@
       "cache_seconds": null,
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_NOT_FOUND"
         }
       ],
@@ -6102,15 +6102,15 @@
       "cache_seconds": null,
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_NOT_FOUND"
         }
       ],
@@ -6193,15 +6193,15 @@
       "cache_seconds": null,
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_EVENT_NOT_FOUND"
         }
       ],
@@ -6259,11 +6259,11 @@
       "cache_seconds": null,
       "errors": [
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": null
         }
       ],
@@ -6332,15 +6332,15 @@
       "cache_seconds": null,
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_NOT_FOUND"
         }
       ],
@@ -6404,11 +6404,11 @@
       "cache_seconds": null,
       "errors": [
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "FINANCIAL_RECORD_NOT_FOUND"
         }
       ],
@@ -6499,15 +6499,15 @@
       "cache_seconds": null,
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_EVENT_NOT_FOUND"
         }
       ],
@@ -6564,15 +6564,15 @@
       "cache_seconds": null,
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_FAQ_NOT_FOUND"
         }
       ],
@@ -6634,15 +6634,15 @@
       "cache_seconds": null,
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_NOT_FOUND"
         }
       ],
@@ -6706,15 +6706,15 @@
       "cache_seconds": null,
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_NOT_FOUND"
         }
       ],
@@ -6783,11 +6783,11 @@
       "cache_seconds": null,
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         }
       ],
@@ -6832,11 +6832,11 @@
       "cache_seconds": null,
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         }
       ],
@@ -6905,11 +6905,11 @@
       "cache_seconds": null,
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         }
       ],
@@ -6966,15 +6966,15 @@
       "cache_seconds": null,
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "CLUB_NOTICE_NOT_FOUND"
         }
       ],
@@ -7060,15 +7060,15 @@
       "cache_seconds": null,
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "RECRUITMENT_NOT_FOUND"
         }
       ],
@@ -7139,15 +7139,15 @@
       "cache_seconds": null,
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "RECRUITMENT_NOT_FOUND"
         }
       ],
@@ -7280,11 +7280,11 @@
       "cache_seconds": null,
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         }
       ],
@@ -7390,11 +7390,11 @@
       "cache_seconds": null,
       "errors": [
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": null
         }
       ],

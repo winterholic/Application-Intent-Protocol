@@ -29,10 +29,10 @@ fn load(src: &str) -> Result<Value, String> {
 #[test]
 fn value_revealing_aggregates_are_checked_at_definition_time() {
     let cases = [
-        ("release sum(price) }", "release sum(cost) }", "POLICY_FIELD_NOT_AGGREGATABLE"),
-        ("release sum(price) }", "release sum(title) }", "UNKNOWN_FIELD"),
-        ("release sum(price) }", "release avg(price) }", "UNSUPPORTED"),
-        ("cheapest: Int?", "cheapest: Int", "UNSUPPORTED"),
+        ("release sum(price) }", "release sum(cost) }", "DEF.POLICY_FIELD_NOT_AGGREGATABLE"),
+        ("release sum(price) }", "release sum(title) }", "DEF.UNKNOWN_FIELD"),
+        ("release sum(price) }", "release avg(price) }", "DEF.UNSUPPORTED"),
+        ("cheapest: Int?", "cheapest: Int", "DEF.UNSUPPORTED"),
     ];
     for (old, new, code) in cases {
         let src = DEF.replacen(old, new, 1);

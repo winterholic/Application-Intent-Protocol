@@ -33,13 +33,13 @@ mod stable_key_tests {
     #[test]
     fn the_wait_an_extension_asked_for_is_read_back_only_from_its_own_retry_request() {
         let ask = |code: &'static str, msg: &str| Reject { code, msg: msg.to_owned() };
-        let asked: Result<(), Reject> = rej("RETRY_LATER", format!("{RETRY_LATER_MESSAGE}; {RETRY_AFTER_KEY}2500"));
+        let asked: Result<(), Reject> = rej("WIRE.RETRY_LATER", format!("{RETRY_LATER_MESSAGE}; {RETRY_AFTER_KEY}2500"));
         assert_eq!(retry_after_ms(&asked.unwrap_err()), Some(2500));
-        let plain: Result<(), Reject> = rej("RETRY_LATER", RETRY_LATER_MESSAGE);
+        let plain: Result<(), Reject> = rej("WIRE.RETRY_LATER", RETRY_LATER_MESSAGE);
         assert_eq!(retry_after_ms(&plain.unwrap_err()), None);
         // A message that merely mentions the key, from any other rejection, is not a request.
-        assert_eq!(retry_after_ms(&ask("EXTENSION_ERROR", "afterMs=9")), None);
-        assert_eq!(retry_after_ms(&ask("RETRY_LATER", "afterMs=-1")), None);
+        assert_eq!(retry_after_ms(&ask("WIRE.EXTENSION_ERROR", "afterMs=9")), None);
+        assert_eq!(retry_after_ms(&ask("WIRE.RETRY_LATER", "afterMs=-1")), None);
     }
 }
 
@@ -112,7 +112,7 @@ const RETRY_AFTER_KEY: &str = "afterMs=";
 
 /// The wait an extension asked for with `ctx.retryLater(reason, {afterMs})`, in milliseconds, when this rejection is its request.
 pub fn retry_after_ms(reject: &Reject) -> Option<i64> {
-    if reject.code != "RETRY_LATER" {
+    if reject.code != "WIRE.RETRY_LATER" {
         return None;
     }
     reject.msg.split_once(RETRY_AFTER_KEY).and_then(|(_, value)| value.parse::<u64>().ok()).and_then(|value| i64::try_from(value).ok())
@@ -264,11 +264,11 @@ impl Worker {
 
     pub(crate) async fn send(&mut self, m: &Value) -> Result<(), Reject> {
         if self.lines.is_failed() {
-            return rej("WORKER_FAILED", "worker protocol이 폐기됨");
+            return rej("WIRE.WORKER_FAILED", "worker protocol이 폐기됨");
         }
         let mut s = m.to_string();
         s.push('\n');
-        self.stdin.write_all(s.as_bytes()).await.map_err(|_| Reject { code: "WORKER_FAILED", msg: "worker 입력 실패".into() })
+        self.stdin.write_all(s.as_bytes()).await.map_err(|_| Reject { code: "WIRE.WORKER_FAILED", msg: "worker 입력 실패".into() })
     }
 
     pub(crate) async fn send_before(&mut self, m: &Value, expires: Instant) -> Result<(), Reject> {
@@ -281,7 +281,7 @@ impl Worker {
         self.lines.discard();
         self.tokens.clear();
         self.kill_all();
-        rej("DEADLINE_EXCEEDED", "worker 입력 전송이 기한 안에 끝나지 않음")
+        rej("WIRE.DEADLINE_EXCEEDED", "worker 입력 전송이 기한 안에 끝나지 않음")
     }
 
     /// Kills the worker, its descendants and its cgroup. Safe to call repeatedly.
@@ -340,8 +340,10 @@ fn check_typed(facts: &Value, ty: &str, v: &Value) -> bool {
 
 /// 선언된 입출력과 정확히 같은 키·타입인지. 모르는 키도 거부한다.
 pub(crate) fn check_record(facts: &Value, decl: &Value, v: &Value, what: &str) -> Result<(), Reject> {
-    let o = v.as_object().ok_or(Reject { code: if what == "출력" { "OUTPUT_INVALID" } else { "BAD_VALUE" }, msg: format!("{what}은 객체") })?;
-    let code = if what == "출력" { "OUTPUT_INVALID" } else { "BAD_VALUE" };
+    let o = v
+        .as_object()
+        .ok_or(Reject { code: if what == "출력" { "WIRE.OUTPUT_INVALID" } else { "WIRE.BAD_VALUE" }, msg: format!("{what}은 객체") })?;
+    let code = if what == "출력" { "WIRE.OUTPUT_INVALID" } else { "WIRE.BAD_VALUE" };
     let d = decl.as_array().unwrap();
     for k in o.keys() {
         if !d.iter().any(|p| p[0] == json!(k)) {
@@ -363,7 +365,7 @@ pub(crate) fn check_record(facts: &Value, decl: &Value, v: &Value, what: &str) -
 
 fn check_read_value(facts: &Value, ty: &str, value: &Value, wire: IdWire, output: bool) -> Result<(), Reject> {
     let base = ty.trim_end_matches('?');
-    let code = if output { "OUTPUT_INVALID" } else { "BAD_VALUE" };
+    let code = if output { "WIRE.OUTPUT_INVALID" } else { "WIRE.BAD_VALUE" };
     if value.is_null() {
         return if ty.ends_with('?') { Ok(()) } else { rej(code, format!("{ty} null 불가")) };
     }
@@ -387,7 +389,7 @@ fn check_read_value(facts: &Value, ty: &str, value: &Value, wire: IdWire, output
 
 fn check_read_record(facts: &Value, decl: &Value, value: &Value, what: &str, wire: IdWire) -> Result<(), Reject> {
     check_read_record_types(facts, decl, value, what, wire)?;
-    let code = if what == "출력" { "OUTPUT_INVALID" } else { "BAD_VALUE" };
+    let code = if what == "출력" { "WIRE.OUTPUT_INVALID" } else { "WIRE.BAD_VALUE" };
     for field in decl.as_array().unwrap() {
         spike_v2_read::scalar::validate_range(field, &value[field[0].as_str().unwrap()], code)?;
     }
@@ -398,10 +400,11 @@ fn check_read_record_types(facts: &Value, decl: &Value, value: &Value, what: &st
     if wire == IdWire::Legacy {
         return check_record(facts, decl, value, what);
     }
-    let object =
-        value.as_object().ok_or(Reject { code: if what == "출력" { "OUTPUT_INVALID" } else { "BAD_VALUE" }, msg: format!("{what}은 객체") })?;
+    let object = value
+        .as_object()
+        .ok_or(Reject { code: if what == "출력" { "WIRE.OUTPUT_INVALID" } else { "WIRE.BAD_VALUE" }, msg: format!("{what}은 객체") })?;
     let output = what == "출력";
-    let code = if output { "OUTPUT_INVALID" } else { "BAD_VALUE" };
+    let code = if output { "WIRE.OUTPUT_INVALID" } else { "WIRE.BAD_VALUE" };
     let fields = decl.as_array().ok_or(Reject { code, msg: format!("{what} 선언 형식 오류") })?;
     for key in object.keys() {
         if !fields.iter().any(|field| field[0] == json!(key)) {
@@ -420,13 +423,13 @@ fn check_read_record_types(facts: &Value, decl: &Value, value: &Value, what: &st
 
 /// HTTP 계층에서 DB·worker 호출 전에 READ extension 입력을 검증한다.
 pub fn validate_read(facts: &Value, name: &str, input: &Value, wire: IdWire) -> Result<(), Reject> {
-    let (resource, extension) = name.split_once('.').ok_or(Reject { code: "BAD_REQUEST", msg: "확장은 `Resource.name`".into() })?;
+    let (resource, extension) = name.split_once('.').ok_or(Reject { code: "WIRE.BAD_REQUEST", msg: "확장은 `Resource.name`".into() })?;
     let x = &facts["resources"][resource]["extensions"][extension];
     if x.is_null() {
-        return rej("NOT_EXPOSED", format!("확장 `{name}` 없음"));
+        return rej("WIRE.NOT_EXPOSED", format!("확장 `{name}` 없음"));
     }
     if x["kind"] != "read" || x["effect"] != "none" {
-        return rej("UNSUPPORTED", "V4-1은 effect none 읽기 확장만");
+        return rej("WIRE.UNSUPPORTED", "V4-1은 effect none 읽기 확장만");
     }
     check_read_record(facts, &x["input"], input, "입력", wire)
 }
@@ -446,7 +449,7 @@ pub async fn invoke_with_wire(
     wire: IdWire,
 ) -> Result<Value, Reject> {
     validate_read(facts, name, input, wire)?;
-    let (res, ext) = name.split_once('.').ok_or(Reject { code: "BAD_REQUEST", msg: "확장은 `Resource.name`".into() })?;
+    let (res, ext) = name.split_once('.').ok_or(Reject { code: "WIRE.BAD_REQUEST", msg: "확장은 `Resource.name`".into() })?;
     let x = &facts["resources"][res]["extensions"][ext];
     invoke_contract(Some(db), w, facts, x, input, caller, wire, None).await
 }
@@ -454,10 +457,10 @@ pub async fn invoke_with_wire(
 pub fn validate_operation(facts: &Value, name: &str, input: &Value, wire: IdWire) -> Result<(), Reject> {
     let operation = &facts["operations"][name];
     if !operation.is_object() {
-        return rej("NOT_EXPOSED", "등록된 operation이 없음");
+        return rej("WIRE.NOT_EXPOSED", "등록된 operation이 없음");
     }
     if operation["kind"] != "read" || operation["effect"] != "none" || !operation["access"].as_object().is_some_and(|access| access.is_empty()) {
-        return rej("UNSUPPORTED", "operation 실행 계약 불일치");
+        return rej("WIRE.UNSUPPORTED", "operation 실행 계약 불일치");
     }
     check_read_record(facts, &operation["input"], input, "입력", wire)
 }
@@ -483,10 +486,10 @@ pub trait JobHost: Send {
 pub fn validate_job(facts: &Value, name: &str, input: &Value, wire: IdWire) -> Result<(), Reject> {
     let job = &facts["operations"][name];
     if job["kind"] != "job" {
-        return rej("NOT_EXPOSED", "등록된 job이 없음");
+        return rej("WIRE.NOT_EXPOSED", "등록된 job이 없음");
     }
     if job["effect"] != "none" && job["effect"] != "managed" {
-        return rej("UNSUPPORTED", "job 효과 계약 불일치");
+        return rej("WIRE.UNSUPPORTED", "job 효과 계약 불일치");
     }
     check_read_record(facts, &job["input"], input, "입력", wire)
 }
@@ -549,32 +552,32 @@ async fn invoke_contract(
     let result = loop {
         let left = expires.saturating_duration_since(Instant::now());
         let line = match tokio::time::timeout(left, w.read_line()).await {
-            Err(_) => break rej("DEADLINE_EXCEEDED", format!("확장이 {}ms 안에 끝나지 않음", deadline.as_millis())),
+            Err(_) => break rej("WIRE.DEADLINE_EXCEEDED", format!("확장이 {}ms 안에 끝나지 않음", deadline.as_millis())),
             Ok(Err(_)) | Ok(Ok(None)) => {
                 let tail = w.stderr_tail.lock().unwrap().last().cloned().unwrap_or_default();
-                break rej("WORKER_FAILED", format!("worker가 종료됨. stderr: {tail}"));
+                break rej("WIRE.WORKER_FAILED", format!("worker가 종료됨. stderr: {tail}"));
             }
             Ok(Ok(Some(l))) => l,
         };
         let Ok(m) = serde_json::from_str::<Value>(&line) else {
-            break rej("WORKER_FAILED", "worker 메시지 형식 오류");
+            break rej("WIRE.WORKER_FAILED", "worker 메시지 형식 오류");
         };
         match m["type"].as_str() {
             Some("call") => {
                 if host.is_none() && db.is_none() {
-                    break rej("ACCESS_NOT_DECLARED", "순수 operation은 ctx 호출을 허용하지 않음");
+                    break rej("WIRE.ACCESS_NOT_DECLARED", "순수 operation은 ctx 호출을 허용하지 않음");
                 }
                 let left = expires.saturating_duration_since(Instant::now());
                 let call = async {
                     if let Some(host) = host.as_deref_mut() {
                         managed_calls += 1;
                         if managed_calls > 64 {
-                            return rej("COST_EXCEEDED", "job capability 호출 상한");
+                            return rej("WIRE.COST_EXCEEDED", "job capability 호출 상한");
                         }
                         let op = m["op"].as_str().unwrap_or("");
                         let name = m["name"].as_str().unwrap_or("");
                         if m["token"] != token || x["access"][job_capability(op, name)] != true {
-                            return rej("ACCESS_NOT_DECLARED", "선언되지 않은 job capability");
+                            return rej("WIRE.ACCESS_NOT_DECLARED", "선언되지 않은 job capability");
                         }
                         if requires_stable_key(op, &m["input"])
                             && !m["input"]["key"].as_str().is_some_and(|key| {
@@ -583,31 +586,32 @@ async fn invoke_contract(
                                     && key.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-' | b'.' | b':'))
                             })
                         {
-                            return rej("BAD_VALUE", "managed effect에는 안정적인 key가 필요함");
+                            return rej("WIRE.BAD_VALUE", "managed effect에는 안정적인 key가 필요함");
                         }
                         host.call(op, name, &m["input"]).await
                     } else if let Some(db) = db.as_deref_mut() {
                         // 읽기·operation 확장도 deadline 안에서 DB 호출을 무한히 보낼 수 없게 한다(쓰기 20, job 64와 같은 취지).
                         db_calls += 1;
                         if db_calls > MAX_READ_CTX_CALLS {
-                            return rej("CALL_LIMIT", "ctx 호출 상한");
+                            return rej("WIRE.CALL_LIMIT", "ctx 호출 상한");
                         }
                         serve_call(db, w, facts, &m).await
                     } else {
-                        rej("ACCESS_NOT_DECLARED", "순수 operation은 ctx 호출을 허용하지 않음")
+                        rej("WIRE.ACCESS_NOT_DECLARED", "순수 operation은 ctx 호출을 허용하지 않음")
                     }
                 };
                 let reply = match tokio::time::timeout(left, call).await {
                     Ok(r) => r,
-                    Err(_) => break rej("DEADLINE_EXCEEDED", format!("확장 ctx 작업이 {}ms 안에 끝나지 않음", deadline.as_millis())),
+                    Err(_) => break rej("WIRE.DEADLINE_EXCEEDED", format!("확장 ctx 작업이 {}ms 안에 끝나지 않음", deadline.as_millis())),
                 };
-                if reply.as_ref().is_err_and(|e| e.code == "CALL_LIMIT") {
+                if reply.as_ref().is_err_and(|e| e.code == "WIRE.CALL_LIMIT") {
                     break reply;
                 }
                 if host.is_some()
-                    && reply
-                        .as_ref()
-                        .is_err_and(|e| ["ACCESS_NOT_DECLARED", "COST_EXCEEDED", "LEASE_LOST", "EFFECT_UNKNOWN", "BAD_VALUE"].contains(&e.code))
+                    && reply.as_ref().is_err_and(|e| {
+                        ["WIRE.ACCESS_NOT_DECLARED", "WIRE.COST_EXCEEDED", "WIRE.LEASE_LOST", "WIRE.EFFECT_UNKNOWN", "WIRE.BAD_VALUE"]
+                            .contains(&e.code)
+                    })
                 {
                     break reply;
                 }
@@ -622,18 +626,18 @@ async fn invoke_contract(
             Some("done") if m["invoke"] == json!(invoke_id) => {
                 if let Some(e) = m.get("error") {
                     // Only a durable job can be retried, so only there does the explicit request keep its code.
-                    if host.is_some() && e["code"] == "RETRY_LATER" {
+                    if host.is_some() && e["code"] == "WIRE.RETRY_LATER" {
                         // The extension may choose the wait (`afterMs`); it rides in the message because `Reject` is shared by every path.
                         break match e["afterMs"].as_u64() {
-                            Some(after_ms) => rej("RETRY_LATER", format!("{RETRY_LATER_MESSAGE}; {RETRY_AFTER_KEY}{after_ms}")),
-                            None => rej("RETRY_LATER", RETRY_LATER_MESSAGE),
+                            Some(after_ms) => rej("WIRE.RETRY_LATER", format!("{RETRY_LATER_MESSAGE}; {RETRY_AFTER_KEY}{after_ms}")),
+                            None => rej("WIRE.RETRY_LATER", RETRY_LATER_MESSAGE),
                         };
                     }
-                    break rej("EXTENSION_ERROR", format!("확장 실패: {}", e["code"].as_str().unwrap_or("?")));
+                    break rej("WIRE.EXTENSION_ERROR", format!("확장 실패: {}", e["code"].as_str().unwrap_or("?")));
                 }
                 // 기한 뒤 도착한 완료는 성공으로 전달하지 않는다(F05).
                 if Instant::now() > expires {
-                    break rej("DEADLINE_EXCEEDED", format!("확장이 {}ms 안에 끝나지 않음", deadline.as_millis()));
+                    break rej("WIRE.DEADLINE_EXCEEDED", format!("확장이 {}ms 안에 끝나지 않음", deadline.as_millis()));
                 }
                 let out = m["output"].clone();
                 break check_read_record(facts, &x["output"], &out, "출력", wire).map(|_| out);
@@ -661,27 +665,27 @@ pub(crate) fn grant_token(kind: char, invoke_id: u64) -> String {
 async fn serve_call(db: &mut Client, w: &mut Worker, facts: &Value, m: &Value) -> Result<Value, Reject> {
     let o = m.as_object().unwrap();
     if let Some(k) = o.keys().find(|k| !["type", "call", "token", "op", "name", "input"].contains(&k.as_str())) {
-        return rej("UNKNOWN_KEY", format!("ctx 요청에 알 수 없는 키 `{k}`"));
+        return rej("WIRE.UNKNOWN_KEY", format!("ctx 요청에 알 수 없는 키 `{k}`"));
     }
     let token = m["token"].as_str().unwrap_or("");
     let Some(g) = w.tokens.get(token) else {
         if w.retired_tokens.iter().any(|retired| retired == token) {
-            return rej("TOKEN_EXPIRED", "끝난 호출의 ctx");
+            return rej("WIRE.TOKEN_EXPIRED", "끝난 호출의 ctx");
         }
-        return rej("TOKEN_INVALID", "알 수 없는 ctx 토큰");
+        return rej("WIRE.TOKEN_INVALID", "알 수 없는 ctx 토큰");
     };
     if !g.active || Instant::now() > g.expires {
-        return rej("TOKEN_EXPIRED", "끝났거나 기한이 지난 호출의 ctx");
+        return rej("WIRE.TOKEN_EXPIRED", "끝났거나 기한이 지난 호출의 ctx");
     }
     if m["op"] != "aggregate" {
-        return rej("UNSUPPORTED", "ctx는 aggregate만 지원");
+        return rej("WIRE.UNSUPPORTED", "ctx는 aggregate만 지원");
     }
     let name = m["name"].as_str().unwrap_or("");
     let Some(fixed) = g.access.get(name) else {
-        return rej("ACCESS_NOT_DECLARED", format!("확장 계약에 `{name}` 접근이 없음"));
+        return rej("WIRE.ACCESS_NOT_DECLARED", format!("확장 계약에 `{name}` 접근이 없음"));
     };
     if m["input"].as_object() != Some(fixed) {
-        return rej("INPUT_BINDING", "집계 입력은 확장 입력에 묶인 값과 같아야 함");
+        return rej("WIRE.INPUT_BINDING", "집계 입력은 확장 입력에 묶인 값과 같아야 함");
     }
     let caller = Caller { actor_id: g.actor_id, now: g.now.clone() };
     let mut plan = spike_v2_read::plan::plan_read_with_wire(facts, &json!({ "aggregate": name, "input": fixed }), &caller, g.id_wire)?;

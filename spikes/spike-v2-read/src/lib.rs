@@ -202,10 +202,10 @@ pub async fn connect() -> Client {
 
 /// 읽기 전용 트랜잭션 + statement_timeout으로 실행한다. DB 오류 원문은 호출자에게 보내지 않는다.
 pub async fn execute(client: &mut Client, plan: &Plan) -> Result<Vec<serde_json::Value>, Reject> {
-    let tx = client.transaction().await.map_err(|_| Reject { code: "INTERNAL", msg: "트랜잭션 시작 실패".into() })?;
+    let tx = client.transaction().await.map_err(|_| Reject { code: "WIRE.INTERNAL", msg: "트랜잭션 시작 실패".into() })?;
     tx.batch_execute(&format!("SET TRANSACTION READ ONLY; SET LOCAL statement_timeout = '{}ms'; SET LOCAL TimeZone = 'UTC'", plan.deadline_ms))
         .await
-        .map_err(|_| Reject { code: "INTERNAL", msg: "세션 설정 실패".into() })?;
+        .map_err(|_| Reject { code: "WIRE.INTERNAL", msg: "세션 설정 실패".into() })?;
     let params: Vec<&(dyn ToSql + Sync)> = plan.params.iter().map(|p| p as &(dyn ToSql + Sync)).collect();
     // 모든 매개변수는 text로 보내고 SQL 안에서 캐스트한다. 타입을 명시해야 식에서 쓰이지 않은 매개변수도 42P18 없이 실행된다.
     let types = vec![tokio_postgres::types::Type::TEXT; params.len()];
@@ -218,9 +218,9 @@ pub async fn execute(client: &mut Client, plan: &Plan) -> Result<Vec<serde_json:
         Err(e) => {
             let code = e.code().map(|c| c.code().to_string()).unwrap_or_default();
             return Err(match code.as_str() {
-                "57014" => Reject { code: "DEADLINE_EXCEEDED", msg: format!("{}ms 안에 끝나지 않음", plan.deadline_ms) },
-                c if c.starts_with("22") => Reject { code: "BAD_VALUE", msg: "값 변환 실패".into() },
-                _ => Reject { code: "INTERNAL", msg: format!("실행 실패(sqlstate {code})") },
+                "57014" => Reject { code: "WIRE.DEADLINE_EXCEEDED", msg: format!("{}ms 안에 끝나지 않음", plan.deadline_ms) },
+                c if c.starts_with("22") => Reject { code: "WIRE.BAD_VALUE", msg: "값 변환 실패".into() },
+                _ => Reject { code: "WIRE.INTERNAL", msg: format!("실행 실패(sqlstate {code})") },
             });
         }
     };
@@ -232,11 +232,13 @@ pub async fn execute(client: &mut Client, plan: &Plan) -> Result<Vec<serde_json:
             Some(s) => {
                 bytes += s.len();
                 if bytes > plan::MAX_OUTPUT_BYTES {
-                    return Err(Reject { code: "OUTPUT_TOO_LARGE", msg: format!("응답이 {} bytes 상한을 넘음", plan::MAX_OUTPUT_BYTES) });
+                    return Err(Reject {
+                        code: "WIRE.OUTPUT_TOO_LARGE", msg: format!("응답이 {} bytes 상한을 넘음", plan::MAX_OUTPUT_BYTES)
+                    });
                 }
                 out.push(serde_json::from_str(&s).unwrap());
             }
-            None if plan.null_is_denied => return Err(Reject { code: "ACCESS_DENIED", msg: "집계 접근 권한 없음".into() }),
+            None if plan.null_is_denied => return Err(Reject { code: "WIRE.ACCESS_DENIED", msg: "집계 접근 권한 없음".into() }),
             None => out.push(serde_json::Value::Null),
         }
     }

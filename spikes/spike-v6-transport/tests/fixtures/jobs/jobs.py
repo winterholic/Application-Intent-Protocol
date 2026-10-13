@@ -42,7 +42,7 @@ async def catchKnownChildFailure(inp, ctx):
         try:
             await ctx.jobs.run("knownFailChild", {}, "known-failure")
         except Exception as error:
-            if getattr(error, "code", None) != "STEP_FAILED":
+            if getattr(error, "code", None) != "WIRE.STEP_FAILED":
                 raise
             recovered += 1
     return {"length": recovered}

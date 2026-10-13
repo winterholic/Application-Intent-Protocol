@@ -203,7 +203,7 @@ async function run(db: Db, sql: string, values: unknown[], trace: string[]) {
 
 export async function executeQuery(db: Db, m: Model, query: Query, input: Record<string, unknown>, actor: Row | null, trace: string[] = []): Promise<unknown> {
   const policy = query.policy!;
-  if (!actor && needsActor(policy)) throw new AipError('AIP.AUTH.UNAUTHENTICATED', query.name, 'this query requires an authenticated actor');
+  if (!actor && needsActor(policy)) throw new AipError('POC.AUTH.UNAUTHENTICATED', query.name, 'this query requires an authenticated actor');
   const env: Env = new Map(Object.entries(input));
   if (actor) env.set('actor', actor);
   const tree = queryTree(m, query);
@@ -212,13 +212,13 @@ export async function executeQuery(db: Db, m: Model, query: Query, input: Record
 
   if (query.by) {
     const rows = await run(db, sql, params.values, trace);
-    if (!rows.length) throw new AipError('AIP.NOT_FOUND', query.name, `${query.entity} not found`, { reason: `${query.entity.toUpperCase()}_NOT_FOUND`, path: query.as });
+    if (!rows.length) throw new AipError('POC.NOT_FOUND', query.name, `${query.entity} not found`, { reason: `${query.entity.toUpperCase()}_NOT_FOUND`, path: query.as });
     const row: Record<string, unknown> = {};
     for (const f of tree.fields) row[f.name] = rows[0][m.column(f)];
     const penv = new Map(env);
     penv.set(query.as, row);
     if (!evalPolicy(policy, penv, actor)) {
-      throw new AipError(actor ? 'AIP.AUTH.FORBIDDEN' : 'AIP.AUTH.UNAUTHENTICATED', query.name, `policy denied: ${policyText(policy)}`, { path: query.as });
+      throw new AipError(actor ? 'POC.AUTH.FORBIDDEN' : 'POC.AUTH.UNAUTHENTICATED', query.name, `policy denied: ${policyText(policy)}`, { path: query.as });
     }
     return (await fill(db, m, tree, rows, trace))[0];
   }
@@ -226,7 +226,7 @@ export async function executeQuery(db: Db, m: Model, query: Query, input: Record
     // A list policy that folds to FALSE for this actor is a denial, not an empty result.
     const probe = new Params();
     const folded = policySql(policy, 'r', m, query.entity, actor, probe);
-    if (folded === 'FALSE') throw new AipError('AIP.AUTH.FORBIDDEN', query.name, `policy denied: ${policyText(policy)}`);
+    if (folded === 'FALSE') throw new AipError('POC.AUTH.FORBIDDEN', query.name, `policy denied: ${policyText(policy)}`);
   }
   const rows = await run(db, sql, params.values, trace);
   return fill(db, m, tree, rows, trace);

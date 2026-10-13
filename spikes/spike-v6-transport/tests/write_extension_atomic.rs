@@ -88,7 +88,7 @@ async fn write_effects_and_idempotent_result_commit_together_without_worker_repl
                 }
                 let different = json!({"key":key,"request":{"extension":"Event.run","input":{"id":emit_id(99,wire).unwrap()}}});
                 let mismatch = apply_observed_fixture(&mut db, &facts, &different, &caller, wire, &config).await;
-                if mismatch["code"] != "IDEMPOTENCY_MISMATCH" {
+                if mismatch["code"] != "WIRE.IDEMPOTENCY_MISMATCH" {
                     failures.push(format!("{lang:?} {wire:?} key mismatch: {mismatch}"));
                 }
                 let row = db
@@ -124,7 +124,7 @@ async fn write_effects_and_idempotent_result_commit_together_without_worker_repl
                 db.batch_execute(&format!("UPDATE {schema}.event SET checked=false; TRUNCATE {schema}.aip_idem; ALTER TABLE {schema}.aip_idem ADD CONSTRAINT reject_result CHECK(key<>'insert-fail')")).await?;
                 let insert_body = json!({"key":"insert-fail","request":request});
                 let failed_insert = apply_observed_fixture(&mut db,&facts,&insert_body,&caller,wire,&config).await;
-                if failed_insert["code"]!="INTERNAL" { failures.push(format!("{lang:?} {wire:?} insert failure: {failed_insert}")); }
+                if failed_insert["code"]!="WIRE.INTERNAL" { failures.push(format!("{lang:?} {wire:?} insert failure: {failed_insert}")); }
                 let row = db.query_one(&format!("SELECT (SELECT count(*) FROM {schema}.event WHERE checked),(SELECT count(*) FROM {schema}.aip_idem)"),&[]).await?;
                 if row.get::<_,i64>(0)!=0 || row.get::<_,i64>(1)!=0 { failures.push(format!("{lang:?} {wire:?} failed idem insert leaked effect")); }
                 db.batch_execute(&format!("ALTER TABLE {schema}.aip_idem DROP CONSTRAINT reject_result")).await?;
@@ -134,13 +134,13 @@ async fn write_effects_and_idempotent_result_commit_together_without_worker_repl
                 let mut delayed_facts = facts.clone();delayed_facts["resources"]["Event"]["extensions"]["run"]["implementation"]=json!("write.delayed");
                 let delayed_body = json!({"key":"commit-unknown","request":request});
                 let unknown = apply_observed_fixture(&mut db,&delayed_facts,&delayed_body,&caller,wire,&config).await;
-                if unknown["code"]!="COMMIT_UNKNOWN" { failures.push(format!("{lang:?} {wire:?} slow commit: {unknown}")); }
+                if unknown["code"]!="WIRE.COMMIT_UNKNOWN" { failures.push(format!("{lang:?} {wire:?} slow commit: {unknown}")); }
                 let recovered = apply_observed_fixture(&mut db,&delayed_facts,&delayed_body,&caller,wire,&config).await;
                 if recovered["ok"]!=true || recovered["replayed"]!=true { failures.push(format!("{lang:?} {wire:?} unknown commit replay: {recovered}")); }
                 if fs::read_to_string(owned.0.join("counter")).unwrap().lines().count()!=1 { failures.push(format!("{lang:?} {wire:?} unknown commit reran worker")); }
                 db.batch_execute(&format!("DROP TRIGGER slow_idem ON {schema}.aip_idem; DROP FUNCTION {schema}.slow_idem()")).await?;
 
-                for (implementation, code) in [("write.unsafe", "OUTPUT_INVALID"), ("write.denied", "EXTENSION_ERROR")] {
+                for (implementation, code) in [("write.unsafe", "WIRE.OUTPUT_INVALID"), ("write.denied", "WIRE.EXTENSION_ERROR")] {
                     db.batch_execute(&format!("UPDATE {schema}.event SET checked=false; TRUNCATE {schema}.aip_idem")).await?;
                     let mut rejected_facts = facts.clone();
                     rejected_facts["resources"]["Event"]["extensions"]["run"]["implementation"] = json!(implementation);

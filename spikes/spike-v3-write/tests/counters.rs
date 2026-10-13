@@ -49,17 +49,17 @@ fn only_same_field_plus_or_minus_a_constant_is_accepted() {
         ("to stock = stock - 1", "to stock = 1 + stock"),
         ("from stock > 0", "from stock + 1 > 0"),
     ]
-    .map(|(old, new)| (DEF.replacen(old, new, 1), "ARITH_NOT_ALLOWED"))
+    .map(|(old, new)| (DEF.replacen(old, new, 1), "DEF.ARITH_NOT_ALLOWED"))
     {
         let got = facts(&bad).unwrap_err();
         assert!(got.contains(code), "{bad}\n=> {got}");
     }
     let unchanged = DEF.replacen("to likes = this.likes + 1", "to likes = this.likes + 1\n    repeat unchanged", 1);
-    assert!(facts(&unchanged).unwrap_err().contains("UNSUPPORTED"));
+    assert!(facts(&unchanged).unwrap_err().contains("DEF.UNSUPPORTED"));
     let nullable = DEF.replacen("likes: Int }", "likes: Int? }", 1);
-    assert!(facts(&nullable).unwrap_err().contains("TYPE_MISMATCH"));
+    assert!(facts(&nullable).unwrap_err().contains("DEF.TYPE_MISMATCH"));
     let constant = DEF.replacen("to stock = stock - 1\n  }\n  transition like", "to stock = 2000\n  }\n  transition like", 1);
-    assert!(facts(&constant).unwrap_err().contains("BAD_RANGE"), "범위 밖 상수 대입");
+    assert!(facts(&constant).unwrap_err().contains("DEF.BAD_RANGE"), "범위 밖 상수 대입");
     let f = facts(DEF).unwrap();
     assert_eq!(f["resources"]["Product"]["transitions"]["sell"]["to"]["stock"], json!({ "increment": -1 }));
 }
@@ -97,15 +97,15 @@ async fn concurrent_increments_and_stock_floor() {
         apply(&mut db, &f, &req("sell"), &who(Some(1)), &k).await.unwrap();
     }
     let fourth = apply(&mut db, &f, &req("sell"), &who(Some(1)), &k).await.unwrap_err();
-    assert_eq!(fourth.code, "INVALID_STATE", "{}", fourth.msg);
+    assert_eq!(fourth.code, "WIRE.INVALID_STATE", "{}", fourth.msg);
     let stock: i64 = db.query_one(format!("SELECT stock FROM {s}.product WHERE id = 1").as_str(), &[]).await.unwrap().get(0);
     assert_eq!(stock, 0);
     // from 검사가 없는 감소도 선언 범위(0..1000) 밖으로는 못 간다. 전체 롤백.
     let below = apply(&mut db, &f, &req("drain"), &who(Some(1)), &k).await.unwrap_err();
-    assert_eq!(below.code, "BAD_VALUE", "{}", below.msg);
+    assert_eq!(below.code, "WIRE.BAD_VALUE", "{}", below.msg);
     let stock: i64 = db.query_one(format!("SELECT stock FROM {s}.product WHERE id = 1").as_str(), &[]).await.unwrap().get(0);
     assert_eq!(stock, 0);
     // 익명은 증감할 수 없다.
-    assert_eq!(apply(&mut db, &f, &req("like"), &who(None), &k).await.unwrap_err().code, "FORBIDDEN");
+    assert_eq!(apply(&mut db, &f, &req("like"), &who(None), &k).await.unwrap_err().code, "WIRE.FORBIDDEN");
     db.batch_execute(&format!("DROP SCHEMA {s} CASCADE")).await.unwrap();
 }

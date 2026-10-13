@@ -139,7 +139,7 @@ operation job bulk {
             break;
         }
     }
-    assert_eq!(refused.as_deref(), Some("QUOTA_EXCEEDED"), "{accepted} jobs of 900 kB were accepted without a byte quota");
+    assert_eq!(refused.as_deref(), Some("WIRE.QUOTA_EXCEEDED"), "{accepted} jobs of 900 kB were accepted without a byte quota");
     // 64 MiB of retained payload / 900 kB.
     assert!((70..=75).contains(&accepted), "accepted {accepted}");
     // A replay of an accepted key is not new retention.

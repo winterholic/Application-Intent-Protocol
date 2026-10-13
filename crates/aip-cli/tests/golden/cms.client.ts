@@ -10,229 +10,229 @@ export type MemberRole = 'ROOT' | 'SUPPORT' | 'USER';
 export type ArticleDraftsInput = { site: string };
 export type ArticleDraftsOutput = Array<{ body: string; id: string; reviewed: boolean; title: string }>;
 export type ArticleDraftsError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.CONSENT.REQUIRED'; reason: 'Terms' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'SITE_NOT_FOUND' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.CONSENT.REQUIRED'; reason: 'Terms' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'SITE_NOT_FOUND' };
 
 export type ArticleReviewStatusInput = { article: string };
 export type ArticleReviewStatusOutput = { approvals: number; canVote: boolean; decidedAt: string | null; expiresAt: string | null; requestedAt: string | null; requestedBy: string | null; required: number; status: ApprovalStatus; votes: Array<{ at: string; comment: string | null; decision: ApprovalDecision; voter: string }> };
 export type ArticleReviewStatusError =
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'ARTICLE_NOT_FOUND' };
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'ARTICLE_NOT_FOUND' };
 
 export type ArticlesInput = { site: string };
 export type ArticlesOutput = Array<{ body: string; id: string; title: string }>;
 export type ArticlesError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'SITE_NOT_FOUND' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'SITE_NOT_FOUND' };
 
 export type GetArticleInput = { article: string };
 export type GetArticleOutput = { body: string; id: string; title: string };
 export type GetArticleError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'ARTICLE_NOT_FOUND' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'ARTICLE_NOT_FOUND' };
 
 export type TermsConsentStatusInput = {  };
 export type TermsConsentStatusOutput = { givenAt: string | null; givenVersion: number | null; name: string; status: ConsentStatus; version: number; withdrawnAt: string | null };
 export type TermsConsentStatusError =
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.INPUT.INVALID' };
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.INPUT.INVALID' };
 
 export type AddEditorInput = { site: string; member: string };
 export type AddEditorOutput = null;
 export type AddEditorError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' }
-  | { code: 'AIP.CONFLICT.UNIQUE'; reason: 'ALREADY_EDITOR' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'MEMBER_NOT_FOUND' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'SITE_NOT_FOUND' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' }
+  | { code: 'POC.CONFLICT.UNIQUE'; reason: 'ALREADY_EDITOR' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'MEMBER_NOT_FOUND' }
+  | { code: 'POC.NOT_FOUND'; reason: 'SITE_NOT_FOUND' };
 
 export type ApproveArticleReviewInput = { article: string; comment?: string | null };
 export type ApproveArticleReviewOutput = null;
 export type ApproveArticleReviewError =
-  | { code: 'AIP.AUTH.FORBIDDEN'; reason: 'IMPERSONATION_FORBIDDEN' }
-  | { code: 'AIP.AUTH.FORBIDDEN'; reason: 'NOT_AN_APPROVER' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' }
-  | { code: 'AIP.CONFLICT.UNIQUE'; reason: 'ALREADY_VOTED' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'ARTICLE_NOT_FOUND' }
-  | { code: 'AIP.PRECONDITION.FAILED'; reason: 'APPROVAL_NOT_PENDING' }
-  | { code: 'AIP.TENANT.MISMATCH' };
+  | { code: 'POC.AUTH.FORBIDDEN'; reason: 'IMPERSONATION_FORBIDDEN' }
+  | { code: 'POC.AUTH.FORBIDDEN'; reason: 'NOT_AN_APPROVER' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' }
+  | { code: 'POC.CONFLICT.UNIQUE'; reason: 'ALREADY_VOTED' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'ARTICLE_NOT_FOUND' }
+  | { code: 'POC.PRECONDITION.FAILED'; reason: 'APPROVAL_NOT_PENDING' }
+  | { code: 'POC.TENANT.MISMATCH' };
 
 export type CancelArticleReviewInput = { article: string };
 export type CancelArticleReviewOutput = null;
 export type CancelArticleReviewError =
-  | { code: 'AIP.AUTH.FORBIDDEN'; reason: 'ONLY_REQUESTER_CAN_CANCEL' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'ARTICLE_NOT_FOUND' }
-  | { code: 'AIP.PRECONDITION.FAILED'; reason: 'APPROVAL_NOT_PENDING' };
+  | { code: 'POC.AUTH.FORBIDDEN'; reason: 'ONLY_REQUESTER_CAN_CANCEL' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'ARTICLE_NOT_FOUND' }
+  | { code: 'POC.PRECONDITION.FAILED'; reason: 'APPROVAL_NOT_PENDING' };
 
 export type CreateArticleInput = { site: string; title: string; body: string };
 export type CreateArticleOutput = { id: string; title: string };
 export type CreateArticleError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' }
-  | { code: 'AIP.CONSENT.REQUIRED'; reason: 'Terms' }
-  | { code: 'AIP.IDEMPOTENCY.KEY_REUSED' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'SITE_NOT_FOUND' }
-  | { code: 'AIP.TENANT.MISMATCH' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' }
+  | { code: 'POC.CONSENT.REQUIRED'; reason: 'Terms' }
+  | { code: 'POC.IDEMPOTENCY.KEY_REUSED' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'SITE_NOT_FOUND' }
+  | { code: 'POC.TENANT.MISMATCH' };
 
 export type CreateSiteInput = { name: string };
 export type CreateSiteOutput = { id: string; name: string };
 export type CreateSiteError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' }
-  | { code: 'AIP.CONFLICT.UNIQUE'; reason: 'ALREADY_EDITOR' }
-  | { code: 'AIP.IDEMPOTENCY.KEY_REUSED' }
-  | { code: 'AIP.INPUT.INVALID' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' }
+  | { code: 'POC.CONFLICT.UNIQUE'; reason: 'ALREADY_EDITOR' }
+  | { code: 'POC.IDEMPOTENCY.KEY_REUSED' }
+  | { code: 'POC.INPUT.INVALID' };
 
 export type DeleteArticleInput = { article: string };
 export type DeleteArticleOutput = null;
 export type DeleteArticleError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'ARTICLE_NOT_FOUND' }
-  | { code: 'AIP.TENANT.MISMATCH' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'ARTICLE_NOT_FOUND' }
+  | { code: 'POC.TENANT.MISMATCH' };
 
 export type DeleteMyAccountInput = {  };
 export type DeleteMyAccountOutput = null;
 export type DeleteMyAccountError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.AUTH.FORBIDDEN'; reason: 'IMPERSONATION_FORBIDDEN' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' }
-  | { code: 'AIP.CONFLICT.UNIQUE'; reason: 'ALREADY_EDITOR' }
-  | { code: 'AIP.CONFLICT.UNIQUE'; reason: 'EMAIL_TAKEN' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.TENANT.MISMATCH' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.AUTH.FORBIDDEN'; reason: 'IMPERSONATION_FORBIDDEN' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' }
+  | { code: 'POC.CONFLICT.UNIQUE'; reason: 'ALREADY_EDITOR' }
+  | { code: 'POC.CONFLICT.UNIQUE'; reason: 'EMAIL_TAKEN' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.TENANT.MISMATCH' };
 
 export type DiscardArticleDraftInput = { article: string };
 export type DiscardArticleDraftOutput = null;
 export type DiscardArticleDraftError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'ARTICLE_NOT_FOUND' }
-  | { code: 'AIP.PRECONDITION.FAILED'; reason: 'NOT_PUBLISHED' }
-  | { code: 'AIP.TENANT.MISMATCH' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'ARTICLE_NOT_FOUND' }
+  | { code: 'POC.PRECONDITION.FAILED'; reason: 'NOT_PUBLISHED' }
+  | { code: 'POC.TENANT.MISMATCH' };
 
 export type EditArticleInput = { article: string; title: string; body: string };
 export type EditArticleOutput = null;
 export type EditArticleError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'ARTICLE_NOT_FOUND' }
-  | { code: 'AIP.TENANT.MISMATCH' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'ARTICLE_NOT_FOUND' }
+  | { code: 'POC.TENANT.MISMATCH' };
 
 export type ExportMyDataInput = {  };
 export type ExportMyDataOutput = null;
 export type ExportMyDataError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.AUTH.FORBIDDEN'; reason: 'IMPERSONATION_FORBIDDEN' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' }
-  | { code: 'AIP.INPUT.INVALID' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.AUTH.FORBIDDEN'; reason: 'IMPERSONATION_FORBIDDEN' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' }
+  | { code: 'POC.INPUT.INVALID' };
 
 export type GiveTermsConsentInput = {  };
 export type GiveTermsConsentOutput = { givenAt: string | null; givenVersion: number | null; name: string; status: ConsentStatus; version: number; withdrawnAt: string | null };
 export type GiveTermsConsentError =
-  | { code: 'AIP.AUTH.FORBIDDEN'; reason: 'IMPERSONATION_FORBIDDEN' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' }
-  | { code: 'AIP.INPUT.INVALID' };
+  | { code: 'POC.AUTH.FORBIDDEN'; reason: 'IMPERSONATION_FORBIDDEN' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' }
+  | { code: 'POC.INPUT.INVALID' };
 
 export type PublishArticleInput = { article: string };
 export type PublishArticleOutput = { publishedAt: string };
 export type PublishArticleError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'ARTICLE_NOT_FOUND' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'ARTICLE_NOT_FOUND' };
 
 export type PurgeDraftsInput = { site: string };
 export type PurgeDraftsOutput = null;
 export type PurgeDraftsError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'SITE_NOT_FOUND' }
-  | { code: 'AIP.TENANT.MISMATCH' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'SITE_NOT_FOUND' }
+  | { code: 'POC.TENANT.MISMATCH' };
 
 export type RejectArticleReviewInput = { article: string; reason?: string | null };
 export type RejectArticleReviewOutput = null;
 export type RejectArticleReviewError =
-  | { code: 'AIP.AUTH.FORBIDDEN'; reason: 'IMPERSONATION_FORBIDDEN' }
-  | { code: 'AIP.AUTH.FORBIDDEN'; reason: 'NOT_AN_APPROVER' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' }
-  | { code: 'AIP.CONFLICT.UNIQUE'; reason: 'ALREADY_VOTED' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'ARTICLE_NOT_FOUND' }
-  | { code: 'AIP.PRECONDITION.FAILED'; reason: 'APPROVAL_NOT_PENDING' }
-  | { code: 'AIP.TENANT.MISMATCH' };
+  | { code: 'POC.AUTH.FORBIDDEN'; reason: 'IMPERSONATION_FORBIDDEN' }
+  | { code: 'POC.AUTH.FORBIDDEN'; reason: 'NOT_AN_APPROVER' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' }
+  | { code: 'POC.CONFLICT.UNIQUE'; reason: 'ALREADY_VOTED' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'ARTICLE_NOT_FOUND' }
+  | { code: 'POC.PRECONDITION.FAILED'; reason: 'APPROVAL_NOT_PENDING' }
+  | { code: 'POC.TENANT.MISMATCH' };
 
 export type RenameMeInput = { name: string };
 export type RenameMeOutput = null;
 export type RenameMeError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' }
-  | { code: 'AIP.CONFLICT.UNIQUE'; reason: 'EMAIL_TAKEN' }
-  | { code: 'AIP.INPUT.INVALID' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' }
+  | { code: 'POC.CONFLICT.UNIQUE'; reason: 'EMAIL_TAKEN' }
+  | { code: 'POC.INPUT.INVALID' };
 
 export type RequestArticleReviewInput = { article: string };
 export type RequestArticleReviewOutput = null;
 export type RequestArticleReviewError =
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' }
-  | { code: 'AIP.CONFLICT.UNIQUE'; reason: 'APPROVAL_ALREADY_PENDING' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'ARTICLE_NOT_FOUND' };
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' }
+  | { code: 'POC.CONFLICT.UNIQUE'; reason: 'APPROVAL_ALREADY_PENDING' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'ARTICLE_NOT_FOUND' };
 
 export type StartMemberImpersonationInput = { target: string; reason: string };
 export type StartMemberImpersonationOutput = { expiresAt: string; session: string; target: string; token: string };
 export type StartMemberImpersonationError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.AUTH.FORBIDDEN'; reason: 'IMPERSONATION_NESTED' }
-  | { code: 'AIP.AUTH.FORBIDDEN'; reason: 'IMPERSONATION_SELF' }
-  | { code: 'AIP.AUTH.FORBIDDEN'; reason: 'IMPERSONATION_TARGET_PRIVILEGED' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'MEMBER_NOT_FOUND' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.AUTH.FORBIDDEN'; reason: 'IMPERSONATION_NESTED' }
+  | { code: 'POC.AUTH.FORBIDDEN'; reason: 'IMPERSONATION_SELF' }
+  | { code: 'POC.AUTH.FORBIDDEN'; reason: 'IMPERSONATION_TARGET_PRIVILEGED' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'MEMBER_NOT_FOUND' };
 
 export type StopMemberImpersonationInput = {  };
 export type StopMemberImpersonationOutput = { ended: number };
 export type StopMemberImpersonationError =
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' }
-  | { code: 'AIP.INPUT.INVALID' };
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' }
+  | { code: 'POC.INPUT.INVALID' };
 
 export type WithdrawTermsConsentInput = {  };
 export type WithdrawTermsConsentOutput = { givenAt: string | null; givenVersion: number | null; name: string; status: ConsentStatus; version: number; withdrawnAt: string | null };
 export type WithdrawTermsConsentError =
-  | { code: 'AIP.AUTH.FORBIDDEN'; reason: 'IMPERSONATION_FORBIDDEN' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' }
-  | { code: 'AIP.INPUT.INVALID' };
+  | { code: 'POC.AUTH.FORBIDDEN'; reason: 'IMPERSONATION_FORBIDDEN' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' }
+  | { code: 'POC.INPUT.INVALID' };
 
 export interface AipErrorBody {
   code: string;

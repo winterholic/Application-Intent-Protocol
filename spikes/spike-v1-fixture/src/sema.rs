@@ -146,7 +146,7 @@ struct Scope {
     input: Vec<(String, TT)>,
 }
 
-const UNRESOLVED: &str = "UNRESOLVED_NAME";
+const UNRESOLVED: &str = "DEF.UNRESOLVED_NAME";
 /// `expose apply`가 한 요청에서 다룰 수 있는 행 수의 상한.
 const MAX_BULK_ROWS: i64 = 10_000;
 const MAX_POLICY_EXPANDED_DEPTH: usize = 64;
@@ -196,7 +196,7 @@ impl<'a> Ctx<'a> {
         let spec = self.spec;
         let mut seen = |n: &str, sp: Span, diags: &mut Vec<Diag>| {
             if !names.insert(n.to_string()) {
-                diags.push(Diag::new("DUPLICATE", format!("이름 `{n}` 중복 선언"), sp));
+                diags.push(Diag::new("DEF.DUPLICATE", format!("이름 `{n}` 중복 선언"), sp));
             }
         };
         for e in &spec.enums {
@@ -225,9 +225,9 @@ impl<'a> Ctx<'a> {
         self.diags.extend(validate_policy_expansion(spec));
         match &spec.actor {
             Some((a, _)) if a == "principal" && spec.resources.is_empty() && !spec.operations.is_empty() => self.actor = Some(a.clone()),
-            Some((a, sp)) if !self.res.contains_key(a.as_str()) => self.d("UNKNOWN_SYMBOL", format!("actor 대상 resource `{a}` 없음"), *sp),
+            Some((a, sp)) if !self.res.contains_key(a.as_str()) => self.d("DEF.UNKNOWN_SYMBOL", format!("actor 대상 resource `{a}` 없음"), *sp),
             Some((a, _)) => self.actor = Some(a.clone()),
-            None => self.d("MISSING_ITEM", "actor 선언 필요", Span::default()),
+            None => self.d("DEF.MISSING_ITEM", "actor 선언 필요", Span::default()),
         }
     }
 
@@ -236,7 +236,7 @@ impl<'a> Ctx<'a> {
             if self.res.contains_key(t.name.as_str()) || (t.name == "principal" && self.principal_actor()) {
                 Ty::Id(t.name.clone())
             } else {
-                self.d("UNKNOWN_TYPE", format!("`{}.Id`의 resource 없음", t.name), t.span);
+                self.d("DEF.UNKNOWN_TYPE", format!("`{}.Id`의 resource 없음", t.name), t.span);
                 return None;
             }
         } else {
@@ -244,7 +244,7 @@ impl<'a> Ctx<'a> {
                 "Id" => match owner {
                     Some(o) => Ty::Id(o.to_string()),
                     None => {
-                        self.d("UNKNOWN_TYPE", "resource 밖에서 맨 `Id`는 대상이 없음. `X.Id`를 쓴다", t.span);
+                        self.d("DEF.UNKNOWN_TYPE", "resource 밖에서 맨 `Id`는 대상이 없음. `X.Id`를 쓴다", t.span);
                         return None;
                     }
                 },
@@ -257,7 +257,7 @@ impl<'a> Ctx<'a> {
                 "Decimal" => match t.decimal {
                     Some((precision, scale)) => Ty::Decimal(precision, scale),
                     None => {
-                        self.d("BAD_DECIMAL_TYPE", "Decimal은 precision과 scale이 필요. `Decimal(p,s)` 형식을 쓴다", t.span);
+                        self.d("DEF.BAD_DECIMAL_TYPE", "Decimal은 precision과 scale이 필요. `Decimal(p,s)` 형식을 쓴다", t.span);
                         return None;
                     }
                 },
@@ -265,17 +265,17 @@ impl<'a> Ctx<'a> {
                 n if self.enums.contains_key(n) => Ty::Enum(n.to_string()),
                 n if self.res.contains_key(n) => Ty::Ref(n.to_string()),
                 n => {
-                    self.d("UNKNOWN_TYPE", format!("알 수 없는 타입 `{n}`"), t.span);
+                    self.d("DEF.UNKNOWN_TYPE", format!("알 수 없는 타입 `{n}`"), t.span);
                     return None;
                 }
             }
         };
         if t.range.is_some() && !matches!(base, Ty::Text | Ty::Int) {
-            self.d("TYPE_MISMATCH", "범위 제약은 Text/Int에만", t.span);
+            self.d("DEF.TYPE_MISMATCH", "범위 제약은 Text/Int에만", t.span);
         }
         if let Some((lo, hi)) = t.range {
             if lo > hi || (base == Ty::Text && lo < 0) {
-                self.d("BAD_RANGE", format!("만족할 수 없는 범위 {lo}..{hi}"), t.span);
+                self.d("DEF.BAD_RANGE", format!("만족할 수 없는 범위 {lo}..{hi}"), t.span);
             }
         }
         Some(TT { ty: base, nullable: t.nullable })
@@ -316,7 +316,7 @@ impl<'a> Ctx<'a> {
         for (n, t) in ps {
             // 이름 바인딩이 앞 인자를 덮어쓰지 않게 매개변수·입출력 이름은 유일해야 한다(R2-02).
             if !seen.insert(n.clone()) {
-                self.d("DUPLICATE", format!("매개변수·입출력 이름 `{n}` 중복"), t.span);
+                self.d("DEF.DUPLICATE", format!("매개변수·입출력 이름 `{n}` 중복"), t.span);
             }
             if let Some(tt) = self.type_of(None, t) {
                 // 범위 제약을 facts에 남긴다. 빠지면 다른 입출력 계약이 같은 digest가 된다(F04).
@@ -346,7 +346,7 @@ impl<'a> Ctx<'a> {
         let (root, mut tt, rest) = match first {
             "this" if sc.in_exists => {
                 return Err(Diag::new(
-                    "THIS_IN_EXISTS",
+                    "DEF.THIS_IN_EXISTS",
                     "exists 조건 안의 `this`는 안쪽 행으로 다시 묶여 `team = this.team`이 항상 참이 된다. 안쪽 필드는 맨 이름으로 쓰고, 바깥 행 값은 predicate 인자로 넘겨라",
                     sp,
                 ))
@@ -356,14 +356,14 @@ impl<'a> Ctx<'a> {
                 None => return Err(Diag::new(UNRESOLVED, "이 위치에는 `this`가 없음", sp)),
             },
             "input" => {
-                let n = segs.get(1).ok_or_else(|| Diag::new("PARSE_EXPECTED", "`input.<이름>` 필요", sp))?;
+                let n = segs.get(1).ok_or_else(|| Diag::new("DEF.PARSE_EXPECTED", "`input.<이름>` 필요", sp))?;
                 match sc.input.iter().find(|(x, _)| x == n) {
                     Some((_, t)) => (format!("input.{n}"), t.clone(), &segs[2..]),
-                    None => return Err(Diag::new("UNKNOWN_FIELD", format!("input에 `{n}` 없음"), sp)),
+                    None => return Err(Diag::new("DEF.UNKNOWN_FIELD", format!("input에 `{n}` 없음"), sp)),
                 }
             }
             _ => match (this_field, var) {
-                (Some(_), Some(_)) => return Err(Diag::new("AMBIGUOUS_NAME", format!("`{first}`가 필드와 변수 둘 다로 해석됨"), sp)),
+                (Some(_), Some(_)) => return Err(Diag::new("DEF.AMBIGUOUS_NAME", format!("`{first}`가 필드와 변수 둘 다로 해석됨"), sp)),
                 (Some(t), None) => ("this".to_string(), t, &segs[1..]),
                 (None, Some(t)) => (if first == "actor" { "actor".to_string() } else { format!("var.{first}") }, t, &segs[1..]),
                 (None, None) => return Err(Diag::new(UNRESOLVED, format!("`{}`를 해석할 수 없음", segs.join(".")), sp)),
@@ -373,7 +373,7 @@ impl<'a> Ctx<'a> {
         for s in rest {
             let target = match &tt.ty {
                 Ty::Ref(r) => r.clone(),
-                _ => return Err(Diag::new("UNKNOWN_FIELD", format!("`{}` 타입에는 필드 `{s}`가 없음", tt.show()), sp)),
+                _ => return Err(Diag::new("DEF.UNKNOWN_FIELD", format!("`{}` 타입에는 필드 `{s}`가 없음", tt.show()), sp)),
             };
             match self.field_tt(&target, s) {
                 Some(f) => {
@@ -381,7 +381,7 @@ impl<'a> Ctx<'a> {
                     tt = TT { ty: f.ty, nullable };
                 }
                 None => {
-                    return Err(Diag::new("UNKNOWN_FIELD", format!("`{target}`에 필드 `{s}` 없음"), sp));
+                    return Err(Diag::new("DEF.UNKNOWN_FIELD", format!("`{target}`에 필드 `{s}` 없음"), sp));
                 }
             }
             walked.push(s.clone());
@@ -406,10 +406,10 @@ impl<'a> Ctx<'a> {
                     return Ok((json!({ "lit": value, "ty": ty }), TT::new(Ty::Decimal(*precision, *scale))));
                 }
                 Ty::Email | Ty::Date => {
-                    return Err(Diag::new("BAD_VALUE", format!("`{}` 형식의 문자열 리터럴 필요", expected.show()), span_of(e)));
+                    return Err(Diag::new("DEF.BAD_VALUE", format!("`{}` 형식의 문자열 리터럴 필요", expected.show()), span_of(e)));
                 }
                 Ty::Decimal(_, _) => {
-                    return Err(Diag::new("BAD_VALUE", format!("`{}` 형식의 문자열 리터럴 필요", expected.show()), span_of(e)));
+                    return Err(Diag::new("DEF.BAD_VALUE", format!("`{}` 형식의 문자열 리터럴 필요", expected.show()), span_of(e)));
                 }
                 _ => {}
             }
@@ -422,7 +422,7 @@ impl<'a> Ctx<'a> {
                         if decl.variants.contains(&segs[0]) {
                             return Ok((json!({ "enum": format!("{en}.{}", segs[0]) }), TT::new(Ty::Enum(en.clone()))));
                         }
-                        return Err(Diag::new("UNKNOWN_SYMBOL", format!("`{en}`에 값 `{}` 없음", segs[0]), *sp));
+                        return Err(Diag::new("DEF.UNKNOWN_SYMBOL", format!("`{en}`에 값 `{}` 없음", segs[0]), *sp));
                     }
                     other => return other,
                 }
@@ -435,7 +435,7 @@ impl<'a> Ctx<'a> {
     /// 호출자 값이나 다른 필드를 섞으면 전이가 서버 정의 밖의 계산이 되므로 받지 않는다.
     fn counter(&self, f: &str, ft: &TT, op: &str, l: &Expr, r: &Expr, sp: Span) -> Result<Value, Diag> {
         if ft.ty != Ty::Int || ft.nullable {
-            return Err(Diag::new("TYPE_MISMATCH", format!("증감 대입은 null이 아닌 Int 필드만, `{f}`는 `{}`", ft.show()), sp));
+            return Err(Diag::new("DEF.TYPE_MISMATCH", format!("증감 대입은 null이 아닌 Int 필드만, `{f}`는 `{}`", ft.show()), sp));
         }
         let same = match l {
             Expr::Path(segs, _) => (segs.len() == 1 && segs[0] == f) || (segs.len() == 2 && segs[0] == "this" && segs[1] == f),
@@ -446,16 +446,16 @@ impl<'a> Ctx<'a> {
             _ => 0,
         };
         if !same || n == 0 {
-            return Err(Diag::new("ARITH_NOT_ALLOWED", format!("증감 대입은 `{f} = {f} + 정수` 또는 `{f} = {f} - 정수`(0 제외)만"), sp));
+            return Err(Diag::new("DEF.ARITH_NOT_ALLOWED", format!("증감 대입은 `{f} = {f} + 정수` 또는 `{f} = {f} - 정수`(0 제외)만"), sp));
         }
-        let delta = if op == "-" { n.checked_neg().ok_or_else(|| Diag::new("BAD_RANGE", "증감 값 범위", sp))? } else { n };
+        let delta = if op == "-" { n.checked_neg().ok_or_else(|| Diag::new("DEF.BAD_RANGE", "증감 값 범위", sp))? } else { n };
         Ok(json!({ "increment": delta }))
     }
 
     fn bool_of(&self, e: &Expr, sc: &Scope) -> Result<Value, Diag> {
         let (v, t) = self.ex(e, sc)?;
         if t.ty != Ty::Bool {
-            return Err(Diag::new("TYPE_MISMATCH", format!("조건식은 Bool이어야 함, `{}`", t.show()), span_of(e)));
+            return Err(Diag::new("DEF.TYPE_MISMATCH", format!("조건식은 Bool이어야 함, `{}`", t.show()), span_of(e)));
         }
         Ok(v)
     }
@@ -469,7 +469,9 @@ impl<'a> Ctx<'a> {
                 Ok((json!({ op: args }), b))
             }
             Expr::Not(x) => Ok((json!({ "not": self.bool_of(x, sc)? }), b)),
-            Expr::Arith(_, _, _, sp) => Err(Diag::new("ARITH_NOT_ALLOWED", "산술식은 transition `to`의 `필드 = 필드 ± 정수`에서만 쓸 수 있음", *sp)),
+            Expr::Arith(_, _, _, sp) => {
+                Err(Diag::new("DEF.ARITH_NOT_ALLOWED", "산술식은 transition `to`의 `필드 = 필드 ± 정수`에서만 쓸 수 있음", *sp))
+            }
             Expr::Cmp(op, l, r) => {
                 let (lv, lt, rv, rt) = if matches!(l.as_ref(), Expr::Str(_)) {
                     let (rv, rt) = self.ex(r, sc)?;
@@ -493,17 +495,17 @@ impl<'a> Ctx<'a> {
                 if lt.ty == Ty::Null || rt.ty == Ty::Null {
                     let other = if lt.ty == Ty::Null { &rt } else { &lt };
                     if !matches!(*op, "=" | "!=") {
-                        return Err(Diag::new("TYPE_MISMATCH", "null은 = 또는 != 로만 비교", sp));
+                        return Err(Diag::new("DEF.TYPE_MISMATCH", "null은 = 또는 != 로만 비교", sp));
                     }
                     // 익명 요청에서 actor는 실제로 NULL이다. `actor != null`이 "로그인한 사용자"를 표현하는 유일한 방법이다.
                     let bare_actor = [l, r].iter().any(|x| matches!(x.as_ref(), Expr::Path(p, _) if p.len() == 1 && p[0] == "actor"));
                     if !other.nullable && !bare_actor {
-                        return Err(Diag::new("NULL_COMPARE_NON_NULLABLE", format!("null이 될 수 없는 `{}`를 null과 비교", other.show()), sp));
+                        return Err(Diag::new("DEF.NULL_COMPARE_NON_NULLABLE", format!("null이 될 수 없는 `{}`를 null과 비교", other.show()), sp));
                     }
                 } else if !same_target(&lt.ty, &rt.ty) {
-                    return Err(Diag::new("TYPE_MISMATCH", format!("`{}` {op} `{}`", lt.show(), rt.show()), sp));
+                    return Err(Diag::new("DEF.TYPE_MISMATCH", format!("`{}` {op} `{}`", lt.show(), rt.show()), sp));
                 } else if !matches!(*op, "=" | "!=") && !matches!(lt.ty, Ty::Time | Ty::Date | Ty::Int | Ty::Decimal(_, _) | Ty::Text) {
-                    return Err(Diag::new("TYPE_MISMATCH", format!("`{}`는 크기 비교 불가", lt.show()), sp));
+                    return Err(Diag::new("DEF.TYPE_MISMATCH", format!("`{}`는 크기 비교 불가", lt.show()), sp));
                 }
                 Ok((json!({ "cmp": op, "l": lv, "r": rv }), b))
             }
@@ -513,7 +515,7 @@ impl<'a> Ctx<'a> {
                 for it in items {
                     let (v, t) = self.expect(it, sc, Some(&lt))?;
                     if !same_target(&t.ty, &lt.ty) {
-                        return Err(Diag::new("TYPE_MISMATCH", format!("in 목록 `{}` vs `{}`", lt.show(), t.show()), span_of(it)));
+                        return Err(Diag::new("DEF.TYPE_MISMATCH", format!("in 목록 `{}` vs `{}`", lt.show(), t.show()), span_of(it)));
                     }
                     iv.push(v);
                 }
@@ -531,13 +533,13 @@ impl<'a> Ctx<'a> {
             Expr::Call(n, args, sp) => {
                 let p = match self.preds.get(n.as_str()) {
                     Some(p) => *p,
-                    None => return Err(Diag::new("UNKNOWN_SYMBOL", format!("predicate `{n}` 없음"), *sp)),
+                    None => return Err(Diag::new("DEF.UNKNOWN_SYMBOL", format!("predicate `{n}` 없음"), *sp)),
                 };
                 self.args_against(n, &p.params, args, sc, *sp).map(|av| (json!({ "call": n, "args": av }), b))
             }
             Expr::Exists(r, cond, sp) => {
                 if !self.res.contains_key(r.as_str()) {
-                    return Err(Diag::new("UNKNOWN_SYMBOL", format!("resource `{r}` 없음"), *sp));
+                    return Err(Diag::new("DEF.UNKNOWN_SYMBOL", format!("resource `{r}` 없음"), *sp));
                 }
                 let mut inner = sc.clone();
                 inner.this = Some(r.clone());
@@ -551,14 +553,14 @@ impl<'a> Ctx<'a> {
 
     fn args_against(&self, n: &str, params: &Params, args: &[Expr], sc: &Scope, sp: Span) -> Result<Vec<Value>, Diag> {
         if params.len() != args.len() {
-            return Err(Diag::new("ARITY_MISMATCH", format!("`{n}` 인자 {}개 필요, {}개", params.len(), args.len()), sp));
+            return Err(Diag::new("DEF.ARITY_MISMATCH", format!("`{n}` 인자 {}개 필요, {}개", params.len(), args.len()), sp));
         }
         let mut av = vec![];
         for ((pn, pt), a) in params.iter().zip(args) {
-            let want = self.plain_type(pt).ok_or_else(|| Diag::new("UNKNOWN_TYPE", format!("`{n}.{pn}` 타입"), sp))?;
+            let want = self.plain_type(pt).ok_or_else(|| Diag::new("DEF.UNKNOWN_TYPE", format!("`{n}.{pn}` 타입"), sp))?;
             let (v, t) = self.expect(a, sc, Some(&want))?;
             if !same_target(&t.ty, &want.ty) || (t.nullable && !want.nullable) {
-                return Err(Diag::new("TYPE_MISMATCH", format!("`{n}`의 `{pn}`는 `{}`, 받은 값 `{}`", want.show(), t.show()), span_of(a)));
+                return Err(Diag::new("DEF.TYPE_MISMATCH", format!("`{n}`의 `{pn}`는 `{}`, 받은 값 `{}`", want.show(), t.show()), span_of(a)));
             }
             av.push(v);
         }
@@ -586,7 +588,7 @@ impl<'a> Ctx<'a> {
         Some(TT { ty, nullable: t.nullable })
     }
 
-    /// 전이의 `from`·`to` 값 식이 field read 정책 필드를 읽으면 막는다(감사 O-02). 결과(`INVALID_STATE`, `changed`/`unchanged`,
+    /// 전이의 `from`·`to` 값 식이 field read 정책 필드를 읽으면 막는다(감사 O-02). 결과(`WIRE.INVALID_STATE`, `changed`/`unchanged`,
     /// 복사된 값)로 가려진 값이 추론되기 때문이다. facts의 path를 따라 참조 이동과 exists 안쪽 resource까지 본다.
     fn reject_hidden_reads(&mut self, v: &Value, res: &str, what: &str, sp: Span) {
         let mut hits = vec![];
@@ -595,7 +597,7 @@ impl<'a> Ctx<'a> {
         hits.dedup();
         for h in hits {
             self.d(
-                "POLICY_FIELD_NOT_USABLE_IN_TRANSITION",
+                "DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION",
                 format!("{what}가 field read 정책이 있는 `{h}`를 읽을 수 없음(결과로 가려진 값이 추론됨). 가려지지 않은 필드로 조건을 쓴다"),
                 sp,
             );
@@ -685,10 +687,10 @@ impl<'a> Ctx<'a> {
             match &a.body {
                 AccessBody::TotalOfVisible(r, sp) => {
                     if !a.params.is_empty() {
-                        self.d("TYPE_MISMATCH", "totalOfVisible access는 매개변수를 받지 않음", a.span);
+                        self.d("DEF.TYPE_MISMATCH", "totalOfVisible access는 매개변수를 받지 않음", a.span);
                     }
                     if !self.res.contains_key(r.as_str()) {
-                        self.d("UNKNOWN_SYMBOL", format!("resource `{r}` 없음"), *sp);
+                        self.d("DEF.UNKNOWN_SYMBOL", format!("resource `{r}` 없음"), *sp);
                     }
                     acc.insert(a.name.clone(), json!({ "kind": "totalOfVisible", "parent": r }));
                 }
@@ -707,11 +709,11 @@ impl<'a> Ctx<'a> {
         let mut lim = Map::new();
         for l in &spec.limits {
             if !self.res.contains_key(l.on.as_str()) {
-                self.d("UNKNOWN_SYMBOL", format!("limit 대상 resource `{}` 없음", l.on), l.span);
+                self.d("DEF.UNKNOWN_SYMBOL", format!("limit 대상 resource `{}` 없음", l.on), l.span);
                 continue;
             }
             if l.at_most < 1 {
-                self.d("TYPE_MISMATCH", "atMost는 1 이상", l.span);
+                self.d("DEF.TYPE_MISMATCH", "atMost는 1 이상", l.span);
             }
             let sc = Scope { this: Some(l.on.clone()), ..Default::default() };
             let c = self.bool_of(&l.cond, &sc);
@@ -750,31 +752,31 @@ impl<'a> Ctx<'a> {
         let mut names: BTreeSet<String> = r.fields.iter().map(|f| f.name.clone()).collect();
         for (n, sp) in r.aggregates.iter().map(|a| (&a.name, a.span)) {
             if !names.insert(n.clone()) {
-                self.d("DUPLICATE", format!("`{n}`이 필드/다른 집계와 이름 충돌"), sp);
+                self.d("DEF.DUPLICATE", format!("`{n}`이 필드/다른 집계와 이름 충돌"), sp);
             }
         }
         let mut seen = BTreeSet::new();
         for (n, sp) in r.transitions.iter().map(|t| (&t.name, t.span)).chain(r.extensions.iter().map(|x| (&x.name, x.span))) {
             if !seen.insert(n.clone()) {
-                self.d("DUPLICATE", format!("동작 이름 `{n}` 중복"), sp);
+                self.d("DEF.DUPLICATE", format!("동작 이름 `{n}` 중복"), sp);
             }
         }
         let mut seen = BTreeSet::new();
         for (f, _, sp) in &r.field_read {
             if !seen.insert(f.clone()) {
-                self.d("DUPLICATE", format!("필드 `{f}`의 read 정책 중복"), *sp);
+                self.d("DEF.DUPLICATE", format!("필드 `{f}`의 read 정책 중복"), *sp);
             }
         }
         let mut seen = BTreeSet::new();
         for (n, _, sp) in &r.invariants {
             if !seen.insert(n.clone()) {
-                self.d("DUPLICATE", format!("invariant `{n}` 중복"), *sp);
+                self.d("DEF.DUPLICATE", format!("invariant `{n}` 중복"), *sp);
             }
         }
         let mut seen = BTreeSet::new();
         for (n, sp) in &r.expose_aggregates {
             if !seen.insert(n.clone()) {
-                self.d("DUPLICATE", format!("expose aggregate `{n}` 중복"), *sp);
+                self.d("DEF.DUPLICATE", format!("expose aggregate `{n}` 중복"), *sp);
             }
         }
         if let Some(e) = &r.expose_read {
@@ -789,7 +791,7 @@ impl<'a> Ctx<'a> {
                 .chain(e.traverse_many.iter().map(|m| (format!("traverse {}", m.name), m.span)));
             for (k, sp) in items {
                 if !seen.insert(k.clone()) {
-                    self.d("DUPLICATE", format!("expose read `{k}` 중복"), sp);
+                    self.d("DEF.DUPLICATE", format!("expose read `{k}` 중복"), sp);
                 }
             }
         }
@@ -797,7 +799,7 @@ impl<'a> Ctx<'a> {
         let mut seen = BTreeSet::new();
         for f in &r.fields {
             if !seen.insert(&f.name) {
-                self.d("DUPLICATE", format!("필드 `{}` 중복", f.name), f.span);
+                self.d("DEF.DUPLICATE", format!("필드 `{}` 중복", f.name), f.span);
             }
             if f.ty.id_of {
                 // 창시자 결정(2026-10-13): 객체 그래프 탐색이 되므로 "X에 속한다"의 철자는 참조 `X` 하나만 둔다.
@@ -807,13 +809,13 @@ impl<'a> Ctx<'a> {
                 } else {
                     format!("필드 `{}`는 `{}.Id`로 선언할 수 없음. `{}: {}`(참조)로 쓴다", f.name, f.ty.name, f.name, f.ty.name)
                 };
-                self.d("ID_FIELD_NEEDS_REFERENCE", msg, f.ty.span);
+                self.d("DEF.ID_FIELD_NEEDS_REFERENCE", msg, f.ty.span);
                 continue;
             }
             if let Some(tt) = self.type_of(Some(&r.name), &f.ty) {
                 if let Ty::Ref(target) = &tt.ty {
                     if !self.res[target.as_str()].fields.iter().any(|field| field.name == "id") {
-                        self.d("TYPE_MISMATCH", format!("Ref 대상 resource `{target}`에는 명시적 id가 필요"), f.ty.span);
+                        self.d("DEF.TYPE_MISMATCH", format!("Ref 대상 resource `{target}`에는 명시적 id가 필요"), f.ty.span);
                         continue;
                     }
                 }
@@ -822,7 +824,7 @@ impl<'a> Ctx<'a> {
         }
         // 비공개 관계 테이블은 id 없이도 exists의 원본이 될 수 있다.
         if fields.get("id").is_some_and(|id| id["ty"] != format!("Id<{}>", r.name)) {
-            self.d("TYPE_MISMATCH", format!("`{}.id`는 non-null 자기 resource의 Id여야 함", r.name), r.span);
+            self.d("DEF.TYPE_MISMATCH", format!("`{}.id`는 non-null 자기 resource의 Id여야 함", r.name), r.span);
         }
         o.insert("fields".into(), Value::Object(fields));
 
@@ -841,7 +843,7 @@ impl<'a> Ctx<'a> {
         let mut fr = Map::new();
         for (f, e, sp) in &r.field_read {
             if !r.fields.iter().any(|x| &x.name == f) {
-                self.d("UNKNOWN_FIELD", format!("field 정책 대상 `{f}` 없음"), *sp);
+                self.d("DEF.UNKNOWN_FIELD", format!("field 정책 대상 `{f}` 없음"), *sp);
                 continue;
             }
             let v = self.bool_of(e, &sc);
@@ -865,7 +867,7 @@ impl<'a> Ctx<'a> {
         let mut ea = vec![];
         for (n, sp) in &r.expose_aggregates {
             if !r.aggregates.iter().any(|a| &a.name == n) {
-                self.d("UNKNOWN_SYMBOL", format!("노출할 aggregate `{n}` 없음"), *sp);
+                self.d("DEF.UNKNOWN_SYMBOL", format!("노출할 aggregate `{n}` 없음"), *sp);
             }
             ea.push(n.clone());
         }
@@ -886,11 +888,11 @@ impl<'a> Ctx<'a> {
             let mut counters = false;
             for (f, val) in &t.to {
                 if to.contains_key(f) {
-                    self.d("DUPLICATE", format!("transition `{}`의 `{f}` 대입 중복", t.name), t.span);
+                    self.d("DEF.DUPLICATE", format!("transition `{}`의 `{f}` 대입 중복", t.name), t.span);
                     continue;
                 }
                 let Some(ft) = self.field_tt(&r.name, f) else {
-                    self.d("UNKNOWN_FIELD", format!("transition 대상 필드 `{f}` 없음"), t.span);
+                    self.d("DEF.UNKNOWN_FIELD", format!("transition 대상 필드 `{f}` 없음"), t.span);
                     continue;
                 };
                 if let Expr::Arith(op, l, r, sp) = val {
@@ -903,7 +905,7 @@ impl<'a> Ctx<'a> {
                 let range = r.fields.iter().find(|x| &x.name == f).and_then(|x| x.ty.range);
                 if let (Expr::Int(n), Some((lo, hi))) = (val, range) {
                     if *n < lo || *n > hi {
-                        self.d("BAD_RANGE", format!("transition `{}`: `{f}` = {n}은 범위 {lo}..{hi} 밖", t.name), t.span);
+                        self.d("DEF.BAD_RANGE", format!("transition `{}`: `{f}` = {n}은 범위 {lo}..{hi} 밖", t.name), t.span);
                         continue;
                     }
                 }
@@ -911,7 +913,7 @@ impl<'a> Ctx<'a> {
                     if (same_target(&vt.ty, &ft.ty) && (!vt.nullable || ft.nullable)) || (vt.ty == Ty::Null && ft.nullable) {
                         Ok(v)
                     } else {
-                        Err(Diag::new("TYPE_MISMATCH", format!("`{f}`에 `{}` 대입 불가", vt.show()), t.span))
+                        Err(Diag::new("DEF.TYPE_MISMATCH", format!("`{f}`에 `{}` 대입 불가", vt.show()), t.span))
                     }
                 });
                 if let Some(v) = self.run(res) {
@@ -924,7 +926,7 @@ impl<'a> Ctx<'a> {
             if t.repeat.as_ref().is_some_and(|(x, _)| x == "unchanged") {
                 if let Some(f) = t.to.iter().map(|(f, _)| f).find(|f| r.field_read.iter().any(|x| &x.0 == *f)) {
                     self.d(
-                        "POLICY_FIELD_NOT_USABLE_IN_TRANSITION",
+                        "DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION",
                         format!("transition `{}`: `{f}`에는 field read 정책이 있어 repeat unchanged와 함께 쓸 수 없음(`unchanged`가 가려진 값과 같음을 알려 줌). repeat를 빼거나 reject로 쓴다", t.name),
                         t.span,
                     );
@@ -932,13 +934,13 @@ impl<'a> Ctx<'a> {
             }
             if counters && t.repeat.as_ref().is_some_and(|(r, _)| r == "unchanged") {
                 // 증감은 매번 값이 달라져 "이미 목표 상태"가 없다. unchanged는 재시도를 조용히 성공시키는 것으로 오해된다.
-                self.d("UNSUPPORTED", format!("transition `{}`: 증감 대입에는 repeat unchanged를 쓸 수 없음", t.name), t.span);
+                self.d("DEF.UNSUPPORTED", format!("transition `{}`: 증감 대입에는 repeat unchanged를 쓸 수 없음", t.name), t.span);
             }
             let repeat = match &t.repeat {
                 None => "reject".to_string(),
                 Some((r, _)) if r == "unchanged" || r == "reject" => r.clone(),
                 Some((r, sp)) => {
-                    self.d("UNSUPPORTED", format!("repeat `{r}`는 unchanged/reject만"), *sp);
+                    self.d("DEF.UNSUPPORTED", format!("repeat `{r}`는 unchanged/reject만"), *sp);
                     r.clone()
                 }
             };
@@ -949,7 +951,7 @@ impl<'a> Ctx<'a> {
                 }
             }
             if to.contains_key("id") {
-                self.d("UNSUPPORTED_EFFECT", "전이는 잠근 대상의 기본키 id를 바꿀 수 없음", t.span);
+                self.d("DEF.UNSUPPORTED_EFFECT", "전이는 잠근 대상의 기본키 id를 바꿀 수 없음", t.span);
             }
             tr.insert(t.name.clone(), json!({ "from": from, "to": to, "allow": allow, "repeat": repeat, "effects": effects }));
         }
@@ -958,34 +960,34 @@ impl<'a> Ctx<'a> {
         let mut ap = Map::new();
         for ea in &r.expose_apply {
             if !r.transitions.iter().any(|t| t.name == ea.transition) {
-                self.d("UNKNOWN_SYMBOL", format!("공개할 전이 `{}` 없음", ea.transition), ea.span);
+                self.d("DEF.UNKNOWN_SYMBOL", format!("공개할 전이 `{}` 없음", ea.transition), ea.span);
                 continue;
             }
             if ap.contains_key(&ea.transition) {
-                self.d("DUPLICATE", format!("expose apply `{}` 중복", ea.transition), ea.span);
+                self.d("DEF.DUPLICATE", format!("expose apply `{}` 중복", ea.transition), ea.span);
                 continue;
             }
             let mut targets = BTreeSet::new();
             for (t, sp) in &ea.targets {
                 if t != "id" && t != "where" {
-                    self.d("UNSUPPORTED", format!("target `{t}`는 id/where만"), *sp);
+                    self.d("DEF.UNSUPPORTED", format!("target `{t}`는 id/where만"), *sp);
                 }
                 if !targets.insert(t.clone()) {
-                    self.d("DUPLICATE", format!("target `{t}` 중복"), *sp);
+                    self.d("DEF.DUPLICATE", format!("target `{t}` 중복"), *sp);
                 }
             }
             if targets.is_empty() {
-                self.d("MISSING_ITEM", "expose apply에 target 필요", ea.span);
+                self.d("DEF.MISSING_ITEM", "expose apply에 target 필요", ea.span);
             }
             // where 대상은 읽기 filter 허용 목록 안에서만 쓴다. 쓰기 조건으로 숨은 값을 추론하지 못하게.
             if targets.contains("where") && r.expose_read.as_ref().is_none_or(|e| e.filter.is_empty()) {
-                self.d("MISSING_ITEM", "where 대상에는 expose read filter 허용 목록이 필요", ea.span);
+                self.d("DEF.MISSING_ITEM", "where 대상에는 expose read filter 허용 목록이 필요", ea.span);
             }
             match ea.bulk {
                 // 상한이 없으면 id 중복 검사와 행 잠금 비용이 요청 하나에 무한히 늘고 `bulk + 1`이 i64를 넘길 수 있다.
                 Some(n) if (1..=MAX_BULK_ROWS).contains(&n) => {}
-                Some(_) => self.d("BAD_BUDGET", format!("bulk maxRows는 1 이상 {MAX_BULK_ROWS} 이하"), ea.span),
-                None => self.d("MISSING_ITEM", "expose apply에 bulk maxRows 필요(무제한 기본값 없음)", ea.span),
+                Some(_) => self.d("DEF.BAD_BUDGET", format!("bulk maxRows는 1 이상 {MAX_BULK_ROWS} 이하"), ea.span),
+                None => self.d("DEF.MISSING_ITEM", "expose apply에 bulk maxRows 필요(무제한 기본값 없음)", ea.span),
             }
             let scope = match &ea.same_scope {
                 None => Value::Null,
@@ -1008,20 +1010,20 @@ impl<'a> Ctx<'a> {
                         self.run(v).unwrap_or(Value::Null)
                     }
                     None => {
-                        self.d("MISSING_ITEM", "expose create에 allow 필요", c.span);
+                        self.d("DEF.MISSING_ITEM", "expose create에 allow 필요", c.span);
                         Value::Null
                     }
                 };
                 let mut fs = BTreeSet::new();
                 for (f, sp) in &c.fields {
                     if !r.fields.iter().any(|x| &x.name == f) {
-                        self.d("UNKNOWN_FIELD", format!("생성 필드 `{f}` 없음"), *sp);
+                        self.d("DEF.UNKNOWN_FIELD", format!("생성 필드 `{f}` 없음"), *sp);
                     }
                     fs.insert(f.clone());
                 }
                 for f in required_fields(r) {
                     if !fs.contains(&f) {
-                        self.d("MISSING_ITEM", format!("필수 필드 `{f}`가 expose create fields에 없음"), c.span);
+                        self.d("DEF.MISSING_ITEM", format!("필수 필드 `{f}`가 expose create fields에 없음"), c.span);
                     }
                 }
                 json!({ "allow": allow, "fields": fs })
@@ -1039,7 +1041,7 @@ impl<'a> Ctx<'a> {
                 let mut trs = BTreeSet::new();
                 for (t, sp) in &c.transitions {
                     if !r.transitions.iter().any(|x| &x.name == t) {
-                        self.d("UNKNOWN_SYMBOL", format!("compose 전이 `{t}` 없음"), *sp);
+                        self.d("DEF.UNKNOWN_SYMBOL", format!("compose 전이 `{t}` 없음"), *sp);
                     }
                     trs.insert(t.clone());
                 }
@@ -1047,14 +1049,14 @@ impl<'a> Ctx<'a> {
                 for (res, srcs, sp) in &c.creates {
                     match self.res.get(res.as_str()) {
                         Some(t) if t.expose_create.is_some() => {}
-                        Some(_) => self.d("MISSING_ITEM", format!("compose create `{res}`에는 그 resource의 expose create(allow)가 필요"), *sp),
-                        None => self.d("UNKNOWN_SYMBOL", format!("resource `{res}` 없음"), *sp),
+                        Some(_) => self.d("DEF.MISSING_ITEM", format!("compose create `{res}`에는 그 resource의 expose create(allow)가 필요"), *sp),
+                        None => self.d("DEF.UNKNOWN_SYMBOL", format!("resource `{res}` 없음"), *sp),
                     }
                     let mut sv = vec![];
                     for e in srcs {
                         // 출처는 대상 행의 경로만 받는다. 상수·호출은 실행기가 해석하지 않는다(R3-06).
                         if !matches!(e, Expr::Path(..)) {
-                            self.d("UNSUPPORTED", format!("compose create `{res}`의 출처는 대상 행 경로여야 함"), *sp);
+                            self.d("DEF.UNSUPPORTED", format!("compose create `{res}`의 출처는 대상 행 경로여야 함"), *sp);
                             continue;
                         }
                         let v = self.ex(e, &sc);
@@ -1065,7 +1067,7 @@ impl<'a> Ctx<'a> {
                     creates.insert(res.clone(), json!({ "sources": sv }));
                 }
                 if c.bulk.is_none_or(|b| b < 1) {
-                    self.d("MISSING_ITEM", "expose compose에 bulk maxRows(1 이상) 필요", c.span);
+                    self.d("DEF.MISSING_ITEM", "expose compose에 bulk maxRows(1 이상) 필요", c.span);
                 }
                 let self_row = match &c.self_row {
                     None => Value::Null,
@@ -1073,12 +1075,12 @@ impl<'a> Ctx<'a> {
                         let actor_ok = matches!((self.field_tt(&r.name, a), &self.actor), (Some(TT { ty: Ty::Ref(x), .. }), Some(ac)) if &x == ac);
                         let by_ok = matches!(self.field_tt(&r.name, by), Some(TT { ty: Ty::Ref(_), .. }));
                         if !actor_ok || !by_ok {
-                            self.d("TYPE_MISMATCH", "selfRow는 `<actor 참조 필드> by <참조 필드>`", *sp);
+                            self.d("DEF.TYPE_MISMATCH", "selfRow는 `<actor 참조 필드> by <참조 필드>`", *sp);
                         }
                         // 자기 행은 대상과 같은 범위에서 찾아야 하므로 sameScope는 `by` 필드 그 자체여야 한다(r6 F01).
                         match &c.same_scope {
                             Some(Expr::Path(p, _)) if p.len() == 1 && &p[0] == by => {}
-                            _ => self.d("TYPE_MISMATCH", format!("selfRow `by {by}`와 sameScope가 같은 필드여야 함"), *sp),
+                            _ => self.d("DEF.TYPE_MISMATCH", format!("selfRow `by {by}`와 sameScope가 같은 필드여야 함"), *sp),
                         }
                         json!({ "actorField": a, "by": by })
                     }
@@ -1092,7 +1094,7 @@ impl<'a> Ctx<'a> {
         for (cols, sp) in &r.uniques {
             for (c, csp) in cols {
                 if !r.fields.iter().any(|x| &x.name == c) {
-                    self.d("UNKNOWN_FIELD", format!("unique 필드 `{c}` 없음"), *csp);
+                    self.d("DEF.UNKNOWN_FIELD", format!("unique 필드 `{c}` 없음"), *csp);
                 }
             }
             let _ = sp;
@@ -1104,7 +1106,7 @@ impl<'a> Ctx<'a> {
         let mut ck = Map::new();
         for (n, e, sp) in &r.checks {
             if ck.contains_key(n) {
-                self.d("DUPLICATE", format!("check `{n}` 중복"), *sp);
+                self.d("DEF.DUPLICATE", format!("check `{n}` 중복"), *sp);
                 continue;
             }
             let v = self.bool_of(e, &sc);
@@ -1117,17 +1119,17 @@ impl<'a> Ctx<'a> {
         let mut inv = Map::new();
         for (n, per, sp) in &r.invariants {
             let Some(l) = limits.get(n) else {
-                self.d("UNKNOWN_SYMBOL", format!("invariant `{n}` 정의 없음. 실행식 없는 불변식은 허용하지 않음"), *sp);
+                self.d("DEF.UNKNOWN_SYMBOL", format!("invariant `{n}` 정의 없음. 실행식 없는 불변식은 허용하지 않음"), *sp);
                 continue;
             };
             if l["on"] != json!(r.name) {
-                self.d("TYPE_MISMATCH", format!("`{n}`은 `{}` 대상 정의", l["on"]), *sp);
+                self.d("DEF.TYPE_MISMATCH", format!("`{n}`은 `{}` 대상 정의", l["on"]), *sp);
                 continue;
             }
             match self.field_tt(&r.name, per) {
                 Some(TT { ty: Ty::Ref(_), .. }) => {}
                 _ => {
-                    self.d("UNKNOWN_FIELD", format!("`per {per}`는 이 resource의 참조 필드여야 함"), *sp);
+                    self.d("DEF.UNKNOWN_FIELD", format!("`per {per}`는 이 resource의 참조 필드여야 함"), *sp);
                     continue;
                 }
             }
@@ -1135,7 +1137,11 @@ impl<'a> Ctx<'a> {
             // 조건은 DB가 행별로 평가할 수 있는 표현으로 제한한다. N=1은 부분 고유 인덱스,
             // 더 큰 N은 쓰기 경로의 직렬화된 집계 검사로 집행한다.
             if !index_safe(&l["where"]) {
-                self.d("UNSUPPORTED_INVARIANT", format!("`{n}`: 조건은 이 행의 필드와 리터럴만 사용해야 함(시간·actor·하위조회 의존은 미지원)"), *sp);
+                self.d(
+                    "DEF.UNSUPPORTED_INVARIANT",
+                    format!("`{n}`: 조건은 이 행의 필드와 리터럴만 사용해야 함(시간·actor·하위조회 의존은 미지원)"),
+                    *sp,
+                );
                 continue;
             }
             let enforcement = if l["atMost"] == json!(1) {
@@ -1161,24 +1167,24 @@ impl<'a> Ctx<'a> {
         match e {
             Effect::Create { resource, values, span } => {
                 let Some(target) = self.res.get(resource.as_str()).copied() else {
-                    self.d("UNKNOWN_SYMBOL", format!("생성 대상 `{resource}` 없음"), *span);
+                    self.d("DEF.UNKNOWN_SYMBOL", format!("생성 대상 `{resource}` 없음"), *span);
                     return None;
                 };
                 let mut vals = Map::new();
                 for (f, v) in values {
                     if vals.contains_key(f) {
-                        self.d("DUPLICATE", format!("`{resource}.{f}` 값 중복"), *span);
+                        self.d("DEF.DUPLICATE", format!("`{resource}.{f}` 값 중복"), *span);
                         continue;
                     }
                     let Some(ft) = self.field_tt(resource, f) else {
-                        self.d("UNKNOWN_FIELD", format!("`{resource}`에 필드 `{f}` 없음"), *span);
+                        self.d("DEF.UNKNOWN_FIELD", format!("`{resource}`에 필드 `{f}` 없음"), *span);
                         continue;
                     };
                     let res = self.expect(v, sc, Some(&ft)).and_then(|(val, vt)| {
                         if same_target(&vt.ty, &ft.ty) && (!vt.nullable || ft.nullable) {
                             Ok(val)
                         } else {
-                            Err(Diag::new("TYPE_MISMATCH", format!("`{resource}.{f}`({})에 `{}` 불가", ft.show(), vt.show()), *span))
+                            Err(Diag::new("DEF.TYPE_MISMATCH", format!("`{resource}.{f}`({})에 `{}` 불가", ft.show(), vt.show()), *span))
                         }
                     });
                     if let Some(val) = self.run(res) {
@@ -1187,7 +1193,7 @@ impl<'a> Ctx<'a> {
                 }
                 for f in required_fields(target) {
                     if !vals.contains_key(&f) {
-                        self.d("MISSING_ITEM", format!("`{resource}` 생성에 필수 필드 `{f}` 값 필요"), *span);
+                        self.d("DEF.MISSING_ITEM", format!("`{resource}` 생성에 필수 필드 `{f}` 값 필요"), *span);
                     }
                 }
                 let _ = r;
@@ -1195,25 +1201,25 @@ impl<'a> Ctx<'a> {
             }
             Effect::Update { resource, max_rows, matches, values, span } => {
                 if !self.res.contains_key(resource.as_str()) {
-                    self.d("UNKNOWN_SYMBOL", format!("갱신 대상 `{resource}` 없음"), *span);
+                    self.d("DEF.UNKNOWN_SYMBOL", format!("갱신 대상 `{resource}` 없음"), *span);
                     return None;
                 }
                 let typed = |pairs: &Vec<(String, Expr)>, what: &str, cx: &mut Self| -> Map<String, Value> {
                     let mut out = Map::new();
                     for (f, v) in pairs {
                         if out.contains_key(f) {
-                            cx.d("DUPLICATE", format!("`{resource}.{f}` {what} 중복"), *span);
+                            cx.d("DEF.DUPLICATE", format!("`{resource}.{f}` {what} 중복"), *span);
                             continue;
                         }
                         let Some(ft) = cx.field_tt(resource, f) else {
-                            cx.d("UNKNOWN_FIELD", format!("`{resource}`에 필드 `{f}` 없음"), *span);
+                            cx.d("DEF.UNKNOWN_FIELD", format!("`{resource}`에 필드 `{f}` 없음"), *span);
                             continue;
                         };
                         let res = cx.expect(v, sc, Some(&ft)).and_then(|(val, vt)| {
                             if same_target(&vt.ty, &ft.ty) && (!vt.nullable || ft.nullable) {
                                 Ok(val)
                             } else {
-                                Err(Diag::new("TYPE_MISMATCH", format!("`{resource}.{f}`({})에 `{}` 불가", ft.show(), vt.show()), *span))
+                                Err(Diag::new("DEF.TYPE_MISMATCH", format!("`{resource}.{f}`({})에 `{}` 불가", ft.show(), vt.show()), *span))
                             }
                         });
                         if let Some(val) = cx.run(res) {
@@ -1225,12 +1231,12 @@ impl<'a> Ctx<'a> {
                 let m = typed(matches, "조건", self);
                 let v = typed(values, "값", self);
                 if m.is_empty() || v.is_empty() {
-                    self.d("MISSING_ITEM", "update 효과에는 찾을 조건과 바꿀 값이 필요", *span);
+                    self.d("DEF.MISSING_ITEM", "update 효과에는 찾을 조건과 바꿀 값이 필요", *span);
                 }
                 let mut effect = json!({ "update": resource, "match": m, "values": v });
                 if let Some(max) = max_rows {
                     if !(1..=1000).contains(max) {
-                        self.d("BAD_BUDGET", "many update maxRows는 1..1000", *span);
+                        self.d("DEF.BAD_BUDGET", "many update maxRows는 1..1000", *span);
                     }
                     let scope = m.iter().find_map(|(field, value)| {
                         let ty = self.field_tt(resource, field)?;
@@ -1239,9 +1245,9 @@ impl<'a> Ctx<'a> {
                         (parent && value["path"]["root"] == "this" && value["path"]["segs"] == json!([])).then_some(field)
                     });
                     match scope {
-                        None => self.d("UNSUPPORTED_EFFECT", "many update에는 non-null 부모 참조 = this.id 조건 필요", *span),
+                        None => self.d("DEF.UNSUPPORTED_EFFECT", "many update에는 non-null 부모 참조 = this.id 조건 필요", *span),
                         Some(field) if v.contains_key(field) => {
-                            self.d("UNSUPPORTED_EFFECT", "many update의 부모 범위 참조는 바꿀 수 없음", *span);
+                            self.d("DEF.UNSUPPORTED_EFFECT", "many update의 부모 범위 참조는 바꿀 수 없음", *span);
                         }
                         Some(_) => {}
                     }
@@ -1252,7 +1258,7 @@ impl<'a> Ctx<'a> {
             Effect::Notify { to, topic, span } => {
                 let res = self.ex(to, sc).and_then(|(v, t)| match (&t.ty, &self.actor) {
                     (Ty::Ref(x), Some(a)) if x == a && !t.nullable => Ok(v),
-                    _ => Err(Diag::new("TYPE_MISMATCH", format!("notify 대상은 actor 타입 참조여야 함, `{}`", t.show()), *span)),
+                    _ => Err(Diag::new("DEF.TYPE_MISMATCH", format!("notify 대상은 actor 타입 참조여야 함, `{}`", t.show()), *span)),
                 });
                 let v = self.run(res)?;
                 Some(json!({ "notify": { "to": v, "topic": topic } }))
@@ -1264,81 +1270,81 @@ impl<'a> Ctx<'a> {
         let tt = self.type_of(Some(&r.name), &a.ty)?;
         for (k, v, allowed) in [("callerFilter", &a.caller_filter, "none"), ("rowOutput", &a.row_output, "none")] {
             match v.as_deref() {
-                None => self.d("MISSING_ITEM", format!("aggregate `{}`에 `{k}` 필요", a.name), a.span),
-                Some(x) if x != allowed => self.d("UNSUPPORTED", format!("`{k} {x}`는 spike에서 지원하지 않음(허용: {allowed})"), a.span),
+                None => self.d("DEF.MISSING_ITEM", format!("aggregate `{}`에 `{k}` 필요", a.name), a.span),
+                Some(x) if x != allowed => self.d("DEF.UNSUPPORTED", format!("`{k} {x}`는 spike에서 지원하지 않음(허용: {allowed})"), a.span),
                 _ => {}
             }
         }
         let source = a.source.clone().unwrap_or_else(|| r.name.clone());
         if !self.res.contains_key(source.as_str()) {
-            self.d("UNKNOWN_SYMBOL", format!("집계 source `{source}` 없음"), a.span);
+            self.d("DEF.UNKNOWN_SYMBOL", format!("집계 source `{source}` 없음"), a.span);
             return None;
         }
         let (release, release_field) = match a.release.as_deref() {
             None => {
-                self.d("MISSING_ITEM", format!("aggregate `{}`에 `release` 필요", a.name), a.span);
+                self.d("DEF.MISSING_ITEM", format!("aggregate `{}`에 `release` 필요", a.name), a.span);
                 return None;
             }
             Some("count") => ("count", None),
             Some(x) => match x.strip_suffix(')').and_then(|x| x.split_once('(')) {
                 Some((f @ ("sum" | "min" | "max"), field)) => (f, Some(field.trim().to_string())),
                 _ => {
-                    self.d("UNSUPPORTED", format!("`release {x}`는 지원하지 않음(허용: count, sum(f), min(f), max(f))"), a.span);
+                    self.d("DEF.UNSUPPORTED", format!("`release {x}`는 지원하지 않음(허용: count, sum(f), min(f), max(f))"), a.span);
                     return None;
                 }
             },
         };
         match &release_field {
-            None if tt.ty != Ty::Int => self.d("TYPE_MISMATCH", "count 집계 타입은 Int", a.span),
+            None if tt.ty != Ty::Int => self.d("DEF.TYPE_MISMATCH", "count 집계 타입은 Int", a.span),
             None => {}
             Some(field) => {
                 match self.field_tt(&source, field) {
                     Some(TT { ty: Ty::Int, .. }) => {}
-                    Some(t) => self.d("TYPE_MISMATCH", format!("`{release}({field})`는 Int 필드만, `{}`", t.show()), a.span),
-                    None => self.d("UNKNOWN_FIELD", format!("집계 대상 `{source}.{field}` 없음"), a.span),
+                    Some(t) => self.d("DEF.TYPE_MISMATCH", format!("`{release}({field})`는 Int 필드만, `{}`", t.show()), a.span),
+                    None => self.d("DEF.UNKNOWN_FIELD", format!("집계 대상 `{source}.{field}` 없음"), a.span),
                 }
                 // count는 행 수만 내보내지만 sum/min/max는 값을 드러낸다. 가려진 필드의 합계로 값이 새지 않게 한다.
                 if self.res.get(source.as_str()).is_some_and(|s| s.field_read.iter().any(|x| &x.0 == field)) {
                     self.d(
-                        "POLICY_FIELD_NOT_AGGREGATABLE",
+                        "DEF.POLICY_FIELD_NOT_AGGREGATABLE",
                         format!("`{source}.{field}`에는 field read 정책이 있어 {release}로 집계할 수 없음"),
                         a.span,
                     );
                 }
                 if tt.ty != Ty::Int {
-                    self.d("TYPE_MISMATCH", format!("{release} 집계 타입은 Int"), a.span);
+                    self.d("DEF.TYPE_MISMATCH", format!("{release} 집계 타입은 Int"), a.span);
                 }
                 // 빈 집합의 min/max는 NULL이다. 단독 집계는 NULL을 접근 거부로 읽으므로 행별(groupKey) 집계에서만 연다.
                 if release != "sum" && (a.group_key.is_none() || !tt.nullable) {
-                    self.d("UNSUPPORTED", format!("{release} 집계는 groupKey가 있고 타입이 `Int?`여야 함(빈 집합은 null)"), a.span);
+                    self.d("DEF.UNSUPPORTED", format!("{release} 집계는 groupKey가 있고 타입이 `Int?`여야 함(빈 집합은 null)"), a.span);
                 }
             }
         }
         if let Some(g) = &a.group_key {
             match self.field_tt(&source, g) {
                 Some(TT { ty: Ty::Ref(t), .. }) if t == r.name => {}
-                _ => self.d("GROUP_KEY_MISMATCH", format!("groupKey `{g}`는 `{source}`에서 `{}`를 가리키는 필드여야 함", r.name), a.span),
+                _ => self.d("DEF.GROUP_KEY_MISMATCH", format!("groupKey `{g}`는 `{source}`에서 `{}`를 가리키는 필드여야 함", r.name), a.span),
             }
         }
         let (input, ij) = self.params(&a.input);
         let access = match &a.source_access {
             None => {
-                self.d("MISSING_ITEM", format!("aggregate `{}`에 sourceAccess 필요. 원본 행 정책을 자동으로 물려받지 않음", a.name), a.span);
+                self.d("DEF.MISSING_ITEM", format!("aggregate `{}`에 sourceAccess 필요. 원본 행 정책을 자동으로 물려받지 않음", a.name), a.span);
                 return None;
             }
             Some(AccessRef::Name(n)) => match self.accesses.get(n.as_str()).map(|x| &x.body) {
                 Some(AccessBody::TotalOfVisible(p, _)) => {
                     if p != &r.name || a.group_key.is_none() {
-                        self.d("ACCESS_MISMATCH", format!("`{n}`은 `{p}` 기준 groupKey 집계에만 사용"), a.span);
+                        self.d("DEF.ACCESS_MISMATCH", format!("`{n}`은 `{p}` 기준 groupKey 집계에만 사용"), a.span);
                     }
                     json!({ "ref": n })
                 }
                 Some(AccessBody::Guard(_)) => {
-                    self.d("ARITY_MISMATCH", format!("guard access `{n}`에는 인자가 필요"), a.span);
+                    self.d("DEF.ARITY_MISMATCH", format!("guard access `{n}`에는 인자가 필요"), a.span);
                     return None;
                 }
                 None => {
-                    self.d("UNKNOWN_SYMBOL", format!("access `{n}` 없음"), a.span);
+                    self.d("DEF.UNKNOWN_SYMBOL", format!("access `{n}` 없음"), a.span);
                     return None;
                 }
             },
@@ -1346,11 +1352,11 @@ impl<'a> Ctx<'a> {
                 let acc = match self.accesses.get(n.as_str()) {
                     Some(x) if matches!(x.body, AccessBody::Guard(_)) => *x,
                     Some(_) => {
-                        self.d("ARITY_MISMATCH", format!("`{n}`은 인자를 받지 않음"), a.span);
+                        self.d("DEF.ARITY_MISMATCH", format!("`{n}`은 인자를 받지 않음"), a.span);
                         return None;
                     }
                     None => {
-                        self.d("UNKNOWN_SYMBOL", format!("access `{n}` 없음"), a.span);
+                        self.d("DEF.UNKNOWN_SYMBOL", format!("access `{n}` 없음"), a.span);
                         return None;
                     }
                 };
@@ -1386,11 +1392,11 @@ impl<'a> Ctx<'a> {
         let mut open_ids = BTreeSet::new();
         for (n, sp) in &e.ref_ids {
             if !open_ids.insert(n.as_str()) {
-                self.d("DUPLICATE", format!("refIds `{n}` 중복"), *sp);
+                self.d("DEF.DUPLICATE", format!("refIds `{n}` 중복"), *sp);
             } else if !e.select.iter().any(|(s, _)| s == n) || !r.fields.iter().any(|f| &f.name == n) {
-                self.d("UNKNOWN_FIELD", format!("refIds `{n}`: `{}`의 expose select에 있는 필드여야 함", r.name), *sp);
+                self.d("DEF.UNKNOWN_FIELD", format!("refIds `{n}`: `{}`의 expose select에 있는 필드여야 함", r.name), *sp);
             } else if !matches!(self.field_tt(&r.name, n), Some(TT { ty: Ty::Ref(_), .. })) {
-                self.d("TYPE_MISMATCH", format!("refIds `{n}`는 참조 필드가 아님"), *sp);
+                self.d("DEF.TYPE_MISMATCH", format!("refIds `{n}`는 참조 필드가 아님"), *sp);
             }
         }
         for (s, sp) in &e.select {
@@ -1408,22 +1414,22 @@ impl<'a> Ctx<'a> {
                 kinds.insert(s.clone(), json!(k));
             } else if let Some(a) = r.aggregates.iter().find(|a| &a.name == s) {
                 if a.group_key.is_none() || !a.input.is_empty() {
-                    self.d("AGG_NOT_SELECTABLE", format!("`{s}`는 행별 집계가 아니어서 select 불가"), *sp);
+                    self.d("DEF.AGG_NOT_SELECTABLE", format!("`{s}`는 행별 집계가 아니어서 select 불가"), *sp);
                 }
                 kinds.insert(s.clone(), json!("aggregate"));
             } else {
-                self.d("UNKNOWN_FIELD", format!("select `{s}`: `{}`에 필드/집계 없음", r.name), *sp);
+                self.d("DEF.UNKNOWN_FIELD", format!("select `{s}`: `{}`에 필드/집계 없음", r.name), *sp);
             }
         }
         let mut filters = BTreeSet::new();
         for (f, op, sp) in &e.filter {
             let Some(tt) = self.field_tt(&r.name, f) else {
-                self.d("UNKNOWN_FIELD", format!("filter 대상 `{f}` 없음"), *sp);
+                self.d("DEF.UNKNOWN_FIELD", format!("filter 대상 `{f}` 없음"), *sp);
                 continue;
             };
             if r.field_read.iter().any(|x| &x.0 == f) {
                 self.d(
-                    "POLICY_FIELD_NOT_FILTERABLE",
+                    "DEF.POLICY_FIELD_NOT_FILTERABLE",
                     format!("`{f}`에는 field read 정책이 있어 filter에 올릴 수 없음(가려진 값이 결과 유무로 추론됨)"),
                     *sp,
                 );
@@ -1440,12 +1446,12 @@ impl<'a> Ctx<'a> {
                 // contains: 리터럴 부분일치(Text만). 대소문자 무시(icontains)는 DB collation 의존이라 보류.
                 "contains" => tt.ty == Ty::Text,
                 _ => {
-                    self.d("UNKNOWN_OPERATOR", format!("filter 연산 `{op}` 없음"), *sp);
+                    self.d("DEF.UNKNOWN_OPERATOR", format!("filter 연산 `{op}` 없음"), *sp);
                     continue;
                 }
             };
             if !ok {
-                self.d("OP_TYPE_MISMATCH", format!("`{f}`({})에 `{op}` 불가", tt.show()), *sp);
+                self.d("DEF.OP_TYPE_MISMATCH", format!("`{f}`({})에 `{op}` 불가", tt.show()), *sp);
             }
             filters.insert(format!("{f}.{op}"));
         }
@@ -1453,15 +1459,17 @@ impl<'a> Ctx<'a> {
         for (s, sp) in &e.sort {
             if r.field_read.iter().any(|x| &x.0 == s) {
                 self.d(
-                    "POLICY_FIELD_NOT_FILTERABLE",
+                    "DEF.POLICY_FIELD_NOT_FILTERABLE",
                     format!("`{s}`에는 field read 정책이 있어 sort에 올릴 수 없음(가려진 값이 정렬 순서로 추론됨)"),
                     *sp,
                 );
             }
             match self.field_tt(&r.name, s) {
-                Some(TT { ty: Ty::Ref(_), .. }) | Some(TT { ty: Ty::Bool, .. }) => self.d("OP_TYPE_MISMATCH", format!("`{s}`는 정렬 불가 타입"), *sp),
+                Some(TT { ty: Ty::Ref(_), .. }) | Some(TT { ty: Ty::Bool, .. }) => {
+                    self.d("DEF.OP_TYPE_MISMATCH", format!("`{s}`는 정렬 불가 타입"), *sp)
+                }
                 Some(_) => {}
-                None => self.d("UNKNOWN_FIELD", format!("sort 대상 `{s}` 없음"), *sp),
+                None => self.d("DEF.UNKNOWN_FIELD", format!("sort 대상 `{s}` 없음"), *sp),
             }
             sorts.insert(s.clone());
         }
@@ -1470,19 +1478,19 @@ impl<'a> Ctx<'a> {
             let target = match self.field_tt(&r.name, rel) {
                 Some(TT { ty: Ty::Ref(t), .. }) => t,
                 _ => {
-                    self.d("UNKNOWN_FIELD", format!("traverse `{rel}`는 참조 필드가 아님"), *sp);
+                    self.d("DEF.UNKNOWN_FIELD", format!("traverse `{rel}`는 참조 필드가 아님"), *sp);
                     continue;
                 }
             };
             let tres = self.res[target.as_str()];
             let Some(te) = &tres.expose_read else {
-                self.d("TRAVERSE_NOT_EXPOSED", format!("`{target}`에 expose read가 없어 traverse 불가"), *sp);
+                self.d("DEF.TRAVERSE_NOT_EXPOSED", format!("`{target}`에 expose read가 없어 traverse 불가"), *sp);
                 continue;
             };
             let mut ss = BTreeSet::new();
             for (s, ssp) in sel {
                 if !te.select.iter().any(|x| &x.0 == s) {
-                    self.d("TRAVERSE_NOT_EXPOSED", format!("`{target}.{s}`는 `{target}`의 expose select에 없음"), *ssp);
+                    self.d("DEF.TRAVERSE_NOT_EXPOSED", format!("`{target}.{s}`는 `{target}`의 expose select에 없음"), *ssp);
                 }
                 ss.insert(s.clone());
             }
@@ -1491,47 +1499,47 @@ impl<'a> Ctx<'a> {
         let mut many = Map::new();
         for m in &e.traverse_many {
             if self.field_tt(&r.name, &m.name).is_some() || e.select.iter().any(|(n, _)| n == &m.name) {
-                self.d("DUPLICATE", format!("traverse `{}`는 `{}`의 필드·select 이름과 겹침", m.name, r.name), m.span);
+                self.d("DEF.DUPLICATE", format!("traverse `{}`는 `{}`의 필드·select 이름과 겹침", m.name, r.name), m.span);
                 continue;
             }
             let Some(cres) = self.res.get(m.child.as_str()).copied() else {
-                self.d("UNKNOWN_RESOURCE", format!("traverse `{}`: resource `{}` 없음", m.name, m.child), m.span);
+                self.d("DEF.UNKNOWN_RESOURCE", format!("traverse `{}`: resource `{}` 없음", m.name, m.child), m.span);
                 continue;
             };
             match self.field_tt(&m.child, &m.via) {
                 None => {
-                    self.d("UNKNOWN_FIELD", format!("traverse `{}`: `{}.{}` 필드 없음", m.name, m.child, m.via), m.span);
+                    self.d("DEF.UNKNOWN_FIELD", format!("traverse `{}`: `{}.{}` 필드 없음", m.name, m.child, m.via), m.span);
                     continue;
                 }
                 Some(TT { ty: Ty::Ref(t), .. }) if t == r.name => {}
                 Some(_) => {
-                    self.d("TRAVERSE_VIA_NOT_REF", format!("`{}.{}`는 `{}`를 가리키는 참조 필드가 아님", m.child, m.via, r.name), m.span);
+                    self.d("DEF.TRAVERSE_VIA_NOT_REF", format!("`{}.{}`는 `{}`를 가리키는 참조 필드가 아님", m.child, m.via, r.name), m.span);
                     continue;
                 }
             }
             // 자식 목록에 들어갔다는 사실 자체가 via 값(어느 부모에 속하는지)을 드러낸다.
             if cres.field_read.iter().any(|x| x.0 == m.via) {
                 self.d(
-                    "POLICY_FIELD_NOT_FILTERABLE",
+                    "DEF.POLICY_FIELD_NOT_FILTERABLE",
                     format!("`{}.{}`에는 field read 정책이 있어 1:N traverse 기준으로 쓸 수 없음", m.child, m.via),
                     m.span,
                 );
                 continue;
             }
             let Some(te) = &cres.expose_read else {
-                self.d("TRAVERSE_NOT_EXPOSED", format!("`{}`에 expose read가 없어 traverse 불가", m.child), m.span);
+                self.d("DEF.TRAVERSE_NOT_EXPOSED", format!("`{}`에 expose read가 없어 traverse 불가", m.child), m.span);
                 continue;
             };
             if m.select.is_empty() {
-                self.d("MISSING_ITEM", format!("traverse `{}`에 select 필요", m.name), m.span);
+                self.d("DEF.MISSING_ITEM", format!("traverse `{}`에 select 필요", m.name), m.span);
             }
             let mut ss = BTreeSet::new();
             for (f, fsp) in &m.select {
                 if !te.select.iter().any(|x| &x.0 == f) {
-                    self.d("TRAVERSE_NOT_EXPOSED", format!("`{}.{f}`는 `{}`의 expose select에 없음", m.child, m.child), *fsp);
+                    self.d("DEF.TRAVERSE_NOT_EXPOSED", format!("`{}.{f}`는 `{}`의 expose select에 없음", m.child, m.child), *fsp);
                 } else if cres.aggregates.iter().any(|a| &a.name == f) {
                     // 자식 행마다 집계 하위조회가 붙으면 비용이 부모 수 x 상한 x 집계로 커진다. 보류.
-                    self.d("TRAVERSE_MANY_AGGREGATE", format!("1:N traverse 자식 select에는 집계 `{f}`를 쓸 수 없음(보류)"), *fsp);
+                    self.d("DEF.TRAVERSE_MANY_AGGREGATE", format!("1:N traverse 자식 select에는 집계 `{f}`를 쓸 수 없음(보류)"), *fsp);
                 }
                 ss.insert(f.clone());
             }
@@ -1539,23 +1547,23 @@ impl<'a> Ctx<'a> {
                 None => json!({ "field": "id", "desc": false }),
                 Some((f, desc, fsp)) => {
                     if cres.field_read.iter().any(|x| &x.0 == f) {
-                        self.d("POLICY_FIELD_NOT_FILTERABLE", format!("`{f}`에는 field read 정책이 있어 정렬에 쓸 수 없음"), *fsp);
+                        self.d("DEF.POLICY_FIELD_NOT_FILTERABLE", format!("`{f}`에는 field read 정책이 있어 정렬에 쓸 수 없음"), *fsp);
                     }
                     match self.field_tt(&m.child, f) {
                         Some(TT { ty: Ty::Ref(_), .. }) | Some(TT { ty: Ty::Bool, .. }) => {
-                            self.d("OP_TYPE_MISMATCH", format!("`{f}`는 정렬 불가 타입"), *fsp)
+                            self.d("DEF.OP_TYPE_MISMATCH", format!("`{f}`는 정렬 불가 타입"), *fsp)
                         }
                         Some(_) => {}
-                        None => self.d("UNKNOWN_FIELD", format!("sort 대상 `{f}` 없음"), *fsp),
+                        None => self.d("DEF.UNKNOWN_FIELD", format!("sort 대상 `{f}` 없음"), *fsp),
                     }
                     json!({ "field": f, "desc": desc })
                 }
             };
             match m.limit {
-                None => self.d("MISSING_ITEM", format!("traverse `{}`에는 자식 개수 상한 limit이 필요", m.name), m.span),
-                Some(n) if n < 1 => self.d("BAD_LIMIT", "traverse limit는 1 이상", m.span),
+                None => self.d("DEF.MISSING_ITEM", format!("traverse `{}`에는 자식 개수 상한 limit이 필요", m.name), m.span),
+                Some(n) if n < 1 => self.d("DEF.BAD_LIMIT", "traverse limit는 1 이상", m.span),
                 // 부모 행 수 × 자식 상한이 비용 추정에 곱해진다. 한 응답의 자식 목록으로 의미 있는 크기만 받는다.
-                Some(n) if n > 1000 => self.d("BAD_LIMIT", "traverse limit는 1000 이하", m.span),
+                Some(n) if n > 1000 => self.d("DEF.BAD_LIMIT", "traverse limit는 1000 이하", m.span),
                 _ => {}
             }
             many.insert(
@@ -1568,13 +1576,13 @@ impl<'a> Ctx<'a> {
             None => Value::Null,
             Some(b) => {
                 if b.rows.is_none() || b.depth.is_none() || b.deadline_ms.is_none() || b.cost.is_none() {
-                    self.d("MISSING_ITEM", "budget에는 rows/depth/deadline/cost가 모두 필요", b.span);
+                    self.d("DEF.MISSING_ITEM", "budget에는 rows/depth/deadline/cost가 모두 필요", b.span);
                 }
                 for (k, v) in
                     [("rows", b.rows), ("depth", b.depth), ("cost", b.cost), ("deadline", b.deadline_ms.map(|x| x as i64)), ("offset", b.offset)]
                 {
                     if v.is_some_and(|x| x < 1) {
-                        self.d("BAD_BUDGET", format!("budget {k}는 1 이상"), b.span);
+                        self.d("DEF.BAD_BUDGET", format!("budget {k}는 1 이상"), b.span);
                     }
                 }
                 if b.cursor {
@@ -1582,19 +1590,19 @@ impl<'a> Ctx<'a> {
                     let selected = |n: &str| e.select.iter().any(|(s, _)| s == n) && kinds.get(n).is_some_and(|k| k == "field");
                     for (s, sp) in &e.sort {
                         if !selected(s) {
-                            self.d("CURSOR_SORT_NOT_SELECTED", format!("cursor를 켜면 sort `{s}`도 정책 없는 select 필드여야 함"), *sp);
+                            self.d("DEF.CURSOR_SORT_NOT_SELECTED", format!("cursor를 켜면 sort `{s}`도 정책 없는 select 필드여야 함"), *sp);
                         }
                         // NULL은 비교가 unknown이라 keyset 경계가 행을 빠뜨린다.
                         if self.field_tt(&r.name, s).is_some_and(|t| t.nullable) {
-                            self.d("CURSOR_NULLABLE_SORT", format!("cursor를 켜면 nullable 필드 `{s}`는 sort에 쓸 수 없음"), *sp);
+                            self.d("DEF.CURSOR_NULLABLE_SORT", format!("cursor를 켜면 nullable 필드 `{s}`는 sort에 쓸 수 없음"), *sp);
                         }
                     }
                     if !selected("id") {
-                        self.d("CURSOR_ID_NOT_SELECTED", "cursor를 켜면 id가 select에 있어야 함(동률 경계)", b.span);
+                        self.d("DEF.CURSOR_ID_NOT_SELECTED", "cursor를 켜면 id가 select에 있어야 함(동률 경계)", b.span);
                     }
                 }
                 if (!e.traverse.is_empty() || !e.traverse_many.is_empty()) && b.depth.unwrap_or(0) < 2 {
-                    self.d("BUDGET_DEPTH_TOO_SMALL", "traverse가 있으면 depth는 2 이상", b.span);
+                    self.d("DEF.BUDGET_DEPTH_TOO_SMALL", "traverse가 있으면 depth는 2 이상", b.span);
                 }
                 let mut bj = json!({ "rows": b.rows, "depth": b.depth, "deadlineMs": b.deadline_ms, "cost": b.cost });
                 // offset은 opt-in이라 선언이 있을 때만 키를 넣는다(기존 facts 호환).
@@ -1620,16 +1628,16 @@ impl<'a> Ctx<'a> {
         let job = operation.kind == "job";
         let managed = job && operation.effect == "managed";
         if (!job && operation.kind != "read") || (!managed && (operation.effect != "none" || !operation.access.is_empty())) {
-            self.d("UNSUPPORTED", "operation은 read/none 또는 job/none·managed 계약이 필요", operation.span);
+            self.d("DEF.UNSUPPORTED", "operation은 read/none 또는 job/none·managed 계약이 필요", operation.span);
             return None;
         }
         let max_deadline = if job { 3_600_000 } else { 30_000 };
         if !operation.deadline_ms.is_some_and(|deadline| deadline > 0 && deadline <= max_deadline) {
-            self.d("BAD_BUDGET", "operation deadline은 read 30s, job 1h 이내의 양수여야 함", operation.span);
+            self.d("DEF.BAD_BUDGET", "operation deadline은 read 30s, job 1h 이내의 양수여야 함", operation.span);
         }
         for (_, ty) in operation.input.iter().chain(&operation.output) {
             if ty.range.is_some_and(|(lo, hi)| lo < -9_007_199_254_740_991 || hi > 9_007_199_254_740_991) {
-                self.d("BAD_RANGE", "operation 범위 경계는 JavaScript 안전 정수로 표현 가능해야 함", ty.span);
+                self.d("DEF.BAD_RANGE", "operation 범위 경계는 JavaScript 안전 정수로 표현 가능해야 함", ty.span);
             }
         }
         let (input, _) = self.params(&operation.input);
@@ -1641,7 +1649,7 @@ impl<'a> Ctx<'a> {
                 self.run(result)
             }
             None => {
-                self.d("MISSING_ITEM", "operation에 allow 정책 필요", operation.span);
+                self.d("DEF.MISSING_ITEM", "operation에 allow 정책 필요", operation.span);
                 None
             }
         };
@@ -1659,42 +1667,46 @@ impl<'a> Ctx<'a> {
                 // 업무 데이터 접근은 job 주체의 기존 read/apply 정책을 그대로 거친다. 선언 없이 열리지 않는다.
                 if domain == "read" || self.res.contains_key(domain.as_str()) {
                     if ["http", "files", "events", "jobs", "messages", "read"].contains(&domain.as_str()) && self.res.contains_key(domain.as_str()) {
-                        self.d("AMBIGUOUS", format!("resource 이름 `{domain}`이 managed capability 영역과 겹침"), operation.span);
+                        self.d("DEF.AMBIGUOUS", format!("resource 이름 `{domain}`이 managed capability 영역과 겹침"), operation.span);
                         continue;
                     }
                     let key = if domain == "read" {
                         if !self.res.contains_key(name.as_str()) {
-                            self.d("UNKNOWN_SYMBOL", format!("read 대상 resource `{name}`이 없음"), operation.span);
+                            self.d("DEF.UNKNOWN_SYMBOL", format!("read 대상 resource `{name}`이 없음"), operation.span);
                             continue;
                         }
                         format!("read.{name}")
                     } else {
                         let exposed = self.res.get(domain.as_str()).is_some_and(|r| r.expose_apply.iter().any(|e| &e.transition == name));
                         if !exposed {
-                            self.d("UNKNOWN_SYMBOL", format!("job 쓰기 access `{domain}.{name}`는 공개된 전이(expose apply)여야 함"), operation.span);
+                            self.d(
+                                "DEF.UNKNOWN_SYMBOL",
+                                format!("job 쓰기 access `{domain}.{name}`는 공개된 전이(expose apply)여야 함"),
+                                operation.span,
+                            );
                             continue;
                         }
                         format!("apply.{domain}.{name}")
                     };
                     data_access = true;
                     if capabilities.insert(key, json!(true)).is_some() {
-                        self.d("DUPLICATE", "managed capability 중복", operation.span);
+                        self.d("DEF.DUPLICATE", "managed capability 중복", operation.span);
                     }
                     continue;
                 }
                 if !["http", "files", "events", "jobs", "messages"].contains(&domain.as_str()) {
-                    self.d("UNKNOWN_SYMBOL", format!("알 수 없는 managed capability `{domain}.{name}`"), operation.span);
+                    self.d("DEF.UNKNOWN_SYMBOL", format!("알 수 없는 managed capability `{domain}.{name}`"), operation.span);
                 }
                 if domain == "messages" && !valid_message_queue(name) {
-                    self.d("BAD_CAPABILITY", format!("메시지 queue 이름 `{name}`은 ASCII 식별자여야 함"), operation.span);
+                    self.d("DEF.BAD_CAPABILITY", format!("메시지 queue 이름 `{name}`은 ASCII 식별자여야 함"), operation.span);
                 }
                 if domain == "jobs"
                     && !self.spec.operations.iter().any(|target| target.name == *name && matches!(target.kind.as_str(), "read" | "job"))
                 {
-                    self.d("UNKNOWN_SYMBOL", format!("managed jobs 대상 operation `{name}`이 없거나 read/job이 아님"), operation.span);
+                    self.d("DEF.UNKNOWN_SYMBOL", format!("managed jobs 대상 operation `{name}`이 없거나 read/job이 아님"), operation.span);
                 }
                 if capabilities.insert(format!("{domain}.{name}"), json!(true)).is_some() {
-                    self.d("DUPLICATE", "managed capability 중복", operation.span);
+                    self.d("DEF.DUPLICATE", "managed capability 중복", operation.span);
                 }
             }
             value["access"] = Value::Object(capabilities);
@@ -1713,10 +1725,10 @@ impl<'a> Ctx<'a> {
         if x.kind == "write" {
             // 쓰기 확장: 서버 트랜잭션 안에서 공개 전이만 부른다. 효과는 DB 쓰기(db)로 명시한다.
             if x.effect != "db" {
-                self.d("EFFECT_MISMATCH", format!("write extension의 effect는 db여야 함, `{}`", x.effect), x.span);
+                self.d("DEF.EFFECT_MISMATCH", format!("write extension의 effect는 db여야 함, `{}`", x.effect), x.span);
             }
             if x.deadline_ms.is_none() || x.implementation.is_empty() {
-                self.d("MISSING_ITEM", "extension에 deadline·implementation 필요", x.span);
+                self.d("DEF.MISSING_ITEM", "extension에 deadline·implementation 필요", x.span);
             }
             let (_, ij) = self.params(&x.input);
             let (_, oj) = self.params(&x.output);
@@ -1724,7 +1736,7 @@ impl<'a> Ctx<'a> {
             for (rn, tn) in &x.access {
                 let exposed = self.res.get(rn.as_str()).is_some_and(|r| r.expose_apply.iter().any(|e| &e.transition == tn));
                 if !exposed {
-                    self.d("UNKNOWN_SYMBOL", format!("쓰기 access `{rn}.{tn}`는 공개된 전이(expose apply)여야 함"), x.span);
+                    self.d("DEF.UNKNOWN_SYMBOL", format!("쓰기 access `{rn}.{tn}`는 공개된 전이(expose apply)여야 함"), x.span);
                     continue;
                 }
                 acc.insert(format!("{rn}.{tn}"), json!("transition"));
@@ -1735,24 +1747,24 @@ impl<'a> Ctx<'a> {
             }));
         }
         if x.kind != "read" {
-            self.d("UNSUPPORTED", format!("extension 종류 `{}`는 spike 범위 밖", x.kind), x.span);
+            self.d("DEF.UNSUPPORTED", format!("extension 종류 `{}`는 spike 범위 밖", x.kind), x.span);
             return None;
         }
         if x.effect != "none" {
-            self.d("EFFECT_MISMATCH", format!("read extension의 effect는 none이어야 함, `{}`", x.effect), x.span);
+            self.d("DEF.EFFECT_MISMATCH", format!("read extension의 effect는 none이어야 함, `{}`", x.effect), x.span);
         }
         if x.deadline_ms.is_none() {
-            self.d("MISSING_ITEM", "extension에 deadline 필요", x.span);
+            self.d("DEF.MISSING_ITEM", "extension에 deadline 필요", x.span);
         }
         if x.implementation.is_empty() {
-            self.d("MISSING_ITEM", "extension에 implementation 필요", x.span);
+            self.d("DEF.MISSING_ITEM", "extension에 implementation 필요", x.span);
         }
         let (input, ij) = self.params(&x.input);
         let (_, oj) = self.params(&x.output);
         let mut binding = Map::new();
         for (rn, an) in &x.access {
             let Some(agg) = self.res.get(rn.as_str()).and_then(|r| r.aggregates.iter().find(|a| &a.name == an)) else {
-                self.d("UNKNOWN_SYMBOL", format!("access 대상 `{rn}.{an}` 없음"), x.span);
+                self.d("DEF.UNKNOWN_SYMBOL", format!("access 대상 `{rn}.{an}` 없음"), x.span);
                 continue;
             };
             let mut b = Map::new();
@@ -1762,7 +1774,7 @@ impl<'a> Ctx<'a> {
                     Some((_, t)) if Some(t) == want.as_ref() => {
                         b.insert(pn.clone(), json!(format!("input.{pn}")));
                     }
-                    _ => self.d("EXT_INPUT_UNBOUND", format!("`{rn}.{an}`의 입력 `{pn}`을 extension 입력에서 같은 타입으로 받지 않음"), x.span),
+                    _ => self.d("DEF.EXT_INPUT_UNBOUND", format!("`{rn}.{an}`의 입력 `{pn}`을 extension 입력에서 같은 타입으로 받지 않음"), x.span),
                 }
             }
             binding.insert(format!("{rn}.{an}"), Value::Object(b));
@@ -1886,7 +1898,7 @@ fn validate_policy_expansion(spec: &Spec) -> Vec<Diag> {
         let metric = expression_metrics(&predicate.body);
         if metric.max_path_segments > MAX_POLICY_PATH_SEGMENTS {
             return vec![Diag::new(
-                "POLICY_EXPANSION_LIMIT",
+                "DEF.POLICY_EXPANSION_LIMIT",
                 format!("predicate `{}`의 경로가 필드 단계 {MAX_POLICY_PATH_SEGMENTS}개 예산을 넘음", predicate.name),
                 predicate.span,
             )];
@@ -1926,7 +1938,7 @@ fn validate_policy_expansion(spec: &Spec) -> Vec<Diag> {
                 }
                 1 => {
                     diags.push(Diag::new(
-                        "POLICY_CYCLE",
+                        "DEF.POLICY_CYCLE",
                         format!("predicate `{}`가 호출 경로를 따라 자기 자신을 다시 부름", predicates[target].name),
                         edge_span,
                     ));
@@ -1951,7 +1963,7 @@ fn validate_policy_expansion(spec: &Spec) -> Vec<Diag> {
         }
         if node_count > MAX_POLICY_EXPANDED_NODES || expression_depth > MAX_POLICY_EXPANDED_DEPTH {
             return vec![Diag::new(
-                "POLICY_EXPANSION_LIMIT",
+                "DEF.POLICY_EXPANSION_LIMIT",
                 format!("predicate `{}`의 인라인 확장이 깊이 {expression_depth}, 노드 {node_count}로 예산을 넘음", predicates[index].name),
                 predicates[index].span,
             )];
@@ -1961,7 +1973,7 @@ fn validate_policy_expansion(spec: &Spec) -> Vec<Diag> {
         total_nodes = total_nodes.saturating_add(node_count).min(node_ceiling);
         if total_nodes > MAX_POLICY_EXPANDED_NODES {
             return vec![Diag::new(
-                "POLICY_EXPANSION_LIMIT",
+                "DEF.POLICY_EXPANSION_LIMIT",
                 format!("predicate 정의 전체의 인라인 노드 수가 {MAX_POLICY_EXPANDED_NODES} 예산을 넘음"),
                 predicates[index].span,
             )];
@@ -2025,7 +2037,11 @@ fn validate_policy_expansion(spec: &Spec) -> Vec<Diag> {
     for (expr, owner_span) in roots {
         let metric = expression_metrics(expr);
         if metric.max_path_segments > MAX_POLICY_PATH_SEGMENTS {
-            return vec![Diag::new("POLICY_EXPANSION_LIMIT", format!("정책 경로가 필드 단계 {MAX_POLICY_PATH_SEGMENTS}개 예산을 넘음"), owner_span)];
+            return vec![Diag::new(
+                "DEF.POLICY_EXPANSION_LIMIT",
+                format!("정책 경로가 필드 단계 {MAX_POLICY_PATH_SEGMENTS}개 예산을 넘음"),
+                owner_span,
+            )];
         }
         let mut node_count = metric.nodes.min(node_ceiling);
         let mut expression_depth = metric.depth;
@@ -2037,7 +2053,7 @@ fn validate_policy_expansion(spec: &Spec) -> Vec<Diag> {
         }
         if node_count > MAX_POLICY_EXPANDED_NODES || expression_depth > MAX_POLICY_EXPANDED_DEPTH {
             return vec![Diag::new(
-                "POLICY_EXPANSION_LIMIT",
+                "DEF.POLICY_EXPANSION_LIMIT",
                 format!("정책 식의 인라인 확장이 깊이 {expression_depth}, 노드 {node_count}로 예산을 넘음"),
                 owner_span,
             )];
@@ -2045,7 +2061,7 @@ fn validate_policy_expansion(spec: &Spec) -> Vec<Diag> {
         total_nodes = total_nodes.saturating_add(node_count).min(node_ceiling);
         if total_nodes > MAX_POLICY_EXPANDED_NODES {
             return vec![Diag::new(
-                "POLICY_EXPANSION_LIMIT",
+                "DEF.POLICY_EXPANSION_LIMIT",
                 format!("정책 전체의 인라인 노드 수가 {MAX_POLICY_EXPANDED_NODES} 예산을 넘음"),
                 owner_span,
             )];

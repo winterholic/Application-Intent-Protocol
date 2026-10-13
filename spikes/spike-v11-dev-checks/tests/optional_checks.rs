@@ -134,7 +134,7 @@ fn only_direct_execution_calls_suppress_unused_predicate_advisories() {
     assert!(checked(&with_unused, Form::A, json!({})).advisories.is_empty());
     assert!(off.advisories.is_empty());
     assert_eq!(on.advisories.len(), 1);
-    assert_eq!(on.advisories[0].code, "ADVISORY_UNUSED_PREDICATE");
+    assert_eq!(on.advisories[0].code, "DEF.ADVISORY_UNUSED_PREDICATE");
     assert_eq!(on.advisories[0].anchor, "predicate:orphan");
     assert_eq!(digest(&off.output.execution), digest(&on.output.execution));
     assert_eq!(contract_ts(&off.output.execution), contract_ts(&on.output.execution));
@@ -165,12 +165,12 @@ fn unknown_docs_and_invalid_options_are_errors() {
         "docs { summary \"모집 정보\"; visibility internal; audience public }",
     );
     for options in [json!({}), json!({"devChecks": true})] {
-        assert!(diag_codes(load_checked(&unknown_docs, Form::A, &options)).contains(&"PARSE_UNKNOWN_KEY"));
+        assert!(diag_codes(load_checked(&unknown_docs, Form::A, &options)).contains(&"DEF.PARSE_UNKNOWN_KEY"));
     }
 
-    assert!(diag_codes(load_checked(A, Form::A, &json!({"unknown": true}))).contains(&"UNKNOWN_OPTION"));
+    assert!(diag_codes(load_checked(A, Form::A, &json!({"unknown": true}))).contains(&"DEF.UNKNOWN_OPTION"));
     for options in [json!({"devChecks": "true"}), json!({"devChecks": null}), json!({"devChecks": 1}), json!(null), json!([]), json!("on")] {
-        assert!(diag_codes(load_checked(A, Form::A, &options)).contains(&"BAD_OPTION"), "허용하지 않은 옵션 형식: {options}");
+        assert!(diag_codes(load_checked(A, Form::A, &options)).contains(&"DEF.BAD_OPTION"), "허용하지 않은 옵션 형식: {options}");
     }
 }
 
@@ -178,7 +178,7 @@ fn unknown_docs_and_invalid_options_are_errors() {
 fn required_definition_type_errors_fail_with_development_checks_off_or_on() {
     let broken = replace_once(A, "title: Text(1..100)", "title: MissingType");
     for options in [json!({}), json!({"devChecks": false}), json!({"devChecks": true})] {
-        assert!(diag_codes(load_checked(&broken, Form::A, &options)).contains(&"UNKNOWN_TYPE"));
+        assert!(diag_codes(load_checked(&broken, Form::A, &options)).contains(&"DEF.UNKNOWN_TYPE"));
     }
 }
 
@@ -187,14 +187,14 @@ fn raw_read_rejections_are_identical_with_development_checks_off_or_on() {
     let facts = checked(A, Form::A, json!({})).output.execution;
     let cost_src = replace_once(A, "cost 1000", "cost 50");
     let cases: [(&str, &str, Value, &str); 8] = [
-        ("closed field", A, json!({"select": ["id", "status"]}), "FIELD_NOT_EXPOSED"),
-        ("bad filter type", A, json!({"filter": [{"field": "periodEnd", "op": "gte", "value": 7}]}), "BAD_VALUE"),
-        ("private filter", A, json!({"filter": [{"field": "internalNote", "op": "eq", "value": "A-only"}]}), "FILTER_NOT_ALLOWED"),
-        ("closed operator", A, json!({"filter": [{"field": "periodEnd", "op": "eq", "value": NOW}]}), "FILTER_NOT_ALLOWED"),
-        ("closed sort", A, json!({"sort": [{"field": "title", "dir": "asc"}]}), "SORT_NOT_ALLOWED"),
-        ("row budget", A, json!({"limit": 51}), "ROWS_EXCEEDED"),
-        ("relation depth", A, json!({"select": ["id", {"club": {"select": ["id", {"school": {"select": ["id"]}}]}}]}), "DEPTH_EXCEEDED"),
-        ("cost budget", &cost_src, json!({}), "COST_EXCEEDED"),
+        ("closed field", A, json!({"select": ["id", "status"]}), "WIRE.FIELD_NOT_EXPOSED"),
+        ("bad filter type", A, json!({"filter": [{"field": "periodEnd", "op": "gte", "value": 7}]}), "WIRE.BAD_VALUE"),
+        ("private filter", A, json!({"filter": [{"field": "internalNote", "op": "eq", "value": "A-only"}]}), "WIRE.FILTER_NOT_ALLOWED"),
+        ("closed operator", A, json!({"filter": [{"field": "periodEnd", "op": "eq", "value": NOW}]}), "WIRE.FILTER_NOT_ALLOWED"),
+        ("closed sort", A, json!({"sort": [{"field": "title", "dir": "asc"}]}), "WIRE.SORT_NOT_ALLOWED"),
+        ("row budget", A, json!({"limit": 51}), "WIRE.ROWS_EXCEEDED"),
+        ("relation depth", A, json!({"select": ["id", {"club": {"select": ["id", {"school": {"select": ["id"]}}]}}]}), "WIRE.DEPTH_EXCEEDED"),
+        ("cost budget", &cost_src, json!({}), "WIRE.COST_EXCEEDED"),
     ];
 
     for (name, source, patch, expected) in cases {
@@ -215,5 +215,5 @@ fn raw_read_rejections_are_identical_with_development_checks_off_or_on() {
 
     let mut runtime_option = read_request();
     runtime_option["devChecks"] = json!(false);
-    assert_eq!(plan_code(&facts, &runtime_option), "UNKNOWN_KEY", "개발 옵션은 raw runtime 요청에서 거부되어야 함");
+    assert_eq!(plan_code(&facts, &runtime_option), "WIRE.UNKNOWN_KEY", "개발 옵션은 raw runtime 요청에서 거부되어야 함");
 }

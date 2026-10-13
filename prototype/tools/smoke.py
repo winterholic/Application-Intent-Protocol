@@ -89,14 +89,14 @@ if (phase==='before') {
   expect(original.fingerprint!==current.fingerprint,'public definition changed contract');
   const old=connect(url,token,original);
   const rejected=await old.apply({apply:'Event.mark',target:{ids:[row12]}});
-  expect(!rejected.ok && rejected.code==='CONTRACT_MISMATCH','stale first write rejected before commit');
+  expect(!rejected.ok && rejected.code==='WIRE.CONTRACT_MISMATCH','stale first write rejected before commit');
   expect(equal(old.pending(),[]),'contract mismatch is settled rejection');
   const before=await aip.read(query);
   expect(equal(before.rows.map(row=>[row.id,row.checked]),[[row11,true],[row12,false]]),'restart preserves committed data and stale write does not mutate');
   const result=await aip.apply({apply:'Event.mark',target:{ids:[row12]}});
   expect(result.ok && equal(result.changed,[row12]),'regenerated caller applies');
   const staleSession=connect(url,process.env.AIP_SMOKE_OLD_TOKEN!,current);
-  expect((await staleSession.post('/session',{})).code==='UNAUTHENTICATED','restart invalidates old demo credentials');
+  expect((await staleSession.post('/session',{})).code==='WIRE.UNAUTHENTICATED','restart invalidates old demo credentials');
   const recovered=await aip.post('/status',{key:'smoke-write',request:{apply:'Event.mark',target:{ids:[row11]}}});
   expect(recovered.ok && equal(recovered.changed,[row11]),'committed same-key status survives server restart');
 }
@@ -188,7 +188,7 @@ def exercise(db_url, binary, sdk, tsc, wire, sdk_mode):
             rows = psql(db_url, f"SELECT id,checked FROM {schema}.event ORDER BY id").strip().splitlines()
             if rows != ["11|t", "12|t", "99|f"]:
                 raise RuntimeError("unexpected committed rows")
-            print(json.dumps({"ok": True, "sdk": sdk_mode, "wire": wire, "phases": 2, "definitionChange": "bulk 20 to 10", "dataPreserved": True, "staleFirstWrite": "CONTRACT_MISMATCH"}))
+            print(json.dumps({"ok": True, "sdk": sdk_mode, "wire": wire, "phases": 2, "definitionChange": "bulk 20 to 10", "dataPreserved": True, "staleFirstWrite": "WIRE.CONTRACT_MISMATCH"}))
     finally:
         for process in servers:
             if process.poll() is None:

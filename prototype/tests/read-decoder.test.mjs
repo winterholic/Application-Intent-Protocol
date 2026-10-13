@@ -20,7 +20,7 @@ function fixture(rows, wire='decimal-string-v13', handler) {
   });
   return {client,binding,calls:()=>calls};
 }
-const protocol=e=>e?.code==='PROTOCOL_ERROR';
+const protocol=e=>e?.code==='CLIENT.PROTOCOL_ERROR';
 
 test('malformed selected fields and unsolicited fields never reach the read cache',async()=>{
   for(const row of [{id:11,checked:false},{id:'11',checked:'false'},{id:'11'},{id:'11',checked:false,privateNote:'secret'},null,[],{id:'011',checked:false},{id:'9223372036854775808',checked:false}]){

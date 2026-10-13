@@ -9,7 +9,7 @@ fn once(seen: &mut BTreeSet<String>, key: &str, sp: Span, what: &str) -> Result<
     if seen.insert(key.to_string()) {
         Ok(())
     } else {
-        Err(Diag::new("DUPLICATE", format!("{what} 안 `{key}` 중복"), sp))
+        Err(Diag::new("DEF.DUPLICATE", format!("{what} 안 `{key}` 중복"), sp))
     }
 }
 
@@ -55,7 +55,7 @@ pub fn parse_duration_str(src: &str, span: Span) -> R<u64> {
     p.expect_eof()?;
     match t.tok {
         Tok::Dur(ms) => Ok(ms),
-        _ => Err(Diag::new("PARSE_EXPECTED", "시간 값(예: 2s) 필요", span)),
+        _ => Err(Diag::new("DEF.PARSE_EXPECTED", "시간 값(예: 2s) 필요", span)),
     }
 }
 
@@ -92,7 +92,7 @@ impl Parser {
         }
     }
     fn err<T>(&self, what: &str) -> R<T> {
-        Err(Diag::new("PARSE_EXPECTED", format!("{what} 필요, `{}` 발견", self.peek().show()), self.span()))
+        Err(Diag::new("DEF.PARSE_EXPECTED", format!("{what} 필요, `{}` 발견", self.peek().show()), self.span()))
     }
     fn expect_sym(&mut self, s: &str) -> R<()> {
         if self.eat_sym(s) {
@@ -220,7 +220,7 @@ impl Parser {
                         }
                         "resource" => spec.resources.push(self.resource(sp)?),
                         "operation" => spec.operations.push(self.extension_with_policy(sp, true)?),
-                        other => return Err(Diag::new("PARSE_UNKNOWN_DECL", format!("알 수 없는 선언 `{other}`"), sp)),
+                        other => return Err(Diag::new("DEF.PARSE_UNKNOWN_DECL", format!("알 수 없는 선언 `{other}`"), sp)),
                     }
                 }
                 _ => return self.err("선언"),
@@ -274,7 +274,7 @@ impl Parser {
                 let scale = self.int()?;
                 self.expect_sym(")")?;
                 if !(1..=38).contains(&precision) || scale < 0 || scale > precision {
-                    return Err(Diag::new("BAD_DECIMAL_TYPE", "Decimal은 1 <= precision <= 38, 0 <= scale <= precision이어야 함", span));
+                    return Err(Diag::new("DEF.BAD_DECIMAL_TYPE", "Decimal은 1 <= precision <= 38, 0 <= scale <= precision이어야 함", span));
                 }
                 t.decimal = Some((precision as u8, scale as u8));
             } else {
@@ -323,7 +323,7 @@ impl Parser {
                     self.expect_kw("read")?;
                     self.expect_kw("when")?;
                     if r.row_read.is_some() {
-                        return Err(Diag::new("DUPLICATE", "rows read 정책 중복", sp));
+                        return Err(Diag::new("DEF.DUPLICATE", "rows read 정책 중복", sp));
                     }
                     r.row_read = Some(self.expr()?);
                 }
@@ -355,14 +355,14 @@ impl Parser {
                                     ea.bulk = Some(self.int()?);
                                 }
                                 "sameScope" => ea.same_scope = Some(self.unary()?),
-                                o => return Err(Diag::new("PARSE_UNKNOWN_KEY", format!("expose apply 안 알 수 없는 키 `{o}`"), ksp)),
+                                o => return Err(Diag::new("DEF.PARSE_UNKNOWN_KEY", format!("expose apply 안 알 수 없는 키 `{o}`"), ksp)),
                             }
                         }
                         r.expose_apply.push(ea);
                     } else if self.is_kw("create") {
                         self.next();
                         if r.expose_create.is_some() {
-                            return Err(Diag::new("DUPLICATE", "expose create 중복", sp));
+                            return Err(Diag::new("DEF.DUPLICATE", "expose create 중복", sp));
                         }
                         let mut ec = ExposeCreate { allow: None, fields: vec![], span: sp };
                         let mut cseen = BTreeSet::new();
@@ -378,14 +378,14 @@ impl Parser {
                             match key.as_str() {
                                 "allow" => ec.allow = Some(self.expr()?),
                                 "fields" => ec.fields = self.ident_list()?,
-                                o => return Err(Diag::new("PARSE_UNKNOWN_KEY", format!("expose create 안 알 수 없는 키 `{o}`"), ksp)),
+                                o => return Err(Diag::new("DEF.PARSE_UNKNOWN_KEY", format!("expose create 안 알 수 없는 키 `{o}`"), ksp)),
                             }
                         }
                         r.expose_create = Some(ec);
                     } else if self.is_kw("compose") {
                         self.next();
                         if r.expose_compose.is_some() {
-                            return Err(Diag::new("DUPLICATE", "expose compose 중복", sp));
+                            return Err(Diag::new("DEF.DUPLICATE", "expose compose 중복", sp));
                         }
                         let mut ec = ExposeCompose { bulk: None, same_scope: None, transitions: vec![], creates: vec![], self_row: None, span: sp };
                         let mut cseen = BTreeSet::new();
@@ -421,7 +421,7 @@ impl Parser {
                                     }
                                     ec.creates.push((res, srcs, ksp));
                                 }
-                                o => return Err(Diag::new("PARSE_UNKNOWN_KEY", format!("expose compose 안 알 수 없는 키 `{o}`"), ksp)),
+                                o => return Err(Diag::new("DEF.PARSE_UNKNOWN_KEY", format!("expose compose 안 알 수 없는 키 `{o}`"), ksp)),
                             }
                         }
                         r.expose_compose = Some(ec);
@@ -432,7 +432,7 @@ impl Parser {
                     } else {
                         self.expect_kw("read")?;
                         if r.expose_read.is_some() {
-                            return Err(Diag::new("DUPLICATE", "expose read 중복", sp));
+                            return Err(Diag::new("DEF.DUPLICATE", "expose read 중복", sp));
                         }
                         r.expose_read = Some(self.expose_read(sp)?);
                     }
@@ -514,14 +514,14 @@ impl Parser {
                                 let to = self.unary()?;
                                 effects.push(Effect::Notify { to, topic: self.string()?, span: ksp });
                             }
-                            o => return Err(Diag::new("PARSE_UNKNOWN_KEY", format!("transition 안 알 수 없는 항목 `{o}`"), sp)),
+                            o => return Err(Diag::new("DEF.PARSE_UNKNOWN_KEY", format!("transition 안 알 수 없는 항목 `{o}`"), sp)),
                         }
                     }
                     match (from, allow) {
                         (Some(from), Some(allow)) if !to.is_empty() => {
                             r.transitions.push(Transition { name, from, to, allow, repeat, effects, span: sp })
                         }
-                        _ => return Err(Diag::new("MISSING_ITEM", "transition에는 from/to/allow가 모두 필요", sp)),
+                        _ => return Err(Diag::new("DEF.MISSING_ITEM", "transition에는 from/to/allow가 모두 필요", sp)),
                     }
                 }
                 "unique" => r.uniques.push((self.ident_list()?, sp)),
@@ -555,12 +555,12 @@ impl Parser {
                         match key.as_str() {
                             "summary" => d.summary = Some(self.string()?),
                             "visibility" => d.visibility = Some(self.ident()?),
-                            o => return Err(Diag::new("PARSE_UNKNOWN_KEY", format!("docs 안 알 수 없는 키 `{o}`"), sp)),
+                            o => return Err(Diag::new("DEF.PARSE_UNKNOWN_KEY", format!("docs 안 알 수 없는 키 `{o}`"), sp)),
                         }
                     }
                     r.docs = Some(d);
                 }
-                o => return Err(Diag::new("PARSE_UNKNOWN_KEY", format!("resource 안 알 수 없는 항목 `{o}`"), sp)),
+                o => return Err(Diag::new("DEF.PARSE_UNKNOWN_KEY", format!("resource 안 알 수 없는 항목 `{o}`"), sp)),
             }
         }
     }
@@ -628,12 +628,12 @@ impl Parser {
                             "offset" => b.offset = Some(self.int()?),
                             // 값 없는 선언 키. 있으면 켠다.
                             "cursor" => b.cursor = true,
-                            o => return Err(Diag::new("PARSE_UNKNOWN_KEY", format!("budget 안 알 수 없는 키 `{o}`"), sp)),
+                            o => return Err(Diag::new("DEF.PARSE_UNKNOWN_KEY", format!("budget 안 알 수 없는 키 `{o}`"), sp)),
                         }
                     }
                     e.budget = Some(b);
                 }
-                o => return Err(Diag::new("PARSE_UNKNOWN_KEY", format!("expose read 안 알 수 없는 항목 `{o}`"), sp)),
+                o => return Err(Diag::new("DEF.PARSE_UNKNOWN_KEY", format!("expose read 안 알 수 없는 항목 `{o}`"), sp)),
             }
         }
     }
@@ -671,7 +671,7 @@ impl Parser {
                     m.sort = Some((f, desc, fsp));
                 }
                 "limit" => m.limit = Some(self.int()?),
-                o => return Err(Diag::new("PARSE_UNKNOWN_KEY", format!("traverse 안 알 수 없는 항목 `{o}`"), sp)),
+                o => return Err(Diag::new("DEF.PARSE_UNKNOWN_KEY", format!("traverse 안 알 수 없는 항목 `{o}`"), sp)),
             }
         }
     }
@@ -725,7 +725,7 @@ impl Parser {
                         f
                     });
                 }
-                o => return Err(Diag::new("PARSE_UNKNOWN_KEY", format!("aggregate 안 알 수 없는 키 `{o}`"), sp)),
+                o => return Err(Diag::new("DEF.PARSE_UNKNOWN_KEY", format!("aggregate 안 알 수 없는 키 `{o}`"), sp)),
             }
         }
     }
@@ -774,7 +774,7 @@ impl Parser {
                 "effect" => x.effect = self.ident()?,
                 "deadline" => x.deadline_ms = Some(self.dur()?),
                 "implementation" => x.implementation = self.string()?,
-                o => return Err(Diag::new("PARSE_UNKNOWN_KEY", format!("extension 안 알 수 없는 키 `{o}`"), sp)),
+                o => return Err(Diag::new("DEF.PARSE_UNKNOWN_KEY", format!("extension 안 알 수 없는 키 `{o}`"), sp)),
             }
         }
     }
@@ -801,14 +801,14 @@ impl Parser {
         }
         let expr = self.nested_expression(Self::expression)?;
         if root && ast_depth(&expr) > MAX_AST_DEPTH {
-            return Err(Diag::new("PARSE_NESTING", "정의식 AST 깊이 hard ceiling을 벗어남", self.span()));
+            return Err(Diag::new("DEF.PARSE_NESTING", "정의식 AST 깊이 hard ceiling을 벗어남", self.span()));
         }
         Ok(expr)
     }
 
     fn nested_expression(&mut self, parse: impl FnOnce(&mut Self) -> R<Expr>) -> R<Expr> {
         if self.expression_depth >= MAX_EXPRESSION_DEPTH {
-            return Err(Diag::new("PARSE_NESTING", "정의식 중첩 hard ceiling을 벗어남", self.span()));
+            return Err(Diag::new("DEF.PARSE_NESTING", "정의식 중첩 hard ceiling을 벗어남", self.span()));
         }
         self.expression_depth += 1;
         let result = parse(self);
@@ -818,7 +818,7 @@ impl Parser {
 
     fn note_expression_node(&mut self) -> R<()> {
         if self.expression_nodes >= MAX_EXPR_NODES {
-            return Err(Diag::new("PARSE_NESTING", format!("정의식이 {MAX_EXPR_NODES} AST node hard ceiling을 넘음"), self.span()));
+            return Err(Diag::new("DEF.PARSE_NESTING", format!("정의식이 {MAX_EXPR_NODES} AST node hard ceiling을 넘음"), self.span()));
         }
         self.expression_nodes += 1;
         Ok(())
@@ -893,7 +893,7 @@ impl Parser {
             self.expect_sym("=")?;
             let value = self.additive()?;
             if ast_depth(&value) > MAX_AST_DEPTH {
-                return Err(Diag::new("PARSE_NESTING", "대입식 AST 깊이 hard ceiling을 벗어남", self.span()));
+                return Err(Diag::new("DEF.PARSE_NESTING", "대입식 AST 깊이 hard ceiling을 벗어남", self.span()));
             }
             values.push((field, value));
             if !self.eat_sym(",") {

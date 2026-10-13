@@ -55,89 +55,89 @@ async fn resource_free_operations_validate_auth_policy_input_output_and_no_ctx_i
             assert_eq!(result["output"], json!({"length":3}));
             assert_eq!(result["contractFingerprint"], fingerprint);
             for (case, token, fingerprint, body, code) in [
-                ("anonymous", None, Some(fingerprint.as_str()), body.clone(), "UNAUTHENTICATED"),
-                ("missing contract", Some(token.as_str()), None, body.clone(), "CONTRACT_MISMATCH"),
+                ("anonymous", None, Some(fingerprint.as_str()), body.clone(), "WIRE.UNAUTHENTICATED"),
+                ("missing contract", Some(token.as_str()), None, body.clone(), "WIRE.CONTRACT_MISMATCH"),
                 (
                     "wrong contract",
                     Some(token.as_str()),
                     Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
                     body.clone(),
-                    "CONTRACT_MISMATCH",
+                    "WIRE.CONTRACT_MISMATCH",
                 ),
-                ("unknown", Some(token.as_str()), Some(fingerprint.as_str()), json!({"operation":"missing","input":{}}), "NOT_EXPOSED"),
+                ("unknown", Some(token.as_str()), Some(fingerprint.as_str()), json!({"operation":"missing","input":{}}), "WIRE.NOT_EXPOSED"),
                 (
                     "extra body",
                     Some(token.as_str()),
                     Some(fingerprint.as_str()),
                     json!({"operation":"length","input":input,"actor":1}),
-                    "BAD_REQUEST",
+                    "WIRE.BAD_REQUEST",
                 ),
                 (
                     "extra input",
                     Some(token.as_str()),
                     Some(fingerprint.as_str()),
                     json!({"operation":"length","input":{"text":"a","owner":owner,"optional":null,"actor":1}}),
-                    "BAD_VALUE",
+                    "WIRE.BAD_VALUE",
                 ),
                 (
                     "missing nullable",
                     Some(token.as_str()),
                     Some(fingerprint.as_str()),
                     json!({"operation":"length","input":{"text":"a","owner":owner}}),
-                    "BAD_VALUE",
+                    "WIRE.BAD_VALUE",
                 ),
                 (
                     "text range",
                     Some(token.as_str()),
                     Some(fingerprint.as_str()),
                     json!({"operation":"ranged","input":{"text":"가😀AB","count":1}}),
-                    "BAD_VALUE",
+                    "WIRE.BAD_VALUE",
                 ),
                 (
                     "int range",
                     Some(token.as_str()),
                     Some(fingerprint.as_str()),
                     json!({"operation":"ranged","input":{"text":"a","count":4}}),
-                    "BAD_VALUE",
+                    "WIRE.BAD_VALUE",
                 ),
                 (
                     "output range",
                     Some(token.as_str()),
                     Some(fingerprint.as_str()),
                     json!({"operation":"ranged","input":{"text":"a","count":3}}),
-                    "OUTPUT_INVALID",
+                    "WIRE.OUTPUT_INVALID",
                 ),
                 (
                     "unsafe Int input",
                     Some(token.as_str()),
                     Some(fingerprint.as_str()),
                     json!({"operation":"length","input":{"text":"a","owner":owner,"optional":9007199254740992i64}}),
-                    "BAD_VALUE",
+                    "WIRE.BAD_VALUE",
                 ),
                 (
                     "unsafe Int output",
                     Some(token.as_str()),
                     Some(fingerprint.as_str()),
                     json!({"operation":"unsafeInteger","input":{}}),
-                    "OUTPUT_INVALID",
+                    "WIRE.OUTPUT_INVALID",
                 ),
-                ("policy false", Some(token.as_str()), Some(fingerprint.as_str()), json!({"operation":"forbidden","input":{}}), "ACCESS_DENIED"),
-                ("output", Some(token.as_str()), Some(fingerprint.as_str()), json!({"operation":"invalid","input":{}}), "OUTPUT_INVALID"),
+                ("policy false", Some(token.as_str()), Some(fingerprint.as_str()), json!({"operation":"forbidden","input":{}}), "WIRE.ACCESS_DENIED"),
+                ("output", Some(token.as_str()), Some(fingerprint.as_str()), json!({"operation":"invalid","input":{}}), "WIRE.OUTPUT_INVALID"),
                 (
                     "caught ctx violation",
                     Some(token.as_str()),
                     Some(fingerprint.as_str()),
                     json!({"operation":"ctxProbe","input":{}}),
-                    "ACCESS_NOT_DECLARED",
+                    "WIRE.ACCESS_NOT_DECLARED",
                 ),
-                ("deadline", Some(token.as_str()), Some(fingerprint.as_str()), json!({"operation":"slow","input":{}}), "DEADLINE_EXCEEDED"),
+                ("deadline", Some(token.as_str()), Some(fingerprint.as_str()), json!({"operation":"slow","input":{}}), "WIRE.DEADLINE_EXCEEDED"),
             ] {
                 let result = post(server.address, "/operation", token, fingerprint, body).await;
                 assert_eq!(result["code"], code, "{lang:?}/{wire:?}/{case}: {result}");
             }
             let other_token = server.keys.issue(2, 30);
             let denied = post(server.address, "/operation", Some(&other_token), Some(&fingerprint), body.clone()).await;
-            assert_eq!(denied["code"], "ACCESS_DENIED", "cross-principal: {denied}");
+            assert_eq!(denied["code"], "WIRE.ACCESS_DENIED", "cross-principal: {denied}");
             let no_alias = post(server.address, "/extension", Some(&token), Some(&fingerprint), json!({"extension":"length","input":input})).await;
             assert_ne!(no_alias["ok"], true, "operation cannot be called through an unguarded extension route");
             server.shutdown().await.unwrap();

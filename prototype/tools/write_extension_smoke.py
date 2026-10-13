@@ -43,7 +43,7 @@ expect(first.output.id===id11&&first.output.count===1,'WRITE decoded output');
 expect(Object.isFrozen(first)&&Object.isFrozen(first.output)&&Object.isFrozen(first.tags),'WRITE result frozen');
 const replay=await client.writeExtension('Event.run',{id:id11},{key:'shared-key',retries:0});expect(replay.ok&&replay.replayed,'WRITE idempotent replay');
 const after=await client.read(query);expect(!after.cached&&after.rows[0].checked,'WRITE invalidates actual cached read');
-const conflict=await client.apply({apply:'Event.mark',target:{ids:[id11]}},{key:'shared-key',retries:0});expect(!conflict.ok&&conflict.code==='IDEMPOTENCY_MISMATCH','standard apply and WRITE share key space');
+const conflict=await client.apply({apply:'Event.mark',target:{ids:[id11]}},{key:'shared-key',retries:0});expect(!conflict.ok&&conflict.code==='WIRE.IDEMPOTENCY_MISMATCH','standard apply and WRITE share key space');
 
 let dropped=false;
 const losingFetch: typeof fetch=async(input,init)=>{
@@ -57,10 +57,10 @@ catch(error){expect(error instanceof WriteUnsettled,'actual committed response l
 expect(equal(losing.pending(),['lost-key']),'pending key survives loss');
 const recovered=await losing.retryPending();const recoveredFirst=recovered[0];
 expect(recoveredFirst?.ok&&'output' in recoveredFirst&&recoveredFirst.output.id===id12&&recoveredFirst.output.count===1&&recoveredFirst.replayed,'same-key WRITE recovery');expect(equal(losing.pending(),[]),'recovery clears pending');
-const denied=await client.writeExtension('Event.run',{id:id99},{key:'foreign-key',retries:0});expect(!denied.ok&&denied.code==='EXTENSION_ERROR','foreign actor WRITE rejected');
-const unsafe=await client.writeExtension('Event.run',{id:id13},{key:'unsafe-key',retries:0});expect(!unsafe.ok&&unsafe.code==='OUTPUT_INVALID','unsafe Int output rejected before commit');
+const denied=await client.writeExtension('Event.run',{id:id99},{key:'foreign-key',retries:0});expect(!denied.ok&&denied.code==='WIRE.EXTENSION_ERROR','foreign actor WRITE rejected');
+const unsafe=await client.writeExtension('Event.run',{id:id13},{key:'unsafe-key',retries:0});expect(!unsafe.ok&&unsafe.code==='WIRE.OUTPUT_INVALID','unsafe Int output rejected before commit');
 const stale=connect(url,token,{...contract,fingerprint:'0'.repeat(64)});
-const old=await stale.writeExtension('Event.run',{id:id13},{key:'stale-key',retries:0});expect(!old.ok&&old.code==='CONTRACT_MISMATCH','stale first WRITE rejected');expect(equal(stale.pending(),[]),'stale pre-execution rejection is settled');
+const old=await stale.writeExtension('Event.run',{id:id13},{key:'stale-key',retries:0});expect(!old.ok&&old.code==='WIRE.CONTRACT_MISMATCH','stale first WRITE rejected');expect(equal(stale.pending(),[]),'stale pre-execution rejection is settled');
 expect(equal(client.pending(),[]),'confirmed rejections leave no pending');
 console.log(JSON.stringify({ok:true,replayed:replay.ok&&replay.replayed,recovered:recoveredFirst?.ok,unsafeCode:unsafe.ok?null:unsafe.code}));
 """

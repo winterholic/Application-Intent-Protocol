@@ -65,8 +65,8 @@ test("browser websocket reports expired sessions and leaves reconnect cursor to 
   const connection = connectEventWebSocket({ ...options, onSessionStale: code => stale.push(code) });
   const socket = FakeWebSocket.instances[0]!;
   socket.open();
-  socket.message(JSON.stringify({ type: "error", code: "TOKEN_EXPIRED" }));
-  assert.deepEqual(stale, ["TOKEN_EXPIRED"]);
+  socket.message(JSON.stringify({ type: "error", code: "WIRE.TOKEN_EXPIRED" }));
+  assert.deepEqual(stale, ["WIRE.TOKEN_EXPIRED"]);
   assert.equal(socket.sent.length, 1);
   assert.equal(connection.lastCursor, options.subscription.after);
   assert.equal(socket.readyState, 3);
@@ -85,12 +85,12 @@ test("browser websocket abort closes the socket and rejects stale sessions befor
 
   assert.throws(() => connectEventWebSocket({
     ...options, sessionExpiresAtMs: Date.now() - 1,
-  }), (error: any) => error.code === "TOKEN_EXPIRED");
+  }), (error: any) => error.code === "WIRE.TOKEN_EXPIRED");
   assert.equal(FakeWebSocket.instances.length, 1);
 });
 
 test("browser websocket refuses credential-bearing query strings", () => {
   FakeWebSocket.instances = [];
-  assert.throws(() => connectEventWebSocket({ ...options, url: `${options.url}?token=${options.token}` }), (error: any) => error.code === "BAD_VALUE");
+  assert.throws(() => connectEventWebSocket({ ...options, url: `${options.url}?token=${options.token}` }), (error: any) => error.code === "WIRE.BAD_VALUE");
   assert.equal(FakeWebSocket.instances.length, 0);
 });

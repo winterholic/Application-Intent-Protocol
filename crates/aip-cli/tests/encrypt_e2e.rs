@@ -105,7 +105,7 @@ async fn the_database_holds_ciphertext_and_the_api_answers_plaintext() {
     let kept = raw(&e, "SELECT response::text FROM _aip_idempotency WHERE key = 'reg-carol'").await;
     assert!(!kept.contains("carol@example.com") && kept.contains("v1:t1:"), "the kept response stays encrypted: {kept}");
     let another = fails(&e, "Register", None, json!({"nickname": "carol", "email": "other@example.com", "phone": null}), Some("reg-carol")).await;
-    assert_eq!(another.code, "AIP.IDEMPOTENCY.KEY_REUSED", "a different email under the same key is still told apart");
+    assert_eq!(another.code, "POC.IDEMPOTENCY.KEY_REUSED", "a different email under the same key is still told apart");
 
     // an update encrypts for the row it changes, with a fresh nonce
     let before = raw(&e, &format!("SELECT email FROM member WHERE id = '{alice}'")).await;
@@ -139,23 +139,23 @@ async fn a_ciphertext_moved_to_another_row_or_field_is_refused() {
     // bob's ciphertext pasted into alice's row
     sql_one(&e, &format!("UPDATE member SET email = (SELECT email FROM member WHERE id = '{bob}') WHERE id = '{alice}' RETURNING id")).await;
     let err = fails(&e, "Me", Some(&alice), json!({"m": alice}), None).await;
-    assert_eq!(err.code, "AIP.ENCRYPTION.DECRYPT_FAILED", "{err}");
+    assert_eq!(err.code, "POC.ENCRYPTION.DECRYPT_FAILED", "{err}");
     assert_eq!(err.status(), 500);
     assert!(!err.to_string().contains("bob@example.com") && !err.to_string().contains("alice@example.com"), "{err}");
     // the list fails as a whole rather than showing a wrong value
     let err = fails(&e, "Members", Some(&alice), json!({}), None).await;
-    assert_eq!(err.code, "AIP.ENCRYPTION.DECRYPT_FAILED");
+    assert_eq!(err.code, "POC.ENCRYPTION.DECRYPT_FAILED");
 
     // alice's own email moved into her phone column (another field, same row)
     sql_one(&e, &format!("UPDATE member SET email = NULL, phone = (SELECT email FROM member WHERE id = '{bob}') WHERE id = '{alice}' RETURNING id"))
         .await;
     let err = fails(&e, "Me", Some(&alice), json!({"m": alice}), None).await;
-    assert_eq!(err.code, "AIP.ENCRYPTION.DECRYPT_FAILED");
+    assert_eq!(err.code, "POC.ENCRYPTION.DECRYPT_FAILED");
 
     // a value that is not ciphertext at all (written around the runtime) is refused too, not shown
     sql_one(&e, &format!("UPDATE member SET email = 'alice@example.com', phone = NULL WHERE id = '{alice}' RETURNING id")).await;
     let err = fails(&e, "Me", Some(&alice), json!({"m": alice}), None).await;
-    assert_eq!(err.code, "AIP.ENCRYPTION.DECRYPT_FAILED");
+    assert_eq!(err.code, "POC.ENCRYPTION.DECRYPT_FAILED");
     assert!(err.message.contains("not in the encrypted format"), "{err}");
 }
 
@@ -164,7 +164,7 @@ fn a_server_without_keys_does_not_start() {
     let (_, program) = compile(APP);
     for spec in [None, Some(""), Some("   "), Some("k1"), Some("k1:not base64!"), Some("k1:c2hvcnQ=")] {
         let err = crypto::load(&program, spec).expect_err("unusable keys");
-        assert_eq!(err.code, "AIP.ENCRYPTION.KEYS_MISSING", "{spec:?}");
+        assert_eq!(err.code, "POC.ENCRYPTION.KEYS_MISSING", "{spec:?}");
     }
     assert!(crypto::load(&program, Some(&key_spec(&[("k1", &random_key())]))).expect("usable").is_some());
     let (_, plain) = compile("entity Note { text: Text }");
@@ -179,7 +179,7 @@ fn a_server_without_keys_does_not_start() {
         .output()
         .expect("run aip");
     let err = String::from_utf8_lossy(&out.stderr);
-    assert!(!out.status.success() && err.contains("AIP.ENCRYPTION.KEYS_MISSING") && err.contains("AIP_ENCRYPTION_KEYS"), "{err}");
+    assert!(!out.status.success() && err.contains("POC.ENCRYPTION.KEYS_MISSING") && err.contains("AIP_ENCRYPTION_KEYS"), "{err}");
     let out = Command::new(bin)
         .args(["run", APP_PATH, "--dev-auth", "--port", "0"])
         .env("DATABASE_URL", "postgres://127.0.0.1:1/none")
@@ -187,7 +187,7 @@ fn a_server_without_keys_does_not_start() {
         .output()
         .expect("run aip");
     let err = String::from_utf8_lossy(&out.stderr);
-    assert!(!out.status.success() && err.contains("AIP.ENCRYPTION.KEYS_MISSING") && err.contains("32"), "a key of the wrong size: {err}");
+    assert!(!out.status.success() && err.contains("POC.ENCRYPTION.KEYS_MISSING") && err.contains("32"), "a key of the wrong size: {err}");
 }
 
 async fn encrypted_columns_are_under(e: &Engine, key_id: &str) {
@@ -283,7 +283,7 @@ async fn keys_rotate_and_rekey_reaches_every_copy() {
     assert_eq!(plain, ["day one", "day two"]);
     // and the old key alone no longer can
     let err = fails(&old, "Me", Some(&alice), json!({"m": alice}), None).await;
-    assert_eq!(err.code, "AIP.ENCRYPTION.DECRYPT_FAILED");
+    assert_eq!(err.code, "POC.ENCRYPTION.DECRYPT_FAILED");
     assert!(err.message.contains("k2"), "the message names the key that is missing: {err}");
 }
 
@@ -358,10 +358,10 @@ fn turning_encryption_on_or_off_or_renaming_an_encrypted_field_is_refused() {
     let (old_core, _) = compile(&plain);
     let (new_core, new_plan) = compile(APP);
     let p = aip_pg::evolve::plan(&old_core, &new_core, &new_plan.ddl);
-    assert!(p.rejections.iter().any(|r| r.code == "AIP.SCHEMA.ENCRYPTION_CHANGE" && r.message.contains("Member.email became encrypted")), "{p:?}");
+    assert!(p.rejections.iter().any(|r| r.code == "POC.SCHEMA.ENCRYPTION_CHANGE" && r.message.contains("Member.email became encrypted")), "{p:?}");
     let (_, plain_plan) = compile(&plain);
     let p = aip_pg::evolve::plan(&new_core, &old_core, &plain_plan.ddl);
-    assert!(p.rejections.iter().any(|r| r.code == "AIP.SCHEMA.ENCRYPTION_CHANGE" && r.message.contains("stopped being encrypted")), "{p:?}");
+    assert!(p.rejections.iter().any(|r| r.code == "POC.SCHEMA.ENCRYPTION_CHANGE" && r.message.contains("stopped being encrypted")), "{p:?}");
     // a rename changes the name the ciphertext is bound to
     let renamed = APP
         .replace("email", "mail")
@@ -369,7 +369,7 @@ fn turning_encryption_on_or_off_or_renaming_an_encrypted_field_is_refused() {
         .replace("mail: Email? personal encrypted", "mail: Email? was email personal encrypted");
     let (renamed_core, renamed_plan) = compile(&renamed);
     let p = aip_pg::evolve::plan(&new_core, &renamed_core, &renamed_plan.ddl);
-    assert!(p.rejections.iter().any(|r| r.code == "AIP.SCHEMA.ENCRYPTION_CHANGE" && r.message.contains("bound to the name")), "{p:?}");
+    assert!(p.rejections.iter().any(|r| r.code == "POC.SCHEMA.ENCRYPTION_CHANGE" && r.message.contains("bound to the name")), "{p:?}");
     // unchanged: nothing refused
     assert!(aip_pg::evolve::plan(&new_core, &new_core, &new_plan.ddl).rejections.is_empty());
 }
@@ -386,6 +386,6 @@ async fn a_server_that_lost_its_keys_fails_writes_instead_of_storing_plaintext()
         keys: None,
     };
     let err = fails(&keyless, "Register", None, json!({"nickname": "dan", "email": "dan@example.com", "phone": null}), Some("k")).await;
-    assert_eq!(err.code, "AIP.ENCRYPTION.KEYS_MISSING");
+    assert_eq!(err.code, "POC.ENCRYPTION.KEYS_MISSING");
     assert!(!dump(&e).await.contains("dan@example.com"));
 }

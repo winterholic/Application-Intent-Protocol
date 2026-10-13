@@ -34,7 +34,7 @@ function makeCtx(token, job) {
     job: job ?? null,
     // durable job 전용: `throw ctx.retryLater("이유")`로 같은 job을 backoff 뒤 다시 시도하게 한다.
     // `{afterMs}`를 주면 기본 backoff 대신 그 시간(서버가 1초~1시간으로 맞춘다) 뒤에 다시 시도한다.
-    retryLater: (reason, options) => Object.assign(new Error(String(reason ?? "RETRY_LATER")), { code: "RETRY_LATER", afterMs: options?.afterMs }),
+    retryLater: (reason, options) => Object.assign(new Error(String(reason ?? "WIRE.RETRY_LATER")), { code: "WIRE.RETRY_LATER", afterMs: options?.afterMs }),
     // 시험용: 서버가 허용하지 않은 원시 요청을 보내 본다.
     _raw: (m) => new Promise((resolve, reject) => { const id = ++seq; pending.set(id, { resolve, reject }); send({ ...m, type: "call", call: id, token }); }),
   };
@@ -57,8 +57,8 @@ rl.on("line", async (line) => {
       const out = await ext[fn](m.input, makeCtx(m.token, m.job));
       send({ type: "done", invoke: m.invoke, output: out });
     } catch (e) {
-      const afterMs = e.code === "RETRY_LATER" && Number.isSafeInteger(e.afterMs) && e.afterMs >= 0 ? e.afterMs : undefined;
-      send({ type: "done", invoke: m.invoke, error: { code: e.code ?? "EXTENSION_ERROR", message: String(e.message ?? e), afterMs } });
+      const afterMs = e.code === "WIRE.RETRY_LATER" && Number.isSafeInteger(e.afterMs) && e.afterMs >= 0 ? e.afterMs : undefined;
+      send({ type: "done", invoke: m.invoke, error: { code: e.code ?? "WIRE.EXTENSION_ERROR", message: String(e.message ?? e), afterMs } });
     }
   }
 });

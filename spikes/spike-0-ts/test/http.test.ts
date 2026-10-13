@@ -36,7 +36,7 @@ test('describe exposes intents, effects and error reasons', async () => {
   assert.equal(cancel.policy, 'owner(order.user) | role(ADMIN)');
   assert.deepEqual(cancel.effects.writes, ['Product.stock', 'Order.status']);
   assert.deepEqual(cancel.effects.emits, ['OrderCancelled']);
-  assert.deepEqual(cancel.errors.find((e: { code: string }) => e.code === 'AIP.PRECONDITION.FAILED').reasons, ['ORDER_NOT_CANCELLABLE']);
+  assert.deepEqual(cancel.errors.find((e: { code: string }) => e.code === 'POC.PRECONDITION.FAILED').reasons, ['ORDER_NOT_CANCELLABLE']);
   // Entities are never exposed as a generic data API; only declared intents are.
   assert.deepEqual(Object.keys(contract).sort(), ['aip', 'commands', 'enums', 'events', 'queries', 'transport']);
 });
@@ -58,7 +58,7 @@ test('generated client drives the full flow over HTTP', async () => {
   const bob = createClient({ baseUrl, actor: s.bob });
   await assert.rejects(bob.commands.CancelOrder({ orderId: order.id }), (e: InstanceType<typeof AipClientError>) => {
     assert.equal(e.status, 403);
-    assert.equal(e.body.code, 'AIP.AUTH.FORBIDDEN');
+    assert.equal(e.body.code, 'POC.AUTH.FORBIDDEN');
     return true;
   });
 });
@@ -66,8 +66,8 @@ test('generated client drives the full flow over HTTP', async () => {
 test('unknown operations and malformed bodies get structured errors', async () => {
   const r1 = await fetch(`${baseUrl}/aip/command/DropAllTables`, { method: 'POST', body: '{}' });
   assert.equal(r1.status, 404);
-  assert.equal((await r1.json()).error.code, 'AIP.REQUEST.UNKNOWN_OPERATION');
+  assert.equal((await r1.json()).error.code, 'POC.REQUEST.UNKNOWN_OPERATION');
   const r2 = await fetch(`${baseUrl}/aip/query/MyOrders`, { method: 'POST', body: '{nope', headers: { 'x-aip-actor': s.alice } });
   assert.equal(r2.status, 400);
-  assert.equal((await r2.json()).error.code, 'AIP.REQUEST.MALFORMED');
+  assert.equal((await r2.json()).error.code, 'POC.REQUEST.MALFORMED');
 });

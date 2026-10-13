@@ -57,14 +57,14 @@ class PythonSdkTest(unittest.TestCase):
         client = connect("http://aip", "t1", FP, transport=server)
         with self.assertRaises(AipError) as caught:
             client.discover()
-        self.assertEqual(caught.exception.code, "CONTRACT_MISMATCH")
+        self.assertEqual(caught.exception.code, "WIRE.CONTRACT_MISMATCH")
         with self.assertRaises(AipError) as caught:
             client.operation("textLength", {"text": "abc"})
-        self.assertEqual(caught.exception.code, "CONTRACT_MISMATCH")
+        self.assertEqual(caught.exception.code, "WIRE.CONTRACT_MISMATCH")
 
     def test_lost_response_is_resent_with_the_same_key_and_body(self):
         server = FakeServer()
-        server.script("/apply", ConnectionResetError(), {"ok": False, "code": "COMMIT_UNKNOWN"},
+        server.script("/apply", ConnectionResetError(), {"ok": False, "code": "WIRE.COMMIT_UNKNOWN"},
                       {"ok": True, "changed": ["11"], "unchanged": [], "tags": ["Event"], "replayed": True})
         client = connect("http://aip", "t1", FP, transport=server)
         result = client.apply({"apply": "Event.mark", "target": {"ids": ["11"]}}, key="k1")
@@ -76,20 +76,20 @@ class PythonSdkTest(unittest.TestCase):
 
     def test_retry_rejected_before_execution_stays_unsettled(self):
         server = FakeServer()
-        server.script("/apply", TimeoutError(), {"ok": False, "code": "DB_UNAVAILABLE"}, {"ok": False, "code": "DB_UNAVAILABLE"})
+        server.script("/apply", TimeoutError(), {"ok": False, "code": "WIRE.DB_UNAVAILABLE"}, {"ok": False, "code": "WIRE.DB_UNAVAILABLE"})
         client = connect("http://aip", "t1", FP, transport=server)
         with self.assertRaises(WriteUnsettled) as caught:
             client.apply({"apply": "Event.mark", "target": {"ids": ["11"]}}, key="k2")
         self.assertEqual(caught.exception.key, "k2")
         self.assertEqual(client.pending(), ["k2"])
         mismatch = client.apply({"apply": "Event.mark", "target": {"ids": ["12"]}}, key="k2")
-        self.assertEqual(mismatch["code"], "IDEMPOTENCY_MISMATCH")
+        self.assertEqual(mismatch["code"], "WIRE.IDEMPOTENCY_MISMATCH")
 
     def test_first_attempt_business_rejection_is_final(self):
         server = FakeServer()
-        server.script("/apply", {"ok": False, "code": "INVALID_STATE"})
+        server.script("/apply", {"ok": False, "code": "WIRE.INVALID_STATE"})
         client = connect("http://aip", "t1", FP, transport=server)
-        self.assertEqual(client.apply({"apply": "Event.mark", "target": {"ids": ["11"]}}, key="k3")["code"], "INVALID_STATE")
+        self.assertEqual(client.apply({"apply": "Event.mark", "target": {"ids": ["11"]}}, key="k3")["code"], "WIRE.INVALID_STATE")
         self.assertEqual(client.pending(), [])
 
     def test_session_renewal_keeps_principal_scope(self):
@@ -123,10 +123,10 @@ class PythonSdkTest(unittest.TestCase):
         with self.assertRaises(AipError):
             connect("http://aip", "t1", "not-a-fingerprint")
         server = FakeServer()
-        server.script("/read", {"ok": False, "code": "ACCESS_DENIED"})
+        server.script("/read", {"ok": False, "code": "WIRE.ACCESS_DENIED"})
         with self.assertRaises(AipError) as caught:
             connect("http://aip", "t1", FP, transport=server).read({"read": "Event"})
-        self.assertEqual(caught.exception.code, "ACCESS_DENIED")
+        self.assertEqual(caught.exception.code, "WIRE.ACCESS_DENIED")
 
 
 class RequestIdTest(unittest.TestCase):
@@ -146,22 +146,22 @@ class RequestIdTest(unittest.TestCase):
 
     def test_a_rejection_carries_the_request_id(self):
         with self.assertRaises(AipError) as caught:
-            self.serve({"ok": False, "code": "FILTER_NOT_ALLOWED"}).read({"read": "Event", "select": ["id"]})
-        self.assertEqual((caught.exception.code, caught.exception.request_id), ("FILTER_NOT_ALLOWED", self.ID))
+            self.serve({"ok": False, "code": "WIRE.FILTER_NOT_ALLOWED"}).read({"read": "Event", "select": ["id"]})
+        self.assertEqual((caught.exception.code, caught.exception.request_id), ("WIRE.FILTER_NOT_ALLOWED", self.ID))
 
     def test_a_contract_mismatch_and_a_managed_failure_carry_it_too(self):
         with self.assertRaises(AipError) as caught:
             self.serve({"ok": True, "rows": [], "deps": [], "contractFingerprint": OTHER}).read({"read": "Event", "select": ["id"]})
-        self.assertEqual((caught.exception.code, caught.exception.request_id), ("CONTRACT_MISMATCH", self.ID))
+        self.assertEqual((caught.exception.code, caught.exception.request_id), ("WIRE.CONTRACT_MISMATCH", self.ID))
         with self.assertRaises(AipError) as caught:
-            self.serve({"ok": False, "code": "NOT_FOUND"}).jobs.status("x")
+            self.serve({"ok": False, "code": "WIRE.NOT_FOUND"}).jobs.status("x")
         self.assertEqual(caught.exception.request_id, self.ID)
 
     def test_a_failed_write_outcome_and_an_unsettled_write_carry_it(self):
-        outcome = self.serve({"ok": False, "code": "BAD_VALUE"}).apply({"apply": "A.b"}, key="k1")
-        self.assertEqual((outcome["ok"], outcome["code"], outcome["requestId"]), (False, "BAD_VALUE", self.ID))
+        outcome = self.serve({"ok": False, "code": "WIRE.BAD_VALUE"}).apply({"apply": "A.b"}, key="k1")
+        self.assertEqual((outcome["ok"], outcome["code"], outcome["requestId"]), (False, "WIRE.BAD_VALUE", self.ID))
         with self.assertRaises(WriteUnsettled) as caught:
-            self.serve({"ok": False, "code": "COMMIT_UNKNOWN"}).apply({"apply": "A.b"}, key="k2", retries=0)
+            self.serve({"ok": False, "code": "WIRE.COMMIT_UNKNOWN"}).apply({"apply": "A.b"}, key="k2", retries=0)
         self.assertEqual(caught.exception.request_id, self.ID)
 
     def test_a_success_and_a_missing_or_unsafe_header_add_nothing(self):
@@ -169,7 +169,7 @@ class RequestIdTest(unittest.TestCase):
         self.assertNotIn("requestId", ok)
         for header in (None, "short", "has space in it", "x" * 65, "semi;colon-1234"):
             with self.assertRaises(AipError) as caught:
-                self.serve({"ok": False, "code": "NOT_FOUND"}, header=header).read({"read": "Event", "select": ["id"]})
+                self.serve({"ok": False, "code": "WIRE.NOT_FOUND"}, header=header).read({"read": "Event", "select": ["id"]})
             self.assertIsNone(caught.exception.request_id, header)
 
     def test_the_default_transport_reads_the_header_of_a_real_reply(self):
@@ -178,7 +178,7 @@ class RequestIdTest(unittest.TestCase):
         class Handler(http.server.BaseHTTPRequestHandler):
             def do_POST(self):
                 self.rfile.read(int(self.headers.get("content-length", 0)))
-                body = json.dumps({"ok": True, "principal": {"actorId": "42"}, "remainingMs": 1000} if self.path == "/session" else {"ok": False, "code": "ACCESS_DENIED"}).encode()
+                body = json.dumps({"ok": True, "principal": {"actorId": "42"}, "remainingMs": 1000} if self.path == "/session" else {"ok": False, "code": "WIRE.ACCESS_DENIED"}).encode()
                 self.send_response(200)
                 self.send_header("content-length", str(len(body)))
                 self.send_header("x-request-id", outer.ID)
@@ -194,7 +194,7 @@ class RequestIdTest(unittest.TestCase):
             client = connect(f"http://127.0.0.1:{server.server_port}", "t1", FP)
             with self.assertRaises(AipError) as caught:
                 client.read({"read": "Event", "select": ["id"]})
-            self.assertEqual((caught.exception.code, caught.exception.request_id), ("ACCESS_DENIED", self.ID))
+            self.assertEqual((caught.exception.code, caught.exception.request_id), ("WIRE.ACCESS_DENIED", self.ID))
         finally:
             server.shutdown()
 
@@ -209,7 +209,7 @@ class TransportBoundaryTest(unittest.TestCase):
             client = connect(base, "t1", FP)
             with self.assertRaises(AipError) as raised:
                 client.read({"read": "Event", "select": ["id"]})
-            self.assertEqual(raised.exception.code, "PROTOCOL_ERROR", base)
+            self.assertEqual(raised.exception.code, "CLIENT.PROTOCOL_ERROR", base)
 
     def test_does_not_follow_redirects_with_the_bearer_token(self):
         seen = []

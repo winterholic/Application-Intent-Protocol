@@ -95,10 +95,10 @@ async fn v3_3_admin_delegation() {
     // (이름, actor, W2 요청, W0 요청, 기대 W2, 기대 W0, 기대 최종 역할(성공 시))
     let cases: Vec<(&str, i64, Value, Value, &str, &str, &str)> = vec![
         ("정상 위임", 1, w2(3), w0(&[("makeAdmin", 3), ("resignAdmin", 1)]), "OK", "OK", "1:MEMBER,2:MANAGER,3:ADMIN,4:ADMIN,5:MEMBER"),
-        ("자기 자신에게 위임", 1, w2(1), w0(&[("makeAdmin", 1), ("resignAdmin", 1)]), "FORBIDDEN", "INVALID_STATE", start),
-        ("관리자 아닌 운영진", 2, w2(3), w0(&[("makeAdmin", 3), ("resignAdmin", 2)]), "FORBIDDEN", "FORBIDDEN", start),
-        ("다른 동아리 회원에게", 1, w2(5), w0(&[("makeAdmin", 5), ("resignAdmin", 1)]), "MISSING_TARGET", "MISSING_TARGET", start),
-        ("이미 관리자에게", 1, w2(4), w0(&[("makeAdmin", 4), ("resignAdmin", 1)]), "MISSING_TARGET", "MISSING_TARGET", start),
+        ("자기 자신에게 위임", 1, w2(1), w0(&[("makeAdmin", 1), ("resignAdmin", 1)]), "WIRE.FORBIDDEN", "WIRE.INVALID_STATE", start),
+        ("관리자 아닌 운영진", 2, w2(3), w0(&[("makeAdmin", 3), ("resignAdmin", 2)]), "WIRE.FORBIDDEN", "WIRE.FORBIDDEN", start),
+        ("다른 동아리 회원에게", 1, w2(5), w0(&[("makeAdmin", 5), ("resignAdmin", 1)]), "WIRE.MISSING_TARGET", "WIRE.MISSING_TARGET", start),
+        ("이미 관리자에게", 1, w2(4), w0(&[("makeAdmin", 4), ("resignAdmin", 1)]), "WIRE.MISSING_TARGET", "WIRE.MISSING_TARGET", start),
     ];
     for (name, actor, q2, q0, want2, want0, want_roles) in &cases {
         let target = q2["target"]["ids"][0].as_str().unwrap().parse::<i64>().unwrap();
@@ -121,19 +121,19 @@ async fn v3_3_admin_delegation() {
     // W0 고유: 순서·생략
     let specific: Vec<(&str, Value, &str)> = vec![
         // 먼저 내려놓으면 actor는 더 이상 운영진이 아니라 대상 행이 보이지 않는다(V3-R1: 없는 대상과 같게).
-        ("W0 내려놓고 임명(순서 바꿈)", w0(&[("resignAdmin", 1), ("makeAdmin", 3)]), "MISSING_TARGET"),
-        ("W0 임명만(관리자 2명)", w0(&[("makeAdmin", 3)]), "INVARIANT_VIOLATED"),
-        ("W0 내려놓기만(관리자 0명)", w0(&[("resignAdmin", 1)]), "CHECK_FAILED"),
+        ("W0 내려놓고 임명(순서 바꿈)", w0(&[("resignAdmin", 1), ("makeAdmin", 3)]), "WIRE.MISSING_TARGET"),
+        ("W0 임명만(관리자 2명)", w0(&[("makeAdmin", 3)]), "WIRE.INVARIANT_VIOLATED"),
+        ("W0 내려놓기만(관리자 0명)", w0(&[("resignAdmin", 1)]), "WIRE.CHECK_FAILED"),
     ];
     let w1_specific: Vec<(&str, Value, &str)> = vec![
         (
             "W1 내려놓고 임명(순서 바꿈)",
             w1(3, json!([{ "transition": "resignAdmin", "on": "self" }, { "transition": "makeAdmin" }])),
-            "MISSING_TARGET",
+            "WIRE.MISSING_TARGET",
         ),
-        ("W1 임명만", w1(3, json!([{ "transition": "makeAdmin" }])), "INVARIANT_VIOLATED"),
-        ("W1 내려놓기만", w1(3, json!([{ "transition": "resignAdmin", "on": "self" }])), "CHECK_FAILED"),
-        ("W1 자기 행 대신 대상에 내려놓기", w1(3, json!([{ "transition": "makeAdmin" }, { "transition": "resignAdmin" }])), "FORBIDDEN"),
+        ("W1 임명만", w1(3, json!([{ "transition": "makeAdmin" }])), "WIRE.INVARIANT_VIOLATED"),
+        ("W1 내려놓기만", w1(3, json!([{ "transition": "resignAdmin", "on": "self" }])), "WIRE.CHECK_FAILED"),
+        ("W1 자기 행 대신 대상에 내려놓기", w1(3, json!([{ "transition": "makeAdmin" }, { "transition": "resignAdmin" }])), "WIRE.FORBIDDEN"),
     ];
     for (name, q, want) in &w1_specific {
         db.batch_execute(&seed).await.unwrap();
@@ -158,7 +158,7 @@ async fn v3_3_admin_delegation() {
     code(apply(&mut db, &f, &w2(3), &who(1), &k).await);
     let again = code(apply(&mut db, &f, &w2(2), &who(1), &k).await);
     table.push(format!("위임 뒤 원래 관리자가 재위임 | W2 | {again}"));
-    if again != "MISSING_TARGET" {
+    if again != "WIRE.MISSING_TARGET" {
         fails.push(format!("재위임: {again}"));
     }
     // 동시 위임: 같은 관리자가 2와 3에게 동시에. 하나만 성공하고 관리자는 한 명

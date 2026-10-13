@@ -66,8 +66,8 @@ caller는 등록된 이름과 typed 입력을 고른다. 구현 경로·정책·
 | 반환 전 검사 | 새 DB clock으로 allow 재평가, 인증 provider로 현재 principal·토큰 재검증. 검사 시점 이후의 경쟁까지 원자적으로 잠그는 보장은 없음 |
 | 기한 | 선언은 1ms 이상 30s 이하. operation 인가·worker 시작/전송/실행/종료·사후 인가·최종 인증을 포함. 앞선 HTTP 수신·초기 인증·DB 연결/fence는 기존 별도 기한 사용 |
 | 자원 | 기존 worker 동시 실행 slot, 본문 상한, stdout/stderr framing 상한 재사용 |
-| ctx | 이 동기 operation의 데이터 ctx 호출은 즉시 `ACCESS_NOT_DECLARED`. durable worker의 managed capability는 [관리형 execution](MANAGED-EXECUTION.md) 참고 |
-| 배포 | 기존 shared deployment fence 유지. 오래된 listener는 정책 변경 뒤 `DEPLOYMENT_CHANGED` |
+| ctx | 이 동기 operation의 데이터 ctx 호출은 즉시 `WIRE.ACCESS_NOT_DECLARED`. durable worker의 managed capability는 [관리형 execution](MANAGED-EXECUTION.md) 참고 |
+| 배포 | 기존 shared deployment fence 유지. 오래된 listener는 정책 변경 뒤 `WIRE.DEPLOYMENT_CHANGED` |
 | 수명 | 동기 결과만 반환. 이 호출 자체에는 연결 유실 뒤 status 복구·지속 실행·자동 retry·cancel 계약이 없음 |
 
 Worker는 macOS에서 기본 `MacSandbox`(Seatbelt 프로파일)를 사용한다. 네트워크, 모든 파일 쓰기(`/dev/null` 제외), `/Users`·`/Volumes`·임시 디렉터리 읽기(extension·의존성·runtime 경로 제외), `fork`/프로세스 생성을 막는다. 네트워크만 막는 이전 동작은 `isolation: "mac_net_deny"`로 고를 수 있다. 이 프로파일은 deny 목록 방식이라 `/etc`·`/opt` 같은 시스템 경로 읽기는 허용하므로 Linux Bubblewrap처럼 보이는 파일 집합을 제한하지는 않는다. 신뢰한 서버 extension만 등록한다. `effect none`은 요청자가 DB/외부 효과 capability를 얻지 않는다는 선언이며 임의 extension의 부작용까지 막는 보장은 아니다. worker를 멈추면 worker를 process group leader로 시작해 후손 프로세스를 부모 링크를 따라 모두 종료한다(`setsid` 손자 포함). 이미 init에 입양된 이중 fork 데몬은 이 방식으로 찾을 수 없으므로 `MacSandbox`(fork 금지), Linux Bubblewrap(PID namespace)·cgroup에 의존한다. `isolation: "none"`은 그 보장이 없다.
@@ -80,6 +80,6 @@ Worker는 macOS에서 기본 `MacSandbox`(Seatbelt 프로파일)를 사용한다
 
 의존성은 `worker: []`, `authorization: ["database", "principal", "deployment"]`로 구분한다. 업무 데이터가 필요 없는 worker와 DB를 사용하는 서버 권한 검사를 혼동하지 않는다. SDK binding과 HTTP catalog는 같은 descriptor projector를 사용한다. 공개 타입·범위·기한 등은 계약 지문에 포함되고 내부 구현 경로·allow는 제외한다. 내부 정책 변경은 별도 배포 facts 지문이 감지한다.
 
-실패에는 `UNAUTHENTICATED`, `TOKEN_EXPIRED`, `CONTRACT_MISMATCH`, `NOT_EXPOSED`, `BAD_VALUE`, `ACCESS_DENIED`, `OUTPUT_INVALID`, `ACCESS_NOT_DECLARED`, `DEADLINE_EXCEEDED`, `DEPLOYMENT_CHANGED`, `DB_UNAVAILABLE` 등이 있다. SDK는 잘못된 출력과 계약 불일치, 세션 교체 이전 응답도 거부한다. 기존 `/status`와 WRITE의 `COMMIT_UNKNOWN` 복구 의미는 유지한다.
+실패에는 `WIRE.UNAUTHENTICATED`, `WIRE.TOKEN_EXPIRED`, `WIRE.CONTRACT_MISMATCH`, `WIRE.NOT_EXPOSED`, `WIRE.BAD_VALUE`, `WIRE.ACCESS_DENIED`, `WIRE.OUTPUT_INVALID`, `WIRE.ACCESS_NOT_DECLARED`, `WIRE.DEADLINE_EXCEEDED`, `WIRE.DEPLOYMENT_CHANGED`, `WIRE.DB_UNAVAILABLE` 등이 있다. SDK는 잘못된 출력과 계약 불일치, 세션 교체 이전 응답도 거부한다. 기존 `/status`와 WRITE의 `WIRE.COMMIT_UNKNOWN` 복구 의미는 유지한다.
 
 검증 명령과 이번 실행 결과는 [VERIFICATION](VERIFICATION.md), 전체 조사 기준은 [기능 감사](../plan-docs/backend-capability/README.md)를 따른다. 이 기능 하나가 여섯 시나리오 전체나 모든 backend 기능을 구현한 것은 아니다.

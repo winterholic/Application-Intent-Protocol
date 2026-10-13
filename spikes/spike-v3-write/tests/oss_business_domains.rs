@@ -53,7 +53,7 @@ async fn capacity_signer_uniqueness_booking_rollback_and_stock_floor_execute_in_
     // back the third transition, leaving exactly two sold tickets and one available.
     apply(&mut db, &facts, &request("Ticket.sell", 102), &caller(), &Knobs::default()).await.unwrap();
     let full = apply(&mut db, &facts, &request("Ticket.sell", 103), &caller(), &Knobs::default()).await.unwrap_err();
-    assert_eq!(full.code, "INVARIANT_VIOLATED");
+    assert_eq!(full.code, "WIRE.INVARIANT_VIOLATED");
     let ticket_counts = db
         .query_one(
             &format!(
@@ -89,7 +89,7 @@ async fn capacity_signer_uniqueness_booking_rollback_and_stock_floor_execute_in_
     // by the commit check, and its status/effects both roll back.
     apply(&mut db, &facts, &request("Appointment.cancel", 201), &caller(), &Knobs::default()).await.unwrap();
     let invalid_booking = apply(&mut db, &facts, &request("Appointment.cancel", 202), &caller(), &Knobs::default()).await.unwrap_err();
-    assert_eq!(invalid_booking.code, "CHECK_FAILED");
+    assert_eq!(invalid_booking.code, "WIRE.CHECK_FAILED");
     let booking_states = db.query_one(
         &format!("SELECT (SELECT status FROM {schema}.appointment WHERE id=201), (SELECT status FROM {schema}.appointment WHERE id=202), (SELECT count(*) FROM {schema}.aip_outbox WHERE topic='booking.cancelled')"),
         &[],
@@ -102,7 +102,7 @@ async fn capacity_signer_uniqueness_booking_rollback_and_stock_floor_execute_in_
     // the commit check and leaves the allocation count unchanged.
     apply(&mut db, &facts, &request("StockItem.reserve", 501), &caller(), &Knobs::default()).await.unwrap();
     let overallocated = apply(&mut db, &facts, &request("StockItem.reserve", 502), &caller(), &Knobs::default()).await.unwrap_err();
-    assert_eq!(overallocated.code, "CHECK_FAILED");
+    assert_eq!(overallocated.code, "WIRE.CHECK_FAILED");
     let stock = db
         .query_one(
             &format!("SELECT (SELECT allocated FROM {schema}.stock_item WHERE id=501), (SELECT allocated FROM {schema}.stock_item WHERE id=502)"),

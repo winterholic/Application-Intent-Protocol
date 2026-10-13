@@ -398,7 +398,7 @@ impl Parser {
             "fn" => self.fn_decl(start),
             "event" => self.event(start),
             "upcast" => self.upcast(start),
-            // `cross tenant` without `internal` parses so that analysis can say why it is refused (AIP-E315)
+            // `cross tenant` without `internal` parses so that analysis can say why it is refused (POC.E315)
             "internal" | "cross" | "drafts" => {
                 let internal = self.eat("internal");
                 let cross_tenant = self.eat("cross");

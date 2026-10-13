@@ -307,13 +307,13 @@ $ aip check-docs docs spec
 
 ### 발견한 결함
 
-- 조회(prelude)에서 엔티티 파라미터를 `FOR SHARE`로 읽으면 읽기 전용 트랜잭션에서 실패한다(`AIP.INTERNAL`). 상태 조회는 잠그지 않도록 고쳤다. e2e가 없었다면 운영에서 처음 드러났을 결함이다.
+- 조회(prelude)에서 엔티티 파라미터를 `FOR SHARE`로 읽으면 읽기 전용 트랜잭션에서 실패한다(`POC.INTERNAL`). 상태 조회는 잠그지 않도록 고쳤다. e2e가 없었다면 운영에서 처음 드러났을 결함이다.
 
 ### 이어서 구현: `versioned`, `webhook`, 두 번째 도메인(Shop)
 
 | 형식 | 하강 결과 | 검증 |
 |---|---|---|
-| `versioned` | 파라미터로 받은 행을 **절대값으로** 고치거나(`set x.f = v`) 지우는 명령에 `<param>Version` 입력이 자동으로 붙고, 잠금 뒤 버전을 비교한다. 불일치는 `409 AIP.CONFLICT.STALE_VERSION` | 아리아리 공지(누락 400, 낡은 버전 409, 재조회 후 성공), Shop 상품 가격 |
+| `versioned` | 파라미터로 받은 행을 **절대값으로** 고치거나(`set x.f = v`) 지우는 명령에 `<param>Version` 입력이 자동으로 붙고, 잠금 뒤 버전을 비교한다. 불일치는 `409 POC.CONFLICT.STALE_VERSION` | 아리아리 공지(누락 400, 낡은 버전 409, 재조회 후 성공), Shop 상품 가격 |
 | `webhook` | 검증(HMAC-SHA256 또는 Stripe `t=,v1=` + 5분 창) → `_aip_webhook_seen`으로 중복 제거 → outbox `webhook` 행 → 즉시 2xx. 디스패처가 `_aip_processed`로 한 번만 적용 | 위조·재전송 거부(저장 전), 확인 응답 후 디스패치 전 미적용, 재전달 no-op, 핸들러 없는 이벤트 확인 후 폐기, 이미 결제된 주문에 늦게 온 실패 이벤트는 무변경 |
 
 Stripe 서명 규칙은 공식 문서(docs.stripe.com/webhooks, 2026-10-01 확인)로 검증했다: 헤더 `t=…,v1=…`(v1 여러 개 가능, v0 무시), 서명 대상 `"{t}.{body}"`, HMAC-SHA256, 상수 시간 비교, 기본 허용 오차 5분.
@@ -349,7 +349,7 @@ Stripe 서명 규칙은 공식 문서(docs.stripe.com/webhooks, 2026-10-01 확�
 | 옛 `aip-ir`(SQL 담은 실행 계획) → `aip-plan`으로 개명 | IR이라는 이름이 실행 계획을 가리켜 철학 §4.3의 층 구분을 흐렸다 | 개명 후 29 passed |
 | 새 `aip-ir` = Core Semantic IR v0 → 0.2 | 언어 독립 의미 계약이 코드에 없었다(10 §3.1) | 아래 |
 | `aip-sema/src/to_core.rs`: `.aip` → Core IR 하강 | 첫 프런트엔드 | 두 예제 validate 진단 0, Unknown 타입 0, 미해석 이름 0 |
-| `aip-ir/src/validate.rs`: 프런트엔드 독립 구조 검증 `AIP-I101`~`I119` | 다른 프런트엔드가 만든 IR도 같은 검사를 받는다 | 규칙마다 negative 테스트 |
+| `aip-ir/src/validate.rs`: 프런트엔드 독립 구조 검증 `POC.I101`~`I119` | 다른 프런트엔드가 만든 IR도 같은 검사를 받는다 | 규칙마다 negative 테스트 |
 | `aip core <file> [--digest]` | 기계가 읽는 의미 계약 출력 | ariari `sha256:…`, shop `sha256:…` 출력 |
 
 Core IR 성질 검증(`crates/aip-sema/tests/core_ir.rs`): JSON 왕복 동일, 두 번 하강한 digest 동일, **공백·주석만 다른 소스의 digest 동일**(위치 정보가 IR에 새지 않음), enum 값 하나 추가하면 digest 다름. Shape는 aip-pg의 계약 output과 두 예제 84개 intent에서 구조 일치(일회성 비교, 스크립트 미보존).
@@ -382,8 +382,8 @@ Core IR 성질 검증(`crates/aip-sema/tests/core_ir.rs`): JSON 왕복 동일, �
 - 의도된 골든 변경은 계약 2개와 TS 헤더 주석 2개뿐, 실행 계획 골든 불변.
 
 ### IR 0.4
-- `Type::Json{schema, validated_by}`: `Json<Record>`와 `Json validated by <field>`(동적 스키마)를 구분. 검사 `AIP-I121`.
-- 한 필드에 generator 둘 이상이면 `AIP-E222`(의미 없는 선언). conformance `two_generators`.
+- `Type::Json{schema, validated_by}`: `Json<Record>`와 `Json validated by <field>`(동적 스키마)를 구분. 검사 `POC.I121`.
+- 한 필드에 generator 둘 이상이면 `POC.E222`(의미 없는 선언). conformance `two_generators`.
 
 ### 진단·오류 코드 레지스트리 (철학 §11)
 - `crates/aip-ir/src/codes.rs` 한 표에 79개(E 31, W 6, I 21, 런타임 21): title, explain, fix, example, 런타임은 http_status·retryable. 소스의 코드 리터럴을 상수로 바꿨고 `AipError::status()`가 레지스트리를 읽는다.
@@ -393,8 +393,8 @@ Core IR 성질 검증(`crates/aip-sema/tests/core_ir.rs`): JSON 왕복 동일, �
 - 분리(발생 지점 119곳 전수 분류, 기존 번호는 가장 일반적인 의미에 유지): E107 actor 선언 둘, E108 타입 옵션 오류(Money 통화 누락 등), E208 문맥 밖 사용(`this`, query의 Upload), E210 최소 1개가 필요한 곳의 빈 값(enum, `in` 목록, approval), E211 인자 개수, E212 형식별 구문 오용, E214 webhook 옵션 오류, E302 Snapshot 대상에 동적 스키마 없음, E502. 새 코드마다 conformance 케이스.
 - 회귀 방지: 코드별 사용 지점 수를 `crates/aip-ir/tests/code_sites.snap`에 고정. 지점이 늘면 테스트가 실패해 같은 의미인지 재검토를 강제한다.
 - E212는 여전히 서로 다른 구문 오용(count body, same binder, 이벤트 spread, insert from as, approvers alias)을 묶는다. 수정 방법이 구문마다 달라 다음 분리 후보.
-- `AIP.UNAVAILABLE`: 409 → 503, retryable. 닫힌 포트 풀로 엔진 호출과 실제 HTTP 응답 모두 503 확인(`crates/aip-cli/tests/unavailable.rs`).
-- 관찰만: 멱등 오류 코드가 `AIP.IDEMPOTENCY.*`와 `AIP.INPUT.IDEMPOTENCY_KEY_*` 두 네임스페이스로 나뉘어 있다. 런타임 코드 이름 변경은 클라이언트 호환을 깨므로 보류.
+- `POC.UNAVAILABLE`: 409 → 503, retryable. 닫힌 포트 풀로 엔진 호출과 실제 HTTP 응답 모두 503 확인(`crates/aip-cli/tests/unavailable.rs`).
+- 관찰만: 멱등 오류 코드가 `POC.IDEMPOTENCY.*`와 `POC.INPUT.IDEMPOTENCY_KEY_*` 두 네임스페이스로 나뉘어 있다. 런타임 코드 이름 변경은 클라이언트 호환을 깨므로 보류했었다(2026-10-13에 접두를 `POC.`로 통합하며 공개 wire 변경을 허용하는 결정이 났다, D-A20).
 
 ### S2: 의미 규칙을 Core IR 위로 (언어 독립 검사)
 - `check.rs`/`model.rs` 진단 지점 172곳을 분류: 프런트엔드 고유(F: 이름 해석, 타입 추론, 구문 형태) 127곳, 의미 규칙(S: 해석된 IR만으로 판단 가능) 45곳. S는 `crates/aip-ir/src/analyze.rs`로 옮기고 `check.rs`에서 지웠다(이중 실행 없음). 코드·메시지 불변.
@@ -405,13 +405,13 @@ Core IR 성질 검증(`crates/aip-sema/tests/core_ir.rs`): JSON 왕복 동일, �
 - 남음: lifecycle 검사는 F에 두었다. IR `validate`의 I113과 같은 노드를 검사해 코드 역할 정리가 먼저다(OI-D1).
 
 ### `tenant` 실행 (E602 해제, D-P18)
-- 참조 무결성 트리거(경로 중간 행 이동 시 하위 행까지 검사), intent 단일 테넌트(Load 뒤 검사 Step), 앵커 테넌트 스캔 필터 자동 삽입, 파라미터에서 참조로만 도달한 집합은 필터 생략. 새 코드 E313(경로 불량), E314(앵커 없는 스캔), E315(`internal` 아닌 `cross tenant`), 런타임 `AIP.TENANT.MISMATCH`(404, 가시성 기반 NOT_FOUND 정책과 같은 이유). 문법 `internal cross tenant`. IR `aip-core/0.5`(`cross_tenant`).
+- 참조 무결성 트리거(경로 중간 행 이동 시 하위 행까지 검사), intent 단일 테넌트(Load 뒤 검사 Step), 앵커 테넌트 스캔 필터 자동 삽입, 파라미터에서 참조로만 도달한 집합은 필터 생략. 새 코드 E313(경로 불량), E314(앵커 없는 스캔), E315(`internal` 아닌 `cross tenant`), 런타임 `POC.TENANT.MISMATCH`(404, 가시성 기반 NOT_FOUND 정책과 같은 이유). 문법 `internal cross tenant`. IR `aip-core/0.5`(`cross_tenant`).
 - 부수 수정: `internal` intent를 호출할 경로가 없어 `at … run`이 실패하던 것을 `Engine::call_internal`로 해결.
 - 검증: 새 예제 `examples/saas`(Workspace/Project/Task/Comment) 침투 e2e. 규칙 끔·트리거 끔·둘 다 끔 세 구성에서 각 공격이 실제로 성공함을 상시 테스트로 고정(negative control). 필터를 `true`로 바꾸거나 트리거·검사 Step을 빼면 e2e 실패(변이 확인).
 - 한계: actor는 테넌트에 묶이지 않는다. 남의 테넌트 id 접근의 1차 방어선은 앱의 `allow`/`visible to`이고, 테넌트 규칙은 두 테넌트에 모두 속한 사용자가 둘을 섞는 것을 막는다. webhook/consume/retain은 암묵적 cross tenant, L3 폼은 필터 미적용 → 아래 "트랜잭션 테넌트 고정"으로 보강.
 
 ### 트랜잭션 테넌트 고정 (D-P18 보강)
-- 테넌트 범위 엔티티와 루트 테이블의 INSERT/UPDATE/DELETE 트리거(`<table>__tenant_pin`)가 행의 테넌트를 트랜잭션 로컬 `aip.tenant`에 고정한다. 다른 테넌트의 쓰기는 `AIP.TENANT.MISMATCH`. UPDATE는 떠나는 테넌트도 검사한다. `aip.tenant_cross = on`이면 이 검사만 건너뛰고 참조 무결성 트리거는 그대로다.
+- 테넌트 범위 엔티티와 루트 테이블의 INSERT/UPDATE/DELETE 트리거(`<table>__tenant_pin`)가 행의 테넌트를 트랜잭션 로컬 `aip.tenant`에 고정한다. 다른 테넌트의 쓰기는 `POC.TENANT.MISMATCH`. UPDATE는 떠나는 테넌트도 검사한다. `aip.tenant_cross = on`이면 이 검사만 건너뛰고 참조 무결성 트리거는 그대로다.
 - 플랜이 문맥 시작에 `tenant: pin|reset|cross` Step을 둔다. 앵커 intent와 L3 폼(approval, job, grant link, verification)은 앵커 테넌트로 고정, 항목을 여럿 담는 문맥(이벤트 핸들러, schedule 항목, rule 행, job 항목)은 항목마다 초기화, `cross tenant`는 스위치를 켠다. retain은 한 문장이 여러 테넌트 행을 지우므로 스위치를 켠 채 실행한다.
 - 문법: `cross tenant`를 `on Event`, `schedule`, `rule`, `consume` 앞과 webhook 핸들러 앞에 허용. IR `aip-core/0.6`(`cross_tenant`).
 - 검증: `saas_e2e`에 웹훅(섞인 페이로드 거부, 같은 테넌트 성공, cross 핸들러), 이벤트 핸들러, 스케줄 스윕, job 진행 범위, approval 승인자 범위, rule 정산을 추가. 핀만 끈 구성, 항목별 초기화를 뺀 구성에서 각각 공격과 배치 실패가 실제로 나타나는 것을 상시 테스트로 고정.
@@ -420,7 +420,7 @@ Core IR 성질 검증(`crates/aip-sema/tests/core_ir.rs`): JSON 왕복 동일, �
 ### `publishable`, `consent`, `impersonate` 실행 (E602 해제)
 - 문법은 정본 그대로: `consent X version N required for [..]`, `impersonate E by <cond> audited reason required ttl <dur>`.
 - publishable: 작업본(엔티티 테이블)과 게시본(`<table>_published`). query는 게시본을 읽고 초안은 `drafts query` 수식어로만 본다. 권한 `publishable by <조건>`, 생략 시 superuser만(없으면 E301). 생성 intent `Publish<E>`, `Discard<E>Draft`.
-- consent: `AIP.CONSENT.REQUIRED`(403), 이력 `_aip_consent`, 버전을 올리면 이전 동의 무효. `Give/Withdraw<X>Consent`, `<X>ConsentStatus`.
+- consent: `POC.CONSENT.REQUIRED`(403), 이력 `_aip_consent`, 버전을 올리면 이전 동의 무효. `Give/Withdraw<X>Consent`, `<X>ConsentStatus`.
 - impersonate: 세션 `_aip_impersonation`, 토큰은 세션 id를 서명(`aip1.<b64 target.exp.session>.<sig>`), 매 호출 세션 유효성 확인. 대리 중 command는 감사에 운영자·대상 둘 다. 중첩·자기 자신·권한 있는 대상 거부, superuser 우회 꺼짐, 본인 데이터 export/erase·동의·approval 투표 거부.
 - 검증: 새 예제 `examples/cms`, `crates/aip-cli/tests/cms_e2e.rs`(위조 토큰은 실제 소켓, ttl 만료는 실제 대기). 상시 negative control(`cms_negative_controls`) + 코드 변이 14건 전부 e2e 실패로 잡힘. 기존 실행 계획 골든 불변, IR `aip-core/0.7`.
 - 보강(같은 날): 대리 세션이 시작 시에만 `by`를 검사해 운영자가 권한을 잃어도 ttl까지 유효했다. 이제 매 호출에 세션 확인과 같은 쿼리로 `by`(또는 superuser)를 운영자에 대해 재평가하고, 거짓이면 세션을 끝내고 인증 실패로 응답한다. e2e `impersonation_rechecks_the_operator`(DB로 role을 내린 뒤 대리 호출 거부, `ended_at` 기록, 데이터 불변), 재평가를 무력화하면 실패(negative control).
@@ -433,17 +433,17 @@ Core IR 성질 검증(`crates/aip-sema/tests/core_ir.rs`): JSON 왕복 동일, �
 - 남음: 비활성 엔드포인트 재활성화, 비밀 회전, 전달 행 정리, https 대상 e2e, 다중 프로세스 러너 경합.
 
 ### `subscribe`, `migration` 실행 (E602 해제)
-- subscribe: WebSocket `GET /aip/subscribe`, 첫 메시지 `auth`(브라우저 WebSocket은 헤더를 못 붙이고, URL 토큰은 로그에 남는다). `subscribe` → `snapshot` → 결과가 바뀔 때만 전체 재전송. 변경 감지는 `LISTEN/NOTIFY` 트리거(읽기 집합 테이블), 재조회는 매번 구독자 기준 allow·가시성·필드 가시성·테넌트 재적용, 권한 철회 시 error 후 종료. 상한 코드 `AIP.SUBSCRIPTION.LIMIT`, `AIP.SUBSCRIPTION.TOO_LARGE`. 프로토콜 `aip-protocol/0.1` 유지.
-- migration: `migrate()`에서 스키마 뒤 선언 순서대로 각각 한 트랜잭션, `_aip_migration`에 이름·본문 digest 기록, 적용된 본문이 바뀌면 기동 실패(`AIP.MIGRATION.CHANGED`), 실패는 롤백(`AIP.MIGRATION.FAILED`), advisory lock으로 동시 기동 1회. 테넌트는 cross tenant.
+- subscribe: WebSocket `GET /aip/subscribe`, 첫 메시지 `auth`(브라우저 WebSocket은 헤더를 못 붙이고, URL 토큰은 로그에 남는다). `subscribe` → `snapshot` → 결과가 바뀔 때만 전체 재전송. 변경 감지는 `LISTEN/NOTIFY` 트리거(읽기 집합 테이블), 재조회는 매번 구독자 기준 allow·가시성·필드 가시성·테넌트 재적용, 권한 철회 시 error 후 종료. 상한 코드 `POC.SUBSCRIPTION.LIMIT`, `POC.SUBSCRIPTION.TOO_LARGE`. 프로토콜 `aip-protocol/0.1` 유지.
+- migration: `migrate()`에서 스키마 뒤 선언 순서대로 각각 한 트랜잭션, `_aip_migration`에 이름·본문 digest 기록, 적용된 본문이 바뀌면 기동 실패(`POC.MIGRATION.CHANGED`), 실패는 롤백(`POC.MIGRATION.FAILED`), advisory lock으로 동시 기동 1회. 테넌트는 cross tenant.
 - 검증: `subscribe_e2e` 5개(실서버 WebSocket), `migration_e2e` 4개, 두 Part negative control. 기존 실행 계획 골든 불변, IR `aip-core/0.10`.
 - 남음: FK cascade 삭제의 NOTIFY, 리스너 재연결 후 재조회, 대규모 구독 부하, 클라이언트 자동 재연결. **기존 DB에는 새 트리거가 `--reset` 없이 생기지 않는다** → IR 비교 기반 스키마 진화로 해결 진행 중. 남은 미실행 형식: `consume`, `projection`.
 
 ### IR 비교 기반 스키마 진화, 계약 호환성 비교
 - `--reset` 없이 스키마를 바꾼다. 배포마다 Core IR과 digest를 `_aip_deployment`에 같은 트랜잭션으로 기록하고, 다음 배포는 "이전 IR → 새 IR" 의미 차이(`aip-ir/src/diff.rs`, SQL 모름)를 `aip-pg/src/evolve.rs`가 DDL 단계로 바꾼다. 불변식: 옛 DB + 계획 = 새 프로그램을 빈 DB에 배포한 스키마(e2e가 카탈로그 덤프로 비교).
 - 자동: 엔티티·optional 필드·default 있는 필수 필드·인덱스·enum 값 추가, 길이·범위 완화, 트리거·함수는 항상 현재 텍스트로 교체(기존 DB에 새 알림 트리거가 안 생기던 문제 해결). 데이터 검사 후 허용: unique/check 추가, 길이·범위 축소, 쓰이지 않는 enum 값 삭제. 거부: 선언 없는 삭제·이름 변경, 호환되지 않는 타입 변경, trait 추가·삭제, 필드 종류 변경.
-- 의도 선언 문법(한 표현씩): 이름 변경 `was 옛이름`(필드, `entity New was Old`), 삭제 `removed field x`, `removed entity X`. 모순은 AIP-E111. 선언이 없는 프로그램의 IR·digest는 이전과 같다(IR `aip-core/0.11`).
-- 데이터 변환이 필요한 조임(필수 전환, unique, 옛 필드 삭제)은 `migration` 다음 배포로 나눈다(expand/contract). 거부 코드 `AIP.SCHEMA.*`의 fix가 이 순서를 안내.
-- `aip migrate --plan [--json]`은 읽기 전용, `aip run`은 거부 대상이 있으면 기동 실패. 기록 없는 기존 DB는 스키마가 맞으면 채택, 아니면 `AIP.SCHEMA.UNRECORDED`.
+- 의도 선언 문법(한 표현씩): 이름 변경 `was 옛이름`(필드, `entity New was Old`), 삭제 `removed field x`, `removed entity X`. 모순은 POC.E111. 선언이 없는 프로그램의 IR·digest는 이전과 같다(IR `aip-core/0.11`).
+- 데이터 변환이 필요한 조임(필수 전환, unique, 옛 필드 삭제)은 `migration` 다음 배포로 나눈다(expand/contract). 거부 코드 `POC.SCHEMA.*`의 fix가 이 순서를 안내.
+- `aip migrate --plan [--json]`은 읽기 전용, `aip run`은 거부 대상이 있으면 기동 실패. 기록 없는 기존 DB는 스키마가 맞으면 채택, 아니면 `POC.SCHEMA.UNRECORDED`.
 - `aip diff --against <core-ir.json|deployed> [--json]`(`aip-contract/src/compat.rs`): 03 §10 규칙(intent·입력 삭제, 필수 입력 추가, 출력 삭제·nullable화, 멱등성 강화=깨짐 / 오류 코드·정책 변경=경고 / 그 외 호환). 깨짐이면 종료코드 1.
 - 검증: e2e 14개(실제 PostgreSQL에서 v1→v2→v3, 선언 없는 삭제 거부·무변경, 이름 변경 데이터 이동, unique 위반 개수 보고, `--plan` 무변경), diff 단위 8개, conformance 9개. negative control 6종(선언 없는 삭제를 허용하면 `note` 값이 실제로 사라짐). 기존 실행 계획 골든 불변. 네 예제 TS 클라이언트 tsc 통과(메인에서 실행).
 - 남음: 대형 테이블 잠금 시간 미측정(`CREATE INDEX CONCURRENTLY` 미사용: 한 트랜잭션 보장과 양립 불가), trait 변경·필드 종류 변경 지원.
@@ -455,7 +455,7 @@ Core IR 성질 검증(`crates/aip-sema/tests/core_ir.rs`): JSON 왕복 동일, �
 
 - 새 예제 `examples/cms`(Site 테넌트, Article `publishable by editorOf(actor, site)`, `consent Terms`, `impersonate Member`). ariari, shop, saas의 실행 계획 골든은 바이트 불변이고 계약과 클라이언트 골든은 `core_ir` 버전 문자열(`aip-core/0.7`)만 바뀌었다.
 - 저장 방식: 같은 테이블에 초안 JSON 컬럼을 두는 안과 `<table>_draft` 섀도 테이블 안을 버리고, **엔티티 테이블을 작업본, `<table>_published`를 게시본**으로 두었다. 이유는 모든 command, 제약, 트리거, rule, FK, 테넌트 고정이 지금 그대로 작업본에서 도는 것이다. query만 `Schema::published()`(같은 컬럼, 테이블 이름만 게시본)로 컴파일하므로 읽기 쪽 변경은 한 곳이다. 비용은 게시본 테이블 하나와 게시 때 행 복사다.
-- 새 런타임 코드 `AIP.CONSENT.REQUIRED`(403). 409(PRECONDITION)가 아닌 이유는 호출 상태가 아니라 사용자가 할 일이 남은 거부여서다. `reason`은 동의 이름.
+- 새 런타임 코드 `POC.CONSENT.REQUIRED`(403). 409(PRECONDITION)가 아닌 이유는 호출 상태가 아니라 사용자가 할 일이 남은 거부여서다. `reason`은 동의 이름.
 - 대리 토큰은 같은 형식 `aip1.<b64>.<서명>`에 본문 `<target>.<exp>.<session>`을 싣는다(일반 토큰은 두 부분 그대로). 세션 id가 서명에 들어가므로 세션을 바꾸거나 떼면 서명이 깨진다. 토큰 서명은 HTTP 계층이 하고(엔진은 비밀을 모른다), 세션 유효성(종료, ttl, target 일치)은 엔진이 호출마다 DB에서 확인한다.
 - 검증: `crates/aip-cli/tests/cms_e2e.rs` 7개(게시 가시성과 편집/되돌리기/권한, consent 거부-동의-버전 상승-철회, 대리 거부 규칙 전부와 감사 행, ttl 1초 실제 대기, 실제 소켓의 토큰 위조 5종). 상시 negative control(`cms_negative_controls`)과 구현 변이 14건을 로그에 기록.
 - 남음: 게시본의 `touch` 카운터는 다음 게시 때 반영된다. 게시본의 `version`은 작업본과 다를 수 있다. 세션 중 조회(query)는 감사하지 않는다(command만). 운영자가 `by` 조건을 잃어도 열린 세션은 ttl까지 유효하다.
@@ -463,15 +463,15 @@ Core IR 성질 검증(`crates/aip-sema/tests/core_ir.rs`): JSON 왕복 동일, �
 ### `search`, `outbound webhooks` 실행 (E602 해제, D-P22, D-P23)
 
 - 예제 `examples/saas`에 추가: `Task.notes`, `search TaskSearch`(english, 제목 A와 노트 B), `search ProjectSearch`(korean), `SearchTasks`(keyset), `SearchProjects`(offset), `Endpoint` 엔티티와 `AddEndpoint`, `outbound webhooks for Endpoint`. ariari와 shop의 실행 계획 골든은 바이트 불변이고 그 계약과 클라이언트 골든은 `core_ir`(`aip-core/0.9`) 한 줄만 바뀌었다. IR은 `0.8`(검색)과 `0.9`(`SigningSecret`)로 올렸다.
-- `search`: 인덱스는 생성 tsvector 컬럼 + GIN. 트리거 대신 생성 컬럼을 택한 이유는 행이 바뀌는 모든 경로(raw SQL 포함)에서 색인이 뒤처질 수 없어서다. history 엔티티의 버전 스냅숏과 `versioned` 변경 판정에서는 이 컬럼을 뺀다. 한국어는 PG에 형태소 분석이 없어(OI-08) `simple` 설정과 질의 단어 접두 일치(`'단어':*`)로 근사하고 `pg_trgm`(로컬 사용 가능 확인)은 쓰지 않았다: 확장 의존이 없고 가중치와 일치도 순위가 tsvector에서만 되기 때문이다. 대가로 단어 중간 일치와 합성어는 못 찾으며 AIP-W603과 계약에 적었다. 검증: `search_e2e.rs`(가중치, 다중어/or/구절/제외, 어간, 빈 질의, 숨은 행과 다른 테넌트, keyset 도중 행 추가, 한국어, 계약), 상시 negative control 5건과 구현 변이 6건 모두 실패로 잡힘.
+- `search`: 인덱스는 생성 tsvector 컬럼 + GIN. 트리거 대신 생성 컬럼을 택한 이유는 행이 바뀌는 모든 경로(raw SQL 포함)에서 색인이 뒤처질 수 없어서다. history 엔티티의 버전 스냅숏과 `versioned` 변경 판정에서는 이 컬럼을 뺀다. 한국어는 PG에 형태소 분석이 없어(OI-08) `simple` 설정과 질의 단어 접두 일치(`'단어':*`)로 근사하고 `pg_trgm`(로컬 사용 가능 확인)은 쓰지 않았다: 확장 의존이 없고 가중치와 일치도 순위가 tsvector에서만 되기 때문이다. 대가로 단어 중간 일치와 합성어는 못 찾으며 POC.W603과 계약에 적었다. 검증: `search_e2e.rs`(가중치, 다중어/or/구절/제외, 어간, 빈 질의, 숨은 행과 다른 테넌트, keyset 도중 행 추가, 한국어, 계약), 상시 negative control 5건과 구현 변이 6건 모두 실패로 잡힘.
 - `outbound webhooks`: 전달은 outbox 뒤 러너(`aip-runtime/src/outbound.rs`)가 reqwest(rustls)로 보낸다. 서버는 해석한 주소가 전부 공개일 때만 그 주소로 연결하고 리다이렉트와 프록시를 쓰지 않는다. 검증: `outbound_e2e.rs` 5개(로컬 수신 서버에서 서명 검증과 변조/타 엔드포인트/재전송 거부, 5xx 재시도 스케줄 1s, 3s, 7s 후 성공, 계속 실패 시 비활성, 사설 주소 7종 거부, where와 테넌트, 비밀이 DB 어디에도 없음)와 실서버 스모크(python 수신, 서명을 별도 구현으로 재검증). 구현 변이 10건 모두 e2e 실패.
 - 남음: 비활성 엔드포인트를 다시 켜는 방법(새로 등록만 가능), 전달 행 보관 정리, 비밀 회전, 엔드포인트 URL의 등록 시점 DNS 검사(전달 때 검사), 한국어 형태소 검색(OI-08), 수신자 쪽 상태를 앱이 읽는 방법(비활성 여부 노출).
 
 ### `subscribe`, `migration` 실행 (E602 해제, D-P24, D-P25)
 
-- 예제 `examples/saas`에 추가: `subscribe LiveProjectTasks`(allow가 멤버십), `subscribe LiveWorkspaceTasks`(allow authenticated, 행 가시성에 기댐), `migration backfill_done_notes`. ariari, shop, cms의 실행 계획 골든은 바이트 불변이고 계약과 클라이언트 골든은 `core_ir`(`aip-core/0.10`) 두 줄만 바뀌었다. saas 골든은 구독, 마이그레이션, 알림 트리거 DDL이 더해졌다. 새 conformance `ok_subscribe_migration`, `tenant_subscribe_without_anchor`(AIP-E314).
+- 예제 `examples/saas`에 추가: `subscribe LiveProjectTasks`(allow가 멤버십), `subscribe LiveWorkspaceTasks`(allow authenticated, 행 가시성에 기댐), `migration backfill_done_notes`. ariari, shop, cms의 실행 계획 골든은 바이트 불변이고 계약과 클라이언트 골든은 `core_ir`(`aip-core/0.10`) 두 줄만 바뀌었다. saas 골든은 구독, 마이그레이션, 알림 트리거 DDL이 더해졌다. 새 conformance `ok_subscribe_migration`, `tenant_subscribe_without_anchor`(POC.E314).
 - IR `aip-core/0.10`: `Subscribe.output`(목록 Shape)와 `Subscribe::as_query()`(구독이 뜻하는 list query), `Migration::digest()`. 구독은 pg에서 그 query의 계획을 재사용하고(allow, 가시성, 필드 가시성, 테넌트 필터가 query와 같은 코드), 읽는 테이블은 계획 SQL에서 `"table"`로 나타나는 이름(별칭의 컬럼 `x."table"`은 제외)을 뽑아 정한다. IR에서 따로 도출하지 않은 이유는 관계, 가시성, 테넌트 경로가 닿는 테이블을 SQL이 이미 전부 담고 있어서다. 과대 추정은 불필요한 재조회뿐이고(결과가 같으면 전송 없음) 누락은 없다.
 - e2e `subscribe_e2e.rs` 5개(실서버와 tokio-tungstenite): 스냅숏과 다른 사용자의 변경 뒤 갱신(전체 결과), 구독이 읽지 않는 테이블 변경에는 재조회 없음, 다른 워크스페이스 변경은 재조회하되 메시지 없음, 보이지 않는 행 미포함(allow는 열려 있지만 가시성이 막는 구독, 타 워크스페이스 프로젝트 구독은 NOT_FOUND), 두 워크스페이스 멤버의 구독에 다른 테넌트 행이 섞이지 않음, 멤버십 삭제로 권한이 철회되면 error 후 구독 종료(가시성에 기댄 구독은 빈 목록으로 계속), 인증 없는 연결, 잘못된 토큰 3종, 인증 전 subscribe, 선언되지 않은 이름 3종, 상한(연결, 연결당 구독, 결과 크기), 대리 세션 종료 뒤 갱신에서 IMPERSONATION_ENDED. 같은 파일의 `a_change_wakes_only_the_subscriptions_that_read_it`는 두 구독 중 읽는 쪽만 다시 조회됨을 `Hub::reruns()`로 센다.
-- e2e `migration_e2e.rs` 4개: 스키마만 있던 DB에서 첫 기동 실행과 기록(digest), 재기동 시 미실행, 서식 변경은 digest 불변, 본문 변경 시 `AIP.MIGRATION.CHANGED`(그 기동에서 아무것도 실행되지 않음), 선언 순서 실행, 실패하면 롤백과 미기록과 중단(고친 뒤 이어서 실행), 15만 행에서 동시 기동 2개 중 1회만 실행, saas의 migration이 두 워크스페이스를 한 트랜잭션에서 고침.
+- e2e `migration_e2e.rs` 4개: 스키마만 있던 DB에서 첫 기동 실행과 기록(digest), 재기동 시 미실행, 서식 변경은 digest 불변, 본문 변경 시 `POC.MIGRATION.CHANGED`(그 기동에서 아무것도 실행되지 않음), 선언 순서 실행, 실패하면 롤백과 미기록과 중단(고친 뒤 이어서 실행), 15만 행에서 동시 기동 2개 중 1회만 실행, saas의 migration이 두 워크스페이스를 한 트랜잭션에서 고침.
 - negative control: 구독은 wake가 reads를 무시, 동일 결과 dedupe 제거, 재조회 오류에도 구독 유지, 대리 세션 재확인 제거, 인증 게이트 제거, NOTIFY 트리거 제거. 마이그레이션은 advisory lock 제거, digest 비교 제거, cross pin 제거. 모두 해당 e2e가 실패했고 원복했다. 실서버(`aip run --dev-auth`)와 Node의 전역 `WebSocket`으로 스냅숏과 갱신 수신을 확인했다.
-- 남음: 자동 재연결과 백오프(클라이언트), 변경 행으로 거르기와 같은 입력 구독 공유(OI-10), 검색(`from X.match`)을 읽는 구독(AIP-E601), 스키마를 이미 가진 DB에는 알림 트리거가 `--reset` 없이는 생기지 않음, 선언에서 지운 migration의 `_aip_migration` 행 정리, 갱신 사이의 변경 행 diff 프로토콜.
+- 남음: 자동 재연결과 백오프(클라이언트), 변경 행으로 거르기와 같은 입력 구독 공유(OI-10), 검색(`from X.match`)을 읽는 구독(POC.E601), 스키마를 이미 가진 DB에는 알림 트리거가 `--reset` 없이는 생기지 않음, 선언에서 지운 migration의 `_aip_migration` 행 정리, 갱신 사이의 변경 행 diff 프로토콜.

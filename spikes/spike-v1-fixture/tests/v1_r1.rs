@@ -36,23 +36,26 @@ fn r1_extraction_boundaries() {
         }
     };
     // F01 주석·문자열 안 블록은 선언이 아님
-    want("F01 TS 주석 안", rejects(&format!("/*\naip`{A}`\n*/\n"), Form::ETs, "NO_BLOCK"));
-    want("F01 Py 문자열 안", rejects(&format!("TEXT = '''\naip(\"\"\"{A}\"\"\")\n'''\n"), Form::EPy, "NO_BLOCK"));
-    want("F07 H-Py 문자열 안", rejects(&format!("X = '''\n{HPY}\n'''\n"), Form::HPy, "NO_BLOCK"));
+    want("F01 TS 주석 안", rejects(&format!("/*\naip`{A}`\n*/\n"), Form::ETs, "DEF.NO_BLOCK"));
+    want("F01 Py 문자열 안", rejects(&format!("TEXT = '''\naip(\"\"\"{A}\"\"\")\n'''\n"), Form::EPy, "DEF.NO_BLOCK"));
+    want("F07 H-Py 문자열 안", rejects(&format!("X = '''\n{HPY}\n'''\n"), Form::HPy, "DEF.NO_BLOCK"));
     // F02 공식 import·선언 위치·두 번째 블록
-    want("F02 TS 다른 패키지", rejects(&sub(ETS, "@aip/define", "evil-package"), Form::ETs, "WRONG_BINDING"));
-    want("F02 Py 다른 바인딩", rejects(&sub(EPY, "from aip.define import aip", "from evil_package import other as aip"), Form::EPy, "WRONG_BINDING"));
-    want("F02 TS 숨은 두 번째", rejects(&format!("{ETS}\nimport \"x\"; const second = aip`enum E {{ A }}`\n"), Form::ETs, "NON_LITERAL"));
-    want("F02 TS export 두 번째", rejects(&format!("{ETS}\nexport const second = aip`enum E {{ A }}`\n"), Form::ETs, "MULTIPLE_BLOCKS"));
-    want("F02 TS 별칭 import", rejects(&sub(ETS, "import { aip } from", "import { aip as a } from"), Form::ETs, "WRONG_BINDING"));
-    want("F02 H 다른 패키지", rejects(&sub(HTS, "@aip/define", "evil-package"), Form::HTs, "WRONG_BINDING"));
+    want("F02 TS 다른 패키지", rejects(&sub(ETS, "@aip/define", "evil-package"), Form::ETs, "DEF.WRONG_BINDING"));
+    want(
+        "F02 Py 다른 바인딩",
+        rejects(&sub(EPY, "from aip.define import aip", "from evil_package import other as aip"), Form::EPy, "DEF.WRONG_BINDING"),
+    );
+    want("F02 TS 숨은 두 번째", rejects(&format!("{ETS}\nimport \"x\"; const second = aip`enum E {{ A }}`\n"), Form::ETs, "DEF.NON_LITERAL"));
+    want("F02 TS export 두 번째", rejects(&format!("{ETS}\nexport const second = aip`enum E {{ A }}`\n"), Form::ETs, "DEF.MULTIPLE_BLOCKS"));
+    want("F02 TS 별칭 import", rejects(&sub(ETS, "import { aip } from", "import { aip as a } from"), Form::ETs, "DEF.WRONG_BINDING"));
+    want("F02 H 다른 패키지", rejects(&sub(HTS, "@aip/define", "evil-package"), Form::HTs, "DEF.WRONG_BINDING"));
     // F03·F07 다음 줄 가공
     let close = "expose aggregate approvedCount\n  }\n`";
-    want("F03 TS 다음 줄 + 결합", rejects(&sub(ETS, close, &format!("{close}\n+ extra")), Form::ETs, "NON_LITERAL"));
-    want("F03 TS 다음 줄 멤버", rejects(&sub(ETS, close, &format!("{close}\n.trim()")), Form::ETs, "NON_LITERAL"));
-    want("F03 Py 줄 연결", rejects(&sub(EPY, "\n\"\"\")", "\n\"\"\") \\\n.strip()"), Form::EPy, "NON_LITERAL"));
-    want("F07 H 호출 뒤 호출", rejects(&sub(HTS, "  },\n})", "  },\n})(execute())"), Form::HTs, "NON_LITERAL"));
-    want("F07 H 다음 줄 호출", rejects(&sub(HTS, "  },\n})", "  },\n})\n(execute())"), Form::HTs, "NON_LITERAL"));
+    want("F03 TS 다음 줄 + 결합", rejects(&sub(ETS, close, &format!("{close}\n+ extra")), Form::ETs, "DEF.NON_LITERAL"));
+    want("F03 TS 다음 줄 멤버", rejects(&sub(ETS, close, &format!("{close}\n.trim()")), Form::ETs, "DEF.NON_LITERAL"));
+    want("F03 Py 줄 연결", rejects(&sub(EPY, "\n\"\"\")", "\n\"\"\") \\\n.strip()"), Form::EPy, "DEF.NON_LITERAL"));
+    want("F07 H 호출 뒤 호출", rejects(&sub(HTS, "  },\n})", "  },\n})(execute())"), Form::HTs, "DEF.NON_LITERAL"));
+    want("F07 H 다음 줄 호출", rejects(&sub(HTS, "  },\n})", "  },\n})\n(execute())"), Form::HTs, "DEF.NON_LITERAL"));
     // 양성 대조: 정상 호스트 코드의 문자열·주석·멤버 이름에 같은 단어가 있어도 통과
     let ok_ts = sub(
         ETS,
@@ -90,7 +93,7 @@ fn r1_contract_loss_and_validation() {
             "F06",
             "fixedTotalOfVisibleRecruitment: { totalOfVisible: \"Recruitment\" }",
             "fixedTotalOfVisibleRecruitment: { totalOfVisible: \"Recruitment\", params: 123 }",
-            "H_SHAPE",
+            "DEF.H_SHAPE",
         ),
     ];
     for (n, old, new, code) in cases {
@@ -100,20 +103,20 @@ fn r1_contract_loss_and_validation() {
     }
     let a_cases: &[(&str, &str, &str, &str)] = &[
         // F09 중복은 덮어쓰지 않고 거부
-        ("F09 필드 정책", "  field internalNote read when", "  field internalNote read when views = 0\n  field internalNote read when", "DUPLICATE"),
-        ("F09 from", "from status = PUBLISHED", "from status = CLOSED\n    from status = PUBLISHED", "DUPLICATE"),
-        ("F09 budget", "budget { rows 50;", "budget { rows 1; rows 50;", "DUPLICATE"),
-        ("F09 aggregate 키", "    groupKey recruitment\n", "    groupKey recruitment\n    groupKey recruitment\n", "DUPLICATE"),
-        ("F09 transition 이름", "  invariant atMostOnePublished per club", "  transition close { from status = DRAFT; to status = PUBLISHED; allow managerOf(actor, club) }\n  invariant atMostOnePublished per club", "DUPLICATE"),
-        ("F09 집계/필드 이름 충돌", "aggregate bookmarkCount: Int {", "aggregate views: Int { source RecruitmentBookmark; sourceAccess fixedTotalOfVisibleRecruitment; groupKey recruitment; callerFilter none; rowOutput none; release count }\n  aggregate bookmarkCount: Int {", "DUPLICATE"),
-        ("F09 select 중복", "select id, title,", "select id, id, title,", "DUPLICATE"),
-        ("F09 docs 키", "docs { summary \"모집 정보\";", "docs { summary \"a\"; summary \"모집 정보\";", "DUPLICATE"),
+        ("F09 필드 정책", "  field internalNote read when", "  field internalNote read when views = 0\n  field internalNote read when", "DEF.DUPLICATE"),
+        ("F09 from", "from status = PUBLISHED", "from status = CLOSED\n    from status = PUBLISHED", "DEF.DUPLICATE"),
+        ("F09 budget", "budget { rows 50;", "budget { rows 1; rows 50;", "DEF.DUPLICATE"),
+        ("F09 aggregate 키", "    groupKey recruitment\n", "    groupKey recruitment\n    groupKey recruitment\n", "DEF.DUPLICATE"),
+        ("F09 transition 이름", "  invariant atMostOnePublished per club", "  transition close { from status = DRAFT; to status = PUBLISHED; allow managerOf(actor, club) }\n  invariant atMostOnePublished per club", "DEF.DUPLICATE"),
+        ("F09 집계/필드 이름 충돌", "aggregate bookmarkCount: Int {", "aggregate views: Int { source RecruitmentBookmark; sourceAccess fixedTotalOfVisibleRecruitment; groupKey recruitment; callerFilter none; rowOutput none; release count }\n  aggregate bookmarkCount: Int {", "DEF.DUPLICATE"),
+        ("F09 select 중복", "select id, title,", "select id, id, title,", "DEF.DUPLICATE"),
+        ("F09 docs 키", "docs { summary \"모집 정보\";", "docs { summary \"a\"; summary \"모집 정보\";", "DEF.DUPLICATE"),
         // F10 타입·범위·budget
-        ("F10 nullable 대입", "to status = CLOSED", "to title = internalNote", "TYPE_MISMATCH"),
-        ("F10 역전 범위", "Text(1..100)", "Text(100..1)", "BAD_RANGE"),
-        ("F10 budget 0", "rows 50;", "rows 0;", "BAD_BUDGET"),
+        ("F10 nullable 대입", "to status = CLOSED", "to title = internalNote", "DEF.TYPE_MISMATCH"),
+        ("F10 역전 범위", "Text(1..100)", "Text(100..1)", "DEF.BAD_RANGE"),
+        ("F10 budget 0", "rows 50;", "rows 0;", "DEF.BAD_BUDGET"),
         // F11 정책 순환
-        ("F11 자기 재귀", "predicate active(r: Recruitment) = r.status = PUBLISHED and r.periodEnd >= now", "predicate active(r: Recruitment) = active(r)", "POLICY_CYCLE"),
+        ("F11 자기 재귀", "predicate active(r: Recruitment) = r.status = PUBLISHED and r.periodEnd >= now", "predicate active(r: Recruitment) = active(r)", "DEF.POLICY_CYCLE"),
     ];
     for (n, old, new, code) in a_cases {
         if let Some(e) = rejects(&sub(A, old, new), Form::A, code) {
@@ -124,7 +127,7 @@ fn r1_contract_loss_and_validation() {
     if let Some(e) = rejects(
         &sub(A, "atMost 1 where status = PUBLISHED", "atMost 1 where status = PUBLISHED and periodEnd >= now"),
         Form::A,
-        "UNSUPPORTED_INVARIANT",
+        "DEF.UNSUPPORTED_INVARIANT",
     ) {
         fails.push(format!("F12 now 조건 불변식: {e}"));
     }

@@ -74,11 +74,11 @@ async fn write_wire_preserves_ctx_ids_and_rejects_outputs_before_commit() {
             for wire in [IdWire::SafeNumber,IdWire::DecimalString] {
                 let value=emit_id(11,wire).unwrap();let tx=db.transaction().await?;
                 let result=prepare_write_in_with_wire(&tx,&mut worker,&unsafe_facts,"Event.run",&json!({"id":value}),&caller,wire).await;
-                if !result.is_err_and(|error|error.code=="OUTPUT_INVALID") { failures.push(format!("{lang:?} {wire:?} unsafe Int output accepted")); }
+                if !result.is_err_and(|error|error.code=="WIRE.OUTPUT_INVALID") { failures.push(format!("{lang:?} {wire:?} unsafe Int output accepted")); }
                 tx.rollback().await?;
                 let wrong=if wire==IdWire::SafeNumber{json!("11")}else{json!(11)};let tx=db.transaction().await?;
                 let result=prepare_write_in_with_wire(&tx,&mut worker,&facts,"Event.run",&json!({"id":wrong}),&caller,wire).await;
-                if !result.is_err_and(|error|error.code=="BAD_VALUE") { failures.push(format!("{lang:?} {wire:?} wrong input wire accepted")); }
+                if !result.is_err_and(|error|error.code=="WIRE.BAD_VALUE") { failures.push(format!("{lang:?} {wire:?} wrong input wire accepted")); }
                 tx.rollback().await?;
             }
             worker.stop().await;

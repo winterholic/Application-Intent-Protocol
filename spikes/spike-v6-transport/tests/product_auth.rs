@@ -47,11 +47,11 @@ async fn product_uses_only_the_injected_identity_provider() {
     let dev_token = server.keys.issue(42, 60);
     assert_eq!(
         session(server.address, &dev_token).await["code"],
-        "UNAUTHENTICATED",
+        "WIRE.UNAUTHENTICATED",
         "product must not accept its otherwise valid development keyring"
     );
     assert_eq!(session(server.address, "api-access-token").await["principal"]["actorId"], "42");
-    assert_eq!(session(server.address, "offline").await["code"], "DB_UNAVAILABLE");
+    assert_eq!(session(server.address, "offline").await["code"], "WIRE.DB_UNAVAILABLE");
     server.shutdown().await.unwrap();
 }
 

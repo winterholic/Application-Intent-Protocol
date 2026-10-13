@@ -88,13 +88,13 @@ async fn r2b_write_regressions() {
     locker.batch_execute(&format!("BEGIN; SELECT id FROM {s}.recruitment WHERE id = 101 FOR UPDATE")).await.unwrap();
     let st = Instant::now();
     let r = short(apply(&mut db, &f, &req("Recruitment.close", &[101]), &who(1), &k).await);
-    check("잠긴 숨은 행", format!("{r} wait<500ms={}", st.elapsed().as_millis() < 500), "MISSING_TARGET wait<500ms=true");
+    check("잠긴 숨은 행", format!("{r} wait<500ms={}", st.elapsed().as_millis() < 500), "WIRE.MISSING_TARGET wait<500ms=true");
     locker.batch_execute("ROLLBACK").await.unwrap();
 
     // R2B-07 잠금 대기가 기한을 넘으면 DEADLINE_EXCEEDED
     locker.batch_execute(&format!("BEGIN; SELECT id FROM {s}.member_alarm WHERE id = 2 FOR UPDATE")).await.unwrap();
     let r = short(apply(&mut db, &f, &req("MemberAlarm.read", &[2]), &who(1), &k).await);
-    check("잠금 대기 기한", r, "DEADLINE_EXCEEDED");
+    check("잠금 대기 기한", r, "WIRE.DEADLINE_EXCEEDED");
     locker.batch_execute("ROLLBACK").await.unwrap();
 
     // R2B-06 쓰기 판정이 읽은 권한 행(ClubMember)은 커밋까지 잠긴다. 회수는 진행 중 쓰기 뒤에 반영된다.

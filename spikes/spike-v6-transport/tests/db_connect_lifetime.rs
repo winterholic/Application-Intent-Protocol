@@ -102,12 +102,12 @@ async fn silent_database_handshake_releases_requests_sockets_and_extension_slots
     }
     let body = json!({"key":"overflow","request":{"extension":"Event.run","input":{"id":11}}});
     let overflow = post(server.address, &token, &fp, "/apply", body.clone()).await;
-    if !matches!(&overflow,Ok(value) if value["code"]=="WORKER_BUSY") {
+    if !matches!(&overflow,Ok(value) if value["code"]=="WIRE.WORKER_BUSY") {
         failures.push(format!("overflow: {overflow:?}"));
     }
     for call in calls {
         let result = call.await.unwrap();
-        if !matches!(&result,Ok(value) if value["code"]=="DB_UNAVAILABLE") {
+        if !matches!(&result,Ok(value) if value["code"]=="WIRE.DB_UNAVAILABLE") {
             failures.push(format!("silent handshake: {result:?}"));
         }
     }
@@ -115,7 +115,7 @@ async fn silent_database_handshake_releases_requests_sockets_and_extension_slots
         failures.push("timed-out database handshake sockets did not close".to_string());
     }
     let retry = post(server.address, &token, &fp, "/apply", body).await;
-    if !matches!(&retry,Ok(value) if value["code"]=="DB_UNAVAILABLE") {
+    if !matches!(&retry,Ok(value) if value["code"]=="WIRE.DB_UNAVAILABLE") {
         failures.push(format!("slot was not returned: {retry:?}"));
     }
     if !count_reaches(&closed, 6).await {

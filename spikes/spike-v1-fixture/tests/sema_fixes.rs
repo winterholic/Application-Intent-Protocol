@@ -23,7 +23,7 @@ fn policy_field_cannot_be_filtered_or_sorted() {
         ("sort periodEnd, views, id", "sort periodEnd, internalNote, id"),
     ] {
         let c = codes(&sub(old, new));
-        assert!(c.contains(&"POLICY_FIELD_NOT_FILTERABLE".to_string()), "{new}: {c:?}");
+        assert!(c.contains(&"DEF.POLICY_FIELD_NOT_FILTERABLE".to_string()), "{new}: {c:?}");
     }
     // 양성: 정책 없는 필드 filter/sort는 그대로 통과한다.
     assert_eq!(codes(A), vec!["OK".to_string()]);
@@ -33,7 +33,7 @@ fn policy_field_cannot_be_filtered_or_sorted() {
 fn this_inside_exists_is_rejected() {
     for body in ["exists ClubMember where club = this.club and member = m", "exists ClubMember where club = c and member = this"] {
         let c = codes(&sub("exists ClubMember where club = c and member = m and role in (ADMIN, MANAGER)", body));
-        assert!(c.contains(&"THIS_IN_EXISTS".to_string()), "{body}: {c:?}");
+        assert!(c.contains(&"DEF.THIS_IN_EXISTS".to_string()), "{body}: {c:?}");
     }
 }
 
@@ -58,7 +58,7 @@ fn count_invariants_use_locked_checks_but_time_dependent_conditions_are_rejected
     );
 
     let c = codes(&sub("atMost 1 where status = PUBLISHED", "atMost 1 where status = PUBLISHED and periodEnd >= now"));
-    assert!(c.contains(&"UNSUPPORTED_INVARIANT".to_string()), "{c:?}");
+    assert!(c.contains(&"DEF.UNSUPPORTED_INVARIANT".to_string()), "{c:?}");
 }
 
 #[test]
@@ -70,6 +70,6 @@ fn bulk_max_rows_has_an_upper_bound() {
     assert_eq!(codes(&with(10_000)), vec!["OK".to_string()]);
     for n in [10_001, i64::MAX] {
         let c = codes(&with(n));
-        assert!(c.contains(&"BAD_BUDGET".to_string()), "{n}: {c:?}");
+        assert!(c.contains(&"DEF.BAD_BUDGET".to_string()), "{n}: {c:?}");
     }
 }

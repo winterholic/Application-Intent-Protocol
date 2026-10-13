@@ -6,31 +6,31 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.IDEMPOTENCY.KEY_REUSED",
+          "code": "POC.IDEMPOTENCY.KEY_REUSED",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "TASK_NOT_FOUND"
         },
         {
-          "code": "AIP.TENANT.MISMATCH",
+          "code": "POC.TENANT.MISMATCH",
           "reason": null
         }
       ],
@@ -91,31 +91,31 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ENDPOINT_EXISTS"
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "PROJECT_NOT_FOUND"
         },
         {
-          "code": "AIP.TENANT.MISMATCH",
+          "code": "POC.TENANT.MISMATCH",
           "reason": null
         }
       ],
@@ -174,31 +174,31 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ALREADY_MEMBER"
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "MEMBER_NOT_FOUND"
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "WORKSPACE_NOT_FOUND"
         }
       ],
@@ -240,35 +240,35 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ALREADY_REVIEWER"
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "MEMBER_NOT_FOUND"
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "PROJECT_NOT_FOUND"
         },
         {
-          "code": "AIP.TENANT.MISMATCH",
+          "code": "POC.TENANT.MISMATCH",
           "reason": null
         }
       ],
@@ -310,35 +310,35 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": "NOT_AN_APPROVER"
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ALREADY_VOTED"
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "TASK_NOT_FOUND"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "APPROVAL_NOT_PENDING"
         },
         {
-          "code": "AIP.TENANT.MISMATCH",
+          "code": "POC.TENANT.MISMATCH",
           "reason": null
         }
       ],
@@ -384,23 +384,23 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "WORKSPACE_NOT_FOUND"
         }
       ],
@@ -442,27 +442,27 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": "ONLY_REQUESTER_CAN_CANCEL"
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "TASK_NOT_FOUND"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "APPROVAL_NOT_PENDING"
         }
       ],
@@ -493,35 +493,35 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.IDEMPOTENCY.KEY_REUSED",
+          "code": "POC.IDEMPOTENCY.KEY_REUSED",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "TASK_NOT_FOUND"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "NO_DEFAULT_PROJECT"
         },
         {
-          "code": "AIP.TENANT.MISMATCH",
+          "code": "POC.TENANT.MISMATCH",
           "reason": null
         }
       ],
@@ -563,27 +563,27 @@
       ],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "TASK_NOT_FOUND"
         },
         {
-          "code": "AIP.TENANT.MISMATCH",
+          "code": "POC.TENANT.MISMATCH",
           "reason": null
         }
       ],
@@ -616,31 +616,31 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.IDEMPOTENCY.KEY_REUSED",
+          "code": "POC.IDEMPOTENCY.KEY_REUSED",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "WORKSPACE_NOT_FOUND"
         },
         {
-          "code": "AIP.TENANT.MISMATCH",
+          "code": "POC.TENANT.MISMATCH",
           "reason": null
         }
       ],
@@ -701,39 +701,39 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.IDEMPOTENCY.KEY_REUSED",
+          "code": "POC.IDEMPOTENCY.KEY_REUSED",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "MEMBER_NOT_FOUND"
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "PROJECT_NOT_FOUND"
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "TASK_NOT_FOUND"
         },
         {
-          "code": "AIP.TENANT.MISMATCH",
+          "code": "POC.TENANT.MISMATCH",
           "reason": null
         }
       ],
@@ -825,27 +825,27 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ALREADY_MEMBER"
         },
         {
-          "code": "AIP.IDEMPOTENCY.KEY_REUSED",
+          "code": "POC.IDEMPOTENCY.KEY_REUSED",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         }
       ],
@@ -898,31 +898,31 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "PROJECT_NOT_FOUND"
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "TASK_NOT_FOUND"
         },
         {
-          "code": "AIP.TENANT.MISMATCH",
+          "code": "POC.TENANT.MISMATCH",
           "reason": null
         }
       ],
@@ -964,31 +964,31 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "TASK_NOT_FOUND"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "NO_DEFAULT_PROJECT"
         },
         {
-          "code": "AIP.TENANT.MISMATCH",
+          "code": "POC.TENANT.MISMATCH",
           "reason": null
         }
       ],
@@ -1021,31 +1021,31 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "TASK_NOT_FOUND"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "NOTHING_PINNED"
         },
         {
-          "code": "AIP.TENANT.MISMATCH",
+          "code": "POC.TENANT.MISMATCH",
           "reason": null
         }
       ],
@@ -1078,35 +1078,35 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": "NOT_AN_APPROVER"
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "ALREADY_VOTED"
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "TASK_NOT_FOUND"
         },
         {
-          "code": "AIP.PRECONDITION.FAILED",
+          "code": "POC.PRECONDITION.FAILED",
           "reason": "APPROVAL_NOT_PENDING"
         },
         {
-          "code": "AIP.TENANT.MISMATCH",
+          "code": "POC.TENANT.MISMATCH",
           "reason": null
         }
       ],
@@ -1152,27 +1152,27 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "PROJECT_NOT_FOUND"
         },
         {
-          "code": "AIP.TENANT.MISMATCH",
+          "code": "POC.TENANT.MISMATCH",
           "reason": null
         }
       ],
@@ -1218,27 +1218,27 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.CONFLICT.UNIQUE",
+          "code": "POC.CONFLICT.UNIQUE",
           "reason": "APPROVAL_ALREADY_PENDING"
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "TASK_NOT_FOUND"
         }
       ],
@@ -1269,19 +1269,19 @@
       "emits": [],
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.CONCURRENCY.CONFLICT",
+          "code": "POC.CONCURRENCY.CONFLICT",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         }
       ],
@@ -1410,11 +1410,11 @@
       "cache_seconds": null,
       "errors": [
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": null
         }
       ],
@@ -1483,15 +1483,15 @@
       "cache_seconds": null,
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "PROJECT_NOT_FOUND"
         }
       ],
@@ -1550,15 +1550,15 @@
       "cache_seconds": null,
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "WORKSPACE_NOT_FOUND"
         }
       ],
@@ -1624,11 +1624,11 @@
       "cache_seconds": null,
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         }
       ],
@@ -1680,15 +1680,15 @@
       "cache_seconds": null,
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "WORKSPACE_NOT_FOUND"
         }
       ],
@@ -1724,15 +1724,15 @@
       "cache_seconds": null,
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "PROJECT_NOT_FOUND"
         }
       ],
@@ -1776,15 +1776,15 @@
       "cache_seconds": null,
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "PROJECT_NOT_FOUND"
         }
       ],
@@ -1837,15 +1837,15 @@
       "cache_seconds": null,
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "WORKSPACE_NOT_FOUND"
         }
       ],
@@ -1919,15 +1919,15 @@
       "cache_seconds": null,
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "WORKSPACE_NOT_FOUND"
         }
       ],
@@ -2005,15 +2005,15 @@
       "cache_seconds": null,
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "TASK_NOT_FOUND"
         }
       ],
@@ -2071,11 +2071,11 @@
       "cache_seconds": null,
       "errors": [
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "TASK_NOT_FOUND"
         }
       ],
@@ -2166,11 +2166,11 @@
       "cache_seconds": null,
       "errors": [
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": null
         }
       ],
@@ -2260,27 +2260,27 @@
     "LiveProjectTasks": {
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "PROJECT_NOT_FOUND"
         },
         {
-          "code": "AIP.SUBSCRIPTION.LIMIT",
+          "code": "POC.SUBSCRIPTION.LIMIT",
           "reason": null
         },
         {
-          "code": "AIP.SUBSCRIPTION.TOO_LARGE",
+          "code": "POC.SUBSCRIPTION.TOO_LARGE",
           "reason": null
         }
       ],
@@ -2328,27 +2328,27 @@
     "LiveWorkspaceTasks": {
       "errors": [
         {
-          "code": "AIP.AUTH.FORBIDDEN",
+          "code": "POC.AUTH.FORBIDDEN",
           "reason": null
         },
         {
-          "code": "AIP.AUTH.UNAUTHENTICATED",
+          "code": "POC.AUTH.UNAUTHENTICATED",
           "reason": null
         },
         {
-          "code": "AIP.INPUT.INVALID",
+          "code": "POC.INPUT.INVALID",
           "reason": null
         },
         {
-          "code": "AIP.NOT_FOUND",
+          "code": "POC.NOT_FOUND",
           "reason": "WORKSPACE_NOT_FOUND"
         },
         {
-          "code": "AIP.SUBSCRIPTION.LIMIT",
+          "code": "POC.SUBSCRIPTION.LIMIT",
           "reason": null
         },
         {
-          "code": "AIP.SUBSCRIPTION.TOO_LARGE",
+          "code": "POC.SUBSCRIPTION.TOO_LARGE",
           "reason": null
         }
       ],

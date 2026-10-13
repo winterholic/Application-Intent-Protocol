@@ -955,7 +955,7 @@ client code generation이 가능해야 한다.
 
 ``` json
 {
-  "code": "AIP.AUTH.FORBIDDEN",
+  "code": "POC.AUTH.FORBIDDEN",
   "operation": "Order.Cancel",
   "reason": "OWNER_REQUIRED",
   "path": "order.owner",

@@ -6,7 +6,7 @@ import type { ContractBinding, ContractShape, Root, SelectItem, CheckSel, Filter
 
 export function connectTypedApply<C extends ContractShape<C>, A extends ApplyContractShape<A>>(base: string, token: string | null, binding: ApplyBinding<C, A>, fetchImpl: typeof fetch = fetch) {
   const idWire = binding?.idWire;
-  if (!isIdWire(idWire)) throw Object.assign(new Error("생성 쓰기 계약의 Id wire 형식 오류"), { code: "PROTOCOL_ERROR" });
+  if (!isIdWire(idWire)) throw Object.assign(new Error("생성 쓰기 계약의 Id wire 형식 오류"), { code: "CLIENT.PROTOCOL_ERROR" });
   const client = typedClient(base, token, binding, fetchImpl, idWire);
   return applyFacade<C, A>(client);
 }
@@ -37,7 +37,7 @@ export function connectTyped<C extends ContractShape<C>>(base: string, token: st
 function typedClient<C extends ContractShape<C>>(base: string, token: string | null, binding: ContractBinding<C>, fetchImpl: typeof fetch, idWire?: IdWireKind, validateWrite?: (request: unknown, response: unknown) => void) {
   const fingerprint = binding?.fingerprint;
   if (typeof fingerprint !== "string" || !/^[a-f0-9]{64}$/.test(fingerprint)) {
-    throw Object.assign(new Error("생성 계약 식별값 형식 오류"), { code: "PROTOCOL_ERROR" });
+    throw Object.assign(new Error("생성 계약 식별값 형식 오류"), { code: "CLIENT.PROTOCOL_ERROR" });
   }
   const descriptors = binding.readDescriptors === undefined ? undefined : structuredClone(binding.readDescriptors);
   const client = connect(base, token, fetchImpl, {
@@ -145,7 +145,7 @@ type ReadDescription = {
 };
 
 function validateReadRows(query: unknown, rows: unknown[], descriptors: Readonly<Record<string, ReadDescription>>, wire: IdWireKind) {
-  function reject(): never { throw Object.assign(new Error("읽기 값이 생성 계약과 다름"), {code: "PROTOCOL_ERROR"}); }
+  function reject(): never { throw Object.assign(new Error("읽기 값이 생성 계약과 다름"), {code: "CLIENT.PROTOCOL_ERROR"}); }
   if (!query || typeof query !== "object" || Array.isArray(query)) reject();
   const request = query as {read: string; select: unknown[]; limit?: number};
   const resource = Object.hasOwn(descriptors, request.read) ? descriptors[request.read] : undefined;
@@ -207,10 +207,10 @@ export function connectTypedExtensions<C extends ContractShape<C>, A extends App
   fetchImpl: typeof fetch = fetch,
 ) {
   if (!binding?.readDescriptors || typeof binding.readDescriptors !== "object" || Array.isArray(binding.readDescriptors)) {
-    throw Object.assign(new Error("생성 읽기 descriptor가 필요함. prototype binding을 다시 생성해야 함"), {code: "PROTOCOL_ERROR"});
+    throw Object.assign(new Error("생성 읽기 descriptor가 필요함. prototype binding을 다시 생성해야 함"), {code: "CLIENT.PROTOCOL_ERROR"});
   }
   const wire = binding.idWire;
-  if (!isIdWire(wire)) throw Object.assign(new Error("생성 계약의 Id wire 형식 오류"), {code:"PROTOCOL_ERROR"});
+  if (!isIdWire(wire)) throw Object.assign(new Error("생성 계약의 Id wire 형식 오류"), {code:"CLIENT.PROTOCOL_ERROR"});
   const fingerprint = binding.fingerprint;
   const descriptors = structuredClone(binding.extensions ?? {}) as ExtensionDescriptors<E>;
   const writes = structuredClone(binding.writeExtensions ?? {}) as WriteExtensionDescriptors<W>;
@@ -222,9 +222,9 @@ export function connectTypedExtensions<C extends ContractShape<C>, A extends App
     const res = response as Record<string, unknown>;
     const name = req.extension;
     if (typeof name !== "string" || !Object.hasOwn(writes, name) || res.contractFingerprint !== fingerprint) {
-      throw Object.assign(new Error("생성 WRITE 응답 계약과 서버 계약이 다름"), {code:"PROTOCOL_ERROR"});
+      throw Object.assign(new Error("생성 WRITE 응답 계약과 서버 계약이 다름"), {code:"CLIENT.PROTOCOL_ERROR"});
     }
-    validateRecord(res.output, writes[name as keyof W].output, wire, "PROTOCOL_ERROR");
+    validateRecord(res.output, writes[name as keyof W].output, wire, "CLIENT.PROTOCOL_ERROR");
   });
   const { callExtension, callOperation, ...client } = applyFacade<C,A>(raw);
   const managed = hasDurableOperations
@@ -239,27 +239,27 @@ export function connectTypedExtensions<C extends ContractShape<C>, A extends App
     rag: createRagClient((route, body) => raw.callManaged(route, body), fingerprint),
     ...(managedApi ?? {}),
     async extension<const K extends keyof E & string>(name: K, input: E[K]["input"]): Promise<DeepReadonly<E[K]["output"]>> {
-      if (!Object.hasOwn(descriptors, name)) throw Object.assign(new Error("생성 계약에 없는 확장"), { code: "NOT_EXPOSED" });
+      if (!Object.hasOwn(descriptors, name)) throw Object.assign(new Error("생성 계약에 없는 확장"), { code: "WIRE.NOT_EXPOSED" });
       const descriptor = descriptors[name];
       const snapshot = structuredClone(input);
-      validateRecord(snapshot, descriptor.input, wire, "BAD_VALUE");
+      validateRecord(snapshot, descriptor.input, wire, "WIRE.BAD_VALUE");
       const output = await callExtension(name, snapshot);
-      validateRecord(output, descriptor.output, wire, "PROTOCOL_ERROR");
+      validateRecord(output, descriptor.output, wire, "CLIENT.PROTOCOL_ERROR");
       return Object.freeze(output) as DeepReadonly<E[K]["output"]>;
     },
     async operation<const K extends keyof O & string>(name: K, input: O[K]["input"]): Promise<DeepReadonly<O[K]["output"]>> {
-      if (!Object.hasOwn(operations, name)) throw Object.assign(new Error("생성 계약에 없는 operation"), {code:"NOT_EXPOSED"});
+      if (!Object.hasOwn(operations, name)) throw Object.assign(new Error("생성 계약에 없는 operation"), {code:"WIRE.NOT_EXPOSED"});
       const descriptor = operations[name];
       const snapshot = structuredClone(input);
-      validateRecord(snapshot, descriptor.input, wire, "BAD_VALUE");
+      validateRecord(snapshot, descriptor.input, wire, "WIRE.BAD_VALUE");
       const output = await callOperation(name, snapshot);
-      validateRecord(output, descriptor.output, wire, "PROTOCOL_ERROR");
+      validateRecord(output, descriptor.output, wire, "CLIENT.PROTOCOL_ERROR");
       return Object.freeze(output) as DeepReadonly<O[K]["output"]>;
     },
     async writeExtension<const K extends keyof W & string>(name: K, input: W[K]["input"], options?: ApplyOptions): Promise<WriteExtensionResult<W[K]["output"]>> {
-      if (!Object.hasOwn(writes, name)) throw Object.assign(new Error("생성 계약에 없는 WRITE 확장"), {code:"NOT_EXPOSED"});
+      if (!Object.hasOwn(writes, name)) throw Object.assign(new Error("생성 계약에 없는 WRITE 확장"), {code:"WIRE.NOT_EXPOSED"});
       const snapshot = structuredClone(input);
-      validateRecord(snapshot, writes[name].input, wire, "BAD_VALUE");
+      validateRecord(snapshot, writes[name].input, wire, "WIRE.BAD_VALUE");
       return raw.apply({extension:name, input:snapshot}, options);
     },
     retryPending(): Promise<readonly ((PendingResult<A> | PendingWriteExtension<W>) & {readonly key:string})[]> { return raw.retryPending(); },

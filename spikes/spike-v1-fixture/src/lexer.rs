@@ -67,8 +67,11 @@ pub fn lex(src: &str, line_base: u32, col_base: u32) -> Result<Vec<Token>, Diag>
             while i < chars.len() && chars[i].is_ascii_digit() {
                 i += 1;
             }
-            let n: i64 =
-                chars[start..i].iter().collect::<String>().parse().map_err(|_| Diag::new("LEX_NUMBER_RANGE", "정수가 지원 범위를 벗어남", span))?;
+            let n: i64 = chars[start..i]
+                .iter()
+                .collect::<String>()
+                .parse()
+                .map_err(|_| Diag::new("DEF.LEX_NUMBER_RANGE", "정수가 지원 범위를 벗어남", span))?;
             if i < chars.len() && chars[i].is_ascii_alphabetic() {
                 let us = i;
                 while i < chars.len() && chars[i].is_ascii_alphabetic() {
@@ -79,10 +82,11 @@ pub fn lex(src: &str, line_base: u32, col_base: u32) -> Result<Vec<Token>, Diag>
                     "ms" => 1,
                     "s" => 1000,
                     "m" => 60_000,
-                    _ => return Err(Diag::new("LEX_BAD_DURATION", format!("알 수 없는 시간 단위 `{unit}`"), span)),
+                    _ => return Err(Diag::new("DEF.LEX_BAD_DURATION", format!("알 수 없는 시간 단위 `{unit}`"), span)),
                 };
-                let ms =
-                    (n as u64).checked_mul(factor).ok_or_else(|| Diag::new("LEX_DURATION_RANGE", "시간이 millisecond 지원 범위를 벗어남", span))?;
+                let ms = (n as u64)
+                    .checked_mul(factor)
+                    .ok_or_else(|| Diag::new("DEF.LEX_DURATION_RANGE", "시간이 millisecond 지원 범위를 벗어남", span))?;
                 col += (i - start) as u32;
                 push(&mut out, Token { tok: Tok::Dur(ms), span })?;
                 continue;
@@ -110,10 +114,10 @@ pub fn lex(src: &str, line_base: u32, col_base: u32) -> Result<Vec<Token>, Diag>
                 i += 1;
             }
             if i >= chars.len() {
-                return Err(Diag::new("LEX_BAD_STRING", "닫히지 않은 문자열", span));
+                return Err(Diag::new("DEF.LEX_BAD_STRING", "닫히지 않은 문자열", span));
             }
             let body: String = chars[start + 1..i].iter().collect();
-            let s = decode_body(&body, Flavor::Aip, false).map_err(|reason| Diag::new("LEX_BAD_STRING", reason, span))?;
+            let s = decode_body(&body, Flavor::Aip, false).map_err(|reason| Diag::new("DEF.LEX_BAD_STRING", reason, span))?;
             i += 1;
             col += (i - start) as u32;
             push(&mut out, Token { tok: Tok::Str(s), span })?;
@@ -126,7 +130,7 @@ pub fn lex(src: &str, line_base: u32, col_base: u32) -> Result<Vec<Token>, Diag>
                 col += s.len() as u32;
                 push(&mut out, Token { tok: Tok::Sym(s), span })?;
             }
-            None => return Err(Diag::new("LEX_UNEXPECTED_CHAR", format!("예상하지 못한 문자 `{c}`"), span)),
+            None => return Err(Diag::new("DEF.LEX_UNEXPECTED_CHAR", format!("예상하지 못한 문자 `{c}`"), span)),
         }
     }
     out.push(Token { tok: Tok::Eof, span: Span { line, col } });

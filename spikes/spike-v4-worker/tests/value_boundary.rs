@@ -35,16 +35,16 @@ fn case(name: &'static str, input_ty: &str, output_ty: &str, implementation: &st
 
 fn cases() -> Vec<Case> {
     let mut cases = vec![
-        case("Text 입력 NUL 거부", "Text", "Text", "values.echo", json!("left\u{0000}right"), Expected::Code("BAD_VALUE")),
-        case("Url 입력 NUL 거부", "Url", "Url", "values.echo", json!("left\u{0000}right"), Expected::Code("BAD_VALUE")),
-        case("Text를 잘못된 Time 출력으로 반환", "Text", "Time", "values.echo", json!("2026-02-29T12:34:56Z"), Expected::Code("OUTPUT_INVALID")),
-        case("Text 출력 NUL 거부", "Text", "Text", "values.nul", json!("ordinary"), Expected::Code("OUTPUT_INVALID")),
-        case("Url 출력 NUL 거부", "Url", "Url", "values.nul", json!("https://example.test/path"), Expected::Code("OUTPUT_INVALID")),
+        case("Text 입력 NUL 거부", "Text", "Text", "values.echo", json!("left\u{0000}right"), Expected::Code("WIRE.BAD_VALUE")),
+        case("Url 입력 NUL 거부", "Url", "Url", "values.echo", json!("left\u{0000}right"), Expected::Code("WIRE.BAD_VALUE")),
+        case("Text를 잘못된 Time 출력으로 반환", "Text", "Time", "values.echo", json!("2026-02-29T12:34:56Z"), Expected::Code("WIRE.OUTPUT_INVALID")),
+        case("Text 출력 NUL 거부", "Text", "Text", "values.nul", json!("ordinary"), Expected::Code("WIRE.OUTPUT_INVALID")),
+        case("Url 출력 NUL 거부", "Url", "Url", "values.nul", json!("https://example.test/path"), Expected::Code("WIRE.OUTPUT_INVALID")),
         case("nullable null 왕복", "Text?", "Text?", "values.echo", Value::Null, Expected::Value(json!({"value": null}))),
     ];
 
     for invalid in ["2026-02-29T12:34:56Z", "2024-02-29T25:00:00Z", "2024-02-29T12:34:56+25:00", "2024-02-29T12:34:56"] {
-        cases.push(case("불가능한 Time 입력 거부", "Time", "Time", "values.echo", json!(invalid), Expected::Code("BAD_VALUE")));
+        cases.push(case("불가능한 Time 입력 거부", "Time", "Time", "values.echo", json!(invalid), Expected::Code("WIRE.BAD_VALUE")));
     }
 
     for valid in ["2024-02-29T12:34:56Z", "2024-02-29t12:34:56.123456+05:30", "2024-02-29T12:34:56z"] {

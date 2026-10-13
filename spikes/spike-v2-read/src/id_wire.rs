@@ -22,7 +22,7 @@ impl IdWire {
 pub const MAX_SAFE_ID: i64 = 9_007_199_254_740_991;
 
 fn bad_id() -> Reject {
-    Reject { code: "BAD_VALUE", msg: "선택한 wire의 Id 형식·범위에 맞지 않음".into() }
+    Reject { code: "WIRE.BAD_VALUE", msg: "선택한 wire의 Id 형식·범위에 맞지 않음".into() }
 }
 
 pub fn parse_id(value: &Value, wire: IdWire) -> Result<i64, Reject> {
@@ -47,14 +47,14 @@ pub fn emit_id(id: i64, wire: IdWire) -> Result<Value, Reject> {
     match wire {
         IdWire::Legacy => Ok(json!(id)),
         _ if id < 0 => Err(bad_id()),
-        IdWire::SafeNumber if id > MAX_SAFE_ID => Err(Reject { code: "ID_OUT_OF_RANGE", msg: "Id가 JS 안전 정수 범위를 넘음".into() }),
+        IdWire::SafeNumber if id > MAX_SAFE_ID => Err(Reject { code: "WIRE.ID_OUT_OF_RANGE", msg: "Id가 JS 안전 정수 범위를 넘음".into() }),
         IdWire::SafeNumber => Ok(json!(id)),
         IdWire::DecimalString => Ok(json!(id.to_string())),
     }
 }
 
 fn malformed_output() -> Reject {
-    Reject { code: "INTERNAL", msg: "실행 결과의 Id 구조가 계획 타입과 다름".into() }
+    Reject { code: "WIRE.INTERNAL", msg: "실행 결과의 Id 구조가 계획 타입과 다름".into() }
 }
 
 fn encode_object(value: &mut Value, fields: &serde_json::Map<String, Value>, wire: IdWire) -> Result<(), Reject> {
@@ -101,7 +101,7 @@ pub fn encode_rows(mut rows: Vec<Value>, output_type: &Value, wire: IdWire) -> R
         }
         bytes = bytes.saturating_add(serde_json::to_vec(row).map_err(|_| malformed_output())?.len());
         if bytes > crate::plan::MAX_OUTPUT_BYTES {
-            return Err(Reject { code: "OUTPUT_TOO_LARGE", msg: "Id 변환 후 응답이 출력 상한을 넘음".into() });
+            return Err(Reject { code: "WIRE.OUTPUT_TOO_LARGE", msg: "Id 변환 후 응답이 출력 상한을 넘음".into() });
         }
     }
     Ok(rows)

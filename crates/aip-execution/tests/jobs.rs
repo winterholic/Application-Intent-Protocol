@@ -144,7 +144,7 @@ async fn an_extension_can_choose_the_wait_before_the_next_attempt() {
     // Without a requested wait the first retry waits the default one second.
     let plain = store.enqueue(&db.client, new_run("plain", json!({"x":1}))).await.unwrap();
     let lease = store.claim(&db.client, "w").await.unwrap().unwrap();
-    assert!(store.retry(&db.client, &lease, "RETRY_LATER").await.unwrap());
+    assert!(store.retry(&db.client, &lease, "WIRE.RETRY_LATER").await.unwrap());
     let (plain_wait, plain_budget, state) = next_attempt(&db, &plain.id).await;
     assert_eq!(state, "QUEUED");
     assert!((0..=1000).contains(&plain_wait), "{plain_wait}");
@@ -152,7 +152,7 @@ async fn an_extension_can_choose_the_wait_before_the_next_attempt() {
     // A requested wait replaces it, and the run budget grows by the extra wait so the retry is not born expired.
     let asked = store.enqueue(&db.client, new_run("asked", json!({"x":2}))).await.unwrap();
     let lease = store.claim(&db.client, "w").await.unwrap().unwrap();
-    assert!(store.retry_after(&db.client, &lease, "RETRY_LATER", Some(20_000)).await.unwrap());
+    assert!(store.retry_after(&db.client, &lease, "WIRE.RETRY_LATER", Some(20_000)).await.unwrap());
     let (wait, budget, state) = next_attempt(&db, &asked.id).await;
     assert_eq!(state, "QUEUED");
     assert!((19_000..=20_000).contains(&wait), "{wait}");
@@ -161,12 +161,12 @@ async fn an_extension_can_choose_the_wait_before_the_next_attempt() {
     // Too short a wait is raised to one second, too long a one is cut to an hour.
     let short = store.enqueue(&db.client, new_run("short", json!({"x":3}))).await.unwrap();
     let lease = store.claim(&db.client, "w").await.unwrap().unwrap();
-    assert!(store.retry_after(&db.client, &lease, "RETRY_LATER", Some(5)).await.unwrap());
+    assert!(store.retry_after(&db.client, &lease, "WIRE.RETRY_LATER", Some(5)).await.unwrap());
     let (wait, _, _) = next_attempt(&db, &short.id).await;
     assert!((0..=1000).contains(&wait) && wait > 0, "{wait}");
     let long = store.enqueue(&db.client, new_run("long", json!({"x":4}))).await.unwrap();
     let lease = store.claim(&db.client, "w").await.unwrap().unwrap();
-    assert!(store.retry_after(&db.client, &lease, "RETRY_LATER", Some(i64::MAX)).await.unwrap());
+    assert!(store.retry_after(&db.client, &lease, "WIRE.RETRY_LATER", Some(i64::MAX)).await.unwrap());
     let (wait, _, _) = next_attempt(&db, &long.id).await;
     assert!((3_599_000..=3_600_000).contains(&wait), "{wait}");
 
@@ -175,7 +175,7 @@ async fn an_extension_can_choose_the_wait_before_the_next_attempt() {
     last.max_attempts = 1;
     let run = store.enqueue(&db.client, last).await.unwrap();
     let lease = store.claim(&db.client, "w").await.unwrap().unwrap();
-    store.retry_after(&db.client, &lease, "RETRY_LATER", Some(20_000)).await.unwrap();
+    store.retry_after(&db.client, &lease, "WIRE.RETRY_LATER", Some(20_000)).await.unwrap();
     assert_eq!(next_attempt(&db, &run.id).await.2, "FAILED");
 }
 
@@ -315,13 +315,13 @@ async fn uncertain_external_cancel_is_terminal_only_for_the_current_lease() {
 
     let mut stale = lease.clone();
     stale.epoch += 1;
-    assert!(!store.reject_cancel(&db.client, &stale, "CANCELLATION_UNCONFIRMED").await.unwrap());
+    assert!(!store.reject_cancel(&db.client, &stale, "WIRE.CANCELLATION_UNCONFIRMED").await.unwrap());
     assert_eq!(store.status(&db.client, &run.id, OWNER).await.unwrap().unwrap().state, "CANCEL_REQUESTED");
 
-    assert!(store.reject_cancel(&db.client, &lease, "CANCELLATION_UNCONFIRMED").await.unwrap());
+    assert!(store.reject_cancel(&db.client, &lease, "WIRE.CANCELLATION_UNCONFIRMED").await.unwrap());
     let status = store.status(&db.client, &run.id, OWNER).await.unwrap().unwrap();
     assert_eq!(status.state, "FAILED");
-    assert_eq!(status.error.as_deref(), Some("CANCELLATION_UNCONFIRMED"));
+    assert_eq!(status.error.as_deref(), Some("WIRE.CANCELLATION_UNCONFIRMED"));
     assert!(!store.check_lease(&db.client, &lease).await.unwrap());
     assert_eq!(store.claim(&db.client, "worker-b").await.unwrap(), None);
 }
@@ -367,7 +367,7 @@ async fn expired_cancel_lease_fails_as_unconfirmed_and_is_never_reclaimed() {
     assert_eq!(store.claim(&db.client, "worker-b").await.unwrap(), None);
     let state = store.status(&db.client, &run.id, OWNER).await.unwrap().unwrap();
     assert_eq!(state.state, "FAILED");
-    assert_eq!(state.error.as_deref(), Some("CANCELLATION_UNCONFIRMED"));
+    assert_eq!(state.error.as_deref(), Some("WIRE.CANCELLATION_UNCONFIRMED"));
     assert!(!store.acknowledge_cancel(&db.client, &lease).await.unwrap());
 }
 
@@ -390,12 +390,12 @@ async fn permanent_failure_is_a_terminal_lease_cas() {
     let run = store.enqueue(&db.client, new_run("permanent", json!({"x":1}))).await.unwrap();
     let lease = store.claim(&db.client, "worker-a").await.unwrap().unwrap();
     assert!(store.check_lease(&db.client, &lease).await.unwrap());
-    assert!(store.fail(&db.client, &lease, "OUTPUT_INVALID").await.unwrap());
+    assert!(store.fail(&db.client, &lease, "WIRE.OUTPUT_INVALID").await.unwrap());
     assert!(!store.check_lease(&db.client, &lease).await.unwrap());
     let status = store.status(&db.client, &run.id, "https://issuer.example|subject-1").await.unwrap().unwrap();
     assert_eq!(status.state, "FAILED");
     assert_eq!(status.operation, "normalize");
-    assert_eq!(status.error.as_deref(), Some("OUTPUT_INVALID"));
+    assert_eq!(status.error.as_deref(), Some("WIRE.OUTPUT_INVALID"));
 }
 
 #[tokio::test]
@@ -432,11 +432,11 @@ async fn operator_lists_without_payloads_and_redrives_a_failed_run_as_the_same_f
     store.enqueue(&db.client, new_run("alive", json!({"x":1}))).await.unwrap();
     let first = store.claim(&db.client, "worker-a").await.unwrap().unwrap();
     assert_eq!(first.run_id.to_string(), run.id);
-    assert!(store.fail(&db.client, &first, "EXTENSION_ERROR").await.unwrap());
+    assert!(store.fail(&db.client, &first, "WIRE.EXTENSION_ERROR").await.unwrap());
 
     let failed = store.list(&db.client, Some("FAILED"), None, 50).await.unwrap();
     assert_eq!(failed.len(), 1);
-    assert_eq!((failed[0].id.as_str(), failed[0].error.as_deref(), failed[0].redrivable), (run.id.as_str(), Some("EXTENSION_ERROR"), true));
+    assert_eq!((failed[0].id.as_str(), failed[0].error.as_deref(), failed[0].redrivable), (run.id.as_str(), Some("WIRE.EXTENSION_ERROR"), true));
     assert!(!serde_json::to_string(&failed).unwrap().contains("payload"), "operator listing must not expose job input");
     assert_eq!(store.list(&db.client, None, Some("normalize"), 50).await.unwrap().len(), 2);
     assert!(store.list(&db.client, Some("DONE"), None, 50).await.is_err());
@@ -470,7 +470,7 @@ async fn operator_lists_without_payloads_and_redrives_a_failed_run_as_the_same_f
     let gone = store.enqueue(&db.client, gone).await.unwrap();
     let lease = store.claim(&db.client, "worker-c").await.unwrap().unwrap();
     assert_eq!(lease.run_id.to_string(), gone.id);
-    assert!(store.fail(&db.client, &lease, "EXTENSION_ERROR").await.unwrap());
+    assert!(store.fail(&db.client, &lease, "WIRE.EXTENSION_ERROR").await.unwrap());
     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     store.expire_payloads(&db.client).await.unwrap();
     assert_eq!(store.redrive(&db.client, &gone.id, "deployment-a").await.unwrap(), Redrive::Expired);

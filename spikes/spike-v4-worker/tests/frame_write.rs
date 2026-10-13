@@ -163,7 +163,7 @@ async fn oversized_write_worker_frame_rolls_back_ctx_changes_and_next_call_commi
                     };
                     let oversized_input = json!({ "value": "x".repeat(1024) });
                     let oversized_result = invoke_write(&mut db, &mut oversized_worker, &facts, "Event.echo", &oversized_input, &caller()).await;
-                    if !oversized_result.as_ref().is_err_and(|error| error.code == "WORKER_FAILED") {
+                    if !oversized_result.as_ref().is_err_and(|error| error.code == "WIRE.WORKER_FAILED") {
                         failures.push(format!("{lang:?} oversized frame: expected WORKER_FAILED, got {oversized_result:?}"));
                     }
                     oversized_worker.stop().await;

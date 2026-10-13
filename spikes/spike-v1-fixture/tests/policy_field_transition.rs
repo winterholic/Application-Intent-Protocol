@@ -1,5 +1,5 @@
 //! Delegated decision CD-4 (2026-10-13, security audit O-02): a transition's `from`, the value side of `to`, and
-//! `repeat unchanged` on a hidden field answer the caller through `INVALID_STATE`, `changed`/`unchanged` or by copying
+//! `repeat unchanged` on a hidden field answer the caller through `WIRE.INVALID_STATE`, `changed`/`unchanged` or by copying
 //! the value into a visible field. A field with `field x read when ...` therefore cannot appear there.
 //! `allow` is the author's explicit authorization rule and a write to a hidden field without `repeat unchanged`
 //! reveals nothing, so both stay legal.
@@ -16,7 +16,7 @@ fn load(resource_body: &str) -> Result<(), Vec<spike_v1_fixture::diag::Diag>> {
 
 fn rejected(body: &str) -> String {
     let errs = load(body).expect_err(body);
-    let d = errs.iter().find(|d| d.code == "POLICY_FIELD_NOT_USABLE_IN_TRANSITION").unwrap_or_else(|| panic!("{body}: {errs:?}"));
+    let d = errs.iter().find(|d| d.code == "DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION").unwrap_or_else(|| panic!("{body}: {errs:?}"));
     d.msg.clone()
 }
 

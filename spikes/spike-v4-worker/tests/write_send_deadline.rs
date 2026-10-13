@@ -75,18 +75,18 @@ async fn blocked_write_input_has_a_deadline_and_discards_partial_protocol() {
             let first =
                 timeout(Duration::from_secs(3), invoke_write(&mut db, &mut worker, &facts, "Event.blocked", &json!({"value":"small"}), &caller))
                     .await;
-            if !matches!(&first, Ok(Err(error)) if error.code == "DEADLINE_EXCEEDED") {
+            if !matches!(&first, Ok(Err(error)) if error.code == "WIRE.DEADLINE_EXCEEDED") {
                 failures.push(format!("{lang:?} initial CPU deadline: {first:?}"));
             }
             let large = json!({"value":"x".repeat(4 * 1024 * 1024)});
             let second = timeout(Duration::from_millis(2500), invoke_write(&mut db, &mut worker, &facts, "Event.blocked", &large, &caller)).await;
-            if !matches!(&second, Ok(Err(error)) if error.code == "DEADLINE_EXCEEDED") {
+            if !matches!(&second, Ok(Err(error)) if error.code == "WIRE.DEADLINE_EXCEEDED") {
                 failures.push(format!("{lang:?} blocked input deadline: {second:?}"));
             }
             let third =
                 timeout(Duration::from_millis(500), invoke_write(&mut db, &mut worker, &facts, "Event.blocked", &json!({"value":"small"}), &caller))
                     .await;
-            if !matches!(&third, Ok(Err(error)) if error.code == "WORKER_FAILED") {
+            if !matches!(&third, Ok(Err(error)) if error.code == "WIRE.WORKER_FAILED") {
                 failures.push(format!("{lang:?} partial protocol reused: {third:?}"));
             }
             worker.stop().await;

@@ -100,7 +100,7 @@ fn invalid_escapes_nul_and_unpaired_surrogates_are_rejected() {
     for bad in [r#"\q"#, r#"\u12"#, r#"\uD800"#, r#"\uDE00"#, r#"\u0000"#] {
         let source = A.replace(r#""plain""#, &format!("\"{bad}\""));
         let errors = load_str(&source, Form::A).err().expect("invalid AIP escape must fail");
-        assert_eq!(errors[0].code, "LEX_BAD_STRING", "{bad}: {errors:?}");
+        assert_eq!(errors[0].code, "DEF.LEX_BAD_STRING", "{bad}: {errors:?}");
     }
     for invalid in [r#"\q"#, r#"\/"#, r#"\uD800"#, r#"\uD83D\uDE00"#, r#"\u0000"#] {
         let dsl = format!("resource Member {{ fields {{ id: Id }} docs {{ summary \"bad{invalid}\" }} }} actor Member");
@@ -109,7 +109,7 @@ fn invalid_escapes_nul_and_unpaired_surrogates_are_rejected() {
             (Form::EPy, format!("from aip.define import aip\nSPEC = aip(\"\"\"{dsl}\"\"\")")),
         ] {
             let errors = load_str(&wrapper, form).err().expect("invalid host escape must fail");
-            assert_eq!(errors[0].code, "ESCAPE_UNSUPPORTED", "{form:?} {invalid}: {errors:?}");
+            assert_eq!(errors[0].code, "DEF.ESCAPE_UNSUPPORTED", "{form:?} {invalid}: {errors:?}");
         }
         for (form, wrapper) in [
             (Form::HTs, format!("import {{ define }} from '@aip/define';\nexport const spec = define({{actor:\"Member\",resources:{{Member:{{fields:{{id:\"Id\"}},docs:{{summary:\"bad{invalid}\"}}}}}}}});")),

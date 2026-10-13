@@ -69,7 +69,7 @@ test("typed read rejects invalid Email and Date scalar output", async () => {
     { email: "person@example.test", date: "2024-02-29\r\n" },
   ]) {
     const client = clientFor(row);
-    await assert.rejects(client.read({ read: "Person", select: ["email", "date"] } as any), (error: any) => error.code === "PROTOCOL_ERROR", JSON.stringify(row));
+    await assert.rejects(client.read({ read: "Person", select: ["email", "date"] } as any), (error: any) => error.code === "CLIENT.PROTOCOL_ERROR", JSON.stringify(row));
   }
 });
 
@@ -79,7 +79,7 @@ test("typed read accepts exact decimal strings and rejects values outside Decima
 
   for (const invalid of ["1000.00", "1.001", "NaN", "Infinity", "1e3", "+1", "01.00", "1.", ".5", "12.30\n", "12.30\r\n", 12.5]) {
     const client = decimalClientFor(invalid);
-    await assert.rejects(client.read({ read: "Invoice", select: ["amount"] } as any), (error: any) => error.code === "PROTOCOL_ERROR");
+    await assert.rejects(client.read({ read: "Invoice", select: ["amount"] } as any), (error: any) => error.code === "CLIENT.PROTOCOL_ERROR");
   }
 });
 
@@ -104,5 +104,5 @@ test("typed extension output uses the same exact Decimal(p,s) decoder as read ro
   });
 
   assert.deepEqual(await (clientForAmount("12.30") as any).extension("Billing.quote", {}), { amount: "12.30" });
-  await assert.rejects((clientForAmount("1.234") as any).extension("Billing.quote", {}), (error: any) => error.code === "PROTOCOL_ERROR");
+  await assert.rejects((clientForAmount("1.234") as any).extension("Billing.quote", {}), (error: any) => error.code === "CLIENT.PROTOCOL_ERROR");
 });

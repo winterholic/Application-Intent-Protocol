@@ -49,13 +49,13 @@ fn contains_requires_declaration() {
     let c = who(Some(1));
     // 선언 없는 정의(기본 fixture)에서는 거부, 선언이 있어도 다른 필드·연산 조합은 거부
     let base = load_str(A, Form::A).unwrap().execution;
-    assert_eq!(code(plan_read(&base, &contains(json!("a")), &c)), "FILTER_NOT_ALLOWED");
+    assert_eq!(code(plan_read(&base, &contains(json!("a")), &c)), "WIRE.FILTER_NOT_ALLOWED");
     let f = open();
     assert_eq!(code(plan_read(&f, &contains(json!("a")), &c)), "OK");
     let other = json!({ "read": "Recruitment", "select": ["id"], "filter": [{ "field": "title", "op": "icontains", "value": "a" }] });
-    assert_eq!(code(plan_read(&f, &other, &c)), "FILTER_NOT_ALLOWED");
+    assert_eq!(code(plan_read(&f, &other, &c)), "WIRE.FILTER_NOT_ALLOWED");
     let prefix = json!({ "read": "Recruitment", "select": ["id"], "filter": [{ "field": "title", "op": "prefix", "value": "a" }] });
-    assert_eq!(code(plan_read(&f, &prefix, &c)), "FILTER_NOT_ALLOWED");
+    assert_eq!(code(plan_read(&f, &prefix, &c)), "WIRE.FILTER_NOT_ALLOWED");
 }
 
 #[test]
@@ -65,14 +65,14 @@ fn contains_value_rules() {
     let c = who(Some(1));
     assert_eq!(MAX_CONTAINS_CHARS, 200);
     // 빈 문자열은 모든 행과 같아 필터가 아니다. 거부한다.
-    assert_eq!(code(plan_read(&f, &contains(json!("")), &c)), "BAD_VALUE");
+    assert_eq!(code(plan_read(&f, &contains(json!("")), &c)), "WIRE.BAD_VALUE");
     for bad in [json!(null), json!(1), json!(true), json!(["a"]), json!({"a":1}), json!("a\u{0}b")] {
-        assert_eq!(code(plan_read(&f, &contains(bad.clone()), &c)), "BAD_VALUE", "{bad}");
+        assert_eq!(code(plan_read(&f, &contains(bad.clone()), &c)), "WIRE.BAD_VALUE", "{bad}");
     }
     // 길이는 문자 수로 센다(바이트 아님).
     assert_eq!(code(plan_read(&f, &contains(json!("가".repeat(200))), &c)), "OK");
-    assert_eq!(code(plan_read(&f, &contains(json!("가".repeat(201))), &c)), "VALUE_TOO_LONG");
-    assert_eq!(code(plan_read(&f, &contains(json!("a".repeat(201))), &c)), "VALUE_TOO_LONG");
+    assert_eq!(code(plan_read(&f, &contains(json!("가".repeat(201))), &c)), "WIRE.VALUE_TOO_LONG");
+    assert_eq!(code(plan_read(&f, &contains(json!("a".repeat(201))), &c)), "WIRE.VALUE_TOO_LONG");
     // 공백만 있는 값은 리터럴이다(trim하지 않는다)
     assert_eq!(code(plan_read(&f, &contains(json!(" ")), &c)), "OK");
 }
@@ -98,7 +98,7 @@ fn contains_on_policy_field_is_rejected_even_if_facts_skip_sema() {
     let mut f = open();
     f["resources"]["Recruitment"]["exposeRead"]["filter"].as_array_mut().unwrap().push(json!("internalNote.contains"));
     let req = json!({ "read": "Recruitment", "select": ["id"], "filter": [{ "field": "internalNote", "op": "contains", "value": "x" }] });
-    assert_eq!(code(plan_read(&f, &req, &who(Some(1)))), "POLICY_FIELD_NOT_FILTERABLE");
+    assert_eq!(code(plan_read(&f, &req, &who(Some(1)))), "WIRE.POLICY_FIELD_NOT_FILTERABLE");
 }
 
 #[test]
@@ -106,7 +106,7 @@ fn offset_rejected_without_budget_opt_in() {
     ensure_test_schema();
     let base = load_str(A, Form::A).unwrap().execution;
     for v in [json!(0), json!(10), json!("a")] {
-        assert_eq!(code(plan_read(&base, &paged(v.clone()), &who(Some(1)))), "UNKNOWN_KEY", "{v}");
+        assert_eq!(code(plan_read(&base, &paged(v.clone()), &who(Some(1)))), "WIRE.UNKNOWN_KEY", "{v}");
     }
 }
 
@@ -119,10 +119,10 @@ fn offset_value_rules_and_binding() {
         assert_eq!(code(plan_read(&f, &paged(ok.clone()), &c)), "OK", "{ok}");
     }
     for bad in [json!(-1), json!(1.5), json!("5"), json!(null), json!(true), json!([1]), json!(1e3)] {
-        assert_eq!(code(plan_read(&f, &paged(bad.clone()), &c)), "BAD_VALUE", "{bad}");
+        assert_eq!(code(plan_read(&f, &paged(bad.clone()), &c)), "WIRE.BAD_VALUE", "{bad}");
     }
     for over in [json!(101), json!(i64::MAX)] {
-        assert_eq!(code(plan_read(&f, &paged(over.clone()), &c)), "OFFSET_EXCEEDED", "{over}");
+        assert_eq!(code(plan_read(&f, &paged(over.clone()), &c)), "WIRE.OFFSET_EXCEEDED", "{over}");
     }
     // 값은 매개변수다. SQL에 숫자가 새지 않는다. offset을 안 보내면 OFFSET 절도 없다.
     let p = plan_read(&f, &paged(json!(77)), &c).unwrap();
@@ -148,8 +148,8 @@ fn offset_order_is_deterministic_and_cost_counts_skipped_rows() {
     // offset 상한이 budget cost보다 크게 선언돼 있으면 깊은 offset은 COST_EXCEEDED로 막힌다.
     let deep = load("filter periodEnd.gte", "budget { rows 50; depth 2; deadline 2s; cost 1000; offset 5000 }");
     assert_eq!(code(plan_read(&deep, &paged(json!(900)), &c)), "OK");
-    assert_eq!(code(plan_read(&deep, &paged(json!(960)), &c)), "COST_EXCEEDED");
-    assert_eq!(code(plan_read(&deep, &paged(json!(5001)), &c)), "OFFSET_EXCEEDED");
+    assert_eq!(code(plan_read(&deep, &paged(json!(960)), &c)), "WIRE.COST_EXCEEDED");
+    assert_eq!(code(plan_read(&deep, &paged(json!(5001)), &c)), "WIRE.OFFSET_EXCEEDED");
 }
 
 const SEED: &str = "

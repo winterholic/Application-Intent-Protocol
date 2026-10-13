@@ -43,7 +43,7 @@ export class Runtime {
     try {
       const query = req.kind === 'query' ? this.a.app.queries.find((x) => x.name === op) : undefined;
       const command = req.kind === 'command' ? this.a.app.commands.find((x) => x.name === op) : undefined;
-      if (!query && !command) throw new AipError('AIP.REQUEST.UNKNOWN_OPERATION', op, `no ${req.kind} named '${op}'`);
+      if (!query && !command) throw new AipError('POC.REQUEST.UNKNOWN_OPERATION', op, `no ${req.kind} named '${op}'`);
       const input = validateInput(this.a.model, op, (query ?? command)!.params, req.input);
 
       // Queries read several statements (one per relation edge) from one snapshot.
@@ -67,10 +67,10 @@ export class Runtime {
   async loadActor(client: pg.PoolClient, op: string, actorId: string | null): Promise<Row | null> {
     if (!actorId) return null;
     const actorEntity = this.a.app.actor?.entity;
-    if (!actorEntity || !isUuid(actorId)) throw new AipError('AIP.AUTH.UNAUTHENTICATED', op, 'invalid actor credentials');
+    if (!actorEntity || !isUuid(actorId)) throw new AipError('POC.AUTH.UNAUTHENTICATED', op, 'invalid actor credentials');
     const m = this.a.model;
     const { rows } = await client.query(`SELECT * FROM ${q(m.table(actorEntity))} WHERE "id" = $1`, [actorId.toLowerCase()]);
-    if (!rows.length) throw new AipError('AIP.AUTH.UNAUTHENTICATED', op, 'invalid actor credentials');
+    if (!rows.length) throw new AipError('POC.AUTH.UNAUTHENTICATED', op, 'invalid actor credentials');
     return fromDb(m, actorEntity, rows[0]);
   }
 
@@ -80,18 +80,18 @@ export class Runtime {
     switch (pgErr.code) {
       case '23514': {
         const inv = pgErr.constraint ? this.invariants.get(pgErr.constraint) : undefined;
-        if (inv) return new AipError('AIP.INVARIANT.VIOLATED', op, `invariant ${inv.entity}.${inv.name} would be violated`, { reason: inv.name, path: inv.entity });
+        if (inv) return new AipError('POC.INVARIANT.VIOLATED', op, `invariant ${inv.entity}.${inv.name} would be violated`, { reason: inv.name, path: inv.entity });
         break;
       }
       case '23503':
-        return new AipError('AIP.INPUT.REFERENCE_NOT_FOUND', op, 'a referenced row does not exist');
+        return new AipError('POC.INPUT.REFERENCE_NOT_FOUND', op, 'a referenced row does not exist');
       case '22003':
-        return new AipError('AIP.INPUT.OUT_OF_RANGE', op, 'a numeric value is out of range');
+        return new AipError('POC.INPUT.OUT_OF_RANGE', op, 'a numeric value is out of range');
       case '40001':
       case '40P01':
-        return new AipError('AIP.CONCURRENCY.CONFLICT', op, 'concurrent update conflict; retry the request', { retryable: true });
+        return new AipError('POC.CONCURRENCY.CONFLICT', op, 'concurrent update conflict; retry the request', { retryable: true });
     }
     console.error(`[aip] internal error in ${op}:`, e);
-    return new AipError('AIP.INTERNAL', op, 'internal error', { retryable: false });
+    return new AipError('POC.INTERNAL', op, 'internal error', { retryable: false });
   }
 }

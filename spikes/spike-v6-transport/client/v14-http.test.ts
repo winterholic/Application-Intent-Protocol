@@ -17,7 +17,7 @@ const aip = connectTypedApply(url, token, binding);
 test("V14: 공개 쓰기 상한만 달라진 이전 binding도 첫 쓰기를 DB 전에 거부", async () => {
   const old = connectTypedApply(url, token, stringWire ? oldDecimal : oldNumeric);
   const rejected = await old.apply({ apply: "WriteOnly.mark", target: { ids: [id(7)] } }, { key: "stale" });
-  assert.equal(rejected.code, "CONTRACT_MISMATCH");
+  assert.equal(rejected.code, "WIRE.CONTRACT_MISMATCH");
   assert.deepEqual(old.pending(), []);
   const marked = await aip.apply({ apply: "WriteOnly.mark", target: { ids: [id(7)] } }, { key: "write-only" });
   assert.deepEqual(marked.changed, [id(7)]);
@@ -45,7 +45,7 @@ test("V14: 허용된 where와 where 전용 action, raw 계약·권한 거부", a
   assert.deepEqual(marked.changed, [id(43)]);
   assert.deepEqual((await aip.apply({ apply: "WhereOnly.mark", target: { where: [{ field: "title", op: "eq", value: "one" }] } })).changed, [id(9)]);
   const forbidden = await aip.post("/apply", { key: "bad-filter", request: { apply: "Inbox.mark", target: { where: [{ field: "count", op: "gte", value: 17 }] } } });
-  assert.equal(forbidden.code, "FILTER_NOT_ALLOWED");
+  assert.equal(forbidden.code, "WIRE.FILTER_NOT_ALLOWED");
   const other = connectTypedApply(url, process.env.AIP_V14_OTHER!, binding);
   assert.equal((await other.apply({ apply: "Inbox.mark", target: { ids: [id(44)] } })).ok, false);
 });
@@ -87,7 +87,7 @@ test("V14: 실제 커밋 응답의 Id를 손상시켜도 pending 보존 후 원�
 
 test("V14: JS binding의 Id mode는 필수이며 연결 뒤 변경해도 검사를 바꾸지 않음", async () => {
   for (const idWire of [undefined, null, "", "nonsense"]) {
-    assert.throws(() => connectTypedApply(url, token, { ...binding, idWire } as any), (e: any) => e.code === "PROTOCOL_ERROR");
+    assert.throws(() => connectTypedApply(url, token, { ...binding, idWire } as any), (e: any) => e.code === "CLIENT.PROTOCOL_ERROR");
   }
   const mutable = { ...binding };
   const client = connectTypedApply(url, token, mutable);

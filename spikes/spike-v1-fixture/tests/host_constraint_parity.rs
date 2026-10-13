@@ -51,11 +51,11 @@ fn unique_checks_and_deferred_invariants_share_the_text_semantics() {
 fn malformed_host_constraints_and_unknown_fields_fail() {
     for form in [Form::HTs, Form::HPy] {
         for (key, value, code) in [
-            ("unique", json!(["member"]), "H_SHAPE"),
-            ("unique", json!([["missing"]]), "UNKNOWN_FIELD"),
-            ("checks", json!({"nonnegative": true}), "H_SHAPE"),
-            ("checks", json!({"nonnegative": "missing >= 0"}), "UNRESOLVED_NAME"),
-            ("invariants", json!(["oneLive per member later"]), "H_SHAPE"),
+            ("unique", json!(["member"]), "DEF.H_SHAPE"),
+            ("unique", json!([["missing"]]), "DEF.UNKNOWN_FIELD"),
+            ("checks", json!({"nonnegative": true}), "DEF.H_SHAPE"),
+            ("checks", json!({"nonnegative": "missing >= 0"}), "DEF.UNRESOLVED_NAME"),
+            ("invariants", json!(["oneLive per member later"]), "DEF.H_SHAPE"),
         ] {
             let mut object = definition();
             object["resources"]["Post"][key] = value;

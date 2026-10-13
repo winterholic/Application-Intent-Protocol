@@ -15,7 +15,7 @@ fn references_require_an_explicit_target_identity_in_every_definition_form() {
         ] {
             let errors = load_str(&wrapped, form).err().expect("Ref cannot point to a resource without id");
             assert!(
-                errors.iter().any(|error| error.code == "TYPE_MISMATCH" && error.msg.contains("Link") && error.msg.contains("id")),
+                errors.iter().any(|error| error.code == "DEF.TYPE_MISMATCH" && error.msg.contains("Link") && error.msg.contains("id")),
                 "{form:?}: {errors:?}"
             );
         }
@@ -31,7 +31,7 @@ fn private_relationships_remain_usable_without_id() {
     // founder decision 2026-10-13: a field never stores an opaque `X.Id`; without an id there is no reference either
     let opaque = source.replace("fields { id: Id } rows read when exists", "fields { id: Id; legacy: Link.Id? } rows read when exists");
     let errors = load_str(&opaque, Form::A).err().expect("X.Id field is rejected");
-    assert!(errors.iter().any(|e| e.code == "ID_FIELD_NEEDS_REFERENCE"), "{errors:?}");
+    assert!(errors.iter().any(|e| e.code == "DEF.ID_FIELD_NEEDS_REFERENCE"), "{errors:?}");
     let referenced = "resource Member { fields { id: Id } } actor Member resource Link { fields { id: Id; member: Member } } resource Item { fields { id: Id; link: Link? } }";
     assert!(load_str(referenced, Form::A).is_ok());
 }

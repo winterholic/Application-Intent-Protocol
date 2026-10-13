@@ -61,15 +61,15 @@ async fn ariari_end_to_end() {
     assert_eq!(again["id"], club["id"], "idempotent replay returns the stored result");
     assert_eq!(sql_one(&e, "SELECT count(*) FROM club").await, json!(1));
     let reused = fails(&e, "CreateClub", Some(&alice), club_input("Other"), Some("k-club")).await;
-    assert_eq!(reused.code, "AIP.IDEMPOTENCY.KEY_REUSED");
+    assert_eq!(reused.code, "POC.IDEMPOTENCY.KEY_REUSED");
     let no_key = fails(&e, "CreateClub", Some(&alice), club_input("X"), None).await;
-    assert_eq!(no_key.code, "AIP.INPUT.IDEMPOTENCY_KEY_REQUIRED");
+    assert_eq!(no_key.code, "POC.INPUT.IDEMPOTENCY_KEY_REQUIRED");
     let anon = fails(&e, "CreateClub", None, club_input("X"), Some("anon")).await;
-    assert_eq!(anon.code, "AIP.AUTH.UNAUTHENTICATED");
+    assert_eq!(anon.code, "POC.AUTH.UNAUTHENTICATED");
     let internal = fails(&e, "CreateClub", Some(&bob), json!({"input": {"name": "Campus", "intro": "", "affiliation": "INTERNAL", "field": "ACADEMIC", "region": "CAPITAL", "target": "UNDERGRADUATE"}, "adminName": "B"}), Some("k2")).await;
     assert_eq!(internal.reason.as_deref(), Some("SCHOOL_AUTH_REQUIRED"));
     let bad = fails(&e, "CreateClub", Some(&alice), json!({"input": {"name": "", "intro": "", "affiliation": "UNION", "field": "ACADEMIC", "region": "CAPITAL", "target": "UNDERGRADUATE"}, "adminName": "A"}), Some("k3")).await;
-    assert_eq!((bad.code.as_str(), bad.path.as_deref()), ("AIP.INPUT.INVALID", Some("input.name")));
+    assert_eq!((bad.code.as_str(), bad.path.as_deref()), ("POC.INPUT.INVALID", Some("input.name")));
 
     // --- public detail with a per-client view counter
     let detail = ok(&e, "ClubDetail", Some(&bob), json!({"club": club_id}), None).await;
@@ -92,14 +92,14 @@ async fn ariari_end_to_end() {
     let r_id = r["id"].as_str().expect("recruitment").to_string();
     assert_eq!(sql_one(&e, &format!("SELECT body FROM recruitment WHERE id = '{r_id}'")).await, json!("<p>join x</p>"), "rich text is sanitised");
     let forbidden = fails(&e, "ApproveRecruitment", Some(&bob), json!({"r": r_id}), None).await;
-    assert_eq!(forbidden.code, "AIP.AUTH.FORBIDDEN");
+    assert_eq!(forbidden.code, "POC.AUTH.FORBIDDEN");
     ok(&e, "ApproveRecruitment", Some(&root), json!({"r": r_id}), None).await;
     assert_eq!(sql_one(&e, "SELECT count(*) FROM _aip_audit WHERE intent = 'ApproveRecruitment'").await, json!(1));
     let overlap = fails(&e, "CreateRecruitment", Some(&alice), json!({"club": club_id, "input": recruitment_input(period(5, 20))}), Some("r2")).await;
     assert_eq!(overlap.reason.as_deref(), Some("RECRUITMENT_PERIOD_OVERLAP"));
     let not_manager =
         fails(&e, "CreateRecruitment", Some(&bob), json!({"club": club_id, "input": recruitment_input(period(30, 40))}), Some("r3")).await;
-    assert_eq!(not_manager.code, "AIP.AUTH.FORBIDDEN");
+    assert_eq!(not_manager.code, "POC.AUTH.FORBIDDEN");
     let lifecycle = fails(&e, "ApproveRecruitment", Some(&root), json!({"r": r_id}), None).await;
     assert_eq!(lifecycle.reason.as_deref(), Some("RECRUITMENT_STATUS_INVALID_TRANSITION"), "only declared transitions");
 
@@ -118,7 +118,7 @@ async fn ariari_end_to_end() {
     let twice = fails(&e, "SubmitApply", Some(&bob), json!({"r": r_id, "answers": answers}), Some("a2")).await;
     assert_eq!(twice.reason.as_deref(), Some("ALREADY_APPLIED"));
     let member_apply = fails(&e, "SubmitApply", Some(&alice), json!({"r": r_id, "answers": answers}), Some("a3")).await;
-    assert_eq!(member_apply.code, "AIP.AUTH.FORBIDDEN");
+    assert_eq!(member_apply.code, "POC.AUTH.FORBIDDEN");
     let mut handles = Vec::new();
     for i in 0..6 {
         let e2 = e.clone();
@@ -140,19 +140,19 @@ async fn ariari_end_to_end() {
     // --- the applicant sees their application; a stranger does not even learn it exists
     ok(&e, "ApplyDetail", Some(&bob), json!({"apply": apply_id}), None).await;
     let hidden = fails(&e, "ApplyDetail", Some(&carol), json!({"apply": apply_id}), None).await;
-    assert_eq!(hidden.code, "AIP.NOT_FOUND");
+    assert_eq!(hidden.code, "POC.NOT_FOUND");
 
     // --- approving several applications at once: same club, lifecycle, membership created
     let mixed = fails(&e, "ApproveApplies", Some(&bob), json!({"applies": [apply_id]}), None).await;
-    assert_eq!(mixed.code, "AIP.AUTH.FORBIDDEN");
+    assert_eq!(mixed.code, "POC.AUTH.FORBIDDEN");
     ok(&e, "ApproveApplies", Some(&alice), json!({"applies": [apply_id, carol_apply]}), None).await;
     assert_eq!(sql_one(&e, &format!("SELECT count(*) FROM club_member WHERE club_id = '{club_id}'")).await, json!(3));
     let refuse = fails(&e, "RefuseApplies", Some(&alice), json!({"applies": [apply_id]}), None).await;
     assert_eq!(refuse.reason.as_deref(), Some("APPLY_STATUS_INVALID_TRANSITION"));
     let empty = fails(&e, "ApproveApplies", Some(&alice), json!({"applies": []}), None).await;
-    assert_eq!(empty.code, "AIP.INPUT.INVALID", "ariari's applies.get(0) crash becomes an input error");
+    assert_eq!(empty.code, "POC.INPUT.INVALID", "ariari's applies.get(0) crash becomes an input error");
     let ghost = fails(&e, "ApproveApplies", Some(&alice), json!({"applies": ["00000000-0000-0000-0000-000000000000"]}), None).await;
-    assert_eq!(ghost.code, "AIP.NOT_FOUND", "unknown ids are not silently dropped");
+    assert_eq!(ghost.code, "POC.NOT_FOUND", "unknown ids are not silently dropped");
 
     // --- roles: exactly one ADMIN, no self entrust, rank-based status changes
     let bob_cm = sql_one(&e, &format!("SELECT id FROM club_member WHERE member_id = '{bob}'")).await.as_str().expect("bob cm").to_string();
@@ -163,7 +163,7 @@ async fn ariari_end_to_end() {
     assert_eq!(own_role.reason.as_deref(), Some("CANNOT_CHANGE_OWN_ROLE"));
     ok(&e, "ChangeMemberRole", Some(&alice), json!({"target": bob_cm, "role": "MANAGER"}), None).await;
     let outranked = fails(&e, "ChangeMemberStatus", Some(&bob), json!({"targets": [alice_cm], "newStatus": "ENDED"}), None).await;
-    assert_eq!(outranked.code, "AIP.AUTH.FORBIDDEN", "a MANAGER cannot deactivate the ADMIN (ariari single-target bug)");
+    assert_eq!(outranked.code, "POC.AUTH.FORBIDDEN", "a MANAGER cannot deactivate the ADMIN (ariari single-target bug)");
     ok(&e, "EntrustAdmin", Some(&alice), json!({"target": bob_cm}), None).await;
     assert_eq!(sql_one(&e, &format!("SELECT count(*) FROM club_member WHERE club_id = '{club_id}' AND role = 'ADMIN'")).await, json!(1));
     let c = e.pool.get().await.expect("conn");
@@ -206,12 +206,12 @@ async fn ariari_end_to_end() {
     let read = ok(&e, "NoticeDetail", Some(&alice), json!({"notice": n0}), None).await;
     let v = read["version"].as_i64().expect("version");
     let missing = fails(&e, "EditNotice", Some(&alice), json!({"notice": n0, "title": "t", "body": "b"}), None).await;
-    assert_eq!((missing.code.as_str(), missing.path.as_deref()), ("AIP.INPUT.INVALID", Some("noticeVersion")));
+    assert_eq!((missing.code.as_str(), missing.path.as_deref()), ("POC.INPUT.INVALID", Some("noticeVersion")));
     ok(&e, "EditNotice", Some(&alice), json!({"notice": n0, "noticeVersion": v, "title": "first", "body": "b"}), None).await;
     let stale = fails(&e, "EditNotice", Some(&alice), json!({"notice": n0, "noticeVersion": v, "title": "second", "body": "b"}), None).await;
     assert_eq!(
         (stale.code.as_str(), stale.reason.as_deref(), stale.status()),
-        ("AIP.CONFLICT.STALE_VERSION", Some("CLUB_NOTICE_VERSION_STALE"), 409)
+        ("POC.CONFLICT.STALE_VERSION", Some("CLUB_NOTICE_VERSION_STALE"), 409)
     );
     let reread = ok(&e, "NoticeDetail", Some(&alice), json!({"notice": n0}), None).await;
     assert_eq!((reread["title"].as_str(), reread["version"].as_i64()), (Some("first"), Some(v + 1)));
@@ -229,7 +229,7 @@ async fn ariari_end_to_end() {
     ok(&e, "PostComment", Some(&carol), json!({"activity": act, "body": "first"}), Some("cm1")).await;
     let comment = sql_one(&e, "SELECT id FROM activity_comment WHERE body = 'first'").await.as_str().expect("comment").to_string();
     let not_author = fails(&e, "EditComment", Some(&alice), json!({"comment": comment, "body": "hacked"}), None).await;
-    assert_eq!(not_author.code, "AIP.AUTH.FORBIDDEN", "ariari let any member edit any comment");
+    assert_eq!(not_author.code, "POC.AUTH.FORBIDDEN", "ariari let any member edit any comment");
     ok(&e, "EditComment", Some(&carol), json!({"comment": comment, "body": "edited"}), None).await;
     let other_act = sql_one(
         &e,
@@ -259,7 +259,7 @@ async fn ariari_end_to_end() {
     for bad in [json!("NaN"), json!("1e400"), json!(1.5), json!("Infinity"), json!(" 7")] {
         let input = json!({"club": club_id, "at": chrono::Utc::now().to_rfc3339(), "amount": bad, "memo": "bad"});
         let err = fails(&e, "AddFinancialRecord", Some(&alice), input, None).await;
-        assert_eq!((err.code.as_str(), err.path.as_deref()), ("AIP.INPUT.INVALID", Some("amount")), "{bad}");
+        assert_eq!((err.code.as_str(), err.path.as_deref()), ("POC.INPUT.INVALID", Some("amount")), "{bad}");
     }
     // 17 integer digits do not fit a double: the amount must survive storage and both read paths unchanged
     let big = "12345678901234567.89";
@@ -273,7 +273,7 @@ async fn ariari_end_to_end() {
     ok(&e, "DeleteFinancialRecord", Some(&alice), json!({"record": big_id}), None).await;
     let outsider = member(&e, "dave", false).await;
     let no_finance = fails(&e, "FinancialLedger", Some(&outsider), json!({"club": club_id}), None).await;
-    assert_eq!(no_finance.code, "AIP.AUTH.FORBIDDEN");
+    assert_eq!(no_finance.code, "POC.AUTH.FORBIDDEN");
 
     // --- keyset pagination over 25 clubs
     for i in 0..24 {
@@ -333,11 +333,11 @@ async fn ariari_forms() {
     let club = ok(&e, "CreateClub", Some(&alice), club_input("Invite Club"), Some("ic")).await;
     let club_id = club["id"].as_str().expect("club").to_string();
     let outsider_issue = fails(&e, "IssueClubInvite", Some(&bob), json!({"club": club_id}), None).await;
-    assert_eq!(outsider_issue.code, "AIP.AUTH.FORBIDDEN");
+    assert_eq!(outsider_issue.code, "POC.AUTH.FORBIDDEN");
     let link = ok(&e, "IssueClubInvite", Some(&alice), json!({"club": club_id}), None).await;
     let token = link["token"].as_str().expect("token").to_string();
     let no_name = fails(&e, "RedeemClubInvite", Some(&bob), json!({"token": token}), None).await;
-    assert_eq!(no_name.code, "AIP.INPUT.INVALID");
+    assert_eq!(no_name.code, "POC.INPUT.INVALID");
     ok(&e, "RedeemClubInvite", Some(&bob), json!({"token": token, "name": "Bobby"}), None).await;
     assert_eq!(sql_one(&e, &format!("SELECT name FROM club_member WHERE member_id = '{bob}'")).await, json!("Bobby"));
     let twice = fails(&e, "RedeemClubInvite", Some(&bob), json!({"token": token, "name": "Bobby"}), None).await;
@@ -354,13 +354,13 @@ async fn ariari_forms() {
     let f1 = ok(&e, "CreateClubFaq", Some(&alice), json!({"club": club_id, "question": "Q1", "answer": "A1"}), Some("f1")).await;
     ok(&e, "CreateClubFaq", Some(&alice), json!({"club": club_id, "question": "Q2", "answer": "A2"}), Some("f2")).await;
     let not_admin = fails(&e, "CreateClubFaq", Some(&bob), json!({"club": club_id, "question": "Q3", "answer": "A3"}), Some("f3")).await;
-    assert_eq!(not_admin.code, "AIP.AUTH.FORBIDDEN");
+    assert_eq!(not_admin.code, "POC.AUTH.FORBIDDEN");
     let list = ok(&e, "ListClubFaq", None, json!({"club": club_id}), None).await;
     let qs: Vec<&str> = list.as_array().expect("faqs").iter().filter_map(|x| x["question"].as_str()).collect();
     assert_eq!(qs, vec!["Q1", "Q2"], "ordered by generated position");
     let f1_id = f1["id"].as_str().expect("faq").to_string();
     let bob_update = fails(&e, "UpdateClubFaq", Some(&bob), json!({"target": f1_id, "question": "x", "answer": "y"}), None).await;
-    assert_eq!(bob_update.code, "AIP.AUTH.FORBIDDEN");
+    assert_eq!(bob_update.code, "POC.AUTH.FORBIDDEN");
     ok(&e, "UpdateClubFaq", Some(&alice), json!({"target": f1_id, "question": "Q1!", "answer": "A1!"}), None).await;
     ok(&e, "DeleteClubFaq", Some(&alice), json!({"target": f1_id}), None).await;
     assert_eq!(ok(&e, "ListClubFaq", None, json!({"club": club_id}), None).await.as_array().expect("faqs").len(), 1);
@@ -373,7 +373,7 @@ async fn ariari_forms() {
     ok(&e, "ApproveRecruitment", Some(&root_id(&e).await), json!({"r": r_id}), None).await;
     let carol = member(&e, "carol", false).await;
     let missing = fails(&e, "SubmitApply", Some(&carol), json!({"r": r_id, "answers": {}}), Some("s1")).await;
-    assert_eq!((missing.code.as_str(), missing.path.as_deref()), ("AIP.INPUT.INVALID", Some("answers.why")));
+    assert_eq!((missing.code.as_str(), missing.path.as_deref()), ("POC.INPUT.INVALID", Some("answers.why")));
     let long = fails(&e, "SubmitApply", Some(&carol), json!({"r": r_id, "answers": {"why": "this is far too long"}}), Some("s2")).await;
     assert_eq!(long.path.as_deref(), Some("answers.why"));
     // the club changes its form; the open recruitment keeps the version it pinned
@@ -393,14 +393,14 @@ async fn ariari_forms() {
     ok(&e, "SubmitApply", Some(&fay), json!({"r": r_id, "answers": {"why": "art"}}), Some("s5")).await;
     let arg = json!({"recruitment": r_id});
     let general = fails(&e, "ExportApplicants", Some(&bob), arg.clone(), None).await;
-    assert_eq!(general.code, "AIP.AUTH.FORBIDDEN");
+    assert_eq!(general.code, "POC.AUTH.FORBIDDEN");
     let started = ok(&e, "ExportApplicants", Some(&alice), arg.clone(), None).await;
     assert_eq!(started["status"], "QUEUED");
     let again = ok(&e, "ExportApplicants", Some(&alice), arg.clone(), None).await;
     assert_eq!(again["job"], started["job"], "an identical running job is reused");
     let job = json!({"job": started["job"]});
     let foreign = fails(&e, "ExportApplicantsStatus", Some(&bob), job.clone(), None).await;
-    assert_eq!(foreign.code, "AIP.NOT_FOUND", "only the requester sees a job");
+    assert_eq!(foreign.code, "POC.NOT_FOUND", "only the requester sees a job");
     assert!(aip_runtime::jobs::tick(&e).await.expect("job tick"));
     let st = ok(&e, "ExportApplicantsStatus", Some(&alice), job.clone(), None).await;
     assert_eq!((st["status"].as_str(), st["total"].as_i64(), st["done"].as_i64()), (Some("DONE"), Some(3), Some(3)), "{st}");
@@ -493,7 +493,7 @@ async fn ariari_uploads() {
         .call(Call { intent: "UpdateClub".into(), input: input.clone(), actor: Some(alice.clone()), uploads: bad, ..Default::default() })
         .await
         .expect_err("exe");
-    assert_eq!((err.code.as_str(), err.path.as_deref()), ("AIP.INPUT.INVALID", Some("profile")));
+    assert_eq!((err.code.as_str(), err.path.as_deref()), ("POC.INPUT.INVALID", Some("profile")));
     assert_eq!(objects_before(e.clone()).await, json!(1));
 
     // a failed transaction leaves no staged object behind
@@ -584,9 +584,9 @@ async fn ariari_approval() {
     let r1 = record("snacks").await;
     let arg = json!({"financialRecord": r1});
     let general = fails(&e, "RequestFinancialSettlement", Some(&dan), arg.clone(), None).await;
-    assert_eq!(general.code, "AIP.AUTH.FORBIDDEN");
+    assert_eq!(general.code, "POC.AUTH.FORBIDDEN");
     let outsider = fails(&e, "RequestFinancialSettlement", Some(&eve), arg.clone(), None).await;
-    assert_eq!(outsider.code, "AIP.NOT_FOUND");
+    assert_eq!(outsider.code, "POC.NOT_FOUND");
     let none = ok(&e, "FinancialSettlementStatus", Some(&bob), arg.clone(), None).await;
     assert_eq!(none["status"], "NONE");
     ok(&e, "RequestFinancialSettlement", Some(&alice), arg.clone(), None).await;

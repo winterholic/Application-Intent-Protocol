@@ -366,7 +366,7 @@ async fn marker(db: &impl GenericClient, schema: &str) -> Result<Marker, Value> 
         .ok_or_else(|| err("SCHEMA_NOT_READY", "migration journal이 비어 있음"))?;
     let journal_digest: String = journal.get(0);
     if journal_digest != m.facts_digest {
-        return Err(err("SCHEMA_MISMATCH", "metadata와 journal의 마지막 정의가 다름"));
+        return Err(err("WIRE.SCHEMA_MISMATCH", "metadata와 journal의 마지막 정의가 다름"));
     }
     Ok(m)
 }
@@ -374,10 +374,10 @@ async fn marker(db: &impl GenericClient, schema: &str) -> Result<Marker, Value> 
 async fn verified_marker(db: &impl GenericClient, schema: &str) -> Result<Marker, Value> {
     let m = marker(db, schema).await?;
     if m.generator_version != VERSION || m.facts_digest != digest(&m.facts) || m.ddl_digest != creation(schema, &m.facts)?.1 {
-        return Err(err("SCHEMA_MISMATCH", "metadata의 facts 또는 생성기 버전 불일치"));
+        return Err(err("WIRE.SCHEMA_MISMATCH", "metadata의 facts 또는 생성기 버전 불일치"));
     }
     if m.structure_digest != structure(db, schema).await? {
-        return Err(err("SCHEMA_MISMATCH", "실제 DB 구조가 journal 구조와 다름"));
+        return Err(err("WIRE.SCHEMA_MISMATCH", "실제 DB 구조가 journal 구조와 다름"));
     }
     Ok(m)
 }
@@ -398,7 +398,7 @@ async fn preflight_inner(db_url: &str, schema: &str, facts: &Value) -> Result<Va
     let m = verified_marker(&tx, schema).await?;
     let (_, ddl_digest) = creation(schema, facts)?;
     if m.facts_digest != digest(facts) || m.ddl_digest != ddl_digest {
-        return Err(err("SCHEMA_MISMATCH", "정의와 배포된 facts/DDL이 다름"));
+        return Err(err("WIRE.SCHEMA_MISMATCH", "정의와 배포된 facts/DDL이 다름"));
     }
     tx.commit().await.map_err(|_| err("DB_PREFLIGHT", "snapshot 종료 실패"))?;
     Ok(json!({"ok":true,"schema":schema,"factsDigest":m.facts_digest,"structureDigest":m.structure_digest}))

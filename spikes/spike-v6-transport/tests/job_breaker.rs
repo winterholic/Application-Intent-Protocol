@@ -167,7 +167,7 @@ async fn an_open_circuit_rejects_without_sending_and_leaves_no_unknown_effect() 
         let status = settle(addr, &fp, &id).await;
         assert_eq!(status["run"]["state"], "SUCCEEDED", "{lang:?}: {status}");
         let result = post(addr, "/jobs/result", &fp, json!({"id":id})).await;
-        assert_eq!(result["output"], json!({"first":503,"second":"CIRCUIT_OPEN","replayed":503}), "{lang:?}: {result}");
+        assert_eq!(result["output"], json!({"first":503,"second":"WIRE.CIRCUIT_OPEN","replayed":503}), "{lang:?}: {result}");
         assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst) - before, 1, "{lang:?}: the open circuit must not reach the provider");
         let effects: Vec<(String, String)> = db
             .query(&format!("SELECT effect_key,state FROM {schema}.aip_effects WHERE run_id=$1::text::uuid"), &[&id])

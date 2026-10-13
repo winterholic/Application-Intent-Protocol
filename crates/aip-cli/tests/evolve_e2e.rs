@@ -153,7 +153,7 @@ async fn removing_a_field_needs_a_declaration_and_a_refused_change_changes_nothi
 
     let v3 = build(&V1.replace("  note: Text?\n", ""));
     let err = deploy(&pool, &v3, false).await.err().expect("a field disappeared without a word").to_string();
-    assert!(err.contains("AIP.SCHEMA.UNDECLARED") && err.contains("Task.note"), "{err}");
+    assert!(err.contains("POC.SCHEMA.UNDECLARED") && err.contains("Task.note"), "{err}");
     assert!(err.contains("removed field note") && err.contains("was note"), "the fix names both ways to say it: {err}");
     assert_eq!(dump(&pool).await, before, "refused: the schema is untouched");
     assert_eq!(text(&pool, "SELECT note FROM task").await, "keep me", "refused: the data is untouched");
@@ -179,7 +179,7 @@ async fn a_rename_declared_with_was_moves_the_values() {
     // without `was` a rename is a removal plus an addition, which is refused
     let renamed = V1.replace("note: Text?", "remark: Text?");
     let err = deploy(&pool, &build(&renamed), false).await.err().expect("undeclared").to_string();
-    assert!(err.contains("AIP.SCHEMA.UNDECLARED") && err.contains("new in Task: remark"), "{err}");
+    assert!(err.contains("POC.SCHEMA.UNDECLARED") && err.contains("new in Task: remark"), "{err}");
 
     deploy(&pool, &build(&V1.replace("note: Text?", "remark: Text? was note")), false).await.expect("declared rename");
     assert_eq!(text(&pool, "SELECT remark FROM task").await, "moved", "the value is under the new name");
@@ -204,7 +204,7 @@ async fn a_unique_rule_over_duplicate_rows_is_refused_with_the_count() {
 
     let v2 = build(&V1.replace("  note: Text?\n", "  note: Text?\n  unique (title) else TITLE_TAKEN\n"));
     let err = deploy(&pool, &v2, false).await.err().expect("duplicates").to_string();
-    assert!(err.contains("AIP.SCHEMA.DATA_CONFLICT") && err.contains("3 row(s)"), "{err}");
+    assert!(err.contains("POC.SCHEMA.DATA_CONFLICT") && err.contains("3 row(s)"), "{err}");
     assert_eq!(dump(&pool).await, before);
 
     let report = plan_of(&pool, &v2).await;
@@ -225,20 +225,20 @@ async fn rules_the_rows_already_break_are_refused() {
 
     // optional -> required while a row is empty
     let err = deploy(&pool, &build(&V1.replace("note: Text?", "note: Text")), false).await.err().expect("nulls").to_string();
-    assert!(err.contains("AIP.SCHEMA.DATA_CONFLICT") && err.contains("1 row(s)"), "{err}");
+    assert!(err.contains("POC.SCHEMA.DATA_CONFLICT") && err.contains("1 row(s)"), "{err}");
     // narrower limit than a stored value
     let err = deploy(&pool, &build(&V1.replace("Text(1..30)", "Text(1..5)")), false).await.err().expect("too long").to_string();
-    assert!(err.contains("AIP.SCHEMA.DATA_CONFLICT"), "{err}");
+    assert!(err.contains("POC.SCHEMA.DATA_CONFLICT"), "{err}");
     // an enum value taken away while a row has it
     sql(&pool, "UPDATE task SET status = 'DONE'").await;
     let err = deploy(&pool, &build(&V1.replace("OPEN DONE", "OPEN")), false).await.err().expect("value in use").to_string();
-    assert!(err.contains("AIP.SCHEMA.DATA_CONFLICT"), "{err}");
+    assert!(err.contains("POC.SCHEMA.DATA_CONFLICT"), "{err}");
     // a new required field without a default cannot fill existing rows
     let err = deploy(&pool, &build(&V1.replace("note: Text?", "note: Text?\n  code: Text")), false).await.err().expect("no default").to_string();
-    assert!(err.contains("AIP.SCHEMA.DATA_CONFLICT") && err.contains("no default"), "{err}");
+    assert!(err.contains("POC.SCHEMA.DATA_CONFLICT") && err.contains("no default"), "{err}");
     // another base type
     let err = deploy(&pool, &build(&V1.replace("title: Text(1..30)", "title: Int")), false).await.err().expect("type").to_string();
-    assert!(err.contains("AIP.SCHEMA.TYPE_CHANGE"), "{err}");
+    assert!(err.contains("POC.SCHEMA.TYPE_CHANGE"), "{err}");
     assert_eq!(num(&pool, "SELECT count(*) FROM _aip_deployment").await, 1, "none of them was recorded");
 
     // widening is applied by itself
@@ -289,7 +289,7 @@ async fn plan_prints_the_steps_and_changes_nothing() {
     assert!(!report.blocked());
     assert!(report.plan.steps.iter().any(|s| s.sql.contains("ADD COLUMN \"priority\"")), "the plan lists the column it would add");
     let removed = plan_of(&pool, &build(&V1.replace("  note: Text?\n", ""))).await;
-    assert!(removed.blocked() && removed.plan.rejections[0].code == "AIP.SCHEMA.UNDECLARED");
+    assert!(removed.blocked() && removed.plan.rejections[0].code == "POC.SCHEMA.UNDECLARED");
 
     assert_eq!(dump(&pool).await, schema, "the schema is as it was");
     assert_eq!((num(&pool, "SELECT count(*) FROM _aip_deployment").await, num(&pool, "SELECT count(*) FROM task").await), (deployments, rows));
@@ -311,7 +311,7 @@ async fn tables_without_a_record_are_adopted_when_they_match() {
     // a schema that does not match has nothing to be compared with
     sql(&pool, "DROP TABLE _aip_deployment").await;
     let err = deploy(&pool, &build(V2), false).await.err().expect("no record, no match").to_string();
-    assert!(err.contains("AIP.SCHEMA.UNRECORDED"), "{err}");
+    assert!(err.contains("POC.SCHEMA.UNRECORDED"), "{err}");
 }
 
 #[tokio::test]
@@ -335,7 +335,7 @@ async fn an_entity_goes_only_when_the_program_says_so() {
     sql(&pool, "INSERT INTO label (name) VALUES ('x')").await;
     let without = V2.replace("entity Label {\n  name: Text(1..20)\n}\n", "");
     let err = deploy(&pool, &build(&without), false).await.err().expect("undeclared").to_string();
-    assert!(err.contains("AIP.SCHEMA.UNDECLARED") && err.contains("entity Label"), "{err}");
+    assert!(err.contains("POC.SCHEMA.UNDECLARED") && err.contains("entity Label"), "{err}");
     assert_eq!(num(&pool, "SELECT count(*) FROM label").await, 1);
     deploy(&pool, &build(&format!("{without}\nremoved entity Label\n")), false).await.expect("declared");
     assert_eq!(num(&pool, "SELECT count(*) FROM information_schema.tables WHERE table_name = 'label'").await, 0);
@@ -346,14 +346,14 @@ async fn changes_the_planner_does_not_know_how_to_carry_are_refused() {
     let pool = fresh("aip_e2e_evolve_unsupported").await;
     deploy(&pool, &build(V1), false).await.expect("v1");
     let err = deploy(&pool, &build(&V1.replace("  note: Text?\n", "  note: Text?\n  history\n")), false).await.err().expect("trait").to_string();
-    assert!(err.contains("AIP.SCHEMA.UNSUPPORTED") && err.contains("history"), "{err}");
+    assert!(err.contains("POC.SCHEMA.UNSUPPORTED") && err.contains("history"), "{err}");
     // an ordered enum whose existing values trade places changes what `>=` means for stored rows
     let ordered = "enum Level ordered { LOW < HIGH }\nentity Ticket { level: Level = LOW }\n";
     let reordered = "enum Level ordered { HIGH < LOW }\nentity Ticket { level: Level = LOW }\n";
     let p2 = fresh("aip_e2e_evolve_unsupported_enum").await;
     deploy(&p2, &build(&format!("use postgres\n{ordered}")), false).await.expect("ordered");
     let err = deploy(&p2, &build(&format!("use postgres\n{reordered}")), false).await.err().expect("reorder").to_string();
-    assert!(err.contains("AIP.SCHEMA.UNSUPPORTED") && err.contains("Level"), "{err}");
+    assert!(err.contains("POC.SCHEMA.UNSUPPORTED") && err.contains("Level"), "{err}");
     // a value in the middle is a change of meaning only for the new value: applied, with a note
     let middle = "enum Level ordered { LOW < MID < HIGH }\nentity Ticket { level: Level = LOW }\n";
     let r = deploy(&p2, &build(&format!("use postgres\n{middle}")), false).await.expect("middle value");
@@ -392,10 +392,10 @@ async fn the_commands_plan_apply_and_compare_against_the_deployed_program() {
     std::fs::write(&file, V1.replace("  note: Text?\n", "")).expect("write");
     let (code, out) = aip(&["migrate", "--plan", path]);
     assert_eq!(code, Some(1), "{out}");
-    assert!(out.contains("refused AIP.SCHEMA.UNDECLARED") && out.contains("blocked"), "{out}");
+    assert!(out.contains("refused POC.SCHEMA.UNDECLARED") && out.contains("blocked"), "{out}");
     let (code, out) = aip(&["migrate", path]);
     assert_ne!(code, Some(0), "{out}");
-    assert!(out.contains("AIP.SCHEMA.UNDECLARED"), "{out}");
+    assert!(out.contains("POC.SCHEMA.UNDECLARED"), "{out}");
     assert_eq!(dump(&pool).await, before);
 
     std::fs::write(&file, V2).expect("write");

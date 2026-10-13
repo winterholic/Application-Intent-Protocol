@@ -42,7 +42,7 @@ fn who(id: i64) -> Caller {
 fn short(r: Result<Value, spike_v2_read::plan::Reject>) -> String {
     match r {
         Ok(v) => format!("OK {v}"),
-        Err(e) if e.code == "EXTENSION_ERROR" => format!("EXTENSION_ERROR({})", e.msg.rsplit(": ").next().unwrap_or("")),
+        Err(e) if e.code == "WIRE.EXTENSION_ERROR" => format!("EXTENSION_ERROR({})", e.msg.rsplit(": ").next().unwrap_or("")),
         Err(e) => e.code.to_string(),
     }
 }
@@ -69,11 +69,11 @@ async fn v4_3_write_extension() {
         let mut w = Worker::start(lang, ext_dir).await;
         let cases: Vec<(&str, &str, i64, &str, &str)> = vec![
             ("정상 위임", "delegate", 1, "OK {\"done\":true}", "1:MEMBER,2:MANAGER,3:ADMIN"),
-            ("관리자 아닌 운영진", "delegate", 2, "EXTENSION_ERROR(FORBIDDEN)", start),
-            ("확장이 중간에 실패", "delegateThrow", 1, "EXTENSION_ERROR(EXTENSION_ERROR)", start),
-            ("ctx 오류를 삼키고 성공 반환", "delegateSwallow", 1, "EXTENSION_ERROR(FORBIDDEN)", start),
-            ("임명만(관리자 2명)", "onlyPromote", 1, "INVARIANT_VIOLATED", start),
-            ("계약 밖 쓰기", "undeclared", 1, "EXTENSION_ERROR(ACCESS_NOT_DECLARED)", start),
+            ("관리자 아닌 운영진", "delegate", 2, "EXTENSION_ERROR(WIRE.FORBIDDEN)", start),
+            ("확장이 중간에 실패", "delegateThrow", 1, "EXTENSION_ERROR(WIRE.EXTENSION_ERROR)", start),
+            ("ctx 오류를 삼키고 성공 반환", "delegateSwallow", 1, "EXTENSION_ERROR(WIRE.FORBIDDEN)", start),
+            ("임명만(관리자 2명)", "onlyPromote", 1, "WIRE.INVARIANT_VIOLATED", start),
+            ("계약 밖 쓰기", "undeclared", 1, "EXTENSION_ERROR(WIRE.ACCESS_NOT_DECLARED)", start),
         ];
         for (name, imp, actor, want, want_roles) in &cases {
             db.batch_execute(&seed).await.unwrap();
@@ -93,7 +93,7 @@ async fn v4_3_write_extension() {
         let r2 = roles(&db).await;
         table.push(format!("{lang:?} | 기한 초과 | {slow} | {r1}"));
         table.push(format!("{lang:?} | 끝난 호출의 ctx로 늦은 쓰기 | {late} | {r2}"));
-        if slow != "DEADLINE_EXCEEDED" || r1 != start || late != "EXTENSION_ERROR(TOKEN_EXPIRED)" || r2 != start {
+        if slow != "WIRE.DEADLINE_EXCEEDED" || r1 != start || late != "EXTENSION_ERROR(WIRE.TOKEN_EXPIRED)" || r2 != start {
             fails.push(format!("{lang:?} 기한/늦은 쓰기: {slow} {r1} / {late} {r2}"));
         }
         w.stop().await;

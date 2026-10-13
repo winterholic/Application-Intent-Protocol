@@ -31,12 +31,12 @@ fn cursor_requires_sort_fields_and_id_to_be_selectable() {
         "select id, title, periodEnd,",
         1,
     );
-    assert!(codes(&hidden_sort).iter().any(|c| c.contains("CURSOR_SORT_NOT_SELECTED")), "{:?}", codes(&hidden_sort));
+    assert!(codes(&hidden_sort).iter().any(|c| c.contains("DEF.CURSOR_SORT_NOT_SELECTED")), "{:?}", codes(&hidden_sort));
     // cursor를 선언하지 않으면 같은 정의도 기존처럼 통과한다.
     assert!(codes(&A.replacen("select id, title, periodEnd, views,", "select id, title, periodEnd,", 1)).is_empty());
     // id가 select에 없으면 타이브레이커 경계가 숨은 값이 된다.
     let no_id = with("budget { rows 50; depth 2; deadline 2s; cost 1000; cursor }").replacen("select id, title,", "select title,", 1);
-    assert!(codes(&no_id).iter().any(|c| c.contains("CURSOR_ID_NOT_SELECTED")), "{:?}", codes(&no_id));
+    assert!(codes(&no_id).iter().any(|c| c.contains("DEF.CURSOR_ID_NOT_SELECTED")), "{:?}", codes(&no_id));
 }
 
 #[test]
@@ -47,7 +47,7 @@ fn cursor_rejects_nullable_sort_field_and_duplicate_flag() {
         1,
     );
     let c = codes(&nullable);
-    assert!(c.iter().any(|c| c.contains("CURSOR_NULLABLE_SORT")), "{c:?}");
+    assert!(c.iter().any(|c| c.contains("DEF.CURSOR_NULLABLE_SORT")), "{c:?}");
     let dup = with("budget { rows 50; depth 2; deadline 2s; cost 1000; cursor; cursor }");
     assert!(!codes(&dup).is_empty());
 }

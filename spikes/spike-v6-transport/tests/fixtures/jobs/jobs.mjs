@@ -50,7 +50,7 @@ export async function catchKnownChildFailure(input, ctx) {
     try {
       await ctx.jobs.run("knownFailChild", {}, "known-failure");
     } catch (error) {
-      if (error?.code !== "STEP_FAILED") throw error;
+      if (error?.code !== "WIRE.STEP_FAILED") throw error;
       recovered++;
     }
   }

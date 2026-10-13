@@ -48,9 +48,9 @@ async fn v10_session_confirmation_and_pending_retry_keep_principal_scope() {
         failures.push(format!("익명 세션 계약 불일치: {anonymous}"));
     }
     for (name, token, code) in [
-        ("변조/형식 오류", "not-a-token", "UNAUTHENTICATED"),
-        ("다른 키", wrong_key.as_str(), "UNAUTHENTICATED"),
-        ("만료", expired.as_str(), "TOKEN_EXPIRED"),
+        ("변조/형식 오류", "not-a-token", "WIRE.UNAUTHENTICATED"),
+        ("다른 키", wrong_key.as_str(), "WIRE.UNAUTHENTICATED"),
+        ("만료", expired.as_str(), "WIRE.TOKEN_EXPIRED"),
     ] {
         let result = post(session_port, "/session", Some(token), &json!({})).await;
         if result["code"] != code || !result.get("principal").is_none() {
@@ -58,7 +58,7 @@ async fn v10_session_confirmation_and_pending_retry_keep_principal_scope() {
         }
     }
     let body_actor = post(session_port, "/session", Some(&t1), &json!({ "actor": "2" })).await;
-    if body_actor["code"] != "BAD_REQUEST" || !body_actor.get("principal").is_none() {
+    if body_actor["code"] != "WIRE.BAD_REQUEST" || !body_actor.get("principal").is_none() {
         failures.push(format!("본문 actor 거부 불일치: {body_actor}"));
     }
 
@@ -99,7 +99,7 @@ async fn v10_session_confirmation_and_pending_retry_keep_principal_scope() {
         failures.push(format!("signed actor -1 쓰기 실패: {signed_write}"));
     }
     let anonymous_status = post(port, "/status", None, &json!({ "key": "signed-minus-one", "request": body["request"] })).await;
-    if anonymous_status["code"] != "NOT_FOUND" {
+    if anonymous_status["code"] != "WIRE.NOT_FOUND" {
         failures.push(format!("익명 status가 signed actor -1 결과를 공유함: {anonymous_status}"));
     }
     let anonymous_apply = post(port, "/apply", None, &body).await;

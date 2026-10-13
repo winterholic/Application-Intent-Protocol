@@ -36,18 +36,18 @@ fn a_misspelled_field_names_its_scope_and_the_close_spelling() {
     let ds = diagnostics(&sub(A, "select id, title, periodEnd", "select id, titel, periodEnd"), Form::A);
     assert_eq!(ds.len(), 1);
     let d = &ds[0];
-    assert_eq!(text(d, "code"), "UNKNOWN_FIELD");
+    assert_eq!(text(d, "code"), "DEF.UNKNOWN_FIELD");
     assert_eq!((d["line"].as_u64(), d["column"].as_u64()), (Some(54), Some(16)));
     assert_eq!(text(d, "scope"), "resource Recruitment > expose read > select");
     assert!(text(d, "help").contains("did you mean `title`?"), "{d}");
-    assert_eq!(text(d, "explain"), "aip explain-code UNKNOWN_FIELD");
+    assert_eq!(text(d, "explain"), "aip explain-code DEF.UNKNOWN_FIELD");
 }
 
 #[test]
 fn an_unknown_key_lists_what_the_block_accepts() {
     let ds = diagnostics(&sub(A, "sort periodEnd, views, id", "sorts periodEnd, views, id"), Form::A);
     let d = &ds[0];
-    assert_eq!(text(d, "code"), "PARSE_UNKNOWN_KEY");
+    assert_eq!(text(d, "code"), "DEF.PARSE_UNKNOWN_KEY");
     assert_eq!(text(d, "scope"), "resource Recruitment > expose read");
     let help = text(d, "help");
     assert!(help.contains("did you mean `sort`?"), "{help}");
@@ -58,7 +58,7 @@ fn an_unknown_key_lists_what_the_block_accepts() {
 fn a_syntax_error_shows_the_token_as_written() {
     let ds = diagnostics(&sub(A, "rows 50; depth 2", "rows fifty; depth 2"), Form::A);
     let d = &ds[0];
-    assert_eq!(text(d, "code"), "PARSE_EXPECTED");
+    assert_eq!(text(d, "code"), "DEF.PARSE_EXPECTED");
     assert_eq!(text(d, "message"), "정수 필요, `fifty` 발견", "no compiler internals such as Ident(..) in the message");
     assert_eq!(text(d, "scope"), "resource Recruitment > expose read > budget");
     assert!(text(d, "help").contains("`budget` accepts: rows, depth, deadline, cost, offset, cursor."), "{d}");
@@ -69,10 +69,10 @@ fn the_root_cause_comes_first_and_its_consequences_say_so() {
     // One typo in a field type makes every use of that enum's values unresolvable.
     let ds = diagnostics(&sub(A, "status: RecruitmentStatus\n", "status: RecruitmentStatuz\n"), Form::A);
     assert!(ds.len() > 2, "{ds:?}");
-    assert_eq!(text(&ds[0], "code"), "UNKNOWN_TYPE");
+    assert_eq!(text(&ds[0], "code"), "DEF.UNKNOWN_TYPE");
     assert!(text(&ds[0], "help").contains("did you mean `RecruitmentStatus`?"), "{}", ds[0]);
     for d in &ds[1..] {
-        assert!(text(d, "help").contains("cascade: this may follow from UNKNOWN_TYPE at line 45"), "{d}");
+        assert!(text(d, "help").contains("cascade: this may follow from DEF.UNKNOWN_TYPE at line 45"), "{d}");
         assert!(!text(d, "help").contains("fix:"), "a consequence does not repeat the repair: {d}");
     }
 }
@@ -80,7 +80,7 @@ fn the_root_cause_comes_first_and_its_consequences_say_so() {
 #[test]
 fn the_repair_of_a_code_is_stated_once_per_answer() {
     let ds = diagnostics(&sub(&sub(A, "periodEnd: Time", "periodEnd: Tiem"), "views: Int", "views: Integer"), Form::A);
-    let unknown: Vec<&Value> = ds.iter().filter(|d| text(d, "code") == "UNKNOWN_TYPE").collect();
+    let unknown: Vec<&Value> = ds.iter().filter(|d| text(d, "code") == "DEF.UNKNOWN_TYPE").collect();
     assert_eq!(unknown.len(), 2, "{ds:?}");
     assert!(text(unknown[0], "help").contains("fix:"));
     assert!(!text(unknown[1], "help").contains("fix:"));
@@ -91,7 +91,7 @@ fn the_repair_of_a_code_is_stated_once_per_answer() {
 fn a_predicate_call_with_a_typo_offers_the_declared_name() {
     let ds = diagnostics(&sub(A, "rows read when active(this)", "rows read when activ(this)"), Form::A);
     let d = &ds[0];
-    assert_eq!(text(d, "code"), "UNKNOWN_SYMBOL");
+    assert_eq!(text(d, "code"), "DEF.UNKNOWN_SYMBOL");
     assert_eq!(text(d, "scope"), "resource Recruitment > rows read");
     assert!(text(d, "help").contains("`active`"), "{d}");
 }
@@ -102,7 +102,7 @@ fn a_declaration_without_a_block_is_named_by_its_own_header() {
         &sub(A, "predicate active(r: Recruitment) = r.status = PUBLISHED", "predicate active(r: Recruitment) = r.statuss = PUBLISHED"),
         Form::A,
     );
-    let d = ds.iter().find(|d| text(d, "code") == "UNKNOWN_FIELD").expect("a field diagnostic");
+    let d = ds.iter().find(|d| text(d, "code") == "DEF.UNKNOWN_FIELD").expect("a field diagnostic");
     assert_eq!(text(d, "scope"), "predicate active");
     assert!(text(d, "help").contains("`status`"), "{d}");
 }
@@ -111,7 +111,7 @@ fn a_declaration_without_a_block_is_named_by_its_own_header() {
 fn an_unknown_filter_operator_lists_the_operators() {
     let ds = diagnostics(&sub(A, "filter periodEnd.gte, periodEnd.lte", "filter periodEnd.gtee, periodEnd.lte"), Form::A);
     let d = &ds[0];
-    assert_eq!(text(d, "code"), "UNKNOWN_OPERATOR");
+    assert_eq!(text(d, "code"), "DEF.UNKNOWN_OPERATOR");
     assert!(text(d, "help").contains("did you mean `gte`?"), "{d}");
     assert!(text(d, "help").contains("operators: eq, in, isNull, gte, lte, gt, lt, prefix, contains."), "{d}");
 }
@@ -120,7 +120,7 @@ fn an_unknown_filter_operator_lists_the_operators() {
 fn an_unknown_declaration_keyword_lists_the_declarations() {
     let ds = diagnostics(&format!("resorce Club {{ fields {{ id: Id }} }}\n{A}"), Form::A);
     let d = &ds[0];
-    assert_eq!(text(d, "code"), "PARSE_UNKNOWN_DECL");
+    assert_eq!(text(d, "code"), "DEF.PARSE_UNKNOWN_DECL");
     assert!(text(d, "help").contains("did you mean `resource`?"), "{d}");
 }
 
@@ -129,7 +129,7 @@ fn the_embedded_form_keeps_host_file_lines_and_the_scope() {
     let wrong = sub(E_TS, "sort periodEnd, views, id", "sorts periodEnd, views, id");
     let ds = diagnostics(&wrong, Form::ETs);
     let d = &ds[0];
-    assert_eq!(text(d, "code"), "PARSE_UNKNOWN_KEY");
+    assert_eq!(text(d, "code"), "DEF.PARSE_UNKNOWN_KEY");
     let line = wrong.lines().position(|l| l.contains("sorts periodEnd")).expect("line") as u64 + 1;
     assert_eq!(d["line"].as_u64(), Some(line), "the line is the line of the host file");
     assert_eq!(text(d, "scope"), "resource Recruitment > expose read");
@@ -139,7 +139,7 @@ fn the_embedded_form_keeps_host_file_lines_and_the_scope() {
 fn the_host_literal_form_gets_help_without_a_scope() {
     let ds = diagnostics(&sub(H_TS, "rows: 50,", "rows: \"50\","), Form::HTs);
     let d = &ds[0];
-    assert_eq!(text(d, "code"), "H_SHAPE");
+    assert_eq!(text(d, "code"), "DEF.H_SHAPE");
     assert!(d.get("scope").is_none(), "no declaration path can be derived from host data: {d}");
     assert!(text(d, "help").contains("fix:"), "{d}");
 }
@@ -156,10 +156,11 @@ fn every_code_is_registered_and_none_is_dead() {
             if p.extension().is_some_and(|x| x == "rs") && !p.ends_with("codes.rs") && !p.ends_with("enrich.rs") {
                 let t = std::fs::read_to_string(&p).expect("source");
                 for part in t.split('"').skip(1).step_by(2) {
-                    if part.len() >= 4
-                        && part.chars().all(|c| c.is_ascii_uppercase() || c == '_')
-                        && part.starts_with(|c: char| c.is_ascii_uppercase())
-                    {
+                    if part.strip_prefix("DEF.").is_some_and(|name| {
+                        name.len() >= 4
+                            && name.chars().all(|c| c.is_ascii_uppercase() || c == '_')
+                            && name.starts_with(|c: char| c.is_ascii_uppercase())
+                    }) {
                         literals.insert(part.to_string());
                     }
                 }
@@ -171,7 +172,7 @@ fn every_code_is_registered_and_none_is_dead() {
     let missing: Vec<&String> = literals.iter().filter(|l| !registered.contains(*l)).collect();
     assert!(missing.is_empty(), "codes emitted by the sources but not in src/codes.rs: {missing:?}");
     // INVALID_DEFINITION is the envelope the service adds around the list.
-    let dead: Vec<&String> = registered.iter().filter(|r| *r != "INVALID_DEFINITION" && !literals.contains(*r)).collect();
+    let dead: Vec<&String> = registered.iter().filter(|r| *r != "DEF.INVALID_DEFINITION" && !literals.contains(*r)).collect();
     assert!(dead.is_empty(), "registered but nothing emits them: {dead:?}");
     for c in codes::all() {
         assert!(!c.title.is_empty() && !c.explain.is_empty() && !c.fix.is_empty(), "{} needs title, explain and fix", c.code);
@@ -276,25 +277,28 @@ fn the_defaults_the_card_denies_hold() {
         "budget { rows 50; depth 2; deadline 2s }",
     ] {
         let ds = diagnostics(&sub(A, budget, partial), Form::A);
-        assert!(ds.iter().any(|d| text(d, "code") == "MISSING_ITEM" && text(d, "message").contains("rows/depth/deadline/cost")), "{partial}: {ds:?}");
+        assert!(
+            ds.iter().any(|d| text(d, "code") == "DEF.MISSING_ITEM" && text(d, "message").contains("rows/depth/deadline/cost")),
+            "{partial}: {ds:?}"
+        );
     }
 
     // `expose apply` without `bulk maxRows`
     let apply = "resource Note {\n  fields { id: Id; done: Bool; owner: Member }\n  rows read when owner = actor\n  transition finish { from done = false; to done = true; allow owner = actor }\n  expose apply finish { target id }\n}\n";
     let base = "actor Member\nresource Member { fields { id: Id } }\n";
     let ds = diagnostics(&format!("{base}{apply}"), Form::A);
-    assert!(ds.iter().any(|d| text(d, "code") == "MISSING_ITEM" && text(d, "message").contains("bulk maxRows")), "{ds:?}");
+    assert!(ds.iter().any(|d| text(d, "code") == "DEF.MISSING_ITEM" && text(d, "message").contains("bulk maxRows")), "{ds:?}");
     assert!(load_str(&format!("{base}{}", apply.replace("target id }", "target id; bulk maxRows 5 }")), Form::A).is_ok());
 
     // an aggregate without `sourceAccess`
     let ds = diagnostics(&sub(A, "    sourceAccess fixedTotalOfVisibleRecruitment\n", ""), Form::A);
-    assert!(ds.iter().any(|d| text(d, "code") == "MISSING_ITEM" && text(d, "message").contains("sourceAccess")), "{ds:?}");
+    assert!(ds.iter().any(|d| text(d, "code") == "DEF.MISSING_ITEM" && text(d, "message").contains("sourceAccess")), "{ds:?}");
 
     // a field with a read policy cannot be filtered
     let ds = diagnostics(&sub(A, "filter periodEnd.gte, periodEnd.lte", "filter periodEnd.gte, internalNote.eq"), Form::A);
-    assert!(ds.iter().any(|d| text(d, "code") == "POLICY_FIELD_NOT_FILTERABLE"));
+    assert!(ds.iter().any(|d| text(d, "code") == "DEF.POLICY_FIELD_NOT_FILTERABLE"));
 
     // an unknown key is an error, and a syntax error stops at the first one
     let ds = diagnostics(&sub(A, "sort periodEnd, views, id", "sorts periodEnd, views, id"), Form::A);
-    assert_eq!((ds.len(), text(&ds[0], "code")), (1, "PARSE_UNKNOWN_KEY"));
+    assert_eq!((ds.len(), text(&ds[0], "code")), (1, "DEF.PARSE_UNKNOWN_KEY"));
 }

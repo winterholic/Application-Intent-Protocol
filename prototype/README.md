@@ -46,12 +46,12 @@ cargo run --offline -- serve example/app.aip --schema aip_local_demo --db-url 'h
 - V2 legacy `connect_with_url`은 유지하며 HTTP와 CLI는 공통 `connect_owned_with_url`로 Client와 driver task를 함께 소유한다. drop은 task 취소를 예약하며 DB 커밋 결과를 확정하지 않는다. CLI는 bind 전에 DB·초기화 지문·실제 구조를 확인한다. V6 listener primitive 단독 호출에는 DB 사전 검사 보장이 없다.
 - V6 owned server는 listener와 JoinSet 요청 task를 함께 소유한다. 선택 포트·충돌·종료 후 신규 연결 거부와 미완성 HTTP 요청 종료를 확인했다. 기존 start 래퍼는 동일한 시험 동작을 유지한다. 일반 프로토타입 listener에서는 `x-spike-drop-response`를 무시하고 기존 실험 래퍼에서만 고장 주입을 허용한다.
 - V2 기존 `ddl`의 DROP은 실험용 API에 남는다. CLI init은 공통 생성 본체의 `create_ddl`만 사용한다. `aip_` 뒤 영문 소문자로 시작하는 ASCII 식별자·63바이트 제한을 검사하고, plain CREATE SCHEMA·앱 테이블·멱등 저장소·marker를 단일 트랜잭션에서 생성한다. 재초기화는 SCHEMA_EXISTS, 중간 DDL 충돌은 DB_INIT과 전체 롤백이다. serve에는 DDL/seed가 없다.
-- marker의 DDL digest는 정의 호환, 새 structure digest는 init 이후 실제 구조 변경을 검사한다. 구조 불일치는 SCHEMA_MISMATCH, 빠진 테이블이나 이전 marker-only schema는 SCHEMA_NOT_READY다. schema/데이터를 자동 변경하지 않는다. marker까지 바꿀 수 있는 DB 관리자나 기동 뒤 외부 DDL을 통제하는 보장은 아니다. 실제 마이그레이션은 구현하지 않았다.
+- marker의 DDL digest는 정의 호환, 새 structure digest는 init 이후 실제 구조 변경을 검사한다. 구조 불일치는 WIRE.SCHEMA_MISMATCH, 빠진 테이블이나 이전 marker-only schema는 SCHEMA_NOT_READY다. schema/데이터를 자동 변경하지 않는다. marker까지 바꿀 수 있는 DB 관리자나 기동 뒤 외부 DDL을 통제하는 보장은 아니다. 실제 마이그레이션은 구현하지 않았다.
 - 서버 재시작은 Keyring을 바꾼다. 구 binding 거부는 새 기동의 유효 토큰과 함께 시험해 인증 실패와 구분했다. 같은 actor·wire의 커밋된 key/request는 재기동 후 status로 조회했다. 구 계약의 미확정 pending 전체를 새 계약으로 이전하는 문제는 남는다. 종료 중 실행된 쓰기는 취소만으로 커밋 여부를 확정하지 않는다.
 
 ## 실제 사용 흐름의 실행 증거
 
-`python3 tools/smoke.py`는 UUID 전용 schema를 init한 뒤 테스트 행을 별도 SQL로 넣는다. 같은 앱 정본에서 생성한 binding과 단일 SDK로 선택형 read·캐시 hit·direct apply·캐시 무효화·동일 key 재생을 실행한다. 앱의 bulk 상한20을10으로 바꾸고 계약 재생성·재기동 후, 새 토큰+구 binding의 첫 쓰기를 CONTRACT_MISMATCH로 거부하고 새 binding의 쓰기를 실행한다. 최종 DB는 id11/12만 true, 다른 actor99는 false다. 기존 데이터·멱등 결과와 구 토큰 거부도 확인한다. SDK source/package와 두 wire 후보의 조합마다 다른 소유 schema를 쓰며 성공한 init의 schema만 finally에서 정리한다. init의 커밋 결과가 불명인 경우 자동 삭제 대신 상태 확인이 필요하다.
+`python3 tools/smoke.py`는 UUID 전용 schema를 init한 뒤 테스트 행을 별도 SQL로 넣는다. 같은 앱 정본에서 생성한 binding과 단일 SDK로 선택형 read·캐시 hit·direct apply·캐시 무효화·동일 key 재생을 실행한다. 앱의 bulk 상한20을10으로 바꾸고 계약 재생성·재기동 후, 새 토큰+구 binding의 첫 쓰기를 WIRE.CONTRACT_MISMATCH로 거부하고 새 binding의 쓰기를 실행한다. 최종 DB는 id11/12만 true, 다른 actor99는 false다. 기존 데이터·멱등 결과와 구 토큰 거부도 확인한다. SDK source/package와 두 wire 후보의 조합마다 다른 소유 schema를 쓰며 성공한 init의 schema만 finally에서 정리한다. init의 커밋 결과가 불명인 경우 자동 삭제 대신 상태 확인이 필요하다.
 
 일부러 fault header를 다시 활성화하거나, 설정 DB를 기본 DB로 바꾸거나, init에 DROP 경로를 연결하면 해당 행동 테스트가 실제 실패한다. 세 음성 대조 후 소스를 복원하고 정상 테스트를 재실행했다. V6 전체16개·V2/V3/V5 전체41개 Rust 회귀도 실패0이며 기존 HTTP·세션·복구·타입 대조를 포함한다.
 
@@ -73,7 +73,7 @@ cargo run --offline -- serve example/app.aip --schema aip_local_demo --db-url 'h
 1. 원칙1·4의 서버 최종 권한을 입출력 경계에서도 유지한다. Node/Python 공식 확장의 값 검사를 공통 서버 scalar 규칙으로 연결한다.
 2. 기존 공식 확장의 표현 범위와 caller read/apply 범위를 유지한다. 새 HTTP 확장 endpoint를 이 변경에 포함하지 않는다.
 3. 앱별 DTO·추가 선언 없이 기존 input/output 계약을 사용한다. 검사 규칙의 복제를 줄인다.
-4. Text/Url의 NUL·Time의 실제 날짜/시각을 입력 BAD_VALUE와 출력 OUTPUT_INVALID로 거부한다. nullable 키·Enum·정확한 키 검사와 권한·deadline은 유지한다.
+4. Text/Url의 NUL·Time의 실제 날짜/시각을 입력 WIRE.BAD_VALUE와 출력 WIRE.OUTPUT_INVALID로 거부한다. nullable 키·Enum·정확한 키 검사와 권한·deadline은 유지한다.
 5. JS와 Python의 실제 worker 호출에서도 같은 거부와 정상 값 전달을 확인한다. 원래 입력값을 변환하지 않고 검증한다.
 6. V2 scalar parser를 재사용한다. worker 전용 날짜 parser나 별도 값 엔진을 만들지 않는다.
 7. 순수 경계 테스트를 먼저 실패시키고, 실제 두 언어 호출과 기존 read/write/outbox 회귀로 실행 경로를 확인한다.
@@ -111,7 +111,7 @@ cargo run --offline -- gen example/app.aip --wire decimal --out /tmp/contract.ts
 1. 원칙4의 권한 수명을 호출 종료와 맞춘다. 비활성 Grant가 actor·now·입력 복사본과 함께 호출마다 남는 현재 경로를 실제 호출로 대조한다.
 2. 확장 표현·권한·access binding은 유지한다. 새 capability나 API를 추가하지 않는다.
 3. 앱별 정리 코드 없이 Worker가 완료·send 실패·후속 호출 시작을 처리한다.
-4. 성공·실패 뒤 Grant를 제거하고 최근 만료 토큰 식별자만 최대64개 보관한다. 더 오래된 토큰은 TOKEN_INVALID, 최근 토큰은 TOKEN_EXPIRED로 동일하게 거부한다. 권한을 복구하는 경로는 없다.
+4. 성공·실패 뒤 Grant를 제거하고 최근 만료 토큰 식별자만 최대64개 보관한다. 더 오래된 토큰은 WIRE.TOKEN_INVALID, 최근 토큰은 WIRE.TOKEN_EXPIRED로 동일하게 거부한다. 권한을 복구하는 경로는 없다.
 5. Node/Python 반복 실제 호출·send 실패·기존 늦은 ctx 재사용 회귀로 확인한다.
 6. 현재 단일 mutable Worker 호출 수명과 기존 토큰 매핑을 재사용한다. 별도 메모리 서버나 영속 grant 저장소를 만들지 않는다.
 7. externally cancelled 읽기 호출은 다음 유효 읽기 호출 시작에서 이전 Grant를 정리한다. 호출 중 현재 Grant와 작은 최근 토큰 목록만 남기며 업무 입력을 tombstone에 복사하지 않는다.
@@ -138,7 +138,7 @@ V4의 공통 scalar 검사·입출력 프레임 한도·기동 Result·읽기 Gr
 
 `gen`은 앱 정본의 read/effect none 확장 이름·입출력·Enum/nullable descriptor에서 `ExtensionContract`와 binding을 생성한다. 공개 확장 계약은 지문에 포함하며 implementation·access 식·내부 정책은 공개하지 않는다. 현재 prototype family는 확장 유무와 관계없이 공개 readDescriptors를 포함한다. 이 family의 지문이 바뀌므로 binding을 재생성해야 한다. 기존 read/apply-only generator family와 V13/V14/V15 비교 실험의 계약은 유지했다.
 
-SDK의 같은 connect에서 표준 read/apply와 확장을 사용한다. 확장은 결과를 캐시하거나 pending 쓰기를 만들지 않는다. 입력 복사본을 검증해 전송하고 연결 시 wire·descriptor를 고정한다. 반환 객체는 정확한 키·nullable·Enum·NUL·Time·Id를 검사한 뒤 동결한다. `Int`는 JS에서 정밀도를 보존할 수 있는 안전 정수만 허용하며 더 큰 값은 입력 BAD_VALUE/출력 PROTOCOL_ERROR다. 서버의 일반 Int/i64와 최종 숫자 domain은 별도 OPEN이다.
+SDK의 같은 connect에서 표준 read/apply와 확장을 사용한다. 확장은 결과를 캐시하거나 pending 쓰기를 만들지 않는다. 입력 복사본을 검증해 전송하고 연결 시 wire·descriptor를 고정한다. 반환 객체는 정확한 키·nullable·Enum·NUL·Time·Id를 검사한 뒤 동결한다. `Int`는 JS에서 정밀도를 보존할 수 있는 안전 정수만 허용하며 더 큰 값은 입력 WIRE.BAD_VALUE/출력 CLIENT.PROTOCOL_ERROR다. 서버의 일반 Int/i64와 최종 숫자 domain은 별도 OPEN이다.
 
 ```ts
 import {connect} from '@aip/prototype-sdk';
@@ -149,7 +149,7 @@ const stats = await aip.extension('Recruitment.stats', {clubId: '10'});
 console.log(stats.approvedApplicants);
 ```
 
-서버 연결은 `serve ... --worker-dir <trusted-directory> --worker-lang node` 또는 `python`을 명시해야 한다. 두 옵션은 함께 필요하며 현재 macOS 로컬 네트워크 차단 실험으로 제한한다. 없으면 `/extension`은 DB 접속 전에 NOT_FOUND다. 설정 시 module.function 식별자와 모듈 파일의 canonical 경로를 bind 전에 검사하고 디렉터리 밖 모듈 symlink도 거부한다. imported 모듈·파일 전체를 격리하는 보장은 아니다. 신뢰한 demo 코드만 사용하는 범위다.
+서버 연결은 `serve ... --worker-dir <trusted-directory> --worker-lang node` 또는 `python`을 명시해야 한다. 두 옵션은 함께 필요하며 현재 macOS 로컬 네트워크 차단 실험으로 제한한다. 없으면 `/extension`은 DB 접속 전에 WIRE.NOT_FOUND다. 설정 시 module.function 식별자와 모듈 파일의 canonical 경로를 bind 전에 검사하고 디렉터리 밖 모듈 symlink도 거부한다. imported 모듈·파일 전체를 격리하는 보장은 아니다. 신뢰한 demo 코드만 사용하는 범위다.
 
 `POST /extension {extension,input}`은 서명 세션·필수 x-aip-contract·정확한 본문·선언된 입력 검사를 DB 접속/worker 실행 전에 처리한다. 서버의 actor·access/input binding·출력·deadline을 유지하며 호출마다 worker를 소유한다. 로컬 동시 확장4개 상한은 DB 접속 전에 적용하고 완료 뒤 슬롯을 반환한다. worker invoke의 외부 timeout은 막힌 stdin도 포함하지만 DB 접속·spawn·stop·HTTP 전체 기한 보장은 아니다. 네트워크 차단은 TCP와 실제 Unix socket 양성 대조에서 확인했으며 파일·프로세스 후손·다른 OS의 일반 격리를 검증한 것은 아니다.
 
@@ -211,7 +211,7 @@ extension smoke는 source/package SDK × safe/decimal × Node/Python8개 조합�
 5. 같은 TypeScript 런타임에서 wire·Bool·Int·Enum·문자열·nullable·관계 결과를 확인한다. Time read 출력은 PostgreSQL 출력 범위가 입력 RFC3339보다 넓어 기존 입력 검사로 임의 축소하지 않는다.
 6. 기존 prototype with_extensions family를 하나의 공개 read/apply/extension projection으로 보완한다. 이전 read/apply-only 실험 family는 유지하며 prototype 지문 변경에는 binding 재생성이 필요하다.
 7. 기존 fetch/cache 경계에 검증 hook과 요청 snapshot을 추가한다. 캐시 저장·TTL·세션 epoch 구조를 복제하지 않는다.
-8. safe/decimal 비교를 유지한다. JS safe Int 출력 밖 값은 정확한 number로 보장할 수 없어 PROTOCOL_ERROR로 거부한다. read Time은 현행 string 타입·NUL 금지를 확인하고 날짜 도메인을 임의로 확정하지 않는다. 최종 값 표현/API/ABI는 OPEN이다.
+8. safe/decimal 비교를 유지한다. JS safe Int 출력 밖 값은 정확한 number로 보장할 수 없어 CLIENT.PROTOCOL_ERROR로 거부한다. read Time은 현행 string 타입·NUL 금지를 확인하고 날짜 도메인을 임의로 확정하지 않는다. 최종 값 표현/API/ABI는 OPEN이다.
 
 
 ## 관계 대상의 공개 집계 실행 관문
@@ -231,11 +231,11 @@ extension smoke는 source/package SDK × safe/decimal × Node/Python8개 조합�
 1. 원칙4·7의 확장 실행 통제를 입력 파이프에도 적용한다. READ 공개 계약과 표준 caller 표현은 유지한다.
 2. 기존 WRITE 확장의 표현을 늘리지 않는다. 이미 선언한 deadline 뒤에 입력 전송만 계속 대기하는 경로를 고친다.
 3. 앱별 timeout·복구 코드를 추가하지 않는다. 동일 서버 Worker 전송 helper를 사용한다.
-4. 초기 invoke와 ctx reply에 기존 호출의 남은 기한을 적용한다. 부분 프레임을 남긴 전송 취소는 protocol을 폐기하고 child 종료를 요청한다. 커밋 전 실패는 DEADLINE_EXCEEDED이며 커밋 결과 불명과 구분한다.
+4. 초기 invoke와 ctx reply에 기존 호출의 남은 기한을 적용한다. 부분 프레임을 남긴 전송 취소는 protocol을 폐기하고 child 종료를 요청한다. 커밋 전 실패는 WIRE.DEADLINE_EXCEEDED이며 커밋 결과 불명과 구분한다.
 5. 실제 Node/Python에서 ctx 쓰기 뒤 CPU 루프·worker 재사용·큰 입력의 pipe 막힘을 재현하고 DB rollback·후속 재사용 거부를 확인한다.
 6. 기존 JSON 줄 ABI와 트랜잭션 실행을 재사용한다. 공개 WRITE API나 별도 전송 모델을 만들지 않는다.
 7. worker 입력 전송의 기한만 보완한다. DB 접속·트랜잭션 시작·rollback 정리 전체의 절대 시간 보장으로 확대하지 않는다.
-8. 최종 WRITE API·wire·worker 격리·조합은 OPEN이다. 실제 실패 테스트 뒤 수정하며 기존 늦은 ctx 거부와 COMMIT_UNKNOWN 분류를 보존한다.
+8. 최종 WRITE API·wire·worker 격리·조합은 OPEN이다. 실제 실패 테스트 뒤 수정하며 기존 늦은 ctx 거부와 WIRE.COMMIT_UNKNOWN 분류를 보존한다.
 
 
 ## 브라우저·read decoder·로컬 bundle 후속 검증
@@ -244,7 +244,7 @@ extension smoke는 source/package SDK × safe/decimal × Node/Python8개 조합�
 
 owned listener는 동시에64개 요청 연결을 소유하고 accept부터 헤더/본문 파싱을 하나의5초 기한으로 제한한다. drip 전송으로 기한을 갱신할 수 없다. 응답 전송도 별도5초이며 이때 이미 커밋됐을 수 있다. 파싱 기한을 DB 실행 취소나 rollback 증명으로 쓰지 않는다. 부분 헤더·미완성 body·drip·65번째 연결 종료·슬롯 반환·unknown route DB 선실행 거부를 실제 TCP로 확인했다.
 
-현재 prototype 생성 binding의 필수 readDescriptors는 공개 scalar·nullable·관계 선택만 포함한다. SDK는 query/descriptor snapshot을 사용해 정확한 선택 키와 값·wire·단일 단계 관계를 캐시 저장 전에 확인한다. 잘못된 Id/Bool/Enum/Int·누락/추가 필드·비객체 행은 PROTOCOL_ERROR이며 캐시에 넣지 않는다. 기존 관계의 빈/중복 선택은 집합 의미를 유지한다. read Time은 PostgreSQL 정상 출력 범위를 임의로 좁히지 않고 string/NUL을 확인한다. 확장 Time 입출력의 RFC3339 검사는 별도다. JS Int 안전 정수 밖의 값은 정확한 number로 보장하지 않는다. 기존 apply-only SDK 비교 실험은 같은 검증 보장을 제공하지 않으며 새 prototype binding을 재생성해야 한다.
+현재 prototype 생성 binding의 필수 readDescriptors는 공개 scalar·nullable·관계 선택만 포함한다. SDK는 query/descriptor snapshot을 사용해 정확한 선택 키와 값·wire·단일 단계 관계를 캐시 저장 전에 확인한다. 잘못된 Id/Bool/Enum/Int·누락/추가 필드·비객체 행은 CLIENT.PROTOCOL_ERROR이며 캐시에 넣지 않는다. 기존 관계의 빈/중복 선택은 집합 의미를 유지한다. read Time은 PostgreSQL 정상 출력 범위를 임의로 좁히지 않고 string/NUL을 확인한다. 확장 Time 입출력의 RFC3339 검사는 별도다. JS Int 안전 정수 밖의 값은 정확한 number로 보장하지 않는다. 기존 apply-only SDK 비교 실험은 같은 검증 보장을 제공하지 않으며 새 prototype binding을 재생성해야 한다.
 
 V2는 이미 V1/TS가 허용한 관계 대상의 공개 집계를 root 집계와 같은 helper로 실행한다. 실제 PG에서 대상 rowRead/fieldRead·sourceAccess·guard·비용·의존성과 두 wire를 검증했다. sourceAccess의 대상 this 입력은 현 V1이 허용하지 않으므로 그 사례까지 검증한 것은 아니다.
 
@@ -261,7 +261,7 @@ python3 tools/bundle_smoke.py --bundle <bundle-절대경로>
 
 `tools/build-bundle.py`는 현재 macOS host용 binary·SDK tarball·정본 예제/확장·명시 seed·SHA manifest를 fresh 경로에 포장한다. 출력 파일/디렉터리/symlink를 보존하며 실패 시 자신이 만든 경로만 정리한다. trusted worker bootstrap은 바이너리에 내장해 checkout의 절대 경로에 의존하지 않는다. Python3.11+의 safe-path로 cwd 표준 모듈 shadowing을 거부하며 Python sibling import 계약을 확대하지 않았다.
 
-`tools/bundle_smoke.py --bundle dist/local-macos-20261005-validated`는 공백이 있는 별도 경로로 복사하고 manifest/hash를 검사한 뒤 Cargo·checkout runtime asset 없이 실제6개 흐름을 실행했다. Event safe/decimal은 read/cache/apply/invalidation/replay·구 지문 첫 쓰기 거부·pending0과 DB를 확인했다. Recruitment safe/decimal × Node/Python은 실제 집계1·club11 EXTENSION_ERROR·중첩 read/no-cache·비공개 close NOT_EXPOSED·DB PUBLISHED 보존을 확인했다. 예제 권한을 넓히거나 가짜 응답으로 통과시키지 않았다. manifest의 로컬 입력 SHA는 외부 registry cache나 bit-for-bit 재현성을 보증하지 않는다. 제품 clean install·다른 OS/CPU·최종 패키지 정책은 남는다.
+`tools/bundle_smoke.py --bundle dist/local-macos-20261005-validated`는 공백이 있는 별도 경로로 복사하고 manifest/hash를 검사한 뒤 Cargo·checkout runtime asset 없이 실제6개 흐름을 실행했다. Event safe/decimal은 read/cache/apply/invalidation/replay·구 지문 첫 쓰기 거부·pending0과 DB를 확인했다. Recruitment safe/decimal × Node/Python은 실제 집계1·club11 WIRE.EXTENSION_ERROR·중첩 read/no-cache·비공개 close WIRE.NOT_EXPOSED·DB PUBLISHED 보존을 확인했다. 예제 권한을 넓히거나 가짜 응답으로 통과시키지 않았다. manifest의 로컬 입력 SHA는 외부 registry cache나 bit-for-bit 재현성을 보증하지 않는다. 제품 clean install·다른 OS/CPU·최종 패키지 정책은 남는다.
 
 이 후속 단위의 새 회귀는 V2/V3/V4/V5/V6/CLI 순서로20/5/29/21/29/25, 총129개 실패0이다. SDK 경계/설치 패키지25개와 bundle builder5개도 실패0이다. source/package 정의 변경 smoke4개·READ extension smoke8개·Chrome6개·재배치 bundle6개를 실제 실행했다. Origin/연결 상한/read decoder/미확정 복구/대상 집계 guard5종 고장 주입은 각각 행동 실패를 확인한 뒤 source bytes를 복원하고 회귀를 재실행했다. WRITE worker 입력 전송의 뒤이은 보완과 최신 전체 수는 아래 기록을 따른다.
 
@@ -295,7 +295,7 @@ python3 tools/bundle_smoke.py --bundle <bundle-절대경로>
 1. 원칙2·4·6·7에 따라 응답 손실 뒤 재시도에도 서버 확장을 중복 실행하지 않는다. 자체 commit을 분리한 기반 위에서 기존 transport 멱등 저장을 재사용한다.
 2. extension write와 공개 전이의 기존 의미를 사용한다. 이 단계는 Rust transport 실험 경계이며 새로운 frontend 조합이나 문법을 추가하지 않는다.
 3. 앱 정의·worker 구현·endpoint를 추가하지 않는다. 같은 principal/wire/key와 저장소를 표준 direct apply와 공유한다.
-4. canonical request/key·선언 입력·worker 설정을 검사하고 key lock 후 저장 결과를 확인한다. 확장 효과·출력 계약·멱등 결과를 한 transaction에 묶으며 실패/기한 초과에는 전체 drop/rollback한다. commit 결과 불명만 COMMIT_UNKNOWN이다.
+4. canonical request/key·선언 입력·worker 설정을 검사하고 key lock 후 저장 결과를 확인한다. 확장 효과·출력 계약·멱등 결과를 한 transaction에 묶으며 실패/기한 초과에는 전체 drop/rollback한다. commit 결과 불명만 WIRE.COMMIT_UNKNOWN이다.
 5. actual Node/Python·PG에서 두 wire의 최초 실행/재생·같은 key 다른 요청·worker 실행 횟수·실패 뒤 data/idem 부재를 확인한다.
 6. 기존 V4 caller-owned 실행·V6 principal/key/태그/저장소를 사용한다. 별도 idem DB나 worker 실행 엔진을 만들지 않는다.
 7. idempotency 기록/commit까지 남은 확장 기한을 적용한다. 공개 HTTP/typed SDK는 검증 뒤 별도 접점으로 연결하며 이번 내부 함수만으로 인증을 제공한다고 주장하지 않는다.
@@ -354,7 +354,7 @@ if (result.ok) console.log(result.output.id, result.output.count);
 
 기존 V4 실행 본체를 caller-owned transaction으로 공유했다. 확장 효과·출력 계약·멱등 결과를 같은 transaction에 묶으며 principal/wire/key와 저장소는 표준 apply와 같다. key lock 이후 저장 결과가 있으면 worker 없이 재생한다. HTTP /status도 같은 key/request의 결과를 반환한다. 내부 prepare 함수의 Err는 trusted Rust caller가 transaction 전체를 rollback/drop해야 한다. Legacy invoke_write는 기존 자동 commit 경로를 유지한다.
 
-실제 PG/Node/Python에서 같은 key의 동시 호출은 worker 한 번만 실행했다. 결과 INSERT 제약 오류·foreign actor ctx 실패·안전 정수 밖 출력은 효과와 멱등 기록 모두 롤백했다. 실제 deferred commit trigger로 응답 기한을 넘긴 경우 COMMIT_UNKNOWN을 반환했고, 뒤이은 같은 key 호출은 커밋된 결과를 worker 재실행 없이 재생했다. commit 전 기한 실패와 commit 결과 불명은 구분한다. DB 접속·트랜잭션 시작·key lock·rollback 정리까지 전체 절대 기한으로 감쌌다는 보장은 없다.
+실제 PG/Node/Python에서 같은 key의 동시 호출은 worker 한 번만 실행했다. 결과 INSERT 제약 오류·foreign actor ctx 실패·안전 정수 밖 출력은 효과와 멱등 기록 모두 롤백했다. 실제 deferred commit trigger로 응답 기한을 넘긴 경우 WIRE.COMMIT_UNKNOWN을 반환했고, 뒤이은 같은 key 호출은 커밋된 결과를 worker 재실행 없이 재생했다. commit 전 기한 실패와 commit 결과 불명은 구분한다. DB 접속·트랜잭션 시작·key lock·rollback 정리까지 전체 절대 기한으로 감쌌다는 보장은 없다.
 
 WRITE의 selected wire는 입력·ctx target·ctx reply·최종 출력에 같은 V2/V3 parser/encoder를 쓴다. decimal의 i64::MAX Id는 실제 worker/PG 왕복을 확인했다. Int는 현재 JS SDK가 정확히 표현할 안전 정수만 commit 준비 상태로 인정한다. SDK는 알려진 WRITE 이름·input snapshot·공개 output descriptor·지문을 검사한 뒤 pending을 확정하고 read cache를 무효화한다. 잘못된 성공 응답은 WriteUnsettled로 남긴다. `post`는 기존 고급 transport helper이며 임의 raw 호출에 facade의 모든 검증 보장을 적용한다는 뜻은 아니다.
 
@@ -364,7 +364,7 @@ actual WRITE smoke8개는 source/package × safe/decimal × Node/Python에서 re
 
 [WRITE 포함 로컬 bundle](dist/local-macos-20261005-write-integrated/README.md)은 CLI·offline SDK·두 정본 예제·Node/Python 구현·명시 seed와 source/output SHA manifest를 담는다. `bundle_smoke.py`는 공백이 있는 fresh 경로에서 bundled binary/SDK/worker만으로8개 흐름을 실행했다. Event4개는 실제 WRITE 응답 손실 복구·동일 key 재생·새 key count 0·foreign actor 거부를, Recruitment4개는 기존 집계/정책을 확인했다. 실행 중 Cargo나 checkout runtime asset은 쓰지 않는다. 다른 host·제품 clean install·운영 인증/파일/후손 격리는 검증 범위 밖이다.
 
-실제 CPU loop4개 후 다섯 번째 WRITE는 WORKER_BUSY이며 새 worker를 만들지 않았다. 기한 뒤 child 종료·효과/결과 rollback·슬롯 반환 뒤 정상 WRITE·서버 shutdown 중 child 종료와 row lock 반환을 Node/Python에서 확인했다. MVCC의 false만으로 rollback을 증명하지 않고 FOR UPDATE로 shutdown 뒤 row lock이 풀렸는지도 검사했다. 동시 슬롯 제한과 key lock을 각각 끈 음성 대조는 초과 worker 실행과 중복 실행으로 행동 FAILED였으며 원본 bytes를 복원했다.
+실제 CPU loop4개 후 다섯 번째 WRITE는 WIRE.WORKER_BUSY이며 새 worker를 만들지 않았다. 기한 뒤 child 종료·효과/결과 rollback·슬롯 반환 뒤 정상 WRITE·서버 shutdown 중 child 종료와 row lock 반환을 Node/Python에서 확인했다. MVCC의 false만으로 rollback을 증명하지 않고 FOR UPDATE로 shutdown 뒤 row lock이 풀렸는지도 검사했다. 동시 슬롯 제한과 key lock을 각각 끈 음성 대조는 초과 worker 실행과 중복 실행으로 행동 FAILED였으며 원본 bytes를 복원했다.
 
 회귀 중 bootstrap argv 테스트의 파일 존재/완료 race도 actual 부분 기록으로 발견했다. 순차 지연 기록에서 Node/Python 모두 결정적 RED였으며, 캡처 완료 marker를 기다리도록 test-owned helper만 보완한 뒤 기존4개가 GREEN이었다. production bootstrap이나 ABI를 완화하지 않았다.
 
@@ -389,7 +389,7 @@ WRITE 연결 단위의 회귀는 V2/V3/V4/V5/V6/CLI 순서로20/5/32/22/32/27, �
 1. 원칙4·6·7에 따라 DB가 TCP만 받아 응답하지 않아도 HTTP 요청·확장 슬롯을 무기한 붙잡지 않는다.
 2. 기존 read/apply/WRITE 표현과 실행 기한·커밋 의미를 유지한다.
 3. 앱별 DB timeout·복구 코드를 추가하지 않고 V6의 공통 연결 경계만 보완한다.
-4. 실행/transaction 이전 connect handshake를 별도5초로 제한해 DB_UNAVAILABLE을 반환한다. 이전 미확정 쓰기의 commit 여부는 이 오류로 확정하지 않는다.
+4. 실행/transaction 이전 connect handshake를 별도5초로 제한해 WIRE.DB_UNAVAILABLE을 반환한다. 이전 미확정 쓰기의 commit 여부는 이 오류로 확정하지 않는다.
 5. test-owned loopback 소켓이 접속만 받고 protocol 응답을 하지 않는 실제 반례에서 read/WRITE의 기한·socket EOF·동시4개 제한·슬롯 반환을 확인한다.
 6. 기존 V2 connector·V6 오류·SDK NOT_EXECUTED를 사용한다. 별도 DB adapter나 retry 엔진을 만들지 않는다.
 7. connect/auth handshake만 제한한다. 연결 뒤 SQL·transaction·clock query·전체 HTTP의 절대 deadline 보장으로 확대하지 않는다.
@@ -400,7 +400,7 @@ WRITE 연결 단위의 회귀는 V2/V3/V4/V5/V6/CLI 순서로20/5/32/22/32/27, �
 
 CLI startup의5초 상한과 달리 개별 HTTP의 DB connect/auth handshake는 무기한 대기할 수 있었다. test-owned loopback DB가 TCP만 받고 아무 PostgreSQL 응답도 보내지 않는 반례에서 read1개·WRITE4개가 계속 대기하고 socket/확장 슬롯도 반환되지 않는 actual RED를 확인했다.
 
-V6의 공통 connector 호출만 별도5초 timeout으로 감쌌다. 기한 뒤에는 DB_UNAVAILABLE이며 transaction/worker 실행 전이다. 같은 연결 대기 중 WRITE4개는 기존 상한을 차지하고5번째를 WORKER_BUSY로 거부한다. 기한 뒤 DB socket5개 EOF와 슬롯 반환을 확인했고, 이어진 WRITE도 BUSY 대신 DB_UNAVAILABLE로 반환하며 여섯 번째 socket이 닫혔다. SQL·clock query·transaction·commit·HTTP 전체에 이5초 상한을 적용했다는 보장은 없다. SDK는 첫 DB_UNAVAILABLE과 과거 응답 손실 뒤의 같은 오류를 이미 구분하므로 미확정 쓰기를 임의로 확정하지 않는다.
+V6의 공통 connector 호출만 별도5초 timeout으로 감쌌다. 기한 뒤에는 WIRE.DB_UNAVAILABLE이며 transaction/worker 실행 전이다. 같은 연결 대기 중 WRITE4개는 기존 상한을 차지하고5번째를 WIRE.WORKER_BUSY로 거부한다. 기한 뒤 DB socket5개 EOF와 슬롯 반환을 확인했고, 이어진 WRITE도 BUSY 대신 WIRE.DB_UNAVAILABLE로 반환하며 여섯 번째 socket이 닫혔다. SQL·clock query·transaction·commit·HTTP 전체에 이5초 상한을 적용했다는 보장은 없다. SDK는 첫 WIRE.DB_UNAVAILABLE과 과거 응답 손실 뒤의 같은 오류를 이미 구분하므로 미확정 쓰기를 임의로 확정하지 않는다.
 
 ```sh
 # spikes/spike-v6-transport/에서
@@ -420,7 +420,7 @@ python3 tools/bundle_smoke.py --bundle dist/local-macos-20261005-db-bounded
 2. 허용되는 Intent 범위는 그대로이고 실행 전 DB 장애가 무한 대기로 바뀌는 경계만 닫는다.
 3. 앱별 서버 코드는 늘지 않는다. 기존 V2 connector를 재사용하고 수명 소유 타입만 추가한다.
 4. 인증·계약·확장 권한 검사는 유지한다. 연결 성공을 SQL 응답 보장으로 신뢰하지 않는다. 연결 취소가 DB 롤백 완료를 뜻한다고 주장하지 않는다.
-5. Node/Python 공식 확장과 SDK의 동일 key 복구 흐름을 유지한다. 실행 전 조회 실패는 DB_UNAVAILABLE, 이미 불명확한 커밋은 COMMIT_UNKNOWN 의미를 보존한다.
+5. Node/Python 공식 확장과 SDK의 동일 key 복구 흐름을 유지한다. 실행 전 조회 실패는 WIRE.DB_UNAVAILABLE, 이미 불명확한 커밋은 WIRE.COMMIT_UNKNOWN 의미를 보존한다.
 6. legacy Client connector는 유지하고 HTTP·프로토타입 기동에서는 owned connector 하나를 사용한다. 새 호출 표현·worker 구현 방식을 만들지 않는다.
 7. task 소유권은 자원 누수 방지를 위한 내부 수단이다. 독립 엔진·SDK·planner를 복제하지 않는다.
 8. 최종 API·Id·ABI·WRITE 조합·운영 인증·OS 격리 선택은 OPEN 그대로 둔다. 실제 SQL 응답 정지 테스트를 먼저 실패시킨 뒤 구현한다.
@@ -455,7 +455,7 @@ python3 tools/bundle_smoke.py --bundle dist/local-macos-20261005-db-bounded
 1. 원칙 2·6·7의 실행 통제를 연결 후 전체 operation(SQL begin/설정/key lock/읽기·쓰기/결과 저장/commit)에도 적용한다.
 2. 허용한 Intent·선택형 타입은 유지한다. 이미 선언한 read/확장 deadline 및 V3 공통 쓰기 기한을 실제 transport transaction까지 적용한다.
 3. 앱별 timeout이나 재시도 저장소를 추가하지 않는다. 기존 planner deadline·WRITE_DEADLINE_MS·확장 선언을 재사용한다.
-4. commit 시작 전 취소는 DEADLINE_EXCEEDED, commit 시작 후는 COMMIT_UNKNOWN으로 구분한다. read-only status 조회 정지는 DB_UNAVAILABLE이다. 소켓 정리를 DB rollback/commit 결과 확정으로 사용하지 않는다.
+4. commit 시작 전 취소는 WIRE.DEADLINE_EXCEEDED, commit 시작 후는 WIRE.COMMIT_UNKNOWN으로 구분한다. read-only status 조회 정지는 WIRE.DB_UNAVAILABLE이다. 소켓 정리를 DB rollback/commit 결과 확정으로 사용하지 않는다.
 5. Node/Python worker는 같은 권한·기한·owned cleanup이며 SDK는 기존 같은 key/request 복구를 유지한다.
 6. 표현·최종 API·write 조합은 추가하지 않는다. 전송 transaction wrapper의 누락된 기한만 보완한다.
 7. operation timer는 driver·확장 슬롯 수명 통제 수단이다. HTTP 파싱·연결·clock·응답은 별도 stage 기한이다.
@@ -464,19 +464,19 @@ python3 tools/bundle_smoke.py --bundle dist/local-macos-20261005-db-bounded
 
 ## DB 수명과 구조 검증 결과
 
-실제 PostgreSQL 인증은 relay하고 그 뒤 SQL 응답만 멈추는 중계 테스트를 추가했다. clock 조회에서5개 요청이 무기한 대기하고 detached driver socket과 확장 슬롯이 남는 RED를 확인했다. HTTP/CLI가 공통 owned connector를 사용하고 clock 조회를 별도5초로 제한한 뒤 DB_UNAVAILABLE·eventual socket EOF·슬롯 반환·shutdown 후 EOF를 확인했다. driver abort는 취소 예약이며 stopped 시점의 EOF 완료나 DB rollback 완료를 뜻하지 않는다.
+실제 PostgreSQL 인증은 relay하고 그 뒤 SQL 응답만 멈추는 중계 테스트를 추가했다. clock 조회에서5개 요청이 무기한 대기하고 detached driver socket과 확장 슬롯이 남는 RED를 확인했다. HTTP/CLI가 공통 owned connector를 사용하고 clock 조회를 별도5초로 제한한 뒤 WIRE.DB_UNAVAILABLE·eventual socket EOF·슬롯 반환·shutdown 후 EOF를 확인했다. driver abort는 취소 예약이며 stopped 시점의 EOF 완료나 DB rollback 완료를 뜻하지 않는다.
 
-clock DataRow와 ReadyForQuery까지 전달한 뒤 다음 SQL을 멈춘7개 요청에서도 RED가 재현됐다. read1개·표준 apply1개·WRITE4개·status1개가 계속 대기했다. read는 planner deadline, 표준 apply는 기존 V3의2초와 commit margin, WRITE는 선언 deadline으로 BEGIN/설정/key lock/replay/효과/결과 저장/commit stage를 제한한다. status 조회는5초다. commit 시작 전은 DEADLINE_EXCEEDED, 시작 뒤에는 COMMIT_UNKNOWN이며 연결/clock/파싱/응답의 별도 기한을 HTTP 전체 절대 기한으로 합쳐 주장하지 않는다.
+clock DataRow와 ReadyForQuery까지 전달한 뒤 다음 SQL을 멈춘7개 요청에서도 RED가 재현됐다. read1개·표준 apply1개·WRITE4개·status1개가 계속 대기했다. read는 planner deadline, 표준 apply는 기존 V3의2초와 commit margin, WRITE는 선언 deadline으로 BEGIN/설정/key lock/replay/효과/결과 저장/commit stage를 제한한다. status 조회는5초다. commit 시작 전은 WIRE.DEADLINE_EXCEEDED, 시작 뒤에는 WIRE.COMMIT_UNKNOWN이며 연결/clock/파싱/응답의 별도 기한을 HTTP 전체 절대 기한으로 합쳐 주장하지 않는다.
 
-실제 COMMIT 성공 CommandComplete만 중계에서 숨긴4개 HTTP case(표준 apply/WRITE × 두 wire)는 COMMIT_UNKNOWN 뒤에도 효과와 idem 결과1개가 실제 남았다. status와 같은 key/request 재생으로 복구했고 worker는 WRITE당1회였다. 생성 binding·실제 Node SDK의 추가 두 wire case는 첫 read cache hit → commit 응답 정지 → 재시도의 BEGIN 응답 정지 → pending 유지와 cache 저장 보류 → 정상 replay → cache 재사용을 확인했다. SDK가 재시도 DEADLINE_EXCEEDED를 확정 실패로 지우는 actual RED를 수정했으며 CONFLICT도 같은 이전 미확정 보존 규칙을 따른다. 첫 시도의 기한/충돌 거부는 pending을 남기지 않는다. COMMIT_UNKNOWN 자체를 성공이나 rollback으로 임의 확정하지 않는다.
+실제 COMMIT 성공 CommandComplete만 중계에서 숨긴4개 HTTP case(표준 apply/WRITE × 두 wire)는 WIRE.COMMIT_UNKNOWN 뒤에도 효과와 idem 결과1개가 실제 남았다. status와 같은 key/request 재생으로 복구했고 worker는 WRITE당1회였다. 생성 binding·실제 Node SDK의 추가 두 wire case는 첫 read cache hit → commit 응답 정지 → 재시도의 BEGIN 응답 정지 → pending 유지와 cache 저장 보류 → 정상 replay → cache 재사용을 확인했다. SDK가 재시도 WIRE.DEADLINE_EXCEEDED를 확정 실패로 지우는 actual RED를 수정했으며 WIRE.CONFLICT도 같은 이전 미확정 보존 규칙을 따른다. 첫 시도의 기한/충돌 거부는 pending을 남기지 않는다. WIRE.COMMIT_UNKNOWN 자체를 성공이나 rollback으로 임의 확정하지 않는다.
 
-유효 세션으로 시작한 WRITE가 실행 중 만료되면 실제 commit과 idem 결과1개가 남아도 TOKEN_EXPIRED로 뒤집히는 추가 RED를 재현했다. 생성 SDK는 첫 실패로 오인해 pending을 비웠다. 성공한 WRITE/status 결과는 그대로 보고하도록 후처리를 좁혔다. Node/Python × safe/decimal4개 실제 지연 worker case는 성공 결과·pending 해소·실제 commit을 확인하고, 다음 READ는 만료 토큰으로 거부됐다. 최초 인증과 성공 READ/extension의 남은 세션 수명 검사는 유지한다. Sol이 이 경계를 별도 문맥으로 재검토했으며 최신 전체 V6 회귀에는 기존 세션/읽기 수명 시험도 포함했다.
+유효 세션으로 시작한 WRITE가 실행 중 만료되면 실제 commit과 idem 결과1개가 남아도 WIRE.TOKEN_EXPIRED로 뒤집히는 추가 RED를 재현했다. 생성 SDK는 첫 실패로 오인해 pending을 비웠다. 성공한 WRITE/status 결과는 그대로 보고하도록 후처리를 좁혔다. Node/Python × safe/decimal4개 실제 지연 worker case는 성공 결과·pending 해소·실제 commit을 확인하고, 다음 READ는 만료 토큰으로 거부됐다. 최초 인증과 성공 READ/extension의 남은 세션 수명 검사는 유지한다. Sol이 이 경계를 별도 문맥으로 재검토했으며 최신 전체 V6 회귀에는 기존 세션/읽기 수명 시험도 포함했다.
 
 CLI init/serve도 인증 뒤 첫 SQL 응답이 없으면 무기한 대기하던 RED를 확인했다. 연결5초 뒤 SQL stage를 별도5초로 제한한다. init timeout은 커밋 여부를 단정할 수 없어 INIT_UNSETTLED, read-only serve 검사는 DB_PREFLIGHT다. init timeout 시험은 첫 SQL 정지만 검증했으며 CLI init의 실제 commit 응답 손실을 검증했다고 주장하지 않는다.
 
 init은 marker까지 만든 같은 transaction에서 실제 catalog structure digest를 저장하고 serve는 read-only repeatable-read snapshot으로 대조한다. relation kind/inventory, live column/type/NULL/default/identity/collation, PK/FK/CHECK/EXCLUDE와 지연·검증 상태, standalone/partial/backing index 정의·valid/ready, sequence 정의·소유 관계, user trigger/rule/RLS policy, 관리 schema와 맞닿은 상속 edge를 정렬해 비교한다. 직접 OID·행·통계·sequence 현재값을 digest에 넣지 않는다. PostgreSQL [column catalog](https://www.postgresql.org/docs/17/catalog-pg-attribute.html), [index catalog](https://www.postgresql.org/docs/17/catalog-pg-index.html), [constraint catalog](https://www.postgresql.org/docs/17/catalog-pg-constraint.html), [sequence catalog](https://www.postgresql.org/docs/17/catalog-pg-sequence.html)의 의미를 확인하고 현재 PG17.11에서 실행했다.
 
-실제13개 drift(타입/NULL/default/identity/CHECK/FK/PK/PK 재정의/partial index/sequence 정의/RLS/동명 table/view)는 bind 전에 SCHEMA_MISMATCH다. 외부 schema의 상속 child row가 managed SELECT에 들어오는 추가 반례도 검출한다. row INSERT·sequence position 변경·동일 PK 재생성은 거부하지 않았다. 13개 구조 변경과 구형 marker 거부 시험에서 기존 member42를 보존했다. 외부 상속 시험은 child row1개가 managed SELECT에 포함되는 반례를 별도로 확인했다. 구형 marker-only schema는 SCHEMA_NOT_READY이며 자동 소급 등록·ALTER·DROP·migration을 하지 않는다. 이는 private marker 형식 변경이며 기존 schema로 serve할 수 없다는 호환 한계를 포함한다. 다른 PG 버전의 지문 호환, owner/ACL·DB role 권한 검사, DB 관리자의 marker 동시 변조, listening 뒤 외부 DDL 감시는 범위 밖이다. 정상 init은 상속을 만들지 않아 빈 edge baseline과 비교한다. 일반 상속/partition 시스템을 구현한 것은 아니다.
+실제13개 drift(타입/NULL/default/identity/CHECK/FK/PK/PK 재정의/partial index/sequence 정의/RLS/동명 table/view)는 bind 전에 WIRE.SCHEMA_MISMATCH다. 외부 schema의 상속 child row가 managed SELECT에 들어오는 추가 반례도 검출한다. row INSERT·sequence position 변경·동일 PK 재생성은 거부하지 않았다. 13개 구조 변경과 구형 marker 거부 시험에서 기존 member42를 보존했다. 외부 상속 시험은 child row1개가 managed SELECT에 포함되는 반례를 별도로 확인했다. 구형 marker-only schema는 SCHEMA_NOT_READY이며 자동 소급 등록·ALTER·DROP·migration을 하지 않는다. 이는 private marker 형식 변경이며 기존 schema로 serve할 수 없다는 호환 한계를 포함한다. 다른 PG 버전의 지문 호환, owner/ACL·DB role 권한 검사, DB 관리자의 marker 동시 변조, listening 뒤 외부 DDL 감시는 범위 밖이다. 정상 init은 상속을 만들지 않아 빈 edge baseline과 비교한다. 일반 상속/partition 시스템을 구현한 것은 아니다.
 
 ```sh
 # 저장소 루트에서
@@ -499,13 +499,13 @@ DB/SQL 후속 당시 V2/V3/V4/V5/V6/CLI 회귀는20/5/32/22/37/32, 총148개 실
 ### 후속 관문: 커밋한 WRITE와 세션 만료 응답
 
 1. 원칙 2·6·7에 따라 서버가 실행한 쓰기 결과를 정확히 전달한다. 인증 실패를 이미 커밋한 효과의 부재로 오인하지 않는다.
-2. Intent 범위와 서버 권한은 유지한다. 유효 세션으로 시작한 호출의 commit 이후 성공 결과를 TOKEN_EXPIRED로 뒤집는 경계를 확인한다.
+2. Intent 범위와 서버 권한은 유지한다. 유효 세션으로 시작한 호출의 commit 이후 성공 결과를 WIRE.TOKEN_EXPIRED로 뒤집는 경계를 확인한다.
 3. 앱별 인증·보상·pending 로직은 늘리지 않는다. 공통 transport의 결과 후처리만 보완한다.
 4. 요청 시작의 서명·principal·정책 검증은 필수로 유지한다. 이미 커밋한 결과는 보고하며 새 요청의 만료 토큰은 계속 DB 전에 거부한다. 읽기 캐시에는 기존 남은 세션 수명을 적용한다.
 5. Node/Python·두 Id 후보·생성 SDK에서 실제 지연 worker와 DB/idem 상태를 함께 확인한다.
 6. 로그인·refresh·최종 세션 정책이나 새 API를 만들지 않는다. 결과 보고와 다음 요청의 인증을 구분한다.
 7. postprocessing은 캐시 수명·결과 전달을 위한 수단이다. 미확정/커밋된 결과를 편의상 실패로 확정하지 않는다.
-8. 운영 인증·최종 expiry/reauth 정책은 OPEN이다. 실제 커밋한 WRITE가 TOKEN_EXPIRED로 응답되는 RED를 먼저 재현하며 미인증 요청 우회는 추가하지 않는다.
+8. 운영 인증·최종 expiry/reauth 정책은 OPEN이다. 실제 커밋한 WRITE가 WIRE.TOKEN_EXPIRED로 응답되는 RED를 먼저 재현하며 미인증 요청 우회는 추가하지 않는다.
 
 
 ### 후속 관문: 정의 숫자와 시간의 범위 진단
@@ -557,7 +557,7 @@ DB/SQL 후속 당시 V2/V3/V4/V5/V6/CLI 회귀는20/5/32/22/37/32, 총148개 실
 
 ## 정의 입력·캐시 완료·CLI 출력 후속 결과
 
-정본 app.aip의 rows에 i64 범위 밖 정수를 넣거나 duration을 millisecond로 변환할 때 u64가 넘으면 CLI가 panic하던 실제 RED를 확인했다. 공통 lexer가 각각 LEX_NUMBER_RANGE/LEX_DURATION_RANGE를 위치가 있는 진단으로 돌려준다. debug와 release의 경계값·정상 단위·후속 token 위치를 확인했으며 check/gen은 INVALID_DEFINITION과 종료1이다. 실패한 생성은 기존 binding과 임시 출력 상태를 보존한다. H 숫자 리터럴의 기존 자체 진단은 바꾸지 않았다.
+정본 app.aip의 rows에 i64 범위 밖 정수를 넣거나 duration을 millisecond로 변환할 때 u64가 넘으면 CLI가 panic하던 실제 RED를 확인했다. 공통 lexer가 각각 DEF.LEX_NUMBER_RANGE/DEF.LEX_DURATION_RANGE를 위치가 있는 진단으로 돌려준다. debug와 release의 경계값·정상 단위·후속 token 위치를 확인했으며 check/gen은 DEF.INVALID_DEFINITION과 종료1이다. 실패한 생성은 기존 binding과 임시 출력 상태를 보존한다. H 숫자 리터럴의 기존 자체 진단은 바꾸지 않았다.
 
 과도한 괄호·not·호출 인자 재귀와 H의 중첩 배열/객체는 기존 CLI의 stack overflow/abort 반례였다. 공통 expression parser와 H literal reader에 각각128의 private 활성 재귀 상한을 추가했다. expression 상한은 root expr와 중첩 expr/not 호출을 함께 세며, H root define object는 counter 밖이다. 정확히 괄호128개를 허용한다는 최종 문법 계약이 아니다. A/E/TS/Python H8개 fixture의 check/gen16개 동작은 정상 JSON 진단과 기존 binding 보존을 확인한다. 63단 괄호/not/호출 인자 및 H 리터럴도 확인했으며 기존5개 작성 형식의 동일 facts/digest 회귀를 유지했다. 이 시험은 정의의 전체 메모리·크기·시간 비용이나 모든 의미 그래프 재귀를 제한했다고 주장하지 않는다.
 

@@ -18,9 +18,9 @@ export type MyOrdersOutput = {
   }[];
 }[];
 export type MyOrdersError =
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.AUTH.FORBIDDEN' };
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.AUTH.FORBIDDEN' };
 
 export type OrderDetailInput = {
   orderId: string;
@@ -41,10 +41,10 @@ export type OrderDetailOutput = {
   }[];
 };
 export type OrderDetailError =
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.NOT_FOUND' };
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.NOT_FOUND' };
 
 export type OrdersByStatusInput = {
   status: OrderStatus;
@@ -57,9 +57,9 @@ export type OrdersByStatusOutput = {
   };
 }[];
 export type OrdersByStatusError =
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.AUTH.FORBIDDEN' };
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.AUTH.FORBIDDEN' };
 
 export type CreateOrderInput = {};
 export type CreateOrderOutput = {
@@ -69,14 +69,14 @@ export type CreateOrderOutput = {
   total: number;
 };
 export type CreateOrderError =
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.INVARIANT.VIOLATED'; reason: 'total_non_negative' }
-  | { code: 'AIP.INPUT.REFERENCE_NOT_FOUND' }
-  | { code: 'AIP.INPUT.IDEMPOTENCY_KEY_REQUIRED' }
-  | { code: 'AIP.IDEMPOTENCY.KEY_REUSED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' };
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.INVARIANT.VIOLATED'; reason: 'total_non_negative' }
+  | { code: 'POC.INPUT.REFERENCE_NOT_FOUND' }
+  | { code: 'POC.INPUT.IDEMPOTENCY_KEY_REQUIRED' }
+  | { code: 'POC.IDEMPOTENCY.KEY_REUSED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' };
 
 export type AddItemInput = {
   orderId: string;
@@ -90,16 +90,16 @@ export type AddItemOutput = {
   total: number;
 };
 export type AddItemError =
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'ORDER_NOT_FOUND' | 'PRODUCT_NOT_FOUND' }
-  | { code: 'AIP.PRECONDITION.FAILED'; reason: 'INVALID_QUANTITY' | 'ORDER_NOT_EDITABLE' | 'OUT_OF_STOCK' }
-  | { code: 'AIP.INVARIANT.VIOLATED'; reason: 'stock_non_negative' | 'price_positive' | 'total_non_negative' | 'quantity_positive' }
-  | { code: 'AIP.INPUT.REFERENCE_NOT_FOUND' }
-  | { code: 'AIP.INPUT.IDEMPOTENCY_KEY_REQUIRED' }
-  | { code: 'AIP.IDEMPOTENCY.KEY_REUSED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' };
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.NOT_FOUND'; reason: 'ORDER_NOT_FOUND' | 'PRODUCT_NOT_FOUND' }
+  | { code: 'POC.PRECONDITION.FAILED'; reason: 'INVALID_QUANTITY' | 'ORDER_NOT_EDITABLE' | 'OUT_OF_STOCK' }
+  | { code: 'POC.INVARIANT.VIOLATED'; reason: 'stock_non_negative' | 'price_positive' | 'total_non_negative' | 'quantity_positive' }
+  | { code: 'POC.INPUT.REFERENCE_NOT_FOUND' }
+  | { code: 'POC.INPUT.IDEMPOTENCY_KEY_REQUIRED' }
+  | { code: 'POC.IDEMPOTENCY.KEY_REUSED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' };
 
 export type PayOrderInput = {
   orderId: string;
@@ -111,15 +111,15 @@ export type PayOrderOutput = {
   total: number;
 };
 export type PayOrderError =
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'ORDER_NOT_FOUND' }
-  | { code: 'AIP.PRECONDITION.FAILED'; reason: 'ORDER_NOT_PAYABLE' | 'ORDER_EMPTY' }
-  | { code: 'AIP.INVARIANT.VIOLATED'; reason: 'total_non_negative' }
-  | { code: 'AIP.INPUT.IDEMPOTENCY_KEY_REQUIRED' }
-  | { code: 'AIP.IDEMPOTENCY.KEY_REUSED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' };
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.NOT_FOUND'; reason: 'ORDER_NOT_FOUND' }
+  | { code: 'POC.PRECONDITION.FAILED'; reason: 'ORDER_NOT_PAYABLE' | 'ORDER_EMPTY' }
+  | { code: 'POC.INVARIANT.VIOLATED'; reason: 'total_non_negative' }
+  | { code: 'POC.INPUT.IDEMPOTENCY_KEY_REQUIRED' }
+  | { code: 'POC.IDEMPOTENCY.KEY_REUSED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' };
 
 export type PrepareOrderInput = {
   orderId: string;
@@ -131,13 +131,13 @@ export type PrepareOrderOutput = {
   total: number;
 };
 export type PrepareOrderError =
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'ORDER_NOT_FOUND' }
-  | { code: 'AIP.PRECONDITION.FAILED'; reason: 'ORDER_NOT_PAID' }
-  | { code: 'AIP.INVARIANT.VIOLATED'; reason: 'total_non_negative' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' };
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.NOT_FOUND'; reason: 'ORDER_NOT_FOUND' }
+  | { code: 'POC.PRECONDITION.FAILED'; reason: 'ORDER_NOT_PAID' }
+  | { code: 'POC.INVARIANT.VIOLATED'; reason: 'total_non_negative' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' };
 
 export type CancelOrderInput = {
   orderId: string;
@@ -149,13 +149,13 @@ export type CancelOrderOutput = {
   total: number;
 };
 export type CancelOrderError =
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'ORDER_NOT_FOUND' }
-  | { code: 'AIP.PRECONDITION.FAILED'; reason: 'ORDER_NOT_CANCELLABLE' }
-  | { code: 'AIP.INVARIANT.VIOLATED'; reason: 'stock_non_negative' | 'price_positive' | 'total_non_negative' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' };
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.NOT_FOUND'; reason: 'ORDER_NOT_FOUND' }
+  | { code: 'POC.PRECONDITION.FAILED'; reason: 'ORDER_NOT_CANCELLABLE' }
+  | { code: 'POC.INVARIANT.VIOLATED'; reason: 'stock_non_negative' | 'price_positive' | 'total_non_negative' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' };
 
 export interface AipErrorBody {
   code: string;

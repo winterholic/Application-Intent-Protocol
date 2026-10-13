@@ -80,10 +80,10 @@ mod tests {
     #[test]
     fn histogram_buckets_are_cumulative_and_codes_stay_labels() {
         observe("metrics_test", Some(200), None, Duration::from_millis(3));
-        observe("metrics_test", Some(200), Some("BAD_VALUE"), Duration::from_millis(70));
+        observe("metrics_test", Some(200), Some("WIRE.BAD_VALUE"), Duration::from_millis(70));
         let text = render();
         assert!(text.contains("aip_requests_total{route=\"metrics_test\",status=\"200\",code=\"\"} 1\n"), "{text}");
-        assert!(text.contains("aip_requests_total{route=\"metrics_test\",status=\"200\",code=\"BAD_VALUE\"} 1\n"), "{text}");
+        assert!(text.contains("aip_requests_total{route=\"metrics_test\",status=\"200\",code=\"WIRE.BAD_VALUE\"} 1\n"), "{text}");
         assert!(text.contains("aip_request_duration_seconds_bucket{route=\"metrics_test\",le=\"0.005\"} 1\n"), "{text}");
         assert!(text.contains("aip_request_duration_seconds_bucket{route=\"metrics_test\",le=\"0.1\"} 2\n"), "{text}");
         assert!(text.contains("aip_request_duration_seconds_count{route=\"metrics_test\"} 2\n"), "{text}");

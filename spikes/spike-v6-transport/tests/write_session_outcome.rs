@@ -41,7 +41,7 @@ const client=connect(process.env.AIP_SESSION_TEST_URL,process.env.AIP_SESSION_TE
 const result=await client.writeExtension('Event.run',{{id:{id}}},{{key:'late-session',retries:0}});
 console.log(JSON.stringify({{result,pending:client.pending()}}));
 assert.equal(result.ok,true,'a committed write must report its successful outcome');assert.deepEqual(result.output,{{id:{id},count:1}});assert.deepEqual(client.pending(),[]);
-await assert.rejects(client.read({{read:'Event',select:['id']}}),error=>error.code==='TOKEN_EXPIRED');
+await assert.rejects(client.read({{read:'Event',select:['id']}}),error=>error.code==='WIRE.TOKEN_EXPIRED');
 "#)).unwrap();
             let token=server.keys.issue(1,2);
             let mut node=tokio::process::Command::new("node");node.args(["--experimental-strip-types",path.join("call.mts").to_str().unwrap()]).env("AIP_SESSION_TEST_URL",format!("http://{}",server.address)).env("AIP_SESSION_TEST_TOKEN",&token).kill_on_drop(true);

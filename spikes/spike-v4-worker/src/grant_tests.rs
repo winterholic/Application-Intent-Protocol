@@ -79,9 +79,9 @@ async fn completed_grants_are_released_and_retired_tokens_are_bounded() {
         }
 
         for (label, token, expected) in [
-            ("old evicted", first_token.as_deref().unwrap_or(""), "TOKEN_INVALID"),
-            ("latest retired", last_token.as_deref().unwrap_or(""), "TOKEN_EXPIRED"),
-            ("unknown", "made-up-token", "TOKEN_INVALID"),
+            ("old evicted", first_token.as_deref().unwrap_or(""), "WIRE.TOKEN_INVALID"),
+            ("latest retired", last_token.as_deref().unwrap_or(""), "WIRE.TOKEN_EXPIRED"),
+            ("unknown", "made-up-token", "WIRE.TOKEN_INVALID"),
         ] {
             let result = serve_call(&mut db, &mut worker, &facts, &json!({ "type": "call", "call": 1, "token": token })).await;
             let actual = token_error(result);
@@ -111,7 +111,7 @@ async fn broken_worker_stdin_does_not_retain_a_grant() {
 
         let result = invoke(&mut db, &mut worker, &facts, "Recruitment.stats", &json!({ "clubId": "10", "value": "send-failure" }), &caller()).await;
         let actual = token_error(result);
-        if actual != Some("WORKER_FAILED") {
+        if actual != Some("WIRE.WORKER_FAILED") {
             failures.push(format!("{lang:?} broken stdin result: expected WORKER_FAILED, got {actual:?}"));
         }
         if !worker.tokens.is_empty() {
@@ -168,7 +168,7 @@ async fn externally_cancelled_grant_is_retired_before_the_next_valid_call() {
             failures.push(format!("{lang:?} follow-up did not release both grants: {resumed:?}"));
         }
         let old = serve_call(&mut db, &mut worker, &facts, &json!({"type":"call", "call":1,"token":old_token})).await;
-        if token_error(old) != Some("TOKEN_EXPIRED") {
+        if token_error(old) != Some("WIRE.TOKEN_EXPIRED") {
             failures.push(format!("{lang:?} cancelled grant was not retired"));
         }
         worker.stop().await;
@@ -252,7 +252,7 @@ async fn explicitly_unisolated_busy_workers_are_reaped_by_stop_and_drop() {
             };
             let result =
                 invoke_operation(&mut worker, &facts, "spin", &json!({"value":"busy"}), &caller(), spike_v2_read::id_wire::IdWire::Legacy).await;
-            if result.as_ref().err().map(|error| error.code) != Some("DEADLINE_EXCEEDED") || !wait_for(&marker).await {
+            if result.as_ref().err().map(|error| error.code) != Some("WIRE.DEADLINE_EXCEEDED") || !wait_for(&marker).await {
                 failures.push(format!("{lang:?} {cleanup}: expected a started busy extension and deadline, got {result:?}"));
             }
             if worker.tokens.len() != 0 || worker.retired_tokens.len() != 1 {

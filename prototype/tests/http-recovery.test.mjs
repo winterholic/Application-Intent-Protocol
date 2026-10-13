@@ -7,7 +7,7 @@ const binding = {fingerprint: 'a'.repeat(64), idWire: 'decimal-string-v13'};
 const request = {apply: 'Event.check', target: {ids: ['11']}};
 const response = value => new Response(JSON.stringify(value));
 
-for (const code of ['ORIGIN_NOT_ALLOWED', 'REQUEST_TIMEOUT', 'DB_UNAVAILABLE', 'WORKER_BUSY', 'DEADLINE_EXCEEDED', 'CONFLICT']) {
+for (const code of ['WIRE.ORIGIN_NOT_ALLOWED', 'WIRE.REQUEST_TIMEOUT', 'WIRE.DB_UNAVAILABLE', 'WIRE.WORKER_BUSY', 'WIRE.DEADLINE_EXCEEDED', 'WIRE.CONFLICT']) {
   test(`${code} on retry cannot settle a previously lost write response`, async () => {
     let attempts = 0;
     const sent = [];

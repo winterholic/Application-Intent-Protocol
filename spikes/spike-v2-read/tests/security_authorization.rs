@@ -58,5 +58,5 @@ fn single_traverse_rejects_repeated_select_fields() {
     let request = json!({"read":"Task","select":["id",{"team":{"select":ids}}]});
     let caller = Caller { actor_id: Some(1), now: "2026-10-13T00:00:00Z".into() };
     let error = plan_read(&facts, &request, &caller).err().expect("repeated traverse select must be rejected");
-    assert_eq!(error.code, "DUPLICATE");
+    assert_eq!(error.code, "WIRE.DUPLICATE");
 }

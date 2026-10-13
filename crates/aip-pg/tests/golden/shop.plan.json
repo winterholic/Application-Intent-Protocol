@@ -14,19 +14,19 @@
     },
     "constraint_errors": {
       "_aip_approval_pending": {
-        "code": "AIP.CONFLICT.UNIQUE",
+        "code": "POC.CONFLICT.UNIQUE",
         "reason": "APPROVAL_ALREADY_PENDING"
       },
       "_aip_approval_vote_once": {
-        "code": "AIP.CONFLICT.UNIQUE",
+        "code": "POC.CONFLICT.UNIQUE",
         "reason": "ALREADY_VOTED"
       },
       "customer__u3": {
-        "code": "AIP.CONFLICT.UNIQUE",
+        "code": "POC.CONFLICT.UNIQUE",
         "reason": "EMAIL_TAKEN"
       },
       "product__out_of_stock": {
-        "code": "AIP.INVARIANT.VIOLATED",
+        "code": "POC.INVARIANT.VIOLATED",
         "reason": "OUT_OF_STOCK"
       }
     },
@@ -330,11 +330,11 @@
         "cache_seconds": null,
         "errors": [
           {
-            "code": "AIP.AUTH.FORBIDDEN",
+            "code": "POC.AUTH.FORBIDDEN",
             "reason": null
           },
           {
-            "code": "AIP.INPUT.INVALID",
+            "code": "POC.INPUT.INVALID",
             "reason": null
           }
         ],
@@ -418,15 +418,15 @@
         "cache_seconds": null,
         "errors": [
           {
-            "code": "AIP.AUTH.FORBIDDEN",
+            "code": "POC.AUTH.FORBIDDEN",
             "reason": null
           },
           {
-            "code": "AIP.INPUT.INVALID",
+            "code": "POC.INPUT.INVALID",
             "reason": null
           },
           {
-            "code": "AIP.NOT_FOUND",
+            "code": "POC.NOT_FOUND",
             "reason": "ORDER_NOT_FOUND"
           }
         ],
@@ -525,31 +525,31 @@
         "emits": [],
         "errors": [
           {
-            "code": "AIP.AUTH.FORBIDDEN",
+            "code": "POC.AUTH.FORBIDDEN",
             "reason": null
           },
           {
-            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "code": "POC.AUTH.UNAUTHENTICATED",
             "reason": null
           },
           {
-            "code": "AIP.CONCURRENCY.CONFLICT",
+            "code": "POC.CONCURRENCY.CONFLICT",
             "reason": null
           },
           {
-            "code": "AIP.IDEMPOTENCY.KEY_REUSED",
+            "code": "POC.IDEMPOTENCY.KEY_REUSED",
             "reason": null
           },
           {
-            "code": "AIP.INPUT.INVALID",
+            "code": "POC.INPUT.INVALID",
             "reason": null
           },
           {
-            "code": "AIP.INVARIANT.VIOLATED",
+            "code": "POC.INVARIANT.VIOLATED",
             "reason": "OUT_OF_STOCK"
           },
           {
-            "code": "AIP.NOT_FOUND",
+            "code": "POC.NOT_FOUND",
             "reason": "PRODUCT_NOT_FOUND"
           }
         ],
@@ -666,27 +666,27 @@
         "emits": [],
         "errors": [
           {
-            "code": "AIP.AUTH.FORBIDDEN",
+            "code": "POC.AUTH.FORBIDDEN",
             "reason": null
           },
           {
-            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "code": "POC.AUTH.UNAUTHENTICATED",
             "reason": null
           },
           {
-            "code": "AIP.CONCURRENCY.CONFLICT",
+            "code": "POC.CONCURRENCY.CONFLICT",
             "reason": null
           },
           {
-            "code": "AIP.INPUT.INVALID",
+            "code": "POC.INPUT.INVALID",
             "reason": null
           },
           {
-            "code": "AIP.INVARIANT.VIOLATED",
+            "code": "POC.INVARIANT.VIOLATED",
             "reason": "OUT_OF_STOCK"
           },
           {
-            "code": "AIP.NOT_FOUND",
+            "code": "POC.NOT_FOUND",
             "reason": "PRODUCT_NOT_FOUND"
           }
         ],
@@ -767,31 +767,31 @@
         "emits": [],
         "errors": [
           {
-            "code": "AIP.AUTH.FORBIDDEN",
+            "code": "POC.AUTH.FORBIDDEN",
             "reason": null
           },
           {
-            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "code": "POC.AUTH.UNAUTHENTICATED",
             "reason": null
           },
           {
-            "code": "AIP.CONCURRENCY.CONFLICT",
+            "code": "POC.CONCURRENCY.CONFLICT",
             "reason": null
           },
           {
-            "code": "AIP.CONFLICT.STALE_VERSION",
+            "code": "POC.CONFLICT.STALE_VERSION",
             "reason": "PRODUCT_VERSION_STALE"
           },
           {
-            "code": "AIP.INPUT.INVALID",
+            "code": "POC.INPUT.INVALID",
             "reason": null
           },
           {
-            "code": "AIP.INVARIANT.VIOLATED",
+            "code": "POC.INVARIANT.VIOLATED",
             "reason": "OUT_OF_STOCK"
           },
           {
-            "code": "AIP.NOT_FOUND",
+            "code": "POC.NOT_FOUND",
             "reason": "PRODUCT_NOT_FOUND"
           }
         ],

@@ -87,7 +87,11 @@ cargo test -q -p aip-cli --features poc-runtime   # PoC runtime e2e(run/migrate 
 | `docs/design/12-design-reset.md` | 설계 재개 계획 |
 | `spec/grammar.md` | 현재 PoC `.aip` 문법 (EBNF). 최종 작성 형식 여부는 미정 |
 | `spec/definition-syntax.md` | 제품 경로(`aip service`)가 읽는 정의 언어의 작성 카드. PoC `.aip`와는 다른 언어이며 확장자만 같다. 블록·키·가정하지 않는 기본값·작성 예. 생성 문서 |
-| `spec/definition-diagnostics.md` | 제품 정의 진단 코드와 고치는 방법(`aip explain-code`). 생성 문서 |
-| `spec/diagnostics.md` | PoC 진단·오류 코드. 생성 문서 |
+| `spec/definition-diagnostics.md` | 제품 정의 진단 코드(`DEF.*`)와 고치는 방법(`aip explain-code`). 생성 문서 |
+| `spec/wire-errors.md` | 제품 HTTP API 오류 코드(`WIRE.*`)와 재시도 지침. 생성 문서 |
+| `spec/client-errors.md` | SDK(TypeScript·Python)가 스스로 올리는 오류 코드(`CLIENT.*`). 생성 문서 |
+| `spec/diagnostics.md` | PoC 진단·오류 코드(`POC.*`). 생성 문서 |
+
+오류 코드는 모두 `영역.이름` 형식이다(`DEF`, `WIRE`, `CLIENT`, `POC`). `aip explain-code <코드>`와 `aip diagnostics [--area ...]`가 네 영역을 함께 조회한다.
 
 `spikes/spike-0-ts/`는 첫 iteration의 TypeScript 스파이크다. 설계 판단의 근거로 보존하며 본 구현의 출발점은 아니다.

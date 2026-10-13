@@ -54,7 +54,7 @@ async fn worker_write_pins_its_transaction_to_read_committed() {
     let rejected = invoke_write(&mut db, &mut worker, &facts, "Event.run", &json!({"id":"13"}), &caller).await;
     let state: Vec<(i64, bool)> =
         db.query(&format!("SELECT id, checked FROM {schema}.event ORDER BY id"), &[]).await.unwrap().iter().map(|r| (r.get(0), r.get(1))).collect();
-    assert_eq!(rejected.unwrap_err().code, "INVARIANT_VIOLATED", "state={state:?}");
+    assert_eq!(rejected.unwrap_err().code, "WIRE.INVARIANT_VIOLATED", "state={state:?}");
     let level: String = db.query_one(&format!("SELECT level FROM {schema}.isolation_seen"), &[]).await.unwrap().get(0);
     assert_eq!(level, "read committed");
     worker.stop().await;

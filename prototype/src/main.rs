@@ -83,7 +83,7 @@ fn load(path: &Path, dev_checks: bool) -> Result<Checked, Value> {
     let form = path.to_str().and_then(spike_v1_fixture::form_of).ok_or_else(|| error("UNSUPPORTED_FORM", "지원하는 AIP 작성 형식이 아님"))?;
     let source = fs::read_to_string(path).map_err(|_| error("SOURCE_IO", "정의 파일을 읽을 수 없음"))?;
     spike_v11_dev_checks::load_checked(&source,form,&json!({"devChecks":dev_checks})).map_err(|diagnostics| {
-        json!({"ok":false,"code":"INVALID_DEFINITION","diagnostics":diagnostics.iter().map(|d|json!({"code":d.code,"msg":d.msg,"line":d.span.line,"col":d.span.col})).collect::<Vec<_>>()})
+        json!({"ok":false,"code":"DEF.INVALID_DEFINITION","diagnostics":diagnostics.iter().map(|d|json!({"code":d.code,"msg":d.msg,"line":d.span.line,"col":d.span.col})).collect::<Vec<_>>()})
     })
 }
 

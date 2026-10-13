@@ -222,10 +222,10 @@ async fn outbound_webhooks_end_to_end() {
     let listed = ok(e, "ProjectEndpoints", Some(&w.alice), json!({"project": w.pa1}), None).await;
     assert!(listed.to_string().contains(&e1.id) && !listed.to_string().contains("whsec_"), "a later read does not show it: {listed}");
     let again = fails(e, "AddEndpoint", Some(&w.alice), json!({"project": w.pa1, "url": format!("{base}/e1")}), None).await;
-    assert_eq!(again.code, "AIP.CONFLICT.UNIQUE", "registering twice does not hand out a second copy: {again}");
+    assert_eq!(again.code, "POC.CONFLICT.UNIQUE", "registering twice does not hand out a second copy: {again}");
     for bad in ["ftp://example.com/hook", "javascript:alert(1)", "http://user:pw@example.com/"] {
         let err = fails(e, "AddEndpoint", Some(&w.alice), json!({"project": w.pa1, "url": bad}), None).await;
-        assert_eq!(err.code, "AIP.INPUT.INVALID", "{bad}: {err}");
+        assert_eq!(err.code, "POC.INPUT.INVALID", "{bad}: {err}");
     }
     let raw = e.pool.get().await.expect("conn");
     for bad in ["ftp://example.com/hook", "file:///etc/passwd", "http://user@example.com/"] {

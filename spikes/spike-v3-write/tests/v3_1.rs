@@ -86,50 +86,54 @@ async fn v3_1_standard_transition_write() {
     expect!("내 알림 1,2 읽음", simplify(apply(&mut db, &f, &alarm(ids(&[1, 2])), &who(Some(1)), &k).await), ok(&[1, 2], &[]));
     expect!("다시 읽음은 unchanged", simplify(apply(&mut db, &f, &alarm(ids(&[1, 2, 3])), &who(Some(1)), &k).await), ok(&[], &[1, 2, 3]));
     // 남의 알림이 섞이면 전체 실패, 내 알림도 안 바뀜
-    expect!("남의 알림 섞임", simplify(apply(&mut db, &f, &alarm(ids(&[5, 4])), &who(Some(1)), &k).await), Err("MISSING_TARGET"));
+    expect!("남의 알림 섞임", simplify(apply(&mut db, &f, &alarm(ids(&[5, 4])), &who(Some(1)), &k).await), Err("WIRE.MISSING_TARGET"));
     expect!("실패 뒤 5 그대로", unchecked(&db, 5).await, true);
-    expect!("없는 id", simplify(apply(&mut db, &f, &alarm(ids(&[5, 999])), &who(Some(1)), &k).await), Err("MISSING_TARGET"));
-    expect!("익명", simplify(apply(&mut db, &f, &alarm(ids(&[4])), &who(None), &k).await), Err("MISSING_TARGET"));
-    expect!("중복 id", simplify(apply(&mut db, &f, &alarm(ids(&[5, 5])), &who(Some(1)), &k).await), Err("DUPLICATE_TARGET"));
-    expect!("id bulk 초과", simplify(apply(&mut db, &f, &alarm(ids(&[5, 6, 7, 8])), &who(Some(1)), &k).await), Err("BULK_LIMIT"));
+    expect!("없는 id", simplify(apply(&mut db, &f, &alarm(ids(&[5, 999])), &who(Some(1)), &k).await), Err("WIRE.MISSING_TARGET"));
+    expect!("익명", simplify(apply(&mut db, &f, &alarm(ids(&[4])), &who(None), &k).await), Err("WIRE.MISSING_TARGET"));
+    expect!("중복 id", simplify(apply(&mut db, &f, &alarm(ids(&[5, 5])), &who(Some(1)), &k).await), Err("WIRE.DUPLICATE_TARGET"));
+    expect!("id bulk 초과", simplify(apply(&mut db, &f, &alarm(ids(&[5, 6, 7, 8])), &who(Some(1)), &k).await), Err("WIRE.BULK_LIMIT"));
     // 상한을 넘는 큰 배열은 중복 검사 전에 거부한다(전부 같은 id여도 BULK_LIMIT).
     let huge: Vec<i64> = (1..=120_000).collect();
     let started = std::time::Instant::now();
-    expect!("큰 ids 배열은 상한 먼저", simplify(apply(&mut db, &f, &alarm(ids(&huge)), &who(Some(1)), &k).await), Err("BULK_LIMIT"));
+    expect!("큰 ids 배열은 상한 먼저", simplify(apply(&mut db, &f, &alarm(ids(&huge)), &who(Some(1)), &k).await), Err("WIRE.BULK_LIMIT"));
     assert!(started.elapsed() < std::time::Duration::from_secs(2), "큰 ids 거부가 {:?} 걸림", started.elapsed());
     let twice = json!({ "where": [{ "field": "isChecked", "op": "eq", "value": false }, { "field": "isChecked", "op": "eq", "value": false }] });
-    expect!("where 같은 조건 중복", simplify(apply(&mut db, &f, &alarm(twice), &who(Some(1)), &k).await), Err("DUPLICATE_FILTER"));
+    expect!("where 같은 조건 중복", simplify(apply(&mut db, &f, &alarm(twice), &who(Some(1)), &k).await), Err("WIRE.DUPLICATE_FILTER"));
     // where 대상: 내 미읽음 전부. 상한을 넘으면 아무것도 안 바뀜
     let unread = json!({ "where": [{ "field": "isChecked", "op": "eq", "value": false }] });
-    expect!("where 상한 초과", simplify(apply(&mut db, &f, &alarm(unread.clone()), &who(Some(1)), &k).await), Err("BULK_LIMIT"));
+    expect!("where 상한 초과", simplify(apply(&mut db, &f, &alarm(unread.clone()), &who(Some(1)), &k).await), Err("WIRE.BULK_LIMIT"));
     expect!("상한 초과 뒤 5 그대로", unchecked(&db, 5).await, true);
     expect!("8, 9 개별 읽음", simplify(apply(&mut db, &f, &alarm(ids(&[8, 9])), &who(Some(1)), &k).await), ok(&[8, 9], &[]));
     expect!("where 미읽음 3개", simplify(apply(&mut db, &f, &alarm(unread.clone()), &who(Some(1)), &k).await), ok(&[5, 6, 7], &[]));
     expect!("남의 알림은 where 대상 밖", unchecked(&db, 4).await, true);
     expect!("회원 2 where", simplify(apply(&mut db, &f, &alarm(unread.clone()), &who(Some(2)), &k).await), ok(&[4], &[]));
     let by_member = json!({ "where": [{ "field": "member", "op": "eq", "value": "1" }] });
-    expect!("허용 안 된 where 필드", simplify(apply(&mut db, &f, &alarm(by_member), &who(Some(2)), &k).await), Err("FILTER_NOT_ALLOWED"));
+    expect!("허용 안 된 where 필드", simplify(apply(&mut db, &f, &alarm(by_member), &who(Some(2)), &k).await), Err("WIRE.FILTER_NOT_ALLOWED"));
     // 계약 밖 요청
     expect!(
         "모르는 키",
         simplify(apply(&mut db, &f, &json!({ "apply": "MemberAlarm.read", "target": ids(&[1]), "force": true }), &who(Some(1)), &k).await),
-        Err("UNKNOWN_KEY")
+        Err("WIRE.UNKNOWN_KEY")
     );
     expect!(
         "공개 안 된 동작",
         simplify(apply(&mut db, &f, &json!({ "apply": "Apply.approve", "target": ids(&[1]) }), &who(Some(1)), &k).await),
-        Err("NOT_EXPOSED")
+        Err("WIRE.NOT_EXPOSED")
     );
 
     // 모집 마감: 읽을 수 있어도 쓸 권한은 별개
     let close = |t: Value| json!({ "apply": "Recruitment.close", "target": t });
-    expect!("학생이 마감", simplify(apply(&mut db, &f, &close(ids(&[100])), &who(Some(2)), &k).await), Err("FORBIDDEN"));
-    expect!("관리자가 타 학교 모집", simplify(apply(&mut db, &f, &close(ids(&[101])), &who(Some(1)), &k).await), Err("MISSING_TARGET"));
-    expect!("없는 모집", simplify(apply(&mut db, &f, &close(ids(&[999])), &who(Some(1)), &k).await), Err("MISSING_TARGET"));
-    expect!("where 마감은 계약 밖", simplify(apply(&mut db, &f, &close(json!({ "where": [] })), &who(Some(1)), &k).await), Err("TARGET_NOT_ALLOWED"));
+    expect!("학생이 마감", simplify(apply(&mut db, &f, &close(ids(&[100])), &who(Some(2)), &k).await), Err("WIRE.FORBIDDEN"));
+    expect!("관리자가 타 학교 모집", simplify(apply(&mut db, &f, &close(ids(&[101])), &who(Some(1)), &k).await), Err("WIRE.MISSING_TARGET"));
+    expect!("없는 모집", simplify(apply(&mut db, &f, &close(ids(&[999])), &who(Some(1)), &k).await), Err("WIRE.MISSING_TARGET"));
+    expect!(
+        "where 마감은 계약 밖",
+        simplify(apply(&mut db, &f, &close(json!({ "where": [] })), &who(Some(1)), &k).await),
+        Err("WIRE.TARGET_NOT_ALLOWED")
+    );
     expect!("관리자 마감", simplify(apply(&mut db, &f, &close(ids(&[100])), &who(Some(1)), &k).await), ok(&[100], &[]));
     // 마감된 모집은 행 정책(active)에서 빠져 관리자에게도 안 보인다. unchanged가 아니라 MISSING_TARGET이 된다.
-    expect!("마감 재시도", simplify(apply(&mut db, &f, &close(ids(&[100])), &who(Some(1)), &k).await), Err("MISSING_TARGET"));
+    expect!("마감 재시도", simplify(apply(&mut db, &f, &close(ids(&[100])), &who(Some(1)), &k).await), Err("WIRE.MISSING_TARGET"));
 
     // 동시 실행: 잠금이 있으면 두 번째는 기다렸다가 unchanged
     db.batch_execute(&format!("UPDATE {}.member_alarm SET is_checked = false WHERE id = 9", sqlgen::schema())).await.unwrap();
@@ -152,7 +156,7 @@ async fn v3_1_standard_transition_write() {
     .await;
     let outcomes = [&r1, &r2];
     expect!("무잠금: 한쪽만 changed", outcomes.iter().filter(|r| ***r == ok(&[9], &[])).count(), 1);
-    expect!("무잠금: 다른 쪽 CONFLICT", outcomes.iter().filter(|r| ***r == Err("CONFLICT")).count(), 1);
+    expect!("무잠금: 다른 쪽 CONFLICT", outcomes.iter().filter(|r| ***r == Err("WIRE.CONFLICT")).count(), 1);
 
     db.batch_execute(&format!("DROP SCHEMA IF EXISTS {} CASCADE", sqlgen::schema())).await.ok();
     assert!(fails.is_empty(), "\n{}", fails.join("\n"));

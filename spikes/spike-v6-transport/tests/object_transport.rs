@@ -292,7 +292,7 @@ async fn actual_http_object_routes_stream_large_bytes_and_enforce_owner_contract
     assert_eq!(body, b"asset");
     let denied_origin = raw_request_with_origin(server.address, "GET", "/assets/hello.txt", "", None, 0, &[], Some("https://attacker.example")).await;
     let (_, headers, _) = response_parts(&denied_origin);
-    assert_eq!(json_body(&denied_origin)["code"], "ORIGIN_NOT_ALLOWED");
+    assert_eq!(json_body(&denied_origin)["code"], "WIRE.ORIGIN_NOT_ALLOWED");
     assert!(!headers.iter().any(|(name, _)| name == "access-control-allow-origin"));
 
     let size = 2 * 1024 * 1024 + 31;
@@ -313,7 +313,7 @@ async fn actual_http_object_routes_stream_large_bytes_and_enforce_owner_contract
     let disallowed_preflight = preflight(server.address, &format!("/objects/{object_id}"), &origin, "POST", "authorization,x-aip-contract").await;
     let (status, headers, body) = response_parts(&disallowed_preflight);
     assert_eq!(status, 200);
-    assert_eq!(serde_json::from_slice::<Value>(body).unwrap()["code"], "BAD_REQUEST");
+    assert_eq!(serde_json::from_slice::<Value>(body).unwrap()["code"], "WIRE.BAD_REQUEST");
     assert!(!headers.iter().any(|(name, _)| name == "access-control-allow-methods"));
 
     let downloaded =
@@ -367,21 +367,21 @@ async fn actual_http_object_routes_stream_large_bytes_and_enforce_owner_contract
 
     let no_contract = raw_request_with_origin(server.address, "POST", "/objects/put", "owner", None, 10, &[], Some(&origin)).await;
     let (_, headers, _) = response_parts(&no_contract);
-    assert_eq!(json_body(&no_contract)["code"], "CONTRACT_MISMATCH");
+    assert_eq!(json_body(&no_contract)["code"], "WIRE.CONTRACT_MISMATCH");
     assert!(headers.contains(&("access-control-allow-origin".into(), origin.clone())));
     assert!(headers.contains(&("cache-control".into(), "private, no-store".into())));
     assert!(headers.contains(&("x-content-type-options".into(), "nosniff".into())));
 
     let control = json_control_request(server.address, "/objects/sign", "owner", &fingerprint, &origin).await;
     let (_, headers, _) = response_parts(&control);
-    assert_eq!(json_body(&control)["code"], "NOT_AVAILABLE");
+    assert_eq!(json_body(&control)["code"], "WIRE.NOT_AVAILABLE");
     assert!(headers.contains(&("access-control-allow-origin".into(), origin.clone())));
     assert!(headers.contains(&("cache-control".into(), "private, no-store".into())));
     assert!(headers.contains(&("x-content-type-options".into(), "nosniff".into())));
 
     let oversized_length = 3 * 1024 * 1024 + 1;
     let oversized = raw_request(server.address, "POST", "/objects/put", "owner", Some(&fingerprint), oversized_length, &[]).await;
-    assert_eq!(json_body(&oversized)["code"], "PAYLOAD_TOO_LARGE");
+    assert_eq!(json_body(&oversized)["code"], "WIRE.PAYLOAD_TOO_LARGE");
 
     let deleted = raw_request(server.address, "DELETE", &format!("/objects/{object_id}"), "owner", Some(&fingerprint), 0, &[]).await;
     assert_eq!(response_parts(&deleted).0, 204);

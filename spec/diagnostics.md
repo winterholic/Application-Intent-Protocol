@@ -1,15 +1,19 @@
 # AIP 진단·오류 코드
 
-> 이 문서는 `crates/aip-ir/src/codes.rs`의 레지스트리에서 생성된다. 손으로 고치지 않는다. 다시 만들려면 `aip diagnostics --markdown > spec/diagnostics.md`를 실행한다.
+> 이 문서는 `crates/aip-ir/src/codes.rs`의 레지스트리에서 생성된다. 손으로 고치지 않는다. 다시 만들려면 `aip diagnostics --area poc --markdown > spec/diagnostics.md`를 실행한다.
 
 ## 코드 체계
 
-| 접두 | 뜻 | 발생 지점 |
+모든 AIP 오류 코드는 `영역.이름` 형식이다(대문자, 영역 접두는 필수). 영역은 셋이고 코드 하나는 한 영역에만 있다: `DEF`(제품 정의 검사기, [definition-diagnostics.md](definition-diagnostics.md)), `WIRE`(제품 HTTP API, [wire-errors.md](wire-errors.md)), `POC`(PoC 언어와 런타임, 이 문서). 세 영역은 `aip explain-code`와 `aip diagnostics` 하나로 조회한다. 이 문서의 코드는 모두 `POC.`로 시작한다.
+
+| 형태 | 뜻 | 발생 지점 |
 |---|---|---|
-| `AIP-E***` | 오류. 프로그램이 컴파일되지 않는다 | `aip check`, 백엔드 계획 단계 |
-| `AIP-W***` | 경고. 컴파일되지만 의도와 다를 가능성이 크다 | `aip check`, 백엔드 계획 단계 |
-| `AIP-I***` | Core IR 구조 위반. 프런트엔드가 만든 IR이 구조 규칙을 어긴다 | IR 검증 |
-| `AIP.*` | 런타임·프로토콜 오류. 호출자가 응답으로 받는다 | `aip run` |
+| `POC.E***` | 오류. 프로그램이 컴파일되지 않는다 | `aip check`, 백엔드 계획 단계 |
+| `POC.W***` | 경고. 컴파일되지만 의도와 다를 가능성이 크다 | `aip check`, 백엔드 계획 단계 |
+| `POC.I***` | Core IR 구조 위반. 프런트엔드가 만든 IR이 구조 규칙을 어긴다 | IR 검증 |
+| `POC.<그룹>.<이름>` | 런타임·프로토콜 오류. 호출자가 응답으로 받는다 | `aip run` |
+
+2026-10-13 이전 표기는 접두만 바뀌었다. `AIP-` 뒤에 E·W·I와 번호가 붙던 코드는 `POC.` 뒤에 같은 E·W·I와 번호가, `AIP.`로 시작하던 런타임 코드는 `POC.`로 시작한다. 이름은 그대로다.
 
 번호의 앞자리는 영역을 가리킨다. 1xx는 선언과 이름, 2xx는 타입과 값, 3xx는 권한·개인정보·정합성, 4xx는 품질 경고, 5xx는 extension, 6xx는 백엔드다. 번호는 영역 안에서 비어 있을 수 있고 재사용하지 않는다.
 
@@ -22,9 +26,9 @@
 
 조회: `aip explain-code <CODE>`.
 
-## 오류 (AIP-E)
+## 오류 (POC.E)
 
-### `AIP-E100`
+### `POC.E100`
 
 syntax error
 
@@ -40,7 +44,7 @@ query Clubs {
 }
 ```
 
-### `AIP-E101`
+### `POC.E101`
 
 duplicate or clashing name
 
@@ -52,7 +56,7 @@ enum Status { ACTIVE ENDED }
 entity Club { name: Text }
 ```
 
-### `AIP-E102`
+### `POC.E102`
 
 unknown type or entity
 
@@ -63,7 +67,7 @@ unknown type or entity
 entity Club { name: Text  fee: Money(KRW) }
 ```
 
-### `AIP-E103`
+### `POC.E103`
 
 unknown field or predicate
 
@@ -77,7 +81,7 @@ command Rename(club: Club, name: Text) {
 }
 ```
 
-### `AIP-E104`
+### `POC.E104`
 
 unknown name
 
@@ -88,7 +92,7 @@ unknown name
 relation isOwner(m: Member, c: Club) = exists membership(m, c)
 ```
 
-### `AIP-E105`
+### `POC.E105`
 
 implicit field redeclared
 
@@ -99,7 +103,7 @@ implicit field redeclared
 entity Club { name: Text }
 ```
 
-### `AIP-E106`
+### `POC.E106`
 
 invalid inverse relation
 
@@ -111,7 +115,7 @@ entity Item { parent: Order }
 entity Order { items: Item[] via parent }
 ```
 
-### `AIP-E107`
+### `POC.E107`
 
 actor declared more than once
 
@@ -124,7 +128,7 @@ actor Member via auth.oidc(kakao)
 entity Member personal { nickname: Text }
 ```
 
-### `AIP-E108`
+### `POC.E108`
 
 type written with wrong options
 
@@ -135,7 +139,7 @@ type written with wrong options
 entity Club { name: Text  fee: Money(KRW) }
 ```
 
-### `AIP-E110`
+### `POC.E110`
 
 actor not declared
 
@@ -148,7 +152,7 @@ actor Member via auth.oidc(kakao)
 entity Member personal { nickname: Text }
 ```
 
-### `AIP-E111`
+### `POC.E111`
 
 evolution declaration contradicts the program
 
@@ -163,7 +167,7 @@ entity Task {
 removed entity OldThing
 ```
 
-### `AIP-E201`
+### `POC.E201`
 
 type mismatch
 
@@ -177,7 +181,7 @@ command Promote(t: ClubMember) {
 }
 ```
 
-### `AIP-E202`
+### `POC.E202`
 
 not a value of the enum
 
@@ -188,14 +192,14 @@ not a value of the enum
 enum ClubRole ordered { GENERAL < MANAGER < ADMIN }
 ```
 
-### `AIP-E203`
+### `POC.E203`
 
 field cannot be assigned
 
 - 원인: The field is implicit, an inverse relation or a counter, which the runtime maintains, so `set`, `insert` or `expose` cannot write it.
 - 수정: Remove the assignment; counters change through `touch`.
 
-### `AIP-E204`
+### `POC.E204`
 
 wrong use of a field kind or parameter kind
 
@@ -207,7 +211,7 @@ use redis
 entity Post { views: Int counter via redis }
 ```
 
-### `AIP-E205`
+### `POC.E205`
 
 required fields missing on insert
 
@@ -221,14 +225,14 @@ command NewClub(name: Text) {
 }
 ```
 
-### `AIP-E206`
+### `POC.E206`
 
 invalid `each` loop
 
 - 원인: `each` needs a bounded collection input and an item name.
 - 수정: Declare the input as a bounded list and write `each items x partial { ... }`.
 
-### `AIP-E207`
+### `POC.E207`
 
 missing unique constraint for toggle or upsert
 
@@ -243,14 +247,14 @@ entity Like {
 }
 ```
 
-### `AIP-E208`
+### `POC.E208`
 
 construct not allowed in this context
 
 - 원인: A valid construct is used where its context does not allow it: an `Upload` parameter outside a command, `this` outside an entity declaration, a `drafts` query that reads no publishable entity or is `allow public`, a `consent` that lists something a caller cannot invoke (an `internal` intent, a form name), an `impersonate` of an entity other than the actor, or `signingSecret` read anywhere but the `returns` of the (not idempotent) command that inserted the endpoint row.
 - 수정: Move the construct to a place that allows it (`Upload` parameters go on a command; `this` is only written inside an entity; `drafts` goes on a query of a publishable entity with its own `allow`; `consent` lists declared commands, queries and jobs; `impersonate` names the actor entity; `signingSecret` is read as `returns ep { secret: ep.signingSecret }` after `insert Endpoint { ... } as ep`).
 
-### `AIP-E209`
+### `POC.E209`
 
 invalid assignment target
 
@@ -264,7 +268,7 @@ command Rename(club: Club, name: Text) {
 }
 ```
 
-### `AIP-E210`
+### `POC.E210`
 
 empty or below the minimum
 
@@ -276,7 +280,7 @@ enum Status { ACTIVE ENDED }
 entity Club { name: Text }
 ```
 
-### `AIP-E211`
+### `POC.E211`
 
 wrong number of arguments
 
@@ -287,14 +291,14 @@ wrong number of arguments
 relation memberCount(c: Club) = count(c.members)
 ```
 
-### `AIP-E212`
+### `POC.E212`
 
 form not allowed on this construct
 
 - 원인: A clause or shape that the construct does not take is written: a `: body` on `count`, `same()` without a binder, a spread in an event, `insert ... from` bound with `as`, or approvers without an alias.
 - 수정: Write the construct in the form the message names (for example `count(items x where ...)`, one event field per name, an alias on approvers).
 
-### `AIP-E213`
+### `POC.E213`
 
 multi-valued where one value is needed
 
@@ -305,35 +309,35 @@ multi-valued where one value is needed
 relation memberCount(c: Club) = count(c.members)
 ```
 
-### `AIP-E214`
+### `POC.E214`
 
 invalid webhook option
 
 - 원인: A webhook option is unknown, is not written as a named string literal, or the required `secret` of `http.webhook` is missing.
 - 수정: Write options as `name: "value"` with one of secret, header, event, id, payload; `http.webhook` needs `secret: "<ENV VAR NAME>"` (the secret itself never goes in source).
 
-### `AIP-E216`
+### `POC.E216`
 
 event emitted with different shapes
 
 - 원인: The same event is emitted with a different field set or types in two places, so consumers cannot rely on its shape.
 - 수정: Emit the event with the same fields everywhere, or give the second shape its own event name.
 
-### `AIP-E220`
+### `POC.E220`
 
 selection on a non-relation or relation without selection
 
 - 원인: A sub-selection is written on a scalar field, or a relation field is selected without saying which of its fields to return.
 - 수정: Select scalars directly; write `relation { fields }` for relations.
 
-### `AIP-E221`
+### `POC.E221`
 
 incomplete sort cases
 
 - 원인: `sort by <param> of { ... }` does not cover every value of the enum parameter.
 - 수정: Add a case for each enum value listed in the message.
 
-### `AIP-E222`
+### `POC.E222`
 
 more than one generator on a field
 
@@ -347,7 +351,7 @@ entity Ticket {
 }
 ```
 
-### `AIP-E301`
+### `POC.E301`
 
 missing `allow`
 
@@ -361,21 +365,21 @@ command Rename(club: Club, name: Text) {
 }
 ```
 
-### `AIP-E302`
+### `POC.E302`
 
 snapshot entity has no dynamic schema
 
 - 원인: `Json validated by <field>` names a `Snapshot<Entity>` field, but that entity declares no `dynamic schema from ...`, so there is nothing to validate against.
 - 수정: Add `dynamic schema from <List<Record> field>` to the entity.
 
-### `AIP-E306`
+### `POC.E306`
 
 `self` outside actor visibility
 
 - 원인: `self` is only valid in field visibility and masking rules of the actor entity.
 - 수정: Use a named parameter or `actor` in other places.
 
-### `AIP-E309`
+### `POC.E309`
 
 personal data reference without erase policy
 
@@ -389,7 +393,7 @@ entity Comment {
 }
 ```
 
-### `AIP-E310`
+### `POC.E310`
 
 erase on a non-personal entity
 
@@ -400,21 +404,21 @@ erase on a non-personal entity
 entity Member personal { nickname: Text }
 ```
 
-### `AIP-E311`
+### `POC.E311`
 
 ambiguous notification recipient
 
 - 원인: `notify` cannot tell which reference of the row is the recipient because the entity has several references to the actor.
 - 수정: Notify a set of actor rows, or an entity with exactly one actor field.
 
-### `AIP-E312`
+### `POC.E312`
 
 validated by does not name a snapshot field
 
 - 원인: `Json validated by <field>` must name a `Snapshot<Entity>` field. A plain entity reference (or any other field) can change later, so old answers would lose the schema they were written against.
 - 수정: Declare the field as `Snapshot<Entity>` and point `validated by` at it.
 
-### `AIP-E313`
+### `POC.E313`
 
 unusable tenant path
 
@@ -433,7 +437,7 @@ entity Task {
 }
 ```
 
-### `AIP-E314`
+### `POC.E314`
 
 tenant-scoped rows read without a tenant
 
@@ -455,7 +459,7 @@ query Projects(workspace: Workspace) {
 }
 ```
 
-### `AIP-E315`
+### `POC.E315`
 
 cross tenant on an intent that is not internal
 
@@ -472,7 +476,7 @@ internal cross tenant query AllWorkspaces() {
 }
 ```
 
-### `AIP-E316`
+### `POC.E316`
 
 invalid search declaration
 
@@ -487,7 +491,7 @@ entity Post {
 search PostSearch on Post fields [title weight A, body weight B] language english
 ```
 
-### `AIP-E317`
+### `POC.E317`
 
 invalid outbound webhooks declaration
 
@@ -505,7 +509,7 @@ outbound webhooks for Endpoint e {
 }
 ```
 
-### `AIP-E318`
+### `POC.E318`
 
 invalid encrypted field
 
@@ -520,7 +524,7 @@ entity Member {
 }
 ```
 
-### `AIP-E319`
+### `POC.E319`
 
 encrypted field used in an expression
 
@@ -540,7 +544,7 @@ query MemberByNickname(nickname: Text) {
 }
 ```
 
-### `AIP-E320`
+### `POC.E320`
 
 encrypted field cannot be written this way
 
@@ -558,7 +562,7 @@ command ChangeEmail(member: Member, email: Email) {
 }
 ```
 
-### `AIP-E501`
+### `POC.E501`
 
 extension not declared or misused
 
@@ -570,37 +574,37 @@ use s3
 entity Photo { file: s3.Object }
 ```
 
-### `AIP-E502`
+### `POC.E502`
 
 call is not an extension effect
 
 - 원인: A statement is a call without a namespace; only extension effects (`ns.effect(...)`) can stand alone as statements.
 - 수정: Write the effect as `ns.effect(...)`, or use the call inside an expression.
 
-### `AIP-E600`
+### `POC.E600`
 
 expression cannot be planned
 
 - 원인: The PostgreSQL backend cannot turn an expression into SQL (an unsupported construct or an unresolved type). Reported by the backend with a path instead of a source position.
 - 수정: Rewrite the expression with supported constructs; see the message for the construct.
 
-### `AIP-E601`
+### `POC.E601`
 
 statement cannot be planned
 
 - 원인: The PostgreSQL backend cannot plan a statement or intent. Reported with a path instead of a source position.
 - 수정: Simplify the statement; see the message for the unsupported part.
 
-### `AIP-E602`
+### `POC.E602`
 
 checked but not executable yet
 
 - 원인: The frontend accepts the construct (a consumer, a projection, a search, a subscription or another form) but this runtime has no executable plan for it, so it is refused instead of silently ignored.
 - 수정: Remove the construct, or wait for a runtime that supports it.
 
-## 경고 (AIP-W)
+## 경고 (POC.W)
 
-### `AIP-W402`
+### `POC.W402`
 
 redundant comparison or call
 
@@ -611,7 +615,7 @@ redundant comparison or call
 relation sameClub(a: ClubMember, b: ClubMember) = a.club = b.club
 ```
 
-### `AIP-W403`
+### `POC.W403`
 
 unbounded list query
 
@@ -627,200 +631,200 @@ query Clubs {
 }
 ```
 
-### `AIP-W404`
+### `POC.W404`
 
 schedule with time of day but no timezone
 
 - 원인: A schedule that fires at a time of day without a timezone depends on the server's zone.
 - 수정: Add `tz "Asia/Seoul"` (or another IANA zone) to the schedule.
 
-### `AIP-W501`
+### `POC.W501`
 
 non-idempotent command creates rows
 
 - 원인: A command inserts rows and binds them without an `idempotent` declaration, so a client retry creates duplicates.
 - 수정: Add `idempotent` so callers send an `Idempotency-Key`, or rely on a unique constraint.
 
-### `AIP-W502`
+### `POC.W502`
 
 extension is not first-party
 
 - 원인: The extension named in `use` is not on the toolchain's first-party list, so the compiler has no knowledge of its effects.
 - 수정: Use a first-party extension, or accept that its effects are unchecked.
 
-### `AIP-W602` (deprecated)
+### `POC.W602` (deprecated)
 
 declared but not enforced by this runtime
 
 - 원인: The runtime accepts the declaration but does not implement it, so the stated guarantee does not hold. No declaration is in this state any more: `encrypted` used to be the one, and now the runtime encrypts it.
 - 수정: Treat the guarantee as absent until the runtime supports it.
 
-### `AIP-W603`
+### `POC.W603`
 
 search language is approximated
 
 - 원인: The `search` is declared with a language whose words the engine cannot reduce to stems (`korean`). It matches by word prefix: a query word finds the words that begin with it, so a particle or ending after the stem is tolerated, but a changed stem, a compound word or a match in the middle of a word is not found. This is not morphological analysis (open issue OI-08).
 - 수정: Accept prefix matching, or run a search engine with a Korean analyzer and keep this declaration for development.
 
-## IR 구조 (AIP-I)
+## IR 구조 (POC.I)
 
-### `AIP-I101`
+### `POC.I101`
 
 version tag differs
 
 - 원인: The program's `aip_core` tag is not the version this toolchain reads.
 - 수정: Regenerate the IR with a frontend that targets `CORE_IR_VERSION`.
 
-### `AIP-I102`
+### `POC.I102`
 
 unknown enum in a type
 
 - 원인: A type names an enum that is not in the program.
 - 수정: Add the enum or fix the type name.
 
-### `AIP-I103`
+### `POC.I103`
 
 unknown record in a type
 
 - 원인: A type names a record that is not in the program.
 - 수정: Add the record or fix the type name.
 
-### `AIP-I104`
+### `POC.I104`
 
 unknown entity in a type
 
 - 원인: A `Ref`, `RefUnion` or `Snapshot` type names an entity that is not in the program.
 - 수정: Add the entity or fix the type name.
 
-### `AIP-I105`
+### `POC.I105`
 
 zero bound
 
 - 원인: A `Set` or `List` bound is zero.
 - 수정: Use a bound of at least one.
 
-### `AIP-I106`
+### `POC.I106`
 
 reference to unknown entity
 
 - 원인: A reference field targets an entity that does not exist.
 - 수정: Add the entity or fix the target.
 
-### `AIP-I107`
+### `POC.I107`
 
 invalid inverse field
 
 - 원인: An inverse field targets a missing entity or a missing `via` field.
 - 수정: Point it at an existing entity and reference field.
 
-### `AIP-I108`
+### `POC.I108`
 
 unknown field expression
 
 - 원인: A `Field` expression names a missing entity or field.
 - 수정: Name an entity and field that exist.
 
-### `AIP-I109`
+### `POC.I109`
 
 unknown row field
 
 - 원인: A `RowField` names a missing entity or field.
 - 수정: Name an entity and field that exist.
 
-### `AIP-I110`
+### `POC.I110`
 
 unknown enum value
 
 - 원인: An `EnumValue` names a missing enum or value.
 - 수정: Name an enum and value that exist.
 
-### `AIP-I111`
+### `POC.I111`
 
 unknown callee
 
 - 원인: A call names a missing function, relation or intent.
 - 수정: Declare the callee or fix the name.
 
-### `AIP-I112`
+### `POC.I112`
 
 unknown write target
 
 - 원인: An insert, upsert or toggle names a missing entity or field.
 - 수정: Name an entity and fields that exist.
 
-### `AIP-I113`
+### `POC.I113`
 
 invalid lifecycle
 
 - 원인: A lifecycle names a missing field, a non-enum field or a missing enum value.
 - 수정: Point it at an enum field and its values.
 
-### `AIP-I114`
+### `POC.I114`
 
 unknown event
 
 - 원인: A reaction, emit, projection, upcast or event type names a missing event.
 - 수정: Declare the event or fix the name.
 
-### `AIP-I115`
+### `POC.I115`
 
 unknown predicate
 
 - 원인: A predicate application names a missing entity or predicate.
 - 수정: Declare the predicate on the entity or fix the name.
 
-### `AIP-I116`
+### `POC.I116`
 
 unknown entity reference
 
 - 원인: An entity reference (actor, source, rule, retain, type test and similar) names a missing entity.
 - 수정: Add the entity or fix the name.
 
-### `AIP-I117`
+### `POC.I117`
 
 constraint on unknown field
 
 - 원인: A constraint names a field the entity does not have.
 - 수정: Name a field the entity declares.
 
-### `AIP-I118`
+### `POC.I118`
 
 unknown record field
 
 - 원인: A `RecordField` names a missing record or field.
 - 수정: Name a record and field that exist.
 
-### `AIP-I119`
+### `POC.I119`
 
 counter store not declared
 
 - 원인: A counter `store` is not an extension listed in `uses`.
 - 수정: Add the extension to `uses` or change the store.
 
-### `AIP-I120`
+### `POC.I120`
 
 duplicate constraint ordinal
 
 - 원인: Two constraints of one entity share an ordinal.
 - 수정: Give each constraint its own ordinal.
 
-### `AIP-I121`
+### `POC.I121`
 
 validated-by field missing
 
 - 원인: `Json validated by` names a field the entity does not have.
 - 수정: Name a field of the entity.
 
-### `AIP-I122`
+### `POC.I122`
 
 search missing or misused
 
 - 원인: A query's `Search` source names a search declaration that is not in the program, or a `SearchRank` node names an alias that no `Search` source of its query binds.
 - 수정: Declare the search, or use the rank only in the query that searches under the alias.
 
-## 런타임 오류 (AIP.*)
+## 런타임 오류 (POC.*)
 
-### `AIP.AUTH.FORBIDDEN`
+### `POC.AUTH.FORBIDDEN`
 
 caller is not allowed
 
@@ -829,7 +833,7 @@ caller is not allowed
 - HTTP 상태: 403
 - 재시도: 불가
 
-### `AIP.AUTH.UNAUTHENTICATED`
+### `POC.AUTH.UNAUTHENTICATED`
 
 no valid caller
 
@@ -838,7 +842,7 @@ no valid caller
 - HTTP 상태: 401
 - 재시도: 불가
 
-### `AIP.CONCURRENCY.CONFLICT`
+### `POC.CONCURRENCY.CONFLICT`
 
 concurrent update, retry
 
@@ -847,7 +851,7 @@ concurrent update, retry
 - HTTP 상태: 409
 - 재시도: 가능
 
-### `AIP.CONFLICT.CAPACITY`
+### `POC.CONFLICT.CAPACITY`
 
 capacity exceeded
 
@@ -856,7 +860,7 @@ capacity exceeded
 - HTTP 상태: 409
 - 재시도: 불가
 
-### `AIP.CONFLICT.IN_USE`
+### `POC.CONFLICT.IN_USE`
 
 row is still referenced
 
@@ -865,7 +869,7 @@ row is still referenced
 - HTTP 상태: 409
 - 재시도: 불가
 
-### `AIP.CONFLICT.OVERLAP`
+### `POC.CONFLICT.OVERLAP`
 
 ranges overlap
 
@@ -874,7 +878,7 @@ ranges overlap
 - HTTP 상태: 409
 - 재시도: 불가
 
-### `AIP.CONFLICT.STALE_VERSION`
+### `POC.CONFLICT.STALE_VERSION`
 
 row changed since it was read
 
@@ -883,7 +887,7 @@ row changed since it was read
 - HTTP 상태: 409
 - 재시도: 불가
 
-### `AIP.CONFLICT.UNIQUE`
+### `POC.CONFLICT.UNIQUE`
 
 unique value already taken
 
@@ -892,7 +896,7 @@ unique value already taken
 - HTTP 상태: 409
 - 재시도: 불가
 
-### `AIP.CONSENT.REQUIRED`
+### `POC.CONSENT.REQUIRED`
 
 required consent is missing
 
@@ -901,7 +905,7 @@ required consent is missing
 - HTTP 상태: 403
 - 재시도: 불가
 
-### `AIP.ENCRYPTION.DECRYPT_FAILED`
+### `POC.ENCRYPTION.DECRYPT_FAILED`
 
 encrypted value cannot be decrypted
 
@@ -910,7 +914,7 @@ encrypted value cannot be decrypted
 - HTTP 상태: 500
 - 재시도: 불가
 
-### `AIP.ENCRYPTION.KEYS_MISSING`
+### `POC.ENCRYPTION.KEYS_MISSING`
 
 encryption keys are missing or unusable
 
@@ -919,7 +923,7 @@ encryption keys are missing or unusable
 - HTTP 상태: 500
 - 재시도: 불가
 
-### `AIP.IDEMPOTENCY.KEY_REUSED`
+### `POC.IDEMPOTENCY.KEY_REUSED`
 
 idempotency key reused with different input
 
@@ -928,7 +932,7 @@ idempotency key reused with different input
 - HTTP 상태: 409
 - 재시도: 불가
 
-### `AIP.INPUT.IDEMPOTENCY_KEY_REQUIRED`
+### `POC.INPUT.IDEMPOTENCY_KEY_REQUIRED`
 
 idempotency key required
 
@@ -937,7 +941,7 @@ idempotency key required
 - HTTP 상태: 400
 - 재시도: 불가
 
-### `AIP.INPUT.IDEMPOTENCY_KEY_UNSUPPORTED`
+### `POC.INPUT.IDEMPOTENCY_KEY_UNSUPPORTED`
 
 idempotency key not supported
 
@@ -946,7 +950,7 @@ idempotency key not supported
 - HTTP 상태: 400
 - 재시도: 불가
 
-### `AIP.INPUT.INVALID`
+### `POC.INPUT.INVALID`
 
 input is invalid
 
@@ -955,7 +959,7 @@ input is invalid
 - HTTP 상태: 400
 - 재시도: 불가
 
-### `AIP.INPUT.REFERENCE_NOT_FOUND`
+### `POC.INPUT.REFERENCE_NOT_FOUND`
 
 referenced row does not exist
 
@@ -964,7 +968,7 @@ referenced row does not exist
 - HTTP 상태: 422
 - 재시도: 불가
 
-### `AIP.INTERNAL`
+### `POC.INTERNAL`
 
 internal error
 
@@ -973,7 +977,7 @@ internal error
 - HTTP 상태: 500
 - 재시도: 불가
 
-### `AIP.INVARIANT.VIOLATED`
+### `POC.INVARIANT.VIOLATED`
 
 invariant violated
 
@@ -982,7 +986,7 @@ invariant violated
 - HTTP 상태: 409
 - 재시도: 불가
 
-### `AIP.MIGRATION.CHANGED`
+### `POC.MIGRATION.CHANGED`
 
 an applied migration was edited
 
@@ -991,7 +995,7 @@ an applied migration was edited
 - HTTP 상태: 500
 - 재시도: 불가
 
-### `AIP.MIGRATION.FAILED`
+### `POC.MIGRATION.FAILED`
 
 a migration failed
 
@@ -1000,7 +1004,7 @@ a migration failed
 - HTTP 상태: 500
 - 재시도: 불가
 
-### `AIP.SCHEMA.DATA_CONFLICT`
+### `POC.SCHEMA.DATA_CONFLICT`
 
 existing rows break a new rule
 
@@ -1009,7 +1013,7 @@ existing rows break a new rule
 - HTTP 상태: 500
 - 재시도: 불가
 
-### `AIP.SCHEMA.ENCRYPTION_CHANGE`
+### `POC.SCHEMA.ENCRYPTION_CHANGE`
 
 encryption of a field changed
 
@@ -1018,7 +1022,7 @@ encryption of a field changed
 - HTTP 상태: 500
 - 재시도: 불가
 
-### `AIP.SCHEMA.FAILED`
+### `POC.SCHEMA.FAILED`
 
 a schema statement failed
 
@@ -1027,7 +1031,7 @@ a schema statement failed
 - HTTP 상태: 500
 - 재시도: 불가
 
-### `AIP.SCHEMA.TYPE_CHANGE`
+### `POC.SCHEMA.TYPE_CHANGE`
 
 field type change is not applied automatically
 
@@ -1036,7 +1040,7 @@ field type change is not applied automatically
 - HTTP 상태: 500
 - 재시도: 불가
 
-### `AIP.SCHEMA.UNDECLARED`
+### `POC.SCHEMA.UNDECLARED`
 
 removal or rename must be declared
 
@@ -1045,7 +1049,7 @@ removal or rename must be declared
 - HTTP 상태: 500
 - 재시도: 불가
 
-### `AIP.SCHEMA.UNRECORDED`
+### `POC.SCHEMA.UNRECORDED`
 
 database has no deployment record
 
@@ -1054,7 +1058,7 @@ database has no deployment record
 - HTTP 상태: 500
 - 재시도: 불가
 
-### `AIP.SCHEMA.UNSUPPORTED`
+### `POC.SCHEMA.UNSUPPORTED`
 
 schema change is not supported
 
@@ -1063,7 +1067,7 @@ schema change is not supported
 - HTTP 상태: 500
 - 재시도: 불가
 
-### `AIP.NOT_FOUND`
+### `POC.NOT_FOUND`
 
 row not found
 
@@ -1072,7 +1076,7 @@ row not found
 - HTTP 상태: 404
 - 재시도: 불가
 
-### `AIP.PRECONDITION.FAILED`
+### `POC.PRECONDITION.FAILED`
 
 precondition failed
 
@@ -1081,7 +1085,7 @@ precondition failed
 - HTTP 상태: 409
 - 재시도: 불가
 
-### `AIP.RATE.LIMITED`
+### `POC.RATE.LIMITED`
 
 rate limit reached
 
@@ -1090,7 +1094,7 @@ rate limit reached
 - HTTP 상태: 429
 - 재시도: 가능
 
-### `AIP.REQUEST.MALFORMED`
+### `POC.REQUEST.MALFORMED`
 
 request is malformed
 
@@ -1099,7 +1103,7 @@ request is malformed
 - HTTP 상태: 400
 - 재시도: 불가
 
-### `AIP.REQUEST.UNKNOWN_INTENT`
+### `POC.REQUEST.UNKNOWN_INTENT`
 
 unknown intent
 
@@ -1108,7 +1112,7 @@ unknown intent
 - HTTP 상태: 404
 - 재시도: 불가
 
-### `AIP.SUBSCRIPTION.LIMIT`
+### `POC.SUBSCRIPTION.LIMIT`
 
 too many subscriptions
 
@@ -1117,7 +1121,7 @@ too many subscriptions
 - HTTP 상태: 429
 - 재시도: 가능
 
-### `AIP.SUBSCRIPTION.TOO_LARGE`
+### `POC.SUBSCRIPTION.TOO_LARGE`
 
 subscription result too large
 
@@ -1126,16 +1130,16 @@ subscription result too large
 - HTTP 상태: 413
 - 재시도: 불가
 
-### `AIP.TENANT.MISMATCH`
+### `POC.TENANT.MISMATCH`
 
 rows belong to different tenants
 
-- 원인: Rows the call touches belong to different tenants: parameters of one call, a reference between tenant-scoped rows, a value written into a tenant that is not the call's, or, for work without a caller (a webhook, an event handler, a schedule item, a rule row, a job item), a second tenant written in the same transaction. The database refuses the second tenant unless the declaration is `cross tenant`. It answers 404 like NOT_FOUND so a caller cannot tell another tenant's row from a missing one by the status. Rows an actor may not see are NOT_FOUND before this is reached.
+- 원인: Rows the call touches belong to different tenants: parameters of one call, a reference between tenant-scoped rows, a value written into a tenant that is not the call's, or, for work without a caller (a webhook, an event handler, a schedule item, a rule row, a job item), a second tenant written in the same transaction. The database refuses the second tenant unless the declaration is `cross tenant`. It answers 404 like POC.NOT_FOUND so a caller cannot tell another tenant's row from a missing one by the status. Rows an actor may not see are POC.NOT_FOUND before this is reached.
 - 수정: Pass rows of one tenant, or reference only rows of the row's own tenant.
 - HTTP 상태: 404
 - 재시도: 불가
 
-### `AIP.UNAVAILABLE`
+### `POC.UNAVAILABLE`
 
 temporarily unavailable
 

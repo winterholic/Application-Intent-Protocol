@@ -10,47 +10,47 @@ export type StripePaymentIntent = { id: string; amount: number; currency: string
 export type CatalogInput = {  };
 export type CatalogOutput = Array<{ featured: boolean; id: string; name: string; price: number; stock: number; version: number }>;
 export type CatalogError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.INPUT.INVALID' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.INPUT.INVALID' };
 
 export type MyOrderInput = { order: string };
 export type MyOrderOutput = { amount: number; id: string; paidAt: string | null; paymentRef: string | null; status: OrderStatus };
 export type MyOrderError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'ORDER_NOT_FOUND' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'ORDER_NOT_FOUND' };
 
 export type PlaceOrderInput = { product: string; quantity: number };
 export type PlaceOrderOutput = { amount: number; id: string; status: OrderStatus };
 export type PlaceOrderError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' }
-  | { code: 'AIP.IDEMPOTENCY.KEY_REUSED' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.INVARIANT.VIOLATED'; reason: 'OUT_OF_STOCK' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'PRODUCT_NOT_FOUND' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' }
+  | { code: 'POC.IDEMPOTENCY.KEY_REUSED' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.INVARIANT.VIOLATED'; reason: 'OUT_OF_STOCK' }
+  | { code: 'POC.NOT_FOUND'; reason: 'PRODUCT_NOT_FOUND' };
 
 export type RestockInput = { product: string; quantity: number };
 export type RestockOutput = null;
 export type RestockError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.INVARIANT.VIOLATED'; reason: 'OUT_OF_STOCK' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'PRODUCT_NOT_FOUND' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.INVARIANT.VIOLATED'; reason: 'OUT_OF_STOCK' }
+  | { code: 'POC.NOT_FOUND'; reason: 'PRODUCT_NOT_FOUND' };
 
 export type UpdateProductInput = { product: string; name: string; price: number; productVersion: number };
 export type UpdateProductOutput = null;
 export type UpdateProductError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' }
-  | { code: 'AIP.CONFLICT.STALE_VERSION'; reason: 'PRODUCT_VERSION_STALE' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.INVARIANT.VIOLATED'; reason: 'OUT_OF_STOCK' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'PRODUCT_NOT_FOUND' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' }
+  | { code: 'POC.CONFLICT.STALE_VERSION'; reason: 'PRODUCT_VERSION_STALE' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.INVARIANT.VIOLATED'; reason: 'OUT_OF_STOCK' }
+  | { code: 'POC.NOT_FOUND'; reason: 'PRODUCT_NOT_FOUND' };
 
 export interface AipErrorBody {
   code: string;

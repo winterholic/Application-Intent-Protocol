@@ -73,7 +73,7 @@ SDK는 `npm install --offline <aip-sdk.tgz>`로 별도 소비자에 설치한다
 | 경로 | 200 조건 | 503 조건 |
 |---|---|---|
 | `/health` | listener가 요청을 처리함. DB를 확인하지 않음 | 없음 |
-| `/ready` | pool에서 DB 연결을 얻고, 저장된 배포 digest가 이 process의 정의와 같음 | `DB_UNAVAILABLE`, 다른 배포가 migration한 뒤의 `DEPLOYMENT_CHANGED` |
+| `/ready` | pool에서 DB 연결을 얻고, 저장된 배포 digest가 이 process의 정의와 같음 | `WIRE.DB_UNAVAILABLE`, 다른 배포가 migration한 뒤의 `WIRE.DEPLOYMENT_CHANGED` |
 
 응답은 `cache-control: no-store`이며 digest·버전·DB 주소·오류 원문을 포함하지 않는다. readiness 검사는 2초로 제한한다. 인증 없는 probe가 요청 pool을 고갈시키지 않도록 process당 동시에 하나의 readiness 검사만 DB 연결을 사용한다. probe 경로는 webhook 경로로 설정할 수 없다. readiness가 worker 확장 import나 외부 provider 연결까지 보증하지는 않는다.
 
@@ -90,7 +90,7 @@ SDK는 `npm install --offline <aip-sdk.tgz>`로 별도 소비자에 설치한다
 
 첫 명령은 읽기 전용 계획이다. 변경 분류·SQL·데이터 영향을 검토하고 반환된 digest를 적용 명령에 전달한다. 필요한 경우 `--migration migration.json`을 양쪽에 똑같이 전달한다. backfill/convert는 [마이그레이션 계약](../crates/aip-migrate/README.md)의 정형 JSON만 받으며 임의 SQL은 받지 않는다. 적용 실패는 DDL·데이터·저널을 같은 트랜잭션에서 되돌린다. 커밋 응답이 불명확하면 같은 digest를 재시도해 최신 저널과 catalog로 확인한다.
 
-요청의 실제 SQL 연결은 배포 shared advisory lock을 유지한다. 마이그레이션은 같은 키의 exclusive lock을 사용하므로 진행 중 요청과 직렬화한다. 적용 뒤 이전 정의를 가진 listener는 `DEPLOYMENT_CHANGED`로 작업을 거부한다. 새 정의로 서버를 재시작하고 생성 binding을 갱신한다. 구버전 클라이언트를 동시에 지원하는 프로토콜은 이번 구현에 포함하지 않는다.
+요청의 실제 SQL 연결은 배포 shared advisory lock을 유지한다. 마이그레이션은 같은 키의 exclusive lock을 사용하므로 진행 중 요청과 직렬화한다. 적용 뒤 이전 정의를 가진 listener는 `WIRE.DEPLOYMENT_CHANGED`로 작업을 거부한다. 새 정의로 서버를 재시작하고 생성 binding을 갱신한다. 구버전 클라이언트를 동시에 지원하는 프로토콜은 이번 구현에 포함하지 않는다.
 
 현재 prototype의 구조 지문 marker가 있는 schema는 다음처럼 명시적으로 이관한다.
 
@@ -170,7 +170,7 @@ aip service jobs --config service.json retry --id 7f3c...
 - `list`는 최신순으로 id·owner·operation·key·상태·시도 횟수·마지막 오류·`unsettledEffects`(결과를 모르는 외부 효과 수)·`redrivable`을 돌려준다. job 입력·출력·grant는 출력하지 않는다.
 - `retry`는 새 job을 만들지 않고 **같은 run**을 `QUEUED`로 되돌린다. id·key·owner·effect journal을 유지하므로 이미 기록된 파일·이벤트·메시지·HTTP·데이터 전이는 반복하지 않고 재생한다. 시도 횟수는 0부터 다시 세고 run 기한은 run에 기록된 시도 횟수로 다시 계산한다. lease epoch는 계속 증가하므로 이전 시도의 worker는 결과를 기록하지 못한다.
 - 실행할 때 principal 활성·배포 fence·`allow`를 다시 검사한다. 비활성화한 주체의 job은 재처리해도 다시 실패한다.
-- 거부하는 경우는 네 가지다. `FAILED`가 아니면 `JOB_NOT_FAILED`, 결과 보존 기간(24시간)이 지나 입력이 지워졌으면 `JOB_EXPIRED`, 다른 배포에서 수락했으면 `DEPLOYMENT_CHANGED`, 결과를 모르는 외부 효과가 있으면 `EFFECT_UNKNOWN`이다. 마지막 경우는 provider에서 실제 결과를 확인한 뒤 새 job으로 처리한다. 미확정 효과를 운영자가 확정하는 명령은 아직 없다.
+- 거부하는 경우는 네 가지다. `FAILED`가 아니면 `JOB_NOT_FAILED`, 결과 보존 기간(24시간)이 지나 입력이 지워졌으면 `JOB_EXPIRED`, 다른 배포에서 수락했으면 `WIRE.DEPLOYMENT_CHANGED`, 결과를 모르는 외부 효과가 있으면 `WIRE.EFFECT_UNKNOWN`이다. 마지막 경우는 provider에서 실제 결과를 확인한 뒤 새 job으로 처리한다. 미확정 효과를 운영자가 확정하는 명령은 아직 없다.
 - 재처리는 owner의 active job 상한(100)을 다시 검사하지 않는다. 대량 재처리는 운영자가 나눠서 실행한다.
 
 ## TLS reverse proxy 검증

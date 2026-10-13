@@ -3,28 +3,28 @@
 //! tool) gets the same checks as one lowered from `.aip`.
 //!
 //! Codes:
-//! - `AIP-I101` version tag differs from [`CORE_IR_VERSION`]
-//! - `AIP-I102` type names an enum that does not exist
-//! - `AIP-I103` type names a record that does not exist
-//! - `AIP-I104` type names an entity that does not exist (`Ref`, `RefUnion`, `Snapshot`)
-//! - `AIP-I105` `Set`/`List` bound is zero
-//! - `AIP-I106` reference field targets an entity that does not exist
-//! - `AIP-I107` inverse field targets a missing entity or a missing `via` field
-//! - `AIP-I108` `Field` expression names a missing entity or field
-//! - `AIP-I109` `RowField` names a missing entity or field
-//! - `AIP-I110` `EnumValue` names a missing enum or value
-//! - `AIP-I111` callee names a missing fn, relation or intent
-//! - `AIP-I112` insert/upsert/toggle names a missing entity or field
-//! - `AIP-I113` lifecycle names a missing field, a non-enum field or a missing enum value
-//! - `AIP-I114` reaction, emit, projection, upcast or event type names a missing event
-//! - `AIP-I115` predicate application names a missing entity or predicate
-//! - `AIP-I118` `RecordField` names a missing record or field
-//! - `AIP-I119` counter `store` is not an extension declared in `uses`
-//! - `AIP-I116` an entity reference (actor, source, rule, retain, type test, ...) names a missing entity
-//! - `AIP-I117` constraint names a missing field
-//! - `AIP-I120` two constraints of one entity share an ordinal
-//! - `AIP-I121` `Json validated by` names a field the entity does not have
-//! - `AIP-I122` a `Search` source names a search that does not exist, or a `SearchRank` names an alias no `Search` source binds
+//! - `POC.I101` version tag differs from [`CORE_IR_VERSION`]
+//! - `POC.I102` type names an enum that does not exist
+//! - `POC.I103` type names a record that does not exist
+//! - `POC.I104` type names an entity that does not exist (`Ref`, `RefUnion`, `Snapshot`)
+//! - `POC.I105` `Set`/`List` bound is zero
+//! - `POC.I106` reference field targets an entity that does not exist
+//! - `POC.I107` inverse field targets a missing entity or a missing `via` field
+//! - `POC.I108` `Field` expression names a missing entity or field
+//! - `POC.I109` `RowField` names a missing entity or field
+//! - `POC.I110` `EnumValue` names a missing enum or value
+//! - `POC.I111` callee names a missing fn, relation or intent
+//! - `POC.I112` insert/upsert/toggle names a missing entity or field
+//! - `POC.I113` lifecycle names a missing field, a non-enum field or a missing enum value
+//! - `POC.I114` reaction, emit, projection, upcast or event type names a missing event
+//! - `POC.I115` predicate application names a missing entity or predicate
+//! - `POC.I118` `RecordField` names a missing record or field
+//! - `POC.I119` counter `store` is not an extension declared in `uses`
+//! - `POC.I116` an entity reference (actor, source, rule, retain, type test, ...) names a missing entity
+//! - `POC.I117` constraint names a missing field
+//! - `POC.I120` two constraints of one entity share an ordinal
+//! - `POC.I121` `Json validated by` names a field the entity does not have
+//! - `POC.I122` a `Search` source names a search that does not exist, or a `SearchRank` names an alias no `Search` source binds
 
 use crate::*;
 use serde::{Deserialize, Serialize};
@@ -1043,25 +1043,25 @@ mod tests {
     fn i101_version_mismatch() {
         let mut p = valid();
         p.aip_core = "aip-core/9.9".into();
-        assert_eq!(only(&p, "AIP-I101").path, "aip_core");
+        assert_eq!(only(&p, "POC.I101").path, "aip_core");
     }
 
     #[test]
     fn i102_unknown_enum_type() {
         let mut p = valid();
         p.entities.entry("Club".into()).and_modify(|e| e.fields.push(field("x", Type::Enum { name: "Nope".into() }, FieldKind::Stored)));
-        assert_eq!(only(&p, "AIP-I102").path, "entities.Club.fields.x.ty");
+        assert_eq!(only(&p, "POC.I102").path, "entities.Club.fields.x.ty");
     }
 
     #[test]
     fn i103_unknown_record_type() {
         let mut p = valid();
         p.entities.entry("Club".into()).and_modify(|e| e.fields.push(field("x", Type::Record { name: "Nope".into() }, FieldKind::Stored)));
-        assert_eq!(only(&p, "AIP-I103").path, "entities.Club.fields.x.ty");
+        assert_eq!(only(&p, "POC.I103").path, "entities.Club.fields.x.ty");
         // the old `event:` spelling is no longer a record name
         let mut p = valid();
         p.entities.entry("Club".into()).and_modify(|e| e.fields.push(field("x", Type::Record { name: "event:Opened".into() }, FieldKind::Stored)));
-        only(&p, "AIP-I103");
+        only(&p, "POC.I103");
     }
 
     #[test]
@@ -1069,12 +1069,12 @@ mod tests {
         let mut p = valid();
         let ty = Type::Json { schema: Some("Nope".into()), validated_by: None };
         p.entities.entry("Club".into()).and_modify(|e| e.fields.push(field("x", ty, FieldKind::Stored)));
-        assert_eq!(only(&p, "AIP-I103").path, "entities.Club.fields.x.ty");
+        assert_eq!(only(&p, "POC.I103").path, "entities.Club.fields.x.ty");
 
         let mut p = valid();
         let ty = Type::Json { schema: None, validated_by: Some("nope.questions".into()) };
         p.entities.entry("Club".into()).and_modify(|e| e.fields.push(field("x", ty, FieldKind::Stored)));
-        assert_eq!(only(&p, "AIP-I121").path, "entities.Club.fields.x.ty");
+        assert_eq!(only(&p, "POC.I121").path, "entities.Club.fields.x.ty");
 
         let mut ok = valid();
         let ty = Type::Json { schema: None, validated_by: Some("name".into()) };
@@ -1086,7 +1086,7 @@ mod tests {
     fn i114_event_type() {
         let mut p = valid();
         p.entities.entry("Club".into()).and_modify(|e| e.fields.push(field("x", Type::Event { name: "Nope".into() }, FieldKind::Stored)));
-        assert_eq!(only(&p, "AIP-I114").path, "entities.Club.fields.x.ty");
+        assert_eq!(only(&p, "POC.I114").path, "entities.Club.fields.x.ty");
         let mut ok = valid();
         ok.entities.entry("Club".into()).and_modify(|e| e.fields.push(field("x", Type::Event { name: "Opened".into() }, FieldKind::Stored)));
         assert!(validate(&ok).is_empty());
@@ -1101,7 +1101,7 @@ mod tests {
         ] {
             let mut p = valid();
             p.entities.entry("Club".into()).and_modify(|e| e.fields.push(field("x", ty, FieldKind::Stored)));
-            only(&p, "AIP-I104");
+            only(&p, "POC.I104");
         }
     }
 
@@ -1110,11 +1110,11 @@ mod tests {
         let mut p = valid();
         let ty = Type::Set { of: Box::new(int()), max: 0 };
         p.entities.entry("Club".into()).and_modify(|e| e.fields.push(field("x", ty, FieldKind::Stored)));
-        only(&p, "AIP-I105");
+        only(&p, "POC.I105");
         let mut p = valid();
         let ty = Type::List { of: Box::new(int()), max: 0 };
         p.entities.entry("Club".into()).and_modify(|e| e.fields.push(field("x", ty, FieldKind::Stored)));
-        only(&p, "AIP-I105");
+        only(&p, "POC.I105");
         let mut ok = valid();
         ok.entities.entry("Club".into()).and_modify(|e| e.fields.push(field("x", Type::List { of: Box::new(int()), max: 3 }, FieldKind::Stored)));
         assert!(validate(&ok).is_empty());
@@ -1126,12 +1126,12 @@ mod tests {
         p.entities
             .entry("Post".into())
             .and_modify(|e| e.fields.push(field("x", int(), FieldKind::Ref { target: "Nope".into(), on_delete: None, on_erase: None })));
-        assert_eq!(only(&p, "AIP-I106").path, "entities.Post.fields.x.kind");
+        assert_eq!(only(&p, "POC.I106").path, "entities.Post.fields.x.kind");
         let mut p = valid();
         p.entities
             .entry("Post".into())
             .and_modify(|e| e.fields.push(field("x", int(), FieldKind::RefUnion { targets: vec!["Nope".into()], on_delete: None, on_erase: None })));
-        only(&p, "AIP-I106");
+        only(&p, "POC.I106");
     }
 
     #[test]
@@ -1140,12 +1140,12 @@ mod tests {
         p.entities
             .entry("Club".into())
             .and_modify(|e| e.fields.push(field("x", int(), FieldKind::Inverse { target: "Nope".into(), via: "club".into() })));
-        only(&p, "AIP-I107");
+        only(&p, "POC.I107");
         let mut p = valid();
         p.entities
             .entry("Club".into())
             .and_modify(|e| e.fields.push(field("x", int(), FieldKind::Inverse { target: "Post".into(), via: "missing".into() })));
-        only(&p, "AIP-I107");
+        only(&p, "POC.I107");
     }
 
     #[test]
@@ -1155,10 +1155,10 @@ mod tests {
             |entity: &str, field: &str| ex(int(), Node::Field { base: Box::new(base.clone()), entity: Some(entity.into()), field: field.into() });
         let mut p = valid();
         with_cmd(&mut p, when(mk("Club", "missing")));
-        assert_eq!(only(&p, "AIP-I108").path, "intents.T.body[0]");
+        assert_eq!(only(&p, "POC.I108").path, "intents.T.body[0]");
         let mut p = valid();
         with_cmd(&mut p, when(mk("Nope", "name")));
-        only(&p, "AIP-I108");
+        only(&p, "POC.I108");
         let mut ok = valid();
         with_cmd(&mut ok, when(mk("Club", "name")));
         assert!(validate(&ok).is_empty());
@@ -1170,12 +1170,12 @@ mod tests {
         p.entities.entry("Club".into()).and_modify(|e| {
             e.predicates.insert("bad".into(), ex(Type::Bool, Node::RowField { entity: "Club".into(), field: "missing".into() }));
         });
-        assert_eq!(only(&p, "AIP-I109").path, "entities.Club.predicates.bad");
+        assert_eq!(only(&p, "POC.I109").path, "entities.Club.predicates.bad");
         let mut p = valid();
         p.entities.entry("Club".into()).and_modify(|e| {
             e.predicates.insert("bad".into(), ex(Type::Bool, Node::RowField { entity: "Nope".into(), field: "name".into() }));
         });
-        only(&p, "AIP-I109");
+        only(&p, "POC.I109");
     }
 
     #[test]
@@ -1186,7 +1186,7 @@ mod tests {
         p.entities.entry("Club".into()).and_modify(|e| {
             e.predicates.insert("bad".into(), ex(Type::Bool, Node::RowField { entity: "R".into(), field: "a".into() }));
         });
-        only(&p, "AIP-I109");
+        only(&p, "POC.I109");
     }
 
     #[test]
@@ -1201,10 +1201,10 @@ mod tests {
         };
         let mut p = valid();
         p.records.insert("R".into(), mk("R", "missing"));
-        assert_eq!(only(&p, "AIP-I118").path, "records.R.checks[0].cond");
+        assert_eq!(only(&p, "POC.I118").path, "records.R.checks[0].cond");
         let mut p = valid();
         p.records.insert("R".into(), mk("Nope", "a"));
-        only(&p, "AIP-I118");
+        only(&p, "POC.I118");
         let mut ok = valid();
         ok.records.insert("R".into(), mk("R", "a"));
         assert!(validate(&ok).is_empty());
@@ -1216,10 +1216,10 @@ mod tests {
             |store: &str| field("views", int(), FieldKind::Counter { store: store.into(), dedupe: None, window_seconds: None, sharded: None });
         let mut p = valid();
         p.entities.entry("Club".into()).and_modify(|e| e.fields.push(counter("redis")));
-        assert_eq!(only(&p, "AIP-I119").path, "entities.Club.fields.views.kind");
+        assert_eq!(only(&p, "POC.I119").path, "entities.Club.fields.views.kind");
         // declared as another extension: still an error
         p.uses.push("s3".into());
-        only(&p, "AIP-I119");
+        only(&p, "POC.I119");
         p.uses.push("redis".into());
         assert!(validate(&p).is_empty());
         // `use redis.cluster` also declares the `redis` family
@@ -1235,7 +1235,7 @@ mod tests {
         let mk = |entity: &str| ex(Type::Bool, Node::TypeTest { value: Box::new(value.clone()), entity: entity.into() });
         let mut p = valid();
         with_cmd(&mut p, when(mk("Nope")));
-        only(&p, "AIP-I116");
+        only(&p, "POC.I116");
         let mut ok = valid();
         with_cmd(&mut ok, when(mk("Club")));
         assert!(validate(&ok).is_empty());
@@ -1248,11 +1248,11 @@ mod tests {
         let range = ex(Type::Range { of: Box::new(int()) }, Node::Param { name: "r".into() });
         let mut p = valid();
         with_cmd(&mut p, when(ex(Type::Bool, Node::InRangeValue { value: Box::new(bad.clone()), range: Box::new(range.clone()) })));
-        only(&p, "AIP-I110");
+        only(&p, "POC.I110");
         let mut p = valid();
         let target = SetExpr { source: SetSource::Entity { entity: "Club".into() }, alias: None, filter: None };
         with_cmd(&mut p, vec![Stmt::Update { target, via: Some(UpdateVia { path: bad, alias: "x".into() }), assigns: Vec::new() }]);
-        only(&p, "AIP-I110");
+        only(&p, "POC.I110");
         let mut ok = valid();
         with_cmd(&mut ok, when(ex(Type::Bool, Node::InRangeValue { value: Box::new(lit_true()), range: Box::new(range) })));
         with_cmd(&mut ok, when(ex(Type::Symbol, Node::Symbol { name: "kakao".into() })));
@@ -1264,10 +1264,10 @@ mod tests {
         let mk = |en: &str, v: &str| ex(Type::Enum { name: "Status".into() }, Node::EnumValue { enum_name: en.into(), value: v.into() });
         let mut p = valid();
         with_cmd(&mut p, when(mk("Status", "NOPE")));
-        only(&p, "AIP-I110");
+        only(&p, "POC.I110");
         let mut p = valid();
         with_cmd(&mut p, when(mk("Nope", "OPEN")));
-        only(&p, "AIP-I110");
+        only(&p, "POC.I110");
         let mut ok = valid();
         with_cmd(&mut ok, when(mk("Status", "OPEN")));
         assert!(validate(&ok).is_empty());
@@ -1278,56 +1278,56 @@ mod tests {
         for callee in [Callee::Fn { name: "nope".into() }, Callee::Relation { name: "nope".into() }, Callee::Intent { name: "nope".into() }] {
             let mut p = valid();
             with_cmd(&mut p, when(ex(Type::Bool, Node::Call(Call { callee, args: Vec::new() }))));
-            only(&p, "AIP-I111");
+            only(&p, "POC.I111");
         }
         let mut ok = valid();
         with_cmd(&mut ok, when(ex(Type::Bool, Node::Call(Call { callee: Callee::Intent { name: "Open".into() }, args: Vec::new() }))));
         assert!(validate(&ok).is_empty());
         let mut p = valid();
         with_cmd(&mut p, vec![Stmt::AtRun { at: ex(Type::Time, Node::Now), intent: "nope".into(), args: Vec::new() }]);
-        only(&p, "AIP-I111");
+        only(&p, "POC.I111");
     }
 
     #[test]
     fn i112_write_targets() {
         let mut p = valid();
         with_cmd(&mut p, vec![Stmt::Insert { entity: "Nope".into(), from: None, values: Vec::new(), bind: None }]);
-        only(&p, "AIP-I112");
+        only(&p, "POC.I112");
         let v = vec![("missing".to_string(), lit_true())];
         let mut p = valid();
         with_cmd(&mut p, vec![Stmt::Insert { entity: "Club".into(), from: None, values: v.clone(), bind: None }]);
-        only(&p, "AIP-I112");
+        only(&p, "POC.I112");
         let mut p = valid();
         with_cmd(&mut p, vec![Stmt::Upsert { entity: "Club".into(), keys: vec!["missing".into()], values: Vec::new(), bind: None }]);
-        only(&p, "AIP-I112");
+        only(&p, "POC.I112");
         let mut p = valid();
         with_cmd(&mut p, vec![Stmt::Toggle { entity: "Club".into(), values: v }]);
-        only(&p, "AIP-I112");
+        only(&p, "POC.I112");
     }
 
     #[test]
     fn i113_lifecycle() {
         let mut p = valid();
         p.entities.entry("Club".into()).and_modify(|e| e.lifecycles[0].field = "missing".into());
-        only(&p, "AIP-I113");
+        only(&p, "POC.I113");
         let mut p = valid();
         p.entities.entry("Club".into()).and_modify(|e| e.lifecycles[0].field = "name".into());
-        only(&p, "AIP-I113");
+        only(&p, "POC.I113");
         let mut p = valid();
         p.entities.entry("Club".into()).and_modify(|e| e.lifecycles[0].transitions[0].to = vec!["NOPE".into()]);
-        assert_eq!(only(&p, "AIP-I113").path, "entities.Club.lifecycles[0].transitions[0]");
+        assert_eq!(only(&p, "POC.I113").path, "entities.Club.lifecycles[0].transitions[0]");
     }
 
     #[test]
     fn i114_events() {
         let mut p = valid();
         p.reactions.push(Reaction::Event { cross_tenant: false, event: "Nope".into(), binding: "e".into(), when: None, body: Vec::new() });
-        assert_eq!(only(&p, "AIP-I114").path, "reactions[0]");
+        assert_eq!(only(&p, "POC.I114").path, "reactions[0]");
         let mut p = valid();
         if let Some(Intent::Command(c)) = p.intents.get_mut("Open") {
             c.emits[0].event = "Nope".into();
         }
-        only(&p, "AIP-I114");
+        only(&p, "POC.I114");
         let mut ok = valid();
         ok.reactions.push(Reaction::Event { cross_tenant: false, event: "Opened".into(), binding: "e".into(), when: None, body: Vec::new() });
         assert!(validate(&ok).is_empty());
@@ -1339,10 +1339,10 @@ mod tests {
         let mk = |entity: &str, name: &str| ex(Type::Bool, Node::Pred { entity: entity.into(), name: name.into(), row: Box::new(row.clone()) });
         let mut p = valid();
         with_cmd(&mut p, when(mk("Club", "missing")));
-        only(&p, "AIP-I115");
+        only(&p, "POC.I115");
         let mut p = valid();
         with_cmd(&mut p, when(mk("Nope", "x")));
-        only(&p, "AIP-I115");
+        only(&p, "POC.I115");
         let mut ok = valid();
         ok.entities.entry("Club".into()).and_modify(|e| {
             e.predicates.insert("open".into(), lit_true());
@@ -1362,10 +1362,10 @@ mod tests {
             when: lit_true(),
             body: Vec::new(),
         });
-        only(&p, "AIP-I116");
+        only(&p, "POC.I116");
         let mut p = valid();
         with_cmd(&mut p, vec![Stmt::Delete { target: SetExpr { source: SetSource::Entity { entity: "Nope".into() }, alias: None, filter: None } }]);
-        only(&p, "AIP-I116");
+        only(&p, "POC.I116");
         let mut p = valid();
         p.actor = Some(Actor {
             entity: "Nope".into(),
@@ -1373,7 +1373,7 @@ mod tests {
             scopes: Vec::new(),
             superuser: None,
         });
-        assert_eq!(only(&p, "AIP-I116").path, "actor.entity");
+        assert_eq!(only(&p, "POC.I116").path, "actor.entity");
     }
 
     #[test]
@@ -1382,7 +1382,7 @@ mod tests {
         p.entities
             .entry("Club".into())
             .and_modify(|e| e.constraints.push(Constraint::Unique { ordinal: 0, fields: vec!["missing".into()], filter: None, code: None }));
-        assert_eq!(only(&p, "AIP-I117").path, "entities.Club.constraints[0]");
+        assert_eq!(only(&p, "POC.I117").path, "entities.Club.constraints[0]");
         let mut ok = valid();
         ok.entities
             .entry("Club".into())
@@ -1397,7 +1397,7 @@ mod tests {
             e.constraints.push(Constraint::Unique { ordinal: 3, fields: vec!["name".into()], filter: None, code: None });
             e.constraints.push(Constraint::Unique { ordinal: 3, fields: vec!["name".into()], filter: None, code: None });
         });
-        assert_eq!(only(&p, "AIP-I120").path, "entities.Club.constraints[1]");
+        assert_eq!(only(&p, "POC.I120").path, "entities.Club.constraints[1]");
     }
 
     #[test]
@@ -1405,6 +1405,6 @@ mod tests {
         // guards the documented numbering: a renumbering must be a conscious change
         let mut p = valid();
         p.aip_core = "x".into();
-        assert_eq!(codes(&p), vec!["AIP-I101".to_string()]);
+        assert_eq!(codes(&p), vec!["POC.I101".to_string()]);
     }
 }

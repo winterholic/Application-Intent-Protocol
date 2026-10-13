@@ -215,7 +215,7 @@ async fn queue_messages_become_jobs_once_and_failed_dispatch_reaches_the_dead_le
             tokio::time::sleep(Duration::from_millis(50)).await;
             state = message_state(&db, &schema, &dead.id).await;
         }
-        assert_eq!(state, ("DEAD".to_string(), 1, Some("PRINCIPAL_UNAVAILABLE".to_string())), "{lang:?}");
+        assert_eq!(state, ("DEAD".to_string(), 1, Some("WIRE.PRINCIPAL_UNAVAILABLE".to_string())), "{lang:?}");
         // A user cannot submit a job with the reserved message key.
         let forged = post(
             servers[0].address,

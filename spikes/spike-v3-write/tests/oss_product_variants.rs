@@ -105,7 +105,7 @@ async fn cyclic_default_variant_obeys_visibility_uniqueness_and_atomic_activatio
     db.batch_execute(&format!("UPDATE {schema}.product SET default_variant_id=201 WHERE id=40")).await.unwrap();
     assert_eq!(read(&mut db, &facts, None).await, public, "the referenced private variant remains hidden in a public product");
     let conflict = apply(&mut db, &facts, &activate(201), &caller(Some(2)), &Knobs::default()).await.unwrap_err();
-    assert_eq!(conflict.code, "ALREADY_EXISTS");
+    assert_eq!(conflict.code, "WIRE.ALREADY_EXISTS");
     let state = db.query_one(&format!("SELECT (SELECT status FROM {schema}.product_variant WHERE id=201), (SELECT default_variant_id FROM {schema}.product WHERE id=20), (SELECT count(*) FROM {schema}.aip_outbox)"), &[]).await.unwrap();
     assert_eq!(state.get::<_, String>(0), "DRAFT", "the parent unique failure rolls back the variant activation");
     assert_eq!(state.get::<_, Option<i64>>(1), None);

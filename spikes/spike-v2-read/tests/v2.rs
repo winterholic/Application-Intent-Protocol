@@ -46,33 +46,41 @@ fn planner_rejects_without_db() {
     let cases: Vec<Case> = vec![
         // 열린 계약은 화면 요청만 바꿔도 된다(RK-01)
         ("logo만 빼도 됨", Box::new(|r| r["select"][5] = json!({ "club": { "select": ["id", "name"] } })), "OK"),
-        ("닫힌 필드: club.school", Box::new(|r| r["select"][5] = json!({ "club": { "select": ["id", "school"] } })), "FIELD_NOT_EXPOSED"),
-        ("닫힌 필드: status", Box::new(|r| r["select"] = json!(["id", "status"])), "FIELD_NOT_EXPOSED"),
+        ("닫힌 필드: club.school", Box::new(|r| r["select"][5] = json!({ "club": { "select": ["id", "school"] } })), "WIRE.FIELD_NOT_EXPOSED"),
+        ("닫힌 필드: status", Box::new(|r| r["select"] = json!(["id", "status"])), "WIRE.FIELD_NOT_EXPOSED"),
         // select 권한이 filter/sort/traverse/aggregate를 자동 허용하지 않음(SY-3)
         (
             "선택 가능 internalNote로 filter",
             Box::new(|r| r["filter"] = json!([{ "field": "internalNote", "op": "eq", "value": "x" }])),
-            "FILTER_NOT_ALLOWED",
+            "WIRE.FILTER_NOT_ALLOWED",
         ),
-        ("선택 가능 title로 sort", Box::new(|r| r["sort"] = json!([{ "field": "title" }])), "SORT_NOT_ALLOWED"),
-        ("집계 bookmarkCount로 sort", Box::new(|r| r["sort"] = json!([{ "field": "bookmarkCount" }])), "SORT_NOT_ALLOWED"),
+        ("선택 가능 title로 sort", Box::new(|r| r["sort"] = json!([{ "field": "title" }])), "WIRE.SORT_NOT_ALLOWED"),
+        ("집계 bookmarkCount로 sort", Box::new(|r| r["sort"] = json!([{ "field": "bookmarkCount" }])), "WIRE.SORT_NOT_ALLOWED"),
         (
             "허용 안 된 연산 periodEnd.eq",
             Box::new(|r| r["filter"] = json!([{ "field": "periodEnd", "op": "eq", "value": NOW }])),
-            "FILTER_NOT_ALLOWED",
+            "WIRE.FILTER_NOT_ALLOWED",
         ),
-        ("계약에 없는 관계", Box::new(|r| r["select"] = json!(["id", { "school": { "select": ["id"] } }])), "TRAVERSE_NOT_ALLOWED"),
+        ("계약에 없는 관계", Box::new(|r| r["select"] = json!(["id", { "school": { "select": ["id"] } }])), "WIRE.TRAVERSE_NOT_ALLOWED"),
         (
             "관계 안 관계",
             Box::new(|r| r["select"][5] = json!({ "club": { "select": ["id", { "school": { "select": ["id"] } }] } })),
-            "DEPTH_EXCEEDED",
+            "WIRE.DEPTH_EXCEEDED",
         ),
-        ("budget rows 초과", Box::new(|r| r["limit"] = json!(51)), "ROWS_EXCEEDED"),
-        ("limit 0", Box::new(|r| r["limit"] = json!(0)), "BAD_VALUE"),
-        ("Time 아닌 값", Box::new(|r| r["filter"] = json!([{ "field": "periodEnd", "op": "gte", "value": "'; DROP TABLE x; --" }])), "BAD_VALUE"),
-        ("필드 이름 주입", Box::new(|r| r["filter"] = json!([{ "field": "periodEnd; DROP", "op": "gte", "value": NOW }])), "FILTER_NOT_ALLOWED"),
-        ("모르는 요청 키", Box::new(|r| r["where"] = json!("1=1")), "UNKNOWN_KEY"),
-        ("모르는 filter 키", Box::new(|r| r["filter"] = json!([{ "field": "periodEnd", "op": "gte", "value": NOW, "raw": true }])), "UNKNOWN_KEY"),
+        ("budget rows 초과", Box::new(|r| r["limit"] = json!(51)), "WIRE.ROWS_EXCEEDED"),
+        ("limit 0", Box::new(|r| r["limit"] = json!(0)), "WIRE.BAD_VALUE"),
+        (
+            "Time 아닌 값",
+            Box::new(|r| r["filter"] = json!([{ "field": "periodEnd", "op": "gte", "value": "'; DROP TABLE x; --" }])),
+            "WIRE.BAD_VALUE",
+        ),
+        ("필드 이름 주입", Box::new(|r| r["filter"] = json!([{ "field": "periodEnd; DROP", "op": "gte", "value": NOW }])), "WIRE.FILTER_NOT_ALLOWED"),
+        ("모르는 요청 키", Box::new(|r| r["where"] = json!("1=1")), "WIRE.UNKNOWN_KEY"),
+        (
+            "모르는 filter 키",
+            Box::new(|r| r["filter"] = json!([{ "field": "periodEnd", "op": "gte", "value": NOW, "raw": true }])),
+            "WIRE.UNKNOWN_KEY",
+        ),
     ];
     let mut fails = vec![];
     for (name, m, want) in &cases {
@@ -84,13 +92,13 @@ fn planner_rejects_without_db() {
         }
     }
     req["read"] = json!("Club");
-    if code(plan_read(&f, &req, &c)) != "NOT_ROOT_QUERYABLE" {
+    if code(plan_read(&f, &req, &c)) != "WIRE.NOT_ROOT_QUERYABLE" {
         fails.push("Club 루트 조회가 거부되지 않음".into());
     }
-    if code(plan_read(&f, &json!({ "read": "RecruitmentBookmark", "select": ["member"] }), &c)) != "NOT_EXPOSED" {
+    if code(plan_read(&f, &json!({ "read": "RecruitmentBookmark", "select": ["member"] }), &c)) != "WIRE.NOT_EXPOSED" {
         fails.push("북마크 개인 행 조회가 거부되지 않음".into());
     }
-    if code(plan_read(&variant("cost 1000", "cost 50"), &list_req(), &c)) != "COST_EXCEEDED" {
+    if code(plan_read(&variant("cost 1000", "cost 50"), &list_req(), &c)) != "WIRE.COST_EXCEEDED" {
         fails.push("cost 50 변형이 거부되지 않음".into());
     }
     // depth 1 + traverse 정의는 planner까지 오지 않고 V1 의미 검사에서 거부된다.
@@ -205,10 +213,10 @@ async fn db_vertical_slice() {
     for (actor, club, want) in [
         (Some(1), "10", Ok(json!(2))),
         (Some(3), "11", Ok(json!(1))),
-        (Some(2), "10", Err("ACCESS_DENIED")),
-        (Some(1), "11", Err("ACCESS_DENIED")),
-        (Some(1), "999", Err("ACCESS_DENIED")),
-        (None, "10", Err("ACCESS_DENIED")),
+        (Some(2), "10", Err("WIRE.ACCESS_DENIED")),
+        (Some(1), "11", Err("WIRE.ACCESS_DENIED")),
+        (Some(1), "999", Err("WIRE.ACCESS_DENIED")),
+        (None, "10", Err("WIRE.ACCESS_DENIED")),
     ] {
         let q = json!({ "aggregate": "Apply.approvedCount", "input": { "clubId": club } });
         let p = plan_read(&f, &q, &who(actor)).unwrap();
@@ -217,9 +225,9 @@ async fn db_vertical_slice() {
         check!(got == want, "approvedCount actor {actor:?} club {club}: 기대 {want:?}, 실제 {got:?}");
     }
     let bad = json!({ "aggregate": "Apply.approvedCount", "input": { "clubId": "10 OR 1=1" } });
-    check!(code(plan_read(&f, &bad, &who(Some(1)))) == "BAD_VALUE", "집계 입력 주입이 거부되지 않음");
+    check!(code(plan_read(&f, &bad, &who(Some(1)))) == "WIRE.BAD_VALUE", "집계 입력 주입이 거부되지 않음");
     let other = json!({ "aggregate": "Recruitment.bookmarkCount", "input": {} });
-    check!(code(plan_read(&f, &other, &who(Some(1)))) == "NOT_EXPOSED", "노출 안 된 집계 직접 호출");
+    check!(code(plan_read(&f, &other, &who(Some(1)))) == "WIRE.NOT_EXPOSED", "노출 안 된 집계 직접 호출");
 
     // EQ-09 불변식 DB 집행(V1-R4)
     let dup = db
@@ -237,7 +245,7 @@ async fn db_vertical_slice() {
         .expect("부하 seed");
     let slow = variant("deadline 2s;", "deadline 1ms;");
     let r = execute(&mut db, &plan_read(&slow, &list_req(), &who(Some(1))).unwrap()).await;
-    check!(matches!(&r, Err(e) if e.code == "DEADLINE_EXCEEDED"), "1ms 기한 변형: {:?}", r.as_ref().map(|v| v.len()));
+    check!(matches!(&r, Err(e) if e.code == "WIRE.DEADLINE_EXCEEDED"), "1ms 기한 변형: {:?}", r.as_ref().map(|v| v.len()));
     let r = execute(&mut db, &plan_read(&f, &list_req(), &who(Some(1))).unwrap()).await;
     check!(r.is_ok(), "기본 2s 기한에서 실패: {:?}", r.err());
 

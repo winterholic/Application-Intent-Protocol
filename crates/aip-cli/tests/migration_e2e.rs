@@ -90,7 +90,7 @@ async fn migrations_run_once_in_order_and_cannot_be_edited() {
         "migration first_label {\n  update Item i where i.label = null set label = \"y\"\n}\nmigration then_count {\n  update Item i set n = 1\n}\n",
     );
     let err = migrate(&pool, &edited, false).await.err().expect("an edited applied migration stops the start").to_string();
-    assert!(err.contains("AIP.MIGRATION.CHANGED") && err.contains("first_label"), "{err}");
+    assert!(err.contains("POC.MIGRATION.CHANGED") && err.contains("first_label"), "{err}");
     assert_eq!(num(&pool, "SELECT count(*) FROM item WHERE n = 1").await, 0, "nothing ran on a start that was refused");
     assert_eq!(num(&pool, "SELECT count(*) FROM _aip_migration").await, 1);
 
@@ -110,7 +110,7 @@ async fn a_failing_migration_rolls_back_and_stops_the_start() {
     // the second insert breaks `unique (name)`: the first one must not survive
     let bad = with(&format!("{LABEL}migration bad {{\n  insert Item {{ name: \"dup\" }}\n  insert Item {{ name: \"dup\" }}\n}}\n{COUNT}"));
     let err = migrate(&pool, &bad, false).await.err().expect("the start fails").to_string();
-    assert!(err.contains("AIP.MIGRATION.FAILED") && err.contains("bad"), "{err}");
+    assert!(err.contains("POC.MIGRATION.FAILED") && err.contains("bad"), "{err}");
     assert_eq!(num(&pool, "SELECT count(*) FROM item WHERE name = 'dup'").await, 0, "the failed migration was rolled back");
     assert_eq!(
         text(&pool, "SELECT string_agg(name, ',') FROM _aip_migration").await,

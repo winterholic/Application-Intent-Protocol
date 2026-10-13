@@ -53,10 +53,10 @@ fn email_and_date_string_literals_keep_their_contextual_types() {
     for invalid_date in ["0000-01-01", "2026-02-29", "2026-2-9", "2026-02-２９", "10000-01-01"] {
         let invalid = source.replace("2024-02-29", invalid_date);
         match load_str(&invalid, Form::A) {
-            Err(diagnostics) => assert!(diagnostics.iter().any(|diag| diag.code == "BAD_VALUE"), "{invalid_date}: {diagnostics:?}"),
+            Err(diagnostics) => assert!(diagnostics.iter().any(|diag| diag.code == "DEF.BAD_VALUE"), "{invalid_date}: {diagnostics:?}"),
             Ok(_) => panic!("invalid Date literal `{invalid_date}` was accepted"),
         }
     }
     let invalid_email = replace_once(&source, "person@example.test", "not-an-email", Form::A);
-    assert!(matches!(load_str(&invalid_email, Form::A), Err(errors) if errors.iter().any(|diag| diag.code == "BAD_VALUE")));
+    assert!(matches!(load_str(&invalid_email, Form::A), Err(errors) if errors.iter().any(|diag| diag.code == "DEF.BAD_VALUE")));
 }

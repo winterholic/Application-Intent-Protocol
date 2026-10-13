@@ -157,7 +157,7 @@ async fn trigger_target_operations_cannot_be_enqueued_directly_by_users() {
     assert_eq!(control["ok"], true, "{control}");
     // The webhook's operation would run with a forged, unsigned body.
     let forged = enqueue("receive", "forged-webhook").await;
-    assert_eq!((forged["ok"].as_bool(), forged["code"].as_str()), (Some(false), Some("ACCESS_DENIED")), "{forged}");
+    assert_eq!((forged["ok"].as_bool(), forged["code"].as_str()), (Some(false), Some("WIRE.ACCESS_DENIED")), "{forged}");
     let jobs: i64 = db.query_one(&format!("SELECT count(*) FROM {schema}.aip_jobs WHERE operation='receive'"), &[]).await.unwrap().get(0);
     assert_eq!(jobs, 0);
     // The signed path itself still works.

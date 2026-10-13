@@ -87,11 +87,11 @@ async fn write_slots_deadlines_and_shutdown_release_children_and_uncommitted_eff
             }
             let owned=pids(&log,4).await;
             let busy=post(server.address,&token,&fp,15,"overflow").await;
-            if busy["code"]!="WORKER_BUSY" {failures.push(format!("{lang:?} overflow: {busy}"));}
+            if busy["code"]!="WIRE.WORKER_BUSY" {failures.push(format!("{lang:?} overflow: {busy}"));}
             if fs::read_to_string(&log).unwrap().lines().count()!=4 {failures.push(format!("{lang:?} overflow started another worker"));}
             for call in calls {
                 let result=call.await.unwrap();
-                if result["code"]!="DEADLINE_EXCEEDED" {failures.push(format!("{lang:?} timeout: {result}"));}
+                if result["code"]!="WIRE.DEADLINE_EXCEEDED" {failures.push(format!("{lang:?} timeout: {result}"));}
             }
             if !dead(&owned).await {failures.push(format!("{lang:?} timeout children survived"));}
             let row=db.query_one(&format!("SELECT (SELECT count(*) FROM {schema}.event WHERE checked),(SELECT count(*) FROM {schema}.aip_idem)"),&[]).await?;

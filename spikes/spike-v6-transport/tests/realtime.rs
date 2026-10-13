@@ -201,12 +201,12 @@ async fn sse_and_websocket_replay_the_same_owner_scoped_event() {
     EventStore::new(&schema).unwrap().prune(&mut db, &owner, "notifications", "1").await.unwrap();
     let expired = sse_event(server.address, &fingerprint, "0").await;
     assert!(expired.contains("event: error\n"), "{expired}");
-    assert!(expired.contains("CURSOR_EXPIRED"), "{expired}");
+    assert!(expired.contains("WIRE.CURSOR_EXPIRED"), "{expired}");
 
     db.execute(&format!("UPDATE {schema}.aip_principals SET enabled=false WHERE issuer='test' AND subject='owner'"), &[]).await.unwrap();
     let revoked = tokio::time::timeout(Duration::from_secs(5), websocket.next()).await.unwrap().unwrap().unwrap();
     let revoked = revoked.into_text().unwrap();
-    assert!(revoked.contains("UNAUTHENTICATED"), "{revoked}");
+    assert!(revoked.contains("WIRE.UNAUTHENTICATED"), "{revoked}");
 
     let mut lifetime_request = format!("ws://{}/events/socket", server.address).into_client_request().unwrap();
     lifetime_request.headers_mut().insert("authorization", "Bearer other".parse().unwrap());

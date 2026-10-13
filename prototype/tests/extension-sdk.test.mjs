@@ -35,7 +35,7 @@ function makeFetch(extensionHandler = async () => jsonResponse({
     if (path === "/read") {
       return jsonResponse({ ok: true, rows: [{ id: 1 }], deps: ["Echo"], maxAgeMs: 60_000, contractFingerprint: fingerprint });
     }
-    return jsonResponse({ ok: false, code: "NOT_FOUND" });
+    return jsonResponse({ ok: false, code: "WIRE.NOT_FOUND" });
   };
   return { fetcher, requests };
 }
@@ -88,18 +88,18 @@ test("extension makes repeated authenticated calls, returns a frozen output, and
 
 test("invalid input is rejected before any network request", async () => {
   const { client, requests } = safeClient();
-  await assert.rejects(client.extension("Echo.echo", { valueId: -1 }), codeIs("BAD_VALUE"));
+  await assert.rejects(client.extension("Echo.echo", { valueId: -1 }), codeIs("WIRE.BAD_VALUE"));
   assert.equal(requests.length, 0);
 });
 
 test("safe-number and decimal-string Id outputs enforce their wire bounds", async () => {
   for (const valueId of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
     const { client } = safeClient(async () => jsonResponse({ ok: true, output: { valueId }, contractFingerprint: fingerprint }));
-    await assert.rejects(client.extension("Echo.echo", { valueId: 42 }), codeIs("PROTOCOL_ERROR"));
+    await assert.rejects(client.extension("Echo.echo", { valueId: 42 }), codeIs("CLIENT.PROTOCOL_ERROR"));
   }
   for (const valueId of [42, "042", "9223372036854775808"]) {
     const { client } = decimalClient(async () => jsonResponse({ ok: true, output: { valueId }, contractFingerprint: fingerprint }));
-    await assert.rejects(client.extension("Echo.echo", { valueId: "42" }), codeIs("PROTOCOL_ERROR"));
+    await assert.rejects(client.extension("Echo.echo", { valueId: "42" }), codeIs("CLIENT.PROTOCOL_ERROR"));
   }
   const { client } = decimalClient(async () => jsonResponse({ ok: true, output: { valueId: "9223372036854775807" }, contractFingerprint: fingerprint }));
   assert.deepEqual(await client.extension("Echo.echo", { valueId: "42" }), { valueId: "9223372036854775807" });
@@ -113,7 +113,7 @@ test("output requires exact keys and honors nullable declarations", async () => 
     { valueId: null, note: null },
   ]) {
     const { client } = safeClient(async () => jsonResponse({ ok: true, output, contractFingerprint: fingerprint }), outputs);
-    await assert.rejects(client.extension("Echo.echo", { valueId: 42 }), codeIs("PROTOCOL_ERROR"));
+    await assert.rejects(client.extension("Echo.echo", { valueId: 42 }), codeIs("CLIENT.PROTOCOL_ERROR"));
   }
   const { client } = safeClient(async () => jsonResponse({ ok: true, output: { valueId: 42, note: null }, contractFingerprint: fingerprint }), outputs);
   assert.deepEqual(await client.extension("Echo.echo", { valueId: 42 }), { valueId: 42, note: null });
@@ -134,7 +134,7 @@ test("runtime output validation rejects unknown enum values, NUL strings, and in
     { role: "ADMIN", text: "ok", url: "https://example.test", at: "2026-02-29T12:34:56Z" },
   ]) {
     const { client } = safeClient(async () => jsonResponse({ ok: true, output, contractFingerprint: fingerprint }), outputs);
-    await assert.rejects(client.extension("Echo.echo", validInput), codeIs("PROTOCOL_ERROR"));
+    await assert.rejects(client.extension("Echo.echo", validInput), codeIs("CLIENT.PROTOCOL_ERROR"));
   }
   const validOutput = { role: "ADMIN", text: "ok", url: "https://example.test", at: "2024-02-29t12:34:56.123456+05:30" };
   const { client } = safeClient(async () => jsonResponse({ ok: true, output: validOutput, contractFingerprint: fingerprint }), outputs);
@@ -142,11 +142,11 @@ test("runtime output validation rejects unknown enum values, NUL strings, and in
 });
 
 test("server failures keep their code and a successful response with a different fingerprint is rejected", async () => {
-  const denied = safeClient(async () => jsonResponse({ ok: false, code: "ACCESS_DENIED", msg: "denied" }));
-  await assert.rejects(denied.client.extension("Echo.echo", { valueId: 42 }), codeIs("ACCESS_DENIED"));
+  const denied = safeClient(async () => jsonResponse({ ok: false, code: "WIRE.ACCESS_DENIED", msg: "denied" }));
+  await assert.rejects(denied.client.extension("Echo.echo", { valueId: 42 }), codeIs("WIRE.ACCESS_DENIED"));
 
   const stale = safeClient(async () => jsonResponse({ ok: true, output: { valueId: 42 }, contractFingerprint: "b".repeat(64) }));
-  await assert.rejects(stale.client.extension("Echo.echo", { valueId: 42 }), codeIs("CONTRACT_MISMATCH"));
+  await assert.rejects(stale.client.extension("Echo.echo", { valueId: 42 }), codeIs("WIRE.CONTRACT_MISMATCH"));
   assert.equal(stale.client.cache.size(), 0);
   assert.deepEqual(stale.client.pending(), []);
 });
@@ -169,7 +169,7 @@ test("a late extension response after same-principal session replacement is disc
       extensionStarted();
       return extensionReply;
     }
-    return jsonResponse({ ok: false, code: "NOT_FOUND" });
+    return jsonResponse({ ok: false, code: "WIRE.NOT_FOUND" });
   };
   const client = connectTypedExtensions(
     "http://extension.invalid",
@@ -201,7 +201,7 @@ test("a connected decimal binding cannot change its wire by mutating the caller'
   const mock = makeFetch(async () => jsonResponse({ ok:true, output:{valueId:42}, contractFingerprint:fingerprint }));
   const client = connectTypedExtensions("http://extension.invalid", "old-token", b, mock.fetcher);
   b.idWire = "safe-number-v13";
-  await assert.rejects(client.extension("Echo.echo", { valueId:42 }), codeIs("BAD_VALUE"));
+  await assert.rejects(client.extension("Echo.echo", { valueId:42 }), codeIs("WIRE.BAD_VALUE"));
   assert.equal(mock.requests.length, 0);
 });
 

@@ -39,7 +39,7 @@ test("쓰기 응답 유실: 상태 확인으로 복구, 두 번 실행되지 않
   assert.equal(again.replayed, true);
   // 새 키로 보내면 실제로 다시 실행되어 이미 승인 상태라 거부 → 처음 한 번만 실행됐다는 뜻
   const fresh = await c.apply({ apply: "Apply.approve", target: { ids: ["300"] } });
-  assert.equal(fresh.code, "INVALID_STATE");
+  assert.equal(fresh.code, "WIRE.INVALID_STATE");
   // 승인은 ClubMember를 바꾸므로 모집 목록(internalNote 정책이 ClubMember를 읽음)은 다시 읽는다
   assert.equal((await c.read(list)).cached, false);
 });
@@ -48,22 +48,22 @@ test("같은 키에 다른 요청은 거부, 없는 키 상태는 NOT_FOUND", as
   const c = connect(URL, T1);
   await c.apply({ apply: "MemberAlarm.read", target: { ids: ["2"] } }, { key: "k-x" });
   const bad = await c.apply({ apply: "MemberAlarm.read", target: { ids: ["1"] } }, { key: "k-x" });
-  assert.equal(bad.code, "IDEMPOTENCY_MISMATCH");
-  assert.equal((await c.post("/status", { key: "never-sent", request: {} })).code, "NOT_FOUND");
+  assert.equal(bad.code, "WIRE.IDEMPOTENCY_MISMATCH");
+  assert.equal((await c.post("/status", { key: "never-sent", request: {} })).code, "WIRE.NOT_FOUND");
 });
 
 test("키는 actor별: 다른 사용자가 같은 키를 써도 남의 결과를 받지 않음", async () => {
   const c2 = connect(URL, T2);
   const r = await c2.post("/status", { key: "approve-300", request: { apply: "Apply.approve", target: { ids: ["300"] } } });
-  assert.equal(r.code, "NOT_FOUND");
+  assert.equal(r.code, "WIRE.NOT_FOUND");
 });
 
 test("키 불일치 응답이 유실돼도 이전 요청의 성공으로 복구하지 않음(r7 R7-01)", async () => {
   const c = connect(URL, T1);
   await c.apply({ apply: "MemberAlarm.read", target: { ids: ["3"] } }, { key: "k-y" });
   const r = await c.apply({ apply: "MemberAlarm.read", target: { ids: ["4"] } }, { key: "k-y", dropResponse: true });
-  assert.equal(r.code, "IDEMPOTENCY_MISMATCH");
-  assert.equal((await c.post("/status", { key: "k-y", request: { apply: "MemberAlarm.read", target: { ids: ["4"] } } })).code, "IDEMPOTENCY_MISMATCH");
+  assert.equal(r.code, "WIRE.IDEMPOTENCY_MISMATCH");
+  assert.equal((await c.post("/status", { key: "k-y", request: { apply: "MemberAlarm.read", target: { ids: ["4"] } } })).code, "WIRE.IDEMPOTENCY_MISMATCH");
 });
 
 test("재요청까지 통신 실패하면 미확정으로 남고, 복구 뒤 같은 키로 확정(r7 R7-02·R7-03)", async () => {

@@ -205,7 +205,7 @@ async fn subscriptions_end_to_end() {
     bob.subscribe("p", "LiveProjectTasks", json!({"project": w.pa})).await;
     let refused = bob.next().await;
     assert_eq!((refused["type"].as_str(), refused["id"].as_str()), (Some("error"), Some("p")), "{refused}");
-    assert_eq!(refused["code"], "AIP.NOT_FOUND", "{refused}");
+    assert_eq!(refused["code"], "POC.NOT_FOUND", "{refused}");
 
     // carol is in both workspaces: her view of A never holds a task of B, whoever creates it
     let mut carol = Client::connect(addr).await;
@@ -238,7 +238,7 @@ async fn subscriptions_end_to_end() {
     // the project subscription ends with an error; the workspace one, which leans on visibility, goes on with what she may still see
     assert_eq!(ended["p"]["type"], "error", "{ended:?}");
     // the project is no longer visible to her, so the load that comes before `allow` fails
-    assert_eq!((ended["p"]["code"].as_str(), ended["p"]["reason"].as_str()), (Some("AIP.NOT_FOUND"), Some("PROJECT_NOT_FOUND")), "{ended:?}");
+    assert_eq!((ended["p"]["code"].as_str(), ended["p"]["reason"].as_str()), (Some("POC.NOT_FOUND"), Some("PROJECT_NOT_FOUND")), "{ended:?}");
     assert_eq!((ended["a"]["type"].as_str(), ended["a"]["rows"].as_array().map(Vec::len)), (Some("changed"), Some(0)), "{ended:?}");
     w.task(&w.alice, &w.pa, "after the revoke").await;
     assert!(carol.silent(700).await, "nothing reaches carol after she lost A");
@@ -260,13 +260,13 @@ async fn connections_must_authenticate_and_name_a_subscription() {
     let mut c = Client::connect(addr).await;
     c.subscribe("x", "LiveProjectTasks", json!({"project": w.pa})).await;
     let m = c.next().await;
-    assert_eq!((m["type"].as_str(), m["code"].as_str()), (Some("error"), Some("AIP.AUTH.UNAUTHENTICATED")), "{m}");
+    assert_eq!((m["type"].as_str(), m["code"].as_str()), (Some("error"), Some("POC.AUTH.UNAUTHENTICATED")), "{m}");
     assert_eq!(c.next().await["type"], "closed");
 
     // a connection that never says who it is is closed
     let mut c = Client::connect(addr).await;
     let m = c.next().await;
-    assert_eq!(m["code"], "AIP.AUTH.UNAUTHENTICATED", "{m}");
+    assert_eq!(m["code"], "POC.AUTH.UNAUTHENTICATED", "{m}");
     assert_eq!(c.next().await["type"], "closed");
 
     // a bad token, an expired one, and a token signed with another secret
@@ -274,14 +274,14 @@ async fn connections_must_authenticate_and_name_a_subscription() {
         let mut c = Client::connect(addr).await;
         c.send(json!({"type": "auth", "token": token})).await;
         let m = c.next().await;
-        assert_eq!(m["code"], "AIP.AUTH.UNAUTHENTICATED", "{m}");
+        assert_eq!(m["code"], "POC.AUTH.UNAUTHENTICATED", "{m}");
         assert_eq!(c.next().await["type"], "closed");
     }
 
     // a well-formed token of someone who does not exist
     let mut c = Client::connect(addr).await;
     c.auth("7b0c8a58-8f1f-4a5e-9a57-0c2f2b3f2e11").await;
-    assert_eq!(c.next().await["code"], "AIP.AUTH.UNAUTHENTICATED");
+    assert_eq!(c.next().await["code"], "POC.AUTH.UNAUTHENTICATED");
 
     // anonymous (`auth` without a token) is allowed to connect but `allow` still decides: these ask for a member
     let mut c = Client::connect(addr).await;
@@ -296,16 +296,16 @@ async fn connections_must_authenticate_and_name_a_subscription() {
     for name in ["ProjectTasks", "CreateTask", "NoSuchThing"] {
         c.subscribe("n", name, json!({"project": w.pa})).await;
         let m = c.next().await;
-        assert_eq!((m["type"].as_str(), m["code"].as_str()), (Some("error"), Some("AIP.REQUEST.UNKNOWN_INTENT")), "{name}: {m}");
+        assert_eq!((m["type"].as_str(), m["code"].as_str()), (Some("error"), Some("POC.REQUEST.UNKNOWN_INTENT")), "{name}: {m}");
     }
     // a bad input is the same error a query gives, and the connection is still good
     c.subscribe("bad", "LiveProjectTasks", json!({"project": "not-a-uuid"})).await;
-    assert_eq!(c.next().await["code"], "AIP.INPUT.INVALID");
+    assert_eq!(c.next().await["code"], "POC.INPUT.INVALID");
     c.subscribe("ok", "LiveProjectTasks", json!({"project": w.pa})).await;
     assert_eq!(c.next().await["type"], "snapshot");
     // a message that is not JSON ends the connection
     c.0.send(Message::Text("not json".into())).await.expect("send");
-    assert_eq!(c.next().await["code"], "AIP.REQUEST.MALFORMED");
+    assert_eq!(c.next().await["code"], "POC.REQUEST.MALFORMED");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -323,7 +323,7 @@ async fn limits_keep_one_client_from_using_up_the_server() {
     }
     c.subscribe("3", "LiveProjectTasks", json!({"project": w.pa})).await;
     let m = c.next().await;
-    assert_eq!((m["id"].as_str(), m["code"].as_str()), (Some("3"), Some("AIP.SUBSCRIPTION.LIMIT")), "{m}");
+    assert_eq!((m["id"].as_str(), m["code"].as_str()), (Some("3"), Some("POC.SUBSCRIPTION.LIMIT")), "{m}");
     // closing one makes room
     c.send(json!({"type": "unsubscribe", "id": "2"})).await;
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -343,7 +343,7 @@ async fn limits_keep_one_client_from_using_up_the_server() {
     while let Some(m) = c.next_within(1500).await {
         seen.push(m);
     }
-    assert!(seen.iter().any(|m| m["code"] == "AIP.SUBSCRIPTION.TOO_LARGE"), "{seen:?}");
+    assert!(seen.iter().any(|m| m["code"] == "POC.SUBSCRIPTION.TOO_LARGE"), "{seen:?}");
 }
 
 const IMPERSONATION: &str = r#"
@@ -409,7 +409,7 @@ async fn an_impersonation_token_is_only_good_while_its_session_is_open() {
     ok(&e, "StopMemberImpersonation", Some(&sam), json!({}), None).await;
     ok(&e, "AddNote", Some(&alice), json!({"body": "two"}), None).await;
     let m = c.next().await;
-    assert_eq!((m["type"].as_str(), m["code"].as_str()), (Some("error"), Some("AIP.AUTH.UNAUTHENTICATED")), "{m}");
+    assert_eq!((m["type"].as_str(), m["code"].as_str()), (Some("error"), Some("POC.AUTH.UNAUTHENTICATED")), "{m}");
     assert_eq!(m["reason"], "IMPERSONATION_ENDED");
     ok(&e, "AddNote", Some(&alice), json!({"body": "three"}), None).await;
     assert!(c.silent(700).await, "nothing follows the error");

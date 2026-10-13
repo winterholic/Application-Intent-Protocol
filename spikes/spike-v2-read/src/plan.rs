@@ -14,7 +14,7 @@ fn rej<T>(code: &'static str, msg: impl Into<String>) -> Result<T, Reject> {
 }
 
 fn internal(e: String) -> Reject {
-    Reject { code: "INTERNAL", msg: e }
+    Reject { code: "WIRE.INTERNAL", msg: e }
 }
 
 pub struct Plan {
@@ -62,7 +62,7 @@ pub struct Caller {
 fn keys(o: &Map<String, Value>, allowed: &[&str], what: &str) -> Result<(), Reject> {
     for k in o.keys() {
         if !allowed.contains(&k.as_str()) {
-            return rej("UNKNOWN_KEY", format!("{what}에 알 수 없는 키 `{k}`. 허용: {}", allowed.join(", ")));
+            return rej("WIRE.UNKNOWN_KEY", format!("{what}에 알 수 없는 키 `{k}`. 허용: {}", allowed.join(", ")));
         }
     }
     Ok(())
@@ -190,19 +190,19 @@ fn check_value(facts: &Value, ty: &str, v: &Value, wire: crate::id_wire::IdWire)
 
 pub fn plan_operation_authorization(facts: &Value, name: &str, input: &Value, caller: &Caller, wire: crate::id_wire::IdWire) -> Result<Plan, Reject> {
     let operation = &facts["operations"][name];
-    let declared = operation["input"].as_array().ok_or(Reject { code: "NOT_EXPOSED", msg: "operation 계약 없음".into() })?;
-    let given = input.as_object().ok_or(Reject { code: "BAD_VALUE", msg: "operation 입력은 객체".into() })?;
+    let declared = operation["input"].as_array().ok_or(Reject { code: "WIRE.NOT_EXPOSED", msg: "operation 계약 없음".into() })?;
+    let given = input.as_object().ok_or(Reject { code: "WIRE.BAD_VALUE", msg: "operation 입력은 객체".into() })?;
     let mut cx = Ctx::new(facts, caller.actor_id, &caller.now);
     let mut env = Env::default();
     for key in given.keys() {
         if !declared.iter().any(|field| field[0] == *key) {
-            return rej("BAD_VALUE", "operation에 선언되지 않은 입력");
+            return rej("WIRE.BAD_VALUE", "operation에 선언되지 않은 입력");
         }
     }
     for field in declared {
         let (name, ty) = (field[0].as_str().unwrap(), field[1].as_str().unwrap());
-        let value = given.get(name).ok_or(Reject { code: "BAD_VALUE", msg: "operation 입력 누락".into() })?;
-        crate::scalar::validate_range(field, value, "BAD_VALUE")?;
+        let value = given.get(name).ok_or(Reject { code: "WIRE.BAD_VALUE", msg: "operation 입력 누락".into() })?;
+        crate::scalar::validate_range(field, value, "WIRE.BAD_VALUE")?;
         let bound = if value.is_null() && ty.ends_with('?') {
             "NULL".to_string()
         } else {
@@ -234,7 +234,7 @@ pub fn plan_read_with_wire(facts: &Value, req: &Value, caller: &Caller, wire: cr
 }
 
 fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_wire::IdWire) -> Result<Plan, Reject> {
-    let o = req.as_object().ok_or_else(|| Reject { code: "BAD_REQUEST", msg: "요청은 객체".into() })?;
+    let o = req.as_object().ok_or_else(|| Reject { code: "WIRE.BAD_REQUEST", msg: "요청은 객체".into() })?;
     if o.contains_key("aggregate") {
         return plan_aggregate(facts, o, caller, wire);
     }
@@ -250,26 +250,26 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
         allowed.push("after");
     }
     keys(o, &allowed, "read 요청")?;
-    let res = o.get("read").and_then(Value::as_str).ok_or(Reject { code: "BAD_REQUEST", msg: "read 필요".into() })?;
+    let res = o.get("read").and_then(Value::as_str).ok_or(Reject { code: "WIRE.BAD_REQUEST", msg: "read 필요".into() })?;
     let rf = &facts["resources"][res];
     if rf.is_null() {
-        return rej("UNKNOWN_RESOURCE", format!("`{res}` 없음"));
+        return rej("WIRE.UNKNOWN_RESOURCE", format!("`{res}` 없음"));
     }
     let ex = &rf["exposeRead"];
     if ex.is_null() {
-        return rej("NOT_EXPOSED", format!("`{res}`는 읽기 노출이 없음"));
+        return rej("WIRE.NOT_EXPOSED", format!("`{res}`는 읽기 노출이 없음"));
     }
     if ex["rootQueryable"] != true {
-        return rej("NOT_ROOT_QUERYABLE", format!("`{res}`는 관계 대상 전용(budget 없음)"));
+        return rej("WIRE.NOT_ROOT_QUERYABLE", format!("`{res}`는 관계 대상 전용(budget 없음)"));
     }
     let budget = &ex["budget"];
     let mut cx = Ctx::new(facts, caller.actor_id, &caller.now);
     let t = "t".to_string();
     let env = Env { this: Some((t.clone(), res.to_string())), ..Default::default() };
 
-    let sel = o.get("select").and_then(Value::as_array).ok_or(Reject { code: "BAD_REQUEST", msg: "select 배열 필요".into() })?;
+    let sel = o.get("select").and_then(Value::as_array).ok_or(Reject { code: "WIRE.BAD_REQUEST", msg: "select 배열 필요".into() })?;
     if sel.is_empty() {
-        return rej("BAD_REQUEST", "select가 비었음");
+        return rej("WIRE.BAD_REQUEST", "select가 비었음");
     }
     let (mut cols, mut joins, mut out) = (vec![], vec![], Map::new());
     let (mut n_trav, mut n_agg, mut n_fp) = (0usize, 0usize, 0usize);
@@ -283,13 +283,13 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
             _ => String::new(),
         };
         if !seen_sel.insert(key.clone()) {
-            return rej("DUPLICATE", format!("select `{key}` 중복"));
+            return rej("WIRE.DUPLICATE", format!("select `{key}` 중복"));
         }
         match s {
             Value::String(f) => {
                 let kind = ex["select"][f].as_str();
                 match kind {
-                    None => return rej("FIELD_NOT_EXPOSED", format!("`{res}.{f}`는 계약에 열려 있지 않음. 서버 정의의 expose 변경이 필요")),
+                    None => return rej("WIRE.FIELD_NOT_EXPOSED", format!("`{res}.{f}`는 계약에 열려 있지 않음. 서버 정의의 expose 변경이 필요")),
                     Some("aggregate") => {
                         let a = &rf["aggregates"][f];
                         let (expr, output_type) = aggregate_select_expr(facts, &mut cx, a, res, &t, &env)?;
@@ -329,17 +329,18 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
                     continue;
                 }
                 if tr.is_null() {
-                    return rej("TRAVERSE_NOT_ALLOWED", format!("`{res}.{rel}` 관계 탐색이 계약에 없음"));
+                    return rej("WIRE.TRAVERSE_NOT_ALLOWED", format!("`{res}.{rel}` 관계 탐색이 계약에 없음"));
                 }
-                let so = sub.as_object().ok_or(Reject { code: "BAD_REQUEST", msg: "traverse 값은 객체".into() })?;
+                let so = sub.as_object().ok_or(Reject { code: "WIRE.BAD_REQUEST", msg: "traverse 값은 객체".into() })?;
                 keys(so, &["select"], "traverse")?;
-                let tsel = so.get("select").and_then(Value::as_array).ok_or(Reject { code: "BAD_REQUEST", msg: "traverse select 필요".into() })?;
+                let tsel =
+                    so.get("select").and_then(Value::as_array).ok_or(Reject { code: "WIRE.BAD_REQUEST", msg: "traverse select 필요".into() })?;
                 let depth = budget["depth"].as_i64().unwrap_or(1);
                 if tsel.iter().any(|x| x.is_object()) {
-                    return rej("DEPTH_EXCEEDED", format!("관계 깊이가 budget depth {depth}를 넘음"));
+                    return rej("WIRE.DEPTH_EXCEEDED", format!("관계 깊이가 budget depth {depth}를 넘음"));
                 }
                 if depth < 2 {
-                    return rej("DEPTH_EXCEEDED", format!("budget depth {depth}에서는 관계 탐색 불가"));
+                    return rej("WIRE.DEPTH_EXCEEDED", format!("budget depth {depth}에서는 관계 탐색 불가"));
                 }
                 let target = tr["target"].as_str().unwrap();
                 let tf = &facts["resources"][target];
@@ -349,13 +350,13 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
                 let mut tout = Map::new();
                 let mut seen_target = std::collections::HashSet::new();
                 for x in tsel {
-                    let f = x.as_str().ok_or(Reject { code: "BAD_REQUEST", msg: "traverse select는 문자열".into() })?;
+                    let f = x.as_str().ok_or(Reject { code: "WIRE.BAD_REQUEST", msg: "traverse select는 문자열".into() })?;
                     // 같은 필드를 반복하면 정책 없는 필드는 비용에 안 잡힌 채 SQL만 부풀고 json_build_object 인수 한도에 걸린다.
                     if !seen_target.insert(f) {
-                        return rej("DUPLICATE", format!("select `{f}` 중복"));
+                        return rej("WIRE.DUPLICATE", format!("select `{f}` 중복"));
                     }
                     if !tr["select"].as_array().unwrap().iter().any(|y| y == f) {
-                        return rej("FIELD_NOT_EXPOSED", format!("`{target}.{f}`는 `{res}.{rel}` 경로에 열려 있지 않음. 서버 정의 변경 필요"));
+                        return rej("WIRE.FIELD_NOT_EXPOSED", format!("`{target}.{f}`는 `{res}.{rel}` 경로에 열려 있지 않음. 서버 정의 변경 필요"));
                     }
                     if tf["exposeRead"]["select"][f] == "aggregate" {
                         let aggregate = &tf["aggregates"][f];
@@ -402,29 +403,29 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
                 out.insert(rel.clone(), json!({ "object": tout, "nullable": true, "reason": "대상 행 정책" }));
                 n_trav += 1;
             }
-            _ => return rej("BAD_REQUEST", format!("select 항목 형식 오류 {s}")),
+            _ => return rej("WIRE.BAD_REQUEST", format!("select 항목 형식 오류 {s}")),
         }
     }
 
     let mut wh = vec![cx.cond(&rf["rowRead"], &env).map_err(internal)?];
     let mut seen_filter = std::collections::HashSet::new();
     if let Some(fl) = o.get("filter") {
-        for f in fl.as_array().ok_or(Reject { code: "BAD_REQUEST", msg: "filter 배열".into() })? {
-            let fo = f.as_object().ok_or(Reject { code: "BAD_REQUEST", msg: "filter 항목은 객체".into() })?;
+        for f in fl.as_array().ok_or(Reject { code: "WIRE.BAD_REQUEST", msg: "filter 배열".into() })? {
+            let fo = f.as_object().ok_or(Reject { code: "WIRE.BAD_REQUEST", msg: "filter 항목은 객체".into() })?;
             keys(fo, &["field", "op", "value"], "filter")?;
             let (field, op) = (fo.get("field").and_then(Value::as_str).unwrap_or(""), fo.get("op").and_then(Value::as_str).unwrap_or(""));
             let key = format!("{field}.{op}");
             // 같은 조건을 반복하면 요청 크기만 커진다. 허용 목록 항목당 한 번만 받는다(R2B-03).
             if !seen_filter.insert(key.clone()) {
-                return rej("DUPLICATE", format!("filter `{key}` 중복"));
+                return rej("WIRE.DUPLICATE", format!("filter `{key}` 중복"));
             }
             if !ex["filter"].as_array().unwrap().iter().any(|x| x == &json!(key)) {
                 let allowed = allowed_names(ex["filter"].as_array().unwrap().iter().filter_map(Value::as_str));
-                return rej("FILTER_NOT_ALLOWED", format!("`{key}` 필터는 계약에 없음(선택 가능 여부와 별개). 허용: {allowed}"));
+                return rej("WIRE.FILTER_NOT_ALLOWED", format!("`{key}` 필터는 계약에 없음(선택 가능 여부와 별개). 허용: {allowed}"));
             }
             // facts가 sema를 거치지 않고 들어와도, 정책으로 가려지는 값이 filter 결과 유무로 새지 않게 막는다.
             if !rf["fieldRead"][field].is_null() {
-                return rej("POLICY_FIELD_NOT_FILTERABLE", format!("`{field}`에는 field read 정책이 있어 filter에 쓸 수 없음"));
+                return rej("WIRE.POLICY_FIELD_NOT_FILTERABLE", format!("`{field}`에는 field read 정책이 있어 filter에 쓸 수 없음"));
             }
             let fty = rf["fields"][field]["ty"].as_str().unwrap();
             let col = column(facts, res, field).unwrap();
@@ -446,7 +447,7 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
             };
             if op == "isNull" {
                 // 값은 bool 하나. 조건 문자열(IS NULL)은 고정이고 true/false만 매개변수로 비교한다.
-                let Value::Bool(b) = raw else { return rej("BAD_VALUE", "isNull 값은 bool") };
+                let Value::Bool(b) = raw else { return rej("WIRE.BAD_VALUE", "isNull 값은 bool") };
                 let p = cx.params.bind(Some(b.to_string()), "boolean");
                 let is_null = match &visible {
                     Some(v) => format!("({t}.{col} IS NULL OR NOT {v})"),
@@ -456,12 +457,12 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
                 continue;
             }
             if op == "in" {
-                let items = raw.as_array().ok_or(Reject { code: "BAD_VALUE", msg: "in 값은 배열".into() })?;
+                let items = raw.as_array().ok_or(Reject { code: "WIRE.BAD_VALUE", msg: "in 값은 배열".into() })?;
                 if items.is_empty() {
-                    return rej("BAD_VALUE", "in 배열이 비었음. 조건이 없으면 필터를 빼야 함");
+                    return rej("WIRE.BAD_VALUE", "in 배열이 비었음. 조건이 없으면 필터를 빼야 함");
                 }
                 if items.len() > MAX_IN_VALUES {
-                    return rej("IN_LIST_EXCEEDED", format!("in 배열 {}개 > 상한 {MAX_IN_VALUES}", items.len()));
+                    return rej("WIRE.IN_LIST_EXCEEDED", format!("in 배열 {}개 > 상한 {MAX_IN_VALUES}", items.len()));
                 }
                 // 같은 값은 한 번만 바인딩한다. 비교는 검사를 거친 정규 문자열 기준이라 `10`과 `"10"`은 같은 값이다.
                 let mut seen = std::collections::HashSet::new();
@@ -477,14 +478,14 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
             }
             let (v, cast) = check_value(facts, fty, raw, wire)?;
             if op == "contains" {
-                let Value::String(text) = raw else { return rej("BAD_VALUE", "contains 값은 문자열") };
+                let Value::String(text) = raw else { return rej("WIRE.BAD_VALUE", "contains 값은 문자열") };
                 // 빈 문자열은 모든 행에 일치하므로 필터가 아니다.
                 if text.is_empty() {
-                    return rej("BAD_VALUE", "contains 값이 비었음. 조건이 없으면 필터를 빼야 함");
+                    return rej("WIRE.BAD_VALUE", "contains 값이 비었음. 조건이 없으면 필터를 빼야 함");
                 }
                 let n = text.chars().count();
                 if n > MAX_CONTAINS_CHARS {
-                    return rej("VALUE_TOO_LONG", format!("contains 값 {n}자 > 상한 {MAX_CONTAINS_CHARS}자"));
+                    return rej("WIRE.VALUE_TOO_LONG", format!("contains 값 {n}자 > 상한 {MAX_CONTAINS_CHARS}자"));
                 }
                 let p = cx.params.bind(Some(v), cast);
                 // strpos는 인자를 리터럴로 비교한다. LIKE와 달리 %, _, \\가 특별한 뜻을 갖지 않는다.
@@ -495,7 +496,7 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
                 // contains와 같은 상한. 긴 값은 검색어가 아니라 비용만 키운다.
                 let n = v.chars().count();
                 if n > MAX_CONTAINS_CHARS {
-                    return rej("VALUE_TOO_LONG", format!("prefix 값 {n}자 > 상한 {MAX_CONTAINS_CHARS}자"));
+                    return rej("WIRE.VALUE_TOO_LONG", format!("prefix 값 {n}자 > 상한 {MAX_CONTAINS_CHARS}자"));
                 }
                 let p = cx.params.bind(Some(v), cast);
                 // A prefix is a literal string; SQL wildcard and escape characters keep their meaning as text.
@@ -508,7 +509,7 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
                 "lte" => "<=",
                 "gt" => ">",
                 "lt" => "<",
-                _ => return rej("FILTER_NOT_ALLOWED", format!("연산 `{op}` 미지원")),
+                _ => return rej("WIRE.FILTER_NOT_ALLOWED", format!("연산 `{op}` 미지원")),
             };
             let p = cx.params.bind(Some(v), cast);
             wh.push(and_visible(format!("({t}.{col} {sop} {p})")));
@@ -520,24 +521,24 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
     let mut sort_keys: Vec<(String, bool)> = vec![];
     let mut seen_sort = std::collections::HashSet::new();
     if let Some(sl) = o.get("sort") {
-        for s in sl.as_array().ok_or(Reject { code: "BAD_REQUEST", msg: "sort 배열".into() })? {
-            let so = s.as_object().ok_or(Reject { code: "BAD_REQUEST", msg: "sort 항목은 객체".into() })?;
+        for s in sl.as_array().ok_or(Reject { code: "WIRE.BAD_REQUEST", msg: "sort 배열".into() })? {
+            let so = s.as_object().ok_or(Reject { code: "WIRE.BAD_REQUEST", msg: "sort 항목은 객체".into() })?;
             keys(so, &["field", "dir"], "sort")?;
             let f = so.get("field").and_then(Value::as_str).unwrap_or("");
             if !seen_sort.insert(f.to_string()) {
-                return rej("DUPLICATE", format!("sort `{f}` 중복"));
+                return rej("WIRE.DUPLICATE", format!("sort `{f}` 중복"));
             }
             if !ex["sort"].as_array().unwrap().iter().any(|x| x == f) {
                 let allowed = allowed_names(ex["sort"].as_array().unwrap().iter().filter_map(Value::as_str));
-                return rej("SORT_NOT_ALLOWED", format!("`{f}` 정렬은 계약에 없음(선택 가능 여부와 별개). 허용: {allowed}"));
+                return rej("WIRE.SORT_NOT_ALLOWED", format!("`{f}` 정렬은 계약에 없음(선택 가능 여부와 별개). 허용: {allowed}"));
             }
             if !rf["fieldRead"][f].is_null() {
-                return rej("POLICY_FIELD_NOT_FILTERABLE", format!("`{f}`에는 field read 정책이 있어 sort에 쓸 수 없음"));
+                return rej("WIRE.POLICY_FIELD_NOT_FILTERABLE", format!("`{f}`에는 field read 정책이 있어 sort에 쓸 수 없음"));
             }
             let dir = match so.get("dir").and_then(Value::as_str).unwrap_or("asc") {
                 "asc" => "ASC",
                 "desc" => "DESC",
-                d => return rej("BAD_REQUEST", format!("정렬 방향 `{d}`")),
+                d => return rej("WIRE.BAD_REQUEST", format!("정렬 방향 `{d}`")),
             };
             order.push(format!("{t}.{} {dir}", column(facts, res, f).unwrap()));
             sort_keys.push((f.to_string(), dir == "DESC"));
@@ -551,24 +552,24 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
 
     if let Some(after) = o.get("after") {
         if o.contains_key("offset") {
-            return rej("CURSOR_WITH_OFFSET", "after와 offset은 함께 쓸 수 없음");
+            return rej("WIRE.CURSOR_WITH_OFFSET", "after와 offset은 함께 쓸 수 없음");
         }
-        let am = after.as_object().ok_or(Reject { code: "BAD_CURSOR", msg: "after는 객체".into() })?;
+        let am = after.as_object().ok_or(Reject { code: "WIRE.BAD_CURSOR", msg: "after는 객체".into() })?;
         // 키 집합은 이 요청의 sort 필드 + id와 정확히 같아야 한다. 호출자가 다른 필드로 경계를 짜 맞출 수 없다.
         let want: std::collections::BTreeSet<&str> = sort_keys.iter().map(|(f, _)| f.as_str()).collect();
         let have: std::collections::BTreeSet<&str> = am.keys().map(String::as_str).collect();
         if want != have {
-            return rej("BAD_CURSOR", format!("after 키는 sort 필드와 id여야 함: 기대 {want:?}, 받음 {have:?}"));
+            return rej("WIRE.BAD_CURSOR", format!("after 키는 sort 필드와 id여야 함: 기대 {want:?}, 받음 {have:?}"));
         }
         // 경계로 쓰는 필드는 호출자가 select로 이미 볼 수 있는 정책 없는 non-null 필드뿐이다(정의 검사를 건너뛴 facts 방어).
         let mut bounds: Vec<(String, bool, String)> = vec![];
         for (f, desc) in &sort_keys {
             let fty = rf["fields"][f.as_str()]["ty"].as_str().unwrap_or("");
             if ex["select"][f.as_str()] != "field" || fty.ends_with('?') {
-                return rej("CURSOR_FIELD_NOT_ALLOWED", format!("`{f}`는 cursor 경계로 쓸 수 없음(select에 없거나 nullable)"));
+                return rej("WIRE.CURSOR_FIELD_NOT_ALLOWED", format!("`{f}`는 cursor 경계로 쓸 수 없음(select에 없거나 nullable)"));
             }
             if !rf["fieldRead"][f.as_str()].is_null() {
-                return rej("POLICY_FIELD_NOT_FILTERABLE", format!("`{f}`에는 field read 정책이 있어 cursor에 쓸 수 없음"));
+                return rej("WIRE.POLICY_FIELD_NOT_FILTERABLE", format!("`{f}`에는 field read 정책이 있어 cursor에 쓸 수 없음"));
             }
             let (v, cast) = check_value(facts, fty, &am[f.as_str()], wire)?;
             let p = cx.params.bind(Some(v), cast);
@@ -590,26 +591,26 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
     let limit = match o.get("limit") {
         None => max_rows,
         Some(Value::Number(n)) if n.as_i64().is_some_and(|x| x >= 1) => n.as_i64().unwrap(),
-        Some(v) => return rej("BAD_VALUE", format!("limit {v}")),
+        Some(v) => return rej("WIRE.BAD_VALUE", format!("limit {v}")),
     };
     if limit > max_rows {
-        return rej("ROWS_EXCEEDED", format!("limit {limit} > budget rows {max_rows}"));
+        return rej("WIRE.ROWS_EXCEEDED", format!("limit {limit} > budget rows {max_rows}"));
     }
     let offset = match (o.get("offset"), max_offset) {
         (None, _) => None,
         (Some(Value::Number(n)), Some(max)) if n.as_i64().is_some_and(|x| x >= 0) => {
             let x = n.as_i64().unwrap();
             if x > max {
-                return rej("OFFSET_EXCEEDED", format!("offset {x} > budget offset {max}"));
+                return rej("WIRE.OFFSET_EXCEEDED", format!("offset {x} > budget offset {max}"));
             }
             Some(x)
         }
-        (Some(v), _) => return rej("BAD_VALUE", format!("offset {v}")),
+        (Some(v), _) => return rej("WIRE.BAD_VALUE", format!("offset {v}")),
     };
     let cost = estimate(limit, offset.unwrap_or(0), n_trav, n_agg, n_fp).saturating_add(limit.saturating_mul(many_cost));
     let max_cost = budget["cost"].as_i64().unwrap();
     if cost > max_cost {
-        return rej("COST_EXCEEDED", format!("추정 비용 {cost} > budget cost {max_cost}"));
+        return rej("WIRE.COST_EXCEEDED", format!("추정 비용 {cost} > budget cost {max_cost}"));
     }
     let lp = cx.params.bind(Some(limit.to_string()), "bigint");
     let offset_sql = match offset {
@@ -649,29 +650,29 @@ fn plan_traverse_many(
     budget: &Value,
 ) -> Result<(String, String, Value, i64), Reject> {
     let tm = &facts["resources"][res]["exposeRead"]["traverseMany"][rel];
-    let so = sub.as_object().ok_or(Reject { code: "BAD_REQUEST", msg: "traverse 값은 객체".into() })?;
+    let so = sub.as_object().ok_or(Reject { code: "WIRE.BAD_REQUEST", msg: "traverse 값은 객체".into() })?;
     // 정렬·필터·offset은 정의가 고정한다. 호출자가 고를 수 있는 것은 select와 더 작은 limit뿐이다.
     keys(so, &["select", "limit"], "traverse")?;
-    let tsel = so.get("select").and_then(Value::as_array).ok_or(Reject { code: "BAD_REQUEST", msg: "traverse select 필요".into() })?;
+    let tsel = so.get("select").and_then(Value::as_array).ok_or(Reject { code: "WIRE.BAD_REQUEST", msg: "traverse select 필요".into() })?;
     if tsel.is_empty() {
-        return rej("BAD_REQUEST", "traverse select가 비었음");
+        return rej("WIRE.BAD_REQUEST", "traverse select가 비었음");
     }
     // 자식의 자식은 이번 범위 밖이다. 중첩 select 항목은 모양과 무관하게 명시적으로 거부한다.
     if tsel.iter().any(|x| x.is_object()) {
-        return rej("NESTED_TRAVERSE_NOT_ALLOWED", format!("`{res}.{rel}` 안에서 관계를 다시 탐색할 수 없음(1:N traverse 중첩 금지)"));
+        return rej("WIRE.NESTED_TRAVERSE_NOT_ALLOWED", format!("`{res}.{rel}` 안에서 관계를 다시 탐색할 수 없음(1:N traverse 중첩 금지)"));
     }
     let depth = budget["depth"].as_i64().unwrap_or(1);
     if depth < 2 {
-        return rej("DEPTH_EXCEEDED", format!("budget depth {depth}에서는 관계 탐색 불가"));
+        return rej("WIRE.DEPTH_EXCEEDED", format!("budget depth {depth}에서는 관계 탐색 불가"));
     }
     let def_limit = tm["limit"].as_i64().ok_or_else(|| internal("traverseMany limit 없음".into()))?;
     let limit = match so.get("limit") {
         None => def_limit,
         Some(Value::Number(n)) if n.as_i64().is_some_and(|x| x >= 1) => n.as_i64().unwrap(),
-        Some(v) => return rej("BAD_VALUE", format!("limit {v}")),
+        Some(v) => return rej("WIRE.BAD_VALUE", format!("limit {v}")),
     };
     if limit > def_limit {
-        return rej("ROWS_EXCEEDED", format!("`{res}.{rel}` limit {limit} > 정의 상한 {def_limit}"));
+        return rej("WIRE.ROWS_EXCEEDED", format!("`{res}.{rel}` limit {limit} > 정의 상한 {def_limit}"));
     }
     let target = tm["target"].as_str().unwrap();
     let tf = &facts["resources"][target];
@@ -681,15 +682,15 @@ fn plan_traverse_many(
     let (mut pairs, mut tout, mut n_fp) = (vec![], Map::new(), 0i64);
     let mut seen = std::collections::HashSet::new();
     for x in tsel {
-        let f = x.as_str().ok_or(Reject { code: "BAD_REQUEST", msg: "traverse select는 문자열".into() })?;
+        let f = x.as_str().ok_or(Reject { code: "WIRE.BAD_REQUEST", msg: "traverse select는 문자열".into() })?;
         if !seen.insert(f) {
-            return rej("DUPLICATE", format!("select `{f}` 중복"));
+            return rej("WIRE.DUPLICATE", format!("select `{f}` 중복"));
         }
         if !tm["select"].as_array().unwrap().iter().any(|y| y == f) {
-            return rej("FIELD_NOT_EXPOSED", format!("`{target}.{f}`는 `{res}.{rel}` 경로에 열려 있지 않음. 서버 정의 변경 필요"));
+            return rej("WIRE.FIELD_NOT_EXPOSED", format!("`{target}.{f}`는 `{res}.{rel}` 경로에 열려 있지 않음. 서버 정의 변경 필요"));
         }
         if tf["exposeRead"]["select"][f] == "aggregate" {
-            return rej("FIELD_NOT_EXPOSED", format!("`{target}.{f}`는 집계라 1:N traverse에서 쓸 수 없음"));
+            return rej("WIRE.FIELD_NOT_EXPOSED", format!("`{target}.{f}`는 집계라 1:N traverse에서 쓸 수 없음"));
         }
         let col = format!("{ob}.{}", column(facts, target, f).unwrap());
         let fty = tf["fields"][f]["ty"].as_str().unwrap();
@@ -726,10 +727,10 @@ fn plan_traverse_many(
 fn plan_aggregate(facts: &Value, o: &Map<String, Value>, caller: &Caller, wire: crate::id_wire::IdWire) -> Result<Plan, Reject> {
     keys(o, &["aggregate", "input"], "aggregate 요청")?;
     let name = o["aggregate"].as_str().unwrap_or("");
-    let (res, an) = name.split_once('.').ok_or(Reject { code: "BAD_REQUEST", msg: "aggregate는 `Resource.name`".into() })?;
+    let (res, an) = name.split_once('.').ok_or(Reject { code: "WIRE.BAD_REQUEST", msg: "aggregate는 `Resource.name`".into() })?;
     let rf = &facts["resources"][res];
     if !rf["exposeAggregates"].as_array().is_some_and(|v| v.iter().any(|x| x == an)) {
-        return rej("NOT_EXPOSED", format!("`{name}`는 노출된 집계가 아님"));
+        return rej("WIRE.NOT_EXPOSED", format!("`{name}`는 노출된 집계가 아님"));
     }
     let a = &rf["aggregates"][an];
     let mut cx = Ctx::new(facts, caller.actor_id, &caller.now);
@@ -740,12 +741,12 @@ fn plan_aggregate(facts: &Value, o: &Map<String, Value>, caller: &Caller, wire: 
     for k in given.keys() {
         if !declared.iter().any(|d| d[0] == json!(k)) {
             let allowed = allowed_names(declared.iter().filter_map(|d| d[0].as_str()));
-            return rej("UNKNOWN_KEY", format!("집계 입력 `{k}` 없음. 허용: {allowed}"));
+            return rej("WIRE.UNKNOWN_KEY", format!("집계 입력 `{k}` 없음. 허용: {allowed}"));
         }
     }
     for d in declared {
         let (n, ty) = (d[0].as_str().unwrap(), d[1].as_str().unwrap());
-        let v = given.get(n).ok_or(Reject { code: "BAD_REQUEST", msg: format!("입력 `{n}` 필요") })?;
+        let v = given.get(n).ok_or(Reject { code: "WIRE.BAD_REQUEST", msg: format!("입력 `{n}` 필요") })?;
         let (s, cast) = check_value(facts, ty, v, wire)?;
         let p = cx.params.bind(Some(s), cast);
         let h = match crate::sqlgen::ref_target(ty) {
@@ -757,7 +758,7 @@ fn plan_aggregate(facts: &Value, o: &Map<String, Value>, caller: &Caller, wire: 
     let sa = &a["sourceAccess"];
     let acc = &facts["accesses"][sa["ref"].as_str().unwrap()];
     if acc["kind"] != "guard" {
-        return rej("NOT_EXPOSED", "단독 집계는 guard access만 지원");
+        return rej("WIRE.NOT_EXPOSED", "단독 집계는 guard access만 지원");
     }
     let outer = Env { this: None, vars: HashMap::new(), input: input.clone() };
     let mut genv = Env::default();

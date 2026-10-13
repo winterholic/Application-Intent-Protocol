@@ -107,7 +107,7 @@ fn host_shapes_are_explicit_and_exact_one_facts_stay_unchanged() {
             let mut definition = h_definition();
             definition["resources"]["Order"]["transitions"]["cancel"]["effects"][0] = bad;
             let errors = load_str(&host_source(&definition, form), form).err().expect("ambiguous bounds rejected");
-            assert!(errors.iter().any(|error| error.code == "H_SHAPE"), "{form:?}: {errors:?}");
+            assert!(errors.iter().any(|error| error.code == "DEF.H_SHAPE"), "{form:?}: {errors:?}");
         }
         let exact_source = SOURCE.replace("update many Allocation maxRows 100", "update Allocation");
         let expected = load_str(&exact_source, Form::A).unwrap().execution;

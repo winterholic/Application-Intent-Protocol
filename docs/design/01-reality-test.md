@@ -61,7 +61,7 @@ command SubmitApply(recruitment: Recruitment, answers: List<AnswerInput> max 50,
 **구성요소**: `Set<T> max N` 입력, lifecycle, 집합 update/insert, unique, notify
 
 **정적 보장**: 입력 집합 상한. 전이 규칙은 lifecycle과 일치해야 컴파일. 집합 연산이므로 쿼리 수가 입력 크기와 무관.
-**런타임 보장**: 모든 id가 존재하고 볼 수 있어야 실행(아니면 `NOT_FOUND` + 어떤 id인지 path). 이미 멤버면 unique 위반이 `ALREADY_CLUB_MEMBER`로. 한 건이라도 실패하면 전체 롤백.
+**런타임 보장**: 모든 id가 존재하고 볼 수 있어야 실행(아니면 `WIRE.NOT_FOUND` + 어떤 id인지 path). 이미 멤버면 unique 위반이 `ALREADY_CLUB_MEMBER`로. 한 건이라도 실패하면 전체 롤백.
 **실패 시나리오**: 부분 성공을 원하는 요구("되는 것만 처리")가 나오면 → `do partial` 같은 명시 형식이 필요해진다. 현재는 전부 또는 전무.
 **누수 가능성**: 부분 성공 semantics. open question으로 기록.
 
@@ -96,7 +96,7 @@ command EntrustAdmin(target: ClubMember) {
 **구성요소**: 기수 불변식, relation을 대입 대상으로 쓰기
 
 **정적 보장**: `exactly one`을 깰 수 있는 명령 목록이 `aip verify`에 나온다. `EntrustAdmin`은 같은 트랜잭션에서 한 명 강등, 한 명 승격이라 "보존 가능"으로 판정되지만, target과 actor가 같은 행일 수 있음을 컴파일러가 발견하고 경고한다(별칭 분석, alias analysis).
-**런타임 보장**: at-most-one은 부분 unique 인덱스, at-least-one은 커밋 시 지연 검사. 자기 위임은 커밋 시 "ADMIN 0명"으로 거절(`INVARIANT_VIOLATED: exactly_one_admin`).
+**런타임 보장**: at-most-one은 부분 unique 인덱스, at-least-one은 커밋 시 지연 검사. 자기 위임은 커밋 시 "ADMIN 0명"으로 거절(`POC.INVARIANT.VIOLATED: exactly_one_admin`).
 **실패 시나리오**: 동시 위임 두 건 → 둘 다 같은 club의 ADMIN 행을 잠금 순서대로 잡으므로 직렬화, 두 번째는 권한 재평가에서 거절.
 **누수 가능성**: 별칭 분석이 모든 경우를 증명하지 못하면 런타임 지연 검사가 최후 방어선이 된다. 정적 증명과 런타임 검사의 경계를 `04-safety-matrix.md`에 명시.
 

@@ -90,11 +90,11 @@ function error(code: string, message: string): Error & { code: string } {
 }
 
 function badValue(): never {
-  throw error("BAD_VALUE", "인프라 요청 값이 잘못되었습니다");
+  throw error("WIRE.BAD_VALUE", "인프라 요청 값이 잘못되었습니다");
 }
 
 function protocolError(): never {
-  throw error("PROTOCOL_ERROR", "인프라 응답 형식이 잘못되었습니다");
+  throw error("CLIENT.PROTOCOL_ERROR", "인프라 응답 형식이 잘못되었습니다");
 }
 
 /** Parse a `text/event-stream` response incrementally with bounded line and event buffers. */
@@ -346,7 +346,7 @@ function normalizeDeadLetter(value: unknown, queue: string): DeadLetter {
 /** Create object-storage and messaging helpers over the authenticated managed transport. */
 export function createInfrastructureClient(send: ManagedSend, fingerprint: string): InfrastructureClient {
   if (typeof send !== "function" || typeof fingerprint !== "string" || !/^[a-f0-9]{64}$/.test(fingerprint)) {
-    throw error("PROTOCOL_ERROR", "인프라 클라이언트 계약 지문 또는 transport가 잘못되었습니다");
+    throw error("CLIENT.PROTOCOL_ERROR", "인프라 클라이언트 계약 지문 또는 transport가 잘못되었습니다");
   }
 
   async function call(route: string, body: unknown): Promise<Record<string, unknown>> {
@@ -356,7 +356,7 @@ export function createInfrastructureClient(send: ManagedSend, fingerprint: strin
       throw failure(value.code, typeof value.msg === "string" ? value.msg : value.code, value);
     }
     if (value.ok !== true) protocolError();
-    if (value.contractFingerprint !== fingerprint) throw failure("CONTRACT_MISMATCH", "서버와 생성 계약이 다릅니다", value);
+    if (value.contractFingerprint !== fingerprint) throw failure("WIRE.CONTRACT_MISMATCH", "서버와 생성 계약이 다릅니다", value);
     return value;
   }
 

@@ -177,7 +177,7 @@ async fn browser_authenticates_in_first_frame_before_subscribing_and_origin_is_r
     let revoked = tokio::time::timeout(Duration::from_secs(5), replacement.next()).await.unwrap().unwrap().unwrap();
     let revoked: serde_json::Value = serde_json::from_str(&revoked.into_text().unwrap()).unwrap();
     assert_eq!(revoked["type"], "error");
-    assert_eq!(revoked["code"], "UNAUTHENTICATED");
+    assert_eq!(revoked["code"], "WIRE.UNAUTHENTICATED");
     let _ = tokio::time::timeout(Duration::from_secs(2), replacement.next()).await;
     drop(db);
     server.shutdown().await.unwrap();
@@ -195,14 +195,14 @@ async fn browser_auth_frame_is_bounded_and_invalid_auth_never_reaches_subscripti
     let first = tokio::time::timeout(Duration::from_secs(3), missing_auth.next()).await.unwrap().unwrap().unwrap();
     let first: serde_json::Value = serde_json::from_str(&first.into_text().unwrap()).unwrap();
     assert_eq!(first["type"], "error");
-    assert_eq!(first["code"], "UNAUTHENTICATED");
+    assert_eq!(first["code"], "WIRE.UNAUTHENTICATED");
 
     let (mut socket, _) = tokio_tungstenite::connect_async(browser_request(server.address, true)).await.unwrap();
     socket.send(Message::Text(json!({"type":"auth","token":"revoked-or-unknown"}).to_string().into())).await.unwrap();
     let first = tokio::time::timeout(Duration::from_secs(5), socket.next()).await.unwrap().unwrap().unwrap();
     let first: serde_json::Value = serde_json::from_str(&first.into_text().unwrap()).unwrap();
     assert_eq!(first["type"], "error");
-    assert_eq!(first["code"], "UNAUTHENTICATED");
+    assert_eq!(first["code"], "WIRE.UNAUTHENTICATED");
     let next = tokio::time::timeout(Duration::from_secs(2), socket.next()).await.unwrap();
     assert!(matches!(next, Some(Ok(Message::Close(_))) | None));
 

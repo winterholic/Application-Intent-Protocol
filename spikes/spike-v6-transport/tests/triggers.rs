@@ -198,12 +198,12 @@ async fn schedules_and_signed_webhooks_run_jobs_as_the_bound_service_principal()
         let (_, hidden) =
             raw(addr, "/jobs/status", &[("authorization", "Bearer svc-cron".into()), ("x-aip-contract", fp.clone())], &json!({"id":id}).to_string())
                 .await;
-        assert_eq!(hidden["code"], "NOT_FOUND", "{lang:?}: {hidden}");
+        assert_eq!(hidden["code"], "WIRE.NOT_FOUND", "{lang:?}: {hidden}");
         // Disabling the bound principal stops intake with a retryable status.
         db.batch_execute(&format!("UPDATE {schema}.aip_principals SET enabled=false WHERE subject='svc-hooks'")).await.unwrap();
         let fresh = r#"{"order":12}"#;
         let (code, unavailable) = raw(addr, "/hooks/orders", &[("x-hub-signature-256", signed(fresh))], fresh).await;
-        assert_eq!((code, unavailable["code"].as_str()), (503, Some("PRINCIPAL_UNAVAILABLE")), "{lang:?}: {unavailable}");
+        assert_eq!((code, unavailable["code"].as_str()), (503, Some("WIRE.PRINCIPAL_UNAVAILABLE")), "{lang:?}: {unavailable}");
         server.shutdown().await.unwrap();
 
         // Two instances evaluate the same schedule; the per-slot key yields one job per slot.

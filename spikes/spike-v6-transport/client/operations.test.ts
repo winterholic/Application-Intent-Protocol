@@ -27,11 +27,11 @@ test("operation validates typed input and output with the generated contract", a
   const output=await client.operation("length",{text:"가😀A"});
   assert.deepEqual(output,{length:3});
   assert.ok(Object.isFrozen(output));
-  await assert.rejects(client.operation("length",{text:42} as never),(error:any)=>error.code==="BAD_VALUE");
-  await assert.rejects(client.operation("missing" as never,{} as never),(error:any)=>error.code==="NOT_EXPOSED");
+  await assert.rejects(client.operation("length",{text:42} as never),(error:any)=>error.code==="WIRE.BAD_VALUE");
+  await assert.rejects(client.operation("missing" as never,{} as never),(error:any)=>error.code==="WIRE.NOT_EXPOSED");
   assert.equal(calls.length,1,"invalid calls must not reach the server");
   badOutput=true;
-  await assert.rejects(client.operation("length",{text:"가😀A"}),(error:any)=>error.code==="PROTOCOL_ERROR");
+  await assert.rejects(client.operation("length",{text:"가😀A"}),(error:any)=>error.code==="CLIENT.PROTOCOL_ERROR");
 });
 
 test("operation rejects mismatched contracts and responses after a session replacement", async () => {
@@ -47,7 +47,7 @@ test("operation rejects mismatched contracts and responses after a session repla
   finish(response({ok:true,output:{length:3},contractFingerprint:fingerprint}));
   await assert.rejects(pending,(error:any)=>error.name==="ScopeChanged");
   const mismatch=connectTypedExtensions("http://operation.invalid","token",binding,async(url)=>response(new URL(String(url)).pathname==="/session"?{ok:true,principal:{actorId:"1"},remainingMs:60000}:{ok:true,output:{length:3},contractFingerprint:"b".repeat(64)}));
-  await assert.rejects(mismatch.operation("length",{text:"가😀A"}),(error:any)=>error.code==="CONTRACT_MISMATCH");
+  await assert.rejects(mismatch.operation("length",{text:"가😀A"}),(error:any)=>error.code==="WIRE.CONTRACT_MISMATCH");
 });
 
 test("operation descriptor ranges reject invalid Unicode length and numeric output", async () => {
@@ -57,6 +57,6 @@ test("operation descriptor ranges reject invalid Unicode length and numeric outp
   }}};
   const fetcher:typeof fetch=async(url)=>response(new URL(String(url)).pathname==="/session"?{ok:true,principal:{actorId:"1"},remainingMs:60000}:{ok:true,output:{length:4},contractFingerprint:fingerprint});
   const client=connectTypedExtensions("http://operation.invalid","token",ranged,fetcher);
-  await assert.rejects(client.operation("length",{text:"가😀AB"}),(error:any)=>error.code==="BAD_VALUE");
-  await assert.rejects(client.operation("length",{text:"가😀A"}),(error:any)=>error.code==="PROTOCOL_ERROR");
+  await assert.rejects(client.operation("length",{text:"가😀AB"}),(error:any)=>error.code==="WIRE.BAD_VALUE");
+  await assert.rejects(client.operation("length",{text:"가😀A"}),(error:any)=>error.code==="CLIENT.PROTOCOL_ERROR");
 });

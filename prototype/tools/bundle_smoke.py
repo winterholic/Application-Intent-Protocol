@@ -46,7 +46,7 @@ expect(replay.ok && replay.replayed === true, 'idempotent replay');
 const after = await client.read(query);
 expect(!after.cached && after.rows[0].checked === true, 'apply invalidates cached read');
 const conflict = await client.writeExtension('Event.confirm',{id:id(11)},{key});
-expect(!conflict.ok && conflict.code==='IDEMPOTENCY_MISMATCH','WRITE shares standard apply key');
+expect(!conflict.ok && conflict.code==='WIRE.IDEMPOTENCY_MISMATCH','WRITE shares standard apply key');
 let lost = false;
 const droppingFetch = async (...args) => {
   const response = await fetch(...args);
@@ -65,11 +65,11 @@ expect(repeated.ok && repeated.replayed && repeated.output.count===1,'WRITE stab
 const unchanged=await writer.writeExtension('Event.confirm',{id:id(12)},{key:writeKey+'-new'});
 expect(unchanged.ok && unchanged.output.count===0,'new intent observes repeat unchanged');
 const denied=await writer.writeExtension('Event.confirm',{id:id(99)},{key:writeKey+'-foreign'});
-expect(!denied.ok && denied.code==='EXTENSION_ERROR','WRITE foreign actor denial');
+expect(!denied.ok && denied.code==='WIRE.EXTENSION_ERROR','WRITE foreign actor denial');
 expect(JSON.stringify(writer.pending())==='[]','settled WRITE pending empty');
 const stale = connect(cfg.api,cfg.token,{...contract,fingerprint:'0'.repeat(64)});
 const rejected = await stale.apply({apply:'Event.mark',target:{ids:[id(12)]}},{key:`bundle-stale-${wire}`});
-expect(!rejected.ok && rejected.code === 'CONTRACT_MISMATCH', 'stale first write rejected');
+expect(!rejected.ok && rejected.code === 'WIRE.CONTRACT_MISMATCH', 'stale first write rejected');
 expect(JSON.stringify(stale.pending()) === '[]', 'stale write is not pending');
 console.log(JSON.stringify({ok:true,wire,lang:cfg.lang,flow:'read-cache-apply-write-recovery',
   cacheHit:hit.cached,cacheInvalidated:!after.cached,replayed:replay.replayed,
@@ -97,7 +97,7 @@ let deniedCode = null;
 let deniedReturned = false;
 try { await client.extension('Recruitment.stats',{clubId:id(11)}); deniedReturned = true; }
 catch (error) { deniedCode = error?.code ?? null; }
-expect(!deniedReturned && deniedCode === 'EXTENSION_ERROR', 'club 11 public error code: ' + deniedCode);
+expect(!deniedReturned && deniedCode === 'WIRE.EXTENSION_ERROR', 'club 11 public error code: ' + deniedCode);
 expect(JSON.stringify(client.pending()) === pendingBefore, 'extension denial leaves pending writes unchanged');
 
 const query = {read:'Recruitment',select:['id','bookmarkCount',{club:{select:['id','name','logo']}}],sort:[{field:'id',dir:'asc'}]};
@@ -111,7 +111,7 @@ for (const row of before.rows) {
 }
 
 const notExposed = await client.apply({apply:'Recruitment.close',target:{ids:[id(100)]}},{key:`bundle-not-exposed-${wire}-${cfg.lang}`});
-expect(!notExposed.ok && notExposed.code === 'NOT_EXPOSED', 'unexposed close remains unavailable');
+expect(!notExposed.ok && notExposed.code === 'WIRE.NOT_EXPOSED', 'unexposed close remains unavailable');
 expect(JSON.stringify(client.pending()) === '[]', 'unexposed write is not pending');
 const after = await client.read(query);
 expect(JSON.stringify(after.rows.map(row => row.id)) === JSON.stringify([id(100),id(101)]), 'unexposed close preserves visible data');
@@ -252,13 +252,13 @@ def run_caller(binary, source, wire, lang, bundle_root, consumer, db_url, schema
             raise RuntimeError("bundled SDK caller did not emit its JSON result") from None
         expected = (
             {"ok": True, "wire": wire, "lang": lang, "flow": "stats-read-not-exposed",
-             "approvedApplicants": 1, "deniedCode": "EXTENSION_ERROR", "nestedRows": 2,
-             "noCache": True, "notExposedCode": "NOT_EXPOSED", "pending": 0}
+             "approvedApplicants": 1, "deniedCode": "WIRE.EXTENSION_ERROR", "nestedRows": 2,
+             "noCache": True, "notExposedCode": "WIRE.NOT_EXPOSED", "pending": 0}
             if extension_app else
             {"ok": True, "wire": wire, "lang": lang, "flow": "read-cache-apply-write-recovery",
              "cacheHit": True, "cacheInvalidated": True, "replayed": True,
-             "staleCode": "CONTRACT_MISMATCH", "stalePending": 0,
-             "writeRecovered": True, "unchangedCount": 0, "writeDenied": "EXTENSION_ERROR"}
+             "staleCode": "WIRE.CONTRACT_MISMATCH", "stalePending": 0,
+             "writeRecovered": True, "unchangedCount": 0, "writeDenied": "WIRE.EXTENSION_ERROR"}
         )
         if result != expected:
             raise RuntimeError("bundled SDK result differed from expected behavior")

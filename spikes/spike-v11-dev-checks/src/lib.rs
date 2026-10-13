@@ -23,14 +23,14 @@ fn option_error(code: &'static str, msg: &str) -> Vec<Diag> {
 }
 
 fn dev_checks_enabled(options: &Value) -> Result<bool, Vec<Diag>> {
-    let options = options.as_object().ok_or_else(|| option_error("BAD_OPTION", "검사 옵션은 객체여야 함"))?;
+    let options = options.as_object().ok_or_else(|| option_error("DEF.BAD_OPTION", "검사 옵션은 객체여야 함"))?;
     if options.keys().any(|key| key != "devChecks") {
-        return Err(option_error("UNKNOWN_OPTION", "지원하는 옵션은 devChecks뿐임"));
+        return Err(option_error("DEF.UNKNOWN_OPTION", "지원하는 옵션은 devChecks뿐임"));
     }
     match options.get("devChecks") {
         None => Ok(false),
         Some(Value::Bool(enabled)) => Ok(*enabled),
-        _ => Err(option_error("BAD_OPTION", "devChecks는 boolean이어야 함")),
+        _ => Err(option_error("DEF.BAD_OPTION", "devChecks는 boolean이어야 함")),
     }
 }
 
@@ -55,7 +55,7 @@ fn direct_reference_advice(execution: &Value) -> Vec<Advisory> {
         .flatten()
         .filter(|(name, _)| !calls.contains(name.as_str()))
         .map(|(name, _)| Advisory {
-            code: "ADVISORY_UNUSED_PREDICATE",
+            code: "DEF.ADVISORY_UNUSED_PREDICATE",
             anchor: format!("predicate:{name}"),
             msg: "실행 facts에 이 predicate의 직접 호출 참조가 없음".into(),
         })
@@ -64,7 +64,7 @@ fn direct_reference_advice(execution: &Value) -> Vec<Advisory> {
 
 /// An `expose read` without `budget` can only be read as the target of another resource's `traverse`; if no
 /// resource traverses it, no caller can read it at all, and the first read fails at run time with
-/// `NOT_ROOT_QUERYABLE`. The usual cause is a forgotten `budget`, so it is said at check time.
+/// `WIRE.NOT_ROOT_QUERYABLE`. The usual cause is a forgotten `budget`, so it is said at check time.
 fn unreachable_read_advice(execution: &Value) -> Vec<Advisory> {
     let Some(resources) = execution["resources"].as_object() else { return Vec::new() };
     let mut targets = BTreeSet::new();
@@ -81,7 +81,7 @@ fn unreachable_read_advice(execution: &Value) -> Vec<Advisory> {
             read.is_object() && read["rootQueryable"] != true && !targets.contains(name.as_str())
         })
         .map(|(name, _)| Advisory {
-            code: "ADVISORY_UNREACHABLE_READ",
+            code: "DEF.ADVISORY_UNREACHABLE_READ",
             anchor: format!("resource:{name}"),
             msg: format!(
                 "`{name}`의 expose read에 budget이 없어 루트로 읽을 수 없고 다른 resource의 traverse 대상도 아님. 루트 조회가 목적이면 budget을 추가"
@@ -144,14 +144,14 @@ fn absence_policy_advice(execution: &Value) -> Vec<Advisory> {
         for (tr, t) in rf["transitions"].as_object().into_iter().flatten() {
             if negates_exists(&t["allow"], predicates, &mut BTreeSet::new()) || negates_exists(&t["from"], predicates, &mut BTreeSet::new()) {
                 out.push(Advisory {
-                    code: "ADVISORY_ABSENCE_POLICY",
+                    code: "DEF.ADVISORY_ABSENCE_POLICY",
                     anchor: format!("transition:{res}.{tr}"),
                     msg: message(&format!("`{res}.{tr}`")),
                 });
             }
         }
         if negates_exists(&rf["exposeCreate"]["allow"], predicates, &mut BTreeSet::new()) {
-            out.push(Advisory { code: "ADVISORY_ABSENCE_POLICY", anchor: format!("create:{res}"), msg: message(&format!("`{res}` 생성")) });
+            out.push(Advisory { code: "DEF.ADVISORY_ABSENCE_POLICY", anchor: format!("create:{res}"), msg: message(&format!("`{res}` 생성")) });
         }
     }
     out

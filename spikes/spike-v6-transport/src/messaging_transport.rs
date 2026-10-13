@@ -5,23 +5,23 @@ use tokio_postgres::GenericClient;
 type Result<T> = std::result::Result<T, &'static str>;
 fn error(e: Error) -> &'static str {
     match e {
-        Error::IdempotencyConflict => "IDEMPOTENCY_MISMATCH",
-        Error::Database(_) => "DB_UNAVAILABLE",
-        Error::PayloadTooLarge => "PAYLOAD_TOO_LARGE",
-        _ => "BAD_VALUE",
+        Error::IdempotencyConflict => "WIRE.IDEMPOTENCY_MISMATCH",
+        Error::Database(_) => "WIRE.DB_UNAVAILABLE",
+        Error::PayloadTooLarge => "WIRE.PAYLOAD_TOO_LARGE",
+        _ => "WIRE.BAD_VALUE",
     }
 }
 fn number(body: &Value, key: &str, default: i64, min: i64, max: i64) -> Result<i64> {
-    body.get(key).map_or(Ok(default), |v| v.as_i64().filter(|n| (*n >= min) && (*n <= max)).ok_or("BAD_VALUE"))
+    body.get(key).map_or(Ok(default), |v| v.as_i64().filter(|n| (*n >= min) && (*n <= max)).ok_or("WIRE.BAD_VALUE"))
 }
 fn text<'a>(body: &'a Value, key: &str) -> Result<&'a str> {
-    body[key].as_str().ok_or("BAD_REQUEST")
+    body[key].as_str().ok_or("WIRE.BAD_REQUEST")
 }
 fn shape(body: &Value, required: &[&str], optional: &[&str]) -> Result<()> {
     if !body.as_object().is_some_and(|o| {
         required.iter().all(|k| o.contains_key(*k)) && o.keys().all(|k| required.contains(&k.as_str()) || optional.contains(&k.as_str()))
     }) {
-        return Err("BAD_REQUEST");
+        return Err("WIRE.BAD_REQUEST");
     }
     Ok(())
 }
@@ -38,12 +38,14 @@ pub(crate) async fn publish(
     ttl_ms: i64,
     max_deliveries: i32,
 ) -> Result<Value> {
-    db.query_one("SELECT pg_advisory_xact_lock(1095323727,hashtext($1))", &[&format!("{schema}:{owner}")]).await.map_err(|_| "DB_UNAVAILABLE")?;
-    let row=db.query_one(&format!("SELECT count(*)::bigint,COALESCE(sum(octet_length(payload::text)),0)::bigint, bool_or(queue=$2 AND idempotency_key=$3) FROM {schema}.aip_messages WHERE owner=$1 AND expires_at>clock_timestamp()"),&[&owner,&queue,&key]).await.map_err(|_|"DB_UNAVAILABLE")?;
+    db.query_one("SELECT pg_advisory_xact_lock(1095323727,hashtext($1))", &[&format!("{schema}:{owner}")])
+        .await
+        .map_err(|_| "WIRE.DB_UNAVAILABLE")?;
+    let row=db.query_one(&format!("SELECT count(*)::bigint,COALESCE(sum(octet_length(payload::text)),0)::bigint, bool_or(queue=$2 AND idempotency_key=$3) FROM {schema}.aip_messages WHERE owner=$1 AND expires_at>clock_timestamp()"),&[&owner,&queue,&key]).await.map_err(|_|"WIRE.DB_UNAVAILABLE")?;
     if row.get::<_, Option<bool>>(2) != Some(true)
         && (row.get::<_, i64>(0) >= 1000 || row.get::<_, i64>(1) + payload.to_string().len() as i64 > 64 * 1024 * 1024)
     {
-        return Err("QUOTA_EXCEEDED");
+        return Err("WIRE.QUOTA_EXCEEDED");
     }
     let message = MessageStore::new(schema)
         .map_err(error)?
@@ -63,20 +65,20 @@ pub(crate) async fn handle(
     body: &Value,
 ) -> Result<Value> {
     if !rt.infrastructure.messaging {
-        return Err("NOT_EXPOSED");
+        return Err("WIRE.NOT_EXPOSED");
     }
     match path {
-        "/messages/enqueue" if !rt.infrastructure.client_publish => return Err("NOT_EXPOSED"),
+        "/messages/enqueue" if !rt.infrastructure.client_publish => return Err("WIRE.NOT_EXPOSED"),
         "/messages/claim" | "/messages/ack" | "/messages/nack" | "/messages/dead" | "/messages/redrive" if !rt.infrastructure.client_consume => {
-            return Err("NOT_EXPOSED");
+            return Err("WIRE.NOT_EXPOSED");
         }
         "/messages/enqueue" | "/messages/claim" | "/messages/ack" | "/messages/nack" | "/messages/dead" | "/messages/redrive" => {}
-        _ => return Err("NOT_FOUND"),
+        _ => return Err("WIRE.NOT_FOUND"),
     }
     let queue = text(body, "queue")?;
     if !facts["operations"].as_object().into_iter().flatten().any(|(_, op)| op["kind"] == "job" && op["access"][format!("messages.{queue}")] == true)
     {
-        return Err("NOT_EXPOSED");
+        return Err("WIRE.NOT_EXPOSED");
     }
     let store = MessageStore::new(schema).map_err(error)?;
     let mut out = match path {
@@ -101,13 +103,13 @@ pub(crate) async fn handle(
         }
         "/messages/ack" | "/messages/nack" => {
             shape(body, &["queue", "lease"], if path.ends_with("nack") { &["error"] } else { &[] })?;
-            let mut lease: MessageLease = serde_json::from_value(body["lease"].clone()).map_err(|_| "BAD_REQUEST")?;
+            let mut lease: MessageLease = serde_json::from_value(body["lease"].clone()).map_err(|_| "WIRE.BAD_REQUEST")?;
             lease.owner = owner.into();
             lease.queue = queue.into();
             if path.ends_with("/ack") {
                 json!({"acknowledged":store.ack(db,&lease).await.map_err(error)?})
             } else {
-                json!({"released":store.nack(db,&lease,body.get("error").map_or(Ok("CONSUMER_FAILED"),|v|v.as_str().ok_or("BAD_REQUEST"))?).await.map_err(error)?})
+                json!({"released":store.nack(db,&lease,body.get("error").map_or(Ok("WIRE.CONSUMER_FAILED"),|v|v.as_str().ok_or("WIRE.BAD_REQUEST"))?).await.map_err(error)?})
             }
         }
         "/messages/dead" => {
@@ -118,19 +120,19 @@ pub(crate) async fn handle(
                         db,
                         owner,
                         queue,
-                        body.get("after").map(|v| v.as_str().ok_or("BAD_REQUEST")).transpose()?,
+                        body.get("after").map(|v| v.as_str().ok_or("WIRE.BAD_REQUEST")).transpose()?,
                         number(body, "limit", 100, 1, 100)?,
                     )
                     .await
                     .map_err(error)?,
             )
-            .map_err(|_| "INTERNAL")?
+            .map_err(|_| "WIRE.INTERNAL")?
         }
         "/messages/redrive" => {
             shape(body, &["queue", "id"], &["maxDeliveries"])?;
             json!({"redriven":store.redrive(db,owner,queue,text(body,"id")?,number(body,"maxDeliveries",3,1,100)? as i32).await.map_err(error)?})
         }
-        _ => return Err("NOT_FOUND"),
+        _ => return Err("WIRE.NOT_FOUND"),
     };
     out["ok"] = json!(true);
     Ok(out)

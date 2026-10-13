@@ -540,7 +540,7 @@ impl Diagnostic {
         self.severity == Severity::Error
     }
 
-    /// Same text the frontend diagnostics use: `error AIP-E600 file:3:5  message`.
+    /// Same text the frontend diagnostics use: `error POC.E600 file:3:5  message`.
     pub fn render(&self, file: &str) -> String {
         let sev = match self.severity {
             Severity::Error => "error",

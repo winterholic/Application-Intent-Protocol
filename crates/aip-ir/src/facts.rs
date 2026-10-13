@@ -3,8 +3,8 @@
 //! it runs, and which error codes a call can fail with. They are derived from
 //! the IR alone, so every consumer (contract, docs, backends) agrees on them.
 //!
-//! Error codes are the language's own taxonomy (`AIP.NOT_FOUND`,
-//! `AIP.PRECONDITION.FAILED` with a reason); mapping them to a transport or to
+//! Error codes are the language's own taxonomy (`POC.NOT_FOUND`,
+//! `POC.PRECONDITION.FAILED` with a reason); mapping them to a transport or to
 //! database objects is a backend concern and not done here.
 
 use crate::*;
@@ -460,14 +460,14 @@ pub fn command_facts(core: &Program, name: &str, c: &Command) -> Facts {
     f
 }
 
-/// `AIP.CONSENT.REQUIRED` once per consent that lists the intent; the reason is the consent's name.
+/// `POC.CONSENT.REQUIRED` once per consent that lists the intent; the reason is the consent's name.
 pub fn consent_errors(core: &Program, intent: &str, out: &mut Facts) {
     for c in crate::form_intents::consents_of(core, intent) {
         out.code(codes::CONSENT_REQUIRED, Some(&c.name));
     }
 }
 
-/// `AIP.TENANT.MISMATCH`: parameters that can disagree on a tenant, or a write into a tenant-scoped entity (a reference may cross tenants).
+/// `POC.TENANT.MISMATCH`: parameters that can disagree on a tenant, or a write into a tenant-scoped entity (a reference may cross tenants).
 pub fn tenant_errors(core: &Program, params: &[Param], cross: bool, writes: Option<&BTreeSet<String>>, out: &mut Facts) {
     if cross {
         return;

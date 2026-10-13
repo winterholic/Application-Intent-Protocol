@@ -118,10 +118,10 @@ async fn silent_operation_sql_after_clock_respects_declared_deadlines_and_return
         let (a, t, f) = (server.address, token.clone(), fp.clone());
         calls.push(tokio::spawn(async move {
             let (path, body, expected) = match i {
-                4 => ("/read", json!({"query":{"read":"Event","select":["id"]}}), "DEADLINE_EXCEEDED"),
-                5 => ("/status", json!({"key":"held","request":{"extension":"Event.run","input":{"id":11}}}), "DB_UNAVAILABLE"),
-                6 => ("/apply", json!({"key":"standard","request":{"apply":"Event.mark","target":{"ids":[11]}}}), "DEADLINE_EXCEEDED"),
-                _ => ("/apply", json!({"key":format!("held-{i}"),"request":{"extension":"Event.run","input":{"id":11}}}), "DEADLINE_EXCEEDED"),
+                4 => ("/read", json!({"query":{"read":"Event","select":["id"]}}), "WIRE.DEADLINE_EXCEEDED"),
+                5 => ("/status", json!({"key":"held","request":{"extension":"Event.run","input":{"id":11}}}), "WIRE.DB_UNAVAILABLE"),
+                6 => ("/apply", json!({"key":"standard","request":{"apply":"Event.mark","target":{"ids":[11]}}}), "WIRE.DEADLINE_EXCEEDED"),
+                _ => ("/apply", json!({"key":format!("held-{i}"),"request":{"extension":"Event.run","input":{"id":11}}}), "WIRE.DEADLINE_EXCEEDED"),
             };
             (post(a, &t, &f, path, body).await, expected)
         }));
@@ -132,7 +132,7 @@ async fn silent_operation_sql_after_clock_respects_declared_deadlines_and_return
     }
     let body = json!({"key":"retry","request":{"extension":"Event.run","input":{"id":11}}});
     let overflow = post(server.address, &token, &fp, "/apply", body.clone()).await;
-    if !matches!(&overflow,Ok(v) if v["code"]=="WORKER_BUSY") {
+    if !matches!(&overflow,Ok(v) if v["code"]=="WIRE.WORKER_BUSY") {
         failures.push(format!("overflow: {overflow:?}"));
     }
     for call in calls {
@@ -145,7 +145,7 @@ async fn silent_operation_sql_after_clock_respects_declared_deadlines_and_return
         failures.push("operation timeout did not close DB driver sockets".to_string());
     }
     let retry = post(server.address, &token, &fp, "/apply", body).await;
-    if !matches!(&retry,Ok(v) if v["code"]=="DEADLINE_EXCEEDED") {
+    if !matches!(&retry,Ok(v) if v["code"]=="WIRE.DEADLINE_EXCEEDED") {
         failures.push(format!("operation did not return extension slot: {retry:?}"));
     }
     if !reaches(&closed, 8).await {
@@ -234,12 +234,12 @@ async fn authenticated_but_silent_sql_releases_slots_and_request_owned_connectio
     }
     let body = json!({"key":"retry","request":{"extension":"Event.run","input":{"id":11}}});
     let overflow = post(server.address, &token, &fp, "/apply", body.clone()).await;
-    if !matches!(&overflow,Ok(v) if v["code"]=="WORKER_BUSY") {
+    if !matches!(&overflow,Ok(v) if v["code"]=="WIRE.WORKER_BUSY") {
         failures.push(format!("overflow: {overflow:?}"));
     }
     for call in calls {
         let response = call.await.unwrap();
-        if !matches!(&response,Ok(v) if v["code"]=="DB_UNAVAILABLE") {
+        if !matches!(&response,Ok(v) if v["code"]=="WIRE.DB_UNAVAILABLE") {
             failures.push(format!("SQL wait: {response:?}"));
         }
     }
@@ -247,7 +247,7 @@ async fn authenticated_but_silent_sql_releases_slots_and_request_owned_connectio
         failures.push("SQL timeout left DB driver sockets open".to_string());
     }
     let retry = post(server.address, &token, &fp, "/apply", body).await;
-    if !matches!(&retry,Ok(v) if v["code"]=="DB_UNAVAILABLE") {
+    if !matches!(&retry,Ok(v) if v["code"]=="WIRE.DB_UNAVAILABLE") {
         failures.push(format!("slot not returned: {retry:?}"));
     }
     if !reaches(&closed, 6).await {

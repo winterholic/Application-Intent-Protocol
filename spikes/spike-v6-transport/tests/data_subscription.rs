@@ -282,7 +282,7 @@ async fn a_subscriber_gets_a_snapshot_then_a_changed_result_after_a_write_and_no
     f.db.batch_execute(&format!("UPDATE {}.aip_principals SET enabled=false WHERE subject='owner'", f.schema)).await.expect("revoke");
     let _ = pay(addr, &f.fingerprint, "other", 98, "pay-98").await;
     let (event, data) = owner.next(Duration::from_secs(5)).await.expect("an error frame");
-    assert_eq!((event.as_str(), data["code"].as_str()), ("error", Some("UNAUTHENTICATED")), "{data}");
+    assert_eq!((event.as_str(), data["code"].as_str()), ("error", Some("WIRE.UNAUTHENTICATED")), "{data}");
     assert!(owner.next(Duration::from_secs(2)).await.is_none(), "nothing follows the error");
     polling.shutdown().await.expect("shutdown");
     server.shutdown().await.expect("shutdown");
@@ -297,15 +297,15 @@ async fn a_malformed_or_overreaching_data_subscription_is_refused_before_any_dat
     let fp = &f.fingerprint;
     let refusals = [
         // Both a stream and a query, or neither.
-        (json!({"stream":"notifications","after":"0","query":query(),"contractFingerprint":fp}), "BAD_REQUEST"),
-        (json!({"contractFingerprint":fp}), "BAD_REQUEST"),
+        (json!({"stream":"notifications","after":"0","query":query(),"contractFingerprint":fp}), "WIRE.BAD_REQUEST"),
+        (json!({"contractFingerprint":fp}), "WIRE.BAD_REQUEST"),
         // A query is not resumable: `after` is meaningless and must not pretend to be a cursor.
-        (json!({"after":"7","query":query(),"contractFingerprint":fp}), "BAD_REQUEST"),
+        (json!({"after":"7","query":query(),"contractFingerprint":fp}), "WIRE.BAD_REQUEST"),
         // A query outside the contract is refused the way a read is, with the allowed names.
-        (json!({"query":{"read":"Order","select":["id"],"sort":[{"field":"paid"}]},"contractFingerprint":fp}), "SORT_NOT_ALLOWED"),
-        (json!({"query":{"read":"Nope","select":["id"]},"contractFingerprint":fp}), "UNKNOWN_RESOURCE"),
+        (json!({"query":{"read":"Order","select":["id"],"sort":[{"field":"paid"}]},"contractFingerprint":fp}), "WIRE.SORT_NOT_ALLOWED"),
+        (json!({"query":{"read":"Nope","select":["id"]},"contractFingerprint":fp}), "WIRE.UNKNOWN_RESOURCE"),
         // The caller's contract must be the server's.
-        (json!({"query":query(),"contractFingerprint":"0".repeat(64)}), "CONTRACT_MISMATCH"),
+        (json!({"query":query(),"contractFingerprint":"0".repeat(64)}), "WIRE.CONTRACT_MISMATCH"),
     ];
     for (subscription, code) in refusals {
         // A request the server can refuse by reading it is answered with a JSON reply; one that only a run can refuse

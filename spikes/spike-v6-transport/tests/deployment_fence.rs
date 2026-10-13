@@ -53,7 +53,7 @@ async fn migration_lock_linearizes_requests_and_old_listener_rejects_new_facts()
     )
     .await
     .expect("server");
-    assert_eq!(status(server.address).await["code"], "NOT_FOUND");
+    assert_eq!(status(server.address).await["code"], "WIRE.NOT_FOUND");
 
     let migration = connect_owned_with_url(db_url).await.expect("migration connection");
     migration.batch_execute("BEGIN; SET LOCAL lock_timeout='2s'").await.expect("migration transaction");
@@ -66,8 +66,8 @@ async fn migration_lock_linearizes_requests_and_old_listener_rejects_new_facts()
     tokio::time::sleep(Duration::from_millis(150)).await;
     assert!(!request.is_finished(), "request must wait behind the active migration");
     migration.batch_execute("COMMIT").await.expect("publish new deployment");
-    assert_eq!(request.await.expect("status task")["code"], "DEPLOYMENT_CHANGED");
-    assert_eq!(status(server.address).await["code"], "DEPLOYMENT_CHANGED");
+    assert_eq!(request.await.expect("status task")["code"], "WIRE.DEPLOYMENT_CHANGED");
+    assert_eq!(status(server.address).await["code"], "WIRE.DEPLOYMENT_CHANGED");
     server.shutdown().await.expect("server shutdown");
     db.batch_execute(&format!("DROP SCHEMA {schema} CASCADE")).await.expect("owned schema cleanup");
 }

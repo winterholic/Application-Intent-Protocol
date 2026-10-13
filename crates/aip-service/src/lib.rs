@@ -421,15 +421,17 @@ fn read_bounded(path: &Path, limit: usize, code: &str) -> Result<String, Value> 
     }
     String::from_utf8(bytes).map_err(|_| error(code, "UTF-8 파일이 필요함"))
 }
-/// The definition diagnostic registry of the product path, for `aip explain-code` and `aip diagnostics --definition`.
+/// The definition diagnostic registry of the product path, for `aip explain-code` and `aip diagnostics --area def`.
 pub use spike_v1_fixture::codes as definition_registry;
+/// The codes the SDKs raise themselves, for `aip explain-code`.
+pub use spike_v6_transport::client_codes as client_registry;
 /// The codes of the product HTTP API (retry and fix), for `aip explain-code`.
 pub use spike_v6_transport::wire_codes as wire_registry;
 pub fn load(file: &Path, dev_checks: bool) -> Result<spike_v11_dev_checks::Checked, Value> {
     let form = file.to_str().and_then(spike_v1_fixture::form_of).ok_or_else(|| error("UNSUPPORTED_FORM", "지원하는 작성 형식이 아님"))?;
     let source = read_bounded(file, SOURCE_BYTES, "SOURCE_IO")?;
     spike_v11_dev_checks::load_checked(&source, form, &json!({"devChecks":dev_checks})).map_err(
-        |ds| json!({"ok":false,"code":"INVALID_DEFINITION","diagnostics":ds.iter().map(spike_v1_fixture::diag::Diag::json).collect::<Vec<_>>()}),
+        |ds| json!({"ok":false,"code":"DEF.INVALID_DEFINITION","diagnostics":ds.iter().map(spike_v1_fixture::diag::Diag::json).collect::<Vec<_>>()}),
     )
 }
 fn configuration(path: &Path) -> Result<Config, Value> {
@@ -948,7 +950,7 @@ async fn jobs(config: Config, command: Jobs) -> Result<Value, Value> {
                 // A redrive would hit the same uncertain provider call; the operator reconciles it first.
                 let pending: i64 = tx.query_one(&unsettled, &[&id]).await.map_err(|_| error("BAD_JOB_ID", "job id는 UUID여야 함"))?.get(0);
                 if pending > 0 {
-                    return Err(error("EFFECT_UNKNOWN", "결과를 모르는 외부 효과가 있어 재처리하지 않음; provider에서 결과를 확인해야 함"));
+                    return Err(error("WIRE.EFFECT_UNKNOWN", "결과를 모르는 외부 효과가 있어 재처리하지 않음; provider에서 결과를 확인해야 함"));
                 }
                 let outcome =
                     store.redrive(&tx, &id, &spike_v1_fixture::digest(&facts)).await.map_err(|_| error("BAD_JOB_ID", "job id는 UUID여야 함"))?;
@@ -960,7 +962,7 @@ async fn jobs(config: Config, command: Jobs) -> Result<Value, Value> {
                         return Err(error("JOB_EXPIRED", "입력 보존 기간이 지나 재처리할 수 없음; 새 job으로 제출해야 함"));
                     }
                     aip_execution::Redrive::DeploymentChanged => {
-                        return Err(error("DEPLOYMENT_CHANGED", "다른 배포에서 수락한 job이라 재처리할 수 없음; 새 job으로 제출해야 함"));
+                        return Err(error("WIRE.DEPLOYMENT_CHANGED", "다른 배포에서 수락한 job이라 재처리할 수 없음; 새 job으로 제출해야 함"));
                     }
                 }
             }

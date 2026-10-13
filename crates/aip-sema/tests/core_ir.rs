@@ -446,7 +446,7 @@ fn counter_store_must_be_declared() {
     let (mut p, _, _) = lower(PRESERVED);
     p.uses.retain(|u| u != "redis");
     let d = aip_ir::validate::validate(&p);
-    assert!(d.iter().any(|x| x.code == "AIP-I119"), "{d:?}");
+    assert!(d.iter().any(|x| x.code == "POC.I119"), "{d:?}");
 }
 
 #[test]

@@ -45,7 +45,7 @@ fn decimal_binding(s: &str, precision: u8, scale: u8) -> bool {
 }
 
 fn bad(ty: &str) -> Reject {
-    Reject { code: "BAD_VALUE", msg: format!("`{ty}` 타입에 맞지 않는 값") }
+    Reject { code: "WIRE.BAD_VALUE", msg: format!("`{ty}` 타입에 맞지 않는 값") }
 }
 
 fn time_binding(s: &str) -> Result<String, Reject> {

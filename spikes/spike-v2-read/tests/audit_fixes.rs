@@ -20,9 +20,9 @@ fn plan_rejects_policy_field_filter_and_sort_even_if_facts_allow_it() {
     ex["filter"].as_array_mut().unwrap().push(json!("internalNote.eq"));
     ex["sort"].as_array_mut().unwrap().push(json!("internalNote"));
     let f = json!({"read":"Recruitment","select":["id"],"filter":[{"field":"internalNote","op":"eq","value":"x"}]});
-    assert_eq!(plan_read(&facts, &f, &caller()).err().unwrap().code, "POLICY_FIELD_NOT_FILTERABLE");
+    assert_eq!(plan_read(&facts, &f, &caller()).err().unwrap().code, "WIRE.POLICY_FIELD_NOT_FILTERABLE");
     let s = json!({"read":"Recruitment","select":["id"],"sort":[{"field":"internalNote","dir":"asc"}]});
-    assert_eq!(plan_read(&facts, &s, &caller()).err().unwrap().code, "POLICY_FIELD_NOT_FILTERABLE");
+    assert_eq!(plan_read(&facts, &s, &caller()).err().unwrap().code, "WIRE.POLICY_FIELD_NOT_FILTERABLE");
     // 정책 없는 필드는 그대로 계획된다.
     let ok = json!({"read":"Recruitment","select":["id"],"sort":[{"field":"views","dir":"asc"}]});
     assert!(plan_read(&facts, &ok, &caller()).is_ok());

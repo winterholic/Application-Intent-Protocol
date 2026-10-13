@@ -9,15 +9,15 @@
     },
     "constraint_errors": {
       "_aip_approval_pending": {
-        "code": "AIP.CONFLICT.UNIQUE",
+        "code": "POC.CONFLICT.UNIQUE",
         "reason": "APPROVAL_ALREADY_PENDING"
       },
       "_aip_approval_vote_once": {
-        "code": "AIP.CONFLICT.UNIQUE",
+        "code": "POC.CONFLICT.UNIQUE",
         "reason": "ALREADY_VOTED"
       },
       "club_member__u4": {
-        "code": "AIP.CONFLICT.UNIQUE",
+        "code": "POC.CONFLICT.UNIQUE",
         "reason": "ALREADY_MEMBER"
       }
     },

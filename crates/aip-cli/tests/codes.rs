@@ -19,7 +19,7 @@ fn aip(args: &[&str]) -> std::process::Output {
 #[test]
 fn spec_diagnostics_is_generated_from_the_registry() {
     let path = root().join("spec/diagnostics.md");
-    let generated = String::from_utf8(aip(&["diagnostics", "--markdown"]).stdout).expect("utf8");
+    let generated = String::from_utf8(aip(&["diagnostics", "--area", "poc", "--markdown"]).stdout).expect("utf8");
     assert_eq!(generated, codes::render_markdown(), "the CLI prints the registry rendering");
     if std::env::var("AIP_UPDATE_GOLDEN").is_ok_and(|v| v == "1") {
         std::fs::write(&path, &generated).expect("write spec/diagnostics.md");
@@ -89,7 +89,7 @@ fn registry_examples_parse() {
 
 #[test]
 fn explain_code_prints_the_entry() {
-    let out = aip(&["explain-code", "AIP.CONFLICT.STALE_VERSION"]);
+    let out = aip(&["explain-code", "POC.CONFLICT.STALE_VERSION"]);
     assert!(out.status.success());
     let text = String::from_utf8(out.stdout).expect("utf8");
     assert!(text.contains("http status: 409") && text.contains("retryable with the same idempotency key: no"), "{text}");
@@ -97,7 +97,7 @@ fn explain_code_prints_the_entry() {
     let out = aip(&["explain-code", "--json", "aip-e103"]);
     assert!(out.status.success(), "lookup is case-insensitive");
     let v: Value = serde_json::from_slice(&out.stdout).expect("json");
-    assert_eq!(v["code"], "AIP-E103");
+    assert_eq!(v["code"], "POC.E103");
     assert_eq!(v["severity"], "error");
 
     assert!(!aip(&["explain-code", "NOT_A_CODE"]).status.success());
@@ -115,8 +115,8 @@ fn check_json_only_adds_explain() {
     std::fs::remove_dir_all(&dir).ok();
     let v: Value = serde_json::from_slice(&out.stdout).expect("json");
     let d = &v[0];
-    assert_eq!(d["code"], "AIP-E103");
-    assert_eq!(d["explain"], "aip explain-code AIP-E103");
+    assert_eq!(d["code"], "POC.E103");
+    assert_eq!(d["explain"], "aip explain-code POC.E103");
     // serde_json::Value sorts keys, so the order is checked on the raw text
     let text = String::from_utf8(out.stdout).expect("utf8");
     let pos: Vec<usize> =
@@ -139,7 +139,7 @@ fn semantic_rule_stops_every_command_that_needs_a_program() {
 
     let check = aip(&["check", &f, "--json"]);
     let v: Value = serde_json::from_slice(&check.stdout).expect("json");
-    assert_eq!(v[0]["code"], "AIP-E301");
+    assert_eq!(v[0]["code"], "POC.E301");
     assert_eq!(v[0]["span"]["line"], 25, "the position comes from the source map");
     assert!(v[0]["help"].is_string(), "the help text of the rule survives the move to the IR");
     assert!(!check.status.success());
@@ -149,7 +149,7 @@ fn semantic_rule_stops_every_command_that_needs_a_program() {
         let out = aip(&args);
         let err = String::from_utf8_lossy(&out.stderr).to_string();
         assert!(!out.status.success(), "{args:?} accepted a command without `allow`");
-        assert!(err.contains("AIP-E301"), "{args:?}: {err}");
+        assert!(err.contains("POC.E301"), "{args:?}: {err}");
     }
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -240,23 +240,23 @@ fn product_definition_errors_carry_scope_help_and_an_explanation() {
     std::fs::remove_dir_all(&dir).ok();
     assert!(!out.status.success());
     let v: Value = serde_json::from_slice(&out.stderr).expect("a failed service command prints its JSON error on stderr");
-    assert_eq!(v["code"], "INVALID_DEFINITION");
+    assert_eq!(v["code"], "DEF.INVALID_DEFINITION");
     let d = &v["diagnostics"][0];
-    assert_eq!(d["code"], "PARSE_UNKNOWN_KEY");
+    assert_eq!(d["code"], "DEF.PARSE_UNKNOWN_KEY");
     assert_eq!(d["line"], 56);
     assert_eq!(d["scope"], "resource Recruitment > expose read");
     assert!(d["help"].as_str().is_some_and(|h| h.contains("did you mean `sort`?")), "{d}");
-    assert_eq!(d["explain"], "aip explain-code PARSE_UNKNOWN_KEY");
+    assert_eq!(d["explain"], "aip explain-code DEF.PARSE_UNKNOWN_KEY");
 
-    let explain = aip(&["explain-code", "PARSE_UNKNOWN_KEY"]);
+    let explain = aip(&["explain-code", "DEF.PARSE_UNKNOWN_KEY"]);
     assert!(explain.status.success());
     let text = String::from_utf8(explain.stdout).expect("utf8");
     assert!(text.contains("why:") && text.contains("fix:") && text.contains("example"), "{text}");
     assert!(aip(&["explain-code", "parse_unknown_key", "--json"]).status.success(), "lookup ignores case like the PoC codes");
 
-    let listed: Value = serde_json::from_slice(&aip(&["diagnostics", "--definition", "--json"]).stdout).expect("json");
-    assert!(listed.as_array().is_some_and(|a| a.iter().any(|c| c["code"] == "PARSE_UNKNOWN_KEY")));
-    let md = String::from_utf8(aip(&["diagnostics", "--definition", "--markdown"]).stdout).expect("utf8");
+    let listed: Value = serde_json::from_slice(&aip(&["diagnostics", "--area", "def", "--json"]).stdout).expect("json");
+    assert!(listed.as_array().is_some_and(|a| a.iter().any(|c| c["code"] == "DEF.PARSE_UNKNOWN_KEY")));
+    let md = String::from_utf8(aip(&["diagnostics", "--area", "def", "--markdown"]).stdout).expect("utf8");
     let on_disk = std::fs::read_to_string(root().join("spec/definition-diagnostics.md")).expect("spec/definition-diagnostics.md");
     assert_eq!(md, on_disk, "the CLI prints the registry rendering that spec/definition-diagnostics.md holds");
 }

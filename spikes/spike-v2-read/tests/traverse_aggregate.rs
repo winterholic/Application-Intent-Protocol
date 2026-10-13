@@ -155,11 +155,11 @@ async fn relation_target_aggregate_preserves_planning_policy_cost_dependencies_a
 
     let mut private_field = req.clone();
     private_field["select"][3]["club"]["select"] = json!(["school"]);
-    check_code(&facts, &private_field, &who, "FIELD_NOT_EXPOSED").unwrap();
-    check_code(&facts, &json!({ "read": "Club", "select": ["id", "memberCount"] }), &who, "NOT_ROOT_QUERYABLE").unwrap();
+    check_code(&facts, &private_field, &who, "WIRE.FIELD_NOT_EXPOSED").unwrap();
+    check_code(&facts, &json!({ "read": "Club", "select": ["id", "memberCount"] }), &who, "WIRE.NOT_ROOT_QUERYABLE").unwrap();
     let mut low_cost = facts.clone();
     low_cost["resources"]["Recruitment"]["exposeRead"]["budget"]["cost"] = json!(17);
-    check_code(&low_cost, &request(3), &who, "COST_EXCEEDED").unwrap();
+    check_code(&low_cost, &request(3), &who, "WIRE.COST_EXCEEDED").unwrap();
 
     let mut db = connect_with_url(DB_URL).await.expect("connect to local PostgreSQL for owned-schema integration test");
     let ddl = sqlgen::create_ddl(&facts).expect("generate CREATE-only DDL");

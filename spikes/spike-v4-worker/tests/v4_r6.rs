@@ -42,7 +42,7 @@ fn who(id: i64) -> Caller {
 fn short(r: Result<Value, spike_v2_read::plan::Reject>) -> String {
     match r {
         Ok(v) => format!("OK {v}"),
-        Err(e) if e.code == "EXTENSION_ERROR" => format!("EXTENSION_ERROR({})", e.msg.rsplit(": ").next().unwrap_or("")),
+        Err(e) if e.code == "WIRE.EXTENSION_ERROR" => format!("EXTENSION_ERROR({})", e.msg.rsplit(": ").next().unwrap_or("")),
         Err(e) => e.code.to_string(),
     }
 }
@@ -85,7 +85,7 @@ async fn r6_write_extension() {
         let r = short(invoke_write(&mut db, &mut w, &facts("delegateAfter500"), "ClubMember.delegate", &input, &who(1)).await);
         tokio::time::sleep(Duration::from_millis(600)).await;
         let st = roles(&db).await;
-        if r != "COMMIT_UNKNOWN" || st != done {
+        if r != "WIRE.COMMIT_UNKNOWN" || st != done {
             fails.push(format!("{lang:?} F02 커밋 기한: {r} / {st}"));
         }
         db.batch_execute(&format!("DROP TRIGGER IF EXISTS slow_cm ON {s}.club_member")).await.unwrap();
@@ -94,7 +94,7 @@ async fn r6_write_extension() {
         let old = short(invoke_write(&mut db, &mut w, &facts_d("staleWriter", "50ms"), "ClubMember.delegate", &input, &who(1)).await);
         let next = short(invoke_write(&mut db, &mut w, &facts("delegateAfter350"), "ClubMember.delegate", &input, &who(1)).await);
         let st = roles(&db).await;
-        if old != "DEADLINE_EXCEEDED" || next != "OK {\"done\":true}" || st != done {
+        if old != "WIRE.DEADLINE_EXCEEDED" || next != "OK {\"done\":true}" || st != done {
             fails.push(format!("{lang:?} F03 이전 호출 간섭: {old} / {next} / {st}"));
         }
         // F05: ctx 쓰기 횟수 상한은 별도 확장 없이 정적 확인(write::MAX_CTX_CALLS = 20)
@@ -114,7 +114,7 @@ async fn r6_write_extension() {
     db.batch_execute(&seed).await.unwrap();
     let after = short(invoke_write(&mut db, &mut w, &facts("delegate"), "ClubMember.delegate", &input, &who(1)).await);
     eprintln!("F04 cancel={c} after={after}");
-    if c == "WORKER_FAILED" || after != "OK {\"done\":true}" {
+    if c == "WIRE.WORKER_FAILED" || after != "OK {\"done\":true}" {
         fails.push(format!("F04 Python 취소: {c} / {after}"));
     }
     w.stop().await;

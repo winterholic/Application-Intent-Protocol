@@ -24,10 +24,10 @@ struct WriteInvocation<'a> {
 }
 
 fn write_invocation<'a>(facts: &'a Value, name: &str, input: &Value, wire: IdWire) -> Result<WriteInvocation<'a>, Reject> {
-    let (resource, extension) = name.split_once('.').ok_or(Reject { code: "BAD_REQUEST", msg: "확장은 `Resource.name`".into() })?;
+    let (resource, extension) = name.split_once('.').ok_or(Reject { code: "WIRE.BAD_REQUEST", msg: "확장은 `Resource.name`".into() })?;
     let declaration = &facts["resources"][resource]["extensions"][extension];
     if declaration.is_null() || declaration["kind"] != "write" {
-        return rej("NOT_EXPOSED", format!("쓰기 확장 `{name}` 없음"));
+        return rej("WIRE.NOT_EXPOSED", format!("쓰기 확장 `{name}` 없음"));
     }
     check_write_record(facts, &declaration["input"], input, "입력", wire)?;
     let deadline = Duration::from_millis(declaration["deadlineMs"].as_u64().unwrap_or(1000));
@@ -67,13 +67,13 @@ pub async fn prepare_write_in_with_wire(
 
 pub async fn invoke_write(db: &mut Client, w: &mut Worker, facts: &Value, name: &str, input: &Value, caller: &Caller) -> Result<Value, Reject> {
     let invocation = write_invocation(facts, name, input, IdWire::Legacy)?;
-    let tx = db.transaction().await.map_err(|_| Reject { code: "INTERNAL", msg: "트랜잭션 시작 실패".into() })?;
+    let tx = db.transaction().await.map_err(|_| Reject { code: "WIRE.INTERNAL", msg: "트랜잭션 시작 실패".into() })?;
     match run_write_in(&tx, w, facts, input, caller, invocation).await {
         Ok(prepared) => {
             let left = prepared.expires.saturating_duration_since(Instant::now());
             match tokio::time::timeout(left, tx.commit()).await {
                 Ok(result) => result.map_err(|error| classify_write_error("커밋", error))?,
-                Err(_) => return rej("COMMIT_UNKNOWN", "커밋 결과를 기한 안에 확인하지 못함. 상태 조회 필요"),
+                Err(_) => return rej("WIRE.COMMIT_UNKNOWN", "커밋 결과를 기한 안에 확인하지 못함. 상태 조회 필요"),
             }
             Ok(prepared.output)
         }
@@ -102,7 +102,7 @@ async fn run_write_in(
         deadline.as_millis()
     ))
     .await
-    .map_err(|_| Reject { code: "INTERNAL", msg: "세션 설정 실패".into() })?;
+    .map_err(|_| Reject { code: "WIRE.INTERNAL", msg: "세션 설정 실패".into() })?;
     w.send_before(&json!({ "type": "invoke", "invoke": invoke_id, "impl": x["implementation"], "input": input, "token": token }), expires).await?;
     // ctx 쓰기가 한 번이라도 실패하면 확장이 오류를 잡고 성공을 돌려줘도 커밋하지 않는다(트랜잭션 오염 방지).
     let mut poisoned: Option<&'static str> = None;
@@ -111,11 +111,11 @@ async fn run_write_in(
     let result: Result<Value, Reject> = loop {
         let left = expires.saturating_duration_since(Instant::now());
         let line = match tokio::time::timeout(left, w.read_line()).await {
-            Err(_) => break rej("DEADLINE_EXCEEDED", format!("쓰기 확장이 {}ms 안에 끝나지 않음", deadline.as_millis())),
-            Ok(Err(_)) | Ok(Ok(None)) => break rej("WORKER_FAILED", "worker가 종료됨"),
+            Err(_) => break rej("WIRE.DEADLINE_EXCEEDED", format!("쓰기 확장이 {}ms 안에 끝나지 않음", deadline.as_millis())),
+            Ok(Err(_)) | Ok(Ok(None)) => break rej("WIRE.WORKER_FAILED", "worker가 종료됨"),
             Ok(Ok(Some(l))) => l,
         };
-        let Ok(m) = serde_json::from_str::<Value>(&line) else { break rej("WORKER_FAILED", "worker 메시지 형식 오류") };
+        let Ok(m) = serde_json::from_str::<Value>(&line) else { break rej("WIRE.WORKER_FAILED", "worker 메시지 형식 오류") };
         match m["type"].as_str() {
             Some("call") => {
                 let mine = m["token"] == json!(token);
@@ -124,17 +124,17 @@ async fn run_write_in(
                 }
                 let reply: Result<Value, Reject> = if !mine {
                     // 이 호출의 토큰이 아니면(끝난 호출의 ctx 등) 아무것도 쓰지 않는다. 현재 호출의 실패로 세지도 않는다(r6 F03).
-                    rej("TOKEN_EXPIRED", "이 쓰기 트랜잭션의 ctx가 아님")
+                    rej("WIRE.TOKEN_EXPIRED", "이 쓰기 트랜잭션의 ctx가 아님")
                 } else if calls > MAX_CTX_CALLS {
-                    rej("CALL_LIMIT", format!("ctx 쓰기는 호출당 {MAX_CTX_CALLS}번까지"))
+                    rej("WIRE.CALL_LIMIT", format!("ctx 쓰기는 호출당 {MAX_CTX_CALLS}번까지"))
                 } else if let Some(k) =
                     m.as_object().unwrap().keys().find(|k| !["type", "call", "token", "op", "name", "input"].contains(&k.as_str()))
                 {
-                    rej("UNKNOWN_KEY", format!("ctx 요청에 알 수 없는 키 `{k}`"))
+                    rej("WIRE.UNKNOWN_KEY", format!("ctx 요청에 알 수 없는 키 `{k}`"))
                 } else if m["op"] != "apply" {
-                    rej("UNSUPPORTED", "쓰기 확장 ctx는 apply만")
+                    rej("WIRE.UNSUPPORTED", "쓰기 확장 ctx는 apply만")
                 } else if !allowed.iter().any(|a| m["name"] == json!(a)) {
-                    rej("ACCESS_NOT_DECLARED", format!("확장 계약에 `{}` 쓰기가 없음", m["name"]))
+                    rej("WIRE.ACCESS_NOT_DECLARED", format!("확장 계약에 `{}` 쓰기가 없음", m["name"]))
                 } else {
                     match ctx_request(&m, wire) {
                         Err(error) => Err(error),
@@ -146,7 +146,7 @@ async fn run_write_in(
                                     let unchanged = applied.unchanged.into_iter().map(|id| emit_id(id, wire)).collect::<Result<Vec<_>, _>>()?;
                                     Ok(json!({"changed":changed,"unchanged":unchanged}))
                                 }),
-                                Err(_) => break rej("DEADLINE_EXCEEDED", "ctx 쓰기가 기한 안에 끝나지 않음"),
+                                Err(_) => break rej("WIRE.DEADLINE_EXCEEDED", "ctx 쓰기가 기한 안에 끝나지 않음"),
                             }
                         }
                     }
@@ -164,13 +164,13 @@ async fn run_write_in(
             }
             Some("done") if m["invoke"] == json!(invoke_id) => {
                 if Instant::now() > expires {
-                    break rej("DEADLINE_EXCEEDED", "기한 뒤 완료");
+                    break rej("WIRE.DEADLINE_EXCEEDED", "기한 뒤 완료");
                 }
                 if let Some(e) = m.get("error") {
-                    break rej("EXTENSION_ERROR", format!("확장 실패: {}", e["code"].as_str().unwrap_or("?")));
+                    break rej("WIRE.EXTENSION_ERROR", format!("확장 실패: {}", e["code"].as_str().unwrap_or("?")));
                 }
                 if let Some(code) = poisoned {
-                    break rej("EXTENSION_ERROR", format!("ctx 쓰기 실패 뒤 성공 반환: {code}"));
+                    break rej("WIRE.EXTENSION_ERROR", format!("ctx 쓰기 실패 뒤 성공 반환: {code}"));
                 }
                 let out = m["output"].clone();
                 break check_write_record(facts, &x["output"], &out, "출력", wire).map(|_| out);
@@ -181,11 +181,11 @@ async fn run_write_in(
     let output = result?;
     let left = expires.saturating_duration_since(Instant::now());
     if left < Duration::from_millis(COMMIT_MARGIN_MS) {
-        return rej("DEADLINE_EXCEEDED", "커밋 전 남은 기한 부족");
+        return rej("WIRE.DEADLINE_EXCEEDED", "커밋 전 남은 기한 부족");
     }
     match tokio::time::timeout(left, checks_in(tx, facts, caller, &knobs)).await {
         Ok(result) => result?,
-        Err(_) => return rej("DEADLINE_EXCEEDED", "커밋 검사가 기한 안에 끝나지 않음"),
+        Err(_) => return rej("WIRE.DEADLINE_EXCEEDED", "커밋 검사가 기한 안에 끝나지 않음"),
     }
     Ok(PreparedWrite { output, expires })
 }
@@ -197,7 +197,7 @@ fn check_write_record(facts: &Value, declaration: &Value, value: &Value, what: &
             if field[1].as_str().unwrap().trim_end_matches('?') == "Int" {
                 let scalar = &value[field[0].as_str().unwrap()];
                 if !scalar.is_null() && !scalar.as_i64().is_some_and(|integer| (-MAX_SAFE_ID..=MAX_SAFE_ID).contains(&integer)) {
-                    return rej(if what == "출력" { "OUTPUT_INVALID" } else { "BAD_VALUE" }, "Int가 JS 안전 정수 범위를 넘음");
+                    return rej(if what == "출력" { "WIRE.OUTPUT_INVALID" } else { "WIRE.BAD_VALUE" }, "Int가 JS 안전 정수 범위를 넘음");
                 }
             }
         }
@@ -209,7 +209,7 @@ fn check_write_record(facts: &Value, declaration: &Value, value: &Value, what: &
 pub fn job_apply_request(name: &str, input: &Value, wire: IdWire) -> Result<Value, Reject> {
     let exact = input.as_object().is_some_and(|object| object.keys().all(|key| key == "ids" || key == "key") && object.contains_key("ids"));
     if !exact || !input["ids"].is_array() {
-        return rej("BAD_VALUE", "ctx.data.apply 입력은 ids와 key만 허용");
+        return rej("WIRE.BAD_VALUE", "ctx.data.apply 입력은 ids와 key만 허용");
     }
     ctx_request(&json!({"name": name, "input": {"ids": input["ids"]}}), wire)
 }

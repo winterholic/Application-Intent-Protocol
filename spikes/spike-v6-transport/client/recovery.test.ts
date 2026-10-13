@@ -35,7 +35,7 @@ test("응답 유실 뒤 인증 만료는 이전 쓰기의 롤백 증거가 아�
   let mode = "lost";
   const fetcher: typeof fetch = async () => {
     if (mode === "lost") throw new TypeError("response lost after commit");
-    if (mode === "expired") return reply({ ok: false, code: "TOKEN_EXPIRED" });
+    if (mode === "expired") return reply({ ok: false, code: "WIRE.TOKEN_EXPIRED" });
     return reply({ ok: true, tags: ["MemberAlarm"], replayed: true });
   };
   const client = connect("http://spike.invalid", "session", fetcher);
@@ -61,7 +61,7 @@ test("미확정 키를 다른 본문으로 재사용해도 원래 복구 요청�
   await assert.rejects(client.apply(request, { key: "one", retries: 0 }), WriteUnsettled);
   const other = { apply: "MemberAlarm.read", target: { ids: ["2"] } };
   const mismatch = await client.apply(other, { key: "one", retries: 0 }).catch((e) => ({ code: e.code }));
-  assert.equal(mismatch.code, "IDEMPOTENCY_MISMATCH");
+  assert.equal(mismatch.code, "WIRE.IDEMPOTENCY_MISMATCH");
   offline = false;
   await client.retryPending();
   assert.deepEqual(seen.at(-1), request);
@@ -85,7 +85,7 @@ test("같은 키의 동시 호출은 하나의 전송과 복구 결과를 공유
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.equal(calls, 1);
   const mismatch = await client.apply({ ...request, target: { ids: ["2"] } }, { key: "same" });
-  assert.equal(mismatch.code, "IDEMPOTENCY_MISMATCH");
+  assert.equal(mismatch.code, "WIRE.IDEMPOTENCY_MISMATCH");
   release();
   assert.deepEqual(await a, await b);
   assert.equal(calls, 2);
@@ -130,7 +130,7 @@ test("잘못된 성공 응답은 커밋 확인으로 받아들이지 않음", as
 });
 
 test("최초 전송의 실행 전 거부는 미확정 쓰기를 남기지 않음", async () => {
-  for (const code of ["TOKEN_EXPIRED", "UNAUTHENTICATED", "BAD_REQUEST", "PAYLOAD_TOO_LARGE", "NOT_FOUND"]) {
+  for (const code of ["WIRE.TOKEN_EXPIRED", "WIRE.UNAUTHENTICATED", "WIRE.BAD_REQUEST", "WIRE.PAYLOAD_TOO_LARGE", "WIRE.NOT_FOUND"]) {
     const client = connect("http://spike.invalid", "session", async (url) => reply(String(url).endsWith("/read")
       ? { ok: true, rows: [1], deps: ["MemberAlarm"], maxAgeMs: 1000 }
       : { ok: false, code }));
@@ -141,7 +141,7 @@ test("최초 전송의 실행 전 거부는 미확정 쓰기를 남기지 않음
 });
 
 test("앞선 응답이 유실됐다면 실행 전 거부만으로 pending을 제거하지 않음", async () => {
-  for (const code of ["TOKEN_EXPIRED", "UNAUTHENTICATED", "BAD_REQUEST", "PAYLOAD_TOO_LARGE", "NOT_FOUND"]) {
+  for (const code of ["WIRE.TOKEN_EXPIRED", "WIRE.UNAUTHENTICATED", "WIRE.BAD_REQUEST", "WIRE.PAYLOAD_TOO_LARGE", "WIRE.NOT_FOUND"]) {
     let calls = 0;
     const client = connect("http://spike.invalid", "session", async () => {
       if (++calls === 1) throw new TypeError("response lost");

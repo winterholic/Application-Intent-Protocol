@@ -160,7 +160,7 @@ async fn read_extensions_cross_http_auth_contract_wire_and_worker_boundaries() {
                 match no_config {
                     Ok(server) => {
                         let response = post(server.address, None, None, &extension_input).await;
-                        expect_code(&mut failures, &format!("{wire_name}/{lang_name} no worker config"), response, "NOT_FOUND");
+                        expect_code(&mut failures, &format!("{wire_name}/{lang_name} no worker config"), response, "WIRE.NOT_FOUND");
                         if let Err(error) = server.shutdown().await {
                             failures.push(format!("no-config server shutdown failed: {:?}", error.kind()));
                         }
@@ -176,19 +176,19 @@ async fn read_extensions_cross_http_auth_contract_wire_and_worker_boundaries() {
                             &mut failures,
                             &format!("{wire_name}/{lang_name} missing token"),
                             post(server.address, None, Some(&contract), &extension_input).await,
-                            "UNAUTHENTICATED",
+                            "WIRE.UNAUTHENTICATED",
                         );
                         expect_code(
                             &mut failures,
                             &format!("{wire_name}/{lang_name} missing contract"),
                             post(server.address, Some(&token), None, &extension_input).await,
-                            "CONTRACT_MISMATCH",
+                            "WIRE.CONTRACT_MISMATCH",
                         );
                         expect_code(
                             &mut failures,
                             &format!("{wire_name}/{lang_name} wrong contract"),
                             post(server.address, Some(&token), Some(&"0".repeat(64)), &extension_input).await,
-                            "CONTRACT_MISMATCH",
+                            "WIRE.CONTRACT_MISMATCH",
                         );
                         let mut extra = extension_input.clone();
                         extra["extra"] = json!(true);
@@ -196,25 +196,25 @@ async fn read_extensions_cross_http_auth_contract_wire_and_worker_boundaries() {
                             &mut failures,
                             &format!("{wire_name}/{lang_name} extra body key"),
                             post(server.address, Some(&token), Some(&contract), &extra).await,
-                            "BAD_REQUEST",
+                            "WIRE.BAD_REQUEST",
                         );
                         expect_code(
                             &mut failures,
                             &format!("{wire_name}/{lang_name} unknown extension"),
                             post(server.address, Some(&token), Some(&contract), &body("Recruitment.notDeclared", wire_id(wire))).await,
-                            "NOT_EXPOSED",
+                            "WIRE.NOT_EXPOSED",
                         );
                         expect_code(
                             &mut failures,
                             &format!("{wire_name}/{lang_name} wrong Id wire"),
                             post(server.address, Some(&token), Some(&contract), &body("Recruitment.stats", wrong_wire_id(wire))).await,
-                            "BAD_VALUE",
+                            "WIRE.BAD_VALUE",
                         );
                         expect_code(
                             &mut failures,
                             &format!("{wire_name}/{lang_name} valid request with unavailable DB"),
                             post(server.address, Some(&token), Some(&contract), &extension_input).await,
-                            "DB_UNAVAILABLE",
+                            "WIRE.DB_UNAVAILABLE",
                         );
                         if let Err(error) = server.shutdown().await {
                             failures.push(format!("preflight server shutdown failed: {:?}", error.kind()));
@@ -244,7 +244,7 @@ async fn read_extensions_cross_http_auth_contract_wire_and_worker_boundaries() {
                             &mut failures,
                             &format!("{wire_name}/{lang_name} unauthorized actor ctx"),
                             post(server.address, Some(&other_token), Some(&contract), &extension_input).await,
-                            "EXTENSION_ERROR",
+                            "WIRE.EXTENSION_ERROR",
                         );
                         if let Err(error) = server.shutdown().await {
                             failures.push(format!("live server shutdown failed: {:?}", error.kind()));
@@ -260,7 +260,7 @@ async fn read_extensions_cross_http_auth_contract_wire_and_worker_boundaries() {
                     Ok(server) => {
                         let token = server.keys.issue(1, 600);
                         let response = post(server.address, Some(&token), Some(&contract), &extension_input).await;
-                        expect_code(&mut failures, &format!("{wire_name}/{lang_name} invalid worker output"), response, "OUTPUT_INVALID");
+                        expect_code(&mut failures, &format!("{wire_name}/{lang_name} invalid worker output"), response, "WIRE.OUTPUT_INVALID");
                         if let Err(error) = server.shutdown().await {
                             failures.push(format!("bad-output server shutdown failed: {:?}", error.kind()));
                         }
@@ -298,7 +298,7 @@ async fn read_extensions_cross_http_auth_contract_wire_and_worker_boundaries() {
                             &mut failures,
                             &format!("{wire_name}/{lang_name} bounded deadline"),
                             post(server.address, Some(&token), Some(&contract), &extension_input).await,
-                            "DEADLINE_EXCEEDED",
+                            "WIRE.DEADLINE_EXCEEDED",
                         );
                         if started.elapsed() > Duration::from_millis(2800) {
                             failures.push(format!("{wire_name}/{lang_name} deadline response took {:?}", started.elapsed()));

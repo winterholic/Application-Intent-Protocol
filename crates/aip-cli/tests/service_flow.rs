@@ -148,8 +148,8 @@ async fn operation_only_service_preserves_principal_contract_revocation_and_depl
                 }).await.expect("worker must have started before revoke");
                 assert!(!waiting.is_finished());
                 command(&config,&["principal","revoke","--subject","user-42"]).await;
-                assert_eq!(waiting.await.unwrap()["code"], "UNAUTHENTICATED", "revoked principal must not receive in-flight output");
-                assert_eq!(post(address,"/operation",&token,fingerprint,body.clone()).await["code"],"UNAUTHENTICATED");
+                assert_eq!(waiting.await.unwrap()["code"], "WIRE.UNAUTHENTICATED", "revoked principal must not receive in-flight output");
+                assert_eq!(post(address,"/operation",&token,fingerprint,body.clone()).await["code"],"WIRE.UNAUTHENTICATED");
                 stop(child).await;
                 command(&config,&["principal","bind","--subject","user-42","--actor","42"]).await;
                 tokio::time::sleep(Duration::from_secs(2)).await;
@@ -162,10 +162,10 @@ async fn operation_only_service_preserves_principal_contract_revocation_and_depl
                 let plan = command(&config,&["migrate",file.to_str().unwrap()]).await;
                 assert_eq!(plan["blocked"],false,"{plan}");
                 command(&config,&["migrate",file.to_str().unwrap(),"--apply",plan["digest"].as_str().unwrap()]).await;
-                assert_eq!(post(address,"/operation",&token,fingerprint,body.clone()).await["code"],"DEPLOYMENT_CHANGED");
+                assert_eq!(post(address,"/operation",&token,fingerprint,body.clone()).await["code"],"WIRE.DEPLOYMENT_CHANGED");
                 stop(child).await;
                 let (child,listening) = start(&config,&file).await;
-                assert_eq!(post(listening["address"].as_str().unwrap(),"/operation",&token,listening["fingerprint"].as_str().unwrap(),body).await["code"],"ACCESS_DENIED");
+                assert_eq!(post(listening["address"].as_str().unwrap(),"/operation",&token,listening["fingerprint"].as_str().unwrap(),body).await["code"],"WIRE.ACCESS_DENIED");
                 stop(child).await;
             }).catch_unwind().await;
             db.batch_execute(&format!("DROP SCHEMA {schema} CASCADE")).await.unwrap();
@@ -218,7 +218,7 @@ async fn product_identity_migration_and_restart_use_the_same_contract() {
         let denied:Value=serde_json::from_slice(&missing.stderr).unwrap();
         assert_eq!(denied["code"],"PRINCIPAL_NOT_FOUND");
         command(&config,&["principal","revoke","--subject","user-42"]).await;
-        assert_eq!(post(address,"/read",&token,fingerprint,json!({"query":{"read":"Event","select":["id"]}})).await["code"],"UNAUTHENTICATED");
+        assert_eq!(post(address,"/read",&token,fingerprint,json!({"query":{"read":"Event","select":["id"]}})).await["code"],"WIRE.UNAUTHENTICATED");
         stop(child).await;
         let new_source=APP.replace("date: Time }","date: Time; note: Text? }");assert_ne!(new_source,APP);std::fs::write(&file,new_source).unwrap();
         let plan=command(&config,&["migrate",file.to_str().unwrap()]).await;assert_eq!(plan["blocked"],false,"{plan}");
@@ -228,7 +228,7 @@ async fn product_identity_migration_and_restart_use_the_same_contract() {
         let (child,listening)=start(&config,&file).await;
         let old_address=listening["address"].as_str().unwrap();
         let old_fingerprint=listening["fingerprint"].as_str().unwrap();
-        assert_eq!(post(old_address,"/session",&token,"",json!({})).await["code"],"UNAUTHENTICATED","rebind must not revive a token issued before revoke");
+        assert_eq!(post(old_address,"/session",&token,"",json!({})).await["code"],"WIRE.UNAUTHENTICATED","rebind must not revive a token issued before revoke");
         tokio::time::sleep(Duration::from_secs(2)).await;
         let now=SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
         let token=encode(&header,&json!({"iss":"https://issuer.example","aud":"aip-api","sub":"user-42","iat":now,"nbf":now,"exp":now+300}),&key).unwrap();
@@ -238,7 +238,7 @@ async fn product_identity_migration_and_restart_use_the_same_contract() {
         let plan=command(&config,&["migrate",file.to_str().unwrap()]).await;
         command(&config,&["migrate",file.to_str().unwrap(),"--apply",plan["digest"].as_str().unwrap()]).await;
         let fenced=post(old_address,"/read",&token,old_fingerprint,json!({"query":{"read":"Event","select":["id"]}})).await;
-        assert_eq!(fenced["code"],"DEPLOYMENT_CHANGED","live old policy must stop authorizing reads: {fenced}");
+        assert_eq!(fenced["code"],"WIRE.DEPLOYMENT_CHANGED","live old policy must stop authorizing reads: {fenced}");
         stop(child).await;
         let (child,listening)=start(&config,&file).await;
         assert_eq!(post(listening["address"].as_str().unwrap(),"/read",&token,listening["fingerprint"].as_str().unwrap(),json!({"query":{"read":"Event","select":["id"]}})).await["rows"],json!([]));

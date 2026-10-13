@@ -100,7 +100,7 @@ fn code(r: &Result<impl Sized, AipError>) -> Option<(&str, Option<&str>)> {
 }
 
 fn forbidden(r: &Result<Reply, AipError>, reason: Option<&str>) -> bool {
-    code(r) == Some(("AIP.AUTH.FORBIDDEN", reason))
+    code(r) == Some(("POC.AUTH.FORBIDDEN", reason))
 }
 
 /// A call made inside an impersonation session: the actor is the person acted as.
@@ -174,15 +174,15 @@ async fn publishing(e: &Engine) -> Publishing {
 
 fn check_publishing(p: &Publishing) {
     assert_eq!(p.before_publish, (vec![], vec!["v1".to_string()]), "a draft is in the editor's list and not in the readers'");
-    assert_eq!(code(&p.get_before), Some(("AIP.NOT_FOUND", Some("ARTICLE_NOT_FOUND"))), "an unpublished article does not exist for readers");
-    assert_eq!(code(&p.outsider_publish), Some(("AIP.AUTH.FORBIDDEN", None)));
+    assert_eq!(code(&p.get_before), Some(("POC.NOT_FOUND", Some("ARTICLE_NOT_FOUND"))), "an unpublished article does not exist for readers");
+    assert_eq!(code(&p.outsider_publish), Some(("POC.AUTH.FORBIDDEN", None)));
     assert_eq!(p.published, vec!["v1".to_string()]);
     assert!(p.stamped, "publishing records when");
     assert_eq!(p.after_edit, (vec!["v1".to_string()], vec!["v2".to_string()]), "an edit changes the draft, not what is published");
     assert_eq!(p.republished, vec!["v2".to_string()]);
     assert_eq!(p.after_discard, (vec!["v2".to_string()], vec!["v2".to_string()]), "discarding brings the draft back to what is published");
-    assert_eq!(code(&p.outsider_discard), Some(("AIP.AUTH.FORBIDDEN", None)));
-    assert_eq!(code(&p.discard_unpublished), Some(("AIP.PRECONDITION.FAILED", Some("NOT_PUBLISHED"))));
+    assert_eq!(code(&p.outsider_discard), Some(("POC.AUTH.FORBIDDEN", None)));
+    assert_eq!(code(&p.discard_unpublished), Some(("POC.PRECONDITION.FAILED", Some("NOT_PUBLISHED"))));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -203,7 +203,7 @@ async fn publishable_end_to_end() {
     assert_eq!(reader_sees(&e, &sa).await, vec!["alpha"], "a site's list holds its own articles");
     assert_eq!(reader_sees(&e, &sb).await, vec!["beta"]);
     let cross = call(&e, "PublishArticle", Some(&alice), json!({"article": b1}), None).await;
-    assert_eq!(code(&cross), Some(("AIP.AUTH.FORBIDDEN", None)), "an editor of another site may not publish");
+    assert_eq!(code(&cross), Some(("POC.AUTH.FORBIDDEN", None)), "an editor of another site may not publish");
     ok(&e, "EditArticle", Some(&bob), json!({"article": b1, "title": "beta2", "body": "text"}), None).await;
     ok(&e, "PublishArticle", Some(&root), json!({"article": b1}), None).await;
     assert_eq!(reader_sees(&e, &sb).await, vec!["beta2"], "the superuser publishes without being an editor");
@@ -213,9 +213,9 @@ async fn publishable_end_to_end() {
     assert_eq!(count(&e, &format!("article WHERE id = '{a1}' AND deleted_at IS NOT NULL")).await, 1, "a soft-deleted working row stays");
     assert_eq!(count(&e, "article_published").await, count(&e, "article WHERE id IN (SELECT id FROM article_published)").await);
     let err = fails(&e, "ArticleDrafts", Some(&alice), json!({"site": sb}), None).await;
-    assert_eq!(err.code, "AIP.AUTH.FORBIDDEN", "the drafts of another site are not for an editor of this one");
+    assert_eq!(err.code, "POC.AUTH.FORBIDDEN", "the drafts of another site are not for an editor of this one");
     let hit = call(&e, "ArticleDrafts", None, json!({"site": sa}), None).await;
-    assert_eq!(code(&hit), Some(("AIP.AUTH.UNAUTHENTICATED", None)), "drafts are for editors, not for the public");
+    assert_eq!(code(&hit), Some(("POC.AUTH.UNAUTHENTICATED", None)), "drafts are for editors, not for the public");
 }
 
 /// Without `soft delete` the working row is deleted for real, and the published one goes with it.
@@ -265,9 +265,9 @@ async fn consenting(e: &Engine) -> Consenting {
 
 fn check_consenting(c: &Consenting) {
     let r = c.refused.as_ref().expect_err("no consent yet");
-    assert_eq!((r.code.as_str(), r.reason.as_deref(), r.status(), r.retryable), ("AIP.CONSENT.REQUIRED", Some("Terms"), 403, false));
-    assert_eq!(code(&c.refused_query), Some(("AIP.CONSENT.REQUIRED", Some("Terms"))), "a listed query needs the consent too");
-    assert_eq!(code(&c.anonymous), Some(("AIP.AUTH.UNAUTHENTICATED", None)), "consent is a person's: nobody is not asked");
+    assert_eq!((r.code.as_str(), r.reason.as_deref(), r.status(), r.retryable), ("POC.CONSENT.REQUIRED", Some("Terms"), 403, false));
+    assert_eq!(code(&c.refused_query), Some(("POC.CONSENT.REQUIRED", Some("Terms"))), "a listed query needs the consent too");
+    assert_eq!(code(&c.anonymous), Some(("POC.AUTH.UNAUTHENTICATED", None)), "consent is a person's: nobody is not asked");
     assert_eq!(c.status_before["status"], json!("NONE"));
     assert_eq!((c.given["status"].clone(), c.given["version"].clone()), (json!("GIVEN"), json!(1)));
     assert_eq!(c.records_after_two_gives, 1, "giving twice records once");
@@ -290,7 +290,7 @@ async fn consent_end_to_end() {
     assert_eq!((report.applied, report.drift.len()), (0, 0));
     let v2 = restarted(&e, &v2_src);
     let r = create(&v2, &alice, &s).await;
-    assert_eq!(code(&r), Some(("AIP.CONSENT.REQUIRED", Some("Terms"))), "consent to version 1 does not cover version 2");
+    assert_eq!(code(&r), Some(("POC.CONSENT.REQUIRED", Some("Terms"))), "consent to version 1 does not cover version 2");
     let st = ok(&v2, "TermsConsentStatus", Some(&alice), json!({}), None).await;
     assert_eq!((st["status"].clone(), st["version"].clone(), st["givenVersion"].clone()), (json!("OUTDATED"), json!(2), json!(1)));
     ok(&v2, "GiveTermsConsent", Some(&alice), json!({}), None).await;
@@ -302,8 +302,8 @@ async fn consent_end_to_end() {
     // withdrawing ends every active consent
     let w = ok(&v2, "WithdrawTermsConsent", Some(&alice), json!({}), None).await;
     assert_eq!(w["status"], json!("WITHDRAWN"));
-    assert_eq!(code(&create(&v2, &alice, &s).await), Some(("AIP.CONSENT.REQUIRED", Some("Terms"))), "withdrawn");
-    assert_eq!(code(&create(&e, &alice, &s).await), Some(("AIP.CONSENT.REQUIRED", Some("Terms"))), "withdrawn for the older version as well");
+    assert_eq!(code(&create(&v2, &alice, &s).await), Some(("POC.CONSENT.REQUIRED", Some("Terms"))), "withdrawn");
+    assert_eq!(code(&create(&e, &alice, &s).await), Some(("POC.CONSENT.REQUIRED", Some("Terms"))), "withdrawn for the older version as well");
     assert_eq!(count(&v2, &format!("_aip_consent WHERE actor = '{alice}' AND withdrawn_at IS NULL")).await, 0);
     assert_eq!(count(&v2, &format!("_aip_consent WHERE actor = '{alice}' AND withdrawn_at IS NOT NULL")).await, 2, "the history is kept");
     // and can be given again
@@ -445,12 +445,12 @@ async fn impersonating(e: &Engine) -> Impersonating {
 }
 
 fn denied(r: &Result<Value, AipError>, reason: Option<&str>) -> bool {
-    code(r) == Some(("AIP.AUTH.FORBIDDEN", reason))
+    code(r) == Some(("POC.AUTH.FORBIDDEN", reason))
 }
 
 fn check_impersonating(i: &Impersonating) {
     assert!(denied(&i.by_user, None), "only support staff start a session: {:?}", code(&i.by_user));
-    assert_eq!(code(&i.by_anonymous), Some(("AIP.AUTH.UNAUTHENTICATED", None)));
+    assert_eq!(code(&i.by_anonymous), Some(("POC.AUTH.UNAUTHENTICATED", None)));
     assert!(denied(&i.to_self, Some("IMPERSONATION_SELF")), "{:?}", code(&i.to_self));
     assert!(denied(&i.to_support, Some("IMPERSONATION_TARGET_PRIVILEGED")), "a session never reaches someone the operator's condition also passes");
     assert!(denied(&i.to_root, Some("IMPERSONATION_TARGET_PRIVILEGED")), "nor a superuser");
@@ -472,9 +472,9 @@ fn check_impersonating(i: &Impersonating) {
     assert!(i.own_vote.is_ok(), "{:?}", code(&i.own_vote));
     assert!(forbidden(&i.lent_superuser, None), "a session does not lend the superuser bypass: {:?}", code(&i.lent_superuser));
     assert!(i.own_superuser.is_ok(), "the same call as the superuser themselves works: {:?}", code(&i.own_superuser));
-    assert_eq!(code(&i.wrong_actor), Some(("AIP.AUTH.UNAUTHENTICATED", Some("IMPERSONATION_ENDED"))), "a session is for its own target");
-    assert_eq!(code(&i.unknown_session), Some(("AIP.AUTH.UNAUTHENTICATED", Some("IMPERSONATION_ENDED"))));
-    assert_eq!(code(&i.no_actor), Some(("AIP.AUTH.UNAUTHENTICATED", Some("IMPERSONATION_ENDED"))));
+    assert_eq!(code(&i.wrong_actor), Some(("POC.AUTH.UNAUTHENTICATED", Some("IMPERSONATION_ENDED"))), "a session is for its own target");
+    assert_eq!(code(&i.unknown_session), Some(("POC.AUTH.UNAUTHENTICATED", Some("IMPERSONATION_ENDED"))));
+    assert_eq!(code(&i.no_actor), Some(("POC.AUTH.UNAUTHENTICATED", Some("IMPERSONATION_ENDED"))));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -515,7 +515,7 @@ async fn impersonation_end_to_end() {
     assert_eq!(stopped.data["ended"], json!(1));
     assert_eq!(
         code(&within(&e, &s1, "RenameMe", &alice, json!({"name": "B"})).await),
-        Some(("AIP.AUTH.UNAUTHENTICATED", Some("IMPERSONATION_ENDED")))
+        Some(("POC.AUTH.UNAUTHENTICATED", Some("IMPERSONATION_ENDED")))
     );
     // the operator ends every session of theirs with their own token
     let (s2, s3) = (session_of(&start(&e, &sam, &alice).await.expect("start")), session_of(&start(&e, &sam, &alice).await.expect("start")));
@@ -537,11 +537,11 @@ async fn impersonation_end_to_end() {
     scalar(&e, &format!("UPDATE _aip_impersonation SET expires_at = now() - interval '1 second' WHERE id = '{s4}' RETURNING 1 AS val")).await;
     assert_eq!(
         code(&within(&e, &s4, "RenameMe", &alice, json!({"name": "E"})).await),
-        Some(("AIP.AUTH.UNAUTHENTICATED", Some("IMPERSONATION_ENDED")))
+        Some(("POC.AUTH.UNAUTHENTICATED", Some("IMPERSONATION_ENDED")))
     );
     assert_eq!(
         code(&within(&e, &s4, "TermsConsentStatus", &alice, json!({})).await),
-        Some(("AIP.AUTH.UNAUTHENTICATED", Some("IMPERSONATION_ENDED"))),
+        Some(("POC.AUTH.UNAUTHENTICATED", Some("IMPERSONATION_ENDED"))),
         "queries as well"
     );
 }
@@ -558,7 +558,7 @@ async fn impersonation_ttl_runs_out() {
     assert!(within(&e, &session, "RenameMe", &p.alice, json!({"name": "in time"})).await.is_ok());
     tokio::time::sleep(std::time::Duration::from_millis(1300)).await;
     let late = within(&e, &session, "RenameMe", &p.alice, json!({"name": "too late"})).await;
-    assert_eq!(code(&late), Some(("AIP.AUTH.UNAUTHENTICATED", Some("IMPERSONATION_ENDED"))), "after the ttl nothing runs");
+    assert_eq!(code(&late), Some(("POC.AUTH.UNAUTHENTICATED", Some("IMPERSONATION_ENDED"))), "after the ttl nothing runs");
     assert_eq!(scalar(&e, &format!("SELECT name AS val FROM member WHERE id = '{}'", p.alice)).await, json!("in time"));
 }
 
@@ -649,7 +649,7 @@ async fn impersonation_tokens_over_http() {
     ];
     for (what, t) in &forged {
         let (status, body) = http(addr, "RenameMe", Some(t), &json!({"name": "forged"})).await;
-        assert_eq!((status, body["error"]["code"].clone()), (401, json!("AIP.AUTH.UNAUTHENTICATED")), "{what}: {body}");
+        assert_eq!((status, body["error"]["code"].clone()), (401, json!("POC.AUTH.UNAUTHENTICATED")), "{what}: {body}");
     }
     assert_eq!(
         scalar(&e, &format!("SELECT name AS val FROM member WHERE id = '{}'", p.alice)).await,
@@ -808,7 +808,7 @@ async fn impersonation_rechecks_the_operator() {
     let e = common::setup_app("cms", "aip_e2e_cms_imp_recheck").await;
     let (before, after, query_after, ended, name) = operator_loses_power(&e).await;
     assert!(before.is_ok(), "while the operator holds the role the session works");
-    let gone = Some(("AIP.AUTH.UNAUTHENTICATED", Some("IMPERSONATION_ENDED")));
+    let gone = Some(("POC.AUTH.UNAUTHENTICATED", Some("IMPERSONATION_ENDED")));
     assert_eq!(code(&after), gone, "the same response as for an ended session");
     assert_eq!(code(&query_after), gone);
     assert_eq!(ended, 1, "and the session is closed on record");

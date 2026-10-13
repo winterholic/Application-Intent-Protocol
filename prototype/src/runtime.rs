@@ -138,10 +138,10 @@ pub async fn serve(args: Serve) -> Result<Value, Value> {
             } else {
                 config.validate(&facts, args.wire.id_wire())
             };
-            Some(checked.map_err(|_| error("WORKER_CONFIG", "macOS 로컬 공식 확장 경로/구현 설정 오류"))?)
+            Some(checked.map_err(|_| error("WIRE.WORKER_CONFIG", "macOS 로컬 공식 확장 경로/구현 설정 오류"))?)
         }
         (None, None) => None,
-        _ => return Err(error("WORKER_CONFIG", "worker-dir와 worker-lang을 함께 지정해야 함")),
+        _ => return Err(error("WIRE.WORKER_CONFIG", "worker-dir와 worker-lang을 함께 지정해야 함")),
     };
     let (statements, expected) = creation(&facts)?;
     let mut db = connect(&args.db_url).await?;
@@ -156,7 +156,7 @@ pub async fn serve(args: Serve) -> Result<Value, Value> {
             .map_err(|_| error("SCHEMA_NOT_READY", "현재 prototype init의 구조 marker가 필요함. 구형 schema는 자동 변경하지 않음"))?;
         let actual = marker.as_ref().and_then(|row| row.try_get::<_, String>(0).ok());
         if actual.as_deref() != Some(&expected) {
-            return Err(error("SCHEMA_MISMATCH", "정의의 DB 구조가 초기화 구조와 다름. 마이그레이션은 미구현"));
+            return Err(error("WIRE.SCHEMA_MISMATCH", "정의의 DB 구조가 초기화 구조와 다름. 마이그레이션은 미구현"));
         }
         for statement in &statements[1..] {
             if let Some(table) = statement.strip_prefix("CREATE TABLE ").and_then(|s| s.split_whitespace().next()) {
@@ -171,7 +171,7 @@ pub async fn serve(args: Serve) -> Result<Value, Value> {
         }
         let saved = marker.and_then(|row| row.try_get::<_, String>(1).ok());
         if saved.as_deref() != Some(&structure_digest(&tx, &args.schema).await?) {
-            return Err(error("SCHEMA_MISMATCH", "초기화 이후 DB 구조가 달라짐. serve는 구조나 데이터를 변경하지 않음"));
+            return Err(error("WIRE.SCHEMA_MISMATCH", "초기화 이후 DB 구조가 달라짐. serve는 구조나 데이터를 변경하지 않음"));
         }
         if let Some(id) = args.dev_actor {
             let actor = facts["actor"].as_str().ok_or_else(|| error("BAD_DEV_SESSION", "actor 선언이 없음"))?;

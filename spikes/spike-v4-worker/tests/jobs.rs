@@ -42,7 +42,7 @@ async fn managed_jobs_broker_only_declared_calls_in_node_and_python() {
         let mut worker = Worker::start(lang, dir).await;
         let mut host = Host(vec![]);
         let error = invoke_job(&mut worker, &facts, "missing", &json!({"text":"a"}), &caller, IdWire::SafeNumber, &mut host).await.unwrap_err();
-        assert_eq!(error.code, "BAD_VALUE");
+        assert_eq!(error.code, "WIRE.BAD_VALUE");
         assert!(host.0.is_empty(), "an HTTP effect without a stable key must be rejected before host dispatch");
         worker.stop().await;
         let denied = source.replace("http.echo", "http.other");
@@ -50,7 +50,7 @@ async fn managed_jobs_broker_only_declared_calls_in_node_and_python() {
         let mut worker = Worker::start(lang, dir).await;
         let mut host = Host(vec![]);
         let error = invoke_job(&mut worker, &facts, "managed", &json!({"text":"a"}), &caller, IdWire::SafeNumber, &mut host).await.unwrap_err();
-        assert_eq!(error.code, "ACCESS_NOT_DECLARED");
+        assert_eq!(error.code, "WIRE.ACCESS_NOT_DECLARED");
         assert!(host.0.is_empty());
         worker.stop().await;
     }

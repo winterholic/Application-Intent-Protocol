@@ -83,12 +83,12 @@ fn existing_write_candidates_have_the_same_facts_in_every_form() {
 #[test]
 fn host_write_shapes_reject_ambiguous_effects_and_unknown_options() {
     let cases = [
-        ("/resources/Apply/transitions/approve/effects/0", json!({"create": "ClubMember", "notify": "member", "values": {}}), "H_SHAPE"),
-        ("/resources/Apply/transitions/approve/effects/1/where", json!("id = member"), "H_SHAPE"),
-        ("/resources/Apply/exposeCompose/selfRow", json!("member by club extra"), "H_SHAPE"),
-        ("/resources/Apply/exposeCompose/creates", json!({"ClubMember": "member"}), "H_SHAPE"),
-        ("/resources/Apply/exposeCompose/creates", json!({"ClubMember": []}), "H_SHAPE"),
-        ("/resources/ClubMember/exposeCreate", json!({"allow": "true", "fields": ["member", "club", "role"], "unknown": 1}), "UNKNOWN_KEY"),
+        ("/resources/Apply/transitions/approve/effects/0", json!({"create": "ClubMember", "notify": "member", "values": {}}), "DEF.H_SHAPE"),
+        ("/resources/Apply/transitions/approve/effects/1/where", json!("id = member"), "DEF.H_SHAPE"),
+        ("/resources/Apply/exposeCompose/selfRow", json!("member by club extra"), "DEF.H_SHAPE"),
+        ("/resources/Apply/exposeCompose/creates", json!({"ClubMember": "member"}), "DEF.H_SHAPE"),
+        ("/resources/Apply/exposeCompose/creates", json!({"ClubMember": []}), "DEF.H_SHAPE"),
+        ("/resources/ClubMember/exposeCreate", json!({"allow": "true", "fields": ["member", "club", "role"], "unknown": 1}), "DEF.UNKNOWN_KEY"),
     ];
     for form in [Form::HTs, Form::HPy] {
         for (pointer, bad, code) in &cases {

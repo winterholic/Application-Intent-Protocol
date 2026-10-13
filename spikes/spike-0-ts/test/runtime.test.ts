@@ -48,7 +48,7 @@ test('order lifecycle: create → add items → pay → cancel restores stock', 
 
   const late = await c.raw('command', 'AddItem', s.alice, { orderId: order.id, productId: s.productB, quantity: 1 }, 'add-4');
   assert.equal(late.ok, false);
-  assert.deepEqual(!late.ok && [late.error.code, late.error.reason], ['AIP.PRECONDITION.FAILED', 'ORDER_NOT_EDITABLE']);
+  assert.deepEqual(!late.ok && [late.error.code, late.error.reason], ['POC.PRECONDITION.FAILED', 'ORDER_NOT_EDITABLE']);
 
   const cancelled = await c.ok('command', 'CancelOrder', s.alice, { orderId: order.id });
   assert.equal(cancelled.status, 'CANCELLED');
@@ -66,24 +66,24 @@ test('authorization: owner, role, anonymous', async () => {
   const order = await c.ok('command', 'CreateOrder', s.alice, {}, 'create-auth');
 
   const bob = await c.raw('command', 'AddItem', s.bob, { orderId: order.id, productId: s.productA, quantity: 1 }, 'bob-1');
-  assert.deepEqual(!bob.ok && [bob.status, bob.error.code], [403, 'AIP.AUTH.FORBIDDEN']);
+  assert.deepEqual(!bob.ok && [bob.status, bob.error.code], [403, 'POC.AUTH.FORBIDDEN']);
 
   const anon = await c.raw('command', 'CreateOrder', null, {}, 'anon-1');
-  assert.deepEqual(!anon.ok && [anon.status, anon.error.code], [401, 'AIP.AUTH.UNAUTHENTICATED']);
+  assert.deepEqual(!anon.ok && [anon.status, anon.error.code], [401, 'POC.AUTH.UNAUTHENTICATED']);
 
   const forged = await c.raw('command', 'CreateOrder', '00000000-0000-0000-0000-000000000000', {}, 'forged-1');
-  assert.deepEqual(!forged.ok && forged.error.code, 'AIP.AUTH.UNAUTHENTICATED');
+  assert.deepEqual(!forged.ok && forged.error.code, 'POC.AUTH.UNAUTHENTICATED');
 
   const detailBob = await c.raw('query', 'OrderDetail', s.bob, { orderId: order.id });
-  assert.deepEqual(!detailBob.ok && detailBob.error.code, 'AIP.AUTH.FORBIDDEN');
+  assert.deepEqual(!detailBob.ok && detailBob.error.code, 'POC.AUTH.FORBIDDEN');
   const detailAdmin = await c.ok('query', 'OrderDetail', s.admin, { orderId: order.id });
   assert.equal(detailAdmin.user.name, 'alice');
 
   const missing = await c.raw('query', 'OrderDetail', s.admin, { orderId: '00000000-0000-0000-0000-000000000001' });
-  assert.deepEqual(!missing.ok && missing.error.code, 'AIP.NOT_FOUND');
+  assert.deepEqual(!missing.ok && missing.error.code, 'POC.NOT_FOUND');
 
   const byStatus = await c.raw('query', 'OrdersByStatus', s.alice, { status: 'PENDING' });
-  assert.deepEqual(!byStatus.ok && byStatus.error.code, 'AIP.AUTH.FORBIDDEN');
+  assert.deepEqual(!byStatus.ok && byStatus.error.code, 'POC.AUTH.FORBIDDEN');
   assert.ok((await c.ok('query', 'OrdersByStatus', s.admin, { status: 'PENDING' })).length >= 1);
 
   // Bob's list never contains Alice's orders: the policy is part of the SQL filter.
@@ -93,7 +93,7 @@ test('authorization: owner, role, anonymous', async () => {
 test('input validation and preconditions', async () => {
   const order = await c.ok('command', 'CreateOrder', s.alice, {}, 'create-v');
   const extra = await c.raw('command', 'AddItem', s.alice, { orderId: order.id, productId: s.productA, quantity: 1, price: 0 }, 'v-1');
-  assert.deepEqual(!extra.ok && [extra.error.code, extra.error.path], ['AIP.INPUT.INVALID', 'price']);
+  assert.deepEqual(!extra.ok && [extra.error.code, extra.error.path], ['POC.INPUT.INVALID', 'price']);
 
   const zero = await c.raw('command', 'AddItem', s.alice, { orderId: order.id, productId: s.productA, quantity: 0 }, 'v-2');
   assert.deepEqual(!zero.ok && zero.error.reason, 'INVALID_QUANTITY');
@@ -102,11 +102,11 @@ test('input validation and preconditions', async () => {
   assert.deepEqual(!tooMany.ok && tooMany.error.reason, 'OUT_OF_STOCK');
 
   const noKey = await c.raw('command', 'AddItem', s.alice, { orderId: order.id, productId: s.productA, quantity: 1 });
-  assert.deepEqual(!noKey.ok && noKey.error.code, 'AIP.INPUT.IDEMPOTENCY_KEY_REQUIRED');
+  assert.deepEqual(!noKey.ok && noKey.error.code, 'POC.INPUT.IDEMPOTENCY_KEY_REQUIRED');
 
   await c.ok('command', 'AddItem', s.alice, { orderId: order.id, productId: s.productA, quantity: 1 }, 'v-4');
   const reused = await c.raw('command', 'AddItem', s.alice, { orderId: order.id, productId: s.productA, quantity: 2 }, 'v-4');
-  assert.deepEqual(!reused.ok && reused.error.code, 'AIP.IDEMPOTENCY.KEY_REUSED');
+  assert.deepEqual(!reused.ok && reused.error.code, 'POC.IDEMPOTENCY.KEY_REUSED');
   await c.ok('command', 'CancelOrder', s.alice, { orderId: order.id });
 });
 
@@ -149,6 +149,6 @@ test('invariants are enforced by the database even when a require is missing', a
   const lrt = caller(new Runtime(loose, pool));
   const o = await lrt.ok('command', 'CreateOrder', s.alice, {}, 'inv-order');
   const r = await lrt.raw('command', 'AddItem', s.alice, { orderId: o.id, productId: s.productB, quantity: 999 }, 'inv-1');
-  assert.deepEqual(!r.ok && [r.error.code, r.error.reason, r.error.path], ['AIP.INVARIANT.VIOLATED', 'stock_non_negative', 'Product']);
+  assert.deepEqual(!r.ok && [r.error.code, r.error.reason, r.error.path], ['POC.INVARIANT.VIOLATED', 'stock_non_negative', 'Product']);
   assert.equal(await stock(s.productB), 3);
 });

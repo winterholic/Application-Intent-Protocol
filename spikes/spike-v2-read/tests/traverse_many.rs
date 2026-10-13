@@ -58,23 +58,23 @@ fn plan_rejects_what_the_definition_does_not_allow() {
     let f = facts();
     let c = who(Some(1));
     // 허용 목록 밖 필드(자식의 state는 expose에 있지만 이 경로 select에 없다)
-    assert_eq!(code(plan_read(&f, &req(json!({ "select": ["id", "state"] })), &c)), "FIELD_NOT_EXPOSED");
-    assert_eq!(code(plan_read(&f, &req(json!({ "select": ["post"] })), &c)), "FIELD_NOT_EXPOSED");
+    assert_eq!(code(plan_read(&f, &req(json!({ "select": ["id", "state"] })), &c)), "WIRE.FIELD_NOT_EXPOSED");
+    assert_eq!(code(plan_read(&f, &req(json!({ "select": ["post"] })), &c)), "WIRE.FIELD_NOT_EXPOSED");
     // 알 수 없는 키: 정렬·필터는 호출자가 정하지 않는다
-    assert_eq!(code(plan_read(&f, &req(json!({ "select": ["id"], "sort": [{ "field": "id" }] })), &c)), "UNKNOWN_KEY");
-    assert_eq!(code(plan_read(&f, &req(json!({ "select": ["id"], "filter": [] })), &c)), "UNKNOWN_KEY");
+    assert_eq!(code(plan_read(&f, &req(json!({ "select": ["id"], "sort": [{ "field": "id" }] })), &c)), "WIRE.UNKNOWN_KEY");
+    assert_eq!(code(plan_read(&f, &req(json!({ "select": ["id"], "filter": [] })), &c)), "WIRE.UNKNOWN_KEY");
     // 계약에 없는 관계
     let bad = json!({ "read": "Post", "select": [{ "replies": { "select": ["id"] } }] });
-    assert_eq!(code(plan_read(&f, &bad, &c)), "TRAVERSE_NOT_ALLOWED");
+    assert_eq!(code(plan_read(&f, &bad, &c)), "WIRE.TRAVERSE_NOT_ALLOWED");
     // 중첩 금지(자식 안의 관계)
-    assert_eq!(code(plan_read(&f, &req(json!({ "select": ["id", { "post": { "select": ["id"] } }] })), &c)), "NESTED_TRAVERSE_NOT_ALLOWED");
+    assert_eq!(code(plan_read(&f, &req(json!({ "select": ["id", { "post": { "select": ["id"] } }] })), &c)), "WIRE.NESTED_TRAVERSE_NOT_ALLOWED");
     // limit는 정의 상한 이하의 양의 정수
     assert_eq!(code(plan_read(&f, &req(json!({ "select": ["id"], "limit": 3 })), &c)), "OK");
-    assert_eq!(code(plan_read(&f, &req(json!({ "select": ["id"], "limit": 4 })), &c)), "ROWS_EXCEEDED");
+    assert_eq!(code(plan_read(&f, &req(json!({ "select": ["id"], "limit": 4 })), &c)), "WIRE.ROWS_EXCEEDED");
     for bad in [json!(0), json!(-1), json!("2"), json!(1.5), json!(null)] {
-        assert_eq!(code(plan_read(&f, &req(json!({ "select": ["id"], "limit": bad.clone() })), &c)), "BAD_VALUE", "{bad}");
+        assert_eq!(code(plan_read(&f, &req(json!({ "select": ["id"], "limit": bad.clone() })), &c)), "WIRE.BAD_VALUE", "{bad}");
     }
-    assert_eq!(code(plan_read(&f, &req(json!({ "select": [] })), &c)), "BAD_REQUEST");
+    assert_eq!(code(plan_read(&f, &req(json!({ "select": [] })), &c)), "WIRE.BAD_REQUEST");
 }
 
 #[test]
@@ -90,11 +90,11 @@ fn cost_counts_parents_times_child_limit_and_depth_is_checked() {
     // budget cost를 낮추면 거부
     let mut tight = f.clone();
     tight["resources"]["Post"]["exposeRead"]["budget"]["cost"] = json!(50);
-    assert_eq!(code(plan_read(&tight, &req(json!({ "select": ["id", "secret"] })), &c)), "COST_EXCEEDED");
+    assert_eq!(code(plan_read(&tight, &req(json!({ "select": ["id", "secret"] })), &c)), "WIRE.COST_EXCEEDED");
     // depth 1이면 관계 탐색 불가(sema를 건너뛴 facts 방어)
     let mut shallow = f.clone();
     shallow["resources"]["Post"]["exposeRead"]["budget"]["depth"] = json!(1);
-    assert_eq!(code(plan_read(&shallow, &req(json!({ "select": ["id"] })), &c)), "DEPTH_EXCEEDED");
+    assert_eq!(code(plan_read(&shallow, &req(json!({ "select": ["id"] })), &c)), "WIRE.DEPTH_EXCEEDED");
 }
 
 #[test]

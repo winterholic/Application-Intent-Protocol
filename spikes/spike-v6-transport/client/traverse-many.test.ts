@@ -60,19 +60,19 @@ test("typed read rejects invalid 1:N child shapes, fields, and limits", async ()
     { id: 1, author: null, comments: [{ id: 2, body: "visible" }], unknown: true },
   ];
   for (const row of invalidRows) {
-    await assert.rejects(clientFor([row]).read({ read: "Post", select: selection } as any), (error: any) => error.code === "PROTOCOL_ERROR", JSON.stringify(row));
+    await assert.rejects(clientFor([row]).read({ read: "Post", select: selection } as any), (error: any) => error.code === "CLIENT.PROTOCOL_ERROR", JSON.stringify(row));
   }
   await assert.rejects(
     clientFor([{ id: 1, comments: [] }]).read({ read: "Post", select: ["id", { comments: { select: ["id"], limit: 4 } }] } as any),
-    (error: any) => error.code === "PROTOCOL_ERROR",
+    (error: any) => error.code === "CLIENT.PROTOCOL_ERROR",
   );
   await assert.rejects(
     clientFor([{ id: 1, comments: [] }]).read({ read: "Post", select: ["id", { comments: { select: ["secret"] } }] } as any),
-    (error: any) => error.code === "PROTOCOL_ERROR",
+    (error: any) => error.code === "CLIENT.PROTOCOL_ERROR",
   );
   await assert.rejects(
     clientFor([{ id: 1, comments: [] }]).read({ read: "Post", select: ["id", { comments: { select: ["id"], unknown: true } }] } as any),
-    (error: any) => error.code === "PROTOCOL_ERROR",
+    (error: any) => error.code === "CLIENT.PROTOCOL_ERROR",
   );
 });
 

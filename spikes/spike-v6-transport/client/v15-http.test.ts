@@ -46,22 +46,22 @@ test("V15: invalid values are BAD_VALUE, never success or unsettled, and leave r
   const snapshot = async () => (await aip.post("/read", { query: { read: "Event", select: ["id", "checked"], sort: [{ field: "id", dir: "asc" }] } })).rows;
   const before = await snapshot();
   for (const value of ["2026-02-30T00:00:00Z", "2026-10-04T00:00:00+24:00", "2026-10-04T00:00:00+00:60", "0000-01-01T00:00:00Z"]) {
-    await assert.rejects(aip.read({ read: "Event", select: ["id"], filter: [{ field: "date", op: "eq", value }] }), (e: any) => e.code === "BAD_VALUE");
+    await assert.rejects(aip.read({ read: "Event", select: ["id"], filter: [{ field: "date", op: "eq", value }] }), (e: any) => e.code === "WIRE.BAD_VALUE");
     const result = await aip.apply({ apply: "Event.mark", target: { where: [{ field: "date", op: "eq", value }] } });
     assert.equal(result.ok, false);
-    if (!result.ok) assert.equal(result.code, "BAD_VALUE");
+    if (!result.ok) assert.equal(result.code, "WIRE.BAD_VALUE");
     assert.deepEqual(aip.pending(), []);
     assert.deepEqual(await snapshot(), before);
   }
   for (const [field, value] of [["phase", "UNKNOWN"], ["phase", 1], ["link", true], ["date", null]] as const) {
     const read = await aip.post("/read", { query: { read: "Event", select: ["id"], filter: [{ field, op: "eq", value }] } });
-    assert.equal(read.code, "BAD_VALUE");
+    assert.equal(read.code, "WIRE.BAD_VALUE");
     const write = await aip.post("/apply", { key: `bad-${field}-${String(value)}`, request: { apply: "Event.mark", target: { where: [{ field, op: "eq", value }] } } });
-    assert.equal(write.code, "BAD_VALUE");
+    assert.equal(write.code, "WIRE.BAD_VALUE");
     assert.deepEqual(await snapshot(), before);
   }
   const notAllowed = await aip.post("/apply", { key: "not-eq", request: { apply: "Event.mark", target: { where: [{ field: "date", op: "gte", value: "2026-10-04T00:00:00Z" }] } } });
-  assert.equal(notAllowed.code, "FILTER_NOT_ALLOWED");
+  assert.equal(notAllowed.code, "WIRE.FILTER_NOT_ALLOWED");
   const unchanged = await aip.read({ read: "Event", select: ["id", "checked"], filter: [{ field: "id", op: "eq", value: id(16) }] });
   assert.equal(unchanged.rows[0].checked, false);
 });
@@ -69,10 +69,10 @@ test("V15: invalid values are BAD_VALUE, never success or unsettled, and leave r
 test("V15: NUL cannot reach PostgreSQL text comparison or leave a pending write", async () => {
   for (const field of ["title", "link"] as const) {
     const value = "bad\u0000text";
-    await assert.rejects(aip.read({ read: "Event", select: ["id"], filter: [{ field, op: "eq", value }] }), (e: any) => e.code === "BAD_VALUE");
+    await assert.rejects(aip.read({ read: "Event", select: ["id"], filter: [{ field, op: "eq", value }] }), (e: any) => e.code === "WIRE.BAD_VALUE");
     const result = await aip.apply({ apply: "Event.mark", target: { where: [{ field, op: "eq", value }] } }, { retries: 0 });
     assert.equal(result.ok, false);
-    if (!result.ok) assert.equal(result.code, "BAD_VALUE");
+    if (!result.ok) assert.equal(result.code, "WIRE.BAD_VALUE");
     assert.deepEqual(aip.pending(), []);
   }
 });
@@ -81,7 +81,7 @@ test("V15: previous unsupported where projection is rejected before first write"
   const old = connectTypedApply(url, token, stringWire ? oldDecimal : oldNumeric);
   const rejected = await old.apply({ apply: "Event.mark", target: { ids: [id(16)] } });
   assert.equal(rejected.ok, false);
-  if (!rejected.ok) assert.equal(rejected.code, "CONTRACT_MISMATCH");
+  if (!rejected.ok) assert.equal(rejected.code, "WIRE.CONTRACT_MISMATCH");
   assert.deepEqual(old.pending(), []);
   assert.equal((await aip.read({ read: "Event", select: ["checked"], filter: [{ field: "id", op: "eq", value: id(16) }] })).rows[0].checked, false);
 });
@@ -92,5 +92,5 @@ test("V15: prefix matches literal Unicode and wildcard characters within row pol
     assert.deepEqual(result.rows.map(row => row.id), expected.map(id));
   }
   const forbidden = await aip.post("/apply", { key: "prefix-write", request: { apply: "Event.mark", target: { where: [{ field: "title", op: "prefix", value: "서울" }] } } });
-  assert.equal(forbidden.code, "FILTER_NOT_ALLOWED");
+  assert.equal(forbidden.code, "WIRE.FILTER_NOT_ALLOWED");
 });

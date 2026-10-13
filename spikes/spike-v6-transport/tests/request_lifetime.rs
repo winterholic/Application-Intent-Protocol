@@ -55,7 +55,7 @@ async fn partial_headers_body_and_dripped_headers_share_one_five_second_deadline
     let partial_header = b"POST /session HTTP/1.1\r\n";
     match connect_and_write(address, partial_header).await {
         Ok(mut socket) => match read_json(&mut socket, READ_DEADLINE).await {
-            Ok(response) if response["code"] == "REQUEST_TIMEOUT" => {}
+            Ok(response) if response["code"] == "WIRE.REQUEST_TIMEOUT" => {}
             Ok(response) => failures.push(format!("partial header: expected REQUEST_TIMEOUT, got {response}")),
             Err(error) => failures.push(format!("partial header: {error}")),
         },
@@ -65,7 +65,7 @@ async fn partial_headers_body_and_dripped_headers_share_one_five_second_deadline
     let partial_body = b"POST /session HTTP/1.1\r\nhost: 127.0.0.1\r\ncontent-length: 1048576\r\n\r\n";
     match connect_and_write(address, partial_body).await {
         Ok(mut socket) => match read_json(&mut socket, READ_DEADLINE).await {
-            Ok(response) if response["code"] == "REQUEST_TIMEOUT" => {}
+            Ok(response) if response["code"] == "WIRE.REQUEST_TIMEOUT" => {}
             Ok(response) => failures.push(format!("partial 1 MiB body: expected REQUEST_TIMEOUT, got {response}")),
             Err(error) => failures.push(format!("partial 1 MiB body: {error}")),
         },
@@ -81,7 +81,7 @@ async fn partial_headers_body_and_dripped_headers_share_one_five_second_deadline
             } else {
                 let remaining = READ_DEADLINE.saturating_sub(drip_start.elapsed());
                 match read_json(&mut socket, remaining).await {
-                    Ok(response) if response["code"] == "REQUEST_TIMEOUT" => {}
+                    Ok(response) if response["code"] == "WIRE.REQUEST_TIMEOUT" => {}
                     Ok(response) => failures.push(format!("dripped header: expected REQUEST_TIMEOUT, got {response}")),
                     Err(error) => failures.push(format!("dripped header reset the absolute deadline: {error}")),
                 }
@@ -138,7 +138,7 @@ async fn sixty_fifth_incomplete_connection_is_rejected_and_a_freed_slot_serves_s
                 session = Some(response);
                 break;
             }
-            Ok(response) if response["code"] == "WORKER_BUSY" => sleep(Duration::from_millis(25)).await,
+            Ok(response) if response["code"] == "WIRE.WORKER_BUSY" => sleep(Duration::from_millis(25)).await,
             Ok(response) => {
                 failures.push(format!("session after slot release: expected ok, got {response}"));
                 break;
@@ -168,7 +168,7 @@ async fn unknown_post_route_returns_not_found_before_database_connection() {
     let mut failures = Vec::new();
     match connect_and_write(server.address, request.as_bytes()).await {
         Ok(mut socket) => match read_json(&mut socket, Duration::from_secs(2)).await {
-            Ok(response) if response["code"] == "NOT_FOUND" => {}
+            Ok(response) if response["code"] == "WIRE.NOT_FOUND" => {}
             Ok(response) => failures.push(format!("unknown POST route: expected NOT_FOUND, got {response}")),
             Err(error) => failures.push(format!("unknown POST route: {error}")),
         },

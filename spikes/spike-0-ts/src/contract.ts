@@ -70,22 +70,22 @@ function rowType(m: Model, entity: string): CType {
 }
 
 function queryErrors(qr: Query): string[] {
-  const errs = ['AIP.INPUT.INVALID', 'AIP.AUTH.UNAUTHENTICATED', 'AIP.AUTH.FORBIDDEN'];
-  if (qr.by) errs.push('AIP.NOT_FOUND');
+  const errs = ['POC.INPUT.INVALID', 'POC.AUTH.UNAUTHENTICATED', 'POC.AUTH.FORBIDDEN'];
+  if (qr.by) errs.push('POC.NOT_FOUND');
   return errs;
 }
 
 function commandErrors(a: Analysis, c: Command): { code: string; reasons?: string[] }[] {
   const info = a.commands.get(c.name)!;
-  const out: { code: string; reasons?: string[] }[] = [{ code: 'AIP.INPUT.INVALID' }, { code: 'AIP.AUTH.UNAUTHENTICATED' }, { code: 'AIP.AUTH.FORBIDDEN' }];
-  if (c.loads.length) out.push({ code: 'AIP.NOT_FOUND', reasons: [...new Set(c.loads.map((l) => `${l.entity.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toUpperCase()}_NOT_FOUND`))] });
-  if (c.requires.length) out.push({ code: 'AIP.PRECONDITION.FAILED', reasons: c.requires.map((r) => r.code) });
+  const out: { code: string; reasons?: string[] }[] = [{ code: 'POC.INPUT.INVALID' }, { code: 'POC.AUTH.UNAUTHENTICATED' }, { code: 'POC.AUTH.FORBIDDEN' }];
+  if (c.loads.length) out.push({ code: 'POC.NOT_FOUND', reasons: [...new Set(c.loads.map((l) => `${l.entity.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toUpperCase()}_NOT_FOUND`))] });
+  if (c.requires.length) out.push({ code: 'POC.PRECONDITION.FAILED', reasons: c.requires.map((r) => r.code) });
   const touched = new Set([...info.writes.map((w) => w.split('.')[0]), ...info.creates]);
   const invs = a.app.entities.filter((e) => touched.has(e.name)).flatMap((e) => e.invariants.map((i) => i.name));
-  if (invs.length) out.push({ code: 'AIP.INVARIANT.VIOLATED', reasons: invs });
-  if (info.creates.length) out.push({ code: 'AIP.INPUT.REFERENCE_NOT_FOUND' });
-  if (c.idempotent) out.push({ code: 'AIP.INPUT.IDEMPOTENCY_KEY_REQUIRED' }, { code: 'AIP.IDEMPOTENCY.KEY_REUSED' });
-  out.push({ code: 'AIP.CONCURRENCY.CONFLICT' });
+  if (invs.length) out.push({ code: 'POC.INVARIANT.VIOLATED', reasons: invs });
+  if (info.creates.length) out.push({ code: 'POC.INPUT.REFERENCE_NOT_FOUND' });
+  if (c.idempotent) out.push({ code: 'POC.INPUT.IDEMPOTENCY_KEY_REQUIRED' }, { code: 'POC.IDEMPOTENCY.KEY_REUSED' });
+  out.push({ code: 'POC.CONCURRENCY.CONFLICT' });
   return out;
 }
 

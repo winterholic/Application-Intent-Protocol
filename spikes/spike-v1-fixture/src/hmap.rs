@@ -10,38 +10,38 @@ type Obj<'a> = &'a [(String, Lit, Span)];
 fn obj<'a>(l: &'a Lit, sp: Span, what: &str) -> R<Obj<'a>> {
     match l {
         Lit::Obj(v) => Ok(v),
-        _ => Err(Diag::new("H_SHAPE", format!("{what}는 객체여야 함"), sp)),
+        _ => Err(Diag::new("DEF.H_SHAPE", format!("{what}는 객체여야 함"), sp)),
     }
 }
 fn s<'a>(l: &'a Lit, sp: Span, what: &str) -> R<&'a str> {
     match l {
         Lit::Str(v) => Ok(v),
-        _ => Err(Diag::new("H_SHAPE", format!("{what}는 문자열이어야 함"), sp)),
+        _ => Err(Diag::new("DEF.H_SHAPE", format!("{what}는 문자열이어야 함"), sp)),
     }
 }
 fn int(l: &Lit, sp: Span, what: &str) -> R<i64> {
     match l {
         Lit::Int(v) => Ok(*v),
-        _ => Err(Diag::new("H_SHAPE", format!("{what}는 정수여야 함"), sp)),
+        _ => Err(Diag::new("DEF.H_SHAPE", format!("{what}는 정수여야 함"), sp)),
     }
 }
 fn boolean(l: &Lit, sp: Span, what: &str) -> R<bool> {
     match l {
         Lit::Bool(v) => Ok(*v),
-        _ => Err(Diag::new("H_SHAPE", format!("{what}는 bool이어야 함"), sp)),
+        _ => Err(Diag::new("DEF.H_SHAPE", format!("{what}는 bool이어야 함"), sp)),
     }
 }
 fn strs(l: &Lit, sp: Span, what: &str) -> R<Vec<(String, Span)>> {
     match l {
         Lit::Arr(v) => v.iter().map(|(x, xs)| s(x, *xs, what).map(|t| (t.to_string(), *xs))).collect(),
-        _ => Err(Diag::new("H_SHAPE", format!("{what}는 문자열 배열이어야 함"), sp)),
+        _ => Err(Diag::new("DEF.H_SHAPE", format!("{what}는 문자열 배열이어야 함"), sp)),
     }
 }
 /// 모르는 키를 조용히 무시하지 않는다(SY-6).
 fn keys(o: Obj, allowed: &[&str], what: &str) -> R<()> {
     for (k, _, sp) in o {
         if !allowed.contains(&k.as_str()) {
-            return Err(Diag::new("UNKNOWN_KEY", format!("{what}에 알 수 없는 키 `{k}`"), *sp));
+            return Err(Diag::new("DEF.UNKNOWN_KEY", format!("{what}에 알 수 없는 키 `{k}`"), *sp));
         }
     }
     Ok(())
@@ -50,7 +50,7 @@ fn get<'a>(o: Obj<'a>, k: &str) -> Option<(&'a Lit, Span)> {
     o.iter().find(|x| x.0 == k).map(|x| (&x.1, x.2))
 }
 fn req<'a>(o: Obj<'a>, k: &str, sp: Span, what: &str) -> R<(&'a Lit, Span)> {
-    get(o, k).ok_or_else(|| Diag::new("MISSING_ITEM", format!("{what}에 `{k}` 필요"), sp))
+    get(o, k).ok_or_else(|| Diag::new("DEF.MISSING_ITEM", format!("{what}에 `{k}` 필요"), sp))
 }
 fn params(l: &Lit, sp: Span) -> R<Params> {
     obj(l, sp, "params")?.iter().map(|(k, v, vs)| Ok((k.clone(), parse_type_str(s(v, *vs, "타입")?, inner(*vs))?))).collect()
@@ -92,7 +92,7 @@ pub fn to_spec(root: &Lit, sp: Span) -> R<Spec> {
             let (ps, body) = match (get(ao, "totalOfVisible"), get(ao, "guard")) {
                 (Some((t, ts)), None) => {
                     if let Some((_, ps)) = get(ao, "params") {
-                        return Err(Diag::new("H_SHAPE", "totalOfVisible access에는 params를 쓸 수 없음", ps));
+                        return Err(Diag::new("DEF.H_SHAPE", "totalOfVisible access에는 params를 쓸 수 없음", ps));
                     }
                     (vec![], AccessBody::TotalOfVisible(s(t, ts, "totalOfVisible")?.to_string(), ts))
                 }
@@ -103,7 +103,7 @@ pub fn to_spec(root: &Lit, sp: Span) -> R<Spec> {
                     };
                     (ps, AccessBody::Guard(expr(g, gs, "guard")?))
                 }
-                _ => return Err(Diag::new("H_SHAPE", "access는 totalOfVisible 또는 guard 중 하나", *vs)),
+                _ => return Err(Diag::new("DEF.H_SHAPE", "access는 totalOfVisible 또는 guard 중 하나", *vs)),
             };
             spec.accesses.push(Access { name: n.clone(), params: ps, body, span: *vs });
         }
@@ -185,7 +185,7 @@ fn resource(name: &str, l: &Lit, span: Span) -> R<Resource> {
         }
         if let Some((x, xs)) = get(ro, "filter") {
             for (f, fsp) in strs(x, xs, "filter")? {
-                let (a, b) = f.split_once('.').ok_or_else(|| Diag::new("H_SHAPE", "filter는 `필드.연산`", fsp))?;
+                let (a, b) = f.split_once('.').ok_or_else(|| Diag::new("DEF.H_SHAPE", "filter는 `필드.연산`", fsp))?;
                 e.filter.push((a.to_string(), b.to_string(), fsp));
             }
         }
@@ -200,7 +200,7 @@ fn resource(name: &str, l: &Lit, span: Span) -> R<Resource> {
                     let path = parse_expr_str(s(v, vs, "via")?, inner(vs))?;
                     let (child, via) = match path {
                         Expr::Path(p, _) if p.len() == 2 => (p[0].clone(), p[1].clone()),
-                        _ => return Err(Diag::new("H_SHAPE", "via는 `Child.field`", vs)),
+                        _ => return Err(Diag::new("DEF.H_SHAPE", "via는 `Child.field`", vs)),
                     };
                     let select = get(to, "select").map(|(v, vs)| strs(v, vs, "select")).transpose()?.unwrap_or_default();
                     let sort = get(to, "sort").map(|(v, vs)| traverse_sort(v, vs)).transpose()?;
@@ -272,7 +272,7 @@ fn resource(name: &str, l: &Lit, span: Span) -> R<Resource> {
             for (name, sources, span) in obj(x, xs, "creates")? {
                 let sources = strs(sources, *span, "create sources")?;
                 if sources.is_empty() {
-                    return Err(Diag::new("H_SHAPE", "create sources에는 출처 하나 이상 필요", *span));
+                    return Err(Diag::new("DEF.H_SHAPE", "create sources에는 출처 하나 이상 필요", *span));
                 }
                 let sources = sources.into_iter().map(|(source, sp)| parse_expr_str(&source, inner(sp))).collect::<R<Vec<_>>>()?;
                 creates.push((name.clone(), sources, *span));
@@ -283,7 +283,7 @@ fn resource(name: &str, l: &Lit, span: Span) -> R<Resource> {
                 let raw = s(v, vs, "selfRow")?;
                 match raw.split_whitespace().collect::<Vec<_>>().as_slice() {
                     [field, "by", scope] => Ok((field.to_string(), scope.to_string(), vs)),
-                    _ => Err(Diag::new("H_SHAPE", "selfRow는 `<actor 참조 필드> by <범위 필드>`", vs)),
+                    _ => Err(Diag::new("DEF.H_SHAPE", "selfRow는 `<actor 참조 필드> by <범위 필드>`", vs)),
                 }
             })
             .transpose()?;
@@ -319,7 +319,7 @@ fn resource(name: &str, l: &Lit, span: Span) -> R<Resource> {
                 repeat: get(to, "repeat").map(|(v, vs)| s(v, vs, "repeat").map(|x| (x.to_string(), vs))).transpose()?,
                 effects: match get(to, "effects") {
                     Some((Lit::Arr(effects), _)) => effects.iter().map(|(effect, span)| transition_effect(effect, *span)).collect::<R<_>>()?,
-                    Some((_, span)) => return Err(Diag::new("H_SHAPE", "effects는 배열", span)),
+                    Some((_, span)) => return Err(Diag::new("DEF.H_SHAPE", "effects는 배열", span)),
                     None => vec![],
                 },
                 span: *vs,
@@ -332,12 +332,12 @@ fn resource(name: &str, l: &Lit, span: Span) -> R<Resource> {
                 for (group, span) in groups {
                     let columns = strs(group, *span, "unique 필드")?;
                     if columns.is_empty() {
-                        return Err(Diag::new("H_SHAPE", "unique에는 필드 하나 이상 필요", *span));
+                        return Err(Diag::new("DEF.H_SHAPE", "unique에는 필드 하나 이상 필요", *span));
                     }
                     r.uniques.push((columns, *span));
                 }
             }
-            _ => return Err(Diag::new("H_SHAPE", "unique는 필드 배열의 배열", xs)),
+            _ => return Err(Diag::new("DEF.H_SHAPE", "unique는 필드 배열의 배열", xs)),
         }
     }
     if let Some((x, xs)) = get(o, "checks") {
@@ -353,7 +353,7 @@ fn resource(name: &str, l: &Lit, span: Span) -> R<Resource> {
                     r.invariants.push((n.to_string(), f.to_string(), isp));
                     r.deferred_invariants.push(n.to_string());
                 }
-                _ => return Err(Diag::new("H_SHAPE", "invariant 문자열은 `<이름> per <필드> [deferred]`", isp)),
+                _ => return Err(Diag::new("DEF.H_SHAPE", "invariant 문자열은 `<이름> per <필드> [deferred]`", isp)),
             }
         }
     }
@@ -383,11 +383,11 @@ fn traverse_sort(value: &Lit, span: Span) -> R<(String, bool, Span)> {
     let (field, desc) = match parts.as_slice() {
         [field] | [field, "asc"] => (*field, false),
         [field, "desc"] => (*field, true),
-        _ => return Err(Diag::new("H_SHAPE", "sort는 `field [asc|desc]`", span)),
+        _ => return Err(Diag::new("DEF.H_SHAPE", "sort는 `field [asc|desc]`", span)),
     };
     match parse_expr_str(field, inner(span))? {
         Expr::Path(p, _) if p.len() == 1 => Ok((p[0].clone(), desc, span)),
-        _ => Err(Diag::new("H_SHAPE", "sort에는 필드 하나만 허용", span)),
+        _ => Err(Diag::new("DEF.H_SHAPE", "sort에는 필드 하나만 허용", span)),
     }
 }
 
@@ -401,7 +401,7 @@ fn aggregate(name: &str, l: &Lit, span: Span) -> R<Aggregate> {
         Some((v, vs)) => Some(match parse_expr_str(s(v, vs, "sourceAccess")?, inner(vs))? {
             Expr::Path(p, _) if p.len() == 1 => AccessRef::Name(p[0].clone()),
             Expr::Call(n, args, _) => AccessRef::Call(n, args),
-            _ => return Err(Diag::new("H_SHAPE", "sourceAccess는 이름 또는 호출", vs)),
+            _ => return Err(Diag::new("DEF.H_SHAPE", "sourceAccess는 이름 또는 호출", vs)),
         }),
     };
     Ok(Aggregate {
@@ -429,7 +429,7 @@ fn effect_values(value: &Lit, span: Span, what: &str) -> R<Vec<(String, Expr)>> 
 fn transition_effect(value: &Lit, span: Span) -> R<Effect> {
     let eo = obj(value, span, "effect")?;
     if ["create", "update", "notify"].iter().filter(|key| get(eo, key).is_some()).count() != 1 {
-        return Err(Diag::new("H_SHAPE", "effect는 create/update/notify 중 하나", span));
+        return Err(Diag::new("DEF.H_SHAPE", "effect는 create/update/notify 중 하나", span));
     }
     if let Some((target, ts)) = get(eo, "create") {
         keys(eo, &["create", "values"], "create effect")?;
@@ -440,7 +440,7 @@ fn transition_effect(value: &Lit, span: Span) -> R<Effect> {
         let max_rows = match (get(eo, "many"), get(eo, "maxRows")) {
             (None, None) => None,
             (Some((Lit::Bool(true), _)), Some((n, ns))) => Some(int(n, ns, "maxRows")?),
-            _ => return Err(Diag::new("H_SHAPE", "many update에는 many:true와 maxRows가 함께 필요", span)),
+            _ => return Err(Diag::new("DEF.H_SHAPE", "many update에는 many:true와 maxRows가 함께 필요", span)),
         };
         let (matches, ms) = req(eo, "where", span, "update effect")?;
         let (values, vs) = req(eo, "values", span, "update effect")?;
@@ -486,7 +486,7 @@ fn extension(name: &str, value: &Lit, span: Span, operation: bool) -> R<Extensio
     }
     if let Some((p, ps)) = get(eo, "access") {
         for (a, asp) in strs(p, ps, "access")? {
-            let (rn, an) = a.split_once('.').ok_or_else(|| Diag::new("H_SHAPE", "access는 `Resource.aggregate`", asp))?;
+            let (rn, an) = a.split_once('.').ok_or_else(|| Diag::new("DEF.H_SHAPE", "access는 `Resource.aggregate`", asp))?;
             ext.access.push((rn.to_string(), an.to_string()));
         }
     }

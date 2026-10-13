@@ -86,7 +86,7 @@ async fn write_extension_pins_its_transaction_to_read_committed() {
         &ReadExtensions { lang: WorkerLang::Node, dir: owned.0.clone() },
     )
     .await;
-    assert_eq!(rejected["code"], "INVARIANT_VIOLATED", "{rejected}");
+    assert_eq!(rejected["code"], "WIRE.INVARIANT_VIOLATED", "{rejected}");
 
     let server_db = "host=localhost dbname=postgres options='-c default_transaction_isolation=serializable'";
     let server = listen_with_prototype_options(

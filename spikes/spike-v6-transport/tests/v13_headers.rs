@@ -22,7 +22,7 @@ async fn v13_contract_header_validation_and_auth_precede_database_access() {
     for value in [String::new(), "a".repeat(63), "A".repeat(64), "g".repeat(64), format!("{fingerprint}\r\nx-aip-contract: {fingerprint}")] {
         // 잘못된 헤더에서는 미전송 본문을 기다리지 않는다.
         let response = request(port, &format!("POST /read HTTP/1.1\r\ncontent-length: 2\r\nx-aip-contract: {value}\r\n\r\n")).await;
-        assert_eq!(response["code"], "BAD_REQUEST");
+        assert_eq!(response["code"], "WIRE.BAD_REQUEST");
     }
     for path in ["/read", "/apply", "/status"] {
         let response = request(
@@ -30,13 +30,13 @@ async fn v13_contract_header_validation_and_auth_precede_database_access() {
             &format!("POST {path} HTTP/1.1\r\ncontent-length: 2\r\nauthorization: Bearer invalid\r\nx-aip-contract: {fingerprint}\r\n\r\n{{}}"),
         )
         .await;
-        assert_eq!(response["code"], "UNAUTHENTICATED");
+        assert_eq!(response["code"], "WIRE.UNAUTHENTICATED");
         let token = keys.issue(1, 60);
         let response = request(
             port,
             &format!("POST {path} HTTP/1.1\r\ncontent-length: 2\r\nauthorization: Bearer {token}\r\nx-aip-contract: {fingerprint}\r\n\r\n{{}}"),
         )
         .await;
-        assert_eq!(response["code"], "CONTRACT_MISMATCH");
+        assert_eq!(response["code"], "WIRE.CONTRACT_MISMATCH");
     }
 }

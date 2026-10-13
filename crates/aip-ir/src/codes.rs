@@ -19,13 +19,13 @@ use std::fmt::Write;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Kind {
-    /// `AIP-E***`: the checker or a backend rejects the program.
+    /// `POC.E***`: the checker or a backend rejects the program.
     Error,
-    /// `AIP-W***`: accepted, but probably not what was meant.
+    /// `POC.W***`: accepted, but probably not what was meant.
     Warning,
-    /// `AIP-I***`: Core IR that violates its structural rules.
+    /// `POC.I***`: Core IR that violates its structural rules.
     Ir,
-    /// `AIP.*`: failure a running intent reports to its caller.
+    /// `POC.<GROUP>.<NAME>`: failure a running intent reports to its caller.
     Runtime,
 }
 
@@ -98,125 +98,125 @@ const fn rt(code: &'static str, http_status: u16, retryable: bool, title: &'stat
     }
 }
 
-// Compile-time diagnostics. The constant name is the code without `AIP-`.
-pub const E100: &str = "AIP-E100";
-pub const E101: &str = "AIP-E101";
-pub const E102: &str = "AIP-E102";
-pub const E103: &str = "AIP-E103";
-pub const E104: &str = "AIP-E104";
-pub const E105: &str = "AIP-E105";
-pub const E106: &str = "AIP-E106";
-pub const E107: &str = "AIP-E107";
-pub const E108: &str = "AIP-E108";
-pub const E110: &str = "AIP-E110";
-pub const E111: &str = "AIP-E111";
-pub const E201: &str = "AIP-E201";
-pub const E202: &str = "AIP-E202";
-pub const E203: &str = "AIP-E203";
-pub const E204: &str = "AIP-E204";
-pub const E205: &str = "AIP-E205";
-pub const E206: &str = "AIP-E206";
-pub const E207: &str = "AIP-E207";
-pub const E208: &str = "AIP-E208";
-pub const E209: &str = "AIP-E209";
-pub const E210: &str = "AIP-E210";
-pub const E211: &str = "AIP-E211";
-pub const E212: &str = "AIP-E212";
-pub const E213: &str = "AIP-E213";
-pub const E214: &str = "AIP-E214";
-pub const E216: &str = "AIP-E216";
-pub const E220: &str = "AIP-E220";
-pub const E221: &str = "AIP-E221";
-pub const E222: &str = "AIP-E222";
-pub const E301: &str = "AIP-E301";
-pub const E302: &str = "AIP-E302";
-pub const E306: &str = "AIP-E306";
-pub const E309: &str = "AIP-E309";
-pub const E310: &str = "AIP-E310";
-pub const E311: &str = "AIP-E311";
-pub const E312: &str = "AIP-E312";
-pub const E313: &str = "AIP-E313";
-pub const E314: &str = "AIP-E314";
-pub const E315: &str = "AIP-E315";
-pub const E316: &str = "AIP-E316";
-pub const E317: &str = "AIP-E317";
-pub const E318: &str = "AIP-E318";
-pub const E319: &str = "AIP-E319";
-pub const E320: &str = "AIP-E320";
-pub const E501: &str = "AIP-E501";
-pub const E502: &str = "AIP-E502";
-pub const E600: &str = "AIP-E600";
-pub const E601: &str = "AIP-E601";
-pub const E602: &str = "AIP-E602";
-pub const W402: &str = "AIP-W402";
-pub const W403: &str = "AIP-W403";
-pub const W404: &str = "AIP-W404";
-pub const W501: &str = "AIP-W501";
-pub const W502: &str = "AIP-W502";
-pub const W602: &str = "AIP-W602";
-pub const W603: &str = "AIP-W603";
+// Compile-time diagnostics. The constant name is the code without `POC.`.
+pub const E100: &str = "POC.E100";
+pub const E101: &str = "POC.E101";
+pub const E102: &str = "POC.E102";
+pub const E103: &str = "POC.E103";
+pub const E104: &str = "POC.E104";
+pub const E105: &str = "POC.E105";
+pub const E106: &str = "POC.E106";
+pub const E107: &str = "POC.E107";
+pub const E108: &str = "POC.E108";
+pub const E110: &str = "POC.E110";
+pub const E111: &str = "POC.E111";
+pub const E201: &str = "POC.E201";
+pub const E202: &str = "POC.E202";
+pub const E203: &str = "POC.E203";
+pub const E204: &str = "POC.E204";
+pub const E205: &str = "POC.E205";
+pub const E206: &str = "POC.E206";
+pub const E207: &str = "POC.E207";
+pub const E208: &str = "POC.E208";
+pub const E209: &str = "POC.E209";
+pub const E210: &str = "POC.E210";
+pub const E211: &str = "POC.E211";
+pub const E212: &str = "POC.E212";
+pub const E213: &str = "POC.E213";
+pub const E214: &str = "POC.E214";
+pub const E216: &str = "POC.E216";
+pub const E220: &str = "POC.E220";
+pub const E221: &str = "POC.E221";
+pub const E222: &str = "POC.E222";
+pub const E301: &str = "POC.E301";
+pub const E302: &str = "POC.E302";
+pub const E306: &str = "POC.E306";
+pub const E309: &str = "POC.E309";
+pub const E310: &str = "POC.E310";
+pub const E311: &str = "POC.E311";
+pub const E312: &str = "POC.E312";
+pub const E313: &str = "POC.E313";
+pub const E314: &str = "POC.E314";
+pub const E315: &str = "POC.E315";
+pub const E316: &str = "POC.E316";
+pub const E317: &str = "POC.E317";
+pub const E318: &str = "POC.E318";
+pub const E319: &str = "POC.E319";
+pub const E320: &str = "POC.E320";
+pub const E501: &str = "POC.E501";
+pub const E502: &str = "POC.E502";
+pub const E600: &str = "POC.E600";
+pub const E601: &str = "POC.E601";
+pub const E602: &str = "POC.E602";
+pub const W402: &str = "POC.W402";
+pub const W403: &str = "POC.W403";
+pub const W404: &str = "POC.W404";
+pub const W501: &str = "POC.W501";
+pub const W502: &str = "POC.W502";
+pub const W602: &str = "POC.W602";
+pub const W603: &str = "POC.W603";
 
 // Core IR structure codes. Documented per code in `validate`.
-pub const I101: &str = "AIP-I101";
-pub const I102: &str = "AIP-I102";
-pub const I103: &str = "AIP-I103";
-pub const I104: &str = "AIP-I104";
-pub const I105: &str = "AIP-I105";
-pub const I106: &str = "AIP-I106";
-pub const I107: &str = "AIP-I107";
-pub const I108: &str = "AIP-I108";
-pub const I109: &str = "AIP-I109";
-pub const I110: &str = "AIP-I110";
-pub const I111: &str = "AIP-I111";
-pub const I112: &str = "AIP-I112";
-pub const I113: &str = "AIP-I113";
-pub const I114: &str = "AIP-I114";
-pub const I115: &str = "AIP-I115";
-pub const I116: &str = "AIP-I116";
-pub const I117: &str = "AIP-I117";
-pub const I118: &str = "AIP-I118";
-pub const I119: &str = "AIP-I119";
-pub const I120: &str = "AIP-I120";
-pub const I121: &str = "AIP-I121";
-pub const I122: &str = "AIP-I122";
+pub const I101: &str = "POC.I101";
+pub const I102: &str = "POC.I102";
+pub const I103: &str = "POC.I103";
+pub const I104: &str = "POC.I104";
+pub const I105: &str = "POC.I105";
+pub const I106: &str = "POC.I106";
+pub const I107: &str = "POC.I107";
+pub const I108: &str = "POC.I108";
+pub const I109: &str = "POC.I109";
+pub const I110: &str = "POC.I110";
+pub const I111: &str = "POC.I111";
+pub const I112: &str = "POC.I112";
+pub const I113: &str = "POC.I113";
+pub const I114: &str = "POC.I114";
+pub const I115: &str = "POC.I115";
+pub const I116: &str = "POC.I116";
+pub const I117: &str = "POC.I117";
+pub const I118: &str = "POC.I118";
+pub const I119: &str = "POC.I119";
+pub const I120: &str = "POC.I120";
+pub const I121: &str = "POC.I121";
+pub const I122: &str = "POC.I122";
 
 // Runtime and protocol error codes.
-pub const AUTH_FORBIDDEN: &str = "AIP.AUTH.FORBIDDEN";
-pub const AUTH_UNAUTHENTICATED: &str = "AIP.AUTH.UNAUTHENTICATED";
-pub const CONCURRENCY_CONFLICT: &str = "AIP.CONCURRENCY.CONFLICT";
-pub const CONFLICT_CAPACITY: &str = "AIP.CONFLICT.CAPACITY";
-pub const CONFLICT_IN_USE: &str = "AIP.CONFLICT.IN_USE";
-pub const CONFLICT_OVERLAP: &str = "AIP.CONFLICT.OVERLAP";
-pub const CONFLICT_STALE_VERSION: &str = "AIP.CONFLICT.STALE_VERSION";
-pub const CONFLICT_UNIQUE: &str = "AIP.CONFLICT.UNIQUE";
-pub const CONSENT_REQUIRED: &str = "AIP.CONSENT.REQUIRED";
-pub const ENCRYPTION_DECRYPT_FAILED: &str = "AIP.ENCRYPTION.DECRYPT_FAILED";
-pub const ENCRYPTION_KEYS_MISSING: &str = "AIP.ENCRYPTION.KEYS_MISSING";
-pub const IDEMPOTENCY_KEY_REUSED: &str = "AIP.IDEMPOTENCY.KEY_REUSED";
-pub const INPUT_IDEMPOTENCY_KEY_REQUIRED: &str = "AIP.INPUT.IDEMPOTENCY_KEY_REQUIRED";
-pub const INPUT_IDEMPOTENCY_KEY_UNSUPPORTED: &str = "AIP.INPUT.IDEMPOTENCY_KEY_UNSUPPORTED";
-pub const INPUT_INVALID: &str = "AIP.INPUT.INVALID";
-pub const INPUT_REFERENCE_NOT_FOUND: &str = "AIP.INPUT.REFERENCE_NOT_FOUND";
-pub const INTERNAL: &str = "AIP.INTERNAL";
-pub const INVARIANT_VIOLATED: &str = "AIP.INVARIANT.VIOLATED";
-pub const MIGRATION_CHANGED: &str = "AIP.MIGRATION.CHANGED";
-pub const MIGRATION_FAILED: &str = "AIP.MIGRATION.FAILED";
-pub const SCHEMA_DATA_CONFLICT: &str = "AIP.SCHEMA.DATA_CONFLICT";
-pub const SCHEMA_ENCRYPTION_CHANGE: &str = "AIP.SCHEMA.ENCRYPTION_CHANGE";
-pub const SCHEMA_FAILED: &str = "AIP.SCHEMA.FAILED";
-pub const SCHEMA_TYPE_CHANGE: &str = "AIP.SCHEMA.TYPE_CHANGE";
-pub const SCHEMA_UNDECLARED: &str = "AIP.SCHEMA.UNDECLARED";
-pub const SCHEMA_UNRECORDED: &str = "AIP.SCHEMA.UNRECORDED";
-pub const SCHEMA_UNSUPPORTED: &str = "AIP.SCHEMA.UNSUPPORTED";
-pub const NOT_FOUND: &str = "AIP.NOT_FOUND";
-pub const PRECONDITION_FAILED: &str = "AIP.PRECONDITION.FAILED";
-pub const RATE_LIMITED: &str = "AIP.RATE.LIMITED";
-pub const REQUEST_MALFORMED: &str = "AIP.REQUEST.MALFORMED";
-pub const REQUEST_UNKNOWN_INTENT: &str = "AIP.REQUEST.UNKNOWN_INTENT";
-pub const SUBSCRIPTION_LIMIT: &str = "AIP.SUBSCRIPTION.LIMIT";
-pub const SUBSCRIPTION_TOO_LARGE: &str = "AIP.SUBSCRIPTION.TOO_LARGE";
-pub const TENANT_MISMATCH: &str = "AIP.TENANT.MISMATCH";
-pub const UNAVAILABLE: &str = "AIP.UNAVAILABLE";
+pub const AUTH_FORBIDDEN: &str = "POC.AUTH.FORBIDDEN";
+pub const AUTH_UNAUTHENTICATED: &str = "POC.AUTH.UNAUTHENTICATED";
+pub const CONCURRENCY_CONFLICT: &str = "POC.CONCURRENCY.CONFLICT";
+pub const CONFLICT_CAPACITY: &str = "POC.CONFLICT.CAPACITY";
+pub const CONFLICT_IN_USE: &str = "POC.CONFLICT.IN_USE";
+pub const CONFLICT_OVERLAP: &str = "POC.CONFLICT.OVERLAP";
+pub const CONFLICT_STALE_VERSION: &str = "POC.CONFLICT.STALE_VERSION";
+pub const CONFLICT_UNIQUE: &str = "POC.CONFLICT.UNIQUE";
+pub const CONSENT_REQUIRED: &str = "POC.CONSENT.REQUIRED";
+pub const ENCRYPTION_DECRYPT_FAILED: &str = "POC.ENCRYPTION.DECRYPT_FAILED";
+pub const ENCRYPTION_KEYS_MISSING: &str = "POC.ENCRYPTION.KEYS_MISSING";
+pub const IDEMPOTENCY_KEY_REUSED: &str = "POC.IDEMPOTENCY.KEY_REUSED";
+pub const INPUT_IDEMPOTENCY_KEY_REQUIRED: &str = "POC.INPUT.IDEMPOTENCY_KEY_REQUIRED";
+pub const INPUT_IDEMPOTENCY_KEY_UNSUPPORTED: &str = "POC.INPUT.IDEMPOTENCY_KEY_UNSUPPORTED";
+pub const INPUT_INVALID: &str = "POC.INPUT.INVALID";
+pub const INPUT_REFERENCE_NOT_FOUND: &str = "POC.INPUT.REFERENCE_NOT_FOUND";
+pub const INTERNAL: &str = "POC.INTERNAL";
+pub const INVARIANT_VIOLATED: &str = "POC.INVARIANT.VIOLATED";
+pub const MIGRATION_CHANGED: &str = "POC.MIGRATION.CHANGED";
+pub const MIGRATION_FAILED: &str = "POC.MIGRATION.FAILED";
+pub const SCHEMA_DATA_CONFLICT: &str = "POC.SCHEMA.DATA_CONFLICT";
+pub const SCHEMA_ENCRYPTION_CHANGE: &str = "POC.SCHEMA.ENCRYPTION_CHANGE";
+pub const SCHEMA_FAILED: &str = "POC.SCHEMA.FAILED";
+pub const SCHEMA_TYPE_CHANGE: &str = "POC.SCHEMA.TYPE_CHANGE";
+pub const SCHEMA_UNDECLARED: &str = "POC.SCHEMA.UNDECLARED";
+pub const SCHEMA_UNRECORDED: &str = "POC.SCHEMA.UNRECORDED";
+pub const SCHEMA_UNSUPPORTED: &str = "POC.SCHEMA.UNSUPPORTED";
+pub const NOT_FOUND: &str = "POC.NOT_FOUND";
+pub const PRECONDITION_FAILED: &str = "POC.PRECONDITION.FAILED";
+pub const RATE_LIMITED: &str = "POC.RATE.LIMITED";
+pub const REQUEST_MALFORMED: &str = "POC.REQUEST.MALFORMED";
+pub const REQUEST_UNKNOWN_INTENT: &str = "POC.REQUEST.UNKNOWN_INTENT";
+pub const SUBSCRIPTION_LIMIT: &str = "POC.SUBSCRIPTION.LIMIT";
+pub const SUBSCRIPTION_TOO_LARGE: &str = "POC.SUBSCRIPTION.TOO_LARGE";
+pub const TENANT_MISMATCH: &str = "POC.TENANT.MISMATCH";
+pub const UNAVAILABLE: &str = "POC.UNAVAILABLE";
 
 /// HTTP status of a runtime code; codes outside the registry map to 409, which
 /// is what the runtime has always answered for an unknown failure.
@@ -259,18 +259,20 @@ pub fn render_text(c: &CodeInfo) -> String {
     out
 }
 
-/// `spec/diagnostics.md`, generated. Regenerate with `aip diagnostics --markdown`.
+/// `spec/diagnostics.md`, generated. Regenerate with `aip diagnostics --area poc --markdown`.
 pub fn render_markdown() -> String {
     let mut out = String::new();
     out.push_str(
         "# AIP 진단·오류 코드\n\n\
-         > 이 문서는 `crates/aip-ir/src/codes.rs`의 레지스트리에서 생성된다. 손으로 고치지 않는다. 다시 만들려면 `aip diagnostics --markdown > spec/diagnostics.md`를 실행한다.\n\n\
+         > 이 문서는 `crates/aip-ir/src/codes.rs`의 레지스트리에서 생성된다. 손으로 고치지 않는다. 다시 만들려면 `aip diagnostics --area poc --markdown > spec/diagnostics.md`를 실행한다.\n\n\
          ## 코드 체계\n\n\
-         | 접두 | 뜻 | 발생 지점 |\n|---|---|---|\n\
-         | `AIP-E***` | 오류. 프로그램이 컴파일되지 않는다 | `aip check`, 백엔드 계획 단계 |\n\
-         | `AIP-W***` | 경고. 컴파일되지만 의도와 다를 가능성이 크다 | `aip check`, 백엔드 계획 단계 |\n\
-         | `AIP-I***` | Core IR 구조 위반. 프런트엔드가 만든 IR이 구조 규칙을 어긴다 | IR 검증 |\n\
-         | `AIP.*` | 런타임·프로토콜 오류. 호출자가 응답으로 받는다 | `aip run` |\n\n\
+         모든 AIP 오류 코드는 `영역.이름` 형식이다(대문자, 영역 접두는 필수). 영역은 셋이고 코드 하나는 한 영역에만 있다: `DEF`(제품 정의 검사기, [definition-diagnostics.md](definition-diagnostics.md)), `WIRE`(제품 HTTP API, [wire-errors.md](wire-errors.md)), `POC`(PoC 언어와 런타임, 이 문서). 세 영역은 `aip explain-code`와 `aip diagnostics` 하나로 조회한다. 이 문서의 코드는 모두 `POC.`로 시작한다.\n\n\
+         | 형태 | 뜻 | 발생 지점 |\n|---|---|---|\n\
+         | `POC.E***` | 오류. 프로그램이 컴파일되지 않는다 | `aip check`, 백엔드 계획 단계 |\n\
+         | `POC.W***` | 경고. 컴파일되지만 의도와 다를 가능성이 크다 | `aip check`, 백엔드 계획 단계 |\n\
+         | `POC.I***` | Core IR 구조 위반. 프런트엔드가 만든 IR이 구조 규칙을 어긴다 | IR 검증 |\n\
+         | `POC.<그룹>.<이름>` | 런타임·프로토콜 오류. 호출자가 응답으로 받는다 | `aip run` |\n\n\
+         2026-10-13 이전 표기는 접두만 바뀌었다. `AIP-` 뒤에 E·W·I와 번호가 붙던 코드는 `POC.` 뒤에 같은 E·W·I와 번호가, `AIP.`로 시작하던 런타임 코드는 `POC.`로 시작한다. 이름은 그대로다.\n\n\
          번호의 앞자리는 영역을 가리킨다. 1xx는 선언과 이름, 2xx는 타입과 값, 3xx는 권한·개인정보·정합성, 4xx는 품질 경고, 5xx는 extension, 6xx는 백엔드다. 번호는 영역 안에서 비어 있을 수 있고 재사용하지 않는다.\n\n\
          ## 안정성 규칙\n\n\
          - 한 번 공개된 코드는 의미를 바꾸지 않는다. 더 좁거나 다른 의미가 필요하면 새 코드를 만든다.\n\
@@ -280,7 +282,7 @@ pub fn render_markdown() -> String {
          조회: `aip explain-code <CODE>`.\n",
     );
     let sections =
-        [(Kind::Error, "오류 (AIP-E)"), (Kind::Warning, "경고 (AIP-W)"), (Kind::Ir, "IR 구조 (AIP-I)"), (Kind::Runtime, "런타임 오류 (AIP.*)")];
+        [(Kind::Error, "오류 (POC.E)"), (Kind::Warning, "경고 (POC.W)"), (Kind::Ir, "IR 구조 (POC.I)"), (Kind::Runtime, "런타임 오류 (POC.*)")];
     for (kind, heading) in sections {
         let _ = write!(out, "\n## {heading}\n");
         for c in REGISTRY.iter().filter(|c| c.kind == kind) {
@@ -298,7 +300,7 @@ pub fn render_markdown() -> String {
 }
 
 pub static REGISTRY: &[CodeInfo] = &[
-    // ---- AIP-E1xx: declarations and names ----
+    // ---- POC.E1xx: declarations and names ----
     err(
         E100,
         "syntax error",
@@ -376,7 +378,7 @@ pub static REGISTRY: &[CodeInfo] = &[
         "Delete the declaration that no longer applies, or the field or entity it contradicts. Once every database has been migrated, the declaration may stay: it does nothing when the old name is not in the database.",
         "entity Task {\n  title: Text was name\n  removed field legacyCode\n}\nremoved entity OldThing",
     ),
-    // ---- AIP-E2xx: types and values ----
+    // ---- POC.E2xx: types and values ----
     err(
         E201,
         "type mismatch",
@@ -503,7 +505,7 @@ pub static REGISTRY: &[CodeInfo] = &[
         "Keep one generator and model the other in a separate field.",
         "entity Ticket {\n  club: Club\n  code: Text sequence per club format \"T-{n}\"\n}",
     ),
-    // ---- AIP-E3xx: authorization, personal data, consistency ----
+    // ---- POC.E3xx: authorization, personal data, consistency ----
     err(
         E301,
         "missing `allow`",
@@ -609,7 +611,7 @@ pub static REGISTRY: &[CodeInfo] = &[
         "Write the field with `set row.field = param` on one row, or insert the row with the parameter as the value; do the work row by row with `each`.",
         "entity Member {\n  email: Email personal encrypted\n  nickname: Text(2..20)\n}\ncommand ChangeEmail(member: Member, email: Email) {\n  allow actor = member\n  do { set member.email = email }\n}",
     ),
-    // ---- AIP-E5xx: extensions ----
+    // ---- POC.E5xx: extensions ----
     err(
         E501,
         "extension not declared or misused",
@@ -624,7 +626,7 @@ pub static REGISTRY: &[CodeInfo] = &[
         "Write the effect as `ns.effect(...)`, or use the call inside an expression.",
         "",
     ),
-    // ---- AIP-E6xx: backend ----
+    // ---- POC.E6xx: backend ----
     err(
         E600,
         "expression cannot be planned",
@@ -646,7 +648,7 @@ pub static REGISTRY: &[CodeInfo] = &[
         "Remove the construct, or wait for a runtime that supports it.",
         "",
     ),
-    // ---- AIP-W: warnings ----
+    // ---- POC.W: warnings ----
     warn(
         W402,
         "redundant comparison or call",
@@ -700,7 +702,7 @@ pub static REGISTRY: &[CodeInfo] = &[
         "Accept prefix matching, or run a search engine with a Korean analyzer and keep this declaration for development.",
         "",
     ),
-    // ---- AIP-I: Core IR structure ----
+    // ---- POC.I: Core IR structure ----
     ir(
         I101,
         "version tag differs",
@@ -763,7 +765,7 @@ pub static REGISTRY: &[CodeInfo] = &[
         "A query's `Search` source names a search declaration that is not in the program, or a `SearchRank` node names an alias that no `Search` source of its query binds.",
         "Declare the search, or use the rank only in the query that searches under the alias.",
     ),
-    // ---- AIP.*: runtime and protocol ----
+    // ---- POC.*: runtime and protocol ----
     rt(
         AUTH_FORBIDDEN,
         403,
@@ -1041,7 +1043,7 @@ pub static REGISTRY: &[CodeInfo] = &[
         404,
         false,
         "rows belong to different tenants",
-        "Rows the call touches belong to different tenants: parameters of one call, a reference between tenant-scoped rows, a value written into a tenant that is not the call's, or, for work without a caller (a webhook, an event handler, a schedule item, a rule row, a job item), a second tenant written in the same transaction. The database refuses the second tenant unless the declaration is `cross tenant`. It answers 404 like NOT_FOUND so a caller cannot tell another tenant's row from a missing one by the status. Rows an actor may not see are NOT_FOUND before this is reached.",
+        "Rows the call touches belong to different tenants: parameters of one call, a reference between tenant-scoped rows, a value written into a tenant that is not the call's, or, for work without a caller (a webhook, an event handler, a schedule item, a rule row, a job item), a second tenant written in the same transaction. The database refuses the second tenant unless the declaration is `cross tenant`. It answers 404 like POC.NOT_FOUND so a caller cannot tell another tenant's row from a missing one by the status. Rows an actor may not see are POC.NOT_FOUND before this is reached.",
         "Pass rows of one tenant, or reference only rows of the row's own tenant.",
     ),
     rt(

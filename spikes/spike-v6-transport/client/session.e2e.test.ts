@@ -26,7 +26,7 @@ test("처음부터 만료된 토큰은 apply 사전 확인에서 거부되고 pe
     return fetch(input, init);
   };
   const expired = connect(URL, EXPIRED, fetcher);
-  await assert.rejects(expired.apply(request, { key: "expired-before-apply" }), (error: any) => error.code === "TOKEN_EXPIRED");
+  await assert.rejects(expired.apply(request, { key: "expired-before-apply" }), (error: any) => error.code === "WIRE.TOKEN_EXPIRED");
   assert.deepEqual(expired.pending(), []);
   assert.equal(applyCalls, 0);
 });
@@ -52,11 +52,11 @@ test("응답 유실 뒤 같은 principal 갱신으로 같은 키를 재확정하
   const key = "v10-approve-300";
   await assert.rejects(client.apply(request, { key, retries: 0 }), WriteUnsettled);
   await new Promise((resolve) => setTimeout(resolve, 3100));
-  assert.equal((await client.post("/session", {})).code, "TOKEN_EXPIRED");
+  assert.equal((await client.post("/session", {})).code, "WIRE.TOKEN_EXPIRED");
   assert.deepEqual(await client.retryPending(), []);
   assert.deepEqual(client.pending(), [key]);
 
-  await assert.rejects(client.replaceSession(EXPIRED), (error: any) => error.code === "TOKEN_EXPIRED");
+  await assert.rejects(client.replaceSession(EXPIRED), (error: any) => error.code === "WIRE.TOKEN_EXPIRED");
   await assert.rejects(client.replaceSession(T2), ScopeConflict);
   assert.deepEqual(client.pending(), [key]);
   assert.equal(applyCalls, 2, "만료·다른 actor 세션 확인은 pending을 재전송하지 않음");

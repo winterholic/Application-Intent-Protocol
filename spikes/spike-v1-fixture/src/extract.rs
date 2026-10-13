@@ -54,10 +54,10 @@ pub fn uses(src: &str, toks: &[T], host: Host, name: &str) -> Result<Vec<usize>,
         }
         let stmt_start = (0..=i).rev().find(|&j| toks[j].nl || (j > 0 && is_punct(&toks[j - 1], ';'))).unwrap_or(0);
         if is_ident(&toks[stmt_start], "import") || is_ident(&toks[stmt_start], "from") {
-            return Err(Diag::new("WRONG_BINDING", format!("`{name}`는 공식 모듈에서만 import"), span_at(src, t.start)));
+            return Err(Diag::new("DEF.WRONG_BINDING", format!("`{name}`는 공식 모듈에서만 import"), span_at(src, t.start)));
         }
         if !decl_position(toks, i, host) {
-            return Err(Diag::new("NON_LITERAL", format!("`{name}`는 공식 import와 export 선언 위치에서만 사용"), span_at(src, t.start)));
+            return Err(Diag::new("DEF.NON_LITERAL", format!("`{name}`는 공식 import와 export 선언 위치에서만 사용"), span_at(src, t.start)));
         }
         v.push(i);
     }
@@ -66,7 +66,7 @@ pub fn uses(src: &str, toks: &[T], host: Host, name: &str) -> Result<Vec<usize>,
             Host::Ts => format!("import {{ {name} }} from \"{TS_MODULE}\""),
             Host::Py => format!("from aip.define import {name}"),
         };
-        return Err(Diag::new("WRONG_BINDING", format!("`{what}`가 정확히 한 번 있어야 함"), Span::default()));
+        return Err(Diag::new("DEF.WRONG_BINDING", format!("`{what}`가 정확히 한 번 있어야 함"), Span::default()));
     }
     Ok(v)
 }
@@ -82,42 +82,42 @@ pub fn extract(src: &str, host: Host) -> Result<Block, Diag> {
             Host::Ts => match toks.get(i + 1).map(|t| &t.k) {
                 Some(K::Template { body, interp, .. }) => {
                     if *interp {
-                        return Err(Diag::new("DYNAMIC_INTERPOLATION", "AIP 블록 안 `${...}` 보간 금지", at));
+                        return Err(Diag::new("DEF.DYNAMIC_INTERPOLATION", "AIP 블록 안 `${...}` 보간 금지", at));
                     }
                     (*body, i + 2)
                 }
-                _ => return Err(Diag::new("NON_LITERAL", "`aip`는 tagged template(aip`...`)로만 사용", at)),
+                _ => return Err(Diag::new("DEF.NON_LITERAL", "`aip`는 tagged template(aip`...`)로만 사용", at)),
             },
             Host::Py => {
                 let ok_shape = toks.get(i + 1).is_some_and(|t| is_punct(t, '(')) && toks.get(i + 3).is_some_and(|t| is_punct(t, ')'));
                 match (ok_shape, toks.get(i + 2).map(|t| &t.k)) {
                     (true, Some(K::Str { prefix, triple, body, .. })) => {
                         if prefix.to_ascii_lowercase().contains('f') {
-                            return Err(Diag::new("DYNAMIC_INTERPOLATION", "f-string 금지", at));
+                            return Err(Diag::new("DEF.DYNAMIC_INTERPOLATION", "f-string 금지", at));
                         }
                         if !prefix.is_empty() || !triple {
-                            return Err(Diag::new("NON_LITERAL", "접두사 없는 삼중 따옴표 문자열 하나만 허용", at));
+                            return Err(Diag::new("DEF.NON_LITERAL", "접두사 없는 삼중 따옴표 문자열 하나만 허용", at));
                         }
                         (*body, i + 4)
                     }
                     (_, Some(K::Str { prefix, .. })) if prefix.to_ascii_lowercase().contains('f') => {
-                        return Err(Diag::new("DYNAMIC_INTERPOLATION", "f-string 금지", at))
+                        return Err(Diag::new("DEF.DYNAMIC_INTERPOLATION", "f-string 금지", at))
                     }
-                    _ => return Err(Diag::new("NON_LITERAL", "aip(\"\"\"...\"\"\") 리터럴 하나만 허용(결합·format 금지)", at)),
+                    _ => return Err(Diag::new("DEF.NON_LITERAL", "aip(\"\"\"...\"\"\") 리터럴 하나만 허용(결합·format 금지)", at)),
                 }
             }
         };
         if !statement_ends(&toks, next, host) {
             let sp = toks.get(next).map(|t| span_at(src, t.start)).unwrap_or(at);
-            return Err(Diag::new("NON_LITERAL", "AIP 블록 뒤 결합·호출·가공 금지", sp));
+            return Err(Diag::new("DEF.NON_LITERAL", "AIP 블록 뒤 결합·호출·가공 금지", sp));
         }
         let s = span_at(src, body.0);
-        let text = decode_body(&src[body.0..body.1], Flavor::Host, true).map_err(|reason| Diag::new("ESCAPE_UNSUPPORTED", reason, s))?;
+        let text = decode_body(&src[body.0..body.1], Flavor::Host, true).map_err(|reason| Diag::new("DEF.ESCAPE_UNSUPPORTED", reason, s))?;
         blocks.push(Block { text, line_base: s.line, col_base: s.col });
     }
     match blocks.len() {
         1 => Ok(blocks.pop().unwrap()),
-        0 => Err(Diag::new("NO_BLOCK", "AIP 블록 없음", Span::default())),
-        _ => Err(Diag::new("MULTIPLE_BLOCKS", "spike는 파일당 블록 하나만 지원", Span::default())),
+        0 => Err(Diag::new("DEF.NO_BLOCK", "AIP 블록 없음", Span::default())),
+        _ => Err(Diag::new("DEF.MULTIPLE_BLOCKS", "spike는 파일당 블록 하나만 지원", Span::default())),
     }
 }

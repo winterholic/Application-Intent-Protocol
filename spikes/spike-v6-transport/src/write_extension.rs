@@ -33,10 +33,10 @@ pub async fn apply_with_launch(
     let exact_request =
         request.as_object().is_some_and(|object| object.len() == 2 && object.contains_key("extension") && object.contains_key("input"));
     let Some(key) = body["key"].as_str().filter(|key| exact_body && !key.is_empty() && key.len() <= 100) else {
-        return failure("BAD_REQUEST");
+        return failure("WIRE.BAD_REQUEST");
     };
     let Some(name) = request["extension"].as_str().filter(|_| exact_request) else {
-        return failure("BAD_REQUEST");
+        return failure("WIRE.BAD_REQUEST");
     };
     let deadline = match validate_write(facts, name, &request["input"], wire) {
         Ok(deadline) => deadline,
@@ -50,7 +50,7 @@ pub async fn apply_with_launch(
     let operation = async {
         let tx = match db.transaction().await {
             Ok(tx) => tx,
-            Err(_) => return failure("INTERNAL"),
+            Err(_) => return failure("WIRE.INTERNAL"),
         };
         if tx
             .batch_execute(&format!(
@@ -60,36 +60,36 @@ pub async fn apply_with_launch(
             .await
             .is_err()
         {
-            return failure("INTERNAL");
+            return failure("WIRE.INTERNAL");
         }
         if tx.execute("SELECT pg_advisory_xact_lock(hashtext($1))", &[&format!("{principal}:{key}")]).await.is_err() {
-            return failure("INTERNAL");
+            return failure("WIRE.INTERNAL");
         }
         match tx.query_opt(&format!("SELECT request,result::text FROM {schema}.aip_idem WHERE principal=$1 AND key=$2"), &[&principal, &key]).await {
             Ok(Some(row)) => {
                 if row.get::<_, String>(0) != request_text {
-                    return failure("IDEMPOTENCY_MISMATCH");
+                    return failure("WIRE.IDEMPOTENCY_MISMATCH");
                 }
                 let mut result: Value = match serde_json::from_str(&row.get::<_, String>(1)) {
                     Ok(result) => result,
-                    Err(_) => return failure("INTERNAL"),
+                    Err(_) => return failure("WIRE.INTERNAL"),
                 };
                 result["replayed"] = json!(true);
                 return result;
             }
             Ok(None) => {}
-            Err(_) => return failure("INTERNAL"),
+            Err(_) => return failure("WIRE.INTERNAL"),
         }
         if Instant::now() >= expires {
-            return failure("DEADLINE_EXCEEDED");
+            return failure("WIRE.DEADLINE_EXCEEDED");
         }
         let config = match config.validate_with_writes(facts, wire) {
             Ok(config) => config,
-            Err(_) => return failure("WORKER_CONFIG"),
+            Err(_) => return failure("WIRE.WORKER_CONFIG"),
         };
         let mut worker = match Worker::try_start_configured(config.lang, config.dir.to_str().unwrap(), launch.clone()).await {
             Ok(worker) => worker,
-            Err(_) => return failure("WORKER_FAILED"),
+            Err(_) => return failure("WIRE.WORKER_FAILED"),
         };
         // lock 대기·spawn 시간을 남은 실행 budget에서 빼고 commit을 보내기 전에만 취소한다.
         let prepared = tokio::time::timeout(
@@ -101,7 +101,7 @@ pub async fn apply_with_launch(
         let prepared = match prepared {
             Ok(Ok(prepared)) => prepared,
             Ok(Err(error)) => return super::err(error),
-            Err(_) => return failure("DEADLINE_EXCEEDED"),
+            Err(_) => return failure("WIRE.DEADLINE_EXCEEDED"),
         };
         let expires = expires.min(prepared.expires);
         let (resource, extension) = name.split_once('.').unwrap();
@@ -116,7 +116,7 @@ pub async fn apply_with_launch(
         let result = json!({"ok":true,"output":prepared.output,"tags":tags});
         let left = expires.saturating_duration_since(Instant::now());
         if left < Duration::from_millis(300) {
-            return failure("DEADLINE_EXCEEDED");
+            return failure("WIRE.DEADLINE_EXCEEDED");
         }
         let insert = tokio::time::timeout(
             left,
@@ -128,23 +128,23 @@ pub async fn apply_with_launch(
         .await;
         match insert {
             Ok(Ok(_)) => {}
-            Ok(Err(_)) => return failure("INTERNAL"),
-            Err(_) => return failure("DEADLINE_EXCEEDED"),
+            Ok(Err(_)) => return failure("WIRE.INTERNAL"),
+            Err(_) => return failure("WIRE.DEADLINE_EXCEEDED"),
         }
         let left = expires.saturating_duration_since(Instant::now());
         if left.is_zero() {
-            return failure("DEADLINE_EXCEEDED");
+            return failure("WIRE.DEADLINE_EXCEEDED");
         }
         commit_sent = true;
         match tokio::time::timeout(left, tx.commit()).await {
             Ok(Ok(())) => result,
             Ok(Err(error)) => super::err(classify_write_error("커밋", error)),
-            Err(_) => failure("COMMIT_UNKNOWN"),
+            Err(_) => failure("WIRE.COMMIT_UNKNOWN"),
         }
     };
     match tokio::time::timeout_at(tokio::time::Instant::from_std(expires), operation).await {
         Ok(result) => result,
-        Err(_) if commit_sent => failure("COMMIT_UNKNOWN"),
-        Err(_) => failure("DEADLINE_EXCEEDED"),
+        Err(_) if commit_sent => failure("WIRE.COMMIT_UNKNOWN"),
+        Err(_) => failure("WIRE.DEADLINE_EXCEEDED"),
     }
 }

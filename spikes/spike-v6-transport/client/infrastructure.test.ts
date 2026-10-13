@@ -77,11 +77,11 @@ test("messages support enqueue, lease claim, ack, nack, bounded DLQ page and red
 test("rejects malformed input before transport, enforces object and payload/page bounds", async () => {
   let calls = 0;
   const client = createInfrastructureClient(async () => { calls++; return ok(); }, fingerprint);
-  await assert.rejects(client.objects.sign({ method: "GET" } as any), (error: any) => error.code === "BAD_VALUE");
-  await assert.rejects(client.objects.part({ id, uploadId: "u", partNumber: 1, size: 0 }), (error: any) => error.code === "BAD_VALUE");
-  await assert.rejects(client.messages.enqueue({ queue: "bad queue", key: "k", payload: {} }), (error: any) => error.code === "BAD_VALUE");
-  await assert.rejects(client.messages.dead({ queue: "uploads", limit: 1001 }), (error: any) => error.code === "BAD_VALUE");
-  await assert.rejects(client.messages.enqueue({ queue: "uploads", key: "k", payload: { data: "x".repeat(1 << 20) } }), (error: any) => error.code === "BAD_VALUE");
+  await assert.rejects(client.objects.sign({ method: "GET" } as any), (error: any) => error.code === "WIRE.BAD_VALUE");
+  await assert.rejects(client.objects.part({ id, uploadId: "u", partNumber: 1, size: 0 }), (error: any) => error.code === "WIRE.BAD_VALUE");
+  await assert.rejects(client.messages.enqueue({ queue: "bad queue", key: "k", payload: {} }), (error: any) => error.code === "WIRE.BAD_VALUE");
+  await assert.rejects(client.messages.dead({ queue: "uploads", limit: 1001 }), (error: any) => error.code === "WIRE.BAD_VALUE");
+  await assert.rejects(client.messages.enqueue({ queue: "uploads", key: "k", payload: { data: "x".repeat(1 << 20) } }), (error: any) => error.code === "WIRE.BAD_VALUE");
   assert.equal(calls, 0);
 });
 
@@ -93,9 +93,9 @@ test("message pagination and duration limits match the HTTP contract", async () 
   }, fingerprint);
   await client.messages.dead({ queue: "uploads", cursor: id, limit: 10 });
   assert.deepEqual(calls, [["/messages/dead", { queue: "uploads", limit: 10, after: id }]]);
-  await assert.rejects(client.messages.enqueue({ queue: "uploads", key: "k", payload: {}, ttlMs: 86_400_001 }), (error: any) => error.code === "BAD_VALUE");
-  await assert.rejects(client.messages.claim({ queue: "uploads", worker: "worker", leaseMs: 300_001 }), (error: any) => error.code === "BAD_VALUE");
-  await assert.rejects(client.messages.dead({ queue: "uploads", cursor: "not-a-uuid" }), (error: any) => error.code === "BAD_VALUE");
+  await assert.rejects(client.messages.enqueue({ queue: "uploads", key: "k", payload: {}, ttlMs: 86_400_001 }), (error: any) => error.code === "WIRE.BAD_VALUE");
+  await assert.rejects(client.messages.claim({ queue: "uploads", worker: "worker", leaseMs: 300_001 }), (error: any) => error.code === "WIRE.BAD_VALUE");
+  await assert.rejects(client.messages.dead({ queue: "uploads", cursor: "not-a-uuid" }), (error: any) => error.code === "WIRE.BAD_VALUE");
   assert.equal(calls.length, 1);
 });
 
@@ -103,20 +103,20 @@ test("message inputs enforce UTF-8 byte and payload limits before sending", asyn
   let calls = 0;
   const client = createInfrastructureClient(async () => { calls++; return ok(); }, fingerprint);
   for (const key of ["한".repeat(86), "bad\u0085key"]) {
-    await assert.rejects(client.messages.enqueue({ queue: "uploads", key, payload: {} }), (error: any) => error.code === "BAD_VALUE");
+    await assert.rejects(client.messages.enqueue({ queue: "uploads", key, payload: {} }), (error: any) => error.code === "WIRE.BAD_VALUE");
   }
-  await assert.rejects(client.messages.enqueue({ queue: "uploads", key: "k", payload: "x".repeat(512 * 1024) }), (error: any) => error.code === "BAD_VALUE");
-  await assert.rejects(client.messages.claim({ queue: "uploads", worker: "한".repeat(86) }), (error: any) => error.code === "BAD_VALUE");
+  await assert.rejects(client.messages.enqueue({ queue: "uploads", key: "k", payload: "x".repeat(512 * 1024) }), (error: any) => error.code === "WIRE.BAD_VALUE");
+  await assert.rejects(client.messages.claim({ queue: "uploads", worker: "한".repeat(86) }), (error: any) => error.code === "WIRE.BAD_VALUE");
   const validLease = { id, owner: lease.owner, queue: lease.queue, payload: lease.payload, deliveries: 1, maxDeliveries: 4, epoch: 2, token, worker: "worker-1", leaseUntil: lease.lease_until };
-  await assert.rejects(client.messages.nack({ queue: "uploads", lease: validLease, error: "한".repeat(171) }), (error: any) => error.code === "BAD_VALUE");
+  await assert.rejects(client.messages.nack({ queue: "uploads", lease: validLease, error: "한".repeat(171) }), (error: any) => error.code === "WIRE.BAD_VALUE");
   assert.equal(calls, 0);
 });
 
 test("validates response envelope, fingerprints, UUIDs and lease ownership without trusting bad data", async () => {
   const mismatch = createInfrastructureClient(async () => ({ ...ok({ lease }), contractFingerprint: "b".repeat(64) }), fingerprint);
-  await assert.rejects(mismatch.messages.claim({ queue: "uploads", worker: "worker-1" }), (error: any) => error.code === "CONTRACT_MISMATCH");
+  await assert.rejects(mismatch.messages.claim({ queue: "uploads", worker: "worker-1" }), (error: any) => error.code === "WIRE.CONTRACT_MISMATCH");
   const invalid = createInfrastructureClient(async () => ok({ lease: { ...lease, id: "../private" } }), fingerprint);
-  await assert.rejects(invalid.messages.claim({ queue: "uploads", worker: "worker-1" }), (error: any) => error.code === "PROTOCOL_ERROR");
+  await assert.rejects(invalid.messages.claim({ queue: "uploads", worker: "worker-1" }), (error: any) => error.code === "CLIENT.PROTOCOL_ERROR");
 
   const wrongOwnerCalls: unknown[][] = [];
   const wrongOwner = createInfrastructureClient(async (route, body) => { wrongOwnerCalls.push([route, body]); return ok({ acknowledged: true }); }, fingerprint);
@@ -151,9 +151,9 @@ test("readSse rejects oversized frames and invalid response content types", asyn
     controller.enqueue(new TextEncoder().encode(`data: ${"x".repeat(64 * 1024 + 1)}\n\n`));
     controller.close();
   } }), { headers: { "content-type": "text/event-stream" } });
-  await assert.rejects(async () => { for await (const _ of readSse(huge)) {} }, (error: any) => error.code === "PROTOCOL_ERROR");
+  await assert.rejects(async () => { for await (const _ of readSse(huge)) {} }, (error: any) => error.code === "CLIENT.PROTOCOL_ERROR");
   const wrongType = new Response("data: x\n\n", { headers: { "content-type": "application/json" } });
-  await assert.rejects(async () => { for await (const _ of readSse(wrongType)) {} }, (error: any) => error.code === "PROTOCOL_ERROR");
+  await assert.rejects(async () => { for await (const _ of readSse(wrongType)) {} }, (error: any) => error.code === "CLIENT.PROTOCOL_ERROR");
 });
 
 test("readSse accepts lone CR line endings split across chunks", async () => {
@@ -208,10 +208,10 @@ test("a signed URL cannot point at another origin through protocol-relative or b
     createInfrastructureClient(async () => ok({ id, method: "PUT", url, headers: { "content-type": "application/octet-stream", "content-length": "1", ...headers }, expiresIn: 300 }), fingerprint);
   const sign = (client: ReturnType<typeof respond>) => client.objects.sign({ method: "PUT", size: 1, contentType: "application/octet-stream" });
   for (const url of ["//evil.example/up", "/\\evil.example/up", "\\\\evil.example/up", "http://objects.example/up", "ftp://objects.example/up", "relative/up"]) {
-    await assert.rejects(sign(respond(url)), (error: any) => error.code === "PROTOCOL_ERROR", url);
+    await assert.rejects(sign(respond(url)), (error: any) => error.code === "CLIENT.PROTOCOL_ERROR", url);
   }
   for (const headers of [{ authorization: "Bearer stolen" }, { Cookie: "a=b" }, { "Proxy-Authorization": "x" }]) {
-    await assert.rejects(sign(respond("https://objects.example/up", headers)), (error: any) => error.code === "PROTOCOL_ERROR", JSON.stringify(headers));
+    await assert.rejects(sign(respond("https://objects.example/up", headers)), (error: any) => error.code === "CLIENT.PROTOCOL_ERROR", JSON.stringify(headers));
   }
   assert.equal((await sign(respond("/objects/local-put"))).url, "/objects/local-put");
 });

@@ -56,11 +56,11 @@ async fn shop_end_to_end() {
     );
     assert_eq!(a.is_ok() as u8 + b.is_ok() as u8, 1, "only one of two orders for the last 2 fits: {:?} {:?}", a.as_ref().err(), b.as_ref().err());
     let refused = a.err().or(b.err()).expect("one refusal");
-    assert_eq!((refused.code.as_str(), refused.reason.as_deref()), ("AIP.INVARIANT.VIOLATED", Some("OUT_OF_STOCK")));
+    assert_eq!((refused.code.as_str(), refused.reason.as_deref()), ("POC.INVARIANT.VIOLATED", Some("OUT_OF_STOCK")));
     assert_eq!(sql_one(&e, &format!("SELECT stock FROM product WHERE id = '{product}'")).await, json!(0));
     let order = o1["id"].as_str().expect("order").to_string();
     let hidden = fails(&e, "MyOrder", Some(&bob), json!({"order": order}), None).await;
-    assert_eq!(hidden.code, "AIP.NOT_FOUND");
+    assert_eq!(hidden.code, "POC.NOT_FOUND");
 
     // --- staff edits: stock movements do not make an edit stale, a concurrent edit does
     let catalog = ok(&e, "Catalog", None, json!({}), None).await;
@@ -68,17 +68,17 @@ async fn shop_end_to_end() {
     assert_eq!(v, 1, "taking stock does not bump the version");
     let customer_edit =
         fails(&e, "UpdateProduct", Some(&alice), json!({"product": product, "productVersion": v, "name": "x", "price": 1}), None).await;
-    assert_eq!(customer_edit.code, "AIP.AUTH.FORBIDDEN");
+    assert_eq!(customer_edit.code, "POC.AUTH.FORBIDDEN");
     ok(&e, "UpdateProduct", Some(&staff), json!({"product": product, "productVersion": v, "name": "Mug", "price": 1200}), None).await;
     let stale = fails(&e, "UpdateProduct", Some(&staff2), json!({"product": product, "productVersion": v, "name": "Cup", "price": 900}), None).await;
-    assert_eq!(stale.code, "AIP.CONFLICT.STALE_VERSION");
+    assert_eq!(stale.code, "POC.CONFLICT.STALE_VERSION");
     assert_eq!(sql_one(&e, &format!("SELECT price FROM product WHERE id = '{product}'")).await, json!(1200));
 
     // --- Stripe webhook: forged and replayed deliveries are refused before anything is stored
     let now = chrono::Utc::now().timestamp();
     let body = intent_event("evt_1", "payment_intent.succeeded", &order);
     let forged = aip_runtime::webhook::receive(&e, "StripePayments", &stripe_headers(&body, now), body.replace("3000", "1").as_bytes()).await;
-    assert_eq!(forged.expect_err("forged").code, "AIP.AUTH.UNAUTHENTICATED");
+    assert_eq!(forged.expect_err("forged").code, "POC.AUTH.UNAUTHENTICATED");
     let old = aip_runtime::webhook::receive(&e, "StripePayments", &stripe_headers(&body, now - 600), body.as_bytes()).await;
     assert!(old.is_err(), "outside the 5 minute window");
     assert_eq!(sql_one(&e, "SELECT count(*) FROM _aip_outbox WHERE kind = 'webhook'").await, json!(0));

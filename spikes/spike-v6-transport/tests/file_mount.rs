@@ -201,7 +201,7 @@ async fn managed_file_mount_serves_owner_bucket_bytes_with_private_headers_and_r
     assert!(cors_get.headers.contains("access-control-expose-headers: x-request-id"), "{}", cors_get.headers);
     let rejected_origin =
         request_with_origin(server.address, "GET", &format!("/reports/{id}"), "owner", &fingerprint, "", Some("https://evil.example")).await;
-    assert_eq!(serde_json::from_slice::<Value>(&rejected_origin.body).unwrap()["code"], "ORIGIN_NOT_ALLOWED");
+    assert_eq!(serde_json::from_slice::<Value>(&rejected_origin.body).unwrap()["code"], "WIRE.ORIGIN_NOT_ALLOWED");
     assert!(rejected_origin.headers.contains("cache-control: private, no-store"));
 
     let head = request(server.address, "HEAD", &format!("/reports/{id}"), "owner", &fingerprint, "").await;
@@ -210,26 +210,26 @@ async fn managed_file_mount_serves_owner_bucket_bytes_with_private_headers_and_r
     assert!(head.headers.contains(&format!("content-length: {}", "hello 😀".len())));
 
     let missing_contract = request(server.address, "GET", &format!("/reports/{id}"), "owner", "", "").await;
-    assert_eq!(serde_json::from_slice::<Value>(&missing_contract.body).unwrap()["code"], "CONTRACT_MISMATCH");
+    assert_eq!(serde_json::from_slice::<Value>(&missing_contract.body).unwrap()["code"], "WIRE.CONTRACT_MISMATCH");
     let missing_contract_head = request(server.address, "HEAD", &format!("/reports/{id}"), "owner", "", "").await;
     assert!(missing_contract_head.body.is_empty(), "HEAD errors must not include a response body");
     assert!(missing_contract_head.headers.contains("content-length: "));
 
     let invalid_id = request(server.address, "GET", "/reports/not-a-uuid", "owner", &fingerprint, "").await;
-    assert_eq!(serde_json::from_slice::<Value>(&invalid_id.body).unwrap()["code"], "NOT_FOUND");
+    assert_eq!(serde_json::from_slice::<Value>(&invalid_id.body).unwrap()["code"], "WIRE.NOT_FOUND");
 
     let wrong_bucket = request(server.address, "GET", &format!("/private/{id}"), "owner", &fingerprint, "").await;
     assert_eq!(wrong_bucket.status, "HTTP/1.1 200 OK");
-    assert_eq!(serde_json::from_slice::<Value>(&wrong_bucket.body).unwrap()["code"], "NOT_EXPOSED");
+    assert_eq!(serde_json::from_slice::<Value>(&wrong_bucket.body).unwrap()["code"], "WIRE.NOT_EXPOSED");
     let other_owner = request(server.address, "GET", &format!("/reports/{id}"), "other", &fingerprint, "").await;
-    assert_eq!(serde_json::from_slice::<Value>(&other_owner.body).unwrap()["code"], "NOT_FOUND");
+    assert_eq!(serde_json::from_slice::<Value>(&other_owner.body).unwrap()["code"], "WIRE.NOT_FOUND");
 
     db.execute(&format!("UPDATE {schema}.aip_principals SET enabled=false WHERE issuer='test' AND subject='owner'"), &[]).await.unwrap();
     let revoked = request(server.address, "GET", &format!("/reports/{id}"), "owner", &fingerprint, "").await;
-    assert_eq!(serde_json::from_slice::<Value>(&revoked.body).unwrap()["code"], "UNAUTHENTICATED");
+    assert_eq!(serde_json::from_slice::<Value>(&revoked.body).unwrap()["code"], "WIRE.UNAUTHENTICATED");
     db.execute(&format!("UPDATE {schema}.aip_principals SET enabled=true WHERE issuer='test' AND subject='owner'"), &[]).await.unwrap();
     db.execute(&format!("UPDATE {schema}.aip_migrate_meta SET facts_digest=repeat('0',64) WHERE singleton=true"), &[]).await.unwrap();
     let changed = request(server.address, "GET", &format!("/reports/{id}"), "owner", &fingerprint, "").await;
-    assert_eq!(serde_json::from_slice::<Value>(&changed.body).unwrap()["code"], "DEPLOYMENT_CHANGED");
+    assert_eq!(serde_json::from_slice::<Value>(&changed.body).unwrap()["code"], "WIRE.DEPLOYMENT_CHANGED");
     server.shutdown().await.unwrap();
 }

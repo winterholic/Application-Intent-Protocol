@@ -12,307 +12,307 @@ export type TaskPair = { first: string; second: string };
 export type ArchiveDoneStatusInput = { job: string };
 export type ArchiveDoneStatusOutput = { createdAt: string; done: number; error: string | null; file: string | null; finishedAt: string | null; startedAt: string | null; status: JobStatus; total: number | null };
 export type ArchiveDoneStatusError =
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND' };
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND' };
 
 export type GetProjectInput = { project: string };
 export type GetProjectOutput = { id: string; title: string; workspace: { id: string; name: string } | null };
 export type GetProjectError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'PROJECT_NOT_FOUND' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'PROJECT_NOT_FOUND' };
 
 export type MyTasksInput = { workspace: string };
 export type MyTasksOutput = Array<{ id: string; project: { id: string; title: string } | null; title: string }>;
 export type MyTasksError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'WORKSPACE_NOT_FOUND' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'WORKSPACE_NOT_FOUND' };
 
 export type MyWorkspacesInput = {  };
 export type MyWorkspacesOutput = Array<{ id: string; role: WorkspaceRole; workspace: { id: string; name: string } | null }>;
 export type MyWorkspacesError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.INPUT.INVALID' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.INPUT.INVALID' };
 
 export type OpenTaskCountInput = { workspace: string };
 export type OpenTaskCountOutput = { open: number };
 export type OpenTaskCountError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'WORKSPACE_NOT_FOUND' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'WORKSPACE_NOT_FOUND' };
 
 export type ProjectEndpointsInput = { project: string };
 export type ProjectEndpointsOutput = Array<{ id: string; url: string }>;
 export type ProjectEndpointsError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'PROJECT_NOT_FOUND' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'PROJECT_NOT_FOUND' };
 
 export type ProjectTasksInput = { project: string };
 export type ProjectTasksOutput = Array<{ id: string; status: TaskStatus; title: string }>;
 export type ProjectTasksError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'PROJECT_NOT_FOUND' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'PROJECT_NOT_FOUND' };
 
 export type SearchProjectsInput = { workspace: string; q: string };
 export type SearchProjectsOutput = Array<{ id: string; rank: string; title: string }>;
 export type SearchProjectsError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'WORKSPACE_NOT_FOUND' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'WORKSPACE_NOT_FOUND' };
 
 export type SearchTasksInput = { workspace: string; q: string };
 export type SearchTasksOutput = Array<{ id: string; rank: string; status: TaskStatus; title: string }>;
 export type SearchTasksError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'WORKSPACE_NOT_FOUND' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'WORKSPACE_NOT_FOUND' };
 
 export type TaskCommentsInput = { task: string };
 export type TaskCommentsOutput = Array<{ author: { email: string } | null; body: string; id: string }>;
 export type TaskCommentsError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'TASK_NOT_FOUND' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'TASK_NOT_FOUND' };
 
 export type TaskSignoffStatusInput = { task: string };
 export type TaskSignoffStatusOutput = { approvals: number; canVote: boolean; decidedAt: string | null; expiresAt: string | null; requestedAt: string | null; requestedBy: string | null; required: number; status: ApprovalStatus; votes: Array<{ at: string; comment: string | null; decision: ApprovalDecision; voter: string }> };
 export type TaskSignoffStatusError =
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'TASK_NOT_FOUND' };
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'TASK_NOT_FOUND' };
 
 export type WelcomeDefaultsStatusInput = { job: string };
 export type WelcomeDefaultsStatusOutput = { createdAt: string; done: number; error: string | null; file: string | null; finishedAt: string | null; startedAt: string | null; status: JobStatus; total: number | null };
 export type WelcomeDefaultsStatusError =
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND' };
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND' };
 
 export type AddCommentInput = { task: string; body: string };
 export type AddCommentOutput = { body: string; id: string };
 export type AddCommentError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' }
-  | { code: 'AIP.IDEMPOTENCY.KEY_REUSED' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'TASK_NOT_FOUND' }
-  | { code: 'AIP.TENANT.MISMATCH' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' }
+  | { code: 'POC.IDEMPOTENCY.KEY_REUSED' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'TASK_NOT_FOUND' }
+  | { code: 'POC.TENANT.MISMATCH' };
 
 export type AddEndpointInput = { project: string; url: string };
 export type AddEndpointOutput = { id: string; secret: string; url: string };
 export type AddEndpointError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' }
-  | { code: 'AIP.CONFLICT.UNIQUE'; reason: 'ENDPOINT_EXISTS' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'PROJECT_NOT_FOUND' }
-  | { code: 'AIP.TENANT.MISMATCH' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' }
+  | { code: 'POC.CONFLICT.UNIQUE'; reason: 'ENDPOINT_EXISTS' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'PROJECT_NOT_FOUND' }
+  | { code: 'POC.TENANT.MISMATCH' };
 
 export type AddMemberInput = { workspace: string; member: string };
 export type AddMemberOutput = null;
 export type AddMemberError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' }
-  | { code: 'AIP.CONFLICT.UNIQUE'; reason: 'ALREADY_MEMBER' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'MEMBER_NOT_FOUND' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'WORKSPACE_NOT_FOUND' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' }
+  | { code: 'POC.CONFLICT.UNIQUE'; reason: 'ALREADY_MEMBER' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'MEMBER_NOT_FOUND' }
+  | { code: 'POC.NOT_FOUND'; reason: 'WORKSPACE_NOT_FOUND' };
 
 export type AddReviewerInput = { project: string; member: string };
 export type AddReviewerOutput = null;
 export type AddReviewerError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' }
-  | { code: 'AIP.CONFLICT.UNIQUE'; reason: 'ALREADY_REVIEWER' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'MEMBER_NOT_FOUND' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'PROJECT_NOT_FOUND' }
-  | { code: 'AIP.TENANT.MISMATCH' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' }
+  | { code: 'POC.CONFLICT.UNIQUE'; reason: 'ALREADY_REVIEWER' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'MEMBER_NOT_FOUND' }
+  | { code: 'POC.NOT_FOUND'; reason: 'PROJECT_NOT_FOUND' }
+  | { code: 'POC.TENANT.MISMATCH' };
 
 export type ApproveTaskSignoffInput = { task: string; comment?: string | null };
 export type ApproveTaskSignoffOutput = null;
 export type ApproveTaskSignoffError =
-  | { code: 'AIP.AUTH.FORBIDDEN'; reason: 'NOT_AN_APPROVER' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' }
-  | { code: 'AIP.CONFLICT.UNIQUE'; reason: 'ALREADY_VOTED' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'TASK_NOT_FOUND' }
-  | { code: 'AIP.PRECONDITION.FAILED'; reason: 'APPROVAL_NOT_PENDING' }
-  | { code: 'AIP.TENANT.MISMATCH' };
+  | { code: 'POC.AUTH.FORBIDDEN'; reason: 'NOT_AN_APPROVER' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' }
+  | { code: 'POC.CONFLICT.UNIQUE'; reason: 'ALREADY_VOTED' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'TASK_NOT_FOUND' }
+  | { code: 'POC.PRECONDITION.FAILED'; reason: 'APPROVAL_NOT_PENDING' }
+  | { code: 'POC.TENANT.MISMATCH' };
 
 export type ArchiveDoneInput = { workspace: string };
 export type ArchiveDoneOutput = { job: string; status: JobStatus };
 export type ArchiveDoneError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'WORKSPACE_NOT_FOUND' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'WORKSPACE_NOT_FOUND' };
 
 export type CancelTaskSignoffInput = { task: string };
 export type CancelTaskSignoffOutput = null;
 export type CancelTaskSignoffError =
-  | { code: 'AIP.AUTH.FORBIDDEN'; reason: 'ONLY_REQUESTER_CAN_CANCEL' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'TASK_NOT_FOUND' }
-  | { code: 'AIP.PRECONDITION.FAILED'; reason: 'APPROVAL_NOT_PENDING' };
+  | { code: 'POC.AUTH.FORBIDDEN'; reason: 'ONLY_REQUESTER_CAN_CANCEL' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'TASK_NOT_FOUND' }
+  | { code: 'POC.PRECONDITION.FAILED'; reason: 'APPROVAL_NOT_PENDING' };
 
 export type CloneToMyDefaultInput = { task: string };
 export type CloneToMyDefaultOutput = { id: string };
 export type CloneToMyDefaultError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' }
-  | { code: 'AIP.IDEMPOTENCY.KEY_REUSED' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'TASK_NOT_FOUND' }
-  | { code: 'AIP.PRECONDITION.FAILED'; reason: 'NO_DEFAULT_PROJECT' }
-  | { code: 'AIP.TENANT.MISMATCH' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' }
+  | { code: 'POC.IDEMPOTENCY.KEY_REUSED' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'TASK_NOT_FOUND' }
+  | { code: 'POC.PRECONDITION.FAILED'; reason: 'NO_DEFAULT_PROJECT' }
+  | { code: 'POC.TENANT.MISMATCH' };
 
 export type CompleteTaskInput = { task: string };
 export type CompleteTaskOutput = null;
 export type CompleteTaskError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'TASK_NOT_FOUND' }
-  | { code: 'AIP.TENANT.MISMATCH' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'TASK_NOT_FOUND' }
+  | { code: 'POC.TENANT.MISMATCH' };
 
 export type CreateProjectInput = { workspace: string; title: string };
 export type CreateProjectOutput = { id: string; title: string };
 export type CreateProjectError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' }
-  | { code: 'AIP.IDEMPOTENCY.KEY_REUSED' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'WORKSPACE_NOT_FOUND' }
-  | { code: 'AIP.TENANT.MISMATCH' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' }
+  | { code: 'POC.IDEMPOTENCY.KEY_REUSED' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'WORKSPACE_NOT_FOUND' }
+  | { code: 'POC.TENANT.MISMATCH' };
 
 export type CreateTaskInput = { project: string; title: string; notes?: string | null; parent?: string | null; assignee?: string | null };
 export type CreateTaskOutput = { id: string; title: string };
 export type CreateTaskError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' }
-  | { code: 'AIP.IDEMPOTENCY.KEY_REUSED' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'MEMBER_NOT_FOUND' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'PROJECT_NOT_FOUND' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'TASK_NOT_FOUND' }
-  | { code: 'AIP.TENANT.MISMATCH' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' }
+  | { code: 'POC.IDEMPOTENCY.KEY_REUSED' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'MEMBER_NOT_FOUND' }
+  | { code: 'POC.NOT_FOUND'; reason: 'PROJECT_NOT_FOUND' }
+  | { code: 'POC.NOT_FOUND'; reason: 'TASK_NOT_FOUND' }
+  | { code: 'POC.TENANT.MISMATCH' };
 
 export type CreateWorkspaceInput = { name: string };
 export type CreateWorkspaceOutput = { id: string; name: string };
 export type CreateWorkspaceError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' }
-  | { code: 'AIP.CONFLICT.UNIQUE'; reason: 'ALREADY_MEMBER' }
-  | { code: 'AIP.IDEMPOTENCY.KEY_REUSED' }
-  | { code: 'AIP.INPUT.INVALID' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' }
+  | { code: 'POC.CONFLICT.UNIQUE'; reason: 'ALREADY_MEMBER' }
+  | { code: 'POC.IDEMPOTENCY.KEY_REUSED' }
+  | { code: 'POC.INPUT.INVALID' };
 
 export type MoveTaskInput = { task: string; project: string };
 export type MoveTaskOutput = null;
 export type MoveTaskError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'PROJECT_NOT_FOUND' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'TASK_NOT_FOUND' }
-  | { code: 'AIP.TENANT.MISMATCH' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'PROJECT_NOT_FOUND' }
+  | { code: 'POC.NOT_FOUND'; reason: 'TASK_NOT_FOUND' }
+  | { code: 'POC.TENANT.MISMATCH' };
 
 export type MoveToMyDefaultInput = { task: string };
 export type MoveToMyDefaultOutput = null;
 export type MoveToMyDefaultError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'TASK_NOT_FOUND' }
-  | { code: 'AIP.PRECONDITION.FAILED'; reason: 'NO_DEFAULT_PROJECT' }
-  | { code: 'AIP.TENANT.MISMATCH' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'TASK_NOT_FOUND' }
+  | { code: 'POC.PRECONDITION.FAILED'; reason: 'NO_DEFAULT_PROJECT' }
+  | { code: 'POC.TENANT.MISMATCH' };
 
 export type PinParentInput = { task: string };
 export type PinParentOutput = null;
 export type PinParentError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'TASK_NOT_FOUND' }
-  | { code: 'AIP.PRECONDITION.FAILED'; reason: 'NOTHING_PINNED' }
-  | { code: 'AIP.TENANT.MISMATCH' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'TASK_NOT_FOUND' }
+  | { code: 'POC.PRECONDITION.FAILED'; reason: 'NOTHING_PINNED' }
+  | { code: 'POC.TENANT.MISMATCH' };
 
 export type RejectTaskSignoffInput = { task: string; reason?: string | null };
 export type RejectTaskSignoffOutput = null;
 export type RejectTaskSignoffError =
-  | { code: 'AIP.AUTH.FORBIDDEN'; reason: 'NOT_AN_APPROVER' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' }
-  | { code: 'AIP.CONFLICT.UNIQUE'; reason: 'ALREADY_VOTED' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'TASK_NOT_FOUND' }
-  | { code: 'AIP.PRECONDITION.FAILED'; reason: 'APPROVAL_NOT_PENDING' }
-  | { code: 'AIP.TENANT.MISMATCH' };
+  | { code: 'POC.AUTH.FORBIDDEN'; reason: 'NOT_AN_APPROVER' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' }
+  | { code: 'POC.CONFLICT.UNIQUE'; reason: 'ALREADY_VOTED' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'TASK_NOT_FOUND' }
+  | { code: 'POC.PRECONDITION.FAILED'; reason: 'APPROVAL_NOT_PENDING' }
+  | { code: 'POC.TENANT.MISMATCH' };
 
 export type RenameProjectInput = { project: string; title: string };
 export type RenameProjectOutput = null;
 export type RenameProjectError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'PROJECT_NOT_FOUND' }
-  | { code: 'AIP.TENANT.MISMATCH' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'PROJECT_NOT_FOUND' }
+  | { code: 'POC.TENANT.MISMATCH' };
 
 export type RequestTaskSignoffInput = { task: string };
 export type RequestTaskSignoffOutput = null;
 export type RequestTaskSignoffError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' }
-  | { code: 'AIP.CONFLICT.UNIQUE'; reason: 'APPROVAL_ALREADY_PENDING' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'TASK_NOT_FOUND' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' }
+  | { code: 'POC.CONFLICT.UNIQUE'; reason: 'APPROVAL_ALREADY_PENDING' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'TASK_NOT_FOUND' };
 
 export type WelcomeDefaultsInput = {  };
 export type WelcomeDefaultsOutput = { job: string; status: JobStatus };
 export type WelcomeDefaultsError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.CONCURRENCY.CONFLICT' }
-  | { code: 'AIP.INPUT.INVALID' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.CONCURRENCY.CONFLICT' }
+  | { code: 'POC.INPUT.INVALID' };
 
 export type LiveProjectTasksInput = { project: string };
 export type LiveProjectTasksOutput = Array<{ id: string; status: TaskStatus; title: string }>;
 export type LiveProjectTasksError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'PROJECT_NOT_FOUND' }
-  | { code: 'AIP.SUBSCRIPTION.LIMIT' }
-  | { code: 'AIP.SUBSCRIPTION.TOO_LARGE' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'PROJECT_NOT_FOUND' }
+  | { code: 'POC.SUBSCRIPTION.LIMIT' }
+  | { code: 'POC.SUBSCRIPTION.TOO_LARGE' };
 
 export type LiveWorkspaceTasksInput = { workspace: string };
 export type LiveWorkspaceTasksOutput = Array<{ id: string; status: TaskStatus; title: string }>;
 export type LiveWorkspaceTasksError =
-  | { code: 'AIP.AUTH.FORBIDDEN' }
-  | { code: 'AIP.AUTH.UNAUTHENTICATED' }
-  | { code: 'AIP.INPUT.INVALID' }
-  | { code: 'AIP.NOT_FOUND'; reason: 'WORKSPACE_NOT_FOUND' }
-  | { code: 'AIP.SUBSCRIPTION.LIMIT' }
-  | { code: 'AIP.SUBSCRIPTION.TOO_LARGE' };
+  | { code: 'POC.AUTH.FORBIDDEN' }
+  | { code: 'POC.AUTH.UNAUTHENTICATED' }
+  | { code: 'POC.INPUT.INVALID' }
+  | { code: 'POC.NOT_FOUND'; reason: 'WORKSPACE_NOT_FOUND' }
+  | { code: 'POC.SUBSCRIPTION.LIMIT' }
+  | { code: 'POC.SUBSCRIPTION.TOO_LARGE' };
 
 export interface AipErrorBody {
   code: string;
@@ -407,7 +407,7 @@ export interface Subscription {
   close(): void;
 }
 
-/** What the server says when it ends a subscription, or the connection drops (`AIP.UNAVAILABLE`). */
+/** What the server says when it ends a subscription, or the connection drops (`POC.UNAVAILABLE`). */
 export type SubscriptionFailure<E> = AipErrorBody & E;
 
 function makeSubscribe<M extends Record<string, { input: unknown; output: unknown; error: unknown }>>(opts: SubscribeClientOptions) {
@@ -442,8 +442,8 @@ function makeSubscribe<M extends Record<string, { input: unknown; output: unknow
         fail(msg);
       }
     };
-    ws.onerror = () => fail({ code: 'AIP.UNAVAILABLE', intent: name, message: 'the connection failed', retryable: true });
-    ws.onclose = () => fail({ code: 'AIP.UNAVAILABLE', intent: name, message: 'the connection was closed', retryable: true });
+    ws.onerror = () => fail({ code: 'POC.UNAVAILABLE', intent: name, message: 'the connection failed', retryable: true });
+    ws.onclose = () => fail({ code: 'POC.UNAVAILABLE', intent: name, message: 'the connection was closed', retryable: true });
     return {
       close() {
         if (done) return;

@@ -121,7 +121,7 @@ async fn bounded_effect_scenarios_are_atomic_scoped_and_bounded() {
     assert_eq!(outbox_count(&db, &schema).await, 1);
 
     let bulk = cancel(&mut db, &facts, &["101", "100"], 1).await.unwrap_err();
-    assert_eq!(bulk.code, "EFFECT_TARGET_MISSING", "four children exceed global maxRows 3");
+    assert_eq!(bulk.code, "WIRE.EFFECT_TARGET_MISSING", "four children exceed global maxRows 3");
     for id in [100, 101] {
         assert_eq!(order_state(&db, &schema, id).await, ("OPEN".into(), 2));
     }
@@ -130,20 +130,20 @@ async fn bounded_effect_scenarios_are_atomic_scoped_and_bounded() {
     assert_eq!(cancel(&mut db, &facts, &["100"], 1).await.unwrap().changed, [100]);
     assert_eq!(order_state(&db, &schema, 100).await, ("CANCELLED".into(), 0));
     assert_eq!(order_state(&db, &schema, 101).await, ("OPEN".into(), 2), "another parent is untouched");
-    assert_eq!(cancel(&mut db, &facts, &["100"], 1).await.unwrap_err().code, "INVALID_STATE");
+    assert_eq!(cancel(&mut db, &facts, &["100"], 1).await.unwrap_err().code, "WIRE.INVALID_STATE");
     assert_eq!(outbox_count(&db, &schema).await, 2, "stale retry produces no duplicate effect");
 
-    assert_eq!(cancel(&mut db, &facts, &["103"], 1).await.unwrap_err().code, "MISSING_TARGET");
+    assert_eq!(cancel(&mut db, &facts, &["103"], 1).await.unwrap_err().code, "WIRE.MISSING_TARGET");
     assert_eq!(order_state(&db, &schema, 103).await, ("OPEN".into(), 1));
-    assert_eq!(cancel(&mut db, &facts, &["104"], 1).await.unwrap_err().code, "CHECK_FAILED");
+    assert_eq!(cancel(&mut db, &facts, &["104"], 1).await.unwrap_err().code, "WIRE.CHECK_FAILED");
     assert_eq!(order_state(&db, &schema, 104).await, ("OPEN".into(), 1));
     assert_eq!(outbox_count(&db, &schema).await, 2);
 
     assert_eq!(cancel(&mut db, &facts, &["105"], 1).await.unwrap().changed, [105], "exact maxRows boundary succeeds");
     assert_eq!(order_state(&db, &schema, 105).await, ("CANCELLED".into(), 0));
-    assert_eq!(cancel(&mut db, &facts, &["106"], 1).await.unwrap_err().code, "EFFECT_TARGET_MISSING");
+    assert_eq!(cancel(&mut db, &facts, &["106"], 1).await.unwrap_err().code, "WIRE.EFFECT_TARGET_MISSING");
     assert_eq!(order_state(&db, &schema, 106).await, ("OPEN".into(), 4));
-    assert_eq!(cancel(&mut db, &facts, &["109"], 1).await.unwrap_err().code, "INVARIANT_VIOLATED");
+    assert_eq!(cancel(&mut db, &facts, &["109"], 1).await.unwrap_err().code, "WIRE.INVARIANT_VIOLATED");
     assert_eq!(order_state(&db, &schema, 109).await, ("OPEN".into(), 2));
     assert_eq!(outbox_count(&db, &schema).await, 3);
 
@@ -204,11 +204,11 @@ async fn bounded_effect_scenarios_are_atomic_scoped_and_bounded() {
         {"apply":"SalesOrder.cancel","target":{"ids":["120"]}},
         {"apply":"SalesOrder.cancel","target":{"ids":["106"]}}
     ]});
-    assert_eq!(bundle(&mut db, &facts, &atomic, &caller(1), &Knobs::default()).await.unwrap_err().code, "EFFECT_TARGET_MISSING");
+    assert_eq!(bundle(&mut db, &facts, &atomic, &caller(1), &Knobs::default()).await.unwrap_err().code, "WIRE.EFFECT_TARGET_MISSING");
     assert_eq!(order_state(&db, &schema, 120).await, ("OPEN".into(), 2), "a later bundle failure rolls back earlier parent and child updates");
     assert_eq!(outbox_count(&db, &schema).await, 6);
     let combined = json!({"compose":"SalesOrder","targets":{"ids":["120","101"]},"steps":[{"transition":"cancel"}]});
-    assert_eq!(compose(&mut db, &facts, &combined, &caller(1), &Knobs::default()).await.unwrap_err().code, "EFFECT_TARGET_MISSING");
+    assert_eq!(compose(&mut db, &facts, &combined, &caller(1), &Knobs::default()).await.unwrap_err().code, "WIRE.EFFECT_TARGET_MISSING");
     for id in [120, 101] {
         assert_eq!(order_state(&db, &schema, id).await, ("OPEN".into(), 2));
     }

@@ -197,8 +197,8 @@ async fn jobs_deliver_signed_webhooks_to_public_subscribers_and_can_resend_failu
         let output = post(server.address, "/jobs/result", &fp, json!({"id":id})).await["output"].clone();
         assert_eq!(output["status"], 204, "{lang:?}: {output}");
         assert_eq!(output["same"], true, "{lang:?}: {output}");
-        assert_eq!(output["privateCode"], "DESTINATION_REJECTED", "{lang:?}: {output}");
-        assert_eq!(output["failingCode"], "DELIVERY_FAILED", "{lang:?}: {output}");
+        assert_eq!(output["privateCode"], "WIRE.DESTINATION_REJECTED", "{lang:?}: {output}");
+        assert_eq!(output["failingCode"], "WIRE.DELIVERY_FAILED", "{lang:?}: {output}");
         // Exactly one signed delivery reached the subscriber, under the id the job saw.
         let delivered = accepted.lock().unwrap()[before..].to_vec();
         assert_eq!(delivered.len(), 1, "{lang:?}: {delivered:?}");

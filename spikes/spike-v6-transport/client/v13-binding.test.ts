@@ -16,12 +16,12 @@ test("typed 계약 기대값은 read/apply/status에 전달하고 처음 거부�
     if(path==="/session") { assert.equal(header,null); return response(session); }
     assert.equal(header,contract.fingerprint);
     seen.push(path);
-    return response(path==="/read"?read:{ok:false,code:"CONTRACT_MISMATCH"});
+    return response(path==="/read"?read:{ok:false,code:"WIRE.CONTRACT_MISMATCH"});
   };
   const client=connectTyped("http://binding.invalid","token",contract,fetcher);
   await client.read({read:"Item",select:["id"]});
   const rejected=await client.apply({apply:"Item.read",target:{where:[]}},{key:"first",retries:0});
-  assert.equal(rejected.code,"CONTRACT_MISMATCH");
+  assert.equal(rejected.code,"WIRE.CONTRACT_MISMATCH");
   assert.deepEqual(client.pending(),[]);
   await client.post("/status",{key:"first",request:{apply:"Item.read",target:{where:[]}}});
   assert.deepEqual(seen,["/read","/apply","/status"]);
@@ -34,7 +34,7 @@ test("이전 응답 유실 뒤 계약 거부는 앞선 commit을 확정하지 �
     if(path==="/session") return response(session);
     if(path==="/apply") {
       if(++attempts===1) throw new Error("응답 유실");
-      return response({ok:false,code:"CONTRACT_MISMATCH"});
+      return response({ok:false,code:"WIRE.CONTRACT_MISMATCH"});
     }
     return response(read);
   };
@@ -52,12 +52,12 @@ test("서버의 계약 사전 거부도 현재 세대의 기존 캐시를 비움
   const fetcher:typeof fetch=async(input)=>{
     const path=new URL(String(input)).pathname;
     if(path==="/session") return response(session);
-    return response(++reads===2?{ok:false,code:"CONTRACT_MISMATCH"}:read);
+    return response(++reads===2?{ok:false,code:"WIRE.CONTRACT_MISMATCH"}:read);
   };
   const client=connectTyped("http://binding.invalid","token",contract,fetcher);
   await client.read({read:"Item",select:["id"]});
   assert.equal((await client.read({read:"Item",select:["id"]})).cached,true);
-  await assert.rejects(client.read({read:"Item",select:["label"]}),(e:any)=>e.code==="CONTRACT_MISMATCH");
+  await assert.rejects(client.read({read:"Item",select:["label"]}),(e:any)=>e.code==="WIRE.CONTRACT_MISMATCH");
   assert.equal((await client.read({read:"Item",select:["id"]})).cached,false);
   assert.equal(reads,3);
 });

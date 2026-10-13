@@ -17,10 +17,10 @@ fn r2_raw_string_hides_declaration() {
     // 실제 Python에서 FAKE 줄은 raw 문자열 내용이다. 선언으로 채택하면 안 된다.
     let body = EPY.split_once("SPEC = ").unwrap().1;
     let e = format!("from aip.define import aip\nTEXT = r'''\\'''\nFAKE = {body}# '''\n");
-    assert!(codes(&e, Form::EPy).contains(&"NO_BLOCK".to_string()), "E-Py raw: {:?}", codes(&e, Form::EPy));
+    assert!(codes(&e, Form::EPy).contains(&"DEF.NO_BLOCK".to_string()), "E-Py raw: {:?}", codes(&e, Form::EPy));
     let hbody = HPY.split_once("SPEC = ").unwrap().1;
     let h = format!("from aip.define import define\nTEXT = r'''\\'''\nFAKE = {hbody}# '''\n");
-    assert!(codes(&h, Form::HPy).contains(&"NO_BLOCK".to_string()), "H-Py raw: {:?}", codes(&h, Form::HPy));
+    assert!(codes(&h, Form::HPy).contains(&"DEF.NO_BLOCK".to_string()), "H-Py raw: {:?}", codes(&h, Form::HPy));
     // 양성: raw 문자열이 정상으로 닫히면 뒤 선언은 읽는다.
     let ok = EPY.replacen("from aip.define import aip\n", "from aip.define import aip\nPATTERN = r'\\d+'\n", 1);
     assert_eq!(codes(&ok, Form::EPy), vec!["OK".to_string()]);
@@ -35,7 +35,7 @@ fn r2_duplicate_param_names() {
     ] {
         assert_eq!(A.matches(old).count(), 1, "{old}");
         let c = codes(&A.replacen(old, new, 1), Form::A);
-        assert!(c.contains(&"DUPLICATE".to_string()), "{new}: {c:?}");
+        assert!(c.contains(&"DEF.DUPLICATE".to_string()), "{new}: {c:?}");
     }
 }
 
@@ -47,7 +47,7 @@ fn r2_long_predicate_cycle() {
         s.push_str(&format!("\npredicate p{i}(r: Recruitment) = p{}(r)", (i + 1) % 65));
     }
     let c = codes(&s, Form::A);
-    assert!(c.contains(&"POLICY_CYCLE".to_string()), "{c:?}");
+    assert!(c.contains(&"DEF.POLICY_CYCLE".to_string()), "{c:?}");
     // 순환 없는 긴 사슬은 통과해야 한다.
     let mut ok =
         A.replacen("predicate active(r: Recruitment) = r.status = PUBLISHED and r.periodEnd >= now", "predicate active(r: Recruitment) = p0(r)", 1);
@@ -66,7 +66,7 @@ fn r3_compose_source_must_be_path() {
     let ok = base.replacen("  expose aggregate approvedCount\n", "  expose aggregate approvedCount\n  transition approveOnly { allow managerOf(actor, recruitment.club); from status = PENDING; to status = APPROVE }\n  expose compose { bulk maxRows 10; transitions approveOnly; create ClubMember from member, recruitment.club }\n", 1);
     assert_eq!(codes(&ok, Form::A), vec!["OK".to_string()]);
     let bad = ok.replacen("create ClubMember from member, recruitment.club", "create ClubMember from 1, member, recruitment.club", 1);
-    assert!(codes(&bad, Form::A).contains(&"UNSUPPORTED".to_string()), "{:?}", codes(&bad, Form::A));
+    assert!(codes(&bad, Form::A).contains(&"DEF.UNSUPPORTED".to_string()), "{:?}", codes(&bad, Form::A));
 }
 
 /// Codex r6 F01: selfRow의 by와 sameScope가 다른 필드면 거부.
@@ -76,5 +76,5 @@ fn r6_self_row_scope_must_match() {
         "  fields { id: Id; club: Club; member: Member; role: ClubRole }\n  rows read when member = actor\n  transition mark { allow member = actor; from role = MANAGER; to role = MEMBER }\n  expose compose { bulk maxRows 1; sameScope SCOPE; transitions mark; selfRow member by club }\n", 1);
     assert_eq!(codes(&base.replace("SCOPE", "club"), Form::A), vec!["OK".to_string()]);
     let c = codes(&base.replace("SCOPE", "club.school"), Form::A);
-    assert!(c.contains(&"TYPE_MISMATCH".to_string()), "{c:?}");
+    assert!(c.contains(&"DEF.TYPE_MISMATCH".to_string()), "{c:?}");
 }

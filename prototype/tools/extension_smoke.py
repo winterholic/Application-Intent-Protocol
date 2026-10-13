@@ -40,13 +40,13 @@ expect(equal(read.rows.map(row => row.id), [ID100, ID101]), 'standard read remai
 
 const wrongId = wire === 'safe-number-v13' ? '10' : 10;
 const badWire = await aip.post('/extension', {extension: 'Recruitment.stats', input: {clubId: wrongId}});
-expect(!badWire.ok && badWire.code === 'BAD_VALUE', 'raw wrong-wire input is rejected');
+expect(!badWire.ok && badWire.code === 'WIRE.BAD_VALUE', 'raw wrong-wire input is rejected');
 const stale = connect(url, token, {...contract, fingerprint: '0'.repeat(64)});
 try {
   await stale.extension('Recruitment.stats', {clubId});
   throw new Error('stale extension contract was accepted');
 } catch (error) {
-  expect((error as {code?: string}).code === 'CONTRACT_MISMATCH', 'stale extension contract is rejected');
+  expect((error as {code?: string}).code === 'WIRE.CONTRACT_MISMATCH', 'stale extension contract is rejected');
 }
 expect(equal(stale.pending(), []), 'contract mismatch leaves no pending write');
 

@@ -77,17 +77,20 @@ async fn omitted_and_explicit_null_values_have_the_same_create_policy_meaning() 
     let all_null: i64 = db.query_one(&format!("SELECT count(*) FROM {schema}.item WHERE archived IS NULL AND reviewer_id IS NULL AND status IS NULL AND count IS NULL AND memo IS NULL AND email IS NULL AND opened_at IS NULL AND day IS NULL AND amount IS NULL AND legacy_id IS NULL"), &[]).await.unwrap().get(0);
     assert_eq!(all_null, 3);
     for (values, code) in [
-        (json!({"title":"denied","archived":true}), "FORBIDDEN"),
-        (json!({"title":"denied","reviewer":"1"}), "FORBIDDEN"),
-        (json!({"title":null}), "BAD_VALUE"),
-        (json!({}), "BAD_VALUE"),
+        (json!({"title":"denied","archived":true}), "WIRE.FORBIDDEN"),
+        (json!({"title":"denied","reviewer":"1"}), "WIRE.FORBIDDEN"),
+        (json!({"title":null}), "WIRE.BAD_VALUE"),
+        (json!({}), "WIRE.BAD_VALUE"),
     ] {
         assert_eq!(bundle(&mut db, &facts, &create("Item", values), &caller(Some(1)), &knobs).await.unwrap_err().code, code);
     }
-    assert_eq!(bundle(&mut db, &facts, &create("Item", json!({"title":"anonymous"})), &caller(None), &knobs).await.unwrap_err().code, "FORBIDDEN");
+    assert_eq!(
+        bundle(&mut db, &facts, &create("Item", json!({"title":"anonymous"})), &caller(None), &knobs).await.unwrap_err().code,
+        "WIRE.FORBIDDEN"
+    );
     let rollback =
         json!({"atomic":[{"create":"Item","values":{"title":"rolled back"}},{"create":"Item","values":{"title":"denied","archived":true}}]});
-    assert_eq!(bundle(&mut db, &facts, &rollback, &caller(Some(1)), &knobs).await.unwrap_err().code, "FORBIDDEN");
+    assert_eq!(bundle(&mut db, &facts, &rollback, &caller(Some(1)), &knobs).await.unwrap_err().code, "WIRE.FORBIDDEN");
     let count: i64 = db.query_one(&format!("SELECT count(*) FROM {schema}.item"), &[]).await.unwrap().get(0);
     assert_eq!(count, 3, "denials and a later failed operation leave no partial rows");
     let empty = db.query_one(&format!("SELECT id,note FROM {schema}.empty"), &[]).await.unwrap();

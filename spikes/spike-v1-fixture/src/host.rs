@@ -89,7 +89,7 @@ pub fn tokenize(src: &str, host: Host) -> Result<Vec<T>, Diag> {
                     i += k + 4;
                     continue;
                 }
-                None => return err("HOST_LEX", "닫히지 않은 블록 주석", i),
+                None => return err("DEF.HOST_LEX", "닫히지 않은 블록 주석", i),
             }
         }
         let start = i;
@@ -133,12 +133,12 @@ pub fn tokenize(src: &str, host: Host) -> Result<Vec<T>, Diag> {
                             escape = true;
                             j += 1;
                         } else if b[j] == b'\n' {
-                            return err("HOST_LEX", "닫히지 않은 문자열", start);
+                            return err("DEF.HOST_LEX", "닫히지 않은 문자열", start);
                         }
                         j += 1;
                     }
                     if j >= b.len() {
-                        return err("HOST_LEX", "닫히지 않은 문자열", start);
+                        return err("DEF.HOST_LEX", "닫히지 않은 문자열", start);
                     }
                     (K::Str { prefix: String::new(), triple: false, body: (i + 1, j), escape }, j + 1)
                 }
@@ -177,7 +177,7 @@ pub fn tokenize(src: &str, host: Host) -> Result<Vec<T>, Diag> {
                 j += 1;
             }
             if j >= b.len() {
-                return err("HOST_LEX", "닫히지 않은 template", start);
+                return err("DEF.HOST_LEX", "닫히지 않은 template", start);
             }
             out.push(T { k: K::Template { body: (i + 1, j), interp, escape }, start, end: j + 1, nl });
             nl = false;
@@ -222,7 +222,7 @@ fn py_string(src: &str, start: usize, q_at: usize) -> Result<(K, usize), Diag> {
         }
         j += 1;
     }
-    Err(Diag::new("HOST_LEX", "닫히지 않은 문자열", span_at(src, start)))
+    Err(Diag::new("DEF.HOST_LEX", "닫히지 않은 문자열", span_at(src, start)))
 }
 
 pub fn is_ident(t: &T, s: &str) -> bool {

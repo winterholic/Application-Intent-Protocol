@@ -1,4 +1,4 @@
-//! `AIP.UNAVAILABLE` is a transient failure of a dependency, so it answers 503 and
+//! `POC.UNAVAILABLE` is a transient failure of a dependency, so it answers 503 and
 //! tells the caller it may retry. The database is replaced by a closed port, so
 //! the pool cannot hand out a connection.
 
@@ -56,5 +56,5 @@ async fn unavailable_database_answers_http_503() {
     let mut raw = String::new();
     stream.read_to_string(&mut raw).await.expect("read");
     assert!(raw.starts_with("HTTP/1.1 503"), "{raw}");
-    assert!(raw.contains("AIP.UNAVAILABLE"), "{raw}");
+    assert!(raw.contains("POC.UNAVAILABLE"), "{raw}");
 }

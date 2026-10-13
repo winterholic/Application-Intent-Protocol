@@ -107,7 +107,7 @@ export function isUuid(v: unknown): v is string {
 // Inputs are validated strictly: unknown keys and missing keys are errors.
 export function validateInput(m: Model, op: string, params: Param[], raw: unknown): Record<string, unknown> {
   const bad = (path: string, message: string): never => {
-    throw new AipError('AIP.INPUT.INVALID', op, message, { path });
+    throw new AipError('POC.INPUT.INVALID', op, message, { path });
   };
   if (raw === undefined || raw === null) raw = {};
   if (typeof raw !== 'object' || Array.isArray(raw)) bad('', 'input must be a JSON object');

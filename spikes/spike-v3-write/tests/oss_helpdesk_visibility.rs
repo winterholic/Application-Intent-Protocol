@@ -80,7 +80,7 @@ async fn public_and_private_replies_preserve_text_without_leaking_or_repeating_e
     .unwrap();
     let public = json!({"apply":"Ticket.closePublic","target":{"ids":["10"]}});
     let private = json!({"apply":"Ticket.closePrivate","target":{"ids":["11"]}});
-    assert_eq!(apply(&mut db, &facts, &public, &caller(Some(1)), &Knobs::default()).await.unwrap_err().code, "FORBIDDEN");
+    assert_eq!(apply(&mut db, &facts, &public, &caller(Some(1)), &Knobs::default()).await.unwrap_err().code, "WIRE.FORBIDDEN");
     for request in [&public, &private] {
         assert_eq!(apply(&mut db, &facts, request, &caller(Some(2)), &Knobs::default()).await.unwrap().changed.len(), 1);
         let retry = apply(&mut db, &facts, request, &caller(Some(2)), &Knobs::default()).await.unwrap();

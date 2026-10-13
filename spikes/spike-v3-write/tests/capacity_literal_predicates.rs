@@ -73,7 +73,7 @@ async fn locked_count_predicates_bind_text_integer_date_and_decimal_literals() {
 
     for (resource, id) in [("LabelItem", 13), ("UnitsItem", 23), ("DayItem", 33), ("AmountItem", 43)] {
         let result = apply(&mut db, &facts, &request(resource, id), &caller(), &Knobs::default()).await;
-        assert_eq!(result.unwrap_err().code, "INVARIANT_VIOLATED", "{resource}");
+        assert_eq!(result.unwrap_err().code, "WIRE.INVARIANT_VIOLATED", "{resource}");
     }
     db.batch_execute(&format!("DROP SCHEMA {schema} CASCADE")).await.unwrap();
 }

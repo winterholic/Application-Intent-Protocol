@@ -17,14 +17,14 @@ fn explicitly_declared_ids_are_non_nullable_and_belong_to_their_resource() {
     // `X.Id` spellings of the key are covered by id_field_rejected.rs (ID_FIELD_NEEDS_REFERENCE, D-A16).
     for ty in ["Int", "Text", "Id?", "Item"] {
         let source = format!("resource Member {{ fields {{ id: Id }} }} actor Member resource Item {{ fields {{ id: {ty} }} }}");
-        assert_rejected(&source, "TYPE_MISMATCH");
+        assert_rejected(&source, "DEF.TYPE_MISMATCH");
         let object = json!({"actor":"Member","resources":{"Member":{"fields":{"id":"Id"}},"Item":{"fields":{"id":ty}}}});
         for (form, wrapper) in [
             (Form::HTs, format!("import {{ define }} from '@aip/define'; export const spec = define({object});")),
             (Form::HPy, format!("from aip.define import define\nSPEC = define({object})")),
         ] {
             let errors = load_str(&wrapper, form).err().expect("invalid host ID declaration must fail");
-            assert!(errors.iter().any(|error| error.code == "TYPE_MISMATCH"), "{form:?}: {errors:?}");
+            assert!(errors.iter().any(|error| error.code == "DEF.TYPE_MISMATCH"), "{form:?}: {errors:?}");
         }
     }
     let valid = "resource Member { fields { id: Id } } actor Member resource Item { fields { id: Id; previous: Item? } }";
@@ -36,5 +36,5 @@ fn explicitly_declared_ids_are_non_nullable_and_belong_to_their_resource() {
 #[test]
 fn transitions_cannot_move_the_primary_id_away_from_their_locked_target() {
     let source = "resource Member { fields { id: Id } } actor Member resource Item { fields { id: Id; replacement: Item.Id } transition rekey { from true; to id = replacement; allow true } expose apply rekey { target id; bulk maxRows 1 } }";
-    assert_rejected(source, "UNSUPPORTED_EFFECT");
+    assert_rejected(source, "DEF.UNSUPPORTED_EFFECT");
 }

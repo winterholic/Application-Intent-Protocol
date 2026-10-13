@@ -38,14 +38,14 @@ export function createAipServer(rt: Runtime, opts: { log?: boolean } = {}): Serv
 
     const m = /^\/aip\/(query|command)\/([A-Za-z_][A-Za-z0-9_]*)$/.exec(url.pathname);
     if (!m || req.method !== 'POST') {
-      return send(404, { error: { code: 'AIP.REQUEST.UNKNOWN_OPERATION', operation: url.pathname, message: 'use POST /aip/query/{name} or /aip/command/{name}', retryable: false } });
+      return send(404, { error: { code: 'POC.REQUEST.UNKNOWN_OPERATION', operation: url.pathname, message: 'use POST /aip/query/{name} or /aip/command/{name}', retryable: false } });
     }
     let input: unknown;
     try {
       const raw = await readBody(req);
       input = raw.trim() ? JSON.parse(raw) : {};
     } catch {
-      return send(400, { error: { code: 'AIP.REQUEST.MALFORMED', operation: m[2], message: 'body must be JSON (max 1MB)', retryable: false } });
+      return send(400, { error: { code: 'POC.REQUEST.MALFORMED', operation: m[2], message: 'body must be JSON (max 1MB)', retryable: false } });
     }
     // DEV ONLY: the actor is taken from a header. A real deployment plugs a verified identity in here.
     const r = await rt.call({ kind: m[1] as 'query' | 'command', name: m[2], input, actorId: header(req, 'x-aip-actor'), idempotencyKey: header(req, 'idempotency-key') });

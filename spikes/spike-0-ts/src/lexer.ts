@@ -57,7 +57,7 @@ export function lex(src: string): Token[] {
       let j = i + 1;
       while (j < src.length && src[j] !== '"' && src[j] !== '\n') j++;
       if (src[j] !== '"') {
-        throw new CompileError([{ severity: 'error', code: 'AIP-E100', message: 'unterminated string', loc }]);
+        throw new CompileError([{ severity: 'error', code: 'POC.E100', message: 'unterminated string', loc }]);
       }
       toks.push({ kind: 'string', text: src.slice(i + 1, j), loc });
       adv(j + 1 - i);
@@ -74,7 +74,7 @@ export function lex(src: string): Token[] {
       adv(1);
       continue;
     }
-    throw new CompileError([{ severity: 'error', code: 'AIP-E100', message: `unexpected character '${c}'`, loc }]);
+    throw new CompileError([{ severity: 'error', code: 'POC.E100', message: `unexpected character '${c}'`, loc }]);
   }
   toks.push({ kind: 'eof', text: '<eof>', loc: { line, col } });
   return toks;

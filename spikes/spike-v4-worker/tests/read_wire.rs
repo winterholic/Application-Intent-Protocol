@@ -58,37 +58,37 @@ fn preflight_validates_wire_ids_without_changing_legacy_contract() {
     assert!(validate_read(&facts, "Recruitment.echo", &echo_input(json!(10), json!(9_007_199_254_740_991i64), json!(1), "safe"), safe).is_ok());
     assert_eq!(
         code(validate_read(&facts, "Recruitment.echo", &echo_input(json!("10"), Value::Null, Value::Null, "wrong type"), safe)),
-        Some("BAD_VALUE")
+        Some("WIRE.BAD_VALUE")
     );
     assert_eq!(
         code(validate_read(&facts, "Recruitment.echo", &echo_input(json!(-1), Value::Null, Value::Null, "negative"), safe)),
-        Some("BAD_VALUE")
+        Some("WIRE.BAD_VALUE")
     );
     assert_eq!(
         code(validate_read(&facts, "Recruitment.echo", &echo_input(json!(9_007_199_254_740_992u64), Value::Null, Value::Null, "unsafe"), safe)),
-        Some("ID_OUT_OF_RANGE")
+        Some("WIRE.ID_OUT_OF_RANGE")
     );
 
     assert!(validate_read(&facts, "Recruitment.echo", &echo_input(json!("10"), json!("9223372036854775807"), json!("1"), "decimal"), decimal).is_ok());
     assert_eq!(
         code(validate_read(&facts, "Recruitment.echo", &echo_input(json!(10), Value::Null, Value::Null, "wrong type"), decimal)),
-        Some("BAD_VALUE")
+        Some("WIRE.BAD_VALUE")
     );
     assert_eq!(
         code(validate_read(&facts, "Recruitment.echo", &echo_input(json!("-1"), Value::Null, Value::Null, "negative"), decimal)),
-        Some("BAD_VALUE")
+        Some("WIRE.BAD_VALUE")
     );
     assert_eq!(
         code(validate_read(&facts, "Recruitment.echo", &echo_input(json!("010"), Value::Null, Value::Null, "noncanonical"), decimal)),
-        Some("BAD_VALUE")
+        Some("WIRE.BAD_VALUE")
     );
     assert_eq!(
         code(validate_read(&facts, "Recruitment.echo", &echo_input(json!("10"), json!("9223372036854775808"), Value::Null, "overflow"), decimal)),
-        Some("BAD_VALUE")
+        Some("WIRE.BAD_VALUE")
     );
     assert_eq!(
         code(validate_read(&facts, "Recruitment.echo", &json!({ "clubId": "10", "optionalId": null, "value": "missing ref" }), decimal)),
-        Some("BAD_VALUE")
+        Some("WIRE.BAD_VALUE")
     );
 
     // V4's old Legacy extension boundary accepts digit strings beyond the V2 ID-wire limits.
@@ -237,7 +237,7 @@ async fn read_wire_round_trips_and_ctx_aggregate_uses_the_same_wire() {
                         IdWire::SafeNumber,
                     )
                     .await;
-                    if code(wrong_safe) != Some("OUTPUT_INVALID") {
+                    if code(wrong_safe) != Some("WIRE.OUTPUT_INVALID") {
                         failures.push(format!("{lang:?} wrong safe-number output was not rejected"));
                     }
                     let wrong_decimal = invoke_with_wire(
@@ -250,7 +250,7 @@ async fn read_wire_round_trips_and_ctx_aggregate_uses_the_same_wire() {
                         IdWire::DecimalString,
                     )
                     .await;
-                    if code(wrong_decimal) != Some("OUTPUT_INVALID") {
+                    if code(wrong_decimal) != Some("WIRE.OUTPUT_INVALID") {
                         failures.push(format!("{lang:?} wrong decimal-string output was not rejected"));
                     }
 

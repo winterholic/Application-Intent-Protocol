@@ -16,49 +16,49 @@ const OUTBOX_TICK: Duration = Duration::from_secs(1);
 const MESSAGES_PER_TICK: usize = 50;
 const MESSAGE_LEASE_MS: i64 = 30_000;
 fn db_error<T>(_: T) -> &'static str {
-    "DB_UNAVAILABLE"
+    "WIRE.DB_UNAVAILABLE"
 }
 fn step_error(code: &str) -> &'static str {
     match code {
-        "ACCESS_NOT_DECLARED" => "ACCESS_NOT_DECLARED",
-        "COST_EXCEEDED" => "COST_EXCEEDED",
-        "LEASE_LOST" => "LEASE_LOST",
-        "EFFECT_UNKNOWN" => "EFFECT_UNKNOWN",
-        "BAD_VALUE" => "BAD_VALUE",
-        _ => "STEP_FAILED",
+        "WIRE.ACCESS_NOT_DECLARED" => "WIRE.ACCESS_NOT_DECLARED",
+        "WIRE.COST_EXCEEDED" => "WIRE.COST_EXCEEDED",
+        "WIRE.LEASE_LOST" => "WIRE.LEASE_LOST",
+        "WIRE.EFFECT_UNKNOWN" => "WIRE.EFFECT_UNKNOWN",
+        "WIRE.BAD_VALUE" => "WIRE.BAD_VALUE",
+        _ => "WIRE.STEP_FAILED",
     }
 }
 /// Business outcomes of data capabilities stay distinguishable so an extension can branch or compensate.
 fn data_error(code: &str) -> &'static str {
     match code {
-        "ACCESS_DENIED" => "ACCESS_DENIED",
-        "NOT_FOUND" => "NOT_FOUND",
-        "INVALID_STATE" => "INVALID_STATE",
-        "CHECK_FAILED" => "CHECK_FAILED",
-        "DUPLICATE_TARGET" => "DUPLICATE_TARGET",
-        "CONFLICT" => "CONFLICT",
-        "ALREADY_EXISTS" => "ALREADY_EXISTS",
-        "INVARIANT_VIOLATED" => "INVARIANT_VIOLATED",
-        "DEADLINE_EXCEEDED" => "DEADLINE_EXCEEDED",
-        "NOT_EXPOSED" => "NOT_EXPOSED",
-        "OUTPUT_TOO_LARGE" => "OUTPUT_TOO_LARGE",
-        "FORBIDDEN" => "FORBIDDEN",
-        "MISSING_TARGET" => "MISSING_TARGET",
-        "TARGET_NOT_ALLOWED" => "TARGET_NOT_ALLOWED",
-        "EFFECT_TARGET_MISSING" => "EFFECT_TARGET_MISSING",
-        "NOT_SAME_SCOPE" => "NOT_SAME_SCOPE",
-        "BULK_LIMIT" => "BULK_LIMIT",
-        "ROWS_EXCEEDED" => "ROWS_EXCEEDED",
-        "DUPLICATE" => "DUPLICATE",
-        "BAD_REQUEST" => "BAD_REQUEST",
+        "WIRE.ACCESS_DENIED" => "WIRE.ACCESS_DENIED",
+        "WIRE.NOT_FOUND" => "WIRE.NOT_FOUND",
+        "WIRE.INVALID_STATE" => "WIRE.INVALID_STATE",
+        "WIRE.CHECK_FAILED" => "WIRE.CHECK_FAILED",
+        "WIRE.DUPLICATE_TARGET" => "WIRE.DUPLICATE_TARGET",
+        "WIRE.CONFLICT" => "WIRE.CONFLICT",
+        "WIRE.ALREADY_EXISTS" => "WIRE.ALREADY_EXISTS",
+        "WIRE.INVARIANT_VIOLATED" => "WIRE.INVARIANT_VIOLATED",
+        "WIRE.DEADLINE_EXCEEDED" => "WIRE.DEADLINE_EXCEEDED",
+        "WIRE.NOT_EXPOSED" => "WIRE.NOT_EXPOSED",
+        "WIRE.OUTPUT_TOO_LARGE" => "WIRE.OUTPUT_TOO_LARGE",
+        "WIRE.FORBIDDEN" => "WIRE.FORBIDDEN",
+        "WIRE.MISSING_TARGET" => "WIRE.MISSING_TARGET",
+        "WIRE.TARGET_NOT_ALLOWED" => "WIRE.TARGET_NOT_ALLOWED",
+        "WIRE.EFFECT_TARGET_MISSING" => "WIRE.EFFECT_TARGET_MISSING",
+        "WIRE.NOT_SAME_SCOPE" => "WIRE.NOT_SAME_SCOPE",
+        "WIRE.BULK_LIMIT" => "WIRE.BULK_LIMIT",
+        "WIRE.ROWS_EXCEEDED" => "WIRE.ROWS_EXCEEDED",
+        "WIRE.DUPLICATE" => "WIRE.DUPLICATE",
+        "WIRE.BAD_REQUEST" => "WIRE.BAD_REQUEST",
         code => step_error(code),
     }
 }
 fn store_error(e: aip_execution::Error) -> &'static str {
     match e {
-        aip_execution::Error::IdempotencyConflict => "IDEMPOTENCY_MISMATCH",
-        aip_execution::Error::InvalidRun => "BAD_VALUE",
-        _ => "DB_UNAVAILABLE",
+        aip_execution::Error::IdempotencyConflict => "WIRE.IDEMPOTENCY_MISMATCH",
+        aip_execution::Error::InvalidRun => "WIRE.BAD_VALUE",
+        _ => "WIRE.DB_UNAVAILABLE",
     }
 }
 pub(crate) fn enabled(facts: &Value) -> bool {
@@ -82,14 +82,15 @@ fn policy(rt: &Runtime, operation: &str) -> crate::triggers::JobPolicy {
 }
 
 /// Infrastructure failures always retry. Extension failures retry only when the extension asked for it
-/// (`RETRY_LATER`) or the operator opted the job into retrying uncaught errors. Contract, permission,
+/// (`WIRE.RETRY_LATER`) or the operator opted the job into retrying uncaught errors. Contract, permission,
 /// cost and uncertain-effect errors never retry because another attempt would not change them.
 fn retryable(rt: &Runtime, operation: &str, code: &str) -> bool {
-    matches!(code, "WORKER_FAILED" | "DB_UNAVAILABLE" | "RETRY_LATER") || (code == "EXTENSION_ERROR" && policy(rt, operation).retry_uncaught)
+    matches!(code, "WIRE.WORKER_FAILED" | "WIRE.DB_UNAVAILABLE" | "WIRE.RETRY_LATER")
+        || (code == "WIRE.EXTENSION_ERROR" && policy(rt, operation).retry_uncaught)
 }
 
 fn schema(rt: &Runtime) -> Result<&str> {
-    rt.deployment.as_ref().map(|f| f.schema.as_str()).ok_or("NOT_AVAILABLE")
+    rt.deployment.as_ref().map(|f| f.schema.as_str()).ok_or("WIRE.NOT_AVAILABLE")
 }
 fn owner(g: &DurablePrincipal) -> String {
     // The revocation floor is deliberately left out: after revoke and re-bind the same person owns the same files and jobs.
@@ -97,11 +98,11 @@ fn owner(g: &DurablePrincipal) -> String {
     spike_v1_fixture::digest(&json!([g.issuer, g.subject, g.actor_id, 0]))
 }
 async fn connect(rt: &Runtime) -> Result<crate::pool::PooledConnection> {
-    rt.db_pool.as_ref().ok_or("DB_UNAVAILABLE")?.acquire().await.map_err(db_error)
+    rt.db_pool.as_ref().ok_or("WIRE.DB_UNAVAILABLE")?.acquire().await.map_err(db_error)
 }
 
 pub(crate) fn bundle(rt: &Runtime) -> Result<String> {
-    let config = rt.extensions.as_ref().ok_or("NOT_AVAILABLE")?;
+    let config = rt.extensions.as_ref().ok_or("WIRE.NOT_AVAILABLE")?;
     let mut paths = std::fs::read_dir(&config.dir)
         .map_err(db_error)?
         .map(|entry| entry.map(|e| e.path()))
@@ -116,14 +117,14 @@ pub(crate) fn bundle(rt: &Runtime) -> Result<String> {
         }
         let path = path.canonicalize().map_err(db_error)?;
         if !path.starts_with(&config.dir) {
-            return Err("IMPLEMENTATION_CHANGED");
+            return Err("WIRE.IMPLEMENTATION_CHANGED");
         }
         let content = std::fs::read(&path).map_err(db_error)?;
         bytes += content.len();
         if bytes > 32 << 20 {
-            return Err("COST_EXCEEDED");
+            return Err("WIRE.COST_EXCEEDED");
         }
-        files.push(json!([path.file_name().and_then(|n| n.to_str()).ok_or("BAD_CONFIGURATION")?, spike_v1_fixture::digest(&json!(content))]));
+        files.push(json!([path.file_name().and_then(|n| n.to_str()).ok_or("WIRE.BAD_CONFIGURATION")?, spike_v1_fixture::digest(&json!(content))]));
     }
     Ok(spike_v1_fixture::digest(&json!([
         "aip-managed-execution/1",
@@ -146,11 +147,13 @@ pub(crate) fn bundle(rt: &Runtime) -> Result<String> {
 }
 
 async fn guard(db: &impl GenericClient, rt: &Runtime, grant: &DurablePrincipal) -> Result<()> {
-    let fence = rt.deployment.as_ref().ok_or("NOT_AVAILABLE")?;
-    match tokio::time::timeout(crate::server::DB_PREFLIGHT_TIMEOUT, rt.authenticator.as_ref().ok_or("UNAUTHENTICATED")?.verify_durable(grant)).await {
+    let fence = rt.deployment.as_ref().ok_or("WIRE.NOT_AVAILABLE")?;
+    match tokio::time::timeout(crate::server::DB_PREFLIGHT_TIMEOUT, rt.authenticator.as_ref().ok_or("WIRE.UNAUTHENTICATED")?.verify_durable(grant))
+        .await
+    {
         Ok(Ok(())) => {}
-        Ok(Err(crate::auth::AuthError::Unavailable)) | Err(_) => return Err("DB_UNAVAILABLE"),
-        _ => return Err("UNAUTHENTICATED"),
+        Ok(Err(crate::auth::AuthError::Unavailable)) | Err(_) => return Err("WIRE.DB_UNAVAILABLE"),
+        _ => return Err("WIRE.UNAUTHENTICATED"),
     }
     db.batch_execute("SET LOCAL lock_timeout='2s'; SET LOCAL statement_timeout='5s'").await.map_err(db_error)?;
     db.query_one("SELECT pg_advisory_xact_lock_shared(1095323725,hashtext($1))", &[&fence.schema]).await.map_err(db_error)?;
@@ -159,7 +162,7 @@ async fn guard(db: &impl GenericClient, rt: &Runtime, grant: &DurablePrincipal) 
         .await
         .map_err(db_error)?;
     if marker.is_none_or(|r| r.get::<_, String>(0) != fence.expected_digest) {
-        return Err("DEPLOYMENT_CHANGED");
+        return Err("WIRE.DEPLOYMENT_CHANGED");
     }
     let row = db
         .query_opt(
@@ -171,7 +174,7 @@ async fn guard(db: &impl GenericClient, rt: &Runtime, grant: &DurablePrincipal) 
     if !row.is_some_and(|r| {
         r.get::<_, i64>(0) == grant.actor_id && r.get::<_, bool>(1) && r.get::<_, i64>(2) == grant.min_iat && grant.issued_at >= grant.min_iat
     }) {
-        return Err("UNAUTHENTICATED");
+        return Err("WIRE.UNAUTHENTICATED");
     }
     Ok(())
 }
@@ -181,13 +184,13 @@ async fn authorize(db: &impl GenericClient, facts: &Value, name: &str, input: &V
     let plan = spike_v2_read::plan::plan_operation_authorization(facts, name, input, &caller, wire).map_err(|e| e.code)?;
     let params: Vec<&(dyn ToSql + Sync)> = plan.params.iter().map(|p| p as _).collect();
     if !db.query_one(&plan.sql, &params).await.map_err(db_error)?.get::<_, bool>(0) {
-        return Err("ACCESS_DENIED");
+        return Err("WIRE.ACCESS_DENIED");
     }
     Ok(caller)
 }
 async fn locked_lease(db: &impl GenericClient, rt: &Runtime, lease: &Lease) -> Result<()> {
     let s = schema(rt)?;
-    db.query_opt(&format!("SELECT id FROM {s}.aip_jobs WHERE id=$1 AND lease_epoch=$2 AND lease_owner=$3 AND state='RUNNING' AND lease_until>clock_timestamp() AND attempt_deadline>clock_timestamp() FOR UPDATE"),&[&lease.run_id,&lease.epoch,&lease.worker]).await.map_err(db_error)?.ok_or("LEASE_LOST")?;
+    db.query_opt(&format!("SELECT id FROM {s}.aip_jobs WHERE id=$1 AND lease_epoch=$2 AND lease_owner=$3 AND state='RUNNING' AND lease_until>clock_timestamp() AND attempt_deadline>clock_timestamp() FOR UPDATE"),&[&lease.run_id,&lease.epoch,&lease.worker]).await.map_err(db_error)?.ok_or("WIRE.LEASE_LOST")?;
     Ok(())
 }
 fn allowed(facts: &Value, domain: &str, name: &str) -> bool {
@@ -200,12 +203,12 @@ fn exact(body: &Value, keys: &[&str]) -> bool {
     body.as_object().is_some_and(|o| o.len() == keys.len() && keys.iter().all(|k| o.contains_key(*k)))
 }
 fn text<'a>(v: &'a Value, k: &str) -> Result<&'a str> {
-    v[k].as_str().ok_or("BAD_REQUEST")
+    v[k].as_str().ok_or("WIRE.BAD_REQUEST")
 }
 fn decode(body: &Value) -> Result<Vec<u8>> {
-    let b = B64.decode(text(body, "base64")?).map_err(|_| "BAD_VALUE")?;
+    let b = B64.decode(text(body, "base64")?).map_err(|_| "WIRE.BAD_VALUE")?;
     if b.len() > 768 * 1024 - 1024 || B64.encode(&b) != body["base64"] {
-        return Err("PAYLOAD_TOO_LARGE");
+        return Err("WIRE.PAYLOAD_TOO_LARGE");
     }
     Ok(b)
 }
@@ -214,7 +217,7 @@ async fn file_budget(db: &impl GenericClient, s: &str, owner: &str, bucket: &str
     db.execute(&format!("DELETE FROM {s}.aip_files WHERE owner=$1 AND expires_at<=clock_timestamp()"), &[&owner]).await.map_err(db_error)?;
     let row=db.query_one(&format!("SELECT count(*)::bigint,COALESCE(sum(octet_length(content)),0)::bigint,bool_or(bucket=$2 AND name=$3 AND object_key=$4) FROM {s}.aip_files WHERE owner=$1"),&[&owner,&bucket,&name,&object_key]).await.map_err(db_error)?;
     if row.get::<_, Option<bool>>(2) != Some(true) && (row.get::<_, i64>(0) >= 100 || row.get::<_, i64>(1) + size > 10 * 1024 * 1024) {
-        return Err("QUOTA_EXCEEDED");
+        return Err("WIRE.QUOTA_EXCEEDED");
     }
     Ok(())
 }
@@ -244,9 +247,9 @@ async fn put_file(
         .put_scoped(db, owner, bucket, name, text(input, "mediaType")?, &bytes, Some(expires), &object_key)
         .await
         .map_err(|e| match e {
-            aip_execution::files::Error::FileConflict => "IDEMPOTENCY_MISMATCH",
-            aip_execution::files::Error::InvalidFile => "BAD_VALUE",
-            _ => "DB_UNAVAILABLE",
+            aip_execution::files::Error::FileConflict => "WIRE.IDEMPOTENCY_MISMATCH",
+            aip_execution::files::Error::InvalidFile => "WIRE.BAD_VALUE",
+            _ => "WIRE.DB_UNAVAILABLE",
         })
 }
 #[allow(clippy::too_many_arguments)]
@@ -264,17 +267,17 @@ async fn submit(
 ) -> Result<aip_execution::Run> {
     spike_v4_worker::validate_job(facts, name, input, wire).map_err(|e| e.code)?;
     if !crate::valid_key(key) || !(0..=86_400_000).contains(&delay) {
-        return Err("BAD_VALUE");
+        return Err("WIRE.BAD_VALUE");
     }
     // Trigger keys are minted by the server. A caller who is also the configured service subject must not be able to claim a
     // schedule slot, webhook delivery or outbox row in advance and turn the real trigger into an IDEMPOTENCY_MISMATCH.
     if !service && crate::triggers::RESERVED_KEY_PREFIXES.iter().any(|prefix| key.starts_with(prefix)) {
-        return Err("BAD_VALUE");
+        return Err("WIRE.BAD_VALUE");
     }
     // O-19: a trigger's operation trusts its input because the server verified its source (HMAC body, schedule input, committed
     // outbox row). A user who passes the operation's `allow` could otherwise enqueue a forged body and skip that verification.
     if !service && rt.infrastructure.triggers.targets_operation(name) {
-        return Err("ACCESS_DENIED");
+        return Err("WIRE.ACCESS_DENIED");
     }
     authorize(db, facts, name, input, grant.actor_id, wire).await?;
     let s = schema(rt)?;
@@ -293,7 +296,7 @@ async fn submit(
     // Trigger traffic is unbounded over time; a retained-history cap would silently stop every trigger
     // sharing the service principal. The active bound still limits concurrent load.
     if (active >= 100 || (!service && total >= 10_000)) && !replay {
-        return Err("QUOTA_EXCEEDED");
+        return Err("WIRE.QUOTA_EXCEEDED");
     }
     // Retained payload bytes (queued and unexpired inputs and outputs) are bounded like managed files and messages. Unlike the
     // row cap this applies to trigger principals too: payloads are cleared when a result expires, so the bound does not stall
@@ -312,7 +315,7 @@ async fn submit(
             .get(0);
         let incoming = serde_json::to_vec(input).map_or(i64::MAX, |bytes| bytes.len() as i64);
         if retained.saturating_add(incoming) > MAX_RETAINED_JOB_BYTES {
-            return Err("QUOTA_EXCEEDED");
+            return Err("WIRE.QUOTA_EXCEEDED");
         }
     }
     Store::new(s)
@@ -329,7 +332,7 @@ async fn submit(
                 implementation: bundle(rt)?,
                 input: input.clone(),
                 key: key.into(),
-                timeout_ms: facts["operations"][name]["deadlineMs"].as_i64().ok_or("BAD_CONFIGURATION")?,
+                timeout_ms: facts["operations"][name]["deadlineMs"].as_i64().ok_or("WIRE.BAD_CONFIGURATION")?,
                 max_attempts: policy(rt, name).max_attempts,
                 ttl_ms: 86_400_000,
                 delay_ms: delay,
@@ -380,7 +383,7 @@ async fn service_grant(db: &impl GenericClient, s: &str, principal: &crate::trig
         .await
         .map_err(db_error)?
         .filter(|row| row.get::<_, bool>(1))
-        .ok_or("PRINCIPAL_UNAVAILABLE")?;
+        .ok_or("WIRE.PRINCIPAL_UNAVAILABLE")?;
     Ok(DurablePrincipal {
         issuer: principal.issuer.clone(),
         subject: principal.subject.clone(),
@@ -402,7 +405,7 @@ async fn submit_as_service_marked(
     marker: Marker<'_>,
 ) -> Result<aip_execution::Run> {
     if !enabled(facts) || rt.extensions.is_none() {
-        return Err("NOT_AVAILABLE");
+        return Err("WIRE.NOT_AVAILABLE");
     }
     let s = schema(rt)?.to_string();
     let mut db = connect(rt).await?;
@@ -414,7 +417,7 @@ async fn submit_as_service_marked(
         // A lost lease means another consumer owns the message now; roll back so only one acks it.
         let store = aip_execution::messages::MessageStore::new(&s).map_err(db_error)?;
         if !store.ack(&tx, lease).await.map_err(db_error)? {
-            return Err("LEASE_LOST");
+            return Err("WIRE.LEASE_LOST");
         }
     }
     if let Marker::Outbox(infra, outbox_id) = marker {
@@ -428,7 +431,7 @@ async fn submit_as_service_marked(
         .await
         .map_err(db_error)?;
     }
-    tx.commit().await.map_err(|_| "COMMIT_UNKNOWN")?;
+    tx.commit().await.map_err(|_| "WIRE.COMMIT_UNKNOWN")?;
     db.release().await.map_err(db_error)?;
     Ok(run)
 }
@@ -463,7 +466,7 @@ pub(crate) fn outbox_dispatch_ddl(infra: &str) -> String {
 /// each row becomes exactly one job via its key.
 async fn relay_outbox(rt: &Runtime, facts: &Value, wire: IdWire) -> Result<()> {
     let s = schema(rt)?.to_string();
-    let infra = aip_execution::infrastructure_schema(&s).map_err(|_| "BAD_CONFIGURATION")?;
+    let infra = aip_execution::infrastructure_schema(&s).map_err(|_| "WIRE.BAD_CONFIGURATION")?;
     for handler in &rt.infrastructure.triggers.outbox {
         let db = connect(rt).await?;
         let rows = db
@@ -545,9 +548,9 @@ async fn relay_messages(rt: &Runtime, facts: &Value, wire: IdWire, worker: &str)
 
 pub(crate) async fn validate_principal(rt: &Runtime, _facts: &Value, _wire: IdWire, session: &crate::auth::Session) -> Result<String> {
     if session.remaining_ms() == 0 {
-        return Err("TOKEN_EXPIRED");
+        return Err("WIRE.TOKEN_EXPIRED");
     }
-    let grant = session.durable.as_ref().ok_or("UNAUTHENTICATED")?;
+    let grant = session.durable.as_ref().ok_or("WIRE.UNAUTHENTICATED")?;
     let mut db = connect(rt).await?;
     let tx = db.transaction().await.map_err(db_error)?;
     guard(&tx, rt, grant).await?;
@@ -567,9 +570,9 @@ pub(crate) async fn read_as_subscriber(
     query: &Value,
 ) -> std::result::Result<Value, &'static str> {
     if session.remaining_ms() == 0 {
-        return Err("TOKEN_EXPIRED");
+        return Err("WIRE.TOKEN_EXPIRED");
     }
-    let grant = session.durable.as_ref().ok_or("UNAUTHENTICATED")?;
+    let grant = session.durable.as_ref().ok_or("WIRE.UNAUTHENTICATED")?;
     let mut db = connect(rt).await?;
     let now: String = {
         let tx = db.transaction().await.map_err(db_error)?;
@@ -582,7 +585,7 @@ pub(crate) async fn read_as_subscriber(
     let plan = spike_v2_read::plan::plan_read_with_wire(facts, query, &caller, wire).map_err(|e| e.code)?;
     let rows = tokio::time::timeout(Duration::from_millis(plan.deadline_ms), spike_v2_read::execute(&mut db, &plan))
         .await
-        .map_err(|_| "DEADLINE_EXCEEDED")?
+        .map_err(|_| "WIRE.DEADLINE_EXCEEDED")?
         .map_err(|e| e.code)?;
     let rows = spike_v2_read::id_wire::encode_rows(rows, &plan.output_type, wire).map_err(|e| e.code)?;
     let _ = db.release().await;
@@ -599,10 +602,10 @@ pub(crate) async fn read_events(
     limit: i64,
 ) -> Value {
     if session.remaining_ms() == 0 {
-        return json!({"ok":false,"code":"TOKEN_EXPIRED"});
+        return json!({"ok":false,"code":"WIRE.TOKEN_EXPIRED"});
     }
     let Some(grant) = session.durable.as_ref() else {
-        return json!({"ok":false,"code":"UNAUTHENTICATED"});
+        return json!({"ok":false,"code":"WIRE.UNAUTHENTICATED"});
     };
     let mut db = match connect(rt).await {
         Ok(db) => db,
@@ -617,7 +620,7 @@ pub(crate) async fn read_events(
 pub(crate) async fn handle(db: &mut Client, rt: &Runtime, facts: &Value, wire: IdWire, path: &str, body: &Value, grant: &DurablePrincipal) -> Value {
     let operation = async {
         if !enabled(facts) || rt.extensions.is_none() {
-            return Err("NOT_AVAILABLE");
+            return Err("WIRE.NOT_AVAILABLE");
         }
         let tx = db.transaction().await.map_err(db_error)?;
         guard(&tx, rt, grant).await?;
@@ -627,7 +630,7 @@ pub(crate) async fn handle(db: &mut Client, rt: &Runtime, facts: &Value, wire: I
         let response = match path {
             "/jobs/enqueue" => {
                 if !exact(body, &["operation", "input", "key", "delayMs"]) {
-                    return Err("BAD_REQUEST");
+                    return Err("WIRE.BAD_REQUEST");
                 }
                 let run = submit(
                     &tx,
@@ -638,7 +641,7 @@ pub(crate) async fn handle(db: &mut Client, rt: &Runtime, facts: &Value, wire: I
                     text(body, "operation")?,
                     &body["input"],
                     text(body, "key")?,
-                    body["delayMs"].as_i64().ok_or("BAD_REQUEST")?,
+                    body["delayMs"].as_i64().ok_or("WIRE.BAD_REQUEST")?,
                     false,
                 )
                 .await?;
@@ -646,17 +649,17 @@ pub(crate) async fn handle(db: &mut Client, rt: &Runtime, facts: &Value, wire: I
             }
             "/jobs/status" | "/jobs/cancel" | "/jobs/result" => {
                 if !exact(body, &["id"]) {
-                    return Err("BAD_REQUEST");
+                    return Err("WIRE.BAD_REQUEST");
                 }
                 let id = text(body, "id")?;
                 if path == "/jobs/result" {
-                    let run = store.status(&tx, id, &owner).await.map_err(store_error)?.ok_or("NOT_FOUND")?;
+                    let run = store.status(&tx, id, &owner).await.map_err(store_error)?.ok_or("WIRE.NOT_FOUND")?;
                     let result = store.result(&tx, id, &owner).await.map_err(store_error)?.ok_or(if run.state == "SUCCEEDED" {
-                        "RESULT_EXPIRED"
+                        "WIRE.RESULT_EXPIRED"
                     } else if run.state == "FAILED" {
-                        "JOB_FAILED"
+                        "WIRE.JOB_FAILED"
                     } else {
-                        "JOB_NOT_READY"
+                        "WIRE.JOB_NOT_READY"
                     })?;
                     let row = tx
                         .query_one(
@@ -668,14 +671,14 @@ pub(crate) async fn handle(db: &mut Client, rt: &Runtime, facts: &Value, wire: I
                     if row.get::<_, String>(1) != rt.deployment.as_ref().unwrap().expected_digest
                         || row.get::<_, String>(2) != spike_v5_sdk::contract_fingerprint_with_all_extensions(facts, wire)
                     {
-                        return Err("DEPLOYMENT_CHANGED");
+                        return Err("WIRE.DEPLOYMENT_CHANGED");
                     }
                     authorize(&tx, facts, &result.operation, &row.get::<_, Value>(0), grant.actor_id, wire).await?;
                     json!({"ok":true,"id":result.id,"operation":result.operation,"output":result.output})
                 } else {
                     let mut run = if path == "/jobs/cancel" { store.cancel(&tx, id, &owner).await } else { store.status(&tx, id, &owner).await }
                         .map_err(store_error)?
-                        .ok_or("NOT_FOUND")?;
+                        .ok_or("WIRE.NOT_FOUND")?;
                     if run.state == "FAILED" || run.state == "CANCELLED" {
                         let pending: bool = tx
                             .query_one(
@@ -689,10 +692,10 @@ pub(crate) async fn handle(db: &mut Client, rt: &Runtime, facts: &Value, wire: I
                             .get(0);
                         if pending {
                             run.error = Some(
-                                if path == "/jobs/cancel" || run.error.as_deref() == Some("CANCELLATION_UNCONFIRMED") {
-                                    "CANCELLATION_UNCONFIRMED"
+                                if path == "/jobs/cancel" || run.error.as_deref() == Some("WIRE.CANCELLATION_UNCONFIRMED") {
+                                    "WIRE.CANCELLATION_UNCONFIRMED"
                                 } else {
-                                    "EFFECT_UNKNOWN"
+                                    "WIRE.EFFECT_UNKNOWN"
                                 }
                                 .into(),
                             );
@@ -704,27 +707,27 @@ pub(crate) async fn handle(db: &mut Client, rt: &Runtime, facts: &Value, wire: I
             }
             "/files/put" => {
                 if !rt.enable_file_uploads {
-                    return Err("NOT_EXPOSED");
+                    return Err("WIRE.NOT_EXPOSED");
                 }
                 if !exact(body, &["bucket", "name", "mediaType", "base64"]) {
-                    return Err("BAD_REQUEST");
+                    return Err("WIRE.BAD_REQUEST");
                 }
                 let bucket = text(body, "bucket")?;
                 if !allowed(facts, "files", bucket) {
-                    return Err("NOT_EXPOSED");
+                    return Err("WIRE.NOT_EXPOSED");
                 }
                 let file = put_file(&tx, s, &owner, bucket, body, None, "").await?;
                 json!({"ok":true,"file":file_json(&file)})
             }
             "/files/get" | "/files/delete" => {
                 if !exact(body, &["id"]) {
-                    return Err("BAD_REQUEST");
+                    return Err("WIRE.BAD_REQUEST");
                 }
-                let id = text(body, "id")?.parse().map_err(|_| "BAD_VALUE")?;
+                let id = text(body, "id")?.parse().map_err(|_| "WIRE.BAD_VALUE")?;
                 let files = aip_execution::files::Store::new(s).map_err(db_error)?;
-                let file = files.get(&tx, &owner, &id).await.map_err(db_error)?.ok_or("NOT_FOUND")?;
+                let file = files.get(&tx, &owner, &id).await.map_err(db_error)?.ok_or("WIRE.NOT_FOUND")?;
                 if !allowed(facts, "files", &file.bucket) {
-                    return Err("NOT_EXPOSED");
+                    return Err("WIRE.NOT_EXPOSED");
                 }
                 if path == "/files/delete" {
                     files.delete(&tx, &owner, &id).await.map_err(db_error)?;
@@ -735,50 +738,50 @@ pub(crate) async fn handle(db: &mut Client, rt: &Runtime, facts: &Value, wire: I
             }
             "/files/mount-get" => {
                 if !exact(body, &["id", "bucket"]) {
-                    return Err("BAD_REQUEST");
+                    return Err("WIRE.BAD_REQUEST");
                 }
                 let bucket = text(body, "bucket")?;
                 if !allowed(facts, "files", bucket) {
-                    return Err("NOT_EXPOSED");
+                    return Err("WIRE.NOT_EXPOSED");
                 }
-                let id = text(body, "id")?.parse().map_err(|_| "BAD_VALUE")?;
+                let id = text(body, "id")?.parse().map_err(|_| "WIRE.BAD_VALUE")?;
                 let file = aip_execution::files::Store::new(s)
                     .map_err(db_error)?
                     .get_in_bucket(&tx, &owner, &id, bucket)
                     .await
                     .map_err(db_error)?
-                    .ok_or("NOT_FOUND")?;
+                    .ok_or("WIRE.NOT_FOUND")?;
                 json!({"ok":true,"file":file_json(&file),"base64":B64.encode(&file.bytes)})
             }
             "/events/read" => {
                 if !exact(body, &["stream", "after", "limit"]) {
-                    return Err("BAD_REQUEST");
+                    return Err("WIRE.BAD_REQUEST");
                 }
                 let stream = text(body, "stream")?;
                 if !allowed(facts, "events", stream) {
-                    return Err("NOT_EXPOSED");
+                    return Err("WIRE.NOT_EXPOSED");
                 }
-                let limit = body["limit"].as_i64().filter(|n| (1..=100).contains(n)).ok_or("BAD_VALUE")?;
+                let limit = body["limit"].as_i64().filter(|n| (1..=100).contains(n)).ok_or("WIRE.BAD_VALUE")?;
                 let page =
                     aip_execution::events::Store::new(s).map_err(db_error)?.scan(&tx, &owner, stream, text(body, "after")?, limit).await.map_err(
                         |e| match e {
-                            aip_execution::events::Error::CursorExpired => "CURSOR_EXPIRED",
-                            aip_execution::events::Error::InvalidEvent => "BAD_VALUE",
-                            _ => "DB_UNAVAILABLE",
+                            aip_execution::events::Error::CursorExpired => "WIRE.CURSOR_EXPIRED",
+                            aip_execution::events::Error::InvalidEvent => "WIRE.BAD_VALUE",
+                            _ => "WIRE.DB_UNAVAILABLE",
                         },
                     )?;
                 json!({"ok":true,"events":page.events.iter().map(|e|json!({"cursor":e.cursor,"payload":e.payload})).collect::<Vec<_>>(),"cursor":page.next_cursor})
             }
             path if path.starts_with("/messages/") => crate::messaging_transport::handle(&tx, rt, facts, s, &owner, path, body).await?,
-            _ => return Err("NOT_FOUND"),
+            _ => return Err("WIRE.NOT_FOUND"),
         };
-        tx.commit().await.map_err(|_| "COMMIT_UNKNOWN")?;
+        tx.commit().await.map_err(|_| "WIRE.COMMIT_UNKNOWN")?;
         Ok(response)
     };
     match tokio::time::timeout(Duration::from_secs(5), operation).await {
         Ok(Ok(response)) => response,
         Ok(Err(code)) => json!({"ok":false,"code":code}),
-        Err(_) => json!({"ok":false,"code":"COMMIT_UNKNOWN"}),
+        Err(_) => json!({"ok":false,"code":"WIRE.COMMIT_UNKNOWN"}),
     }
 }
 
@@ -805,10 +808,10 @@ async fn collect_expired(db: &mut Client, s: &str, cleanup_messages: bool, clean
     .map_err(db_error)?;
     if cleanup_messages {
         aip_execution::messages::MessageStore::new(s)
-            .map_err(|_| "DB_UNAVAILABLE")?
+            .map_err(|_| "WIRE.DB_UNAVAILABLE")?
             .cleanup_expired(&tx, 1000)
             .await
-            .map_err(|_| "DB_UNAVAILABLE")?;
+            .map_err(|_| "WIRE.DB_UNAVAILABLE")?;
     }
     // Trigger principals have no retained-history cap, so tombstones must be removed at least as fast as triggers create them.
     // A sweep runs every minute; several batches per sweep keep up with far more than the former 100 jobs per minute.
@@ -834,7 +837,7 @@ async fn collect_expired(db: &mut Client, s: &str, cleanup_messages: bool, clean
     }
     if cleanup_outbox {
         // A dispatch row means the relay already turned the outbox row into a job; both are history once the job record is gone.
-        let infra = aip_execution::infrastructure_schema(s).map_err(|_| "BAD_CONFIGURATION")?;
+        let infra = aip_execution::infrastructure_schema(s).map_err(|_| "WIRE.BAD_CONFIGURATION")?;
         for _ in 0..GC_BATCHES_PER_SWEEP {
             let removed = tx
                 .execute(
@@ -912,17 +915,17 @@ pub(crate) async fn supervisor(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire
                 Err(_) => break,
             };
             let admission = async {
-                let grant: DurablePrincipal = serde_json::from_value(lease.grant.clone()).map_err(|_| "UNAUTHENTICATED")?;
+                let grant: DurablePrincipal = serde_json::from_value(lease.grant.clone()).map_err(|_| "WIRE.UNAUTHENTICATED")?;
                 guard(&tx, &rt, &grant).await?;
                 if lease.deployment != rt.deployment.as_ref().unwrap().expected_digest || lease.implementation != bundle(&rt)? {
-                    return Err("IMPLEMENTATION_CHANGED");
+                    return Err("WIRE.IMPLEMENTATION_CHANGED");
                 }
                 authorize(&tx, &facts, &lease.operation, &lease.input, lease.actor, wire).await?;
                 Ok(())
             }
             .await;
             if let Err(code) = admission {
-                let update = if code == "DB_UNAVAILABLE" { store.retry(&tx, &lease, code).await } else { store.fail(&tx, &lease, code).await };
+                let update = if code == "WIRE.DB_UNAVAILABLE" { store.retry(&tx, &lease, code).await } else { store.fail(&tx, &lease, code).await };
                 if update.is_err() || tx.commit().await.is_err() {
                     eprintln!("{{\"event\":\"job_admission_failed\"}}");
                     break;
@@ -957,7 +960,7 @@ async fn execute(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire, lease: Lease
         guard(&tx, &rt, &grant).await?;
         locked_lease(&tx, &rt, &lease).await?;
         if lease.deployment != rt.deployment.as_ref().unwrap().expected_digest || lease.implementation != bundle(&rt)? {
-            return Err("IMPLEMENTATION_CHANGED");
+            return Err("WIRE.IMPLEMENTATION_CHANGED");
         }
         let caller = authorize(&tx, &facts, &lease.operation, &lease.input, lease.actor, wire).await?;
         tx.commit().await.map_err(db_error)?;
@@ -969,7 +972,7 @@ async fn execute(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire, lease: Lease
         Ok(c) => c,
         Err(code) => {
             if let Ok(db) = connect(&rt).await {
-                let result = if code == "DB_UNAVAILABLE" { store.retry(&*db, &lease, code).await } else { store.fail(&*db, &lease, code).await };
+                let result = if code == "WIRE.DB_UNAVAILABLE" { store.retry(&*db, &lease, code).await } else { store.fail(&*db, &lease, code).await };
                 if result.is_ok() {
                     let _ = db.release().await;
                 }
@@ -984,7 +987,7 @@ async fn execute(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire, lease: Lease
             Ok(w) => w,
             Err(_) => {
                 if let Ok(db) = connect(&rt).await {
-                    if store.retry(&*db, &lease, "WORKER_FAILED").await.is_ok() {
+                    if store.retry(&*db, &lease, "WIRE.WORKER_FAILED").await.is_ok() {
                         let _ = db.release().await;
                     }
                 }
@@ -1015,7 +1018,7 @@ async fn execute(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire, lease: Lease
                 let tx = db.transaction().await.map_err(db_error)?;
                 guard(&tx, &rt, &grant).await?;
                 if !store.heartbeat(&tx, &lease).await.map_err(store_error)? {
-                    return Err::<(), _>("LEASE_LOST");
+                    return Err::<(), _>("WIRE.LEASE_LOST");
                 }
                 tx.commit().await.map_err(db_error)?;
                 db.release().await.map_err(db_error)?;
@@ -1025,7 +1028,7 @@ async fn execute(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire, lease: Lease
         // Poll both futures while heartbeat waits for a capability transaction's row lock.
         tokio::select! {
             result=&mut future=>result.map_err(|e| { retry_after_ms = spike_v4_worker::retry_after_ms(&e); e.code }),
-            result=&mut monitor=>result.and(Err("LEASE_LOST")),
+            result=&mut monitor=>result.and(Err("WIRE.LEASE_LOST")),
         }
     };
     worker.stop().await;
@@ -1055,7 +1058,7 @@ async fn execute(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire, lease: Lease
                 .await;
             let updated = match pending {
                 Ok(row) if !row.get::<_, bool>(0) => store.acknowledge_cancel(&tx, &lease).await,
-                Ok(_) => store.reject_cancel(&tx, &lease, "CANCELLATION_UNCONFIRMED").await,
+                Ok(_) => store.reject_cancel(&tx, &lease, "WIRE.CANCELLATION_UNCONFIRMED").await,
                 Err(_) => return,
             };
             if !matches!(updated, Ok(true)) {
@@ -1071,7 +1074,7 @@ async fn execute(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire, lease: Lease
         guard(&tx, &rt, &grant).await?;
         locked_lease(&tx, &rt, &lease).await?;
         if bundle(&rt)? != lease.implementation {
-            return Err("IMPLEMENTATION_CHANGED");
+            return Err("WIRE.IMPLEMENTATION_CHANGED");
         }
         authorize(&tx, &facts, &lease.operation, &lease.input, lease.actor, wire).await?;
         Ok(())
@@ -1085,7 +1088,7 @@ async fn execute(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire, lease: Lease
             .map_err(db_error)?
             .get(0);
         if pending {
-            return Err("EFFECT_UNKNOWN");
+            return Err("WIRE.EFFECT_UNKNOWN");
         }
         result
     }
@@ -1132,10 +1135,10 @@ impl spike_v4_worker::JobHost for Host {
 impl Host {
     async fn dispatch(&mut self, op: &str, name: &str, input: &Value) -> Result<Value> {
         if self.depth > 8 || self.budget.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= 64 {
-            return Err("COST_EXCEEDED");
+            return Err("WIRE.COST_EXCEEDED");
         }
         if !self.capabilities.contains(&spike_v4_worker::job_capability(op, name)) {
-            return Err("ACCESS_NOT_DECLARED");
+            return Err("WIRE.ACCESS_NOT_DECLARED");
         }
         let read_only = op == "read" || op == "aggregate" || op == "files" && input["action"] == "get";
         let suffix = if read_only {
@@ -1143,7 +1146,7 @@ impl Host {
         } else {
             let key = text(input, "key")?;
             if !crate::valid_key(key) {
-                return Err("BAD_VALUE");
+                return Err("WIRE.BAD_VALUE");
             }
             spike_v1_fixture::digest(&json!(key))
         };
@@ -1156,7 +1159,7 @@ impl Host {
         locked_lease(&tx, &self.rt, &self.lease).await?;
         let caller = authorize(&tx, &self.facts, &self.lease.operation, &self.lease.input, self.lease.actor, self.wire).await?;
         if bundle(&self.rt)? != self.lease.implementation {
-            return Err("IMPLEMENTATION_CHANGED");
+            return Err("WIRE.IMPLEMENTATION_CHANGED");
         }
         if op == "read" || op == "aggregate" {
             // Reads have no effect journal. They run as the job principal with the same planner and budgets as /read.
@@ -1169,14 +1172,14 @@ impl Host {
             authorize(&tx, &self.facts, name, &input["input"], self.lease.actor, self.wire).await?;
         }
         if op == "files" && text(input, "action")? == "get" {
-            let id = text(input, "id")?.parse().map_err(|_| "BAD_VALUE")?;
+            let id = text(input, "id")?.parse().map_err(|_| "WIRE.BAD_VALUE")?;
             let f = aip_execution::files::Store::new(&s)
                 .map_err(db_error)?
                 .get(&tx, &self.lease.owner, &id)
                 .await
                 .map_err(db_error)?
                 .filter(|f| f.bucket == name)
-                .ok_or("NOT_FOUND")?;
+                .ok_or("WIRE.NOT_FOUND")?;
             let output = json!({"file":file_json(&f),"base64":B64.encode(&f.bytes)});
             tx.commit().await.map_err(db_error)?;
             db.release().await.map_err(db_error)?;
@@ -1191,7 +1194,7 @@ impl Host {
             .map_err(db_error)?
         {
             if row.get::<_, String>(0) != digest {
-                return Err("IDEMPOTENCY_MISMATCH");
+                return Err("WIRE.IDEMPOTENCY_MISMATCH");
             }
             if row.get::<_, String>(1) == "SUCCEEDED" {
                 let output = row.get(2);
@@ -1205,7 +1208,7 @@ impl Host {
             }
             // A webhook subscriber dedupes on webhook-id, so a delivery whose outcome was lost is sent again.
             if op == "http" && !self.rt.broker.as_ref().is_some_and(|broker| broker.is_webhook(name)) {
-                return Err("EFFECT_UNKNOWN");
+                return Err("WIRE.EFFECT_UNKNOWN");
             }
         }
         tx.execute(
@@ -1245,7 +1248,7 @@ impl Host {
             }
             "messages" => {
                 if !self.rt.infrastructure.messaging {
-                    return Err("NOT_EXPOSED");
+                    return Err("WIRE.NOT_EXPOSED");
                 }
                 let key = spike_v1_fixture::digest(&json!([self.lease.run_id.to_string(), self.prefix, text(input, "key")?]));
                 crate::messaging_transport::publish(&tx, &s, &self.lease.owner, name, &key, input["payload"].clone(), 0, 86_400_000, 3).await?
@@ -1258,30 +1261,35 @@ impl Host {
                         file_json(&file)
                     }
                     "get" => {
-                        let id = text(input, "id")?.parse().map_err(|_| "BAD_VALUE")?;
-                        let f = files.get(&tx, &self.lease.owner, &id).await.map_err(db_error)?.filter(|f| f.bucket == name).ok_or("NOT_FOUND")?;
+                        let id = text(input, "id")?.parse().map_err(|_| "WIRE.BAD_VALUE")?;
+                        let f =
+                            files.get(&tx, &self.lease.owner, &id).await.map_err(db_error)?.filter(|f| f.bucket == name).ok_or("WIRE.NOT_FOUND")?;
                         json!({"file":file_json(&f),"base64":B64.encode(&f.bytes)})
                     }
-                    _ => return Err("BAD_REQUEST"),
+                    _ => return Err("WIRE.BAD_REQUEST"),
                 }
             }
             "events" => {
                 let key = text(input, "key")?;
                 if !crate::valid_key(key) {
-                    return Err("BAD_VALUE");
+                    return Err("WIRE.BAD_VALUE");
                 }
                 let key = spike_v1_fixture::digest(&json!([self.lease.run_id.to_string(), self.prefix, key]));
                 let cursor = aip_execution::events::Store::new(&s)
                     .map_err(db_error)?
                     .publish_in(&tx, &self.lease.owner, name, &key, input["payload"].clone())
                     .await
-                    .map_err(
-                        |e| if matches!(e, aip_execution::events::Error::IdempotencyConflict) { "IDEMPOTENCY_MISMATCH" } else { "EVENT_INVALID" },
-                    )?;
+                    .map_err(|e| {
+                        if matches!(e, aip_execution::events::Error::IdempotencyConflict) {
+                            "WIRE.IDEMPOTENCY_MISMATCH"
+                        } else {
+                            "WIRE.EVENT_INVALID"
+                        }
+                    })?;
                 json!({"cursor":cursor})
             }
             "http" => {
-                let broker = self.rt.broker.as_ref().ok_or("NOT_EXPOSED")?;
+                let broker = self.rt.broker.as_ref().ok_or("WIRE.NOT_EXPOSED")?;
                 let webhook = broker.is_webhook(name).then(|| text(input, "url")).transpose()?;
                 tx.commit().await.map_err(db_error)?;
                 db.release().await.map_err(db_error)?;
@@ -1292,16 +1300,16 @@ impl Host {
                     let id = format!("msg_{}", spike_v1_fixture::digest(&json!([self.lease.run_id.to_string(), effect_key])));
                     match broker.deliver_webhook(name, url, &input["input"], &id).await {
                         Ok(status) if (200..300).contains(&status) => Ok(json!({"status":status,"id":id})),
-                        Err(E::DestinationRejected) => Err(Some("DESTINATION_REJECTED")),
-                        Err(E::RequestTooLarge) => Err(Some("BAD_VALUE")),
-                        Ok(_) | Err(_) => Err(Some("DELIVERY_FAILED")),
+                        Err(E::DestinationRejected) => Err(Some("WIRE.DESTINATION_REJECTED")),
+                        Err(E::RequestTooLarge) => Err(Some("WIRE.BAD_VALUE")),
+                        Ok(_) | Err(_) => Err(Some("WIRE.DELIVERY_FAILED")),
                     }
                 } else {
                     let key = format!("{}:{effect_key}", self.lease.run_id);
                     match broker.call_with_key(name, &input["input"], Some(&key)).await {
                         Ok(r) => Ok(json!({"status":r.status,"body":r.body,"retryAfterSeconds":r.retry_after_seconds})),
-                        Err(aip_execution::integrations::Error::CircuitOpen) => Err(Some("CIRCUIT_OPEN")),
-                        Err(aip_execution::integrations::Error::TokenUnavailable) => Err(Some("INTEGRATION_AUTH_FAILED")),
+                        Err(aip_execution::integrations::Error::CircuitOpen) => Err(Some("WIRE.CIRCUIT_OPEN")),
+                        Err(aip_execution::integrations::Error::TokenUnavailable) => Err(Some("WIRE.INTEGRATION_AUTH_FAILED")),
                         Err(_) => Err(None),
                     }
                 };
@@ -1332,7 +1340,7 @@ impl Host {
                         .await
                         .map_err(db_error)?;
                         tx.commit().await.map_err(db_error)?;
-                        return Err("EFFECT_UNKNOWN");
+                        return Err("WIRE.EFFECT_UNKNOWN");
                     }
                 };
                 tx.execute(
@@ -1347,14 +1355,14 @@ impl Host {
             }
             "jobs" => {
                 if self.depth >= 8 {
-                    return Err("COST_EXCEEDED");
+                    return Err("WIRE.COST_EXCEEDED");
                 }
-                let child_caps = self.facts["operations"][name]["access"].as_object().ok_or("NOT_EXPOSED")?.keys().cloned().collect::<Vec<_>>();
+                let child_caps = self.facts["operations"][name]["access"].as_object().ok_or("WIRE.NOT_EXPOSED")?.keys().cloned().collect::<Vec<_>>();
                 if child_caps.iter().any(|cap| !self.capabilities.contains(cap)) {
-                    return Err("ACCESS_NOT_DECLARED");
+                    return Err("WIRE.ACCESS_NOT_DECLARED");
                 }
                 if !crate::valid_key(text(input, "key")?) {
-                    return Err("BAD_VALUE");
+                    return Err("WIRE.BAD_VALUE");
                 }
                 let caller = authorize(&tx, &self.facts, name, &input["input"], self.lease.actor, self.wire).await?;
                 tx.commit().await.map_err(db_error)?;
@@ -1366,7 +1374,7 @@ impl Host {
                     self.rt.infrastructure.worker_launch.clone(),
                 )
                 .await
-                .map_err(|_| "WORKER_FAILED")?;
+                .map_err(|_| "WIRE.WORKER_FAILED")?;
                 let mut child = Host {
                     rt: self.rt.clone(),
                     facts: self.facts.clone(),
@@ -1403,7 +1411,7 @@ impl Host {
                 db.release().await.map_err(db_error)?;
                 return out.map_err(|e| data_error(e.code));
             }
-            _ => return Err("ACCESS_NOT_DECLARED"),
+            _ => return Err("WIRE.ACCESS_NOT_DECLARED"),
         };
         tx.execute(
             &format!("UPDATE {s}.aip_effects SET state='SUCCEEDED',result=$3 WHERE run_id=$1 AND effect_key=$2"),
@@ -1425,8 +1433,8 @@ impl Host {
     /// Transient failures leave no journal row because the rolled-back transaction changed nothing.
     async fn reject_data_effect(&self, db: crate::pool::PooledConnection, effect_key: &str, digest: &str, code: &'static str) -> Result<Value> {
         drop(db);
-        if matches!(code, "CONFLICT" | "DEADLINE_EXCEEDED" | "INTERNAL" | "DB_UNAVAILABLE") {
-            return Err(if code == "CONFLICT" { "CONFLICT" } else { "DB_UNAVAILABLE" });
+        if matches!(code, "WIRE.CONFLICT" | "WIRE.DEADLINE_EXCEEDED" | "WIRE.INTERNAL" | "WIRE.DB_UNAVAILABLE") {
+            return Err(if code == "WIRE.CONFLICT" { "WIRE.CONFLICT" } else { "WIRE.DB_UNAVAILABLE" });
         }
         let s = schema(&self.rt)?.to_string();
         let mut db = connect(&self.rt).await?;
@@ -1450,19 +1458,19 @@ impl Host {
 async fn data_read(db: &mut Client, facts: &Value, op: &str, name: &str, input: &Value, caller: &Caller, wire: IdWire) -> Result<Value> {
     let request = if op == "aggregate" {
         if !input.is_object() {
-            return Err("BAD_VALUE");
+            return Err("WIRE.BAD_VALUE");
         }
         json!({"aggregate": name, "input": input})
     } else {
         if input["read"].as_str() != Some(name) {
-            return Err("BAD_VALUE");
+            return Err("WIRE.BAD_VALUE");
         }
         input.clone()
     };
     let plan = spike_v2_read::plan::plan_read_with_wire(facts, &request, caller, wire).map_err(|e| data_error(e.code))?;
     let rows = match tokio::time::timeout(Duration::from_millis(plan.deadline_ms), spike_v2_read::execute(db, &plan)).await {
         Ok(rows) => rows.map_err(|e| data_error(e.code))?,
-        Err(_) => return Err("DEADLINE_EXCEEDED"),
+        Err(_) => return Err("WIRE.DEADLINE_EXCEEDED"),
     };
     if op == "aggregate" {
         return Ok(json!({"value": rows.first().cloned().unwrap_or(Value::Null)}));
@@ -1566,7 +1574,7 @@ mod safety_tests {
         db.batch_execute(&format!("CREATE SCHEMA {s}; {}", aip_execution::files::Store::new(&s).unwrap().ddl())).await.unwrap();
         db.batch_execute(&format!("INSERT INTO {s}.aip_files(handle,owner,bucket,name,media_type,content) SELECT md5(i::text)::uuid,'owner','reports',i::text,'text/plain',''::bytea FROM generate_series(1,100) i")).await.unwrap();
         let tx = db.transaction().await.unwrap();
-        assert_eq!(file_budget(&tx, &s, "owner", "reports", "new", 1, "").await, Err("QUOTA_EXCEEDED"));
+        assert_eq!(file_budget(&tx, &s, "owner", "reports", "new", 1, "").await, Err("WIRE.QUOTA_EXCEEDED"));
         assert!(file_budget(&tx, &s, "owner", "reports", "1", 1, "").await.is_ok(), "a replay doesn't consume additional capacity");
         tx.commit().await.unwrap();
         db.batch_execute(&format!("UPDATE {s}.aip_files SET expires_at=clock_timestamp()-interval '1 second'")).await.unwrap();

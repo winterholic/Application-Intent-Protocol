@@ -26,14 +26,14 @@ async fn legacy_plan(db: &impl GenericClient, schema: &str, facts: &Value, wire:
     let (mut statements, _) = creation(schema, facts)?;
     statements.push(legacy_idempotency(schema));
     if digest(&json!(statements)) != saved_ddl {
-        return Err(err("SCHEMA_MISMATCH", "제출한 정의와 prototype 초기화 구조가 다름"));
+        return Err(err("WIRE.SCHEMA_MISMATCH", "제출한 정의와 prototype 초기화 구조가 다름"));
     }
     db.batch_execute("SET LOCAL search_path TO pg_catalog").await.map_err(|_| err("DB_CATALOG", "catalog 설정 실패"))?;
     let text: String = db.query_one(LEGACY_CATALOG, &[&schema]).await.map_err(|_| err("DB_CATALOG", "prototype 구조 조회 실패"))?.get(0);
     let legacy: Value = serde_json::from_str(&text).map_err(|_| err("DB_CATALOG", "prototype 구조 형식 오류"))?;
     let actual = digest(&json!({"format":"prototype-catalog-v1","catalog":legacy}));
     if actual != saved_structure {
-        return Err(err("SCHEMA_MISMATCH", "prototype 초기화 이후 실제 구조가 달라짐"));
+        return Err(err("WIRE.SCHEMA_MISMATCH", "prototype 초기화 이후 실제 구조가 달라짐"));
     }
     if let Some(wire) = wire {
         validate_existing_wire(db, schema, wire).await?;

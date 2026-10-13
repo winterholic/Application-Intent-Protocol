@@ -29,7 +29,7 @@ fn only_the_not_exists_writes_are_advised() {
     anchors.sort();
     assert_eq!(
         anchors,
-        vec![("ADVISORY_ABSENCE_POLICY", "create:Booking"), ("ADVISORY_ABSENCE_POLICY", "transition:Booking.confirm")],
+        vec![("DEF.ADVISORY_ABSENCE_POLICY", "create:Booking"), ("DEF.ADVISORY_ABSENCE_POLICY", "transition:Booking.confirm")],
         "{anchors:?}"
     );
     assert!(on.advisories[0].msg.contains("unique"), "the advice names the cheaper tools: {}", on.advisories[0].msg);

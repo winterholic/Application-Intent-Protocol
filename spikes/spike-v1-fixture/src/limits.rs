@@ -9,12 +9,12 @@ pub(crate) const MAX_LITERAL_DEPTH: usize = 64;
 
 pub(crate) fn check_source(src: &str) -> Result<(), Diag> {
     if src.len() > MAX_SOURCE_BYTES {
-        Err(Diag::new("SOURCE_TOO_LARGE", format!("정의가 {} byte hard ceiling을 넘음", MAX_SOURCE_BYTES), Span::default()))
+        Err(Diag::new("DEF.SOURCE_TOO_LARGE", format!("정의가 {} byte hard ceiling을 넘음", MAX_SOURCE_BYTES), Span::default()))
     } else {
         Ok(())
     }
 }
 
 pub(crate) fn token_limit(span: Span) -> Diag {
-    Diag::new("TOKEN_LIMIT", format!("정의가 {} token hard ceiling을 넘음", MAX_TOKENS), span)
+    Diag::new("DEF.TOKEN_LIMIT", format!("정의가 {} token hard ceiling을 넘음", MAX_TOKENS), span)
 }

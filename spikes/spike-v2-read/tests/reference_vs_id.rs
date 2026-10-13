@@ -13,5 +13,5 @@ fn a_reference_is_a_foreign_key_and_the_id_spelling_is_rejected() {
     assert!(note.contains("club_id bigint REFERENCES"), "{note}");
 
     let errs = load_str(&format!("{BASE}resource Note {{ fields {{ id: Id; club: Club.Id }} }}\n"), Form::A).err().expect("rejected");
-    assert!(errs.iter().any(|d| d.code == "ID_FIELD_NEEDS_REFERENCE"), "{errs:?}");
+    assert!(errs.iter().any(|d| d.code == "DEF.ID_FIELD_NEEDS_REFERENCE"), "{errs:?}");
 }

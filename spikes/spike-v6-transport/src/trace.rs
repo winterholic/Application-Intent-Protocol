@@ -337,14 +337,14 @@ mod tests {
     fn the_line_has_the_outcome_and_no_payload() {
         let mut t = Trace::default();
         t.begin("POST", "/apply?token=abc");
-        t.record("200 OK", "{\"code\":\"BAD_VALUE\",\"msg\":\"password=hunter2\",\"ok\":false}");
+        t.record("200 OK", "{\"code\":\"WIRE.BAD_VALUE\",\"msg\":\"password=hunter2\",\"ok\":false}");
         let line = t.line();
         let v: serde_json::Value = serde_json::from_str(&line).expect("one JSON object");
         assert_eq!((v["event"].as_str(), v["method"].as_str(), v["route"].as_str()), (Some("request"), Some("POST"), Some("apply")));
-        assert_eq!((v["status"].as_u64(), v["code"].as_str()), (Some(200), Some("BAD_VALUE")));
+        assert_eq!((v["status"].as_u64(), v["code"].as_str()), (Some(200), Some("WIRE.BAD_VALUE")));
         assert!(!line.contains("hunter2") && !line.contains("abc"), "{line}");
         t.record("200 OK", "{\"ok\":true}");
-        assert!(t.line().contains("\"status\":200") && !t.line().contains("BAD_VALUE"), "a later reply replaces the earlier outcome");
+        assert!(t.line().contains("\"status\":200") && !t.line().contains("WIRE.BAD_VALUE"), "a later reply replaces the earlier outcome");
     }
 
     /// Writes `head` and then `chunks` through a tap over a tiny pipe (so the longer head needs several writes) and
@@ -386,11 +386,11 @@ mod tests {
     #[tokio::test]
     async fn a_cors_reply_exposes_the_id_and_a_json_failure_in_the_head_write_gives_its_code() {
         let head =
-            "HTTP/1.1 404 Not Found\r\naccess-control-allow-origin: http://a.example\r\nvary: Origin\r\n\r\n{\"ok\":false,\"code\":\"NOT_FOUND\"}";
+            "HTTP/1.1 404 Not Found\r\naccess-control-allow-origin: http://a.example\r\nvary: Origin\r\n\r\n{\"ok\":false,\"code\":\"WIRE.NOT_FOUND\"}";
         let (text, line) = through_tap(head, &[]).await;
         assert!(text.contains("\r\naccess-control-expose-headers: x-request-id\r\n"), "{text}");
         let v: serde_json::Value = serde_json::from_str(&line).expect("one JSON object");
-        assert_eq!((v["status"].as_u64(), v["code"].as_str()), (Some(404), Some("NOT_FOUND")));
+        assert_eq!((v["status"].as_u64(), v["code"].as_str()), (Some(404), Some("WIRE.NOT_FOUND")));
         let (plain, _) = through_tap("HTTP/1.1 200 OK\r\n\r\n", &[]).await;
         assert!(!plain.contains("access-control-expose-headers"), "{plain}");
     }

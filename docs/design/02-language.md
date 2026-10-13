@@ -135,7 +135,7 @@ command Unregister() {
 
 ### 3.4 존재 여부 노출 → 정책을 로딩 조건에 넣는다
 
-엔티티 타입 파라미터(`target: ClubMember`)는 "id를 받아 로딩"을 뜻한다. 로딩 SQL의 WHERE에 읽기 가시성(`visible to`)과 `allow` 중 행 의존 부분이 들어간다. 볼 수 없는 행은 없는 행과 구분되지 않아 응답이 `NOT_FOUND`로 통일된다. 구분이 필요한 도메인은 `disclose existence`를 명시한다(위험한 쪽이 명시).
+엔티티 타입 파라미터(`target: ClubMember`)는 "id를 받아 로딩"을 뜻한다. 로딩 SQL의 WHERE에 읽기 가시성(`visible to`)과 `allow` 중 행 의존 부분이 들어간다. 볼 수 없는 행은 없는 행과 구분되지 않아 응답이 `WIRE.NOT_FOUND`로 통일된다. 구분이 필요한 도메인은 `disclose existence`를 명시한다(위험한 쪽이 명시).
 
 ### 3.5 교착(deadlock) → 컴파일러가 잠금 순서를 정한다
 

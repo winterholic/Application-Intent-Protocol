@@ -212,7 +212,7 @@ async fn probes(w: &World) -> Probes {
     ok(e, "CompleteTask", Some(&w.alice), json!({"task": done_a}), None).await;
     ok(e, "CompleteTask", Some(&w.bob), json!({"task": done_b}), None).await;
     let public = call(e, "ArchiveDoneTasks", None, json!({}), None).await.err().map(|x| x.code);
-    let internal_is_hidden = public.as_deref() == Some("AIP.REQUEST.UNKNOWN_INTENT");
+    let internal_is_hidden = public.as_deref() == Some("POC.REQUEST.UNKNOWN_INTENT");
     call_internal(e, "ArchiveDoneTasks").await.expect("internal cross tenant command");
     let archived = scalar(e, &format!("SELECT count(*) AS n FROM task WHERE id IN ('{done_a}', '{done_b}') AND status = 'ARCHIVED'")).await;
     let archived_both = archived == json!(2);
@@ -409,15 +409,15 @@ async fn background(w: &World) -> Background {
 }
 
 fn mismatch(r: &Result<(), AipError>) -> bool {
-    r.as_ref().err().is_some_and(|e| e.code == "AIP.TENANT.MISMATCH")
+    r.as_ref().err().is_some_and(|e| e.code == "POC.TENANT.MISMATCH")
 }
 
 fn mismatch_forbidden(r: &Result<(), AipError>) -> bool {
-    r.as_ref().err().is_some_and(|e| e.code == "AIP.AUTH.FORBIDDEN")
+    r.as_ref().err().is_some_and(|e| e.code == "POC.AUTH.FORBIDDEN")
 }
 
 fn mismatch_u64(r: &Result<u64, AipError>) -> bool {
-    r.as_ref().err().is_some_and(|e| e.code == "AIP.TENANT.MISMATCH")
+    r.as_ref().err().is_some_and(|e| e.code == "POC.TENANT.MISMATCH")
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -452,11 +452,11 @@ async fn saas_end_to_end() {
         let err = fails(e, intent, Some(&w.alice), input, k.as_deref()).await;
         let wants_not_found = intent != "OpenTaskCount";
         if wants_not_found {
-            assert_eq!(err.code, "AIP.NOT_FOUND", "{intent}: {err}");
+            assert_eq!(err.code, "POC.NOT_FOUND", "{intent}: {err}");
             assert_eq!(err.status(), 404);
         } else {
             // the root itself is not tenant-scoped and has no visibility rule: the membership check answers
-            assert_eq!(err.code, "AIP.AUTH.FORBIDDEN", "{intent}: {err}");
+            assert_eq!(err.code, "POC.AUTH.FORBIDDEN", "{intent}: {err}");
         }
     }
     assert_eq!((count(e, "project").await, count(e, "task").await, count(e, "comment").await), before);
@@ -493,7 +493,7 @@ async fn saas_end_to_end() {
     // --- work with no caller: every context writes one tenant
     let b = background(&w).await;
     assert!(!b.mixed_applied, "a payload that names two workspaces changes nothing");
-    assert!(b.mixed_error.as_deref().is_some_and(|m| m.contains("AIP.TENANT.MISMATCH")), "{:?}", b.mixed_error);
+    assert!(b.mixed_error.as_deref().is_some_and(|m| m.contains("POC.TENANT.MISMATCH")), "{:?}", b.mixed_error);
     assert!(b.same_ok, "the same payload naming one workspace is applied");
     assert!(b.cross_hook_ok, "a cross tenant handler may name both");
     assert!(b.events_ok, "events of two workspaces are each handled in their own");
@@ -514,10 +514,10 @@ async fn saas_end_to_end() {
     let tb = task(e, &w.carol, &w.pb, "other", None).await;
     let rows = count(e, "task").await;
     let err = fails(e, "CreateTask", Some(&w.carol), json!({"project": w.pa, "title": "mix", "parent": tb}), Some(&key())).await;
-    assert_eq!((err.code.as_str(), err.intent.as_str()), ("AIP.TENANT.MISMATCH", "CreateTask"));
+    assert_eq!((err.code.as_str(), err.intent.as_str()), ("POC.TENANT.MISMATCH", "CreateTask"));
     assert_eq!(count(e, "task").await, rows);
     let err = fails(e, "MoveTask", Some(&w.carol), json!({"task": ta, "project": w.pb}), None).await;
-    assert_eq!(err.code, "AIP.TENANT.MISMATCH");
+    assert_eq!(err.code, "POC.TENANT.MISMATCH");
     // within one tenant the same calls work
     let pa2 = project(e, &w.carol, &w.wa, "PA2").await;
     ok(e, "MoveTask", Some(&w.carol), json!({"task": ta, "project": pa2}), None).await;
@@ -627,7 +627,7 @@ async fn saas_negative_controls() {
     assert!(!b.mixed_applied, "the pin still refuses the mixed payload");
     assert!(b.sweep.is_err() && !b.swept, "without the per-item reset the sweep stops at its second tenant: {:?}", b.sweep);
     assert_ne!(b.welcome.0, "DONE", "without the per-item reset a job batch of two tenants fails");
-    assert!(b.welcome.1.as_deref().is_some_and(|m| m.contains("AIP.TENANT.MISMATCH")), "{:?}", b.welcome);
+    assert!(b.welcome.1.as_deref().is_some_and(|m| m.contains("POC.TENANT.MISMATCH")), "{:?}", b.welcome);
     assert_eq!(b.welcomed.0 + b.welcomed.1, 0, "the failed batch committed nothing");
 
     // both dropped: every probe is a working attack

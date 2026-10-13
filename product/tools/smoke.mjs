@@ -252,7 +252,7 @@ if (process.env.AIP_SMOKE_WORKER) {
   if (calculated.length !== 3) throw new Error("operation Unicode calculation failed");
   let rejected = false;
   try { await client.operation("textLength", { text: "" }); }
-  catch (error) { rejected = (error as {code?:string}).code === "BAD_VALUE"; }
+  catch (error) { rejected = (error as {code?:string}).code === "WIRE.BAD_VALUE"; }
   if (!rejected) throw new Error("operation range validation failed");
   operation = { length: calculated.length, invalidInputRejected: Number(rejected) };
   const jobInput = { text: "가😀A" };
@@ -368,7 +368,7 @@ async function runWire({ binary, wire, workRoot, tarball, worker, extensionDir }
       body: "{}",
     });
     const session = await response.json();
-    if (session.ok !== false || session.code !== "UNAUTHENTICATED") throw new SmokeFailure("revocation", "REVOCATION_ACCEPTED", "폐기한 JWT가 service endpoint에서 계속 허용됩니다");
+    if (session.ok !== false || session.code !== "WIRE.UNAUTHENTICATED") throw new SmokeFailure("revocation", "REVOCATION_ACCEPTED", "폐기한 JWT가 service endpoint에서 계속 허용됩니다");
     return {
       wire,
       results: {

@@ -62,7 +62,7 @@ async fn operator_lists_failed_jobs_without_payloads_and_redrives_only_safe_ones
     for (key, deployment) in [("current", deployment.as_str()), ("older", "older-deployment"), ("uncertain", deployment.as_str())] {
         let accepted = store.enqueue(&*db, run("boom", deployment, key)).await.unwrap();
         let lease = store.claim(&*db, "worker").await.unwrap().unwrap();
-        assert!(store.fail(&*db, &lease, "EXTENSION_ERROR").await.unwrap());
+        assert!(store.fail(&*db, &lease, "WIRE.EXTENSION_ERROR").await.unwrap());
         ids.push(accepted.id);
     }
     let effect_columns: Vec<String> = db
@@ -105,9 +105,9 @@ async fn operator_lists_failed_jobs_without_payloads_and_redrives_only_safe_ones
     assert!(cli(&config, Jobs::List { state: Some("DONE".into()), operation: None, limit: 50 }).await.is_err());
 
     let refused = cli(&config, Jobs::Retry { id: ids[1].clone() }).await.unwrap_err();
-    assert_eq!(refused["code"], "DEPLOYMENT_CHANGED", "{refused}");
+    assert_eq!(refused["code"], "WIRE.DEPLOYMENT_CHANGED", "{refused}");
     let refused = cli(&config, Jobs::Retry { id: ids[2].clone() }).await.unwrap_err();
-    assert_eq!(refused["code"], "EFFECT_UNKNOWN", "{refused}");
+    assert_eq!(refused["code"], "WIRE.EFFECT_UNKNOWN", "{refused}");
     let refused = cli(&config, Jobs::Retry { id: "not-a-uuid".into() }).await.unwrap_err();
     assert_eq!(refused["code"], "BAD_JOB_ID", "{refused}");
 

@@ -60,10 +60,10 @@ async fn configured_database_and_authentication_order_are_observable() {
     let server = listen_with_apply_contract(facts(), IdWire::DecimalString, "127.0.0.1:0".parse().unwrap(), BAD_DB.into()).await.unwrap();
     let token = server.keys.issue(1, 60);
     assert_eq!(post(server.address, "/session", &token, None, false).await["principal"]["actorId"], "1");
-    assert_eq!(post(server.address, "/read", "invalid", None, false).await["code"], "UNAUTHENTICATED");
-    assert_eq!(post(server.address, "/read", &token, Some(&"0".repeat(64)), false).await["code"], "CONTRACT_MISMATCH");
+    assert_eq!(post(server.address, "/read", "invalid", None, false).await["code"], "WIRE.UNAUTHENTICATED");
+    assert_eq!(post(server.address, "/read", &token, Some(&"0".repeat(64)), false).await["code"], "WIRE.CONTRACT_MISMATCH");
     let result = post(server.address, "/read", &token, None, true).await;
-    assert_eq!(result["code"], "DB_UNAVAILABLE", "configured failing database cannot silently use the default database");
+    assert_eq!(result["code"], "WIRE.DB_UNAVAILABLE", "configured failing database cannot silently use the default database");
     assert!(!result.to_string().contains("never_print_me"));
     server.shutdown().await.unwrap();
 }

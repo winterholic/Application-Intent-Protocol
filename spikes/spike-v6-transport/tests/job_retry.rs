@@ -181,11 +181,11 @@ async fn jobs_retry_on_request_within_the_configured_attempts_and_uncaught_error
         // Without a policy the default three attempts bound a job that keeps asking.
         assert_eq!(exhausted["run"]["state"], "FAILED", "{lang:?}: {exhausted}");
         assert_eq!(exhausted["run"]["attempt"], 3, "{lang:?}: {exhausted}");
-        assert_eq!(exhausted["run"]["error"], "RETRY_LATER", "{lang:?}: {exhausted}");
+        assert_eq!(exhausted["run"]["error"], "WIRE.RETRY_LATER", "{lang:?}: {exhausted}");
         // An uncaught error is final unless the operator opted the job in.
         assert_eq!(boom["run"]["state"], "FAILED", "{lang:?}: {boom}");
         assert_eq!(boom["run"]["attempt"], 1, "{lang:?}: {boom}");
-        assert_eq!(boom["run"]["error"], "EXTENSION_ERROR", "{lang:?}: {boom}");
+        assert_eq!(boom["run"]["error"], "WIRE.EXTENSION_ERROR", "{lang:?}: {boom}");
         assert_eq!(boom_retry["run"]["state"], "SUCCEEDED", "{lang:?}: {boom_retry}");
         let result = post(addr, "/jobs/result", &fp, json!({"id":retry_id})).await;
         assert_eq!(result["output"], json!({"attempt":2}), "{lang:?}: {result}");

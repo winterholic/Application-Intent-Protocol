@@ -312,7 +312,7 @@ mod tests {
         assert!(first.starts_with("HTTP/1.1 200 OK\r\n"));
         assert!(second.starts_with("HTTP/1.1 429 Too Many Requests\r\n"));
         assert!(second.contains("Retry-After: 60\r\n"));
-        assert!(second.contains("\"code\":\"RATE_LIMITED\""));
+        assert!(second.contains("\"code\":\"WIRE.RATE_LIMITED\""));
         server.shutdown().await.unwrap();
         let db = pool.acquire().await.unwrap();
         db.batch_execute(&format!(
@@ -371,7 +371,7 @@ mod tests {
         let second_reply = tokio::time::timeout(Duration::from_secs(2), second.next()).await.unwrap().unwrap().unwrap();
         let second_reply: serde_json::Value = serde_json::from_str(&second_reply.into_text().unwrap()).unwrap();
         assert_eq!(second_reply["type"], "error");
-        assert_eq!(second_reply["code"], "RATE_LIMITED");
+        assert_eq!(second_reply["code"], "WIRE.RATE_LIMITED");
         drop(second);
         server.shutdown().await.unwrap();
         let db = pool.acquire().await.unwrap();

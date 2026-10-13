@@ -24,11 +24,11 @@ __version__ = "0.1.0"
 _FINGERPRINT = re.compile(r"^[a-f0-9]{64}$")
 _ACTOR_ID = re.compile(r"^(0|[1-9][0-9]*|-[1-9][0-9]*)$")
 # A write whose commit could not be confirmed is resent with the same key and body.
-_UNSETTLED = {"COMMIT_UNKNOWN", "INTERNAL"}
+_UNSETTLED = {"WIRE.COMMIT_UNKNOWN", "WIRE.INTERNAL"}
 # Rejections before execution say nothing about whether an earlier attempt with the key committed.
 _NOT_EXECUTED = {
-    "TOKEN_EXPIRED", "UNAUTHENTICATED", "BAD_REQUEST", "PAYLOAD_TOO_LARGE", "NOT_FOUND", "CONTRACT_MISMATCH",
-    "ORIGIN_NOT_ALLOWED", "REQUEST_TIMEOUT", "DB_UNAVAILABLE", "WORKER_BUSY", "DEADLINE_EXCEEDED", "CONFLICT",
+    "WIRE.TOKEN_EXPIRED", "WIRE.UNAUTHENTICATED", "WIRE.BAD_REQUEST", "WIRE.PAYLOAD_TOO_LARGE", "WIRE.NOT_FOUND", "WIRE.CONTRACT_MISMATCH",
+    "WIRE.ORIGIN_NOT_ALLOWED", "WIRE.REQUEST_TIMEOUT", "WIRE.DB_UNAVAILABLE", "WIRE.WORKER_BUSY", "WIRE.DEADLINE_EXCEEDED", "WIRE.CONFLICT",
 }
 _CONTRACT_PATHS = {"/read", "/apply", "/status", "/extension", "/operation"}
 _MANAGED_PREFIXES = ("/jobs/", "/files/", "/events/read", "/messages/", "/rag/", "/objects/")
@@ -48,14 +48,14 @@ class WriteUnsettled(AipError):
     """The write may or may not have committed. Retry with `client.retry_pending()` or the same key."""
 
     def __init__(self, key: str, request: Any, request_id: Optional[str] = None):
-        super().__init__("WRITE_UNSETTLED", "쓰기 결과를 아직 확정하지 못함", request_id)
+        super().__init__("CLIENT.WRITE_UNSETTLED", "쓰기 결과를 아직 확정하지 못함", request_id)
         self.key = key
         self.request = request
 
 
 class ScopeConflict(AipError):
     def __init__(self) -> None:
-        super().__init__("SCOPE_CONFLICT", "다른 사용자 세션으로 미확정 쓰기를 이관할 수 없음")
+        super().__init__("CLIENT.SCOPE_CONFLICT", "다른 사용자 세션으로 미확정 쓰기를 이관할 수 없음")
 
 
 # A transport returns the body, or `(body, response_headers)` when it can also give the response headers.
@@ -100,7 +100,7 @@ def _check_url(url: str) -> None:
     # The service listens on loopback behind a TLS proxy; a bearer token must not cross a network in clear text.
     if parts.scheme == "http" and parts.hostname in _LOOPBACK_HOSTS:
         return
-    raise AipError("PROTOCOL_ERROR", "https 또는 loopback http 주소만 사용할 수 있음")
+    raise AipError("CLIENT.PROTOCOL_ERROR", "https 또는 loopback http 주소만 사용할 수 있음")
 
 
 def _urllib_transport(url: str, headers: dict, body: bytes, timeout: float) -> Any:
@@ -118,7 +118,7 @@ class Client:
     def __init__(self, base_url: str, token: Optional[str], contract_fingerprint: Optional[str] = None,
                  timeout: float = 30.0, transport: Optional[Transport] = None):
         if contract_fingerprint is not None and not _FINGERPRINT.match(contract_fingerprint):
-            raise AipError("PROTOCOL_ERROR", "계약 식별값 형식 오류")
+            raise AipError("CLIENT.PROTOCOL_ERROR", "계약 식별값 형식 오류")
         self._base = base_url.rstrip("/")
         self._token = token
         self._pinned = contract_fingerprint is not None
@@ -147,7 +147,7 @@ class Client:
         try:
             parsed = json.loads(raw)
         except (ValueError, TypeError):
-            raise AipError("PROTOCOL_ERROR", "JSON 응답이 아님", request_id) from None
+            raise AipError("CLIENT.PROTOCOL_ERROR", "JSON 응답이 아님", request_id) from None
         if isinstance(parsed, dict):
             parsed = _Body(parsed)
             parsed.request_id = request_id
@@ -157,9 +157,9 @@ class Client:
         if isinstance(response, dict) and response.get("ok") is False and isinstance(response.get("code"), str):
             raise AipError(response["code"], response.get("msg") if isinstance(response.get("msg"), str) else None, _request_id(response))
         if not isinstance(response, dict) or response.get("ok") is not True:
-            raise AipError("PROTOCOL_ERROR", "응답 형식 오류", _request_id(response))
+            raise AipError("CLIENT.PROTOCOL_ERROR", "응답 형식 오류", _request_id(response))
         if expect_contract and response.get("contractFingerprint") != self.contract_fingerprint:
-            raise AipError("CONTRACT_MISMATCH", "고정한 계약과 서버 계약이 다름", _request_id(response))
+            raise AipError("WIRE.CONTRACT_MISMATCH", "고정한 계약과 서버 계약이 다름", _request_id(response))
         return response
 
     def _describe(self, token: Optional[str]) -> Optional[str]:
@@ -168,7 +168,7 @@ class Client:
             raise AipError(response["code"], None, _request_id(response))
         actor = (response.get("principal") or {}).get("actorId") if isinstance(response, dict) else None
         if response.get("ok") is not True or (token and not (isinstance(actor, str) and _ACTOR_ID.match(actor))):
-            raise AipError("PROTOCOL_ERROR", "세션 응답 계약 오류", _request_id(response))
+            raise AipError("CLIENT.PROTOCOL_ERROR", "세션 응답 계약 오류", _request_id(response))
         return actor
 
     def _ensure_principal(self) -> Optional[str]:
@@ -187,9 +187,9 @@ class Client:
         response = self._checked(self._post("/capabilities", {}, contract=False), expect_contract=False)
         served = response.get("contractFingerprint")
         if not isinstance(served, str) or not _FINGERPRINT.match(served):
-            raise AipError("PROTOCOL_ERROR", "계약 식별값이 없음", _request_id(response))
+            raise AipError("CLIENT.PROTOCOL_ERROR", "계약 식별값이 없음", _request_id(response))
         if self._pinned and served != self.contract_fingerprint:
-            raise AipError("CONTRACT_MISMATCH", "고정한 계약과 서버 계약이 다름", _request_id(response))
+            raise AipError("WIRE.CONTRACT_MISMATCH", "고정한 계약과 서버 계약이 다름", _request_id(response))
         self.contract_fingerprint = served
         return response
 
@@ -199,7 +199,7 @@ class Client:
         self._ensure_contract()
         response = self._checked(self._post("/read", {"query": copy.deepcopy(query)}), expect_contract=True)
         if not isinstance(response.get("rows"), list):
-            raise AipError("PROTOCOL_ERROR", "읽기 응답 계약 오류", _request_id(response))
+            raise AipError("CLIENT.PROTOCOL_ERROR", "읽기 응답 계약 오류", _request_id(response))
         return response["rows"]
 
     def apply(self, request: dict, key: Optional[str] = None, retries: int = 2) -> dict:
@@ -211,7 +211,7 @@ class Client:
         self._ensure_contract()
         previous = self._pending.get(key)
         if previous is not None and previous != snapshot:
-            return {"ok": False, "code": "IDEMPOTENCY_MISMATCH"}
+            return {"ok": False, "code": "WIRE.IDEMPOTENCY_MISMATCH"}
         self._pending[key] = snapshot
         last_request_id: Optional[str] = None
         for attempt in range(retries + 1):
@@ -237,7 +237,7 @@ class Client:
         raise WriteUnsettled(key, copy.deepcopy(snapshot), last_request_id)
 
     def status(self, request: dict, key: str) -> dict:
-        """Committed result for a key and identical request, or `NOT_FOUND` if none is committed yet."""
+        """Committed result for a key and identical request, or `WIRE.NOT_FOUND` if none is committed yet."""
         self._ensure_contract()
         return self._post("/status", {"request": request, "key": key})
 

@@ -10,40 +10,40 @@
 //! `docs/design/04-safety-matrix.md`. Run both.
 //!
 //! Codes keep their registered meaning (`spec/diagnostics.md`):
-//! - `AIP-E100` a query has neither `from` nor `fetch`
-//! - `AIP-E101` a webhook handles one event twice, or a form's generated intent has the name of a declared one
-//! - `AIP-E103` `has scope` names a scope the actor does not declare
-//! - `AIP-E106` an inverse field's `via` is not a reference back to the entity
-//! - `AIP-E110` `actor`, `authenticated`, actor visibility, `publishable by` or `impersonate` without an actor declaration
-//! - `AIP-E201` generator, counter, `set null`, unique, `no overlap` and dynamic-schema fields of the wrong shape
-//! - `AIP-E204` `touch` on a field that is not a counter
-//! - `AIP-E205` insert, upsert or toggle leaves a required field out
-//! - `AIP-E207` upsert or toggle without the unique constraint it relies on
-//! - `AIP-E208` an `Upload` parameter outside a command, a `drafts` query that reads no publishable entity or is public, a `consent` on something that is not a callable intent, an `impersonate` of an entity other than the actor, `signingSecret` read anywhere but the `returns` of the not idempotent command that inserted the endpoint
-//! - `AIP-E210` an empty enum, an empty `in [...]` list, an approval that needs no approvers, a consent below version 1 or a non-positive `ttl`
-//! - `AIP-E214` malformed webhook options
-//! - `AIP-E216` an event emitted with a shape other than its first one
-//! - `AIP-E221` `sort by <param> of {...}` misses an enum value
-//! - `AIP-E301` an intent without `allow`, or a `publishable` entity nobody is allowed to publish
-//! - `AIP-E302` `Json validated by` a snapshot of an entity without a dynamic schema
-//! - `AIP-E306` `self` outside field visibility of the actor entity
-//! - `AIP-E309` a reference to personal data without an erase policy, or `anonymize` on a required field
-//! - `AIP-E310` `erase` of an entity that is not personal
-//! - `AIP-E311` `notify` whose recipient cannot be told from the row
-//! - `AIP-E312` `Json validated by` a field that is not a pinned snapshot
-//! - `AIP-E313` a `tenant via` path that is not a chain of required references ending at one tenant entity
-//! - `AIP-E314` an intent reads tenant-scoped rows but nothing fixes its tenant
-//! - `AIP-E315` `cross tenant` on an intent that is not `internal`
-//! - `AIP-E316` a `search` with an unsupported language, a weight outside A to D, a non-text or repeated field, no field, or over a `publishable` entity
-//! - `AIP-E317` an `outbound webhooks` form with an unsupported scheme, a retry count outside 0 to 16, a non-positive duration, no event, an endpoint entity without `url`, or a second form for one entity
-//! - `AIP-E318` an `encrypted` field that is not plain stored text, has a default or generated value, or is in a unique, no overlap, at most one, search, slug or outbound url
-//! - `AIP-E319` an `encrypted` field read inside an expression
-//! - `AIP-E320` an `encrypted` field written from anything but a parameter, or over more than one row
-//! - `AIP-W402` both sides of a comparison, or both arguments of a call, are the same expression
-//! - `AIP-W403` an unbounded query result
-//! - `AIP-W404` a schedule with a time of day and no timezone
-//! - `AIP-W501` a command creates rows and is not idempotent
-//! - `AIP-W502` a `use` of an extension that is not first-party
+//! - `POC.E100` a query has neither `from` nor `fetch`
+//! - `POC.E101` a webhook handles one event twice, or a form's generated intent has the name of a declared one
+//! - `POC.E103` `has scope` names a scope the actor does not declare
+//! - `POC.E106` an inverse field's `via` is not a reference back to the entity
+//! - `POC.E110` `actor`, `authenticated`, actor visibility, `publishable by` or `impersonate` without an actor declaration
+//! - `POC.E201` generator, counter, `set null`, unique, `no overlap` and dynamic-schema fields of the wrong shape
+//! - `POC.E204` `touch` on a field that is not a counter
+//! - `POC.E205` insert, upsert or toggle leaves a required field out
+//! - `POC.E207` upsert or toggle without the unique constraint it relies on
+//! - `POC.E208` an `Upload` parameter outside a command, a `drafts` query that reads no publishable entity or is public, a `consent` on something that is not a callable intent, an `impersonate` of an entity other than the actor, `signingSecret` read anywhere but the `returns` of the not idempotent command that inserted the endpoint
+//! - `POC.E210` an empty enum, an empty `in [...]` list, an approval that needs no approvers, a consent below version 1 or a non-positive `ttl`
+//! - `POC.E214` malformed webhook options
+//! - `POC.E216` an event emitted with a shape other than its first one
+//! - `POC.E221` `sort by <param> of {...}` misses an enum value
+//! - `POC.E301` an intent without `allow`, or a `publishable` entity nobody is allowed to publish
+//! - `POC.E302` `Json validated by` a snapshot of an entity without a dynamic schema
+//! - `POC.E306` `self` outside field visibility of the actor entity
+//! - `POC.E309` a reference to personal data without an erase policy, or `anonymize` on a required field
+//! - `POC.E310` `erase` of an entity that is not personal
+//! - `POC.E311` `notify` whose recipient cannot be told from the row
+//! - `POC.E312` `Json validated by` a field that is not a pinned snapshot
+//! - `POC.E313` a `tenant via` path that is not a chain of required references ending at one tenant entity
+//! - `POC.E314` an intent reads tenant-scoped rows but nothing fixes its tenant
+//! - `POC.E315` `cross tenant` on an intent that is not `internal`
+//! - `POC.E316` a `search` with an unsupported language, a weight outside A to D, a non-text or repeated field, no field, or over a `publishable` entity
+//! - `POC.E317` an `outbound webhooks` form with an unsupported scheme, a retry count outside 0 to 16, a non-positive duration, no event, an endpoint entity without `url`, or a second form for one entity
+//! - `POC.E318` an `encrypted` field that is not plain stored text, has a default or generated value, or is in a unique, no overlap, at most one, search, slug or outbound url
+//! - `POC.E319` an `encrypted` field read inside an expression
+//! - `POC.E320` an `encrypted` field written from anything but a parameter, or over more than one row
+//! - `POC.W402` both sides of a comparison, or both arguments of a call, are the same expression
+//! - `POC.W403` an unbounded query result
+//! - `POC.W404` a schedule with a time of day and no timezone
+//! - `POC.W501` a command creates rows and is not idempotent
+//! - `POC.W502` a `use` of an extension that is not first-party
 
 use crate::facts::{callee_name, entity_of_type, set_entity};
 use crate::validate::IrDiagnostic;

@@ -82,25 +82,25 @@ async fn write_extensions_require_session_contract_and_opt_in_then_replay_atomic
                 let token = denied.keys.issue(1, 60);
                 let wrong_id = if wire == IdWire::SafeNumber { json!("11") } else { json!(11) };
                 let cases = [
-                    (None, Some(fp.as_str()), body.clone(), "UNAUTHENTICATED"),
-                    (Some(token.as_str()), None, body.clone(), "CONTRACT_MISMATCH"),
+                    (None, Some(fp.as_str()), body.clone(), "WIRE.UNAUTHENTICATED"),
+                    (Some(token.as_str()), None, body.clone(), "WIRE.CONTRACT_MISMATCH"),
                     (
                         Some(token.as_str()),
                         Some(fp.as_str()),
                         json!({"key":"invalid","request":{"extension":"Event.run","input":{"id":wrong_id}}}),
-                        "BAD_VALUE",
+                        "WIRE.BAD_VALUE",
                     ),
                     (
                         Some(token.as_str()),
                         Some(fp.as_str()),
                         json!({"key":"invalid","request":{"extension":"Event.run","input":{"id":input},"apply":"Event.mark"}}),
-                        "BAD_REQUEST",
+                        "WIRE.BAD_REQUEST",
                     ),
                     (
                         Some(token.as_str()),
                         Some(fp.as_str()),
                         json!({"key":"invalid","request":{"extension":"Event.missing","input":{"id":input}}}),
-                        "NOT_EXPOSED",
+                        "WIRE.NOT_EXPOSED",
                     ),
                 ];
                 for (token, contract, request, code) in cases {
@@ -123,7 +123,7 @@ async fn write_extensions_require_session_contract_and_opt_in_then_replay_atomic
                 .unwrap();
                 let token = disabled.keys.issue(1, 60);
                 let result = post(disabled.address, "/apply", Some(&token), Some(&fp), &body).await;
-                if result["code"] != "NOT_FOUND" {
+                if result["code"] != "WIRE.NOT_FOUND" {
                     failures.push(format!("{wire:?} {lang:?} opt-out: {result}"));
                 }
                 disabled.shutdown().await.unwrap();

@@ -43,23 +43,23 @@ fn new_operators_are_accepted_and_listed_in_facts() {
 fn operators_are_rejected_on_types_that_do_not_fit() {
     let cases: &[(&str, &str)] = &[
         // isNull은 nullable 필드에만(항상 non-null인 필드에 쓰면 의미가 없다)
-        ("filter title.isNull", "OP_TYPE_MISMATCH"),
-        ("filter club.isNull", "OP_TYPE_MISMATCH"),
+        ("filter title.isNull", "DEF.OP_TYPE_MISMATCH"),
+        ("filter club.isNull", "DEF.OP_TYPE_MISMATCH"),
         // in은 Enum/Text/Id/Ref만. Time·Int는 범위 연산 대상이다
-        ("filter periodEnd.in", "OP_TYPE_MISMATCH"),
-        ("filter views.in", "OP_TYPE_MISMATCH"),
+        ("filter periodEnd.in", "DEF.OP_TYPE_MISMATCH"),
+        ("filter views.in", "DEF.OP_TYPE_MISMATCH"),
         // 이름이 다른 비슷한 연산은 계속 모르는 연산
-        ("filter club.isnull", "UNKNOWN_OPERATOR"),
-        ("filter club.notIn", "UNKNOWN_OPERATOR"),
-        ("filter club.ne", "UNKNOWN_OPERATOR"),
-        ("filter nothing.in", "UNKNOWN_FIELD"),
+        ("filter club.isnull", "DEF.UNKNOWN_OPERATOR"),
+        ("filter club.notIn", "DEF.UNKNOWN_OPERATOR"),
+        ("filter club.ne", "DEF.UNKNOWN_OPERATOR"),
+        ("filter nothing.in", "DEF.UNKNOWN_FIELD"),
     ];
     for (rec, want) in cases {
         let got = codes(&with(rec, CLUB_EXPOSE));
         assert!(got.iter().any(|g| g.contains(want)), "`{rec}`: 기대 {want}, 실제 {got:?}");
     }
     // nullable 허용은 CLUB_OK(school/logo.isNull)가 보인다. field read 정책 필드는 isNull로도 존재를 추론하므로 거부된다.
-    assert!(codes(&with("filter internalNote.isNull", CLUB_EXPOSE)).iter().any(|g| g.contains("POLICY_FIELD_NOT_FILTERABLE")));
+    assert!(codes(&with("filter internalNote.isNull", CLUB_EXPOSE)).iter().any(|g| g.contains("DEF.POLICY_FIELD_NOT_FILTERABLE")));
     assert_eq!(codes(&with(REC_FILTER, CLUB_OK)), Vec::<String>::new());
 }
 
@@ -70,16 +70,16 @@ fn contains_is_text_only_and_icontains_stays_unknown() {
     let rec = facts["resources"]["Recruitment"]["exposeRead"]["filter"].as_array().unwrap().clone();
     assert!(rec.iter().any(|x| x == "title.contains"), "{rec:?}");
     let cases: &[(&str, &str)] = &[
-        ("filter views.contains", "OP_TYPE_MISMATCH"),
-        ("filter periodEnd.contains", "OP_TYPE_MISMATCH"),
-        ("filter status.contains", "OP_TYPE_MISMATCH"),
-        ("filter club.contains", "OP_TYPE_MISMATCH"),
+        ("filter views.contains", "DEF.OP_TYPE_MISMATCH"),
+        ("filter periodEnd.contains", "DEF.OP_TYPE_MISMATCH"),
+        ("filter status.contains", "DEF.OP_TYPE_MISMATCH"),
+        ("filter club.contains", "DEF.OP_TYPE_MISMATCH"),
         // 대소문자 무시는 이번 범위가 아니다(보류). 문법에도 열지 않는다.
-        ("filter title.icontains", "UNKNOWN_OPERATOR"),
-        ("filter title.contain", "UNKNOWN_OPERATOR"),
-        ("filter title.like", "UNKNOWN_OPERATOR"),
+        ("filter title.icontains", "DEF.UNKNOWN_OPERATOR"),
+        ("filter title.contain", "DEF.UNKNOWN_OPERATOR"),
+        ("filter title.like", "DEF.UNKNOWN_OPERATOR"),
         // field read 정책 필드는 부분일치로도 값을 추론할 수 있다
-        ("filter internalNote.contains", "POLICY_FIELD_NOT_FILTERABLE"),
+        ("filter internalNote.contains", "DEF.POLICY_FIELD_NOT_FILTERABLE"),
     ];
     for (rec, want) in cases {
         let got = codes(&with(rec, CLUB_EXPOSE));
@@ -103,8 +103,8 @@ fn offset_is_opt_in_budget_item() {
         .execution;
     assert_eq!(f["resources"]["Recruitment"]["exposeRead"]["budget"]["maxOffset"], 1000);
     for (b, want) in [
-        ("budget { rows 50; depth 2; deadline 2s; cost 1000; offset 0 }", "BAD_BUDGET"),
-        ("budget { rows 50; depth 2; deadline 2s; cost 1000; offset 10; offset 20 }", "DUPLICATE"),
+        ("budget { rows 50; depth 2; deadline 2s; cost 1000; offset 0 }", "DEF.BAD_BUDGET"),
+        ("budget { rows 50; depth 2; deadline 2s; cost 1000; offset 10; offset 20 }", "DEF.DUPLICATE"),
     ] {
         let got = codes(&budget_src(b));
         assert!(got.iter().any(|g| g.contains(want)), "`{b}`: 기대 {want}, 실제 {got:?}");

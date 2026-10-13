@@ -46,5 +46,5 @@ fn appointment_overlap_expression_is_rejected_as_an_executable_invariant() {
         Ok(_) => panic!("overlap invariant unexpectedly passed check"),
         Err(errors) => errors,
     };
-    assert!(errors.iter().any(|error| error.code == "UNSUPPORTED_INVARIANT"), "{errors:?}");
+    assert!(errors.iter().any(|error| error.code == "DEF.UNSUPPORTED_INVARIANT"), "{errors:?}");
 }

@@ -23,7 +23,7 @@ function fetchWith(read: (query: unknown, call: number) => unknown, writes?: () 
     const body = JSON.parse(String(init?.body));
     if (path === "/read") return reply(read(body.query, ++reads));
     if (path === "/apply") return reply(writes?.() ?? { ok: true, tags: ["MemberAlarm"] });
-    return reply({ ok: false, code: "NOT_FOUND" });
+    return reply({ ok: false, code: "WIRE.NOT_FOUND" });
   };
 }
 
@@ -43,7 +43,7 @@ test("typed binding 식별값이 빠지거나 잘못되면 요청 전에 거부�
   let calls = 0;
   const fetcher: typeof fetch = async () => { calls++; return reply(session); };
   for (const fingerprint of [undefined, null, 7, "", "0".repeat(63), "G".repeat(64)]) {
-    assert.throws(() => connectTyped("http://contract.invalid", "token", { ...contract, fingerprint } as any, fetcher), isCode("PROTOCOL_ERROR"));
+    assert.throws(() => connectTyped("http://contract.invalid", "token", { ...contract, fingerprint } as any, fetcher), isCode("CLIENT.PROTOCOL_ERROR"));
   }
   assert.equal(calls, 0);
   const mutable = { ...contract };
@@ -66,7 +66,7 @@ test("계약 불일치로 비운 뒤에도 미확정 쓰기가 있으면 캐시 
   };
   const client = connectTyped("http://contract.invalid", "token", contract, fetcher);
   await assert.rejects(client.apply({ apply: "MemberAlarm.read", target: { ids: ["1"] } }, { key: "pending", retries: 0 }));
-  await assert.rejects(client.read(query), isCode("CONTRACT_MISMATCH"));
+  await assert.rejects(client.read(query), isCode("WIRE.CONTRACT_MISMATCH"));
   mismatch = false;
   const fresh = await client.read(query);
   assert.equal(fresh.stored, false);
@@ -96,7 +96,7 @@ test("누락·null·비문자열·다른 fingerprint는 행 검사보다 먼저 
         ? readBody({ rows: "malformed", ...override })
         : readBody();
     }));
-    await assert.rejects(client.read(query), isCode("CONTRACT_MISMATCH"), name);
+    await assert.rejects(client.read(query), isCode("WIRE.CONTRACT_MISMATCH"), name);
     const next = await client.read(query);
     assert.equal(next.cached, false, `${name}: 실패 응답은 캐시되지 않음`);
     assert.equal(next.rows[0].isChecked, false);
@@ -114,13 +114,13 @@ test("올바른 계약에서도 성공 envelope 구조 오류와 서버 오류 �
   for (const [name, override] of malformed) {
     const client = connectTyped("http://contract.invalid", "token", contract,
       fetchWith(() => readBody(override)));
-    await assert.rejects(client.read(query), isCode("PROTOCOL_ERROR"), name);
+    await assert.rejects(client.read(query), isCode("CLIENT.PROTOCOL_ERROR"), name);
     assert.equal(client.cache.size(), 0, `${name}: 잘못된 envelope는 저장되지 않음`);
   }
 
   const rejected = connectTyped("http://contract.invalid", "token", contract,
-    fetchWith(() => ({ ok: false, code: "FIELD_NOT_EXPOSED" })));
-  await assert.rejects(rejected.read(query), isCode("FIELD_NOT_EXPOSED"));
+    fetchWith(() => ({ ok: false, code: "WIRE.FIELD_NOT_EXPOSED" })));
+  await assert.rejects(rejected.read(query), isCode("WIRE.FIELD_NOT_EXPOSED"));
   assert.equal(rejected.cache.size(), 0);
 });
 
@@ -164,7 +164,7 @@ test("읽기 중 쓰기가 캐시 epoch을 바꾸면 이전 행을 버리고 새
       });
       return reply(readBody({ rows: [{ id: 2, isChecked: true }] }));
     }
-    return reply({ ok: false, code: "NOT_FOUND" });
+    return reply({ ok: false, code: "WIRE.NOT_FOUND" });
   };
   const client = connectTyped("http://contract.invalid", "token", contract, fetcher);
   const pending = client.read(query);
@@ -194,7 +194,7 @@ test("다른 query의 fingerprint mismatch는 기존 캐시도 비우고 matchin
   assert.equal((await client.read(query)).cached, true);
 
   mismatch = true;
-  await assert.rejects(client.read({ read: "Recruitment", select: ["id"] }), isCode("CONTRACT_MISMATCH"));
+  await assert.rejects(client.read({ read: "Recruitment", select: ["id"] }), isCode("WIRE.CONTRACT_MISMATCH"));
   mismatch = false;
   const refetched = await client.read(query);
   assert.equal(refetched.cached, false, "fingerprint mismatch 뒤 기존 query 캐시는 hit되면 안 됨");

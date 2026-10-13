@@ -80,7 +80,7 @@ async fn write_effects_follow_caller_commit_and_rollback() {
             db.batch_execute(&format!("UPDATE {schema}.event SET checked=false")).await?;
             let tx = db.transaction().await?;
             let denied = prepare_write_in(&tx, &mut worker, &facts, "Event.run", &json!({"id":"99"}), &caller).await;
-            if !denied.is_err_and(|error| error.code=="EXTENSION_ERROR") { failures.push(format!("{lang:?} foreign actor target not rejected")); }
+            if !denied.is_err_and(|error| error.code=="WIRE.EXTENSION_ERROR") { failures.push(format!("{lang:?} foreign actor target not rejected")); }
             let partial: bool = tx.query_one(&format!("SELECT checked FROM {schema}.event WHERE id=11"), &[]).await?.get(0);
             if !partial { failures.push(format!("{lang:?} partial-write failure fixture did not execute first ctx write")); }
             tx.rollback().await?;

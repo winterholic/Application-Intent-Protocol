@@ -7,6 +7,7 @@
 //! `x-spike-drop-response: 1`이면 커밋 뒤 응답 없이 연결을 끊는다(시험용).
 mod admission;
 pub mod auth;
+pub mod client_codes;
 mod cors;
 mod durable;
 mod health;
@@ -135,7 +136,7 @@ fn invisible_format(c: char) -> bool {
 
 async fn handle_apply(db: &mut Client, facts: &Value, body: &Value, caller: &Caller, wire: IdWire) -> Value {
     let Some(key) = body["key"].as_str().filter(|k| valid_key(k)) else {
-        return json!({ "ok": false, "code": "BAD_REQUEST", "msg": "key 필요" });
+        return json!({ "ok": false, "code": "WIRE.BAD_REQUEST", "msg": "key 필요" });
     };
     let req = &body["request"];
     let req_text = req.to_string();
@@ -149,8 +150,8 @@ async fn handle_apply(db: &mut Client, facts: &Value, body: &Value, caller: &Cal
         loop {
             let result = apply_attempt(db, facts, key, req, &req_text, &principal, caller, wire, serializable, &commit_sent, started).await;
             let retry = serializable
-                && result["code"] == "CONFLICT"
-                && result["msg"].as_str().is_some_and(|msg| spike_v3_write::is_retryable(&Reject { code: "CONFLICT", msg: msg.to_string() }))
+                && result["code"] == "WIRE.CONFLICT"
+                && result["msg"].as_str().is_some_and(|msg| spike_v3_write::is_retryable(&Reject { code: "WIRE.CONFLICT", msg: msg.to_string() }))
                 && attempt < spike_v3_write::SERIALIZATION_RETRIES;
             if !retry {
                 return result;
@@ -161,8 +162,8 @@ async fn handle_apply(db: &mut Client, facts: &Value, body: &Value, caller: &Cal
     };
     match tokio::time::timeout(std::time::Duration::from_millis(spike_v3_write::WRITE_DEADLINE_MS), operation).await {
         Ok(result) => result,
-        Err(_) if commit_sent.load(std::sync::atomic::Ordering::SeqCst) => json!({"ok":false,"code":"COMMIT_UNKNOWN"}),
-        Err(_) => json!({"ok":false,"code":"DEADLINE_EXCEEDED"}),
+        Err(_) if commit_sent.load(std::sync::atomic::Ordering::SeqCst) => json!({"ok":false,"code":"WIRE.COMMIT_UNKNOWN"}),
+        Err(_) => json!({"ok":false,"code":"WIRE.DEADLINE_EXCEEDED"}),
     }
 }
 
@@ -184,7 +185,7 @@ async fn apply_attempt(
     let s = sqlgen::schema();
     let tx = match db.transaction().await {
         Ok(t) => t,
-        Err(_) => return json!({ "ok": false, "code": "INTERNAL" }),
+        Err(_) => return json!({ "ok": false, "code": "WIRE.INTERNAL" }),
     };
     if let Err(error) = tx
         .batch_execute(&format!(
@@ -205,10 +206,10 @@ async fn apply_attempt(
     {
         let (stored_req, result): (String, String) = (row.get(0), row.get(1));
         if stored_req != req_text {
-            return json!({ "ok": false, "code": "IDEMPOTENCY_MISMATCH", "msg": "같은 키에 다른 요청" });
+            return json!({ "ok": false, "code": "WIRE.IDEMPOTENCY_MISMATCH", "msg": "같은 키에 다른 요청" });
         }
         let Ok(mut v) = serde_json::from_str::<Value>(&result) else {
-            return json!({ "ok": false, "code": "INTERNAL", "msg": "저장된 멱등 결과를 읽을 수 없음" });
+            return json!({ "ok": false, "code": "WIRE.INTERNAL", "msg": "저장된 멱등 결과를 읽을 수 없음" });
         };
         v["replayed"] = json!(true);
         return v;
@@ -246,11 +247,11 @@ async fn apply_attempt(
         return match error.code().map(|c| c.code()) {
             Some("23505") if serializable => err(spike_v3_write::serialization_conflict("멱등 기록")),
             Some("40001") | Some("40P01") => err(classify_write_error("멱등 기록", error)),
-            _ => json!({ "ok": false, "code": "INTERNAL" }),
+            _ => json!({ "ok": false, "code": "WIRE.INTERNAL" }),
         };
     }
     if started.elapsed().as_millis() + u128::from(spike_v3_write::COMMIT_MARGIN_MS) >= u128::from(spike_v3_write::WRITE_DEADLINE_MS) {
-        return json!({"ok":false,"code":"DEADLINE_EXCEEDED"});
+        return json!({"ok":false,"code":"WIRE.DEADLINE_EXCEEDED"});
     }
     commit_sent.store(true, std::sync::atomic::Ordering::SeqCst);
     match tx.commit().await {
@@ -279,7 +280,7 @@ async fn handle(db: &mut Client, facts: &Value, path: &str, body: &Value, caller
                     json!({ "ok": true, "rows": rows, "deps": p.deps, "maxAgeMs": if time_dependent { 0 } else { READ_CACHE_MS } })
                 }
                 Ok(Err(e)) => err(e),
-                Err(_) => json!({"ok":false,"code":"DEADLINE_EXCEEDED"}),
+                Err(_) => json!({"ok":false,"code":"WIRE.DEADLINE_EXCEEDED"}),
             },
             Err(e) => err(e),
         },
@@ -287,28 +288,28 @@ async fn handle(db: &mut Client, facts: &Value, path: &str, body: &Value, caller
         "/status" => {
             let principal = principal_key(caller.actor_id, wire);
             let Some(key) = body["key"].as_str().filter(|k| valid_key(k)) else {
-                return json!({ "ok": false, "code": "BAD_REQUEST", "msg": "key 필요" });
+                return json!({ "ok": false, "code": "WIRE.BAD_REQUEST", "msg": "key 필요" });
             };
             let request_text = body["request"].to_string();
             let q = format!("SELECT request, result::text FROM {}.aip_idem WHERE principal = $1 AND key = $2", sqlgen::schema());
             match tokio::time::timeout(server::DB_PREFLIGHT_TIMEOUT, db.query_opt(q.as_str(), &[&principal, &key])).await {
                 // 키만으로 결과를 주지 않는다. 같은 요청인지 확인한다(r7 R7-01).
                 Ok(Ok(Some(r))) if r.get::<_, String>(0) != request_text => {
-                    json!({ "ok": false, "code": "IDEMPOTENCY_MISMATCH", "msg": "같은 키에 다른 요청" })
+                    json!({ "ok": false, "code": "WIRE.IDEMPOTENCY_MISMATCH", "msg": "같은 키에 다른 요청" })
                 }
                 Ok(Ok(Some(r))) => {
                     let Ok(mut v) = serde_json::from_str::<Value>(&r.get::<_, String>(1)) else {
-                        return json!({ "ok": false, "code": "INTERNAL", "msg": "저장된 멱등 결과를 읽을 수 없음" });
+                        return json!({ "ok": false, "code": "WIRE.INTERNAL", "msg": "저장된 멱등 결과를 읽을 수 없음" });
                     };
                     v["replayed"] = json!(true);
                     v
                 }
                 // 조회 시점에 커밋된 결과가 없다는 뜻일 뿐, 진행 중일 수 있다(r7 R7-02). 확정은 같은 키 재요청으로 한다.
-                Ok(Ok(None)) => json!({ "ok": false, "code": "NOT_FOUND" }),
-                Ok(Err(_)) | Err(_) => json!({ "ok": false, "code": "DB_UNAVAILABLE" }),
+                Ok(Ok(None)) => json!({ "ok": false, "code": "WIRE.NOT_FOUND" }),
+                Ok(Err(_)) | Err(_) => json!({ "ok": false, "code": "WIRE.DB_UNAVAILABLE" }),
             }
         }
-        _ => json!({ "ok": false, "code": "NOT_FOUND" }),
+        _ => json!({ "ok": false, "code": "WIRE.NOT_FOUND" }),
     }
 }
 
@@ -320,9 +321,9 @@ pub const MAX_TOKEN: usize = 4 << 10;
 async fn header_line(rd: &mut (impl tokio::io::AsyncBufRead + Unpin), line: &mut String, deadline: tokio::time::Instant) -> Result<(), &'static str> {
     let read = tokio::time::timeout_at(deadline, (&mut *rd).take((MAX_HEADER_LINE + 1) as u64).read_line(line)).await;
     match read {
-        Err(_) => Err("REQUEST_TIMEOUT"),
+        Err(_) => Err("WIRE.REQUEST_TIMEOUT"),
         Ok(Ok(n)) if n > 0 && n <= MAX_HEADER_LINE && line.ends_with("\r\n") => Ok(()),
-        _ => Err("BAD_REQUEST"),
+        _ => Err("WIRE.BAD_REQUEST"),
     }
 }
 
@@ -421,7 +422,7 @@ async fn enforce_admission(
         reply_with_status(
             w,
             "503 Service Unavailable",
-            &json!({"ok":false,"code":"DB_UNAVAILABLE","msg":"rate limit 저장소를 사용할 수 없음"}).to_string(),
+            &json!({"ok":false,"code":"WIRE.DB_UNAVAILABLE","msg":"rate limit 저장소를 사용할 수 없음"}).to_string(),
             "cache-control: no-store\r\nvary: Origin\r\n",
         )
         .await;
@@ -436,7 +437,7 @@ async fn enforce_admission(
             } else {
                 format!("vary: Origin\r\nRetry-After: {retry_after_secs}\r\n")
             };
-            reply_with_status(w, "429 Too Many Requests", &json!({"ok":false,"code":"RATE_LIMITED","msg":"요청 한도 초과"}).to_string(), &extra)
+            reply_with_status(w, "429 Too Many Requests", &json!({"ok":false,"code":"WIRE.RATE_LIMITED","msg":"요청 한도 초과"}).to_string(), &extra)
                 .await;
             true
         }
@@ -449,7 +450,7 @@ async fn enforce_admission(
             reply_with_status(
                 w,
                 "503 Service Unavailable",
-                &json!({"ok":false,"code":"DB_UNAVAILABLE","msg":"rate limit 저장소를 사용할 수 없음"}).to_string(),
+                &json!({"ok":false,"code":"WIRE.DB_UNAVAILABLE","msg":"rate limit 저장소를 사용할 수 없음"}).to_string(),
                 extra,
             )
             .await;
@@ -521,31 +522,31 @@ async fn serve_webhook<R: tokio::io::AsyncRead + Unpin>(
 ) {
     let fail = |code: &str| json!({"ok":false,"code":code}).to_string();
     if method != "POST" {
-        return reply_with_status(w, "405 Method Not Allowed", &fail("BAD_REQUEST"), "allow: POST\r\n").await;
+        return reply_with_status(w, "405 Method Not Allowed", &fail("WIRE.BAD_REQUEST"), "allow: POST\r\n").await;
     }
-    let Some(len) = len else { return reply_with_status(w, "411 Length Required", &fail("BAD_REQUEST"), "").await };
+    let Some(len) = len else { return reply_with_status(w, "411 Length Required", &fail("WIRE.BAD_REQUEST"), "").await };
     if len > webhook.max_body_bytes {
-        return reply_with_status(w, "413 Payload Too Large", &fail("PAYLOAD_TOO_LARGE"), "").await;
+        return reply_with_status(w, "413 Payload Too Large", &fail("WIRE.PAYLOAD_TOO_LARGE"), "").await;
     }
     let mut body = vec![0; len];
     match tokio::time::timeout_at(deadline, rd.read_exact(&mut body)).await {
-        Err(_) => return reply_with_status(w, "408 Request Timeout", &fail("REQUEST_TIMEOUT"), "").await,
+        Err(_) => return reply_with_status(w, "408 Request Timeout", &fail("WIRE.REQUEST_TIMEOUT"), "").await,
         Ok(Err(_)) => return,
         Ok(Ok(_)) => {}
     }
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
     let delivery = match triggers::verify(webhook, headers, &body, now) {
         Ok(delivery) => delivery,
-        Err(triggers::Rejection::Stale) => return reply_with_status(w, "401 Unauthorized", &fail("SIGNATURE_EXPIRED"), "").await,
-        Err(triggers::Rejection::Signature) => return reply_with_status(w, "401 Unauthorized", &fail("SIGNATURE_INVALID"), "").await,
+        Err(triggers::Rejection::Stale) => return reply_with_status(w, "401 Unauthorized", &fail("WIRE.SIGNATURE_EXPIRED"), "").await,
+        Err(triggers::Rejection::Signature) => return reply_with_status(w, "401 Unauthorized", &fail("WIRE.SIGNATURE_INVALID"), "").await,
     };
-    let Ok(text) = String::from_utf8(body) else { return reply_with_status(w, "400 Bad Request", &fail("BAD_VALUE"), "").await };
+    let Ok(text) = String::from_utf8(body) else { return reply_with_status(w, "400 Bad Request", &fail("WIRE.BAD_VALUE"), "").await };
     let key = triggers::webhook_key(&webhook.name, &delivery);
     match durable::submit_as_service(runtime, facts, wire, &webhook.principal, &webhook.operation, &json!({"body":text}), &key, None).await {
         Ok(run) => reply_with_status(w, "202 Accepted", &json!({"ok":true,"id":run.id,"state":run.state}).to_string(), "").await,
-        Err("IDEMPOTENCY_MISMATCH") => reply_with_status(w, "409 Conflict", &fail("IDEMPOTENCY_MISMATCH"), "").await,
-        Err("BAD_VALUE") => reply_with_status(w, "400 Bad Request", &fail("BAD_VALUE"), "").await,
-        Err("QUOTA_EXCEEDED") => reply_with_status(w, "429 Too Many Requests", &fail("QUOTA_EXCEEDED"), "retry-after: 60\r\n").await,
+        Err("WIRE.IDEMPOTENCY_MISMATCH") => reply_with_status(w, "409 Conflict", &fail("WIRE.IDEMPOTENCY_MISMATCH"), "").await,
+        Err("WIRE.BAD_VALUE") => reply_with_status(w, "400 Bad Request", &fail("WIRE.BAD_VALUE"), "").await,
+        Err("WIRE.QUOTA_EXCEEDED") => reply_with_status(w, "429 Too Many Requests", &fail("WIRE.QUOTA_EXCEEDED"), "retry-after: 60\r\n").await,
         Err(code) => reply_with_status(w, "503 Service Unavailable", &fail(code), "retry-after: 30\r\n").await,
     }
 }
@@ -576,7 +577,7 @@ async fn serve_conn(
     w.private_object =
         path.starts_with("/objects/") || path.starts_with("/rag/") || runtime.infrastructure.file_mounts.iter().any(|mount| mount.matches(&path));
     if parts.next() != Some("HTTP/1.1") || parts.next().is_some() {
-        return reply(&mut w, &json!({"ok":false,"code":"BAD_REQUEST"}).to_string()).await;
+        return reply(&mut w, &json!({"ok":false,"code":"WIRE.BAD_REQUEST"}).to_string()).await;
     }
     let (mut origin, mut host, mut request_method, mut request_headers) = (None::<String>, None::<String>, None::<String>, None::<String>);
     let (mut accept, mut content_type, mut upgrade, mut connection, mut ws_key, mut ws_version, mut ws_extensions) =
@@ -594,7 +595,7 @@ async fn serve_conn(
         }
         header_bytes += h.len();
         if header_bytes > MAX_HEADERS {
-            return reply(&mut w, &json!({ "ok": false, "code": "BAD_REQUEST", "msg": "헤더 총량 상한" }).to_string()).await;
+            return reply(&mut w, &json!({ "ok": false, "code": "WIRE.BAD_REQUEST", "msg": "헤더 총량 상한" }).to_string()).await;
         }
         if h == "\r\n" {
             // Outbound calls made while this request is handled carry its trace id.
@@ -673,33 +674,33 @@ async fn serve_conn(
             {
                 w.origin = Some(origin.to_string());
             }
-            return reply(&mut w, &json!({ "ok": false, "code": "BAD_REQUEST", "msg": bad }).to_string()).await;
+            return reply(&mut w, &json!({ "ok": false, "code": "WIRE.BAD_REQUEST", "msg": bad }).to_string()).await;
         }
     }
     let err = |code: &str, msg: &str| json!({ "ok": false, "code": code, "msg": msg }).to_string();
     if let Some(origin) = origin.as_deref() {
         if invalid_browser_headers || !runtime.options.allows(origin, host.as_deref(), local) {
-            return reply(&mut w, &err("ORIGIN_NOT_ALLOWED", "허용하지 않은 로컬 출처")).await;
+            return reply(&mut w, &err("WIRE.ORIGIN_NOT_ALLOWED", "허용하지 않은 로컬 출처")).await;
         }
         w.origin = Some(origin.to_string());
     }
     if let Some(m) = bad {
-        return reply(&mut w, &err("BAD_REQUEST", m)).await;
+        return reply(&mut w, &err("WIRE.BAD_REQUEST", m)).await;
     }
     if health::is_probe(&path) {
         if !matches!(method.as_str(), "GET" | "HEAD") || len.is_some_and(|length| length != 0) {
-            return reply_with_status(&mut w, "405 Method Not Allowed", &err("BAD_REQUEST", "GET/HEAD만"), "allow: GET, HEAD\r\n").await;
+            return reply_with_status(&mut w, "405 Method Not Allowed", &err("WIRE.BAD_REQUEST", "GET/HEAD만"), "allow: GET, HEAD\r\n").await;
         }
         let (status, body) = health::probe(&path, &runtime).await;
         return reply_with_status(&mut w, status, &body, "cache-control: no-store\r\n").await;
     }
     if let Some(token) = runtime.infrastructure.metrics_token.as_deref().filter(|_| path == "/metrics") {
         if !matches!(method.as_str(), "GET" | "HEAD") || len.is_some_and(|length| length != 0) {
-            return reply_with_status(&mut w, "405 Method Not Allowed", &err("BAD_REQUEST", "GET/HEAD만"), "allow: GET, HEAD\r\n").await;
+            return reply_with_status(&mut w, "405 Method Not Allowed", &err("WIRE.BAD_REQUEST", "GET/HEAD만"), "allow: GET, HEAD\r\n").await;
         }
         let authorization = header_values.iter().find(|(key, _)| key == "authorization").map(|(_, value)| value.as_str());
         if !metrics::token_matches(token, authorization) {
-            return reply_with_status(&mut w, "401 Unauthorized", &err("UNAUTHENTICATED", "metrics token 필요"), "www-authenticate: Bearer\r\n")
+            return reply_with_status(&mut w, "401 Unauthorized", &err("WIRE.UNAUTHENTICATED", "metrics token 필요"), "www-authenticate: Bearer\r\n")
                 .await;
         }
         return reply_metrics(&mut w, metrics::render()).await;
@@ -743,19 +744,19 @@ async fn serve_conn(
         && !object_path
         && !messages_path
     {
-        return reply(&mut w, &err("NOT_FOUND", "알 수 없는 경로")).await;
+        return reply(&mut w, &err("WIRE.NOT_FOUND", "알 수 없는 경로")).await;
     }
     if method == "OPTIONS" {
         let Some(requested_method) = request_method.as_deref() else {
-            return reply(&mut w, &err("BAD_REQUEST", "잘못된 preflight")).await;
+            return reply(&mut w, &err("WIRE.BAD_REQUEST", "잘못된 preflight")).await;
         };
         let Some(methods) = cors::allowed_methods(&path, mount.is_some() || file_mount.is_some())
             .filter(|methods| cors::method_is_allowed(methods, requested_method))
         else {
-            return reply(&mut w, &err("BAD_REQUEST", "이 경로에서 허용하지 않는 preflight method")).await;
+            return reply(&mut w, &err("WIRE.BAD_REQUEST", "이 경로에서 허용하지 않는 preflight method")).await;
         };
         if w.origin.is_none() || !cors::allowed_request_headers(request_headers.as_deref()) || len.is_some_and(|len| len != 0) {
-            return reply(&mut w, &err("BAD_REQUEST", "잘못된 preflight")).await;
+            return reply(&mut w, &err("WIRE.BAD_REQUEST", "잘못된 preflight")).await;
         }
         let extra = format!(
             "vary: Origin, Access-Control-Request-Method, Access-Control-Request-Headers\r\naccess-control-allow-methods: {methods}\r\naccess-control-allow-headers: authorization, content-type, x-aip-contract\r\n"
@@ -765,18 +766,18 @@ async fn serve_conn(
     if let Some(mount) = mount {
         let session = match verify_session(token.as_deref(), &keys, &runtime, deadline).await {
             Ok(session) => session,
-            Err(auth::AuthError::Expired) => return reply(&mut w, &err("TOKEN_EXPIRED", "세션 만료")).await,
-            Err(auth::AuthError::Unavailable) => return reply(&mut w, &err("DB_UNAVAILABLE", "인증 제공자 또는 사용자 연결 조회 실패")).await,
-            Err(_) => return reply(&mut w, &err("UNAUTHENTICATED", "토큰 검증 실패")).await,
+            Err(auth::AuthError::Expired) => return reply(&mut w, &err("WIRE.TOKEN_EXPIRED", "세션 만료")).await,
+            Err(auth::AuthError::Unavailable) => return reply(&mut w, &err("WIRE.DB_UNAVAILABLE", "인증 제공자 또는 사용자 연결 조회 실패")).await,
+            Err(_) => return reply(&mut w, &err("WIRE.UNAUTHENTICATED", "토큰 검증 실패")).await,
         };
         if mount.access == hosting::MountAccess::Authenticated && session.is_none() {
-            return reply(&mut w, &err("UNAUTHENTICATED", "인증된 정적 mount입니다")).await;
+            return reply(&mut w, &err("WIRE.UNAUTHENTICATED", "인증된 정적 mount입니다")).await;
         }
         if enforce_admission(&mut w, &runtime, session.as_ref(), admission::Route::Static, deadline).await {
             return;
         }
         if len.is_some_and(|length| length != 0) {
-            return reply(&mut w, &err("BAD_REQUEST", "정적 파일 요청 본문은 비어 있어야 함")).await;
+            return reply(&mut w, &err("WIRE.BAD_REQUEST", "정적 파일 요청 본문은 비어 있어야 함")).await;
         }
         let headers: Vec<(&str, &str)> = header_values.iter().map(|(key, value)| (key.as_str(), value.as_str())).collect();
         let mut tap = trace::HeadTap::new(&mut w.writer, &mut w.trace);
@@ -785,13 +786,15 @@ async fn serve_conn(
     }
     if object_path && path != "/objects/sign" && !path.starts_with("/objects/multipart/") {
         if expected_contract.as_deref() != contract_fingerprint.as_deref() || expected_contract.is_none() {
-            return reply_object(&mut w, &err("CONTRACT_MISMATCH", "object API 계약 지문 필요")).await;
+            return reply_object(&mut w, &err("WIRE.CONTRACT_MISMATCH", "object API 계약 지문 필요")).await;
         }
         let session = match verify_session(token.as_deref(), &keys, &runtime, deadline).await {
             Ok(session) => session,
-            Err(auth::AuthError::Expired) => return reply_object(&mut w, &err("TOKEN_EXPIRED", "세션 만료")).await,
-            Err(auth::AuthError::Unavailable) => return reply_object(&mut w, &err("DB_UNAVAILABLE", "인증 제공자 또는 사용자 연결 조회 실패")).await,
-            Err(_) => return reply_object(&mut w, &err("UNAUTHENTICATED", "토큰 검증 실패")).await,
+            Err(auth::AuthError::Expired) => return reply_object(&mut w, &err("WIRE.TOKEN_EXPIRED", "세션 만료")).await,
+            Err(auth::AuthError::Unavailable) => {
+                return reply_object(&mut w, &err("WIRE.DB_UNAVAILABLE", "인증 제공자 또는 사용자 연결 조회 실패")).await
+            }
+            Err(_) => return reply_object(&mut w, &err("WIRE.UNAUTHENTICATED", "토큰 검증 실패")).await,
         };
         if enforce_admission(&mut w, &runtime, session.as_ref(), admission::Route::Objects, deadline).await {
             return;
@@ -839,41 +842,41 @@ async fn serve_conn(
             || origin.is_none()
             || host.is_none()
         {
-            return reply(&mut w, &err("BAD_REQUEST", "잘못된 WebSocket handshake")).await;
+            return reply(&mut w, &err("WIRE.BAD_REQUEST", "잘못된 WebSocket handshake")).await;
         }
         json!({})
     } else if file_mount.is_some() {
         if !matches!(method.as_str(), "GET" | "HEAD") || len.is_some_and(|length| length != 0) {
-            return reply_object(&mut w, &err("BAD_REQUEST", "관리 파일 mount는 본문 없는 GET/HEAD만 지원함").to_string()).await;
+            return reply_object(&mut w, &err("WIRE.BAD_REQUEST", "관리 파일 mount는 본문 없는 GET/HEAD만 지원함").to_string()).await;
         }
         json!({})
     } else {
         if method != "POST" {
-            return reply(&mut w, &err("BAD_REQUEST", "POST만")).await;
+            return reply(&mut w, &err("WIRE.BAD_REQUEST", "POST만")).await;
         }
         if sse && accept.as_deref() != Some("text/event-stream") {
-            return reply(&mut w, &err("BAD_REQUEST", "Accept: text/event-stream 필요")).await;
+            return reply(&mut w, &err("WIRE.BAD_REQUEST", "Accept: text/event-stream 필요")).await;
         }
         if sse
             && content_type
                 .as_deref()
                 .is_none_or(|value| !value.split(';').next().is_some_and(|media| media.trim().eq_ignore_ascii_case("application/json")))
         {
-            return reply(&mut w, &err("BAD_REQUEST", "Content-Type: application/json 필요")).await;
+            return reply(&mut w, &err("WIRE.BAD_REQUEST", "Content-Type: application/json 필요")).await;
         }
-        let Some(len) = len else { return reply(&mut w, &err("BAD_REQUEST", "content-length 필요")).await };
+        let Some(len) = len else { return reply(&mut w, &err("WIRE.BAD_REQUEST", "content-length 필요")).await };
         // 상한을 넘는 본문은 읽기 전에 거부한다. 잘라서 처리하지 않는다(r7 R7-04).
         if len > MAX_BODY {
-            return reply(&mut w, &err("PAYLOAD_TOO_LARGE", "본문 1MiB 초과")).await;
+            return reply(&mut w, &err("WIRE.PAYLOAD_TOO_LARGE", "본문 1MiB 초과")).await;
         }
         raw_body.resize(len, 0);
         match tokio::time::timeout_at(deadline, rd.read_exact(&mut raw_body)).await {
-            Err(_) => return reply(&mut w, &err("REQUEST_TIMEOUT", "요청 본문 수신 기한 초과")).await,
+            Err(_) => return reply(&mut w, &err("WIRE.REQUEST_TIMEOUT", "요청 본문 수신 기한 초과")).await,
             Ok(Err(_)) => return,
             Ok(Ok(_)) => {}
         }
         let Ok(body) = serde_json::from_slice::<Value>(&raw_body) else {
-            return reply(&mut w, &err("BAD_REQUEST", "JSON 형식 오류")).await;
+            return reply(&mut w, &err("WIRE.BAD_REQUEST", "JSON 형식 오류")).await;
         };
         body
     };
@@ -890,9 +893,9 @@ async fn serve_conn(
     let session = match verification {
         None => None,
         Some(Ok(s)) => Some(s),
-        Some(Err(auth::AuthError::Expired)) => return reply(&mut w, &err("TOKEN_EXPIRED", "세션 만료")).await,
-        Some(Err(auth::AuthError::Unavailable)) => return reply(&mut w, &err("DB_UNAVAILABLE", "인증 제공자 또는 사용자 연결 조회 실패")).await,
-        Some(Err(_)) => return reply(&mut w, &err("UNAUTHENTICATED", "토큰 검증 실패")).await,
+        Some(Err(auth::AuthError::Expired)) => return reply(&mut w, &err("WIRE.TOKEN_EXPIRED", "세션 만료")).await,
+        Some(Err(auth::AuthError::Unavailable)) => return reply(&mut w, &err("WIRE.DB_UNAVAILABLE", "인증 제공자 또는 사용자 연결 조회 실패")).await,
+        Some(Err(_)) => return reply(&mut w, &err("WIRE.UNAUTHENTICATED", "토큰 검증 실패")).await,
     };
     if !(websocket && token.is_none()) {
         let route = if file_mount.is_some() { admission::Route::ManagedFiles } else { admission::Route::from_request(&path, &method) };
@@ -902,7 +905,7 @@ async fn serve_conn(
     }
     if path == "/objects/sign" || path.starts_with("/objects/multipart/") {
         if expected_contract.as_deref() != contract_fingerprint.as_deref() || expected_contract.is_none() {
-            return reply_object(&mut w, &err("CONTRACT_MISMATCH", "object API 계약 지문 필요")).await;
+            return reply_object(&mut w, &err("WIRE.CONTRACT_MISMATCH", "object API 계약 지문 필요")).await;
         }
         let result = object_transport::control(&runtime, &facts, wire, session.as_ref(), &body, &path).await;
         return reply_object(&mut w, &result.to_string()).await;
@@ -911,34 +914,34 @@ async fn serve_conn(
     let write_extension = path == "/apply" && body["request"].get("extension").is_some();
     let rag_path = path.starts_with("/rag/");
     if rag_path && (expected_contract.is_none() || expected_contract.as_deref() != contract_fingerprint.as_deref()) {
-        return reply(&mut w, &err("CONTRACT_MISMATCH", "RAG API 계약 지문 필요")).await;
+        return reply(&mut w, &err("WIRE.CONTRACT_MISMATCH", "RAG API 계약 지문 필요")).await;
     }
     if rag_path && method != "POST" {
-        return reply(&mut w, &err("BAD_REQUEST", "RAG API는 POST만 허용함")).await;
+        return reply(&mut w, &err("WIRE.BAD_REQUEST", "RAG API는 POST만 허용함")).await;
     }
     if ["/read", "/apply", "/status"].contains(&path.as_str()) && !write_extension {
         if let Some(expected) = expected_contract.as_deref() {
             if contract_fingerprint.as_deref() != Some(expected) {
-                return reply(&mut w, &err("CONTRACT_MISMATCH", "생성 계약과 서버 계약이 다름")).await;
+                return reply(&mut w, &err("WIRE.CONTRACT_MISMATCH", "생성 계약과 서버 계약이 다름")).await;
             }
         }
     }
     if write_extension {
         if !runtime.write_extensions || runtime.extensions.is_none() {
-            return reply(&mut w, &err("NOT_FOUND", "공식 WRITE 확장은 명시적 서버 설정이 필요함")).await;
+            return reply(&mut w, &err("WIRE.NOT_FOUND", "공식 WRITE 확장은 명시적 서버 설정이 필요함")).await;
         }
         if session.is_none() {
-            return reply(&mut w, &err("UNAUTHENTICATED", "공식 WRITE 확장은 서명 세션이 필요함")).await;
+            return reply(&mut w, &err("WIRE.UNAUTHENTICATED", "공식 WRITE 확장은 서명 세션이 필요함")).await;
         }
         if expected_contract.is_none() || expected_contract.as_deref() != contract_fingerprint.as_deref() {
-            return reply(&mut w, &err("CONTRACT_MISMATCH", "생성 WRITE 계약 지문이 필요함")).await;
+            return reply(&mut w, &err("WIRE.CONTRACT_MISMATCH", "생성 WRITE 계약 지문이 필요함")).await;
         }
         let request = &body["request"];
         let exact = body.as_object().is_some_and(|body| body.len() == 2 && body.contains_key("key") && body.contains_key("request"))
             && request.as_object().is_some_and(|request| request.len() == 2 && request.contains_key("extension") && request.contains_key("input"))
             && body["key"].as_str().is_some_and(valid_key);
         let Some(name) = request["extension"].as_str().filter(|_| exact) else {
-            return reply(&mut w, &err("BAD_REQUEST", "WRITE 요청은 key/request와 extension/input만 허용함")).await;
+            return reply(&mut w, &err("WIRE.BAD_REQUEST", "WRITE 요청은 key/request와 extension/input만 허용함")).await;
         };
         if let Err(error) = spike_v4_worker::write::validate_write(&facts, name, &request["input"], wire) {
             return reply(&mut w, &err(error.code, &error.msg)).await;
@@ -946,17 +949,17 @@ async fn serve_conn(
     }
     if path == "/extension" {
         if runtime.extensions.is_none() {
-            return reply(&mut w, &err("NOT_FOUND", "공식 확장은 명시적 서버 설정이 필요함")).await;
+            return reply(&mut w, &err("WIRE.NOT_FOUND", "공식 확장은 명시적 서버 설정이 필요함")).await;
         }
         if session.is_none() {
-            return reply(&mut w, &err("UNAUTHENTICATED", "공식 확장은 서명 세션이 필요함")).await;
+            return reply(&mut w, &err("WIRE.UNAUTHENTICATED", "공식 확장은 서명 세션이 필요함")).await;
         }
         if expected_contract.is_none() || expected_contract.as_deref() != contract_fingerprint.as_deref() {
-            return reply(&mut w, &err("CONTRACT_MISMATCH", "생성 확장 계약 지문이 필요함")).await;
+            return reply(&mut w, &err("WIRE.CONTRACT_MISMATCH", "생성 확장 계약 지문이 필요함")).await;
         }
         let valid_body = body.as_object().is_some_and(|o| o.len() == 2 && o.contains_key("extension") && o.contains_key("input"));
         let Some(name) = body["extension"].as_str().filter(|_| valid_body) else {
-            return reply(&mut w, &err("BAD_REQUEST", "확장 본문은 extension/input만 허용함")).await;
+            return reply(&mut w, &err("WIRE.BAD_REQUEST", "확장 본문은 extension/input만 허용함")).await;
         };
         if let Err(e) = spike_v4_worker::validate_read(&facts, name, &body["input"], wire) {
             return reply(&mut w, &err(e.code, &e.msg)).await;
@@ -964,17 +967,17 @@ async fn serve_conn(
     }
     if path == "/operation" {
         if runtime.extensions.is_none() {
-            return reply(&mut w, &err("NOT_FOUND", "operation은 서버 worker 설정이 필요함")).await;
+            return reply(&mut w, &err("WIRE.NOT_FOUND", "operation은 서버 worker 설정이 필요함")).await;
         }
         if session.is_none() {
-            return reply(&mut w, &err("UNAUTHENTICATED", "operation은 검증된 세션이 필요함")).await;
+            return reply(&mut w, &err("WIRE.UNAUTHENTICATED", "operation은 검증된 세션이 필요함")).await;
         }
         if expected_contract.is_none() || expected_contract.as_deref() != contract_fingerprint.as_deref() {
-            return reply(&mut w, &err("CONTRACT_MISMATCH", "생성 operation 계약 지문이 필요함")).await;
+            return reply(&mut w, &err("WIRE.CONTRACT_MISMATCH", "생성 operation 계약 지문이 필요함")).await;
         }
         let exact = body.as_object().is_some_and(|body| body.len() == 2 && body.contains_key("operation") && body.contains_key("input"));
         let Some(name) = body["operation"].as_str().filter(|_| exact) else {
-            return reply(&mut w, &err("BAD_REQUEST", "operation 본문은 operation/input만 허용함")).await;
+            return reply(&mut w, &err("WIRE.BAD_REQUEST", "operation 본문은 operation/input만 허용함")).await;
         };
         if let Err(error) = spike_v4_worker::validate_operation(&facts, name, &body["input"], wire) {
             return reply(&mut w, &err(error.code, &error.msg)).await;
@@ -982,10 +985,10 @@ async fn serve_conn(
     }
     if path == "/capabilities" {
         if session.is_none() {
-            return reply(&mut w, &err("UNAUTHENTICATED", "capability 탐색은 검증된 세션이 필요함")).await;
+            return reply(&mut w, &err("WIRE.UNAUTHENTICATED", "capability 탐색은 검증된 세션이 필요함")).await;
         }
         if !body.as_object().is_some_and(|body| body.is_empty()) {
-            return reply(&mut w, &err("BAD_REQUEST", "capabilities 본문은 빈 객체")).await;
+            return reply(&mut w, &err("WIRE.BAD_REQUEST", "capabilities 본문은 빈 객체")).await;
         }
     }
     let browser_ws = websocket && token.is_none();
@@ -999,29 +1002,31 @@ async fn serve_conn(
         || websocket;
     if managed {
         if !browser_ws && session.as_ref().and_then(|s| s.durable.as_ref()).is_none() {
-            return reply(&mut w, &err("UNAUTHENTICATED", "관리 실행은 제품 principal 세션이 필요함")).await;
+            return reply(&mut w, &err("WIRE.UNAUTHENTICATED", "관리 실행은 제품 principal 세션이 필요함")).await;
         }
         if !sse && !websocket && (expected_contract.is_none() || expected_contract.as_deref() != contract_fingerprint.as_deref()) {
-            return reply(&mut w, &err("CONTRACT_MISMATCH", "관리 실행 계약 지문 필요")).await;
+            return reply(&mut w, &err("WIRE.CONTRACT_MISMATCH", "관리 실행 계약 지문 필요")).await;
         }
     }
     if rag_path {
         let Ok(_slot) = runtime.extension_slots.try_acquire() else {
-            return reply(&mut w, &err("SERVER_BUSY", "RAG 동시 실행 상한")).await;
+            return reply(&mut w, &err("WIRE.SERVER_BUSY", "RAG 동시 실행 상한")).await;
         };
         let Some(engine) = runtime.infrastructure.rag.as_ref() else {
-            return reply(&mut w, &err("NOT_AVAILABLE", "RAG 서비스가 비활성화됨")).await;
+            return reply(&mut w, &err("WIRE.NOT_AVAILABLE", "RAG 서비스가 비활성화됨")).await;
         };
         let Some(session) = session.as_ref() else {
-            return reply(&mut w, &err("UNAUTHENTICATED", "RAG에는 제품 principal 세션이 필요함")).await;
+            return reply(&mut w, &err("WIRE.UNAUTHENTICATED", "RAG에는 제품 principal 세션이 필요함")).await;
         };
         let Some(_principal_slot) = runtime.principal_slots.workers.try_acquire(&admission::principal(Some(session))) else {
-            return reply(&mut w, &err("SERVER_BUSY", "principal별 RAG 동시 실행 상한")).await;
+            return reply(&mut w, &err("WIRE.SERVER_BUSY", "principal별 RAG 동시 실행 상한")).await;
         };
         let owner = match tokio::time::timeout_at(deadline, durable::validate_principal(&runtime, &facts, wire, session)).await {
             Ok(Ok(owner)) => owner,
-            Ok(Err("UNAUTHENTICATED" | "TOKEN_EXPIRED")) => return reply(&mut w, &err("UNAUTHENTICATED", "RAG 제품 principal 검증 실패")).await,
-            Ok(Err(_)) | Err(_) => return reply(&mut w, &err("DB_UNAVAILABLE", "RAG 제품 principal 검증 실패")).await,
+            Ok(Err("WIRE.UNAUTHENTICATED" | "WIRE.TOKEN_EXPIRED")) => {
+                return reply(&mut w, &err("WIRE.UNAUTHENTICATED", "RAG 제품 principal 검증 실패")).await
+            }
+            Ok(Err(_)) | Err(_) => return reply(&mut w, &err("WIRE.DB_UNAVAILABLE", "RAG 제품 principal 검증 실패")).await,
         };
         let fingerprint = contract_fingerprint.as_deref().unwrap_or_default();
         let result = match tokio::time::timeout_at(
@@ -1031,25 +1036,25 @@ async fn serve_conn(
         .await
         {
             Ok(result) => result,
-            Err(_) => json!({"ok":false,"code":"REQUEST_TIMEOUT"}),
+            Err(_) => json!({"ok":false,"code":"WIRE.REQUEST_TIMEOUT"}),
         };
         if result["ok"] == true {
             match tokio::time::timeout_at(deadline, durable::validate_principal(&runtime, &facts, wire, session)).await {
                 Ok(Ok(current_owner)) if current_owner == owner => {}
-                Ok(Err("UNAUTHENTICATED" | "TOKEN_EXPIRED")) => {
-                    return reply(&mut w, &err("UNAUTHENTICATED", "RAG 처리 중 신원 폐기 또는 만료")).await
+                Ok(Err("WIRE.UNAUTHENTICATED" | "WIRE.TOKEN_EXPIRED")) => {
+                    return reply(&mut w, &err("WIRE.UNAUTHENTICATED", "RAG 처리 중 신원 폐기 또는 만료")).await
                 }
-                _ => return reply(&mut w, &err("DB_UNAVAILABLE", "RAG 반환 전 신원 검증 실패")).await,
+                _ => return reply(&mut w, &err("WIRE.DB_UNAVAILABLE", "RAG 반환 전 신원 검증 실패")).await,
             }
         }
         return reply(&mut w, &result.to_string()).await;
     }
     if sse || websocket {
         if !runtime.infrastructure.realtime.enabled {
-            return reply(&mut w, &err("NOT_AVAILABLE", "실시간 전송이 비활성화됨")).await;
+            return reply(&mut w, &err("WIRE.NOT_AVAILABLE", "실시간 전송이 비활성화됨")).await;
         }
         let Some(fingerprint) = contract_fingerprint.as_deref() else {
-            return reply(&mut w, &err("NOT_AVAILABLE", "이벤트 계약 지문 없음")).await;
+            return reply(&mut w, &err("WIRE.NOT_AVAILABLE", "이벤트 계약 지문 없음")).await;
         };
         let subscription = if sse {
             let subscription = match realtime::Subscription::parse(&raw_body) {
@@ -1057,7 +1062,7 @@ async fn serve_conn(
                 Err(code) => return reply(&mut w, &err(code, "잘못된 이벤트 구독 본문")).await,
             };
             if subscription.contract_fingerprint != fingerprint {
-                return reply(&mut w, &err("CONTRACT_MISMATCH", "이벤트 구독 계약 지문이 다름")).await;
+                return reply(&mut w, &err("WIRE.CONTRACT_MISMATCH", "이벤트 구독 계약 지문이 다름")).await;
             }
             Some(subscription)
         } else {
@@ -1067,14 +1072,14 @@ async fn serve_conn(
         let browser_slots = if websocket && token.is_none() { realtime::BrowserSlots::acquire_preauth(&runtime) } else { None };
         let _slot = if websocket && token.is_none() { None } else { runtime.realtime_slots.try_acquire().ok() };
         if browser_slots.is_none() && _slot.is_none() {
-            return reply(&mut w, &err("SERVER_BUSY", "실시간 연결 상한")).await;
+            return reply(&mut w, &err("WIRE.SERVER_BUSY", "실시간 연결 상한")).await;
         }
         // A token-bearing connection holds its principal's share for as long as the stream runs. Browser sockets take theirs
         // when the auth frame identifies the principal.
         let _principal_slot = if browser_slots.is_none() {
             match runtime.principal_slots.realtime.try_acquire(&admission::principal(session.as_ref())) {
                 Some(permit) => Some(permit),
-                None => return reply(&mut w, &err("SERVER_BUSY", "principal별 실시간 연결 상한")).await,
+                None => return reply(&mut w, &err("WIRE.SERVER_BUSY", "principal별 실시간 연결 상한")).await,
             }
         } else {
             None
@@ -1107,11 +1112,11 @@ async fn serve_conn(
     }
     if path == "/session" {
         if !body.as_object().is_some_and(|body| body.is_empty()) {
-            return reply(&mut w, &err("BAD_REQUEST", "session 본문은 빈 객체")).await;
+            return reply(&mut w, &err("WIRE.BAD_REQUEST", "session 본문은 빈 객체")).await;
         }
         let remaining = session.as_ref().map(auth::Session::remaining_ms);
         if remaining == Some(0) {
-            return reply(&mut w, &err("TOKEN_EXPIRED", "세션 만료")).await;
+            return reply(&mut w, &err("WIRE.TOKEN_EXPIRED", "세션 만료")).await;
         }
         let result = json!({
             "ok": true,
@@ -1123,7 +1128,7 @@ async fn serve_conn(
     let _extension_slot = if path == "/extension" || path == "/operation" || write_extension {
         match runtime.extension_slots.try_acquire() {
             Ok(slot) => Some(slot),
-            Err(_) => return reply(&mut w, &err("WORKER_BUSY", "로컬 확장 동시 호출 상한")).await,
+            Err(_) => return reply(&mut w, &err("WIRE.WORKER_BUSY", "로컬 확장 동시 호출 상한")).await,
         }
     } else {
         None
@@ -1131,17 +1136,17 @@ async fn serve_conn(
     let _extension_principal_slot = if _extension_slot.is_some() {
         match runtime.principal_slots.workers.try_acquire(&admission::principal(session.as_ref())) {
             Some(permit) => Some(permit),
-            None => return reply(&mut w, &err("WORKER_BUSY", "principal별 로컬 확장 동시 호출 상한")).await,
+            None => return reply(&mut w, &err("WIRE.WORKER_BUSY", "principal별 로컬 확장 동시 호출 상한")).await,
         }
     } else {
         None
     };
     let Some(pool) = runtime.db_pool.as_ref() else {
-        return reply(&mut w, &err("DB_UNAVAILABLE", "DB pool 설정 없음")).await;
+        return reply(&mut w, &err("WIRE.DB_UNAVAILABLE", "DB pool 설정 없음")).await;
     };
     let mut db = match pool.acquire_until(deadline).await {
         Ok(db) => db,
-        Err(_) => return reply(&mut w, &err("DB_UNAVAILABLE", "DB 연결 또는 pool checkout 기한 초과")).await,
+        Err(_) => return reply(&mut w, &err("WIRE.DB_UNAVAILABLE", "DB 연결 또는 pool checkout 기한 초과")).await,
     };
     if let Some(fence) = &runtime.deployment {
         let checked = tokio::time::timeout_at(deadline, async {
@@ -1156,15 +1161,15 @@ async fn serve_conn(
             Ok(Ok(Some(actual))) if actual == fence.expected_digest => {}
             Ok(Ok(Some(_))) => {
                 std::mem::drop(db);
-                return reply(&mut w, &err("DEPLOYMENT_CHANGED", "실행 정의와 배포 정의가 다름")).await;
+                return reply(&mut w, &err("WIRE.DEPLOYMENT_CHANGED", "실행 정의와 배포 정의가 다름")).await;
             }
             Ok(Ok(None)) => {
                 std::mem::drop(db);
-                return reply(&mut w, &err("SCHEMA_MISMATCH", "배포 marker 누락")).await;
+                return reply(&mut w, &err("WIRE.SCHEMA_MISMATCH", "배포 marker 누락")).await;
             }
             Ok(Err(_)) | Err(_) => {
                 std::mem::drop(db);
-                return reply(&mut w, &err("DB_UNAVAILABLE", "배포 잠금 또는 marker 조회 실패")).await;
+                return reply(&mut w, &err("WIRE.DB_UNAVAILABLE", "배포 잠금 또는 marker 조회 실패")).await;
             }
         }
     }
@@ -1172,13 +1177,13 @@ async fn serve_conn(
         Ok(Ok(row)) => row.get::<_, String>(0),
         Ok(Err(_)) | Err(_) => {
             std::mem::drop(db);
-            return reply(&mut w, &err("DB_UNAVAILABLE", "실행 전 DB 조회 실패 또는 기한 초과")).await;
+            return reply(&mut w, &err("WIRE.DB_UNAVAILABLE", "실행 전 DB 조회 실패 또는 기한 초과")).await;
         }
     };
     let caller = Caller { actor_id: session.as_ref().map(|s| s.actor_id), now };
     if let Some(mount) = file_mount {
         let Ok(id) = managed_file_id(mount, &path) else {
-            return reply_object(&mut w, &err("NOT_FOUND", "관리 파일 경로가 올바르지 않음").to_string()).await;
+            return reply_object(&mut w, &err("WIRE.NOT_FOUND", "관리 파일 경로가 올바르지 않음").to_string()).await;
         };
         let result = match tokio::time::timeout_at(
             deadline,
@@ -1195,20 +1200,20 @@ async fn serve_conn(
         .await
         {
             Ok(result) => result,
-            Err(_) => return reply_object(&mut w, &err("REQUEST_TIMEOUT", "관리 파일 조회 기한 초과").to_string()).await,
+            Err(_) => return reply_object(&mut w, &err("WIRE.REQUEST_TIMEOUT", "관리 파일 조회 기한 초과").to_string()).await,
         };
         if result["ok"] != true {
             return reply_object(&mut w, &result.to_string()).await;
         }
         let Some(media_type) = result["file"]["mediaType"].as_str() else {
-            return reply_object(&mut w, &err("INTERNAL", "관리 파일 metadata 오류").to_string()).await;
+            return reply_object(&mut w, &err("WIRE.INTERNAL", "관리 파일 metadata 오류").to_string()).await;
         };
         use base64::Engine;
         let Some(encoded) = result["base64"].as_str() else {
-            return reply_object(&mut w, &err("INTERNAL", "관리 파일 payload 오류").to_string()).await;
+            return reply_object(&mut w, &err("WIRE.INTERNAL", "관리 파일 payload 오류").to_string()).await;
         };
         let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(encoded) else {
-            return reply_object(&mut w, &err("INTERNAL", "관리 파일 payload 오류").to_string()).await;
+            return reply_object(&mut w, &err("WIRE.INTERNAL", "관리 파일 payload 오류").to_string()).await;
         };
         let _ =
             reply_managed_file(&mut trace::HeadTap::new(&mut w.writer, &mut w.trace), &method, id, media_type, &bytes, w.origin.as_deref(), deadline)
@@ -1253,14 +1258,14 @@ async fn serve_conn(
             };
             match current {
                 Ok(current) if Some(current.actor_id) == caller.actor_id => output,
-                Err(auth::AuthError::Expired) => json!({"ok":false,"code":"TOKEN_EXPIRED"}),
-                Err(auth::AuthError::Unavailable) => json!({"ok":false,"code":"DB_UNAVAILABLE"}),
-                _ => json!({"ok":false,"code":"UNAUTHENTICATED"}),
+                Err(auth::AuthError::Expired) => json!({"ok":false,"code":"WIRE.TOKEN_EXPIRED"}),
+                Err(auth::AuthError::Unavailable) => json!({"ok":false,"code":"WIRE.DB_UNAVAILABLE"}),
+                _ => json!({"ok":false,"code":"WIRE.UNAUTHENTICATED"}),
             }
         };
         match tokio::time::timeout(operation_deadline, execution).await {
             Ok(output) => output,
-            Err(_) => json!({"ok":false,"code":"DEADLINE_EXCEEDED"}),
+            Err(_) => json!({"ok":false,"code":"WIRE.DEADLINE_EXCEEDED"}),
         }
     } else if write_extension {
         let mut result = write_extension::apply_with_launch(
@@ -1289,7 +1294,7 @@ async fn serve_conn(
             Ok(worker) => worker,
             Err(_) => {
                 std::mem::drop(db);
-                return reply(&mut w, &err("WORKER_FAILED", "공식 worker 실행 실패")).await;
+                return reply(&mut w, &err("WIRE.WORKER_FAILED", "공식 worker 실행 실패")).await;
             }
         };
         let name = body["extension"].as_str().unwrap();
@@ -1305,7 +1310,7 @@ async fn serve_conn(
         match output {
             Ok(Ok(output)) => json!({"ok":true,"output":output}),
             Ok(Err(e)) => json!({"ok":false,"code":e.code,"msg":"공식 읽기 확장 호출 거부"}),
-            Err(_) => json!({"ok":false,"code":"DEADLINE_EXCEEDED","msg":"공식 읽기 확장 기한 초과"}),
+            Err(_) => json!({"ok":false,"code":"WIRE.DEADLINE_EXCEEDED","msg":"공식 읽기 확장 기한 초과"}),
         }
     } else {
         handle(&mut db, &facts, &path, &body, &caller, wire).await
@@ -1322,7 +1327,7 @@ async fn serve_conn(
             let remaining = session.remaining_ms();
             if remaining == 0 {
                 std::mem::drop(db);
-                return reply(&mut w, &err("TOKEN_EXPIRED", "읽는 동안 세션 만료")).await;
+                return reply(&mut w, &err("WIRE.TOKEN_EXPIRED", "읽는 동안 세션 만료")).await;
             }
             if path == "/read" {
                 result["maxAgeMs"] = json!(result["maxAgeMs"].as_u64().unwrap_or(0).min(remaining));

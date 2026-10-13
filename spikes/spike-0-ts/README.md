@@ -81,8 +81,8 @@ command 절 순서는 `idempotent → load → policy → require → transactio
 - query는 관계 edge마다 `= ANY($ids)` 배치 조회 1개입니다. 왕복 수는 select 모양으로 정해지고 행 수와 무관합니다. 여러 SQL은 `REPEATABLE READ READ ONLY` 스냅샷 하나에서 읽습니다.
 - list query의 policy는 SQL WHERE로 내려갑니다. 볼 수 없는 행은 읽지도 않습니다.
 - `emit`은 같은 트랜잭션에서 `_aip_outbox`에 기록됩니다. dispatcher는 아직 없습니다.
-- `idempotent` command는 `Idempotency-Key`가 필수이고, 같은 키의 동시 요청은 한 번만 실행됩니다. 같은 키에 다른 입력이면 `AIP.IDEMPOTENCY.KEY_REUSED`입니다.
-- invariant 위반은 DB CHECK에서 막히고 `AIP.INVARIANT.VIOLATED` + invariant 이름으로 돌아갑니다.
+- `idempotent` command는 `Idempotency-Key`가 필수이고, 같은 키의 동시 요청은 한 번만 실행됩니다. 같은 키에 다른 입력이면 `POC.IDEMPOTENCY.KEY_REUSED`입니다.
+- invariant 위반은 DB CHECK에서 막히고 `POC.INVARIANT.VIOLATED` + invariant 이름으로 돌아갑니다.
 
 ## 정적 분석 규칙
 
@@ -115,7 +115,7 @@ command 절 순서는 `idempotent → load → policy → require → transactio
 2. 관계를 거친 정책(`owner(part.box.owner)`)을 쓰려면 `load`를 더 써야 합니다. multi-tenant 서비스에서는 이게 기본이라 표현 비용이 큽니다.
 3. lock과 check를 붙여두려면 command 전체가 트랜잭션이어야 해서, 단일 DB에서는 `transaction {}` 블록의 의미가 약합니다. 이 primitive의 진짜 쓰임은 외부 effect와의 경계일 가능성이 큽니다.
 4. load가 policy보다 먼저라서 권한 없는 사용자도 NOT_FOUND와 FORBIDDEN 차이로 존재 여부를 알 수 있습니다. 숨길지 정책으로 정해야 합니다.
-5. `each` 안의 다중 행 UPDATE는 동시 취소끼리 deadlock이 날 수 있습니다(추론, 재현 테스트 없음. 확인 필요). 지금은 `AIP.CONCURRENCY.CONFLICT`(retryable)로 돌려줍니다.
+5. `each` 안의 다중 행 UPDATE는 동시 취소끼리 deadlock이 날 수 있습니다(추론, 재현 테스트 없음. 확인 필요). 지금은 `POC.CONCURRENCY.CONFLICT`(retryable)로 돌려줍니다.
 
 ## 알려진 한계
 

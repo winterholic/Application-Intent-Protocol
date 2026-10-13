@@ -51,16 +51,16 @@ where
     let cors_headers = cors::actual_response_headers(origin);
     let _slot = match rt.object_slots.try_acquire() {
         Ok(permit) => permit,
-        Err(_) => return send_json(writer, 503, "OBJECT_CAPACITY", "동시 객체 전송 상한에 도달함", &cors_headers, head_only).await,
+        Err(_) => return send_json(writer, 503, "WIRE.OBJECT_CAPACITY", "동시 객체 전송 상한에 도달함", &cors_headers, head_only).await,
     };
     let Some(session) = session else {
-        return send_json(writer, 401, "UNAUTHENTICATED", "검증된 principal 세션이 필요함", &cors_headers, head_only).await;
+        return send_json(writer, 401, "WIRE.UNAUTHENTICATED", "검증된 principal 세션이 필요함", &cors_headers, head_only).await;
     };
     if session.remaining_ms() == 0 {
-        return send_json(writer, 401, "TOKEN_EXPIRED", "세션 만료", &cors_headers, head_only).await;
+        return send_json(writer, 401, "WIRE.TOKEN_EXPIRED", "세션 만료", &cors_headers, head_only).await;
     }
     let Some(_principal_slot) = rt.principal_slots.uploads.try_acquire(&crate::admission::principal(Some(session))) else {
-        return send_json(writer, 503, "OBJECT_CAPACITY", "principal별 동시 객체 전송 상한에 도달함", &cors_headers, head_only).await;
+        return send_json(writer, 503, "WIRE.OBJECT_CAPACITY", "principal별 동시 객체 전송 상한에 도달함", &cors_headers, head_only).await;
     };
     let owner = match validate_owner(rt, facts, wire, session).await {
         Ok(owner) => owner,
@@ -68,36 +68,36 @@ where
     };
     let storage = match &rt.infrastructure.objects {
         Some(storage) => storage.clone(),
-        None => return send_json(writer, 503, "NOT_AVAILABLE", "object storage 설정이 필요함", &cors_headers, head_only).await,
+        None => return send_json(writer, 503, "WIRE.NOT_AVAILABLE", "object storage 설정이 필요함", &cors_headers, head_only).await,
     };
     let store = match storage {
         ObjectStorage::Local(base) => match tokio::task::spawn_blocking(move || base.for_owner(&owner)).await {
             Ok(Ok(store)) => Arc::new(store),
-            _ => return send_json(writer, 503, "STORAGE_UNAVAILABLE", "object storage 준비 실패", &cors_headers, head_only).await,
+            _ => return send_json(writer, 503, "WIRE.STORAGE_UNAVAILABLE", "object storage 준비 실패", &cors_headers, head_only).await,
         },
         ObjectStorage::S3(_) | ObjectStorage::GcsHmac(_) => {
-            return send_json(writer, 405, "METHOD_NOT_ALLOWED", "S3 객체는 presigned URL로 전송해야 함", &cors_headers, head_only).await;
+            return send_json(writer, 405, "WIRE.METHOD_NOT_ALLOWED", "S3 객체는 presigned URL로 전송해야 함", &cors_headers, head_only).await;
         }
     };
 
     if path == "/objects/put" {
         if method != "POST" {
-            return send_json(writer, 405, "METHOD_NOT_ALLOWED", "POST만 지원함", &cors_headers, head_only).await;
+            return send_json(writer, 405, "WIRE.METHOD_NOT_ALLOWED", "POST만 지원함", &cors_headers, head_only).await;
         }
         let Some(length) = content_length else {
-            return send_json(writer, 411, "LENGTH_REQUIRED", "content-length가 필요함", &cors_headers, head_only).await;
+            return send_json(writer, 411, "WIRE.LENGTH_REQUIRED", "content-length가 필요함", &cors_headers, head_only).await;
         };
         let Some(content_type) = header(headers, "content-type").filter(|value| valid_content_type(value)) else {
-            return send_json(writer, 400, "BAD_REQUEST", "유효한 content-type이 필요함", &cors_headers, head_only).await;
+            return send_json(writer, 400, "WIRE.BAD_REQUEST", "유효한 content-type이 필요함", &cors_headers, head_only).await;
         };
         if length as u64 > store.max_bytes() {
-            return send_json(writer, 413, "PAYLOAD_TOO_LARGE", "저장소 객체 크기 상한 초과", &cors_headers, head_only).await;
+            return send_json(writer, 413, "WIRE.PAYLOAD_TOO_LARGE", "저장소 객체 크기 상한 초과", &cors_headers, head_only).await;
         }
         return receive_object(reader, writer, length, content_type.to_owned(), store, session, rt, facts, wire, &cors_headers).await;
     }
 
     let Some(key) = path.strip_prefix("/objects/").and_then(|value| ObjectKey::parse(value).ok()) else {
-        return send_json(writer, 404, "NOT_FOUND", "객체를 찾을 수 없음", &cors_headers, head_only).await;
+        return send_json(writer, 404, "WIRE.NOT_FOUND", "객체를 찾을 수 없음", &cors_headers, head_only).await;
     };
     match method {
         "GET" | "HEAD" => {
@@ -107,8 +107,8 @@ where
                 let store_for_worker = store.clone();
                 let metadata = match tokio::task::spawn_blocking(move || store_for_worker.stat(&key_for_worker)).await {
                     Ok(Ok(Some(metadata))) => metadata,
-                    Ok(Ok(None)) => return send_json(writer, 404, "NOT_FOUND", "객체를 찾을 수 없음", &cors_headers, head_only).await,
-                    _ => return send_json(writer, 503, "STORAGE_UNAVAILABLE", "object storage 조회 실패", &cors_headers, head_only).await,
+                    Ok(Ok(None)) => return send_json(writer, 404, "WIRE.NOT_FOUND", "객체를 찾을 수 없음", &cors_headers, head_only).await,
+                    _ => return send_json(writer, 503, "WIRE.STORAGE_UNAVAILABLE", "object storage 조회 실패", &cors_headers, head_only).await,
                 };
                 if let Err(code) = validate_owner(rt, facts, wire, session).await {
                     return send_json(writer, status_for(code), code, "principal 상태 변경", &cors_headers, head_only).await;
@@ -119,8 +119,10 @@ where
             let store_for_worker = store.clone();
             let opened = match tokio::task::spawn_blocking(move || store_for_worker.open(&key_for_worker)).await {
                 Ok(Ok(opened)) => opened,
-                Ok(Err(ObjectError::NotFound)) => return send_json(writer, 404, "NOT_FOUND", "객체를 찾을 수 없음", &cors_headers, head_only).await,
-                _ => return send_json(writer, 503, "STORAGE_UNAVAILABLE", "object storage 읽기 실패", &cors_headers, head_only).await,
+                Ok(Err(ObjectError::NotFound)) => {
+                    return send_json(writer, 404, "WIRE.NOT_FOUND", "객체를 찾을 수 없음", &cors_headers, head_only).await
+                }
+                _ => return send_json(writer, 503, "WIRE.STORAGE_UNAVAILABLE", "object storage 읽기 실패", &cors_headers, head_only).await,
             };
             if let Err(code) = validate_owner(rt, facts, wire, session).await {
                 return send_json(writer, status_for(code), code, "principal 상태 변경", &cors_headers, head_only).await;
@@ -134,15 +136,15 @@ where
             }
             let deleted = match tokio::task::spawn_blocking(move || store.delete(&key)).await {
                 Ok(Ok(deleted)) => deleted,
-                _ => return send_json(writer, 503, "STORAGE_UNAVAILABLE", "object storage 삭제 실패", &cors_headers, head_only).await,
+                _ => return send_json(writer, 503, "WIRE.STORAGE_UNAVAILABLE", "object storage 삭제 실패", &cors_headers, head_only).await,
             };
             if deleted {
                 send_empty(writer, 204, &cors_headers).await
             } else {
-                send_json(writer, 404, "NOT_FOUND", "객체를 찾을 수 없음", &cors_headers, head_only).await
+                send_json(writer, 404, "WIRE.NOT_FOUND", "객체를 찾을 수 없음", &cors_headers, head_only).await
             }
         }
-        _ => send_json(writer, 405, "METHOD_NOT_ALLOWED", "GET, HEAD, DELETE만 지원함", &cors_headers, head_only).await,
+        _ => send_json(writer, 405, "WIRE.METHOD_NOT_ALLOWED", "GET, HEAD, DELETE만 지원함", &cors_headers, head_only).await,
     }
 }
 
@@ -189,7 +191,7 @@ where
                 let _ = tx.send(Err(io::Error::new(io::ErrorKind::UnexpectedEof, "request body ended early"))).await;
                 drop(tx);
                 let _ = worker.await;
-                return send_json(writer, 400, "BAD_REQUEST", "요청 본문이 content-length보다 짧음", cors_headers, false).await;
+                return send_json(writer, 400, "WIRE.BAD_REQUEST", "요청 본문이 content-length보다 짧음", cors_headers, false).await;
             }
         };
         remaining -= read;
@@ -206,10 +208,10 @@ where
     let upload = match worker.await {
         Ok(Ok(upload)) => upload,
         Ok(Err(error)) => return send_object_error(writer, error, cors_headers).await,
-        Err(_) => return send_json(writer, 503, "STORAGE_UNAVAILABLE", "object storage worker 실패", cors_headers, false).await,
+        Err(_) => return send_json(writer, 503, "WIRE.STORAGE_UNAVAILABLE", "object storage worker 실패", cors_headers, false).await,
     };
     if session.remaining_ms() == 0 {
-        return send_json(writer, 401, "TOKEN_EXPIRED", "업로드 중 세션 만료", cors_headers, false).await;
+        return send_json(writer, 401, "WIRE.TOKEN_EXPIRED", "업로드 중 세션 만료", cors_headers, false).await;
     }
     if let Err(code) = validate_owner(rt, facts, wire, session).await {
         return send_json(writer, status_for(code), code, "업로드 중 principal 상태 변경", cors_headers, false).await;
@@ -232,7 +234,7 @@ where
             .await
         }
         Ok(Err(error)) => send_object_error(writer, error, cors_headers).await,
-        Err(_) => send_json(writer, 503, "STORAGE_UNAVAILABLE", "object storage 저장 실패", cors_headers, false).await,
+        Err(_) => send_json(writer, 503, "WIRE.STORAGE_UNAVAILABLE", "object storage 저장 실패", cors_headers, false).await,
     }
 }
 
@@ -240,16 +242,16 @@ where
 pub(crate) async fn control(rt: &Runtime, facts: &Value, wire: IdWire, session: Option<&Session>, body: &Value, path: &str) -> Value {
     let _slot = match rt.object_slots.try_acquire() {
         Ok(permit) => permit,
-        Err(_) => return failure("OBJECT_CAPACITY"),
+        Err(_) => return failure("WIRE.OBJECT_CAPACITY"),
     };
     let Some(session) = session else {
-        return failure("UNAUTHENTICATED");
+        return failure("WIRE.UNAUTHENTICATED");
     };
     if session.remaining_ms() == 0 {
-        return failure("TOKEN_EXPIRED");
+        return failure("WIRE.TOKEN_EXPIRED");
     }
     let Some(_principal_slot) = rt.principal_slots.uploads.try_acquire(&crate::admission::principal(Some(session))) else {
-        return failure("OBJECT_CAPACITY");
+        return failure("WIRE.OBJECT_CAPACITY");
     };
     let owner = match validate_owner(rt, facts, wire, session).await {
         Ok(owner) => owner,
@@ -258,11 +260,11 @@ pub(crate) async fn control(rt: &Runtime, facts: &Value, wire: IdWire, session: 
     let base = match &rt.infrastructure.objects {
         Some(ObjectStorage::S3(base)) => base.as_ref().clone(),
         Some(ObjectStorage::GcsHmac(base)) => base.s3_compatible_store().clone(),
-        _ => return failure("NOT_AVAILABLE"),
+        _ => return failure("WIRE.NOT_AVAILABLE"),
     };
     let store = match base.for_owner(&owner) {
         Ok(store) => store,
-        Err(_) => return failure("BAD_REQUEST"),
+        Err(_) => return failure("WIRE.BAD_REQUEST"),
     };
     let response = match path {
         "/objects/sign" => sign(&store, body),
@@ -270,9 +272,9 @@ pub(crate) async fn control(rt: &Runtime, facts: &Value, wire: IdWire, session: 
         "/objects/multipart/part" => multipart_part(&store, body),
         "/objects/multipart/complete" => multipart_complete(&store, body).await,
         "/objects/multipart/abort" => multipart_abort(&store, body).await,
-        _ => failure("NOT_FOUND"),
+        _ => failure("WIRE.NOT_FOUND"),
     };
-    let postflight = if session.remaining_ms() == 0 { Err("TOKEN_EXPIRED") } else { validate_owner(rt, facts, wire, session).await };
+    let postflight = if session.remaining_ms() == 0 { Err("WIRE.TOKEN_EXPIRED") } else { validate_owner(rt, facts, wire, session).await };
     if let Err(code) = postflight {
         if path == "/objects/multipart/start" && response["ok"] == true {
             if let Some(upload) = parse_upload(&json!({"id":response["id"],"uploadId":response["uploadId"]})) {
@@ -286,7 +288,7 @@ pub(crate) async fn control(rt: &Runtime, facts: &Value, wire: IdWire, session: 
 
 fn sign(store: &S3Store, body: &Value) -> Value {
     let Some(method) = body.get("method").and_then(Value::as_str) else {
-        return failure("BAD_REQUEST");
+        return failure("WIRE.BAD_REQUEST");
     };
     let has_id = body.get("id").is_some();
     let has_type = body.get("contentType").is_some();
@@ -296,15 +298,15 @@ fn sign(store: &S3Store, body: &Value) -> Value {
         _ => false,
     };
     if !valid_keys {
-        return failure("BAD_REQUEST");
+        return failure("WIRE.BAD_REQUEST");
     }
     if method == "PUT" && !body["size"].as_u64().is_some_and(|size| size <= MAX_S3_OBJECT_BYTES) {
-        return failure("PAYLOAD_TOO_LARGE");
+        return failure("WIRE.PAYLOAD_TOO_LARGE");
     }
     let key = if let Some(id) = body["id"].as_str() {
         match ObjectKey::parse(id) {
             Ok(key) => key,
-            Err(_) => return failure("BAD_REQUEST"),
+            Err(_) => return failure("WIRE.BAD_REQUEST"),
         }
     } else {
         ObjectKey::generate()
@@ -328,89 +330,89 @@ fn sign(store: &S3Store, body: &Value) -> Value {
                 json!({"ok":true,"id":key.to_string(),"method":method,"url":url,"expiresIn":PRESIGN_SECONDS})
             }
         }
-        Err(_) => failure("BAD_REQUEST"),
+        Err(_) => failure("WIRE.BAD_REQUEST"),
     }
 }
 
 async fn multipart_start(store: &S3Store, body: &Value) -> Value {
     if !exact(body, &["contentType"]) {
-        return failure("BAD_REQUEST");
+        return failure("WIRE.BAD_REQUEST");
     }
     let Some(content_type) = body["contentType"].as_str().filter(|value| valid_content_type(value)) else {
-        return failure("BAD_REQUEST");
+        return failure("WIRE.BAD_REQUEST");
     };
     match store.create_multipart(content_type).await {
         Ok(upload) => json!({"ok":true,"id":upload.key.to_string(),"uploadId":upload.upload_id}),
-        Err(_) => failure("OBJECT_STORE_ERROR"),
+        Err(_) => failure("WIRE.OBJECT_STORE_ERROR"),
     }
 }
 
 fn multipart_part(store: &S3Store, body: &Value) -> Value {
     if !exact(body, &["id", "uploadId", "partNumber", "size"]) {
-        return failure("BAD_REQUEST");
+        return failure("WIRE.BAD_REQUEST");
     }
     let Some(key) = parse_key(body) else {
-        return failure("BAD_REQUEST");
+        return failure("WIRE.BAD_REQUEST");
     };
     let Some(upload_id) = body["uploadId"].as_str() else {
-        return failure("BAD_REQUEST");
+        return failure("WIRE.BAD_REQUEST");
     };
     let Some(part_number) = body["partNumber"].as_u64().and_then(|n| u16::try_from(n).ok()) else {
-        return failure("BAD_REQUEST");
+        return failure("WIRE.BAD_REQUEST");
     };
     if !body["size"].as_u64().is_some_and(|size| size > 0 && size <= MAX_S3_PART_BYTES) {
-        return failure("PAYLOAD_TOO_LARGE");
+        return failure("WIRE.PAYLOAD_TOO_LARGE");
     }
     let size = body["size"].as_u64().unwrap();
     match store.presign_part_sized(&key, upload_id, part_number, size, PRESIGN_SECONDS) {
         Ok(url) => {
             json!({"ok":true,"id":key.to_string(),"partNumber":part_number,"method":"PUT","url":url,"headers":{"content-length":size.to_string()},"expiresIn":PRESIGN_SECONDS})
         }
-        Err(_) => failure("BAD_REQUEST"),
+        Err(_) => failure("WIRE.BAD_REQUEST"),
     }
 }
 
 async fn multipart_complete(store: &S3Store, body: &Value) -> Value {
     if !exact(body, &["id", "uploadId", "parts"]) {
-        return failure("BAD_REQUEST");
+        return failure("WIRE.BAD_REQUEST");
     }
     let Some(upload) = parse_upload(body) else {
-        return failure("BAD_REQUEST");
+        return failure("WIRE.BAD_REQUEST");
     };
     let Some(parts) = body["parts"].as_array().filter(|parts| !parts.is_empty() && parts.len() <= 10_000) else {
-        return failure("BAD_REQUEST");
+        return failure("WIRE.BAD_REQUEST");
     };
     let mut completed = Vec::with_capacity(parts.len());
     for part in parts {
         if !exact(part, &["number", "etag"]) {
-            return failure("BAD_REQUEST");
+            return failure("WIRE.BAD_REQUEST");
         }
         let Some(number) = part["number"].as_u64().and_then(|n| u16::try_from(n).ok()) else {
-            return failure("BAD_REQUEST");
+            return failure("WIRE.BAD_REQUEST");
         };
         let Some(etag) = part["etag"].as_str().filter(|s| !s.is_empty() && s.len() <= 256 && !s.chars().any(char::is_control)) else {
-            return failure("BAD_REQUEST");
+            return failure("WIRE.BAD_REQUEST");
         };
         completed.push(CompletedPart { number, etag: etag.to_owned() });
     }
     match store.complete_multipart(&upload, &completed).await {
         Ok(()) => json!({"ok":true,"id":upload.key.to_string(),"completed":true}),
-        Err(ObjectError::InvalidMultipart) => failure("BAD_REQUEST"),
-        Err(_) => failure("OBJECT_STORE_ERROR"),
+        Err(ObjectError::InvalidMultipart) => failure("WIRE.BAD_REQUEST"),
+        Err(_) => failure("WIRE.OBJECT_STORE_ERROR"),
     }
 }
 
 async fn multipart_abort(store: &S3Store, body: &Value) -> Value {
     if !exact(body, &["id", "uploadId"]) {
-        return failure("BAD_REQUEST");
+        return failure("WIRE.BAD_REQUEST");
     }
     let Some(upload) = parse_upload(body) else {
-        return failure("BAD_REQUEST");
+        return failure("WIRE.BAD_REQUEST");
     };
     match store.abort_multipart(&upload).await {
         Ok(()) => json!({"ok":true,"id":upload.key.to_string()}),
-        Err(ObjectError::InvalidMultipart) => failure("BAD_REQUEST"),
-        Err(_) => failure("OBJECT_STORE_ERROR"),
+        Err(ObjectError::InvalidMultipart) => failure("WIRE.BAD_REQUEST"),
+        Err(_) => failure("WIRE.OBJECT_STORE_ERROR"),
     }
 }
 
@@ -438,12 +440,12 @@ fn header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
 async fn validate_owner(rt: &Runtime, facts: &Value, wire: IdWire, session: &Session) -> Result<String, &'static str> {
     tokio::time::timeout(crate::server::DB_PREFLIGHT_TIMEOUT, durable::validate_principal(rt, facts, wire, session))
         .await
-        .map_err(|_| "DB_UNAVAILABLE")?
+        .map_err(|_| "WIRE.DB_UNAVAILABLE")?
 }
 fn status_for(code: &str) -> u16 {
     match code {
-        "UNAUTHENTICATED" | "TOKEN_EXPIRED" => 401,
-        "NOT_AVAILABLE" | "DB_UNAVAILABLE" | "DEPLOYMENT_CHANGED" => 503,
+        "WIRE.UNAUTHENTICATED" | "WIRE.TOKEN_EXPIRED" => 401,
+        "WIRE.NOT_AVAILABLE" | "WIRE.DB_UNAVAILABLE" | "WIRE.DEPLOYMENT_CHANGED" => 503,
         _ => 403,
     }
 }
@@ -452,20 +454,20 @@ fn failure(code: &str) -> Value {
 }
 fn object_error_code(error: &ObjectError) -> &'static str {
     match error {
-        ObjectError::TooLarge | ObjectError::QuotaExceeded => "PAYLOAD_TOO_LARGE",
-        ObjectError::Capacity => "OBJECT_CAPACITY",
-        ObjectError::InvalidKey | ObjectError::InvalidMetadata | ObjectError::InvalidMultipart => "BAD_REQUEST",
-        ObjectError::NotFound => "NOT_FOUND",
-        _ => "STORAGE_UNAVAILABLE",
+        ObjectError::TooLarge | ObjectError::QuotaExceeded => "WIRE.PAYLOAD_TOO_LARGE",
+        ObjectError::Capacity => "WIRE.OBJECT_CAPACITY",
+        ObjectError::InvalidKey | ObjectError::InvalidMetadata | ObjectError::InvalidMultipart => "WIRE.BAD_REQUEST",
+        ObjectError::NotFound => "WIRE.NOT_FOUND",
+        _ => "WIRE.STORAGE_UNAVAILABLE",
     }
 }
 async fn send_object_error<W: AsyncWrite + Unpin>(writer: &mut W, error: ObjectError, cors_headers: &str) -> bool {
     let code = object_error_code(&error);
     let status = match code {
-        "PAYLOAD_TOO_LARGE" => 413,
-        "OBJECT_CAPACITY" => 503,
-        "BAD_REQUEST" => 400,
-        "NOT_FOUND" => 404,
+        "WIRE.PAYLOAD_TOO_LARGE" => 413,
+        "WIRE.OBJECT_CAPACITY" => 503,
+        "WIRE.BAD_REQUEST" => 400,
+        "WIRE.NOT_FOUND" => 404,
         _ => 503,
     };
     send_json(writer, status, code, "object storage 처리 실패", cors_headers, false).await
@@ -511,7 +513,7 @@ async fn send_object<W: AsyncWrite + Unpin>(
     cors_headers: &str,
 ) -> bool {
     if session.remaining_ms() == 0 {
-        return send_json(writer, 401, "TOKEN_EXPIRED", "세션 만료", cors_headers, false).await;
+        return send_json(writer, 401, "WIRE.TOKEN_EXPIRED", "세션 만료", cors_headers, false).await;
     }
     if let Err(code) = validate_owner(rt, facts, wire, session).await {
         return send_json(writer, status_for(code), code, "principal 상태 변경", cors_headers, false).await;
@@ -596,11 +598,11 @@ mod tests {
     #[tokio::test]
     async fn head_json_errors_preserve_get_length_without_sending_body() {
         let mut response = Vec::new();
-        send_json(&mut response, 404, "NOT_FOUND", "missing", "", true).await;
+        send_json(&mut response, 404, "WIRE.NOT_FOUND", "missing", "", true).await;
         let split = response.windows(4).position(|bytes| bytes == b"\r\n\r\n").unwrap();
         let headers = std::str::from_utf8(&response[..split]).unwrap();
         let body = &response[split + 4..];
-        let expected = json!({"ok":false,"code":"NOT_FOUND","msg":"missing"}).to_string().len();
+        let expected = json!({"ok":false,"code":"WIRE.NOT_FOUND","msg":"missing"}).to_string().len();
         assert!(headers.lines().any(|line| line.eq_ignore_ascii_case(&format!("content-length: {expected}"))));
         assert!(body.is_empty());
     }
@@ -612,8 +614,8 @@ mod tests {
         assert_eq!(signed["ok"], true);
         assert!(signed["url"].as_str().unwrap().contains("X-Amz-SignedHeaders=content-length%3Bcontent-type%3Bhost"));
         assert_eq!(signed["headers"]["content-length"].as_str(), Some("64"));
-        assert_eq!(sign(&store, &json!({"method":"PUT","size":u64::MAX,"contentType":"image/png"}))["code"], "PAYLOAD_TOO_LARGE");
-        assert_eq!(sign(&store, &json!({"method":"PUT","size":64,"contentType":"image/png","path":"/tmp/x"}))["code"], "BAD_REQUEST");
+        assert_eq!(sign(&store, &json!({"method":"PUT","size":u64::MAX,"contentType":"image/png"}))["code"], "WIRE.PAYLOAD_TOO_LARGE");
+        assert_eq!(sign(&store, &json!({"method":"PUT","size":64,"contentType":"image/png","path":"/tmp/x"}))["code"], "WIRE.BAD_REQUEST");
         assert!(exact(&json!({"method":"PUT","contentType":"image/png","size":64}), &["method", "contentType", "size"]));
         assert!(valid_content_type("application/octet-stream"));
         assert!(!valid_content_type("text/plain\r\nX-Evil: yes"));
@@ -630,6 +632,6 @@ mod tests {
         assert_eq!(signed["headers"]["content-length"].as_str(), Some("128"));
         let mut invalid = body.clone();
         invalid["extra"] = json!(true);
-        assert_eq!(multipart_part(&store, &invalid)["code"], "BAD_REQUEST");
+        assert_eq!(multipart_part(&store, &invalid)["code"], "WIRE.BAD_REQUEST");
     }
 }

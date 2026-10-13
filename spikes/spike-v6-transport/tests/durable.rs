@@ -373,10 +373,10 @@ operation job http_hold {
         let broken_id = broken["run"]["id"].as_str().unwrap();
         let failed = wait(server.address, &fp, broken_id).await;
         assert_eq!(failed["run"]["state"], "FAILED", "{failed}");
-        if failed["run"]["error"] != "EFFECT_UNKNOWN" {
+        if failed["run"]["error"] != "WIRE.EFFECT_UNKNOWN" {
             unknown_errors.push(format!("{lang:?}: {}", failed["run"]["error"]));
         }
-        assert_eq!(post(server.address, "/jobs/result", "owner", &fp, json!({"id":broken_id})).await["code"], "JOB_FAILED");
+        assert_eq!(post(server.address, "/jobs/result", "owner", &fp, json!({"id":broken_id})).await["code"], "WIRE.JOB_FAILED");
         assert_eq!(
             post(
                 server.address,
@@ -409,8 +409,8 @@ operation job http_hold {
         let caught_id = caught["run"]["id"].as_str().unwrap();
         let caught_state = wait(server.address, &fp, caught_id).await;
         assert_eq!(caught_state["run"]["state"], "FAILED", "caught EFFECT_UNKNOWN must not let the job report success: {caught_state}");
-        assert_eq!(caught_state["run"]["error"], "EFFECT_UNKNOWN", "{caught_state}");
-        assert_eq!(post(server.address, "/jobs/result", "owner", &fp, json!({"id":caught_id})).await["code"], "JOB_FAILED");
+        assert_eq!(caught_state["run"]["error"], "WIRE.EFFECT_UNKNOWN", "{caught_state}");
+        assert_eq!(post(server.address, "/jobs/result", "owner", &fp, json!({"id":caught_id})).await["code"], "WIRE.JOB_FAILED");
         let caught_effect: String =
             db.query_one(&format!("SELECT state FROM {schema}.aip_effects WHERE run_id::text=$1"), &[&caught_id]).await.unwrap().get(0);
         assert_eq!(caught_effect, "UNKNOWN");
@@ -442,8 +442,8 @@ operation job http_hold {
         hold_release.notify_one();
         let held_state = wait(server.address, &fp, held_id).await;
         assert_eq!(held_state["run"]["state"], "FAILED", "an in-flight external effect cannot be reported as safely cancelled: {held_state}");
-        assert_eq!(held_state["run"]["error"], "CANCELLATION_UNCONFIRMED", "{held_state}");
-        assert_eq!(post(server.address, "/jobs/result", "owner", &fp, json!({"id":held_id})).await["code"], "JOB_FAILED");
+        assert_eq!(held_state["run"]["error"], "WIRE.CANCELLATION_UNCONFIRMED", "{held_state}");
+        assert_eq!(post(server.address, "/jobs/result", "owner", &fp, json!({"id":held_id})).await["code"], "WIRE.JOB_FAILED");
         assert_eq!(hold_count.load(Ordering::SeqCst), 1);
         let req = hold_requests.lock().unwrap().join("\n");
         assert!(req.to_ascii_lowercase().contains("idempotency-key:"), "{req}");
@@ -491,28 +491,28 @@ async fn durable_jobs_survive_restart_cancel_and_isolate_files_events_in_both_la
                 json!({"bucket":"reports","name":"upload.txt","mediaType":"text/plain","base64":"eA=="})
             )
             .await["code"],
-            "NOT_EXPOSED"
+            "WIRE.NOT_EXPOSED"
         );
         // Keys of schedules, webhooks and outbox rows belong to the server; a caller cannot claim one in advance.
         for reserved in ["schedule:nightly:1", "webhook:hook:0123", "outbox:7:1"] {
             let claimed =
                 post(server.address, "/jobs/enqueue", "owner", &fp, json!({"operation":"count","input":{"text":"x"},"key":reserved,"delayMs":0}))
                     .await;
-            assert_eq!(claimed["code"], "BAD_VALUE", "{reserved}: {claimed}");
+            assert_eq!(claimed["code"], "WIRE.BAD_VALUE", "{reserved}: {claimed}");
         }
         let body = json!({"operation":"count","input":{"text":"가😀A"},"key":format!("count-{lang:?}"),"delayMs":500});
         let submitted = post(server.address, "/jobs/enqueue", "owner", &fp, body.clone()).await;
         assert_eq!(submitted["ok"], true, "{submitted}");
         let id = submitted["run"]["id"].as_str().unwrap();
         assert_eq!(post(server.address, "/jobs/enqueue", "owner", &fp, body.clone()).await["run"]["id"], id);
-        assert_eq!(post(server.address, "/jobs/status", "other", &fp, json!({"id":id})).await["code"], "NOT_FOUND");
+        assert_eq!(post(server.address, "/jobs/status", "other", &fp, json!({"id":id})).await["code"], "WIRE.NOT_FOUND");
         server.shutdown().await.unwrap();
         let server = start().await.unwrap();
         assert_eq!(wait(server.address, &fp, id).await["run"]["state"], "SUCCEEDED");
         assert_eq!(post(server.address, "/jobs/result", "owner", &fp, json!({"id":id})).await["output"], json!({"length":3}));
         db.execute(&format!("UPDATE {schema}.aip_principals SET enabled=false WHERE issuer='test' AND subject='owner'"), &[]).await.unwrap();
         let revoked = post(server.address, "/jobs/result", "owner", &fp, json!({"id":id})).await;
-        assert_eq!(revoked["code"], "UNAUTHENTICATED", "terminal results must check the principal's current authorization: {revoked}");
+        assert_eq!(revoked["code"], "WIRE.UNAUTHENTICATED", "terminal results must check the principal's current authorization: {revoked}");
         db.execute(&format!("UPDATE {schema}.aip_principals SET enabled=true WHERE issuer='test' AND subject='owner'"), &[]).await.unwrap();
         assert_eq!(post(server.address, "/jobs/result", "owner", &fp, json!({"id":id})).await["output"], json!({"length":3}));
         let slow =
@@ -535,7 +535,7 @@ async fn durable_jobs_survive_restart_cancel_and_isolate_files_events_in_both_la
         let result = post(server.address, "/jobs/result", "owner", &fp, json!({"id":report["run"]["id"]})).await;
         let fid = &result["output"]["file"];
         assert_eq!(post(server.address, "/files/get", "owner", &fp, json!({"id":fid})).await["base64"], "cmVwb3J0");
-        assert_eq!(post(server.address, "/files/get", "other", &fp, json!({"id":fid})).await["code"], "NOT_FOUND");
+        assert_eq!(post(server.address, "/files/get", "other", &fp, json!({"id":fid})).await["code"], "WIRE.NOT_FOUND");
         let events = post(server.address, "/events/read", "owner", &fp, json!({"stream":"notifications","after":"0","limit":100})).await;
         assert!(!events["events"].as_array().unwrap().is_empty(), "{events}");
         assert!(post(server.address, "/events/read", "other", &fp, json!({"stream":"notifications","after":"0","limit":100})).await["events"]
@@ -617,7 +617,7 @@ operation job budgetChild {
         assert_eq!(job["ok"], true, "{job}");
         let id = job["run"]["id"].as_str().unwrap();
         let failed = wait_for(server.address, &fp, id, 2400).await;
-        if failed["run"]["state"] != "FAILED" || failed["run"]["error"] != "COST_EXCEEDED" {
+        if failed["run"]["state"] != "FAILED" || failed["run"]["error"] != "WIRE.COST_EXCEEDED" {
             let connections: i64 = db.query_one("SELECT count(*) FROM pg_stat_activity WHERE datname=current_database()", &[]).await.unwrap().get(0);
             let stored = db
                 .query_one(
@@ -780,7 +780,7 @@ async fn messages_share_atomic_job_effects_and_reject_foreign_acknowledgements()
             json!({"queue":"notifications","key":"client-forbidden","payload":{"text":"injected"}}),
         )
         .await;
-        assert_eq!(direct_publish["code"], "NOT_EXPOSED", "job queue declaration must not grant client publishing: {direct_publish}");
+        assert_eq!(direct_publish["code"], "WIRE.NOT_EXPOSED", "job queue declaration must not grant client publishing: {direct_publish}");
         let run = post(
             server.address,
             "/jobs/enqueue",

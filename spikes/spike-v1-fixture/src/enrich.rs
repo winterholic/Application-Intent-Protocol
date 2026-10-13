@@ -16,13 +16,13 @@ const LINE_DECLS: &[&str] =
     &["predicate", "access", "limit", "enum", "actor", "field", "rows", "unique", "check", "invariant", "select", "filter", "sort"];
 
 /// Errors that are often a consequence of a declaration-level error.
-const CASCADING: &[&str] = &["UNRESOLVED_NAME", "UNKNOWN_SYMBOL", "UNKNOWN_FIELD", "TYPE_MISMATCH", "UNKNOWN_TYPE"];
+const CASCADING: &[&str] = &["DEF.UNRESOLVED_NAME", "DEF.UNKNOWN_SYMBOL", "DEF.UNKNOWN_FIELD", "DEF.TYPE_MISMATCH", "DEF.UNKNOWN_TYPE"];
 
 /// Declaration-level errors; the errors that follow from them are reported after them.
 fn is_root(code: &str) -> bool {
     code.starts_with("PARSE_")
         || code.starts_with("LEX_")
-        || matches!(code, "DUPLICATE" | "UNKNOWN_TYPE" | "UNKNOWN_RESOURCE" | "AMBIGUOUS" | "BAD_DECIMAL_TYPE")
+        || matches!(code, "DEF.DUPLICATE" | "DEF.UNKNOWN_TYPE" | "DEF.UNKNOWN_RESOURCE" | "DEF.AMBIGUOUS" | "DEF.BAD_DECIMAL_TYPE")
 }
 
 pub fn enrich(mut diags: Vec<Diag>, src: &str, form: Form) -> Vec<Diag> {
@@ -108,7 +108,7 @@ fn backticked(msg: &str) -> Vec<&str> {
 fn suggestions(d: &Diag, universe: &BTreeMap<String, usize>) -> Vec<String> {
     let mut out = Vec::new();
     match d.code {
-        "PARSE_UNKNOWN_KEY" => {
+        "DEF.PARSE_UNKNOWN_KEY" => {
             let block = d.msg.split(" 안 ").next().unwrap_or("");
             if let Some(keys) = codes::keys_of(block) {
                 let bad = backticked(&d.msg).first().copied().unwrap_or("");
@@ -119,7 +119,7 @@ fn suggestions(d: &Diag, universe: &BTreeMap<String, usize>) -> Vec<String> {
                 out.push(format!("`{block}` accepts: {}.", keys.join(", ")));
             }
         }
-        "PARSE_EXPECTED" => {
+        "DEF.PARSE_EXPECTED" => {
             // A syntax error often sits at a key of the block being read: name the keys that block has.
             let inner = d.scope().and_then(|s| s.rsplit(" > ").next()).unwrap_or("");
             let block = BLOCK_KEYS.iter().filter(|(b, _)| inner == *b || inner.starts_with(&format!("{b} "))).max_by_key(|(b, _)| b.len());
@@ -127,7 +127,7 @@ fn suggestions(d: &Diag, universe: &BTreeMap<String, usize>) -> Vec<String> {
                 out.push(format!("`{block}` accepts: {}.", keys.join(", ")));
             }
         }
-        "PARSE_UNKNOWN_DECL" => {
+        "DEF.PARSE_UNKNOWN_DECL" => {
             if let Some(keys) = codes::keys_of("선언") {
                 let bad = backticked(&d.msg).first().copied().unwrap_or("");
                 let near = close(bad, keys.iter().map(|k| k.to_string()));
@@ -137,7 +137,7 @@ fn suggestions(d: &Diag, universe: &BTreeMap<String, usize>) -> Vec<String> {
                 out.push(format!("a declaration starts with one of: {}.", keys.join(", ")));
             }
         }
-        "UNKNOWN_OPERATOR" => {
+        "DEF.UNKNOWN_OPERATOR" => {
             let bad = backticked(&d.msg).first().copied().unwrap_or("");
             let near = close(bad, OPERATORS.iter().map(|s| s.to_string()));
             if !near.is_empty() {
@@ -145,7 +145,7 @@ fn suggestions(d: &Diag, universe: &BTreeMap<String, usize>) -> Vec<String> {
             }
             out.push(format!("operators: {}.", OPERATORS.join(", ")));
         }
-        "UNKNOWN_FIELD" | "UNKNOWN_SYMBOL" | "UNRESOLVED_NAME" | "UNKNOWN_TYPE" | "UNKNOWN_RESOURCE" | "UNKNOWN_KEY" => {
+        "DEF.UNKNOWN_FIELD" | "DEF.UNKNOWN_SYMBOL" | "DEF.UNRESOLVED_NAME" | "DEF.UNKNOWN_TYPE" | "DEF.UNKNOWN_RESOURCE" | "DEF.UNKNOWN_KEY" => {
             // The misspelled word is the quoted word the definition uses least: a real name occurs
             // at its declaration and at its uses, a typo once or twice.
             let bad = backticked(&d.msg)
@@ -154,7 +154,7 @@ fn suggestions(d: &Diag, universe: &BTreeMap<String, usize>) -> Vec<String> {
                 .filter(|t| !t.is_empty())
                 .min_by_key(|t| universe.get(*t).copied().unwrap_or(0));
             if let Some(bad) = bad {
-                let upper = d.code == "UNKNOWN_TYPE";
+                let upper = d.code == "DEF.UNKNOWN_TYPE";
                 let pool = universe.iter().filter(|(w, _)| !upper || w.chars().next().is_some_and(char::is_uppercase)).map(|(w, _)| w.clone());
                 let near = close(bad, pool);
                 if !near.is_empty() {

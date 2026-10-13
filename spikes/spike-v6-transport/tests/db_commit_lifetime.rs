@@ -164,7 +164,7 @@ async fn committed_but_missing_reply_stays_unknown_and_recovers_without_duplicat
                 let body = json!({"key":"held-commit","request":request});
                 remaining.store(1, Ordering::SeqCst);
                 let first = post(server.address, &token, &fp, "/apply", &body).await;
-                if !matches!(&first,Ok(v) if v["code"]=="COMMIT_UNKNOWN") {
+                if !matches!(&first,Ok(v) if v["code"]=="WIRE.COMMIT_UNKNOWN") {
                     failures.push(format!("{wire:?} extension={extension} first: {first:?}"));
                 }
                 if remaining.load(Ordering::SeqCst) != 0 {

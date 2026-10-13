@@ -73,10 +73,10 @@ test("V14: 같은 actor 세션 교체 뒤에도 malformed 성공은 미확정으
 });
 
 test("V14: 복구된 확정 오류도 code와 recovered를 보존", async () => {
-  const aip = clientFor(n => n === 1 ? { ...success, changed: null } : { ok: false, code: "FORBIDDEN", msg: "denied" });
+  const aip = clientFor(n => n === 1 ? { ...success, changed: null } : { ok: false, code: "WIRE.FORBIDDEN", msg: "denied" });
   const outcome = await aip.apply(request, { key: "rejected", retries: 1 });
   assert.equal(outcome.ok, false);
-  assert.equal(outcome.code, "FORBIDDEN");
+  assert.equal(outcome.code, "WIRE.FORBIDDEN");
   assert.equal(outcome.recovered, true);
   assert.deepEqual(aip.pending(), []);
 });
@@ -100,7 +100,7 @@ test("V14: 같은 키 응답과 복구 목록은 JS 호출자의 변조도 차�
   assert.equal(Object.isFrozen(outcomes), true);
   assert.equal(Object.isFrozen(outcomes[0]), true);
   assert.equal(Object.isFrozen(outcomes[0].changed), true);
-  const rejected = clientFor(n => n === 1 ? { ...success, changed: null } : { ok: false, code: "FORBIDDEN" });
+  const rejected = clientFor(n => n === 1 ? { ...success, changed: null } : { ok: false, code: "WIRE.FORBIDDEN" });
   const outcome = await rejected.apply(request, { key: "error", retries: 1 });
   assert.equal(outcome.recovered, true);
   assert.equal(Object.isFrozen(outcome), true);
@@ -110,7 +110,7 @@ test("V14: 같은 키의 다른 본문 사전 거부도 불변 결과이며 원�
   const aip = clientFor(() => ({ ...success, changed: null }));
   await assert.rejects(aip.apply(request, { key: "fixed", retries: 0 }), WriteUnsettled);
   const rejected = await aip.apply({ apply: "Inbox.mark", target: { ids: ["43"] } }, { key: "fixed" });
-  assert.equal(rejected.code, "IDEMPOTENCY_MISMATCH");
+  assert.equal(rejected.code, "WIRE.IDEMPOTENCY_MISMATCH");
   assert.equal(Object.isFrozen(rejected), true);
   assert.deepEqual(aip.pending(), ["fixed"]);
 });

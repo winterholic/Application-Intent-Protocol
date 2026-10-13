@@ -19,7 +19,7 @@ HTTP listener는 loopback에서 TLS reverse proxy 뒤에 둔다. 제품은 개�
 
 마이그레이션은 owned schema에서 테스트한다. 실행 전 plan으로 SQL·변경 분류·데이터 영향을 확인하고 plan digest로 적용 대상을 고정한다. 일반 변환의 미지원 형태는 임의 SQL로 추측하지 않고 구체 오류로 거부한다.
 
-서비스 기동 때 정본 정의와 실제 schema를 preflight로 확인한다. 실행 중인 서비스는 각 `/read`·`/apply`·`/status`·`/extension`·`/operation`·`/capabilities` 작업 전 작업용 DB 연결에서 배포 shared advisory lock을 잡고 `aip_migrate_meta.facts_digest`를 기동 시 정의와 다시 비교한다. 이 잠금은 결과가 준비될 때까지 유지된다. 마이그레이션의 exclusive 잠금과 직렬화되므로 진행 중인 작업을 마친 뒤 새 배포가 적용되고, 이전 정의를 든 listener의 후속 요청은 `DEPLOYMENT_CHANGED`로 거부된다. DB 잠금·marker 조회 실패는 실행 없이 거부한다. `/session`은 정책 데이터를 실행하지 않아 이 배포 잠금을 잡지 않는다. 이 요청별 비교는 기동 시 catalog preflight를 대체하지 않으며, 외부의 임의 DDL 변경을 매 요청 검출한다는 보장은 아니다.
+서비스 기동 때 정본 정의와 실제 schema를 preflight로 확인한다. 실행 중인 서비스는 각 `/read`·`/apply`·`/status`·`/extension`·`/operation`·`/capabilities` 작업 전 작업용 DB 연결에서 배포 shared advisory lock을 잡고 `aip_migrate_meta.facts_digest`를 기동 시 정의와 다시 비교한다. 이 잠금은 결과가 준비될 때까지 유지된다. 마이그레이션의 exclusive 잠금과 직렬화되므로 진행 중인 작업을 마친 뒤 새 배포가 적용되고, 이전 정의를 든 listener의 후속 요청은 `WIRE.DEPLOYMENT_CHANGED`로 거부된다. DB 잠금·marker 조회 실패는 실행 없이 거부한다. `/session`은 정책 데이터를 실행하지 않아 이 배포 잠금을 잡지 않는다. 이 요청별 비교는 기동 시 catalog preflight를 대체하지 않으며, 외부의 임의 DDL 변경을 매 요청 검출한다는 보장은 아니다.
 
 ## 실행과 재검증
 

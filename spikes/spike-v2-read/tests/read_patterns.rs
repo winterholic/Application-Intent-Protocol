@@ -55,17 +55,17 @@ fn operators_outside_the_definition_allow_list_are_rejected() {
     // 기본 fixture는 club.eq / status.in / school.isNull 어느 것도 열지 않았다.
     let base = load_str(A, Form::A).unwrap().execution;
     let c = who(Some(1));
-    assert_eq!(code(plan_read(&base, &rec("club", "eq", json!(10)), &c)), "FILTER_NOT_ALLOWED");
-    assert_eq!(code(plan_read(&base, &rec("status", "in", json!(["PUBLISHED"])), &c)), "FILTER_NOT_ALLOWED");
+    assert_eq!(code(plan_read(&base, &rec("club", "eq", json!(10)), &c)), "WIRE.FILTER_NOT_ALLOWED");
+    assert_eq!(code(plan_read(&base, &rec("status", "in", json!(["PUBLISHED"])), &c)), "WIRE.FILTER_NOT_ALLOWED");
     // 새 facts에서도 목록에 없는 (필드, 연산) 조합은 거부: title.eq, status.eq, club.isNull, school.gte
     let f = facts();
-    assert_eq!(code(plan_read(&f, &rec("title", "eq", json!("x")), &c)), "FILTER_NOT_ALLOWED");
-    assert_eq!(code(plan_read(&f, &rec("status", "eq", json!("PUBLISHED")), &c)), "FILTER_NOT_ALLOWED");
-    assert_eq!(code(plan_read(&f, &rec("club", "isNull", json!(true)), &c)), "FILTER_NOT_ALLOWED");
-    assert_eq!(code(plan_read(&f, &club("name", "in", json!(["a"])), &c)), "FILTER_NOT_ALLOWED");
+    assert_eq!(code(plan_read(&f, &rec("title", "eq", json!("x")), &c)), "WIRE.FILTER_NOT_ALLOWED");
+    assert_eq!(code(plan_read(&f, &rec("status", "eq", json!("PUBLISHED")), &c)), "WIRE.FILTER_NOT_ALLOWED");
+    assert_eq!(code(plan_read(&f, &rec("club", "isNull", json!(true)), &c)), "WIRE.FILTER_NOT_ALLOWED");
+    assert_eq!(code(plan_read(&f, &club("name", "in", json!(["a"])), &c)), "WIRE.FILTER_NOT_ALLOWED");
     // in 허용이 eq·isNull 허용을 뜻하지 않는다
-    assert_eq!(code(plan_read(&f, &club("school", "gte", json!(1)), &c)), "FILTER_NOT_ALLOWED");
-    assert_eq!(code(plan_read(&f, &club("logo", "in", json!(["a"])), &c)), "FILTER_NOT_ALLOWED");
+    assert_eq!(code(plan_read(&f, &club("school", "gte", json!(1)), &c)), "WIRE.FILTER_NOT_ALLOWED");
+    assert_eq!(code(plan_read(&f, &club("logo", "in", json!(["a"])), &c)), "WIRE.FILTER_NOT_ALLOWED");
 }
 
 #[test]
@@ -88,7 +88,7 @@ fn ref_eq_follows_the_id_wire_and_rejects_bad_values() {
             assert!(p.sql.contains("::text::bigint"), "{}", p.sql);
         }
         for v in bad {
-            assert_eq!(code(plan_read_with_wire(&f, &rec("club", "eq", v.clone()), &c, wire)), "BAD_VALUE", "{wire:?} {v}");
+            assert_eq!(code(plan_read_with_wire(&f, &rec("club", "eq", v.clone()), &c, wire)), "WIRE.BAD_VALUE", "{wire:?} {v}");
         }
     }
 }
@@ -101,20 +101,20 @@ fn in_filter_bounds_dedupes_and_binds_every_element() {
     assert_eq!(MAX_IN_VALUES, 50);
     let req = |v: Value| rec("status", "in", v);
     // 빈 배열, 배열 아님, 상한 초과, 잘못된 원소는 SQL 전에 거부
-    assert_eq!(code(plan_read(&f, &req(json!([])), &c)), "BAD_VALUE");
-    assert_eq!(code(plan_read(&f, &req(json!("PUBLISHED")), &c)), "BAD_VALUE");
-    assert_eq!(code(plan_read(&f, &req(json!(null)), &c)), "BAD_VALUE");
-    assert_eq!(code(plan_read(&f, &req(json!(["PUBLISHED", "NOPE"])), &c)), "BAD_VALUE");
-    assert_eq!(code(plan_read(&f, &req(json!(["PUBLISHED", null])), &c)), "BAD_VALUE");
-    assert_eq!(code(plan_read(&f, &req(json!([["PUBLISHED"]])), &c)), "BAD_VALUE");
+    assert_eq!(code(plan_read(&f, &req(json!([])), &c)), "WIRE.BAD_VALUE");
+    assert_eq!(code(plan_read(&f, &req(json!("PUBLISHED")), &c)), "WIRE.BAD_VALUE");
+    assert_eq!(code(plan_read(&f, &req(json!(null)), &c)), "WIRE.BAD_VALUE");
+    assert_eq!(code(plan_read(&f, &req(json!(["PUBLISHED", "NOPE"])), &c)), "WIRE.BAD_VALUE");
+    assert_eq!(code(plan_read(&f, &req(json!(["PUBLISHED", null])), &c)), "WIRE.BAD_VALUE");
+    assert_eq!(code(plan_read(&f, &req(json!([["PUBLISHED"]])), &c)), "WIRE.BAD_VALUE");
     // 상한 초과는 중복 제거 전 길이로 센다. 요청 크기 자체를 제한하기 위해서다.
     let many: Vec<Value> = (0..=MAX_IN_VALUES).map(|_| json!("PUBLISHED")).collect();
-    assert_eq!(code(plan_read(&f, &req(Value::Array(many)), &c)), "IN_LIST_EXCEEDED");
+    assert_eq!(code(plan_read(&f, &req(Value::Array(many)), &c)), "WIRE.IN_LIST_EXCEEDED");
     let titles: Vec<Value> = (0..MAX_IN_VALUES).map(|i| json!(format!("t{i}"))).collect();
     let p = plan_read(&f, &rec("title", "in", Value::Array(titles)), &c).unwrap();
     assert_eq!(p.params.iter().filter(|x| x.as_ref().is_some_and(|s| s.starts_with('t'))).count(), 50);
     let titles: Vec<Value> = (0..=MAX_IN_VALUES).map(|i| json!(format!("t{i}"))).collect();
-    assert_eq!(code(plan_read(&f, &rec("title", "in", Value::Array(titles)), &c)), "IN_LIST_EXCEEDED");
+    assert_eq!(code(plan_read(&f, &rec("title", "in", Value::Array(titles)), &c)), "WIRE.IN_LIST_EXCEEDED");
     // 중복은 값 하나로 합친다(첫 등장 순서). Id는 정규화한 값 기준이다.
     let p = plan_read(&f, &req(json!(["DRAFT", "CLOSED", "DRAFT"])), &c).unwrap();
     assert_eq!(p.params.iter().filter(|x| x.as_deref() == Some("DRAFT")).count(), 1);
@@ -129,7 +129,7 @@ fn in_filter_bounds_dedupes_and_binds_every_element() {
     }
     assert!(p.sql.contains("::text::text"));
     // NUL 문자는 기존 Text 검사에서 거부
-    assert_eq!(code(plan_read(&f, &rec("title", "in", json!(["a\u{0}b"])), &c)), "BAD_VALUE");
+    assert_eq!(code(plan_read(&f, &rec("title", "in", json!(["a\u{0}b"])), &c)), "WIRE.BAD_VALUE");
 }
 
 #[test]
@@ -138,8 +138,8 @@ fn safe_number_wire_rejects_ids_beyond_js_safe_range() {
     let f = facts();
     let c = who(Some(1));
     let big = json!(9_007_199_254_740_992_i64);
-    assert_eq!(code(plan_read_with_wire(&f, &rec("club", "eq", big.clone()), &c, IdWire::SafeNumber)), "ID_OUT_OF_RANGE");
-    assert_eq!(code(plan_read_with_wire(&f, &rec("club", "in", json!([10, big])), &c, IdWire::SafeNumber)), "ID_OUT_OF_RANGE");
+    assert_eq!(code(plan_read_with_wire(&f, &rec("club", "eq", big.clone()), &c, IdWire::SafeNumber)), "WIRE.ID_OUT_OF_RANGE");
+    assert_eq!(code(plan_read_with_wire(&f, &rec("club", "in", json!([10, big])), &c, IdWire::SafeNumber)), "WIRE.ID_OUT_OF_RANGE");
 }
 
 #[test]
@@ -148,16 +148,16 @@ fn in_filter_on_ref_follows_wire_and_unknown_op_shapes_stay_rejected() {
     let f = facts();
     let c = who(Some(1));
     assert_eq!(code(plan_read_with_wire(&f, &rec("club", "in", json!(["10", "11"])), &c, IdWire::DecimalString)), "OK");
-    assert_eq!(code(plan_read_with_wire(&f, &rec("club", "in", json!([10, 11])), &c, IdWire::DecimalString)), "BAD_VALUE");
+    assert_eq!(code(plan_read_with_wire(&f, &rec("club", "in", json!([10, 11])), &c, IdWire::DecimalString)), "WIRE.BAD_VALUE");
     assert_eq!(code(plan_read_with_wire(&f, &rec("club", "in", json!([10, 11])), &c, IdWire::SafeNumber)), "OK");
-    assert_eq!(code(plan_read_with_wire(&f, &rec("club", "in", json!([10, "x"])), &c, IdWire::SafeNumber)), "BAD_VALUE");
+    assert_eq!(code(plan_read_with_wire(&f, &rec("club", "in", json!([10, "x"])), &c, IdWire::SafeNumber)), "WIRE.BAD_VALUE");
     // 스칼라 연산에 배열을 넣을 수 없고, in에 스칼라를 넣을 수 없다
-    assert_eq!(code(plan_read(&f, &rec("club", "eq", json!([10, 11])), &c)), "BAD_VALUE");
-    assert_eq!(code(plan_read(&f, &rec("club", "in", json!(10)), &c)), "BAD_VALUE");
+    assert_eq!(code(plan_read(&f, &rec("club", "eq", json!([10, 11])), &c)), "WIRE.BAD_VALUE");
+    assert_eq!(code(plan_read(&f, &rec("club", "in", json!(10)), &c)), "WIRE.BAD_VALUE");
     // 같은 (필드, 연산) 중복 금지는 그대로
     let mut r = rec("club", "in", json!([10]));
     r["filter"] = json!([{"field":"club","op":"in","value":[10]},{"field":"club","op":"in","value":[11]}]);
-    assert_eq!(code(plan_read(&f, &r, &c)), "DUPLICATE");
+    assert_eq!(code(plan_read(&f, &r, &c)), "WIRE.DUPLICATE");
 }
 
 #[test]
@@ -166,7 +166,7 @@ fn is_null_takes_only_a_bool_and_binds_it() {
     let f = facts();
     let c = who(Some(1));
     for bad in [json!("true"), json!(1), json!(null), json!([true]), json!({"a":1})] {
-        assert_eq!(code(plan_read(&f, &club("school", "isNull", bad.clone()), &c)), "BAD_VALUE", "{bad}");
+        assert_eq!(code(plan_read(&f, &club("school", "isNull", bad.clone()), &c)), "WIRE.BAD_VALUE", "{bad}");
     }
     for (v, s) in [(true, "true"), (false, "false")] {
         let p = plan_read(&f, &club("school", "isNull", json!(v)), &c).unwrap();

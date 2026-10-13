@@ -228,7 +228,7 @@ mod macos {
         let token = server.keys.issue(1, 600);
         let result = post(server.address, &token, &fingerprint).await;
         match result {
-            Ok(body) if body["code"] == "DEADLINE_EXCEEDED" => {}
+            Ok(body) if body["code"] == "WIRE.DEADLINE_EXCEEDED" => {}
             Ok(body) => failures.push(format!("{lang:?} deadline response: expected DEADLINE_EXCEEDED, got {body}")),
             Err(error) => failures.push(format!("{lang:?} deadline HTTP request failed: {error}")),
         }
@@ -370,7 +370,7 @@ mod macos {
                 failures.push(format!("{lang:?} expected four live children, observed {alive}"));
             }
             match post(server.address, &token, &fingerprint).await {
-                Ok(body) if body["code"] == "WORKER_BUSY" => {}
+                Ok(body) if body["code"] == "WIRE.WORKER_BUSY" => {}
                 Ok(body) => failures.push(format!("{lang:?} fifth concurrent call: expected WORKER_BUSY, got {body}")),
                 Err(error) => failures.push(format!("{lang:?} fifth concurrent call failed: {error}")),
             }

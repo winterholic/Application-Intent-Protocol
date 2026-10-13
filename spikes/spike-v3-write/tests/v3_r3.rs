@@ -110,13 +110,13 @@ async fn r3_regressions() {
     // R3-01 복합 위반의 오류 우선순위가 세 후보에서 같다(권한·상태 판정이 같은 범위 검사보다 먼저)
     db.batch_execute(&seed).await.unwrap();
     let got = all3(&mut db, &f, 8, &["304", "302"]).await;
-    if got != "INVALID_STATE/INVALID_STATE/INVALID_STATE" {
+    if got != "WIRE.INVALID_STATE/WIRE.INVALID_STATE/WIRE.INVALID_STATE" {
         fails.push(format!("R3-01 거절됨+다른 동아리: {got}"));
     }
     let ft = facts(true);
     db.batch_execute(&seed).await.unwrap();
     let got = all3(&mut db, &ft, 1, &["300", "302"]).await;
-    if got != "FORBIDDEN/FORBIDDEN/FORBIDDEN" {
+    if got != "WIRE.FORBIDDEN/WIRE.FORBIDDEN/WIRE.FORBIDDEN" {
         fails.push(format!("R3-01 rowRead true + 권한 없는 동아리 섞임: {got}"));
     }
 
@@ -143,14 +143,14 @@ async fn r3_regressions() {
     let r = code(apply(&mut db, &f, &json!({ "apply": "Apply.approve", "target": { "ids": ["300"] } }), &who(1), &k).await);
     tokio::time::sleep(Duration::from_millis(800)).await;
     let st = state(&db, s).await;
-    if r != "COMMIT_UNKNOWN" || !st.contains("300:APPROVE") {
+    if r != "WIRE.COMMIT_UNKNOWN" || !st.contains("300:APPROVE") {
         fails.push(format!("R3-05 커밋 중 기한 초과: {r} / {st}"));
     }
     db.batch_execute(&seed).await.unwrap();
     let k = Knobs { pause_before_commit_ms: 1850, ..Default::default() };
     let r = code(apply(&mut db, &f, &json!({ "apply": "Apply.approve", "target": { "ids": ["300"] } }), &who(1), &k).await);
     let st = state(&db, s).await;
-    if r != "DEADLINE_EXCEEDED" || st.contains("300:APPROVE") {
+    if r != "WIRE.DEADLINE_EXCEEDED" || st.contains("300:APPROVE") {
         fails.push(format!("R3-05 커밋 전 기한 부족: {r} / {st}"));
     }
 

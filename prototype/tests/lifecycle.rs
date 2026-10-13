@@ -184,7 +184,7 @@ fn invalid_definition_is_rejected_without_creating_the_requested_schema() {
 
     let output = init(&source, schema.name(), LOCAL_DB);
     assert!(!output.status.success());
-    assert_eq!(result_json(&output)["code"], "INVALID_DEFINITION");
+    assert_eq!(result_json(&output)["code"], "DEF.INVALID_DEFINITION");
     assert!(!schema_exists(schema.name()), "definition validation must happen before schema creation");
 }
 

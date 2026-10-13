@@ -68,7 +68,7 @@ async fn boolean_values_execute_in_transitions_and_post_update_effects() {
     assert!(effect.get::<_, bool>(0));
     assert!(effect.get::<_, bool>(1), "effects read the new APPROVED state");
     let denied = apply(&mut db, &facts, &json!({"apply":"Task.approve","target":{"ids":["101"]}}), &caller, &Knobs::default()).await.unwrap_err();
-    assert_eq!(denied.code, "MISSING_TARGET");
+    assert_eq!(denied.code, "WIRE.MISSING_TARGET");
     let unchanged = db.query_one(&format!("SELECT status,(SELECT count(*) FROM {schema}.audit) FROM {schema}.task WHERE id=101"), &[]).await.unwrap();
     assert_eq!(unchanged.get::<_, String>(0), "PENDING");
     assert_eq!(unchanged.get::<_, i64>(1), 1);

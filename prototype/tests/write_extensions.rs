@@ -100,5 +100,5 @@ fn write_worker_opt_in_checks_flags_and_implementation_before_database() {
         .output()
         .unwrap();
     let error: serde_json::Value = serde_json::from_slice(&invalid.stderr).unwrap();
-    assert_eq!(error["code"], "WORKER_CONFIG", "missing WRITE implementation precedes DB");
+    assert_eq!(error["code"], "WIRE.WORKER_CONFIG", "missing WRITE implementation precedes DB");
 }

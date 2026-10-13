@@ -120,7 +120,7 @@ async fn refids_declares_the_raw_foreign_key_id_public_and_keeps_the_declared_nu
 fn refids_only_names_selected_reference_fields() {
     let load = |declaration: &str| load_str(&source(declaration), Form::A).map(|_| ()).map_err(|e| e.into_iter().map(|d| d.code).collect::<Vec<_>>());
     assert!(load("refIds team").is_ok());
-    assert_eq!(load("refIds title"), Err(vec!["UNKNOWN_FIELD"]), "title is not in select");
-    assert_eq!(load("refIds id"), Err(vec!["TYPE_MISMATCH"]), "id is a select field but not a reference");
-    assert_eq!(load("refIds nope"), Err(vec!["UNKNOWN_FIELD"]));
+    assert_eq!(load("refIds title"), Err(vec!["DEF.UNKNOWN_FIELD"]), "title is not in select");
+    assert_eq!(load("refIds id"), Err(vec!["DEF.TYPE_MISMATCH"]), "id is a select field but not a reference");
+    assert_eq!(load("refIds nope"), Err(vec!["DEF.UNKNOWN_FIELD"]));
 }

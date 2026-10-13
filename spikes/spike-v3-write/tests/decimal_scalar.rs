@@ -40,7 +40,7 @@ async fn decimal_create_filter_and_transition_literals_are_validated_and_written
     assert_eq!(bundle(&mut db, &facts, &create, &caller, &knobs).await.unwrap().created, 1);
 
     let invalid = json!({"atomic":[{"create":"Recruitment","values":{"title":"Invalid","periodEnd":"2026-12-28","status":"PUBLISHED","views":"1.001","club":"1"}}]});
-    assert_eq!(bundle(&mut db, &facts, &invalid, &caller, &knobs).await.unwrap_err().code, "BAD_VALUE");
+    assert_eq!(bundle(&mut db, &facts, &invalid, &caller, &knobs).await.unwrap_err().code, "WIRE.BAD_VALUE");
 
     let result = apply(&mut db, &facts, &json!({"apply":"Recruitment.close","target":{"ids":["1"]}}), &caller, &knobs).await.unwrap();
     assert_eq!(result.changed, vec![1]);

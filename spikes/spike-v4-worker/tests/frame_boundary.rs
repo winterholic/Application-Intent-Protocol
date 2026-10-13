@@ -96,7 +96,7 @@ async fn worker_bounds_stdout_frames_and_drains_large_stderr_lines() {
             Ok(mut worker) => {
                 let oversized = json!({ "clubId": "10", "value": "x".repeat(1024) });
                 let first = invoke(&mut db, &mut worker, &facts, "Recruitment.stats", &oversized, &caller).await;
-                let first_ok = first.as_ref().err().is_some_and(|error| error.code == "WORKER_FAILED");
+                let first_ok = first.as_ref().err().is_some_and(|error| error.code == "WIRE.WORKER_FAILED");
                 table.push(format!(
                     "{lang:?} | oversized stdout | {}",
                     first.as_ref().map(|v| format!("OK {v}")).unwrap_or_else(|e| e.code.to_string())
@@ -107,7 +107,7 @@ async fn worker_bounds_stdout_frames_and_drains_large_stderr_lines() {
 
                 let small = json!({ "clubId": "10", "value": "small" });
                 let second = invoke(&mut db, &mut worker, &facts, "Recruitment.stats", &small, &caller).await;
-                let second_ok = second.as_ref().err().is_some_and(|error| error.code == "WORKER_FAILED");
+                let second_ok = second.as_ref().err().is_some_and(|error| error.code == "WIRE.WORKER_FAILED");
                 table.push(format!("{lang:?} | 다음 호출 | {}", second.as_ref().map(|v| format!("OK {v}")).unwrap_or_else(|e| e.code.to_string())));
                 if !second_ok {
                     failures.push(format!("{lang:?} after oversized stdout: 기대 WORKER_FAILED"));
@@ -140,7 +140,7 @@ async fn worker_bounds_stdout_frames_and_drains_large_stderr_lines() {
                 let (actual, passed) = match result {
                     Err(error) => (
                         format!("{} ({} bytes)", error.code, error.msg.len()),
-                        error.code == "WORKER_FAILED" && error.msg.contains("stderr frame limit exceeded") && error.msg.len() <= 512,
+                        error.code == "WIRE.WORKER_FAILED" && error.msg.contains("stderr frame limit exceeded") && error.msg.len() <= 512,
                     ),
                     Ok(value) => (format!("OK {value}"), false),
                 };

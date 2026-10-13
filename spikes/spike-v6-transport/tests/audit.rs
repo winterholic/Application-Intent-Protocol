@@ -177,9 +177,9 @@ async fn every_committed_transition_leaves_one_audit_row_in_the_same_transaction
     let replay = post(addr, "/apply", &fp, json!({"key":"pay-13","request":{"apply":"Order.pay","target":{"ids":[13]}}})).await;
     assert_eq!(replay["replayed"], true, "{replay}");
     let hidden = post(addr, "/apply", &fp, json!({"key":"pay-99","request":{"apply":"Order.pay","target":{"ids":[99]}}})).await;
-    assert_eq!(hidden["code"], "MISSING_TARGET", "{hidden}");
+    assert_eq!(hidden["code"], "WIRE.MISSING_TARGET", "{hidden}");
     let mixed = post(addr, "/apply", &fp, json!({"key":"pay-mixed","request":{"apply":"Order.pay","target":{"ids":[14,99]}}})).await;
-    assert_eq!(mixed["code"], "MISSING_TARGET", "{mixed}");
+    assert_eq!(mixed["code"], "WIRE.MISSING_TARGET", "{mixed}");
     assert_eq!(audit_rows(&db, &audit).await, expected);
 
     // A write extension's ctx transition commits with its audit row in the server-owned transaction.

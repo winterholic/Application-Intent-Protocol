@@ -23,8 +23,8 @@ test('shop example compiles without diagnostics', () => {
 });
 
 test('E301: operations without a policy are rejected', () => {
-  assert.deepEqual(codes(`command Close(id: UUID) { load item: Item by id lock transaction { set item.status = CLOSED } }`), ['AIP-E301']);
-  assert.deepEqual(codes(`query Items { from Item as i limit 10 select { id } }`), ['AIP-E301']);
+  assert.deepEqual(codes(`command Close(id: UUID) { load item: Item by id lock transaction { set item.status = CLOSED } }`), ['POC.E301']);
+  assert.deepEqual(codes(`query Items { from Item as i limit 10 select { id } }`), ['POC.E301']);
 });
 
 test('E401: check-then-act on an unlocked row', () => {
@@ -34,7 +34,7 @@ test('E401: check-then-act on an unlocked row', () => {
     require item.status == OPEN else NOT_OPEN
     transaction { set item.status = CLOSED }
   }`;
-  assert.deepEqual(codes(src), ['AIP-E401']);
+  assert.deepEqual(codes(src), ['POC.E401']);
   assert.deepEqual(codes(src.replace('by id', 'by id lock')), []);
 });
 
@@ -43,7 +43,7 @@ test('E213: no implicit loading through relations', () => {
     load part: Part by id lock
     policy: owner(part.box.owner)
     transaction { set part.qty = 1 }
-  }`), ['AIP-E213']);
+  }`), ['POC.E213']);
 });
 
 test('E202: unknown enum value', () => {
@@ -51,7 +51,7 @@ test('E202: unknown enum value', () => {
     load item: Item by id lock
     policy: owner(item.owner)
     transaction { set item.status = DELETED }
-  }`), ['AIP-E202']);
+  }`), ['POC.E202']);
 });
 
 test('E207: set through a reference inside each is ambiguous', () => {
@@ -60,21 +60,21 @@ test('E207: set through a reference inside each is ambiguous', () => {
     policy: owner(box.owner)
     transaction { each box.parts as p { set p.item.count = 0 } }
   }`;
-  assert.deepEqual(codes(src), ['AIP-E207']);
+  assert.deepEqual(codes(src), ['POC.E207']);
   assert.deepEqual(codes(src.replace('set p.item.count = 0', 'increment p.item.count by p.qty')), []);
 });
 
 test('E220: relations must be selected explicitly', () => {
-  assert.deepEqual(codes(`query Q { from Box as b limit 5 policy: authenticated select { id parts } }`), ['AIP-E220']);
+  assert.deepEqual(codes(`query Q { from Box as b limit 5 policy: authenticated select { id parts } }`), ['POC.E220']);
 });
 
 test('E105: id is implicit', () => {
-  assert.deepEqual(compileSource('entity A { id: UUID }', 't.aip').diagnostics.map((d) => d.code), ['AIP-E105']);
+  assert.deepEqual(compileSource('entity A { id: UUID }', 't.aip').diagnostics.map((d) => d.code), ['POC.E105']);
 });
 
 test('E100: canonical clause order is enforced', () => {
   const d = compileSource(HEADER + `command C(id: UUID) { policy: authenticated load item: Item by id }`, 't.aip').diagnostics;
-  assert.equal(d[0].code, 'AIP-E100');
+  assert.equal(d[0].code, 'POC.E100');
   assert.match(d[0].message, /'load' must come before 'policy'/);
 });
 
@@ -83,11 +83,11 @@ test('E303: owner() must point to the actor entity', () => {
     load part: Part by id lock
     policy: owner(part.box)
     transaction { set part.qty = 1 }
-  }`), ['AIP-E303']);
+  }`), ['POC.E303']);
 });
 
 test('E304: unknown role', () => {
-  assert.deepEqual(codes(`query Q { from Item as i limit 5 policy: role(ROOT) select { id } }`), ['AIP-E304']);
+  assert.deepEqual(codes(`query Q { from Item as i limit 5 policy: role(ROOT) select { id } }`), ['POC.E304']);
 });
 
 test('E205: create must set every required field', () => {
@@ -95,23 +95,23 @@ test('E205: create must set every required field', () => {
     idempotent
     policy: authenticated
     transaction { create Item { owner: actor, count: 0 } }
-  }`), ['AIP-E205']);
+  }`), ['POC.E205']);
 });
 
 test('W501: creating rows without idempotency is flagged', () => {
   assert.deepEqual(codes(`command C {
     policy: authenticated
     transaction { create Item { owner: actor, status: OPEN, count: 0 } }
-  }`), ['AIP-W501']);
+  }`), ['POC.W501']);
 });
 
 test('E216: one event, one shape', () => {
   assert.deepEqual(codes(`
     command A(id: UUID) { load item: Item by id lock policy: owner(item.owner) emit Touched { id: item.id } }
     command B(id: UUID) { load item: Item by id lock policy: owner(item.owner) emit Touched { itemId: item.id } }
-  `), ['AIP-E216']);
+  `), ['POC.E216']);
 });
 
 test('W403: unbounded list query', () => {
-  assert.deepEqual(codes(`query Q { from Item as i policy: authenticated select { id } }`), ['AIP-W403']);
+  assert.deepEqual(codes(`query Q { from Item as i policy: authenticated select { id } }`), ['POC.W403']);
 });

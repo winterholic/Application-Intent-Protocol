@@ -63,7 +63,7 @@ async fn cancel_releases_one_allocation_and_stale_retry_does_not_repeat_effect()
     assert_eq!(first.changed, [100]);
 
     let stale_retry = apply(&mut db, &facts, &request, &caller, &Knobs::default()).await;
-    assert_eq!(stale_retry.unwrap_err().code, "INVALID_STATE");
+    assert_eq!(stale_retry.unwrap_err().code, "WIRE.INVALID_STATE");
 
     let state = db
         .query_one(
@@ -84,7 +84,7 @@ async fn cancel_releases_one_allocation_and_stale_retry_does_not_repeat_effect()
     // is rejected atomically instead of being counted as supported behavior.
     let multi_line =
         apply(&mut db, &facts, &json!({"apply":"SalesOrder.cancel","target":{"ids":["101"]}}), &caller, &Knobs::default()).await.unwrap_err();
-    assert_eq!(multi_line.code, "EFFECT_TARGET_MISSING");
+    assert_eq!(multi_line.code, "WIRE.EFFECT_TARGET_MISSING");
     let untouched = db
         .query_one(
             &format!(

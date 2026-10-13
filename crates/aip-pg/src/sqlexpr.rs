@@ -229,7 +229,7 @@ impl<'x> Compiler<'x> {
     }
 
     /// Reading an encrypted column anywhere but a selection would hand the database's ciphertext to an expression.
-    /// The semantic check (`AIP-E319`) normally stops such a program first; this keeps another frontend honest.
+    /// The semantic check (`POC.E319`) normally stops such a program first; this keeps another frontend honest.
     fn refuse_encrypted(&mut self, entity: &str, field: &str) -> Option<Val> {
         if !self.is_encrypted(entity, field) {
             return None;

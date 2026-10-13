@@ -28,7 +28,7 @@ try:
     drift.read({"read": "Event", "select": ["id"]})
     drift_rejected = False
 except AipError as error:
-    drift_rejected = error.code == "CONTRACT_MISMATCH"
+    drift_rejected = error.code == "WIRE.CONTRACT_MISMATCH"
 
 report = {
     "catalog": catalog.get("catalogVersion") == "aip-capabilities/1",
@@ -43,7 +43,7 @@ if os.environ.get("AIP_SMOKE_WORKER"):
         client.operation("textLength", {"text": ""})
         invalid = False
     except AipError as error:
-        invalid = error.code == "BAD_VALUE"
+        invalid = error.code == "WIRE.BAD_VALUE"
     job = client.jobs.enqueue("textLengthJob", {"text": "가😀A"}, key="product-python-smoke-job")
     again = client.jobs.enqueue("textLengthJob", {"text": "가😀A"}, key="product-python-smoke-job")
     run = client.jobs.wait(job["id"], timeout=20)

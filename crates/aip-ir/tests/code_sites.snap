@@ -94,7 +94,7 @@ PRECONDITION_FAILED exec.rs=3 facts.rs=4 form_intents.rs=9
 RATE_LIMITED engine.rs=1
 REQUEST_MALFORMED http.rs=6 subscribe.rs=5 webhook.rs=3
 REQUEST_UNKNOWN_INTENT engine.rs=2 subscribe.rs=1
-S main.rs=1 validate.rs=1
+S validate.rs=1
 SCHEMA_DATA_CONFLICT schema.rs=1
 SCHEMA_ENCRYPTION_CHANGE evolve.rs=3
 SCHEMA_FAILED schema.rs=2

@@ -9,15 +9,15 @@
     },
     "constraint_errors": {
       "_aip_approval_pending": {
-        "code": "AIP.CONFLICT.UNIQUE",
+        "code": "POC.CONFLICT.UNIQUE",
         "reason": "APPROVAL_ALREADY_PENDING"
       },
       "_aip_approval_vote_once": {
-        "code": "AIP.CONFLICT.UNIQUE",
+        "code": "POC.CONFLICT.UNIQUE",
         "reason": "ALREADY_VOTED"
       },
       "club_member__u4": {
-        "code": "AIP.CONFLICT.UNIQUE",
+        "code": "POC.CONFLICT.UNIQUE",
         "reason": "ALREADY_MEMBER"
       }
     },
@@ -276,19 +276,19 @@
         "cache_seconds": null,
         "errors": [
           {
-            "code": "AIP.AUTH.FORBIDDEN",
+            "code": "POC.AUTH.FORBIDDEN",
             "reason": null
           },
           {
-            "code": "AIP.CONSENT.REQUIRED",
+            "code": "POC.CONSENT.REQUIRED",
             "reason": "Terms"
           },
           {
-            "code": "AIP.INPUT.INVALID",
+            "code": "POC.INPUT.INVALID",
             "reason": null
           },
           {
-            "code": "AIP.NOT_FOUND",
+            "code": "POC.NOT_FOUND",
             "reason": "CLUB_NOT_FOUND"
           }
         ],
@@ -390,15 +390,15 @@
         "cache_seconds": null,
         "errors": [
           {
-            "code": "AIP.AUTH.FORBIDDEN",
+            "code": "POC.AUTH.FORBIDDEN",
             "reason": null
           },
           {
-            "code": "AIP.INPUT.INVALID",
+            "code": "POC.INPUT.INVALID",
             "reason": null
           },
           {
-            "code": "AIP.NOT_FOUND",
+            "code": "POC.NOT_FOUND",
             "reason": "CLUB_NOT_FOUND"
           }
         ],
@@ -488,27 +488,27 @@
         "emits": [],
         "errors": [
           {
-            "code": "AIP.AUTH.FORBIDDEN",
+            "code": "POC.AUTH.FORBIDDEN",
             "reason": null
           },
           {
-            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "code": "POC.AUTH.UNAUTHENTICATED",
             "reason": null
           },
           {
-            "code": "AIP.CONCURRENCY.CONFLICT",
+            "code": "POC.CONCURRENCY.CONFLICT",
             "reason": null
           },
           {
-            "code": "AIP.INPUT.INVALID",
+            "code": "POC.INPUT.INVALID",
             "reason": null
           },
           {
-            "code": "AIP.NOT_FOUND",
+            "code": "POC.NOT_FOUND",
             "reason": "ARTICLE_NOT_FOUND"
           },
           {
-            "code": "AIP.PRECONDITION.FAILED",
+            "code": "POC.PRECONDITION.FAILED",
             "reason": "NOT_PUBLISHED"
           }
         ],
@@ -590,19 +590,19 @@
         "emits": [],
         "errors": [
           {
-            "code": "AIP.AUTH.FORBIDDEN",
+            "code": "POC.AUTH.FORBIDDEN",
             "reason": "IMPERSONATION_FORBIDDEN"
           },
           {
-            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "code": "POC.AUTH.UNAUTHENTICATED",
             "reason": null
           },
           {
-            "code": "AIP.CONCURRENCY.CONFLICT",
+            "code": "POC.CONCURRENCY.CONFLICT",
             "reason": null
           },
           {
-            "code": "AIP.INPUT.INVALID",
+            "code": "POC.INPUT.INVALID",
             "reason": null
           }
         ],
@@ -698,23 +698,23 @@
         "emits": [],
         "errors": [
           {
-            "code": "AIP.AUTH.FORBIDDEN",
+            "code": "POC.AUTH.FORBIDDEN",
             "reason": null
           },
           {
-            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "code": "POC.AUTH.UNAUTHENTICATED",
             "reason": null
           },
           {
-            "code": "AIP.CONCURRENCY.CONFLICT",
+            "code": "POC.CONCURRENCY.CONFLICT",
             "reason": null
           },
           {
-            "code": "AIP.INPUT.INVALID",
+            "code": "POC.INPUT.INVALID",
             "reason": null
           },
           {
-            "code": "AIP.NOT_FOUND",
+            "code": "POC.NOT_FOUND",
             "reason": "ARTICLE_NOT_FOUND"
           }
         ],
@@ -797,27 +797,27 @@
         "emits": [],
         "errors": [
           {
-            "code": "AIP.AUTH.FORBIDDEN",
+            "code": "POC.AUTH.FORBIDDEN",
             "reason": null
           },
           {
-            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "code": "POC.AUTH.UNAUTHENTICATED",
             "reason": null
           },
           {
-            "code": "AIP.CONCURRENCY.CONFLICT",
+            "code": "POC.CONCURRENCY.CONFLICT",
             "reason": null
           },
           {
-            "code": "AIP.CONSENT.REQUIRED",
+            "code": "POC.CONSENT.REQUIRED",
             "reason": "Terms"
           },
           {
-            "code": "AIP.INPUT.INVALID",
+            "code": "POC.INPUT.INVALID",
             "reason": null
           },
           {
-            "code": "AIP.NOT_FOUND",
+            "code": "POC.NOT_FOUND",
             "reason": "ARTICLE_NOT_FOUND"
           }
         ],
@@ -913,35 +913,35 @@
         "emits": [],
         "errors": [
           {
-            "code": "AIP.AUTH.FORBIDDEN",
+            "code": "POC.AUTH.FORBIDDEN",
             "reason": null
           },
           {
-            "code": "AIP.AUTH.FORBIDDEN",
+            "code": "POC.AUTH.FORBIDDEN",
             "reason": "IMPERSONATION_NESTED"
           },
           {
-            "code": "AIP.AUTH.FORBIDDEN",
+            "code": "POC.AUTH.FORBIDDEN",
             "reason": "IMPERSONATION_SELF"
           },
           {
-            "code": "AIP.AUTH.FORBIDDEN",
+            "code": "POC.AUTH.FORBIDDEN",
             "reason": "IMPERSONATION_TARGET_PRIVILEGED"
           },
           {
-            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "code": "POC.AUTH.UNAUTHENTICATED",
             "reason": null
           },
           {
-            "code": "AIP.CONCURRENCY.CONFLICT",
+            "code": "POC.CONCURRENCY.CONFLICT",
             "reason": null
           },
           {
-            "code": "AIP.INPUT.INVALID",
+            "code": "POC.INPUT.INVALID",
             "reason": null
           },
           {
-            "code": "AIP.NOT_FOUND",
+            "code": "POC.NOT_FOUND",
             "reason": "MEMBER_NOT_FOUND"
           }
         ],
@@ -1095,15 +1095,15 @@
         "emits": [],
         "errors": [
           {
-            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "code": "POC.AUTH.UNAUTHENTICATED",
             "reason": null
           },
           {
-            "code": "AIP.CONCURRENCY.CONFLICT",
+            "code": "POC.CONCURRENCY.CONFLICT",
             "reason": null
           },
           {
-            "code": "AIP.INPUT.INVALID",
+            "code": "POC.INPUT.INVALID",
             "reason": null
           }
         ],
@@ -1150,11 +1150,11 @@
         "cache_seconds": null,
         "errors": [
           {
-            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "code": "POC.AUTH.UNAUTHENTICATED",
             "reason": null
           },
           {
-            "code": "AIP.INPUT.INVALID",
+            "code": "POC.INPUT.INVALID",
             "reason": null
           }
         ],
@@ -1235,19 +1235,19 @@
         "emits": [],
         "errors": [
           {
-            "code": "AIP.AUTH.FORBIDDEN",
+            "code": "POC.AUTH.FORBIDDEN",
             "reason": "IMPERSONATION_FORBIDDEN"
           },
           {
-            "code": "AIP.AUTH.UNAUTHENTICATED",
+            "code": "POC.AUTH.UNAUTHENTICATED",
             "reason": null
           },
           {
-            "code": "AIP.CONCURRENCY.CONFLICT",
+            "code": "POC.CONCURRENCY.CONFLICT",
             "reason": null
           },
           {
-            "code": "AIP.INPUT.INVALID",
+            "code": "POC.INPUT.INVALID",
             "reason": null
           }
         ],

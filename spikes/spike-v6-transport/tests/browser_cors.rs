@@ -33,7 +33,7 @@ async fn same_origin_browser_and_errors_are_readable_without_database() {
         "{}",
     )
     .await;
-    assert_eq!(body["code"], "UNAUTHENTICATED");
+    assert_eq!(body["code"], "WIRE.UNAUTHENTICATED");
     assert!(headers.contains(&format!("access-control-allow-origin: {origin}")));
     server.shutdown().await.unwrap();
 }
@@ -42,7 +42,7 @@ async fn same_origin_browser_and_errors_are_readable_without_database() {
 async fn unconfigured_foreign_origin_is_rejected_before_database_or_body() {
     let server = listen_with_extensions(json!({}), IdWire::DecimalString, "127.0.0.1:0".parse().unwrap(), BAD_DB.into(), None).await.unwrap();
     let (headers, body) = request(server.address, "POST /apply HTTP/1.1\r\nOrigin: http://127.0.0.1:3000\r\nContent-Length: 999\r\n", "").await;
-    assert_eq!(body["code"], "ORIGIN_NOT_ALLOWED");
+    assert_eq!(body["code"], "WIRE.ORIGIN_NOT_ALLOWED");
     assert!(!headers.contains("access-control-allow-origin"));
     server.shutdown().await.unwrap();
 }
@@ -113,7 +113,7 @@ async fn explicit_preflight_is_route_and_header_bounded_before_authentication() 
     }
     let (_, body) =
         request(server.address, &format!("OPTIONS /unknown HTTP/1.1\r\nOrigin: {origin}\r\nAccess-Control-Request-Method: POST\r\n"), "").await;
-    assert_eq!(body["code"], "NOT_FOUND");
+    assert_eq!(body["code"], "WIRE.NOT_FOUND");
     server.shutdown().await.unwrap();
 }
 
@@ -132,10 +132,10 @@ async fn allowed_origin_can_read_authentication_contract_and_framing_errors() {
     .unwrap();
     let token = server.keys.issue(1, 60);
     let cases = [
-        ("Authorization: Bearer invalid\r\n".to_string(), "{}", "UNAUTHENTICATED"),
-        (format!("Authorization: Bearer {token}\r\nx-aip-contract: {}\r\n", "0".repeat(64)), "{}", "CONTRACT_MISMATCH"),
-        ("Authorization: Bearer invalid\r\nAuthorization: Bearer invalid\r\n".into(), "{}", "BAD_REQUEST"),
-        ("".into(), "{", "BAD_REQUEST"),
+        ("Authorization: Bearer invalid\r\n".to_string(), "{}", "WIRE.UNAUTHENTICATED"),
+        (format!("Authorization: Bearer {token}\r\nx-aip-contract: {}\r\n", "0".repeat(64)), "{}", "WIRE.CONTRACT_MISMATCH"),
+        ("Authorization: Bearer invalid\r\nAuthorization: Bearer invalid\r\n".into(), "{}", "WIRE.BAD_REQUEST"),
+        ("".into(), "{", "WIRE.BAD_REQUEST"),
     ];
     for (extra, body, code) in cases {
         let (headers, response) = request(
@@ -153,7 +153,7 @@ async fn allowed_origin_can_read_authentication_contract_and_framing_errors() {
         "",
     )
     .await;
-    assert_eq!(response["code"], "BAD_REQUEST");
+    assert_eq!(response["code"], "WIRE.BAD_REQUEST");
     assert!(headers.contains(&format!("access-control-allow-origin: {origin}")), "oversized token: {headers}");
     for headers in [
         format!("Host: attacker.example:{}\r\nOrigin: http://attacker.example:{}\r\n", server.address.port(), server.address.port()),
@@ -162,7 +162,7 @@ async fn allowed_origin_can_read_authentication_contract_and_framing_errors() {
         format!("Origin: {origin}\r\nHost: {}\r\nHost: {}\r\n", server.address, server.address),
     ] {
         let (head, body) = request(server.address, &format!("POST /apply HTTP/1.1\r\n{headers}Content-Length: 999\r\n"), "").await;
-        assert_eq!(body["code"], "ORIGIN_NOT_ALLOWED");
+        assert_eq!(body["code"], "WIRE.ORIGIN_NOT_ALLOWED");
         assert!(!head.contains("access-control-allow-origin"));
     }
     server.shutdown().await.unwrap();

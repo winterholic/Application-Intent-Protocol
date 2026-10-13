@@ -15,9 +15,9 @@
 - `expose apply`에는 `bulk maxRows`가 필요하다.
 - `aggregate`에는 `sourceAccess`가 필요하다. 원본 행의 읽기 정책을 물려받지 않는다.
 - 필드 읽기 정책(`field ... read when`)이 있는 필드는 filter·sort·집계에 쓸 수 없다.
-- 필드 읽기 정책이 있는 필드는 전이의 `from`, `to`의 값 식, `repeat unchanged`가 걸린 `to` 대상에도 쓸 수 없다(`POLICY_FIELD_NOT_USABLE_IN_TRANSITION`). 결과로 가려진 값이 추론되기 때문이다. `allow`와 `repeat unchanged` 없는 `to` 쓰기는 가능하다.
-- `unique`·`limit`·`invariant` 위반(`ALREADY_EXISTS`, `INVARIANT_VIOLATED`)은 호출자가 볼 수 없는 행과 충돌해도 같은 코드로 실패한다. 존재는 알려도 오류 본문에 그 행의 id나 값은 싣지 않는다.
-- `fields` 안에서 다른 resource를 가리키는 타입은 참조 `X` 하나뿐이다(외래 키가 생긴다). `X.Id`는 `input`·`access` 인자·operation 입출력처럼 DB 열이 아닌 자리에서만 쓰며, `fields` 안에서는 정의 오류(`ID_FIELD_NEEDS_REFERENCE`)다. 기본 키도 `id: Id` 한 가지뿐이고 `id: Item.Id`는 같은 오류다.
+- 필드 읽기 정책이 있는 필드는 전이의 `from`, `to`의 값 식, `repeat unchanged`가 걸린 `to` 대상에도 쓸 수 없다(`DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION`). 결과로 가려진 값이 추론되기 때문이다. `allow`와 `repeat unchanged` 없는 `to` 쓰기는 가능하다.
+- `unique`·`limit`·`invariant` 위반(`WIRE.ALREADY_EXISTS`, `WIRE.INVARIANT_VIOLATED`)은 호출자가 볼 수 없는 행과 충돌해도 같은 코드로 실패한다. 존재는 알려도 오류 본문에 그 행의 id나 값은 싣지 않는다.
+- `fields` 안에서 다른 resource를 가리키는 타입은 참조 `X` 하나뿐이다(외래 키가 생긴다). `X.Id`는 `input`·`access` 인자·operation 입출력처럼 DB 열이 아닌 자리에서만 쓰며, `fields` 안에서는 정의 오류(`DEF.ID_FIELD_NEEDS_REFERENCE`)다. 기본 키도 `id: Id` 한 가지뿐이고 `id: Item.Id`는 같은 오류다.
 - 다른 행이 없음에 의존하는 `allow`·`from`(`not exists`, predicate 안과 중첩 포함)이나 그런 `check`가 걸린 전이·create는 서버가 SERIALIZABLE 트랜잭션으로 실행하고, 직렬화 실패·교착은 같은 요청을 서버가 최대 3회 다시 실행한다. 유일성·정원이 목적이면 `unique`나 `limit`과 `invariant`가 더 싸다.
 - 알 수 없는 키는 무시하지 않고 오류다.
 - 문법 오류는 첫 번째에서 멈춘다. 의미 오류는 모아서 보고하며 원인을 먼저 둔다.
@@ -40,7 +40,7 @@
 
 | 키 | 형태 | 뜻 |
 |---|---|---|
-| `fields` | `fields { id: Id; name: Text(1..100); owner: Member? }` | 열. ?는 null 허용. owner: Member는 외래 키가 있는 참조(조인·traverse 가능). fields 안에서 `X.Id`는 쓸 수 없고 오류다(ID_FIELD_NEEDS_REFERENCE). 참조 `X`를 쓴다. resource마다 한 번 |
+| `fields` | `fields { id: Id; name: Text(1..100); owner: Member? }` | 열. ?는 null 허용. owner: Member는 외래 키가 있는 참조(조인·traverse 가능). fields 안에서 `X.Id`는 쓸 수 없고 오류다(DEF.ID_FIELD_NEEDS_REFERENCE). 참조 `X`를 쓴다. resource마다 한 번 |
 | `rows` | `rows read when condition` | 호출자가 읽을 수 있는 행. 쓰지 않으면 읽을 수 있는 행이 없다 |
 | `field` | `field name read when condition` | 필드별 읽기 조건. 조건이 거짓인 행에서 select하면 null이고 출력 타입은 nullable이다(열이 필수여도). 이 필드는 filter·sort·집계에 쓸 수 없다 |
 | `expose` | `expose read {..} \| expose apply T {..} \| expose create {..} \| expose compose {..} \| expose aggregate name` | 호출자에게 여는 것. 쓰지 않은 것은 열리지 않는다 |

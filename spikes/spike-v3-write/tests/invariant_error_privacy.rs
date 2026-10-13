@@ -60,14 +60,14 @@ async fn invariant_errors_admit_existence_but_never_carry_a_hidden_rows_id_or_va
         bundle(&mut db, &facts, &json!({"atomic":[{"create":"Seat","values":{"code":SECRET_CODE,"note":"x","held":false}}]}), &caller(1), &knobs)
             .await;
     let error = created.expect_err("a duplicate code must be rejected");
-    assert_eq!(error.code, "ALREADY_EXISTS", "{error:?}");
+    assert_eq!(error.code, "WIRE.ALREADY_EXISTS", "{error:?}");
     assert_clean("unique create", &error);
 
     // capacity: member 1 already holds seat 5, so holding seat 6 breaks atMost 1
     let held = apply(&mut db, &facts, &json!({"apply":"Seat.hold","target":{"ids":["6"]}}), &caller(1), &knobs).await;
     let error = held.expect_err("second held seat must be rejected");
     // atMost 1 is a partial unique index, so it surfaces as ALREADY_EXISTS; larger limits are counted at commit.
-    assert!(["ALREADY_EXISTS", "INVARIANT_VIOLATED"].contains(&error.code), "{error:?}");
+    assert!(["WIRE.ALREADY_EXISTS", "WIRE.INVARIANT_VIOLATED"].contains(&error.code), "{error:?}");
     assert_clean("capacity", &error);
 
     // a hidden target is the same MISSING_TARGET as a missing one and names neither id

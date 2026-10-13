@@ -144,7 +144,7 @@ async fn durable_jobs_read_and_apply_business_data_with_principal_policies_and_a
         assert_eq!(output["visible"], 2, "{lang:?}: {result}");
         assert_eq!(output["paid"], 2, "{lang:?}: {result}");
         // Same code as a direct /apply on an invisible row, so the job learns nothing about rows its principal cannot see.
-        assert_eq!(output["denied"], "MISSING_TARGET", "{lang:?}: {result}");
+        assert_eq!(output["denied"], "WIRE.MISSING_TARGET", "{lang:?}: {result}");
         // The repeated key replays the journaled result instead of re-running a now-invalid transition.
         assert_eq!(output["replayed"], true, "{lang:?}: {result}");
         let paid: Vec<(i64, bool)> = db
@@ -172,7 +172,7 @@ async fn durable_jobs_read_and_apply_business_data_with_principal_policies_and_a
         let id = queued["run"]["id"].as_str().unwrap().to_string();
         let status = settle(addr, &fp, &id).await;
         assert_eq!(status["run"]["state"], "FAILED", "{lang:?}: {status}");
-        assert_eq!(status["run"]["error"], "ACCESS_NOT_DECLARED", "{lang:?}: {status}");
+        assert_eq!(status["run"]["error"], "WIRE.ACCESS_NOT_DECLARED", "{lang:?}: {status}");
         let changed: bool = db.query_one(&format!("SELECT paid FROM {schema}.\"order\" WHERE id=11"), &[]).await.unwrap().get(0);
         assert!(!changed, "{lang:?}: undeclared apply changed data");
 

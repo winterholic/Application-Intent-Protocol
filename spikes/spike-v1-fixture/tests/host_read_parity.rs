@@ -90,13 +90,13 @@ fn omitted_options_and_false_cursor_preserve_existing_facts() {
 #[test]
 fn object_shapes_and_semantic_limits_are_checked() {
     let cases = [
-        ("/resources/Post/read/budget/cursor", json!("true"), "H_SHAPE"),
-        ("/resources/Post/read/budget/offset", json!(true), "H_SHAPE"),
-        ("/resources/Post/read/budget/offset", json!(-1), "BAD_BUDGET"),
-        ("/resources/Post/read/traverse/comments/via", json!("Comment.post.extra"), "H_SHAPE"),
-        ("/resources/Post/read/traverse/comments/via", json!("Comment.body"), "TRAVERSE_VIA_NOT_REF"),
-        ("/resources/Post/read/traverse/comments/sort", json!("id sideways"), "H_SHAPE"),
-        ("/resources/Post/read/traverse/comments/limit", json!(1001), "BAD_LIMIT"),
+        ("/resources/Post/read/budget/cursor", json!("true"), "DEF.H_SHAPE"),
+        ("/resources/Post/read/budget/offset", json!(true), "DEF.H_SHAPE"),
+        ("/resources/Post/read/budget/offset", json!(-1), "DEF.BAD_BUDGET"),
+        ("/resources/Post/read/traverse/comments/via", json!("Comment.post.extra"), "DEF.H_SHAPE"),
+        ("/resources/Post/read/traverse/comments/via", json!("Comment.body"), "DEF.TRAVERSE_VIA_NOT_REF"),
+        ("/resources/Post/read/traverse/comments/sort", json!("id sideways"), "DEF.H_SHAPE"),
+        ("/resources/Post/read/traverse/comments/limit", json!(1001), "DEF.BAD_LIMIT"),
     ];
     for form in [Form::HTs, Form::HPy] {
         for (pointer, bad, code) in &cases {
@@ -109,11 +109,11 @@ fn object_shapes_and_semantic_limits_are_checked() {
             let mut value = definition();
             value["resources"]["Post"]["read"]["budget"][key] = json!(1);
             let errors = load_str(&source(&value, form), form).err().expect("unknown budget option");
-            assert!(errors.iter().any(|error| error.code == "UNKNOWN_KEY"), "{errors:?}");
+            assert!(errors.iter().any(|error| error.code == "DEF.UNKNOWN_KEY"), "{errors:?}");
         }
         let mut value = definition();
         value["resources"]["Post"]["read"]["traverse"]["author"]["limit"] = json!(2);
         let errors = load_str(&source(&value, form), form).err().expect("single relation must reject list options");
-        assert!(errors.iter().any(|error| error.code == "UNKNOWN_KEY"), "{errors:?}");
+        assert!(errors.iter().any(|error| error.code == "DEF.UNKNOWN_KEY"), "{errors:?}");
     }
 }

@@ -191,12 +191,12 @@ async fn v3_2_approval_w0_w1_w2() {
             "approved[300,305] members[10:2,10:5,10:9] outbox2",
             "approved[300,305] members[10:2,10:5,10:9] outbox0",
         ),
-        ("다른 동아리 섞기(양쪽 운영진)", 8, vec![300, 302], "NOT_SAME_SCOPE", base, base),
-        ("일반 회원이 승인", 2, vec![300], "MISSING_TARGET", base, base),
-        ("일부 없는 id", 1, vec![300, 999], "MISSING_TARGET", base, base),
-        ("이미 회원 포함", 1, vec![300, 303], "ALREADY_EXISTS", base, base),
-        ("이전 상태 아님(거절됨)", 1, vec![304], "INVALID_STATE", base, base),
-        ("빈 목록", 1, vec![], "BAD_REQUEST", base, base),
+        ("다른 동아리 섞기(양쪽 운영진)", 8, vec![300, 302], "WIRE.NOT_SAME_SCOPE", base, base),
+        ("일반 회원이 승인", 2, vec![300], "WIRE.MISSING_TARGET", base, base),
+        ("일부 없는 id", 1, vec![300, 999], "WIRE.MISSING_TARGET", base, base),
+        ("이미 회원 포함", 1, vec![300, 303], "WIRE.ALREADY_EXISTS", base, base),
+        ("이전 상태 아님(거절됨)", 1, vec![304], "WIRE.INVALID_STATE", base, base),
+        ("빈 목록", 1, vec![], "WIRE.BAD_REQUEST", base, base),
     ];
     for (name, actor, ids, want, st2, st01) in &cases {
         for w in [W::W2, W::W0, W::W1] {
@@ -222,20 +222,27 @@ async fn v3_2_approval_w0_w1_w2() {
     let tr = json!({ "transition": "approveOnly" });
     let mk = |member: Value| json!({ "create": "ClubMember", "values": { "club": { "item": "recruitment.club" }, "member": member, "role": { "const": "MEMBER" } } });
     let specific: Vec<(&str, W, &Value, Value, i64, &str)> = vec![
-        ("W0 승인+지원 안 한 회원 생성", W::W0, &fc, forged_w0.clone(), 1, "CHECK_FAILED"),
+        ("W0 승인+지원 안 한 회원 생성", W::W0, &fc, forged_w0.clone(), 1, "WIRE.CHECK_FAILED"),
         ("W0 승인+지원 안 한 회원 생성(check 없음)", W::W0, &fn_, forged_w0, 1, "OK"),
-        ("W0 회원 생성만", W::W0, &fc, create_only_w0.clone(), 1, "CHECK_FAILED"),
+        ("W0 회원 생성만", W::W0, &fc, create_only_w0.clone(), 1, "WIRE.CHECK_FAILED"),
         ("W0 회원 생성만(check 없음)", W::W0, &fn_, create_only_w0.clone(), 1, "OK"),
-        ("W0 일반 회원이 회원 생성", W::W0, &fn_, create_only_w0, 2, "FORBIDDEN"),
-        ("W1 member를 상수로", W::W1, &fc, w1(json!([tr, mk(json!({ "const": "9" }))])), 1, "VALUE_SOURCE_NOT_ALLOWED"),
-        ("W1 선언 안 된 출처 경로", W::W1, &fc, w1(json!([tr, mk(json!({ "item": "recruitment.club.school" }))])), 1, "VALUE_SOURCE_NOT_ALLOWED"),
-        ("W1 허용 안 된 전이 단계", W::W1, &fc, w1(json!([{ "transition": "approve" }])), 1, "STEP_NOT_ALLOWED"),
-        ("W1 승인 단계 빼고 생성만", W::W1, &fc, w1(json!([mk(json!({ "item": "member" }))])), 1, "CHECK_FAILED"),
+        ("W0 일반 회원이 회원 생성", W::W0, &fn_, create_only_w0, 2, "WIRE.FORBIDDEN"),
+        ("W1 member를 상수로", W::W1, &fc, w1(json!([tr, mk(json!({ "const": "9" }))])), 1, "WIRE.VALUE_SOURCE_NOT_ALLOWED"),
+        (
+            "W1 선언 안 된 출처 경로",
+            W::W1,
+            &fc,
+            w1(json!([tr, mk(json!({ "item": "recruitment.club.school" }))])),
+            1,
+            "WIRE.VALUE_SOURCE_NOT_ALLOWED",
+        ),
+        ("W1 허용 안 된 전이 단계", W::W1, &fc, w1(json!([{ "transition": "approve" }])), 1, "WIRE.STEP_NOT_ALLOWED"),
+        ("W1 승인 단계 빼고 생성만", W::W1, &fc, w1(json!([mk(json!({ "item": "member" }))])), 1, "WIRE.CHECK_FAILED"),
         ("W1 승인 단계 빼고 생성만(check 없음)", W::W1, &fn_, w1(json!([mk(json!({ "item": "member" }))])), 1, "OK"),
         ("W1 생성 뒤 승인(순서 바꿈)", W::W1, &fc, w1(json!([mk(json!({ "item": "member" })), tr.clone()])), 1, "OK"),
         // R3-02: 승인만 하고 회원을 만들지 않음, 관리자 역할로 생성
-        ("W1 승인만", W::W1, &fc, w1(json!([tr.clone()])), 1, "CHECK_FAILED"),
-        ("W0 승인만", W::W0, &fc, json!({ "atomic": [{ "apply": "Apply.approveOnly", "target": { "ids": ["300"] } }] }), 1, "CHECK_FAILED"),
+        ("W1 승인만", W::W1, &fc, w1(json!([tr.clone()])), 1, "WIRE.CHECK_FAILED"),
+        ("W0 승인만", W::W0, &fc, json!({ "atomic": [{ "apply": "Apply.approveOnly", "target": { "ids": ["300"] } }] }), 1, "WIRE.CHECK_FAILED"),
         (
             "W1 role ADMIN",
             W::W1,
@@ -244,7 +251,7 @@ async fn v3_2_approval_w0_w1_w2() {
                 json!([tr.clone(), { "create": "ClubMember", "values": { "club": { "item": "recruitment.club" }, "member": { "item": "member" }, "role": { "const": "ADMIN" } } }]),
             ),
             1,
-            "FORBIDDEN",
+            "WIRE.FORBIDDEN",
         ),
         (
             "W0 role ADMIN",
@@ -254,7 +261,7 @@ async fn v3_2_approval_w0_w1_w2() {
             { "apply": "Apply.approveOnly", "target": { "ids": ["300"] } },
             { "create": "ClubMember", "values": { "club": "10", "member": "5", "role": "ADMIN" } }] }),
             1,
-            "FORBIDDEN",
+            "WIRE.FORBIDDEN",
         ),
     ];
     for (name, w, f, req, actor, want) in &specific {
@@ -268,9 +275,10 @@ async fn v3_2_approval_w0_w1_w2() {
     }
 
     // 동시성: 같은 지원 동시 승인, 다른 지원으로 같은 회원 동시 생성
-    for (name, ids1, ids2, want2) in
-        [("같은 지원 동시 승인", vec![300], vec![300], "INVALID_STATE"), ("같은 회원 다른 지원 동시 승인", vec![300], vec![306], "ALREADY_EXISTS")]
-    {
+    for (name, ids1, ids2, want2) in [
+        ("같은 지원 동시 승인", vec![300], vec![300], "WIRE.INVALID_STATE"),
+        ("같은 회원 다른 지원 동시 승인", vec![300], vec![306], "WIRE.ALREADY_EXISTS"),
+    ] {
         for w in [W::W2, W::W1] {
             db.batch_execute(&seed).await.unwrap();
             let (r1, r2) = race(&fc, w, &ids1, &ids2).await;

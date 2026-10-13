@@ -26,12 +26,12 @@ export async function executeCommand(db: Db, m: Model, c: Command, req: CommandR
   const op = c.name;
   const { actor } = req;
 
-  if (!actor && c.policy && needsActor(c.policy)) throw new AipError('AIP.AUTH.UNAUTHENTICATED', op, 'this command requires an authenticated actor');
+  if (!actor && c.policy && needsActor(c.policy)) throw new AipError('POC.AUTH.UNAUTHENTICATED', op, 'this command requires an authenticated actor');
   if (c.idempotent && !req.idempotencyKey) {
-    throw new AipError('AIP.INPUT.IDEMPOTENCY_KEY_REQUIRED', op, `${op} is idempotent; send an Idempotency-Key header`);
+    throw new AipError('POC.INPUT.IDEMPOTENCY_KEY_REQUIRED', op, `${op} is idempotent; send an Idempotency-Key header`);
   }
   if (!c.idempotent && req.idempotencyKey) {
-    throw new AipError('AIP.INPUT.IDEMPOTENCY_KEY_UNSUPPORTED', op, `${op} is not declared idempotent; an Idempotency-Key would give a false guarantee`);
+    throw new AipError('POC.INPUT.IDEMPOTENCY_KEY_UNSUPPORTED', op, `${op} is not declared idempotent; an Idempotency-Key would give a false guarantee`);
   }
 
   if (c.idempotent) {
@@ -46,7 +46,7 @@ export async function executeCommand(db: Db, m: Model, c: Command, req: CommandR
     if (!ins.length) {
       const prev = await run(`SELECT "request_hash", "response" FROM ${q(IDEMPOTENCY)} WHERE "operation" = $1 AND "actor" = $2 AND "key" = $3`, [op, actorKey, req.idempotencyKey]);
       if (prev[0].request_hash !== hash) {
-        throw new AipError('AIP.IDEMPOTENCY.KEY_REUSED', op, 'this Idempotency-Key was already used with a different input');
+        throw new AipError('POC.IDEMPOTENCY.KEY_REUSED', op, 'this Idempotency-Key was already used with a different input');
       }
       return prev[0].response;
     }
@@ -59,17 +59,17 @@ export async function executeCommand(db: Db, m: Model, c: Command, req: CommandR
   for (const l of c.loads) {
     const id = evalExpr(l.by, env);
     const rows = await run(`SELECT * FROM ${q(m.table(l.entity))} WHERE "id" = $1${l.lock ? ' FOR UPDATE' : ''}`, [id]);
-    if (!rows.length) throw new AipError('AIP.NOT_FOUND', op, `${l.entity} not found`, { reason: `${upperSnake(l.entity)}_NOT_FOUND`, path: l.name });
+    if (!rows.length) throw new AipError('POC.NOT_FOUND', op, `${l.entity} not found`, { reason: `${upperSnake(l.entity)}_NOT_FOUND`, path: l.name });
     env.set(l.name, fromDb(m, l.entity, rows[0]));
     entityOf.set(l.name, l.entity);
   }
 
   if (!evalPolicy(c.policy!, env, actor)) {
-    throw new AipError(actor ? 'AIP.AUTH.FORBIDDEN' : 'AIP.AUTH.UNAUTHENTICATED', op, `policy denied: ${policyText(c.policy!)}`);
+    throw new AipError(actor ? 'POC.AUTH.FORBIDDEN' : 'POC.AUTH.UNAUTHENTICATED', op, `policy denied: ${policyText(c.policy!)}`);
   }
 
   for (const r of c.requires) {
-    if (!evalExpr(r.cond, env)) throw new AipError('AIP.PRECONDITION.FAILED', op, `precondition failed: ${r.code}`, { reason: r.code });
+    if (!evalExpr(r.cond, env)) throw new AipError('POC.PRECONDITION.FAILED', op, `precondition failed: ${r.code}`, { reason: r.code });
   }
 
   await execStmts(c.tx, env, entityOf, m, run);

@@ -49,7 +49,7 @@ async fn v8_rejects_oversized_headers_before_reading_the_body() {
     let mut failures = Vec::new();
     for (name, headers) in cases {
         match rejected_before_body(port, &headers).await {
-            Ok(code) if code == "BAD_REQUEST" => {}
+            Ok(code) if code == "WIRE.BAD_REQUEST" => {}
             Ok(code) => failures.push(format!("{name}: BAD_REQUEST 기대, 실제 {code}")),
             Err(error) => failures.push(format!("{name}: {error}")),
         }
@@ -83,6 +83,6 @@ async fn v8_rejects_whitespace_between_header_name_and_colon() {
     assert!(probe(port, "x-probe: 1").await.contains("\"live\""), "a well-formed header must still be accepted");
     for header in ["x-probe : 1", "x-probe\t: 1"] {
         let response = probe(port, header).await;
-        assert!(response.contains("BAD_REQUEST"), "{header:?} must be rejected: {response}");
+        assert!(response.contains("WIRE.BAD_REQUEST"), "{header:?} must be rejected: {response}");
     }
 }

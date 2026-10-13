@@ -14,10 +14,10 @@ export async function fanout(input, ctx) {
       // One success ends the streak.
       if (subscription.failures > 0) await ctx.data.apply("Subscription", "recovered", [subscription.id], `recovered-${key}`);
     } catch (error) {
-      if (error.code !== "DELIVERY_FAILED" && error.code !== "DESTINATION_REJECTED") throw error;
+      if (error.code !== "WIRE.DELIVERY_FAILED" && error.code !== "WIRE.DESTINATION_REJECTED") throw error;
       failed++;
       // A rejected destination (a private address, a malformed URL) never becomes valid by waiting; a failed delivery may.
-      const hopeless = error.code === "DESTINATION_REJECTED" || subscription.failures + 1 >= MAX_CONSECUTIVE_FAILURES;
+      const hopeless = error.code === "WIRE.DESTINATION_REJECTED" || subscription.failures + 1 >= MAX_CONSECUTIVE_FAILURES;
       await ctx.data.apply("Subscription", "failed", [subscription.id], `failed-${key}`);
       if (hopeless) {
         await ctx.data.apply("Subscription", "disable", [subscription.id], `disable-${key}`);

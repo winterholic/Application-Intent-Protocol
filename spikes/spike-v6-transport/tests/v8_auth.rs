@@ -71,20 +71,20 @@ async fn v8_server_auth() {
     check("토큰 없음은 익명", format!("{:?}", ids(&http(port, &q, "").await)), "Some([])");
     let (_, sig) = t1.split_once('.').unwrap();
     let forged = format!("{}.{sig}", B64.encode(json!({ "sub": 2, "iat": 0, "exp": 9_999_999_999i64 }).to_string()));
-    check("변조 토큰", http(port, &q, &format!("authorization: Bearer {forged}\r\n")).await["code"].to_string(), "\"UNAUTHENTICATED\"");
+    check("변조 토큰", http(port, &q, &format!("authorization: Bearer {forged}\r\n")).await["code"].to_string(), "\"WIRE.UNAUTHENTICATED\"");
     let other = Keyring::generate().issue(2, 60);
-    check("다른 키 토큰", http(port, &q, &format!("authorization: Bearer {other}\r\n")).await["code"].to_string(), "\"UNAUTHENTICATED\"");
+    check("다른 키 토큰", http(port, &q, &format!("authorization: Bearer {other}\r\n")).await["code"].to_string(), "\"WIRE.UNAUTHENTICATED\"");
     let expired = keys.issue(1, -1);
-    check("만료 토큰", http(port, &q, &format!("authorization: Bearer {expired}\r\n")).await["code"].to_string(), "\"TOKEN_EXPIRED\"");
+    check("만료 토큰", http(port, &q, &format!("authorization: Bearer {expired}\r\n")).await["code"].to_string(), "\"WIRE.TOKEN_EXPIRED\"");
     // 실패한 토큰을 익명으로 낮추지 않는다(익명 결과도 주지 않음)
-    check("깨진 토큰", http(port, &q, "authorization: Bearer x\r\n").await["code"].to_string(), "\"UNAUTHENTICATED\"");
+    check("깨진 토큰", http(port, &q, "authorization: Bearer x\r\n").await["code"].to_string(), "\"WIRE.UNAUTHENTICATED\"");
     // 옛 시험용 헤더로 사칭 불가: 무시되고 익명
     check("옛 x-spike-actor 헤더", format!("{:?}", ids(&http(port, &q, "x-spike-actor: 2\r\n").await)), "Some([])");
     let t2 = keys.issue(2, 60);
     check(
         "authorization 두 번",
         http(port, &q, &format!("authorization: Bearer {t1}\r\nauthorization: Bearer {t2}\r\n")).await["code"].to_string(),
-        "\"BAD_REQUEST\"",
+        "\"WIRE.BAD_REQUEST\"",
     );
     db.batch_execute(&format!("DROP SCHEMA IF EXISTS {s} CASCADE")).await.ok();
     assert!(fails.is_empty(), "\n{}", fails.join("\n"));

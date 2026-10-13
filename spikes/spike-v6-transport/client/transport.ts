@@ -29,9 +29,9 @@ function validWriteResponse(res: any, wire?: IdWireKind, extensionWrite = false)
   return wire === undefined || [res.changed, res.unchanged].every(ids => Array.isArray(ids) && ids.every(id => validResultId(id, wire)));
 }
 
-const UNSETTLED = new Set(["COMMIT_UNKNOWN", "INTERNAL"]);
+const UNSETTLED = new Set(["WIRE.COMMIT_UNKNOWN", "WIRE.INTERNAL"]);
 // 실행 전 거부나 이번 시도의 rollback은 같은 키의 이전 커밋 여부를 알려 주지 않는다.
-const NOT_EXECUTED = new Set(["TOKEN_EXPIRED", "UNAUTHENTICATED", "BAD_REQUEST", "PAYLOAD_TOO_LARGE", "NOT_FOUND", "CONTRACT_MISMATCH", "ORIGIN_NOT_ALLOWED", "REQUEST_TIMEOUT", "DB_UNAVAILABLE", "WORKER_BUSY", "DEADLINE_EXCEEDED", "CONFLICT"]);
+const NOT_EXECUTED = new Set(["WIRE.TOKEN_EXPIRED", "WIRE.UNAUTHENTICATED", "WIRE.BAD_REQUEST", "WIRE.PAYLOAD_TOO_LARGE", "WIRE.NOT_FOUND", "WIRE.CONTRACT_MISMATCH", "WIRE.ORIGIN_NOT_ALLOWED", "WIRE.REQUEST_TIMEOUT", "WIRE.DB_UNAVAILABLE", "WIRE.WORKER_BUSY", "WIRE.DEADLINE_EXCEEDED", "WIRE.CONFLICT"]);
 
 export class WriteUnsettled extends Error {
   key: string;
@@ -60,10 +60,10 @@ export function connect(base: string, initialToken: string | null, fetchImpl: ty
   const validateRead = options.validateRead;
   const validateWrite = options.validateWrite;
   if (resultWire !== undefined && !isIdWire(resultWire)) {
-    throw Object.assign(new Error("Id wire 형식 오류"), { code: "PROTOCOL_ERROR" });
+    throw Object.assign(new Error("Id wire 형식 오류"), { code: "CLIENT.PROTOCOL_ERROR" });
   }
   if (expectedFingerprint !== undefined && (typeof expectedFingerprint !== "string" || !/^[a-f0-9]{64}$/.test(expectedFingerprint))) {
-    throw Object.assign(new Error("계약 식별값 형식 오류"), { code: "PROTOCOL_ERROR" });
+    throw Object.assign(new Error("계약 식별값 형식 오류"), { code: "CLIENT.PROTOCOL_ERROR" });
   }
   let token = initialToken;
   let generation = 0;
@@ -100,7 +100,7 @@ export function connect(base: string, initialToken: string | null, fetchImpl: ty
     const id = res?.principal?.actorId;
     const canonical = typeof id === "string" && id.length <= 20 && /^(0|[1-9][0-9]*|-[1-9][0-9]*)$/.test(id) && BigInt(id) >= -(1n << 63n) && BigInt(id) < (1n << 63n);
     const valid = credential === null ? id === null && res?.remainingMs === null : canonical && Number.isFinite(res?.remainingMs) && res.remainingMs > 0;
-    if (res?.ok !== true || !valid) throw failure("PROTOCOL_ERROR", "세션 응답 계약 오류", res);
+    if (res?.ok !== true || !valid) throw failure("CLIENT.PROTOCOL_ERROR", "세션 응답 계약 오류", res);
     return id;
   }
   async function ensurePrincipal() {
@@ -163,7 +163,7 @@ export function connect(base: string, initialToken: string | null, fetchImpl: ty
     const flight = flights.get(flightKey);
     let record = pending.get(key);
     if ((flight && flight.text !== text) || (record && JSON.stringify(record.request) !== text)) {
-      return freezeOutcome({ ok: false, code: "IDEMPOTENCY_MISMATCH" });
+      return freezeOutcome({ ok: false, code: "WIRE.IDEMPOTENCY_MISMATCH" });
     }
     if (flight) return flight.promise;
     if (!record) {
@@ -206,32 +206,32 @@ export function connect(base: string, initialToken: string | null, fetchImpl: ty
       const r = await postWithToken(path, { [field]: name, input: snapshot }, auth.token);
       if (auth.generation !== generation) throw new ScopeChanged("확장을 읽는 동안 세션이 바뀜");
       if (r?.ok === false && typeof r.code === "string") {
-        if (r.code === "CONTRACT_MISMATCH") cache.invalidate();
+        if (r.code === "WIRE.CONTRACT_MISMATCH") cache.invalidate();
         throw failure(r.code, r.code, r);
       }
-      if (r?.ok !== true) throw failure("PROTOCOL_ERROR", "확장 응답 형식 오류", r);
+      if (r?.ok !== true) throw failure("CLIENT.PROTOCOL_ERROR", "확장 응답 형식 오류", r);
       if (expectedFingerprint === undefined || r.contractFingerprint !== expectedFingerprint) {
         cache.invalidate();
-        throw failure("CONTRACT_MISMATCH", "생성 확장 계약과 서버 계약이 다름", r);
+        throw failure("WIRE.CONTRACT_MISMATCH", "생성 확장 계약과 서버 계약이 다름", r);
       }
       return r.output as unknown;
   }
   async function callManaged(path: string, body: unknown): Promise<unknown> {
     if (!MANAGED_PATHS.has(path)) {
-      throw Object.assign(new Error("지원하지 않는 관리 경로"), { code: "PROTOCOL_ERROR" });
+      throw Object.assign(new Error("지원하지 않는 관리 경로"), { code: "CLIENT.PROTOCOL_ERROR" });
     }
     await ensurePrincipal();
     const auth = { token, generation };
     const response = await postWithToken(path, structuredClone(body), auth.token);
     if (auth.generation !== generation) throw new ScopeChanged("관리 요청 중 세션이 바뀜");
     if (response?.ok === false && typeof response.code === "string") {
-      if (response.code === "CONTRACT_MISMATCH") cache.invalidate();
+      if (response.code === "WIRE.CONTRACT_MISMATCH") cache.invalidate();
       throw failure(response.code, response.code, response);
     }
-    if (response?.ok !== true) throw failure("PROTOCOL_ERROR", "관리 응답 형식 오류", response);
+    if (response?.ok !== true) throw failure("CLIENT.PROTOCOL_ERROR", "관리 응답 형식 오류", response);
     if (expectedFingerprint === undefined || response.contractFingerprint !== expectedFingerprint) {
       cache.invalidate();
-      throw failure("CONTRACT_MISMATCH", "생성 관리 계약과 서버 계약이 다름", response);
+      throw failure("WIRE.CONTRACT_MISMATCH", "생성 관리 계약과 서버 계약이 다름", response);
     }
     return response;
   }
@@ -248,17 +248,17 @@ export function connect(base: string, initialToken: string | null, fetchImpl: ty
         // 구세대 응답은 새 세대의 계약 검사·캐시 무효화에도 참여하지 않는다.
         if (auth.generation !== generation) throw new ScopeChanged("읽는 동안 세션이 바뀜");
         if (r?.ok === false && typeof r.code === "string") {
-          if (r.code === "CONTRACT_MISMATCH") cache.invalidate();
+          if (r.code === "WIRE.CONTRACT_MISMATCH") cache.invalidate();
           throw failure(r.code, r.code, r);
         }
-        if (r?.ok !== true) throw failure("PROTOCOL_ERROR", "읽기 응답 계약 오류", r);
+        if (r?.ok !== true) throw failure("CLIENT.PROTOCOL_ERROR", "읽기 응답 계약 오류", r);
         if (expectedFingerprint !== undefined && r.contractFingerprint !== expectedFingerprint) {
           cache.invalidate();
-          throw failure("CONTRACT_MISMATCH", "생성 계약과 서버 계약이 다름", r);
+          throw failure("WIRE.CONTRACT_MISMATCH", "생성 계약과 서버 계약이 다름", r);
         }
         if (!Array.isArray(r.rows) || !Array.isArray(r.deps) || !r.deps.every((d: unknown) => typeof d === "string") ||
           (r.maxAgeMs !== undefined && (typeof r.maxAgeMs !== "number" || !Number.isFinite(r.maxAgeMs) || r.maxAgeMs < 0))) {
-          throw failure("PROTOCOL_ERROR", "읽기 응답 계약 오류", r);
+          throw failure("CLIENT.PROTOCOL_ERROR", "읽기 응답 계약 오류", r);
         }
         validateRead?.(snapshot, r.rows);
         return { rows: r.rows, deps: r.deps, maxAgeMs: r.maxAgeMs };

@@ -15,8 +15,8 @@ fn error_code<T>(result: Result<T, Reject>) -> &'static str {
 fn legacy_keeps_existing_string_input_and_number_output_rules() {
     assert_eq!(parse_id(&json!("0007"), IdWire::Legacy).unwrap(), 7);
     assert_eq!(parse_id(&json!("123456789012345678"), IdWire::Legacy).unwrap(), 123_456_789_012_345_678);
-    assert_eq!(error_code(parse_id(&json!("1234567890123456789"), IdWire::Legacy)), "BAD_VALUE");
-    assert_eq!(error_code(parse_id(&json!(7), IdWire::Legacy)), "BAD_VALUE");
+    assert_eq!(error_code(parse_id(&json!("1234567890123456789"), IdWire::Legacy)), "WIRE.BAD_VALUE");
+    assert_eq!(error_code(parse_id(&json!(7), IdWire::Legacy)), "WIRE.BAD_VALUE");
     assert_eq!(emit_id(7, IdWire::Legacy).unwrap(), json!(7));
     assert_eq!(emit_id(9_007_199_254_740_992, IdWire::Legacy).unwrap(), json!(9_007_199_254_740_992i64));
 }
@@ -27,16 +27,16 @@ fn safe_number_accepts_only_nonnegative_safe_integer_numbers() {
     assert_eq!(parse_id(&json!(MAX_SAFE_ID), IdWire::SafeNumber).unwrap(), MAX_SAFE_ID);
 
     for invalid in [json!(-1), json!(1.5), json!("1"), json!(null), json!(true), json!([]), json!({})] {
-        assert_eq!(error_code(parse_id(&invalid, IdWire::SafeNumber)), "BAD_VALUE", "입력 {invalid}");
+        assert_eq!(error_code(parse_id(&invalid, IdWire::SafeNumber)), "WIRE.BAD_VALUE", "입력 {invalid}");
     }
     for unsafe_integer in [json!(MAX_SAFE_ID + 1), json!(i64::MAX)] {
-        assert_eq!(error_code(parse_id(&unsafe_integer, IdWire::SafeNumber)), "ID_OUT_OF_RANGE", "입력 {unsafe_integer}");
+        assert_eq!(error_code(parse_id(&unsafe_integer, IdWire::SafeNumber)), "WIRE.ID_OUT_OF_RANGE", "입력 {unsafe_integer}");
     }
 
     assert_eq!(emit_id(0, IdWire::SafeNumber).unwrap(), json!(0));
     assert_eq!(emit_id(MAX_SAFE_ID, IdWire::SafeNumber).unwrap(), json!(MAX_SAFE_ID));
-    assert_eq!(error_code(emit_id(-1, IdWire::SafeNumber)), "BAD_VALUE");
-    assert_eq!(error_code(emit_id(MAX_SAFE_ID + 1, IdWire::SafeNumber)), "ID_OUT_OF_RANGE");
+    assert_eq!(error_code(emit_id(-1, IdWire::SafeNumber)), "WIRE.BAD_VALUE");
+    assert_eq!(error_code(emit_id(MAX_SAFE_ID + 1, IdWire::SafeNumber)), "WIRE.ID_OUT_OF_RANGE");
 }
 
 #[test]
@@ -61,12 +61,12 @@ fn decimal_string_accepts_only_canonical_nonnegative_i64_strings() {
         json!(1.0),
         json!(null),
     ] {
-        assert_eq!(error_code(parse_id(&invalid, IdWire::DecimalString)), "BAD_VALUE", "입력 {invalid}");
+        assert_eq!(error_code(parse_id(&invalid, IdWire::DecimalString)), "WIRE.BAD_VALUE", "입력 {invalid}");
     }
 
     assert_eq!(emit_id(0, IdWire::DecimalString).unwrap(), json!("0"));
     assert_eq!(emit_id(i64::MAX, IdWire::DecimalString).unwrap(), json!("9223372036854775807"));
-    assert_eq!(error_code(emit_id(-1, IdWire::DecimalString)), "BAD_VALUE");
+    assert_eq!(error_code(emit_id(-1, IdWire::DecimalString)), "WIRE.BAD_VALUE");
 }
 
 fn row_output_type() -> Value {
@@ -141,7 +141,7 @@ fn scalar_id_output_is_encoded_with_the_selected_wire() {
 fn safe_number_row_encoder_rejects_ids_outside_javascript_safe_integer_range() {
     let output_type = json!({ "rows": { "id": { "ty": "Id<Thing>", "nullable": false } } });
     let error = error_code(encode_rows(vec![json!({ "id": MAX_SAFE_ID + 1 })], &output_type, IdWire::SafeNumber));
-    assert_eq!(error, "ID_OUT_OF_RANGE");
+    assert_eq!(error, "WIRE.ID_OUT_OF_RANGE");
 }
 
 #[test]
@@ -158,7 +158,7 @@ fn string_conversion_is_included_in_the_serialized_output_byte_limit() {
     assert_eq!(serde_json::to_vec(&row).unwrap().len(), MAX_OUTPUT_BYTES, "원본 number row는 정확히 상한 이하여야 함");
 
     let error = error_code(encode_rows(vec![row], &output_type, IdWire::DecimalString));
-    assert_eq!(error, "OUTPUT_TOO_LARGE", "문자열 ID의 JSON 따옴표 증가분을 포함해 거부해야 함");
+    assert_eq!(error, "WIRE.OUTPUT_TOO_LARGE", "문자열 ID의 JSON 따옴표 증가분을 포함해 거부해야 함");
 }
 
 #[test]
@@ -174,5 +174,5 @@ fn one_to_many_children_are_encoded_with_the_selected_wire() {
     let decimal = encode_rows(rows.clone(), &output_type, IdWire::DecimalString).unwrap();
     assert_eq!(decimal[0]["comments"][0]["id"], json!("9007199254740993"));
     assert_eq!(decimal[0]["comments"][1]["id"], json!("2"));
-    assert_eq!(error_code(encode_rows(rows, &output_type, IdWire::SafeNumber)), "ID_OUT_OF_RANGE");
+    assert_eq!(error_code(encode_rows(rows, &output_type, IdWire::SafeNumber)), "WIRE.ID_OUT_OF_RANGE");
 }
