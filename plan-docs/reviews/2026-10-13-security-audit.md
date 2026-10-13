@@ -84,6 +84,7 @@
 | S-26 | 낮음 | PoC | Text에 NUL이 들어가면 DB 오류가 `INTERNAL`로 나옴, CSV export 셀이 수식으로 실행됨, 읽기에 `statement_timeout` 없음, 제약 위반 메시지가 DB 원문 | 단위 테스트, e2e 전체 | NUL 거부, 수식 접두 셀에 `'`, 읽기 10초 timeout(`UNAVAILABLE`), 일반 문구 | `validate.rs`·`jobs.rs` 단위 테스트, `poc-runtime` e2e 전체 통과 | f7dccb3 |
 | S-27 | 정보 | 제품 | `aip-execution`에 `hmac`·`base64`·`url`이 추가된 뒤 `spike-v3-write`·`spike-v4-worker`·`spike-v5-sdk`의 `Cargo.lock`이 갱신되지 않아 `verify.sh`가 spike-v3 단계에서 `--locked` 오류로 멈추고 CI의 v4 단계도 같은 오류를 낼 상태였음 | 실행(`bash tools/verify.sh`, exit 101) | lock 3개 오프라인 갱신(추가만), verify.sh에 v4·v6 포함 | `tools/verify.sh` 전체 | b7c2b7c |
 | S-28 | 중간 | 제품 | O-19: trigger 대상 operation을 인증된 사용자가 `/jobs/enqueue`로 직접 넣어 HMAC 검증을 우회 | 실제 PG: 위조 body enqueue가 `ok:true`로 QUEUED | 사용자 경로에서 webhook·schedule·outbox·message 대상 operation이면 `ACCESS_DENIED`(`Triggers::targets_operation`). trigger 경로(`submit_as_service`)는 그대로 | `spike-v6-transport/tests/trigger_guard.rs`, `tests/triggers.rs` | 9feb20b |
+| S-29 | 중간(가용성) | 제품 | O-25: `check`·정원 제약이 있는 resource마다 모든 `/apply`가 `xmin = pg_current_xact_id()` 전체 스캔(인덱스 불가) | 실제 PG: 관련 없는 `Ticket.close` 한 번이 `Allocation`을 seq scan 2번(`pg_stat_user_tables.seq_scan` 증가) | 트랜잭션 로컬 통계 `pg_stat_xact_all_tables`로 변경 없는 테이블을 먼저 거르고, 변경이 있어 보이면 기존 xmin 검사로 확정(결과 동일). `track_counts`가 꺼져 있으면 거르지 않음 | `spike-v3-write/tests/commit_check_scope.rs`(스캔 0회, 직접·effect 경유 `CHECK_FAILED`·`INVARIANT_VIOLATED` 동일) | 72c8557 |
 
 ### 3.2 열려 있는 항목(제품 경로)
 
@@ -112,7 +113,7 @@
 | O-22 | 중간 | 런타임과 migration이 같은 DB 역할을 씀. `serve`가 시작할 때 `CREATE SCHEMA/TABLE`을 하므로 서버 프로세스가 사실상 owner. 최소 권한 가이드 없음 | 코드 추적. migrate 전용 URL과 runtime 전용 URL 분리 권고 |
 | O-23 | 낮음 | `/ready`가 인증 없이 전역 `Semaphore(1)`을 쓰고 `DEPLOYMENT_CHANGED`/`DB_UNAVAILABLE`을 구분해 응답. 공개 프록시에 노출되면 flood가 LB의 정상 probe를 막음 | 코드 추적. probe는 내부 listener 권고 |
 | O-24 | 낮음 | migration `plan_digest UNIQUE`가 A→B→A→B 순환의 두 번째 적용을 롤백시킴. `requiresReview`는 보고만 하고 apply에서 강제하지 않음. Time→Date 변환이 세션 TimeZone에 의존 | 코드 추적 |
-| O-25 | 중간(가용성) | `check`/정원 제약이 선언된 resource가 있으면 관련 없는 전이의 `/apply`마다 각 resource에 `xmin = pg_current_xact_id()` 전체 스캔(인덱스 불가). 테이블이 커지면 `statement_timeout` 2초에 걸려 전 쓰기가 `DEADLINE_EXCEEDED` | 코드 추적. 이번 트랜잭션이 건드린 resource만 검사하도록 추적 필요 |
+| O-25 | 완료 | `check`·정원 제약 검사가 관련 없는 `/apply`마다 전체 스캔 | S-29으로 조치. 변경된 resource에는 여전히 xmin 스캔이 돈다(그 테이블이 클 때의 비용은 남음) |
 | O-26 | 중간 | 행의 부재에 의존하는 정책(`allow not exists Booking b where b.room = r.room and b.status = CONFIRMED`)은 서로 다른 행을 동시에 바꾸는 요청을 막지 못함(이중 예약). `atMost 1` 불변식만 막음. sema가 경고하지 않음. 설계 문서 V3-R5에 한계로만 있음. `not exists`가 익명 actor에게 열리는 것은 의미상 옳지만 정의 작성자가 `actor != null`을 써야 함 | 코드 추적. sema 경고 권고 |
 | O-27 | 낮음 | 불변식 위반 코드(`ALREADY_EXISTS`, `INVARIANT_VIOLATED`)로 `rows read`에 가려진 행의 존재·정원 상태를 추론할 수 있음 | 코드 추적. 설계상 허용 여부 결정 필요 |
 | O-28 | 낮음 | 쓰기 판정의 `now`가 트랜잭션 전에 고정되어 멱등·행 잠금 대기(최대 2초)만큼 마감을 지난 뒤에도 `allow now < deadline`이 통과할 수 있음. 비-`maxRows` update effect의 락 순서 비고정(교착 시 `CONFLICT` 재시도). advisory lock 키가 32비트 해시를 공유 | 코드 추적 |
