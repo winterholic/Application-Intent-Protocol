@@ -152,6 +152,12 @@ mod linux {
                 }
             }
             write_control(&self.path.join("memory.max"), &limits.memory_max_value())?;
+            // Without this the kernel swaps pages out instead of killing the group, so memory.max would not be a hard cap on
+            // hosts with swap (GitHub's runners have it). The file only exists when swap accounting is enabled.
+            let swap = self.path.join("memory.swap.max");
+            if swap.is_file() {
+                write_control(&swap, "0")?;
+            }
             write_control(&self.path.join("memory.oom.group"), "1")?;
             write_control(&self.path.join("pids.max"), &limits.pids_max_value())?;
             write_control(&self.path.join("cpu.max"), &limits.cpu_max_value())?;

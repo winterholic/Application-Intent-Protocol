@@ -152,6 +152,8 @@ async fn v4_1_read_extension_node_and_python() {
         w.stop().await;
     }
     // 격리 대안: macOS sandbox-exec로 worker 네트워크 차단. ctx 경로는 동작하고 DB 직접 연결만 막혀야 한다.
+    // Linux는 이 격리 모드가 없고(MacNetDeny 거부) bwrap 격리는 isolation::tests가 AIP_TEST_BWRAP로 검증한다.
+    #[cfg(target_os = "macos")]
     for lang in [Lang::Node, Lang::Python] {
         let mut w = Worker::start_with(lang, ext_dir, Isolation::MacNetDeny).await;
         let db_probe = short(invoke(&mut db, &mut w, &facts("probeDb"), "Recruitment.stats", &c10, &who(Some(1))).await);
