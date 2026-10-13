@@ -162,6 +162,22 @@ pub async fn build(
     Ok((Arc::new(engine), config.client_index))
 }
 
+/// Creates the RAG storage with the connection's role, for a deployment whose server role may not create tables.
+pub async fn provision(
+    _config: &Config,
+    database_url: &str,
+    schema: &str,
+    pool_options: spike_v6_transport::pool::PoolOptions,
+) -> Result<(), String> {
+    let factory = Arc::new(
+        spike_v6_transport::rag_transport::RagConnectionFactory::new(database_url.to_owned(), pool_options)
+            .map_err(|_| "RAG 저장소 연결 풀 설정 오류".to_owned())?,
+    );
+    let storage_schema = aip_execution::infrastructure_schema(schema).map_err(|_| "배포 schema 이름 오류".to_owned())?;
+    let store = PgJsonVectorStore::with_factory(factory, storage_schema).map_err(|_| "RAG 저장소를 만들 수 없음".to_owned())?;
+    store.initialize().await.map_err(|_| "RAG 저장소 초기화 실패".to_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

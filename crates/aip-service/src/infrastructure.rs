@@ -20,7 +20,7 @@ impl Default for DbPoolConfig {
     }
 }
 impl DbPoolConfig {
-    fn build(&self) -> Result<spike_v6_transport::pool::PoolOptions, Value> {
+    pub(super) fn build(&self) -> Result<spike_v6_transport::pool::PoolOptions, Value> {
         if self.max_size > 1024 || self.acquire_timeout_ms > 30_000 || self.idle_timeout_ms > 3_600_000 {
             return Err(configuration_error());
         }

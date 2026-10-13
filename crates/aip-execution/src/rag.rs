@@ -299,7 +299,17 @@ impl PgJsonVectorStore {
                chunk_index integer NOT NULL, embedding_profile text NOT NULL, source text NOT NULL, chunk_text text NOT NULL, embedding jsonb NOT NULL,\
                PRIMARY KEY(corpus, owner_id, document_id, chunk_index))\
              ; CREATE INDEX IF NOT EXISTS \"aip_rag_scope_idx\" ON {schema}.\"aip_rag_chunks\"(corpus, owner_id, document_id, chunk_index)"
-        )).await.map_err(|_| RagError::Storage);
+        )).await;
+        let result = match result {
+            Ok(()) => Ok(()),
+            // A runtime role without CREATE privileges can still use a table that a migration role provisioned (O-22).
+            Err(error) if error.code() == Some(&tokio_postgres::error::SqlState::INSUFFICIENT_PRIVILEGE) => {
+                let table = format!("{}.\"aip_rag_chunks\"", schema);
+                let exists = lease.client().query_one("SELECT to_regclass($1) IS NOT NULL", &[&table]).await.map(|row| row.get::<_, bool>(0));
+                if exists.unwrap_or(false) { Ok(()) } else { Err(RagError::Storage) }
+            }
+            Err(_) => Err(RagError::Storage),
+        };
         lease.release().await?;
         result
     }

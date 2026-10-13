@@ -35,8 +35,16 @@ impl RateLimiter {
         }
         Ok(Self { schema: schema.into() })
     }
+    /// The statements `install` runs, for callers that provision the table under a different database role.
+    pub fn ddl(schema: &str) -> Result<String, &'static str> {
+        let limiter = Self::new(schema)?;
+        Ok(format!(
+            "CREATE TABLE IF NOT EXISTS {0}.aip_rate_limits (scope text PRIMARY KEY, used bigint NOT NULL, reset_at timestamptz NOT NULL); CREATE INDEX IF NOT EXISTS aip_rate_limits_expiry ON {0}.aip_rate_limits(reset_at)",
+            limiter.schema
+        ))
+    }
     pub async fn install(&self, db: &impl GenericClient) -> Result<(), tokio_postgres::Error> {
-        db.batch_execute(&format!("CREATE TABLE IF NOT EXISTS {}.aip_rate_limits (scope text PRIMARY KEY, used bigint NOT NULL, reset_at timestamptz NOT NULL); CREATE INDEX IF NOT EXISTS aip_rate_limits_expiry ON {}.aip_rate_limits(reset_at)", self.schema, self.schema)).await
+        db.batch_execute(&Self::ddl(&self.schema).expect("schema was validated by new")).await
     }
     pub async fn check(&self, db: &mut Client, principal: &str, route: &str, policy: Policy) -> Result<Decision, String> {
         policy.validate().map_err(str::to_owned)?;

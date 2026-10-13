@@ -44,6 +44,61 @@ impl DeploymentFence {
     }
 }
 
+fn rate_limiter_ddl(storage_schema: &str) -> String {
+    format!(
+        "CREATE SCHEMA IF NOT EXISTS {storage_schema}; {}",
+        aip_execution::rate_limit::RateLimiter::ddl(storage_schema).expect("storage schema was validated")
+    )
+}
+
+fn outbox_ddl(infra: &str) -> String {
+    format!("CREATE SCHEMA IF NOT EXISTS {infra}; {}", crate::durable::outbox_dispatch_ddl(infra))
+}
+
+fn audit_ddl(infra: &str) -> String {
+    format!("CREATE SCHEMA IF NOT EXISTS {infra}; {}", spike_v3_write::audit_ddl(infra))
+}
+
+/// Runs an infrastructure installation. Even `CREATE ... IF NOT EXISTS` needs CREATE privileges, so a runtime role that
+/// was deliberately denied them (O-22) would never start. If the statement is refused for privileges and `probe` already
+/// exists, the objects were provisioned by `provision_infrastructure` under a migration role and the runtime proceeds.
+async fn install_or_accept_provisioned(db: &tokio_postgres::Client, ddl: &str, probe: &str, what: &str) -> io::Result<()> {
+    match db.batch_execute(ddl).await {
+        Ok(()) => Ok(()),
+        Err(error) if error.code() == Some(&tokio_postgres::error::SqlState::INSUFFICIENT_PRIVILEGE) => {
+            // The installation may have been inside an explicit transaction that is now aborted.
+            let _ = db.batch_execute("ROLLBACK").await;
+            let exists = db.query_one("SELECT to_regclass($1) IS NOT NULL", &[&probe]).await.map(|row| row.get::<_, bool>(0)).unwrap_or(false);
+            if exists {
+                Ok(())
+            } else {
+                // InvalidInput: the service reports this class of startup error verbatim, and the sentence names no value.
+                Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!(
+                        "{what} tables are missing and this database role may not create them; run `aip service provision` with the migration role"
+                    ),
+                ))
+            }
+        }
+        Err(_) => Err(io::Error::other(format!("{what} installation failed"))),
+    }
+}
+
+/// Creates the infrastructure schema and tables (rate limits, outbox dispatch, business audit) with the connection's
+/// role, so the server can later run under a role that has no CREATE privileges. Idempotent.
+pub async fn provision_infrastructure(db_url: &str, deployment_schema: &str) -> io::Result<()> {
+    let infra = aip_execution::infrastructure_schema(deployment_schema).map_err(|_| io::Error::other("invalid deployment schema"))?;
+    let db = spike_v2_read::connect_owned_with_url(db_url).await.map_err(|_| io::Error::other("database unavailable"))?;
+    for (ddl, what) in [(rate_limiter_ddl(&infra), "rate limiter"), (outbox_ddl(&infra), "outbox relay"), (audit_ddl(&infra), "audit")] {
+        tokio::time::timeout(DB_PREFLIGHT_TIMEOUT, db.batch_execute(&ddl))
+            .await
+            .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, format!("{what} provisioning timed out")))?
+            .map_err(|_| io::Error::other(format!("{what} provisioning failed; this role needs CREATE on the database")))?;
+    }
+    Ok(())
+}
+
 pub(crate) struct Runtime {
     pub infrastructure: crate::infrastructure::Infrastructure,
     pub db_pool: Option<Arc<crate::pool::ConnectionPool>>,
@@ -207,10 +262,8 @@ pub(crate) async fn listen_with_fingerprint(
         let pool = runtime.db_pool.as_ref().expect("pool initialized");
         let install = tokio::time::timeout(DB_PREFLIGHT_TIMEOUT, async {
             let db = pool.acquire().await.map_err(|_| io::Error::other("rate limiter database unavailable"))?;
-            db.batch_execute(&format!("CREATE SCHEMA IF NOT EXISTS {storage_schema}"))
-                .await
-                .map_err(|_| io::Error::other("rate limiter schema initialization failed"))?;
-            limiter.install(&*db).await.map_err(|_| io::Error::other("rate limiter installation failed"))?;
+            install_or_accept_provisioned(&db, &rate_limiter_ddl(&storage_schema), &format!("{storage_schema}.aip_rate_limits"), "rate limiter")
+                .await?;
             db.release().await.map_err(|_| io::Error::other("rate limiter connection reset failed"))?;
             Ok::<_, io::Error>(())
         })
@@ -225,9 +278,7 @@ pub(crate) async fn listen_with_fingerprint(
         let pool = runtime.db_pool.as_ref().expect("pool initialized");
         tokio::time::timeout(DB_PREFLIGHT_TIMEOUT, async {
             let db = pool.acquire().await.map_err(|_| io::Error::other("outbox relay database unavailable"))?;
-            db.batch_execute(&format!("CREATE SCHEMA IF NOT EXISTS {infra}; {}", crate::durable::outbox_dispatch_ddl(&infra)))
-                .await
-                .map_err(|_| io::Error::other("outbox relay installation failed"))?;
+            install_or_accept_provisioned(&db, &outbox_ddl(&infra), &format!("{infra}.aip_outbox_dispatch"), "outbox relay").await?;
             db.release().await.map_err(|_| io::Error::other("outbox relay connection reset failed"))
         })
         .await
@@ -239,9 +290,7 @@ pub(crate) async fn listen_with_fingerprint(
         let pool = runtime.db_pool.as_ref().expect("pool initialized");
         tokio::time::timeout(DB_PREFLIGHT_TIMEOUT, async {
             let db = pool.acquire().await.map_err(|_| io::Error::other("audit database unavailable"))?;
-            db.batch_execute(&format!("CREATE SCHEMA IF NOT EXISTS {infra}; {}", spike_v3_write::audit_ddl(&infra)))
-                .await
-                .map_err(|_| io::Error::other("audit installation failed"))?;
+            install_or_accept_provisioned(&db, &audit_ddl(&infra), &format!("{infra}.aip_audit"), "audit").await?;
             db.release().await.map_err(|_| io::Error::other("audit connection reset failed"))
         })
         .await

@@ -63,6 +63,12 @@ pub enum Command {
         #[arg(long)]
         apply: Option<String>,
     },
+    /// Create the infrastructure tables (rate limits, outbox dispatch, business audit, RAG) with the migration role,
+    /// so `serve` can run under a database role that has no CREATE privileges
+    Provision {
+        #[arg(long)]
+        config: PathBuf,
+    },
     /// Serve a previously initialized deployment behind a TLS reverse proxy
     Serve {
         file: PathBuf,
@@ -204,6 +210,11 @@ pub struct Config {
     pub schema: String,
     #[serde(default = "default_env")]
     pub database_url_env: String,
+    /// Name of the environment variable that holds the DB URL of the migration role, used by `init`, `migrate`, `adopt` and
+    /// `provision`. When absent those commands use `database_url_env`, so a single owner role keeps working. Setting it lets
+    /// `serve`, `principal`, `jobs` and `audit` run under a role that cannot alter or drop the application tables (O-22).
+    #[serde(default)]
+    pub migrate_database_url_env: Option<String>,
     #[serde(default)]
     pub db_pool: infrastructure::DbPoolConfig,
     #[serde(default = "default_listen")]
@@ -444,6 +455,10 @@ fn configuration(path: &Path) -> Result<Config, Value> {
     if config.database_url_env.is_empty() || !config.database_url_env.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
         return Err(error("BAD_CONFIG", "database_url_env는 영문자·숫자·'_'로 된 환경 변수 이름이어야 함(DB URL 자체가 아님)"));
     }
+    if config.migrate_database_url_env.as_deref().is_some_and(|name| name.is_empty() || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'))
+    {
+        return Err(error("BAD_CONFIG", "migrate_database_url_env는 영문자·숫자·'_'로 된 환경 변수 이름이어야 함(DB URL 자체가 아님)"));
+    }
     spike_v6_transport::server::ServerOptions { allowed_origins: config.allowed_origins.clone() }.validate_product().map_err(|_| {
         error(
             "BAD_ORIGIN",
@@ -682,15 +697,27 @@ where
         .await
         .map_err(|_| error("INTEGRATION_CONFIG", "외부 연동 DNS 조회가 기한 안에 끝나지 않음(호스트 이름과 서버의 DNS 접근을 확인)"))?
 }
-fn database_url(config: &Config) -> Result<String, Value> {
+fn install_database_ca(config: &Config) -> Result<(), Value> {
     if let Some(path) = &config.database_ca_file {
         let pem = read_bounded(path, CONFIG_BYTES, "DB_CA_IO")?;
         spike_v2_read::install_ca_bundle(pem.as_bytes()).map_err(|_| error("DB_CA_CONFIG", "DB CA bundle 형식 또는 프로세스 설정 충돌"))?;
     }
+    Ok(())
+}
+/// The runtime role's URL: `serve`, `principal`, `jobs`, `audit`.
+fn database_url(config: &Config) -> Result<String, Value> {
+    install_database_ca(config)?;
     std::env::var(&config.database_url_env)
         .ok()
         .filter(|v| !v.trim().is_empty())
         .ok_or_else(|| error("DB_CONFIG", "설정에 지정한 DB 환경 변수가 필요함"))
+}
+/// The migration role's URL: `init`, `migrate`, `adopt`, `provision`. Falls back to the runtime URL when no separate role is
+/// configured.
+fn migrate_database_url(config: &Config) -> Result<String, Value> {
+    let Some(name) = &config.migrate_database_url_env else { return database_url(config) };
+    install_database_ca(config)?;
+    std::env::var(name).ok().filter(|v| !v.trim().is_empty()).ok_or_else(|| error("DB_CONFIG", "설정에 지정한 migration DB 환경 변수가 필요함"))
 }
 fn report(value: &Value) -> std::io::Result<()> {
     let mut out = std::io::stdout().lock();
@@ -749,7 +776,7 @@ pub async fn run(command: Command) -> Result<Value, Value> {
         Command::Init { file, config } => {
             let c = configuration(&config)?;
             let facts = load(&file, false)?.output.execution;
-            aip_migrate::init_with_wire(&database_url(&c)?, &c.schema, &facts, c.wire.deployment_label()).await
+            aip_migrate::init_with_wire(&migrate_database_url(&c)?, &c.schema, &facts, c.wire.deployment_label()).await
         }
         Command::Migrate { file, config, migration, apply } => {
             let c = configuration(&config)?;
@@ -761,23 +788,46 @@ pub async fn run(command: Command) -> Result<Value, Value> {
                 })
                 .transpose()?;
             match apply {
-                Some(hash) => aip_migrate::apply(&database_url(&c)?, &c.schema, &facts, &migration, &hash).await,
-                None => aip_migrate::plan(&database_url(&c)?, &c.schema, &facts, &migration).await,
+                Some(hash) => aip_migrate::apply(&migrate_database_url(&c)?, &c.schema, &facts, &migration, &hash).await,
+                None => aip_migrate::plan(&migrate_database_url(&c)?, &c.schema, &facts, &migration).await,
             }
         }
         Command::Adopt { file, config, apply } => {
             let c = configuration(&config)?;
             let facts = load(&file, false)?.output.execution;
             match apply {
-                Some(hash) => aip_migrate::adopt::apply_with_wire(&database_url(&c)?, &c.schema, &facts, &hash, c.wire.deployment_label()).await,
-                None => aip_migrate::adopt::plan_with_wire(&database_url(&c)?, &c.schema, &facts, c.wire.deployment_label()).await,
+                Some(hash) => {
+                    aip_migrate::adopt::apply_with_wire(&migrate_database_url(&c)?, &c.schema, &facts, &hash, c.wire.deployment_label()).await
+                }
+                None => aip_migrate::adopt::plan_with_wire(&migrate_database_url(&c)?, &c.schema, &facts, c.wire.deployment_label()).await,
             }
         }
+        Command::Provision { config } => provision(configuration(&config)?).await,
         Command::Serve { file, config } => serve(&file, configuration(&config)?).await,
         Command::Principal { config, command } => principal(configuration(&config)?, command).await,
         Command::Jobs { config, command } => jobs(configuration(&config)?, command).await,
         Command::Audit { config, command } => audit(configuration(&config)?, command).await,
     }
+}
+
+/// Installs the infrastructure objects under the migration role. Idempotent; run it again after enabling rate limiting,
+/// outbox handlers or RAG.
+async fn provision(config: Config) -> Result<Value, Value> {
+    let db_url = migrate_database_url(&config)?;
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        spike_v6_transport::server::provision_infrastructure(&db_url, &config.schema)
+            .await
+            .map_err(|_| error("PROVISION_FAILED", "인프라 테이블 생성 실패(migration 역할의 CREATE 권한과 DB 연결을 확인)"))?;
+        let rag = config.rag.is_some();
+        if let Some(rag_config) = &config.rag {
+            rag::provision(rag_config, &db_url, &config.schema, config.db_pool.build()?)
+                .await
+                .map_err(|_| error("PROVISION_FAILED", "RAG 테이블 생성 실패(migration 역할의 CREATE 권한과 pgvector 사용 여부를 확인)"))?;
+        }
+        Ok(json!({"ok":true,"schema":config.schema,"infrastructureSchema":aip_execution::infrastructure_schema(&config.schema).map_err(|_| error("PROVISION_FAILED", "schema 이름 오류"))?,"rag":rag}))
+    })
+    .await
+    .map_err(|_| error("PROVISION_FAILED", "인프라 생성이 기한 안에 끝나지 않음"))?
 }
 
 const AUDIT_BAD_QUERY: &str = "via는 apply·extension·job, limit은 1에서 500, since는 RFC 3339 시각(예: 2026-10-01T00:00:00Z)이어야 함";

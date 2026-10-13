@@ -45,6 +45,8 @@ Durable job이나 서버 확장이 필요한 경우에만 선택적으로 `worke
 
 `secret_header_env.env`는 서비스 process environment에서 명시적으로 읽는다. 서비스는 `.env`를 자동 로드하지 않는다. endpoint는 startup에서 DNS 검증·고정하고 설정 불일치는 generic `INTEGRATION_CONFIG` 오류로 보고한다. secret이나 URL은 startup 오류에 기록하지 않는다.
 
+운영 환경에서는 마이그레이션 역할과 서버 실행 역할을 나눈다. `migrate_database_url_env`를 추가하고 `aip service provision`으로 인프라 테이블을 미리 만든다. 서버 역할에 줄 권한은 [DB 역할 분리와 최소 권한](DATABASE-ROLES.md)에 있다. 생략하면 역할 하나가 둘 다 맡으며 그 역할은 앱 schema의 소유자다.
+
 DB 연결 문자열은 설정의 환경 변수로 전달한다. 서비스는 `.env`를 자동으로 읽지 않는다. 원격 DB는 `sslmode=require`와 인증서·호스트명 검증이 필요하다. 사설 DB CA는 `database_ca_file`로 설정하며 설정 파일 기준 상대 경로와 최대 64KiB 인증서 PEM만 허용한다. 공개 JWKS 파일을 사용할 때는 `{"kind":"file","path":"./jwks.json"}`이며 역시 설정 파일 기준 경로다.
 
 listener는 loopback HTTP에 한정된다. 외부 HTTPS는 reverse proxy를 구성한다. `allowed_origins`는 정규화된 정확한 HTTPS origin 또는 로컬 HTTP origin만 받는다. 알려지지 않은 설정 키는 오류다. 토큰·개인키·실제 DB 비밀번호를 설정 예제나 로그에 남기지 않는다.
