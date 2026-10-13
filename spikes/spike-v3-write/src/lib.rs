@@ -634,6 +634,28 @@ async fn create_row(
     Ok(())
 }
 
+/// 이 트랜잭션이 `res` 테이블을 바꿨는지 판정한다. `xmin = pg_current_xact_id()`는 인덱스가 없어 전체 스캔이므로(O-25),
+/// 먼저 트랜잭션 로컬 통계(`pg_stat_xact_all_tables`)로 변경이 전혀 없는 테이블을 스캔 없이 걸러낸다.
+/// 통계는 savepoint에서 롤백된 쓰기도 세므로 "변경 없음"을 단정할 때만 믿고, 변경이 있어 보이면 기존 xmin 검사로 확정한다.
+/// `track_counts`가 꺼져 있으면 통계가 쌓이지 않으므로 걸러내지 않는다(검사 누락은 fail-open).
+async fn changed_in_transaction(tx: &Transaction<'_>, res: &str) -> Result<bool, tokio_postgres::Error> {
+    let table = table(res);
+    let touched: bool = tx
+        .query_one(
+            format!(
+                "SELECT current_setting('track_counts') <> 'on' OR coalesce((SELECT n_tup_ins + n_tup_upd + n_tup_del > 0 FROM pg_stat_xact_all_tables WHERE relid = '{table}'::regclass), true)"
+            )
+            .as_str(),
+            &[],
+        )
+        .await?
+        .get(0);
+    if !touched {
+        return Ok(false);
+    }
+    Ok(tx.query_one(format!("SELECT EXISTS (SELECT 1 FROM {table} WHERE xmin = pg_current_xact_id()::xid)").as_str(), &[]).await?.get(0))
+}
+
 /// `check`는 기존처럼 변경 행의 사후조건이고, locked count는 별도 잠금으로 직렬화한 그룹 제약이다.
 /// 일반 `check`의 교차 트랜잭션 근거 행은 잠기지 않는다(R3-03). savepoint 안에서 쓴 행은 변경 검사에서 빠진다.
 async fn run_checks(tx: &Transaction<'_>, facts: &Value, caller: &Caller, knobs: &Knobs) -> Result<(), Reject> {
@@ -656,12 +678,7 @@ async fn run_checks(tx: &Transaction<'_>, facts: &Value, caller: &Caller, knobs:
     // 실제 정원 집계는 잠금 획득 뒤 별도 SQL에서 실행해 앞선 writer의 커밋을 관찰한다.
     let mut touched = Vec::new();
     for (res, _) in &limited {
-        let changed: bool = tx
-            .query_one(format!("SELECT EXISTS (SELECT 1 FROM {} WHERE xmin = pg_current_xact_id()::xid)", table(res)).as_str(), &[])
-            .await
-            .map_err(|e| db_err("정원 변경 확인", e))?
-            .get(0);
-        if changed {
+        if changed_in_transaction(tx, res).await.map_err(|e| db_err("정원 변경 확인", e))? {
             let lock = format!("aip.capacity:{}:{res}", sqlgen::schema());
             tx.query_one("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", &[&lock]).await.map_err(|e| db_err("정원 잠금", e))?;
             touched.push(*res);
@@ -713,6 +730,12 @@ async fn run_checks(tx: &Transaction<'_>, facts: &Value, caller: &Caller, knobs:
     }
 
     for (res, rf) in facts["resources"].as_object().unwrap() {
+        if rf["checks"].as_object().is_none_or(|checks| checks.is_empty()) {
+            continue;
+        }
+        if !changed_in_transaction(tx, res).await.map_err(|e| db_err("커밋 검사 대상 확인", e))? {
+            continue;
+        }
         for (name, cond) in rf["checks"].as_object().into_iter().flatten() {
             let mut cx = Ctx::new(facts, caller.actor_id, &caller.now);
             // 검사 근거가 된 다른 행(예: 승인된 Apply)을 커밋까지 공유 잠금한다. 검사 뒤 커밋 전 철회를 막는다(R3-03).
