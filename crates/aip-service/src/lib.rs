@@ -1011,7 +1011,10 @@ mod managed_config_tests {
     use serde_json::json;
 
     fn config_error(text: &str) -> String {
-        let dir = std::env::temp_dir().join(format!("aip-config-error-{}-{}", std::process::id(), text.len()));
+        // Tests run in parallel and texts can have equal lengths, so a counter keeps each directory its own.
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let dir =
+            std::env::temp_dir().join(format!("aip-config-error-{}-{}", std::process::id(), NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
         std::fs::create_dir_all(&dir).expect("tmp dir");
         let file = dir.join("service.json");
         std::fs::write(&file, text).expect("write");
