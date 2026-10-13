@@ -15,6 +15,9 @@ const SCHEDULE_TICK: Duration = Duration::from_secs(5);
 const OUTBOX_TICK: Duration = Duration::from_secs(1);
 const MESSAGES_PER_TICK: usize = 50;
 const MESSAGE_LEASE_MS: i64 = 30_000;
+/// How long consecutive heartbeats may fail before a running job is stopped. Well inside the 30s lease.
+const HEARTBEAT_OUTAGE_TOLERANCE: Duration = Duration::from_secs(12);
+
 fn db_error<T>(_: T) -> &'static str {
     "WIRE.DB_UNAVAILABLE"
 }
@@ -1012,16 +1015,29 @@ async fn execute(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire, lease: Lease
         tokio::pin!(future);
         let monitor = async {
             let mut timer = tokio::time::interval(Duration::from_millis(250));
+            let mut last_beat = tokio::time::Instant::now();
             loop {
                 timer.tick().await;
-                let mut db = connect(&rt).await?;
-                let tx = db.transaction().await.map_err(db_error)?;
-                guard(&tx, &rt, &grant).await?;
-                if !store.heartbeat(&tx, &lease).await.map_err(store_error)? {
-                    return Err::<(), _>("WIRE.LEASE_LOST");
+                let beat = async {
+                    let mut db = connect(&rt).await?;
+                    let tx = db.transaction().await.map_err(db_error)?;
+                    guard(&tx, &rt, &grant).await?;
+                    if !store.heartbeat(&tx, &lease).await.map_err(store_error)? {
+                        return Err::<(), _>("WIRE.LEASE_LOST");
+                    }
+                    tx.commit().await.map_err(db_error)?;
+                    db.release().await.map_err(db_error)?;
+                    Ok(())
                 }
-                tx.commit().await.map_err(db_error)?;
-                db.release().await.map_err(db_error)?;
+                .await;
+                match beat {
+                    Ok(()) => last_beat = tokio::time::Instant::now(),
+                    // A migration holding the deployment lock, a saturated pool or a restarting database fails single
+                    // heartbeats. The lease lasts 30s, so keep the worker alive and try again until the last good beat
+                    // is old enough that the lease could be at risk; only then is the job given back for a retry.
+                    Err("WIRE.DB_UNAVAILABLE") if last_beat.elapsed() < HEARTBEAT_OUTAGE_TOLERANCE => {}
+                    Err(code) => return Err::<(), &'static str>(code),
+                }
             }
         };
         tokio::pin!(monitor);
