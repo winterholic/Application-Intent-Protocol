@@ -31,3 +31,45 @@ fn invalid_policies_and_schema_are_rejected() {
     assert!(Policy { limit: 0, window: Duration::from_secs(1) }.validate().is_err());
     assert!(Policy { limit: 1, window: Duration::ZERO }.validate().is_err());
 }
+
+async fn full_limiter(label: &str, reset_at: &str) -> (tokio_postgres::Client, tokio::task::JoinHandle<()>, RateLimiter, String) {
+    let (db, driver) = tokio_postgres::connect("host=localhost dbname=postgres", tokio_postgres::NoTls).await.unwrap();
+    let task = tokio::spawn(async move {
+        let _ = driver.await;
+    });
+    let schema = format!("aip_rate_{label}_{}", std::process::id());
+    db.batch_execute(&format!("CREATE SCHEMA {schema}")).await.unwrap();
+    let limiter = RateLimiter::new(&schema).unwrap();
+    limiter.install(&db).await.unwrap();
+    db.batch_execute(&format!(
+        "INSERT INTO {schema}.aip_rate_limits(scope,used,reset_at) SELECT 'filler-' || g, 1, {reset_at} FROM generate_series(1,100000) g"
+    ))
+    .await
+    .unwrap();
+    (db, task, limiter, schema)
+}
+
+/// Windows that already ended carry no state, so they must not count toward the scope quota; a limiter with
+/// only minute-long windows would otherwise reject every new principal once 100000 scopes passed through in a day.
+#[tokio::test]
+async fn expired_windows_do_not_keep_new_principals_out_at_the_scope_limit() {
+    let (mut db, task, limiter, schema) = full_limiter("expired", "clock_timestamp() - interval '2 minutes'").await;
+    let policy = Policy { limit: 3, window: Duration::from_secs(60) };
+    assert_eq!(limiter.check(&mut db, "new-principal", "read", policy).await.unwrap(), Decision::Allowed);
+    db.batch_execute(&format!("DROP SCHEMA {schema} CASCADE")).await.unwrap();
+    task.abort();
+}
+
+/// When every scope is still active the oldest ones are evicted instead of refusing a new principal with a 503.
+#[tokio::test]
+async fn the_oldest_scopes_are_evicted_when_every_scope_is_active() {
+    let (mut db, task, limiter, schema) = full_limiter("active", "clock_timestamp() + interval '1 minute' + g * interval '1 millisecond'").await;
+    let policy = Policy { limit: 3, window: Duration::from_secs(60) };
+    assert_eq!(limiter.check(&mut db, "new-principal", "read", policy).await.unwrap(), Decision::Allowed);
+    let rows: i64 = db.query_one(&format!("SELECT count(*) FROM {schema}.aip_rate_limits"), &[]).await.unwrap().get(0);
+    assert!(rows <= 100_000, "the table stays within the scope quota, has {rows} rows");
+    let evicted: i64 = db.query_one(&format!("SELECT count(*) FROM {schema}.aip_rate_limits WHERE scope='filler-1'"), &[]).await.unwrap().get(0);
+    assert_eq!(evicted, 0, "the scope that resets soonest is the one removed");
+    db.batch_execute(&format!("DROP SCHEMA {schema} CASCADE")).await.unwrap();
+    task.abort();
+}

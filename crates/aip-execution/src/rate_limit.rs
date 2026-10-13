@@ -21,6 +21,9 @@ pub enum Decision {
     Allowed,
     Limited { retry_after_ms: u64 },
 }
+/// Rows kept in `aip_rate_limits`; beyond it the oldest scopes are evicted.
+const MAX_SCOPES: i64 = 100_000;
+
 #[derive(Clone)]
 pub struct RateLimiter {
     schema: String,
@@ -46,14 +49,26 @@ impl RateLimiter {
         let limit = i64::from(policy.limit);
         let tx = db.transaction().await.map_err(|_| "rate storage unavailable")?;
         tx.batch_execute("SET LOCAL statement_timeout='1s'; SET LOCAL lock_timeout='100ms'").await.map_err(|_| "rate storage unavailable")?;
-        // Reclaim a bounded batch; never accumulate one row per time window.
-        tx.execute(&format!("DELETE FROM {table} WHERE scope IN (SELECT scope FROM {table} WHERE reset_at<clock_timestamp()-interval '1 day' ORDER BY reset_at LIMIT 128 FOR UPDATE SKIP LOCKED)"), &[]).await.map_err(|_| "rate storage unavailable")?;
+        // A window that already ended carries no state (the next hit starts a new one), so reclaim a bounded batch of
+        // them on every check; never accumulate one row per time window.
+        tx.execute(&format!("DELETE FROM {table} WHERE scope IN (SELECT scope FROM {table} WHERE reset_at<clock_timestamp() ORDER BY reset_at LIMIT 128 FOR UPDATE SKIP LOCKED)"), &[]).await.map_err(|_| "rate storage unavailable")?;
         if tx.query_opt(&format!("SELECT 1 FROM {table} WHERE scope=$1"), &[&scope]).await.map_err(|_| "rate storage unavailable")?.is_none() {
             // Serialize only new keys, so authenticated users cannot grow the table without bound.
             tx.query_one("SELECT pg_advisory_xact_lock(1095323726,hashtext($1))", &[&self.schema]).await.map_err(|_| "rate storage unavailable")?;
             let count: i64 = tx.query_one(&format!("SELECT count(*) FROM {table}"), &[]).await.map_err(|_| "rate storage unavailable")?.get(0);
-            if count >= 100_000 {
-                return Err("rate scope quota exceeded".into());
+            if count >= MAX_SCOPES {
+                // Every scope still has a live window. Make room by evicting the ones that reset soonest: they hold the least
+                // quota history, and refusing a new principal outright would lock out real users behind a flood of others.
+                let evicted = tx
+                    .execute(
+                        &format!("DELETE FROM {table} WHERE scope IN (SELECT scope FROM {table} ORDER BY reset_at LIMIT 128 FOR UPDATE SKIP LOCKED)"),
+                        &[],
+                    )
+                    .await
+                    .map_err(|_| "rate storage unavailable")?;
+                if evicted == 0 {
+                    return Err("rate scope quota exceeded".into());
+                }
             }
         }
         let admitted = tx.query_opt(&format!("INSERT INTO {table} AS current(scope,used,reset_at) VALUES($1,1,clock_timestamp()+$2::bigint*interval '1 millisecond') ON CONFLICT(scope) DO UPDATE SET used=CASE WHEN current.reset_at<=clock_timestamp() THEN 1 ELSE current.used+1 END, reset_at=CASE WHEN current.reset_at<=clock_timestamp() THEN clock_timestamp()+$2::bigint*interval '1 millisecond' ELSE current.reset_at END WHERE current.reset_at<=clock_timestamp() OR current.used<$3 RETURNING used"), &[&scope, &window, &limit]).await.map_err(|_| "rate storage unavailable")?.is_some();
