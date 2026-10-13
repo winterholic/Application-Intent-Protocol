@@ -191,6 +191,14 @@ impl<'a> Ctx<'a> {
         self.diags.push(Diag::new(code, msg, span));
     }
 
+    /// JavaScript treats `__proto__` as the prototype accessor, not an own key, so a generated descriptor or SDK object
+    /// would silently lose a member with that name. The definition may not use it.
+    fn reserved_name(&mut self, name: &str, span: Span) {
+        if name == "__proto__" {
+            self.d("DEF.RESERVED_NAME", format!("이름 `{name}`은 예약되어 쓸 수 없음. 다른 이름을 쓴다"), span);
+        }
+    }
+
     fn collect(&mut self) {
         let mut names: BTreeSet<String> = BTreeSet::new();
         let spec = self.spec;
@@ -201,17 +209,21 @@ impl<'a> Ctx<'a> {
         };
         for e in &spec.enums {
             seen(&e.name, e.span, &mut self.diags);
+            self.reserved_name(&e.name, e.span);
             self.enums.insert(&e.name, e);
         }
         for r in &spec.resources {
             seen(&r.name, r.span, &mut self.diags);
+            self.reserved_name(&r.name, r.span);
             self.res.insert(&r.name, r);
         }
         for operation in &spec.operations {
             seen(&operation.name, operation.span, &mut self.diags);
+            self.reserved_name(&operation.name, operation.span);
         }
         for p in &spec.predicates {
             seen(&p.name, p.span, &mut self.diags);
+            self.reserved_name(&p.name, p.span);
             self.preds.insert(&p.name, p);
         }
         for a in &spec.accesses {
@@ -318,6 +330,7 @@ impl<'a> Ctx<'a> {
             if !seen.insert(n.clone()) {
                 self.d("DEF.DUPLICATE", format!("매개변수·입출력 이름 `{n}` 중복"), t.span);
             }
+            self.reserved_name(n, t.span);
             if let Some(tt) = self.type_of(None, t) {
                 // 범위 제약을 facts에 남긴다. 빠지면 다른 입출력 계약이 같은 digest가 된다(F04).
                 j.push(json!([n, tt.show(), t.range.map(|(a, b)| json!([a, b]))]));
@@ -760,6 +773,7 @@ impl<'a> Ctx<'a> {
             if !seen.insert(n.clone()) {
                 self.d("DEF.DUPLICATE", format!("동작 이름 `{n}` 중복"), sp);
             }
+            self.reserved_name(n, sp);
         }
         let mut seen = BTreeSet::new();
         for (f, _, sp) in &r.field_read {
@@ -801,6 +815,7 @@ impl<'a> Ctx<'a> {
             if !seen.insert(&f.name) {
                 self.d("DEF.DUPLICATE", format!("필드 `{}` 중복", f.name), f.span);
             }
+            self.reserved_name(&f.name, f.span);
             if f.ty.id_of {
                 // 창시자 결정(2026-10-13): 객체 그래프 탐색이 되므로 "X에 속한다"의 철자는 참조 `X` 하나만 둔다.
                 // 기본 키도 같은 원칙이다(같은 뜻에 두 표기 금지): `id: Note.Id`는 맨 `Id`와 같은 열이라 철자만 둘이 된다.

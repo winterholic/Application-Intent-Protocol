@@ -388,6 +388,13 @@ pub static REGISTRY: &[Info] = &[
         concat!(base!(), "resource Club {\n  fields { id: Id; name: Text }\n}\nresource Note {\n  fields { id: Id; body: Text; club: Club }\n}\n"),
     ),
     i(
+        "DEF.RESERVED_NAME",
+        "a name the generated code cannot carry",
+        "JavaScript reads `__proto__` as the prototype accessor, not as an ordinary key, so a resource, field, transition, operation or parameter with that name would silently vanish from generated descriptors and SDK objects, and every call that uses it would be refused.",
+        "Rename it, for example `proto` or `protoField`.",
+        concat!(base!(), "resource Note {\n  fields { id: Id; proto: Text }\n}\n"),
+    ),
+    i(
         "DEF.ARITH_NOT_ALLOWED",
         "arithmetic outside the one place it is allowed",
         "Only the `to` block of a transition may change a number, written `field = field + 1` or `field = field - 1`. Conditions never compute.",

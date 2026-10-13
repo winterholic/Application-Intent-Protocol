@@ -393,6 +393,21 @@ resource Note {
 }
 ```
 
+### `DEF.RESERVED_NAME`
+
+a name the generated code cannot carry
+
+- 원인: JavaScript reads `__proto__` as the prototype accessor, not as an ordinary key, so a resource, field, transition, operation or parameter with that name would silently vanish from generated descriptors and SDK objects, and every call that uses it would be refused.
+- 수정: Rename it, for example `proto` or `protoField`.
+
+```aip
+actor Member
+resource Member { fields { id: Id; name: Text } }
+resource Note {
+  fields { id: Id; proto: Text }
+}
+```
+
 ### `DEF.ARITH_NOT_ALLOWED`
 
 arithmetic outside the one place it is allowed
