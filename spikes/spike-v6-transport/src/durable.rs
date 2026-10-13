@@ -1241,6 +1241,7 @@ impl Host {
                 let knobs = spike_v3_write::Knobs {
                     audit_via: Some("job"),
                     audit_key: Some(format!("{}:{effect_key}", self.lease.run_id)),
+                    fresh_now_after_lock: true,
                     ..spike_v3_write::Knobs::default()
                 };
                 tx.batch_execute("SET LOCAL TimeZone='UTC'").await.map_err(db_error)?;

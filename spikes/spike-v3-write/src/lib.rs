@@ -19,6 +19,9 @@ pub struct Knobs {
     pub skip_row_lock: bool,
     pub skip_policy_lock: bool,
     pub pause_before_commit_ms: u64,
+    /// After the row locks are held, read the database clock again; when more than 250ms passed since `caller.now` the
+    /// decision is made again with the fresh time. Servers set it; tests with a fixed clock leave it off.
+    pub fresh_now_after_lock: bool,
     /// 감사 행에 남길 쓰기 경로(`apply`, `extension`, `job`)와 요청 키. 감사 테이블이 설정된 때만 쓰인다.
     pub audit_via: Option<&'static str>,
     pub audit_key: Option<String>,
@@ -291,27 +294,30 @@ fn parse_target(facts: &Value, res: &str, ex: &Value, tg: &Value, wire: IdWire) 
 }
 
 struct Judged {
+    /// The time the decision was made with; later statements of the same write use it too.
+    now: String,
     change: Vec<i64>,
     unchanged: Vec<i64>,
     scopes: Vec<Option<String>>,
 }
 
-/// 대상 행을 잠그고 행 정책·allow·from·이미 목표 상태 여부, sameScope 값을 판정한다.
+/// 판정 SQL 하나와 그 바인드 값. `now`는 이 문장이 보는 시각이고 `locked`가 참이면 대상 행을 잠근다.
 #[allow(clippy::too_many_arguments)]
-async fn judge(
-    tx: &Transaction<'_>,
+fn judge_query(
     facts: &Value,
     res: &str,
     tr: &str,
     target: &TargetSpec,
     bulk: i64,
     scope: &Value,
-    caller: &Caller,
+    actor_id: Option<i64>,
+    now: &str,
+    locked: bool,
     knobs: &Knobs,
-) -> Result<Judged, Reject> {
+) -> Result<(String, Vec<Option<String>>), Reject> {
     let rf = &facts["resources"][res];
     let t = &rf["transitions"][tr];
-    let mut cx = Ctx::new(facts, caller.actor_id, &caller.now);
+    let mut cx = Ctx::new(facts, actor_id, now);
     cx.lock_reads = !knobs.skip_policy_lock;
     let env = Env { this: Some(("t".into(), res.to_string())), ..Default::default() };
     let vis = cx.cond(&rf["rowRead"], &env).map_err(internal)?;
@@ -330,7 +336,7 @@ async fn judge(
     }
     let done = format!("({})", done.join(" AND "));
     let scope_sql = if scope.is_null() { "NULL::text".to_string() } else { format!("({})::text", cx.value(scope, &env).map_err(internal)?) };
-    let lock = if knobs.skip_row_lock { "" } else { " FOR UPDATE OF t" };
+    let lock = if !locked || knobs.skip_row_lock { "" } else { " FOR UPDATE OF t" };
     let sel = match target {
         TargetSpec::Ids(ids) => {
             let p = cx.params.bind(Some(id_array(ids)), "bigint[]");
@@ -349,11 +355,43 @@ async fn judge(
         }
     };
     let params = cx.params.values.clone();
-    let rows = typed_query(tx, sel.as_str(), &params).await.map_err(|e| db_err("대상 조회", e))?;
+    Ok((sel, params))
+}
+
+/// 대상 행을 잠그고 행 정책·allow·from·이미 목표 상태 여부, sameScope 값을 판정한다.
+#[allow(clippy::too_many_arguments)]
+async fn judge(
+    tx: &Transaction<'_>,
+    facts: &Value,
+    res: &str,
+    tr: &str,
+    target: &TargetSpec,
+    bulk: i64,
+    scope: &Value,
+    caller: &Caller,
+    knobs: &Knobs,
+) -> Result<Judged, Reject> {
+    let t = &facts["resources"][res]["transitions"][tr];
+    let (sel, params) = judge_query(facts, res, tr, target, bulk, scope, caller.actor_id, &caller.now, true, knobs)?;
+    let mut rows = typed_query(tx, sel.as_str(), &params).await.map_err(|e| db_err("대상 조회", e))?;
     if knobs.pause_after_lock_ms > 0 {
         tokio::time::sleep(Duration::from_millis(knobs.pause_after_lock_ms)).await;
     }
-    let mut j = Judged { change: vec![], unchanged: vec![], scopes: vec![] };
+    // The clock was read before the idempotency and row lock waits (up to 2s). The rows are locked now, so decide again
+    // with the current time; a deadline that passed during the wait must not be honoured by a stale `now`.
+    let mut now_used = caller.now.clone();
+    if knobs.fresh_now_after_lock {
+        let clock = tx
+            .query_one("SELECT clock_timestamp()::text, (clock_timestamp() - $1::text::timestamptz) > interval '250 milliseconds'", &[&caller.now])
+            .await
+            .map_err(|e| db_err("판정 시각", e))?;
+        if clock.get::<_, bool>(1) {
+            now_used = clock.get::<_, String>(0);
+            let (again, again_params) = judge_query(facts, res, tr, target, bulk, scope, caller.actor_id, &now_used, false, knobs)?;
+            rows = typed_query(tx, again.as_str(), &again_params).await.map_err(|e| db_err("대상 재판정", e))?;
+        }
+    }
+    let mut j = Judged { now: now_used, change: vec![], unchanged: vec![], scopes: vec![] };
     let mut seen = vec![];
     for r in &rows {
         let (id, a, f, d, sc): (i64, Option<bool>, Option<bool>, Option<bool>, Option<String>) = (r.get(0), r.get(1), r.get(2), r.get(3), r.get(4));
@@ -868,8 +906,9 @@ async fn apply_op(
     let (res, tr, ex) = exposed(facts, o.get("apply").and_then(Value::as_str).unwrap_or(""))?;
     let target = parse_target(facts, res, ex, o.get("target").unwrap_or(&Value::Null), wire)?;
     let j = judge(tx, facts, res, tr, &target, ex["bulkMaxRows"].as_i64().unwrap_or(1), &ex["sameScope"], caller, knobs).await?;
-    update(tx, facts, res, tr, &j.change, caller, knobs).await?;
-    effects(tx, facts, res, tr, &j.change, caller).await?;
+    let decided = Caller { actor_id: caller.actor_id, now: j.now.clone() };
+    update(tx, facts, res, tr, &j.change, &decided, knobs).await?;
+    effects(tx, facts, res, tr, &j.change, &decided).await?;
     Ok(Applied { changed: j.change, unchanged: j.unchanged })
 }
 
@@ -1243,8 +1282,9 @@ async fn compose_exec(
                     ids.clone()
                 };
                 let j = judge(tx, facts, res, t, &TargetSpec::Ids(step_ids), bulk, &Value::Null, caller, knobs).await?;
-                update(tx, facts, res, t, &j.change, caller, knobs).await?;
-                effects(tx, facts, res, t, &j.change, caller).await?;
+                let decided = Caller { actor_id: caller.actor_id, now: j.now.clone() };
+                update(tx, facts, res, t, &j.change, &decided, knobs).await?;
+                effects(tx, facts, res, t, &j.change, &decided).await?;
                 out.applied.push(Applied { changed: j.change, unchanged: j.unchanged });
             }
             Step::Create(target, vals) => {

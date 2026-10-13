@@ -274,7 +274,7 @@ async fn apply_attempt(
         v["replayed"] = json!(true);
         return v;
     }
-    let knobs = Knobs { audit_via: Some("apply"), audit_key: Some(key.to_string()), ..Knobs::default() };
+    let knobs = Knobs { audit_via: Some("apply"), audit_key: Some(key.to_string()), fresh_now_after_lock: true, ..Knobs::default() };
     // 전이 하나, 묶음(atomic), 조합(compose)은 같은 트랜잭션·같은 멱등 키·같은 커밋 시점 검사를 쓴다.
     let result = match run_write(&tx, facts, req, caller, &knobs, wire).await {
         Ok(result) => result,
