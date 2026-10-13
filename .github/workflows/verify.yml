@@ -68,7 +68,5 @@ jobs:
           fi
       - name: Verify Linux worker isolation boundaries
         run: AIP_TEST_BWRAP=1 cargo test --manifest-path spikes/spike-v4-worker/Cargo.toml --lib isolation::tests --locked --target-dir target
-      - name: Verify v6 transport regressions
-        run: cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --locked --target-dir target
-      - name: Verify compiler, runtime, product and SDK
+      - name: Verify compiler, runtime, product, worker, transport and SDK
         run: bash tools/verify.sh

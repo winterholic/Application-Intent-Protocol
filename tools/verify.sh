@@ -23,7 +23,8 @@ cargo clippy -p aip-cli --features poc-runtime --bins --locked -- -D warnings
 cargo test --workspace --locked
 cargo test -p aip-cli --features poc-runtime --locked
 # These product engines are path dependencies excluded from the root workspace.
-for engine in spike-v1-fixture spike-v2-read spike-v3-write spike-v5-sdk; do
+# v4 (worker) and v6 (transport) are included because their regressions (S-24) were otherwise caught only by CI.
+for engine in spike-v1-fixture spike-v2-read spike-v3-write spike-v4-worker spike-v5-sdk spike-v6-transport; do
   cargo test --manifest-path "spikes/$engine/Cargo.toml" --locked --target-dir target
 done
 node --test \
@@ -49,4 +50,4 @@ python3 -m unittest product.tests.google_storage_provider_test product.tests.pyt
 
 # Test feature combinations can replace target/debug/aip; rebuild the product last.
 cargo build -p aip-cli --locked
-printf 'AIP core verification passed. Worker and relocated-service checks are separate.\n'
+printf 'AIP core verification passed.\n'
