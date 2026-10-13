@@ -28,6 +28,9 @@ pub struct RealTimeOptions {
     pub max_lifetime: Duration,
     pub heartbeat_interval: Duration,
     pub poll_interval: Duration,
+    /// How often a data subscription re-runs its read when no commit in this process woke it. A commit of this
+    /// process wakes it at once; this interval is the safety net for writes the process never saw (another instance, a script).
+    pub query_poll_interval: Duration,
 }
 
 impl Default for RealTimeOptions {
@@ -38,6 +41,7 @@ impl Default for RealTimeOptions {
             max_lifetime: Duration::from_secs(15 * 60),
             heartbeat_interval: Duration::from_secs(15),
             poll_interval: Duration::from_millis(250),
+            query_poll_interval: Duration::from_secs(5),
         }
     }
 }
@@ -51,6 +55,8 @@ impl RealTimeOptions {
             || self.heartbeat_interval.is_zero()
             || self.poll_interval.is_zero()
             || self.poll_interval > self.heartbeat_interval
+            || self.query_poll_interval.is_zero()
+            || self.query_poll_interval > Duration::from_secs(60 * 60)
         {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid realtime limits"));
         }
@@ -58,14 +64,27 @@ impl RealTimeOptions {
     }
 }
 
+/// What a client subscribes to: the events of a stream from a cursor, or the result of a read (`query`).
+///
+/// A query subscription follows the PoC `subscribe` (D-P24): the whole result is sent first (`snapshot`), then again
+/// (`changed`) whenever a re-run as the subscriber gives a different one, so it has no cursor to resume from, and a
+/// reconnect starts with a new snapshot. The re-run is the full check of any read: the contract, the principal, the row
+/// and field policies. A subscriber who lost access gets an error and the stream ends.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Subscription {
-    pub stream: String,
-    pub after: String,
+    #[serde(default)]
+    pub stream: Option<String>,
+    #[serde(default)]
+    pub after: Option<String>,
+    #[serde(default)]
+    pub query: Option<Value>,
     #[serde(rename = "contractFingerprint")]
     pub contract_fingerprint: String,
 }
+
+/// The `after` of a query subscription before anything was sent; it is never a digest of a result.
+const QUERY_START: &str = "0";
 
 impl Subscription {
     pub(crate) fn parse(bytes: &[u8]) -> Result<Self, &'static str> {
@@ -73,18 +92,33 @@ impl Subscription {
             return Err("PAYLOAD_TOO_LARGE");
         }
         let subscription: Self = serde_json::from_slice(bytes).map_err(|_| "BAD_REQUEST")?;
-        if subscription.stream.is_empty()
-            || subscription.stream.len() > MAX_STREAM_LENGTH
-            || subscription.stream.chars().any(char::is_control)
-            || subscription.after.is_empty()
-            || subscription.after.len() > MAX_CURSOR_LENGTH
-            || subscription.after.chars().any(char::is_control)
-            || subscription.contract_fingerprint.len() != 64
+        if subscription.contract_fingerprint.len() != 64
             || !subscription.contract_fingerprint.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
         {
             return Err("BAD_REQUEST");
         }
+        match (&subscription.stream, &subscription.after, &subscription.query) {
+            (Some(stream), Some(after), None) => {
+                if stream.is_empty()
+                    || stream.len() > MAX_STREAM_LENGTH
+                    || stream.chars().any(char::is_control)
+                    || after.is_empty()
+                    || after.len() > MAX_CURSOR_LENGTH
+                    || after.chars().any(char::is_control)
+                {
+                    return Err("BAD_REQUEST");
+                }
+            }
+            // Exactly one of the two kinds, and a query has no cursor.
+            (None, None, Some(query)) if query.is_object() => {}
+            _ => return Err("BAD_REQUEST"),
+        }
         Ok(subscription)
+    }
+
+    /// Where polling starts: the cursor of an event stream, or "nothing sent yet" for a query.
+    fn start(&self) -> String {
+        self.after.clone().unwrap_or_else(|| QUERY_START.to_owned())
     }
 }
 
@@ -117,46 +151,78 @@ pub(crate) async fn send_sse_headers(writer: &mut (impl AsyncWriteExt + Unpin), 
     .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "slow realtime client"))?
 }
 
-pub(crate) async fn serve_sse<W, F>(writer: &mut W, subscription: Subscription, options: &RealTimeOptions, mut poll: F) -> io::Result<()>
+/// Changes closer together than this are answered by one re-run of a data subscription.
+const QUERY_DEBOUNCE: Duration = Duration::from_millis(100);
+
+/// Resolves when a commit of this process signals a change, for a data subscription; never for an event stream.
+async fn wake_signal(wake: &mut Option<tokio::sync::watch::Receiver<u64>>) {
+    if let Some(receiver) = wake.as_mut() {
+        if receiver.changed().await.is_ok() {
+            // A burst of commits costs one re-run: wait a moment, then mark everything seen so far as answered.
+            tokio::time::sleep(QUERY_DEBOUNCE).await;
+            receiver.borrow_and_update();
+            return;
+        }
+    }
+    std::future::pending::<()>().await
+}
+
+pub(crate) async fn serve_sse<W, F>(
+    writer: &mut W,
+    subscription: Subscription,
+    options: &RealTimeOptions,
+    changes: tokio::sync::watch::Receiver<u64>,
+    mut poll: F,
+) -> io::Result<()>
 where
     W: AsyncWriteExt + Unpin,
     F: FnMut(&Subscription, &str) -> PollFuture,
 {
     let start = tokio::time::Instant::now();
     let deadline = start + options.max_lifetime;
-    let mut cursor = subscription.after.clone();
-    let mut polling = tokio::time::interval_at(start, options.poll_interval);
+    let mut cursor = subscription.start();
+    let query = subscription.query.is_some();
+    let mut wake = query.then_some(changes);
+    let mut polling = tokio::time::interval_at(start, if query { options.query_poll_interval } else { options.poll_interval });
     polling.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut heartbeat = tokio::time::interval_at(start + options.heartbeat_interval, options.heartbeat_interval);
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
-        tokio::select! {
+        let due = tokio::select! {
             _ = tokio::time::sleep_until(deadline) => {
                 write_sse(writer, ": close: lifetime limit\n\n").await?;
                 return Ok(());
             }
-            _ = polling.tick() => {
-                match tokio::time::timeout_at(deadline, poll(&subscription, &cursor)).await {
-                    Ok(Ok(batch)) => {
-                        for event in batch.events {
-                            let frame = sse_event(&event);
-                            write_sse(writer, &frame).await?;
-                            cursor = event.cursor;
-                        }
-                        if batch.cursor != cursor { cursor = batch.cursor; }
-                    }
-                    Ok(Err(code)) => {
-                        let frame = format!("event: error\ndata: {}\n\n", json!({"code":code}));
-                        let _ = write_sse(writer, &frame).await;
-                        return Ok(());
-                    }
-                    Err(_) => {
-                        write_sse(writer, ": close: lifetime limit\n\n").await?;
-                        return Ok(());
-                    }
+            _ = polling.tick() => true,
+            _ = wake_signal(&mut wake) => true,
+            _ = heartbeat.tick() => {
+                write_sse(writer, ": keepalive\n\n").await?;
+                false
+            }
+        };
+        if !due {
+            continue;
+        }
+        match tokio::time::timeout_at(deadline, poll(&subscription, &cursor)).await {
+            Ok(Ok(batch)) => {
+                for event in batch.events {
+                    let frame = sse_event(&event);
+                    write_sse(writer, &frame).await?;
+                    cursor = event.cursor;
+                }
+                if batch.cursor != cursor {
+                    cursor = batch.cursor;
                 }
             }
-            _ = heartbeat.tick() => write_sse(writer, ": keepalive\n\n").await?,
+            Ok(Err(code)) => {
+                let frame = format!("event: error\ndata: {}\n\n", json!({"code":code}));
+                let _ = write_sse(writer, &frame).await;
+                return Ok(());
+            }
+            Err(_) => {
+                write_sse(writer, ": close: lifetime limit\n\n").await?;
+                return Ok(());
+            }
         }
     }
 }
@@ -171,12 +237,13 @@ pub(crate) async fn stream_sse<W: AsyncWriteExt + Unpin>(
     wire: spike_v2_read::id_wire::IdWire,
 ) -> io::Result<()> {
     let options = runtime.infrastructure.realtime.clone();
+    let changes = runtime.infrastructure.data_changes.subscribe();
     let mut poll = |subscription: &Subscription, after: &str| -> PollFuture {
         let (subscription, after, token, fingerprint, facts, runtime) =
             (subscription.clone(), after.to_owned(), token.clone(), expected_fingerprint.clone(), facts.clone(), runtime.clone());
         Box::pin(async move { poll_events(runtime, facts, wire, token, fingerprint, subscription, after).await })
     };
-    serve_sse(writer, subscription, &options, &mut poll).await
+    serve_sse(writer, subscription, &options, changes, &mut poll).await
 }
 
 fn sse_event(event: &RealtimeEvent) -> String {
@@ -215,6 +282,7 @@ struct BrowserAuthFrame {
 pub(crate) async fn serve_ws<S, A, F>(
     io: S,
     options: &RealTimeOptions,
+    changes: tokio::sync::watch::Receiver<u64>,
     header_token: Option<String>,
     mut authenticate: A,
     mut poll: F,
@@ -278,7 +346,7 @@ where
             return Ok(());
         }
     };
-    run_ws(&mut socket, subscription, &token, options, deadline, &mut poll).await
+    run_ws(&mut socket, subscription, &token, options, changes, deadline, &mut poll).await
 }
 
 /// 토큰 없는 브라우저 WebSocket의 슬롯 상태. 인증 전에는 `realtime_preauth`만 쓰고, 인증이 끝나면 `realtime_slots`로 옮긴다.
@@ -376,7 +444,8 @@ where
             (subscription.clone(), after.to_owned(), token.to_owned(), expected_fingerprint.clone(), facts.clone(), runtime.clone());
         Box::pin(async move { poll_events(runtime, facts, wire, token, fingerprint, subscription, after).await })
     };
-    serve_ws(io, &options, token, &mut authenticate, &mut poll).await
+    let changes = runtime.infrastructure.data_changes.subscribe();
+    serve_ws(io, &options, changes, token, &mut authenticate, &mut poll).await
 }
 
 async fn read_ws_text<S>(
@@ -447,7 +516,11 @@ async fn poll_events(
         Ok(Err(crate::auth::AuthError::Unavailable)) | Err(_) => return Err("DB_UNAVAILABLE"),
         Ok(Err(_)) => return Err("UNAUTHENTICATED"),
     };
-    let response = crate::durable::read_events(&runtime, &facts, wire, &session, &subscription.stream, &after, 100).await;
+    if let Some(query) = &subscription.query {
+        return poll_query(&runtime, &facts, wire, &session, query, &after).await;
+    }
+    let stream = subscription.stream.as_deref().ok_or("BAD_REQUEST")?;
+    let response = crate::durable::read_events(&runtime, &facts, wire, &session, stream, &after, 100).await;
     if response["ok"] != true {
         return Err(match response["code"].as_str() {
             Some("CURSOR_EXPIRED") => "CURSOR_EXPIRED",
@@ -475,11 +548,31 @@ async fn poll_events(
     Ok(EventBatch { events, cursor: cursor.to_owned() })
 }
 
+/// One run of a data subscription: the result as the subscriber sees it now. It is sent when it differs from the last one
+/// sent (`after` is the digest of that one, or `QUERY_START`), as the whole result, so a client never applies a diff.
+async fn poll_query(
+    runtime: &Arc<crate::server::Runtime>,
+    facts: &Value,
+    wire: spike_v2_read::id_wire::IdWire,
+    session: &crate::auth::Session,
+    query: &Value,
+    after: &str,
+) -> Result<EventBatch, PollError> {
+    let rows = crate::durable::read_as_subscriber(runtime, facts, wire, session, query).await?;
+    let digest = spike_v1_fixture::digest(&rows);
+    if digest == after {
+        return Ok(EventBatch { events: Vec::new(), cursor: after.to_owned() });
+    }
+    let kind = if after == QUERY_START { "snapshot" } else { "changed" };
+    Ok(EventBatch { events: vec![RealtimeEvent { cursor: digest.clone(), payload: json!({"type":kind,"rows":rows}) }], cursor: digest })
+}
+
 async fn run_ws<S, F>(
     socket: &mut WebSocketStream<S>,
     subscription: Subscription,
     token: &str,
     options: &RealTimeOptions,
+    changes: tokio::sync::watch::Receiver<u64>,
     deadline: tokio::time::Instant,
     poll: &mut F,
 ) -> Result<(), tokio_tungstenite::tungstenite::Error>
@@ -488,14 +581,16 @@ where
     F: FnMut(&Subscription, &str, &str) -> PollFuture,
 {
     let start = tokio::time::Instant::now();
-    let mut cursor = subscription.after.clone();
-    let mut polling = tokio::time::interval_at(start, options.poll_interval);
+    let mut cursor = subscription.start();
+    let query = subscription.query.is_some();
+    let mut wake = query.then_some(changes);
+    let mut polling = tokio::time::interval_at(start, if query { options.query_poll_interval } else { options.poll_interval });
     polling.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut heartbeat = tokio::time::interval_at(start + options.heartbeat_interval, options.heartbeat_interval);
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut last_pong = start;
     loop {
-        tokio::select! {
+        let due = tokio::select! {
             _ = tokio::time::sleep_until(deadline) => {
                 send_ws(socket, Message::Close(Some(CloseFrame { code: CloseCode::Away, reason: "lifetime limit".into() }))).await?;
                 return Ok(());
@@ -504,41 +599,47 @@ where
                 None => return Ok(()),
                 Some(Err(error)) => return Err(error),
                 Some(Ok(Message::Close(frame))) => { send_ws(socket, Message::Close(frame)).await?; return Ok(()); }
-                Some(Ok(Message::Ping(payload))) => send_ws(socket, Message::Pong(payload)).await?,
-                Some(Ok(Message::Pong(_))) => last_pong = tokio::time::Instant::now(),
+                Some(Ok(Message::Ping(payload))) => { send_ws(socket, Message::Pong(payload)).await?; false }
+                Some(Ok(Message::Pong(_))) => { last_pong = tokio::time::Instant::now(); false }
                 Some(Ok(_)) => {
                     send_ws(socket, Message::Close(Some(CloseFrame { code: CloseCode::Policy, reason: "one subscription per connection".into() }))).await?;
                     return Ok(());
                 }
             },
-            _ = polling.tick() => {
-                match tokio::time::timeout_at(deadline, poll(&subscription, &cursor, token)).await {
-                    Ok(Ok(batch)) => {
-                        for event in batch.events {
-                            let text = json!({"type":"event", "cursor":event.cursor, "payload":event.payload}).to_string();
-                            send_ws(socket, Message::Text(text.into())).await?;
-                            cursor = event.cursor;
-                        }
-                        if batch.cursor != cursor { cursor = batch.cursor; }
-                    }
-                    Ok(Err(code)) => {
-                        let text = json!({"type":"error", "code":code}).to_string();
-                        let _ = send_ws(socket, Message::Text(text.into())).await;
-                        send_ws(socket, Message::Close(Some(CloseFrame { code: CloseCode::Policy, reason: code.into() }))).await?;
-                        return Ok(());
-                    }
-                    Err(_) => {
-                        send_ws(socket, Message::Close(Some(CloseFrame { code: CloseCode::Away, reason: "lifetime limit".into() }))).await?;
-                        return Ok(());
-                    }
-                }
-            }
+            _ = polling.tick() => true,
+            _ = wake_signal(&mut wake) => true,
             _ = heartbeat.tick() => {
                 if tokio::time::Instant::now().duration_since(last_pong) > options.heartbeat_interval.saturating_mul(2) {
                     send_ws(socket, Message::Close(Some(CloseFrame { code: CloseCode::Away, reason: "heartbeat timeout".into() }))).await?;
                     return Ok(());
                 }
                 send_ws(socket, Message::Ping(Vec::new().into())).await?;
+                false
+            }
+        };
+        if !due {
+            continue;
+        }
+        match tokio::time::timeout_at(deadline, poll(&subscription, &cursor, token)).await {
+            Ok(Ok(batch)) => {
+                for event in batch.events {
+                    let text = json!({"type":"event", "cursor":event.cursor, "payload":event.payload}).to_string();
+                    send_ws(socket, Message::Text(text.into())).await?;
+                    cursor = event.cursor;
+                }
+                if batch.cursor != cursor {
+                    cursor = batch.cursor;
+                }
+            }
+            Ok(Err(code)) => {
+                let text = json!({"type":"error", "code":code}).to_string();
+                let _ = send_ws(socket, Message::Text(text.into())).await;
+                send_ws(socket, Message::Close(Some(CloseFrame { code: CloseCode::Policy, reason: code.into() }))).await?;
+                return Ok(());
+            }
+            Err(_) => {
+                send_ws(socket, Message::Close(Some(CloseFrame { code: CloseCode::Away, reason: "lifetime limit".into() }))).await?;
+                return Ok(());
             }
         }
     }

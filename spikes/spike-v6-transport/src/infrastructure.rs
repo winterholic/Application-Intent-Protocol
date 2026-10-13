@@ -49,6 +49,28 @@ pub enum ObjectStorage {
     GcsHmac(Arc<aip_execution::gcs::GcsStore>),
 }
 
+/// The signal a committed write gives to the data subscriptions of this process. It carries no data: a subscription
+/// re-runs its read as its own subscriber, which is the only way to know what that subscriber may now see.
+#[derive(Clone)]
+pub struct DataChanges(Arc<tokio::sync::watch::Sender<u64>>);
+
+impl Default for DataChanges {
+    fn default() -> Self {
+        Self(Arc::new(tokio::sync::watch::channel(0).0))
+    }
+}
+
+impl DataChanges {
+    /// Called after a commit that changed business data (a transition from `/apply`, a write extension or a job).
+    pub fn notify(&self) {
+        self.0.send_modify(|count| *count = count.wrapping_add(1));
+    }
+
+    pub(crate) fn subscribe(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.0.subscribe()
+    }
+}
+
 #[derive(Clone)]
 pub struct Infrastructure {
     pub db_pool: crate::pool::PoolOptions,
@@ -70,6 +92,8 @@ pub struct Infrastructure {
     pub job_policies: std::collections::HashMap<String, crate::triggers::JobPolicy>,
     /// Bearer token for `GET /metrics`. Without one the path is not served.
     pub metrics_token: Option<String>,
+    /// Wakes data subscriptions after a commit; see [`DataChanges`].
+    pub data_changes: DataChanges,
 }
 
 impl Default for Infrastructure {
@@ -92,6 +116,7 @@ impl Default for Infrastructure {
             triggers: Arc::default(),
             job_policies: Default::default(),
             metrics_token: None,
+            data_changes: DataChanges::default(),
         }
     }
 }
@@ -110,7 +135,7 @@ impl Infrastructure {
         json!({
             "version":"aip-infrastructure/1", "staticMounts":static_mounts, "fileMounts":file_mounts,
             "objects":{"backend":backend,"transferLifetimeMs":self.object_transfer_lifetime.as_millis()},
-            "events":{"polling":true,"sse":self.realtime.enabled,"websocket":self.realtime.enabled,"maxConnections":self.resource_limits.realtime_capacity(self.realtime.max_connections)},
+            "events":{"polling":true,"sse":self.realtime.enabled,"websocket":self.realtime.enabled,"dataSubscriptions":self.realtime.enabled,"maxConnections":self.resource_limits.realtime_capacity(self.realtime.max_connections)},
             "messages":{"enabled":self.messaging,"clientPublish":self.client_publish,"clientConsume":self.client_consume,"delivery":"at-least-once"},
             "limits":{"connections":self.resource_limits.connections,"workers":self.resource_limits.workers,"jobs":self.resource_limits.jobs,"uploads":self.resource_limits.uploads},
             "rag":{"enabled":self.rag.is_some(),"clientIndex":self.rag.is_some() && self.rag_client_index}

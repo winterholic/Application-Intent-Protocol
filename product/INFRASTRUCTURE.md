@@ -93,6 +93,20 @@ Google Cloud Storage XML API의 HMAC 호환 backend도 같은 객체 API를 사�
 
 SDK의 `readSse(response,signal)`는 streaming UTF-8·multiline·cursor·취소를 처리하며 line/event 버퍼 상한을 적용한다. 소비자 코드가 연결 종료 뒤 마지막 event ID/cursor로 다시 구독해야 한다. `readSse`는 자동 재연결하지 않는다. 서버가 보존 범위를 벗어난 cursor에 대해 `CURSOR_EXPIRED`를 error event로 보내면 소비자가 최신 상태를 다시 조회해야 한다. 서버는 poll마다 인증·배포·generation을 재검증하고 세션 만료나 폐기 시 연결을 끝낸다. 이벤트 조회용 DB 연결이나 배포 lock을 연결 수명 동안 잡고 있지 않는다.
 
+### 읽기 결과 구독
+
+같은 입구(`POST /events/subscribe`, `GET /events/socket`)에 `stream` 대신 `query`를 주면 이벤트가 아니라 읽기 결과를 구독한다. 설계와 한계는 [H04 설계 메모](../plan-docs/backend-capability/h04-data-subscription-2026-10-13.md)에 있다.
+
+```json
+{"query":{"read":"Order","select":["id","paid"],"sort":[{"field":"id"}]},"contractFingerprint":"<64 hex>"}
+```
+
+- `query`는 `/read`의 요청 본문과 같고 `expose read`로 열린 것만 구독할 수 있다. `stream`·`after`와 함께 쓸 수 없고 `after`도 받지 않는다. 계약 밖 요청은 읽기와 같은 코드로 거부한다.
+- 이벤트 payload는 `{"type":"snapshot","rows":[...]}`가 한 번, 이후 `{"type":"changed","rows":[...]}`다. 항상 결과 전체이고 직전에 보낸 것과 같으면 보내지 않는다. 클라이언트는 diff를 적용하지 않고 결과를 통째로 바꾼다. 재연결하면 새 snapshot부터 받는다. SSE `id`와 WebSocket `cursor`는 결과의 digest이며 재개용이 아니다.
+- 재조회는 구독자의 세션으로 서버가 한다. 주체 재검증과 배포 fence를 먼저 통과해야 하고, 행·필드 정책은 읽기와 같다. 그래서 다른 구성원의 행은 snapshot에 없고, 접근을 잃은 구독자는 `UNAUTHENTICATED` 같은 오류 이벤트를 받고 연결이 끝난다.
+- 이 프로세스에서 커밋된 쓰기(`/apply`, 쓰기 확장, durable job의 `ctx.data.apply`)는 100ms 안의 것을 모아 한 번 재조회한다. 다른 인스턴스나 스크립트의 쓰기는 `query_poll_interval`(기본 5초)마다의 재조회가 찾는다. 연결 수·수명·heartbeat는 위 이벤트 구독과 같은 상한을 쓴다.
+- SDK helper(`connectEventWebSocket`, `readSse`)는 아직 stream cursor 구독만 안다. 읽기 구독은 SSE/WebSocket을 직접 쓴다.
+
 브라우저는 제품 SDK의 `connectEventWebSocket`으로 직접 인증할 수 있다. 토큰을 URL query나 subprotocol에 넣지 않으며 별도 인증 gateway는 필수가 아니다. 외부 연결의 WSS 종료는 기존 TLS reverse proxy가 담당한다. SDK helper는 취소·세션 만료·마지막 cursor를 제공하며 재연결은 호출자가 결정한다. 조직 전체 broadcast나 record별 subscription ACL은 아직 별도 기능이다.
 
 ## 메시지 큐와 업무 effect

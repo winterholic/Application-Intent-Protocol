@@ -152,7 +152,7 @@
 | H01 | WebSocket | Spring WebSocket, `@nestjs/websockets`, Channels, ActionCable | 지원 | `/events/socket` |
 | H02 | SSE | `SseEmitter`, `@Sse` | 지원 | `/events/subscribe` |
 | H03 | 실시간 알림 | ActionCable broadcast | 부분 | owner stream. 다른 사용자에게 보내는 fan-out 없음 |
-| H04 | 데이터 변경 전달 | Hotwire Turbo Streams, Channels group | 미지원 | 행 변경 publish 없음(PoC subscribe만) |
+| H04 | 데이터 변경 전달 | Hotwire Turbo Streams, Channels group | 부분 | 읽기 결과 구독: SSE·WebSocket에 `query`를 주면 snapshot 뒤 결과가 바뀔 때 전체를 다시 보냄(구독자로 재조회해 가시성 재평가, 같으면 안 보냄). 이 프로세스의 커밋이 즉시 깨우고 다른 쓰기는 poll이 찾음. 호출 SDK helper·인스턴스 간 즉시 신호·fan-out 최적화는 없음. [설계 메모](h04-data-subscription-2026-10-13.md), `tests/data_subscription.rs` |
 | H05 | 구독·해제 | channel subscribe | 부분 | stream 구독. 이름 있는 subscription 등록 없음 |
 | H06 | 사용자별 전달 | `convertAndSendToUser` | 부분 | owner 범위만 |
 | H07 | 재연결 | client reconnect + replay | 부분 | cursor 재개, 보존 범위 밖은 CURSOR_EXPIRED |
@@ -262,6 +262,6 @@
 | 4 | ~~D08·C09 retry 정책~~ | 2026-10-13 구현(`job_policies`, `ctx.retryLater(reason, {afterMs})`, `ctx.job`) | 남은 것 없음 |
 | 5 | ~~E05 발신 webhook~~ | 2026-10-13 구현(ctx.webhooks.deliver), 구독 resource 예제와 연속 실패 자동 비활성화 정책(앱 선언 + 시험, [MANAGED-EXECUTION](../../product/MANAGED-EXECUTION.md#구독-관리와-연속-실패-자동-비활성화)) | 남은 것 없음 |
 | 6 | ~~F11 circuit breaker, F02 client credentials~~ | 2026-10-13 구현 | 남은 것: 사용자별 OAuth token 저장(저장 암호화 B10과 함께) |
-| 7 | H04 데이터 변경 push | 협업 UI | PoC subscribe의 재조회·가시성 재평가 모델 이식 |
+| 7 | ~~H04 데이터 변경 push~~ | 2026-10-13 PoC subscribe의 재조회·가시성 재평가 모델을 SSE·WebSocket에 이식([설계 메모](h04-data-subscription-2026-10-13.md)) | 남은 것: 호출 SDK helper, 인스턴스 간 즉시 신호(커밋 뒤 `pg_notify`), 같은 읽기의 재조회 공유(fan-out), 변경 resource 필터 |
 
 선택 의존성 메모(작업자 A 구조 참고): 이번 회차의 schedule·webhook·outbox 릴레이·health·`ctx.data`는 추가 외부 서비스 없이 PostgreSQL만 쓰는 core 기능이라 기본 빌드에 둔다. cron 시간대 계산에 `chrono`(이미 transitive)와 `chrono-tz`를 transport에 직접 의존으로 추가했다. 3번 metrics·tracing exporter와 5번 발신 webhook의 HTTP client는 선택 패키지 후보다.

@@ -554,6 +554,39 @@ pub(crate) async fn validate_principal(rt: &Runtime, _facts: &Value, _wire: IdWi
     Ok(owner(grant))
 }
 
+/// One run of a data subscription: the read of `query` as the subscriber, with every check a read has. The principal and
+/// the deployment are verified first, so a subscriber who was revoked, or a deployment that changed, ends the
+/// subscription instead of leaving it on a stale view. The result is the rows of the read in the wire's encoding.
+pub(crate) async fn read_as_subscriber(
+    rt: &Runtime,
+    facts: &Value,
+    wire: IdWire,
+    session: &crate::auth::Session,
+    query: &Value,
+) -> std::result::Result<Value, &'static str> {
+    if session.remaining_ms() == 0 {
+        return Err("TOKEN_EXPIRED");
+    }
+    let grant = session.durable.as_ref().ok_or("UNAUTHENTICATED")?;
+    let mut db = connect(rt).await?;
+    let now: String = {
+        let tx = db.transaction().await.map_err(db_error)?;
+        guard(&tx, rt, grant).await?;
+        let now = tx.query_one("SELECT clock_timestamp()::text", &[]).await.map_err(db_error)?.get(0);
+        tx.commit().await.map_err(db_error)?;
+        now
+    };
+    let caller = Caller { actor_id: Some(grant.actor_id), now };
+    let plan = spike_v2_read::plan::plan_read_with_wire(facts, query, &caller, wire).map_err(|e| e.code)?;
+    let rows = tokio::time::timeout(Duration::from_millis(plan.deadline_ms), spike_v2_read::execute(&mut db, &plan))
+        .await
+        .map_err(|_| "DEADLINE_EXCEEDED")?
+        .map_err(|e| e.code)?;
+    let rows = spike_v2_read::id_wire::encode_rows(rows, &plan.output_type, wire).map_err(|e| e.code)?;
+    let _ = db.release().await;
+    Ok(Value::Array(rows))
+}
+
 pub(crate) async fn read_events(
     rt: &Runtime,
     facts: &Value,
@@ -1378,6 +1411,9 @@ impl Host {
         .map_err(db_error)?;
         tx.commit().await.map_err(db_error)?;
         db.release().await.map_err(db_error)?;
+        if op == "apply" {
+            self.rt.infrastructure.data_changes.notify();
+        }
         Ok(output)
     }
 }

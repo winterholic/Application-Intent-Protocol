@@ -1267,6 +1267,10 @@ async fn serve_conn(
         std::mem::drop(db);
         return reply(&mut w, &out).await;
     }
+    // A committed write wakes the data subscriptions; a replay of a stored result changed nothing.
+    if (path == "/apply" || write_extension) && result["replayed"] != true {
+        runtime.infrastructure.data_changes.notify();
+    }
     if drop {
         // 응답 유실 흉내: 처리(커밋 포함)는 끝났지만 클라이언트는 응답을 받지 못한다.
         return;
