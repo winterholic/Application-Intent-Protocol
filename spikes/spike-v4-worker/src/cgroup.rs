@@ -111,13 +111,13 @@ mod linux {
     static NEXT_CGROUP: AtomicU64 = AtomicU64::new(0);
     const CLEANUP_TIMEOUT: Duration = Duration::from_secs(5);
 
-    pub(super) struct CgroupGuard {
+    pub(crate) struct CgroupGuard {
         path: PathBuf,
         removed: bool,
     }
 
     impl CgroupGuard {
-        pub(super) fn create(root: &Path, limits: WorkerResourceLimits) -> io::Result<Self> {
+        pub(crate) fn create(root: &Path, limits: WorkerResourceLimits) -> io::Result<Self> {
             limits.validate()?;
             let root = root.canonicalize()?;
             if !root.is_dir() || !root.join("cgroup.controllers").is_file() || !root.join("cgroup.procs").is_file() {
@@ -158,7 +158,7 @@ mod linux {
             Ok(())
         }
 
-        pub(super) fn attach(&self, command: &mut tokio::process::Command) -> io::Result<()> {
+        pub(crate) fn attach(&self, command: &mut tokio::process::Command) -> io::Result<()> {
             self.attach_std(command.as_std_mut())
         }
 
@@ -204,16 +204,16 @@ mod linux {
             Ok(())
         }
 
-        pub(super) fn kill(&self) -> io::Result<()> {
+        pub(crate) fn kill(&self) -> io::Result<()> {
             write_control(&self.path.join("cgroup.kill"), "1")
         }
 
         #[cfg(test)]
-        pub(super) fn path(&self) -> &Path {
+        pub(crate) fn path(&self) -> &Path {
             &self.path
         }
 
-        pub(super) async fn terminate(mut self) -> io::Result<()> {
+        pub(crate) async fn terminate(mut self) -> io::Result<()> {
             self.kill()?;
             let deadline = tokio::time::Instant::now() + CLEANUP_TIMEOUT;
             loop {
@@ -321,7 +321,7 @@ mod linux {
         }
     }
 
-    pub(super) use CgroupGuard as Guard;
+    pub(crate) use CgroupGuard as Guard;
 }
 
 #[cfg(target_os = "linux")]
