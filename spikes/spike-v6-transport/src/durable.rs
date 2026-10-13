@@ -92,7 +92,9 @@ fn schema(rt: &Runtime) -> Result<&str> {
     rt.deployment.as_ref().map(|f| f.schema.as_str()).ok_or("NOT_AVAILABLE")
 }
 fn owner(g: &DurablePrincipal) -> String {
-    spike_v1_fixture::digest(&json!([g.issuer, g.subject, g.actor_id, g.min_iat]))
+    // The revocation floor is deliberately left out: after revoke and re-bind the same person owns the same files and jobs.
+    // The fixed 0 keeps the digest of a never-revoked principal, which is what existing stored data used.
+    spike_v1_fixture::digest(&json!([g.issuer, g.subject, g.actor_id, 0]))
 }
 async fn connect(rt: &Runtime) -> Result<crate::pool::PooledConnection> {
     rt.db_pool.as_ref().ok_or("DB_UNAVAILABLE")?.acquire().await.map_err(db_error)
@@ -1634,5 +1636,41 @@ mod safety_tests {
         assert_eq!(count(format!("{infra}.aip_outbox_dispatch")).await, 20, "recent dispatch rows stay for replay protection");
         assert_eq!(count(format!("{s}.aip_outbox")).await, 50, "undelivered and recently delivered rows stay");
         db.batch_execute(&format!("DROP SCHEMA {s} CASCADE; DROP SCHEMA {infra} CASCADE")).await.unwrap();
+    }
+}
+
+#[cfg(test)]
+mod owner_identity_tests {
+    use super::owner;
+    use crate::auth::DurablePrincipal;
+
+    fn grant(min_iat: i64) -> DurablePrincipal {
+        DurablePrincipal { issuer: "https://issuer.example".into(), subject: "user-1".into(), actor_id: 42, issued_at: min_iat + 10, min_iat }
+    }
+
+    /// Revoking a principal raises `min_iat`; binding the same subject to the same actor again must give the person back
+    /// their own files, jobs and events, so the owner cannot depend on the revocation floor.
+    #[test]
+    fn owner_survives_revoke_and_rebind() {
+        assert_eq!(owner(&grant(0)), owner(&grant(1_790_000_000)));
+    }
+
+    #[test]
+    fn owner_still_separates_subjects_actors_and_issuers() {
+        let base = grant(0);
+        for other in [
+            DurablePrincipal { subject: "user-2".into(), ..grant(0) },
+            DurablePrincipal { actor_id: 43, ..grant(0) },
+            DurablePrincipal { issuer: "https://other.example".into(), ..grant(0) },
+        ] {
+            assert_ne!(owner(&base), owner(&other));
+        }
+    }
+
+    /// Data written before this change was stored under the digest of a principal that had never been revoked.
+    #[test]
+    fn owner_of_a_never_revoked_principal_is_unchanged() {
+        let legacy = spike_v1_fixture::digest(&serde_json::json!(["https://issuer.example", "user-1", 42, 0]));
+        assert_eq!(owner(&grant(0)), legacy);
     }
 }

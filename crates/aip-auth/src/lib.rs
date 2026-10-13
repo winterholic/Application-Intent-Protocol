@@ -80,7 +80,7 @@ fn file_stamp(path: &std::path::Path) -> Option<FileStamp> {
 
 enum Lookup<'a> {
     Pooled(spike_v6_transport::pool::PooledConnection),
-    Private(spike_v2_read::OwnedConnection, tokio::sync::SemaphorePermit<'a>),
+    Private(spike_v2_read::OwnedConnection, #[allow(dead_code)] tokio::sync::SemaphorePermit<'a>),
 }
 
 impl Lookup<'_> {
