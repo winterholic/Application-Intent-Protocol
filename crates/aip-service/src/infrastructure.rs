@@ -118,10 +118,12 @@ pub struct RealtimeConfig {
     max_lifetime_ms: u64,
     heartbeat_ms: u64,
     poll_ms: u64,
+    /// How often a read subscription re-runs when no commit of this process woke it (the safety net for other writers).
+    query_poll_ms: u64,
 }
 impl Default for RealtimeConfig {
     fn default() -> Self {
-        Self { enabled: true, max_connections: 32, max_lifetime_ms: 900_000, heartbeat_ms: 15_000, poll_ms: 250 }
+        Self { enabled: true, max_connections: 32, max_lifetime_ms: 900_000, heartbeat_ms: 15_000, poll_ms: 250, query_poll_ms: 5_000 }
     }
 }
 #[derive(Deserialize, Default)]
@@ -282,6 +284,7 @@ pub(super) fn build_with_environment(config: &super::Config, lookup: &impl Fn(&s
         max_lifetime: Duration::from_millis(r.max_lifetime_ms),
         heartbeat_interval: Duration::from_millis(r.heartbeat_ms),
         poll_interval: Duration::from_millis(r.poll_ms),
+        query_poll_interval: Duration::from_millis(r.query_poll_ms),
     };
     let worker_launch = match &config.workers {
         Some(w) => {
@@ -341,6 +344,7 @@ pub(super) fn build_with_environment(config: &super::Config, lookup: &impl Fn(&s
         triggers: Default::default(),
         job_policies: Default::default(),
         metrics_token: config.metrics.as_ref().map(|metrics| metrics_token(&metrics.token_env, lookup)).transpose()?,
+        data_changes: Default::default(),
     };
     result.validate().map_err(|_| configuration_error())?;
     Ok(result)

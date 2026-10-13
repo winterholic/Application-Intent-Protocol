@@ -1266,11 +1266,28 @@ mod managed_config_tests {
             "static_mounts":[{"prefix":"/media","directory":"./public","access":"public"}],
             "file_mounts":[{"prefix":"/reports","bucket":"reports"}],
             "objects":{"kind":"local","directory":"./objects","max_bytes":1073741824},
-            "realtime":{"enabled":true,"max_connections":12,"max_lifetime_ms":60000,"heartbeat_ms":1000,"poll_ms":100},
+            "realtime":{"enabled":true,"max_connections":12,"max_lifetime_ms":60000,"heartbeat_ms":1000,"poll_ms":100,"query_poll_ms":2000},
             "messaging":{"enabled":true},
             "workers":{"directory":"extensions","language":"python","runtime_executable":"./.venv/bin/python","environment":{"PYTHONPATH":"./plugins"},"isolation":"auto"}
         });
         assert!(serde_json::from_value::<Config>(value).is_ok(), "explicit infrastructure configuration must be supported");
+    }
+
+    #[test]
+    fn the_read_subscription_poll_defaults_to_five_seconds_and_is_configurable_and_bounded() {
+        let build = |realtime: serde_json::Value| {
+            let config: Config = serde_json::from_value(json!({
+                "schema":"aip_test",
+                "auth":{"issuer":"https://issuer.example","audience":"aip","jwks":{"kind":"file","path":"jwks.json"}},
+                "realtime":realtime
+            }))
+            .unwrap();
+            infrastructure::build(&config)
+        };
+        assert_eq!(build(json!({})).unwrap().realtime.query_poll_interval, std::time::Duration::from_secs(5));
+        assert_eq!(build(json!({"query_poll_ms":2000})).unwrap().realtime.query_poll_interval, std::time::Duration::from_secs(2));
+        assert_eq!(build(json!({"query_poll_ms":0})).err().unwrap()["code"], "INFRASTRUCTURE_CONFIG");
+        assert_eq!(build(json!({"query_poll_ms":3_600_001})).err().unwrap()["code"], "INFRASTRUCTURE_CONFIG");
     }
 
     #[test]

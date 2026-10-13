@@ -21,7 +21,7 @@
   "db_pool":{"max_size":16,"acquire_timeout_ms":2000,"idle_timeout_ms":60000},
   "rate_limit":{"limit":120,"window_ms":60000},
   "limits":{"connections":64,"workers":4,"jobs":2,"uploads":4},
-  "realtime":{"enabled":true,"max_connections":32,"max_lifetime_ms":900000,"heartbeat_ms":15000,"poll_ms":250},
+  "realtime":{"enabled":true,"max_connections":32,"max_lifetime_ms":900000,"heartbeat_ms":15000,"poll_ms":250,"query_poll_ms":5000},
   "messaging":{"enabled":true,"client_publish":false,"client_consume":false},
   "workers":{
     "directory":"./extensions", "language":"python", "isolation":"auto",
@@ -104,7 +104,7 @@ SDK의 `readSse(response,signal)`는 streaming UTF-8·multiline·cursor·취소�
 - `query`는 `/read`의 요청 본문과 같고 `expose read`로 열린 것만 구독할 수 있다. `stream`·`after`와 함께 쓸 수 없고 `after`도 받지 않는다. 계약 밖 요청은 읽기와 같은 코드로 거부한다.
 - 이벤트 payload는 `{"type":"snapshot","rows":[...]}`가 한 번, 이후 `{"type":"changed","rows":[...]}`다. 항상 결과 전체이고 직전에 보낸 것과 같으면 보내지 않는다. 클라이언트는 diff를 적용하지 않고 결과를 통째로 바꾼다. 재연결하면 새 snapshot부터 받는다. SSE `id`와 WebSocket `cursor`는 결과의 digest이며 재개용이 아니다.
 - 재조회는 구독자의 세션으로 서버가 한다. 주체 재검증과 배포 fence를 먼저 통과해야 하고, 행·필드 정책은 읽기와 같다. 그래서 다른 구성원의 행은 snapshot에 없고, 접근을 잃은 구독자는 `UNAUTHENTICATED` 같은 오류 이벤트를 받고 연결이 끝난다.
-- 이 프로세스에서 커밋된 쓰기(`/apply`, 쓰기 확장, durable job의 `ctx.data.apply`)는 100ms 안의 것을 모아 한 번 재조회한다. 다른 인스턴스나 스크립트의 쓰기는 `query_poll_interval`(기본 5초)마다의 재조회가 찾는다. 연결 수·수명·heartbeat는 위 이벤트 구독과 같은 상한을 쓴다.
+- 이 프로세스에서 커밋된 쓰기(`/apply`, 쓰기 확장, durable job의 `ctx.data.apply`)는 100ms 안의 것을 모아 한 번 재조회한다. 다른 인스턴스나 스크립트의 쓰기는 설정 `realtime.query_poll_ms`(기본 5000, 1~3600000)마다의 재조회가 찾는다. 연결 수·수명·heartbeat는 위 이벤트 구독과 같은 상한을 쓴다.
 - SDK helper(`connectEventWebSocket`, `readSse`)는 아직 stream cursor 구독만 안다. 읽기 구독은 SSE/WebSocket을 직접 쓴다.
 
 브라우저는 제품 SDK의 `connectEventWebSocket`으로 직접 인증할 수 있다. 토큰을 URL query나 subprotocol에 넣지 않으며 별도 인증 gateway는 필수가 아니다. 외부 연결의 WSS 종료는 기존 TLS reverse proxy가 담당한다. SDK helper는 취소·세션 만료·마지막 cursor를 제공하며 재연결은 호출자가 결정한다. 조직 전체 broadcast나 record별 subscription ACL은 아직 별도 기능이다.
