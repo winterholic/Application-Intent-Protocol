@@ -5,6 +5,7 @@ const MANAGED_PATHS = new Set(["/rag/search", "/rag/answer", "/rag/index", "/rag
 // 확정 응답을 받기 전까지 그 키는 미확정으로 남고 캐시 저장도 보류된다(r7 R7-02·R7-03).
 import { createCache, ScopeChanged } from "../../spike-v5-sdk/sdk/cache.ts";
 import type { IdWireKind } from "../../spike-v5-sdk/sdk/generic.ts";
+import { failure, rememberRequestId, requestIdOf } from "./request-id.ts";
 
 export type ApplyOptions = { key?: string; dropResponse?: boolean; retries?: number };
 export function isIdWire(value: unknown): value is IdWireKind {
@@ -35,10 +36,13 @@ const NOT_EXECUTED = new Set(["TOKEN_EXPIRED", "UNAUTHENTICATED", "BAD_REQUEST",
 export class WriteUnsettled extends Error {
   key: string;
   request: unknown;
-  constructor(key: string, request: unknown) {
+  /** 서버가 마지막으로 답한 요청의 ID. 한 번도 응답을 받지 못했으면 없다. */
+  requestId?: string;
+  constructor(key: string, request: unknown, requestId?: string) {
     super("쓰기 결과를 아직 확정하지 못함");
     this.key = key;
     this.request = request;
+    if (requestId !== undefined) this.requestId = requestId;
   }
 }
 
@@ -46,7 +50,7 @@ export class ScopeConflict extends Error {
   name = "ScopeConflict";
 }
 
-type Pending = { request: unknown; attempts: number; outcome?: any };
+type Pending = { request: unknown; attempts: number; outcome?: any; lastRequestId?: string };
 type AuthContext = { token: string | null; generation: number };
 
 // 미확정 쓰기는 서버 검증 principal에, 캐시·진행 중 요청은 인증 세대에 귀속한다.
@@ -84,16 +88,19 @@ export function connect(base: string, initialToken: string | null, fetchImpl: ty
     }
     // A service never redirects an API call; following one would resend the body (and for 307/308 the whole request) to another origin.
     const r = await fetchImpl(base + path, { method: "POST", headers, body: JSON.stringify(body), redirect: "error", credentials: "omit" });
-    return (await r.json()) as any;
+    const parsed = (await r.json()) as any;
+    // The body contract is untouched; the id travels in a header and is linked to the parsed body for the failures built from it.
+    rememberRequestId(parsed, r);
+    return parsed;
   }
   const post = (path: string, body: unknown, extra: Record<string, string> = {}) => postWithToken(path, body, token, extra);
   async function describe(credential: string | null): Promise<string | null> {
     const res = await postWithToken("/session", {}, credential);
-    if (res?.ok === false && typeof res.code === "string") throw Object.assign(new Error(res.code), { code: res.code });
+    if (res?.ok === false && typeof res.code === "string") throw failure(res.code, res.code, res);
     const id = res?.principal?.actorId;
     const canonical = typeof id === "string" && id.length <= 20 && /^(0|[1-9][0-9]*|-[1-9][0-9]*)$/.test(id) && BigInt(id) >= -(1n << 63n) && BigInt(id) < (1n << 63n);
     const valid = credential === null ? id === null && res?.remainingMs === null : canonical && Number.isFinite(res?.remainingMs) && res.remainingMs > 0;
-    if (res?.ok !== true || !valid) throw Object.assign(new Error("세션 응답 계약 오류"), { code: "PROTOCOL_ERROR" });
+    if (res?.ok !== true || !valid) throw failure("PROTOCOL_ERROR", "세션 응답 계약 오류", res);
     return id;
   }
   async function ensurePrincipal() {
@@ -108,6 +115,8 @@ export function connect(base: string, initialToken: string | null, fetchImpl: ty
     try {
       const res = await postWithToken("/apply", { request: record.request, key }, auth.token, extra);
       if (auth.generation !== generation) return null;
+      const attemptId = requestIdOf(res);
+      if (attemptId !== undefined) record.lastRequestId = attemptId;
       const extensionWrite = record.request !== null && typeof record.request === "object" && Object.hasOwn(record.request, "extension");
       if (!validWriteResponse(res, resultWire, extensionWrite)) return null;
       if (res.ok && extensionWrite) {
@@ -120,6 +129,9 @@ export function connect(base: string, initialToken: string | null, fetchImpl: ty
     }
   }
   function settle(key: string, record: Pending, res: any) {
+    // A failed outcome names its request so that the rejection can be reported; a success carries nothing extra.
+    const requestId = requestIdOf(res);
+    if (res?.ok === false && requestId !== undefined && res.requestId === undefined) res = { ...res, requestId };
     res = freezeOutcome(res);
     record.outcome = res;
     if (pending.get(key) === record) {
@@ -139,7 +151,7 @@ export function connect(base: string, initialToken: string | null, fetchImpl: ty
       if (record.outcome) return record.outcome;
       if (res) return freezeOutcome({ ...settle(key, record, res), recovered: true });
     }
-    throw new WriteUnsettled(key, structuredClone(record.request));
+    throw new WriteUnsettled(key, structuredClone(record.request), record.lastRequestId);
   }
   async function apply(request: unknown, opts: ApplyOptions = {}) {
     const key = opts.key ?? crypto.randomUUID();
@@ -195,12 +207,12 @@ export function connect(base: string, initialToken: string | null, fetchImpl: ty
       if (auth.generation !== generation) throw new ScopeChanged("확장을 읽는 동안 세션이 바뀜");
       if (r?.ok === false && typeof r.code === "string") {
         if (r.code === "CONTRACT_MISMATCH") cache.invalidate();
-        throw Object.assign(new Error(r.code), { code: r.code });
+        throw failure(r.code, r.code, r);
       }
-      if (r?.ok !== true) throw Object.assign(new Error("확장 응답 형식 오류"), { code: "PROTOCOL_ERROR" });
+      if (r?.ok !== true) throw failure("PROTOCOL_ERROR", "확장 응답 형식 오류", r);
       if (expectedFingerprint === undefined || r.contractFingerprint !== expectedFingerprint) {
         cache.invalidate();
-        throw Object.assign(new Error("생성 확장 계약과 서버 계약이 다름"), { code: "CONTRACT_MISMATCH" });
+        throw failure("CONTRACT_MISMATCH", "생성 확장 계약과 서버 계약이 다름", r);
       }
       return r.output as unknown;
   }
@@ -214,12 +226,12 @@ export function connect(base: string, initialToken: string | null, fetchImpl: ty
     if (auth.generation !== generation) throw new ScopeChanged("관리 요청 중 세션이 바뀜");
     if (response?.ok === false && typeof response.code === "string") {
       if (response.code === "CONTRACT_MISMATCH") cache.invalidate();
-      throw Object.assign(new Error(response.code), { code: response.code });
+      throw failure(response.code, response.code, response);
     }
-    if (response?.ok !== true) throw Object.assign(new Error("관리 응답 형식 오류"), { code: "PROTOCOL_ERROR" });
+    if (response?.ok !== true) throw failure("PROTOCOL_ERROR", "관리 응답 형식 오류", response);
     if (expectedFingerprint === undefined || response.contractFingerprint !== expectedFingerprint) {
       cache.invalidate();
-      throw Object.assign(new Error("생성 관리 계약과 서버 계약이 다름"), { code: "CONTRACT_MISMATCH" });
+      throw failure("CONTRACT_MISMATCH", "생성 관리 계약과 서버 계약이 다름", response);
     }
     return response;
   }
@@ -237,16 +249,16 @@ export function connect(base: string, initialToken: string | null, fetchImpl: ty
         if (auth.generation !== generation) throw new ScopeChanged("읽는 동안 세션이 바뀜");
         if (r?.ok === false && typeof r.code === "string") {
           if (r.code === "CONTRACT_MISMATCH") cache.invalidate();
-          throw Object.assign(new Error(r.code), { code: r.code });
+          throw failure(r.code, r.code, r);
         }
-        if (r?.ok !== true) throw Object.assign(new Error("읽기 응답 계약 오류"), { code: "PROTOCOL_ERROR" });
+        if (r?.ok !== true) throw failure("PROTOCOL_ERROR", "읽기 응답 계약 오류", r);
         if (expectedFingerprint !== undefined && r.contractFingerprint !== expectedFingerprint) {
           cache.invalidate();
-          throw Object.assign(new Error("생성 계약과 서버 계약이 다름"), { code: "CONTRACT_MISMATCH" });
+          throw failure("CONTRACT_MISMATCH", "생성 계약과 서버 계약이 다름", r);
         }
         if (!Array.isArray(r.rows) || !Array.isArray(r.deps) || !r.deps.every((d: unknown) => typeof d === "string") ||
           (r.maxAgeMs !== undefined && (typeof r.maxAgeMs !== "number" || !Number.isFinite(r.maxAgeMs) || r.maxAgeMs < 0))) {
-          throw Object.assign(new Error("읽기 응답 계약 오류"), { code: "PROTOCOL_ERROR" });
+          throw failure("PROTOCOL_ERROR", "읽기 응답 계약 오류", r);
         }
         validateRead?.(snapshot, r.rows);
         return { rows: r.rows, deps: r.deps, maxAgeMs: r.maxAgeMs };

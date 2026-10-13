@@ -45,6 +45,10 @@ node product/tools/package.mjs
 
 CLI나 compiler 변경 뒤 service smoke·패키징 전에 위 `cargo build`를 실행한다. package 도구는 기존 실행 파일을 복사하므로 SDK 소스만 최신이라고 해서 생성 계약도 최신인 것은 아니다.
 
+## 실패 추적: requestId
+
+서버는 모든 응답의 `x-request-id` 헤더에 요청 ID를 싣는다. 응답 본문 계약은 바뀌지 않는다. TypeScript SDK는 던지는 오류, `ok:false` 쓰기 결과, `WriteUnsettled`에 `requestId`를 싣고, Python SDK는 `AipError.request_id`(`WriteUnsettled` 포함)와 `ok:false` 쓰기 결과의 `requestId` 키를 준다. 헤더가 없거나 8~64자의 안전 문자(`A-Za-z0-9._-`)가 아니면 필드를 만들지 않으며 성공 결과에는 아무것도 더하지 않는다. 실패를 신고할 때 이 값을 함께 주면 운영자가 같은 ID의 서버 로그 줄을 찾는다. 근거 테스트는 `spikes/spike-v6-transport/client/request-id.test.ts`와 `product/tests/python_sdk_test.py`의 `RequestIdTest`다.
+
 ## durable Job, file, event API
 
 `operation job`이 생성 binding에 있으면 `connect` 결과가 `jobs`, `files`, `events`를 제공한다. API 호출 예시와 제한, 오류 경계는 [관리형 durable execution](MANAGED-EXECUTION.md)을 따른다.

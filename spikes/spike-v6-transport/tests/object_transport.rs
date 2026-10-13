@@ -188,6 +188,12 @@ async fn json_control_request(address: std::net::SocketAddr, path: &str, token: 
     response
 }
 
+/// Every reply names its request so that a failure can be traced to the server's log line.
+fn assert_traced(headers: &[(String, String)]) {
+    let id = headers.iter().find(|(name, _)| name == "x-request-id").map(|(_, value)| value.as_str());
+    assert!(id.is_some_and(|id| id.starts_with("req_")), "x-request-id missing: {headers:?}");
+}
+
 fn response_parts(response: &[u8]) -> (u16, Vec<(String, String)>, &[u8]) {
     let split = response.windows(4).position(|bytes| bytes == b"\r\n\r\n").unwrap();
     let headers = std::str::from_utf8(&response[..split]).unwrap();
@@ -281,6 +287,8 @@ async fn actual_http_object_routes_stream_large_bytes_and_enforce_owner_contract
     assert!(headers.contains(&("access-control-allow-origin".into(), origin.clone())));
     assert!(headers.iter().any(|(name, value)| name == "vary" && value.eq_ignore_ascii_case("Origin")));
     assert!(headers.contains(&("x-content-type-options".into(), "nosniff".into())), "{headers:?}");
+    assert_traced(&headers);
+    assert!(headers.contains(&("access-control-expose-headers".into(), "x-request-id".into())), "{headers:?}");
     assert_eq!(body, b"asset");
     let denied_origin = raw_request_with_origin(server.address, "GET", "/assets/hello.txt", "", None, 0, &[], Some("https://attacker.example")).await;
     let (_, headers, _) = response_parts(&denied_origin);
@@ -295,6 +303,7 @@ async fn actual_http_object_routes_stream_large_bytes_and_enforce_owner_contract
     assert!(headers.contains(&("access-control-allow-origin".into(), origin.clone())));
     assert!(headers.contains(&("cache-control".into(), "private, no-store".into())));
     assert!(headers.contains(&("x-content-type-options".into(), "nosniff".into())));
+    assert_traced(&headers);
     let object_id = json_body(&uploaded)["id"].as_str().unwrap().to_owned();
 
     let preflight_delete = preflight(server.address, &format!("/objects/{object_id}"), &origin, "DELETE", "authorization,x-aip-contract").await;
@@ -316,6 +325,7 @@ async fn actual_http_object_routes_stream_large_bytes_and_enforce_owner_contract
     assert!(headers.contains(&("x-content-type-options".into(), "nosniff".into())));
     assert!(headers.contains(&("content-disposition".into(), "attachment".into())));
     assert_eq!(headers.iter().find(|(name, _)| name == "transfer-encoding").unwrap().1, "chunked");
+    assert_traced(&headers);
     assert_eq!(decode_chunks(body), payload);
 
     let headed =
@@ -327,6 +337,7 @@ async fn actual_http_object_routes_stream_large_bytes_and_enforce_owner_contract
     assert!(headers.contains(&("x-content-type-options".into(), "nosniff".into())));
     assert!(headers.contains(&("content-disposition".into(), "attachment".into())));
     assert_eq!(headers.iter().find(|(name, _)| name == "content-length").unwrap().1, size.to_string());
+    assert_traced(&headers);
     assert!(body.is_empty());
 
     let foreign = raw_request(server.address, "GET", &format!("/objects/{object_id}"), "other", Some(&fingerprint), 0, &[]).await;

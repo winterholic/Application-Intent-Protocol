@@ -1,3 +1,4 @@
+import { failure } from "./request-id.ts";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_OBJECT_BYTES = 5 * 1024 * 1024 * 1024;
 const MAX_PAYLOAD_BYTES = 512 << 10;
@@ -352,10 +353,10 @@ export function createInfrastructureClient(send: ManagedSend, fingerprint: strin
     const value = await send(route, body);
     if (!plainRecord(value)) protocolError();
     if (value.ok === false && typeof value.code === "string") {
-      throw error(value.code, typeof value.msg === "string" ? value.msg : value.code);
+      throw failure(value.code, typeof value.msg === "string" ? value.msg : value.code, value);
     }
     if (value.ok !== true) protocolError();
-    if (value.contractFingerprint !== fingerprint) throw error("CONTRACT_MISMATCH", "서버와 생성 계약이 다릅니다");
+    if (value.contractFingerprint !== fingerprint) throw failure("CONTRACT_MISMATCH", "서버와 생성 계약이 다릅니다", value);
     return value;
   }
 

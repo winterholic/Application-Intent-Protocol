@@ -118,6 +118,7 @@ async fn sse_event(address: SocketAddr, fingerprint: &str, after: &str) -> Strin
     }
     assert!(headers.iter().any(|header| header.eq_ignore_ascii_case("connection: keep-alive")), "{headers:?}");
     assert!(headers.iter().any(|header| header.eq_ignore_ascii_case("vary: Origin")), "{headers:?}");
+    assert!(headers.iter().any(|header| header.to_ascii_lowercase().starts_with("x-request-id: req_")), "an event stream is traceable: {headers:?}");
     let mut frame = String::new();
     loop {
         line.clear();
@@ -175,7 +176,12 @@ async fn sse_and_websocket_replay_the_same_owner_scoped_event() {
     let mut request = format!("ws://{}/events/socket", server.address).into_client_request().unwrap();
     request.headers_mut().insert("authorization", "Bearer owner".parse().unwrap());
     request.headers_mut().insert("origin", format!("http://{}", server.address).parse().unwrap());
-    let (mut websocket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+    let (mut websocket, upgrade) = tokio_tungstenite::connect_async(request).await.unwrap();
+    assert!(
+        upgrade.headers().get("x-request-id").and_then(|value| value.to_str().ok()).is_some_and(|id| id.starts_with("req_")),
+        "the upgrade reply is traceable: {:?}",
+        upgrade.headers()
+    );
     use futures_util::{SinkExt, StreamExt};
     websocket.send(tokio_tungstenite::tungstenite::Message::Text(subscription(&fingerprint, "0").into())).await.unwrap();
     let message = tokio::time::timeout(Duration::from_secs(5), websocket.next()).await.unwrap().unwrap().unwrap();

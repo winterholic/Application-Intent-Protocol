@@ -41,6 +41,7 @@ node --test \
   spikes/spike-v6-transport/client/websocket.test.ts \
   spikes/spike-v6-transport/client/rag.test.ts \
   spikes/spike-v6-transport/client/traverse-many.test.ts \
+  spikes/spike-v6-transport/client/request-id.test.ts \
   product/tests/sdk-package.test.mjs \
   product/tests/package-boundaries.test.mjs \
   product/tests/google-storage-provider.test.mjs

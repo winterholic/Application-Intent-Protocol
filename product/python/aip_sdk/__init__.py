@@ -35,18 +35,20 @@ _MANAGED_PREFIXES = ("/jobs/", "/files/", "/events/read", "/messages/", "/rag/",
 
 
 class AipError(Exception):
-    """A typed server or protocol rejection. `code` is the stable AIP error code."""
+    """A typed server or protocol rejection. `code` is the stable AIP error code. `request_id` is the server's
+    `x-request-id` response header (None when the reply had none); report it so the operator can find the log line."""
 
-    def __init__(self, code: str, message: Optional[str] = None):
+    def __init__(self, code: str, message: Optional[str] = None, request_id: Optional[str] = None):
         super().__init__(message or code)
         self.code = code
+        self.request_id = request_id
 
 
 class WriteUnsettled(AipError):
     """The write may or may not have committed. Retry with `client.retry_pending()` or the same key."""
 
-    def __init__(self, key: str, request: Any):
-        super().__init__("WRITE_UNSETTLED", "쓰기 결과를 아직 확정하지 못함")
+    def __init__(self, key: str, request: Any, request_id: Optional[str] = None):
+        super().__init__("WRITE_UNSETTLED", "쓰기 결과를 아직 확정하지 못함", request_id)
         self.key = key
         self.request = request
 
@@ -56,7 +58,27 @@ class ScopeConflict(AipError):
         super().__init__("SCOPE_CONFLICT", "다른 사용자 세션으로 미확정 쓰기를 이관할 수 없음")
 
 
-Transport = Callable[[str, dict, bytes, float], bytes]
+# A transport returns the body, or `(body, response_headers)` when it can also give the response headers.
+Transport = Callable[[str, dict, bytes, float], Any]
+
+_SAFE_REQUEST_ID = re.compile(r"^[A-Za-z0-9._-]{8,64}$")
+
+
+class _Body(dict):
+    """A parsed JSON object that remembers the request id of its reply. The body itself is the server's, unchanged."""
+
+    request_id: Optional[str] = None
+
+
+def _request_id(response: Any) -> Optional[str]:
+    return getattr(response, "request_id", None)
+
+
+def _reply_request_id(headers: Any) -> Optional[str]:
+    if not headers:
+        return None
+    value = next((v for k, v in dict(headers).items() if str(k).lower() == "x-request-id"), None)
+    return value if isinstance(value, str) and _SAFE_REQUEST_ID.match(value) else None
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -81,15 +103,15 @@ def _check_url(url: str) -> None:
     raise AipError("PROTOCOL_ERROR", "https 또는 loopback http 주소만 사용할 수 있음")
 
 
-def _urllib_transport(url: str, headers: dict, body: bytes, timeout: float) -> bytes:
+def _urllib_transport(url: str, headers: dict, body: bytes, timeout: float) -> Any:
     _check_url(url)
     request = urllib.request.Request(url, data=body, headers=headers, method="POST")
     try:
         with _OPENER.open(request, timeout=timeout) as response:
-            return response.read()
+            return response.read(), {"x-request-id": response.headers.get("x-request-id")}
     except urllib.error.HTTPError as error:
         # Webhook-style status codes still carry the JSON envelope. A refused redirect has no JSON and ends as PROTOCOL_ERROR.
-        return error.read()
+        return error.read(), {"x-request-id": error.headers.get("x-request-id")}
 
 
 class Client:
@@ -118,27 +140,35 @@ class Client:
         if contract and self.contract_fingerprint and (path in _CONTRACT_PATHS or path.startswith(_MANAGED_PREFIXES)):
             headers["x-aip-contract"] = self.contract_fingerprint
         raw = self._transport(self._base + path, headers, json.dumps(body, ensure_ascii=False).encode("utf-8"), self._timeout)
+        request_id = None
+        if isinstance(raw, tuple):
+            raw, headers_in = raw
+            request_id = _reply_request_id(headers_in)
         try:
-            return json.loads(raw)
+            parsed = json.loads(raw)
         except (ValueError, TypeError):
-            raise AipError("PROTOCOL_ERROR", "JSON 응답이 아님") from None
+            raise AipError("PROTOCOL_ERROR", "JSON 응답이 아님", request_id) from None
+        if isinstance(parsed, dict):
+            parsed = _Body(parsed)
+            parsed.request_id = request_id
+        return parsed
 
     def _checked(self, response: Any, expect_contract: bool) -> dict:
         if isinstance(response, dict) and response.get("ok") is False and isinstance(response.get("code"), str):
-            raise AipError(response["code"], response.get("msg") if isinstance(response.get("msg"), str) else None)
+            raise AipError(response["code"], response.get("msg") if isinstance(response.get("msg"), str) else None, _request_id(response))
         if not isinstance(response, dict) or response.get("ok") is not True:
-            raise AipError("PROTOCOL_ERROR", "응답 형식 오류")
+            raise AipError("PROTOCOL_ERROR", "응답 형식 오류", _request_id(response))
         if expect_contract and response.get("contractFingerprint") != self.contract_fingerprint:
-            raise AipError("CONTRACT_MISMATCH", "고정한 계약과 서버 계약이 다름")
+            raise AipError("CONTRACT_MISMATCH", "고정한 계약과 서버 계약이 다름", _request_id(response))
         return response
 
     def _describe(self, token: Optional[str]) -> Optional[str]:
         response = self._post("/session", {}, token=token, contract=False)
         if isinstance(response, dict) and response.get("ok") is False and isinstance(response.get("code"), str):
-            raise AipError(response["code"])
+            raise AipError(response["code"], None, _request_id(response))
         actor = (response.get("principal") or {}).get("actorId") if isinstance(response, dict) else None
         if response.get("ok") is not True or (token and not (isinstance(actor, str) and _ACTOR_ID.match(actor))):
-            raise AipError("PROTOCOL_ERROR", "세션 응답 계약 오류")
+            raise AipError("PROTOCOL_ERROR", "세션 응답 계약 오류", _request_id(response))
         return actor
 
     def _ensure_principal(self) -> Optional[str]:
@@ -157,9 +187,9 @@ class Client:
         response = self._checked(self._post("/capabilities", {}, contract=False), expect_contract=False)
         served = response.get("contractFingerprint")
         if not isinstance(served, str) or not _FINGERPRINT.match(served):
-            raise AipError("PROTOCOL_ERROR", "계약 식별값이 없음")
+            raise AipError("PROTOCOL_ERROR", "계약 식별값이 없음", _request_id(response))
         if self._pinned and served != self.contract_fingerprint:
-            raise AipError("CONTRACT_MISMATCH", "고정한 계약과 서버 계약이 다름")
+            raise AipError("CONTRACT_MISMATCH", "고정한 계약과 서버 계약이 다름", _request_id(response))
         self.contract_fingerprint = served
         return response
 
@@ -169,7 +199,7 @@ class Client:
         self._ensure_contract()
         response = self._checked(self._post("/read", {"query": copy.deepcopy(query)}), expect_contract=True)
         if not isinstance(response.get("rows"), list):
-            raise AipError("PROTOCOL_ERROR", "읽기 응답 계약 오류")
+            raise AipError("PROTOCOL_ERROR", "읽기 응답 계약 오류", _request_id(response))
         return response["rows"]
 
     def apply(self, request: dict, key: Optional[str] = None, retries: int = 2) -> dict:
@@ -183,21 +213,28 @@ class Client:
         if previous is not None and previous != snapshot:
             return {"ok": False, "code": "IDEMPOTENCY_MISMATCH"}
         self._pending[key] = snapshot
+        last_request_id: Optional[str] = None
         for attempt in range(retries + 1):
             try:
                 response = self._post("/apply", {"request": snapshot, "key": key})
-            except (OSError, AipError):
+            except (OSError, AipError) as failure:
+                last_request_id = getattr(failure, "request_id", None) or last_request_id
                 continue
+            last_request_id = _request_id(response) or last_request_id
             code = response.get("code") if isinstance(response, dict) else None
             if not isinstance(response, dict) or (response.get("ok") is not True and not isinstance(code, str)):
                 continue
             if code in _UNSETTLED or (attempt > 0 and code in _NOT_EXECUTED):
                 continue
             del self._pending[key]
+            request_id = _request_id(response)
             if attempt > 0:
                 response = {**response, "recovered": True}
+            # A failed outcome names its request so that the rejection can be reported; a success carries nothing extra.
+            if request_id and response.get("ok") is False and "requestId" not in response:
+                response = {**response, "requestId": request_id}
             return response
-        raise WriteUnsettled(key, copy.deepcopy(snapshot))
+        raise WriteUnsettled(key, copy.deepcopy(snapshot), last_request_id)
 
     def status(self, request: dict, key: str) -> dict:
         """Committed result for a key and identical request, or `NOT_FOUND` if none is committed yet."""

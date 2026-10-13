@@ -730,7 +730,8 @@ async fn serve_conn(
             return reply(&mut w, &err("BAD_REQUEST", "정적 파일 요청 본문은 비어 있어야 함")).await;
         }
         let headers: Vec<(&str, &str)> = header_values.iter().map(|(key, value)| (key.as_str(), value.as_str())).collect();
-        let _ = hosting::serve_with_origin(&mut w.writer, mount, &method, &path, &headers, w.origin.as_deref()).await;
+        let mut tap = trace::HeadTap::new(&mut w.writer, &mut w.trace);
+        let _ = hosting::serve_with_origin(&mut tap, mount, &method, &path, &headers, w.origin.as_deref()).await;
         return;
     }
     if object_path && path != "/objects/sign" && !path.starts_with("/objects/multipart/") {
@@ -750,7 +751,7 @@ async fn serve_conn(
             runtime.infrastructure.object_transfer_lifetime,
             object_transport::serve(
                 &mut rd,
-                &mut w.writer,
+                &mut trace::HeadTap::new(&mut w.writer, &mut w.trace),
                 &method,
                 &path,
                 &header_values,
@@ -1017,7 +1018,7 @@ async fn serve_conn(
             return reply(&mut w, &err("SERVER_BUSY", "실시간 연결 상한")).await;
         }
         if sse {
-            if let Err(error) = realtime::send_sse_headers(&mut w.writer, w.origin.as_deref()).await {
+            if let Err(error) = realtime::send_sse_headers(&mut trace::HeadTap::new(&mut w.writer, &mut w.trace), w.origin.as_deref()).await {
                 eprintln!("{{\"event\":\"realtime_write_failed\",\"transport\":\"sse\",\"kind\":\"{:?}\"}}", error.kind());
                 return;
             }
@@ -1029,7 +1030,12 @@ async fn serve_conn(
         let accept_key = tokio_tungstenite::tungstenite::handshake::derive_accept_key(ws_key.as_bytes());
         let response =
             format!("HTTP/1.1 101 Switching Protocols\r\nupgrade: websocket\r\nconnection: Upgrade\r\nsec-websocket-accept: {accept_key}\r\n\r\n");
-        match tokio::time::timeout(server::REQUEST_TIMEOUT, w.writer.write_all(response.as_bytes())).await {
+        let upgrade = async {
+            let mut tap = trace::HeadTap::new(&mut w.writer, &mut w.trace);
+            tap.write_all(response.as_bytes()).await?;
+            tap.flush().await
+        };
+        match tokio::time::timeout(server::REQUEST_TIMEOUT, upgrade).await {
             Ok(Ok(())) => {}
             Ok(Err(_)) | Err(_) => return,
         }
@@ -1134,7 +1140,9 @@ async fn serve_conn(
         let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(encoded) else {
             return reply_object(&mut w, &err("INTERNAL", "관리 파일 payload 오류").to_string()).await;
         };
-        let _ = reply_managed_file(&mut w.writer, &method, id, media_type, &bytes, w.origin.as_deref(), deadline).await;
+        let _ =
+            reply_managed_file(&mut trace::HeadTap::new(&mut w.writer, &mut w.trace), &method, id, media_type, &bytes, w.origin.as_deref(), deadline)
+                .await;
         let _ = db.release().await;
         return;
     }

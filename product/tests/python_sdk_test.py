@@ -129,6 +129,76 @@ class PythonSdkTest(unittest.TestCase):
         self.assertEqual(caught.exception.code, "ACCESS_DENIED")
 
 
+class RequestIdTest(unittest.TestCase):
+    """The server names every request in the `x-request-id` response header; a failure carries it (the body is unchanged)."""
+
+    ID = "req_0123456789abcdef01234567"
+
+    def serve(self, reply, header=ID):
+        def transport(url, headers, body, timeout):
+            path = url.split("http://aip", 1)[1]
+            if path == "/session":
+                return json.dumps({"ok": True, "principal": {"actorId": "42"}, "remainingMs": 1000}).encode()
+            raw = json.dumps(reply).encode()
+            return raw if header is None else (raw, {"X-Request-Id": header})
+
+        return connect("http://aip", "t1", FP, transport=transport)
+
+    def test_a_rejection_carries_the_request_id(self):
+        with self.assertRaises(AipError) as caught:
+            self.serve({"ok": False, "code": "FILTER_NOT_ALLOWED"}).read({"read": "Event", "select": ["id"]})
+        self.assertEqual((caught.exception.code, caught.exception.request_id), ("FILTER_NOT_ALLOWED", self.ID))
+
+    def test_a_contract_mismatch_and_a_managed_failure_carry_it_too(self):
+        with self.assertRaises(AipError) as caught:
+            self.serve({"ok": True, "rows": [], "deps": [], "contractFingerprint": OTHER}).read({"read": "Event", "select": ["id"]})
+        self.assertEqual((caught.exception.code, caught.exception.request_id), ("CONTRACT_MISMATCH", self.ID))
+        with self.assertRaises(AipError) as caught:
+            self.serve({"ok": False, "code": "NOT_FOUND"}).jobs.status("x")
+        self.assertEqual(caught.exception.request_id, self.ID)
+
+    def test_a_failed_write_outcome_and_an_unsettled_write_carry_it(self):
+        outcome = self.serve({"ok": False, "code": "BAD_VALUE"}).apply({"apply": "A.b"}, key="k1")
+        self.assertEqual((outcome["ok"], outcome["code"], outcome["requestId"]), (False, "BAD_VALUE", self.ID))
+        with self.assertRaises(WriteUnsettled) as caught:
+            self.serve({"ok": False, "code": "COMMIT_UNKNOWN"}).apply({"apply": "A.b"}, key="k2", retries=0)
+        self.assertEqual(caught.exception.request_id, self.ID)
+
+    def test_a_success_and_a_missing_or_unsafe_header_add_nothing(self):
+        ok = self.serve({"ok": True, "tags": [], "changed": [], "unchanged": []}).apply({"apply": "A.b"}, key="k3")
+        self.assertNotIn("requestId", ok)
+        for header in (None, "short", "has space in it", "x" * 65, "semi;colon-1234"):
+            with self.assertRaises(AipError) as caught:
+                self.serve({"ok": False, "code": "NOT_FOUND"}, header=header).read({"read": "Event", "select": ["id"]})
+            self.assertIsNone(caught.exception.request_id, header)
+
+    def test_the_default_transport_reads_the_header_of_a_real_reply(self):
+        outer = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("content-length", 0)))
+                body = json.dumps({"ok": True, "principal": {"actorId": "42"}, "remainingMs": 1000} if self.path == "/session" else {"ok": False, "code": "ACCESS_DENIED"}).encode()
+                self.send_response(200)
+                self.send_header("content-length", str(len(body)))
+                self.send_header("x-request-id", outer.ID)
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            client = connect(f"http://127.0.0.1:{server.server_port}", "t1", FP)
+            with self.assertRaises(AipError) as caught:
+                client.read({"read": "Event", "select": ["id"]})
+            self.assertEqual((caught.exception.code, caught.exception.request_id), ("ACCESS_DENIED", self.ID))
+        finally:
+            server.shutdown()
+
+
 if __name__ == "__main__":
     unittest.main()
 

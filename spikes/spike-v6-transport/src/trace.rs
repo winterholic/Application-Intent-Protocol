@@ -140,6 +140,116 @@ impl Drop for Trace {
     }
 }
 
+/// A writer that gives the replies of the routes with their own head writers (static files, object streams, managed
+/// files, SSE, the WebSocket upgrade) the same correlation the JSON replies have: the first write of a reply is an
+/// HTTP/1.1 head, so `x-request-id` is inserted after its status line, the status is remembered for the log line,
+/// and a browser is allowed to read the header when the reply is a CORS one. Those writers do not know the request,
+/// and this keeps them from having to.
+pub struct HeadTap<'a, W> {
+    inner: &'a mut W,
+    trace: &'a mut Trace,
+    seen: bool,
+    pending: Vec<u8>,
+    sent: usize,
+    claimed: usize,
+}
+
+impl<'a, W> HeadTap<'a, W> {
+    pub fn new(inner: &'a mut W, trace: &'a mut Trace) -> Self {
+        HeadTap { inner, trace, seen: false, pending: Vec::new(), sent: 0, claimed: 0 }
+    }
+
+    /// The head with the id inserted, or `None` when the write is not the start of an HTTP/1.1 reply.
+    fn rewrite(&mut self, buf: &[u8]) -> Option<Vec<u8>> {
+        if !buf.starts_with(b"HTTP/1.1 ") {
+            return None;
+        }
+        let status_end = buf.windows(2).position(|pair| pair == b"\r\n")?;
+        let head_end = buf.windows(4).position(|quad| quad == b"\r\n\r\n");
+        let head = String::from_utf8_lossy(&buf[..head_end.unwrap_or(buf.len())]).to_ascii_lowercase();
+        let body = head_end.and_then(|end| std::str::from_utf8(&buf[end + 4..]).ok()).unwrap_or("");
+        self.trace.record(&String::from_utf8_lossy(&buf[9..status_end]), body);
+        let mut inserted = String::new();
+        if !head.contains("\r\nx-request-id:") {
+            inserted.push_str(&format!("x-request-id: {}\r\n", self.trace.id()));
+        }
+        if head.contains("\r\naccess-control-allow-origin:") {
+            inserted.push_str("access-control-expose-headers: x-request-id\r\n");
+        }
+        let mut out = Vec::with_capacity(buf.len() + inserted.len());
+        out.extend_from_slice(&buf[..status_end + 2]);
+        out.extend_from_slice(inserted.as_bytes());
+        out.extend_from_slice(&buf[status_end + 2..]);
+        Some(out)
+    }
+}
+
+impl<W: tokio::io::AsyncWrite + Unpin> HeadTap<'_, W> {
+    fn drain(&mut self, cx: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Result<()>> {
+        use std::task::Poll;
+        while self.sent < self.pending.len() {
+            match std::pin::Pin::new(&mut *self.inner).poll_write(cx, &self.pending[self.sent..]) {
+                Poll::Ready(Ok(0)) => return Poll::Ready(Err(std::io::ErrorKind::WriteZero.into())),
+                Poll::Ready(Ok(n)) => self.sent += n,
+                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+        self.pending.clear();
+        self.sent = 0;
+        Poll::Ready(Ok(()))
+    }
+}
+
+impl<W: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for HeadTap<'_, W> {
+    fn poll_write(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>, buf: &[u8]) -> std::task::Poll<std::io::Result<usize>> {
+        use std::task::Poll;
+        let this = self.get_mut();
+        if !this.pending.is_empty() {
+            match this.drain(cx) {
+                Poll::Ready(Ok(())) => {}
+                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                Poll::Pending => return Poll::Pending,
+            }
+            if this.claimed > 0 {
+                // The head the caller offered was taken earlier and has now left in full.
+                return Poll::Ready(Ok(std::mem::take(&mut this.claimed)));
+            }
+        }
+        if !this.seen {
+            this.seen = true;
+            if let Some(rewritten) = this.rewrite(buf) {
+                this.pending = rewritten;
+                this.claimed = buf.len();
+                // The caller is told its whole buffer was taken only once the longer bytes have left, so a writer
+                // that never flushes cannot lose the tail of the head.
+                return match this.drain(cx) {
+                    Poll::Ready(Ok(())) => Poll::Ready(Ok(std::mem::take(&mut this.claimed))),
+                    Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
+                    Poll::Pending => Poll::Pending,
+                };
+            }
+        }
+        std::pin::Pin::new(&mut *this.inner).poll_write(cx, buf)
+    }
+
+    fn poll_flush(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Result<()>> {
+        let this = self.get_mut();
+        match this.drain(cx) {
+            std::task::Poll::Ready(Ok(())) => std::pin::Pin::new(&mut *this.inner).poll_flush(cx),
+            other => other,
+        }
+    }
+
+    fn poll_shutdown(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Result<()>> {
+        let this = self.get_mut();
+        match this.drain(cx) {
+            std::task::Poll::Ready(Ok(())) => std::pin::Pin::new(&mut *this.inner).poll_shutdown(cx),
+            other => other,
+        }
+    }
+}
+
 fn route_of(path: &str) -> &'static str {
     let segment = path.split(['?', '#']).next().unwrap_or("").trim_start_matches('/').split('/').next().unwrap_or("");
     ROUTES.iter().find(|r| **r == segment).copied().unwrap_or("other")
@@ -206,5 +316,61 @@ mod tests {
         assert!(!line.contains("hunter2") && !line.contains("abc"), "{line}");
         t.record("200 OK", "{\"ok\":true}");
         assert!(t.line().contains("\"status\":200") && !t.line().contains("BAD_VALUE"), "a later reply replaces the earlier outcome");
+    }
+
+    /// Writes `head` and then `chunks` through a tap over a tiny pipe (so the longer head needs several writes) and
+    /// returns what the peer read and the log line.
+    async fn through_tap(head: &str, chunks: &[&[u8]]) -> (String, String) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let (mut client, mut server) = tokio::io::duplex(16);
+        let mut trace = Trace::default();
+        trace.begin("GET", "/assets/a.txt");
+        let writer = async {
+            let mut tap = HeadTap::new(&mut server, &mut trace);
+            tap.write_all(head.as_bytes()).await.expect("write head");
+            for chunk in chunks {
+                tap.write_all(chunk).await.expect("write chunk");
+            }
+            tap.flush().await.expect("flush");
+            drop(tap);
+            drop(server);
+        };
+        let reader = async {
+            let mut out = Vec::new();
+            client.read_to_end(&mut out).await.expect("read");
+            String::from_utf8_lossy(&out).into_owned()
+        };
+        let ((), text) = tokio::join!(writer, reader);
+        (text, trace.line())
+    }
+
+    #[tokio::test]
+    async fn a_head_written_by_another_writer_gets_the_id_and_its_status_reaches_the_log() {
+        let (text, line) = through_tap("HTTP/1.1 200 OK\r\ncontent-length: 5\r\n\r\n", &[b"hello"]).await;
+        let id = text.lines().find_map(|l| l.strip_prefix("x-request-id: ")).expect("the header was inserted").to_string();
+        assert!(text.starts_with("HTTP/1.1 200 OK\r\nx-request-id: req_"), "{text}");
+        assert!(text.ends_with("content-length: 5\r\n\r\nhello"), "the rest of the reply is untouched: {text}");
+        let v: serde_json::Value = serde_json::from_str(&line).expect("one JSON object");
+        assert_eq!((v["status"].as_u64(), v["requestId"].as_str()), (Some(200), Some(id.as_str())));
+    }
+
+    #[tokio::test]
+    async fn a_cors_reply_exposes_the_id_and_a_json_failure_in_the_head_write_gives_its_code() {
+        let head =
+            "HTTP/1.1 404 Not Found\r\naccess-control-allow-origin: http://a.example\r\nvary: Origin\r\n\r\n{\"ok\":false,\"code\":\"NOT_FOUND\"}";
+        let (text, line) = through_tap(head, &[]).await;
+        assert!(text.contains("\r\naccess-control-expose-headers: x-request-id\r\n"), "{text}");
+        let v: serde_json::Value = serde_json::from_str(&line).expect("one JSON object");
+        assert_eq!((v["status"].as_u64(), v["code"].as_str()), (Some(404), Some("NOT_FOUND")));
+        let (plain, _) = through_tap("HTTP/1.1 200 OK\r\n\r\n", &[]).await;
+        assert!(!plain.contains("access-control-expose-headers"), "{plain}");
+    }
+
+    #[tokio::test]
+    async fn bytes_that_are_not_a_head_pass_through_and_a_later_head_is_not_rewritten() {
+        let (text, line) = through_tap("data: x\n\n", &[b"HTTP/1.1 200 OK\r\n\r\n"]).await;
+        assert_eq!(text, "data: x\n\nHTTP/1.1 200 OK\r\n\r\n");
+        let v: serde_json::Value = serde_json::from_str(&line).expect("one JSON object");
+        assert!(v["status"].is_null(), "{line}");
     }
 }

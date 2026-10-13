@@ -194,9 +194,11 @@ async fn managed_file_mount_serves_owner_bucket_bytes_with_private_headers_and_r
     assert!(get.headers.contains(&format!("content-disposition: attachment; filename=\"{id}\"")));
     assert!(get.headers.contains("cache-control: private, no-store"));
     assert!(get.headers.contains("x-content-type-options: nosniff"));
+    assert!(get.headers.contains("\r\nx-request-id: req_"), "a managed file reply is traceable: {}", get.headers);
     let cors_get =
         request_with_origin(server.address, "GET", &format!("/reports/{id}"), "owner", &fingerprint, "", Some("https://app.example.com")).await;
     assert!(cors_get.headers.contains("access-control-allow-origin: https://app.example.com"));
+    assert!(cors_get.headers.contains("access-control-expose-headers: x-request-id"), "{}", cors_get.headers);
     let rejected_origin =
         request_with_origin(server.address, "GET", &format!("/reports/{id}"), "owner", &fingerprint, "", Some("https://evil.example")).await;
     assert_eq!(serde_json::from_slice::<Value>(&rejected_origin.body).unwrap()["code"], "ORIGIN_NOT_ALLOWED");

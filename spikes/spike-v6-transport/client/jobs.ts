@@ -1,4 +1,5 @@
 import { isIdWire, validResultId } from "./transport.ts";
+import { failure } from "./request-id.ts";
 import type { DeepReadonly, ExtensionContractShape, IdWireKind, OperationDescriptors, ScalarDescriptor } from "../../spike-v5-sdk/sdk/generic.ts";
 
 export type JobsTransport = (route: string, body: unknown) => Promise<unknown>;
@@ -125,9 +126,9 @@ function validateRecord(value: unknown, fields: Readonly<Record<string, ScalarDe
 function contractResponse<T extends Record<string, unknown>>(value: unknown, fingerprint: string): T {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw error("PROTOCOL_ERROR", "jobs 응답 형식이 잘못되었습니다");
   const response = value as Record<string, unknown>;
-  if (response.ok === false && typeof response.code === "string") throw error(response.code, typeof response.msg === "string" ? response.msg : response.code);
-  if (response.ok !== true) throw error("PROTOCOL_ERROR", "jobs 응답 형식이 잘못되었습니다");
-  if (response.contractFingerprint !== fingerprint) throw error("CONTRACT_MISMATCH", "서버와 생성 계약이 다릅니다");
+  if (response.ok === false && typeof response.code === "string") throw failure(response.code, typeof response.msg === "string" ? response.msg : response.code, response);
+  if (response.ok !== true) throw failure("PROTOCOL_ERROR", "jobs 응답 형식이 잘못되었습니다", response);
+  if (response.contractFingerprint !== fingerprint) throw failure("CONTRACT_MISMATCH", "서버와 생성 계약이 다릅니다", response);
   return response as T;
 }
 

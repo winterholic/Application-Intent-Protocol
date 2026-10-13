@@ -1,4 +1,5 @@
 import type { ManagedSend } from "./infrastructure.ts";
+import { failure } from "./request-id.ts";
 
 export type RagCitation = Readonly<{ sourceId: string; documentId: string; chunkIndex: number; source: string }>;
 export type RagHit = Readonly<{ text: string; score: number; citation: RagCitation }>;
@@ -26,8 +27,8 @@ export function createRagClient(send: ManagedSend, fingerprint: string) {
     if (!text(body.corpus,128) || !/^[A-Za-z0-9_.-]+$/.test(body.corpus)) fail("BAD_VALUE");
     const result = await send(path,body);
     if (!record(result)) fail("PROTOCOL_ERROR");
-    if (result.ok === false && typeof result.code === "string") fail(result.code);
-    if (result.ok !== true) fail("PROTOCOL_ERROR");
+    if (result.ok === false && typeof result.code === "string") throw failure(result.code, result.code, result);
+    if (result.ok !== true) throw failure("PROTOCOL_ERROR", "PROTOCOL_ERROR", result);
     if (result.contractFingerprint !== fingerprint) fail("CONTRACT_MISMATCH");
     return result;
   }

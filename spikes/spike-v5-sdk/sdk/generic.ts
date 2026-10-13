@@ -44,7 +44,7 @@ export type ApplyRequest<A extends ApplyContractShape<A>, K extends keyof A & st
 }[K];
 export type ApplyResult<I> =
   | { readonly ok: true; readonly changed: readonly I[]; readonly unchanged: readonly I[]; readonly tags: readonly string[]; readonly replayed?: boolean; readonly recovered?: boolean }
-  | { readonly ok: false; readonly code: string; readonly msg?: string; readonly recovered?: boolean };
+  | { readonly ok: false; readonly code: string; readonly msg?: string; readonly recovered?: boolean; readonly requestId?: string };
 export type PendingResult<A extends ApplyContractShape<A>> = ApplyResult<A[keyof A]["idOutput"]> & { readonly key: string };
 export type DeepReadonly<T> = T extends string | number | boolean | bigint | symbol | null | undefined
   ? T : T extends object ? { readonly [K in keyof T]: DeepReadonly<T[K]> } : T;
@@ -156,7 +156,7 @@ export type OperationBinding<C extends ContractShape<C>, A extends ApplyContract
 };
 export type WriteExtensionResult<O> =
   | { readonly ok: true; readonly output: DeepReadonly<O>; readonly tags: readonly string[]; readonly replayed?: boolean; readonly recovered?: boolean }
-  | { readonly ok: false; readonly code: string; readonly msg?: string; readonly recovered?: boolean };
+  | { readonly ok: false; readonly code: string; readonly msg?: string; readonly recovered?: boolean; readonly requestId?: string };
 
 
 export type ReadDescriptors<C extends ContractShape<C>> = {
