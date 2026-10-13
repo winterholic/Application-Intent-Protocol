@@ -151,13 +151,14 @@ impl BrokerConfig {
             .into_iter()
             .map(|provider| match provider {
                 Provider::Kafka { name, bootstrap_servers, security, timeout_ms, allow_private_networks } => {
+                    let provider_name = name.clone();
                     let security = match security {
                         KafkaSecurity::Tls { ca_location } => aip_execution::brokers::KafkaSecurity::Tls { ca_location },
                         KafkaSecurity::SaslTls { mechanism, username, password_env, ca_location } => {
                             let password = std::env::var(&password_env)
                                 .ok()
                                 .filter(|value| !value.is_empty())
-                                .ok_or_else(|| format!("Kafka SASL password 환경 변수 `{password_env}`가 필요함"))?;
+                                .ok_or_else(|| format!("Kafka provider '{provider_name}'의 SASL password_env가 가리키는 환경 변수가 없거나 비어 있음(변수 이름은 출력하지 않음)"))?;
                             aip_execution::brokers::KafkaSecurity::SaslTls { mechanism, username, password, ca_location }
                         }
                         KafkaSecurity::Plaintext { allow_insecure_transport } => {
@@ -176,7 +177,7 @@ impl BrokerConfig {
                     let uri = std::env::var(&uri_env)
                         .ok()
                         .filter(|value| !value.is_empty())
-                        .ok_or_else(|| format!("RabbitMQ URI 환경 변수 `{uri_env}`가 필요함"))?;
+                        .ok_or_else(|| format!("RabbitMQ provider '{name}'의 uri_env가 가리키는 환경 변수가 없거나 비어 있음(변수 이름은 출력하지 않음)"))?;
                     Ok(aip_execution::brokers::ProviderConfig::RabbitMq(aip_execution::brokers::RabbitMqConfig {
                         name,
                         uri,
@@ -221,7 +222,16 @@ impl BrokerConfig {
             })
             .collect();
         let config = aip_execution::brokers::BrokerConfig { providers, outbound, inbound };
-        config.validate().map_err(|_| "broker 연결 또는 route 설정 오류".to_owned())?;
+        config.validate().map_err(|e| {
+            use aip_execution::brokers::RelayError;
+            match e {
+                RelayError::DuplicateRoute => "outbound·inbound route의 owner·queue 조합이 중복되었거나 형식이 올바르지 않음",
+                RelayError::UnknownProvider => "route가 설정에 없는 provider를 가리킴",
+                RelayError::RouteNotAllowed => "route의 종류(Kafka·RabbitMQ)가 가리키는 provider의 종류와 다름",
+                _ => "provider 이름·보안·주소 설정 또는 route의 topic·exchange·queue·한계 값 범위 오류",
+            }
+            .to_owned()
+        })?;
         Ok(config)
     }
 
@@ -374,6 +384,36 @@ mod tests {
     #[test]
     fn unknown_config_fields_are_rejected() {
         assert!(serde_json::from_value::<BrokerConfig>(json!({"outbound":[],"debug_password":"oops"})).is_err());
+    }
+
+    #[cfg(feature = "external-brokers")]
+    #[test]
+    fn broker_configuration_failures_name_the_cause_and_not_the_secret_variable() {
+        let kafka = |extra: serde_json::Value| -> String {
+            let mut value = json!({
+                "providers":[{"kind":"kafka","name":"events","bootstrap_servers":["127.0.0.1:9092"],"allow_private_networks":true,
+                    "security":{"kind":"sasl_tls","mechanism":"scram-sha-256","username":"u","password_env":"AIP_TEST_BROKER_SECRET_NAME_5521"}}],
+                "outbound":[]
+            });
+            for (key, item) in extra.as_object().into_iter().flatten() {
+                value[key] = item.clone();
+            }
+            let config: BrokerConfig = serde_json::from_value(value).unwrap();
+            config.into_execution().err().expect("must be rejected")
+        };
+        let missing_env = kafka(json!({}));
+        assert!(missing_env.contains("'events'") && missing_env.contains("환경 변수가 없"), "{missing_env}");
+        assert!(!missing_env.contains("AIP_TEST_BROKER_SECRET_NAME_5521"), "the variable name must not be printed: {missing_env}");
+        let unknown_provider = serde_json::from_value::<BrokerConfig>(json!({
+            "providers":[{"kind":"kafka","name":"events","bootstrap_servers":["127.0.0.1:9092"],"allow_private_networks":true,"security":{"kind":"plaintext","allow_insecure_transport":true}}],
+            "outbound":[{"owner":"42","queue":"q","destination":{"kind":"kafka","provider":"missing","topic":"t"}}]
+        }))
+        .unwrap()
+        .into_execution()
+        .err()
+        .expect("unknown provider");
+        assert!(unknown_provider.contains("없는 provider"), "{unknown_provider}");
+        assert_ne!(missing_env, unknown_provider);
     }
 
     #[cfg(feature = "external-brokers")]

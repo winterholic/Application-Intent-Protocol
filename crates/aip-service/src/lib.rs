@@ -303,6 +303,26 @@ fn error(code: &str, message: &str) -> Value {
     json!({"ok":false,"code":code,"message":message})
 }
 
+/// The error of a listener that did not start. Only the server's own validation sentences (`InvalidInput`, `TimedOut`)
+/// are fixed text that names a setting and never a value; every other io error is described by its kind, because it can
+/// carry an address, a path or the output of a worker runtime.
+fn server_start_error(e: &std::io::Error) -> Value {
+    use std::io::ErrorKind;
+    let message = match e.kind() {
+        ErrorKind::InvalidInput | ErrorKind::TimedOut => format!("서버 시작 설정 검증 실패: {e}"),
+        ErrorKind::AddrInUse => "listen 주소가 이미 사용 중임(listen 설정의 포트를 바꾸거나 다른 프로세스를 종료)".to_owned(),
+        ErrorKind::AddrNotAvailable => "listen 주소를 이 호스트에서 쓸 수 없음(listen 설정의 주소 확인)".to_owned(),
+        ErrorKind::PermissionDenied => {
+            "권한 거부로 listener 또는 worker 런타임을 시작하지 못함(포트 권한, 런타임 실행 권한, 격리 설정 확인)".to_owned()
+        }
+        ErrorKind::NotFound => "worker 런타임 실행 파일을 찾지 못함(workers.language의 node 또는 python3가 PATH에 있어야 함)".to_owned(),
+        kind => format!(
+            "서버 시작 준비 단계 실패(io {kind}): worker 런타임 점검, rate limit·outbox·audit 저장소 설치, listener 바인딩 중 하나이며 DB 연결과 권한을 먼저 확인"
+        ),
+    };
+    error("SERVER_CONFIG", &message)
+}
+
 /// The error of a JSON document that does not parse into its type, with the reason and the position. The
 /// reason of serde names keys and types (`unknown field`, `missing field`, `invalid type`), which a person
 /// or an AI needs to repair the file; the value that was wrong is dropped, because a configuration file can
@@ -868,8 +888,8 @@ async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
         let (engine, client_index) =
             tokio::time::timeout(std::time::Duration::from_secs(5), rag::build(rag_config, &db_url, &config.schema, infrastructure.db_pool))
                 .await
-                .map_err(|_| error("RAG_CONFIG", "RAG 초기화 기한 초과"))?
-                .map_err(|_| error("RAG_CONFIG", "RAG corpus, provider 또는 저장소 설정 오류"))?;
+                .map_err(|_| error("RAG_CONFIG", "RAG 초기화가 5초 안에 끝나지 않음(embedding·answer provider나 DB 응답을 확인)"))?
+                .map_err(|failure| error("RAG_CONFIG", &format!("RAG 설정 오류: {failure}")))?;
         infrastructure.rag = Some(engine);
         infrastructure.rag_client_index = client_index;
     }
@@ -882,7 +902,7 @@ async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
         Some(
             brokers::Worker::start(broker_config, db_url.clone(), config.schema.clone())
                 .await
-                .map_err(|_| error("BROKER_CONFIG", "broker 설정, 외부 연결 또는 worker 시작 실패"))?,
+                .map_err(|reason| error("BROKER_CONFIG", &format!("broker 설정 오류: {reason}")))?,
         )
     } else {
         None
@@ -893,9 +913,9 @@ async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
         .map_err(|_| error("SCHEMA_CONTEXT", "배포 fence 설정 실패"))?;
     sqlgen::try_set_schema(&config.schema).map_err(|_| error("SCHEMA_CONTEXT", "프로세스당 한 schema만 실행할 수 있음"))?;
     let auth = Arc::new(
-        aip_auth::AuthenticatorImpl::new(config.auth, db_url.clone(), config.schema)
+        aip_auth::AuthenticatorImpl::new_explained(config.auth, db_url.clone(), config.schema)
             .await
-            .map_err(|_| error("AUTH_CONFIG", "인증 설정 또는 공개키 집합 검증 실패"))?,
+            .map_err(|failure| error("AUTH_CONFIG", &format!("인증 설정 오류: {}", failure.reason)))?,
     );
     let enable_writes = config.workers.as_ref().is_some_and(|w| w.enable_writes);
     let enable_file_uploads = config.workers.as_ref().is_some_and(|w| w.enable_file_uploads);
@@ -925,7 +945,7 @@ async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
         infrastructure,
     )
     .await
-    .map_err(|_| error("SERVER_CONFIG", "listener·공식 확장 설정 실패"))?;
+    .map_err(|e| server_start_error(&e))?;
     let event = json!({"ok":true,"event":"listening","address":server.address.to_string(),"fingerprint":spike_v5_sdk::contract_fingerprint_with_all_extensions(&facts,config.wire.id_wire()),"idWire":config.wire.id_wire().label(),"authentication":"jwt-access-token"});
     if report(&event).is_err() {
         server.shutdown().await.map_err(|_| error("SERVER_STOP", "출력 실패 후 종료 실패"))?;
@@ -1450,5 +1470,31 @@ mod managed_config_tests {
         })
         .await;
         assert_eq!(result.unwrap_err()["code"], "INTEGRATION_CONFIG");
+    }
+
+    #[test]
+    fn a_listener_that_did_not_start_says_which_kind_of_failure_and_leaks_no_value() {
+        use std::io::{Error, ErrorKind};
+        let causes = [
+            Error::new(
+                ErrorKind::InvalidInput,
+                "local extension configuration: extension `stats` needs stats.mjs in the worker directory, which does not exist",
+            ),
+            Error::new(ErrorKind::AddrInUse, "Address already in use (os error 48) 127.0.0.1:4310"),
+            Error::new(ErrorKind::NotFound, "No such file or directory /opt/secret-runtime/node"),
+            Error::new(ErrorKind::PermissionDenied, "Permission denied /var/run/secret-socket"),
+            Error::other("worker runtime probe exited with exit status: 1; stdout=\"\"; stderr=\"token=abc123\""),
+        ];
+        let mut sentences = std::collections::HashSet::new();
+        for cause in &causes {
+            let value = server_start_error(cause);
+            assert_eq!(value["code"], "SERVER_CONFIG");
+            let message = value["message"].as_str().unwrap().to_owned();
+            assert!(!message.contains("secret") && !message.contains("abc123") && !message.contains("4310"), "{message}");
+            sentences.insert(message);
+        }
+        assert_eq!(sentences.len(), causes.len(), "each cause has its own sentence");
+        let validation = server_start_error(&causes[0])["message"].as_str().unwrap().to_owned();
+        assert!(validation.contains("stats.mjs"), "{validation}");
     }
 }

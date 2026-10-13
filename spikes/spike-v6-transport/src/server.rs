@@ -536,43 +536,52 @@ impl ReadExtensions {
     }
 
     fn validate_kinds(&self, facts: &Value, wire: IdWire, include_write: bool) -> io::Result<Self> {
-        let invalid = || io::Error::new(io::ErrorKind::InvalidInput, "invalid local READ extension configuration");
-        if !cfg!(any(target_os = "macos", target_os = "linux")) || wire == IdWire::Legacy {
-            return Err(invalid());
+        // Each failure names its cause and the extension involved (a contract name, never a path or a secret), so the
+        // operator can repair the worker directory or the declaration without reading the server source.
+        let invalid = |reason: &str| io::Error::new(io::ErrorKind::InvalidInput, format!("local extension configuration: {reason}"));
+        if !cfg!(any(target_os = "macos", target_os = "linux")) {
+            return Err(invalid("local workers are supported only on macOS and Linux"));
         }
-        let dir = self.dir.canonicalize().map_err(|_| invalid())?;
+        if wire == IdWire::Legacy {
+            return Err(invalid("local workers require a safe id wire, not the legacy one"));
+        }
+        let dir = self.dir.canonicalize().map_err(|_| invalid("the worker directory does not exist or cannot be resolved"))?;
         if !dir.is_dir() || dir.to_str().is_none() {
-            return Err(invalid());
+            return Err(invalid("the worker directory is not a directory or its path is not UTF-8"));
         }
-        let resource_extensions = facts["resources"]
-            .as_object()
-            .into_iter()
-            .flatten()
-            .flat_map(|(_, resource)| resource["extensions"].as_object().into_iter().flatten().map(|(_, extension)| extension));
-        let operations = facts["operations"].as_object().into_iter().flatten().map(|(_, operation)| operation);
-        for ext in resource_extensions.chain(operations) {
+        let resource_extensions =
+            facts["resources"].as_object().into_iter().flatten().flat_map(|(_, resource)| {
+                resource["extensions"].as_object().into_iter().flatten().map(|(name, extension)| (name.as_str(), extension))
+            });
+        let operations = facts["operations"].as_object().into_iter().flatten().map(|(name, operation)| (name.as_str(), operation));
+        for (name, ext) in resource_extensions.chain(operations) {
             let read = (ext["kind"] == "read" && ext["effect"] == "none")
                 || (ext["kind"] == "job" && (ext["effect"] == "none" || ext["effect"] == "managed"));
             let write = include_write && ext["kind"] == "write" && ext["effect"] == "db";
             if !read && !write {
                 continue;
             }
-            let implementation = ext["implementation"].as_str().ok_or_else(invalid)?;
-            let (module, function) = implementation.split_once('.').ok_or_else(invalid)?;
+            let implementation = ext["implementation"].as_str().ok_or_else(|| invalid(&format!("extension `{name}` declares no implementation")))?;
+            let (module, function) = implementation
+                .split_once('.')
+                .ok_or_else(|| invalid(&format!("extension `{name}` implementation must be written module.function")))?;
             let identifier = |part: &str| {
                 let mut bytes = part.bytes();
                 bytes.next().is_some_and(|b| b.is_ascii_alphabetic() || b == b'_') && bytes.all(|b| b.is_ascii_alphanumeric() || b == b'_')
             };
             if !identifier(module) || !identifier(function) {
-                return Err(invalid());
+                return Err(invalid(&format!("extension `{name}` implementation module and function must be identifiers")));
             }
             let suffix = match self.lang {
                 WorkerLang::Node => "mjs",
                 WorkerLang::Python => "py",
             };
-            let file = dir.join(format!("{module}.{suffix}")).canonicalize().map_err(|_| invalid())?;
+            let file = dir
+                .join(format!("{module}.{suffix}"))
+                .canonicalize()
+                .map_err(|_| invalid(&format!("extension `{name}` needs {module}.{suffix} in the worker directory, which does not exist")))?;
             if !file.starts_with(&dir) || !file.is_file() {
-                return Err(invalid());
+                return Err(invalid(&format!("extension `{name}` module {module}.{suffix} must be a regular file inside the worker directory")));
             }
         }
         Ok(Self { lang: self.lang, dir })
@@ -795,5 +804,30 @@ mod extension_config_tests {
             let facts = json!({"resources":{"Echo":{"extensions":{"echo":{"kind":"read","effect":"none","implementation":implementation}}}}});
             assert!(config.validate(&facts, IdWire::SafeNumber).is_err(), "accepted {implementation}");
         }
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn extension_configuration_failures_name_their_cause_without_paths() {
+        let dir = std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../spike-v4-worker/extensions"));
+        let config = ReadExtensions { lang: WorkerLang::Node, dir };
+        let declare = |implementation: serde_json::Value| json!({"resources":{"Echo":{"extensions":{"echo":{"kind":"read","effect":"none","implementation":implementation}}}}});
+        let message = |facts: Value| config.validate(&facts, IdWire::SafeNumber).err().unwrap().to_string();
+        let missing_module = message(declare(json!("no_such_module.echo")));
+        assert!(missing_module.contains("`echo`") && missing_module.contains("no_such_module.mjs"), "{missing_module}");
+        assert!(!missing_module.contains("spike-v4-worker"), "the configured path must not be echoed: {missing_module}");
+        let malformed = message(declare(json!("values")));
+        assert!(malformed.contains("module.function"), "{malformed}");
+        let identifier = message(declare(json!("values.1bad")));
+        assert!(identifier.contains("identifiers"), "{identifier}");
+        let absent = message(declare(serde_json::Value::Null));
+        assert!(absent.contains("no implementation"), "{absent}");
+        let legacy = config.validate(&declare(json!("values.echo")), IdWire::Legacy).err().unwrap().to_string();
+        assert!(legacy.contains("safe id wire"), "{legacy}");
+        let gone = ReadExtensions { lang: WorkerLang::Node, dir: "/nonexistent/aip-workers".into() };
+        let gone_message = gone.validate(&declare(json!("values.echo")), IdWire::SafeNumber).err().unwrap().to_string();
+        assert!(gone_message.contains("worker directory") && !gone_message.contains("nonexistent"), "{gone_message}");
+        let all = [missing_module, malformed, identifier, absent, legacy, gone_message];
+        assert_eq!(all.iter().collect::<std::collections::HashSet<_>>().len(), all.len(), "each cause has its own sentence");
     }
 }

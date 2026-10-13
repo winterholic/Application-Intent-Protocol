@@ -173,32 +173,59 @@ async fn read_jwks(source: &JwksSource, http: &reqwest::Client) -> Result<Vec<u8
     }
 }
 
+/// Why an authenticator could not be built. `reason` is a fixed sentence that names the offending setting but
+/// never its value, so an operator or an AI can repair the file and the log of a failed start holds no secret.
+#[derive(Debug, PartialEq, Eq)]
+pub struct ConfigFailure {
+    pub kind: AuthError,
+    pub reason: &'static str,
+}
+
+fn invalid(reason: &'static str) -> ConfigFailure {
+    ConfigFailure { kind: AuthError::Invalid, reason }
+}
+
+fn unavailable(reason: &'static str) -> ConfigFailure {
+    ConfigFailure { kind: AuthError::Unavailable, reason }
+}
+
 impl AuthenticatorImpl {
     pub async fn new(config: Config, db_url: String, schema: String) -> Result<Self, AuthError> {
-        if !valid_identifier(&schema) || config.audience.is_empty() || config.audience.len() > 256 || db_url.is_empty() {
-            return Err(AuthError::Invalid);
+        Self::new_explained(config, db_url, schema).await.map_err(|failure| failure.kind)
+    }
+
+    pub async fn new_explained(config: Config, db_url: String, schema: String) -> Result<Self, ConfigFailure> {
+        if !valid_identifier(&schema) {
+            return Err(invalid("배포 schema 이름이 올바르지 않음"));
         }
-        let issuer = reqwest::Url::parse(&config.issuer).map_err(|_| AuthError::Invalid)?;
-        if issuer.scheme() != "https"
-            || issuer.host_str().is_none()
-            || !issuer.username().is_empty()
-            || issuer.password().is_some()
-            || issuer.fragment().is_some()
-            || issuer.query().is_some()
-        {
-            return Err(AuthError::Invalid);
+        if config.audience.is_empty() || config.audience.len() > 256 {
+            return Err(invalid("audience는 1~256바이트여야 함"));
+        }
+        if db_url.is_empty() {
+            return Err(invalid("DB 연결 문자열이 비어 있음"));
+        }
+        let issuer = reqwest::Url::parse(&config.issuer).map_err(|_| invalid("issuer가 URL이 아님"))?;
+        if issuer.scheme() != "https" {
+            return Err(invalid("issuer는 https여야 함"));
+        }
+        if issuer.host_str().is_none() {
+            return Err(invalid("issuer에 호스트가 없음"));
+        }
+        if !issuer.username().is_empty() || issuer.password().is_some() {
+            return Err(invalid("issuer에 자격 증명을 넣을 수 없음"));
+        }
+        if issuer.fragment().is_some() || issuer.query().is_some() {
+            return Err(invalid("issuer에 query·fragment를 넣을 수 없음"));
         }
         match &config.jwks {
-            JwksSource::File { path } if path.as_os_str().is_empty() => return Err(AuthError::Invalid),
+            JwksSource::File { path } if path.as_os_str().is_empty() => return Err(invalid("jwks.path가 비어 있음")),
             JwksSource::Https { url } => {
-                let parsed = reqwest::Url::parse(url).map_err(|_| AuthError::Invalid)?;
-                if parsed.scheme() != "https"
-                    || parsed.host_str().is_none()
-                    || !parsed.username().is_empty()
-                    || parsed.password().is_some()
-                    || parsed.fragment().is_some()
-                {
-                    return Err(AuthError::Invalid);
+                let parsed = reqwest::Url::parse(url).map_err(|_| invalid("jwks.url이 URL이 아님"))?;
+                if parsed.scheme() != "https" || parsed.host_str().is_none() {
+                    return Err(invalid("jwks.url은 호스트가 있는 https여야 함"));
+                }
+                if !parsed.username().is_empty() || parsed.password().is_some() || parsed.fragment().is_some() {
+                    return Err(invalid("jwks.url에 자격 증명·fragment를 넣을 수 없음"));
                 }
             }
             _ => {}
@@ -207,8 +234,13 @@ impl AuthenticatorImpl {
             .redirect(reqwest::redirect::Policy::none())
             .timeout(REMOTE_TIMEOUT)
             .build()
-            .map_err(|_| AuthError::Unavailable)?;
-        let keys = parse_jwks(&read_jwks(&config.jwks, &http).await?)?;
+            .map_err(|_| unavailable("HTTP client를 만들 수 없음"))?;
+        let document = read_jwks(&config.jwks, &http).await.map_err(|_| match config.jwks {
+            JwksSource::File { .. } => unavailable("jwks.path 파일을 읽을 수 없음(없음, 일반 파일 아님, 크기 상한 초과, 읽기 기한 초과 중 하나)"),
+            JwksSource::Https { .. } => unavailable("jwks.url에서 공개키 집합을 받지 못함(연결, TLS, 성공 상태 코드, 크기 상한, 기한 중 하나)"),
+        })?;
+        let keys = parse_jwks(&document)
+            .map_err(|_| unavailable("공개키 집합(JWKS) 형식 오류: 키가 하나 이상이고 각 키가 RSA 서명용 kid·n·e와 지원 알고리즘을 가져야 함"))?;
         let now = Instant::now();
         Ok(Self {
             config,
@@ -513,5 +545,42 @@ mod tests {
         let result = read_jwks(&JwksSource::Https { url }, &tls_client(ca, port)).await;
         assert_eq!(result, Err(AuthError::Unavailable));
         assert!(!worker.join().expect("TLS server thread"));
+    }
+
+    async fn explain(issuer: &str, audience: &str, jwks: JwksSource) -> ConfigFailure {
+        let config = Config { issuer: issuer.into(), audience: audience.into(), jwks };
+        AuthenticatorImpl::new_explained(config, "host=x".into(), "aip_app".into()).await.err().expect("configuration must be rejected")
+    }
+
+    #[tokio::test]
+    async fn each_configuration_failure_names_its_setting_and_no_value() {
+        let file = || JwksSource::File { path: "/nonexistent/aip-jwks-probe.json".into() };
+        let secret_marker = "very-secret-marker-7731";
+        let cases = [
+            (explain("https://issuer.example", "", file()).await, "audience"),
+            (explain("not a url", "aud", file()).await, "issuer가 URL이 아님"),
+            (explain("http://issuer.example", "aud", file()).await, "issuer는 https"),
+            (explain(&format!("https://user:{secret_marker}@issuer.example"), "aud", file()).await, "issuer에 자격 증명"),
+            (explain("https://issuer.example/?a=1", "aud", file()).await, "issuer에 query"),
+            (explain("https://issuer.example", "aud", JwksSource::File { path: "".into() }).await, "jwks.path가 비어"),
+            (explain("https://issuer.example", "aud", JwksSource::Https { url: "http://keys.example/jwks".into() }).await, "jwks.url은"),
+            (explain("https://issuer.example", "aud", file()).await, "jwks.path 파일을 읽을 수 없음"),
+        ];
+        let mut distinct = std::collections::HashSet::new();
+        for (failure, needle) in cases {
+            assert!(failure.reason.contains(needle), "{} should contain {needle}", failure.reason);
+            assert!(!failure.reason.contains(secret_marker) && !failure.reason.contains("nonexistent"));
+            distinct.insert(failure.reason);
+        }
+        assert_eq!(distinct.len(), 8, "every cause has its own sentence");
+    }
+
+    #[tokio::test]
+    async fn a_malformed_key_set_is_told_apart_from_an_unreadable_one() {
+        let path = std::env::temp_dir().join(format!("aip-auth-jwks-{}.json", std::process::id()));
+        std::fs::write(&path, b"{\"keys\":[]}").expect("write test key set");
+        let failure = explain("https://issuer.example", "aud", JwksSource::File { path: path.clone() }).await;
+        let _ = std::fs::remove_file(&path);
+        assert!(failure.reason.contains("(JWKS) 형식 오류"), "{}", failure.reason);
     }
 }

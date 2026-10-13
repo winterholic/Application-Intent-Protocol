@@ -10,7 +10,7 @@
 |---|---|---|---|---|
 | F1 | 제품 정의 오류가 코드·줄만 줌 | 실제 사용 시나리오 미지원(AI 자가 수정) | 높음 | 수정·테스트 |
 | F2 | PoC 검사기 진단 107개 중 69개에 고치는 방법 없음 | 실제 사용 시나리오 미지원 | 중간 | 수정·테스트 |
-| F3 | 제품 설정 오류가 모두 같은 문장 | 실제 사용 시나리오 미지원 | 중간 | 수정·테스트 |
+| F3 | 제품 설정 오류가 모두 같은 문장 | 실제 사용 시나리오 미지원 | 중간 | 수정·테스트(포괄 문장 후속까지 완료) |
 | F4 | 제품 서버에 요청 ID·요청 로그 없음 | 실제 사용 시나리오 미지원(추적) | 높음 | 수정·테스트 |
 | F5 | 같은 `.aip` 확장자의 두 언어가 서로의 파일을 오류로 오인시킴 | 의미론적 모순(AI 혼동) | 높음 | 안내 추가·테스트, 구조 결정은 남김 |
 | F6 | `budget` 없는 `expose read`가 조용히 도달 불가 | 불필요한 복잡도(암묵적 기본값) | 낮음 | 개발 조언 추가·테스트 |
@@ -58,7 +58,7 @@
 - 근본 원인: 설정에 비밀이 있을 수 있어 serde 오류를 통째로 버렸다. 이유와 위치까지 버릴 필요는 없었다.
 - 수정(커밋 4416432): serde 오류의 이유(unknown/missing field, 기대 타입)와 줄·열을 알려주되, 틀린 값은 지운다(`invalid type: string "..."` → `invalid type: string`, unknown variant의 값 삭제, Deserialize 구현이 만든 임의 메시지는 "a value is not accepted"). 외부 연동은 어느 integration이 어느 규칙(예: `timeout_ms는 1~30000`)을 어겼는지 이름과 한계로 알리고, URL과 비밀 환경 변수 이름은 출력하지 않는다(기존 테스트 `secret_is_loaded_only_from_explicit_environment_reference`가 변수 이름 비노출을 고정하고 있어 그 결정을 지켰다).
 - 검증: `aip-service` 단위 테스트 5개(키·줄 번호, 비밀 값이 어떤 오류에도 나오지 않음, 이유 정리 함수, URL 자격 증명 비노출).
-- 남은 것: `SERVER_CONFIG "listener·공식 확장 설정 실패"`, `invalid local READ extension configuration`, `AUTH_CONFIG`, `RAG_CONFIG`, `BROKER_CONFIG`는 여전히 포괄 문장이다. 서로 다른 원인이 한 코드에 묶여 있어 같은 방식의 분리가 필요하다(후속).
+- 후속 수정(2026-10-13): 남았던 포괄 문장도 같은 방식으로 원인별로 나눴다. `AUTH_CONFIG`는 audience·issuer(https·자격 증명·query)·jwks 위치·공개키 집합 읽기·JWKS 형식을 서로 다른 문장으로 알린다(`aip-auth::ConfigFailure`). `RAG_CONFIG`는 어느 provider의 `api_key_env`·endpoint 설정인지, 이름 중복, 저장소 초기화, corpus 설정을 나눈다. `BROKER_CONFIG`는 provider 이름으로 환경 변수 누락을 알리고(변수 이름은 출력하지 않음), route의 중복·알 수 없는 provider·종류 불일치를 나눈다. `SERVER_CONFIG`는 서버 자체 검증 문장(`InvalidInput`·`TimedOut`)만 그대로 싣고 listen 주소 사용 중·권한·런타임 없음 등은 kind별 문장으로 바꿨으며, 그 밖의 io 오류는 주소·경로·worker 출력이 새지 않도록 kind만 말한다. 로컬 READ 확장 검증(`invalid local READ extension configuration`)은 worker 디렉터리, 구현 이름 형식, 모듈 파일 누락·경계 이탈, 안전 wire 요구를 확장 이름과 함께 구분하되 경로는 싣지 않는다. 검증: `aip-auth` 단위 2개, `aip-service` 단위 1개·rag 1개 확장, spike-v6 `extension_configuration_failures_name_their_cause_without_paths`. broker 테스트는 `external-brokers` 빌드가 이 환경에서 링크되지 않아 컴파일(`cargo check --features external-brokers --tests`)만 확인했고 실행은 미실행이다.
 
 ## F4. 요청 ID와 요청 로그
 
