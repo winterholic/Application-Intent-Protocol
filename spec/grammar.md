@@ -436,7 +436,11 @@ retain       = 'retain' Type-ident 'for' duration 'after' path
 rule         = cross-tenant? 'rule' Type-ident 'on' Type-ident ident 'when' expr 'do' block ;
 (* 같은 트랜잭션 안, 커밋 직전에 평가한다. 조건이 거짓에서 참이 되는 순간에만 본문을 실행하고(에지),
    거짓이 되면 다시 무장한다. 조건은 행 자신, 행의 직접 컬렉션(e.items), 행을 참조하는 집합
-   (Order o where o.product = p)만 읽을 수 있다. 연쇄는 16라운드 안에 끝나야 한다. *)
+   (Order o where o.product = p)만 읽을 수 있다. 연쇄는 16라운드 안에 끝나야 한다.
+   한 트랜잭션의 같은 라운드에서 함께 참이 되는 rule은 선언 순서대로 실행하고, 같은 rule이 여러 행에서 참이 되면 행 id(UUID 값 오름차순) 순이다.
+   rule 이름 순이나 저장소가 돌려주는 순서에 기대면 안 되며, 같은 필드를 쓰는 rule이 여럿이면 마지막에 선언한 rule의 값이 남는다.
+   선언 순서는 Core IR의 `reactions` 배열 순서이기도 해서 rule의 선언 위치를 바꾸면 digest도 바뀐다.
+   근거 테스트: `crates/aip-cli/tests/rule_order_e2e.rs`의 `rules_that_fire_together_run_in_declaration_order`. *)
 projection   = 'projection' Type-ident 'from' 'events' '[' Type-ident (',' Type-ident)* ']' 'key' ident '{'
                  ('on' Type-ident ident ':' stmt)+ '}' ;
 search       = 'search' Type-ident 'on' Type-ident 'fields' '[' search-field (',' search-field)* ']'
