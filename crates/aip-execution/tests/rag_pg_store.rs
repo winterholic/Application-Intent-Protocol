@@ -62,8 +62,8 @@ async fn postgres_store_replaces_atomically_scopes_owner_and_serializes_capacity
     let store = PgJsonVectorStore::with_factory(std::sync::Arc::new(TestFactory(database_url())), &schema).unwrap();
     store.initialize().await.unwrap();
 
-    store.replace_document(vec![chunk("alice", "doc-a", "old")], 1).await.unwrap();
-    store.replace_document(vec![chunk("alice", "doc-a", "new")], 1).await.unwrap();
+    store.replace_document(vec![chunk("alice", "doc-a", "old")], 1, 1).await.unwrap();
+    store.replace_document(vec![chunk("alice", "doc-a", "new")], 1, 1).await.unwrap();
     let alice = store.scan_owner("handbook", "alice", 1).await.unwrap();
     assert_eq!(alice.len(), 1);
     assert_eq!(alice[0].text, "new", "same document replacement is idempotent");
@@ -74,7 +74,7 @@ async fn postgres_store_replaces_atomically_scopes_owner_and_serializes_capacity
         second.chunk_index = 1;
         second
     }];
-    assert!(matches!(store.replace_document(too_large, 1).await, Err(RagError::LimitExceeded)));
+    assert!(matches!(store.replace_document(too_large, 1, 1).await, Err(RagError::LimitExceeded)));
     let after_reject = store.scan_owner("handbook", "alice", 1).await.unwrap();
     assert_eq!(after_reject.len(), 1);
     assert_eq!(after_reject[0].text, "new", "failed replacement leaves prior document intact");
@@ -82,8 +82,8 @@ async fn postgres_store_replaces_atomically_scopes_owner_and_serializes_capacity
     assert_eq!(store.delete_document("handbook", "alice", "doc-a").await.unwrap(), 1);
     assert_eq!(store.delete_document("handbook", "alice", "doc-a").await.unwrap(), 0);
     let (left, right) = tokio::join!(
-        store.replace_document(vec![chunk("alice", "doc-left", "left")], 1),
-        store.replace_document(vec![chunk("alice", "doc-right", "right")], 1),
+        store.replace_document(vec![chunk("alice", "doc-left", "left")], 1, 1),
+        store.replace_document(vec![chunk("alice", "doc-right", "right")], 1, 1),
     );
     assert_ne!(left.is_ok(), right.is_ok(), "corpus advisory lock must prevent concurrent capacity oversubscription");
     let alice = store.scan_owner("handbook", "alice", 1).await.unwrap();

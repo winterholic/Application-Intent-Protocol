@@ -56,6 +56,7 @@ fn corpus() -> CorpusSpec {
         max_document_bytes: 16 * 1024,
         max_document_chunks: 100,
         max_corpus_chunks: 100,
+        max_owner_chunks: None,
         max_top_k: 8,
         max_context_chars: 2048,
         max_prompt_tokens: 8192,
@@ -289,4 +290,39 @@ async fn search_fails_closed_until_documents_are_reindexed_for_new_embedding_pro
         engine_v2.search(SearchRequest { principal: "alice", corpus: "manuals", query: "query", top_k: 1, min_score: None }).await,
         Err(RagError::Storage)
     ));
+}
+
+fn engine_with(spec: CorpusSpec) -> Result<RagEngine, RagError> {
+    let mut embeddings = std::collections::HashMap::new();
+    embeddings.insert("keyword".to_owned(), Arc::new(KeywordEmbedder) as Arc<dyn EmbeddingProvider>);
+    RagEngine::new(vec![spec], embeddings, std::collections::HashMap::new(), Arc::new(MemoryVectorStore::default()), Arc::new(OwnerAuthorizer))
+}
+
+/// One principal indexing documents (`client_index: true`) must not be able to use up the corpus and make every other
+/// principal's `index` fail with a limit error.
+#[tokio::test]
+async fn an_owner_chunk_limit_keeps_one_principal_from_filling_the_corpus() {
+    let engine =
+        engine_with(CorpusSpec { max_corpus_chunks: 100, max_owner_chunks: Some(10), max_document_chunks: 5, answer_provider: None, ..corpus() })
+            .unwrap();
+    for n in 0..10 {
+        engine.index_document("alice", "manuals", "alice", &format!("doc-{n}"), "source", "alpha").await.unwrap();
+    }
+    assert!(
+        matches!(engine.index_document("alice", "manuals", "alice", "doc-10", "source", "alpha").await, Err(RagError::LimitExceeded)),
+        "alice is at her share"
+    );
+    // Replacing one of her own documents is still allowed at the limit, and other principals are unaffected.
+    engine.index_document("alice", "manuals", "alice", "doc-3", "source", "beta").await.unwrap();
+    for n in 0..10 {
+        engine.index_document("bob", "manuals", "bob", &format!("doc-{n}"), "source", "alpha").await.unwrap();
+    }
+}
+
+#[test]
+fn an_owner_chunk_limit_must_fit_between_the_document_and_corpus_limits() {
+    for owner in [0, 101, 4] {
+        let spec = CorpusSpec { max_corpus_chunks: 100, max_document_chunks: 5, max_owner_chunks: Some(owner), answer_provider: None, ..corpus() };
+        assert!(matches!(engine_with(spec), Err(RagError::InvalidInput)), "max_owner_chunks {owner} must be rejected");
+    }
 }

@@ -90,6 +90,7 @@ async fn the_trace_of_a_request_reaches_its_outbound_calls() {
         max_document_bytes: 1024,
         max_document_chunks: 10,
         max_corpus_chunks: 100,
+        max_owner_chunks: None,
         max_top_k: 10,
         max_context_chars: 1024,
         max_prompt_tokens: 4096,

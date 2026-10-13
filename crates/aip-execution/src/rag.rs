@@ -85,6 +85,8 @@ pub struct CorpusSpec {
     pub max_document_bytes: usize,
     pub max_document_chunks: usize,
     pub max_corpus_chunks: usize,
+    /// Chunks one owner may hold in this corpus. `None` leaves only the corpus total, so a single owner can use all of it.
+    pub max_owner_chunks: Option<usize>,
     pub max_top_k: usize,
     pub max_context_chars: usize,
     /// Conservative UTF-8 byte ceiling for prompt tokens, including fixed
@@ -109,6 +111,7 @@ impl CorpusSpec {
             || self.max_document_bytes > MAX_DOCUMENT_BYTES
             || self.max_document_chunks == 0
             || self.max_document_chunks > self.max_corpus_chunks
+            || self.max_owner_chunks.is_some_and(|owner| owner == 0 || owner > self.max_corpus_chunks || owner < self.max_document_chunks)
             || self.max_corpus_chunks == 0
             || self.max_corpus_chunks > MAX_CORPUS_CHUNKS
             || vector_values > MAX_VECTOR_VALUES_PER_CORPUS
@@ -206,7 +209,9 @@ pub struct StoredChunk {
 }
 
 pub trait RagStore: Send + Sync {
-    fn replace_document<'a>(&'a self, chunks: Vec<StoredChunk>, max_corpus_chunks: usize) -> StoreFuture<'a, ()>;
+    /// `max_owner_chunks` bounds what the document's owner may hold in the corpus (replacing one of their own documents
+    /// does not count the old chunks); `max_corpus_chunks` bounds the corpus as a whole.
+    fn replace_document<'a>(&'a self, chunks: Vec<StoredChunk>, max_corpus_chunks: usize, max_owner_chunks: usize) -> StoreFuture<'a, ()>;
     fn delete_document<'a>(&'a self, corpus: &'a str, owner: &'a str, document_id: &'a str) -> StoreFuture<'a, usize>;
     fn scan_owner<'a>(&'a self, corpus: &'a str, owner: &'a str, max_chunks: usize) -> StoreFuture<'a, Vec<StoredChunk>>;
 }
@@ -219,7 +224,7 @@ pub struct MemoryVectorStore {
 }
 
 impl RagStore for MemoryVectorStore {
-    fn replace_document<'a>(&'a self, chunks: Vec<StoredChunk>, max_corpus_chunks: usize) -> StoreFuture<'a, ()> {
+    fn replace_document<'a>(&'a self, chunks: Vec<StoredChunk>, max_corpus_chunks: usize, max_owner_chunks: usize) -> StoreFuture<'a, ()> {
         Box::pin(async move {
             let Some(first) = chunks.first() else { return Err(RagError::InvalidInput) };
             let key = (first.corpus.clone(), first.owner_id.clone(), first.document_id.clone());
@@ -232,6 +237,10 @@ impl RagStore for MemoryVectorStore {
             let mut guard = self.chunks.write().map_err(|_| RagError::Storage)?;
             let remaining = guard.keys().filter(|(corpus, owner, doc, _)| corpus == &key.0 && !(owner == &key.1 && doc == &key.2)).count();
             if remaining.saturating_add(chunks.len()) > max_corpus_chunks {
+                return Err(RagError::LimitExceeded);
+            }
+            let owned = guard.keys().filter(|(corpus, owner, doc, _)| corpus == &key.0 && owner == &key.1 && doc != &key.2).count();
+            if owned.saturating_add(chunks.len()) > max_owner_chunks {
                 return Err(RagError::LimitExceeded);
             }
             guard.retain(|(corpus, owner, doc, _), _| !(corpus == &key.0 && owner == &key.1 && doc == &key.2));
@@ -301,7 +310,7 @@ impl PgJsonVectorStore {
 }
 
 impl RagStore for PgJsonVectorStore {
-    fn replace_document<'a>(&'a self, chunks: Vec<StoredChunk>, max_corpus_chunks: usize) -> StoreFuture<'a, ()> {
+    fn replace_document<'a>(&'a self, chunks: Vec<StoredChunk>, max_corpus_chunks: usize, max_owner_chunks: usize) -> StoreFuture<'a, ()> {
         Box::pin(async move {
             let Some(first) = chunks.first() else { return Err(RagError::InvalidInput) };
             let (corpus, owner, doc) = (first.corpus.clone(), first.owner_id.clone(), first.document_id.clone());
@@ -323,6 +332,17 @@ impl RagStore for PgJsonVectorStore {
                 .map_err(|_| RagError::Storage)?
                 .get(0);
             if usize::try_from(other).unwrap_or(usize::MAX).saturating_add(chunks.len()) > max_corpus_chunks {
+                return Err(RagError::LimitExceeded);
+            }
+            let owned: i64 = tx
+                .query_one(
+                    &format!("SELECT count(*) FROM {table} WHERE corpus=$1 AND owner_id=$2 AND document_id<>$3"),
+                    &[&corpus, &owner, &doc],
+                )
+                .await
+                .map_err(|_| RagError::Storage)?
+                .get(0);
+            if usize::try_from(owned).unwrap_or(usize::MAX).saturating_add(chunks.len()) > max_owner_chunks {
                 return Err(RagError::LimitExceeded);
             }
             tx.execute(&format!("DELETE FROM {table} WHERE corpus=$1 AND owner_id=$2 AND document_id=$3"), &[&corpus, &owner, &doc])
@@ -694,9 +714,12 @@ impl RagEngine {
             });
         }
         let count = stored.len();
-        tokio::time::timeout(remaining(deadline)?, self.store.replace_document(stored, corpus.max_corpus_chunks))
-            .await
-            .map_err(|_| RagError::Timeout)??;
+        tokio::time::timeout(
+            remaining(deadline)?,
+            self.store.replace_document(stored, corpus.max_corpus_chunks, corpus.max_owner_chunks.unwrap_or(corpus.max_corpus_chunks)),
+        )
+        .await
+        .map_err(|_| RagError::Timeout)??;
         Ok(count)
     }
 
@@ -775,10 +798,13 @@ impl RagEngine {
             return Err(RagError::Provider);
         }
         let query_vector = normalize_vector(vectors.into_iter().next().ok_or(RagError::Provider)?, corpus.dimensions)?;
-        let rows = tokio::time::timeout(remaining(deadline)?, self.store.scan_owner(&corpus.name, owner, corpus.max_corpus_chunks))
-            .await
-            .map_err(|_| RagError::Timeout)??;
-        if rows.len() > corpus.max_corpus_chunks {
+        let rows = tokio::time::timeout(
+            remaining(deadline)?,
+            self.store.scan_owner(&corpus.name, owner, corpus.max_owner_chunks.unwrap_or(corpus.max_corpus_chunks)),
+        )
+        .await
+        .map_err(|_| RagError::Timeout)??;
+        if rows.len() > corpus.max_owner_chunks.unwrap_or(corpus.max_corpus_chunks) {
             return Err(RagError::LimitExceeded);
         }
         let mut scored: Vec<(f32, StoredChunk)> = Vec::with_capacity(top_k);

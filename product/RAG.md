@@ -21,7 +21,7 @@
   "corpora":[{
     "name":"manuals","embedding_provider":"documents","answer_provider":"assistant",
     "dimensions":768,"chunk_chars":1024,"overlap_chars":128,
-    "max_document_bytes":524288,"max_document_chunks":1000,"max_corpus_chunks":10000,
+    "max_document_bytes":524288,"max_document_chunks":1000,"max_corpus_chunks":10000,"max_owner_chunks":2000,
     "max_top_k":10,"max_context_chars":16000,"max_prompt_tokens":24000,
     "max_answer_tokens":1024,"timeout_ms":30000
   }]
@@ -42,7 +42,7 @@ console.log(result.answer, result.citations);
 
 HTTP 경로는 POST /rag/search, /rag/answer, /rag/index, /rag/delete다. Bearer와 x-aip-contract가 필요하다. 활성화와 client 색인 허용 여부는 인증된 capability catalog에서 탐색한다. 고정 입력 필드만 허용하고 응답의 계약 지문도 검사한다.
 
-색인·삭제의 client 접근은 기본 false다. client_index:true를 설정하면 인증된 사용자가 자신의 corpus 문서를 수정할 수 있다. 업무 승인 정책이 필요하면 이 옵션을 열지 않고 신뢰한 서버에서 RagEngine::index_document와 delete_document를 호출한다. 허용한 배포에서만 다음 API를 쓴다.
+색인·삭제의 client 접근은 기본 false다. client_index:true를 설정하면 인증된 사용자가 자신의 corpus 문서를 수정할 수 있다. 이때 모든 corpus에 `max_owner_chunks`(principal 하나가 쓸 수 있는 chunk 수, `max_document_chunks` 이상 `max_corpus_chunks` 이하)를 지정해야 시작한다. 한 사용자가 corpus를 채워 다른 사용자의 색인을 막는 일을 막고 검색이 메모리에 올리는 chunk 수도 이 값으로 묶인다. `max_corpus_chunks`는 전체 상한으로 남으므로 `예상 사용자 수 × max_owner_chunks` 이하로 두어야 한 사용자의 몫이 보장된다. 업무 승인 정책이 필요하면 이 옵션을 열지 않고 신뢰한 서버에서 RagEngine::index_document와 delete_document를 호출한다. 허용한 배포에서만 다음 API를 쓴다.
 
 ```ts
 await client.rag.index("manuals", "return-policy-v1", "사내 반품 정책", plainText);

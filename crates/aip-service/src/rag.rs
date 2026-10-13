@@ -29,6 +29,8 @@ pub struct Corpus {
     pub max_document_bytes: usize,
     pub max_document_chunks: usize,
     pub max_corpus_chunks: usize,
+    #[serde(default)]
+    pub max_owner_chunks: Option<usize>,
     pub max_top_k: usize,
     pub max_context_chars: usize,
     pub max_prompt_tokens: usize,
@@ -88,6 +90,16 @@ pub async fn build(
     schema: &str,
     pool_options: spike_v6_transport::pool::PoolOptions,
 ) -> Result<(Arc<RagEngine>, bool), String> {
+    // With client indexing every principal writes into the corpus, so without a per-owner share the first one to fill the
+    // corpus makes indexing fail for everyone else. The share is a capacity decision, so it has to be stated.
+    if config.client_index {
+        if let Some(corpus) = config.corpora.iter().find(|corpus| corpus.max_owner_chunks.is_none()) {
+            return Err(format!(
+                "client_index가 켜져 있으면 corpus '{}'에 max_owner_chunks(principal 하나가 쓸 수 있는 chunk 수)를 지정해야 함",
+                corpus.name
+            ));
+        }
+    }
     let mut embeddings: HashMap<String, Arc<dyn EmbeddingProvider>> = HashMap::new();
     for provider in &config.embedding_providers {
         let key = key_from_env(&provider.name, &provider.api_key_env)?;
@@ -128,6 +140,7 @@ pub async fn build(
             max_document_bytes: corpus.max_document_bytes,
             max_document_chunks: corpus.max_document_chunks,
             max_corpus_chunks: corpus.max_corpus_chunks,
+            max_owner_chunks: corpus.max_owner_chunks,
             max_top_k: corpus.max_top_k,
             max_context_chars: corpus.max_context_chars,
             max_prompt_tokens: corpus.max_prompt_tokens,
@@ -160,6 +173,27 @@ mod tests {
         assert!(!config.client_index);
         assert!(config.embedding_providers.is_empty());
         assert!(serde_json::from_value::<Config>(json!({"corpora":[],"allow_all":true})).is_err());
+    }
+
+    fn corpus(name: &str, owner: Option<u64>) -> serde_json::Value {
+        let mut value = json!({"name":name,"embedding_provider":"e","dimensions":2,"chunk_chars":64,"max_document_bytes":1024,
+            "max_document_chunks":10,"max_corpus_chunks":100,"max_top_k":5,"max_context_chars":1000,"max_prompt_tokens":8000,
+            "max_answer_tokens":64,"timeout_ms":1000});
+        if let Some(owner) = owner {
+            value["max_owner_chunks"] = json!(owner);
+        }
+        value
+    }
+
+    #[tokio::test]
+    async fn client_indexing_requires_an_owner_share_for_every_corpus() {
+        let pool = spike_v6_transport::pool::PoolOptions::default();
+        let config: Config = serde_json::from_value(json!({"client_index":true,"corpora":[corpus("a",Some(20)),corpus("b",None)]})).unwrap();
+        let failure = build(&config, "host=unused", "aip_app", pool).await.err().expect("must be rejected before any connection");
+        assert!(failure.contains("'b'") && failure.contains("max_owner_chunks"), "{failure}");
+        // Server-side indexing only (client_index false) does not need the share; the configuration parses as before.
+        let server_only: Config = serde_json::from_value(json!({"corpora":[corpus("b",None)]})).unwrap();
+        assert!(server_only.corpora[0].max_owner_chunks.is_none());
     }
 
     #[test]
