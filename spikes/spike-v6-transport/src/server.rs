@@ -362,6 +362,22 @@ pub async fn listen_with_prototype_options(
     options: ServerOptions,
     enable_write: bool,
 ) -> io::Result<Server> {
+    listen_with_prototype_launch(facts, wire, address, db_url, extensions, options, enable_write, WorkerLaunchConfig::default()).await
+}
+
+/// Same as `listen_with_prototype_options` with an explicit worker launch configuration, for
+/// trusted fixtures that must write files the default worker sandbox forbids.
+#[allow(clippy::too_many_arguments)]
+pub async fn listen_with_prototype_launch(
+    facts: Value,
+    wire: IdWire,
+    address: SocketAddr,
+    db_url: String,
+    extensions: Option<ReadExtensions>,
+    options: ServerOptions,
+    enable_write: bool,
+    worker_launch: WorkerLaunchConfig,
+) -> io::Result<Server> {
     options.validate()?;
     if enable_write && extensions.is_none() {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "WRITE extensions require configured workers"));
@@ -374,7 +390,7 @@ pub async fn listen_with_prototype_options(
         wire,
         address,
         Runtime {
-            infrastructure: crate::infrastructure::Infrastructure::default(),
+            infrastructure: crate::infrastructure::Infrastructure { worker_launch, ..crate::infrastructure::Infrastructure::default() },
             db_pool: None,
             admission: None,
             realtime_slots: tokio::sync::Semaphore::new(32),

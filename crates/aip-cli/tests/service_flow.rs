@@ -109,7 +109,7 @@ async fn operation_only_service_preserves_principal_contract_revocation_and_depl
             std::fs::write(workers.join("compute.py"), format!("{}\nfrom pathlib import Path\nasync def waiting(input, ctx):\n    Path({marker_literal}).write_text('started')\n    await asyncio.sleep(0.8)\n    return {{'length': 1}}\n", include_str!("../../../spikes/spike-v6-transport/tests/fixtures/operations/compute.py"))).unwrap();
             std::fs::write(&file, &source).unwrap();
             std::fs::write(directory.join("jwks.json"), jwks.to_string()).unwrap();
-            std::fs::write(&config, json!({"schema":schema,"database_url_env":"AIP_TEST_DATABASE","listen":"127.0.0.1:0","wire":wire,"allowed_origins":["https://app.example.com"],"auth":{"issuer":"https://issuer.example","audience":"aip-api","jwks":{"kind":"file","path":"jwks.json"}},"workers":{"directory":workers,"language":lang}}).to_string()).unwrap();
+            std::fs::write(&config, json!({"schema":schema,"database_url_env":"AIP_TEST_DATABASE","listen":"127.0.0.1:0","wire":wire,"allowed_origins":["https://app.example.com"],"auth":{"issuer":"https://issuer.example","audience":"aip-api","jwks":{"kind":"file","path":"jwks.json"}},"workers":{"directory":workers,"language":lang,"isolation":if cfg!(target_os = "macos") { "mac_net_deny" } else { "auto" }}}).to_string()).unwrap();
             command(&config, &["init", file.to_str().unwrap()]).await;
             let db = spike_v2_read::connect_owned_with_url(DB).await.unwrap();
             let outcome = AssertUnwindSafe(async {

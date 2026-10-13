@@ -2,12 +2,15 @@
 mod cgroup;
 mod framing;
 mod isolation;
+mod reap;
 pub use cgroup::WorkerResourceLimits;
 pub use isolation::{Isolation, WorkerLaunchConfig};
 
 pub mod outbox;
 pub mod write;
 
+#[cfg(all(test, unix))]
+mod cleanup_tests;
 #[cfg(test)]
 mod grant_tests;
 #[cfg(test)]
@@ -163,7 +166,11 @@ impl Worker {
         let mut cmd = Command::new(spec.program);
         cmd.args(spec.args);
         isolation::configure_environment(&mut cmd, &config)?;
+        isolation::set_working_directory(&mut cmd, config.isolation, std::path::Path::new(ext_dir.as_ref()));
         cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
+        // Own process group so teardown can signal the worker's whole tree, not just the direct child.
+        #[cfg(unix)]
+        cmd.process_group(0);
         let cgroup = cgroup::create(config.cgroup_root.as_deref(), config.resource_limits)?;
         if let Some(cgroup) = &cgroup {
             cgroup.attach(&mut cmd)?;
@@ -227,10 +234,7 @@ impl Worker {
         if !matches!(&result, Ok(Some(_))) {
             self.lines.discard();
             self.tokens.clear();
-            let _ = self.child.start_kill();
-            if let Some(cgroup) = &self.cgroup {
-                let _ = cgroup.kill();
-            }
+            self.kill_all();
         }
         result
     }
@@ -253,14 +257,25 @@ impl Worker {
         // 취소된 write_all은 부분 JSON을 남길 수 있어 같은 protocol을 이어 쓰면 안 된다.
         self.lines.discard();
         self.tokens.clear();
+        self.kill_all();
+        rej("DEADLINE_EXCEEDED", "worker 입력 전송이 기한 안에 끝나지 않음")
+    }
+
+    /// Kills the worker, its descendants and its cgroup. Safe to call repeatedly.
+    fn kill_all(&mut self) {
+        if let Some(pid) = self.child.id() {
+            reap::kill_tree(pid);
+        }
         let _ = self.child.start_kill();
         if let Some(cgroup) = &self.cgroup {
             let _ = cgroup.kill();
         }
-        rej("DEADLINE_EXCEEDED", "worker 입력 전송이 기한 안에 끝나지 않음")
     }
 
     pub async fn stop(mut self) {
+        if let Some(pid) = self.child.id() {
+            reap::kill_tree(pid);
+        }
         if let Some(cgroup) = &self.cgroup {
             if let Err(error) = cgroup.kill() {
                 eprintln!("worker cgroup kill failed during stop: {error}");
@@ -280,6 +295,10 @@ impl Worker {
 
 impl Drop for Worker {
     fn drop(&mut self) {
+        // `kill_on_drop` only signals the direct child; grandchildren need the tree kill.
+        if let Some(pid) = self.child.id() {
+            reap::kill_tree(pid);
+        }
         self.stderr_task.abort();
     }
 }

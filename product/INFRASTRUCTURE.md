@@ -135,7 +135,7 @@ ACK/NACK는 owner·queue·worker·epoch·token·lease 만료를 검사한다. at
 
 ## Linux 격리와 JS/Python 의존성
 
-`auto`는 macOS에서 network-deny sandbox, Linux에서 Bubblewrap을 선택하고 필요한 도구가 없으면 실행을 거부한다. Linux는 빈 mount namespace에 시스템 runtime·확장 폴더·지정한 dependency 디렉터리만 읽기 전용으로 노출한다. 네트워크와 PID namespace를 분리하고 private tmp를 사용한다. HOME 전체나 `/` mount는 거부한다. [Ubuntu CI의 Linux 격리 검사](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/38133412454)에서 실제 읽기·쓰기·네트워크 경계와 Node/Python 의존성 import를 확인했다. 전체 transport와 core 회귀 검사는 [Verify workflow](https://github.com/winterholic/Application-Intent-Protocol/actions/workflows/verify.yml)에서 함께 실행한다.
+`auto`는 macOS에서 `MacSandbox`(Seatbelt: 네트워크·파일 쓰기·`/Users` 등 사용자 디렉터리 읽기·프로세스 생성 거부), Linux에서 Bubblewrap을 선택하고 필요한 도구가 없으면 실행을 거부한다. Linux는 빈 mount namespace에 시스템 runtime·확장 폴더·지정한 dependency 디렉터리만 읽기 전용으로 노출한다. 네트워크와 PID namespace를 분리하고 private tmp를 사용한다. HOME 전체나 `/` mount는 거부한다. [Ubuntu CI의 Linux 격리 검사](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/38133412454)에서 실제 읽기·쓰기·네트워크 경계와 Node/Python 의존성 import를 확인했다. 전체 transport와 core 회귀 검사는 [Verify workflow](https://github.com/winterholic/Application-Intent-Protocol/actions/workflows/verify.yml)에서 함께 실행한다.
 
 확장을 사용하는 서버는 요청 수신 전에 실제 worker와 같은 runtime·sandbox·mount·환경 설정으로 `--version`을 실행한다. 실행 파일의 존재만 확인하는 대신 namespace 권한이나 runtime 실행 실패도 시작 시 거부한다. 검사는 2초로 제한하고 stdout/stderr는 각각 최대 4KiB만 보관한다. 이는 애플리케이션 확장의 모든 import나 외부 서비스 연결을 보증하는 readiness 검사는 아니다.
 
@@ -145,7 +145,7 @@ Python venv interpreter, 명시적 PYTHONPATH, Node extension 폴더의 node_mod
 
 Linux의 선택적 `workers.cgroup_root`와 `workers.resource_limits`는 함께 설정한다. 예: `"cgroup_root":"/sys/fs/cgroup/aip.service/workers", "resource_limits":{"memory_bytes":268435456,"pids_max":64,"cpu_quota_micros":50000,"cpu_period_micros":100000}`. 운영자가 cpu/memory/pids controller를 활성화한 cgroup v2 subtree를 미리 위임해야 한다. worker는 exec 전에 leaf cgroup에 들어가며 `memory.max`, `pids.max`, `cpu.max`가 적용된다. 취소·종료는 해당 cgroup의 descendants를 함께 정리한다. 필요한 interface나 권한이 없으면 시작을 거부하고 전역 cgroup·sysctl을 자동 변경하지 않는다. [Linux cgroup workflow](../.github/workflows/cgroup.yml)가 실제 강제 제한을 검사한다.
 
-macOS는 네트워크만 차단하며 filesystem 격리는 보장하지 않는다. cgroup 제한을 설정하면 macOS에서는 시작을 거부한다. worker는 신뢰한 서버 코드다. 의존성 전체 내용은 현재 implementation fingerprint에 들어가지 않으므로 immutable deployment와 lockfile을 사용한다. npm/pip 생태계의 모든 라이브러리 호환성이나 native GPU 사용을 보장하지 않는다.
+macOS `MacSandbox`는 deny 목록 방식이라 시스템 경로 읽기는 열려 있고 Linux처럼 보이는 파일 집합을 제한하지는 않는다. `mac_net_deny`는 네트워크만 차단한다. 모든 Unix worker는 process group leader로 시작해 중지 때 후손 프로세스 전체(`setsid` 손자 포함)를 종료한다. cgroup 제한을 설정하면 macOS에서는 시작을 거부한다. worker는 신뢰한 서버 코드다. 의존성 전체 내용은 현재 implementation fingerprint에 들어가지 않으므로 immutable deployment와 lockfile을 사용한다. npm/pip 생태계의 모든 라이브러리 호환성이나 native GPU 사용을 보장하지 않는다.
 
 이름 기반 corpus·embedding/answer provider, owner 격리·문서 분할·색인·검색·출처 반환을 제공하는 RAG 엔진은 [RAG](RAG.md)를 따른다. JS/TS·Python의 특수 파서나 모델은 custom provider/서버 bridge로 연결한다. 프론트에 모델 endpoint·credential·SQL 실행 권한을 주지 않는다.
 

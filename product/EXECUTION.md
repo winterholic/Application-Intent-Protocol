@@ -70,7 +70,7 @@ caller는 등록된 이름과 typed 입력을 고른다. 구현 경로·정책·
 | 배포 | 기존 shared deployment fence 유지. 오래된 listener는 정책 변경 뒤 `DEPLOYMENT_CHANGED` |
 | 수명 | 동기 결과만 반환. 이 호출 자체에는 연결 유실 뒤 status 복구·지속 실행·자동 retry·cancel 계약이 없음 |
 
-Worker는 macOS `MacNetDeny`를 사용한다. 네트워크 차단은 파일 접근 격리나 순수성 증명이 아니다. 신뢰한 서버 extension만 등록한다. `effect none`은 요청자가 DB/외부 효과 capability를 얻지 않는다는 선언이며 임의 extension의 파일 부작용까지 막는 보장은 아니다. 다른 OS의 worker 격리는 아직 제공하지 않는다.
+Worker는 macOS에서 기본 `MacSandbox`(Seatbelt 프로파일)를 사용한다. 네트워크, 모든 파일 쓰기(`/dev/null` 제외), `/Users`·`/Volumes`·임시 디렉터리 읽기(extension·의존성·runtime 경로 제외), `fork`/프로세스 생성을 막는다. 네트워크만 막는 이전 동작은 `isolation: "mac_net_deny"`로 고를 수 있다. 이 프로파일은 deny 목록 방식이라 `/etc`·`/opt` 같은 시스템 경로 읽기는 허용하므로 Linux Bubblewrap처럼 보이는 파일 집합을 제한하지는 않는다. 신뢰한 서버 extension만 등록한다. `effect none`은 요청자가 DB/외부 효과 capability를 얻지 않는다는 선언이며 임의 extension의 부작용까지 막는 보장은 아니다. worker를 멈추면 worker를 process group leader로 시작해 후손 프로세스를 부모 링크를 따라 모두 종료한다(`setsid` 손자 포함). 이미 init에 입양된 이중 fork 데몬은 이 방식으로 찾을 수 없으므로 `MacSandbox`(fork 금지), Linux Bubblewrap(PID namespace)·cgroup에 의존한다. `isolation: "none"`은 그 보장이 없다.
 
 ## HTTP와 발견
 

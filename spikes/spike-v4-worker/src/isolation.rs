@@ -1,15 +1,19 @@
 use std::ffi::{OsStr, OsString};
 
-/// Automatic isolation uses the platform's network-denying worker sandbox.
-/// MacNetDeny blocks network access only; LinuxBubblewrap also limits visible files.
+/// Automatic isolation uses the platform's worker sandbox: MacSandbox on macOS, LinuxBubblewrap on Linux.
+/// MacNetDeny blocks network access only. MacSandbox also denies file writes, reads of user data
+/// directories and spawning processes. LinuxBubblewrap limits visible files and runs in its own PID namespace.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Isolation {
-    /// Select MacNetDeny on macOS and LinuxBubblewrap on Linux.
+    /// Select MacSandbox on macOS and LinuxBubblewrap on Linux.
     Auto,
     /// Run without an OS sandbox. Only use for explicitly trusted server-side configurations.
     None,
     /// macOS network denial; host filesystem remains visible to the worker.
     MacNetDeny,
+    /// macOS Seatbelt profile: no network, no file writes, no reads under `/Users`, `/Volumes` and
+    /// temporary directories except the extension and runtime, and no `fork`/`spawn`.
+    MacSandbox,
     LinuxBubblewrap,
 }
 
@@ -33,14 +37,14 @@ impl Isolation {
                     Err(unsupported("automatic worker isolation is unavailable on this platform"))
                 }
             }
-            Self::MacNetDeny => {
+            Self::MacNetDeny | Self::MacSandbox => {
                 #[cfg(target_os = "macos")]
                 {
                     validate_executable(std::path::Path::new("/usr/bin/sandbox-exec"))
                 }
                 #[cfg(not(target_os = "macos"))]
                 {
-                    Err(unsupported("MacNetDeny requires macOS"))
+                    Err(unsupported("MacNetDeny and MacSandbox require macOS"))
                 }
             }
             Self::LinuxBubblewrap => {
@@ -138,6 +142,7 @@ impl WorkerLaunchConfig {
         let mut command = tokio::process::Command::new(spec.program);
         command.args(spec.args);
         configure_environment(&mut command, self)?;
+        set_working_directory(&mut command, self.isolation, &ext_dir);
         command.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).kill_on_drop(true);
         let cgroup = crate::cgroup::create(self.cgroup_root.as_deref(), self.resource_limits)?;
         if let Some(cgroup) = &cgroup {
@@ -208,7 +213,14 @@ pub(crate) fn runtime_path(lang: crate::Lang, config: &WorkerLaunchConfig) -> st
 pub(crate) fn extension_path(isolation: Isolation, ext_dir: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
     match isolation {
         Isolation::None | Isolation::MacNetDeny => Ok(ext_dir.to_path_buf()),
-        Isolation::Auto | Isolation::LinuxBubblewrap => ext_dir.canonicalize(),
+        Isolation::Auto | Isolation::MacSandbox | Isolation::LinuxBubblewrap => ext_dir.canonicalize(),
+    }
+}
+
+/// The macOS sandbox hides the server's working directory, and Node aborts when `cwd()` is unreadable.
+pub(crate) fn set_working_directory(command: &mut tokio::process::Command, isolation: Isolation, ext_dir: &std::path::Path) {
+    if cfg!(target_os = "macos") && matches!(isolation, Isolation::Auto | Isolation::MacSandbox) {
+        command.current_dir(ext_dir);
     }
 }
 
@@ -389,7 +401,7 @@ pub(crate) fn command_spec(
         Isolation::Auto => {
             #[cfg(target_os = "macos")]
             {
-                mac_sandbox_spec(program, args)
+                mac_sandbox_spec(program, args, _ext_dir, _read_only_paths)
             }
             #[cfg(target_os = "linux")]
             {
@@ -400,10 +412,20 @@ pub(crate) fn command_spec(
                 Err(unsupported("automatic worker isolation is unavailable on this platform"))
             }
         }
+        Isolation::MacSandbox => {
+            #[cfg(target_os = "macos")]
+            {
+                mac_sandbox_spec(program, args, _ext_dir, _read_only_paths)
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                Err(unsupported("MacSandbox requires macOS"))
+            }
+        }
         Isolation::MacNetDeny => {
             #[cfg(target_os = "macos")]
             {
-                mac_sandbox_spec(program, args)
+                mac_net_deny_spec(program, args)
             }
             #[cfg(not(target_os = "macos"))]
             {
@@ -424,8 +446,77 @@ pub(crate) fn command_spec(
 }
 
 #[cfg(target_os = "macos")]
-fn mac_sandbox_spec(program: &OsStr, args: &[OsString]) -> std::io::Result<CommandSpec> {
+fn mac_net_deny_spec(program: &OsStr, args: &[OsString]) -> std::io::Result<CommandSpec> {
     let mut sandbox_args = vec!["-p".into(), "(version 1)(allow default)(deny network*)".into(), program.to_owned()];
+    sandbox_args.extend_from_slice(args);
+    Ok(CommandSpec { program: "/usr/bin/sandbox-exec".into(), args: sandbox_args })
+}
+
+/// Quotes a path as an SBPL string literal. Seatbelt reads the profile as text, so a quote or
+/// backslash in a path must not be able to close the literal and add rules.
+#[cfg(target_os = "macos")]
+fn sbpl_string(path: &std::path::Path) -> std::io::Result<String> {
+    let text = path.to_str().ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "sandbox path is not valid UTF-8"))?;
+    if text.chars().any(char::is_control) {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "sandbox path contains a control character"));
+    }
+    Ok(format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\"")))
+}
+
+/// Directories the runtime itself needs, so a Node or Python under a denied root (`~/.nvm`, a venv) still starts.
+#[cfg(target_os = "macos")]
+fn runtime_roots(program: &OsStr) -> Vec<std::path::PathBuf> {
+    let mut candidates = Vec::new();
+    let program = std::path::Path::new(program);
+    if program.components().count() == 1 {
+        if let Some(path) = std::env::var_os("PATH") {
+            candidates.extend(std::env::split_paths(&path).map(|dir| dir.join(program)).filter(|path| path.exists()));
+        }
+    } else {
+        candidates.push(program.to_path_buf());
+    }
+    let mut roots = Vec::new();
+    for candidate in candidates {
+        let real = candidate.canonicalize().unwrap_or_else(|_| candidate.clone());
+        for path in [candidate, real] {
+            let Some(parent) = path.parent() else { continue };
+            // `<prefix>/bin/node` needs `<prefix>/lib`; anything else only gets its own directory.
+            let root = if parent.file_name().is_some_and(|name| name == "bin") { parent.parent().unwrap_or(parent) } else { parent };
+            roots.push(root.to_path_buf());
+        }
+    }
+    roots
+}
+
+#[cfg(target_os = "macos")]
+fn mac_sandbox_profile(program: &OsStr, ext_dir: &std::path::Path, read_only_paths: &[std::path::PathBuf]) -> std::io::Result<String> {
+    // Reads stay open for system libraries and the runtime. Only places that hold user or other
+    // processes' data are closed, then the extension and trusted dependencies are opened again.
+    // Seatbelt prefers the more specific operation, so the allow rules name `file-read-data` too.
+    let mut profile = String::from(
+        "(version 1)(allow default)(deny network*)(deny process-fork)(deny file-write*)\n\
+         (allow file-write* (literal \"/dev/null\") (literal \"/dev/dtracehelper\"))\n\
+         (deny file-read-data (subpath \"/Users\") (subpath \"/Volumes\") (subpath \"/private/var/folders\") (subpath \"/private/tmp\") (subpath \"/private/var/tmp\") (subpath \"/private/var/root\"))\n",
+    );
+    let mut allowed = vec![ext_dir.to_path_buf()];
+    allowed.extend(read_only_paths.iter().cloned());
+    allowed.extend(runtime_roots(program));
+    for path in allowed {
+        let path = path.canonicalize().unwrap_or(path);
+        profile.push_str(&format!("(allow file-read-data (subpath {}))\n", sbpl_string(&path)?));
+    }
+    Ok(profile)
+}
+
+#[cfg(target_os = "macos")]
+fn mac_sandbox_spec(
+    program: &OsStr,
+    args: &[OsString],
+    ext_dir: &std::path::Path,
+    read_only_paths: &[std::path::PathBuf],
+) -> std::io::Result<CommandSpec> {
+    let profile = mac_sandbox_profile(program, ext_dir, read_only_paths)?;
+    let mut sandbox_args = vec!["-p".into(), profile.into(), program.to_owned()];
     sandbox_args.extend_from_slice(args);
     Ok(CommandSpec { program: "/usr/bin/sandbox-exec".into(), args: sandbox_args })
 }
@@ -691,11 +782,77 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn auto_uses_macos_network_sandbox() {
+    fn auto_uses_macos_sandbox_that_denies_network_writes_and_spawn() {
         let ext = TempDir::new("auto-ext");
         let spec = command_spec(Isolation::Auto, "python3".as_ref(), &["-c".into()], ext.path(), &[]).unwrap();
         assert_eq!(spec.program, OsString::from("/usr/bin/sandbox-exec"));
+        let profile = spec.args[1].to_string_lossy().into_owned();
+        for rule in ["(deny network*)", "(deny process-fork)", "(deny file-write*)", "(deny file-read-data (subpath \"/Users\")"] {
+            assert!(profile.contains(rule), "profile lacks {rule}: {profile}");
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn mac_net_deny_keeps_its_network_only_profile() {
+        let ext = TempDir::new("net-ext");
+        let spec = command_spec(Isolation::MacNetDeny, "python3".as_ref(), &["-c".into()], ext.path(), &[]).unwrap();
         assert!(spec.args.iter().any(|arg| arg == "(version 1)(allow default)(deny network*)"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn mac_sandbox_profile_escapes_paths_so_they_cannot_add_rules() {
+        let path = std::path::Path::new("/tmp/x\") (allow file-write* (subpath \"/\"))");
+        let quoted = super::sbpl_string(path).unwrap();
+        assert!(quoted.starts_with('"') && quoted.ends_with('"'));
+        assert!(!quoted[1..quoted.len() - 1].replace("\\\"", "").contains('"'), "unescaped quote in {quoted}");
+        assert!(super::sbpl_string(std::path::Path::new("/tmp/a\nb")).is_err());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn macos_sandbox_blocks_file_reads_writes_network_and_spawn() {
+        let dir = TempDir::new("mac-boundary");
+        let host_secret = TempDir::new("mac-host-secret");
+        let host_secret_path = host_secret.path().join("credential.txt");
+        std::fs::write(&host_secret_path, "host-secret-must-not-be-visible").unwrap();
+        std::fs::write(
+            dir.path().join("probe.py"),
+            "import os, socket, subprocess\ndef run(_input, _ctx):\n    def attempt(fn):\n        try:\n            fn(); return True\n        except Exception:\n            return False\n    here = os.path.dirname(os.path.abspath(__file__))\n    return {\n        'host_file': attempt(lambda: open(os.environ['AIP_HOST_SECRET_PATH']).read()),\n        'home_listing': attempt(lambda: os.listdir('/Users')),\n        'own_source': attempt(lambda: open(__file__).read()),\n        'write_extension_dir': attempt(lambda: open(os.path.join(here, 'escape'), 'w').write('bad')),\n        'write_tmp': attempt(lambda: open('/private/tmp/aip-escape', 'w').write('bad')),\n        'fork': attempt(lambda: os.fork()),\n        'spawn': attempt(lambda: subprocess.run(['/bin/echo', 'x'])),\n        'network': attempt(lambda: socket.create_connection(('1.1.1.1', 53), 0.2)),\n    }\n",
+        )
+        .unwrap();
+        let response = invoke_worker(
+            Lang::Python,
+            dir.path(),
+            [("AIP_HOST_SECRET_PATH".into(), host_secret_path.to_string_lossy().into_owned())].into(),
+            vec![],
+        )
+        .await;
+        assert_eq!(
+            response["output"],
+            json!({"host_file":false,"home_listing":false,"own_source":true,"write_extension_dir":false,"write_tmp":false,"fork":false,"spawn":false,"network":false}),
+            "{response}"
+        );
+        assert!(!std::path::Path::new("/private/tmp/aip-escape").exists());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn macos_sandbox_runs_node_extensions() {
+        let dir = TempDir::new("mac-node");
+        std::fs::write(
+            dir.path().join("probe.mjs"),
+            "import { readFileSync } from 'node:fs';\nexport function run() {\n  let secret = false;\n  try { readFileSync(process.env.AIP_HOST_SECRET_PATH); secret = true; } catch {}\n  return { secret };\n}\n",
+        )
+        .unwrap();
+        let host_secret = TempDir::new("mac-node-secret");
+        let host_secret_path = host_secret.path().join("credential.txt");
+        std::fs::write(&host_secret_path, "x").unwrap();
+        let response =
+            invoke_worker(Lang::Node, dir.path(), [("AIP_HOST_SECRET_PATH".into(), host_secret_path.to_string_lossy().into_owned())].into(), vec![])
+                .await;
+        assert_eq!(response["output"], json!({"secret":false}), "{response}");
     }
 
     #[cfg(target_os = "linux")]

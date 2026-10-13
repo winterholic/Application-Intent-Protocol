@@ -4,7 +4,7 @@ mod macos {
     use spike_v1_fixture::{load_str, Form};
     use spike_v2_read::id_wire::IdWire;
     use spike_v5_sdk::contract_fingerprint_with_extensions;
-    use spike_v6_transport::server::{listen_with_extensions, ReadExtensions, WorkerLang};
+    use spike_v6_transport::server::{listen_with_prototype_launch, ReadExtensions, ServerOptions, WorkerLang};
     use std::fs;
     use std::net::SocketAddr;
     use std::path::{Path, PathBuf};
@@ -97,12 +97,16 @@ mod macos {
     }
 
     async fn start_server(deadline_ms: u64, config: ReadExtensions) -> Result<spike_v6_transport::server::Server, std::io::Error> {
-        listen_with_extensions(
+        listen_with_prototype_launch(
             facts(deadline_ms),
             IdWire::SafeNumber,
             "127.0.0.1:0".parse().expect("loopback address"),
             spike_v2_read::DB_URL.to_string(),
             Some(config),
+            ServerOptions::default(),
+            false,
+            // Fixtures write PID logs and spawn children, which the default worker sandbox forbids.
+            spike_v4_worker::WorkerLaunchConfig { isolation: spike_v4_worker::Isolation::None, ..Default::default() },
         )
         .await
     }
@@ -326,12 +330,16 @@ mod macos {
                 return;
             }
         };
-        let server = match listen_with_extensions(
+        let server = match listen_with_prototype_launch(
             facts_with(2000, "observer.drain"),
             IdWire::SafeNumber,
             "127.0.0.1:0".parse().expect("loopback address"),
             spike_v2_read::DB_URL.to_string(),
             Some(config),
+            ServerOptions::default(),
+            false,
+            // Fixtures write PID logs and spawn children, which the default worker sandbox forbids.
+            spike_v4_worker::WorkerLaunchConfig { isolation: spike_v4_worker::Isolation::None, ..Default::default() },
         )
         .await
         {

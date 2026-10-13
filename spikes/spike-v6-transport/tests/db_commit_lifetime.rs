@@ -139,7 +139,9 @@ async fn committed_but_missing_reply_stays_unknown_and_recovers_without_duplicat
             .await?;
         for wire in [IdWire::SafeNumber, IdWire::DecimalString] {
             sdk_case.store(false, Ordering::SeqCst);
-            let server = listen_with_prototype_options(
+            // The fixture extension appends to a call-counter file, which the default sandbox forbids.
+            let launch = spike_v4_worker::WorkerLaunchConfig { isolation: spike_v4_worker::Isolation::None, ..Default::default() };
+            let server = spike_v6_transport::server::listen_with_prototype_launch(
                 facts.clone(),
                 wire,
                 "127.0.0.1:0".parse().unwrap(),
@@ -147,6 +149,7 @@ async fn committed_but_missing_reply_stays_unknown_and_recovers_without_duplicat
                 Some(ReadExtensions { lang: WorkerLang::Node, dir: path.clone() }),
                 ServerOptions::default(),
                 true,
+                launch,
             )
             .await
             .unwrap();

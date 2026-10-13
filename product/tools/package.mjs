@@ -76,7 +76,7 @@ function packageReadme() {
 
 \`./bin/aip service check example.aip\`로 정의를 확인하고, \`./bin/aip service gen example.aip --wire decimal --out bindings.ts --sdk-import @aip/sdk\`로 TypeScript binding을 생성할 수 있습니다. 배포 전에는 예시 설정의 schema, DB 환경 변수, issuer, audience, JWKS와 허용 origin을 운영 값으로 채우십시오.
 
-기본 설정은 worker를 사용하지 않습니다. \`Event.confirm\`을 활성화하려면 \`workers.directory\`를 \`./extensions\`로, \`workers.language\`를 \`node\` 또는 \`python\`으로, \`workers.enable_writes\`를 \`true\`로 설정합니다. Node에는 Node.js, Python에는 Python 3가 필요합니다. extension 기본 격리는 \`auto\`입니다. macOS는 \`sandbox-exec\` 기반 \`MacNetDeny\`로 네트워크만 차단하고, Linux는 Bubblewrap으로 지정한 runtime/extension/dependency 경로를 읽기 전용으로 노출합니다. 필요한 격리 도구가 없으면 실행을 거부합니다. 신뢰한 extension source와 고정된 dependency를 사용하십시오.
+기본 설정은 worker를 사용하지 않습니다. \`Event.confirm\`을 활성화하려면 \`workers.directory\`를 \`./extensions\`로, \`workers.language\`를 \`node\` 또는 \`python\`으로, \`workers.enable_writes\`를 \`true\`로 설정합니다. Node에는 Node.js, Python에는 Python 3가 필요합니다. extension 기본 격리는 \`auto\`입니다. macOS는 \`sandbox-exec\` 기반 \`MacSandbox\`로 네트워크·파일 쓰기·사용자 디렉터리 읽기·프로세스 생성을 차단하며(네트워크만 차단하는 \`MacNetDeny\`도 선택 가능), Linux는 Bubblewrap으로 지정한 runtime/extension/dependency 경로를 읽기 전용으로 노출합니다. 필요한 격리 도구가 없으면 실행을 거부합니다. 신뢰한 extension source와 고정된 dependency를 사용하십시오.
 
 ## 산출 범위
 

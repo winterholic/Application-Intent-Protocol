@@ -174,6 +174,7 @@ pub enum WorkerIsolation {
     #[default]
     Auto,
     MacNetDeny,
+    MacSandbox,
     LinuxBubblewrap,
 }
 impl WorkerIsolation {
@@ -182,6 +183,7 @@ impl WorkerIsolation {
         match self {
             Self::Auto => I::Auto,
             Self::MacNetDeny => I::MacNetDeny,
+            Self::MacSandbox => I::MacSandbox,
             Self::LinuxBubblewrap => I::LinuxBubblewrap,
         }
     }
