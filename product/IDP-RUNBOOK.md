@@ -9,6 +9,7 @@
 | JWKS를 HTTPS로 받아 서명 검증, issuer·audience·`typ`·수명 검사 | 로컬 mock으로 검증됨 | `crates/aip-auth/src/idp_tests.rs`, `tests/jwt.rs` |
 | discovery 문서(`/.well-known/openid-configuration`)의 `issuer`·`jwks_uri`를 설정에 옮기는 절차 | 로컬 mock으로 검증됨 | `discovery_document_yields_the_jwks_url_and_the_issuer_the_service_enforces` |
 | 서명 키 회전(겹침 구간, kid 교체, 폐기된 kid 거부) | 로컬 mock으로 검증됨 | `a_new_signing_key_is_picked_up_without_a_restart_and_the_retired_key_stops_working` |
+| IdP 장애 중 캐시된 키의 토큰, 알 수 없는 kid가 만든 갱신 실패 | 로컬 mock으로 검증됨 | `a_failed_refresh_for_an_unknown_kid_does_not_block_tokens_for_cached_keys`, `a_known_key_is_still_served_for_a_while_when_the_idp_is_down_after_the_cache_expired` |
 | 모르는 kid에 대한 위조 토큰, 같은 kid에 다른 키 | 로컬 mock으로 검증됨 | `a_forged_token_for_an_unknown_kid_is_rejected_and_never_accepts_the_attacker_key` |
 | 실제 Auth0·Keycloak·Entra ID가 이 토큰 프로필(`typ: at+jwt`, 수명 900초 이하)을 발급하는지 | 확인 못함: 계정 없음 | 아래 제공자별 설정은 각 제품 문서 기준의 절차이며 실행해 보지 않았다 |
 
@@ -58,7 +59,7 @@ mock은 저장소 테스트 CA로 서명한 HTTPS 서버다. 서비스 바이너
 3. 이전 키로 서명한 토큰이 모두 만료될 때까지(최대 900초) 이전 키를 JWKS에 남긴다. 그 뒤에 제거한다.
 4. `kid`를 재사용하지 않는다. 같은 `kid`에 다른 키를 넣으면 서비스는 TTL이 끝날 때까지 캐시된 옛 키로 검증해 새 토큰을 거부한다.
 
-회전 중 JWKS 요청이 실패하면 HTTPS 모드는 5초 동안 `UNAVAILABLE`로 응답한다. 이미 캐시된 키의 토큰까지 이 5초 동안 막히는 한계가 있고, 감사 문서 O-06의 조치 항목이다.
+JWKS 요청이 실패하면(회전 중이든 IdP 장애든) 캐시에 없는 `kid`의 토큰은 5초 동안 `UNAVAILABLE`이다. 이미 캐시된 키의 토큰은 영향을 받지 않고, TTL(60초)이 지난 뒤에도 IdP가 응답하지 않으면 마지막으로 받은 키 집합을 최대 5분까지 계속 사용한다(감사 문서 O-06). 키를 폐기했는데 IdP가 응답하지 않는 상황에서는 그 키가 최대 5분 더 통할 수 있다.
 
 ## 장애 대응
 

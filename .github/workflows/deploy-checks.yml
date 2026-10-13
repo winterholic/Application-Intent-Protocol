@@ -44,15 +44,34 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '26'
-      - name: Install Caddy and PostgreSQL client
+      - name: Install Caddy, Bubblewrap and PostgreSQL client
         run: |
           sudo apt-get update
-          sudo apt-get install -y caddy postgresql-client openssl
+          sudo apt-get install -y caddy postgresql-client openssl bubblewrap apparmor
           # The package starts its own service on port 80/443; the check starts a private instance.
           sudo systemctl stop caddy || true
           rustup update stable
           rustup default stable
           caddy version
+      - name: Configure CI Bubblewrap user namespace policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The service defaults to Bubblewrap isolation for workers on Linux; the runner's AppArmor policy blocks its user namespaces.
+          if [[ -r /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]] && [[ $(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns) == 1 ]]; then
+            sandbox_bin="$RUNNER_TEMP/aip-ci-bwrap"
+            mkdir -p "$sandbox_bin"
+            cp "$(command -v bwrap)" "$sandbox_bin/bwrap"
+            sudo tee /etc/apparmor.d/aip-ci-bwrap >/dev/null <<EOF
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile aip-ci-bwrap "$sandbox_bin/bwrap" flags=(unconfined) {
+            userns,
+          }
+          EOF
+            sudo apparmor_parser -r /etc/apparmor.d/aip-ci-bwrap
+            echo "$sandbox_bin" >> "$GITHUB_PATH"
+          fi
       - name: Build the service
         run: cargo build -p aip-cli --locked
       - name: Verify Origin, headers, request id, SSE and WebSocket through Caddy

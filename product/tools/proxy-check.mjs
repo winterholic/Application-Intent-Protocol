@@ -158,15 +158,18 @@ function webSocket(base, ca, { origin }) {
 async function waitForLine(child, predicate, label) {
   return new Promise((resolveLine, reject) => {
     let output = "";
-    const timer = setTimeout(() => reject(new Error(`${label} did not start`)), 20000);
+    let errors = "";
+    const timer = setTimeout(() => reject(new Error(`${label} did not start: ${errors.trim().slice(0, 400)}`)), 20000);
     child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => { errors += chunk; });
     child.stdout.on("data", (chunk) => {
       output += chunk;
       for (const line of output.split("\n")) {
         if (predicate(line)) { clearTimeout(timer); resolveLine(line); return; }
       }
     });
-    child.once("exit", (code) => { clearTimeout(timer); reject(new Error(`${label} exited early (${code}): ${output}`)); });
+    child.once("exit", (code) => { clearTimeout(timer); reject(new Error(`${label} exited early (${code}): ${(output + errors).trim().slice(0, 400)}`)); });
   });
 }
 
