@@ -20,7 +20,7 @@
 - `[확인 필요]` 알림 전송이 트랜잭션 안에서 호출된다. 롤백 시 알림 행도 롤백되는지는 AlarmManager 구현에 달렸다.
 
 **AIP 표현**
-```aip
+```aipoc
 relation schoolVerified(m: Member, s: School?) = s = null or m.school = s
 
 command SubmitApply(recruitment: Recruitment, answers: List<AnswerInput> max 50,
@@ -77,7 +77,7 @@ command SubmitApply(recruitment: Recruitment, answers: List<AnswerInput> max 50,
 - 규칙 "ADMIN은 1명"이 README, 컨트롤러(`modifyRoleType`에서 ADMIN 지정 차단), 서비스에 흩어져 있다. `modifyRoleType`으로 ADMIN이 자기 역할을 MANAGER로 바꾸는 것도 막혀 있지 않다(대상 역할 검사만 있음, 자기 자신 제외 검사 없음).
 
 **AIP 표현**
-```aip
+```aipoc
 entity ClubMember {
   ...
   exactly one where role = ADMIN per club
@@ -110,7 +110,7 @@ command EntrustAdmin(target: ClubMember) {
 - `[결함]` 일괄 버전(`modifyStatusTypes`)은 `isHigherRoleTypeThan`과 `belongsToClub`을 검사하지만 단건 버전(`modifyStatusType`)은 역할 우위 검사가 없다. MANAGER가 ADMIN을 활동 종료로 바꿀 수 있다.
 
 **AIP 표현**
-```aip
+```aipoc
 relation outranks(m: Member, target: ClubMember)
   = membership(m, target.club).role > target.role
 
@@ -160,7 +160,7 @@ command ChangeMemberStatus(targets: Set<ClubMember> max 200, newStatus: MemberSt
 - `[결함 가능]` 여기서는 `clubMemberRepository.delete`만 호출하고, 다른 탈퇴 경로(`quitClubMember`)가 수행하는 `deleteClubMember` 정리(댓글·활동·공지·출석의 참조 처리)는 하지 않는다. 탈퇴 경로마다 정리가 다르다.
 
 **AIP 표현**
-```aip
+```aipoc
 command CancelSchoolAuth() {
   allow authenticated
   require not exists ClubMember cm where cm.member = actor
@@ -190,7 +190,7 @@ ClubMember 삭제 시 참조 정리(`on delete` 정책)는 엔티티에 선언�
 - 알림 대상 조회와 발송이 트랜잭션 안.
 
 **AIP 표현**
-```aip
+```aipoc
 entity Recruitment {
   club: Club
   period: Range<Time>                                // start < end는 Range 타입이 보장
@@ -228,7 +228,7 @@ command CreateRecruitment(club: Club, input: RecruitmentInput, poster: Upload?) 
 - 스케줄러가 전체 동아리와 공고를 `findAll()` 후 개별 갱신.
 
 **AIP 표현**
-```aip
+```aipoc
 entity Recruitment {
   visible to actor when club.school = null or schoolVerified(actor, club.school)
   views: Int counter via redis dedupe by client within 1d window 14d
@@ -260,7 +260,7 @@ query RecruitmentDetail(r: Recruitment) cached 30s per actor-class {
 **요구사항**: 분야 8, 지역 10, 대상 3, 소속 2 필터. 정렬 5종(최신, 조회수, 스크랩, 오래된, 마감일). 학교 미인증 사용자가 "교내" 선택 시 안내 메시지.
 
 **AIP 표현**
-```aip
+```aipoc
 query RecruitmentList(filter: RecruitmentFilter, sort: RecruitmentSort = LATEST) {
   allow public
   from Recruitment r
@@ -289,7 +289,7 @@ query RecruitmentList(filter: RecruitmentFilter, sort: RecruitmentSort = LATEST)
 **요구사항**: 활동은 전체공개/동아리원 공개. 차단한 사용자와 나를 차단한 사용자의 댓글은 서로 보이지 않는다. 표시 이름은 동아리 내 이름.
 
 **AIP 표현**
-```aip
+```aipoc
 entity ClubActivity {
   club: Club
   visibility: Visibility
@@ -319,7 +319,7 @@ entity ActivityComment {
 - `[결함]` 잔액 조회(`findBalance`)는 시스템 관리자를 허용하지만 목록 조회(`findFinancialRecords`)는 허용하지 않는다. 같은 자원에 정책이 둘.
 
 **AIP 표현**
-```aip
+```aipoc
 relation canReadFinance(m: Member, c: Club) = exists membership(m, c) or m.isSuperAdmin
 
 entity FinancialRecord {
@@ -357,7 +357,7 @@ IDOR가 표현 불가능한 이유: 명령이 받는 것은 "기록"이고 권�
 **기존 구현**: `@Scheduled` 메서드 여러 개. 다중 인스턴스 배포 시 중복 실행 방지 장치가 보이지 않는다(`[확인 필요]`: ShedLock 등 외부 설정 여부). 보존 기한 삭제는 코드에서 찾지 못함(`[확인 필요]`).
 
 **AIP 표현**
-```aip
+```aipoc
 schedule RecruitmentDeadlineReminder every day at 00:00 tz "Asia/Seoul" {
   for Recruitment r where r.period.end in [today + 1d, today + 2d) or r.period.end in [today + 7d, today + 8d)
   notify bookmarkers(r) via alarm.template("recruitment-deadline") { days: days_until(r.period.end) }
@@ -381,7 +381,7 @@ retain ReportedPost for 3mo after moderatedAt then purge
 **요구사항**: 주문 시 재고를 예약(15분 유지), 쿠폰은 1인 1회. 결제 안 하면 예약 해제.
 
 **AIP 표현**
-```aip
+```aipoc
 entity Coupon {
   owner: Member
   status: CouponStatus = ISSUED
@@ -423,7 +423,7 @@ on StockReservationExpired e when e.order.status = PENDING do {
 **요구사항**: 외부 PG로 결제. 네트워크 타임아웃이 나도 이중 결제는 없어야 한다. 결제 승인 후 서버가 죽어도 주문 상태가 결국 맞아야 한다. PG 웹훅으로도 확정될 수 있다.
 
 **AIP 표현**
-```aip
+```aipoc
 command PayOrder(order: Order, method: PaymentMethodToken) idempotent by order {
   allow order.customer = actor
   require order.status = PENDING else ORDER_NOT_PAYABLE
@@ -459,7 +459,7 @@ webhook PaymentCaptured via payments.webhook {
 **요구사항**: 배송 전까지 취소 가능. 결제된 주문이면 환불. 재고 복원, 쿠폰 복원, 주문 목록 캐시 무효화, 이벤트를 Kafka로 발행.
 
 **AIP 표현**
-```aip
+```aipoc
 command CancelOrder(order: Order) idempotent by order {
   allow order.customer = actor or actor.role = ADMIN
   require order.status in [PENDING, PAID, PREPARING] else ORDER_NOT_CANCELLABLE

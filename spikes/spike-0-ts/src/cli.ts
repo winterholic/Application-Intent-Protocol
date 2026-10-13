@@ -11,7 +11,7 @@ import { Runtime } from './runtime/runtime.ts';
 import { createAipServer } from './runtime/server.ts';
 import { generateDDL, migrate } from './schema.ts';
 
-const USAGE = `usage: aip <command> <app.aip> [options]
+const USAGE = `usage: aip <command> <app.aipoc> [options]
 
   check <file> [--json]         parse + static analysis
   ir <file>                     print the typed IR as JSON

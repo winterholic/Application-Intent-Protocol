@@ -66,7 +66,7 @@ fn expect(edit: impl Fn(&str) -> String, level: Level, rule: &str) {
 fn a_program_against_itself_has_no_differences() {
     assert!(changes(|s| s.to_string()).is_empty());
     for example in ["ariari", "cms", "saas", "shop"] {
-        let src = std::fs::read_to_string(format!("{}/../../examples/{example}/app.aip", env!("CARGO_MANIFEST_DIR"))).expect("example");
+        let src = std::fs::read_to_string(format!("{}/../../examples/{example}/app.aipoc", env!("CARGO_MANIFEST_DIR"))).expect("example");
         let c = core(&src);
         assert!(compare(&c, &c).is_empty(), "{example} differs from itself");
     }
@@ -184,7 +184,7 @@ fn only_breaking_changes_make_the_exit_code_one() {
 fn the_command_reads_a_core_file_and_exits_with_the_verdict() {
     let dir = std::env::temp_dir().join("aip-diff-cli");
     std::fs::create_dir_all(&dir).expect("dir");
-    let (old_core, new_src) = (dir.join("old.core.json"), dir.join("new.aip"));
+    let (old_core, new_src) = (dir.join("old.core.json"), dir.join("new.aipoc"));
     std::fs::write(&old_core, serde_json::to_string_pretty(&core(BASE)).expect("json")).expect("write");
     let run = |src: &str| {
         std::fs::write(&new_src, src).expect("write");

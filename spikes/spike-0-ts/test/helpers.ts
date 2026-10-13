@@ -6,13 +6,13 @@ import { formatDiagnostic } from '../src/diagnostics.ts';
 import { Runtime, type CallRequest } from '../src/runtime/runtime.ts';
 import { migrate } from '../src/schema.ts';
 
-export const SHOP = new URL('../examples/shop/app.aip', import.meta.url).pathname;
+export const SHOP = new URL('../examples/shop/app.aipoc', import.meta.url).pathname;
 export const SHOP_SRC = readFileSync(SHOP, 'utf8');
 
 const ADMIN_URL = process.env.AIP_TEST_ADMIN_URL ?? 'postgres://localhost/postgres';
 const TEST_DB = process.env.AIP_TEST_DB ?? 'aip_test';
 
-export function compileOk(src: string, file = 'test.aip'): Analysis {
+export function compileOk(src: string, file = 'test.aipoc'): Analysis {
   const { analysis, diagnostics } = compileSource(src, file);
   if (!analysis || hasErrors(diagnostics)) throw new Error(diagnostics.map((d) => formatDiagnostic(d, file)).join('\n'));
   return analysis;

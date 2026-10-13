@@ -47,7 +47,7 @@ pub struct CodeInfo {
     pub explain: &'static str,
     /// The standard form or the way to repair it.
     pub fix: &'static str,
-    /// `.aip` that parses and shows the fixed form; empty when there is none.
+    /// `.aipoc` source that parses and shows the fixed form; empty when there is none.
     pub example: &'static str,
     /// HTTP status of a runtime error; `None` for compile-time codes.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -99,6 +99,7 @@ const fn rt(code: &'static str, http_status: u16, retryable: bool, title: &'stat
 }
 
 // Compile-time diagnostics. The constant name is the code without `POC.`.
+pub const E001: &str = "POC.E001";
 pub const E100: &str = "POC.E100";
 pub const E101: &str = "POC.E101";
 pub const E102: &str = "POC.E102";
@@ -274,7 +275,7 @@ pub fn render_markdown() -> String {
          | `POC.I***` | Core IR 구조 위반. 프런트엔드가 만든 IR이 구조 규칙을 어긴다 | IR 검증 |\n\
          | `POC.<그룹>.<이름>` | 런타임·프로토콜 오류. 호출자가 응답으로 받는다 | `aip run` |\n\n\
          2026-10-13 이전 표기는 접두만 바뀌었다. `AIP-` 뒤에 E·W·I와 번호가 붙던 코드는 `POC.` 뒤에 같은 E·W·I와 번호가, `AIP.`로 시작하던 런타임 코드는 `POC.`로 시작한다. 이름은 그대로다.\n\n\
-         번호의 앞자리는 영역을 가리킨다. 1xx는 선언과 이름, 2xx는 타입과 값, 3xx는 권한·개인정보·정합성, 4xx는 품질 경고, 5xx는 extension, 6xx는 백엔드다. 번호는 영역 안에서 비어 있을 수 있고 재사용하지 않는다.\n\n\
+         번호의 앞자리는 영역을 가리킨다. 0xx는 파일과 입력, 1xx는 선언과 이름, 2xx는 타입과 값, 3xx는 권한·개인정보·정합성, 4xx는 품질 경고, 5xx는 extension, 6xx는 백엔드다. 번호는 영역 안에서 비어 있을 수 있고 재사용하지 않는다.\n\n\
          ## 안정성 규칙\n\n\
          - 한 번 공개된 코드는 의미를 바꾸지 않는다. 더 좁거나 다른 의미가 필요하면 새 코드를 만든다.\n\
          - 더 이상 발생하지 않는 코드는 지우지 않고 `deprecated`로 표시한다.\n\
@@ -293,7 +294,7 @@ pub fn render_markdown() -> String {
                 let _ = write!(out, "- HTTP 상태: {s}\n- 재시도: {}\n", if r { "가능" } else { "불가" });
             }
             if !c.example.is_empty() {
-                let _ = write!(out, "\n```aip\n{}\n```\n", c.example);
+                let _ = write!(out, "\n```aipoc\n{}\n```\n", c.example);
             }
         }
     }
@@ -301,6 +302,14 @@ pub fn render_markdown() -> String {
 }
 
 pub static REGISTRY: &[CodeInfo] = &[
+    // ---- POC.E0xx: files and input ----
+    err(
+        E001,
+        "file does not have the extension of PoC programs",
+        "`aip check` and every command that reads a PoC program need a file with the extension `.aipoc`. The extension `.aip` belongs to the product definition language (`resource`, `expose`, `transition`), which `aip service check` reads; reading it as a PoC program would only report typos in a file that has none.",
+        "Rename a PoC program (`entity`, `command`, `query`) to `.aipoc`; check a product definition with `aip service check`.",
+        "",
+    ),
     // ---- POC.E1xx: declarations and names ----
     err(
         E100,

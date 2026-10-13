@@ -1,11 +1,11 @@
-//! Lowering of analyzed `.aip` files to Core IR: validity, stability and meaning.
+//! Lowering of analyzed `.aipoc` files to Core IR: validity, stability and meaning.
 
 use aip_ir::{Program, SourceMap};
 use aip_sema::to_core::{LowerNote, NoteKind, to_core_with_notes};
 use serde_json::{Value, json};
 use std::path::PathBuf;
 
-const EXAMPLES: [&str; 2] = ["examples/ariari/app.aip", "examples/shop/app.aip"];
+const EXAMPLES: [&str; 2] = ["examples/ariari/app.aipoc", "examples/shop/app.aipoc"];
 
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -103,7 +103,7 @@ fn whitespace_and_comments_do_not_change_the_digest() {
 
 #[test]
 fn a_different_meaning_changes_the_digest() {
-    let src = load("examples/shop/app.aip");
+    let src = load("examples/shop/app.aipoc");
     let changed =
         src.replace("enum OrderStatus { PENDING PAID CANCELLED REFUNDED }", "enum OrderStatus { PENDING PAID CANCELLED REFUNDED ARCHIVED }");
     assert_ne!(src, changed, "the replacement must hit");
@@ -116,7 +116,7 @@ fn a_different_meaning_changes_the_digest() {
 #[test]
 fn a_different_limit_changes_the_digest() {
     // refinements are part of the type, so they are part of the meaning
-    let src = load("examples/shop/app.aip");
+    let src = load("examples/shop/app.aipoc");
     let changed = src.replace("name: Text(1..100)", "name: Text(1..101)");
     assert_ne!(src, changed);
     assert_ne!(aip_ir::digest(&lower(&src).0), aip_ir::digest(&lower(&changed).0));
@@ -236,12 +236,12 @@ fn intent_surface_maps_one_to_one() {
 #[test]
 fn accepted_conformance_cases_lower_cleanly() {
     let dir = root().join("conformance/sema");
-    let prelude = std::fs::read_to_string(dir.join("_prelude.aip")).expect("prelude");
+    let prelude = std::fs::read_to_string(dir.join("_prelude.aipoc")).expect("prelude");
     let mut lowered = 0;
     let mut paths: Vec<PathBuf> = std::fs::read_dir(&dir)
         .expect("dir")
         .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.extension().is_some_and(|x| x == "aip"))
+        .filter(|p| p.extension().is_some_and(|x| x == "aipoc"))
         .collect();
     paths.sort();
     for case in paths {
@@ -472,7 +472,7 @@ entity Answer {
 
 #[test]
 fn cross_tenant_reaches_core_ir_on_declarations_without_a_caller() {
-    let src = std::fs::read_to_string(root().join("conformance/sema/ok_tenant_cross_reactions.aip")).expect("case");
+    let src = std::fs::read_to_string(root().join("conformance/sema/ok_tenant_cross_reactions.aipoc")).expect("case");
     let (p, _, _) = lower(&src);
     assert!(aip_ir::validate::validate(&p).is_empty());
     let v = json(&p);

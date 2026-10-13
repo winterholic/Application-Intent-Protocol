@@ -1,4 +1,4 @@
-//! Parses the ```aip examples embedded in design documents so that the
+//! Parses the ```aipoc examples (PoC programs) embedded in design documents so that the
 //! documentation can never drift from the grammar the compiler implements.
 
 use anyhow::Result;
@@ -26,7 +26,7 @@ fn collect(path: &Path, out: &mut Vec<Block>) -> Result<()> {
     let text = std::fs::read_to_string(path)?;
     let mut lines = text.lines().enumerate();
     while let Some((i, line)) = lines.next() {
-        if line.trim_start() == "```aip" {
+        if line.trim_start() == "```aipoc" {
             let mut body = String::new();
             for (_, l) in lines.by_ref() {
                 if l.trim_start() == "```" {

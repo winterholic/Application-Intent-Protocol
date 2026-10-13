@@ -68,7 +68,7 @@ PG마다 결제 모델이 다르다는 점은 **서명을 다르게 선언**해�
 # aip.toml
 [app]
 name = "ariari"
-definition = "app.aip"
+definition = "app.aipoc"
 
 [extensions]
 postgres = "0.1"
@@ -81,7 +81,7 @@ auth-oidc = { version = "0.1", providers = ["kakao"] }
 trusted_proxies = ["10.0.0.0/8"]
 ```
 
-```aip
+```aipoc
 use postgres
 use redis
 use s3

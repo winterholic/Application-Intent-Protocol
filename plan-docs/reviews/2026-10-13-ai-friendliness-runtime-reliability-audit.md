@@ -87,7 +87,8 @@
 - 근본 원인: 제품 언어는 PoC의 문법을 이어받지 않았고(독립 spike), 확장자와 명령 이름(`aip check`/`aip service check`)이 같은 계열처럼 보인다. 독립 `.aip` 필요성은 OPEN([PRINCIPLES §3](../../docs/PRINCIPLES.md))이라 확장자 변경은 임의로 정하지 않는다.
 - 수정(비호환 없음): 두 검사기가 상대 언어의 신호를 보면 첫 오류에 `language:` 안내를 붙인다. PoC 검사기는 최상위 `resource`와 `fields {`가 있으면 `aip service check`를, 제품 검사기는 최상위 `entity/command/query/use`가 있으면 `aip check`를 안내한다.
 - 검증: 아래 §검증 기록의 테스트.
-- 결정 대상(`docs/DECISIONS.md`에 제안으로 남김): (a) 제품 언어에 별도 확장자(예: `.aipd`), (b) 한 파일 머리에 언어 표지, (c) 현재처럼 확장자 공유와 오류 안내. 사용자 코드·문서의 `.aip`를 바꾸는 (a)·(b)는 공개 문법 변경이라 확정하지 않았다.
+- 결정 대상(`docs/DECISIONS.md`에 제안으로 남김): (a) 제품 언어에 별도 확장자(예: `.aipd`), (b) 한 파일 머리에 언어 표지, (c) 현재처럼 확장자 공유와 오류 안내.
+- **결정(창시자 2026-10-13, D-A25)**: 확장자를 분리한다. 방향은 (a)의 반대로 정했다: 제품 정의 언어가 제품 경로(`aip service`)이므로 `.aip`를 유지하고 PoC 언어를 `.aipoc`로 옮겼다. `aip check` 등 PoC 명령은 `.aipoc`가 아닌 파일을 `POC.E001`로, `aip service`는 `.aipoc`를 `DEF.WRONG_LANGUAGE`로 읽기 전에 거부하며 안내가 서로를 가리킨다. 검증: `crates/aip-cli/tests/extensions.rs`. 위 `language:` 안내는 확장자와 내용이 어긋난 파일을 위해 남아 있다. 사용자 코드·문서의 `.aip`를 바꾸는 (a)·(b)는 공개 문법 변경이라 확정하지 않았다.
 
 ## F6. `budget` 없는 `expose read`
 
@@ -123,7 +124,7 @@
 - 분류·영향도: 추상화 실패. 낮음.
 - 사실: PoC는 `AIP-E###`/`AIP-W###`/`AIP-I###`/`AIP.*`, 제품 정의는 `UPPER_SNAKE`(`UNKNOWN_FIELD` 등), 제품 wire는 `{"ok":false,"code":"BAD_VALUE"}`(HTTP 200), PoC wire는 `AIP.*`와 HTTP 상태다. 같은 이름의 의미가 겹친다: 제품 `UNKNOWN_FIELD`는 정의 오류와 런타임 거부 둘 다 쓴다(`plan.rs`의 `UNKNOWN_KEY`, `DUPLICATE`, `BAD_VALUE`가 정의 코드와 이름이 같다).
 - 이번에 한 것: 정의 코드와 PoC 코드 모두 `aip explain-code`로 조회하게 했고, 생성 문서를 둘로 나눠 서로 가리킨다. 이름 충돌을 해소하는 통합(코드 접두 도입)은 공개 wire를 바꾸므로 결정 대상이다.
-- **결정(창시자 2026-10-13, D-A20)**: 코드 체계를 `영역.이름` 하나로 통합하고 공개 wire 변경을 허용했다. 이름이 겹치던 것은 4개가 아니라 8개였다(`BAD_VALUE`, `DUPLICATE`, `POLICY_FIELD_NOT_FILTERABLE`, `TYPE_MISMATCH`, `UNKNOWN_FIELD`, `UNKNOWN_KEY`, `UNKNOWN_RESOURCE`, `UNSUPPORTED`). 영역은 `DEF`, `WIRE`, `POC`와, SDK가 서버 코드와 섞어 쓰던 `PROTOCOL_ERROR` 등 8개를 위해 새로 둔 `CLIENT`다. `aip explain-code`와 `aip diagnostics --area`가 네 레지스트리를 함께 다루고(`crates/aip-cli/src/registry.rs`), 옛 표기를 넣으면 새 이름을 알려준다. 생성 문서는 `spec/diagnostics.md`(POC), `spec/definition-diagnostics.md`(DEF), `spec/wire-errors.md`(WIRE), `spec/client-errors.md`(CLIENT)다. 검증: `crates/aip-cli/tests/error_codes.rs`(문법·유일성·모든 코드 설명 가능·옛 표기가 트리에 없음), 영역별 레지스트리 완전성 테스트.
+- **결정(창시자 2026-10-13, D-A24)**: 코드 체계를 `영역.이름` 하나로 통합하고 공개 wire 변경을 허용했다. 이름이 겹치던 것은 4개가 아니라 8개였다(`BAD_VALUE`, `DUPLICATE`, `POLICY_FIELD_NOT_FILTERABLE`, `TYPE_MISMATCH`, `UNKNOWN_FIELD`, `UNKNOWN_KEY`, `UNKNOWN_RESOURCE`, `UNSUPPORTED`). 영역은 `DEF`, `WIRE`, `POC`와, SDK가 서버 코드와 섞어 쓰던 `PROTOCOL_ERROR` 등 8개를 위해 새로 둔 `CLIENT`다. `aip explain-code`와 `aip diagnostics --area`가 네 레지스트리를 함께 다루고(`crates/aip-cli/src/registry.rs`), 옛 표기를 넣으면 새 이름을 알려준다. 생성 문서는 `spec/diagnostics.md`(POC), `spec/definition-diagnostics.md`(DEF), `spec/wire-errors.md`(WIRE), `spec/client-errors.md`(CLIENT)다. 검증: `crates/aip-cli/tests/error_codes.rs`(문법·유일성·모든 코드 설명 가능·옛 표기가 트리에 없음), 영역별 레지스트리 완전성 테스트.
 
 ## F10. 계약 크기
 
@@ -153,10 +154,10 @@
 
 | 사안 | 대안 | 지금의 완화 |
 |---|---|---|
-| 제품 언어와 PoC 언어의 확장자 공유(F5) | 별도 확장자, 파일 머리 언어 표지, 현행 유지 | 두 검사기의 `language:` 안내 |
+| 제품 언어와 PoC 언어의 확장자 공유(F5) | 별도 확장자, 파일 머리 언어 표지, 현행 유지 | **결정·반영됨(D-A25)**: PoC를 `.aipoc`로 분리 |
 | `club: Club.Id`(외래 키 없음) 허용 여부(F8) | 오류로 금지, 별도 철자 | 결정됨(2026-10-13): 오류로 금지, 별도 철자 없음 |
 | 오류 본문에 `requestId`·`retryable`·`explain` 추가(F4, F13) | 본문 필드 추가(DD-14), 헤더만 유지 | 헤더 `x-request-id`, `spec/wire-errors.md` |
-| 오류 코드 두 체계 통합(F9) | 접두 도입, 현행 유지 | **결정·반영됨(D-A20)**: `영역.이름`(DEF·WIRE·CLIENT·POC), 공개 wire 변경 |
+| 오류 코드 두 체계 통합(F9) | 접두 도입, 현행 유지 | **결정·반영됨(D-A24)**: `영역.이름`(DEF·WIRE·CLIENT·POC), 공개 wire 변경 |
 | 열거형 값 순서의 digest 반영(F12) | 정렬해서 digest | **결정·반영됨(D-A18)**: 값 정렬 |
 | 계약 JSON의 공통 `errors` 분리와 compact 출력(F10) | 계약 형식 변경 | 측정만 |
 

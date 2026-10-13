@@ -29,7 +29,7 @@
 ```
 aip/
   spec/                   언어 명세 (grammar, IR 스키마, 진단 코드 목록)
-  conformance/            케이스별 .aip + 기대 진단(.expect.json) + 기대 런타임 시나리오
+  conformance/            케이스별 .aipoc + 기대 진단(.expect.json) + 기대 런타임 시나리오
   crates/
     aip-syntax/           lexer, parser, CST(rowan), formatter
     aip-hir/              이름 해석, L3 하강, 타입 검사
@@ -90,7 +90,7 @@ aip/
 
 ### M6. 증명: 아리아리 전체 포팅
 - 아리아리 백엔드 전 기능을 AIP로 재구현, 원본 프런트(Next.js)를 생성 클라이언트로 연결
-- 측정: 코드량(원본 Java vs AIP 정의 + escape hatch), 결함(원본에서 확인된 결함의 AIP 검출/차단 여부), 성능(k6로 동일 시나리오 p50/p95), LLM 생성 실험(요구사항 → .aip 생성 → 진단 → 자가수정 성공률)
+- 측정: 코드량(원본 Java vs AIP 정의 + escape hatch), 결함(원본에서 확인된 결함의 AIP 검출/차단 여부), 성능(k6로 동일 시나리오 p50/p95), LLM 생성 실험(요구사항 → .aipoc 생성 → 진단 → 자가수정 성공률)
 - 종료 조건: `00-strategy.md` 7절 전제들을 판정하고 결과를 문서로 남긴다. 전제가 틀렸으면 그것도 결과다.
 
 ## 4. 검증-보충 루프 (상시 운영)
@@ -99,7 +99,7 @@ aip/
 
 ```
 1 수집    새 백엔드 케이스를 커버리지 카탈로그(08)에 추가
-2 표현    케이스를 명세 문법으로 작성 (conformance/<category>/<case>.aip)
+2 표현    케이스를 명세 문법으로 작성 (conformance/<category>/<case>.aipoc)
 3 판정    표현 가능 / 새 L3 형식 필요 / L2 개정 필요 / escape hatch / 범위 밖
 4 검증    (M1 이후) 파서·분석기로 자동 확인, 기대 진단 작성
           (M2 이후) 런타임 시나리오와 동시성·장애 주입 테스트

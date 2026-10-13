@@ -348,7 +348,7 @@ Stripe 서명 규칙은 공식 문서(docs.stripe.com/webhooks, 2026-10-01 확�
 |---|---|---|
 | 옛 `aip-ir`(SQL 담은 실행 계획) → `aip-plan`으로 개명 | IR이라는 이름이 실행 계획을 가리켜 철학 §4.3의 층 구분을 흐렸다 | 개명 후 29 passed |
 | 새 `aip-ir` = Core Semantic IR v0 → 0.2 | 언어 독립 의미 계약이 코드에 없었다(10 §3.1) | 아래 |
-| `aip-sema/src/to_core.rs`: `.aip` → Core IR 하강 | 첫 프런트엔드 | 두 예제 validate 진단 0, Unknown 타입 0, 미해석 이름 0 |
+| `aip-sema/src/to_core.rs`: `.aipoc` → Core IR 하강 | 첫 프런트엔드 | 두 예제 validate 진단 0, Unknown 타입 0, 미해석 이름 0 |
 | `aip-ir/src/validate.rs`: 프런트엔드 독립 구조 검증 `POC.I101`~`I119` | 다른 프런트엔드가 만든 IR도 같은 검사를 받는다 | 규칙마다 negative 테스트 |
 | `aip core <file> [--digest]` | 기계가 읽는 의미 계약 출력 | ariari `sha256:…`, shop `sha256:…` 출력 |
 
@@ -394,7 +394,7 @@ Core IR 성질 검증(`crates/aip-sema/tests/core_ir.rs`): JSON 왕복 동일, �
 - 회귀 방지: 코드별 사용 지점 수를 `crates/aip-ir/tests/code_sites.snap`에 고정. 지점이 늘면 테스트가 실패해 같은 의미인지 재검토를 강제한다.
 - E212는 여전히 서로 다른 구문 오용(count body, same binder, 이벤트 spread, insert from as, approvers alias)을 묶는다. 수정 방법이 구문마다 달라 다음 분리 후보.
 - `POC.UNAVAILABLE`: 409 → 503, retryable. 닫힌 포트 풀로 엔진 호출과 실제 HTTP 응답 모두 503 확인(`crates/aip-cli/tests/unavailable.rs`).
-- 관찰만: 멱등 오류 코드가 `POC.IDEMPOTENCY.*`와 `POC.INPUT.IDEMPOTENCY_KEY_*` 두 네임스페이스로 나뉘어 있다. 런타임 코드 이름 변경은 클라이언트 호환을 깨므로 보류했었다(2026-10-13에 접두를 `POC.`로 통합하며 공개 wire 변경을 허용하는 결정이 났다, D-A20).
+- 관찰만: 멱등 오류 코드가 `POC.IDEMPOTENCY.*`와 `POC.INPUT.IDEMPOTENCY_KEY_*` 두 네임스페이스로 나뉘어 있다. 런타임 코드 이름 변경은 클라이언트 호환을 깨므로 보류했었다(2026-10-13에 접두를 `POC.`로 통합하며 공개 wire 변경을 허용하는 결정이 났다, D-A24).
 
 ### S2: 의미 규칙을 Core IR 위로 (언어 독립 검사)
 - `check.rs`/`model.rs` 진단 지점 172곳을 분류: 프런트엔드 고유(F: 이름 해석, 타입 추론, 구문 형태) 127곳, 의미 규칙(S: 해석된 IR만으로 판단 가능) 45곳. S는 `crates/aip-ir/src/analyze.rs`로 옮기고 `check.rs`에서 지웠다(이중 실행 없음). 코드·메시지 불변.

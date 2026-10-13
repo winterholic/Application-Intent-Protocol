@@ -14,8 +14,8 @@ use serde_json::{Value, json};
 use std::process::Command;
 use std::sync::Arc;
 
-const APP: &str = include_str!("encrypt_app.aip");
-const APP_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/encrypt_app.aip");
+const APP: &str = include_str!("encrypt_app.aipoc");
+const APP_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/encrypt_app.aipoc");
 
 fn compile(src: &str) -> (aip_ir::Program, aip_plan::Program) {
     let checked = aip_sema::pipeline::check_source(src);

@@ -4,7 +4,7 @@
 //! that is settled, whether the program is *sound* (every intent says who may
 //! call it, a toggle has the unique constraint it relies on, an event is
 //! emitted with one shape, ...) is a property of the IR alone. These rules
-//! live here so a TS or Python frontend gets exactly the checks `.aip` gets.
+//! live here so a TS or Python frontend gets exactly the checks `.aipoc` gets.
 //! [`crate::validate::validate`] checks that the IR is well-formed; this checks
 //! that a well-formed program follows the safety rules of
 //! `docs/design/04-safety-matrix.md`. Run both.

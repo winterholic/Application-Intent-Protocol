@@ -35,6 +35,22 @@ pub fn form_of(path: &str) -> Option<Form> {
         .map(|x| x.1)
 }
 
+/// A PoC program (`.aipoc`) given to the product checker. The PoC language (`entity`, `command`, `query`) is read by
+/// `aip check`; reading it here would only report typos in a file that has none (founder decision 2026-10-13, audit F5).
+pub fn wrong_language(path: &str) -> Option<Vec<Diag>> {
+    path.ends_with(".aipoc").then(|| {
+        vec![Diag::new(
+            "DEF.WRONG_LANGUAGE",
+            format!("`{path}` has the extension `.aipoc` of PoC programs, not of product definitions"),
+            diag::Span { line: 1, col: 1 },
+        )
+        .with_help(
+            "`aip service` reads product definitions (resource, expose, transition) in `.aip` files; a PoC program (entity, command, query) is checked with `aip check`. \
+             If this file is a product definition, rename it to `.aip`.",
+        )]
+    })
+}
+
 pub fn load_str(src: &str, form: Form) -> Result<sema::Output, Vec<Diag>> {
     limits::check_source(src).map_err(|d| enrich::enrich(vec![d], src, form))?;
     match form {

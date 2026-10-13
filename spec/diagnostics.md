@@ -15,7 +15,7 @@
 
 2026-10-13 이전 표기는 접두만 바뀌었다. `AIP-` 뒤에 E·W·I와 번호가 붙던 코드는 `POC.` 뒤에 같은 E·W·I와 번호가, `AIP.`로 시작하던 런타임 코드는 `POC.`로 시작한다. 이름은 그대로다.
 
-번호의 앞자리는 영역을 가리킨다. 1xx는 선언과 이름, 2xx는 타입과 값, 3xx는 권한·개인정보·정합성, 4xx는 품질 경고, 5xx는 extension, 6xx는 백엔드다. 번호는 영역 안에서 비어 있을 수 있고 재사용하지 않는다.
+번호의 앞자리는 영역을 가리킨다. 0xx는 파일과 입력, 1xx는 선언과 이름, 2xx는 타입과 값, 3xx는 권한·개인정보·정합성, 4xx는 품질 경고, 5xx는 extension, 6xx는 백엔드다. 번호는 영역 안에서 비어 있을 수 있고 재사용하지 않는다.
 
 ## 안정성 규칙
 
@@ -28,6 +28,13 @@
 
 ## 오류 (POC.E)
 
+### `POC.E001`
+
+file does not have the extension of PoC programs
+
+- 원인: `aip check` and every command that reads a PoC program need a file with the extension `.aipoc`. The extension `.aip` belongs to the product definition language (`resource`, `expose`, `transition`), which `aip service check` reads; reading it as a PoC program would only report typos in a file that has none.
+- 수정: Rename a PoC program (`entity`, `command`, `query`) to `.aipoc`; check a product definition with `aip service check`.
+
 ### `POC.E100`
 
 syntax error
@@ -35,7 +42,7 @@ syntax error
 - 원인: The source does not match the grammar (`spec/grammar.md`): an unexpected character, a malformed literal, a clause out of order or a missing part. Also used when a query has no `from`/`fetch`.
 - 수정: Follow the message and its help text; clause order is fixed (see `spec/grammar.md`).
 
-```aip
+```aipoc
 query Clubs {
   allow public
   from Club c
@@ -51,7 +58,7 @@ duplicate or clashing name
 - 원인: Two declarations, enum values, parameters, selections, assignments or webhook handlers use the same name in one scope, a name shadows another name or a built-in type, or an intent a form generates (`PublishArticle`, `GiveTermsConsent`, `StartMemberImpersonation`, ...) has the name of a declared one.
 - 수정: Rename or remove one of them; a name means exactly one thing in its scope.
 
-```aip
+```aipoc
 enum Status { ACTIVE ENDED }
 entity Club { name: Text }
 ```
@@ -63,7 +70,7 @@ unknown type or entity
 - 원인: A type or entity name (in a type position, `from`, a reference or the actor declaration) is not declared.
 - 수정: Declare the type or entity, or fix the spelling; the help text lists what exists.
 
-```aip
+```aipoc
 entity Club { name: Text  fee: Money(KRW) }
 ```
 
@@ -74,7 +81,7 @@ unknown field or predicate
 - 원인: A field or predicate is read or written on an entity that does not have it.
 - 수정: Use a field the entity declares; the help text lists the entity's fields.
 
-```aip
+```aipoc
 command Rename(club: Club, name: Text) {
   allow authenticated
   do { set club.name = name }
@@ -88,7 +95,7 @@ unknown name
 - 원인: A name does not refer to a parameter, binding, function, relation, search, intent, flag, partition, event or webhook source that is in scope or known.
 - 수정: Declare the name or correct the spelling; the help text suggests close matches.
 
-```aip
+```aipoc
 relation isOwner(m: Member, c: Club) = exists membership(m, c)
 ```
 
@@ -99,7 +106,7 @@ implicit field redeclared
 - 원인: The entity declares a field whose name the runtime already maintains implicitly (for example `version` on a versioned or history entity).
 - 수정: Remove the declaration, or rename the field.
 
-```aip
+```aipoc
 entity Club { name: Text }
 ```
 
@@ -110,7 +117,7 @@ invalid inverse relation
 - 원인: `via` is used on a field that is not an inverse relation, an inverse relation field has no `via <backref field>`, or the named field of the other entity is not a reference back to this entity.
 - 수정: Write `via` only on `Entity[]` fields and name a reference field of the other entity that points back; the help text shows the declaration to add.
 
-```aip
+```aipoc
 entity Item { parent: Order }
 entity Order { items: Item[] via parent }
 ```
@@ -122,7 +129,7 @@ actor declared more than once
 - 원인: An application has exactly one actor; a second `actor` declaration is ambiguous about who `actor` refers to.
 - 수정: Delete the extra `actor` declaration; model different roles as an enum field on the actor entity.
 
-```aip
+```aipoc
 use auth
 actor Member via auth.oidc(kakao)
 entity Member personal { nickname: Text }
@@ -135,7 +142,7 @@ type written with wrong options
 - 원인: A type that needs options has none (`Money` without a currency) or a type that takes no options was given some.
 - 수정: Write the type in its standard form such as `Money(KRW)`, and drop the options from types that take none.
 
-```aip
+```aipoc
 entity Club { name: Text  fee: Money(KRW) }
 ```
 
@@ -146,7 +153,7 @@ actor not declared
 - 원인: `actor`, `authenticated`, `visible to actor`, `publishable by` or `impersonate` is used but the application declares no actor.
 - 수정: Declare the actor once at the top of the file (`actor <Entity> via ...`).
 
-```aip
+```aipoc
 use auth
 actor Member via auth.oidc(kakao)
 entity Member personal { nickname: Text }
@@ -159,7 +166,7 @@ evolution declaration contradicts the program
 - 원인: `was old` (on a field or an entity) or `removed field x` / `removed entity X` says how a deployed database moves to this program, so it must agree with the program: a field cannot be `was` its own name or the name of a field that is still declared, a name cannot be both renamed away and removed, two fields cannot continue the same old field, a removed field or entity cannot still be declared, and `was` only applies to entity fields.
 - 수정: Delete the declaration that no longer applies, or the field or entity it contradicts. Once every database has been migrated, the declaration may stay: it does nothing when the old name is not in the database.
 
-```aip
+```aipoc
 entity Task {
   title: Text was name
   removed field legacyCode
@@ -174,7 +181,7 @@ type mismatch
 - 원인: An expression, argument, default, assignment or declaration has a type the context does not accept (wrong operand types, wrong collection element, null for a required field, a non-Bool condition, and similar).
 - 수정: Make both sides the same type; convert or aggregate the value, or change the declared type.
 
-```aip
+```aipoc
 command Promote(t: ClubMember) {
   allow authenticated
   do { set t.role = MANAGER }
@@ -188,7 +195,7 @@ not a value of the enum
 - 원인: An identifier used as an enum value is not one of the enum's values (or belongs to several enums and is ambiguous).
 - 수정: Use one of the listed values, or compare against a typed value such as `ClubRole.MANAGER` when the name is shared.
 
-```aip
+```aipoc
 enum ClubRole ordered { GENERAL < MANAGER < ADMIN }
 ```
 
@@ -206,7 +213,7 @@ wrong use of a field kind or parameter kind
 - 원인: `+=`/`-=` need a numeric field and `touch` needs a counter field; the operation is applied to a field of another kind.
 - 수정: Use the operation on the kind of field it is made for.
 
-```aip
+```aipoc
 use redis
 entity Post { views: Int counter via redis }
 ```
@@ -218,7 +225,7 @@ required fields missing on insert
 - 원인: `insert` (or `expose create`) does not set every required field that has no default or generator.
 - 수정: Assign each missing field named in the message, or give the field a default or make it optional.
 
-```aip
+```aipoc
 command NewClub(name: Text) {
   allow authenticated
   do { insert Club { name } }
@@ -239,7 +246,7 @@ missing unique constraint for toggle or upsert
 - 원인: `toggle` and `upsert` find the existing row through a unique constraint; without a matching one the statement is ambiguous.
 - 수정: Add `unique (...)` over exactly the key columns.
 
-```aip
+```aipoc
 entity Like {
   club: Club
   member: Member on erase cascade
@@ -261,7 +268,7 @@ invalid assignment target
 - 원인: An assignment or `into` target is not a field of a row.
 - 수정: Assign to `row.field`; derived values cannot be targets.
 
-```aip
+```aipoc
 command Rename(club: Club, name: Text) {
   allow authenticated
   do { set club.name = name }
@@ -275,7 +282,7 @@ empty or below the minimum
 - 원인: A construct that needs at least one part has none: an `in` list without values, an enum without values, an approval that requires fewer than 1 approval, a `consent` below version 1, or an `impersonate` with a `ttl` under one second.
 - 수정: Add at least one value (or raise the number to 1 or more).
 
-```aip
+```aipoc
 enum Status { ACTIVE ENDED }
 entity Club { name: Text }
 ```
@@ -287,7 +294,7 @@ wrong number of arguments
 - 원인: A function, relation or built-in is called with more or fewer arguments than it declares.
 - 수정: Pass exactly the declared number of arguments; the message names the expected count.
 
-```aip
+```aipoc
 relation memberCount(c: Club) = count(c.members)
 ```
 
@@ -305,7 +312,7 @@ multi-valued where one value is needed
 - 원인: A set-valued expression (a relation or collection) is used where a single value is required.
 - 수정: Aggregate it (`count`, `sum`, `same`, `the`) or bind one element.
 
-```aip
+```aipoc
 relation memberCount(c: Club) = count(c.members)
 ```
 
@@ -344,7 +351,7 @@ more than one generator on a field
 - 원인: A field has several value generators (sequence, slug, position, counter); the IR keeps one meaning per field.
 - 수정: Keep one generator and model the other in a separate field.
 
-```aip
+```aipoc
 entity Ticket {
   club: Club
   code: Text sequence per club format "T-{n}"
@@ -358,7 +365,7 @@ missing `allow`
 - 원인: Every intent and every exposed operation must say who may call it; there is no default. A `publishable` entity says who may publish it with `publishable by <condition>`, or leaves it to the superuser, and the program must declare one of them.
 - 수정: Add `allow public`, `allow authenticated` or an `allow <condition>` clause.
 
-```aip
+```aipoc
 command Rename(club: Club, name: Text) {
   allow authenticated
   do { set club.name = name }
@@ -386,7 +393,7 @@ personal data reference without erase policy
 - 원인: A field that references personal data does not say what happens when that data is erased, or an anonymized field is not optional.
 - 수정: Add `on erase cascade`, `on erase anonymize` (optional field) or `on erase restrict`.
 
-```aip
+```aipoc
 entity Comment {
   author: Member? on erase anonymize
   body: Text
@@ -400,7 +407,7 @@ erase on a non-personal entity
 - 원인: `erase` applies to entities declared `personal`.
 - 수정: Declare the entity `personal`, or delete the row instead of erasing it.
 
-```aip
+```aipoc
 entity Member personal { nickname: Text }
 ```
 
@@ -425,7 +432,7 @@ unusable tenant path
 - 원인: `tenant via <path>` must be a chain of required references that starts at the entity and ends at the entity that is the tenant (for example `Workspace`). The path names a field that does not exist, is not a reference, is optional, ends at another tenant-scoped entity, or two entities end at different tenants.
 - 수정: Write the path as required reference fields, and end every tenant path at the same entity.
 
-```aip
+```aipoc
 entity Workspace { name: Text }
 entity Project {
   workspace: Workspace
@@ -444,7 +451,7 @@ tenant-scoped rows read without a tenant
 - 원인: The intent, or the form (approval, job, grant link, verification, subscription), reads rows of a tenant-scoped entity (`from`, a set expression, an update or delete target, an inverse relation of something that is not tenant-bound) but has no required parameter that fixes the tenant. A read that names no tenant would span all of them, and the only way to opt out is `internal cross tenant` on an intent. Event handlers, schedule items and rules are anchored by the row they are about; so are the endpoints of an `outbound webhooks` form, by the event, which therefore has to reference a tenant-scoped row. Webhooks, consumers and retention have no anchor and are not checked here: their writes are held to one tenant by the database instead.
 - 수정: Add a required parameter of the tenant entity or of a tenant-scoped entity (`workspace: Workspace`), or make the intent `internal cross tenant`.
 
-```aip
+```aipoc
 entity Workspace { name: Text }
 entity Project {
   workspace: Workspace
@@ -466,7 +473,7 @@ cross tenant on an intent that is not internal
 - 원인: `cross tenant` lifts the single-tenant rules, so on an intent it is only allowed together with `internal`, which clients cannot call. A public intent that works across tenants would let any caller read or write other tenants. Declarations that have no caller (`on Event`, `schedule`, `rule`, `consume` and a webhook handler) may be written `cross tenant` without `internal`.
 - 수정: Write `internal cross tenant`, or remove `cross tenant` and give the intent a parameter that fixes its tenant.
 
-```aip
+```aipoc
 entity Workspace { name: Text }
 internal cross tenant query AllWorkspaces() {
   allow public
@@ -483,7 +490,7 @@ invalid search declaration
 - 원인: A `search` names a language the runtime has no text analysis for, a weight other than A, B, C or D, a field that is not text (Text, RichText, Email, Url, Phone), the same field twice, or no field at all. A search over an entity with `publishable` is refused too, because readers see the published copy and the index is on the working table.
 - 수정: Use one of the supported languages, weights A to D, and text fields of the entity, each once.
 
-```aip
+```aipoc
 entity Post {
   title: Text(1..100)
   body: Text(1..4000)
@@ -498,7 +505,7 @@ invalid outbound webhooks declaration
 - 원인: An `outbound webhooks` form names a signature scheme other than `hmac_sha256`, a retry count above 16, a window (`over`) or a `disable after` that is not positive, no event, or an endpoint entity without a `url: Url` field to deliver to. Two forms for one entity are refused too, because an endpoint belongs to one subscription.
 - 수정: Use `sign hmac_sha256`, `retry` from 0 to 16, positive durations, at least one event, and a `url: Url` field on the endpoint entity; declare one form per endpoint entity.
 
-```aip
+```aipoc
 entity Endpoint {
   url: Url
 }
@@ -516,7 +523,7 @@ invalid encrypted field
 - 원인: An `encrypted` field is stored as ciphertext the database cannot compute on. It must be a plain stored text field (Text, Email, Url, Phone), must not carry a `default` or a generated value (the default would be stored in the clear), and cannot be part of a `unique`, `no overlap` or `at most one` declaration or of a `search`, because the database would compare, index or search the ciphertext, which is random for every value.
 - 수정: Keep `encrypted` on text fields only, remove the default, and take the field out of unique, search and the other declarations; look a row up by something that is not encrypted (an id, or a separate field such as a hash you compute and store yourself).
 
-```aip
+```aipoc
 entity Member {
   email: Email personal encrypted
   nickname: Text(2..20)
@@ -531,7 +538,7 @@ encrypted field used in an expression
 - 원인: The runtime encrypts a value just before it is bound to a statement and decrypts a result just before it is returned, so the database never sees the plaintext of an `encrypted` field. An expression that makes the database read it (a comparison, a filter, `sort by`, an aggregate, a `group by`, a condition, a computed value, an event or notification payload, a copy into another field or row, an `exists` over it) would work on ciphertext and silently give wrong answers.
 - 수정: Select the field by name in a `select` or `returns` of the same row, or write it from a parameter with `set row.field = param`. To filter or sort by it, keep a separate, unencrypted field for that purpose.
 
-```aip
+```aipoc
 entity Member {
   email: Email personal encrypted
   nickname: Text(2..20)
@@ -551,7 +558,7 @@ encrypted field cannot be written this way
 - 원인: The ciphertext of a row is bound to the row's id, so a value is encrypted for exactly one row. The value written to an `encrypted` field has to be a parameter (or a value the program already received), and the write has to name one row: `insert`, or `set row.field = value`. An `update` or `upsert` over many rows, an `insert ... from` a set, a `toggle`, or a value computed from other data cannot be encrypted per row.
 - 수정: Write the field with `set row.field = param` on one row, or insert the row with the parameter as the value; do the work row by row with `each`.
 
-```aip
+```aipoc
 entity Member {
   email: Email personal encrypted
   nickname: Text(2..20)
@@ -569,7 +576,7 @@ extension not declared or misused
 - 원인: A name, type, effect, broker, webhook source or provider belongs to an extension the application did not declare with `use`.
 - 수정: Add `use <extension>` at the top of the file.
 
-```aip
+```aipoc
 use s3
 entity Photo { file: s3.Object }
 ```
@@ -618,7 +625,7 @@ redundant comparison or call
 - 원인: Both sides of a comparison are the same expression, or a function is called with the same expression twice, which is almost always a typo.
 - 수정: Compare two different values.
 
-```aip
+```aipoc
 relation sameClub(a: ClubMember, b: ClubMember) = a.club = b.club
 ```
 
@@ -629,7 +636,7 @@ unbounded list query
 - 원인: A query returns every row; the result grows with the data and cannot be paged by clients safely.
 - 수정: Add `page N by keyset` (or `by offset`) to the query.
 
-```aip
+```aipoc
 query Clubs {
   allow public
   from Club c

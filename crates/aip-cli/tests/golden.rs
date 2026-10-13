@@ -19,15 +19,15 @@ fn golden_dir() -> PathBuf {
 fn inputs() -> Vec<(String, String)> {
     let mut out = Vec::new();
     for app in ["ariari", "shop", "saas", "cms"] {
-        let src = std::fs::read_to_string(root().join(format!("examples/{app}/app.aip"))).expect("example source");
+        let src = std::fs::read_to_string(root().join(format!("examples/{app}/app.aipoc"))).expect("example source");
         out.push((app.to_string(), src));
     }
     let dir = root().join("conformance/sema");
-    let prelude = std::fs::read_to_string(dir.join("_prelude.aip")).expect("prelude");
+    let prelude = std::fs::read_to_string(dir.join("_prelude.aipoc")).expect("prelude");
     let mut cases: Vec<PathBuf> = std::fs::read_dir(&dir)
         .expect("conformance dir")
         .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.extension().is_some_and(|x| x == "aip") && !p.file_name().is_some_and(|n| n.to_string_lossy().starts_with('_')))
+        .filter(|p| p.extension().is_some_and(|x| x == "aipoc") && !p.file_name().is_some_and(|n| n.to_string_lossy().starts_with('_')))
         .collect();
     cases.sort();
     for case in cases {

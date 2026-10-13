@@ -1,6 +1,6 @@
 //! Structural validation of Core IR, independent of the frontend that
 //! produced it: a program from a TS or Python frontend (or written by a
-//! tool) gets the same checks as one lowered from `.aip`.
+//! tool) gets the same checks as one lowered from `.aipoc`.
 //!
 //! Codes:
 //! - `POC.I101` version tag differs from [`CORE_IR_VERSION`]

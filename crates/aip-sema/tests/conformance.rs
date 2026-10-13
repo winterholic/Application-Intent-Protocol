@@ -1,4 +1,4 @@
-//! Runs `conformance/sema/*.aip`: each case is appended to `_prelude.aip` and
+//! Runs `conformance/sema/*.aipoc`: each case is appended to `_prelude.aipoc` and
 //! must produce exactly the diagnostic codes listed in its `.expect` file.
 //!
 //! Frontend rules (names, types, syntax) are checked on the AST. Semantic rules
@@ -22,11 +22,11 @@ struct Case {
 
 fn cases() -> Vec<Case> {
     let dir = root();
-    let prelude = std::fs::read_to_string(dir.join("_prelude.aip")).expect("prelude");
+    let prelude = std::fs::read_to_string(dir.join("_prelude.aipoc")).expect("prelude");
     let mut paths: Vec<PathBuf> = std::fs::read_dir(&dir)
         .expect("conformance dir")
         .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.extension().is_some_and(|x| x == "aip") && !p.file_name().is_some_and(|n| n.to_string_lossy().starts_with('_')))
+        .filter(|p| p.extension().is_some_and(|x| x == "aipoc") && !p.file_name().is_some_and(|n| n.to_string_lossy().starts_with('_')))
         .collect();
     paths.sort();
     assert!(!paths.is_empty());
@@ -87,7 +87,7 @@ fn ir_json_alone_yields_the_semantic_codes() {
 
 #[test]
 fn ariari_is_clean() {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/ariari/app.aip");
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/ariari/app.aipoc");
     let src = std::fs::read_to_string(path).expect("ariari");
     let checked = aip_sema::pipeline::check_source(&src);
     let rendered: Vec<String> = checked.diagnostics.iter().map(|d| d.render("ariari")).collect();

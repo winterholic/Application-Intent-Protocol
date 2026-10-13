@@ -528,6 +528,6 @@ class Parser {
   }
 }
 
-export function parse(src: string, file = 'app.aip'): App {
+export function parse(src: string, file = 'app.aipoc'): App {
   return new Parser(lex(src)).app(file);
 }

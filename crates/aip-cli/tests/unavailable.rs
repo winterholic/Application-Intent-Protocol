@@ -10,7 +10,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 fn engine_without_database() -> Arc<Engine> {
-    let path = format!("{}/../../examples/shop/app.aip", env!("CARGO_MANIFEST_DIR"));
+    let path = format!("{}/../../examples/shop/app.aipoc", env!("CARGO_MANIFEST_DIR"));
     let src = std::fs::read_to_string(path).expect("shop source");
     let (core, map) = aip_sema::pipeline::check_source(&src).into_core().expect("shop checks clean");
     let compiled = aip_pg::compile(&core, &map);

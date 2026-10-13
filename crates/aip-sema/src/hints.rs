@@ -19,12 +19,12 @@ const UNKNOWN_NAME_CODES: &[&str] = &["POC.E102", "POC.E103", "POC.E104"];
 pub fn add(diags: &mut [Diagnostic], src: &str) {
     let words = words(src);
     let mut told: BTreeSet<String> = BTreeSet::new();
-    // Two different languages are both written in .aip files; a file of the other one fails with errors that
-    // look like typos. Say so once, on the first error.
+    // A product definition saved with the PoC extension `.aipoc` fails with errors that look like typos. Say so once,
+    // on the first error. (`aip check` refuses a file with another extension before it reads it.)
     if let Some(first) = diags.first_mut().filter(|_| looks_like_product_definition(src)) {
         first.help = Some(
             "language: this file looks like a product definition (top-level resource with fields/expose/transition), whose checker is \
-             'aip service check'; 'aip check' reads the PoC language (entity, command, query; see spec/grammar.md)."
+             'aip service check'; save it with the extension .aip. 'aip check' reads the PoC language (entity, command, query, in .aipoc files; see spec/grammar.md)."
                 .to_string(),
         );
     }

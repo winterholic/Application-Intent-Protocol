@@ -254,6 +254,13 @@ pub static REGISTRY: &[Info] = &[
         "",
     ),
     i(
+        "DEF.WRONG_LANGUAGE",
+        "a PoC program was given to the product checker",
+        "The product commands (`aip service check/gen/serve`) read definitions of the product language (`resource`, `expose`, `transition`) in `.aip` files. A file with the extension `.aipoc` is a PoC program (`entity`, `command`, `query`), which has its own checker; reading it here would only report typos in a file that has none.",
+        "Check a PoC program with `aip check`; if the file is a product definition, rename it to `.aip`.",
+        "",
+    ),
+    i(
         "DEF.UNKNOWN_KEY",
         "a key that the object does not accept (host-literal form)",
         "As in `DEF.PARSE_UNKNOWN_KEY`: unknown keys are never ignored.",

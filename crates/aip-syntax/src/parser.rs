@@ -2624,7 +2624,7 @@ mod tests {
     fn ok(src: &str) -> File {
         match parse_file(src) {
             Ok(f) => f,
-            Err(d) => panic!("{}", d.render("t.aip")),
+            Err(d) => panic!("{}", d.render("t.aipoc")),
         }
     }
 

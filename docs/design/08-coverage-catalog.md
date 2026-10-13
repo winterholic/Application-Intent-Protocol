@@ -339,7 +339,7 @@
 
 ### 엔티티 수식어
 
-```aip
+```aipoc
 entity Post {
   track created, updated by actor           // A05: createdAt, updatedAt, createdBy, updatedBy
   history                                   // A06: post_history 테이블, 쓰기 집합마다 전후 값 기록
@@ -365,7 +365,7 @@ entity Post {
 
 ### 인증·인가
 
-```aip
+```aipoc
 actor Member   via auth.oidc(kakao)
 actor ApiClient via auth.apiKey scopes [orders.read, orders.write]      // B06
 actor Guest    via auth.anonymous                                       // B12
@@ -414,7 +414,7 @@ internal command RecalculateStats(club: Club) { ... }                    // B07
 
 ### 입력과 동적 스키마
 
-```aip
+```aipoc
 record PeriodInput {
   start: Time
   end: Time?
@@ -438,7 +438,7 @@ entity Apply {
 
 ### 조회
 
-```aip
+```aipoc
 query ClubStats(club: Club) {                                           // E07
   allow managerOf(actor, club)
   from Apply a where a.recruitment.club = club
@@ -479,7 +479,7 @@ query List(...) { page 20 by offset max page 100 ... }                  // E02
 
 ### 쓰기
 
-```aip
+```aipoc
 expose Notice {                                                          // F02
   read:   visible
   create: managerOf(actor, club)  fields [title, body, pinned]
@@ -524,7 +524,7 @@ rule OrderCompleted on Order o                                          // F12
 
 ### 동시성·용량
 
-```aip
+```aipoc
 entity Campaign {
   quantity: Int(1..)
   capacity count(Coupon c where c.campaign = this) <= quantity else SOLD_OUT    // G04
@@ -536,7 +536,7 @@ entity Product { stock: Int counter via postgres sharded 8 }             // G05:
 
 ### 외부 연동
 
-```aip
+```aipoc
 webhook TossPaymentEvent via payments.toss.webhook {                    // H03
   // 서명 검증, 이벤트 id 중복 제거는 extension이 하강에서 삽입
   on DONE(e)     do { update Order o where o.paymentRef = e.paymentKey set o.settledAt = now }
@@ -561,7 +561,7 @@ upcast OrderCreated v1 -> v2 with channel: WEB
 
 ### 알림
 
-```aip
+```aipoc
 notify managersOf(club) via notify.template("new-apply")
   respecting preferences(category: RECRUITMENT)                         // K02
   digest every 1h                                                       // K03
@@ -569,7 +569,7 @@ notify managersOf(club) via notify.template("new-apply")
 
 ### 개인정보·설정·운영
 
-```aip
+```aipoc
 consent Terms version 3 required for [SubmitApply, CreateClub]          // O03: 미동의 시 CONSENT_REQUIRED
 command ExportMyData() {                                                // O02
   allow authenticated
@@ -588,7 +588,7 @@ fn pickWinners(entries: Set<Entry>, n: Int): Set<Entry> = sample(entries, n, see
 
 ### Pass 2 추가 형식
 
-```aip
+```aipoc
 actor Member via auth.oidc(kakao) superuser when role = SUPER_ADMIN audited   // C20
 // 모든 allow와 visible to에 "or actor is superuser"가 일관되게 붙고, 사용 시 감사 기록이 남는다.
 // 아리아리에서 공지 상세는 시스템 관리자를 허용하고 고정 공지 목록은 허용하지 않던 불일치가 사라진다.

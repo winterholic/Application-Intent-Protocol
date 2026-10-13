@@ -175,7 +175,7 @@ fn now() -> i64 {
 
 /// The saas example with the form's numbers replaced, so a test does not wait for hours.
 fn program(tweak: impl FnOnce(&mut aip_ir::OutboundWebhooks)) -> aip_plan::Program {
-    let path = format!("{}/../../examples/saas/app.aip", env!("CARGO_MANIFEST_DIR"));
+    let path = format!("{}/../../examples/saas/app.aipoc", env!("CARGO_MANIFEST_DIR"));
     let src = std::fs::read_to_string(path).expect("example source");
     let (mut core, map) = aip_sema::pipeline::check_source(&src).into_core().expect("saas checks clean");
     let mut tweak = Some(tweak);

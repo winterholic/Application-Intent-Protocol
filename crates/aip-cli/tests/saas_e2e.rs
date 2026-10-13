@@ -539,7 +539,7 @@ enum Layer {
 }
 
 async fn engine_without(layer: Layer, db: &str) -> Arc<Engine> {
-    let path = format!("{}/../../examples/saas/app.aip", env!("CARGO_MANIFEST_DIR"));
+    let path = format!("{}/../../examples/saas/app.aipoc", env!("CARGO_MANIFEST_DIR"));
     let src = std::fs::read_to_string(path).expect("example source");
     let (mut core, map) = aip_sema::pipeline::check_source(&src).into_core().expect("saas checks clean");
     if matches!(layer, Layer::IntentRules | Layer::Both) {

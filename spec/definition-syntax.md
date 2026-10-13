@@ -2,7 +2,7 @@
 
 > 이 문서는 `spikes/spike-v1-fixture/src/syntax_card.rs`에서 생성된다. 손으로 고치지 않는다. 다시 만들려면 `AIP_UPDATE_GOLDEN=1 cargo test --manifest-path spikes/spike-v1-fixture/Cargo.toml --test diagnostics`를 실행한다.
 
-제품 경로(`aip service check/gen/serve`)가 읽는 정의 언어의 요약이다. PoC `.aip`(entity·command·query, [grammar.md](grammar.md))와는 다른 언어이며 확장자만 같다. 정의는 `.aip` 텍스트, TS·Python 안의 `aip` 블록(`.e.ts`, `.e.py`), TS·Python 데이터 리터럴(`.h.ts`, `.h.py`) 다섯 형식 중 하나로 쓰고 모두 같은 계약이 된다. 키 목록은 파서와 같은 표에서 나오고, 오류 코드와 고치는 방법은 [definition-diagnostics.md](definition-diagnostics.md)에 있다.
+제품 경로(`aip service check/gen/serve`)가 읽는 정의 언어의 요약이다. PoC 언어(entity·command·query, 확장자 `.aipoc`, [grammar.md](grammar.md))와는 다른 언어이고 확장자도 다르다(`.aip`는 이 제품 정의 언어 전용이다). 정의는 `.aip` 텍스트, TS·Python 안의 `aip` 블록(`.e.ts`, `.e.py`), TS·Python 데이터 리터럴(`.h.ts`, `.h.py`) 다섯 형식 중 하나로 쓰고 모두 같은 계약이 된다. 키 목록은 파서와 같은 표에서 나오고, 오류 코드와 고치는 방법은 [definition-diagnostics.md](definition-diagnostics.md)에 있다.
 
 ## 언어가 가정하지 않는 것
 

@@ -43,7 +43,7 @@
 
 | 원칙 | 현재 상태 | 근거 | 판정 |
 |---|---|---|---|
-| 존재 목적: 백엔드 개발·유지보수 최소화 | 계층 코드는 사라졌지만 새 화면·기능이 필요하면 서버 명세에 intent를 추가해야 한다. 유지보수 대상이 Java에서 `.aip`로 옮겨 갔다. 스키마 진화·계약 호환 검사·진단이 유지보수 비용을 낮춘다 | `examples/ariari/app.aip`, `aip-pg/src/evolve.rs`, `aip-contract/src/compat.rs` | **부분 일치**. 양은 크게 줄었으나(측정 M6 미완) "매번 API를 추가하지 않는다"는 아니다 |
+| 존재 목적: 백엔드 개발·유지보수 최소화 | 계층 코드는 사라졌지만 새 화면·기능이 필요하면 서버 명세에 intent를 추가해야 한다. 유지보수 대상이 Java에서 `.aip`로 옮겨 갔다. 스키마 진화·계약 호환 검사·진단이 유지보수 비용을 낮춘다 | `examples/ariari/app.aipoc`, `aip-pg/src/evolve.rs`, `aip-contract/src/compat.rs` | **부분 일치**. 양은 크게 줄었으나(측정 M6 미완) "매번 API를 추가하지 않는다"는 아니다 |
 | 작동 모델: 호출자가 원하는 데이터·동작을 표현 | 호출자는 서버가 이름 붙인 intent만 호출. 결정 D-P8 "클라이언트 임의 쿼리(GraphQL식 포함) 없음"이 이를 명시적으로 막는다 | `docs/DECISIONS.md` D-P8, `docs/design/00-strategy.md` §5, `aip-runtime/src/http.rs`, 생성 TS | **충돌 (가장 중대)** |
 | 보안: 서버가 최종 권한·실행 통제 | 강하게 구현. allow/requires, 가시성 기반 NOT_FOUND, 필드 가시성, 테넌트 격리(트리거 고정), 대리 접속 매 호출 재확인, SSRF·DNS rebinding 차단, 멱등, 서명 토큰 | `aip-pg/src/plan.rs`, `ddl.rs`, `aip-runtime/src/engine.rs`, `outbound.rs`, e2e의 negative control | 일치 |
 | 요청의 자유와 실행 권한의 분리 | 실행 권한은 서버에 있다. 그러나 요청의 자유가 거의 없다(이름+입력만). 분리가 아니라 자유 쪽을 없애는 방식으로 안전을 얻었다 | 위와 같음 | **불일치** |

@@ -9,7 +9,7 @@ fn aip(args: &[&str]) -> std::process::Output {
 
 #[test]
 fn poc_runtime_commands_name_the_missing_feature() {
-    let app = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/ariari/app.aip");
+    let app = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/ariari/app.aipoc");
     for args in [vec!["run", app], vec!["migrate", app], vec!["rekey", app], vec!["token", "7"], vec!["diff", app, "--against", "deployed"]] {
         let out = aip(&args);
         assert_eq!(out.status.code(), Some(1), "{args:?}");
@@ -20,7 +20,7 @@ fn poc_runtime_commands_name_the_missing_feature() {
 
 #[test]
 fn compiler_commands_and_diff_against_a_file_work_without_the_package() {
-    let app = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/ariari/app.aip");
+    let app = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/ariari/app.aipoc");
     assert!(aip(&["check", app]).status.success());
     let core = aip(&["core", app]);
     assert!(core.status.success());

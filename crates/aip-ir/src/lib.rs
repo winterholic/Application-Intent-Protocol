@@ -2,7 +2,7 @@
 //! independent of the language it was written in and of the backend that
 //! runs it. See `docs/design/03-ir.md` and `docs/design/10-philosophy-alignment.md`.
 //!
-//! Rules every producer (the `.aip` frontend today, TS/Python frontends or
+//! Rules every producer (the `.aipoc` frontend today, TS/Python frontends or
 //! tools later) must follow:
 //! - No source positions. Positions live in a [`SourceMap`] next to the
 //!   program, so two frontends that mean the same thing produce byte-equal IR.

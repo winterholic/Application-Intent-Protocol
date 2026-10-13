@@ -144,7 +144,7 @@ async fn two_processes_starting_together_run_a_migration_once() {
 #[tokio::test]
 async fn a_migration_reaches_every_tenant_in_one_transaction() {
     // the saas example with its migration taken out: the schema as an earlier deployment had it; seeded by a cross tenant transaction
-    let src = std::fs::read_to_string(format!("{}/../../examples/saas/app.aip", env!("CARGO_MANIFEST_DIR"))).expect("example");
+    let src = std::fs::read_to_string(format!("{}/../../examples/saas/app.aipoc", env!("CARGO_MANIFEST_DIR"))).expect("example");
     let at = src.find("\nmigration backfill_done_notes").expect("the example's migration");
     let (before, full) = (plan(&src[..at]), plan(&src));
     let pool = fresh("aip_e2e_migration_tenants").await;

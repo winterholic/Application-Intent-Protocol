@@ -33,7 +33,7 @@ fn contract_and_client_match_golden() {
     let update = std::env::var("AIP_UPDATE_GOLDEN").is_ok_and(|v| v == "1");
     let mut failures = Vec::new();
     for app in ["ariari", "shop", "saas", "cms"] {
-        let src = root().join(format!("examples/{app}/app.aip"));
+        let src = root().join(format!("examples/{app}/app.aipoc"));
         let src = src.to_string_lossy();
 
         let out = aip(&["contract", &src]);
@@ -54,7 +54,7 @@ fn contract_and_client_match_golden() {
 #[test]
 fn public_contract_carries_no_operator_information() {
     for app in ["ariari", "shop", "saas", "cms"] {
-        let src = root().join(format!("examples/{app}/app.aip"));
+        let src = root().join(format!("examples/{app}/app.aipoc"));
         let out = aip(&["contract", &src.to_string_lossy()]);
         assert!(out.status.success(), "aip contract {app} failed");
         let text = String::from_utf8(out.stdout).expect("utf-8 contract");
@@ -66,7 +66,7 @@ fn public_contract_carries_no_operator_information() {
 
 #[test]
 fn operator_view_has_the_webhook_signing_setup() {
-    let src = root().join("examples/shop/app.aip");
+    let src = root().join("examples/shop/app.aipoc");
     let out = aip(&["contract", &src.to_string_lossy(), "--operator"]);
     assert!(out.status.success(), "aip contract --operator failed");
     let text = String::from_utf8(out.stdout).expect("utf-8 operator view");

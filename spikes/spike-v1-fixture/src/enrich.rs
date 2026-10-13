@@ -32,10 +32,10 @@ pub fn enrich(mut diags: Vec<Diag>, src: &str, form: Form) -> Vec<Diag> {
     let universe = universe(src);
     let first_root: Option<(String, u32)> = diags.iter().find(|d| is_root(d.code)).map(|d| (d.code.to_string(), d.span.line));
     let mut told: BTreeSet<&'static str> = BTreeSet::new();
-    // Two different languages are both written in `.aip` files; a file of the other one fails with errors
-    // that look like typos. Say so once, on the first error.
+    // A PoC program saved with the product extension `.aip` fails with errors that look like typos. Say so once,
+    // on the first error. (A file with the extension `.aipoc` is refused before it is read: `wrong_language`.)
     if let Some(first) = diags.first_mut().filter(|_| looks_like_poc_program(src)) {
-        let note = "language: this file looks like a PoC program (top-level entity/command/query/use), whose checker is `aip check`; \
+        let note = "language: this file looks like a PoC program (top-level entity/command/query/use), whose checker is `aip check`; rename it to `.aipoc`. \
                     `aip service` reads the product definition language (resource, expose, transition; see spikes/spike-v1-fixture/fixture/recruitment.aip)."
             .to_string();
         first.set_help(Some(note));

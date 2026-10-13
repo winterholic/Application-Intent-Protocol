@@ -367,7 +367,7 @@ async fn the_commands_plan_apply_and_compare_against_the_deployed_program() {
     let url = admin_url.rsplit_once('/').map(|(base, _)| format!("{base}/aip_e2e_evolve_cli")).expect("url");
     let dir = std::env::temp_dir().join("aip-evolve-cli");
     std::fs::create_dir_all(&dir).expect("dir");
-    let file = dir.join("app.aip");
+    let file = dir.join("app.aipoc");
     let aip = |args: &[&str]| {
         let out = std::process::Command::new(env!("CARGO_BIN_EXE_aip")).args(args).env("DATABASE_URL", &url).output().expect("run aip");
         (out.status.code(), String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr))

@@ -135,7 +135,7 @@ track-item   = 'created' | 'updated' ;
 
 `tenant via a.b`가 붙은 엔티티를 테넌트 범위 엔티티라 한다. 경로는 필수 참조 필드의 사슬이고, 끝 엔티티(루트, 예: `Workspace`)가 그 행의 테넌트다. 루트는 자기 자신이 테넌트다. 경로가 선택 참조를 지나거나 존재하지 않는 필드를 가리키거나 앱 안에서 서로 다른 루트로 끝나면 POC.E313이다.
 
-```aip
+```aipoc
 entity Workspace { name: Text }
 entity Project {
   workspace: Workspace
@@ -170,7 +170,7 @@ actor 없는 실행 문맥의 기본값은 다음과 같다. `rule`은 규칙이
 5. **삭제는 게시본도 지운다.** 작업본 행이 지워지거나 soft delete 되면 게시본이 같은 트랜잭션에서 사라진다. 게시본은 제약 없는 스냅숏이고 제약은 작업본이 강제한다. 되돌리기는 게시본의 값을 작업본에 다시 쓰므로 작업본의 제약(unique 등)이 그 값을 다시 판정한다.
 6. **한계.** `touch` 카운터는 작업본에서 오르고 게시본에는 다음 게시 때 반영된다. 게시본이 가진 `version`은 작업본의 것과 다를 수 있어서, 낙관적 갱신에 쓸 버전은 `drafts query`에서 읽어야 한다.
 
-```aip
+```aipoc
 entity Article {
   site: Site
   title: Text
@@ -207,7 +207,7 @@ removed-entity = 'removed' 'entity' Type-ident ; (* 최상위. 이 엔티티의 
 
 프로그램에서 사라진 필드와 엔티티는 지워진 것인지 이름이 바뀐 것인지 알 수 없고, 컬럼 삭제는 데이터를 버리지만 이름 변경은 보존한다. 그래서 의도를 문법으로 적는다. 의도마다 표현은 하나다.
 
-```aip
+```aipoc
 entity Ticket was Task {
   headline: Text(1..100) was title
   removed field legacyCode

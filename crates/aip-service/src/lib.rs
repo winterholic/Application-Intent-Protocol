@@ -439,6 +439,11 @@ pub use spike_v6_transport::client_codes as client_registry;
 /// The codes of the product HTTP API (retry and fix), for `aip explain-code`.
 pub use spike_v6_transport::wire_codes as wire_registry;
 pub fn load(file: &Path, dev_checks: bool) -> Result<spike_v11_dev_checks::Checked, Value> {
+    if let Some(diagnostics) = file.to_str().and_then(spike_v1_fixture::wrong_language) {
+        return Err(
+            json!({"ok":false,"code":"DEF.INVALID_DEFINITION","diagnostics":diagnostics.iter().map(spike_v1_fixture::diag::Diag::json).collect::<Vec<_>>()}),
+        );
+    }
     let form = file.to_str().and_then(spike_v1_fixture::form_of).ok_or_else(|| error("UNSUPPORTED_FORM", "지원하는 작성 형식이 아님"))?;
     let source = read_bounded(file, SOURCE_BYTES, "SOURCE_IO")?;
     spike_v11_dev_checks::load_checked(&source, form, &json!({"devChecks":dev_checks})).map_err(

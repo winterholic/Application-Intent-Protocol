@@ -64,7 +64,7 @@ fn contract_codes(v: &Value, out: &mut BTreeSet<String>) {
 #[test]
 fn contract_error_codes_are_registered() {
     for app in ["ariari", "shop", "saas", "cms"] {
-        let src = root().join(format!("examples/{app}/app.aip"));
+        let src = root().join(format!("examples/{app}/app.aipoc"));
         let out = aip(&["contract", &src.to_string_lossy()]);
         assert!(out.status.success(), "aip contract {app} failed");
         let v: Value = serde_json::from_slice(&out.stdout).expect("contract json");
@@ -107,9 +107,9 @@ fn explain_code_prints_the_entry() {
 fn check_json_only_adds_explain() {
     let dir = std::env::temp_dir().join(format!("aip-codes-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("tmp dir");
-    let file = dir.join("t.aip");
-    let prelude = std::fs::read_to_string(root().join("conformance/sema/_prelude.aip")).expect("prelude");
-    let body = std::fs::read_to_string(root().join("conformance/sema/unknown_field.aip")).expect("case");
+    let file = dir.join("t.aipoc");
+    let prelude = std::fs::read_to_string(root().join("conformance/sema/_prelude.aipoc")).expect("prelude");
+    let body = std::fs::read_to_string(root().join("conformance/sema/unknown_field.aipoc")).expect("case");
     std::fs::write(&file, format!("{prelude}\n{body}")).expect("write");
     let out = aip(&["check", &file.to_string_lossy(), "--json"]);
     std::fs::remove_dir_all(&dir).ok();
@@ -130,9 +130,9 @@ fn check_json_only_adds_explain() {
 fn semantic_rule_stops_every_command_that_needs_a_program() {
     let dir = std::env::temp_dir().join(format!("aip-sem-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("tmp dir");
-    let file = dir.join("t.aip");
-    let prelude = std::fs::read_to_string(root().join("conformance/sema/_prelude.aip")).expect("prelude");
-    let body = std::fs::read_to_string(root().join("conformance/sema/missing_allow.aip")).expect("case");
+    let file = dir.join("t.aipoc");
+    let prelude = std::fs::read_to_string(root().join("conformance/sema/_prelude.aipoc")).expect("prelude");
+    let body = std::fs::read_to_string(root().join("conformance/sema/missing_allow.aipoc")).expect("case");
     std::fs::write(&file, format!("{prelude}\n{body}")).expect("write");
     let f = file.to_string_lossy().to_string();
     let out_ts = dir.join("client.ts").to_string_lossy().to_string();
@@ -161,14 +161,14 @@ fn semantic_rule_stops_every_command_that_needs_a_program() {
 fn every_checker_diagnostic_carries_help() {
     let dir = std::env::temp_dir().join(format!("aip-help-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("tmp dir");
-    let prelude = std::fs::read_to_string(root().join("conformance/sema/_prelude.aip")).expect("prelude");
+    let prelude = std::fs::read_to_string(root().join("conformance/sema/_prelude.aipoc")).expect("prelude");
     let mut checked = 0;
     for e in std::fs::read_dir(root().join("conformance/sema")).expect("conformance dir") {
         let p = e.expect("entry").path();
-        if p.extension().is_none_or(|x| x != "aip") || p.ends_with("_prelude.aip") {
+        if p.extension().is_none_or(|x| x != "aipoc") || p.ends_with("_prelude.aipoc") {
             continue;
         }
-        let file = dir.join("t.aip");
+        let file = dir.join("t.aipoc");
         std::fs::write(&file, format!("{prelude}\n{}", std::fs::read_to_string(&p).expect("case"))).expect("write");
         let v: Value = serde_json::from_slice(&aip(&["check", &file.to_string_lossy(), "--json"]).stdout).expect("json");
         let mut seen = BTreeSet::new();
@@ -191,9 +191,9 @@ fn every_checker_diagnostic_carries_help() {
 fn a_misspelled_name_gets_the_close_spelling() {
     let dir = std::env::temp_dir().join(format!("aip-typo-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("tmp dir");
-    let file = dir.join("t.aip");
-    let prelude = std::fs::read_to_string(root().join("conformance/sema/_prelude.aip")).expect("prelude");
-    let body = std::fs::read_to_string(root().join("conformance/sema/outbound_unknown_event.aip")).expect("case");
+    let file = dir.join("t.aipoc");
+    let prelude = std::fs::read_to_string(root().join("conformance/sema/_prelude.aipoc")).expect("prelude");
+    let body = std::fs::read_to_string(root().join("conformance/sema/outbound_unknown_event.aipoc")).expect("case");
     std::fs::write(&file, format!("{prelude}\n{body}")).expect("write");
     let v: Value = serde_json::from_slice(&aip(&["check", &file.to_string_lossy(), "--json"]).stdout).expect("json");
     std::fs::remove_dir_all(&dir).ok();
@@ -201,29 +201,36 @@ fn a_misspelled_name_gets_the_close_spelling() {
     assert!(help.contains("'Renamed'"), "{help}");
 }
 
-/// Both languages are written in `.aip` files. Given a file of the other one, each checker says which checker
-/// reads it instead of reporting typos in a file that has none.
+/// A file whose extension says one language but whose text is the other one (a product definition saved as `.aipoc`,
+/// a PoC program saved as `.aip`) fails with errors that look like typos. Each checker says which checker reads the
+/// text instead. A file with the wrong extension is refused before it is read (`tests/extensions.rs`).
 #[test]
-fn a_file_of_the_other_language_is_named_as_such() {
-    let product = root().join("spikes/spike-v1-fixture/fixture/recruitment.aip");
-    let out = aip(&["check", &product.to_string_lossy(), "--json"]);
+fn a_file_whose_text_is_the_other_language_is_named_as_such() {
+    let dir = std::env::temp_dir().join(format!("aip-lang-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("tmp dir");
+    let product_text = std::fs::read_to_string(root().join("spikes/spike-v1-fixture/fixture/recruitment.aip")).expect("fixture");
+    let product_as_poc = dir.join("definition.aipoc");
+    std::fs::write(&product_as_poc, product_text).expect("write");
+    let out = aip(&["check", &product_as_poc.to_string_lossy(), "--json"]);
     let v: Value = serde_json::from_slice(&out.stdout).expect("json");
     let help = v[0]["help"].as_str().expect("help");
     assert!(help.starts_with("language: this file looks like a product definition") && help.contains("aip service check"), "{help}");
 
-    let poc = root().join("examples/shop/app.aip");
-    let out = aip(&["service", "check", &poc.to_string_lossy()]);
+    let poc_text = std::fs::read_to_string(root().join("examples/shop/app.aipoc")).expect("example");
+    let poc_as_product = dir.join("program.aip");
+    std::fs::write(&poc_as_product, poc_text).expect("write");
+    let out = aip(&["service", "check", &poc_as_product.to_string_lossy()]);
     let v: Value = serde_json::from_slice(&out.stderr).expect("json");
     let help = v["diagnostics"][0]["help"].as_str().expect("help");
     assert!(help.starts_with("language: this file looks like a PoC program") && help.contains("`aip check`"), "{help}");
 
     // a PoC program with an ordinary mistake keeps its ordinary help
-    let ordinary = std::env::temp_dir().join(format!("aip-lang-{}.aip", std::process::id()));
-    let prelude = std::fs::read_to_string(root().join("conformance/sema/_prelude.aip")).expect("prelude");
-    let body = std::fs::read_to_string(root().join("conformance/sema/unknown_field.aip")).expect("case");
+    let ordinary = dir.join("ordinary.aipoc");
+    let prelude = std::fs::read_to_string(root().join("conformance/sema/_prelude.aipoc")).expect("prelude");
+    let body = std::fs::read_to_string(root().join("conformance/sema/unknown_field.aipoc")).expect("case");
     std::fs::write(&ordinary, format!("{prelude}\n{body}")).expect("write");
     let v: Value = serde_json::from_slice(&aip(&["check", &ordinary.to_string_lossy(), "--json"]).stdout).expect("json");
-    std::fs::remove_file(&ordinary).ok();
+    std::fs::remove_dir_all(&dir).ok();
     assert!(!v[0]["help"].as_str().expect("help").starts_with("language:"), "{v}");
 }
 

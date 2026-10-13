@@ -28,7 +28,7 @@ fn key() -> String {
 }
 
 fn source() -> String {
-    std::fs::read_to_string(format!("{}/../../examples/cms/app.aip", env!("CARGO_MANIFEST_DIR"))).expect("cms source")
+    std::fs::read_to_string(format!("{}/../../examples/cms/app.aipoc", env!("CARGO_MANIFEST_DIR"))).expect("cms source")
 }
 
 fn compile(src: &str) -> aip_plan::Program {

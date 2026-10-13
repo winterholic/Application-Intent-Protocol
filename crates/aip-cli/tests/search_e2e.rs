@@ -274,7 +274,7 @@ async fn search_end_to_end() {
     assert_eq!(beyond.code, "POC.INPUT.INVALID");
 
     // the compiler said so too
-    let src = std::fs::read_to_string(format!("{}/../../examples/saas/app.aip", env!("CARGO_MANIFEST_DIR"))).expect("source");
+    let src = std::fs::read_to_string(format!("{}/../../examples/saas/app.aipoc", env!("CARGO_MANIFEST_DIR"))).expect("source");
     let (core, map) = aip_sema::pipeline::check_source(&src).into_core().expect("clean");
     let warned: Vec<String> = aip_pg::compile(&core, &map).diagnostics.iter().map(|d| d.code.clone()).collect();
     assert!(warned.iter().any(|c| c == "POC.W603"), "{warned:?}");
@@ -296,7 +296,7 @@ enum Off {
 }
 
 async fn engine_without(off: Off, db: &str) -> Arc<Engine> {
-    let path = format!("{}/../../examples/saas/app.aip", env!("CARGO_MANIFEST_DIR"));
+    let path = format!("{}/../../examples/saas/app.aipoc", env!("CARGO_MANIFEST_DIR"));
     let src = std::fs::read_to_string(path).expect("example source");
     let (mut core, map) = aip_sema::pipeline::check_source(&src).into_core().expect("saas checks clean");
     match off {

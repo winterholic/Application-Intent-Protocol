@@ -26,7 +26,7 @@ Core 검증은 GitHub Actions의 Ubuntu에서도 실행한다. 외부 IdP 계정
 ## 기존 PoC 구조
 
 ```
-.aip (작성 언어) ─▶ AST ─▶ 의미 분석 ─▶ Core IR (언어 독립, 결정적) ─▶ 실행 계획 (SQL 고정) ─▶ 런타임
+.aipoc (PoC 작성 언어) ─▶ AST ─▶ 의미 분석 ─▶ Core IR (언어 독립, 결정적) ─▶ 실행 계획 (SQL 고정) ─▶ 런타임
                                               └─▶ 계약(/aip/describe) · 생성 클라이언트
 ```
 
@@ -49,20 +49,20 @@ Core 검증은 GitHub Actions의 Ubuntu에서도 실행한다. 외부 IdP 계정
 
 **제품 서비스 통합 및 실행 검증 중(2026-10-05).** 기준은 [창시자 통합 지침](plan-docs/sources/founder-integrated-directive-2026-10-03.md)이며 결과물은 [plan-docs A~E](plan-docs/README.md#이번-결과물-ae)에 있다. 자체 포트 AIP 서버+공식 프론트 라이브러리, Rust 엔진, JS/TS·Python 확장, 선택적 구조화 설명·개발 검증이 제품 기준이다.
 
-기존 `aip check/run/gen-ts` 등의 PoC Core IR 경로는 보존한다. 새 제품 진입점은 `aip service`이며 caller read/direct apply 정본을 사용한다. 독립 spike의 검증된 엔진을 path dependency로 재사용한다. `.aip` 파일 여부와 최종 문법·쓰기 조합 선택은 이번 조립만으로 확정하지 않는다.
+기존 `aip check/run/gen-ts` 등의 PoC Core IR 경로는 보존한다. 새 제품 진입점은 `aip service`이며 caller read/direct apply 정본을 사용한다. 독립 spike의 검증된 엔진을 path dependency로 재사용한다. `.aip` 파일 여부와 최종 문법·쓰기 조합 선택은 이번 조립만으로 확정하지 않는다. 확장자는 언어마다 하나다: 제품 정의 언어(`resource`·`expose`·`transition`, `aip service`가 읽는다)는 `.aip`, PoC 언어(`entity`·`command`·`query`, `aip check` 등이 읽는다)는 `.aipoc`다.
 
 이전 단계의 [실행 프로토타입](prototype/README.md)은 기존 엔진의 check/gen/init/serve와 단일 생성 SDK를 연결했다. source/package × 두 Id 후보의 정의 변경4개, READ8개·WRITE8개·실제 Chrome8개·재배치 bundle8개 흐름을 실행했다. 후속 DB driver 소유권·SQL stage 기한·실제 catalog 구조 검사·SDK 미확정 재시도 보존을 연결했다. 실제 커밋 응답과 다음 재시도 응답을 멈춰도 같은 key로 복구하며 중복 worker 실행을 막았다. 실행 중 세션이 만료돼도 이미 커밋한 WRITE의 성공 결과를 보존한다. 정의 숫자·중첩 진단, 쓰기 완료와 캐시 저장 사이의 경쟁 조건, CLI 출력 소비자 종료 처리도 보완했다. 최신 Rust175개(V1 포함)·SDK/패키지47개·builder5개는 실패0이며 명령과 한계는 [DB 후속 결과](prototype/README.md#정의-입력캐시-완료cli-출력-후속-결과)를 따른다. [최신 실행 bundle](prototype/dist/local-macos-20261005-input-cache/README.md)을 제공한다. 이 수치와 bundle은 이전 단계의 검증이다. 현재 제품 경로의 인증·일반 migration·명시적 prototype 이관·SDK 설치 결과는 위 제품 문서를 따른다. 구조 지문이 없는 구형 marker-only schema를 자동 채택하지 않는다.
 
 별도 `spikes/`에서 V1부터 V15까지 후보를 실행했다. 최신 [V15 결과](plan-docs/alignment/V15-filter-value-results.md)는 공개 Url·Enum·Time 필터와 리터럴 접두어 검색을 실제 읽기·쓰기 검사에 연결한다. [V14 결과](plan-docs/alignment/V14-typed-apply-results.md)는 공개 전이의 입력/결과를 생성 타입에 연결하고 잘못된 성공 응답을 pending으로 보존한다. [V13 결과](plan-docs/alignment/V13-id-boundary-results.md)는 큰 Id 반올림으로 다른 행을 변경하는 반례를 재현하고 숫자 제한·십진 문자열 후보를 비교했다. 처음부터 쓰기를 호출하는 계약 불일치도 DB 전에 거부한다. [V12 결과](plan-docs/alignment/V12-typed-transport-results.md)는 앱별 생성 계약의 선택형 타입을 실제 HTTP·캐시 SDK에 연결하고 계약 불일치를 저장 전에 검사한다. [V11](plan-docs/alignment/V11-optional-checks-results.md)의 선택적 개발 조언·필수 검사 분리도 유지한다. [V10](plan-docs/alignment/V10-session-recovery-results.md)의 같은 사용자 세션 복구도 유지한다. [V9](plan-docs/alignment/V9-cache-lifetime-results.md)의 캐시 수명·시간 의존 조회 경계도 유지한다. 최종 계약 결정은 남아 있다.
 
-PoC 현황: Rust 구현이 네 예제(`examples/ariari`, `shop`, `saas`, `cms`)를 실제 PostgreSQL에서 e2e로 실행한다. 정의는 PoC용 임시 프런트엔드인 `.aip` 텍스트로 쓰고, 백엔드는 언어 독립 의미 표현(`aip-ir`)만 읽는다. 진행 기록은 `docs/design/09-verification-log.md`, 결정 상태는 `docs/DECISIONS.md`.
+PoC 현황: Rust 구현이 네 예제(`examples/ariari`, `shop`, `saas`, `cms`)를 실제 PostgreSQL에서 e2e로 실행한다. 정의는 PoC용 임시 프런트엔드인 `.aipoc` 텍스트로 쓰고, 백엔드는 언어 독립 의미 표현(`aip-ir`)만 읽는다. 진행 기록은 `docs/design/09-verification-log.md`, 결정 상태는 `docs/DECISIONS.md`.
 
 ```bash
 export PATH="$HOME/.cargo/bin:$PATH"
 cargo test -q --workspace            # 로컬 PostgreSQL 필요(postgres://localhost/postgres)
 cargo test -q -p aip-cli --features poc-runtime   # PoC runtime e2e(run/migrate 등)는 이 feature가 필요
-./target/debug/aip check examples/ariari/app.aip
-./target/debug/aip core examples/ariari/app.aip --digest
+./target/debug/aip check examples/ariari/app.aipoc
+./target/debug/aip core examples/ariari/app.aipoc --digest
 ```
 
 ## 문서
@@ -85,8 +85,8 @@ cargo test -q -p aip-cli --features poc-runtime   # PoC runtime e2e(run/migrate 
 | `docs/design/10-philosophy-alignment.md` | 설계 철학 대비 현재 구현 검토, 구조적 문제, 다음 단계 |
 | `docs/design/11-founder-intent-audit.md` | 창시자 의도 대비 감사 |
 | `docs/design/12-design-reset.md` | 설계 재개 계획 |
-| `spec/grammar.md` | 현재 PoC `.aip` 문법 (EBNF). 최종 작성 형식 여부는 미정 |
-| `spec/definition-syntax.md` | 제품 경로(`aip service`)가 읽는 정의 언어의 작성 카드. PoC `.aip`와는 다른 언어이며 확장자만 같다. 블록·키·가정하지 않는 기본값·작성 예. 생성 문서 |
+| `spec/grammar.md` | 현재 PoC `.aipoc` 문법 (EBNF). 최종 작성 형식 여부는 미정 |
+| `spec/definition-syntax.md` | 제품 경로(`aip service`)가 읽는 정의 언어의 작성 카드. PoC 언어(`.aipoc`)와는 다른 언어이고 확장자도 다르다. 블록·키·가정하지 않는 기본값·작성 예. 생성 문서 |
 | `spec/definition-diagnostics.md` | 제품 정의 진단 코드(`DEF.*`)와 고치는 방법(`aip explain-code`). 생성 문서 |
 | `spec/wire-errors.md` | 제품 HTTP API 오류 코드(`WIRE.*`)와 재시도 지침. 생성 문서 |
 | `spec/client-errors.md` | SDK(TypeScript·Python)가 스스로 올리는 오류 코드(`CLIENT.*`). 생성 문서 |

@@ -14,11 +14,11 @@ entity Part { box: Box item: Item qty: Int }
 `;
 
 function codes(body: string): string[] {
-  return compileSource(HEADER + body, 't.aip').diagnostics.map((d) => d.code);
+  return compileSource(HEADER + body, 't.aipoc').diagnostics.map((d) => d.code);
 }
 
 test('shop example compiles without diagnostics', () => {
-  const { diagnostics } = compileSource(SHOP_SRC, 'app.aip');
+  const { diagnostics } = compileSource(SHOP_SRC, 'app.aipoc');
   assert.deepEqual(diagnostics, []);
 });
 
@@ -69,11 +69,11 @@ test('E220: relations must be selected explicitly', () => {
 });
 
 test('E105: id is implicit', () => {
-  assert.deepEqual(compileSource('entity A { id: UUID }', 't.aip').diagnostics.map((d) => d.code), ['POC.E105']);
+  assert.deepEqual(compileSource('entity A { id: UUID }', 't.aipoc').diagnostics.map((d) => d.code), ['POC.E105']);
 });
 
 test('E100: canonical clause order is enforced', () => {
-  const d = compileSource(HEADER + `command C(id: UUID) { policy: authenticated load item: Item by id }`, 't.aip').diagnostics;
+  const d = compileSource(HEADER + `command C(id: UUID) { policy: authenticated load item: Item by id }`, 't.aipoc').diagnostics;
   assert.equal(d[0].code, 'POC.E100');
   assert.match(d[0].message, /'load' must come before 'policy'/);
 });

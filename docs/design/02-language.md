@@ -54,7 +54,7 @@ iteration 1(spike-0)에서 "한계"로 적었던 것들은 언어가 풀 수 있
 
 주문 취소의 "각 항목마다 재고 복원"은 루프가 아니라 **관계 대수**다. SQL이 50년간 증명한 사실이다.
 
-```aip
+```aipoc
 do {
   update Product p via order.items i
     set p.stock += sum(i.quantity)
@@ -67,7 +67,7 @@ do {
 
 집합 입력도 1급이다. 아리아리 `approveApplies`는 id 목록을 받아 `get(0)`로 동아리를 추정하고, 없는 id는 조용히 무시했다.
 
-```aip
+```aipoc
 command ApproveApplies(applies: Set<Apply> max 100) {
   let club = same(applies a: a.recruitment.club) else APPLIES_FROM_DIFFERENT_CLUBS
   allow managerOf(actor, club)
@@ -88,7 +88,7 @@ command ApproveApplies(applies: Set<Apply> max 100) {
 
 spike-0은 "암묵적 로딩 금지" 때문에 `owner(part.box.owner)`를 쓸 수 없었다. 잘못된 결론이었다. 금지해야 할 것은 **계획되지 않은** 로딩이지 깊은 경로가 아니다. 컴파일러는 명령이 쓰는 모든 경로(읽기 집합)를 미리 알기 때문에 한 번의 계획된 조회로 가져올 수 있다.
 
-```aip
+```aipoc
 enum ClubRole ordered { GENERAL < MANAGER < ADMIN }
 
 relation membership(m: Member, c: Club): ClubMember
@@ -121,7 +121,7 @@ command ChangeMemberStatus(target: ClubMember, newStatus: MemberStatus) {
 
 사용자는 효과 호출만 쓴다. 어디에 놓을지는 컴파일러가 서명을 보고 정한다.
 
-```aip
+```aipoc
 command Unregister() {
   allow authenticated
   do {
@@ -149,7 +149,7 @@ command Unregister() {
 
 ### 4.1 `lifecycle` (상태 기계)
 
-```aip
+```aipoc
 entity Apply {
   member: Member      on erase cascade
   recruitment: Recruitment
@@ -169,7 +169,7 @@ entity Apply {
 
 ### 4.2 기수 불변식 (`unique`, `exactly one`, `no overlap`)
 
-```aip
+```aipoc
 entity ClubMember {
   club: Club
   member: Member?     on erase anonymize
@@ -198,7 +198,7 @@ entity Recruitment {
 
 ### 4.3 `erase` (개인정보 삭제 완결성)
 
-```aip
+```aipoc
 entity Member personal {
   email: Email        personal
   nickname: Text
@@ -213,7 +213,7 @@ entity Apply      { member: Member   on erase cascade }
 - `erase actor`는 참조 그래프 전체의 처리 계획으로 하강한다. 아리아리 `UnregisterService`가 8개 저장소에 수동으로 `updateMemberNull`을 호출하고 `em.flush/clear`로 영속성 컨텍스트를 맞추던 코드가 선언 몇 줄이 된다. 새 엔티티가 Member를 참조하면서 정책을 빼먹는 실수는 컴파일되지 않는다.
 - 불변식과 결합: `erase`가 `exactly one ADMIN`을 깨면 복구 규칙이 필요하다.
 
-```aip
+```aipoc
 entity ClubMember {
   club: Club
   member: Member?  on erase anonymize
@@ -234,7 +234,7 @@ entity ClubMember {
 
 ### 4.4 `retain` (보존 기한)
 
-```aip
+```aipoc
 retain Apply for 6mo after recruitment.endsAt
   then purge
   notify member 7d before via mail.template("apply-expiring")
@@ -244,7 +244,7 @@ retain Apply for 6mo after recruitment.endsAt
 
 ### 4.5 파생 값 (`counter`, `aggregate`)
 
-```aip
+```aipoc
 entity Recruitment {
   views: Int counter via redis dedupe by client within 1d window 14d
   bookmarkCount: count(bookmarks)            // 조회 시 계산, 저장 안 함
@@ -256,7 +256,7 @@ entity Recruitment {
 
 ### 4.6 `cached` (읽기 캐시와 자동 무효화)
 
-```aip
+```aipoc
 query RecruitmentDetail(r: Recruitment) cached 60s {
   ...
 }
@@ -266,7 +266,7 @@ query RecruitmentDetail(r: Recruitment) cached 60s {
 
 ### 4.7 `notify` (알림 팬아웃)
 
-```aip
+```aipoc
 // CreateRecruitment 안에서: emit RecruitmentOpened { recruitment: r }
 
 on RecruitmentOpened e

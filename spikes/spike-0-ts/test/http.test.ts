@@ -10,7 +10,7 @@ import { Runtime } from '../src/runtime/runtime.ts';
 import { createAipServer } from '../src/runtime/server.ts';
 import { compileOk, freshDb, seedShop, SHOP_SRC, type Seed } from './helpers.ts';
 
-const shop = compileOk(SHOP_SRC, 'app.aip');
+const shop = compileOk(SHOP_SRC, 'app.aipoc');
 let pool: pg.Pool;
 let server: ReturnType<typeof createAipServer>;
 let baseUrl: string;

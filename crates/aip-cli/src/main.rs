@@ -111,7 +111,7 @@ enum Cmd {
     },
     /// Generate a typed TypeScript client from the contract
     GenTs { file: PathBuf, out: PathBuf },
-    /// Parse every ```aip block in markdown files under the given paths
+    /// Parse every ```aipoc block (PoC programs) in markdown files under the given paths; ```aip blocks are product definitions and are left to their own checks
     CheckDocs {
         #[arg(default_values = ["docs", "spec"])]
         paths: Vec<PathBuf>,
@@ -135,6 +135,10 @@ fn run() -> Result<ExitCode> {
         #[cfg(not(feature = "poc-runtime"))]
         Cmd::Token { .. } | Cmd::Migrate { .. } | Cmd::Rekey { .. } | Cmd::Run { .. } => poc_runtime_disabled(),
         Cmd::Parse { file } => {
+            if let Some(d) = extension_diagnostic(&file) {
+                eprintln!("{}", d.render(&file.display().to_string()));
+                return Ok(ExitCode::FAILURE);
+            }
             let src = read(&file)?;
             match aip_syntax::parse_file(&src) {
                 Ok(ast) => {
@@ -384,6 +388,14 @@ fn run() -> Result<ExitCode> {
         }
         Cmd::Check { file, json } => {
             let name = file.display().to_string();
+            if let Some(d) = extension_diagnostic(&file) {
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&[d])?);
+                } else {
+                    eprintln!("{}", d.render(&name));
+                }
+                return Ok(ExitCode::FAILURE);
+            }
             let checked = aip_sema::pipeline::check_source(&read(&file)?);
             if !checked.parsed {
                 // a source that does not parse has exactly one diagnostic and no summary
@@ -477,6 +489,10 @@ pub fn compile_full(file: &Path) -> Result<Option<(aip_ir::Program, aip_plan::Pr
 /// to stderr, `None` when any of them is an error.
 fn lower_core_with_map(file: &Path) -> Result<Option<(aip_ir::Program, aip_ir::SourceMap)>> {
     let name = file.display().to_string();
+    if let Some(d) = extension_diagnostic(file) {
+        eprintln!("{}", d.render(&name));
+        return Ok(None);
+    }
     let checked = aip_sema::pipeline::check_source(&read(file)?);
     for d in &checked.diagnostics {
         eprintln!("{}", d.render(&name));
@@ -487,6 +503,42 @@ fn lower_core_with_map(file: &Path) -> Result<Option<(aip_ir::Program, aip_ir::S
 #[cfg(feature = "poc-runtime")]
 fn database_url() -> Result<String> {
     Ok(std::env::var("DATABASE_URL").unwrap_or_else(|_| "postgres://localhost/aip_dev".into()))
+}
+
+/// The extension of a PoC program. `.aip` is the product definition language, which `aip service check` reads.
+const POC_EXTENSION: &str = "aipoc";
+
+/// A file with another extension is refused before it is read. Reading a product definition as a PoC program (or the
+/// reverse) only produces errors that look like typos, so the diagnostic says which checker reads the file instead
+/// (founder decision 2026-10-13, audit F5). The code is written as a string, not as a constant of the registry:
+/// `aip-ir/tests/code_sites.snap` pins where the registry's constants are used.
+fn extension_diagnostic(file: &Path) -> Option<aip_syntax::Diagnostic> {
+    let ext = file.extension().and_then(|e| e.to_str()).unwrap_or("");
+    if ext == POC_EXTENSION {
+        return None;
+    }
+    let name = file.display();
+    let at = aip_syntax::Span { start: 0, end: 0, line: 1, col: 1 };
+    let (message, help) = if ext == "aip" {
+        (
+            format!(
+                "`{name}` has the extension `.aip` of the product definition language, but `aip check` reads PoC programs, which use `.{POC_EXTENSION}`"
+            ),
+            format!(
+                "if the file is a product definition (resource, expose, transition), check it with `aip service check {name}`; if it is a PoC program \
+                 (entity, command, query; see spec/grammar.md), rename it to `.{POC_EXTENSION}`"
+            ),
+        )
+    } else {
+        (
+            format!("`{name}` does not have the extension `.{POC_EXTENSION}` of PoC programs"),
+            format!(
+                "rename the file to `.{POC_EXTENSION}`; a product definition (resource, expose, transition) has the extension `.aip` and is checked \
+                 with `aip service check`"
+            ),
+        )
+    };
+    Some(aip_syntax::Diagnostic::error("POC.E001", message, at).with_help(help))
 }
 
 pub fn read(path: &Path) -> Result<String> {

@@ -39,7 +39,7 @@ pub fn compile_source(src: &str) -> Option<Value> {
 }
 
 pub async fn setup_app(app: &str, db: &str) -> Arc<Engine> {
-    let path = format!("{}/../../examples/{app}/app.aip", env!("CARGO_MANIFEST_DIR"));
+    let path = format!("{}/../../examples/{app}/app.aipoc", env!("CARGO_MANIFEST_DIR"));
     let src = std::fs::read_to_string(&path).expect("example source");
     let checked = aip_sema::pipeline::check_source(&src);
     assert!(!checked.has_errors(), "{:?}", checked.diagnostics);

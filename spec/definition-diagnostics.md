@@ -188,6 +188,13 @@ a host-literal value has the wrong shape
 - 원인: In the host-literal form each key expects an object, string, integer, boolean or list. The message names the key and the shape expected.
 - 수정: Replace the value with the shape the message names. The fixtures spikes/spike-v1-fixture/fixture/recruitment.h.ts and recruitment.h.py show every key.
 
+### `DEF.WRONG_LANGUAGE`
+
+a PoC program was given to the product checker
+
+- 원인: The product commands (`aip service check/gen/serve`) read definitions of the product language (`resource`, `expose`, `transition`) in `.aip` files. A file with the extension `.aipoc` is a PoC program (`entity`, `command`, `query`), which has its own checker; reading it here would only report typos in a file that has none.
+- 수정: Check a PoC program with `aip check`; if the file is a product definition, rename it to `.aip`.
+
 ### `DEF.UNKNOWN_KEY`
 
 a key that the object does not accept (host-literal form)

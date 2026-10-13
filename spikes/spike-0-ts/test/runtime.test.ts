@@ -5,7 +5,7 @@ import type pg from 'pg';
 import { Runtime } from '../src/runtime/runtime.ts';
 import { caller, compileOk, freshDb, seedShop, SHOP_SRC, type Seed } from './helpers.ts';
 
-const shop = compileOk(SHOP_SRC, 'app.aip');
+const shop = compileOk(SHOP_SRC, 'app.aipoc');
 let pool: pg.Pool;
 let rt: Runtime;
 let s: Seed;
@@ -145,7 +145,7 @@ test('query plan: statement count is fixed regardless of row count (no N+1)', as
 });
 
 test('invariants are enforced by the database even when a require is missing', async () => {
-  const loose = compileOk(SHOP_SRC.replace('  require product.stock >= quantity else OUT_OF_STOCK\n', ''), 'loose.aip');
+  const loose = compileOk(SHOP_SRC.replace('  require product.stock >= quantity else OUT_OF_STOCK\n', ''), 'loose.aipoc');
   const lrt = caller(new Runtime(loose, pool));
   const o = await lrt.ok('command', 'CreateOrder', s.alice, {}, 'inv-order');
   const r = await lrt.raw('command', 'AddItem', s.alice, { orderId: o.id, productId: s.productB, quantity: 999 }, 'inv-1');

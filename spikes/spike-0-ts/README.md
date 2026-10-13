@@ -12,11 +12,11 @@ DSL로 entity·query·command·policy·invariant를 선언하면 컴파일러가
 ```bash
 npm install
 npm test                                        # 분석기 15 + Postgres 통합 7 + HTTP e2e 3
-node src/cli.ts check examples/shop/app.aip     # 정적 분석
-node src/cli.ts plan examples/shop/app.aip      # 쿼리 실행 계획
+node src/cli.ts check examples/shop/app.aipoc     # 정적 분석
+node src/cli.ts plan examples/shop/app.aipoc      # 쿼리 실행 계획
 createdb aip_dev
-node src/cli.ts migrate examples/shop/app.aip --reset
-node src/cli.ts run examples/shop/app.aip --port 4000
+node src/cli.ts migrate examples/shop/app.aipoc --reset
+node src/cli.ts run examples/shop/app.aipoc --port 4000
 curl localhost:4000/aip/describe
 ```
 
@@ -130,4 +130,4 @@ command 절 순서는 `idempotent → load → policy → require → transactio
 2. 상태 전이 선언 (`transitions`)으로 status 관련 require 반복 제거
 3. 관계 경유 정책의 표현 방식 결정 (위 2번)
 4. 설계 초안 22절의 실제 프로젝트 비즈니스 로직을 가져와 표현력 검증
-5. LLM에게 요구사항만 주고 `.aip`를 생성시켜 편차와 compiler error 자가수정률 측정
+5. LLM에게 요구사항만 주고 `.aipoc`를 생성시켜 편차와 compiler error 자가수정률 측정
