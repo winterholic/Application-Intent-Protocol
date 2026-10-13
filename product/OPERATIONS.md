@@ -77,7 +77,7 @@ SDK는 `npm install --offline <aip-sdk.tgz>`로 별도 소비자에 설치한다
 | `/health` | listener가 요청을 처리함. DB를 확인하지 않음 | 없음 |
 | `/ready` | pool에서 DB 연결을 얻고, 저장된 배포 digest가 이 process의 정의와 같음 | `WIRE.DB_UNAVAILABLE`, 다른 배포가 migration한 뒤의 `WIRE.DEPLOYMENT_CHANGED` |
 
-응답은 `cache-control: no-store`이며 digest·버전·DB 주소·오류 원문을 포함하지 않는다. readiness 검사는 2초로 제한한다. 인증 없는 probe가 요청 pool을 고갈시키지 않도록 process당 동시에 하나의 readiness 검사만 DB 연결을 사용한다. probe 경로는 webhook 경로로 설정할 수 없다. readiness가 worker 확장 import나 외부 provider 연결까지 보증하지는 않는다.
+응답은 `cache-control: no-store`이며 digest·버전·DB 주소·오류 원문을 포함하지 않는다. readiness 검사는 2초로 제한한다. 인증 없는 probe가 요청 pool을 고갈시키지 않도록 process당 동시에 하나의 readiness 검사만 DB 연결을 사용한다. 검사가 진행 중일 때 들어온 probe는 줄을 서지 않고 직전 응답(최대 10초 전까지)을 바로 돌려받으므로 probe flood가 load balancer의 probe를 막지 못한다. 한가할 때는 매번 새로 검사한다. 공개 proxy에 두지 않고 내부 listener에서만 probe를 열려면 proxy에서 `/health`·`/ready` 경로를 외부로 노출하지 않는다. probe 경로는 webhook 경로로 설정할 수 없다. readiness가 worker 확장 import나 외부 provider 연결까지 보증하지는 않는다.
 
 ### 서비스 주체와 trigger
 
