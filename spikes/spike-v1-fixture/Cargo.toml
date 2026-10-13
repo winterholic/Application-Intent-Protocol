@@ -3,6 +3,7 @@ name = "spike-v1-fixture"
 version = "0.0.0"
 edition = "2021"
 publish = false
+license = "MIT"
 
 # 본 workspace(crates/*)와 분리된 검증 실험. 본 crate에 의존하지 않는다.
 [workspace]

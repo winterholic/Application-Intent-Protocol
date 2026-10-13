@@ -3,6 +3,7 @@ name = "spike-v11-dev-checks"
 version = "0.0.0"
 edition = "2021"
 publish = false
+license = "MIT"
 
 # V11 선택형 개발 조언과 필수 정적·실행 검사의 경계를 확인하는 독립 spike.
 [workspace]

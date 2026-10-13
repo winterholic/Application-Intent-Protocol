@@ -3,6 +3,7 @@ name = "spike-v4-worker"
 version = "0.0.0"
 edition = "2021"
 publish = false
+license = "MIT"
 
 # V4 공식 확장 worker 실험. Rust 서버 + Node/Python worker를 stdin/stdout JSON 줄로 연결한다.
 [workspace]

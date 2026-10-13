@@ -65,6 +65,10 @@ cargo test -q -p aip-cli --features poc-runtime   # PoC runtime e2e(run/migrate 
 ./target/debug/aip core examples/ariari/app.aipoc --digest
 ```
 
+## 라이선스
+
+MIT. [LICENSE](LICENSE)를 따른다(D-A27).
+
 ## 문서
 
 | 문서 | 내용 |

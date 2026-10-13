@@ -3,6 +3,7 @@ name = "spike-v7-migrate"
 version = "0.0.0"
 edition = "2021"
 publish = false
+license = "MIT"
 
 # V7 마이그레이션 실험(RK-10). 두 facts 버전의 차이를 분류하고, 정책 확대·기존 데이터 위반을 적용 전에 실제 DB로 확인한다.
 [workspace]

@@ -38,6 +38,7 @@ async function build(args) {
       name: "@aip/sdk",
       version: "0.1.0",
       private: true,
+      license: "MIT",
       type: "module",
       types: "./product/sdk/index.d.ts",
       exports: { ".": { types: "./product/sdk/index.d.ts", import: "./product/sdk/index.js" } },

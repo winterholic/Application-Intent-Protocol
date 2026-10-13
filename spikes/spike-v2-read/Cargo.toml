@@ -3,6 +3,7 @@ name = "spike-v2-read"
 version = "0.0.0"
 edition = "2021"
 publish = false
+license = "MIT"
 
 # V2 호출자 읽기 수직 slice. 입력은 V1 typed facts뿐이다. 본 crates/에 의존하지 않는다.
 [workspace]

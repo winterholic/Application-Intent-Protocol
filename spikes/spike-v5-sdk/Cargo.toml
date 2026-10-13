@@ -3,6 +3,7 @@ name = "spike-v5-sdk"
 version = "0.0.0"
 edition = "2021"
 publish = false
+license = "MIT"
 
 # V5 SDK 실험. V1 facts에서 TS 계약 타입을 만들고 tsc로 화면 요청의 타입 추론·거부를 검증한다.
 [workspace]

@@ -3,6 +3,7 @@ name = "spike-v6-transport"
 version = "0.0.0"
 edition = "2021"
 publish = false
+license = "MIT"
 
 # V6 전송 계층 실험. V8 인증·V9 캐시 수명·V10 세션 복구 경계를 포함한다.
 [workspace]

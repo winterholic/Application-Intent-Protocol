@@ -60,7 +60,7 @@ v1·v2·v3·v5의 전체 독립 suite는 `tools/verify.sh`에서도 실행한다
 | 5 | 부하와 자원 회수 | 요청/DB/worker 기한 테스트는 있음. 혼합 부하·느린 클라이언트·취소 누적에서 연결·프로세스·메모리 회수를 측정 |
 | 6 | SDK 및 브라우저 | 현재 설치·단위·로컬 smoke와 과거 prototype Chrome 기록을 구분. 제품 서비스의 실제 브라우저 CORS·세션 갱신·pending 복구를 재실행 |
 | 7 | 전체 테스트 lint | root `clippy --all-targets -D warnings`는 CLI 통합 테스트의 기존 `unwrap_used`로 실패. 메시지가 유용한 실패 진단으로 보완하고 전체 검사를 연결 |
-| 8 | 배포 메타데이터 | 현재 LICENSE는 MIT, Cargo workspace는 UNLICENSED로 불일치. 공개 배포 메타데이터 정합성을 별도 확인 |
+| 8 | 배포 메타데이터 | LICENSE와 모든 Cargo·package·pyproject 표기를 MIT로 맞췄다(2026-10-13, D-A27). 공개 배포 시 SPDX 표기만 재확인 |
 
 외부 IdP 계정·운영 proxy·다른 OS worker 격리·대형 테이블 운영 변경은 이 로컬 검증으로 확인하지 않았다. 최종 문법·Id wire·쓰기 조합의 Open 결정을 테스트 결과만으로 확정하지 않는다.
 
