@@ -18,6 +18,7 @@ resource Item {
   transition read { allow member = actor; from isChecked = false; to isChecked = true; repeat unchanged }
   expose read {
     select id, member, parent, isChecked, count, label
+    refIds member
     filter id.eq, label.eq
     sort id
     traverse parent { select id, title }
