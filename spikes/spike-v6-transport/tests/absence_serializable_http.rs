@@ -29,7 +29,20 @@ resource Booking {
 
 const ROOMS: i64 = 6;
 
+/// Sends the request and, like a real client, sends it again with the same key when the server answers that it did not
+/// get to run it (a deadline or an unavailable database under a loaded machine). `CONFLICT` is not in that set: the server
+/// must have settled serialization failures itself.
 async fn post_apply(address: SocketAddr, token: &str, key: &str, id: i64) -> Value {
+    for _ in 0..3 {
+        let result = post_apply_once(address, token, key, id).await;
+        if !matches!(result["code"].as_str(), Some("WIRE.DEADLINE_EXCEEDED" | "WIRE.DB_UNAVAILABLE")) {
+            return result;
+        }
+    }
+    post_apply_once(address, token, key, id).await
+}
+
+async fn post_apply_once(address: SocketAddr, token: &str, key: &str, id: i64) -> Value {
     let body = json!({"key": key, "request": {"apply": "Booking.confirm", "target": {"ids": [id.to_string()]}}}).to_string();
     let mut socket = TcpStream::connect(address).await.unwrap();
     socket

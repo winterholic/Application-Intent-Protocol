@@ -45,6 +45,38 @@ node product/tools/package.mjs
 
 CLI나 compiler 변경 뒤 service smoke·패키징 전에 위 `cargo build`를 실행한다. package 도구는 기존 실행 파일을 복사하므로 SDK 소스만 최신이라고 해서 생성 계약도 최신인 것은 아니다.
 
+## 묶음(bundle)과 조합(compose)
+
+서버가 공개한 동작(`expose apply` 전이, `expose create`, `expose compose`)을 호출자가 골라 한 요청에 묶어 원자적으로 실행한다. 임의 필드 update나 delete는 열리지 않는다. 같은 `/apply` 경로를 쓰므로 멱등 키, 응답 유실 복구, `x-aip-contract` 지문 검사, 커밋 시점 `check`·불변식 재검사가 전이 하나와 같다. 전부 성공하거나 아무것도 바뀌지 않으며, 실패한 묶음은 멱등 결과를 남기지 않는다.
+
+```ts
+const done = await client.bundle({ atomic: [
+  { create: "Task", values: { project: "10", author: "1", title: "write", points: 3 } },
+  { apply: "Project.archive", target: { ids: ["10"] } },
+] }, { key: "close-10" });
+if (done.ok) done.created[0].id;           // 만든 행의 id. id 열이 없는 비공개 관계 테이블은 null
+const composed = await client.compose({ compose: "Project", targets: { ids: ["11"] }, steps: [
+  { transition: "archive" },
+  { create: "Log", values: { owner: { item: "owner" }, name: { item: "name" } } },   // 값은 서버가 읽은 대상 행의 경로
+] });
+```
+
+```python
+done = client.bundle([{"create": "Task", "values": {"project": "10", "author": "1", "title": "write", "points": 3}},
+                      {"apply": "Project.archive", "target": {"ids": ["10"]}}], key="close-10")
+composed = client.compose("Project", ["11"], [{"transition": "archive"},
+                          {"create": "Log", "values": {"owner": {"item": "owner"}, "name": {"item": "name"}}}])
+```
+
+| 항목 | 규칙 |
+|---|---|
+| 요청 | `{atomic:[{apply,target}\|{create,values}]}`(묶음), `{compose,targets:{ids},steps}`(조합). 생성 계약에 없는 create·필드·전이·값 출처는 타입에서 막히고 서버도 `WIRE.NOT_EXPOSED`·`WIRE.FIELD_NOT_EXPOSED`·`WIRE.STEP_NOT_ALLOWED`·`WIRE.VALUE_SOURCE_NOT_ALLOWED`로 거절한다 |
+| 결과 | `{ok:true, applied:[{changed,unchanged}], created:[{resource,id}], tags}`. 같은 키 재생은 `replayed:true`와 저장된 `created`를 돌려주고 행을 다시 만들지 않는다 |
+| 크기 상한 | 묶음 연산 20개, 묶음·조합이 건드리는 대상 행 1000개, 조합 단계 10개. 넘으면 `WIRE.BULK_LIMIT`. 값은 생성 계약의 `bundleLimits`에도 실린다 |
+| 참조 값 | create의 Ref 값은 호출자가 읽을 수 있는 행이어야 한다(D-A17). 안 보이는 행은 없는 행과 같은 `WIRE.MISSING_TARGET`이다 |
+| 타입 | TypeScript는 생성 binding의 `CreateContract`·`ComposeContract`로 값·id·`item` 출처를 검사한다. Python SDK는 정적 타입이 없고 서버가 검사한다. 성공 결과의 모양이 틀리면 둘 다 확정으로 보지 않고 같은 키로 다시 확인한다 |
+| 한계 | 계약이 create·compose를 공개하지 않고 전이만 있으면 `retryPending()` 결과 타입은 전이 하나의 것 그대로다. 그 계약에서 `bundle()`을 쓰면 pending 결과를 `applied` 유무로 좁혀 읽는다. 연산 사이로 값을 넘기는 일반 조합은 없다(`compose`의 `item`만). create는 Url·Time 필드를 받지 않는다 |
+
 ## 실패 추적: requestId
 
 서버는 모든 응답의 `x-request-id` 헤더에 요청 ID를 싣는다. 응답 본문 계약은 바뀌지 않는다. TypeScript SDK는 던지는 오류, `ok:false` 쓰기 결과, `WriteUnsettled`에 `requestId`를 싣고, Python SDK는 `AipError.request_id`(`WriteUnsettled` 포함)와 `ok:false` 쓰기 결과의 `requestId` 키를 준다. 헤더가 없거나 8~64자의 안전 문자(`A-Za-z0-9._-`)가 아니면 필드를 만들지 않으며 성공 결과에는 아무것도 더하지 않는다. 실패를 신고할 때 이 값을 함께 주면 운영자가 같은 ID의 서버 로그 줄을 찾는다. 근거 테스트는 `spikes/spike-v6-transport/client/request-id.test.ts`와 `product/tests/python_sdk_test.py`의 `RequestIdTest`다.

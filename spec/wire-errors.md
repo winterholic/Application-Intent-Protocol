@@ -44,7 +44,7 @@
 
 `class` request, `retry` never
 
-- 원인: A unique constraint rejected the write: a row with these values exists.
+- 원인: A unique constraint rejected the write: a row with these values exists. The response never names that row or its values, because it may be one the caller cannot read.
 - 수정: Read the existing row instead of creating it, or send different values.
 
 ### `WIRE.BAD_CONFIGURATION`
@@ -79,7 +79,7 @@
 
 `class` limit, `retry` never
 
-- 원인: More targets than the `bulk maxRows` of the exposed transition.
+- 원인: More targets than the `bulk maxRows` of the exposed transition, or an atomic bundle or compose over its size cap (operations, steps or target rows).
 - 수정: Send fewer targets per call, or raise `maxRows` in the definition.
 
 ### `WIRE.CALL_LIMIT`
@@ -114,7 +114,7 @@
 
 `class` outcome, `retry` later
 
-- 원인: A concurrent change made this write lose (a serialization or version conflict).
+- 원인: A concurrent change made this write lose (a serialization or version conflict). A write that depends on another row being absent runs in SERIALIZABLE and the server already retried it up to 3 times.
 - 수정: Read the current state and send the write again, with the same idempotency key.
 
 ### `WIRE.CIRCUIT_OPEN`
@@ -674,7 +674,7 @@
 
 `class` server, `retry` never
 
-- 원인: A write with a capacity constraint needs a READ COMMITTED transaction.
+- 원인: A write with a capacity constraint needs a READ COMMITTED or SERIALIZABLE transaction.
 - 수정: Operator: do not change the transaction isolation of the service connection.
 
 ### `WIRE.VALUE_SOURCE_NOT_ALLOWED`

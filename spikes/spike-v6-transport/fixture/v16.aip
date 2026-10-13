@@ -1,0 +1,26 @@
+resource Member { fields { id: Id } }
+actor Member
+resource Project {
+  fields { id: Id; owner: Member; name: Text(1..50); archived: Bool }
+  rows read when owner = actor
+  transition archive { allow owner = actor; from archived = false; to archived = true }
+  expose apply archive { target id; bulk maxRows 5 }
+  expose compose { bulk maxRows 2; transitions archive; create Log from owner, name }
+}
+resource Log {
+  fields { id: Id; owner: Member; name: Text(1..50); note: Text? }
+  rows read when owner = actor
+  expose create { allow owner = actor; fields owner, name, note }
+}
+resource Task {
+  fields { id: Id; project: Project; author: Member; title: Text(1..100); points: Int }
+  rows read when author = actor
+  check smallTask when points <= 10
+  unique author, title
+  expose create { allow author = actor; fields project, author, title, points }
+}
+resource Link {
+  fields { project: Project; member: Member }
+  rows read when member = actor
+  expose create { allow member = actor; fields project, member }
+}

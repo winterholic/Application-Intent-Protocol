@@ -619,7 +619,7 @@ async fn create_row(
     values: &[(String, Src)],
     caller: &Caller,
     knobs: &Knobs,
-) -> Result<(), Reject> {
+) -> Result<Option<i64>, Reject> {
     let ec = &facts["resources"][target]["exposeCreate"];
     let mut cx = Ctx::new(facts, caller.actor_id, &caller.now);
     cx.lock_reads = !knobs.skip_policy_lock;
@@ -655,18 +655,21 @@ async fn create_row(
     let venv = Env { this: Some(("v".into(), target.to_string())), ..Default::default() };
     let allow = cx.cond(&ec["allow"], &venv).map_err(internal)?;
     let insert_cols = if cols.is_empty() { String::new() } else { format!(" ({})", cols.join(", ")) };
+    // 비공개 관계 테이블은 `id` 열이 없을 수 있다. 그런 행은 id를 돌려줄 수 없다.
+    let has_id = facts["resources"][target]["fields"].get("id").is_some();
+    let returning = if has_id { "id" } else { "1" };
     let sql = format!(
-        "INSERT INTO {}{insert_cols} SELECT {} FROM (SELECT {}{from}) v WHERE {allow} RETURNING 1",
+        "INSERT INTO {}{insert_cols} SELECT {} FROM (SELECT {}{from}) v WHERE {allow} RETURNING {returning}",
         table(target),
         cols.iter().map(|c| format!("v.{c}")).collect::<Vec<_>>().join(", "),
         exprs.join(", ")
     );
     let params = cx.params.values.clone();
-    let n = typed_query(tx, sql.as_str(), &params).await.map_err(|e| write_err("생성", e))?.len();
-    if n != 1 {
+    let rows = typed_query(tx, sql.as_str(), &params).await.map_err(|e| write_err("생성", e))?;
+    if rows.len() != 1 {
         return rej("WIRE.FORBIDDEN", format!("`{target}` 생성 권한 없음"));
     }
-    Ok(())
+    Ok(has_id.then(|| rows[0].get::<_, i64>(0)))
 }
 
 /// 이 트랜잭션이 `res` 테이블을 바꿨는지 판정한다. `xmin = pg_current_xact_id()`는 인덱스가 없어 전체 스캔이므로(O-25),
@@ -819,6 +822,17 @@ pub fn bundle_needs_serializable(facts: &Value, req: &Value) -> bool {
     })
 }
 
+/// `/apply` 요청 하나(전이, 묶음, 조합)가 SERIALIZABLE을 요구하는지.
+pub fn write_needs_serializable(facts: &Value, req: &Value) -> bool {
+    if req.get("atomic").is_some() {
+        bundle_needs_serializable(facts, req)
+    } else if req.get("compose").is_some() {
+        compose_needs_serializable(facts, req)
+    } else {
+        apply_needs_serializable(facts, req)
+    }
+}
+
 pub fn compose_needs_serializable(facts: &Value, req: &Value) -> bool {
     req["compose"].as_str().is_some_and(|res| is_serializable(&facts["resources"][res]["exposeCompose"]["isolation"]))
 }
@@ -876,7 +890,7 @@ async fn apply_inner(
     Ok(a)
 }
 
-fn literal(facts: &Value, res: &str, field: &str, v: &Value) -> Result<Src, Reject> {
+fn literal(facts: &Value, res: &str, field: &str, v: &Value, wire: IdWire) -> Result<Src, Reject> {
     let ty = facts["resources"][res]["fields"][field]["ty"]
         .as_str()
         .ok_or(Reject { code: "WIRE.UNKNOWN_FIELD", msg: format!("`{res}.{field}` 없음") })?;
@@ -889,8 +903,9 @@ fn literal(facts: &Value, res: &str, field: &str, v: &Value) -> Result<Src, Reje
         return s.map(|s| Src::Lit(s.to_string(), "text")).ok_or(Reject { code: "WIRE.BAD_VALUE", msg: format!("`{field}`는 {e} 값") });
     }
     if base.starts_with("Ref<") || base.starts_with("Id<") {
-        let s = v.as_str().filter(|s| !s.is_empty() && s.len() <= 18 && s.chars().all(|c| c.is_ascii_digit()));
-        return s.map(|s| Src::Lit(s.to_string(), "bigint")).ok_or(Reject { code: "WIRE.BAD_VALUE", msg: format!("`{field}` id 형식") });
+        // Id wire(숫자·십진 문자열)에 맞는 표기만 받는다. 전이 대상 id와 같은 규칙이다.
+        let id = parse_id(v, wire).map_err(|_| Reject { code: "WIRE.BAD_VALUE", msg: format!("`{field}` id 형식") })?;
+        return Ok(Src::Lit(id.to_string(), "bigint"));
     }
     let (s, cast) = filter_value(base, v)?;
     Ok(Src::Lit(s, cast))
@@ -900,7 +915,11 @@ fn literal(facts: &Value, res: &str, field: &str, v: &Value) -> Result<Src, Reje
 pub struct BundleResult {
     pub applied: Vec<Applied>,
     pub created: usize,
+    /// 만든 행의 (resource, id). 호출자가 만든 행을 곧바로 가리킬 수 있게 한다. `id` 열이 없는 resource는 None이다.
+    pub created_rows: Vec<(String, Option<i64>)>,
 }
+
+pub use spike_v2_read::write_limits::{BUNDLE_MAX_OPS, BUNDLE_MAX_ROWS, COMPOSE_MAX_STEPS};
 
 /// W0: 이미 공개된 동작(전이 apply, expose create)을 한 트랜잭션으로 묶는다. 연산 사이 값 전달은 없다.
 pub async fn bundle(db: &mut Client, facts: &Value, req: &Value, caller: &Caller, knobs: &Knobs) -> Result<BundleResult, Reject> {
@@ -929,18 +948,72 @@ async fn bundle_once(
     ctl: Ctl,
     serializable: bool,
 ) -> Result<BundleResult, Reject> {
+    let ops = bundle_ops(req)?;
+    let tx = begin(db, serializable).await?;
+    let out = bundle_run(&tx, facts, ops, caller, knobs, IdWire::Legacy).await?;
+    run_checks(&tx, facts, caller, knobs).await?;
+    commit(tx, &ctl, knobs).await?;
+    Ok(out)
+}
+
+/// 요청 형식과 크기 상한을 트랜잭션 전에 검사한다.
+fn bundle_ops(req: &Value) -> Result<&Vec<Value>, Reject> {
     let o = req.as_object().ok_or(bad("요청은 객체"))?;
     keys(o, &["atomic"], "묶음 요청")?;
     let ops = o.get("atomic").and_then(Value::as_array).ok_or(bad("atomic 배열 필요"))?;
-    if ops.is_empty() || ops.len() > 20 {
-        return Err(bad("연산은 1~20개"));
+    if ops.is_empty() {
+        return Err(bad("atomic에 연산이 하나는 있어야 함"));
     }
-    let tx = begin(db, serializable).await?;
-    let mut out = BundleResult { applied: vec![], created: 0 };
+    if ops.len() > BUNDLE_MAX_OPS {
+        return rej("WIRE.BULK_LIMIT", format!("묶음의 연산 {}개 > 상한 {BUNDLE_MAX_OPS}", ops.len()));
+    }
+    Ok(ops)
+}
+
+/// 쓰기 확장·HTTP 쓰기용: 호출자가 가진 트랜잭션 안에서 묶음을 실행한다. 커밋 시점 검사(`checks_in`)와 커밋은 호출자가 한다.
+pub async fn bundle_in(
+    tx: &Transaction<'_>,
+    facts: &Value,
+    req: &Value,
+    caller: &Caller,
+    knobs: &Knobs,
+    wire: IdWire,
+) -> Result<BundleResult, Reject> {
+    bundle_run(tx, facts, bundle_ops(req)?, caller, knobs, wire).await
+}
+
+async fn bundle_run(
+    tx: &Transaction<'_>,
+    facts: &Value,
+    ops: &[Value],
+    caller: &Caller,
+    knobs: &Knobs,
+    wire: IdWire,
+) -> Result<BundleResult, Reject> {
+    // 대상 행 수 상한은 DB에 닿기 전에 본다. where 대상은 실제 수를 모르므로 선언한 상한으로 센다.
+    let mut rows = 0usize;
+    for op in ops {
+        let m = op.as_object().ok_or(bad("연산은 객체"))?;
+        rows += if m.contains_key("apply") {
+            let name = m.get("apply").and_then(Value::as_str).unwrap_or("");
+            let (res, tr) = name.split_once('.').unwrap_or(("", ""));
+            let ex = &facts["resources"][res]["exposeApply"][tr];
+            match m.get("target").and_then(|t| t.get("ids")).and_then(Value::as_array) {
+                Some(ids) => ids.len(),
+                None => ex["bulkMaxRows"].as_u64().unwrap_or(1) as usize,
+            }
+        } else {
+            1
+        };
+    }
+    if rows > BUNDLE_MAX_ROWS {
+        return rej("WIRE.BULK_LIMIT", format!("묶음의 대상 행 {rows}개 > 상한 {BUNDLE_MAX_ROWS}"));
+    }
+    let mut out = BundleResult { applied: vec![], created: 0, created_rows: vec![] };
     for op in ops {
         let m = op.as_object().ok_or(bad("연산은 객체"))?;
         if m.contains_key("apply") {
-            out.applied.push(apply_op(&tx, facts, m, caller, knobs, IdWire::Legacy).await?);
+            out.applied.push(apply_op(tx, facts, m, caller, knobs, wire).await?);
         } else {
             keys(m, &["create", "values"], "create 연산")?;
             let res = m.get("create").and_then(Value::as_str).unwrap_or("");
@@ -948,6 +1021,7 @@ async fn bundle_once(
             if ec.is_null() {
                 return rej("WIRE.NOT_EXPOSED", format!("`{res}` 생성은 공개되지 않음"));
             }
+            let res = facts["resources"].as_object().unwrap().keys().find(|k| *k == res).unwrap().as_str();
             let vals = m.get("values").and_then(Value::as_object).ok_or(bad("values 객체 필요"))?;
             let allowed: Vec<&str> = ec["fields"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
             let mut row = vec![];
@@ -955,15 +1029,14 @@ async fn bundle_once(
                 if !allowed.contains(&f.as_str()) {
                     return rej("WIRE.FIELD_NOT_EXPOSED", format!("`{res}.{f}`는 생성 계약에 없음"));
                 }
-                row.push((f.clone(), literal(facts, res, f, v)?));
+                row.push((f.clone(), literal(facts, res, f, v, wire)?));
             }
-            ensure_refs_readable(&tx, facts, res, &row, caller, knobs).await?;
-            create_row(&tx, facts, res, &row, caller, knobs).await?;
+            ensure_refs_readable(tx, facts, res, &row, caller, knobs).await?;
+            let id = create_row(tx, facts, res, &row, caller, knobs).await?;
             out.created += 1;
+            out.created_rows.push((res.to_string(), id));
         }
     }
-    run_checks(&tx, facts, caller, knobs).await?;
-    commit(tx, &ctl, knobs).await?;
     Ok(out)
 }
 
@@ -990,15 +1063,8 @@ pub async fn compose(db: &mut Client, facts: &Value, req: &Value, caller: &Calle
     .await
 }
 
-async fn compose_once(
-    db: &mut Client,
-    facts: &Value,
-    req: &Value,
-    caller: &Caller,
-    knobs: &Knobs,
-    ctl: Ctl,
-    serializable: bool,
-) -> Result<BundleResult, Reject> {
+/// 조합 요청을 트랜잭션 전에 해석하고 허용 단계·값 출처·크기를 모두 검사한다.
+fn compose_plan<'a>(facts: &'a Value, req: &'a Value, wire: IdWire) -> Result<ComposePlan<'a>, Reject> {
     let o = req.as_object().ok_or(bad("요청은 객체"))?;
     keys(o, &["compose", "targets", "steps"], "조합 요청")?;
     let res = o.get("compose").and_then(Value::as_str).unwrap_or("");
@@ -1010,15 +1076,17 @@ async fn compose_once(
     let bulk = cp["bulkMaxRows"].as_i64().unwrap_or(1);
     let tg = o.get("targets").and_then(Value::as_object).ok_or(bad("targets 객체 필요"))?;
     keys(tg, &["ids"], "targets")?;
-    let ids = parse_ids(tg.get("ids").unwrap_or(&Value::Null), bulk, IdWire::Legacy)?;
+    let ids = parse_ids(tg.get("ids").unwrap_or(&Value::Null), bulk, wire)?;
     let steps = o.get("steps").and_then(Value::as_array).ok_or(bad("steps 배열 필요"))?;
-    if steps.is_empty() || steps.len() > 10 {
-        return Err(bad("단계는 1~10개"));
+    if steps.is_empty() {
+        return Err(bad("steps에 단계가 하나는 있어야 함"));
     }
-    // 단계 형식을 트랜잭션 전에 모두 검사한다.
-    enum Step<'a> {
-        Tr(&'a str, bool),
-        Create(&'a str, Vec<(String, Value, Option<Value>)>),
+    if steps.len() > COMPOSE_MAX_STEPS {
+        return rej("WIRE.BULK_LIMIT", format!("조합의 단계 {}개 > 상한 {COMPOSE_MAX_STEPS}", steps.len()));
+    }
+    // 단계마다 대상 행 전체를 건드리므로 행 수는 대상 수 × 단계 수다.
+    if ids.len() * steps.len() > BUNDLE_MAX_ROWS {
+        return rej("WIRE.BULK_LIMIT", format!("조합의 대상 행 {}개 > 상한 {BUNDLE_MAX_ROWS}", ids.len() * steps.len()));
     }
     let mut plan = vec![];
     for st in steps {
@@ -1074,7 +1142,65 @@ async fn compose_once(
             plan.push(Step::Create(target, vals));
         }
     }
+    Ok(ComposePlan { res, cp, bulk, ids, steps: plan })
+}
+
+/// 해석한 조합 요청.
+struct ComposePlan<'a> {
+    res: &'a str,
+    cp: &'a Value,
+    bulk: i64,
+    ids: Vec<i64>,
+    steps: Vec<Step<'a>>,
+}
+
+enum Step<'a> {
+    Tr(&'a str, bool),
+    Create(&'a str, Vec<(String, Value, Option<Value>)>),
+}
+
+async fn compose_once(
+    db: &mut Client,
+    facts: &Value,
+    req: &Value,
+    caller: &Caller,
+    knobs: &Knobs,
+    ctl: Ctl,
+    serializable: bool,
+) -> Result<BundleResult, Reject> {
+    let plan = compose_plan(facts, req, IdWire::Legacy)?;
     let tx = begin(&mut *db, serializable).await?;
+    let out = compose_exec(&tx, facts, &plan, caller, knobs, IdWire::Legacy).await?;
+    run_checks(&tx, facts, caller, knobs).await?;
+    commit(tx, &ctl, knobs).await?;
+    Ok(out)
+}
+
+/// 쓰기 확장·HTTP 쓰기용: 호출자가 가진 트랜잭션 안에서 조합을 실행한다. 커밋 시점 검사와 커밋은 호출자가 한다.
+pub async fn compose_in(
+    tx: &Transaction<'_>,
+    facts: &Value,
+    req: &Value,
+    caller: &Caller,
+    knobs: &Knobs,
+    wire: IdWire,
+) -> Result<BundleResult, Reject> {
+    let plan = compose_plan(facts, req, wire)?;
+    compose_exec(tx, facts, &plan, caller, knobs, wire).await
+}
+
+async fn compose_exec(
+    tx: &Transaction<'_>,
+    facts: &Value,
+    plan: &ComposePlan<'_>,
+    caller: &Caller,
+    knobs: &Knobs,
+    wire: IdWire,
+) -> Result<BundleResult, Reject> {
+    let ComposePlan { res, cp, bulk, ids, steps: _ } = plan;
+    let ids: &Vec<i64> = ids;
+    let (res, bulk) = (*res, *bulk);
+    let cp: &Value = cp;
     // 모든 대상을 먼저 잠그고 가시성을 확인한다. 같은 범위 검사는 단계별 권한 판정 뒤에 한다(R3-01).
     let scopes: Vec<Option<String>>;
     {
@@ -1088,14 +1214,14 @@ async fn compose_once(
         let p = cx.params.bind(Some(id_array(&ids)), "bigint[]");
         let sql = format!("SELECT t.id, {scope} FROM {} t WHERE t.id = ANY({p}) AND {vis} ORDER BY t.id FOR UPDATE OF t", table(res));
         let params = cx.params.values.clone();
-        let rows = typed_query(&tx, sql.as_str(), &params).await.map_err(|e| db_err("대상 조회", e))?;
+        let rows = typed_query(tx, sql.as_str(), &params).await.map_err(|e| db_err("대상 조회", e))?;
         if rows.len() != ids.len() {
             return rej("WIRE.MISSING_TARGET", format!("대상 {}개를 찾을 수 없음", ids.len() - rows.len()));
         }
         scopes = rows.iter().map(|r| r.get(1)).collect();
     }
-    let mut out = BundleResult { applied: vec![], created: 0 };
-    for st in &plan {
+    let mut out = BundleResult { applied: vec![], created: 0, created_rows: vec![] };
+    for st in &plan.steps {
         match st {
             Step::Tr(t, on_self) => {
                 let step_ids = if *on_self {
@@ -1108,7 +1234,7 @@ async fn compose_once(
                     let pb = cx.params.bind(scopes[0].clone(), "text");
                     let sql = format!("SELECT t.id FROM {} t WHERE t.{a_col} = {pa} AND t.{b_col}::text = {pb}", table(res));
                     let params = cx.params.values.clone();
-                    let rows = typed_query(&tx, sql.as_str(), &params).await.map_err(|e| db_err("자기 행 조회", e))?;
+                    let rows = typed_query(tx, sql.as_str(), &params).await.map_err(|e| db_err("자기 행 조회", e))?;
                     if rows.len() != 1 {
                         return rej("WIRE.MISSING_TARGET", "같은 범위의 자기 행을 찾을 수 없음");
                     }
@@ -1116,25 +1242,26 @@ async fn compose_once(
                 } else {
                     ids.clone()
                 };
-                let j = judge(&tx, facts, res, t, &TargetSpec::Ids(step_ids), bulk, &Value::Null, caller, knobs).await?;
-                update(&tx, facts, res, t, &j.change, caller, knobs).await?;
-                effects(&tx, facts, res, t, &j.change, caller).await?;
+                let j = judge(tx, facts, res, t, &TargetSpec::Ids(step_ids), bulk, &Value::Null, caller, knobs).await?;
+                update(tx, facts, res, t, &j.change, caller, knobs).await?;
+                effects(tx, facts, res, t, &j.change, caller).await?;
                 out.applied.push(Applied { changed: j.change, unchanged: j.unchanged });
             }
             Step::Create(target, vals) => {
-                for id in &ids {
+                for id in ids {
                     let mut row = vec![];
                     for (f, c, src) in vals {
                         row.push((
                             f.clone(),
                             match src {
                                 Some(p) => Src::Item { res: res.to_string(), id: *id, path: p.clone() },
-                                None => literal(facts, target, f, c)?,
+                                None => literal(facts, target, f, c, wire)?,
                             },
                         ));
                     }
-                    create_row(&tx, facts, target, &row, caller, knobs).await?;
+                    let created = create_row(tx, facts, target, &row, caller, knobs).await?;
                     out.created += 1;
+                    out.created_rows.push((target.to_string(), created));
                 }
             }
         }
@@ -1142,8 +1269,6 @@ async fn compose_once(
     if !cp["sameScope"].is_null() && (scopes[0].is_none() || scopes.iter().any(|s| *s != scopes[0])) {
         return rej("WIRE.NOT_SAME_SCOPE", "대상들이 같은 범위가 아님");
     }
-    run_checks(&tx, facts, caller, knobs).await?;
-    commit(tx, &ctl, knobs).await?;
     Ok(out)
 }
 

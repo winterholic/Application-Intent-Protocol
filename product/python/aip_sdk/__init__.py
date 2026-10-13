@@ -1,7 +1,7 @@
 """Official Python caller SDK for an AIP service.
 
-The server stays the final authority: this client only expresses reads, transitions,
-operations and durable jobs that the deployed contract exposes. It mirrors the TypeScript
+The server stays the final authority: this client only expresses reads, transitions, atomic bundles of exposed
+creates and transitions, composes, operations and durable jobs that the deployed contract exposes. It mirrors the TypeScript
 transport rules for contract fingerprints, session scope and unsettled-write recovery.
 Only the standard library is used so it runs in scripts, workers and other backends.
 """
@@ -62,6 +62,17 @@ class ScopeConflict(AipError):
 Transport = Callable[[str, dict, bytes, float], Any]
 
 _SAFE_REQUEST_ID = re.compile(r"^[A-Za-z0-9._-]{8,64}$")
+
+
+def _well_formed_bundle_result(response: dict) -> bool:
+    """A committed bundle or compose answers `applied` (changed/unchanged ids per operation) and `created`
+    (resource and id, `null` for a table without an id column). Anything else is not a result to trust."""
+    applied, created = response.get("applied"), response.get("created")
+    if not isinstance(applied, list) or not isinstance(created, list):
+        return False
+    ids_ok = lambda ids: isinstance(ids, list)  # noqa: E731
+    return all(isinstance(row, dict) and ids_ok(row.get("changed")) and ids_ok(row.get("unchanged")) for row in applied) and all(
+        isinstance(row, dict) and isinstance(row.get("resource"), str) and "id" in row for row in created)
 
 
 class _Body(dict):
@@ -226,6 +237,10 @@ class Client:
                 continue
             if code in _UNSETTLED or (attempt > 0 and code in _NOT_EXECUTED):
                 continue
+            # A bundle or compose that reports success must say what it changed and created; otherwise the commit is
+            # unconfirmed and the same key is sent again to read the stored result.
+            if response.get("ok") is True and ("atomic" in snapshot or "compose" in snapshot) and not _well_formed_bundle_result(response):
+                continue
             del self._pending[key]
             request_id = _request_id(response)
             if attempt > 0:
@@ -235,6 +250,22 @@ class Client:
                 response = {**response, "requestId": request_id}
             return response
         raise WriteUnsettled(key, copy.deepcopy(snapshot), last_request_id)
+
+    def bundle(self, operations: list, key: Optional[str] = None, retries: int = 2) -> dict:
+        """Runs exposed transitions (`{"apply": "R.t", "target": {...}}`) and exposed creates
+        (`{"create": "R", "values": {...}}`) as one atomic request: all succeed or nothing changes. The result is
+        `{"ok": True, "applied": [{"changed", "unchanged"}...], "created": [{"resource", "id"}...], "tags"}` or a
+        rejection. The key, lost-response recovery and `WriteUnsettled` work as for `apply`."""
+        if not isinstance(operations, (list, tuple)) or not operations:
+            raise AipError("WIRE.BAD_REQUEST", "묶음에는 연산이 하나 이상 있어야 함")
+        return self.apply({"atomic": list(operations)}, key=key, retries=retries)
+
+    def compose(self, resource: str, ids: list, steps: list, key: Optional[str] = None, retries: int = 2) -> dict:
+        """Runs an exposed compose: the steps (`{"transition": "t"}` or `{"create": "R", "values": {field: {"item":
+        "path"} | {"const": value}}}`) apply to every target id. Values come from the target row the server reads."""
+        if not isinstance(steps, (list, tuple)) or not steps:
+            raise AipError("WIRE.BAD_REQUEST", "조합에는 단계가 하나 이상 있어야 함")
+        return self.apply({"compose": resource, "targets": {"ids": list(ids)}, "steps": list(steps)}, key=key, retries=retries)
 
     def status(self, request: dict, key: str) -> dict:
         """Committed result for a key and identical request, or `WIRE.NOT_FOUND` if none is committed yet."""

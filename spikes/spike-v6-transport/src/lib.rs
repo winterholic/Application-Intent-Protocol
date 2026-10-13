@@ -134,6 +134,66 @@ fn invisible_format(c: char) -> bool {
     )
 }
 
+/// 쓰기 요청 하나를 호출자의 트랜잭션 안에서 실행해 응답 본문을 만든다. 커밋은 호출자가 한다.
+/// 형식은 키로 구분한다: `apply`(전이 하나), `atomic`(공개 동작 묶음), `compose`(대상 목록에 단계 조합).
+async fn run_write(
+    tx: &tokio_postgres::Transaction<'_>,
+    facts: &Value,
+    req: &Value,
+    caller: &Caller,
+    knobs: &Knobs,
+    wire: IdWire,
+) -> Result<Value, Reject> {
+    let emit_all = |ids: Vec<i64>| ids.into_iter().map(|id| emit_id(id, wire)).collect::<Result<Vec<_>, _>>();
+    if req.get("atomic").is_some() || req.get("compose").is_some() {
+        let out = if req.get("atomic").is_some() {
+            spike_v3_write::bundle_in(tx, facts, req, caller, knobs, wire).await?
+        } else {
+            spike_v3_write::compose_in(tx, facts, req, caller, knobs, wire).await?
+        };
+        let mut applied = vec![];
+        for a in out.applied {
+            applied.push(json!({ "changed": emit_all(a.changed)?, "unchanged": emit_all(a.unchanged)? }));
+        }
+        let mut created = vec![];
+        for (resource, id) in out.created_rows {
+            created.push(json!({ "resource": resource, "id": match id { Some(id) => emit_id(id, wire)?, None => Value::Null } }));
+        }
+        // wire에 표현할 수 없는 id가 있으면 멱등 결과 기록·commit 전 전체 transaction이 rollback된다.
+        return Ok(json!({ "ok": true, "applied": applied, "created": created, "tags": bundle_tags(facts, req) }));
+    }
+    let applied = apply_in_with_wire(tx, facts, req, caller, knobs, wire).await?;
+    Ok(json!({
+        "ok": true, "changed": emit_all(applied.changed)?, "unchanged": emit_all(applied.unchanged)?,
+        "tags": write_tags(facts, req["apply"].as_str().unwrap_or("")),
+    }))
+}
+
+/// 묶음·조합이 바꿀 수 있는 resource(캐시 무효화 태그). 연산마다 `write_tags`와 같은 규칙이다.
+fn bundle_tags(facts: &Value, req: &Value) -> Vec<String> {
+    let mut out = vec![];
+    if let Some(res) = req["compose"].as_str() {
+        out.push(res.to_string());
+        for t in req["steps"].as_array().into_iter().flatten() {
+            if let Some(tr) = t["transition"].as_str() {
+                out.extend(write_tags(facts, &format!("{res}.{tr}")));
+            } else if let Some(target) = t["create"].as_str() {
+                out.push(target.to_string());
+            }
+        }
+    }
+    for op in req["atomic"].as_array().into_iter().flatten() {
+        if let Some(name) = op["apply"].as_str() {
+            out.extend(write_tags(facts, name));
+        } else if let Some(target) = op["create"].as_str() {
+            out.push(target.to_string());
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
 async fn handle_apply(db: &mut Client, facts: &Value, body: &Value, caller: &Caller, wire: IdWire) -> Value {
     let Some(key) = body["key"].as_str().filter(|k| valid_key(k)) else {
         return json!({ "ok": false, "code": "WIRE.BAD_REQUEST", "msg": "key 필요" });
@@ -142,7 +202,7 @@ async fn handle_apply(db: &mut Client, facts: &Value, body: &Value, caller: &Cal
     let req_text = req.to_string();
     let principal = principal_key(caller.actor_id, wire);
     // 다른 행을 읽는 정책에 의존하는 전이는 SERIALIZABLE로 실행하고, 직렬화 실패는 같은 요청을 서버가 다시 실행한다(O-26).
-    let serializable = spike_v3_write::apply_needs_serializable(facts, req);
+    let serializable = spike_v3_write::write_needs_serializable(facts, req);
     let started = std::time::Instant::now();
     let commit_sent = std::sync::atomic::AtomicBool::new(false);
     let operation = async {
@@ -215,26 +275,14 @@ async fn apply_attempt(
         return v;
     }
     let knobs = Knobs { audit_via: Some("apply"), audit_key: Some(key.to_string()), ..Knobs::default() };
-    let applied = match apply_in_with_wire(&tx, facts, req, caller, &knobs, wire).await {
-        Ok(a) => a,
+    // 전이 하나, 묶음(atomic), 조합(compose)은 같은 트랜잭션·같은 멱등 키·같은 커밋 시점 검사를 쓴다.
+    let result = match run_write(&tx, facts, req, caller, &knobs, wire).await {
+        Ok(result) => result,
         Err(e) => return err(e),
     };
     if let Err(e) = checks_in(&tx, facts, caller, &knobs).await {
         return err(e);
     }
-    // wire에 표현할 수 없는 결과면 멱등 결과 기록·commit 전 전체 transaction이 rollback된다.
-    let changed = match applied.changed.into_iter().map(|id| emit_id(id, wire)).collect::<Result<Vec<_>, _>>() {
-        Ok(ids) => ids,
-        Err(e) => return err(e),
-    };
-    let unchanged = match applied.unchanged.into_iter().map(|id| emit_id(id, wire)).collect::<Result<Vec<_>, _>>() {
-        Ok(ids) => ids,
-        Err(e) => return err(e),
-    };
-    let result = json!({
-        "ok": true, "changed": changed, "unchanged": unchanged,
-        "tags": write_tags(facts, req["apply"].as_str().unwrap_or("")),
-    });
     if let Err(error) = tx
         .execute(
             format!("INSERT INTO {s}.aip_idem (principal, key, request, result) VALUES ($1, $2, $3, $4::text::jsonb)").as_str(),

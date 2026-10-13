@@ -3,6 +3,16 @@ pub mod plan;
 pub mod scalar;
 pub mod sqlgen;
 
+/// 서버가 정하는 묶음·조합 크기 상한. 실행기(`spike-v3-write`)가 강제하고 생성 계약이 같은 값을 싣는다.
+pub mod write_limits {
+    /// 묶음 하나가 담을 수 있는 연산 수. 커밋 시점 검사와 잠금이 연산 수만큼 늘기 때문이다.
+    pub const BUNDLE_MAX_OPS: usize = 20;
+    /// 묶음·조합 하나가 건드릴 수 있는 대상 행 수. 한 트랜잭션이 잠그는 행을 묶는다.
+    pub const BUNDLE_MAX_ROWS: usize = 1000;
+    /// 조합 하나가 담을 수 있는 단계 수.
+    pub const COMPOSE_MAX_STEPS: usize = 10;
+}
+
 use plan::{Plan, Reject};
 use std::{
     error::Error as StdError,

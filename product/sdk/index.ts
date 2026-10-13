@@ -14,4 +14,5 @@ export type {
   ExtensionBinding, ExtensionContractShape, ScalarDescriptor, ApplyBinding, ApplyRequest, ApplyResult, ContractBinding, PendingResult,
   PrototypeBinding, WriteExtensionDescriptors, WriteExtensionResult,
   OperationBinding, OperationDescriptors,
+  WriteBinding, CreateContractShape, ComposeContractShape, BundleRequest, BundleResult, ComposeRequest, ComposeResult, CreatedRow, PendingWrite,
 } from "../../spikes/spike-v5-sdk/sdk/generic.ts";

@@ -119,6 +119,48 @@ class PythonSdkTest(unittest.TestCase):
         self.assertEqual(enqueue[2], {"operation": "report", "input": {"text": "x"}, "key": "r1", "delayMs": 0})
         self.assertEqual(enqueue[1]["x-aip-contract"], FP)
 
+    def test_bundle_sends_one_atomic_request_and_a_lost_response_replays_the_stored_result(self):
+        server = FakeServer()
+        stored = {"ok": True, "applied": [{"changed": ["10"], "unchanged": []}], "created": [{"resource": "Task", "id": "5"}],
+                  "tags": ["Project", "Task"], "replayed": True}
+        server.script("/apply", ConnectionResetError(), stored)
+        client = connect("http://aip", "t1", FP, transport=server)
+        operations = [{"create": "Task", "values": {"project": "10", "title": "t"}}, {"apply": "Project.archive", "target": {"ids": ["10"]}}]
+        result = client.bundle(operations, key="b1")
+        self.assertTrue(result["recovered"] and result["replayed"])
+        self.assertEqual(result["created"], [{"resource": "Task", "id": "5"}])
+        bodies = [c[2] for c in server.calls if c[0] == "/apply"]
+        self.assertEqual([b["request"] for b in bodies], [{"atomic": operations}] * 2)
+        self.assertEqual({b["key"] for b in bodies}, {"b1"})
+        self.assertEqual(client.pending(), [])
+        with self.assertRaises(AipError) as caught:
+            client.bundle([])
+        self.assertEqual(caught.exception.code, "WIRE.BAD_REQUEST")
+
+    def test_a_malformed_bundle_result_is_not_trusted_and_the_key_stays_pending(self):
+        server = FakeServer()
+        # a success that does not say what it created is unconfirmed; every attempt is the same request
+        server.script("/apply", {"ok": True, "changed": ["10"], "unchanged": [], "tags": []}, {"ok": True, "applied": "none", "created": []},
+                      {"ok": True, "applied": [], "created": [{"id": "5"}]})
+        client = connect("http://aip", "t1", FP, transport=server)
+        with self.assertRaises(WriteUnsettled) as caught:
+            client.bundle([{"apply": "Project.archive", "target": {"ids": ["10"]}}], key="b2")
+        self.assertEqual(caught.exception.key, "b2")
+        self.assertEqual(client.pending(), ["b2"])
+
+    def test_bundle_business_rejection_is_final_and_compose_builds_its_request(self):
+        server = FakeServer()
+        server.script("/apply", {"ok": False, "code": "WIRE.INVALID_STATE"}, {"ok": True, "applied": [{"changed": ["11"], "unchanged": []}],
+                      "created": [{"resource": "Log", "id": "7"}], "tags": ["Project", "Log"]})
+        client = connect("http://aip", "t1", FP, transport=server)
+        self.assertEqual(client.bundle([{"apply": "Project.archive", "target": {"ids": ["10"]}}], key="b3")["code"], "WIRE.INVALID_STATE")
+        steps = [{"transition": "archive"}, {"create": "Log", "values": {"owner": {"item": "owner"}, "name": {"item": "name"}}}]
+        done = client.compose("Project", ["11"], steps, key="c1")
+        self.assertEqual(done["created"], [{"resource": "Log", "id": "7"}])
+        request = [c[2] for c in server.calls if c[0] == "/apply"][-1]["request"]
+        self.assertEqual(request, {"compose": "Project", "targets": {"ids": ["11"]}, "steps": steps})
+        self.assertEqual(client.pending(), [])
+
     def test_rejects_malformed_fingerprint_and_server_errors(self):
         with self.assertRaises(AipError):
             connect("http://aip", "t1", "not-a-fingerprint")

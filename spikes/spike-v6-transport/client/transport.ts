@@ -26,6 +26,14 @@ function validWriteResponse(res: any, wire?: IdWireKind, extensionWrite = false)
   if (res?.ok === false) return typeof res.code === "string" && (wire === undefined || res.msg === undefined || typeof res.msg === "string");
   if (res?.ok !== true || !Array.isArray(res.tags) || !res.tags.every((tag: unknown) => typeof tag === "string")) return false;
   if (extensionWrite) return res.output !== null && typeof res.output === "object" && !Array.isArray(res.output);
+  // 묶음·조합 결과: 연산마다 바뀐 id와 만든 행. 만든 행의 id는 `id` 열이 없는 resource면 null이다.
+  if (res.applied !== undefined || res.created !== undefined) {
+    const idsOk = (ids: unknown) => Array.isArray(ids) && ids.every(id => wire === undefined || validResultId(id, wire));
+    return Array.isArray(res.applied) && Array.isArray(res.created) &&
+      res.applied.every((row: any) => row !== null && typeof row === "object" && idsOk(row.changed) && idsOk(row.unchanged)) &&
+      res.created.every((row: any) => row !== null && typeof row === "object" && typeof row.resource === "string" &&
+        (row.id === null || wire === undefined || validResultId(row.id, wire)));
+  }
   return wire === undefined || [res.changed, res.unchanged].every(ids => Array.isArray(ids) && ids.every(id => validResultId(id, wire)));
 }
 
@@ -77,6 +85,11 @@ export function connect(base: string, initialToken: string | null, fetchImpl: ty
   function freezeOutcome(res: any) {
     if (resultWire === undefined) return res;
     if (res.ok) for (const field of ["changed", "unchanged", "tags"]) Object.freeze(res[field]);
+    if (res.ok && Array.isArray(res.applied)) {
+      for (const row of res.applied) { Object.freeze(row.changed); Object.freeze(row.unchanged); Object.freeze(row); }
+      Object.freeze(res.applied);
+    }
+    if (res.ok && Array.isArray(res.created)) { for (const row of res.created) Object.freeze(row); Object.freeze(res.created); }
     if (res.ok && Object.hasOwn(res, "output")) Object.freeze(res.output);
     return Object.freeze(res);
   }

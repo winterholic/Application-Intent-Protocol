@@ -32,7 +32,151 @@ pub fn contract_ts_with_apply(facts: &Value, wire: IdWire) -> String {
         }
     }
     s.push_str("}\n");
+    push_write_contract(&mut s, facts, wire);
     s
+}
+
+/// 생성 binding 타입에 덧붙이는 create·compose 계약. 둘 다 없으면 빈 문자열이라 기존 모듈 글자가 그대로다.
+fn write_binding(facts: &Value) -> (&'static str, String) {
+    let resources = facts["resources"].as_object();
+    let any = |key: &str| resources.is_some_and(|r| r.values().any(|rf| !rf[key].is_null()));
+    let (creates, composes) = (any("exposeCreate"), any("exposeCompose"));
+    if !creates && !composes {
+        return ("", String::new());
+    }
+    (
+        ", WriteBinding",
+        format!(" & WriteBinding<{}, {}>", if creates { "CreateContract" } else { "{}" }, if composes { "ComposeContract" } else { "{}" }),
+    )
+}
+
+/// 호출자 값 하나의 TS 타입. 정의 Id·참조는 wire를 따르고 create가 받지 못하는 타입(Time·Url)은 `never`다.
+fn create_value_type(facts: &Value, ty: &str, wire: IdWire) -> String {
+    let nullable = ty.ends_with('?');
+    let base = ty.trim_end_matches('?');
+    let t = if let Some(target) = base.strip_prefix("Ref<").or_else(|| base.strip_prefix("Id<")).and_then(|x| x.strip_suffix('>')) {
+        if wire == IdWire::Legacy {
+            "string".to_string()
+        } else {
+            format!("Id<\"{target}\">")
+        }
+    } else if matches!(base, "Time" | "Url") {
+        "never".to_string()
+    } else {
+        ts_type(facts, base)
+    };
+    if nullable && t != "never" {
+        format!("{t} | null")
+    } else {
+        t
+    }
+}
+
+fn union_of(items: impl IntoIterator<Item = String>) -> String {
+    let items: Vec<String> = items.into_iter().map(|x| format!("\"{x}\"")).collect();
+    if items.is_empty() {
+        "never".into()
+    } else {
+        items.join(" | ")
+    }
+}
+
+/// 공개 create(`expose create`)와 compose(`expose compose`)의 타입. 둘 다 없으면 아무것도 내보내지 않아 기존 계약 지문이 그대로다.
+fn push_write_contract(s: &mut String, facts: &Value, wire: IdWire) {
+    let resources = facts["resources"].as_object().unwrap();
+    let creates: Vec<_> = resources.iter().filter(|(_, rf)| !rf["exposeCreate"].is_null()).collect();
+    let composes: Vec<_> = resources.iter().filter(|(_, rf)| !rf["exposeCompose"].is_null()).collect();
+    if creates.is_empty() && composes.is_empty() {
+        return;
+    }
+    use spike_v2_read::write_limits::{BUNDLE_MAX_OPS, BUNDLE_MAX_ROWS, COMPOSE_MAX_STEPS};
+    writeln!(s, "\nexport const bundleLimits = {{ maxOps: {BUNDLE_MAX_OPS}, maxRows: {BUNDLE_MAX_ROWS}, maxSteps: {COMPOSE_MAX_STEPS} }} as const;")
+        .unwrap();
+    // 이 resource가 호출자에게 돌려줄 수 있는 id 타입. `id` 열이 없는 비공개 관계 테이블은 null이다.
+    let id_out = |res: &str| if resources[res]["fields"].get("id").is_some() { format!("Id<\"{res}\">") } else { "null".to_string() };
+    let fields_of = |res: &str, names: &[String]| -> String {
+        names
+            .iter()
+            .map(|f| format!("{f}: {};", create_value_type(facts, resources[res]["fields"][f.as_str()]["ty"].as_str().unwrap(), wire)))
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    if !creates.is_empty() {
+        s.push_str("export interface CreateContract {\n");
+        for (res, rf) in &creates {
+            let allowed: Vec<String> =
+                rf["exposeCreate"]["fields"].as_array().unwrap().iter().filter_map(|x| x.as_str().map(str::to_string)).collect();
+            // 비워 둘 수 있는 것은 null을 받는 필드뿐이다. 필수 필드를 빼면 서버가 BAD_VALUE로 거절한다.
+            let optional: Vec<String> = allowed.iter().filter(|f| rf["fields"][f.as_str()]["ty"].as_str().unwrap().ends_with('?')).cloned().collect();
+            writeln!(
+                s,
+                "  \"{res}\": {{ idOutput: {}; fields: {{ {} }}; optional: {} }};",
+                id_out(res),
+                fields_of(res, &allowed),
+                union_of(optional)
+            )
+            .unwrap();
+        }
+        s.push_str("}\n");
+    }
+    if !composes.is_empty() {
+        s.push_str("export interface ComposeContract {\n");
+        for (res, rf) in &composes {
+            let cp = &rf["exposeCompose"];
+            let transitions = union_of(cp["transitions"].as_array().into_iter().flatten().filter_map(|x| x.as_str().map(str::to_string)));
+            let input = if wire == IdWire::Legacy { "string".into() } else { format!("Id<\"{res}\">") };
+            let mut creates_ts = vec![];
+            for (target, decl) in cp["creates"].as_object().into_iter().flatten() {
+                let allowed: Vec<String> = resources[target.as_str()]["exposeCreate"]["fields"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|x| x.as_str().map(str::to_string))
+                    .collect();
+                // 값 출처는 서버가 선언한 대상 행 경로뿐이다. 타입은 그 경로의 필드 타입이다.
+                let sources: Vec<String> = decl["sources"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|src| {
+                        let path = src["path"]["segs"].as_array()?.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(".");
+                        Some(format!("\"{path}\": {};", create_value_type(facts, src["ty"].as_str()?, wire)))
+                    })
+                    .collect();
+                // 참조 필드는 상수를 받지 않는다(서버가 VALUE_SOURCE_NOT_ALLOWED로 거절한다).
+                let constants: Vec<String> = allowed
+                    .iter()
+                    .filter(|f| {
+                        let ty = resources[target.as_str()]["fields"][f.as_str()]["ty"].as_str().unwrap();
+                        !(ty.starts_with("Ref<") || ty.starts_with("Id<"))
+                    })
+                    .cloned()
+                    .collect();
+                let optional: Vec<String> = allowed
+                    .iter()
+                    .filter(|f| resources[target.as_str()]["fields"][f.as_str()]["ty"].as_str().unwrap().ends_with('?'))
+                    .cloned()
+                    .collect();
+                creates_ts.push(format!(
+                    "\"{target}\": {{ idOutput: {}; fields: {{ {} }}; optional: {}; sources: {{ {} }}; constants: {} }}",
+                    id_out(target),
+                    fields_of(target, &allowed),
+                    union_of(optional),
+                    sources.join(" "),
+                    union_of(constants)
+                ));
+            }
+            let self_row = !cp["selfRow"].is_null();
+            writeln!(
+                s,
+                "  \"{res}\": {{ idInput: {input}; idOutput: Id<\"{res}\">; maxRows: {}; transitions: {transitions}; self: {self_row}; creates: {{ {} }} }};",
+                cp["bulkMaxRows"].as_i64().unwrap_or(1),
+                creates_ts.join("; ")
+            )
+            .unwrap();
+        }
+        s.push_str("}\n");
+    }
 }
 
 pub fn contract_fingerprint_with_apply(facts: &Value, wire: IdWire) -> String {
@@ -43,11 +187,12 @@ pub fn contract_module_with_apply(facts: &Value, binding_import: &str, wire: IdW
     let mut module = contract_ts_with_apply(facts, wire);
     let fingerprint = fingerprint_of(&module);
     let import = serde_json::to_string(binding_import).expect("문자열 직렬화는 실패하지 않음");
-    writeln!(module, "\nimport type {{ ApplyBinding }} from {import};").unwrap();
+    let (import_more, suffix) = write_binding(facts);
+    writeln!(module, "\nimport type {{ ApplyBinding{import_more} }} from {import};").unwrap();
     writeln!(module, "export const contractFingerprint = \"{fingerprint}\";").unwrap();
     writeln!(
         module,
-        "export const contract: ApplyBinding<Contract, ApplyContract> = {{ fingerprint: \"{fingerprint}\", idWire: \"{}\" }};",
+        "export const contract: ApplyBinding<Contract, ApplyContract>{suffix} = {{ fingerprint: \"{fingerprint}\", idWire: \"{}\" }};",
         wire.label()
     )
     .unwrap();
@@ -425,9 +570,10 @@ pub fn contract_module_with_all_extensions(facts: &Value, binding_import: &str, 
     let mut module = contract_ts_with_all_extensions(facts, wire);
     let fingerprint = fingerprint_of(&module);
     let import = serde_json::to_string(binding_import).unwrap();
-    writeln!(module, "\nimport type {{ PrototypeBinding }} from {import};").unwrap();
+    let (import_more, suffix) = write_binding(facts);
+    writeln!(module, "\nimport type {{ PrototypeBinding{import_more} }} from {import};").unwrap();
     writeln!(module, "export const contractFingerprint = \"{fingerprint}\";").unwrap();
-    writeln!(module, "export const contract: PrototypeBinding<Contract, ApplyContract, ExtensionContract, WriteExtensionContract> = {{ fingerprint: \"{fingerprint}\", idWire: \"{}\", extensions: extensionDescriptors, readDescriptors: readDescriptors, writeExtensions: writeExtensionDescriptors }};", wire.label()).unwrap();
+    writeln!(module, "export const contract: PrototypeBinding<Contract, ApplyContract, ExtensionContract, WriteExtensionContract>{suffix} = {{ fingerprint: \"{fingerprint}\", idWire: \"{}\", extensions: extensionDescriptors, readDescriptors: readDescriptors, writeExtensions: writeExtensionDescriptors }};", wire.label()).unwrap();
     module
 }
 
@@ -438,9 +584,10 @@ pub fn contract_module_with_extensions(facts: &Value, binding_import: &str, wire
     let mut module = contract_ts_with_extensions(facts, wire);
     let fingerprint = fingerprint_of(&module);
     let import = serde_json::to_string(binding_import).unwrap();
-    writeln!(module, "\nimport type {{ ExtensionBinding }} from {import};").unwrap();
+    let (import_more, suffix) = write_binding(facts);
+    writeln!(module, "\nimport type {{ ExtensionBinding{import_more} }} from {import};").unwrap();
     writeln!(module, "export const contractFingerprint = \"{fingerprint}\";").unwrap();
-    writeln!(module, "export const contract: ExtensionBinding<Contract, ApplyContract, ExtensionContract> = {{ fingerprint: \"{fingerprint}\", idWire: \"{}\", extensions: extensionDescriptors, readDescriptors: readDescriptors }};", wire.label()).unwrap();
+    writeln!(module, "export const contract: ExtensionBinding<Contract, ApplyContract, ExtensionContract>{suffix} = {{ fingerprint: \"{fingerprint}\", idWire: \"{}\", extensions: extensionDescriptors, readDescriptors: readDescriptors }};", wire.label()).unwrap();
     module
 }
 
@@ -451,9 +598,10 @@ fn operation_binding_module(facts: &Value, binding_import: &str, wire: IdWire, a
     let has_writes = all && !extensions_of_kind(facts, "write", "db").is_empty();
     let writes_type = if has_writes { "WriteExtensionContract" } else { "{}" };
     let writes = if has_writes { ", writeExtensions: writeExtensionDescriptors" } else { "" };
-    writeln!(module, "\nimport type {{ OperationBinding }} from {import};").unwrap();
+    let (import_more, suffix) = write_binding(facts);
+    writeln!(module, "\nimport type {{ OperationBinding{import_more} }} from {import};").unwrap();
     writeln!(module, "export const contractFingerprint = \"{fingerprint}\";").unwrap();
-    writeln!(module, "export const contract: OperationBinding<Contract, ApplyContract, ExtensionContract, {writes_type}, OperationContract> = {{ fingerprint: \"{fingerprint}\", idWire: \"{}\", extensions: extensionDescriptors, readDescriptors: readDescriptors, operations: operationDescriptors{writes} }};", wire.label()).unwrap();
+    writeln!(module, "export const contract: OperationBinding<Contract, ApplyContract, ExtensionContract, {writes_type}, OperationContract>{suffix} = {{ fingerprint: \"{fingerprint}\", idWire: \"{}\", extensions: extensionDescriptors, readDescriptors: readDescriptors, operations: operationDescriptors{writes} }};", wire.label()).unwrap();
     module
 }
 

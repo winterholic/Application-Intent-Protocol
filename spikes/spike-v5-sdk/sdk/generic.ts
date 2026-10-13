@@ -46,6 +46,58 @@ export type ApplyResult<I> =
   | { readonly ok: true; readonly changed: readonly I[]; readonly unchanged: readonly I[]; readonly tags: readonly string[]; readonly replayed?: boolean; readonly recovered?: boolean }
   | { readonly ok: false; readonly code: string; readonly msg?: string; readonly recovered?: boolean; readonly requestId?: string };
 export type PendingResult<A extends ApplyContractShape<A>> = ApplyResult<A[keyof A]["idOutput"]> & { readonly key: string };
+
+/** 생성 binding에 create·compose 계약이 있을 때만 붙는다. 값은 타입 추론용이고 런타임에는 없다. */
+export type WriteBinding<Cr = {}, Cp = {}> = { readonly __create?: Cr; readonly __compose?: Cp };
+
+/** `expose create`: 호출자가 줄 수 있는 필드. `optional`은 null을 받는 필드라 비워 둘 수 있다. */
+export type CreateShape = { readonly idOutput: unknown; readonly fields: Record<string, unknown>; readonly optional: string };
+export type CreateContractShape<Cr> = { [K in keyof Cr]: CreateShape };
+export type CreateValues<S extends CreateShape> =
+  & { readonly [F in Exclude<keyof S["fields"] & string, S["optional"]>]: S["fields"][F] }
+  & { readonly [F in S["optional"] & keyof S["fields"] & string]?: S["fields"][F] };
+export type CreateOp<Cr extends CreateContractShape<Cr>, K extends keyof Cr & string = keyof Cr & string> = {
+  [N in K]: { readonly create: N; readonly values: CreateValues<Cr[N]> }
+}[K];
+/** 한 요청에 묶는 공개 동작: 서버가 선언한 `expose apply` 전이와 `expose create`만 고를 수 있다. 하나 이상. */
+export type BundleOp<A extends ApplyContractShape<A>, Cr extends CreateContractShape<Cr>> = ApplyRequest<A> | CreateOp<Cr>;
+export type BundleRequest<A extends ApplyContractShape<A>, Cr extends CreateContractShape<Cr> = {}> = {
+  readonly atomic: readonly [BundleOp<A, Cr>, ...BundleOp<A, Cr>[]];
+};
+/** 만든 행. `id` 열이 없는 비공개 관계 테이블은 id가 null이다. */
+export type CreatedRow<Cr extends CreateContractShape<Cr>> = {
+  [N in keyof Cr & string]: { readonly resource: N; readonly id: Cr[N]["idOutput"] }
+}[keyof Cr & string];
+type AppliedRow<I> = { readonly changed: readonly I[]; readonly unchanged: readonly I[] };
+export type BundleResult<A extends ApplyContractShape<A>, Cr extends CreateContractShape<Cr> = {}> =
+  | { readonly ok: true; readonly applied: readonly AppliedRow<A[keyof A]["idOutput"]>[]; readonly created: readonly CreatedRow<Cr>[]; readonly tags: readonly string[]; readonly replayed?: boolean; readonly recovered?: boolean }
+  | { readonly ok: false; readonly code: string; readonly msg?: string; readonly recovered?: boolean; readonly requestId?: string };
+
+/** `expose compose`: 대상 목록 하나에 서버가 허용한 전이·생성 단계를 조합한다. 값은 서버가 읽은 대상 행의 경로(`item`)나 상수(`const`)다. */
+export type ComposeCreateShape = { readonly idOutput: unknown; readonly fields: Record<string, unknown>; readonly optional: string; readonly sources: Record<string, unknown>; readonly constants: string };
+export type ComposeShape = { readonly idInput: unknown; readonly idOutput: unknown; readonly maxRows: number; readonly transitions: string; readonly self: boolean; readonly creates: Record<string, ComposeCreateShape> };
+export type ComposeContractShape<Cp> = { [K in keyof Cp]: ComposeShape };
+type ComposeValue<C extends ComposeCreateShape, F extends keyof C["fields"] & string> =
+  | { readonly item: { [S in keyof C["sources"] & string]: [C["sources"][S]] extends [C["fields"][F]] ? S : never }[keyof C["sources"] & string] }
+  | (F extends C["constants"] ? { readonly const: C["fields"][F] } : never);
+type ComposeCreateValues<C extends ComposeCreateShape> =
+  & { readonly [F in Exclude<keyof C["fields"] & string, C["optional"]>]: ComposeValue<C, F> }
+  & { readonly [F in C["optional"] & keyof C["fields"] & string]?: ComposeValue<C, F> };
+export type ComposeStep<S extends ComposeShape> =
+  | { readonly transition: S["transitions"]; readonly on?: S["self"] extends true ? "targets" | "self" : "targets" }
+  | { [T in keyof S["creates"] & string]: { readonly create: T; readonly values: ComposeCreateValues<S["creates"][T]> } }[keyof S["creates"] & string];
+export type ComposeRequest<Cp extends ComposeContractShape<Cp>, K extends keyof Cp & string = keyof Cp & string> = {
+  [N in K]: { readonly compose: N; readonly targets: { readonly ids: readonly Cp[N]["idInput"][] }; readonly steps: readonly [ComposeStep<Cp[N]>, ...ComposeStep<Cp[N]>[]] }
+}[K];
+type ComposeCreated<S extends ComposeShape> = { [T in keyof S["creates"] & string]: { readonly resource: T; readonly id: S["creates"][T]["idOutput"] } }[keyof S["creates"] & string];
+export type ComposeResult<Cp extends ComposeContractShape<Cp>, K extends keyof Cp & string = keyof Cp & string> =
+  | { readonly ok: true; readonly applied: readonly AppliedRow<Cp[K]["idOutput"]>[]; readonly created: readonly ComposeCreated<Cp[K]>[]; readonly tags: readonly string[]; readonly replayed?: boolean; readonly recovered?: boolean }
+  | { readonly ok: false; readonly code: string; readonly msg?: string; readonly recovered?: boolean; readonly requestId?: string };
+export type PendingWrite<A extends ApplyContractShape<A>, Cr extends CreateContractShape<Cr> = {}, Cp extends ComposeContractShape<Cp> = {}> =
+  | PendingResult<A>
+  | (BundleResult<A, Cr> & { readonly key: string })
+  | (ComposeResult<Cp> & { readonly key: string });
+
 export type DeepReadonly<T> = T extends string | number | boolean | bigint | symbol | null | undefined
   ? T : T extends object ? { readonly [K in keyof T]: DeepReadonly<T[K]> } : T;
 

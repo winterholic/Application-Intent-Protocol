@@ -2,24 +2,37 @@ import { connect, isIdWire, validResultId, type ApplyOptions } from "./transport
 import { createJobsClient } from "./jobs.ts";
 import { createInfrastructureClient } from "./infrastructure.ts";
 import { createRagClient } from "./rag.ts";
-import type { ContractBinding, ContractShape, Root, SelectItem, CheckSel, FilterItem, SortItem, Row, DeepReadonly, ApplyBinding, ApplyContractShape, ApplyRequest, ApplyResult, PendingResult, IdWireKind, ExtensionContractShape, ExtensionDescriptors, OperationDescriptors, ScalarDescriptor, ReadDescriptors, WriteExtensionDescriptors, WriteExtensionResult, OffsetOpt, CursorOpt } from "../../spike-v5-sdk/sdk/generic.ts";
+import type { ContractBinding, ContractShape, Root, SelectItem, CheckSel, FilterItem, SortItem, Row, DeepReadonly, ApplyBinding, ApplyContractShape, ApplyRequest, ApplyResult, PendingResult, IdWireKind, WriteBinding, CreateContractShape, ComposeContractShape, BundleRequest, BundleResult, ComposeRequest, ComposeResult, PendingWrite, ExtensionContractShape, ExtensionDescriptors, OperationDescriptors, ScalarDescriptor, ReadDescriptors, WriteExtensionDescriptors, WriteExtensionResult, OffsetOpt, CursorOpt } from "../../spike-v5-sdk/sdk/generic.ts";
 
-export function connectTypedApply<C extends ContractShape<C>, A extends ApplyContractShape<A>>(base: string, token: string | null, binding: ApplyBinding<C, A>, fetchImpl: typeof fetch = fetch) {
+export function connectTypedApply<C extends ContractShape<C>, A extends ApplyContractShape<A>, Cr extends CreateContractShape<Cr> = {}, Cp extends ComposeContractShape<Cp> = {}>(base: string, token: string | null, binding: ApplyBinding<C, A> & WriteBinding<Cr, Cp>, fetchImpl: typeof fetch = fetch) {
   const idWire = binding?.idWire;
   if (!isIdWire(idWire)) throw Object.assign(new Error("생성 쓰기 계약의 Id wire 형식 오류"), { code: "CLIENT.PROTOCOL_ERROR" });
   const client = typedClient(base, token, binding, fetchImpl, idWire);
-  return applyFacade<C, A>(client);
+  return applyFacade<C, A, Cr, Cp>(client);
 }
 
-function applyFacade<C extends ContractShape<C>, A extends ApplyContractShape<A>>(client: ReturnType<typeof typedClient<C>>) {
+// 계약이 create·compose를 공개하지 않으면 미확정 쓰기 결과의 타입은 전이 하나의 것(PendingResult) 그대로다. 공개하면 묶음·조합 결과를 더한 합집합이다.
+// 전이만 있는 계약에서 `bundle()`을 쓰면 그 pending 결과는 `applied` 유무로 좁혀 읽는다(README의 한계).
+type PendingOf<A extends ApplyContractShape<A>, Cr extends CreateContractShape<Cr>, Cp extends ComposeContractShape<Cp>> = [keyof Cr | keyof Cp] extends [never] ? PendingResult<A> : PendingWrite<A, Cr, Cp>;
+
+// 전이 하나(apply), 공개 동작 묶음(bundle), 대상 목록 조합(compose)은 같은 /apply 경로와 같은 멱등 키·재확정 규칙을 쓴다.
+function applyFacade<C extends ContractShape<C>, A extends ApplyContractShape<A>, Cr extends CreateContractShape<Cr> = {}, Cp extends ComposeContractShape<Cp> = {}>(client: ReturnType<typeof typedClient<C>>) {
   const { callManaged, ...publicClient } = client;
   return {
     ...publicClient,
     apply<const K extends keyof A & string>(request: ApplyRequest<A, K> & { readonly apply: K }, options?: ApplyOptions): Promise<ApplyResult<A[K]["idOutput"]>> {
       return client.apply(request, options);
     },
-    retryPending(): Promise<readonly PendingResult<A>[]> { return client.retryPending(); },
-    replaceSession(token: string): Promise<readonly PendingResult<A>[]> { return client.replaceSession(token); },
+    /** 서버가 공개한 전이·create를 한 요청에 묶어 원자적으로 실행한다. 전부 성공하거나 아무것도 바뀌지 않는다. */
+    bundle(request: BundleRequest<A, Cr>, options?: ApplyOptions): Promise<BundleResult<A, Cr>> {
+      return client.apply(request, options) as Promise<BundleResult<A, Cr>>;
+    },
+    /** 서버가 공개한 조합(`expose compose`): 대상 목록에 허용된 전이·생성 단계를 조합한다. */
+    compose<const K extends keyof Cp & string>(request: ComposeRequest<Cp, K> & { readonly compose: K }, options?: ApplyOptions): Promise<ComposeResult<Cp, K>> {
+      return client.apply(request, options) as Promise<ComposeResult<Cp, K>>;
+    },
+    retryPending(): Promise<readonly PendingOf<A, Cr, Cp>[]> { return client.retryPending() as Promise<readonly PendingOf<A, Cr, Cp>[]>; },
+    replaceSession(token: string): Promise<readonly PendingOf<A, Cr, Cp>[]> { return client.replaceSession(token) as Promise<readonly PendingOf<A, Cr, Cp>[]>; },
   };
 }
 
@@ -201,9 +214,9 @@ function validateReadRows(query: unknown, rows: unknown[], descriptors: Readonly
 
 type PendingWriteExtension<W extends ExtensionContractShape<W>> = keyof W extends never ? never : WriteExtensionResult<W[keyof W]["output"]>;
 
-export function connectTypedExtensions<C extends ContractShape<C>, A extends ApplyContractShape<A>, E extends ExtensionContractShape<E> = {}, W extends ExtensionContractShape<W> = {}, O extends ExtensionContractShape<O> = {}>(
+export function connectTypedExtensions<C extends ContractShape<C>, A extends ApplyContractShape<A>, E extends ExtensionContractShape<E> = {}, W extends ExtensionContractShape<W> = {}, O extends ExtensionContractShape<O> = {}, Cr extends CreateContractShape<Cr> = {}, Cp extends ComposeContractShape<Cp> = {}>(
   base: string, token: string | null,
-  binding: ApplyBinding<C, A> & { readonly readDescriptors: ReadDescriptors<C>; readonly __extensions?: E; readonly extensions?: ExtensionDescriptors<E>; readonly __writes?: W; readonly writeExtensions?: WriteExtensionDescriptors<W>; readonly __operations?: O; readonly operations?: ExtensionDescriptors<O> },
+  binding: ApplyBinding<C, A> & WriteBinding<Cr, Cp> & { readonly readDescriptors: ReadDescriptors<C>; readonly __extensions?: E; readonly extensions?: ExtensionDescriptors<E>; readonly __writes?: W; readonly writeExtensions?: WriteExtensionDescriptors<W>; readonly __operations?: O; readonly operations?: ExtensionDescriptors<O> },
   fetchImpl: typeof fetch = fetch,
 ) {
   if (!binding?.readDescriptors || typeof binding.readDescriptors !== "object" || Array.isArray(binding.readDescriptors)) {
@@ -226,7 +239,7 @@ export function connectTypedExtensions<C extends ContractShape<C>, A extends App
     }
     validateRecord(res.output, writes[name as keyof W].output, wire, "CLIENT.PROTOCOL_ERROR");
   });
-  const { callExtension, callOperation, ...client } = applyFacade<C,A>(raw);
+  const { callExtension, callOperation, ...client } = applyFacade<C, A, Cr, Cp>(raw);
   const managed = hasDurableOperations
     ? createJobsClient((path, body) => raw.callManaged(path, body), {
       fingerprint, idWire: wire, operations: operations as OperationDescriptors<O>,
@@ -262,7 +275,7 @@ export function connectTypedExtensions<C extends ContractShape<C>, A extends App
       validateRecord(snapshot, writes[name].input, wire, "WIRE.BAD_VALUE");
       return raw.apply({extension:name, input:snapshot}, options);
     },
-    retryPending(): Promise<readonly ((PendingResult<A> | PendingWriteExtension<W>) & {readonly key:string})[]> { return raw.retryPending(); },
-    replaceSession(token: string): Promise<readonly ((PendingResult<A> | PendingWriteExtension<W>) & {readonly key:string})[]> { return raw.replaceSession(token); },
+    retryPending(): Promise<readonly ((PendingOf<A, Cr, Cp> | PendingWriteExtension<W>) & {readonly key:string})[]> { return raw.retryPending() as Promise<readonly ((PendingOf<A, Cr, Cp> | PendingWriteExtension<W>) & {readonly key:string})[]>; },
+    replaceSession(token: string): Promise<readonly ((PendingOf<A, Cr, Cp> | PendingWriteExtension<W>) & {readonly key:string})[]> { return raw.replaceSession(token) as Promise<readonly ((PendingOf<A, Cr, Cp> | PendingWriteExtension<W>) & {readonly key:string})[]>; },
   };
 }

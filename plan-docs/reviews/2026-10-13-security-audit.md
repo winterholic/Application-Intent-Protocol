@@ -39,7 +39,7 @@
 |---|---|
 | 객체 수준 인가 BOLA(API1) | `/apply` 대상 행에 rowRead를 WHERE로 걸고 없는 행과 안 보이는 행을 구분하지 않음. 관계 확장·필터·정렬·집계는 S-01과 2026-10-07 항목으로 막음 |
 | 인증(API2) | RS256 고정, iss·aud·exp·nbf·kid·jku 검사, 매 요청 DB에서 principal 재확인. 남은 것은 O-06 |
-| 속성 수준 인가·mass assignment(API3) | `/apply`는 `{apply,target}`만 받고 `to` 값은 계약에 고정. create/bundle은 HTTP에 없음. O-01·O-02는 조치 완료 |
+| 속성 수준 인가·mass assignment(API3) | `/apply`는 `{apply,target}`만 받고 `to` 값은 계약에 고정. create/bundle/compose는 2026-10-13에 `/apply`로 연결됨(D-A24, 같은 멱등·계약 지문·커밋 시점 검사). O-01·O-02는 조치 완료 |
 | 자원 소비(API4) | 본문 1MiB·헤더·IN 50·limit·cost·깊이·deadline·연결 상한. S-07·S-08 보강. O-04·O-05 남음 |
 | 기능 수준 인가(API5) | 경로별 세션 요구, `/capabilities`는 세션 필요 |
 | 민감 흐름(API6) | 멱등 키는 (principal,key) 범위 |

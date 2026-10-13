@@ -253,6 +253,10 @@ r6([codex-v34-r6](../reviews/codex-v34-r6.md)) F01(P1): `selfRow member by club`
 
 순환 전이(여러 행이 서로 상태를 바꾸는 업무)로 W1 재평가, 삭제·관계 연결 쓰기, 쓰기 후 캐시 태그, 감사 기록, 외부 효과 전달(outbox 소비), H 형식의 전이 효과 문법.
 
+## HTTP·SDK 연결(2026-10-13, D-A24)
+
+W0 묶음(`atomic`)과 W1 조합(`compose`)은 라이브러리에만 있던 것을 `/apply`에 연결했다. 한 요청이 한 트랜잭션에서 실행되고, 멱등 키 결과는 같은 트랜잭션에서 기록하며, 커밋 시점 `check`·정원 검사는 묶음 전체에 한 번 돈다. 결과에 만든 행의 id(`created`)가 추가됐고(id 열이 없는 비공개 관계 테이블은 null), Id wire(숫자·십진 문자열)를 전이 대상 id와 같은 parser로 받는다. 크기 상한은 연산 20개·대상 행 1000개·조합 단계 10개다. 생성 TS 계약과 Python SDK가 같은 요청·결과를 쓴다. 근거 테스트: `spike-v6-transport/tests/bundle_http.rs`(실제 HTTP: 원자성·replay·응답 유실·커밋 시점 check·create Ref 가시성·상한·계약 지문), `v16_bundle.rs`(생성 TS 타입 양성·음성 tsc, Node·Python 실제 호출, DB 사후 확인). 한계: 연산 사이 값 전달은 compose의 `item`뿐이고 create는 Url·Time 필드를 받지 않는다.
+
 ## 변경 이력
 
 - 2026-10-04 V3-1 실행 결과.
