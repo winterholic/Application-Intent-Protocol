@@ -62,10 +62,24 @@ pub struct Caller {
 fn keys(o: &Map<String, Value>, allowed: &[&str], what: &str) -> Result<(), Reject> {
     for k in o.keys() {
         if !allowed.contains(&k.as_str()) {
-            return rej("UNKNOWN_KEY", format!("{what}에 알 수 없는 키 `{k}`"));
+            return rej("UNKNOWN_KEY", format!("{what}에 알 수 없는 키 `{k}`. 허용: {}", allowed.join(", ")));
         }
     }
     Ok(())
+}
+
+/// 거부 메시지에 붙이는 허용 목록. 계약(facts)에서 계산한 이름만 받으므로 이미 공개된 이름이다. 목록이 길어져도 메시지가 커지지 않게 자른다.
+fn allowed_names<'a>(names: impl Iterator<Item = &'a str>) -> String {
+    const SHOWN: usize = 40;
+    let all: Vec<&str> = names.collect();
+    if all.is_empty() {
+        return "없음".into();
+    }
+    let mut text = all.iter().take(SHOWN).copied().collect::<Vec<_>>().join(", ");
+    if all.len() > SHOWN {
+        text.push_str(&format!(" 외 {}개", all.len() - SHOWN));
+    }
+    text
 }
 
 /// 비용 추정은 자리표시 휴리스틱이다: 행 상한 × (1 + 관계 + 집계 + 필드 정책 수). 실제 DB 비용과 같지 않다.
@@ -381,7 +395,8 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
                 return rej("DUPLICATE", format!("filter `{key}` 중복"));
             }
             if !ex["filter"].as_array().unwrap().iter().any(|x| x == &json!(key)) {
-                return rej("FILTER_NOT_ALLOWED", format!("`{key}` 필터는 계약에 없음(선택 가능 여부와 별개)"));
+                let allowed = allowed_names(ex["filter"].as_array().unwrap().iter().filter_map(Value::as_str));
+                return rej("FILTER_NOT_ALLOWED", format!("`{key}` 필터는 계약에 없음(선택 가능 여부와 별개). 허용: {allowed}"));
             }
             // facts가 sema를 거치지 않고 들어와도, 정책으로 가려지는 값이 filter 결과 유무로 새지 않게 막는다.
             if !rf["fieldRead"][field].is_null() {
@@ -489,7 +504,8 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
                 return rej("DUPLICATE", format!("sort `{f}` 중복"));
             }
             if !ex["sort"].as_array().unwrap().iter().any(|x| x == f) {
-                return rej("SORT_NOT_ALLOWED", format!("`{f}` 정렬은 계약에 없음(선택 가능 여부와 별개)"));
+                let allowed = allowed_names(ex["sort"].as_array().unwrap().iter().filter_map(Value::as_str));
+                return rej("SORT_NOT_ALLOWED", format!("`{f}` 정렬은 계약에 없음(선택 가능 여부와 별개). 허용: {allowed}"));
             }
             if !rf["fieldRead"][f].is_null() {
                 return rej("POLICY_FIELD_NOT_FILTERABLE", format!("`{f}`에는 field read 정책이 있어 sort에 쓸 수 없음"));
@@ -695,7 +711,8 @@ fn plan_aggregate(facts: &Value, o: &Map<String, Value>, caller: &Caller, wire: 
     let declared = a["input"].as_array().unwrap();
     for k in given.keys() {
         if !declared.iter().any(|d| d[0] == json!(k)) {
-            return rej("UNKNOWN_KEY", format!("집계 입력 `{k}` 없음"));
+            let allowed = allowed_names(declared.iter().filter_map(|d| d[0].as_str()));
+            return rej("UNKNOWN_KEY", format!("집계 입력 `{k}` 없음. 허용: {allowed}"));
         }
     }
     for d in declared {
