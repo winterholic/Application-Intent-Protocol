@@ -17,4 +17,3 @@ tokio-postgres = "0.7.18"
 tokio-postgres-rustls = { version = "0.14.0", default-features = false, features = ["ring"] }
 rustls = { version = "0.23.35", default-features = false, features = ["ring", "std", "tls12"] }
 webpki-roots = "1.0.4"
-rustls-pemfile = "2.2.0"

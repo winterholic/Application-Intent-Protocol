@@ -88,9 +88,12 @@ fn parse_ca_bundle(pem: &[u8]) -> Result<Vec<rustls::pki_types::CertificateDer<'
     }
     let mut reader = Cursor::new(pem);
     let mut certificates = Vec::new();
-    while let Some(item) = rustls_pemfile::read_one(&mut reader).map_err(|error| ConnectError::TlsConfig(format!("invalid CA PEM: {error}")))? {
-        match item {
-            rustls_pemfile::Item::X509Certificate(certificate) => certificates.push(certificate),
+    // rustls-pemfile is unmaintained (RUSTSEC-2025-0134); rustls-pki-types reads PEM and is already a dependency of rustls.
+    while let Some((kind, der)) =
+        rustls::pki_types::pem::from_buf(&mut reader).map_err(|error| ConnectError::TlsConfig(format!("invalid CA PEM: {error}")))?
+    {
+        match kind {
+            rustls::pki_types::pem::SectionKind::Certificate => certificates.push(rustls::pki_types::CertificateDer::from(der)),
             _ => return Err(ConnectError::TlsConfig("CA PEM may contain certificates only".into())),
         }
     }
