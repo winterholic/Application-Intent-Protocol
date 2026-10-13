@@ -825,12 +825,9 @@ pub fn compose_needs_serializable(facts: &Value, req: &Value) -> bool {
 
 async fn begin<'a>(db: &'a mut Client, serializable: bool) -> Result<Transaction<'a>, Reject> {
     let tx = db.transaction().await.map_err(internal)?;
-    tx.batch_execute(&format!(
-        "{}; SET LOCAL statement_timeout = '{WRITE_DEADLINE_MS}ms'; SET LOCAL TimeZone = 'UTC'",
-        isolation_sql(serializable)
-    ))
-    .await
-    .map_err(internal)?;
+    tx.batch_execute(&format!("{}; SET LOCAL statement_timeout = '{WRITE_DEADLINE_MS}ms'; SET LOCAL TimeZone = 'UTC'", isolation_sql(serializable)))
+        .await
+        .map_err(internal)?;
     Ok(tx)
 }
 
@@ -862,7 +859,15 @@ async fn apply_op(
     Ok(Applied { changed: j.change, unchanged: j.unchanged })
 }
 
-async fn apply_inner(db: &mut Client, facts: &Value, req: &Value, caller: &Caller, knobs: &Knobs, ctl: Ctl, serializable: bool) -> Result<Applied, Reject> {
+async fn apply_inner(
+    db: &mut Client,
+    facts: &Value,
+    req: &Value,
+    caller: &Caller,
+    knobs: &Knobs,
+    ctl: Ctl,
+    serializable: bool,
+) -> Result<Applied, Reject> {
     let o = req.as_object().ok_or(bad("요청은 객체"))?;
     let tx = begin(db, serializable).await?;
     let a = apply_op(&tx, facts, o, caller, knobs, IdWire::Legacy).await?;
@@ -914,7 +919,15 @@ pub async fn bundle(db: &mut Client, facts: &Value, req: &Value, caller: &Caller
     .await
 }
 
-async fn bundle_once(db: &mut Client, facts: &Value, req: &Value, caller: &Caller, knobs: &Knobs, ctl: Ctl, serializable: bool) -> Result<BundleResult, Reject> {
+async fn bundle_once(
+    db: &mut Client,
+    facts: &Value,
+    req: &Value,
+    caller: &Caller,
+    knobs: &Knobs,
+    ctl: Ctl,
+    serializable: bool,
+) -> Result<BundleResult, Reject> {
     let o = req.as_object().ok_or(bad("요청은 객체"))?;
     keys(o, &["atomic"], "묶음 요청")?;
     let ops = o.get("atomic").and_then(Value::as_array).ok_or(bad("atomic 배열 필요"))?;
@@ -976,7 +989,15 @@ pub async fn compose(db: &mut Client, facts: &Value, req: &Value, caller: &Calle
     .await
 }
 
-async fn compose_once(db: &mut Client, facts: &Value, req: &Value, caller: &Caller, knobs: &Knobs, ctl: Ctl, serializable: bool) -> Result<BundleResult, Reject> {
+async fn compose_once(
+    db: &mut Client,
+    facts: &Value,
+    req: &Value,
+    caller: &Caller,
+    knobs: &Knobs,
+    ctl: Ctl,
+    serializable: bool,
+) -> Result<BundleResult, Reject> {
     let o = req.as_object().ok_or(bad("요청은 객체"))?;
     keys(o, &["compose", "targets", "steps"], "조합 요청")?;
     let res = o.get("compose").and_then(Value::as_str).unwrap_or("");
@@ -1061,11 +1082,8 @@ async fn compose_once(db: &mut Client, facts: &Value, req: &Value, caller: &Call
         cx.lock_reads = !knobs.skip_policy_lock;
         let env = Env { this: Some(("t".into(), res.to_string())), ..Default::default() };
         let vis = cx.cond(&rf["rowRead"], &env).map_err(internal)?;
-        let scope = if cp["sameScope"].is_null() {
-            "NULL::text".into()
-        } else {
-            format!("({})::text", cx.value(&cp["sameScope"], &env).map_err(internal)?)
-        };
+        let scope =
+            if cp["sameScope"].is_null() { "NULL::text".into() } else { format!("({})::text", cx.value(&cp["sameScope"], &env).map_err(internal)?) };
         let p = cx.params.bind(Some(id_array(&ids)), "bigint[]");
         let sql = format!("SELECT t.id, {scope} FROM {} t WHERE t.id = ANY({p}) AND {vis} ORDER BY t.id FOR UPDATE OF t", table(res));
         let params = cx.params.values.clone();

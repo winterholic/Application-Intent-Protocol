@@ -143,7 +143,11 @@ fn absence_policy_advice(execution: &Value) -> Vec<Advisory> {
     for (res, rf) in execution["resources"].as_object().into_iter().flatten() {
         for (tr, t) in rf["transitions"].as_object().into_iter().flatten() {
             if negates_exists(&t["allow"], predicates, &mut BTreeSet::new()) || negates_exists(&t["from"], predicates, &mut BTreeSet::new()) {
-                out.push(Advisory { code: "ADVISORY_ABSENCE_POLICY", anchor: format!("transition:{res}.{tr}"), msg: message(&format!("`{res}.{tr}`")) });
+                out.push(Advisory {
+                    code: "ADVISORY_ABSENCE_POLICY",
+                    anchor: format!("transition:{res}.{tr}"),
+                    msg: message(&format!("`{res}.{tr}`")),
+                });
             }
         }
         if negates_exists(&rf["exposeCreate"]["allow"], predicates, &mut BTreeSet::new()) {

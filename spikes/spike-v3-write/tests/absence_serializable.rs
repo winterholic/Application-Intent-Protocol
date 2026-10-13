@@ -73,7 +73,8 @@ async fn concurrent_confirmations_of_one_room_cannot_both_succeed_while_other_ro
     let (a, b) = tokio::join!(apply(&mut first, &facts, &request_a, &caller_a, &knobs), apply(&mut second, &facts, &request_b, &caller_b, &knobs));
     let mut outcomes = [code(a), code(b)];
     outcomes.sort();
-    let confirmed: i64 = first.query_one(&format!("SELECT count(*) FROM {schema}.booking WHERE room_id=1 AND status='CONFIRMED'"), &[]).await.unwrap().get(0);
+    let confirmed: i64 =
+        first.query_one(&format!("SELECT count(*) FROM {schema}.booking WHERE room_id=1 AND status='CONFIRMED'"), &[]).await.unwrap().get(0);
     assert_eq!((outcomes, confirmed), (["FORBIDDEN", "OK"], 1), "exactly one booking per room: {outcomes:?}, confirmed={confirmed}");
 
     // different rooms never conflict, even with the same overlap
@@ -85,4 +86,3 @@ async fn concurrent_confirmations_of_one_room_cannot_both_succeed_while_other_ro
     assert_eq!(facts["resources"]["Booking"]["transitions"]["confirm"]["isolation"], json!("serializable"));
     first.batch_execute(&format!("DROP SCHEMA {schema} CASCADE")).await.unwrap();
 }
-

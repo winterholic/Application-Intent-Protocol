@@ -60,7 +60,8 @@ async fn simultaneous_requests_for_one_room_over_http_confirm_exactly_one() {
         .await
         .unwrap();
     }
-    let server = listen_with_apply_contract(facts, IdWire::DecimalString, "127.0.0.1:0".parse().unwrap(), spike_v2_read::DB_URL.into()).await.unwrap();
+    let server =
+        listen_with_apply_contract(facts, IdWire::DecimalString, "127.0.0.1:0".parse().unwrap(), spike_v2_read::DB_URL.into()).await.unwrap();
     let token = server.keys.issue(1, 120);
     let address = server.address;
     let mut calls = vec![];

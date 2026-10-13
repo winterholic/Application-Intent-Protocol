@@ -200,9 +200,8 @@ async fn apply_attempt(
     if let Err(error) = tx.execute("SELECT pg_advisory_xact_lock(hashtext($1))", &[&format!("{principal}:{key}")]).await {
         return err(classify_write_error("멱등 잠금", error));
     }
-    if let Ok(Some(row)) = tx
-        .query_opt(format!("SELECT request, result::text FROM {s}.aip_idem WHERE principal = $1 AND key = $2").as_str(), &[&principal, &key])
-        .await
+    if let Ok(Some(row)) =
+        tx.query_opt(format!("SELECT request, result::text FROM {s}.aip_idem WHERE principal = $1 AND key = $2").as_str(), &[&principal, &key]).await
     {
         let (stored_req, result): (String, String) = (row.get(0), row.get(1));
         if stored_req != req_text {

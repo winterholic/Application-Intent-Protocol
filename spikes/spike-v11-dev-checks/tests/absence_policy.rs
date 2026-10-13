@@ -27,7 +27,11 @@ fn only_the_not_exists_writes_are_advised() {
     let on = load_checked(SPEC, Form::A, &json!({"devChecks": true})).expect("valid");
     let mut anchors: Vec<(&str, &str)> = on.advisories.iter().map(|a| (a.code, a.anchor.as_str())).collect();
     anchors.sort();
-    assert_eq!(anchors, vec![("ADVISORY_ABSENCE_POLICY", "create:Booking"), ("ADVISORY_ABSENCE_POLICY", "transition:Booking.confirm")], "{anchors:?}");
+    assert_eq!(
+        anchors,
+        vec![("ADVISORY_ABSENCE_POLICY", "create:Booking"), ("ADVISORY_ABSENCE_POLICY", "transition:Booking.confirm")],
+        "{anchors:?}"
+    );
     assert!(on.advisories[0].msg.contains("unique"), "the advice names the cheaper tools: {}", on.advisories[0].msg);
 
     let off = load_checked(SPEC, Form::A, &json!({"devChecks": false})).expect("valid");

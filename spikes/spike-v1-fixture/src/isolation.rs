@@ -60,7 +60,8 @@ pub fn mark(facts: &mut Value) {
     for (name, rf) in &resources {
         for (tr, t) in rf["transitions"].as_object().into_iter().flatten() {
             // writes reach the resource itself and the targets of its effects
-            let targets = std::iter::once(name.as_str()).chain(t["effects"].as_array().into_iter().flatten().flat_map(|e| ["create", "update"].into_iter().filter_map(|k| e[k].as_str())));
+            let targets = std::iter::once(name.as_str())
+                .chain(t["effects"].as_array().into_iter().flatten().flat_map(|e| ["create", "update"].into_iter().filter_map(|k| e[k].as_str())));
             if reads(&t["allow"], &predicates) || reads(&t["from"], &predicates) || targets.into_iter().any(|x| checked.contains(x)) {
                 transition_marks.push((name.clone(), tr.clone()));
             }
@@ -82,8 +83,13 @@ pub fn mark(facts: &mut Value) {
         if cp.is_null() {
             continue;
         }
-        let transitions = cp["transitions"].as_array().into_iter().flatten().filter_map(Value::as_str).any(|t| rf["transitions"][t]["isolation"] == SERIALIZABLE);
-        let creates = cp["creates"].as_object().into_iter().flatten().any(|(target, _)| facts["resources"][target.as_str()]["exposeCreate"]["isolation"] == SERIALIZABLE);
+        let transitions =
+            cp["transitions"].as_array().into_iter().flatten().filter_map(Value::as_str).any(|t| rf["transitions"][t]["isolation"] == SERIALIZABLE);
+        let creates = cp["creates"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .any(|(target, _)| facts["resources"][target.as_str()]["exposeCreate"]["isolation"] == SERIALIZABLE);
         if transitions || creates || checked.contains(name.as_str()) {
             compose_marks.push(name.clone());
         }
