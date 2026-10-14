@@ -40,6 +40,10 @@ Mac sandbox에서 native Chrome/headless shell의 MachPortRendezvousServer 기�
 허용 hostname은 이 alias와 127.0.0.1뿐이며 port는 23173/23174/23175뿐이다. 공개 운영 API·YouTube/CDN 요청은 차단한다.
 실제 Chrome/Safari·모바일 교차 브라우저 보증은 하지 않는다.
 
+원본 Socket.IO는 `host.docker.internal` 시험 주소를 origin 허용 목록에서 거부했다.
+이는 이번 기본 화면 실행의 환경 제약으로 기록하며, WebSocket 연결·프레임 전달이 동작했다고 판정하지 않는다.
+원본 origin 설정을 임의로 완화하거나 연결 성공을 mock으로 만들지 않았다.
+
 ## 재현 명령
 
 먼저 [API 환경](BASELINE.md)의 lock venv와 Docker를 준비한다. 다음 명령의 `/tmp` 경로는 예시다.
