@@ -40,7 +40,19 @@ SDK 음성 대조는 숫자 resource의 성공응답에 UUID를 주면 pending�
 
 SDK 패키징의 npm cache 쓰기는 환경 제한에 걸렸고, 프로젝트 코드를 바꾸지 않고 `/tmp` cache를 사용하는 npm wrapper로 재검증했다. HOME이나 비밀을 바꾸지 않았다. 기존 SDK 회귀 126개와 신규 실 DB 통합 1개가 포함된 최종 127개는 통과했다.
 
-신규 실 DB 통합 테스트는 `tools/verify.sh`에 추가했다. Linux PostgreSQL17·Bubblewrap CI에서 전체 verify를 이어 확인한다. CI 상태는 PROGRESS.md의 최종 기록을 따른다.
+신규 실 DB 통합 테스트는 `tools/verify.sh`에 추가했다. 첫 CI 실행에서 UUID 테스트 fixture만 기본 Unix socket을 선택해 접속에 실패했다. `product/tests/uuid-external.test.mjs`의 SQL helper를 `host=localhost` 접속으로 맞춘 뒤 macOS와 Linux CI에서 재검증했다.
+
+## UUID fixture 접속 수정 및 최종 CI
+
+수정 커밋 `7724ef785194f13ed56017faf5e1aaafaccbb58e`는 Verify run [38521559207](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/38521559207)에서 **success**했다. `core` 전체 job이 12분 41초 만에 통과했다. fixture의 생성·초기화·정리는 모두 기존 테스트 전용 DB 연결을 사용하며 테스트를 생략하거나 약화하지 않았다.
+
+macOS 실 PostgreSQL 17에서 기본 Unix socket 환경 변수를 의도적으로 무효화해 실행했다. helper가 명시적 localhost 접속을 사용함을 검증했고, 테스트는 owned/external × safe/decimal 네 경로를 실행했다.
+
+```text
+✔ UUID owned and external PostgreSQL: introspect, adopt, restricted role, installed TS/Python SDK, drift refusal (4049.235875ms)
+ℹ pass 1
+ℹ fail 0
+```
 
 ## 산출물과 제한
 
