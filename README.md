@@ -21,7 +21,7 @@ AIP는 백엔드 서버를 없애려는 것이 아니다. 기능마다 반복되
 - [백엔드 기능 포괄성 감사 기준](plan-docs/sources/founder-backend-capability-directive-2026-10-09.md): SQL 외 비동기·이벤트·외부 연동·파일·실시간·운영까지 후속 보완의 원문 기준. 현재 단계는 분석·고도화 제안이며, 기존 PoC 기능을 제품 지원으로 합산하지 않는다.
 - [백엔드 기능 포괄성 감사 A~F](plan-docs/backend-capability/README.md): 105개 최소 항목·SQL 밖 여섯 시나리오·독립 상호 검토·실행 반례. 현재 단계는 분석과 고도화 제안이다.
 
-Core 검증은 GitHub Actions의 Ubuntu에서도 실행한다. 외부 IdP 계정·TLS reverse proxy 배포·다른 OS worker 검증은 별도 운영 환경이 필요하다. 로컬 제품 실행 검증은 macOS의 실제 PostgreSQL과 통제된 HTTPS/JWT fixture를 사용한다. 대형 테이블 무중단 변경, 자동 역방향 migration, 최종 Id 표현·쓰기 조합 선택은 범위 밖이다.
+Core 검증은 GitHub Actions Ubuntu에서 실행한다. Linux worker 격리와 durable job smoke도 Bubblewrap을 적용해 확인했다([검증 결과](product/VERIFICATION.md#linux-격리-workerjob-smoke-2026-10-14)). macOS Seatbelt 동작, 외부 IdP 계정, TLS reverse proxy의 실제 배포 검증은 별도 환경이 필요하다. 로컬 제품 실행 검증은 macOS의 실제 PostgreSQL과 통제된 HTTPS/JWT fixture를 사용한다. 대형 테이블 무중단 변경, 자동 역방향 migration, 최종 Id 표현·쓰기 조합 선택은 범위 밖이다.
 
 ## 기존 PoC 구조
 

@@ -29,7 +29,7 @@ bash tools/verify.sh
 | 설치 SDK 테스트 | offline pack/install, declaration closure, strict 타입 음성 대조, 출력 보호 | 실제 IdP·배포 환경 |
 | 마지막 CLI build | 테스트 feature 조합 뒤 제품 실행 파일 복원 | 실행 파일 재배치와 worker 실행 |
 
-`.github/workflows/verify.yml`은 push/PR마다 같은 core 검증을 Ubuntu와 폐기 가능한 PostgreSQL 17 fixture에서 실행한다. macOS worker 테스트를 Linux 통과로 대신하지 않는다. GitHub Actions 구성의 근거는 [PostgreSQL service container 공식 문서](https://docs.github.com/en/actions/tutorials/use-containerized-services/create-postgresql-service-containers)다.
+`.github/workflows/verify.yml`은 push/PR마다 core 검증과 Linux worker 격리 경계 검사를 Ubuntu 및 폐기 가능한 PostgreSQL 17 fixture에서 실행한다. durable worker의 Node/Python job·retry·cron·서명 webhook·notify outbox와 설치 SDK smoke는 별도 [Linux worker jobs workflow](../.github/workflows/worker-jobs-linux.yml)에서 Bubblewrap을 적용해 실행한다. 이 결과가 macOS Seatbelt 동작을 대신하지는 않는다. GitHub Actions 구성의 근거는 [PostgreSQL service container 공식 문서](https://docs.github.com/en/actions/tutorials/use-containerized-services/create-postgresql-service-containers)다.
 
 ## 제품 실행 및 엔진 회귀
 
@@ -38,7 +38,7 @@ node --test product/tests/service-smoke.test.mjs
 cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --locked
 ```
 
-첫 명령은 재배치한 binary와 설치한 SDK로 decimal/safe 두 wire를 검사하고 Node/Python worker도 실행한다. worker 단계는 현재 macOS `sandbox-exec` 환경이 필요하다. Core 검증 뒤에 실행해야 마지막 build의 제품 binary를 사용한다.
+첫 명령은 재배치한 binary와 설치한 SDK로 decimal/safe 두 wire를 검사하고 Node/Python worker도 실행한다. Linux에서는 기본 Bubblewrap, macOS에서는 `sandbox-exec`가 적용된다. Ttakkari sandbox가 macOS `sandbox-exec`를 막는 경우 일반 macOS Terminal에서 [worker smoke 스크립트](../scripts/verify-macos-worker-smoke.sh)를 실행한다. Core 검증 뒤 실행할 때는 마지막 build의 제품 binary를 사용한다.
 
 v1·v2·v3·v5의 전체 독립 suite는 `tools/verify.sh`에서도 실행한다. root target 디렉터리를 공유해 이미 빌드한 의존성을 재사용한다. 그 밖의 `spikes/spike-v4-worker`, `spike-v7-migrate`, `spike-v11-dev-checks`의 Cargo.toml에도 같은 독립 테스트 명령을 적용할 수 있다. 이 세 엔진과 v6의 전체 suite는 자동 core 검증과 별도다.
 
@@ -53,7 +53,7 @@ v1·v2·v3·v5의 전체 독립 suite는 `tools/verify.sh`에서도 실행한다
 
 | 순서 | 영역 | 현재 근거와 다음 검증 |
 |---|---|---|
-| 1 | 깨끗한 Linux checkout | [첫 CI](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/37482679158)는 core Rust 230·Node 53개 통과. workspace 밖 엔진의 Linux 회귀와 worker 격리 지원은 별도 확인 |
+| 1 | 깨끗한 Linux checkout | [첫 CI](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/37482679158)는 core Rust 230·Node 53개 통과. worker 격리와 durable job smoke는 [2026-10-14 Linux run](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/38511151991)에서 확인. workspace 밖 나머지 엔진의 전체 Linux 회귀는 별도 |
 | 2 | HTTPS JWKS rotation·장애·동시성 | 파일 rotation과 HTTPS loader는 기존 테스트가 있으나 remote cache 갱신 전체 흐름은 별도 검증 필요. 새 kid, 같은 kid 교체, unknown-kid 연속 요청, timeout 뒤 복구를 검사 |
 | 3 | 실제 TLS reverse proxy | 현재 loopback와 HTTPS fixture까지만 검증. proxy 뒤 origin·header·body limit·종료 중 요청을 확인 |
 | 4 | migration 장애 복구 | rollback·동시 적용·재시도 테스트는 있음. 실제 backend/process 종료 및 커밋 응답 유실 시 journal/catalog/data 비교를 추가 |
@@ -70,7 +70,7 @@ v1·v2·v3·v5의 전체 독립 suite는 `tools/verify.sh`에서도 실행한다
 
 V6의 별도 `operations` 테스트는 Node/Python × safe/decimal에서 계약·입출력·Unicode 범위·정수 안전성·false allow·ctx 호출·deadline·다른 사용자·catalog를 검사한다. 설치 SDK smoke도 같은 네 조합에서 typed operation을 호출하고 범위 밖 입력을 거부한다. strict 소비자에는 잘못된 operation 이름/입력의 타입 음성 대조를 포함한다. worker·transport 전체 suite와 설치 smoke는 위와 같이 core 뒤 순서대로 실행한다.
 
-위 문장은 2026-10-10 동기 operation 회차의 검사 범위다. 그 뒤 durable job·file·event·HTTP broker 경로가 추가됐다. 현재 경로와 검증 범위는 아래 회차 및 [관리형 durable execution](MANAGED-EXECUTION.md)을 본다.
+위 문장은 2026-10-10 동기 operation 회차의 검사 범위다. 그 뒤 durable job·file·event·HTTP broker 경로가 추가됐다. Linux worker job 실행은 별도 [2026-10-14 검증 회차](VERIFICATION.md#linux-격리-workerjob-smoke-2026-10-14)와 [Linux worker jobs workflow](../.github/workflows/worker-jobs-linux.yml)를 본다. 현재 경로와 나머지 검증 범위는 아래 회차 및 [관리형 durable execution](MANAGED-EXECUTION.md)을 따른다.
 
 ## 관리형 durable execution 회차
 
