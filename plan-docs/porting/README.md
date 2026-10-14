@@ -85,3 +85,9 @@ API test client, 브라우저, socket 실제 ML, worker/provider를 구분하며
 2026-10-15 후속: 7.1.3.1의 API 하위 gate는 23개 case의 계약·의미값과 12개 SQL/Redis 상태를
 독립 oracle에 대조했다. 누락/중복/부분실행/기대값변조/저장오류를 unit 음성 control로 검사한다.
 7.1.3 전체는 browser·Socket.IO/ML·worker/provider 기준선이 남아 있어 완료하지 않는다.
+
+7.1.5.1·7.1.5.2는 API 하위 증거 gate·반복 runner를 추가했다. 고정 원본 추출과 lock 확인→새 실DB 실행→
+API/저장 oracle→자체 컨테이너 정리→증거 hash/exit/범위 검사를 한 명령으로 수행한다.
+부분 결과·실패 exit·잘못된 scope·oracle/lock 불일치·누락/변조 파일은 성공으로 보고하지 않는다.
+사용자 요청대로 작고 선행 효과가 있는 과제를 순서대로 처리하며 원본·화면·ML·인프라의 완료 조건을 줄이지 않는다.
+남은 browser/runtime oracle와 전체 CI는 하위 WBS에 예정으로 유지한다.

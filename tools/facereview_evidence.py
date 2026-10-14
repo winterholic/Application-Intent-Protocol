@@ -59,10 +59,18 @@ def check_evidence(manifest, directory):
                 verified[name] = json.loads(data)
             except (ValueError, UnicodeError):
                 errors.append(f'malformed artifact {name}')
+        elif name == 'lock.txt':
+            try:
+                verified[name] = sorted(line.strip() for line in data.decode().splitlines() if line.strip())
+            except UnicodeError:
+                errors.append('malformed artifact lock.txt')
     if 'result.json' in verified and 'oracle.json' in verified:
         errors.extend(compare_result(verified['result.json'], verified['oracle.json']))
         if not isinstance(verified['result.json'], dict) or verified['result.json'].get('source_sha') != manifest.get('source_sha'):
             errors.append('manifest source_sha mismatch')
+    if 'lock.txt' in verified and isinstance(verified.get('oracle.json'), dict):
+        if verified['lock.txt'] != verified['oracle.json'].get('packages'):
+            errors.append('lock packages differ from reviewed oracle')
     if 'inventory.json' in verified:
         inventory = verified['inventory.json']
         repositories = inventory.get('repositories') if isinstance(inventory, dict) else None

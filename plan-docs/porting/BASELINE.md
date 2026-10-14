@@ -77,6 +77,29 @@ JSON으로 읽히더라도 null/잘못된 shape이면 실패한다. 진단은 �
 hash는 파일 이동 중 훼손을 확인하는 수단이며, 악의적으로 전체 묶음을 다시 작성한 사람의 증거를 인증하는 서명은 아니다.
 browser/ML/AIP port는 `not-executed`다. 이 API 증거 gate를 통과해도 전체 앱 포팅/실배포 완료로 계산하지 않는다.
 
+## 한 번 실행하는 API runner (7.1.5.2)
+
+준비된 API venv와 Docker Engine/Compose를 사용한다. 입력 source는 고정 Git revision에서 새 임시 디렉터리로
+추출한다. 기존 원본 작업 트리·`.env`를 복사하지 않고 결과 디렉터리가 있으면 덮어쓰지 않는다.
+Python 실제 설치 목록과 lock·검토된 oracle의 패키지가 일치해야 DB를 시작한다.
+
+```sh
+python3 tools/facereview_runner.py --backend-repo /path/to/facereview/new-facereview --python /tmp/aip-facereview-baseline-venv/bin/python --out /tmp/new-facereview-api-run
+python3 tools/facereview_evidence.py --manifest /tmp/new-facereview-api-run/manifest.json
+python3 -m unittest discover -s tools -p 'test_facereview_*.py'
+```
+
+runner는 default baseline 프로젝트가 남아 있으면 실행을 거부한다. 각 새 실행은 무작위 이름의 Compose 프로젝트를
+소유하고 자신의 프로젝트만 `down --volumes`로 정리한다. 원본 실행/검사 실패와 정리 실패는 nonzero로 끝난다.
+컨테이너 시작이 일부 실패해도 자신의 프로젝트를 정리하며 API 실패 때에도 정리 순서를 수행한다.
+명령 argv/exit를 저장하되 응답·인증 값과 subprocess stderr를 evidence에 그대로 복사하지 않는다.
+archive의 절대 경로·상위 경로·symlink·hardlink·device 입력을 추출하지 않는다.
+
+2026-10-15 실제 runner 실행은 23개 API·12개 SQL/Redis 상태·원본 결함 2개를 보존했고,
+API exit 0·cleanup exit 0·evidence 오류 0·남은 해당 프로젝트 컨테이너 0이었다.
+관련 unit 34개는 inventory8·oracle10·evidence9·runner7로 구성된다. CI와 브라우저/ML/worker/provider 전체 통합은
+7.1.5.3에 남겨둔다. 이 runner는 원본 API 기준선 도구이며 AIP로 업무를 대체한 구현이 아니다.
+
 실행 증거는 [facereview-api-baseline.json](facereview-api-baseline.json), 패키지 버전은 [baseline-api.lock](baseline-api.lock).
 공통 source 범위는 [facereview-inventory.json](facereview-inventory.json)이다.
 앞으로 브라우저/실제 ML/worker/provider까지 실행해야 WBS 7.1.2 전체 환경 완료를 판정할 수 있다.

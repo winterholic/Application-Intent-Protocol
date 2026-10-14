@@ -5,6 +5,8 @@
     "mongo": "7.0.45",
     "redis": "7.4.11"
   },
+  "completed": true,
+  "scope": "original-api",
   "transport": "Flask test_client -> ORIGINAL handlers -> real MySQL/Mongo/Redis",
   "ml": "not executed; preload_emotion_model=False; no fake inference",
   "browser": "not executed",
@@ -20,7 +22,11 @@
         "service",
         "status"
       ],
-      "code": null
+      "code": null,
+      "checks": {
+        "status": "healthy",
+        "service": "facereview"
+      }
     },
     {
       "label": "login-user",
@@ -31,7 +37,10 @@
       "response_keys": [
         "access_token"
       ],
-      "code": null
+      "code": null,
+      "checks": {
+        "access_present": true
+      }
     },
     {
       "label": "login-admin",
@@ -42,7 +51,10 @@
       "response_keys": [
         "access_token"
       ],
-      "code": null
+      "code": null,
+      "checks": {
+        "access_present": true
+      }
     },
     {
       "label": "me",
@@ -61,7 +73,13 @@
         "role",
         "user_id"
       ],
-      "code": null
+      "code": null,
+      "checks": {
+        "user_id": "00000000-0000-4000-8000-000000000001",
+        "role": "GENERAL",
+        "name": "합성사용자",
+        "is_tutorial_done": false
+      }
     },
     {
       "label": "guest-me-denied",
@@ -75,7 +93,8 @@
         "message",
         "result"
       ],
-      "code": "A002"
+      "code": "A002",
+      "checks": {}
     },
     {
       "label": "general-admin-denied",
@@ -89,7 +108,8 @@
         "message",
         "result"
       ],
-      "code": "U002"
+      "code": "U002",
+      "checks": {}
     },
     {
       "label": "admin-users",
@@ -104,7 +124,14 @@
         "total",
         "users"
       ],
-      "code": null
+      "code": null,
+      "checks": {
+        "total": 2,
+        "roles": [
+          "GENERAL",
+          "SUPER_ADMIN"
+        ]
+      }
     },
     {
       "label": "tutorial",
@@ -116,7 +143,10 @@
         "message",
         "result"
       ],
-      "code": null
+      "code": null,
+      "checks": {
+        "result": "success"
+      }
     },
     {
       "label": "guest-video-detail",
@@ -138,7 +168,17 @@
         "view_count",
         "youtube_url"
       ],
-      "code": null
+      "code": null,
+      "checks": {
+        "video_id": "00000000-0000-4000-8000-000000000010",
+        "title": "합성 영상",
+        "category": "music",
+        "duration": 120,
+        "like_count": 0,
+        "comment_count": 0,
+        "user_is_liked": false,
+        "is_bookmarked": false
+      }
     },
     {
       "label": "guest-comment-denied",
@@ -152,7 +192,8 @@
         "message",
         "result"
       ],
-      "code": "A002"
+      "code": "A002",
+      "checks": {}
     },
     {
       "label": "create-comment",
@@ -164,7 +205,10 @@
         "comment_id",
         "message"
       ],
-      "code": null
+      "code": null,
+      "checks": {
+        "comment_id_is_null": true
+      }
     },
     {
       "label": "edit-comment",
@@ -176,7 +220,10 @@
         "message",
         "result"
       ],
-      "code": null
+      "code": null,
+      "checks": {
+        "result": "success"
+      }
     },
     {
       "label": "list-comments",
@@ -188,19 +235,33 @@
         "comments",
         "total"
       ],
-      "code": null
+      "code": null,
+      "checks": {
+        "total": 1,
+        "comments": [
+          {
+            "user_id": "00000000-0000-4000-8000-000000000001",
+            "content": "수정 댓글",
+            "is_modified": true,
+            "is_mine": true
+          }
+        ]
+      }
     },
     {
       "label": "delete-comment",
       "method": "DELETE",
-      "path": "/api/v2/watch/comments?comment_id=9efa6063-0119-4aa2-be77-ebb5a36f65bc",
+      "path": "/api/v2/watch/comments?comment_id=5e72b0d5-592c-44ae-905a-10aca67744be",
       "status": 200,
       "expected": 200,
       "response_keys": [
         "message",
         "result"
       ],
-      "code": null
+      "code": null,
+      "checks": {
+        "result": "success"
+      }
     },
     {
       "label": "like-toggle-1",
@@ -213,7 +274,11 @@
         "like_count",
         "message"
       ],
-      "code": null
+      "code": null,
+      "checks": {
+        "is_liked": true,
+        "like_count": 1
+      }
     },
     {
       "label": "bookmark-toggle-1",
@@ -225,7 +290,10 @@
         "is_bookmarked",
         "message"
       ],
-      "code": null
+      "code": null,
+      "checks": {
+        "is_bookmarked": true
+      }
     },
     {
       "label": "like-toggle-2",
@@ -238,7 +306,11 @@
         "like_count",
         "message"
       ],
-      "code": null
+      "code": null,
+      "checks": {
+        "is_liked": false,
+        "like_count": 0
+      }
     },
     {
       "label": "bookmark-toggle-2",
@@ -250,7 +322,10 @@
         "is_bookmarked",
         "message"
       ],
-      "code": null
+      "code": null,
+      "checks": {
+        "is_bookmarked": false
+      }
     },
     {
       "label": "like-toggle-3",
@@ -263,7 +338,11 @@
         "like_count",
         "message"
       ],
-      "code": null
+      "code": null,
+      "checks": {
+        "is_liked": true,
+        "like_count": 1
+      }
     },
     {
       "label": "bookmark-toggle-3",
@@ -275,7 +354,10 @@
         "is_bookmarked",
         "message"
       ],
-      "code": null
+      "code": null,
+      "checks": {
+        "is_bookmarked": true
+      }
     },
     {
       "label": "logout",
@@ -287,7 +369,10 @@
         "message",
         "result"
       ],
-      "code": null
+      "code": null,
+      "checks": {
+        "result": "success"
+      }
     },
     {
       "label": "source-access-token-lives-until-expiry",
@@ -306,7 +391,13 @@
         "role",
         "user_id"
       ],
-      "code": null
+      "code": null,
+      "checks": {
+        "user_id": "00000000-0000-4000-8000-000000000001",
+        "role": "GENERAL",
+        "name": "합성사용자",
+        "is_tutorial_done": true
+      }
     },
     {
       "label": "source-revoked-refresh-replay",
@@ -317,7 +408,10 @@
       "response_keys": [
         "access_token"
       ],
-      "code": null
+      "code": null,
+      "checks": {
+        "access_present": true
+      }
     }
   ],
   "original_anomalies": [
@@ -334,6 +428,71 @@
       "source": "app/services/auth_service.py:reissue",
       "cause": "Reissue verifies JWT and active user but does not consult refresh blacklist",
       "followup": "Security difference: port must reject replay; preserve source observation, not vulnerability"
+    }
+  ],
+  "state_checks": [
+    {
+      "label": "tutorial-saved",
+      "observed": true
+    },
+    {
+      "label": "guest-comment-row-count",
+      "observed": 0
+    },
+    {
+      "label": "created-comment",
+      "observed": {
+        "owner": "00000000-0000-4000-8000-000000000001",
+        "video": "00000000-0000-4000-8000-000000000010",
+        "content": "합성 댓글",
+        "modified": false,
+        "deleted": false
+      }
+    },
+    {
+      "label": "edited-comment",
+      "observed": {
+        "content": "수정 댓글",
+        "modified": true
+      }
+    },
+    {
+      "label": "deleted-comment",
+      "observed": {
+        "retained": true,
+        "deleted": true
+      }
+    },
+    {
+      "label": "video_like-count-1",
+      "observed": 1
+    },
+    {
+      "label": "video_bookmark-count-1",
+      "observed": 1
+    },
+    {
+      "label": "video_like-count-2",
+      "observed": 0
+    },
+    {
+      "label": "video_bookmark-count-2",
+      "observed": 0
+    },
+    {
+      "label": "video_like-count-3",
+      "observed": 1
+    },
+    {
+      "label": "video_bookmark-count-3",
+      "observed": 1
+    },
+    {
+      "label": "logout",
+      "observed": {
+        "refresh_cookie_absent": true,
+        "refresh_blacklisted": true
+      }
     }
   ],
   "missing_registered_routes": [],

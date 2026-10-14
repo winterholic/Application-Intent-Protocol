@@ -72,6 +72,11 @@ class EvidenceTest(unittest.TestCase):
         self.manifest['files']['result.json']['sha256'] = hashlib.sha256(file.read_bytes()).hexdigest()
         self.assertTrue(self.errors())
 
+    def test_changed_lock_is_detected_even_with_updated_manifest_hash(self):
+        file = self.root / 'lock.txt'; file.write_text('Flask==9.0\n')
+        self.manifest['files']['lock.txt']['sha256'] = hashlib.sha256(file.read_bytes()).hexdigest()
+        self.assertTrue(any('lock packages' in error for error in self.errors()))
+
     def test_sensitive_command_values_are_not_echoed(self):
         manifest = copy.deepcopy(self.manifest)
         manifest['commands'][0]['argv'] += ['Authorization=never-print-this-value']
