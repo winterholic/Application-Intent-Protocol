@@ -1,0 +1,35 @@
+name: aip-facereview-baseline
+services:
+  mysql:
+    image: mysql:8.4@sha256:24989179f58856db763f418010c1169fecc944e3ec1ea7e921572d83eb070f70
+    environment:
+      MYSQL_ROOT_PASSWORD: synthetic-baseline-root-only
+      MYSQL_DATABASE: facereview_baseline
+      MYSQL_USER: baseline
+      MYSQL_PASSWORD: synthetic-baseline-only
+    ports: ['127.0.0.1:23306:3306']
+    tmpfs: ['/var/lib/mysql']
+    healthcheck:
+      test: ['CMD', 'mysql', '-h', '127.0.0.1', '-ubaseline', '-psynthetic-baseline-only', '-D', 'facereview_baseline', '-e', 'SELECT 1']
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  mongo:
+    image: mongo:7@sha256:9650758f83af117fc96699f030a44f9300bed839734e67012f56df05b2fd6290
+    ports: ['127.0.0.1:27027:27017']
+    tmpfs: ['/data/db', '/data/configdb']
+    healthcheck:
+      test: ['CMD', 'mongosh', '--quiet', '--eval', 'db.adminCommand({ping:1}).ok']
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  redis:
+    image: redis:7@sha256:4fa24486b8bcca8eec45ee0eb166edc674795e53a2b53d1a9ef263eecebaac85
+    ports: ['127.0.0.1:26379:6379']
+    command: ['redis-server', '--save', '', '--appendonly', 'no']
+    tmpfs: ['/data']
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 3s
+      timeout: 3s
+      retries: 30
