@@ -90,7 +90,12 @@ async fn install_or_accept_provisioned(db: &tokio_postgres::Client, ddl: &str, p
 pub async fn provision_infrastructure(db_url: &str, deployment_schema: &str) -> io::Result<()> {
     let infra = aip_execution::infrastructure_schema(deployment_schema).map_err(|_| io::Error::other("invalid deployment schema"))?;
     let db = spike_v2_read::connect_owned_with_url(db_url).await.map_err(|_| io::Error::other("database unavailable"))?;
-    for (ddl, what) in [(rate_limiter_ddl(&infra), "rate limiter"), (outbox_ddl(&infra), "outbox relay"), (audit_ddl(&infra), "audit")] {
+    let facts: Value =
+        db.query_one(&format!("SELECT facts FROM {deployment_schema}.aip_migrate_meta WHERE singleton"), &[]).await.map_err(io::Error::other)?.get(0);
+    let uuid_audit = facts["resources"].as_object().is_some_and(|rs| rs.values().any(|r| r["idKind"] == "uuid"));
+    let audit =
+        if uuid_audit { format!("CREATE SCHEMA IF NOT EXISTS {infra}; {}", spike_v3_write::audit_ddl_with_uuid(&infra)) } else { audit_ddl(&infra) };
+    for (ddl, what) in [(rate_limiter_ddl(&infra), "rate limiter"), (outbox_ddl(&infra), "outbox relay"), (audit, "audit")] {
         tokio::time::timeout(DB_PREFLIGHT_TIMEOUT, db.batch_execute(&ddl))
             .await
             .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, format!("{what} provisioning timed out")))?
@@ -290,7 +295,12 @@ pub(crate) async fn listen_with_fingerprint(
         let pool = runtime.db_pool.as_ref().expect("pool initialized");
         tokio::time::timeout(DB_PREFLIGHT_TIMEOUT, async {
             let db = pool.acquire().await.map_err(|_| io::Error::other("audit database unavailable"))?;
-            install_or_accept_provisioned(&db, &audit_ddl(&infra), &format!("{infra}.aip_audit"), "audit").await?;
+            let audit = if facts["resources"].as_object().is_some_and(|rs| rs.values().any(|r| r["idKind"] == "uuid")) {
+                format!("CREATE SCHEMA IF NOT EXISTS {infra}; {}", spike_v3_write::audit_ddl_with_uuid(&infra))
+            } else {
+                audit_ddl(&infra)
+            };
+            install_or_accept_provisioned(&db, &audit, &format!("{infra}.aip_audit"), "audit").await?;
             db.release().await.map_err(|_| io::Error::other("audit connection reset failed"))
         })
         .await

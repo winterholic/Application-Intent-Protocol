@@ -1,3 +1,4 @@
+pub mod external;
 pub mod id_wire;
 pub mod plan;
 pub mod scalar;

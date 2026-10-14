@@ -37,7 +37,7 @@ fn ids(v: &[i64]) -> Value {
     json!({ "ids": v.iter().map(|x| x.to_string()).collect::<Vec<_>>() })
 }
 fn ok(changed: &[i64], unchanged: &[i64]) -> Result<Applied, &'static str> {
-    Ok(Applied { changed: changed.to_vec(), unchanged: unchanged.to_vec() })
+    Ok(Applied { changed: changed.iter().copied().map(Into::into).collect(), unchanged: unchanged.iter().copied().map(Into::into).collect() })
 }
 fn simplify(r: Result<Applied, Reject>) -> Result<Applied, &'static str> {
     r.map_err(|e| e.code)

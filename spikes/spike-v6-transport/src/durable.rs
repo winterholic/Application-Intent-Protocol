@@ -477,7 +477,7 @@ async fn relay_outbox(rt: &Runtime, facts: &Value, wire: IdWire) -> Result<()> {
         let rows = db
             .query(
                 &format!(
-                    "SELECT o.id,o.source,o.source_id,o.recipient_id,o.created_at::text,(extract(epoch FROM o.created_at)*1000000)::bigint FROM {s}.aip_outbox o \
+                    "SELECT o.id,o.source,o.source_id::text,o.recipient_id::text,o.created_at::text,(extract(epoch FROM o.created_at)*1000000)::bigint FROM {s}.aip_outbox o \
                      WHERE o.topic=$1 AND NOT EXISTS (SELECT 1 FROM {infra}.aip_outbox_dispatch d WHERE d.outbox_id=o.id AND d.outbox_created_at=o.created_at) \
                      ORDER BY o.id LIMIT 50"
                 ),
@@ -492,8 +492,8 @@ async fn relay_outbox(rt: &Runtime, facts: &Value, wire: IdWire) -> Result<()> {
                 "id": id.to_string(),
                 "topic": handler.topic,
                 "source": row.get::<_, String>(1),
-                "sourceId": row.get::<_, Option<i64>>(2).map(|v| v.to_string()),
-                "recipientId": row.get::<_, Option<i64>>(3).map(|v| v.to_string()),
+                "sourceId": row.get::<_, Option<String>>(2),
+                "recipientId": row.get::<_, Option<String>>(3),
                 "createdAt": row.get::<_, String>(4),
             });
             let input = json!({"event": event.to_string()});
@@ -1257,7 +1257,7 @@ impl Host {
                         return self.reject_data_effect(db, &effect_key, &digest, e.code).await;
                     }
                 };
-                let encode = |ids: Vec<i64>| {
+                let encode = |ids: Vec<spike_v2_read::id_wire::EntityId>| {
                     ids.into_iter().map(|id| spike_v2_read::id_wire::emit_id(id, self.wire)).collect::<std::result::Result<Vec<_>, _>>()
                 };
                 json!({

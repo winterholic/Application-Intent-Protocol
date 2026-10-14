@@ -1183,6 +1183,7 @@ dependencies = [
  "aip-execution",
  "chrono",
  "rustls",
+ "serde",
  "serde_json",
  "spike-v1-fixture",
  "tokio",

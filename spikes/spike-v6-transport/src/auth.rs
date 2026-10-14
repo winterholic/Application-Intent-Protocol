@@ -50,6 +50,7 @@ pub struct DurablePrincipal {
 
 pub struct Session {
     pub actor_id: i64,
+    pub actor_resource_id: Option<String>,
     pub durable: Option<DurablePrincipal>,
     expires_at: i64,
 }
@@ -62,7 +63,7 @@ impl Session {
         if expires_at <= now_secs() {
             return Err(AuthError::Expired);
         }
-        Ok(Self { actor_id, durable: None, expires_at })
+        Ok(Self { actor_id, actor_resource_id: None, durable: None, expires_at })
     }
     pub fn new_durable(grant: DurablePrincipal, expires_at: i64) -> Result<Self, AuthError> {
         let mut session = Self::new(grant.actor_id, expires_at)?;
@@ -118,6 +119,6 @@ impl Keyring {
         if exp <= now_secs() {
             return Err(AuthError::Expired);
         }
-        Ok(Session { actor_id: sub, durable: None, expires_at: exp })
+        Ok(Session { actor_id: sub, actor_resource_id: None, durable: None, expires_at: exp })
     }
 }

@@ -67,10 +67,14 @@ async fn ready(runtime: &Runtime, permit: Option<tokio::sync::SemaphorePermit<'s
         match &runtime.deployment {
             Some(fence) => {
                 let row = db
-                    .query_opt(&format!("SELECT facts_digest FROM {}.aip_migrate_meta WHERE singleton=true", fence.schema), &[])
+                    .query_opt(&format!("SELECT facts_digest,facts FROM {}.aip_migrate_meta WHERE singleton=true", fence.schema), &[])
                     .await
                     .map_err(|_| "WIRE.DB_UNAVAILABLE")?;
-                if row.is_none_or(|row| row.get::<_, String>(0) != fence.expected_digest) {
+                if row.as_ref().is_none_or(|row| row.get::<_, String>(0) != fence.expected_digest) {
+                    return Err("WIRE.DEPLOYMENT_CHANGED");
+                }
+                let facts: serde_json::Value = row.unwrap().get(1);
+                if !spike_v2_read::external::matches(&*db, &facts).await.map_err(|_| "WIRE.DB_UNAVAILABLE")? {
                     return Err("WIRE.DEPLOYMENT_CHANGED");
                 }
             }

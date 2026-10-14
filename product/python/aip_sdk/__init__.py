@@ -22,7 +22,7 @@ __all__ = ["connect", "Client", "AipError", "WriteUnsettled", "ScopeConflict"]
 __version__ = "0.1.0"
 
 _FINGERPRINT = re.compile(r"^[a-f0-9]{64}$")
-_ACTOR_ID = re.compile(r"^(0|[1-9][0-9]*|-[1-9][0-9]*)$")
+_ACTOR_ID = re.compile(r"^(0|[1-9][0-9]*|-[1-9][0-9]*|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$")
 # A write whose commit could not be confirmed is resent with the same key and body.
 _UNSETTLED = {"WIRE.COMMIT_UNKNOWN", "WIRE.INTERNAL"}
 # Rejections before execution say nothing about whether an earlier attempt with the key committed.

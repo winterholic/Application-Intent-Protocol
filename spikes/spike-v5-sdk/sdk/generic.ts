@@ -16,6 +16,7 @@ export type ResourceShape = {
 };
 export type ContractShape<C> = { [R in keyof C]: ResourceShape };
 export type ContractBinding<C extends ContractShape<C>> = {
+  readonly identityKinds?: Readonly<Record<string,"uuid"|"bigint">>;
   readonly fingerprint: string;
   readonly __contract?: C;
   readonly readDescriptors?: ReadDescriptors<C>;

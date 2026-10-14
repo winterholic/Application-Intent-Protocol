@@ -12,7 +12,8 @@ export function isIdWire(value: unknown): value is IdWireKind {
   return value === "legacy" || value === "safe-number-v13" || value === "decimal-string-v13";
 }
 
-export function validResultId(value: unknown, wire: IdWireKind): boolean {
+export function validResultId(value: unknown, wire: IdWireKind, kind: "uuid" | "bigint" = "bigint"): boolean {
+  if (kind === "uuid") return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value);
   if (wire === "decimal-string-v13") {
     return typeof value === "string" && value.length <= 19 && /^(0|[1-9][0-9]*)$/.test(value) && BigInt(value) <= (1n << 63n) - 1n;
   }
@@ -20,7 +21,8 @@ export function validResultId(value: unknown, wire: IdWireKind): boolean {
   return typeof value === "number" && Number.isInteger(value) && value >= -(2 ** 63) && value <= 2 ** 63;
 }
 
-function validWriteResponse(res: any, wire?: IdWireKind, extensionWrite = false): boolean {
+function validWriteResponse(res: any, wire?: IdWireKind, extensionWrite = false, request?: any, kinds?: Readonly<Record<string,"uuid"|"bigint">>): boolean {
+  const valid = (v:unknown,res:string) => wire === undefined || validResultId(v,wire,kinds?.[res] ?? "bigint");
   const metadata = wire === undefined || (res?.replayed === undefined || typeof res.replayed === "boolean") && (res?.recovered === undefined || typeof res.recovered === "boolean");
   if (!metadata) return false;
   if (res?.ok === false) return typeof res.code === "string" && (wire === undefined || res.msg === undefined || typeof res.msg === "string");
@@ -28,13 +30,14 @@ function validWriteResponse(res: any, wire?: IdWireKind, extensionWrite = false)
   if (extensionWrite) return res.output !== null && typeof res.output === "object" && !Array.isArray(res.output);
   // 묶음·조합 결과: 연산마다 바뀐 id와 만든 행. 만든 행의 id는 `id` 열이 없는 resource면 null이다.
   if (res.applied !== undefined || res.created !== undefined) {
-    const idsOk = (ids: unknown) => Array.isArray(ids) && ids.every(id => wire === undefined || validResultId(id, wire));
+    const appliedResources = Array.isArray(request?.atomic) ? request.atomic.filter((op:any)=>typeof op?.apply==="string").map((op:any)=>op.apply.split(".")[0]) : Array(res.applied?.length ?? 0).fill(request?.compose);
+    const idsOk = (ids: unknown,resource:string) => Array.isArray(ids) && ids.every(id => valid(id,resource));
     return Array.isArray(res.applied) && Array.isArray(res.created) &&
-      res.applied.every((row: any) => row !== null && typeof row === "object" && idsOk(row.changed) && idsOk(row.unchanged)) &&
+      res.applied.every((row: any,index:number) => row !== null && typeof row === "object" && idsOk(row.changed,appliedResources[index]) && idsOk(row.unchanged,appliedResources[index])) &&
       res.created.every((row: any) => row !== null && typeof row === "object" && typeof row.resource === "string" &&
-        (row.id === null || wire === undefined || validResultId(row.id, wire)));
+        (row.id === null || valid(row.id,row.resource)));
   }
-  return wire === undefined || [res.changed, res.unchanged].every(ids => Array.isArray(ids) && ids.every(id => validResultId(id, wire)));
+  return wire === undefined || [res.changed, res.unchanged].every(ids => Array.isArray(ids) && ids.every(id => valid(id,request?.apply?.split(".")[0])));
 }
 
 const UNSETTLED = new Set(["WIRE.COMMIT_UNKNOWN", "WIRE.INTERNAL"]);
@@ -107,7 +110,7 @@ async function readJsonBounded(response: Response, limit: number): Promise<any> 
   }
 }
 
-export function connect(base: string, initialToken: string | null, fetchImpl: typeof fetch = fetch, options: { contractFingerprint?: string; idWire?: IdWireKind; maxResponseBytes?: number; validateRead?: (query: unknown, rows: unknown[]) => void; validateWrite?: (request: unknown, response: unknown) => void } = {}) {
+export function connect(base: string, initialToken: string | null, fetchImpl: typeof fetch = fetch, options: { identityKinds?: Readonly<Record<string,"uuid"|"bigint">>; contractFingerprint?: string; idWire?: IdWireKind; maxResponseBytes?: number; validateRead?: (query: unknown, rows: unknown[]) => void; validateWrite?: (request: unknown, response: unknown) => void } = {}) {
   const expectedFingerprint = options.contractFingerprint;
   const resultWire = options.idWire;
   const validateRead = options.validateRead;
@@ -160,7 +163,7 @@ export function connect(base: string, initialToken: string | null, fetchImpl: ty
     const res = await postWithToken("/session", {}, credential);
     if (res?.ok === false && typeof res.code === "string") throw failure(res.code, res.code, res);
     const id = res?.principal?.actorId;
-    const canonical = typeof id === "string" && id.length <= 20 && /^(0|[1-9][0-9]*|-[1-9][0-9]*)$/.test(id) && BigInt(id) >= -(1n << 63n) && BigInt(id) < (1n << 63n);
+    const canonical = typeof id === "string" && (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id) || id.length <= 20 && /^(0|[1-9][0-9]*|-[1-9][0-9]*)$/.test(id) && BigInt(id) >= -(1n << 63n) && BigInt(id) < (1n << 63n));
     const valid = credential === null ? id === null && res?.remainingMs === null : canonical && Number.isFinite(res?.remainingMs) && res.remainingMs > 0;
     if (res?.ok !== true || !valid) throw failure("CLIENT.PROTOCOL_ERROR", "세션 응답 계약 오류", res);
     return id;
@@ -181,7 +184,7 @@ export function connect(base: string, initialToken: string | null, fetchImpl: ty
       const attemptId = requestIdOf(res);
       if (attemptId !== undefined) record.lastRequestId = attemptId;
       const extensionWrite = record.request !== null && typeof record.request === "object" && Object.hasOwn(record.request, "extension");
-      if (!validWriteResponse(res, resultWire, extensionWrite)) return null;
+      if (!validWriteResponse(res, resultWire, extensionWrite,record.request,options.identityKinds)) return null;
       if (res.ok && extensionWrite) {
         if (!validateWrite) return null;
         validateWrite(record.request, res);

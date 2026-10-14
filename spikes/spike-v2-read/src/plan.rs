@@ -171,8 +171,8 @@ fn aggregate_select_expr(
 
 fn check_value(facts: &Value, ty: &str, v: &Value, wire: crate::id_wire::IdWire) -> Result<(String, &'static str), Reject> {
     let base = ty.trim_end_matches('?');
-    if wire != crate::id_wire::IdWire::Legacy && (base.starts_with("Id<") || base.starts_with("Ref<")) {
-        return crate::id_wire::parse_id(v, wire).map(|id| (id.to_string(), "bigint"));
+    if base.starts_with("Id<") || base.starts_with("Ref<") {
+        return crate::id_wire::parse_typed_id(facts, base, v, wire);
     }
     match (base, v) {
         // 응답 Id는 숫자라 요청도 숫자를 받는다. 숫자 문자열도 받는다(r4b F04).

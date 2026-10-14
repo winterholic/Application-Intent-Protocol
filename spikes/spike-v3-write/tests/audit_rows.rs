@@ -52,7 +52,8 @@ async fn audit_rows_hold_counter_and_wide_transition_values() {
     let flipped = apply(&mut db, &facts, &json!({"apply":"Product.flip","target":{"ids":["1"]}}), &caller, &knobs).await;
     set_audit_table(None).unwrap();
     let (sold, flipped) = (sold.unwrap(), flipped.unwrap());
-    assert_eq!((sold.changed, flipped.changed), (vec![1, 2], vec![1]));
+    assert_eq!(sold.changed, vec![1, 2]);
+    assert_eq!(flipped.changed, vec![1]);
 
     let rows: Vec<(String, i64, Value, Value)> = db
         .query(&format!("SELECT transition,target_id,before,after FROM {schema}.aip_audit ORDER BY id"), &[])

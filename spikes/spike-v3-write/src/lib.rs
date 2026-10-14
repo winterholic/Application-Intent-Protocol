@@ -1,6 +1,6 @@
 //! V3-1 단일 표준 전이 쓰기. 대상 판정과 변경을 한 트랜잭션에서 하고, 일부만 바꾼 성공 응답을 만들지 않는다.
 use serde_json::{json, Map, Value};
-use spike_v2_read::id_wire::{parse_id, IdWire};
+use spike_v2_read::id_wire::{id_array_cast, id_kind, parse_entity_id, parse_typed_id, EntityId, IdWire};
 use spike_v2_read::plan::{Caller, Reject};
 use spike_v2_read::sqlgen::{self, column, table, Ctx, Env};
 use std::time::Duration;
@@ -8,8 +8,8 @@ use tokio_postgres::{types::ToSql, Client, Transaction};
 
 #[derive(Debug, PartialEq)]
 pub struct Applied {
-    pub changed: Vec<i64>,
-    pub unchanged: Vec<i64>,
+    pub changed: Vec<EntityId>,
+    pub unchanged: Vec<EntityId>,
 }
 
 /// 테스트용 조절 손잡이. 잠금 뒤 멈춰서 동시 실행 순서를 재현한다.
@@ -204,7 +204,7 @@ fn bad(msg: impl Into<String>) -> Reject {
     Reject { code: "WIRE.BAD_REQUEST", msg: msg.into() }
 }
 
-fn id_array(ids: &[i64]) -> String {
+fn id_array(ids: &[EntityId]) -> String {
     format!("{{{}}}", ids.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(","))
 }
 
@@ -220,11 +220,11 @@ async fn typed_query(tx: &Transaction<'_>, sql: &str, params: &[Option<String>])
 }
 
 pub enum TargetSpec {
-    Ids(Vec<i64>),
+    Ids(Vec<EntityId>),
     Where(Vec<(String, String, &'static str)>),
 }
 
-fn parse_ids(raw: &Value, bulk: i64, wire: IdWire) -> Result<Vec<i64>, Reject> {
+fn parse_ids(facts: &Value, res: &str, raw: &Value, bulk: i64, wire: IdWire) -> Result<Vec<EntityId>, Reject> {
     let raw = raw.as_array().ok_or(bad("ids는 배열"))?;
     if raw.is_empty() {
         return Err(bad("ids가 비었음"));
@@ -235,7 +235,7 @@ fn parse_ids(raw: &Value, bulk: i64, wire: IdWire) -> Result<Vec<i64>, Reject> {
     }
     let mut v = vec![];
     for x in raw {
-        let n = parse_id(x, wire)?;
+        let n = parse_entity_id(facts, res, x, wire)?;
         if v.contains(&n) {
             return rej("WIRE.DUPLICATE_TARGET", format!("id {n} 중복"));
         }
@@ -255,7 +255,7 @@ fn parse_target(facts: &Value, res: &str, ex: &Value, tg: &Value, wire: IdWire) 
             if !forms.contains(&"id") {
                 return rej("WIRE.TARGET_NOT_ALLOWED", "id 대상은 계약에 없음");
             }
-            Ok(TargetSpec::Ids(parse_ids(ids, bulk, wire)?))
+            Ok(TargetSpec::Ids(parse_ids(facts, res, ids, bulk, wire)?))
         }
         (None, Some(w)) => {
             if !forms.contains(&"where") {
@@ -282,8 +282,8 @@ fn parse_target(facts: &Value, res: &str, ex: &Value, tg: &Value, wire: IdWire) 
                     return rej("WIRE.FILTER_NOT_ALLOWED", format!("`{field}.{op}`: 쓰기 대상 조건에는 참조 필드를 쓸 수 없음. ids 대상을 사용"));
                 }
                 let value = fo.get("value").unwrap_or(&Value::Null);
-                let (val, cast) = if wire != IdWire::Legacy && (ty.starts_with("Id<") || ty.starts_with("Ref<")) {
-                    (parse_id(value, wire)?.to_string(), "bigint")
+                let (val, cast) = if ty.starts_with("Id<") || ty.starts_with("Ref<") {
+                    parse_typed_id(facts, ty, value, wire)?
                 } else {
                     spike_v2_read::scalar::parse(facts, ty, value)?
                 };
@@ -298,8 +298,8 @@ fn parse_target(facts: &Value, res: &str, ex: &Value, tg: &Value, wire: IdWire) 
 struct Judged {
     /// The time the decision was made with; later statements of the same write use it too.
     now: String,
-    change: Vec<i64>,
-    unchanged: Vec<i64>,
+    change: Vec<EntityId>,
+    unchanged: Vec<EntityId>,
     scopes: Vec<Option<String>>,
 }
 
@@ -342,7 +342,7 @@ fn judge_query(
     let lock = if !locked || knobs.skip_row_lock { "" } else { " FOR UPDATE OF t" };
     let sel = match target {
         TargetSpec::Ids(ids) => {
-            let p = cx.params.bind(Some(id_array(ids)), "bigint[]");
+            let p = cx.params.bind(Some(id_array(ids)), id_array_cast(facts, res));
             // 행 정책을 WHERE에 둬서 안 보이는 행은 잠그지도 기다리지도 않는다(R2B-11).
             format!("SELECT t.id, {allow}, {from}, {done}, {scope_sql} FROM {} t WHERE t.id = ANY({p}) AND {vis} ORDER BY t.id{lock}", table(res))
         }
@@ -397,7 +397,8 @@ async fn judge(
     let mut j = Judged { now: now_used, change: vec![], unchanged: vec![], scopes: vec![] };
     let mut seen = vec![];
     for r in &rows {
-        let (id, a, f, d, sc): (i64, Option<bool>, Option<bool>, Option<bool>, Option<String>) = (r.get(0), r.get(1), r.get(2), r.get(3), r.get(4));
+        let (id, a, f, d, sc): (EntityId, Option<bool>, Option<bool>, Option<bool>, Option<String>) =
+            (r.get(0), r.get(1), r.get(2), r.get(3), r.get(4));
         seen.push(id);
         if a != Some(true) {
             return rej("WIRE.FORBIDDEN", format!("{id}에 `{tr}` 권한 없음"));
@@ -441,7 +442,7 @@ async fn update(
     facts: &Value,
     res: &str,
     tr: &str,
-    change: &[i64],
+    change: &[EntityId],
     caller: &Caller,
     knobs: &Knobs,
     input: Option<&ApplyInput>,
@@ -486,7 +487,7 @@ async fn update(
             ranged.push(format!("t.{} NOT BETWEEN {lo} AND {hi}", column(facts, res, f).unwrap()));
         }
     }
-    let ip = cx.params.bind(Some(id_array(change)), "bigint[]");
+    let ip = cx.params.bind(Some(id_array(change)), id_array_cast(facts, res));
     // UPDATE에도 from 조건을 다시 건다. 잠금이 없거나 우회돼도 이미 바뀐 행을 두 번 바꾸지 않는다.
     let out_of_range = if ranged.is_empty() { "FALSE".to_string() } else { format!("({})", ranged.join(" OR ")) };
     let audit_table = AUDIT_TABLE.read().map_err(|_| internal("감사 테이블 잠금"))?.clone();
@@ -554,7 +555,7 @@ fn write_err(stage: &str, e: tokio_postgres::Error) -> Reject {
 }
 
 /// 서버가 정의한 전이 효과. 값은 바뀐 대상 행에서 계산한다(W2).
-async fn effects(tx: &Transaction<'_>, facts: &Value, res: &str, tr: &str, change: &[i64], caller: &Caller) -> Result<(), Reject> {
+async fn effects(tx: &Transaction<'_>, facts: &Value, res: &str, tr: &str, change: &[EntityId], caller: &Caller) -> Result<(), Reject> {
     if change.is_empty() {
         return Ok(());
     }
@@ -571,7 +572,7 @@ async fn effects(tx: &Transaction<'_>, facts: &Value, res: &str, tr: &str, chang
             for (f, v) in e["values"].as_object().unwrap() {
                 sets.push(format!("{} = {}", column(facts, target, f).unwrap(), cx.value(v, &env).map_err(internal)?));
             }
-            let ip = cx.params.bind(Some(id_array(change)), "bigint[]");
+            let ip = cx.params.bind(Some(id_array(change)), id_array_cast(facts, res));
             let children = if let Some(max) = e.get("maxRows") {
                 let max = max.as_i64().filter(|n| (1..=1000).contains(n)).ok_or_else(|| internal("many update 상한 오류"))?;
                 // 부모 잠금 뒤 새 RC 스냅샷으로 FK 삽입을 관측하고 자식을 ID 순으로 잠근다.
@@ -586,11 +587,11 @@ async fn effects(tx: &Transaction<'_>, facts: &Value, res: &str, tr: &str, chang
                 if rows.len() as i64 > max {
                     return rej("WIRE.EFFECT_TARGET_MISSING", "선언한 전이 효과 범위를 처리할 수 없음");
                 }
-                let ids: Vec<i64> = rows.iter().map(|row| row.get(0)).collect();
+                let ids: Vec<EntityId> = rows.iter().map(|row| row.get(0)).collect();
                 if ids.is_empty() {
                     continue;
                 }
-                let bounded = cx.params.bind(Some(id_array(&ids)), "bigint[]");
+                let bounded = cx.params.bind(Some(id_array(&ids)), id_array_cast(facts, res));
                 conds.push(format!("u.id = ANY({bounded})"));
                 Some(ids.len())
             } else {
@@ -604,7 +605,7 @@ async fn effects(tx: &Transaction<'_>, facts: &Value, res: &str, tr: &str, chang
                 conds.join(" AND ")
             );
             let params = cx.params.values.clone();
-            let mut got: Vec<i64> =
+            let mut got: Vec<EntityId> =
                 typed_query(tx, sql.as_str(), &params).await.map_err(|e| write_err("전이 효과", e))?.iter().map(|r| r.get(0)).collect();
             got.sort();
             if children.is_some_and(|count| count != got.len()) || (children.is_none() && got != change) {
@@ -618,17 +619,20 @@ async fn effects(tx: &Transaction<'_>, facts: &Value, res: &str, tr: &str, chang
                 cols.push(column(facts, target, f).unwrap());
                 vals.push(cx.value(v, &env).map_err(internal)?);
             }
-            let ip = cx.params.bind(Some(id_array(change)), "bigint[]");
+            let ip = cx.params.bind(Some(id_array(change)), id_array_cast(facts, res));
             format!("INSERT INTO {} ({}) SELECT {} FROM {} t WHERE t.id = ANY({ip})", table(target), cols.join(", "), vals.join(", "), table(res))
         } else {
             let n = &e["notify"];
             let to = cx.value(&n["to"], &env).map_err(internal)?;
+            let mixed = facts["resources"].as_object().unwrap().values().any(|r| r["idKind"] == "uuid");
+            let to = if mixed { format!("({to})::text") } else { to };
+            let source_id = if mixed { "t.id::text" } else { "t.id" };
             let topic = cx.params.bind(Some(n["topic"].as_str().unwrap().to_string()), "text");
             let src = cx.params.bind(Some(res.to_string()), "text");
-            let ip = cx.params.bind(Some(id_array(change)), "bigint[]");
+            let ip = cx.params.bind(Some(id_array(change)), id_array_cast(facts, res));
             // 알림은 같은 트랜잭션의 outbox 행이다. 승인이 rollback되면 알림 기록도 없다.
             format!(
-                "INSERT INTO {}.aip_outbox (topic, recipient_id, source, source_id) SELECT {topic}, {to}, {src}, t.id FROM {} t WHERE t.id = ANY({ip})",
+                "INSERT INTO {}.aip_outbox (topic, recipient_id, source, source_id) SELECT {topic}, {to}, {src}, {source_id} FROM {} t WHERE t.id = ANY({ip})",
                 sqlgen::schema(),
                 table(res)
             )
@@ -643,7 +647,7 @@ async fn effects(tx: &Transaction<'_>, facts: &Value, res: &str, tr: &str, chang
 pub enum Src {
     Lit(String, &'static str),
     Null,
-    Item { res: String, id: i64, path: Value },
+    Item { res: String, id: EntityId, path: Value },
 }
 
 /// 호출자가 준 Ref 값은 호출자가 읽을 수 있는 행이어야 한다(창시자 결정 2026-10-13, 테넌트 격리 T2-A).
@@ -662,15 +666,15 @@ async fn ensure_refs_readable(
         let Src::Lit(id, _) = src else { continue };
         let ty = facts["resources"][target]["fields"][field.as_str()]["ty"].as_str().unwrap_or("");
         let Some(referenced) = ty.trim_end_matches('?').strip_prefix("Ref<").and_then(|t| t.strip_suffix('>')) else { continue };
-        let id: i64 = id.parse().map_err(|_| bad(format!("`{field}` id 형식")))?;
-        if facts["actor"].as_str() == Some(referenced) && caller.actor_id == Some(id) {
+        let id = parse_entity_id(facts, referenced, &json!(id), IdWire::DecimalString)?;
+        if facts["actor"].as_str() == Some(referenced) && caller.actor_id.map(EntityId::Number) == Some(id) {
             continue;
         }
         let mut cx = Ctx::new(facts, caller.actor_id, &caller.now);
         cx.lock_reads = !knobs.skip_policy_lock;
         let env = Env { this: Some(("t".into(), referenced.to_string())), ..Default::default() };
         let vis = cx.cond(&facts["resources"][referenced]["rowRead"], &env).map_err(internal)?;
-        let p = cx.params.bind(Some(id.to_string()), "bigint");
+        let p = cx.params.bind(Some(id.to_string()), id_kind(facts, referenced));
         let sql = format!("SELECT 1 FROM {} t WHERE t.id = {p} AND {vis}", table(referenced));
         let params = cx.params.values.clone();
         if typed_query(tx, sql.as_str(), &params).await.map_err(|e| write_err("참조 행 확인", e))?.is_empty() {
@@ -688,7 +692,7 @@ async fn create_row(
     values: &[(String, Src)],
     caller: &Caller,
     knobs: &Knobs,
-) -> Result<Option<i64>, Reject> {
+) -> Result<Option<EntityId>, Reject> {
     let ec = &facts["resources"][target]["exposeCreate"];
     let mut cx = Ctx::new(facts, caller.actor_id, &caller.now);
     cx.lock_reads = !knobs.skip_policy_lock;
@@ -701,7 +705,7 @@ async fn create_row(
             Src::Null => format!("(NULL::{}).{col}", table(target)),
             Src::Item { res, id, path } => {
                 if from.is_empty() {
-                    let p = cx.params.bind(Some(id.to_string()), "bigint");
+                    let p = cx.params.bind(Some(id.to_string()), id_kind(facts, res));
                     from = format!(" FROM {} s WHERE s.id = {p}", table(res));
                 }
                 let env = Env { this: Some(("s".into(), res.clone())), ..Default::default() };
@@ -722,7 +726,8 @@ async fn create_row(
         exprs.push("1".into());
     }
     let venv = Env { this: Some(("v".into(), target.to_string())), ..Default::default() };
-    let allow = cx.cond(&ec["allow"], &venv).map_err(internal)?;
+    let external = !facts["externalStorage"].is_null();
+    let allow = if external { "TRUE".into() } else { cx.cond(&ec["allow"], &venv).map_err(internal)? };
     let insert_cols = if cols.is_empty() { String::new() } else { format!(" ({})", cols.join(", ")) };
     // 비공개 관계 테이블은 `id` 열이 없을 수 있다. 그런 행은 id를 돌려줄 수 없다.
     let has_id = facts["resources"][target]["fields"].get("id").is_some();
@@ -738,7 +743,20 @@ async fn create_row(
     if rows.len() != 1 {
         return rej("WIRE.FORBIDDEN", format!("`{target}` 생성 권한 없음"));
     }
-    Ok(has_id.then(|| rows[0].get::<_, i64>(0)))
+    let id = has_id.then(|| rows[0].get::<_, EntityId>(0));
+    if external {
+        let id = id.ok_or_else(|| bad("외부 create에는 단일 기본키 필요"))?;
+        let mut policy = Ctx::new(facts, caller.actor_id, &caller.now);
+        policy.lock_reads = !knobs.skip_policy_lock;
+        let env = Env { this: Some(("t".into(), target.into())), ..Default::default() };
+        let allow = policy.cond(&ec["allow"], &env).map_err(internal)?;
+        let p = policy.params.bind(Some(id.to_string()), id_kind(facts, target));
+        let sql = format!("SELECT 1 FROM {} t WHERE t.id={p} AND {allow}", table(target));
+        if typed_query(tx, &sql, &policy.params.values).await.map_err(|e| write_err("생성 후 인가", e))?.is_empty() {
+            return rej("WIRE.FORBIDDEN", "DB 기본값 적용 후 생성 권한 없음");
+        }
+    }
+    Ok(id)
 }
 
 /// 이 트랜잭션이 `res` 테이블을 바꿨는지 판정한다. `xmin = pg_current_xact_id()`는 인덱스가 없어 전체 스캔이므로(O-25),
@@ -808,11 +826,11 @@ async fn run_checks(tx: &Transaction<'_>, facts: &Value, caller: &Caller, knobs:
             let cond = cx.cond(&enf["where"], &env).map_err(internal)?;
             let predicate_params = cx.params.values.clone();
             let touched_groups = format!(
-                "SELECT DISTINCT t.{per_col} FROM {} t WHERE t.xmin = pg_current_xact_id()::xid AND ({cond}) IS TRUE AND t.{per_col} IS NOT NULL",
+                "SELECT DISTINCT t.{per_col}::text FROM {} t WHERE t.xmin = pg_current_xact_id()::xid AND ({cond}) IS TRUE AND t.{per_col} IS NOT NULL",
                 table(res)
             );
             let touched_params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = predicate_params.iter().map(|value| value as _).collect();
-            let groups: Vec<i64> = tx
+            let groups: Vec<String> = tx
                 .query(touched_groups.as_str(), &touched_params)
                 .await
                 .map_err(|e| db_err("정원 그룹 조회", e))?
@@ -825,9 +843,10 @@ async fn run_checks(tx: &Transaction<'_>, facts: &Value, caller: &Caller, knobs:
             let groups_idx = predicate_params.len() + 1;
             let max_idx = groups_idx + 1;
             let sql = format!(
-                "SELECT t.{per_col} FROM {} t WHERE t.{per_col} = ANY(${groups_idx}::bigint[]) AND ({cond}) IS TRUE GROUP BY t.{per_col} HAVING count(*) > ${max_idx} LIMIT 1",
-                table(res),
+                "SELECT t.{per_col} FROM {} t WHERE t.{per_col} = ANY(${groups_idx}::text::{group_cast}[]) AND ({cond}) IS TRUE GROUP BY t.{per_col} HAVING count(*) > ${max_idx} LIMIT 1",
+                table(res), group_cast=spike_v2_read::id_wire::id_cast(facts,rf["fields"][per]["ty"].as_str().unwrap()),
             );
+            let groups = format!("{{{}}}", groups.join(","));
             let mut query_params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = predicate_params.iter().map(|value| value as _).collect();
             query_params.push(&groups);
             query_params.push(&max);
@@ -1034,8 +1053,8 @@ fn literal(facts: &Value, res: &str, field: &str, v: &Value, wire: IdWire) -> Re
     }
     if base.starts_with("Ref<") || base.starts_with("Id<") {
         // Id wire(숫자·십진 문자열)에 맞는 표기만 받는다. 전이 대상 id와 같은 규칙이다.
-        let id = parse_id(v, wire).map_err(|_| Reject { code: "WIRE.BAD_VALUE", msg: format!("`{field}` id 형식") })?;
-        return Ok(Src::Lit(id.to_string(), "bigint"));
+        let (id, cast) = parse_typed_id(facts, base, v, wire)?;
+        return Ok(Src::Lit(id, cast));
     }
     let (s, cast) = filter_value(base, v)?;
     Ok(Src::Lit(s, cast))
@@ -1046,7 +1065,7 @@ pub struct BundleResult {
     pub applied: Vec<Applied>,
     pub created: usize,
     /// 만든 행의 (resource, id). 호출자가 만든 행을 곧바로 가리킬 수 있게 한다. `id` 열이 없는 resource는 None이다.
-    pub created_rows: Vec<(String, Option<i64>)>,
+    pub created_rows: Vec<(String, Option<EntityId>)>,
 }
 
 pub use spike_v2_read::write_limits::{BUNDLE_MAX_OPS, BUNDLE_MAX_ROWS, COMPOSE_MAX_STEPS};
@@ -1208,7 +1227,7 @@ fn compose_plan<'a>(facts: &'a Value, req: &'a Value, wire: IdWire) -> Result<Co
     let bulk = cp["bulkMaxRows"].as_i64().unwrap_or(1);
     let tg = o.get("targets").and_then(Value::as_object).ok_or(bad("targets 객체 필요"))?;
     keys(tg, &["ids"], "targets")?;
-    let ids = parse_ids(tg.get("ids").unwrap_or(&Value::Null), bulk, wire)?;
+    let ids = parse_ids(facts, res, tg.get("ids").unwrap_or(&Value::Null), bulk, wire)?;
     let steps = o.get("steps").and_then(Value::as_array).ok_or(bad("steps 배열 필요"))?;
     if steps.is_empty() {
         return Err(bad("steps에 단계가 하나는 있어야 함"));
@@ -1282,7 +1301,7 @@ struct ComposePlan<'a> {
     res: &'a str,
     cp: &'a Value,
     bulk: i64,
-    ids: Vec<i64>,
+    ids: Vec<EntityId>,
     steps: Vec<Step<'a>>,
 }
 
@@ -1330,7 +1349,7 @@ async fn compose_exec(
     wire: IdWire,
 ) -> Result<BundleResult, Reject> {
     let ComposePlan { res, cp, bulk, ids, steps: _ } = plan;
-    let ids: &Vec<i64> = ids;
+    let ids: &Vec<EntityId> = ids;
     let (res, bulk) = (*res, *bulk);
     let cp: &Value = cp;
     // 모든 대상을 먼저 잠그고 가시성을 확인한다. 같은 범위 검사는 단계별 권한 판정 뒤에 한다(R3-01).
@@ -1343,7 +1362,7 @@ async fn compose_exec(
         let vis = cx.cond(&rf["rowRead"], &env).map_err(internal)?;
         let scope =
             if cp["sameScope"].is_null() { "NULL::text".into() } else { format!("({})::text", cx.value(&cp["sameScope"], &env).map_err(internal)?) };
-        let p = cx.params.bind(Some(id_array(&ids)), "bigint[]");
+        let p = cx.params.bind(Some(id_array(&ids)), id_array_cast(facts, res));
         let sql = format!("SELECT t.id, {scope} FROM {} t WHERE t.id = ANY({p}) AND {vis} ORDER BY t.id FOR UPDATE OF t", table(res));
         let params = cx.params.values.clone();
         let rows = typed_query(tx, sql.as_str(), &params).await.map_err(|e| db_err("대상 조회", e))?;
@@ -1370,7 +1389,7 @@ async fn compose_exec(
                     if rows.len() != 1 {
                         return rej("WIRE.MISSING_TARGET", "같은 범위의 자기 행을 찾을 수 없음");
                     }
-                    vec![rows[0].get::<_, i64>(0)]
+                    vec![rows[0].get::<_, EntityId>(0)]
                 } else {
                     ids.clone()
                 };
@@ -1437,4 +1456,9 @@ pub async fn checks_in(tx: &Transaction<'_>, facts: &Value, caller: &Caller, kno
 /// 커밋 오류 분류(지연 제약 위반 등)를 쓰기 확장에서도 같게 쓴다.
 pub fn classify_write_error(stage: &str, e: tokio_postgres::Error) -> Reject {
     write_err(stage, e)
+}
+
+/// UUID-aware audit keeps numeric deployments unchanged; mixed identities are stored losslessly as text.
+pub fn audit_ddl_with_uuid(schema: &str) -> String {
+    audit_ddl(schema).replace("target_id bigint NOT NULL", "target_id text NOT NULL")
 }

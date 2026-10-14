@@ -332,7 +332,13 @@ fn check_typed(facts: &Value, ty: &str, v: &Value) -> bool {
     let base = ty.trim_end_matches('?');
     match (base, v) {
         (_, Value::Null) => nullable,
-        (t, Value::String(s)) if t.starts_with("Id<") || t.starts_with("Ref<") => !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()),
+        (t, Value::String(s)) if t.starts_with("Id<") || t.starts_with("Ref<") => {
+            if spike_v2_read::id_wire::id_cast(facts, t) == "uuid" {
+                spike_v2_read::id_wire::parse_uuid(s).is_ok()
+            } else {
+                !s.is_empty() && s.chars().all(|c| c.is_ascii_digit())
+            }
+        }
         // Worker payloads keep their spelling; scalar parsing only validates the shared domain.
         _ => spike_v2_read::scalar::parse(facts, base, v).is_ok(),
     }
@@ -370,6 +376,9 @@ fn check_read_value(facts: &Value, ty: &str, value: &Value, wire: IdWire, output
         return if ty.ends_with('?') { Ok(()) } else { rej(code, format!("{ty} null 불가")) };
     }
     if base.starts_with("Id<") || base.starts_with("Ref<") {
+        if spike_v2_read::id_wire::id_cast(facts, base) == "uuid" {
+            return spike_v2_read::id_wire::parse_typed_id(facts, base, value, wire).map(|_| ()).map_err(|e| Reject { code, msg: e.msg });
+        }
         if wire == IdWire::Legacy {
             return if matches!(value, Value::String(s) if !s.is_empty() && s.chars().all(|c| c.is_ascii_digit())) {
                 Ok(())

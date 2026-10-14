@@ -54,7 +54,7 @@ function typedClient<C extends ContractShape<C>>(base: string, token: string | n
   }
   const descriptors = binding.readDescriptors === undefined ? undefined : structuredClone(binding.readDescriptors);
   const client = connect(base, token, fetchImpl, {
-    contractFingerprint: fingerprint, idWire, validateWrite,
+    contractFingerprint: fingerprint, idWire, validateWrite, identityKinds: binding.identityKinds,
     validateRead: descriptors === undefined ? undefined : (query, rows) => validateReadRows(query, rows, descriptors, idWire ?? "legacy"),
   });
   return {
@@ -126,6 +126,7 @@ function validScalar(value: unknown, d: ScalarDescriptor, wire: IdWireKind): boo
   switch (d.type) {
     case "Id": case "Ref":
       return wire === "legacy" ? typeof value === "string" && /^[0-9]+$/.test(value) : validResultId(value, wire);
+    case "Uuid": return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value);
     case "Bool": return typeof value === "boolean";
     // The JS decoder rejects an Int that cannot retain its exact integer value.
     case "Int": return typeof value === "number" && Number.isSafeInteger(value);
@@ -229,7 +230,7 @@ export function connectTypedExtensions<C extends ContractShape<C>, A extends App
   const writes = structuredClone(binding.writeExtensions ?? {}) as WriteExtensionDescriptors<W>;
   const operations = structuredClone(binding.operations ?? {}) as ExtensionDescriptors<O> & Partial<Record<keyof O, { readonly lifetime?: "sync" | "durable" }>>;
   const hasDurableOperations = Object.values(operations as Record<string, { readonly lifetime?: string }>).some((descriptor) => descriptor?.lifetime === "durable");
-  const stable = {fingerprint, idWire:wire, readDescriptors:structuredClone(binding.readDescriptors)};
+  const stable = {fingerprint, idWire:wire, identityKinds:binding.identityKinds, readDescriptors:structuredClone(binding.readDescriptors)};
   const raw = typedClient<C>(base, token, stable, fetchImpl, wire, (request, response) => {
     const req = request as Record<string, unknown>;
     const res = response as Record<string, unknown>;

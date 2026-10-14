@@ -144,7 +144,7 @@ async fn run_write(
     knobs: &Knobs,
     wire: IdWire,
 ) -> Result<Value, Reject> {
-    let emit_all = |ids: Vec<i64>| ids.into_iter().map(|id| emit_id(id, wire)).collect::<Result<Vec<_>, _>>();
+    let emit_all = |ids: Vec<spike_v2_read::id_wire::EntityId>| ids.into_iter().map(|id| emit_id(id, wire)).collect::<Result<Vec<_>, _>>();
     if req.get("atomic").is_some() || req.get("compose").is_some() {
         let out = if req.get("atomic").is_some() {
             spike_v3_write::bundle_in(tx, facts, req, caller, knobs, wire).await?
@@ -1185,7 +1185,7 @@ async fn serve_conn(
         }
         let result = json!({
             "ok": true,
-            "principal": { "actorId": session.as_ref().map(|s| s.actor_id.to_string()) },
+            "principal": { "actorId": session.as_ref().map(|s| s.actor_resource_id.clone().unwrap_or_else(||s.actor_id.to_string())) },
             "remainingMs": remaining,
         });
         return reply(&mut w, &result.to_string()).await;
@@ -1223,7 +1223,15 @@ async fn serve_conn(
         })
         .await;
         match checked {
-            Ok(Ok(Some(actual))) if actual == fence.expected_digest => {}
+            Ok(Ok(Some(actual))) if actual == fence.expected_digest => {
+                match tokio::time::timeout_at(deadline, spike_v2_read::external::matches(&*db, &facts)).await {
+                    Ok(Ok(true)) => {}
+                    _ => {
+                        std::mem::drop(db);
+                        return reply(&mut w, &err("WIRE.DEPLOYMENT_CHANGED", "외부 업무 schema drift 또는 catalog 검사 실패")).await;
+                    }
+                }
+            }
             Ok(Ok(Some(_))) => {
                 std::mem::drop(db);
                 return reply(&mut w, &err("WIRE.DEPLOYMENT_CHANGED", "실행 정의와 배포 정의가 다름")).await;
