@@ -336,7 +336,8 @@ fn judge_query(
         let val = cx.value(v, &env).map_err(internal)?;
         done.push(format!("(t.{col} IS NOT DISTINCT FROM {val})"));
     }
-    let done = format!("({})", done.join(" AND "));
+    // 호출자 patch는 매번 실제 쓰기다. 멱등 재시도는 같은 key의 저장 결과를 재생한다.
+    let done = if t.get("patch").is_some() { "FALSE".into() } else { format!("({})", done.join(" AND ")) };
     let scope_sql = if scope.is_null() { "NULL::text".to_string() } else { format!("({})::text", cx.value(scope, &env).map_err(internal)?) };
     let lock = if !locked || knobs.skip_row_lock { "" } else { " FOR UPDATE OF t" };
     let sel = match target {
@@ -434,14 +435,30 @@ async fn judge(
     Ok(j)
 }
 
-async fn update(tx: &Transaction<'_>, facts: &Value, res: &str, tr: &str, change: &[i64], caller: &Caller, knobs: &Knobs) -> Result<(), Reject> {
+async fn update(
+    tx: &Transaction<'_>,
+    facts: &Value,
+    res: &str,
+    tr: &str,
+    change: &[i64],
+    caller: &Caller,
+    knobs: &Knobs,
+    input: Option<&ApplyInput>,
+) -> Result<(), Reject> {
     if change.is_empty() {
         return Ok(());
     }
     let t = &facts["resources"][res]["transitions"][tr];
     let mut cx = Ctx::new(facts, caller.actor_id, &caller.now);
     let env = Env { this: Some(("t".into(), res.to_string())), ..Default::default() };
-    let from = cx.cond(&t["from"], &env).map_err(internal)?;
+    let mut from = cx.cond(&t["from"], &env).map_err(internal)?;
+    if let Some(input) = input {
+        for (field, src) in &input.expected {
+            let col = column(facts, res, field).unwrap();
+            let value = input_sql(&mut cx, res, field, src);
+            from = format!("({from}) AND (t.{col} IS NOT DISTINCT FROM {value})");
+        }
+    }
     let mut sets = vec![];
     for (f, v) in t["to"].as_object().unwrap() {
         let col = column(facts, res, f).unwrap();
@@ -453,6 +470,12 @@ async fn update(tx: &Transaction<'_>, facts: &Value, res: &str, tr: &str, change
             continue;
         }
         sets.push(format!("{col} = {}", cx.value(v, &env).map_err(internal)?));
+    }
+    if let Some(input) = input {
+        for (field, src) in &input.values {
+            let col = column(facts, res, field).unwrap();
+            sets.push(format!("{col} = {}", input_sql(&mut cx, res, field, src)));
+        }
     }
     // 증감한 Int 필드의 선언 범위. DDL CHECK가 없으므로 같은 트랜잭션에서 UPDATE 결과로 확인한다.
     let mut ranged = vec![];
@@ -471,8 +494,13 @@ async fn update(tx: &Transaction<'_>, facts: &Value, res: &str, tr: &str, change
         Some(audit) => {
             // 바뀌는 필드의 이전 값은 같은 문장의 스냅숏에서, 이후 값은 RETURNING에서 읽는다. 감사 행은 전이와 함께만 commit된다.
             let snapshot = |alias: &str| {
-                let pairs: Vec<String> =
-                    t["to"].as_object().unwrap().keys().map(|f| format!("'{f}', to_jsonb({alias}.{})", column(facts, res, f).unwrap())).collect();
+                let pairs: Vec<String> = t["to"]
+                    .as_object()
+                    .unwrap()
+                    .keys()
+                    .chain(input.into_iter().flat_map(|i| i.values.iter().map(|(f, _)| f)))
+                    .map(|f| format!("'{f}', to_jsonb({alias}.{})", column(facts, res, f).unwrap()))
+                    .collect();
                 // jsonb_build_object takes at most 100 arguments, so wide transitions are built in parts.
                 let parts: Vec<String> = pairs.chunks(50).map(|chunk| format!("jsonb_build_object({})", chunk.join(", "))).collect();
                 if parts.is_empty() {
@@ -896,6 +924,64 @@ fn exposed<'a>(facts: &'a Value, name: &str) -> Result<(&'a str, &'a str, &'a Va
     Ok((res, tr, ex))
 }
 
+#[derive(Default)]
+struct ApplyInput {
+    values: Vec<(String, Src)>,
+    expected: Vec<(String, Src)>,
+}
+
+/// 입력 값은 SQL 식이 아니다. 공통 scalar/Id wire 검증을 거친 바인드 값만 받는다.
+fn apply_input(facts: &Value, res: &str, tr: &str, request: &Map<String, Value>, wire: IdWire) -> Result<ApplyInput, Reject> {
+    let declaration = &facts["resources"][res]["transitions"][tr];
+    let mut input = ApplyInput::default();
+    for (key, declared, dest) in [("values", "patch", &mut input.values), ("expect", "expect", &mut input.expected)] {
+        let allowed: Vec<&str> = declaration[declared].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+        if allowed.is_empty() {
+            if request.contains_key(key) {
+                return rej("WIRE.UNKNOWN_KEY", format!("`{res}.{tr}`에는 {key} 선언이 없음"));
+            }
+            continue;
+        }
+        let values = request.get(key).and_then(Value::as_object).ok_or_else(|| bad(format!("{key} 객체 필요")))?;
+        if values.is_empty() || (key == "expect" && values.len() != allowed.len()) {
+            return rej("WIRE.BAD_VALUE", format!("{key}는 비어 있을 수 없고 expect의 선언 키는 모두 필요"));
+        }
+        for (field, value) in values {
+            if !allowed.contains(&field.as_str()) {
+                return rej("WIRE.FIELD_NOT_EXPOSED", format!("`{res}.{field}`는 {key} 계약에 없음"));
+            }
+            let fd = &facts["resources"][res]["fields"][field];
+            let ty = fd["ty"].as_str().ok_or_else(|| internal("입력 필드 타입"))?;
+            let base = ty.trim_end_matches('?');
+            let src = if value.is_null() || base.starts_with("Ref<") || base.starts_with("Id<") {
+                literal(facts, res, field, value, wire)?
+            } else {
+                let (value, cast) = spike_v2_read::scalar::parse(facts, base, value)?;
+                Src::Lit(value, cast)
+            };
+            if !value.is_null() {
+                if let (Some(lo), Some(hi)) = (fd["range"][0].as_i64(), fd["range"][1].as_i64()) {
+                    let measure = if base == "Int" { value.as_i64() } else { value.as_str().map(|s| s.chars().count() as i64) };
+                    if measure.is_none_or(|n| n < lo || n > hi) {
+                        return rej("WIRE.BAD_VALUE", format!("`{field}` 값이 선언 범위 밖"));
+                    }
+                }
+            }
+            dest.push((field.clone(), src));
+        }
+    }
+    Ok(input)
+}
+
+fn input_sql(cx: &mut Ctx<'_>, res: &str, field: &str, src: &Src) -> String {
+    match src {
+        Src::Lit(value, cast) => cx.params.bind(Some(value.clone()), cast),
+        // 테이블 행 타입에서 NULL의 SQL 타입을 얻는다. nullable scalar·Ref 모두 같은 경로다.
+        Src::Null => format!("(NULL::{}).{}", table(res), column(cx.facts, res, field).unwrap()),
+        Src::Item { .. } => unreachable!("apply_input accepts only caller literals"),
+    }
+}
+
 async fn apply_op(
     tx: &Transaction<'_>,
     facts: &Value,
@@ -904,12 +990,14 @@ async fn apply_op(
     knobs: &Knobs,
     wire: IdWire,
 ) -> Result<Applied, Reject> {
-    keys(o, &["apply", "target"], "apply 요청")?;
+    keys(o, &["apply", "target", "values", "expect"], "apply 요청")?;
     let (res, tr, ex) = exposed(facts, o.get("apply").and_then(Value::as_str).unwrap_or(""))?;
+    let input = apply_input(facts, res, tr, o, wire)?;
     let target = parse_target(facts, res, ex, o.get("target").unwrap_or(&Value::Null), wire)?;
     let j = judge(tx, facts, res, tr, &target, ex["bulkMaxRows"].as_i64().unwrap_or(1), &ex["sameScope"], caller, knobs).await?;
     let decided = Caller { actor_id: caller.actor_id, now: j.now.clone() };
-    update(tx, facts, res, tr, &j.change, &decided, knobs).await?;
+    ensure_refs_readable(tx, facts, res, &input.values, &decided, knobs).await?;
+    update(tx, facts, res, tr, &j.change, &decided, knobs, Some(&input)).await?;
     effects(tx, facts, res, tr, &j.change, &decided).await?;
     Ok(Applied { changed: j.change, unchanged: j.unchanged })
 }
@@ -1287,7 +1375,13 @@ async fn compose_exec(
                 };
                 let j = judge(tx, facts, res, t, &TargetSpec::Ids(step_ids), bulk, &Value::Null, caller, knobs).await?;
                 let decided = Caller { actor_id: caller.actor_id, now: j.now.clone() };
-                update(tx, facts, res, t, &j.change, &decided, knobs).await?;
+                // parameterized actions use bundle.apply, whose values/expect are checked by apply_op.
+                if facts["resources"][res]["transitions"][t].get("patch").is_some()
+                    || facts["resources"][res]["transitions"][t].get("expect").is_some()
+                {
+                    return rej("WIRE.BAD_VALUE", "patch/expect 전이는 values/expect를 제공하는 bundle.apply로 호출해야 함");
+                }
+                update(tx, facts, res, t, &j.change, &decided, knobs, None).await?;
                 effects(tx, facts, res, t, &j.change, &decided).await?;
                 out.applied.push(Applied { changed: j.change, unchanged: j.unchanged });
             }
