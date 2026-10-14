@@ -116,7 +116,8 @@ async fn real_kafka_confirm_and_import_round_trip() {
             .set("acks", "all")
             .set("delivery.timeout.ms", "3000")
             .set("message.max.bytes", "1048576")
-            .set("queue.buffering.max.kbytes", "32768");
+            .set("queue.buffering.max.kbytes", "32768")
+            .set("allow.auto.create.topics", "false");
         let probe = diagnostic.create::<FutureProducer>().map_err(|cause| format!("producer config: {cause:?}"));
         let probe = probe.and_then(|producer| {
             producer
@@ -125,7 +126,26 @@ async fn real_kafka_confirm_and_import_round_trip() {
                 .map(|_| ())
                 .map_err(|cause| format!("metadata probe: {cause:?}"))
         });
-        panic!("connect real Kafka client: {error:?}; direct librdkafka probe: {probe:?}");
+        let mut consumer_config = ClientConfig::new();
+        consumer_config
+            .set("bootstrap.servers", &bootstrap)
+            .set("security.protocol", "plaintext")
+            .set("socket.timeout.ms", "3000")
+            .set("group.id", "aip-ci-probe")
+            .set("enable.auto.commit", "false")
+            .set("enable.auto.offset.store", "false")
+            .set("isolation.level", "read_committed")
+            .set("auto.offset.reset", "earliest")
+            .set("allow.auto.create.topics", "false")
+            .set("max.poll.interval.ms", "30000")
+            .set("fetch.max.bytes", "2097152")
+            .set("max.partition.fetch.bytes", "1048576")
+            .set("queued.max.messages.kbytes", "32768");
+        let consumer_probe = consumer_config
+            .create::<StreamConsumer>()
+            .map_err(|cause| format!("consumer config: {cause:?}"))
+            .and_then(|consumer| consumer.subscribe(&[&inbound_topic]).map_err(|cause| format!("consumer subscribe: {cause:?}")));
+        panic!("connect real Kafka client: {error:?}; direct producer/metadata probe: {probe:?}; consumer probe: {consumer_probe:?}");
     });
     let store = fixture.store();
     let poll_started = std::time::Instant::now();
