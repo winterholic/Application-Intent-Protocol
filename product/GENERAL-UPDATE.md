@@ -33,7 +33,7 @@ const result = await client.apply({
 }, { key: "edit-note-42-v3" });
 ```
 
-values는 비어 있지 않은 객체다. `{title:"새 제목"}`이면 content는 유지한다. `{content:null}`은 nullable content를 비우며 `{title:undefined}`는 JSON에서 누락되어 유지된다. 필수 필드에 null, 모르는 키, 허용 밖 필드, 잘못된 타입·길이·범위는 거부한다. 기본키와 고정 `to` 대상은 patch에 넣을 수 없다.
+values는 비어 있지 않은 객체다. `{title:"새 제목"}`이면 content는 유지한다. `{content:null}`은 nullable content를 비운다. undefined인 값 키는 JSON에서 누락되어 해당 필드를 유지하지만, 모든 키가 빠져 values가 비면 요청을 거부한다. 필수 필드에 null, 모르는 키, 허용 밖 필드, 잘못된 타입·길이·범위는 거부한다. 기본키와 고정 `to` 대상은 patch에 넣을 수 없다.
 
 권장 동시성 방식은 `expect version` + 서버의 `to version = version + 1`이다. 생성 시 version 초기값(예: 0)도 정의의 create 필드와 호출 입력에 둔다. `expect title, content`처럼 기존 scalar 값으로 조건부 갱신할 수도 있다. expect는 선언된 키를 전부 요구하며 null도 NULL-safe 비교한다. `expect`를 생략한 **정의**는 행 잠금 안에서 마지막 요청 값이 이기는 일반 update 방식이다. expect가 선언된 action의 **요청**에서 expect를 생략하는 것은 오류다. version은 편집에 참여할 모든 action에서 증감시켜야 그 action과도 충돌을 감지한다.
 

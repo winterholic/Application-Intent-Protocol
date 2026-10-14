@@ -41,3 +41,11 @@ values는 비어 있지 않은 객체이며 patch allowlist의 부분집합이�
 - root verify의 fmt/clippy 관문은 통과했다. 추가 V5 lib clippy 통과. V1 단독 clippy는 기존 hmap.rs/enrich.rs 경고 2개, V3 단독은 기존 needless_borrow 경고 1개가 있어 별도 기록한다(새 update 함수의 인자 수 경고는 기존 judge와 같은 국소 allow로 정리). V3는 기존 경고만 제외한 `-D warnings -A clippy::needless_borrow`로 통과.
 - 생성 문법 카드 21개·wire registry 6개 테스트 통과. plan-docs 검사기는 `/tmp` worktree에서 외부 AriAri 상대 링크 12개를 못 찾으므로 원래 폴더 깊이·읽기 전용 원본 링크를 복원한 임시 문서 복사본에서 다시 검사했다.
 - 원격에 후속 Kafka 진단 커밋이 들어와 있으므로 마지막 rebase 후 기능 시험을 다시 실행하고 요청한 `git push origin HEAD:main`으로 올린다. 전체 Linux CI는 push된 commit의 결과를 별도로 확인한다.
+
+## 최종 결과
+
+코드 commit `749527f1f8a222f9b91b4c1831be665e356586fa`를 main에 push했다. 마지막 rebase에서 다른 작업자의 Kafka 진단 변경까지 보존했고 충돌은 없었다. rebase 뒤 실제 PG CRUD와 설치 SDK/Python 포팅 시험을 다시 실행해 모두 통과했다.
+
+[Verify #38512660261](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/38512660261): `completed / success`. Ubuntu·PostgreSQL 17에서 Linux worker 격리·후손 정리와 **전체 `bash tools/verify.sh`**를 제외 없이 통과했다. 마지막 출력은 `AIP core verification passed.`이며 새로운 memoir TS/Python 시험도 포함한다. 로컬 macOS sandbox 제한을 Linux 검증으로 구분해 닫았다. macOS Seatbelt 자체는 이번 환경에서 미실행이다.
+
+다운로드용 포팅 복사본·TS/Python binding·설치 SDK tarball·검증 증거는 이번 세션 outbox의 `memoir-update-copy.zip`에 둔다. 원본 포팅 notes와 기존 DB는 보존했다. 초기 RED 시험이 남긴 본인 시험 schema도 정리했다.
