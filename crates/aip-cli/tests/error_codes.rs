@@ -94,7 +94,7 @@ fn scan(dir: &Path, out: &mut Vec<PathBuf>) {
         let p = e.path();
         let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
         if p.is_dir() {
-            if !["target", "node_modules", "dist", ".git", "agent-logs", "reviews", "sources"].contains(&name) {
+            if !["target", "node_modules", "dist", ".generated", ".git", "agent-logs", "reviews", "sources"].contains(&name) {
                 scan(&p, out);
             }
         } else if p
