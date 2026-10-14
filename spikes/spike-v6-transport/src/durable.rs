@@ -163,10 +163,14 @@ async fn guard(db: &impl GenericClient, rt: &Runtime, grant: &DurablePrincipal) 
     db.batch_execute("SET LOCAL lock_timeout='2s'; SET LOCAL statement_timeout='5s'").await.map_err(db_error)?;
     db.query_one("SELECT pg_advisory_xact_lock_shared(1095323725,hashtext($1))", &[&fence.schema]).await.map_err(db_error)?;
     let marker = db
-        .query_opt(&format!("SELECT facts_digest FROM {}.aip_migrate_meta WHERE singleton=true FOR SHARE", fence.schema), &[])
+        .query_opt(&format!("SELECT facts_digest,facts FROM {}.aip_migrate_meta WHERE singleton=true FOR SHARE", fence.schema), &[])
         .await
         .map_err(db_error)?;
-    if marker.is_none_or(|r| r.get::<_, String>(0) != fence.expected_digest) {
+    if marker.as_ref().is_none_or(|r| r.get::<_, String>(0) != fence.expected_digest) {
+        return Err("WIRE.DEPLOYMENT_CHANGED");
+    }
+    let facts: Value = marker.unwrap().get(1);
+    if !spike_v2_read::external::matches(db, &facts).await.map_err(db_error)? {
         return Err("WIRE.DEPLOYMENT_CHANGED");
     }
     let row = db
