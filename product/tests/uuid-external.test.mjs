@@ -21,7 +21,7 @@ test('UUID owned and external PostgreSQL: introspect, adopt, restricted role, in
  const adopter=`aip_uuid_adopter_${process.pid}`;
  const owner=randomUUID(),other=randomUUID();
  let server;
- const sql=(text,db=dbname)=>{const file=join(temp,'fixture.sql');writeFileSync(file,text);return run('psql',['-X','-v','ON_ERROR_STOP=1','-d',db,'-f',file]);};
+ const sql=(text,db=dbname)=>{const file=join(temp,'fixture.sql');writeFileSync(file,text);return run('psql',['-X','-v','ON_ERROR_STOP=1','-d',`host=localhost dbname=${db}`,'-f',file]);};
  const admin=`host=localhost dbname=${dbname}`;
  const runtime=`host=localhost dbname=${dbname} user=${role}`;
  const migration=`host=localhost dbname=${dbname} user=${adopter}`;
