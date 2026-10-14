@@ -68,6 +68,15 @@ report의 `completed`는 계획된 API 실행 완료만 뜻한다. `scope=origin
 case 누락·중복, 저장 검사 누락, source/환경 변경, 원본 route 누락은 comparator 오류와 nonzero 종료다.
 원본 실행 결과로 기대값을 매번 다시 만드는 방식은 쓰지 않는다. oracle의 의미값은 고정 source의 DTO/schema·합성 seed를 기준으로 정했다.
 
+## 실행 증거 gate (7.1.5.1)
+
+`tools/facereview_evidence.py --manifest <run>/manifest.json`은 result·독립 oracle·inventory·API lock·Compose를
+같은 묶음에 두고 hash, 원본 SHA, 명령 exit, 정리 exit, 범위 표식과 oracle 일치를 확인한다.
+API/cleanup exit는 반드시 정수 0이어야 하며, 누락/변조/부분 report·디렉터리 밖 파일·민감 command argument를 거부한다.
+JSON으로 읽히더라도 null/잘못된 shape이면 실패한다. 진단은 민감 값 대신 필드 이름을 사용한다.
+hash는 파일 이동 중 훼손을 확인하는 수단이며, 악의적으로 전체 묶음을 다시 작성한 사람의 증거를 인증하는 서명은 아니다.
+browser/ML/AIP port는 `not-executed`다. 이 API 증거 gate를 통과해도 전체 앱 포팅/실배포 완료로 계산하지 않는다.
+
 실행 증거는 [facereview-api-baseline.json](facereview-api-baseline.json), 패키지 버전은 [baseline-api.lock](baseline-api.lock).
 공통 source 범위는 [facereview-inventory.json](facereview-inventory.json)이다.
 앞으로 브라우저/실제 ML/worker/provider까지 실행해야 WBS 7.1.2 전체 환경 완료를 판정할 수 있다.
