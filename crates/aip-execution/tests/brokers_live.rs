@@ -10,7 +10,7 @@ use rdkafka::{
     ClientConfig,
     consumer::{Consumer, StreamConsumer},
     message::Message,
-    producer::{FutureProducer, FutureRecord},
+    producer::{FutureProducer, FutureRecord, Producer},
     util::Timeout,
 };
 use serde_json::json;
@@ -105,7 +105,28 @@ async fn real_kafka_confirm_and_import_round_trip() {
             ttl_ms: 60_000,
         }],
     };
-    let mut relay = Relay::connect(config).await.expect("connect real Kafka client");
+    let mut relay = Relay::connect(config).await.unwrap_or_else(|error| {
+        let mut diagnostic = ClientConfig::new();
+        diagnostic
+            .set("bootstrap.servers", &bootstrap)
+            .set("security.protocol", "plaintext")
+            .set("socket.timeout.ms", "3000")
+            .set("client.id", "aip-outbox-ci-kafka")
+            .set("enable.idempotence", "true")
+            .set("acks", "all")
+            .set("delivery.timeout.ms", "3000")
+            .set("message.max.bytes", "1048576")
+            .set("queue.buffering.max.kbytes", "32768");
+        let probe = diagnostic.create::<FutureProducer>().map_err(|cause| format!("producer config: {cause:?}"));
+        let probe = probe.and_then(|producer| {
+            producer
+                .client()
+                .fetch_metadata(None, Timeout::After(Duration::from_secs(3)))
+                .map(|_| ())
+                .map_err(|cause| format!("metadata probe: {cause:?}"))
+        });
+        panic!("connect real Kafka client: {error:?}; direct librdkafka probe: {probe:?}");
+    });
     let store = fixture.store();
     let poll_started = std::time::Instant::now();
     assert!(!relay.import_once_with_wait(&mut fixture.client, &store, owner, "incoming", Duration::from_millis(1)).await.unwrap());
