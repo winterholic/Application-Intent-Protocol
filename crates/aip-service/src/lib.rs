@@ -41,6 +41,25 @@ pub enum Command {
         #[arg(long, value_enum, default_value = "ts")]
         lang: BindingLanguage,
     },
+    /// Read an external PostgreSQL schema; write a deny-all definition draft and physical mapping.
+    Introspect {
+        #[arg(long)]
+        config: PathBuf,
+        #[arg(long)]
+        source_schema: String,
+        #[arg(long)]
+        out: PathBuf,
+        #[arg(long)]
+        mapping_out: PathBuf,
+    },
+    /// Adopt external tables through views in a fresh AIP schema, without business DDL.
+    AdoptExternal {
+        file: PathBuf,
+        #[arg(long)]
+        config: PathBuf,
+        #[arg(long)]
+        apply: Option<String>,
+    },
     /// Create a fresh owned schema and its deployment journal
     Init {
         file: PathBuf,
@@ -113,7 +132,7 @@ pub struct AuditQuery {
     pub resource: Option<String>,
     /// The changed row, with --resource for one row's history
     #[arg(long)]
-    pub target_id: Option<i64>,
+    pub target_id: Option<String>,
     /// The actor that ran the transition
     #[arg(long)]
     pub actor: Option<i64>,
@@ -163,7 +182,7 @@ pub enum Principal {
         #[arg(long)]
         subject: String,
         #[arg(long)]
-        actor: i64,
+        actor: String,
         #[arg(long, default_value_t = 0)]
         not_before: i64,
     },
@@ -215,6 +234,9 @@ fn default_env() -> String {
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub schema: String,
+    /// JSON physical table/column mapping for external business storage.
+    #[serde(default)]
+    pub external_mapping: Option<PathBuf>,
     #[serde(default = "default_env")]
     pub database_url_env: String,
     /// Name of the environment variable that holds the DB URL of the migration role, used by `init`, `migrate`, `adopt` and
@@ -460,6 +482,11 @@ pub fn load(file: &Path, dev_checks: bool) -> Result<spike_v11_dev_checks::Check
 fn configuration(path: &Path) -> Result<Config, Value> {
     let source = read_bounded(path, CONFIG_BYTES, "CONFIG_IO")?;
     let mut config: Config = serde_json::from_str(&source).map_err(|e| json_error("BAD_CONFIG", "제품 설정 형식 오류", &e))?;
+    if let Some(mapping) = &mut config.external_mapping
+        && mapping.is_relative()
+    {
+        *mapping = path.parent().unwrap_or(Path::new(".")).join(&*mapping);
+    }
     aip_migrate::configure_schema(&config.schema)?;
     if !config.listen.ip().is_loopback() {
         return Err(error("BAD_LISTEN", "TLS reverse proxy 뒤의 loopback listener가 필요함"));
@@ -788,13 +815,45 @@ pub async fn run(command: Command) -> Result<Value, Value> {
                 json!({"ok":true,"fingerprint":spike_v5_sdk::contract_fingerprint_with_all_extensions(&facts,wire.id_wire()),"idWire":wire.id_wire().label()}),
             )
         }
+        Command::Introspect { config, source_schema, out, mapping_out } => {
+            let c = configuration(&config)?;
+            if out.exists() || mapping_out.exists() || out == mapping_out {
+                return Err(error("OUTPUT_EXISTS", "introspect 출력 파일은 새 경로여야 함"));
+            }
+            let discovered = aip_migrate::external::introspect(&database_url(&c)?, &source_schema).await?;
+            write_binding(
+                &config,
+                &mapping_out,
+                &serde_json::to_string_pretty(&discovered["mapping"]).map_err(|_| error("OUTPUT_IO", "mapping 직렬화 실패"))?,
+            )?;
+            write_binding(&config, &out, discovered["definition"].as_str().unwrap())?;
+            Ok(
+                json!({"ok":true,"structureDigest":discovered["structureDigest"],"definition":out,"mapping":mapping_out,"authorization":"deny-all; review before exposing read/write"}),
+            )
+        }
+        Command::AdoptExternal { file, config, apply } => {
+            let c = configuration(&config)?;
+            let facts = load(&file, false)?.output.execution;
+            let mapping = external_mapping(&c)?.ok_or_else(|| error("EXTERNAL_MAPPING_REQUIRED", "external_mapping 설정이 필요함"))?;
+            match apply {
+                Some(hash) => {
+                    aip_migrate::external::adopt_external(&migrate_database_url(&c)?, &c.schema, &facts, &mapping, c.wire.deployment_label(), &hash)
+                        .await
+                }
+                None => {
+                    aip_migrate::external::plan_external(&migrate_database_url(&c)?, &c.schema, &facts, &mapping, c.wire.deployment_label()).await
+                }
+            }
+        }
         Command::Init { file, config } => {
             let c = configuration(&config)?;
+            reject_external_ddl(&c)?;
             let facts = load(&file, false)?.output.execution;
             aip_migrate::init_with_wire(&migrate_database_url(&c)?, &c.schema, &facts, c.wire.deployment_label()).await
         }
         Command::Migrate { file, config, migration, apply } => {
             let c = configuration(&config)?;
+            reject_external_ddl(&c)?;
             let facts = load(&file, false)?.output.execution;
             let migration = migration
                 .map(|p| {
@@ -809,6 +868,7 @@ pub async fn run(command: Command) -> Result<Value, Value> {
         }
         Command::Adopt { file, config, apply } => {
             let c = configuration(&config)?;
+            reject_external_ddl(&c)?;
             let facts = load(&file, false)?.output.execution;
             match apply {
                 Some(hash) => {
@@ -907,7 +967,7 @@ async fn audit(config: Config, command: Audit) -> Result<Value, Value> {
         add("resource = ?", Box::new(value));
     }
     if let Some(value) = target_id {
-        add("target_id = ?", Box::new(value));
+        add("target_id::text = ?", Box::new(value));
     }
     if let Some(value) = actor {
         add("actor_id = ?", Box::new(value));
@@ -927,7 +987,7 @@ async fn audit(config: Config, command: Audit) -> Result<Value, Value> {
     let filter = if clauses.is_empty() { String::new() } else { format!("WHERE {}", clauses.join(" AND ")) };
     // One more row than the page tells whether another page exists.
     let sql = format!(
-        "SELECT id, to_char(recorded_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'), actor_id, via, request_key, resource, transition, target_id, before, after \
+        "SELECT id, to_char(recorded_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'), actor_id, via, request_key, resource, transition, target_id::text, before, after \
          FROM {infra}.aip_audit {filter} ORDER BY id DESC LIMIT {}",
         limit + 1
     );
@@ -956,7 +1016,7 @@ async fn audit(config: Config, command: Audit) -> Result<Value, Value> {
                 "requestKey": row.get::<_, Option<String>>(4),
                 "resource": row.get::<_, String>(5),
                 "transition": row.get::<_, String>(6),
-                "targetId": row.get::<_, i64>(7),
+                "targetId": ({let id:String=row.get(7);id.parse::<i64>().map_or_else(|_|json!(id),|id|json!(id))}),
                 "before": row.get::<_, Value>(8),
                 "after": row.get::<_, Value>(9),
             })
@@ -1064,8 +1124,21 @@ async fn principal(config: Config, command: Principal) -> Result<Value, Value> {
         let managed = facts["actorMode"] == "principal";
         let count=match command {
             Principal::Bind{subject,actor,not_before}=>{
-                if subject.is_empty()||subject.len()>256||actor<=0||not_before<0{return Err(error("BAD_PRINCIPAL","subject·actor·not-before 값 오류"));}
-                if managed {
+                if subject.is_empty()||subject.len()>256||not_before<0{return Err(error("BAD_PRINCIPAL","subject·actor·not-before 값 오류"));}
+                let actor_res=facts["actor"].as_str().unwrap_or("principal");
+                let actor=if spike_v2_read::id_wire::id_kind(&facts,actor_res)=="uuid" {
+                    let id=spike_v2_read::id_wire::parse_uuid(&actor).map_err(|_|error("BAD_PRINCIPAL","actor는 정규 UUID 문자열이어야 함"))?.to_string();
+                    let present=tx.query_opt(&format!("SELECT 1 FROM {}.{} WHERE id=$1::text::uuid",config.schema,sqlgen::snake(actor_res)),&[&id]).await.map_err(|_|error("BAD_PRINCIPAL","actor resource 조회 실패"))?;
+                    if present.is_none(){return Err(error("BAD_PRINCIPAL","actor resource 행이 없음"));}
+                    tx.query_one(&format!("INSERT INTO {}.aip_actor_identities(resource_id) VALUES($1::text::uuid) ON CONFLICT(resource_id) DO UPDATE SET resource_id=EXCLUDED.resource_id RETURNING id",config.schema),&[&id]).await.map_err(|_|error("BAD_PRINCIPAL","UUID 신원 연결 실패"))?.get::<_,i64>(0)
+                } else {spike_v2_read::id_wire::parse_id(&json!(actor),IdWire::DecimalString).map_err(|_|error("BAD_PRINCIPAL","actor 숫자 Id 형식 오류"))?};
+                if actor<=0{return Err(error("BAD_PRINCIPAL","actor 숫자 Id는 양수여야 함"));}
+                let external_numeric=!managed&&!facts["externalStorage"].is_null()&&spike_v2_read::id_wire::id_kind(&facts,actor_res)!="uuid";
+                if external_numeric {
+                    let present=tx.query_opt(&format!("SELECT 1 FROM {}.{} WHERE id=$1",config.schema,sqlgen::snake(actor_res)),&[&actor]).await.map_err(|_|error("BAD_PRINCIPAL","actor resource 조회 실패"))?;
+                    if present.is_none(){return Err(error("BAD_PRINCIPAL","actor resource 행이 없음"));}
+                }
+                if managed||external_numeric {
                     if config.wire.id_wire() == IdWire::SafeNumber && actor > spike_v2_read::id_wire::MAX_SAFE_ID {
                         return Err(error("BAD_PRINCIPAL", "safe wire의 actor 안전 정수 상한 초과"));
                     }
@@ -1106,7 +1179,10 @@ fn require_built_features(config: &Config) -> Result<(), Value> {
 
 async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
     require_built_features(&config)?;
-    let facts = load(file, false)?.output.execution;
+    let mut facts = load(file, false)?.output.execution;
+    if let Some(mapping) = external_mapping(&config)? {
+        facts = aip_migrate::external::deployment_facts(&database_url(&config)?, &config.schema, &facts, &mapping).await?;
+    }
     let mut infrastructure = infrastructure::build(&config)?;
     let mut built =
         triggers::build(&config.schedules, &config.webhooks, &config.outbox_handlers, &config.auth.issuer, &|name| std::env::var(name).ok())
@@ -1151,7 +1227,8 @@ async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
     let auth = Arc::new(
         aip_auth::AuthenticatorImpl::new_explained(config.auth, db_url.clone(), config.schema)
             .await
-            .map_err(|failure| error("AUTH_CONFIG", &format!("인증 설정 오류: {}", failure.reason)))?,
+            .map_err(|failure| error("AUTH_CONFIG", &format!("인증 설정 오류: {}", failure.reason)))?
+            .with_resource_actor(&facts),
     );
     let enable_writes = config.workers.as_ref().is_some_and(|w| w.enable_writes);
     let enable_file_uploads = config.workers.as_ref().is_some_and(|w| w.enable_file_uploads);
@@ -1797,5 +1874,23 @@ mod audit_query_tests {
         {
             assert!(!looks_like_rfc3339(bad), "{bad}");
         }
+    }
+}
+
+fn external_mapping(config: &Config) -> Result<Option<spike_v2_read::external::Mapping>, Value> {
+    config
+        .external_mapping
+        .as_ref()
+        .map(|path| {
+            let src = read_bounded(path, SOURCE_BYTES, "EXTERNAL_MAPPING_IO")?;
+            serde_json::from_str(&src).map_err(|e| json_error("EXTERNAL_MAPPING", "매핑 JSON 형식 오류", &e))
+        })
+        .transpose()
+}
+fn reject_external_ddl(config: &Config) -> Result<(), Value> {
+    if config.external_mapping.is_some() {
+        Err(error("EXTERNAL_DDL_FORBIDDEN", "외부 업무 테이블에 AIP DDL을 실행하지 않음; adopt-external을 사용"))
+    } else {
+        Ok(())
     }
 }

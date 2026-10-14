@@ -106,6 +106,7 @@ enum CacheDecision {
 }
 
 pub struct AuthenticatorImpl {
+    actor_resource_sql: Option<String>,
     config: Config,
     db_url: String,
     schema: String,
@@ -240,6 +241,22 @@ fn unavailable(reason: &'static str) -> ConfigFailure {
 }
 
 impl AuthenticatorImpl {
+    /// Configure from checked server facts, never from a request. Infrastructure handles stay numeric.
+    pub fn with_resource_actor(mut self, facts: &serde_json::Value) -> Self {
+        let actor = facts["actor"].as_str().unwrap_or("principal");
+        let uuid = spike_v2_read::id_wire::id_kind(facts, actor) == "uuid";
+        if uuid || (!facts["externalStorage"].is_null() && facts["actorMode"] != "principal") {
+            let table = spike_v2_read::sqlgen::snake(actor);
+            let lookup = if uuid {
+                format!("SELECT i.resource_id FROM \"{}\".aip_actor_identities i WHERE i.id=p.actor_id", self.schema)
+            } else {
+                "SELECT p.actor_id".into()
+            };
+            self.actor_resource_sql = Some(format!("SELECT a.id::text FROM \"{}\".{table} a WHERE a.id=({lookup})", self.schema));
+        }
+        self
+    }
+
     pub async fn new(config: Config, db_url: String, schema: String) -> Result<Self, AuthError> {
         Self::new_explained(config, db_url, schema).await.map_err(|failure| failure.kind)
     }
@@ -294,6 +311,7 @@ impl AuthenticatorImpl {
         let now = Instant::now();
         let config_for_stamp = config.jwks.clone();
         Ok(Self {
+            actor_resource_sql: None,
             config,
             db_url,
             schema,
@@ -462,7 +480,8 @@ impl AuthenticatorImpl {
         let claims = self.verify_token(token).await?;
         let lookup = self.lookup_connection(true).await?;
         let db = lookup.client();
-        let sql = format!("SELECT actor_id, enabled, min_iat FROM \"{}\".aip_principals WHERE issuer=$1 AND subject=$2", self.schema);
+        let extra = self.actor_resource_sql.as_ref().map_or(String::new(), |sql| format!(", ({sql})"));
+        let sql = format!("SELECT actor_id, enabled, min_iat{extra} FROM \"{}\".aip_principals p WHERE issuer=$1 AND subject=$2", self.schema);
         let row = tokio::time::timeout(DB_TIMEOUT, db.query_opt(&sql, &[&claims.issuer, &claims.subject]))
             .await
             .map_err(|_| AuthError::Unavailable)?
@@ -482,10 +501,20 @@ impl AuthenticatorImpl {
             issued_at: claims.issued_at,
             min_iat,
         };
-        spike_v6_transport::auth::Session::new_durable(grant, claims.expires_at).map_err(|error| match error {
-            spike_v6_transport::auth::AuthError::Expired => AuthError::Expired,
-            _ => AuthError::Invalid,
-        })
+        let public_id = if self.actor_resource_sql.is_some() {
+            Some(row.try_get::<_, Option<String>>(3).map_err(|_| AuthError::Unavailable)?.ok_or(AuthError::Invalid)?)
+        } else {
+            None
+        };
+        spike_v6_transport::auth::Session::new_durable(grant, claims.expires_at)
+            .map(|mut session| {
+                session.actor_resource_id = public_id;
+                session
+            })
+            .map_err(|error| match error {
+                spike_v6_transport::auth::AuthError::Expired => AuthError::Expired,
+                _ => AuthError::Invalid,
+            })
     }
 
     pub async fn verify_durable_principal(&self, grant: &spike_v6_transport::auth::DurablePrincipal) -> Result<(), AuthError> {
@@ -501,8 +530,9 @@ impl AuthenticatorImpl {
         }
         let lookup = self.lookup_connection(false).await?;
         let db = lookup.client();
+        let extra = self.actor_resource_sql.as_ref().map_or(String::new(), |sql| format!(",({sql})"));
         let sql = format!(
-            "SELECT actor_id, enabled, min_iat, floor(extract(epoch FROM clock_timestamp()))::bigint FROM \"{}\".aip_principals WHERE issuer=$1 AND subject=$2",
+            "SELECT actor_id, enabled, min_iat, floor(extract(epoch FROM clock_timestamp()))::bigint{extra} FROM \"{}\".aip_principals p WHERE issuer=$1 AND subject=$2",
             self.schema
         );
         let row = tokio::time::timeout(DB_TIMEOUT, db.query_opt(&sql, &[&grant.issuer, &grant.subject]))
@@ -515,6 +545,9 @@ impl AuthenticatorImpl {
         let enabled: bool = row.try_get(1).map_err(|_| AuthError::Unavailable)?;
         let min_iat: i64 = row.try_get(2).map_err(|_| AuthError::Unavailable)?;
         let now: i64 = row.try_get(3).map_err(|_| AuthError::Unavailable)?;
+        if self.actor_resource_sql.is_some() && row.try_get::<_, Option<String>>(4).map_err(|_| AuthError::Unavailable)?.is_none() {
+            return Err(AuthError::Invalid);
+        }
         if !enabled || actor_id != grant.actor_id || min_iat != grant.min_iat || grant.issued_at < min_iat || grant.issued_at > now {
             return Err(AuthError::Invalid);
         }

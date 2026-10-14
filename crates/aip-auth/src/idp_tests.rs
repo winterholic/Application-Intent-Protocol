@@ -110,6 +110,7 @@ impl Idp {
         let document = read_jwks(&config.jwks, &http).await.expect("initial JWKS fetch");
         let keys = parse_jwks(&document).expect("initial JWKS parses");
         AuthenticatorImpl {
+            actor_resource_sql: None,
             config,
             db_url: "host=unused".into(),
             schema: "aip_app".into(),
@@ -249,6 +250,7 @@ async fn a_known_key_is_still_served_for_a_while_when_the_idp_is_down_after_the_
 async fn file_auth(path: &std::path::Path, document: &[u8]) -> AuthenticatorImpl {
     let keys = parse_jwks(document).expect("initial JWKS parses");
     AuthenticatorImpl {
+        actor_resource_sql: None,
         config: Config { issuer: ISSUER.into(), audience: AUDIENCE.into(), jwks: JwksSource::File { path: path.to_owned() } },
         db_url: "host=unused".into(),
         schema: "aip_app".into(),

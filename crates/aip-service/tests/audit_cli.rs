@@ -76,7 +76,8 @@ async fn operator_reads_audit_rows_newest_first_with_filters_and_a_cursor() {
     assert_eq!((rows[0]["before"].clone(), rows[0]["after"].clone()), (json!({"name":"a"}), json!({"name":"b"})));
     assert!(rows[2]["requestKey"].is_null() && rows[2]["via"] == "extension", "an extension write has no request key: {all}");
 
-    let history = cli(&config, query(AuditQuery { resource: Some("Order".into()), target_id: Some(11), ..Default::default() })).await.unwrap();
+    let history =
+        cli(&config, query(AuditQuery { resource: Some("Order".into()), target_id: Some("11".into()), ..Default::default() })).await.unwrap();
     let transitions: Vec<_> = history["audit"].as_array().unwrap().iter().map(|r| (r["via"].clone(), r["after"].clone())).collect();
     assert_eq!(transitions, vec![(json!("job"), json!({"paid":false})), (json!("apply"), json!({"paid":true}))], "{history}");
 
