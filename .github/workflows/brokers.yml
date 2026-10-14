@@ -81,7 +81,7 @@ jobs:
       - name: Install native build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake libssl-dev pkg-config postgresql-client
+          sudo apt-get install -y cmake libssl-dev libcurl4-openssl-dev libsasl2-dev pkg-config postgresql-client
           rustup update stable
           rustup default stable
       - name: Create Kafka test topics

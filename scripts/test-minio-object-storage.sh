@@ -1,24 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if ! command -v docker >/dev/null 2>&1; then
-  echo "docker is required for the MinIO object-storage integration test" >&2
+if ! command -v minio >/dev/null 2>&1 || ! command -v mc >/dev/null 2>&1; then
+  echo "the pinned MinIO server and client binaries are required; install them from the versions in .github/workflows/object-storage.yml" >&2
   exit 2
 fi
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 task_dir="$(mktemp -d)"
-network="aip-minio-objects-$$"
-container="aip-minio-objects-$$"
 port="${AIP_MINIO_TEST_PORT:-9000}"
+server_pid=""
 cleanup() {
-  docker rm -f "$container" >/dev/null 2>&1 || true
-  docker network rm "$network" >/dev/null 2>&1 || true
+  if [[ -n "$server_pid" ]]; then
+    kill "$server_pid" >/dev/null 2>&1 || true
+    wait "$server_pid" >/dev/null 2>&1 || true
+  fi
   rm -rf "$task_dir"
 }
 trap cleanup EXIT
 
-mkdir -p "$task_dir/minio-certs" "$task_dir/mc-config/certs/CAs"
+mkdir -p "$task_dir/minio-certs" "$task_dir/mc-config/certs/CAs" "$task_dir/data"
 cat >"$task_dir/ca.cnf" <<'EOF'
 [req]
 distinguished_name=dn
@@ -54,13 +55,11 @@ openssl x509 -req -in "$task_dir/server.csr" -CA "$task_dir/ca.pem" -CAkey "$tas
 cp "$task_dir/ca.pem" "$task_dir/mc-config/certs/CAs/test-ca.pem"
 chmod 644 "$task_dir/minio-certs/private.key" "$task_dir/minio-certs/public.crt" "$task_dir/ca.pem"
 
-docker network create "$network" >/dev/null
-docker run --detach --name "$container" --network "$network" --network-alias minio \
-  --publish "127.0.0.1:${port}:9000" \
-  --env MINIO_ROOT_USER=aip-test-access \
-  --env MINIO_ROOT_PASSWORD=aip-test-secret-please-rotate \
-  --volume "$task_dir/minio-certs:/root/.minio/certs:ro" \
-  quay.io/minio/minio:RELEASE.2025-09-06T17-38-46Z server /data --console-address :9001 >/dev/null
+MINIO_ROOT_USER=aip-test-access \
+MINIO_ROOT_PASSWORD=aip-test-secret-please-rotate \
+  minio server "$task_dir/data" --address "127.0.0.1:${port}" --certs-dir "$task_dir/minio-certs" \
+  >"$task_dir/minio.log" 2>&1 &
+server_pid=$!
 
 ready=false
 for _ in $(seq 1 60); do
@@ -71,21 +70,14 @@ for _ in $(seq 1 60); do
   sleep 1
 done
 if [[ "$ready" != true ]]; then
-  docker logs "$container" >&2
+  cat "$task_dir/minio.log" >&2
   echo "MinIO did not become ready" >&2
   exit 1
 fi
 
-docker run --rm --network "$network" \
-  --env MC_CONFIG_DIR=/root/.mc \
-  --volume "$task_dir/mc-config:/root/.mc" \
-  quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z \
-  alias set aip-test https://minio:9000 aip-test-access aip-test-secret-please-rotate >/dev/null
-docker run --rm --network "$network" \
-  --env MC_CONFIG_DIR=/root/.mc \
-  --volume "$task_dir/mc-config:/root/.mc" \
-  quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z \
-  mb aip-test/object-test-bucket >/dev/null
+cp "$task_dir/ca.pem" "$task_dir/mc-config/certs/CAs/test-ca.pem"
+MC_CONFIG_DIR="$task_dir/mc-config" mc alias set aip-test "https://localhost:${port}" aip-test-access aip-test-secret-please-rotate >/dev/null
+MC_CONFIG_DIR="$task_dir/mc-config" mc mb aip-test/object-test-bucket >/dev/null
 
 cd "$repo_root"
 AIP_MINIO_ENDPOINT="https://localhost:${port}" \
