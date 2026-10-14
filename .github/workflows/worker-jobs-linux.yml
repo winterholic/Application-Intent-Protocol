@@ -1,0 +1,79 @@
+name: Linux worker jobs
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/worker-jobs-linux.yml'
+      - 'crates/**'
+      - 'product/**'
+      - 'spikes/spike-v4-worker/**'
+      - 'spikes/spike-v6-transport/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: worker-jobs-linux-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  worker-jobs:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: runner
+          POSTGRES_DB: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - '127.0.0.1:5432:5432'
+        options: >-
+          --health-cmd "pg_isready -U runner -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '26'
+      - name: Install PostgreSQL client and Bubblewrap
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client bubblewrap apparmor
+          rustup update stable
+          rustup default stable
+      - name: Configure scoped Bubblewrap user namespace profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -r /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]] && [[ $(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns) == 1 ]]; then
+            sandbox_bin="$RUNNER_TEMP/aip-ci-bwrap"
+            mkdir -p "$sandbox_bin"
+            cp "$(command -v bwrap)" "$sandbox_bin/bwrap"
+            sudo tee /etc/apparmor.d/aip-ci-bwrap >/dev/null <<EOF
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile aip-ci-bwrap "$sandbox_bin/bwrap" flags=(unconfined) {
+            userns,
+          }
+          EOF
+            sudo apparmor_parser -r /etc/apparmor.d/aip-ci-bwrap
+            echo "$sandbox_bin" >> "$GITHUB_PATH"
+          fi
+      - name: Install Node SDK test dependencies
+        run: npm ci --prefix spikes/spike-0-ts --ignore-scripts --no-audit --no-fund
+      - name: Build the product CLI
+        run: cargo build -p aip-cli --locked
+      - name: Prove Linux worker sandbox boundaries with Bubblewrap
+        run: AIP_TEST_BWRAP=1 cargo test --manifest-path spikes/spike-v4-worker/Cargo.toml --lib isolation::tests --locked --target-dir target
+      - name: Run durable worker, retry, schedule, webhook and outbox jobs
+        run: cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --locked --target-dir target --test job_retry --test triggers --test outbox
+      - name: Run installed product SDK smoke with Node and Python workers
+        run: node --test product/tests/service-smoke.test.mjs
