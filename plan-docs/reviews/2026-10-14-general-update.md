@@ -30,3 +30,14 @@ values는 비어 있지 않은 객체이며 patch allowlist의 부분집합이�
 - 제품 포팅 1개: Python --lang 미지원 실패 뒤 구현. 원본 notes 복사본에 version/patch/expect 추가. 설치 @aip/sdk strict tsc 양성·음성, JWT 실제 서비스, 전체/부분/null·거부·conflict·멱등 재생·응답 유실 복구·계약 불일치·Python 생성 helper 통과. DB version/outbox는 `4|4`.
 - 마지막 broad regression/rebase/push 전 checkpoint. 최신 원격에는 검증 복구·rate-limit 후속 변경이 들어와 있으므로 commit 뒤 `git pull --rebase origin main`으로 합친 뒤 전체 검증한다. UUID 작업은 아직 원격 main에 없는 상태였음(조회 시점).
 - 지원 한계: compose parameter 입력 슬롯은 확장하지 않는다(bundle.apply 사용). expect Ref/field read 가림 필드는 비교 금지. Python 생성은 공개 apply TypedDict/helper 범위. 실제 운영 Memoir DB·worker sandbox 경로는 이 기능 시험의 대상이 아니다.
+
+## 로컬 회귀 기록
+
+- V1 134, V2 99, V3 30, V5 41 테스트: 실패 0. 각 manifest의 `cargo test --locked --target-dir target`을 실행했다.
+- workspace 382 테스트(기존 ignored 4, macOS worker operation 1개는 환경 때문에 제외), PoC CLI 106 테스트(같은 worker operation 제외): 실패 0. 제외 없이 `bash tools/verify.sh`를 먼저 실행했고 해당 worker 기동에서 멈췄다. 직접 `sandbox-exec`도 exit 71 `sandbox_apply: Operation not permitted`라 같은 최신 main의 환경 제약이다. 런타임 격리는 변경하지 않았다.
+- V6의 worker 없는 HTTP/전이/원자 묶음/Id/오류 코드 테스트 14개: 실패 0. audit의 worker 포함 통합은 같은 sandbox probe 실패이며, 새 CRUD 시험에서는 worker 없는 실제 PG 감사 before/after를 직접 확인했다.
+- 정본 verify.sh의 Node 목록(새 포팅 포함) 125개, Python 24개: 실패 0. npm의 기존 root-owned 캐시 대신 `/tmp` 전용 cache를 쓰는 임시 npm wrapper로 실행했다(제품 코드·HOME 권한은 변경하지 않음).
+- PoC와 제품 CLI는 같은 target binary를 쓰므로 순차 실행해야 한다. 처음 겹친 실행의 `RUNTIME_FEATURE_DISABLED`를 확인하고 PoC를 순차 재실행해 위 결과를 얻었다. Rust 통합 harness가 서버 주소를 주는 Node fixture들은 직접 wildcard로 실행할 목록이 아니므로 정본 목록으로 재실행했다.
+- root verify의 fmt/clippy 관문은 통과했다. 추가 V5 lib clippy 통과. V1 단독 clippy는 기존 hmap.rs/enrich.rs 경고 2개, V3 단독은 기존 needless_borrow 경고 1개가 있어 별도 기록한다(새 update 함수의 인자 수 경고는 기존 judge와 같은 국소 allow로 정리). V3는 기존 경고만 제외한 `-D warnings -A clippy::needless_borrow`로 통과.
+- 생성 문법 카드 21개·wire registry 6개 테스트 통과. plan-docs 검사기는 `/tmp` worktree에서 외부 AriAri 상대 링크 12개를 못 찾으므로 원래 폴더 깊이·읽기 전용 원본 링크를 복원한 임시 문서 복사본에서 다시 검사했다.
+- 원격에 후속 Kafka 진단 커밋이 들어와 있으므로 마지막 rebase 후 기능 시험을 다시 실행하고 요청한 `git push origin HEAD:main`으로 올린다. 전체 Linux CI는 push된 commit의 결과를 별도로 확인한다.

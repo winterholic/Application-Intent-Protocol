@@ -228,7 +228,7 @@
 | 호출 측 SDK | 부분(이번에 추가) | 이전에는 TypeScript `@aip/sdk`뿐이었다. `product/python/aip_sdk`를 추가했다. 계약 지문 고정, 쓰기 복구, 세션 교체, operation, job·file·event를 제공한다. 공개 apply 외 생성 정적 타입과 read 캐시, SSE/WebSocket helper, wheel 배포는 없다 |
 | 서버 bridge 어댑터 | 부분 | `product/providers/google_storage.py`(GCS ADC) 하나 |
 
-의존성 패키지화 작업자가 "Python SDK 패키지가 없다"고 보고한 것은 호출 측 SDK를 가리킨다. 서버 확장 경로는 처음부터 있었다. 2026-10-14 `aip service gen --lang python`의 공개 apply TypedDict/helper를 추가했다. 전체 read/operation/job 정적 타입과, 작업자 A의 패키지 구조에 맞춘 wheel 배포다.
+의존성 패키지화 작업자가 "Python SDK 패키지가 없다"고 보고한 것은 호출 측 SDK를 가리킨다. 서버 확장 경로는 처음부터 있었다. 2026-10-14 `aip service gen --lang python`의 공개 apply TypedDict/helper를 추가했다. 다음 단계는 전체 read/operation/job 정적 타입과 작업자 A의 패키지 구조에 맞춘 wheel 배포다.
 
 ## 이번 회차 설계 선택의 근거
 

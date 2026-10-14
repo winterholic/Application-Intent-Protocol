@@ -435,6 +435,7 @@ async fn judge(
     Ok(j)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn update(
     tx: &Transaction<'_>,
     facts: &Value,

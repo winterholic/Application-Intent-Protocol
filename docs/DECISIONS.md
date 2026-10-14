@@ -45,7 +45,6 @@
 | D-A28 | `/read`, `/apply`, `/status`는 `x-aip-contract`가 필수다. 헤더 누락은 `WIRE.CONTRACT_REQUIRED`, 다른 지문은 `WIRE.CONTRACT_MISMATCH`다. 인증을 먼저 확인하고 업무 데이터 실행 전에 계약을 검사한다. `/capabilities`에서 지문을 찾을 수 있다 | 2026-10-13 승인된 CD-13. 구현·회귀 테스트: `spikes/spike-v6-transport/tests/v13_headers.rs` |
 | D-A29 | JSON 실패 본문은 헤더 `x-request-id`와 같은 `requestId`, 코드 레지스트리의 `retry`(`never`, `later`, `check-first`, `reauthenticate`)를 포함한다. SDK 실패 객체와 미확정 쓰기 오류가 이 정보를 보존한다. 성공 본문은 그대로다. 쓰기 복구는 같은 멱등 키를 유지하며 `retry`만으로 커밋 여부를 판단하지 않는다 | 2026-10-13 승인된 CD-2. 구현·회귀 테스트: `spikes/spike-v6-transport/tests/error_body.rs`, `client/request-id.test.ts`, `product/tests/python_sdk_test.py` |
 | D-A30 | `aip contract`는 compact JSON이 기본이고 `--pretty`로 들여쓴다. 내보낸 클라이언트 계약의 공통 오류는 최상위 `errors` 배열에 한 번 저장하며 query·command·subscription의 `errors`는 이 배열의 0부터 시작하는 인덱스다. 코드와 선택적 reason을 함께 구분한다. 의미 분석·호환성 비교·TS 생성용 내부 계약은 확장된 오류 정보를 유지한다 | 2026-10-13 승인된 CD-7. CLI 검증: `crates/aip-cli/tests/contract_golden.rs` |
-
 | D-A-UPDATE | 권장 쓰기 방식과 함께 실제 앱의 일반 CRUD·부분 수정도 표현·실행한다. 입력 필드 허용 목록·기존 값 타입 검증·행 인가·누락/null 구분·동시성 선택·effect/notify와 같은 transaction·멱등 복구·TS/Python 생성 타입·계약 비교를 유지하며 기존 전이 문법을 깨지 않는다 | 사용자 2026-10-14 일반 수정 설계·구현 지시. [설계 관문·검증 기록](../plan-docs/reviews/2026-10-14-general-update.md), [제품 계약](../product/GENERAL-UPDATE.md) |
 
 ## Proposed
@@ -77,8 +76,7 @@
 | D-P19 | 스키마 진화는 배포된 Core IR과 새 IR의 의미 차이로 계산한다. 데이터를 잃을 수 있는 변경(삭제, 이름 변경, 호환 안 되는 타입 변경)은 소스에 의도를 선언해야 한다(`was`, `removed field`, `removed entity`). 조임은 expand/contract로 배포를 나눈다 | 철학 §1(유지보수 부담), 2026-10-02 구현 |
 | D-P20 | 계약 호환성은 IR 비교로 판정(`aip diff`), 깨짐이면 실패 종료 | 03 §10, 2026-10-02 구현 |
 | D-P12 | 그 밖에 09 검증 로그의 명세 변경 SC-1~SC-5, OI 종결 결정(approval, job, versioned, webhook, rule 의미 포함) | 09, handoff §5 |
-
-| D-P-UPDATE | 일반 수정의 구현 선택: 기존 전이에 patch 허용 필드 목록과 expect scalar 조건을 추가한다. 타입·range는 fields에서 얻고 /apply values·expect는 서버 allowlist 안에서만 실행한다. version 조건+서버 증감을 권장하며 조건부 갱신과 expect 없는 마지막 쓰기 방식도 허용한다. patch/expect 입력이 없는 기존 전이 facts·생성 계약은 유지한다. compose 입력 슬롯은 확장하지 않고 원자 조합은 bundle을 사용한다 | D-A-UPDATE 구현, [설계·의미](../product/GENERAL-UPDATE.md). 최종 작성 언어·쓰기 조합의 Open을 닫지 않음 | 2026-10-14 |
+| D-P-UPDATE | 일반 수정의 구현 선택: 기존 전이에 patch 허용 필드 목록과 expect scalar 조건을 추가한다. 타입·range는 fields에서 얻고 /apply values·expect는 서버 allowlist 안에서만 실행한다. version 조건+서버 증감을 권장하며 조건부 갱신과 expect 없는 마지막 쓰기 방식도 허용한다. patch/expect 입력이 없는 기존 전이 facts·생성 계약은 유지한다. compose 입력 슬롯은 확장하지 않고 원자 조합은 bundle을 사용한다 | 2026-10-14 D-A-UPDATE 구현, [설계·의미](../product/GENERAL-UPDATE.md). 최종 작성 언어·쓰기 조합의 Open을 닫지 않음 |
 
 ## Open
 
