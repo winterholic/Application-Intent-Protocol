@@ -236,7 +236,7 @@ impl<'a> Ctx<'a> {
         }
         self.diags.extend(validate_policy_expansion(spec));
         match &spec.actor {
-            Some((a, _)) if a == "principal" && spec.resources.is_empty() && !spec.operations.is_empty() => self.actor = Some(a.clone()),
+            Some((a, _)) if a == "principal" && !self.res.contains_key("principal") => self.actor = Some(a.clone()),
             Some((a, sp)) if !self.res.contains_key(a.as_str()) => self.d("DEF.UNKNOWN_SYMBOL", format!("actor 대상 resource `{a}` 없음"), *sp),
             Some((a, _)) => self.actor = Some(a.clone()),
             None => self.d("DEF.MISSING_ITEM", "actor 선언 필요", Span::default()),
@@ -244,6 +244,9 @@ impl<'a> Ctx<'a> {
     }
 
     fn type_of(&mut self, owner: Option<&str>, t: &TypeRef) -> Option<TT> {
+        if t.database_default && owner.is_none() {
+            self.d("DEF.TYPE_MISMATCH", "default database는 resource 필드에만 선언한다", t.span);
+        }
         let base = if t.id_of {
             if self.res.contains_key(t.name.as_str()) || (t.name == "principal" && self.principal_actor()) {
                 Ty::Id(t.name.clone())
@@ -253,7 +256,7 @@ impl<'a> Ctx<'a> {
             }
         } else {
             match t.name.as_str() {
-                "Id" => match owner {
+                "Id" | "Uuid" => match owner {
                     Some(o) => Ty::Id(o.to_string()),
                     None => {
                         self.d("DEF.UNKNOWN_TYPE", "resource 밖에서 맨 `Id`는 대상이 없음. `X.Id`를 쓴다", t.span);
@@ -305,7 +308,7 @@ impl<'a> Ctx<'a> {
             Ty::Id(t.name.clone())
         } else {
             match t.name.as_str() {
-                "Id" => Ty::Id(r.to_string()),
+                "Id" | "Uuid" => Ty::Id(r.to_string()),
                 "Text" => Ty::Text,
                 "Email" => Ty::Email,
                 "Url" => Ty::Url,
@@ -349,7 +352,7 @@ impl<'a> Ctx<'a> {
     }
 
     fn principal_actor(&self) -> bool {
-        self.actor.as_deref() == Some("principal") && self.spec.resources.is_empty()
+        self.actor.as_deref() == Some("principal") && !self.res.contains_key("principal")
     }
 
     fn path(&self, segs: &[String], sp: Span, sc: &Scope) -> Result<(Value, TT), Diag> {
@@ -761,6 +764,9 @@ impl<'a> Ctx<'a> {
 
     fn resource(&mut self, r: &Resource, limits: &Map<String, Value>) -> Value {
         let mut o = Map::new();
+        if r.fields.iter().any(|f| f.name == "id" && f.ty.name == "Uuid") {
+            o.insert("idKind".into(), json!("uuid"));
+        }
         // 같은 resource 안 이름 충돌은 마지막 선언이 앞을 덮어쓰지 않게 거부한다(F09).
         let mut names: BTreeSet<String> = r.fields.iter().map(|f| f.name.clone()).collect();
         for (n, sp) in r.aggregates.iter().map(|a| (&a.name, a.span)) {
@@ -816,6 +822,9 @@ impl<'a> Ctx<'a> {
                 self.d("DEF.DUPLICATE", format!("필드 `{}` 중복", f.name), f.span);
             }
             self.reserved_name(&f.name, f.span);
+            if f.ty.name == "Uuid" && f.name != "id" {
+                self.d("DEF.TYPE_MISMATCH", "Uuid는 기본키 id에만 선언한다. 참조 필드는 resource 이름으로 선언한다", f.span);
+            }
             if f.ty.id_of {
                 // 창시자 결정(2026-10-13): 객체 그래프 탐색이 되므로 "X에 속한다"의 철자는 참조 `X` 하나만 둔다.
                 // 기본 키도 같은 원칙이다(같은 뜻에 두 표기 금지): `id: Note.Id`는 맨 `Id`와 같은 열이라 철자만 둘이 된다.
@@ -835,6 +844,9 @@ impl<'a> Ctx<'a> {
                     }
                 }
                 fields.insert(f.name.clone(), json!({ "ty": tt.show(), "range": f.ty.range.map(|(a, b)| json!([a, b])) }));
+                if f.ty.database_default {
+                    fields.get_mut(&f.name).unwrap()["databaseDefault"] = json!(true);
+                }
             }
         }
         // 비공개 관계 테이블은 id 없이도 exists의 원본이 될 수 있다.
@@ -1494,7 +1506,7 @@ impl<'a> Ctx<'a> {
                 "in" => matches!(tt.ty, Ty::Text | Ty::Email | Ty::Enum(_) | Ty::Id(_) | Ty::Ref(_)),
                 // isNull: bool 값. 항상 값이 있는 필드에는 의미가 없으므로 nullable 필드에만 연다.
                 "isNull" => tt.nullable,
-                "gte" | "lte" | "gt" | "lt" => matches!(tt.ty, Ty::Time | Ty::Date | Ty::Int | Ty::Decimal(_, _)),
+                "gte" | "lte" | "gt" | "lt" => matches!(tt.ty, Ty::Time | Ty::Date | Ty::Int | Ty::Decimal(_, _) | Ty::Id(_)),
                 "prefix" => tt.ty == Ty::Text,
                 // contains: 리터럴 부분일치(Text만). 대소문자 무시(icontains)는 DB collation 의존이라 보류.
                 "contains" => tt.ty == Ty::Text,
@@ -1841,7 +1853,7 @@ impl<'a> Ctx<'a> {
 
 /// 호출자나 효과가 반드시 값을 줘야 하는 필드. id는 서버가 만든다.
 fn required_fields(r: &Resource) -> Vec<String> {
-    r.fields.iter().filter(|f| !f.ty.nullable && f.name != "id").map(|f| f.name.clone()).collect()
+    r.fields.iter().filter(|f| !f.ty.nullable && f.name != "id" && !f.ty.database_default).map(|f| f.name.clone()).collect()
 }
 
 fn valid_message_queue(value: &str) -> bool {

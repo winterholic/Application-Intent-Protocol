@@ -262,7 +262,7 @@ impl Parser {
     pub fn type_ref(&mut self) -> R<TypeRef> {
         let span = self.span();
         let name = self.ident()?;
-        let mut t = TypeRef { name, id_of: false, nullable: false, range: None, decimal: None, span };
+        let mut t = TypeRef { database_default: false, name, id_of: false, nullable: false, range: None, decimal: None, span };
         if self.eat_sym(".") {
             self.expect_kw("Id")?;
             t.id_of = true;
@@ -287,6 +287,11 @@ impl Parser {
         }
         if self.eat_sym("?") {
             t.nullable = true;
+        }
+        if self.is_kw("default") {
+            self.next();
+            self.expect_kw("database")?;
+            t.database_default = true;
         }
         Ok(t)
     }

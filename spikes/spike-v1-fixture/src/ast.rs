@@ -20,6 +20,7 @@ pub struct EnumDecl {
 
 #[derive(Debug, Clone)]
 pub struct TypeRef {
+    pub database_default: bool,
     pub name: String,
     pub id_of: bool,
     pub nullable: bool,
