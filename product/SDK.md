@@ -47,7 +47,7 @@ CLI나 compiler 변경 뒤 service smoke·패키징 전에 위 `cargo build`를 
 
 ## 묶음(bundle)과 조합(compose)
 
-서버가 공개한 동작(`expose apply` 전이, `expose create`, `expose compose`)을 호출자가 골라 한 요청에 묶어 원자적으로 실행한다. 임의 필드 update나 delete는 열리지 않는다. 같은 `/apply` 경로를 쓰므로 멱등 키, 응답 유실 복구, `x-aip-contract` 지문 검사, 커밋 시점 `check`·불변식 재검사가 전이 하나와 같다. 전부 성공하거나 아무것도 바뀌지 않으며, 실패한 묶음은 멱등 결과를 남기지 않는다.
+서버가 공개한 동작(`expose apply` 전이, `expose create`, `expose compose`)을 호출자가 골라 한 요청에 묶어 원자적으로 실행한다. 일반 필드 수정은 전이에 명시한 patch 목록으로 열며 [일반·부분 수정](GENERAL-UPDATE.md)을 따른다. 선언 없는 update나 물리 delete는 열리지 않는다. 같은 `/apply` 경로를 쓰므로 멱등 키, 응답 유실 복구, `x-aip-contract` 지문 검사, 커밋 시점 `check`·불변식 재검사가 전이 하나와 같다. 전부 성공하거나 아무것도 바뀌지 않으며, 실패한 묶음은 멱등 결과를 남기지 않는다.
 
 ```ts
 const done = await client.bundle({ atomic: [
@@ -142,7 +142,7 @@ run = client.jobs.wait(job["id"])
 | 쓰기 복구 | 통신 실패·`WIRE.COMMIT_UNKNOWN`·`WIRE.INTERNAL`이면 같은 key·같은 본문으로 다시 보낸다. 재시도에서 실행 전 거부를 받으면 확정으로 보지 않고 `WriteUnsettled`를 던진다. 같은 key에 다른 본문은 `WIRE.IDEMPOTENCY_MISMATCH` |
 | 세션 교체 | `replace_session(token)`은 같은 principal일 때만 바꾸고 미확정 쓰기를 다시 확정한다. 다른 사용자면 `ScopeConflict` |
 | 관리 API | `jobs.enqueue/status/result/cancel/wait`, `files.put/get/delete`, `events.read/watch`. SSE·WebSocket helper는 없다 |
-| 타입 | 생성 binding 기반 정적 타입이 없다. 입력·출력 계약은 서버가 검사하고 오류 코드를 `AipError.code`로 돌려준다 |
+| 타입 | `service gen --lang python`의 공개 apply TypedDict·helper를 제공한다. 전체 읽기·operation·job 정적 타입은 없다. 입력·출력 계약은 서버가 검사하고 오류 코드를 `AipError.code`로 돌려준다 |
 | 캐시 | read 캐시가 없다 |
 
 설치는 `pip install ./product/python`이다(배포용 wheel·PyPI 게시는 아직 없음). 단위 검증은 `python3 -m unittest product.tests.python_sdk_test`, 실제 서비스 검증은 `node --test product/tests/service-smoke.test.mjs`다. smoke는 TypeScript 소비자가 커밋한 쓰기를 Python 소비자가 같은 key로 재생하는지까지 확인한다.

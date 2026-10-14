@@ -114,8 +114,8 @@ JSON 실패 본문은 `requestId`와 이 레지스트리의 `retry`를 싣는다
 
 `class` outcome, `retry` later
 
-- 원인: A concurrent change made this write lose (a serialization or version conflict). A write that depends on another row being absent runs in SERIALIZABLE and the server already retried it up to 3 times.
-- 수정: Read the current state and send the write again, with the same idempotency key.
+- 원인: A concurrent change made this write lose (a serialization or declared expect conflict). The whole transaction was rolled back. A write that depends on another row being absent runs in SERIALIZABLE and the server already retried it up to 3 times.
+- 수정: Read the current state. Retry an identical request with the same key; if values or expect change, use a new key. COMMIT_UNKNOWN always keeps the original key and body until settled.
 
 ### `WIRE.CIRCUIT_OPEN`
 

@@ -24,4 +24,9 @@ values는 비어 있지 않은 객체이며 patch allowlist의 부분집합이�
 ## 진행
 
 - 지정 문서·포팅 보고서·최근 work-history 확인. PostgreSQL 17.11 연결 확인.
-- 다음: 선언 parity/음성·실 PostgreSQL·SDK 타입 실패 테스트 → 구현 → 포팅 복사본·회귀 → rebase/push.
+- 선언 parity 3개: patch 미지원 실패를 관측한 뒤 구현. 다섯 형식 facts·digest 일치, 기본키·중복·고정 to 중복·hidden/Ref expect·repeat·compose 입력 누락 거부.
+- 실 PostgreSQL 통합 1개: apply values/expect 미지원 실패를 관측한 뒤 구현. 일반·부분·null·인가·타입/범위·Email/Date/Decimal·동시 충돌·effect/notify·check/bundle rollback 통과.
+- 생성 계약 1개: values 타입 누락 실패 뒤 구현. patch/expect 타입·range 변경 지문 민감도 확인.
+- 제품 포팅 1개: Python --lang 미지원 실패 뒤 구현. 원본 notes 복사본에 version/patch/expect 추가. 설치 @aip/sdk strict tsc 양성·음성, JWT 실제 서비스, 전체/부분/null·거부·conflict·멱등 재생·응답 유실 복구·계약 불일치·Python 생성 helper 통과. DB version/outbox는 `4|4`.
+- 마지막 broad regression/rebase/push 전 checkpoint. 최신 원격에는 검증 복구·rate-limit 후속 변경이 들어와 있으므로 commit 뒤 `git pull --rebase origin main`으로 합친 뒤 전체 검증한다. UUID 작업은 아직 원격 main에 없는 상태였음(조회 시점).
+- 지원 한계: compose parameter 입력 슬롯은 확장하지 않는다(bundle.apply 사용). expect Ref/field read 가림 필드는 비교 금지. Python 생성은 공개 apply TypedDict/helper 범위. 실제 운영 Memoir DB·worker sandbox 경로는 이 기능 시험의 대상이 아니다.

@@ -37,7 +37,7 @@
 
 | ID | 기능 | 타 프레임워크 대표 구현 | AIP 현재 | 근거·남은 갭 |
 |---|---|---|---|---|
-| A01 | CRUD | JPA Repository, Prisma/TypeORM, Django ORM, ActiveRecord | 부분 | read/create/공개 전이. 임의 필드 update·delete는 전이나 쓰기 확장으로 표현 |
+| A01 | CRUD | JPA Repository, Prisma/TypeORM, Django ORM, ActiveRecord | 부분 | read/create/공개 전이·patch 일반/부분 수정(expect 조건·version). 물리 delete 미지원. [수정 계약](../../product/GENERAL-UPDATE.md) |
 | A02 | 관계 조회 | JPA fetch join, Django `select_related`, Rails `includes` | 지원 | 노출 관계 traverse, 깊이·팬아웃 상한. 중첩 traverse는 거부 |
 | A03 | 조건·집계 | Criteria/QueryDSL, Django `annotate`, Rails `group` | 부분 | count/sum/min/max. avg·임의 산식은 확장 aggregate 결합 |
 | A04 | 검색·필터 | Spring Data Specification, django-filter, Ransack | 부분 | 노출 필터 연산자. 벡터 검색은 RAG. 전문 검색 계약은 제품에 없음(PoC tsvector) |
@@ -225,10 +225,10 @@
 | 서버 확장(예외 로직) | 지원 | `spikes/spike-v4-worker/workers/worker.py`가 `operation read`·쓰기 확장·durable job을 실행하고 `ctx.data`·`http`·`files`·`events`·`messages`·`jobs`를 Node와 같은 계약으로 제공. v4·v6 suite와 service smoke의 Python worker 실행 |
 | 정의 작성 | 지원 | 다섯 작성 형식 중 `.h.py`(host 블록)와 `.e.py`(정형 데이터). `spike-v1-fixture`의 형식 일치 테스트 |
 | 확장 작성 편의 | 부분 | worker가 주입하는 `ctx`에 타입 stub·설치형 모듈이 없다. 오류는 `except Exception as e: e.code`로 다룬다. JS도 같은 수준이다 |
-| 호출 측 SDK | 부분(이번에 추가) | 이전에는 TypeScript `@aip/sdk`뿐이었다. `product/python/aip_sdk`를 추가했다. 계약 지문 고정, 쓰기 복구, 세션 교체, operation, job·file·event를 제공한다. 생성 binding 기반 정적 타입과 read 캐시, SSE/WebSocket helper, wheel 배포는 없다 |
+| 호출 측 SDK | 부분(이번에 추가) | 이전에는 TypeScript `@aip/sdk`뿐이었다. `product/python/aip_sdk`를 추가했다. 계약 지문 고정, 쓰기 복구, 세션 교체, operation, job·file·event를 제공한다. 공개 apply 외 생성 정적 타입과 read 캐시, SSE/WebSocket helper, wheel 배포는 없다 |
 | 서버 bridge 어댑터 | 부분 | `product/providers/google_storage.py`(GCS ADC) 하나 |
 
-의존성 패키지화 작업자가 "Python SDK 패키지가 없다"고 보고한 것은 호출 측 SDK를 가리킨다. 서버 확장 경로는 처음부터 있었다. 다음 단계는 `aip service gen --lang python`으로 TypedDict binding을 생성해 정적 타입을 맞추는 것과, 작업자 A의 패키지 구조에 맞춘 wheel 배포다.
+의존성 패키지화 작업자가 "Python SDK 패키지가 없다"고 보고한 것은 호출 측 SDK를 가리킨다. 서버 확장 경로는 처음부터 있었다. 2026-10-14 `aip service gen --lang python`의 공개 apply TypedDict/helper를 추가했다. 전체 read/operation/job 정적 타입과, 작업자 A의 패키지 구조에 맞춘 wheel 배포다.
 
 ## 이번 회차 설계 선택의 근거
 
@@ -248,7 +248,7 @@
 |---|---|---|
 | B03 테넌트 격리, B09 감사, D08 retry 정책, E05 발신 webhook, F11 breaker, I02·I03 관측 | C. 범용 기능이지만 누락 | 반복성이 높아 내장 후보 |
 | H04 데이터 변경 push, E09 순서 보장 | D. 구조적 한계에 가까움 | 행 변경 감지와 가시성 재평가 비용, owner 단위 stream 구조와 충돌 |
-| A01 임의 update/delete, C08 다단계 승인 | B. 기존 동작 조합 | 전이·bulk·job 조합으로 표현. 반복 패턴이 확인되면 선언 후보 |
+| A01 일반 update/물리 delete, C08 다단계 승인 | B. 기존 동작 조합 | 2026-10-14 일반 수정은 patch/expect로 구현([계약](../../product/GENERAL-UPDATE.md)). 물리 delete는 미지원 |
 | F03 결제, F04·F05·F06 메일·SMS·push, G02·G03·G04 파일 처리 | E. 프로젝트별 확장이 적절 | provider·포맷이 다양함. `ctx.http`·`ctx.files`·`ctx.data` 경로로 처리 |
 | B06 API key, B07 위임 | C와 E 경계 | IdP 기능(client credentials, token exchange)으로 대체 가능한지 먼저 확인 |
 

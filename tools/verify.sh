@@ -27,6 +27,8 @@ cargo test -p aip-cli --features poc-runtime --locked
 for engine in spike-v1-fixture spike-v2-read spike-v3-write spike-v4-worker spike-v5-sdk spike-v6-transport; do
   cargo test --manifest-path "spikes/$engine/Cargo.toml" --locked --target-dir target
 done
+# The update smoke executes the product CLI; rebuild before its installed-SDK test.
+cargo build -p aip-cli --locked
 node --test \
   spikes/spike-v5-sdk/sdk/cache.test.ts \
   spikes/spike-v5-sdk/sdk/lifetime.test.ts \
@@ -44,6 +46,7 @@ node --test \
   spikes/spike-v6-transport/client/traverse-many.test.ts \
   spikes/spike-v6-transport/client/request-id.test.ts \
   spikes/spike-v6-transport/client/hardening.test.ts \
+  product/tests/general-update.test.mjs \
   product/tests/sdk-package.test.mjs \
   product/tests/package-boundaries.test.mjs \
   product/tests/google-storage-provider.test.mjs

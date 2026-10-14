@@ -2,6 +2,8 @@
 
 > 상태: 진행 중인 감사의 살아 있는 기록이다. 소유자가 직접 요청한 자기 프로젝트의 방어적 점검이며, 수치와 상태는 기록 시점 값이다. 앞선 점검은 [2026-10-07 패턴 커버리지·보안 점검](2026-10-07-pattern-security-audit.md)이고 이 문서는 그 뒤를 잇는다. 설계 결정이 필요한 항목은 [OPEN]으로 표시하고 임의로 정하지 않았다.
 
+2026-10-14 후속: 일반 수정은 선언한 patch 필드만 values에서 받으며 expect 조건·행 인가 뒤 transaction에서 실행한다. 기본키·모르는 필드·타입/범위·hidden/Ref expect를 거부한다. [일반 수정 계약](../../product/GENERAL-UPDATE.md), `tests/general_update.rs`, `product/tests/general-update.test.mjs`. 아래 표의 고정 to만 받는 설명은 감사 당시 기록이다.
+
 ## 1. 범위와 방법
 
 - 경로 구분: **제품 경로**는 `aip service`가 쓰는 `spikes/spike-v1~v7`과 `crates/aip-service·aip-auth·aip-execution·aip-migrate`다. **PoC 경로**는 `aip-cli --features poc-runtime`가 켜는 `crates/aip-runtime`과 `aip-pg`의 .aip 언어 실행기다. 같은 심각도라도 제품 경로를 먼저 고친다.

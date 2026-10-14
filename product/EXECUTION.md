@@ -1,5 +1,7 @@
 # 데이터 resource와 독립된 동기 operation
 
+일반 CRUD 수정은 별도 operation 구현 없이 [일반·부분 수정](GENERAL-UPDATE.md)의 공개 전이 `patch`로 처리한다. 아래 동기 operation은 표준 읽기·수정 밖의 계산을 위한 경로다.
+
 2026-10-10 resource 독립 동기 operation 회차의 기록이다. 아래 `operation read`와 SDK 호출은 현재 제품 경로의 동기 문법과 경계를 설명한다. durable `operation job`, 파일·이벤트·HTTP effect의 실제 계약은 [관리형 durable execution](MANAGED-EXECUTION.md)을 따른다. 기존 SQL 동기 경로는 그대로 유지된다.
 
 ## 선언과 호출

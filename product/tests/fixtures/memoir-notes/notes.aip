@@ -1,0 +1,56 @@
+enum NoteType { GENERAL, CODE, COMMAND, BOOKMARK, VIDEO }
+
+resource Member {
+  fields { id: Id }
+}
+actor Member
+
+resource Folder {
+  fields { id: Id; owner: Member; name: Text(1..100); deleted: Bool }
+  rows read when owner = actor
+  transition delete { allow owner = actor; from deleted = false; to deleted = true }
+  expose read {
+    select id, owner, name, deleted
+    sort id
+    budget { rows 100; depth 1; deadline 1s; cost 100 }
+  }
+  expose create { allow owner = actor and deleted = false; fields owner, name, deleted }
+  expose apply delete { target id; bulk maxRows 1 }
+}
+
+resource Note {
+  fields {
+    id: Id
+    owner: Member
+    folder: Folder?
+    noteType: NoteType
+    title: Text(1..200)?
+    content: Text?
+    sourceUrl: Url?
+    version: Int(0..1000000)
+    favorite: Bool
+    deleted: Bool
+  }
+  rows read when owner = actor
+  transition edit { allow owner = actor; from deleted = false; patch title, content; expect version; to version = version + 1; notify owner "note.edited" }
+  transition favorite { allow owner = actor; from favorite = false; to favorite = true }
+  transition unfavorite { allow owner = actor; from favorite = true; to favorite = false }
+  transition delete { allow owner = actor; from deleted = false; to deleted = true }
+  transition restore { allow owner = actor; from deleted = true; to deleted = false }
+  expose read {
+    select id, owner, folder, noteType, title, content, sourceUrl, version, favorite, deleted
+    filter noteType.eq, title.prefix
+    sort id
+    traverse folder { select id, name }
+    budget { rows 100; depth 2; deadline 1s; cost 300 }
+  }
+  expose create {
+    allow owner = actor and favorite = false and deleted = false
+    fields owner, folder, noteType, title, content, sourceUrl, version, favorite, deleted
+  }
+  expose apply edit { target id; bulk maxRows 1 }
+  expose apply favorite { target id; bulk maxRows 1 }
+  expose apply unfavorite { target id; bulk maxRows 1 }
+  expose apply delete { target id; bulk maxRows 1 }
+  expose apply restore { target id; bulk maxRows 1 }
+}

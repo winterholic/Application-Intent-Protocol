@@ -27,6 +27,8 @@ HTTP listener는 loopback에서 TLS reverse proxy 뒤에 둔다. 제품은 개�
 
 정의 변경 뒤 새 binding과 새 정의로 서버를 재시작한다.
 
+일반·부분 수정은 공개 전이의 `patch` 필드 목록과 `expect` 조건으로 선언한다. 기존 `/apply`·배포 fence·transaction을 공유한다. `service gen --lang python`은 같은 계약 지문의 Python TypedDict와 apply helper를 생성하며 기본은 기존 TypeScript다. [수정 선언과 호출](../../product/GENERAL-UPDATE.md)을 따른다.
+
 `principal revoke`는 연결을 비활성화하고 폐기 시각까지 발급한 JWT를 제외한다. 같은 actor 재활성화가 과거 토큰을 되살리지 않는다. 없는 신원의 폐기는 성공으로 보고하지 않는다. 현재 root CLI의 제품 테스트는 JWT 권한·재기동·live 정책 migration·폐기·원본 보존·설정 음성 대조와 실제 기존 서버의 멱등 결과 이관을 포함한다.
 
 ## resource 독립 실행 후속
