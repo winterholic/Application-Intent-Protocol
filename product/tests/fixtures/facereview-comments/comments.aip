@@ -1,0 +1,63 @@
+// FaceReview comments slice. PostgreSQL reconstruction, not a MySQL connector.
+actor User
+
+resource User {
+  fields { id: Uuid; name: Text }
+  rows read when true
+  expose read {
+    select id, name
+    budget { rows 100; depth 1; cost 1000; deadline 2s }
+  }
+}
+
+resource Video {
+  fields { id: Uuid; title: Text; is_deleted: Bool default database }
+  rows read when is_deleted = false
+  expose read {
+    select id, title
+    filter id.eq
+    sort id
+    budget { rows 100; depth 1; cost 1000; deadline 2s }
+  }
+}
+
+resource Comment {
+  fields {
+    id: Uuid
+    video: Video
+    user: User
+    content: Text(1..500)
+    is_modified: Bool default database
+    is_deleted: Bool default database
+    version: Int(0..1000000) default database
+    created_at: Time default database
+    updated_at: Time default database
+  }
+  rows read when is_deleted = false and video.is_deleted = false
+  transition edit {
+    allow user = actor
+    from is_deleted = false
+    patch content
+    expect version
+    to is_modified = true, version = version + 1, updated_at = now
+  }
+  transition delete {
+    allow user = actor
+    from is_deleted = false
+    to is_deleted = true, version = version + 1, updated_at = now
+  }
+  expose create {
+    fields video, user, content
+    allow user = actor and is_deleted = false and is_modified = false and version = 0
+  }
+  expose read {
+    select id, video, user, content, is_modified, version, created_at, updated_at
+    refIds video, user
+    filter id.eq, video.eq
+    sort id, created_at
+    traverse user { select id, name }
+    budget { rows 100; depth 2; cost 2000; deadline 2s }
+  }
+  expose apply edit { target id; bulk maxRows 1 }
+  expose apply delete { target id; bulk maxRows 1 }
+}

@@ -48,6 +48,7 @@ node --test \
   spikes/spike-v6-transport/client/hardening.test.ts \
   product/tests/general-update.test.mjs \
   product/tests/uuid-external.test.mjs \
+  product/tests/facereview-comments.test.mjs \
   product/tests/sdk-package.test.mjs \
   product/tests/package-boundaries.test.mjs \
   product/tests/google-storage-provider.test.mjs

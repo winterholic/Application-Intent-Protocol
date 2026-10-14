@@ -116,39 +116,65 @@ fn keys(o: &Map<String, Value>, allowed: &[&str], what: &str) -> Result<(), Reje
     }
 }
 
-fn filter_value(ty: &str, v: &Value) -> Result<(String, &'static str), Reject> {
-    let base = ty.trim_end_matches('?');
-    if matches!(base, "Email" | "Date") || base.starts_with("Decimal<") {
-        return spike_v2_read::scalar::parse(&json!({ "enums": {} }), ty, v);
-    }
-    match (ty.trim_end_matches('?'), v) {
-        ("Bool", Value::Bool(b)) => Ok((b.to_string(), "boolean")),
-        ("Int", Value::Number(n)) if n.is_i64() => Ok((n.to_string(), "bigint")),
-        ("Text", Value::String(s)) => Ok((s.clone(), "text")),
-        (t, _) => rej("WIRE.BAD_VALUE", format!("`{t}` 타입에 맞지 않는 값 {v}")),
-    }
-}
-
 #[cfg(test)]
 mod scalar_literal_tests {
-    use super::filter_value;
+    use super::{literal, IdWire, Src};
     use serde_json::json;
 
     #[test]
     fn email_and_date_literals_are_validated_and_use_typed_sql_casts() {
-        assert_eq!(filter_value("Email", &json!("person@example.test")).unwrap(), ("person@example.test".into(), "text"));
-        assert!(filter_value("Email", &json!("not-an-email")).is_err());
-        assert_eq!(filter_value("Date", &json!("2024-02-29")).unwrap(), ("2024-02-29".into(), "date"));
-        assert!(filter_value("Date", &json!("2026-02-29")).is_err());
+        let facts = json!({"resources":{"Item":{"fields":{"email":{"ty":"Email"},"date":{"ty":"Date"}}}}});
+        assert!(
+            matches!(literal(&facts, "Item", "email", &json!("person@example.test"), IdWire::Legacy), Ok(Src::Lit(s, "text")) if s == "person@example.test")
+        );
+        assert!(literal(&facts, "Item", "email", &json!("not-an-email"), IdWire::Legacy).is_err());
+        assert!(matches!(literal(&facts, "Item", "date", &json!("2024-02-29"), IdWire::Legacy), Ok(Src::Lit(s, "date")) if s == "2024-02-29"));
+        assert!(literal(&facts, "Item", "date", &json!("2026-02-29"), IdWire::Legacy).is_err());
     }
 
     #[test]
     fn decimal_create_values_are_validated_and_use_numeric_bindings() {
-        assert_eq!(filter_value("Decimal<5,2>", &json!("12.30")).unwrap(), ("12.30".into(), "numeric"));
+        let facts = json!({"resources":{"Item":{"fields":{"amount":{"ty":"Decimal<5,2>"}}}}});
+        assert!(matches!(literal(&facts, "Item", "amount", &json!("12.30"), IdWire::Legacy), Ok(Src::Lit(s, "numeric")) if s == "12.30"));
         for invalid in ["1234.56", "1.234", "NaN", "1e3", "+1", "01.00"] {
-            assert!(filter_value("Decimal<5,2>", &json!(invalid)).is_err(), "{invalid}");
+            assert!(literal(&facts, "Item", "amount", &json!(invalid), IdWire::Legacy).is_err(), "{invalid}");
         }
-        assert!(filter_value("Decimal<5,2>", &json!(12.3)).is_err());
+        assert!(literal(&facts, "Item", "amount", &json!(12.3), IdWire::Legacy).is_err());
+    }
+
+    #[test]
+    fn create_literals_enforce_text_code_points_integer_bounds_and_nullable_ranges() {
+        let facts = json!({"resources":{"Comment":{"fields":{
+            "content":{"ty":"Text","range":[1,500]},
+            "score":{"ty":"Int","range":[0,100]},
+            "memo":{"ty":"Text?","range":[1,5]}
+        }}}});
+        for value in [json!(""), json!("😀".repeat(501))] {
+            assert_eq!(literal(&facts, "Comment", "content", &value, IdWire::Legacy).err().unwrap().code, "WIRE.BAD_VALUE");
+        }
+        for value in [json!("a"), json!("😀".repeat(500))] {
+            assert!(literal(&facts, "Comment", "content", &value, IdWire::Legacy).is_ok());
+        }
+        for value in [json!(-1), json!(101), json!(1.5)] {
+            assert_eq!(literal(&facts, "Comment", "score", &value, IdWire::Legacy).err().unwrap().code, "WIRE.BAD_VALUE");
+        }
+        for value in [json!(0), json!(100)] {
+            assert!(literal(&facts, "Comment", "score", &value, IdWire::Legacy).is_ok());
+        }
+        assert!(literal(&facts, "Comment", "memo", &json!(null), IdWire::Legacy).is_ok());
+        assert_eq!(literal(&facts, "Comment", "memo", &json!(""), IdWire::Legacy).err().unwrap().code, "WIRE.BAD_VALUE");
+    }
+
+    #[test]
+    fn create_time_url_and_text_use_the_common_scalar_parser() {
+        let facts = json!({"resources":{"Comment":{"fields":{
+            "at":{"ty":"Time"},"url":{"ty":"Url"},"content":{"ty":"Text"}
+        }}}});
+        assert!(literal(&facts, "Comment", "at", &json!("2026-10-15T00:00:00Z"), IdWire::Legacy).is_ok());
+        assert!(literal(&facts, "Comment", "url", &json!("https://example.test/video"), IdWire::Legacy).is_ok());
+        for (field, value) in [("at", json!("invalid")), ("content", json!("text\u{0}tail")), ("url", json!("https://example.test/\u{0}"))] {
+            assert_eq!(literal(&facts, "Comment", field, &value, IdWire::Legacy).err().unwrap().code, "WIRE.BAD_VALUE");
+        }
     }
 }
 
@@ -983,24 +1009,7 @@ fn apply_input(facts: &Value, res: &str, tr: &str, request: &Map<String, Value>,
             if !allowed.contains(&field.as_str()) {
                 return rej("WIRE.FIELD_NOT_EXPOSED", format!("`{res}.{field}`는 {key} 계약에 없음"));
             }
-            let fd = &facts["resources"][res]["fields"][field];
-            let ty = fd["ty"].as_str().ok_or_else(|| internal("입력 필드 타입"))?;
-            let base = ty.trim_end_matches('?');
-            let src = if value.is_null() || base.starts_with("Ref<") || base.starts_with("Id<") {
-                literal(facts, res, field, value, wire)?
-            } else {
-                let (value, cast) = spike_v2_read::scalar::parse(facts, base, value)?;
-                Src::Lit(value, cast)
-            };
-            if !value.is_null() {
-                if let (Some(lo), Some(hi)) = (fd["range"][0].as_i64(), fd["range"][1].as_i64()) {
-                    let measure = if base == "Int" { value.as_i64() } else { value.as_str().map(|s| s.chars().count() as i64) };
-                    if measure.is_none_or(|n| n < lo || n > hi) {
-                        return rej("WIRE.BAD_VALUE", format!("`{field}` 값이 선언 범위 밖"));
-                    }
-                }
-            }
-            dest.push((field.clone(), src));
+            dest.push((field.clone(), literal(facts, res, field, value, wire)?));
         }
     }
     Ok(input)
@@ -1060,16 +1069,14 @@ fn literal(facts: &Value, res: &str, field: &str, v: &Value, wire: IdWire) -> Re
     if v.is_null() {
         return if ty.ends_with('?') { Ok(Src::Null) } else { rej("WIRE.BAD_VALUE", format!("`{field}`는 null일 수 없음")) };
     }
-    if let Some(e) = base.strip_prefix("Enum<").and_then(|x| x.strip_suffix('>')) {
-        let s = v.as_str().filter(|s| facts["enums"][e].as_array().unwrap().iter().any(|x| x == s));
-        return s.map(|s| Src::Lit(s.to_string(), "text")).ok_or(Reject { code: "WIRE.BAD_VALUE", msg: format!("`{field}`는 {e} 값") });
-    }
     if base.starts_with("Ref<") || base.starts_with("Id<") {
         // Id wire(숫자·십진 문자열)에 맞는 표기만 받는다. 전이 대상 id와 같은 규칙이다.
         let (id, cast) = parse_typed_id(facts, base, v, wire)?;
         return Ok(Src::Lit(id, cast));
     }
-    let (s, cast) = filter_value(base, v)?;
+    let (s, cast) = spike_v2_read::scalar::parse(facts, base, v)?;
+    let range = &facts["resources"][res]["fields"][field]["range"];
+    spike_v2_read::scalar::validate_range(&json!([field, base, range]), v, "WIRE.BAD_VALUE")?;
     Ok(Src::Lit(s, cast))
 }
 
@@ -1375,7 +1382,7 @@ async fn compose_exec(
         let vis = cx.cond(&rf["rowRead"], &env).map_err(internal)?;
         let scope =
             if cp["sameScope"].is_null() { "NULL::text".into() } else { format!("({})::text", cx.value(&cp["sameScope"], &env).map_err(internal)?) };
-        let p = cx.params.bind(Some(id_array(&ids)), id_array_cast(facts, res));
+        let p = cx.params.bind(Some(id_array(ids)), id_array_cast(facts, res));
         let sql = format!("SELECT t.id, {scope} FROM {} t WHERE t.id = ANY({p}) AND {vis} ORDER BY t.id FOR UPDATE OF t", table(res));
         let params = cx.params.values.clone();
         let rows = typed_query(tx, sql.as_str(), &params).await.map_err(|e| db_err("대상 조회", e))?;

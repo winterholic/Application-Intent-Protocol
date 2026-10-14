@@ -43,6 +43,8 @@ Core 검증은 GitHub Actions Ubuntu에서 실행한다. Linux worker 격리와 
 
 ## 상태
 
+2026-10-15 후속: [페이스리뷰 댓글 적용 시험](product/tests/fixtures/facereview-comments/README.md)을 기존 PostgreSQL 채택·설치 TS SDK·Python helper 경로에 추가했다. 시험에서 발견한 생성 입력의 range 누락을 수정하고 생성·patch·expect의 scalar 검증을 통합했다. 페이스리뷰 원본 MySQL/Mongo 서비스 이식과는 구분한다. 이번 실행 결과는 [제품 검증](product/VERIFICATION.md#페이스리뷰-댓글-적용-시험-2026-10-15)에 있다.
+
 2026-10-14 후속: [일반·부분 수정](product/GENERAL-UPDATE.md)을 공개 전이의 `patch`로 표현한다. 기존 필드 타입·검증·행 인가를 적용하고, `expect` 조건·서버 version 증감으로 동시 편집 충돌을 검출한다. 기존 `/apply`의 transaction·effect·notify·멱등 복구·TS 생성 계약을 공유하며 `service gen --lang python`은 공개 apply 입력 TypedDict와 helper를 생성한다.
 
 2026-10-13 후속: durable job이 선언한 resource에 한해 업무 데이터를 읽고 공개 전이를 실행한다(`ctx.data.read/apply`, 전이와 effect journal이 한 transaction). 서비스 설정만으로 cron 스케줄, 서명 검증 webhook 수신, 전이 `notify` outbox 행을 서비스 주체 job으로 연결하고, `/health`·`/ready` probe를 제공한다. 현재 105개 항목 판정과 남은 갭은 [기능 갭 표](plan-docs/backend-capability/capability-gap-2026-10-13.md)를 따른다.

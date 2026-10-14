@@ -54,6 +54,10 @@ REVOKE UPDATE, DELETE, TRUNCATE ON <infra>.aip_audit FROM <runtime>;   -- 감사
 
 ## 알아둘 점
 
+외부 테이블을 채택할 때는 AIP view의 권한 외에 원본 테이블 권한도 필요하다. 쓰기 인가는 참조·정책 근거 행을 `FOR SHARE`로 잠근다. 그래서 생성·수정 API를 공개하지 않은 참조 테이블도 `SELECT`만 주면 쓰기 요청에서 SQLSTATE `42501`이 발생한다. PostgreSQL 행 잠금에는 잠그는 테이블의 컬럼 하나 이상에 `UPDATE` 권한이 필요하다.
+
+[페이스리뷰 댓글 시험](tests/fixtures/facereview-comments/README.md)은 원본 사용자·영상 테이블에 `SELECT`와 `UPDATE(user_id)`·`UPDATE(video_id)`만 주고 댓글을 작성한다. 이름·영상 삭제 상태 컬럼의 UPDATE는 허용하지 않는다. 이는 DB 역할의 권한이며 호출자에게 ID 수정 API를 공개하는 것은 아니다. 변경 대상 댓글 테이블에는 `SELECT, INSERT, UPDATE`가 필요하다. 실제 원본 schema에 맞는 컬럼으로 권한을 설정하고, AIP view·metadata·인프라 권한도 함께 준다.
+
 - `serve`는 시작할 때 배포 digest와 구조를 읽어 검사하고 `runtime_wire`를 한 번 고정한다. 둘 다 위 권한 안에서 동작한다. 앱 schema의 `aip_migrate_meta` 같은 관리 테이블에도 DML이 열리므로 runtime 역할이 침해되면 배포 metadata는 바꿀 수 있다. 이를 막으려면 PostgreSQL 컬럼 권한으로 해당 테이블의 쓰기를 줄여야 하며 이 가이드는 그 구성을 검증하지 않았다.
 - 트리거는 테이블 소유자만 끌 수 있다. 역할 하나로 운영하면 서버가 소유자이지만 역할을 나누면 runtime 역할은 소유자가 아니므로 감사 테이블의 트리거를 끄지 못한다. 다만 `aip_audit`에 DELETE·TRUNCATE를 막는 트리거는 아직 없고(보안 감사 O-32), 이 가이드는 권한으로 막는다.
 - `aip service principal`은 runtime URL로 실행한다. 주체 연결은 데이터 변경이라 위 DML 권한으로 충분하다.
