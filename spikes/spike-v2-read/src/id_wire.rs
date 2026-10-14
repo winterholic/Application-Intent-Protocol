@@ -43,11 +43,7 @@ pub fn parse_id(value: &Value, wire: IdWire) -> Result<i64, Reject> {
     text.parse().map_err(|_| bad_id())
 }
 
-pub fn emit_id(id: impl Into<EntityId>, wire: IdWire) -> Result<Value, Reject> {
-    let id = match id.into() {
-        EntityId::Number(id) => id,
-        id @ EntityId::Uuid(_) => return Ok(json!(id.to_string())),
-    };
+pub fn emit_id(id: i64, wire: IdWire) -> Result<Value, Reject> {
     match wire {
         IdWire::Legacy => Ok(json!(id)),
         _ if id < 0 => Err(bad_id()),
@@ -244,5 +240,12 @@ impl std::fmt::Debug for EntityId {
             Self::Number(v) => std::fmt::Debug::fmt(v, f),
             Self::Uuid(_) => std::fmt::Debug::fmt(&self.to_string(), f),
         }
+    }
+}
+
+pub fn emit_entity_id(id: EntityId, wire: IdWire) -> Result<Value, Reject> {
+    match id {
+        EntityId::Number(id) => emit_id(id, wire),
+        id @ EntityId::Uuid(_) => Ok(json!(id.to_string())),
     }
 }

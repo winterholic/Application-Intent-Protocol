@@ -1258,7 +1258,7 @@ impl Host {
                     }
                 };
                 let encode = |ids: Vec<spike_v2_read::id_wire::EntityId>| {
-                    ids.into_iter().map(|id| spike_v2_read::id_wire::emit_id(id, self.wire)).collect::<std::result::Result<Vec<_>, _>>()
+                    ids.into_iter().map(|id| spike_v2_read::id_wire::emit_entity_id(id, self.wire)).collect::<std::result::Result<Vec<_>, _>>()
                 };
                 json!({
                     "changed": encode(applied.changed).map_err(|e| e.code)?,

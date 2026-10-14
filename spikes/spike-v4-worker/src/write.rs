@@ -1,7 +1,7 @@
 //! V4 쓰기 확장. 서버가 소유한 트랜잭션에서만 공개 전이를 실행한다.
 use crate::{check_read_record, rej, Worker};
 use serde_json::{json, Value};
-use spike_v2_read::id_wire::{emit_id, parse_id, IdWire, MAX_SAFE_ID};
+use spike_v2_read::id_wire::{emit_entity_id, emit_id, parse_id, IdWire, MAX_SAFE_ID};
 use spike_v2_read::plan::{Caller, Reject};
 use spike_v3_write::{apply_in_with_wire, checks_in, classify_write_error, Knobs};
 use std::time::{Duration, Instant};
@@ -142,8 +142,9 @@ async fn run_write_in(
                             let left = expires.saturating_duration_since(Instant::now());
                             match tokio::time::timeout(left, apply_in_with_wire(tx, facts, &req, caller, &knobs, wire)).await {
                                 Ok(result) => result.and_then(|applied| {
-                                    let changed = applied.changed.into_iter().map(|id| emit_id(id, wire)).collect::<Result<Vec<_>, _>>()?;
-                                    let unchanged = applied.unchanged.into_iter().map(|id| emit_id(id, wire)).collect::<Result<Vec<_>, _>>()?;
+                                    let changed = applied.changed.into_iter().map(|id| emit_entity_id(id, wire)).collect::<Result<Vec<_>, _>>()?;
+                                    let unchanged =
+                                        applied.unchanged.into_iter().map(|id| emit_entity_id(id, wire)).collect::<Result<Vec<_>, _>>()?;
                                     Ok(json!({"changed":changed,"unchanged":unchanged}))
                                 }),
                                 Err(_) => break rej("WIRE.DEADLINE_EXCEEDED", "ctx 쓰기가 기한 안에 끝나지 않음"),
@@ -219,7 +220,16 @@ fn ctx_request(message: &Value, wire: IdWire) -> Result<Value, Reject> {
     if wire != IdWire::Legacy {
         if let Some(ids) = target["ids"].as_array() {
             // 공식 worker ctx의 문자열 Id를 선택 wire로 바꿔 JS parse 전에 정밀도를 보존한다.
-            let encoded = ids.iter().map(|id| parse_id(id, IdWire::DecimalString).and_then(|id| emit_id(id, wire))).collect::<Result<Vec<_>, _>>()?;
+            let encoded = ids
+                .iter()
+                .map(|id| {
+                    if id.as_str().is_some_and(|text| spike_v2_read::id_wire::parse_uuid(text).is_ok()) {
+                        Ok(id.clone())
+                    } else {
+                        parse_id(id, IdWire::DecimalString).and_then(|id| emit_id(id, wire))
+                    }
+                })
+                .collect::<Result<Vec<_>, _>>()?;
             target["ids"] = json!(encoded);
         }
     }

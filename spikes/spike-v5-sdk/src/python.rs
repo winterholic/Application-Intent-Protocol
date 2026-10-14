@@ -45,9 +45,26 @@ pub fn contract_module_python(facts: &Value, wire: IdWire) -> String {
         _ => "str",
     };
     for res in facts["resources"].as_object().unwrap().keys() {
+        let scalar = if spike_v2_read::id_wire::id_kind(facts, res) == "uuid" { "str" } else { scalar };
         writeln!(s, "{res}Id = NewType(\"{res}Id\", {scalar})").unwrap();
     }
     for (res, rf) in facts["resources"].as_object().unwrap() {
+        if let Some(select) = rf["exposeRead"]["select"].as_object() {
+            let desc = super::read_descriptors(facts);
+            let row = select
+                .keys()
+                .map(|name| {
+                    let ty = rf["fields"][name]["ty"].as_str().or_else(|| rf["aggregates"][name]["ty"].as_str()).unwrap();
+                    let mut py = value_type(facts, ty);
+                    if desc[res]["fields"][name]["nullable"] == true && !ty.ends_with('?') {
+                        py.push_str(" | None");
+                    }
+                    format!("{name:?}: {py}")
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            writeln!(s, "{res}Row = TypedDict({:?}, {{{row}}}, total=False)", format!("{res}Row")).unwrap();
+        }
         for (action, ex) in rf["exposeApply"].as_object().into_iter().flatten() {
             let prefix = format!("{res}{}", action.chars().next().unwrap().to_uppercase().collect::<String>() + &action[1..]);
             let targets = ex["target"].as_array().unwrap();

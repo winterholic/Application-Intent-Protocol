@@ -111,6 +111,10 @@ async function readJsonBounded(response: Response, limit: number): Promise<any> 
 }
 
 export function connect(base: string, initialToken: string | null, fetchImpl: typeof fetch = fetch, options: { identityKinds?: Readonly<Record<string,"uuid"|"bigint">>; contractFingerprint?: string; idWire?: IdWireKind; maxResponseBytes?: number; validateRead?: (query: unknown, rows: unknown[]) => void; validateWrite?: (request: unknown, response: unknown) => void } = {}) {
+  const identityKinds = options.identityKinds === undefined ? undefined : structuredClone(options.identityKinds);
+  if (identityKinds !== undefined && (identityKinds === null || typeof identityKinds !== "object" || Array.isArray(identityKinds) || Object.values(identityKinds).some(kind => kind !== "uuid" && kind !== "bigint"))) {
+    throw failure("CLIENT.PROTOCOL_ERROR", "Id 종류 계약 형식 오류");
+  }
   const expectedFingerprint = options.contractFingerprint;
   const resultWire = options.idWire;
   const validateRead = options.validateRead;
@@ -184,7 +188,7 @@ export function connect(base: string, initialToken: string | null, fetchImpl: ty
       const attemptId = requestIdOf(res);
       if (attemptId !== undefined) record.lastRequestId = attemptId;
       const extensionWrite = record.request !== null && typeof record.request === "object" && Object.hasOwn(record.request, "extension");
-      if (!validWriteResponse(res, resultWire, extensionWrite,record.request,options.identityKinds)) return null;
+      if (!validWriteResponse(res, resultWire, extensionWrite,record.request,identityKinds)) return null;
       if (res.ok && extensionWrite) {
         if (!validateWrite) return null;
         validateWrite(record.request, res);

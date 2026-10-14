@@ -288,7 +288,9 @@ fn metadata_sql(schema: &str, facts: &Value) -> Result<String, Value> {
         sqlgen::snake(actor)
     };
     let identities = if uuid {
-        format!("CREATE TABLE {schema}.aip_actor_identities(id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, resource_id uuid NOT NULL UNIQUE); ")
+        format!(
+            "CREATE TABLE {schema}.aip_actor_identities(id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, resource_id uuid NOT NULL UNIQUE); CREATE FUNCTION {schema}.aip_reject_actor_resource_change() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.resource_id IS DISTINCT FROM OLD.resource_id THEN RAISE EXCEPTION 'actor resource identity is immutable' USING ERRCODE='23514'; END IF; RETURN NEW; END $$; CREATE TRIGGER aip_actor_resource_immutable BEFORE UPDATE OF resource_id ON {schema}.aip_actor_identities FOR EACH ROW EXECUTE FUNCTION {schema}.aip_reject_actor_resource_change(); "
+        )
     } else if managed || external {
         format!("CREATE TABLE {schema}.aip_actors (id bigint PRIMARY KEY CHECK(id>0)); ")
     } else {
@@ -450,10 +452,10 @@ async fn bind_wire_inner(db_url: &str, schema: &str, wire: &str) -> Result<Value
         .await
         .map_err(|_| err("DB_WIRE_BIND", "wire 고정 기한 설정 실패"))?;
     tx.execute("SELECT pg_advisory_xact_lock(1095323725, hashtext($1))", &[&schema]).await.map_err(|_| err("DB_LOCK", "wire 고정 잠금 실패"))?;
-    if !marker(&tx, schema).await?.facts["externalStorage"].is_null() {
-        return Err(err("EXTERNAL_DDL_FORBIDDEN", "외부 배포에는 DDL을 실행하지 않음"));
+    let external = !marker(&tx, schema).await?.facts["externalStorage"].is_null();
+    if !external {
+        lock_managed_tables(&tx, schema).await?;
     }
-    lock_managed_tables(&tx, schema).await?;
     verified_marker(&tx, schema).await?;
     let row = tx
         .query_one(&format!("SELECT runtime_wire FROM {schema}.{META} WHERE singleton=true FOR UPDATE"), &[])
@@ -466,6 +468,9 @@ async fn bind_wire_inner(db_url: &str, schema: &str, wire: &str) -> Result<Value
         }
         tx.commit().await.map_err(|_| err("COMMIT_UNSETTLED", "wire 재조회 종료 결과 불명"))?;
         return Ok(json!({"ok":true,"schema":schema,"wire":wire,"alreadyBound":true}));
+    }
+    if external {
+        return Err(err("WIRE_MODE_MISMATCH", "외부 채택은 배포 시 wire가 고정되어야 함"));
     }
     validate_existing_wire(&tx, schema, wire).await?;
     tx.execute(&format!("UPDATE {schema}.{META} SET runtime_wire=$1 WHERE singleton=true"), &[&wire])
@@ -572,7 +577,7 @@ fn parse_directives(migration: &Option<Value>) -> Result<Directives, Value> {
     Ok(out)
 }
 
-fn typed_literal(value: Value, ty: &str) -> Result<String, Value> {
+fn typed_literal(facts: &Value, value: Value, ty: &str) -> Result<String, Value> {
     let base = ty.trim_end_matches('?');
     if decimal_type(base).is_some() {
         return spike_v2_read::scalar::parse(&json!({"enums":{}}), base, &value)
@@ -585,13 +590,19 @@ fn typed_literal(value: Value, ty: &str) -> Result<String, Value> {
         "Int" => value.as_i64().map(|n| n.to_string()),
         "Bool" => value.as_bool().map(|b| b.to_string()),
         t if t.starts_with("Enum<") && t.ends_with('>') => value.as_str().map(str::to_string),
-        t if t.starts_with("Ref<") && t.ends_with('>') => value.as_i64().map(|n| n.to_string()),
+        t if t.starts_with("Ref<") && t.ends_with('>') => {
+            if spike_v2_read::id_wire::id_cast(facts, t) == "uuid" {
+                value.as_str().and_then(|s| spike_v2_read::id_wire::parse_uuid(s).ok().map(|v| v.to_string()))
+            } else {
+                value.as_i64().map(|n| n.to_string())
+            }
+        }
         _ => None,
     }
     .ok_or_else(|| err("BAD_MIGRATION", "backfill 값의 JSON 타입이 필드와 다름"))
 }
 
-fn backfill_cast(ty: &str) -> Option<String> {
+fn backfill_cast(facts: &Value, ty: &str) -> Option<String> {
     if let Some((precision, scale)) = decimal_type(ty.trim_end_matches('?')) {
         return Some(format!("numeric({precision},{scale})"));
     }
@@ -602,12 +613,12 @@ fn backfill_cast(ty: &str) -> Option<String> {
         "Time" => Some("timestamptz".into()),
         "Date" => Some("date".into()),
         t if t.starts_with("Enum<") && t.ends_with('>') => Some("text".into()),
-        t if (t.starts_with("Ref<") || t.starts_with("Id<")) && t.ends_with('>') => Some("bigint".into()),
+        t if (t.starts_with("Ref<") || t.starts_with("Id<")) && t.ends_with('>') => Some(spike_v2_read::id_wire::id_cast(facts, t).into()),
         _ => None,
     }
 }
 
-fn physical_type(ty: &str) -> Option<String> {
+fn physical_type(facts: &Value, ty: &str) -> Option<String> {
     if let Some((precision, scale)) = decimal_type(ty.trim_end_matches('?')) {
         return Some(format!("numeric({precision},{scale})"));
     }
@@ -618,7 +629,7 @@ fn physical_type(ty: &str) -> Option<String> {
         "Time" => Some("timestamptz".into()),
         "Date" => Some("date".into()),
         t if t.starts_with("Enum<") && t.ends_with('>') => Some("text".into()),
-        t if (t.starts_with("Ref<") || t.starts_with("Id<")) && t.ends_with('>') => Some("bigint".into()),
+        t if (t.starts_with("Ref<") || t.starts_with("Id<")) && t.ends_with('>') => Some(spike_v2_read::id_wire::id_cast(facts, t).into()),
         _ => None,
     }
 }
@@ -757,14 +768,15 @@ async fn classify_capacity_changes(
             let mut params = cx.params.values.clone();
             for (field, descriptor) in new_fields {
                 let new_col = sqlgen::column(new_facts, res, field).ok_or_else(|| err("BAD_FACTS", "새 열 이름 오류"))?;
-                let new_type = physical_type(descriptor["ty"].as_str().unwrap_or("")).ok_or_else(|| err("BAD_FACTS", "정원 검사 물리 타입 오류"))?;
+                let new_type =
+                    physical_type(new_facts, descriptor["ty"].as_str().unwrap_or("")).ok_or_else(|| err("BAD_FACTS", "정원 검사 물리 타입 오류"))?;
                 let expression = if let Some(old_descriptor) = old_fields.get(field) {
                     let old_col = sqlgen::column(old_facts, res, field).ok_or_else(|| err("BAD_FACTS", "기존 열 이름 오류"))?;
-                    let old_type = physical_type(old_descriptor["ty"].as_str().unwrap_or(""))
+                    let old_type = physical_type(old_facts, old_descriptor["ty"].as_str().unwrap_or(""))
                         .ok_or_else(|| err("BAD_FACTS", "기존 정원 검사 물리 타입 오류"))?;
                     if old_type == new_type { format!("src.{old_col}") } else { format!("src.{old_col}::text::{new_type}") }
                 } else if let Some(value) = directives.backfill.get(&(res.clone(), field.clone())) {
-                    let typed = typed_literal(value.clone(), descriptor["ty"].as_str().unwrap_or(""))?;
+                    let typed = typed_literal(new_facts, value.clone(), descriptor["ty"].as_str().unwrap_or(""))?;
                     params.push(Some(typed));
                     format!("${}::text::{new_type}", params.len())
                 } else {
@@ -811,6 +823,22 @@ async fn derive(db: &impl GenericClient, schema: &str, new_facts: &Value, migrat
     let mut blocked = false;
     let old_resources = old.facts["resources"].as_object().ok_or_else(|| err("BAD_FACTS", "기존 resources 오류"))?;
     let new_resources = new_facts["resources"].as_object().ok_or_else(|| err("BAD_FACTS", "새 resources 오류"))?;
+    let old_uuid = old_resources.values().any(|r| r["idKind"] == "uuid");
+    let new_uuid = new_resources.values().any(|r| r["idKind"] == "uuid");
+    if !old_uuid && new_uuid {
+        for col in ["recipient_id", "source_id"] {
+            steps.push(Step {
+                sql: format!("ALTER TABLE {schema}.aip_outbox ALTER COLUMN {col} TYPE text USING {col}::text"),
+                class: "Breaking",
+                value: None,
+                reason: "UUID outbox identity는 손실 없는 text로 보존; 기존 worker 재시작 필요".into(),
+            });
+        }
+        changes.push(json!({"class":"Breaking","reason":"UUID outbox storage 추가; owned migration 후 provision과 worker 재시작 필요"}));
+    } else if old_uuid && !new_uuid {
+        blocked = true;
+        changes.push(json!({"class":"Unsupported","reason":"마지막 UUID resource 제거는 UUID outbox 이력 보존/정리 계획이 필요함"}));
+    }
     let had_jobs = old.facts["operations"].as_object().is_some_and(|ops| ops.values().any(|op| op["kind"] == "job"));
     let has_jobs = new_facts["operations"].as_object().is_some_and(|ops| ops.values().any(|op| op["kind"] == "job"));
     if has_message_access(&old.facts) && !has_message_access(new_facts) {
@@ -937,8 +965,8 @@ async fn derive(db: &impl GenericClient, schema: &str, new_facts: &Value, migrat
                                 });
                             }
                         } else {
-                            let old_ty = physical_type(fd["ty"].as_str().unwrap_or(""));
-                            let new_ty = physical_type(new_fd["ty"].as_str().unwrap_or(""));
+                            let old_ty = physical_type(&old.facts, fd["ty"].as_str().unwrap_or(""));
+                            let new_ty = physical_type(new_facts, new_fd["ty"].as_str().unwrap_or(""));
                             if let (Some(old_ty), Some(new_ty)) = (old_ty, new_ty) {
                                 let reason = format!("{res}.{field} 타입/범위/enum 변경");
                                 changes.push(json!({"class":"Destructive","reason":reason}));
@@ -1091,8 +1119,8 @@ async fn derive(db: &impl GenericClient, schema: &str, new_facts: &Value, migrat
                 // once (PostgreSQL 11+) and does not rewrite or update the rows, so the exclusive lock lasts
                 // milliseconds on a table of any size. The old ADD / UPDATE / SET NOT NULL sequence rewrote every
                 // row inside one transaction and could not finish within the 20s statement limit on large tables.
-                let cast = backfill_cast(fd["ty"].as_str().unwrap_or("")).ok_or_else(|| err("BAD_MIGRATION", "backfill 타입 미지원"))?;
-                let value = typed_literal(value, fd["ty"].as_str().unwrap_or(""))?;
+                let cast = backfill_cast(new_facts, fd["ty"].as_str().unwrap_or("")).ok_or_else(|| err("BAD_MIGRATION", "backfill 타입 미지원"))?;
+                let value = typed_literal(new_facts, value, fd["ty"].as_str().unwrap_or(""))?;
                 steps.push(Step {
                     sql: format!("ALTER TABLE {schema}.{name} ADD COLUMN {def} DEFAULT $1::text::{cast}"),
                     class,

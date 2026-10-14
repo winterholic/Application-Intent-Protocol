@@ -301,6 +301,10 @@ pub(crate) async fn listen_with_fingerprint(
                 audit_ddl(&infra)
             };
             install_or_accept_provisioned(&db, &audit, &format!("{infra}.aip_audit"), "audit").await?;
+            if facts["resources"].as_object().is_some_and(|rs|rs.values().any(|r|r["idKind"]=="uuid")) {
+                let text:bool=db.query_one("SELECT a.atttypid='pg_catalog.text'::regtype FROM pg_catalog.pg_attribute a WHERE a.attrelid=$1::text::regclass AND a.attname='target_id'",&[&format!("{infra}.aip_audit")]).await.map_err(io::Error::other)?.get(0);
+                if !text{return Err(io::Error::new(io::ErrorKind::InvalidInput,"UUID audit requires service provision with the migration role"));}
+            }
             db.release().await.map_err(|_| io::Error::other("audit connection reset failed"))
         })
         .await

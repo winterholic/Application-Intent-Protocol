@@ -670,6 +670,19 @@ async fn ensure_refs_readable(
         if facts["actor"].as_str() == Some(referenced) && caller.actor_id.map(EntityId::Number) == Some(id) {
             continue;
         }
+        if facts["actor"].as_str() == Some(referenced) && id_kind(facts, referenced) == "uuid" {
+            if let Some(handle) = caller.actor_id {
+                let lock = if knobs.skip_policy_lock { "" } else { " FOR SHARE OF i,t" };
+                let sql = format!(
+                    "SELECT 1 FROM {}.aip_actor_identities i JOIN {} t ON t.id=i.resource_id WHERE i.id=$1 AND i.resource_id=$2::text::uuid{lock}",
+                    sqlgen::schema(),
+                    table(referenced)
+                );
+                if tx.query_opt(&sql, &[&handle, &id.to_string()]).await.map_err(|e| write_err("UUID actor 참조 확인", e))?.is_some() {
+                    continue;
+                }
+            }
+        }
         let mut cx = Ctx::new(facts, caller.actor_id, &caller.now);
         cx.lock_reads = !knobs.skip_policy_lock;
         let env = Env { this: Some(("t".into(), referenced.to_string())), ..Default::default() };
@@ -1460,5 +1473,7 @@ pub fn classify_write_error(stage: &str, e: tokio_postgres::Error) -> Reject {
 
 /// UUID-aware audit keeps numeric deployments unchanged; mixed identities are stored losslessly as text.
 pub fn audit_ddl_with_uuid(schema: &str) -> String {
-    audit_ddl(schema).replace("target_id bigint NOT NULL", "target_id text NOT NULL")
+    audit_ddl(schema)
+        .replace("target_id bigint NOT NULL", "target_id text NOT NULL")
+        .replace(" COMMIT", &format!(" ALTER TABLE {schema}.aip_audit ALTER COLUMN target_id TYPE text USING target_id::text; COMMIT"))
 }

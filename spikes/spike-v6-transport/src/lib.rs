@@ -28,7 +28,7 @@ pub mod triggers;
 pub mod wire_codes;
 pub mod write_extension;
 use serde_json::{json, Value};
-use spike_v2_read::id_wire::{emit_id, encode_rows, IdWire};
+use spike_v2_read::id_wire::{emit_entity_id, encode_rows, IdWire};
 use spike_v2_read::plan::{plan_read_with_wire, Caller, Reject};
 use spike_v2_read::{execute, sqlgen};
 use spike_v3_write::{apply_in_with_wire, checks_in, classify_write_error, Knobs};
@@ -144,7 +144,7 @@ async fn run_write(
     knobs: &Knobs,
     wire: IdWire,
 ) -> Result<Value, Reject> {
-    let emit_all = |ids: Vec<spike_v2_read::id_wire::EntityId>| ids.into_iter().map(|id| emit_id(id, wire)).collect::<Result<Vec<_>, _>>();
+    let emit_all = |ids: Vec<spike_v2_read::id_wire::EntityId>| ids.into_iter().map(|id| emit_entity_id(id, wire)).collect::<Result<Vec<_>, _>>();
     if req.get("atomic").is_some() || req.get("compose").is_some() {
         let out = if req.get("atomic").is_some() {
             spike_v3_write::bundle_in(tx, facts, req, caller, knobs, wire).await?
@@ -157,7 +157,7 @@ async fn run_write(
         }
         let mut created = vec![];
         for (resource, id) in out.created_rows {
-            created.push(json!({ "resource": resource, "id": match id { Some(id) => emit_id(id, wire)?, None => Value::Null } }));
+            created.push(json!({ "resource": resource, "id": match id { Some(id) => emit_entity_id(id, wire)?, None => Value::Null } }));
         }
         // wire에 표현할 수 없는 id가 있으면 멱등 결과 기록·commit 전 전체 transaction이 rollback된다.
         return Ok(json!({ "ok": true, "applied": applied, "created": created, "tags": bundle_tags(facts, req) }));

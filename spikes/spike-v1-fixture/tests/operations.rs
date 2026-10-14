@@ -54,7 +54,7 @@ fn operations_fail_closed_on_missing_policy_capabilities_and_invalid_contracts()
         format!("{SOURCE}\n{SOURCE}"),
         SOURCE.replace("input { text: Text }", "input { text: Text; text: Int }"),
         SOURCE.replace("actor principal", "actor Missing"),
-        format!("{SOURCE}\nresource Other {{ fields {{ id: Id }} }}"),
+        format!("{SOURCE}\nresource Other {{ fields {{ id: Id }} rows read when missingField = true }}"),
     ] {
         assert!(load_str(&source, Form::A).is_err(), "accepted: {source}");
     }
@@ -163,4 +163,11 @@ fn managed_jobs_can_declare_message_queue_capabilities() {
     assert!(load_str(&invalid_queue, Form::A).is_err(), "queue names must stay ASCII identifiers");
     let non_job = managed.replace("operation job", "operation read");
     assert!(load_str(&non_job, Form::A).is_err(), "message queues are a durable job capability");
+}
+
+#[test]
+fn managed_principal_can_coexist_with_external_business_resources() {
+    let facts = load_str(&format!("{SOURCE}\nresource Other {{fields {{id: Uuid}} rows read when false}}"), Form::A).unwrap().execution;
+    assert_eq!(facts["actorMode"], "principal");
+    assert_eq!(facts["resources"]["Other"]["idKind"], "uuid");
 }

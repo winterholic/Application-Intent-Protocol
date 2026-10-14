@@ -14,6 +14,7 @@ function run(bin,args,env={},cwd=root) {const p=spawnSync(bin,args,{cwd,env:{...
 
 // Only a new, uniquely named database is touched. No .env files or saved credentials are used.
 test('UUID owned and external PostgreSQL: introspect, adopt, restricted role, installed TS/Python SDK, drift refusal',{timeout:240000},async()=>{
+ const stop=async(proc)=>{if(proc.exitCode!==null||proc.signalCode!==null)return;const ended=once(proc,'exit');proc.kill('SIGTERM');await ended;};
  const temp=mkdtempSync(join(tmpdir(),'aip-uuid-sdk-'));
  const dbname=`aip_uuid_trial_${process.pid}`; const source='memoir_existing';
  const role=`aip_uuid_runtime_${process.pid}`;
@@ -52,15 +53,17 @@ GRANT USAGE ON SCHEMA ${source} TO ${role},${adopter}; GRANT SELECT ON ALL TABLE
    const scan=cmd(config,['introspect','--source-schema',source,'--out',app,'--mapping-out',map]);assert.equal(scan.ok,true);
    const draft=readFileSync(app,'utf8');assert.match(draft,/id: Uuid/);assert.match(draft,/rows read when false/);assert.match(draft,/default database/);
    // Review policy, then expose the notes use case; retain physical mapping from the catalog.
-   const reviewed=draft.replace('actor principal','actor Users').replace(/resource Users \{([\s\S]*?)rows read when false/, 'resource Users {$1rows read when id = actor').replace(/resource Notes \{([\s\S]*?)rows read when false/, `resource Notes {$1rows read when user = actor
+   const reviewed=draft.replace('actor principal','actor Users').replace(/resource Users \{([\s\S]*?)rows read when false/, 'resource Users {$1rows read when false').replace(/resource Notes \{([\s\S]*?)rows read when false/, `resource Notes {$1rows read when user = actor
+ transition Edit {from true allow user = actor patch title, body expect body}
+ expose apply Edit {target id; bulk maxRows 1}
  transition Archive { from archived = false to archived = true allow user = actor repeat unchanged notify user "notes.archived" }
- expose read {select id, user, title, body, archived, created_at; filter id.eq, id.gt; sort id; budget {rows 50; depth 1; cost 1000; deadline 2s; cursor}}
+ expose read {select id, user, title, body, archived, created_at; refIds user; filter id.eq, id.gt; sort id; budget {rows 50; depth 1; cost 1000; deadline 2s; cursor}}
  expose apply Archive {target id; bulk maxRows 10}
  expose create {fields user, title, body allow user = actor}`);
    writeFileSync(app,reviewed);c.external_mapping=map;writeFileSync(config,JSON.stringify(c));
    assert.equal(cmd(config,['check',app]).ok,true);
    const plan=cmd(config,['adopt-external',app]);assert.deepEqual(plan.businessDDL,[]);
-   assert.equal(cmd(config,['adopt-external',app,'--apply',plan.digest]).ok,true);
+   assert.equal(cmd(config,['adopt-external',app,'--apply',plan.digest]).ok,true);assert.equal(cmd(config,['adopt-external',app,'--apply',plan.digest]).alreadyApplied,true);
    assert.equal(cmd(config,['provision']).ok,true);
    const infra=createHash('sha256').update(schema).digest('hex').slice(0,52); const infraSchema=`aip_infra_${infra}`;
    // Grant only DML to runtime, on AIP metadata/views and separate infrastructure.
@@ -68,7 +71,7 @@ GRANT USAGE ON SCHEMA ${source} TO ${role},${adopter}; GRANT SELECT ON ALL TABLE
    assert.equal(cmd(config,['principal','bind','--subject','owner','--actor',owner]).ok,true);
    assert.equal(cmd(config,['principal','bind','--subject','other','--actor',other]).ok,true);
    const binding=join(consumer,`${wire}.ts`);const py=join(temp,`${wire}_binding.py`);
-   assert.equal(cmd(config,['gen',app,'--wire',wire,'--out',binding]).ok,true);assert.equal(cmd(config,['gen',app,'--wire',wire,'--out',py]).ok,true);
+   assert.equal(cmd(config,['gen',app,'--wire',wire,'--out',binding]).ok,true);assert.equal(cmd(config,['gen',app,'--wire',wire,'--lang','python','--out',py]).ok,true);
    assert.match(readFileSync(py,'utf8'),/NotesId = NewType\("NotesId", str\)/);
    run(join(root,'spikes/spike-0-ts/node_modules/.bin/tsc'),['--strict','--skipLibCheck','--target','ES2022','--module','NodeNext','--moduleResolution','NodeNext',binding],{},consumer);
    const {contract}=await import(pathToFileURL(binding.replace(/\.ts$/,'.js')).href);
@@ -88,16 +91,24 @@ GRANT USAGE ON SCHEMA ${source} TO ${role},${adopter}; GRANT SELECT ON ALL TABLE
    const audit=cmd(config,['audit','list','--resource','Notes','--target-id',id]);assert.equal(audit.audit[0].targetId,id);
    const denied=await hidden.apply({apply:'Notes.Archive',target:{ids:[id]}},{key:`uuid-denied-${wire}`});assert.equal(denied.ok,false);
    const after=await client.read({...query,filter:[{field:'id',op:'eq',value:id}]});assert.equal(after.rows[0].archived,true);assert.equal(typeof after.rows[0].created_at,'string');
+   const edit=await client.apply({apply:'Notes.Edit',target:{ids:[id]},values:{title:`updated ${wire}`,body:'written'},expect:{body:null}},{key:`uuid-edit-${wire}`});assert.equal(edit.ok,true,JSON.stringify(edit));
+   const stale=await client.apply({apply:'Notes.Edit',target:{ids:[id]},values:{title:'stale'},expect:{body:null}},{key:`uuid-stale-${wire}`});assert.equal(stale.code,'WIRE.CONFLICT');
+   const edited=await client.read({...query,select:['id','title','body'],filter:[{field:'id',op:'eq',value:id}]});assert.equal(edited.rows[0].title,`updated ${wire}`);assert.equal(edited.rows[0].body,'written');
+   const clientId=await client.bundle({atomic:[{create:'Notes',values:{id:randomUUID(),user:owner,title:'client id'}}]},{key:`forbid-id-${wire}`});assert.equal(clientId.code,'WIRE.FIELD_NOT_EXPOSED');
    const sorted=await client.read({...query,limit:1});const next=await client.read({...query,limit:1,after:{id:sorted.rows[0].id}});assert.notEqual(sorted.rows[0]?.id,next.rows[0]?.id);
-   const duplicates=await client.bundle({atomic:[{create:'Notes',values:{user:owner,title:uniqueTitle}}]},{key:`unique-${wire}`});assert.equal(duplicates.code,'WIRE.ALREADY_EXISTS');
+   const duplicates=await client.bundle({atomic:[{create:'Notes',values:{user:owner,title:`updated ${wire}`}}]},{key:`unique-${wire}`});assert.equal(duplicates.code,'WIRE.ALREADY_EXISTS');
    const pyScript=join(temp,'call.py');writeFileSync(pyScript,`import json\nfrom aip_sdk import connect\nc=connect(${JSON.stringify(base)},${JSON.stringify(token('owner'))},${JSON.stringify(contract.fingerprint)})\nr=c.read({'read':'Notes','select':['id','title'],'filter':[{'field':'id','op':'eq','value':${JSON.stringify(id)}}]})\nassert r[0]['id']==${JSON.stringify(id)}\nprint('Python UUID SDK read passed')\n`);run('python3',[pyScript],{PYTHONPATH:join(root,'product/python')},temp);
-   const row=sql(`SELECT title,archived,created_at IS NOT NULL AS default_respected FROM ${source}.notes WHERE note_id='${id}';`);assert.match(row,/sdk/);assert.match(row,/t/);
+   const row=sql(`SELECT title,archived,created_at IS NOT NULL AS default_respected FROM ${source}.notes WHERE note_id='${id}';`);assert.match(row,/updated/);assert.match(row,/t/);
    // Drift in existing defaults is caught even after startup, before a write executes.
    sql(`ALTER TABLE ${source}.notes ALTER COLUMN archived SET DEFAULT true;`);
-   const drift=await fetch(`${base}/apply`,{method:'POST',headers:{Authorization:`Bearer ${token('owner')}`,'Content-Type':'application/json','x-aip-contract':contract.fingerprint},body:JSON.stringify({key:'drift',request:{apply:'Notes.Archive',target:{ids:[id]}}})}).then(r=>r.json());assert.equal(drift.code,'WIRE.DEPLOYMENT_CHANGED');
-   server.kill('SIGTERM');await once(server,'exit');server=undefined;lines.close();
+   const drift=await fetch(`${base}/apply`,{method:'POST',headers:{Authorization:`Bearer ${token('owner')}`,'Content-Type':'application/json','x-aip-contract':contract.fingerprint},body:JSON.stringify({key:'drift',request:{apply:'Notes.Archive',target:{ids:[id]}}})}).then(r=>r.json());assert.equal(drift.code,'WIRE.DEPLOYMENT_CHANGED');assert.equal((await fetch(`${base}/ready`)).status,503);
+   await stop(server);server=undefined;lines.close();
    const refused=spawnSync(cli,['service','serve',app,'--config',config],{env:{...process.env,AIP_UUID_DB:runtime},cwd:temp,encoding:'utf8',timeout:15000});assert.notEqual(refused.status,0);assert.match(refused.stdout+refused.stderr,/SCHEMA_MISMATCH/);
    sql(`ALTER TABLE ${source}.notes ALTER COLUMN archived SET DEFAULT false;`);
+   writeFileSync(app,reviewed.replace('rows read when user = actor','rows read when false'));const policies=cmd(config,['adopt-external',app]);assert.deepEqual(policies.businessDDL,[]);assert.equal(cmd(config,['adopt-external',app,'--apply',policies.digest]).ok,true);
+   assert.equal(cmd(config,['adopt-external',app,'--apply',policies.digest]).alreadyApplied,true);
+   assert.notEqual(policies.oldFactsDigest,policies.factsDigest);
+   writeFileSync(app,reviewed);
    console.log(`${wire}: external UUID SDK create/read/apply/replay/cursor/Python, restricted DML role and drift refusal passed`);
    // The default AIP-owned storage path uses the same UUID contract and installed SDK.
    const owned=`aip_uuid_owned_${wire}`,ownedConfig=join(temp,`owned-${wire}.json`),ownedApp=join(temp,`owned-${wire}.aip`);
@@ -118,17 +129,17 @@ resource Notes {fields {id: Uuid; user: Users; title: Text; archived: Bool}
    const ob=join(consumer,`owned-${wire}.ts`);cmd(ownedConfig,['gen',ownedApp,'--wire',wire,'--out',ob]);run(join(root,'spikes/spike-0-ts/node_modules/.bin/tsc'),['--strict','--skipLibCheck','--target','ES2022','--module','NodeNext','--moduleResolution','NodeNext',ob],{},consumer);
    const ownedBinding=(await import(pathToFileURL(ob.replace(/\.ts$/,'.js')).href)).contract;
    server=spawn(cli,['service','serve',ownedApp,'--config',ownedConfig],{cwd:temp,env:{...process.env,AIP_UUID_DB:runtime},stdio:['ignore','pipe','pipe']});
-   const ownedLines=createInterface({input:server.stdout});const listening=JSON.parse((await once(ownedLines,'line'))[0]);
+   const ownedLines=createInterface({input:server.stdout});let ownedError='';server.stderr.on('data',d=>ownedError+=d);const listening=await Promise.race([once(ownedLines,'line').then(([line])=>JSON.parse(line)),once(server,'exit').then(([code])=>{throw new Error(`owned serve exit ${code}: ${ownedError}`);})]);
    const oc=connect(`http://${listening.address}`,token('owner'),ownedBinding);
    const cr=await oc.bundle({atomic:[{create:'Notes',values:{user:owner,title:'owned SDK',archived:false}}]},{key:`owned-${wire}`});assert.equal(cr.ok,true,JSON.stringify(cr));const oid=cr.created[0].id;assert.match(oid,/^[a-f0-9-]{36}$/);
    assert.deepEqual((await oc.apply({apply:'Notes.Archive',target:{ids:[oid]}},{key:`owned-archive-${wire}`})).changed,[oid]);
    const rr=await oc.read({read:'Notes',select:['id','title','archived'],filter:[{field:'id',op:'eq',value:oid}]});assert.equal(rr.rows[0].archived,true);
-   server.kill('SIGTERM');await once(server,'exit');server=undefined;ownedLines.close();
+   await stop(server);server=undefined;ownedLines.close();
    console.log(`${wire}: AIP-owned native UUID create/read/apply via installed SDK passed`);
 
   }
  } finally {
-  if(server){server.kill('SIGTERM');await once(server,'exit');}
+  if(server){await stop(server);}
   sql(`DROP DATABASE IF EXISTS ${dbname} WITH (FORCE); DROP ROLE IF EXISTS ${role}; DROP ROLE IF EXISTS ${adopter};`,'postgres');rmSync(temp,{recursive:true,force:true});
  }
 });
