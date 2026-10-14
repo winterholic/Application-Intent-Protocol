@@ -307,14 +307,21 @@ fn resource(name: &str, l: &Lit, span: Span) -> R<Resource> {
     if let Some((x, xs)) = get(o, "transitions") {
         for (n, v, vs) in obj(x, xs, "transitions")? {
             let to = obj(v, *vs, "transition")?;
-            keys(to, &["from", "to", "allow", "repeat", "effects"], "transition")?;
+            keys(to, &["from", "to", "patch", "expect", "allow", "repeat", "effects"], "transition")?;
             let (f, fs) = req(to, "from", *vs, "transition")?;
-            let (t, tsp) = req(to, "to", *vs, "transition")?;
             let (a, asp) = req(to, "allow", *vs, "transition")?;
+            let names = |key| get(to, key).map(|(v, vs)| strs(v, vs, key)).transpose().map(|v| v.unwrap_or_default());
+            let patch = names("patch")?;
+            let assigns = get(to, "to").map(|(v, vs)| parse_assignments_str(s(v, vs, "to")?, inner(vs))).transpose()?.unwrap_or_default();
+            if patch.is_empty() && assigns.is_empty() {
+                return Err(Diag::new("DEF.MISSING_ITEM", "transition에는 to 또는 patch가 필요", *vs));
+            }
             r.transitions.push(Transition {
                 name: n.clone(),
+                patch,
+                expect: names("expect")?,
                 from: expr(f, fs, "from")?,
-                to: parse_assignments_str(s(t, tsp, "to")?, inner(tsp))?,
+                to: assigns,
                 allow: expr(a, asp, "allow")?,
                 repeat: get(to, "repeat").map(|(v, vs)| s(v, vs, "repeat").map(|x| (x.to_string(), vs))).transpose()?,
                 effects: match get(to, "effects") {

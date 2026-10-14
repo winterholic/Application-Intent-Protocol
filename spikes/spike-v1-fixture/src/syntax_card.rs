@@ -46,9 +46,11 @@ pub const NOTES: &[(&str, &str, &str, &str)] = &[
         "resource",
         "transition",
         "transition name { from cond; to f = v; allow cond }",
-        "상태 전이. from·to·allow가 모두 필요하다. 숫자는 f = f + 1처럼만 바꾼다",
+        "상태 전이. from·allow와 to 또는 patch가 필요하다. 숫자는 f = f + 1처럼만 바꾼다",
     ),
     ("resource", "unique", "unique a, b", "유일 제약"),
+    ("transition", "patch", "patch title, content", "호출자의 values에서 수정할 수 있는 필드. 타입·범위는 fields와 같으며 누락은 유지, null은 nullable만. 기본키·to 대입과 중복 불가"),
+    ("transition", "expect", "expect version", "호출자의 expect에서 모두 제공해야 하는 이전 값. 인가 뒤 잠근 행과 NULL-safe 비교하며 불일치는 WIRE.CONFLICT. version 증감 to와 조합하면 낙관적 잠금"),
     ("resource", "check", "check name when condition", "쓰기 뒤 행이 만족해야 하는 조건"),
     ("resource", "invariant", "invariant limitName per refField [deferred]", "limit을 참조 필드별로 적용한다(유일 인덱스로 집행)"),
     (

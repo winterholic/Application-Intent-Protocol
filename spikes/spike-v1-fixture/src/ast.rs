@@ -133,6 +133,10 @@ pub struct Aggregate {
 #[derive(Debug, Clone)]
 pub struct Transition {
     pub name: String,
+    /// 호출자가 값을 지정할 수 있는 필드. 타입·범위는 resource fields를 재사용한다.
+    pub patch: Vec<(String, Span)>,
+    /// 잠근 행과 NULL-safe 비교할 호출자의 이전 값. 선언된 키는 모두 필수다.
+    pub expect: Vec<(String, Span)>,
     pub from: Expr,
     pub to: Vec<(String, Expr)>,
     pub allow: Expr,

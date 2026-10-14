@@ -442,6 +442,7 @@ impl Parser {
                     let name = self.ident()?;
                     self.expect_sym("{")?;
                     let (mut from, mut to, mut allow, mut repeat) = (None, vec![], None, None);
+                    let (mut patch, mut expect) = (vec![], vec![]);
                     let mut effects = vec![];
                     let mut tseen = BTreeSet::new();
                     loop {
@@ -457,6 +458,8 @@ impl Parser {
                         match key.as_str() {
                             "from" => from = Some(self.expr()?),
                             "to" => to = self.assignments()?,
+                            "patch" => patch = self.ident_list()?,
+                            "expect" => expect = self.ident_list()?,
                             "allow" => allow = Some(self.expr()?),
                             "repeat" => repeat = Some((self.ident()?, ksp)),
                             "create" => {
@@ -518,8 +521,8 @@ impl Parser {
                         }
                     }
                     match (from, allow) {
-                        (Some(from), Some(allow)) if !to.is_empty() => {
-                            r.transitions.push(Transition { name, from, to, allow, repeat, effects, span: sp })
+                        (Some(from), Some(allow)) if !to.is_empty() || !patch.is_empty() => {
+                            r.transitions.push(Transition { name, patch, expect, from, to, allow, repeat, effects, span: sp })
                         }
                         _ => return Err(Diag::new("DEF.MISSING_ITEM", "transition에는 from/to/allow가 모두 필요", sp)),
                     }

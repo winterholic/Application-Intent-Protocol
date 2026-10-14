@@ -968,7 +968,31 @@ impl<'a> Ctx<'a> {
             if to.contains_key("id") {
                 self.d("DEF.UNSUPPORTED_EFFECT", "전이는 잠근 대상의 기본키 id를 바꿀 수 없음", t.span);
             }
-            tr.insert(t.name.clone(), json!({ "from": from, "to": to, "allow": allow, "repeat": repeat, "effects": effects }));
+            let mut declaration = json!({ "from": from, "to": to, "allow": allow, "repeat": repeat, "effects": effects });
+            for (key, names) in [("patch", &t.patch), ("expect", &t.expect)] {
+                let mut fields = std::collections::BTreeSet::new();
+                for (f, sp) in names {
+                    if !fields.insert(f.clone()) {
+                        self.d("DEF.DUPLICATE", format!("{key} 필드 `{f}` 중복"), *sp);
+                    }
+                    if self.field_tt(&r.name, f).is_none() {
+                        self.d("DEF.UNKNOWN_FIELD", format!("{key} 필드 `{f}` 없음"), *sp);
+                    }
+                    if key == "patch" && (f == "id" || t.to.iter().any(|(fixed, _)| fixed == f)) {
+                        self.d("DEF.UNSUPPORTED_EFFECT", format!("patch `{f}`는 기본키이거나 to 대입과 겹침"), *sp);
+                    }
+                    if key == "expect" && r.field_read.iter().any(|(hidden, _, _)| hidden == f) {
+                        self.d("DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION", format!("expect `{f}`에는 field read 정책이 있어 이전 값 비교를 공개할 수 없음"), *sp);
+                    }
+                }
+                if !fields.is_empty() {
+                    declaration[key] = json!(fields);
+                }
+            }
+            if !t.patch.is_empty() && repeat == "unchanged" {
+                self.d("DEF.UNSUPPORTED", "patch에는 repeat unchanged를 쓸 수 없음. 같은 key 재시도로 멱등 결과를 복구한다", t.span);
+            }
+            tr.insert(t.name.clone(), declaration);
         }
         o.insert("transitions".into(), Value::Object(tr));
 
