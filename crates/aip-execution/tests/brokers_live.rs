@@ -137,6 +137,7 @@ async fn real_kafka_confirm_and_import_round_trip() {
             .set("isolation.level", "read_committed")
             .set("auto.offset.reset", "earliest")
             .set("allow.auto.create.topics", "false")
+            .set("session.timeout.ms", "10000")
             .set("max.poll.interval.ms", "30000")
             .set("fetch.max.bytes", "2097152")
             .set("max.partition.fetch.bytes", "1048576")
