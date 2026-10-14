@@ -81,3 +81,7 @@ IR 변경을 목표로 삼지 않으며 기존 OPEN 결정을 닫지 않는다. 
 원본 API 기준선은 [결과 JSON](facereview-api-baseline.json)에 저장한다.
 API test client, 브라우저, socket 실제 ML, worker/provider를 구분하며 UI/ML/provider 미실행 상태에서는 환경 작업 전체를 done으로 세지 않는다.
 재현 절차와 현재 확인 범위는 [BASELINE.md](BASELINE.md)에 둔다.
+
+2026-10-15 후속: 7.1.3.1의 API 하위 gate는 23개 case의 계약·의미값과 12개 SQL/Redis 상태를
+독립 oracle에 대조했다. 누락/중복/부분실행/기대값변조/저장오류를 unit 음성 control로 검사한다.
+7.1.3 전체는 browser·Socket.IO/ML·worker/provider 기준선이 남아 있어 완료하지 않는다.

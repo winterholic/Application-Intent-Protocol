@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import sys
 from datetime import datetime
+from facereview_oracle import semantic_checks
 
 
 def main():
@@ -80,6 +81,11 @@ def main():
     admin_client = app.test_client()
     observations = []
     anomalies = []
+    state_checks = []
+    completed = False
+
+    def state(label, value):
+        state_checks.append(dict(label=label, observed=value))
 
     def call(label, method, path, expected, body=None, token=None, api_client=None):
         headers = {'Authorization': 'Bearer '+token} if token else {}
@@ -88,7 +94,8 @@ def main():
         observations.append(dict(label=label, method=method, path=path,
                                  status=response.status_code, expected=expected,
                                  response_keys=sorted(data) if isinstance(data,dict) else [],
-                                 code=data.get('code') if isinstance(data,dict) else None))
+                                 code=data.get('code') if isinstance(data,dict) else None,
+                                 checks=semantic_checks(label, data)))
         if response.status_code != expected:
             # Only synthetic input; auth payloads are deliberately excluded.
             raise AssertionError(f'{label}: {response.status_code}, expected {expected}; keys={observations[-1]["response_keys"]}')
@@ -106,8 +113,12 @@ def main():
         call('general-admin-denied','GET','/api/v2/admin/users',403,token=user)
         call('admin-users','GET','/api/v2/admin/users',200,token=admin)
         call('tutorial','PATCH','/api/v2/auth/tutorial',200,token=user)
+        with app.app_context():
+            state('tutorial-saved', bool(db.session.get(User,user_id).is_tutorial_done))
         call('guest-video-detail','GET',f'/api/v2/watch/video?video_id={video_id}',200)
         call('guest-comment-denied','POST','/api/v2/watch/comments',401,dict(video_id=video_id,content='거절해야 함'))
+        with app.app_context():
+            state('guest-comment-row-count', db.session.query(Comment).count())
         comment = call('create-comment','POST','/api/v2/watch/comments',200,dict(video_id=video_id,content='합성 댓글'),user)['comment_id']
         if comment is None:
             # Keep the original response defect visible, then use the DB oracle
@@ -118,21 +129,33 @@ def main():
                                   source='app/services/watch_service.py:add_comment',
                                   cause='DTO captures default-generated ID before session flush',
                                   followup='Subsequent API cases use actual DB UUID; original response is not repaired'))
+        with app.app_context():
+            saved = db.session.get(Comment,comment)
+            state('created-comment', dict(owner=saved.user_id, video=saved.video_id, content=saved.content,
+                                         modified=bool(saved.is_modified), deleted=bool(saved.is_deleted)))
         call('edit-comment','PATCH','/api/v2/watch/comments',200,dict(comment_id=comment,content='수정 댓글'),user)
+        with app.app_context():
+            saved = db.session.get(Comment,comment)
+            state('edited-comment', dict(content=saved.content, modified=bool(saved.is_modified)))
         call('list-comments','GET',f'/api/v2/watch/comments?video_id={video_id}',200,token=user)
         call('delete-comment','DELETE',f'/api/v2/watch/comments?comment_id={comment}',200,token=user)
         with app.app_context():
             saved = db.session.get(Comment,comment)
+            state('deleted-comment', dict(retained=saved is not None, deleted=bool(saved.is_deleted) if saved else None))
             assert saved is not None and saved.is_deleted, 'Original comment delete must be soft delete'
         for i in range(3):
             call(f'like-toggle-{i+1}','POST','/api/v2/watch/like',200,dict(video_id=video_id),user)
             call(f'bookmark-toggle-{i+1}','POST','/api/v2/home/bookmark',200,dict(video_id=video_id),user)
             with app.app_context():
                 for model in (VideoLike,VideoBookmark):
-                    assert db.session.query(model).filter_by(user_id=user_id,video_id=video_id).count() == (1 if i%2==0 else 0)
+                    count = db.session.query(model).filter_by(user_id=user_id,video_id=video_id).count()
+                    state(f'{model.__tablename__}-count-{i+1}', count)
+                    assert count == (1 if i%2==0 else 0)
         call('logout','POST','/api/v2/auth/logout',200,token=user)
         assert client.get_cookie(REFRESH_TOKEN_COOKIE_NAME) is None
         assert extensions.redis_client.exists('facereview:blacklist:'+user_refresh.value)
+        state('logout', dict(refresh_cookie_absent=client.get_cookie(REFRESH_TOKEN_COOKIE_NAME) is None,
+                             refresh_blacklisted=bool(extensions.redis_client.exists('facereview:blacklist:'+user_refresh.value))))
         # The source route revokes only the refresh cookie, not access tokens.
         call('source-access-token-lives-until-expiry','GET','/api/v2/auth/me',200,token=user)
         client.set_cookie(REFRESH_TOKEN_COOKIE_NAME,user_refresh.value)
@@ -143,6 +166,7 @@ def main():
                               source='app/services/auth_service.py:reissue',
                               cause='Reissue verifies JWT and active user but does not consult refresh blacklist',
                               followup='Security difference: port must reject replay; preserve source observation, not vulnerability'))
+        completed = True
     finally:
         expected = {(r['endpoint'].split(' ',1)[0],r['endpoint'].split(' ',1)[1])
                     for r in inventory['entries'] if r['kind']=='http' and r['scope']=='product'}
@@ -150,11 +174,12 @@ def main():
                   for m in rule.methods-{'HEAD','OPTIONS'} if rule.endpoint != 'static'}
         missing = sorted(expected-actual)
         extra = sorted(actual-expected)
-        result = dict(source_sha=backend['sha'], runtime=versions,
+        result = dict(source_sha=backend['sha'], runtime=versions, completed=completed, scope='original-api',
                       transport='Flask test_client -> ORIGINAL handlers -> real MySQL/Mongo/Redis',
                       ml='not executed; preload_emotion_model=False; no fake inference',
                       browser='not executed', aip_ported=False, observations=observations,
                       original_anomalies=anomalies,
+                      state_checks=state_checks,
                       missing_registered_routes=missing, additional_framework_routes=extra,
                       expected_product_http=len(expected),
                       packages=sorted(f'{d.metadata["Name"]}=={d.version}' for d in importlib.metadata.distributions()),
@@ -162,7 +187,7 @@ def main():
                                 description='two synthetic roles, one fixed video; no production data'))
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2)+'\n')
-        print(json.dumps(dict(cases=len(observations), oracle_mismatches=sum(r['status']!=r['expected'] for r in observations),
+        print(json.dumps(dict(completed=completed, cases=len(observations), states=len(state_checks), oracle_mismatches=sum(r['status']!=r['expected'] for r in observations),
                               original_anomalies=len(anomalies), missing_registered_routes=missing, aip_ported=False)))
     if missing:
         raise AssertionError('Inventory contains unregistered production routes')

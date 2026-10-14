@@ -47,6 +47,27 @@ ML 의존성은 API baseline lock에 넣지 않았다. `preload_emotion_model=Fa
 포팅본은 replay 거부를 기대하고 의도적 차이로 기록해야 한다. 원본 복제를 이유로 이 취약 동작을 유지하지 않는다.
 서로 다른 사용자 로그인은 client/cookie jar를 분리해 잘못된 refresh cookie를 로그아웃하는 harness 오류를 막는다.
 
+## API 의미·저장 상태 대조 (7.1.3.1)
+
+2026-10-15 후속 실행은 23개 API case와 12개 SQL/Redis 상태를 독립 [oracle](facereview-api-oracle.json)에 대조한다.
+HTTP status·response keys·오류 code 외에 사용자/role·튜토리얼·영상/댓글 값·토글 응답을 선택해 검사한다.
+저장 oracle은 튜토리얼 변경, guest 작성의 0행, 댓글 작성/수정/soft delete, like/bookmark의 1/0/1행, logout blacklist/cookie다.
+MySQL 8.4.11·MongoDB 7.0.45·Redis 7.4.11의 새 tmpfs DB에서 23개/12개 전부 일치했고 원본 결함 2개는 유지됐다.
+
+```sh
+python3 -m unittest discover -s tools -p test_facereview_oracle.py
+python3 tools/facereview_oracle.py --result /tmp/facereview-api-baseline.json --oracle plan-docs/porting/facereview-api-oracle.json
+```
+
+unit 10개는 정상 결과와 누락·중복·추가 case, 잘못된 HTTP/응답값/저장 상태, embedded expected 변조,
+부분 실행·원본 SHA/환경 변경·scope 오인·민감 필드를 양방향으로 검사한다. 실패 진단은 값 대신 case/field 이름만 낸다.
+로그인 응답의 token은 값 없이 `access_present` bool만 저장한다. 생성 댓글 UUID는 DELETE query의 해당 값만 `$comment`로 정규화하고
+다른 API 경로·영상 UUID는 그대로 비교한다. 변동 시간은 이 API oracle의 의미값에 넣지 않으며 화면/ML 동등성으로 확대하지 않는다.
+
+report의 `completed`는 계획된 API 실행 완료만 뜻한다. `scope=original-api`, `aip_ported=false`이며 browser/ML 미실행 표식은 유지한다.
+case 누락·중복, 저장 검사 누락, source/환경 변경, 원본 route 누락은 comparator 오류와 nonzero 종료다.
+원본 실행 결과로 기대값을 매번 다시 만드는 방식은 쓰지 않는다. oracle의 의미값은 고정 source의 DTO/schema·합성 seed를 기준으로 정했다.
+
 실행 증거는 [facereview-api-baseline.json](facereview-api-baseline.json), 패키지 버전은 [baseline-api.lock](baseline-api.lock).
 공통 source 범위는 [facereview-inventory.json](facereview-inventory.json)이다.
 앞으로 브라우저/실제 ML/worker/provider까지 실행해야 WBS 7.1.2 전체 환경 완료를 판정할 수 있다.
