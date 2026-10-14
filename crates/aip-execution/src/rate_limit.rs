@@ -56,7 +56,7 @@ impl RateLimiter {
         let window = policy.window.as_millis() as i64;
         let limit = i64::from(policy.limit);
         let tx = db.transaction().await.map_err(|_| "rate storage unavailable")?;
-        tx.batch_execute("SET LOCAL statement_timeout='1s'; SET LOCAL lock_timeout='100ms'").await.map_err(|_| "rate storage unavailable")?;
+        tx.batch_execute("SET LOCAL statement_timeout='5s'; SET LOCAL lock_timeout='1s'").await.map_err(|_| "rate storage unavailable")?;
         // A window that already ended carries no state (the next hit starts a new one), so reclaim a bounded batch of
         // them on every check; never accumulate one row per time window.
         tx.execute(&format!("DELETE FROM {table} WHERE scope IN (SELECT scope FROM {table} WHERE reset_at<clock_timestamp() ORDER BY reset_at LIMIT 128 FOR UPDATE SKIP LOCKED)"), &[]).await.map_err(|_| "rate storage unavailable")?;
