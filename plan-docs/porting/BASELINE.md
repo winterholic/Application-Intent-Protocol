@@ -103,3 +103,6 @@ API exit 0·cleanup exit 0·evidence 오류 0·남은 해당 프로젝트 컨테
 실행 증거는 [facereview-api-baseline.json](facereview-api-baseline.json), 패키지 버전은 [baseline-api.lock](baseline-api.lock).
 공통 source 범위는 [facereview-inventory.json](facereview-inventory.json)이다.
 앞으로 브라우저/실제 ML/worker/provider까지 실행해야 WBS 7.1.2 전체 환경 완료를 판정할 수 있다.
+
+2026-10-15 [기본 브라우저 기준선](BROWSER-BASELINE.md)은 사용자·관리자 13개 화면 case를 실제 HTTP 서버에서 실행했다.
+기존 API test_client 증거와 별개이며 영상 제공자 오류 상태까지만 포함한다. 전체 UI·ML·provider gate는 여전히 남아 있다.
