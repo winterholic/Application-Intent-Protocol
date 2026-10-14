@@ -3,6 +3,8 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use spike_v2_read::id_wire::IdWire;
 use std::fmt::Write;
+mod python;
+pub use python::contract_module_python;
 
 pub fn contract_ts_with_apply(facts: &Value, wire: IdWire) -> String {
     let mut s = contract_ts_with_wire(facts, wire);
@@ -12,6 +14,16 @@ pub fn contract_ts_with_apply(facts: &Value, wire: IdWire) -> String {
             writeln!(s, "  \"{res}.{action}\": {{").unwrap();
             let input = if wire == IdWire::Legacy { "string".into() } else { format!("Id<\"{res}\">") };
             writeln!(s, "    idInput: {input};\n    idOutput: Id<\"{res}\">;").unwrap();
+            for (declared, key, optional) in [("patch", "values", "?"), ("expect", "expect", "")] {
+                if let Some(names) = rf["transitions"][action][declared].as_array() {
+                    writeln!(s, "    {key}: {{").unwrap();
+                    for name in names.iter().filter_map(Value::as_str) {
+                        let ty = rf["fields"][name]["ty"].as_str().unwrap();
+                        writeln!(s, "      {name}{optional}: {};", ts_type(facts, ty)).unwrap();
+                    }
+                    s.push_str("    };\n");
+                }
+            }
             let mut targets: Vec<_> = ex["target"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
             targets.sort();
             targets.dedup();
@@ -32,6 +44,31 @@ pub fn contract_ts_with_apply(facts: &Value, wire: IdWire) -> String {
         }
     }
     s.push_str("}\n");
+    let mut inputs = serde_json::Map::new();
+    for (res, rf) in facts["resources"].as_object().unwrap() {
+        for (action, _) in rf["exposeApply"].as_object().into_iter().flatten() {
+            let mut descriptor = serde_json::Map::new();
+            for key in ["patch", "expect"] {
+                if let Some(names) = rf["transitions"][action][key].as_array() {
+                    let fields: serde_json::Map<String, Value> = names
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(|name| {
+                            let field = &rf["fields"][name];
+                            (name.into(), serde_json::json!({"ty":field["ty"],"range":field["range"]}))
+                        })
+                        .collect();
+                    descriptor.insert(key.into(), Value::Object(fields));
+                }
+            }
+            if !descriptor.is_empty() {
+                inputs.insert(format!("{res}.{action}"), Value::Object(descriptor));
+            }
+        }
+    }
+    if !inputs.is_empty() {
+        writeln!(s, "export const applyInputDescriptors = {} as const;", Value::Object(inputs)).unwrap();
+    }
     push_write_contract(&mut s, facts, wire);
     s
 }

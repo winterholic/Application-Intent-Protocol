@@ -38,6 +38,8 @@ pub enum Command {
         out: PathBuf,
         #[arg(long, default_value = "@aip/sdk")]
         sdk_import: String,
+        #[arg(long, value_enum, default_value = "ts")]
+        lang: BindingLanguage,
     },
     /// Create a fresh owned schema and its deployment journal
     Init {
@@ -176,6 +178,11 @@ pub enum Principal {
 pub enum Wire {
     Safe,
     Decimal,
+}
+#[derive(Clone, Copy, ValueEnum)]
+pub enum BindingLanguage {
+    Ts,
+    Python,
 }
 impl Wire {
     fn deployment_label(self) -> &'static str {
@@ -767,12 +774,15 @@ pub async fn run(command: Command) -> Result<Value, Value> {
                 json!({"ok":true,"executionDigest":spike_v1_fixture::digest(&checked.output.execution),"advisories":checked.advisories.iter().map(|a|json!({"code":a.code,"anchor":a.anchor,"message":a.msg})).collect::<Vec<_>>()}),
             )
         }
-        Command::Gen { file, wire, out, sdk_import } => {
+        Command::Gen { file, wire, out, sdk_import, lang } => {
             let facts = load(&file, false)?.output.execution;
             if sdk_import.trim().is_empty() {
                 return Err(error("BAD_SDK_IMPORT", "SDK import 경로가 필요함"));
             }
-            let content = spike_v5_sdk::contract_module_with_all_extensions(&facts, &sdk_import, wire.id_wire());
+            let content = match lang {
+                BindingLanguage::Ts => spike_v5_sdk::contract_module_with_all_extensions(&facts, &sdk_import, wire.id_wire()),
+                BindingLanguage::Python => spike_v5_sdk::contract_module_python(&facts, wire.id_wire()),
+            };
             write_binding(&file, &out, &content)?;
             Ok(
                 json!({"ok":true,"fingerprint":spike_v5_sdk::contract_fingerprint_with_all_extensions(&facts,wire.id_wire()),"idWire":wire.id_wire().label()}),

@@ -40,8 +40,10 @@ type ApplyWhere<A extends ApplyActionShape> = {
 type ApplyTarget<A extends ApplyActionShape> =
   | ("id" extends A["targets"] ? { readonly ids: readonly A["idInput"][]; readonly where?: never } : never)
   | ("where" extends A["targets"] ? { readonly where: readonly ApplyWhere<A>[]; readonly ids?: never } : never);
+type ApplyInput<A> = (A extends { readonly values: infer V } ? { readonly values: V } : { readonly values?: never })
+  & (A extends { readonly expect: infer E } ? { readonly expect: E } : { readonly expect?: never });
 export type ApplyRequest<A extends ApplyContractShape<A>, K extends keyof A & string = keyof A & string> = {
-  [Name in K]: { readonly apply: Name; readonly target: ApplyTarget<A[Name]> }
+  [Name in K]: { readonly apply: Name; readonly target: ApplyTarget<A[Name]> } & ApplyInput<A[Name]>
 }[K];
 export type ApplyResult<I> =
   | { readonly ok: true; readonly changed: readonly I[]; readonly unchanged: readonly I[]; readonly tags: readonly string[]; readonly replayed?: boolean; readonly recovered?: boolean }

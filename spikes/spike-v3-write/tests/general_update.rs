@@ -33,13 +33,15 @@ async fn postgres_general_partial_null_authorization_validation_conflict_and_ato
     for ddl in sqlgen::ddl(&facts).unwrap() {
         db.batch_execute(&ddl).await.unwrap();
     }
+    db.batch_execute(&spike_v3_write::audit_ddl(&schema)).await.unwrap();
+    spike_v3_write::set_audit_table(Some(format!("{schema}.aip_audit"))).unwrap();
     db.batch_execute(&format!(
         "INSERT INTO {schema}.member(id) VALUES(1),(2); INSERT INTO {schema}.note(id,owner_id,title,content,version) VALUES(10,1,'before','body',0)"
     ))
     .await
     .unwrap();
     let caller = Caller { actor_id: Some(1), now: "2026-10-14T00:00:00Z".into() };
-    let k = Knobs::default();
+    let k = Knobs { audit_key: Some("crud-test".into()), ..Knobs::default() };
     let result = apply(
         &mut db,
         &facts,
@@ -100,5 +102,13 @@ async fn postgres_general_partial_null_authorization_validation_conflict_and_ato
     assert_eq!(bundle(&mut db, &facts, &atomic, &caller, &k).await.unwrap_err().code, "WIRE.CONFLICT");
     let row = db.query_one(&format!("SELECT title,version FROM {schema}.note"), &[]).await.unwrap();
     assert_eq!((row.get::<_, String>(0), row.get::<_, i64>(1)), ("cmp".into(), 4));
+    let audit = db.query_one(&format!("SELECT before,after,request_key FROM {schema}.aip_audit ORDER BY id LIMIT 1"), &[]).await.unwrap();
+    let before: Value = audit.get(0);
+    let after: Value = audit.get(1);
+    assert_eq!(before["title"], "before");
+    assert_eq!(after["title"], "새 제목");
+    assert_eq!(after["content"], "새 본문");
+    assert_eq!(audit.get::<_, Option<String>>(2), Some("crud-test".into()));
+    spike_v3_write::set_audit_table(None).unwrap();
     db.batch_execute(&format!("DROP SCHEMA {schema} CASCADE")).await.unwrap();
 }

@@ -982,15 +982,26 @@ impl<'a> Ctx<'a> {
                         self.d("DEF.UNSUPPORTED_EFFECT", format!("patch `{f}`는 기본키이거나 to 대입과 겹침"), *sp);
                     }
                     if key == "expect" && r.field_read.iter().any(|(hidden, _, _)| hidden == f) {
-                        self.d("DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION", format!("expect `{f}`에는 field read 정책이 있어 이전 값 비교를 공개할 수 없음"), *sp);
+                        self.d(
+                            "DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION",
+                            format!("expect `{f}`에는 field read 정책이 있어 이전 값 비교를 공개할 수 없음"),
+                            *sp,
+                        );
+                    }
+                    if key == "expect" && self.field_tt(&r.name, f).is_some_and(|ft| matches!(ft.ty, Ty::Ref(_))) {
+                        self.d(
+                            "DEF.UNSUPPORTED",
+                            "expect는 참조 필드를 비교할 수 없음. 읽기 정책에 가려진 외래 키의 추론을 막는다. version 또는 scalar 필드를 사용한다",
+                            *sp,
+                        );
                     }
                 }
                 if !fields.is_empty() {
                     declaration[key] = json!(fields);
                 }
             }
-            if !t.patch.is_empty() && repeat == "unchanged" {
-                self.d("DEF.UNSUPPORTED", "patch에는 repeat unchanged를 쓸 수 없음. 같은 key 재시도로 멱등 결과를 복구한다", t.span);
+            if (!t.patch.is_empty() || !t.expect.is_empty()) && repeat == "unchanged" {
+                self.d("DEF.UNSUPPORTED", "patch/expect에는 repeat unchanged를 쓸 수 없음. 같은 key 재시도로 멱등 결과를 복구한다", t.span);
             }
             tr.insert(t.name.clone(), declaration);
         }
@@ -1081,6 +1092,9 @@ impl<'a> Ctx<'a> {
                 for (t, sp) in &c.transitions {
                     if !r.transitions.iter().any(|x| &x.name == t) {
                         self.d("DEF.UNKNOWN_SYMBOL", format!("compose 전이 `{t}` 없음"), *sp);
+                    }
+                    if r.transitions.iter().any(|x| &x.name == t && (!x.patch.is_empty() || !x.expect.is_empty())) {
+                        self.d("DEF.UNSUPPORTED", "compose의 전이 단계는 patch/expect 입력을 제공하지 않는다. 이 전이는 bundle.apply로 묶는다", *sp);
                     }
                     trs.insert(t.clone());
                 }

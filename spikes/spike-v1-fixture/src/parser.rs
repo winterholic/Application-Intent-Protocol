@@ -524,7 +524,7 @@ impl Parser {
                         (Some(from), Some(allow)) if !to.is_empty() || !patch.is_empty() => {
                             r.transitions.push(Transition { name, patch, expect, from, to, allow, repeat, effects, span: sp })
                         }
-                        _ => return Err(Diag::new("DEF.MISSING_ITEM", "transition에는 from/to/allow가 모두 필요", sp)),
+                        _ => return Err(Diag::new("DEF.MISSING_ITEM", "transition에는 from/allow와 to 또는 patch가 필요", sp)),
                     }
                 }
                 "unique" => r.uniques.push((self.ident_list()?, sp)),

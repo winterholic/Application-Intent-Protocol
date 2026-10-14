@@ -455,7 +455,7 @@ async fn update(
     if let Some(input) = input {
         for (field, src) in &input.expected {
             let col = column(facts, res, field).unwrap();
-            let value = input_sql(&mut cx, res, field, src);
+            let value = input_sql(&mut cx, res, field, src)?;
             from = format!("({from}) AND (t.{col} IS NOT DISTINCT FROM {value})");
         }
     }
@@ -474,7 +474,7 @@ async fn update(
     if let Some(input) = input {
         for (field, src) in &input.values {
             let col = column(facts, res, field).unwrap();
-            sets.push(format!("{col} = {}", input_sql(&mut cx, res, field, src)));
+            sets.push(format!("{col} = {}", input_sql(&mut cx, res, field, src)?));
         }
     }
     // 증감한 Int 필드의 선언 범위. DDL CHECK가 없으므로 같은 트랜잭션에서 UPDATE 결과로 확인한다.
@@ -973,12 +973,12 @@ fn apply_input(facts: &Value, res: &str, tr: &str, request: &Map<String, Value>,
     Ok(input)
 }
 
-fn input_sql(cx: &mut Ctx<'_>, res: &str, field: &str, src: &Src) -> String {
+fn input_sql(cx: &mut Ctx<'_>, res: &str, field: &str, src: &Src) -> Result<String, Reject> {
     match src {
-        Src::Lit(value, cast) => cx.params.bind(Some(value.clone()), cast),
+        Src::Lit(value, cast) => Ok(cx.params.bind(Some(value.clone()), cast)),
         // 테이블 행 타입에서 NULL의 SQL 타입을 얻는다. nullable scalar·Ref 모두 같은 경로다.
-        Src::Null => format!("(NULL::{}).{}", table(res), column(cx.facts, res, field).unwrap()),
-        Src::Item { .. } => unreachable!("apply_input accepts only caller literals"),
+        Src::Null => Ok(format!("(NULL::{}).{}", table(res), column(cx.facts, res, field).unwrap())),
+        Src::Item { .. } => Err(internal("apply input must be a literal")),
     }
 }
 
