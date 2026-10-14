@@ -34,3 +34,7 @@ HTTP listener는 loopback에서 TLS reverse proxy 뒤에 둔다. 제품은 개�
 ## resource 독립 실행 후속
 
 현재 제품은 top-level `operation read`와 업무 resource가 없는 `actor principal` 모드를 지원한다. 같은 형식·SDK·Node/Python worker를 사용하며 별도 컨트롤러를 요구하지 않는다. 운영 PostgreSQL·인증·배포 fence는 유지한다. 실제 문법과 지원 범위는 [동기 operation](../../product/EXECUTION.md), 현재 durable 실행은 [관리형 실행](../../product/MANAGED-EXECUTION.md), 파일 hosting·실시간·스토리지·메시징·Linux 설정은 [서버 인프라](../../product/INFRASTRUCTURE.md)를 따른다. 이전 [Job 제안](../../plan-docs/backend-capability/durable-job-proposal.md)은 설계 이력이다.
+
+## UUID와 외부 PostgreSQL
+
+`id: Uuid`는 두 wire에서 UUID 문자열로 왕복한다. `service gen --lang python`도 리소스별 UUID Id 타입을 생성한다. 기존 DB는 `introspect`로 deny-all 정의/매핑 초안을 만들고 `external_mapping` 설정과 `adopt-external`로 채택한다. 업무 schema에 DDL하지 않으며 별도 AIP schema의 view와 metadata를 사용한다. 동일 매핑의 정책 재배포는 metadata만 갱신한다. [명령·권한·제약](../../plan-docs/uuid-adoption/DESIGN.md)을 따른다.

@@ -147,3 +147,7 @@ run = client.jobs.wait(job["id"])
 
 설치는 `pip install ./product/python`이다(배포용 wheel·PyPI 게시는 아직 없음). 단위 검증은 `python3 -m unittest product.tests.python_sdk_test`, 실제 서비스 검증은 `node --test product/tests/service-smoke.test.mjs`다. smoke는 TypeScript 소비자가 커밋한 쓰기를 Python 소비자가 같은 key로 재생하는지까지 확인한다.
 
+
+## UUID Id
+
+`id: Uuid` resource와 그 Ref/X.Id는 safe/decimal 모두 정규 UUID 문자열이다. TypeScript는 리소스별 Id 조건부 타입, Python `gen --lang python`은 NewType(str)와 선택형 Row 타입을 생성한다. read/filter/after/create/apply/수정 입력·pending 복구에 같은 값을 전달한다. 숫자 Id의 V13 규칙은 그대로다. 잘못된 종류의 성공응답은 pending으로 보존한다. [UUID·실 DB 채택 검증](../plan-docs/uuid-adoption/DESIGN.md)을 참고한다.

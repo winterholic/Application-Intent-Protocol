@@ -16,3 +16,7 @@
 제품 CLI는 `plan_with_wire`/`apply_with_wire`를 사용한다. 계획에 wire와 기존 멱등 기록 검사를 포함하고, 제품 metadata·wire 고정·저널 기록·prototype marker 제거를 같은 트랜잭션으로 묶는다. 다른 wire를 요청하면 기존 marker와 데이터를 유지한 채 거부한다. 같은 계획 재시도는 최신 저널·facts·실제 구조·wire를 대조해 `alreadyApplied`로 확인하며 저널을 중복 생성하지 않는다.
 
 `crates/aip-cli/tests/adoption_flow.rs`는 실제 이전 V6 서버가 decimal ID로 커밋한 쓰기를 JWT 제품 서버에서 같은 키로 재생한다. 직접 심은 임의 principal 행의 보존만으로 이관을 보증하지 않는다. 이 테스트는 이전 prototype과 같은 V1/V2/V6 엔진 경로를 사용하고, prototype CLI binary 자체를 실행하는 검증과는 구분한다.
+
+## marker 없는 운영 DB
+
+이 문서의 prototype 안전 채택 조건은 유지한다. AIP가 만들지 않은 운영 schema는 별도 `service introspect`·`adopt-external` 경로로 연결한다. prototype marker를 만들어서 우회하지 않는다. [외부 채택·제한 역할·구조 drift](../../plan-docs/uuid-adoption/DESIGN.md)를 따른다.

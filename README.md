@@ -105,3 +105,5 @@ MIT. [LICENSE](LICENSE)를 따른다(D-A27).
 ### 계약 JSON 출력
 
 `aip contract <program.aipoc>`는 JSON 한 줄을 출력한다. 사람이 읽을 때는 `--pretty`를 붙인다. 공통 오류 정의는 최상위 `errors` 배열에 있고 각 query·command·subscription의 `errors` 배열은 해당 정의의 인덱스를 참조한다. 이 명령은 PoC 언어의 계약 출력이며 제품 언어의 생성 binding은 `aip service gen`을 사용한다.
+
+2026-10-14: [UUID Id·기존 운영 PostgreSQL 채택](plan-docs/uuid-adoption/DESIGN.md)을 추가했다. 숫자 Id/owned schema 기본을 유지하며 `service introspect`·`adopt-external`이 별도 AIP schema의 매핑 view·구조 검증으로 기존 테이블을 사용한다. [외부 인프라 연결 목록](plan-docs/uuid-adoption/INFRASTRUCTURE-CONNECTIONS.md)과 검증 제한을 함께 확인한다.

@@ -26,3 +26,7 @@
 이 라이브러리의 facts 인자는 V1 sema가 산출한 execution facts를 전제로 한다. 직접 만든 JSON을 받는 공개 API에는 식별자·enum 값·비교 연산자·`exists` 대상 등의 최소 검사를 두었지만, 임의 정책 AST의 의미와 모든 표현식을 독립적으로 검증하지는 않는다. 제품 CLI는 사용자 정의를 sema로 분석한 결과만 전달해야 한다.
 
 목표 구조 검증은 임시 schema의 catalog에서 물리 열 순서를 제외하고 schema 이름을 치환한 뒤 실제 schema와 비교한다. 이 이름 치환은 SQL 파서가 아닌 catalog 문자열 치환이므로, schema 이름이 SQL 문자열 리터럴이나 함수 본문에 등장하는 특수 정의는 의미가 같아도 검증이 실패할 수 있다. 임시 schema 이름이 facts와 겹치면 적용을 거부한다. 검증 실패는 전체 트랜잭션을 취소하며, 임시 schema 이름은 소유를 확인한 트랜잭션 안에서만 삭제한다.
+
+## 외부 schema와 UUID
+
+`external::{introspect,plan_external,adopt_external}`은 원본 테이블을 소유하지 않는다. 실제 타입/nullable/PK/FK/기본값과 매핑을 확인하고, AIP schema의 security-invoker view와 metadata만 만든다. 원본 snapshot drift를 자동 재기준화하지 않으며 explicit plan이 필요하다. 같은 매핑의 정책 업데이트·같은 최신 plan 재조회는 신원/멱등 기록을 보존한다. 외부 marker에는 일반 owned DDL migration을 허용하지 않는다. UUID 종류 변경은 identity/FK 이관 의미가 없어 Unsupported다. [설계·범위](../../plan-docs/uuid-adoption/DESIGN.md)를 참고한다.

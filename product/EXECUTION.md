@@ -50,7 +50,7 @@ caller는 등록된 이름과 typed 입력을 고른다. 구현 경로·정책·
 
 ## 신원과 저장소
 
-`actor principal`은 **resource가 없고 operation이 있는 앱에서만** Runtime 관리 신원을 뜻한다. `principal.Id`와 `actor.id`를 사용할 수 있고 업무 필드나 `exists principal`은 사용할 수 없다. 실제 `resource principal`이 이미 있는 정의는 기존 actor resource 의미를 유지한다. `actor Member` 같은 기존 정의에도 operation을 추가할 수 있으며 기존 predicate와 actor 필드 정책을 재사용한다.
+`actor principal`은 실제 `resource principal` 선언이 없으면 Runtime 관리 신원을 뜻한다. operation 전용 앱뿐 아니라 외부 DB의 업무 resource와 함께 사용할 수도 있다(2026-10-14 D-A32). `principal.Id`와 `actor.id`를 사용할 수 있고 업무 필드나 `exists principal`은 사용할 수 없다. 실제 `resource principal`이 이미 있는 정의는 기존 actor resource 의미를 유지한다. `actor Member` 같은 기존 정의에도 operation을 추가할 수 있으며 기존 predicate와 actor 필드 정책을 재사용한다.
 
 작업 전용 앱의 `aip service init`은 운영 신원용 `aip_actors`와 기존 인증·배포 metadata를 만든다. `service principal bind`가 명시적으로 actor를 등록하고 subject를 연결하며 요청에서 자동 등록하지 않는다. bind 충돌은 같은 트랜잭션의 actor 등록도 되돌린다. revoke는 actor row를 삭제하지 않는다. 저장된 wire와 다른 설정의 principal 명령은 거부한다.
 
