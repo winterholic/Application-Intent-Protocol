@@ -17,9 +17,9 @@ API의 MySQL/Mongo/Redis 실제 서비스와 23 API case 기준선은 계속 재
 
 ## 외부 IdP·TLS reverse proxy 및 실제 broker·storage smoke 검증 (2026-10-17)
 
-WBS 항목인 외부 IdP/TLS reverse proxy 운영 smoke 및 실제 Kafka/RabbitMQ/MinIO(S3 호환) 연동 smoke를 로컬 컨테이너 환경에서 검증 완료했다.
-- **외부 IdP 및 TLS reverse proxy**: Caddy TLS proxy 뒤 `aip service` 운영 인증, Origin/CORS, `x-request-id`, 루프백 차단, OIDC HTTPS JWKS 기반 JWT(`at+jwt`) 검증, 토큰 만료/aud/iss/typ/sub 불일치 거부 등 17개 검사 통과 (`scripts/smoke-idp-proxy.sh`).
-- **실제 Kafka·RabbitMQ 및 MinIO**: Kafka KRaft 왕복/dead-letter redrive, RabbitMQ 발행확인/quarantine 재시도, DB 연결 단절 후 복구, MinIO HTTPS 멀티파트 업로드/다운로드 및 권한 분리 4개 live 통합 검사 통과 (`scripts/smoke-brokers-storage.sh`).
+WBS 항목인 외부 IdP/TLS reverse proxy 운영 smoke 및 실제 Kafka/RabbitMQ/MinIO(S3 호환) 연동 smoke의 로컬 컨테이너 기반 검증 기록이다. 원 작업과 독립 교차 재현 결과를 병기하며, 현재 Flash 수정 후 독립 재검증 대기 상태다.
+- **외부 IdP 및 TLS reverse proxy**: Caddy TLS proxy 환경에서 자체 경량 RSA/JWKS/JWT fixture(`conformance/idp-proxy/idp/server.mjs`) 기반으로 검증했다. Keycloak·상용 IdP 연동 및 RFC 9068 전체 conformance 적합성은 미검증이다. 원 작업(`cbaa401`)에서는 17개 검사 통과를 보고했으나, 독립 교차 검증(`cbaa401`, 별도 DB)에서는 3개 assertion(health/discovery/JWKS) 통과 후 `aip service` 시작 단계에서 `io other error`의 `SERVER_CONFIG`로 중단(exit 1)되어 남은 14개 assertion은 미실행되었다(원인 불명, 별도 세션에서 진단 예정).
+- **실제 Kafka·RabbitMQ 및 MinIO**: Kafka KRaft 왕복/redrive(`real_kafka_confirm_and_import_round_trip`), RabbitMQ 발행확인/quarantine(`real_rabbitmq_confirm_and_import_round_trip`), DB 연결 단절 후 복구(`broker_worker_recovers_from_database_disconnect_without_losing_delivery_budget`), MinIO HTTPS 멀티파트/권한분리(`minio_https_actual_object_and_multipart_contract`) 세 cargo 명령 기반 4개 live 통합 검사를 통과했다 (`scripts/smoke-brokers-storage.sh`). MinIO 소스 빌드는 독립 검증 시 기존 로컬 이미지 재사용으로 미실행되었으며 공식 이미지 중단 단정은 제외했다.
 - 상세 실행 결과 및 회귀 수정은 [제품 검증](../product/VERIFICATION.md)을 따른다.
 
 ## 내부 metrics·OTLP exporter·durable job trace 연결 (2026-10-17)
@@ -46,7 +46,7 @@ WBS 항목인 내부 metrics 확장, OTLP/HTTP exporter, durable job run trace �
 
 운영 JWT 검증과 지속 actor 연결, 일반 DDL 계획·적용·배포 저널, 데이터와 멱등 결과를 보존하는 명시적 prototype 이관, 설치 SDK를 제품 경로에 연결했다. 재귀 제한은 source·token·AST·predicate 확장·path·SQL 생성·복제 payload에 함께 적용한다. 활성 서버의 구 정책 실행, 연결 재활성화 시 폐기 토큰 복구, Id wire 변경에 따른 멱등 namespace 변화도 회귀 검증 대상으로 고정한다.
 
-2026-10-06 최종 제품 검증은 [제품 결과](../product/VERIFICATION.md)와 [배포 묶음](../product/dist/2026-10-06T11-19-25-091Z/README.md)을 따른다. 현재 실행 절차·검증 명령·미지원 범위는 [제품 서비스](../crates/aip-service/README.md), [마이그레이션](../crates/aip-migrate/README.md), [SDK](../product/SDK.md)를 따른다. 외부 IdP 실배포·TLS proxy 및 실제 broker/storage smoke는 2026-10-17 로컬 컨테이너 기반으로 통과했다. 다른 OS·무중단 대형 backfill·클라우드 상용 서비스 직접 계정 연동은 미검증이다. 최종 DSL·Id wire·쓰기 조합·라이선스 결정은 유지한다.
+2026-10-06 최종 제품 검증은 [제품 결과](../product/VERIFICATION.md)와 [배포 묶음](../product/dist/2026-10-06T11-19-25-091Z/README.md)을 따른다. 현재 실행 절차·검증 명령·미지원 범위는 [제품 서비스](../crates/aip-service/README.md), [마이그레이션](../crates/aip-migrate/README.md), [SDK](../product/SDK.md)를 따른다. 자체 fixture 기반 IdP·TLS proxy 및 실제 broker/storage smoke는 2026-10-17 로컬 컨테이너 기반으로 실행됐으며, IdP는 독립 검증 중단 후 재검증 대기 상태다. 다른 OS·무중단 대형 backfill·클라우드 상용 IdP/외부 서비스 직접 연동 및 RFC 9068 전체 conformance는 미검증이다. 최종 DSL·Id wire·쓰기 조합·라이선스 결정은 유지한다.
 
 ## 이전 단계: 2026-10-04 밤 작업 요약
 
