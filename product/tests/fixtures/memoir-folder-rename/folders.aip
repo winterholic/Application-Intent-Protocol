@@ -1,0 +1,20 @@
+resource Member { fields { id: Uuid } }
+actor Member
+
+resource Folder {
+  fields { id: Uuid; owner: Member; name: Text(1..255); sortOrder: Int; deleted: Bool }
+  rows read when owner = actor and deleted = false
+  transition rename {
+    allow owner = actor
+    from deleted = false
+    patch name, sortOrder
+  }
+  expose read {
+    select id, owner, name, sortOrder, deleted
+    refIds owner
+    filter id.eq
+    sort id
+    budget { rows 20; depth 1; deadline 1s; cost 100 }
+  }
+  expose apply rename { target id; bulk maxRows 1 }
+}
