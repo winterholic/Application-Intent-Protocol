@@ -1,27 +1,31 @@
 # 제품 통합 검증 (2026-10-17)
 
-운영 IdP·TLS reverse proxy 및 실제 broker(Kafka, RabbitMQ)·S3 호환 object storage(MinIO) 연동의 로컬 컨테이너 기반 종단간(E2E) smoke 검증을 완료했다. 테스트 전용 재현 환경(`conformance/`)과 자동화 스크립트(`scripts/`)를 저장소에 구성하고 실제 컨테이너 환경에서 검증을 통과했다.
+운영 IdP·TLS reverse proxy 및 실제 broker(Kafka, RabbitMQ)·S3 호환 object storage(MinIO) 연동의 로컬 컨테이너 기반 종단간(E2E) smoke 검증 기록이다. 원 작업(커밋 `cbaa401`)과 독립 교차 검증(`결과.md`)의 실행 결과를 시점·환경·커밋별로 병기하며, 현재 Flash 수정 후 독립 재검증 대기 상태다.
 
 ## WBS A: 외부 IdP·TLS reverse proxy 운영 smoke (2026-10-17)
 
-RFC 9068 준수 OIDC IdP(`at+jwt`, JWKS 엔드포인트) 및 Caddy TLS reverse proxy(자체 서명 SAN 인증서) 환경에서 `aip service` 운영 인증 및 프록시 헤더 처리를 검증했다.
+`conformance/idp-proxy/idp/server.mjs`는 저장소 자체의 경량 RSA/JWKS/JWT fixture이며, 실제 Keycloak·Entra·Google 연동이나 RFC 9068 전체 conformance 적합성은 미검증이다. Caddy TLS reverse proxy(자체 서명 SAN 인증서) 환경에서 `aip service` 운영 인증 및 프록시 헤더 처리를 검증했다.
 
-| 실제 실행 | 결과 | 확인한 범위 |
-|---|---|---|
-| `bash scripts/smoke-idp-proxy.sh` (`node conformance/idp-proxy/smoke-check.mjs`) | 17 passed, 0 failed | Caddy HTTPS 앞단 통신, Origin/CORS 허용·차단, `x-request-id` 보존 및 자동 생성, 루프백 직접 연결(헤더 위조) 차단 정책, OIDC IdP HTTPS JWKS 검증 기반 정상 토큰 인증 및 읽기, 토큰 만료(`WIRE.TOKEN_EXPIRED`), 잘못된 aud/iss(`WIRE.UNAUTHENTICATED`), 위조 서명/지원하지 않는 typ 거부, 미등록 sub 거부 |
+| 실행 시점 및 환경 | 실행 명령 | 결과 | 확인한 범위 및 상태 |
+|---|---|---|---|
+| 원 작업 (`cbaa401`, 2026-10-17 02:56) | `bash scripts/smoke-idp-proxy.sh` (`node conformance/idp-proxy/smoke-check.mjs`) | 17 passed, 0 failed (`[SUCCESS] All 17 checks passed!`) | Caddy HTTPS 앞단 통신, Origin/CORS 허용·차단, `x-request-id` 보존 및 자동 생성, 루프백 직접 연결(헤더 위조) 차단 정책, OIDC IdP HTTPS JWKS 검증 기반 정상 토큰 인증 및 읽기, 토큰 만료(`WIRE.TOKEN_EXPIRED`), 잘못된 aud/iss(`WIRE.UNAUTHENTICATED`), 위조 서명/지원하지 않는 typ 거부, 미등록 sub 거부 |
+| 독립 교차 검증 (`cbaa401`, 2026-10-17 03:07, 별도 DB `aip_flash_verify_20261017`) | `AIP_TEST_DATABASE='...' bash scripts/smoke-idp-proxy.sh` | exit 1 (failed) | IdP health/discovery/JWKS 3 assertion 통과 후 `aip service` 시작 단계에서 `io other error`의 `SERVER_CONFIG`로 중단됨. 프록시·CORS·request ID·JWT 검증 등 남은 14개 assertion 미실행 (원인 불명, 별도 IdP 진단 세션에서 확인 예정). |
 
-- 사설/자체 서명 CA 환경 지원을 위해 `crates/aip-auth`가 `SSL_CERT_FILE` 및 `AIP_AUTH_CA_PEM` 환경 변수를 인식해 webpki 루트 인증서 풀에 추가하도록 보강했다 (`remote_jwks_accepts_ca_from_environment` 회귀 테스트 추가).
+- 사설/자체 서명 CA 환경 지원을 위해 `crates/aip-auth`가 `SSL_CERT_FILE` 우선, `AIP_AUTH_CA_PEM` fallback으로 환경 변수를 인식해 webpki 루트 인증서 풀에 추가하도록 지원한다. 파일 읽기/파싱 실패 시 `.ok()`로 조용히 무시하고 기본 루트로 계속하는 기존 동작을 유지하며, `remote_jwks_accepts_ca_from_environment` 및 `remote_jwks_ca_environment_fallback_and_rejections`를 통해 실제 `new_explained` 프로덕션 경로, CA 부재 시 거부, 잘못된 CA 경로 거부, hostname mismatch 거부 회귀를 검증했다.
 
 ## WBS B: 실제 Kafka·RabbitMQ 및 MinIO object storage smoke (2026-10-17)
 
-실제 Kafka(v4.1.0 KRaft), RabbitMQ(v4.2), MinIO(S3 호환 HTTPS) 컨테이너를 구동하고 broker 발행·소비·재시도·redrive 및 object storage 업로드·다운로드·권한 경계를 실제 통신으로 검증했다.
+실제 Kafka(v4.1.0 KRaft), RabbitMQ(v4.2), MinIO(S3 호환 HTTPS) 컨테이너를 구동하고 broker 발행·소비·재시도·redrive 및 object storage 업로드·다운로드·권한 경계를 실제 통신으로 검증했다. 원 작업과 독립 교차 검증 모두 4개 테스트 통과를 확인했다.
 
-| 실제 실행 | 결과 | 확인한 범위 |
+| 실제 실행 명령 (스크립트 내부 세부 명령) | 결과 | 확인한 테스트 및 범위 |
 |---|---|---|
-| `bash scripts/smoke-brokers-storage.sh` (`cargo test -p aip-execution --test brokers_live -- --nocapture`) | 4 passed, 0 failed | Kafka 발행·소비 왕복 및 dead-letter redrive, RabbitMQ 발행 확인(publisher confirms) 및 DLX quarantine 재시도, DB 연결 단절 후 broker 복구 복원력, MinIO TLS S3 호환 다중 파트 업로드·다운로드 및 읽기 권한 분리 |
+| `cargo test -p aip-execution --test brokers_live --features external-brokers -- real_kafka_confirm_and_import_round_trip real_rabbitmq_confirm_and_import_round_trip --ignored --nocapture` | 2 passed, 0 failed | `real_kafka_confirm_and_import_round_trip` (Kafka 발행·소비 왕복 및 dead-letter redrive), `real_rabbitmq_confirm_and_import_round_trip` (RabbitMQ 발행 확인 및 DLX quarantine 재시도) |
+| `cargo test -p aip-service --test recovery -- broker_worker_recovers_from_database_disconnect_without_losing_delivery_budget --nocapture` | 1 passed, 0 failed | `broker_worker_recovers_from_database_disconnect_without_losing_delivery_budget` (DB 연결 단절 후 broker 복구 복원력) |
+| `cargo test -p aip-execution --test cloud_storage -- minio_https_actual_object_and_multipart_contract --nocapture` | 1 passed, 0 failed | `minio_https_actual_object_and_multipart_contract` (MinIO TLS S3 호환 다중 파트 업로드·다운로드 및 읽기 권한 분리) |
+| **전체 스크립트 실행**: `bash scripts/smoke-brokers-storage.sh` | **총계 4 passed, 0 failed** | 상기 3개 세부 실행 명령을 순차 실행하여 4개 live 통합 검사 모두 통과 |
 
 - `crates/aip-execution/tests/brokers_live.rs` 및 `crates/aip-service/src/brokers.rs` 내 하드코딩되어 있던 `user=runner` 연결 문자열을 `AIP_TEST_DATABASE` 및 `AIP_TEST_DATABASE_URL` 환경 변수를 우선 참조하도록 수정했다.
-- MinIO 공식 도커 이미지 배포 중단에 대응하여 `conformance/brokers-storage/minio/Dockerfile`에서 검증된 소스 아카이브(`RELEASE.2025-09-06T17-38-46Z`) 기반 빌드 및 SAN 인증서 자동 발급 진입점을 구성했다.
+- MinIO 도커 환경은 `conformance/brokers-storage/minio/Dockerfile`에서 고정 릴리스 태그(`RELEASE.2025-09-06T17-38-46Z`) 및 SAN 인증서 진입점을 구성했다. 독립 검증에서는 기존 로컬 이미지(`aip-minio-fixture:local`)가 재사용되어 source build/download 경로는 미실행되었다. '공식 이미지 배포 중단'은 확인된 근거가 없으므로 단정에서 제외한다.
 
 # 제품 통합 검증 (2026-10-06)
 

@@ -261,7 +261,22 @@ impl AuthenticatorImpl {
         Self::new_explained(config, db_url, schema).await.map_err(|failure| failure.kind)
     }
 
+    /// Builds an authenticator from verified configuration and database settings.
+    ///
+    /// Custom CA certificates are read from the environment: `SSL_CERT_FILE` takes precedence,
+    /// falling back to `AIP_AUTH_CA_PEM`. If the specified file cannot be read or parsed, it is
+    /// ignored (.ok()) and client construction continues with standard WebPKI root certificates.
+    /// Untrusted root certificates and hostname mismatches remain rejected under all settings.
     pub async fn new_explained(config: Config, db_url: String, schema: String) -> Result<Self, ConfigFailure> {
+        Self::new_explained_with_lookup(config, db_url, schema, &|name| std::env::var(name).ok()).await
+    }
+
+    pub(crate) async fn new_explained_with_lookup(
+        config: Config,
+        db_url: String,
+        schema: String,
+        lookup: &impl Fn(&str) -> Option<String>,
+    ) -> Result<Self, ConfigFailure> {
         if !valid_identifier(&schema) {
             return Err(invalid("배포 schema 이름이 올바르지 않음"));
         }
@@ -298,9 +313,8 @@ impl AuthenticatorImpl {
             _ => {}
         }
         let mut http_builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).timeout(REMOTE_TIMEOUT);
-        let custom_ca = std::env::var("SSL_CERT_FILE")
-            .or_else(|_| std::env::var("AIP_AUTH_CA_PEM"))
-            .ok()
+        let custom_ca = lookup("SSL_CERT_FILE")
+            .or_else(|| lookup("AIP_AUTH_CA_PEM"))
             .and_then(|ca_path| std::fs::read(ca_path).ok())
             .and_then(|bytes| reqwest::Certificate::from_pem(&bytes).ok());
         if let Some(root) = custom_ca {
@@ -606,7 +620,7 @@ mod tests {
     use super::*;
     use std::io::{Read, Write};
 
-    fn local_tls_response() -> (u16, std::thread::JoinHandle<bool>) {
+    fn local_tls_response_with_body(body: Vec<u8>) -> (u16, std::thread::JoinHandle<bool>) {
         use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
         let cert = CertificateDer::from(include_bytes!("../../../spikes/spike-v2-read/tests/certs/server.der").to_vec());
@@ -624,14 +638,26 @@ mod tests {
             if !matches!(tls.read(&mut request), Ok(1..)) {
                 return false;
             }
-            let body = br#"{"keys":[]}"#;
             let reply = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
             tls.write_all(reply.as_bytes()).expect("write TLS response headers");
-            tls.write_all(body).expect("write TLS JWKS body");
+            tls.write_all(&body).expect("write TLS JWKS body");
             tls.flush().expect("flush TLS JWKS response");
             true
         });
         (port, worker)
+    }
+
+    fn local_tls_response() -> (u16, std::thread::JoinHandle<bool>) {
+        local_tls_response_with_body(br#"{"keys":[]}"#.to_vec())
+    }
+
+    fn valid_jwks() -> Vec<u8> {
+        use rsa::traits::PublicKeyParts;
+        let private = rsa::RsaPrivateKey::new(&mut rand::thread_rng(), 2048).expect("test RSA key");
+        let public = private.to_public_key();
+        let n = URL_SAFE_NO_PAD.encode(public.n().to_bytes_be());
+        let e = URL_SAFE_NO_PAD.encode(public.e().to_bytes_be());
+        serde_json::json!({"keys":[{"kty":"RSA","kid":"test-key","alg":"RS256","use":"sig","n":n,"e":e}]}).to_string().into_bytes()
     }
 
     fn tls_client(ca: &[u8], port: u16) -> reqwest::Client {
@@ -712,18 +738,122 @@ mod tests {
 
     #[tokio::test]
     async fn remote_jwks_accepts_ca_from_environment() {
-        let (port, worker) = local_tls_response();
+        let (port, worker) = local_tls_response_with_body(valid_jwks());
         let ca_file = tempfile::NamedTempFile::new().expect("create temp CA file");
         std::fs::write(ca_file.path(), include_bytes!("../../../spikes/spike-v2-read/tests/certs/test-ca.pem")).expect("write test CA");
-        let url = format!("https://localhost:{port}/keys");
-        let mut builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).timeout(REMOTE_TIMEOUT);
-        let bytes = std::fs::read(ca_file.path()).unwrap();
-        let root = reqwest::Certificate::from_pem(&bytes).unwrap();
-        builder = builder.add_root_certificate(root);
-        let client = builder.build().unwrap();
-        let result = read_jwks(&JwksSource::Https { url }, &client).await;
-        assert_eq!(result, Ok(br#"{"keys":[]}"#.to_vec()));
+        let ca_path = ca_file.path().to_str().expect("valid CA path").to_owned();
+
+        let config = Config {
+            issuer: "https://issuer.example".into(),
+            audience: "aip-api".into(),
+            jwks: JwksSource::Https { url: format!("https://localhost:{port}/keys") },
+        };
+
+        let env_lookup = |name: &str| if name == "SSL_CERT_FILE" { Some(ca_path.clone()) } else { None };
+        let auth = AuthenticatorImpl::new_explained_with_lookup(config, "host=unused".into(), "aip_app".into(), &env_lookup)
+            .await
+            .expect("SSL_CERT_FILE custom CA should allow HTTPS JWKS fetch via new_explained path");
+        assert_eq!(auth.config.audience, "aip-api");
         assert!(worker.join().expect("TLS server thread"));
+    }
+
+    #[tokio::test]
+    async fn remote_jwks_ca_environment_fallback_and_rejections() {
+        let ca_file = tempfile::NamedTempFile::new().expect("create temp CA file");
+        std::fs::write(ca_file.path(), include_bytes!("../../../spikes/spike-v2-read/tests/certs/test-ca.pem")).expect("write test CA");
+        let ca_path = ca_file.path().to_str().expect("valid CA path").to_owned();
+
+        let untrusted_ca_file = tempfile::NamedTempFile::new().expect("create temp untrusted CA file");
+        std::fs::write(untrusted_ca_file.path(), include_bytes!("../../../spikes/spike-v2-read/tests/certs/untrusted-ca.pem"))
+            .expect("write untrusted CA");
+        let untrusted_path = untrusted_ca_file.path().to_str().expect("valid untrusted CA path").to_owned();
+
+        // 1. SSL_CERT_FILE 부재 시 AIP_AUTH_CA_PEM fallback 성공
+        {
+            let (port, worker) = local_tls_response_with_body(valid_jwks());
+            let config = Config {
+                issuer: "https://issuer.example".into(),
+                audience: "aip-api".into(),
+                jwks: JwksSource::Https { url: format!("https://localhost:{port}/keys") },
+            };
+            let env_lookup = |name: &str| if name == "AIP_AUTH_CA_PEM" { Some(ca_path.clone()) } else { None };
+            let auth = AuthenticatorImpl::new_explained_with_lookup(config, "host=unused".into(), "aip_app".into(), &env_lookup)
+                .await
+                .expect("AIP_AUTH_CA_PEM fallback should allow HTTPS JWKS fetch");
+            assert_eq!(auth.config.audience, "aip-api");
+            assert!(worker.join().expect("TLS server thread"));
+        }
+
+        // 2. SSL_CERT_FILE 우선순위: SSL_CERT_FILE 유효 + AIP_AUTH_CA_PEM 잘못된 파일 -> SSL_CERT_FILE 우선으로 성공
+        {
+            let (port, worker) = local_tls_response_with_body(valid_jwks());
+            let config = Config {
+                issuer: "https://issuer.example".into(),
+                audience: "aip-api".into(),
+                jwks: JwksSource::Https { url: format!("https://localhost:{port}/keys") },
+            };
+            let env_lookup = |name: &str| match name {
+                "SSL_CERT_FILE" => Some(ca_path.clone()),
+                "AIP_AUTH_CA_PEM" => Some(untrusted_path.clone()),
+                _ => None,
+            };
+            let auth = AuthenticatorImpl::new_explained_with_lookup(config, "host=unused".into(), "aip_app".into(), &env_lookup)
+                .await
+                .expect("SSL_CERT_FILE must take priority over AIP_AUTH_CA_PEM");
+            assert_eq!(auth.config.audience, "aip-api");
+            assert!(worker.join().expect("TLS server thread"));
+        }
+
+        // 3. CA 환경 변수 부재 시 거부: 자체 서명 인증서를 신뢰할 수 없어 TLS 실패
+        {
+            let (port, worker) = local_tls_response_with_body(valid_jwks());
+            let config = Config {
+                issuer: "https://issuer.example".into(),
+                audience: "aip-api".into(),
+                jwks: JwksSource::Https { url: format!("https://localhost:{port}/keys") },
+            };
+            let no_env = |_: &str| None;
+            let err = AuthenticatorImpl::new_explained_with_lookup(config, "host=unused".into(), "aip_app".into(), &no_env)
+                .await
+                .err()
+                .expect("missing custom CA must reject untrusted server cert");
+            assert!(err.reason.contains("jwks.url에서 공개키 집합을 받지 못함"));
+            assert!(!worker.join().expect("TLS server thread"));
+        }
+
+        // 4. 잘못된 CA 파일 경로: .ok()로 무시되어 custom CA 없이 계속하므로 untrusted root로 거부
+        {
+            let (port, worker) = local_tls_response_with_body(valid_jwks());
+            let config = Config {
+                issuer: "https://issuer.example".into(),
+                audience: "aip-api".into(),
+                jwks: JwksSource::Https { url: format!("https://localhost:{port}/keys") },
+            };
+            let bad_path_env = |name: &str| if name == "SSL_CERT_FILE" { Some("/nonexistent/invalid-ca.pem".into()) } else { None };
+            let err = AuthenticatorImpl::new_explained_with_lookup(config, "host=unused".into(), "aip_app".into(), &bad_path_env)
+                .await
+                .err()
+                .expect("nonexistent CA path must result in rejected TLS without panicking");
+            assert!(err.reason.contains("jwks.url에서 공개키 집합을 받지 못함"));
+            assert!(!worker.join().expect("TLS server thread"));
+        }
+
+        // 5. 호스트명 불일치 거부 보존: 올바른 CA가 있어도 hostname mismatch (127.0.0.1 vs localhost)는 거부
+        {
+            let (port, worker) = local_tls_response_with_body(valid_jwks());
+            let config = Config {
+                issuer: "https://issuer.example".into(),
+                audience: "aip-api".into(),
+                jwks: JwksSource::Https { url: format!("https://127.0.0.1:{port}/keys") },
+            };
+            let env_lookup = |name: &str| if name == "SSL_CERT_FILE" { Some(ca_path.clone()) } else { None };
+            let err = AuthenticatorImpl::new_explained_with_lookup(config, "host=unused".into(), "aip_app".into(), &env_lookup)
+                .await
+                .err()
+                .expect("mismatched hostname must be rejected even with custom CA");
+            assert!(err.reason.contains("jwks.url에서 공개키 집합을 받지 못함"));
+            assert!(!worker.join().expect("TLS server thread"));
+        }
     }
 
     async fn explain(issuer: &str, audience: &str, jwks: JwksSource) -> ConfigFailure {
