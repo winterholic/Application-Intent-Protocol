@@ -1,0 +1,44 @@
+services:
+  kafka:
+    image: apache/kafka:4.1.0
+    container_name: aip-smoke-kafka
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://127.0.0.1:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 1
+      KAFKA_MESSAGE_MAX_BYTES: 4194304
+      KAFKA_REPLICA_FETCH_MAX_BYTES: 4194304
+    ports:
+      - "127.0.0.1:9092:9092"
+
+  rabbitmq:
+    image: rabbitmq:4.2
+    container_name: aip-smoke-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: aiptest
+      RABBITMQ_DEFAULT_PASS: aip-fixture-password
+    ports:
+      - "127.0.0.1:5672:5672"
+
+  minio:
+    build: ./minio
+    image: aip-minio-fixture:local
+    container_name: aip-smoke-minio
+    environment:
+      MINIO_ROOT_USER: aip-test-access
+      MINIO_ROOT_PASSWORD: aip-test-secret-please-rotate
+      MINIO_CERTS_DIR: /certs
+      MINIO_DATA_DIR: /data
+    volumes:
+      - ./certs:/certs
+    ports:
+      - "127.0.0.1:9000:9000"

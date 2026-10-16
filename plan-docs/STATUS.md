@@ -15,6 +15,13 @@ API의 MySQL/Mongo/Redis 실제 서비스와 23 API case 기준선은 계속 재
 
 > 현재 기준: [2026-10-09 백엔드 기능 포괄성 지침](sources/founder-backend-capability-directive-2026-10-09.md)과 기존 [통합 지침](sources/founder-integrated-directive-2026-10-03.md). 충돌하면 최신 원문의 범위·표식을 따른다.
 
+## 외부 IdP·TLS reverse proxy 및 실제 broker·storage smoke 검증 (2026-10-17)
+
+WBS 항목인 외부 IdP/TLS reverse proxy 운영 smoke 및 실제 Kafka/RabbitMQ/MinIO(S3 호환) 연동 smoke를 로컬 컨테이너 환경에서 검증 완료했다.
+- **외부 IdP 및 TLS reverse proxy**: Caddy TLS proxy 뒤 `aip service` 운영 인증, Origin/CORS, `x-request-id`, 루프백 차단, OIDC HTTPS JWKS 기반 JWT(`at+jwt`) 검증, 토큰 만료/aud/iss/typ/sub 불일치 거부 등 17개 검사 통과 (`scripts/smoke-idp-proxy.sh`).
+- **실제 Kafka·RabbitMQ 및 MinIO**: Kafka KRaft 왕복/dead-letter redrive, RabbitMQ 발행확인/quarantine 재시도, DB 연결 단절 후 복구, MinIO HTTPS 멀티파트 업로드/다운로드 및 권한 분리 4개 live 통합 검사 통과 (`scripts/smoke-brokers-storage.sh`).
+- 상세 실행 결과 및 회귀 수정은 [제품 검증](../product/VERIFICATION.md)을 따른다.
+
 ## resource 독립 실행 고도화 (2026-10-10)
 
 후속 요청으로 [동기 operation](../product/EXECUTION.md)을 제품 V1/V2/V4/V5/V6와 운영 신원·배포·설치 SDK에 연결했다. 업무 resource 0개 모드와 기존 actor resource 모드를 구분하며, allow·입출력 범위·기한·ctx 거부·현재 principal 재검사를 유지한다. 다음 [durable Job 제안](backend-capability/durable-job-proposal.md)은 실행권 세대·권한 회수·취소/완료 경합·결과 ACL·schema 업그레이드 접점까지 구체화했지만 아직 구현하지 않았다. 현재 실행 근거는 [제품 검증](../product/VERIFICATION.md)을 따른다.
@@ -31,7 +38,7 @@ API의 MySQL/Mongo/Redis 실제 서비스와 23 API case 기준선은 계속 재
 
 운영 JWT 검증과 지속 actor 연결, 일반 DDL 계획·적용·배포 저널, 데이터와 멱등 결과를 보존하는 명시적 prototype 이관, 설치 SDK를 제품 경로에 연결했다. 재귀 제한은 source·token·AST·predicate 확장·path·SQL 생성·복제 payload에 함께 적용한다. 활성 서버의 구 정책 실행, 연결 재활성화 시 폐기 토큰 복구, Id wire 변경에 따른 멱등 namespace 변화도 회귀 검증 대상으로 고정한다.
 
-2026-10-06 최종 제품 검증은 [제품 결과](../product/VERIFICATION.md)와 [배포 묶음](../product/dist/2026-10-06T11-19-25-091Z/README.md)을 따른다. 현재 실행 절차·검증 명령·미지원 범위는 [제품 서비스](../crates/aip-service/README.md), [마이그레이션](../crates/aip-migrate/README.md), [SDK](../product/SDK.md)를 따른다. 외부 IdP 실배포·TLS proxy·다른 OS·무중단 대형 backfill은 검증하지 않았다. 최종 DSL·Id wire·쓰기 조합·라이선스 결정은 유지한다.
+2026-10-06 최종 제품 검증은 [제품 결과](../product/VERIFICATION.md)와 [배포 묶음](../product/dist/2026-10-06T11-19-25-091Z/README.md)을 따른다. 현재 실행 절차·검증 명령·미지원 범위는 [제품 서비스](../crates/aip-service/README.md), [마이그레이션](../crates/aip-migrate/README.md), [SDK](../product/SDK.md)를 따른다. 외부 IdP 실배포·TLS proxy 및 실제 broker/storage smoke는 2026-10-17 로컬 컨테이너 기반으로 통과했다. 다른 OS·무중단 대형 backfill·클라우드 상용 서비스 직접 계정 연동은 미검증이다. 최종 DSL·Id wire·쓰기 조합·라이선스 결정은 유지한다.
 
 ## 이전 단계: 2026-10-04 밤 작업 요약
 

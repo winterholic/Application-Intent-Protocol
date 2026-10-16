@@ -424,8 +424,10 @@ mod tests {
         use std::time::{Duration, Instant};
         let bootstrap = std::env::var("AIP_TEST_KAFKA_BOOTSTRAP").expect("live Kafka bootstrap required");
         let topic = std::env::var("AIP_TEST_KAFKA_OUT_TOPIC").expect("live Kafka topic required");
-        let database_url = "host=localhost user=runner dbname=postgres";
-        let db = spike_v2_read::connect_owned_with_url(database_url).await.unwrap();
+        let database_url = std::env::var("AIP_TEST_DATABASE")
+            .or_else(|_| std::env::var("AIP_TEST_DATABASE_URL"))
+            .unwrap_or_else(|_| "host=localhost dbname=postgres".to_owned());
+        let db = spike_v2_read::connect_owned_with_url(&database_url).await.unwrap();
         let suffix = uuid::Uuid::new_v4().simple().to_string();
         let schema = format!("aip_relay_recovery_{suffix}");
         db.batch_execute(&format!("CREATE SCHEMA {schema}")).await.unwrap();

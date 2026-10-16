@@ -297,11 +297,16 @@ impl AuthenticatorImpl {
             }
             _ => {}
         }
-        let http = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(REMOTE_TIMEOUT)
-            .build()
-            .map_err(|_| unavailable("HTTP client를 만들 수 없음"))?;
+        let mut http_builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).timeout(REMOTE_TIMEOUT);
+        let custom_ca = std::env::var("SSL_CERT_FILE")
+            .or_else(|_| std::env::var("AIP_AUTH_CA_PEM"))
+            .ok()
+            .and_then(|ca_path| std::fs::read(ca_path).ok())
+            .and_then(|bytes| reqwest::Certificate::from_pem(&bytes).ok());
+        if let Some(root) = custom_ca {
+            http_builder = http_builder.add_root_certificate(root);
+        }
+        let http = http_builder.build().map_err(|_| unavailable("HTTP client를 만들 수 없음"))?;
         let document = read_jwks(&config.jwks, &http).await.map_err(|_| match config.jwks {
             JwksSource::File { .. } => unavailable("jwks.path 파일을 읽을 수 없음(없음, 일반 파일 아님, 크기 상한 초과, 읽기 기한 초과 중 하나)"),
             JwksSource::Https { .. } => unavailable("jwks.url에서 공개키 집합을 받지 못함(연결, TLS, 성공 상태 코드, 크기 상한, 기한 중 하나)"),
@@ -703,6 +708,22 @@ mod tests {
         let result = read_jwks(&JwksSource::Https { url }, &tls_client(ca, port)).await;
         assert_eq!(result, Err(AuthError::Unavailable));
         assert!(!worker.join().expect("TLS server thread"));
+    }
+
+    #[tokio::test]
+    async fn remote_jwks_accepts_ca_from_environment() {
+        let (port, worker) = local_tls_response();
+        let ca_file = tempfile::NamedTempFile::new().expect("create temp CA file");
+        std::fs::write(ca_file.path(), include_bytes!("../../../spikes/spike-v2-read/tests/certs/test-ca.pem")).expect("write test CA");
+        let url = format!("https://localhost:{port}/keys");
+        let mut builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).timeout(REMOTE_TIMEOUT);
+        let bytes = std::fs::read(ca_file.path()).unwrap();
+        let root = reqwest::Certificate::from_pem(&bytes).unwrap();
+        builder = builder.add_root_certificate(root);
+        let client = builder.build().unwrap();
+        let result = read_jwks(&JwksSource::Https { url }, &client).await;
+        assert_eq!(result, Ok(br#"{"keys":[]}"#.to_vec()));
+        assert!(worker.join().expect("TLS server thread"));
     }
 
     async fn explain(issuer: &str, audience: &str, jwks: JwksSource) -> ConfigFailure {

@@ -1,0 +1,27 @@
+services:
+  idp:
+    build: ./idp
+    image: aip-idp-fixture:local
+    container_name: aip-smoke-idp
+    environment:
+      PORT: 8080
+      IDP_ISSUER: "https://localhost:8444"
+      IDP_AUDIENCE: "aip-api"
+    ports:
+      - "127.0.0.1:8088:8080"
+
+  caddy:
+    image: caddy:2.9-alpine
+    container_name: aip-smoke-caddy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      AIP_BACKEND_PORT: "${AIP_BACKEND_PORT:-8099}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./certs:/certs:ro
+    ports:
+      - "127.0.0.1:8443:8443"
+      - "127.0.0.1:8444:8444"
+    depends_on:
+      - idp

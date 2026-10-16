@@ -1,3 +1,28 @@
+# 제품 통합 검증 (2026-10-17)
+
+운영 IdP·TLS reverse proxy 및 실제 broker(Kafka, RabbitMQ)·S3 호환 object storage(MinIO) 연동의 로컬 컨테이너 기반 종단간(E2E) smoke 검증을 완료했다. 테스트 전용 재현 환경(`conformance/`)과 자동화 스크립트(`scripts/`)를 저장소에 구성하고 실제 컨테이너 환경에서 검증을 통과했다.
+
+## WBS A: 외부 IdP·TLS reverse proxy 운영 smoke (2026-10-17)
+
+RFC 9068 준수 OIDC IdP(`at+jwt`, JWKS 엔드포인트) 및 Caddy TLS reverse proxy(자체 서명 SAN 인증서) 환경에서 `aip service` 운영 인증 및 프록시 헤더 처리를 검증했다.
+
+| 실제 실행 | 결과 | 확인한 범위 |
+|---|---|---|
+| `bash scripts/smoke-idp-proxy.sh` (`node conformance/idp-proxy/smoke-check.mjs`) | 17 passed, 0 failed | Caddy HTTPS 앞단 통신, Origin/CORS 허용·차단, `x-request-id` 보존 및 자동 생성, 루프백 직접 연결(헤더 위조) 차단 정책, OIDC IdP HTTPS JWKS 검증 기반 정상 토큰 인증 및 읽기, 토큰 만료(`WIRE.TOKEN_EXPIRED`), 잘못된 aud/iss(`WIRE.UNAUTHENTICATED`), 위조 서명/지원하지 않는 typ 거부, 미등록 sub 거부 |
+
+- 사설/자체 서명 CA 환경 지원을 위해 `crates/aip-auth`가 `SSL_CERT_FILE` 및 `AIP_AUTH_CA_PEM` 환경 변수를 인식해 webpki 루트 인증서 풀에 추가하도록 보강했다 (`remote_jwks_accepts_ca_from_environment` 회귀 테스트 추가).
+
+## WBS B: 실제 Kafka·RabbitMQ 및 MinIO object storage smoke (2026-10-17)
+
+실제 Kafka(v4.1.0 KRaft), RabbitMQ(v4.2), MinIO(S3 호환 HTTPS) 컨테이너를 구동하고 broker 발행·소비·재시도·redrive 및 object storage 업로드·다운로드·권한 경계를 실제 통신으로 검증했다.
+
+| 실제 실행 | 결과 | 확인한 범위 |
+|---|---|---|
+| `bash scripts/smoke-brokers-storage.sh` (`cargo test -p aip-execution --test brokers_live -- --nocapture`) | 4 passed, 0 failed | Kafka 발행·소비 왕복 및 dead-letter redrive, RabbitMQ 발행 확인(publisher confirms) 및 DLX quarantine 재시도, DB 연결 단절 후 broker 복구 복원력, MinIO TLS S3 호환 다중 파트 업로드·다운로드 및 읽기 권한 분리 |
+
+- `crates/aip-execution/tests/brokers_live.rs` 및 `crates/aip-service/src/brokers.rs` 내 하드코딩되어 있던 `user=runner` 연결 문자열을 `AIP_TEST_DATABASE` 및 `AIP_TEST_DATABASE_URL` 환경 변수를 우선 참조하도록 수정했다.
+- MinIO 공식 도커 이미지 배포 중단에 대응하여 `conformance/brokers-storage/minio/Dockerfile`에서 검증된 소스 아카이브(`RELEASE.2025-09-06T17-38-46Z`) 기반 빌드 및 SAN 인증서 자동 발급 진입점을 구성했다.
+
 # 제품 통합 검증 (2026-10-06)
 
 ## MySQL catalog 변환 계층과 fail-closed 경계 (2026-10-17)
