@@ -1,5 +1,12 @@
 # 진행 현황과 쌓인 질문
 
+## 페이스리뷰 원본 포팅 기준선 후속 (2026-10-17)
+
+고정 원본 backend에서 허용된 로컬 Origin의 Socket.IO polling 연결, 빈 `watch_frame` 입력 거부, 연결 종료를 실제 확인했다.
+이는 WBS 7.1.3.3.1의 부분 원본 기준선이며 AIP 포팅·실제 프레임·WebSocket·ML·worker/provider·통합 CI 완료를 뜻하지 않는다.
+댓글 UI는 고정 YouTube 영상의 실제 제공자 오류 모달이 상호작용을 막아 열어 두었다. seed·player 동작을 바꿔 통과시키지 않았다.
+API의 MySQL/Mongo/Redis 실제 서비스와 23 API case 기준선은 계속 재사용한다. 전체 범위와 다음 단계는 [포팅 README](porting/README.md)를 따른다.
+
 > 현재 기준: [2026-10-09 백엔드 기능 포괄성 지침](sources/founder-backend-capability-directive-2026-10-09.md)과 기존 [통합 지침](sources/founder-integrated-directive-2026-10-03.md). 충돌하면 최신 원문의 범위·표식을 따른다.
 
 ## resource 독립 실행 고도화 (2026-10-10)

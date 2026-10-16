@@ -86,6 +86,13 @@ API test client, 브라우저, socket 실제 ML, worker/provider를 구분하며
 독립 oracle에 대조했다. 누락/중복/부분실행/기대값변조/저장오류를 unit 음성 control로 검사한다.
 7.1.3 전체는 browser·Socket.IO/ML·worker/provider 기준선이 남아 있어 완료하지 않는다.
 
+### 2026-10-17 원본 Socket.IO polling 부분 기준선
+
+WBS 7.1.3.3.1은 고정 원본에서 허용된 로컬 Origin의 polling connect/disconnect와 빈 `watch_frame` 입력 거부를 확인했다.
+실행 결과는 [facereview-socket-baseline.json](facereview-socket-baseline.json), 재현·범위는 [브라우저 기준선](BROWSER-BASELINE.md#원본-socketio-polling-입력-거부-기준선-2026-10-17)에 기록했다.
+원본 결과와 AIP 구현은 혼동하지 않는다. 유효 프레임·WebSocket·ML·timeline·worker·provider는 미검증이며 7.1.3과 7.1.5.3 전체 gate는 계속 열린다.
+이 부분 실행에서 AIP 본체의 제품 갭은 판정하지 않았다. 다음 포팅 단계에서 원본 기능과 AIP를 실제로 대조해 갭이 나타나면 코어 회귀로 고정한다.
+
 7.1.5.1·7.1.5.2는 API 하위 증거 gate·반복 runner를 추가했다. 고정 원본 추출과 lock 확인→새 실DB 실행→
 API/저장 oracle→자체 컨테이너 정리→증거 hash/exit/범위 검사를 한 명령으로 수행한다.
 부분 결과·실패 exit·잘못된 scope·oracle/lock 불일치·누락/변조 파일은 성공으로 보고하지 않는다.

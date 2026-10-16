@@ -44,6 +44,25 @@ Mac sandbox에서 native Chrome/headless shell의 MachPortRendezvousServer 기�
 이는 이번 기본 화면 실행의 환경 제약으로 기록하며, WebSocket 연결·프레임 전달이 동작했다고 판정하지 않는다.
 원본 origin 설정을 임의로 완화하거나 연결 성공을 mock으로 만들지 않았다.
 
+### 원본 Socket.IO polling 입력 거부 기준선 (2026-10-17)
+
+브라우저 origin 차단과 분리해 허용된 `http://localhost:5173` Origin으로 격리 원본 API에 Engine.IO polling 연결을 열었다.
+`watch_frame`에 빈 객체를 실제 전달한 뒤 원본 응답 `status=error`, `message=Missing required fields`를 받았고 연결을 닫았다.
+고정 backend SHA는 `7948b7e721837fdb73c427cb54e12cad4ec2d5af`이며 실제 source Python 파일 hash를 실행 전에 다시 대조한다.
+보고서 [facereview-socket-baseline.json](facereview-socket-baseline.json)은 `scope=original-socket`, `aip_ported=false`, `ml=not-executed`, `complete=false`를 보존한다.
+프레임 bytes는 보내지 않았고 DB/Mongo 쓰기를 기대하지 않았으므로 이 실행은 유효 영상 프레임·watch timeline·ML·provider 검증이 아니다.
+polling만 확인했다. Python 환경의 `websocket-client` 미설치로 WebSocket transport는 미실행이며, browser origin 차단은 별도 환경 결과다.
+
+재현은 격리 baseline Compose와 고정 API source를 준비하고 기존 API baseline으로 seed한 다음 실행한다.
+
+```sh
+/tmp/aip-api-venv/bin/python tools/facereview_socket_baseline.py \
+  --source /tmp/aip-ui/backend \
+  --inventory plan-docs/porting/facereview-inventory.json \
+  --output /tmp/facereview-socket-result.json
+python3 -m unittest discover -s tools -p 'test_facereview_socket.py'
+```
+
 ## 재현 명령
 
 먼저 [API 환경](BASELINE.md)의 lock venv와 Docker를 준비한다. 다음 명령의 `/tmp` 경로는 예시다.
@@ -96,6 +115,8 @@ docker compose -p aip-face-browser-run -f plan-docs/porting/baseline.compose.yam
 13개 예정 case의 누락/중복/실패, 처리되지 않은 browser exception, 외부 운영 endpoint 응답,
 API 5xx 또는 인증 값이 섞인 기록을 실패시킨다. 기본 화면 실행 성공과 전체 앱 포팅 gate를 구분한다.
 관련 테스트는 기존 34개 + browser 경계/기록/부분 gate 3개(변조 음성 control 포함)다.
+Socket.IO polling 입력 거부 gate는 별도의 `tools/test_facereview_socket.py` 네 단위 테스트를 사용한다.
+browser/API/UI/ML/provider 전체 gate 완료로 합산하지 않는다.
 
 남은 UI gate는 댓글 작성/수정/삭제·토글과 저장 결과, 잘못된 입력/권한/로그아웃·재접속 상태,
 실제 영상/웹캠과 연결한 journey, 전 화면 비교 oracle 및 UI·ML·provider CI 통합이다.

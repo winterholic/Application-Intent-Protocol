@@ -1,0 +1,18 @@
+{
+  "kind": "original-socket",
+  "source_sha": "7948b7e721837fdb73c427cb54e12cad4ec2d5af",
+  "scope": "original-socket",
+  "aip_ported": false,
+  "ml": "not-executed",
+  "transport": "polling",
+  "origin": "http://localhost:5173",
+  "connect": "pass",
+  "disconnect": "pass",
+  "watch_frame": {
+    "status": "error",
+    "code": "Missing required fields"
+  },
+  "frame_payload_sent": false,
+  "writes_expected": false,
+  "complete": false
+}
