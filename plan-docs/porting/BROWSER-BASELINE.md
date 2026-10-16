@@ -47,11 +47,12 @@ Mac sandbox에서 native Chrome/headless shell의 MachPortRendezvousServer 기�
 ### 원본 Socket.IO polling 입력 거부 기준선 (2026-10-17)
 
 브라우저 origin 차단과 분리해 허용된 `http://localhost:5173` Origin으로 격리 원본 API에 Engine.IO polling 연결을 열었다.
-`watch_frame`에 빈 객체를 실제 전달한 뒤 원본 응답 `status=error`, `message=Missing required fields`를 받았고 연결을 닫았다.
+`watch_frame`에 빈 객체를 실제 전달한 뒤 원본 응답 `status=error`, `message=Missing required fields`를 받았고 client transport 종료를 확인했다.
 고정 backend SHA는 `7948b7e721837fdb73c427cb54e12cad4ec2d5af`이며 실제 source Python 파일 hash를 실행 전에 다시 대조한다.
 보고서 [facereview-socket-baseline.json](facereview-socket-baseline.json)은 `scope=original-socket`, `aip_ported=false`, `ml=not-executed`, `complete=false`를 보존한다.
 프레임 bytes는 보내지 않았고 DB/Mongo 쓰기를 기대하지 않았으므로 이 실행은 유효 영상 프레임·watch timeline·ML·provider 검증이 아니다.
 polling만 확인했다. Python 환경의 `websocket-client` 미설치로 WebSocket transport는 미실행이며, browser origin 차단은 별도 환경 결과다.
+재실행에서 이 polling client가 유일한 Socket.IO 연결인 상태로 서버를 종료할 때 `disconnect handler error`와 `TypeError: handle_disconnect() missing 1 required positional argument: 'message'`가 출력됐다. client transport는 닫혔으나 원본 callback 처리는 실패했다. 이는 원본의 결함 관찰이며 AIP와 기능 대조 전이므로 AIP 갭으로 분류하지 않는다.
 
 재현은 격리 baseline Compose와 고정 API source를 준비하고 기존 API baseline으로 seed한 다음 실행한다.
 

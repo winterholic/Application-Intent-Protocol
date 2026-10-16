@@ -14,7 +14,7 @@ def valid_report():
         'transport': 'polling',
         'origin': 'http://localhost:5173',
         'connect': 'pass',
-        'disconnect': 'pass',
+        'disconnect': 'transport-closed',
         'watch_frame': {'status': 'error', 'code': 'Missing required fields'},
         'frame_payload_sent': False,
         'writes_expected': False,

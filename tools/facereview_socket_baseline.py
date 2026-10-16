@@ -23,7 +23,7 @@ def check_socket_report(report):
         'kind': 'original-socket', 'source_sha': PINNED_BACKEND_SHA,
         'scope': 'original-socket', 'aip_ported': False, 'ml': 'not-executed',
         'transport': 'polling', 'origin': ALLOWED_ORIGIN, 'connect': 'pass',
-        'disconnect': 'pass',
+        'disconnect': 'transport-closed',
         'watch_frame': {'status': 'error', 'code': 'Missing required fields'},
         'frame_payload_sent': False, 'writes_expected': False, 'complete': False,
     }
@@ -78,7 +78,7 @@ def run_baseline(endpoint, origin):
     finally:
         if client.connected:
             client.disconnect()
-            report['disconnect'] = 'pass'
+            report['disconnect'] = 'transport-closed'
     return report
 
 
