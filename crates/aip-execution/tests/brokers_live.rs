@@ -20,24 +20,31 @@ use std::{
 };
 use tokio_postgres::{Client, NoTls};
 
-const DB: &str = "host=localhost user=runner dbname=postgres";
+fn test_db_url() -> String {
+    std::env::var("AIP_TEST_DATABASE")
+        .or_else(|_| std::env::var("AIP_TEST_DATABASE_URL"))
+        .unwrap_or_else(|_| "host=localhost dbname=postgres".to_owned())
+}
+
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
 struct Fixture {
     client: Client,
     schema: String,
+    db: String,
 }
 
 impl Fixture {
     async fn new() -> Self {
+        let db = test_db_url();
         let schema = format!("aip_broker_live_{}_{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed));
-        let (client, connection) = tokio_postgres::connect(DB, NoTls).await.expect("connect disposable CI Postgres");
+        let (client, connection) = tokio_postgres::connect(&db, NoTls).await.expect("connect disposable CI Postgres");
         tokio::spawn(async move {
             let _ = connection.await;
         });
         client.batch_execute(&format!("CREATE SCHEMA {schema}")).await.unwrap();
         client.batch_execute(&ddl(&schema).unwrap()).await.unwrap();
-        Self { client, schema }
+        Self { client, schema, db }
     }
     fn store(&self) -> MessageStore {
         MessageStore::new(&self.schema).unwrap()
@@ -64,7 +71,8 @@ impl Fixture {
 impl Drop for Fixture {
     fn drop(&mut self) {
         let schema = self.schema.clone();
-        let _ = std::process::Command::new("psql").args(["-X", "-q", "-d", DB, "-c", &format!("DROP SCHEMA IF EXISTS {schema} CASCADE")]).status();
+        let _ =
+            std::process::Command::new("psql").args(["-X", "-q", "-d", &self.db, "-c", &format!("DROP SCHEMA IF EXISTS {schema} CASCADE")]).status();
     }
 }
 
