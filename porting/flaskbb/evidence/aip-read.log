@@ -1,0 +1,10 @@
+{"schema":"aip_flaskbb_f3311f06a0","ddlDigest":"09d56b19848ea39bfc1a6b2fcb00223f1e8c76c2c0eb681735dd0556f7765f52","factsDigest":"4d0e956edc9159f46448844f0e3c724f480eec10efd55091981d9f0c4e32bed0","ok":true,"structureDigest":"c4cd5fb5a608f069f9542952da847a4b22e43a038458c14adee5e48b7a59f35c","memberVisible":["Private fixture"],"guestVisible":["Public forum"],"duplicateLinkRejected":true}
+✔ AIP server enforces forum group visibility and unique link relations with the SDK (896.476125ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3940.792334

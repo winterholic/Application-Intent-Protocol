@@ -1,0 +1,16 @@
+alembic_version|{version_num}|{"character varying"}
+categories|{id}|{integer}
+conversations|{id}|{integer}
+forums|{id}|{integer}
+forumsread|{user_id,forum_id}|{integer,integer}
+groups|{id}|{integer}
+messages|{id}|{integer}
+plugin_registry|{id}|{integer}
+plugin_store|{id}|{integer}
+posts|{id}|{integer}
+reports|{id}|{integer}
+settings|{key}|{"character varying"}
+settingsgroup|{key}|{"character varying"}
+topics|{id}|{integer}
+topicsread|{user_id,topic_id,forum_id}|{integer,integer,integer}
+users|{id}|{integer}

@@ -1,0 +1,122 @@
+Route                                                  Endpoint                               Methods                 
+======================================================================================================================
+/                                                      forum.index                            OPTIONS, HEAD, GET      
+/<int:forum_id>-<slug>/markread                        forum.markread                         OPTIONS, POST           
+/<int:forum_id>-<slug>/topic/new                       forum.new_topic                        OPTIONS, HEAD, GET, POST
+/<int:forum_id>/markread                               forum.markread                         OPTIONS, POST           
+/<int:forum_id>/topic/new                              forum.new_topic                        OPTIONS, HEAD, GET, POST
+/_themes/<themeid>/<path:filename>                     _themes.static                         OPTIONS, HEAD, GET      
+/admin/                                                management.overview                    OPTIONS, HEAD, GET      
+/admin/category/<int:category_id>/delete               management.delete_category             OPTIONS, POST           
+/admin/category/<int:category_id>/edit                 management.edit_category               OPTIONS, HEAD, GET, POST
+/admin/category/add                                    management.add_category                OPTIONS, HEAD, GET, POST
+/admin/celerystatus                                    management.celery_status               OPTIONS, HEAD, GET      
+/admin/forums                                          management.forums                      OPTIONS, HEAD, GET      
+/admin/forums/<int:category_id>/add                    management.add_forum                   OPTIONS, HEAD, GET, POST
+/admin/forums/<int:forum_id>/delete                    management.delete_forum                OPTIONS, POST           
+/admin/forums/<int:forum_id>/edit                      management.edit_forum                  OPTIONS, HEAD, GET, POST
+/admin/forums/add                                      management.add_forum                   OPTIONS, HEAD, GET, POST
+/admin/groups                                          management.groups                      OPTIONS, HEAD, GET      
+/admin/groups/<int:group_id>/delete                    management.delete_group                OPTIONS, POST           
+/admin/groups/<int:group_id>/edit                      management.edit_group                  OPTIONS, HEAD, GET, POST
+/admin/groups/add                                      management.add_group                   OPTIONS, HEAD, GET, POST
+/admin/groups/delete                                   management.delete_group                OPTIONS, POST           
+/admin/plugins                                         management.plugins                     OPTIONS, HEAD, GET      
+/admin/plugins/<path:name>/disable                     management.disable_plugin              OPTIONS, POST           
+/admin/plugins/<path:name>/enable                      management.enable_plugin               OPTIONS, POST           
+/admin/plugins/<path:name>/install                     management.install_plugin              OPTIONS, POST           
+/admin/plugins/<path:name>/uninstall                   management.uninstall_plugin            OPTIONS, POST           
+/admin/reports                                         management.reports                     OPTIONS, HEAD, GET      
+/admin/reports/<int:report_id>/delete                  management.delete_report               OPTIONS, POST           
+/admin/reports/<int:report_id>/markread                management.report_markread             OPTIONS, POST           
+/admin/reports/delete                                  management.delete_report               OPTIONS, POST           
+/admin/reports/markread                                management.report_markread             OPTIONS, POST           
+/admin/reports/unread                                  management.unread_reports              OPTIONS, HEAD, GET      
+/admin/settings                                        management.settings                    OPTIONS, HEAD, GET, POST
+/admin/settings/<path:slug>                            management.settings                    OPTIONS, HEAD, GET, POST
+/admin/settings/plugin/<path:plugin>                   management.settings                    OPTIONS, HEAD, GET, POST
+/admin/users                                           management.users                       OPTIONS, HEAD, GET, POST
+/admin/users/<int:user_id>/ban                         management.ban_user                    OPTIONS, POST           
+/admin/users/<int:user_id>/delete                      management.delete_user                 OPTIONS, POST           
+/admin/users/<int:user_id>/edit                        management.edit_user                   OPTIONS, HEAD, GET, POST
+/admin/users/<int:user_id>/unban                       management.unban_user                  OPTIONS, POST           
+/admin/users/add                                       management.add_user                    OPTIONS, HEAD, GET, POST
+/admin/users/ban                                       management.ban_user                    OPTIONS, POST           
+/admin/users/banned                                    management.banned_users                OPTIONS, HEAD, GET, POST
+/admin/users/delete                                    management.delete_user                 OPTIONS, POST           
+/admin/users/unban                                     management.unban_user                  OPTIONS, POST           
+/auth/activate                                         auth.request_activation_token          OPTIONS, HEAD, GET, POST
+/auth/activate/confirm                                 auth.activate_account                  OPTIONS, HEAD, GET, POST
+/auth/activate/confirm/<token>                         auth.autoactivate_account              OPTIONS, HEAD, GET      
+/auth/login                                            auth.login                             OPTIONS, HEAD, GET, POST
+/auth/logout                                           auth.logout                            OPTIONS, HEAD, GET      
+/auth/reauth                                           auth.reauth                            OPTIONS, HEAD, GET, POST
+/auth/register                                         auth.register                          OPTIONS, HEAD, GET, POST
+/auth/reset-password                                   auth.forgot_password                   OPTIONS, HEAD, GET, POST
+/auth/reset-password/<token>                           auth.reset_password                    OPTIONS, HEAD, GET, POST
+/category/<int:category_id>                            forum.view_category                    OPTIONS, HEAD, GET      
+/category/<int:category_id>-<slug>                     forum.view_category                    OPTIONS, HEAD, GET      
+/conversations/                                        conversations_bp.inbox                 OPTIONS, HEAD, GET      
+/conversations/<int:conversation_id>/delete            conversations_bp.delete_conversation   OPTIONS, POST           
+/conversations/<int:conversation_id>/edit              conversations_bp.edit_conversation     OPTIONS, HEAD, GET, POST
+/conversations/<int:conversation_id>/move              conversations_bp.move_conversation     OPTIONS, POST           
+/conversations/<int:conversation_id>/restore           conversations_bp.restore_conversation  OPTIONS, POST           
+/conversations/<int:conversation_id>/view              conversations_bp.view_conversation     OPTIONS, HEAD, GET, POST
+/conversations/drafts                                  conversations_bp.drafts                OPTIONS, HEAD, GET      
+/conversations/inbox                                   conversations_bp.inbox                 OPTIONS, HEAD, GET      
+/conversations/message/<int:message_id>/raw            conversations_bp.raw_message           OPTIONS, HEAD, GET      
+/conversations/new                                     conversations_bp.new_conversation      OPTIONS, HEAD, GET, POST
+/conversations/sent                                    conversations_bp.sent                  OPTIONS, HEAD, GET      
+/conversations/trash                                   conversations_bp.trash                 OPTIONS, HEAD, GET      
+/forum/<int:forum_id>                                  forum.view_forum                       OPTIONS, HEAD, GET      
+/forum/<int:forum_id>-<slug>                           forum.view_forum                       OPTIONS, HEAD, GET      
+/forum/<int:forum_id>-<slug>/edit                      forum.manage_forum                     OPTIONS, HEAD, GET, POST
+/forum/<int:forum_id>/edit                             forum.manage_forum                     OPTIONS, HEAD, GET, POST
+/markdown                                              forum.markdown_preview                 OPTIONS, POST           
+/markdown/<path:mode>                                  forum.markdown_preview                 OPTIONS, POST           
+/memberlist                                            forum.memberlist                       OPTIONS, HEAD, GET, POST
+/portal/                                               portal.index                           OPTIONS, HEAD, GET      
+/post/<int:post_id>                                    forum.view_post                        OPTIONS, HEAD, GET      
+/post/<int:post_id>/delete                             forum.delete_post                      OPTIONS, POST           
+/post/<int:post_id>/edit                               forum.edit_post                        OPTIONS, HEAD, GET, POST
+/post/<int:post_id>/hide                               forum.hide_post                        OPTIONS, POST           
+/post/<int:post_id>/raw                                forum.raw_post                         OPTIONS, HEAD, GET      
+/post/<int:post_id>/report                             forum.report_post                      OPTIONS, HEAD, GET, POST
+/post/<int:post_id>/unhide                             forum.unhide_post                      OPTIONS, POST           
+/search                                                forum.search                           OPTIONS, HEAD, GET, POST
+/static/<path:filename>                                static                                 OPTIONS, HEAD, GET      
+/topic/<int:topic_id>                                  forum.view_topic                       OPTIONS, HEAD, GET, POST
+/topic/<int:topic_id>-<slug>                           forum.view_topic                       OPTIONS, HEAD, GET, POST
+/topic/<int:topic_id>-<slug>/delete                    forum.delete_topic                     OPTIONS, POST           
+/topic/<int:topic_id>-<slug>/edit                      forum.edit_topic                       OPTIONS, HEAD, GET, POST
+/topic/<int:topic_id>-<slug>/hide                      forum.hide_topic                       OPTIONS, POST           
+/topic/<int:topic_id>-<slug>/highlight                 forum.highlight_topic                  OPTIONS, POST           
+/topic/<int:topic_id>-<slug>/lock                      forum.lock_topic                       OPTIONS, POST           
+/topic/<int:topic_id>-<slug>/post/<int:post_id>/reply  forum.reply_post                       OPTIONS, HEAD, GET, POST
+/topic/<int:topic_id>-<slug>/post/new                  forum.new_post                         OPTIONS, HEAD, GET, POST
+/topic/<int:topic_id>-<slug>/trivialize                forum.trivialize_topic                 OPTIONS, POST           
+/topic/<int:topic_id>-<slug>/unhide                    forum.unhide_topic                     OPTIONS, POST           
+/topic/<int:topic_id>-<slug>/unlock                    forum.unlock_topic                     OPTIONS, POST           
+/topic/<int:topic_id>/delete                           forum.delete_topic                     OPTIONS, POST           
+/topic/<int:topic_id>/edit                             forum.edit_topic                       OPTIONS, HEAD, GET, POST
+/topic/<int:topic_id>/hide                             forum.hide_topic                       OPTIONS, POST           
+/topic/<int:topic_id>/highlight                        forum.highlight_topic                  OPTIONS, POST           
+/topic/<int:topic_id>/lock                             forum.lock_topic                       OPTIONS, POST           
+/topic/<int:topic_id>/post/<int:post_id>/reply         forum.reply_post                       OPTIONS, HEAD, GET, POST
+/topic/<int:topic_id>/post/new                         forum.new_post                         OPTIONS, HEAD, GET, POST
+/topic/<int:topic_id>/trivialize                       forum.trivialize_topic                 OPTIONS, POST           
+/topic/<int:topic_id>/unhide                           forum.unhide_topic                     OPTIONS, POST           
+/topic/<int:topic_id>/unlock                           forum.unlock_topic                     OPTIONS, POST           
+/topictracker                                          forum.topictracker                     OPTIONS, HEAD, GET, POST
+/topictracker/<int:topic_id>-<slug>/add                forum.track_topic                      OPTIONS, POST           
+/topictracker/<int:topic_id>-<slug>/delete             forum.untrack_topic                    OPTIONS, POST           
+/topictracker/<int:topic_id>/add                       forum.track_topic                      OPTIONS, POST           
+/topictracker/<int:topic_id>/delete                    forum.untrack_topic                    OPTIONS, POST           
+/user/<username>                                       user.profile                           OPTIONS, HEAD, GET      
+/user/<username>/posts                                 user.view_all_posts                    OPTIONS, HEAD, GET      
+/user/<username>/topics                                user.view_all_topics                   OPTIONS, HEAD, GET      
+/user/settings/email                                   user.change_email                      OPTIONS, HEAD, GET, POST
+/user/settings/general                                 user.settings                          OPTIONS, HEAD, GET, POST
+/user/settings/password                                user.change_password                   OPTIONS, HEAD, GET, POST
+/user/settings/user-details                            user.change_user_details               OPTIONS, HEAD, GET, POST
+/who-is-online                                         forum.who_is_online                    OPTIONS, HEAD, GET      

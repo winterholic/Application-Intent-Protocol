@@ -1,0 +1,36 @@
+# FlaskBB 전체 기능 inventory (분모 v0.1 검토본)
+
+원본: `upstream/`의 고정 SHA `0885238df7c54826adda8cfbe8a831e846e2cb64`. 이 목록은 업무 흐름 단위이며 URL 120개, endpoint 91개, 테이블 수와 더하지 않는다. 2019 코어에는 HTML route와 server-rendered Jinja UI가 있고, conversations/portal은 설치된 공식 FlaskBB plugin이다. 원본에서 기능이 확인된 항목을 임의 제외하지 않는다. v0.1은 source pass가 진행 중이므로 완전성 확인 후에만 분모를 잠근다. 미확인 여부도 항목으로 보존한다.
+
+상태 표기: `기준선`은 original runtime에서 직접 관측한 것, `미관측`은 source 존재만 확인한 것, AIP 칸은 아직 구현/시험 전이다.
+
+| ID | 원본 업무흐름 및 상태/권한 검증 분모 | 원본 근거 | 원본 관측 | AIP 이식 방식 | AIP 시험/판정 |
+|---|---|---|---|---|---|
+| F01 | 공개 진입, 카테고리/포럼 목록, 포럼 주제 목록·정렬·페이지, 주제/게시물 읽기와 게시물 계수 | `upstream/flaskbb/forum/views.py`, `forum/models.py`, `forum/templates/`; `evidence/routes.txt` | 홈/portal/login/memberlist 200, test1 로그인 후 seed UI render; 상세 route 동작 미검증 | `app.aip`: User/Group/Category/Forum/ForumGroupAccess/UserGroup/Topic/Post와 server-side group ACL; original template→SDK 미연결 | `node --test ...contract.test.mjs ...aip-read.test.mjs`: AIP 서버 + 생성 SDK GET, guest/member별 공개 포럼/주제/게시물, hidden 상태, unique link 검증 PASS; original vs full flow 미실행 |
+| F02 | 가입, 이메일 중복/차단 도메인, 활성화 대기, 활성화 token, 로그인/로그아웃, 비밀번호 재인증·재설정 | `auth/views.py`, `auth/services/{registration,password}.py`, `email.py`, email templates | login UI 성공(test1); 가입/메일 미관측 | principal과 회원 resource 관계/공식 확장; 원본 비밀번호 UX를 보존할 인증 adapter 필요 | 미실행; AIP OIDC-only 현재 계약과 통합 갭 |
+| F03 | 회원 프로필/작성 이력, memberlist, 온라인 사용자, 일반설정·이메일·비밀번호·상세/avatar URL 변경 | `user/views.py`, `user/forms.py`, `user/models.py` | memberlist 200만 확인 | User/Profile/Topic/Post relation read와 자기 계정 update | 미실행 |
+| F04 | forum/category 관리 CRUD, 그룹별 접근·보기·게시 권한, moderator 연결 | `forum/models.py`, `management/views.py`, `management/forms.py`, `fixtures/groups.py` | test1 관리자 화면 진입 및 Forums 메뉴 관측; 비관리자 거부 미검증 | Category/Forum/Group/Moderator 관계 + server-side actor/group policy | 미실행 |
+| F05 | 주제 작성/수정/삭제·숨김/복구·잠금/잠금해제·고정·해제·이동; 게시물 reply/edit/delete/hide/unhide; 카운터·최종활동 동기 | `forum/views.py`, `forum/models.py`, `forum/forms.py` | fixture 목록 렌더만 확인 | Topic/Post/F​​orum 관계, 상태 전이·동일 트랜잭션 집계 | 미실행 |
+| F06 | 포럼/주제 읽음표시·읽지 않음, topic tracker 등록/해제, 마지막 읽은 위치 | `forum/models.py`, `forum/views.py`, `ForumsRead`, `TopicsRead`, `TopicTracker` | source/schema 확인, UI action 미관측 | actor-owned read marker/tracker relation, AIP read/apply | 미실행 |
+| F07 | 본문 Markdown 렌더/미리보기, post/topic/forum/user 검색 및 결과 페이지·필터 | `forum/forms.py`, `utils/search.py`, `app.py` Whooshee setup, search templates | 검색 UI source/schema는 확인, 실제 query 미관측 | searchable data/resource query 또는 공인 서버 extension; 원본 결과 의미 보존 | 미실행 |
+| F08 | 게시물 신고 생성, 사용자 신고 목록/조회/상태처리·모더레이션 | `forum/models.py` Report, `forum/views.py`, `management/views.py` | 관리자 Overview에 Reports 메뉴; create/review 미관측 | Report resource, 제출자/모더레이터 권한과 workflow | 미실행 |
+| F09 | 사용자 대화함: 작성, 수신함/보낸함/임시보관/휴지통, 보기/답장/수정, 이동·복원·삭제, 읽음 상태 | 설치된 `flaskbb-plugin-conversations==1.0.6`, 패키지 `conversations/{views,models,forms}.py`, 템플릿 | routes에 `conversations_bp` 12 endpoint; 실제 UI 미관측 | conversation/participant/message relation 및 소유자별 인가 | 미실행 |
+| F10 | 관리자 사용자 생성/수정/삭제, ban/unban, 그룹·권한 관리 | `management/views.py`, `management/forms.py`, `user/models.py` | 관리자 UI 메뉴만 확인 | 사용자/그룹/역할 관계, 제한된 관리자 전이 | 미실행 |
+| F11 | 포럼/카테고리와 신고/설정/플러그인 관리, Celery status·admin actions | `management/views.py`, `fixtures/settings.py`, `plugins/manager.py` | 관리자 nav UI 메뉴 관측 | 설정 resource/허용 extension; 임의 코드 설치는 별도 운영자 경계 | 미실행 |
+| F12 | 포털/홈 위젯·최신/활동 요약 | `flaskbb-plugin-portal==1.1.3`, package `portal/views.py`, `portal/templates/index.html` | `/portal/` 200, 내용 전체 검증은 미실행 | 원본과 같은 관계 read/query 기반 view | 미실행 |
+| F13 | CLI install/populate/upgrade/migration/사용자 관리/검색 reindex/번역 compile/plugin-theme 관리 및 startup configuration | `cli/`, `migrations/`, `plugins/`, themes, `setup.py`, `Makefile` | install + test seed + routes CLI 성공; clean deploy 아님 | AIP schema init/migrate, 배포 artifact/운영 명령 문서 | 미실행 |
+| F14 | password reset/account activation/비동기 이메일; Celery worker와 Redis broker; SMTP 설정·실패 | `email.py` (3 celery tasks), `app.py`, `configs/default.py`, `celery_worker.py` | mail은 suppress; 외부 발송 미검증. Redis 구동 | 업무상 effect를 공식 extension + durable jobs/broker로 처리; retry/idempotency/secret policy | 미실행 |
+| F15 | 검색 인덱스 재생성 및 DB 변경 연동, UI action 후 검색 일관성 | `utils/search.py`, `app.py`, `cli/main.py` | Whoosh/Whooshee 구성 source 확인; 검색 동작 미관측 | AIP resource 데이터의 관리 검색 또는 projection 재구성 | 미실행 |
+| F16 | 테마/static/CSS/JS, locale/i18n, form 오류/빈 목록/접근 거부/404/500 상태, server-rendered 원본 화면 전체 | `templates/`, `themes/`, `translations/`, route handlers | home/login/admin 일부; 전체 시각/빈/오류 화면 미관측 | 원본 템플릿/스타일 보존하면서 실제 AIP SDK transport 사용 | 미실행 |
+| F17 | 운영 의존·저장 경계: PostgreSQL 관계·Alembic, Redis, Whoosh filesystem, SMTP, Celery, plugin/theme assets | `configs/`, `app.py`, `extensions.py`, migrations, `setup.py` | PostgreSQL schema와 Redis 컨테이너 확인; SMTP suppress | AIP PostgreSQL schema와 외부 effect/provider config, clean isolated deployment | 미실행 |
+
+## 구조 커버리지 축 (업무 분모에 합산 금지)
+
+- CLI route 명령 `evidence/routes.txt`: 120 route rules / 91 distinct endpoints. Blueprint 그룹 관측: forum 50, management 39, auth 9, conversations 12, user 7, portal 1, static 1, themes 1 (route aliases로 group 합은 distinct endpoints와 같지 않을 수 있음).
+- PostgreSQL: 19 앱 테이블 (`categories`, `conversations`, `forumgroups`, `forums`, `forumsread`, `groups`, `groups_users`, `messages`, `moderators`, `plugin_registry`, `plugin_store`, `posts`, `reports`, `settings`, `settingsgroup`, `topics`, `topicsread`, `topictracker`, `users`) + `alembic_version`.
+- fixture seed: users 5, groups 6, categories 2, forums 4, topics 4, posts 8, conversations 0. 다른 role/데이터 상태는 각 gate에서 추가 생성.
+- 별도 검사할 외부 인터페이스: Flask HTML/forms, `flaskbb` CLI, SMTP+Celery async task, Redis broker/cache, PostgreSQL, Whoosh local search index, plugin API, theme/static assets. 원본에 실시간 push/WebSocket 또는 public JSON REST가 있는지는 source-wide audit에서 부재 증거를 확인한 뒤 기록한다.
+
+## 의미 보존 gate
+
+각 ID는 같은 fixture와 권한 역할로 원본/AIP 양쪽 UI 요청, DB 전후 상태, 성공·거부 결과를 대조한다. 거부 시 행·관련 카운터가 변하지 않아야 한다. restart 이후 데이터·검색/추적 상태 보존도 별도 검증한다. 외부 SMTP/OIDC 실제 provider를 구성하지 않으면 그 통합은 미실행으로 남는다. 원본 보안 약점이 있어도 AIP 인가를 약화해 복제하지 않고 호환 가능한 차이로 명시한다. 전체 frontend가 AIP SDK만 호출하고 원본 업무 backend 중단 상태에서 작동해야 한다.

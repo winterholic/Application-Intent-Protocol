@@ -1,0 +1,162 @@
+// FlaskBB 2019 port. Public reads are the first vertical slice; source workflow
+// coverage remains the full F01-F17 denominator in INVENTORY.md.
+actor User
+predicate hasGroup(viewer: User?, targetGroup: Group) = exists UserGroup where user = viewer and group = targetGroup
+predicate canReadForum(viewer: User?, targetForum: Forum?) = exists ForumGroupAccess where forum = targetForum and ((viewer = null and group.guest) or hasGroup(viewer, group))
+predicate canViewHidden(viewer: User?) = viewer != null and (viewer.primary_group.viewhidden or exists UserGroup where user = viewer and group.viewhidden)
+
+resource Group {
+  fields {
+    id: Id
+    name: Text(1..80)
+    guest: Bool
+    admin: Bool
+    super_mod: Bool
+    mod: Bool
+    banned: Bool
+    editpost: Bool
+    deletepost: Bool
+    deletetopic: Bool
+    posttopic: Bool
+    postreply: Bool
+    viewhidden: Bool
+    makehidden: Bool
+  }
+  rows read when true
+  expose read {
+    select id, name, guest, admin, super_mod, mod, banned, editpost, deletepost, deletetopic, posttopic, postreply, viewhidden, makehidden
+    sort id
+    budget { rows 100; depth 1; cost 1000; deadline 2s }
+  }
+}
+
+resource User {
+  fields {
+    id: Id
+    username: Text(1..200)
+    primary_group: Group
+    activated: Bool
+  }
+  rows read when true
+  expose read {
+    select id, username, primary_group, activated
+    filter id.eq, username.prefix
+    sort id, username
+    traverse primary_group { select id, name }
+    budget { rows 100; depth 2; cost 2000; deadline 2s }
+  }
+}
+
+resource UserGroup {
+  fields { id: Id; user: User; group: Group }
+  unique user, group
+  rows read when true
+  expose read {
+    select id, user, group
+    filter user.eq, group.eq
+    sort id
+    budget { rows 1000; depth 2; cost 3000; deadline 2s }
+  }
+}
+
+resource Category {
+  fields { id: Id; title: Text(1..255); description: Text?; position: Int }
+  rows read when true
+  expose read {
+    select id, title, description, position
+    filter id.eq
+    sort position, id
+    budget { rows 100; depth 1; cost 1000; deadline 2s }
+  }
+}
+
+resource Forum {
+  fields {
+    id: Id
+    category: Category
+    title: Text(1..255)
+    description: Text?
+    position: Int
+    locked: Bool
+    external: Url?
+    post_count: Int
+    topic_count: Int
+  }
+  rows read when canReadForum(actor, this)
+  expose read {
+    select id, category, title, description, position, locked, external, post_count, topic_count
+    filter id.eq, category.eq
+    sort position, id
+    traverse category { select id, title, position }
+    budget { rows 200; depth 2; cost 4000; deadline 2s }
+  }
+}
+
+resource ForumGroupAccess {
+  fields { id: Id; forum: Forum; group: Group }
+  unique forum, group
+  rows read when true
+  expose read {
+    select id, forum, group
+    filter forum.eq, group.eq
+    sort id
+    budget { rows 1000; depth 2; cost 3000; deadline 2s }
+  }
+}
+
+resource Topic {
+  fields {
+    id: Id
+    forum: Forum
+    title: Text(1..255)
+    user: User?
+    username: Text(1..200)
+    date_created: Time
+    last_updated: Time
+    locked: Bool
+    important: Bool
+    views: Int
+    post_count: Int
+    first_post: Post?
+    last_post: Post?
+    hidden: Bool?
+    hidden_at: Time?
+    hidden_by: User?
+  }
+  rows read when canReadForum(actor, forum) and (hidden != true or canViewHidden(actor))
+  expose read {
+    select id, forum, title, user, username, date_created, last_updated, locked, important, views, post_count, first_post, last_post, hidden, hidden_at, hidden_by
+    filter id.eq, forum.eq, user.eq, locked.eq, important.eq
+    sort id, last_updated, views
+    traverse forum { select id, category, title, position }
+    traverse user { select id, username }
+    traverse first_post { select id, username, content, date_created }
+    traverse last_post { select id, username, content, date_created }
+    budget { rows 200; depth 3; cost 8000; deadline 2s }
+  }
+}
+
+resource Post {
+  fields {
+    id: Id
+    topic: Topic?
+    user: User?
+    username: Text(1..200)
+    content: Text
+    date_created: Time
+    date_modified: Time?
+    modified_by: Text(1..200)?
+    hidden: Bool?
+    hidden_at: Time?
+    hidden_by: User?
+  }
+  rows read when topic != null and canReadForum(actor, topic.forum) and (hidden != true or canViewHidden(actor)) and (topic.hidden != true or canViewHidden(actor))
+  expose read {
+    select id, topic, user, username, content, date_created, date_modified, modified_by, hidden, hidden_at, hidden_by
+    filter id.eq, topic.eq, user.eq, hidden.eq
+    sort id, date_created
+    traverse topic { select id, forum, title, locked, hidden }
+    traverse user { select id, username }
+    budget { rows 500; depth 3; cost 10000; deadline 2s }
+  }
+}

@@ -1,5 +1,9 @@
 # 진행 현황과 쌓인 질문
 
+## 2026-10-17 신규 AIP 전체 포팅 트랙
+
+사용자가 공개 pre-AI 시점의 완성된 웹앱 전체를 실제 AIP 제품 경로로 포팅하도록 재지시해 FlaskBB 2019 고정본을 별도 worktree/branch에서 조사 중이다. 원본 Linux 컨테이너 install/seed/run 및 로그인 후 관리자 UI 기준선은 관측됐다. 의미 기능 전체 분모, AIP 구현, 동등성 및 clean isolated deployment 게이트는 아직 미완료다. 별도 상태와 증거: [FlaskBB 전체 포팅](../porting/flaskbb/STATUS.md), [inventory](../porting/flaskbb/INVENTORY.md). 이 트랙은 바로 아래 FaceReview와 MySQL blocker를 대체하거나 닫지 않는다.
+
 ## 2026-10-17 포팅 진행 — UI 환경 갭과 MySQL adapter 경계
 
 댓글 UI 7.1.3.2.2는 아직 실행하지 못했다. 설정된 Ttakkari browser가 loopback `23173`에 연결할 때 `ERR_CONNECTION_REFUSED`를 반환했고, 지정 browser preflight는 `status=blocked`, `browser_launched=false`와 Mach IPC 거부를 기록했다. 추가 브라우저 실행 경로로 우회하지 않았다. 외부 YouTube 모달이 원인일 수 있다는 설명은 미검증이며, 이를 AIP 제품 갭으로 분류하지 않는다. 다음 허용된 browser 실행에서만 iframe/API stub 또는 화면에 보이는 닫기 동작을 고정 절차로 추가한다. 상세 범위는 [브라우저 기준선](porting/BROWSER-BASELINE.md#2026-10-17-댓글-ui-실행-환경-갭)을 따른다.
