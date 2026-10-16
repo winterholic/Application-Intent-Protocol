@@ -1,17 +1,22 @@
 # 제품 통합 검증 (2026-10-06)
 
-## MySQL/MariaDB adapter fail-closed 경계 (2026-10-17)
+## MySQL catalog 변환 계층과 fail-closed 경계 (2026-10-17)
 
-AIP external introspection은 현재 PostgreSQL 전용이다. 합성 MySQL/MariaDB URL을 주면 이전에는 PostgreSQL driver에서 일반 연결 오류가 났다. scheme을 명시적으로 차단하고 credential이 반환 오류에 섞이지 않는 작은 회귀를 추가했다. 이는 실제 adapter 검증이나 지원을 뜻하지 않는다.
+AIP external introspection은 현재 PostgreSQL 전용이다. MySQL URL 거부 guard는 유지하면서, `aip-migrate::mysql_catalog::normalize_table`에 driver 비의존 INFORMATION_SCHEMA 행→중립 manifest 변환을 추가했다. 원본 `facereview-inventory.json`의 11개 SQLAlchemy 모델과 PostgreSQL catalog/외부 채택 경로를 대조해 컬럼 타입·PK/인덱스 순서의 작은 범위로 제한했다. 아래 catalog 행들은 synthetic 회귀 fixture이며 실제 DB 관측이 아니다.
 
 | 실행 | 결과 | 범위 |
 |---|---|---|
-| `CARGO_NET_OFFLINE=true CARGO_TARGET_DIR=/private/tmp/aip-target cargo test -p aip-migrate --test mysql_adapter --locked` | 구현 전 기대 코드 불일치로 1 failed, 수정 후 1 passed | MySQL/MariaDB fail-closed와 오류의 비밀값 미포함 |
-| `CARGO_NET_OFFLINE=true CARGO_TARGET_DIR=/private/tmp/aip-target cargo fmt --all -- --check` | exit 0 | 현재 worktree 포맷 |
+| `CARGO_NET_OFFLINE=true CARGO_TARGET_DIR=/private/tmp/aip-target cargo test -p aip-migrate --test mysql_catalog --test mysql_adapter --locked --offline` | 4 passed, 0 failed | synthetic PK 순서·unsigned·enum·tinyint(1) alias·nullable/default/generated·NULL default 모호성·unsupported 진단, 그리고 기존 URL fail-closed/credential 숨김 |
+| `CARGO_NET_OFFLINE=true CARGO_TARGET_DIR=/private/tmp/aip-target cargo test -p aip-migrate --lib --locked --offline` | 1 passed, 0 failed | migration library 회귀 |
+| `CARGO_NET_OFFLINE=true cargo build -p aip-cli --locked --offline && node --test product/tests/uuid-external.test.mjs` | build exit 0; PostgreSQL UUID owned/external 통합 1 passed, 0 failed | 기존 PG introspect/adopt, runtime DML role, TS/Python SDK, 두 wire, drift 거부. 새 MySQL converter를 호출하지 않음 |
 
-이번 실행에서는 driver 추가, 실제 DB 연결, catalog/read/write, MariaDB 실행을 하지 않았다. adapter는 미지원 상태이며 이어서 읽기 전용 MySQL catalog adapter를 구현한다.
+`mysql_catalog` 테스트 입력은 테스트 코드에서 만든 synthetic catalog rows다. DB에서 관측한 값으로 표시하거나 취급하지 않는다. MySQL 8.4는 `INFORMATION_SCHEMA.COLUMNS.COLUMN_DEFAULT = NULL`을 명시적 `DEFAULT NULL`과 DEFAULT 절 부재 양쪽에 반환하므로, manifest는 이를 `NullOrAbsent`로 남기고 `SHOW CREATE TABLE` 등 추가 판별을 요구하는 diagnostic을 붙인다 ([공식 MySQL 8.4 문서](https://dev.mysql.com/doc/refman/8.4/en/information-schema-columns-table.html)). converter는 타입·PK/index 행만 받으며 FK/action 등 아직 입력·표현하지 않는 catalog 영역은 다음 연결 단계에 남는다. 진단 항목이 있으면 소비자는 이를 검토해야 하며 unsupported 타입은 manifest에 명시한다.
 
-구현 착수 중 `cargo info mysql_async`가 crate 다운로드 후 Cargo cache (`/Users/winterholic/.cargo/registry/cache/...`) 쓰기에서 nested worker sandbox의 `Operation not permitted`로 실패했다. 이 실패는 해당 실행 환경의 cache 쓰기 범위만 말하며 production engine 상태나 MySQL 연결 가능성을 판정하지 않는다. 우회 조달은 하지 않았다.
+회귀를 먼저 추가한 실행은 API 부재로 컴파일 실패했고, 구현 뒤 세 converter 회귀가 통과했다. 이후 `tinyint(1)`를 Boolean으로 축약하지 않는 범위를 별도 기대값으로 고정했다.
+
+driver 추가, MySQL 실 DB 연결·catalog/read/write, MariaDB 실행은 미실행이다. adapter는 미지원 상태다. 이전 `cargo info mysql_async` 단계는 crate 다운로드 뒤 nested worker sandbox에서 Cargo cache open이 `Operation not permitted`로 막혔다. 이는 해당 실행 환경의 cache 접근만 말하며 production의 MySQL 가용성 원인으로 일반화하지 않는다. cache 경로 변경·직접 다운로드·브라우저/권한 우회는 하지 않았다. 다음 단계는 허용 의존성 공급이 가능한 실행 환경에서 driver와 read-only query를 연결하고 같은 manifest 회귀를 실제 catalog row로 대조하는 것이다.
+
+이번 구현 source revision: `1f04d1e0500ba439172c0be567793489797b059f` (코드 단위 커밋; 이 문서 갱신 커밋은 최종 보고에 포함).
 
 운영 인증·일반 마이그레이션·root 제품 통합을 사용자 요청 범위로 구현했다. AIP의 caller read/direct apply와 서버의 최종 권한, 같은 정의·같은 SDK·Node/Python 확장을 유지한다. 앱별 endpoint나 별도 실행 엔진을 추가하지 않았다.
 

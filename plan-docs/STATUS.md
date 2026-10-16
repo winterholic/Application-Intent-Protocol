@@ -4,7 +4,7 @@
 
 댓글 UI 7.1.3.2.2는 아직 실행하지 못했다. 설정된 Ttakkari browser가 loopback `23173`에 연결할 때 `ERR_CONNECTION_REFUSED`를 반환했고, 지정 browser preflight는 `status=blocked`, `browser_launched=false`와 Mach IPC 거부를 기록했다. 추가 브라우저 실행 경로로 우회하지 않았다. 외부 YouTube 모달이 원인일 수 있다는 설명은 미검증이며, 이를 AIP 제품 갭으로 분류하지 않는다. 다음 허용된 browser 실행에서만 iframe/API stub 또는 화면에 보이는 닫기 동작을 고정 절차로 추가한다. 상세 범위는 [브라우저 기준선](porting/BROWSER-BASELINE.md#2026-10-17-댓글-ui-실행-환경-갭)을 따른다.
 
-AIP MySQL/MariaDB adapter의 실제 연결·catalog/read/write 검증도 아직 불가능한 상태로 확인됐다. `aip-migrate`의 external introspection이 PostgreSQL `tokio_postgres`에 고정되어 있어 URL만 MySQL로 바꾸면 `DB_CONNECT`로 뭉뚱그려 실패했다. 명시적인 `DB_ADAPTER_UNSUPPORTED` 거부와 회귀 테스트를 추가했다. 이것은 adapter 구현이나 지원 판정이 아니다. 다음 제품 단위는 실제 MySQL driver와 읽기 전용 catalog introspection이며, MySQL 실제 DB에서 검증한 뒤 MariaDB를 별도 실행한다. 인증·권한 포팅은 그 뒤다.
+AIP MySQL/MariaDB adapter의 실제 연결·catalog/read/write 검증은 여전히 미실행이다. `aip-migrate`의 PostgreSQL `tokio_postgres` 경로에 붙이지 않고, 허용된 기존 의존성으로 MySQL `INFORMATION_SCHEMA` 입력을 중립 manifest로 바꾸는 순수 함수·타입 계층을 추가했다. 합성 행 회귀는 PK 순서·unsigned·enum·tinyint(1) 표시 폭·nullable/default/generated를 보존하고, NULL default 모호성과 collation·생성식·on-update 등 표현 밖 의미를 진단한다. 이는 DB 관측이나 MySQL adapter 지원이 아니다. MySQL/MariaDB URL의 `DB_ADAPTER_UNSUPPORTED` guard는 유지한다. 실제 driver·catalog query 연결과 MySQL 8.4 실 DB 검증, 이후 MariaDB 별도 실행 및 read/write는 남아 있으며 WBS 7.2.1 전체는 미완료다. 인증·권한 포팅은 그 뒤다. 코드 revision: `1f04d1e0500ba439172c0be567793489797b059f`.
 
 ## 페이스리뷰 원본 포팅 기준선 후속 (2026-10-17)
 

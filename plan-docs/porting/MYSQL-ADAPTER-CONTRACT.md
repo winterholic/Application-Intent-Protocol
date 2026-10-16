@@ -7,6 +7,14 @@
 
 `aip-migrate::external::introspect`가 PostgreSQL `tokio_postgres` 연결과 `pg_catalog` 쿼리만 사용한다. MySQL/MariaDB URL을 넘기는 검사는 실제 driver/catalog 시험이 아니며, 이전에는 PostgreSQL connect 단계의 일반 `DB_CONNECT` 오류로 끝났다. 이제 이 두 scheme은 `DB_ADAPTER_UNSUPPORTED`로 명시 거부한다. 테스트는 오류에 합성 URL 비밀번호가 노출되지 않는 것도 고정한다.
 
+후속 순수 변환 단위에서 `aip_migrate::mysql_catalog::normalize_table`을 추가했다. INFORMATION_SCHEMA COLUMNS/STATISTICS에서 온 typed row를 driver 없이 받으며, 컬럼 순서·정규화 타입·부호/표시 폭·null/default/generated·PK/unique index 순서를 반환한다. 작은 현재 manifest 경계 밖인 collation, generation expression, on-update, auto_increment, functional index expression, 미지원 타입은 diagnostics에 남긴다. `tinyint(1)`은 값이 0/1로 제한됐다는 뜻으로 단정하지 않고 정수 metadata와 alias 표식·진단을 함께 보존한다.
+
+`COLUMN_DEFAULT = NULL`은 MySQL 8.4에서 명시적 `DEFAULT NULL`과 DEFAULT 절 부재 양쪽에 쓰이므로 `NullOrAbsent`로 표현하고 모호성 진단을 남긴다. 드라이버 연결 시 `SHOW CREATE TABLE` 등으로 구분해야 한다 ([MySQL 8.4 COLUMNS](https://dev.mysql.com/doc/refman/8.4/en/information-schema-columns-table.html)).
+
+코드 revision: `1f04d1e0500ba439172c0be567793489797b059f`.
+
+이 구현의 catalog 회귀 행은 모두 synthetic이며 MySQL/MariaDB 관측 증거가 아니다. 현재 converter에 FK/actions·check·charset 또는 index prefix 등의 입력 모델은 없다. MySQL driver query 연결과 INFORMATION_SCHEMA row extraction은 다음 하위 단계다. URL guard와 전체 adapter 미지원 판정은 그대로다.
+
 | 이번 확인 | 결과 | 확인하지 않은 것 |
 |---|---|---|
 | MySQL/MariaDB scheme 요청의 fail-closed 경계 | `aip-migrate` 회귀 1 passed | 서버 연결, schema introspection, catalog 의미, 정책 read/write |
