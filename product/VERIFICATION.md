@@ -64,21 +64,39 @@ driver 추가, MySQL 실 DB 연결·catalog/read/write, MariaDB 실행은 미실
 
 ## 내부 metrics·OTLP exporter·durable job trace 연결 검증 (2026-10-17)
 
-WBS 항목인 "내부 metrics·OTLP exporter·durable job trace 연결"의 3개 범위를 구현하고 검증했다.
+WBS 항목인 "내부 metrics·OTLP exporter·durable job trace 연결"의 진행 및 검증 기록이다. 본 WBS 전체는 독립 재검증 전까지 **미완료** 상태다.
+
+### 1. 원구현 보고 및 독립 검증 결과 (`4e8e2126a91bd15e21afd870fe5373c0ccba9adb`)
+
+원구현에서는 in-process mock 수신기를 통해 trace/metric 수신을 확인했으나, GPT-6-Luna high의 독립 검증(`flash-independent-verification-4e8e212.md`)에서 **FAILED**로 판정되었다:
+- 실제 OpenTelemetry Collector 0.120.1 수신 결과, 제품이 보낸 성공 값 `2`가 Collector에서 `Error`로 표시되고 실패 값 `3`은 상태 미해석/빈 값으로 처리되는 P1 결함 확인 (공식 trace.proto 규격은 `UNSET=0`, `OK=1`, `ERROR=2`).
+- 기존 durable job 테이블에 `trace_id`를 추가하는 upgrade migration 부재, parent-child flags 보존 한계, 전송 실패 관측 정책 부재 지적.
+
+### 2. 후속 수정 회차 (OTLP status code 표준 수정)
+
+확정된 OTLP status enum 오류를 공통 타입 `SpanStatusCode`(`Unset=0`, `Ok=1`, `Error=2`)로 교체하여 비표준 오류값 재발을 방지하고 `spikes/spike-v6-transport/src/{otlp,trace,durable}.rs` 전 callsite를 수정했다.
 
 | 실제 실행 | 결과 | 확인한 범위 |
 |---|---|---|
-| `cargo test --test otlp --manifest-path spikes/spike-v6-transport/Cargo.toml --target-dir target` | 2 passed, 0 failed | mock in-process OTLP/HTTP 수신기(/v1/traces, /v1/metrics)를 통한 trace/span 수신, HTTP 요청 span과 durable job run span의 동일 trace_id 연계, duration histogram 수신, 민감값(인증 토큰·payload) 배제 |
-| `cargo test -p aip-execution` | 80 passed, 0 failed | `aip_jobs.trace_id` 스키마 바인딩·보존(18 tests), files(5), integrations(10), messages(15), objects(11), rag(16), rate_limit(4), trace_context(4) |
-| `cargo test -p aip-service` | 33 passed, 0 failed | 제품 설정의 `otlp` 파싱 및 validation, unit tests(31), audit_cli(1), jobs_cli(1) |
-| `cargo fmt -- --check && cargo fmt --manifest-path spikes/spike-v6-transport/Cargo.toml -- --check` | exit 0 | workspace 및 transport spike 코드 포맷 검사 |
-| `cargo clippy --workspace --lib --bins --locked -- -D warnings` | exit 0 | workspace 라이브러리/바이너리 clippy 검사 |
-| `cargo clippy -p aip-auth -p aip-migrate -p aip-service --all-targets --locked -- -D warnings` | exit 0 | 제품 서비스 크레이트 전체 타깃 clippy 검사 |
-| `cargo clippy --manifest-path spikes/spike-v6-transport/Cargo.toml --all-targets --locked -- -D warnings` | exit 0 | transport spike 전체 타깃 clippy 검사 |
-| `cargo deny --manifest-path Cargo.toml check && cargo deny --manifest-path spikes/spike-v6-transport/Cargo.toml check` | exit 0 | 라이선스, 금지 crate, advisories, sources 보안 검증 |
+| `cargo test --offline --locked --manifest-path spikes/spike-v6-transport/Cargo.toml --target-dir /private/tmp/aip-target --test otlp http_trace_status_mapping_conforms_to_otlp_spec -- --exact` | 1 passed, 0 failed | RED(기존 2 반환 실패) → GREEN. 200 OK(1), 400 Bad Request(2), 500 Internal Error(2), 미설정(0)의 OTLP 표준 status_code 매핑 wire 검증 |
+| `cargo test --offline --locked --manifest-path spikes/spike-v6-transport/Cargo.toml --target-dir /private/tmp/aip-target --test otlp durable_job_status_mapping_conforms_to_otlp_spec -- --exact` | 1 passed, 0 failed | RED → GREEN. SUCCEEDED(1), FAILED(2), CANCELLED(2), RETRY(0)의 durable job span status_code 매핑 wire 검증 |
+| `cargo test --offline --locked --manifest-path spikes/spike-v6-transport/Cargo.toml --target-dir /private/tmp/aip-target --test otlp durable_job_and_http_spans_share_same_trace_id -- --exact` | 1 passed, 0 failed | RED(기존 fixture 2 반환 실패) → GREEN. HTTP span과 durable job span의 표준 status_code(1) 및 동일 trace_id 연계 검증 |
+| `cargo test --offline --locked --manifest-path spikes/spike-v6-transport/Cargo.toml --target-dir /private/tmp/aip-target --lib otlp::tests` | 3 passed, 0 failed | `SpanStatusCode` enum 값의 trace.proto 대조, HTTP status 매핑, Job state 매핑 단위 검증 |
+| `cargo test --offline --locked --manifest-path spikes/spike-v6-transport/Cargo.toml --target-dir /private/tmp/aip-target --lib trace::tests` | 9 passed, 0 failed | Trace drop 시 status code 매핑 및 기존 trace 단위 검증 |
+| `cargo test --offline --locked -p aip-execution --lib --target-dir /private/tmp/aip-target` | 6 passed, 0 failed | execution 라이브러리 단위 검증 |
+| `cargo test --offline --locked -p aip-service --lib --target-dir /private/tmp/aip-target` | 31 passed, 0 failed | 서비스 설정 파싱 및 validation 단위 검증 |
+| `cargo test --offline --locked -p aip-execution --test trace_context --target-dir /private/tmp/aip-target` | 4 passed, 0 failed | W3C traceparent 파싱 및 scope 단위 검증 |
+| `cargo fmt --manifest-path spikes/spike-v6-transport/Cargo.toml -- --check` & `cargo fmt --all -- --check` | exit 0 | 코드 포맷 검사 |
+| `cargo clippy --offline --locked --manifest-path spikes/spike-v6-transport/Cargo.toml --target-dir /private/tmp/aip-target --all-targets -- -D warnings` | exit 0 | transport spike 전체 타깃 clippy 검사 |
+| `cargo clippy --offline --locked --workspace --lib --bins --target-dir /private/tmp/aip-target -- -D warnings` | exit 0 | workspace 라이브러리/바이너리 clippy 검사 |
+| `python3 tools/doccheck.py` | 14 aip blocks checked, 0 findings | 제품 문서 선언 검사 |
 
-미검증:
-- 원격 외부 OTLP Collector(Docker) 실서버 네트워크 전송: 로컬 mock in-process OTLP 수신기로 검증 완료했으나 외부 원격 Collector 실연결은 미실행.
+미실행 및 범위 제한:
+- localhost 사용자 PostgreSQL(PID 25678, 기본 5432) 보호를 위해 실제 DB 필요 통합 테스트(`cargo test -p aip-execution`, `cargo test -p aip-service` 전체, enqueue/lease/retry/restart/trigger DB E2E)는 미실행.
+- 실제 Collector 재검증은 수정 후 독립 검증자(Luna)가 담당하므로 본 수정 단위에서는 미실행.
+- 기존 cargo-deny advisory DB lock 제약은 재시도/우회하지 않음.
+- durable job 스키마 migration, parent flags, 실패 관측 정책 추가는 본 수정 범위에 포함하지 않음 (독립 검증이 격리 PG에서 조사).
+- WBS 관측성 항목 전체는 독립 재검증 전까지 **미완료**로 유지.
 
 ## 페이스리뷰 댓글 적용 시험 (2026-10-15)
 

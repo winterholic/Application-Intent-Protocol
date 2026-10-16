@@ -49,6 +49,49 @@ impl OtlpConfig {
     }
 }
 
+/// Official OpenTelemetry trace.proto status code enum:
+/// STATUS_CODE_UNSET = 0
+/// STATUS_CODE_OK = 1
+/// STATUS_CODE_ERROR = 2
+/// (Note: do NOT confuse with SpanKind enum, where INTERNAL=1, SERVER=2, CLIENT=3)
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
+#[repr(i32)]
+pub enum SpanStatusCode {
+    Unset = 0,
+    Ok = 1,
+    Error = 2,
+}
+
+impl SpanStatusCode {
+    pub const fn as_i32(self) -> i32 {
+        self as i32
+    }
+
+    /// Map HTTP response status code to OTLP SpanStatusCode.
+    /// 200..400 -> Ok (1)
+    /// Some(_) (4xx, 5xx, etc.) -> Error (2)
+    /// None (interrupted / unrecorded) -> Unset (0)
+    pub fn from_http_status(status: Option<u16>) -> Self {
+        match status {
+            Some(s) if (200..400).contains(&s) => Self::Ok,
+            Some(_) => Self::Error,
+            None => Self::Unset,
+        }
+    }
+
+    /// Map durable job outcome state to OTLP SpanStatusCode.
+    /// "SUCCEEDED" -> Ok (1)
+    /// "FAILED" | "CANCELLED" -> Error (2)
+    /// _ ("RETRY", "PENDING", etc.) -> Unset (0)
+    pub fn from_job_state(state: &str) -> Self {
+        match state {
+            "SUCCEEDED" => Self::Ok,
+            "FAILED" | "CANCELLED" => Self::Error,
+            _ => Self::Unset,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct SpanData {
     pub trace_id: String,
@@ -59,7 +102,7 @@ pub struct SpanData {
     pub start_time_nanos: u64,
     pub end_time_nanos: u64,
     pub attributes: Vec<(String, Value)>,
-    pub status_code: i32, // 1: UNSET, 2: OK, 3: ERROR
+    pub status_code: SpanStatusCode, // Official OTLP: 0=UNSET, 1=OK, 2=ERROR
     pub status_message: Option<String>,
 }
 
@@ -192,7 +235,7 @@ async fn send_traces(client: &reqwest::Client, url: &str, headers: &HashMap<Stri
                 "endTimeUnixNano": s.end_time_nanos.to_string(),
                 "attributes": attrs,
                 "status": {
-                    "code": s.status_code,
+                    "code": s.status_code.as_i32(),
                 }
             });
 
@@ -423,4 +466,64 @@ async fn send_metrics(client: &reqwest::Client, url: &str, headers: &HashMap<Str
         req = req.header(k, v);
     }
     let _ = req.send().await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn span_status_code_enum_values_match_official_trace_proto() {
+        // Official OpenTelemetry trace.proto:
+        // enum StatusCode {
+        //   STATUS_CODE_UNSET = 0;
+        //   STATUS_CODE_OK = 1;
+        //   STATUS_CODE_ERROR = 2;
+        // }
+        assert_eq!(SpanStatusCode::Unset.as_i32(), 0);
+        assert_eq!(SpanStatusCode::Ok.as_i32(), 1);
+        assert_eq!(SpanStatusCode::Error.as_i32(), 2);
+
+        assert_ne!(SpanStatusCode::Ok.as_i32(), 2, "Ok must NOT be 2 (which is ERROR)");
+        assert_ne!(SpanStatusCode::Error.as_i32(), 3, "Error must NOT be 3 (which is uninterpreted/invalid)");
+    }
+
+    #[test]
+    fn http_status_mapping_produces_standard_status_codes() {
+        // Success ranges (200..400) -> STATUS_CODE_OK (1)
+        for s in [200, 201, 204, 301, 302, 304, 307, 308] {
+            assert_eq!(SpanStatusCode::from_http_status(Some(s)), SpanStatusCode::Ok);
+            assert_eq!(SpanStatusCode::from_http_status(Some(s)).as_i32(), 1);
+        }
+
+        // Error ranges (4xx, 5xx) -> STATUS_CODE_ERROR (2)
+        for s in [400, 401, 403, 404, 409, 422, 500, 502, 503, 504] {
+            assert_eq!(SpanStatusCode::from_http_status(Some(s)), SpanStatusCode::Error);
+            assert_eq!(SpanStatusCode::from_http_status(Some(s)).as_i32(), 2);
+        }
+
+        // None (incomplete / connection dropped before response) -> STATUS_CODE_UNSET (0)
+        assert_eq!(SpanStatusCode::from_http_status(None), SpanStatusCode::Unset);
+        assert_eq!(SpanStatusCode::from_http_status(None).as_i32(), 0);
+    }
+
+    #[test]
+    fn job_state_mapping_produces_standard_status_codes() {
+        // Terminal success -> STATUS_CODE_OK (1)
+        assert_eq!(SpanStatusCode::from_job_state("SUCCEEDED"), SpanStatusCode::Ok);
+        assert_eq!(SpanStatusCode::from_job_state("SUCCEEDED").as_i32(), 1);
+
+        // Terminal errors -> STATUS_CODE_ERROR (2)
+        assert_eq!(SpanStatusCode::from_job_state("FAILED"), SpanStatusCode::Error);
+        assert_eq!(SpanStatusCode::from_job_state("FAILED").as_i32(), 2);
+        assert_eq!(SpanStatusCode::from_job_state("CANCELLED"), SpanStatusCode::Error);
+        assert_eq!(SpanStatusCode::from_job_state("CANCELLED").as_i32(), 2);
+
+        // Non-terminal / transient -> STATUS_CODE_UNSET (0)
+        assert_eq!(SpanStatusCode::from_job_state("RETRY"), SpanStatusCode::Unset);
+        assert_eq!(SpanStatusCode::from_job_state("RETRY").as_i32(), 0);
+        assert_eq!(SpanStatusCode::from_job_state("PENDING"), SpanStatusCode::Unset);
+        assert_eq!(SpanStatusCode::from_job_state("RUNNING"), SpanStatusCode::Unset);
+        assert_eq!(SpanStatusCode::from_job_state("CANCEL_REQUESTED"), SpanStatusCode::Unset);
+    }
 }

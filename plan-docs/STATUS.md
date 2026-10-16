@@ -24,11 +24,19 @@ WBS 항목인 외부 IdP/TLS reverse proxy 운영 smoke 및 실제 Kafka/RabbitM
 
 ## 내부 metrics·OTLP exporter·durable job trace 연결 (2026-10-17)
 
-WBS 항목인 내부 metrics 확장, OTLP/HTTP exporter, durable job run trace 연결을 구현했다.
-1. 내부 metrics: HTTP 요청(`aip_requests_total`, `aip_request_duration_seconds`), operation(`aip_operations_total`, `aip_operation_duration_seconds`), durable job(`aip_jobs_total`, `aip_job_duration_seconds`)의 카운터 및 지연 histogram(5ms~30s)을 계측하고 AIP 오류 코드별 실패를 분류한다.
-2. OTLP exporter: `OtlpConfig`로 설정하며 기본값은 off다. 비활성화 시 `Option` 검사만 수행되어 추가 오버헤드가 없다. 활성화 시 bounded mpsc queue(4096) 기반의 백그라운드 워커가 `/v1/traces`와 `/v1/metrics`로 OTLP JSON 규격 배치 전송을 수행한다.
-3. Durable job trace 연결: HTTP 인그레스의 W3C `traceparent`에서 유입된 `trace_id`를 PostgreSQL `aip_jobs.trace_id`에 저장하여 재시도·attempt 간 보존한다. job 실행 시 해당 trace_id 컨텍스트를 복원하여 HTTP 요청 span과 durable job run span이 동일한 trace로 묶인다. 민감값(인증 토큰, 요청 body/query payload)은 span 속성에서 제외한다.
-검증: mock in-process OTLP 수신기를 통한 통합 테스트(`tests/otlp.rs`), `aip-execution`, `aip-service`, `cargo fmt`, `cargo clippy`, `cargo deny` 전체 통과.
+WBS 항목인 내부 metrics 확장, OTLP/HTTP exporter, durable job run trace 연결의 진행 현황이다. 본 WBS 전체는 독립 재검증 전까지 **미완료** 상태다.
+
+1. **원구현 (`4e8e2126a91bd15e21afd870fe5373c0ccba9adb`)**:
+   - 내부 metrics: HTTP 요청(`aip_requests_total`, `aip_request_duration_seconds`), operation(`aip_operations_total`, `aip_operation_duration_seconds`), durable job(`aip_jobs_total`, `aip_job_duration_seconds`)의 카운터 및 지연 histogram(5ms~30s)을 계측하고 AIP 오류 코드별 실패를 분류.
+   - OTLP exporter: `OtlpConfig`로 설정하며 기본값은 off. 활성화 시 bounded mpsc queue(4096) 기반 백그라운드 워커가 `/v1/traces`와 `/v1/metrics`로 OTLP JSON 규격 배치 전송 수행.
+   - Durable job trace 연결: HTTP 인그레스의 W3C `traceparent`에서 유입된 `trace_id`를 PostgreSQL `aip_jobs.trace_id`에 저장하여 재시도·attempt 간 보존.
+   - **독립 검증 결과**: GPT-6-Luna high 독립 검증(`flash-independent-verification-4e8e212.md`)에서 `verification_outcome=failed`로 판정. 실제 OpenTelemetry Collector 0.120.1 수신 결과, 제품의 성공 값 `2`가 Collector에서 `Error`로, 실패 값 `3`이 알 수 없는 enum(상태 미해석/소실)으로 해석되는 P1 결함 확인. 또한 기존 schema upgrade migration 부재, parent-child flags 보존 한계, 전송 실패 관측 정책 부재 지적.
+
+2. **후속 수정 회차 (OTLP status enum 표준 수정)**:
+   - 확정된 OTLP span status code 매핑 오류를 공통 타입 `SpanStatusCode`(`Unset=0`, `Ok=1`, `Error=2`)로 교체하여 숫자 3 등 비표준 오류값 재발 방지.
+   - `spikes/spike-v6-transport/src/{otlp,trace,durable}.rs` 및 테스트의 모든 status 생성 callsite를 `SpanStatusCode` 기반으로 전체 수정.
+   - 실제 HTTP(200..400 OK, 4xx/5xx Error, None Unset) 및 durable job(SUCCEEDED Ok, FAILED/CANCELLED Error, RETRY/PENDING Unset) 분기에서 표준값을 선택함을 검증하는 RED→GREEN 회귀 테스트 추가(`tests/otlp.rs`의 `http_trace_status_mapping_conforms_to_otlp_spec`, `durable_job_status_mapping_conforms_to_otlp_spec`, `durable_job_and_http_spans_share_same_trace_id` 및 lib unit tests).
+   - 이번 범위 제외: job 스키마 migration/parent flags/실패 관측 정책 추가는 Luna 검증이 격리 PG에서 조사하므로 미포함. 실제 Collector 재검증은 독립 검증자가 담당. 사용자 PostgreSQL 보호를 위해 실제 DB 필요 통합 테스트는 미실행. WBS 관측성 항목 전체는 독립 재검증 전까지 **미완료**로 유지.
 
 ## resource 독립 실행 고도화 (2026-10-10)
 

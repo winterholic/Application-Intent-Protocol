@@ -176,11 +176,7 @@ impl Drop for Trace {
             let end_time_nanos = crate::otlp::now_nanos();
             let duration_nanos = (self.started.elapsed().as_nanos() as u64).min(end_time_nanos);
             let start_time_nanos = end_time_nanos.saturating_sub(duration_nanos);
-            let status_code = match self.status {
-                Some(s) if (200..400).contains(&s) => 2, // OK
-                Some(_) => 3,                            // ERROR
-                None => 1,                               // UNSET
-            };
+            let status_code = crate::otlp::SpanStatusCode::from_http_status(self.status);
             let mut attributes = vec![
                 ("http.method".to_string(), serde_json::Value::String(self.method.clone())),
                 ("http.route".to_string(), serde_json::Value::String(self.route.to_string())),
@@ -466,5 +462,17 @@ mod tests {
         twice.accept_traceparent(&format!("00-{trace_id}-b7ad6b7169203331-01"));
         twice.accept_traceparent(&format!("00-{trace_id}-b7ad6b7169203331-01"));
         assert_ne!(twice.context().trace_id(), trace_id, "two headers are an invalid context and start a new trace");
+    }
+
+    #[test]
+    fn trace_otlp_status_code_mapping_on_drop() {
+        // Direct mapping checks
+        assert_eq!(crate::otlp::SpanStatusCode::from_http_status(Some(200)), crate::otlp::SpanStatusCode::Ok);
+        assert_eq!(crate::otlp::SpanStatusCode::from_http_status(Some(201)), crate::otlp::SpanStatusCode::Ok);
+        assert_eq!(crate::otlp::SpanStatusCode::from_http_status(Some(304)), crate::otlp::SpanStatusCode::Ok);
+        assert_eq!(crate::otlp::SpanStatusCode::from_http_status(Some(400)), crate::otlp::SpanStatusCode::Error);
+        assert_eq!(crate::otlp::SpanStatusCode::from_http_status(Some(404)), crate::otlp::SpanStatusCode::Error);
+        assert_eq!(crate::otlp::SpanStatusCode::from_http_status(Some(500)), crate::otlp::SpanStatusCode::Error);
+        assert_eq!(crate::otlp::SpanStatusCode::from_http_status(None), crate::otlp::SpanStatusCode::Unset);
     }
 }

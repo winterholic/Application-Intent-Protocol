@@ -977,11 +977,7 @@ fn export_job_span(rt: &Runtime, lease: &Lease, state: &str, code: Option<&str>,
         let end_time_nanos = crate::otlp::now_nanos();
         let duration_nanos = (started.elapsed().as_nanos() as u64).min(end_time_nanos);
         let start_time_nanos = end_time_nanos.saturating_sub(duration_nanos);
-        let status_code = match state {
-            "SUCCEEDED" => 2,
-            "FAILED" | "CANCELLED" => 3,
-            _ => 1,
-        };
+        let status_code = crate::otlp::SpanStatusCode::from_job_state(state);
         let mut attributes = vec![
             ("job.operation".to_string(), serde_json::Value::String(lease.operation.clone())),
             ("job.id".to_string(), serde_json::Value::String(lease.run_id.to_string())),
