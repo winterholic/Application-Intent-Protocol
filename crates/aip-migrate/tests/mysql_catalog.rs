@@ -1,5 +1,5 @@
 //! Every catalog row here is a synthetic regression fixture, not a database observation.
-use aip_migrate::mysql_catalog::{ColumnRow, IndexRow, LogicalType, normalize_table};
+use aip_migrate::mysql_catalog::{CatalogDefault, ColumnRow, IndexRow, LogicalType, normalize_table};
 
 fn column(name: &str, data_type: &str, column_type: &str) -> ColumnRow {
     ColumnRow {
@@ -55,10 +55,12 @@ fn preserves_nullable_default_and_generated_flags_and_reports_unrepresentable_de
     let table = normalize_table("user", vec![nullable, generated], vec![]).unwrap();
 
     assert!(table.columns[0].nullable);
-    assert_eq!(table.columns[0].default.as_deref(), Some("guest"));
+    assert_eq!(table.columns[0].default, CatalogDefault::Value("guest".into()));
     assert!(table.columns[1].generated);
+    assert_eq!(table.columns[1].default, CatalogDefault::NullOrAbsent);
     assert!(table.diagnostics.iter().any(|d| d.field == "normalized_email" && d.reason.contains("generation expression")));
     assert!(table.diagnostics.iter().any(|d| d.field == "normalized_email" && d.reason.contains("on update")));
+    assert!(table.diagnostics.iter().any(|d| d.field == "normalized_email" && d.reason.contains("DEFAULT NULL")));
     assert!(table.diagnostics.iter().any(|d| d.field == "nickname" && d.reason.contains("collation")));
 }
 

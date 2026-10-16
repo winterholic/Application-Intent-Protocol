@@ -45,13 +45,21 @@ pub enum LogicalType {
     Unsupported(String),
 }
 
+/// INFORMATION_SCHEMA.COLUMNS cannot distinguish explicit DEFAULT NULL from no DEFAULT clause.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+pub enum CatalogDefault {
+    NullOrAbsent,
+    Value(String),
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Column {
     pub name: String,
     pub ordinal_position: u64,
     pub logical_type: LogicalType,
     pub nullable: bool,
-    pub default: Option<String>,
+    pub default: CatalogDefault,
     pub generated: bool,
 }
 
@@ -125,14 +133,17 @@ pub fn normalize_table(name: &str, mut columns: Vec<ColumnRow>, rows: Vec<IndexR
         if row.collation_name.is_some() {
             diagnostics.push(Diagnostic { field: row.name.clone(), reason: "column collation is not represented".into() });
         }
-        normalized.push(Column {
-            name: row.name,
-            ordinal_position: row.ordinal_position,
-            logical_type,
-            nullable,
-            default: row.column_default,
-            generated,
-        });
+        let default = match row.column_default {
+            Some(value) => CatalogDefault::Value(value),
+            None => {
+                diagnostics.push(Diagnostic {
+                    field: row.name.clone(),
+                    reason: "INFORMATION_SCHEMA COLUMN_DEFAULT NULL cannot distinguish explicit DEFAULT NULL from no DEFAULT clause".into(),
+                });
+                CatalogDefault::NullOrAbsent
+            }
+        };
+        normalized.push(Column { name: row.name, ordinal_position: row.ordinal_position, logical_type, nullable, default, generated });
     }
 
     let mut grouped: BTreeMap<String, Vec<IndexRow>> = BTreeMap::new();
