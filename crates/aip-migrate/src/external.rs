@@ -47,6 +47,9 @@ pub async fn introspect(url: &str, source: &str) -> Result<Value, Value> {
     if !spike_v2_read::external::valid_name(source) {
         return Err(failure("원본 schema 식별자 오류"));
     }
+    if url.split_once("://").is_some_and(|(scheme, _)| scheme.eq_ignore_ascii_case("mysql") || scheme.eq_ignore_ascii_case("mariadb")) {
+        return Err(err("DB_ADAPTER_UNSUPPORTED", "MySQL/MariaDB adapter가 아직 지원되지 않음"));
+    }
     let mut db = connect(url).await?;
     let tx = db.transaction().await.map_err(|_| failure("introspection transaction 실패"))?;
     tx.batch_execute(

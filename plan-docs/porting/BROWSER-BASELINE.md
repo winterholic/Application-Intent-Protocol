@@ -1,5 +1,13 @@
 # 원본 브라우저 기본 화면 기준선
 
+## 2026-10-17 댓글 UI 실행 환경 갭
+
+WBS 7.1.3.2.2 댓글 UI 대조를 시작하려 했으나 이번 실행에서는 브라우저가 앱까지 도달하지 못했다. 설정된 Ttakkari browser는 `http://127.0.0.1:23173/watch/00000000-0000-4000-8000-000000000010`에 `net::ERR_CONNECTION_REFUSED`를 반환했다. 앱 서버가 이번 실행에 떠 있지 않은 상태였다. 또한 지정된 Mac browser preflight는 `status=blocked`, `browser_launched=false`를 반환했고 `mach-register`/`mach-lookup`을 거부했다. 이 결과 뒤에는 다른 브라우저를 실행하지 않았다.
+
+따라서 이전 실행에서 관찰한 YouTube 오류 모달의 원인은 이번 실행에서 확인하지 못했다. 외부 YouTube 접근 제한이 원인일 가능성은 **추정**으로 남긴다. 댓글 화면 조작, 댓글 생성·수정·soft delete UI, 저장 후 화면 반영은 미실행이고 AIP 갭 판정도 없다. 이 환경 실패를 제품 대체율에 합산하지 않는다.
+
+다음 허용된 browser 실행의 harness 조건은 원본 프런트/API 및 seed를 변경하지 않고 YouTube 의존성만 고립하는 것이다. 우선 `/embed/` iframe과 해당 YouTube player API 요청을 명시된 로컬 fixture로 route해 player 오류가 댓글 화면을 가리지 않게 한다. 응답은 화면에서 playback 성공을 주장하지 않는 고정 stub이어야 하며, 원본 댓글 HTTP 요청은 기존 격리 API로 계속 보낸다. iframe stub이 화면을 안정적으로 열지 못하면 재현 가능한 위치의 UI 닫기 control을 실제 클릭하는 대안을 사용한다. 실행 기록에는 stubbed provider request와 미검증 playback을 남기고, 요청을 전부 차단한 결과를 댓글 UI 성공으로 계산하지 않는다. 이 조건은 원본 코드 수정 없이 브라우저 harness에만 적용한다.
+
 2026-10-15. **원본 앱의 기본 화면 검증이며 AIP 포팅 결과가 아니다.**
 사용자/관리자 로그인과 13개 정상·오류 화면을 실제 브라우저→실제 HTTP→원본 handler→MySQL/Mongo/Redis로 확인했다.
 영상 제공자는 차단했다. 시청 화면은 제공자 오류 상태만 검증했으며, 재생·댓글 UI 조작·웹캠/ML·예약 업무는 남아 있다.

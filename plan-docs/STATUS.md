@@ -1,5 +1,11 @@
 # 진행 현황과 쌓인 질문
 
+## 2026-10-17 포팅 진행 — UI 환경 갭과 MySQL adapter 경계
+
+댓글 UI 7.1.3.2.2는 아직 실행하지 못했다. 설정된 Ttakkari browser가 loopback `23173`에 연결할 때 `ERR_CONNECTION_REFUSED`를 반환했고, 지정 browser preflight는 `status=blocked`, `browser_launched=false`와 Mach IPC 거부를 기록했다. 추가 브라우저 실행 경로로 우회하지 않았다. 외부 YouTube 모달이 원인일 수 있다는 설명은 미검증이며, 이를 AIP 제품 갭으로 분류하지 않는다. 다음 허용된 browser 실행에서만 iframe/API stub 또는 화면에 보이는 닫기 동작을 고정 절차로 추가한다. 상세 범위는 [브라우저 기준선](porting/BROWSER-BASELINE.md#2026-10-17-댓글-ui-실행-환경-갭)을 따른다.
+
+AIP MySQL/MariaDB adapter의 실제 연결·catalog/read/write 검증도 아직 불가능한 상태로 확인됐다. `aip-migrate`의 external introspection이 PostgreSQL `tokio_postgres`에 고정되어 있어 URL만 MySQL로 바꾸면 `DB_CONNECT`로 뭉뚱그려 실패했다. 명시적인 `DB_ADAPTER_UNSUPPORTED` 거부와 회귀 테스트를 추가했다. 이것은 adapter 구현이나 지원 판정이 아니다. 다음 제품 단위는 실제 MySQL driver와 읽기 전용 catalog introspection이며, MySQL 실제 DB에서 검증한 뒤 MariaDB를 별도 실행한다. 인증·권한 포팅은 그 뒤다.
+
 ## 페이스리뷰 원본 포팅 기준선 후속 (2026-10-17)
 
 고정 원본 backend에서 허용된 로컬 Origin의 Socket.IO polling 연결, 빈 `watch_frame` 입력 거부, 연결 종료를 실제 확인했다.

@@ -3,6 +3,17 @@
 2026-10-15. 범위는 계약 조사다. **AIP MySQL adapter는 아직 구현되지 않았다.**
 원본 앱이 MySQL에서 실행되는 것과 AIP가 MySQL을 지원하는 것은 다른 판정이다.
 
+## 2026-10-17 실제 제품 경로 확인
+
+`aip-migrate::external::introspect`가 PostgreSQL `tokio_postgres` 연결과 `pg_catalog` 쿼리만 사용한다. MySQL/MariaDB URL을 넘기는 검사는 실제 driver/catalog 시험이 아니며, 이전에는 PostgreSQL connect 단계의 일반 `DB_CONNECT` 오류로 끝났다. 이제 이 두 scheme은 `DB_ADAPTER_UNSUPPORTED`로 명시 거부한다. 테스트는 오류에 합성 URL 비밀번호가 노출되지 않는 것도 고정한다.
+
+| 이번 확인 | 결과 | 확인하지 않은 것 |
+|---|---|---|
+| MySQL/MariaDB scheme 요청의 fail-closed 경계 | `aip-migrate` 회귀 1 passed | 서버 연결, schema introspection, catalog 의미, 정책 read/write |
+| adapter 지원 판정 | **미지원** | 실제 MySQL·MariaDB 호환성 |
+
+다음 구현 slice는 이 문서 §구현 위치와 작업 순서의 2번, MySQL driver를 이용한 반복 가능한 read-only introspection이다. 원본 11개 모델에서 만든 synthetic schema를 실제 MySQL 8.4에 두고, catalog manifest·UUID 문자열·타입/default/nullable·PK/FK/unique·collation을 대조한다. MariaDB 성공은 별도 실행 전까지 미지원 표식으로 둔다. Read-only 단계가 실제 adapter 경로에서 통과하기 전에 7.2.2 인증·권한으로 건너뛰지 않는다.
+
 ## 원본과 현재 엔진의 접점
 
 페이스리뷰 원본은 `new-facereview@7948b7e721837fdb73c427cb54e12cad4ec2d5af`.

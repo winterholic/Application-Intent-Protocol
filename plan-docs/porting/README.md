@@ -3,6 +3,8 @@
 2026-10-15. **앱 포팅은 미완료다.** 전체 기능 추적표와 MySQL adapter 계약 조사를 먼저 수행하고,
 원본 앱의 실제 DB 기준선으로 이어간다. 댓글 PostgreSQL fixture는 엔진 회귀이며 전체 포팅 분모에 넣지 않는다.
 
+2026-10-17 후속에서는 댓글 UI 환경 제약과 MySQL adapter 부재를 실제 실행 경로에서 다시 확인했다. 댓글 UI는 브라우저 연결/preflight 차단으로 미실행이며 YouTube 모달 원인은 추정이다. MySQL/MariaDB는 제품에서 지원하지 않는다. scheme fail-fast 회귀만 추가됐고 adapter 성공으로 계산하지 않는다. 세부 및 다음 구현 gate는 [브라우저 기준선](BROWSER-BASELINE.md#2026-10-17-댓글-ui-실행-환경-갭)과 [adapter 계약](MYSQL-ADAPTER-CONTRACT.md#2026-10-17-실제-제품-경로-확인)을 따른다.
+
 ## 고정 원본 — WBS 7.1.1
 
 | 역할 | 저장소 | 고정 SHA | 선정 근거 |
