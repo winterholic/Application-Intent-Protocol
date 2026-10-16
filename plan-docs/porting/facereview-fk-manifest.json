@@ -1,0 +1,45 @@
+{
+  "source": "facereview-inventory.json",
+  "source_revision": "new-facereview@7948b7e721837fdb73c427cb54e12cad4ec2d5af",
+  "scope": "SQLAlchemy ForeignKey declarations in the 11 inventoried RDB models",
+  "schema": "selected by the database connection; source declarations do not name a schema",
+  "models": [
+    {"model": "Comment", "table": "comment", "foreign_keys": [
+      {"column": "video_id", "referenced_table": "video", "referenced_column": "video_id", "on_delete": "CASCADE", "on_update": "CASCADE"},
+      {"column": "user_id", "referenced_table": "user", "referenced_column": "user_id", "on_delete": "CASCADE", "on_update": "CASCADE"}
+    ]},
+    {"model": "User", "table": "user", "foreign_keys": []},
+    {"model": "UserEmotionDna", "table": "user_emotion_dna", "foreign_keys": []},
+    {"model": "UserEmotionSummary", "table": "user_emotion_summary", "foreign_keys": [
+      {"column": "user_id", "referenced_table": "user", "referenced_column": "user_id", "on_delete": "CASCADE", "on_update": "CASCADE"}
+    ]},
+    {"model": "UserFavoriteGenre", "table": "user_favorite_genre", "foreign_keys": [
+      {"column": "user_id", "referenced_table": "user", "referenced_column": "user_id", "on_delete": "CASCADE", "on_update": "CASCADE"}
+    ]},
+    {"model": "UserPointHistory", "table": "user_point_history", "foreign_keys": [
+      {"column": "user_id", "referenced_table": "user", "referenced_column": "user_id", "on_delete": "CASCADE", "on_update": "CASCADE"},
+      {"column": "video_id", "referenced_table": "video", "referenced_column": "video_id", "on_delete": "SET NULL", "on_update": "CASCADE"}
+    ]},
+    {"model": "Video", "table": "video", "foreign_keys": []},
+    {"model": "VideoBookmark", "table": "video_bookmark", "foreign_keys": [
+      {"column": "video_id", "referenced_table": "video", "referenced_column": "video_id", "on_delete": "CASCADE", "on_update": "CASCADE"},
+      {"column": "user_id", "referenced_table": "user", "referenced_column": "user_id", "on_delete": "CASCADE", "on_update": "CASCADE"}
+    ]},
+    {"model": "VideoLike", "table": "video_like", "foreign_keys": [
+      {"column": "video_id", "referenced_table": "video", "referenced_column": "video_id", "on_delete": "CASCADE", "on_update": "CASCADE"},
+      {"column": "user_id", "referenced_table": "user", "referenced_column": "user_id", "on_delete": "CASCADE", "on_update": "CASCADE"}
+    ]},
+    {"model": "VideoRequest", "table": "video_request", "foreign_keys": [
+      {"column": "user_id", "referenced_table": "user", "referenced_column": "user_id", "on_delete": "CASCADE", "on_update": "CASCADE"}
+    ]},
+    {"model": "VideoViewLog", "table": "video_view_log", "foreign_keys": [
+      {"column": "video_id", "referenced_table": "video", "referenced_column": "video_id", "on_delete": "CASCADE", "on_update": "CASCADE"},
+      {"column": "user_id", "referenced_table": "user", "referenced_column": "user_id", "on_delete": "CASCADE", "on_update": "CASCADE"}
+    ]}
+  ],
+  "notes": [
+    "The existing PostgreSQL comments fixture declares Comment.video and Comment.user references; it is a narrow two-reference fixture, not a full 11-model FK manifest.",
+    "Constraint names and referenced schema come from the live catalog and are preserved by the normalized manifest; the source inventory does not specify either.",
+    "This file is a source-derived expectation, not a MySQL or MariaDB observation."
+  ]
+}

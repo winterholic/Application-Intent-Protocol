@@ -1,5 +1,5 @@
 //! Every catalog row here is a synthetic regression fixture, not a database observation.
-use aip_migrate::mysql_catalog::{CatalogDefault, ColumnRow, IndexRow, LogicalType, normalize_table};
+use aip_migrate::mysql_catalog::{CatalogDefault, ColumnRow, ForeignKeyRow, IndexRow, LogicalType, normalize_foreign_keys, normalize_table};
 
 fn column(name: &str, data_type: &str, column_type: &str) -> ColumnRow {
     ColumnRow {
@@ -49,6 +49,7 @@ fn preserves_nullable_default_and_generated_flags_and_reports_unrepresentable_de
     nullable.column_default = Some("guest".into());
     nullable.collation_name = Some("utf8mb4_0900_ai_ci".into());
     let mut generated = column("normalized_email", "varchar", "varchar(255)");
+    generated.ordinal_position = 2;
     generated.extra = "STORED GENERATED on update CURRENT_TIMESTAMP".into();
     generated.generation_expression = "lower(email)".into();
 
@@ -74,4 +75,107 @@ fn reports_malformed_enum_and_rejects_invalid_nullable_metadata() {
     malformed.is_nullable = "MAYBE".into();
     let error = normalize_table("task", vec![malformed], vec![]).unwrap_err();
     assert!(error.to_string().contains("nullable"));
+}
+
+#[test]
+fn rejects_duplicate_column_ordinals_and_indexes_that_reference_missing_columns() {
+    let first = column("first", "int", "int");
+    let mut second = column("second", "int", "int");
+    second.ordinal_position = first.ordinal_position;
+    assert!(normalize_table("sample", vec![first, second], vec![]).unwrap_err().to_string().contains("ordinal"));
+
+    let table = normalize_table("sample", vec![column("present", "int", "int")], vec![IndexRow::column("idx_missing", 1, 1, "absent")]);
+    assert!(table.unwrap_err().to_string().contains("absent"));
+}
+
+#[test]
+fn rejects_indexes_with_inconsistent_unique_flags() {
+    let mut left = column("left_id", "int", "int");
+    left.ordinal_position = 1;
+    let mut right = column("right_id", "int", "int");
+    right.ordinal_position = 2;
+    let error =
+        normalize_table("sample", vec![left, right], vec![IndexRow::column("mixed", 0, 1, "left_id"), IndexRow::column("mixed", 1, 2, "right_id")])
+            .unwrap_err();
+    assert!(error.to_string().contains("non_unique"));
+}
+
+#[test]
+fn reports_varchar_length_that_text_manifest_does_not_represent() {
+    let table = normalize_table("sample", vec![column("label", "varchar", "varchar(80)")], vec![]).unwrap();
+    assert!(matches!(table.columns[0].logical_type, LogicalType::Text));
+    assert!(table.diagnostics.iter().any(|d| d.field == "label" && d.reason.contains("length")));
+}
+
+fn foreign_key(constraint_name: &str, ordinal_position: u64, column_name: &str, target: (&str, &str, &str), actions: (&str, &str)) -> ForeignKeyRow {
+    let (referenced_schema, referenced_table, referenced_column) = target;
+    let (delete_rule, update_rule) = actions;
+    ForeignKeyRow {
+        constraint_schema: "face".into(),
+        table_name: "comment".into(),
+        constraint_name: constraint_name.into(),
+        ordinal_position,
+        column_name: column_name.into(),
+        referenced_table_schema: Some(referenced_schema.into()),
+        referenced_table_name: Some(referenced_table.into()),
+        referenced_column_name: Some(referenced_column.into()),
+        delete_rule: Some(delete_rule.into()),
+        update_rule: Some(update_rule.into()),
+    }
+}
+
+#[test]
+fn preserves_composite_foreign_key_order_targets_actions_and_constraint_identity() {
+    let rows = vec![
+        foreign_key("fk_pair", 2, "right_id", ("media", "pair_parent", "right_id"), ("CASCADE", "CASCADE")),
+        foreign_key("fk_single", 1, "owner_id", ("accounts", "user", "id"), ("SET NULL", "NO ACTION")),
+        foreign_key("fk_pair", 1, "left_id", ("media", "pair_parent", "left_id"), ("CASCADE", "CASCADE")),
+    ];
+    let keys = normalize_foreign_keys("face", "comment", &["left_id".into(), "right_id".into(), "owner_id".into()], rows).unwrap();
+    assert_eq!(keys.len(), 2);
+    let pair = keys.iter().find(|key| key.name == "fk_pair").unwrap();
+    assert_eq!(pair.source_schema, "face");
+    assert_eq!(pair.source_table, "comment");
+    assert_eq!(pair.columns, ["left_id", "right_id"]);
+    assert_eq!(pair.referenced_schema, "media");
+    assert_eq!(pair.referenced_table, "pair_parent");
+    assert_eq!(pair.referenced_columns, ["left_id", "right_id"]);
+    assert_eq!(pair.on_delete.to_string(), "CASCADE");
+    assert_eq!(pair.on_update.to_string(), "CASCADE");
+    assert_eq!(serde_json::to_value(pair).unwrap()["on_delete"], "CASCADE");
+    let single = keys.iter().find(|key| key.name == "fk_single").unwrap();
+    assert_eq!(single.referenced_schema, "accounts");
+    assert_eq!(single.on_delete.to_string(), "SET NULL");
+    assert_eq!(single.on_update.to_string(), "NO ACTION");
+}
+
+#[test]
+fn rejects_malformed_or_unsupported_foreign_key_metadata() {
+    let columns = ["left_id".into(), "right_id".into()];
+    let out_of_order = vec![
+        foreign_key("fk_pair", 1, "left_id", ("face", "parent", "left_id"), ("CASCADE", "CASCADE")),
+        foreign_key("fk_pair", 3, "right_id", ("face", "parent", "right_id"), ("CASCADE", "CASCADE")),
+    ];
+    assert!(normalize_foreign_keys("face", "comment", &columns, out_of_order).unwrap_err().to_string().contains("sequence"));
+
+    let missing_column = foreign_key("fk_missing", 1, "absent", ("face", "parent", "id"), ("CASCADE", "CASCADE"));
+    assert!(normalize_foreign_keys("face", "comment", &columns, vec![missing_column]).unwrap_err().to_string().contains("absent"));
+
+    let unknown_action = vec![foreign_key("fk_unknown", 1, "left_id", ("face", "parent", "id"), ("MAGIC", "CASCADE"))];
+    assert!(normalize_foreign_keys("face", "comment", &columns, unknown_action).unwrap_err().to_string().contains("unsupported delete rule"));
+
+    let unsupported_action = vec![foreign_key("fk_default", 1, "left_id", ("face", "parent", "id"), ("SET DEFAULT", "CASCADE"))];
+    assert!(normalize_foreign_keys("face", "comment", &columns, unsupported_action).unwrap_err().to_string().contains("SET DEFAULT"));
+
+    let mut missing_target = foreign_key("fk_target", 1, "left_id", ("face", "parent", "id"), ("CASCADE", "CASCADE"));
+    missing_target.referenced_table_schema = None;
+    assert!(normalize_foreign_keys("face", "comment", &columns, vec![missing_target]).unwrap_err().to_string().contains("referenced"));
+
+    let mut missing_action = foreign_key("fk_action", 1, "left_id", ("face", "parent", "id"), ("CASCADE", "CASCADE"));
+    missing_action.delete_rule = None;
+    assert!(normalize_foreign_keys("face", "comment", &columns, vec![missing_action]).unwrap_err().to_string().contains("unsupported delete rule"));
+
+    let mut missing_target_column = foreign_key("fk_target_column", 1, "left_id", ("face", "parent", "id"), ("CASCADE", "CASCADE"));
+    missing_target_column.referenced_column_name = None;
+    assert!(normalize_foreign_keys("face", "comment", &columns, vec![missing_target_column]).unwrap_err().to_string().contains("referenced column"));
 }
