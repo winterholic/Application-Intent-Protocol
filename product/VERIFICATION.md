@@ -11,6 +11,8 @@ AIP external introspection은 현재 PostgreSQL 전용이다. 합성 MySQL/Maria
 
 이번 실행에서는 driver 추가, 실제 DB 연결, catalog/read/write, MariaDB 실행을 하지 않았다. adapter는 미지원 상태이며 이어서 읽기 전용 MySQL catalog adapter를 구현한다.
 
+구현 착수 중 `cargo info mysql_async`가 crate 다운로드 후 Cargo cache (`/Users/winterholic/.cargo/registry/cache/...`) 쓰기에서 nested worker sandbox의 `Operation not permitted`로 실패했다. 이 실패는 해당 실행 환경의 cache 쓰기 범위만 말하며 production engine 상태나 MySQL 연결 가능성을 판정하지 않는다. 우회 조달은 하지 않았다.
+
 운영 인증·일반 마이그레이션·root 제품 통합을 사용자 요청 범위로 구현했다. AIP의 caller read/direct apply와 서버의 최종 권한, 같은 정의·같은 SDK·Node/Python 확장을 유지한다. 앱별 endpoint나 별도 실행 엔진을 추가하지 않았다.
 
 ## 페이스리뷰 원본 Socket.IO 부분 기준선 (2026-10-17)

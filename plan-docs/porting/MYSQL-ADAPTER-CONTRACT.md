@@ -14,6 +14,8 @@
 
 다음 구현 slice는 이 문서 §구현 위치와 작업 순서의 2번, MySQL driver를 이용한 반복 가능한 read-only introspection이다. 원본 11개 모델에서 만든 synthetic schema를 실제 MySQL 8.4에 두고, catalog manifest·UUID 문자열·타입/default/nullable·PK/FK/unique·collation을 대조한다. MariaDB 성공은 별도 실행 전까지 미지원 표식으로 둔다. Read-only 단계가 실제 adapter 경로에서 통과하기 전에 7.2.2 인증·권한으로 건너뛰지 않는다.
 
+2026-10-17 구현 착수 때 `cargo search mysql_async --limit 3`는 통과했으나, `cargo info mysql_async`의 crate 다운로드 후 cache open이 nested worker sandbox에서 `/Users/winterholic/.cargo/registry/cache/...`의 `Operation not permitted`로 막혔다. 이건 현재 실행 환경의 dependency cache 쓰기 제한이며 production의 MySQL 가용성 증거가 아니다. 이 제한 아래서 driver를 우회 조달하거나 다른 실행 경로를 사용하지 않았고 adapter 구현은 시작하지 않았다.
+
 ## 원본과 현재 엔진의 접점
 
 페이스리뷰 원본은 `new-facereview@7948b7e721837fdb73c427cb54e12cad4ec2d5af`.
