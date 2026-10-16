@@ -327,6 +327,8 @@ async fn submit(
             return Err("WIRE.QUOTA_EXCEEDED");
         }
     }
+    let trace_id = aip_execution::trace_context::current_trace_id()
+        .unwrap_or_else(|| aip_execution::trace_context::TraceContext::generate().trace_id().to_string());
     Store::new(s)
         .map_err(store_error)?
         .enqueue(
@@ -345,6 +347,7 @@ async fn submit(
                 max_attempts: policy(rt, name).max_attempts,
                 ttl_ms: 86_400_000,
                 delay_ms: delay,
+                trace_id: Some(trace_id),
             },
         )
         .await
@@ -958,6 +961,55 @@ pub(crate) async fn supervisor(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire
     }
 }
 async fn execute(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire, lease: Lease) {
+    let trace_ctx = match &lease.trace_id {
+        Some(tid) => aip_execution::trace_context::TraceContext::from_trace_id(tid.clone()),
+        None => aip_execution::trace_context::TraceContext::generate(),
+    };
+    aip_execution::trace_context::scope(async move {
+        aip_execution::trace_context::set(trace_ctx);
+        execute_inner(rt, facts, wire, lease).await;
+    })
+    .await;
+}
+
+fn export_job_span(rt: &Runtime, lease: &Lease, state: &str, code: Option<&str>, started: std::time::Instant) {
+    if let Some(otlp) = &rt.infrastructure.otlp_exporter {
+        let end_time_nanos = crate::otlp::now_nanos();
+        let duration_nanos = (started.elapsed().as_nanos() as u64).min(end_time_nanos);
+        let start_time_nanos = end_time_nanos.saturating_sub(duration_nanos);
+        let status_code = match state {
+            "SUCCEEDED" => 2,
+            "FAILED" | "CANCELLED" => 3,
+            _ => 1,
+        };
+        let mut attributes = vec![
+            ("job.operation".to_string(), serde_json::Value::String(lease.operation.clone())),
+            ("job.id".to_string(), serde_json::Value::String(lease.run_id.to_string())),
+            ("job.epoch".to_string(), serde_json::json!(lease.epoch)),
+            ("job.state".to_string(), serde_json::Value::String(state.to_string())),
+        ];
+        if let Some(c) = code {
+            attributes.push(("aip.code".to_string(), serde_json::Value::String(c.to_string())));
+        }
+        let trace_id = lease.trace_id.clone().unwrap_or_else(crate::otlp::random_span_id);
+        let span = crate::otlp::SpanData {
+            trace_id,
+            span_id: crate::otlp::random_span_id(),
+            parent_span_id: None,
+            name: format!("JOB {}", lease.operation),
+            kind: 1,
+            start_time_nanos,
+            end_time_nanos,
+            attributes,
+            status_code,
+            status_message: code.map(ToString::to_string),
+        };
+        otlp.export_span(span);
+    }
+}
+
+async fn execute_inner(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire, lease: Lease) {
+    let started = std::time::Instant::now();
     let Ok(store) = schema(&rt).and_then(|s| Store::new(s).map_err(store_error)) else { return };
     let grant: DurablePrincipal = match serde_json::from_value(lease.grant.clone()) {
         Ok(g) => g,
@@ -980,6 +1032,9 @@ async fn execute(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire, lease: Lease
     let caller = match admitted {
         Ok(c) => c,
         Err(code) => {
+            let state = if code == "WIRE.DB_UNAVAILABLE" { "RETRY" } else { "FAILED" };
+            crate::metrics::observe_job(&lease.operation, state, Some(code), started.elapsed());
+            export_job_span(&rt, &lease, state, Some(code), started);
             if let Ok(db) = connect(&rt).await {
                 let result = if code == "WIRE.DB_UNAVAILABLE" { store.retry(&*db, &lease, code).await } else { store.fail(&*db, &lease, code).await };
                 if result.is_ok() {
@@ -995,6 +1050,8 @@ async fn execute(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire, lease: Lease
         {
             Ok(w) => w,
             Err(_) => {
+                crate::metrics::observe_job(&lease.operation, "RETRY", Some("WIRE.WORKER_FAILED"), started.elapsed());
+                export_job_span(&rt, &lease, "RETRY", Some("WIRE.WORKER_FAILED"), started);
                 if let Ok(db) = connect(&rt).await {
                     if store.retry(&*db, &lease, "WIRE.WORKER_FAILED").await.is_ok() {
                         let _ = db.release().await;
@@ -1079,8 +1136,16 @@ async fn execute(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire, lease: Lease
                 )
                 .await;
             let updated = match pending {
-                Ok(row) if !row.get::<_, bool>(0) => store.acknowledge_cancel(&tx, &lease).await,
-                Ok(_) => store.reject_cancel(&tx, &lease, "WIRE.CANCELLATION_UNCONFIRMED").await,
+                Ok(row) if !row.get::<_, bool>(0) => {
+                    crate::metrics::observe_job(&lease.operation, "CANCELLED", None, started.elapsed());
+                    export_job_span(&rt, &lease, "CANCELLED", None, started);
+                    store.acknowledge_cancel(&tx, &lease).await
+                }
+                Ok(_) => {
+                    crate::metrics::observe_job(&lease.operation, "FAILED", Some("WIRE.CANCELLATION_UNCONFIRMED"), started.elapsed());
+                    export_job_span(&rt, &lease, "FAILED", Some("WIRE.CANCELLATION_UNCONFIRMED"), started);
+                    store.reject_cancel(&tx, &lease, "WIRE.CANCELLATION_UNCONFIRMED").await
+                }
                 Err(_) => return,
             };
             if !matches!(updated, Ok(true)) {
@@ -1115,6 +1180,13 @@ async fn execute(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire, lease: Lease
         result
     }
     .await;
+    let (job_state, job_code) = match &settled {
+        Ok(_) => ("SUCCEEDED", None),
+        Err(code) if retryable(&rt, &lease.operation, code) => ("RETRY", Some(*code)),
+        Err(code) => ("FAILED", Some(*code)),
+    };
+    crate::metrics::observe_job(&lease.operation, job_state, job_code, started.elapsed());
+    export_job_span(&rt, &lease, job_state, job_code, started);
     let updated = match settled {
         Ok(out) => store.finish(&tx, &lease, out).await,
         Err(code) if retryable(&rt, &lease.operation, code) => store.retry_after(&tx, &lease, code, retry_after_ms).await,
@@ -1548,6 +1620,7 @@ mod safety_tests {
                         max_attempts: 1,
                         ttl_ms: 1000,
                         delay_ms: 0,
+                        trace_id: None,
                     },
                 )
                 .await
@@ -1642,6 +1715,7 @@ mod safety_tests {
                         max_attempts: 1,
                         ttl_ms: 1000,
                         delay_ms: 0,
+                        trace_id: None,
                     },
                 )
                 .await

@@ -26,11 +26,17 @@ pub async fn invoke_with_launch(
     config: &super::server::ReadExtensions,
     launch: &spike_v4_worker::WorkerLaunchConfig,
 ) -> Value {
-    let deadline = facts["operations"][body["operation"].as_str().unwrap()]["deadlineMs"].as_u64().unwrap();
-    match tokio::time::timeout(std::time::Duration::from_millis(deadline), invoke_inner(db, facts, body, caller, wire, config, launch)).await {
-        Ok(result) => result,
-        Err(_) => json!({"ok":false,"code":"WIRE.DEADLINE_EXCEEDED"}),
-    }
+    let started = std::time::Instant::now();
+    let op_name = body["operation"].as_str().unwrap_or("unknown");
+    let deadline = facts["operations"][op_name]["deadlineMs"].as_u64().unwrap_or(30_000);
+    let result =
+        match tokio::time::timeout(std::time::Duration::from_millis(deadline), invoke_inner(db, facts, body, caller, wire, config, launch)).await {
+            Ok(result) => result,
+            Err(_) => json!({"ok":false,"code":"WIRE.DEADLINE_EXCEEDED"}),
+        };
+    let (status, code) = if result["ok"] == true { (200, None) } else { (400, result["code"].as_str()) };
+    crate::metrics::observe_operation(op_name, status, code, started.elapsed());
+    result
 }
 
 #[allow(clippy::too_many_arguments)]

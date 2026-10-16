@@ -346,6 +346,10 @@ pub(super) fn build_with_environment(config: &super::Config, lookup: &impl Fn(&s
                 .map_err(|_| configuration_error())
         })
         .transpose()?;
+    let otlp = config.otlp.clone();
+    if let Some(ref o) = otlp {
+        o.validate().map_err(|_| configuration_error())?;
+    }
     let result = Infrastructure {
         db_pool,
         rate_limit,
@@ -365,6 +369,8 @@ pub(super) fn build_with_environment(config: &super::Config, lookup: &impl Fn(&s
         job_policies: Default::default(),
         metrics_token: config.metrics.as_ref().map(|metrics| metrics_token(&metrics.token_env, lookup)).transpose()?,
         data_changes: Default::default(),
+        otlp,
+        otlp_exporter: None,
     };
     result.validate().map_err(|_| configuration_error())?;
     Ok(result)

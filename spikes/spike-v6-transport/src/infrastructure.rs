@@ -102,6 +102,8 @@ pub struct Infrastructure {
     pub metrics_token: Option<String>,
     /// Wakes data subscriptions after a commit; see [`DataChanges`].
     pub data_changes: DataChanges,
+    pub otlp: Option<crate::otlp::OtlpConfig>,
+    pub otlp_exporter: Option<Arc<crate::otlp::OtlpExporter>>,
 }
 
 impl Default for Infrastructure {
@@ -125,6 +127,8 @@ impl Default for Infrastructure {
             job_policies: Default::default(),
             metrics_token: None,
             data_changes: DataChanges::default(),
+            otlp: None,
+            otlp_exporter: None,
         }
     }
 }
@@ -146,7 +150,8 @@ impl Infrastructure {
             "events":{"polling":true,"sse":self.realtime.enabled,"websocket":self.realtime.enabled,"dataSubscriptions":self.realtime.enabled,"maxConnections":self.resource_limits.realtime_capacity(self.realtime.max_connections)},
             "messages":{"enabled":self.messaging,"clientPublish":self.client_publish,"clientConsume":self.client_consume,"delivery":"at-least-once"},
             "limits":{"connections":self.resource_limits.connections,"workers":self.resource_limits.workers,"jobs":self.resource_limits.jobs,"uploads":self.resource_limits.uploads},
-            "rag":{"enabled":self.rag.is_some(),"clientIndex":self.rag.is_some() && self.rag_client_index}
+            "rag":{"enabled":self.rag.is_some(),"clientIndex":self.rag.is_some() && self.rag_client_index},
+            "otlp":{"enabled":self.otlp.is_some()}
         })
     }
 
@@ -207,6 +212,9 @@ impl Infrastructure {
             {
                 return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "overlapping or reserved managed file mount"));
             }
+        }
+        if let Some(otlp) = &self.otlp {
+            otlp.validate()?;
         }
         Ok(())
     }

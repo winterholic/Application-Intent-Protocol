@@ -124,6 +124,7 @@ pub(crate) struct Runtime {
     pub options: ServerOptions,
     pub authenticator: Option<Arc<dyn crate::auth::Authenticator>>,
     pub deployment: Option<DeploymentFence>,
+    pub otlp: Option<Arc<crate::otlp::OtlpExporter>>,
 }
 
 pub struct Server {
@@ -196,6 +197,7 @@ pub async fn listen_with_apply_contract(facts: Value, wire: IdWire, address: Soc
             options: ServerOptions::default(),
             authenticator: None,
             deployment: None,
+            otlp: None,
         },
         fingerprint,
     )
@@ -211,6 +213,11 @@ pub(crate) async fn listen_with_fingerprint(
 ) -> io::Result<Server> {
     if !address.ip().is_loopback() {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "prototype server requires loopback"));
+    }
+    if let Some(otlp_cfg) = &runtime.infrastructure.otlp {
+        let exporter = crate::otlp::OtlpExporter::start(otlp_cfg.clone())?;
+        runtime.infrastructure.otlp_exporter = Some(exporter.clone());
+        runtime.otlp = Some(exporter);
     }
     if let Some(extensions) = &runtime.extensions {
         runtime.infrastructure.worker_launch.probe(extensions.lang, &extensions.dir).await?;
@@ -417,6 +424,7 @@ pub async fn listen_with_options(
             options,
             authenticator: None,
             deployment: None,
+            otlp: None,
         },
         fingerprint,
     )
@@ -477,6 +485,7 @@ pub async fn listen_with_prototype_launch(
             options,
             authenticator: None,
             deployment: None,
+            otlp: None,
         },
         fingerprint,
     )
@@ -590,6 +599,7 @@ pub async fn listen_with_infrastructure(
             options,
             authenticator: Some(authenticator),
             deployment,
+            otlp: None,
         },
         fingerprint,
     )

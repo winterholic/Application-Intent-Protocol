@@ -56,6 +56,7 @@ fn new_run(key: &str, input: serde_json::Value) -> NewRun {
         max_attempts: 3,
         ttl_ms: 60_000,
         delay_ms: 0,
+        trace_id: None,
     }
 }
 
@@ -478,4 +479,16 @@ async fn operator_lists_without_payloads_and_redrives_a_failed_run_as_the_same_f
 
 fn uuid_like() -> String {
     "00000000-0000-4000-8000-000000000000".into()
+}
+
+#[tokio::test]
+async fn trace_id_is_preserved_across_enqueue_and_claim() {
+    let db = Db::new().await;
+    let store = db.store();
+    let mut run = new_run("traced-job", json!({"x": 10}));
+    run.trace_id = Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string());
+    let enqueued = store.enqueue(&db.client, run).await.unwrap();
+    let lease = store.claim(&db.client, "worker-trace").await.unwrap().expect("claimed lease");
+    assert_eq!(lease.run_id.to_string(), enqueued.id);
+    assert_eq!(lease.trace_id.as_deref(), Some("4bf92f3577b34da6a3ce929d0e0e4736"));
 }

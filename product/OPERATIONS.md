@@ -127,22 +127,32 @@ aip service audit --config service.json list --before-id 3411                  #
 
 필터는 `--resource`, `--target-id`, `--actor`, `--via apply|extension|job`, `--request-key`, `--since`(RFC 3339), `--before-id`이고 모두 AND다. 최신 id 순이며 `--limit`은 1~500(기본 50)이다. 출력은 `{"ok":true,"audit":[{id, recordedAt, actorId, via, requestKey, resource, transition, targetId, before, after}],"nextBeforeId":다음 쪽이 있으면 그 커서, 없으면 null}`이다. 읽기 전용이고 DB 접근 권한이 있는 운영자 도구라 호출자 인증이 없으며, 값이 bind 매개변수로만 들어가 SQL을 조립하지 않는다. 서버가 한 번도 시작되지 않아 테이블이 없으면 `AUDIT_UNAVAILABLE`, 필터 값이 틀리면 `BAD_AUDIT_QUERY`다.
 
-## 요청 metrics
+## 요청·operation·job metrics
 
-`{"metrics":{"token_env":"AIP_METRICS_TOKEN"}}`을 설정하면 `GET /metrics`가 Prometheus text 형식(0.0.4)으로 열린다. 설정이 없으면 이 경로는 없는 경로와 같다. scrape는 그 환경 변수 값을 `Authorization: Bearer`로 보내야 하며, 값은 공백 없는 ASCII 32~256자여야 시작된다. 별도 exporter 의존성이 없어 기본 빌드에 포함된다.
+`{"metrics":{"token_env":"AIP_METRICS_TOKEN"}}`을 설정하면 `GET /metrics`가 Prometheus text 형식(0.0.4)으로 열린다. 설정이 없으면 이 경로는 없는 경로와 같다. scrape는 그 환경 변수 값을 `Authorization: Bearer`로 보내야 하며, 값은 공백 없는 ASCII 32~256자여야 시작된다. 별도 무거운 exporter 라이브러리 없이 표준 HTTP 계측으로 동작한다.
 
 | metric | label | 뜻 |
 |---|---|---|
 | `aip_requests_total` | `route`, `status`, `code` | 끝난 요청 수. `route`는 고정 이름(`read`, `apply`, `jobs` 등, 그 밖은 `other`), `code`는 실패 응답의 AIP 오류 코드 |
 | `aip_request_duration_seconds` | `route` | 요청 수락부터 응답 완료까지(histogram, 5ms~30s) |
+| `aip_operations_total` | `operation`, `status`, `code` | 끝난 operation 실행 수. `code`는 실패 응답 코드 |
+| `aip_operation_duration_seconds` | `operation` | operation 실행 소요 시간(histogram, 5ms~30s) |
+| `aip_jobs_total` | `operation`, `state`, `code` | 끝난 durable job run/attempt 수(`state`: SUCCEEDED, RETRY, FAILED, CANCELLED) |
+| `aip_job_duration_seconds` | `operation` | durable job 실행 소요 시간(histogram, 5ms~30s) |
 
-label에는 경로·query·본문·principal을 넣지 않아 호출자 입력이 metric series 수를 늘리지 않는다. 오류율은 `status`가 아니라 `code!=""`로 계산한다. 많은 거부가 HTTP 200 본문의 오류 코드로 전달되기 때문이다. job 상태별 수, DB pool 대기, outbox 적체 metric은 아직 없다.
+label에는 경로·query·본문·principal을 넣지 않아 호출자 입력이 metric series 수를 늘리지 않는다. 오류율은 `status`가 아니라 `code!=""`로 계산한다. 많은 거부가 HTTP 200 본문의 오류 코드로 전달되기 때문이다.
 
 요청 ID는 응답의 `x-request-id`, JSON 실패 본문의 `requestId`, 요청 로그 줄에 동일하게 기록된다. 오류 본문에는 코드별 `retry`도 있어 운영자가 본문만 받아도 로그와 재시도 지침을 확인할 수 있다. SDK의 실패 객체도 이 정보를 보존한다(Python 예외의 ID 속성은 `request_id`). 미확정 쓰기의 처리 규칙은 [SDK](SDK.md#계약-헤더와-실패-응답)를 따른다. 정적 파일·객체 스트림·managed file·SSE·WebSocket 업그레이드에도 같은 요청 ID 헤더와 상태 로그가 남는다.
 
-W3C `traceparent`가 유효한 헤더 하나로 들어오면 요청 로그의 `traceId`는 호출자의 trace id다. 헤더가 없거나 잘못됐거나 둘 이상이면 서버가 새 trace id를 만든다. 요청 중 외부 HTTP 호출(RAG embedding·answer provider, 객체 저장소)은 같은 trace id, 새 span id, 호출자의 sampled flag를 전달한다. 서버는 span을 기록하거나 내보내지 않으며 durable job 단계의 호출에는 아직 전파하지 않는다.
+W3C `traceparent`가 유효한 헤더 하나로 들어오면 요청 로그의 `traceId`는 호출자의 trace id다. 헤더가 없거나 잘못됐거나 둘 이상이면 서버가 새 trace id를 만든다. 요청 중 외부 HTTP 호출(RAG embedding·answer provider, 객체 저장소)은 같은 trace id, 새 span id, 호출자의 sampled flag를 전달한다. 또한 durable job을 enqueue할 때 이 trace id가 `aip_jobs.trace_id`에 저장되어 worker 실행·재시도 시에도 같은 trace id 컨텍스트가 복원된다.
 
-OpenTelemetry exporter는 현재 구현에 포함되지 않는다. 외부 SDK 의존성을 선택적 패키지로 둘 설계는 [INFRASTRUCTURE](INFRASTRUCTURE.md#opentelemetry-exporter-설계-메모)에 있다. metric 검증은 `spikes/spike-v6-transport/tests/metrics.rs`, trace 전파 검증은 `tests/trace_propagation.rs`를 따른다.
+## OpenTelemetry (OTLP/HTTP) exporter
+
+`{"otlp":{"endpoint":"http://collector:4318","headers":{},"timeout_ms":5000}}`을 설정하면 OpenTelemetry Collector로 traces와 metrics를 HTTP/JSON 규격으로 내보낸다. 기본값은 off(미설정)이며, 꺼져 있을 때는 단순 `Option` 검사만 수행되어 추가 런타임 비용이 없다.
+- `/v1/traces`: HTTP 요청 span(`HTTP <route>`, kind SERVER)과 durable job run span(`JOB <operation>`, kind INTERNAL)을 비동기 bounded queue(4096)를 통해 논블로킹으로 전송한다.
+- `/v1/metrics`: 요청·operation·job 카운터 및 지연 histogram 데이터를 2초 간격으로 OTLP JSON 규격으로 전송한다.
+- 민감값 배제: span 속성에는 `http.method`, `http.route`, `http.status_code`, `job.operation`, `job.id`, `job.epoch`, `job.state`, `aip.code` 등 사전에 정해진 안전한 식별자만 포함하며, 인증 토큰·query string·요청/응답 payload는 절대 포함하지 않는다.
+- 검증: `spikes/spike-v6-transport/tests/otlp.rs`(mock OTLP 수신기를 통한 trace/metrics 수신 확인), `tests/metrics.rs`, `tests/trace_propagation.rs`.
 
 ## 확장과 검증 범위
 

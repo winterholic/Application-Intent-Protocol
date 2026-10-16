@@ -22,6 +22,14 @@ WBS 항목인 외부 IdP/TLS reverse proxy 운영 smoke 및 실제 Kafka/RabbitM
 - **실제 Kafka·RabbitMQ 및 MinIO**: Kafka KRaft 왕복/dead-letter redrive, RabbitMQ 발행확인/quarantine 재시도, DB 연결 단절 후 복구, MinIO HTTPS 멀티파트 업로드/다운로드 및 권한 분리 4개 live 통합 검사 통과 (`scripts/smoke-brokers-storage.sh`).
 - 상세 실행 결과 및 회귀 수정은 [제품 검증](../product/VERIFICATION.md)을 따른다.
 
+## 내부 metrics·OTLP exporter·durable job trace 연결 (2026-10-17)
+
+WBS 항목인 내부 metrics 확장, OTLP/HTTP exporter, durable job run trace 연결을 구현했다.
+1. 내부 metrics: HTTP 요청(`aip_requests_total`, `aip_request_duration_seconds`), operation(`aip_operations_total`, `aip_operation_duration_seconds`), durable job(`aip_jobs_total`, `aip_job_duration_seconds`)의 카운터 및 지연 histogram(5ms~30s)을 계측하고 AIP 오류 코드별 실패를 분류한다.
+2. OTLP exporter: `OtlpConfig`로 설정하며 기본값은 off다. 비활성화 시 `Option` 검사만 수행되어 추가 오버헤드가 없다. 활성화 시 bounded mpsc queue(4096) 기반의 백그라운드 워커가 `/v1/traces`와 `/v1/metrics`로 OTLP JSON 규격 배치 전송을 수행한다.
+3. Durable job trace 연결: HTTP 인그레스의 W3C `traceparent`에서 유입된 `trace_id`를 PostgreSQL `aip_jobs.trace_id`에 저장하여 재시도·attempt 간 보존한다. job 실행 시 해당 trace_id 컨텍스트를 복원하여 HTTP 요청 span과 durable job run span이 동일한 trace로 묶인다. 민감값(인증 토큰, 요청 body/query payload)은 span 속성에서 제외한다.
+검증: mock in-process OTLP 수신기를 통한 통합 테스트(`tests/otlp.rs`), `aip-execution`, `aip-service`, `cargo fmt`, `cargo clippy`, `cargo deny` 전체 통과.
+
 ## resource 독립 실행 고도화 (2026-10-10)
 
 후속 요청으로 [동기 operation](../product/EXECUTION.md)을 제품 V1/V2/V4/V5/V6와 운영 신원·배포·설치 SDK에 연결했다. 업무 resource 0개 모드와 기존 actor resource 모드를 구분하며, allow·입출력 범위·기한·ctx 거부·현재 principal 재검사를 유지한다. 다음 [durable Job 제안](backend-capability/durable-job-proposal.md)은 실행권 세대·권한 회수·취소/완료 경합·결과 ACL·schema 업그레이드 접점까지 구체화했지만 아직 구현하지 않았다. 현재 실행 근거는 [제품 검증](../product/VERIFICATION.md)을 따른다.

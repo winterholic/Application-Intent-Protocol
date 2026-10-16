@@ -285,6 +285,8 @@ pub struct Config {
     #[serde(default)]
     pub message_handlers: Vec<triggers::MessageHandlerConfig>,
     pub metrics: Option<infrastructure::MetricsConfig>,
+    #[serde(default)]
+    pub otlp: Option<spike_v6_transport::otlp::OtlpConfig>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

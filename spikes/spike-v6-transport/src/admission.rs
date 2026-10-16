@@ -295,6 +295,7 @@ mod tests {
             options: crate::server::ServerOptions::default(),
             authenticator: Some(Arc::new(DurableAuth)),
             deployment: Some(crate::server::DeploymentFence::new(schema.clone(), "a".repeat(64)).unwrap()),
+            otlp: None,
         };
         let facts = json!({"resources":{}});
         let fingerprint = spike_v5_sdk::contract_fingerprint_with_wire(&facts, spike_v2_read::id_wire::IdWire::Legacy).into();
@@ -348,6 +349,7 @@ mod tests {
             options: crate::server::ServerOptions::default(),
             authenticator: Some(Arc::new(DurableAuth)),
             deployment: Some(crate::server::DeploymentFence::new(schema.clone(), "a".repeat(64)).unwrap()),
+            otlp: None,
         };
         let facts = json!({"resources":{}});
         let fingerprint = spike_v5_sdk::contract_fingerprint_with_wire(&facts, spike_v2_read::id_wire::IdWire::Legacy).into();
@@ -407,6 +409,7 @@ mod tests {
             options: crate::server::ServerOptions::default(),
             authenticator: None,
             deployment: None,
+            otlp: None,
         };
         let result = crate::server::listen_with_fingerprint(
             json!({"schema":"aip_prototype","resources":{}}),

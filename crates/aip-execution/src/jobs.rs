@@ -71,11 +71,11 @@ impl Store {
         let inserted = client
             .query_opt(
                 &format!(
-                    "INSERT INTO {table} (id,owner,actor_id,grant_data,operation,contract_digest,deployment_digest,implementation_digest,input,input_digest,idempotency_key,state,timeout_ms,max_attempts,result_ttl_ms,initial_delay_ms,next_run_at,run_deadline) \
-                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'QUEUED',$12,$13,$14,$15,clock_timestamp()+($15::bigint*interval '1 millisecond'),clock_timestamp()+($16::bigint*interval '1 millisecond')) \
+                    "INSERT INTO {table} (id,owner,actor_id,grant_data,operation,contract_digest,deployment_digest,implementation_digest,input,input_digest,idempotency_key,state,timeout_ms,max_attempts,result_ttl_ms,initial_delay_ms,next_run_at,run_deadline,trace_id) \
+                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'QUEUED',$12,$13,$14,$15,clock_timestamp()+($15::bigint*interval '1 millisecond'),clock_timestamp()+($16::bigint*interval '1 millisecond'),$17) \
                      ON CONFLICT (owner,operation,contract_digest,deployment_digest,idempotency_key) DO NOTHING RETURNING id"
                 ),
-                &[&id, &new.owner, &new.actor, &new.grant, &new.operation, &new.contract, &new.deployment, &new.implementation, &new.input, &input_digest, &new.key, &new.timeout_ms, &new.max_attempts, &new.ttl_ms, &new.delay_ms, &total_ms],
+                &[&id, &new.owner, &new.actor, &new.grant, &new.operation, &new.contract, &new.deployment, &new.implementation, &new.input, &input_digest, &new.key, &new.timeout_ms, &new.max_attempts, &new.ttl_ms, &new.delay_ms, &total_ms, &new.trace_id],
             )
             .await?;
         let run_id = if let Some(row) = inserted {
@@ -134,7 +134,7 @@ impl Store {
                        attempt_deadline=LEAST(j.run_deadline,clock_timestamp()+(j.timeout_ms*interval '1 millisecond')), \
                        lease_until=LEAST(j.run_deadline,clock_timestamp()+($2::bigint*interval '1 millisecond'),clock_timestamp()+(j.timeout_ms*interval '1 millisecond')) \
                      FROM candidate c WHERE j.id=c.id \
-                     RETURNING j.id,j.lease_epoch,j.lease_owner,j.owner,j.actor_id,j.grant_data,j.operation,j.contract_digest,j.deployment_digest,j.implementation_digest,j.input,j.attempt,j.run_deadline::text"
+                     RETURNING j.id,j.lease_epoch,j.lease_owner,j.owner,j.actor_id,j.grant_data,j.operation,j.contract_digest,j.deployment_digest,j.implementation_digest,j.input,j.attempt,j.run_deadline::text,j.trace_id"
                 ),
                 &[&worker, &LEASE_MS],
             )
@@ -460,6 +460,7 @@ pub struct NewRun {
     pub max_attempts: i32,
     pub ttl_ms: i64,
     pub delay_ms: i64,
+    pub trace_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -510,6 +511,7 @@ pub struct Lease {
     pub input: Value,
     pub attempt: i32,
     pub run_deadline: String,
+    pub trace_id: Option<String>,
 }
 
 impl Lease {
@@ -528,6 +530,7 @@ impl Lease {
             input: row.get(10),
             attempt: row.get(11),
             run_deadline: row.get(12),
+            trace_id: row.get(13),
         })
     }
 }
@@ -545,6 +548,7 @@ pub fn ddl(schema: &str) -> Result<String, Error> {
            timeout_ms bigint NOT NULL CHECK(timeout_ms>0), run_deadline timestamptz NOT NULL, next_run_at timestamptz NOT NULL DEFAULT clock_timestamp(), \
            cancel_requested_at timestamptz, output jsonb, error text, result_ttl_ms bigint NOT NULL CHECK(result_ttl_ms>0), \
            initial_delay_ms bigint NOT NULL CHECK(initial_delay_ms>=0), created_at timestamptz NOT NULL DEFAULT clock_timestamp(), result_expires_at timestamptz, \
+           trace_id text, \
            UNIQUE(owner,operation,contract_digest,deployment_digest,idempotency_key))"
     ))
 }

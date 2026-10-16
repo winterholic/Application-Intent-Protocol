@@ -32,6 +32,8 @@ chrono = { version = "0.4", default-features = false, features = ["now", "std"] 
 chrono-tz = "0.10"
 futures-util = "0.3.34"
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect", "handshake"] }
+uuid = { version = "1", features = ["v4"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 
 [dev-dependencies]
 aip-migrate = { path = "../../crates/aip-migrate" }

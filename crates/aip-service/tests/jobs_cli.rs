@@ -29,6 +29,7 @@ fn run(name: &str, deployment: &str, key: &str) -> NewRun {
         max_attempts: 1,
         ttl_ms: 86_400_000,
         delay_ms: 0,
+        trace_id: None,
     }
 }
 

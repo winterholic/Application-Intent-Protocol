@@ -17,6 +17,7 @@ mod messaging_transport;
 mod metrics;
 mod object_transport;
 mod operation;
+pub mod otlp;
 pub mod pool;
 pub mod rag_transport;
 pub mod realtime;
@@ -624,6 +625,7 @@ async fn serve_conn(
     };
     let (r, w) = sock.split();
     let mut w = Response { writer: w, origin: None, private_object: false, head_only: false, deadline, trace: trace::Trace::default() };
+    w.trace.set_otlp_exporter(runtime.otlp.clone());
     let mut rd = BufReader::new(r);
     let mut line = String::new();
     if let Err(code) = header_line(&mut rd, &mut line, deadline).await {
@@ -1465,6 +1467,7 @@ async fn start_with_fingerprint(facts: Value, wire: IdWire, contract_fingerprint
             options: server::ServerOptions::default(),
             authenticator: None,
             deployment: None,
+            otlp: None,
         },
         contract_fingerprint,
     )

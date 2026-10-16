@@ -19,6 +19,7 @@ tokio::task_local! {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TraceContext {
     trace_id: String,
+    parent_span_id: Option<String>,
     flags: u8,
 }
 
@@ -38,16 +39,29 @@ impl TraceContext {
         if version == "00" && fields.next().is_some() {
             return None;
         }
-        Some(Self { trace_id: trace_id.to_owned(), flags: u8::from_str_radix(flags, 16).ok()? })
+        Some(Self { trace_id: trace_id.to_owned(), parent_span_id: Some(parent_id.to_owned()), flags: u8::from_str_radix(flags, 16).ok()? })
     }
 
     /// A trace that starts at this server: a random trace id, not sampled.
     pub fn generate() -> Self {
-        Self { trace_id: random_hex(16), flags: 0 }
+        Self { trace_id: random_hex(16), parent_span_id: None, flags: 0 }
+    }
+
+    /// Creates a trace context from an existing trace id (e.g. preserved on a durable job).
+    pub fn from_trace_id(trace_id: impl Into<String>) -> Self {
+        Self { trace_id: trace_id.into(), parent_span_id: None, flags: 0 }
     }
 
     pub fn trace_id(&self) -> &str {
         &self.trace_id
+    }
+
+    pub fn parent_span_id(&self) -> Option<&str> {
+        self.parent_span_id.as_deref()
+    }
+
+    pub fn flags(&self) -> u8 {
+        self.flags
     }
 
     /// The header an outbound call carries: the same trace id and flags, a new span id for the call.
@@ -75,6 +89,16 @@ pub async fn scope<F: Future>(future: F) -> F::Output {
 /// Records the context of the request being handled. Outside a [`scope`] it does nothing.
 pub fn set(context: TraceContext) {
     let _ = CURRENT.try_with(|slot| *slot.borrow_mut() = Some(context));
+}
+
+/// Returns a clone of the current request's trace context, if set.
+pub fn current() -> Option<TraceContext> {
+    CURRENT.try_with(|slot| slot.borrow().clone()).ok().flatten()
+}
+
+/// Returns the current trace id, if set.
+pub fn current_trace_id() -> Option<String> {
+    CURRENT.try_with(|slot| slot.borrow().as_ref().map(|c| c.trace_id().to_string())).ok().flatten()
 }
 
 /// The `traceparent` value for an outbound call of this request, or `None` outside a traced request.

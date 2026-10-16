@@ -12,7 +12,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, SyncSender, TrySendError};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
 const QUEUE: usize = 4096;
@@ -74,6 +74,7 @@ pub struct Trace {
     route: &'static str,
     status: Option<u16>,
     code: Option<String>,
+    otlp_exporter: Option<Arc<crate::otlp::OtlpExporter>>,
 }
 
 impl Default for Trace {
@@ -87,11 +88,16 @@ impl Default for Trace {
             route: "other",
             status: None,
             code: None,
+            otlp_exporter: None,
         }
     }
 }
 
 impl Trace {
+    pub fn set_otlp_exporter(&mut self, exporter: Option<Arc<crate::otlp::OtlpExporter>>) {
+        self.otlp_exporter = exporter;
+    }
+
     pub fn id(&self) -> &str {
         &self.id
     }
@@ -165,6 +171,39 @@ impl Drop for Trace {
             if let Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) = tx.try_send(self.line()) {
                 DROPPED.fetch_add(1, Ordering::Relaxed);
             }
+        }
+        if let Some(otlp) = &self.otlp_exporter {
+            let end_time_nanos = crate::otlp::now_nanos();
+            let duration_nanos = (self.started.elapsed().as_nanos() as u64).min(end_time_nanos);
+            let start_time_nanos = end_time_nanos.saturating_sub(duration_nanos);
+            let status_code = match self.status {
+                Some(s) if (200..400).contains(&s) => 2, // OK
+                Some(_) => 3,                            // ERROR
+                None => 1,                               // UNSET
+            };
+            let mut attributes = vec![
+                ("http.method".to_string(), serde_json::Value::String(self.method.clone())),
+                ("http.route".to_string(), serde_json::Value::String(self.route.to_string())),
+            ];
+            if let Some(s) = self.status {
+                attributes.push(("http.status_code".to_string(), serde_json::json!(s as i64)));
+            }
+            if let Some(c) = &self.code {
+                attributes.push(("aip.code".to_string(), serde_json::Value::String(c.clone())));
+            }
+            let span = crate::otlp::SpanData {
+                trace_id: self.context.trace_id().to_string(),
+                span_id: crate::otlp::random_span_id(),
+                parent_span_id: self.context.parent_span_id().map(|s| s.to_string()),
+                name: format!("HTTP {}", self.route),
+                kind: 2, // SERVER
+                start_time_nanos,
+                end_time_nanos,
+                attributes,
+                status_code,
+                status_message: self.code.clone(),
+            };
+            otlp.export_span(span);
         }
     }
 }
