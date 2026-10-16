@@ -82,7 +82,20 @@ WBS 항목인 "내부 metrics·OTLP exporter·durable job trace 연결"의 3개 
 | `cargo deny --manifest-path Cargo.toml check && cargo deny --manifest-path spikes/spike-v6-transport/Cargo.toml check` | exit 0 | 라이선스, 금지 crate, advisories, sources 보안 검증 |
 
 미검증:
-- 원격 외부 OTLP Collector(Docker) 실서버 네트워크 전송: 로컬 mock in-process OTLP 수신기로 검증 완료했으나 외부 원격 Collector 실연결은 미실행.
+- 실제 remote OTLP Collector 실연결은 미실행. 별도 격리 검증에서는 로컬 Collector 0.120.1가 실제 제품 HTTP span과 `export_job_span` wire를 수신·파싱해 HTTP 200→`Ok`, 405→`Error`, job `SUCCEEDED`→`Ok`, `FAILED`/`CANCELLED`→`Error`, `RETRY`→`Unset`을 확인했다. Job 검증은 synthetic Lease와 제품 emitter를 사용했으며 PostgreSQL enqueue/claim 또는 worker lifecycle은 포함하지 않는다.
+
+## 기존 durable job schema의 trace_id upgrade 후속 (2026-10-17)
+
+출시 차단 결함: `4e8e2126a91bd15e21afd870fe5373c0ccba9adb` 이전에 생성한 `aip_jobs`에는 `trace_id`가 없다. 기존 metadata의 DDL digest가 현행 생성 DDL과 다를 때 planner가 `verified_marker()`에서 거부해 upgrade plan을 만들지 못했고, 그 상태의 Store enqueue/claim은 PostgreSQL `42703`을 반환했다. 이 원인 경로는 기존 재현의 실행 결과에 코드 경로 검토를 결합한 것이다.
+
+수정은 이전 job DDL digest를 정확히 재구성해 해당 marker만 별도 인식한다. facts/generator version·journal·실제 catalog digest 검사는 유지하고, 실제 `trace_id`가 이미 있거나 다른 drift·미지 digest가 있으면 계속 거부한다. 허용된 schema는 plan에 nullable 컬럼 추가를 기록하고 기존 advisory fence·transaction·rollback·target verification·metadata/journal commit을 거친다. 범용 migration version 체계는 추가하지 않았다.
+
+| 실행 | 결과 | 범위 |
+|---|---|---|
+| `CARGO_NET_OFFLINE=true CARGO_TARGET_DIR=<Run temp> cargo build --locked --offline -p aip-cli` | exit 0 | 제품 `aip service` CLI 빌드 |
+| `AIP_TRACE_UPGRADE_DATABASE_URL=<Run-owned PostgreSQL> AIP_SERVICE_CLI=<built aip> CARGO_NET_OFFLINE=true CARGO_TARGET_DIR=<Run temp> cargo test --locked --offline -p aip-migrate --lib trace_id_upgrade_tests::explicit_parent_job_schema_upgrade_adds_trace_id_and_rejects_drift -- --ignored --exact --nocapture` | 1 passed, 0 failed | test가 실제 `aip service init` 및 `aip service migrate` plan/apply/repeated apply CLI를 호출. 기존 NULL job claim·retry, 신규 enqueue/claim·idempotency replay·trace retry 보존, actor/principal/idempotency rows와 facts/wire metadata 보존, unknown digest·추가 drift·이전 digest와 실제 컬럼 불일치 거부 |
+
+테스트는 별도 Run 소유 PostgreSQL 컨테이너의 임의 loopback 포트와 전용 DB를 사용했다. 부모 job 구조는 독립 재현에 기록된 이전 DDL(현재 생성물에서 `trace_id`만 제거)과 그 정확한 DDL/catalog marker로 구성했다. SQL을 직접 실행해 컬럼을 성공시킨 결과는 PASS로 세지 않았고, SQL 조작은 과거 schema 재현 fixture 준비에만 썼다. 이번 회귀는 적용 후 실패를 강제한 rollback 및 제한된 DB role 권한 음성 경로는 실행하지 않았다. apply는 기존 advisory lock·단일 transaction·목표 검증·metadata/journal commit 경로를 그대로 사용한다(이 부분은 구현 경로 확인이며 별도 failure-injection 검증은 아니다). 자체 검증은 PASS이나 별도 독립 DB 검증이 아직 필요하다. 이 수정은 main 반영·production 배포·전체 출시 완료가 아니다.
 
 ## 페이스리뷰 댓글 적용 시험 (2026-10-15)
 

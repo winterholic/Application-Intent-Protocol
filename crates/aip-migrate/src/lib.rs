@@ -413,6 +413,54 @@ async fn verified_marker(db: &impl GenericClient, schema: &str) -> Result<Marker
     Ok(m)
 }
 
+/// Recognizes only the durable-job DDL generated immediately before `aip_jobs.trace_id` was added.
+/// The stored catalog digest still has to match exactly, so any other database drift remains fatal.
+async fn verified_marker_for_migration(db: &impl GenericClient, schema: &str) -> Result<(Marker, bool), Value> {
+    let m = marker(db, schema).await?;
+    if m.generator_version != VERSION || m.facts_digest != digest(&m.facts) {
+        return Err(err("WIRE.SCHEMA_MISMATCH", "metadata의 facts 또는 생성기 버전 불일치"));
+    }
+    let current_ddl_digest = creation(schema, &m.facts)?.1;
+    let legacy_trace_digest = if m.ddl_digest != current_ddl_digest { Some(parent_job_ddl_digest(schema, &m.facts)?) } else { None };
+    let legacy_trace_upgrade = legacy_trace_digest.as_deref() == Some(m.ddl_digest.as_str());
+    if m.ddl_digest != current_ddl_digest && !legacy_trace_upgrade {
+        return Err(err("WIRE.SCHEMA_MISMATCH", "metadata의 facts 또는 생성기 버전 불일치"));
+    }
+    if m.structure_digest != structure(db, schema).await? {
+        return Err(err("WIRE.SCHEMA_MISMATCH", "실제 DB 구조가 journal 구조와 다름"));
+    }
+    if legacy_trace_upgrade {
+        let trace_column_exists: bool = db
+            .query_one(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema=$1 AND table_name='aip_jobs' AND column_name='trace_id')",
+                &[&schema],
+            )
+            .await
+            .map_err(|_| err("DB_CATALOG", "durable job catalog 조회 실패"))?
+            .get(0);
+        if trace_column_exists {
+            return Err(err("WIRE.SCHEMA_MISMATCH", "이전 durable job DDL marker와 실제 trace_id 구조가 다름"));
+        }
+    }
+    Ok((m, legacy_trace_upgrade))
+}
+
+fn parent_job_ddl_digest(schema: &str, facts: &Value) -> Result<String, Value> {
+    if !facts["operations"].as_object().is_some_and(|operations| operations.values().any(|operation| operation["kind"] == "job")) {
+        return Err(err("WIRE.SCHEMA_MISMATCH", "알 수 없는 migration DDL marker"));
+    }
+    let (mut ddl, _) = creation(schema, facts)?;
+    let jobs = ddl
+        .iter_mut()
+        .find(|statement| statement.starts_with(&format!("CREATE TABLE {schema}.aip_jobs ")))
+        .ok_or_else(|| err("WIRE.SCHEMA_MISMATCH", "알 수 없는 migration DDL marker"))?;
+    if jobs.matches("trace_id text").count() != 1 {
+        return Err(err("WIRE.SCHEMA_MISMATCH", "durable job DDL이 알려진 이전 버전과 다름"));
+    }
+    *jobs = jobs.replace("trace_id text,", "");
+    Ok(digest(&json!(ddl)))
+}
+
 pub async fn preflight(db_url: &str, schema: &str, facts: &Value) -> Result<Value, Value> {
     tokio::time::timeout(std::time::Duration::from_secs(12), preflight_inner(db_url, schema, facts))
         .await
@@ -811,7 +859,7 @@ async fn classify_capacity_changes(
 
 async fn derive(db: &impl GenericClient, schema: &str, new_facts: &Value, migration: &Option<Value>) -> Result<(Value, Vec<Step>), Value> {
     let mut directives = parse_directives(migration)?;
-    let old = verified_marker(db, schema).await?;
+    let (old, legacy_trace_upgrade) = verified_marker_for_migration(db, schema).await?;
     if !old.facts["externalStorage"].is_null() {
         return Err(err("EXTERNAL_DDL_FORBIDDEN", "외부 배포에는 일반 DDL migration을 실행하지 않음"));
     }
@@ -822,6 +870,15 @@ async fn derive(db: &impl GenericClient, schema: &str, new_facts: &Value, migrat
     let mut steps = Vec::new();
     let mut changes = Vec::new();
     let mut blocked = false;
+    if legacy_trace_upgrade {
+        changes.push(json!({"class":"SecurityReview","reason":"기존 durable job 행을 유지하며 trace_id 컬럼을 nullable로 추가"}));
+        steps.push(Step {
+            sql: format!("ALTER TABLE {schema}.aip_jobs ADD COLUMN IF NOT EXISTS trace_id text"),
+            class: "SecurityReview",
+            value: None,
+            reason: "검증된 이전 durable job schema에 trace_id 컬럼 추가".into(),
+        });
+    }
     let old_resources = old.facts["resources"].as_object().ok_or_else(|| err("BAD_FACTS", "기존 resources 오류"))?;
     let new_resources = new_facts["resources"].as_object().ok_or_else(|| err("BAD_FACTS", "새 resources 오류"))?;
     let old_uuid = old_resources.values().any(|r| r["idKind"] == "uuid");
@@ -1366,5 +1423,214 @@ mod old_journal_tests {
         }
         db.batch_execute(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE")).await.unwrap();
         assert!(outcome.is_ok(), "{outcome:?}");
+    }
+}
+
+#[cfg(test)]
+mod trace_id_upgrade_tests {
+    use super::*;
+    use std::{
+        fs,
+        process::Command,
+        sync::atomic::{AtomicU64, Ordering},
+    };
+
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+
+    fn database_url() -> String {
+        std::env::var("AIP_TRACE_UPGRADE_DATABASE_URL").expect("AIP_TRACE_UPGRADE_DATABASE_URL must point to the Run-owned PostgreSQL database")
+    }
+
+    fn job_facts() -> Value {
+        let source = include_str!("../../../spikes/spike-v6-transport/tests/fixtures/operations.aip").replace("operation read", "operation job");
+        spike_v1_fixture::load_str(&source, spike_v1_fixture::Form::A).unwrap().execution
+    }
+
+    fn service_command(cli: &str, args: &[String]) -> Value {
+        let output = Command::new(cli).args(args).output().unwrap();
+        assert!(output.status.success(), "aip service command failed: {}", String::from_utf8_lossy(&output.stderr));
+        serde_json::from_slice(&output.stdout).unwrap()
+    }
+
+    async fn make_parent_job_schema(db_url: &str, schema: &str, facts: &Value) {
+        init(db_url, schema, facts).await.unwrap();
+        let db = connect(db_url).await.unwrap();
+        db.batch_execute(&format!("ALTER TABLE {schema}.aip_jobs DROP COLUMN trace_id")).await.unwrap();
+        let (mut parent_ddl, _) = creation(schema, facts).unwrap();
+        let jobs = parent_ddl.iter_mut().find(|ddl| ddl.starts_with(&format!("CREATE TABLE {schema}.aip_jobs "))).unwrap();
+        *jobs = jobs.replace("trace_id text,", "");
+        let parent_digest = digest(&json!(parent_ddl));
+        let structure_digest = structure(&*db, schema).await.unwrap();
+        db.execute(&format!("UPDATE {schema}.{META} SET ddl_digest=$1,structure_digest=$2"), &[&parent_digest, &structure_digest]).await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a Run-owned isolated PostgreSQL database and a built aip service CLI"]
+    async fn explicit_parent_job_schema_upgrade_adds_trace_id_and_rejects_drift() {
+        let db_url = database_url();
+        let suffix = NEXT.fetch_add(1, Ordering::Relaxed);
+        let schema = format!("aip_trace_up_{}_{}", std::process::id(), suffix);
+        let drift_schema = format!("aip_trace_drift_{}_{}", std::process::id(), suffix);
+        let unknown_schema = format!("aip_trace_unknown_{}_{}", std::process::id(), suffix);
+        let inconsistent_schema = format!("aip_trace_inconsistent_{}_{}", std::process::id(), suffix);
+        let temp = std::env::temp_dir().join(format!("aip-trace-upgrade-cli-{}-{suffix}", std::process::id()));
+        fs::create_dir_all(&temp).unwrap();
+        let app = temp.join("jobs.aip");
+        let config = temp.join("service.json");
+        let app_source = include_str!("../../../spikes/spike-v6-transport/tests/fixtures/operations.aip").replace("operation read", "operation job");
+        fs::write(&app, app_source).unwrap();
+        fs::write(
+            &config,
+            serde_json::to_vec(&json!({
+                "schema":schema.clone(),
+                "database_url_env":"AIP_TRACE_UPGRADE_DATABASE_URL",
+                "auth":{"issuer":"https://issuer.example","audience":"aip","jwks":{"kind":"file","path":"jwks.json"}}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let cli = std::env::var("AIP_SERVICE_CLI").expect("AIP_SERVICE_CLI must point to the built aip CLI");
+        let init =
+            service_command(&cli, &["service".into(), "init".into(), app.display().to_string(), "--config".into(), config.display().to_string()]);
+        assert_eq!(init["ok"], true, "{init}");
+        let facts = job_facts();
+        // Recreate the exact pre-trace column shape and its original DDL/catalog marker as test fixture setup.
+        let db = connect(&db_url).await.unwrap();
+        db.batch_execute(&format!("ALTER TABLE {schema}.aip_jobs DROP COLUMN trace_id")).await.unwrap();
+        let (mut parent_ddl, _) = creation(&schema, &facts).unwrap();
+        let jobs = parent_ddl.iter_mut().find(|ddl| ddl.starts_with(&format!("CREATE TABLE {schema}.aip_jobs "))).unwrap();
+        *jobs = jobs.replace("trace_id text,", "");
+        let parent_digest = digest(&json!(parent_ddl));
+        let parent_structure = structure(&*db, &schema).await.unwrap();
+        db.execute(&format!("UPDATE {schema}.{META} SET ddl_digest=$1,structure_digest=$2"), &[&parent_digest, &parent_structure]).await.unwrap();
+        drop(db);
+        make_parent_job_schema(&db_url, &drift_schema, &facts).await;
+        make_parent_job_schema(&db_url, &unknown_schema, &facts).await;
+        make_parent_job_schema(&db_url, &inconsistent_schema, &facts).await;
+
+        let db = connect(&db_url).await.unwrap();
+        db.batch_execute(&format!("ALTER TABLE {drift_schema}.aip_jobs ADD COLUMN unrecognized_drift text")).await.unwrap();
+        assert_eq!(plan(&db_url, &drift_schema, &facts, &None).await.unwrap_err()["code"], "WIRE.SCHEMA_MISMATCH");
+        db.execute(format!("UPDATE {unknown_schema}.{META} SET ddl_digest='unknown-parent-digest'").as_str(), &[]).await.unwrap();
+        assert_eq!(plan(&db_url, &unknown_schema, &facts, &None).await.unwrap_err()["code"], "WIRE.SCHEMA_MISMATCH");
+        db.batch_execute(&format!("ALTER TABLE {inconsistent_schema}.aip_jobs ADD COLUMN trace_id text")).await.unwrap();
+        let inconsistent_structure = structure(&*db, &inconsistent_schema).await.unwrap();
+        db.execute(&format!("UPDATE {inconsistent_schema}.{META} SET structure_digest=$1"), &[&inconsistent_structure]).await.unwrap();
+        assert_eq!(plan(&db_url, &inconsistent_schema, &facts, &None).await.unwrap_err()["code"], "WIRE.SCHEMA_MISMATCH");
+
+        db.execute(
+            &format!("INSERT INTO {schema}.aip_jobs(id,owner,actor_id,grant_data,operation,contract_digest,deployment_digest,implementation_digest,input,input_digest,idempotency_key,state,max_attempts,timeout_ms,run_deadline,result_ttl_ms,initial_delay_ms) VALUES('00000000-0000-4000-8000-000000000001','https://issuer.example|subject-1',17,'{{}}','normalize','contract-a','deployment-a','sha256:impl-a','{{\"x\":1}}','legacy-input','legacy-key','QUEUED',3,30000,clock_timestamp()+interval '1 hour',60000,0)"),
+            &[],
+        )
+        .await
+        .unwrap();
+        db.execute(&format!("INSERT INTO {schema}.aip_actors(id) VALUES(17)"), &[]).await.unwrap();
+        db.execute(
+            &format!("INSERT INTO {schema}.aip_principals(issuer,subject,actor_id,min_iat) VALUES('https://issuer.example','subject-1',17,123)"),
+            &[],
+        )
+        .await
+        .unwrap();
+        db.execute(
+            &format!(
+                "INSERT INTO {schema}.aip_idem(principal,key,request,result) VALUES('actor:17:ids:decimal-string-v13','idem-key','idem-request',$1)"
+            ),
+            &[&json!({"kept":true})],
+        )
+        .await
+        .unwrap();
+
+        let plan_output =
+            service_command(&cli, &["service".into(), "migrate".into(), app.display().to_string(), "--config".into(), config.display().to_string()]);
+        let report = plan_output;
+        assert_eq!(report["blocked"], false, "{report}");
+        assert!(
+            report["steps"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|step| step["sql"].as_str().unwrap_or("").contains("aip_jobs") && step["sql"].as_str().unwrap_or("").contains("trace_id")),
+            "{report}"
+        );
+        let result = service_command(
+            &cli,
+            &[
+                "service".into(),
+                "migrate".into(),
+                app.display().to_string(),
+                "--config".into(),
+                config.display().to_string(),
+                "--apply".into(),
+                report["digest"].as_str().unwrap().into(),
+            ],
+        );
+        assert_eq!(result["ok"], true, "{result}");
+        let repeated = service_command(
+            &cli,
+            &[
+                "service".into(),
+                "migrate".into(),
+                app.display().to_string(),
+                "--config".into(),
+                config.display().to_string(),
+                "--apply".into(),
+                report["digest"].as_str().unwrap().into(),
+            ],
+        );
+        assert_eq!(repeated["alreadyApplied"], true, "{repeated}");
+        assert_eq!(preflight(&db_url, &schema, &facts).await.unwrap()["ok"], true);
+        assert_eq!(plan(&db_url, &schema, &facts, &None).await.unwrap()["steps"], json!([]));
+
+        let store = aip_execution::Store::new(schema.clone()).unwrap();
+        let legacy_lease = store.claim(&*db, "upgrade-worker").await.unwrap().unwrap();
+        assert_eq!(legacy_lease.trace_id, None);
+        assert!(store.retry(&*db, &legacy_lease, "TEMPORARY_TEST").await.unwrap());
+        let legacy_trace: Option<String> =
+            db.query_one(&format!("SELECT trace_id FROM {schema}.aip_jobs WHERE id=$1"), &[&legacy_lease.run_id]).await.unwrap().get(0);
+        assert_eq!(legacy_trace, None);
+
+        let mut run = aip_execution::NewRun {
+            owner: "https://issuer.example|subject-1".into(),
+            actor: 17,
+            grant: json!({"scope":"operation:normalize"}),
+            operation: "normalize".into(),
+            contract: "contract-a".into(),
+            deployment: "deployment-a".into(),
+            implementation: "sha256:impl-a".into(),
+            input: json!({"x":2}),
+            key: "new-trace-key".into(),
+            timeout_ms: 30_000,
+            max_attempts: 3,
+            ttl_ms: 60_000,
+            delay_ms: 0,
+            trace_id: Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into()),
+        };
+        let enqueued = store.enqueue(&*db, run.clone()).await.unwrap();
+        run.trace_id = Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into());
+        let replay = store.enqueue(&*db, run).await.unwrap();
+        assert_eq!(enqueued.id, replay.id);
+        let traced_lease = store.claim(&*db, "upgrade-worker").await.unwrap().unwrap();
+        assert_eq!(traced_lease.trace_id.as_deref(), Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
+        assert!(store.retry(&*db, &traced_lease, "TEMPORARY_TEST").await.unwrap());
+        let stored_trace: Option<String> =
+            db.query_one(&format!("SELECT trace_id FROM {schema}.aip_jobs WHERE id=$1"), &[&traced_lease.run_id]).await.unwrap().get(0);
+        assert_eq!(stored_trace.as_deref(), Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
+        let actor: i64 = db.query_one(&format!("SELECT id FROM {schema}.aip_actors WHERE id=17"), &[]).await.unwrap().get(0);
+        assert_eq!(actor, 17);
+        let principal = db.query_one(&format!("SELECT issuer,subject,actor_id,min_iat FROM {schema}.aip_principals"), &[]).await.unwrap();
+        assert_eq!(principal.get::<_, String>(0), "https://issuer.example");
+        assert_eq!(principal.get::<_, String>(1), "subject-1");
+        assert_eq!(principal.get::<_, i64>(2), 17);
+        assert_eq!(principal.get::<_, i64>(3), 123);
+        let idem: Value = db.query_one(&format!("SELECT result FROM {schema}.aip_idem WHERE key='idem-key'"), &[]).await.unwrap().get(0);
+        assert_eq!(idem, json!({"kept":true}));
+        let metadata = db.query_one(&format!("SELECT facts,runtime_wire FROM {schema}.{META} WHERE singleton=true"), &[]).await.unwrap();
+        assert_eq!(metadata.get::<_, Value>(0), facts);
+        assert_eq!(metadata.get::<_, Option<String>>(1).as_deref(), Some("decimal"));
+
+        db.batch_execute(&format!("DROP SCHEMA {drift_schema} CASCADE; DROP SCHEMA {unknown_schema} CASCADE; DROP SCHEMA {inconsistent_schema} CASCADE; DROP SCHEMA {schema} CASCADE"))
+            .await
+            .unwrap();
+        fs::remove_dir_all(temp).unwrap();
     }
 }

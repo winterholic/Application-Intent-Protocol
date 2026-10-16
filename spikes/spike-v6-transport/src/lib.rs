@@ -24,7 +24,7 @@ pub mod realtime;
 pub mod schedule;
 pub mod server;
 pub(crate) mod slots;
-mod trace;
+pub mod trace;
 pub mod triggers;
 pub mod wire_codes;
 pub mod write_extension;
