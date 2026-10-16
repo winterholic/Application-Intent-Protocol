@@ -3,7 +3,7 @@
 ## 고정 기준
 
 - upstream: `https://github.com/flaskbb/flaskbb`, commit `0885238df7c54826adda8cfbe8a831e846e2cb64` (2019-10-25, 2019-10-31 고정 release 시점 이전). 비교·선정 근거는 [선정 기록](../../plan-docs/porting/FLASKBB-SELECTION.md), snapshot은 `upstream/`.
-- 시작한 AIP core: origin/main `d2c468dd30f258a9762365b213ca79ccbb34fe2c`; 이 작업 branch는 해당 SHA에서 분기했다. 후속 core SHA는 변경 때 갱신한다.
+- 시작 당시 origin/main `d2c468dd30f258a9762365b213ca79ccbb34fe2c`였다. 진행 중 GitHub main 전진을 확인해 `f10c8828cac9ff38ab1ec569ca1ca61396f25f5d`까지 rebase했으며 이 SHA가 현재 branch의 upstream base다. 최신 origin을 기준으로 다시 build·read regression을 실행했다. Current work SHA는 `git rev-parse HEAD`로 확인한다.
 - 전체 의미 기능 분모는 [INVENTORY.md](INVENTORY.md)에 잠근다. URL/endpoint/table 수는 별도 커버리지 축이며 기능 수로 합산하지 않는다.
 - 기획의 독립 완료·출시 판정은 이 작업 이후 별도로 요구된다. 현재 전체 포팅·기능 동등성·배포 준비 완료가 아니다.
 

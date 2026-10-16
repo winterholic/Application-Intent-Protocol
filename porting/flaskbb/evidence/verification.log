@@ -1,6 +1,6 @@
-{"schema":"aip_flaskbb_3915f6706f","ddlDigest":"15c88aa375ef97a0f4df9992a5fd77023612cf270c55aaf12fddc6adf93a7ab3","factsDigest":"4d0e956edc9159f46448844f0e3c724f480eec10efd55091981d9f0c4e32bed0","ok":true,"structureDigest":"30dc03085f49da24d1501fada5eb32186d3c7e97b7f41528b40d31ff86c29ede","memberVisible":["Private fixture"],"guestVisible":["Public forum"],"duplicateLinkRejected":true}
-✔ AIP server enforces forum group visibility and unique link relations with the SDK (879.532ms)
-✔ FlaskBB port contract parses and retains the full source workflow denominator (8.495208ms)
+{"schema":"aip_flaskbb_40e7673b9c","ddlDigest":"d950afd6d6d28ea6f0671106142151f48813243c0c916fdbc45b0c9546cbd921","factsDigest":"4d0e956edc9159f46448844f0e3c724f480eec10efd55091981d9f0c4e32bed0","ok":true,"structureDigest":"2f706d005d9391593e5e164270ccad0a5a645f1aa4a8c424cb7c8c728d351720","memberVisible":["Private fixture"],"guestVisible":["Public forum"],"duplicateLinkRejected":true}
+✔ AIP server enforces forum group visibility and unique link relations with the SDK (883.858709ms)
+✔ FlaskBB port contract parses and retains the full source workflow denominator (7.962583ms)
 ℹ tests 2
 ℹ suites 0
 ℹ pass 2
@@ -8,4 +8,4 @@
 ℹ cancelled 0
 ℹ skipped 0
 ℹ todo 0
-ℹ duration_ms 3931.866083
+ℹ duration_ms 3927.061625
