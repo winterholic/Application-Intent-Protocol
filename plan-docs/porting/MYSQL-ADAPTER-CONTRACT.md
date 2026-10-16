@@ -7,22 +7,27 @@
 
 `aip-migrate::external::introspect`가 PostgreSQL `tokio_postgres` 연결과 `pg_catalog` 쿼리만 사용한다. MySQL/MariaDB URL을 넘기는 검사는 실제 driver/catalog 시험이 아니며, 이전에는 PostgreSQL connect 단계의 일반 `DB_CONNECT` 오류로 끝났다. 이제 이 두 scheme은 `DB_ADAPTER_UNSUPPORTED`로 명시 거부한다. 테스트는 오류에 합성 URL 비밀번호가 노출되지 않는 것도 고정한다.
 
-후속 순수 변환 단위에서 `aip_migrate::mysql_catalog::normalize_table`을 추가했다. INFORMATION_SCHEMA COLUMNS/STATISTICS에서 온 typed row를 driver 없이 받으며, 컬럼 순서·정규화 타입·부호/표시 폭·null/default/generated·PK/unique index 순서를 반환한다. 작은 현재 manifest 경계 밖인 collation, generation expression, on-update, auto_increment, functional index expression, 미지원 타입은 diagnostics에 남긴다. `tinyint(1)`은 값이 0/1로 제한됐다는 뜻으로 단정하지 않고 정수 metadata와 alias 표식·진단을 함께 보존한다.
+후속 순수 변환 단위에서 `aip_migrate::mysql_catalog::normalize_table`을 추가했다. INFORMATION_SCHEMA COLUMNS/STATISTICS에서 온 typed row를 driver 없이 받으며, 컬럼 순서·정규화 타입·부호/표시 폭·null/default/generated·PK/unique index 순서를 반환한다. 중복/비연속 column ordinal, 없는 column을 참조하는 index, index 멤버 간 `NON_UNIQUE` 불일치는 오류다. `CHAR`/`VARCHAR` 길이는 현재 `Text`로 축약되므로 길이 비보존 진단을 남긴다. 작은 현재 manifest 경계 밖인 collation, generation expression, on-update, auto_increment, functional index expression, 미지원 타입은 diagnostics에 남긴다. `tinyint(1)`은 값이 0/1로 제한됐다는 뜻으로 단정하지 않고 정수 metadata와 alias 표식·진단을 함께 보존한다.
+
+`normalize_foreign_keys`는 future driver가 `KEY_COLUMN_USAGE`와 `REFERENTIAL_CONSTRAINTS`를 결합해 제공하는 driver 비의존 row를 받아 constraint 단위 manifest를 만든다. constraint/source schema·table·이름을 분리 키로 유지하고 ordered source/target column pairs, referenced schema/table, `ON DELETE`/`ON UPDATE` actions를 보존한다. 비연속 순서·누락 source/target/action·action 또는 대상 불일치는 오류로 닫는다. 현재 인식하는 action은 `CASCADE`, `SET NULL`, `RESTRICT`, `NO ACTION`; `SET DEFAULT`와 알 수 없는 값은 unsupported 오류다. 원본 11개 RDB 모델의 선언 기준은 [FK manifest](facereview-fk-manifest.json)다. 기존 댓글 PostgreSQL fixture는 이 중 Comment의 두 참조만 담는다. 이름과 실제 참조 schema는 원본 선언에 없으므로 manifest 예상치에서 만들지 않고, catalog 입력/출력에서만 보존한다.
 
 `COLUMN_DEFAULT = NULL`은 MySQL 8.4에서 명시적 `DEFAULT NULL`과 DEFAULT 절 부재 양쪽에 쓰이므로 `NullOrAbsent`로 표현하고 모호성 진단을 남긴다. 드라이버 연결 시 `SHOW CREATE TABLE` 등으로 구분해야 한다 ([MySQL 8.4 COLUMNS](https://dev.mysql.com/doc/refman/8.4/en/information-schema-columns-table.html)).
 
-코드 revision: `1f04d1e0500ba439172c0be567793489797b059f`.
+현재 catalog/FK 코드 revision: `28bb463f4bb73f461ff813ec8da3f57ad726e165`.
 
-이 구현의 catalog 회귀 행은 모두 synthetic이며 MySQL/MariaDB 관측 증거가 아니다. 현재 converter에 FK/actions·check·charset 또는 index prefix 등의 입력 모델은 없다. MySQL driver query 연결과 INFORMATION_SCHEMA row extraction은 다음 하위 단계다. URL guard와 전체 adapter 미지원 판정은 그대로다.
+이 구현의 catalog 회귀 행은 모두 synthetic이며 MySQL/MariaDB 관측 증거가 아니다. FK/action 입력은 추가했지만 check·charset 또는 index prefix 등의 입력 모델은 아직 없다. FK/action 변환 API의 미래 소비자는 driver이며 현재 제품 경로는 이를 호출하지 않는다. MySQL driver query 연결과 INFORMATION_SCHEMA row extraction은 다음 연결 단계다. URL guard와 전체 adapter 미지원 판정은 그대로다.
 
 | 이번 확인 | 결과 | 확인하지 않은 것 |
 |---|---|---|
-| MySQL/MariaDB scheme 요청의 fail-closed 경계 | `aip-migrate` 회귀 1 passed | 서버 연결, schema introspection, catalog 의미, 정책 read/write |
+| MySQL/MariaDB scheme 요청의 fail-closed 경계 | `aip-migrate` 회귀 1 passed | 서버 연결, schema introspection, 정책 read/write |
+| 순수 catalog 변환 및 metadata 오류 경계 | synthetic `mysql_catalog` 회귀 8 passed | 실제 MySQL/MariaDB catalog 행·호환성 |
 | adapter 지원 판정 | **미지원** | 실제 MySQL·MariaDB 호환성 |
 
 다음 구현 slice는 이 문서 §구현 위치와 작업 순서의 2번, MySQL driver를 이용한 반복 가능한 read-only introspection이다. 원본 11개 모델에서 만든 synthetic schema를 실제 MySQL 8.4에 두고, catalog manifest·UUID 문자열·타입/default/nullable·PK/FK/unique·collation을 대조한다. MariaDB 성공은 별도 실행 전까지 미지원 표식으로 둔다. Read-only 단계가 실제 adapter 경로에서 통과하기 전에 7.2.2 인증·권한으로 건너뛰지 않는다.
 
 2026-10-17 구현 착수 때 `cargo search mysql_async --limit 3`는 통과했으나, `cargo info mysql_async`의 crate 다운로드 후 cache open이 nested worker sandbox에서 `/Users/winterholic/.cargo/registry/cache/...`의 `Operation not permitted`로 막혔다. 이건 현재 실행 환경의 dependency cache 쓰기 제한이며 production의 MySQL 가용성 증거가 아니다. 이 제한 아래서 driver를 우회 조달하거나 다른 실행 경로를 사용하지 않았고 adapter 구현은 시작하지 않았다.
+
+외래키 action 의미는 [MySQL 8.4 FOREIGN KEY 문서](https://dev.mysql.com/doc/refman/8.4/en/create-table-foreign-keys.html)와 [`INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS`](https://dev.mysql.com/doc/refman/8.4/en/information-schema-referential-constraints-table.html)를 기준으로 한다. MySQL 8.4 문서는 InnoDB에서 `NO ACTION`을 `RESTRICT`와 동등하게 즉시 거부 처리하고 `SET DEFAULT` 정의는 거부된다고 명시한다. Manifest는 원본 action 표기를 서로 다른 enum 값으로 보존한다. MariaDB semantics는 이 근거로 추정하지 않는다.
 
 ## 원본과 현재 엔진의 접점
 
