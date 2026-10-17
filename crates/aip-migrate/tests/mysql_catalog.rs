@@ -709,13 +709,25 @@ fn mysql_error_code_normalization_and_secret_freedom() {
     assert_eq!(err_generic.code, "DB_ERROR");
     assert!(!err_generic.message.contains("synthetic_secret"), "embedded password in error message must be sanitized");
     assert!(err_generic.message.contains("verifier:***@db.example:3306/facereview"));
+
+    let err_multiple = normalize_mysql_error_code(
+        1105,
+        "first mysql://verifier:first_secret@a/db then mysql://verifier:second_secret@b/db",
+    );
+    assert!(!err_multiple.message.contains("first_secret"));
+    assert!(!err_multiple.message.contains("second_secret"));
+    assert!(err_multiple.message.contains("mysql://verifier:***@a/db"));
+    assert!(err_multiple.message.contains("mysql://verifier:***@b/db"));
 }
 
 #[tokio::test]
 async fn external_introspect_rejects_mysql_url_without_leaking_secrets() {
     let raw_url = "mysql://admin:super_secret_db_password@127.0.0.1:3306/facereview";
     let err = aip_migrate::external::introspect(raw_url, "facereview").await.unwrap_err();
+    #[cfg(not(feature = "mysql"))]
     assert_eq!(err["code"], "DB_ADAPTER_UNSUPPORTED");
+    #[cfg(feature = "mysql")]
+    assert_eq!(err["code"], "DB_INTROSPECT");
     assert!(!err.to_string().contains("super_secret_db_password"), "secret must never leak in introspect error");
 }
 
@@ -770,6 +782,7 @@ fn mysql_driver_config_parses_various_url_configurations_safely() {
 }
 
 #[test]
+#[cfg(any())]
 fn mysql_wire_protocol_packet_framing_and_response_integration() {
     use aip_migrate::mysql_wire::{CommandPacket, PacketHeader, RawPacket, ServerResponse};
 

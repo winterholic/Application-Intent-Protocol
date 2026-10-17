@@ -3,7 +3,7 @@
 2026-10-15. **앱 포팅은 미완료다.** 전체 기능 추적표와 MySQL adapter 계약 조사를 먼저 수행하고,
 원본 앱의 실제 DB 기준선으로 이어간다. 댓글 PostgreSQL fixture는 엔진 회귀이며 전체 포팅 분모에 넣지 않는다.
 
-2026-10-17 후속에서는 댓글 UI 환경 제약과 MySQL adapter 부재를 실제 실행 경로에서 다시 확인했다. 댓글 UI는 브라우저 연결/preflight 차단으로 미실행이며 YouTube 모달 원인은 추정이다. MySQL/MariaDB는 제품에서 지원하지 않는다. scheme fail-fast 회귀만 추가됐고 adapter 성공으로 계산하지 않는다. 세부 및 다음 구현 gate는 [브라우저 기준선](BROWSER-BASELINE.md#2026-10-17-댓글-ui-실행-환경-갭)과 [adapter 계약](MYSQL-ADAPTER-CONTRACT.md#2026-10-17-실제-제품-경로-확인)을 따른다.
+2026-10-17 후속에서 MySQL `mysql` feature에 선택 `mysql_async` 의존성과 live INFORMATION_SCHEMA introspection draft 경로를 추가하고, 격리 MySQL 8.4의 작은 synthetic schema 조회를 확인했다. 이는 FaceReview 원본 전체 포팅이나 서비스 read/write/transaction 지원이 아니다. MariaDB도 미검증이다. 댓글 UI는 브라우저 연결/preflight 차단으로 미실행이며 YouTube 모달 원인은 추정이다. 세부 및 다음 gate는 [브라우저 기준선](BROWSER-BASELINE.md#2026-10-17-댓글-ui-실행-환경-갭)과 [adapter 계약](MYSQL-ADAPTER-CONTRACT.md#2026-10-17-mysql-드라이버-및-live-catalog-단계)을 따른다.
 
 ## 고정 원본 — WBS 7.1.1
 

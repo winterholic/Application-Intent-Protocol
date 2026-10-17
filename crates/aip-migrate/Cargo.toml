@@ -7,7 +7,7 @@ license.workspace = true
 
 [features]
 default = []
-mysql = ["aip-execution/mysql"]
+mysql = ["aip-execution/mysql", "dep:mysql_async"]
 
 [dependencies]
 aip-execution = { path = "../aip-execution", default-features = false }
@@ -16,6 +16,7 @@ serde_json.workspace = true
 sha2 = "0.10"
 tokio = { version = "1", features = ["rt", "macros", "time"] }
 tokio-postgres = { version = "0.7", features = ["with-serde_json-1"] }
+mysql_async = { version = "=0.37.1", default-features = false, features = ["default-rustls-ring"], optional = true }
 spike-v2-read = { path = "../../spikes/spike-v2-read" }
 spike-v1-fixture = { path = "../../spikes/spike-v1-fixture" }
 

@@ -1,7 +1,7 @@
 //! Driver-independent normalization of MySQL INFORMATION_SCHEMA table metadata.
 //!
-//! This module consumes catalog rows supplied by a future adapter. It does not connect to
-//! MySQL, claim database observations, or make unsupported metadata disappear.
+//! This module normalizes MySQL catalog rows. A feature-gated driver supplies live rows;
+//! unit fixtures remain synthetic and do not claim database observations.
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt;
@@ -30,7 +30,7 @@ pub struct IndexRow {
     pub expression: Option<String>,
 }
 
-/// Joined KEY_COLUMN_USAGE and REFERENTIAL_CONSTRAINTS data supplied by a future driver.
+/// Joined KEY_COLUMN_USAGE and REFERENTIAL_CONSTRAINTS data supplied by the catalog reader.
 /// A row represents one ordered column pair from one foreign-key constraint.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ForeignKeyRow {
@@ -151,6 +151,12 @@ impl fmt::Display for CatalogError {
 
 impl std::error::Error for CatalogError {}
 
+impl CatalogError {
+    pub(crate) fn new(message: impl Into<String>) -> Self {
+        Self(message.into())
+    }
+}
+
 /// Normalize already-read catalog rows. Synthetic test rows are not database evidence.
 pub fn normalize_table(name: &str, mut columns: Vec<ColumnRow>, rows: Vec<IndexRow>) -> Result<TableManifest, CatalogError> {
     columns.sort_by_key(|c| c.ordinal_position);
@@ -247,7 +253,7 @@ pub fn normalize_table(name: &str, mut columns: Vec<ColumnRow>, rows: Vec<IndexR
 }
 
 /// Normalize joined MySQL catalog rows for a single source table.
-/// This is an input/manifest boundary for a future driver; it executes no query.
+/// Driver-independent normalization of catalog rows; it executes no query itself.
 pub fn normalize_foreign_keys(
     constraint_schema: &str,
     table_name: &str,
@@ -488,6 +494,7 @@ pub struct MysqlDriverConfig {
     pub pool_min: usize,
     pub pool_max: usize,
     pub tls_required: bool,
+    pub mariadb: bool,
 }
 
 impl fmt::Debug for MysqlDriverConfig {
@@ -503,6 +510,7 @@ impl fmt::Debug for MysqlDriverConfig {
             .field("pool_min", &self.pool_min)
             .field("pool_max", &self.pool_max)
             .field("tls_required", &self.tls_required)
+            .field("mariadb", &self.mariadb)
             .finish()
     }
 }
@@ -559,8 +567,8 @@ impl MysqlDriverConfig {
         let mut tls_required = false;
         let mut connect_timeout_ms = 5_000;
         let mut statement_timeout_ms = 10_000;
-        let pool_min = 1;
-        let pool_max = 10;
+        let mut pool_min = 1;
+        let mut pool_max = 10;
 
         if let Some(q) = query {
             for pair in q.split('&') {
@@ -570,18 +578,31 @@ impl MysqlDriverConfig {
                     if key == "sslmode" || key == "ssl-mode" {
                         if matches!(val.as_str(), "required" | "verify-ca" | "verify-full" | "require") {
                             tls_required = true;
+                        } else if matches!(val.as_str(), "disable" | "disabled" | "prefer") {
+                            tls_required = false;
                         }
                     } else if key == "connect_timeout" || key == "connect-timeout" {
                         if let Ok(secs) = val.parse::<u64>() {
-                            connect_timeout_ms = secs * 1000;
+                            connect_timeout_ms = secs.saturating_mul(1000);
                         }
                     } else if key == "statement_timeout" || key == "statement-timeout" {
                         if let Ok(secs) = val.parse::<u64>() {
-                            statement_timeout_ms = secs * 1000;
+                            statement_timeout_ms = secs.saturating_mul(1000);
+                        }
+                    } else if key == "pool_min" {
+                        if let Ok(value) = val.parse::<usize>() {
+                            pool_min = value;
+                        }
+                    } else if key == "pool_max" {
+                        if let Ok(value) = val.parse::<usize>() {
+                            pool_max = value;
                         }
                     }
                 }
             }
+        }
+        if pool_max == 0 || pool_min > pool_max {
+            return Err(CatalogError::new("invalid MySQL pool constraints"));
         }
 
         Ok(Self {
@@ -595,6 +616,7 @@ impl MysqlDriverConfig {
             pool_min,
             pool_max,
             tls_required,
+            mariadb: s == "mariadb",
         })
     }
 
@@ -624,16 +646,23 @@ pub fn sanitize_error_message(msg: &str) -> String {
         msg.to_string()
     };
 
-    if let Some(scheme_idx) = sanitized.find("://") {
-        let after_scheme = &sanitized[scheme_idx + 3..];
-        if let Some(at_idx) = after_scheme.find('@') {
-            let user_pass = &after_scheme[..at_idx];
-            if let Some(colon_idx) = user_pass.find(':') {
-                let prefix = &sanitized[..scheme_idx + 3 + colon_idx + 1];
-                let suffix = &after_scheme[at_idx..];
-                sanitized = format!("{prefix}***{suffix}");
-            }
-        }
+    let mut search_from = 0;
+    while let Some(relative_scheme_idx) = sanitized[search_from..].find("://") {
+        let scheme_idx = search_from + relative_scheme_idx;
+        let authority_start = scheme_idx + 3;
+        let Some(relative_at_idx) = sanitized[authority_start..].find('@') else {
+            search_from = authority_start;
+            continue;
+        };
+        let at_idx = authority_start + relative_at_idx;
+        let authority = &sanitized[authority_start..at_idx];
+        let Some(colon_idx) = authority.find(':') else {
+            search_from = at_idx + 1;
+            continue;
+        };
+        let password_start = authority_start + colon_idx + 1;
+        sanitized.replace_range(password_start..at_idx, "***");
+        search_from = password_start + 3 + 1;
     }
     sanitized
 }

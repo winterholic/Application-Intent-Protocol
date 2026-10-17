@@ -2,7 +2,8 @@
 pub mod adopt;
 pub mod external;
 pub mod mysql_catalog;
-pub mod mysql_wire;
+#[cfg(feature = "mysql")]
+pub mod mysql_driver;
 use serde_json::{Value, json};
 use spike_v1_fixture::digest;
 use spike_v2_read::{id_wire::IdWire, sqlgen};

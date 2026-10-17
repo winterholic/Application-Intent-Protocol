@@ -1,11 +1,12 @@
 # MySQL/MariaDB adapter 조사 — WBS 5.2.4
 
-2026-10-15. 범위는 계약 조사다. **AIP MySQL adapter는 아직 구현되지 않았다.**
-원본 앱이 MySQL에서 실행되는 것과 AIP가 MySQL을 지원하는 것은 다른 판정이다.
+2026-10-15 조사에서 시작한 구현 작업의 현재 기록이다. 원본 앱이 MySQL에서 실행되는 것과 AIP가 MySQL을 지원하는 것은 다른 판정이다.
+
+**현재 상태: optional `mysql_async` 기반 live catalog introspection이 구현됐고 격리된 MySQL 8.4에서 읽기 경로를 확인했다. AIP의 일반 read/write service와 트랜잭션 어댑터는 아직 미구현이며 MySQL/MariaDB 저장 어댑터 지원 완료로 판정하지 않는다.**
 
 ## 2026-10-17 실제 제품 경로 확인
 
-`aip-migrate::external::introspect`가 PostgreSQL `tokio_postgres` 연결과 `pg_catalog` 쿼리만 사용한다. MySQL/MariaDB URL을 넘기는 검사는 실제 driver/catalog 시험이 아니며, 이전에는 PostgreSQL connect 단계의 일반 `DB_CONNECT` 오류로 끝났다. 이제 이 두 scheme은 `DB_ADAPTER_UNSUPPORTED`로 명시 거부한다. 테스트는 오류에 합성 URL 비밀번호가 노출되지 않는 것도 고정한다.
+`aip-migrate::external::introspect`는 기본 빌드에서 MySQL/MariaDB URL을 `DB_ADAPTER_UNSUPPORTED`로 거부한다. `mysql` feature 빌드는 `mysql_async` 연결과 catalog 조회를 사용해 introspection draft 및 mapping을 만든다. 이 예외는 `service introspect` 전용이다. 일반 service/serve/migrate/adopt 경로는 계속 fail-closed다. URL 파싱·연결 오류에 원본 비밀번호를 포함하지 않는다.
 
 후속 순수 변환 단위에서 `aip_migrate::mysql_catalog::normalize_table`을 추가했다. INFORMATION_SCHEMA COLUMNS/STATISTICS에서 온 typed row를 driver 없이 받으며, 컬럼 순서·정규화 타입·부호/표시 폭·null/default/generated·PK/unique index 순서를 반환한다. 중복/비연속 column ordinal, 없는 column을 참조하는 index, index 멤버 간 `NON_UNIQUE` 불일치는 오류다. `CHAR`/`VARCHAR` 길이는 현재 `Text`로 축약되므로 길이 비보존 진단을 남긴다. 작은 현재 manifest 경계 밖인 collation, generation expression, on-update, auto_increment, functional index expression, 미지원 타입은 diagnostics에 남긴다. `tinyint(1)`은 값이 0/1로 제한됐다는 뜻으로 단정하지 않고 정수 metadata와 alias 표식·진단을 함께 보존한다.
 
@@ -13,40 +14,38 @@
 
 `COLUMN_DEFAULT = NULL`은 MySQL 8.4에서 명시적 `DEFAULT NULL`과 DEFAULT 절 부재 양쪽에 쓰이므로 `NullOrAbsent`로 표현하고 모호성 진단을 남긴다. 드라이버 연결 시 `SHOW CREATE TABLE` 등으로 구분해야 한다 ([MySQL 8.4 COLUMNS](https://dev.mysql.com/doc/refman/8.4/en/information-schema-columns-table.html)).
 
-### DB Adapter 경계, Adapter-URL Mismatch 방어 및 드라이버 연결 계약 구현
+### 2026-10-17 MySQL 드라이버 및 live catalog 단계
 
-1. **선택적 패키지 feature 분리**:
-   - `crates/aip-execution`, `crates/aip-migrate`, `crates/aip-service`, `crates/aip-cli`에 Cargo feature `mysql`을 추가했다.
-   - 기본 빌드에서는 `mysql` feature가 비활성화되며, `cargo tree --offline -p aip-cli -e normal | grep -i mysql` 결과가 비어 있음을 확인했다(의존성 0건).
-2. **Adapter + Runtime/Migrate URL Mismatch 방어 및 환경 충돌 검사 (Secret-Free)**:
-   - `resolve_database_adapter`에 Adapter와 Runtime URL(`database_url_env`) 및 Migration URL(`migrate_database_url_env`) 간 일치성 검증을 도입했다.
-   - `postgres` 어댑터에 `mysql://`/`mariadb://` URL이 지정되거나, `mysql`/`mariadb` 어댑터에 `postgres://` URL이 지정되면 `DB_ADAPTER_MISMATCH`로 즉시 거부한다.
-   - Runtime URL과 Migrate URL 간 scheme이 불일치하는 경우(예: Runtime은 PG인데 Migrate URL은 MySQL) 역시 `DB_ADAPTER_MISMATCH`로 즉시 차단한다.
-   - `database_adapter` 필드와 `database_adapter_env` 환경변수가 서로 다른 어댑터를 지정하면 `BAD_CONFIG`로 거부한다.
-   - 오류 메시지 및 로깅 시 URL 비밀번호(`super_secret_pw` 등)는 일절 노출되지 않으며 scheme과 어댑터 식별자만 안전하게 표기된다.
-3. **Enabled 빌드(`--features mysql`)에서의 Fail-Closed 전체 진입점 누출 방어**:
-   - `#[cfg(feature = "mysql")]` 빌드에서도, 미구현된 MySQL 라이브 커넥터가 기존 PostgreSQL 연결(`tokio-postgres`)로 조용히 흘러가지 않도록 `require_built_features`에서 모든 명령(`serve`, `service init`, `migrate` 등)에 대해 사전 명시적 `DB_ADAPTER_UNSUPPORTED`로 fail-closed 거부한다.
-4. **INFORMATION_SCHEMA Query Reader 및 Driver 연결 계층 (Secret-Safe & Wire Protocol)**:
-   - MySQL 8.4 공식 Reference에 따른 `SQL_TABLES`, `SQL_COLUMNS`, `SQL_STATISTICS`, `SQL_FOREIGN_KEYS` 쿼리 상수를 확립했다.
-   - 비동기 행 수집 계약 `MysqlCatalogReader` trait(`fetch_tables`, `fetch_columns`, `fetch_indexes`, `fetch_foreign_keys`)과 이를 `normalize_table`/`normalize_foreign_keys`로 연결하는 `introspect_table`, `introspect_schema` 파이프라인을 구현했다.
-   - **순수 Rust MySQL 8.4 Wire Protocol Framing 및 Packet 처리 계층 (`mysql_wire.rs`)**:
-     - 외부 라이브러리(`mysql_async` 등) 조달이 샌드박스 SSL/네트워크 격리로 차단된 환경에서, 표준 MySQL 와이어 프로토콜 패킷 프레이밍(`PacketHeader`, `RawPacket`, Length-Encoded Int/String), Initial Handshake (`HandshakeV10`) 파싱, `HandshakeResponse41` 직렬화, Command (`COM_QUERY`, `COM_PING`, `COM_QUIT`) 패킷 및 `ServerResponse` (OK, ERR, EOF, ResultSetHeader) 파싱 계층을 자체 구현하고 5개 단위 테스트로 검증했다.
-   - 드라이버 설정 `MysqlDriverConfig`:
-     - URL 파싱 시 percent-decoding(`%40` -> `@`, 비hex `%ZZ` 보존 등) 및 IPv6 주소(`[2001:db8::1]:3306`, 포트 생략 기본 3306) 지원.
-     - 쿼리 스트링(`?sslmode=required`, `verify-full`, `disabled`) 파싱을 통한 `tls_required` 플래그 설정.
-     - 커스텀 `fmt::Debug`를 구현하여 `password: Some("***")`로 마스킹(원문 비밀번호의 Debug 노출 결함 해결).
-     - `display_sanitized`를 통한 credential 마스킹(`***`) 유지.
-   - 에러 정규화 `normalize_mysql_error_code`:
-     - 1045(`DB_AUTH_FAILED`), 1049(`DB_NOT_FOUND`), 1146(`TABLE_NOT_FOUND`), 1062(`UNIQUE_VIOLATION`), 1213(`DEADLOCK_DETECTED`), 1205(`LOCK_TIMEOUT`), 1451/1452(`FOREIGN_KEY_VIOLATION`), 2002/2003(`DB_CONNECT_FAILED`).
-     - 에러 1105 등 임의의 원시 에러 메시지에 포함된 데이터베이스 URL(`scheme://user:pass@host/...`)의 비밀번호를 `***`로 자동 마스킹(`sanitize_error_message`).
-   - `aip_migrate::external::introspect`: 기본 빌드 및 `--features mysql` 빌드 모두에서 `DB_ADAPTER_UNSUPPORTED`를 일관되게 반환하여 `mysql_adapter.rs` 회귀 테스트 통과.
-5. **FaceReview 11개 모델 synthetic fixture 구조 및 13개 FK 정규화 검증 (독립 감사 rev 7948b7e7 반영)**:
-   - [facereview-inventory.json](facereview-inventory.json) 및 [facereview-fk-manifest.json](facereview-fk-manifest.json)의 11개 SQLAlchemy 모델 구조를 바탕으로 한 synthetic fixture 구조 검증(`facereview_11_models_synthetic_fixture_matches_fk_manifest`)을 구현했다(16 passed).
-   - **Synthetic 범위 및 한계 명시**:
-     - 11개 모델의 총 81개 컬럼 식별자 및 기본 구조, 실제 PK(특히 `UserEmotionSummary`의 PK `user_id` 포함), 고유 제약(`uk_user_genre`, `uk_bookmark_user_video` 등), 복합 인덱스(`idx_video_comments`, `idx_user_history`, `idx_video_history`)의 manifest 정규화 호환성을 확인했다.
-     - 외래키 13개는 원본 revision `7948b7e721837fdb73c427cb54e12cad4ec2d5af`의 독립 소스 감사(independent source audit) 결과에 따라 이전 10개 집계 오류를 정정한 것이며, 사용자의 설계 결정이 아닌 코드베이스 실사 기반 정정이다.
-     - Python-side default(예: `generate_uuid`, Python `0`, `CURRENT_TIMESTAMP`)는 Python ORM 클라이언트 수준의 기본값이며, MySQL 서버 측의 DDL DEFAULT 절과 1:1 동등하지 않다.
-     - 실제 MySQL 8.4 라이브 서버 DDL/타입/서버 기본값/보조 인덱스와의 100% 완전 동등성을 주장하지 않는다.
+- `crates/aip-migrate/Cargo.toml`의 `mysql` feature가 선택 의존성 `mysql_async = 0.37.1`을 활성화한다. 기본 빌드에서는 해당 드라이버가 제외되며, TLS backend는 `default-rustls-ring`이다. 라이선스는 MIT OR Apache-2.0이다.
+- `MysqlDriverConfig`는 `mysql://`와 `mariadb://` URL, pool min/max, TLS mode, connect timeout을 읽는다. TLS를 요구하면 인증서 검증을 켜고, 추가 CA bundle은 `AIP_MYSQL_CA_CERT`로 지정한다. 이 CA 환경변수는 DB 연결 설정이며 Cargo crate 다운로드 설정과 별개다.
+- feature build의 `aip_migrate::external::introspect`는 `mysql_driver`를 통해 INFORMATION_SCHEMA의 table/column/index/FK row를 조회하고 기존 normalizer에 연결해 introspection definition/mapping을 반환한다. `service introspect`만 이 설정을 통과하며 MySQL 서빙·정책 read/write·migration/adopt 경로는 지원하지 않는다.
+- 새 격리 MySQL 8.4 컨테이너의 `aip_mysql_test` schema에서 `users`와 `posts` 두 테이블, unique/ordinary index, FK action을 조회해 CLI draft mapping에 담는 live test가 통과했다. 이는 FaceReview 원본 schema 검증이 아니다.
+- 다중 URL error sanitizer의 두 비밀번호 누락 회귀를 테스트 우선으로 재현(exit 101)한 뒤 수정하고 같은 targeted test를 통과시켰다. 호출자/운영 로그에서 이 helper가 실제 사용됐는지는 확인하지 않았다.
+- `mysql_wire.rs`는 과거 parser 실험으로 파일에 보존되어 있으나 모듈 export가 없고 테스트도 compile 대상에서 제외한다. 제품 driver로 계산하지 않는다.
+- FaceReview 11개 모델/81개 컬럼/13개 FK 검사는 기존 synthetic fixture와 manifest 범위다. 원본 MySQL DDL과 live catalog를 대조하지 않았다.
+
+| 이번 단계 | 확인 결과 | 아직 확인하지 않은 것 |
+|---|---|---|
+| optional driver 조달 및 feature build | `mysql_async 0.37.1` 조달 성공, `aip-migrate --features mysql` 검사 | production TLS CA configuration |
+| sanitizer multi-URL regression | 이전 code에서 두 번째 비밀번호 누출 RED, 수정 후 targeted test PASS | operational callers/logging exposure |
+| introspection draft renderer | synthetic fixture test PASS | 모든 FaceReview 타입/PK/FK를 draft로 변환 |
+| live MySQL catalog read | 격리 MySQL 8.4의 `aip_mysql_test` 2-table schema에서 test PASS | FaceReview 전체 schema, policy read, write, transaction, rollback |
+| MariaDB | 미실행 | 별도 MariaDB compatibility |
+| 일반 adapter 지원 판정 | **미지원 유지** | read/write/runtime/transaction과 FaceReview 포팅 완료 |
+
+### 조달 실행환경 기록
+
+- 이전 nested-worker 기록은 `cargo add mysql_async --package aip-migrate --dry-run` 중 crates.io index fetch에서 SSL[60]을 관측했다고 보고했으나, raw log와 전체 환경 증거는 독립 검증에 제공되지 않았다. 따라서 원인은 확정하지 않는다.
+- 이번 command environment에서는 `CARGO_HOME=/private/tmp/aip-mysql-cargo-20261017`, `CARGO_HTTP_CAINFO=/etc/ssl/cert.pem`으로 `cargo test`와 `cargo check -p aip-migrate --features mysql`가 crate를 조달하고 완료했다. 이 실행의 네트워크 성공은 다른 worker 실행의 원인을 소급해 증명하지 않는다.
+- Docker 29.4.0과 `mysql:8.4` image를 확인했다. MySQL은 `127.0.0.1:23316` loopback에 임시 노출하고 datadir를 tmpfs에 둔 컨테이너로 실행했으며 테스트 종료 뒤 제거한다.
+
+### 이번 구현 checkout 실행 영수증
+
+- 전용 checkout: `/Users/winterholic/development/aip-mysql-driver-20261017`, branch `feat/mysql-adapter`, base/HEAD `30f1a159b225958cfc4cf3c08ef3bd13f7881b77`. 이 checkout은 원본 scratch와 별개이며 현재 변경은 아직 commit하지 않았다.
+- 구현 변경은 optional `mysql_async` feature와 MySQL live catalog introspection이다. PostgreSQL 기본 빌드 회귀와 MySQL feature 전체 `aip-migrate` test suite를 실행했다. MySQL feature suite의 마지막으로 수집된 출력은 앞선 통합 테스트 `3 passed; 0 failed`, `online_backfill` 3, `reference_cycles` 3, `typed_id_columns` 1, `uuid_migration` 1 모두 통과, doc-tests 0건이다. 세션이 종료된 뒤 exit code를 다시 조회할 수 없어 전체 feature suite의 최종 exit status는 기록하지 않는다.
+- 별도 확인: `cargo check -p aip-migrate --features mysql`, `cargo test -p aip-migrate --test mysql_catalog` (feature, 15 passed), 격리 MySQL live catalog test (1 passed), MySQL CLI `service introspect`와 생성 draft의 `service check` (둘 다 `ok:true`), 기본/feature dependency tree, 기본 PostgreSQL `cargo test -p aip-migrate --offline`, `git diff --check`, 새 driver 파일 `rustfmt --check`가 통과했다. 전체 workspace fmt 검사는 기존 포맷 차이로 통과하지 않아 성공 근거로 쓰지 않는다.
+- 실제 MySQL 컨테이너는 임시 tmpfs/loopback으로 띄워 시험 후 중지·제거한다. 이 시험은 `aip_mysql_test`의 두 테이블 catalog 읽기다. FaceReview 스키마·MariaDB·일반 정책 read/write·실제 트랜잭션/rollback은 아직 검증되지 않았다.
+- 다음 단계: AIP service의 MySQL read/write/transaction adapter 계약을 구현하고 PostgreSQL 회귀를 유지한 뒤, MariaDB와 원본 FaceReview 전체 스키마를 별도 실DB로 대조한다. 그 gate들이 통과하기 전에는 MySQL/MariaDB 저장 어댑터 지원 완료로 판정하지 않는다.
 
 ### PostgreSQL 선택 구조(postgres feature) 전환 제안과 영향 범위
 
@@ -72,7 +71,9 @@
 | 실제 MySQL 8.4 / MariaDB 컨테이너 실행 | **미실행** (이유 아래 참조) | 실제 컨테이너 연결 및 정책 write |
 | adapter 지원 판정 | **미지원 (adapter 계약·와이어 드라이버 기초 및 fail-closed 확립)** | 실제 MySQL·MariaDB 완결 호환성 |
 
-### 2026-10-17 실행 환경 제약 및 관측 증거
+### 이전 시도의 실행 환경 관측 (이후 단계에서 일부 대체됨)
+
+> 아래 내용은 당시 다른 nested-worker 실행에서 기록한 역사적 결과다. 위의 이번 구현 checkout 실행 영수증이 현재 검증 상태이며, 과거의 sandbox denial 및 자체 wire parser 제안은 실제 드라이버/실DB 시험의 근거가 아니다.
 
 - **Docker 컨테이너 기동**: `docker run --rm alpine echo hello` 명령 실행 시 `permission denied while trying to connect to the docker API at unix:///Users/winterholic/.orbstack/run/docker.sock` 발생. nested worker sandbox 환경에서 OrbStack docker 소켓 접근이 차단되어 실제 MySQL 8.4 및 MariaDB 컨테이너 기동은 미실행으로 기록한다.
 - **Cargo Registry Crate 조달 시도**:

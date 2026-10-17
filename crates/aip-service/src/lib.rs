@@ -488,6 +488,14 @@ pub fn load(file: &Path, dev_checks: bool) -> Result<spike_v11_dev_checks::Check
     )
 }
 fn configuration(path: &Path) -> Result<Config, Value> {
+    configuration_with_mode(path, false)
+}
+
+fn configuration_for_introspection(path: &Path) -> Result<Config, Value> {
+    configuration_with_mode(path, true)
+}
+
+fn configuration_with_mode(path: &Path, catalog_only: bool) -> Result<Config, Value> {
     let source = read_bounded(path, CONFIG_BYTES, "CONFIG_IO")?;
     let mut config: Config = serde_json::from_str(&source).map_err(|e| json_error("BAD_CONFIG", "제품 설정 형식 오류", &e))?;
     if let Some(mapping) = &mut config.external_mapping
@@ -541,7 +549,11 @@ fn configuration(path: &Path) -> Result<Config, Value> {
     if let Some(worker) = &config.workers {
         validate_integrations_shape(&worker.integrations)?;
     }
-    require_built_features(&config)?;
+    if catalog_only {
+        require_built_features_for_introspection(&config)?;
+    } else {
+        require_built_features(&config)?;
+    }
     Ok(config)
 }
 
@@ -835,7 +847,7 @@ pub async fn run(command: Command) -> Result<Value, Value> {
             )
         }
         Command::Introspect { config, source_schema, out, mapping_out } => {
-            let c = configuration(&config)?;
+            let c = configuration_for_introspection(&config)?;
             if out.exists() || mapping_out.exists() || out == mapping_out {
                 return Err(error("OUTPUT_EXISTS", "introspect 출력 파일은 새 경로여야 함"));
             }
@@ -1288,6 +1300,14 @@ pub fn resolve_database_adapter(config: &Config) -> Result<String, Value> {
 /// Rejects configuration that needs an optional package this binary was built without,
 /// or configuration attempting to use unsupported MySQL runtime connectors before connection.
 pub fn require_built_features(config: &Config) -> Result<(), Value> {
+    require_built_features_mode(config, false)
+}
+
+fn require_built_features_for_introspection(config: &Config) -> Result<(), Value> {
+    require_built_features_mode(config, true)
+}
+
+fn require_built_features_mode(config: &Config, catalog_only: bool) -> Result<(), Value> {
     #[cfg(not(feature = "external-brokers"))]
     if config.broker.is_some() {
         return Err(error("BROKER_FEATURE_DISABLED", "broker 설정을 사용하려면 external-brokers feature로 빌드해야 함"));
@@ -1310,16 +1330,17 @@ pub fn require_built_features(config: &Config) -> Result<(), Value> {
 
     #[cfg(feature = "mysql")]
     {
-        if adapter == "mysql" || adapter == "mariadb" || has_mysql_url {
+        if !catalog_only && (adapter == "mysql" || adapter == "mariadb" || has_mysql_url) {
             return Err(error(
                 "DB_ADAPTER_UNSUPPORTED",
-                "MySQL/MariaDB adapter는 현재 catalog introspection 계약만 지원되며 CLI/서빙/마이그레이션 커넥터는 아직 구현되지 않음",
+                "MySQL/MariaDB adapter는 현재 catalog introspection만 지원되며 CLI/서빙/마이그레이션 런타임은 아직 구현되지 않음",
             ));
         }
     }
 
     let _ = adapter;
     let _ = has_mysql_url;
+    let _ = catalog_only;
     let _ = config;
     Ok(())
 }
@@ -1774,6 +1795,19 @@ mod managed_config_tests {
             let rejected = require_built_features(&config).unwrap_err();
             assert_eq!(rejected["code"], "DB_ADAPTER_FEATURE_DISABLED");
         }
+    }
+
+    #[cfg(feature = "mysql")]
+    #[test]
+    fn mysql_feature_allows_catalog_only_configuration_but_not_service_runtime() {
+        let config: Config = serde_json::from_value(json!({
+            "schema": "aip_test",
+            "auth": {"issuer": "https://issuer.example", "audience": "aip", "jwks": {"kind": "file", "path": "jwks.json"}},
+            "database_adapter": "mysql"
+        }))
+        .unwrap();
+        assert!(require_built_features_for_introspection(&config).is_ok());
+        assert_eq!(require_built_features(&config).unwrap_err()["code"], "DB_ADAPTER_UNSUPPORTED");
     }
 
     #[cfg(not(feature = "mysql"))]

@@ -52,12 +52,9 @@ pub async fn introspect(url: &str, source: &str) -> Result<Value, Value> {
         if s == "mysql" || s == "mariadb" {
             #[cfg(feature = "mysql")]
             {
-                let cfg = crate::mysql_catalog::MysqlDriverConfig::parse_url(url)
-                    .map_err(|e| err("DB_ADAPTER_CONFIG", &format!("MySQL/MariaDB URL 파싱 실패: {e}")))?;
-                return Err(err(
-                    "DB_ADAPTER_UNSUPPORTED",
-                    &format!("MySQL/MariaDB({}) live driver introspection 실행기가 준비되지 않음", cfg.display_sanitized()),
-                ));
+                return crate::mysql_driver::introspect_draft(url, source)
+                    .await
+                    .map_err(|e| err("DB_INTROSPECT", &e.to_string()));
             }
             #[cfg(not(feature = "mysql"))]
             {
