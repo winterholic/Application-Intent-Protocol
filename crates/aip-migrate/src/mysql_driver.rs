@@ -163,9 +163,10 @@ impl MysqlDriver {
     /// Compute a fresh structural fingerprint for every call. This deliberately has no TTL/cache:
     /// callers use it as a deployment fence and must observe out-of-band DDL on the next check.
     pub async fn catalog_fingerprint(&self, schema: &str) -> Result<String, CatalogError> {
-        let catalog = self.introspect(schema).await?;
-        let value = serde_json::to_value(catalog).map_err(|_| CatalogError::new("MySQL catalog serialization failed"))?;
-        Ok(crate::digest(&value))
+        // One definition of the fingerprint: the same schema-wide queries the request fence runs inside its transaction.
+        let mut conn = self.get_conn_with_timeout().await?;
+        let _ = conn.query_drop("SET SESSION information_schema_stats_expiry = 0").await;
+        catalog_fingerprint_on_conn(&mut conn, schema, self.mariadb).await.map(|fingerprint| fingerprint.digest)
     }
 
     /// Fail closed if the live catalog no longer matches the fingerprint recorded at adoption.
@@ -712,10 +713,69 @@ pub async fn catalog_fingerprint_on_conn<Q: Queryable>(
         .collect::<Result<Vec<_>, _>>()?;
 
     let catalog = crate::mysql_catalog::introspect_schema_from_schema_rows(schema_name, tables, columns, indexes, foreign_keys)?;
-    let value = serde_json::to_value(&catalog).map_err(|_| CatalogError::new("MySQL catalog serialization failed"))?;
+    let raw = raw_structure_facts(conn, schema_name, is_mariadb).await?;
+    let value = serde_json::json!({ "manifest": serde_json::to_value(&catalog).map_err(|_| CatalogError::new("MySQL catalog serialization failed"))?, "raw": raw });
     let digest = spike_v1_fixture::digest(&value);
 
     Ok(MysqlCatalogFingerprint { digest, catalog })
+}
+
+/// Rows the neutral manifest drops (full column types and collations, generation expressions, index prefix/direction/visibility,
+/// CHECK constraints, storage engine). They are part of the fingerprint so that DDL on any of them is drift.
+///
+/// Triggers are not included on purpose: `INFORMATION_SCHEMA.TRIGGERS` only lists triggers the account holds the `TRIGGER` privilege on,
+/// and granting that to the runtime account would let it create triggers. A trigger added out of band is therefore not detected here.
+async fn raw_structure_facts<Q: Queryable>(conn: &mut Q, schema_name: &str, is_mariadb: bool) -> Result<serde_json::Value, CatalogError> {
+    use crate::mysql_catalog::{
+        SQL_RAW_CHECKS, SQL_RAW_CHECKS_MARIADB, SQL_RAW_COLUMNS, SQL_RAW_STATISTICS, SQL_RAW_STATISTICS_MARIADB, SQL_RAW_TABLES,
+    };
+    async fn fetch<Q: Queryable>(conn: &mut Q, sql: &str, schema_name: &str, what: &str) -> Result<Vec<Row>, CatalogError> {
+        conn.exec(sql, (schema_name,)).await.map_err(|err| {
+            if is_drift_error(&err) {
+                CatalogError::drift(format!("{what} query drift: {err}"))
+            } else {
+                CatalogError::new(format!("{what} query failed: {err}"))
+            }
+        })
+    }
+    let bad = |what: &str| CatalogError::new(format!("invalid MySQL {what} catalog row"));
+    let tables = fetch(conn, SQL_RAW_TABLES, schema_name, "raw tables")
+        .await?
+        .into_iter()
+        .map(|row| {
+            from_row_opt::<(String, Option<String>, Option<String>)>(row).map(|(a, b, c)| serde_json::json!([a, b, c])).map_err(|_| bad("table"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    #[allow(clippy::type_complexity)]
+    let columns = fetch(conn, SQL_RAW_COLUMNS, schema_name, "raw columns")
+        .await?
+        .into_iter()
+        .map(|row| {
+            from_row_opt::<(String, String, u64, String, String, Option<String>, String, String, Option<String>, Option<String>)>(row)
+                .map(|(a, b, c, d, e, f, g, h, i, j)| serde_json::json!([a, b, c, d, e, f, g, h, i, j]))
+                .map_err(|_| bad("column"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let statistics_sql = if is_mariadb { SQL_RAW_STATISTICS_MARIADB } else { SQL_RAW_STATISTICS };
+    #[allow(clippy::type_complexity)]
+    let indexes = fetch(conn, statistics_sql, schema_name, "raw indexes")
+        .await?
+        .into_iter()
+        .map(|row| {
+            from_row_opt::<(String, String, u8, u64, Option<String>, Option<String>, Option<u64>, Option<String>, String, Option<String>)>(row)
+                .map(|(a, b, c, d, e, f, g, h, i, j)| serde_json::json!([a, b, c, d, e, f, g, h, i, j]))
+                .map_err(|_| bad("index"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let checks_sql = if is_mariadb { SQL_RAW_CHECKS_MARIADB } else { SQL_RAW_CHECKS };
+    let checks = fetch(conn, checks_sql, schema_name, "raw checks")
+        .await?
+        .into_iter()
+        .map(|row| {
+            from_row_opt::<(String, String, String, String)>(row).map(|(a, b, c, d)| serde_json::json!([a, b, c, d])).map_err(|_| bad("check"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(serde_json::json!({ "tables": tables, "columns": columns, "indexes": indexes, "checks": checks }))
 }
 
 fn build_mysql_opts(config: &MysqlDriverConfig, ca_cert: Option<PathBuf>) -> Result<Opts, CatalogError> {
