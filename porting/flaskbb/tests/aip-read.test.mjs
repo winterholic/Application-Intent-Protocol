@@ -58,14 +58,14 @@ test('AIP server enforces forum group visibility and unique link relations with 
     sql(`INSERT INTO ${q}.forum (id,category_id,title,description,position,locked,external,show_moderators,last_post_id,last_post_user_id,last_post_title,last_post_username,last_post_created) VALUES
       (1,1,'Public forum','Visible to guest group',1,false,NULL,false,NULL,NULL,NULL,NULL,NULL),
       (2,1,'Private fixture','Member group required',2,false,NULL,false,NULL,NULL,NULL,NULL,NULL);`);
-    sql(`INSERT INTO ${q}.topic (id,forum_id,title,user_id,username,date_created,last_updated,locked,important,views,published,hidden) VALUES
-      ('00000000-0000-4000-8000-000000000001',1,'Public topic',1,'guest-fixture',now(),now(),false,false,2,true,false),
-      ('00000000-0000-4000-8000-000000000002',2,'Private topic',2,'member-fixture',now(),now(),false,false,3,true,false),
-      ('00000000-0000-4000-8000-000000000003',2,'Hidden topic',2,'member-fixture',now(),now(),false,false,0,true,true);`);
-    sql(`INSERT INTO ${q}.post (id,topic_id,forum_id,user_id,username,content,date_created,hidden,published,version) VALUES
-      ('00000000-0000-4000-8000-000000000011','00000000-0000-4000-8000-000000000001',1,1,'guest-fixture','Public post',now(),false,true,0),
-      ('00000000-0000-4000-8000-000000000012','00000000-0000-4000-8000-000000000002',2,2,'member-fixture','Private post',now(),false,true,0),
-      ('00000000-0000-4000-8000-000000000013','00000000-0000-4000-8000-000000000003',2,2,'member-fixture','Hidden post',now(),true,true,0);`);
+    sql(`INSERT INTO ${q}.topic (id,forum_id,title,user_id,username,date_created,last_updated,locked,important,views,published,deleted,hidden) VALUES
+      ('00000000-0000-4000-8000-000000000001',1,'Public topic',1,'guest-fixture',now(),now(),false,false,2,true,false,false),
+      ('00000000-0000-4000-8000-000000000002',2,'Private topic',2,'member-fixture',now(),now(),false,false,3,true,false,false),
+      ('00000000-0000-4000-8000-000000000003',2,'Hidden topic',2,'member-fixture',now(),now(),false,false,0,true,false,true);`);
+    sql(`INSERT INTO ${q}.post (id,topic_id,forum_id,user_id,username,content,date_created,hidden,published,version,deleted) VALUES
+      ('00000000-0000-4000-8000-000000000011','00000000-0000-4000-8000-000000000001',1,1,'guest-fixture','Public post',now(),false,true,0,false),
+      ('00000000-0000-4000-8000-000000000012','00000000-0000-4000-8000-000000000002',2,2,'member-fixture','Private post',now(),false,true,0,false),
+      ('00000000-0000-4000-8000-000000000013','00000000-0000-4000-8000-000000000003',2,2,'member-fixture','Hidden post',now(),true,true,0,false);`);
     sql(`INSERT INTO ${q}.forum_group_access (id,forum_id,group_id) VALUES (1,1,1),(2,2,2),(3,2,3),(4,2,4);`);
     const duplicate = spawnSync('psql', ['-X', '-v', 'ON_ERROR_STOP=1', '-d', dbUrl, '-c', `INSERT INTO ${q}.forum_group_access (id,forum_id,group_id) VALUES (5,2,2)`], {encoding: 'utf8', env});
     assert.notEqual(duplicate.status, 0, 'duplicate forum/group access must be rejected');
@@ -114,8 +114,8 @@ test('AIP server enforces forum group visibility and unique link relations with 
     assert.deepEqual((await readOnly.read(query)).rows.map(row => row.title), ['Private fixture']);
     const topicId = randomUUID();
     const firstPostId = randomUUID();
-    const topicCreate = {create: 'Topic', values: {id: topicId, forum: '2', title: 'SDK-created topic', user: '2', username: 'member-fixture', locked: false, important: false, views: 0, published: false, hidden: false, hidden_at: null, hidden_by: null}};
-    const postCreate = {create: 'Post', values: {id: firstPostId, topic: topicId, forum: '2', user: '2', username: 'member-fixture', content: 'Initial body', hidden: false, published: false, version: 0}};
+    const topicCreate = {create: 'Topic', values: {id: topicId, forum: '2', title: 'SDK-created topic', user: '2', username: 'member-fixture', locked: false, important: false, views: 0, published: false, deleted: false, hidden: false, hidden_at: null, hidden_by: null}};
+    const postCreate = {create: 'Post', values: {id: firstPostId, topic: topicId, forum: '2', user: '2', username: 'member-fixture', content: 'Initial body', hidden: false, published: false, version: 0, deleted: false}};
     const rejectedTopicId = randomUUID();
     const beforeDeniedCount = sql(`SELECT count(*) FROM ${q}.topic`);
     const denied = await readOnly.bundle({atomic: [{create: 'Topic', values: {...topicCreate.values, id: rejectedTopicId, user: '4', username: 'readonly-fixture'}}]}, {key: `deny-topic-${rejectedTopicId}`});
@@ -127,6 +127,7 @@ test('AIP server enforces forum group visibility and unique link relations with 
       {...topicCreate, values: {...topicCreate.values, id: topic}},
       {...postCreate, values: {...postCreate.values, id: post, topic}},
       {apply: 'Post.publish', target: {ids: [post]}},
+      {create: 'TopicFirstPost', values: {topic, post}},
       {apply: 'Topic.publish', target: {ids: [topic]}},
     ];
     const beforeRollback = [sql(`SELECT count(*) FROM ${q}.topic`), sql(`SELECT count(*) FROM ${q}.post`)];
@@ -137,7 +138,8 @@ test('AIP server enforces forum group visibility and unique link relations with 
     const workflowKey = `create-topic-${topicId}`;
     const createdTopic = await member.bundle({atomic: successfulWorkflow}, {key: workflowKey});
     assert.equal(createdTopic.ok, true, JSON.stringify(createdTopic));
-    assert.deepEqual(createdTopic.created.map(row => [row.resource, row.id]), [['Topic', topicId], ['Post', firstPostId]]);
+    assert.deepEqual(createdTopic.created.slice(0, 2).map(row => [row.resource, row.id]), [['Topic', topicId], ['Post', firstPostId]]);
+    assert.equal(createdTopic.created[2].resource, 'TopicFirstPost');
     const replay = await member.bundle({atomic: successfulWorkflow}, {key: workflowKey});
     assert.equal(replay.replayed, true, JSON.stringify(replay));
     assert.deepEqual(replay.created, createdTopic.created);
@@ -145,17 +147,28 @@ test('AIP server enforces forum group visibility and unique link relations with 
     assert.equal(sql(`SELECT count(*) FROM ${q}.post WHERE id='${firstPostId}' AND topic_id='${topicId}' AND content='Initial body'`), '1');
     assert.equal(sql(`SELECT count(*) FROM ${q}.topic WHERE forum_id=2 AND published AND hidden=false`), '2');
     assert.equal(sql(`SELECT count(*) FROM ${q}.post WHERE topic_id='${topicId}' AND published AND date_created IS NOT NULL`), '1');
+    const locked = await admin.bundle({atomic: [{apply: 'Topic.lock', target: {ids: [topicId]}}]}, {key: `lock-${topicId}`});
+    assert.equal(locked.ok, true, JSON.stringify(locked));
+    assert.equal((await member.read({read: 'Topic', select: ['id', 'locked'], filter: [{field: 'id', op: 'eq', value: topicId}], limit: 1})).rows[0].locked, true);
+    const lockedReply = await member.bundle({atomic: [{create: 'Post', values: {id: randomUUID(), topic: topicId, forum: '2', user: '2', username: 'member-fixture', content: 'blocked by topic lock', hidden: false, published: false, version: 0}}]}, {key: `locked-reply-${topicId}`});
+    assert.equal(lockedReply.code, 'WIRE.FORBIDDEN', JSON.stringify(lockedReply));
+    const highlighted = await admin.bundle({atomic: [{apply: 'Topic.highlight', target: {ids: [topicId]}}]}, {key: `highlight-${topicId}`});
+    assert.equal(highlighted.ok, true, JSON.stringify(highlighted));
+    const unlocked = await admin.bundle({atomic: [{apply: 'Topic.unlock', target: {ids: [topicId]}}]}, {key: `unlock-${topicId}`});
+    assert.equal(unlocked.ok, true, JSON.stringify(unlocked));
+    const trivialized = await admin.bundle({atomic: [{apply: 'Topic.trivialize', target: {ids: [topicId]}}]}, {key: `trivialize-${topicId}`});
+    assert.equal(trivialized.ok, true, JSON.stringify(trivialized));
     const initialTopic = (await member.read({read: 'Topic', select: ['id', 'last_updated'], filter: [{field: 'id', op: 'eq', value: topicId}], limit: 1})).rows[0];
     const replyId = randomUUID();
     const replyWorkflow = {atomic: [
-      {create: 'Post', values: {id: replyId, topic: topicId, forum: '2', user: '2', username: 'member-fixture', content: 'Reply body', hidden: false, published: false, version: 0}},
+      {create: 'Post', values: {id: replyId, topic: topicId, forum: '2', user: '2', username: 'member-fixture', content: 'Reply body', hidden: false, published: false, version: 0, deleted: false}},
       {apply: 'Post.publish', target: {ids: [replyId]}},
       {apply: 'Topic.bump', target: {ids: [topicId]}},
     ]};
     const reply = await member.bundle(replyWorkflow, {key: `reply-${replyId}`});
     assert.equal(reply.ok, true, JSON.stringify(reply));
     const beforeDeniedReply = sql(`SELECT count(*) FROM ${q}.post`);
-    const deniedReply = await readOnly.bundle({atomic: [{create: 'Post', values: {id: randomUUID(), topic: topicId, forum: '2', user: '4', username: 'readonly-fixture', content: 'forbidden', hidden: false, published: false, version: 0}}]}, {key: `deny-reply-${topicId}`});
+    const deniedReply = await readOnly.bundle({atomic: [{create: 'Post', values: {id: randomUUID(), topic: topicId, forum: '2', user: '4', username: 'readonly-fixture', content: 'forbidden', hidden: false, published: false, version: 0, deleted: false}}]}, {key: `deny-reply-${topicId}`});
     assert.equal(deniedReply.code, 'WIRE.FORBIDDEN', JSON.stringify(deniedReply));
     assert.equal(sql(`SELECT count(*) FROM ${q}.post`), beforeDeniedReply);
     const afterReplyTopic = (await member.read({read: 'Topic', select: ['id', 'last_updated'], filter: [{field: 'id', op: 'eq', value: topicId}], limit: 1})).rows[0];
@@ -176,6 +189,41 @@ test('AIP server enforces forum group visibility and unique link relations with 
     assert.deepEqual([guestForum.topic_count, guestForum.post_count], [1, 1]);
     const memberStats = (await member.read({read: 'User', select: ['id', 'post_count'], filter: [{field: 'id', op: 'eq', value: '2'}], limit: 1})).rows[0];
     assert.equal(memberStats.post_count, 3);
+    const firstPostHide = await admin.bundle({atomic: [{apply: 'Post.hide', target: {ids: [firstPostId]}}]}, {key: `hide-first-post-${firstPostId}`});
+    assert.equal(firstPostHide.code, 'WIRE.FORBIDDEN', 'first-post hide must use the topic-level operation');
+    const firstPostDelete = await member.bundle({atomic: [{apply: 'Post.delete', target: {ids: [firstPostId]}}]}, {key: `delete-first-post-${firstPostId}`});
+    assert.equal(firstPostDelete.code, 'WIRE.FORBIDDEN', 'first-post delete must use the topic-level operation');
+    const topicHide = await admin.bundle({atomic: [{apply: 'Topic.hide', target: {ids: [topicId]}}]}, {key: `hide-topic-${topicId}`});
+    assert.equal(topicHide.ok, true, JSON.stringify(topicHide));
+    assert.equal((await member.read({read: 'Topic', select: ['id'], filter: [{field: 'id', op: 'eq', value: topicId}], limit: 1})).rows.length, 0);
+    assert.equal((await member.read({read: 'Post', select: ['id'], filter: [{field: 'id', op: 'eq', value: replyId}], limit: 1})).rows.length, 0);
+    const hiddenCounts = (await member.read({read: 'Forum', select: ['topic_count', 'post_count'], filter: [{field: 'id', op: 'eq', value: '2'}], limit: 1})).rows[0];
+    assert.deepEqual([hiddenCounts.topic_count, hiddenCounts.post_count], [1, 1], 'hidden topic and posts do not leak through aggregates');
+    const topicUnhide = await admin.bundle({atomic: [{apply: 'Topic.unhide', target: {ids: [topicId]}}]}, {key: `unhide-topic-${topicId}`});
+    assert.equal(topicUnhide.ok, true, JSON.stringify(topicUnhide));
+    const replyHide = await admin.bundle({atomic: [{apply: 'Post.hide', target: {ids: [replyId]}}]}, {key: `hide-post-${replyId}`});
+    assert.equal(replyHide.ok, true, JSON.stringify(replyHide));
+    assert.equal((await member.read({read: 'Post', select: ['id'], filter: [{field: 'id', op: 'eq', value: replyId}], limit: 1})).rows.length, 0);
+    const replyUnhide = await admin.bundle({atomic: [{apply: 'Post.unhide', target: {ids: [replyId]}}]}, {key: `unhide-post-${replyId}`});
+    assert.equal(replyUnhide.ok, true, JSON.stringify(replyUnhide));
+    assert.equal((await member.read({read: 'Topic', select: ['id', 'locked'], filter: [{field: 'id', op: 'eq', value: topicId}], limit: 1})).rows[0].locked, false);
+    const replyDelete = await member.bundle({atomic: [{apply: 'Post.delete', target: {ids: [replyId]}}]}, {key: `delete-post-${replyId}`});
+    assert.equal(replyDelete.ok, true, JSON.stringify(replyDelete));
+    assert.equal((await member.read({read: 'Post', select: ['id'], filter: [{field: 'id', op: 'eq', value: replyId}], limit: 1})).rows.length, 0);
+    assert.equal(sql(`SELECT deleted FROM ${q}.post WHERE id='${replyId}'`), 't', 'delete is a retained tombstone in the AIP model');
+    const readonlyDelete = await readOnly.bundle({atomic: [{apply: 'Topic.delete', target: {ids: [topicId]}}]}, {key: `deny-delete-topic-${topicId}`});
+    assert.equal(readonlyDelete.code, 'WIRE.FORBIDDEN', JSON.stringify(readonlyDelete));
+    const topicDelete = await member.bundle({atomic: [
+      {apply: 'Topic.delete', target: {ids: [topicId]}},
+      {apply: 'Post.delete', target: {ids: [firstPostId]}},
+    ]}, {key: `delete-topic-${topicId}`});
+    assert.equal(topicDelete.ok, true, JSON.stringify(topicDelete));
+    assert.equal(sql(`SELECT deleted FROM ${q}.topic WHERE id='${topicId}'`), 't');
+    assert.equal(sql(`SELECT count(*) FROM ${q}.post WHERE topic_id='${topicId}' AND deleted`), '2', 'topic deletion tombstones its complete post set');
+    assert.equal((await member.read({read: 'Topic', select: ['id'], filter: [{field: 'id', op: 'eq', value: topicId}], limit: 1})).rows.length, 0);
+    assert.equal((await member.read({read: 'Post', select: ['id'], filter: [{field: 'id', op: 'eq', value: firstPostId}], limit: 1})).rows.length, 0);
+    const countsAfterDelete = (await member.read({read: 'Forum', select: ['topic_count', 'post_count'], filter: [{field: 'id', op: 'eq', value: '2'}], limit: 1})).rows[0];
+    assert.deepEqual([countsAfterDelete.topic_count, countsAfterDelete.post_count], [1, 1], 'deleted topic cascade is absent from member reads and aggregates');
     console.log(JSON.stringify({schema, ...init, memberVisible: memberRows.map(row => row.title), guestVisible: guestRows.map(row => row.title), duplicateLinkRejected: true}));
   } finally {
     if (server && server.exitCode === null) {

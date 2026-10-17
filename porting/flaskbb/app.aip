@@ -1,15 +1,19 @@
-// FlaskBB 2019 port. Public reads are the first vertical slice; source workflow
-// coverage remains the full F01-F17 denominator in INVENTORY.md.
+// FlaskBB 2019 port. F01 reads and a subset of F05 topic/post workflows are
+// exercised so far; full source workflow coverage remains F01-F17 in INVENTORY.md.
 actor User
 predicate hasGroup(viewer: User?, targetGroup: Group) = viewer != null and (viewer.primary_group = targetGroup or exists UserGroup where user = viewer and group = targetGroup)
 predicate canReadForum(viewer: User?, targetForum: Forum?) = exists ForumGroupAccess where forum = targetForum and ((viewer = null and group.guest) or hasGroup(viewer, group))
 predicate canViewHidden(viewer: User?) = viewer != null and (viewer.primary_group.viewhidden or exists UserGroup where user = viewer and group.viewhidden)
-predicate canModerateForum(viewer: User?, targetForum: Forum?) = viewer != null and (viewer.primary_group.admin or viewer.primary_group.super_mod or viewer.primary_group.mod or exists ForumModerator where forum = targetForum and user = viewer)
+predicate canModerateForum(viewer: User?, targetForum: Forum?) = viewer != null and (viewer.primary_group.admin or viewer.primary_group.super_mod or viewer.primary_group.mod or exists UserGroup where user = viewer and (group.admin or group.super_mod or group.mod) or exists ForumModerator where forum = targetForum and user = viewer)
 predicate canStartTopic(viewer: User?, targetForum: Forum?) = viewer != null and targetForum != null and canReadForum(viewer, targetForum) and not targetForum.locked and (canModerateForum(viewer, targetForum) or viewer.primary_group.posttopic or exists UserGroup where user = viewer and group.posttopic)
 predicate canReply(viewer: User?, targetTopic: Topic?) = viewer != null and targetTopic != null and canReadForum(viewer, targetTopic.forum) and not targetTopic.hidden and (canModerateForum(viewer, targetTopic.forum) or (not targetTopic.locked and (viewer.primary_group.postreply or exists UserGroup where user = viewer and group.postreply)))
-predicate canReadTopic(viewer: User?, targetTopic: Topic?) = targetTopic != null and canReadForum(viewer, targetTopic.forum) and (targetTopic.hidden != true or canViewHidden(viewer)) and (targetTopic.published or targetTopic.user = viewer)
-predicate canReadPost(viewer: User?, targetPost: Post?) = targetPost != null and (targetPost.user = viewer or (targetPost.published and canReadForum(viewer, targetPost.forum))) and (targetPost.hidden != true or canViewHidden(viewer)) and (targetPost.topic.hidden != true or canViewHidden(viewer))
-predicate hasAuthoredPost(targetTopic: Topic, viewer: User?) = exists Post where topic = targetTopic and user = viewer and published
+predicate canDeleteTopic(viewer: User?, targetTopic: Topic?) = targetTopic != null and canReadForum(viewer, targetTopic.forum) and (viewer.primary_group.admin or viewer.primary_group.super_mod or exists UserGroup where user = viewer and (group.admin or group.super_mod) or (canModerateForum(viewer, targetTopic.forum) and (viewer.primary_group.deletetopic or exists UserGroup where user = viewer and group.deletetopic)) or (targetTopic.user = viewer and not targetTopic.locked and (viewer.primary_group.deletetopic or exists UserGroup where user = viewer and group.deletetopic)) or (canModerateForum(viewer, targetTopic.forum) and (viewer.primary_group.editpost or exists UserGroup where user = viewer and group.editpost)) or (targetTopic.user = viewer and not targetTopic.locked and (viewer.primary_group.editpost or exists UserGroup where user = viewer and group.editpost)))
+predicate canDeletePost(viewer: User?, targetPost: Post?) = targetPost != null and targetPost.published and canReadForum(viewer, targetPost.topic.forum) and (canDeleteTopic(viewer, targetPost.topic) and targetPost.topic.deleted or canModerateForum(viewer, targetPost.topic.forum) and (viewer.primary_group.editpost or exists UserGroup where user = viewer and group.editpost) or targetPost.user = viewer and not targetPost.topic.locked and (viewer.primary_group.editpost or exists UserGroup where user = viewer and group.editpost))
+predicate canHide(viewer: User?, targetForum: Forum?) = viewer != null and canModerateForum(viewer, targetForum) and (viewer.primary_group.makehidden or exists UserGroup where user = viewer and group.makehidden)
+predicate canReadTopic(viewer: User?, targetTopic: Topic?) = targetTopic != null and not targetTopic.deleted and canReadForum(viewer, targetTopic.forum) and (targetTopic.hidden != true or canViewHidden(viewer)) and (targetTopic.published or targetTopic.user = viewer)
+predicate canReadPost(viewer: User?, targetPost: Post?) = targetPost != null and not targetPost.deleted and (not targetPost.topic.deleted or canDeleteTopic(viewer, targetPost.topic) or (targetPost.topic.user = viewer and not targetPost.topic.locked and (viewer.primary_group.editpost or exists UserGroup where user = viewer and group.editpost))) and (targetPost.user = viewer or (targetPost.published and canReadForum(viewer, targetPost.forum))) and (targetPost.hidden != true or canViewHidden(viewer)) and (targetPost.topic.hidden != true or canViewHidden(viewer))
+predicate hasFirstPost(targetTopic: Topic, viewer: User?) = exists TopicFirstPost where topic = targetTopic and post.user = viewer and post.published
+predicate isFirstPost(targetPost: Post) = exists TopicFirstPost where post = targetPost
 predicate hasNewerAuthoredPost(targetTopic: Topic, viewer: User?) = exists Post where topic = targetTopic and user = viewer and published and date_created > targetTopic.last_updated
 access visibleUserTotal = totalOfVisible(User)
 access visibleForumTotal = totalOfVisible(Forum)
@@ -70,7 +74,7 @@ resource User {
     traverse primary_group { select id, name }
     budget { rows 100; depth 2; cost 2000; deadline 2s }
   }
-  aggregate post_count: Int { source Post; sourceAccess visibleUserTotal; groupKey user; where canReadPost(actor, this) and published = true; callerFilter none; rowOutput none; release count }
+  aggregate post_count: Int { source Post; sourceAccess visibleUserTotal; groupKey user; where canReadPost(actor, this) and not topic.deleted and published = true; callerFilter none; rowOutput none; release count }
 }
 
 resource UserGroup {
@@ -121,7 +125,7 @@ resource Forum {
     budget { rows 200; depth 2; cost 4000; deadline 2s }
   }
   aggregate topic_count: Int { source Topic; sourceAccess visibleForumTotal; groupKey forum; where canReadTopic(actor, this) and published = true; callerFilter none; rowOutput none; release count }
-  aggregate post_count: Int { source Post; sourceAccess visibleForumTotal; groupKey forum; where canReadPost(actor, this) and published = true; callerFilter none; rowOutput none; release count }
+  aggregate post_count: Int { source Post; sourceAccess visibleForumTotal; groupKey forum; where canReadPost(actor, this) and not topic.deleted and published = true; callerFilter none; rowOutput none; release count }
 }
 
 resource ForumGroupAccess {
@@ -161,6 +165,7 @@ resource Topic {
     important: Bool
     views: Int
     published: Bool
+    deleted: Bool
     hidden: Bool?
     hidden_at: Time?
     hidden_by: User?
@@ -168,17 +173,31 @@ resource Topic {
   rows read when canReadTopic(actor, this)
   check publishedTopicHasDates when not published or (date_created != null and last_updated != null)
   expose create {
-    allow user = actor and username = actor.username and not published and canStartTopic(actor, forum)
-    fields id, forum, title, user, username, locked, important, views, published, hidden, hidden_at, hidden_by
+    allow user = actor and username = actor.username and not published and not deleted and canStartTopic(actor, forum)
+    fields id, forum, title, user, username, locked, important, views, published, deleted, hidden, hidden_at, hidden_by
   }
   transition publish {
-    allow user = actor and not published and canStartTopic(actor, forum) and hasAuthoredPost(this, actor)
+    allow user = actor and not published and canStartTopic(actor, forum) and hasFirstPost(this, actor)
     from published = false
     to published = true, date_created = now, last_updated = now
   }
   expose apply publish { target id; bulk maxRows 1 }
   transition bump { allow published and hasNewerAuthoredPost(this, actor); from published = true; to last_updated = now }
   expose apply bump { target id; bulk maxRows 1 }
+  transition lock { allow canModerateForum(actor, forum); from locked = false; to locked = true }
+  expose apply lock { target id; bulk maxRows 1 }
+  transition unlock { allow canModerateForum(actor, forum); from locked = true; to locked = false }
+  expose apply unlock { target id; bulk maxRows 1 }
+  transition highlight { allow canModerateForum(actor, forum); from important = false; to important = true }
+  expose apply highlight { target id; bulk maxRows 1 }
+  transition trivialize { allow canModerateForum(actor, forum); from important = true; to important = false }
+  expose apply trivialize { target id; bulk maxRows 1 }
+  transition hide { allow canHide(actor, forum); from hidden != true and deleted = false; to hidden = true, hidden_at = now, hidden_by = actor }
+  expose apply hide { target id; bulk maxRows 1 }
+  transition unhide { allow canHide(actor, forum); from hidden = true and deleted = false; to hidden = false, hidden_at = null, hidden_by = null }
+  expose apply unhide { target id; bulk maxRows 1 }
+  transition delete { allow canDeleteTopic(actor, this) or (user = actor and not locked and (actor.primary_group.editpost or exists UserGroup where user = actor and group.editpost)); from deleted = false; to deleted = true }
+  expose apply delete { target id; bulk maxRows 1 }
   expose read {
     select id, forum, title, user, username, date_created, last_updated, locked, important, views, published, hidden, hidden_at, hidden_by, post_count
     filter id.eq, forum.eq, user.eq, locked.eq, important.eq
@@ -187,7 +206,7 @@ resource Topic {
     traverse user { select id, username }
     budget { rows 200; depth 3; cost 8000; deadline 2s }
   }
-  aggregate post_count: Int { source Post; sourceAccess visibleTopicTotal; groupKey topic; where canReadPost(actor, this) and published = true; callerFilter none; rowOutput none; release count }
+  aggregate post_count: Int { source Post; sourceAccess visibleTopicTotal; groupKey topic; where canReadPost(actor, this) and not topic.deleted and published = true; callerFilter none; rowOutput none; release count }
 }
 
 resource Post {
@@ -206,13 +225,14 @@ resource Post {
     hidden_by: User?
     published: Bool
     version: Int
+    deleted: Bool
   }
   rows read when canReadPost(actor, this)
   check postForumMatchesTopic when topic.forum = forum
   check publishedPostHasDate when not published or date_created != null
   expose create {
-    allow user = actor and username = actor.username and not published and not hidden and canReply(actor, topic) and forum = topic.forum
-    fields id, topic, forum, user, username, content, hidden, published, version
+    allow user = actor and username = actor.username and not published and not deleted and not hidden and canReply(actor, topic) and forum = topic.forum
+    fields id, topic, forum, user, username, content, hidden, published, version, deleted
   }
   transition publish { allow user = actor and not published and canReply(actor, topic); from published = false; to published = true, date_created = now }
   expose apply publish { target id; bulk maxRows 1 }
@@ -224,6 +244,12 @@ resource Post {
     to version = version + 1, date_modified = now, modified_by = actor.username
   }
   expose apply edit { target id; bulk maxRows 1 }
+  transition hide { allow canHide(actor, forum) and not isFirstPost(this); from hidden = false and deleted = false; to hidden = true, hidden_at = now, hidden_by = actor }
+  expose apply hide { target id; bulk maxRows 1 }
+  transition unhide { allow canHide(actor, forum) and not isFirstPost(this); from hidden = true and deleted = false; to hidden = false, hidden_at = null, hidden_by = null }
+  expose apply unhide { target id; bulk maxRows 1 }
+  transition delete { allow canDeletePost(actor, this) and (not isFirstPost(this) or topic.deleted); from deleted = false; to deleted = true }
+  expose apply delete { target id; bulk maxRows 1 }
   expose read {
     select id, topic, user, username, content, date_created, date_modified, modified_by, hidden, hidden_at, hidden_by, version
     filter id.eq, topic.eq, user.eq, hidden.eq
@@ -231,6 +257,25 @@ resource Post {
     traverse topic { select id, forum, title, locked, hidden }
     traverse user { select id, username }
     budget { rows 500; depth 3; cost 10000; deadline 2s }
+  }
+}
+
+// Internal one-to-one relation keeps the source app's special first-post rules
+// without a cyclic Topic↔Post foreign key.
+resource TopicFirstPost {
+  fields { id: Id; topic: Topic; post: Post }
+  unique topic
+  unique post
+  rows read when canReadTopic(actor, topic)
+  expose create {
+    allow topic.user = actor and not topic.published and post.topic = topic and post.user = actor and post.published
+    fields topic, post
+  }
+  expose read {
+    select id, topic, post
+    filter topic.eq, post.eq
+    sort id
+    budget { rows 100; depth 2; cost 2000; deadline 2s }
   }
 }
 
