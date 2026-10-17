@@ -1,0 +1,294 @@
+// Infisical MIT port draft (WBS 7.3.3.3/7.3.3.4: I03 secrets, I04 RBAC).
+// Structure + authorization only. Secret VALUES are opaque ciphertext
+// (valueCiphertext) until the key-model decision (INFISICAL-KEYMODEL.md):
+// no contains filter, no server-side comparison on values.
+// Upstream: Infisical 47246be (2026-10-17), MIT scope only.
+actor User
+predicate isOrgMember(viewer: User?, targetOrg: Organization?) = viewer != null and exists OrgMembership where user = viewer and org = targetOrg
+predicate isOrgAdmin(viewer: User?, targetOrg: Organization?) = viewer != null and exists OrgMembership where user = viewer and org = targetOrg and role = "admin"
+predicate isProjectMember(viewer: User?, targetProject: Project?) = viewer != null and targetProject != null and (isOrgAdmin(viewer, targetProject.org) or exists ProjectMembership where user = viewer and project = targetProject)
+predicate isProjectAdmin(viewer: User?, targetProject: Project?) = viewer != null and targetProject != null and (isOrgAdmin(viewer, targetProject.org) or exists ProjectMembership where user = viewer and project = targetProject and role = "admin")
+predicate canReadSecret(viewer: User?, targetSecret: Secret?) = viewer != null and targetSecret != null and isProjectMember(viewer, targetSecret.project)
+
+resource User {
+  fields { id: Id; email: Text(3..200); username: Text(1..200)? }
+  unique email
+  rows read when true
+  expose read {
+    select id, email, username
+    filter id.eq, email.eq, username.prefix
+    sort id
+    budget { rows 100; depth 1; cost 1000; deadline 2s; offset 1000; cursor }
+  }
+}
+
+resource Organization {
+  fields { id: Id; name: Text(1..100); slug: Text(1..100) }
+  unique slug
+  rows read when isOrgMember(actor, this)
+  expose create {
+    allow actor != null
+    fields name, slug
+  }
+  expose read {
+    select id, name, slug
+    filter id.eq, slug.eq, name.prefix
+    sort id
+    budget { rows 100; depth 1; cost 1000; deadline 2s; offset 500 }
+  }
+}
+
+resource OrgMembership {
+  fields { id: Id; user: User; org: Organization; role: Text(1..32) }
+  unique user, org
+  rows read when isOrgMember(actor, org)
+  expose create {
+    allow isOrgAdmin(actor, org)
+    fields user, org, role
+  }
+  transition setRole {
+    allow isOrgAdmin(actor, org)
+    from true
+    patch role
+  }
+  expose apply setRole { target id; bulk maxRows 1 }
+  expose read {
+    select id, user, org, role
+    filter user.eq, org.eq
+    sort id
+    traverse user { select id, email }
+    budget { rows 1000; depth 2; cost 3000; deadline 2s; offset 2000 }
+  }
+}
+
+resource Project {
+  fields { id: Id; org: Organization; name: Text(1..100); slug: Text(1..100) }
+  unique org, slug
+  rows read when isOrgMember(actor, org)
+  expose create {
+    allow isOrgAdmin(actor, org)
+    fields org, name, slug
+  }
+  expose read {
+    select id, org, name, slug
+    filter id.eq, org.eq, slug.eq, name.prefix
+    sort id
+    traverse org { select id, slug }
+    budget { rows 500; depth 2; cost 2000; deadline 2s; offset 1000 }
+  }
+}
+
+resource ProjectMembership {
+  fields { id: Id; user: User; project: Project; role: Text(1..32) }
+  unique user, project
+  rows read when isProjectMember(actor, project)
+  expose create {
+    allow isProjectAdmin(actor, project)
+    fields user, project, role
+  }
+  transition setRole {
+    allow isProjectAdmin(actor, project)
+    from true
+    patch role
+  }
+  expose apply setRole { target id; bulk maxRows 1 }
+  expose read {
+    select id, user, project, role
+    filter user.eq, project.eq
+    sort id
+    traverse user { select id, email }
+    budget { rows 1000; depth 2; cost 3000; deadline 2s; offset 2000 }
+  }
+}
+
+resource Folder {
+  fields { id: Id; project: Project; path: Text(1..500); env: Text(1..64) }
+  unique project, path, env
+  rows read when isProjectMember(actor, project)
+  expose create {
+    allow isProjectMember(actor, project)
+    fields project, path, env
+  }
+  expose read {
+    select id, project, path, env
+    filter id.eq, project.eq, path.prefix, env.eq
+    sort path, id
+    traverse project { select id, slug }
+    budget { rows 1000; depth 2; cost 3000; deadline 2s; offset 2000 }
+  }
+}
+
+resource Secret {
+  fields {
+    id: Id
+    project: Project
+    folder: Folder?
+    env: Text(1..64)
+    key: Text(1..200)
+    valueCiphertext: Text?
+    version: Int
+  }
+  unique project, folder, env, key
+  rows read when canReadSecret(actor, this)
+  check versionNonNegative when version >= 0
+  expose create {
+    allow isProjectMember(actor, project) and version = 1
+    fields project, folder, env, key, valueCiphertext, version
+  }
+  transition rotate {
+    allow isProjectMember(actor, project)
+    from true
+    patch valueCiphertext
+    to version = version + 1
+  }
+  expose apply rotate { target id; bulk maxRows 100 }
+  transition delete {
+    allow isProjectAdmin(actor, project)
+    from true
+    to valueCiphertext = null
+  }
+  expose apply delete { target id; bulk maxRows 100 }
+  expose read {
+    select id, project, folder, env, key, version
+    filter id.eq, project.eq, folder.eq, env.eq, key.eq, key.prefix
+    sort key, id
+    traverse project { select id, slug }
+    traverse folder { select id, path }
+    budget { rows 500; depth 2; cost 5000; deadline 2s; offset 2000 }
+  }
+}
+
+// I06 MIT BullMQ queues mapped 1:1 to operation jobs (payload shapes from
+// backend/src/queue/queue-service.ts). Worker modules (infisical_jobs.*)
+// are pending; effect db/none below is a draft approximation per job.
+// EE queues (rotation, scanning, PAM, gateway, dynamic-secret) are out of scope.
+// effect managed (not db): operation jobs take managed effects; row writes by
+// jobs go through declared transitions. Serve-side execution is unverified.
+operation job secretReminder {
+  input { projectId: Text(1..200); secretId: Text(1..200) }
+  output { accepted: Bool }
+  allow actor != null
+  effect none
+  deadline 30s
+  implementation "infisical_jobs.secret_reminder"
+}
+operation job secretWebhookDispatch {
+  input { projectId: Text(1..200) }
+  output { accepted: Bool }
+  allow actor != null
+  effect none
+  deadline 30s
+  implementation "infisical_jobs.secret_webhook_dispatch"
+}
+operation job integrationSync {
+  input { projectId: Text(1..200) }
+  output { accepted: Bool }
+  allow actor != null
+  effect managed
+  deadline 60s
+  implementation "infisical_jobs.integration_sync"
+}
+operation job appConnectionSecretSync {
+  input { projectId: Text(1..200) }
+  output { accepted: Bool }
+  allow actor != null
+  effect managed
+  deadline 60s
+  implementation "infisical_jobs.app_connection_secret_sync"
+}
+operation job secretSyncDispatch {
+  input { projectId: Text(1..200) }
+  output { accepted: Bool }
+  allow actor != null
+  effect managed
+  deadline 60s
+  implementation "infisical_jobs.secret_sync_dispatch"
+}
+operation job pkiSyncDispatch {
+  input { projectId: Text(1..200) }
+  output { accepted: Bool }
+  allow actor != null
+  effect managed
+  deadline 60s
+  implementation "infisical_jobs.pki_sync_dispatch"
+}
+operation job pkiSyncHealthCheck {
+  input { projectId: Text(1..200) }
+  output { accepted: Bool }
+  allow actor != null
+  effect managed
+  deadline 60s
+  implementation "infisical_jobs.pki_sync_health_check"
+}
+operation job folderTreeCheckpoint {
+  input { projectId: Text(1..200) }
+  output { accepted: Bool }
+  allow actor != null
+  effect managed
+  deadline 60s
+  implementation "infisical_jobs.folder_tree_checkpoint"
+}
+operation job importSecretsFromExternalSource {
+  input { projectId: Text(1..200) }
+  output { accepted: Bool }
+  allow actor != null
+  effect managed
+  deadline 120s
+  implementation "infisical_jobs.import_secrets_from_external_source"
+}
+operation job invalidateCache {
+  input { projectId: Text(1..200) }
+  output { accepted: Bool }
+  allow actor != null
+  effect none
+  deadline 30s
+  implementation "infisical_jobs.invalidate_cache"
+}
+operation job userNotification {
+  input { projectId: Text(1..200) }
+  output { accepted: Bool }
+  allow actor != null
+  effect none
+  deadline 30s
+  implementation "infisical_jobs.user_notification"
+}
+operation job alertDispatch {
+  input { projectId: Text(1..200) }
+  output { accepted: Bool }
+  allow actor != null
+  effect none
+  deadline 30s
+  implementation "infisical_jobs.alert_dispatch"
+}
+operation job eventOutboxFlush {
+  input { consumer: Text(1..200) }
+  output { accepted: Bool }
+  allow actor != null
+  effect managed
+  deadline 60s
+  implementation "infisical_jobs.event_outbox_flush"
+}
+operation job accessTokenStatusUpdate {
+  input { tokenId: Text(1..200) }
+  output { accepted: Bool }
+  allow actor != null
+  effect managed
+  deadline 30s
+  implementation "infisical_jobs.access_token_status_update"
+}
+operation job upgradeProjectToGhost {
+  input { projectId: Text(1..200) }
+  output { accepted: Bool }
+  allow actor != null
+  effect managed
+  deadline 120s
+  implementation "infisical_jobs.upgrade_project_to_ghost"
+}
+operation job auditLogPrune {
+  input { consumer: Text(1..200) }
+  output { accepted: Bool }
+  allow actor != null
+  effect managed
+  deadline 120s
+  implementation "infisical_jobs.audit_log_prune"
+}
