@@ -2,7 +2,7 @@
 
 2026-10-15 조사에서 시작한 구현 작업의 현재 기록이다. 원본 앱이 MySQL에서 실행되는 것과 AIP가 MySQL을 지원하는 것은 다른 판정이다.
 
-**현재 상태: MySQL 8.4 읽기 경로(WBS 7.2.1.1)와 쓰기 경로(WBS 7.2.1.2: `/apply` 전이·`atomic` 묶음·create, `/status`)가 `aip service`의 `adopt-external`·`principal`·`serve`까지 연결돼 실제 MySQL 8.4에서 검증됐다. 작업(job)·outbox 전달·파일·이벤트·rate limit·`compose`·확장 쓰기는 `WIRE.ADAPTER_UNSUPPORTED` 또는 설정 거부로 명시 거절한다(7.2.1.3 대상). MariaDB는 서빙·채택을 지원하지 않고 `DB_ADAPTER_UNSUPPORTED`로 거부한다(LATERAL 부재, 별도 게이트). 이 문서의 구현은 독립 검증을 받지 않았다.**
+**현재 상태: MySQL 8.4 읽기 경로(WBS 7.2.1.1)와 쓰기 경로(WBS 7.2.1.2: `/apply` 전이·`atomic` 묶음·create, `/status`)가 `aip service`의 `adopt-external`·`principal`·`serve`까지 연결돼 실제 MySQL 8.4에서 검증됐다. Durable job 저장소(`mysql_jobs`)와 outbox 릴레이(`mysql_outbox`)는 라이브러리 수준에서 실제 MySQL 8.4로 검증했지만 HTTP `/jobs/*`와 worker 실행에는 연결하지 않았다(WBS 7.2.1.3 일부). 서버 능력 probe가 MySQL 8.4를 통과시키고 MariaDB 11.4를 LATERAL·`FOR SHARE OF` 부재로 이름을 대며 거부한다. 파일·이벤트·메시지·rate limit·`compose`·확장 쓰기·job 실행은 `WIRE.ADAPTER_UNSUPPORTED` 또는 설정 거부로 명시 거절한다. 이 문서의 구현은 독립 검증을 받지 않았다.**
 
 ## 2026-10-17 실제 제품 경로 확인
 
@@ -135,6 +135,47 @@ COMMIT은 보낸 시점으로 가른다. COMMIT 전 연결 단절은 `WIRE.DB_UN
 | CLI 전 과정 | `mysql_adoption_flow`에 JWT `/apply`(적용·재생·익명 거부·감사 한 행) 추가 |
 
 미확인: `where` target과 `sameScope`, `effect update`(단일 일치) 경로의 전용 시험, `compose`, 외부 OIDC 사용자의 쓰기, 큰 번들의 시간 한도, MariaDB.
+
+### 2026-10-18 작업 저장소·outbox 릴레이·MariaDB 게이트 (WBS 7.2.1.3)
+
+**작업 저장소.** `crates/aip-migrate/src/mysql_jobs.rs`가 `aip_execution::Store`의 상태 기계를 같은 타입(`NewRun`·`Run`·`Lease`·`Redrive`)으로 옮긴다: 멱등 enqueue(같은 키는 같은 run, 다른 요청은 `IdempotencyConflict`, 재시도 정책은 요청이 아님), lease와 fencing epoch를 가진 claim, heartbeat·finish·retry(지수 backoff와 호출자가 정한 대기)·fail, deadline, cancel, payload 만료, 운영자 list·redrive. InnoDB에 맞춘 차이는 다음과 같다.
+
+| PostgreSQL | MySQL |
+|---|---|
+| `WITH candidate AS (.. FOR UPDATE SKIP LOCKED) UPDATE .. RETURNING` | READ COMMITTED 트랜잭션 하나에서 `SELECT .. FOR UPDATE SKIP LOCKED`로 후보를 잡고 같은 트랜잭션에서 갱신·재조회·커밋 |
+| `clock_timestamp()` | `UTC_TIMESTAMP(6)`. 모든 만료·deadline은 DB 시계 |
+| `UNIQUE(owner, operation, contract, deployment, key)` | InnoDB 인덱스 한도(3072B)를 넘어 튜플의 SHA-256을 유일 열로 두고, 중복(1062)이면 기존 run에 수렴 |
+| `ON CONFLICT DO NOTHING` | 1062를 기존 run으로 해석. 입력 digest·구현·actor·timeout·ttl·delay가 같을 때만 같은 run |
+| lease 만료 뒤 다른 worker가 claim | epoch가 늘어 이전 worker의 heartbeat·finish·retry·fail·check는 어떤 행도 맞추지 못한다 |
+
+MySQL은 `UPDATE`의 `SET`을 왼쪽에서 오른쪽으로 평가하고 뒤의 식이 앞의 대입을 본다. 그래서 `state`를 읽는 열(`error`, `cancel_requested_at`, `result_expires_at`)을 먼저 대입하고 `state`를 마지막에 둔다. 처음 순서로는 `CANCEL_REQUESTED` 판정이 깨졌을 것이다.
+
+**outbox 릴레이.** `mysql_outbox.rs`는 outbox 행 claim(`FOR UPDATE OF o SKIP LOCKED`), 행에서 정한 키(`outbox:<id>:<created_us>`)로 job enqueue, `aip_outbox_dispatch` 영수증 기록, commit을 한 트랜잭션으로 한다. outbox·job·영수증이 같은 DB라 PostgreSQL 릴레이가 두 저장소에 걸쳐 근사하던 것을 정확히 한다. 호출자 쪽 `make_run`이 한 행이라도 거절하면 배치 전체가 rollback되어 job도 영수증도 남지 않는다.
+
+**MariaDB 게이트.** `probe_capabilities`가 어댑터가 기대는 문장을 서버에서 직접 실행해 능력을 정한다(버전 문자열을 읽지 않는다). `MysqlBackend::check_server_profile`은 빠진 능력을 이름으로 나열해 `DB_ADAPTER_UNSUPPORTED`로 거부한다. 실측:
+
+| 능력 | MySQL 8.4.11 | MariaDB 11.4.13 |
+|---|---|---|
+| 8.4 이상 | 예 | 아니오(MariaDB) |
+| strict mode | 예 | 예 |
+| `LATERAL` | 예 | **아니오** |
+| `FOR UPDATE SKIP LOCKED` | 예 | 예 |
+| `FOR SHARE OF` | 예 | **아니오** |
+| `JSON_ARRAYAGG` | 예 | 예 |
+| 강제되는 `CHECK` | 예 | 예 |
+| InnoDB | 예 | 예 |
+
+그래서 MariaDB는 traverse(LATERAL)와 정책 잠금(`FOR SHARE OF`)을 쓰는 읽기·쓰기 경로를 지원하지 못하고, 거부는 정확히 그 둘을 이름으로 말한다. SKIP LOCKED·JSON·CHECK는 있으므로 job 저장소만의 MariaDB 방언은 가능하지만, 저장소 SQL이 MariaDB에 없는 `CAST(? AS JSON)`과 `FOR UPDATE OF .. SKIP LOCKED`를 쓰므로 이번에는 MariaDB에서 job 저장소를 실행하지 않았다. 별도 방언은 후속이다.
+
+| 이번 확인 | 결과 |
+|---|---|
+| job 저장소(실 MySQL 8.4.11) | `mysql_jobs` 3 passed: 멱등 enqueue·충돌, claim·lease·epoch fencing(만료 뒤 인계, 이전 worker의 모든 쓰기 거부), 재시도·소진, 요청된 대기와 deadline 확장, deadline 초과, delay, cancel(대기·실행·타인), redrive(상태·배포·만료), list 필터, payload 만료 뒤에도 키 수렴 |
+| 동시 claim | 40개 run, 8 worker(별도 연결): 모든 run이 정확히 한 번(`claimed=40 unique=40`), epoch 1 |
+| 변이 | 후보 행 잠금 제거, lease epoch 검사 제거, epoch 증가 제거를 각각 하면 시험이 실패 |
+| outbox 릴레이 | 실패 배치의 전체 rollback, 4개 동시 릴레이가 30행을 정확히 한 번씩(job 30, 영수증 30, 서로 다른 job 30), 다른 topic 불변, 재실행 0건 |
+| 능력 게이트 | `mysql_capability_gate` 2 passed: MySQL 8.4 통과, MariaDB 거부와 사유(LATERAL, FOR SHARE OF) |
+
+미완료: `/jobs/*` HTTP 연결, job 실행(worker·effect journal·확장 호출), 메시지·파일·이벤트 저장소, schedule·webhook 트리거, MariaDB 방언. 이들은 설정에 나타나면 DB 접속 전에 거부한다.
 
 ### 조달 실행환경 기록
 

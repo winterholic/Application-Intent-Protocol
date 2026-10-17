@@ -547,9 +547,35 @@ pub(crate) async fn create_meta_tables<Q: Queryable>(conn: &mut Q, meta_schema: 
            (SELECT 0 n UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9) b, \
            (SELECT 0 n UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9) c"
     ));
-    for table in ["aip_events", "aip_jobs"] {
-        statements.push(format!("CREATE TABLE IF NOT EXISTS `{meta_schema}`.`{table}` (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY) ENGINE=InnoDB"));
-    }
+    statements.push(format!("CREATE TABLE IF NOT EXISTS `{meta_schema}`.`aip_events` (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY) ENGINE=InnoDB"));
+    // Durable jobs (WBS 7.2.1.3). The PostgreSQL unique key over (owner, operation, contract, deployment, key) is too wide for an
+    // InnoDB index, so its SHA-256 is the unique column. All instants are UTC DATETIME(6) from the database clock.
+    statements.push(format!(
+        "CREATE TABLE IF NOT EXISTS `{meta_schema}`.`aip_jobs` (\
+           id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL PRIMARY KEY, \
+           owner VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL, actor_id BIGINT NOT NULL, grant_data JSON NOT NULL, \
+           operation VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL, \
+           contract_digest VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, deployment_digest VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, \
+           implementation_digest VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, \
+           input JSON NOT NULL, input_digest CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, \
+           idempotency_key VARCHAR(256) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL, key_digest CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, \
+           state VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, attempt INT NOT NULL DEFAULT 0, max_attempts INT NOT NULL, \
+           lease_epoch BIGINT NOT NULL DEFAULT 0, lease_owner VARCHAR(256) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NULL, \
+           lease_until DATETIME(6) NULL, attempt_deadline DATETIME(6) NULL, timeout_ms BIGINT NOT NULL, \
+           run_deadline DATETIME(6) NOT NULL, next_run_at DATETIME(6) NOT NULL, cancel_requested_at DATETIME(6) NULL, \
+           output JSON NULL, error VARCHAR(512) NULL, result_ttl_ms BIGINT NOT NULL, initial_delay_ms BIGINT NOT NULL, \
+           created_at DATETIME(6) NOT NULL, result_expires_at DATETIME(6) NULL, trace_id VARCHAR(64) NULL, \
+           UNIQUE KEY aip_jobs_key (key_digest), KEY aip_jobs_claim (state, next_run_at, created_at), KEY aip_jobs_lease (state, lease_until), \
+           CONSTRAINT aip_jobs_state CHECK (state IN ('QUEUED', 'RUNNING', 'CANCEL_REQUESTED', 'SUCCEEDED', 'FAILED', 'CANCELLED')), \
+           CONSTRAINT aip_jobs_actor CHECK (actor_id > 0), CONSTRAINT aip_jobs_attempts CHECK (attempt >= 0 AND max_attempts > 0), \
+           CONSTRAINT aip_jobs_timeout CHECK (timeout_ms > 0 AND result_ttl_ms > 0 AND initial_delay_ms >= 0)) ENGINE=InnoDB"
+    ));
+    // The relay's receipt that an outbox row became a job: unique per row, written in the same transaction as the job.
+    statements.push(format!(
+        "CREATE TABLE IF NOT EXISTS `{meta_schema}`.`aip_outbox_dispatch` (\
+           outbox_id BIGINT NOT NULL PRIMARY KEY, outbox_created_at DATETIME(6) NOT NULL, job_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, \
+           dispatched_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)) ENGINE=InnoDB"
+    ));
     // The audit trail only grows.
     statements.push(format!("DROP TRIGGER IF EXISTS `{meta_schema}`.`aip_audit_no_update`"));
     statements.push(format!(

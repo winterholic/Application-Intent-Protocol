@@ -10,6 +10,10 @@ pub mod mysql_backend;
 #[cfg(feature = "mysql")]
 pub mod mysql_driver;
 #[cfg(feature = "mysql")]
+pub mod mysql_jobs;
+#[cfg(feature = "mysql")]
+pub mod mysql_outbox;
+#[cfg(feature = "mysql")]
 pub mod mysql_write;
 use serde_json::{Value, json};
 use spike_v1_fixture::digest;

@@ -40,31 +40,95 @@ impl MysqlBackend {
         &self.driver
     }
 
-    /// Server profile the read path was written and verified against. Anything else is refused at start instead of
-    /// producing different results silently: `LATERAL` needs MySQL 8.0.14+, MariaDB has no `LATERAL` at all, and the
-    /// timestamp/text semantics assume InnoDB with strict mode.
+    /// What the server can do, found by running each statement shape the adapter relies on instead of reading a version string.
+    pub async fn capabilities(&self) -> Result<ServerCapabilities, CatalogError> {
+        probe_capabilities(&self.driver).await
+    }
+
+    /// Server profile the adapter was written and verified against. A server that lacks a capability it relies on is refused at
+    /// start with the missing capabilities named, instead of producing different results silently: `LATERAL` for traverse,
+    /// `FOR SHARE OF` for policy locks, `SKIP LOCKED` for the job store, enforced `CHECK`, InnoDB, strict mode.
     pub async fn check_server_profile(&self) -> Result<(), CatalogError> {
-        let mut conn = self.driver.pool().get_conn().await.map_err(|_| CatalogError::new("MySQL connection failed"))?;
-        let row: Option<(String, String)> =
-            conn.query_first("SELECT VERSION(), @@sql_mode").await.map_err(|_| CatalogError::new("MySQL profile query failed"))?;
-        let (version, sql_mode) = row.ok_or_else(|| CatalogError::new("MySQL profile query returned no row"))?;
-        if version.to_ascii_lowercase().contains("mariadb") {
+        let capabilities = self.capabilities().await?;
+        let missing = capabilities.missing();
+        if !missing.is_empty() {
             return Err(CatalogError::with_code(
                 "DB_ADAPTER_UNSUPPORTED",
-                "MariaDB lacks LATERAL joins, which the read compiler needs; it is not a supported runtime until its own gate passes",
+                format!("{} {} lacks what the MySQL adapter relies on: {}", capabilities.engine, capabilities.version, missing.join(", ")),
             ));
-        }
-        let mut parts = version.split(['.', '-']);
-        let (major, minor) = (parts.next().and_then(|v| v.parse::<u32>().ok()), parts.next().and_then(|v| v.parse::<u32>().ok()));
-        if !matches!((major, minor), (Some(major), Some(minor)) if (major, minor) >= (8, 4)) {
-            return Err(CatalogError::with_code("DB_ADAPTER_UNSUPPORTED", "MySQL 8.4 or newer is required"));
-        }
-        let strict = sql_mode.split(',').any(|mode| matches!(mode.trim(), "STRICT_TRANS_TABLES" | "STRICT_ALL_TABLES"));
-        if !strict {
-            return Err(CatalogError::with_code("DB_ADAPTER_UNSUPPORTED", "sql_mode must include STRICT_TRANS_TABLES"));
         }
         Ok(())
     }
+}
+
+/// Capabilities the adapter relies on, each established by executing a statement on the live server.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ServerCapabilities {
+    /// `MySQL` or `MariaDB`.
+    pub engine: &'static str,
+    pub version: String,
+    pub major_minor_ok: bool,
+    pub strict_mode: bool,
+    pub lateral: bool,
+    pub skip_locked: bool,
+    pub for_share_of: bool,
+    pub json_arrayagg: bool,
+    pub check_enforced: bool,
+    pub innodb: bool,
+}
+
+impl ServerCapabilities {
+    /// Names of the capabilities the adapter needs and this server does not have.
+    pub fn missing(&self) -> Vec<&'static str> {
+        [
+            (self.major_minor_ok, "MySQL 8.4 or newer"),
+            (self.strict_mode, "sql_mode STRICT_TRANS_TABLES"),
+            (self.lateral, "LATERAL joins"),
+            (self.skip_locked, "FOR UPDATE SKIP LOCKED"),
+            (self.for_share_of, "FOR SHARE OF"),
+            (self.json_arrayagg, "JSON_ARRAYAGG"),
+            (self.check_enforced, "enforced CHECK constraints"),
+            (self.innodb, "InnoDB"),
+        ]
+        .into_iter()
+        .filter_map(|(ok, name)| (!ok).then_some(name))
+        .collect()
+    }
+}
+
+/// Run one probe statement; any server error means the capability is absent.
+async fn works(conn: &mut mysql_async::Conn, sql: &str) -> bool {
+    conn.query_drop(sql).await.is_ok()
+}
+
+/// Probe the server on one connection with a session-local temporary table, leaving nothing behind.
+pub async fn probe_capabilities(driver: &MysqlDriver) -> Result<ServerCapabilities, CatalogError> {
+    let mut conn = driver.pool().get_conn().await.map_err(|_| CatalogError::new("MySQL connection failed"))?;
+    let row: Option<(String, String)> =
+        conn.query_first("SELECT VERSION(), @@sql_mode").await.map_err(|_| CatalogError::new("MySQL profile query failed"))?;
+    let (version, sql_mode) = row.ok_or_else(|| CatalogError::new("MySQL profile query returned no row"))?;
+    let engine = if version.to_ascii_lowercase().contains("mariadb") { "MariaDB" } else { "MySQL" };
+    let mut parts = version.split(['.', '-']);
+    let (major, minor) = (parts.next().and_then(|v| v.parse::<u32>().ok()), parts.next().and_then(|v| v.parse::<u32>().ok()));
+    let major_minor_ok = engine == "MySQL" && matches!((major, minor), (Some(major), Some(minor)) if (major, minor) >= (8, 4));
+    let strict_mode = sql_mode.split(',').any(|mode| matches!(mode.trim(), "STRICT_TRANS_TABLES" | "STRICT_ALL_TABLES"));
+    let innodb = works(
+        &mut conn,
+        "CREATE TEMPORARY TABLE aip_capability_probe (id INT PRIMARY KEY, CONSTRAINT aip_probe_positive CHECK (id > 0)) ENGINE=InnoDB",
+    )
+    .await;
+    let lateral = works(&mut conn, "SELECT 1 FROM (SELECT 1 AS a) x JOIN LATERAL (SELECT x.a AS b) y ON TRUE").await;
+    let json_arrayagg = works(&mut conn, "SELECT JSON_ARRAYAGG(JSON_OBJECT('a', 1))").await;
+    let (mut skip_locked, mut for_share_of) = (false, false);
+    if innodb && works(&mut conn, "START TRANSACTION").await {
+        skip_locked = works(&mut conn, "SELECT id FROM aip_capability_probe FOR UPDATE SKIP LOCKED").await;
+        for_share_of = works(&mut conn, "SELECT id FROM aip_capability_probe p FOR SHARE OF p").await;
+        let _ = conn.query_drop("ROLLBACK").await;
+    }
+    // A CHECK that is parsed but not enforced would let invalid rows in silently.
+    let check_enforced = innodb && !works(&mut conn, "INSERT INTO aip_capability_probe (id) VALUES (0)").await;
+    let _ = conn.query_drop("DROP TEMPORARY TABLE IF EXISTS aip_capability_probe").await;
+    Ok(ServerCapabilities { engine, version, major_minor_ok, strict_mode, lateral, skip_locked, for_share_of, json_arrayagg, check_enforced, innodb })
 }
 
 impl RelationalBackend for MysqlBackend {
