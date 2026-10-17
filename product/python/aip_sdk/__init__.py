@@ -126,13 +126,16 @@ def _check_url(url: str) -> None:
 
 def _urllib_transport(url: str, headers: dict, body: bytes, timeout: float) -> Any:
     _check_url(url)
-    request = urllib.request.Request(url, data=body, headers=headers, method="POST")
+    req_headers = dict(headers)
+    req_headers.setdefault("connection", "close")
+    request = urllib.request.Request(url, data=body, headers=req_headers, method="POST")
     try:
         with _OPENER.open(request, timeout=timeout) as response:
             return response.read(), {"x-request-id": response.headers.get("x-request-id")}
     except urllib.error.HTTPError as error:
         # Webhook-style status codes still carry the JSON envelope. A refused redirect has no JSON and ends as PROTOCOL_ERROR.
-        return error.read(), {"x-request-id": error.headers.get("x-request-id")}
+        with error:
+            return error.read(), {"x-request-id": error.headers.get("x-request-id")}
 
 
 class Client:

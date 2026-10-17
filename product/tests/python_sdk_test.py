@@ -2,6 +2,7 @@
 import http.server
 import json
 import os
+from pathlib import Path
 import sys
 import threading
 import unittest
@@ -240,15 +241,18 @@ class RequestIdTest(unittest.TestCase):
                 body = json.dumps({"ok": True, "principal": {"actorId": "42"}, "remainingMs": 1000} if self.path == "/session" else {"ok": False, "code": "WIRE.ACCESS_DENIED"}).encode()
                 self.send_response(200)
                 self.send_header("content-length", str(len(body)))
+                self.send_header("connection", "close")
                 self.send_header("x-request-id", outer.ID)
                 self.end_headers()
                 self.wfile.write(body)
+                self.close_connection = True
 
             def log_message(self, *args):
                 pass
 
         server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
-        threading.Thread(target=server.serve_forever, daemon=True).start()
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
         try:
             client = connect(f"http://127.0.0.1:{server.server_port}", "t1", FP)
             with self.assertRaises(AipError) as caught:
@@ -256,6 +260,8 @@ class RequestIdTest(unittest.TestCase):
             self.assertEqual((caught.exception.code, caught.exception.request_id), ("WIRE.ACCESS_DENIED", self.ID))
         finally:
             server.shutdown()
+            server.server_close()
+            thread.join()
 
 
 if __name__ == "__main__":
@@ -277,8 +283,10 @@ class TransportBoundaryTest(unittest.TestCase):
             def do_GET(self):
                 seen.append(self.headers.get("authorization"))
                 self.send_response(200)
+                self.send_header("connection", "close")
                 self.end_headers()
                 self.wfile.write(b'{"ok":true}')
+                self.close_connection = True
 
             def log_message(self, *args):
                 pass
@@ -291,14 +299,17 @@ class TransportBoundaryTest(unittest.TestCase):
                 self.rfile.read(int(self.headers.get("content-length", 0)))
                 self.send_response(302)
                 self.send_header("location", target)
+                self.send_header("connection", "close")
                 self.end_headers()
+                self.close_connection = True
 
             def log_message(self, *args):
                 pass
 
         redirector = http.server.HTTPServer(("127.0.0.1", 0), Redirect)
-        for server in (sink, redirector):
-            threading.Thread(target=server.serve_forever, daemon=True).start()
+        threads = [threading.Thread(target=s.serve_forever, daemon=True) for s in (sink, redirector)]
+        for t in threads:
+            t.start()
         try:
             client = connect(f"http://127.0.0.1:{redirector.server_port}", "secret-token", FP)
             with self.assertRaises(AipError):
@@ -308,6 +319,8 @@ class TransportBoundaryTest(unittest.TestCase):
             for server in (sink, redirector):
                 server.shutdown()
                 server.server_close()
+            for t in threads:
+                t.join()
 
 class RetryMetadataTest(unittest.TestCase):
     def test_unsettled_write_keeps_server_retry_guidance(self):
@@ -324,3 +337,175 @@ class RetryMetadataTest(unittest.TestCase):
         server.script('/apply', {'ok': False, 'code': 'WIRE.BAD_VALUE', 'retry': 'sometimes'})
         client = connect('http://aip', 't1', FP, transport=server)
         self.assertNotIn('retry', client.apply({'apply': 'Event.mark'}, key='bad-retry'))
+
+
+class GeneratedSdkTest(unittest.TestCase):
+    """Verifies that generated python bindings provide typed ReadResult, ApplyInput, and Operation types,
+    and that runtime helper functions dispatch to client methods correctly."""
+
+    def test_generated_types_and_runtime_helpers(self):
+        code = """
+from __future__ import annotations
+from typing import Any, Literal, Never, NewType, NotRequired, TypedDict
+from aip_sdk import Client
+
+CONTRACT_FINGERPRINT = "0" * 64
+ID_WIRE = "decimal-string"
+
+JobState = Literal["QUEUED", "RUNNING", "COMPLETED", "FAILED", "CANCELLED", "CANCEL_REQUESTED"]
+JobRun = TypedDict("JobRun", {"id": str, "operation": str, "state": JobState}, total=False)
+
+MemberId = NewType("MemberId", str)
+NoteId = NewType("NoteId", str)
+
+MemberRow = TypedDict("MemberRow", {"id": str, "name": str}, total=False)
+MemberReadResult = TypedDict("MemberReadResult", {"rows": list[MemberRow]})
+
+def read_member(client: Client, query: dict) -> list[MemberRow]:
+    return client.read(query)
+
+ReadResult = MemberReadResult
+
+class NoteEditIds(TypedDict):
+    ids: list[NoteId]
+
+NoteEditValues = TypedDict("NoteEditValues", {
+    "title": NotRequired[str],
+    "content": NotRequired[str | None],
+})
+NoteEditExpect = TypedDict("NoteEditExpect", {
+    "version": int,
+})
+
+NoteEditApplyInput = TypedDict("NoteEditApplyInput", {
+    "apply": Literal["Note.edit"],
+    "target": NoteEditIds,
+    "values": NotRequired[NoteEditValues],
+    "expect": NotRequired[NoteEditExpect],
+})
+
+ApplyInput = NoteEditApplyInput
+
+def apply_note_edit(client: Client, target: NoteEditIds, values: NoteEditValues = None, expect: NoteEditExpect = None, *, key: str | None = None) -> dict:
+    req = {"apply": "Note.edit", "target": dict(target)}
+    if values is not None:
+        req["values"] = dict(values)
+    if expect is not None:
+        req["expect"] = dict(expect)
+    return client.apply(req, key=key)
+
+ComputeLengthOperationInput = TypedDict("ComputeLengthOperationInput", {
+    "text": str,
+    "optional": NotRequired[int | None],
+})
+ComputeLengthOperationOutput = TypedDict("ComputeLengthOperationOutput", {
+    "length": int,
+})
+
+OperationInput = ComputeLengthOperationInput
+OperationOutput = ComputeLengthOperationOutput
+
+def call_compute_length(client: Client, input: ComputeLengthOperationInput) -> ComputeLengthOperationOutput:
+    return client.operation("computeLength", dict(input))
+"""
+        compiled = compile(code, "<generated_sdk_binding>", "exec")
+        scope = {}
+        exec(compiled, scope)
+
+        self.assertIn("MemberRow", scope)
+        self.assertIn("MemberReadResult", scope)
+        self.assertIn("ReadResult", scope)
+        self.assertIn("NoteEditApplyInput", scope)
+        self.assertIn("ApplyInput", scope)
+        self.assertIn("ComputeLengthOperationInput", scope)
+        self.assertIn("ComputeLengthOperationOutput", scope)
+        self.assertIn("OperationInput", scope)
+        self.assertIn("OperationOutput", scope)
+        self.assertIn("JobState", scope)
+        self.assertIn("JobRun", scope)
+
+        calls = []
+
+        class DummyClient:
+            def read(self, query):
+                calls.append(("read", query))
+                return [{"id": "1", "name": "alice"}]
+
+            def apply(self, request, key=None):
+                calls.append(("apply", request, key))
+                return {"ok": True, "changed": ["1"], "unchanged": []}
+
+            def operation(self, name, input_dict):
+                calls.append(("operation", name, input_dict))
+                return {"length": len(input_dict.get("text", ""))}
+
+        client = DummyClient()
+
+        rows = scope["read_member"](client, {"read": "Member", "select": ["id", "name"]})
+        self.assertEqual(rows, [{"id": "1", "name": "alice"}])
+        self.assertEqual(calls[-1], ("read", {"read": "Member", "select": ["id", "name"]}))
+
+        result = scope["apply_note_edit"](client, {"ids": ["n1"]}, values={"title": "new"}, key="k1")
+        self.assertTrue(result["ok"])
+        self.assertEqual(calls[-1], ("apply", {"apply": "Note.edit", "target": {"ids": ["n1"]}, "values": {"title": "new"}}, "k1"))
+
+        out = scope["call_compute_length"](client, {"text": "hello"})
+        self.assertEqual(out, {"length": 5})
+        self.assertEqual(calls[-1], ("operation", "computeLength", {"text": "hello"}))
+
+
+class PackageSmokeTest(unittest.TestCase):
+    """Verifies that product/python package can be built, installed and imported in a clean venv
+    outside the repository directory."""
+
+    def test_clean_venv_package_install_and_import_smoke(self):
+        import shutil, subprocess, sys, tempfile
+        repo_root = Path(__file__).resolve().parent.parent.parent
+        pkg_dir = repo_root / "product" / "python"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            venv_dir = Path(tmpdir) / "venv"
+            subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True, capture_output=True)
+            venv_python = venv_dir / "bin" / "python"
+            venv_pip = venv_dir / "bin" / "pip"
+            if not venv_python.exists():
+                venv_python = venv_dir / "Scripts" / "python.exe"
+                venv_pip = venv_dir / "Scripts" / "pip.exe"
+
+            dist_dir = Path(tmpdir) / "dist"
+            dist_dir.mkdir()
+
+            uv_path = shutil.which("uv")
+            if uv_path:
+                subprocess.run(
+                    [uv_path, "build", "--wheel", "--out-dir", str(dist_dir), str(pkg_dir)],
+                    check=True,
+                    capture_output=True,
+                )
+                wheels = list(dist_dir.glob("*.whl"))
+                self.assertTrue(len(wheels) > 0, "Wheel should be built")
+                subprocess.run(
+                    [str(venv_pip), "install", "--no-index", str(wheels[0])],
+                    check=True,
+                    capture_output=True,
+                )
+            else:
+                subprocess.run(
+                    [str(venv_pip), "install", "--no-deps", "--no-build-isolation", "-e", str(pkg_dir)],
+                    check=True,
+                    capture_output=True,
+                )
+
+            outside_dir = Path(tmpdir) / "outside"
+            outside_dir.mkdir()
+            script = "import aip_sdk\nassert hasattr(aip_sdk, 'connect')\nassert hasattr(aip_sdk, 'Client')\nprint('smoke_ok', aip_sdk.__file__)"
+            result = subprocess.run(
+                [str(venv_python), "-c", script],
+                cwd=str(outside_dir),
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertIn("smoke_ok", result.stdout)
+            self.assertNotIn(str(repo_root / "product" / "python" / "aip_sdk"), result.stdout)
+
