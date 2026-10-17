@@ -21,7 +21,7 @@ fn build(src: &str) -> Built {
 
 async fn fresh(db: &str) -> Pool {
     let admin_url = aip_test_support::admin_database_url();
-    let admin = aip_runtime::pool(&admin_url, 1).expect("admin pool");
+    let admin = aip_runtime::pool(admin_url, 1).expect("admin pool");
     let c = admin.get().await.expect("admin connection");
     c.execute(format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)").as_str(), &[]).await.expect("drop");
     c.execute(format!("CREATE DATABASE {db}").as_str(), &[]).await.expect("create");
@@ -363,7 +363,6 @@ async fn changes_the_planner_does_not_know_how_to_carry_are_refused() {
 #[tokio::test]
 async fn the_commands_plan_apply_and_compare_against_the_deployed_program() {
     let pool = fresh("aip_e2e_evolve_cli").await;
-    let admin_url = aip_test_support::admin_database_url();
     let url = aip_test_support::admin_database_url_for("aip_e2e_evolve_cli");
     let dir = std::env::temp_dir().join("aip-evolve-cli");
     std::fs::create_dir_all(&dir).expect("dir");
