@@ -66,6 +66,39 @@ async fn accepts_only_api_access_token_profile() {
     assert!(auth.verify_token(&token(&key, future, "at+jwt", "current")).await.is_err());
 }
 
+/// Keycloak 26.2.5 access tokens carry iss, aud, sub, iat and exp but no nbf. The claim is optional (RFC 7519) and `iat` already bounds
+/// the earliest use, so an absent `nbf` is accepted while every other rule stays: lifetime, future `iat`, and a bad `nbf` when present.
+#[tokio::test]
+async fn a_token_without_not_before_is_accepted_and_a_present_one_is_still_enforced() {
+    let (_dir, config, key) = fixture();
+    let auth = AuthenticatorImpl::new(config, aip_test_support::test_database_url!().into(), "aip_example".into()).await.expect("test setup");
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("test setup").as_secs();
+    let without = json!({"iss":"https://issuer.example","aud":"aip-api","sub":"user-1","iat":now,"exp":now+300});
+    assert_eq!(auth.verify_token(&token(&key, without.clone(), "at+jwt", "current")).await.expect("no nbf is valid").subject, "user-1");
+
+    let mut null_nbf = without.clone();
+    null_nbf["nbf"] = json!(null);
+    assert!(auth.verify_token(&token(&key, null_nbf, "at+jwt", "current")).await.is_err(), "an explicit null is not an absent claim");
+    let mut text_nbf = without.clone();
+    text_nbf["nbf"] = json!(now.to_string());
+    assert!(auth.verify_token(&token(&key, text_nbf, "at+jwt", "current")).await.is_err());
+    let mut future_nbf = without.clone();
+    future_nbf["nbf"] = json!(now + 60);
+    assert!(auth.verify_token(&token(&key, future_nbf, "at+jwt", "current")).await.is_err());
+
+    // Everything else is as strict as before.
+    let mut future_iat = without.clone();
+    future_iat["iat"] = json!(now + 60);
+    future_iat["exp"] = json!(now + 120);
+    assert!(auth.verify_token(&token(&key, future_iat, "at+jwt", "current")).await.is_err(), "a token from the future is refused without nbf too");
+    let mut long_lived = without.clone();
+    long_lived["exp"] = json!(now + 901);
+    assert!(auth.verify_token(&token(&key, long_lived, "at+jwt", "current")).await.is_err());
+    let mut no_exp = without;
+    no_exp.as_object_mut().expect("object").remove("exp");
+    assert!(auth.verify_token(&token(&key, no_exp, "at+jwt", "current")).await.is_err());
+}
+
 #[tokio::test]
 async fn extreme_signed_timestamps_are_rejected_without_panicking() {
     let (_dir, config, key) = fixture();

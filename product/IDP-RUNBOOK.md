@@ -11,7 +11,8 @@
 | 서명 키 회전(겹침 구간, kid 교체, 폐기된 kid 거부) | 로컬 mock으로 검증됨 | `a_new_signing_key_is_picked_up_without_a_restart_and_the_retired_key_stops_working` |
 | IdP 장애 중 캐시된 키의 토큰, 알 수 없는 kid가 만든 갱신 실패 | 로컬 mock으로 검증됨 | `a_failed_refresh_for_an_unknown_kid_does_not_block_tokens_for_cached_keys`, `a_known_key_is_still_served_for_a_while_when_the_idp_is_down_after_the_cache_expired` |
 | 모르는 kid에 대한 위조 토큰, 같은 kid에 다른 키 | 로컬 mock으로 검증됨 | `a_forged_token_for_an_unknown_kid_is_rejected_and_never_accepts_the_attacker_key` |
-| 실제 Auth0·Keycloak·Entra ID가 이 토큰 프로필(`typ: at+jwt`, 수명 900초 이하)을 발급하는지 | 확인 못함: 계정 없음 | 아래 제공자별 설정은 각 제품 문서 기준의 절차이며 실행해 보지 않았다 |
+| 실제 Keycloak 26.2.5가 발급한 access token을 HTTPS JWKS로 검증하고 principal에 연결 | 실제 컨테이너로 검증됨 | `scripts/smoke-keycloak.sh`(`conformance/keycloak/smoke-check.mjs`), 12개 확인. 토큰에 `nbf`가 없고 `aud`가 배열이며 JWKS에 암호화 키가 함께 있어도 통과 |
+| 실제 Auth0·Entra ID가 이 토큰 프로필(`typ: at+jwt`, 수명 900초 이하)을 발급하는지 | 확인 못함: 계정 없음 | 아래 제공자별 설정은 각 제품 문서 기준의 절차이며 실행해 보지 않았다 |
 
 mock은 저장소 테스트 CA로 서명한 HTTPS 서버다. 서비스 바이너리가 쓰는 `reqwest` rustls 경로(redirect 거부, 크기 상한, timeout)를 같은 코드로 지나가지만, 운영 서비스 프로세스는 공개 CA만 신뢰하므로 서비스 전체를 mock IdP에 연결하는 end-to-end는 하지 않았다.
 
@@ -19,7 +20,8 @@ mock은 저장소 테스트 CA로 서명한 HTTPS 서버다. 서비스 바이너
 
 - 서명: RS256, 공개키는 JWKS의 RSA 키(2048~4096비트, `kid` 필수, 공개 지수는 3 이상 홀수).
 - header: `typ` 정확히 `at+jwt`, `kid` 있음. `jku`·`x5u`·`x5c`·`crit`·`zip`·`cty`는 거부한다.
-- claim: `iss`(설정의 issuer와 문자 그대로 일치, 끝 슬래시 포함), `aud`(설정의 audience), `sub`, `iat`, `nbf`, `exp`. `exp - iat`는 1~900초. 시계 여유(leeway)는 0이므로 서버와 IdP의 시계를 맞춘다.
+- claim: `iss`(설정의 issuer와 문자 그대로 일치, 끝 슬래시 포함), `aud`(설정의 audience. 문자열이거나 그 값을 포함한 배열), `sub`, `iat`, `exp`. `exp - iat`는 1~900초. `nbf`는 선택이다. 있으면 현재 시각 이하의 정수여야 하고 없어도 된다. 시계 여유(leeway)는 0이므로 서버와 IdP의 시계를 맞춘다.
+- `nbf`를 요구하지 않는 이유: RFC 7519에서 선택 claim이고 RFC 9068의 필수 목록에도 없으며 Keycloak은 발급하지 않는다. 서비스는 `iat`를 필수로 보고 미래의 `iat`와 `iat` 기준 900초 상한을 막으므로 `nbf`가 없어도 토큰이 발급 전에 쓰일 수 없다. 요구하면 보안은 늘지 않고 표준 제공자 연동만 깨진다. 값이 있는 `nbf`는 그대로 강제한다.
 - `sub`는 `aip service principal bind`로 actor에 연결된 값이어야 한다. 연결이 없으면 인증은 `WIRE.UNAUTHENTICATED`다.
 
 ## 연결 절차
@@ -47,7 +49,7 @@ mock은 저장소 테스트 CA로 서명한 HTTPS 서버다. 서비스 바이너
 아래는 각 제품의 공개 문서를 바탕으로 한 확인 대상 목록이다. 실제 테넌트에서 토큰을 열어 `typ`·`iss`·`aud`·`exp - iat`를 확인한 뒤 쓴다.
 
 - **Auth0**: API의 signing algorithm을 RS256, "JWT Access Token Profile"을 RFC 9068로 설정해야 `typ`이 `at+jwt`가 된다 `확인 필요`. issuer는 `https://<tenant>/`로 끝 슬래시가 붙는다. JWKS는 `https://<tenant>/.well-known/jwks.json`.
-- **Keycloak**: issuer는 `https://<host>/realms/<realm>`. JWKS는 `.../protocol/openid-connect/certs`. 기본 access token의 `typ`은 `Bearer`라서 이 서비스가 거부한다. 클라이언트 설정에서 `at+jwt` header type을 쓰도록 바꿔야 하며 제공하는 버전이 있는지 `확인 필요`. audience는 audience mapper로 넣는다.
+- **Keycloak**(26.2.5에서 실제 컨테이너로 확인): issuer는 `https://<host>/realms/<realm>`, JWKS는 `.../protocol/openid-connect/certs`다. 이 서비스는 https issuer만 받으므로 Keycloak을 TLS로 노출한다. 기본 access token은 header `typ`이 `JWT`라서 거부된다. 클라이언트의 **Advanced → Advanced settings**에서 "Use \"at+jwt\" as the access token header type"(속성 `access.token.header.type.rfc9068`)을 켜면 `at+jwt`가 된다. audience는 클라이언트에 *Audience* 유형의 protocol mapper를 추가해 *Included Custom Audience*에 API 이름을 넣는다. `aud`가 배열(`["aip-api","account"]`)로 나오는 것은 정상이다. 토큰에 `nbf`가 없는 것도 정상이다. 토큰 수명은 realm의 Access Token Lifespan을 900초 이하로 둔다. `sub`는 Keycloak 사용자 UUID이므로 `principal bind --subject <그 UUID>`로 연결한다. 스모크는 이 설정 그대로 12개 확인을 통과한다(`scripts/smoke-keycloak.sh`, 도커 필요).
 - **Entra ID**: v2 토큰의 issuer와 audience 형식, `typ` 값이 위 프로필과 맞는지 `확인 필요`. 맞지 않으면 사이에 토큰을 다시 발급하는 token exchange 계층이 필요하다.
 
 ## 서명 키 회전
