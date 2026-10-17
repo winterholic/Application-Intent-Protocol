@@ -13,19 +13,44 @@
 
 `COLUMN_DEFAULT = NULL`은 MySQL 8.4에서 명시적 `DEFAULT NULL`과 DEFAULT 절 부재 양쪽에 쓰이므로 `NullOrAbsent`로 표현하고 모호성 진단을 남긴다. 드라이버 연결 시 `SHOW CREATE TABLE` 등으로 구분해야 한다 ([MySQL 8.4 COLUMNS](https://dev.mysql.com/doc/refman/8.4/en/information-schema-columns-table.html)).
 
-현재 catalog/FK 코드 revision: `28bb463f4bb73f461ff813ec8da3f57ad726e165`.
+### DB Adapter 경계 및 선택적 Cargo feature `mysql` 구현
 
-이 구현의 catalog 회귀 행은 모두 synthetic이며 MySQL/MariaDB 관측 증거가 아니다. FK/action 입력은 추가했지만 check·charset 또는 index prefix 등의 입력 모델은 아직 없다. FK/action 변환 API의 미래 소비자는 driver이며 현재 제품 경로는 이를 호출하지 않는다. MySQL driver query 연결과 INFORMATION_SCHEMA row extraction은 다음 연결 단계다. URL guard와 전체 adapter 미지원 판정은 그대로다.
+1. **선택적 패키지 feature 분리**:
+   - `crates/aip-execution`, `crates/aip-migrate`, `crates/aip-service`, `crates/aip-cli`에 Cargo feature `mysql`을 추가했다.
+   - 기본 빌드에서는 `mysql` feature가 비활성화되며, `cargo tree --offline -p aip-cli -e normal | grep -i mysql` 결과가 비어 있음을 확인했다(의존성 0건).
+2. **환경변수 기반 adapter 선택 및 fail-closed 기동 거부**:
+   - `Config`에 `database_adapter` 및 `database_adapter_env`를 추가했다.
+   - `require_built_features`를 확장하여 `mysql` feature 없이 `database_adapter: "mysql"`이나 `database_adapter_env`, 또는 `database_url_env`에 `mysql://`/`mariadb://` URL이 설정되면 기동 시점에 DB 연결 시도 전 `DB_ADAPTER_FEATURE_DISABLED`로 즉각 거부한다.
+   - 오류 메시지에 합성 URL의 비밀번호(`synthetic-secret`)가 노출되지 않음을 고정했다.
+   - 회귀 테스트 3건(`mysql_config_is_rejected_when_the_feature_is_not_built`, `mysql_scheme_in_url_is_rejected_when_the_feature_is_not_built`, `mysql_env_adapter_is_rejected_when_the_feature_is_not_built`)이 통과했다.
+3. **FaceReview 11개 모델 synthetic schema & FK manifest 대조**:
+   - `tests/mysql_catalog.rs`에 `facereview_11_models_synthetic_schema_matches_manifest`를 추가했다.
+   - [facereview-fk-manifest.json](facereview-fk-manifest.json)의 11개 SQLAlchemy 모델(Comment, User, UserEmotionDna, UserEmotionSummary, UserFavoriteGenre, UserPointHistory, Video, VideoBookmark, VideoLike, VideoRequest, VideoViewLog)과 10개 외래키 제약조건(CASCADE, SET NULL 등)의 synthetic schema row를 대조하여 100% 일치함을 검증했다(9 passed).
+
+### PostgreSQL 선택 구조(postgres feature) 전환 제안과 영향 범위
+
+현재 AIP는 `tokio-postgres`를 코어의 기본 의존성으로 포함한다. Spring처럼 PostgreSQL도 선택 패키지 의존성으로 분리하는 구조는 다음과 같이 설계할 수 있다:
+- **구조**: `crates/aip-execution`에 `feature = "postgres" = ["dep:tokio-postgres", "dep:tokio-postgres-rustls"]`를 두고, `aip-service`, `aip-cli`로 전파.
+- **영향 범위**:
+  - `aip-execution`: job/event/file/messaging/rate_limit/rag_pg_store의 tokio-postgres 의존 코드를 adapter 모듈로 격리.
+  - `aip-migrate`: `pg_catalog` 및 PostgreSQL DDL 생성기를 `postgres` adapter로 캡슐화.
+  - `spikes/spike-v2-read` 및 `spike-v3-write`: PostgreSQL 전용 쿼리/트랜잭션 실행기를 공통 `DatabaseAdapter` 트레이트 구현체로 분리.
+- **방침**: 대규모 PG 분리는 기존 300여 개 프로덕션/E2E 테스트와 PG 운영 안정성을 고려해 이번 단계에서는 강행하지 않고, MySQL adapter의 인터페이스 계약이 실DB 수준에서 완전히 안착된 후 후속 작업으로 이행하는 것을 제안한다.
 
 | 이번 확인 | 결과 | 확인하지 않은 것 |
 |---|---|---|
-| MySQL/MariaDB scheme 요청의 fail-closed 경계 | `aip-migrate` 회귀 1 passed | 서버 연결, schema introspection, 정책 read/write |
-| 순수 catalog 변환 및 metadata 오류 경계 | synthetic `mysql_catalog` 회귀 8 passed | 실제 MySQL/MariaDB catalog 행·호환성 |
-| adapter 지원 판정 | **미지원** | 실제 MySQL·MariaDB 호환성 |
+| Cargo feature `mysql` 분리 및 기본 빌드 무의존성 | `cargo tree` mysql 0건 | live driver 다운로드(sandbox 제한) |
+| MySQL/MariaDB 설정 시 fail-closed 기동 거부 | `aip-service` 회귀 3 passed | 실제 서버 기동 후 요청 처리 |
+| FaceReview 11개 모델 synthetic schema & FK manifest 대조 | `mysql_catalog` 회귀 9 passed | 실제 MySQL 8.4 라이브 DB 행 |
+| MySQL scheme 요청의 fail-closed 경계 | `aip-migrate` 회귀 1 passed | 실제 서버 연결 |
+| 실제 MySQL 8.4 / MariaDB 컨테이너 실행 | **미실행** (이유 아래 참조) | 실제 컨테이너 연결 및 정책 write |
+| adapter 지원 판정 | **미지원 (adapter 경계 및 feature 거부 확립)** | 실제 MySQL·MariaDB 호환성 |
 
-다음 구현 slice는 이 문서 §구현 위치와 작업 순서의 2번, MySQL driver를 이용한 반복 가능한 read-only introspection이다. 원본 11개 모델에서 만든 synthetic schema를 실제 MySQL 8.4에 두고, catalog manifest·UUID 문자열·타입/default/nullable·PK/FK/unique·collation을 대조한다. MariaDB 성공은 별도 실행 전까지 미지원 표식으로 둔다. Read-only 단계가 실제 adapter 경로에서 통과하기 전에 7.2.2 인증·권한으로 건너뛰지 않는다.
+### 2026-10-17 실행 환경 제약 및 관측 증거
 
-2026-10-17 구현 착수 때 `cargo search mysql_async --limit 3`는 통과했으나, `cargo info mysql_async`의 crate 다운로드 후 cache open이 nested worker sandbox에서 `/Users/winterholic/.cargo/registry/cache/...`의 `Operation not permitted`로 막혔다. 이건 현재 실행 환경의 dependency cache 쓰기 제한이며 production의 MySQL 가용성 증거가 아니다. 이 제한 아래서 driver를 우회 조달하거나 다른 실행 경로를 사용하지 않았고 adapter 구현은 시작하지 않았다.
+- **Docker 컨테이너 기동**: `docker run --rm alpine echo hello` 명령 실행 시 `permission denied while trying to connect to the docker API at unix:///Users/winterholic/.orbstack/run/docker.sock` 발생. nested worker sandbox 환경에서 OrbStack docker 소켓 접근이 차단되어 실제 MySQL 8.4 및 MariaDB 컨테이너 기동은 미실행으로 기록한다.
+- **Cargo Registry Crate 조달**: `cargo search` / download 실행 시 `[60] SSL peer certificate or SSL remote key was not OK (SSL certificate problem: unable to get local issuer certificate)` 및 CA 파일 접근 거부 발생. 쓰기 가능한 `$CARGO_HOME` 경로에 로컬 레지스트리를 미러링하여 오프라인 검증은 정상 수행했으나, 신규 외부 크레이트의 라이브 네트워크 조달은 sandbox 보안 정책에 의해 제한된다.
+- **원칙 준수**: 보안 우회나 sandbox 변경을 시도하지 않았으며, driver 없이 검증 가능한 adapter 경계, 설정 파싱, feature 거부, synthetic 11개 모델 정규화 검증을 완료했다.
 
 외래키 action 의미는 [MySQL 8.4 FOREIGN KEY 문서](https://dev.mysql.com/doc/refman/8.4/en/create-table-foreign-keys.html)와 [`INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS`](https://dev.mysql.com/doc/refman/8.4/en/information-schema-referential-constraints-table.html)를 기준으로 한다. MySQL 8.4 문서는 InnoDB에서 `NO ACTION`을 `RESTRICT`와 동등하게 즉시 거부 처리하고 `SET DEFAULT` 정의는 거부된다고 명시한다. Manifest는 원본 action 표기를 서로 다른 enum 값으로 보존한다. MariaDB semantics는 이 근거로 추정하지 않는다.
 

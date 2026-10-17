@@ -8,6 +8,7 @@ license.workspace = true
 [features]
 default = []
 external-brokers = ["dep:futures-util", "dep:lapin", "dep:rdkafka"]
+mysql = []
 
 [dependencies]
 serde.workspace = true

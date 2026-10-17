@@ -5,7 +5,7 @@
 | 통로 | 현재 제품 지원 | 부재·경계 | 우선순위 |
 |---|---|---|---|
 | PostgreSQL | URL 환경변수, TLS/CA, pool, migration/runtime 역할 분리. 이번에 UUID·외부 schema introspect/mapping/DDL 비소유 모드·drift 검사 추가 | PG15+, 단일 숫자/UUID PK. 자동 introspect의 enum/numeric/JSONB·복합키·cross-schema FK 보완 필요 | P0 구현·검증, 타입/부분 schema 선택은 P1 |
-| 기타 업무 DB | 없음 | MySQL/MariaDB/SQLite/MongoDB adapter. 기존 PG가 권장이라는 이유로 영구 차단하지 않음 | P2: SQL 방언/트랜잭션 보장별 adapter 계약부터 |
+| 기타 업무 DB | MySQL/MariaDB adapter 경계 정리, Cargo feature `mysql` 분리, 환경변수/기동 시점 fail-closed 검증, FaceReview 11개 모델 synthetic FK/schema 대조 완료 | SQLite/MongoDB adapter 없음. live MySQL 8.4/MariaDB 컨테이너 검증 및 드라이버 런타임 연결 진행 중 | P1: MySQL/MariaDB read-only introspection 및 정책 read/write 실제 DB 검증 |
 | 외부 IdP | issuer/audience + RS256 access token, HTTPS/file JWKS, 영속 subject→actor bind/revoke. 숫자와 UUID 업무 actor | OIDC 로그인 UI·authorization-code/PKCE는 앱/IdP 책임. 실제 외부 IdP 계정으로 smoke는 별도 | P1: 대표 IdP 운영 예제와 테스트, 임의 claim→actor 매핑은 명시적 정책 유지 |
 | 메시지 브로커 | `external-brokers` feature의 Kafka(TLS/SASL)·RabbitMQ, PG managed queue/inbox/outbox relay | NATS·SQS/SNS·Redis Streams 없음. feature 없이 설정하면 거부. 실제 브로커 환경 검증은 이번 범위 밖 | P1: 설치/운영·오류/재시도 검증; 추가 공급자는 P2 |
 | Object storage | local filesystem, S3-compatible endpoint/bucket/region·서명 요청, GCS HMAC | Azure Blob, GCS native OAuth·workload identity 없음. 이번에는 실제 cloud bucket을 호출하지 않음 | P1: 공급자 운영 smoke/최소 권한; Azure·workload identity는 P2 |

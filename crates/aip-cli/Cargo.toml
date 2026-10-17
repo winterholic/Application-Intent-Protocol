@@ -8,6 +8,7 @@ license.workspace = true
 [features]
 default = []
 external-brokers = ["aip-service/external-brokers"]
+mysql = ["aip-service/mysql"]
 # The PoC runtime behind `aip run/migrate/rekey/token/diff --against deployed`: HTTP server, outbox, jobs, encrypted fields.
 poc-runtime = ["dep:aip-runtime", "dep:tracing-subscriber"]
 

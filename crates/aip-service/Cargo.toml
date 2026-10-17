@@ -8,6 +8,7 @@ license.workspace = true
 [features]
 default = []
 external-brokers = ["aip-execution/external-brokers", "spike-v6-transport/external-brokers"]
+mysql = ["aip-execution/mysql", "aip-migrate/mysql"]
 
 [dependencies]
 aip-auth = { path = "../aip-auth" }

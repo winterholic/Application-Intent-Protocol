@@ -5,7 +5,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = []
+mysql = ["aip-execution/mysql"]
+
 [dependencies]
+aip-execution = { path = "../aip-execution", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"

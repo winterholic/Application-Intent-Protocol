@@ -244,6 +244,12 @@ pub struct Config {
     /// `serve`, `principal`, `jobs` and `audit` run under a role that cannot alter or drop the application tables (O-22).
     #[serde(default)]
     pub migrate_database_url_env: Option<String>,
+    /// Optional database adapter selection ("postgres", "mysql", "mariadb").
+    #[serde(default)]
+    pub database_adapter: Option<String>,
+    /// Environment variable name to select the database adapter without putting it in config files.
+    #[serde(default)]
+    pub database_adapter_env: Option<String>,
     #[serde(default)]
     pub db_pool: infrastructure::DbPoolConfig,
     #[serde(default = "default_listen")]
@@ -500,6 +506,16 @@ fn configuration(path: &Path) -> Result<Config, Value> {
     {
         return Err(error("BAD_CONFIG", "migrate_database_url_env는 영문자·숫자·'_'로 된 환경 변수 이름이어야 함(DB URL 자체가 아님)"));
     }
+    if config.database_adapter_env.as_deref().is_some_and(|name| name.is_empty() || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'))
+    {
+        return Err(error("BAD_CONFIG", "database_adapter_env는 영문자·숫자·'_'로 된 환경 변수 이름이어야 함"));
+    }
+    if let Some(adapter) = &config.database_adapter {
+        let a = adapter.trim().to_ascii_lowercase();
+        if !matches!(a.as_str(), "postgres" | "mysql" | "mariadb") {
+            return Err(error("BAD_CONFIG", "database_adapter는 postgres, mysql 또는 mariadb여야 함"));
+        }
+    }
     spike_v6_transport::server::ServerOptions { allowed_origins: config.allowed_origins.clone() }.validate_product().map_err(|_| {
         error(
             "BAD_ORIGIN",
@@ -525,6 +541,7 @@ fn configuration(path: &Path) -> Result<Config, Value> {
     if let Some(worker) = &config.workers {
         validate_integrations_shape(&worker.integrations)?;
     }
+    require_built_features(&config)?;
     Ok(config)
 }
 
@@ -1168,12 +1185,50 @@ async fn principal(config: Config, command: Principal) -> Result<Value, Value> {
         .map_err(|_| error("PRINCIPAL_UNSETTLED", "사용자 연결 변경 결과 불명; 상태 확인 필요"))?
 }
 
+/// Resolve the selected database adapter from config or environment variable.
+pub fn resolve_database_adapter(config: &Config) -> Result<String, Value> {
+    if let Some(env_name) = &config.database_adapter_env
+        && let Ok(val) = std::env::var(env_name)
+    {
+        let trimmed = val.trim().to_ascii_lowercase();
+        if !trimmed.is_empty() {
+            if !matches!(trimmed.as_str(), "postgres" | "mysql" | "mariadb") {
+                return Err(error("BAD_CONFIG", "환경변수 database_adapter는 postgres, mysql 또는 mariadb여야 함"));
+            }
+            return Ok(trimmed);
+        }
+    }
+    if let Some(adapter) = &config.database_adapter {
+        let trimmed = adapter.trim().to_ascii_lowercase();
+        if !matches!(trimmed.as_str(), "postgres" | "mysql" | "mariadb") {
+            return Err(error("BAD_CONFIG", "database_adapter는 postgres, mysql 또는 mariadb여야 함"));
+        }
+        return Ok(trimmed);
+    }
+    if let Ok(url) = std::env::var(&config.database_url_env)
+        && let Some((scheme, _)) = url.split_once("://")
+    {
+        let s = scheme.trim().to_ascii_lowercase();
+        if s == "mysql" || s == "mariadb" {
+            return Ok(s);
+        }
+    }
+    Ok("postgres".to_string())
+}
+
 /// Rejects configuration that needs an optional package this binary was built without.
 /// Runs before any database or network access so the operator sees the missing feature first.
-fn require_built_features(config: &Config) -> Result<(), Value> {
+pub fn require_built_features(config: &Config) -> Result<(), Value> {
     #[cfg(not(feature = "external-brokers"))]
     if config.broker.is_some() {
         return Err(error("BROKER_FEATURE_DISABLED", "broker 설정을 사용하려면 external-brokers feature로 빌드해야 함"));
+    }
+    #[cfg(not(feature = "mysql"))]
+    {
+        let adapter = resolve_database_adapter(config)?;
+        if adapter == "mysql" || adapter == "mariadb" {
+            return Err(error("DB_ADAPTER_FEATURE_DISABLED", "MySQL/MariaDB adapter를 사용하려면 mysql feature로 빌드해야 함"));
+        }
     }
     let _ = config;
     Ok(())
@@ -1607,6 +1662,61 @@ mod managed_config_tests {
         .unwrap();
         let rejected = require_built_features(&config).unwrap_err();
         assert_eq!(rejected["code"], "BROKER_FEATURE_DISABLED");
+    }
+
+    #[cfg(not(feature = "mysql"))]
+    #[test]
+    fn mysql_config_is_rejected_when_the_feature_is_not_built() {
+        for adapter in ["mysql", "mariadb"] {
+            let config: Config = serde_json::from_value(json!({
+                "schema": "aip_test",
+                "auth": {"issuer": "https://issuer.example", "audience": "aip", "jwks": {"kind": "file", "path": "jwks.json"}},
+                "database_adapter": adapter
+            }))
+            .unwrap();
+            let rejected = require_built_features(&config).unwrap_err();
+            assert_eq!(rejected["code"], "DB_ADAPTER_FEATURE_DISABLED");
+        }
+    }
+
+    #[cfg(not(feature = "mysql"))]
+    #[test]
+    fn mysql_scheme_in_url_is_rejected_when_the_feature_is_not_built() {
+        let env_var = "TEST_AIP_DB_URL_REJECT_TEST";
+        for url in [
+            "mysql://baseline:synthetic-secret@127.0.0.1:23306/facereview",
+            "mariadb://baseline:synthetic-secret@127.0.0.1:23306/facereview",
+        ] {
+            unsafe { std::env::set_var(env_var, url) };
+            let config: Config = serde_json::from_value(json!({
+                "schema": "aip_test",
+                "auth": {"issuer": "https://issuer.example", "audience": "aip", "jwks": {"kind": "file", "path": "jwks.json"}},
+                "database_url_env": env_var
+            }))
+            .unwrap();
+            let rejected = require_built_features(&config).unwrap_err();
+            assert_eq!(rejected["code"], "DB_ADAPTER_FEATURE_DISABLED");
+            assert!(!rejected.to_string().contains("synthetic-secret"));
+        }
+        unsafe { std::env::remove_var(env_var) };
+    }
+
+    #[cfg(not(feature = "mysql"))]
+    #[test]
+    fn mysql_env_adapter_is_rejected_when_the_feature_is_not_built() {
+        let env_var = "TEST_AIP_DB_ADAPTER_ENV_TEST";
+        for adapter in ["mysql", "mariadb"] {
+            unsafe { std::env::set_var(env_var, adapter) };
+            let config: Config = serde_json::from_value(json!({
+                "schema": "aip_test",
+                "auth": {"issuer": "https://issuer.example", "audience": "aip", "jwks": {"kind": "file", "path": "jwks.json"}},
+                "database_adapter_env": env_var
+            }))
+            .unwrap();
+            let rejected = require_built_features(&config).unwrap_err();
+            assert_eq!(rejected["code"], "DB_ADAPTER_FEATURE_DISABLED");
+        }
+        unsafe { std::env::remove_var(env_var) };
     }
 
     #[test]

@@ -179,3 +179,78 @@ fn rejects_malformed_or_unsupported_foreign_key_metadata() {
     missing_target_column.referenced_column_name = None;
     assert!(normalize_foreign_keys("face", "comment", &columns, vec![missing_target_column]).unwrap_err().to_string().contains("referenced column"));
 }
+
+#[test]
+fn facereview_11_models_synthetic_schema_matches_manifest() {
+    let manifest_json = include_str!("../../../plan-docs/porting/facereview-fk-manifest.json");
+    let manifest_val: serde_json::Value = serde_json::from_str(manifest_json).expect("valid manifest json");
+    let models = manifest_val["models"].as_array().expect("models array");
+    assert_eq!(models.len(), 11, "FaceReview must have exactly 11 models");
+
+    // Synthetic column helper for FaceReview models
+    let col = |name: &str, ord: u64, dt: &str, ct: &str, nullable: bool| {
+        let mut c = column(name, dt, ct);
+        c.ordinal_position = ord;
+        c.is_nullable = if nullable { "YES".into() } else { "NO".into() };
+        c
+    };
+
+    // Verify all 11 models normalize properly
+    for m in models {
+        let table_name = m["table"].as_str().unwrap();
+        let pk_col = format!("{}_id", table_name);
+        let columns = vec![
+            col(&pk_col, 1, "varchar", "varchar(36)", false),
+            col("created_at", 2, "timestamp", "timestamp", true),
+        ];
+        let indexes = vec![IndexRow::column("PRIMARY", 0, 1, &pk_col)];
+        let normalized = normalize_table(table_name, columns, indexes).expect("synthetic model table should normalize");
+        assert_eq!(normalized.name, table_name);
+        assert_eq!(normalized.indexes[0].columns, [pk_col.as_str()]);
+        assert!(normalized.indexes[0].primary);
+
+        // Normalize FKs if declared in manifest
+        let fk_declarations = m["foreign_keys"].as_array().unwrap();
+        let mut source_cols = vec![pk_col, "created_at".into()];
+        for fk in fk_declarations {
+            source_cols.push(fk["column"].as_str().unwrap().into());
+        }
+
+        let mut fk_rows = Vec::new();
+        for fk in fk_declarations {
+            let col_name = fk["column"].as_str().unwrap();
+            let ref_table = fk["referenced_table"].as_str().unwrap();
+            let ref_col = fk["referenced_column"].as_str().unwrap();
+            let on_del = fk["on_delete"].as_str().unwrap();
+            let on_upd = fk["on_update"].as_str().unwrap();
+            fk_rows.push(ForeignKeyRow {
+                constraint_schema: "facereview_baseline".into(),
+                table_name: table_name.into(),
+                constraint_name: format!("fk_{}_{}", table_name, col_name),
+                ordinal_position: 1,
+                column_name: col_name.into(),
+                referenced_table_schema: Some("facereview_baseline".into()),
+                referenced_table_name: Some(ref_table.into()),
+                referenced_column_name: Some(ref_col.into()),
+                delete_rule: Some(on_del.into()),
+                update_rule: Some(on_upd.into()),
+            });
+        }
+
+        let normalized_fks = normalize_foreign_keys("facereview_baseline", table_name, &source_cols, fk_rows)
+            .expect("synthetic FKs should normalize");
+        assert_eq!(normalized_fks.len(), fk_declarations.len());
+
+        for expected in fk_declarations {
+            let exp_col = expected["column"].as_str().unwrap();
+            let actual = normalized_fks
+                .iter()
+                .find(|k| k.columns == [exp_col])
+                .expect("FK for column must exist in normalized results");
+            assert_eq!(actual.referenced_table, expected["referenced_table"].as_str().unwrap());
+            assert_eq!(actual.referenced_columns, [expected["referenced_column"].as_str().unwrap()]);
+            assert_eq!(actual.on_delete.to_string(), expected["on_delete"].as_str().unwrap());
+            assert_eq!(actual.on_update.to_string(), expected["on_update"].as_str().unwrap());
+        }
+    }
+}
