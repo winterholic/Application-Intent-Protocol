@@ -48,8 +48,50 @@ Codex 작업 세션이 취소된 7개 브랜치를 이어받아 main에 통합�
 - `cargo clippy --all-targets`는 spike-v2-read의 `needless_lifetimes`(main에도 있음) 때문에 spike v2/v6에서 실패한다. `tools/verify.sh`가 요구하는 clippy 명령은 통과한다.
 - `prototype/Cargo.lock`은 main에서 `--locked` 검사가 이미 실패했고 이번에 갱신했다.
 - 8.3 큐 포화 테스트는 호출이 100ms 안에 끝나는지만 본다. 드롭 카운터는 검증하지 않는다.
-- 8.9는 연결이 닫힌 경우(`is_closed`)만 `COMMIT_UNKNOWN`으로 분류한다. 그 밖의 연결 오류 형태는 실행해 보지 않았다.
+- 8.9는 연결이 닫힌 경우(`is_closed`)만 `COMMIT_UNKNOWN`으로 분류한다. 그 밖의 연결 오류 형태는 실행해 보지 않았다. (다음 절 "WBS 8.9 분류 보강"에서 실행했다.)
 - GitHub Actions 워크플로 변경, 실제 Kafka·RabbitMQ·MinIO smoke, Linux 격리는 이번 회차에 실행하지 않았다.
+
+## WBS 8.9 분류 보강 (2026-10-18, Claude 구현 / 독립 검증 대기)
+
+대상은 `spikes/spike-v6-transport`의 `/apply` 쓰기 경로다. 이 회차의 구현과 실행은 같은 Run의 Claude이고, 별도 문맥의 독립 검증은 아직 없다. DB 테스트는 이 Run이 만든 PostgreSQL 17.11 컨테이너(`127.0.0.1:32786`, DB `aip_test_wbs89`)에서만 실행했고 공유 `127.0.0.1:5432`에는 접속하지 않았다. 저장소의 DSN 가드(`aip-test-support`)가 켜진 상태다.
+
+### 바꾼 분류
+
+| 연결 단절 시점 | 수정 전 | 수정 후 |
+|---|---|---|
+| COMMIT 전송 전(UPDATE 직후, 멱등 INSERT 직후) | `WIRE.INTERNAL`, `retry: later` | `WIRE.DB_UNAVAILABLE`. 커밋되지 않았고 같은 키로 다시 보내면 새로 실행된다 |
+| COMMIT 호출 시점에 연결이 이미 닫힘(COMMIT이 나가지 못함) | `WIRE.COMMIT_UNKNOWN`(표지를 먼저 올림) | `WIRE.DB_UNAVAILABLE`, 표지 유지 안 함 |
+| COMMIT 전송 뒤 응답 손실(FIN, RST, 서버가 COMMIT을 받지 못함, backend 종료) | `WIRE.COMMIT_UNKNOWN` | 같다 |
+| COMMIT 응답을 해석할 수 없음(`Kind::Parse`), 예상 밖 메시지(`Kind::UnexpectedMessage`) | `WIRE.INTERNAL` | `WIRE.COMMIT_UNKNOWN` |
+| 서버가 거절한 COMMIT(23514, 23505, 40001, 40P01) | `BAD_VALUE`, `ALREADY_EXISTS`, `CONFLICT` | 같다. `COMMIT_UNKNOWN`으로 넓히지 않는다 |
+
+판정은 `connection_failed`(SQLSTATE가 없고 `is_closed`이거나 Io·UnexpectedMessage·Parse 문구)이다. 서버 SQLSTATE가 있는 오류와 로컬 파라미터 직렬화 오류는 연결 오류로 보지 않는다. COMMIT 전 단계에서 쓰기 엔진이 오류 원본을 지운 거절은 연결이 이미 닫혔고 코드가 `WIRE.INTERNAL`일 때만 `DB_UNAVAILABLE`로 바꾼다.
+
+### 실행 결과
+
+| 명령(`spikes/spike-v6-transport`, `/tmp/aip-wbs89-classify-20261018`) | 결과 |
+|---|---|
+| 새 테스트를 먼저 쓰고 분류 코드는 수정 전과 같은 상태로 `cargo test --locked --test commit_unknown_wire` (red) | 11개 중 5 failed: 전송 전 단절 2개(`WIRE.INTERNAL`), 이미 닫힌 연결(`COMMIT_UNKNOWN`), 해석 불가·예상 밖 응답 2개(`WIRE.INTERNAL`) |
+| 수정 후 같은 명령 (green) | 11 passed, 0 failed |
+| 변이 1: `connection_failed`를 `is_closed`만으로 되돌림 | 2 failed (`unparseable_*`, `unexpected_message_*`) |
+| 변이 2: COMMIT 전 `is_closed` 검사 제거 | 1 failed (`commit_on_an_already_closed_connection_*`) |
+| 변이 3: 전송 전 코드를 `WIRE.INTERNAL`로 되돌림 | 3 failed (전송 전 단절 2개, 이미 닫힌 연결) |
+| 변이 4: `connection_failed`를 항상 true로 넓힘 | 2 failed (`definite_commit_rejections_*`, `connection_failure_predicate_*`) |
+| `cargo clippy --all-targets --locked -- -D warnings` (spike-v6) | 통과. 수정 전에는 `commit_unknown_wire.rs` 105·202·221줄의 3개(`manual_range_contains`, `bool_assert_comparison` 2개)로 실패 |
+| `cargo clippy --workspace --all-targets --locked -- -D warnings` (루트) | 통과(수정 전에도 통과. spike는 루트 workspace가 아니다) |
+| `cargo fmt --all --check` (루트) | 통과. 수정 전 main에서도 `spike-v6-transport/tests/otlp.rs` 포맷 차이로 실패하고 있어 그 파일만 포맷했다 |
+| `cargo test --locked --no-fail-fast` (spike-v6 전체) | 187 passed, 7 targets failed(아래) |
+
+전체 실행의 실패 7개 타깃은 수정 전 main에서도 같은 테스트가 같이 실패했다. `v12_typed`, `v13_idwire`, `v14_apply`, `v15_values`, `v16_bundle`은 `tsc`가 이 환경에 없어 파일을 찾지 못하는 오류(`NotFound`)이고, `--lib`는 `pool::tests::checkout_is_bounded_by_pool_capacity_and_acquire_deadline`(30ms 기한)이다. 이 pool 테스트는 단독 실행 3회는 통과했다. `write_isolation`은 pool checkout 기한 초과(`WIRE.DB_UNAVAILABLE`)로 실패하며 원인은 조사하지 않았다. 이 항목들은 이번 변경과 무관한 사전 실패다.
+
+### 미검증·남은 것
+
+- `Kind::Io`는 연결 task 안에서만 생기고 호출자에게는 `Closed`로 전달된다. RST를 보내는 테스트도 호출자에게는 `Closed`로 보였다. 따라서 `Io` 자체의 호출자 쪽 재현은 못 했다. 표시 문구 비교는 tokio-postgres 0.7.18 기준이며, 그 문구가 바뀌면 해석 불가·예상 밖 응답 테스트가 깨지도록 했다.
+- 서버가 보내는 SQLSTATE 08·57P01(관리자 종료) 오류는 분류에 넣지 않았다. `pg_terminate_backend` 재현에서도 호출자는 FATAL 대신 `Closed`를 받아 그 경로를 만들 수 없었다.
+- COMMIT 호출 직전의 `is_closed` 검사와 실제 전송 사이의 짧은 경합에서 닫히면 `COMMIT_UNKNOWN`(보수적 쪽)으로 보고된다.
+- 이 보강은 `/apply` 핵심 경로(`apply_attempt`)만 고쳤다. 같은 COMMIT 분류가 필요할 수 있는 다른 경로는 실행하지 않았다: `write_extension.rs`(`classify_write_error("커밋", ..)`), `spike-v4-worker/src/write.rs`, `spike-v3-write/src/lib.rs`의 COMMIT, `durable.rs`.
+- COMMIT 전 단계에서 쓰기 엔진이 오류 원본을 지운 거절은 서버 FATAL(57P01 등)이면 `WIRE.INTERNAL`로 남는다.
+- GPT 독립 검증 전이다. 완료가 아니라 "독립 검증 대기"다.
 
 ## WBS A: 외부 IdP·TLS reverse proxy 운영 smoke (2026-10-17)
 
