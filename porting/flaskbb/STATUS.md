@@ -7,6 +7,58 @@
 - 전체 의미 기능 분모는 [INVENTORY.md](INVENTORY.md)에 잠근다. URL/endpoint/table 수는 별도 커버리지 축이며 기능 수로 합산하지 않는다.
 - 기획의 독립 완료·출시 판정은 이 작업 이후 별도로 요구된다. 현재 전체 포팅·기능 동등성·배포 준비 완료가 아니다.
 
+## 2026-10-18 Run — 7.5.1 잔여 DSN 가드 + 7.5.2 페이지네이션/last-post 선언 + 7.5.3 메일 job/CLI 대조
+
+**환경 제약 (이 세션)**: 실행 샌드박스가 listen 소켓을 전면 차단(`bind` EPERM)하고
+OrbStack VM이 시작 타임아웃(`orbctl start` 실패 반복)으로 전용 PG(127.0.0.1:55439)를
+기동할 수 없었다. 네이티브 PG 17.6을 /tmp에 빌드했으나 (a) 샌드박스에 UID 501의
+passwd 항목이 없어 initdb 거부 → 소스 패치로 우회, (b) SysV shmget 차단으로 bootstrap
+실패 → 중단. 따라서 리스너 기동·실DB 연결이 필요한 검증은 전부 미실행이며, 아래의
+실행 증거는 listen/DB 불필요 항목만이다. 독립 검증 게이트에서 DB 환경으로 재실행 필요.
+
+**7.5.1 잔여 (전 세션 미커밋분 인수)**: `crates/aip-auth/tests/common/mod.rs`(신규,
+DSN 파싱·검증: 기본 DB/user/template 거부, percent-decode 후 재검사, service/host/
+hostaddr/port/dbname/user/password 쿼리 오버라이드 거부, unix 소켓·멀티호스트 거부,
+loopback 강제, 정규화 URL 재생성, PGPASSWORD/PG* 환경 격리) + `db_guard.rs`(신규,
+11개 단위 테스트) + `durable.rs`/`jwt.rs`의 공통 모듈 사용 전환.
+- 실행: `cargo test -p aip-auth --offline --no-run` 컴파일 통과,
+  `db_guard` 11 passed/0 failed. `jwt`/`durable` DB 연결분은 미실행.
+- 이전 FAIL 5결함(인증 컴파일·정지계정 차단·권한상승 차단·쪽지 양방향·이메일 검증)의
+  코드 수정은 2bf962d·cc3d5df에 이미 반영됨. 본 세션은 DSN 우회 벡터 경화분을 얹는다.
+
+**7.5.2 선언 (service check 통과, executionDigest `6ffbbab6…`)**:
+- 전 list read에 `offset` 예산 추가(원본 `paginate()` 대응, 기본 10/페이지:
+  Topic 2000, Post 5000, User 1000+cursor, Conversation 1000+cursor,
+  Message 2000+cursor, read-marker 3종 1000+cursor, Report 1000, 기타 500~2000).
+- `Post.publish`에 동일 트랜잭션 `update Forum where id = this.forum`
+  (last_post/last_post_user/last_post_title/last_post_username/last_post_created) 추가.
+ effect 문장의 구분자는 `;` (`,` 불가)임을 checker로 확인. 삭제/hide 시 재계산은 미선언.
+- 갭 기록: `sort`에 Bool 불가 → sticky(important-first) 정렬 불가.
+  Topic/Post id가 UUID라 keyset 커서는 해당 read에 미선언(의미 없음).
+- `features.test.mjs` 9절 추가(문법 `node --check` 통과, 실행 미실행):
+  Topic offset 3+3+1 분할/서로소/전체커버, offset 2001 거부, User 커서 2+2+1 연쇄,
+  최종 reply의 Forum.last_post_* 단언(DB last_post_id/username 대조 포함),
+  TopicRead 위조 거부·본인 marker 전진, Report 2+1 페이징·reporter 0건·mod 3건,
+  editor Category.create 거부.
+
+**7.5.3**:
+- F14: `operation job sendActivationEmail/sendPasswordResetEmail` 선언
+  (`implementation "flaskbb_mail.send_*", effect none, allow actor != null`
+  남용 주의 주석 포함) + `mail/flaskbb_mail.py` 구현 + `tests/test_mail_jobs.py`
+  3 passed (수신자·발신자·토큰 링크·fail-closed, 소켓 없이 순수 구성 검증).
+  실제 SMTP 송신·serve job 기동은 미실행. [CLI-MAPPING.md](CLI-MAPPING.md)에 F13 대조표 작성.
+- F13: 원본 install/populate/db/users/celery/shell/urls/makeconfig/translations →
+  `service init/migrate/principal/jobs/audit/gen` 대응. `check`/`gen`만 실행됨
+  (20 descriptors, fingerprint `873e35e6…`).
+- F15: `contains` 필터 선언 유지(색인 없이 항상 일관). 제품 다이얼렉트에서
+  최상위 `search` 선언은 파서 거부(`DEF.LEX_UNEXPECTED_CHAR`) → 순위 기반 전문검색은
+  제품 갭으로 확정. Whoosh 동기화 불필요(색인 자체가 없음).
+
+**계속 미완료**: 전용 PG에서의 전 suite 재실행(jwt/durable/features/provisioning/
+aip-read), serve 기동 후 offset/after/last-post 실동작, mail 실제 송신·job 기동,
+clean-checkout `init→migrate→seed→serve` 재현, User 물리 삭제 전이 여부, i18n.
+7.5.4(독립 검증 게이트)는 착수하지 않음.
+
 ## 2026-10-17 새 컨텍스트 — 독립 FAIL (db18f573) 비활성 쓰기 차단 및 auth DB 테스트 파라미터화
 
 **기준**: 시작 SHA `db18f573fd669ac6b95a512a698c7b395dfee49f`, branch `porting/flaskbb-full-2019`. 독립 검증(작업자 66f533e8, Claude Sonnet) 결과 FAIL 판정. 검증 보고서: `/Users/winterholic/.ttakkari/data/outbox/fecbc43e-400c-4c3f-a4e8-8124b658b9f4/flaskbb-independent-verification-20261017/verification-report.md`.

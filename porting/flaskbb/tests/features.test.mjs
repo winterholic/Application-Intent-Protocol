@@ -946,7 +946,144 @@ test('FlaskBB ported features: search, profile, conversations, tracker, admin CR
     assert.equal(reactivatedTrash.ok, true, 'reactivated alice can trash conversation');
     assert.equal(sql(`SELECT trash FROM ${q}.conversation WHERE id=${aliceConversationId}`), 't', 'mailbox trashed after reactivation');
 
-    console.log(JSON.stringify({schema, ok: true, featuresVerified: ['F07_search', 'F03_profile', 'F09_conversations', 'F06_tracker_read', 'F04_F10_admin_crud', 'UI_live_integration', 'deactivated_writes_rejected', 'reactivation_recovered', 'forged_mailbox_rejected']}));
+    // =========================================================================
+    // 9. F01/F05 offset pagination + Forum last-post projection, F06 read
+    //    markers, F08 report queue paging (7.5.2: declared offset/cursor budgets)
+    // =========================================================================
+    const seedTopic101 = '00000000-0000-4000-8000-000000000101';
+    const seedPost201 = '00000000-0000-4000-8000-000000000201';
+    for (let i = 1; i <= 6; i++) {
+      const topicId = randomUUID();
+      const postId = randomUUID();
+      const probeIso = new Date().toISOString();
+      const mkTopic = await alice.bundle({atomic: [
+        {create: 'Topic', values: {id: topicId, forum: '1', title: `Pagination probe topic ${i}`, user: '2', username: 'member-alice', locked: false, important: false, views: 0, published: false, deleted: false}},
+      ]}, {key: `page-topic-${i}`});
+      assert.equal(mkTopic.ok, true, JSON.stringify(mkTopic));
+      const mkPost = await alice.bundle({atomic: [
+        {create: 'Post', values: {id: postId, topic: topicId, forum: '1', user: '2', username: 'member-alice', content: `Pagination probe post ${i}`, hidden: false, published: false, version: 0, deleted: false}},
+      ]}, {key: `page-post-${i}`});
+      assert.equal(mkPost.ok, true, JSON.stringify(mkPost));
+      const pubPost = await alice.bundle({atomic: [{apply: 'Post.publish', target: {ids: [postId]}}]}, {key: `page-post-pub-${i}`});
+      assert.equal(pubPost.ok, true, JSON.stringify(pubPost));
+      const link = await alice.bundle({atomic: [{create: 'TopicFirstPost', values: {topic: topicId, post: postId}}]}, {key: `page-link-${i}`});
+      assert.equal(link.ok, true, JSON.stringify(link));
+      const pubTopic = await alice.bundle({atomic: [{apply: 'Topic.publish', target: {ids: [topicId]}}]}, {key: `page-topic-pub-${i}`});
+      assert.equal(pubTopic.ok, true, JSON.stringify(pubTopic));
+    }
+
+    // 9a. Topic offset pages: 1 seed + 6 probes visible to alice (hidden seed excluded by row policy)
+    const topicPage = async offset => (await alice.read({
+      read: 'Topic',
+      select: ['id', 'title'],
+      filter: [{field: 'forum', op: 'eq', value: '1'}],
+      sort: [{field: 'id', dir: 'asc'}],
+      limit: 3,
+      offset,
+    })).rows;
+    const pg0 = await topicPage(0);
+    const pg1 = await topicPage(3);
+    const pg2 = await topicPage(6);
+    assert.deepEqual([pg0.length, pg1.length, pg2.length], [3, 3, 1]);
+    const allPageIds = [...pg0, ...pg1, ...pg2].map(r => r.id);
+    assert.equal(new Set(allPageIds).size, 7, 'pages must be disjoint and cover all visible topics');
+    assert.ok(allPageIds.includes(seedTopic101), 'seed topic must appear in exactly one page');
+
+    // offset beyond the declared budget cap must be rejected, rows unchanged
+    let offsetRejected = false;
+    try {
+      const over = await alice.read({read: 'Topic', select: ['id'], sort: [{field: 'id', dir: 'asc'}], limit: 3, offset: 2001});
+      offsetRejected = over.ok === false;
+    } catch {
+      offsetRejected = true;
+    }
+    assert.equal(offsetRejected, true, 'offset above budget cap must be rejected');
+
+    // 9a2. User keyset cursor: ids 1..5 chain without gaps
+    const userPage = async after => (await alice.read({
+      read: 'User',
+      select: ['id', 'username'],
+      sort: [{field: 'id', dir: 'asc'}],
+      limit: 2,
+      ...(after ? {after} : {}),
+    })).rows;
+    const u0 = await userPage(undefined);
+    assert.deepEqual(u0.map(r => r.id), ['1', '2']);
+    const u1 = await userPage({id: u0[1].id});
+    assert.deepEqual(u1.map(r => r.id), ['3', '4']);
+    const u2 = await userPage({id: u1[1].id});
+    assert.deepEqual(u2.map(r => r.id), ['5']);
+
+    // 9b. Last-post projection: final reply drives Forum.last_post_* in the same transaction
+    const probeReplyId = randomUUID();
+    const replyIso = new Date().toISOString();
+    const mkReply = await alice.bundle({atomic: [
+      {create: 'Post', values: {id: probeReplyId, topic: seedTopic101, forum: '1', user: '2', username: 'member-alice', content: 'Final last-post probe reply', hidden: false, published: false, version: 0, deleted: false}},
+    ]}, {key: 'lastpost-reply-create'});
+    assert.equal(mkReply.ok, true, JSON.stringify(mkReply));
+    const pubReply = await alice.bundle({atomic: [{apply: 'Post.publish', target: {ids: [probeReplyId]}}]}, {key: 'lastpost-reply-publish'});
+    assert.equal(pubReply.ok, true, JSON.stringify(pubReply));
+    const forum1 = (await alice.read({
+      read: 'Forum',
+      select: ['id', 'last_post', 'last_post_user', 'last_post_title', 'last_post_username', 'last_post_created'],
+      filter: [{field: 'id', op: 'eq', value: '1'}],
+    })).rows[0];
+    assert.equal(forum1.last_post, probeReplyId);
+    assert.equal(forum1.last_post_user, '2');
+    assert.equal(forum1.last_post_title, 'First Discussion Topic');
+    assert.equal(forum1.last_post_username, 'member-alice');
+    assert.ok(forum1.last_post_created, 'last_post_created must be set');
+    assert.ok(Math.abs(Date.parse(forum1.last_post_created) - Date.parse(replyIso)) <= 5000, 'last_post_created must track publish time');
+    assert.equal(sql(`SELECT last_post_id FROM ${q}.forum WHERE id=1`), probeReplyId, 'DB last_post_id must match the published reply');
+    assert.equal(sql(`SELECT last_post_username FROM ${q}.forum WHERE id=1`), 'member-alice');
+
+    // 9c. Read markers: stranger cannot plant a marker for alice; own marker advances
+    const forgedRead = await editor.bundle({atomic: [
+      {create: 'TopicRead', values: {user: '2', topic: seedTopic101, forum: '1', last_read: new Date().toISOString()}},
+    ]}, {key: 'forged-topicread'});
+    assert.equal(forgedRead.ok, false, 'stranger TopicRead create must be rejected');
+    const markerCountBefore = sql(`SELECT count(*) FROM ${q}.topic_read WHERE user_id=2`);
+    assert.equal(markerCountBefore, '0', 'no marker row may appear from the forged call');
+    const markerIso = new Date().toISOString();
+    const mkMarker = await alice.bundle({atomic: [
+      {create: 'TopicRead', values: {user: '2', topic: seedTopic101, forum: '1', last_read: markerIso}},
+    ]}, {key: 'alice-topicread'});
+    assert.equal(mkMarker.ok, true, JSON.stringify(mkMarker));
+    const markerId = mkMarker.created[0].id;
+    const advMarker = await alice.bundle({atomic: [{apply: 'TopicRead.updateRead', target: {ids: [String(markerId)]}}]}, {key: 'alice-topicread-adv'});
+    assert.equal(advMarker.ok, true, JSON.stringify(advMarker));
+    const markerRow = (await alice.read({read: 'TopicRead', select: ['id', 'last_read'], filter: [{field: 'id', op: 'eq', value: String(markerId)}]})).rows[0];
+    assert.ok(Date.parse(markerRow.last_read) >= Date.parse(markerIso), 'updateRead must advance last_read');
+
+    // 9d. Report queue: 3 reports page as 2+1; reporter sees none after submit; moderator sees all
+    const reportIds = [];
+    for (let k = 1; k <= 3; k++) {
+      const rep = await alice.bundle({atomic: [
+        {create: 'Report', values: {reporter: '2', post: seedPost201, reason: `probe report ${k}`}},
+      ]}, {key: `probe-report-${k}`});
+      assert.equal(rep.ok, true, JSON.stringify(rep));
+      const sub = await alice.bundle({atomic: [{apply: 'Report.submit', target: {ids: [String(rep.created[0].id)]}}]}, {key: `probe-report-submit-${k}`});
+      assert.equal(sub.ok, true, JSON.stringify(sub));
+      reportIds.push(String(rep.created[0].id));
+    }
+    const repPage = async offset => (await bob.read({read: 'Report', select: ['id'], limit: 2, offset})).rows;
+    const r0 = await repPage(0);
+    const r1 = await repPage(2);
+    assert.deepEqual([r0.length, r1.length], [2, 1]);
+    assert.deepEqual([...r0, ...r1].map(r => r.id).sort(), [...reportIds].sort(), 'report pages must cover the queue without overlap');
+    const aliceQueue = (await alice.read({read: 'Report', select: ['id']})).rows;
+    assert.equal(aliceQueue.length, 0, 'reporter sees no submitted reports in the mod queue');
+    const editorQueue = (await editor.read({read: 'Report', select: ['id']})).rows;
+    assert.equal(editorQueue.length, 3, 'moderator group sees the full queue');
+
+    // moderator (non-admin) management boundary: editor cannot create categories
+    const editorCat = await editor.bundle({atomic: [
+      {create: 'Category', values: {title: 'Editor Unauthorized Category', description: 'probe', position: 103}},
+    ]}, {key: 'editor-unauthorized-cat'});
+    assert.equal(editorCat.ok, false, 'non-admin moderator Category.create must be rejected');
+    assert.equal(sql(`SELECT count(*) FROM ${q}.category WHERE title='Editor Unauthorized Category'`), '0');
+
+    console.log(JSON.stringify({schema, ok: true, featuresVerified: ['F07_search', 'F03_profile', 'F09_conversations', 'F06_tracker_read', 'F04_F10_admin_crud', 'UI_live_integration', 'deactivated_writes_rejected', 'reactivation_recovered', 'forged_mailbox_rejected', 'F01_pagination', 'F05_last_post', 'F06_read_markers', 'F08_report_queue']}));
   } catch (error) {
     console.error(error);
     throw error;

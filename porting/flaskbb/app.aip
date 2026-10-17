@@ -1,5 +1,7 @@
-// FlaskBB 2019 port. F01 reads and a subset of F05 topic/post workflows are
-// exercised so far; full source workflow coverage remains F01-F17 in INVENTORY.md.
+// FlaskBB 2019 port. F01-F10 reads/writes are declared; offset paging is
+// open on list reads (original paginate() semantics, 10/page defaults) and
+// Post.publish maintains the Forum last-post projection in the same
+// transaction. Full source workflow coverage remains F01-F17 in INVENTORY.md.
 actor User
 predicate hasGroup(viewer: User?, targetGroup: Group) = viewer != null and viewer.activated and (viewer.primary_group = targetGroup or exists UserGroup where user = viewer and group = targetGroup)
 predicate hasElevatedGroup(target: User?) = target != null and (target.primary_group.admin or target.primary_group.super_mod or exists UserGroup where user = target and (group.admin or group.super_mod))
@@ -45,7 +47,7 @@ resource Group {
   expose read {
     select id, name, guest, admin, super_mod, mod, banned, editpost, deletepost, deletetopic, posttopic, postreply, viewhidden, makehidden
     sort id
-    budget { rows 100; depth 1; cost 1000; deadline 2s }
+    budget { rows 100; depth 1; cost 1000; deadline 2s; offset 500 }
   }
 }
 
@@ -97,7 +99,7 @@ resource User {
     filter id.eq, username.prefix, username.contains
     sort id, username
     traverse primary_group { select id, name }
-    budget { rows 100; depth 2; cost 2000; deadline 2s }
+    budget { rows 100; depth 2; cost 2000; deadline 2s; offset 1000; cursor }
   }
   aggregate post_count: Int { source Post; sourceAccess visibleUserTotal; groupKey user; where canReadPost(actor, this) and not topic.deleted and published = true; callerFilter none; rowOutput none; release count }
 }
@@ -110,7 +112,7 @@ resource UserGroup {
     select id, user, group
     filter user.eq, group.eq
     sort id
-    budget { rows 1000; depth 2; cost 3000; deadline 2s }
+    budget { rows 1000; depth 2; cost 3000; deadline 2s; offset 2000 }
   }
 }
 
@@ -131,7 +133,7 @@ resource Category {
     select id, title, description, position
     filter id.eq, title.contains
     sort position, id
-    budget { rows 100; depth 1; cost 1000; deadline 2s }
+    budget { rows 100; depth 1; cost 1000; deadline 2s; offset 500 }
   }
 }
 
@@ -167,7 +169,7 @@ resource Forum {
     filter id.eq, category.eq, title.contains
     sort position, id
     traverse category { select id, title, position }
-    budget { rows 200; depth 2; cost 4000; deadline 2s }
+    budget { rows 200; depth 2; cost 4000; deadline 2s; offset 1000 }
   }
   aggregate topic_count: Int { source Topic; sourceAccess visibleForumTotal; groupKey forum; where canReadTopic(actor, this) and published = true; callerFilter none; rowOutput none; release count }
   aggregate post_count: Int { source Post; sourceAccess visibleForumTotal; groupKey forum; where canReadPost(actor, this) and not topic.deleted and published = true; callerFilter none; rowOutput none; release count }
@@ -181,7 +183,7 @@ resource ForumGroupAccess {
     select id, forum, group
     filter forum.eq, group.eq
     sort id
-    budget { rows 1000; depth 2; cost 3000; deadline 2s }
+    budget { rows 1000; depth 2; cost 3000; deadline 2s; offset 2000 }
   }
 }
 
@@ -193,7 +195,7 @@ resource ForumModerator {
     select id, forum, user
     filter forum.eq, user.eq
     sort id
-    budget { rows 1000; depth 2; cost 3000; deadline 2s }
+    budget { rows 1000; depth 2; cost 3000; deadline 2s; offset 2000 }
   }
 }
 
@@ -249,7 +251,7 @@ resource Topic {
     sort id, last_updated, views
     traverse forum { select id, category, title, position }
     traverse user { select id, username }
-    budget { rows 200; depth 3; cost 8000; deadline 2s }
+    budget { rows 200; depth 3; cost 8000; deadline 2s; offset 2000 }
   }
   aggregate post_count: Int { source Post; sourceAccess visibleTopicTotal; groupKey topic; where canReadPost(actor, this) and not topic.deleted and published = true; callerFilter none; rowOutput none; release count }
 }
@@ -279,7 +281,12 @@ resource Post {
     allow user = actor and username = actor.username and not published and not deleted and not hidden and canReply(actor, topic) and forum = topic.forum
     fields id, topic, forum, user, username, content, hidden, published, version, deleted
   }
-  transition publish { allow user = actor and not published and canReply(actor, topic); from published = false; to published = true, date_created = now }
+  transition publish {
+    allow user = actor and not published and canReply(actor, topic)
+    from published = false
+    to published = true, date_created = now
+    update Forum where id = this.forum { last_post = this; last_post_user = actor; last_post_title = this.topic.title; last_post_username = this.username; last_post_created = now }
+  }
   expose apply publish { target id; bulk maxRows 1 }
   transition edit {
     allow actor.activated and published and (canModerateForum(actor, topic.forum) or (user = actor and not topic.locked and (actor.primary_group.editpost or exists UserGroup where user = actor and group.editpost)))
@@ -301,7 +308,7 @@ resource Post {
     sort id, date_created
     traverse topic { select id, forum, title, locked, hidden }
     traverse user { select id, username }
-    budget { rows 500; depth 3; cost 10000; deadline 2s }
+    budget { rows 500; depth 3; cost 10000; deadline 2s; offset 5000 }
   }
 }
 
@@ -320,7 +327,7 @@ resource TopicFirstPost {
     select id, topic, post
     filter topic.eq, post.eq
     sort id
-    budget { rows 100; depth 2; cost 2000; deadline 2s }
+    budget { rows 100; depth 2; cost 2000; deadline 2s; offset 500 }
   }
 }
 
@@ -342,7 +349,7 @@ resource ForumRead {
     select id, user, forum, last_read, cleared
     filter id.eq, forum.eq, user.eq
     sort id
-    budget { rows 1000; depth 2; cost 3000; deadline 2s }
+    budget { rows 1000; depth 2; cost 3000; deadline 2s; offset 1000; cursor }
   }
 }
 
@@ -364,7 +371,7 @@ resource TopicRead {
     select id, user, topic, forum, last_read
     filter id.eq, topic.eq, forum.eq, user.eq
     sort id
-    budget { rows 1000; depth 2; cost 3000; deadline 2s }
+    budget { rows 1000; depth 2; cost 3000; deadline 2s; offset 1000; cursor }
   }
 }
 
@@ -384,7 +391,7 @@ resource TopicTracker {
     select id, user, topic, active
     filter id.eq, topic.eq, active.eq, user.eq
     sort id
-    budget { rows 1000; depth 2; cost 3000; deadline 2s }
+    budget { rows 1000; depth 2; cost 3000; deadline 2s; offset 1000; cursor }
   }
 }
 
@@ -405,7 +412,7 @@ resource Report {
     sort id, reported
     traverse reporter { select id, username }
     traverse post { select id, topic, username, content, date_created }
-    budget { rows 200; depth 3; cost 8000; deadline 2s }
+    budget { rows 200; depth 3; cost 8000; deadline 2s; offset 1000 }
   }
 }
 
@@ -458,7 +465,7 @@ resource Conversation {
     sort date_modified, id
     traverse from_user { select id, username }
     traverse to_user { select id, username }
-    budget { rows 100; depth 3; cost 6000; deadline 2s }
+    budget { rows 100; depth 3; cost 6000; deadline 2s; offset 1000; cursor }
   }
 }
 
@@ -474,7 +481,7 @@ resource Message {
     filter conversation.eq, user.eq
     sort id, date_created
     traverse user { select id, username }
-    budget { rows 200; depth 3; cost 6000; deadline 2s }
+    budget { rows 200; depth 3; cost 6000; deadline 2s; offset 2000; cursor }
   }
 }
 
@@ -486,7 +493,7 @@ resource SettingsGroup {
     select id, key, name, description
     filter key.eq
     sort key
-    budget { rows 100; depth 1; cost 1000; deadline 2s }
+    budget { rows 100; depth 1; cost 1000; deadline 2s; offset 500 }
   }
 }
 
@@ -508,7 +515,7 @@ resource Setting {
     filter group.eq, key.eq
     sort key
     traverse group { select id, key, name }
-    budget { rows 500; depth 2; cost 3000; deadline 2s }
+    budget { rows 500; depth 2; cost 3000; deadline 2s; offset 1000 }
   }
 }
 
@@ -520,7 +527,7 @@ resource PluginRegistry {
     select id, name, enabled
     filter id.eq, name.prefix, enabled.eq
     sort name
-    budget { rows 100; depth 1; cost 1000; deadline 2s }
+    budget { rows 100; depth 1; cost 1000; deadline 2s; offset 500 }
   }
 }
 
@@ -542,6 +549,30 @@ resource PluginStore {
     filter plugin.eq, key.eq
     sort key
     traverse plugin { select id, name, enabled }
-    budget { rows 500; depth 2; cost 3000; deadline 2s }
+    budget { rows 500; depth 2; cost 3000; deadline 2s; offset 1000 }
   }
+}
+
+// F02/F14 account emails. The job carries only caller-supplied values and
+// touches no rows (effect none): the caller reads the account through normal
+// reads first. Delivery runs in the Python worker dir as
+// flaskbb_mail.send_*; SMTP targets come from the deployment environment so
+// no secret is declared here. Abuse note: allow is any authenticated actor,
+// so deployments must rate-limit these jobs like the original's self-service
+// endpoints.
+operation job sendActivationEmail {
+  input { email: Text(3..200); username: Text(1..200); token: Text(1..500) }
+  output { accepted: Bool }
+  allow actor != null
+  effect none
+  deadline 30s
+  implementation "flaskbb_mail.send_activation_email"
+}
+operation job sendPasswordResetEmail {
+  input { email: Text(3..200); username: Text(1..200); token: Text(1..500) }
+  output { accepted: Bool }
+  allow actor != null
+  effect none
+  deadline 30s
+  implementation "flaskbb_mail.send_password_reset_email"
 }
