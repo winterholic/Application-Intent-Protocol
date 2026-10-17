@@ -35,6 +35,8 @@ PATH=/opt/flaskbb-venv/bin:$PATH flaskbb --config /runtime/flaskbb.cfg run --hos
 
 - 원본 고정/출처 검토: 수행. 정확한 저자·시점 이력은 선정 기록 참고; 100% human-authorship 증명은 불가.
 - 원본 전체 앱 설치/기동/초기 UI 기준선: 확인. 메일 전달·모든 UI 및 업무흐름은 미검증.
+- F02 원본 인증 기준선: 고정 FlaskBB source에서 username 또는 email + Werkzeug password hash 로그인, registration uniqueness/blacklist validators, `ACTIVATE_ACCOUNT`에 따른 대기/활성화, 한 시간 operation-scoped activation/reset token, reset email, password re-auth를 확인했다. 실제 원본 runtime browser에서 test1 로그인→인증 사용자 UI→로그아웃, 가입 form과 forgot-password form을 확인했다. dedicated baseline PG 설정은 registration/activation 모두 true이고 runtime config는 `MAIL_SUPPRESS_SEND=True`; 따라서 실제 가입/activation/reset 메일·token 효과는 미관측이며 메일 성공으로 세지 않는다. 상세 명령·화면 파일은 `evidence/verification.log`에 기록했다.
+- F02 AIP 경계: 공식 Python SDK는 access token으로 `/session`을 확인하고 AIP 요청을 할 수 있다. 제품은 외부 IdP의 서명 access token을 검증하고 이미 바인딩된 `sub`만 actor로 인정한다. `principal bind`는 operator CLI뿐이라 self-registration 이후 actor 생성과 subject 연결이 안전한 제품 경로로 이어지지 않는다. 새 사용자 온보딩은 핵심 제품 기능/결정 갭이다. 이 갭은 원본 비밀번호 UX를 OIDC-only라는 이유로 미정 처리하지 않으며, 실제 IdP 로그인과 SMTP mail/token 시험도 아직 통과한 것이 아니다.
 - route·endpoint 및 DB 구조 수집: 확인. [INVENTORY](INVENTORY.md)의 업무 의미 매핑은 진행 중이며 분모 변경은 source 근거와 함께 기록.
 - AIP 현재 구현: upstream 19개 앱 도메인 resource를 선언했고 Topic/Post/TopicFirstPost와 원자 생성·reply·edit·moderation 한 부분을 실제 SDK/서버/격리 PostgreSQL로 검증했다. Forum/User/Topic 카운터 일부는 role-visible aggregate다. 모든 resource의 변환·인가·CRUD는 미완료이며, Forum `last_post*`와 Topic 최신 활동 projection도 미완료다. 선언 수나 이 vertical slice를 전체 데이터 이식으로 부르지 않는다.
 - F05 실제 AIP workflow slice: UUID Topic → UUID Post → Post.publish → 고유 TopicFirstPost relation → Topic.publish를 한 원자 bundle에서 검증. Reply create/publish/bump 및 edit/version conflict도 검증. Moderator lock/unlock/highlight/trivialize와 Topic/Post hide/unhide, member reply soft-delete, readonly 거부를 검증했다. 원본의 first-post 삭제는 CanDeletePost(=CanEditPost) 통과 후 topic 전체를 ORM cascade로 제거한다. AIP slice는 Topic.delete + 첫 Post.delete tombstone을 같은 atomic bundle에서 실행하고, 원본 첫 글 작성자의 editpost 권한도 허용한다. 삭제된 부모 아래의 Post는 해당 topic을 지울 수 있는 작성자/관리자만 정리 목적으로 읽을 수 있고 aggregate에서 제외한다. 이 저장 의미는 원본 물리 삭제와 다르며 실제 DB상태 의미 차이를 후속 gate에서 확정해야 한다. Forum last-post projection은 아직 구현되지 않았다.
@@ -45,7 +47,7 @@ PATH=/opt/flaskbb-venv/bin:$PATH flaskbb --config /runtime/flaskbb.cfg run --hos
 - 전체 권한별 흐름/재시작 보존/원본 대조: 미실행. F05 slice 안의 거부 후 불변, bundle rollback, idempotent replay 및 숨김/삭제 권한 일부만 확인.
 - 원본 UI의 AIP SDK 연결과 원본 업무 backend 중단 gate: 미실행.
 - clean checkout install/build/deployment/health/config/TLS 게이트: 미실행.
-- 실제 SMTP/OIDC 계정 또는 공개 운영 배포: 수행하지 않음. 인증 흐름의 통합 설계는 제품 갭/결정 필요로 열어 둔다.
+- 실제 SMTP/OIDC IdP 통합·사용자 계정 lifecycle의 AIP 연결 또는 공개 운영 배포: 수행하지 않음. F02의 새 사용자 actor/principal 온보딩 경계는 제품 갭으로 기록했으며, OIDC session+bound existing actor와 실제 SMTP mail/token 효과는 다음 검증 gate로 남긴다.
 
 ## 실행 경로 장애와 재현성 주의
 
