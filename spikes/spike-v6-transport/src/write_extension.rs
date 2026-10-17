@@ -2,7 +2,7 @@
 use crate::server::ReadExtensions;
 use serde_json::{json, Value};
 use spike_v2_read::{id_wire::IdWire, plan::Caller};
-use spike_v3_write::classify_write_error;
+use spike_v3_write::{before_commit_rejection, classify_write_error, connection_failed, send_commit, CommitFailure};
 use spike_v4_worker::{
     write::{prepare_write_in_with_wire, validate_write},
     Worker,
@@ -12,6 +12,16 @@ use tokio_postgres::Client;
 
 fn failure(code: &str) -> Value {
     json!({"ok":false,"code":code})
+}
+
+/// COMMIT 전 단계의 DB 오류. 연결을 잃었다면 커밋된 것이 없어 같은 키로 다시 보내도 안전하다(DB_UNAVAILABLE).
+/// 그 밖의 오류는 기존대로 내부 오류다.
+fn before_commit_failure(error: &tokio_postgres::Error) -> Value {
+    if connection_failed(error) {
+        failure(spike_v3_write::lost_before_commit().code)
+    } else {
+        failure("WIRE.INTERNAL")
+    }
 }
 
 pub async fn apply(db: &mut Client, facts: &Value, body: &Value, caller: &Caller, wire: IdWire, config: &ReadExtensions) -> Value {
@@ -50,20 +60,19 @@ pub async fn apply_with_launch(
     let operation = async {
         let tx = match db.transaction().await {
             Ok(tx) => tx,
-            Err(_) => return failure("WIRE.INTERNAL"),
+            Err(error) => return before_commit_failure(&error),
         };
-        if tx
+        if let Err(error) = tx
             .batch_execute(&format!(
                 "SET TRANSACTION ISOLATION LEVEL READ COMMITTED; SET LOCAL statement_timeout='{}ms'; SET LOCAL TimeZone='UTC'",
                 deadline.as_millis()
             ))
             .await
-            .is_err()
         {
-            return failure("WIRE.INTERNAL");
+            return before_commit_failure(&error);
         }
-        if tx.execute("SELECT pg_advisory_xact_lock(hashtext($1))", &[&format!("{principal}:{key}")]).await.is_err() {
-            return failure("WIRE.INTERNAL");
+        if let Err(error) = tx.execute("SELECT pg_advisory_xact_lock(hashtext($1))", &[&format!("{principal}:{key}")]).await {
+            return before_commit_failure(&error);
         }
         match tx.query_opt(&format!("SELECT request,result::text FROM {schema}.aip_idem WHERE principal=$1 AND key=$2"), &[&principal, &key]).await {
             Ok(Some(row)) => {
@@ -78,7 +87,7 @@ pub async fn apply_with_launch(
                 return result;
             }
             Ok(None) => {}
-            Err(_) => return failure("WIRE.INTERNAL"),
+            Err(error) => return before_commit_failure(&error),
         }
         if Instant::now() >= expires {
             return failure("WIRE.DEADLINE_EXCEEDED");
@@ -100,7 +109,7 @@ pub async fn apply_with_launch(
         worker.stop().await;
         let prepared = match prepared {
             Ok(Ok(prepared)) => prepared,
-            Ok(Err(error)) => return super::err(error),
+            Ok(Err(error)) => return super::err(before_commit_rejection(&tx, error)),
             Err(_) => return failure("WIRE.DEADLINE_EXCEEDED"),
         };
         let expires = expires.min(prepared.expires);
@@ -128,18 +137,18 @@ pub async fn apply_with_launch(
         .await;
         match insert {
             Ok(Ok(_)) => {}
-            Ok(Err(_)) => return failure("WIRE.INTERNAL"),
+            Ok(Err(error)) => return before_commit_failure(&error),
             Err(_) => return failure("WIRE.DEADLINE_EXCEEDED"),
         }
         let left = expires.saturating_duration_since(Instant::now());
         if left.is_zero() {
             return failure("WIRE.DEADLINE_EXCEEDED");
         }
-        commit_sent = true;
-        match tokio::time::timeout(left, tx.commit()).await {
+        match tokio::time::timeout(left, send_commit(tx, || commit_sent = true)).await {
             Ok(Ok(())) => result,
-            Ok(Err(error)) => super::err(classify_write_error("커밋", error)),
-            Err(_) => failure("WIRE.COMMIT_UNKNOWN"),
+            Ok(Err(CommitFailure::Rejected(error))) => super::err(classify_write_error("커밋", error)),
+            Ok(Err(CommitFailure::NotSent)) => failure(spike_v3_write::lost_before_commit().code),
+            Ok(Err(CommitFailure::Unknown)) | Err(_) => failure("WIRE.COMMIT_UNKNOWN"),
         }
     };
     match tokio::time::timeout_at(tokio::time::Instant::from_std(expires), operation).await {

@@ -618,8 +618,16 @@ async fn invoke_contract(
                 }
                 if host.is_some()
                     && reply.as_ref().is_err_and(|e| {
-                        ["WIRE.ACCESS_NOT_DECLARED", "WIRE.COST_EXCEEDED", "WIRE.LEASE_LOST", "WIRE.EFFECT_UNKNOWN", "WIRE.BAD_VALUE"]
-                            .contains(&e.code)
+                        [
+                            "WIRE.ACCESS_NOT_DECLARED",
+                            "WIRE.COST_EXCEEDED",
+                            "WIRE.LEASE_LOST",
+                            "WIRE.EFFECT_UNKNOWN",
+                            "WIRE.COMMIT_UNKNOWN",
+                            "WIRE.DB_UNAVAILABLE",
+                            "WIRE.BAD_VALUE",
+                        ]
+                        .contains(&e.code)
                     })
                 {
                     break reply;

@@ -104,7 +104,7 @@ Python은 `await ctx.data.read({...})`, `await ctx.data.apply("Order", "pay", [i
 | 전이 | `<Resource>.<transition>` (공개 `expose apply`만) | `ctx.data.apply(resource, transition, ids, key)` | 전이, deferred 검사, effect journal 기록이 **하나의 PostgreSQL transaction**에서 commit된다 |
 
 - 권한은 job을 수락한 principal의 것이다. 행 정책에서 보이지 않는 행에 대한 전이는 동기 `/apply`와 같은 `WIRE.MISSING_TARGET`으로 끝나 행 존재 여부를 알리지 않는다. 선언하지 않은 전이는 job 전체가 `WIRE.ACCESS_NOT_DECLARED`로 실패한다.
-- `apply`에는 다른 managed effect처럼 안정 key가 필요하다. 같은 run에서 같은 key를 다시 부르거나 worker가 commit 뒤에 죽어 재시도되면, 전이를 다시 실행하지 않고 journal의 결과를 그대로 돌려준다. 실행 결과를 모르는 상태가 생기지 않으므로 외부 HTTP와 달리 `WIRE.EFFECT_UNKNOWN`이 없다.
+- `apply`에는 다른 managed effect처럼 안정 key가 필요하다. 같은 run에서 같은 key를 다시 부르거나 worker가 commit 뒤에 죽어 재시도되면, 전이를 다시 실행하지 않고 journal의 결과를 그대로 돌려준다. 외부 HTTP와 달리 `WIRE.EFFECT_UNKNOWN`은 없다. 다만 COMMIT을 보낸 뒤 응답을 잃거나 해석하지 못하면 전이가 커밋됐는지 이 연결로는 알 수 없다. 이때 job은 확장 오류가 아니라 `WIRE.COMMIT_UNKNOWN`으로 끝나고 자동으로 다시 실행하지 않는다. 커밋됐다면 journal 행도 함께 남아 있으므로 데이터 상태를 먼저 확인한다. COMMIT을 보내기 전에 연결을 잃은 경우는 아무것도 커밋되지 않았고 `WIRE.DB_UNAVAILABLE`로 job이 다시 시도된다.
 - 전이가 `WIRE.MISSING_TARGET`, `WIRE.ACCESS_DENIED`, `WIRE.INVARIANT_VIOLATED`처럼 업무 규칙으로 거부되면 그 결과를 journal에 남겨 재시도에서도 같은 오류를 재생한다. 확장은 이 오류를 잡아 분기·보상할 수 있다. `WIRE.CONFLICT`(교착·직렬화)와 DB 장애는 아무것도 commit하지 않았으므로 기록하지 않고 다시 시도할 수 있다.
 - 각 `apply`는 자체 transaction이다. job 전체를 한 transaction으로 묶지 않으므로 여러 전이 사이의 원자성이 필요하면 하나의 전이 effects나 동기 쓰기 확장으로 표현한다. attempt당 managed 호출 64회 상한과 `expose apply`의 bulk 상한이 함께 적용된다.
 - 이 capability가 있는 job의 descriptor는 `dependencies.worker`에 `database`를 표시한다.

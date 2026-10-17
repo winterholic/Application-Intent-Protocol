@@ -1,0 +1,11 @@
+[package]
+name = "aip-test-fault-proxy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "PostgreSQL 연결을 지정한 지점에서 끊는 테스트용 TCP proxy. 테스트 DB 가드(aip-test-support)가 허용한 endpoint 앞에만 선다."
+
+[dependencies]
+aip-test-support = { path = "../aip-test-support" }
+tokio = { version = "1", features = ["net", "io-util", "sync", "rt", "time", "macros"] }

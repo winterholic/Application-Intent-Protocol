@@ -1,5 +1,15 @@
 # 진행 현황과 쌓인 질문
 
+## 2026-10-18 WBS 8.9 후속: 나머지 COMMIT 경로와 spike-v6 사전 실패 (Claude 구현, 독립 검증 대기)
+
+분류 규칙(COMMIT 전 단절은 `WIRE.DB_UNAVAILABLE`, 전송 뒤 단절·해석 불가 응답은 `WIRE.COMMIT_UNKNOWN`, 서버 거절은 기존 코드)을 `spike-v3-write`의 `apply`·`bundle`·`compose`, `spike-v4-worker`의 `invoke_write`, `write_extension.rs`, `durable.rs`에 적용했다. 세 spike는 `aip-service`·`aip-auth`가 path dependency로 쓰는 제품 경로라 문서화에 그치지 않고 고쳤다. 판정과 COMMIT 전송은 `spike-v3-write`의 공통 함수(`connection_failed`, `send_commit`, `before_commit_rejection`)로 묶었고 v4·v6 `/apply`가 같은 함수를 쓴다. 경로마다 장애 지점별 재현 테스트를 붙였고, 구현 전 red(v3 14개 중 12, v4 9개 중 8, v6 `write_extension` 10개 중 8, job의 COMMIT 손실 3개 모두 실패)와 구현 뒤 green, 분류를 되돌리는 변이 20종이 모두 실패하는 것을 확인했다. 변경 중 제품 동작이 바뀌는 곳은 managed effect journal의 COMMIT이다. 응답을 잃은 job은 확장 오류 대신 `WIRE.COMMIT_UNKNOWN`으로 끝나고, COMMIT 전에 연결을 잃은 job은 `WIRE.DB_UNAVAILABLE`로 재시도된다.
+
+spike-v6 사전 실패는 셋 다 원인을 찾았다. `write_isolation`은 제품 결함이 아니라 `aip-test-support::database_url_with_option`이 URI 옵션의 공백을 `+`로 써서 PostgreSQL이 접속을 거부한 테스트 지원 결함이고(같은 함수를 쓰는 `aip-migrate`의 `migration_history` 2개도 main에서 실패했다), 고쳤다. pool 30ms 테스트는 첫 checkout의 연결 시간이 같은 기한을 쓰는 불안정 테스트라 연결을 미리 idle에 넣어 결정적으로 바꿨다. v12~v16의 `tsc` 부재는 새 worktree에 추적되지 않는 `node_modules`가 없는 환경 문제이며, 전역 설치 없이 저장소 경로(`npm ci --prefix spikes/spike-0-ts`)로 설치하자 5개가 통과했다. 실행 명령과 결과, 남은 미검증 항목은 [제품 검증](../product/VERIFICATION.md)의 "WBS 8.9 나머지 COMMIT 경로와 spike-v6 사전 실패"를 따른다. 독립 검증 전이므로 완료로 표시하지 않는다.
+
+## 2026-10-18 WBS 8.9 분류 보강 (Claude 구현, 독립 검증 대기)
+
+8.9가 연결이 닫힌 경우만 `COMMIT_UNKNOWN`으로 분류하던 범위를 실제 재현 테스트로 넓혀 확인했다. COMMIT 전송 전에 연결을 잃으면 `WIRE.DB_UNAVAILABLE`(커밋 없음, 같은 키로 안전한 재시도), COMMIT 전송 뒤의 응답 손실·해석 불가·예상 밖 응답은 `WIRE.COMMIT_UNKNOWN`이다. 서버가 거절한 COMMIT(제약 위반, 직렬화 실패, 교착)은 확정 코드를 유지한다. `commit_unknown_wire` 11개(기존 1개와 신규 10개)가 red 5 failed에서 green 11 passed가 되었고 분류를 되돌리는 변이 4종이 모두 실패했다. spike-v6 clippy `-D warnings`와 `cargo fmt --all --check`는 통과했고, spike-v6 전체 스위트의 실패 7개 타깃은 수정 전 main에서도 같다. 실행 명령과 미검증 항목(`Kind::Io` 직접 재현 불가, 다른 COMMIT 경로 미실행 등)은 [제품 검증](../product/VERIFICATION.md)의 WBS 8.9 분류 보강을 따른다. 독립 검증 전이므로 완료로 표시하지 않는다.
+
 ## 2026-10-17 WBS 8.x 통합 (Claude 구현·통합, GPT 독립 검증 미실시)
 
 Codex 작업 세션이 취소된 7개 브랜치를 이어받아 검증하고 main에 통합했다. 병합된 것은 `codex/db-test-isolation-20261017`, `fix/wbs-8.1-serializable-concurrency`, `fix/wire-commit-unknown-20261017`(8.9), `codex/wbs-8-6-cli-lint-cleanup-20261017`(8.6), `feature/wbs-8.4-python-sdk`(8.4)이고, `feature/wbs-8.2-8.3-recovery-20261017`은 test tooling만 반영했다. `fix/otlp-status-code-standard`는 코드가 이미 main에 있어 병합하지 않았다. 브랜치별 실행 명령과 결과는 [제품 검증](../product/VERIFICATION.md)의 WBS 8.x 통합 회차를 따른다.

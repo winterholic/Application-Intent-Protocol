@@ -3,7 +3,9 @@ use crate::{check_read_record, rej, Worker};
 use serde_json::{json, Value};
 use spike_v2_read::id_wire::{emit_entity_id, emit_id, parse_id, IdWire, MAX_SAFE_ID};
 use spike_v2_read::plan::{Caller, Reject};
-use spike_v3_write::{apply_in_with_wire, checks_in, classify_write_error, Knobs};
+use spike_v3_write::{
+    apply_in_with_wire, before_commit_rejection, checks_in, connection_failed, lost_before_commit, send_commit, CommitFailure, Knobs,
+};
 use std::time::{Duration, Instant};
 use tokio_postgres::{Client, Transaction};
 
@@ -67,17 +69,24 @@ pub async fn prepare_write_in_with_wire(
 
 pub async fn invoke_write(db: &mut Client, w: &mut Worker, facts: &Value, name: &str, input: &Value, caller: &Caller) -> Result<Value, Reject> {
     let invocation = write_invocation(facts, name, input, IdWire::Legacy)?;
-    let tx = db.transaction().await.map_err(|_| Reject { code: "WIRE.INTERNAL", msg: "트랜잭션 시작 실패".into() })?;
+    let tx = db.transaction().await.map_err(|error| {
+        if connection_failed(&error) {
+            lost_before_commit()
+        } else {
+            Reject { code: "WIRE.INTERNAL", msg: "트랜잭션 시작 실패".into() }
+        }
+    })?;
     match run_write_in(&tx, w, facts, input, caller, invocation).await {
         Ok(prepared) => {
             let left = prepared.expires.saturating_duration_since(Instant::now());
-            match tokio::time::timeout(left, tx.commit()).await {
-                Ok(result) => result.map_err(|error| classify_write_error("커밋", error))?,
+            match tokio::time::timeout(left, send_commit(tx, || ())).await {
+                Ok(result) => result.map_err(CommitFailure::into_reject)?,
                 Err(_) => return rej("WIRE.COMMIT_UNKNOWN", "커밋 결과를 기한 안에 확인하지 못함. 상태 조회 필요"),
             }
             Ok(prepared.output)
         }
         Err(error) => {
+            let error = before_commit_rejection(&tx, error);
             let _ = tx.rollback().await;
             Err(error)
         }
@@ -152,6 +161,8 @@ async fn run_write_in(
                         }
                     }
                 };
+                // ctx 쓰기가 연결을 잃어 실패하면 확장이 어떻게 끝나든 호출자에게는 연결 끊김이다(아직 COMMIT 전이라 커밋된 것이 없다).
+                let reply = reply.map_err(|e| before_commit_rejection(tx, e));
                 if let (Err(e), true) = (&reply, mine) {
                     poisoned.get_or_insert(e.code);
                 }
@@ -166,6 +177,9 @@ async fn run_write_in(
             Some("done") if m["invoke"] == json!(invoke_id) => {
                 if Instant::now() > expires {
                     break rej("WIRE.DEADLINE_EXCEEDED", "기한 뒤 완료");
+                }
+                if poisoned == Some("WIRE.DB_UNAVAILABLE") {
+                    break Err(lost_before_commit());
                 }
                 if let Some(e) = m.get("error") {
                     break rej("WIRE.EXTENSION_ERROR", format!("확장 실패: {}", e["code"].as_str().unwrap_or("?")));

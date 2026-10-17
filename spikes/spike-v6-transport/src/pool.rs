@@ -234,10 +234,21 @@ mod tests {
             PoolOptions { max_size: 1, acquire_timeout: Duration::from_millis(30), ..PoolOptions::default() },
         )
         .unwrap();
+        // 첫 checkout이 새 연결을 만들면 연결 시간이 30ms 기한 안에 들어가는지에 시험이 기대게 된다. 부하가 있으면 첫 호출이 먼저 Timeout이 난다.
+        // 연결을 idle에 미리 넣어 첫 checkout이 연결을 만들지 않게 하고, 두 번째 호출만 30ms 기한을 받게 한다.
+        warm(&pool).await;
         let first = pool.acquire().await.unwrap();
+        let started = Instant::now();
         let result = pool.acquire().await;
-        assert!(matches!(result, Err(PoolError::Timeout)));
+        assert!(matches!(result, Err(PoolError::Timeout)), "the only slot is held, so the second checkout cannot succeed");
+        assert!(started.elapsed() >= Duration::from_millis(30), "the second checkout must wait for its acquire deadline, not fail early");
         drop(first);
+    }
+
+    /// 새 연결을 만들어 idle 목록에 넣는다. 기한이 짧은 pool 시험의 첫 checkout이 연결 시간에 좌우되지 않게 한다.
+    async fn warm(pool: &ConnectionPool) {
+        let connection = spike_v2_read::connect_owned_with_url(&pool.0.url).await.unwrap();
+        pool.0.idle.lock().unwrap().push_back(IdleConnection { since: Instant::now(), connection });
     }
 
     #[tokio::test]

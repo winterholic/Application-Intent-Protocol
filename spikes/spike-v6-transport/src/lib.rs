@@ -246,6 +246,7 @@ async fn apply_attempt(
     let s = sqlgen::schema();
     let tx = match db.transaction().await {
         Ok(t) => t,
+        Err(e) if spike_v3_write::connection_failed(&e) => return lost_before_commit(),
         Err(_) => return json!({ "ok": false, "code": "WIRE.INTERNAL" }),
     };
     if let Err(error) = tx
@@ -255,7 +256,7 @@ async fn apply_attempt(
         ))
         .await
     {
-        return err(classify_write_error("세션 설정", error));
+        return if spike_v3_write::connection_failed(&error) { lost_before_commit() } else { err(classify_write_error("세션 설정", error)) };
     }
     // 같은 키가 이미 커밋됐으면 다시 실행하지 않고 저장된 결과를 준다. 같은 키에 다른 요청이면 거부.
     // 동시에 같은 키가 오면 키 행 잠금으로 하나씩 처리한다.
@@ -279,10 +280,10 @@ async fn apply_attempt(
     // 전이 하나, 묶음(atomic), 조합(compose)은 같은 트랜잭션·같은 멱등 키·같은 커밋 시점 검사를 쓴다.
     let result = match run_write(&tx, facts, req, caller, &knobs, wire).await {
         Ok(result) => result,
-        Err(e) => return err(e),
+        Err(e) => return err(spike_v3_write::before_commit_rejection(&tx, e)),
     };
     if let Err(e) = checks_in(&tx, facts, caller, &knobs).await {
-        return err(e);
+        return err(spike_v3_write::before_commit_rejection(&tx, e));
     }
     if let Err(error) = tx
         .execute(
@@ -296,26 +297,36 @@ async fn apply_attempt(
         return match error.code().map(|c| c.code()) {
             Some("23505") if serializable => err(spike_v3_write::serialization_conflict("멱등 기록")),
             Some("40001") | Some("40P01") => err(classify_write_error("멱등 기록", error)),
+            _ if spike_v3_write::connection_failed(&error) => lost_before_commit(),
             _ => json!({ "ok": false, "code": "WIRE.INTERNAL" }),
         };
     }
     if started.elapsed().as_millis() + u128::from(spike_v3_write::COMMIT_MARGIN_MS) >= u128::from(spike_v3_write::WRITE_DEADLINE_MS) {
         return json!({"ok":false,"code":"WIRE.DEADLINE_EXCEEDED"});
     }
-    commit_sent.store(true, std::sync::atomic::Ordering::SeqCst);
-    match tx.commit().await {
+    commit_attempt(tx, commit_sent, result).await
+}
+
+/// COMMIT 전에 연결을 잃은 실패를 wire 응답으로 바꾼다. 분류 규칙은 `spike_v3_write`의 공통 함수가 정한다.
+fn lost_before_commit() -> Value {
+    json!({"ok":false,"code":spike_v3_write::lost_before_commit().code})
+}
+
+/// COMMIT 한 번을 보내고 결과를 분류한다.
+#[doc(hidden)]
+pub async fn commit_attempt(tx: tokio_postgres::Transaction<'_>, commit_sent: &std::sync::atomic::AtomicBool, result: Value) -> Value {
+    use spike_v3_write::CommitFailure;
+    match spike_v3_write::send_commit(tx, || commit_sent.store(true, std::sync::atomic::Ordering::SeqCst)).await {
         Ok(()) => result,
-        Err(e) => {
+        Err(CommitFailure::NotSent) => lost_before_commit(),
+        // COMMIT 응답 전에 PostgreSQL 연결이 닫히면 서버가 커밋했는지 이 연결로는 알 수 없다.
+        Err(CommitFailure::Unknown) => json!({"ok":false,"code":"WIRE.COMMIT_UNKNOWN"}),
+        Err(CommitFailure::Rejected(e)) => {
             // 직렬화 실패로 커밋이 거절되면 커밋되지 않았다. 재시도 구간에서 다시 보내기 전에 표지를 내린다.
             if matches!(e.code().map(|c| c.code()), Some("40001") | Some("40P01")) {
                 commit_sent.store(false, std::sync::atomic::Ordering::SeqCst);
-                err(classify_write_error("커밋", e))
-            } else if e.is_closed() {
-                // COMMIT 응답 전에 PostgreSQL 연결이 닫히면 서버가 커밋했는지 이 연결로는 알 수 없다.
-                json!({"ok":false,"code":"WIRE.COMMIT_UNKNOWN"})
-            } else {
-                err(classify_write_error("커밋", e))
             }
+            err(classify_write_error("커밋", e))
         }
     }
 }
