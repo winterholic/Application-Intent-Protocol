@@ -255,7 +255,7 @@ async fn explicitly_unisolated_busy_workers_are_reaped_by_stop_and_drop() {
             if result.as_ref().err().map(|error| error.code) != Some("WIRE.DEADLINE_EXCEEDED") || !wait_for(&marker).await {
                 failures.push(format!("{lang:?} {cleanup}: expected a started busy extension and deadline, got {result:?}"));
             }
-            if worker.tokens.len() != 0 || worker.retired_tokens.len() != 1 {
+            if !worker.tokens.is_empty() || worker.retired_tokens.len() != 1 {
                 failures.push(format!("{lang:?} {cleanup}: timed-out grant was not invalidated"));
             }
             let alive_after_timeout = Command::new("kill")

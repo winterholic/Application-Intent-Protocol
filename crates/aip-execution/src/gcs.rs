@@ -14,11 +14,18 @@ pub struct GcsConfig {
     bucket: String,
     access_id: String,
     secret: String,
+    owner_quota: Option<(u64, usize)>,
 }
 
 impl GcsConfig {
     pub fn new(bucket: impl Into<String>, access_id: impl Into<String>, secret: impl Into<String>) -> Self {
-        Self { bucket: bucket.into(), access_id: access_id.into(), secret: secret.into() }
+        Self { bucket: bucket.into(), access_id: access_id.into(), secret: secret.into(), owner_quota: None }
+    }
+
+    /// Per-owner ceiling on reserved plus stored bytes and on object count, enforced by the server's object ledger.
+    pub fn with_owner_quota(mut self, max_total_bytes: u64, max_objects: usize) -> Self {
+        self.owner_quota = Some((max_total_bytes, max_objects));
+        self
     }
 }
 
@@ -33,7 +40,11 @@ pub struct GcsStore {
 
 impl GcsStore {
     pub fn new(config: GcsConfig) -> Result<Self, Error> {
-        let inner = S3Store::new(S3Config::new("https://storage.googleapis.com", config.bucket, "auto", config.access_id, config.secret))?;
+        let mut s3 = S3Config::new("https://storage.googleapis.com", config.bucket, "auto", config.access_id, config.secret);
+        if let Some((bytes, objects)) = config.owner_quota {
+            s3 = s3.with_owner_quota(bytes, objects);
+        }
+        let inner = S3Store::new(s3)?;
         Ok(Self { inner })
     }
 

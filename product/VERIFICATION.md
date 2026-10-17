@@ -215,6 +215,65 @@ managed effect journal의 변경은 제품 동작 변경이다. 두 가지가 �
 - 다른 crate의 직접 COMMIT(`aip-runtime`, `aip-execution`, `aip-migrate`, `aip-service`의 `tx.commit()`)은 이번 범위가 아니라 분류를 확인하지 않았다. 대부분 `map_err(|_| ...)`로 오류를 종류와 상관없이 자기 코드(`COMMIT_UNSETTLED`, `JOBS_UNSETTLED` 등)나 `WIRE.COMMIT_UNKNOWN`으로 한 번에 내므로, COMMIT 전 단절을 `DB_UNAVAILABLE`로 가르는 규칙이 필요한지는 별도로 봐야 한다.
 - GPT 독립 검증 전이다. 완료가 아니라 "독립 검증 대기"다.
 
+## WBS 8.5 보존 정리와 S3 owner quota (2026-10-18, Claude 구현 / 독립 검증 대기)
+
+DB 테스트는 이 Run이 띄운 PostgreSQL 17 컨테이너(`aip-claude-wbs8-pg-1018`, `127.0.0.1:32801`, DB `aip_test_wbs8_1018`)에서만 실행했고 공유 5432에는 접속하지 않았다. 객체 저장소 live 테스트는 이 Run이 만든 임시 CA의 TLS MinIO 컨테이너(`aip-claude-wbs8-minio`, `127.0.0.1:32802`, 이미지 `aip-minio-fixture:local`, 서버 `RELEASE.2025-09-06T17-38-46Z`)에서 실행했다. AWS S3와 GCS 실계정은 미실행이다.
+
+### 구현한 것
+
+| 항목 | 결과 | 위치 |
+|---|---|---|
+| S3 owner별 합계 quota | 서명한 PUT·multipart part 크기를 `aip_infra_<digest>.aip_object_ledger`에 예약하고 owner 합계(기본 10GiB·1,000개, `objects.max_total_bytes`·`max_objects`)에 넣어 검사한다. 넘으면 URL 없이 `WIRE.QUOTA_EXCEEDED`. 같은 객체 재서명은 이전 예약을 대체하고 owner마다 advisory lock으로 동시 예약이 합계를 넘지 못하게 한다 | `crates/aip-execution/src/object_ledger.rs`, `spikes/spike-v6-transport/src/object_transport.rs` |
+| 만료 업로드 정리 | 서명 PUT은 발급 65분 뒤, multipart는 part 서명이 24시간 없으면 서버가 `HEAD`로 저장소를 확인한다. 객체가 있으면 실제 크기로 확정, 없으면 예약을 풀고 multipart는 저장소에서 abort한다. 서명 DELETE는 저장소가 객체 없음을 확인할 때까지 quota를 유지한다. 모든 인스턴스가 60초마다 돌되 행별 임대와 `version` 비교로 재서명과 겹쳐도 새 예약을 지우지 않는다 | 같은 파일의 `reconcile_loop`, `S3Store::head_object` |
+| multipart 보호 | 장부에 없는 upload id의 part 서명과 complete는 `WIRE.NOT_FOUND`. 완료 객체의 id와 지어낸 upload id로 abort를 호출해도 그 객체의 quota가 풀리지 않는다 | `ObjectLedger::abort_multipart` |
+| outbox 정리 | relay가 넘긴 행·dispatch 기록 보존 기간을 설정으로 열었다(`retention.outbox_dispatched_days`, 기본 30). handler가 없는 topic의 행은 `retention.outbox_unhandled_days`를 정할 때만 지운다(기본 보존). handler가 있는 topic의 미전달 행은 지우지 않는다 | `spikes/spike-v6-transport/src/durable.rs`(`collect_expired`) |
+| events 정리 | 개수 상한(stream당 1,000)에 더해 `retention.events_days`를 정하면 그 기간이 지난 이벤트를 지우고 replay 하한을 올려 옛 cursor는 `WIRE.CURSOR_EXPIRED`를 받는다. 10분마다 최대 1,000 stream | `crates/aip-execution/src/events.rs`(`expire_older_than`) |
+
+기존 문서의 "`aip_outbox`는 아직 자동 정리하지 않으며"는 틀렸다. O-20(`b68fa7b`)이 handler가 있을 때 dispatch 30일 뒤 정리를 이미 넣었다. 이번 회차는 그 기간을 설정으로 열고 handler 없는 topic과 events를 더했다. `MANAGED-EXECUTION.md`와 `INFRASTRUCTURE.md`를 고쳤다.
+
+### 실행 결과
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p aip-execution --test object_ledger --locked` | 17 passed. 장부 예약·대체·동시 8개 예약·만료 해소·stale 해소 거부·multipart 부담·abort 경계·서명 DELETE |
+| `cargo test -p aip-execution --test events --locked` | 13 passed(신규 3: 나이 기준 정리, stream 수 상한, 잘못된 설정) |
+| `cargo test --locked --test object_ledger_s3` (spike-v6, 실제 HTTP 서버와 PostgreSQL, 저장소 연결 없음) | 4 passed, 3 ignored |
+| 같은 명령에 `-- --ignored`, MinIO 환경 변수(`scripts/test-minio-object-storage.sh`가 설정) | 3 passed. 서명 PUT 업로드 뒤 만료 확정, 미사용 5MiB 예약 해소, 서명 DELETE 미사용·사용 두 경우, multipart 두 part 완료와 유휴 upload의 저장소 abort(abort 뒤 part PUT이 404) |
+| `cargo test --locked --lib retention_tests` (spike-v6) | 4 passed. 기본은 handler 없는 topic 보존, 설정하면 나이로 삭제, id 순서로 2,500행 삭제하고 젊은 40행에서 멈춤, dispatch 기간 설정 |
+| `cargo test -p aip-service --lib` 신규 2개 | S3 quota 기본값·거부값, retention 기본값·범위 |
+| `cargo test --workspace --locked --no-fail-fast` | 427 passed, 0 failed, 5 ignored |
+| `cargo test --locked --no-fail-fast` (spike-v6) | 226 passed, 0 failed, 3 ignored(live MinIO) |
+| `cargo fmt --all --check`, spike-v6 `cargo fmt --check` | 통과 |
+| `cargo clippy --workspace --lib --bins --locked -- -D warnings`, 제품 crate와 spike-v6 `--all-targets` | 통과 |
+
+변이 확인: 합계 검사 제거(3 실패), stale resolve의 version 비교 제거(1), abort가 아무 행이나 지움(1), events 정리가 replay 하한을 올리지 않음(1)이 모두 잡혔다. reconciler가 multipart abort를 하지 않는 변이는 live 테스트의 abort 뒤 PUT 확인(200 대 404)에서 잡혔다.
+
+전체 실행 중 `aip-execution` `messages`의 `owner_checks_scope_claim_ack_and_dlq_and_expiry_cleanup_is_bounded`가 한 번 실패했다(TTL 25ms 시험으로 부하에 따라 흔들린다). 단독으로 3번 연속 통과했고 이번 변경은 messages 모듈에 닿지 않는다. 전체 재실행에서는 통과했다.
+
+### 한계·미검증
+
+- 장부가 생기기 전에 올린 객체는 quota에 세지 않는다. 장부가 필요한 객체를 소급하려면 bucket을 목록 조회해야 하는데 구현하지 않았다.
+- 정리 시점에도 끝나지 않은 아주 큰 PUT은 이후 완료되어도 세지 않는다. bucket 수명 주기 규칙이 필요하다.
+- 업그레이드 중에 장부가 생기기 전에 시작한 multipart는 part 서명과 complete가 `WIRE.NOT_FOUND`다(재시작해야 한다).
+- quota는 서명한 크기 기준이다. provider 비용이나 bucket 전체 용량을 대신하지 않는다.
+- `aip_events.created_at`에 index가 없어 events 정리는 10분마다 테이블을 한 번 훑는다. 앱 migration 지문을 바꾸지 않으려는 선택이다. 매우 큰 events 테이블의 비용은 측정하지 않았다.
+- GCS(`gcs_hmac`)는 같은 코드 경로이지만 실제 계정으로 실행하지 않았고 MinIO로만 검증했다. AWS S3의 `HEAD`·multipart abort 응답 차이는 미확인이다(MinIO는 존재하지 않는 upload의 abort에도 성공을 돌려줘 `NotFound` 경로는 live로 재현하지 못했다).
+- 독립 검증 전이다. 완료가 아니라 "독립 검증 대기"다.
+
+## WBS 8.11 8.9 후속: clippy 정리와 Kind::Io 시험 (2026-10-18, Claude 구현 / 독립 검증 대기)
+
+DB 테스트는 이 Run이 띄운 PostgreSQL 17 컨테이너(`aip-claude-wbs8-pg-1018`, `127.0.0.1:32801`, DB `aip_test_wbs8_1018`)에서만 실행했고 공유 5432에는 접속하지 않았다.
+
+- `commit_unknown_wire` 자체의 clippy는 이미 깨끗했다(`cargo clippy --all-targets --locked -- -D warnings`, spike-v6). 8.9 절에 남긴 사전 실패는 이 파일이 아니라 spike-v3·v4 테스트였고 셋을 고쳤다: v3 `general_update`의 불필요한 참조, v4 `cleanup_tests`의 `marker_processes`(Linux 테스트에서만 쓰여 비Linux에서 dead code라 `cfg(target_os = "linux")`), v4 `grant_tests`의 `len() != 0`. 동작은 바꾸지 않았다.
+- `Kind::Io`: 호출자의 COMMIT 호출에서는 여전히 재현하지 못한다. 대신 접속 단계에서 가짜 서버가 시작 메시지를 읽고 RST로 닫게 해 실제 `Kind::Io` 오류(`error communicating with the server`)를 만들고 `connection_failed`가 이를 연결 오류로 판정하는지 고정했다(`io_error_during_startup_is_a_connection_failure`). Io 문구 판정을 지운 변이에서 이 테스트가 실패했다(12 passed, 1 failed).
+- COMMIT 전 단절 시험은 8.9 회차에 이미 있다(`disconnect_while_beginning_the_transaction_is_a_safe_retry`, `..._after_update_...`, `..._after_idempotency_insert_...`, `commit_on_an_already_closed_connection_...`). 새로 더하지 않았다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo clippy --all-targets --locked -- -D warnings` (spike-v3, v4, v6 각각) | 모두 통과 |
+| `cargo test --locked --test commit_unknown_wire` (spike-v6) | 13 passed |
+| `cargo test --locked --no-fail-fast` (spike-v3, spike-v4) | 모두 0 failed |
+
 ## WBS A: 외부 IdP·TLS reverse proxy 운영 smoke (2026-10-17)
 
 `conformance/idp-proxy/idp/server.mjs`는 저장소 자체의 경량 RSA/JWKS/JWT fixture이며, 실제 Keycloak·Entra·Google 연동이나 RFC 9068 전체 conformance 적합성은 미검증이다. Caddy TLS reverse proxy(자체 서명 SAN 인증서) 환경에서 `aip service` 운영 인증 및 프록시 헤더 처리를 검증했다.

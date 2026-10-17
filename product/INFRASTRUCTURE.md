@@ -18,6 +18,7 @@
     "max_total_bytes":10737418240, "max_objects":1000
   },
   "object_transfer_lifetime_ms":900000,
+  "retention":{"outbox_dispatched_days":30, "outbox_unhandled_days":null, "events_days":null},
   "db_pool":{"max_size":16,"acquire_timeout_ms":2000,"idle_timeout_ms":60000},
   "rate_limit":{"limit":120,"window_ms":60000},
   "limits":{"connections":64,"workers":4,"jobs":2,"uploads":4,"per_principal_realtime":4,"per_principal_workers":2,"per_principal_uploads":2},
@@ -41,6 +42,18 @@
 선택적 `rate_limit`은 같은 PostgreSQL schema를 쓰는 인스턴스 사이에서 계정과 고정 경로 분류별 quota를 공유한다. DB 시계와 원자적 갱신을 쓰는 fixed window 방식이며, 세션 재발급으로 계정 quota를 초기화하지 않는다. 초과하면 HTTP 429와 `Retry-After`, DB 오류면 실행 거부다. 브라우저 WebSocket은 첫 인증 프레임 뒤 검사하므로 초과 오류는 WebSocket error frame이다. 정적 공개 mount의 익명 quota는 공유 bucket이다. IP별 DDoS 방어나 sliding-window의 균일한 유량 보장은 아니며, TLS proxy의 요청 크기·연결 제한도 필요하다. `rate_limit`를 생략하면 principal·경로 분류별 분당 600회의 기본값이 켜진다(앱 사용 패턴에 맞게 올리거나, 필요하면 `"rate_limit":null`로 명시적으로 끈다). 시작할 때 인프라 schema에 limiter 테이블을 만든다.
 
 rate limiting과 RAG는 앱 schema 이름의 digest로 파생한 별도 `aip_infra_<digest>` schema에 저장한다. 앱 migration의 구조 지문을 유지하기 위한 분리다. 시작 시 schema/table 생성 권한이 필요하며 권한이 없으면 시작을 거부한다. 앱 schema만 선택하는 백업에는 이 데이터가 포함되지 않는다. 인프라 schema도 함께 백업하고, 앱 삭제·owner 폐기 시 데이터 보존과 정리를 별도로 수행한다. 앱 schema 삭제만으로 자동 삭제하지 않는다.
+
+### 기록 보존 정리(`retention`)
+
+서버가 쌓는 기록 중 다른 정리 경로가 없는 것을 정해진 기간 뒤에 지운다. 값은 1~3650일의 정수이고, 범위를 벗어나면 시작 시 거부한다. 정리는 durable job collector가 60초마다 한 인스턴스(advisory lock)에서만 돌린다.
+
+| 설정 | 기본 | 지우는 대상 |
+| --- | --- | --- |
+| `outbox_dispatched_days` | 30 | relay가 job으로 넘긴 outbox 행과 dispatch 기록을, 넘긴 뒤 이 기간이 지나면 지운다. `outbox_handlers`가 있을 때만 일어난다 |
+| `outbox_unhandled_days` | `null`(보존) | handler가 없는 topic의 outbox 행을, 쓴 뒤 이 기간이 지나면 지운다. 운영자가 DB에서 직접 읽는 행일 수 있어 기본은 지우지 않는다. handler가 있는 topic의 미전달 행은 job이 받아야 할 행이므로 이 설정과 무관하게 지우지 않는다 |
+| `events_days` | `null`(보존) | 발행 뒤 이 기간이 지난 이벤트. stream마다 최근 1,000개만 남기는 개수 상한은 이 설정과 별개로 항상 적용된다. 지운 범위의 cursor는 빈 구간이 아니라 `WIRE.CURSOR_EXPIRED`를 받는다. 멱등 key 장부와 stream head는 유지한다 |
+
+한계: outbox 행 정리는 id 순서로 가장 오래된 행부터 한 번에 1,000개씩 최대 10번 지우고 첫 번째로 젊은 행에서 멈춘다. `aip_events`의 `created_at`에는 index가 없어(앱 migration 지문을 바꾸지 않으려는 선택) 이벤트 정리는 10분마다 events 테이블을 한 번 훑고 한 번에 최대 1,000개 stream을 처리한다. 이벤트가 수백만 건인 서비스는 이 비용을 감안해 `events_days`를 켠다. 근거 테스트는 `spikes/spike-v6-transport/src/durable.rs`의 `retention_tests`와 `crates/aip-execution/tests/events.rs`다.
 
 ## 디렉터리 hosting
 
@@ -72,6 +85,8 @@ S3 설정은 `objects`를 다음으로 교체한다. 환경 변수 이름만 설
 {"kind":"s3","endpoint":"https://objects.example.com","bucket":"app-files","region":"us-east-1","access_key_env":"AIP_OBJECT_ACCESS_KEY","secret_key_env":"AIP_OBJECT_SECRET_KEY"}
 ```
 
+선택 필드 `max_total_bytes`(기본 10GiB)와 `max_objects`(기본 1,000)는 owner별 합계 상한이며 `gcs_hmac`에도 있다. 0이나 허용 범위를 넘는 값은 시작 시 거부한다(`max_objects`는 최대 100,000). S3 객체를 쓰려면 배포 fence가 있는 `aip service serve`여야 한다.
+
 TypeScript 제품 client의 실제 API:
 
 ```ts
@@ -82,7 +97,9 @@ const part = await client.objects.part({...upload, partNumber:1, size:chunk.size
 // 각 PUT 응답의 ETag를 모아서 complete({ ...upload, parts:[{number:1,etag}] }) 호출.
 ```
 
-SigV4는 Content-Length를 서명해 선언한 크기보다 큰 PUT/part를 막는다. URL 수명은 300초다. presigned URL은 소지자가 사용할 수 있고 발급 이후 principal 폐기가 즉시 URL을 취소하지 않는다. S3 control에는 동시 실행 제한이 있지만 **owner별 S3 합계 quota와 미완료 multipart 자동 정리는 아직 없다**. 배포 시 bucket 정책·수명 주기·비용 제한을 설정해야 한다. provider에서 Content-Length 서명, path-style URL, ETag, CORS 동작을 검증해야 한다. [TLS MinIO 통합 workflow](../.github/workflows/object-storage.yml)는 실제 S3 호환 HTTP와 multipart를 검사한다. 이는 AWS 계정에서의 IAM·CORS·운영 연동 확인을 대체하지 않는다.
+SigV4는 Content-Length를 서명해 선언한 크기보다 큰 PUT/part를 막는다. URL 수명은 300초다. presigned URL은 소지자가 사용할 수 있고 발급 이후 principal 폐기가 즉시 URL을 취소하지 않는다. S3 control에는 동시 실행 제한과 owner별 quota가 있다. 객체 bytes는 서버를 지나지 않으므로 서버가 **서명한 크기**를 장부(`aip_infra_<digest>.aip_object_ledger`)에 예약하고 owner 합계(기본 10GiB·1,000개, `objects`의 `max_total_bytes`·`max_objects`로 조정)에 넣어 검사한다. 넘으면 URL을 돌려주지 않고 `WIRE.QUOTA_EXCEEDED`를 낸다. 같은 객체를 다시 서명하면 이전 예약을 대체한다. multipart는 `start`가 객체 한 개, 서명한 part 크기가 같은 part 번호는 대체되어 누적된다. 아직 장부에 없는 upload id의 part 서명과 complete는 `WIRE.NOT_FOUND`다.
+
+예약은 사용되지 않아도 시간이 지나면 정리된다. 서명한 PUT은 발급 65분 뒤(URL 수명 5분과 진행 중 업로드를 위한 1시간), part 서명이 24시간 없던 multipart는 그 시점에, 서버가 `HEAD`로 저장소를 확인한다. 객체가 있으면 실제 크기로 확정하고(계속 quota에 포함), 없으면 예약을 풀며 multipart는 저장소에서 abort한다. 서명한 DELETE는 URL을 쓰지 않았을 수 있으므로 저장소가 객체 없음을 확인할 때까지 quota를 유지한다. 60초마다 모든 인스턴스가 돌지만 행마다 임대를 잡아 한 곳만 처리한다. 한계: ① 장부가 생기기 전에 올린 객체는 quota에 세지 않는다. ② 정리 시점까지 끝나지 않은 아주 큰 PUT은 이후 완료되어도 세지 않으므로 bucket 수명 주기 규칙으로 보완한다. ③ 이 장부는 서명한 크기 기준이며 provider 비용이나 bucket 전체 용량을 대신하지 않는다. 배포 시 bucket 정책·수명 주기·비용 제한은 여전히 설정해야 한다. provider에서 Content-Length 서명, path-style URL, ETag, CORS 동작을 검증해야 한다. [TLS MinIO 통합 workflow](../.github/workflows/object-storage.yml)는 실제 S3 호환 HTTP와 multipart를 검사한다. 이는 AWS 계정에서의 IAM·CORS·운영 연동 확인을 대체하지 않는다.
 
 Google Cloud Storage XML API의 HMAC 호환 backend도 같은 객체 API를 사용한다. 실제 설정은 `{"kind":"gcs_hmac","bucket":"app-files","access_key_env":"AIP_GCS_HMAC_ACCESS_ID","secret_key_env":"AIP_GCS_HMAC_SECRET"}`다. endpoint는 Google Storage로 고정하고 서명 scope는 `auto/s3/aws4_request`를 사용한다. ADC·Workload Identity를 사용하는 공식 Node/Python SDK 어댑터는 [providers](providers/README.md)를 참고한다. 이 어댑터는 신뢰한 서버 bridge용이며 `gcs_hmac` 인증과 구분한다. 실제 AWS/GCP 계정 검증은 자격증명 없이 실행할 수 없다.
 
@@ -209,6 +226,6 @@ Spring처럼 PostgreSQL과 MySQL 모두 선택한 라이브러리 의존성으�
 
 ## 확인된 미해결 운영 경계
 
-다중 프로세스 schema 분리, 운영 tracing/metrics, tenant 전체 broadcast, S3 누적 quota는 후속 검증·구현 대상이다. 현재 동시 quota·lease 경쟁·부분 요청 disconnect·느린 WebSocket 소비자·pool 취소를 검사하지만, 실제 운영 트래픽의 장시간 부하나 가용성 SLO를 보증하지 않는다. 기존 HTTP listener는 loopback TLS reverse proxy 뒤에 두는 모델을 유지한다.
+다중 프로세스 schema 분리, 운영 tracing/metrics, tenant 전체 broadcast는 후속 검증·구현 대상이다. S3 owner quota와 만료 정리는 [위](#파일과-대용량-객체) 장부로 구현했고 실제 MinIO(TLS)로 검증했으며, AWS·GCS 실계정 검증은 미실행이다. 현재 동시 quota·lease 경쟁·부분 요청 disconnect·느린 WebSocket 소비자·pool 취소를 검사하지만, 실제 운영 트래픽의 장시간 부하나 가용성 SLO를 보증하지 않는다. 기존 HTTP listener는 loopback TLS reverse proxy 뒤에 두는 모델을 유지한다.
 
 참고한 공식 자료: [Bubblewrap README](https://github.com/containers/bubblewrap/blob/main/README.md), [AWS multipart 의미와 수명 주기](https://docs.aws.amazon.com/AmazonS3/latest/userguide/mpuoverview.html). 타 프로젝트 소스를 복사하지 않았으며 Bubblewrap은 배포 환경의 별도 도구로 실행한다.

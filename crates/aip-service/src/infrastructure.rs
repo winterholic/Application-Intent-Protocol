@@ -98,12 +98,21 @@ pub enum ObjectsConfig {
         access_key_env: String,
         secret_key_env: String,
         session_token_env: Option<String>,
+        /// Per-owner ceiling on bytes signed for or stored, enforced by the server's object ledger.
+        #[serde(default = "owner_object_bytes")]
+        max_total_bytes: u64,
+        #[serde(default = "owner_object_count")]
+        max_objects: usize,
     },
     #[serde(rename = "gcs_hmac")]
     GcsHmac {
         bucket: String,
         access_key_env: String,
         secret_key_env: String,
+        #[serde(default = "owner_object_bytes")]
+        max_total_bytes: u64,
+        #[serde(default = "owner_object_count")]
+        max_objects: usize,
     },
 }
 fn owner_object_bytes() -> u64 {
@@ -114,6 +123,27 @@ fn owner_object_count() -> usize {
 }
 fn max_object_bytes() -> u64 {
     5 * 1024 * 1024 * 1024
+}
+
+/// Retention of server-side history, in whole days (1 to 3650). Omitted limits keep their defaults.
+#[derive(Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct RetentionConfig {
+    /// Days after dispatch that an outbox row and its dispatch record are removed. Applies when `outbox_handlers` exist.
+    pub outbox_dispatched_days: u32,
+    /// Days after which an outbox row whose topic has no handler is removed. `null` (default) keeps such rows forever,
+    /// because an operator may read them from the database directly. Undispatched rows of a handled topic are never removed.
+    pub outbox_unhandled_days: Option<u32>,
+    /// Days after which a published event is removed, in addition to the 1,000 most recent events a stream keeps.
+    /// `null` (default) keeps events until the per-stream count limit removes them.
+    pub events_days: Option<u32>,
+}
+
+impl Default for RetentionConfig {
+    fn default() -> Self {
+        let defaults = spike_v6_transport::infrastructure::Retention::default();
+        Self { outbox_dispatched_days: defaults.outbox_dispatched_days, outbox_unhandled_days: None, events_days: None }
+    }
 }
 
 #[derive(Deserialize)]
@@ -276,21 +306,29 @@ pub(super) fn build_with_environment(config: &super::Config, lookup: &impl Fn(&s
                 .map_err(|_| configuration_error())?,
             )))
         }
-        Some(ObjectsConfig::S3 { endpoint, bucket, region, access_key_env, secret_key_env, session_token_env }) => {
+        Some(ObjectsConfig::S3 { endpoint, bucket, region, access_key_env, secret_key_env, session_token_env, max_total_bytes, max_objects }) => {
+            if *max_total_bytes == 0 || *max_total_bytes > i64::MAX as u64 || *max_objects == 0 || *max_objects > 100_000 {
+                return Err(configuration_error());
+            }
             let mut s = aip_execution::objects::S3Config::new(
                 endpoint,
                 bucket,
                 region,
                 credential(access_key_env, lookup)?,
                 credential(secret_key_env, lookup)?,
-            );
+            )
+            .with_owner_quota(*max_total_bytes, *max_objects);
             if let Some(name) = session_token_env {
                 s = s.with_session_token(credential(name, lookup)?);
             }
             Some(ObjectStorage::S3(Arc::new(aip_execution::objects::S3Store::new(s).map_err(|_| configuration_error())?)))
         }
-        Some(ObjectsConfig::GcsHmac { bucket, access_key_env, secret_key_env }) => {
-            let config = aip_execution::gcs::GcsConfig::new(bucket, credential(access_key_env, lookup)?, credential(secret_key_env, lookup)?);
+        Some(ObjectsConfig::GcsHmac { bucket, access_key_env, secret_key_env, max_total_bytes, max_objects }) => {
+            if *max_total_bytes == 0 || *max_total_bytes > i64::MAX as u64 || *max_objects == 0 || *max_objects > 100_000 {
+                return Err(configuration_error());
+            }
+            let config = aip_execution::gcs::GcsConfig::new(bucket, credential(access_key_env, lookup)?, credential(secret_key_env, lookup)?)
+                .with_owner_quota(*max_total_bytes, *max_objects);
             Some(ObjectStorage::GcsHmac(Arc::new(aip_execution::gcs::GcsStore::new(config).map_err(|_| configuration_error())?)))
         }
     };
@@ -363,6 +401,7 @@ pub(super) fn build_with_environment(config: &super::Config, lookup: &impl Fn(&s
         client_consume: config.messaging.client_consume,
         resource_limits,
         object_transfer_lifetime: Duration::from_millis(config.object_transfer_lifetime_ms),
+        object_reconcile_interval: Duration::from_secs(60),
         rag: None,
         rag_client_index: false,
         triggers: Default::default(),
@@ -372,6 +411,11 @@ pub(super) fn build_with_environment(config: &super::Config, lookup: &impl Fn(&s
         otlp,
         otlp_exporter: None,
         relational: None,
+        retention: spike_v6_transport::infrastructure::Retention {
+            outbox_dispatched_days: config.retention.outbox_dispatched_days,
+            outbox_unhandled_days: config.retention.outbox_unhandled_days,
+            events_days: config.retention.events_days,
+        },
     };
     result.validate().map_err(|_| configuration_error())?;
     Ok(result)

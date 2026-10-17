@@ -8,6 +8,8 @@ pub mod events;
 
 pub mod integrations;
 
+pub mod object_ledger;
+
 pub mod objects;
 
 pub mod messages;

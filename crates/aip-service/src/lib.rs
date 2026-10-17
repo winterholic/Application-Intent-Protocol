@@ -293,6 +293,9 @@ pub struct Config {
     pub metrics: Option<infrastructure::MetricsConfig>,
     #[serde(default)]
     pub otlp: Option<spike_v6_transport::otlp::OtlpConfig>,
+    /// How long history that nothing else removes is kept (outbox rows, events). See `RetentionConfig`.
+    #[serde(default)]
+    pub retention: infrastructure::RetentionConfig,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1738,6 +1741,73 @@ mod managed_config_tests {
             let config: Config = serde_json::from_value(value).unwrap();
             assert_eq!(infrastructure::build(&config).err().unwrap()["code"], "INFRASTRUCTURE_CONFIG");
         }
+    }
+
+    #[test]
+    fn s3_owner_quota_defaults_match_local_objects_and_zero_or_unbounded_values_are_rejected() {
+        let build = |objects: Value| {
+            let config: Config = serde_json::from_value(json!({
+                "schema":"aip_test",
+                "auth":{"issuer":"https://issuer.example","audience":"aip","jwks":{"kind":"file","path":"jwks.json"}},
+                "objects":objects
+            }))
+            .unwrap();
+            infrastructure::build_with_environment(&config, &|_| Some("secret".to_owned()))
+        };
+        let s3 = |extra: Value| {
+            let mut value = json!({"kind":"s3","endpoint":"https://objects.example.test","bucket":"b","region":"us-east-1","access_key_env":"A","secret_key_env":"S"});
+            for (key, field) in extra.as_object().unwrap() {
+                value[key] = field.clone();
+            }
+            value
+        };
+        let Some(spike_v6_transport::infrastructure::ObjectStorage::S3(store)) = build(s3(json!({}))).unwrap().objects else { panic!("S3 storage") };
+        assert_eq!(store.owner_quota(), (10 * 1024 * 1024 * 1024, 1000), "same defaults as local object storage");
+        let Some(spike_v6_transport::infrastructure::ObjectStorage::S3(store)) =
+            build(s3(json!({"max_total_bytes":1048576,"max_objects":7}))).unwrap().objects
+        else {
+            panic!("S3 storage")
+        };
+        assert_eq!(store.owner_quota(), (1048576, 7));
+        for invalid in [json!({"max_total_bytes":0}), json!({"max_objects":0}), json!({"max_objects":100001}), json!({"max_total_bytes":u64::MAX})] {
+            assert_eq!(build(s3(invalid)).err().unwrap()["code"], "INFRASTRUCTURE_CONFIG");
+        }
+        let gcs = build(json!({"kind":"gcs_hmac","bucket":"b","access_key_env":"A","secret_key_env":"S","max_total_bytes":0}));
+        assert_eq!(gcs.err().unwrap()["code"], "INFRASTRUCTURE_CONFIG");
+    }
+
+    #[test]
+    fn retention_defaults_keep_unhandled_history_and_out_of_range_days_are_rejected() {
+        let build = |retention: Option<Value>| {
+            let mut value = json!({
+                "schema":"aip_test",
+                "auth":{"issuer":"https://issuer.example","audience":"aip","jwks":{"kind":"file","path":"jwks.json"}}
+            });
+            if let Some(retention) = retention {
+                value["retention"] = retention;
+            }
+            infrastructure::build(&serde_json::from_value::<Config>(value).unwrap())
+        };
+        let defaults = build(None).unwrap().retention;
+        assert_eq!((defaults.outbox_dispatched_days, defaults.outbox_unhandled_days, defaults.events_days), (30, None, None));
+        let custom = build(Some(json!({"outbox_dispatched_days":7,"outbox_unhandled_days":14,"events_days":90}))).unwrap().retention;
+        assert_eq!((custom.outbox_dispatched_days, custom.outbox_unhandled_days, custom.events_days), (7, Some(14), Some(90)));
+        for invalid in [
+            json!({"outbox_dispatched_days":0}),
+            json!({"outbox_unhandled_days":0}),
+            json!({"events_days":3651}),
+            json!({"outbox_dispatched_days":3651}),
+        ] {
+            assert_eq!(build(Some(invalid)).err().unwrap()["code"], "INFRASTRUCTURE_CONFIG");
+        }
+        assert!(
+            serde_json::from_value::<Config>(json!({
+                "schema":"aip_test",
+                "auth":{"issuer":"https://issuer.example","audience":"aip","jwks":{"kind":"file","path":"jwks.json"}},
+                "retention":{"unknown":1}
+            }))
+            .is_err()
+        );
     }
 
     #[test]

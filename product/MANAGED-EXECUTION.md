@@ -298,7 +298,7 @@ export async function fulfil(input, ctx) {
 - 각 instance가 1초마다 topic별로 처리하지 않은 행을 id 순으로 최대 50개 읽고 `outbox:<행 id>:<생성 시각>` key로 job을 수락한다. 같은 transaction에서 dispatch 표시를 남기므로 표시만 있고 job이 없는 상태는 생기지 않는다. 여러 instance가 경쟁해도 행당 job은 하나다. 이 표시 테이블은 앱 migration 지문을 바꾸지 않도록 `aip_infra_<digest>` schema에 둔다.
 - 전달은 at-least-once 수락, 실행은 job 계약(재시도·journal)을 따른다. 행 사이의 실행 순서는 보장하지 않는다. topic의 job 수락이 실패하면(주체 비활성 등) 그 tick에서 해당 topic의 나머지 행만 미루고 다른 topic은 계속 처리한다. 같은 행이 계속 실패하면 그 topic은 운영자가 원인을 고칠 때까지 진행하지 않는다(dead 표시는 아직 없다). dispatch 기록은 행의 생성 시각까지 묶으므로 앱 schema를 다시 만들어 sequence가 처음부터 시작해도 옛 기록과 섞이지 않는다.
 - 설정한 topic은 정의의 `notify` 효과가 실제로 내보내는 것이어야 하고, job 입력은 정확히 `{ event: Text }`여야 한다.
-- `aip_outbox`는 아직 자동 정리하지 않으며 처리 대상 조회는 미처리 행 anti-join이다. outbox가 매우 커지는 서비스는 보존 정책을 별도로 정해야 한다.
+- 처리 대상 조회는 미처리 행 anti-join이다. relay가 넘긴 행과 dispatch 기록은 `retention.outbox_dispatched_days`(기본 30일) 뒤에 지운다. handler가 없는 topic의 행은 기본으로 보존하며 `retention.outbox_unhandled_days`를 정하면 그 기간 뒤에 지운다. handler가 있는 topic의 미전달 행은 지우지 않는다. 설정과 한계는 [서버 인프라](INFRASTRUCTURE.md#기록-보존-정리retention)를 따른다.
 
 ### 메시지 큐 소비 job
 

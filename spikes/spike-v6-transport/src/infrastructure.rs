@@ -50,6 +50,37 @@ impl ResourceLimits {
     }
 }
 
+/// How long the server keeps history that nothing else removes. Every limit is in whole days; `None` keeps the history.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Retention {
+    /// A dispatched outbox row and its dispatch record are removed this long after the relay turned the row into a job.
+    pub outbox_dispatched_days: u32,
+    /// An outbox row whose topic has no handler is removed this long after it was written. Rows of a handled topic that were
+    /// not dispatched yet are never removed, because they are still owed to a job.
+    pub outbox_unhandled_days: Option<u32>,
+    /// An event is removed this long after it was published, on top of the 1,000 most recent events a stream always keeps.
+    pub events_days: Option<u32>,
+}
+
+impl Retention {
+    pub const MAX_DAYS: u32 = 3650;
+
+    pub fn validate(&self) -> std::io::Result<()> {
+        let valid = |days: u32| (1..=Self::MAX_DAYS).contains(&days);
+        if !valid(self.outbox_dispatched_days) || self.outbox_unhandled_days.is_some_and(|d| !valid(d)) || self.events_days.is_some_and(|d| !valid(d))
+        {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid retention"));
+        }
+        Ok(())
+    }
+}
+
+impl Default for Retention {
+    fn default() -> Self {
+        Self { outbox_dispatched_days: 30, outbox_unhandled_days: None, events_days: None }
+    }
+}
+
 #[derive(Clone)]
 pub enum ObjectStorage {
     Local(Arc<aip_execution::objects::LocalStore>),
@@ -93,6 +124,8 @@ pub struct Infrastructure {
     pub client_consume: bool,
     pub resource_limits: ResourceLimits,
     pub object_transfer_lifetime: std::time::Duration,
+    /// How often expired S3 reservations are checked against the store. Tests shorten it; production keeps the default.
+    pub object_reconcile_interval: std::time::Duration,
     pub rag: Option<Arc<aip_execution::rag::RagEngine>>,
     pub rag_client_index: bool,
     pub triggers: Arc<crate::triggers::Triggers>,
@@ -107,6 +140,7 @@ pub struct Infrastructure {
     /// A non-PostgreSQL relational store. When set, the PostgreSQL pool is not used; requests the adapter cannot serve are
     /// refused with `WIRE.ADAPTER_UNSUPPORTED` instead of being emulated.
     pub relational: Option<Arc<dyn spike_v2_read::backend::RelationalBackend>>,
+    pub retention: Retention,
 }
 
 impl Default for Infrastructure {
@@ -124,6 +158,7 @@ impl Default for Infrastructure {
             client_consume: false,
             resource_limits: ResourceLimits::default(),
             object_transfer_lifetime: std::time::Duration::from_secs(15 * 60),
+            object_reconcile_interval: std::time::Duration::from_secs(60),
             rag: None,
             rag_client_index: false,
             triggers: Arc::default(),
@@ -133,6 +168,7 @@ impl Default for Infrastructure {
             otlp: None,
             otlp_exporter: None,
             relational: None,
+            retention: Retention::default(),
         }
     }
 }
@@ -166,6 +202,7 @@ impl Infrastructure {
         }
         self.realtime.validate()?;
         self.resource_limits.validate()?;
+        self.retention.validate()?;
         if !(std::time::Duration::from_secs(1)..=std::time::Duration::from_secs(24 * 60 * 60)).contains(&self.object_transfer_lifetime) {
             return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid object transfer lifetime"));
         }

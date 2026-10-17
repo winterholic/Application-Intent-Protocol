@@ -55,6 +55,13 @@ fn outbox_ddl(infra: &str) -> String {
     format!("CREATE SCHEMA IF NOT EXISTS {infra}; {}", crate::durable::outbox_dispatch_ddl(infra))
 }
 
+fn object_ledger_ddl(infra: &str) -> String {
+    format!(
+        "CREATE SCHEMA IF NOT EXISTS {infra}; {}",
+        aip_execution::object_ledger::ObjectLedger::ddl(infra).expect("infrastructure schema was validated")
+    )
+}
+
 fn audit_ddl(infra: &str) -> String {
     format!("CREATE SCHEMA IF NOT EXISTS {infra}; {}", spike_v3_write::audit_ddl(infra))
 }
@@ -95,7 +102,12 @@ pub async fn provision_infrastructure(db_url: &str, deployment_schema: &str) -> 
     let uuid_audit = facts["resources"].as_object().is_some_and(|rs| rs.values().any(|r| r["idKind"] == "uuid"));
     let audit =
         if uuid_audit { format!("CREATE SCHEMA IF NOT EXISTS {infra}; {}", spike_v3_write::audit_ddl_with_uuid(&infra)) } else { audit_ddl(&infra) };
-    for (ddl, what) in [(rate_limiter_ddl(&infra), "rate limiter"), (outbox_ddl(&infra), "outbox relay"), (audit, "audit")] {
+    for (ddl, what) in [
+        (rate_limiter_ddl(&infra), "rate limiter"),
+        (outbox_ddl(&infra), "outbox relay"),
+        (object_ledger_ddl(&infra), "object ledger"),
+        (audit, "audit"),
+    ] {
         tokio::time::timeout(DB_PREFLIGHT_TIMEOUT, db.batch_execute(&ddl))
             .await
             .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, format!("{what} provisioning timed out")))?
@@ -296,6 +308,22 @@ pub(crate) async fn listen_with_fingerprint(
         .await
         .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "outbox relay installation timed out"))??;
     }
+    if matches!(runtime.infrastructure.objects, Some(crate::infrastructure::ObjectStorage::S3(_) | crate::infrastructure::ObjectStorage::GcsHmac(_)))
+    {
+        let deployment = runtime
+            .deployment
+            .as_ref()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "S3 object storage requires deployment fencing"))?;
+        let infra = aip_execution::infrastructure_schema(&deployment.schema).map_err(|_| io::Error::other("invalid deployment schema"))?;
+        let pool = runtime.db_pool.as_ref().expect("pool initialized");
+        tokio::time::timeout(DB_PREFLIGHT_TIMEOUT, async {
+            let db = pool.acquire().await.map_err(|_| io::Error::other("object ledger database unavailable"))?;
+            install_or_accept_provisioned(&db, &object_ledger_ddl(&infra), &format!("{infra}.aip_object_ledger"), "object ledger").await?;
+            db.release().await.map_err(|_| io::Error::other("object ledger connection reset failed"))
+        })
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "object ledger installation timed out"))??;
+    }
     if let Some(deployment) = &runtime.deployment {
         // 배포된 서비스의 전이는 모두 업무 감사 행을 남긴다. 기존 배포 schema를 바꾸지 않도록 infra schema에 둔다.
         let infra = aip_execution::infrastructure_schema(&deployment.schema).map_err(|_| io::Error::other("invalid deployment schema"))?;
@@ -333,6 +361,12 @@ pub(crate) async fn listen_with_fingerprint(
         let mut background = JoinSet::new();
         if crate::durable::enabled(&facts) && runtime.authenticator.is_some() && runtime.deployment.is_some() {
             background.spawn(crate::durable::supervisor(runtime.clone(), facts.clone(), wire));
+        }
+        if matches!(
+            runtime.infrastructure.objects,
+            Some(crate::infrastructure::ObjectStorage::S3(_) | crate::infrastructure::ObjectStorage::GcsHmac(_))
+        ) {
+            background.spawn(crate::object_transport::reconcile_loop(runtime.clone()));
         }
         let connections = Arc::new(tokio::sync::Semaphore::new(runtime.infrastructure.resource_limits.connections));
         let mut stop_open = true;
