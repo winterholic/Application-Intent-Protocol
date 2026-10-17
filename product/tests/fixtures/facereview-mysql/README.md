@@ -35,7 +35,7 @@ cargo test -p aip-cli --features aip-cli/mysql --test mysql_facereview_reads -- 
 
 - 제목 OR 채널 검색. 읽기 `filter`는 AND만 있다.
 - 목록 응답의 전체 건수(`total`). 원본은 매 페이지에 돌려주지만 AIP 읽기 응답에는 없다.
-- `user_emotion_dna`(JSON 열)와 `user_emotion_summary`(PK가 FK, 낙관적 잠금 열)는 정의하지 않았다.
+- `user_emotion_dna`와 `user_emotion_summary`. 두 표는 기본키가 곧 `user`의 외래 키(1:1 공유 키)다. resource의 `id: Uuid`는 `actor`(`Ref<User>`)와 타입이 달라 `rows read when id = actor`가 `DEF.TYPE_MISMATCH`이고, 같은 열을 `id`와 `user` 두 필드에 매핑하면 어댑션이 `컬럼 매핑 중복`으로 거절한다(둘 다 실제로 시도). 정의 언어에 "기본키가 참조인 resource"가 생기기 전에는 본인 행만 읽는 정책을 쓸 수 없다. `dna_data` JSON 열은 JSON 타입이 없어 선언하지 않아도 되는지는 이 표들이 막혀 있어 확인하지 못했다.
 - 음수 범위 `Int(-1000..1000)`은 문법이 지원하지 않아 `user_point_history.amount`는 범위 없는 `Int`다.
 - Mongo(감정 분포)·Redis에 의존하는 목록(`get_all_videos`, 북마크 영상, 추천)은 이 fixture 범위 밖이다.
 - 비활성화된 회원의 요청은 원본의 401(`AUTH_INVALID_TOKEN`)이 아니라 200과 빈 결과(쓰기는 거절)다. 인증은 외부 토큰 검증이고 가시성은 정책이라서다. 상태 코드까지 같게 하려면 actor 유효 조건을 정의 수준에서 선언하는 기능이 필요하다.
