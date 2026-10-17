@@ -16,6 +16,7 @@ AIP는 백엔드 서버를 없애려는 것이 아니다. 기능마다 반복되
 - [일반 마이그레이션](crates/aip-migrate/README.md): 변경 계획, 정형 backfill/convert, 실제 DDL 트랜잭션과 배포 저널. [기존 데이터 이관](crates/aip-migrate/ADOPTION.md)은 prototype 구조 marker를 검증한다.
 - [설치 SDK](product/SDK.md): 기존 TypeScript 엔진을 `@aip/sdk`로 offline 설치하고 생성 binding과 함께 사용한다.
 - [검증 절차와 보완 목록](product/VALIDATION.md): 새 checkout 준비, 반복 검증 명령, 자동 검증 범위와 남은 확인 항목.
+- [1.0 릴리스 게이트 증거](product/RELEASE-GATE.md): 새 clone 전체 회귀, 묶음 smoke, 이전 릴리스 업그레이드·롤백 실행 기록과 한계.
 - [제품 검증 결과](product/VERIFICATION.md)와 [최신 macOS 실행 묶음](product/dist/2026-10-06T11-19-25-091Z/README.md): 실제 JWT·PostgreSQL·설치 SDK·두 wire·Node/Python 확장 실행.
 - [정의 한계](spikes/spike-v1-fixture/PRODUCTION-LIMITS.md)와 [정책 실행 한계](spikes/spike-v2-read/PRODUCTION-RUNTIME.md): 입력·AST·predicate 확장·SQL·복제 payload의 상한을 함께 검사한다.
 - [제품 문법 보완](plan-docs/reviews/2026-10-07-syntax-completion.md): 다섯 작성 형식의 선언 일치, Date·Email·정밀 Decimal, 정원 제약과 공식 SDK 연결. [공개 백엔드 규칙 대조](plan-docs/reviews/2026-10-07-oss-pattern-survey.md#실제-소스에서-추출한-규칙의-실행-대조)는 실행한 범위와 남은 제약을 구분한다.
