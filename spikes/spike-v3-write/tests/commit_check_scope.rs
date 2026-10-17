@@ -7,7 +7,7 @@ use spike_v2_read::{connect_with_url, plan::Caller, sqlgen};
 use spike_v3_write::{apply, Knobs};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const DB: &str = "host=localhost dbname=postgres";
+const DB: &str = aip_test_support::test_database_url!();
 const SOURCE: &str = r#"
 enum TicketStatus { OPEN, CLOSED }
 enum AllocationStatus { ACTIVE, RELEASED }

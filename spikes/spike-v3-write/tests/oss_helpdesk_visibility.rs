@@ -10,7 +10,7 @@ use spike_v2_read::{
 };
 use spike_v3_write::{apply, Knobs};
 
-const DB: &str = "host=localhost dbname=postgres";
+const DB: &str = aip_test_support::test_database_url!();
 const SOURCE: &str = r#"
 enum TicketStatus { OPEN, CLOSED }
 resource Member { fields { id: Id; isStaff: Bool } }

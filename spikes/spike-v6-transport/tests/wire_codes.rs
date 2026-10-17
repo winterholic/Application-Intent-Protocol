@@ -6,8 +6,9 @@ use std::path::PathBuf;
 
 /// Uppercase string literals of the read, write, worker and transport layers that are not wire codes.
 const NOT_CODES: &[&str] = &["DESC", "HOME", "PATH", "PLAIN", "PRIVATE_VALUE", "PYTHONPATH", "ROLLBACK", "CARGO_MANIFEST_DIR"];
-/// Job status values: a state of a job, not an error code, so they keep their bare names.
-const JOB_STATUSES: &[&str] = &["CANCELLED", "CANCEL_REQUESTED", "FAILED", "SUCCEEDED"];
+/// Job status values: a state of a job, not an error code, so they keep their bare names. `RETRY`, `PENDING` and
+/// `RUNNING` are the attempt states that the job metrics and the OTLP span status mapping name.
+const JOB_STATUSES: &[&str] = &["CANCELLED", "CANCEL_REQUESTED", "FAILED", "PENDING", "RETRY", "RUNNING", "SUCCEEDED"];
 
 /// `(codes with the WIRE area, uppercase literals without an area)` of the layers that emit wire codes.
 fn scan() -> (BTreeSet<String>, BTreeSet<String>) {

@@ -26,7 +26,7 @@ impl Drop for SchemaCleanup {
         let cleanup = std::thread::spawn(move || {
             let Ok(runtime) = tokio::runtime::Builder::new_current_thread().enable_all().build() else { return };
             runtime.block_on(async move {
-                if let Ok(db) = spike_v2_read::connect_owned_with_url(spike_v2_read::DB_URL).await {
+                if let Ok(db) = spike_v2_read::connect_owned_with_url(aip_test_support::test_database_url!()).await {
                     let _ = db.batch_execute(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE")).await;
                 }
             });
@@ -52,7 +52,7 @@ impl Authenticator for Auth {
         g: &'a DurablePrincipal,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), AuthError>> + Send + 'a>> {
         Box::pin(async move {
-            let db = spike_v2_read::connect_owned_with_url(spike_v2_read::DB_URL).await.map_err(|_| AuthError::Unavailable)?;
+            let db = spike_v2_read::connect_owned_with_url(aip_test_support::test_database_url!()).await.map_err(|_| AuthError::Unavailable)?;
             let row = db
                 .query_opt(
                     &format!("SELECT enabled,min_iat FROM {}.aip_principals WHERE issuer=$1 AND subject=$2 AND actor_id=$3", self.schema),
@@ -108,8 +108,8 @@ async fn schedules_and_signed_webhooks_run_jobs_as_the_bound_service_principal()
     sqlgen::try_set_schema(&schema).unwrap();
     let _cleanup = SchemaCleanup(schema.clone());
     let facts = load_str(include_str!("fixtures/triggers.aip"), Form::A).unwrap().execution;
-    aip_migrate::init_with_wire(spike_v2_read::DB_URL, &schema, &facts, "safe").await.unwrap();
-    let db = spike_v2_read::connect_owned_with_url(spike_v2_read::DB_URL).await.unwrap();
+    aip_migrate::init_with_wire(aip_test_support::test_database_url!(), &schema, &facts, "safe").await.unwrap();
+    let db = spike_v2_read::connect_owned_with_url(aip_test_support::test_database_url!()).await.unwrap();
     db.batch_execute(&format!(
         "INSERT INTO {schema}.member(id) VALUES(1),(2); INSERT INTO {schema}.aip_principals(issuer,subject,actor_id) VALUES('test','svc-hooks',1),('test','svc-cron',1)"
     ))
@@ -151,7 +151,7 @@ async fn schedules_and_signed_webhooks_run_jobs_as_the_bound_service_principal()
             facts.clone(),
             IdWire::SafeNumber,
             "127.0.0.1:0".parse().unwrap(),
-            spike_v2_read::DB_URL.into(),
+            aip_test_support::test_database_url!().into(),
             Some(ReadExtensions { lang, dir: concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/job-data").into() }),
             ServerOptions::default(),
             false,

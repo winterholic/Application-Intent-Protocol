@@ -1,7 +1,7 @@
 use aip_migrate::{apply, init, plan};
 use spike_v1_fixture::{Form, load_str};
 
-const DB: &str = "host=localhost dbname=postgres";
+const DB: &str = aip_test_support::test_database_url!();
 
 #[tokio::test]
 async fn migration_adds_a_nullable_self_reference_with_a_foreign_key() {

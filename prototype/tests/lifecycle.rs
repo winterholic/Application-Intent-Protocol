@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-const LOCAL_DB: &str = "host=localhost dbname=postgres";
+const LOCAL_DB: &str = aip_test_support::test_database_url!();
 const UNREACHABLE_DB: &str = "host=127.0.0.1 port=1 dbname=postgres password=never_print_me connect_timeout=1";
 
 #[test]

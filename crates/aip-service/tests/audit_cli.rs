@@ -3,7 +3,7 @@
 use aip_service::{Audit, AuditQuery, Command};
 use serde_json::{Value, json};
 
-const DB: &str = "host=localhost dbname=postgres";
+const DB: &str = aip_test_support::test_database_url!();
 const DB_ENV: &str = "AIP_AUDIT_CLI_TEST_DATABASE";
 
 struct Cleanup(Vec<String>, std::path::PathBuf);

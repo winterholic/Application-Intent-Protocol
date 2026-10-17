@@ -23,6 +23,7 @@ dependencies = [
 name = "aip-prototype"
 version = "0.0.0"
 dependencies = [
+ "aip-test-support",
  "clap",
  "serde_json",
  "spike-v1-fixture",
@@ -32,6 +33,13 @@ dependencies = [
  "spike-v6-transport",
  "tokio",
  "tokio-postgres",
+]
+
+[[package]]
+name = "aip-test-support"
+version = "0.1.0"
+dependencies = [
+ "url",
 ]
 
 [[package]]
@@ -1387,6 +1395,7 @@ name = "spike-v2-read"
 version = "0.0.0"
 dependencies = [
  "aip-execution",
+ "aip-test-support",
  "chrono",
  "rustls",
  "serde",
@@ -1445,6 +1454,7 @@ dependencies = [
  "futures-util",
  "getrandom 0.2.17",
  "hmac 0.12.1",
+ "reqwest",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -1457,6 +1467,7 @@ dependencies = [
  "tokio-postgres",
  "tokio-tungstenite",
  "url",
+ "uuid",
 ]
 
 [[package]]

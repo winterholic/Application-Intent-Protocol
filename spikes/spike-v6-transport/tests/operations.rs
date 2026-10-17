@@ -36,9 +36,15 @@ async fn resource_free_operations_validate_auth_policy_input_output_and_no_ctx_i
         for lang in [WorkerLang::Node, WorkerLang::Python] {
             let fingerprint = spike_v5_sdk::contract_fingerprint_with_extensions(&facts, wire);
             let config = ReadExtensions { lang, dir: PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/operations")) };
-            let server = listen_with_extensions(facts.clone(), wire, "127.0.0.1:0".parse().unwrap(), spike_v2_read::DB_URL.into(), Some(config))
-                .await
-                .unwrap();
+            let server = listen_with_extensions(
+                facts.clone(),
+                wire,
+                "127.0.0.1:0".parse().unwrap(),
+                aip_test_support::test_database_url!().into(),
+                Some(config),
+            )
+            .await
+            .unwrap();
             let token = server.keys.issue(1, 30);
             let owner = if wire == IdWire::SafeNumber { json!(1) } else { json!("1") };
             let input = json!({"text":"가😀A","owner":owner,"optional":null});

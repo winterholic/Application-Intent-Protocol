@@ -132,7 +132,8 @@ def _urllib_transport(url: str, headers: dict, body: bytes, timeout: float) -> A
             return response.read(), {"x-request-id": response.headers.get("x-request-id")}
     except urllib.error.HTTPError as error:
         # Webhook-style status codes still carry the JSON envelope. A refused redirect has no JSON and ends as PROTOCOL_ERROR.
-        return error.read(), {"x-request-id": error.headers.get("x-request-id")}
+        with error:
+            return error.read(), {"x-request-id": error.headers.get("x-request-id")}
 
 
 class Client:

@@ -24,7 +24,9 @@ fn request_id(head: &str) -> Option<String> {
 
 async fn server(options: ServerOptions) -> spike_v6_transport::server::Server {
     let facts = load_str(include_str!("fixtures/job-data.aip"), Form::A).unwrap().execution;
-    listen_with_options(facts, IdWire::SafeNumber, "127.0.0.1:0".parse().unwrap(), spike_v2_read::DB_URL.into(), None, options).await.unwrap()
+    listen_with_options(facts, IdWire::SafeNumber, "127.0.0.1:0".parse().unwrap(), aip_test_support::test_database_url!().into(), None, options)
+        .await
+        .unwrap()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

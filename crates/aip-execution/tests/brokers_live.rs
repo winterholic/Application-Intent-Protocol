@@ -21,9 +21,7 @@ use std::{
 use tokio_postgres::{Client, NoTls};
 
 fn test_db_url() -> String {
-    std::env::var("AIP_TEST_DATABASE")
-        .or_else(|_| std::env::var("AIP_TEST_DATABASE_URL"))
-        .unwrap_or_else(|_| "host=localhost dbname=postgres".to_owned())
+    aip_test_support::database_url().to_owned()
 }
 
 static NEXT: AtomicU64 = AtomicU64::new(0);

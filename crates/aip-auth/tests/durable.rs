@@ -16,7 +16,7 @@ impl Drop for SchemaGuard {
 }
 
 fn psql(sql: &str) -> std::process::Output {
-    Command::new("psql").args(["-X", "-q", "-d", "host=localhost dbname=postgres", "-Atc", sql]).output().expect("test setup")
+    Command::new("psql").args(["-X", "-q", "-d", aip_test_support::test_database_url!(), "-Atc", sql]).output().expect("test setup")
 }
 
 fn mapped_schema() -> SchemaGuard {
@@ -46,7 +46,7 @@ fn fixture() -> (tempfile::TempDir, Config, EncodingKey) {
 async fn durable_grant_survives_token_expiry_but_not_principal_revocation() {
     let schema = mapped_schema();
     let (_dir, config, key) = fixture();
-    let auth = AuthenticatorImpl::new(config, "host=localhost dbname=postgres".into(), schema.0.clone()).await.expect("test setup");
+    let auth = AuthenticatorImpl::new(config, aip_test_support::test_database_url!().into(), schema.0.clone()).await.expect("test setup");
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("test setup").as_secs() as i64;
     let mut header = Header::new(Algorithm::RS256);
     header.typ = Some("at+jwt".into());
@@ -73,7 +73,7 @@ async fn durable_grant_survives_token_expiry_but_not_principal_revocation() {
 async fn durable_grant_is_bound_to_subject_actor_and_revocation_floor() {
     let schema = mapped_schema();
     let (_dir, config, key) = fixture();
-    let auth = AuthenticatorImpl::new(config, "host=localhost dbname=postgres".into(), schema.0.clone()).await.expect("test setup");
+    let auth = AuthenticatorImpl::new(config, aip_test_support::test_database_url!().into(), schema.0.clone()).await.expect("test setup");
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("test setup").as_secs() as i64;
     let mut header = Header::new(Algorithm::RS256);
     header.typ = Some("at+jwt".into());

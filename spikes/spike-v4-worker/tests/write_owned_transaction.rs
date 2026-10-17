@@ -49,7 +49,7 @@ async fn write_effects_follow_caller_commit_and_rollback() {
     let schema = format!("aip_write_owned_{unique}");
     sqlgen::set_schema(&schema);
     let facts: Value = load_str(SPEC, Form::A).unwrap_or_else(|errors| panic!("{errors:?}")).execution;
-    let mut db = connect_with_url("host=localhost dbname=postgres").await.expect("local PostgreSQL");
+    let mut db = connect_with_url(aip_test_support::test_database_url!()).await.expect("local PostgreSQL");
     let ddl = sqlgen::create_ddl(&facts).unwrap();
     db.batch_execute(&ddl[0]).await.expect("fresh schema ownership");
     let mut failures = vec![];

@@ -3,7 +3,7 @@
 //! service enforced (or failed to enforce) by hand.
 //!
 //! Requires a local PostgreSQL; set AIP_TEST_ADMIN_URL to override
-//! `postgres://localhost/postgres`.
+//! Requires explicit AIP_TEST_DATABASE_URL and AIP_TEST_ADMIN_URL values for a worker-owned isolated PostgreSQL.
 
 mod common;
 

@@ -35,7 +35,7 @@ async fn boolean_values_execute_in_transitions_and_post_update_effects() {
     let facts = load_str(SOURCE, Form::A).unwrap_or_else(|errors| panic!("{errors:?}")).execution;
     let schema = format!("aip_boolean_values_{}", std::process::id());
     sqlgen::set_schema(&schema);
-    let mut db = connect_with_url("host=localhost dbname=postgres").await.unwrap();
+    let mut db = connect_with_url(aip_test_support::test_database_url!()).await.unwrap();
     db.batch_execute(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE")).await.unwrap();
     for sql in sqlgen::create_ddl(&facts).unwrap() {
         db.batch_execute(&sql).await.unwrap();

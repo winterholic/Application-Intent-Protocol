@@ -14,7 +14,8 @@ use tokio::{
 };
 // Authentication is relayed to the real local PostgreSQL. Only post-auth SQL is held.
 async fn hold_sql(socket: TcpStream, held: Arc<AtomicUsize>, closed: Arc<AtomicUsize>) {
-    let db = TcpStream::connect("127.0.0.1:5432").await.unwrap();
+    let (db_host, db_port) = aip_test_support::endpoint(aip_test_support::test_database_url!()).unwrap();
+    let db = TcpStream::connect((db_host.as_str(), db_port)).await.unwrap();
     let (mut input, mut output) = socket.into_split();
     let (mut db_input, mut db_output) = db.into_split();
     let ready = Arc::new(AtomicBool::new(false));
@@ -88,7 +89,7 @@ async fn cli_sql_startup_wait_is_bounded_after_real_database_authentication() {
     });
     let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("example/app.aip");
     let schema = format!("aip_startup_p{}", std::process::id());
-    let db_url = format!("host=127.0.0.1 port={} dbname=postgres", address.port());
+    let db_url = aip_test_support::database_url_via_proxy(address.port());
     let mut failures = vec![];
     for (index, (operation, expected)) in [("init", "INIT_UNSETTLED"), ("serve", "DB_PREFLIGHT")].into_iter().enumerate() {
         let mut command = Command::new(env!("CARGO_BIN_EXE_aip-prototype"));

@@ -11,3 +11,7 @@ license = "MIT"
 [dependencies]
 serde_json = "1.0.151"
 sha2 = "0.10.9"
+
+# 전체 DWARF 대신 줄 정보만 남겨 target 용량을 줄인다.
+[profile.dev]
+debug = "line-tables-only"

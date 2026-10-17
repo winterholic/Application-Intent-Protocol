@@ -7,11 +7,13 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
+import { requireTestDatabase } from "../../product/test-support/postgres-guard.mjs";
 
 const conformanceDir = resolve(dirname(fileURLToPath(import.meta.url)));
 const repoDir = resolve(conformanceDir, "..", "..");
-const testDatabase = process.env.AIP_TEST_DATABASE || "host=localhost dbname=postgres";
-const binary = resolve(repoDir, "target/debug/aip");
+const testDb = requireTestDatabase();
+const testDatabase = testDb.raw;
+const binary = process.env.AIP_BINARY || resolve(repoDir, "target/debug/aip");
 const composeFile = join(conformanceDir, "docker-compose.yml");
 const certsDir = join(conformanceDir, "certs");
 

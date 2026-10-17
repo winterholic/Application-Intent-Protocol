@@ -69,7 +69,7 @@ async fn official_invoke_enforces_scalar_value_boundaries_for_node_and_python() 
     let cases = cases();
     // No schema or data is needed: echo implementations never call ctx. The client is only
     // required by the public invoke API and uses the local test database explicitly.
-    let mut db = connect_with_url("host=localhost dbname=postgres").await.expect("local PostgreSQL connection");
+    let mut db = connect_with_url(aip_test_support::test_database_url!()).await.expect("local PostgreSQL connection");
     let ext_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/extensions");
     let caller = Caller { actor_id: None, now: NOW.into() };
     let mut failures = Vec::new();

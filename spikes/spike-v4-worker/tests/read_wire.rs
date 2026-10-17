@@ -166,7 +166,7 @@ fn worker_limits() -> spike_v4_worker::WorkerLimits {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn read_wire_round_trips_and_ctx_aggregate_uses_the_same_wire() {
     let facts = facts();
-    let mut db = connect_with_url("host=localhost dbname=postgres").await.expect("local PostgreSQL connection");
+    let mut db = connect_with_url(aip_test_support::test_database_url!()).await.expect("local PostgreSQL connection");
     let schema = format!("aip_read_wire_{}_{}", std::process::id(), NEXT_ID.fetch_add(1, Ordering::Relaxed));
     sqlgen::set_schema(&schema);
     let ddl = sqlgen::create_ddl(&facts).expect("DDL generation");

@@ -15,3 +15,7 @@ spike-v5-sdk = { path = "../spike-v5-sdk" }
 serde_json = "1.0.151"
 tokio = { version = "1.53.1", features = ["rt", "macros"] }
 tokio-postgres = "0.7.18"
+
+# 전체 DWARF 대신 줄 정보만 남겨 target 용량을 줄인다.
+[profile.dev]
+debug = "line-tables-only"

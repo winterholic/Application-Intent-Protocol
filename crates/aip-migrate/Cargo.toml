@@ -24,3 +24,4 @@ spike-v1-fixture = { path = "../../spikes/spike-v1-fixture" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 futures-util = "0.3"
 aip-execution = { path = "../aip-execution" }
+aip-test-support = { path = "../aip-test-support", features = ["strict-db"] }

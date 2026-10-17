@@ -1,6 +1,6 @@
 use serde_json::json;
 use spike_v1_fixture::{Form, load_str};
-const URL: &str = "host=localhost dbname=postgres";
+const URL: &str = aip_test_support::test_database_url!();
 #[tokio::test]
 async fn an_owned_numeric_app_can_add_uuid_resources_and_backfill_uuid_refs() {
     let schema = format!("aip_uuid_migrate_{}", std::process::id());

@@ -106,7 +106,7 @@ async fn read_extensions_cross_http_auth_contract_wire_and_worker_boundaries() {
     sqlgen::set_schema(&schema);
     let base_facts = facts("recruitment.stats");
     let mut failures = Vec::new();
-    let db = match connect_with_url(spike_v2_read::DB_URL).await {
+    let db = match connect_with_url(aip_test_support::test_database_url!()).await {
         Ok(db) => db,
         Err(error) => panic!("local PostgreSQL connection failed: {error}"),
     };
@@ -223,7 +223,14 @@ async fn read_extensions_cross_http_auth_contract_wire_and_worker_boundaries() {
                     Err(error) => failures.push(format!("{wire_name}/{lang_name} preflight server startup failed: {:?}", error.kind())),
                 }
 
-                let live = start_server(base_facts.clone(), wire, "127.0.0.1:0".parse().unwrap(), spike_v2_read::DB_URL, Some(config.clone())).await;
+                let live = start_server(
+                    base_facts.clone(),
+                    wire,
+                    "127.0.0.1:0".parse().unwrap(),
+                    aip_test_support::test_database_url!(),
+                    Some(config.clone()),
+                )
+                .await;
                 match live {
                     Ok(server) => {
                         let token = server.keys.issue(1, 600);
@@ -254,8 +261,14 @@ async fn read_extensions_cross_http_auth_contract_wire_and_worker_boundaries() {
                 }
 
                 let bad_output_facts = facts("recruitment.statsBadOutput");
-                let bad_output =
-                    start_server(bad_output_facts.clone(), wire, "127.0.0.1:0".parse().unwrap(), spike_v2_read::DB_URL, Some(config.clone())).await;
+                let bad_output = start_server(
+                    bad_output_facts.clone(),
+                    wire,
+                    "127.0.0.1:0".parse().unwrap(),
+                    aip_test_support::test_database_url!(),
+                    Some(config.clone()),
+                )
+                .await;
                 match bad_output {
                     Ok(server) => {
                         let token = server.keys.issue(1, 600);
@@ -271,7 +284,9 @@ async fn read_extensions_cross_http_auth_contract_wire_and_worker_boundaries() {
                 #[cfg(target_os = "macos")]
                 {
                     let probe_facts = facts("recruitment.probeDb");
-                    let probe = start_server(probe_facts, wire, "127.0.0.1:0".parse().unwrap(), spike_v2_read::DB_URL, Some(config.clone())).await;
+                    let probe =
+                        start_server(probe_facts, wire, "127.0.0.1:0".parse().unwrap(), aip_test_support::test_database_url!(), Some(config.clone()))
+                            .await;
                     match probe {
                         Ok(server) => {
                             let token = server.keys.issue(1, 600);
@@ -289,7 +304,7 @@ async fn read_extensions_cross_http_auth_contract_wire_and_worker_boundaries() {
                 }
 
                 let slow_facts = facts("recruitment.statsSlow");
-                let slow = start_server(slow_facts, wire, "127.0.0.1:0".parse().unwrap(), spike_v2_read::DB_URL, Some(config)).await;
+                let slow = start_server(slow_facts, wire, "127.0.0.1:0".parse().unwrap(), aip_test_support::test_database_url!(), Some(config)).await;
                 match slow {
                     Ok(server) => {
                         let token = server.keys.issue(1, 600);

@@ -20,10 +20,8 @@ if [[ ! -x /usr/bin/sandbox-exec ]]; then
   echo "Missing macOS sandbox-exec at /usr/bin/sandbox-exec" >&2
   exit 2
 fi
-if ! psql -X -d 'host=localhost dbname=postgres' -Atc 'SELECT 1' >/dev/null; then
-  echo "Start the local PostgreSQL test server; the smoke uses only a fresh temporary schema." >&2
-  exit 2
-fi
+cargo test --manifest-path "$repo_dir/Cargo.toml" -p aip-test-support --features strict-db --locked
+psql -X "$AIP_TEST_DATABASE_URL" -Atc 'SELECT 1' >/dev/null
 
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/aip-worker-smoke.XXXXXX")"
 trap 'rm -rf "$scratch"' EXIT

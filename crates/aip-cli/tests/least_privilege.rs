@@ -1,5 +1,8 @@
 //! O-22: the migration role owns the schema; the runtime role only holds the grants documented in
 //! `product/DATABASE-ROLES.md`. This runs the documented grants end to end so the guide cannot drift from the code.
+
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use futures_util::FutureExt;
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
@@ -15,7 +18,7 @@ use tokio::{
     process::Command,
 };
 
-const MIGRATE_DB: &str = "host=localhost dbname=postgres";
+const MIGRATE_DB: &str = aip_test_support::test_database_url!();
 const APP: &str = include_str!("../../../prototype/example/app.aip");
 
 async fn service(config: &Path, runtime_db: &str, args: &[&str]) -> std::process::Output {
@@ -87,7 +90,7 @@ async fn a_runtime_role_with_only_the_documented_grants_serves_while_the_migrati
     let unique = uuid::Uuid::new_v4().simple().to_string();
     let schema = format!("aip_lp_{unique}");
     let role = format!("aip_lp_rt_{}", &unique[..12]);
-    let runtime_db = format!("host=localhost dbname=postgres user={role}");
+    let runtime_db = aip_test_support::database_url_for_user(aip_test_support::test_database_url!(), &role);
     let config = dir.path().join("service.json");
     let file = dir.path().join("app.aip");
     std::fs::write(&file, APP).unwrap();
@@ -134,7 +137,7 @@ async fn a_runtime_role_with_only_the_documented_grants_serves_while_the_migrati
             .unwrap();
 
         // Without the infrastructure objects the runtime role cannot start, and it says what to do about it.
-        let failure = start(&config, &file, &runtime_db).await.err().expect("serve must refuse to start without provisioned infrastructure");
+        let failure = start(&config, &file, &runtime_db).await.expect_err("serve must refuse to start without provisioned infrastructure");
         assert!(failure.contains("aip service provision"), "the startup error must tell the operator how to fix it: {failure}");
 
         // Provisioning under the migration role fixes that; then the runtime grants for the infrastructure schema follow.

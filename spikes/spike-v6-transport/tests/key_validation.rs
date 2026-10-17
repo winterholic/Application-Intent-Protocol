@@ -33,7 +33,7 @@ async fn control_character_keys_are_rejected_before_the_database() {
     let schema =
         format!("aip_key_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("clock").as_nanos());
     sqlgen::try_set_schema(&schema).expect("test schema context");
-    let db_url = "host=localhost dbname=postgres";
+    let db_url = aip_test_support::test_database_url!();
     let db = connect_owned_with_url(db_url).await.expect("local PostgreSQL");
     db.batch_execute(&format!(
         "CREATE SCHEMA {schema}; CREATE TABLE {schema}.aip_idem(principal text,key text,request text,result jsonb,PRIMARY KEY(principal,key))"

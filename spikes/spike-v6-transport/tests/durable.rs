@@ -28,7 +28,7 @@ impl Drop for SchemaCleanup {
         let cleanup = std::thread::Builder::new().name("aip-test-schema-cleanup".into()).spawn(move || {
             let Ok(runtime) = tokio::runtime::Builder::new_current_thread().enable_all().build() else { return };
             runtime.block_on(async move {
-                if let Ok(db) = spike_v2_read::connect_owned_with_url(spike_v2_read::DB_URL).await {
+                if let Ok(db) = spike_v2_read::connect_owned_with_url(aip_test_support::test_database_url!()).await {
                     let _ = db.batch_execute(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE")).await;
                 }
             });
@@ -56,7 +56,7 @@ impl Authenticator for Auth {
         g: &'a DurablePrincipal,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), AuthError>> + Send + 'a>> {
         Box::pin(async move {
-            let db = spike_v2_read::connect_owned_with_url(spike_v2_read::DB_URL).await.map_err(|_| AuthError::Unavailable)?;
+            let db = spike_v2_read::connect_owned_with_url(aip_test_support::test_database_url!()).await.map_err(|_| AuthError::Unavailable)?;
             let row = db
                 .query_opt(
                     &format!("SELECT enabled,min_iat FROM {}.aip_principals WHERE issuer=$1 AND subject=$2 AND actor_id=$3", self.schema),
@@ -287,8 +287,8 @@ operation job http_hold {
 }"#
     );
     let facts = load_str(&source, Form::A).unwrap().execution;
-    aip_migrate::init_with_wire(spike_v2_read::DB_URL, &schema, &facts, "safe").await.unwrap();
-    let db = spike_v2_read::connect_owned_with_url(spike_v2_read::DB_URL).await.unwrap();
+    aip_migrate::init_with_wire(aip_test_support::test_database_url!(), &schema, &facts, "safe").await.unwrap();
+    let db = spike_v2_read::connect_owned_with_url(aip_test_support::test_database_url!()).await.unwrap();
     db.batch_execute(&format!(
         "INSERT INTO {schema}.aip_actors VALUES(1); INSERT INTO {schema}.aip_principals(issuer,subject,actor_id) VALUES('test','owner',1)"
     ))
@@ -319,7 +319,7 @@ operation job http_hold {
                 facts.clone(),
                 IdWire::SafeNumber,
                 "127.0.0.1:0".parse().unwrap(),
-                spike_v2_read::DB_URL.into(),
+                aip_test_support::test_database_url!().into(),
                 Some(ReadExtensions { lang, dir: concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/jobs").into() }),
                 ServerOptions::default(),
                 false,
@@ -460,8 +460,8 @@ async fn durable_jobs_survive_restart_cancel_and_isolate_files_events_in_both_la
     sqlgen::try_set_schema(&schema).unwrap();
     let _schema_cleanup = SchemaCleanup(schema.clone());
     let facts = load_str(include_str!("fixtures/jobs.aip"), Form::A).unwrap().execution;
-    aip_migrate::init_with_wire(spike_v2_read::DB_URL, &schema, &facts, "safe").await.unwrap();
-    let db = spike_v2_read::connect_owned_with_url(spike_v2_read::DB_URL).await.unwrap();
+    aip_migrate::init_with_wire(aip_test_support::test_database_url!(), &schema, &facts, "safe").await.unwrap();
+    let db = spike_v2_read::connect_owned_with_url(aip_test_support::test_database_url!()).await.unwrap();
     db.batch_execute(&format!("INSERT INTO {schema}.aip_actors VALUES(1); INSERT INTO {schema}.aip_principals(issuer,subject,actor_id) VALUES('test','owner',1),('test','other',1)")).await.unwrap();
     let iat = db.query_one("SELECT floor(extract(epoch FROM clock_timestamp()))::bigint", &[]).await.unwrap().get(0);
     let auth = Arc::new(Auth { schema: schema.clone(), iat });
@@ -473,7 +473,7 @@ async fn durable_jobs_survive_restart_cancel_and_isolate_files_events_in_both_la
                 facts.clone(),
                 IdWire::SafeNumber,
                 "127.0.0.1:0".parse().unwrap(),
-                spike_v2_read::DB_URL.into(),
+                aip_test_support::test_database_url!().into(),
                 Some(ReadExtensions { lang, dir: concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/jobs").into() }),
                 ServerOptions::default(),
                 false,
@@ -578,8 +578,8 @@ operation job budgetChild {
 }"#
     );
     let facts = load_str(&source, Form::A).unwrap().execution;
-    aip_migrate::init_with_wire(spike_v2_read::DB_URL, &schema, &facts, "safe").await.unwrap();
-    let db = spike_v2_read::connect_owned_with_url(spike_v2_read::DB_URL).await.unwrap();
+    aip_migrate::init_with_wire(aip_test_support::test_database_url!(), &schema, &facts, "safe").await.unwrap();
+    let db = spike_v2_read::connect_owned_with_url(aip_test_support::test_database_url!()).await.unwrap();
     db.batch_execute(&format!(
         "INSERT INTO {schema}.aip_actors VALUES(1); INSERT INTO {schema}.aip_principals(issuer,subject,actor_id) VALUES('test','owner',1)"
     ))
@@ -595,7 +595,7 @@ operation job budgetChild {
             facts.clone(),
             IdWire::SafeNumber,
             "127.0.0.1:0".parse().unwrap(),
-            spike_v2_read::DB_URL.into(),
+            aip_test_support::test_database_url!().into(),
             Some(ReadExtensions { lang, dir: concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/jobs").into() }),
             ServerOptions::default(),
             false,
@@ -682,8 +682,8 @@ operation job catchKnownChildFailure {
 }"#
     );
     let facts = load_str(&source, Form::A).unwrap().execution;
-    aip_migrate::init_with_wire(spike_v2_read::DB_URL, &schema, &facts, "safe").await.unwrap();
-    let db = spike_v2_read::connect_owned_with_url(spike_v2_read::DB_URL).await.unwrap();
+    aip_migrate::init_with_wire(aip_test_support::test_database_url!(), &schema, &facts, "safe").await.unwrap();
+    let db = spike_v2_read::connect_owned_with_url(aip_test_support::test_database_url!()).await.unwrap();
     db.batch_execute(&format!(
         "INSERT INTO {schema}.aip_actors VALUES(1); INSERT INTO {schema}.aip_principals(issuer,subject,actor_id) VALUES('test','owner',1)"
     ))
@@ -698,7 +698,7 @@ operation job catchKnownChildFailure {
             facts.clone(),
             IdWire::SafeNumber,
             "127.0.0.1:0".parse().unwrap(),
-            spike_v2_read::DB_URL.into(),
+            aip_test_support::test_database_url!().into(),
             Some(ReadExtensions { lang, dir: concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/jobs").into() }),
             ServerOptions::default(),
             false,
@@ -749,8 +749,8 @@ async fn messages_share_atomic_job_effects_and_reject_foreign_acknowledgements()
     sqlgen::set_schema(schema);
     let source=format!("{}\noperation job dispatch {{ input {{ text: Text }} output {{ length: Int }} allow actor != null access messages.notifications effect managed deadline 5s implementation \"jobs.message\" }}",include_str!("fixtures/jobs.aip"));
     let facts = load_str(&source, Form::A).unwrap().execution;
-    aip_migrate::init(spike_v2_read::DB_URL, schema, &facts).await.unwrap();
-    let db = spike_v2_read::connect_owned_with_url(spike_v2_read::DB_URL).await.unwrap();
+    aip_migrate::init(aip_test_support::test_database_url!(), schema, &facts).await.unwrap();
+    let db = spike_v2_read::connect_owned_with_url(aip_test_support::test_database_url!()).await.unwrap();
     db.batch_execute(&format!("INSERT INTO {schema}.aip_actors VALUES(1); INSERT INTO {schema}.aip_principals(issuer,subject,actor_id) VALUES('test','owner',1),('test','other',1)")).await.unwrap();
     let iat: i64 = db.query_one("SELECT floor(extract(epoch from clock_timestamp()))::bigint", &[]).await.unwrap().get(0);
     let fp = spike_v5_sdk::contract_fingerprint_with_all_extensions(&facts, IdWire::DecimalString);
@@ -760,7 +760,7 @@ async fn messages_share_atomic_job_effects_and_reject_foreign_acknowledgements()
             facts.clone(),
             IdWire::DecimalString,
             "127.0.0.1:0".parse().unwrap(),
-            spike_v2_read::DB_URL.into(),
+            aip_test_support::test_database_url!().into(),
             Some(ReadExtensions { lang, dir: concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/jobs").into() }),
             ServerOptions::default(),
             false,

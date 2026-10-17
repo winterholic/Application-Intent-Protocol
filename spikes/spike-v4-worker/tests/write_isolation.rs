@@ -5,7 +5,7 @@ use spike_v4_worker::{write::invoke_write, Isolation, Lang, Worker, WorkerLimits
 use std::{fs, path::PathBuf};
 
 const SPEC: &str = include_str!("../../spike-v6-transport/tests/fixtures/write-extension.aip");
-const DB: &str = "host=localhost dbname=postgres";
+const DB: &str = aip_test_support::test_database_url!();
 
 struct Owned(PathBuf);
 impl Drop for Owned {

@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use serde_json::{Value, json};
 use std::{path::Path, process::Command};
 

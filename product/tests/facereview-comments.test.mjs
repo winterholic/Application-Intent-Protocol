@@ -8,10 +8,12 @@ import {join, resolve} from 'node:path';
 import {once} from 'node:events';
 import {createInterface} from 'node:readline';
 import {pathToFileURL} from 'node:url';
+import {requireTestDatabase, withDatabase, withUser} from '../test-support/postgres-guard.mjs';
 
 const root = resolve(import.meta.dirname, '../..');
 const binary = join(root, 'target/debug/aip');
 const file = join(root, 'product/tests/fixtures/facereview-comments/comments.aip');
+const adminDb = requireTestDatabase({admin: true});
 
 test('FaceReview comments: existing PG schema, installed SDKs and real authorization', {timeout: 180000}, async t => {
   const temp = mkdtempSync(join(tmpdir(), 'aip-facereview-'));
@@ -21,8 +23,8 @@ test('FaceReview comments: existing PG schema, installed SDKs and real authoriza
   const schema = 'aip_comments';
   const source = 'facereview_copy';
   const owner = randomUUID(), other = randomUUID(), video = randomUUID(), deletedVideo = randomUUID();
-  const adminUrl = `host=localhost dbname=${database}`;
-  const runtimeUrl = `host=localhost dbname=${database} user=${role}`;
+  const adminUrl = withDatabase(adminDb.raw, database);
+  const runtimeUrl = withUser(adminUrl, role);
   const env = {PATH: process.env.PATH, HOME: process.env.HOME, TMPDIR: process.env.TMPDIR,
     AIP_FACE_DATABASE: runtimeUrl, AIP_FACE_MIGRATION: adminUrl, npm_config_cache: join(temp, 'npm-cache')};
   const run = (command, args, options = {}) => {
@@ -39,7 +41,7 @@ test('FaceReview comments: existing PG schema, installed SDKs and real authoriza
   const cli = args => JSON.parse(run(binary, ['service', ...args]));
   let server, lines, databaseCreated = false, roleCreated = false;
   try {
-    sql(`CREATE DATABASE ${database};`, 'host=localhost dbname=postgres');
+    sql(`CREATE DATABASE ${database};`, adminDb.raw);
     databaseCreated = true;
     sql(`CREATE ROLE ${role} LOGIN;`);
     roleCreated = true;
@@ -298,8 +300,8 @@ GRANT UPDATE(video_id) ON ${source}.video TO ${role};`);
       const ended = once(server, 'exit'); server.kill('SIGTERM'); await ended;
     }
     lines?.close();
-    if (databaseCreated) sql(`DROP DATABASE ${database};`, 'host=localhost dbname=postgres');
-    if (roleCreated) sql(`DROP ROLE ${role};`, 'host=localhost dbname=postgres');
+    if (databaseCreated) sql(`DROP DATABASE ${database};`, adminDb.raw);
+    if (roleCreated) sql(`DROP ROLE ${role};`, adminDb.raw);
     rmSync(temp, {recursive: true, force: true});
   }
 });

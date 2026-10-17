@@ -67,6 +67,7 @@ dependencies = [
 name = "aip-auth"
 version = "0.1.0"
 dependencies = [
+ "aip-test-support",
  "base64 0.22.1",
  "jsonwebtoken",
  "rand 0.8.8",
@@ -95,6 +96,7 @@ dependencies = [
  "aip-sema",
  "aip-service",
  "aip-syntax",
+ "aip-test-support",
  "anyhow",
  "axum",
  "base64 0.22.1",
@@ -131,6 +133,7 @@ dependencies = [
 name = "aip-execution"
 version = "0.1.0"
 dependencies = [
+ "aip-test-support",
  "base64 0.22.1",
  "futures-util",
  "hmac 0.12.1",
@@ -161,6 +164,7 @@ name = "aip-migrate"
 version = "0.1.0"
 dependencies = [
  "aip-execution",
+ "aip-test-support",
  "futures-util",
  "mysql_async",
  "serde",
@@ -236,6 +240,7 @@ dependencies = [
  "aip-auth",
  "aip-execution",
  "aip-migrate",
+ "aip-test-support",
  "base64 0.22.1",
  "clap",
  "libc",
@@ -259,6 +264,13 @@ dependencies = [
  "aip-ir",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "aip-test-support"
+version = "0.1.0"
+dependencies = [
+ "url",
 ]
 
 [[package]]
@@ -3735,6 +3747,7 @@ name = "spike-v2-read"
 version = "0.0.0"
 dependencies = [
  "aip-execution",
+ "aip-test-support",
  "chrono",
  "rustls",
  "serde",

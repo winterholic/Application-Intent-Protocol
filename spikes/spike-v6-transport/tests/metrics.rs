@@ -45,7 +45,7 @@ async fn server(token: Option<&str>) -> spike_v6_transport::server::Server {
         facts,
         IdWire::SafeNumber,
         "127.0.0.1:0".parse().unwrap(),
-        spike_v2_read::DB_URL.into(),
+        aip_test_support::test_database_url!().into(),
         None,
         ServerOptions::default(),
         false,

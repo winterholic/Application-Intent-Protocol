@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use futures_util::FutureExt;
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
@@ -13,7 +15,7 @@ use tokio::{
     process::Command,
 };
 
-const DB: &str = "host=localhost dbname=postgres";
+const DB: &str = aip_test_support::test_database_url!();
 const APP: &str = include_str!("../../../prototype/example/app.aip");
 
 async fn command(config: &Path, args: &[&str]) -> Value {

@@ -78,13 +78,17 @@ docker compose -f "$compose_file" exec -T minio mc mb local/object-test-bucket -
 echo "==> Running live Kafka and RabbitMQ integration tests..."
 cd "$repo_root"
 
+# Validate the dedicated worker DSNs and explicit fallback port before starting
+# any live DB test. The Rust tests cannot silently use libpq's port 5432 default.
+cargo test -p aip-test-support --features strict-db --locked
+
 export AIP_TEST_KAFKA_BOOTSTRAP="127.0.0.1:9092"
 export AIP_TEST_KAFKA_OUT_TOPIC="aip-ci-outbound"
 export AIP_TEST_KAFKA_IN_TOPIC="aip-ci-inbound"
 export AIP_TEST_RABBITMQ_URI="amqp://aiptest:aip-fixture-password@127.0.0.1:5672/%2f"
 export AIP_TEST_RABBITMQ_OUT_QUEUE="aip-ci-outbound"
 export AIP_TEST_RABBITMQ_IN_QUEUE="aip-ci-inbound"
-export AIP_TEST_DATABASE="${AIP_TEST_DATABASE:-host=localhost dbname=postgres}"
+export AIP_TEST_DATABASE="${AIP_TEST_DATABASE_URL:?AIP_TEST_DATABASE_URL is required}"
 
 if [[ -d "/opt/homebrew/opt/openssl@3" ]]; then
   export OPENSSL_DIR="/opt/homebrew/opt/openssl@3"

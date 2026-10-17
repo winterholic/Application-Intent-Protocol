@@ -16,12 +16,12 @@ fn plan(src: &str) -> aip_plan::Program {
 
 /// An empty database of this name, and a pool on it.
 async fn fresh(db: &str) -> Pool {
-    let admin_url = std::env::var("AIP_TEST_ADMIN_URL").unwrap_or_else(|_| "postgres://localhost/postgres".into());
+    let admin_url = aip_test_support::admin_database_url();
     let admin = aip_runtime::pool(&admin_url, 1).expect("admin pool");
     let c = admin.get().await.expect("admin connection");
     c.execute(format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)").as_str(), &[]).await.expect("drop");
     c.execute(format!("CREATE DATABASE {db}").as_str(), &[]).await.expect("create");
-    let url = admin_url.rsplit_once('/').map(|(base, _)| format!("{base}/{db}")).expect("url");
+    let url = aip_test_support::admin_database_url_for(db);
     aip_runtime::pool(&url, 16).expect("pool")
 }
 

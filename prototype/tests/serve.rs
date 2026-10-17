@@ -7,7 +7,7 @@ use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::{Duration, Instant};
 
-const LOCAL_DB: &str = "host=localhost dbname=postgres";
+const LOCAL_DB: &str = aip_test_support::test_database_url!();
 const UNREACHABLE_DB: &str = "host=127.0.0.1 port=1 dbname=postgres password=never_print_me connect_timeout=1";
 
 static NEXT_SCHEMA: AtomicU64 = AtomicU64::new(0);

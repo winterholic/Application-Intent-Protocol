@@ -1587,7 +1587,7 @@ mod safety_tests {
     #[tokio::test]
     async fn collector_removes_payloads_files_and_old_tombstones() {
         let s = format!("aip_job_gc_{}", std::process::id());
-        let mut db = spike_v2_read::connect_owned_with_url(spike_v2_read::DB_URL).await.unwrap();
+        let mut db = spike_v2_read::connect_owned_with_url(aip_test_support::test_database_url!()).await.unwrap();
         db.batch_execute(&format!(
             "CREATE SCHEMA {s}; {}; {}; {}; CREATE TABLE {s}.aip_effects(run_id uuid REFERENCES {s}.aip_jobs(id),result jsonb)",
             aip_execution::ddl(&s).unwrap(),
@@ -1662,7 +1662,7 @@ mod safety_tests {
     #[tokio::test]
     async fn managed_files_enforce_total_quota_and_reclaim_expired_content() {
         let s = format!("aip_file_quota_{}", std::process::id());
-        let mut db = spike_v2_read::connect_owned_with_url(spike_v2_read::DB_URL).await.unwrap();
+        let mut db = spike_v2_read::connect_owned_with_url(aip_test_support::test_database_url!()).await.unwrap();
         db.batch_execute(&format!("CREATE SCHEMA {s}; {}", aip_execution::files::Store::new(&s).unwrap().ddl())).await.unwrap();
         db.batch_execute(&format!("INSERT INTO {s}.aip_files(handle,owner,bucket,name,media_type,content) SELECT md5(i::text)::uuid,'owner','reports',i::text,'text/plain',''::bytea FROM generate_series(1,100) i")).await.unwrap();
         let tx = db.transaction().await.unwrap();
@@ -1682,7 +1682,7 @@ mod safety_tests {
     async fn collector_keeps_up_with_bulk_history_and_trims_the_outbox_ledger() {
         let s = format!("aip_job_gc_bulk_{}", std::process::id());
         let infra = aip_execution::infrastructure_schema(&s).unwrap();
-        let mut db = spike_v2_read::connect_owned_with_url(spike_v2_read::DB_URL).await.unwrap();
+        let mut db = spike_v2_read::connect_owned_with_url(aip_test_support::test_database_url!()).await.unwrap();
         db.batch_execute(&format!(
             "DROP SCHEMA IF EXISTS {infra} CASCADE; CREATE SCHEMA {s}; CREATE SCHEMA {infra}; {}; {}; CREATE TABLE {s}.aip_effects(run_id uuid REFERENCES {s}.aip_jobs(id),result jsonb); \
              CREATE TABLE {s}.aip_outbox (id bigserial PRIMARY KEY, topic text NOT NULL, recipient_id bigint, source text NOT NULL, source_id bigint, created_at timestamptz NOT NULL DEFAULT now()); {}",

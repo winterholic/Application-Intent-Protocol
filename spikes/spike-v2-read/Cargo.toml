@@ -19,3 +19,11 @@ tokio-postgres = "0.7.18"
 tokio-postgres-rustls = { version = "0.14.0", default-features = false, features = ["ring"] }
 rustls = { version = "0.23.35", default-features = false, features = ["ring", "std", "tls12"] }
 webpki-roots = "1.0.4"
+aip-test-support = { path = "../../crates/aip-test-support" }
+
+[dev-dependencies]
+aip-test-support = { path = "../../crates/aip-test-support", features = ["strict-db"] }
+
+# 전체 DWARF 대신 줄 정보만 남겨 target 용량을 줄인다.
+[profile.dev]
+debug = "line-tables-only"

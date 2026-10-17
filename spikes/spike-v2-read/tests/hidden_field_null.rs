@@ -10,7 +10,7 @@ use spike_v2_read::{
     sqlgen,
 };
 
-const DB: &str = "host=localhost dbname=postgres";
+const DB: &str = aip_test_support::test_database_url!();
 
 const DEF: &str = r#"
 resource Member { fields { id: Id } }
