@@ -1019,7 +1019,9 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires a disposable MySQL or MariaDB database seeded with the aip_mysql_test schema"]
     async fn live_mysql_catalog_reads_information_schema_into_cli_draft() {
-        let url = live_mysql_url();
+        // The 4s session limit is asserted below, so the test sets it instead of relying on the caller's URL.
+        let base_url = live_mysql_url();
+        let url = format!("{base_url}{}statement_timeout=4", if base_url.contains('?') { '&' } else { '?' });
         let driver = MysqlDriver::from_url(&url).unwrap();
         driver.check_connection().await.unwrap();
         let mut conn = driver.pool.get_conn().await.unwrap();
