@@ -10,6 +10,8 @@ import subprocess
 import tempfile
 import uuid
 
+import dedicated_db
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -106,10 +108,11 @@ console.log(JSON.stringify({ok:true,phase}));
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--db-url", default="host=localhost dbname=postgres")
+    parser.add_argument("--db-url", default=None, help="dedicated aip_test_* PostgreSQL DSN with an explicit high port; defaults to AIP_TEST_DATABASE_URL, never a PostgreSQL default")
     parser.add_argument("--wire", choices=("decimal", "safe", "both"), default="both")
     parser.add_argument("--sdk", choices=("source", "package", "both"), default="both")
     args = parser.parse_args()
+    args.db_url = dedicated_db.resolve(args.db_url)
     cargo = shutil.which("cargo") or str(Path.home() / ".cargo/bin/cargo")
     run([cargo, "build", "--offline"])
     binary = str(ROOT / "target/debug/aip-prototype")

@@ -181,11 +181,13 @@ python3 tools/build-bundle.py --out <새-출력-경로> --profile {profile}
 `Event.confirm`은 공개 `Event.mark` 전이를 호출하고 결과를 돌려줍니다. 실행하려면 명시적 WRITE 설정이 필요합니다. 표준 apply와 같은 멱등 key·상태 조회·SDK pending·읽기 캐시 무효화 경로를 사용합니다.
 
 ```sh
+# 이 명령은 schema를 만들고 지웁니다. 운영·공유 PostgreSQL이 아니라 전용 데이터베이스 DSN을 지정하세요.
+export AIP_DEMO_DB_URL='host=127.0.0.1 port=<전용 포트> user=<사용자> dbname=aip_test_demo'
 schema=aip_event_demo
 ./bin/aip-prototype gen examples/app.aip --wire decimal --out /tmp/event.contract.ts --sdk-import @aip/prototype-sdk
-./bin/aip-prototype init examples/app.aip --schema "$schema" --db-url 'host=localhost dbname=postgres'
-psql 'host=localhost dbname=postgres' -v ON_ERROR_STOP=1 --single-transaction -v schema="$schema" -f examples/event-seed.sql
-./bin/aip-prototype serve examples/app.aip --schema "$schema" --db-url 'host=localhost dbname=postgres' --listen 127.0.0.1:8080 --wire decimal --dev-actor 1 --worker-dir extensions/node --worker-lang node --enable-write-extensions
+./bin/aip-prototype init examples/app.aip --schema "$schema" --db-url "$AIP_DEMO_DB_URL"
+psql "$AIP_DEMO_DB_URL" -v ON_ERROR_STOP=1 --single-transaction -v schema="$schema" -f examples/event-seed.sql
+./bin/aip-prototype serve examples/app.aip --schema "$schema" --db-url "$AIP_DEMO_DB_URL" --listen 127.0.0.1:8080 --wire decimal --dev-actor 1 --worker-dir extensions/node --worker-lang node --enable-write-extensions
 ```
 
 생성 binding과 설치한 SDK에서 서버 readiness의 `devToken`으로 호출합니다.
@@ -208,9 +210,9 @@ Bundle 루트에서 실행합니다. 예제 schema는 비어 있어야 하며 `i
 schema=aip_bundle_demo
 ./bin/aip-prototype check examples/app.aip
 ./bin/aip-prototype gen examples/recruitment.aip --wire decimal --out /tmp/recruitment.contract.ts --sdk-import @aip/prototype-sdk
-./bin/aip-prototype init examples/recruitment.aip --schema "$schema" --db-url 'host=localhost dbname=postgres'
-psql 'host=localhost dbname=postgres' -v ON_ERROR_STOP=1 --single-transaction -v schema="$schema" -f examples/recruitment-seed.sql
-./bin/aip-prototype serve examples/recruitment.aip --schema "$schema" --db-url 'host=localhost dbname=postgres' --listen 127.0.0.1:8080 --wire decimal --dev-actor 1 --worker-dir extensions/node --worker-lang node
+./bin/aip-prototype init examples/recruitment.aip --schema "$schema" --db-url "$AIP_DEMO_DB_URL"
+psql "$AIP_DEMO_DB_URL" -v ON_ERROR_STOP=1 --single-transaction -v schema="$schema" -f examples/recruitment-seed.sql
+./bin/aip-prototype serve examples/recruitment.aip --schema "$schema" --db-url "$AIP_DEMO_DB_URL" --listen 127.0.0.1:8080 --wire decimal --dev-actor 1 --worker-dir extensions/node --worker-lang node
 ```
 
 Python worker를 확인하려면 마지막 명령의 `extensions/node --worker-lang node`를 `extensions/python --worker-lang python`으로 바꿉니다. 두 server는 같은 fixture의 `Recruitment.stats`를 호출합니다. 서버는 loopback에만 bind하며 로그인을 제공하지 않습니다. `--dev-actor 1`은 seed에 이미 있는 Member 1의 단기 로컬 토큰입니다.
