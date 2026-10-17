@@ -387,14 +387,44 @@ IP.1=127.0.0.1
     const unknownSubBody = JSON.parse(unknownSubSession.body || "{}");
     check("Token for unbound subject is rejected (WIRE.UNAUTHENTICATED)", unknownSubBody.ok === false && unknownSubBody.code === "WIRE.UNAUTHENTICATED", unknownSubSession.body);
 
-    // 7.7. Perform authenticated read through Caddy
-    const readRes = await request(8443, ca, {
+    // 7.7. A real operation through Caddy with the IdP's token. The service answers HTTP 200 for application-level failures too
+    // (the verdict is in the JSON body), so the status alone proves nothing: the body must be the declared output.
+    const operationRes = await request(8443, ca, {
       method: "POST",
-      path: "/read",
+      path: "/operation",
       headers: sessionHeaders,
-      body: JSON.stringify({ select: { job: { "*": {} } } }),
+      body: JSON.stringify({ operation: "length", input: { text: "가😀A" } }),
     });
-    check("Authenticated read through TLS reverse proxy succeeds", readRes.status === 200, `status=${readRes.status} body=${readRes.body}`);
+    let operationBody = {};
+    try {
+      operationBody = JSON.parse(operationRes.body || "{}");
+    } catch {
+      // left empty: the check below reports the raw body
+    }
+    check(
+      "Authenticated operation through TLS reverse proxy returns its declared output",
+      operationRes.status === 200 && operationBody.ok === true && operationBody.output?.length === 3,
+      `status=${operationRes.status} body=${operationRes.body}`
+    );
+
+    // 7.8. The same request without the token must fail in the body, not only by status.
+    const anonymousOperation = await request(8443, ca, {
+      method: "POST",
+      path: "/operation",
+      headers: { "content-type": "application/json", "x-aip-contract": fingerprint },
+      body: JSON.stringify({ operation: "length", input: { text: "가😀A" } }),
+    });
+    let anonymousBody = {};
+    try {
+      anonymousBody = JSON.parse(anonymousOperation.body || "{}");
+    } catch {
+      // left empty
+    }
+    check(
+      "The same operation without the IdP token is refused (WIRE.UNAUTHENTICATED)",
+      anonymousBody.ok === false && anonymousBody.code === "WIRE.UNAUTHENTICATED",
+      `status=${anonymousOperation.status} body=${anonymousOperation.body}`
+    );
 
     console.log("==> All IdP and TLS reverse proxy smoke tests passed!");
   } finally {
