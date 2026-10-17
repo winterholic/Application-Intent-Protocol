@@ -1,0 +1,32 @@
+test_cannot_claim_an_organization_created_by_another_user (test_live_db.LiveDbTests.test_cannot_claim_an_organization_created_by_another_user) ... ok
+test_deleted_secret_leaves_reads_and_the_name_can_be_recreated_twice (test_live_db.LiveDbTests.test_deleted_secret_leaves_reads_and_the_name_can_be_recreated_twice) ... ok
+test_every_served_job_has_a_worker_function (test_live_db.LiveDbTests.test_every_served_job_has_a_worker_function) ... ok
+test_member_can_create_folder_and_secret (test_live_db.LiveDbTests.test_member_can_create_folder_and_secret) ... ok
+test_members_see_their_organization_only (test_live_db.LiveDbTests.test_members_see_their_organization_only) ... ok
+test_no_access_role_reads_nothing (test_live_db.LiveDbTests.test_no_access_role_reads_nothing) ... ok
+test_non_member_sees_only_themselves (test_live_db.LiveDbTests.test_non_member_sees_only_themselves) ... ok
+test_only_one_live_generation_per_name (test_live_db.LiveDbTests.test_only_one_live_generation_per_name) ... ok
+test_organization_cannot_be_created_in_someone_elses_name (test_live_db.LiveDbTests.test_organization_cannot_be_created_in_someone_elses_name) ... ok
+test_organization_creator_becomes_admin_exactly_once (test_live_db.LiveDbTests.test_organization_creator_becomes_admin_exactly_once) ... ok
+test_other_organization_is_isolated (test_live_db.LiveDbTests.test_other_organization_is_isolated) ... ok
+test_project_membership_rules (test_live_db.LiveDbTests.test_project_membership_rules) ... ok
+test_reminder_job_rejects_callers_without_project_access (test_live_db.LiveDbTests.test_reminder_job_rejects_callers_without_project_access) ... ok
+test_reminder_job_runs_for_a_project_reader (test_live_db.LiveDbTests.test_reminder_job_runs_for_a_project_reader) ... ok
+test_secret_name_is_unique_in_a_folder_including_the_root (test_live_db.LiveDbTests.test_secret_name_is_unique_in_a_folder_including_the_root) ... ok
+test_viewer_can_read_but_not_delete (test_live_db.LiveDbTests.test_viewer_can_read_but_not_delete) ... ok
+test_viewer_cannot_create_folder_secret_name_or_generation (test_live_db.LiveDbTests.test_viewer_cannot_create_folder_secret_name_or_generation) ... ok
+
+----------------------------------------------------------------------
+Ran 17 tests in 1.796s
+
+OK
+caught   viewer may write: test_viewer_cannot_create_folder_secret_name_or_generation
+caught   every user visible: test_non_member_sees_only_themselves
+caught   several live generations: test_only_one_live_generation_per_name
+caught   org created in another name: test_organization_cannot_be_created_in_someone_elses_name
+caught   job open to any user: test_reminder_job_rejects_callers_without_project_access
+caught   outsider joins project: test_project_membership_rules
+caught   deleted rows stay listed: test_deleted_secret_leaves_reads_and_the_name_can_be_recreated_twice
+caught   org member reads any project: test_no_access_role_reads_nothing
+EQUIV    claim without creator check: whole suite unchanged
+EQUIV    claim without empty-org check: whole suite unchanged

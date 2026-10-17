@@ -1,19 +1,35 @@
-// Infisical MIT port draft (WBS 7.3.3.3/7.3.3.4: I03 secrets, I04 RBAC).
-// Structure + authorization only. Secret VALUES are opaque ciphertext
-// (valueCiphertext) until the key-model decision (INFISICAL-KEYMODEL.md):
-// no contains filter, no server-side comparison on values.
-// Upstream: Infisical 47246be (2026-10-17), MIT scope only.
+// Infisical MIT port, structure and authorization only (WBS 7.3.3.3/7.3.3.4, reworked after the independent
+// verification of 2026-10-18). Upstream: Infisical 47246be (2026-10-17), MIT scope only.
+//
+// PRODUCT GAP, deliberately NOT worked around (plan-docs/porting/INFISICAL-GAPS.md, G2):
+//   Secret VALUES are not declared here. The product service dialect rejects the `encrypted` field
+//   modifier (DEF.PARSE_EXPECTED) and AIP_ENCRYPTION_KEYS exists only in the PoC runtime, so the only way to store a
+//   value today is a plain Text column, which would keep secrets in clear text and expose them to every reader. The
+//   previous draft did that under the name valueCiphertext; it was also unreadable (WIRE.FIELD_NOT_EXPOSED).
+//   Secret value storage, value versions, rotation and blind-index lookups stay undeclared until the
+//   encryption design (docs/design/13) lands. Everything below is names, folders, membership and permissions.
+//
+// Behavior is checked on a real PostgreSQL by porting/infisical/tests/test_live_db.py. Declared jobs live only
+// when a worker implements them (see the job section at the end).
+enum OrgRole { ADMIN, MEMBER }
+enum ProjectRole { ADMIN, MEMBER, VIEWER, NO_ACCESS }
 actor User
-predicate isOrgMember(viewer: User?, targetOrg: Organization?) = viewer != null and exists OrgMembership where user = viewer and org = targetOrg
-predicate isOrgAdmin(viewer: User?, targetOrg: Organization?) = viewer != null and exists OrgMembership where user = viewer and org = targetOrg and role = "admin"
-predicate isProjectMember(viewer: User?, targetProject: Project?) = viewer != null and targetProject != null and (isOrgAdmin(viewer, targetProject.org) or exists ProjectMembership where user = viewer and project = targetProject)
-predicate isProjectAdmin(viewer: User?, targetProject: Project?) = viewer != null and targetProject != null and (isOrgAdmin(viewer, targetProject.org) or exists ProjectMembership where user = viewer and project = targetProject and role = "admin")
-predicate canReadSecret(viewer: User?, targetSecret: Secret?) = viewer != null and targetSecret != null and isProjectMember(viewer, targetSecret.project)
+
+// -- predicates ---------------------------------------------------------------------------------------------------
+predicate isOrgMember(viewer: User?, targetOrg: Organization?) = viewer != null and targetOrg != null and exists OrgMembership where user = viewer and org = targetOrg
+predicate isOrgAdmin(viewer: User?, targetOrg: Organization?) = viewer != null and targetOrg != null and exists OrgMembership where user = viewer and org = targetOrg and role = ADMIN
+predicate orgHasNoMember(targetOrg: Organization?) = targetOrg != null and not exists OrgMembership where org = targetOrg
+predicate sharesOrgWith(viewer: User?, other: User?) = viewer != null and other != null and exists OrgMembership where user = other and isOrgMember(viewer, org)
+// Org admins reach every project of their org (draft decision, differs from upstream; see INFISICAL-GAPS.md G7).
+predicate canReadProject(viewer: User?, targetProject: Project?) = viewer != null and targetProject != null and (isOrgAdmin(viewer, targetProject.org) or exists ProjectMembership where user = viewer and project = targetProject and role in (ADMIN, MEMBER, VIEWER))
+predicate canWriteProject(viewer: User?, targetProject: Project?) = viewer != null and targetProject != null and (isOrgAdmin(viewer, targetProject.org) or exists ProjectMembership where user = viewer and project = targetProject and role in (ADMIN, MEMBER))
+predicate isProjectAdmin(viewer: User?, targetProject: Project?) = viewer != null and targetProject != null and (isOrgAdmin(viewer, targetProject.org) or exists ProjectMembership where user = viewer and project = targetProject and role = ADMIN)
 
 resource User {
   fields { id: Id; email: Text(3..200); username: Text(1..200)? }
   unique email
-  rows read when true
+  // A user is visible to themselves and to members of an organization they share, never to the whole table.
+  rows read when this = actor or sharesOrgWith(actor, this)
   expose read {
     select id, email, username
     filter id.eq, email.eq, username.prefix
@@ -23,12 +39,12 @@ resource User {
 }
 
 resource Organization {
-  fields { id: Id; name: Text(1..100); slug: Text(1..100) }
+  fields { id: Id; name: Text(1..100); slug: Text(1..100); createdBy: User }
   unique slug
-  rows read when isOrgMember(actor, this)
+  rows read when isOrgMember(actor, this) or createdBy = actor
   expose create {
-    allow actor != null
-    fields name, slug
+    allow actor != null and createdBy = actor
+    fields name, slug, createdBy
   }
   expose read {
     select id, name, slug
@@ -39,11 +55,12 @@ resource Organization {
 }
 
 resource OrgMembership {
-  fields { id: Id; user: User; org: Organization; role: Text(1..32) }
+  fields { id: Id; user: User; org: Organization; role: OrgRole }
   unique user, org
   rows read when isOrgMember(actor, org)
+  // The creator of an organization claims its first admin seat exactly once; afterwards only admins add members.
   expose create {
-    allow isOrgAdmin(actor, org)
+    allow isOrgAdmin(actor, org) or (user = actor and role = ADMIN and org.createdBy = actor and orgHasNoMember(org))
     fields user, org, role
   }
   transition setRole {
@@ -64,7 +81,7 @@ resource OrgMembership {
 resource Project {
   fields { id: Id; org: Organization; name: Text(1..100); slug: Text(1..100) }
   unique org, slug
-  rows read when isOrgMember(actor, org)
+  rows read when canReadProject(actor, this)
   expose create {
     allow isOrgAdmin(actor, org)
     fields org, name, slug
@@ -79,11 +96,11 @@ resource Project {
 }
 
 resource ProjectMembership {
-  fields { id: Id; user: User; project: Project; role: Text(1..32) }
+  fields { id: Id; user: User; project: Project; role: ProjectRole }
   unique user, project
-  rows read when isProjectMember(actor, project)
+  rows read when canReadProject(actor, project)
   expose create {
-    allow isProjectAdmin(actor, project)
+    allow isProjectAdmin(actor, project) and isOrgMember(user, project.org)
     fields user, project, role
   }
   transition setRole {
@@ -101,12 +118,14 @@ resource ProjectMembership {
   }
 }
 
+// Every environment has a root folder with path "/", exactly like upstream. Secrets always live in a folder, so the
+// (folder, key) uniqueness below has no NULL hole.
 resource Folder {
   fields { id: Id; project: Project; path: Text(1..500); env: Text(1..64) }
   unique project, path, env
-  rows read when isProjectMember(actor, project)
+  rows read when canReadProject(actor, project)
   expose create {
-    allow isProjectMember(actor, project)
+    allow canWriteProject(actor, project)
     fields project, path, env
   }
   expose read {
@@ -118,177 +137,73 @@ resource Folder {
   }
 }
 
-resource Secret {
-  fields {
-    id: Id
-    project: Project
-    folder: Folder?
-    env: Text(1..64)
-    key: Text(1..200)
-    valueCiphertext: Text?
-    version: Int
-  }
-  unique project, folder, env, key
-  rows read when canReadSecret(actor, this)
-  check versionNonNegative when version >= 0
+// A secret NAME inside a folder. It is permanent (the product dialect has no row delete and no partial unique
+// index, G10); the live/deleted lifecycle sits on Secret and is capped at one live row per name by a limit.
+resource SecretKey {
+  fields { id: Id; folder: Folder; key: Text(1..200) }
+  unique folder, key
+  rows read when canReadProject(actor, folder.project)
   expose create {
-    allow isProjectMember(actor, project) and version = 1
-    fields project, folder, env, key, valueCiphertext, version
+    allow canWriteProject(actor, folder.project)
+    fields folder, key
   }
-  transition rotate {
-    allow isProjectMember(actor, project)
-    from true
-    patch valueCiphertext
-    to version = version + 1
-  }
-  expose apply rotate { target id; bulk maxRows 100 }
-  transition delete {
-    allow isProjectAdmin(actor, project)
-    from true
-    to valueCiphertext = null
-  }
-  expose apply delete { target id; bulk maxRows 100 }
   expose read {
-    select id, project, folder, env, key, version
-    filter id.eq, project.eq, folder.eq, env.eq, key.eq, key.prefix
+    select id, folder, key
+    filter id.eq, folder.eq, key.eq, key.prefix
     sort key, id
-    traverse project { select id, slug }
-    traverse folder { select id, path }
-    budget { rows 500; depth 2; cost 5000; deadline 2s; offset 2000 }
+    traverse folder { select id, path, env }
+    budget { rows 500; depth 2; cost 3000; deadline 2s; offset 2000 }
   }
 }
 
-// I06 MIT BullMQ queues mapped 1:1 to operation jobs (payload shapes from
-// backend/src/queue/queue-service.ts). Worker modules (infisical_jobs.*)
-// are pending; effect db/none below is a draft approximation per job.
-// EE queues (rotation, scanning, PAM, gateway, dynamic-secret) are out of scope.
-// effect managed (not db): operation jobs take managed effects; row writes by
-// jobs go through declared transitions. Serve-side execution is unverified.
+limit atMostOneLiveSecret on Secret = atMost 1 where deleted = false
+
+// One generation of a secret name. No value column (see the gap note at the top).
+resource Secret {
+  fields { id: Id; secretKey: SecretKey; owner: User; deleted: Bool; remindedAt: Time? }
+  rows read when deleted = false and canReadProject(actor, secretKey.folder.project)
+  invariant atMostOneLiveSecret per secretKey
+  docs { summary "비밀 이름의 한 세대. 값 저장은 encrypted 수정자 제품 갭(G2)으로 선언하지 않음"; visibility internal }
+  expose create {
+    allow canWriteProject(actor, secretKey.folder.project) and owner = actor and deleted = false
+    fields secretKey, owner, deleted
+  }
+  // Soft delete: the row leaves every read and the name can get a new generation.
+  transition delete {
+    allow canWriteProject(actor, secretKey.folder.project)
+    from deleted = false
+    to deleted = true
+  }
+  expose apply delete { target id; bulk maxRows 100 }
+  // Reminder record for the owner (an outbox notification, not a delivered mail).
+  transition remind {
+    allow canReadProject(actor, secretKey.folder.project)
+    from deleted = false
+    to remindedAt = now
+    repeat unchanged
+    notify owner "secret.reminder"
+  }
+  expose apply remind { target id; bulk maxRows 1 }
+  expose read {
+    select id, secretKey, owner, remindedAt
+    filter id.eq, secretKey.eq, owner.eq
+    sort id
+    traverse secretKey { select id, key }
+    budget { rows 500; depth 2; cost 3000; deadline 2s; offset 2000 }
+  }
+}
+
+// -- jobs ---------------------------------------------------------------------------------------------------------
+// Only jobs with a worker implementation are declared. The other MIT BullMQ queues are mapped in
+// plan-docs/porting/INFISICAL-JOBS.md as "declared only" (no served operation, so nothing can enqueue a job
+// that fails with EXTENSION_ERROR). The queue's reminder delivery itself (mail/Slack) is out of scope:
+// this job records the reminder as an outbox notification through the declared Secret.remind transition.
 operation job secretReminder {
-  input { projectId: Text(1..200); secretId: Text(1..200) }
-  output { accepted: Bool }
-  allow actor != null
-  effect none
+  input { secret: Secret.Id }
+  output { reminded: Int }
+  allow actor != null and exists Secret where id = input.secret and canReadProject(actor, secretKey.folder.project)
+  access read.Secret, Secret.remind
+  effect managed
   deadline 30s
   implementation "infisical_jobs.secret_reminder"
-}
-operation job secretWebhookDispatch {
-  input { projectId: Text(1..200) }
-  output { accepted: Bool }
-  allow actor != null
-  effect none
-  deadline 30s
-  implementation "infisical_jobs.secret_webhook_dispatch"
-}
-operation job integrationSync {
-  input { projectId: Text(1..200) }
-  output { accepted: Bool }
-  allow actor != null
-  effect managed
-  deadline 60s
-  implementation "infisical_jobs.integration_sync"
-}
-operation job appConnectionSecretSync {
-  input { projectId: Text(1..200) }
-  output { accepted: Bool }
-  allow actor != null
-  effect managed
-  deadline 60s
-  implementation "infisical_jobs.app_connection_secret_sync"
-}
-operation job secretSyncDispatch {
-  input { projectId: Text(1..200) }
-  output { accepted: Bool }
-  allow actor != null
-  effect managed
-  deadline 60s
-  implementation "infisical_jobs.secret_sync_dispatch"
-}
-operation job pkiSyncDispatch {
-  input { projectId: Text(1..200) }
-  output { accepted: Bool }
-  allow actor != null
-  effect managed
-  deadline 60s
-  implementation "infisical_jobs.pki_sync_dispatch"
-}
-operation job pkiSyncHealthCheck {
-  input { projectId: Text(1..200) }
-  output { accepted: Bool }
-  allow actor != null
-  effect managed
-  deadline 60s
-  implementation "infisical_jobs.pki_sync_health_check"
-}
-operation job folderTreeCheckpoint {
-  input { projectId: Text(1..200) }
-  output { accepted: Bool }
-  allow actor != null
-  effect managed
-  deadline 60s
-  implementation "infisical_jobs.folder_tree_checkpoint"
-}
-operation job importSecretsFromExternalSource {
-  input { projectId: Text(1..200) }
-  output { accepted: Bool }
-  allow actor != null
-  effect managed
-  deadline 120s
-  implementation "infisical_jobs.import_secrets_from_external_source"
-}
-operation job invalidateCache {
-  input { projectId: Text(1..200) }
-  output { accepted: Bool }
-  allow actor != null
-  effect none
-  deadline 30s
-  implementation "infisical_jobs.invalidate_cache"
-}
-operation job userNotification {
-  input { projectId: Text(1..200) }
-  output { accepted: Bool }
-  allow actor != null
-  effect none
-  deadline 30s
-  implementation "infisical_jobs.user_notification"
-}
-operation job alertDispatch {
-  input { projectId: Text(1..200) }
-  output { accepted: Bool }
-  allow actor != null
-  effect none
-  deadline 30s
-  implementation "infisical_jobs.alert_dispatch"
-}
-operation job eventOutboxFlush {
-  input { consumer: Text(1..200) }
-  output { accepted: Bool }
-  allow actor != null
-  effect managed
-  deadline 60s
-  implementation "infisical_jobs.event_outbox_flush"
-}
-operation job accessTokenStatusUpdate {
-  input { tokenId: Text(1..200) }
-  output { accepted: Bool }
-  allow actor != null
-  effect managed
-  deadline 30s
-  implementation "infisical_jobs.access_token_status_update"
-}
-operation job upgradeProjectToGhost {
-  input { projectId: Text(1..200) }
-  output { accepted: Bool }
-  allow actor != null
-  effect managed
-  deadline 120s
-  implementation "infisical_jobs.upgrade_project_to_ghost"
-}
-operation job auditLogPrune {
-  input { consumer: Text(1..200) }
-  output { accepted: Bool }
-  allow actor != null
-  effect managed
-  deadline 120s
-  implementation "infisical_jobs.audit_log_prune"
 }

@@ -18,6 +18,8 @@ import sys
 import tempfile
 import uuid
 
+import dedicated_db
+
 
 BASE_CALLER = r"""
 import {connect,WriteUnsettled} from '@aip/prototype-sdk';
@@ -310,8 +312,9 @@ def exercise_flow(bundle_root, temp_root, db_url, wire, lang, extension_app):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bundle", help="기존 private bundle 디렉터리. 지정하면 빌더/Cargo/checkout 없이 실행")
-    parser.add_argument("--db-url", default="host=localhost dbname=postgres")
+    parser.add_argument("--db-url", default=None, help="dedicated aip_test_* PostgreSQL DSN with an explicit high port; defaults to AIP_TEST_DATABASE_URL, never a PostgreSQL default")
     args = parser.parse_args()
+    args.db_url = dedicated_db.resolve(args.db_url)
     with tempfile.TemporaryDirectory(prefix="aip-bundle-smoke-") as temp:
         temp_root = Path(temp)
         if args.bundle:

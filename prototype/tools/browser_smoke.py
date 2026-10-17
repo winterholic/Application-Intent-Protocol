@@ -26,6 +26,7 @@ import uuid
 from playwright.sync_api import sync_playwright
 
 from smoke import ROOT, listening, psql, run, stop
+import dedicated_db
 
 
 def modes(selected, values):
@@ -363,10 +364,11 @@ def exercise(db_url, binary, tsc, shared, wire, lang, extension_app):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--db-url", default="host=localhost dbname=postgres")
+    parser.add_argument("--db-url", default=None, help="dedicated aip_test_* PostgreSQL DSN with an explicit high port; defaults to AIP_TEST_DATABASE_URL, never a PostgreSQL default")
     parser.add_argument("--wire", choices=("safe", "decimal", "both"), default="both")
     parser.add_argument("--lang", choices=("node", "python", "both"), default="both")
     args = parser.parse_args()
+    args.db_url = dedicated_db.resolve(args.db_url)
 
     cargo = shutil.which("cargo") or str(Path.home() / ".cargo/bin/cargo")
     run([cargo, "build", "--offline"])

@@ -57,7 +57,7 @@ node --test \
   product/tests/package-boundaries.test.mjs \
   product/tests/dev-jwt.test.mjs \
   product/tests/google-storage-provider.test.mjs
-python3 -m unittest product.tests.google_storage_provider_test product.tests.python_sdk_test
+python3 -m unittest product.tests.google_storage_provider_test product.tests.python_sdk_test product.tests.dedicated_db_test
 
 # Test feature combinations can replace target/debug/aip; rebuild the product last.
 cargo build -p aip-cli --locked

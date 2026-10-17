@@ -1,7 +1,8 @@
-"""Infisical machine-identity worker spike (WBS 7.3.3.7, I02).
+"""Infisical port workers under "infisical_jobs.*".
 
-Declared in app.aip as implementations under "infisical_jobs.*".
-Shape follows the repo worker convention: `async def fn(input, ctx)`.
+`secret_reminder` is the only function a served app.aip operation points at. `verify_identity_jwt`
+(WBS 7.3.3.7, I02) is a unit-tested spike that no operation declares yet, so it is not reachable
+through the service. Shape follows the repo worker convention: `async def fn(input, ctx)`.
 
 Scope of this spike: JWT-bearer identity verification (one of the 12+
 upstream methods in services/identity-*-auth) against a deployment-provided
@@ -77,3 +78,19 @@ async def verify_identity_jwt(input, ctx):
     """Worker entry: {"token": str} -> {"valid": True, "subject": str}."""
     subject, _claims = verify_identity_token(input["token"])
     return {"valid": True, "subject": subject}
+
+
+async def secret_reminder(input, ctx):
+    """Record a reminder for a secret as an outbox notification (WBS 7.3.3.5).
+
+    The read and the transition both run as the job principal, so row policies and the
+    Secret.remind allow rule decide; a secret the principal cannot see fails with
+    WIRE.MISSING_TARGET like the synchronous path. Delivery (mail, Slack) is not done here.
+    """
+    secret = input["secret"]
+    page = await ctx.data.read({"read": "Secret", "select": ["id"],
+                                "filter": [{"field": "id", "op": "eq", "value": secret}]})
+    if not page["rows"]:
+        raise ValueError("secret not visible to the job principal")
+    result = await ctx.data.apply("Secret", "remind", [secret], f"remind-{secret}")
+    return {"reminded": len(result["changed"]) + len(result.get("unchanged", []))}
