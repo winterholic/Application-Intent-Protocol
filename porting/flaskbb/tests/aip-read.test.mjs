@@ -11,7 +11,7 @@ import {spawn, spawnSync} from 'node:child_process';
 
 const track = resolve(new URL('..', import.meta.url).pathname);
 const root = resolve(track, '../..');
-const binary = join(root, 'target/debug/aip');
+const binary = process.env.AIP_BINARY || join(root, 'target/debug/aip');
 const file = join(track, 'app.aip');
 const b64 = value => Buffer.from(JSON.stringify(value)).toString('base64url');
 

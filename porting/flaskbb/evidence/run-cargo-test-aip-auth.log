@@ -1,0 +1,80 @@
+   Compiling tokio v1.53.1
+   Compiling getrandom v0.3.4
+   Compiling rustix v1.1.5
+   Compiling fastrand v2.5.0
+   Compiling rand v0.8.8
+   Compiling num-bigint-dig v0.8.6
+   Compiling rsa v0.9.10
+   Compiling jsonwebtoken v11.1.0
+   Compiling tokio-rustls v0.26.6
+   Compiling hyper v1.11.1
+   Compiling tokio-util v0.7.19
+   Compiling tower v0.5.3
+   Compiling tokio-tungstenite v0.30.0
+   Compiling tempfile v3.27.0
+   Compiling tokio-postgres v0.7.18
+   Compiling tower-http v0.6.11
+   Compiling hyper-util v0.1.21
+   Compiling hyper-rustls v0.27.10
+   Compiling reqwest v0.12.28
+   Compiling tokio-postgres-rustls v0.14.0
+   Compiling aip-execution v0.1.0 (/private/tmp/aip-porting-full-20261017/crates/aip-execution)
+   Compiling spike-v2-read v0.0.0 (/private/tmp/aip-porting-full-20261017/spikes/spike-v2-read)
+   Compiling spike-v3-write v0.0.0 (/private/tmp/aip-porting-full-20261017/spikes/spike-v3-write)
+   Compiling spike-v5-sdk v0.0.0 (/private/tmp/aip-porting-full-20261017/spikes/spike-v5-sdk)
+   Compiling spike-v4-worker v0.0.0 (/private/tmp/aip-porting-full-20261017/spikes/spike-v4-worker)
+   Compiling spike-v6-transport v0.0.0 (/private/tmp/aip-porting-full-20261017/spikes/spike-v6-transport)
+   Compiling aip-auth v0.1.0 (/private/tmp/aip-porting-full-20261017/crates/aip-auth)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.79s
+     Running unittests src/lib.rs (/private/tmp/aip-flaskbb-verifier-target/debug/deps/aip_auth-fa1e44a1b527be70)
+
+running 17 tests
+test tests::each_configuration_failure_names_its_setting_and_no_value ... ok
+test tests::a_malformed_key_set_is_told_apart_from_an_unreadable_one ... ok
+test tests::remote_jwks_redirect_is_not_followed ... ok
+test tests::remote_jwks_body_is_bounded_without_content_length ... ok
+test tests::remote_jwks_rejects_untrusted_tls_root ... ok
+test tests::remote_jwks_rejects_mismatched_tls_hostname ... ok
+test tests::remote_jwks_accepts_trusted_tls_with_matching_hostname ... ok
+test tests::explicit_null_optional_nbf_is_rejected ... ok
+test tests::rfc9068_access_token_without_optional_nbf_is_accepted ... ok
+test idp_tests::a_known_key_is_still_served_for_a_while_when_the_idp_is_down_after_the_cache_expired ... ok
+test tests::remote_jwks_accepts_ca_from_environment ... ok
+test idp_tests::file_jwks_is_parsed_once_until_the_file_changes ... ok
+test idp_tests::discovery_document_yields_the_jwks_url_and_the_issuer_the_service_enforces ... ok
+test idp_tests::a_new_signing_key_is_picked_up_without_a_restart_and_the_retired_key_stops_working ... ok
+test idp_tests::a_failed_refresh_for_an_unknown_kid_does_not_block_tokens_for_cached_keys ... ok
+test idp_tests::a_forged_token_for_an_unknown_kid_is_rejected_and_never_accepts_the_attacker_key ... ok
+test tests::remote_jwks_ca_environment_fallback_and_rejections ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 16.47s
+
+     Running tests/durable.rs (/private/tmp/aip-flaskbb-verifier-target/debug/deps/durable-b79002ae40992daa)
+
+running 2 tests
+test durable_grant_is_bound_to_subject_actor_and_revocation_floor ... ok
+test durable_grant_survives_token_expiry_but_not_principal_revocation ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.46s
+
+     Running tests/jwt.rs (/private/tmp/aip-flaskbb-verifier-target/debug/deps/jwt-f556ee29bd41c922)
+
+running 10 tests
+test negative_not_before_is_rejected ... ok
+test configured_issuer_cannot_include_a_query ... ok
+test signing_only_jwk_is_not_a_verification_key ... ok
+test accepts_only_api_access_token_profile ... ok
+test extreme_signed_timestamps_are_rejected_without_panicking ... ok
+test principal_lookups_share_the_server_pool_and_its_limit ... ok
+test maps_verified_subject_to_existing_actor_and_checks_revocation_each_call ... ok
+test file_jwks_rotation_replaces_the_accepted_key ... ok
+test rsa_public_exponent_one_is_rejected_from_jwks ... ok
+test rsa_modulus_below_2048_bits_cannot_be_padded_into_acceptance ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 12.16s
+
+   Doc-tests aip_auth
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

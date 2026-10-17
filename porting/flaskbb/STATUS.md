@@ -7,6 +7,26 @@
 - 전체 의미 기능 분모는 [INVENTORY.md](INVENTORY.md)에 잠근다. URL/endpoint/table 수는 별도 커버리지 축이며 기능 수로 합산하지 않는다.
 - 기획의 독립 완료·출시 판정은 이 작업 이후 별도로 요구된다. 현재 전체 포팅·기능 동등성·배포 준비 완료가 아니다.
 
+## 2026-10-17 새 컨텍스트 — 독립 FAIL 반례 수정 및 실경로 재검증
+
+**기준**: 시작 SHA `7fea9bc126beb0a23bdaf7051781b2aea6b3a9bd`, branch `porting/flaskbb-full-2019`. 독립 교차검증 [보고서](/Users/winterholic/.ttakkari/data/outbox/41bc6349-377e-4b39-b1f8-f3512121b1b4/flaskbb-verification-7fea9bc/verification-report.md)는 해당 SHA를 FAIL로 판정했다. 기존 9개 미커밋 파일을 보존해 계속했고, 초기 patch backup은 Run outbox의 `flaskbb-preexisting-diff.patch`다.
+
+**이번 증분**:
+- `aip-auth` auth 회귀 fixture의 `Config.provisioning` 초기값을 보충했다. `durable.rs`와 `jwt.rs`의 통합 테스트 연결을 `127.0.0.1:55439/aip_flaskbb` 고정 URL로 바꿔 `DATABASE_URL`/`TEST_DATABASE_URL` 환경값을 무시한다. jwt 스키마 이름에 process-local sequence도 추가했다.
+- Provisioning 이메일 형식 검사에서 별도 임시 함수를 없애고 AIP read 계층의 기존 `spike_v2_read::scalar::valid_email`과 같은 validator를 사용한다. missing/null email, email_verified의 false/missing/null/string/숫자 경계는 실제 PG에서 거부 및 사용자/principal row 부재를 확인한다.
+- 원본 FlaskBB `EditUser`의 mod_edituser 권한을 그대로 제거하지 않도록 `moderatorEditUser`를 분리했다. actor에 moderator급 + mod_edituser가 있어야 하며 기존 admin/super_mod 대상은 막고, 이 전이는 그룹·활성화 필드를 수정하지 않는다. `adminUpdateUser`는 활성 admin 전용으로 두어 새 Administrator/super_mod 승격과 기존 고권한 계정 변경을 막았다. 실제 AIP/PG 테스트에서 일반 대상 수정은 허용, 상승·고권한 대상 거부 및 DB 불변, admin의 그룹 변경 허용을 확인했다.
+- Renderer의 대화함 create/reply에서 양쪽 mailbox에 첫 메시지/답장을 저장한다. URL에서 온 numeric ID를 SDK decimal string으로 바꾸고 markRead는 공식 SDK request object로 호출한다. 실제 UI→SDK→AIP→PG 테스트로 양측 메시지 확인, 개인별 unread/read/trash 상태와 비참여자 거부를 확인했다.
+
+**실행 기록** (`porting/flaskbb/evidence/`에 원시 로그):
+- 먼저 실행한 auth suite에서는 `TEST_DATABASE_URL`이 전용 DB를 가리켰지만 `tests/jwt.rs`가 무시하고 `host=localhost dbname=postgres`로 연결해 테스트군이 서로 다른 DB에 나뉘었다. 그 suite의 출력은 모두 통과였지만 분리 DB 결과가 아니어서 근거로 폐기했다. 후속 run은 양쪽 env 값을 localhost로 바꿔 이를 드러냈고, jwt test stage에서 `pg_namespace_nspname_index`, 기존 schema `aip_auth_19387_1792219434204611000` 중복 오류로 9 pass/1 fail을 관측했다. 둘 다 Mac Studio command-runner의 test 실행이며 금지된 default DB 경로 사용이다. 그 대상이 실제 운영 데이터 DB인지 확인하지 않았고, 이후 그 연결을 재사용하거나 조사·정리하지 않았다. 성공한 첫 시도의 `SchemaGuard::drop`은 실행됐으나 결과를 버리므로 잔여 영향도 독립 확인하지 않았다. 실패 시도 raw 전문은 후속 rerun으로 덮어써져 `run-aip-auth-default-db-incident.log`에 관측 excerpt만 기록했다. 두 helper를 고정 전용 DB로 바꾼 뒤 전체 suite를 17 unit + 2 durable + 10 jwt로 다시 실행했다.
+- `DATABASE_URL`/`TEST_DATABASE_URL`을 금지된 기본 값으로 둔 상태의 pinned run은 모두 고정 URL을 썼다: `cargo test -p aip-auth --offline` → 17 + 2 + 10 passed; `cargo build --offline -p aip-cli` → exit 0. 로그: `run-cargo-test-aip-auth-pinned.log`, `run-cargo-build-aip-cli.log`.
+- `AIP_BINARY=/private/tmp/aip-flaskbb-verifier-target/debug/aip node --test porting/flaskbb/tests/provisioning.test.mjs` → 1 test passed; 실제 PG 55439, 9 named scenarios 및 추가 claim-boundary DB invariants. `run-provisioning-boundaries.log`.
+- 같은 바이너리의 `node --test porting/flaskbb/tests/features.test.mjs` → 1 test passed, exit 0; actual renderer, official SDK, AIP listener, dedicated PG. `run-features-security.log`에 권한 경계와 `run-features-ui-conversations.log`에 쪽지 round trip 전체 출력.
+- `/private/tmp/flaskbb-aip-host-venv/bin/python -m unittest porting.flaskbb.tests.test_ui_host` → 13 passed; `run-ui-host-unittest.log` (Mock 기반 단위시험이며 실통합 증거로 계산하지 않음).
+- `git diff --check` → exit 0. `cargo fmt --all -- --check` → exit 1; rustfmt formatting diff가 이 미커밋 auth 코드와 `spikes/spike-v6-transport/src/lib.rs` 같은 건드리지 않은 경로까지 보고됐다. workspace-wide formatting sweep은 하지 않았고, 이 check는 미통과로 남긴다.
+
+**계속 미완료**: 이 증분은 FlaskBB 전체 F01–F17 완료가 아니다. `activated=false`는 FlaskBB actor row policy에서 기존 token 쓰기를 막고 `activated=true` 재활성화 후 허용한다. core `aip_principals.enabled/min_iat`와 구분되며 core에 FlaskBB 표식을 하드코딩하지 않았다. 이 한 전이 외의 원본 계정수정/활성화 전체 의미는 미검증. Browser OIDC, Keycloak `ERR_CERT_AUTHORITY_INVALID`, 원본 backend-off, 가입·메일 활성화/reset/logout 전수, 재시작 보존, clean deployment는 열린 gate다. 독립 검증은 별도 세션이 배정할 예정이므로 이 실행의 자체 결과는 출시 판정이 아니다.
+
 ## 2026-10-17 현재 Run — Provisioning working proposal 구현 및 F02–F10 포팅 실DB 검증
 
 ### 1. 신규 계정 Provisioning core 계약 구현 및 실DB 증명 (OPEN 유지)

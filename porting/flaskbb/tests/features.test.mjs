@@ -11,7 +11,7 @@ import {spawn, spawnSync} from 'node:child_process';
 
 const track = resolve(new URL('..', import.meta.url).pathname);
 const root = resolve(track, '../..');
-const binary = join(root, 'target/debug/aip');
+const binary = process.env.AIP_BINARY || join(root, 'target/debug/aip');
 const file = join(track, 'app.aip');
 const b64 = value => Buffer.from(JSON.stringify(value)).toString('base64url');
 
@@ -33,6 +33,7 @@ test('FlaskBB ported features: search, profile, conversations, tracker, admin CR
   const jwksPath = join(temp, 'jwks.json');
   const bindingPath = join(temp, 'binding.ts');
   let server;
+  const uiHosts = [];
 
   try {
     const {publicKey, privateKey} = generateKeyPairSync('rsa', {modulusLength: 2048});
@@ -60,24 +61,30 @@ test('FlaskBB ported features: search, profile, conversations, tracker, admin CR
     sql(`INSERT INTO ${q}."group" (id,name,guest,admin,super_mod,mod,banned,editpost,deletepost,deletetopic,posttopic,postreply,viewhidden,makehidden,mod_edituser,mod_banuser,description) VALUES
       (1,'Guest',true,false,false,false,false,false,false,false,false,false,false,false,false,false,NULL),
       (2,'Member',false,false,false,false,false,true,false,false,true,true,false,false,false,false,NULL),
-      (3,'Administrator',false,true,false,false,false,true,true,true,true,true,true,true,true,true,NULL);`);
+      (3,'Administrator',false,true,false,false,false,true,true,true,true,true,true,true,true,true,NULL),
+      (4,'Moderator',false,false,false,true,false,true,true,true,true,true,false,false,true,false,NULL),
+      (5,'Super Moderator',false,false,true,false,false,true,true,true,true,true,true,true,true,false,NULL);`);
 
     sql(`INSERT INTO ${q}.user (id,username,email,date_joined,lastseen,birthday,gender,website,location,signature,avatar,notes,primary_group_id,activated,language,theme) VALUES
       (1,'guest-fixture','guest@example.test',now(),now(),NULL,NULL,NULL,NULL,NULL,NULL,NULL,1,true,'en',NULL),
       (2,'member-alice','alice@example.test',now(),now(),NULL,NULL,NULL,NULL,NULL,NULL,NULL,2,true,'en',NULL),
-      (3,'admin-bob','bob@example.test',now(),now(),NULL,NULL,NULL,NULL,NULL,NULL,NULL,3,true,'en',NULL);`);
+      (3,'admin-bob','bob@example.test',now(),now(),NULL,NULL,NULL,NULL,NULL,NULL,NULL,3,true,'en',NULL),
+      (4,'mod-editor','editor@example.test',now(),now(),NULL,NULL,NULL,NULL,NULL,NULL,NULL,4,true,'en',NULL),
+      (5,'super-mod','supermod@example.test',now(),now(),NULL,NULL,NULL,NULL,NULL,NULL,NULL,5,true,'en',NULL);`);
 
     sql(`INSERT INTO ${q}.category (id,title,description,position) VALUES (1,'General Category','Test category',1);`);
     sql(`INSERT INTO ${q}.forum (id,category_id,title,description,position,locked,external,show_moderators,last_post_id,last_post_user_id,last_post_title,last_post_username,last_post_created) VALUES
       (1,1,'Public Forum','Visible to all',1,false,NULL,false,NULL,NULL,NULL,NULL,NULL);`);
 
-    sql(`INSERT INTO ${q}.forum_group_access (id,forum_id,group_id) VALUES (1,1,1),(2,1,2),(3,1,3);`);
+    sql(`INSERT INTO ${q}.forum_group_access (id,forum_id,group_id) VALUES (1,1,1),(2,1,2),(3,1,3),(4,1,4),(5,1,5);`);
 
     sql(`INSERT INTO ${q}.topic (id,forum_id,title,user_id,username,date_created,last_updated,locked,important,views,published,deleted,hidden) VALUES
-      ('00000000-0000-4000-8000-000000000101',1,'First Discussion Topic',2,'member-alice',now(),now(),false,false,5,true,false,false);`);
+      ('00000000-0000-4000-8000-000000000101',1,'First Discussion Topic',2,'member-alice',now(),now(),false,false,5,true,false,false),
+      ('00000000-0000-4000-8000-000000000102',1,'Secret Hidden Topic',3,'admin-bob',now(),now(),false,false,0,true,false,true);`);
 
     sql(`INSERT INTO ${q}.post (id,topic_id,forum_id,user_id,username,content,date_created,hidden,published,version,deleted) VALUES
-      ('00000000-0000-4000-8000-000000000201','00000000-0000-4000-8000-000000000101',1,2,'member-alice','Hello world! First post content',now(),false,true,0,false);`);
+      ('00000000-0000-4000-8000-000000000201','00000000-0000-4000-8000-000000000101',1,2,'member-alice','Hello world! First post content',now(),false,true,0,false),
+      ('00000000-0000-4000-8000-000000000202','00000000-0000-4000-8000-000000000102',1,3,'admin-bob','Top secret hidden post content',now(),true,true,0,false);`);
 
     sql(`SELECT setval(pg_get_serial_sequence('${q}.category', 'id'), 100);`);
     sql(`SELECT setval(pg_get_serial_sequence('${q}.forum', 'id'), 100);`);
@@ -85,6 +92,8 @@ test('FlaskBB ported features: search, profile, conversations, tracker, admin CR
 
     run(binary, ['service', 'principal', '--config', config, 'bind', '--subject', 'alice-sub', '--actor', '2']);
     run(binary, ['service', 'principal', '--config', config, 'bind', '--subject', 'bob-sub', '--actor', '3']);
+    run(binary, ['service', 'principal', '--config', config, 'bind', '--subject', 'editor-sub', '--actor', '4']);
+    run(binary, ['service', 'principal', '--config', config, 'bind', '--subject', 'supermod-sub', '--actor', '5']);
 
     const generated = JSON.parse(run(binary, ['service', 'gen', file, '--out', bindingPath]));
     const bindingSource = readFileSync(bindingPath, 'utf8');
@@ -93,6 +102,7 @@ test('FlaskBB ported features: search, profile, conversations, tracker, admin CR
     const contract = {fingerprint: generated.fingerprint, idWire: 'decimal-string-v13', identityKinds, extensions: {}, readDescriptors: descriptors};
 
     server = spawn(binary, ['service', 'serve', file, '--config', config], {cwd: temp, env, stdio: ['ignore', 'pipe', 'pipe']});
+    server.unref();
     let stderr = '';
     server.stderr.on('data', data => {stderr += data;});
     const lines = createInterface({input: server.stdout});
@@ -102,6 +112,9 @@ test('FlaskBB ported features: search, profile, conversations, tracker, admin CR
       new Promise((_, reject) => setTimeout(() => reject(new Error(`serve timeout: ${stderr}`)), 15000).unref())
     ]);
     assert.equal(started.ok, true, JSON.stringify(started));
+    lines.close();
+    server.stdout.destroy();
+    server.stderr.destroy();
 
     const {connect} = await import(pathToFileURL(join(sdkRoot, 'product/sdk/index.js')).href);
     const token = subject => {
@@ -112,6 +125,8 @@ test('FlaskBB ported features: search, profile, conversations, tracker, admin CR
 
     const alice = connect(`http://${started.address}`, token('alice-sub'), contract);
     const bob = connect(`http://${started.address}`, token('bob-sub'), contract);
+    const editor = connect(`http://${started.address}`, token('editor-sub'), contract);
+    const supermod = connect(`http://${started.address}`, token('supermod-sub'), contract);
 
     // 1. F07 / F15 검색 (Search) 검증
     const topicSearch = (await alice.read({
@@ -122,6 +137,22 @@ test('FlaskBB ported features: search, profile, conversations, tracker, admin CR
     assert.equal(topicSearch.length, 1);
     assert.equal(topicSearch[0].title, 'First Discussion Topic');
 
+    // 숨김(hidden) 토픽이 일반 회원(alice)의 검색 결과에 노출되지 않음 검증 (음수 반례)
+    const hiddenTopicSearchAlice = (await alice.read({
+      read: 'Topic',
+      select: ['id', 'title'],
+      filter: [{field: 'title', op: 'contains', value: 'Secret Hidden'}],
+    })).rows;
+    assert.equal(hiddenTopicSearchAlice.length, 0);
+
+    // 권한이 있는 관리자(bob)는 숨김 토픽 검색 가능
+    const hiddenTopicSearchBob = (await bob.read({
+      read: 'Topic',
+      select: ['id', 'title'],
+      filter: [{field: 'title', op: 'contains', value: 'Secret Hidden'}],
+    })).rows;
+    assert.equal(hiddenTopicSearchBob.length, 1);
+
     const postSearch = (await alice.read({
       read: 'Post',
       select: ['id', 'content'],
@@ -129,6 +160,14 @@ test('FlaskBB ported features: search, profile, conversations, tracker, admin CR
     })).rows;
     assert.equal(postSearch.length, 1);
     assert.equal(postSearch[0].content, 'Hello world! First post content');
+
+    // 숨김(hidden) 게시물이 일반 회원(alice)의 검색 결과에 노출되지 않음 검증 (음수 반례)
+    const hiddenPostSearchAlice = (await alice.read({
+      read: 'Post',
+      select: ['id', 'content'],
+      filter: [{field: 'content', op: 'contains', value: 'secret hidden'}],
+    })).rows;
+    assert.equal(hiddenPostSearchAlice.length, 0);
 
     const userSearch = (await alice.read({
       read: 'User',
@@ -222,20 +261,77 @@ test('FlaskBB ported features: search, profile, conversations, tracker, admin CR
     }, {key: `create-conv-${convSharedId}`});
     assert.equal(createConvResult.ok, true);
 
-    // Bob(수신자) 쪽지함 확인
+    const aliceConvId = createConvResult.created[0].id;
+    const bobConvId = createConvResult.created[1].id;
+
+    // 대화 생성 시 발신자와 수신자 양쪽 대화함에 첫 Message 생성
+    const firstMsgResult = await alice.bundle({
+      atomic: [
+        {
+          create: 'Message',
+          values: {
+            conversation: aliceConvId,
+            user: '2',
+            message: 'First confidential message from Alice',
+            date_created: nowIso,
+          },
+        },
+        {
+          create: 'Message',
+          values: {
+            conversation: bobConvId,
+            user: '2',
+            message: 'First confidential message from Alice',
+            date_created: nowIso,
+          },
+        },
+      ],
+    }, {key: `alice-first-msg-${convSharedId}`});
+    assert.equal(firstMsgResult.ok, true);
+
+    // Bob(수신자) 쪽지함 확인: unread: true 및 첫 메시지 조회 확인
     const bobConvs = (await bob.read({
       read: 'Conversation',
       select: ['id', 'subject', 'unread', 'trash'],
-      filter: [{field: 'trash', op: 'eq', value: false}],
+      filter: [
+        {field: 'user', op: 'eq', value: '3'},
+        {field: 'trash', op: 'eq', value: false},
+      ],
     })).rows;
     assert.equal(bobConvs.length, 1);
     assert.equal(bobConvs[0].subject, 'Confidential inquiry');
     assert.equal(bobConvs[0].unread, true);
 
-    const bobConvId = bobConvs[0].id;
+    const bobFirstMsgs = (await bob.read({
+      read: 'Message',
+      select: ['id', 'conversation', 'message'],
+      filter: [{field: 'conversation', op: 'eq', value: bobConvId}],
+    })).rows;
+    assert.equal(bobFirstMsgs.length, 1);
+    assert.equal(bobFirstMsgs[0].message, 'First confidential message from Alice');
 
-    // Bob이 Message 생성 (답장)
-    const msgResult = await bob.bundle({
+    // Alice(발신자) 쪽지함 확인: unread: false 및 첫 메시지 조회 확인
+    const aliceConvs = (await alice.read({
+      read: 'Conversation',
+      select: ['id', 'subject', 'unread', 'trash'],
+      filter: [
+        {field: 'user', op: 'eq', value: '2'},
+        {field: 'trash', op: 'eq', value: false},
+      ],
+    })).rows;
+    assert.equal(aliceConvs.length, 1);
+    assert.equal(aliceConvs[0].unread, false);
+
+    const aliceFirstMsgs = (await alice.read({
+      read: 'Message',
+      select: ['id', 'conversation', 'message'],
+      filter: [{field: 'conversation', op: 'eq', value: aliceConvId}],
+    })).rows;
+    assert.equal(aliceFirstMsgs.length, 1);
+    assert.equal(aliceFirstMsgs[0].message, 'First confidential message from Alice');
+
+    // Bob이 답장 작성: 양쪽 대화에 Message 생성 + Alice 대화 bump + Bob 대화 markRead
+    const replyResult = await bob.bundle({
       atomic: [
         {
           create: 'Message',
@@ -247,14 +343,27 @@ test('FlaskBB ported features: search, profile, conversations, tracker, admin CR
           },
         },
         {
+          create: 'Message',
+          values: {
+            conversation: aliceConvId,
+            user: '3',
+            message: 'Received your inquiry. Everything looks good.',
+            date_created: new Date().toISOString(),
+          },
+        },
+        {
           apply: 'Conversation.markRead',
           target: {ids: [bobConvId]},
         },
+        {
+          apply: 'Conversation.bump',
+          target: {ids: [aliceConvId]},
+        },
       ],
     }, {key: `bob-reply-${bobConvId}`});
-    assert.equal(msgResult.ok, true);
+    assert.equal(replyResult.ok, true);
 
-    // Bob의 대화 읽음 확인
+    // Bob의 대화 읽음 확인 (unread: false, 메시지 2건)
     const bobConvAfterRead = (await bob.read({
       read: 'Conversation',
       select: ['id', 'unread'],
@@ -262,16 +371,56 @@ test('FlaskBB ported features: search, profile, conversations, tracker, admin CR
     })).rows;
     assert.equal(bobConvAfterRead[0].unread, false);
 
-    // Message 확인
-    const messages = (await bob.read({
+    const bobAllMessages = (await bob.read({
       read: 'Message',
       select: ['id', 'conversation', 'message'],
       filter: [{field: 'conversation', op: 'eq', value: bobConvId}],
     })).rows;
-    assert.equal(messages.length, 1);
-    assert.equal(messages[0].message, 'Received your inquiry. Everything looks good.');
+    assert.equal(bobAllMessages.length, 2);
+    assert.equal(bobAllMessages[1].message, 'Received your inquiry. Everything looks good.');
 
-    // 휴지통 이동 및 복원 검증
+    // Alice의 대화함 확인: bump되어 unread: true 로 전환, 메시지 2건 확인
+    await alice.replaceSession(token('alice-sub'));
+    const aliceConvAfterReply = (await alice.read({
+      read: 'Conversation',
+      select: ['id', 'unread'],
+      filter: [{field: 'id', op: 'eq', value: aliceConvId}],
+    })).rows;
+    assert.equal(aliceConvAfterReply[0].unread, true);
+
+    const aliceAllMessages = (await alice.read({
+      read: 'Message',
+      select: ['id', 'conversation', 'message'],
+      filter: [{field: 'conversation', op: 'eq', value: aliceConvId}],
+    })).rows;
+    assert.equal(aliceAllMessages.length, 2);
+    assert.equal(aliceAllMessages[1].message, 'Received your inquiry. Everything looks good.');
+
+    // 비참여자(editor)가 Alice의 대화함에 메시지 주입 시도 차단 (음수 반례)
+    const hackerInjectedMessage = await editor.bundle({
+      atomic: [
+        {
+          create: 'Message',
+          values: {
+            conversation: aliceConvId,
+            user: '4',
+            message: 'Malicious injected message by editor',
+            date_created: new Date().toISOString(),
+          },
+        },
+      ],
+    }, {key: 'editor-inject-msg'});
+    assert.equal(hackerInjectedMessage.ok, false);
+
+    // Alice 대화함 메시지는 여전히 2건 유지 (불변)
+    const aliceMsgCountAfterAttack = (await alice.read({
+      read: 'Message',
+      select: ['id'],
+      filter: [{field: 'conversation', op: 'eq', value: aliceConvId}],
+    })).rows;
+    assert.equal(aliceMsgCountAfterAttack.length, 2);
+
+    // 개인별 휴지통 이동 및 격리 검증 (Bob이 휴지통에 넣어도 Alice는 영향 없음)
     const trashResult = await bob.bundle({
       atomic: [
         {
@@ -285,9 +434,22 @@ test('FlaskBB ported features: search, profile, conversations, tracker, admin CR
     const bobTrashConvs = (await bob.read({
       read: 'Conversation',
       select: ['id', 'trash'],
-      filter: [{field: 'trash', op: 'eq', value: true}],
+      filter: [
+        {field: 'user', op: 'eq', value: '3'},
+        {field: 'trash', op: 'eq', value: true},
+      ],
     })).rows;
     assert.equal(bobTrashConvs.length, 1);
+
+    const aliceConvsWhileBobTrash = (await alice.read({
+      read: 'Conversation',
+      select: ['id', 'trash'],
+      filter: [
+        {field: 'user', op: 'eq', value: '2'},
+        {field: 'trash', op: 'eq', value: false},
+      ],
+    })).rows;
+    assert.equal(aliceConvsWhileBobTrash.length, 1); // Alice의 대화함은 trash 되지 않음 (격리!)
 
     const restoreResult = await bob.bundle({
       atomic: [
@@ -417,11 +579,313 @@ test('FlaskBB ported features: search, profile, conversations, tracker, admin CR
     }, {key: 'admin-update-alice'});
     assert.equal(adminUserUpdate.ok, true, JSON.stringify(adminUserUpdate));
 
-    console.log(JSON.stringify({schema, ok: true, featuresVerified: ['F07_search', 'F03_profile', 'F09_conversations', 'F06_tracker_read', 'F04_F10_admin_crud']}));
+    // =========================================================================
+    // 6. 권한 상승(Privilege Escalation) 방지 검증:
+    //    mod_edituser 권한을 가진 editor가 일반 사용자(alice)를 Administrator(group 3)로 승격 시도 시 거부
+    // =========================================================================
+    assert.equal(sql(`SELECT mod_edituser FROM ${q}."group" WHERE id=4`), 't', 'editor fixture must actually have mod_edituser');
+    const editorAllowedUserEdit = await editor.bundle({
+      atomic: [{apply: 'User.moderatorEditUser', target: {ids: ['2']}, values: {notes: 'Edited by moderator'}}],
+    }, {key: 'editor-ordinary-user-edit'});
+    assert.equal(editorAllowedUserEdit.ok, true, 'mod_edituser must retain its ordinary-user edit permission');
+    assert.equal(sql(`SELECT notes FROM ${q}."user" WHERE id=2`), 'Edited by moderator');
+
+    const editorPromoAttempt = await editor.bundle({
+      atomic: [
+        {
+          apply: 'User.adminUpdateUser',
+          target: {ids: ['2']},
+          values: {primary_group: '3'},
+        },
+      ],
+    }, {key: 'editor-promo-attempt'});
+    assert.equal(editorPromoAttempt.ok, false, 'mod_edituser must NOT be allowed to promote user to Administrator');
+
+    // DB 확인: Alice의 그룹은 여전히 '2' (Member) 불변
+    const aliceGroupAfterEditorAttempt = sql(`SELECT primary_group_id FROM ${q}."user" WHERE id=2`);
+    assert.equal(aliceGroupAfterEditorAttempt, '2', 'Alice primary_group must remain 2 after editor promotion attempt');
+
+    // The same editor must not grant super_mod or any other elevated group.
+    const editorSupermodPromoAttempt = await editor.bundle({
+      atomic: [{apply: 'User.adminUpdateUser', target: {ids: ['2']}, values: {primary_group: '5'}}],
+    }, {key: 'editor-supermod-promo-attempt'});
+    assert.equal(editorSupermodPromoAttempt.ok, false, 'mod_edituser must NOT grant a super_mod group');
+    assert.equal(sql(`SELECT primary_group_id FROM ${q}."user" WHERE id=2`), '2');
+
+    // An editor also cannot edit targets who already hold elevated permissions.
+    for (const [label, targetId, expectedGroup] of [
+      ['administrator', '3', '3'],
+      ['super moderator', '5', '5'],
+    ]) {
+      const profileEdit = await editor.bundle({
+        atomic: [{apply: 'User.moderatorEditUser', target: {ids: [targetId]}, values: {notes: `forbidden edit of ${label}`}}],
+      }, {key: `editor-profile-${targetId}`});
+      assert.equal(profileEdit.ok, false, `mod_edituser must not edit an existing ${label}`);
+      const denied = await editor.bundle({
+        atomic: [{apply: 'User.adminUpdateUser', target: {ids: [targetId]}, values: {primary_group: '2'}}],
+      }, {key: `editor-demote-${targetId}`});
+      assert.equal(denied.ok, false, `mod_edituser must not change an existing ${label}`);
+      assert.equal(sql(`SELECT primary_group_id FROM ${q}."user" WHERE id=${targetId}`), expectedGroup);
+    }
+
+    // Super moderators cannot grant admin or super_mod membership either.
+    const supermodPromotion = await supermod.bundle({
+      atomic: [{apply: 'User.adminUpdateUser', target: {ids: ['2']}, values: {primary_group: '3'}}],
+    }, {key: 'supermod-promo-attempt'});
+    assert.equal(supermodPromotion.ok, false, 'super_mod cannot grant an admin group');
+    assert.equal(sql(`SELECT primary_group_id FROM ${q}."user" WHERE id=2`), '2');
+
+    // 관리자(Bob)는 정상적으로 그룹 변경 가능
+    const adminPromoSuccess = await bob.bundle({
+      atomic: [
+        {
+          apply: 'User.adminUpdateUser',
+          target: {ids: ['2']},
+          values: {primary_group: '3'},
+        },
+      ],
+    }, {key: 'admin-promo-success'});
+    assert.equal(adminPromoSuccess.ok, true, 'Admin must be allowed to update primary_group');
+
+    // 다시 Member(2)로 원상복구
+    await bob.bundle({
+      atomic: [
+        {
+          apply: 'User.adminUpdateUser',
+          target: {ids: ['2']},
+          values: {primary_group: '2'},
+        },
+      ],
+    }, {key: 'admin-restore-group'});
+
+    // =========================================================================
+    // 7. 계정 정지/비활성화 시 기존 토큰 쓰기 거부 및 재활성화 검증:
+    //    Bob이 Alice를 activated=false 로 정지하면, Alice의 기존 토큰으로 updateProfile 거부
+    // =========================================================================
+    const deactivateAlice = await bob.bundle({
+      atomic: [
+        {
+          apply: 'User.adminUpdateUser',
+          target: {ids: ['2']},
+          values: {activated: false},
+        },
+      ],
+    }, {key: 'deactivate-alice'});
+    assert.equal(deactivateAlice.ok, true);
+
+    const aliceActivatedStatus = sql(`SELECT activated FROM ${q}."user" WHERE id=2`);
+    assert.equal(aliceActivatedStatus, 'f');
+
+    // 비활성화된 Alice가 기존 토큰으로 프로필 수정 시도 -> 거부되어야 함
+    const aliceWriteWhileDeactivated = await alice.bundle({
+      atomic: [
+        {
+          apply: 'User.updateProfile',
+          target: {ids: ['2']},
+          values: {signature: 'Malicious signature while deactivated'},
+        },
+      ],
+    }, {key: 'alice-write-deactivated'});
+    assert.equal(aliceWriteWhileDeactivated.ok, false, 'Deactivated user token write must be rejected');
+
+    // DB 확인: Alice의 signature는 바뀌지 않고 기존 값 유지
+    const aliceSigAfterDeactivatedWrite = sql(`SELECT signature FROM ${q}."user" WHERE id=2`);
+    assert.equal(aliceSigAfterDeactivatedWrite, 'Alice In Wonderland', 'Signature must not change while deactivated');
+
+    // 관리자가 Alice를 다시 activated=true 로 재활성화
+    const reactivateAlice = await bob.bundle({
+      atomic: [
+        {
+          apply: 'User.adminUpdateUser',
+          target: {ids: ['2']},
+          values: {activated: true},
+        },
+      ],
+    }, {key: 'reactivate-alice'});
+    assert.equal(reactivateAlice.ok, true);
+
+    // 재활성화된 후 Alice가 다시 프로필 수정 시도 -> 성공해야 함
+    const aliceWriteAfterReactivation = await alice.bundle({
+      atomic: [
+        {
+          apply: 'User.updateProfile',
+          target: {ids: ['2']},
+          values: {signature: 'Alice Restored Signature'},
+        },
+      ],
+    }, {key: 'alice-write-restored'});
+    assert.equal(aliceWriteAfterReactivation.ok, true, 'Reactivated user token write must succeed');
+
+    const aliceSigAfterReactivation = sql(`SELECT signature FROM ${q}."user" WHERE id=2`);
+    assert.equal(aliceSigAfterReactivation, 'Alice Restored Signature');
+
+    // =========================================================================
+    // 8. Live UI Renderer Integration (UI -> SDK -> AIP -> PG):
+    //    Flask UI 렌더러를 직접 기동하여 실제 HTTP 요청으로 Search(검색 비유출), Profile(수정 및 DB반영), Conversations(조회) 검증
+    // =========================================================================
+    const python = '/private/tmp/flaskbb-aip-host-venv/bin/python';
+    const launchUi = async (subject, username) => {
+      const uiEnv = {
+        PATH: process.env.PATH,
+        PYTHONPATH: [join(track, 'ui'), join(root, 'product/python')].join(':'),
+        FLASKBB_TEST_INTEGRATION: '1',
+        FLASKBB_TEST_ACCESS_TOKEN: token(subject),
+        FLASKBB_TEST_SUBJECT: subject,
+        FLASKBB_TEST_USERNAME: username || subject,
+        FLASKBB_TEST_AIP_URL: `http://${started.address}`,
+      };
+      const host = spawn(python, ['tests/run_ui_host.py'], {cwd: track, env: uiEnv, stdio: ['ignore', 'pipe', 'pipe']});
+      host.unref();
+      uiHosts.push(host);
+      host.stderrText = '';
+      host.stderr.on('data', data => {host.stderrText += data;});
+      const lines = createInterface({input: host.stdout});
+      const listening = await Promise.race([
+        once(lines, 'line').then(([line]) => JSON.parse(line)),
+        once(host, 'exit').then(([code]) => {throw new Error(`UI host exit ${code}: ${host.stderrText}`);}),
+        new Promise((_, reject) => setTimeout(() => reject(new Error(`UI host timeout: ${host.stderrText}`)), 15000).unref())
+      ]);
+      lines.close();
+      host.stdout.destroy();
+      host.stderr.destroy();
+      return {host, base: `http://127.0.0.1:${listening.port}`};
+    };
+
+    const cookie = 'aip_session=aip-integration-session';
+    const csrf = 'aip-integration-csrf-token';
+
+    // 8a. Alice UI 인스턴스 기동 및 Live Search 검증 (공개 검색어 통과 & 숨김 토픽/게시물 비유출 검증)
+    const aliceUi = await launchUi('alice-sub', 'member-alice');
+    const publicSearchRes = await fetch(`${aliceUi.base}/search?q=Discussion`, {headers: {Cookie: cookie}});
+    assert.equal(publicSearchRes.status, 200);
+    const publicSearchHtml = await publicSearchRes.text();
+    assert.match(publicSearchHtml, /First Discussion Topic/);
+
+    // 일반 회원 Alice는 'Secret' 검색 시 숨김 토픽/게시물이 절대 노출되지 않음 (음수 반례)
+    const hiddenSearchRes = await fetch(`${aliceUi.base}/search?q=Secret`, {headers: {Cookie: cookie}});
+    assert.equal(hiddenSearchRes.status, 200);
+    const hiddenSearchHtml = await hiddenSearchRes.text();
+    assert.doesNotMatch(hiddenSearchHtml, /Secret Hidden Topic/);
+    assert.doesNotMatch(hiddenSearchHtml, /Top secret hidden post content/);
+
+    // 8b. Bob(관리자) UI 인스턴스 기동 및 Live Search 검증 (관리자는 숨김 토픽 조회 가능)
+    const bobUi = await launchUi('bob-sub', 'admin-bob');
+    const adminSearchRes = await fetch(`${bobUi.base}/search?q=Secret`, {headers: {Cookie: cookie}});
+    assert.equal(adminSearchRes.status, 200);
+    const adminSearchHtml = await adminSearchRes.text();
+    assert.match(adminSearchHtml, /Secret Hidden Topic/);
+
+    // 8c. Live User Profile 설정 수정 (UI POST -> SDK -> AIP -> PG 실반영)
+    const updateSettingsRes = await fetch(`${aliceUi.base}/user/settings`, {
+      method: 'POST',
+      redirect: 'manual',
+      headers: {Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded'},
+      body: new URLSearchParams({
+        csrf_token: csrf,
+        signature: 'Signature Updated via Live UI Integration',
+        website: 'https://alice-live-ui.example.com',
+        location: 'Wonderland Live',
+      }),
+    });
+    assert.equal(updateSettingsRes.status, 303, 'Successful settings POST redirects with 303');
+    await updateSettingsRes.arrayBuffer();
+
+    // DB 확인: 실제 PostgreSQL에 서명과 웹사이트가 반영되었는지 검증
+    const aliceSigFromUi = sql(`SELECT signature FROM ${q}."user" WHERE id=2`);
+    assert.equal(aliceSigFromUi, 'Signature Updated via Live UI Integration');
+    const aliceWebFromUi = sql(`SELECT website FROM ${q}."user" WHERE id=2`);
+    assert.equal(aliceWebFromUi, 'https://alice-live-ui.example.com');
+
+    // 8d. Live Conversations Inbox 조회
+    const convInboxRes = await fetch(`${aliceUi.base}/conversations/inbox`, {headers: {Cookie: cookie}});
+    assert.equal(convInboxRes.status, 200);
+    const convInboxHtml = await convInboxRes.text();
+    assert.match(convInboxHtml, /Confidential inquiry/);
+
+    // 8e. New message and reply round trip through the real renderer, official SDK,
+    // AIP listener and PostgreSQL. Both users have independent mailbox rows.
+    const createMessageRes = await fetch(`${aliceUi.base}/conversations/new`, {
+      method: 'POST',
+      redirect: 'manual',
+      headers: {Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded'},
+      body: new URLSearchParams({
+        csrf_token: csrf,
+        to_username: 'admin-bob',
+        subject: 'Live UI conversation round trip',
+        message: 'First message from Alice through the UI',
+      }),
+    });
+    assert.equal(createMessageRes.status, 303);
+    await createMessageRes.arrayBuffer();
+    const conversationRows = sql(`SELECT id || '|' || user_id || '|' || unread FROM ${q}.conversation WHERE subject='Live UI conversation round trip' ORDER BY user_id`)
+      .split('\n').map(line => line.split('|'));
+    assert.equal(conversationRows.length, 2, 'sender and recipient each need a mailbox row');
+    const aliceConversationId = conversationRows.find(row => row[1] === '2')?.[0];
+    const bobConversationId = conversationRows.find(row => row[1] === '3')?.[0];
+    assert.ok(aliceConversationId && bobConversationId);
+    assert.deepEqual(conversationRows.map(row => row[2]), ['false', 'true'], 'recipient starts unread; sender does not');
+    assert.equal(sql(`SELECT count(*) FROM ${q}.message m JOIN ${q}.conversation c ON c.id=m.conversation_id WHERE c.subject='Live UI conversation round trip' AND m.message='First message from Alice through the UI'`), '2', 'the first Message must be visible in both mailboxes');
+
+    const bobInbox = await fetch(`${bobUi.base}/conversations/inbox`, {headers: {Cookie: cookie}});
+    assert.equal(bobInbox.status, 200);
+    assert.match(await bobInbox.text(), /Live UI conversation round trip/);
+    const bobView = await fetch(`${bobUi.base}/conversations/${bobConversationId}`, {headers: {Cookie: cookie}});
+    const bobViewHtml = await bobView.text();
+    assert.equal(bobView.status, 200, `${bobViewHtml}\nUI stderr: ${bobUi.host.stderrText}\nAIP stderr: ${stderr}`);
+    assert.match(bobViewHtml, /First message from Alice through the UI/);
+    assert.equal(sql(`SELECT unread FROM ${q}.conversation WHERE id=${bobConversationId}`), 'f', 'reading Bob mailbox clears only Bob unread state');
+    assert.equal(sql(`SELECT unread FROM ${q}.conversation WHERE id=${aliceConversationId}`), 'f', 'Bob reading must not change Alice mailbox state');
+
+    const replyRes = await fetch(`${bobUi.base}/conversations/${bobConversationId}/reply`, {
+      method: 'POST',
+      redirect: 'manual',
+      headers: {Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded'},
+      body: new URLSearchParams({csrf_token: csrf, message: 'Reply from Bob through the UI'}),
+    });
+    assert.equal(replyRes.status, 303);
+    await replyRes.arrayBuffer();
+    assert.equal(sql(`SELECT count(*) FROM ${q}.message m JOIN ${q}.conversation c ON c.id=m.conversation_id WHERE c.subject='Live UI conversation round trip' AND m.message='Reply from Bob through the UI'`), '2', 'reply must be visible from each mailbox');
+    assert.equal(sql(`SELECT unread FROM ${q}.conversation WHERE id=${aliceConversationId}`), 't', 'reply marks only Alice mailbox unread');
+
+    const aliceConversationView = await fetch(`${aliceUi.base}/conversations/${aliceConversationId}`, {headers: {Cookie: cookie}});
+    assert.equal(aliceConversationView.status, 200);
+    assert.match(await aliceConversationView.text(), /Reply from Bob through the UI/);
+    assert.equal(sql(`SELECT unread FROM ${q}.conversation WHERE id=${aliceConversationId}`), 'f');
+    assert.equal(sql(`SELECT unread FROM ${q}.conversation WHERE id=${bobConversationId}`), 'f');
+
+    const trashAlice = await fetch(`${aliceUi.base}/conversations/${aliceConversationId}/trash`, {
+      method: 'POST', redirect: 'manual',
+      headers: {Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded'},
+      body: new URLSearchParams({csrf_token: csrf}),
+    });
+    assert.equal(trashAlice.status, 303);
+    await trashAlice.arrayBuffer();
+    assert.equal(sql(`SELECT trash FROM ${q}.conversation WHERE id=${aliceConversationId}`), 't');
+    assert.equal(sql(`SELECT trash FROM ${q}.conversation WHERE id=${bobConversationId}`), 'f', 'trashing is per-user');
+
+    const editorUi = await launchUi('editor-sub', 'mod-editor');
+    const outsiderRead = await fetch(`${editorUi.base}/conversations/${aliceConversationId}`, {headers: {Cookie: cookie}});
+    assert.ok([403, 404].includes(outsiderRead.status), `nonparticipant read rejected, got ${outsiderRead.status}`);
+    const beforeOutsiderReply = sql(`SELECT count(*) FROM ${q}.message m JOIN ${q}.conversation c ON c.id=m.conversation_id WHERE c.subject='Live UI conversation round trip'`);
+    const outsiderReply = await fetch(`${editorUi.base}/conversations/${aliceConversationId}/reply`, {
+      method: 'POST', redirect: 'manual',
+      headers: {Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded'},
+      body: new URLSearchParams({csrf_token: csrf, message: 'forbidden outsider reply'}),
+    });
+    assert.ok([403, 404].includes(outsiderReply.status), `nonparticipant reply rejected, got ${outsiderReply.status}`);
+    await outsiderReply.arrayBuffer();
+    assert.equal(sql(`SELECT count(*) FROM ${q}.message m JOIN ${q}.conversation c ON c.id=m.conversation_id WHERE c.subject='Live UI conversation round trip'`), beforeOutsiderReply);
+
+    console.log(JSON.stringify({schema, ok: true, featuresVerified: ['F07_search', 'F03_profile', 'F09_conversations', 'F06_tracker_read', 'F04_F10_admin_crud', 'UI_live_integration']}));
+  } catch (error) {
+    console.error(error);
+    throw error;
   } finally {
-    if (server) {
-      server.kill();
-      await once(server, 'close').catch(() => {});
+    for (const child of [...uiHosts, server].filter(Boolean)) {
+      if (child.closed) continue;
+      const closed = once(child, 'close');
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      await closed;
     }
     sql(`DROP SCHEMA IF EXISTS "${schema}" CASCADE;`);
     rmSync(temp, {recursive: true, force: true});

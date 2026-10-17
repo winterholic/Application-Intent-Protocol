@@ -259,7 +259,10 @@ class UiHostTests(unittest.TestCase):
             [{"id": "6", "username": "sender", "activated": True}],
             [{"id": "7", "username": "recipient", "activated": True}],
         ]
-        client_api.bundle.return_value = {"ok": True}
+        client_api.bundle.side_effect = [
+            {"ok": True, "created": [{"resource": "Conversation", "id": "101"}, {"resource": "Conversation", "id": "102"}]},
+            {"ok": True, "created": [{"resource": "Message", "id": "201"}, {"resource": "Message", "id": "202"}]},
+        ]
         sessions = {"session": {"access_token": "token", "csrf_token": "csrf"}}
         app = create_app(
             {"TESTING": True, "SECRET_KEY": "test-only-secret", "AIP_URL": "http://aip.test"},
@@ -279,13 +282,63 @@ class UiHostTests(unittest.TestCase):
             },
         )
         self.assertEqual(res.status_code, 303)
+        self.assertEqual(client_api.bundle.call_count, 2)
+        conv_ops = client_api.bundle.call_args_list[0].args[0]
+        self.assertEqual(len(conv_ops), 2)
+        self.assertEqual(conv_ops[0]["create"], "Conversation")
+        self.assertEqual(conv_ops[0]["values"]["user"], "6")
+        self.assertEqual(conv_ops[1]["create"], "Conversation")
+        self.assertEqual(conv_ops[1]["values"]["user"], "7")
+
+        msg_ops = client_api.bundle.call_args_list[1].args[0]
+        self.assertEqual(len(msg_ops), 2)
+        self.assertEqual(msg_ops[0]["create"], "Message")
+        self.assertEqual(msg_ops[0]["values"]["conversation"], "101")
+        self.assertEqual(msg_ops[0]["values"]["message"], "Testing private message")
+        self.assertEqual(msg_ops[1]["create"], "Message")
+        self.assertEqual(msg_ops[1]["values"]["conversation"], "102")
+        self.assertEqual(msg_ops[1]["values"]["message"], "Testing private message")
+
+    def test_reply_conversation_bundle(self):
+        client_api = Mock()
+        client_api.session.return_value = {"actorId": "6"}
+        client_api.read.side_effect = [
+            [{"id": "6", "username": "sender", "activated": True}],
+            [{"id": "101", "user": "6", "shared_id": "shared-uuid-1"}],
+            [
+                {"id": "101", "user": "6", "shared_id": "shared-uuid-1"},
+                {"id": "102", "user": "7", "shared_id": "shared-uuid-1"},
+            ],
+        ]
+        client_api.bundle.return_value = {"ok": True}
+        sessions = {"session": {"access_token": "token", "csrf_token": "csrf"}}
+        app = create_app(
+            {"TESTING": True, "SECRET_KEY": "test-only-secret", "AIP_URL": "http://aip.test"},
+            sdk_factory=Mock(return_value=client_api),
+            sessions=sessions,
+        )
+        browser = app.test_client()
+        browser.set_cookie("aip_session", "session")
+
+        res = browser.post(
+            "/conversations/101/reply",
+            data={
+                "csrf_token": "csrf",
+                "message": "Reply message text",
+            },
+        )
+        self.assertEqual(res.status_code, 303)
         client_api.bundle.assert_called_once()
         ops = client_api.bundle.call_args.args[0]
-        self.assertEqual(len(ops), 2)
-        self.assertEqual(ops[0]["create"], "Conversation")
-        self.assertEqual(ops[0]["values"]["user"], "6")
-        self.assertEqual(ops[1]["create"], "Conversation")
-        self.assertEqual(ops[1]["values"]["user"], "7")
+        self.assertEqual(len(ops), 3)
+        self.assertEqual(ops[0]["create"], "Message")
+        self.assertEqual(ops[0]["values"]["conversation"], "101")
+        self.assertEqual(ops[0]["values"]["message"], "Reply message text")
+        self.assertEqual(ops[1]["create"], "Message")
+        self.assertEqual(ops[1]["values"]["conversation"], "102")
+        self.assertEqual(ops[1]["values"]["message"], "Reply message text")
+        self.assertEqual(ops[2]["apply"], "Conversation.bump")
+        self.assertEqual(ops[2]["target"], {"ids": ["102"]})
 
 
 if __name__ == "__main__":

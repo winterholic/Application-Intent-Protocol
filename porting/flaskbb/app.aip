@@ -1,18 +1,19 @@
 // FlaskBB 2019 port. F01 reads and a subset of F05 topic/post workflows are
 // exercised so far; full source workflow coverage remains F01-F17 in INVENTORY.md.
 actor User
-predicate hasGroup(viewer: User?, targetGroup: Group) = viewer != null and (viewer.primary_group = targetGroup or exists UserGroup where user = viewer and group = targetGroup)
+predicate hasGroup(viewer: User?, targetGroup: Group) = viewer != null and viewer.activated and (viewer.primary_group = targetGroup or exists UserGroup where user = viewer and group = targetGroup)
+predicate hasElevatedGroup(target: User?) = target != null and (target.primary_group.admin or target.primary_group.super_mod or exists UserGroup where user = target and (group.admin or group.super_mod))
 predicate canReadForum(viewer: User?, targetForum: Forum?) = exists ForumGroupAccess where forum = targetForum and ((viewer = null and group.guest) or hasGroup(viewer, group))
-predicate canViewHidden(viewer: User?) = viewer != null and (viewer.primary_group.viewhidden or exists UserGroup where user = viewer and group.viewhidden)
-predicate canModerateForum(viewer: User?, targetForum: Forum?) = viewer != null and (viewer.primary_group.admin or viewer.primary_group.super_mod or viewer.primary_group.mod or exists UserGroup where user = viewer and (group.admin or group.super_mod or group.mod) or exists ForumModerator where forum = targetForum and user = viewer)
-predicate canStartTopic(viewer: User?, targetForum: Forum?) = viewer != null and targetForum != null and canReadForum(viewer, targetForum) and not targetForum.locked and (canModerateForum(viewer, targetForum) or viewer.primary_group.posttopic or exists UserGroup where user = viewer and group.posttopic)
-predicate canReply(viewer: User?, targetTopic: Topic?) = viewer != null and targetTopic != null and canReadForum(viewer, targetTopic.forum) and not targetTopic.hidden and (canModerateForum(viewer, targetTopic.forum) or (not targetTopic.locked and (viewer.primary_group.postreply or exists UserGroup where user = viewer and group.postreply)))
+predicate canViewHidden(viewer: User?) = viewer != null and viewer.activated and (viewer.primary_group.viewhidden or exists UserGroup where user = viewer and group.viewhidden)
+predicate canModerateForum(viewer: User?, targetForum: Forum?) = viewer != null and viewer.activated and (viewer.primary_group.admin or viewer.primary_group.super_mod or viewer.primary_group.mod or exists UserGroup where user = viewer and (group.admin or group.super_mod or group.mod) or exists ForumModerator where forum = targetForum and user = viewer)
+predicate canStartTopic(viewer: User?, targetForum: Forum?) = viewer != null and viewer.activated and targetForum != null and canReadForum(viewer, targetForum) and not targetForum.locked and (canModerateForum(viewer, targetForum) or viewer.primary_group.posttopic or exists UserGroup where user = viewer and group.posttopic)
+predicate canReply(viewer: User?, targetTopic: Topic?) = viewer != null and viewer.activated and targetTopic != null and canReadForum(viewer, targetTopic.forum) and not targetTopic.hidden and (canModerateForum(viewer, targetTopic.forum) or (not targetTopic.locked and (viewer.primary_group.postreply or exists UserGroup where user = viewer and group.postreply)))
 predicate canDeleteTopic(viewer: User?, targetTopic: Topic?) = targetTopic != null and canReadForum(viewer, targetTopic.forum) and (viewer.primary_group.admin or viewer.primary_group.super_mod or exists UserGroup where user = viewer and (group.admin or group.super_mod) or (canModerateForum(viewer, targetTopic.forum) and (viewer.primary_group.deletetopic or exists UserGroup where user = viewer and group.deletetopic)) or (targetTopic.user = viewer and not targetTopic.locked and (viewer.primary_group.deletetopic or exists UserGroup where user = viewer and group.deletetopic)) or (canModerateForum(viewer, targetTopic.forum) and (viewer.primary_group.editpost or exists UserGroup where user = viewer and group.editpost)) or (targetTopic.user = viewer and not targetTopic.locked and (viewer.primary_group.editpost or exists UserGroup where user = viewer and group.editpost)))
 predicate canDeletePost(viewer: User?, targetPost: Post?) = targetPost != null and targetPost.published and canReadForum(viewer, targetPost.topic.forum) and (canDeleteTopic(viewer, targetPost.topic) and targetPost.topic.deleted or canModerateForum(viewer, targetPost.topic.forum) and (viewer.primary_group.editpost or exists UserGroup where user = viewer and group.editpost) or targetPost.user = viewer and not targetPost.topic.locked and (viewer.primary_group.editpost or exists UserGroup where user = viewer and group.editpost))
 predicate canHide(viewer: User?, targetForum: Forum?) = viewer != null and canModerateForum(viewer, targetForum) and (viewer.primary_group.makehidden or exists UserGroup where user = viewer and group.makehidden)
 predicate canReadTopic(viewer: User?, targetTopic: Topic?) = targetTopic != null and not targetTopic.deleted and canReadForum(viewer, targetTopic.forum) and (targetTopic.hidden != true or canViewHidden(viewer)) and (targetTopic.published or targetTopic.user = viewer)
 predicate canReadPost(viewer: User?, targetPost: Post?) = targetPost != null and not targetPost.deleted and (not targetPost.topic.deleted or canDeleteTopic(viewer, targetPost.topic) or (targetPost.topic.user = viewer and not targetPost.topic.locked and (viewer.primary_group.editpost or exists UserGroup where user = viewer and group.editpost))) and (targetPost.user = viewer or (targetPost.published and canReadForum(viewer, targetPost.forum))) and (targetPost.hidden != true or canViewHidden(viewer)) and (targetPost.topic.hidden != true or canViewHidden(viewer))
-predicate canReviewReports(viewer: User?) = viewer != null and (viewer.primary_group.admin or viewer.primary_group.super_mod or viewer.primary_group.mod or exists UserGroup where user = viewer and (group.admin or group.super_mod or group.mod))
+predicate canReviewReports(viewer: User?) = viewer != null and viewer.activated and (viewer.primary_group.admin or viewer.primary_group.super_mod or viewer.primary_group.mod or exists UserGroup where user = viewer and (group.admin or group.super_mod or group.mod))
 predicate hasFirstPost(targetTopic: Topic, viewer: User?) = exists TopicFirstPost where topic = targetTopic and post.user = viewer and post.published
 predicate isFirstPost(targetPost: Post) = exists TopicFirstPost where post = targetPost
 predicate hasNewerAuthoredPost(targetTopic: Topic, viewer: User?) = exists Post where topic = targetTopic and user = viewer and published and date_created > targetTopic.last_updated
@@ -71,17 +72,26 @@ resource User {
   unique email
   rows read when true
   transition updateProfile {
-    allow actor = this
+    allow actor = this and this.activated = true
     from true
     patch signature, avatar, website, location, birthday, gender, notes, theme, language
   }
   expose apply updateProfile { target id; bulk maxRows 1 }
   transition adminUpdateUser {
-    allow actor.primary_group.admin or (actor.primary_group.mod_edituser and not this.primary_group.admin)
+    allow actor.primary_group.admin and actor.activated
     from true
     patch primary_group, activated
   }
   expose apply adminUpdateUser { target id; bulk maxRows 1 }
+  transition moderatorEditUser {
+    allow actor.activated
+      and (actor.primary_group.admin or actor.primary_group.super_mod or actor.primary_group.mod or exists UserGroup where user = actor and (group.admin or group.super_mod or group.mod))
+      and (actor.primary_group.mod_edituser or exists UserGroup where user = actor and group.mod_edituser)
+      and not hasElevatedGroup(this)
+    from true
+    patch username, email, birthday, gender, website, location, signature, avatar, notes, language, theme
+  }
+  expose apply moderatorEditUser { target id; bulk maxRows 1 }
   expose read {
     select id, username, primary_group, activated, date_joined, lastseen, birthday, gender, website, location, signature, avatar, notes, language, theme, post_count
     filter id.eq, username.prefix, username.contains
@@ -413,7 +423,7 @@ resource Conversation {
     draft: Bool
     unread: Bool
   }
-  rows read when user = actor
+  rows read when user = actor or from_user = actor or to_user = actor
   expose create {
     allow user = actor or from_user = actor
     fields user, from_user, to_user, shared_id, subject, date_created, date_modified, trash, draft, unread
@@ -424,6 +434,12 @@ resource Conversation {
     to unread = false
   }
   expose apply markRead { target id; bulk maxRows 50 }
+  transition bump {
+    allow user = actor or from_user = actor or to_user = actor
+    from true
+    to unread = true, date_modified = now
+  }
+  expose apply bump { target id; bulk maxRows 50 }
   transition moveToTrash {
     allow user = actor
     from trash = false
@@ -450,7 +466,7 @@ resource Message {
   fields { id: Id; conversation: Conversation; user: User?; message: Text; date_created: Time }
   rows read when conversation.user = actor
   expose create {
-    allow conversation.user = actor or user = actor
+    allow (conversation.user = actor or user = actor) and (conversation.from_user = actor or conversation.to_user = actor)
     fields conversation, user, message, date_created
   }
   expose read {

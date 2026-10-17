@@ -1,12 +1,14 @@
 """Start the UI renderer with a pre-bound synthetic test identity for AIP integration tests."""
 import json
 import os
+import signal
 from werkzeug.serving import make_server
 
 from app import create_app
 
 
 def main():
+    signal.signal(signal.SIGTERM, lambda *_: os._exit(0))
     if os.environ.get("FLASKBB_TEST_INTEGRATION") != "1":
         raise SystemExit("test harness only")
     session_id = "aip-integration-session"

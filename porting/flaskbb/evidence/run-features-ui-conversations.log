@@ -1,0 +1,10 @@
+{"schema":"aip_flaskbb_057cd53d6b","ok":true,"featuresVerified":["F07_search","F03_profile","F09_conversations","F06_tracker_read","F04_F10_admin_crud","UI_live_integration"]}
+✔ FlaskBB ported features: search, profile, conversations, tracker, admin CRUD in real PostgreSQL (3712.424875ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3790.220834

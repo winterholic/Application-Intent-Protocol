@@ -636,7 +636,7 @@ def create_app(config=None, sdk_factory=connect, sessions=None, flows=None):
                 abort(404)
             shared_id = str(uuid.uuid4())
             now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-            operations = [
+            conv_ops = [
                 {
                     "create": "Conversation",
                     "values": {
@@ -668,12 +668,53 @@ def create_app(config=None, sdk_factory=connect, sessions=None, flows=None):
                     },
                 },
             ]
-            return submit_bundle(
-                client,
-                operations,
-                f"flaskbb-conv-{shared_id}",
-                lambda: url_for("conversations_inbox"),
-            )
+            conv_result = client.bundle(conv_ops, key=f"flaskbb-conv-{shared_id}")
+            if not conv_result.get("ok"):
+                reject_aip_error(AipError(conv_result.get("code", "WIRE.REJECTED"), conv_result.get("message", "Conversation creation rejected")))
+
+            created_list = conv_result.get("created") or []
+            sender_conv_id = created_list[0]["id"] if len(created_list) > 0 and isinstance(created_list[0], dict) else None
+            recipient_conv_id = created_list[1]["id"] if len(created_list) > 1 and isinstance(created_list[1], dict) else None
+
+            if not sender_conv_id:
+                read_convs = client.read({
+                    "read": "Conversation",
+                    "select": ["id", "user"],
+                    "filter": [{"field": "shared_id", "op": "eq", "value": shared_id}],
+                })
+                for c in read_convs:
+                    if str(c.get("user")) == str(user["id"]):
+                        sender_conv_id = c["id"]
+                    elif str(c.get("user")) == str(to_user["id"]):
+                        recipient_conv_id = c["id"]
+
+            msg_ops = []
+            if sender_conv_id:
+                msg_ops.append({
+                    "create": "Message",
+                    "values": {
+                        "conversation": sender_conv_id,
+                        "user": user["id"],
+                        "message": message_text,
+                        "date_created": now_iso,
+                    },
+                })
+            if recipient_conv_id:
+                msg_ops.append({
+                    "create": "Message",
+                    "values": {
+                        "conversation": recipient_conv_id,
+                        "user": user["id"],
+                        "message": message_text,
+                        "date_created": now_iso,
+                    },
+                })
+            if msg_ops:
+                msg_result = client.bundle(msg_ops, key=f"flaskbb-msg-{shared_id}")
+                if not msg_result.get("ok"):
+                    reject_aip_error(AipError(msg_result.get("code", "WIRE.REJECTED"), msg_result.get("message", "Message creation rejected")))
+
+            return redirect(url_for("conversations_inbox"), code=303)
         except AipError as error:
             reject_aip_error(error)
 
@@ -685,7 +726,7 @@ def create_app(config=None, sdk_factory=connect, sessions=None, flows=None):
             convs = client.read({
                 "read": "Conversation",
                 "select": ["id", "user", "from_user", "to_user", "shared_id", "subject", "date_created", "date_modified", "unread", "trash"],
-                "filter": [{"field": "id", "op": "eq", "value": conversation_id}],
+                "filter": [{"field": "id", "op": "eq", "value": str(conversation_id)}],
                 "limit": 1,
             })
             if not convs:
@@ -696,11 +737,11 @@ def create_app(config=None, sdk_factory=connect, sessions=None, flows=None):
             messages = client.read({
                 "read": "Message",
                 "select": ["id", "conversation", "user", "message", "date_created"],
-                "filter": [{"field": "conversation", "op": "eq", "value": conversation_id}],
+                "filter": [{"field": "conversation", "op": "eq", "value": str(conversation_id)}],
             })
             if conv.get("unread"):
                 try:
-                    client.apply("Conversation.markRead", {"ids": [conversation_id]})
+                    client.apply({"apply": "Conversation.markRead", "target": {"ids": [str(conversation_id)]}})
                 except AipError:
                     pass
         except AipError as error:
@@ -732,23 +773,53 @@ def create_app(config=None, sdk_factory=connect, sessions=None, flows=None):
             convs = client.read({
                 "read": "Conversation",
                 "select": ["id", "user", "shared_id"],
-                "filter": [{"field": "id", "op": "eq", "value": conversation_id}],
+                "filter": [{"field": "id", "op": "eq", "value": str(conversation_id)}],
                 "limit": 1,
             })
             if not convs or str(convs[0]["user"]) != str(user["id"]):
                 abort(404)
+            current_conv = convs[0]
+            shared_id = current_conv.get("shared_id")
             now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+            other_conv_id = None
+            if shared_id:
+                matching_convs = client.read({
+                    "read": "Conversation",
+                    "select": ["id", "user", "shared_id"],
+                    "filter": [{"field": "shared_id", "op": "eq", "value": shared_id}],
+                })
+                for c in matching_convs:
+                    if str(c.get("user")) != str(user["id"]):
+                        other_conv_id = c["id"]
+                        break
+
             operations = [
                 {
                     "create": "Message",
                     "values": {
-                        "conversation": conversation_id,
+                        "conversation": str(conversation_id),
                         "user": user["id"],
                         "message": message_text,
                         "date_created": now_iso,
                     },
                 }
             ]
+            if other_conv_id:
+                operations.append({
+                    "create": "Message",
+                    "values": {
+                        "conversation": other_conv_id,
+                        "user": user["id"],
+                        "message": message_text,
+                        "date_created": now_iso,
+                    },
+                })
+                operations.append({
+                    "apply": "Conversation.bump",
+                    "target": {"ids": [other_conv_id]},
+                })
+
             return submit_bundle(
                 client,
                 operations,
@@ -767,7 +838,7 @@ def create_app(config=None, sdk_factory=connect, sessions=None, flows=None):
         client = aip_client()
         try:
             operations = [
-                {"apply": "Conversation.moveToTrash", "target": {"ids": [conversation_id]}}
+                {"apply": "Conversation.moveToTrash", "target": {"ids": [str(conversation_id)]}}
             ]
             return submit_bundle(
                 client,
@@ -787,7 +858,7 @@ def create_app(config=None, sdk_factory=connect, sessions=None, flows=None):
         client = aip_client()
         try:
             operations = [
-                {"apply": "Conversation.restoreFromTrash", "target": {"ids": [conversation_id]}}
+                {"apply": "Conversation.restoreFromTrash", "target": {"ids": [str(conversation_id)]}}
             ]
             return submit_bundle(
                 client,

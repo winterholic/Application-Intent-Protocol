@@ -672,7 +672,7 @@ impl AuthenticatorImpl {
             .ok_or(AuthError::Invalid)?;
         if email.len() < 3
             || email.len() > 200
-            || !email.contains('@')
+            || !spike_v2_read::scalar::valid_email(email)
             || email.chars().any(|c| c.is_control() || c.is_whitespace())
         {
             return Err(AuthError::Invalid);

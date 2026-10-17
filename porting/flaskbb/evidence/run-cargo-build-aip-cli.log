@@ -1,0 +1,11 @@
+   Compiling spike-v2-read v0.0.0 (/private/tmp/aip-porting-full-20261017/spikes/spike-v2-read)
+   Compiling spike-v3-write v0.0.0 (/private/tmp/aip-porting-full-20261017/spikes/spike-v3-write)
+   Compiling spike-v5-sdk v0.0.0 (/private/tmp/aip-porting-full-20261017/spikes/spike-v5-sdk)
+   Compiling aip-migrate v0.1.0 (/private/tmp/aip-porting-full-20261017/crates/aip-migrate)
+   Compiling spike-v11-dev-checks v0.0.0 (/private/tmp/aip-porting-full-20261017/spikes/spike-v11-dev-checks)
+   Compiling spike-v4-worker v0.0.0 (/private/tmp/aip-porting-full-20261017/spikes/spike-v4-worker)
+   Compiling spike-v6-transport v0.0.0 (/private/tmp/aip-porting-full-20261017/spikes/spike-v6-transport)
+   Compiling aip-auth v0.1.0 (/private/tmp/aip-porting-full-20261017/crates/aip-auth)
+   Compiling aip-service v0.1.0 (/private/tmp/aip-porting-full-20261017/crates/aip-service)
+   Compiling aip-cli v0.1.0 (/private/tmp/aip-porting-full-20261017/crates/aip-cli)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.33s

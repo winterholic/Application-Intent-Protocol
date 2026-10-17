@@ -11,7 +11,7 @@ import {spawn, spawnSync} from 'node:child_process';
 
 const track = resolve(new URL('..', import.meta.url).pathname);
 const root = resolve(track, '../..');
-const binary = join(root, 'target/debug/aip');
+const binary = process.env.AIP_BINARY || join(root, 'target/debug/aip');
 const file = join(track, 'app.aip');
 const b64 = value => Buffer.from(JSON.stringify(value)).toString('base64url');
 
@@ -237,6 +237,8 @@ test('AIP core provisioning working proposal (contract verification in real Post
     const unverifiedSession = await callSession(unverifiedEmailToken);
     assert.equal(unverifiedSession.data.ok, false);
     assert.equal(unverifiedSession.data.code, 'WIRE.UNAUTHENTICATED');
+    assert.equal(sql(`SELECT count(*) FROM ${q}."user" WHERE username='unverified_user'`), '0');
+    assert.equal(sql(`SELECT count(*) FROM ${q}.aip_principals WHERE subject='unverified-email-sub'`), '0');
 
     // 3b. email_verified 누락
     const missingEmailVerifiedToken = token({
@@ -247,6 +249,8 @@ test('AIP core provisioning working proposal (contract verification in real Post
     const missingSession = await callSession(missingEmailVerifiedToken);
     assert.equal(missingSession.data.ok, false);
     assert.equal(missingSession.data.code, 'WIRE.UNAUTHENTICATED');
+    assert.equal(sql(`SELECT count(*) FROM ${q}."user" WHERE username='missing_verified'`), '0');
+    assert.equal(sql(`SELECT count(*) FROM ${q}.aip_principals WHERE subject='missing-verified-sub'`), '0');
 
     // 3c. 기존 username("alice")과 충돌하는 신규 주체
     const conflictUsernameToken = token({
@@ -269,6 +273,56 @@ test('AIP core provisioning working proposal (contract verification in real Post
     const conflictEmailSession = await callSession(conflictEmailToken);
     assert.equal(conflictEmailSession.data.ok, false);
     assert.equal(conflictEmailSession.data.code, 'WIRE.UNAUTHENTICATED');
+
+    // 3e. 잘못된 형식의 이메일 (malformed email) 차단
+    for (const badEmail of ['not-an-email@', 'not-an-email', 'user@.test', 'user@@example.test', 'user@example.test ', 'user\u0000@example.test']) {
+      const malformedEmailToken = token({
+        sub: `bad-email-sub-${randomUUID().slice(0, 8)}`,
+        preferred_username: `bad_email_${randomUUID().slice(0, 8)}`,
+        email: badEmail,
+        email_verified: true
+      });
+      const malformedSession = await callSession(malformedEmailToken);
+      assert.equal(malformedSession.data.ok, false, `Expected rejection for bad email: ${badEmail}`);
+      assert.equal(malformedSession.data.code, 'WIRE.UNAUTHENTICATED');
+    }
+    const badEmailUserCount = sql(`SELECT count(*) FROM ${q}."user" WHERE email LIKE 'not-an-email%' OR email LIKE 'user@%'`);
+    assert.equal(badEmailUserCount, '0');
+
+    // Missing and explicit-null email claims are distinct malformed inputs;
+    // neither may create an actor or principal.
+    for (const [label, emailClaim] of [['missing', undefined], ['null', null]]) {
+      const subject = `bad-email-${label}-${randomUUID().slice(0, 8)}`;
+      const username = `bad_email_${label}_${randomUUID().slice(0, 8)}`;
+      const claims = {
+        sub: subject,
+        preferred_username: username,
+        email_verified: true,
+      };
+      if (emailClaim !== undefined) claims.email = emailClaim;
+      const response = await callSession(token(claims));
+      assert.equal(response.data.ok, false, `${label} email claim must be rejected`);
+      assert.equal(response.data.code, 'WIRE.UNAUTHENTICATED');
+      assert.equal(sql(`SELECT count(*) FROM ${q}.aip_principals WHERE subject='${subject}'`), '0');
+      assert.equal(sql(`SELECT count(*) FROM ${q}."user" WHERE username='${username}'`), '0');
+    }
+
+    // 3f. email_verified 타입 경계 (null, 문자열 "true") 차단
+    for (const badVerified of [null, 'true', 1]) {
+      const subject = `bad-verified-sub-${randomUUID().slice(0, 8)}`;
+      const username = `bad_verified_${randomUUID().slice(0, 8)}`;
+      const badVerifiedToken = token({
+        sub: subject,
+        preferred_username: username,
+        email: `${username}@example.test`,
+        email_verified: badVerified
+      });
+      const badVerifiedSession = await callSession(badVerifiedToken);
+      assert.equal(badVerifiedSession.data.ok, false, `Expected rejection for bad email_verified: ${badVerified}`);
+      assert.equal(badVerifiedSession.data.code, 'WIRE.UNAUTHENTICATED');
+      assert.equal(sql(`SELECT count(*) FROM ${q}.aip_principals WHERE subject='${subject}'`), '0');
+      assert.equal(sql(`SELECT count(*) FROM ${q}."user" WHERE username='${username}'`), '0');
+    }
 
     // alice의 aip_principals가 attacker에게 연결되거나 변경되지 않았음을 확인
     const attackerPrincipal = sql(`SELECT count(*) FROM ${q}.aip_principals WHERE subject LIKE 'attacker-sub%'`);
