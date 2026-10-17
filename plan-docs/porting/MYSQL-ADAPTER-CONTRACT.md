@@ -99,7 +99,7 @@
 | PG 회귀 | `spike-v2-read` 전체 통과(실패 0), `aip-service`·`aip-migrate` 기본 빌드 통과 | spike-v6 전체 스위트는 아래 기록 |
 | 실 MySQL 8.4.11 읽기 HTTP | `mysql_read_http` 1 passed: 읽기 전용 계정, 행·필드 정책, traverse(1:1·1:N 순서·상한·숨김 행·빈 목록), 집계, Bool·Decimal·Date·Time·Enum, drift, marker 변조, `/apply` 거부 | |
 | 실 MySQL 8.4.11 CLI 전 과정 | `mysql_adoption_flow` 1 passed: plan/apply/재적용, `PLAN_CHANGED`, 설정 거부, bind/충돌/revoke, JWT serve, drift 시 `/read`·`/ready` 즉시 거부와 재기동 거부 | UUID actor·UUID resource, 외부 OIDC, 큰 schema의 catalog 비용 |
-| DDL 매트릭스 | `mysql_drift_matrix` 1 passed(34건) | MariaDB 변형 |
+| DDL 매트릭스 | `mysql_drift_matrix` 1 passed(35건) | MariaDB 변형 |
 | 드라이버·펜스 | `aip-migrate --features mysql` 라이브 13 + `mysql_fence_verification` 8, MySQL 8.4.11과 MariaDB 11.4.13 양쪽 통과 | 스트리밍 도중 절단 |
 | MariaDB | 드라이버·펜스·catalog만 통과. 서빙·채택은 거부 | 읽기 경로 전체(LATERAL 부재) |
 
