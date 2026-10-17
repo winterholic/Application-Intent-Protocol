@@ -7,7 +7,8 @@
 //   value today is a plain Text column, which would keep secrets in clear text and expose them to every reader. The
 //   previous draft did that under the name valueCiphertext; it was also unreadable (WIRE.FIELD_NOT_EXPOSED).
 //   Secret value storage, value versions, rotation and blind-index lookups stay undeclared until the
-//   encryption design (docs/design/13) lands. Everything below is names, folders, membership and permissions.
+//   an encryption design is approved and implemented (docs/design/13 is a Proposed draft that an independent
+//   static review did not clear for implementation). Everything below is names, folders, membership and permissions.
 //
 // Behavior is checked on a real PostgreSQL by porting/infisical/tests/test_live_db.py. Declared jobs live only
 // when a worker implements them (see the job section at the end).
