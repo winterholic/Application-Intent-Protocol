@@ -181,41 +181,297 @@ fn rejects_malformed_or_unsupported_foreign_key_metadata() {
 }
 
 #[test]
-fn facereview_11_models_synthetic_schema_matches_manifest() {
+fn facereview_11_models_full_schema_matches_declaration() {
     let manifest_json = include_str!("../../../plan-docs/porting/facereview-fk-manifest.json");
     let manifest_val: serde_json::Value = serde_json::from_str(manifest_json).expect("valid manifest json");
     let models = manifest_val["models"].as_array().expect("models array");
     assert_eq!(models.len(), 11, "FaceReview must have exactly 11 models");
 
-    // Synthetic column helper for FaceReview models
-    let col = |name: &str, ord: u64, dt: &str, ct: &str, nullable: bool| {
-        let mut c = column(name, dt, ct);
-        c.ordinal_position = ord;
-        c.is_nullable = if nullable { "YES".into() } else { "NO".into() };
-        c
-    };
+    fn col(name: &str, ord: u64, dt: &str, ct: &str, nullable: bool, default: Option<&str>) -> ColumnRow {
+        ColumnRow {
+            name: name.into(),
+            ordinal_position: ord,
+            data_type: dt.into(),
+            column_type: ct.into(),
+            is_nullable: if nullable { "YES".into() } else { "NO".into() },
+            column_default: default.map(Into::into),
+            extra: String::new(),
+            generation_expression: String::new(),
+            collation_name: None,
+        }
+    }
 
-    // Verify all 11 models normalize properly
-    for m in models {
-        let table_name = m["table"].as_str().unwrap();
-        let pk_col = format!("{}_id", table_name);
-        let columns = vec![
-            col(&pk_col, 1, "varchar", "varchar(36)", false),
-            col("created_at", 2, "timestamp", "timestamp", true),
-        ];
-        let indexes = vec![IndexRow::column("PRIMARY", 0, 1, &pk_col)];
-        let normalized = normalize_table(table_name, columns, indexes).expect("synthetic model table should normalize");
-        assert_eq!(normalized.name, table_name);
-        assert_eq!(normalized.indexes[0].columns, [pk_col.as_str()]);
-        assert!(normalized.indexes[0].primary);
+    struct ModelFixture {
+        name: &'static str,
+        pk_col: &'static str,
+        columns: Vec<ColumnRow>,
+        indexes: Vec<IndexRow>,
+    }
 
-        // Normalize FKs if declared in manifest
-        let fk_declarations = m["foreign_keys"].as_array().unwrap();
-        let mut source_cols = vec![pk_col, "created_at".into()];
-        for fk in fk_declarations {
-            source_cols.push(fk["column"].as_str().unwrap().into());
+    let fixtures = vec![
+        ModelFixture {
+            name: "comment",
+            pk_col: "comment_id",
+            columns: vec![
+                col("comment_id", 1, "varchar", "varchar(36)", false, Some("generate_uuid")),
+                col("video_id", 2, "varchar", "varchar(36)", false, None),
+                col("user_id", 3, "varchar", "varchar(36)", false, None),
+                col("content", 4, "text", "text", false, None),
+                col("is_modified", 5, "tinyint", "tinyint(1)", true, Some("0")),
+                col("is_deleted", 6, "tinyint", "tinyint(1)", true, Some("0")),
+                col("created_at", 7, "timestamp", "timestamp", false, Some("CURRENT_TIMESTAMP")),
+                col("updated_at", 8, "timestamp", "timestamp", false, Some("CURRENT_TIMESTAMP")),
+            ],
+            indexes: vec![
+                IndexRow::column("PRIMARY", 0, 1, "comment_id"),
+                IndexRow::column("idx_video_comments", 1, 1, "video_id"),
+                IndexRow::column("idx_video_comments", 1, 2, "is_deleted"),
+                IndexRow::column("idx_video_comments", 1, 3, "created_at"),
+            ],
+        },
+        ModelFixture {
+            name: "user",
+            pk_col: "user_id",
+            columns: vec![
+                col("user_id", 1, "varchar", "varchar(36)", false, Some("generate_uuid")),
+                col("email", 2, "varchar", "varchar(255)", false, None),
+                col("password", 3, "varchar", "varchar(255)", false, None),
+                col("name", 4, "varchar", "varchar(50)", false, None),
+                col("role", 5, "enum", "enum('GENERAL','ADMIN','SUPER_ADMIN')", false, Some("GENERAL")),
+                col("profile_image_id", 6, "int", "int", true, Some("0")),
+                col("is_tutorial_done", 7, "tinyint", "tinyint(1)", true, Some("0")),
+                col("is_verify_email_done", 8, "tinyint", "tinyint(1)", true, Some("0")),
+                col("is_deleted", 9, "tinyint", "tinyint(1)", true, Some("0")),
+                col("created_at", 10, "timestamp", "timestamp", false, Some("CURRENT_TIMESTAMP")),
+                col("updated_at", 11, "timestamp", "timestamp", false, Some("CURRENT_TIMESTAMP")),
+            ],
+            indexes: vec![
+                IndexRow::column("PRIMARY", 0, 1, "user_id"),
+                IndexRow::column("uk_user_email", 0, 1, "email"),
+            ],
+        },
+        ModelFixture {
+            name: "user_emotion_dna",
+            pk_col: "user_id",
+            columns: vec![
+                col("user_id", 1, "varchar", "varchar(36)", false, None),
+                col("dna_type", 2, "varchar", "varchar(50)", false, None),
+                col("dna_data", 3, "json", "json", false, None),
+                col("based_on_videos", 4, "int", "int", false, None),
+                col("generated_at", 5, "timestamp", "timestamp", false, Some("CURRENT_TIMESTAMP")),
+                col("expires_at", 6, "timestamp", "timestamp", false, None),
+            ],
+            indexes: vec![
+                IndexRow::column("PRIMARY", 0, 1, "user_id"),
+            ],
+        },
+        ModelFixture {
+            name: "user_emotion_summary",
+            pk_col: "user_id",
+            columns: vec![
+                col("user_id", 1, "varchar", "varchar(36)", false, None),
+                col("neutral_seconds", 2, "bigint", "bigint", false, Some("0")),
+                col("happy_seconds", 3, "bigint", "bigint", false, Some("0")),
+                col("surprise_seconds", 4, "bigint", "bigint", false, Some("0")),
+                col("sad_seconds", 5, "bigint", "bigint", false, Some("0")),
+                col("angry_seconds", 6, "bigint", "bigint", false, Some("0")),
+                col("last_finalized_at", 7, "datetime", "datetime", true, None),
+                col("last_session_id", 8, "varchar", "varchar(64)", true, None),
+                col("lock_version", 9, "bigint", "bigint", false, Some("0")),
+                col("created_at", 10, "datetime", "datetime", false, Some("CURRENT_TIMESTAMP")),
+                col("updated_at", 11, "datetime", "datetime", false, Some("CURRENT_TIMESTAMP")),
+            ],
+            indexes: vec![
+                IndexRow::column("PRIMARY", 0, 1, "user_id"),
+            ],
+        },
+        ModelFixture {
+            name: "user_favorite_genre",
+            pk_col: "user_favorite_genre_id",
+            columns: vec![
+                col("user_favorite_genre_id", 1, "varchar", "varchar(36)", false, Some("generate_uuid")),
+                col("user_id", 2, "varchar", "varchar(36)", false, None),
+                col("genre", 3, "enum", "enum('MUSIC','ENTERTAINMENT','GAMING','NEWS','EDUCATION','LIFESTYLE','SPORTS','COMEDY','ANIMATION','ETC')", false, None),
+                col("created_at", 4, "timestamp", "timestamp", false, Some("CURRENT_TIMESTAMP")),
+                col("updated_at", 5, "timestamp", "timestamp", false, Some("CURRENT_TIMESTAMP")),
+            ],
+            indexes: vec![
+                IndexRow::column("PRIMARY", 0, 1, "user_favorite_genre_id"),
+                IndexRow::column("uk_user_genre", 0, 1, "user_id"),
+                IndexRow::column("uk_user_genre", 0, 2, "genre"),
+            ],
+        },
+        ModelFixture {
+            name: "user_point_history",
+            pk_col: "user_point_history_id",
+            columns: vec![
+                col("user_point_history_id", 1, "varchar", "varchar(36)", false, Some("generate_uuid")),
+                col("user_id", 2, "varchar", "varchar(36)", false, None),
+                col("video_id", 3, "varchar", "varchar(36)", true, None),
+                col("amount", 4, "int", "int", false, None),
+                col("watch_time", 5, "int", "int", true, Some("0")),
+                col("description", 6, "varchar", "varchar(255)", true, None),
+                col("created_at", 7, "timestamp", "timestamp", false, Some("CURRENT_TIMESTAMP")),
+                col("updated_at", 8, "timestamp", "timestamp", false, Some("CURRENT_TIMESTAMP")),
+            ],
+            indexes: vec![
+                IndexRow::column("PRIMARY", 0, 1, "user_point_history_id"),
+            ],
+        },
+        ModelFixture {
+            name: "video",
+            pk_col: "video_id",
+            columns: vec![
+                col("video_id", 1, "varchar", "varchar(36)", false, Some("generate_uuid")),
+                col("youtube_url", 2, "varchar", "varchar(50)", false, None),
+                col("title", 3, "varchar", "varchar(255)", false, None),
+                col("channel_name", 4, "varchar", "varchar(100)", true, None),
+                col("category", 5, "enum", "enum('MUSIC','ENTERTAINMENT','GAMING','NEWS','EDUCATION','LIFESTYLE','SPORTS','COMEDY','ANIMATION','ETC')", false, None),
+                col("duration", 6, "int", "int", true, Some("0")),
+                col("view_count", 7, "bigint", "bigint", true, Some("0")),
+                col("is_deleted", 8, "tinyint", "tinyint(1)", true, Some("0")),
+                col("created_at", 9, "timestamp", "timestamp", false, Some("CURRENT_TIMESTAMP")),
+                col("updated_at", 10, "timestamp", "timestamp", false, Some("CURRENT_TIMESTAMP")),
+            ],
+            indexes: vec![
+                IndexRow::column("PRIMARY", 0, 1, "video_id"),
+                IndexRow::column("uk_video_youtube_url", 0, 1, "youtube_url"),
+            ],
+        },
+        ModelFixture {
+            name: "video_bookmark",
+            pk_col: "video_bookmark_id",
+            columns: vec![
+                col("video_bookmark_id", 1, "varchar", "varchar(36)", false, Some("generate_uuid")),
+                col("video_id", 2, "varchar", "varchar(36)", false, None),
+                col("user_id", 3, "varchar", "varchar(36)", false, None),
+                col("created_at", 4, "timestamp", "timestamp", false, Some("CURRENT_TIMESTAMP")),
+            ],
+            indexes: vec![
+                IndexRow::column("PRIMARY", 0, 1, "video_bookmark_id"),
+                IndexRow::column("uk_bookmark_user_video", 0, 1, "user_id"),
+                IndexRow::column("uk_bookmark_user_video", 0, 2, "video_id"),
+            ],
+        },
+        ModelFixture {
+            name: "video_like",
+            pk_col: "video_like_id",
+            columns: vec![
+                col("video_like_id", 1, "varchar", "varchar(36)", false, Some("generate_uuid")),
+                col("video_id", 2, "varchar", "varchar(36)", false, None),
+                col("user_id", 3, "varchar", "varchar(36)", false, None),
+                col("created_at", 4, "timestamp", "timestamp", false, Some("CURRENT_TIMESTAMP")),
+            ],
+            indexes: vec![
+                IndexRow::column("PRIMARY", 0, 1, "video_like_id"),
+                IndexRow::column("uk_like_user_video", 0, 1, "user_id"),
+                IndexRow::column("uk_like_user_video", 0, 2, "video_id"),
+            ],
+        },
+        ModelFixture {
+            name: "video_request",
+            pk_col: "video_request_id",
+            columns: vec![
+                col("video_request_id", 1, "varchar", "varchar(36)", false, Some("generate_uuid")),
+                col("user_id", 2, "varchar", "varchar(36)", false, None),
+                col("youtube_url", 3, "varchar", "varchar(50)", false, None),
+                col("youtube_full_url", 4, "varchar", "varchar(255)", false, None),
+                col("status", 5, "enum", "enum('PENDING','ACCEPTED','REJECTED')", false, Some("PENDING")),
+                col("admin_comment", 6, "varchar", "varchar(255)", true, None),
+                col("created_at", 7, "timestamp", "timestamp", false, Some("CURRENT_TIMESTAMP")),
+                col("updated_at", 8, "timestamp", "timestamp", false, Some("CURRENT_TIMESTAMP")),
+            ],
+            indexes: vec![
+                IndexRow::column("PRIMARY", 0, 1, "video_request_id"),
+            ],
+        },
+        ModelFixture {
+            name: "video_view_log",
+            pk_col: "video_view_log_id",
+            columns: vec![
+                col("video_view_log_id", 1, "varchar", "varchar(36)", false, Some("generate_uuid")),
+                col("video_id", 2, "varchar", "varchar(36)", false, None),
+                col("user_id", 3, "varchar", "varchar(36)", true, None),
+                col("guest_token", 4, "varchar", "varchar(255)", true, None),
+                col("created_at", 5, "timestamp", "timestamp", false, Some("CURRENT_TIMESTAMP")),
+                col("updated_at", 6, "timestamp", "timestamp", false, Some("CURRENT_TIMESTAMP")),
+            ],
+            indexes: vec![
+                IndexRow::column("PRIMARY", 0, 1, "video_view_log_id"),
+                IndexRow::column("idx_user_history", 1, 1, "user_id"),
+                IndexRow::column("idx_user_history", 1, 2, "created_at"),
+                IndexRow::column("idx_video_history", 1, 1, "video_id"),
+                IndexRow::column("idx_video_history", 1, 2, "created_at"),
+            ],
+        },
+    ];
+
+    assert_eq!(fixtures.len(), 11);
+    let total_columns: usize = fixtures.iter().map(|f| f.columns.len()).sum();
+    assert_eq!(total_columns, 81, "11 FaceReview models must define all 81 declared columns");
+
+    let mut all_normalized_fks_count = 0;
+
+    for fixture in &fixtures {
+        let normalized = normalize_table(fixture.name, fixture.columns.clone(), fixture.indexes.clone())
+            .unwrap_or_else(|e| panic!("table {} should normalize: {e}", fixture.name));
+
+        assert_eq!(normalized.name, fixture.name);
+        assert_eq!(normalized.columns.len(), fixture.columns.len());
+
+        let pk_index = normalized.indexes.iter().find(|i| i.primary).expect("must have PRIMARY index");
+        assert_eq!(pk_index.columns, [fixture.pk_col], "PK column for {} must match exact declaration", fixture.name);
+        assert!(pk_index.unique);
+
+        // Verify specific unique constraints and composite indexes
+        match fixture.name {
+            "comment" => {
+                let comp = normalized.indexes.iter().find(|i| i.name == "idx_video_comments").unwrap();
+                assert_eq!(comp.columns, ["video_id", "is_deleted", "created_at"]);
+                assert!(!comp.unique);
+            }
+            "user" => {
+                let uk = normalized.indexes.iter().find(|i| i.name == "uk_user_email").unwrap();
+                assert_eq!(uk.columns, ["email"]);
+                assert!(uk.unique);
+            }
+            "user_emotion_summary" => {
+                assert_eq!(fixture.pk_col, "user_id", "UserEmotionSummary PK is user_id, not an artificial id");
+            }
+            "user_favorite_genre" => {
+                let uk = normalized.indexes.iter().find(|i| i.name == "uk_user_genre").unwrap();
+                assert_eq!(uk.columns, ["user_id", "genre"]);
+                assert!(uk.unique);
+            }
+            "video" => {
+                let uk = normalized.indexes.iter().find(|i| i.name == "uk_video_youtube_url").unwrap();
+                assert_eq!(uk.columns, ["youtube_url"]);
+                assert!(uk.unique);
+            }
+            "video_bookmark" => {
+                let uk = normalized.indexes.iter().find(|i| i.name == "uk_bookmark_user_video").unwrap();
+                assert_eq!(uk.columns, ["user_id", "video_id"]);
+                assert!(uk.unique);
+            }
+            "video_like" => {
+                let uk = normalized.indexes.iter().find(|i| i.name == "uk_like_user_video").unwrap();
+                assert_eq!(uk.columns, ["user_id", "video_id"]);
+                assert!(uk.unique);
+            }
+            "video_view_log" => {
+                let idx_u = normalized.indexes.iter().find(|i| i.name == "idx_user_history").unwrap();
+                assert_eq!(idx_u.columns, ["user_id", "created_at"]);
+                let idx_v = normalized.indexes.iter().find(|i| i.name == "idx_video_history").unwrap();
+                assert_eq!(idx_v.columns, ["video_id", "created_at"]);
+            }
+            _ => {}
         }
 
+        // Match against manifest foreign keys
+        let manifest_model = models.iter().find(|m| m["table"].as_str() == Some(fixture.name)).expect("model in manifest");
+        let fk_declarations = manifest_model["foreign_keys"].as_array().unwrap();
+
+        let source_col_names: Vec<String> = fixture.columns.iter().map(|c| c.name.clone()).collect();
         let mut fk_rows = Vec::new();
         for fk in fk_declarations {
             let col_name = fk["column"].as_str().unwrap();
@@ -225,8 +481,8 @@ fn facereview_11_models_synthetic_schema_matches_manifest() {
             let on_upd = fk["on_update"].as_str().unwrap();
             fk_rows.push(ForeignKeyRow {
                 constraint_schema: "facereview_baseline".into(),
-                table_name: table_name.into(),
-                constraint_name: format!("fk_{}_{}", table_name, col_name),
+                table_name: fixture.name.into(),
+                constraint_name: format!("fk_{}_{}", fixture.name, col_name),
                 ordinal_position: 1,
                 column_name: col_name.into(),
                 referenced_table_schema: Some("facereview_baseline".into()),
@@ -237,9 +493,10 @@ fn facereview_11_models_synthetic_schema_matches_manifest() {
             });
         }
 
-        let normalized_fks = normalize_foreign_keys("facereview_baseline", table_name, &source_cols, fk_rows)
+        let normalized_fks = normalize_foreign_keys("facereview_baseline", fixture.name, &source_col_names, fk_rows)
             .expect("synthetic FKs should normalize");
         assert_eq!(normalized_fks.len(), fk_declarations.len());
+        all_normalized_fks_count += normalized_fks.len();
 
         for expected in fk_declarations {
             let exp_col = expected["column"].as_str().unwrap();
@@ -253,6 +510,8 @@ fn facereview_11_models_synthetic_schema_matches_manifest() {
             assert_eq!(actual.on_update.to_string(), expected["on_update"].as_str().unwrap());
         }
     }
+
+    assert_eq!(all_normalized_fks_count, 13, "Total normalized foreign keys across all 11 models must be exactly 13");
 }
 
 use aip_migrate::mysql_catalog::{

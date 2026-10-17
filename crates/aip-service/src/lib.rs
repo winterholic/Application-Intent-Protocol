@@ -1187,6 +1187,29 @@ async fn principal(config: Config, command: Principal) -> Result<Value, Value> {
 
 /// Resolve the selected database adapter from config or environment variable.
 /// Validates consistency between config and environment, and ensures adapter matches database_url scheme.
+fn extract_url_scheme(env_name: &str) -> Option<String> {
+    std::env::var(env_name).ok().and_then(|url| {
+        url.split_once("://").map(|(scheme, _)| scheme.trim().to_ascii_lowercase())
+    })
+}
+
+fn validate_adapter_and_scheme(adapter: &str, scheme: &str, env_label: &str) -> Result<(), Value> {
+    let is_pg_adapter = adapter == "postgres";
+    let is_pg_scheme = scheme == "postgres" || scheme == "postgresql";
+    let is_my_adapter = adapter == "mysql" || adapter == "mariadb";
+    let is_my_scheme = scheme == "mysql" || scheme == "mariadb";
+
+    if (is_pg_adapter && is_my_scheme) || (is_my_adapter && is_pg_scheme) {
+        return Err(error(
+            "DB_ADAPTER_MISMATCH",
+            &format!("database_adapter '{adapter}'와 {env_label} scheme '{scheme}'가 일치하지 않음"),
+        ));
+    }
+    Ok(())
+}
+
+/// Resolve the selected database adapter from config or environment variable.
+/// Validates consistency between config, environment, runtime database_url, and migrate_database_url.
 pub fn resolve_database_adapter(config: &Config) -> Result<String, Value> {
     let env_adapter = if let Some(env_name) = &config.database_adapter_env {
         if let Ok(val) = std::env::var(env_name) {
@@ -1222,55 +1245,81 @@ pub fn resolve_database_adapter(config: &Config) -> Result<String, Value> {
         }
     }
 
+    let runtime_scheme = extract_url_scheme(&config.database_url_env);
+    let migrate_scheme = config.migrate_database_url_env.as_ref().and_then(|name| extract_url_scheme(name));
+
+    if let (Some(r_scheme), Some(m_scheme)) = (&runtime_scheme, &migrate_scheme) {
+        let r_is_my = r_scheme == "mysql" || r_scheme == "mariadb";
+        let m_is_my = m_scheme == "mysql" || m_scheme == "mariadb";
+        let r_is_pg = r_scheme == "postgres" || r_scheme == "postgresql";
+        let m_is_pg = m_scheme == "postgres" || m_scheme == "postgresql";
+        if (r_is_my && m_is_pg) || (r_is_pg && m_is_my) {
+            return Err(error(
+                "DB_ADAPTER_MISMATCH",
+                &format!("runtime DB URL scheme '{r_scheme}'와 migration DB URL scheme '{m_scheme}'가 일치하지 않음"),
+            ));
+        }
+    }
+
     let explicit_adapter = env_adapter.or(config_adapter);
 
-    let url_scheme = if let Ok(url) = std::env::var(&config.database_url_env) {
-        url.split_once("://").map(|(scheme, _)| scheme.trim().to_ascii_lowercase())
-    } else {
-        None
-    };
-
     if let Some(adapter) = explicit_adapter {
-        if let Some(ref scheme) = url_scheme {
-            let is_pg_adapter = adapter == "postgres";
-            let is_pg_scheme = scheme == "postgres" || scheme == "postgresql";
-            let is_my_adapter = adapter == "mysql" || adapter == "mariadb";
-            let is_my_scheme = scheme == "mysql" || scheme == "mariadb";
-
-            if (is_pg_adapter && is_my_scheme) || (is_my_adapter && is_pg_scheme) {
-                return Err(error(
-                    "DB_ADAPTER_MISMATCH",
-                    &format!("database_adapter '{adapter}'와 database_url scheme '{scheme}'가 일치하지 않음"),
-                ));
-            }
+        if let Some(ref scheme) = runtime_scheme {
+            validate_adapter_and_scheme(&adapter, scheme, "database_url")?;
+        }
+        if let Some(ref scheme) = migrate_scheme {
+            validate_adapter_and_scheme(&adapter, scheme, "migrate_database_url")?;
         }
         Ok(adapter)
-    } else if let Some(ref scheme) = url_scheme {
-        if scheme == "mysql" || scheme == "mariadb" {
-            Ok(scheme.clone())
+    } else {
+        let detected = migrate_scheme.or(runtime_scheme);
+        if let Some(scheme) = detected {
+            if scheme == "mysql" || scheme == "mariadb" {
+                Ok(scheme)
+            } else {
+                Ok("postgres".to_string())
+            }
         } else {
             Ok("postgres".to_string())
         }
-    } else {
-        Ok("postgres".to_string())
     }
 }
 
-/// Rejects configuration that needs an optional package this binary was built without.
-/// Runs before any database or network access so the operator sees the missing feature first.
+/// Rejects configuration that needs an optional package this binary was built without,
+/// or configuration attempting to use unsupported MySQL runtime connectors before connection.
 pub fn require_built_features(config: &Config) -> Result<(), Value> {
     #[cfg(not(feature = "external-brokers"))]
     if config.broker.is_some() {
         return Err(error("BROKER_FEATURE_DISABLED", "broker 설정을 사용하려면 external-brokers feature로 빌드해야 함"));
     }
     let adapter = resolve_database_adapter(config)?;
+
+    let has_mysql_url = [&config.database_url_env]
+        .into_iter()
+        .chain(config.migrate_database_url_env.as_ref())
+        .any(|env_name| {
+            extract_url_scheme(env_name).is_some_and(|s| s == "mysql" || s == "mariadb")
+        });
+
     #[cfg(not(feature = "mysql"))]
     {
-        if adapter == "mysql" || adapter == "mariadb" {
+        if adapter == "mysql" || adapter == "mariadb" || has_mysql_url {
             return Err(error("DB_ADAPTER_FEATURE_DISABLED", "MySQL/MariaDB adapter를 사용하려면 mysql feature로 빌드해야 함"));
         }
     }
+
+    #[cfg(feature = "mysql")]
+    {
+        if adapter == "mysql" || adapter == "mariadb" || has_mysql_url {
+            return Err(error(
+                "DB_ADAPTER_UNSUPPORTED",
+                "MySQL/MariaDB adapter는 현재 catalog introspection 계약만 지원되며 CLI/서빙/마이그레이션 커넥터는 아직 구현되지 않음",
+            ));
+        }
+    }
+
     let _ = adapter;
+    let _ = has_mysql_url;
     let _ = config;
     Ok(())
 }
@@ -1812,6 +1861,72 @@ mod managed_config_tests {
         let err = resolve_database_adapter(&config).unwrap_err();
         assert_eq!(err["code"], "BAD_CONFIG");
         unsafe { std::env::remove_var(env_var) };
+    }
+
+    #[test]
+    fn migrate_database_url_mismatch_with_adapter_or_runtime_is_rejected() {
+        let rt_var = "TEST_AIP_RT_URL_VAR";
+        let mig_var = "TEST_AIP_MIG_URL_VAR";
+
+        // Case 1: runtime is postgres, migrate URL is mysql
+        unsafe {
+            std::env::set_var(rt_var, "postgres://app:rt_secret@127.0.0.1:5432/db");
+            std::env::set_var(mig_var, "mysql://mig:mig_secret@127.0.0.1:3306/db");
+        };
+        let config: Config = serde_json::from_value(json!({
+            "schema": "aip_test",
+            "auth": {"issuer": "https://issuer.example", "audience": "aip", "jwks": {"kind": "file", "path": "jwks.json"}},
+            "database_url_env": rt_var,
+            "migrate_database_url_env": mig_var
+        }))
+        .unwrap();
+        let err = resolve_database_adapter(&config).unwrap_err();
+        assert_eq!(err["code"], "DB_ADAPTER_MISMATCH");
+        assert!(!err.to_string().contains("mig_secret"));
+        assert!(!err.to_string().contains("rt_secret"));
+
+        // Case 2: adapter explicitly postgres, migrate URL is mysql
+        let config_explicit_pg: Config = serde_json::from_value(json!({
+            "schema": "aip_test",
+            "auth": {"issuer": "https://issuer.example", "audience": "aip", "jwks": {"kind": "file", "path": "jwks.json"}},
+            "database_adapter": "postgres",
+            "database_url_env": rt_var,
+            "migrate_database_url_env": mig_var
+        }))
+        .unwrap();
+        let err_explicit = resolve_database_adapter(&config_explicit_pg).unwrap_err();
+        assert_eq!(err_explicit["code"], "DB_ADAPTER_MISMATCH");
+
+        unsafe {
+            std::env::remove_var(rt_var);
+            std::env::remove_var(mig_var);
+        };
+    }
+
+    #[test]
+    fn mysql_url_or_adapter_fails_closed_before_pg_connect() {
+        let rt_var = "TEST_AIP_FAIL_CLOSED_URL_VAR";
+        unsafe {
+            std::env::set_var(rt_var, "mysql://app:secret123@127.0.0.1:3306/db");
+        };
+        let config: Config = serde_json::from_value(json!({
+            "schema": "aip_test",
+            "auth": {"issuer": "https://issuer.example", "audience": "aip", "jwks": {"kind": "file", "path": "jwks.json"}},
+            "database_adapter": "mysql",
+            "database_url_env": rt_var
+        }))
+        .unwrap();
+
+        let err = require_built_features(&config).unwrap_err();
+        #[cfg(not(feature = "mysql"))]
+        assert_eq!(err["code"], "DB_ADAPTER_FEATURE_DISABLED");
+        #[cfg(feature = "mysql")]
+        assert_eq!(err["code"], "DB_ADAPTER_UNSUPPORTED");
+        assert!(!err.to_string().contains("secret123"));
+
+        unsafe {
+            std::env::remove_var(rt_var);
+        };
     }
 
     #[test]

@@ -18,19 +18,22 @@
 1. **선택적 패키지 feature 분리**:
    - `crates/aip-execution`, `crates/aip-migrate`, `crates/aip-service`, `crates/aip-cli`에 Cargo feature `mysql`을 추가했다.
    - 기본 빌드에서는 `mysql` feature가 비활성화되며, `cargo tree --offline -p aip-cli -e normal | grep -i mysql` 결과가 비어 있음을 확인했다(의존성 0건).
-2. **Adapter + URL Mismatch 방어 및 환경 충돌 검사 (Secret-Free)**:
-   - `resolve_database_adapter`에 Adapter와 URL scheme 간 일치성 검증을 도입했다. `postgres` 어댑터에 `mysql://`/`mariadb://` URL이 지정되거나, `mysql`/`mariadb` 어댑터에 `postgres://` URL이 지정되면 `DB_ADAPTER_MISMATCH`로 즉시 거부한다.
+2. **Adapter + Runtime/Migrate URL Mismatch 방어 및 환경 충돌 검사 (Secret-Free)**:
+   - `resolve_database_adapter`에 Adapter와 Runtime URL(`database_url_env`) 및 Migration URL(`migrate_database_url_env`) 간 일치성 검증을 도입했다.
+   - `postgres` 어댑터에 `mysql://`/`mariadb://` URL이 지정되거나, `mysql`/`mariadb` 어댑터에 `postgres://` URL이 지정되면 `DB_ADAPTER_MISMATCH`로 즉시 거부한다.
+   - Runtime URL과 Migrate URL 간 scheme이 불일치하는 경우(예: Runtime은 PG인데 Migrate URL은 MySQL) 역시 `DB_ADAPTER_MISMATCH`로 즉시 차단한다.
    - `database_adapter` 필드와 `database_adapter_env` 환경변수가 서로 다른 어댑터를 지정하면 `BAD_CONFIG`로 거부한다.
    - 오류 메시지 및 로깅 시 URL 비밀번호(`super_secret_pw` 등)는 일절 노출되지 않으며 scheme과 어댑터 식별자만 안전하게 표기된다.
-3. **Enabled 빌드(`--features mysql`)에서의 Fail-Closed 런타임 누출 방어**:
-   - `#[cfg(feature = "mysql")]` 빌드에서도, 미구현된 MySQL 런타임(HTTP 서빙 `serve` 및 live driver가 없는 `introspect`)이 기존 PostgreSQL connection pool(`deadpool-postgres`, `tokio-postgres`)로 조용히 흘러가지 않도록 진입점에서 명시적 `DB_ADAPTER_UNSUPPORTED`로 fail-closed 거부한다.
+3. **Enabled 빌드(`--features mysql`)에서의 Fail-Closed 전체 진입점 누출 방어**:
+   - `#[cfg(feature = "mysql")]` 빌드에서도, 미구현된 MySQL 라이브 커넥터가 기존 PostgreSQL 연결(`tokio-postgres`)로 조용히 흘러가지 않도록 `require_built_features`에서 모든 명령(`serve`, `service init`, `migrate` 등)에 대해 사전 명시적 `DB_ADAPTER_UNSUPPORTED`로 fail-closed 거부한다.
 4. **INFORMATION_SCHEMA Query Reader 및 Driver 연결 계층**:
    - MySQL 8.4 공식 Reference에 따른 `SQL_TABLES`, `SQL_COLUMNS`, `SQL_STATISTICS`, `SQL_FOREIGN_KEYS` 쿼리 상수를 확립했다.
    - 비동기 행 수집 계약 `MysqlCatalogReader` trait(`fetch_tables`, `fetch_columns`, `fetch_indexes`, `fetch_foreign_keys`)과 이를 `normalize_table`/`normalize_foreign_keys`로 연결하는 `introspect_table`, `introspect_schema` 파이프라인을 구현했다.
    - 드라이버 설정 `MysqlDriverConfig`: URL 파싱, connect timeout(5s), statement timeout(10s), pool size(min 1, max 10), TLS 지원, `display_sanitized`를 통한 credential 마스킹(`***`)을 구현했다.
    - 에러 정규화 `normalize_mysql_error_code`: 1045(`DB_AUTH_FAILED`), 1049(`DB_NOT_FOUND`), 1146(`TABLE_NOT_FOUND`), 1062(`UNIQUE_VIOLATION`), 1213(`DEADLOCK_DETECTED`), 1205(`LOCK_TIMEOUT`), 1451/1452(`FOREIGN_KEY_VIOLATION`), 2002/2003(`DB_CONNECT_FAILED`) 및 raw credentials sanitize.
-5. **FaceReview 11개 모델 synthetic schema & FK manifest 대조 및 통합 회귀**:
-   - [facereview-fk-manifest.json](facereview-fk-manifest.json)의 11개 SQLAlchemy 모델과 10개 외래키 제약조건 대조를 포함하여 총 13개 단위/통합 테스트가 통과했다(13 passed).
+5. **FaceReview 11개 모델 전체 81컬럼 선언, 실제 PK, 고유/복합 인덱스 및 13개 FK 대조**:
+   - [facereview-inventory.json](facereview-inventory.json) 및 [facereview-fk-manifest.json](facereview-fk-manifest.json)의 11개 SQLAlchemy 모델 전체 선언을 대조하는 `facereview_11_models_full_schema_matches_declaration` 테스트를 작성했다.
+   - 합성 2컬럼 round-trip이 아닌 11개 모델의 총 81개 컬럼(정확한 타입, nullable, default), 실제 PK(특히 `UserEmotionSummary`의 PK `user_id` 포함), 고유 제약(`uk_user_genre`, `uk_bookmark_user_video` 등), 복합 인덱스(`idx_video_comments`, `idx_user_history`, `idx_video_history`), 총 13개 외래키의 완전 일치를 검증했다(13 passed).
 
 ### PostgreSQL 선택 구조(postgres feature) 전환 제안과 영향 범위
 
@@ -45,12 +48,12 @@
 | 이번 확인 | 결과 | 확인하지 않은 것 |
 |---|---|---|
 | Cargo feature `mysql` 분리 및 기본 빌드 무의존성 | `cargo tree` mysql 0건 | live driver 다운로드(sandbox 제한) |
-| Adapter + URL Mismatch & 설정 충돌 거부 | `aip-service` 회귀 3 passed | 실제 서버 기동 후 요청 처리 |
-| MySQL/MariaDB 설정 시 fail-closed 기동 거부 | `aip-service` 회귀 3 passed | 실제 서버 기동 후 요청 처리 |
-| Enabled 빌드(`--features mysql`) fail-closed 방어 | `mysql_adapter` 1 passed | 실제 서버 기동 후 요청 처리 |
+| Adapter + Runtime/Migrate URL Mismatch & 설정 충돌 거부 | `aip-service` 회귀 5 passed (비밀번호 미노출) | 실제 서버 기동 후 요청 처리 |
+| MySQL/MariaDB 설정 시 fail-closed 기동 거부 | `aip-service` 회귀 5 passed (기본 및 `--features mysql`) | 실제 서버 기동 후 요청 처리 |
+| Enabled 빌드(`--features mysql`) fail-closed 방어 | `aip-service` 회귀 passed (`DB_ADAPTER_UNSUPPORTED`) | 실제 서버 기동 후 요청 처리 |
 | INFORMATION_SCHEMA reader & introspect 파이프라인 | `mysql_catalog` 13 passed | 실제 MySQL 8.4 라이브 DB 행 |
-| FaceReview 11개 모델 synthetic schema & FK manifest 대조 | `mysql_catalog` 회귀 passed | 실제 MySQL 8.4 라이브 DB 행 |
-| MySQL Driver Config 파싱 & Error Code 정규화 | `mysql_catalog` 회귀 passed | 실제 네트워크 드라이버 I/O |
+| FaceReview 11개 모델 전체 81컬럼, PK, 복합인덱스, 13개 FK 선언 대조 | `facereview_11_models_full_schema_matches_declaration` passed | 실제 MySQL 8.4 라이브 DB 행 |
+| MySQL Driver Config 파싱 & Error Code 정규화 | `mysql_catalog` 회귀 passed (비밀번호 마스킹) | 실제 네트워크 드라이버 I/O |
 | 실제 MySQL 8.4 / MariaDB 컨테이너 실행 | **미실행** (이유 아래 참조) | 실제 컨테이너 연결 및 정책 write |
 | adapter 지원 판정 | **미지원 (adapter 계약·driver 연결 계층 및 fail-closed 확립)** | 실제 MySQL·MariaDB 호환성 |
 
