@@ -103,6 +103,37 @@ SDK는 `npm install --offline <aip-sdk.tgz>`로 별도 소비자에 설치한다
 
 먼저 기존 prototype을 중지한다. 기존 앱 행과 커밋된 멱등 결과는 유지하고 제품 저널·principal 연결을 만든다. 정의의 DDL과 기존 catalog marker가 다르면 이관을 거부한다. 원래 marker에는 정책 본문이 없으므로 제출한 정의의 execution digest가 새 정책 정본이다. 개발 토큰은 이관하지 않는다. 이전 wire와 같은 제품 설정을 사용한다. 구조 지문 없는 구형 marker나 임의 운영 schema를 자동으로 채택하지 않는다.
 
+## 릴리스 업그레이드와 롤백
+
+새 실행 파일로 바꿀 때는 정의 변경이 없어도 AIP가 만든 schema(durable job, 인프라 테이블)가 달라질 수 있다. 아래 순서를 따른다. 이 순서는 `product/tools/upgrade-drill.mjs`로 이전 릴리스의 실제 binary가 만든 schema를 새 binary로 올리고 되돌리는 것까지 실행해 확인했다([릴리스 게이트](RELEASE-GATE.md)).
+
+1. 서비스를 중지하고 백업한다. 앱 schema와 인프라 schema를 함께 받는다. 인프라 schema 이름은 `aip_infra_` 뒤에 앱 schema 이름의 SHA-256 앞 52자를 붙인 것이다(`printf %s my_app | shasum -a 256 | cut -c1-52`).
+
+   ```sh
+   pg_dump -Fc --no-owner --schema my_app --schema aip_infra_<52hex> --file pre-upgrade.dump "$AIP_DATABASE_URL"
+   ```
+
+2. 새 binary로 계획을 보고 digest를 적용한다. 계획에는 DROP·TRUNCATE·DELETE가 없어야 하고 `blocked`가 `false`여야 한다. 적용은 저널에 한 행을 더한다.
+
+   ```sh
+   ./aip service migrate app.aip --config service.json
+   ./aip service migrate app.aip --config service.json --apply <reviewed-plan-digest>
+   ./aip service provision --config service.json
+   ```
+
+3. 서비스를 시작하고 `/ready`가 200인지 확인한다. 이전 binary가 쓴 행, 멱등 기록, 끝난 job은 그대로 읽힌다.
+
+**적용 전에는 새 binary가 이전 schema를 서빙하지 않는다.** 계획을 적용하지 않고 `serve`를 시작하면 `WIRE.SCHEMA_MISMATCH`로 끝난다. 일부만 올라간 상태로 요청을 받는 일이 없다.
+
+**롤백은 이전 binary로 되돌리는 것만으로 되지 않는다.** 업그레이드를 적용한 schema에 이전 binary를 시작하면 같은 `WIRE.SCHEMA_MISMATCH`로 끝난다(역방향 migration은 없다). 되돌릴 때는 1번의 백업을 복원한다.
+
+```sh
+psql "$AIP_DATABASE_URL" -c 'DROP SCHEMA my_app CASCADE' -c 'DROP SCHEMA aip_infra_<52hex> CASCADE'
+pg_restore --no-owner --dbname "$AIP_DATABASE_URL" pre-upgrade.dump
+```
+
+복원하면 백업 이후 커밋된 쓰기도 사라진다. 클라이언트가 같은 키로 다시 보내면 새 쓰기로 실행되므로(멱등 기록도 함께 되돌아간다) 업그레이드 뒤 트래픽을 받았다면 롤백 전에 그 쓰기를 별도로 확인한다. 이전 binary와 새 schema를 섞어 쓰는 구성은 지원하지 않는다.
+
 ## 업무 감사 기록
 
 배포 schema로 시작한 서버(`aip service run`)는 commit된 전이마다 감사 행을 하나 남긴다. 정의에 따로 쓸 것은 없다. 전이 UPDATE와 같은 SQL 문장에서 기록하므로 전이가 rollback되면 감사 행도 없고, 감사 기록이 실패하면 전이도 commit되지 않는다. Hibernate Envers·django-auditlog·PaperTrail이 엔티티 변경을 남기는 것과 같은 역할이다.

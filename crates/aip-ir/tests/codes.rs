@@ -161,7 +161,8 @@ fn scanner_reads_both_shapes() {
 fn emission_sites() -> String {
     let mut per: std::collections::BTreeMap<String, std::collections::BTreeMap<String, usize>> = Default::default();
     for (path, text) in sources() {
-        let p = path.to_string_lossy().replace('\\', "/");
+        // Relative to `crates/`, so a checkout that happens to live under a directory named `src` is read the same way.
+        let p = path.strip_prefix(crates_dir()).unwrap_or(&path).to_string_lossy().replace('\\', "/");
         if !p.contains("/src/") || p.ends_with("aip-ir/src/codes.rs") {
             continue;
         }
