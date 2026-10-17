@@ -6,7 +6,7 @@ root의 `aip service`는 caller 정의와 공통 Rust 실행 엔진, 설치형 T
 
 ```json
 {
-  "schema": "my_app",
+  "schema": "aip_my_app",
   "database_url_env": "AIP_DATABASE_URL",
   "listen": "127.0.0.1:8080",
   "wire": "decimal",
@@ -107,10 +107,10 @@ SDK는 `npm install --offline <aip-sdk.tgz>`로 별도 소비자에 설치한다
 
 새 실행 파일로 바꿀 때는 정의 변경이 없어도 AIP가 만든 schema(durable job, 인프라 테이블)가 달라질 수 있다. 아래 순서를 따른다. 이 순서는 `product/tools/upgrade-drill.mjs`로 이전 릴리스의 실제 binary가 만든 schema를 새 binary로 올리고 되돌리는 것까지 실행해 확인했다([릴리스 게이트](RELEASE-GATE.md)).
 
-1. 서비스를 중지하고 백업한다. 앱 schema와 인프라 schema를 함께 받는다. 인프라 schema 이름은 `aip_infra_` 뒤에 앱 schema 이름의 SHA-256 앞 52자를 붙인 것이다(`printf %s my_app | shasum -a 256 | cut -c1-52`).
+1. 서비스를 중지하고 백업한다. 앱 schema와 인프라 schema를 함께 받는다. 인프라 schema 이름은 `aip_infra_` 뒤에 앱 schema 이름의 SHA-256 앞 52자를 붙인 것이다(`printf %s aip_my_app | shasum -a 256 | cut -c1-52`).
 
    ```sh
-   pg_dump -Fc --no-owner --schema my_app --schema aip_infra_<52hex> --file pre-upgrade.dump "$AIP_DATABASE_URL"
+   pg_dump -Fc --no-owner --schema aip_my_app --schema aip_infra_<52hex> --file pre-upgrade.dump "$AIP_DATABASE_URL"
    ```
 
 2. 새 binary로 계획을 보고 digest를 적용한다. 계획에는 DROP·TRUNCATE·DELETE가 없어야 하고 `blocked`가 `false`여야 한다. 적용은 저널에 한 행을 더한다.
@@ -128,7 +128,7 @@ SDK는 `npm install --offline <aip-sdk.tgz>`로 별도 소비자에 설치한다
 **롤백은 이전 binary로 되돌리는 것만으로 되지 않는다.** 업그레이드를 적용한 schema에 이전 binary를 시작하면 같은 `WIRE.SCHEMA_MISMATCH`로 끝난다(역방향 migration은 없다). 되돌릴 때는 1번의 백업을 복원한다.
 
 ```sh
-psql "$AIP_DATABASE_URL" -c 'DROP SCHEMA my_app CASCADE' -c 'DROP SCHEMA aip_infra_<52hex> CASCADE'
+psql "$AIP_DATABASE_URL" -c 'DROP SCHEMA aip_my_app CASCADE' -c 'DROP SCHEMA aip_infra_<52hex> CASCADE'
 pg_restore --no-owner --dbname "$AIP_DATABASE_URL" pre-upgrade.dump
 ```
 

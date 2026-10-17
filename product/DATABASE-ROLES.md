@@ -11,7 +11,7 @@
 
 ```json
 {
-  "schema": "my_app",
+  "schema": "aip_my_app",
   "database_url_env": "AIP_RUNTIME_DATABASE_URL",
   "migrate_database_url_env": "AIP_MIGRATE_DATABASE_URL"
 }
