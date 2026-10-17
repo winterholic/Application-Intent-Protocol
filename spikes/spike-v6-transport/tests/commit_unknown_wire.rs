@@ -524,3 +524,27 @@ async fn connection_failure_predicate_ignores_server_and_local_errors() {
     let syntax = db.batch_execute("SELECT 1 WHERE").await.expect_err("syntax error");
     assert!(!spike_v3_write::connection_failed(&syntax), "syntax error: {syntax}");
 }
+
+/// `Kind::Io`는 호출자의 COMMIT 호출에서는 만들 수 없다(연결 task에서 나고 호출자에게는 Closed로 전달된다).
+/// 대신 같은 종류의 오류를 접속 단계에서 실제로 만들어, 판정이 Io 문구를 연결 오류로 읽는지 고정한다.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn io_error_during_startup_is_a_connection_failure() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut startup = [0u8; 8];
+        let _ = socket.read(&mut startup).await;
+        // 닫을 때 RST를 보내려면 SO_LINGER 0이 필요하다.
+        #[allow(deprecated)]
+        socket.as_ref().set_linger(Some(Duration::ZERO)).unwrap();
+    });
+    let config = format!("host=127.0.0.1 port={} user=probe dbname=probe connect_timeout=5", address.port());
+    let error = match tokio_postgres::connect(&config, tokio_postgres::NoTls).await {
+        Ok(_) => panic!("a server that resets during startup must not yield a connection"),
+        Err(error) => error,
+    };
+    server.await.unwrap();
+    assert!(error.code().is_none());
+    assert!(spike_v3_write::connection_failed(&error), "I/O failure without SQLSTATE is a connection failure: {error}");
+}

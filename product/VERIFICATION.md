@@ -215,6 +215,20 @@ managed effect journal의 변경은 제품 동작 변경이다. 두 가지가 �
 - 다른 crate의 직접 COMMIT(`aip-runtime`, `aip-execution`, `aip-migrate`, `aip-service`의 `tx.commit()`)은 이번 범위가 아니라 분류를 확인하지 않았다. 대부분 `map_err(|_| ...)`로 오류를 종류와 상관없이 자기 코드(`COMMIT_UNSETTLED`, `JOBS_UNSETTLED` 등)나 `WIRE.COMMIT_UNKNOWN`으로 한 번에 내므로, COMMIT 전 단절을 `DB_UNAVAILABLE`로 가르는 규칙이 필요한지는 별도로 봐야 한다.
 - GPT 독립 검증 전이다. 완료가 아니라 "독립 검증 대기"다.
 
+## WBS 8.11 8.9 후속: clippy 정리와 Kind::Io 시험 (2026-10-18, Claude 구현 / 독립 검증 대기)
+
+DB 테스트는 이 Run이 띄운 PostgreSQL 17 컨테이너(`aip-claude-wbs8-pg-1018`, `127.0.0.1:32801`, DB `aip_test_wbs8_1018`)에서만 실행했고 공유 5432에는 접속하지 않았다.
+
+- `commit_unknown_wire` 자체의 clippy는 이미 깨끗했다(`cargo clippy --all-targets --locked -- -D warnings`, spike-v6). 8.9 절에 남긴 사전 실패는 이 파일이 아니라 spike-v3·v4 테스트였고 셋을 고쳤다: v3 `general_update`의 불필요한 참조, v4 `cleanup_tests`의 `marker_processes`(Linux 테스트에서만 쓰여 비Linux에서 dead code라 `cfg(target_os = "linux")`), v4 `grant_tests`의 `len() != 0`. 동작은 바꾸지 않았다.
+- `Kind::Io`: 호출자의 COMMIT 호출에서는 여전히 재현하지 못한다. 대신 접속 단계에서 가짜 서버가 시작 메시지를 읽고 RST로 닫게 해 실제 `Kind::Io` 오류(`error communicating with the server`)를 만들고 `connection_failed`가 이를 연결 오류로 판정하는지 고정했다(`io_error_during_startup_is_a_connection_failure`). Io 문구 판정을 지운 변이에서 이 테스트가 실패했다(12 passed, 1 failed).
+- COMMIT 전 단절 시험은 8.9 회차에 이미 있다(`disconnect_while_beginning_the_transaction_is_a_safe_retry`, `..._after_update_...`, `..._after_idempotency_insert_...`, `commit_on_an_already_closed_connection_...`). 새로 더하지 않았다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo clippy --all-targets --locked -- -D warnings` (spike-v3, v4, v6 각각) | 모두 통과 |
+| `cargo test --locked --test commit_unknown_wire` (spike-v6) | 13 passed |
+| `cargo test --locked --no-fail-fast` (spike-v3, spike-v4) | 모두 0 failed |
+
 ## WBS A: 외부 IdP·TLS reverse proxy 운영 smoke (2026-10-17)
 
 `conformance/idp-proxy/idp/server.mjs`는 저장소 자체의 경량 RSA/JWKS/JWT fixture이며, 실제 Keycloak·Entra·Google 연동이나 RFC 9068 전체 conformance 적합성은 미검증이다. Caddy TLS reverse proxy(자체 서명 SAN 인증서) 환경에서 `aip service` 운영 인증 및 프록시 헤더 처리를 검증했다.

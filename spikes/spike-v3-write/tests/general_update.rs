@@ -33,7 +33,7 @@ async fn postgres_general_partial_null_authorization_validation_conflict_and_ato
     for ddl in sqlgen::ddl(&facts).unwrap() {
         db.batch_execute(&ddl).await.unwrap();
     }
-    db.batch_execute(&spike_v3_write::audit_ddl(&schema)).await.unwrap();
+    db.batch_execute(&spike_v3_write::audit_ddl(schema)).await.unwrap();
     spike_v3_write::set_audit_table(Some(format!("{schema}.aip_audit"))).unwrap();
     db.batch_execute(&format!(
         "INSERT INTO {schema}.member(id) VALUES(1),(2); INSERT INTO {schema}.note(id,owner_id,title,content,version) VALUES(10,1,'before','body',0)"

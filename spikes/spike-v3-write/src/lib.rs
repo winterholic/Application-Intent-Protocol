@@ -571,7 +571,8 @@ async fn update(
 /// SQLSTATE가 있는 서버 오류는 문장 결과가 확정이라(제약 위반·직렬화 실패 등) 여기에 넣지 않는다.
 /// tokio-postgres는 오류 종류를 공개하지 않아 `is_closed`와 표시 문구(Io·UnexpectedMessage·Parse)로 가른다.
 /// 문구가 바뀌면 `unexpected_message_*`·`unparseable_*` 테스트가 먼저 깨진다.
-/// Io는 연결 task에서만 나서 호출자에게는 Closed로 보인다(RST 테스트로 확인). Io 자체는 호출자 쪽에서 재현하지 못했다.
+/// Io는 연결 task에서만 나서 호출자의 COMMIT 호출에는 Closed로 보인다(RST 테스트로 확인). Io 문구 판정은 접속 단계의 실제 Io 오류로
+/// 고정한다(`io_error_during_startup_is_a_connection_failure`).
 pub fn connection_failed(e: &tokio_postgres::Error) -> bool {
     e.code().is_none()
         && (e.is_closed()

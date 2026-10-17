@@ -121,6 +121,7 @@ async fn drop_kills_grandchild_that_called_setsid() {
     assert_gone(&setsid_child(), End::Drop).await;
 }
 
+#[cfg(target_os = "linux")]
 fn marker_processes(marker: &str) -> Vec<String> {
     let output = std::process::Command::new("ps").args(["-A", "-o", "pid=,stat=,command="]).output().unwrap();
     String::from_utf8_lossy(&output.stdout)

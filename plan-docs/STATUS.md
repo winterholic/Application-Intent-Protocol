@@ -1,5 +1,9 @@
 # 진행 현황과 쌓인 질문
 
+## 2026-10-18 WBS 8.11 8.9 후속 (Claude 구현, 독립 검증 대기)
+
+spike-v3·v4 테스트의 사전 clippy 실패 3건을 정리해 세 spike의 `clippy --all-targets -D warnings`가 모두 통과한다. `Kind::Io`는 호출자의 COMMIT 호출에서 재현할 수 없어 접속 단계의 실제 Io 오류로 판정을 고정했다. 실행 결과는 [제품 검증](../product/VERIFICATION.md)의 WBS 8.11을 따른다. 독립 검증 전이므로 완료로 표시하지 않는다.
+
 ## 2026-10-18 WBS 8.9 후속: 나머지 COMMIT 경로와 spike-v6 사전 실패 (Claude 구현, 독립 검증 대기)
 
 분류 규칙(COMMIT 전 단절은 `WIRE.DB_UNAVAILABLE`, 전송 뒤 단절·해석 불가 응답은 `WIRE.COMMIT_UNKNOWN`, 서버 거절은 기존 코드)을 `spike-v3-write`의 `apply`·`bundle`·`compose`, `spike-v4-worker`의 `invoke_write`, `write_extension.rs`, `durable.rs`에 적용했다. 세 spike는 `aip-service`·`aip-auth`가 path dependency로 쓰는 제품 경로라 문서화에 그치지 않고 고쳤다. 판정과 COMMIT 전송은 `spike-v3-write`의 공통 함수(`connection_failed`, `send_commit`, `before_commit_rejection`)로 묶었고 v4·v6 `/apply`가 같은 함수를 쓴다. 경로마다 장애 지점별 재현 테스트를 붙였고, 구현 전 red(v3 14개 중 12, v4 9개 중 8, v6 `write_extension` 10개 중 8, job의 COMMIT 손실 3개 모두 실패)와 구현 뒤 green, 분류를 되돌리는 변이 20종이 모두 실패하는 것을 확인했다. 변경 중 제품 동작이 바뀌는 곳은 managed effect journal의 COMMIT이다. 응답을 잃은 job은 확장 오류 대신 `WIRE.COMMIT_UNKNOWN`으로 끝나고, COMMIT 전에 연결을 잃은 job은 `WIRE.DB_UNAVAILABLE`로 재시도된다.
