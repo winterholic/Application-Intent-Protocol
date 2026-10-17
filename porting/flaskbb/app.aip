@@ -434,7 +434,10 @@ resource Conversation {
   }
   rows read when user = actor or from_user = actor or to_user = actor
   expose create {
-    allow actor.activated and (user = actor or from_user = actor)
+    // Original send path: the sender copy (user = from_user = actor) and the
+    // recipient copy (user = to_user, from_user = actor, delivered unread).
+    // The sender is always the caller and nobody mails themselves.
+    allow actor.activated and from_user = actor and to_user != null and to_user != actor and (user = actor or (user = to_user and unread and not trash and not draft))
     fields user, from_user, to_user, shared_id, subject, date_created, date_modified, trash, draft, unread
   }
   transition markRead {
@@ -475,7 +478,9 @@ resource Message {
   fields { id: Id; conversation: Conversation; user: User?; message: Text; date_created: Time }
   rows read when conversation.user = actor
   expose create {
-    allow actor.activated and (conversation.user = actor or user = actor) and (conversation.from_user = actor or conversation.to_user = actor)
+    // The author is the caller; the target mailbox row belongs to one of the
+    // two parties and the caller is the other (or the same) party.
+    allow actor.activated and user = actor and (conversation.from_user = actor or conversation.to_user = actor) and (conversation.user = conversation.from_user or conversation.user = conversation.to_user)
     fields conversation, user, message, date_created
   }
   expose read {
