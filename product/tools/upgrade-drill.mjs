@@ -219,6 +219,7 @@ async function main() {
     const refused = await startService(options.newBin, options.app, configPath, "new-serve-before-apply");
     assert(!refused.started, "new-serve-before-apply", "the new binary served an old schema before the plan was applied");
     assert(String(refused.errors ?? "").includes("WIRE.SCHEMA_MISMATCH") || refused.code === "WIRE.SCHEMA_MISMATCH", "new-serve-before-apply", `unexpected refusal: ${describe(refused)}`);
+    assert(String(refused.errors ?? "").includes("aip service migrate"), "new-serve-before-apply", `the refusal does not tell the operator how to upgrade: ${describe(refused)}`);
     const journalBefore = Number(sql(`SELECT count(*) FROM ${schema}.aip_migrate_journal`, "journal"));
     const applied = runJson(options.newBin, ["service", "migrate", options.app, "--config", configPath, "--apply", plan.digest], "new-apply");
     assert(applied.ok === true, "new-apply", `applying the reviewed plan failed: ${JSON.stringify(applied).slice(0, 400)}`);
