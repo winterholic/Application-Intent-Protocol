@@ -2,8 +2,10 @@
 import http.server
 import json
 import os
+from pathlib import Path
 import sys
 import threading
+import typing
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
@@ -240,15 +242,18 @@ class RequestIdTest(unittest.TestCase):
                 body = json.dumps({"ok": True, "principal": {"actorId": "42"}, "remainingMs": 1000} if self.path == "/session" else {"ok": False, "code": "WIRE.ACCESS_DENIED"}).encode()
                 self.send_response(200)
                 self.send_header("content-length", str(len(body)))
+                self.send_header("connection", "close")
                 self.send_header("x-request-id", outer.ID)
                 self.end_headers()
                 self.wfile.write(body)
+                self.close_connection = True
 
             def log_message(self, *args):
                 pass
 
         server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
-        threading.Thread(target=server.serve_forever, daemon=True).start()
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
         try:
             client = connect(f"http://127.0.0.1:{server.server_port}", "t1", FP)
             with self.assertRaises(AipError) as caught:
@@ -256,6 +261,8 @@ class RequestIdTest(unittest.TestCase):
             self.assertEqual((caught.exception.code, caught.exception.request_id), ("WIRE.ACCESS_DENIED", self.ID))
         finally:
             server.shutdown()
+            server.server_close()
+            thread.join()
 
 
 if __name__ == "__main__":
@@ -277,8 +284,10 @@ class TransportBoundaryTest(unittest.TestCase):
             def do_GET(self):
                 seen.append(self.headers.get("authorization"))
                 self.send_response(200)
+                self.send_header("connection", "close")
                 self.end_headers()
                 self.wfile.write(b'{"ok":true}')
+                self.close_connection = True
 
             def log_message(self, *args):
                 pass
@@ -291,14 +300,17 @@ class TransportBoundaryTest(unittest.TestCase):
                 self.rfile.read(int(self.headers.get("content-length", 0)))
                 self.send_response(302)
                 self.send_header("location", target)
+                self.send_header("connection", "close")
                 self.end_headers()
+                self.close_connection = True
 
             def log_message(self, *args):
                 pass
 
         redirector = http.server.HTTPServer(("127.0.0.1", 0), Redirect)
-        for server in (sink, redirector):
-            threading.Thread(target=server.serve_forever, daemon=True).start()
+        threads = [threading.Thread(target=s.serve_forever, daemon=True) for s in (sink, redirector)]
+        for t in threads:
+            t.start()
         try:
             client = connect(f"http://127.0.0.1:{redirector.server_port}", "secret-token", FP)
             with self.assertRaises(AipError):
@@ -308,6 +320,8 @@ class TransportBoundaryTest(unittest.TestCase):
             for server in (sink, redirector):
                 server.shutdown()
                 server.server_close()
+            for t in threads:
+                t.join()
 
 class RetryMetadataTest(unittest.TestCase):
     def test_unsettled_write_keeps_server_retry_guidance(self):
@@ -324,3 +338,218 @@ class RetryMetadataTest(unittest.TestCase):
         server.script('/apply', {'ok': False, 'code': 'WIRE.BAD_VALUE', 'retry': 'sometimes'})
         client = connect('http://aip', 't1', FP, transport=server)
         self.assertNotIn('retry', client.apply({'apply': 'Event.mark'}, key='bad-retry'))
+
+
+class GeneratedSdkTest(unittest.TestCase):
+    """Verifies that generated python bindings provide typed ReadResult, ApplyInput, and Operation types,
+    and that runtime helper functions dispatch to client methods correctly."""
+
+    def _generate_sdk_binding(self, fixture_path: Path, out_path: Path) -> None:
+        import subprocess
+        repo_root = Path(__file__).resolve().parent.parent.parent
+        aip_bin = repo_root / "target" / "debug" / "aip"
+        if aip_bin.exists():
+            cmd = [str(aip_bin), "service", "gen", str(fixture_path), "--lang", "python", "--out", str(out_path)]
+        else:
+            cmd = ["cargo", "run", "-p", "aip-cli", "--bin", "aip", "--", "service", "gen", str(fixture_path), "--lang", "python", "--out", str(out_path)]
+        result = subprocess.run(cmd, cwd=str(repo_root), capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, f"Generator failed:\nstdout: {result.stdout}\nstderr: {result.stderr}")
+
+    def test_generated_types_and_runtime_helpers_from_real_fixture(self):
+        import importlib.util, shutil, subprocess, sys, tempfile
+        repo_root = Path(__file__).resolve().parent.parent.parent
+        app_fixture = repo_root / "prototype" / "example" / "app.aip"
+        operations_fixture = repo_root / "spikes" / "spike-v6-transport" / "tests" / "fixtures" / "operations.aip"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app_out = Path(tmpdir) / "app_gen.py"
+            ops_out = Path(tmpdir) / "ops_gen.py"
+
+            self._generate_sdk_binding(app_fixture, app_out)
+            self._generate_sdk_binding(operations_fixture, ops_out)
+
+            # 1. Real import and runtime helper execution for app.aip
+            sys_path_entry = str(repo_root / "product" / "python")
+            sys.path.insert(0, sys_path_entry)
+            try:
+                spec_app = importlib.util.spec_from_file_location("app_gen", app_out)
+                self.assertIsNotNone(spec_app and spec_app.loader)
+                mod_app = importlib.util.module_from_spec(spec_app)
+                spec_app.loader.exec_module(mod_app)
+
+                self.assertTrue(hasattr(mod_app, "CONTRACT_FINGERPRINT"))
+                self.assertEqual(len(mod_app.CONTRACT_FINGERPRINT), 64)
+                self.assertTrue(hasattr(mod_app, "JobState"))
+                self.assertEqual(
+                    typing.get_args(mod_app.JobState),
+                    ("QUEUED", "RUNNING", "CANCEL_REQUESTED", "SUCCEEDED", "FAILED", "CANCELLED"),
+                )
+                self.assertTrue(hasattr(mod_app, "JobRun"))
+                self.assertTrue(hasattr(mod_app, "EventRow"))
+                self.assertTrue(hasattr(mod_app, "EventReadResult"))
+                self.assertTrue(hasattr(mod_app, "ReadResult"))
+                self.assertTrue(hasattr(mod_app, "EventMarkApplyInput"))
+                self.assertTrue(hasattr(mod_app, "ApplyInput"))
+                self.assertTrue(hasattr(mod_app, "TextLengthOperationInput"))
+                self.assertTrue(hasattr(mod_app, "TextLengthOperationOutput"))
+                self.assertTrue(hasattr(mod_app, "OperationInput"))
+                self.assertTrue(hasattr(mod_app, "OperationOutput"))
+
+                calls = []
+
+                class DummyClient:
+                    def read(self, query):
+                        calls.append(("read", query))
+                        return [{"id": "1", "title": "t"}]
+
+                    def apply(self, request, key=None):
+                        calls.append(("apply", request, key))
+                        return {"ok": True, "changed": ["1"], "unchanged": []}
+
+                    def operation(self, name, input_dict):
+                        calls.append(("operation", name, input_dict))
+                        return {"length": len(input_dict.get("text", ""))}
+
+                client = DummyClient()
+
+                rows = mod_app.read_event(client, {"read": "Event", "select": ["id", "title"]})
+                self.assertEqual(rows, [{"id": "1", "title": "t"}])
+                self.assertEqual(calls[-1], ("read", {"read": "Event", "select": ["id", "title"]}))
+
+                apply_res = mod_app.apply_event_mark(client, {"ids": ["1"]}, key="k1")
+                self.assertTrue(apply_res["ok"])
+                self.assertEqual(calls[-1], ("apply", {"apply": "Event.mark", "target": {"ids": ["1"]}}, "k1"))
+
+                op_out = mod_app.call_text_length(client, {"text": "hello"})
+                self.assertEqual(op_out, {"length": 5})
+                self.assertEqual(calls[-1], ("operation", "textLength", {"text": "hello"}))
+
+                # 2. Real import and principalId check for operations.aip
+                spec_ops = importlib.util.spec_from_file_location("ops_gen", ops_out)
+                self.assertIsNotNone(spec_ops and spec_ops.loader)
+                mod_ops = importlib.util.module_from_spec(spec_ops)
+                spec_ops.loader.exec_module(mod_ops)
+
+                self.assertTrue(hasattr(mod_ops, "principalId"), "operations.aip with actor principal must generate principalId")
+                self.assertTrue(hasattr(mod_ops, "LengthOperationInput"))
+                owner_field = mod_ops.LengthOperationInput.__annotations__["owner"]
+                self.assertEqual(owner_field, mod_ops.principalId)
+                self.assertTrue(hasattr(mod_ops, "call_length"))
+                op_res = mod_ops.call_length(client, {"text": "test", "owner": mod_ops.principalId("p1")})
+                self.assertEqual(op_res, {"length": 4})
+                self.assertEqual(calls[-1], ("operation", "length", {"text": "test", "owner": "p1"}))
+            finally:
+                if sys_path_entry in sys.path:
+                    sys.path.remove(sys_path_entry)
+
+            # 3. Static type check with mypy
+            uv_path = shutil.which("uv")
+            mypy_path = shutil.which("mypy")
+            env = dict(sys.modules["os"].environ, PYTHONPATH=str(repo_root / "product" / "python"))
+            if uv_path:
+                for gen_file in (app_out, ops_out):
+                    mypy_run = subprocess.run(
+                        [uv_path, "run", "--with", "mypy", "mypy", str(gen_file)],
+                        capture_output=True,
+                        text=True,
+                        env=env,
+                    )
+                    self.assertEqual(
+                        mypy_run.returncode,
+                        0,
+                        f"mypy typecheck failed for {gen_file}:\n{mypy_run.stdout}\n{mypy_run.stderr}",
+                    )
+            elif mypy_path:
+                for gen_file in (app_out, ops_out):
+                    mypy_run = subprocess.run(
+                        [mypy_path, str(gen_file)],
+                        capture_output=True,
+                        text=True,
+                        env=env,
+                    )
+                    self.assertEqual(
+                        mypy_run.returncode,
+                        0,
+                        f"mypy typecheck failed for {gen_file}:\n{mypy_run.stdout}\n{mypy_run.stderr}",
+                    )
+
+
+class PackageSmokeTest(unittest.TestCase):
+    """Verifies that product/python package can be built, installed and imported in a clean venv
+    outside the repository directory without leaving build artifacts in source tree."""
+
+    def test_clean_venv_package_install_and_import_smoke(self):
+        import shutil, subprocess, sys, tempfile, zipfile
+        repo_root = Path(__file__).resolve().parent.parent.parent
+        pkg_dir = repo_root / "product" / "python"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Build wheel from an isolated source copy so source tree remains untouched
+            isolated_src = Path(tmpdir) / "pkg_src"
+            shutil.copytree(pkg_dir, isolated_src)
+
+            venv_dir = Path(tmpdir) / "venv"
+            subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True, capture_output=True)
+            venv_python = venv_dir / "bin" / "python"
+            venv_pip = venv_dir / "bin" / "pip"
+            if not venv_python.exists():
+                venv_python = venv_dir / "Scripts" / "python.exe"
+                venv_pip = venv_dir / "Scripts" / "pip.exe"
+
+            dist_dir = Path(tmpdir) / "dist"
+            dist_dir.mkdir()
+
+            uv_path = shutil.which("uv")
+            if uv_path:
+                subprocess.run(
+                    [uv_path, "build", "--wheel", "--out-dir", str(dist_dir), str(isolated_src)],
+                    check=True,
+                    capture_output=True,
+                )
+            else:
+                wheel_proc = subprocess.run(
+                    [sys.executable, "-m", "pip", "wheel", "--no-deps", "-w", str(dist_dir), str(isolated_src)],
+                    capture_output=True,
+                )
+                if wheel_proc.returncode != 0:
+                    self.skipTest(f"pip wheel unavailable: {wheel_proc.stderr.decode()}")
+
+            wheels = list(dist_dir.glob("*.whl"))
+            self.assertTrue(len(wheels) > 0, "Wheel should be built")
+            wheel_file = wheels[0]
+
+            # Verify py.typed marker is packaged in the wheel
+            with zipfile.ZipFile(wheel_file) as zf:
+                wheel_members = zf.namelist()
+            self.assertTrue(
+                any(m == "aip_sdk/py.typed" or m.endswith("/aip_sdk/py.typed") for m in wheel_members),
+                f"py.typed marker must be present in wheel contents: {wheel_members}",
+            )
+
+            # Install wheel into clean venv without index access
+            subprocess.run(
+                [str(venv_pip), "install", "--no-index", str(wheel_file)],
+                check=True,
+                capture_output=True,
+            )
+
+            # Test import from outside repository directory
+            outside_dir = Path(tmpdir) / "outside"
+            outside_dir.mkdir()
+            script = "import aip_sdk\nassert hasattr(aip_sdk, 'connect')\nassert hasattr(aip_sdk, 'Client')\nprint('smoke_ok', aip_sdk.__file__)"
+            result = subprocess.run(
+                [str(venv_python), "-c", script],
+                cwd=str(outside_dir),
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertIn("smoke_ok", result.stdout)
+            self.assertNotIn(str(repo_root / "product" / "python"), result.stdout)
+
+        # Verify no build or egg-info directories leaked into source tree
+        self.assertFalse((pkg_dir / "build").exists(), "build directory should not leak into product/python")
+        self.assertFalse((pkg_dir / "dist").exists(), "dist directory should not leak into product/python")
+        self.assertEqual(list(pkg_dir.glob("*.egg-info")), [], "egg-info should not leak into product/python")
+
+
