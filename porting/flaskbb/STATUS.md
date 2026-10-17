@@ -46,6 +46,14 @@ renderer에서 AIP 서버가 검증한 현재 actor id를 얻도록 Python SDK�
 
 결론: 새 UI code와 SDK actor-session read API가 생겼지만 **실제 browser login과 UI→AIP 요청은 아직 한 번도 성공하지 않았다.** UI의 auth callback도 현재 AIP auth bridge contract를 만나 신규/미연결 주체에 실패한다. 원본 Jinja 템플릿 적용, trusted local IdP TLS 시험기반, 새 주체 자동 provisioning 제품 결정 및 실제 signup email lifecycle이 다음 blocking gate다. 전체 F01–F17, 원본 업무 backend 중단, 의미 동등성, clean deployment gate는 모두 유지된다.
 
+## 2026-10-17 현재 Run — F05 forum UI의 AIP 원자 쓰기 폼
+
+다음 구현 증분은 기존 read-only F01/F05 renderer에 forum topic 생성과 reply 폼을 연결했다. `porting/flaskbb/ui/app.py`의 POST route는 server session에서 AIP가 검증한 actor와 활성화된 User row를 다시 읽고, browser-bound CSRF token을 검사한 뒤 official Python SDK `bundle()`로 보낸다. 새 topic은 Topic + 첫 Post + publish + TopicFirstPost 연결 + Topic publish를 단일 AIP atomic bundle로 요청하며, reply는 Post create + publish + Topic.bump를 하나의 bundle로 요청한다. 작성자 ID/username은 form body나 IdP claim이 아니라 AIP session/User read에서 고른다. Topic/Post 권한과 원자성의 최종 판단은 `app.aip` contract 및 AIP server가 수행한다. AIP mutation 실패는 권한 거부 403, 인증 실패 401, 나머지 계약/서비스 실패 503으로 렌더한다. 페이지 폼은 Aurora 기반 adapted template에 추가했다.
+
+TDD로 POST endpoint test 3개를 먼저 추가했고 기존 호스트에 route가 없던 상태에서 새 테스트가 각각 HTTP 404로 실패했다. 구현 뒤 isolated Python 3.14.7 venv에서 `python -m unittest porting.flaskbb.tests.test_ui_host`는 7 tests passed, 0 failed. 이 테스트들은 mock SDK의 bundle request shape, actor-derived username, CSRF mutation 차단을 검사한다. `py_compile`은 exit 0이다. **실제 AIP 서버에서 이 bundle을 실행한 것, 브라우저에서 폼을 눌러 network/DB 결과를 본 것, 성공 로그인 actor는 이번 증분에서 확인하지 않았다.** 앞서 기록된 테스트 인증서 오류를 같은 방식으로 재시도하지 않았다.
+
+이 증분은 F05 전체 구현이 아니다. 원본 forum/user/role별 폼 노출과 validation/plugin hooks, topic/post edit, delete 의미와 cascade, lock/hidden baseline, tracker/read markers, pagination/last-post/search projection, 거부 후 상태 비교는 미완료다. AIP `Topic`/`Post`는 현재 물리 delete 대신 tombstone이며 열린 의미 차이를 유지한다. 신규 IdP 주체 provisioning 제품 계약은 여전히 결정 대기다. 브라우저 TLS/신뢰 경로와 사용자 선택이 생기면 실제 signup/login/activation, 성공한 browser-to-AIP reads/writes, logout/denial 증거부터 실행하고 F01–F17 및 원본 backend 중단 gate를 계속 닫는다.
+
 ## 실행 환경과 원본 고정본 실제 결과
 
 OrbStack Docker 29.4.0의 Linux/aarch64에서 실행. Python 3.7.17 Bullseye image digest는 `f36f6fe9ddb2622aab9803944cbe7e2bc50be75d624a081f7895e60e7c6b7f0a`. 공개 upstream은 read-only clone에서 고정 SHA로 export했다. 컨테이너 안 `/opt/flaskbb`는 실행용 사본이며 upstream snapshot은 수정하지 않았다.

@@ -162,3 +162,17 @@ Commands and output:
 - In isolated Keycloak test realm, read back `aip-flaskbb` public client with standard flow enabled, direct grants disabled, redirect `http://127.0.0.1:58082/oidc/callback`, web origin `http://127.0.0.1:58082`; authorization request includes PKCE `S256`. Read-back showed empty client `attributes`, so server-enforced PKCE is **unverified**. Realm read-back confirmed registration/email verification/reset flags; no token callback or SMTP/Mailpit action was run. Synthetic test user `auth_new` password was rotated to a fixture value not recorded here.
 
 Not executed: real authorization-code callback/token exchange, signature/nonce validation against a delivered ID token, official SDK authenticated `/session`, AIP row reads from the browser UI, DB state changes, signup/verification email, logout against IdP, exact original Jinja template reuse, F05 writes, original business-backend stop, restart persistence, clean deploy. No successful OIDC login or original-UI-to-AIP conversion is claimed.
+
+## 2026-10-17 — F05 topic/reply forms submit official SDK atomic bundles (unit scope)
+
+Source basis: frozen `upstream/flaskbb/forum/forms.py` `NewTopicForm`/`ReplyForm` require title/content and save through forum models/hooks. The existing `porting/flaskbb/app.aip` contract exposes `Topic`/`Post` create and publish, `TopicFirstPost` create, and `Topic.bump`; AIP integration coverage already exercises the corresponding atomic bundles, permission checks, and rollback. This does not prove UI runtime parity.
+
+TDD RED: added three POST route tests first, then ran `/private/tmp/flaskbb-aip-host-venv/bin/python -m unittest porting.flaskbb.tests.test_ui_host`. New topic submission, reply submission, and missing-CSRF case each failed because route was absent (`404`, expected `303`/`403`); existing four tests passed.
+
+Implementation: added server-bound CSRF check; SDK `/session` actor → AIP `User` read for active account/username; POST `/forum/<forum_id>/topic` creates Topic + first Post + publish + first-post link + Topic publish in one `Client.bundle`; POST `/topic/<topic_id>/reply` creates/publishes Post and bumps Topic atomically. Both use server-generated UUIDs and idempotency keys. New forum/topic templates render CSRF forms. Caller input is only title/content; it cannot choose actor/username. AIP error mapping does not replace server authorization.
+
+GREEN commands/results:
+- `/private/tmp/flaskbb-aip-host-venv/bin/python -m unittest porting.flaskbb.tests.test_ui_host` → 7 passed, 0 failed.
+- `/private/tmp/flaskbb-aip-host-venv/bin/python -m py_compile porting/flaskbb/ui/app.py` → exit 0.
+
+Scope limit: SDK interactions here are mocks. This Run did not start AIP for the form mutations, submit a form through `ttakkari_browser`, inspect actual HTTP network/AIP logs or DB deltas, perform login/signup/activation, or validate browser OIDC. The previous test Keycloak TLS `ERR_CERT_AUTHORITY_INVALID` was not retried or bypassed. User IdP→AIP actor provisioning remains OPEN. Original business backend shutdown, F01–F17 parity, edit/delete/cascade equivalence, restart persistence and clean deployment remain not complete.

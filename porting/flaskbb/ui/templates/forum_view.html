@@ -8,5 +8,15 @@
         {% for topic in topics %}<div class="row forum-row hover clearfix"><div class="col-md-7 col-xs-8 topic-info"><div class="topic-name"><a href="{{ url_for('topic_view', topic_id=topic.id) }}">{{ topic.title }}</a></div><div class="topic-meta">Started by {{ topic.username or 'Guest' }}</div></div><div class="col-md-2 hidden-xs topic-stats">{{ topic.post_count }}</div><div class="col-md-3 col-xs-4 topic-last-post">{{ topic.last_updated or topic.date_created or '' }}</div></div>
         {% else %}<div class="row forum-row"><div class="col-md-12">No topics.</div></div>{% endfor %}
     </div></div>
+    {% if csrf_token %}
+    <div class="panel new-topic-panel"><div class="panel-heading">Start a topic</div><div class="panel-body">
+        <form method="post" action="{{ url_for('create_topic', forum_id=forum.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <div class="form-group"><label for="topic-title">Topic title</label><input class="form-control" id="topic-title" name="title" maxlength="255" required></div>
+            <div class="form-group"><label for="topic-content">Content</label><textarea class="form-control" id="topic-content" name="content" rows="7" required></textarea></div>
+            <button class="btn btn-primary" type="submit">Post topic</button>
+        </form>
+    </div></div>
+    {% endif %}
 </div>
 {% endblock %}

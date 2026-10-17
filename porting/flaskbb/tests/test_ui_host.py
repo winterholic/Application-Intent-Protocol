@@ -82,6 +82,77 @@ class UiHostTests(unittest.TestCase):
         forum_query = client_api.read.call_args_list[-1].args[0]
         self.assertIn("title", forum_query["select"])
 
+    def test_new_topic_posts_one_authorized_atomic_aip_bundle(self):
+        client_api = Mock()
+        client_api.session.return_value = {"actorId": "6"}
+        client_api.read.return_value = [{"id": "6", "username": "member", "activated": True}]
+        client_api.bundle.return_value = {"ok": True, "created": []}
+        sessions = {"session": {"access_token": "test-only-token", "csrf_token": "csrf"}}
+        app = create_app(
+            {"TESTING": True, "SECRET_KEY": "test-only-secret", "AIP_URL": "http://aip.test"},
+            sdk_factory=Mock(return_value=client_api),
+            sessions=sessions,
+        )
+        browser = app.test_client()
+        browser.set_cookie("aip_session", "session")
+
+        response = browser.post(
+            "/forum/2/topic",
+            data={"csrf_token": "csrf", "title": "AIP topic", "content": "First post"},
+        )
+
+        self.assertEqual(response.status_code, 303)
+        client_api.bundle.assert_called_once()
+        workflow = client_api.bundle.call_args.args[0]
+        self.assertEqual([operation.get("create") or operation.get("apply") for operation in workflow],
+                         ["Topic", "Post", "Post.publish", "TopicFirstPost", "Topic.publish"])
+        self.assertTrue(all(operation["values"]["username"] == "member" for operation in workflow[:2]))
+
+    def test_topic_reply_uses_aip_atomic_create_publish_and_bump(self):
+        client_api = Mock()
+        client_api.session.return_value = {"actorId": "6"}
+        client_api.read.side_effect = [
+            [{"id": "6", "username": "member", "activated": True}],
+            [{"id": "topic-1", "forum": "2", "locked": False}],
+        ]
+        client_api.bundle.return_value = {"ok": True, "created": []}
+        sessions = {"session": {"access_token": "test-only-token", "csrf_token": "csrf"}}
+        app = create_app(
+            {"TESTING": True, "SECRET_KEY": "test-only-secret", "AIP_URL": "http://aip.test"},
+            sdk_factory=Mock(return_value=client_api),
+            sessions=sessions,
+        )
+        browser = app.test_client()
+        browser.set_cookie("aip_session", "session")
+
+        response = browser.post(
+            "/topic/topic-1/reply",
+            data={"csrf_token": "csrf", "content": "Reply body"},
+        )
+
+        self.assertEqual(response.status_code, 303)
+        workflow = client_api.bundle.call_args.args[0]
+        self.assertEqual([operation.get("create") or operation.get("apply") for operation in workflow],
+                         ["Post", "Post.publish", "Topic.bump"])
+        self.assertEqual(workflow[0]["values"]["username"], "member")
+        self.assertEqual(workflow[0]["values"]["topic"], "topic-1")
+
+    def test_topic_post_without_csrf_is_rejected_before_aip_mutation(self):
+        client_api = Mock()
+        sessions = {"session": {"access_token": "test-only-token", "csrf_token": "csrf"}}
+        app = create_app(
+            {"TESTING": True, "SECRET_KEY": "test-only-secret", "AIP_URL": "http://aip.test"},
+            sdk_factory=Mock(return_value=client_api),
+            sessions=sessions,
+        )
+        browser = app.test_client()
+        browser.set_cookie("aip_session", "session")
+
+        response = browser.post("/forum/2/topic", data={"title": "No CSRF", "content": "Denied"})
+
+        self.assertEqual(response.status_code, 403)
+        client_api.bundle.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

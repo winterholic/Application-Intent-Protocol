@@ -8,6 +8,7 @@ import ssl
 import time
 import urllib.parse
 import urllib.request
+import uuid
 from pathlib import Path
 
 from flask import Flask, abort, redirect, render_template, request, url_for
@@ -74,6 +75,37 @@ def create_app(config=None, sdk_factory=connect, sessions=None, flows=None):
         if not identity:
             abort(401)
         return sdk_factory(app.config["AIP_URL"], identity["access_token"])
+
+    def require_csrf(identity):
+        if not secrets.compare_digest(request.form.get("csrf_token", ""), identity["csrf_token"]):
+            abort(403)
+
+    def current_aip_user(client):
+        session_info = client.session()
+        actor_id = session_info.get("actorId")
+        if not actor_id:
+            abort(401)
+        users = client.read({
+            "read": "User",
+            "select": ["id", "username", "activated"],
+            "filter": [{"field": "id", "op": "eq", "value": actor_id}],
+            "limit": 1,
+        })
+        if not users or not users[0].get("activated"):
+            abort(403)
+        return users[0]
+
+    def submit_bundle(client, operations, key, on_success):
+        result = client.bundle(operations, key=key)
+        if result.get("ok") is True:
+            return redirect(on_success(), code=303)
+        code = result.get("code", "")
+        app.logger.warning("AIP mutation rejected code=%s request_id=%s", code, result.get("requestId"))
+        if code in {"WIRE.FORBIDDEN", "WIRE.ACCESS_DENIED", "WIRE.ACCESS_NOT_DECLARED"}:
+            abort(403)
+        if code in {"WIRE.UNAUTHENTICATED", "WIRE.TOKEN_EXPIRED"}:
+            abort(401)
+        abort(503)
 
     def reject_aip_error(error):
         app.logger.warning("AIP request rejected code=%s request_id=%s", error.code, error.request_id)
@@ -208,7 +240,59 @@ def create_app(config=None, sdk_factory=connect, sessions=None, flows=None):
             reject_aip_error(error)
         if not forum:
             abort(404)
-        return render_template("forum_view.html", forum=forum[0], topics=topics, logout_url=url_for("logout"))
+        identity = session_store.get(request.cookies.get("aip_session"), {})
+        return render_template("forum_view.html", forum=forum[0], topics=topics, logout_url=url_for("logout"), csrf_token=identity.get("csrf_token"))
+
+    @app.post("/forum/<forum_id>/topic")
+    def create_topic(forum_id):
+        identity = session_store.get(request.cookies.get("aip_session"))
+        if not identity:
+            abort(401)
+        require_csrf(identity)
+        title = request.form.get("title", "").strip()
+        content = request.form.get("content", "").strip()
+        if not title or len(title) > 255 or not content:
+            abort(400)
+        client = aip_client()
+        try:
+            user = current_aip_user(client)
+            topic_id = str(uuid.uuid4())
+            post_id = str(uuid.uuid4())
+            operations = [
+                {"create": "Topic", "values": {"id": topic_id, "forum": forum_id, "title": title, "user": user["id"], "username": user["username"], "locked": False, "important": False, "views": 0, "published": False, "deleted": False, "hidden": False, "hidden_at": None, "hidden_by": None}},
+                {"create": "Post", "values": {"id": post_id, "topic": topic_id, "forum": forum_id, "user": user["id"], "username": user["username"], "content": content, "hidden": False, "published": False, "version": 0, "deleted": False}},
+                {"apply": "Post.publish", "target": {"ids": [post_id]}},
+                {"create": "TopicFirstPost", "values": {"topic": topic_id, "post": post_id}},
+                {"apply": "Topic.publish", "target": {"ids": [topic_id]}},
+            ]
+            return submit_bundle(client, operations, f"flaskbb-topic-{topic_id}", lambda: url_for("topic_view", topic_id=topic_id))
+        except AipError as error:
+            reject_aip_error(error)
+
+    @app.post("/topic/<topic_id>/reply")
+    def create_reply(topic_id):
+        identity = session_store.get(request.cookies.get("aip_session"))
+        if not identity:
+            abort(401)
+        require_csrf(identity)
+        content = request.form.get("content", "").strip()
+        if not content:
+            abort(400)
+        client = aip_client()
+        try:
+            user = current_aip_user(client)
+            topics = client.read({"read": "Topic", "select": ["id", "forum"], "filter": [{"field": "id", "op": "eq", "value": topic_id}], "limit": 1})
+            if not topics:
+                abort(404)
+            post_id = str(uuid.uuid4())
+            operations = [
+                {"create": "Post", "values": {"id": post_id, "topic": topic_id, "forum": topics[0]["forum"], "user": user["id"], "username": user["username"], "content": content, "hidden": False, "published": False, "version": 0, "deleted": False}},
+                {"apply": "Post.publish", "target": {"ids": [post_id]}},
+                {"apply": "Topic.bump", "target": {"ids": [topic_id]}},
+            ]
+            return submit_bundle(client, operations, f"flaskbb-reply-{post_id}", lambda: url_for("topic_view", topic_id=topic_id))
+        except AipError as error:
+            reject_aip_error(error)
 
     @app.get("/topic/<topic_id>")
     def topic_view(topic_id):
@@ -220,7 +304,8 @@ def create_app(config=None, sdk_factory=connect, sessions=None, flows=None):
             reject_aip_error(error)
         if not topics:
             abort(404)
-        return render_template("topic_view.html", topic=topics[0], posts=posts, logout_url=url_for("logout"))
+        identity = session_store.get(request.cookies.get("aip_session"), {})
+        return render_template("topic_view.html", topic=topics[0], posts=posts, logout_url=url_for("logout"), csrf_token=identity.get("csrf_token"))
 
     @app.errorhandler(401)
     def unauthenticated(_error):
