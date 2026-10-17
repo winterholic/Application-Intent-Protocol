@@ -363,7 +363,7 @@ async fn external_mysql_adoption_binding_serving_and_drift() {
     let (_, drifted) = http(&address, "POST", "/read", Some(&user1), &fingerprint, &recruitments).await;
     assert_eq!(drifted["code"], "WIRE.DEPLOYMENT_CHANGED", "{drifted}");
     assert_eq!(http(&address, "GET", "/ready", None, "", &Value::Null).await.0, 503);
-    let refused_start = start_server(&env, &file, &config).await.err().expect("a drifted schema must not start a server");
+    let refused_start = start_server(&env, &file, &config).await.expect_err("a drifted schema must not start a server");
     assert_eq!(refused_start["code"], "WIRE.DEPLOYMENT_CHANGED", "{refused_start}");
     setup.query_drop(format!("ALTER TABLE `{SOURCE}`.`club` MODIFY `name` VARCHAR(255) NOT NULL")).await.unwrap();
     let (_, reopened) = http(&address, "POST", "/read", Some(&user1), &fingerprint, &recruitments).await;

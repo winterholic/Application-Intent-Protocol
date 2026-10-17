@@ -470,7 +470,9 @@ pub async fn deployment(url: &str, meta_schema: &str, facts: &Value, mapping: &M
     wire_label(wire)?;
     let driver = MysqlDriver::from_url(url).map_err(from_catalog)?;
     let mut conn = connect(&driver).await?;
-    let row: Option<(String, String, String, Option<String>, Option<String>)> = conn
+    // facts_digest, schema_sha256, status, facts, runtime_wire
+    type MarkerRow = (String, String, String, Option<String>, Option<String>);
+    let row: Option<MarkerRow> = conn
         .query_first(format!(
             "SELECT facts_digest, schema_sha256, status, CAST(facts AS CHAR), runtime_wire FROM `{meta_schema}`.`{META_TABLE}` WHERE singleton = 1"
         ))
