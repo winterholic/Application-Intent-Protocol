@@ -23,6 +23,8 @@ cargo clippy --workspace --lib --bins --locked -- -D warnings
 cargo clippy -p aip-auth -p aip-migrate -p aip-service --all-targets --locked -- -D warnings
 # The PoC runtime is an optional aip-cli package; its end-to-end tests only build with the feature.
 cargo clippy -p aip-cli --features poc-runtime --all-targets --locked -- -D warnings
+# The MySQL adapter is an optional package too: its code and live tests (ignored without a container) must stay lint-clean and compile.
+cargo clippy -p aip-migrate -p aip-service -p aip-cli --features mysql,aip-cli/mysql --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 cargo test -p aip-cli --features poc-runtime --locked
 # These product engines are path dependencies excluded from the root workspace.

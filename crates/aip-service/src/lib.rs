@@ -511,8 +511,8 @@ fn configuration_for_runtime(path: &Path) -> Result<Config, Value> {
 enum Gate {
     Standard,
     CatalogOnly,
-    /// Only constructed by the `mysql` feature's runtime entry point.
-    #[cfg_attr(not(feature = "mysql"), allow(dead_code))]
+    /// The runtime commands the MySQL adapter implements; the variant only exists in builds that have the adapter.
+    #[cfg(feature = "mysql")]
     MysqlRuntime,
 }
 
@@ -571,6 +571,7 @@ fn configuration_with_mode(path: &Path, gate: Gate) -> Result<Config, Value> {
     }
     match gate {
         Gate::CatalogOnly => require_built_features_for_introspection(&config)?,
+        #[cfg(feature = "mysql")]
         Gate::MysqlRuntime => require_built_features_mode(&config, Gate::MysqlRuntime)?,
         Gate::Standard => require_built_features(&config)?,
     }
