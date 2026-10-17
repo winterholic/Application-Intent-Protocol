@@ -35,6 +35,8 @@ struct ColumnInfo {
     name: String,
     data_type: String,
     column_type: String,
+    /// Case preserved: ENUM members are case-sensitive values, unlike the type words compared through `column_type`.
+    column_type_raw: String,
     nullable: bool,
     max_chars: Option<u64>,
     generated: bool,
@@ -60,6 +62,7 @@ async fn columns(conn: &mut Conn, schema: &str, table: &str) -> Result<Vec<Colum
                         name,
                         data_type: data_type.to_ascii_lowercase(),
                         column_type: column_type.to_ascii_lowercase(),
+                        column_type_raw: column_type,
                         nullable: nullable == "YES",
                         max_chars,
                         generated: !generation.is_empty() || extra.contains("generated"),
@@ -110,7 +113,7 @@ fn type_problem(facts: &Value, field: &Value, column: &ColumnInfo) -> Option<Str
         let declared: Vec<&str> = facts["enums"][members].as_array()?.iter().filter_map(Value::as_str).collect();
         return match column.data_type.as_str() {
             "enum" => {
-                let live = match crate::mysql_catalog::logical_type_of(&column.data_type, &column.column_type) {
+                let live = match crate::mysql_catalog::logical_type_of(&column.data_type, &column.column_type_raw) {
                     LogicalType::Enum(values) => values,
                     _ => return Some("ENUM 정의를 해석할 수 없음".into()),
                 };
@@ -118,7 +121,7 @@ fn type_problem(facts: &Value, field: &Value, column: &ColumnInfo) -> Option<Str
                 let mut declared_sorted = declared.clone();
                 live_sorted.sort_unstable();
                 declared_sorted.sort_unstable();
-                (live_sorted != declared_sorted).then(|| "ENUM 값 집합이 AIP enum 선언과 다름".to_string())
+                (live_sorted != declared_sorted).then(|| format!("ENUM 값 집합이 AIP enum 선언과 다름(DB {live_sorted:?}, 선언 {declared_sorted:?})"))
             }
             "char" | "varchar" => {
                 let longest = declared.iter().map(|value| value.chars().count() as u64).max().unwrap_or(0);

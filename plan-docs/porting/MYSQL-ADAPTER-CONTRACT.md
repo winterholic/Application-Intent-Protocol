@@ -165,6 +165,8 @@ MySQL은 `UPDATE`의 `SET`을 왼쪽에서 오른쪽으로 평가하고 뒤의 �
 | 강제되는 `CHECK` | 예 | 예 |
 | InnoDB | 예 | 예 |
 
+이 probe는 연결 세션에 임시 표를 만들므로 런타임 계정에 업무 schema의 `CREATE TEMPORARY TABLES`가 필요하다. 권한이 없으면 서버 능력 부족으로 오판하지 않고 그 권한 이름을 대며 `DB_ADAPTER_UNSUPPORTED`로 거부한다.
+
 그래서 MariaDB는 traverse(LATERAL)와 정책 잠금(`FOR SHARE OF`)을 쓰는 읽기·쓰기 경로를 지원하지 못하고, 거부는 정확히 그 둘을 이름으로 말한다. SKIP LOCKED·JSON·CHECK는 있으므로 job 저장소만의 MariaDB 방언은 가능하지만, 저장소 SQL이 MariaDB에 없는 `CAST(? AS JSON)`과 `FOR UPDATE OF .. SKIP LOCKED`를 쓰므로 이번에는 MariaDB에서 job 저장소를 실행하지 않았다. 별도 방언은 후속이다.
 
 | 이번 확인 | 결과 |

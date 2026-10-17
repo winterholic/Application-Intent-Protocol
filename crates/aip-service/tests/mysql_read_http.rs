@@ -173,7 +173,7 @@ async fn mysql_read_path_serves_policy_reads_and_fences_ddl() {
     setup.query_drop("DROP USER IF EXISTS 'aip_t_reader'@'%'").await.unwrap();
     setup.query_drop("CREATE USER 'aip_t_reader'@'%' IDENTIFIED BY 'reader_test_only'").await.unwrap();
     for schema in [META, SOURCE] {
-        setup.query_drop(format!("GRANT SELECT ON `{schema}`.* TO 'aip_t_reader'@'%'")).await.unwrap();
+        setup.query_drop(format!("GRANT SELECT, CREATE TEMPORARY TABLES ON `{schema}`.* TO 'aip_t_reader'@'%'")).await.unwrap();
     }
     drop(setup);
 

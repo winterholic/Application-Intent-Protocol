@@ -201,7 +201,7 @@ async fn harness_with(definition: &str, seed: &[String], source_grants: &str, pr
     setup.query_drop("DROP USER IF EXISTS 'aip_t_writer'@'%'").await.unwrap();
     setup.query_drop("CREATE USER 'aip_t_writer'@'%' IDENTIFIED BY 'writer_test_only'").await.unwrap();
     setup.query_drop(format!("GRANT SELECT, INSERT, UPDATE, DELETE ON `{META}`.* TO 'aip_t_writer'@'%'")).await.unwrap();
-    setup.query_drop(format!("GRANT {source_grants} ON `{SOURCE}`.* TO 'aip_t_writer'@'%'")).await.unwrap();
+    setup.query_drop(format!("GRANT {source_grants}, CREATE TEMPORARY TABLES ON `{SOURCE}`.* TO 'aip_t_writer'@'%'")).await.unwrap();
     drop(setup);
 
     let plan = mysql_adopt::plan_external(&admin_url, META, &facts, &mapping, "decimal").await.unwrap_or_else(|e| panic!("plan: {e}"));

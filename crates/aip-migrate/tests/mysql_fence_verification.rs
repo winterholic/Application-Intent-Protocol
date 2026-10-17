@@ -196,7 +196,10 @@ async fn live_readwrite_fence_commits_rolls_back_and_runs_with_dml_only_grants()
         setup.query_drop("DROP USER IF EXISTS 'aip_runtime'@'%'").await.unwrap();
         setup.query_drop("CREATE USER 'aip_runtime'@'%' IDENTIFIED BY 'runtime_test_only'").await.unwrap();
         for schema in [meta, source] {
-            setup.query_drop(format!("GRANT SELECT, INSERT, UPDATE, DELETE ON `{schema}`.* TO 'aip_runtime'@'%'")).await.unwrap();
+            setup
+                .query_drop(format!("GRANT SELECT, INSERT, UPDATE, DELETE, CREATE TEMPORARY TABLES ON `{schema}`.* TO 'aip_runtime'@'%'"))
+                .await
+                .unwrap();
         }
         drop(setup);
 

@@ -320,6 +320,8 @@ DB 테스트는 이 Run이 띄운 PostgreSQL 17 컨테이너(`aip-claude-wbs8-pg
 | `cd spikes/spike-v6-transport && cargo test --no-fail-fast` | 65 target 통과, 5 target 실패(`v12_typed`·`v13_idwire`·`v14_apply`·`v15_values`·`v16_bundle`). 다섯 모두 `tsc` 부재(`Os { code: 2, NotFound }`)로 기존 사전 실패와 같다 |
 | `cargo clippy -p aip-migrate -p aip-service -p aip-cli --features mysql,aip-cli/mysql --all-targets -- -D warnings` | 경고 0 |
 
+정정(2026-10-18 후속): 위 표의 `mysql_adoption_flow`·`mysql_read_http`·`mysql_write_http`·`mysql_jobs` 결과는 서버 능력 게이트(`check_server_profile`)를 넣기 전 실행이다. 게이트 뒤에는 `mysql_adoption_flow`가 실패하는 상태로 푸시됐다. 시험 런타임 계정에 `CREATE TEMPORARY TABLES`가 없어 probe가 서버를 "InnoDB·SKIP LOCKED·CHECK 없음"으로 오판했고, `mysql_jobs`는 두 시험이 같은 schema를 병렬로 지워 서로 깨뜨렸다. 고친 뒤 같은 명령을 다시 실행했다: `mysql_adoption_flow` 1 passed, `mysql_read_http` 1 + `mysql_write_http` 5 passed, `mysql_capability_gate` 3 passed(권한 부족 계정이 서버 결함이 아니라 권한 부족으로 거부되는 시험 추가), `mysql_jobs` 3 passed(직렬화), `mysql_fence_verification` 8 passed, `mysql_drift_matrix` 1 passed. 런타임 계정은 업무 schema에 `CREATE TEMPORARY TABLES`가 필요하다(세션 안에서만 보이는 probe 표 하나를 만든다).
+
 환경 한계: `aip-cli`의 `least_privilege`는 비밀번호 인증 PostgreSQL에서는 역할 접속이 실패하고, trust 인증 PostgreSQL 컨테이너에서는 통과한다(이번 변경과 무관). 시험 DB 비밀번호와 계정은 모두 이 시험을 위해 만든 일회용이다.
 
 변이 확인(보호 장치를 하나씩 끄고 시험이 실패하는지 확인): 용량 잠금, 키 잠금, 매칭 행 수 확인, SERIALIZABLE(`mysql_write_http`), 후보 행 잠금, lease epoch 검사, epoch 증가(`mysql_jobs`)는 각각 시험을 실패시켰다. 쓰기 판정의 `FOR UPDATE`만은 끄면 통과하며, 뒤의 `UPDATE`가 같은 행 잠금과 `from` 재확인을 해서 결과가 같기 때문이다.

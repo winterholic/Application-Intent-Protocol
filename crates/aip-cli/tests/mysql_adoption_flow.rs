@@ -242,7 +242,7 @@ async fn external_mysql_adoption_binding_serving_and_drift() {
     setup.query_drop("DROP USER IF EXISTS 'aip_t_cli_rt'@'%'").await.unwrap();
     setup.query_drop("CREATE USER 'aip_t_cli_rt'@'%' IDENTIFIED BY 'runtime_test_only'").await.unwrap();
     // Reads need SELECT; the write path also locks and changes business rows, so it needs DML on them.
-    setup.query_drop(format!("GRANT SELECT, INSERT, UPDATE, DELETE ON `{SOURCE}`.* TO 'aip_t_cli_rt'@'%'")).await.unwrap();
+    setup.query_drop(format!("GRANT SELECT, INSERT, UPDATE, DELETE, CREATE TEMPORARY TABLES ON `{SOURCE}`.* TO 'aip_t_cli_rt'@'%'")).await.unwrap();
     // The AIP schema does not exist yet; the runtime account is granted on it by pattern, as an operator would.
     setup.query_drop(format!("GRANT SELECT, INSERT, UPDATE, DELETE ON `{META}`.* TO 'aip_t_cli_rt'@'%'")).await.unwrap();
     let host = admin_url.split_once('@').unwrap().1.split('/').next().unwrap().to_string();

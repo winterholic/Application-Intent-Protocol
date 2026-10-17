@@ -1,14 +1,14 @@
 //! PostgreSQL deployment of the V1 execution facts. All database changes are explicit CLI operations.
 pub mod adopt;
 pub mod external;
-pub mod mysql_catalog;
-pub mod mysql_external;
 #[cfg(feature = "mysql")]
 pub mod mysql_adopt;
 #[cfg(feature = "mysql")]
 pub mod mysql_backend;
+pub mod mysql_catalog;
 #[cfg(feature = "mysql")]
 pub mod mysql_driver;
+pub mod mysql_external;
 #[cfg(feature = "mysql")]
 pub mod mysql_jobs;
 #[cfg(feature = "mysql")]

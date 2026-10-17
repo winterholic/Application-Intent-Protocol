@@ -32,13 +32,18 @@ fn run(key: &str) -> NewRun {
     }
 }
 
+/// The tests share one schema pair, so they must not run at the same time.
+static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 struct Harness {
     driver: MysqlDriver,
     store: MysqlJobStore,
+    _serial: tokio::sync::MutexGuard<'static, ()>,
 }
 
 impl Harness {
     async fn new() -> Self {
+        let serial = SERIAL.lock().await;
         let url = std::env::var("AIP_TEST_MYSQL_URL").expect("set AIP_TEST_MYSQL_URL to a run-owned MySQL 8.4 container");
         aip_test_support::validate_mysql_admin_url(&url).unwrap_or_else(|reason| panic!("AIP_TEST_MYSQL_URL is unsafe: {reason}"));
         assert!(url.starts_with("mysql://"), "this test targets MySQL 8.4");
@@ -51,7 +56,7 @@ impl Harness {
         setup.query_drop(format!("CREATE TABLE `{SOURCE}`.`t` (id INT PRIMARY KEY) ENGINE=InnoDB")).await.unwrap();
         drop(setup);
         driver.ensure_meta_schema_bootstrap(META, SOURCE, FACTS).await.expect("meta bootstrap creates the job tables");
-        Self { driver, store: MysqlJobStore::new(META).unwrap() }
+        Self { driver, store: MysqlJobStore::new(META).unwrap(), _serial: serial }
     }
 
     async fn conn(&self) -> aip_migrate::mysql_driver::mysql_async::Conn {

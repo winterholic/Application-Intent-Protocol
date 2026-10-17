@@ -112,11 +112,21 @@ pub async fn probe_capabilities(driver: &MysqlDriver) -> Result<ServerCapabiliti
     let (major, minor) = (parts.next().and_then(|v| v.parse::<u32>().ok()), parts.next().and_then(|v| v.parse::<u32>().ok()));
     let major_minor_ok = engine == "MySQL" && matches!((major, minor), (Some(major), Some(minor)) if (major, minor) >= (8, 4));
     let strict_mode = sql_mode.split(',').any(|mode| matches!(mode.trim(), "STRICT_TRANS_TABLES" | "STRICT_ALL_TABLES"));
-    let innodb = works(
-        &mut conn,
-        "CREATE TEMPORARY TABLE aip_capability_probe (id INT PRIMARY KEY, CONSTRAINT aip_probe_positive CHECK (id > 0)) ENGINE=InnoDB",
-    )
-    .await;
+    // The probe needs a session-local table. A runtime account without that privilege would look like a server without InnoDB, so
+    // a privilege error is reported as what it is rather than as a missing capability.
+    let innodb = match conn
+        .query_drop("CREATE TEMPORARY TABLE aip_capability_probe (id INT PRIMARY KEY, CONSTRAINT aip_probe_positive CHECK (id > 0)) ENGINE=InnoDB")
+        .await
+    {
+        Ok(()) => true,
+        Err(mysql_async::Error::Server(server)) if matches!(server.code, 1044 | 1142 | 1143) => {
+            return Err(CatalogError::with_code(
+                "DB_ADAPTER_UNSUPPORTED",
+                "the database account lacks CREATE TEMPORARY TABLES, which the start-up capability probe needs (it only creates a session-local table); grant it on the business schema",
+            ));
+        }
+        Err(_) => false,
+    };
     let lateral = works(&mut conn, "SELECT 1 FROM (SELECT 1 AS a) x JOIN LATERAL (SELECT x.a AS b) y ON TRUE").await;
     let json_arrayagg = works(&mut conn, "SELECT JSON_ARRAYAGG(JSON_OBJECT('a', 1))").await;
     let (mut skip_locked, mut for_share_of) = (false, false);

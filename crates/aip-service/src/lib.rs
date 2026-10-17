@@ -1358,7 +1358,10 @@ fn require_built_features_mode(config: &Config, gate: Gate) -> Result<(), Value>
         // The MySQL runtime gate lets MySQL through; MariaDB stays refused until its own compatibility gate passes.
         if gate == Gate::MysqlRuntime && wants_mysql {
             let mariadb = adapter == "mariadb"
-                || [&config.database_url_env].into_iter().chain(config.migrate_database_url_env.as_ref()).any(|name| extract_url_scheme(name).is_some_and(|scheme| scheme == "mariadb"));
+                || [&config.database_url_env]
+                    .into_iter()
+                    .chain(config.migrate_database_url_env.as_ref())
+                    .any(|name| extract_url_scheme(name).is_some_and(|scheme| scheme == "mariadb"));
             if mariadb {
                 return Err(error(
                     "DB_ADAPTER_UNSUPPORTED",

@@ -539,7 +539,8 @@ pub(crate) async fn create_meta_tables<Q: Queryable>(conn: &mut Q, meta_schema: 
     ));
     // Transaction-scoped named locks. MySQL has no `pg_advisory_xact_lock`; a row lock on one of a fixed set of buckets
     // lives exactly until COMMIT or ROLLBACK, and a crashed connection releases it with the transaction.
-    statements.push(format!("CREATE TABLE IF NOT EXISTS `{meta_schema}`.`aip_tx_locks` (bucket SMALLINT UNSIGNED NOT NULL PRIMARY KEY) ENGINE=InnoDB"));
+    statements
+        .push(format!("CREATE TABLE IF NOT EXISTS `{meta_schema}`.`aip_tx_locks` (bucket SMALLINT UNSIGNED NOT NULL PRIMARY KEY) ENGINE=InnoDB"));
     statements.push(format!(
         "INSERT IGNORE INTO `{meta_schema}`.`aip_tx_locks` (bucket) \
          SELECT a.n * 100 + b.n * 10 + c.n FROM \
@@ -547,7 +548,9 @@ pub(crate) async fn create_meta_tables<Q: Queryable>(conn: &mut Q, meta_schema: 
            (SELECT 0 n UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9) b, \
            (SELECT 0 n UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9) c"
     ));
-    statements.push(format!("CREATE TABLE IF NOT EXISTS `{meta_schema}`.`aip_events` (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY) ENGINE=InnoDB"));
+    statements.push(format!(
+        "CREATE TABLE IF NOT EXISTS `{meta_schema}`.`aip_events` (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY) ENGINE=InnoDB"
+    ));
     // Durable jobs (WBS 7.2.1.3). The PostgreSQL unique key over (owner, operation, contract, deployment, key) is too wide for an
     // InnoDB index, so its SHA-256 is the unique column. All instants are UTC DATETIME(6) from the database clock.
     statements.push(format!(
