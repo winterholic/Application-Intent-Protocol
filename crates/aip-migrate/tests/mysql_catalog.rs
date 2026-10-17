@@ -896,3 +896,32 @@ fn mysql_wire_protocol_packet_framing_and_response_integration() {
         _ => panic!("expected OK response"),
     }
 }
+
+/// The catalog fingerprint is the SHA-256 of this manifest as JSON. A column type serde cannot serialize (enum members,
+/// DATETIME, DECIMAL, ...) used to make every fingerprint, adoption and fenced request fail for any schema that has one.
+#[test]
+fn every_logical_type_serializes_so_the_catalog_fingerprint_is_computable() {
+    let mut id = column("id", "bigint", "bigint");
+    id.ordinal_position = 1;
+    let mut kind = column("kind", "enum", "enum('MEMO','TODO')");
+    kind.ordinal_position = 2;
+    let mut created = column("created", "datetime", "datetime(6)");
+    created.ordinal_position = 3;
+    let mut score = column("score", "decimal", "decimal(10,2)");
+    score.ordinal_position = 4;
+    let table = normalize_table("note", vec![id, kind, created, score], vec![IndexRow::column("PRIMARY", 0, 1, "id")]).expect("normalizes");
+    let value = serde_json::to_value(&table).expect("manifest with enum and unsupported types must serialize");
+    let again: aip_migrate::mysql_catalog::TableManifest = serde_json::from_value(value.clone()).expect("and round-trip");
+    assert_eq!(again, table);
+    // The precision and scale are part of the fingerprint input, so changing them is observable drift.
+    let mut widened = column("created", "datetime", "datetime(3)");
+    widened.ordinal_position = 3;
+    let mut id = column("id", "bigint", "bigint");
+    id.ordinal_position = 1;
+    let mut kind = column("kind", "enum", "enum('MEMO','TODO')");
+    kind.ordinal_position = 2;
+    let mut score = column("score", "decimal", "decimal(10,2)");
+    score.ordinal_position = 4;
+    let other = normalize_table("note", vec![id, kind, widened, score], vec![IndexRow::column("PRIMARY", 0, 1, "id")]).unwrap();
+    assert_ne!(serde_json::to_value(&other).unwrap(), value, "datetime(6) vs datetime(3) must differ");
+}

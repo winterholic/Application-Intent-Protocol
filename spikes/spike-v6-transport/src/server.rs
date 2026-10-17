@@ -253,7 +253,7 @@ pub(crate) async fn listen_with_fingerprint(
     }
     crate::triggers::validate_job_policies(&runtime.infrastructure.job_policies, &facts)
         .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?;
-    if runtime.db_pool.is_none() {
+    if runtime.db_pool.is_none() && runtime.infrastructure.relational.is_none() {
         let pool = crate::pool::ConnectionPool::new(runtime.db_url.clone(), runtime.infrastructure.db_pool)
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid database pool options"))?;
         runtime.db_pool = Some(Arc::new(pool));
@@ -929,4 +929,45 @@ mod extension_config_tests {
         let all = [missing_module, malformed, identifier, absent, legacy, gone_message];
         assert_eq!(all.iter().collect::<std::collections::HashSet<_>>().len(), all.len(), "each cause has its own sentence");
     }
+}
+
+/// Serve over a non-PostgreSQL relational adapter. Only what the adapter implements is served; infrastructure that needs
+/// the PostgreSQL pool (durable jobs, files, rate limits, product authentication) is not configured here and its paths
+/// answer `WIRE.ADAPTER_UNSUPPORTED`.
+pub async fn listen_relational(
+    facts: Value,
+    wire: IdWire,
+    address: SocketAddr,
+    backend: Arc<dyn spike_v2_read::backend::RelationalBackend>,
+    options: ServerOptions,
+) -> io::Result<Server> {
+    options.validate()?;
+    let fingerprint = facts["resources"].is_object().then(|| spike_v5_sdk::contract_fingerprint_with_apply(&facts, wire).into());
+    listen_with_fingerprint(
+        facts,
+        wire,
+        address,
+        Runtime {
+            infrastructure: crate::infrastructure::Infrastructure { relational: Some(backend), ..crate::infrastructure::Infrastructure::default() },
+            db_pool: None,
+            admission: None,
+            realtime_slots: tokio::sync::Semaphore::new(32),
+            realtime_preauth: tokio::sync::Semaphore::new(32),
+            object_slots: tokio::sync::Semaphore::new(4),
+            db_url: String::new(),
+            broker: None,
+            enable_file_uploads: false,
+            fault_injection: false,
+            extensions: None,
+            write_extensions: false,
+            extension_slots: tokio::sync::Semaphore::new(4),
+            principal_slots: crate::slots::PrincipalSlotSet::unlimited(),
+            options,
+            authenticator: None,
+            deployment: None,
+            otlp: None,
+        },
+        fingerprint,
+    )
+    .await
 }

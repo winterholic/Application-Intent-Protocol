@@ -104,6 +104,9 @@ pub struct Infrastructure {
     pub data_changes: DataChanges,
     pub otlp: Option<crate::otlp::OtlpConfig>,
     pub otlp_exporter: Option<Arc<crate::otlp::OtlpExporter>>,
+    /// A non-PostgreSQL relational store. When set, the PostgreSQL pool is not used; requests the adapter cannot serve are
+    /// refused with `WIRE.ADAPTER_UNSUPPORTED` instead of being emulated.
+    pub relational: Option<Arc<dyn spike_v2_read::backend::RelationalBackend>>,
 }
 
 impl Default for Infrastructure {
@@ -129,6 +132,7 @@ impl Default for Infrastructure {
             data_changes: DataChanges::default(),
             otlp: None,
             otlp_exporter: None,
+            relational: None,
         }
     }
 }

@@ -2,6 +2,9 @@
 pub mod adopt;
 pub mod external;
 pub mod mysql_catalog;
+pub mod mysql_external;
+#[cfg(feature = "mysql")]
+pub mod mysql_backend;
 #[cfg(feature = "mysql")]
 pub mod mysql_driver;
 use serde_json::{Value, json};

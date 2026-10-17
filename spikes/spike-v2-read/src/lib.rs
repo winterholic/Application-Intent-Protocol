@@ -1,5 +1,7 @@
+pub mod backend;
 pub mod external;
 pub mod id_wire;
+pub mod mysql_rows;
 pub mod plan;
 pub mod scalar;
 pub mod sqlgen;

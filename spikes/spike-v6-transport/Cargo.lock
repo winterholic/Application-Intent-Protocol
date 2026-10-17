@@ -37,6 +37,7 @@ dependencies = [
 name = "aip-migrate"
 version = "0.1.0"
 dependencies = [
+ "aip-execution",
  "serde",
  "serde_json",
  "sha2 0.10.9",

@@ -87,15 +87,126 @@ pub fn column(facts: &Value, res: &str, field: &str) -> Option<String> {
     Some(if ty.starts_with("Ref<") { format!("{}_id", snake(field)) } else { snake(field) })
 }
 
+/// SQL을 만드는 대상 엔진. PostgreSQL 출력은 기존 그대로 두고 MySQL은 같은 의미를 별도 구문으로 낸다.
+/// MariaDB는 LATERAL을 지원하지 않아 이 방언의 대상이 아니다(어댑터가 시작 때 거부한다).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Dialect {
+    #[default]
+    Postgres,
+    MySql,
+}
+
+impl Dialect {
+    pub fn is_mysql(self) -> bool {
+        self == Dialect::MySql
+    }
+
+    /// 식별자 인용. PostgreSQL은 기존 계약대로 소문자 snake 이름을 그대로 쓰고, MySQL은 예약어와 충돌하지 않게 백틱으로 감싼다.
+    pub fn ident(self, name: &str) -> String {
+        match self {
+            Dialect::Postgres => name.to_string(),
+            Dialect::MySql => format!("`{}`", name.replace('`', "``")),
+        }
+    }
+
+    pub fn table(self, res: &str) -> String {
+        match self {
+            Dialect::Postgres => table(res),
+            Dialect::MySql => format!("{}.{}", self.ident(schema()), self.ident(&snake(res))),
+        }
+    }
+
+    /// `alias.column`.
+    pub fn qualified(self, alias: &str, column: &str) -> String {
+        format!("{alias}.{}", self.ident(column))
+    }
+}
+
+/// MySQL의 `?`는 위치 바인딩이라 같은 값을 여러 번 쓰거나 SQL 조립 순서가 바뀌면 어긋난다. 조립 중에는 번호가 든 표지를 두고
+/// `Params::finish`가 최종 SQL을 왼쪽부터 읽으며 `?`로 바꾸고 그 순서대로 값을 늘어놓는다.
+const MARK_OPEN: char = '\u{1}';
+const MARK_CLOSE: char = '\u{2}';
+
 #[derive(Default)]
 pub struct Params {
     pub values: Vec<Option<String>>,
+    dialect: Dialect,
 }
 
 impl Params {
+    pub fn new(dialect: Dialect) -> Params {
+        Params { values: Vec::new(), dialect }
+    }
+
     pub fn bind(&mut self, v: Option<String>, cast: &str) -> String {
-        self.values.push(v);
-        format!("${}::text::{cast}", self.values.len())
+        match self.dialect {
+            Dialect::Postgres => {
+                self.values.push(v);
+                format!("${}::text::{cast}", self.values.len())
+            }
+            Dialect::MySql => {
+                self.values.push(v.map(|value| mysql_value(&value, cast)));
+                let n = self.values.len();
+                match cast {
+                    "bigint" | "boolean" => format!("CAST({MARK_OPEN}{n}{MARK_CLOSE} AS SIGNED)"),
+                    "timestamptz" => format!("CAST({MARK_OPEN}{n}{MARK_CLOSE} AS DATETIME(6))"),
+                    "date" => format!("CAST({MARK_OPEN}{n}{MARK_CLOSE} AS DATE)"),
+                    "numeric" => format!("CAST({MARK_OPEN}{n}{MARK_CLOSE} AS DECIMAL(65,30))"),
+                    // 문자열 리터럴과 같은 coercibility를 유지해 열의 collation을 따른다.
+                    _ => format!("{MARK_OPEN}{n}{MARK_CLOSE}"),
+                }
+            }
+        }
+    }
+
+    /// 정수 상수. MySQL의 `LIMIT`/`OFFSET`은 바인딩 정수만 받아 문자열로 보내면 거부되므로 검증이 끝난 값을 리터럴로 쓴다.
+    pub fn bind_count(&mut self, n: i64, cast: &str) -> String {
+        match self.dialect {
+            Dialect::Postgres => self.bind(Some(n.to_string()), cast),
+            Dialect::MySql => n.to_string(),
+        }
+    }
+
+    /// 조립이 끝난 SQL과 바인딩 값을 돌려준다. PostgreSQL은 그대로, MySQL은 표지를 `?`로 바꿔 값을 SQL 순서로 정렬한다.
+    pub fn finish(self, sql: String) -> (String, Vec<Option<String>>) {
+        if self.dialect == Dialect::Postgres {
+            return (sql, self.values);
+        }
+        let mut out = String::with_capacity(sql.len());
+        let mut ordered = Vec::new();
+        let mut rest = sql.as_str();
+        while let Some(open) = rest.find(MARK_OPEN) {
+            out.push_str(&rest[..open]);
+            let after = &rest[open + MARK_OPEN.len_utf8()..];
+            let close = after.find(MARK_CLOSE).expect("바인딩 표지가 닫혀 있음");
+            let n: usize = after[..close].parse().expect("바인딩 표지 번호");
+            ordered.push(self.values[n - 1].clone());
+            out.push('?');
+            rest = &after[close + MARK_CLOSE.len_utf8()..];
+        }
+        out.push_str(rest);
+        (out, ordered)
+    }
+}
+
+/// MySQL 바인딩 값. PostgreSQL 캐스트가 받아주던 문자열을 MySQL이 받는 모양으로 바꾼다.
+fn mysql_value(value: &str, cast: &str) -> String {
+    match cast {
+        "boolean" => match value {
+            "true" => "1".into(),
+            "false" => "0".into(),
+            other => other.into(),
+        },
+        // 입력은 UTC로 정규화되어 `+00:00` 꼬리를 가진다. DATETIME(6)은 꼬리를 받지 않으므로 떼고 T를 공백으로 쓴다.
+        // 서기 이전(BC) 값은 DATETIME 범위 밖이라 0000-00-00으로 보내 CAST가 NULL이 되게 한다(조건은 거짓이 된다).
+        "timestamptz" => {
+            if value.ends_with(" BC") {
+                return "0000-00-00 00:00:00".into();
+            }
+            let trimmed = value.strip_suffix("+00:00").or_else(|| value.strip_suffix('Z')).unwrap_or(value);
+            trimmed.replacen('T', " ", 1)
+        }
+        _ => value.to_string(),
     }
 }
 
@@ -108,9 +219,9 @@ pub enum Handle {
 }
 
 impl Handle {
-    fn sql(&self) -> String {
+    fn sql(&self, dialect: Dialect) -> String {
         match self {
-            Handle::Row { alias, .. } => format!("{alias}.id"),
+            Handle::Row { alias, .. } => dialect.qualified(alias, "id"),
             Handle::Id { sql, .. } | Handle::Scalar(sql) => sql.clone(),
         }
     }
@@ -118,6 +229,7 @@ impl Handle {
 
 pub struct Ctx<'a> {
     pub facts: &'a Value,
+    pub dialect: Dialect,
     pub params: Params,
     actor_id: Option<i64>,
     actor: Option<Handle>,
@@ -148,6 +260,7 @@ impl<'a> Ctx<'a> {
         // actor·now는 실제로 쓰일 때만 바인딩한다. 안 쓰인 매개변수는 PG가 타입을 추론하지 못한다(42P18).
         Ctx {
             facts,
+            dialect: Dialect::Postgres,
             params: Params::default(),
             actor_id,
             actor: None,
@@ -168,6 +281,7 @@ impl<'a> Ctx<'a> {
     pub fn for_ddl(facts: &'a Value) -> Ctx<'a> {
         Ctx {
             facts,
+            dialect: Dialect::Postgres,
             params: Params::default(),
             actor_id: None,
             actor: Some(Handle::Scalar("NULL".into())),
@@ -184,6 +298,31 @@ impl<'a> Ctx<'a> {
         }
     }
 
+    /// 같은 정책 식을 다른 엔진 SQL로 낸다. 바인딩이 시작되기 전에 불러야 한다.
+    pub fn with_dialect(mut self, dialect: Dialect) -> Self {
+        assert!(self.params.values.is_empty(), "방언은 바인딩 전에 정한다");
+        self.dialect = dialect;
+        self.params = Params::new(dialect);
+        self
+    }
+
+    pub fn table(&self, res: &str) -> String {
+        self.dialect.table(res)
+    }
+
+    pub fn qualified(&self, alias: &str, column: &str) -> String {
+        self.dialect.qualified(alias, column)
+    }
+
+    /// JSON 투영에서 고정소수점은 문자열로 둔다. 방언별 캐스트만 다르다.
+    pub fn json_scalar(&self, ty: &str, sql: &str) -> String {
+        match self.dialect {
+            Dialect::Postgres => json_scalar(ty, sql),
+            Dialect::MySql if decimal_type(ty.trim_end_matches('?')).is_some() => format!("CAST({sql} AS CHAR)"),
+            Dialect::MySql => sql.to_string(),
+        }
+    }
+
     pub fn alias(&mut self, p: &str) -> String {
         self.next_alias += 1;
         format!("{p}{}", self.next_alias)
@@ -195,7 +334,7 @@ impl<'a> Ctx<'a> {
 
     fn step(&self, h: Handle, seg: &str) -> R<Handle> {
         let (res, row_sql, id_sql) = match &h {
-            Handle::Row { alias, res } => (res.clone(), Some(alias.clone()), format!("{alias}.id")),
+            Handle::Row { alias, res } => (res.clone(), Some(alias.clone()), self.qualified(alias, "id")),
             Handle::Id { sql, res } => (res.clone(), None, sql.clone()),
             Handle::Scalar(_) => return Err(format!("스칼라에서 `{seg}` 접근")),
         };
@@ -203,10 +342,10 @@ impl<'a> Ctx<'a> {
         let col = column(self.facts, &res, seg).unwrap();
         let val = match (&row_sql, seg) {
             (_, "id") => id_sql,
-            (Some(a), _) => format!("{a}.{col}"),
+            (Some(a), _) => self.qualified(a, &col),
             (None, _) => {
                 let lock = if self.lock_reads { " FOR SHARE OF z" } else { "" };
-                format!("(SELECT z.{col} FROM {} z WHERE z.id = {id_sql}{lock})", table(&res))
+                format!("(SELECT {} FROM {} z WHERE {} = {id_sql}{lock})", self.qualified("z", &col), self.table(&res), self.qualified("z", "id"))
             }
         };
         Ok(match ref_target(&ty) {
@@ -220,10 +359,13 @@ impl<'a> Ctx<'a> {
             let res = self.facts["actor"].as_str().unwrap_or("Member").to_string();
             let sql = self.params.bind(self.actor_id.map(|x| x.to_string()), "bigint");
             let sql = if crate::id_wire::id_kind(self.facts, &res) == "uuid" {
+                let (d, resource_table) = (self.dialect, self.table(&res));
                 format!(
-                    "(SELECT i.resource_id FROM {}.aip_actor_identities i JOIN {} a ON a.id=i.resource_id WHERE i.id={sql})",
-                    schema(),
-                    table(&res)
+                    "(SELECT {resource} FROM {identities} i JOIN {resource_table} a ON {a_id}={resource} WHERE {i_id}={sql})",
+                    resource = d.qualified("i", "resource_id"),
+                    identities = format_args!("{}.{}", d.ident(schema()), d.ident("aip_actor_identities")),
+                    a_id = d.qualified("a", "id"),
+                    i_id = d.qualified("i", "id"),
                 )
             } else {
                 sql
@@ -265,7 +407,7 @@ impl<'a> Ctx<'a> {
     pub fn value(&mut self, e: &Value, env: &Env) -> R<String> {
         self.charge_work(1)?;
         if e.get("path").is_some() {
-            return Ok(self.path(e, env)?.sql());
+            return Ok(self.path(e, env)?.sql(self.dialect));
         }
         if let Some(en) = e.get("enum").and_then(Value::as_str) {
             let v = en.split_once('.').ok_or("enum 형식")?.1;
@@ -465,7 +607,7 @@ impl<'a> Ctx<'a> {
             inner.this = Some((a.clone(), r.to_string()));
             let c = self.cond(&e["where"], &inner)?;
             let lock = if self.lock_reads { format!(" FOR SHARE OF {a}") } else { String::new() };
-            return Ok(format!("EXISTS (SELECT 1 FROM {} {a} WHERE {c}{lock})", table(r)));
+            return Ok(format!("EXISTS (SELECT 1 FROM {} {a} WHERE {c}{lock})", self.table(r)));
         }
         Err(format!("조건으로 쓸 수 없는 식 {e}"))
     }

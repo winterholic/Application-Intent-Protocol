@@ -1,5 +1,5 @@
 //! 호출자 정형 읽기 요청을 facts의 허용 범위로 검증하고 매개변수 SQL 하나로 만든다.
-use crate::sqlgen::{self, column, table, Ctx, Env, Handle};
+use crate::sqlgen::{self, column, Ctx, Dialect, Env, Handle};
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 
@@ -31,12 +31,16 @@ pub struct Plan {
 
 /// SQL이 참조하는 schema 테이블을 resource 이름으로 되돌린다.
 pub fn deps_of(facts: &Value, sql: &str) -> Vec<String> {
+    deps_of_in(Dialect::Postgres, facts, sql)
+}
+
+pub fn deps_of_in(dialect: Dialect, facts: &Value, sql: &str) -> Vec<String> {
     let mut out: Vec<String> = facts["resources"]
         .as_object()
         .unwrap()
         .keys()
         .filter(|r| {
-            let t = table(r);
+            let t = dialect.table(r);
             sql.match_indices(&t).any(|(i, _)| !sql[i + t.len()..].starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_'))
         })
         .cloned()
@@ -100,7 +104,7 @@ fn guard_ref(facts: &Value, cx: &mut Ctx<'_>, ty: &str, col: &str, value: &str) 
     let ta = cx.alias("v");
     let tenv = Env { this: Some((ta.clone(), target.to_string())), ..Default::default() };
     let row = cx.cond(&facts["resources"][target]["rowRead"], &tenv).map_err(internal)?;
-    Ok(format!("CASE WHEN EXISTS (SELECT 1 FROM {} {ta} WHERE {ta}.id = {col} AND {row}) THEN {value} END", table(target)))
+    Ok(format!("CASE WHEN EXISTS (SELECT 1 FROM {} {ta} WHERE {} = {col} AND {row}) THEN {value} END", cx.table(target), cx.qualified(&ta, "id")))
 }
 
 fn out_ty(ty: &str, redactable: bool) -> Value {
@@ -124,6 +128,13 @@ fn measure(facts: &Value, cx: &mut Ctx<'_>, aggregate: &Value, alias: &str) -> R
     let visible = cx.cond(&facts["resources"][source]["rowRead"], &env).map_err(internal)?;
     match (release, field) {
         // bigint 합은 numeric이 된다. 범위를 넘으면 캐스트가 실패해 잘린 값 대신 오류가 난다.
+        (Some("sum"), Some(f)) if cx.dialect.is_mysql() => {
+            // MySQL은 FILTER가 없고 DECIMAL을 SIGNED로 줄일 때 범위 밖 값을 조용히 자른다. 합은 DECIMAL 그대로 내보내 정규화 단계가 i64를 확인한다.
+            Ok(format!("COALESCE(SUM(CASE WHEN {visible} THEN {} END), 0)", cx.qualified(alias, &col(f)?)))
+        }
+        (Some(op @ ("min" | "max")), Some(f)) if cx.dialect.is_mysql() => {
+            Ok(format!("{op}(CASE WHEN {visible} THEN {} END)", cx.qualified(alias, &col(f)?)))
+        }
         (Some("sum"), Some(f)) => Ok(format!("coalesce(sum({alias}.{}) FILTER (WHERE {visible}), 0)::bigint", col(f)?)),
         (Some(op @ ("min" | "max")), Some(f)) => Ok(format!("{op}({alias}.{}) FILTER (WHERE {visible})", col(f)?)),
         (r, f) => Err(internal(format!("집계 release {r:?}({f:?}) 미지원"))),
@@ -143,13 +154,13 @@ fn aggregate_select_expr(
     let source_group_key = column(facts, source, group_key).unwrap();
     let owner_id = column(facts, owner, "id").unwrap();
     let source_alias = cx.alias("g");
-    let mut where_sql = format!("{source_alias}.{source_group_key} = {owner_alias}.{owner_id}");
+    let mut where_sql = format!("{} = {}", cx.qualified(&source_alias, &source_group_key), cx.qualified(owner_alias, &owner_id));
     if !aggregate["where"].is_null() {
         let source_env = Env { this: Some((source_alias.clone(), source.to_string())), ..Default::default() };
         where_sql = format!("{where_sql} AND {}", cx.cond(&aggregate["where"], &source_env).map_err(internal)?);
     }
     // 집계 원본은 원본 행 정책을 자동 상속하지 않고 sourceAccess로만 읽는다.
-    let count = format!("(SELECT {} FROM {} {source_alias} WHERE {where_sql})", measure(facts, cx, aggregate, &source_alias)?, table(source));
+    let count = format!("(SELECT {} FROM {} {source_alias} WHERE {where_sql})", measure(facts, cx, aggregate, &source_alias)?, cx.table(source));
     let access_ref = aggregate["sourceAccess"]["ref"].as_str().unwrap_or("");
     let access = &facts["accesses"][access_ref];
     let (expression, guarded) = match access["kind"].as_str() {
@@ -190,11 +201,39 @@ fn check_value(facts: &Value, ty: &str, v: &Value, wire: crate::id_wire::IdWire)
     }
 }
 
+/// JSON 객체 생성 식. PostgreSQL은 키/값 인수를 번갈아 받고, MySQL의 `JSON_OBJECT`도 같은 모양이다.
+fn json_object(dialect: Dialect, pairs: &[String]) -> String {
+    match dialect {
+        Dialect::Postgres => format!("json_build_object({})", pairs.join(", ")),
+        Dialect::MySql => format!("JSON_OBJECT({})", pairs.join(", ")),
+    }
+}
+
+/// PostgreSQL은 ASC에서 NULL이 마지막, DESC에서 처음이다. MySQL은 반대라 같은 순서가 되도록 NULL 여부를 앞 정렬 키로 둔다.
+fn order_term(dialect: Dialect, column_sql: &str, desc: bool) -> String {
+    let dir = if desc { "DESC" } else { "ASC" };
+    match dialect {
+        Dialect::Postgres => format!("{column_sql} {dir}"),
+        Dialect::MySql => format!("({column_sql} IS NULL) {dir}, {column_sql} {dir}"),
+    }
+}
+
 pub fn plan_operation_authorization(facts: &Value, name: &str, input: &Value, caller: &Caller, wire: crate::id_wire::IdWire) -> Result<Plan, Reject> {
+    plan_operation_authorization_in(Dialect::Postgres, facts, name, input, caller, wire)
+}
+
+pub fn plan_operation_authorization_in(
+    dialect: Dialect,
+    facts: &Value,
+    name: &str,
+    input: &Value,
+    caller: &Caller,
+    wire: crate::id_wire::IdWire,
+) -> Result<Plan, Reject> {
     let operation = &facts["operations"][name];
     let declared = operation["input"].as_array().ok_or(Reject { code: "WIRE.NOT_EXPOSED", msg: "operation 계약 없음".into() })?;
     let given = input.as_object().ok_or(Reject { code: "WIRE.BAD_VALUE", msg: "operation 입력은 객체".into() })?;
-    let mut cx = Ctx::new(facts, caller.actor_id, &caller.now);
+    let mut cx = Ctx::new(facts, caller.actor_id, &caller.now).with_dialect(dialect);
     let mut env = Env::default();
     for key in given.keys() {
         if !declared.iter().any(|field| field[0] == *key) {
@@ -218,11 +257,16 @@ pub fn plan_operation_authorization(facts: &Value, name: &str, input: &Value, ca
         env.input.insert(name.to_string(), handle);
     }
     let allow = cx.cond(&operation["allow"], &env).map_err(internal)?;
-    // Even unused inputs need a text parameter type in PostgreSQL's parse phase.
-    let bindings = (1..=cx.params.values.len()).map(|n| format!("${n}::text AS p{n}")).collect::<Vec<_>>().join(",");
+    // Even unused inputs need a text parameter type in PostgreSQL's parse phase. MySQL types a `?` by its use, so it needs no such row.
+    let bindings = if dialect.is_mysql() {
+        String::new()
+    } else {
+        (1..=cx.params.values.len()).map(|n| format!("${n}::text AS p{n}")).collect::<Vec<_>>().join(",")
+    };
     let source = if bindings.is_empty() { String::new() } else { format!(" FROM (SELECT {bindings}) _aip_input") };
     let sql = format!("SELECT COALESCE(({allow}),false){source}");
-    Ok(Plan { deps: deps_of(facts, &sql), sql, params: cx.params.values, deadline_ms: 2000, output_type: json!({}), cost: 1, null_is_denied: false })
+    let (sql, params) = cx.params.finish(sql);
+    Ok(Plan { deps: deps_of_in(dialect, facts, &sql), sql, params, deadline_ms: 2000, output_type: json!({}), cost: 1, null_is_denied: false })
 }
 
 pub fn plan_read(facts: &Value, req: &Value, caller: &Caller) -> Result<Plan, Reject> {
@@ -230,15 +274,19 @@ pub fn plan_read(facts: &Value, req: &Value, caller: &Caller) -> Result<Plan, Re
 }
 
 pub fn plan_read_with_wire(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_wire::IdWire) -> Result<Plan, Reject> {
-    let mut p = plan_read_inner(facts, req, caller, wire)?;
-    p.deps = deps_of(facts, &p.sql);
+    plan_read_in(Dialect::Postgres, facts, req, caller, wire)
+}
+
+pub fn plan_read_in(dialect: Dialect, facts: &Value, req: &Value, caller: &Caller, wire: crate::id_wire::IdWire) -> Result<Plan, Reject> {
+    let mut p = plan_read_inner(dialect, facts, req, caller, wire)?;
+    p.deps = deps_of_in(dialect, facts, &p.sql);
     Ok(p)
 }
 
-fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_wire::IdWire) -> Result<Plan, Reject> {
+fn plan_read_inner(dialect: Dialect, facts: &Value, req: &Value, caller: &Caller, wire: crate::id_wire::IdWire) -> Result<Plan, Reject> {
     let o = req.as_object().ok_or_else(|| Reject { code: "WIRE.BAD_REQUEST", msg: "요청은 객체".into() })?;
     if o.contains_key("aggregate") {
-        return plan_aggregate(facts, o, caller, wire);
+        return plan_aggregate(dialect, facts, o, caller, wire);
     }
     // offset 키는 정의 budget이 opt-in(maxOffset)했을 때만 허용한다. 선언이 없으면 알 수 없는 키다.
     let max_offset = facts["resources"][o.get("read").and_then(Value::as_str).unwrap_or("")]["exposeRead"]["budget"]["maxOffset"].as_i64();
@@ -265,7 +313,7 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
         return rej("WIRE.NOT_ROOT_QUERYABLE", format!("`{res}`는 관계 대상 전용(budget 없음)"));
     }
     let budget = &ex["budget"];
-    let mut cx = Ctx::new(facts, caller.actor_id, &caller.now);
+    let mut cx = Ctx::new(facts, caller.actor_id, &caller.now).with_dialect(dialect);
     let t = "t".to_string();
     let env = Env { this: Some((t.clone(), res.to_string())), ..Default::default() };
 
@@ -300,7 +348,7 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
                         n_agg += 1;
                     }
                     Some(k) => {
-                        let col = format!("{t}.{}", column(facts, res, f).unwrap());
+                        let col = cx.qualified(&t, &column(facts, res, f).unwrap());
                         let fty = rf["fields"][f]["ty"].as_str().unwrap();
                         let guarded = ref_guarded(Some(k));
                         let policy = matches!(k, "fieldWithPolicy" | "refVisibleWithPolicy");
@@ -314,7 +362,7 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
                             let c = cx.cond(&rf["fieldRead"][f], &env).map_err(internal)?;
                             expr = format!("CASE WHEN {c} THEN {expr} END");
                         }
-                        cols.push((f.clone(), sqlgen::json_scalar(fty, &expr)));
+                        cols.push((f.clone(), cx.json_scalar(fty, &expr)));
                         out.insert(f.clone(), out_ty(fty, policy || guarded));
                     }
                 }
@@ -368,7 +416,7 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
                         n_agg += 1;
                         continue;
                     }
-                    let col = format!("{ta}.{}", column(facts, target, f).unwrap());
+                    let col = cx.qualified(&ta, &column(facts, target, f).unwrap());
                     let fty = tf["fields"][f]["ty"].as_str().unwrap();
                     let redact = !tf["fieldRead"][f].is_null();
                     let guarded = ref_guarded(tf["exposeRead"]["select"][f].as_str());
@@ -381,7 +429,7 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
                         n_fp += 1;
                         e = format!("CASE WHEN {} THEN {e} END", cx.cond(&tf["fieldRead"][f], &tenv).map_err(internal)?);
                     }
-                    pairs.push(format!("'{f}', {}", sqlgen::json_scalar(fty, &e)));
+                    pairs.push(format!("'{f}', {}", cx.json_scalar(fty, &e)));
                     tout.insert(f.to_string(), out_ty(fty, redact || guarded));
                 }
                 // 대상 resource의 행 정책을 다시 적용한다. 안 보이는 관계는 null이 된다.
@@ -397,9 +445,11 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
                 let fk = column(facts, res, rel).unwrap();
                 let jv = cx.alias("j");
                 joins.push(format!(
-                    "LEFT JOIN LATERAL (SELECT json_build_object({}) AS v FROM {} {ta} WHERE {ta}.id = {t}.{fk} AND ({origin}) AND ({row})) {jv} ON TRUE",
-                    pairs.join(", "),
-                    table(target)
+                    "LEFT JOIN LATERAL (SELECT {} AS v FROM {} {ta} WHERE {} = {} AND ({origin}) AND ({row})) {jv} ON TRUE",
+                    json_object(dialect, &pairs),
+                    cx.table(target),
+                    cx.qualified(&ta, "id"),
+                    cx.qualified(&t, &fk)
                 ));
                 cols.push((rel.clone(), format!("{jv}.v")));
                 out.insert(rel.clone(), json!({ "object": tout, "nullable": true, "reason": "대상 행 정책" }));
@@ -431,6 +481,7 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
             }
             let fty = rf["fields"][field]["ty"].as_str().unwrap();
             let col = column(facts, res, field).unwrap();
+            let tcol = cx.qualified(&t, &col);
             let raw = fo.get("value").unwrap_or(&Value::Null);
             // Ref는 traverse와 같게 대상 행 정책을 통과한 경우에만 값이 있는 것으로 본다.
             // 아니면 traverse에서 null로 가린 대상 id를 eq/in으로 확인할 수 있다.
@@ -439,7 +490,7 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
                     let ta = cx.alias("v");
                     let tenv = Env { this: Some((ta.clone(), target.to_string())), ..Default::default() };
                     let row = cx.cond(&facts["resources"][target]["rowRead"], &tenv).map_err(internal)?;
-                    Some(format!("EXISTS (SELECT 1 FROM {} {ta} WHERE {ta}.id = {t}.{col} AND {row})", table(target)))
+                    Some(format!("EXISTS (SELECT 1 FROM {} {ta} WHERE {} = {tcol} AND {row})", cx.table(target), cx.qualified(&ta, "id")))
                 }
                 None => None,
             };
@@ -452,8 +503,8 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
                 let Value::Bool(b) = raw else { return rej("WIRE.BAD_VALUE", "isNull 값은 bool") };
                 let p = cx.params.bind(Some(b.to_string()), "boolean");
                 let is_null = match &visible {
-                    Some(v) => format!("({t}.{col} IS NULL OR NOT {v})"),
-                    None => format!("({t}.{col} IS NULL)"),
+                    Some(v) => format!("({tcol} IS NULL OR NOT {v})"),
+                    None => format!("({tcol} IS NULL)"),
                 };
                 wh.push(format!("({is_null} = {p})"));
                 continue;
@@ -475,7 +526,7 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
                         marks.push(cx.params.bind(Some(v), cast));
                     }
                 }
-                wh.push(and_visible(format!("({t}.{col} IN ({}))", marks.join(", "))));
+                wh.push(and_visible(format!("({tcol} IN ({}))", marks.join(", "))));
                 continue;
             }
             let (v, cast) = check_value(facts, fty, raw, wire)?;
@@ -490,8 +541,8 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
                     return rej("WIRE.VALUE_TOO_LONG", format!("contains 값 {n}자 > 상한 {MAX_CONTAINS_CHARS}자"));
                 }
                 let p = cx.params.bind(Some(v), cast);
-                // strpos는 인자를 리터럴로 비교한다. LIKE와 달리 %, _, \\가 특별한 뜻을 갖지 않는다.
-                wh.push(format!("(strpos({t}.{col}, {p}) > 0)"));
+                // strpos는 인자를 리터럴로 비교한다. LIKE와 달리 %, _, \\가 특별한 뜻을 갖지 않는다. MySQL의 LOCATE도 같다(대소문자는 열 collation을 따른다).
+                wh.push(if dialect.is_mysql() { format!("(LOCATE({p}, {tcol}) > 0)") } else { format!("(strpos({tcol}, {p}) > 0)") });
                 continue;
             }
             if op == "prefix" {
@@ -502,7 +553,11 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
                 }
                 let p = cx.params.bind(Some(v), cast);
                 // A prefix is a literal string; SQL wildcard and escape characters keep their meaning as text.
-                wh.push(format!("(left({t}.{col}, char_length({p})) = {p})"));
+                wh.push(if dialect.is_mysql() {
+                    format!("(LEFT({tcol}, CHAR_LENGTH({p})) = {p})")
+                } else {
+                    format!("(left({tcol}, char_length({p})) = {p})")
+                });
                 continue;
             }
             let sop = match op {
@@ -514,7 +569,7 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
                 _ => return rej("WIRE.FILTER_NOT_ALLOWED", format!("연산 `{op}` 미지원")),
             };
             let p = cx.params.bind(Some(v), cast);
-            wh.push(and_visible(format!("({t}.{col} {sop} {p})")));
+            wh.push(and_visible(format!("({tcol} {sop} {p})")));
         }
     }
 
@@ -542,12 +597,12 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
                 "desc" => "DESC",
                 d => return rej("WIRE.BAD_REQUEST", format!("정렬 방향 `{d}`")),
             };
-            order.push(format!("{t}.{} {dir}", column(facts, res, f).unwrap()));
+            order.push(order_term(dialect, &cx.qualified(&t, &column(facts, res, f).unwrap()), dir == "DESC"));
             sort_keys.push((f.to_string(), dir == "DESC"));
         }
     }
     // 같은 값이 많을 때 페이지가 흔들리지 않게 항상 id를 마지막 정렬 키로 둔다.
-    order.push(format!("{t}.id ASC"));
+    order.push(format!("{} ASC", cx.qualified(&t, "id")));
     if !sort_keys.iter().any(|(f, _)| f == "id") {
         sort_keys.push(("id".to_string(), false));
     }
@@ -575,7 +630,7 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
             }
             let (v, cast) = check_value(facts, fty, &am[f.as_str()], wire)?;
             let p = cx.params.bind(Some(v), cast);
-            bounds.push((format!("{t}.{}", column(facts, res, f).unwrap()), *desc, p));
+            bounds.push((cx.qualified(&t, &column(facts, res, f).unwrap()), *desc, p));
         }
         // (k1,k2,..) > (v1,v2,..)를 방향별로 전개한다: k1 op v1 OR (k1 = v1 AND k2 op v2) OR ...
         // 모든 키가 non-null이라 NULL 비교로 행이 빠지지 않는다. 마지막 키는 id라 전체가 유일하다.
@@ -614,23 +669,27 @@ fn plan_read_inner(facts: &Value, req: &Value, caller: &Caller, wire: crate::id_
     if cost > max_cost {
         return rej("WIRE.COST_EXCEEDED", format!("추정 비용 {cost} > budget cost {max_cost}"));
     }
-    let lp = cx.params.bind(Some(limit.to_string()), "bigint");
+    let lp = cx.params.bind_count(limit, "bigint");
     let offset_sql = match offset {
-        Some(x) => format!(" OFFSET {}", cx.params.bind(Some(x.to_string()), "bigint")),
+        Some(x) => format!(" OFFSET {}", cx.params.bind_count(x, "bigint")),
         None => String::new(),
     };
     let obj: Vec<String> = cols.iter().map(|(k, v)| format!("'{k}', {v}")).collect();
+    let projection = match dialect {
+        Dialect::Postgres => format!("{}::text", json_object(dialect, &obj)),
+        Dialect::MySql => format!("CAST({} AS CHAR CHARACTER SET utf8mb4)", json_object(dialect, &obj)),
+    };
     let sql = format!(
-        "SELECT json_build_object({})::text FROM {} {t} {} WHERE {} ORDER BY {} LIMIT {lp}{offset_sql}",
-        obj.join(", "),
-        table(res),
+        "SELECT {projection} FROM {} {t} {} WHERE {} ORDER BY {} LIMIT {lp}{offset_sql}",
+        cx.table(res),
         joins.join(" "),
         wh.join(" AND "),
         order.join(", ")
     );
+    let (sql, params) = cx.params.finish(sql);
     Ok(Plan {
         sql,
-        params: cx.params.values,
+        params,
         deadline_ms: budget["deadlineMs"].as_u64().unwrap(),
         output_type: json!({ "rows": out, "maxRows": limit }),
         cost,
@@ -694,7 +753,7 @@ fn plan_traverse_many(
         if tf["exposeRead"]["select"][f] == "aggregate" {
             return rej("WIRE.FIELD_NOT_EXPOSED", format!("`{target}.{f}`는 집계라 1:N traverse에서 쓸 수 없음"));
         }
-        let col = format!("{ob}.{}", column(facts, target, f).unwrap());
+        let col = cx.qualified(&ob, &column(facts, target, f).unwrap());
         let fty = tf["fields"][f]["ty"].as_str().unwrap();
         let redact = !tf["fieldRead"][f].is_null();
         let guarded = ref_guarded(tf["exposeRead"]["select"][f].as_str());
@@ -707,26 +766,44 @@ fn plan_traverse_many(
             n_fp += 1;
             e = format!("CASE WHEN {} THEN {e} END", cx.cond(&tf["fieldRead"][f], &outer_env).map_err(internal)?);
         }
-        pairs.push(format!("'{f}', {}", sqlgen::json_scalar(fty, &e)));
+        pairs.push(format!("'{f}', {}", cx.json_scalar(fty, &e)));
         tout.insert(f.to_string(), out_ty(fty, redact || guarded));
     }
     let row = cx.cond(&tf["rowRead"], &inner_env).map_err(internal)?;
     let fk = column(facts, target, tm["via"].as_str().unwrap()).unwrap();
     let sort_col = column(facts, target, tm["sort"]["field"].as_str().unwrap_or("id")).unwrap();
-    let dir = if tm["sort"]["desc"] == true { "DESC" } else { "ASC" };
-    let lp = cx.params.bind(Some(limit.to_string()), "bigint");
+    let desc = tm["sort"]["desc"] == true;
+    let dialect = cx.dialect;
+    let lp = cx.params.bind_count(limit, "bigint");
     let jv = cx.alias("j");
-    let join = format!(
-        "LEFT JOIN LATERAL (SELECT coalesce(json_agg(json_build_object({pairs}) ORDER BY {ob}.{sort_col} {dir}, {ob}.id ASC), '[]'::json) AS v \
-         FROM (SELECT {ta}.* FROM {tbl} {ta} WHERE {ta}.{fk} = {t}.id AND {row} ORDER BY {ta}.{sort_col} {dir}, {ta}.id ASC LIMIT {lp}) {ob}) {jv} ON TRUE",
-        pairs = pairs.join(", "),
-        tbl = table(target),
+    let inner_order = format!("{}, {}", order_term(dialect, &cx.qualified(&ta, &sort_col), desc), cx.qualified(&ta, "id"));
+    let from = format!(
+        "FROM (SELECT {ta}.* FROM {tbl} {ta} WHERE {} = {} AND {row} ORDER BY {inner_order} ASC LIMIT {lp}) {ob}",
+        cx.qualified(&ta, &fk),
+        cx.qualified(t, "id"),
+        tbl = cx.table(target),
     );
+    let join = match dialect {
+        Dialect::Postgres => {
+            let dir = if desc { "DESC" } else { "ASC" };
+            let outer_sort = cx.qualified(&ob, &sort_col);
+            let outer_id = cx.qualified(&ob, "id");
+            format!(
+                "LEFT JOIN LATERAL (SELECT coalesce(json_agg(json_build_object({pairs}) ORDER BY {outer_sort} {dir}, {outer_id} ASC), '[]'::json) AS v \
+                 {from}) {jv} ON TRUE",
+                pairs = pairs.join(", "),
+            )
+        }
+        // JSON_ARRAYAGG에는 ORDER BY가 없다. LIMIT가 붙은 파생 테이블은 병합되지 않고 정렬된 채 물질화되어 그 순서로 모인다.
+        Dialect::MySql => {
+            format!("LEFT JOIN LATERAL (SELECT COALESCE(JSON_ARRAYAGG({}), JSON_ARRAY()) AS v {from}) {jv} ON TRUE", json_object(dialect, &pairs))
+        }
+    };
     let ty = json!({ "array": tout, "nullable": false, "maxItems": limit, "reason": "대상 행 정책으로 줄어든 목록. 없으면 빈 배열" });
     Ok((join, format!("{jv}.v"), ty, limit.saturating_mul(1 + n_fp)))
 }
 
-fn plan_aggregate(facts: &Value, o: &Map<String, Value>, caller: &Caller, wire: crate::id_wire::IdWire) -> Result<Plan, Reject> {
+fn plan_aggregate(dialect: Dialect, facts: &Value, o: &Map<String, Value>, caller: &Caller, wire: crate::id_wire::IdWire) -> Result<Plan, Reject> {
     keys(o, &["aggregate", "input"], "aggregate 요청")?;
     let name = o["aggregate"].as_str().unwrap_or("");
     let (res, an) = name.split_once('.').ok_or(Reject { code: "WIRE.BAD_REQUEST", msg: "aggregate는 `Resource.name`".into() })?;
@@ -735,7 +812,7 @@ fn plan_aggregate(facts: &Value, o: &Map<String, Value>, caller: &Caller, wire: 
         return rej("WIRE.NOT_EXPOSED", format!("`{name}`는 노출된 집계가 아님"));
     }
     let a = &rf["aggregates"][an];
-    let mut cx = Ctx::new(facts, caller.actor_id, &caller.now);
+    let mut cx = Ctx::new(facts, caller.actor_id, &caller.now).with_dialect(dialect);
     let empty = Map::new();
     let given = o.get("input").and_then(Value::as_object).unwrap_or(&empty);
     let mut input = HashMap::new();
@@ -774,10 +851,16 @@ fn plan_aggregate(facts: &Value, o: &Map<String, Value>, caller: &Caller, wire: 
     let wenv = Env { this: Some((al.clone(), src.to_string())), vars: HashMap::new(), input };
     let w = if a["where"].is_null() { "TRUE".into() } else { cx.cond(&a["where"], &wenv).map_err(internal)? };
     // guard가 거짓이면 NULL을 돌려 ACCESS_DENIED로 바꾼다. 없는 동아리와 남의 동아리를 같은 결과로 만든다.
-    let sql = format!("SELECT (CASE WHEN {guard} THEN (SELECT {} FROM {} {al} WHERE {w}) END)::text", measure(facts, &mut cx, a, &al)?, table(src));
+    let measured = measure(facts, &mut cx, a, &al)?;
+    let value = format!("(CASE WHEN {guard} THEN (SELECT {measured} FROM {} {al} WHERE {w}) END)", cx.table(src));
+    let sql = match dialect {
+        Dialect::Postgres => format!("SELECT {value}::text"),
+        Dialect::MySql => format!("SELECT CAST({value} AS CHAR CHARACTER SET utf8mb4)"),
+    };
+    let (sql, params) = cx.params.finish(sql);
     Ok(Plan {
         sql,
-        params: cx.params.values,
+        params,
         // C의 단독 집계 노출에는 budget이 없다. spike는 고정 2s를 쓰고 이 공백을 결과 문서에 남긴다.
         deadline_ms: 2000,
         output_type: json!({ "value": out_ty(a["ty"].as_str().unwrap(), false) }),

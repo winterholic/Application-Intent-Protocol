@@ -2,6 +2,7 @@
 use crate::mysql_catalog::{
     CatalogError, ColumnRow, ForeignKeyRow, IndexRow, MysqlCatalogReader, MysqlDriverConfig, TableManifest, introspect_schema,
 };
+pub use mysql_async;
 use mysql_async::prelude::Queryable;
 use mysql_async::{IsolationLevel, Opts, OptsBuilder, Pool, PoolConstraints, PoolOpts, Row, SslOpts, Transaction, TxOpts, from_row_opt};
 use std::path::{Path, PathBuf};

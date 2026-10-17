@@ -371,6 +371,7 @@ pub(super) fn build_with_environment(config: &super::Config, lookup: &impl Fn(&s
         data_changes: Default::default(),
         otlp,
         otlp_exporter: None,
+        relational: None,
     };
     result.validate().map_err(|_| configuration_error())?;
     Ok(result)

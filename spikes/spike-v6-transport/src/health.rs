@@ -61,6 +61,9 @@ async fn ready(runtime: &Runtime, permit: Option<tokio::sync::SemaphorePermit<'s
         Some(permit) => permit,
         None => READY_GATE.acquire().await.map_err(|_| "WIRE.DB_UNAVAILABLE")?,
     };
+    if let Some(backend) = &runtime.infrastructure.relational {
+        return backend.ready().await;
+    }
     let pool = runtime.db_pool.as_ref().ok_or("WIRE.DB_UNAVAILABLE")?;
     let db = pool.acquire().await.map_err(|_| "WIRE.DB_UNAVAILABLE")?;
     let result = async {

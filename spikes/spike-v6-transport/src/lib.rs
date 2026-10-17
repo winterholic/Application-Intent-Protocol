@@ -18,6 +18,7 @@ mod metrics;
 mod object_transport;
 mod operation;
 pub mod otlp;
+mod relational;
 pub mod pool;
 pub mod rag_transport;
 pub mod realtime;
@@ -1224,6 +1225,22 @@ async fn serve_conn(
     } else {
         None
     };
+    if let Some(backend) = runtime.infrastructure.relational.clone() {
+        let mut result = relational::handle(&*backend, &facts, &path, &body, session.as_ref().map(|s| s.actor_id), wire).await;
+        if path == "/read" && result["ok"] == true {
+            if let Some(fingerprint) = contract_fingerprint {
+                result["contractFingerprint"] = json!(&*fingerprint);
+            }
+            if let Some(session) = session {
+                let remaining = session.remaining_ms();
+                if remaining == 0 {
+                    return reply(&mut w, &err("WIRE.TOKEN_EXPIRED", "읽는 동안 세션 만료")).await;
+                }
+                result["maxAgeMs"] = json!(result["maxAgeMs"].as_u64().unwrap_or(0).min(remaining));
+            }
+        }
+        return reply(&mut w, &result.to_string()).await;
+    }
     let Some(pool) = runtime.db_pool.as_ref() else {
         return reply(&mut w, &err("WIRE.DB_UNAVAILABLE", "DB pool 설정 없음")).await;
     };

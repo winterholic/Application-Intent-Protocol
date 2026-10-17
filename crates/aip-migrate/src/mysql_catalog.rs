@@ -52,8 +52,10 @@ impl IndexRow {
     }
 }
 
+/// Adjacently tagged: serde cannot serialize an internally tagged tuple variant that holds a sequence or string, which made
+/// the fingerprint of any schema with an ENUM, DATETIME or DECIMAL column fail.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum LogicalType {
     Integer { bits: u8, unsigned: bool, display_width: Option<u16>, boolean_alias: bool },
     Enum(Vec<String>),
