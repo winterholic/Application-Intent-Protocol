@@ -201,6 +201,14 @@ class Client:
             self._principal = self._describe(self._token)
         return self._principal
 
+    def session(self) -> dict:
+        """Return the actor established by the AIP server, never one inferred from token claims.
+
+        An anonymous client returns ``{"actorId": None}``. A bearer token is validated by the server's
+        ``/session`` endpoint before its bound actor id is returned.
+        """
+        return {"actorId": self._ensure_principal()}
+
     def _ensure_contract(self) -> None:
         if self.contract_fingerprint is None:
             self.discover()

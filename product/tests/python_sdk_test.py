@@ -38,6 +38,13 @@ class FakeServer:
 
 
 class PythonSdkTest(unittest.TestCase):
+    def test_session_returns_the_verified_actor_id_from_aip(self):
+        server = FakeServer()
+        client = connect("http://aip", "t1", transport=server)
+
+        self.assertEqual(client.session(), {"actorId": "42"})
+        self.assertEqual([call[0] for call in server.calls], ["/session"])
+
     def test_discovers_fingerprint_and_sends_it_on_contract_paths(self):
         server = FakeServer()
         server.script("/capabilities", {"ok": True, "contractFingerprint": FP, "operations": {}})

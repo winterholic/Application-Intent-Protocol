@@ -1,0 +1,13 @@
+{% extends "layout.html" %}
+{% block title %}Login - FlaskBB{% endblock %}
+{% block content %}
+<div class="page-view"><div class="panel page-panel">
+    <div class="panel-heading page-head">Login</div>
+    <div class="panel-body page-body">
+        <p>Sign in with the forum account provider.</p>
+        <a class="btn btn-success" href="{{ login_url }}">Continue to login</a>
+        <p class="help-block"><a href="{{ registration_url }}">Not a member yet? Register</a></p>
+        <p class="help-block"><a href="{{ login_url }}">Forgot your password? Continue to the account provider's login page.</a></p>
+    </div>
+</div></div>
+{% endblock %}

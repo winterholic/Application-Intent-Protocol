@@ -23,6 +23,29 @@
 
 **다음 진척:** 결정 전에도 고정 원본 auth source/runtime의 누락 edge와 기존 AIP Forum/Topic/Post read/apply를 실제 renderer와 연결하는 UI host 골격은 진행할 수 있다. 다만 signup 완료/인증된 새 사용자 경로 또는 UI→AIP 성공을 선언할 수는 없다. 큰 인증 계약 결정은 위 대안과 함께 기획으로 올린다. F01–F17 분모, 전체 앱 backend 중단 gate, 삭제/tombstone 및 tracker 의미 차이는 그대로 유지한다.
 
+## 2026-10-17 현재 Run — OIDC/AIP renderer 첫 증분 (E2E 차단)
+
+`porting/flaskbb/ui/app.py`에 별도 Flask renderer를 추가했다. OIDC authorization-code + PKCE S256 시작, browser-bound state cookie, issuer/audience/nonce/signature/시간 검증, opaque HttpOnly local session, CSRF-검사 logout을 구현했고 forum 홈·forum topic list·topic posts GET은 AIP Python caller SDK만 통해 읽는다. 이 호스트는 원본 FlaskBB app/ORM/업무 DB를 import하지 않는다. upstream의 Aurora CSS/static과 forum CSS class 계층은 재사용하지만 현재 Jinja 화면은 upstream 템플릿 그 자체가 아닌 작은 adapted renderer다. 따라서 요구된 원본 템플릿 전체 보존과 F01/F05 화면 동등성은 아직 달성하지 못했다. 코드 검토와 단위시험만으로 브라우저 실사용 동등성을 주장하지 않는다.
+
+renderer에서 AIP 서버가 검증한 현재 actor id를 얻도록 Python SDK에 `Client.session()`을 공개하고, `product/SDK.md` 및 `product/tests/python_sdk_test.py`를 갱신했다. 이 메서드는 기존 `/session` 경로만 부르며 신규 사용자 생성/바인딩 권한은 없다.
+
+### 실행 증거와 차단 범위
+
+- AIP: dedicated PostgreSQL `aip_flaskbb` host `55439`, schema `aip_flaskbb_auth`; 실제 `target/debug/aip service serve --config /private/tmp/flaskbb-keycloak-ui-aip.json porting/flaskbb/app.aip`는 `127.0.0.1:58083`에서 JWT access-token 인증으로 기동했고 `/health`는 `{"ok":true,"status":"live"}`였다. 그 뒤 즉시 중지했다. 테스트 config는 CORS origin `http://127.0.0.1:58082`이며 `/private/tmp` test-only file이다.
+- renderer: Python 3.14.7 격리 venv, Flask 3.1.3, joserfc 1.7.5, local product Python SDK source (`PYTHONPATH=product/python`)로 `127.0.0.1:58082`에 띄웠다. browser MCP에서 `/` 및 original-asset CSS/woff2는 200, `/auth/login`은 302였다. Favicon 404 한 건도 보였다.
+- Browser: `Continue to login`이 Keycloak TLS test issuer `https://127.0.0.1:58094`로 이동했지만 configured `ttakkari_browser`는 `chrome-error://chromewebdata/`, `net::ERR_CERT_AUTHORITY_INVALID`를 표시했다. 예외 수락·보안 설정 변경·다른 browser/셸 실행 없이 browser를 닫았다. 따라서 callback·PKCE token exchange·AIP SDK browser-auth call을 실행하지 않았다.
+- Keycloak isolated test realm에 `aip-flaskbb` client를 public authorization-code client로 설정하고 redirect URI `http://127.0.0.1:58082/oidc/callback`, origin, standard flow 및 PKCE S256 요청을 설정했다. Client attribute에 서버 강제 PKCE가 설정됐는지는 확인되지 않았다. `verifyEmail=true`, `registrationAllowed=true`, `loginWithEmailAllowed=true`, `resetPasswordAllowed=true`가 realm metadata에서 관측됐다. SMTP/Mailpit 등록메일·재설정메일은 이 Keycloak realm에 연결/시험하지 않았다. 기존 synthetic `auth_new` 계정의 fixture password를 재설정했으나 값은 기록하지 않는다.
+- 실제 browser 로그인 단계 이후 AIP `/session`, `User`/`Category`/`Forum` reads, forum/topic 화면, AIP DB, create/reply/edit/denial, IdP logout, restart/DB 보존 및 original 업무 backend 중지 상태는 모두 **미실행**이다. 특히 같은 test subject의 사전 principal bind 계정은 기존 회원에 대한 로그인 관측일 뿐 신규 가입/온보딩 증거가 아니다.
+
+### 이번 코드 검증 (전체 gate가 아님)
+
+- `python3 -m unittest product.tests.python_sdk_test` (Python 3.14.7 isolated venv, fake transport protocol tests): 22 passed, 0 failed. 2개의 기존 ResourceWarning(닫히지 않은 test socket/HTTPError 임시 객체)이 함께 출력됐다.
+- `python3 -m unittest porting.flaskbb.tests.test_ui_host`: 4 passed, 0 failed. 이들은 query 분기, PKCE redirect 생성, browser-state mismatch 차단, CSRF logout을 검사하는 unit tests이며 실제 IdP/UI 통합 증거가 아니다.
+- `target/debug/aip service check porting/flaskbb/app.aip`: `ok:true`, advisories `[]`.
+- `git diff --check`: clean.
+
+결론: 새 UI code와 SDK actor-session read API가 생겼지만 **실제 browser login과 UI→AIP 요청은 아직 한 번도 성공하지 않았다.** UI의 auth callback도 현재 AIP auth bridge contract를 만나 신규/미연결 주체에 실패한다. 원본 Jinja 템플릿 적용, trusted local IdP TLS 시험기반, 새 주체 자동 provisioning 제품 결정 및 실제 signup email lifecycle이 다음 blocking gate다. 전체 F01–F17, 원본 업무 backend 중단, 의미 동등성, clean deployment gate는 모두 유지된다.
+
 ## 실행 환경과 원본 고정본 실제 결과
 
 OrbStack Docker 29.4.0의 Linux/aarch64에서 실행. Python 3.7.17 Bullseye image digest는 `f36f6fe9ddb2622aab9803944cbe7e2bc50be75d624a081f7895e60e7c6b7f0a`. 공개 upstream은 read-only clone에서 고정 SHA로 export했다. 컨테이너 안 `/opt/flaskbb`는 실행용 사본이며 upstream snapshot은 수정하지 않았다.

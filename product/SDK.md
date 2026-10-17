@@ -126,6 +126,7 @@ from aip_sdk import AipError, WriteUnsettled, connect
 
 # 생성 binding의 `export const contractFingerprint = "..."` 값을 고정하면 배포가 바뀐 것을 감지한다.
 client = connect("https://api.example.com", access_token, contract_fingerprint)
+identity = client.session()  # {"actorId": "..."}; verified by the AIP server, not inferred from token claims
 rows = client.read({"read": "Event", "select": ["id", "checked"]})
 try:
     result = client.apply({"apply": "Event.mark", "target": {"ids": ["11"]}}, key="mark-11")
@@ -135,6 +136,8 @@ length = client.operation("textLength", {"text": "가😀A"})["length"]
 job = client.jobs.enqueue("report", {"text": "hello"}, key="report-42")
 run = client.jobs.wait(job["id"])
 ```
+
+`session()` validates the access token through `/session` and returns the already bound AIP actor id. An anonymous client returns `{"actorId": null}`. It never creates or binds an actor; resource reads and writes still pass through normal server authorization.
 
 | 기능 | TypeScript SDK와의 관계 |
 |---|---|
