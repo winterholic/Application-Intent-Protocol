@@ -417,8 +417,20 @@ async fn marker(db: &impl GenericClient, schema: &str) -> Result<Marker, Value> 
 
 async fn verified_marker(db: &impl GenericClient, schema: &str) -> Result<Marker, Value> {
     let m = marker(db, schema).await?;
-    if m.generator_version != VERSION || m.facts_digest != digest(&m.facts) || m.ddl_digest != creation(schema, &m.facts)?.1 {
+    if m.generator_version != VERSION || m.facts_digest != digest(&m.facts) {
         return Err(err("WIRE.SCHEMA_MISMATCH", "metadata의 facts 또는 생성기 버전 불일치"));
+    }
+    if m.ddl_digest != creation(schema, &m.facts)?.1 {
+        // The operator has to act in both cases, but differently: an earlier release's schema is upgraded, anything else is drift.
+        let known_earlier_release = parent_job_ddl_digest(schema, &m.facts).is_ok_and(|parent| parent == m.ddl_digest);
+        return Err(err(
+            "WIRE.SCHEMA_MISMATCH",
+            if known_earlier_release {
+                "이전 릴리스가 만든 schema라 업그레이드가 필요함: aip service migrate로 계획을 확인하고 --apply로 적용한 뒤 다시 시작"
+            } else {
+                "metadata의 DDL이 이 릴리스의 생성기와 다르며 알려진 이전 형식도 아님"
+            },
+        ));
     }
     if m.structure_digest != structure(db, schema).await? {
         return Err(err("WIRE.SCHEMA_MISMATCH", "실제 DB 구조가 journal 구조와 다름"));
@@ -1488,6 +1500,28 @@ mod trace_id_upgrade_tests {
         let (current, _) = creation(schema, &facts).unwrap();
         assert_eq!(parent.len(), current.len());
         assert_eq!(parent.iter().zip(&current).filter(|(old, new)| old != new).count(), 1, "only the aip_jobs statement differs");
+    }
+
+    /// `serve` on a schema the earlier release made must tell the operator what to run, and must not say "drift" for it.
+    #[tokio::test]
+    async fn serving_a_schema_from_the_earlier_release_names_the_upgrade_command() {
+        let db_url = database_url();
+        let schema = format!("aip_trace_hint_{}_{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed));
+        let facts = job_facts();
+        make_parent_job_schema(&db_url, &schema, &facts).await;
+        let earlier = preflight(&db_url, &schema, &facts).await.unwrap_err();
+
+        let drifted_schema = format!("{schema}_drift");
+        make_parent_job_schema(&db_url, &drifted_schema, &facts).await;
+        let db = connect(&db_url).await.unwrap();
+        db.execute(&format!("UPDATE {drifted_schema}.{META} SET ddl_digest='not-a-known-digest'"), &[]).await.unwrap();
+        let drifted = preflight(&db_url, &drifted_schema, &facts).await.unwrap_err();
+        db.batch_execute(&format!("DROP SCHEMA {schema} CASCADE; DROP SCHEMA {drifted_schema} CASCADE")).await.unwrap();
+
+        assert_eq!(earlier["code"], "WIRE.SCHEMA_MISMATCH", "{earlier}");
+        assert!(earlier["message"].as_str().unwrap().contains("aip service migrate"), "{earlier}");
+        assert_eq!(drifted["code"], "WIRE.SCHEMA_MISMATCH", "{drifted}");
+        assert!(!drifted["message"].as_str().unwrap().contains("aip service migrate"), "unknown drift is not an upgrade: {drifted}");
     }
 
     async fn make_parent_job_schema(db_url: &str, schema: &str, facts: &Value) {
