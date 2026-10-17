@@ -517,4 +517,47 @@ mod tests {
         let mut conn = driver.pool.get_conn().await.unwrap();
         conn.query_drop("ALTER TABLE aip_mysql_test.users DROP COLUMN fence_probe").await.unwrap();
     }
+
+    #[tokio::test]
+    #[ignore = "requires a disposable MySQL or MariaDB database URL in AIP_TEST_MYSQL_URL"]
+    async fn live_information_schema_reads_do_not_pin_target_table_metadata_for_the_business_transaction() {
+        let url = std::env::var("AIP_TEST_MYSQL_URL").expect("set AIP_TEST_MYSQL_URL to a disposable local test database URL");
+        let driver = MysqlDriver::from_url(&url).unwrap();
+        let catalog_table = "aip_stage6_catalog_mdl_probe";
+        let business_table = "aip_stage6_business_mdl_probe";
+
+        let mut setup = driver.pool.get_conn().await.unwrap();
+        setup.query_drop(format!("DROP TABLE IF EXISTS `{catalog_table}`, `{business_table}`")).await.unwrap();
+        setup.query_drop(format!("CREATE TABLE `{catalog_table}` (id INT PRIMARY KEY) ENGINE=InnoDB")).await.unwrap();
+        setup.query_drop(format!("CREATE TABLE `{business_table}` (id INT PRIMARY KEY) ENGINE=InnoDB")).await.unwrap();
+        drop(setup);
+
+        // A transaction snapshot over INFORMATION_SCHEMA is not a metadata lock on the business table.
+        let mut catalog_reader = driver.pool.get_conn().await.unwrap();
+        catalog_reader.query_drop("START TRANSACTION").await.unwrap();
+        let _: Vec<String> = catalog_reader
+            .exec(
+                "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION",
+                (&catalog_table,),
+            )
+            .await
+            .unwrap();
+        let mut catalog_ddl = driver.pool.get_conn().await.unwrap();
+        catalog_ddl.query_drop("SET SESSION lock_wait_timeout = 1").await.unwrap();
+        catalog_ddl.query_drop(format!("ALTER TABLE `{catalog_table}` ADD COLUMN catalog_probe INT NULL")).await.unwrap();
+        catalog_reader.query_drop("COMMIT").await.unwrap();
+        drop(catalog_ddl);
+        drop(catalog_reader);
+
+        // A real business-table read in the same transaction does retain MDL until transaction end.
+        let mut business_reader = driver.pool.get_conn().await.unwrap();
+        business_reader.query_drop("START TRANSACTION").await.unwrap();
+        let _: Option<u32> = business_reader.exec_first(format!("SELECT id FROM `{business_table}` LIMIT 1"), ()).await.unwrap();
+        let mut business_ddl = driver.pool.get_conn().await.unwrap();
+        business_ddl.query_drop("SET SESSION lock_wait_timeout = 1").await.unwrap();
+        assert!(business_ddl.query_drop(format!("ALTER TABLE `{business_table}` ADD COLUMN business_probe INT NULL")).await.is_err());
+        business_reader.query_drop("COMMIT").await.unwrap();
+        business_ddl.query_drop(format!("ALTER TABLE `{business_table}` ADD COLUMN business_probe INT NULL")).await.unwrap();
+        business_ddl.query_drop(format!("DROP TABLE `{catalog_table}`, `{business_table}`")).await.unwrap();
+    }
 }
