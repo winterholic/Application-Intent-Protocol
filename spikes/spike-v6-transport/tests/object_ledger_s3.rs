@@ -210,6 +210,30 @@ async fn signing_uploads_is_refused_once_the_owner_quota_is_signed_for() {
     assert_eq!(fixture.control("alice", "/objects/sign", put_request(8 * MIB)).await["ok"], true, "the released 4 MiB makes room");
 }
 
+/// Many simultaneous HTTP sign requests from one owner cannot jointly sign more than the quota, and another owner is unaffected.
+/// This pins the contract through the server. It is NOT a race detector: the server serializes signing enough that removing the owner lock
+/// does not fail it (measured). The lock itself is covered by `concurrent_reservations_cannot_jointly_exceed_the_quota` in aip-execution.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn simultaneous_sign_requests_cannot_jointly_exceed_the_owner_quota() {
+    let fixture = Fixture::start(offline_store(10 * MIB, 100)).await;
+    let attempts = futures_util::future::join_all((0..16).map(|_| fixture.control("alice", "/objects/sign", put_request(3 * MIB)))).await;
+    // The server also bounds concurrent signing (WIRE.OBJECT_CAPACITY); the quota must hold whichever way an attempt is answered.
+    for body in &attempts {
+        let code = body["code"].as_str().unwrap_or("");
+        assert!(body["ok"] == true || code == "WIRE.QUOTA_EXCEEDED" || code == "WIRE.OBJECT_CAPACITY", "unexpected answer: {body}");
+    }
+    let signed = attempts.iter().filter(|body| body["ok"] == true).count() as i64;
+    assert!((1..=3).contains(&signed), "10 MiB holds at most three 3 MiB uploads, signed {signed}");
+    assert_eq!(fixture.number(BYTES).await, signed * 3 * MIB as i64, "the ledger holds exactly what was signed");
+    // Serially, the remaining room is used and then refused.
+    for _ in signed..3 {
+        assert_eq!(fixture.control("alice", "/objects/sign", put_request(3 * MIB)).await["ok"], true);
+    }
+    assert_eq!(fixture.control("alice", "/objects/sign", put_request(3 * MIB)).await["code"], "WIRE.QUOTA_EXCEEDED");
+    assert_eq!(fixture.number(BYTES).await, 9 * MIB as i64);
+    assert_eq!(fixture.control("bob", "/objects/sign", put_request(10 * MIB)).await["ok"], true, "quota is per owner");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn object_count_ceiling_applies_to_signed_uploads() {
     let fixture = Fixture::start(offline_store(100 * MIB, 2)).await;
@@ -397,4 +421,25 @@ async fn live_known_limit_an_upload_finishing_after_its_reservation_was_released
     tokio::time::sleep(Duration::from_millis(1500)).await;
     assert_eq!(fixture.number(BYTES).await, 0, "the object exists in the bucket but the ledger does not count it");
     assert_eq!(fixture.number(ROWS).await, 0);
+}
+
+/// KNOWN LIMIT, pinned on purpose: only objects the ledger has seen are counted. An object that was already in the bucket before the ledger
+/// existed (for example uploaded by an earlier release) has no row, so it never counts toward the owner quota and the owner can sign a full
+/// quota on top of it. Forced here by removing the row of an uploaded object, which is exactly the state such an object has.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "run through scripts/test-minio-object-storage.sh with the TLS MinIO fixture"]
+async fn live_known_limit_an_object_that_predates_the_ledger_is_not_counted() {
+    let (store, client) = live_store(10 * MIB, 10);
+    let fixture = Fixture::start(store).await;
+    let signed = fixture.control("alice", "/objects/sign", put_request(3 * MIB)).await;
+    assert_eq!(signed["ok"], true, "{signed}");
+    assert!(put_to(&client, &signed, vec![5; (3 * MIB) as usize]).await.is_success());
+    fixture.make_all_due().await;
+    fixture.wait_until("the uploaded object is confirmed at its real size", BYTES, 3 * MIB as i64).await;
+
+    fixture.db.execute(&format!("DELETE FROM {}.aip_object_ledger", fixture.infra), &[]).await.unwrap();
+    assert_eq!(fixture.number(BYTES).await, 0, "the object is in the bucket but has no ledger row");
+    let second = fixture.control("alice", "/objects/sign", put_request(10 * MIB)).await;
+    assert_eq!(second["ok"], true, "a full quota can be signed on top of the uncounted object: {second}");
+    assert_eq!(fixture.number(BYTES).await, 10 * MIB as i64);
 }
