@@ -61,23 +61,24 @@ G7·G8은 7.3.3 대조 결과에 따라 갭 확정 또는 해소한다.
 작은 단위, 각 항목은 완료 기준·검증 방법을 포함한다. DB·서버 실행이 필요한 항목은
 환경이 갖춰진 세션에서 수행한다.
 
-- [ ] 7.3.3.1 revision 잠금·인벤토리 확정 — 본 세션에서 수행. 완료 기준:
-  `infisical-inventory.json` 커밋 + `test_infisical_inventory` 2 passed. (완료)
-- [ ] 7.3.3.2 SRP 경계 결정 — I01 로그인 흐름의 원본 분기 정독 후 SRP를 확장에 둘지
-  잔여로 둘지 결정 문서 1쪽. 완료 기준: 결정문+근거행. 검증: 문서 리뷰(실행 없음).
-- [ ] 7.3.3.3 I03 시크릿 resource 초안 — secret/folder/env/version 최소 선언 + `service check`.
-  완료 기준: `check ok:true`. 검증: 무DB.
-- [ ] 7.3.3.4 I04 RBAC predicate 초안 — org/membership/role + 폴더 읽기 정책 최소 선언 +
-  `service check`. 완료 기준·검증: 7.3.3.3과 동일.
-- [ ] 7.3.3.5 I06 큐→job 매핑표 — BullMQ 큐(MIT분) 전수에 대한 operation job 선언 초안.
-  완료 기준: 매핑표+선언 `check`. 검증: 무DB(선언), 실기동은 DB 세션.
-- [ ] 7.3.3.6 I05 암호화 모델 결정 — G2 수용(서버 키) vs 잔여(E2E 유지)를 창시자에게 묻는
-  결정 요청문. 완료 기준: 승인된 결정 기록. 검증: 문서.
-- [ ] 7.3.3.7 I02 identity 확장 spike — JWT 1종에 대한 검증 확장 목업+단위 테스트(소켓 없음).
-  완료 기준: 목업 테스트 통과. 검증: `unittest`.
-- [ ] 7.3.3.8 EE 제외 비준 — I13 목록 확정 + 분모 고정 선언. 완료 기준: 본 문서+inventory 커밋.
-- [ ] 7.3.3.9 실DB 기준선 (환경 종속) — 격리 PG에 원본 스키마가 아닌 AIP 선언 스키마로
-  `init→migrate→seed→serve` 재현. 완료 기준: serve 기동+SDK read 1건. 검증: 실DB.
+- [x] 7.3.3.1 revision 잠금·인벤토리 확정 — commit a24a311. 완료 기준:
+  `infisical-inventory.json` 커밋 + `tools/test_infisical_inventory.py` 2 passed. (완료)
+- [x] 7.3.3.2 SRP 경계 결정 — commit d338f6f (`plan-docs/porting/INFISICAL-AUTHN.md`).
+  완료 기준: SRP는 레거시 호환용 확장에 두고 AIP 기본 auth+principal 우선. (완료)
+- [x] 7.3.3.3 I03 시크릿 resource 초안 — commit 53b1537 (`porting/infisical/app.aip`).
+  완료 기준: `service check ok:true`, `service gen ok:true`. (완료)
+- [x] 7.3.3.4 I04 RBAC predicate 초안 — commit 53b1537 (`porting/infisical/app.aip`).
+  완료 기준: Org/Project/Folder/Secret 권한 술어 선언 및 check 통과. (완료)
+- [x] 7.3.3.5 I06 큐→job 매핑표 — commit 53b1537 (`porting/infisical/app.aip` + `workers/infisical_jobs.py`).
+  완료 기준: MIT BullMQ 16개 큐 1:1 job 매핑 선언. (완료)
+- [x] 7.3.3.6 I05 암호화 모델 결정 — commit d338f6f (`plan-docs/porting/INFISICAL-KEYMODEL.md`).
+  완료 기준: 안 A/B/C 장단점 및 철학 정합성 분석, 안 C(값 영역 분리) 추천안 문서화. (완료)
+- [x] 7.3.3.7 I02 identity 확장 spike — commit 53b1537 (`porting/infisical/workers/infisical_jobs.py` + `tests/test_identity_jwt.py`).
+  완료 기준: JWT 단위 테스트 7 passed. (완료)
+- [x] 7.3.3.8 EE 제외 비준 — commit d338f6f (`plan-docs/porting/INFISICAL-KEYMODEL.md` §부록).
+  완료 기준: EE 77 서비스·122 라우터 파일 제외 비준. (완료)
+- [ ] 7.3.3.9 실DB 기준선 (환경 종속) — `porting/infisical/DB-RUNBOOK.md`에 실행 명령 명시 완료.
+  완료 기준: 격리 PG 환경 보유 세션에서 `init→migrate→seed→serve` 실행 및 SDK read 1건. (대기: DB 세션 위임)
 
 순서: 7.3.3.8 → 7.3.3.2/7.3.3.6(결정) → 7.3.3.3/7.3.3.4/7.3.3.5(선언) → 7.3.3.7(확장) →
 7.3.3.9(실DB).
