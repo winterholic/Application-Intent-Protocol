@@ -130,6 +130,11 @@ impl Harness {
 }
 
 async fn harness() -> Harness {
+    harness_via(None).await
+}
+
+/// `proxy`: a fault proxy the runtime account connects through (the admin connection stays direct).
+async fn harness_via(proxy: Option<&MysqlProxy>) -> Harness {
     let admin_url = std::env::var("AIP_TEST_MYSQL_URL").expect("set AIP_TEST_MYSQL_URL to a run-owned MySQL 8.4 container");
     aip_test_support::validate_mysql_admin_url(&admin_url).unwrap_or_else(|reason| panic!("AIP_TEST_MYSQL_URL is unsafe: {reason}"));
     assert!(admin_url.starts_with("mysql://"), "this test targets MySQL 8.4");
@@ -171,7 +176,8 @@ async fn harness() -> Harness {
     mysql_adopt::adopt_external(&admin_url, META, &facts, &mapping, "decimal", digest).await.unwrap_or_else(|e| panic!("adopt: {e}"));
 
     let host = admin_url.split_once('@').unwrap().1.split('/').next().unwrap();
-    let runtime_url = format!("mysql://aip_t_writer:writer_test_only@{host}/{SOURCE}");
+    let runtime_host = proxy.map_or_else(|| host.to_string(), |proxy| proxy.addr.to_string());
+    let runtime_url = format!("mysql://aip_t_writer:writer_test_only@{runtime_host}/{SOURCE}");
     let deployment = mysql_adopt::deployment(&runtime_url, META, &facts, &mapping, "decimal").await.unwrap_or_else(|e| panic!("deployment: {e}"));
     let runtime = MysqlDriver::from_url(&runtime_url).unwrap();
     let fence = MysqlDeploymentFence::new(META, SOURCE, &deployment.source_tables, &deployment.facts_digest, &deployment.structure_digest).unwrap();
@@ -193,6 +199,116 @@ async fn harness() -> Harness {
     .expect("listen");
     let (owner, other) = (server.keys.issue(1, 600), server.keys.issue(2, 600));
     Harness { addr: server.address, contract, owner, other, admin, _server: server }
+}
+
+
+/// One-shot MySQL fault injection between the server's runtime account and the database. Faults fire on the first matching
+/// COM_QUERY and every later connection passes through untouched.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Fault {
+    /// COMMIT is swallowed and both sides are closed: the server never saw it and rolls the transaction back.
+    CutOnCommit,
+    /// COMMIT reaches the server, which commits; the reply is dropped and both sides are closed.
+    DropAckAfterCommit,
+    /// The statement containing this text is swallowed and both sides are closed: nothing of the write is committed.
+    CutOnStatement(&'static str),
+}
+
+struct MysqlProxy {
+    addr: std::net::SocketAddr,
+    armed: Arc<std::sync::Mutex<Option<Fault>>>,
+}
+
+impl MysqlProxy {
+    async fn start(target: std::net::SocketAddr) -> Self {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let armed: Arc<std::sync::Mutex<Option<Fault>>> = Arc::default();
+        let shared = armed.clone();
+        tokio::spawn(async move {
+            loop {
+                let Ok((client, _)) = listener.accept().await else { return };
+                tokio::spawn(Self::connection(client, target, shared.clone()));
+            }
+        });
+        Self { addr, armed }
+    }
+
+    fn arm(&self, fault: Fault) {
+        *self.armed.lock().unwrap() = Some(fault);
+    }
+
+    fn take(armed: &std::sync::Mutex<Option<Fault>>, wanted: impl Fn(Fault) -> bool) -> bool {
+        let mut slot = armed.lock().unwrap();
+        if slot.is_some_and(wanted) {
+            *slot = None;
+            true
+        } else {
+            false
+        }
+    }
+
+    async fn connection(client: TcpStream, target: std::net::SocketAddr, armed: Arc<std::sync::Mutex<Option<Fault>>>) {
+        let Ok(server) = TcpStream::connect(target).await else { return };
+        let (mut client_read, mut client_write) = client.into_split();
+        let (mut server_read, mut server_write) = server.into_split();
+        let drop_ack = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let forward = {
+            let (armed, drop_ack) = (armed.clone(), drop_ack.clone());
+            async move {
+                let mut buf = vec![0u8; 65536];
+                loop {
+                    let Ok(n) = client_read.read(&mut buf).await else { return };
+                    if n == 0 {
+                        return;
+                    }
+                    // Packets are 3 length bytes, 1 sequence byte and the payload; a command payload starts with its command byte.
+                    let (mut at, mut commit, mut statement) = (0usize, false, String::new());
+                    while at + 4 < n {
+                        let len = usize::from(buf[at]) | usize::from(buf[at + 1]) << 8 | usize::from(buf[at + 2]) << 16;
+                        if at + 4 + len > n {
+                            break;
+                        }
+                        // COM_QUERY (0x03) carries text; the driver prepares statements with COM_STMT_PREPARE (0x16).
+                        if matches!(buf[at + 4], 0x03 | 0x16) {
+                            let text = String::from_utf8_lossy(&buf[at + 5..at + 4 + len]).to_string();
+                            if buf[at + 4] == 0x03 && text.trim().eq_ignore_ascii_case("COMMIT") {
+                                commit = true;
+                            }
+                            statement.push_str(&text);
+                        }
+                        at += 4 + len;
+                    }
+                    if commit && Self::take(&armed, |f| f == Fault::CutOnCommit) {
+                        return;
+                    }
+                    if !statement.is_empty() && Self::take(&armed, |f| matches!(f, Fault::CutOnStatement(text) if statement.contains(text))) {
+                        return;
+                    }
+                    if commit && Self::take(&armed, |f| f == Fault::DropAckAfterCommit) {
+                        drop_ack.store(true, std::sync::atomic::Ordering::SeqCst);
+                    }
+                    if server_write.write_all(&buf[..n]).await.is_err() {
+                        return;
+                    }
+                }
+            }
+        };
+        let backward = async move {
+            let mut buf = vec![0u8; 65536];
+            loop {
+                let Ok(n) = server_read.read(&mut buf).await else { return };
+                if n == 0 || drop_ack.load(std::sync::atomic::Ordering::SeqCst) {
+                    return;
+                }
+                if client_write.write_all(&buf[..n]).await.is_err() {
+                    return;
+                }
+            }
+        };
+        // Either direction ending closes both: the dropped halves reset the sockets.
+        tokio::select! { _ = forward => {}, _ = backward => {} }
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
@@ -433,4 +549,45 @@ async fn mysql_concurrent_writes_keep_capacity_counters_and_keys_exact() {
     }
     assert_eq!(winners, 1);
     assert_eq!(h.count(&format!("SELECT version FROM {}", note(11))).await, 1);
+}
+
+/// The three ways a connection can fail around COMMIT, and what each lets the client conclude (WBS 7.2.1.2 gate W4).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "live: needs a dedicated MySQL 8.4 container (scripts/mysql-live-fixture.sh); run with -- --ignored"]
+async fn mysql_connection_loss_around_commit_is_reported_by_what_could_have_happened() {
+    let _turn = SERIAL.lock().await;
+    let admin_url = std::env::var("AIP_TEST_MYSQL_URL").expect("set AIP_TEST_MYSQL_URL");
+    let target = admin_url.split_once('@').unwrap().1.split('/').next().unwrap().parse().unwrap();
+    let proxy = MysqlProxy::start(target).await;
+    let h = harness_via(Some(&proxy)).await;
+    let hit = |id: &str| json!({"apply": "Note.hit", "target": {"ids": [id]}});
+    let hits = |id: i64| format!("SELECT hits FROM `{SOURCE}`.`note` WHERE id = {id}");
+    let journal = |key: &str| format!("SELECT COUNT(*) FROM `{META}`.`aip_idem` WHERE idem_key = '{key}'");
+
+    // The statement is cut before COMMIT: nothing committed and the client may simply send the same key again.
+    proxy.arm(Fault::CutOnStatement("UPDATE"));
+    let cut = h.apply(&h.owner, "w4-c", hit("11")).await;
+    assert_eq!(cut["code"], "WIRE.DB_UNAVAILABLE", "{cut}");
+    assert_eq!((h.count(&hits(11)).await, h.count(&journal("w4-c")).await), (0, 0));
+    let retried = h.apply(&h.owner, "w4-c", hit("11")).await;
+    assert_eq!((retried["ok"].clone(), retried["replayed"].clone()), (json!(true), Value::Null), "{retried}");
+    assert_eq!(h.count(&hits(11)).await, 1);
+
+    // COMMIT never reaches the server: the connection drop rolls the transaction back, yet the client cannot know that.
+    proxy.arm(Fault::CutOnCommit);
+    let unknown = h.apply(&h.owner, "w4-a", hit("11")).await;
+    assert_eq!(unknown["code"], "WIRE.COMMIT_UNKNOWN", "{unknown}");
+    assert_eq!((h.count(&hits(11)).await, h.count(&journal("w4-a")).await), (1, 0), "server rolled back");
+    let resolved = h.apply(&h.owner, "w4-a", hit("11")).await;
+    assert_eq!(resolved["ok"], true, "{resolved}");
+    assert_eq!(h.count(&hits(11)).await, 2, "the retry did the write");
+
+    // The server commits and the acknowledgement is lost: the same key replays the committed result and writes nothing more.
+    proxy.arm(Fault::DropAckAfterCommit);
+    let lost = h.apply(&h.owner, "w4-b", hit("11")).await;
+    assert_eq!(lost["code"], "WIRE.COMMIT_UNKNOWN", "{lost}");
+    assert_eq!((h.count(&hits(11)).await, h.count(&journal("w4-b")).await), (3, 1), "server committed");
+    let replayed = h.apply(&h.owner, "w4-b", hit("11")).await;
+    assert_eq!((replayed["ok"].clone(), replayed["replayed"].clone(), replayed["changed"].clone()), (json!(true), json!(true), json!(["11"])), "{replayed}");
+    assert_eq!(h.count(&hits(11)).await, 3, "no second effect");
 }

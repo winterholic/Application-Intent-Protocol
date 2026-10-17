@@ -272,7 +272,7 @@ async fn mysql_read_path_serves_policy_reads_and_fences_ddl() {
     assert_eq!(rejected["code"], "WIRE.FILTER_NOT_ALLOWED", "{rejected}");
 
     // Everything outside the implemented read path is refused by name, not emulated.
-    for path in ["/apply", "/status"] {
+    for path in ["/capabilities"] {
         let refused = post(addr, path, member1.as_deref(), &contract, &json!({})).await;
         assert_eq!(refused["code"], "WIRE.ADAPTER_UNSUPPORTED", "{path}: {refused}");
     }

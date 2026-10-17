@@ -347,8 +347,8 @@ async fn external_mysql_adoption_binding_serving_and_drift() {
     assert_eq!(notes["rows"][0]["score"], "10.50");
     assert_eq!(notes["rows"][0]["created"], "2026-10-01T09:30:00.1234+00:00");
 
-    // The apply path is not implemented: it is refused by name, and nothing was written.
-    let (_, refused) = http(&address, "POST", "/apply", Some(&user1), &fingerprint, &json!({"key": "k", "request": {}})).await;
+    // What the adapter does not implement is refused by name, and nothing was written.
+    let (_, refused) = http(&address, "POST", "/apply", Some(&user1), &fingerprint, &json!({"key": "k", "request": {"compose": "Note", "steps": []}})).await;
     assert_eq!(refused["code"], "WIRE.ADAPTER_UNSUPPORTED", "{refused}");
 
     // A forged or revoked identity gets nothing.
