@@ -298,4 +298,22 @@ mod tests {
         assert!(validate_admin_url("host=localhost dbname=postgres").is_err());
         assert!(validate_admin_url("host=remote port=55432 dbname=postgres user=runner").is_err());
     }
+
+    #[test]
+    fn rejects_flaskbb_bypass_vectors() {
+        // 1. encoded_db_hostaddr / indirect host
+        assert!(validate_database_url("host=db.example hostaddr=127.0.0.1 port=5432 dbname=postgres user=synthetic").is_err());
+        assert!(validate_database_url("host=db.example hostaddr=127.0.0.1 port=55432 dbname=aip_test_run user=synthetic").is_err());
+        assert!(validate_database_url("postgresql://synthetic@db.example:55432/aip_test_run?hostaddr=127.0.0.1").is_err());
+
+        // 2. partial_dsn (missing port, dbname, user)
+        assert!(validate_database_url("host=127.0.0.1").is_err());
+        assert!(validate_database_url("host=127.0.0.1 port=55432").is_err());
+        assert!(validate_database_url("host=127.0.0.1 dbname=aip_test_run user=runner").is_err());
+
+        // 3. service_dsn (service file fallback)
+        assert!(validate_database_url("service=synthetic_fixture").is_err());
+        assert!(validate_database_url("host=127.0.0.1 port=55432 dbname=aip_test_run user=runner service=synthetic_fixture").is_err());
+        assert!(validate_database_url("postgresql://runner@127.0.0.1:55432/aip_test_run?service=synthetic_fixture").is_err());
+    }
 }
