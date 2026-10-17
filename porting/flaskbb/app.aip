@@ -12,6 +12,7 @@ predicate canDeletePost(viewer: User?, targetPost: Post?) = targetPost != null a
 predicate canHide(viewer: User?, targetForum: Forum?) = viewer != null and canModerateForum(viewer, targetForum) and (viewer.primary_group.makehidden or exists UserGroup where user = viewer and group.makehidden)
 predicate canReadTopic(viewer: User?, targetTopic: Topic?) = targetTopic != null and not targetTopic.deleted and canReadForum(viewer, targetTopic.forum) and (targetTopic.hidden != true or canViewHidden(viewer)) and (targetTopic.published or targetTopic.user = viewer)
 predicate canReadPost(viewer: User?, targetPost: Post?) = targetPost != null and not targetPost.deleted and (not targetPost.topic.deleted or canDeleteTopic(viewer, targetPost.topic) or (targetPost.topic.user = viewer and not targetPost.topic.locked and (viewer.primary_group.editpost or exists UserGroup where user = viewer and group.editpost))) and (targetPost.user = viewer or (targetPost.published and canReadForum(viewer, targetPost.forum))) and (targetPost.hidden != true or canViewHidden(viewer)) and (targetPost.topic.hidden != true or canViewHidden(viewer))
+predicate canReviewReports(viewer: User?) = viewer != null and (viewer.primary_group.admin or viewer.primary_group.super_mod or viewer.primary_group.mod or exists UserGroup where user = viewer and (group.admin or group.super_mod or group.mod))
 predicate hasFirstPost(targetTopic: Topic, viewer: User?) = exists TopicFirstPost where topic = targetTopic and post.user = viewer and post.published
 predicate isFirstPost(targetPost: Post) = exists TopicFirstPost where post = targetPost
 predicate hasNewerAuthoredPost(targetTopic: Topic, viewer: User?) = exists Post where topic = targetTopic and user = viewer and published and date_created > targetTopic.last_updated
@@ -324,8 +325,16 @@ resource TopicTracker {
 }
 
 resource Report {
-  fields { id: Id; reporter: User?; reported: Time; post: Post?; zapped: Time?; zapped_by: User?; reason: Text? }
-  rows read when (actor.primary_group.admin or actor.primary_group.super_mod or actor.primary_group.mod)
+  fields { id: Id; reporter: User?; reported: Time?; post: Post?; zapped: Time?; zapped_by: User?; reason: Text? }
+  rows read when canReviewReports(actor) or (reporter = actor and reported = null)
+  expose create {
+    allow reporter = actor and post != null and canReadPost(actor, post) and reported = null and zapped = null and zapped_by = null
+    fields reporter, post, reason
+  }
+  transition submit { allow reporter = actor and post != null and canReadPost(actor, post) and reported = null; from reported = null; to reported = now }
+  expose apply submit { target id; bulk maxRows 1 }
+  transition resolve { allow canReviewReports(actor) and zapped = null; from zapped = null; to zapped = now, zapped_by = actor }
+  expose apply resolve { target id; bulk maxRows 1 }
   expose read {
     select id, reporter, reported, post, zapped, zapped_by, reason
     filter id.eq, post.eq, reporter.eq, zapped.eq
