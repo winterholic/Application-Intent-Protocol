@@ -180,8 +180,18 @@ fn rejects_malformed_or_unsupported_foreign_key_metadata() {
     assert!(normalize_foreign_keys("face", "comment", &columns, vec![missing_target_column]).unwrap_err().to_string().contains("referenced column"));
 }
 
+/// Structural compatibility test for FaceReview 11 models based on SQLAlchemy source audit (revision 7948b7e7).
+///
+/// NOTE on scope & limits (synthetic boundary):
+/// - Tests structural manifest normalization against 11 model fixtures containing 81 column definitions.
+/// - The 13 foreign keys reflect the independent source audit correction from the earlier 10 FK undercount
+///   (independent audit of revision 7948b7e7, NOT a user design decision).
+/// - Python-side defaults (e.g. generate_uuid, 0, CURRENT_TIMESTAMP) are Python ORM client expressions
+///   and are NOT asserted as equivalent to live MySQL server-side DDL DEFAULT clauses.
+/// - Does NOT prove 100% equivalence of all MySQL 8.4 data types, server nullability behaviors,
+///   or non-manifest secondary indexes against live database observations.
 #[test]
-fn facereview_11_models_full_schema_matches_declaration() {
+fn facereview_11_models_synthetic_fixture_matches_fk_manifest() {
     let manifest_json = include_str!("../../../plan-docs/porting/facereview-fk-manifest.json");
     let manifest_val: serde_json::Value = serde_json::from_str(manifest_json).expect("valid manifest json");
     let models = manifest_val["models"].as_array().expect("models array");
@@ -511,7 +521,7 @@ fn facereview_11_models_full_schema_matches_declaration() {
         }
     }
 
-    assert_eq!(all_normalized_fks_count, 13, "Total normalized foreign keys across all 11 models must be exactly 13");
+    assert_eq!(all_normalized_fks_count, 13, "Total normalized foreign keys across all 11 models must be exactly 13 per independent source audit of rev 7948b7e7 (correcting earlier 10 FK count)");
 }
 
 use aip_migrate::mysql_catalog::{
@@ -708,4 +718,75 @@ async fn external_introspect_rejects_mysql_url_without_leaking_secrets() {
     assert_eq!(err["code"], "DB_ADAPTER_UNSUPPORTED");
     assert!(!err.to_string().contains("super_secret_db_password"), "secret must never leak in introspect error");
 }
+
+#[test]
+fn percent_decode_handles_malformed_and_edge_case_inputs() {
+    use aip_migrate::mysql_catalog::percent_decode;
+
+    // Standard valid decoding
+    assert_eq!(percent_decode("p%40ss"), "p@ss");
+    assert_eq!(percent_decode("hello%20world"), "hello world");
+
+    // Invalid hex sequence preserved without panic
+    assert_eq!(percent_decode("foo%ZZbar"), "foo%ZZbar");
+    assert_eq!(percent_decode("val%4Gtest"), "val%4Gtest");
+
+    // Incomplete percent at string boundaries
+    assert_eq!(percent_decode("trailing%"), "trailing%");
+    assert_eq!(percent_decode("trailing%4"), "trailing%4");
+
+    // Empty string
+    assert_eq!(percent_decode(""), "");
+
+    // Pure unencoded string
+    assert_eq!(percent_decode("normal_string_123"), "normal_string_123");
+}
+
+#[test]
+fn mysql_driver_config_parses_various_url_configurations_safely() {
+    // 1. IPv6 without explicit port defaults to 3306
+    let ip6_url = "mysql://u:p@[2001:db8::1]/app_db";
+    let cfg1 = MysqlDriverConfig::parse_url(ip6_url).unwrap();
+    assert_eq!(cfg1.host, "[2001:db8::1]");
+    assert_eq!(cfg1.port, 3306);
+    assert_eq!(cfg1.database, "app_db");
+
+    // 2. User without password
+    let no_pass_url = "mysql://developer@db.internal:3306/analytics";
+    let cfg2 = MysqlDriverConfig::parse_url(no_pass_url).unwrap();
+    assert_eq!(cfg2.user, "developer");
+    assert_eq!(cfg2.password, None);
+    assert_eq!(cfg2.display_sanitized(), "mysql://developer@db.internal:3306/analytics");
+
+    // 3. SSL modes
+    let ssl_req = "mysql://app:pw@10.0.0.1:3306/db?sslmode=required";
+    assert!(MysqlDriverConfig::parse_url(ssl_req).unwrap().tls_required);
+
+    let ssl_dis = "mysql://app:pw@10.0.0.1:3306/db?sslmode=disabled";
+    assert!(!MysqlDriverConfig::parse_url(ssl_dis).unwrap().tls_required);
+
+    let ssl_full = "mysql://app:pw@10.0.0.1:3306/db?ssl-mode=verify-full";
+    assert!(MysqlDriverConfig::parse_url(ssl_full).unwrap().tls_required);
+}
+
+#[test]
+fn mysql_wire_protocol_packet_framing_and_response_integration() {
+    use aip_migrate::mysql_wire::{CommandPacket, PacketHeader, RawPacket, ServerResponse};
+
+    // Verify command query serialization
+    let cmd = CommandPacket::query(SQL_TABLES);
+    let serialized = cmd.serialize();
+    let header = PacketHeader::decode(&serialized[..4]).unwrap();
+    assert_eq!(header.payload_length as usize, cmd.payload.len());
+    assert_eq!(header.sequence_id, 0);
+
+    // Verify OK response parsing
+    let ok_packet = RawPacket::new(1, vec![0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00]);
+    let resp = ServerResponse::parse(&ok_packet).unwrap();
+    match resp {
+        ServerResponse::Ok { affected_rows, .. } => assert_eq!(affected_rows, 0),
+        _ => panic!("expected OK response"),
+    }
+}
+
 

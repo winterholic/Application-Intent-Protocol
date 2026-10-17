@@ -456,7 +456,8 @@ pub async fn introspect_schema(
 }
 
 /// Decode percent-encoded characters in URL components (e.g. %40 -> @).
-fn percent_decode(input: &str) -> String {
+/// Preserves non-hex sequences such as %ZZ or trailing % safely.
+pub fn percent_decode(input: &str) -> String {
     let bytes = input.as_bytes();
     let mut output = Vec::with_capacity(bytes.len());
     let mut i = 0;

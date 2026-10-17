@@ -2,6 +2,7 @@
 pub mod adopt;
 pub mod external;
 pub mod mysql_catalog;
+pub mod mysql_wire;
 use serde_json::{Value, json};
 use spike_v1_fixture::digest;
 use spike_v2_read::{id_wire::IdWire, sqlgen};

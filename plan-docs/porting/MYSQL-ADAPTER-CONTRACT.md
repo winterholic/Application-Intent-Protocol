@@ -26,21 +26,27 @@
    - 오류 메시지 및 로깅 시 URL 비밀번호(`super_secret_pw` 등)는 일절 노출되지 않으며 scheme과 어댑터 식별자만 안전하게 표기된다.
 3. **Enabled 빌드(`--features mysql`)에서의 Fail-Closed 전체 진입점 누출 방어**:
    - `#[cfg(feature = "mysql")]` 빌드에서도, 미구현된 MySQL 라이브 커넥터가 기존 PostgreSQL 연결(`tokio-postgres`)로 조용히 흘러가지 않도록 `require_built_features`에서 모든 명령(`serve`, `service init`, `migrate` 등)에 대해 사전 명시적 `DB_ADAPTER_UNSUPPORTED`로 fail-closed 거부한다.
-4. **INFORMATION_SCHEMA Query Reader 및 Driver 연결 계층 (Secret-Safe & 견고성)**:
+4. **INFORMATION_SCHEMA Query Reader 및 Driver 연결 계층 (Secret-Safe & Wire Protocol)**:
    - MySQL 8.4 공식 Reference에 따른 `SQL_TABLES`, `SQL_COLUMNS`, `SQL_STATISTICS`, `SQL_FOREIGN_KEYS` 쿼리 상수를 확립했다.
    - 비동기 행 수집 계약 `MysqlCatalogReader` trait(`fetch_tables`, `fetch_columns`, `fetch_indexes`, `fetch_foreign_keys`)과 이를 `normalize_table`/`normalize_foreign_keys`로 연결하는 `introspect_table`, `introspect_schema` 파이프라인을 구현했다.
+   - **순수 Rust MySQL 8.4 Wire Protocol Framing 및 Packet 처리 계층 (`mysql_wire.rs`)**:
+     - 외부 라이브러리(`mysql_async` 등) 조달이 샌드박스 SSL/네트워크 격리로 차단된 환경에서, 표준 MySQL 와이어 프로토콜 패킷 프레이밍(`PacketHeader`, `RawPacket`, Length-Encoded Int/String), Initial Handshake (`HandshakeV10`) 파싱, `HandshakeResponse41` 직렬화, Command (`COM_QUERY`, `COM_PING`, `COM_QUIT`) 패킷 및 `ServerResponse` (OK, ERR, EOF, ResultSetHeader) 파싱 계층을 자체 구현하고 5개 단위 테스트로 검증했다.
    - 드라이버 설정 `MysqlDriverConfig`:
-     - URL 파싱 시 percent-decoding(`%40` -> `@` 등) 및 IPv6 주소(`[2001:db8::1]:3306`) 지원.
-     - 쿼리 스트링(`?sslmode=required`) 파싱을 통한 `tls_required` 플래그 설정.
+     - URL 파싱 시 percent-decoding(`%40` -> `@`, 비hex `%ZZ` 보존 등) 및 IPv6 주소(`[2001:db8::1]:3306`, 포트 생략 기본 3306) 지원.
+     - 쿼리 스트링(`?sslmode=required`, `verify-full`, `disabled`) 파싱을 통한 `tls_required` 플래그 설정.
      - 커스텀 `fmt::Debug`를 구현하여 `password: Some("***")`로 마스킹(원문 비밀번호의 Debug 노출 결함 해결).
      - `display_sanitized`를 통한 credential 마스킹(`***`) 유지.
    - 에러 정규화 `normalize_mysql_error_code`:
      - 1045(`DB_AUTH_FAILED`), 1049(`DB_NOT_FOUND`), 1146(`TABLE_NOT_FOUND`), 1062(`UNIQUE_VIOLATION`), 1213(`DEADLOCK_DETECTED`), 1205(`LOCK_TIMEOUT`), 1451/1452(`FOREIGN_KEY_VIOLATION`), 2002/2003(`DB_CONNECT_FAILED`).
      - 에러 1105 등 임의의 원시 에러 메시지에 포함된 데이터베이스 URL(`scheme://user:pass@host/...`)의 비밀번호를 `***`로 자동 마스킹(`sanitize_error_message`).
    - `aip_migrate::external::introspect`: 기본 빌드 및 `--features mysql` 빌드 모두에서 `DB_ADAPTER_UNSUPPORTED`를 일관되게 반환하여 `mysql_adapter.rs` 회귀 테스트 통과.
-5. **FaceReview 11개 모델 전체 81컬럼 선언, 실제 PK, 고유/복합 인덱스 및 13개 FK 대조**:
-   - [facereview-inventory.json](facereview-inventory.json) 및 [facereview-fk-manifest.json](facereview-fk-manifest.json)의 11개 SQLAlchemy 모델 전체 선언을 대조하는 `facereview_11_models_full_schema_matches_declaration` 테스트를 작성했다.
-   - 합성 2컬럼 round-trip이 아닌 11개 모델의 총 81개 컬럼(정확한 타입, nullable, default), 실제 PK(특히 `UserEmotionSummary`의 PK `user_id` 포함), 고유 제약(`uk_user_genre`, `uk_bookmark_user_video` 등), 복합 인덱스(`idx_video_comments`, `idx_user_history`, `idx_video_history`), 총 13개 외래키의 완전 일치를 검증했다(13 passed).
+5. **FaceReview 11개 모델 synthetic fixture 구조 및 13개 FK 정규화 검증 (독립 감사 rev 7948b7e7 반영)**:
+   - [facereview-inventory.json](facereview-inventory.json) 및 [facereview-fk-manifest.json](facereview-fk-manifest.json)의 11개 SQLAlchemy 모델 구조를 바탕으로 한 synthetic fixture 구조 검증(`facereview_11_models_synthetic_fixture_matches_fk_manifest`)을 구현했다(16 passed).
+   - **Synthetic 범위 및 한계 명시**:
+     - 11개 모델의 총 81개 컬럼 식별자 및 기본 구조, 실제 PK(특히 `UserEmotionSummary`의 PK `user_id` 포함), 고유 제약(`uk_user_genre`, `uk_bookmark_user_video` 등), 복합 인덱스(`idx_video_comments`, `idx_user_history`, `idx_video_history`)의 manifest 정규화 호환성을 확인했다.
+     - 외래키 13개는 원본 revision `7948b7e721837fdb73c427cb54e12cad4ec2d5af`의 독립 소스 감사(independent source audit) 결과에 따라 이전 10개 집계 오류를 정정한 것이며, 사용자의 설계 결정이 아닌 코드베이스 실사 기반 정정이다.
+     - Python-side default(예: `generate_uuid`, Python `0`, `CURRENT_TIMESTAMP`)는 Python ORM 클라이언트 수준의 기본값이며, MySQL 서버 측의 DDL DEFAULT 절과 1:1 동등하지 않다.
+     - 실제 MySQL 8.4 라이브 서버 DDL/타입/서버 기본값/보조 인덱스와의 100% 완전 동등성을 주장하지 않는다.
 
 ### PostgreSQL 선택 구조(postgres feature) 전환 제안과 영향 범위
 
@@ -59,17 +65,22 @@
 | MySQL/MariaDB 설정 시 fail-closed 기동 거부 | `aip-service` 회귀 (기본 `DB_ADAPTER_FEATURE_DISABLED`, feature `DB_ADAPTER_UNSUPPORTED`) | 실제 서버 기동 후 요청 처리 |
 | Enabled 빌드(`--features mysql`) fail-closed 방어 | `init`, `serve`, `adopt`, `migrate` 등 CLI 전체 거부 확인 | 실제 서버 기동 후 요청 처리 |
 | `mysql_adapter` 통합 테스트 (기본 및 feature 빌드) | 둘 다 1 passed (`DB_ADAPTER_UNSUPPORTED`) | 실제 라이브 드라이버 연결 |
-| INFORMATION_SCHEMA reader & introspect 파이프라인 | `mysql_catalog` 13 passed | 실제 MySQL 8.4 라이브 DB 행 |
-| FaceReview 11개 모델 전체 81컬럼, PK, 복합인덱스, 13개 FK 선언 대조 | `facereview_11_models_full_schema_matches_declaration` passed | 실제 MySQL 8.4 라이브 DB 행 |
-| MySQL Driver Config 파싱 & Error Code 정규화 | `mysql_catalog` passed (Debug/Error 비밀번호 마스킹, IPv6, `%40`) | 실제 네트워크 드라이버 I/O |
+| MySQL 8.4 Wire Protocol Framing & Packet 처리기 (`mysql_wire`) | `mysql_wire` 5 passed (HandshakeV10/Response41/Cmd/OK/ERR) | 실제 네트워크 소켓 I/O |
+| INFORMATION_SCHEMA reader & introspect 파이프라인 | `mysql_catalog` 16 passed | 실제 MySQL 8.4 라이브 DB 행 |
+| FaceReview 11개 모델 synthetic fixture 구조 & 13 FK 대조 | `facereview_11_models_synthetic_fixture_matches_fk_manifest` passed (합성 범위 명시) | 실제 MySQL 8.4 라이브 DB DDL/서버 default |
+| MySQL Driver Config 파싱 & Error Code 정규화 | `mysql_catalog` passed (Debug/Error 비밀번호 마스킹, IPv6, `%40`, edge cases) | 실제 네트워크 드라이버 I/O |
 | 실제 MySQL 8.4 / MariaDB 컨테이너 실행 | **미실행** (이유 아래 참조) | 실제 컨테이너 연결 및 정책 write |
-| adapter 지원 판정 | **미지원 (adapter 계약·driver 연결 계층 및 fail-closed 확립)** | 실제 MySQL·MariaDB 호환성 |
+| adapter 지원 판정 | **미지원 (adapter 계약·와이어 드라이버 기초 및 fail-closed 확립)** | 실제 MySQL·MariaDB 완결 호환성 |
 
 ### 2026-10-17 실행 환경 제약 및 관측 증거
 
 - **Docker 컨테이너 기동**: `docker run --rm alpine echo hello` 명령 실행 시 `permission denied while trying to connect to the docker API at unix:///Users/winterholic/.orbstack/run/docker.sock` 발생. nested worker sandbox 환경에서 OrbStack docker 소켓 접근이 차단되어 실제 MySQL 8.4 및 MariaDB 컨테이너 기동은 미실행으로 기록한다.
-- **Cargo Registry Crate 조달**: `cargo search` / download 실행 시 `[60] SSL peer certificate or SSL remote key was not OK (SSL certificate problem: unable to get local issuer certificate)` 및 CA 파일 접근 거부 발생. 쓰기 가능한 `$CARGO_HOME` 경로에 로컬 레지스트리를 미러링하여 오프라인 검증은 정상 수행했으나, 신규 외부 크레이트의 라이브 네트워크 조달은 sandbox 보안 정책에 의해 제한된다.
-- **원칙 준수**: 보안 우회나 sandbox 변경을 시도하지 않았으며, driver 없이 검증 가능한 adapter 경계, 설정 파싱, feature 거부, synthetic 11개 모델 정규화 검증을 완료했다.
+- **Cargo Registry Crate 조달 시도**:
+  - 명령: `cargo add mysql_async --package aip-migrate --dry-run`
+  - 실패 단계: Cargo dependency resolution / crates.io index fetch stage
+  - 관측 에러: `error: failed to load source for dependency 'mysql_async' ... [60] SSL peer certificate or SSH remote key was not OK (SSL certificate problem: unable to get local issuer certificate)`
+  - 허용 대안 시도: 서드파티 크레이트 조달이 불가능한 샌드박스 제약을 극복하기 위해, AIP 내부에 순수 Rust로 표준 MySQL 8.4 와이어 프로토콜 프레이밍 및 패킷 처리 계층(`mysql_wire.rs`)을 직접 구현하여 드라이버 연결 기초를 실질적으로 전진시켰다.
+- **원칙 준수**: 보안 우회나 sandbox 변경을 시도하지 않았으며, 검증 가능한 와이어 프로토콜 계층, adapter 경계, 설정 파싱, feature 거부, synthetic 11개 모델 정규화 검증을 완료했다.
 
 외래키 action 의미는 [MySQL 8.4 FOREIGN KEY 문서](https://dev.mysql.com/doc/refman/8.4/en/create-table-foreign-keys.html)와 [`INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS`](https://dev.mysql.com/doc/refman/8.4/en/information-schema-referential-constraints-table.html)를 기준으로 한다. MySQL 8.4 문서는 InnoDB에서 `NO ACTION`을 `RESTRICT`와 동등하게 즉시 거부 처리하고 `SET DEFAULT` 정의는 거부된다고 명시한다. Manifest는 원본 action 표기를 서로 다른 enum 값으로 보존한다. MariaDB semantics는 이 근거로 추정하지 않는다.
 
