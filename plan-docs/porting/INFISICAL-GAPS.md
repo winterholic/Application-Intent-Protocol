@@ -18,7 +18,7 @@
 
 영향: 시크릿 값, 값 버전, 회전, blind index 조회(G4)를 선언할 수 없다. 비밀 관리 앱과 개인정보 앱을 AIP 제품 방언으로 만들 수 없다. 임시 평문 Text 열은 모든 읽기 가능자에게 평문이 노출되므로 우회로 판단해 쓰지 않았다.
 
-설계 소유: 별도 세션의 `docs/design/13-field-encryption.md`(상태 Proposed, 창시자 승인 대기). 이 트랙은 그 문서를 수정하지 않는다. 문서가 인용한 `porting/infisical/app.aip:134` 등 줄 번호는 이 재작업 이후 달라졌다(`valueCiphertext`는 정의에서 제거).
+설계 소유: 별도 세션의 `docs/design/13-field-encryption.md`(상태 Proposed, 창시자 승인 대기). 설계 13(`a257b8d`)은 GPT 독립 정적 리뷰에서 "현 초안 그대로 구현에 넘기지 않는다"는 판정을 받았다. P1은 blind index 회전과 unique, SKIP LOCKED 재개 누락, idempotency·job 평문 경로, HMAC 회전 뒤 재시도, 이전 binary rollback 호환성이다. 이 리뷰는 정적 검토이며 테스트·빌드·DB를 실행하지 않았으므로 실행상 고장의 증명은 아니다. 사용자 승인도 없다. 따라서 이 초안은 승인된 설계도 제품이 보증하는 기능도 아니고, 암호화에 의존하는 Infisical 포팅 항목(값·버전·회전·blind index·동기화 내용)은 **미구현·설계 미확정**으로 취급한다. 이 트랙은 그 문서를 수정하지 않는다. 문서가 인용한 `porting/infisical/app.aip:134` 등 줄 번호는 이 재작업 이후 달라졌다(`valueCiphertext`는 정의에서 제거).
 
 현재 포팅 처리: `app.aip`는 값을 선언하지 않고 머리 주석과 `docs { summary }`로 갭을 표시한다. 값 없는 Secret은 이름과 세대, 소프트 삭제만 가진다.
 
@@ -51,7 +51,7 @@
 | ID | 내용 | 상태 |
 |---|---|---|
 | G1 | 순위 기반 전문검색 선언 불가 | FlaskBB 7.5가 제품 방언 `search` 파서 거부를 확인했다(다른 세션의 기록). 이 세션은 재확인하지 않았다 |
-| G4 | blind index(암호문 동등 검색) | G2에 종속. 설계 13의 `lookup: eq`가 대응안. 원본은 서버가 HKDF+HMAC으로 계산한다 |
+| G4 | blind index(암호문 동등 검색) | G2에 종속. 설계 13의 `lookup: eq`가 대응안이지만 이 안의 blind index 회전과 unique가 리뷰 P1이라 미확정. 원본은 서버가 HKDF+HMAC으로 계산한다 |
 | G6 | X.509/EST/SCEP/ACME 발급 의미 | 확장 job으로 감쌀 수 있으나 선언 의미는 없음. 미착수, 판독 수준 |
 | G7 | CASL 조건식 → predicate | 이 세션에서 역할 기반 권한(admin/member/viewer/no-access, 조직 admin 암묵 권한)은 predicate로 표현하고 실DB로 확인했다. 원본의 조건식(환경, 경로, 태그 조건)과 권한 평가 핵심의 EE 소재는 미확인이며 EE 경계 문서에서 다룬다 |
 | G8 | provider capability 등록 절차 | 90종 연동의 등록·검증·버전 운영 절차 미정. 미착수 |
