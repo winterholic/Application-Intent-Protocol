@@ -1,0 +1,113 @@
+{
+ "schema": "fr_src",
+ "tables": {
+  "User": {
+   "table": "user",
+   "columns": {
+    "id": "user_id",
+    "email": "email",
+    "name": "name",
+    "role": "role",
+    "profile_image_id": "profile_image_id",
+    "is_tutorial_done": "is_tutorial_done",
+    "is_verify_email_done": "is_verify_email_done",
+    "is_deleted": "is_deleted",
+    "created_at": "created_at",
+    "updated_at": "updated_at"
+   }
+  },
+  "Video": {
+   "table": "video",
+   "columns": {
+    "id": "video_id",
+    "youtube_url": "youtube_url",
+    "title": "title",
+    "channel_name": "channel_name",
+    "category": "category",
+    "duration": "duration",
+    "view_count": "view_count",
+    "is_deleted": "is_deleted",
+    "created_at": "created_at",
+    "updated_at": "updated_at"
+   }
+  },
+  "Comment": {
+   "table": "comment",
+   "columns": {
+    "id": "comment_id",
+    "video": "video_id",
+    "user": "user_id",
+    "content": "content",
+    "is_modified": "is_modified",
+    "is_deleted": "is_deleted",
+    "created_at": "created_at",
+    "updated_at": "updated_at"
+   }
+  },
+  "VideoLike": {
+   "table": "video_like",
+   "columns": {
+    "id": "video_like_id",
+    "video": "video_id",
+    "user": "user_id",
+    "created_at": "created_at"
+   }
+  },
+  "VideoBookmark": {
+   "table": "video_bookmark",
+   "columns": {
+    "id": "video_bookmark_id",
+    "video": "video_id",
+    "user": "user_id",
+    "created_at": "created_at"
+   }
+  },
+  "VideoRequest": {
+   "table": "video_request",
+   "columns": {
+    "id": "video_request_id",
+    "user": "user_id",
+    "youtube_url": "youtube_url",
+    "youtube_full_url": "youtube_full_url",
+    "status": "status",
+    "admin_comment": "admin_comment",
+    "created_at": "created_at",
+    "updated_at": "updated_at"
+   }
+  },
+  "VideoViewLog": {
+   "table": "video_view_log",
+   "columns": {
+    "id": "video_view_log_id",
+    "video": "video_id",
+    "user": "user_id",
+    "guest_token": "guest_token",
+    "created_at": "created_at",
+    "updated_at": "updated_at"
+   }
+  },
+  "UserFavoriteGenre": {
+   "table": "user_favorite_genre",
+   "columns": {
+    "id": "user_favorite_genre_id",
+    "user": "user_id",
+    "genre": "genre",
+    "created_at": "created_at",
+    "updated_at": "updated_at"
+   }
+  },
+  "UserPointHistory": {
+   "table": "user_point_history",
+   "columns": {
+    "id": "user_point_history_id",
+    "user": "user_id",
+    "video": "video_id",
+    "amount": "amount",
+    "watch_time": "watch_time",
+    "description": "description",
+    "created_at": "created_at",
+    "updated_at": "updated_at"
+   }
+  }
+ }
+}

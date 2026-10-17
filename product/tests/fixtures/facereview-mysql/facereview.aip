@@ -1,0 +1,170 @@
+// FaceReview relational models over the original MySQL schema (WBS 7.2.3). Reads only; writes come with 7.2.2/7.2.4.
+// The original app fills created_at/updated_at in Python, so the business tables need DB defaults before adoption
+// (see fr-port/db-defaults.sql); `default database` is checked against the live catalog at adoption.
+actor User
+
+enum Role { GENERAL, ADMIN, SUPER_ADMIN }
+enum Genre { drama, eating, travel, cook, show, information, game, sports, music, animal, beauty, comedy, horror, exercise, vlog, etc }
+enum RequestStatus { PENDING, ACCEPTED, REJECTED }
+
+resource User {
+  fields {
+    id: Uuid
+    email: Text(1..255)
+    name: Text(1..50)
+    role: Role
+    profile_image_id: Int(0..1000000)?
+    is_tutorial_done: Bool?
+    is_verify_email_done: Bool?
+    is_deleted: Bool?
+    created_at: Time default database
+    updated_at: Time default database
+  }
+  rows read when id = actor
+  expose read {
+    select id, email, name, role, profile_image_id, is_tutorial_done, is_verify_email_done, created_at
+    filter id.eq
+    sort created_at, id
+    budget { rows 100; depth 1; cost 1000; deadline 2s; offset 100000 }
+  }
+}
+
+resource Video {
+  fields {
+    id: Uuid
+    youtube_url: Text(1..50)
+    title: Text(1..255)
+    channel_name: Text(1..100)?
+    category: Genre
+    duration: Int(0..1000000)?
+    view_count: Int(0..1000000000)?
+    is_deleted: Bool?
+    created_at: Time default database
+    updated_at: Time default database
+  }
+  rows read when is_deleted = false
+  expose read {
+    select id, youtube_url, title, channel_name, category, duration, view_count, created_at
+    filter id.eq, category.eq, title.contains, channel_name.contains, youtube_url.eq
+    sort created_at, id, view_count
+    budget { rows 100; depth 1; cost 1000; deadline 2s; offset 100000 }
+  }
+}
+
+resource Comment {
+  fields {
+    id: Uuid
+    video: Video
+    user: User
+    content: Text(1..500)
+    is_modified: Bool?
+    is_deleted: Bool?
+    created_at: Time default database
+    updated_at: Time default database
+  }
+  rows read when is_deleted = false and video.is_deleted = false
+  expose read {
+    select id, video, user, content, is_modified, created_at, updated_at
+    refIds video, user
+    filter id.eq, video.eq
+    sort created_at, id
+    traverse user { select id, name }
+    budget { rows 100; depth 2; cost 2000; deadline 2s; offset 100000 }
+  }
+}
+
+resource VideoLike {
+  fields { id: Uuid; video: Video; user: User; created_at: Time default database }
+  rows read when user = actor
+  expose read {
+    select id, video, user, created_at
+    refIds video, user
+    filter video.eq
+    sort created_at, id
+    budget { rows 100; depth 1; cost 1000; deadline 2s; offset 100000 }
+  }
+}
+
+resource VideoBookmark {
+  fields { id: Uuid; video: Video; user: User; created_at: Time default database }
+  rows read when user = actor
+  expose read {
+    select id, video, user, created_at
+    refIds video, user
+    filter video.eq
+    sort created_at, id
+    budget { rows 100; depth 1; cost 1000; deadline 2s; offset 100000 }
+  }
+}
+
+resource VideoRequest {
+  fields {
+    id: Uuid
+    user: User
+    youtube_url: Text(1..50)
+    youtube_full_url: Text(1..255)
+    status: RequestStatus
+    admin_comment: Text(1..255)?
+    created_at: Time default database
+    updated_at: Time default database
+  }
+  rows read when user = actor
+  expose read {
+    select id, user, youtube_url, youtube_full_url, status, admin_comment, created_at, updated_at
+    refIds user
+    filter status.eq
+    sort created_at, id
+    budget { rows 100; depth 1; cost 1000; deadline 2s; offset 100000 }
+  }
+}
+
+resource VideoViewLog {
+  fields {
+    id: Uuid
+    video: Video
+    user: User?
+    guest_token: Text(1..255)?
+    created_at: Time default database
+    updated_at: Time default database
+  }
+  rows read when user = actor
+  expose read {
+    select id, video, user, created_at
+    refIds video, user
+    filter video.eq
+    sort created_at, id
+    budget { rows 100; depth 1; cost 1000; deadline 2s; offset 100000 }
+  }
+}
+
+resource UserFavoriteGenre {
+  fields { id: Uuid; user: User; genre: Genre; created_at: Time default database; updated_at: Time default database }
+  rows read when user = actor
+  expose read {
+    select id, user, genre, created_at
+    refIds user
+    sort created_at, id
+    budget { rows 100; depth 1; cost 1000; deadline 2s; offset 100000 }
+  }
+}
+
+resource UserPointHistory {
+  fields {
+    id: Uuid
+    user: User
+    video: Video?
+    amount: Int
+    watch_time: Int(0..1000000)?
+    description: Text(1..255)?
+    created_at: Time default database
+    updated_at: Time default database
+  }
+  rows read when user = actor
+  expose read {
+    select id, user, video, amount, watch_time, description, created_at
+    refIds user, video
+    filter video.eq
+    sort created_at, id
+    budget { rows 100; depth 1; cost 1000; deadline 2s; offset 100000 }
+  }
+}

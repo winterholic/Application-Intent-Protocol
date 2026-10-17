@@ -21,6 +21,10 @@ name = "mysql_adoption_flow"
 required-features = ["mysql"]
 
 [[test]]
+name = "mysql_facereview_reads"
+required-features = ["mysql"]
+
+[[test]]
 name = "field_policy_e2e"
 required-features = ["poc-runtime"]
 

@@ -511,6 +511,8 @@ fn configuration_for_runtime(path: &Path) -> Result<Config, Value> {
 enum Gate {
     Standard,
     CatalogOnly,
+    /// Only constructed by the `mysql` feature's runtime entry point.
+    #[cfg_attr(not(feature = "mysql"), allow(dead_code))]
     MysqlRuntime,
 }
 

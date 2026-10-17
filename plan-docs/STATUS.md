@@ -1,5 +1,9 @@
 # 진행 현황과 쌓인 질문
 
+## 2026-10-18 WBS 7.2.3 FaceReview MySQL 읽기 포팅과 어댑터 결함 수정 (Claude 구현, 독립 검증 대기)
+
+원본 FaceReview의 실제 MySQL 스키마(SQLAlchemy가 만든 11개 표)에서 9개 resource를 업무 DDL 0건으로 adopt하고 `aip service serve`로 읽었다. 원본 앱의 SQLAlchemy 쿼리와 같은 질문 21개(검색, 카테고리, 최신순·NULL 플래그 제외, offset 페이징, 댓글 가시성, 본인 전용 표, 필드 값)가 모두 같은 결과를 냈다. 원본은 `created_at` 등을 Python에서 채우므로 표에 DB default가 없고, 그래서 `default database` 필드는 DBA 단계(`db-defaults.sql`) 전에는 adoption이 이름을 대며 거절한다. 어댑터 결함 둘을 고쳤다: ENUM 값을 소문자로 비교해 `'GENERAL'` 같은 실제 값이 거절되던 것, 런타임 계정에 `CREATE TEMPORARY TABLES`가 없을 때 서버 능력 probe가 서버를 "InnoDB 없음"으로 오판하던 것(이제 권한 이름을 댄다). 서버 능력 게이트 뒤 `mysql_adoption_flow`가 실패한 채 푸시했던 것도 바로잡았다([VERIFICATION](../product/VERIFICATION.md) 정정). 남은 차이: 제목 OR 채널 검색(filter가 AND만), 목록 total, JSON·낙관적 잠금 표 2개, 음수 범위 Int 문법, Mongo·Redis 의존 목록, 쓰기·인증(7.2.2·7.2.4). 자세한 내용은 [fixture README](../product/tests/fixtures/facereview-mysql/README.md). 독립 검증 전이므로 완료로 표시하지 않는다.
+
 ## 2026-10-18 WBS 8.7 릴리스 게이트 증거 묶음 (Claude 구현, 독립 검증 대기)
 
 새 clone에서 전체 회귀, release 빌드·패키징, 묶음 smoke, 이전 릴리스(`4c27040`)의 schema 업그레이드와 두 롤백을 실행하는 `scripts/release-gate.sh`와 `product/tools/upgrade-drill.mjs`를 추가했다. 드릴이 실제 결함을 찾았다: 구버전 durable job schema를 새 binary가 거부했다(`b1b7d1b`). 후보는 main이 아니라 MySQL 트랙의 미완 커밋(fmt·clippy 실패)을 뺀 로컬 트리여서 main에서 게이트를 다시 실행해야 한다. 결과와 한계는 [릴리스 게이트](../product/RELEASE-GATE.md)를 따른다. 시작 가이드(`product/GETTING-STARTED.md`)와 개발용 토큰 helper를 더했다. 독립 검증 전이므로 완료로 표시하지 않는다.
