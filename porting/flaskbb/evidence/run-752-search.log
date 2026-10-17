@@ -1,6 +1,6 @@
-# 2026-10-17T19:08:37Z commit 447cdccb0112abdf110bf92d709a5509141182fe
-{"schema":"aip_flaskbb_1036c37dce","ok":true}
-✔ FlaskBB search stays consistent with writes, row policy and restarts without an index (real PostgreSQL) (2063.150292ms)
+# 2026-10-17T22:52:28Z commit ade4a89cd905dd3b76d137f80b9685b71c7efd2a
+{"schema":"aip_flaskbb_1ef13c8305","ok":true}
+✔ FlaskBB search stays consistent with writes, row policy and restarts without an index (real PostgreSQL) (1966.905791ms)
 ℹ tests 1
 ℹ suites 0
 ℹ pass 1
@@ -8,4 +8,4 @@
 ℹ cancelled 0
 ℹ skipped 0
 ℹ todo 0
-ℹ duration_ms 2185.8415
+ℹ duration_ms 2071.285125

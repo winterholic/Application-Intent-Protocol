@@ -1,6 +1,6 @@
-# 2026-10-17T19:08:37Z commit 447cdccb0112abdf110bf92d709a5509141182fe
-{"schema":"aip_flaskbb_f5858e3b24","ok":true,"withoutRows":{"moderator":true,"superMod":true,"admin":true,"owner":true,"otherMember":false,"forumModeratorOwnForum":true,"forumModeratorOtherForum":false},"withUnrelatedRow":{"moderator":true,"superMod":true,"admin":true,"owner":true,"otherMember":false,"forumModeratorOwnForum":true,"forumModeratorOtherForum":false}}
-✔ FlaskBB moderation does not depend on unrelated user_group rows (real PostgreSQL) (3035.263833ms)
+# 2026-10-17T22:52:28Z commit ade4a89cd905dd3b76d137f80b9685b71c7efd2a
+{"schema":"aip_flaskbb_600f5d169f","ok":true,"withoutRows":{"moderator":true,"superMod":true,"admin":true,"owner":true,"otherMember":false,"forumModeratorOwnForum":true,"forumModeratorOtherForum":false},"withUnrelatedRow":{"moderator":true,"superMod":true,"admin":true,"owner":true,"otherMember":false,"forumModeratorOwnForum":true,"forumModeratorOtherForum":false}}
+✔ FlaskBB moderation does not depend on unrelated user_group rows (real PostgreSQL) (2131.493917ms)
 ℹ tests 1
 ℹ suites 0
 ℹ pass 1
@@ -8,4 +8,4 @@
 ℹ cancelled 0
 ℹ skipped 0
 ℹ todo 0
-ℹ duration_ms 3146.719458
+ℹ duration_ms 2210.814542

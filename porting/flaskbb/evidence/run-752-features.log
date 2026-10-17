@@ -1,6 +1,6 @@
-# 2026-10-17T19:08:37Z commit 447cdccb0112abdf110bf92d709a5509141182fe
-{"schema":"aip_flaskbb_abe39d490a","ok":true,"featuresVerified":["F07_search","F03_profile","F09_conversations","F06_tracker_read","F04_F10_admin_crud","UI_live_integration","deactivated_writes_rejected","reactivation_recovered","forged_mailbox_rejected","F01_pagination","F05_last_post","F06_read_markers","F08_report_queue"]}
-✔ FlaskBB ported features: search, profile, conversations, tracker, admin CRUD in real PostgreSQL (6921.96475ms)
+# 2026-10-17T22:52:28Z commit ade4a89cd905dd3b76d137f80b9685b71c7efd2a
+{"schema":"aip_flaskbb_7dbd49c854","ok":true,"featuresVerified":["F07_search","F03_profile","F09_conversations","F06_tracker_read","F04_F10_admin_crud","UI_live_integration","deactivated_writes_rejected","reactivation_recovered","forged_mailbox_rejected","F01_pagination","F05_last_post","F06_read_markers","F08_report_queue"]}
+✔ FlaskBB ported features: search, profile, conversations, tracker, admin CRUD in real PostgreSQL (4432.812417ms)
 ℹ tests 1
 ℹ suites 0
 ℹ pass 1
@@ -8,4 +8,4 @@
 ℹ cancelled 0
 ℹ skipped 0
 ℹ todo 0
-ℹ duration_ms 7043.114125
+ℹ duration_ms 4515.747125
