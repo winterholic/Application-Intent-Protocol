@@ -793,3 +793,80 @@ async fn mysql_write_without_business_grants_names_the_missing_privilege() {
     assert_eq!(h.count(&format!("SELECT hits FROM `{SOURCE}`.`note` WHERE id = 10")).await, 0);
     assert_eq!(h.count(&format!("SELECT COUNT(*) FROM `{META}`.`aip_idem`")).await, 0);
 }
+
+const TASKS: &str = r#"
+resource Member { fields { id: Id } }
+actor Member
+resource Project {
+  fields { id: Id; name: Text; touched: Bool default database }
+  rows read when true
+  expose read { select id, name, touched; sort id; budget { rows 20; depth 1; deadline 2s; cost 1000 } }
+}
+resource Task {
+  fields { id: Id; project: Project; owner: Member; tag: Text(1..8); done: Bool default database }
+  rows read when true
+  transition complete { from done = false; allow owner = actor; to done = true; update Project where id = project { touched = true } }
+  transition sweep { from done = false; allow owner = actor; to done = true }
+  expose apply complete { target id; bulk maxRows 3 }
+  expose apply sweep { target id, where; bulk maxRows 3; sameScope project }
+  expose read { select id, project, owner, tag, done; filter project.eq, done.eq, tag.eq; sort id; budget { rows 20; depth 1; deadline 2s; cost 1000 } }
+}
+"#;
+
+/// A `where` target, `sameScope` and the single-row `update` effect, none of which the other tests reach.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "live: needs a dedicated MySQL 8.4 container (scripts/mysql-live-fixture.sh); run with -- --ignored"]
+async fn mysql_where_target_same_scope_and_single_update_effect() {
+    let _turn = SERIAL.lock().await;
+    let seed = [
+        "INSERT INTO `{SOURCE}`.`member` (id) VALUES (1), (2)".to_string(),
+        "INSERT INTO `{SOURCE}`.`project` (id, name, touched) VALUES (1, 'a', 0), (2, 'b', 0)".to_string(),
+        "INSERT INTO `{SOURCE}`.`task` (id, project_id, owner_id, tag, done) VALUES \
+         (10, 1, 1, 'x', 0), (11, 1, 1, 'x', 0), (12, 2, 1, 'solo', 0), (13, 1, 2, 'x', 0), (14, 1, 1, 'x', 1), (15, 2, 1, 'x', 0)"
+            .to_string(),
+    ];
+    let h = harness_with(TASKS, &seed, "SELECT, INSERT, UPDATE, DELETE", None).await;
+    let touched = |project: i64| format!("SELECT touched FROM `{SOURCE}`.`project` WHERE id = {project}");
+    let done = |task: i64| format!("SELECT done FROM `{SOURCE}`.`task` WHERE id = {task}");
+    let owner = h.owner.clone();
+    let sweep = |target: Value| json!({"apply": "Task.sweep", "target": target});
+
+    // `where` picks the rows `from` lets change now: tag x and still open are 10, 11, 13 and 15, more than the cap of 3.
+    let wide = h.apply(&owner, "where-1", sweep(json!({"where": [{"field": "tag", "op": "eq", "value": "x"}]}))).await;
+    // The rows span two projects, so `sameScope` refuses it before the row cap is reached.
+    assert_eq!(wide["code"], "WIRE.NOT_SAME_SCOPE", "{wide}");
+    assert_eq!(h.count(&format!("SELECT COUNT(*) FROM `{SOURCE}`.`task` WHERE done = 0")).await, 5, "a refused request changes nothing");
+
+    // A reference field is not an allowed `where` condition: the caller names rows by id instead.
+    let by_reference = h.apply(&owner, "where-ref", sweep(json!({"where": [{"field": "project", "op": "eq", "value": "1"}]}))).await;
+    assert_eq!(by_reference["code"], "WIRE.FILTER_NOT_ALLOWED", "{by_reference}");
+
+    // A `where` that matches exactly one row.
+    let single = h.apply(&owner, "where-2", sweep(json!({"where": [{"field": "tag", "op": "eq", "value": "solo"}]}))).await;
+    assert_eq!(single["ok"], true, "{single}");
+    assert_eq!(single["changed"], json!(["12"]), "{single}");
+    assert_eq!(h.count(&done(12)).await, 1);
+    let replay = h.apply(&owner, "where-2", sweep(json!({"where": [{"field": "tag", "op": "eq", "value": "solo"}]}))).await;
+    assert_eq!(replay["replayed"], true, "{replay}");
+
+    // Two tasks of one project would update the same project row twice. The effect needs one target row per task, so the whole
+    // request is refused and both tasks stay open (the PostgreSQL path has the same rule).
+    let twice = h.apply(&owner, "complete-twice", json!({"apply": "Task.complete", "target": {"ids": ["10", "11"]}})).await;
+    assert_eq!(twice["code"], "WIRE.EFFECT_TARGET_MISSING", "{twice}");
+    assert_eq!((h.count(&done(10)).await, h.count(&done(11)).await, h.count(&touched(1)).await), (0, 0, 0), "nothing of it was kept");
+
+    // `sameScope project`: two tasks of one project pass, two projects in one request are refused though both are the caller's.
+    let mixed = h.apply(&owner, "scope-2", sweep(json!({"ids": ["11", "15"]}))).await;
+    assert_eq!(mixed["code"], "WIRE.NOT_SAME_SCOPE", "{mixed}");
+    assert_eq!((h.count(&done(11)).await, h.count(&done(15)).await), (0, 0), "a refused request changes nothing");
+    let same = h.apply(&owner, "scope-1", sweep(json!({"ids": ["10", "11"]}))).await;
+    assert_eq!((same["ok"].clone(), same["changed"].clone()), (json!(true), json!(["10", "11"])), "{same}");
+
+    // The single-row `update` effect: one task, one project row, marked in the same transaction.
+    let completed = h.apply(&owner, "complete-1", json!({"apply": "Task.complete", "target": {"ids": ["15"]}})).await;
+    assert_eq!(completed["ok"], true, "{completed}");
+    assert_eq!(h.count(&touched(2)).await, 1, "the effect marked the project");
+    assert_eq!(h.count(&touched(1)).await, 0, "and only the project it names");
+    let again = h.apply(&owner, "complete-2", json!({"apply": "Task.complete", "target": {"ids": ["15"]}})).await;
+    assert_ne!(again["ok"], true, "a finished task is no longer a target: {again}");
+}
