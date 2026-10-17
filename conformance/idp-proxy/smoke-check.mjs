@@ -13,7 +13,7 @@ const conformanceDir = resolve(dirname(fileURLToPath(import.meta.url)));
 const repoDir = resolve(conformanceDir, "..", "..");
 const testDb = requireTestDatabase();
 const testDatabase = testDb.raw;
-const binary = resolve(repoDir, "target/debug/aip");
+const binary = process.env.AIP_BINARY || resolve(repoDir, "target/debug/aip");
 const composeFile = join(conformanceDir, "docker-compose.yml");
 const certsDir = join(conformanceDir, "certs");
 
