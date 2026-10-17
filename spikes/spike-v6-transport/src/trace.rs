@@ -66,6 +66,9 @@ const ROUTES: &[&str] = &[
 
 pub struct Trace {
     id: String,
+    /// The id of the span this request is exported as. It is fixed when the request starts, so a job enqueued while the request is
+    /// handled can name it as its parent; the exporter only learns the end time when the request finishes.
+    span_id: String,
     context: aip_execution::trace_context::TraceContext,
     /// `traceparent` headers seen. A request with more than one has an invalid trace context and starts a new trace.
     traceparents: u8,
@@ -79,9 +82,11 @@ pub struct Trace {
 
 impl Default for Trace {
     fn default() -> Self {
+        let span_id = crate::otlp::random_span_id();
         Trace {
             id: generate_id(),
-            context: aip_execution::trace_context::TraceContext::generate(),
+            context: aip_execution::trace_context::TraceContext::generate().with_span_id(span_id.clone()),
+            span_id,
             traceparents: 0,
             started: Instant::now(),
             method: String::new(),
@@ -124,7 +129,8 @@ impl Trace {
         self.context = match (self.traceparents, aip_execution::trace_context::TraceContext::parse(value)) {
             (1, Some(inbound)) => inbound,
             _ => aip_execution::trace_context::TraceContext::generate(),
-        };
+        }
+        .with_span_id(self.span_id.clone());
     }
 
     pub fn begin(&mut self, method: &str, path: &str) {
@@ -189,7 +195,7 @@ impl Drop for Trace {
             }
             let span = crate::otlp::SpanData {
                 trace_id: self.context.trace_id().to_string(),
-                span_id: crate::otlp::random_span_id(),
+                span_id: self.span_id.clone(),
                 parent_span_id: self.context.parent_span_id().map(|s| s.to_string()),
                 name: format!("HTTP {}", self.route),
                 kind: 2, // SERVER

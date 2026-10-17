@@ -349,8 +349,8 @@ async fn submit(
             return Err("WIRE.QUOTA_EXCEEDED");
         }
     }
-    let trace_id = aip_execution::trace_context::current_trace_id()
-        .unwrap_or_else(|| aip_execution::trace_context::TraceContext::generate().trace_id().to_string());
+    // The trace of the request that enqueues, and that request's span, so the run's span can be its child.
+    let trace_id = aip_execution::trace_context::current().unwrap_or_else(aip_execution::trace_context::TraceContext::generate).job_value();
     Store::new(s)
         .map_err(store_error)?
         .enqueue(
@@ -1030,10 +1030,12 @@ pub(crate) async fn supervisor(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire
     }
 }
 async fn execute(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire, lease: Lease) {
+    // The run is a span of its own. Its id goes into the context so that work the run starts (a job it enqueues) can name it as parent.
     let trace_ctx = match &lease.trace_id {
-        Some(tid) => aip_execution::trace_context::TraceContext::from_trace_id(tid.clone()),
+        Some(stored) => aip_execution::trace_context::TraceContext::from_job_value(stored),
         None => aip_execution::trace_context::TraceContext::generate(),
-    };
+    }
+    .with_span_id(crate::otlp::random_span_id());
     aip_execution::trace_context::scope(async move {
         aip_execution::trace_context::set(trace_ctx);
         execute_inner(rt, facts, wire, lease).await;
@@ -1056,11 +1058,12 @@ fn export_job_span(rt: &Runtime, lease: &Lease, state: &str, code: Option<&str>,
         if let Some(c) = code {
             attributes.push(("aip.code".to_string(), serde_json::Value::String(c.to_string())));
         }
-        let trace_id = lease.trace_id.clone().unwrap_or_else(crate::otlp::random_span_id);
+        // Inside `execute`'s scope the context holds the trace, this run's span id and the enqueuing request's span as parent.
+        let context = aip_execution::trace_context::current().unwrap_or_else(aip_execution::trace_context::TraceContext::generate);
         let span = crate::otlp::SpanData {
-            trace_id,
-            span_id: crate::otlp::random_span_id(),
-            parent_span_id: None,
+            trace_id: context.trace_id().to_string(),
+            span_id: context.span_id().map_or_else(crate::otlp::random_span_id, str::to_owned),
+            parent_span_id: context.parent_span_id().map(str::to_owned),
             name: format!("JOB {}", lease.operation),
             kind: 1,
             start_time_nanos,

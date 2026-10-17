@@ -5,10 +5,10 @@
 //! provider, an object store) adds a `traceparent` with the same trace id, the sampled flag of the caller and a fresh
 //! span id, so the caller's tracing backend and the provider's logs name one trace.
 //!
-//! This is propagation only. The server does not record spans and takes no exporter dependency; an OpenTelemetry
-//! exporter is an optional package candidate. A task spawned from the request, such as a durable job step, does not
-//! inherit the context: the trace of an enqueue request would have to be stored in the job row, which is a deployment
-//! schema change and is left as a design decision.
+//! This module only carries the context. Spans are recorded by the transport's optional OTLP exporter. A task spawned from the
+//! request does not inherit the context by itself; a durable job gets it through the `trace_id` text column of its row, which
+//! holds `<trace id>` or `<trace id>-<span id>` ([`TraceContext::job_value`]): the trace of the enqueue request and the span
+//! that enqueued it, so the job's own span can name that span as its parent.
 use std::{cell::RefCell, future::Future};
 
 tokio::task_local! {
@@ -20,6 +20,8 @@ tokio::task_local! {
 pub struct TraceContext {
     trace_id: String,
     parent_span_id: Option<String>,
+    /// The span this server records for the work it is doing (a request or a job run), once one is assigned.
+    span_id: Option<String>,
     flags: u8,
 }
 
@@ -39,17 +41,56 @@ impl TraceContext {
         if version == "00" && fields.next().is_some() {
             return None;
         }
-        Some(Self { trace_id: trace_id.to_owned(), parent_span_id: Some(parent_id.to_owned()), flags: u8::from_str_radix(flags, 16).ok()? })
+        Some(Self {
+            trace_id: trace_id.to_owned(),
+            parent_span_id: Some(parent_id.to_owned()),
+            span_id: None,
+            flags: u8::from_str_radix(flags, 16).ok()?,
+        })
     }
 
     /// A trace that starts at this server: a random trace id, not sampled.
     pub fn generate() -> Self {
-        Self { trace_id: random_hex(16), parent_span_id: None, flags: 0 }
+        Self { trace_id: random_hex(16), parent_span_id: None, span_id: None, flags: 0 }
     }
 
     /// Creates a trace context from an existing trace id (e.g. preserved on a durable job).
     pub fn from_trace_id(trace_id: impl Into<String>) -> Self {
-        Self { trace_id: trace_id.into(), parent_span_id: None, flags: 0 }
+        Self { trace_id: trace_id.into(), parent_span_id: None, span_id: None, flags: 0 }
+    }
+
+    /// Rebuilds the context of a job from what [`job_value`](Self::job_value) stored. A bare 32-hex trace id (rows written before spans
+    /// were stored) has no parent span. Anything else is not trusted as a trace id: a new trace starts, so a corrupt value cannot
+    /// reach an exporter or an outbound header.
+    pub fn from_job_value(value: &str) -> Self {
+        let lower_hex = |s: &str, len: usize| {
+            s.len() == len && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) && s.bytes().any(|b| b != b'0')
+        };
+        match value.split_once('-') {
+            None if lower_hex(value, 32) => Self::from_trace_id(value),
+            Some((trace, span)) if lower_hex(trace, 32) && lower_hex(span, 16) => {
+                Self { trace_id: trace.to_owned(), parent_span_id: Some(span.to_owned()), span_id: None, flags: 0 }
+            }
+            _ => Self::generate(),
+        }
+    }
+
+    /// What a durable job row stores so the run can join this trace: the trace id, and the span that is enqueueing it when there is one.
+    pub fn job_value(&self) -> String {
+        match &self.span_id {
+            Some(span) => format!("{}-{span}", self.trace_id),
+            None => self.trace_id.clone(),
+        }
+    }
+
+    /// The same trace with `span_id` as the span of the work now starting.
+    pub fn with_span_id(mut self, span_id: impl Into<String>) -> Self {
+        self.span_id = Some(span_id.into());
+        self
+    }
+
+    pub fn span_id(&self) -> Option<&str> {
+        self.span_id.as_deref()
     }
 
     pub fn trace_id(&self) -> &str {
@@ -111,5 +152,47 @@ pub fn propagate(request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
     match outgoing() {
         Some(value) => request.header("traceparent", value),
         None => request,
+    }
+}
+
+#[cfg(test)]
+mod job_value_tests {
+    use super::TraceContext;
+
+    const TRACE: &str = "0af7651916cd43dd8448eb211c80319c";
+    const SPAN: &str = "b7ad6b7169203331";
+
+    #[test]
+    fn a_job_value_round_trips_the_trace_and_the_enqueuing_span() {
+        let request = TraceContext::parse(&format!("00-{TRACE}-00f067aa0ba902b7-01")).expect("valid").with_span_id(SPAN);
+        let stored = request.job_value();
+        assert_eq!(stored, format!("{TRACE}-{SPAN}"));
+        let run = TraceContext::from_job_value(&stored);
+        assert_eq!((run.trace_id(), run.parent_span_id(), run.span_id()), (TRACE, Some(SPAN), None));
+    }
+
+    #[test]
+    fn rows_written_before_spans_were_stored_still_join_their_trace() {
+        let run = TraceContext::from_job_value(TRACE);
+        assert_eq!((run.trace_id(), run.parent_span_id()), (TRACE, None));
+        assert_eq!(TraceContext::from_trace_id(TRACE).job_value(), TRACE, "no span, no suffix");
+    }
+
+    #[test]
+    fn a_corrupt_stored_value_starts_a_new_trace_instead_of_reaching_an_exporter() {
+        for bad in [
+            "",
+            "not-a-trace",
+            "0af7651916cd43dd8448eb211c80319",
+            &format!("{TRACE}-short"),
+            &format!("{TRACE}-{SPAN}-extra"),
+            &"0".repeat(32),
+            &format!("{}-{SPAN}", TRACE.to_uppercase()),
+        ] {
+            let run = TraceContext::from_job_value(bad);
+            assert_eq!(run.trace_id().len(), 32, "{bad}");
+            assert_ne!(run.trace_id(), TRACE, "{bad}");
+            assert_eq!(run.parent_span_id(), None, "{bad}");
+        }
     }
 }
