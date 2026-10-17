@@ -8,6 +8,7 @@ import {once} from 'node:events';
 import {createInterface} from 'node:readline';
 import {pathToFileURL} from 'node:url';
 import {spawn, spawnSync} from 'node:child_process';
+import {GROUPS_SQL, dbUrl, startFixture} from './harness.mjs';
 
 // 7.5.3 F14: account mail jobs through `aip service serve` with the real worker
 // network isolation. The worker never opens a socket; delivery is the declared
@@ -181,5 +182,73 @@ test('FlaskBB account mail jobs deliver through the declared HTTP integration un
     }
     sql(`DROP SCHEMA IF EXISTS "${schema}" CASCADE;`);
     rmSync(temp, {recursive: true, force: true});
+  }
+});
+
+test('FlaskBB mail provider outage dead-letters the job; redrive is refused as unconfirmed and a new job delivers once', {timeout: 120000}, async () => {
+  const runTag = randomUUID().replaceAll('-', '').slice(0, 12);
+  const aliceMail = `alice-${runTag}@example.test`;
+  const dead = 'http://127.0.0.1:55499';
+  const workers = url => ({
+    directory: join(track, 'mail'),
+    language: 'python',
+    isolation: process.platform === 'darwin' ? 'mac_net_deny' : 'auto',
+    environment: {FLASKBB_MAIL_SENDER: 'noreply@flaskbb.test'},
+    integrations: [{name: 'mail', url: `${url}/api/v1/send`, method: 'POST', timeout_ms: 2000, max_request_bytes: 65536, max_response_bytes: 65536, allow_loopback: true}],
+  });
+  const fx = await startFixture({
+    prefix: 'aip-flaskbb-mail-dlq-',
+    actors: {'alice-sub': 2},
+    serviceExtra: {workers: workers(dead)},
+    seed: (sql, q, schema) => {
+      sql(GROUPS_SQL(schema));
+      sql(`INSERT INTO ${q}.user (id,username,email,date_joined,lastseen,primary_group_id,activated,language) VALUES (2,'member-alice','${aliceMail}',now(),now(),2,true,'en');`);
+    },
+  });
+  try {
+    const alice = fx.client('alice-sub');
+    const input = {email: aliceMail, username: 'member-alice', token: `payload-${runTag}`};
+    const receipt = await alice.jobs.enqueue('sendActivationEmail', input, {key: `dlq-${runTag}`});
+    let receiptId = receipt.id;
+    const settled = async client => {
+      let status;
+      for (let attempt = 0; attempt < 300; attempt++) {
+        status = await client.jobs.status(receiptId);
+        if (['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(status.status)) break;
+        await new Promise(done => setTimeout(done, 100));
+      }
+      return status;
+    };
+    let status = await settled(alice);
+    assert.equal(status.status, 'FAILED', `an unreachable provider fails the job: ${JSON.stringify(status)}`);
+    const inbox = async () => (await (await fetch(`${mailpit}/api/v1/search?query=${encodeURIComponent(`to:${aliceMail}`)}`)).json()).messages;
+    assert.equal((await inbox()).length, 0, 'nothing was delivered during the outage');
+
+    // Operator view: the failed run is listed without its payload.
+    const listed = JSON.parse(fx.run(binary, ['service', 'jobs', '--config', fx.config, 'list', '--state', 'FAILED']));
+    assert.equal(listed.ok, true);
+    assert.deepEqual(listed.jobs.map(job => job.id), [receipt.id]);
+    assert.ok(!JSON.stringify(listed).includes(`payload-${runTag}`), 'job payloads are not exposed by the listing');
+
+    // The provider comes back (config now points at Mailpit). A transport failure leaves the effect
+    // unconfirmed, so the platform refuses to redrive the same run (it cannot know the provider saw nothing).
+    const config = JSON.parse(readFileSync(fx.config, 'utf8'));
+    config.workers = workers(mailpit);
+    writeFileSync(fx.config, JSON.stringify(config));
+    await fx.restart(file);
+    const refused = spawnSync(binary, ['service', 'jobs', '--config', fx.config, 'retry', '--id', receipt.id], {cwd: root, env: {...process.env, AIP_FLASKBB_DATABASE: dbUrl}, encoding: 'utf8'});
+    assert.notEqual(refused.status, 0);
+    assert.equal(JSON.parse(refused.stdout || refused.stderr).code, 'WIRE.EFFECT_UNKNOWN', `${refused.stdout}${refused.stderr}`);
+    assert.equal((await inbox()).length, 0, 'a refused redrive sends nothing');
+
+    // Operator procedure from OPERATIONS.md: confirm with the provider (nothing arrived), then enqueue a new job.
+    const second = fx.client('alice-sub');
+    const fresh = await second.jobs.enqueue('sendActivationEmail', input, {key: `dlq-${runTag}-again`});
+    receiptId = fresh.id;
+    status = await settled(second);
+    assert.equal(status.status, 'SUCCEEDED', JSON.stringify(status));
+    assert.equal((await inbox()).length, 1, 'the new job delivers exactly one mail');
+  } finally {
+    await fx.stop();
   }
 });

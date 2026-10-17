@@ -34,7 +34,7 @@ export const USERS_SQL = schema => `INSERT INTO "${schema}".user (id,username,em
   (6,'member-carol','carol@example.test',now(),now(),2,true,'en');`;
 
 /**
- * Start a fresh schema and listener. `seed(sql, q, schema)` inserts rows after init;
+ * Start a fresh schema and listener. `seed(sql, q, schema, run)` inserts rows after init;
  * `actors` maps token subject -> actor id and is bound as service principals.
  * Returns helpers and `stop()`; always call stop() in a finally block.
  */
@@ -79,7 +79,7 @@ export async function startFixture({prefix = 'aip-flaskbb-test-', seed, actors =
     const init = JSON.parse(run(binary, ['service', 'init', definition, '--config', config]));
     if (!init.ok) throw new Error(`service init: ${JSON.stringify(init)}`);
     const q = `"${schema}"`;
-    if (seed) seed(sql, q, schema);
+    if (seed) seed(sql, q, schema, run);
     for (const [subject, actor] of Object.entries(actors)) {
       run(binary, ['service', 'principal', '--config', config, 'bind', '--subject', subject, '--actor', String(actor)]);
     }
@@ -95,20 +95,33 @@ export async function startFixture({prefix = 'aip-flaskbb-test-', seed, actors =
       readDescriptors: section('readDescriptors'),
       operations: section('operationDescriptors'),
     };
-    server = spawn(binary, ['service', 'serve', definition, '--config', config], {cwd: temp, env, stdio: ['ignore', 'pipe', 'pipe']});
-    server.unref();
-    let stderr = '';
-    server.stderr.on('data', data => {stderr += data;});
-    const lines = createInterface({input: server.stdout});
-    const started = await Promise.race([
-      once(lines, 'line').then(([line]) => JSON.parse(line)),
-      once(server, 'exit').then(([code]) => {throw new Error(`serve exit ${code}: ${stderr}`);}),
-      new Promise((_, reject) => setTimeout(() => reject(new Error(`serve timeout: ${stderr}`)), 20000).unref()),
-    ]);
-    if (!started.ok) throw new Error(`serve: ${JSON.stringify(started)}`);
-    lines.close();
-    server.stdout.destroy();
-    server.stderr.destroy();
+    const killServer = async () => {
+      if (server && !server.closed) {
+        const closed = once(server, 'close');
+        if (server.exitCode === null && server.signalCode === null) server.kill('SIGKILL');
+        await closed;
+      }
+      server = undefined;
+    };
+    const start = async file => {
+      await killServer();
+      server = spawn(binary, ['service', 'serve', file, '--config', config], {cwd: temp, env, stdio: ['ignore', 'pipe', 'pipe']});
+      server.unref();
+      let stderr = '';
+      server.stderr.on('data', data => {stderr += data;});
+      const lines = createInterface({input: server.stdout});
+      const started = await Promise.race([
+        once(lines, 'line').then(([line]) => JSON.parse(line)),
+        once(server, 'exit').then(([code]) => {throw new Error(`serve exit ${code}: ${stderr}`);}),
+        new Promise((_, reject) => setTimeout(() => reject(new Error(`serve timeout: ${stderr}`)), 20000).unref()),
+      ]);
+      if (!started.ok) throw new Error(`serve: ${JSON.stringify(started)}`);
+      lines.close();
+      server.stdout.destroy();
+      server.stderr.destroy();
+      return started;
+    };
+    let started = await start(definition);
     const {connect} = await import(pathToFileURL(join(sdkRoot, 'product/sdk/index.js')).href);
     const token = subject => {
       const now = Math.floor(Date.now() / 1000);
@@ -116,7 +129,12 @@ export async function startFixture({prefix = 'aip-flaskbb-test-', seed, actors =
       return `${unsigned}.${sign('RSA-SHA256', Buffer.from(unsigned), privateKey).toString('base64url')}`;
     };
     const client = subject => connect(`http://${started.address}`, token(subject), contract);
-    return {schema, q, sql, run, client, contract, address: started.address, config, temp, stop};
+    // Restart serve against another definition file (after a migration); returns the new address.
+    const restart = async file => {
+      started = await start(file);
+      return started.address;
+    };
+    return {schema, q, sql, run, client, token, contract, config, temp, stop, restart, killServer, get address() {return started.address;}};
   } catch (error) {
     await stop();
     throw error;
