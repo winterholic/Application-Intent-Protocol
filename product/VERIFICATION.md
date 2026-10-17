@@ -286,3 +286,44 @@ Sol high가 별도 문맥에서 운영 중 구 정책 실행, 폐기 토큰 재�
 검증 환경은 현재 macOS arm64, 로컬 PostgreSQL, 통제된 HTTPS 인증서 fixture와 메모리 생성 RSA 키다. 외부 실제 IdP 계정·TLS reverse proxy 배포·다른 OS·대형 테이블 무중단 변경은 미실행이다. actor resource 교체·임의 SQL 변환·자동 역방향 migration·구버전 client 공존은 지원하지 않는다. 최종 작성 형식·Id 표현·쓰기 조합·라이선스의 미결정을 승인으로 승격하지 않는다.
 
 실행 절차는 [OPERATIONS](OPERATIONS.md), 설계 관문은 [서비스](../crates/aip-service/README.md)·[인증](../crates/aip-auth/README.md)·[마이그레이션](../crates/aip-migrate/README.md)·[정의 한계](../spikes/spike-v1-fixture/PRODUCTION-LIMITS.md)·[정책 실행 한계](../spikes/spike-v2-read/PRODUCTION-RUNTIME.md)를 따른다.
+
+## 운영 준비: IdP Proxy & OTLP Observability (2026-10-17, WBS 8.2 / 8.3)
+
+AIP 1.0 운영 준비 WBS 8.2(IdP/TLS Proxy 스모크 검증) 및 WBS 8.3(OTLP Job 관측성 및 장애 격리)에 대한 검증 결과다. 독립 검증(작업자 eb02743f) 피드백에 따라 JS 자기검사를 폐기하고 실제 Rust 통합 테스트 표면과 샌드박스 실행 증거만을 기록한다.
+
+### 1. WBS 8.2: IdP Proxy 스모크 교정 및 macOS sandbox 조사
+
+- **원인 판정 상태**:
+  - 17개 assertion(IdP health, OIDC discovery, JWKS RS256, Caddy HTTPS, CORS, x-request-id, JWT 유효/만료/aud/iss/typ/sub 거부, `/read` 인증)과 설정 생성을 코드로 대조했다. 독립 검토는 assertion 코드에서 worker 호출을 찾지 못했지만, `/read` 픽스처의 worker 의존성과 workers 설정 제거 뒤의 실제 기동·통과는 실행으로 입증하지 못했다.
+  - 이전 작업자 보고는 `worker_runtime_probe`/`sandbox-exec` exit 71을 원인으로 들었으나, 확인 가능한 실행 출력은 `smoke-check.mjs` 시작 단계의 `mkdtemp ... EPERM`에서 멈춘 기록이다. 따라서 worker probe가 원인이라는 주장은 **미검증**이며, 아래 수정이 17개 assertion을 통과시킨다는 주장도 아직 하지 않는다.
+- **최소 테스트 구성 교정**:
+  - `conformance/idp-proxy/smoke-check.mjs`에서 불필요한 `workers` 설정을 제거하여 IdP/TLS proxy 본연의 테스트 구성으로 교정했다.
+  - `scripts/smoke-idp-proxy.sh`에 `AIP_BINARY` 환경 변수가 설정된 경우 파일 존재 여부와 실행 권한을 검증하도록 보완했다. 비존재 경로 설정 시 즉시 실패(exit 1)를 확인했다.
+- **환경 제약 및 이전 실행 결과**:
+  - 이전 작업자 보고의 실행 명령은 `AIP_BINARY=/private/tmp/aip-verify-target/debug/aip bash /private/tmp/aip-wbs82-83-ops/scripts/smoke-idp-proxy.sh`이고, 보고된 종료 코드는 1이다. 출력은 `Using pre-built aip binary`, `Running OIDC IdP and Caddy TLS reverse proxy smoke test`, `FATAL: Error: EPERM ... mkdtemp ...`까지이며 assertion 단계 전 종료됐다.
+  - 해당 이전 시도에서 17개 assertion은 **미실행**이었다. 이후 복구 Run은 별도의 Codex Luna 명령환경에서 전용 DB/IdP를 구성해 실제 17개 assertion을 실행했으며, 결과는 아래 복구 증분에 기록했다. 두 실행환경의 차이를 보존하며 과거 EPERM을 프로덕션 가용성 결함으로 일반화하지 않는다.
+
+### 2. WBS 8.3: OTLP durable job trace_id 전파 및 collector 장애 격리
+
+- **설계 대조 및 아키텍처 규명**:
+  - 플래너 문서의 `crates/aip-jobs` 및 `crates/aip-service/src/telemetry.rs`는 가상 경로이며 존재하지 않음을 확인했다.
+  - 실제 OTLP 구현체는 `spikes/spike-v6-transport/src/otlp.rs`에 위치하며, `OtlpExporter::export_span`은 `mpsc::channel(4096)` 유한 큐에 `try_send`하여 collector 장애나 지연 시 호출자를 절대 블로킹하지 않고 백그라운드 드롭(fail-open / non-blocking queue)하도록 구현되어 있음을 코드로 확인했다.
+- **실제 Rust 통합 테스트 표면 (`spikes/spike-v6-transport/tests/otlp.rs`)**:
+  - JS 자기검사 파일(`conformance/otlp/smoke-check.mjs`)을 폐기하고, `scripts/smoke-otlp.sh`가 실제 Rust 통합 테스트 `cargo test -p spike-v6-transport --test otlp --locked`를 실행하도록 교정했다.
+  - `spikes/spike-v6-transport/tests/otlp.rs`에 큐 포화(4096 초과) 및 collector 장애 시 논블로킹 드롭을 검증하는 5번째 테스트(`otlp_exporter_queue_saturation_drops_spans_without_blocking`)를 추가했다.
+
+| Rust 테스트 함수 | 검증 범위 및 세부 확인 내용 |
+|---|---|
+| `otlp_exporter_receives_traces_and_metrics_with_correlated_trace_id` | mock in-process OTLP/HTTP 수신기로 trace/span 및 duration histogram 수신, HTTP 요청 span과 durable job run span의 동일 trace_id 연계, 민감 파라미터/토큰 마스킹 검증 |
+| `durable_job_and_http_spans_share_same_trace_id` | HTTP span과 durable job span의 동일 `trace_id` 공유 및 `parentSpanId` 계층 구조 검증 |
+| `http_trace_status_mapping_conforms_to_otlp_spec` | HTTP 상태 코드의 OTLP spec 규격 매핑: 200..399 -> `STATUS_CODE_OK`(1), 4xx/5xx -> `STATUS_CODE_ERROR`(2), unrecorded -> `STATUS_CODE_UNSET`(0) |
+| `durable_job_status_mapping_conforms_to_otlp_spec` | Durable Job 상태의 OTLP spec 규격 매핑: SUCCEEDED -> `STATUS_CODE_OK`(1), FAILED/CANCELLED -> `STATUS_CODE_ERROR`(2), RETRY/PENDING -> `STATUS_CODE_UNSET`(0) |
+| `otlp_exporter_queue_saturation_drops_spans_without_blocking` | 큐 용량(4096)을 초과하는 5000개 span 전송 시 호출자가 100ms 이내에 논블로킹으로 완료됨을 실증 (<100ms) |
+
+### 복구 Run 검증 증분 (2026-10-17)
+
+- `/private/tmp/aip-wbs82-83-ops`의 staged 삭제 1,278개와 비어 있는 index를 보존했다. 기준 SHA는 `0eb0ce5d956490aa4ff4287f50d1a2e3ea6d3d6d`; forensic snapshot과 실행 로그는 Run outbox의 `aip-wbs82-83-forensic-20261017/`에 있다. 복구는 별도 worktree `/private/tmp/aip-wbs82-83-recovery-20261017`, 브랜치 `feature/wbs-8.2-8.3-recovery-20261017`에서 진행했다.
+- 변경은 `scripts/smoke-idp-proxy.sh`, `conformance/idp-proxy/smoke-check.mjs`, `scripts/smoke-otlp.sh`, `spikes/spike-v6-transport/tests/otlp.rs`, 이 문서의 WBS 8.2/8.3 증거 섹션으로 제한했다. 각 경로를 기준 tree와 대조했으며, Rust 테스트는 실제 테스트 바이너리로 연결된다. JS 자기검사는 제품 테스트 증거에서 제외했다.
+- `CARGO_NET_OFFLINE=true cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --test otlp --locked --target-dir /private/tmp/aip-wbs82-83-recovery-20261017/target` 통과: 5 passed, 0 failed. 이 테스트 파일에는 DB 연결이 없고 mock OTLP 수신기는 loopback ephemeral port를 사용한다.
+- IdP/Docker 스모크는 별도 전용 PostgreSQL 컨테이너(`postgres:16-alpine`, 임시 이름 `aip-wbs82-83-postgres-20261017`)를 host loopback `127.0.0.1:25432`에만 매핑하고 명시 DSN(`host=127.0.0.1 port=25432 dbname=postgres user=postgres sslmode=disable`)으로 1회 실행했다. `bash scripts/smoke-idp-proxy.sh`는 exit 0, **17 passed / 0 failed**였다. IdP/Caddy와 전용 DB 컨테이너는 종료했으며 ports 25432/8088/8443/8444에 남은 listener가 없는 것을 확인했다. 비밀 credential은 사용·저장하지 않았다.
+- 이 결과는 수정 구현의 실행 증거다. 사용자가 정한 완료 관문에 따라 독립 검토 전 두 WBS의 상태는 `review`로 두며 `done` 처리하지 않는다.

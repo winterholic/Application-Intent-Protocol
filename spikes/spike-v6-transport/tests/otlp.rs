@@ -585,3 +585,37 @@ async fn durable_job_status_mapping_conforms_to_otlp_spec() {
     );
     assert_ne!(retry_span["status"]["code"].as_i64(), Some(1), "Job state RETRY must NEVER map to 1 (STATUS_CODE_OK in OTLP)");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn otlp_exporter_queue_saturation_drops_spans_without_blocking() {
+    let unreachable_addr: SocketAddr = "127.0.0.1:19999".parse().unwrap();
+    let otlp_config = OtlpConfig {
+        endpoint: format!("http://{unreachable_addr}"),
+        headers: HashMap::new(),
+        timeout_ms: 100,
+    };
+    let exporter = spike_v6_transport::otlp::OtlpExporter::start(otlp_config).unwrap();
+    let now = spike_v6_transport::otlp::now_nanos();
+
+    // Export 5000 spans (exceeding queue capacity of 4096)
+    let start = std::time::Instant::now();
+    for i in 0..5000 {
+        exporter.export_span(spike_v6_transport::otlp::SpanData {
+            trace_id: format!("{:032x}", i + 1),
+            span_id: spike_v6_transport::otlp::random_span_id(),
+            parent_span_id: None,
+            name: format!("SPAN_{i}"),
+            kind: 1,
+            start_time_nanos: now,
+            end_time_nanos: now + 1_000_000,
+            attributes: vec![],
+            status_code: spike_v6_transport::otlp::SpanStatusCode::Ok,
+            status_message: None,
+        });
+    }
+    let elapsed = start.elapsed();
+    assert!(
+        elapsed < Duration::from_millis(100),
+        "Enqueuing 5000 spans must complete non-blockingly under 100ms, took {elapsed:?}"
+    );
+}

@@ -11,7 +11,7 @@ import { randomUUID } from "node:crypto";
 const conformanceDir = resolve(dirname(fileURLToPath(import.meta.url)));
 const repoDir = resolve(conformanceDir, "..", "..");
 const testDatabase = process.env.AIP_TEST_DATABASE || "host=localhost dbname=postgres";
-const binary = resolve(repoDir, "target/debug/aip");
+const binary = process.env.AIP_BINARY || resolve(repoDir, "target/debug/aip");
 const composeFile = join(conformanceDir, "docker-compose.yml");
 const certsDir = join(conformanceDir, "certs");
 
@@ -230,10 +230,6 @@ IP.1=127.0.0.1
           },
         },
         realtime: { heartbeat_ms: 400, poll_ms: 100 },
-        workers: {
-          directory: join(repoDir, "spikes", "spike-v6-transport", "tests", "fixtures", "jobs"),
-          language: "node",
-        },
       }, null, 2)
     );
 
