@@ -140,6 +140,105 @@ async fn expired_put_reservation_is_released_when_the_store_has_no_object() {
     ledger.reserve_put(&mut db.client, "alice", "next", 10 * MIB, 600).await.unwrap();
 }
 
+/// A ledger table created before the `settling` column existed (the earlier 8.5 build) is upgraded in place by the same DDL, keeping its rows.
+#[tokio::test]
+async fn the_ddl_upgrades_a_ledger_table_that_predates_the_hold_column() {
+    let mut db = Db::new().await;
+    let schema = db.schema.clone();
+    db.client
+        .batch_execute(&format!(
+            "DROP TABLE {schema}.aip_object_ledger; \
+             CREATE TABLE {schema}.aip_object_ledger (owner text NOT NULL, object_id text NOT NULL, \
+             kind text NOT NULL CHECK (kind IN ('PUT','MULTIPART')), upload_id text, \
+             state text NOT NULL CHECK (state IN ('PENDING','COMPLETE','DELETING')), \
+             bytes bigint NOT NULL CHECK (bytes >= 0), expires_at timestamptz, version bigint NOT NULL DEFAULT 0, \
+             created_at timestamptz NOT NULL DEFAULT clock_timestamp(), PRIMARY KEY(owner,object_id)); \
+             INSERT INTO {schema}.aip_object_ledger (owner,object_id,kind,state,bytes) VALUES ('alice','old','PUT','COMPLETE',{})",
+            2 * MIB
+        ))
+        .await
+        .unwrap();
+    db.client.batch_execute(&ObjectLedger::ddl(&schema).unwrap()).await.unwrap();
+    db.client.batch_execute(&ObjectLedger::ddl(&schema).unwrap()).await.expect("running the DDL twice is harmless");
+    let ledger = db.ledger(10 * MIB, 100);
+    assert_eq!(ledger.usage(&db.client, "alice").await.unwrap(), Usage { bytes: 2 * MIB, objects: 1 }, "existing rows survive");
+    ledger.reserve_put(&mut db.client, "alice", "new", 3 * MIB, 600).await.unwrap();
+}
+
+const HOLD: u64 = 86_400;
+
+#[tokio::test]
+async fn first_miss_of_a_put_keeps_the_charge_and_only_the_second_miss_releases_it() {
+    let mut db = Db::new().await;
+    let ledger = db.ledger(10 * MIB, 100);
+    ledger.reserve_put(&mut db.client, "alice", "slow", 7 * MIB, 600).await.unwrap();
+    db.expire_all().await;
+    let first = ledger.claim_due(&mut db.client, 10, 300).await.unwrap();
+    assert!(!first[0].settling);
+    assert!(ledger.resolve(&mut db.client, &first[0], Outcome::NotYetStored { hold_secs: HOLD }).await.unwrap());
+    assert_eq!(ledger.usage(&db.client, "alice").await.unwrap(), Usage { bytes: 7 * MIB, objects: 1 }, "the charge is kept, not released");
+    assert_eq!(
+        ledger.reserve_put(&mut db.client, "alice", "other", 4 * MIB, 600).await.unwrap_err(),
+        Error::QuotaExceeded,
+        "held bytes cannot be handed to another upload"
+    );
+    assert!(ledger.claim_due(&mut db.client, 10, 300).await.unwrap().is_empty(), "the second look is a day away");
+
+    db.expire_all().await;
+    let second = ledger.claim_due(&mut db.client, 10, 300).await.unwrap();
+    assert_eq!((second.len(), second[0].settling), (1, true));
+    assert!(ledger.resolve(&mut db.client, &second[0], Outcome::NotYetStored { hold_secs: HOLD }).await.unwrap());
+    assert_eq!(ledger.usage(&db.client, "alice").await.unwrap(), Usage { bytes: 0, objects: 0 }, "the second miss releases the reservation");
+}
+
+#[tokio::test]
+async fn an_upload_that_lands_during_the_hold_is_confirmed_at_its_real_size() {
+    let mut db = Db::new().await;
+    let ledger = db.ledger(10 * MIB, 100);
+    ledger.reserve_put(&mut db.client, "alice", "slow", 7 * MIB, 600).await.unwrap();
+    db.expire_all().await;
+    let first = ledger.claim_due(&mut db.client, 10, 300).await.unwrap();
+    ledger.resolve(&mut db.client, &first[0], Outcome::NotYetStored { hold_secs: HOLD }).await.unwrap();
+    db.expire_all().await;
+    let second = ledger.claim_due(&mut db.client, 10, 300).await.unwrap();
+    assert!(ledger.resolve(&mut db.client, &second[0], Outcome::Stored(7 * MIB)).await.unwrap());
+    assert_eq!(ledger.usage(&db.client, "alice").await.unwrap(), Usage { bytes: 7 * MIB, objects: 1 });
+    db.expire_all().await;
+    assert!(ledger.claim_due(&mut db.client, 10, 300).await.unwrap().is_empty(), "a confirmed object has no timer");
+}
+
+#[tokio::test]
+async fn signing_a_held_object_again_starts_a_fresh_reservation_and_a_stale_hold_is_ignored() {
+    let mut db = Db::new().await;
+    let ledger = db.ledger(10 * MIB, 100);
+    ledger.reserve_put(&mut db.client, "alice", "slow", 7 * MIB, 600).await.unwrap();
+    db.expire_all().await;
+    let first = ledger.claim_due(&mut db.client, 10, 300).await.unwrap();
+    // The owner signs the same object again before the reconciler's answer arrives.
+    ledger.reserve_put(&mut db.client, "alice", "slow", 6 * MIB, 600).await.unwrap();
+    assert!(!ledger.resolve(&mut db.client, &first[0], Outcome::NotYetStored { hold_secs: HOLD }).await.unwrap(), "stale answer");
+    db.expire_all().await;
+    let again = ledger.claim_due(&mut db.client, 10, 300).await.unwrap();
+    assert!(!again[0].settling, "a re-sign resets the hold: it gets its own first look");
+    assert_eq!(again[0].bytes, 6 * MIB as i64);
+}
+
+#[tokio::test]
+async fn a_signed_delete_that_finds_the_object_gone_is_released_not_held() {
+    let mut db = Db::new().await;
+    let ledger = db.ledger(10 * MIB, 100);
+    ledger.reserve_put(&mut db.client, "alice", "obj", 3 * MIB, 600).await.unwrap();
+    db.expire_all().await;
+    let due = ledger.claim_due(&mut db.client, 10, 300).await.unwrap();
+    ledger.resolve(&mut db.client, &due[0], Outcome::Stored(3 * MIB)).await.unwrap();
+    ledger.delete_signed(&mut db.client, "alice", "obj", 360).await.unwrap();
+    db.expire_all().await;
+    let due = ledger.claim_due(&mut db.client, 10, 300).await.unwrap();
+    assert_eq!(due[0].state, State::Deleting);
+    assert!(ledger.resolve(&mut db.client, &due[0], Outcome::NotYetStored { hold_secs: HOLD }).await.unwrap());
+    assert_eq!(db.rows().await, 0, "the confirmed-gone object leaves the ledger");
+}
+
 #[tokio::test]
 async fn expired_put_reservation_becomes_a_stored_object_with_its_real_size() {
     let mut db = Db::new().await;

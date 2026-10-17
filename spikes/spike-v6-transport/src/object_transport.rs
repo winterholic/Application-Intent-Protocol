@@ -21,10 +21,12 @@ const PIPE_DEPTH: usize = 2;
 const STREAM_CHUNK: usize = 64 * 1024;
 const PRESIGN_SECONDS: u64 = 300;
 /// A signed PUT is checked against the store this long after it was issued. The URL only has to be valid when the
-/// transfer starts, so a large upload can still be running after it expires; the extra hour covers those. An upload
-/// that is still running when the reservation is released is not counted afterwards, which the bucket's own
-/// lifecycle rules have to cover.
+/// transfer starts, so a large upload can still be running after it expires; the extra hour covers those.
 const PUT_RECONCILE_SECONDS: u64 = PRESIGN_SECONDS + 3600;
+/// A missing object at that first check does not prove the transfer is not still running, so the charge is kept for
+/// one more look this much later and only then released. An upload that is still running after both looks is not
+/// counted, which the bucket's own lifecycle rules have to cover.
+const PUT_HOLD_SECONDS: u64 = 24 * 3600;
 const DELETE_RECONCILE_SECONDS: u64 = PRESIGN_SECONDS + 60;
 /// A multipart upload with no signed part for this long is aborted and its charge released.
 const MULTIPART_IDLE_SECONDS: u64 = 24 * 3600;
@@ -629,7 +631,7 @@ pub(crate) async fn reconcile_once(rt: &Runtime) -> Result<usize, &'static str> 
                     Err(_) => continue,
                 }
             }
-            Ok(None) => Outcome::Absent,
+            Ok(None) => Outcome::NotYetStored { hold_secs: PUT_HOLD_SECONDS },
             Err(_) => continue,
         };
         let ledger = ledger.clone();

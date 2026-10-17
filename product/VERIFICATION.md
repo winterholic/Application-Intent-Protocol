@@ -245,7 +245,7 @@ DB 테스트는 이 Run이 띄운 PostgreSQL 17 컨테이너(`aip-claude-wbs8-pg
 | 항목 | 결과 | 위치 |
 |---|---|---|
 | S3 owner별 합계 quota | 서명한 PUT·multipart part 크기를 `aip_infra_<digest>.aip_object_ledger`에 예약하고 owner 합계(기본 10GiB·1,000개, `objects.max_total_bytes`·`max_objects`)에 넣어 검사한다. 넘으면 URL 없이 `WIRE.QUOTA_EXCEEDED`. 같은 객체 재서명은 이전 예약을 대체하고 owner마다 advisory lock으로 동시 예약이 합계를 넘지 못하게 한다 | `crates/aip-execution/src/object_ledger.rs`, `spikes/spike-v6-transport/src/object_transport.rs` |
-| 만료 업로드 정리 | 서명 PUT은 발급 65분 뒤, multipart는 part 서명이 24시간 없으면 서버가 `HEAD`로 저장소를 확인한다. 객체가 있으면 실제 크기로 확정, 없으면 예약을 풀고 multipart는 저장소에서 abort한다. 서명 DELETE는 저장소가 객체 없음을 확인할 때까지 quota를 유지한다. 모든 인스턴스가 60초마다 돌되 행별 임대와 `version` 비교로 재서명과 겹쳐도 새 예약을 지우지 않는다 | 같은 파일의 `reconcile_loop`, `S3Store::head_object` |
+| 만료 업로드 정리 | 서명 PUT은 발급 65분 뒤, multipart는 part 서명이 24시간 없으면 서버가 `HEAD`로 저장소를 확인한다. 객체가 있으면 실제 크기로 확정, multipart는 없으면 저장소에서 abort하고 예약을 푼다. 서명 PUT은 첫 부재에서 풀지 않고 24시간 보류한 뒤 한 번 더 확인한다(2026-10-18 후속, [릴리스 게이트](RELEASE-GATE.md)). 서명 DELETE는 저장소가 객체 없음을 확인할 때까지 quota를 유지한다. 모든 인스턴스가 60초마다 돌되 행별 임대와 `version` 비교로 재서명과 겹쳐도 새 예약을 지우지 않는다 | 같은 파일의 `reconcile_loop`, `S3Store::head_object` |
 | multipart 보호 | 장부에 없는 upload id의 part 서명과 complete는 `WIRE.NOT_FOUND`. 완료 객체의 id와 지어낸 upload id로 abort를 호출해도 그 객체의 quota가 풀리지 않는다 | `ObjectLedger::abort_multipart` |
 | outbox 정리 | relay가 넘긴 행·dispatch 기록 보존 기간을 설정으로 열었다(`retention.outbox_dispatched_days`, 기본 30). handler가 없는 topic의 행은 `retention.outbox_unhandled_days`를 정할 때만 지운다(기본 보존). handler가 있는 topic의 미전달 행은 지우지 않는다 | `spikes/spike-v6-transport/src/durable.rs`(`collect_expired`) |
 | events 정리 | 개수 상한(stream당 1,000)에 더해 `retention.events_days`를 정하면 그 기간이 지난 이벤트를 지우고 replay 하한을 올려 옛 cursor는 `WIRE.CURSOR_EXPIRED`를 받는다. 10분마다 최대 1,000 stream | `crates/aip-execution/src/events.rs`(`expire_older_than`) |
@@ -274,7 +274,7 @@ DB 테스트는 이 Run이 띄운 PostgreSQL 17 컨테이너(`aip-claude-wbs8-pg
 ### 한계·미검증
 
 - 장부가 생기기 전에 올린 객체는 quota에 세지 않는다. 장부가 필요한 객체를 소급하려면 bucket을 목록 조회해야 하는데 구현하지 않았다.
-- 정리 시점에도 끝나지 않은 아주 큰 PUT은 이후 완료되어도 세지 않는다. bucket 수명 주기 규칙이 필요하다.
+- (2026-10-18 후속으로 바뀜) 첫 확인 뒤에 끝나는 PUT은 이제 보류 후 확정된다. 두 번째 확인(약 25시간) 뒤에 끝나는 PUT은 여전히 세지 않는다. bucket 수명 주기 규칙이 필요하다. 상세는 [릴리스 게이트](RELEASE-GATE.md)의 "후속 증분".
 - 업그레이드 중에 장부가 생기기 전에 시작한 multipart는 part 서명과 complete가 `WIRE.NOT_FOUND`다(재시작해야 한다).
 - quota는 서명한 크기 기준이다. provider 비용이나 bucket 전체 용량을 대신하지 않는다.
 - `aip_events.created_at`에 index가 없어 events 정리는 10분마다 테이블을 한 번 훑는다. 앱 migration 지문을 바꾸지 않으려는 선택이다. 매우 큰 events 테이블의 비용은 측정하지 않았다.

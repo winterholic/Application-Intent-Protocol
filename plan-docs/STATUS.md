@@ -1,5 +1,9 @@
 # 진행 현황과 쌓인 질문
 
+## 2026-10-18 독립 검증 반영: spike clippy, S3 늦은 PUT 보수화, 의존성 (Claude 구현, 독립 검증 대기)
+
+spike-v6 `items after a test module`와 v1·v2 clippy를 고치고 `tools/verify.sh`가 workspace 밖 engine crate를 lint하게 했다. 서명 PUT의 첫 `HEAD` 부재가 예약을 풀던 경로를 "보류 후 한 번 더 확인"으로 바꿨고(`settling`), 두 번째 확인 뒤 도착하는 전송과 장부 이전 객체는 여전히 세지 못한다. rustls 0.23.46으로 올려 `tools/dependency-check.sh`가 통과한다. 전체 게이트는 이 증분 뒤 SHA에서 다시 돌리지 않았고 마지막 성공은 `a97f1b9`다. 자세한 명령·결과·한계는 [릴리스 게이트](../product/RELEASE-GATE.md)의 "후속 증분"을 따른다. 독립 검증 전이므로 8.5·8.7을 완료로 표시하지 않는다.
+
 ## 2026-10-18 WBS 8.7 main 게이트 실행 (Claude 실행, 독립 검증 대기)
 
 다른 트랙이 fmt·clippy를 정리한 뒤 main `a97f1b9`를 고정해 `scripts/release-gate.sh --baseline 4c27040`을 실행했고 모든 단계가 통과했다(Rust 1212 passed). 앞선 후보 `4e78ddb` 결과는 별개로 남겼고 main 성공으로 바꿔 적지 않았다. S3 quota의 65분 이후 미계상 경계는 하드 상한이 아님을 시험으로 고정하고 영향을 [릴리스 게이트](../product/RELEASE-GATE.md)에 적었다. 인계 목록도 같은 문서에 있다. 독립 검증 전이므로 완료로 표시하지 않는다.

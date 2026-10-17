@@ -188,6 +188,7 @@ fn put_request(size: u64) -> Value {
 
 const BYTES: &str = "SELECT COALESCE(sum(bytes),0)::bigint FROM {infra}.aip_object_ledger";
 const ROWS: &str = "SELECT count(*) FROM {infra}.aip_object_ledger";
+const HELD: &str = "SELECT count(*) FROM {infra}.aip_object_ledger WHERE settling";
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn signing_uploads_is_refused_once_the_owner_quota_is_signed_for() {
@@ -305,6 +306,9 @@ async fn live_expired_signed_put_is_checked_against_the_store() {
     assert_eq!(fixture.control("alice", "/objects/sign", put_request(3 * MIB)).await["code"], "WIRE.QUOTA_EXCEEDED");
 
     fixture.make_all_due().await;
+    fixture.wait_until("the missing object is held for a second look", HELD, 1).await;
+    assert_eq!(fixture.number(BYTES).await, 8 * MIB as i64, "one missing HEAD does not release the charge");
+    fixture.make_all_due().await;
     fixture.wait_until("the unused 5 MiB reservation is released", BYTES, 3 * MIB as i64).await;
     assert_eq!(fixture.number(ROWS).await, 1, "the uploaded object stays, at its real size");
     assert_eq!(fixture.number("SELECT count(*) FROM {infra}.aip_object_ledger WHERE state='COMPLETE' AND expires_at IS NULL").await, 1);
@@ -398,25 +402,54 @@ async fn owner_of(fixture: &Fixture) -> String {
     fixture.db.query_one(&format!("SELECT owner FROM {}.aip_object_ledger LIMIT 1", fixture.infra), &[]).await.unwrap().get(0)
 }
 
-/// KNOWN LIMIT, pinned on purpose: the ledger counts what was signed for until the reservation is settled against the store. An upload that
-/// is still running when the reservation is released (65 minutes after signing in production; forced here) lands in the bucket without a
-/// ledger row, so the owner quota does not cover it. The quota is therefore a bound on signed-for and confirmed bytes, not a hard cap on
-/// what an owner can leave in the bucket; the bucket's own lifecycle and capacity controls have to cover the rest (INFRASTRUCTURE.md).
-/// If the ledger ever learns to adopt late objects, this test should fail and be rewritten.
+/// GUARANTEE: an upload that is still running when the first check finds nothing is still counted when it lands. The first miss keeps
+/// the charge for a second look instead of handing the bytes to someone else. `make_all_due` forces the timers; this reproduces the
+/// state transitions with a valid signed URL and a real MinIO, not a transfer that really lasted 65 minutes.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "run through scripts/test-minio-object-storage.sh with the TLS MinIO fixture"]
-async fn live_known_limit_an_upload_finishing_after_its_reservation_was_released_is_not_counted() {
+async fn live_an_upload_finishing_after_the_first_check_is_still_counted() {
+    let (store, client) = live_store(10 * MIB, 10);
+    let fixture = Fixture::start(store).await;
+    let signed = fixture.control("alice", "/objects/sign", put_request(3 * MIB)).await;
+    assert_eq!(signed["ok"], true, "{signed}");
+
+    // The reservation timer ends before the upload does.
+    fixture.make_all_due().await;
+    fixture.wait_until("the unfinished upload is held, not released", HELD, 1).await;
+    assert_eq!(fixture.number(BYTES).await, 3 * MIB as i64);
+    assert_eq!(
+        fixture.control("alice", "/objects/sign", put_request(8 * MIB)).await["code"],
+        "WIRE.QUOTA_EXCEEDED",
+        "the held bytes are not available to another upload"
+    );
+
+    // The signed URL is still valid, so the transfer that was "still running" completes now.
+    assert!(put_to(&client, &signed, vec![3; (3 * MIB) as usize]).await.is_success());
+    fixture.make_all_due().await;
+    fixture
+        .wait_until("the late object is confirmed", "SELECT count(*) FROM {infra}.aip_object_ledger WHERE state='COMPLETE' AND NOT settling", 1)
+        .await;
+    assert_eq!((fixture.number(BYTES).await, fixture.number(ROWS).await), (3 * MIB as i64, 1), "the object exists and the ledger counts it");
+}
+
+/// KNOWN LIMIT, pinned on purpose: after the second look the reservation is released. An upload that is still running even then lands
+/// in the bucket without a ledger row, so the owner quota does not cover it. The quota is a bound on signed-for and confirmed bytes, not a
+/// hard cap on what an owner can leave in the bucket; the bucket's own lifecycle and capacity controls have to cover the rest
+/// (INFRASTRUCTURE.md). If the ledger ever learns to adopt such objects, this test should fail and be rewritten.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "run through scripts/test-minio-object-storage.sh with the TLS MinIO fixture"]
+async fn live_known_limit_an_upload_finishing_after_the_hold_ended_is_not_counted() {
     let (store, client) = live_store(10 * MIB, 10);
     let fixture = Fixture::start(store).await;
     let signed = fixture.control("alice", "/objects/sign", put_request(3 * MIB)).await;
     assert_eq!(signed["ok"], true, "{signed}");
     assert_eq!(fixture.number(BYTES).await, 3 * MIB as i64);
 
-    // The reservation ends before the upload does.
     fixture.make_all_due().await;
-    fixture.wait_until("the unused reservation is released", ROWS, 0).await;
+    fixture.wait_until("the unfinished upload is held", HELD, 1).await;
+    fixture.make_all_due().await;
+    fixture.wait_until("the hold ended and the reservation is released", ROWS, 0).await;
 
-    // The signed URL is still valid, so the transfer that was "still running" completes now.
     assert!(put_to(&client, &signed, vec![3; (3 * MIB) as usize]).await.is_success());
     tokio::time::sleep(Duration::from_millis(1500)).await;
     assert_eq!(fixture.number(BYTES).await, 0, "the object exists in the bucket but the ledger does not count it");

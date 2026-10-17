@@ -91,7 +91,7 @@
 
 - main 최종 커밋: 후보 결과만으로는 아니다. `a97f1b9`에서는 위 절에서 따로 통과했고, 그 뒤의 커밋은 포함하지 않는다. 독립 검증자는 자기가 고정한 SHA에서 다시 돌린다.
 - Linux 격리(Bubblewrap)·cgroup 실행, 외부 IdP 실계정, 실제 AWS S3·GCS 계정, 대형 부하·장기 운영, Windows. 일부는 CI와 이전 회차 기록([제품 검증](VERIFICATION.md))에 있으나 이 게이트가 다시 실행한 것은 아니다.
-- 의존성 취약점·라이선스 점검(`tools/dependency-check.sh`, cargo-audit·cargo-deny 설치됨): 미실행: 이번 회차에 시간을 쓰지 않았다. 독립 검증 때 실행한다.
+- 의존성 점검: `tools/dependency-check.sh`는 게이트 단계에 없다. 별도 실행 결과는 아래 "후속 증분"을 본다.
 - `python3 tools/check_plan_docs.py`: 12개 ERROR. 모두 `plan-docs/alignment/D-development-experience.md`가 저장소 밖의 `../../../../ariari/...` 경로를 링크한 것이다. 게이트에 넣지 않았다.
 - 기준 릴리스는 `4c27040` 하나다. 그 사이 다른 시점에서의 업그레이드, 정의가 바뀐 migration과의 조합은 실행하지 않았다.
 - 같은 Run의 구현·실행이다. 독립 검증 전이다.
@@ -100,27 +100,59 @@
 
 owner별 S3 quota는 **서명한 크기와 저장소에서 확인된 크기의 합계**에 대한 상한이다. 소유자가 bucket에 남길 수 있는 바이트의 하드 상한이 아니다. 아래 표가 보장하는 경로와 보장하지 못하는 경로의 확정본이다. "측정"은 전용 PostgreSQL 17과 TLS MinIO에서 실제로 실행한 시험이 있다는 뜻이고, "정적"은 코드 추론만 있다는 뜻이다.
 
+**시험이 재현하는 것의 범위:** live 시험은 `make_all_due`로 장부의 만료 시각을 당긴 뒤 유효한 서명 URL로 실제 MinIO에 PUT하는 **상태 전이** 재현이다. 서명 후 65분 또는 25시간 동안 실제로 지속된 전송을 측정한 것이 아니다.
+
+**미확정 예약을 푸는 기준(2026-10-18 변경):** 서명 PUT은 65분째 `HEAD`에서 객체가 없어도 **풀지 않는다.** 한 번의 `HEAD` 부재는 진행 중인 전송이 없다는 증거가 아니다(URL은 전송 시작 때만 유효하면 된다). 바이트를 계속 세고 24시간 뒤 한 번 더 확인해 그때도 없을 때만 푼다. 그 사이 도착한 객체는 실제 크기로 확정된다. 그래서 다른 업로드에 재할당되는 일은 두 번의 확인 안에서는 없다. 두 번째 확인 뒤에도 끝나지 않은 전송은 여전히 세지 못한다. 대가로 쓰지 않은 서명 예약이 약 25시간 바이트를 차지한다(같은 id 재서명은 대체).
+
 | 경로 | 보장 | 근거 |
 |---|---|---|
-| 서명 시점의 owner 합계(바이트·개수) 초과 | 보장(`WIRE.QUOTA_EXCEEDED`, URL 없음) | 측정: `object_ledger` 17개, HTTP 경유 4개 |
+| 서명 시점의 owner 합계(바이트·개수) 초과 | 보장(`WIRE.QUOTA_EXCEEDED`, URL 없음) | 측정: `object_ledger` 22개, HTTP 경유 5개 |
 | 같은 owner의 동시 서명 | 보장(owner 단위 advisory lock) | 측정: `concurrent_reservations_cannot_jointly_exceed_the_quota`. 락을 없앤 변이는 이 시험이 잡는다. HTTP 시험은 서버가 서명을 충분히 직렬화해 락 변이를 못 잡으므로 경쟁 검출기가 아니다 |
 | owner 사이 격리 | 보장 | 측정 |
 | multipart part 크기 누적, 유휴 upload의 abort와 예약 해제 | 보장 | 측정: 실제 MinIO |
-| 사용하지 않은 PUT 예약의 해제, 올라간 객체의 실제 크기 확정 | 보장 | 측정: 실제 MinIO |
+| 사용하지 않은 PUT 예약 | 약 25시간(65분 + 24시간) 뒤 해제. 그 전에는 바이트를 계속 센다 | 측정: `live_expired_signed_put_is_checked_against_the_store`, 장부 시험 |
+| 올라간 객체의 실제 크기 확정 | 보장 | 측정: 실제 MinIO |
+| 첫 확인(65분) 뒤에 끝나는 PUT | **보장**: 보류 중인 예약이 확정된다. 그 사이 다른 업로드가 그 바이트를 받지 못한다 | 측정: `live_an_upload_finishing_after_the_first_check_is_still_counted`(상태 전이 재현) |
+| 두 번째 확인(약 25시간) 뒤에 끝나는 PUT | **보장하지 못함**: 예약이 풀린 뒤 완료되면 객체는 bucket에 있고 장부는 0바이트 | 측정: `live_known_limit_an_upload_finishing_after_the_hold_ended_is_not_counted` |
+| 장부가 생기기 전에 올라간 객체, 서버를 거치지 않고 provider에 직접 쓴 객체 | **보장하지 못함**: 행이 없어 세지 않고, 그 위에 quota 전체를 더 서명할 수 있다 | 측정: `live_known_limit_an_object_that_predates_the_ledger_is_not_counted`(행이 없는 상태를 강제). 직접 쓰기는 같은 상태이므로 별도 시험은 없다 |
 | 서명 DELETE | 저장소가 객체 없음을 확인할 때까지 quota 유지 | 측정: 실제 MinIO |
-| 서명 후 65분(URL 5분 + 진행 중 업로드 1시간)이 지나서 끝나는 PUT | **보장하지 못함**: 예약이 풀린 뒤 완료되면 객체는 bucket에 있고 장부는 0바이트 | 측정: `live_known_limit_an_upload_finishing_after_its_reservation_was_released_is_not_counted` |
-| 장부가 생기기 전에 올라간 객체 | **보장하지 못함**: 행이 없어 세지 않고, 그 위에 quota 전체를 더 서명할 수 있다 | 측정: `live_known_limit_an_object_that_predates_the_ledger_is_not_counted`(행이 없는 상태를 강제) |
 | 서명한 크기보다 큰 PUT | 보장(SigV4가 Content-Length를 서명) | 정적. 선언보다 작은 업로드는 장부가 서명 크기로 세므로 보수적이다 |
 | provider 비용·bucket 전체 용량 | **범위 밖** | 운영자가 bucket 수명 주기·용량 제한을 설정해야 한다 |
 | AWS S3·GCS 실계정 동작(HEAD·abort 응답 차이 포함) | **미실행** | MinIO로만 검증했다 |
 
-- **영향:** 악의적 소유자는 매번 새 URL을 서명한 뒤 5분 안에 느린 전송을 시작하고 65분 넘게 끌어 예약이 풀린 뒤에 완료시키는 방식으로 quota를 우회해 저장 공간을 늘릴 수 있다. 우회 크기는 동시에 열어 둘 수 있는 전송 수와 객체당 5GiB 상한, 대기 시간에 묶인다. 정상 사용자의 큰 파일(65분 이상)도 같은 이유로 세어지지 않는다. 객체는 owner 접두어 아래 있으므로 소유자 격리와 다운로드 권한에는 영향이 없다.
-- **1.0에서의 표기:** 이 quota를 "owner당 저장 용량을 보장한다"고 광고하지 않는다. 광고할 수 있는 것은 "서명 시점에 owner 합계가 설정값을 넘는 요청을 거절한다"까지다. 운영자는 bucket 수명 주기 규칙과 provider 쪽 용량·비용 제한을 함께 설정해야 한다([서버 인프라](INFRASTRUCTURE.md)).
-- **메울 수 있는 방법(미구현):** (1) 예약을 풀 때 객체가 없으면 감시 행을 24시간 더 두고 나타나면 확정(초과 상태 포함)한다. 65분 경계는 줄지만 24시간 뒤의 완료는 여전히 샌다. (2) owner 접두어를 주기적으로 `ListObjectsV2`로 훑어 장부와 대조해 장부에 없는 객체를 확정한다(장부 이전에 올린 객체도 함께 다룬다). (2)가 근본적이지만 owner 해시와 원문 owner를 매핑하는 열과 목록 호출 비용 설계가 필요하다. 어느 쪽도 이번 릴리스에서 구현하지 않았다.
+- **영향:** 악의적 소유자는 두 번의 확인(약 25시간)이 끝난 뒤에 완료되도록 전송을 극단적으로 느리게 끌면 quota를 우회해 저장 공간을 늘릴 수 있다. 이전 설계(65분)보다 훨씬 어려워졌지만 하드 상한은 아니다. 우회 크기는 동시에 열어 둘 수 있는 전송 수와 객체당 5GiB 상한에 묶인다. 객체는 owner 접두어 아래 있으므로 소유자 격리와 다운로드 권한에는 영향이 없다.
+- **1.0에서의 표기:** 이 quota를 "owner당 저장 용량을 보장한다"고 광고하지 않는다. 광고할 수 있는 것은 "서명 시점에 owner 합계가 설정값을 넘는 요청을 거절하고, 서명 후 약 25시간 안에 끝나는 업로드는 계속 센다"까지다. 운영자는 bucket 수명 주기 규칙과 provider 쪽 용량·비용 제한을 함께 설정해야 한다([서버 인프라](INFRASTRUCTURE.md)).
+- **이 설계가 증명하지 못하는 것:** 보류 시간을 늘려도 전송 지속 시간의 상한은 provider가 보장하지 않는다. 증명은 provider 쪽 신호가 있어야 닫힌다: (1) 객체 생성 알림(S3 Event Notifications·Pub/Sub)을 받아 장부와 대조하거나, (2) owner 접두어를 `ListObjectsV2`로 훑어 장부에 없는 객체를 확정하는 것이다. 둘 다 provider 설정과 owner 해시 ↔ 원문 owner 매핑 설계가 필요해 이번 릴리스에 넣지 않았다. 객체를 자동 삭제해 상한을 지키는 방식은 데이터 손실이므로 택하지 않는다.
 
 ## 인계 (2026-10-18)
 
 - **현재 변경(main, 모두 push됨):** 8.11 `c542d90`, 8.5 `0088a88`·`dc4129d`, 8.7 `b1b7d1b`·`cc5aa71`·`b8da233`·`f896f72`·`4ee67e7`·`b7f592e`, 8.10 후속 6건 `a8b0d0b`·`5b7f23c`·`791367b`·`99e1052`·`3b0925f`·`dc95dc9`·`a97f1b9`. 모두 같은 Claude Run의 구현이며 독립 검증 전이다.
 - **검증 위치:** 항목별 명령·결과는 [제품 검증](VERIFICATION.md)의 WBS 8.11·8.5·8.10 절, 게이트 결과는 이 문서다.
-- **미완료·열린 것:** 위 "증명하지 않는 것", 중첩 job의 span 부모 시험 없음, Python 3.11·3.12 미실행, Auth0·Entra 미실행, `tools/dependency-check.sh` 미실행, S3 quota 우회 경계(위), main의 `spike-v6-transport`가 `cargo clippy --all-targets -D warnings`에서 `src/server.rs`의 `items after a test module`로 실패(다른 트랙 파일, 게이트 단계에는 없음).
+- **미완료·열린 것:** 위 "증명하지 않는 것", 중첩 job의 span 부모 시험 없음, Python 3.11·3.12 미실행, Auth0·Entra 미실행, S3 quota 우회 경계(위). spike-v6 clippy 실패와 의존성 점검은 아래 "후속 증분"에서 처리했다.
 - **독립 검증이 필요한 설계:** S3 장부(서명 크기 기준, 65분 유예, 임대·`version` 경쟁), retention 쿼리 비용, nbf 선택 허용, `trace_id` 컬럼의 `<trace>-<span>` 의미, Python 코드젠 호환 방식, 구버전 schema 인식 수정.
+
+## 후속 증분 (2026-10-18, 독립 검증 결과 반영, Claude 구현·실행)
+
+**전체 게이트는 이 증분 뒤의 SHA에서 다시 돌리지 않았다.** 마지막 전체 게이트 성공은 위 `a97f1b9` 하나다. `364ad32`·`cd915f5`에서 시작한 두 번의 게이트 실행은 세션이 끝나며 중단되어 결과가 없다(`npm-ci`까지만 통과). 독립 검증자는 자기가 고정한 SHA에서 다시 돌려야 한다.
+
+전용 PostgreSQL 17(`aip-claude-final-pg`, 127.0.0.1:32811)과 TLS MinIO(`aip-claude-final-minio`, 127.0.0.1:32812)에서 실행했다. 공유 5432에는 접속하지 않았다. 검증자 샌드박스의 `initdb ... shmget Operation not permitted`는 그 샌드박스의 제약이며 제품이나 호스트 DB의 불가가 아니다. 호스트에서는 같은 이미지의 컨테이너가 정상 기동했다.
+
+| 항목 | 명령(고정 clone `364ad32`) | 결과 |
+|---|---|---|
+| 8.5 장부 | `cargo test -p aip-execution --test object_ledger` | 17 passed(이 증분에서 22로 늘어남, 아래) |
+| 8.5 retention | `cargo test -p aip-execution --test events`, `cargo test --lib retention_tests`(spike-v6), `--test outbox` | 13, 4, 2 passed |
+| 8.5 S3 HTTP·실 MinIO | `cargo test --test object_ledger_s3`, 같은 명령 `-- --ignored --test-threads=1` | 4 passed; live 4 passed(이 증분에서 live 6) |
+| 8.11 COMMIT_UNKNOWN | `commit_unknown_wire` 13, `durable_commit_classification` 4, `write_extension_commit_classification` 12, `durable_job_commit_loss` 3, v3 `commit_classification` 18, v4 10 | 모두 passed(실제 PG) |
+| 8.11 변이(실제 PG) | M1 요청 COMMIT의 Unknown을 DB_UNAVAILABLE로, M2 효과 COMMIT, M3 쓰기 경로를 COMMIT 전 단절로 | 3개 모두 잡힘(`durable_commit_classification` 3 실패, `durable_job_commit_loss` 2 실패, `commit_unknown_wire` 6 실패). 파일은 복원했다 |
+| 의존성 | `bash tools/dependency-check.sh` | 처음엔 rc=1: prototype과 spike v2·v3·v4·v5·v7·v11의 `rustls 0.23.45`가 RUSTSEC-2026-0346~0349(2026-10-14 공시) 4건. root와 v1·v6는 통과. `cargo update -p rustls --precise 0.23.46`을 7개 lock에 적용(`4df44b2`) 뒤 rc=0, `npm audit` 0 |
+
+### spike clippy
+`items after a test module`(spike-v6 `src/server.rs`)를 재현(cd915f5에서 `cargo clippy --all-targets -- -D warnings` 실패)하고 테스트 모듈을 파일 끝으로 옮겼다. 원인: `tools/verify.sh`는 루트 workspace와 일부 crate만 lint하고 workspace 밖 engine crate(`spikes/*`)는 lint하지 않아 게이트가 못 잡았다. 같은 검사를 돌리자 spike-v1(2건), spike-v2(1건 lib, 2건 테스트 `unused mut`)도 실패해 고쳤고, `tools/verify.sh`가 6개 engine crate를 `--all-targets -D warnings`로 lint하도록 했다. 6개 모두 통과, `cargo fmt --all --check` 통과, 기본·mysql·poc 루트 clippy 4개 통과, spike-v6 전체 228 passed.
+
+### S3 quota: 늦은 PUT 보수화
+- **재현한 결함:** 65분째 `HEAD`에서 객체가 없으면 예약을 풀어, 진행 중이던 전송이 나중에 끝나도 장부에 없었다. 앞선 live 시험은 이 누락을 "있어야 통과"로 고정하고 있었다.
+- **변경:** `Outcome::NotYetStored`. 서명 PUT의 첫 부재는 예약(바이트·개수)을 유지하고 `settling`으로 표시한 뒤 24시간 뒤 한 번 더 확인한다. 두 번째에도 없을 때만 푼다. 늦게 도착하면 실제 크기로 확정한다. 다시 서명하면 새 예약(`settling=false`)이다. 서명 DELETE의 부재와 multipart abort는 그대로 즉시 해제다. 스키마는 `ADD COLUMN IF NOT EXISTS settling boolean NOT NULL DEFAULT false`만 더한다(파괴적 변경 없음, 옛 테이블 업그레이드 시험 있음).
+- **시험:** 장부 22(신규: 첫 부재 유지·둘째 부재 해제, 보류 중 도착 확정, 재서명 뒤 stale 보류 무시, DELETE는 보류하지 않음, 옛 테이블 DDL 업그레이드). live MinIO 6 passed(`live_an_upload_finishing_after_the_first_check_is_still_counted`가 보장 시험이고, 옛 누락 시험은 `..._after_the_hold_ended_is_not_counted`로 한계를 두 번째 확인 뒤로 옮겨 고정). 변이 확인: 첫 부재를 즉시 해제하게 하면 live 3개 실패, 두 번째에도 계속 보류하게 하면 장부 1개와 live 2개 실패.
+- **회귀:** `aip-execution` 129 passed, spike-v6 228 passed(0 failed), spike-v6·aip-execution `--all-targets` clippy 통과.
+- **남은 것:** 두 번의 확인 뒤에 끝나는 전송, 장부 이전 객체, provider 직접 쓰기는 세지 못한다(표 참고). 증명하려면 provider 알림 또는 목록 대조가 필요하다. AWS·GCS 실계정 미실행. Linux 미실행.
+- **독립 검증이 필요한 설계:** 보류 24시간 상수, 쓰지 않은 예약이 약 25시간 바이트를 차지하는 트레이드오프, `settling` 컬럼 추가.

@@ -66,6 +66,8 @@ pub struct Due {
     pub upload_id: Option<String>,
     pub state: State,
     pub bytes: i64,
+    /// A PUT whose first check found nothing and whose charge is being held for a second look (see `Outcome::NotYetStored`).
+    pub settling: bool,
     version: i64,
 }
 
@@ -74,8 +76,13 @@ pub struct Due {
 pub enum Outcome {
     /// The object exists with this many bytes.
     Stored(u64),
-    /// The object does not exist (and a multipart upload, if any, is aborted).
+    /// The object does not exist and nothing can still create it (a multipart upload, if any, is aborted).
     Absent,
+    /// A PUT whose object does not exist yet. One missing `HEAD` does not prove the transfer is not still running: the signed
+    /// URL only has to be valid when the transfer starts. The first time, the charge is kept and the row is looked at again
+    /// after `hold_secs`; on the second miss the reservation is released. An upload that is still running after both looks
+    /// is not counted (a documented limit, see the release gate).
+    NotYetStored { hold_secs: u64 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -118,7 +125,8 @@ impl ObjectLedger {
              kind text NOT NULL CHECK (kind IN ('PUT','MULTIPART')), upload_id text, \
              state text NOT NULL CHECK (state IN ('PENDING','COMPLETE','DELETING')), \
              bytes bigint NOT NULL CHECK (bytes >= 0), expires_at timestamptz, version bigint NOT NULL DEFAULT 0, \
-             created_at timestamptz NOT NULL DEFAULT clock_timestamp(), PRIMARY KEY(owner,object_id)); \
+             created_at timestamptz NOT NULL DEFAULT clock_timestamp(), settling boolean NOT NULL DEFAULT false, PRIMARY KEY(owner,object_id)); \
+             ALTER TABLE {schema}.{LEDGER} ADD COLUMN IF NOT EXISTS settling boolean NOT NULL DEFAULT false; \
              CREATE INDEX IF NOT EXISTS aip_object_ledger_due ON {schema}.{LEDGER} (expires_at) WHERE expires_at IS NOT NULL; \
              CREATE TABLE IF NOT EXISTS {schema}.{PARTS} (owner text NOT NULL, object_id text NOT NULL, part_number integer NOT NULL, \
              bytes bigint NOT NULL CHECK (bytes > 0), PRIMARY KEY(owner,object_id,part_number))"
@@ -148,7 +156,7 @@ impl ObjectLedger {
         tx.execute(
             &format!(
                 "INSERT INTO {} (owner,object_id,kind,state,bytes,expires_at) VALUES ($1,$2,'PUT','PENDING',$3,clock_timestamp()+make_interval(secs=>$4)) \
-                 ON CONFLICT (owner,object_id) DO UPDATE SET state='PENDING',bytes=$3,expires_at=clock_timestamp()+make_interval(secs=>$4),version={0}.version+1",
+                 ON CONFLICT (owner,object_id) DO UPDATE SET state='PENDING',settling=false,bytes=$3,expires_at=clock_timestamp()+make_interval(secs=>$4),version={0}.version+1",
                 self.ledger()
             ),
             &[&owner, &object_id, &bytes, &ttl],
@@ -310,7 +318,7 @@ impl ObjectLedger {
                     "UPDATE {0} l SET expires_at=clock_timestamp()+make_interval(secs=>$2) \
                      FROM (SELECT owner,object_id FROM {0} WHERE expires_at<=clock_timestamp() ORDER BY expires_at LIMIT $1 FOR UPDATE SKIP LOCKED) due \
                      WHERE l.owner=due.owner AND l.object_id=due.object_id \
-                     RETURNING l.owner,l.object_id,l.kind,l.upload_id,l.state,l.bytes,l.version",
+                     RETURNING l.owner,l.object_id,l.kind,l.upload_id,l.state,l.bytes,l.version,l.settling",
                     self.ledger()
                 ),
                 &[&limit, &lease],
@@ -323,7 +331,16 @@ impl ObjectLedger {
                 _ => Kind::Multipart,
             };
             let state = State::parse(&row.get::<_, String>(4)).ok_or(Error::InvalidRequest)?;
-            due.push(Due { owner: row.get(0), object_id: row.get(1), kind, upload_id: row.get(3), state, bytes: row.get(5), version: row.get(6) });
+            due.push(Due {
+                owner: row.get(0),
+                object_id: row.get(1),
+                kind,
+                upload_id: row.get(3),
+                state,
+                bytes: row.get(5),
+                version: row.get(6),
+                settling: row.get(7),
+            });
         }
         Ok(due)
     }
@@ -331,13 +348,35 @@ impl ObjectLedger {
     /// Applies what the store said about a due row. Returns false when the row changed after it was claimed; the
     /// newer request owns it and its own timer will bring it back.
     pub async fn resolve(&self, client: &mut Client, due: &Due, outcome: Outcome) -> Result<bool, Error> {
-        let size = match outcome {
-            Outcome::Stored(size) => Some(checked_bytes(size)?),
-            Outcome::Absent => None,
+        let (size, hold) = match outcome {
+            Outcome::Stored(size) => (Some(checked_bytes(size)?), None),
+            Outcome::Absent => (None, None),
+            Outcome::NotYetStored { hold_secs } if due.kind == Kind::Put && due.state == State::Pending && !due.settling => {
+                (None, Some(checked_secs(hold_secs)?))
+            }
+            Outcome::NotYetStored { .. } => (None, None),
         };
         let tx = client.transaction().await?;
-        let result = self.resolve_in(&tx, due, size).await;
+        let result = match hold {
+            Some(hold) => self.hold_in(&tx, due, hold).await,
+            None => self.resolve_in(&tx, due, size).await,
+        };
         finish(tx, result).await
+    }
+
+    /// Keeps the charge and moves the timer, guarded by `version` like every other resolution.
+    async fn hold_in(&self, tx: &Transaction<'_>, due: &Due, hold: f64) -> Result<bool, Error> {
+        let updated = tx
+            .execute(
+                &format!(
+                    "UPDATE {} SET settling=true,expires_at=clock_timestamp()+make_interval(secs=>$4),version=version+1 \
+                     WHERE owner=$1 AND object_id=$2 AND version=$3 AND kind='PUT' AND state='PENDING' AND NOT settling",
+                    self.ledger()
+                ),
+                &[&due.owner, &due.object_id, &due.version, &hold],
+            )
+            .await?;
+        Ok(updated > 0)
     }
 
     async fn resolve_in(&self, tx: &Transaction<'_>, due: &Due, size: Option<i64>) -> Result<bool, Error> {
@@ -348,7 +387,7 @@ impl ObjectLedger {
                 let updated = tx
                     .execute(
                         &format!(
-                            "UPDATE {} SET state='COMPLETE',bytes=$4,expires_at=NULL,version=version+1 WHERE owner=$1 AND object_id=$2 AND version=$3",
+                            "UPDATE {} SET state='COMPLETE',settling=false,bytes=$4,expires_at=NULL,version=version+1 WHERE owner=$1 AND object_id=$2 AND version=$3",
                             self.ledger()
                         ),
                         &[&due.owner, &due.object_id, &due.version, &size],
