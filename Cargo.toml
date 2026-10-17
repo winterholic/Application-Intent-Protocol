@@ -29,3 +29,7 @@ unwrap_used = "warn"
 # diagnostics are returned by value on purpose; they are cold-path and carry help text
 result_large_err = "allow"
 too_many_arguments = "allow"
+
+# 전체 DWARF는 target 용량의 대부분을 차지한다. 백트레이스에 필요한 줄 정보만 남긴다.
+[profile.dev]
+debug = "line-tables-only"
