@@ -1,6 +1,55 @@
 # 제품 통합 검증 (2026-10-17)
 
-운영 IdP·TLS reverse proxy 및 실제 broker(Kafka, RabbitMQ)·S3 호환 object storage(MinIO) 연동의 로컬 컨테이너 기반 종단간(E2E) smoke 검증 기록이다. 원 작업(커밋 `cbaa401`), 독립 교차 검증(`결과.md`), 그리고 후속 IdP 원인 진단(`idp-server-config-diagnostic.md`)의 실행 결과를 시점·환경·커밋별로 병기한다. CA 코드와 문서 보완은 독립 검증 PASS이며, IdP 전체 smoke는 FAILED(17개 중 3개 실행, 14개 미실행) 상태로 남는다. (작업 기준 부모 커밋: `4e8e2126a91bd15e21afd870fe5373c0ccba9adb`).
+운영 IdP·TLS reverse proxy 및 실제 broker(Kafka, RabbitMQ)·S3 호환 object storage(MinIO) 연동의 로컬 컨테이너 기반 종단간(E2E) smoke 검증 기록이다. 원 작업(커밋 `cbaa401`), 독립 교차 검증(`결과.md`), 그리고 후속 IdP 원인 진단(`idp-server-config-diagnostic.md`)의 실행 결과를 시점·환경·커밋별로 병기한다. CA 코드와 문서 보완은 독립 검증 PASS다. IdP 전체 smoke는 독립 교차 검증에서 FAILED(17개 중 3개 실행, 14개 미실행)였고, 아래 WBS 8.x 통합 회차에서 원래 설정으로 17 passed였다. 후자는 자체 실행이며 독립 검증은 남아 있다. (작업 기준 부모 커밋: `4e8e2126a91bd15e21afd870fe5373c0ccba9adb`).
+
+## WBS 8.x 통합 회차 (2026-10-17, Claude 구현·통합 / GPT 독립 검증 미실시)
+
+Codex 작업 세션이 취소된 7개 브랜치를 이어받아 main에 통합한 회차의 기록이다. 모든 DB 의존 테스트는 이 Run이 `initdb`로 새로 만든 PostgreSQL 17.11(`127.0.0.1:55432`, DB `aip_test_claude`)에서만 실행했다. 컨테이너는 IdP·Caddy smoke에만 썼다. 이 회차의 구현과 통합은 Claude가 했고, 별도 문맥의 GPT 독립 검증은 아직 하지 않았다. 아래 PASS는 같은 Run의 자체 실행 결과이며 독립 검증을 대신하지 않는다.
+
+| 브랜치 | 처리 | 실행 결과 |
+|---|---|---|
+| `codex/db-test-isolation-20261017` | 병합. 누락된 경로를 추가로 막음 | 병합 시점: 루트 workspace 402 passed, 0 failed, 5 ignored, Node 가드·DB 테스트 26 passed. 최종 트리 전체 결과는 아래 "최종 전체 실행" |
+| `fix/wbs-8.1-serializable-concurrency` | 병합. 내용이 위 브랜치 버전에 포함되어 그 버전을 유지 | `absence_serializable_http` 5/5 통과, `SERIALIZATION_RETRIES=0` 변이는 3/3 실패 |
+| `fix/wire-commit-unknown-20261017` (8.9) | 병합 | `commit_unknown_wire` 통과. 수정 전 `lib.rs`로 되돌리면 `WIRE.INTERNAL`(`retry: later`)로 실패 |
+| `codex/wbs-8-6-cli-lint-cleanup-20261017` (8.6) | 병합 | `clippy -p aip-cli --all-targets -D warnings`가 main에서는 오류 5개 타깃(12·41·39·40·91건), 병합 후 통과. 변경 테스트 6개 타깃 통과 |
+| `feature/wbs-8.4-python-sdk` (8.4) | 병합 | `python_sdk_test` 23 OK(생성 모듈 import·mypy, 깨끗한 venv wheel 설치 포함), spike-v5 46 passed, aip-cli `service` 4 passed, `service-smoke` 1 passed. 저장소의 `.aip` 21개 모두 생성되고 mypy 통과 |
+| `feature/wbs-8.2-8.3-recovery-20261017` (8.2/8.3) | 일부 병합. `AIP_BINARY` 검사, `smoke-otlp.sh`, 큐 포화 테스트만 반영 | IdP·TLS smoke 원래 설정(workers 포함) 17 passed, 0 failed. OTLP 5 passed, 큐 포화 테스트 10/10 통과 |
+| `fix/otlp-status-code-standard` | 병합하지 않음. 코드는 이미 main에 동일하게 있음 | `otlp.rs`·`trace.rs`는 main과 동일, 나머지 차이는 이후 가드·8.9 변경뿐. 원 브랜치의 문서 변경은 정정된 STATUS/VERIFICATION을 되돌리므로 가져오지 않음 |
+
+### 최종 전체 실행
+
+통합 마지막 코드 커밋 `d9ca0d8faad5672c87ddcd7423286b341eb31f54`에서 같은 Run 전용 PostgreSQL로 한 번에 실행했다. 이 뒤의 커밋은 문서만 바꾼다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace --locked --no-fail-fast` | 404 passed, 0 failed, 5 ignored |
+| `cargo test --manifest-path spikes/spike-v{2-read,3-write,4-worker,5-sdk,6-transport,7-migrate,11-dev-checks}/Cargo.toml --locked --no-fail-fast` | v2 102, v3 33, v4 62(1 ignored), v5 46, v6 184, v7 1, v11 13 passed, 모두 0 failed |
+| `cargo test --manifest-path prototype/Cargo.toml --locked --no-fail-fast` | 35 passed, 2 failed. 실패는 `cli`의 `gen_emits_a_typed_binding_...`, `generated_binding_resolves_...`이며 main에서도 같다 |
+| `node --test product/tests/{postgres-guard,general-update,uuid-external,facereview-comments,service-smoke}.test.mjs` | 27 passed, 0 failed |
+| `python3 -m unittest product.tests.python_sdk_test` | 23 tests OK |
+| `cargo clippy --workspace --lib --bins --locked -- -D warnings`, `cargo clippy -p aip-auth -p aip-migrate -p aip-service -p aip-cli --all-targets --locked -- -D warnings`, `cargo fmt --all --check` | 모두 통과 |
+
+### 이번 회차에서 고친 문제
+
+- DB 가드가 불완전했다. `spike_v2_read::connect()`와 `DB_URL`, `127.0.0.1:5432` 하드코딩 relay(spike v6 `db_*_lifetime`, prototype `db_startup`), 사용자 없는 proxy DSN, prototype `lifecycle`/`serve`, `product/tests/uuid-external.test.mjs`가 기본 엔드포인트를 쓰고 있었다. 모두 명시 DSN으로 바꾸고 `spikes/spike-v2-read/tests/test_database_default.rs`로 `connect()`가 DSN 없음·기본 DSN을 거부함을 고정했다.
+- Node 가드는 URI query 키를 대소문자 구분으로 비교했다. 실제 libpq(`psql`)는 `HOSTADDR`·`HOST`·`SERVICE`·`SERVICEFILE` 대문자 키를 `invalid URI query parameter`로 거부하고 소문자 `hostaddr`만 적용하므로 우회 경로는 아니었다. Rust 가드와 같게 정렬하고 회귀 테스트를 추가했다. tokio-postgres의 대소문자 처리는 소스 읽기로만 확인했다.
+- db-test-isolation 브랜치는 spike v2/v3/v4/v5/v7/v11과 prototype의 `Cargo.lock`을 갱신하지 않아 `--locked` 빌드가 실패했다. 갱신했다.
+- CI 워크플로가 `aip_test_ci` DB를 만들지 않거나(brokers, worker-jobs-linux) DSN을 주지 않았다(deploy-checks). 맞췄다. GitHub Actions에서는 실행하지 못했다.
+- `wire_codes::no_code_is_written_without_its_area`가 main(0eb0ce5)에서 이미 실패하고 있었다. metrics·OTLP의 job 상태 `RETRY`·`PENDING`·`RUNNING`이 허용 목록에 없었다. 목록에 추가했다.
+- 8.9 수정 전 코드는 이미 커밋된 쓰기를 `WIRE.INTERNAL`과 `retry: later`로 돌려줬다. 응답 단절 시 `WIRE.COMMIT_UNKNOWN`으로 바꿨다.
+
+### 사고: 공유 PostgreSQL 접속
+
+위 가드 누락을 알기 전에 spike v2/v3/v4 전체와 spike v6 일부, prototype `db_startup`을 실행했다. 이 테스트들은 DSN에 포트가 없어 이 Mac의 공유 PostgreSQL(`127.0.0.1:5432`)에 접속했다. 대부분 자기 이름의 스키마를 만들고 지우는 테스트이고 `db_startup`은 인증만 중계했지만, 접속 사실과 중간 실패로 남은 스키마가 있는지는 확인하지 못했다. 공유 DB 접속은 금지 대상이라 확인용 접속도 하지 않았다. 인지한 즉시 실행을 멈추고 사용자에게 알림을 보냈다. `spike-v4-worker/extensions/recruitment.{mjs,py}`는 worker가 DB에 직접 닿는지 보는 격리 probe로, 5432에 TCP 연결만 시도한다. 그 probe는 의도된 fixture라 바꾸지 않았다.
+
+### 이번 회차에도 남은 것
+
+- `prototype` 테스트 `cli`의 2개(`gen_emits_a_typed_binding_...`, `generated_binding_resolves_...`)는 main에서도 같은 이유(`OperationBinding` 미export)로 실패한다. 이번 변경과 무관하다.
+- `cargo clippy --all-targets`는 spike-v2-read의 `needless_lifetimes`(main에도 있음) 때문에 spike v2/v6에서 실패한다. `tools/verify.sh`가 요구하는 clippy 명령은 통과한다.
+- `prototype/Cargo.lock`은 main에서 `--locked` 검사가 이미 실패했고 이번에 갱신했다.
+- 8.3 큐 포화 테스트는 호출이 100ms 안에 끝나는지만 본다. 드롭 카운터는 검증하지 않는다.
+- 8.9는 연결이 닫힌 경우(`is_closed`)만 `COMMIT_UNKNOWN`으로 분류한다. 그 밖의 연결 오류 형태는 실행해 보지 않았다.
+- GitHub Actions 워크플로 변경, 실제 Kafka·RabbitMQ·MinIO smoke, Linux 격리는 이번 회차에 실행하지 않았다.
 
 ## WBS A: 외부 IdP·TLS reverse proxy 운영 smoke (2026-10-17)
 
