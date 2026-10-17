@@ -28,10 +28,18 @@ resource Note {
     select id, title, done, score, due, created, kind, owner
     filter done.eq, score.gte, title.contains, created.lte
     sort created, score, id
-    budget { rows 20; depth 1; deadline 2s; cost 1000 }
+    traverse comments via Comment.note { select id, body, secret; sort id desc; limit 3 }
+    budget { rows 20; depth 2; deadline 2s; cost 1000 }
   }
 }
 enum NoteKind { MEMO, TODO }
+enum CommentState { VISIBLE, HIDDEN }
+resource Comment {
+  fields { id: Id; note: Note; author: Member?; body: Text(1..200); secret: Text?; state: CommentState }
+  rows read when state = VISIBLE
+  field secret read when author = actor
+  expose read { select id, body, secret, state }
+}
 ";
 const META: &str = "aip_t_mysql_read_meta";
 const SOURCE: &str = "aip_t_mysql_read_src";
@@ -89,6 +97,9 @@ const SEED: &[&str] = &[
      (1, 'first', 1, 10.50, '2026-10-18', '2026-10-01 09:30:00.123400', 'MEMO', 1), \
      (2, 'second', 0, 2.25, NULL, '2026-10-02 00:00:00.000000', 'TODO', NULL), \
      (3, 'Third%_', 1, 99999999.99, '2026-12-31', '2026-10-03 23:59:59.999999', 'TODO', 3)",
+    "INSERT INTO comment (id, note_id, author_id, body, secret, state) VALUES \
+     (1, 1, 1, 'c1', 's1', 'VISIBLE'), (2, 1, 2, 'c2-hidden', 's2', 'HIDDEN'), (3, 1, 2, 'c3', 's3', 'VISIBLE'), \
+     (4, 1, NULL, 'c4', NULL, 'VISIBLE'), (5, 1, 1, 'c5', 's5', 'VISIBLE'), (6, 2, 1, 'other-note', 's6', 'VISIBLE')",
 ];
 
 async fn post(addr: std::net::SocketAddr, path: &str, token: Option<&str>, fingerprint: &str, body: &Value) -> Value {
@@ -233,6 +244,23 @@ async fn mysql_read_path_serves_policy_reads_and_fences_ddl() {
     assert_eq!(notes["rows"][0]["kind"], "MEMO");
     // Member has no row-read policy, so the reference guard shows null instead of the raw foreign key (security audit O-01).
     assert_eq!(notes["rows"][0]["owner"], Value::Null, "{notes}");
+
+    // 1:N traverse: hidden children do not take a slot, the definition's `sort id desc` and `limit 3` decide the list, and the
+    // per-field policy redacts a secret to null unless the caller is its author.
+    let many = |token: &Option<String>| {
+        list(token, json!({ "read": "Note", "select": ["id", {"comments": {"select": ["id", "body", "secret"]}}], "sort": [{"field":"id","dir":"asc"}] }))
+    };
+    let (as_anon, as_author) = (many(&anon).await, many(&member1).await);
+    let comment_ids = |response: &Value, note: usize| -> Vec<i64> {
+        response["rows"][note]["comments"].as_array().unwrap().iter().map(|c| c["id"].as_i64().unwrap()).collect()
+    };
+    assert_eq!(comment_ids(&as_anon, 0), vec![5, 4, 3], "newest first, HIDDEN skipped, capped at 3: {as_anon}");
+    assert_eq!(comment_ids(&as_anon, 1), vec![6], "{as_anon}");
+    assert_eq!(comment_ids(&as_anon, 2), Vec::<i64>::new(), "a note without comments gets an empty list, not null: {as_anon}");
+    assert!(as_anon["rows"][0]["comments"].as_array().unwrap().iter().all(|c| c["secret"].is_null()), "anonymous never sees a secret");
+    assert_eq!(as_author["rows"][0]["comments"][0]["secret"], "s5", "actor 1 wrote comment 5: {as_author}");
+    assert_eq!(as_author["rows"][0]["comments"][1]["secret"], Value::Null, "comment 4 has no author");
+    assert_eq!(as_author["rows"][0]["comments"][2]["secret"], Value::Null, "comment 3 was written by actor 2");
 
     let filtered = |filter: Value| list(&anon, json!({ "read": "Note", "select": ["id"], "filter": [filter], "sort": [{"field":"id","dir":"asc"}] }));
     assert_eq!(ids(&filtered(json!({"field":"done","op":"eq","value":true})).await), vec![1, 3]);

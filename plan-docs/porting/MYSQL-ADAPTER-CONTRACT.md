@@ -2,7 +2,7 @@
 
 2026-10-15 조사에서 시작한 구현 작업의 현재 기록이다. 원본 앱이 MySQL에서 실행되는 것과 AIP가 MySQL을 지원하는 것은 다른 판정이다.
 
-**현재 상태: Stage 6(WBS 7.2.1.1) DDL 경쟁 안전계약은 `aip-migrate::mysql_driver` 계층에서만 구현·검증됐다(단일 연결 선행 MDL Pin + 인트랜잭션 4-쿼리 카탈로그 fingerprint + 완전 바인딩 집합 동치 검증 Step 2c + `MysqlDeploymentFence` + `mysql_async::Transaction<'static>` 캡슐화). 격리된 MySQL 8.4 및 MariaDB 11.4 컨테이너에서 실측했으나 별도 모델의 독립 검증은 아직 받지 않았다. `aip-service`에는 MySQL 런타임 경로가 없으며, 7.2.1.2(Policy Read Compiler)와 7.2.1.3(Apply/Write Transaction 어댑터 및 HTTP serve 연동)이 끝나기 전까지 `DB_ADAPTER_UNSUPPORTED`로 fail-closed를 유지한다.**
+**현재 상태: MySQL 8.4 읽기 경로(WBS 7.2.1.1)가 `aip service`의 `adopt-external`·`principal`·`serve`까지 연결돼 실제 MySQL 8.4에서 검증됐다. `/read`와 `/ready`만 제공하고 `/apply`, 작업, 파일, 이벤트, rate limit 등 나머지는 `WIRE.ADAPTER_UNSUPPORTED` 또는 설정 거부로 명시 거절한다(7.2.1.2·7.2.1.3 대상). MariaDB는 서빙·채택을 지원하지 않고 `DB_ADAPTER_UNSUPPORTED`로 거부한다(LATERAL 부재, 별도 게이트). 이 문서의 구현은 독립 검증을 받지 않았다.**
 
 ## 2026-10-17 실제 제품 경로 확인
 
@@ -74,6 +74,36 @@
 | live MySQL catalog read / request-time fingerprint | 격리 MySQL 8.4의 `aip_mysql_test` 2-table schema에서 draft·drift 차단 test PASS | FaceReview 전체 schema, HTTP boot/auth/DeploymentFence 연결, policy read, write, transaction, rollback |
 | live MariaDB catalog read / request-time fingerprint | 격리 MariaDB 11.4의 `aip_mysql_test` 2-table schema에서 draft·drift 차단 test PASS | FaceReview 전체 schema, 모든 INFORMATION_SCHEMA 차이·functional index, HTTP boot/auth/DeploymentFence 연결, policy read/write/transaction/rollback |
 | 일반 adapter 지원 판정 | **미지원 유지** | read/write/runtime/transaction과 FaceReview 포팅 완료 |
+
+### 2026-10-18 읽기 경로: adopt-external·principal·serve·/read·/ready (WBS 7.2.1.1)
+
+**구현.** `spike-v2-read`의 읽기 계획기가 `Dialect`(PostgreSQL 기본, MySql)를 받는다. PostgreSQL 출력은 바이트 단위로 같고 `mysql_dialect` 테스트가 고정한다. MySQL 방언은 식별자를 백틱으로 인용하고, 값은 SQL 텍스트 순서로 정렬한 `?` 위치 바인딩(같은 값을 여러 번 쓰면 `?`도 그만큼)으로 보내며, `JSON_OBJECT`/`JSON_ARRAYAGG`/`LEFT JOIN LATERAL`, `LOCATE`, 정렬의 NULL 순서(PostgreSQL처럼 ASC는 NULL 마지막, DESC는 처음)를 낸다. 결과는 계획의 출력 타입으로 한 번 정규화한다(TINYINT(1)→bool, DATETIME→`YYYY-MM-DDTHH:MM:SS[.f]+00:00`, DECIMAL은 문자열, 0000-00-00 거부). 전송 계층은 `RelationalBackend` trait로 저장소를 받고, `MysqlBackend`는 요청마다 `MysqlDeploymentFence`를 통과한 읽기 전용 트랜잭션 하나에서 계획을 실행한다.
+
+`aip service adopt-external`은 PostgreSQL 채택과 같은 plan digest/`--apply <digest>` 절차다. 매핑을 실제 catalog와 대조하고(타입·nullable·FK·UNIQUE·InnoDB·UUID는 CHAR(36)·Text 최대 길이가 컬럼 길이 이내·DECIMAL 정밀도 일치), 별도 AIP schema에 엔진 이름으로 바꾼 `SQL SECURITY INVOKER` view, 신원 테이블, 배포 marker, journal을 만든다. MySQL DDL은 암묵 커밋이라 한 트랜잭션이 아니므로 marker를 `MIGRATING`으로 먼저 쓰고 모든 객체가 생긴 뒤 journal과 함께 `READY`로 바꾼다. 중단되면 런타임이 거부하고 같은 apply가 수렴한다. 정책만 바뀌면 view는 두고 marker와 journal을 한 트랜잭션에서 갱신한다. `principal bind/revoke`는 `aip_principals`(issuer·subject는 `utf8mb4_bin`)를 쓰고 기존 binding의 actor 변경을 거부한다. `serve`는 marker의 구조 digest와 실제 catalog가 다르면 기동하지 않으며, RS256 JWT 검증은 PostgreSQL 배포와 같은 `aip-auth` 검증기이고 principal 조회만 MySQL이다.
+
+**명시 거부.** `workers`, `objects`, `broker`, `rag`, `static_mounts`, `file_mounts`, `schedules`, `webhooks`, `outbox_handlers`, `message_handlers`, `job_policies`, `messaging`은 설정에 있으면 DB 접속 전에 `DB_ADAPTER_UNSUPPORTED`다. `rate_limit`은 기본값이 켜져 있어 `"rate_limit": null`을 명시해야 한다(앞단 proxy에서 제한해야 한다는 뜻). `external_mapping`이 없으면 `EXTERNAL_MAPPING_REQUIRED`다. `migrate`·`init`·`adopt`·`jobs`·`audit`·`provision`은 MySQL에서 계속 거부한다. 실시간 구독은 `WIRE.NOT_AVAILABLE`이다.
+
+**고친 결함 셋.** (1) `LogicalType`이 내부 태그 enum이라 ENUM·DATETIME·DECIMAL 열이 하나라도 있으면 catalog 직렬화가 실패해 지문 계산, 채택, 모든 요청이 막혔다. 인접 태그로 바꾸고 재현 테스트를 추가했다. (2) 스키마 전체 COLUMNS 쿼리가 view 컬럼도 가져와 업무 schema에 view가 하나만 있어도 지문이 실패했다. base table로 한정했다. (3) 지문이 중립 manifest만 해시해 아래 열두 가지 DDL을 보지 못했다. 원시 INFORMATION_SCHEMA 행을 지문에 넣었다.
+
+| 실제 MySQL 8.4에서 지문이 바뀌는 것(`mysql_drift_matrix` 34건) | 바뀌지 않는 것(알려진 한계) |
+|---|---|
+| VARCHAR 길이, nullable, default, 정수 폭·부호, DECIMAL 정밀도, DATETIME 정밀도·TIMESTAMP 전환, ENUM 값, 컬럼·테이블 collation·charset, 컬럼 이름·순서·추가·삭제, AUTO_INCREMENT·ON UPDATE, 생성식, UNIQUE·인덱스 종류·prefix·방향·visible, 인덱스 열 순서, FK 동작·삭제, CHECK, 스토리지 엔진, 테이블 이름·추가·삭제 | 테이블 comment(의미 없음), 업무 schema의 view(AIP가 읽지 않음), **트리거** |
+
+트리거는 `TRIGGER` 권한이 없으면 `INFORMATION_SCHEMA.TRIGGERS`에 보이지 않고, 그 권한을 런타임 계정에 주면 계정이 트리거를 만들 수 있다. 최소 권한 MySQL 배포에서는 어댑터가 업무 테이블에 몰래 추가된 트리거를 감지하지 못한다(PostgreSQL 스냅샷은 pg_catalog로 본다). 운영자가 지켜야 하며 `mysql_drift_matrix`가 이 한계를 고정한다.
+
+**의미 차이(조용히 흉내 내지 않고 기록).** 문자열 비교·정렬·`contains`·`prefix`·UNIQUE는 컬럼 collation을 따른다. 기본 `utf8mb4_0900_ai_ci`에서는 대소문자와 악센트를 구분하지 않아 PostgreSQL의 바이너리 비교와 다르다. 어댑터는 이를 바꾸지 않고, 컬럼 collation 변경은 지문으로 드리프트 처리한다. `JSON_ARRAYAGG`에는 ORDER BY가 없어 1:N traverse는 LIMIT가 붙은 정렬된 파생 테이블을 순서대로 모으는 동작에 기대며, `traverse_many` 순서는 실DB 시험으로 확인했다. TIMESTAMP 열은 세션 시간대를 UTC로 고정해 읽는다. DATETIME은 UTC로 간주한다. view는 `FOR SHARE OF`를 지원하는 것을 확인했다.
+
+| 이번 확인 | 결과 | 확인하지 않은 것 |
+|---|---|---|
+| 방언 단위(오프라인) | `mysql_dialect` 7 passed. PG 출력 바이트 고정, MySQL 구문·`?` 순서·NULL 정렬·정규화 | |
+| PG 회귀 | `spike-v2-read` 전체 통과(실패 0), `aip-service`·`aip-migrate` 기본 빌드 통과 | spike-v6 전체 스위트는 아래 기록 |
+| 실 MySQL 8.4.11 읽기 HTTP | `mysql_read_http` 1 passed: 읽기 전용 계정, 행·필드 정책, traverse(1:1·1:N 순서·상한·숨김 행·빈 목록), 집계, Bool·Decimal·Date·Time·Enum, drift, marker 변조, `/apply` 거부 | |
+| 실 MySQL 8.4.11 CLI 전 과정 | `mysql_adoption_flow` 1 passed: plan/apply/재적용, `PLAN_CHANGED`, 설정 거부, bind/충돌/revoke, JWT serve, drift 시 `/read`·`/ready` 즉시 거부와 재기동 거부 | UUID actor·UUID resource, 외부 OIDC, 큰 schema의 catalog 비용 |
+| DDL 매트릭스 | `mysql_drift_matrix` 1 passed(34건) | MariaDB 변형 |
+| 드라이버·펜스 | `aip-migrate --features mysql` 라이브 13 + `mysql_fence_verification` 8, MySQL 8.4.11과 MariaDB 11.4.13 양쪽 통과 | 스트리밍 도중 절단 |
+| MariaDB | 드라이버·펜스·catalog만 통과. 서빙·채택은 거부 | 읽기 경로 전체(LATERAL 부재) |
+
+**실행.** `scripts/mysql-live-fixture.sh up`이 TLS가 켜진 MySQL 8.4와 MariaDB 11.4 컨테이너(loopback, tmpfs)를 띄우고 시드를 넣는다. `eval "$(scripts/mysql-live-fixture.sh env mysql)"` 뒤에 `cargo test -p aip-migrate --features mysql -- --include-ignored mysql --skip every_semantic_ddl`, `cargo test -p aip-migrate --features mysql --test mysql_drift_matrix -- --ignored`, `cargo test -p aip-service --features mysql --test mysql_read_http -- --ignored`, `cargo test -p aip-cli --features mysql --test mysql_adoption_flow -- --ignored`를 실행한다. MariaDB는 `env mariadb`로 같은 변수를 바꿔 드라이버·펜스 시험만 돌린다. PostgreSQL 기본 빌드가 `AIP_TEST_DATABASE_URL`을 요구하므로 격리 PG 컨테이너가 하나 더 필요하다.
 
 ### 조달 실행환경 기록
 
