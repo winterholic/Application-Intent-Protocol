@@ -126,9 +126,7 @@ def _check_url(url: str) -> None:
 
 def _urllib_transport(url: str, headers: dict, body: bytes, timeout: float) -> Any:
     _check_url(url)
-    req_headers = dict(headers)
-    req_headers.setdefault("connection", "close")
-    request = urllib.request.Request(url, data=body, headers=req_headers, method="POST")
+    request = urllib.request.Request(url, data=body, headers=headers, method="POST")
     try:
         with _OPENER.open(request, timeout=timeout) as response:
             return response.read(), {"x-request-id": response.headers.get("x-request-id")}

@@ -59,8 +59,13 @@ fn python_codegen_generates_read_apply_and_operation_types() {
     assert!(generated.contains("OperationInput = ComputeLengthOperationInput"), "{generated}");
     assert!(generated.contains("OperationOutput = ComputeLengthOperationOutput"), "{generated}");
 
+    let sdk_path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../product/python");
     let mut child = Command::new("python3")
-        .args(["-c", "import sys; compile(sys.stdin.read(), '<binding>', 'exec')"])
+        .args([
+            "-c",
+            "import sys; sys.path.insert(0, sys.argv[1]); code = sys.stdin.read(); scope = {}; exec(code, scope); assert 'read_member' in scope; assert 'call_compute_length' in scope",
+            sdk_path,
+        ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
