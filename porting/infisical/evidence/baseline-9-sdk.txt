@@ -1,0 +1,130 @@
+{
+  "base": "loopback",
+  "results": {
+    "sdk_read_users_as_member": {
+      "pass": true,
+      "detail": [
+        {
+          "email": "alice@acme.test",
+          "id": "1"
+        },
+        {
+          "email": "bob@acme.test",
+          "id": "2"
+        },
+        {
+          "email": "carol@acme.test",
+          "id": "3"
+        },
+        {
+          "email": "dan@acme.test",
+          "id": "6"
+        }
+      ]
+    },
+    "sdk_read_project_hidden_from_org_member_without_membership": {
+      "pass": true,
+      "detail": "dan sees no project"
+    },
+    "member_creates_secret_name": {
+      "pass": true,
+      "detail": {
+        "applied": [],
+        "created": [
+          {
+            "id": "1",
+            "resource": "SecretKey"
+          }
+        ],
+        "ok": true,
+        "tags": [
+          "SecretKey"
+        ]
+      }
+    },
+    "member_creates_secret_generation": {
+      "pass": true,
+      "detail": {
+        "applied": [],
+        "created": [
+          {
+            "id": "1",
+            "resource": "Secret"
+          }
+        ],
+        "ok": true,
+        "tags": [
+          "Secret"
+        ]
+      }
+    },
+    "viewer_write_denied": {
+      "pass": true,
+      "detail": {
+        "code": "WIRE.FORBIDDEN",
+        "msg": "`SecretKey` 생성 권한 없음",
+        "ok": false,
+        "requestId": "req_a09b9436a2825e9a626cf972",
+        "retry": "never"
+      }
+    },
+    "viewer_reads_secret_name": {
+      "pass": true,
+      "detail": [
+        {
+          "id": "1",
+          "key": "DB_URL"
+        }
+      ]
+    },
+    "job_secretReminder_succeeds_for_reader": {
+      "pass": true,
+      "detail": {
+        "attempt": 1,
+        "error": null,
+        "id": "7378ed1d-00ac-46d9-87a5-b79206a87b7c",
+        "operation": "secretReminder",
+        "output": null,
+        "state": "SUCCEEDED"
+      }
+    },
+    "job_enqueue_refused_without_project_access": {
+      "pass": true,
+      "detail": "WIRE.ACCESS_DENIED"
+    },
+    "member_deletes_secret": {
+      "pass": true,
+      "detail": {
+        "changed": [
+          "1"
+        ],
+        "ok": true,
+        "tags": [
+          "Secret"
+        ],
+        "unchanged": []
+      }
+    },
+    "deleted_secret_not_listed": {
+      "pass": true,
+      "detail": []
+    },
+    "name_can_be_recreated": {
+      "pass": true,
+      "detail": {
+        "applied": [],
+        "created": [
+          {
+            "id": "2",
+            "resource": "Secret"
+          }
+        ],
+        "ok": true,
+        "tags": [
+          "Secret"
+        ]
+      }
+    }
+  },
+  "failed": []
+}
