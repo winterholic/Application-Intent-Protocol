@@ -637,10 +637,28 @@ fn mysql_driver_config_url_parsing_and_secret_redaction() {
     assert_eq!(cfg.user, "db_admin");
     assert_eq!(cfg.database, "facereview_prod");
     assert_eq!(cfg.password.as_deref(), Some("super_secret_pass"));
+    assert!(cfg.tls_required, "sslmode=required must set tls_required to true");
 
     let sanitized = cfg.display_sanitized();
     assert!(!sanitized.contains("super_secret_pass"), "secret password must never appear in display_sanitized");
     assert!(sanitized.contains("db_admin:***@10.0.0.5:3306/facereview_prod"));
+
+    // Debug output must NOT leak raw password
+    let debug_repr = format!("{cfg:?}");
+    assert!(!debug_repr.contains("super_secret_pass"), "Debug output must not leak raw password");
+    assert!(debug_repr.contains("***"), "Debug output must mask password");
+
+    // Percent-encoded password decode (%40 -> @)
+    let encoded_url = "mysql://verifier:p%40ss@db.example:3306/facereview";
+    let enc_cfg = MysqlDriverConfig::parse_url(encoded_url).expect("percent-encoded url should parse");
+    assert_eq!(enc_cfg.password.as_deref(), Some("p@ss"), "percent-encoded password must be decoded");
+
+    // IPv6 host address support
+    let ipv6_url = "mysql://verifier:pw@[2001:db8::1]:3306/facereview";
+    let ip6_cfg = MysqlDriverConfig::parse_url(ipv6_url).expect("IPv6 host url should parse");
+    assert_eq!(ip6_cfg.host, "[2001:db8::1]");
+    assert_eq!(ip6_cfg.port, 3306);
+    assert_eq!(ip6_cfg.database, "facereview");
 
     // MariaDB scheme
     let maria_url = "mariadb://app:another_secret@localhost/my_db";
@@ -675,13 +693,19 @@ fn mysql_error_code_normalization_and_secret_freedom() {
 
     let err_conn = normalize_mysql_error_code(2003, "Can't connect to MySQL server on '127.0.0.1'");
     assert_eq!(err_conn.code, "DB_CONNECT_FAILED");
+
+    // Error 1105 with embedded raw URL containing secret credentials must be sanitized
+    let err_generic = normalize_mysql_error_code(1105, "unknown server error: mysql://verifier:synthetic_secret@db.example:3306/facereview");
+    assert_eq!(err_generic.code, "DB_ERROR");
+    assert!(!err_generic.message.contains("synthetic_secret"), "embedded password in error message must be sanitized");
+    assert!(err_generic.message.contains("verifier:***@db.example:3306/facereview"));
 }
 
 #[tokio::test]
 async fn external_introspect_rejects_mysql_url_without_leaking_secrets() {
     let raw_url = "mysql://admin:super_secret_db_password@127.0.0.1:3306/facereview";
     let err = aip_migrate::external::introspect(raw_url, "facereview").await.unwrap_err();
-    assert!(err["code"] == "DB_ADAPTER_FEATURE_DISABLED" || err["code"] == "DB_ADAPTER_UNSUPPORTED");
+    assert_eq!(err["code"], "DB_ADAPTER_UNSUPPORTED");
     assert!(!err.to_string().contains("super_secret_db_password"), "secret must never leak in introspect error");
 }
 

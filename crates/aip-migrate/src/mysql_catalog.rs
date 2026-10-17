@@ -455,8 +455,27 @@ pub async fn introspect_schema(
     Ok(results)
 }
 
+/// Decode percent-encoded characters in URL components (e.g. %40 -> @).
+fn percent_decode(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(byte) = u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..=i + 2]).unwrap_or(""), 16) {
+                output.push(byte);
+                i += 3;
+                continue;
+            }
+        }
+        output.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&output).into_owned()
+}
+
 /// Configuration and sanitization for MySQL driver connections.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct MysqlDriverConfig {
     pub host: String,
     pub port: u16,
@@ -468,6 +487,23 @@ pub struct MysqlDriverConfig {
     pub pool_min: usize,
     pub pool_max: usize,
     pub tls_required: bool,
+}
+
+impl fmt::Debug for MysqlDriverConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MysqlDriverConfig")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("database", &self.database)
+            .field("user", &self.user)
+            .field("password", &self.password.as_ref().map(|_| "***"))
+            .field("connect_timeout_ms", &self.connect_timeout_ms)
+            .field("statement_timeout_ms", &self.statement_timeout_ms)
+            .field("pool_min", &self.pool_min)
+            .field("pool_max", &self.pool_max)
+            .field("tls_required", &self.tls_required)
+            .finish()
+    }
 }
 
 impl MysqlDriverConfig {
@@ -483,21 +519,68 @@ impl MysqlDriverConfig {
         let (user, password) = if user_info.is_empty() {
             ("root".to_string(), None)
         } else if let Some((u, p)) = user_info.split_once(':') {
-            (u.to_string(), Some(p.to_string()))
+            (percent_decode(u), Some(percent_decode(p)))
         } else {
-            (user_info.to_string(), None)
+            (percent_decode(user_info), None)
         };
 
-        let (host, port) = if let Some((h, p)) = host_port.split_once(':') {
+        let (host, port) = if host_port.starts_with('[') {
+            if let Some(bracket_end) = host_port.find(']') {
+                let h = &host_port[0..=bracket_end];
+                let rest = &host_port[bracket_end + 1..];
+                if rest.is_empty() {
+                    (h.to_string(), 3306)
+                } else if let Some(p_str) = rest.strip_prefix(':') {
+                    let parsed_port = p_str.parse::<u16>().map_err(|_| CatalogError("invalid port in database URL".into()))?;
+                    (h.to_string(), parsed_port)
+                } else {
+                    return Err(CatalogError("invalid IPv6 host in database URL".into()));
+                }
+            } else {
+                return Err(CatalogError("unclosed IPv6 bracket in database URL".into()));
+            }
+        } else if let Some((h, p)) = host_port.split_once(':') {
             let parsed_port = p.parse::<u16>().map_err(|_| CatalogError("invalid port in database URL".into()))?;
             (h.to_string(), parsed_port)
         } else {
             (if host_port.is_empty() { "127.0.0.1".to_string() } else { host_port.to_string() }, 3306)
         };
 
-        let database = path_query.split(['?', '#']).next().unwrap_or("").trim_matches('/').to_string();
+        let (database_raw, query) = match path_query.split_once('?') {
+            Some((db, q)) => (db, Some(q)),
+            None => (path_query.split('#').next().unwrap_or(""), None),
+        };
+        let database = database_raw.trim_matches('/').to_string();
         if database.is_empty() {
             return Err(CatalogError("database name is required in database URL".into()));
+        }
+
+        let mut tls_required = false;
+        let mut connect_timeout_ms = 5_000;
+        let mut statement_timeout_ms = 10_000;
+        let pool_min = 1;
+        let pool_max = 10;
+
+        if let Some(q) = query {
+            for pair in q.split('&') {
+                if let Some((k, v)) = pair.split_once('=') {
+                    let key = k.trim().to_ascii_lowercase();
+                    let val = v.trim().to_ascii_lowercase();
+                    if key == "sslmode" || key == "ssl-mode" {
+                        if matches!(val.as_str(), "required" | "verify-ca" | "verify-full" | "require") {
+                            tls_required = true;
+                        }
+                    } else if key == "connect_timeout" || key == "connect-timeout" {
+                        if let Ok(secs) = val.parse::<u64>() {
+                            connect_timeout_ms = secs * 1000;
+                        }
+                    } else if key == "statement_timeout" || key == "statement-timeout" {
+                        if let Ok(secs) = val.parse::<u64>() {
+                            statement_timeout_ms = secs * 1000;
+                        }
+                    }
+                }
+            }
         }
 
         Ok(Self {
@@ -506,11 +589,11 @@ impl MysqlDriverConfig {
             database,
             user,
             password,
-            connect_timeout_ms: 5_000,
-            statement_timeout_ms: 10_000,
-            pool_min: 1,
-            pool_max: 10,
-            tls_required: false,
+            connect_timeout_ms,
+            statement_timeout_ms,
+            pool_min,
+            pool_max,
+            tls_required,
         })
     }
 
@@ -532,12 +615,30 @@ pub struct NormalizedDriverError {
     pub message: String,
 }
 
-pub fn normalize_mysql_error_code(error_code: u16, raw_message: &str) -> NormalizedDriverError {
-    let sanitized = if raw_message.contains("Access denied for user") {
+/// Sanitize raw error messages by redacting passwords in URLs and credentials.
+pub fn sanitize_error_message(msg: &str) -> String {
+    let mut sanitized = if msg.contains("Access denied for user") {
         "access denied for user (credentials rejected)".to_string()
     } else {
-        raw_message.to_string()
+        msg.to_string()
     };
+
+    if let Some(scheme_idx) = sanitized.find("://") {
+        let after_scheme = &sanitized[scheme_idx + 3..];
+        if let Some(at_idx) = after_scheme.find('@') {
+            let user_pass = &after_scheme[..at_idx];
+            if let Some(colon_idx) = user_pass.find(':') {
+                let prefix = &sanitized[..scheme_idx + 3 + colon_idx + 1];
+                let suffix = &after_scheme[at_idx..];
+                sanitized = format!("{prefix}***{suffix}");
+            }
+        }
+    }
+    sanitized
+}
+
+pub fn normalize_mysql_error_code(error_code: u16, raw_message: &str) -> NormalizedDriverError {
+    let sanitized = sanitize_error_message(raw_message);
 
     let code = match error_code {
         1045 => "DB_AUTH_FAILED",
