@@ -554,25 +554,29 @@ resource PluginStore {
 }
 
 // F02/F14 account emails. The job carries only caller-supplied values and
-// touches no rows (effect none): the caller reads the account through normal
-// reads first. Delivery runs in the Python worker dir as
-// flaskbb_mail.send_*; SMTP targets come from the deployment environment so
-// no secret is declared here. Abuse note: allow is any authenticated actor,
-// so deployments must rate-limit these jobs like the original's self-service
-// endpoints.
+// touches no rows: the caller reads the account through normal reads first.
+// Delivery runs in the Python worker dir as flaskbb_mail.send_*. The worker has
+// no network (OS isolation), so it cannot use the original's SMTP; it sends
+// through the declared outbound HTTP integration `mail` (access http.mail),
+// whose URL and credentials live in the service config, not here. A recipient
+// is limited to the caller's own account address so the job cannot relay mail
+// to other people; deployments should still rate-limit it like the original's
+// self-service endpoints.
 operation job sendActivationEmail {
   input { email: Text(3..200); username: Text(1..200); token: Text(1..500) }
   output { accepted: Bool }
-  allow actor != null
-  effect none
+  allow actor != null and input.email = actor.email and input.username = actor.username
+  access http.mail
+  effect managed
   deadline 30s
   implementation "flaskbb_mail.send_activation_email"
 }
 operation job sendPasswordResetEmail {
   input { email: Text(3..200); username: Text(1..200); token: Text(1..500) }
   output { accepted: Bool }
-  allow actor != null
-  effect none
+  allow actor != null and input.email = actor.email and input.username = actor.username
+  access http.mail
+  effect managed
   deadline 30s
   implementation "flaskbb_mail.send_password_reset_email"
 }
