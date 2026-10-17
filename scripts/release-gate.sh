@@ -62,7 +62,7 @@ step clone-baseline git clone --quiet --no-hardlinks "$repo_root" "$baseline_src
 step checkout-baseline git -C "$baseline_src" checkout --quiet --detach "$baseline_sha"
 
 # A fresh checkout has no node_modules: the install the validation guide prescribes is part of what is being proven.
-step npm-ci npm ci --prefix "$src/spikes/spike-0-ts" --ignore-scripts --no-audit --no-fund
+step npm-ci bash -c "cd '$src' && npm ci --prefix spikes/spike-0-ts --ignore-scripts --no-audit --no-fund"
 
 # The full regression exactly as the repository defines it (fmt, clippy, workspace and engine suites, SDK and package tests).
 step full-regression bash -c "cd '$src' && bash tools/verify.sh"
