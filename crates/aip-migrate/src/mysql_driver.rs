@@ -107,6 +107,7 @@ fn render_mysql_draft(
 pub struct MysqlDriver {
     pool: Pool,
     connect_timeout: Duration,
+    mariadb: bool,
 }
 
 impl MysqlDriver {
@@ -122,7 +123,7 @@ impl MysqlDriver {
         let config = MysqlDriverConfig::parse_url(url)?;
         let opts = build_mysql_opts(&config, ca_cert.map(Path::to_path_buf))?;
         let connect_timeout = Duration::from_millis(config.connect_timeout_ms);
-        Ok(Self { pool: Pool::new(opts), connect_timeout })
+        Ok(Self { pool: Pool::new(opts), connect_timeout, mariadb: config.mariadb })
     }
 
     /// Establish a connection now; `Pool::new` itself is lazy.
@@ -140,6 +141,27 @@ impl MysqlDriver {
         schema: &str,
     ) -> Result<std::collections::BTreeMap<String, (TableManifest, Vec<crate::mysql_catalog::ForeignKey>)>, CatalogError> {
         introspect_schema(self, schema).await
+    }
+
+    /// Compute a fresh structural fingerprint for every call. This deliberately has no TTL/cache:
+    /// callers use it as a deployment fence and must observe out-of-band DDL on the next check.
+    pub async fn catalog_fingerprint(&self, schema: &str) -> Result<String, CatalogError> {
+        let catalog = self.introspect(schema).await?;
+        let value = serde_json::to_value(catalog).map_err(|_| CatalogError::new("MySQL catalog serialization failed"))?;
+        Ok(crate::digest(&value))
+    }
+
+    /// Fail closed if the live catalog no longer matches the fingerprint recorded at adoption.
+    /// The fingerprint is recomputed from INFORMATION_SCHEMA on every invocation.
+    pub async fn verify_catalog_fingerprint(&self, schema: &str, expected: &str) -> Result<(), CatalogError> {
+        if expected.len() != 64 || !expected.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(CatalogError::new("invalid expected MySQL catalog fingerprint"));
+        }
+        let actual = self.catalog_fingerprint(schema).await?;
+        if !actual.eq_ignore_ascii_case(expected) {
+            return Err(CatalogError::new("MySQL schema changed since the deployed catalog fingerprint was recorded"));
+        }
+        Ok(())
     }
 
     async fn query_rows(&self, query: &str, params: impl Into<mysql_async::Params> + Send) -> Result<Vec<Row>, CatalogError> {
@@ -213,7 +235,8 @@ impl MysqlCatalogReader for MysqlDriver {
     }
 
     async fn fetch_indexes(&self, schema: &str, table: &str) -> Result<Vec<IndexRow>, CatalogError> {
-        let rows = self.query_rows(crate::mysql_catalog::SQL_STATISTICS, (schema, table)).await?;
+        let query = if self.mariadb { crate::mysql_catalog::SQL_STATISTICS_MARIADB } else { crate::mysql_catalog::SQL_STATISTICS };
+        let rows = self.query_rows(query, (schema, table)).await?;
         rows.into_iter()
             .map(|row| {
                 let (index_name, non_unique, seq_in_index, column_name, expression) =
@@ -340,9 +363,11 @@ mod tests {
         let trusted_url = std::env::var("AIP_TEST_MYSQL_TLS_URL").expect("set disposable fixture TLS URL");
         let mismatch_url = std::env::var("AIP_TEST_MYSQL_TLS_MISMATCH_URL").expect("set TLS hostname mismatch URL");
         let ca_path = PathBuf::from(std::env::var_os("AIP_TEST_MYSQL_TLS_CA").expect("set fixture CA path"));
+        let untrusted_ca_path = PathBuf::from(std::env::var_os("AIP_TEST_MYSQL_TLS_UNTRUSTED_CA").expect("set an unrelated CA path"));
 
         MysqlDriver::from_url_with_ca(&trusted_url, Some(&ca_path)).unwrap().check_connection().await.unwrap();
         assert!(MysqlDriver::from_url_with_ca(&trusted_url, None).unwrap().check_connection().await.is_err());
+        assert!(MysqlDriver::from_url_with_ca(&trusted_url, Some(&untrusted_ca_path)).unwrap().check_connection().await.is_err());
         assert!(MysqlDriver::from_url_with_ca(&mismatch_url, Some(&ca_path)).unwrap().check_connection().await.is_err());
     }
 
@@ -446,8 +471,12 @@ mod tests {
         let driver = MysqlDriver::from_url(&url).unwrap();
         driver.check_connection().await.unwrap();
         let mut conn = driver.pool.get_conn().await.unwrap();
-        let statement_timeout: u64 = conn.query_first("SELECT @@max_execution_time").await.unwrap().unwrap();
-        assert_eq!(statement_timeout, 4_000);
+        let statement_timeout_configured: bool = if url.starts_with("mariadb://") {
+            conn.query_first("SELECT @@max_statement_time = 4.000").await.unwrap().unwrap()
+        } else {
+            conn.query_first("SELECT @@max_execution_time = 4000").await.unwrap().unwrap()
+        };
+        assert!(statement_timeout_configured);
         drop(conn);
         let draft = crate::external::introspect(&url, "aip_mysql_test").await.unwrap();
         assert_eq!(draft["ok"], true);
@@ -456,5 +485,36 @@ mod tests {
         assert_eq!(draft["mapping"]["tables"]["Posts"]["columns"]["user"], "user_id");
         assert!(draft["catalog"]["posts"].is_array());
         assert_eq!(draft["catalog"]["posts"][0]["name"], "posts");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a disposable MySQL or MariaDB database seeded with aip_mysql_test"]
+    async fn live_catalog_fence_rechecks_schema_and_rejects_drift_without_a_cache() {
+        let url = std::env::var("AIP_TEST_MYSQL_URL").expect("set AIP_TEST_MYSQL_URL to a disposable test database URL");
+        let ca = PathBuf::from(std::env::var_os("AIP_TEST_MYSQL_TLS_CA").expect("set AIP_TEST_MYSQL_TLS_CA to the disposable CA path"));
+        let driver = MysqlDriver::from_url_with_ca(&url, Some(&ca)).unwrap();
+        let mut conn = driver.pool.get_conn().await.unwrap();
+        let prior_probe: Option<u8> = conn
+            .exec_first(
+                "SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?",
+                ("aip_mysql_test", "users", "fence_probe"),
+            )
+            .await
+            .unwrap();
+        if prior_probe.is_some() {
+            conn.query_drop("ALTER TABLE aip_mysql_test.users DROP COLUMN fence_probe").await.unwrap();
+        }
+        drop(conn);
+        let baseline = driver.catalog_fingerprint("aip_mysql_test").await.unwrap();
+        driver.verify_catalog_fingerprint("aip_mysql_test", &baseline).await.unwrap();
+
+        let mut conn = driver.pool.get_conn().await.unwrap();
+        conn.query_drop("ALTER TABLE aip_mysql_test.users ADD COLUMN fence_probe INT NULL").await.unwrap();
+        drop(conn);
+
+        let error = driver.verify_catalog_fingerprint("aip_mysql_test", &baseline).await.unwrap_err();
+        assert!(error.to_string().contains("schema changed"));
+        let mut conn = driver.pool.get_conn().await.unwrap();
+        conn.query_drop("ALTER TABLE aip_mysql_test.users DROP COLUMN fence_probe").await.unwrap();
     }
 }

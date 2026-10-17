@@ -525,8 +525,8 @@ fn facereview_11_models_synthetic_fixture_matches_fk_manifest() {
 }
 
 use aip_migrate::mysql_catalog::{
-    CatalogError, MysqlCatalogReader, MysqlDriverConfig, SQL_COLUMNS, SQL_FOREIGN_KEYS, SQL_STATISTICS,
-    SQL_TABLES, introspect_schema, introspect_table, normalize_mysql_error_code,
+    CatalogError, MysqlCatalogReader, MysqlDriverConfig, SQL_COLUMNS, SQL_FOREIGN_KEYS, SQL_STATISTICS, SQL_STATISTICS_MARIADB, SQL_TABLES,
+    introspect_schema, introspect_table, normalize_mysql_error_code,
 };
 
 struct MockCatalogReader;
@@ -620,7 +620,9 @@ impl MysqlCatalogReader for MockCatalogReader {
 async fn mysql_catalog_reader_introspect_pipeline_and_sql_constants() {
     assert!(SQL_TABLES.contains("INFORMATION_SCHEMA.TABLES"));
     assert!(SQL_COLUMNS.contains("INFORMATION_SCHEMA.COLUMNS"));
+    assert!(SQL_COLUMNS.contains("COALESCE(GENERATION_EXPRESSION, '')"));
     assert!(SQL_STATISTICS.contains("INFORMATION_SCHEMA.STATISTICS"));
+    assert!(SQL_STATISTICS_MARIADB.contains("NULL AS EXPRESSION"));
     assert!(SQL_FOREIGN_KEYS.contains("INFORMATION_SCHEMA.KEY_COLUMN_USAGE"));
     assert!(SQL_FOREIGN_KEYS.contains("INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS"));
 
