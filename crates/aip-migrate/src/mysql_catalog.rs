@@ -385,3 +385,170 @@ fn parse_enum(column_type: &str) -> Option<Vec<String>> {
     }
     (!values.is_empty()).then_some(values)
 }
+
+/// Standard INFORMATION_SCHEMA SQL queries according to MySQL 8.4 reference manual.
+pub const SQL_TABLES: &str = "\
+SELECT TABLE_NAME \
+FROM INFORMATION_SCHEMA.TABLES \
+WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE' \
+ORDER BY TABLE_NAME ASC";
+
+pub const SQL_COLUMNS: &str = "\
+SELECT COLUMN_NAME, ORDINAL_POSITION, DATA_TYPE, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT, EXTRA, GENERATION_EXPRESSION, COLLATION_NAME \
+FROM INFORMATION_SCHEMA.COLUMNS \
+WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? \
+ORDER BY ORDINAL_POSITION ASC";
+
+pub const SQL_STATISTICS: &str = "\
+SELECT INDEX_NAME, NON_UNIQUE, SEQ_IN_INDEX, COLUMN_NAME, EXPRESSION \
+FROM INFORMATION_SCHEMA.STATISTICS \
+WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? \
+ORDER BY INDEX_NAME ASC, SEQ_IN_INDEX ASC";
+
+pub const SQL_FOREIGN_KEYS: &str = "\
+SELECT k.CONSTRAINT_SCHEMA, k.TABLE_NAME, k.CONSTRAINT_NAME, k.ORDINAL_POSITION, k.COLUMN_NAME, \
+       k.REFERENCED_TABLE_SCHEMA, k.REFERENCED_TABLE_NAME, k.REFERENCED_COLUMN_NAME, \
+       r.DELETE_RULE, r.UPDATE_RULE \
+FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE k \
+JOIN INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS r \
+  ON k.CONSTRAINT_SCHEMA = r.CONSTRAINT_SCHEMA \
+ AND k.CONSTRAINT_NAME = r.CONSTRAINT_NAME \
+ AND k.TABLE_NAME = r.TABLE_NAME \
+WHERE k.CONSTRAINT_SCHEMA = ? AND k.TABLE_NAME = ? AND k.REFERENCED_TABLE_NAME IS NOT NULL \
+ORDER BY k.CONSTRAINT_NAME ASC, k.ORDINAL_POSITION ASC";
+
+/// Contract for asynchronous MySQL catalog row retrieval.
+/// Implementations may be a mock for testing or an actual live driver connection pool.
+pub trait MysqlCatalogReader: Send + Sync {
+    fn fetch_tables(&self, schema: &str) -> impl std::future::Future<Output = Result<Vec<String>, CatalogError>> + Send;
+    fn fetch_columns(&self, schema: &str, table: &str) -> impl std::future::Future<Output = Result<Vec<ColumnRow>, CatalogError>> + Send;
+    fn fetch_indexes(&self, schema: &str, table: &str) -> impl std::future::Future<Output = Result<Vec<IndexRow>, CatalogError>> + Send;
+    fn fetch_foreign_keys(&self, schema: &str, table: &str) -> impl std::future::Future<Output = Result<Vec<ForeignKeyRow>, CatalogError>> + Send;
+}
+
+/// Introspect a single table by fetching catalog rows and normalizing them into manifests.
+pub async fn introspect_table(
+    reader: &impl MysqlCatalogReader,
+    schema: &str,
+    table: &str,
+) -> Result<(TableManifest, Vec<ForeignKey>), CatalogError> {
+    let columns = reader.fetch_columns(schema, table).await?;
+    let indexes = reader.fetch_indexes(schema, table).await?;
+    let source_columns: Vec<String> = columns.iter().map(|c| c.name.clone()).collect();
+    let manifest = normalize_table(table, columns, indexes)?;
+    let fk_rows = reader.fetch_foreign_keys(schema, table).await?;
+    let foreign_keys = normalize_foreign_keys(schema, table, &source_columns, fk_rows)?;
+    Ok((manifest, foreign_keys))
+}
+
+/// Introspect an entire database schema by fetching all tables and normalizing their manifests.
+pub async fn introspect_schema(
+    reader: &impl MysqlCatalogReader,
+    schema: &str,
+) -> Result<BTreeMap<String, (TableManifest, Vec<ForeignKey>)>, CatalogError> {
+    let tables = reader.fetch_tables(schema).await?;
+    let mut results = BTreeMap::new();
+    for table in tables {
+        let (manifest, foreign_keys) = introspect_table(reader, schema, &table).await?;
+        results.insert(table, (manifest, foreign_keys));
+    }
+    Ok(results)
+}
+
+/// Configuration and sanitization for MySQL driver connections.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MysqlDriverConfig {
+    pub host: String,
+    pub port: u16,
+    pub database: String,
+    pub user: String,
+    pub password: Option<String>,
+    pub connect_timeout_ms: u64,
+    pub statement_timeout_ms: u64,
+    pub pool_min: usize,
+    pub pool_max: usize,
+    pub tls_required: bool,
+}
+
+impl MysqlDriverConfig {
+    pub fn parse_url(url: &str) -> Result<Self, CatalogError> {
+        let (scheme, rest) = url.split_once("://").ok_or_else(|| CatalogError("invalid database URL scheme".into()))?;
+        let s = scheme.to_ascii_lowercase();
+        if s != "mysql" && s != "mariadb" {
+            return Err(CatalogError(format!("expected mysql or mariadb scheme, found {scheme}")));
+        }
+
+        let (authority, path_query) = rest.split_once('/').unwrap_or((rest, ""));
+        let (user_info, host_port) = authority.rsplit_once('@').map_or(("", authority), |(u, h)| (u, h));
+        let (user, password) = if user_info.is_empty() {
+            ("root".to_string(), None)
+        } else if let Some((u, p)) = user_info.split_once(':') {
+            (u.to_string(), Some(p.to_string()))
+        } else {
+            (user_info.to_string(), None)
+        };
+
+        let (host, port) = if let Some((h, p)) = host_port.split_once(':') {
+            let parsed_port = p.parse::<u16>().map_err(|_| CatalogError("invalid port in database URL".into()))?;
+            (h.to_string(), parsed_port)
+        } else {
+            (if host_port.is_empty() { "127.0.0.1".to_string() } else { host_port.to_string() }, 3306)
+        };
+
+        let database = path_query.split(['?', '#']).next().unwrap_or("").trim_matches('/').to_string();
+        if database.is_empty() {
+            return Err(CatalogError("database name is required in database URL".into()));
+        }
+
+        Ok(Self {
+            host,
+            port,
+            database,
+            user,
+            password,
+            connect_timeout_ms: 5_000,
+            statement_timeout_ms: 10_000,
+            pool_min: 1,
+            pool_max: 10,
+            tls_required: false,
+        })
+    }
+
+    /// Redacted representation safe for error messages and logging.
+    pub fn display_sanitized(&self) -> String {
+        let auth = if self.password.is_some() {
+            format!("{}:***@", self.user)
+        } else {
+            format!("{}@", self.user)
+        };
+        format!("mysql://{}{}:{}/{}", auth, self.host, self.port, self.database)
+    }
+}
+
+/// Normalized database errors mapping MySQL server errors into standard AIP codes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NormalizedDriverError {
+    pub code: &'static str,
+    pub message: String,
+}
+
+pub fn normalize_mysql_error_code(error_code: u16, raw_message: &str) -> NormalizedDriverError {
+    let sanitized = if raw_message.contains("Access denied for user") {
+        "access denied for user (credentials rejected)".to_string()
+    } else {
+        raw_message.to_string()
+    };
+
+    let code = match error_code {
+        1045 => "DB_AUTH_FAILED",
+        1049 => "DB_NOT_FOUND",
+        1146 => "TABLE_NOT_FOUND",
+        1062 => "UNIQUE_VIOLATION",
+        1213 => "DEADLOCK_DETECTED",
+        1205 => "LOCK_TIMEOUT",
+        1451 | 1452 => "FOREIGN_KEY_VIOLATION",
+        2002 | 2003 => "DB_CONNECT_FAILED",
+        _ => "DB_ERROR",
+    };
+    NormalizedDriverError { code, message: sanitized }
+}

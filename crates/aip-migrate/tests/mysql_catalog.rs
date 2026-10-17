@@ -254,3 +254,175 @@ fn facereview_11_models_synthetic_schema_matches_manifest() {
         }
     }
 }
+
+use aip_migrate::mysql_catalog::{
+    CatalogError, MysqlCatalogReader, MysqlDriverConfig, SQL_COLUMNS, SQL_FOREIGN_KEYS, SQL_STATISTICS,
+    SQL_TABLES, introspect_schema, introspect_table, normalize_mysql_error_code,
+};
+
+struct MockCatalogReader;
+
+impl MysqlCatalogReader for MockCatalogReader {
+    fn fetch_tables(&self, _schema: &str) -> impl std::future::Future<Output = Result<Vec<String>, CatalogError>> + Send {
+        std::future::ready(Ok(vec!["users".into(), "comments".into()]))
+    }
+
+    fn fetch_columns(&self, _schema: &str, table: &str) -> impl std::future::Future<Output = Result<Vec<ColumnRow>, CatalogError>> + Send {
+        let cols = match table {
+            "users" => vec![
+                ColumnRow {
+                    name: "id".into(),
+                    ordinal_position: 1,
+                    data_type: "bigint".into(),
+                    column_type: "bigint unsigned".into(),
+                    is_nullable: "NO".into(),
+                    column_default: None,
+                    extra: "auto_increment".into(),
+                    generation_expression: String::new(),
+                    collation_name: None,
+                },
+                ColumnRow {
+                    name: "email".into(),
+                    ordinal_position: 2,
+                    data_type: "varchar".into(),
+                    column_type: "varchar(255)".into(),
+                    is_nullable: "NO".into(),
+                    column_default: None,
+                    extra: String::new(),
+                    generation_expression: String::new(),
+                    collation_name: Some("utf8mb4_0900_ai_ci".into()),
+                },
+            ],
+            "comments" => vec![
+                ColumnRow {
+                    name: "id".into(),
+                    ordinal_position: 1,
+                    data_type: "bigint".into(),
+                    column_type: "bigint unsigned".into(),
+                    is_nullable: "NO".into(),
+                    column_default: None,
+                    extra: "auto_increment".into(),
+                    generation_expression: String::new(),
+                    collation_name: None,
+                },
+                ColumnRow {
+                    name: "user_id".into(),
+                    ordinal_position: 2,
+                    data_type: "bigint".into(),
+                    column_type: "bigint unsigned".into(),
+                    is_nullable: "NO".into(),
+                    column_default: None,
+                    extra: String::new(),
+                    generation_expression: String::new(),
+                    collation_name: None,
+                },
+            ],
+            _ => vec![],
+        };
+        std::future::ready(Ok(cols))
+    }
+
+    fn fetch_indexes(&self, _schema: &str, _table: &str) -> impl std::future::Future<Output = Result<Vec<IndexRow>, CatalogError>> + Send {
+        std::future::ready(Ok(vec![IndexRow::column("PRIMARY", 0, 1, "id")]))
+    }
+
+    fn fetch_foreign_keys(&self, _schema: &str, table: &str) -> impl std::future::Future<Output = Result<Vec<ForeignKeyRow>, CatalogError>> + Send {
+        let fks = if table == "comments" {
+            vec![ForeignKeyRow {
+                constraint_schema: "app_db".into(),
+                table_name: "comments".into(),
+                constraint_name: "fk_comments_user".into(),
+                ordinal_position: 1,
+                column_name: "user_id".into(),
+                referenced_table_schema: Some("app_db".into()),
+                referenced_table_name: Some("users".into()),
+                referenced_column_name: Some("id".into()),
+                delete_rule: Some("CASCADE".into()),
+                update_rule: Some("CASCADE".into()),
+            }]
+        } else {
+            vec![]
+        };
+        std::future::ready(Ok(fks))
+    }
+}
+
+#[tokio::test]
+async fn mysql_catalog_reader_introspect_pipeline_and_sql_constants() {
+    assert!(SQL_TABLES.contains("INFORMATION_SCHEMA.TABLES"));
+    assert!(SQL_COLUMNS.contains("INFORMATION_SCHEMA.COLUMNS"));
+    assert!(SQL_STATISTICS.contains("INFORMATION_SCHEMA.STATISTICS"));
+    assert!(SQL_FOREIGN_KEYS.contains("INFORMATION_SCHEMA.KEY_COLUMN_USAGE"));
+    assert!(SQL_FOREIGN_KEYS.contains("INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS"));
+
+    let reader = MockCatalogReader;
+    let (table_manifest, fks) = introspect_table(&reader, "app_db", "comments").await.unwrap();
+    assert_eq!(table_manifest.name, "comments");
+    assert_eq!(table_manifest.columns.len(), 2);
+    assert_eq!(table_manifest.indexes.len(), 1);
+    assert_eq!(fks.len(), 1);
+    assert_eq!(fks[0].referenced_table, "users");
+
+    let full_schema = introspect_schema(&reader, "app_db").await.unwrap();
+    assert_eq!(full_schema.len(), 2);
+    assert!(full_schema.contains_key("users"));
+    assert!(full_schema.contains_key("comments"));
+}
+
+#[test]
+fn mysql_driver_config_url_parsing_and_secret_redaction() {
+    let url = "mysql://db_admin:super_secret_pass@10.0.0.5:3306/facereview_prod?sslmode=required";
+    let cfg = MysqlDriverConfig::parse_url(url).expect("valid mysql url should parse");
+    assert_eq!(cfg.host, "10.0.0.5");
+    assert_eq!(cfg.port, 3306);
+    assert_eq!(cfg.user, "db_admin");
+    assert_eq!(cfg.database, "facereview_prod");
+    assert_eq!(cfg.password.as_deref(), Some("super_secret_pass"));
+
+    let sanitized = cfg.display_sanitized();
+    assert!(!sanitized.contains("super_secret_pass"), "secret password must never appear in display_sanitized");
+    assert!(sanitized.contains("db_admin:***@10.0.0.5:3306/facereview_prod"));
+
+    // MariaDB scheme
+    let maria_url = "mariadb://app:another_secret@localhost/my_db";
+    let mcfg = MysqlDriverConfig::parse_url(maria_url).expect("mariadb url should parse");
+    assert_eq!(mcfg.user, "app");
+    assert_eq!(mcfg.port, 3306);
+    assert_eq!(mcfg.database, "my_db");
+    assert!(!mcfg.display_sanitized().contains("another_secret"));
+
+    // Invalid scheme
+    let pg_url = "postgres://user:pass@localhost:5432/db";
+    assert!(MysqlDriverConfig::parse_url(pg_url).is_err());
+}
+
+#[test]
+fn mysql_error_code_normalization_and_secret_freedom() {
+    let err_auth = normalize_mysql_error_code(1045, "Access denied for user 'admin'@'localhost' (using password: YES)");
+    assert_eq!(err_auth.code, "DB_AUTH_FAILED");
+    assert!(!err_auth.message.contains("admin"), "credentials must be sanitized from error message");
+
+    let err_dup = normalize_mysql_error_code(1062, "Duplicate entry 'test@example.com' for key 'users.email'");
+    assert_eq!(err_dup.code, "UNIQUE_VIOLATION");
+
+    let err_deadlock = normalize_mysql_error_code(1213, "Deadlock found when trying to get lock; try restarting transaction");
+    assert_eq!(err_deadlock.code, "DEADLOCK_DETECTED");
+
+    let err_timeout = normalize_mysql_error_code(1205, "Lock wait timeout exceeded; try restarting transaction");
+    assert_eq!(err_timeout.code, "LOCK_TIMEOUT");
+
+    let err_fk = normalize_mysql_error_code(1451, "Cannot delete or update a parent row: a foreign key constraint fails");
+    assert_eq!(err_fk.code, "FOREIGN_KEY_VIOLATION");
+
+    let err_conn = normalize_mysql_error_code(2003, "Can't connect to MySQL server on '127.0.0.1'");
+    assert_eq!(err_conn.code, "DB_CONNECT_FAILED");
+}
+
+#[tokio::test]
+async fn external_introspect_rejects_mysql_url_without_leaking_secrets() {
+    let raw_url = "mysql://admin:super_secret_db_password@127.0.0.1:3306/facereview";
+    let err = aip_migrate::external::introspect(raw_url, "facereview").await.unwrap_err();
+    assert!(err["code"] == "DB_ADAPTER_FEATURE_DISABLED" || err["code"] == "DB_ADAPTER_UNSUPPORTED");
+    assert!(!err.to_string().contains("super_secret_db_password"), "secret must never leak in introspect error");
+}
+
