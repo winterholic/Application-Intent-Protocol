@@ -103,3 +103,23 @@ Commands/actions and observed output:
 Assessment: this is an actual IdP-issued signed token, but not a successful AIP login. The missing required `nbf` is the leading source-supported explanation for `WIRE.UNAUTHENTICATED` (the external response deliberately does not distinguish JWT validation causes). This remains an inferred cause, not an instrumented verifier trace. One initial service start used an incorrect local database role and returned `DB_CONNECT`; it was corrected to the test role and does not describe product or production availability. A prior remote JWKS HTTPS source attempt returned generic `AUTH_CONFIG`; current service used the JWKS fetched over HTTPS from the same test IdP and read from a local file. Remote JWKS TLS loading therefore remains unverified. `SSL_CERT_FILE` was present in the AIP service environment.
 
 Next gates: resolve supported IdP/AIP JWT claim compatibility without weakening signature/issuer/audience checks; repeat real Keycloak token → SDK `/session` → authorized AIP read; provide a safe product path for self-registered IdP subject → AIP actor provisioning (operator CLI bind alone is not that path); test authorization-code/PKCE browser flow and logout. F01/F05 source UI → AIP SDK and F03–F17 remain open.
+
+## 2026-10-17 — RFC 9068 optional `nbf` compatibility and real IdP→AIP SDK session
+
+Standards/source basis: IETF RFC 9068 section 2.2 lists required JWT access-token claims (`iss`, `exp`, `aud`, `sub`, `client_id`, `iat`, `jti`); it does not make `nbf` required: https://www.rfc-editor.org/rfc/rfc9068.html . The AIP verifier had required `nbf` in `set_required_spec_claims`, which rejected the real Keycloak token observed above. AIP now treats `nbf` as optional, but continues rejecting negative and future `nbf`; signature algorithm/key, `typ=at+jwt`, issuer, audience, subject, expiry, issued-at and max token lifetime validation remain.
+
+TDD evidence:
+- Added `rfc9068_access_token_without_optional_nbf_is_accepted` in `crates/aip-auth/src/lib.rs` first, using a real ephemeral RSA signing key and the actual verifier/JWKS parser.
+- RED: `cargo test -p aip-auth rfc9068_access_token_without_optional_nbf_is_accepted --offline` → 1 failed at `expect("RFC 9068 does not require nbf")`, returning `Invalid` under the old required-claim list.
+- GREEN: after optional `nbf` decoding and conditional negative/future checks, the focused test → 1 passed. `cargo test -p aip-auth --offline` → library 16 passed, durable integration 2 passed, JWT integration 10 passed, doc tests 0; 0 failures. Existing JWT tests continue covering negative and future `nbf`, wrong profile/audience, weak/invalid keys, rotation, subject binding and revocation.
+- `cargo build -p aip-cli --offline` → finished successfully and rebuilt aip-auth, aip-service and aip-cli.
+
+Real IdP runtime recheck (not a fixture token): isolated Keycloak 26.2.5 issued a fresh synthetic user's signed RS256 access token with `typ=at+jwt`, the configured TLS `iss`, `aud` containing `aip-flaskbb`, `sub`, and a 300-second lifetime. The public JWKS was fetched over the Keycloak HTTPS endpoint (the tested AIP config reads the downloaded JWKS file; remote AIP JWKS HTTPS source is still unverified). The corrected actual AIP server started on `127.0.0.1:58083` against only dedicated AIP PostgreSQL `127.0.0.1:55439`. An operator pre-bound this test subject to seeded synthetic actor 6. The official Python SDK then returned:
+```
+session_actor=6
+capabilities_ok=True
+read_rows=[{"activated":true,"id":"6","username":"auth_new"}]
+```
+This verifies real IdP signature → AIP session/principal mapping → capability discovery → authorized User read for an existing bound actor. It does not verify browser authorization-code/PKCE, original FlaskBB UI using the SDK, user self-registration provisioning, or whole-app porting. The earlier failed `/session` remains recorded as the pre-fix red observation.
+
+Formatting/diff gate for this increment: `cargo fmt --all -- --check` → exit 0; `git diff --check` → exit 0.

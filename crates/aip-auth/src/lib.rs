@@ -470,7 +470,7 @@ impl AuthenticatorImpl {
         let mut validation = Validation::new(Algorithm::RS256);
         validation.set_issuer(&[&self.config.issuer]);
         validation.set_audience(&[&self.config.audience]);
-        validation.set_required_spec_claims(&["iss", "aud", "sub", "exp", "nbf"]);
+        validation.set_required_spec_claims(&["iss", "aud", "sub", "exp"]);
         validation.leeway = 0;
         let decoded = decode::<Claims>(token, &key, &validation).map_err(|error| match error.kind() {
             ErrorKind::ExpiredSignature => AuthError::Expired,
@@ -483,10 +483,10 @@ impl AuthenticatorImpl {
             || claims.sub.chars().any(char::is_control)
             || claims.iss != self.config.issuer
             || claims.iat < 0
-            || claims.nbf < 0
+            || claims.nbf.is_some_and(|nbf| nbf < 0)
             || claims.exp < 0
             || claims.iat > now
-            || claims.nbf > now
+            || claims.nbf.is_some_and(|nbf| nbf > now)
             || claims.exp <= now
             || !matches!(claims.exp.checked_sub(claims.iat), Some(1..=900))
         {
@@ -579,7 +579,7 @@ struct Claims {
     iss: String,
     sub: String,
     iat: i64,
-    nbf: i64,
+    nbf: Option<i64>,
     exp: i64,
 }
 
@@ -658,6 +658,47 @@ mod tests {
         let n = URL_SAFE_NO_PAD.encode(public.n().to_bytes_be());
         let e = URL_SAFE_NO_PAD.encode(public.e().to_bytes_be());
         serde_json::json!({"keys":[{"kty":"RSA","kid":"test-key","alg":"RS256","use":"sig","n":n,"e":e}]}).to_string().into_bytes()
+    }
+
+    #[tokio::test]
+    async fn rfc9068_access_token_without_optional_nbf_is_accepted() {
+        use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+        use rsa::{pkcs1::EncodeRsaPrivateKey, traits::PublicKeyParts};
+
+        let private = rsa::RsaPrivateKey::new(&mut rand::thread_rng(), 2048).expect("test RSA key");
+        let public = private.to_public_key();
+        let jwks = serde_json::json!({"keys":[{
+            "kty":"RSA", "kid":"rfc9068-key", "alg":"RS256", "use":"sig",
+            "n":URL_SAFE_NO_PAD.encode(public.n().to_bytes_be()),
+            "e":URL_SAFE_NO_PAD.encode(public.e().to_bytes_be())
+        }]});
+        let jwks_file = tempfile::NamedTempFile::new().expect("temporary JWKS file");
+        std::fs::write(jwks_file.path(), jwks.to_string()).expect("write JWKS");
+        let der = private.to_pkcs1_der().expect("encode test private key");
+        let key = EncodingKey::from_rsa_der(der.as_bytes());
+        let now = now_secs().expect("clock");
+        let mut header = Header::new(Algorithm::RS256);
+        header.typ = Some("at+jwt".into());
+        header.kid = Some("rfc9068-key".into());
+        let token = encode(
+            &header,
+            &serde_json::json!({
+                "iss":"https://issuer.example", "aud":"aip-api", "sub":"fixture-subject",
+                "iat":now, "exp":now + 300, "jti":"fixture-jti", "client_id":"fixture-client"
+            }),
+            &key,
+        )
+        .expect("sign RFC 9068 token");
+        let auth = AuthenticatorImpl::new_explained(
+            Config { issuer: "https://issuer.example".into(), audience: "aip-api".into(), jwks: JwksSource::File { path: jwks_file.path().into() } },
+            "host=unused".into(),
+            "aip_auth_test".into(),
+        )
+        .await
+        .expect("load authenticator");
+
+        let claims = auth.verify_token(&token).await.expect("RFC 9068 does not require nbf");
+        assert_eq!(claims.subject, "fixture-subject");
     }
 
     fn tls_client(ca: &[u8], port: u16) -> reqwest::Client {
