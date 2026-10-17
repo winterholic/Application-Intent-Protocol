@@ -579,8 +579,16 @@ struct Claims {
     iss: String,
     sub: String,
     iat: i64,
+    #[serde(default, deserialize_with = "deserialize_present_nbf")]
     nbf: Option<i64>,
     exp: i64,
+}
+
+fn deserialize_present_nbf<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    i64::deserialize(deserializer).map(Some)
 }
 
 impl spike_v6_transport::auth::Authenticator for AuthenticatorImpl {
@@ -699,6 +707,46 @@ mod tests {
 
         let claims = auth.verify_token(&token).await.expect("RFC 9068 does not require nbf");
         assert_eq!(claims.subject, "fixture-subject");
+    }
+
+    #[tokio::test]
+    async fn explicit_null_optional_nbf_is_rejected() {
+        use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+        use rsa::{pkcs1::EncodeRsaPrivateKey, traits::PublicKeyParts};
+
+        let private = rsa::RsaPrivateKey::new(&mut rand::thread_rng(), 2048).expect("test RSA key");
+        let public = private.to_public_key();
+        let jwks = serde_json::json!({"keys":[{
+            "kty":"RSA", "kid":"null-nbf-key", "alg":"RS256", "use":"sig",
+            "n":URL_SAFE_NO_PAD.encode(public.n().to_bytes_be()),
+            "e":URL_SAFE_NO_PAD.encode(public.e().to_bytes_be())
+        }]});
+        let jwks_file = tempfile::NamedTempFile::new().expect("temporary JWKS file");
+        std::fs::write(jwks_file.path(), jwks.to_string()).expect("write JWKS");
+        let der = private.to_pkcs1_der().expect("encode test private key");
+        let key = EncodingKey::from_rsa_der(der.as_bytes());
+        let now = now_secs().expect("clock");
+        let mut header = Header::new(Algorithm::RS256);
+        header.typ = Some("at+jwt".into());
+        header.kid = Some("null-nbf-key".into());
+        let token = encode(
+            &header,
+            &serde_json::json!({
+                "iss":"https://issuer.example", "aud":"aip-api", "sub":"fixture-subject",
+                "iat":now, "nbf":null, "exp":now + 300
+            }),
+            &key,
+        )
+        .expect("sign explicit-null token");
+        let auth = AuthenticatorImpl::new_explained(
+            Config { issuer: "https://issuer.example".into(), audience: "aip-api".into(), jwks: JwksSource::File { path: jwks_file.path().into() } },
+            "host=unused".into(),
+            "aip_auth_test".into(),
+        )
+        .await
+        .expect("load authenticator");
+
+        assert!(auth.verify_token(&token).await.is_err(), "explicit null is present but is not a NumericDate");
     }
 
     fn tls_client(ca: &[u8], port: u16) -> reqwest::Client {

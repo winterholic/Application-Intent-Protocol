@@ -1,0 +1,9 @@
+   Compiling aip-auth v0.1.0 (/private/tmp/aip-porting-full-20261017/crates/aip-auth)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.80s
+     Running tests/jwt.rs (target/debug/deps/jwt-f556ee29bd41c922)
+
+running 1 test
+test accepts_only_api_access_token_profile ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 2.69s
+

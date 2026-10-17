@@ -190,3 +190,24 @@ Environment probe command: `docker ps --format '{{.Names}} {{.Image}} {{.Status}
 Started only the existing isolated renderer venv: `FLASKBB_UI_SECRET="$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')" PYTHONPATH="$PWD/product/python" /private/tmp/flaskbb-aip-host-venv/bin/python porting/flaskbb/ui/app.py` (Python 3.14.7 / Flask 3.1.3) → listening `127.0.0.1:58082`. Using configured `ttakkari_browser`, navigated to `http://127.0.0.1:58082/`: page title `Login - FlaskBB`; snapshot showed adapted sign-in page and registration link to `/auth/login?kc_action=register`. Original Aurora CSS, Pygments CSS and FontAwesome font returned HTTP 200 in renderer logs. Browser console contained one error: `/favicon.ico` HTTP 404. Snapshot auto-saved as Run outbox `browser/page-2026-10-17T01-13-03-784Z.yml`. Closed configured browser and stopped renderer with Ctrl-C after observation.
 
 Not executed in this baseline: following registration/login link (the prior TLS trust error was not retried), OIDC authorization-code/PKCE callback, SDK authenticated session, provisioning or AIP DB delta, original-template reuse, forum/topic read or write, logout/denial. Thus this is a browser-rendered login-shell baseline, not account connection or original-template/AIP network evidence. AIP listener remained down; no test user/DB/mail data was changed.
+
+## 2026-10-17 — Independent `nbf:null` finding fixed at the claim decoder boundary
+
+Reference finding: the independent, source-read-only verification report at `/Users/winterholic/.ttakkari/data/outbox/e154d62e-6f9f-4df2-8cac-e1c20583723e/aip-auth-nbf-independent-verification.md` tested detached target `48658d7c24b4b231b499d9512825017935f5955c` (auth fix `f3f68f6fcc601e47e821b98d39b801739f903864`). It found absent/past/current `nbf` accepted and future/negative/wrong-type/signature/issuer/audience/expiry cases rejected, while explicit `nbf:null` was accepted. RFC 7519 §4.1.5 allows omission but requires NumericDate when present.
+
+TDD RED: added database-free signed-token unit `explicit_null_optional_nbf_is_rejected` in `crates/aip-auth/src/lib.rs`, then ran:
+`cargo test -p aip-auth --lib --offline explicit_null_optional_nbf_is_rejected`
+Observed: the test failed at the intended assertion because `verify_token` accepted the explicitly-null signed claim; `0 passed; 1 failed`, exit 101. Full raw output: `evidence/nbf-null-red.log`.
+
+Minimal GREEN: `Claims.nbf` retains `Option<i64>` but adds `#[serde(default, deserialize_with = "deserialize_present_nbf")]`; the deserializer reads present values as `i64` and wraps them in `Some`. Missing fields use default `None`; explicit null and wrong value types fail deserialization. Signature, configured issuer/audience, exp, iat, lifetime, negative/future `nbf` validation code was not changed.
+
+Executed commands and outcomes (all `--offline`; logs contain full stdout/stderr and exit codes):
+- `cargo test -p aip-auth --lib --offline explicit_null_optional_nbf_is_rejected` → 1 passed, exit 0 (`evidence/nbf-null-green.log`).
+- `cargo test -p aip-auth --lib --offline rfc9068_access_token_without_optional_nbf_is_accepted` → 1 passed, exit 0 (`evidence/nbf-absent-green.log`).
+- `cargo test -p aip-auth --lib --offline` → 17 passed, 0 failed, exit 0 (`evidence/nbf-auth-lib-suite.log`).
+- `cargo test -p aip-auth --test jwt --offline accepts_only_api_access_token_profile` → 1 passed, exit 0 (`evidence/nbf-jwt-profile.log`).
+- `cargo test -p aip-auth --test jwt --offline negative_not_before_is_rejected` → 1 passed, exit 0 (`evidence/nbf-jwt-negative.log`).
+- `cargo test -p aip-auth --test jwt --offline extreme_signed_timestamps_are_rejected_without_panicking` → 1 passed, exit 0 (`evidence/nbf-jwt-extreme.log`).
+- `cargo fmt --package aip-auth -- --check` and `git diff --check` → exit 0.
+
+The three selected `tests/jwt.rs` tests only exercise `verify_token`; no `psql`, principal lookup or database-backed test was run. In particular, no connection to user DB `localhost:5432` was attempted. Browser, provisioning, UI-to-AIP flow and full F01–F17 gates were not executed by this narrow correction and remain governed by the active porting task.

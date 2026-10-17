@@ -1,0 +1,22 @@
+   Compiling aip-auth v0.1.0 (/private/tmp/aip-porting-full-20261017/crates/aip-auth)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.41s
+     Running unittests src/lib.rs (target/debug/deps/aip_auth-fa1e44a1b527be70)
+
+running 1 test
+test tests::explicit_null_optional_nbf_is_rejected ... FAILED
+
+failures:
+
+---- tests::explicit_null_optional_nbf_is_rejected stdout ----
+
+thread 'tests::explicit_null_optional_nbf_is_rejected' (73147181) panicked at crates/aip-auth/src/lib.rs:741:9:
+explicit null is present but is not a NumericDate
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::explicit_null_optional_nbf_is_rejected
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 16 filtered out; finished in 7.17s
+
+error: test failed, to rerun pass `-p aip-auth --lib`

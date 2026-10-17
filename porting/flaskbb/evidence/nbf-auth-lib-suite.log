@@ -1,0 +1,24 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.09s
+     Running unittests src/lib.rs (target/debug/deps/aip_auth-fa1e44a1b527be70)
+
+running 17 tests
+test tests::each_configuration_failure_names_its_setting_and_no_value ... ok
+test tests::remote_jwks_redirect_is_not_followed ... ok
+test tests::a_malformed_key_set_is_told_apart_from_an_unreadable_one ... ok
+test tests::remote_jwks_body_is_bounded_without_content_length ... ok
+test tests::remote_jwks_rejects_untrusted_tls_root ... ok
+test tests::remote_jwks_rejects_mismatched_tls_hostname ... ok
+test tests::remote_jwks_accepts_trusted_tls_with_matching_hostname ... ok
+test idp_tests::discovery_document_yields_the_jwks_url_and_the_issuer_the_service_enforces ... ok
+test tests::rfc9068_access_token_without_optional_nbf_is_accepted ... ok
+test tests::remote_jwks_accepts_ca_from_environment ... ok
+test idp_tests::a_known_key_is_still_served_for_a_while_when_the_idp_is_down_after_the_cache_expired ... ok
+test idp_tests::a_forged_token_for_an_unknown_kid_is_rejected_and_never_accepts_the_attacker_key ... ok
+test tests::explicit_null_optional_nbf_is_rejected ... ok
+test idp_tests::file_jwks_is_parsed_once_until_the_file_changes ... ok
+test idp_tests::a_new_signing_key_is_picked_up_without_a_restart_and_the_retired_key_stops_working ... ok
+test idp_tests::a_failed_refresh_for_an_unknown_kid_does_not_block_tokens_for_cached_keys ... ok
+test tests::remote_jwks_ca_environment_fallback_and_rejections ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.33s
+
