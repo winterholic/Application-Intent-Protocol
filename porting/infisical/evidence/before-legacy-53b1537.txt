@@ -1,0 +1,115 @@
+test_declared_jobs_run (legacy_repro.LegacyDefects.test_declared_jobs_run) ... FAIL
+test_deleted_secret_leaves_the_list_and_can_be_recreated (legacy_repro.LegacyDefects.test_deleted_secret_leaves_the_list_and_can_be_recreated) ... FAIL
+test_job_enqueue_requires_project_access (legacy_repro.LegacyDefects.test_job_enqueue_requires_project_access) ... FAIL
+test_non_member_cannot_enumerate_user_emails (legacy_repro.LegacyDefects.test_non_member_cannot_enumerate_user_emails) ... FAIL
+test_organization_creator_is_not_orphaned (legacy_repro.LegacyDefects.test_organization_creator_is_not_orphaned) ... FAIL
+test_root_secret_key_is_unique (legacy_repro.LegacyDefects.test_root_secret_key_is_unique) ... FAIL
+test_secret_value_is_readable_or_not_stored (legacy_repro.LegacyDefects.test_secret_value_is_readable_or_not_stored) ... FAIL
+test_viewer_cannot_create_a_folder (legacy_repro.LegacyDefects.test_viewer_cannot_create_a_folder) ... FAIL
+test_viewer_cannot_create_a_secret (legacy_repro.LegacyDefects.test_viewer_cannot_create_a_secret) ... FAIL
+test_viewer_cannot_rotate_a_secret (legacy_repro.LegacyDefects.test_viewer_cannot_rotate_a_secret) ... FAIL
+
+======================================================================
+FAIL: test_declared_jobs_run (legacy_repro.LegacyDefects.test_declared_jobs_run)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/winterholic/development/projects/aip/aip/porting/infisical/tests/legacy_repro.py", line 79, in test_declared_jobs_run
+    self.assertEqual(receipt["state"], "SUCCEEDED", f"job did not run: {receipt}")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'FAILED' != 'SUCCEEDED'
+- FAILED
++ SUCCEEDED
+ : job did not run: {'attempt': 1, 'error': 'WIRE.EXTENSION_ERROR', 'id': 'd9c126dc-4ea6-41aa-a56f-6914be50d113', 'operation': 'secretReminder', 'output': None, 'state': 'FAILED'}
+
+======================================================================
+FAIL: test_deleted_secret_leaves_the_list_and_can_be_recreated (legacy_repro.LegacyDefects.test_deleted_secret_leaves_the_list_and_can_be_recreated)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/winterholic/development/projects/aip/aip/porting/infisical/tests/legacy_repro.py", line 89, in test_deleted_secret_leaves_the_list_and_can_be_recreated
+    self.assertEqual(rows, [], f"deleted secret is still listed: {rows}")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [{'id': '1', 'key': 'DELETE_ME'}] != []
+
+First list contains 1 additional elements.
+First extra element 0:
+{'id': '1', 'key': 'DELETE_ME'}
+
+- [{'id': '1', 'key': 'DELETE_ME'}]
++ [] : deleted secret is still listed: [{'id': '1', 'key': 'DELETE_ME'}]
+
+======================================================================
+FAIL: test_job_enqueue_requires_project_access (legacy_repro.LegacyDefects.test_job_enqueue_requires_project_access)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/winterholic/development/projects/aip/aip/porting/infisical/tests/legacy_repro.py", line 106, in test_job_enqueue_requires_project_access
+    self.assertIsNotNone(code, "a user with no access to the project enqueued a job for it")
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: unexpectedly None : a user with no access to the project enqueued a job for it
+
+======================================================================
+FAIL: test_non_member_cannot_enumerate_user_emails (legacy_repro.LegacyDefects.test_non_member_cannot_enumerate_user_emails)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/winterholic/development/projects/aip/aip/porting/infisical/tests/legacy_repro.py", line 74, in test_non_member_cannot_enumerate_user_emails
+    self.assertTrue(emails <= {"mallory@elsewhere.test"}, f"mallory sees {sorted(emails)}")
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true : mallory sees ['alice@acme.test', 'bob@acme.test', 'carol@acme.test', 'eve@other.test', 'mallory@elsewhere.test']
+
+======================================================================
+FAIL: test_organization_creator_is_not_orphaned (legacy_repro.LegacyDefects.test_organization_creator_is_not_orphaned)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/winterholic/development/projects/aip/aip/porting/infisical/tests/legacy_repro.py", line 98, in test_organization_creator_is_not_orphaned
+    self.assertEqual(len(rows), 1, "the creator cannot see the organization it just created")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 1 : the creator cannot see the organization it just created
+
+======================================================================
+FAIL: test_root_secret_key_is_unique (legacy_repro.LegacyDefects.test_root_secret_key_is_unique)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/winterholic/development/projects/aip/aip/porting/infisical/tests/legacy_repro.py", line 59, in test_root_secret_key_is_unique
+    self.assertEqual(second.get("ok"), False, f"duplicate root secret accepted: {second}")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: True != False : duplicate root secret accepted: {'applied': [], 'created': [{'id': '3', 'resource': 'Secret'}], 'ok': True, 'tags': ['Secret']}
+
+======================================================================
+FAIL: test_secret_value_is_readable_or_not_stored (legacy_repro.LegacyDefects.test_secret_value_is_readable_or_not_stored)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/winterholic/development/projects/aip/aip/porting/infisical/tests/legacy_repro.py", line 68, in test_secret_value_is_readable_or_not_stored
+    self.assertIsNone(code, f"a stored value cannot be read back: {code}")
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'WIRE.FIELD_NOT_EXPOSED' is not None : a stored value cannot be read back: WIRE.FIELD_NOT_EXPOSED
+
+======================================================================
+FAIL: test_viewer_cannot_create_a_folder (legacy_repro.LegacyDefects.test_viewer_cannot_create_a_folder)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/winterholic/development/projects/aip/aip/porting/infisical/tests/legacy_repro.py", line 41, in test_viewer_cannot_create_a_folder
+    self.assertEqual(result.get("ok"), False, f"viewer created a folder: {result}")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: True != False : viewer created a folder: {'applied': [], 'created': [{'id': '101', 'resource': 'Folder'}], 'ok': True, 'tags': ['Folder']}
+
+======================================================================
+FAIL: test_viewer_cannot_create_a_secret (legacy_repro.LegacyDefects.test_viewer_cannot_create_a_secret)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/winterholic/development/projects/aip/aip/porting/infisical/tests/legacy_repro.py", line 36, in test_viewer_cannot_create_a_secret
+    self.assertEqual(result.get("ok"), False, f"viewer created a secret: {result}")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: True != False : viewer created a secret: {'applied': [], 'created': [{'id': '5', 'resource': 'Secret'}], 'ok': True, 'tags': ['Secret']}
+
+======================================================================
+FAIL: test_viewer_cannot_rotate_a_secret (legacy_repro.LegacyDefects.test_viewer_cannot_rotate_a_secret)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/winterholic/development/projects/aip/aip/porting/infisical/tests/legacy_repro.py", line 51, in test_viewer_cannot_rotate_a_secret
+    self.assertEqual(result.get("ok"), False, f"viewer rotated a secret: {result}")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: True != False : viewer rotated a secret: {'changed': ['6'], 'ok': True, 'tags': ['Secret'], 'unchanged': []}
+
+----------------------------------------------------------------------
+Ran 10 tests in 1.594s
+
+FAILED (failures=10)

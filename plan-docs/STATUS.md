@@ -1,5 +1,9 @@
 # 진행 현황과 쌓인 질문
 
+## 2026-10-18 WBS 8.7 릴리스 게이트 증거 묶음 (Claude 구현, 독립 검증 대기)
+
+새 clone에서 전체 회귀, release 빌드·패키징, 묶음 smoke, 이전 릴리스(`4c27040`)의 schema 업그레이드와 두 롤백을 실행하는 `scripts/release-gate.sh`와 `product/tools/upgrade-drill.mjs`를 추가했다. 드릴이 실제 결함을 찾았다: 구버전 durable job schema를 새 binary가 거부했다(`b1b7d1b`). 후보는 main이 아니라 MySQL 트랙의 미완 커밋(fmt·clippy 실패)을 뺀 로컬 트리여서 main에서 게이트를 다시 실행해야 한다. 결과와 한계는 [릴리스 게이트](../product/RELEASE-GATE.md)를 따른다. 시작 가이드(`product/GETTING-STARTED.md`)와 개발용 토큰 helper를 더했다. 독립 검증 전이므로 완료로 표시하지 않는다.
+
 ## 2026-10-18 WBS 7.2.1.3 MySQL 작업 저장소·outbox 릴레이·MariaDB 게이트 (Claude 구현, 독립 검증 대기)
 
 PostgreSQL job 저장소의 상태 기계를 MySQL 8.4로 옮겼다(`SKIP LOCKED` claim, DB 시계, 키 digest 유일 열, lease epoch fencing, backoff·deadline·cancel·redrive). 실 MySQL 8.4.11에서 40개 run을 8 worker가 정확히 한 번씩 claim했고, 후보 잠금·epoch 검사·epoch 증가를 각각 끄면 시험이 실패한다. outbox 릴레이는 claim·enqueue·영수증을 한 트랜잭션으로 해 4개 동시 릴레이가 30행을 한 번씩만 dispatch하고 실패 배치는 아무것도 남기지 않는다. 서버 능력 probe는 MySQL 8.4를 통과시키고 MariaDB 11.4.13을 LATERAL·`FOR SHARE OF` 부재로 이름을 대며 거부한다(SKIP LOCKED·JSON_ARRAYAGG·CHECK·InnoDB는 있다). HTTP `/jobs/*`와 job 실행(worker·effect journal), MariaDB용 job 저장소 방언은 연결하지 않았다. 표와 한계는 [MySQL adapter 계약](porting/MYSQL-ADAPTER-CONTRACT.md)의 "작업 저장소" 절이다. 독립 검증 전이므로 완료로 표시하지 않는다.
