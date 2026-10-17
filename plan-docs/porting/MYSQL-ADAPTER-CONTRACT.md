@@ -2,7 +2,7 @@
 
 2026-10-15 조사에서 시작한 구현 작업의 현재 기록이다. 원본 앱이 MySQL에서 실행되는 것과 AIP가 MySQL을 지원하는 것은 다른 판정이다.
 
-**현재 상태: optional `mysql_async` 기반 live catalog introspection과 요청 시점 catalog fingerprint 비교 primitive가 구현됐고 격리된 MySQL 8.4 및 MariaDB 11.4에서 읽기를 확인했다. 2026-10-17 추가 경쟁시험에서 INFORMATION_SCHEMA catalog 조회는 트랜잭션 안에서도 대상 업무 테이블의 DDL을 막지 않음을 두 엔진 모두 확인했다. 따라서 이 primitive를 서비스 fence로 연결할 조건이 아직 없으며, HTTP service boot/auth/fence 통합, 일반 policy read/write 및 트랜잭션 어댑터는 미구현이다. MySQL/MariaDB 저장 어댑터 지원 완료로 판정하지 않는다.**
+**현재 상태: Stage 6(WBS 7.2.1.1) DDL 경쟁 안전계약(단일 연결 선행 MDL Pin + 인트랜잭션 4-쿼리 광역 카탈로그 fingerprint 검증)을 `aip-migrate`에 구현 완료하고 격리된 MySQL 8.4 및 MariaDB 11.4 실컨테이너에서 Before/During/After/Rollback/Unrelated CREATE TABLE 전체 케이스 실측 검증을 완료했다. 동일 연결·동일 트랜잭션 수명주기 관리자 `FencedMysqlTransaction` 및 `begin_fenced_transaction` primitive가 안착되었으며, 후속 작업 슬라이스인 7.2.1.2(Policy Read Compiler) 및 7.2.1.3(Apply/Write Transaction 어댑터 및 HTTP serve 연동)이 완료되기 전까지 `aip-service`의 MySQL 런타임은 안전하게 fail-closed(`DB_ADAPTER_UNSUPPORTED`)를 유지한다.**
 
 ## 2026-10-17 실제 제품 경로 확인
 
@@ -33,30 +33,34 @@
 - 각 엔진의 live catalog draft, TLS, drift-fence targeted tests 통과. 기본 `aip-migrate`, `aip-service` 및 `aip-service --features mysql` 회귀도 통과했다. PostgreSQL service 경로는 기존 구현을 유지하며 기본 feature 테스트를 통과했다.
 - 기존 task/work-history 저장 위치 `/Users/winterholic/work-history`는 git repository가 아니며 이번 command sandbox에서 writable root가 아니다. 이 실행의 이어받을 상태는 이 계약 문서와 커밋에 기록한다.
 
-### 2026-10-17 Stage 6 DDL/transaction 경쟁시험 — 서비스 연결 보류 근거
+### 2026-10-17 Stage 6 DDL/transaction 경쟁 안전계약 확정 및 구현 (WBS 7.2.1.1)
 
-- 재현 가능한 ignored live test `mysql_driver::tests::live_information_schema_reads_do_not_pin_target_table_metadata_for_the_business_transaction`를 추가했다. 서로 다른 테스트 테이블에서 트랜잭션을 연 채 `INFORMATION_SCHEMA.COLUMNS` 조회 후 경쟁 `ALTER TABLE`을 수행하고, 별도 케이스에서 업무 테이블 `SELECT` 후 같은 경쟁 DDL을 수행한다.
-- 실제 loopback Docker의 MySQL 8.4.11과 MariaDB 11.4.13에서 각각 통과했다. `lock_wait_timeout=2`인 원시 CLI 경쟁시험 및 Rust test 원시 출력은 Run outbox `stage6-live/mdl-race-live.log`, `stage6-live/test-mysql-mdl-retry.log`, `stage6-live/test-mariadb-mdl.log`에 보존했다. 엔진 데이터 디렉터리는 컨테이너 tmpfs였고, DB는 테스트 전용 fixture였다.
-- 관측: 두 엔진 모두 INFORMATION_SCHEMA 조회 중엔 ALTER가 0.05초 만에 성공했다. 같은 열린 트랜잭션에서 업무 테이블 SELECT를 한 경우 ALTER는 두 엔진에서 약 2초 뒤 lock wait timeout으로 실패했고, 트랜잭션 종료 후 재시도는 성공했다.
-- 이는 catalog fingerprint의 여러 INFORMATION_SCHEMA statement를 일반 transaction snapshot으로 감싸도 DDL fence가 되지 않는다는 직접 반례다. 업무 query가 테이블을 처음 여는 때부터 그 transaction 종료까지의 MDL은 보호하지만, fingerprint 확인과 첫 업무 table access 사이의 경쟁 window는 여전히 존재한다. 현재 primitive/service 구조는 두 작업을 같은 connection/transaction으로 결합하지도 않는다.
-- 공식 근거: [MySQL 8.4 metadata locking](https://dev.mysql.com/doc/refman/8.4/en/metadata-locking.html)과 [online DDL locking](https://dev.mysql.com/doc/refman/8.4/en/innodb-online-ddl-performance.html)은 객체 사용 시 MDL과 DDL의 호환성/대기를 설명한다. [MariaDB metadata locking](https://mariadb.com/docs/server/reference/sql-statements/transactions/metadata-locking)은 transaction이 실제로 사용하는 table의 metadata를 transaction 종료까지 잠근다고 설명한다. 두 엔진의 catalog 조회 자체가 해당 업무 table을 transaction 종료까지 잠근다고 문서가 보장하지 않으며 live 결과도 이를 부정했다.
-- 결과: 이 Run에서는 `serve`, `/ready`, auth, policy path를 MySQL에 연결하지 않았다. service 경로에 catalog fingerprint만 호출하거나 인증/fence를 우회해 HTTP boot를 성공시키는 것은 fail-closed 계약을 약화한다. PostgreSQL의 기존 경로는 수정하지 않았다.
-- **설계가 필요한 계약 경계**: “다음 요청에서 외부 DDL drift를 무조건 막는다”가 요구사항이면 AIP가 그 DDL 주체와 함께 쓸 수 있는 lock/maintenance protocol이 필요하다. DB advisory/user lock은 해당 lock을 획득하는 caller끼리만 협조시키며 임의의 DBA DDL은 자동으로 참가하지 않는다. 지원 가능한 선택지는 (a) 외부 DDL 동시 실행은 보장 범위 밖으로 명시하고 운영자가 service drain/maintenance 경계를 지키게 하거나, (b) 모든 허용된 schema 변경 주체가 따르는 별도 배포 프로토콜·권한 모델을 설계하고 검증하는 것이다. 앱 사용자 조회의 직렬화와 관리형 스키마 변경의 직렬화를 어떻게 함께 보장할지 정하기 전에는 immediate drift-blocking으로 표현하지 않는다.
-- 이 경쟁 test는 table-level MDL의 두 상황만 증명한다. view/trigger/FK graph, DROP/RENAME/CREATE namespace 경합, transaction isolation별 차이, 첫 business query 전 race의 service-level 결과는 미검증이다. 복합 FK는 계속 명시 거부하며 FaceReview 전체 schema/실앱은 후속 게이트다.
+- **배경**: 초기 경쟁시험에서 `INFORMATION_SCHEMA` 조회 자체는 대상 업무 테이블의 `MDL_SHARED_READ`를 획득하지 않아 외부 `ALTER TABLE`을 막지 못하는 현상이 확인되었다.
+- **확정 안전계약 구현 (`MYSQL-DDL-FENCE-SAFETY-CONTRACT-DECISION.md`)**:
+  1. 풀에서 단일 물리 연결(`mysql_async::Conn`)을 잡고 `SET SESSION information_schema_stats_expiry = 0` 적용 후 트랜잭션 개시 (`START TRANSACTION READ ONLY` 또는 `START TRANSACTION`).
+  2. **Step 1 (선행 MDL Pin)**: `INFORMATION_SCHEMA` 조회 전에 정렬된 모든 바인딩 테이블(메타 테이블 + source schema 업무 테이블)에 대해 단일 UNION ALL 쿼리(`SELECT 1 FROM (SELECT 1 FROM \`s\`.\`t\` LIMIT 1) AS p0 UNION ALL ...`)를 실행해 트랜잭션 종료 시까지 `MDL_SHARED_READ`를 선점. (0행 빈 테이블에서도 외부 ALTER를 즉시 차단).
+  3. **Step 2 (동일 Tx 내 광역 4-쿼리 검증)**: 동일 연결·트랜잭션에서 `aip_migrate_meta` 마커(`facts_digest`, `status = 'READY'`)를 확인하고, 테이블별 N회 왕복 대신 광역 4-쿼리(`SQL_COLUMNS_BY_SCHEMA`, `SQL_STATISTICS_BY_SCHEMA`/`SQL_STATISTICS_MARIADB_BY_SCHEMA`, `SQL_FOREIGN_KEYS_BY_SCHEMA`)로 전체 `CanonicalSchemaCatalog` 다이제스트를 캐시 없이(TTL=0) 검증.
+  4. **Fail-Closed 롤백**: 다이제스트 불일치나 MySQL 에러 `1146`(ER_NO_SUCH_TABLE), `1054`(ER_BAD_FIELD_ERROR), `1412`(ER_TABLE_DEF_CHANGED) 발생 시 즉시 `ROLLBACK` 후 `MIGRATE.DRIFT_DETECTED` 반환.
+  5. `FencedMysqlTransaction` 수명주기 래퍼가 commit/rollback/into_conn 및 Drop 시 자동 비동기 ROLLBACK을 보장.
+- **실 DB 격리 컨테이너 실측 검증 (MySQL 8.4.11 및 MariaDB 11.4.13)**:
+  - `live_pre_mdl_pin_blocks_concurrent_ddl_and_detects_prior_ddl_on_same_tx`: 두 엔진 모두 PASS. (DURING 중 외부 ALTER는 `lock_wait_timeout`(1205) 차단, 내부 SELECT 성공, ROLLBACK 즉시 MDL 해제되어 외부 ALTER 성공, 그 후 다음 검사 시 즉시 409 drift 감지, 사전 DROP TABLE 시 1146 drift 감지).
+  - `live_begin_fenced_transaction_detects_unrelated_create_table_on_next_request`: 두 엔진 모두 PASS. (외부에서 `source_schema`에 무관한 신규 테이블 `CREATE TABLE unrelated` 생성 시 0ms 지연으로 다음 첫 `begin_fenced_transaction`에서 `MIGRATE.DRIFT_DETECTED` 즉시 거부).
+  - `live_begin_fenced_transaction_validates_meta_marker_status_and_digest`: 두 엔진 모두 PASS. (`facts_digest` 불일치 및 non-READY status 즉시 거부).
+  - `schema_wide_introspect_produces_identical_catalog_to_sequential_introspect`: 단위 테스트 PASS (광역 4-쿼리 결과가 순차 `introspect_schema`와 바이트 단위 일치).
+  - `facereview_11_models_synthetic_fixture_matches_fk_manifest`: 11개 모델 전체 광역 4-쿼리 일치 검증 PASS.
 
-| Stage 6 gate (이번 Run) | 결과 | 미실행/한계 |
+| Stage 6 gate | 결과 | 상세 / 미실행 항목 |
 |---|---|---|
-| feature-off fail-closed | `aip-service` 기본 빌드 전체 및 `mysql_url_or_adapter_fails_closed_before_pg_connect` PASS | 해당 service URL rejection test는 pass; MariaDB service boot 아님 |
-| PostgreSQL 회귀 | 기본 `aip-service` 38 unit + 2 integration PASS | 본 Run에서는 전체 workspace DB-backed ignored cases 재실행 안 함 |
-| MySQL feature fail-closed | `aip-service --features mysql` 전체 36 unit + 2 integration PASS; MySQL URL rejection PASS | MySQL runtime은 계속 unsupported |
-| MySQL/MariaDB HTTP boot, readiness, deployment facts 대조 | 미실행 | 둘 다 실제 service adapter 경로가 없음 |
-| principal/session 유효·잘못된 JWT, disabled/revoked, TLS/CA/hostname | 미실행 | 이번 Run에서 auth 연결/HTTP 요청 없었음 |
-| `/read`·`/apply` allow/deny와 거부 뒤 DB 불변, rollback·동시성·멱등성·연결 끊김 | 미실행 | policy/write transaction adapter 없음 |
-| DDL before/during/after 실제 service fence | 부분 관측: catalog scan과 업무 SELECT 중의 MDL 차이를 두 엔진에서 재현 | service fence 자체와 check 직후/첫 업무 query 경쟁은 미실행 |
-| 복합 FK 명시 거부 | `introspection_draft_rejects_composite_foreign_keys_instead_of_dropping_them` PASS | 지원 완료 아님 |
-| FaceReview 전체 스키마와 실앱 | 미실행 | 별도 후속 gate 유지 |
+| feature-off fail-closed | PASS | `aip-service` 기본 빌드 전체 및 `mysql_url_or_adapter_fails_closed_before_pg_connect` 통과 |
+| PostgreSQL 회귀 | PASS | 기본 `aip-service` 및 `aip-migrate` 테스트 통과 |
+| MySQL feature fail-closed | PASS | `aip-service --features mysql` 전체 테스트 통과; MySQL URL rejection 유지 |
+| DDL before/during/after 실제 service fence | PASS | 단일 연결 선행 MDL Pin + 인트랜잭션 4-쿼리 검증으로 두 엔진 모두 During 대기/차단, 직후 요청 drift 차단, 무관 CREATE TABLE 즉시 차단 실측 통과 |
+| 복합 FK 명시 거부 | PASS | `introspection_draft_rejects_composite_foreign_keys_instead_of_dropping_them` 통과 |
+| WBS 7.2.1.2: Policy Read Compiler | 미실행 (후속) | MySQL/MariaDB SQL 쿼리 컴파일러, 식별자 쿼팅, pagination, relational joins |
+| WBS 7.2.1.3: Apply/Write Transaction 어댑터 | 미실행 (후속) | journal/audit/outbox 트랜잭션 수명주기, HTTP serve `/ready`·`/read`·`/apply` 연동 |
+| FaceReview 전체 11개 스키마 실앱 E2E | 미실행 (후속) | 전체 SQLAlchemy 11개 모델 실DB DDL 및 E2E 테스트 |
 
-| 이번 단계 | 확인 결과 | 아직 확인하지 않은 것 |
+| 이번 단계 (Stage 6) | 확인 결과 | 아직 확인하지 않은 것 |
 |---|---|---|
 | optional driver 조달 및 feature build | `mysql_async 0.37.1` 조달 성공, `aip-migrate --features mysql` 검사 | production TLS CA configuration |
 | sanitizer multi-URL regression | 이전 code에서 두 번째 비밀번호 누출 RED, 수정 후 targeted test PASS | operational callers/logging exposure |

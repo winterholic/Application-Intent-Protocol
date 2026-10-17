@@ -522,11 +522,67 @@ fn facereview_11_models_synthetic_fixture_matches_fk_manifest() {
     }
 
     assert_eq!(all_normalized_fks_count, 13, "Total normalized foreign keys across all 11 models must be exactly 13 per independent source audit of rev 7948b7e7 (correcting earlier 10 FK count)");
+
+    // Verify that schema-wide 4-query normalization produces byte-for-byte identical manifests
+    let all_tables = fixtures.iter().map(|f| f.name.to_string()).collect::<Vec<_>>();
+    let mut all_columns = Vec::new();
+    let mut all_indexes = Vec::new();
+    let mut all_fks = Vec::new();
+    let mut sequential_catalog = std::collections::BTreeMap::new();
+
+    for f in &fixtures {
+        for col in &f.columns {
+            all_columns.push(SchemaColumnRow { table_name: f.name.to_string(), column: col.clone() });
+        }
+        for idx in &f.indexes {
+            all_indexes.push(SchemaIndexRow { table_name: f.name.to_string(), index: idx.clone() });
+        }
+        let manifest_model = models.iter().find(|m| m["table"].as_str() == Some(f.name)).unwrap();
+        let fk_declarations = manifest_model["foreign_keys"].as_array().unwrap();
+        let source_col_names: Vec<String> = f.columns.iter().map(|c| c.name.clone()).collect();
+        let mut table_fk_rows = Vec::new();
+        for fk in fk_declarations {
+            let col_name = fk["column"].as_str().unwrap();
+            let row = ForeignKeyRow {
+                constraint_schema: "facereview_baseline".into(),
+                table_name: f.name.into(),
+                constraint_name: format!("fk_{}_{}", f.name, col_name),
+                ordinal_position: 1,
+                column_name: col_name.into(),
+                referenced_table_schema: Some("facereview_baseline".into()),
+                referenced_table_name: Some(fk["referenced_table"].as_str().unwrap().into()),
+                referenced_column_name: Some(fk["referenced_column"].as_str().unwrap().into()),
+                delete_rule: Some(fk["on_delete"].as_str().unwrap().into()),
+                update_rule: Some(fk["on_update"].as_str().unwrap().into()),
+            };
+            all_fks.push(row.clone());
+            table_fk_rows.push(row);
+        }
+        let manifest = normalize_table(f.name, f.columns.clone(), f.indexes.clone()).unwrap();
+        let fks = normalize_foreign_keys("facereview_baseline", f.name, &source_col_names, table_fk_rows).unwrap();
+        sequential_catalog.insert(f.name.to_string(), (manifest, fks));
+    }
+
+    let schema_wide_catalog = introspect_schema_from_schema_rows(
+        "facereview_baseline",
+        all_tables,
+        all_columns,
+        all_indexes,
+        all_fks,
+    ).expect("schema-wide normalization of 11 FaceReview models must succeed");
+
+    assert_eq!(
+        sequential_catalog,
+        schema_wide_catalog,
+        "schema-wide catalog must match sequential catalog for all 11 models"
+    );
 }
 
 use aip_migrate::mysql_catalog::{
-    CatalogError, MysqlCatalogReader, MysqlDriverConfig, SQL_COLUMNS, SQL_FOREIGN_KEYS, SQL_STATISTICS, SQL_STATISTICS_MARIADB, SQL_TABLES,
-    introspect_schema, introspect_table, normalize_mysql_error_code,
+    CatalogError, MysqlCatalogReader, MysqlDriverConfig, SchemaColumnRow, SchemaIndexRow, introspect_schema,
+    introspect_schema_from_schema_rows, introspect_table, normalize_mysql_error_code, SQL_COLUMNS, SQL_COLUMNS_BY_SCHEMA,
+    SQL_FOREIGN_KEYS, SQL_FOREIGN_KEYS_BY_SCHEMA, SQL_STATISTICS, SQL_STATISTICS_BY_SCHEMA, SQL_STATISTICS_MARIADB,
+    SQL_STATISTICS_MARIADB_BY_SCHEMA, SQL_TABLES,
 };
 
 struct MockCatalogReader;
@@ -638,6 +694,45 @@ async fn mysql_catalog_reader_introspect_pipeline_and_sql_constants() {
     assert_eq!(full_schema.len(), 2);
     assert!(full_schema.contains_key("users"));
     assert!(full_schema.contains_key("comments"));
+}
+
+#[tokio::test]
+async fn schema_wide_introspect_produces_identical_catalog_to_sequential_introspect() {
+    assert!(SQL_COLUMNS_BY_SCHEMA.contains("WHERE TABLE_SCHEMA = ?"));
+    assert!(SQL_COLUMNS_BY_SCHEMA.contains("ORDER BY TABLE_NAME ASC, ORDINAL_POSITION ASC"));
+    assert!(SQL_STATISTICS_BY_SCHEMA.contains("ORDER BY TABLE_NAME ASC, INDEX_NAME ASC, SEQ_IN_INDEX ASC"));
+    assert!(SQL_STATISTICS_MARIADB_BY_SCHEMA.contains("NULL AS EXPRESSION"));
+    assert!(SQL_FOREIGN_KEYS_BY_SCHEMA.contains("WHERE k.CONSTRAINT_SCHEMA = ? AND k.REFERENCED_TABLE_NAME IS NOT NULL"));
+
+    let reader = MockCatalogReader;
+    let sequential = introspect_schema(&reader, "app_db").await.unwrap();
+
+    let tables = reader.fetch_tables("app_db").await.unwrap();
+    let mut columns = Vec::new();
+    let mut indexes = Vec::new();
+    let mut foreign_keys = Vec::new();
+
+    for table in &tables {
+        for col in reader.fetch_columns("app_db", table).await.unwrap() {
+            columns.push(SchemaColumnRow { table_name: table.clone(), column: col });
+        }
+        for idx in reader.fetch_indexes("app_db", table).await.unwrap() {
+            indexes.push(SchemaIndexRow { table_name: table.clone(), index: idx });
+        }
+        for fk in reader.fetch_foreign_keys("app_db", table).await.unwrap() {
+            foreign_keys.push(fk);
+        }
+    }
+
+    let schema_wide = introspect_schema_from_schema_rows("app_db", tables, columns, indexes, foreign_keys).unwrap();
+
+    let seq_json = serde_json::to_string(&sequential).unwrap();
+    let wide_json = serde_json::to_string(&schema_wide).unwrap();
+    assert_eq!(seq_json, wide_json, "schema-wide introspect output must match sequential introspect byte-for-byte");
+    assert_eq!(
+        spike_v1_fixture::digest(&serde_json::to_value(&sequential).unwrap()),
+        spike_v1_fixture::digest(&serde_json::to_value(&schema_wide).unwrap())
+    );
 }
 
 #[test]

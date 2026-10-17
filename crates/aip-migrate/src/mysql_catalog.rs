@@ -141,20 +141,63 @@ pub struct TableManifest {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CatalogError(String);
+pub struct SchemaColumnRow {
+    pub table_name: String,
+    pub column: ColumnRow,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SchemaIndexRow {
+    pub table_name: String,
+    pub index: IndexRow,
+}
+
+pub type CanonicalSchemaCatalog = BTreeMap<String, (TableManifest, Vec<ForeignKey>)>;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CatalogError {
+    pub code: String,
+    pub message: String,
+}
 
 impl fmt::Display for CatalogError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
+        if self.code == "CATALOG_ERROR" {
+            write!(f, "{}", self.message)
+        } else {
+            write!(f, "{}: {}", self.code, self.message)
+        }
     }
 }
 
 impl std::error::Error for CatalogError {}
 
 impl CatalogError {
-    pub(crate) fn new(message: impl Into<String>) -> Self {
-        Self(message.into())
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            code: "CATALOG_ERROR".into(),
+            message: message.into(),
+        }
     }
+
+    pub fn drift(message: impl Into<String>) -> Self {
+        Self {
+            code: "MIGRATE.DRIFT_DETECTED".into(),
+            message: message.into(),
+        }
+    }
+
+    pub fn with_code(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            code: code.into(),
+            message: message.into(),
+        }
+    }
+}
+
+#[allow(non_snake_case)]
+pub(crate) fn CatalogError(message: String) -> CatalogError {
+    CatalogError::new(message)
 }
 
 /// Normalize already-read catalog rows. Synthetic test rows are not database evidence.
@@ -431,6 +474,36 @@ JOIN INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS r \
 WHERE k.CONSTRAINT_SCHEMA = ? AND k.TABLE_NAME = ? AND k.REFERENCED_TABLE_NAME IS NOT NULL \
 ORDER BY k.CONSTRAINT_NAME ASC, k.ORDINAL_POSITION ASC";
 
+pub const SQL_COLUMNS_BY_SCHEMA: &str = "\
+SELECT TABLE_NAME, COLUMN_NAME, ORDINAL_POSITION, DATA_TYPE, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT, EXTRA, COALESCE(GENERATION_EXPRESSION, ''), COLLATION_NAME \
+FROM INFORMATION_SCHEMA.COLUMNS \
+WHERE TABLE_SCHEMA = ? \
+ORDER BY TABLE_NAME ASC, ORDINAL_POSITION ASC";
+
+pub const SQL_STATISTICS_BY_SCHEMA: &str = "\
+SELECT TABLE_NAME, INDEX_NAME, NON_UNIQUE, SEQ_IN_INDEX, COLUMN_NAME, EXPRESSION \
+FROM INFORMATION_SCHEMA.STATISTICS \
+WHERE TABLE_SCHEMA = ? \
+ORDER BY TABLE_NAME ASC, INDEX_NAME ASC, SEQ_IN_INDEX ASC";
+
+pub const SQL_STATISTICS_MARIADB_BY_SCHEMA: &str = "\
+SELECT TABLE_NAME, INDEX_NAME, NON_UNIQUE, SEQ_IN_INDEX, COLUMN_NAME, NULL AS EXPRESSION \
+FROM INFORMATION_SCHEMA.STATISTICS \
+WHERE TABLE_SCHEMA = ? \
+ORDER BY TABLE_NAME ASC, INDEX_NAME ASC, SEQ_IN_INDEX ASC";
+
+pub const SQL_FOREIGN_KEYS_BY_SCHEMA: &str = "\
+SELECT k.CONSTRAINT_SCHEMA, k.TABLE_NAME, k.CONSTRAINT_NAME, k.ORDINAL_POSITION, k.COLUMN_NAME, \
+       k.REFERENCED_TABLE_SCHEMA, k.REFERENCED_TABLE_NAME, k.REFERENCED_COLUMN_NAME, \
+       r.DELETE_RULE, r.UPDATE_RULE \
+FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE k \
+JOIN INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS r \
+  ON k.CONSTRAINT_SCHEMA = r.CONSTRAINT_SCHEMA \
+ AND k.CONSTRAINT_NAME = r.CONSTRAINT_NAME \
+ AND k.TABLE_NAME = r.TABLE_NAME \
+WHERE k.CONSTRAINT_SCHEMA = ? AND k.REFERENCED_TABLE_NAME IS NOT NULL \
+ORDER BY k.TABLE_NAME ASC, k.CONSTRAINT_NAME ASC, k.ORDINAL_POSITION ASC";
+
 /// Contract for asynchronous MySQL catalog row retrieval.
 /// Implementations may be a mock for testing or an actual live driver connection pool.
 pub trait MysqlCatalogReader: Send + Sync {
@@ -466,6 +539,55 @@ pub async fn introspect_schema(
         let (manifest, foreign_keys) = introspect_table(reader, schema, &table).await?;
         results.insert(table, (manifest, foreign_keys));
     }
+    Ok(results)
+}
+
+/// Introspect an entire database schema from schema-wide query rows and normalize into manifests.
+/// Produces a byte-for-byte identical `CanonicalSchemaCatalog` to sequential `introspect_schema`.
+pub fn introspect_schema_from_schema_rows(
+    schema_name: &str,
+    tables: Vec<String>,
+    columns: Vec<SchemaColumnRow>,
+    indexes: Vec<SchemaIndexRow>,
+    foreign_keys: Vec<ForeignKeyRow>,
+) -> Result<CanonicalSchemaCatalog, CatalogError> {
+    let mut columns_by_table: BTreeMap<String, Vec<ColumnRow>> = BTreeMap::new();
+    for col in columns {
+        columns_by_table.entry(col.table_name).or_default().push(col.column);
+    }
+
+    let mut indexes_by_table: BTreeMap<String, Vec<IndexRow>> = BTreeMap::new();
+    for idx in indexes {
+        indexes_by_table.entry(idx.table_name).or_default().push(idx.index);
+    }
+
+    let mut fks_by_table: BTreeMap<String, Vec<ForeignKeyRow>> = BTreeMap::new();
+    for fk in foreign_keys {
+        fks_by_table.entry(fk.table_name.clone()).or_default().push(fk);
+    }
+
+    let mut results = BTreeMap::new();
+    for table in tables {
+        let cols = columns_by_table.remove(&table).unwrap_or_default();
+        let idxs = indexes_by_table.remove(&table).unwrap_or_default();
+        let fks = fks_by_table.remove(&table).unwrap_or_default();
+
+        let source_columns: Vec<String> = cols.iter().map(|c| c.name.clone()).collect();
+        let manifest = normalize_table(&table, cols, idxs)?;
+        let normalized_fks = normalize_foreign_keys(schema_name, &table, &source_columns, fks)?;
+        results.insert(table, (manifest, normalized_fks));
+    }
+
+    if let Some((unexpected_table, _)) = columns_by_table.into_iter().next() {
+        return Err(CatalogError::new(format!("column catalog row references unknown table {unexpected_table}")));
+    }
+    if let Some((unexpected_table, _)) = indexes_by_table.into_iter().next() {
+        return Err(CatalogError::new(format!("index catalog row references unknown table {unexpected_table}")));
+    }
+    if let Some((unexpected_table, _)) = fks_by_table.into_iter().next() {
+        return Err(CatalogError::new(format!("foreign-key catalog row references unknown table {unexpected_table}")));
+    }
+
     Ok(results)
 }
 
