@@ -31,6 +31,9 @@ const SOURCE: &str = "aip_t_fr_src";
 const ISSUER: &str = "https://issuer.example";
 const ALICE: &str = "11111111-1111-4111-8111-111111111111";
 const BOB: &str = "22222222-2222-4222-8222-222222222222";
+const CAROL: &str = "33333333-3333-4333-8333-333333333333";
+const DAVE: &str = "44444444-4444-4444-8444-444444444444";
+const ERIN: &str = "55555555-5555-4555-8555-555555555555";
 const CAT_VIDEO: &str = "aaaaaaaa-0000-4000-8000-000000000001";
 
 struct Env {
@@ -190,7 +193,7 @@ async fn facereview_schema_is_adopted_without_business_ddl_and_read_with_origina
     assert_eq!(plan["businessDDL"], json!([]), "adoption changes no business table: {plan}");
     let digest = plan["digest"].as_str().unwrap().to_string();
     run(&env, &["adopt-external", file_arg, "--apply", &digest], &config).await.expect("apply");
-    for (subject, actor) in [("alice", ALICE), ("bob", BOB)] {
+    for (subject, actor) in [("alice", ALICE), ("bob", BOB), ("carol", CAROL), ("dave", DAVE), ("erin", ERIN)] {
         run(&env, &["principal", "bind", "--subject", subject, "--actor", actor], &config).await.expect("bind");
     }
     let unknown =
@@ -201,6 +204,7 @@ async fn facereview_schema_is_adopted_without_business_ddl_and_read_with_origina
     let address = listening["address"].as_str().unwrap().to_string();
     let fingerprint = listening["fingerprint"].as_str().unwrap().to_string();
     let (alice, bob) = (token(&private, "alice"), token(&private, "bob"));
+    let (carol, dave) = (token(&private, "carol"), token(&private, "dave"));
     let read = |token: Option<&str>, query: Value| {
         let (address, fingerprint, token) = (address.clone(), fingerprint.clone(), token.map(str::to_string));
         async move { post(&address, "/read", token.as_deref(), &fingerprint, &json!({"query": query})).await }
@@ -330,6 +334,70 @@ async fn facereview_schema_is_adopted_without_business_ddl_and_read_with_origina
     assert_eq!(request["ok"], true, "{request}");
     let status: Option<String> = setup.query_first("SELECT status FROM video_request WHERE youtube_url = 'newreq00001'").await.unwrap();
     assert_eq!(status.as_deref(), Some("PENDING"), "DB default");
+
+    // Roles of the original admin_required / super_admin_required, judged from the caller's own row.
+    let everyone = read(Some(&bob), json!({"read": "User", "select": ["id"]})).await;
+    assert_eq!(ids(&everyone).len(), 5, "an ADMIN lists every user: {everyone}");
+    assert_eq!(ids(&read(Some(&alice), json!({"read": "User", "select": ["id"]})).await), vec![ALICE], "a member lists herself only");
+    let deactivate = |token: &str, key: &'static str, target: &'static str| {
+        apply(Some(token.to_string()), key, json!({"apply": "User.deactivate", "target": {"ids": [target]}}))
+    };
+    assert_ne!(deactivate(&alice, "fr-a1", DAVE).await["ok"], true, "a member cannot deactivate");
+    assert_ne!(deactivate(&bob, "fr-a2", ERIN).await["ok"], true, "an ADMIN cannot deactivate another ADMIN");
+    let still: Option<i8> = setup.query_first(format!("SELECT is_deleted FROM user WHERE user_id = '{ERIN}'")).await.unwrap();
+    assert_eq!(still, Some(0));
+    assert_eq!(deactivate(&bob, "fr-a3", DAVE).await["ok"], true, "an ADMIN deactivates a GENERAL member");
+    let hidden: Option<i64> = setup.query_first(format!("SELECT COUNT(*) FROM comment WHERE user_id = '{DAVE}' AND is_deleted = 0")).await.unwrap();
+    assert_eq!(hidden, Some(0), "the member's comments are hidden in the same transaction");
+    assert_eq!(deactivate(&carol, "fr-a4", ERIN).await["ok"], true, "a SUPER_ADMIN deactivates an ADMIN");
+    let change = |token: &str, key: &'static str, target: &'static str, role: &'static str| {
+        apply(Some(token.to_string()), key, json!({"apply": "User.changeRole", "target": {"ids": [target]}, "values": {"role": role}}))
+    };
+    assert_ne!(change(&bob, "fr-a5", ALICE, "ADMIN").await["ok"], true, "only a SUPER_ADMIN changes roles");
+    assert_ne!(change(&carol, "fr-a6", DAVE, "ADMIN").await["ok"], true, "a deactivated member is not found");
+    assert_ne!(change(&carol, "fr-a7", ALICE, "ROOT").await["ok"], true, "a role outside the enum");
+    assert_eq!(change(&carol, "fr-a8", ALICE, "ADMIN").await["ok"], true);
+    let role: Option<String> = setup.query_first(format!("SELECT role FROM user WHERE user_id = '{ALICE}'")).await.unwrap();
+    assert_eq!(role.as_deref(), Some("ADMIN"));
+    assert_eq!(change(&carol, "fr-a9", ALICE, "GENERAL").await["ok"], true);
+    // Video requests: an ADMIN reads and rejects a pending one, once. (alice's own request was created above, so the seed one is used.)
+    let pending = "ffffffff-0000-4000-8000-000000000001";
+    let reject = |token: &str, key: &'static str| {
+        apply(
+            Some(token.to_string()),
+            key,
+            json!({"apply": "VideoRequest.reject", "target": {"ids": [pending]}, "values": {"admin_comment": "중복 요청"}}),
+        )
+    };
+    assert_ne!(reject(&alice, "fr-q1").await["ok"], true, "a member cannot reject");
+    assert_eq!(reject(&bob, "fr-q2").await["ok"], true);
+    let stored: Option<(String, String)> =
+        setup.query_first(format!("SELECT status, admin_comment FROM video_request WHERE video_request_id = '{pending}'")).await.unwrap();
+    assert_eq!(stored, Some(("REJECTED".to_string(), "중복 요청".to_string())));
+    assert_ne!(reject(&bob, "fr-q3").await["ok"], true, "a processed request cannot be rejected again");
+    // Soft deletes by an ADMIN keep the rows; public reads stop showing them.
+    let remove = |token: &str, key: &'static str, name: &'static str, target: &'static str| {
+        apply(Some(token.to_string()), key, json!({"apply": name, "target": {"ids": [target]}}))
+    };
+    assert_ne!(remove(&alice, "fr-x1", "Video.remove", CAT_VIDEO).await["ok"], true, "a member cannot remove a video");
+    assert_eq!(remove(&bob, "fr-x2", "Video.remove", CAT_VIDEO).await["ok"], true);
+    let listed = read(None, json!({"read": "Video", "select": ["id"]})).await;
+    assert!(!ids(&listed).contains(&CAT_VIDEO.to_string()), "{listed}");
+    let kept: Option<i8> = setup.query_first(format!("SELECT is_deleted FROM video WHERE video_id = '{CAT_VIDEO}'")).await.unwrap();
+    assert_eq!(kept, Some(1));
+    // A deactivated member is no longer a valid caller (the original's login_required filters is_deleted = False).
+    let gone = read(Some(&dave), json!({"read": "User", "select": ["id"]})).await;
+    assert_eq!(gone["rows"], json!([]), "{gone}");
+    let write = create(
+        Some(dave.clone()),
+        "fr-z1",
+        "Comment",
+        json!({"video": "aaaaaaaa-0000-4000-8000-000000000002", "user": DAVE, "content": "복귀 시도"}),
+    )
+    .await;
+    assert_ne!(write["ok"], true, "{write}");
+    let none: Option<i64> = setup.query_first("SELECT COUNT(*) FROM comment WHERE content = '복귀 시도'").await.unwrap();
+    assert_eq!(none, Some(0));
 
     for schema in [META, SOURCE] {
         setup.query_drop(format!("DROP DATABASE IF EXISTS `{schema}`")).await.unwrap();

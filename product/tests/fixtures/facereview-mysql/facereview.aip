@@ -3,6 +3,11 @@
 // (see fr-port/db-defaults.sql); `default database` is checked against the live catalog at adoption.
 actor User
 
+// The original's admin_required: ADMIN and SUPER_ADMIN, judged from the caller's own row.
+predicate isAdmin(a: User) = a.role in (ADMIN, SUPER_ADMIN) and a.is_deleted = false
+// A deactivated member (is_deleted) is no longer a valid caller; NULL counts as deactivated, as filter_by(is_deleted=False) does.
+predicate active(a: User) = a.is_deleted = false
+
 enum Role { GENERAL, ADMIN, SUPER_ADMIN }
 enum Genre { drama, eating, travel, cook, show, information, game, sports, music, animal, beauty, comedy, horror, exercise, vlog, etc }
 enum RequestStatus { PENDING, ACCEPTED, REJECTED }
@@ -20,10 +25,26 @@ resource User {
     created_at: Time default database
     updated_at: Time default database
   }
-  rows read when id = actor
+  rows read when (id = actor and active(actor)) or isAdmin(actor)
+  // SUPER_ADMIN may deactivate anyone, ADMIN only a GENERAL member; the member's comments are hidden in the same transaction.
+  transition deactivate {
+    allow actor.role = SUPER_ADMIN or (actor.role = ADMIN and role = GENERAL)
+    from true
+    to is_deleted = true, updated_at = now
+    update many Comment maxRows 1000 where user = this.id { is_deleted = true; updated_at = now }
+    repeat unchanged
+  }
+  transition changeRole {
+    allow actor.role = SUPER_ADMIN
+    from is_deleted = false
+    patch role
+    to updated_at = now
+  }
+  expose apply deactivate { target id; bulk maxRows 1 }
+  expose apply changeRole { target id; bulk maxRows 1 }
   expose read {
-    select id, email, name, role, profile_image_id, is_tutorial_done, is_verify_email_done, created_at
-    filter id.eq
+    select id, email, name, role, profile_image_id, is_tutorial_done, is_verify_email_done, is_deleted, created_at
+    filter id.eq, role.eq, is_deleted.eq, name.contains, email.contains
     sort created_at, id
     budget { rows 100; depth 1; cost 1000; deadline 2s; offset 100000 }
   }
@@ -42,7 +63,14 @@ resource Video {
     created_at: Time default database
     updated_at: Time default database
   }
-  rows read when is_deleted = false
+  rows read when is_deleted = false and (actor = null or active(actor))
+  transition remove {
+    allow isAdmin(actor)
+    from true
+    to is_deleted = true, updated_at = now
+    repeat unchanged
+  }
+  expose apply remove { target id; bulk maxRows 1 }
   expose read {
     select id, youtube_url, title, channel_name, category, duration, view_count, created_at
     filter id.eq, category.eq, title.contains, channel_name.contains, youtube_url.eq
@@ -62,28 +90,35 @@ resource Comment {
     created_at: Time default database
     updated_at: Time default database
   }
-  rows read when is_deleted = false and video.is_deleted = false
+  rows read when (is_deleted = false and video.is_deleted = false and (actor = null or active(actor))) or isAdmin(actor)
   transition edit {
-    allow user = actor
+    allow user = actor and active(actor)
     from is_deleted = false
     patch content
     to is_modified = true, updated_at = now
   }
   transition delete {
-    allow user = actor
+    allow user = actor and active(actor)
     from is_deleted = false
     to is_deleted = true, updated_at = now
   }
   expose create {
     fields video, user, content
-    allow user = actor and video.is_deleted = false
+    allow user = actor and active(actor) and video.is_deleted = false
+  }
+  transition remove {
+    allow isAdmin(actor)
+    from true
+    to is_deleted = true, updated_at = now
+    repeat unchanged
   }
   expose apply edit { target id; bulk maxRows 1 }
   expose apply delete { target id; bulk maxRows 1 }
+  expose apply remove { target id; bulk maxRows 1 }
   expose read {
-    select id, video, user, content, is_modified, created_at, updated_at
+    select id, video, user, content, is_modified, is_deleted, created_at, updated_at
     refIds video, user
-    filter id.eq, video.eq
+    filter id.eq, video.eq, is_deleted.eq, content.contains
     sort created_at, id
     traverse user { select id, name }
     budget { rows 100; depth 2; cost 2000; deadline 2s; offset 100000 }
@@ -92,10 +127,10 @@ resource Comment {
 
 resource VideoLike {
   fields { id: Uuid; video: Video; user: User; created_at: Time default database }
-  rows read when user = actor
+  rows read when user = actor and active(actor)
   expose create {
     fields video, user
-    allow user = actor and video.is_deleted = false
+    allow user = actor and active(actor) and video.is_deleted = false
   }
   expose read {
     select id, video, user, created_at
@@ -108,10 +143,10 @@ resource VideoLike {
 
 resource VideoBookmark {
   fields { id: Uuid; video: Video; user: User; created_at: Time default database }
-  rows read when user = actor
+  rows read when user = actor and active(actor)
   expose create {
     fields video, user
-    allow user = actor and video.is_deleted = false
+    allow user = actor and active(actor) and video.is_deleted = false
   }
   expose read {
     select id, video, user, created_at
@@ -133,15 +168,22 @@ resource VideoRequest {
     created_at: Time default database
     updated_at: Time default database
   }
-  rows read when user = actor
+  rows read when (user = actor and active(actor)) or isAdmin(actor)
+  transition reject {
+    allow isAdmin(actor)
+    from status = PENDING
+    patch admin_comment
+    to status = REJECTED, updated_at = now
+  }
+  expose apply reject { target id; bulk maxRows 1 }
   expose create {
     fields user, youtube_url, youtube_full_url
-    allow user = actor
+    allow user = actor and active(actor)
   }
   expose read {
     select id, user, youtube_url, youtube_full_url, status, admin_comment, created_at, updated_at
     refIds user
-    filter status.eq
+    filter id.eq, user.eq, status.eq
     sort created_at, id
     budget { rows 100; depth 1; cost 1000; deadline 2s; offset 100000 }
   }
@@ -156,7 +198,7 @@ resource VideoViewLog {
     created_at: Time default database
     updated_at: Time default database
   }
-  rows read when user = actor
+  rows read when user = actor and active(actor)
   expose read {
     select id, video, user, created_at
     refIds video, user
@@ -168,7 +210,7 @@ resource VideoViewLog {
 
 resource UserFavoriteGenre {
   fields { id: Uuid; user: User; genre: Genre; created_at: Time default database; updated_at: Time default database }
-  rows read when user = actor
+  rows read when user = actor and active(actor)
   expose read {
     select id, user, genre, created_at
     refIds user
@@ -188,7 +230,7 @@ resource UserPointHistory {
     created_at: Time default database
     updated_at: Time default database
   }
-  rows read when user = actor
+  rows read when user = actor and active(actor)
   expose read {
     select id, user, video, amount, watch_time, description, created_at
     refIds user, video
