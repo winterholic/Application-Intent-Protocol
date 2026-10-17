@@ -297,7 +297,8 @@ pub fn run_psql(endpoint: &VerifiedEndpoint, sql: &str) -> std::process::Output 
     }
 
     // Isolate child psql from host environment and prevent service fallback
-    cmd.env("PGSERVICE", "")
+    // An empty PGSERVICE is looked up as a service named "" and fails, so remove it.
+    cmd.env_remove("PGSERVICE")
         .env("PGSERVICEFILE", "/dev/null")
         .env("PGSYSCONFDIR", "/dev/null")
         .env("PGHOST", &endpoint.host)
