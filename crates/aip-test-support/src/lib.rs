@@ -140,6 +140,30 @@ pub fn validate_admin_url(raw: &str) -> Result<(), &'static str> {
     validate_fields(&fields, true)
 }
 
+/// Validate a MySQL/MariaDB fixture admin URL with the same rules as the PostgreSQL admin DSN:
+/// explicit loopback host, explicit non-default high port (never 3306), explicit user and database.
+pub fn validate_mysql_admin_url(raw: &str) -> Result<(), &'static str> {
+    let url = url::Url::parse(raw).map_err(|_| "URL is malformed")?;
+    if !matches!(url.scheme(), "mysql" | "mariadb") {
+        return Err("URL scheme must be mysql or mariadb");
+    }
+    let host = url.host_str().filter(|host| !host.is_empty()).ok_or("host must be explicit")?;
+    if !is_loopback(host) {
+        return Err("admin host must be loopback for an isolated worker database");
+    }
+    let port = url.port().ok_or("port must be explicit")?;
+    if port <= 1024 || port == 3306 {
+        return Err("port must be a dedicated non-default high port");
+    }
+    if url.username().is_empty() {
+        return Err("user must be explicit");
+    }
+    if url.path().strip_prefix('/').is_none_or(str::is_empty) {
+        return Err("database name must be explicit");
+    }
+    Ok(())
+}
+
 fn validate_fields(fields: &HashMap<String, String>, admin: bool) -> Result<(), &'static str> {
     let host = fields.get("host").filter(|s| !s.is_empty()).ok_or("host must be explicit")?;
     if host.contains(',') || fields.contains_key("hostaddr") {
@@ -343,5 +367,33 @@ mod tests {
         assert!(validate_database_url("service=synthetic_fixture").is_err());
         assert!(validate_database_url("host=127.0.0.1 port=55432 dbname=aip_test_run user=runner service=synthetic_fixture").is_err());
         assert!(validate_database_url("postgresql://runner@127.0.0.1:55432/aip_test_run?service=synthetic_fixture").is_err());
+    }
+}
+
+#[cfg(test)]
+mod mysql_tests {
+    use super::validate_mysql_admin_url;
+
+    #[test]
+    fn accepts_explicit_run_owned_mysql_urls() {
+        assert!(validate_mysql_admin_url("mysql://root:secret@127.0.0.1:56741/mysql").is_ok());
+        assert!(validate_mysql_admin_url("mariadb://root:secret@localhost:56742/mysql").is_ok());
+        assert!(validate_mysql_admin_url("mysql://root:secret@127.0.0.1:56741/mysql?pool_max=1").is_ok());
+    }
+
+    #[test]
+    fn rejects_default_shared_remote_and_implicit_mysql_endpoints() {
+        for url in [
+            "mysql://root:secret@127.0.0.1:3306/mysql",
+            "mysql://root:secret@127.0.0.1/mysql",
+            "mysql://root:secret@db.example:56741/mysql",
+            "mysql://127.0.0.1:56741/mysql",
+            "mysql://root:secret@127.0.0.1:56741",
+            "mysql://root:secret@127.0.0.1:80/mysql",
+            "postgres://root:secret@127.0.0.1:56741/mysql",
+            "not a url",
+        ] {
+            assert!(validate_mysql_admin_url(url).is_err(), "unsafe MySQL URL accepted");
+        }
     }
 }

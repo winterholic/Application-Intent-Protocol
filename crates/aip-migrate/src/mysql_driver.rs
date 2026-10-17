@@ -182,13 +182,9 @@ impl MysqlDriver {
 
     /// Open a fenced transaction from a frozen [`MysqlDeploymentFence`]. The caller never assembles
     /// the table set; the read/write set computed at fence construction is pinned and then re-verified
-    /// against the live catalog by the same Step 2c check as the slice entry point.
-    pub async fn begin_fenced_transaction_with_fence(
-        &self,
-        read_only: bool,
-        fence: &MysqlDeploymentFence,
-    ) -> Result<FencedMysqlTransaction, CatalogError> {
-        self.begin_fenced_transaction(
+    /// against the live catalog by Step 2c in [`Self::begin_fenced_transaction_with_bounds`].
+    pub async fn begin_fenced_transaction(&self, read_only: bool, fence: &MysqlDeploymentFence) -> Result<FencedMysqlTransaction, CatalogError> {
+        self.begin_fenced_transaction_with_bounds(
             read_only,
             &fence.meta_schema,
             &fence.source_schema,
@@ -203,7 +199,11 @@ impl MysqlDriver {
     /// Starts a transaction on one pooled connection, pins every bound table with a metadata lock,
     /// verifies the meta marker and the schema-wide catalog fingerprint, and finally proves that the
     /// pinned set equals the canonical set derived from that same live catalog.
-    pub async fn begin_fenced_transaction(
+    ///
+    /// Low-level entry for tests and the fence wrapper. An incomplete `bound_tables` can never yield a
+    /// transaction because Step 2c rejects it; production callers use [`Self::begin_fenced_transaction`].
+    #[doc(hidden)]
+    pub async fn begin_fenced_transaction_with_bounds(
         &self,
         read_only: bool,
         meta_schema: &str,
@@ -429,11 +429,7 @@ async fn write_meta_status_migrating<Q: Queryable>(conn: &mut Q, meta_schema: &s
     .map_err(|err| CatalogError::new(format!("meta MIGRATING marker failed: {err}")))
 }
 
-async fn verify_meta_digest_on_conn<Q: Queryable>(
-    conn: &mut Q,
-    meta_schema: &str,
-    expected_facts_digest: &str,
-) -> Result<(), CatalogError> {
+async fn verify_meta_digest_on_conn<Q: Queryable>(conn: &mut Q, meta_schema: &str, expected_facts_digest: &str) -> Result<(), CatalogError> {
     let meta_sql = format!("SELECT facts_digest, schema_sha256, status FROM `{meta_schema}`.`{META_TABLE}` WHERE singleton = 1");
     let meta_row: Option<(String, String, String)> = conn.exec_first(&meta_sql, ()).await.map_err(|err| {
         if is_drift_error(&err) {
@@ -477,9 +473,7 @@ impl MysqlDeploymentFence {
             || expected_facts_digest.trim().is_empty()
             || expected_structure_digest.trim().is_empty()
         {
-            return Err(CatalogError::drift(
-                "MySQL deployment fence requires non-empty schemas, source_tables, facts_digest, and structure_digest",
-            ));
+            return Err(CatalogError::drift("MySQL deployment fence requires non-empty schemas, source_tables, facts_digest, and structure_digest"));
         }
         validate_ident("meta schema", meta_schema)?;
         validate_ident("source schema", source_schema)?;
@@ -568,10 +562,7 @@ pub fn canonical_bound_tables(
     tables
 }
 
-pub async fn pin_bound_tables_on_conn<Q: Queryable>(
-    conn: &mut Q,
-    bound_tables: &[(String, String)],
-) -> Result<(), CatalogError> {
+pub async fn pin_bound_tables_on_conn<Q: Queryable>(conn: &mut Q, bound_tables: &[(String, String)]) -> Result<(), CatalogError> {
     if bound_tables.is_empty() {
         return Ok(());
     }
@@ -579,9 +570,7 @@ pub async fn pin_bound_tables_on_conn<Q: Queryable>(
     let unions = bound_tables
         .iter()
         .enumerate()
-        .map(|(idx, (schema, table))| {
-            format!("SELECT 1 FROM (SELECT 1 FROM `{schema}`.`{table}` LIMIT 1) AS p{idx}")
-        })
+        .map(|(idx, (schema, table))| format!("SELECT 1 FROM (SELECT 1 FROM `{schema}`.`{table}` LIMIT 1) AS p{idx}"))
         .collect::<Vec<_>>()
         .join(" UNION ALL ");
 
@@ -605,37 +594,41 @@ pub async fn catalog_fingerprint_on_conn<Q: Queryable>(
     schema_name: &str,
     is_mariadb: bool,
 ) -> Result<MysqlCatalogFingerprint, CatalogError> {
-    let tables_rows: Vec<Row> = conn
-        .exec(crate::mysql_catalog::SQL_TABLES, (schema_name,))
-        .await
-        .map_err(|err| {
-            if is_drift_error(&err) {
-                CatalogError::drift(format!("tables query drift: {err}"))
-            } else {
-                CatalogError::new(format!("tables query failed: {err}"))
-            }
-        })?;
+    let tables_rows: Vec<Row> = conn.exec(crate::mysql_catalog::SQL_TABLES, (schema_name,)).await.map_err(|err| {
+        if is_drift_error(&err) {
+            CatalogError::drift(format!("tables query drift: {err}"))
+        } else {
+            CatalogError::new(format!("tables query failed: {err}"))
+        }
+    })?;
     let tables: Vec<String> = tables_rows
         .into_iter()
         .map(|row| from_row_opt::<(String,)>(row).map(|(name,)| name).map_err(|_| CatalogError::new("invalid MySQL table catalog row")))
         .collect::<Result<Vec<_>, _>>()?;
 
-    let columns_rows: Vec<Row> = conn
-        .exec(crate::mysql_catalog::SQL_COLUMNS_BY_SCHEMA, (schema_name,))
-        .await
-        .map_err(|err| {
-            if is_drift_error(&err) {
-                CatalogError::drift(format!("columns query drift: {err}"))
-            } else {
-                CatalogError::new(format!("columns query failed: {err}"))
-            }
-        })?;
+    let columns_rows: Vec<Row> = conn.exec(crate::mysql_catalog::SQL_COLUMNS_BY_SCHEMA, (schema_name,)).await.map_err(|err| {
+        if is_drift_error(&err) {
+            CatalogError::drift(format!("columns query drift: {err}"))
+        } else {
+            CatalogError::new(format!("columns query failed: {err}"))
+        }
+    })?;
     let columns: Vec<crate::mysql_catalog::SchemaColumnRow> = columns_rows
         .into_iter()
         .map(|row| {
-            let (table_name, name, ordinal_position, data_type, column_type, is_nullable, column_default, extra, generation_expression, collation_name) =
-                from_row_opt::<(String, String, u64, String, String, String, Option<String>, String, String, Option<String>)>(row)
-                    .map_err(|_| CatalogError::new("invalid MySQL column catalog row"))?;
+            let (
+                table_name,
+                name,
+                ordinal_position,
+                data_type,
+                column_type,
+                is_nullable,
+                column_default,
+                extra,
+                generation_expression,
+                collation_name,
+            ) = from_row_opt::<(String, String, u64, String, String, String, Option<String>, String, String, Option<String>)>(row)
+                .map_err(|_| CatalogError::new("invalid MySQL column catalog row"))?;
             Ok(crate::mysql_catalog::SchemaColumnRow {
                 table_name,
                 column: crate::mysql_catalog::ColumnRow {
@@ -653,21 +646,15 @@ pub async fn catalog_fingerprint_on_conn<Q: Queryable>(
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    let stats_query = if is_mariadb {
-        crate::mysql_catalog::SQL_STATISTICS_MARIADB_BY_SCHEMA
-    } else {
-        crate::mysql_catalog::SQL_STATISTICS_BY_SCHEMA
-    };
-    let indexes_rows: Vec<Row> = conn
-        .exec(stats_query, (schema_name,))
-        .await
-        .map_err(|err| {
-            if is_drift_error(&err) {
-                CatalogError::drift(format!("indexes query drift: {err}"))
-            } else {
-                CatalogError::new(format!("indexes query failed: {err}"))
-            }
-        })?;
+    let stats_query =
+        if is_mariadb { crate::mysql_catalog::SQL_STATISTICS_MARIADB_BY_SCHEMA } else { crate::mysql_catalog::SQL_STATISTICS_BY_SCHEMA };
+    let indexes_rows: Vec<Row> = conn.exec(stats_query, (schema_name,)).await.map_err(|err| {
+        if is_drift_error(&err) {
+            CatalogError::drift(format!("indexes query drift: {err}"))
+        } else {
+            CatalogError::new(format!("indexes query failed: {err}"))
+        }
+    })?;
     let indexes: Vec<crate::mysql_catalog::SchemaIndexRow> = indexes_rows
         .into_iter()
         .map(|row| {
@@ -676,27 +663,18 @@ pub async fn catalog_fingerprint_on_conn<Q: Queryable>(
                     .map_err(|_| CatalogError::new("invalid MySQL index catalog row"))?;
             Ok(crate::mysql_catalog::SchemaIndexRow {
                 table_name,
-                index: crate::mysql_catalog::IndexRow {
-                    index_name,
-                    non_unique: non_unique != 0,
-                    seq_in_index,
-                    column_name,
-                    expression,
-                },
+                index: crate::mysql_catalog::IndexRow { index_name, non_unique: non_unique != 0, seq_in_index, column_name, expression },
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    let fk_rows_raw: Vec<Row> = conn
-        .exec(crate::mysql_catalog::SQL_FOREIGN_KEYS_BY_SCHEMA, (schema_name,))
-        .await
-        .map_err(|err| {
-            if is_drift_error(&err) {
-                CatalogError::drift(format!("foreign keys query drift: {err}"))
-            } else {
-                CatalogError::new(format!("foreign keys query failed: {err}"))
-            }
-        })?;
+    let fk_rows_raw: Vec<Row> = conn.exec(crate::mysql_catalog::SQL_FOREIGN_KEYS_BY_SCHEMA, (schema_name,)).await.map_err(|err| {
+        if is_drift_error(&err) {
+            CatalogError::drift(format!("foreign keys query drift: {err}"))
+        } else {
+            CatalogError::new(format!("foreign keys query failed: {err}"))
+        }
+    })?;
     let foreign_keys: Vec<crate::mysql_catalog::ForeignKeyRow> = fk_rows_raw
         .into_iter()
         .map(|row| {
@@ -740,8 +718,7 @@ pub async fn catalog_fingerprint_on_conn<Q: Queryable>(
 }
 
 fn build_mysql_opts(config: &MysqlDriverConfig, ca_cert: Option<PathBuf>) -> Result<Opts, CatalogError> {
-    let constraints =
-        PoolConstraints::new(config.pool_min, config.pool_max).ok_or_else(|| CatalogError::new("invalid MySQL pool constraints"))?;
+    let constraints = PoolConstraints::new(config.pool_min, config.pool_max).ok_or_else(|| CatalogError::new("invalid MySQL pool constraints"))?;
     let tls = if config.tls_required || ca_cert.is_some() {
         let mut ssl = SslOpts::default();
         if let Some(path) = ca_cert {
@@ -864,11 +841,7 @@ pub async fn introspect_url(
 }
 
 pub async fn introspect_draft_with_ca(url: &str, schema: &str, ca_cert: Option<&Path>) -> Result<serde_json::Value, CatalogError> {
-    let driver = if let Some(ca_cert) = ca_cert {
-        MysqlDriver::from_url_with_ca(url, Some(ca_cert))?
-    } else {
-        MysqlDriver::from_url(url)?
-    };
+    let driver = if let Some(ca_cert) = ca_cert { MysqlDriver::from_url_with_ca(url, Some(ca_cert))? } else { MysqlDriver::from_url(url)? };
     driver.check_connection().await?;
     let catalog = driver.introspect(schema).await?;
     render_mysql_draft(schema, &catalog)
@@ -885,6 +858,13 @@ pub async fn introspect_draft(url: &str, schema: &str) -> Result<serde_json::Val
 mod tests {
     use super::*;
     use crate::mysql_catalog::{Column, Diagnostic, Index, LogicalType};
+
+    /// Live tests drop databases, so the URL must pass the shared dedicated-endpoint guard first.
+    fn live_mysql_url() -> String {
+        let url = std::env::var("AIP_TEST_MYSQL_URL").expect("set AIP_TEST_MYSQL_URL to a run-owned MySQL/MariaDB container");
+        aip_test_support::validate_mysql_admin_url(&url).unwrap_or_else(|reason| panic!("AIP_TEST_MYSQL_URL is unsafe: {reason}"));
+        url
+    }
 
     #[test]
     fn mysql_driver_config_uses_optional_tls_and_pool_settings() {
@@ -987,12 +967,8 @@ mod tests {
             default: crate::mysql_catalog::CatalogDefault::NullOrAbsent,
             generated: false,
         };
-        let table = |name: &str, columns: Vec<Column>, indexes: Vec<Index>| TableManifest {
-            name: name.into(),
-            columns,
-            indexes,
-            diagnostics: vec![],
-        };
+        let table =
+            |name: &str, columns: Vec<Column>, indexes: Vec<Index>| TableManifest { name: name.into(), columns, indexes, diagnostics: vec![] };
         let mut parent_id = integer();
         parent_id.name = "id".into();
         let mut left = integer();
@@ -1015,15 +991,25 @@ mod tests {
         let mut catalog = std::collections::BTreeMap::new();
         catalog.insert(
             "parents".into(),
-            (table("parents", vec![parent_id, left.clone(), right.clone()], vec![Index {
-                name: "PRIMARY".into(), unique: true, primary: true, columns: vec!["id".into()],
-            }]), vec![]),
+            (
+                table(
+                    "parents",
+                    vec![parent_id, left.clone(), right.clone()],
+                    vec![Index { name: "PRIMARY".into(), unique: true, primary: true, columns: vec!["id".into()] }],
+                ),
+                vec![],
+            ),
         );
         catalog.insert(
             "children".into(),
-            (table("children", vec![child_id, left, right], vec![Index {
-                name: "PRIMARY".into(), unique: true, primary: true, columns: vec!["id".into()],
-            }]), vec![foreign_key]),
+            (
+                table(
+                    "children",
+                    vec![child_id, left, right],
+                    vec![Index { name: "PRIMARY".into(), unique: true, primary: true, columns: vec!["id".into()] }],
+                ),
+                vec![foreign_key],
+            ),
         );
 
         let error = render_mysql_draft("app", &catalog).unwrap_err();
@@ -1033,7 +1019,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires a disposable MySQL or MariaDB database seeded with the aip_mysql_test schema"]
     async fn live_mysql_catalog_reads_information_schema_into_cli_draft() {
-        let url = std::env::var("AIP_TEST_MYSQL_URL").expect("set AIP_TEST_MYSQL_URL to a disposable test database URL");
+        let url = live_mysql_url();
         let driver = MysqlDriver::from_url(&url).unwrap();
         driver.check_connection().await.unwrap();
         let mut conn = driver.pool.get_conn().await.unwrap();
@@ -1087,7 +1073,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires a disposable MySQL or MariaDB database URL in AIP_TEST_MYSQL_URL"]
     async fn live_information_schema_reads_do_not_pin_target_table_metadata_for_the_business_transaction() {
-        let url = std::env::var("AIP_TEST_MYSQL_URL").expect("set AIP_TEST_MYSQL_URL to a disposable local test database URL");
+        let url = live_mysql_url();
         let driver = MysqlDriver::from_url(&url).unwrap();
         let catalog_table = "aip_stage6_catalog_mdl_probe";
         let business_table = "aip_stage6_business_mdl_probe";
@@ -1180,31 +1166,22 @@ mod tests {
         });
         assert!(is_drift_error(&err_def));
 
-        let err_timeout = mysql_async::Error::Server(mysql_async::ServerError {
-            code: 1205,
-            message: "Lock wait timeout exceeded".into(),
-            state: "HY000".into(),
-        });
+        let err_timeout =
+            mysql_async::Error::Server(mysql_async::ServerError { code: 1205, message: "Lock wait timeout exceeded".into(), state: "HY000".into() });
         assert!(!is_drift_error(&err_timeout));
     }
 
     #[tokio::test]
     #[ignore = "requires live MySQL/MariaDB via AIP_TEST_MYSQL_URL"]
     async fn live_pre_mdl_pin_blocks_concurrent_ddl_and_detects_prior_ddl_on_same_tx() {
-        let url = std::env::var("AIP_TEST_MYSQL_URL").expect("AIP_TEST_MYSQL_URL must be set");
+        let url = live_mysql_url();
         let driver = MysqlDriver::connect(&url).await.expect("connect driver");
         let pool = mysql_async::Pool::new(driver.opts().clone());
 
         let schema = "aip_stage6_fenced_tx_test";
         let mut setup_conn = pool.get_conn().await.expect("setup conn");
-        setup_conn
-            .query_drop(format!("DROP DATABASE IF EXISTS `{schema}`"))
-            .await
-            .expect("drop old db");
-        setup_conn
-            .query_drop(format!("CREATE DATABASE `{schema}`"))
-            .await
-            .expect("create db");
+        setup_conn.query_drop(format!("DROP DATABASE IF EXISTS `{schema}`")).await.expect("drop old db");
+        setup_conn.query_drop(format!("CREATE DATABASE `{schema}`")).await.expect("create db");
         setup_conn
             .query_drop(format!(
                 "CREATE TABLE `{schema}`.`users` (
@@ -1226,10 +1203,7 @@ mod tests {
             .await
             .expect("create comments");
 
-        let baseline = driver
-            .catalog_fingerprint(schema)
-            .await
-            .expect("baseline fingerprint");
+        let baseline = driver.catalog_fingerprint(schema).await.expect("baseline fingerprint");
 
         let pin_sql = format!(
             "SELECT 1 FROM (SELECT 1 FROM `{schema}`.`comments` LIMIT 1) AS p0 \
@@ -1242,40 +1216,28 @@ mod tests {
         // bound table while tx is open; ROLLBACK immediately releases MDL.
         // -------------------------------------------------------------------------
         let mut tx_conn = pool.get_conn().await.expect("tx conn");
-        tx_conn
-            .query_drop("START TRANSACTION READ ONLY")
-            .await
-            .expect("start ro tx");
+        tx_conn.query_drop("START TRANSACTION READ ONLY").await.expect("start ro tx");
         let pinned: Vec<i64> = tx_conn.query(&pin_sql).await.expect("pin bound tables");
         assert!(pinned.is_empty());
 
         let mut ddl_conn = pool.get_conn().await.expect("ddl conn");
-        ddl_conn
-            .query_drop("SET SESSION lock_wait_timeout = 1")
-            .await
-            .expect("set lock_wait_timeout = 1");
+        ddl_conn.query_drop("SET SESSION lock_wait_timeout = 1").await.expect("set lock_wait_timeout = 1");
 
         let alter_comments = ddl_conn
-            .query_drop(format!(
-                "ALTER TABLE `{schema}`.`comments` ADD COLUMN flagged TINYINT(1) NOT NULL DEFAULT 0"
-            ))
+            .query_drop(format!("ALTER TABLE `{schema}`.`comments` ADD COLUMN flagged TINYINT(1) NOT NULL DEFAULT 0"))
             .await
             .expect_err("ALTER on pinned comments table must time out");
         assert!(alter_comments.to_string().contains("Lock wait timeout exceeded"));
 
         let alter_users = ddl_conn
-            .query_drop(format!(
-                "ALTER TABLE `{schema}`.`users` ADD COLUMN nickname VARCHAR(64) NULL"
-            ))
+            .query_drop(format!("ALTER TABLE `{schema}`.`users` ADD COLUMN nickname VARCHAR(64) NULL"))
             .await
             .expect_err("ALTER on pinned users table must time out");
         assert!(alter_users.to_string().contains("Lock wait timeout exceeded"));
 
         // Business query inside the same transaction sees unmutated schema.
         let rows: Vec<(String, String)> = tx_conn
-            .query(format!(
-                "SELECT c.id, u.email FROM `{schema}`.`comments` c JOIN `{schema}`.`users` u ON c.user_id = u.id"
-            ))
+            .query(format!("SELECT c.id, u.email FROM `{schema}`.`comments` c JOIN `{schema}`.`users` u ON c.user_id = u.id"))
             .await
             .expect("business join inside fenced tx");
         assert!(rows.is_empty());
@@ -1288,52 +1250,35 @@ mod tests {
         // and the very next fenced check immediately rejects drift with zero cache.
         // -------------------------------------------------------------------------
         ddl_conn
-            .query_drop(format!(
-                "ALTER TABLE `{schema}`.`users` ADD COLUMN nickname VARCHAR(64) NULL"
-            ))
+            .query_drop(format!("ALTER TABLE `{schema}`.`users` ADD COLUMN nickname VARCHAR(64) NULL"))
             .await
             .expect("ALTER succeeds immediately after ROLLBACK");
 
-        let drift_err = driver
-            .verify_catalog_fingerprint(schema, &baseline)
-            .await
-            .expect_err("drift must be rejected immediately on next request");
+        let drift_err = driver.verify_catalog_fingerprint(schema, &baseline).await.expect_err("drift must be rejected immediately on next request");
         assert_eq!(drift_err.code, "MIGRATE.DRIFT_DETECTED");
 
         // -------------------------------------------------------------------------
         // CASE C (BEFORE TX - DROP TABLE): If a bound table is dropped before pin,
         // the pin query immediately fails with 1146 ER_NO_SUCH_TABLE / drift.
         // -------------------------------------------------------------------------
-        ddl_conn
-            .query_drop(format!("DROP TABLE `{schema}`.`comments`"))
-            .await
-            .expect("drop comments");
+        ddl_conn.query_drop(format!("DROP TABLE `{schema}`.`comments`")).await.expect("drop comments");
 
-        tx_conn
-            .query_drop("START TRANSACTION READ ONLY")
-            .await
-            .expect("start ro tx after drop");
-        let drop_err = tx_conn
-            .query::<i64, _>(&pin_sql)
-            .await
-            .expect_err("pin must fail when bound table was dropped");
+        tx_conn.query_drop("START TRANSACTION READ ONLY").await.expect("start ro tx after drop");
+        let drop_err = tx_conn.query::<i64, _>(&pin_sql).await.expect_err("pin must fail when bound table was dropped");
         assert!(
             drop_err.to_string().contains("1146") || drop_err.to_string().contains("doesn't exist"),
             "expected ER_NO_SUCH_TABLE (1146), got: {drop_err}"
         );
         tx_conn.query_drop("ROLLBACK").await.expect("rollback after 1146");
 
-        setup_conn
-            .query_drop(format!("DROP DATABASE IF EXISTS `{schema}`"))
-            .await
-            .expect("cleanup db");
+        setup_conn.query_drop(format!("DROP DATABASE IF EXISTS `{schema}`")).await.expect("cleanup db");
         drop(setup_conn);
     }
 
     #[tokio::test]
     #[ignore = "requires live MySQL/MariaDB via AIP_TEST_MYSQL_URL"]
     async fn live_begin_fenced_transaction_detects_unrelated_create_table_on_next_request() {
-        let url = std::env::var("AIP_TEST_MYSQL_URL").expect("AIP_TEST_MYSQL_URL must be set");
+        let url = live_mysql_url();
         let driver = MysqlDriver::connect(&url).await.expect("connect driver");
         let pool = mysql_async::Pool::new(driver.opts().clone());
 
@@ -1383,14 +1328,11 @@ mod tests {
             .await
             .expect("create items");
 
-        let bound_tables = canonical_bound_tables(schema, schema, &["items".to_string()], false);
         let baseline = driver.catalog_fingerprint(schema).await.expect("baseline fingerprint");
+        let fence = MysqlDeploymentFence::new(schema, schema, &["items".to_string()], facts_digest, &baseline).expect("fence");
 
         // 1. First fenced transaction succeeds
-        let tx = driver
-            .begin_fenced_transaction(true, schema, schema, &bound_tables, facts_digest, &baseline)
-            .await
-            .expect("initial fenced tx must succeed");
+        let tx = driver.begin_fenced_transaction(true, &fence).await.expect("initial fenced tx must succeed");
         tx.commit().await.expect("commit fenced tx");
 
         // 2. External session creates an unrelated new table in source_schema
@@ -1408,7 +1350,7 @@ mod tests {
         // 3. Very next request calls begin_fenced_transaction with baseline fingerprint
         // and must be rejected immediately (zero cache) with MIGRATE.DRIFT_DETECTED
         let err = driver
-            .begin_fenced_transaction(true, schema, schema, &bound_tables, facts_digest, &baseline)
+            .begin_fenced_transaction(true, &fence)
             .await
             .expect_err("unrelated CREATE TABLE must cause next request to fail closed with drift");
         assert_eq!(err.code, "MIGRATE.DRIFT_DETECTED");
@@ -1420,7 +1362,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires live MySQL/MariaDB via AIP_TEST_MYSQL_URL"]
     async fn live_begin_fenced_transaction_validates_meta_marker_status_and_digest() {
-        let url = std::env::var("AIP_TEST_MYSQL_URL").expect("AIP_TEST_MYSQL_URL must be set");
+        let url = live_mysql_url();
         let driver = MysqlDriver::connect(&url).await.expect("connect driver");
         let pool = mysql_async::Pool::new(driver.opts().clone());
 
@@ -1461,35 +1403,27 @@ mod tests {
             .await
             .expect("create aip_principals");
 
-        let bound_tables = canonical_bound_tables(schema, schema, &[], false);
         let baseline = driver.catalog_fingerprint(schema).await.expect("baseline fingerprint");
+        // Meta and source share one schema here, so the catalog tables are exactly the two meta tables.
+        let source_tables = vec![META_TABLE.to_string(), "aip_principals".to_string()];
+        let good_fence = MysqlDeploymentFence::new(schema, schema, &source_tables, good_facts_digest, &baseline).expect("good fence");
+        let wrong_fence = MysqlDeploymentFence::new(schema, schema, &source_tables, wrong_facts_digest, &baseline).expect("wrong fence");
 
         // 1. Success case with correct facts digest and READY status
-        let tx = driver
-            .begin_fenced_transaction(true, schema, schema, &bound_tables, good_facts_digest, &baseline)
-            .await
-            .expect("fenced tx with correct facts and status must succeed");
+        let tx = driver.begin_fenced_transaction(true, &good_fence).await.expect("fenced tx with correct facts and status must succeed");
         tx.commit().await.expect("commit fenced tx");
 
         // 2. Reject mismatched facts digest
-        let err_digest = driver
-            .begin_fenced_transaction(true, schema, schema, &bound_tables, wrong_facts_digest, &baseline)
-            .await
-            .expect_err("mismatched facts_digest must fail closed");
+        let err_digest = driver.begin_fenced_transaction(true, &wrong_fence).await.expect_err("mismatched facts_digest must fail closed");
         assert_eq!(err_digest.code, "MIGRATE.DRIFT_DETECTED");
 
         // 3. Reject non-READY status
         setup_conn
-            .query_drop(format!(
-                "UPDATE `{schema}`.`aip_migrate_meta` SET status = 'MIGRATING' WHERE singleton = 1"
-            ))
+            .query_drop(format!("UPDATE `{schema}`.`aip_migrate_meta` SET status = 'MIGRATING' WHERE singleton = 1"))
             .await
             .expect("update status to non-READY");
 
-        let err_status = driver
-            .begin_fenced_transaction(true, schema, schema, &bound_tables, good_facts_digest, &baseline)
-            .await
-            .expect_err("non-READY status must fail closed");
+        let err_status = driver.begin_fenced_transaction(true, &good_fence).await.expect_err("non-READY status must fail closed");
         assert_eq!(err_status.code, "MIGRATE.DRIFT_DETECTED");
 
         setup_conn.query_drop(format!("DROP DATABASE IF EXISTS `{schema}`")).await.expect("cleanup db");

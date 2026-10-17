@@ -162,11 +162,7 @@ pub struct CatalogError {
 
 impl fmt::Display for CatalogError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.code == "CATALOG_ERROR" {
-            write!(f, "{}", self.message)
-        } else {
-            write!(f, "{}: {}", self.code, self.message)
-        }
+        if self.code == "CATALOG_ERROR" { write!(f, "{}", self.message) } else { write!(f, "{}: {}", self.code, self.message) }
     }
 }
 
@@ -174,24 +170,15 @@ impl std::error::Error for CatalogError {}
 
 impl CatalogError {
     pub fn new(message: impl Into<String>) -> Self {
-        Self {
-            code: "CATALOG_ERROR".into(),
-            message: message.into(),
-        }
+        Self { code: "CATALOG_ERROR".into(), message: message.into() }
     }
 
     pub fn drift(message: impl Into<String>) -> Self {
-        Self {
-            code: "MIGRATE.DRIFT_DETECTED".into(),
-            message: message.into(),
-        }
+        Self { code: "MIGRATE.DRIFT_DETECTED".into(), message: message.into() }
     }
 
     pub fn with_code(code: impl Into<String>, message: impl Into<String>) -> Self {
-        Self {
-            code: code.into(),
-            message: message.into(),
-        }
+        Self { code: code.into(), message: message.into() }
     }
 }
 
@@ -514,11 +501,7 @@ pub trait MysqlCatalogReader: Send + Sync {
 }
 
 /// Introspect a single table by fetching catalog rows and normalizing them into manifests.
-pub async fn introspect_table(
-    reader: &impl MysqlCatalogReader,
-    schema: &str,
-    table: &str,
-) -> Result<(TableManifest, Vec<ForeignKey>), CatalogError> {
+pub async fn introspect_table(reader: &impl MysqlCatalogReader, schema: &str, table: &str) -> Result<(TableManifest, Vec<ForeignKey>), CatalogError> {
     let columns = reader.fetch_columns(schema, table).await?;
     let indexes = reader.fetch_indexes(schema, table).await?;
     let source_columns: Vec<String> = columns.iter().map(|c| c.name.clone()).collect();
@@ -598,12 +581,13 @@ pub fn percent_decode(input: &str) -> String {
     let mut output = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(byte) = u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..=i + 2]).unwrap_or(""), 16) {
-                output.push(byte);
-                i += 3;
-                continue;
-            }
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let Ok(byte) = u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..=i + 2]).unwrap_or(""), 16)
+        {
+            output.push(byte);
+            i += 3;
+            continue;
         }
         output.push(bytes[i]);
         i += 1;
@@ -727,10 +711,10 @@ impl MysqlDriverConfig {
                     if let Ok(value) = val.parse::<usize>() {
                         pool_min = value;
                     }
-                } else if key == "pool_max" {
-                    if let Ok(value) = val.parse::<usize>() {
-                        pool_max = value;
-                    }
+                } else if key == "pool_max"
+                    && let Ok(value) = val.parse::<usize>()
+                {
+                    pool_max = value;
                 }
             }
         }
@@ -763,11 +747,7 @@ impl MysqlDriverConfig {
 
     /// Redacted representation safe for error messages and logging.
     pub fn display_sanitized(&self) -> String {
-        let auth = if self.password.is_some() {
-            format!("{}:***@", self.user)
-        } else {
-            format!("{}@", self.user)
-        };
+        let auth = if self.password.is_some() { format!("{}:***@", self.user) } else { format!("{}@", self.user) };
         format!("mysql://{}{}:{}/{}", auth, self.host, self.port, self.database)
     }
 }
@@ -789,11 +769,8 @@ pub struct NormalizedDriverError {
 
 /// Sanitize raw error messages by redacting passwords in URLs and credentials.
 pub fn sanitize_error_message(msg: &str) -> String {
-    let mut sanitized = if msg.contains("Access denied for user") {
-        "access denied for user (credentials rejected)".to_string()
-    } else {
-        msg.to_string()
-    };
+    let mut sanitized =
+        if msg.contains("Access denied for user") { "access denied for user (credentials rejected)".to_string() } else { msg.to_string() };
 
     let mut search_from = 0;
     while let Some(relative_scheme_idx) = sanitized[search_from..].find("://") {

@@ -255,10 +255,7 @@ fn facereview_11_models_synthetic_fixture_matches_fk_manifest() {
                 col("created_at", 10, "timestamp", "timestamp", false, Some("CURRENT_TIMESTAMP")),
                 col("updated_at", 11, "timestamp", "timestamp", false, Some("CURRENT_TIMESTAMP")),
             ],
-            indexes: vec![
-                IndexRow::column("PRIMARY", 0, 1, "user_id"),
-                IndexRow::column("uk_user_email", 0, 1, "email"),
-            ],
+            indexes: vec![IndexRow::column("PRIMARY", 0, 1, "user_id"), IndexRow::column("uk_user_email", 0, 1, "email")],
         },
         ModelFixture {
             name: "user_emotion_dna",
@@ -271,9 +268,7 @@ fn facereview_11_models_synthetic_fixture_matches_fk_manifest() {
                 col("generated_at", 5, "timestamp", "timestamp", false, Some("CURRENT_TIMESTAMP")),
                 col("expires_at", 6, "timestamp", "timestamp", false, None),
             ],
-            indexes: vec![
-                IndexRow::column("PRIMARY", 0, 1, "user_id"),
-            ],
+            indexes: vec![IndexRow::column("PRIMARY", 0, 1, "user_id")],
         },
         ModelFixture {
             name: "user_emotion_summary",
@@ -291,9 +286,7 @@ fn facereview_11_models_synthetic_fixture_matches_fk_manifest() {
                 col("created_at", 10, "datetime", "datetime", false, Some("CURRENT_TIMESTAMP")),
                 col("updated_at", 11, "datetime", "datetime", false, Some("CURRENT_TIMESTAMP")),
             ],
-            indexes: vec![
-                IndexRow::column("PRIMARY", 0, 1, "user_id"),
-            ],
+            indexes: vec![IndexRow::column("PRIMARY", 0, 1, "user_id")],
         },
         ModelFixture {
             name: "user_favorite_genre",
@@ -301,7 +294,14 @@ fn facereview_11_models_synthetic_fixture_matches_fk_manifest() {
             columns: vec![
                 col("user_favorite_genre_id", 1, "varchar", "varchar(36)", false, Some("generate_uuid")),
                 col("user_id", 2, "varchar", "varchar(36)", false, None),
-                col("genre", 3, "enum", "enum('MUSIC','ENTERTAINMENT','GAMING','NEWS','EDUCATION','LIFESTYLE','SPORTS','COMEDY','ANIMATION','ETC')", false, None),
+                col(
+                    "genre",
+                    3,
+                    "enum",
+                    "enum('MUSIC','ENTERTAINMENT','GAMING','NEWS','EDUCATION','LIFESTYLE','SPORTS','COMEDY','ANIMATION','ETC')",
+                    false,
+                    None,
+                ),
                 col("created_at", 4, "timestamp", "timestamp", false, Some("CURRENT_TIMESTAMP")),
                 col("updated_at", 5, "timestamp", "timestamp", false, Some("CURRENT_TIMESTAMP")),
             ],
@@ -324,9 +324,7 @@ fn facereview_11_models_synthetic_fixture_matches_fk_manifest() {
                 col("created_at", 7, "timestamp", "timestamp", false, Some("CURRENT_TIMESTAMP")),
                 col("updated_at", 8, "timestamp", "timestamp", false, Some("CURRENT_TIMESTAMP")),
             ],
-            indexes: vec![
-                IndexRow::column("PRIMARY", 0, 1, "user_point_history_id"),
-            ],
+            indexes: vec![IndexRow::column("PRIMARY", 0, 1, "user_point_history_id")],
         },
         ModelFixture {
             name: "video",
@@ -336,17 +334,21 @@ fn facereview_11_models_synthetic_fixture_matches_fk_manifest() {
                 col("youtube_url", 2, "varchar", "varchar(50)", false, None),
                 col("title", 3, "varchar", "varchar(255)", false, None),
                 col("channel_name", 4, "varchar", "varchar(100)", true, None),
-                col("category", 5, "enum", "enum('MUSIC','ENTERTAINMENT','GAMING','NEWS','EDUCATION','LIFESTYLE','SPORTS','COMEDY','ANIMATION','ETC')", false, None),
+                col(
+                    "category",
+                    5,
+                    "enum",
+                    "enum('MUSIC','ENTERTAINMENT','GAMING','NEWS','EDUCATION','LIFESTYLE','SPORTS','COMEDY','ANIMATION','ETC')",
+                    false,
+                    None,
+                ),
                 col("duration", 6, "int", "int", true, Some("0")),
                 col("view_count", 7, "bigint", "bigint", true, Some("0")),
                 col("is_deleted", 8, "tinyint", "tinyint(1)", true, Some("0")),
                 col("created_at", 9, "timestamp", "timestamp", false, Some("CURRENT_TIMESTAMP")),
                 col("updated_at", 10, "timestamp", "timestamp", false, Some("CURRENT_TIMESTAMP")),
             ],
-            indexes: vec![
-                IndexRow::column("PRIMARY", 0, 1, "video_id"),
-                IndexRow::column("uk_video_youtube_url", 0, 1, "youtube_url"),
-            ],
+            indexes: vec![IndexRow::column("PRIMARY", 0, 1, "video_id"), IndexRow::column("uk_video_youtube_url", 0, 1, "youtube_url")],
         },
         ModelFixture {
             name: "video_bookmark",
@@ -391,9 +393,7 @@ fn facereview_11_models_synthetic_fixture_matches_fk_manifest() {
                 col("created_at", 7, "timestamp", "timestamp", false, Some("CURRENT_TIMESTAMP")),
                 col("updated_at", 8, "timestamp", "timestamp", false, Some("CURRENT_TIMESTAMP")),
             ],
-            indexes: vec![
-                IndexRow::column("PRIMARY", 0, 1, "video_request_id"),
-            ],
+            indexes: vec![IndexRow::column("PRIMARY", 0, 1, "video_request_id")],
         },
         ModelFixture {
             name: "video_view_log",
@@ -503,17 +503,14 @@ fn facereview_11_models_synthetic_fixture_matches_fk_manifest() {
             });
         }
 
-        let normalized_fks = normalize_foreign_keys("facereview_baseline", fixture.name, &source_col_names, fk_rows)
-            .expect("synthetic FKs should normalize");
+        let normalized_fks =
+            normalize_foreign_keys("facereview_baseline", fixture.name, &source_col_names, fk_rows).expect("synthetic FKs should normalize");
         assert_eq!(normalized_fks.len(), fk_declarations.len());
         all_normalized_fks_count += normalized_fks.len();
 
         for expected in fk_declarations {
             let exp_col = expected["column"].as_str().unwrap();
-            let actual = normalized_fks
-                .iter()
-                .find(|k| k.columns == [exp_col])
-                .expect("FK for column must exist in normalized results");
+            let actual = normalized_fks.iter().find(|k| k.columns == [exp_col]).expect("FK for column must exist in normalized results");
             assert_eq!(actual.referenced_table, expected["referenced_table"].as_str().unwrap());
             assert_eq!(actual.referenced_columns, [expected["referenced_column"].as_str().unwrap()]);
             assert_eq!(actual.on_delete.to_string(), expected["on_delete"].as_str().unwrap());
@@ -521,7 +518,10 @@ fn facereview_11_models_synthetic_fixture_matches_fk_manifest() {
         }
     }
 
-    assert_eq!(all_normalized_fks_count, 13, "Total normalized foreign keys across all 11 models must be exactly 13 per independent source audit of rev 7948b7e7 (correcting earlier 10 FK count)");
+    assert_eq!(
+        all_normalized_fks_count, 13,
+        "Total normalized foreign keys across all 11 models must be exactly 13 per independent source audit of rev 7948b7e7 (correcting earlier 10 FK count)"
+    );
 
     // Verify that schema-wide 4-query normalization produces byte-for-byte identical manifests
     let all_tables = fixtures.iter().map(|f| f.name.to_string()).collect::<Vec<_>>();
@@ -563,26 +563,16 @@ fn facereview_11_models_synthetic_fixture_matches_fk_manifest() {
         sequential_catalog.insert(f.name.to_string(), (manifest, fks));
     }
 
-    let schema_wide_catalog = introspect_schema_from_schema_rows(
-        "facereview_baseline",
-        all_tables,
-        all_columns,
-        all_indexes,
-        all_fks,
-    ).expect("schema-wide normalization of 11 FaceReview models must succeed");
+    let schema_wide_catalog = introspect_schema_from_schema_rows("facereview_baseline", all_tables, all_columns, all_indexes, all_fks)
+        .expect("schema-wide normalization of 11 FaceReview models must succeed");
 
-    assert_eq!(
-        sequential_catalog,
-        schema_wide_catalog,
-        "schema-wide catalog must match sequential catalog for all 11 models"
-    );
+    assert_eq!(sequential_catalog, schema_wide_catalog, "schema-wide catalog must match sequential catalog for all 11 models");
 }
 
 use aip_migrate::mysql_catalog::{
-    CatalogError, MysqlCatalogReader, MysqlDriverConfig, SchemaColumnRow, SchemaIndexRow, introspect_schema,
-    introspect_schema_from_schema_rows, introspect_table, normalize_mysql_error_code, SQL_COLUMNS, SQL_COLUMNS_BY_SCHEMA,
-    SQL_FOREIGN_KEYS, SQL_FOREIGN_KEYS_BY_SCHEMA, SQL_STATISTICS, SQL_STATISTICS_BY_SCHEMA, SQL_STATISTICS_MARIADB,
-    SQL_STATISTICS_MARIADB_BY_SCHEMA, SQL_TABLES,
+    CatalogError, MysqlCatalogReader, MysqlDriverConfig, SQL_COLUMNS, SQL_COLUMNS_BY_SCHEMA, SQL_FOREIGN_KEYS, SQL_FOREIGN_KEYS_BY_SCHEMA,
+    SQL_STATISTICS, SQL_STATISTICS_BY_SCHEMA, SQL_STATISTICS_MARIADB, SQL_STATISTICS_MARIADB_BY_SCHEMA, SQL_TABLES, SchemaColumnRow, SchemaIndexRow,
+    introspect_schema, introspect_schema_from_schema_rows, introspect_table, normalize_mysql_error_code,
 };
 
 struct MockCatalogReader;
@@ -807,10 +797,7 @@ fn mysql_error_code_normalization_and_secret_freedom() {
     assert!(!err_generic.message.contains("synthetic_secret"), "embedded password in error message must be sanitized");
     assert!(err_generic.message.contains("verifier:***@db.example:3306/facereview"));
 
-    let err_multiple = normalize_mysql_error_code(
-        1105,
-        "first mysql://verifier:first_secret@a/db then mysql://verifier:second_secret@b/db",
-    );
+    let err_multiple = normalize_mysql_error_code(1105, "first mysql://verifier:first_secret@a/db then mysql://verifier:second_secret@b/db");
     assert!(!err_multiple.message.contains("first_secret"));
     assert!(!err_multiple.message.contains("second_secret"));
     assert!(err_multiple.message.contains("mysql://verifier:***@a/db"));
@@ -909,5 +896,3 @@ fn mysql_wire_protocol_packet_framing_and_response_integration() {
         _ => panic!("expected OK response"),
     }
 }
-
-

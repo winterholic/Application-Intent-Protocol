@@ -514,8 +514,7 @@ fn configuration_with_mode(path: &Path, catalog_only: bool) -> Result<Config, Va
     {
         return Err(error("BAD_CONFIG", "migrate_database_url_env는 영문자·숫자·'_'로 된 환경 변수 이름이어야 함(DB URL 자체가 아님)"));
     }
-    if config.database_adapter_env.as_deref().is_some_and(|name| name.is_empty() || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'))
-    {
+    if config.database_adapter_env.as_deref().is_some_and(|name| name.is_empty() || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')) {
         return Err(error("BAD_CONFIG", "database_adapter_env는 영문자·숫자·'_'로 된 환경 변수 이름이어야 함"));
     }
     if let Some(adapter) = &config.database_adapter {
@@ -1201,9 +1200,7 @@ async fn principal(config: Config, command: Principal) -> Result<Value, Value> {
 /// Resolve the selected database adapter from config or environment variable.
 /// Validates consistency between config and environment, and ensures adapter matches database_url scheme.
 fn extract_url_scheme(env_name: &str) -> Option<String> {
-    std::env::var(env_name).ok().and_then(|url| {
-        url.split_once("://").map(|(scheme, _)| scheme.trim().to_ascii_lowercase())
-    })
+    std::env::var(env_name).ok().and_then(|url| url.split_once("://").map(|(scheme, _)| scheme.trim().to_ascii_lowercase()))
 }
 
 fn validate_adapter_and_scheme(adapter: &str, scheme: &str, env_label: &str) -> Result<(), Value> {
@@ -1213,10 +1210,7 @@ fn validate_adapter_and_scheme(adapter: &str, scheme: &str, env_label: &str) -> 
     let is_my_scheme = scheme == "mysql" || scheme == "mariadb";
 
     if (is_pg_adapter && is_my_scheme) || (is_my_adapter && is_pg_scheme) {
-        return Err(error(
-            "DB_ADAPTER_MISMATCH",
-            &format!("database_adapter '{adapter}'와 {env_label} scheme '{scheme}'가 일치하지 않음"),
-        ));
+        return Err(error("DB_ADAPTER_MISMATCH", &format!("database_adapter '{adapter}'와 {env_label} scheme '{scheme}'가 일치하지 않음")));
     }
     Ok(())
 }
@@ -1252,10 +1246,10 @@ pub fn resolve_database_adapter(config: &Config) -> Result<String, Value> {
         None
     };
 
-    if let (Some(env_a), Some(cfg_a)) = (&env_adapter, &config_adapter) {
-        if env_a != cfg_a {
-            return Err(error("BAD_CONFIG", "database_adapter 설정값과 database_adapter_env 환경변수 값이 일치하지 않음"));
-        }
+    if let (Some(env_a), Some(cfg_a)) = (&env_adapter, &config_adapter)
+        && env_a != cfg_a
+    {
+        return Err(error("BAD_CONFIG", "database_adapter 설정값과 database_adapter_env 환경변수 값이 일치하지 않음"));
     }
 
     let runtime_scheme = extract_url_scheme(&config.database_url_env);
@@ -1287,11 +1281,7 @@ pub fn resolve_database_adapter(config: &Config) -> Result<String, Value> {
     } else {
         let detected = migrate_scheme.or(runtime_scheme);
         if let Some(scheme) = detected {
-            if scheme == "mysql" || scheme == "mariadb" {
-                Ok(scheme)
-            } else {
-                Ok("postgres".to_string())
-            }
+            if scheme == "mysql" || scheme == "mariadb" { Ok(scheme) } else { Ok("postgres".to_string()) }
         } else {
             Ok("postgres".to_string())
         }
@@ -1318,9 +1308,7 @@ fn require_built_features_mode(config: &Config, catalog_only: bool) -> Result<()
     let has_mysql_url = [&config.database_url_env]
         .into_iter()
         .chain(config.migrate_database_url_env.as_ref())
-        .any(|env_name| {
-            extract_url_scheme(env_name).is_some_and(|s| s == "mysql" || s == "mariadb")
-        });
+        .any(|env_name| extract_url_scheme(env_name).is_some_and(|s| s == "mysql" || s == "mariadb"));
 
     #[cfg(not(feature = "mysql"))]
     {
@@ -1815,10 +1803,8 @@ mod managed_config_tests {
     #[test]
     fn mysql_scheme_in_url_is_rejected_when_the_feature_is_not_built() {
         let env_var = "TEST_AIP_DB_URL_REJECT_TEST";
-        for url in [
-            "mysql://baseline:synthetic-secret@127.0.0.1:23306/facereview",
-            "mariadb://baseline:synthetic-secret@127.0.0.1:23306/facereview",
-        ] {
+        for url in ["mysql://baseline:synthetic-secret@127.0.0.1:23306/facereview", "mariadb://baseline:synthetic-secret@127.0.0.1:23306/facereview"]
+        {
             unsafe { std::env::set_var(env_var, url) };
             let config: Config = serde_json::from_value(json!({
                 "schema": "aip_test",
