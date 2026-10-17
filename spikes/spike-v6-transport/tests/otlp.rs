@@ -589,11 +589,7 @@ async fn durable_job_status_mapping_conforms_to_otlp_spec() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn otlp_exporter_queue_saturation_drops_spans_without_blocking() {
     let unreachable_addr: SocketAddr = "127.0.0.1:19999".parse().unwrap();
-    let otlp_config = OtlpConfig {
-        endpoint: format!("http://{unreachable_addr}"),
-        headers: HashMap::new(),
-        timeout_ms: 100,
-    };
+    let otlp_config = OtlpConfig { endpoint: format!("http://{unreachable_addr}"), headers: HashMap::new(), timeout_ms: 100 };
     let exporter = spike_v6_transport::otlp::OtlpExporter::start(otlp_config).unwrap();
     let now = spike_v6_transport::otlp::now_nanos();
 
@@ -614,8 +610,5 @@ async fn otlp_exporter_queue_saturation_drops_spans_without_blocking() {
         });
     }
     let elapsed = start.elapsed();
-    assert!(
-        elapsed < Duration::from_millis(100),
-        "Enqueuing 5000 spans must complete non-blockingly under 100ms, took {elapsed:?}"
-    );
+    assert!(elapsed < Duration::from_millis(100), "Enqueuing 5000 spans must complete non-blockingly under 100ms, took {elapsed:?}");
 }
