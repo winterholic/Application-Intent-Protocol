@@ -67,10 +67,24 @@ resource User {
     language: Text(1..15)?
     theme: Text(1..15)?
   }
+  unique username
+  unique email
   rows read when true
+  transition updateProfile {
+    allow actor = this
+    from true
+    patch signature, avatar, website, location, birthday, gender, notes, theme, language
+  }
+  expose apply updateProfile { target id; bulk maxRows 1 }
+  transition adminUpdateUser {
+    allow actor.primary_group.admin or (actor.primary_group.mod_edituser and not this.primary_group.admin)
+    from true
+    patch primary_group, activated
+  }
+  expose apply adminUpdateUser { target id; bulk maxRows 1 }
   expose read {
-    select id, username, primary_group, activated, post_count
-    filter id.eq, username.prefix
+    select id, username, primary_group, activated, date_joined, lastseen, birthday, gender, website, location, signature, avatar, notes, language, theme, post_count
+    filter id.eq, username.prefix, username.contains
     sort id, username
     traverse primary_group { select id, name }
     budget { rows 100; depth 2; cost 2000; deadline 2s }
@@ -93,9 +107,19 @@ resource UserGroup {
 resource Category {
   fields { id: Id; title: Text(1..255); description: Text?; position: Int }
   rows read when true
+  expose create {
+    allow actor.primary_group.admin or actor.primary_group.super_mod
+    fields title, description, position
+  }
+  transition edit {
+    allow actor.primary_group.admin or actor.primary_group.super_mod
+    from true
+    patch title, description, position
+  }
+  expose apply edit { target id; bulk maxRows 1 }
   expose read {
     select id, title, description, position
-    filter id.eq
+    filter id.eq, title.contains
     sort position, id
     budget { rows 100; depth 1; cost 1000; deadline 2s }
   }
@@ -118,9 +142,19 @@ resource Forum {
     last_post_created: Time?
   }
   rows read when canReadForum(actor, this)
+  expose create {
+    allow actor.primary_group.admin or actor.primary_group.super_mod
+    fields category, title, description, position, locked, external, show_moderators
+  }
+  transition edit {
+    allow actor.primary_group.admin or actor.primary_group.super_mod
+    from true
+    patch category, title, description, position, locked, external, show_moderators
+  }
+  expose apply edit { target id; bulk maxRows 1 }
   expose read {
     select id, category, title, description, position, locked, external, show_moderators, last_post, last_post_user, last_post_title, last_post_username, last_post_created, topic_count, post_count
-    filter id.eq, category.eq
+    filter id.eq, category.eq, title.contains
     sort position, id
     traverse category { select id, title, position }
     budget { rows 200; depth 2; cost 4000; deadline 2s }

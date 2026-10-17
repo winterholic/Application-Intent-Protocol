@@ -27,6 +27,13 @@ pub enum AuthError {
 pub trait Authenticator: Send + Sync {
     fn verify_session<'a>(&'a self, token: &'a str) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Session, AuthError>> + Send + 'a>>;
 
+    fn provision_or_verify_session<'a>(
+        &'a self,
+        token: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Session, AuthError>> + Send + 'a>> {
+        self.verify_session(token)
+    }
+
     fn verify_durable<'a>(
         &'a self,
         _grant: &'a DurablePrincipal,

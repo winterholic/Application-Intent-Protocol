@@ -17,5 +17,5 @@ test('FlaskBB port contract parses and retains the full source workflow denomina
   for (const id of Array.from({length: 17}, (_, i) => `F${String(i + 1).padStart(2, '0')}`)) {
     assert.match(inventory, new RegExp(`\\| ${id} \\|`), `missing source workflow ${id}`);
   }
-  assert.match(inventory, /분모 v0\.1 검토본/);
+  assert.match(inventory, /분모 v0\.1 (검토본|잠금)/);
 });

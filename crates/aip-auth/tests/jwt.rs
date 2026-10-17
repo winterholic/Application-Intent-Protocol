@@ -37,7 +37,7 @@ fn fixture() -> (tempfile::TempDir, Config, EncodingKey) {
     std::fs::write(&path, jwks.to_string()).expect("test setup");
     let der = private.to_pkcs1_der().expect("test setup");
     let key = EncodingKey::from_rsa_der(der.as_bytes());
-    let config = Config { issuer: "https://issuer.example".into(), audience: "aip-api".into(), jwks: JwksSource::File { path } };
+    let config = Config { issuer: "https://issuer.example".into(), audience: "aip-api".into(), jwks: JwksSource::File { path }, provisioning: aip_auth::ProvisioningConfig::default() };
     (dir, config, key)
 }
 

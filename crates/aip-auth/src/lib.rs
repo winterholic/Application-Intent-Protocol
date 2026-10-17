@@ -30,6 +30,51 @@ pub struct Config {
     pub issuer: String,
     pub audience: String,
     pub jwks: JwksSource,
+    #[serde(default)]
+    pub provisioning: ProvisioningConfig,
+}
+
+#[derive(Clone, Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ProvisioningConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_actor_resource")]
+    pub actor_resource: String,
+    #[serde(default = "default_username_claim")]
+    pub username_claim: String,
+    #[serde(default = "default_email_claim")]
+    pub email_claim: String,
+    #[serde(default = "default_true")]
+    pub require_email_verified: bool,
+    #[serde(default)]
+    pub fixed_defaults: ProvisioningFixedDefaults,
+}
+
+fn default_actor_resource() -> String {
+    "User".to_string()
+}
+fn default_username_claim() -> String {
+    "preferred_username".to_string()
+}
+fn default_email_claim() -> String {
+    "email".to_string()
+}
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Clone, Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ProvisioningFixedDefaults {
+    #[serde(default = "default_primary_group")]
+    pub primary_group_name: String,
+    #[serde(default = "default_true")]
+    pub activated: bool,
+}
+
+fn default_primary_group() -> String {
+    "Member".to_string()
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -46,12 +91,13 @@ pub enum AuthError {
     Unavailable,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct VerifiedClaims {
     pub issuer: String,
     pub subject: String,
     pub issued_at: i64,
     pub expires_at: i64,
+    pub claims: HashMap<String, Value>,
 }
 
 struct KeyState {
@@ -312,6 +358,20 @@ impl AuthenticatorImpl {
             }
             _ => {}
         }
+        if config.provisioning.enabled {
+            if !valid_identifier(&config.provisioning.actor_resource) {
+                return Err(invalid("provisioning actor_resource가 유효한 식별자가 아님"));
+            }
+            if config.provisioning.username_claim.is_empty() {
+                return Err(invalid("provisioning username_claim이 비어 있음"));
+            }
+            if config.provisioning.email_claim.is_empty() {
+                return Err(invalid("provisioning email_claim이 비어 있음"));
+            }
+            if config.provisioning.fixed_defaults.primary_group_name.is_empty() {
+                return Err(invalid("provisioning fixed_defaults.primary_group_name이 비어 있음"));
+            }
+        }
         let mut http_builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).timeout(REMOTE_TIMEOUT);
         let custom_ca = lookup("SSL_CERT_FILE")
             .or_else(|| lookup("AIP_AUTH_CA_PEM"))
@@ -492,7 +552,13 @@ impl AuthenticatorImpl {
         {
             return Err(if claims.exp <= now { AuthError::Expired } else { AuthError::Invalid });
         }
-        Ok(VerifiedClaims { issuer: claims.iss, subject: claims.sub, issued_at: claims.iat, expires_at: claims.exp })
+        Ok(VerifiedClaims {
+            issuer: claims.iss,
+            subject: claims.sub,
+            issued_at: claims.iat,
+            expires_at: claims.exp,
+            claims: claims.claims,
+        })
     }
 
     pub async fn session_for(&self, token: &str) -> Result<spike_v6_transport::auth::Session, AuthError> {
@@ -572,6 +638,244 @@ impl AuthenticatorImpl {
         }
         Ok(())
     }
+
+    pub async fn provision_or_session_for(&self, token: &str) -> Result<spike_v6_transport::auth::Session, AuthError> {
+        if !self.config.provisioning.enabled {
+            return self.session_for(token).await;
+        }
+        let claims = self.verify_token(token).await?;
+
+        if self.config.provisioning.require_email_verified {
+            let email_verified = claims.claims.get("email_verified").and_then(Value::as_bool);
+            if email_verified != Some(true) {
+                return Err(AuthError::Invalid);
+            }
+        }
+
+        let username = claims
+            .claims
+            .get(&self.config.provisioning.username_claim)
+            .and_then(Value::as_str)
+            .ok_or(AuthError::Invalid)?;
+        if username.is_empty()
+            || username.len() > 200
+            || username.trim() != username
+            || username.chars().any(char::is_control)
+        {
+            return Err(AuthError::Invalid);
+        }
+
+        let email = claims
+            .claims
+            .get(&self.config.provisioning.email_claim)
+            .and_then(Value::as_str)
+            .ok_or(AuthError::Invalid)?;
+        if email.len() < 3
+            || email.len() > 200
+            || !email.contains('@')
+            || email.chars().any(|c| c.is_control() || c.is_whitespace())
+        {
+            return Err(AuthError::Invalid);
+        }
+
+        let lookup = self.lookup_connection(true).await?;
+        let db = lookup.client();
+        let extra = self.actor_resource_sql.as_ref().map_or(String::new(), |sql| format!(", ({sql})"));
+
+        let sql = format!("SELECT actor_id, enabled, min_iat{extra} FROM \"{}\".aip_principals p WHERE issuer=$1 AND subject=$2", self.schema);
+        let existing = tokio::time::timeout(DB_TIMEOUT, db.query_opt(&sql, &[&claims.issuer, &claims.subject]))
+            .await
+            .map_err(|_| AuthError::Unavailable)?
+            .map_err(|_| AuthError::Unavailable)?;
+
+        if let Some(row) = existing {
+            lookup.finish().await;
+            let actor_id: i64 = row.try_get(0).map_err(|_| AuthError::Unavailable)?;
+            let enabled: bool = row.try_get(1).map_err(|_| AuthError::Unavailable)?;
+            let min_iat: i64 = row.try_get(2).map_err(|_| AuthError::Unavailable)?;
+            if !enabled || claims.issued_at < min_iat {
+                return Err(AuthError::Invalid);
+            }
+            let grant = spike_v6_transport::auth::DurablePrincipal {
+                issuer: claims.issuer,
+                subject: claims.subject,
+                actor_id,
+                issued_at: claims.issued_at,
+                min_iat,
+            };
+            let public_id = if self.actor_resource_sql.is_some() {
+                Some(row.try_get::<_, Option<String>>(3).map_err(|_| AuthError::Unavailable)?.ok_or(AuthError::Invalid)?)
+            } else {
+                None
+            };
+            return spike_v6_transport::auth::Session::new_durable(grant, claims.expires_at)
+                .map(|mut session| {
+                    session.actor_resource_id = public_id;
+                    session
+                })
+                .map_err(|error| match error {
+                    spike_v6_transport::auth::AuthError::Expired => AuthError::Expired,
+                    _ => AuthError::Invalid,
+                });
+        }
+
+        if let Err(_) = tokio::time::timeout(DB_TIMEOUT, db.batch_execute("BEGIN")).await.map_err(|_| AuthError::Unavailable)? {
+            lookup.finish().await;
+            return Err(AuthError::Unavailable);
+        }
+
+        let lock_key = format!("{}:{}:{}:{}:{}:{}", self.schema.len(), self.schema, claims.issuer.len(), claims.issuer, claims.subject.len(), claims.subject);
+        let lock_res = tokio::time::timeout(DB_TIMEOUT, db.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0::bigint))", &[&lock_key]))
+            .await
+            .map_err(|_| AuthError::Unavailable);
+
+        if lock_res.is_err() || lock_res.as_ref().unwrap().is_err() {
+            let _ = db.batch_execute("ROLLBACK").await;
+            lookup.finish().await;
+            return Err(AuthError::Unavailable);
+        }
+
+        let double_check = tokio::time::timeout(DB_TIMEOUT, db.query_opt(&sql, &[&claims.issuer, &claims.subject]))
+            .await
+            .map_err(|_| AuthError::Unavailable);
+
+        let row_opt = match double_check {
+            Ok(Ok(r)) => r,
+            _ => {
+                let _ = db.batch_execute("ROLLBACK").await;
+                lookup.finish().await;
+                return Err(AuthError::Unavailable);
+            }
+        };
+
+        if let Some(row) = row_opt {
+            let _ = db.batch_execute("COMMIT").await;
+            lookup.finish().await;
+            let actor_id: i64 = row.try_get(0).map_err(|_| AuthError::Unavailable)?;
+            let enabled: bool = row.try_get(1).map_err(|_| AuthError::Unavailable)?;
+            let min_iat: i64 = row.try_get(2).map_err(|_| AuthError::Unavailable)?;
+            if !enabled || claims.issued_at < min_iat {
+                return Err(AuthError::Invalid);
+            }
+            let grant = spike_v6_transport::auth::DurablePrincipal {
+                issuer: claims.issuer,
+                subject: claims.subject,
+                actor_id,
+                issued_at: claims.issued_at,
+                min_iat,
+            };
+            let public_id = if self.actor_resource_sql.is_some() {
+                Some(row.try_get::<_, Option<String>>(3).map_err(|_| AuthError::Unavailable)?.ok_or(AuthError::Invalid)?)
+            } else {
+                None
+            };
+            return spike_v6_transport::auth::Session::new_durable(grant, claims.expires_at)
+                .map(|mut session| {
+                    session.actor_resource_id = public_id;
+                    session
+                })
+                .map_err(|error| match error {
+                    spike_v6_transport::auth::AuthError::Expired => AuthError::Expired,
+                    _ => AuthError::Invalid,
+                });
+        }
+
+        let group_sql = format!(
+            "SELECT id FROM \"{}\".\"group\" WHERE name = $1 AND admin = FALSE AND super_mod = FALSE AND mod = FALSE AND banned = FALSE AND guest = FALSE ORDER BY id ASC LIMIT 1",
+            self.schema
+        );
+        let group_row = match tokio::time::timeout(DB_TIMEOUT, db.query_opt(&group_sql, &[&self.config.provisioning.fixed_defaults.primary_group_name])).await {
+            Ok(Ok(Some(r))) => r,
+            _ => {
+                let _ = db.batch_execute("ROLLBACK").await;
+                lookup.finish().await;
+                return Err(AuthError::Unavailable);
+            }
+        };
+        let group_id: i64 = match group_row.try_get(0) {
+            Ok(id) => id,
+            Err(_) => {
+                let _ = db.batch_execute("ROLLBACK").await;
+                lookup.finish().await;
+                return Err(AuthError::Unavailable);
+            }
+        };
+
+        let actor_table = spike_v2_read::sqlgen::snake(&self.config.provisioning.actor_resource);
+        let user_sql = format!(
+            "INSERT INTO \"{}\".\"{}\" (username, email, date_joined, primary_group_id, activated) VALUES ($1, $2, NOW(), $3, $4) RETURNING id",
+            self.schema, actor_table
+        );
+        let activated = self.config.provisioning.fixed_defaults.activated;
+        let insert_user_res = tokio::time::timeout(DB_TIMEOUT, db.query_one(&user_sql, &[&username, &email, &group_id, &activated])).await;
+        let user_row = match insert_user_res {
+            Ok(Ok(row)) => row,
+            _ => {
+                let _ = db.batch_execute("ROLLBACK").await;
+                lookup.finish().await;
+                return Err(AuthError::Invalid);
+            }
+        };
+        let actor_id: i64 = match user_row.try_get(0) {
+            Ok(id) => id,
+            Err(_) => {
+                let _ = db.batch_execute("ROLLBACK").await;
+                lookup.finish().await;
+                return Err(AuthError::Unavailable);
+            }
+        };
+
+        let principal_sql = format!(
+            "INSERT INTO \"{}\".aip_principals (issuer, subject, actor_id, enabled, min_iat) VALUES ($1, $2, $3, TRUE, $4)",
+            self.schema
+        );
+        let insert_principal_res = tokio::time::timeout(DB_TIMEOUT, db.execute(&principal_sql, &[&claims.issuer, &claims.subject, &actor_id, &claims.issued_at])).await;
+        if insert_principal_res.is_err() || insert_principal_res.as_ref().unwrap().is_err() {
+            let _ = db.batch_execute("ROLLBACK").await;
+            lookup.finish().await;
+            return Err(AuthError::Invalid);
+        }
+
+        let final_row = match tokio::time::timeout(DB_TIMEOUT, db.query_one(&sql, &[&claims.issuer, &claims.subject])).await {
+            Ok(Ok(r)) => r,
+            _ => {
+                let _ = db.batch_execute("ROLLBACK").await;
+                lookup.finish().await;
+                return Err(AuthError::Unavailable);
+            }
+        };
+
+        if let Err(_) = tokio::time::timeout(DB_TIMEOUT, db.batch_execute("COMMIT")).await {
+            let _ = db.batch_execute("ROLLBACK").await;
+            lookup.finish().await;
+            return Err(AuthError::Unavailable);
+        }
+        lookup.finish().await;
+
+        let _enabled: bool = final_row.try_get(1).map_err(|_| AuthError::Unavailable)?;
+        let min_iat: i64 = final_row.try_get(2).map_err(|_| AuthError::Unavailable)?;
+        let public_id = if self.actor_resource_sql.is_some() {
+            Some(final_row.try_get::<_, Option<String>>(3).map_err(|_| AuthError::Unavailable)?.ok_or(AuthError::Invalid)?)
+        } else {
+            None
+        };
+        let grant = spike_v6_transport::auth::DurablePrincipal {
+            issuer: claims.issuer,
+            subject: claims.subject,
+            actor_id,
+            issued_at: claims.issued_at,
+            min_iat,
+        };
+        spike_v6_transport::auth::Session::new_durable(grant, claims.expires_at)
+            .map(|mut session| {
+                session.actor_resource_id = public_id;
+                session
+            })
+            .map_err(|error| match error {
+                spike_v6_transport::auth::AuthError::Expired => AuthError::Expired,
+                _ => AuthError::Invalid,
+            })
+    }
 }
 
 #[derive(Deserialize)]
@@ -582,6 +886,8 @@ struct Claims {
     #[serde(default, deserialize_with = "deserialize_present_nbf")]
     nbf: Option<i64>,
     exp: i64,
+    #[serde(flatten)]
+    claims: HashMap<String, Value>,
 }
 
 fn deserialize_present_nbf<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
@@ -602,6 +908,19 @@ impl spike_v6_transport::auth::Authenticator for AuthenticatorImpl {
     ) -> Pin<Box<dyn Future<Output = Result<spike_v6_transport::auth::Session, spike_v6_transport::auth::AuthError>> + Send + 'a>> {
         Box::pin(async move {
             self.session_for(token).await.map_err(|error| match error {
+                AuthError::Invalid => spike_v6_transport::auth::AuthError::BadSignature,
+                AuthError::Expired => spike_v6_transport::auth::AuthError::Expired,
+                AuthError::Unavailable => spike_v6_transport::auth::AuthError::Unavailable,
+            })
+        })
+    }
+
+    fn provision_or_verify_session<'a>(
+        &'a self,
+        token: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<spike_v6_transport::auth::Session, spike_v6_transport::auth::AuthError>> + Send + 'a>> {
+        Box::pin(async move {
+            self.provision_or_session_for(token).await.map_err(|error| match error {
                 AuthError::Invalid => spike_v6_transport::auth::AuthError::BadSignature,
                 AuthError::Expired => spike_v6_transport::auth::AuthError::Expired,
                 AuthError::Unavailable => spike_v6_transport::auth::AuthError::Unavailable,
@@ -698,7 +1017,12 @@ mod tests {
         )
         .expect("sign RFC 9068 token");
         let auth = AuthenticatorImpl::new_explained(
-            Config { issuer: "https://issuer.example".into(), audience: "aip-api".into(), jwks: JwksSource::File { path: jwks_file.path().into() } },
+            Config {
+                issuer: "https://issuer.example".into(),
+                audience: "aip-api".into(),
+                jwks: JwksSource::File { path: jwks_file.path().into() },
+                provisioning: ProvisioningConfig::default(),
+            },
             "host=unused".into(),
             "aip_auth_test".into(),
         )
@@ -739,7 +1063,12 @@ mod tests {
         )
         .expect("sign explicit-null token");
         let auth = AuthenticatorImpl::new_explained(
-            Config { issuer: "https://issuer.example".into(), audience: "aip-api".into(), jwks: JwksSource::File { path: jwks_file.path().into() } },
+            Config {
+                issuer: "https://issuer.example".into(),
+                audience: "aip-api".into(),
+                jwks: JwksSource::File { path: jwks_file.path().into() },
+                provisioning: ProvisioningConfig::default(),
+            },
             "host=unused".into(),
             "aip_auth_test".into(),
         )
@@ -836,6 +1165,7 @@ mod tests {
             issuer: "https://issuer.example".into(),
             audience: "aip-api".into(),
             jwks: JwksSource::Https { url: format!("https://localhost:{port}/keys") },
+            provisioning: ProvisioningConfig::default(),
         };
 
         let env_lookup = |name: &str| if name == "SSL_CERT_FILE" { Some(ca_path.clone()) } else { None };
@@ -864,6 +1194,7 @@ mod tests {
                 issuer: "https://issuer.example".into(),
                 audience: "aip-api".into(),
                 jwks: JwksSource::Https { url: format!("https://localhost:{port}/keys") },
+                provisioning: ProvisioningConfig::default(),
             };
             let env_lookup = |name: &str| if name == "AIP_AUTH_CA_PEM" { Some(ca_path.clone()) } else { None };
             let auth = AuthenticatorImpl::new_explained_with_lookup(config, "host=unused".into(), "aip_app".into(), &env_lookup)
@@ -880,6 +1211,7 @@ mod tests {
                 issuer: "https://issuer.example".into(),
                 audience: "aip-api".into(),
                 jwks: JwksSource::Https { url: format!("https://localhost:{port}/keys") },
+                provisioning: ProvisioningConfig::default(),
             };
             let env_lookup = |name: &str| match name {
                 "SSL_CERT_FILE" => Some(ca_path.clone()),
@@ -900,6 +1232,7 @@ mod tests {
                 issuer: "https://issuer.example".into(),
                 audience: "aip-api".into(),
                 jwks: JwksSource::Https { url: format!("https://localhost:{port}/keys") },
+                provisioning: ProvisioningConfig::default(),
             };
             let no_env = |_: &str| None;
             let err = AuthenticatorImpl::new_explained_with_lookup(config, "host=unused".into(), "aip_app".into(), &no_env)
@@ -917,6 +1250,7 @@ mod tests {
                 issuer: "https://issuer.example".into(),
                 audience: "aip-api".into(),
                 jwks: JwksSource::Https { url: format!("https://localhost:{port}/keys") },
+                provisioning: ProvisioningConfig::default(),
             };
             let bad_path_env = |name: &str| if name == "SSL_CERT_FILE" { Some("/nonexistent/invalid-ca.pem".into()) } else { None };
             let err = AuthenticatorImpl::new_explained_with_lookup(config, "host=unused".into(), "aip_app".into(), &bad_path_env)
@@ -934,6 +1268,7 @@ mod tests {
                 issuer: "https://issuer.example".into(),
                 audience: "aip-api".into(),
                 jwks: JwksSource::Https { url: format!("https://127.0.0.1:{port}/keys") },
+                provisioning: ProvisioningConfig::default(),
             };
             let env_lookup = |name: &str| if name == "SSL_CERT_FILE" { Some(ca_path.clone()) } else { None };
             let err = AuthenticatorImpl::new_explained_with_lookup(config, "host=unused".into(), "aip_app".into(), &env_lookup)
@@ -946,7 +1281,7 @@ mod tests {
     }
 
     async fn explain(issuer: &str, audience: &str, jwks: JwksSource) -> ConfigFailure {
-        let config = Config { issuer: issuer.into(), audience: audience.into(), jwks };
+        let config = Config { issuer: issuer.into(), audience: audience.into(), jwks, provisioning: ProvisioningConfig::default() };
         AuthenticatorImpl::new_explained(config, "host=x".into(), "aip_app".into()).await.err().expect("configuration must be rejected")
     }
 
