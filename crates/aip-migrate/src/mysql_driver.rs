@@ -3,7 +3,7 @@ use crate::mysql_catalog::{
     CatalogError, ColumnRow, ForeignKeyRow, IndexRow, MysqlCatalogReader, MysqlDriverConfig, TableManifest, introspect_schema,
 };
 use mysql_async::prelude::Queryable;
-use mysql_async::{Opts, OptsBuilder, Pool, PoolConstraints, PoolOpts, Row, SslOpts, from_row_opt};
+use mysql_async::{IsolationLevel, Opts, OptsBuilder, Pool, PoolConstraints, PoolOpts, Row, SslOpts, Transaction, TxOpts, from_row_opt};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -180,9 +180,29 @@ impl MysqlDriver {
         Ok(())
     }
 
+    /// Open a fenced transaction from a frozen [`MysqlDeploymentFence`]. The caller never assembles
+    /// the table set; the read/write set computed at fence construction is pinned and then re-verified
+    /// against the live catalog by the same Step 2c check as the slice entry point.
+    pub async fn begin_fenced_transaction_with_fence(
+        &self,
+        read_only: bool,
+        fence: &MysqlDeploymentFence,
+    ) -> Result<FencedMysqlTransaction, CatalogError> {
+        self.begin_fenced_transaction(
+            read_only,
+            &fence.meta_schema,
+            &fence.source_schema,
+            fence.bound_tables_for(read_only),
+            &fence.expected_facts_digest,
+            &fence.expected_structure_digest,
+        )
+        .await
+    }
+
     /// Single-connection fenced transaction lifecycle:
-    /// Acquires a single connection, starts transaction, pins bound tables with pre-MDL,
-    /// verifies meta markers and schema-wide catalog fingerprint, and returns the active fenced transaction.
+    /// Starts a transaction on one pooled connection, pins every bound table with a metadata lock,
+    /// verifies the meta marker and the schema-wide catalog fingerprint, and finally proves that the
+    /// pinned set equals the canonical set derived from that same live catalog.
     pub async fn begin_fenced_transaction(
         &self,
         read_only: bool,
@@ -192,78 +212,145 @@ impl MysqlDriver {
         expected_facts_digest: &str,
         expected_structure_digest: &str,
     ) -> Result<FencedMysqlTransaction, CatalogError> {
-        let mut conn = tokio::time::timeout(self.connect_timeout, self.pool.get_conn())
-            .await
-            .map_err(|_| CatalogError::new("MySQL connection timed out"))?
-            .map_err(|_| CatalogError::new("MySQL connection failed"))?;
-
-        // Disable stats caching for immediate I_S accuracy (MySQL 8.4; ignore on MariaDB)
-        let _ = conn.query_drop("SET SESSION information_schema_stats_expiry = 0").await;
-
-        let tx_start = if read_only {
-            "START TRANSACTION READ ONLY"
-        } else {
-            "START TRANSACTION"
-        };
-        if let Err(err) = conn.query_drop(tx_start).await {
-            return Err(CatalogError::new(format!("failed to start transaction: {err}")));
+        // Step 0: input validation. Identifiers are interpolated into SQL below, so reject unsafe ones here.
+        if bound_tables.is_empty() {
+            return Err(CatalogError::drift("bound_tables must not be empty for fenced MySQL transaction"));
+        }
+        validate_ident("meta schema", meta_schema)?;
+        validate_ident("source schema", source_schema)?;
+        for (schema, table) in bound_tables {
+            validate_ident("bound table schema", schema)?;
+            validate_ident("bound table", table)?;
         }
 
-        // Step 1: Pre-MDL Pinning
-        if let Err(err) = pin_bound_tables_on_conn(&mut conn, bound_tables).await {
-            let _ = conn.query_drop("ROLLBACK").await;
+        // Step 1: start the transaction through mysql_async so its own cleanup path owns rollback,
+        // then pre-pin metadata locks before any INFORMATION_SCHEMA read.
+        let mut tx_options = TxOpts::default();
+        tx_options.with_isolation_level(IsolationLevel::RepeatableRead).with_readonly(read_only);
+        let mut tx: Transaction<'static> = tokio::time::timeout(self.connect_timeout, self.pool.start_transaction(tx_options))
+            .await
+            .map_err(|_| CatalogError::new("MySQL connection timed out"))?
+            .map_err(|err| CatalogError::new(format!("failed to start transaction: {err}")))?;
+
+        // Disable stats caching for immediate I_S accuracy (MySQL 8.4; ignore on MariaDB)
+        let _ = tx.query_drop("SET SESSION information_schema_stats_expiry = 0").await;
+
+        if let Err(err) = pin_bound_tables_on_conn(&mut tx, bound_tables).await {
+            let _ = tx.rollback().await;
             return Err(err);
         }
 
-        // Step 2: In-Tx Fresh Catalog Fence
-        // 2a: Check aip_migrate_meta
-        let meta_sql = format!(
-            "SELECT facts_digest, schema_sha256, status FROM `{meta_schema}`.`aip_migrate_meta` WHERE singleton = 1"
-        );
-        let meta_row: Option<(String, String, String)> = match conn.exec_first(&meta_sql, ()).await {
-            Ok(row) => row,
-            Err(err) => {
-                let _ = conn.query_drop("ROLLBACK").await;
-                if is_drift_error(&err) {
-                    return Err(CatalogError::drift(format!("meta table access failed: {err}")));
-                }
-                return Err(CatalogError::new(format!("meta table query failed: {err}")));
-            }
-        };
-
-        match meta_row {
-            Some((facts_digest, _schema_sha256, status)) => {
-                if facts_digest != expected_facts_digest || status != "READY" {
-                    let _ = conn.query_drop("ROLLBACK").await;
-                    return Err(CatalogError::drift(format!(
-                        "aip_migrate_meta deployment changed (facts_digest: {facts_digest}, status: {status})"
-                    )));
-                }
-            }
-            None => {
-                let _ = conn.query_drop("ROLLBACK").await;
-                return Err(CatalogError::drift("aip_migrate_meta singleton row missing"));
-            }
+        // Step 2a: meta marker must be READY and carry the expected facts digest.
+        if let Err(err) = verify_meta_digest_on_conn(&mut tx, meta_schema, expected_facts_digest).await {
+            let _ = tx.rollback().await;
+            return Err(err);
         }
 
-        // 2b: Schema-wide 4-query catalog verification
-        let fingerprint = match catalog_fingerprint_on_conn(&mut conn, source_schema, self.mariadb).await {
+        // Step 2b: schema-wide 4-query catalog verification.
+        let fingerprint = match catalog_fingerprint_on_conn(&mut tx, source_schema, self.mariadb).await {
             Ok(fp) => fp,
             Err(err) => {
-                let _ = conn.query_drop("ROLLBACK").await;
+                let _ = tx.rollback().await;
                 return Err(err);
             }
         };
-
         if !fingerprint.digest.eq_ignore_ascii_case(expected_structure_digest) {
-            let _ = conn.query_drop("ROLLBACK").await;
+            let _ = tx.rollback().await;
             return Err(CatalogError::drift(format!(
                 "MySQL schema changed since deployed catalog fingerprint was recorded (actual: {}, expected: {})",
                 fingerprint.digest, expected_structure_digest
             )));
         }
 
-        Ok(FencedMysqlTransaction { conn: Some(conn) })
+        // Step 2c: the pinned set must equal the canonical set of this very catalog. A caller that omits
+        // one table would otherwise pass the digest check while that table stays unprotected from DDL.
+        let catalog_tables: Vec<String> = fingerprint.catalog.keys().cloned().collect();
+        let expected_bound_tables = canonical_bound_tables(meta_schema, source_schema, &catalog_tables, !read_only);
+        if bound_tables != expected_bound_tables.as_slice() {
+            let _ = tx.rollback().await;
+            return Err(CatalogError::drift(format!(
+                "bound_tables mismatch for fenced MySQL transaction: pinned {bound_tables:?}, expected {expected_bound_tables:?}"
+            )));
+        }
+
+        // Step 3
+        Ok(FencedMysqlTransaction { tx: Some(tx), read_only })
+    }
+
+    /// Record `MIGRATING` before any meta/source DDL starts. DDL implicitly commits in MySQL/MariaDB, so a
+    /// crash mid-migration cannot roll back; the marker is what keeps runtime entry closed meanwhile.
+    pub async fn mark_meta_migrating(&self, meta_schema: &str) -> Result<(), CatalogError> {
+        validate_ident("meta schema", meta_schema)?;
+        let mut conn = self.get_conn_with_timeout().await?;
+        write_meta_status_migrating(&mut conn, meta_schema).await
+    }
+
+    /// Idempotent meta bootstrap with a two-phase marker:
+    /// A) `CREATE ... IF NOT EXISTS` for the meta marker table, B) `status = 'MIGRATING'`, then the other
+    /// meta tables, C) re-read the live source catalog, D) record digests and flip to `READY`.
+    /// Any failure (or crash) after B leaves `MIGRATING`, which `begin_fenced_transaction` rejects.
+    /// Re-running after an interruption converges to `READY`. Returns the fingerprint recorded in step D.
+    pub async fn ensure_meta_schema_bootstrap(
+        &self,
+        meta_schema: &str,
+        source_schema: &str,
+        facts_digest: &str,
+    ) -> Result<MysqlCatalogFingerprint, CatalogError> {
+        validate_ident("meta schema", meta_schema)?;
+        validate_ident("source schema", source_schema)?;
+        if facts_digest.trim().is_empty() {
+            return Err(CatalogError::drift("facts_digest must not be empty for meta bootstrap"));
+        }
+        let mut conn = self.get_conn_with_timeout().await?;
+
+        // Step A
+        conn.query_drop(format!("CREATE DATABASE IF NOT EXISTS `{meta_schema}`"))
+            .await
+            .map_err(|err| CatalogError::new(format!("meta schema creation failed: {err}")))?;
+        conn.query_drop(format!(
+            "CREATE TABLE IF NOT EXISTS `{meta_schema}`.`{META_TABLE}` (singleton TINYINT NOT NULL PRIMARY KEY, \
+             facts_digest VARCHAR(64) NOT NULL, schema_sha256 VARCHAR(64) NOT NULL, status VARCHAR(32) NOT NULL) ENGINE=InnoDB"
+        ))
+        .await
+        .map_err(|err| CatalogError::new(format!("meta table creation failed: {err}")))?;
+
+        // Step B: marker first, before the remaining meta tables exist.
+        write_meta_status_migrating(&mut conn, meta_schema).await?;
+
+        // NOTE: stub columns only; 7.2.1.2/7.2.1.3 own the real runtime table shapes and will migrate them.
+        for table in META_READ_TABLES.iter().chain(META_WRITE_TABLES.iter()).filter(|table| **table != META_TABLE) {
+            let id_column = if *table == "aip_principals" {
+                "id VARCHAR(36) NOT NULL PRIMARY KEY"
+            } else {
+                "id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY"
+            };
+            conn.query_drop(format!("CREATE TABLE IF NOT EXISTS `{meta_schema}`.`{table}` ({id_column}) ENGINE=InnoDB"))
+                .await
+                .map_err(|err| CatalogError::new(format!("meta table creation failed: {err}")))?;
+        }
+
+        // Step C
+        let _ = conn.query_drop("SET SESSION information_schema_stats_expiry = 0").await;
+        let fingerprint = catalog_fingerprint_on_conn(&mut conn, source_schema, self.mariadb).await?;
+        if fingerprint.catalog.is_empty() {
+            return Err(CatalogError::new("source schema has no base tables"));
+        }
+
+        // Step D
+        conn.exec_drop(
+            format!("UPDATE `{meta_schema}`.`{META_TABLE}` SET facts_digest = ?, schema_sha256 = ?, status = 'READY' WHERE singleton = 1"),
+            (facts_digest, fingerprint.digest.as_str()),
+        )
+        .await
+        .map_err(|err| CatalogError::new(format!("meta READY update failed: {err}")))?;
+        Ok(fingerprint)
+    }
+
+    async fn get_conn_with_timeout(&self) -> Result<mysql_async::Conn, CatalogError> {
+        tokio::time::timeout(self.connect_timeout, self.pool.get_conn())
+            .await
+            .map_err(|_| CatalogError::new("MySQL connection timed out"))?
+            .map_err(|_| CatalogError::new("MySQL connection failed"))
     }
 
     async fn query_rows(&self, query: &str, params: impl Into<mysql_async::Params> + Send) -> Result<Vec<Row>, CatalogError> {
@@ -281,49 +368,162 @@ pub struct MysqlCatalogFingerprint {
     pub catalog: crate::mysql_catalog::CanonicalSchemaCatalog,
 }
 
+/// A fenced transaction. It owns a `mysql_async::Transaction` rather than a raw connection and exposes
+/// no way to take the connection out: dropping it (including task abort or timeout) hands the connection
+/// back to the pool flagged `RequiresRollback`, and mysql_async rolls it back before the pool reuses it.
 pub struct FencedMysqlTransaction {
-    conn: Option<mysql_async::Conn>,
+    tx: Option<Transaction<'static>>,
+    read_only: bool,
 }
 
 impl std::fmt::Debug for FencedMysqlTransaction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("FencedMysqlTransaction")
-            .field("active", &self.conn.is_some())
-            .finish()
+        f.debug_struct("FencedMysqlTransaction").field("active", &self.tx.is_some()).field("read_only", &self.read_only).finish()
     }
 }
 
 impl FencedMysqlTransaction {
-    pub fn conn(&mut self) -> &mut mysql_async::Conn {
-        self.conn.as_mut().expect("fenced transaction connection is active")
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
     }
 
-    pub fn into_conn(mut self) -> mysql_async::Conn {
-        self.conn.take().expect("fenced transaction connection is active")
+    /// Borrow the open transaction for queries. Ownership never leaves this wrapper.
+    pub fn as_mut(&mut self) -> Result<&mut Transaction<'static>, CatalogError> {
+        self.tx.as_mut().ok_or_else(|| CatalogError::new("fenced MySQL transaction is no longer active"))
     }
 
     pub async fn commit(mut self) -> Result<(), CatalogError> {
-        if let Some(mut conn) = self.conn.take() {
-            conn.query_drop("COMMIT").await.map_err(|e| CatalogError::new(format!("MySQL commit failed: {e}")))?;
+        if let Some(tx) = self.tx.take() {
+            tx.commit().await.map_err(|e| CatalogError::new(format!("MySQL commit failed: {e}")))?;
         }
         Ok(())
     }
 
     pub async fn rollback(mut self) -> Result<(), CatalogError> {
-        if let Some(mut conn) = self.conn.take() {
-            conn.query_drop("ROLLBACK").await.map_err(|e| CatalogError::new(format!("MySQL rollback failed: {e}")))?;
+        if let Some(tx) = self.tx.take() {
+            tx.rollback().await.map_err(|e| CatalogError::new(format!("MySQL rollback failed: {e}")))?;
         }
         Ok(())
     }
 }
 
-impl Drop for FencedMysqlTransaction {
-    fn drop(&mut self) {
-        if let Some(mut conn) = self.conn.take() {
-            tokio::spawn(async move {
-                let _ = conn.query_drop("ROLLBACK").await;
-            });
+const META_TABLE: &str = "aip_migrate_meta";
+/// Meta tables every runtime transaction reads (the marker and the principals).
+const META_READ_TABLES: [&str; 2] = [META_TABLE, "aip_principals"];
+/// Additional meta tables a read-write transaction touches.
+const META_WRITE_TABLES: [&str; 6] = ["aip_idem", "aip_audit", "aip_events", "aip_tx_locks", "aip_jobs", "aip_outbox"];
+
+fn validate_ident(kind: &str, name: &str) -> Result<(), CatalogError> {
+    if name.trim().is_empty() || name.contains('`') || name.contains('\0') {
+        return Err(CatalogError::drift(format!("{kind} must be a non-empty identifier without backticks")));
+    }
+    Ok(())
+}
+
+async fn write_meta_status_migrating<Q: Queryable>(conn: &mut Q, meta_schema: &str) -> Result<(), CatalogError> {
+    conn.query_drop(format!(
+        "INSERT INTO `{meta_schema}`.`{META_TABLE}` (singleton, facts_digest, schema_sha256, status) VALUES (1, '', '', 'MIGRATING') \
+         ON DUPLICATE KEY UPDATE status = 'MIGRATING'"
+    ))
+    .await
+    .map_err(|err| CatalogError::new(format!("meta MIGRATING marker failed: {err}")))
+}
+
+async fn verify_meta_digest_on_conn<Q: Queryable>(
+    conn: &mut Q,
+    meta_schema: &str,
+    expected_facts_digest: &str,
+) -> Result<(), CatalogError> {
+    let meta_sql = format!("SELECT facts_digest, schema_sha256, status FROM `{meta_schema}`.`{META_TABLE}` WHERE singleton = 1");
+    let meta_row: Option<(String, String, String)> = conn.exec_first(&meta_sql, ()).await.map_err(|err| {
+        if is_drift_error(&err) {
+            CatalogError::drift(format!("meta table access failed: {err}"))
+        } else {
+            CatalogError::new(format!("meta table query failed: {err}"))
         }
+    })?;
+    match meta_row {
+        Some((facts_digest, _schema_sha256, status)) if facts_digest == expected_facts_digest && status == "READY" => Ok(()),
+        Some((facts_digest, _schema_sha256, status)) => {
+            Err(CatalogError::drift(format!("aip_migrate_meta deployment changed (facts_digest: {facts_digest}, status: {status})")))
+        }
+        None => Err(CatalogError::drift("aip_migrate_meta singleton row missing")),
+    }
+}
+
+/// Immutable deployment fence: the canonical bound-table sets are computed once, at construction,
+/// so request paths never assemble table lists by hand.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MysqlDeploymentFence {
+    meta_schema: String,
+    source_schema: String,
+    expected_facts_digest: String,
+    expected_structure_digest: String,
+    read_bound_tables: Vec<(String, String)>,
+    write_bound_tables: Vec<(String, String)>,
+}
+
+impl MysqlDeploymentFence {
+    pub fn new(
+        meta_schema: &str,
+        source_schema: &str,
+        source_tables: &[String],
+        expected_facts_digest: &str,
+        expected_structure_digest: &str,
+    ) -> Result<Self, CatalogError> {
+        if meta_schema.trim().is_empty()
+            || source_schema.trim().is_empty()
+            || source_tables.is_empty()
+            || expected_facts_digest.trim().is_empty()
+            || expected_structure_digest.trim().is_empty()
+        {
+            return Err(CatalogError::drift(
+                "MySQL deployment fence requires non-empty schemas, source_tables, facts_digest, and structure_digest",
+            ));
+        }
+        validate_ident("meta schema", meta_schema)?;
+        validate_ident("source schema", source_schema)?;
+        for table in source_tables {
+            validate_ident("source table", table)?;
+        }
+        Ok(Self {
+            meta_schema: meta_schema.to_string(),
+            source_schema: source_schema.to_string(),
+            expected_facts_digest: expected_facts_digest.to_string(),
+            expected_structure_digest: expected_structure_digest.to_string(),
+            read_bound_tables: canonical_bound_tables(meta_schema, source_schema, source_tables, false),
+            write_bound_tables: canonical_bound_tables(meta_schema, source_schema, source_tables, true),
+        })
+    }
+
+    pub fn from_fingerprint(
+        meta_schema: &str,
+        source_schema: &str,
+        expected_facts_digest: &str,
+        fingerprint: &MysqlCatalogFingerprint,
+    ) -> Result<Self, CatalogError> {
+        let source_tables: Vec<String> = fingerprint.catalog.keys().cloned().collect();
+        Self::new(meta_schema, source_schema, &source_tables, expected_facts_digest, &fingerprint.digest)
+    }
+
+    pub fn bound_tables_for(&self, read_only: bool) -> &[(String, String)] {
+        if read_only { &self.read_bound_tables } else { &self.write_bound_tables }
+    }
+
+    pub fn meta_schema(&self) -> &str {
+        &self.meta_schema
+    }
+
+    pub fn source_schema(&self) -> &str {
+        &self.source_schema
+    }
+
+    pub fn expected_facts_digest(&self) -> &str {
+        &self.expected_facts_digest
+    }
+
+    pub fn expected_structure_digest(&self) -> &str {
+        &self.expected_structure_digest
     }
 }
 
@@ -349,11 +549,12 @@ pub fn canonical_bound_tables(
 ) -> Vec<(String, String)> {
     let mut tables = Vec::new();
 
-    tables.push((meta_schema.to_string(), "aip_migrate_meta".to_string()));
-    tables.push((meta_schema.to_string(), "aip_principals".to_string()));
+    for t in META_READ_TABLES {
+        tables.push((meta_schema.to_string(), t.to_string()));
+    }
 
     if include_write_tables {
-        for t in ["aip_idem", "aip_audit", "aip_events", "aip_tx_locks", "aip_jobs", "aip_outbox"] {
+        for t in META_WRITE_TABLES {
             tables.push((meta_schema.to_string(), t.to_string()));
         }
     }
@@ -367,8 +568,8 @@ pub fn canonical_bound_tables(
     tables
 }
 
-pub async fn pin_bound_tables_on_conn(
-    conn: &mut mysql_async::Conn,
+pub async fn pin_bound_tables_on_conn<Q: Queryable>(
+    conn: &mut Q,
     bound_tables: &[(String, String)],
 ) -> Result<(), CatalogError> {
     if bound_tables.is_empty() {
@@ -399,8 +600,8 @@ pub async fn pin_bound_tables_on_conn(
     }
 }
 
-pub async fn catalog_fingerprint_on_conn(
-    conn: &mut mysql_async::Conn,
+pub async fn catalog_fingerprint_on_conn<Q: Queryable>(
+    conn: &mut Q,
     schema_name: &str,
     is_mariadb: bool,
 ) -> Result<MysqlCatalogFingerprint, CatalogError> {

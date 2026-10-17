@@ -2,7 +2,7 @@
 
 2026-10-15 조사에서 시작한 구현 작업의 현재 기록이다. 원본 앱이 MySQL에서 실행되는 것과 AIP가 MySQL을 지원하는 것은 다른 판정이다.
 
-**현재 상태: Stage 6(WBS 7.2.1.1) DDL 경쟁 안전계약(단일 연결 선행 MDL Pin + 인트랜잭션 4-쿼리 광역 카탈로그 fingerprint 검증)을 `aip-migrate`에 구현 완료하고 격리된 MySQL 8.4 및 MariaDB 11.4 실컨테이너에서 Before/During/After/Rollback/Unrelated CREATE TABLE 전체 케이스 실측 검증을 완료했다. 동일 연결·동일 트랜잭션 수명주기 관리자 `FencedMysqlTransaction` 및 `begin_fenced_transaction` primitive가 안착되었으며, 후속 작업 슬라이스인 7.2.1.2(Policy Read Compiler) 및 7.2.1.3(Apply/Write Transaction 어댑터 및 HTTP serve 연동)이 완료되기 전까지 `aip-service`의 MySQL 런타임은 안전하게 fail-closed(`DB_ADAPTER_UNSUPPORTED`)를 유지한다.**
+**현재 상태: Stage 6(WBS 7.2.1.1) DDL 경쟁 안전계약은 `aip-migrate::mysql_driver` 계층에서만 구현·검증됐다(단일 연결 선행 MDL Pin + 인트랜잭션 4-쿼리 카탈로그 fingerprint + 완전 바인딩 집합 동치 검증 Step 2c + `MysqlDeploymentFence` + `mysql_async::Transaction<'static>` 캡슐화). 격리된 MySQL 8.4 및 MariaDB 11.4 컨테이너에서 실측했으나 별도 모델의 독립 검증은 아직 받지 않았다. `aip-service`에는 MySQL 런타임 경로가 없으며, 7.2.1.2(Policy Read Compiler)와 7.2.1.3(Apply/Write Transaction 어댑터 및 HTTP serve 연동)이 끝나기 전까지 `DB_ADAPTER_UNSUPPORTED`로 fail-closed를 유지한다.**
 
 ## 2026-10-17 실제 제품 경로 확인
 
@@ -37,15 +37,19 @@
 
 - **배경**: 초기 경쟁시험에서 `INFORMATION_SCHEMA` 조회 자체는 대상 업무 테이블의 `MDL_SHARED_READ`를 획득하지 않아 외부 `ALTER TABLE`을 막지 못하는 현상이 확인되었다.
 - **확정 안전계약 구현 (`MYSQL-DDL-FENCE-SAFETY-CONTRACT-DECISION.md`)**:
-  1. 풀에서 단일 물리 연결(`mysql_async::Conn`)을 잡고 `SET SESSION information_schema_stats_expiry = 0` 적용 후 트랜잭션 개시 (`START TRANSACTION READ ONLY` 또는 `START TRANSACTION`).
+  0. **배포 펜스 값 객체**: `MysqlDeploymentFence::new(meta_schema, source_schema, source_tables, facts_digest, structure_digest)`가 생성 시점에 읽기용(메타 2개 + 소스 전체)과 쓰기용(메타 8개 + 소스 전체) 정규 `bound_tables`를 `canonical_bound_tables`로 한 번 계산해 고정한다. 빈 입력이나 백틱이 든 식별자는 `MIGRATE.DRIFT_DETECTED`로 거부한다. 요청 경로는 `begin_fenced_transaction_with_fence(read_only, &fence)`만 호출하면 된다. 테이블 목록을 직접 넘기는 `begin_fenced_transaction(read_only, meta, source, bound_tables, facts, structure)`도 남아 있으며 같은 Step 2c를 거친다.
+  1. 풀에서 `mysql_async` 트랜잭션(`Pool::start_transaction`, `REPEATABLE READ`, 읽기 전용 여부는 `TxOpts::with_readonly`)을 열고 `SET SESSION information_schema_stats_expiry = 0`을 적용한다. 이 서버 쪽 접근 모드 지정은 `START TRANSACTION READ ONLY`와 동치가 아니라 `SET TRANSACTION READ ONLY|WRITE` 다음 `START TRANSACTION`이다.
   2. **Step 1 (선행 MDL Pin)**: `INFORMATION_SCHEMA` 조회 전에 정렬된 모든 바인딩 테이블(메타 테이블 + source schema 업무 테이블)에 대해 단일 UNION ALL 쿼리(`SELECT 1 FROM (SELECT 1 FROM \`s\`.\`t\` LIMIT 1) AS p0 UNION ALL ...`)를 실행해 트랜잭션 종료 시까지 `MDL_SHARED_READ`를 선점. (0행 빈 테이블에서도 외부 ALTER를 즉시 차단).
   3. **Step 2 (동일 Tx 내 광역 4-쿼리 검증)**: 동일 연결·트랜잭션에서 `aip_migrate_meta` 마커(`facts_digest`, `status = 'READY'`)를 확인하고, 테이블별 N회 왕복 대신 광역 4-쿼리(`SQL_COLUMNS_BY_SCHEMA`, `SQL_STATISTICS_BY_SCHEMA`/`SQL_STATISTICS_MARIADB_BY_SCHEMA`, `SQL_FOREIGN_KEYS_BY_SCHEMA`)로 전체 `CanonicalSchemaCatalog` 다이제스트를 캐시 없이(TTL=0) 검증.
+  3b. **Step 2c (완전 바인딩 집합 불변식)**: 같은 트랜잭션에서 읽은 라이브 카탈로그의 테이블 집합으로 `canonical_bound_tables(meta_schema, source_schema, &live_catalog_tables, !read_only)`를 다시 계산해 Step 1에서 실제로 고정한 `bound_tables`와 정확히 비교한다. 소스 테이블이 하나라도 빠졌거나 쓰기용 메타 테이블이 빠지면 `ROLLBACK` 후 `MIGRATE.DRIFT_DETECTED`다. 8a27b94는 이 비교가 없어 호출자가 일부 테이블을 빼면 해당 테이블에 `MDL_SHARED_READ`가 없는 채로 외부 `ALTER TABLE`이 성공했다.
   4. **Fail-Closed 롤백**: 다이제스트 불일치나 MySQL 에러 `1146`(ER_NO_SUCH_TABLE), `1054`(ER_BAD_FIELD_ERROR), `1412`(ER_TABLE_DEF_CHANGED) 발생 시 즉시 `ROLLBACK` 후 `MIGRATE.DRIFT_DETECTED` 반환.
-  5. `FencedMysqlTransaction` 수명주기 래퍼가 commit/rollback/into_conn 및 Drop 시 자동 비동기 ROLLBACK을 보장.
+  5. `FencedMysqlTransaction`은 `Option<mysql_async::Transaction<'static>>`만 보관하고 `into_conn()`을 제공하지 않는다. 쿼리는 `as_mut()`로 빌린 트랜잭션에서만 실행한다. drop·task abort 시 mysql_async가 연결에 `RequiresRollback`을 표시하고 풀이 그 연결을 재사용하기 전에 롤백한다. 즉 `drop`이 `ROLLBACK`을 동기 실행하는 것이 아니라 풀 재사용 시점까지 지연될 수 있다(실측은 아래 테스트, 대용량 스트리밍 도중 절단은 미검증).
+  6. **메타 상태 2단계 전이**: MySQL DDL은 암묵 커밋이라 롤백할 수 없으므로 `ensure_meta_schema_bootstrap`은 `aip_migrate_meta` 생성 직후 `status='MIGRATING'`을 먼저 기록하고, 나머지 메타 테이블 생성과 라이브 카탈로그 재조회가 끝난 뒤에만 `facts_digest`·`schema_sha256`과 함께 `READY`로 바꾼다. 중단되면 `MIGRATING`이나 행 없음으로 남아 Step 2a가 `MIGRATE.DRIFT_DETECTED`로 거부한다. 재실행은 멱등이며 `READY`로 수렴한다. 나머지 7개 메타 테이블은 PK 열만 가진 자리표시 DDL이고 실제 형태는 7.2.1.2/7.2.1.3에서 정한다.
 - **실 DB 격리 컨테이너 실측 검증 (MySQL 8.4.11 및 MariaDB 11.4.13)**:
   - `live_pre_mdl_pin_blocks_concurrent_ddl_and_detects_prior_ddl_on_same_tx`: 두 엔진 모두 PASS. (DURING 중 외부 ALTER는 `lock_wait_timeout`(1205) 차단, 내부 SELECT 성공, ROLLBACK 즉시 MDL 해제되어 외부 ALTER 성공, 그 후 다음 검사 시 즉시 409 drift 감지, 사전 DROP TABLE 시 1146 drift 감지).
   - `live_begin_fenced_transaction_detects_unrelated_create_table_on_next_request`: 두 엔진 모두 PASS. (외부에서 `source_schema`에 무관한 신규 테이블 `CREATE TABLE unrelated` 생성 시 0ms 지연으로 다음 첫 `begin_fenced_transaction`에서 `MIGRATE.DRIFT_DETECTED` 즉시 거부).
   - `live_begin_fenced_transaction_validates_meta_marker_status_and_digest`: 두 엔진 모두 PASS. (`facts_digest` 불일치 및 non-READY status 즉시 거부).
+  - `crates/aip-migrate/tests/mysql_fence_verification.rs` (8개, 두 엔진 모두 실행): `live_fence_rejects_incomplete_bound_table_set`(일부 테이블 누락 3종과 부분 목록으로 만든 fence 모두 거부, 완전한 fence는 모든 소스 테이블의 외부 ALTER를 1205로 차단), `live_fence_detects_dropped_and_created_source_tables_before_returning`, `live_readwrite_fence_commits_rolls_back_and_runs_with_dml_only_grants`(DML 전용 계정), `live_cancelled_fenced_transaction_rolls_back_before_connection_reuse`(`pool_max=1`에서 drop과 task abort 모두 미커밋 행 0건), `live_interrupted_meta_migration_rejects_entry_until_ready_again`(`MIGRATING`·행 없음 거부, 재실행 후 `READY`), 그리고 `MysqlDeploymentFence` 오프라인 3개. Step 2c를 끄면 첫 테스트가 실패함을 확인했다.
   - `schema_wide_introspect_produces_identical_catalog_to_sequential_introspect`: 단위 테스트 PASS (광역 4-쿼리 결과가 순차 `introspect_schema`와 바이트 단위 일치).
   - `facereview_11_models_synthetic_fixture_matches_fk_manifest`: 11개 모델 전체 광역 4-쿼리 일치 검증 PASS.
 
@@ -54,7 +58,9 @@
 | feature-off fail-closed | PASS | `aip-service` 기본 빌드 전체 및 `mysql_url_or_adapter_fails_closed_before_pg_connect` 통과 |
 | PostgreSQL 회귀 | PASS | 기본 `aip-service` 및 `aip-migrate` 테스트 통과 |
 | MySQL feature fail-closed | PASS | `aip-service --features mysql` 전체 테스트 통과; MySQL URL rejection 유지 |
-| DDL before/during/after 실제 service fence | PASS | 단일 연결 선행 MDL Pin + 인트랜잭션 4-쿼리 검증으로 두 엔진 모두 During 대기/차단, 직후 요청 drift 차단, 무관 CREATE TABLE 즉시 차단 실측 통과 |
+| `mysql_driver` fenced transaction runtime contract | PASS (`aip-service` HTTP `serve` wiring remains gated by `DB_ADAPTER_UNSUPPORTED` until service-layer integration) | `aip-migrate::mysql_driver` 계층만 검증: 선행 MDL Pin, 4-쿼리 검증, Step 2c 완전 바인딩 집합, drop 시 롤백, `MIGRATING` 거부를 두 엔진에서 실측. `aip-service`는 MySQL 런타임에 연결돼 있지 않다. 독립 검증 미수행 |
+| `aip-service`의 `MysqlDeploymentFence` 부팅 시 캐시와 요청 핸들러 주입 | 미실행 (후속) | 7.2.1.3에서 구현과 E2E 검증 필요 |
+| 스트리밍 도중 `timeout`으로 Future가 절단될 때의 연결 폐기·복구 지연 | 미검증 | 유휴 상태 drop과 task abort만 실측 |
 | 복합 FK 명시 거부 | PASS | `introspection_draft_rejects_composite_foreign_keys_instead_of_dropping_them` 통과 |
 | WBS 7.2.1.2: Policy Read Compiler | 미실행 (후속) | MySQL/MariaDB SQL 쿼리 컴파일러, 식별자 쿼팅, pagination, relational joins |
 | WBS 7.2.1.3: Apply/Write Transaction 어댑터 | 미실행 (후속) | journal/audit/outbox 트랜잭션 수명주기, HTTP serve `/ready`·`/read`·`/apply` 연동 |
