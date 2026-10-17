@@ -57,7 +57,15 @@ pub fn database_url_for_user(raw: &str, user: &str) -> String {
 pub fn database_url_with_option(raw: &str, key: &str, value: &str) -> String {
     if raw.starts_with("postgres://") || raw.starts_with("postgresql://") {
         let mut url = url::Url::parse(raw).expect("validated test DSN");
-        url.query_pairs_mut().append_pair(key, value);
+        // form 인코딩(`append_pair`)은 공백을 `+`로 쓰는데 libpq와 tokio-postgres는 URI query에서 `+`를 공백으로 읽지 않는다.
+        // 리터럴 `+`는 `%2B`로 나오므로 인코딩 뒤 남은 `+`는 모두 공백이다.
+        let encode = |text: &str| url::form_urlencoded::byte_serialize(text.as_bytes()).collect::<String>().replace('+', "%20");
+        let pair = format!("{}={}", encode(key), encode(value));
+        let query = match url.query() {
+            Some(existing) if !existing.is_empty() => format!("{existing}&{pair}"),
+            _ => pair,
+        };
+        url.set_query(Some(&query));
         return url.into();
     }
     let mut fields = parse_keywords(raw).expect("validated test DSN");
@@ -278,7 +286,18 @@ fn parse_keywords(raw: &str) -> Result<HashMap<String, String>, &'static str> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_dsn, validate_admin_url, validate_database_url};
+    use super::{database_url_with_option, parse_dsn, validate_admin_url, validate_database_url};
+
+    /// libpq와 tokio-postgres는 URI query의 `+`를 공백으로 읽지 않고 퍼센트 인코딩만 푼다.
+    /// `options=-c+TimeZone=...`은 서버에 `+TimeZone`이라는 이름의 설정으로 전달돼 접속 자체가 거부된다.
+    #[test]
+    fn uri_option_values_encode_spaces_as_percent_20() {
+        let url = database_url_with_option("postgresql://runner@127.0.0.1:55432/aip_test_run", "options", "-c TimeZone=Asia/Seoul");
+        assert!(url.ends_with("?options=-c%20TimeZone%3DAsia%2FSeoul"), "{url}");
+        let more = database_url_with_option(&url, "application_name", "a+b c");
+        assert!(more.ends_with("&application_name=a%2Bb%20c"), "a literal plus stays %2B and an existing query is kept: {more}");
+        assert!(validate_database_url(&more).is_ok());
+    }
 
     #[test]
     fn accepts_explicit_run_owned_keyword_and_uri_dsns() {

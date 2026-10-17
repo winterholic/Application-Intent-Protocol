@@ -221,9 +221,8 @@ async fn commit(tx: Transaction<'_>, ctl: &Ctl, knobs: &Knobs) -> Result<(), Rej
         tx.rollback().await.ok();
         return rej("WIRE.DEADLINE_EXCEEDED", format!("커밋 전 남은 기한 {left}ms. rollback함"));
     }
-    ctl.commit_sent.store(true, std::sync::atomic::Ordering::SeqCst);
     // 지연 제약(커밋 시점 불변식) 위반은 커밋에서 드러난다.
-    tx.commit().await.map_err(|e| write_err("커밋", e))
+    send_commit(tx, || ctl.commit_sent.store(true, std::sync::atomic::Ordering::SeqCst)).await.map_err(CommitFailure::into_reject)
 }
 
 fn bad(msg: impl Into<String>) -> Reject {
@@ -566,6 +565,69 @@ async fn update(
         return rej("WIRE.CONFLICT", format!("판정 {}개와 실제 변경 {n}개가 다름. 전체 취소", change.len()));
     }
     Ok(())
+}
+
+/// 연결이 끊기거나 응답을 읽을 수 없어 서버가 문장을 끝냈는지 알 수 없는 오류인지 가른다.
+/// SQLSTATE가 있는 서버 오류는 문장 결과가 확정이라(제약 위반·직렬화 실패 등) 여기에 넣지 않는다.
+/// tokio-postgres는 오류 종류를 공개하지 않아 `is_closed`와 표시 문구(Io·UnexpectedMessage·Parse)로 가른다.
+/// 문구가 바뀌면 `unexpected_message_*`·`unparseable_*` 테스트가 먼저 깨진다.
+/// Io는 연결 task에서만 나서 호출자에게는 Closed로 보인다(RST 테스트로 확인). Io 자체는 호출자 쪽에서 재현하지 못했다.
+pub fn connection_failed(e: &tokio_postgres::Error) -> bool {
+    e.code().is_none()
+        && (e.is_closed()
+            || ["error communicating with the server", "unexpected message from server", "error parsing response from server"]
+                .iter()
+                .any(|prefix| e.to_string().starts_with(prefix)))
+}
+
+/// COMMIT을 보내기 전에 연결을 잃은 실패. 서버는 끊긴 연결의 열린 트랜잭션을 rollback하므로 아무것도 커밋되지 않았다.
+/// 같은 키로 다시 보내도 안전하다.
+pub fn lost_before_commit() -> Reject {
+    Reject { code: "WIRE.DB_UNAVAILABLE", msg: "DB 연결을 잃음. 커밋되지 않았음".into() }
+}
+
+/// COMMIT 전 단계에서 쓰기 엔진이 오류 원본을 지우고 돌려준 거절이, 연결이 이미 닫힌 뒤의 것이라면 내부 오류가 아니라 연결 끊김이다.
+pub fn before_commit_rejection(tx: &Transaction<'_>, reject: Reject) -> Reject {
+    if reject.code == "WIRE.INTERNAL" && tx.client().is_closed() {
+        lost_before_commit()
+    } else {
+        reject
+    }
+}
+
+/// COMMIT 한 번의 실패를 보낸 시점 기준으로 나눈 것. 모든 COMMIT 경로가 이 분류를 같이 쓴다.
+#[derive(Debug)]
+pub enum CommitFailure {
+    /// COMMIT이 나가지 못했다(이미 닫힌 연결). 서버는 열린 트랜잭션을 rollback하므로 커밋되지 않았고 다시 보내도 안전하다.
+    NotSent,
+    /// COMMIT을 보낸 뒤 연결이 끊기거나 응답을 해석할 수 없다. 서버가 커밋했는지 이 연결로는 알 수 없다.
+    Unknown,
+    /// 서버가 SQLSTATE와 함께 거절했다(제약 위반·직렬화 실패·교착). rollback이 확정이라 호출 경로의 기존 분류를 따른다.
+    Rejected(tokio_postgres::Error),
+}
+
+impl CommitFailure {
+    pub fn into_reject(self) -> Reject {
+        match self {
+            CommitFailure::NotSent => lost_before_commit(),
+            CommitFailure::Unknown => Reject { code: "WIRE.COMMIT_UNKNOWN", msg: "커밋 응답을 받지 못함. 상태 조회 필요".into() },
+            CommitFailure::Rejected(e) => write_err("커밋", e),
+        }
+    }
+}
+
+/// COMMIT을 한 번 보내고 결과를 분류한다. `on_send`는 COMMIT을 실제로 보내기 직전에 한 번 불린다(결과 불명 표지를 올리는 자리).
+/// 연결이 이미 닫혔으면 `on_send`를 부르지 않는다. 보냈다고 표시하면 커밋되지 않은 쓰기가 결과 불명으로 보고된다.
+pub async fn send_commit(tx: Transaction<'_>, on_send: impl FnOnce()) -> Result<(), CommitFailure> {
+    if tx.client().is_closed() {
+        return Err(CommitFailure::NotSent);
+    }
+    on_send();
+    match tx.commit().await {
+        Ok(()) => Ok(()),
+        Err(e) if connection_failed(&e) => Err(CommitFailure::Unknown),
+        Err(e) => Err(CommitFailure::Rejected(e)),
+    }
 }
 
 fn write_err(stage: &str, e: tokio_postgres::Error) -> Reject {
@@ -964,11 +1026,19 @@ pub fn compose_needs_serializable(facts: &Value, req: &Value) -> bool {
     req["compose"].as_str().is_some_and(|res| is_serializable(&facts["resources"][res]["exposeCompose"]["isolation"]))
 }
 
+fn begin_failure(e: tokio_postgres::Error) -> Reject {
+    if connection_failed(&e) {
+        lost_before_commit()
+    } else {
+        internal(e)
+    }
+}
+
 async fn begin<'a>(db: &'a mut Client, serializable: bool) -> Result<Transaction<'a>, Reject> {
-    let tx = db.transaction().await.map_err(internal)?;
+    let tx = db.transaction().await.map_err(begin_failure)?;
     tx.batch_execute(&format!("{}; SET LOCAL statement_timeout = '{WRITE_DEADLINE_MS}ms'; SET LOCAL TimeZone = 'UTC'", isolation_sql(serializable)))
         .await
-        .map_err(internal)?;
+        .map_err(begin_failure)?;
     Ok(tx)
 }
 
@@ -1055,8 +1125,8 @@ async fn apply_inner(
 ) -> Result<Applied, Reject> {
     let o = req.as_object().ok_or(bad("요청은 객체"))?;
     let tx = begin(db, serializable).await?;
-    let a = apply_op(&tx, facts, o, caller, knobs, IdWire::Legacy).await?;
-    run_checks(&tx, facts, caller, knobs).await?;
+    let a = apply_op(&tx, facts, o, caller, knobs, IdWire::Legacy).await.map_err(|e| before_commit_rejection(&tx, e))?;
+    run_checks(&tx, facts, caller, knobs).await.map_err(|e| before_commit_rejection(&tx, e))?;
     commit(tx, &ctl, knobs).await?;
     Ok(a)
 }
@@ -1120,8 +1190,8 @@ async fn bundle_once(
 ) -> Result<BundleResult, Reject> {
     let ops = bundle_ops(req)?;
     let tx = begin(db, serializable).await?;
-    let out = bundle_run(&tx, facts, ops, caller, knobs, IdWire::Legacy).await?;
-    run_checks(&tx, facts, caller, knobs).await?;
+    let out = bundle_run(&tx, facts, ops, caller, knobs, IdWire::Legacy).await.map_err(|e| before_commit_rejection(&tx, e))?;
+    run_checks(&tx, facts, caller, knobs).await.map_err(|e| before_commit_rejection(&tx, e))?;
     commit(tx, &ctl, knobs).await?;
     Ok(out)
 }
@@ -1341,8 +1411,8 @@ async fn compose_once(
 ) -> Result<BundleResult, Reject> {
     let plan = compose_plan(facts, req, IdWire::Legacy)?;
     let tx = begin(&mut *db, serializable).await?;
-    let out = compose_exec(&tx, facts, &plan, caller, knobs, IdWire::Legacy).await?;
-    run_checks(&tx, facts, caller, knobs).await?;
+    let out = compose_exec(&tx, facts, &plan, caller, knobs, IdWire::Legacy).await.map_err(|e| before_commit_rejection(&tx, e))?;
+    run_checks(&tx, facts, caller, knobs).await.map_err(|e| before_commit_rejection(&tx, e))?;
     commit(tx, &ctl, knobs).await?;
     Ok(out)
 }

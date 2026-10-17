@@ -21,6 +21,28 @@ const HEARTBEAT_OUTAGE_TOLERANCE: Duration = Duration::from_secs(12);
 fn db_error<T>(_: T) -> &'static str {
     "WIRE.DB_UNAVAILABLE"
 }
+/// 쓰기 요청(job 접수·파일·메시지)의 COMMIT 한 번. 이 요청의 결과는 호출자에게 그대로 간다.
+/// COMMIT이 나가지 못했으면 커밋된 것이 없어 DB_UNAVAILABLE이다. 보낸 뒤의 연결 끊김·해석 불가 응답은 COMMIT_UNKNOWN이다.
+/// 서버가 SQLSTATE와 함께 거절한 COMMIT도 기존대로 COMMIT_UNKNOWN으로 낸다(보수적. 넓히지도 좁히지도 않았다).
+async fn commit_request(tx: tokio_postgres::Transaction<'_>) -> Result<()> {
+    use spike_v3_write::CommitFailure;
+    match spike_v3_write::send_commit(tx, || ()).await {
+        Ok(()) => Ok(()),
+        Err(CommitFailure::NotSent) => Err("WIRE.DB_UNAVAILABLE"),
+        Err(CommitFailure::Unknown | CommitFailure::Rejected(_)) => Err("WIRE.COMMIT_UNKNOWN"),
+    }
+}
+/// managed effect(데이터 apply·파일·이벤트·메시지)가 journal과 함께 커밋하는 COMMIT 한 번.
+/// COMMIT을 보낸 뒤 연결이 끊기거나 응답을 해석할 수 없으면 쓰기가 커밋됐을 수 있다. 확장 오류로 뭉개지 않고 COMMIT_UNKNOWN으로 낸다.
+/// COMMIT이 나가지 못했거나 서버가 거절한 경우는 기존대로 DB_UNAVAILABLE이다.
+async fn commit_effect(tx: tokio_postgres::Transaction<'_>) -> Result<()> {
+    use spike_v3_write::CommitFailure;
+    match spike_v3_write::send_commit(tx, || ()).await {
+        Ok(()) => Ok(()),
+        Err(CommitFailure::Unknown) => Err("WIRE.COMMIT_UNKNOWN"),
+        Err(CommitFailure::NotSent | CommitFailure::Rejected(_)) => Err("WIRE.DB_UNAVAILABLE"),
+    }
+}
 fn step_error(code: &str) -> &'static str {
     match code {
         "WIRE.ACCESS_NOT_DECLARED" => "WIRE.ACCESS_NOT_DECLARED",
@@ -443,7 +465,7 @@ async fn submit_as_service_marked(
         .await
         .map_err(db_error)?;
     }
-    tx.commit().await.map_err(|_| "WIRE.COMMIT_UNKNOWN")?;
+    commit_request(tx).await?;
     db.release().await.map_err(db_error)?;
     Ok(run)
 }
@@ -787,7 +809,7 @@ pub(crate) async fn handle(db: &mut Client, rt: &Runtime, facts: &Value, wire: I
             path if path.starts_with("/messages/") => crate::messaging_transport::handle(&tx, rt, facts, s, &owner, path, body).await?,
             _ => return Err("WIRE.NOT_FOUND"),
         };
-        tx.commit().await.map_err(|_| "WIRE.COMMIT_UNKNOWN")?;
+        commit_request(tx).await?;
         Ok(response)
     };
     match tokio::time::timeout(Duration::from_secs(5), operation).await {
@@ -1510,7 +1532,7 @@ impl Host {
         )
         .await
         .map_err(db_error)?;
-        tx.commit().await.map_err(db_error)?;
+        commit_effect(tx).await?;
         db.release().await.map_err(db_error)?;
         if op == "apply" {
             self.rt.infrastructure.data_changes.notify();
@@ -1573,6 +1595,45 @@ async fn data_read(db: &mut Client, facts: &Value, op: &str, name: &str, input: 
 #[cfg(test)]
 mod safety_tests {
     use super::*;
+
+    /// 서버가 끝낸 backend의 연결로 열린 트랜잭션을 돌려준다. 클라이언트가 닫힘을 알아챈 뒤에만 돌려주므로 COMMIT은 나갈 수 없다.
+    async fn transaction_on_a_terminated_backend(victim: &mut tokio_postgres::Client) -> tokio_postgres::Transaction<'_> {
+        let control = spike_v2_read::connect_owned_with_url(aip_test_support::test_database_url!()).await.unwrap();
+        let tx = victim.transaction().await.unwrap();
+        let pid: i32 = tx.query_one("SELECT pg_backend_pid()", &[]).await.unwrap().get(0);
+        control.execute("SELECT pg_terminate_backend($1)", &[&pid]).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !tx.client().is_closed() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("client must notice that its backend was terminated");
+        tx
+    }
+
+    /// 이미 닫힌 연결에는 COMMIT이 나가지 못한다. 서버는 끊긴 연결의 열린 트랜잭션을 rollback하므로 결과가 불확실하지 않다.
+    #[tokio::test]
+    async fn commit_request_on_an_already_closed_connection_is_db_unavailable() {
+        let mut victim = spike_v2_read::connect_owned_with_url(aip_test_support::test_database_url!()).await.unwrap();
+        let tx = transaction_on_a_terminated_backend(&mut victim).await;
+        assert_eq!(commit_request(tx).await, Err("WIRE.DB_UNAVAILABLE"), "COMMIT never left the client, so the outcome is known");
+    }
+
+    #[tokio::test]
+    async fn commit_effect_on_an_already_closed_connection_is_db_unavailable() {
+        let mut victim = spike_v2_read::connect_owned_with_url(aip_test_support::test_database_url!()).await.unwrap();
+        let tx = transaction_on_a_terminated_backend(&mut victim).await;
+        assert_eq!(commit_effect(tx).await, Err("WIRE.DB_UNAVAILABLE"), "COMMIT never left the client, so a job retry is safe");
+    }
+
+    #[tokio::test]
+    async fn commit_request_that_succeeds_is_ok() {
+        let mut db = spike_v2_read::connect_owned_with_url(aip_test_support::test_database_url!()).await.unwrap();
+        let tx = db.transaction().await.unwrap();
+        tx.batch_execute("SELECT 1").await.unwrap();
+        assert_eq!(commit_request(tx).await, Ok(()));
+    }
 
     #[test]
     fn message_gc_requires_enabled_infrastructure_and_declared_access() {

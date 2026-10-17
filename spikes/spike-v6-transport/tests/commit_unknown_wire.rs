@@ -48,6 +48,8 @@ enum Fault {
     AckDropFin,
     /// 같은 시점에 RST로 끊는다.
     AckDropReset,
+    /// 트랜잭션 시작(START TRANSACTION)이 서버에서 끝난 직후 응답을 막고 닫는다. 문장은 하나도 보내지지 않았다.
+    CutAtBegin,
     /// 전이의 UPDATE가 서버에서 끝난 직후 응답을 막고 닫는다. COMMIT은 아직 보내지지 않았다.
     CutAfterUpdate,
     /// 멱등 기록 INSERT가 서버에서 끝난 직후 응답을 막고 닫는다. COMMIT 바로 앞이며 COMMIT은 보내지지 않았다.
@@ -202,6 +204,12 @@ async fn proxy_connection(caller: TcpStream, backend_address: SocketAddr, state:
                 } else {
                     let _ = caller_write.shutdown().await;
                 }
+                return;
+            }
+            Fault::CutAtBegin if command_complete && body.starts_with(b"START TRANSACTION") && state.take() => {
+                state.fire("CommandComplete(START TRANSACTION) observed from owned PostgreSQL; response withheld before any statement").await;
+                front.abort();
+                let _ = caller_write.shutdown().await;
                 return;
             }
             Fault::CutAfterUpdate if command_complete && body.starts_with(b"UPDATE") && state.take() => {
@@ -406,6 +414,11 @@ async fn assert_cut_before_commit_is_safe_to_retry(fault: Fault) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn disconnect_while_beginning_the_transaction_is_a_safe_retry() {
+    assert_cut_before_commit_is_safe_to_retry(Fault::CutAtBegin).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn disconnect_after_update_before_commit_is_a_safe_retry() {
     assert_cut_before_commit_is_safe_to_retry(Fault::CutAfterUpdate).await;
 }
@@ -505,9 +518,9 @@ async fn definite_commit_rejections_are_not_widened_to_commit_unknown() {
 async fn connection_failure_predicate_ignores_server_and_local_errors() {
     let db = connect_owned_with_url(DATABASE).await.expect("connect to run-owned PostgreSQL only");
     let to_sql = db.query_one("SELECT $1::int4", &[&"not an integer"]).await.expect_err("a text parameter cannot be encoded as int4");
-    assert!(!spike_v6_transport::connection_failed(&to_sql), "parameter serialization failure is a local error: {to_sql}");
+    assert!(!spike_v3_write::connection_failed(&to_sql), "parameter serialization failure is a local error: {to_sql}");
     let division = db.query_one("SELECT 1/0", &[]).await.expect_err("division by zero");
-    assert!(!spike_v6_transport::connection_failed(&division), "server error whose SQLSTATE means rollback: {division}");
+    assert!(!spike_v3_write::connection_failed(&division), "server error whose SQLSTATE means rollback: {division}");
     let syntax = db.batch_execute("SELECT 1 WHERE").await.expect_err("syntax error");
-    assert!(!spike_v6_transport::connection_failed(&syntax), "syntax error: {syntax}");
+    assert!(!spike_v3_write::connection_failed(&syntax), "syntax error: {syntax}");
 }

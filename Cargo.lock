@@ -260,6 +260,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "aip-test-fault-proxy"
+version = "0.1.0"
+dependencies = [
+ "aip-test-support",
+ "tokio",
+]
+
+[[package]]
 name = "aip-test-support"
 version = "0.1.0"
 dependencies = [

@@ -19,6 +19,7 @@ spike-v3-write = { path = "../spike-v3-write" }
 
 [dev-dependencies]
 aip-test-support = { path = "../../crates/aip-test-support", features = ["strict-db"] }
+aip-test-fault-proxy = { path = "../../crates/aip-test-fault-proxy" }
 
 # 전체 DWARF 대신 줄 정보만 남겨 target 용량을 줄인다.
 [profile.dev]
