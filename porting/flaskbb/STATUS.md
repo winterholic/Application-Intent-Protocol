@@ -7,6 +7,16 @@
 - 전체 의미 기능 분모는 [INVENTORY.md](INVENTORY.md)에 잠근다. URL/endpoint/table 수는 별도 커버리지 축이며 기능 수로 합산하지 않는다.
 - 기획의 독립 완료·출시 판정은 이 작업 이후 별도로 요구된다. 현재 전체 포팅·기능 동등성·배포 준비 완료가 아니다.
 
+## 2026-10-17 현재 Run — provisioning working-contract 권고 수신 (미검증)
+
+신규 주체 계약 검토 worker `8c214290-f8de-4bb0-89b0-706ed0f1796c`의 [권고문](/Users/winterholic/.ttakkari/data/outbox/973ae930-8d38-46fa-af0a-8266b89f086d/flaskbb-provisioning-contract-recommendation.md)을 읽었다. 이는 코드 수정·실행이 없었던 설계 권고다. 이번 포팅의 **임시 working contract**로 제시한 방향은 `auth.provisioning.enabled=false` 기본값의 server-configured core provisioning, 검증 완료된 `(iss, sub)`로만 `POST /session`에서 신규 주체를 만들고 같은 DB transaction에서 app `User`, principal mapping, 서버 지정 초기 Member 관계를 생성하는 것이다. pre-auth extension, client 제공 actor/role 신뢰, email/username 일치에 의한 자동 병합, disabled/revoked subject의 재생성은 배제한다. 다른 API 경로에서 provisioning 부작용을 일으키지 않는다.
+
+**상태는 계속 OPEN**이며 이 working contract는 Accepted/product-wide DSL 결정이 아니다. 추천 문서 자체도 `미실행`이라고 명시한다. 제안의 `activated=true`는 verified-email claim과 기존 FlaskBB의 가입→메일 activation→비활성/활성 전이의 동등성 검증 전에는 채택 사실이나 원본 parity로 기록하지 않는다. issuer access token에 username/email/email_verified가 실제 포함되는지와 trust/allowlist 조건도 아직 검증되지 않았다. AIP 전역 기본 Group을 새로 고정하지 않고, 이 앱 배포의 서버 설정이 명시한 Group에만 적용한다.
+
+권고 §3.3의 `U&'\0000'` advisory-lock separator는 복사하지 않는다. PostgreSQL text가 NUL을 담을 수 없는 SQL 입력 경계이므로 해당 예시는 실행 SQL로 검증되지 않았다. 구현 전 deployment schema + issuer + subject의 **모호하지 않은 tuple serialization을 hash 입력에 쓰는 방법**, schema scope 및 lock-key hash 충돌이 correctness에 미치는 영향(정확성은 PK/unique constraint가 보장하고 충돌은 불필요 직렬화만 유발해야 함)을 따로 확정한다. NUL 삽입을 위한 escape/bypass는 하지 않는다.
+
+이번 기록은 권고의 범위·미검증 사항을 반영한 것이며 provisioning 코드/DDL이나 테스트를 추가하지 않았다. detached nbf verifier와 auth code가 겹치지 않게 유지한다. 독립 검증이 끝난 뒤에도 claim source, Member Group app config, uniqueness, stale/revoked 보호, concurrency/rollback 및 이메일 activation 의미를 격리 통합시험으로 닫기 전에는 provisioning 동작이나 전체 F02 완료를 주장하지 않는다. Browser `ERR_CERT_AUTHORITY_INVALID` 및 F01–F17 분모도 그대로 유지한다.
+
 ## 2026-10-17 현재 Run — forum 렌더 권한 및 실제 AIP SDK/DB 통합
 
 원본 `layout.html`, `forum/index.html`, `forum/category_layout.html`, `forum/forum.html`, `forum/topic.html`, `forum/new_topic.html`, `forum/forms.py`, `forum/views.py`를 대조했다. 현재 adapted renderer에서 보존된 항목은 Aurora 정적 자원과 FlaskBB class 구조, 카테고리/포럼 제목·설명·잠금 표시, 주제 제목·작성자·게시물 수·날짜, 게시글 본문, 원본의 필수 제목/본문 검사, AIP contract의 제목 255자 상한, 로그인 회원의 CSRF 폼이다. upstream 권한 경계에 맞춰 로그인·활성 AIP actor, 포럼 읽기 접근, locked/hidden 상태, primary/additional group 권한과 moderator 관계를 조회해 새 주제/답글 폼을 노출하고, 실제 mutation 인가는 계속 AIP 서버가 최종 결정한다.
@@ -29,11 +39,11 @@ F01–F17, 새 IdP 주체 provisioning A/B 계약, 원본 business backend 중�
 
 현재 계약 대조 결과, 신규 가입→AIP 회원/principal 연결은 현 제품 경로에 맞춰 배선할 수 있는 작은 UI 변경이 아니다. `product/EXECUTION.md`의 신원 절은 `service principal bind`를 명시적 운영 작업으로 한정하고, `product/OPERATIONS.md`는 앱 사용자 actor가 먼저 존재해야 한다고 규정한다. 실제 서버는 `/session` 전에 토큰을 검증한 뒤 `(issuer, subject)`의 활성 principal mapping을 조회한다. `porting/flaskbb/app.aip`의 `User`는 actor resource이고 read만 노출한다. renderer의 callback은 official SDK `discover()`를 호출하며 연결 없는 subject를 거절한다. 즉 등록 뒤 SDK/운영 CLI를 이용하거나 원본 FlaskBB DB를 우회하면 기존 계약을 깨거나 금지된 업무-backend bridge가 된다.
 
-따라서 core 선언형 provisioning 계약(검증된 IdP 주체 + 서버가 정한 신규 actor/User 기본값 + principal mapping을 제한된 opt-in 정책 아래 원자적으로 생성)은 새 인증/저장 제품 계약이다. 기존 요청 중 자동등록 금지, 재배정·활성화 불가 정책과 맞물리므로 구현 전 계약·정책 선택 및 음성/동시성 회귀 범위를 확정해야 한다. 대안은 인증된 actor의 extension hook을 새로 설계하는 것이지만 현재 hook 계약에는 unauthenticated subject를 처리할 권한이 없으며 core 트랜잭션 경계를 확장한다. 앱 proxy/직접 SQL/운영 bind 자동 호출은 기존 제품 정책을 우회하므로 제외한다. 이 OPEN 항목은 승인·구현으로 간주하지 않는다. F02 원본 대비 차이(비밀번호/login·가입/activation/reset의 IdP 위임, local-only logout)는 동등성 gate에 계속 남는다.
+신규 worker 권고는 이 core provisioning을 이번 FlaskBB 포팅의 임시 working contract로 제안하고, 기본 OFF 및 POST /session 전용으로 좁혔다. 권고는 인증 전 extension hook을 기각하며 app proxy/직접 SQL/운영 bind 자동 호출도 제외한다. 다만 이는 제품 OPEN을 해결하거나 사용자 승인으로 확정한 것이 아니고 구현/실행 증거도 없다. auth code의 별도 nbf 검증이 끝나기 전 provisioning/auth 구현은 보류한다. 나중에 구현하더라도 opt-in 서버 설정, 검증된 issuer/subject, single transaction, server-fixed app group/default, no email/username auto-merge, disabled/revoked subject no-recreation, concurrency/rollback tests를 이 권고 범위에서 검증해야 한다. F02 원본 대비 차이(비밀번호/login·가입/activation/reset의 IdP 위임, local-only logout)는 동등성 gate에 계속 남는다.
 
 이번 새 컨텍스트에서 `docker ps --format ...`으로 전용 baseline FlaskBB·Keycloak·Mailpit·두 PostgreSQL 컨테이너가 실행 중임을 확인했다. `curl` 기준 원본 FlaskBB `127.0.0.1:58080/`은 HTTP 200, 당시 renderer `:58082`와 AIP `:58083/health`는 `curl (7) Couldn't connect`였다. 기존 격리 venv와 test-only random session secret으로 renderer를 `127.0.0.1:58082`에 기동하고 configured `ttakkari_browser`로 열어 `Login - FlaskBB` 및 `Continue to login`, IdP 가입 링크, 원본 CSS/font 로드(200)를 확인한 뒤 브라우저를 닫고 호스트를 중지했다. `favicon.ico` 404가 browser console의 유일한 error였다. 등록 링크를 따라 Keycloak에 접근하거나 callback/SDK/AIP 요청은 실행하지 않았다. UI screenshot/snapshot: Run outbox `browser/page-2026-10-17T01-13-03-784Z.yml`. 상세 환경·명령은 [검증 로그](evidence/verification.log)에 기록했다.
 
-진행 판정: 이 단계에서 실제 새 가입→principal 연결, authenticated SDK 조회/주제 작성, logout/denial 흐름은 아직 성립하지 않는다. 그 계약 결정을 기다리는 동안에도 F01/F05 AIP UI의 upstream 템플릿·폼 의미와 검증 가능한 배선은 계속 진행한다. F01–F17 v0.1 scope, 전체 backend 중단 gate, clean deployment gate 및 기존/비활성/revoked principal 보호는 그대로다.
+진행 판정: 이 기준선 실행에서는 새 가입→principal 연결, authenticated browser UI 흐름, logout/denial을 확인하지 않았다. 이후 reasoning worker가 default-OFF `/session` provisioning을 포팅 working proposal로 권고했지만 제품 OPEN은 유지한다. 독립 nbf verifier의 auth edit boundary가 정리될 때까지 provisioning/auth 구현을 보류하고, 그동안 F01/F05 AIP UI와 전체 포팅을 진전한다. F01–F17 v0.1 scope, 전체 backend 중단 gate, clean deployment gate 및 기존/비활성/revoked principal 보호는 그대로다.
 
 ## 2026-10-17 현재 Run — 원본 인증 UI 재관측과 AIP 가입 경계 결정 필요
 
@@ -45,11 +55,11 @@ F01–F17, 새 IdP 주체 provisioning A/B 계약, 원본 business backend 중�
 
 **최소 제품안(권고, 아직 미승인·미구현):** AIP core에 선언형, 원자적 principal-provisioning 경로를 추가한다. AIP가 먼저 JWT 서명·issuer·audience·수명·subject를 검증한 뒤 `(iss, sub)`만으로 서버가 actor ID를 발급하고, 앱이 선언한 `User` actor resource row와 principal mapping을 한 DB transaction에서 생성한다. role/group·`activated` 기본값은 서버 선언에 고정하고, 요청자는 actor ID나 role을 지정할 수 없다. 이름/email claim mapping은 allowlist된 claim만 사용하고 uniqueness·IdP email verified/activation 조건을 실패폐쇄로 검사한다. 같은 주체의 재시도는 멱등, 동시 가입은 한 연결만 성공, 중복 email/username 및 잘못된 claim은 행/바인딩 불변이어야 한다. activation/reset은 사용자가 설정한 IdP/메일 공급자에서 실제 token 효과를 검증한 후 이 경로와 연결한다.
 
-**결정할 대안:** (A) 위 core declarative provisioning contract — principal, actor row, 앱 정책이 한 transaction/검증 경로에 있어 재사용과 권한 경계를 core가 보장. (B) 인증 이전 extension hook — 현재 extension은 인증된 actor의 작업 경로로 설명돼 있어 unauthenticated subject의 identity·row를 결합할 수 있는 계약부터 설계해야 하고, core transaction/policy 보장을 hook에 노출하는 폭이 더 크다. 앱 전용 proxy가 운영자 bind나 SQL로 우회하는 방안은 채택할 수 없다. 사용자/기획의 선택 전까지 이 항목은 `OPEN`으로 두고, 열린 결정을 승인된 것으로 기록하지 않는다.
+**현재 권고 (포팅 working proposal, OPEN):** reasoning worker는 (A) 좁은 server-configured core provisioning을 권고하고 (B) pre-auth extension hook을 기각했다. 설정 기본값 OFF, 검증된 `(iss, sub)`만 `POST /session`에서 생성, User+principal+앱 설정 초기 Group을 단일 transaction으로 다룬다. client actor/role과 email 동일성 자동 병합은 신뢰하지 않으며 disabled/revoked 주체는 재생성하지 않는다. 이는 현재 포팅 구현을 구체화하는 권고이지 사용자 Accepted/product-wide DSL 결정이 아니다. 앱 전용 proxy/ORM/direct SQL/operator bind 자동 호출은 제외한다.
 
 **이번 Run에서 실행되지 않은 것:** 브라우저 authorization-code/PKCE, FlaskBB 화면의 AIP SDK 요청, AIP DB 행 변경, 새 IdP 가입→AIP actor 연결, 로그인 이후 forum 목록/주제 CRUD, 로그아웃/거부. 현재 command environment에서 `curl http://127.0.0.1:58083/health`는 `curl: (7) Couldn't connect`로 끝났다. 이 관측은 macOS command environment에서 해당 시각 AIP listener에 연결되지 않았다는 뜻뿐이며 AIP/production 장애 판정이 아니다. 원본 UI는 port `58080`에서 응답했다. 자세한 command 범위는 `evidence/verification.log` 마지막 항목.
 
-**다음 진척:** 결정 전에도 고정 원본 auth source/runtime의 누락 edge와 기존 AIP Forum/Topic/Post read/apply를 실제 renderer와 연결하는 UI host 골격은 진행할 수 있다. 다만 signup 완료/인증된 새 사용자 경로 또는 UI→AIP 성공을 선언할 수는 없다. 큰 인증 계약 결정은 위 대안과 함께 기획으로 올린다. F01–F17 분모, 전체 앱 backend 중단 gate, 삭제/tombstone 및 tracker 의미 차이는 그대로 유지한다.
+**다음 진척:** auth code는 detached nbf verification이 진행되는 동안 수정하지 않는다. edit boundary가 끝나면 worker 권고를 per-port working proposal로 구현하되 제품 OPEN을 유지하고, default-off/session-only, verified claim source, uniqueness/no-merge, disabled/min_iat, concurrency/rollback, schema isolation을 실제 격리 DB에서 증명한다. `activated=true`는 verified-email와 원본 activation workflow parity 확인 전 제안에 머문다. 독립적으로 upstream UI parity 및 Forum/Topic/Post renderer를 계속한다. F01–F17 분모, 전체 앱 backend 중단 gate, 삭제/tombstone 및 tracker 의미 차이는 그대로 유지한다.
 
 ## 2026-10-17 현재 Run — OIDC/AIP renderer 첫 증분 (E2E 차단)
 
