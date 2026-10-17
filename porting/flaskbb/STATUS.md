@@ -36,9 +36,12 @@ PATH=/opt/flaskbb-venv/bin:$PATH flaskbb --config /runtime/flaskbb.cfg run --hos
 - 원본 고정/출처 검토: 수행. 정확한 저자·시점 이력은 선정 기록 참고; 100% human-authorship 증명은 불가.
 - 원본 전체 앱 설치/기동/초기 UI 기준선: 확인. 메일 전달·모든 UI 및 업무흐름은 미검증.
 - route·endpoint 및 DB 구조 수집: 확인. [INVENTORY](INVENTORY.md)의 업무 의미 매핑은 진행 중이며 분모 변경은 source 근거와 함께 기록.
-- AIP 현재 구현: `app.aip`에 사용자/그룹/카테고리/포럼/포럼 접근관계/주제/게시물의 읽기 모델과 그룹 ACL이 있다. `aip service check`, `service init`, principal bind, 실제 JWT 인증된 service, 실제 생성된 SDK의 `read` 요청으로 공개 게스트 포럼과 멤버 전용 포럼, 숨김 주제/게시물 권한을 독립 PG에서 시험했다. 복합 사용자-그룹 링크 중복도 DB에서 거부됨을 확인. 이 UI/API slice는 계속 확장 중이며 원래 FlaskBB UI는 아직 AIP SDK에 연결하지 않았다.
+- AIP 현재 구현: upstream 19 도메인 자원을 모두 목록화해 선언을 시작했지만, resource별 의미 보존 변환과 CRUD/정책 검증은 초기다. Topic/Post는 부모·자식 atomic create를 위해 AIP UUID Id를 쓰고 `published`/`version` 구현 상태를 추가했다. Forum/User/Topic 저장 카운터는 AIP aggregate에서 role-visible rows를 세며 ForumPost에는 Forum Ref를 명시한다. Forum `last_post*` 및 Topic first/last-post의 최신화·화면 projection은 아직 미완료. AIP resource 수나 row-read 일부 통과를 전체 데이터 구조 이식으로 부르지 않는다.
+- F05 실제 AIP workflows: 생성 SDK의 한 bundle에서 UUID Topic → UUID Post → Post.publish → Topic.publish 실행. AIP가 `now`로 날짜를 찍고, username snapshot과 Post.forum 연결은 server allow/check가 검증한다. 답글은 Post.create → Post.publish → Topic.bump 원자 bundle, 수정은 `expect version` 조건과 server date_modified/modified_by로 처리. 통합시험은 readonly 역할의 Topic/Post create 및 타인 Post edit 거부, late-step failure rollback, idempotency replay, stale version conflict, guest/member별 Forum count 및 member post count를 실제 PostgreSQL state와 함께 검사했다. Source UI 흐름은 직접 연결되지 않았고 화면 전체 기능도 미구현이다.
+- 최신 AIP regression: `node --test porting/flaskbb/tests/contract.test.mjs porting/flaskbb/tests/aip-read.test.mjs` → 2 passed, 0 failed (2026-10-17; isolated PostgreSQL 14.18 `aip_flaskbb`, dynamic schema, actual AIP server/SDK). latest schema `aip_flaskbb_b42fc63f0b`, facts digest `fa91530b8d8b066511ba828dbd3f72c9f1c924dd1bd2f9693604e5e07e99cf38`; complete command/output/current source hashes in `evidence/verification.log`. Delete/hide/moderation, last-post projection, full original parity, original frontend transport, migration/restart and clean deployment remain untested.
 - AIP 전체 resource/read/apply/extension/인가와 원래 UI SDK 연결: 미완료.
-- 전체 권한별 흐름, 상태 불변, 재시작 보존, 원본 backend 차단, 원본 대조: 미실행.
+- 전체 권한별 흐름/재시작 보존/원본 대조: 미실행. 한 쓰기 흐름의 거부 후 불변, bundle rollback, idempotent replay는 해당 vertical slice에서 확인.
+- 원본 UI의 AIP SDK 연결과 원본 업무 backend 중단 gate: 미실행.
 - clean checkout install/build/deployment/health/config/TLS 게이트: 미실행.
 - 실제 SMTP/OIDC 계정 또는 공개 운영 배포: 수행하지 않음. 인증 흐름의 통합 설계는 제품 갭/결정 필요로 열어 둔다.
 

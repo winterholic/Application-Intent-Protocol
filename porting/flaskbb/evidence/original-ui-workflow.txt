@@ -1,0 +1,10 @@
+Original UI baseline test (isolated FlaskBB 2019 server at loopback :58080; configured ttakkari_browser MCP; synthetic admin test1/test)
+
+1. GET /auth/login -> 200, browser title `Login - FlaskBB`; form exposes username/email, password, remember-me, registration and password-reset links.
+2. Browser login test1 -> POST succeeds, redirected to `/`; UI displays authenticated inbox/profile/navigation.
+3. GET `/admin/` -> 200 after login; title `Overview - FlaskBB`.
+4. GET `/forum/1-test-forum-1-1`, then `/1-test-forum-1-1/topic/new` -> title `New Topic - FlaskBB`; form includes topic title, Markdown editor, track-topic checkbox and Post topic action.
+5. Browser submitted synthetic topic title `AIP baseline workflow fixture` and body `AIP baseline workflow fixture body.`. Server redirected to `/topic/5`. PostgreSQL showed topic 5 with one post; forum 1 topic_count advanced from 1 to 2 and post_count from 2 to 3.
+6. Browser submitted synthetic reply `AIP baseline workflow reply.` then edited post 10 to `AIP baseline workflow reply edited.`. PostgreSQL showed two posts, topic post_count 2, forum post_count 4, `date_modified` set, `modified_by=test1`.
+
+Current source baseline DB is therefore deliberately seeded fixture plus one test topic/two posts. Initial clean seed counts remain in `seed-counts.txt`. Never treat the added browser rows as original seed; use this explicit state only for mutation comparison or remove it with FlaskBB's own delete workflow before resetting the isolated DB. A route guess initially returned 404 because the forum view path is `/forum/<id>-<slug>` while new-topic uses `/<id>-<slug>/topic/new`; corrected route succeeded. No upstream code was edited.

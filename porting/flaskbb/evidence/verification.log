@@ -9,3 +9,28 @@
 ℹ skipped 0
 ℹ todo 0
 ℹ duration_ms 3927.061625
+
+--- 2026-10-17 rerun after latest upstream/main rebase and schema expansion ---
+Command: node --test porting/flaskbb/tests/contract.test.mjs porting/flaskbb/tests/aip-read.test.mjs
+Environment: OrbStack Linux runtime, isolated PostgreSQL 14.18 aip_flaskbb database at 127.0.0.1:55439; ephemeral JWT/JWKS fixture; actual aip server and generated SDK; schema cleanup in test finally.
+Output: 2 passed, 0 failed; duration 4219.4 ms.
+AIP integration result: {"schema":"aip_flaskbb_6f2b4c5f17","ddlDigest":"830f8a558177b9ed6883900df12418f30aa2e20b492aa10bb777b6c135e4fb0f","factsDigest":"711fbab725967581e7bd81cb36c3a9c6ed09e328ea2fc2a68de38ba622a0b54f","ok":true,"structureDigest":"5e7871f1367b161c1551d5e1b63d4e852323ecf901d2ade1449b662b882b2e9c","memberVisible":["Private fixture"],"guestVisible":["Public forum"],"duplicateLinkRejected":true}
+Scope limit: policy/read and resource schema regression only. No AIP writes, original UI integration, full workflow parity, or deployment gate.
+
+--- 2026-10-17 F05 new-topic create/publish workflow ---
+Branch: porting/flaskbb-full-2019; committed HEAD before this uncommitted increment: 3fd1e959fcfbba98ac1554bb3c93c97127c58cfe; upstream base: f10c8828cac9ff38ab1ec569ca1ca61396f25f5d.
+Command: node --test porting/flaskbb/tests/contract.test.mjs porting/flaskbb/tests/aip-read.test.mjs
+Environment: OrbStack Linux, isolated PostgreSQL 14.18 aip_flaskbb at 127.0.0.1:55439; disposable AIP schema aip_flaskbb_516d606a36; actual AIP server, local ephemeral JWT issuer, SDK built from current product tools. Test finally dropped the schema.
+Output: 2 passed, 0 failed; duration 4475.0 ms. AIP test: schema aip_flaskbb_516d606a36, ok:true, factsDigest=4bdb4b8955f5ac435928298fdff0793b9e89b2c616783c61d4974e9d02510733.
+Observed assertions: guest/member/readonly forum visibility; member create bundle creates UUID Topic + UUID Post and executes Post.publish + Topic.publish; actor-bound username and forum/group permission; denied readonly create returns WIRE.FORBIDDEN with no Topic count delta; late missing publish target returns WIRE.MISSING_TARGET and leaves both Topic/Post counts unchanged; successful rows have non-null server timestamps and published=true; same idempotency key returns replayed=true with identical created IDs; duplicate ForumGroupAccess pair rejected by DB.
+Current source SHA-256: app.aip ce566aaf0221886a70659bb942e0a598a1056d125f5ad239e63fc37a5a147977; tests/aip-read.test.mjs 099e75f8fad99b0a095b8cb3903dc16eaf6ccbc00b9214f6ce71fa6ec271d58c.
+Scope limit: this is one AIP mutation vertical slice. Original UI is still not wired to SDK; reply/edit/delete/moderation, counters/last-post projection, all other workflow parity, migration, restart and clean deployment remain open.
+
+--- 2026-10-17 extended F05 bundle/read aggregate regression ---
+Branch: porting/flaskbb-full-2019; committed HEAD at test time 3fd1e959fcfbba98ac1554bb3c93c97127c58cfe; origin/main base f10c8828cac9ff38ab1ec569ca1ca61396f25f5d.
+Command: node --test porting/flaskbb/tests/contract.test.mjs porting/flaskbb/tests/aip-read.test.mjs
+Environment: OrbStack Linux; dedicated PG14.18 aip_flaskbb database on loopback :55439; ephemeral schema aip_flaskbb_b42fc63f0b and local ephemeral RSA fixture issuer; actual AIP service and SDK; schema dropped in test finally.
+Output: 2 passed, 0 failed, duration 4790.5 ms. Integration start: {"schema":"aip_flaskbb_b42fc63f0b","ddlDigest":"d60104fe824a6462f506c3308b9e5575e9c5047eb0bb81982c64d1cf65b1e4ce","factsDigest":"fa91530b8d8b066511ba828dbd3f72c9f1c924dd1bd2f9693604e5e07e99cf38","ok":true,"structureDigest":"951da50cdcf2510d2e6267062b957ab8fb4ff50ffd3f333487d18a903e372128","memberVisible":["Private fixture"],"guestVisible":["Public forum"],"duplicateLinkRejected":true}
+Assertions include actual SDK atomic topic+first post and reply, publish and topic bump, author edit with version=0, stale version conflict leaves content unchanged, read-only user cannot create Topic/Post or edit another user's Post, rollback at a late missing target, idempotent replay, server timestamps, forum visible topic/post counts (member 2/3, guest 1/1), member visible post count 3, and duplicate forum/group link rejection.
+Current source SHA-256: app.aip c7d59efb14492cc72345d22fe870d57a783dfaed4579a735b2a16a87d8e6a2f1; tests/aip-read.test.mjs 17f5e545062564cc032ac29b05a900256fe3ef6ff4dad230611600b8283e4ed3.
+Remaining: original UI still points to original FlaskBB backend; first/last-post summary, hide/delete/moderation and full role/state/restart/deployment parity are not in this gate.

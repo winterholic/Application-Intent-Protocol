@@ -44,32 +44,39 @@ test('AIP server enforces forum group visibility and unique link relations with 
     assert.equal(init.ok, true);
     run(process.execPath, ['product/tools/build-sdk.mjs', '--out', sdkRoot]);
     const q = `"${schema}"`;
-    sql(`INSERT INTO ${q}."group" (id,name,guest,admin,super_mod,mod,banned,editpost,deletepost,deletetopic,posttopic,postreply,viewhidden,makehidden) VALUES
-      (1,'Guest',true,false,false,false,false,false,false,false,false,false,false,false),
-      (2,'Member',false,false,false,false,false,true,false,false,true,true,false,false);`);
-    sql(`INSERT INTO ${q}.user (id,username,primary_group_id,activated) VALUES (1,'guest-fixture',1,true),(2,'member-fixture',2,true);`);
+    sql(`INSERT INTO ${q}."group" (id,name,guest,admin,super_mod,mod,banned,editpost,deletepost,deletetopic,posttopic,postreply,viewhidden,makehidden,mod_edituser,mod_banuser,description) VALUES
+      (1,'Guest',true,false,false,false,false,false,false,false,false,false,false,false,false,false,NULL),
+      (2,'Member',false,false,false,false,false,true,false,false,true,true,false,false,false,false,NULL),
+      (3,'Administrator',false,true,false,false,false,true,true,true,true,true,true,true,true,true,NULL),
+      (4,'Read only',false,false,false,false,false,false,false,false,false,false,false,false,false,false,NULL);`);
+    sql(`INSERT INTO ${q}.user (id,username,email,date_joined,lastseen,birthday,gender,website,location,signature,avatar,notes,primary_group_id,activated,language,theme) VALUES
+      (1,'guest-fixture','guest@example.test',now(),now(),NULL,NULL,NULL,NULL,NULL,NULL,NULL,1,true,'en',NULL),
+      (2,'member-fixture','member@example.test',now(),now(),NULL,NULL,NULL,NULL,NULL,NULL,NULL,2,true,'en',NULL),
+      (3,'admin-fixture','admin@example.test',now(),now(),NULL,NULL,NULL,NULL,NULL,NULL,NULL,3,true,'en',NULL),
+      (4,'readonly-fixture','readonly@example.test',now(),now(),NULL,NULL,NULL,NULL,NULL,NULL,NULL,4,true,'en',NULL);`);
     sql(`INSERT INTO ${q}.category (id,title,description,position) VALUES (1,'General','Fixture',1);`);
-    sql(`INSERT INTO ${q}.forum (id,category_id,title,description,position,locked,external,post_count,topic_count) VALUES
-      (1,1,'Public forum','Visible to guest group',1,false,NULL,0,0),
-      (2,1,'Private fixture','Member group required',2,false,NULL,0,0);`);
-    sql(`INSERT INTO ${q}.topic (id,forum_id,title,user_id,username,date_created,last_updated,locked,important,views,post_count,hidden) VALUES
-      (1,1,'Public topic',1,'guest-fixture',now(),now(),false,false,2,1,false),
-      (2,2,'Private topic',2,'member-fixture',now(),now(),false,false,3,1,false),
-      (3,2,'Hidden topic',2,'member-fixture',now(),now(),false,false,0,1,true);`);
-    sql(`INSERT INTO ${q}.post (id,topic_id,user_id,username,content,date_created,hidden) VALUES
-      (1,1,1,'guest-fixture','Public post',now(),false),
-      (2,2,2,'member-fixture','Private post',now(),false),
-      (3,3,2,'member-fixture','Hidden post',now(),true);`);
-    sql(`UPDATE ${q}.topic SET first_post_id=id, last_post_id=id WHERE id IN (1,2,3);`);
-    sql(`INSERT INTO ${q}.forum_group_access (id,forum_id,group_id) VALUES (1,1,1),(2,2,2);`);
-    sql(`INSERT INTO ${q}.user_group (id,user_id,group_id) VALUES (1,1,1),(2,2,2);`);
-    const duplicate = spawnSync('psql', ['-X', '-v', 'ON_ERROR_STOP=1', '-d', dbUrl, '-c', `INSERT INTO ${q}.forum_group_access (id,forum_id,group_id) VALUES (3,2,2)`], {encoding: 'utf8', env});
+    sql(`INSERT INTO ${q}.forum (id,category_id,title,description,position,locked,external,show_moderators,last_post_id,last_post_user_id,last_post_title,last_post_username,last_post_created) VALUES
+      (1,1,'Public forum','Visible to guest group',1,false,NULL,false,NULL,NULL,NULL,NULL,NULL),
+      (2,1,'Private fixture','Member group required',2,false,NULL,false,NULL,NULL,NULL,NULL,NULL);`);
+    sql(`INSERT INTO ${q}.topic (id,forum_id,title,user_id,username,date_created,last_updated,locked,important,views,published,hidden) VALUES
+      ('00000000-0000-4000-8000-000000000001',1,'Public topic',1,'guest-fixture',now(),now(),false,false,2,true,false),
+      ('00000000-0000-4000-8000-000000000002',2,'Private topic',2,'member-fixture',now(),now(),false,false,3,true,false),
+      ('00000000-0000-4000-8000-000000000003',2,'Hidden topic',2,'member-fixture',now(),now(),false,false,0,true,true);`);
+    sql(`INSERT INTO ${q}.post (id,topic_id,forum_id,user_id,username,content,date_created,hidden,published,version) VALUES
+      ('00000000-0000-4000-8000-000000000011','00000000-0000-4000-8000-000000000001',1,1,'guest-fixture','Public post',now(),false,true,0),
+      ('00000000-0000-4000-8000-000000000012','00000000-0000-4000-8000-000000000002',2,2,'member-fixture','Private post',now(),false,true,0),
+      ('00000000-0000-4000-8000-000000000013','00000000-0000-4000-8000-000000000003',2,2,'member-fixture','Hidden post',now(),true,true,0);`);
+    sql(`INSERT INTO ${q}.forum_group_access (id,forum_id,group_id) VALUES (1,1,1),(2,2,2),(3,2,3),(4,2,4);`);
+    const duplicate = spawnSync('psql', ['-X', '-v', 'ON_ERROR_STOP=1', '-d', dbUrl, '-c', `INSERT INTO ${q}.forum_group_access (id,forum_id,group_id) VALUES (5,2,2)`], {encoding: 'utf8', env});
     assert.notEqual(duplicate.status, 0, 'duplicate forum/group access must be rejected');
     run(binary, ['service', 'principal', '--config', config, 'bind', '--subject', 'member-fixture', '--actor', '2']);
+    run(binary, ['service', 'principal', '--config', config, 'bind', '--subject', 'admin-fixture', '--actor', '3']);
+    run(binary, ['service', 'principal', '--config', config, 'bind', '--subject', 'readonly-fixture', '--actor', '4']);
     const generated = JSON.parse(run(binary, ['service', 'gen', file, '--out', bindingPath]));
     const bindingSource = readFileSync(bindingPath, 'utf8');
     const descriptors = JSON.parse(bindingSource.match(/export const readDescriptors = (.*) as const;/)[1]);
-    const contract = {fingerprint: generated.fingerprint, idWire: 'decimal-string-v13', extensions: {}, readDescriptors: descriptors};
+    const identityKinds = JSON.parse(bindingSource.match(/identityKinds: (.*), fingerprint:/)[1]);
+    const contract = {fingerprint: generated.fingerprint, idWire: 'decimal-string-v13', identityKinds, extensions: {}, readDescriptors: descriptors};
     server = spawn(binary, ['service', 'serve', file, '--config', config], {cwd: temp, env, stdio: ['ignore', 'pipe', 'pipe']});
     let stderr = '';
     server.stderr.on('data', data => {stderr += data;});
@@ -87,19 +94,88 @@ test('AIP server enforces forum group visibility and unique link relations with 
       return `${unsigned}.${sign('RSA-SHA256', Buffer.from(unsigned), privateKey).toString('base64url')}`;
     };
     const member = connect(`http://${started.address}`, token('member-fixture'), contract);
+    const admin = connect(`http://${started.address}`, token('admin-fixture'), contract);
+    const readOnly = connect(`http://${started.address}`, token('readonly-fixture'), contract);
     const guest = connect(`http://${started.address}`, null, contract);
     const query = {read: 'Forum', select: ['id', 'title', 'category'], sort: [{field: 'id', dir: 'asc'}], limit: 100};
     const memberRows = (await member.read(query)).rows;
     const guestRows = (await guest.read(query)).rows;
     assert.deepEqual(memberRows.map(row => row.title), ['Private fixture']);
     assert.deepEqual(guestRows.map(row => row.title), ['Public forum']);
-    const topicQuery = {read: 'Topic', select: ['id', 'title', 'forum', 'first_post'], sort: [{field: 'id', dir: 'asc'}], limit: 100};
-    const postQuery = {read: 'Post', select: ['id', 'topic', 'username', 'content'], sort: [{field: 'id', dir: 'asc'}], limit: 100};
+    const topicQuery = {read: 'Topic', select: ['id', 'title', 'forum', 'published'], sort: [{field: 'id', dir: 'asc'}], limit: 100};
+    const postQuery = {read: 'Post', select: ['id', 'topic', 'username', 'content', 'date_created', 'date_modified', 'modified_by', 'version'], sort: [{field: 'id', dir: 'asc'}], limit: 100};
     assert.deepEqual((await member.read(topicQuery)).rows.map(row => row.title), ['Private topic']);
     assert.deepEqual((await guest.read(topicQuery)).rows.map(row => row.title), ['Public topic']);
+    assert.deepEqual((await admin.read(topicQuery)).rows.map(row => row.title), ['Private topic', 'Hidden topic']);
     assert.deepEqual((await member.read(postQuery)).rows.map(row => row.content), ['Private post']);
     assert.deepEqual((await guest.read(postQuery)).rows.map(row => row.content), ['Public post']);
-    assert.equal(sql(`SELECT count(*) FROM ${q}.forum_group_access`), '2');
+    assert.deepEqual((await admin.read(postQuery)).rows.map(row => row.content), ['Private post', 'Hidden post']);
+    assert.equal(sql(`SELECT count(*) FROM ${q}.forum_group_access`), '4');
+    assert.deepEqual((await readOnly.read(query)).rows.map(row => row.title), ['Private fixture']);
+    const topicId = randomUUID();
+    const firstPostId = randomUUID();
+    const topicCreate = {create: 'Topic', values: {id: topicId, forum: '2', title: 'SDK-created topic', user: '2', username: 'member-fixture', locked: false, important: false, views: 0, published: false, hidden: false, hidden_at: null, hidden_by: null}};
+    const postCreate = {create: 'Post', values: {id: firstPostId, topic: topicId, forum: '2', user: '2', username: 'member-fixture', content: 'Initial body', hidden: false, published: false, version: 0}};
+    const rejectedTopicId = randomUUID();
+    const beforeDeniedCount = sql(`SELECT count(*) FROM ${q}.topic`);
+    const denied = await readOnly.bundle({atomic: [{create: 'Topic', values: {...topicCreate.values, id: rejectedTopicId, user: '4', username: 'readonly-fixture'}}]}, {key: `deny-topic-${rejectedTopicId}`});
+    assert.equal(denied.code, 'WIRE.FORBIDDEN', JSON.stringify(denied));
+    assert.equal(sql(`SELECT count(*) FROM ${q}.topic`), beforeDeniedCount, 'denied creation leaves all topic rows unchanged');
+    const rollbackTopicId = randomUUID();
+    const rollbackPostId = randomUUID();
+    const workflow = (topic, post) => [
+      {...topicCreate, values: {...topicCreate.values, id: topic}},
+      {...postCreate, values: {...postCreate.values, id: post, topic}},
+      {apply: 'Post.publish', target: {ids: [post]}},
+      {apply: 'Topic.publish', target: {ids: [topic]}},
+    ];
+    const beforeRollback = [sql(`SELECT count(*) FROM ${q}.topic`), sql(`SELECT count(*) FROM ${q}.post`)];
+    const rolledBack = await member.bundle({atomic: [...workflow(rollbackTopicId, rollbackPostId).slice(0, 3), {apply: 'Topic.publish', target: {ids: [randomUUID()]}}]}, {key: `rollback-topic-${rollbackTopicId}`});
+    assert.equal(rolledBack.code, 'WIRE.MISSING_TARGET', JSON.stringify(rolledBack));
+    assert.deepEqual([sql(`SELECT count(*) FROM ${q}.topic`), sql(`SELECT count(*) FROM ${q}.post`)], beforeRollback, 'late failure rolls back both new rows');
+    const successfulWorkflow = workflow(topicId, firstPostId);
+    const workflowKey = `create-topic-${topicId}`;
+    const createdTopic = await member.bundle({atomic: successfulWorkflow}, {key: workflowKey});
+    assert.equal(createdTopic.ok, true, JSON.stringify(createdTopic));
+    assert.deepEqual(createdTopic.created.map(row => [row.resource, row.id]), [['Topic', topicId], ['Post', firstPostId]]);
+    const replay = await member.bundle({atomic: successfulWorkflow}, {key: workflowKey});
+    assert.equal(replay.replayed, true, JSON.stringify(replay));
+    assert.deepEqual(replay.created, createdTopic.created);
+    assert.equal(sql(`SELECT count(*) FROM ${q}.topic WHERE id='${topicId}' AND published AND last_updated IS NOT NULL`), '1');
+    assert.equal(sql(`SELECT count(*) FROM ${q}.post WHERE id='${firstPostId}' AND topic_id='${topicId}' AND content='Initial body'`), '1');
+    assert.equal(sql(`SELECT count(*) FROM ${q}.topic WHERE forum_id=2 AND published AND hidden=false`), '2');
+    assert.equal(sql(`SELECT count(*) FROM ${q}.post WHERE topic_id='${topicId}' AND published AND date_created IS NOT NULL`), '1');
+    const initialTopic = (await member.read({read: 'Topic', select: ['id', 'last_updated'], filter: [{field: 'id', op: 'eq', value: topicId}], limit: 1})).rows[0];
+    const replyId = randomUUID();
+    const replyWorkflow = {atomic: [
+      {create: 'Post', values: {id: replyId, topic: topicId, forum: '2', user: '2', username: 'member-fixture', content: 'Reply body', hidden: false, published: false, version: 0}},
+      {apply: 'Post.publish', target: {ids: [replyId]}},
+      {apply: 'Topic.bump', target: {ids: [topicId]}},
+    ]};
+    const reply = await member.bundle(replyWorkflow, {key: `reply-${replyId}`});
+    assert.equal(reply.ok, true, JSON.stringify(reply));
+    const beforeDeniedReply = sql(`SELECT count(*) FROM ${q}.post`);
+    const deniedReply = await readOnly.bundle({atomic: [{create: 'Post', values: {id: randomUUID(), topic: topicId, forum: '2', user: '4', username: 'readonly-fixture', content: 'forbidden', hidden: false, published: false, version: 0}}]}, {key: `deny-reply-${topicId}`});
+    assert.equal(deniedReply.code, 'WIRE.FORBIDDEN', JSON.stringify(deniedReply));
+    assert.equal(sql(`SELECT count(*) FROM ${q}.post`), beforeDeniedReply);
+    const afterReplyTopic = (await member.read({read: 'Topic', select: ['id', 'last_updated'], filter: [{field: 'id', op: 'eq', value: topicId}], limit: 1})).rows[0];
+    assert.ok(Date.parse(afterReplyTopic.last_updated) > Date.parse(initialTopic.last_updated));
+    const edit = await member.bundle({atomic: [{apply: 'Post.edit', target: {ids: [replyId]}, values: {content: 'Reply edited'}, expect: {version: 0}}]}, {key: `edit-${replyId}-v0`});
+    assert.equal(edit.ok, true, JSON.stringify(edit));
+    const editedPost = (await member.read({read: 'Post', select: ['id', 'content', 'date_modified', 'modified_by', 'version'], filter: [{field: 'id', op: 'eq', value: replyId}], limit: 1})).rows[0];
+    assert.deepEqual([editedPost.content, editedPost.modified_by, editedPost.version], ['Reply edited', 'member-fixture', 1]);
+    assert.ok(editedPost.date_modified);
+    const deniedEdit = await readOnly.bundle({atomic: [{apply: 'Post.edit', target: {ids: [replyId]}, values: {content: 'unauthorized edit'}, expect: {version: 0}}]}, {key: `deny-edit-${replyId}`});
+    assert.equal(deniedEdit.code, 'WIRE.FORBIDDEN', JSON.stringify(deniedEdit));
+    const conflicted = await member.bundle({atomic: [{apply: 'Post.edit', target: {ids: [replyId]}, values: {content: 'stale edit'}, expect: {version: 0}}]}, {key: `edit-${replyId}-stale`});
+    assert.equal(conflicted.code, 'WIRE.CONFLICT', JSON.stringify(conflicted));
+    assert.equal((await member.read({read: 'Post', select: ['id', 'content', 'version'], filter: [{field: 'id', op: 'eq', value: replyId}], limit: 1})).rows[0].content, 'Reply edited');
+    const memberForum = (await member.read({read: 'Forum', select: ['id', 'title', 'topic_count', 'post_count'], filter: [{field: 'id', op: 'eq', value: '2'}], limit: 1})).rows[0];
+    assert.deepEqual([memberForum.topic_count, memberForum.post_count], [2, 3]);
+    const guestForum = (await guest.read({read: 'Forum', select: ['id', 'title', 'topic_count', 'post_count'], filter: [{field: 'id', op: 'eq', value: '1'}], limit: 1})).rows[0];
+    assert.deepEqual([guestForum.topic_count, guestForum.post_count], [1, 1]);
+    const memberStats = (await member.read({read: 'User', select: ['id', 'post_count'], filter: [{field: 'id', op: 'eq', value: '2'}], limit: 1})).rows[0];
+    assert.equal(memberStats.post_count, 3);
     console.log(JSON.stringify({schema, ...init, memberVisible: memberRows.map(row => row.title), guestVisible: guestRows.map(row => row.title), duplicateLinkRejected: true}));
   } finally {
     if (server && server.exitCode === null) {
