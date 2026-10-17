@@ -235,7 +235,7 @@ resource Topic {
   expose apply delete { target id; bulk maxRows 1 }
   expose read {
     select id, forum, title, user, username, date_created, last_updated, locked, important, views, published, hidden, hidden_at, hidden_by, post_count
-    filter id.eq, forum.eq, user.eq, locked.eq, important.eq
+    filter id.eq, forum.eq, user.eq, locked.eq, important.eq, title.contains
     sort id, last_updated, views
     traverse forum { select id, category, title, position }
     traverse user { select id, username }
@@ -287,7 +287,7 @@ resource Post {
   expose apply delete { target id; bulk maxRows 1 }
   expose read {
     select id, topic, user, username, content, date_created, date_modified, modified_by, hidden, hidden_at, hidden_by, version
-    filter id.eq, topic.eq, user.eq, hidden.eq
+    filter id.eq, topic.eq, user.eq, hidden.eq, content.contains
     sort id, date_created
     traverse topic { select id, forum, title, locked, hidden }
     traverse user { select id, username }
@@ -318,9 +318,19 @@ resource ForumRead {
   fields { id: Id; user: User; forum: Forum; last_read: Time; cleared: Time? }
   unique user, forum
   rows read when user = actor
+  expose create {
+    allow user = actor
+    fields user, forum, last_read, cleared
+  }
+  transition updateRead {
+    allow user = actor
+    from true
+    to last_read = now
+  }
+  expose apply updateRead { target id; bulk maxRows 1 }
   expose read {
     select id, user, forum, last_read, cleared
-    filter forum.eq
+    filter id.eq, forum.eq, user.eq
     sort id
     budget { rows 1000; depth 2; cost 3000; deadline 2s }
   }
@@ -330,9 +340,19 @@ resource TopicRead {
   fields { id: Id; user: User; topic: Topic; forum: Forum; last_read: Time }
   unique user, topic, forum
   rows read when user = actor
+  expose create {
+    allow user = actor
+    fields user, topic, forum, last_read
+  }
+  transition updateRead {
+    allow user = actor
+    from true
+    to last_read = now
+  }
+  expose apply updateRead { target id; bulk maxRows 1 }
   expose read {
     select id, user, topic, forum, last_read
-    filter topic.eq, forum.eq
+    filter id.eq, topic.eq, forum.eq, user.eq
     sort id
     budget { rows 1000; depth 2; cost 3000; deadline 2s }
   }
@@ -352,7 +372,7 @@ resource TopicTracker {
   expose apply track { target id; bulk maxRows 1 }
   expose read {
     select id, user, topic, active
-    filter topic.eq, active.eq
+    filter id.eq, topic.eq, active.eq, user.eq
     sort id
     budget { rows 1000; depth 2; cost 3000; deadline 2s }
   }
@@ -394,9 +414,31 @@ resource Conversation {
     unread: Bool
   }
   rows read when user = actor
+  expose create {
+    allow user = actor or from_user = actor
+    fields user, from_user, to_user, shared_id, subject, date_created, date_modified, trash, draft, unread
+  }
+  transition markRead {
+    allow user = actor
+    from unread = true
+    to unread = false
+  }
+  expose apply markRead { target id; bulk maxRows 50 }
+  transition moveToTrash {
+    allow user = actor
+    from trash = false
+    to trash = true
+  }
+  expose apply moveToTrash { target id; bulk maxRows 50 }
+  transition restoreFromTrash {
+    allow user = actor
+    from trash = true
+    to trash = false
+  }
+  expose apply restoreFromTrash { target id; bulk maxRows 50 }
   expose read {
     select id, user, from_user, to_user, shared_id, subject, date_created, date_modified, trash, draft, unread
-    filter id.eq, trash.eq, draft.eq, unread.eq
+    filter id.eq, trash.eq, draft.eq, unread.eq, shared_id.eq, user.eq
     sort date_modified, id
     traverse from_user { select id, username }
     traverse to_user { select id, username }
@@ -407,6 +449,10 @@ resource Conversation {
 resource Message {
   fields { id: Id; conversation: Conversation; user: User?; message: Text; date_created: Time }
   rows read when conversation.user = actor
+  expose create {
+    allow conversation.user = actor or user = actor
+    fields conversation, user, message, date_created
+  }
   expose read {
     select id, conversation, user, message, date_created
     filter conversation.eq, user.eq

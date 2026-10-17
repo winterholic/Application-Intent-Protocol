@@ -151,7 +151,141 @@ class UiHostTests(unittest.TestCase):
         response = browser.post("/forum/2/topic", data={"title": "No CSRF", "content": "Denied"})
 
         self.assertEqual(response.status_code, 403)
-        client_api.bundle.assert_not_called()
+    def test_auth_routes_redirect_to_oidc_endpoints(self):
+        app = create_app({"TESTING": True, "SECRET_KEY": "test-only-secret", "AIP_URL": "http://aip.test"})
+        browser = app.test_client()
+
+        reg_res = browser.get("/auth/register")
+        self.assertEqual(reg_res.status_code, 302)
+        self.assertIn("kc_action=register", reg_res.headers["Location"])
+
+        forgot_res = browser.get("/auth/forgot-password")
+        self.assertEqual(forgot_res.status_code, 302)
+        self.assertIn("kc_action=UPDATE_PASSWORD", forgot_res.headers["Location"])
+
+        reset_res = browser.get("/auth/reset-password")
+        self.assertEqual(reset_res.status_code, 302)
+        self.assertIn("kc_action=UPDATE_PASSWORD", reset_res.headers["Location"])
+
+        sessions = {"sess": {"access_token": "token", "csrf_token": "csrf"}}
+        app_with_sess = create_app({"TESTING": True, "SECRET_KEY": "test-only-secret"}, sessions=sessions)
+        b2 = app_with_sess.test_client()
+        b2.set_cookie("aip_session", "sess")
+        logout_res = b2.get("/auth/logout")
+        self.assertEqual(logout_res.status_code, 303)
+        self.assertNotIn("sess", sessions)
+
+    def test_search_route_invokes_aip_filters(self):
+        client_api = Mock()
+        client_api.read.return_value = []
+        sessions = {"session": {"access_token": "token", "csrf_token": "csrf"}}
+        app = create_app(
+            {"TESTING": True, "SECRET_KEY": "test-only-secret", "AIP_URL": "http://aip.test"},
+            sdk_factory=Mock(return_value=client_api),
+            sessions=sessions,
+        )
+        browser = app.test_client()
+        browser.set_cookie("aip_session", "session")
+
+        res = browser.get("/search?q=testkeyword&type=all")
+        self.assertEqual(res.status_code, 200)
+        self.assertIn(b"Search Results for \"testkeyword\"", res.data)
+        read_resources = [c.args[0]["read"] for c in client_api.read.call_args_list]
+        self.assertEqual(read_resources, ["Topic", "Post", "User", "Forum"])
+        topic_filter = client_api.read.call_args_list[0].args[0]["filter"]
+        self.assertEqual(topic_filter, [{"field": "title", "op": "contains", "value": "testkeyword"}])
+
+    def test_member_list_and_user_profile(self):
+        client_api = Mock()
+        client_api.read.side_effect = [
+            [{"id": "6", "username": "porting-user", "primary_group": "3", "post_count": 5}],
+            [{"id": "6", "username": "porting-user", "primary_group": {"name": "Member"}, "activated": True, "signature": "Sig"}],
+            [{"id": "t1", "title": "My Topic", "date_created": "2026-10-17T00:00:00Z"}],
+            [{"id": "p1", "topic": "t1", "content": "My Post", "date_created": "2026-10-17T00:00:00Z"}],
+        ]
+        sessions = {"session": {"access_token": "token", "csrf_token": "csrf"}}
+        app = create_app(
+            {"TESTING": True, "SECRET_KEY": "test-only-secret", "AIP_URL": "http://aip.test"},
+            sdk_factory=Mock(return_value=client_api),
+            sessions=sessions,
+        )
+        browser = app.test_client()
+        browser.set_cookie("aip_session", "session")
+
+        users_res = browser.get("/users")
+        self.assertEqual(users_res.status_code, 200)
+        self.assertIn(b"porting-user", users_res.data)
+
+        profile_res = browser.get("/user/porting-user")
+        self.assertEqual(profile_res.status_code, 200)
+        self.assertIn(b"porting-user", profile_res.data)
+        self.assertIn(b"My Topic", profile_res.data)
+        self.assertIn(b"My Post", profile_res.data)
+
+    def test_user_settings_post_calls_update_profile_bundle(self):
+        client_api = Mock()
+        client_api.session.return_value = {"actorId": "6"}
+        client_api.read.return_value = [{"id": "6", "username": "porting-user", "activated": True}]
+        client_api.bundle.return_value = {"ok": True}
+        sessions = {"session": {"access_token": "token", "csrf_token": "csrf"}}
+        app = create_app(
+            {"TESTING": True, "SECRET_KEY": "test-only-secret", "AIP_URL": "http://aip.test"},
+            sdk_factory=Mock(return_value=client_api),
+            sessions=sessions,
+        )
+        browser = app.test_client()
+        browser.set_cookie("aip_session", "session")
+
+        res = browser.post(
+            "/user/settings",
+            data={
+                "csrf_token": "csrf",
+                "location": "Seoul",
+                "signature": "My Cool Signature",
+            },
+        )
+        self.assertEqual(res.status_code, 303)
+        client_api.bundle.assert_called_once()
+        ops = client_api.bundle.call_args.args[0]
+        self.assertEqual(ops[0]["apply"], "User.updateProfile")
+        self.assertEqual(ops[0]["target"], {"ids": ["6"]})
+        self.assertEqual(ops[0]["values"]["location"], "Seoul")
+        self.assertEqual(ops[0]["values"]["signature"], "My Cool Signature")
+
+    def test_create_conversation_bundle(self):
+        client_api = Mock()
+        client_api.session.return_value = {"actorId": "6"}
+        client_api.read.side_effect = [
+            [{"id": "6", "username": "sender", "activated": True}],
+            [{"id": "7", "username": "recipient", "activated": True}],
+        ]
+        client_api.bundle.return_value = {"ok": True}
+        sessions = {"session": {"access_token": "token", "csrf_token": "csrf"}}
+        app = create_app(
+            {"TESTING": True, "SECRET_KEY": "test-only-secret", "AIP_URL": "http://aip.test"},
+            sdk_factory=Mock(return_value=client_api),
+            sessions=sessions,
+        )
+        browser = app.test_client()
+        browser.set_cookie("aip_session", "session")
+
+        res = browser.post(
+            "/conversations/new",
+            data={
+                "csrf_token": "csrf",
+                "to_username": "recipient",
+                "subject": "Hello",
+                "message": "Testing private message",
+            },
+        )
+        self.assertEqual(res.status_code, 303)
+        client_api.bundle.assert_called_once()
+        ops = client_api.bundle.call_args.args[0]
+        self.assertEqual(len(ops), 2)
+        self.assertEqual(ops[0]["create"], "Conversation")
+        self.assertEqual(ops[0]["values"]["user"], "6")
+        self.assertEqual(ops[1]["create"], "Conversation")
+        self.assertEqual(ops[1]["values"]["user"], "7")
 
 
 if __name__ == "__main__":

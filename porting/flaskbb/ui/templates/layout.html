@@ -16,11 +16,23 @@
     <nav class="navbar navbar-default" role="navigation"><div class="collapse navbar-collapse">
         <ul class="nav navbar-nav forum-nav">
             <li><a href="{{ url_for('forum_index') }}"><span class="fa fa-comment"></span> Forum</a></li>
+            <li><a href="{{ url_for('member_list') }}"><span class="fa fa-users"></span> Users</a></li>
+            <li><a href="{{ url_for('search') }}"><span class="fa fa-search"></span> Search</a></li>
+            {% if user %}
+            <li><a href="{{ url_for('conversations_inbox') }}"><span class="fa fa-envelope"></span> Messages</a></li>
+            {% endif %}
         </ul>
         <ul class="nav navbar-nav navbar-right">
-            {% if logout_url %}<li><span class="btn btn-primary navbar-btn">{{ user.username if user else 'Signed in' }}</span></li>
-            <li><form method="post" action="{{ logout_url }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn btn-default navbar-btn">Logout</button></form></li>
-            {% else %}<li><a class="btn btn-primary navbar-btn" href="{{ url_for('login') }}"><span class="fa fa-user"></span> Login</a></li>{% endif %}
+            {% if logout_url and user and user.username %}
+            <li><a class="btn btn-default navbar-btn" href="{{ url_for('user_profile', username=user.username) }}">{{ user.username }}</a></li>
+            <li><a class="btn btn-default navbar-btn" href="{{ url_for('user_settings') }}"><span class="fa fa-cog"></span> Settings</a></li>
+            <li><form method="post" action="{{ logout_url }}" style="display:inline;"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn btn-default navbar-btn">Logout</button></form></li>
+            {% elif logout_url %}
+            <li><form method="post" action="{{ logout_url }}" style="display:inline;"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn btn-default navbar-btn">Logout</button></form></li>
+            {% else %}
+            <li><a class="btn btn-primary navbar-btn" href="{{ url_for('login') }}"><span class="fa fa-user"></span> Login</a></li>
+            <li><a class="btn btn-default navbar-btn" href="{{ url_for('register') }}">Register</a></li>
+            {% endif %}
         </ul>
     </div></nav>
     <main>{% block content %}{% endblock %}</main>

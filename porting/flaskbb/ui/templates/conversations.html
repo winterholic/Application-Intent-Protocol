@@ -1,0 +1,113 @@
+{% extends "layout.html" %}
+{% block title %}Messages - FlaskBB{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Messages</h1>
+</div>
+
+<div class="row">
+    <div class="col-md-3">
+        <div class="list-group">
+            <a href="{{ url_for('conversations_inbox') }}" class="list-group-item {% if folder == 'inbox' %}active{% endif %}">Inbox</a>
+            <a href="{{ url_for('conversations_trash') }}" class="list-group-item {% if folder == 'trash' %}active{% endif %}">Trash</a>
+            <a href="{{ url_for('conversation_new') }}" class="list-group-item list-group-item-success"><span class="fa fa-pencil"></span> New Message</a>
+        </div>
+    </div>
+    <div class="col-md-9">
+        {% if mode == 'list' %}
+        <div class="panel panel-default">
+            <div class="panel-heading"><h3 class="panel-title">{{ folder|capitalize }}</h3></div>
+            <table class="table table-striped">
+                <thead>
+                    <tr>
+                        <th>Subject</th>
+                        <th>With</th>
+                        <th>Last Activity</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for c in conversations %}
+                    <tr {% if c.unread %}class="info"{% endif %}>
+                        <td>
+                            <a href="{{ url_for('conversation_view', conversation_id=c.id) }}">
+                                {% if c.unread %}<strong>[New] {% endif %}{{ c.subject or '(No subject)' }}{% if c.unread %}</strong>{% endif %}
+                            </a>
+                        </td>
+                        <td>{{ c.to_user.username if c.from_user and c.from_user.id == current_user.id else (c.from_user.username if c.from_user else 'Unknown') }}</td>
+                        <td>{{ c.date_modified }}</td>
+                        <td>
+                            {% if folder != 'trash' %}
+                            <form method="post" action="{{ url_for('conversation_trash', conversation_id=c.id) }}" style="display:inline;">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                <button class="btn btn-xs btn-danger"><span class="fa fa-trash"></span> Trash</button>
+                            </form>
+                            {% else %}
+                            <form method="post" action="{{ url_for('conversation_restore', conversation_id=c.id) }}" style="display:inline;">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                <button class="btn btn-xs btn-success">Restore</button>
+                            </form>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="4" class="text-muted text-center">No messages in {{ folder }}.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        {% elif mode == 'view' %}
+        <div class="panel panel-default">
+            <div class="panel-heading">
+                <h3 class="panel-title">{{ conversation.subject or '(No subject)' }}</h3>
+            </div>
+            <div class="panel-body">
+                {% for m in messages %}
+                <div class="panel panel-default">
+                    <div class="panel-heading">
+                        <strong>{{ m.user.username if m.user else 'User' }}</strong> <span class="text-muted pull-right">{{ m.date_created }}</span>
+                    </div>
+                    <div class="panel-body">
+                        <p>{{ m.message }}</p>
+                    </div>
+                </div>
+                {% endfor %}
+
+                <h4>Reply</h4>
+                <form method="post" action="{{ url_for('conversation_reply', conversation_id=conversation.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <div class="form-group">
+                        <textarea name="message" class="form-control" rows="4" placeholder="Write your reply..." required></textarea>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Send Reply</button>
+                </form>
+            </div>
+        </div>
+
+        {% elif mode == 'new' %}
+        <div class="panel panel-default">
+            <div class="panel-heading"><h3 class="panel-title">New Message</h3></div>
+            <div class="panel-body">
+                <form method="post" action="{{ url_for('conversation_new') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <div class="form-group">
+                        <label for="to_username">Recipient Username</label>
+                        <input type="text" id="to_username" name="to_username" class="form-control" value="{{ to_username or '' }}" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="subject">Subject</label>
+                        <input type="text" id="subject" name="subject" class="form-control" placeholder="Message subject..." required maxlength="255">
+                    </div>
+                    <div class="form-group">
+                        <label for="message">Message</label>
+                        <textarea id="message" name="message" class="form-control" rows="5" placeholder="Write your message..." required></textarea>
+                    </div>
+                    <button type="submit" class="btn btn-primary"><span class="fa fa-paper-plane"></span> Send Message</button>
+                </form>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

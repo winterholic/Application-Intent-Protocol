@@ -242,13 +242,24 @@ def create_app(config=None, sdk_factory=connect, sessions=None, flows=None):
         response.delete_cookie("aip_oidc_flow")
         return response
 
-    @app.post("/auth/logout")
+    @app.get("/auth/register")
+    def register():
+        return redirect(url_for("login", kc_action="register"))
+
+    @app.get("/auth/forgot-password")
+    @app.get("/auth/reset-password")
+    def forgot_password():
+        return redirect(url_for("login", kc_action="UPDATE_PASSWORD"))
+
+    @app.route("/auth/logout", methods=["GET", "POST"])
     def logout():
         identity_id = request.cookies.get("aip_session")
         identity = session_store.get(identity_id) if identity_id else None
-        if not identity or not secrets.compare_digest(request.form.get("csrf_token", ""), identity["csrf_token"]):
-            abort(403)
-        session_store.pop(identity_id, None)
+        if request.method == "POST":
+            if not identity or not secrets.compare_digest(request.form.get("csrf_token", ""), identity["csrf_token"]):
+                abort(403)
+        if identity_id:
+            session_store.pop(identity_id, None)
         response = redirect(url_for("forum_index"), code=303)
         response.delete_cookie("aip_session")
         return response
@@ -370,6 +381,422 @@ def create_app(config=None, sdk_factory=connect, sessions=None, flows=None):
             csrf_token=identity.get("csrf_token"),
             can_reply=can_contribute(client, user, topic, "postreply"),
         )
+
+    @app.get("/search")
+    def search():
+        q = request.args.get("q", "").strip()
+        search_type = request.args.get("type", "all")
+        topics, posts, users, forums = [], [], [], []
+        if q:
+            client = aip_client()
+            try:
+                if search_type in {"all", "topic"}:
+                    topics = client.read({
+                        "read": "Topic",
+                        "select": ["id", "forum", "title", "username", "date_created"],
+                        "filter": [{"field": "title", "op": "contains", "value": q}],
+                        "limit": 50,
+                    })
+                if search_type in {"all", "post"}:
+                    posts = client.read({
+                        "read": "Post",
+                        "select": ["id", "topic", "username", "content", "date_created"],
+                        "filter": [{"field": "content", "op": "contains", "value": q}],
+                        "limit": 50,
+                    })
+                if search_type in {"all", "user"}:
+                    users = client.read({
+                        "read": "User",
+                        "select": ["id", "username"],
+                        "filter": [{"field": "username", "op": "contains", "value": q}],
+                        "limit": 50,
+                    })
+                if search_type in {"all", "forum"}:
+                    forums = client.read({
+                        "read": "Forum",
+                        "select": ["id", "category", "title", "description"],
+                        "filter": [{"field": "title", "op": "contains", "value": q}],
+                        "limit": 50,
+                    })
+            except AipError as error:
+                reject_aip_error(error)
+        identity = session_store.get(request.cookies.get("aip_session"), {})
+        return render_template(
+            "search.html",
+            query=q,
+            search_type=search_type,
+            topics=topics,
+            posts=posts,
+            users=users,
+            forums=forums,
+            logout_url=url_for("logout") if identity else None,
+            csrf_token=identity.get("csrf_token"),
+        )
+
+    @app.get("/users")
+    def member_list():
+        client = aip_client()
+        try:
+            members = client.read({
+                "read": "User",
+                "select": ["id", "username", "primary_group", "post_count"],
+                "limit": 100,
+            })
+        except AipError as error:
+            reject_aip_error(error)
+        identity = session_store.get(request.cookies.get("aip_session"), {})
+        return render_template(
+            "member_list.html",
+            members=members,
+            logout_url=url_for("logout") if identity else None,
+            csrf_token=identity.get("csrf_token"),
+        )
+
+    @app.get("/user/<username>")
+    def user_profile(username):
+        client = aip_client()
+        try:
+            users = client.read({
+                "read": "User",
+                "select": ["id", "username", "primary_group", "activated", "date_joined", "location", "website", "signature", "avatar", "notes", "post_count"],
+                "filter": [{"field": "username", "op": "prefix", "value": username}],
+                "limit": 10,
+            })
+            profile_user = next((u for u in users if u.get("username") == username), None)
+            if not profile_user:
+                abort(404)
+            topics = client.read({
+                "read": "Topic",
+                "select": ["id", "title", "date_created"],
+                "filter": [{"field": "user", "op": "eq", "value": profile_user["id"]}],
+                "limit": 10,
+            })
+            posts = client.read({
+                "read": "Post",
+                "select": ["id", "topic", "content", "date_created"],
+                "filter": [{"field": "user", "op": "eq", "value": profile_user["id"]}],
+                "limit": 10,
+            })
+        except AipError as error:
+            reject_aip_error(error)
+        identity = session_store.get(request.cookies.get("aip_session"), {})
+        return render_template(
+            "user_profile.html",
+            profile_user=profile_user,
+            topics=topics,
+            posts=posts,
+            logout_url=url_for("logout") if identity else None,
+            csrf_token=identity.get("csrf_token"),
+        )
+
+    @app.get("/user/settings")
+    def user_settings():
+        client = aip_client()
+        try:
+            user = current_aip_user(client)
+        except AipError as error:
+            reject_aip_error(error)
+        identity = session_store.get(request.cookies.get("aip_session"), {})
+        return render_template(
+            "user_settings.html",
+            current_user=user,
+            saved=request.args.get("saved") == "1",
+            logout_url=url_for("logout"),
+            csrf_token=identity.get("csrf_token"),
+        )
+
+    @app.post("/user/settings")
+    def update_user_settings():
+        identity = session_store.get(request.cookies.get("aip_session"))
+        if not identity:
+            abort(401)
+        require_csrf(identity)
+        client = aip_client()
+        try:
+            user = current_aip_user(client)
+            patch = {}
+            for field in ["signature", "avatar", "website", "location", "theme", "language"]:
+                val = request.form.get(field, "").strip()
+                if val:
+                    patch[field] = val
+            operations = [
+                {
+                    "apply": "User.updateProfile",
+                    "target": {"ids": [user["id"]]},
+                    "values": patch,
+                }
+            ]
+            return submit_bundle(
+                client,
+                operations,
+                f"flaskbb-profile-{user['id']}-{secrets.token_hex(4)}",
+                lambda: url_for("user_settings", saved=1),
+            )
+        except AipError as error:
+            reject_aip_error(error)
+
+    @app.get("/conversations")
+    def conversations_root():
+        return redirect(url_for("conversations_inbox"))
+
+    @app.get("/conversations/inbox")
+    def conversations_inbox():
+        client = aip_client()
+        try:
+            user = current_aip_user(client)
+            conversations = client.read({
+                "read": "Conversation",
+                "select": ["id", "from_user", "to_user", "shared_id", "subject", "date_modified", "unread", "trash"],
+                "filter": [
+                    {"field": "trash", "op": "eq", "value": False},
+                    {"field": "user", "op": "eq", "value": user["id"]},
+                ],
+                "limit": 50,
+            })
+        except AipError as error:
+            reject_aip_error(error)
+        identity = session_store.get(request.cookies.get("aip_session"), {})
+        return render_template(
+            "conversations.html",
+            mode="list",
+            folder="inbox",
+            conversations=conversations,
+            current_user=user,
+            logout_url=url_for("logout"),
+            csrf_token=identity.get("csrf_token"),
+        )
+
+    @app.get("/conversations/trash")
+    def conversations_trash():
+        client = aip_client()
+        try:
+            user = current_aip_user(client)
+            conversations = client.read({
+                "read": "Conversation",
+                "select": ["id", "from_user", "to_user", "shared_id", "subject", "date_modified", "unread", "trash"],
+                "filter": [
+                    {"field": "trash", "op": "eq", "value": True},
+                    {"field": "user", "op": "eq", "value": user["id"]},
+                ],
+                "limit": 50,
+            })
+        except AipError as error:
+            reject_aip_error(error)
+        identity = session_store.get(request.cookies.get("aip_session"), {})
+        return render_template(
+            "conversations.html",
+            mode="list",
+            folder="trash",
+            conversations=conversations,
+            current_user=user,
+            logout_url=url_for("logout"),
+            csrf_token=identity.get("csrf_token"),
+        )
+
+    @app.get("/conversations/new")
+    def conversation_new():
+        client = aip_client()
+        try:
+            user = current_aip_user(client)
+        except AipError as error:
+            reject_aip_error(error)
+        identity = session_store.get(request.cookies.get("aip_session"), {})
+        return render_template(
+            "conversations.html",
+            mode="new",
+            folder="inbox",
+            to_username=request.args.get("to", ""),
+            current_user=user,
+            logout_url=url_for("logout"),
+            csrf_token=identity.get("csrf_token"),
+        )
+
+    @app.post("/conversations/new")
+    def create_conversation():
+        identity = session_store.get(request.cookies.get("aip_session"))
+        if not identity:
+            abort(401)
+        require_csrf(identity)
+        to_username = request.form.get("to_username", "").strip()
+        subject = request.form.get("subject", "").strip()
+        message_text = request.form.get("message", "").strip()
+        if not to_username or not subject or not message_text:
+            abort(400)
+        client = aip_client()
+        try:
+            user = current_aip_user(client)
+            recipients = client.read({
+                "read": "User",
+                "select": ["id", "username", "activated"],
+                "filter": [{"field": "username", "op": "prefix", "value": to_username}],
+                "limit": 10,
+            })
+            to_user = next((u for u in recipients if u.get("username") == to_username and u.get("activated")), None)
+            if not to_user:
+                abort(404)
+            shared_id = str(uuid.uuid4())
+            now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            operations = [
+                {
+                    "create": "Conversation",
+                    "values": {
+                        "user": user["id"],
+                        "from_user": user["id"],
+                        "to_user": to_user["id"],
+                        "shared_id": shared_id,
+                        "subject": subject,
+                        "date_created": now_iso,
+                        "date_modified": now_iso,
+                        "trash": False,
+                        "draft": False,
+                        "unread": False,
+                    },
+                },
+                {
+                    "create": "Conversation",
+                    "values": {
+                        "user": to_user["id"],
+                        "from_user": user["id"],
+                        "to_user": to_user["id"],
+                        "shared_id": shared_id,
+                        "subject": subject,
+                        "date_created": now_iso,
+                        "date_modified": now_iso,
+                        "trash": False,
+                        "draft": False,
+                        "unread": True,
+                    },
+                },
+            ]
+            return submit_bundle(
+                client,
+                operations,
+                f"flaskbb-conv-{shared_id}",
+                lambda: url_for("conversations_inbox"),
+            )
+        except AipError as error:
+            reject_aip_error(error)
+
+    @app.get("/conversations/<int:conversation_id>")
+    def conversation_view(conversation_id):
+        client = aip_client()
+        try:
+            user = current_aip_user(client)
+            convs = client.read({
+                "read": "Conversation",
+                "select": ["id", "user", "from_user", "to_user", "shared_id", "subject", "date_created", "date_modified", "unread", "trash"],
+                "filter": [{"field": "id", "op": "eq", "value": conversation_id}],
+                "limit": 1,
+            })
+            if not convs:
+                abort(404)
+            conv = convs[0]
+            if str(conv["user"]) != str(user["id"]):
+                abort(403)
+            messages = client.read({
+                "read": "Message",
+                "select": ["id", "conversation", "user", "message", "date_created"],
+                "filter": [{"field": "conversation", "op": "eq", "value": conversation_id}],
+            })
+            if conv.get("unread"):
+                try:
+                    client.apply("Conversation.markRead", {"ids": [conversation_id]})
+                except AipError:
+                    pass
+        except AipError as error:
+            reject_aip_error(error)
+        identity = session_store.get(request.cookies.get("aip_session"), {})
+        return render_template(
+            "conversations.html",
+            mode="view",
+            folder="trash" if conv.get("trash") else "inbox",
+            conversation=conv,
+            messages=messages,
+            current_user=user,
+            logout_url=url_for("logout"),
+            csrf_token=identity.get("csrf_token"),
+        )
+
+    @app.post("/conversations/<int:conversation_id>/reply")
+    def conversation_reply(conversation_id):
+        identity = session_store.get(request.cookies.get("aip_session"))
+        if not identity:
+            abort(401)
+        require_csrf(identity)
+        message_text = request.form.get("message", "").strip()
+        if not message_text:
+            abort(400)
+        client = aip_client()
+        try:
+            user = current_aip_user(client)
+            convs = client.read({
+                "read": "Conversation",
+                "select": ["id", "user", "shared_id"],
+                "filter": [{"field": "id", "op": "eq", "value": conversation_id}],
+                "limit": 1,
+            })
+            if not convs or str(convs[0]["user"]) != str(user["id"]):
+                abort(404)
+            now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            operations = [
+                {
+                    "create": "Message",
+                    "values": {
+                        "conversation": conversation_id,
+                        "user": user["id"],
+                        "message": message_text,
+                        "date_created": now_iso,
+                    },
+                }
+            ]
+            return submit_bundle(
+                client,
+                operations,
+                f"flaskbb-msg-{conversation_id}-{secrets.token_hex(4)}",
+                lambda: url_for("conversation_view", conversation_id=conversation_id),
+            )
+        except AipError as error:
+            reject_aip_error(error)
+
+    @app.post("/conversations/<int:conversation_id>/trash")
+    def conversation_trash(conversation_id):
+        identity = session_store.get(request.cookies.get("aip_session"))
+        if not identity:
+            abort(401)
+        require_csrf(identity)
+        client = aip_client()
+        try:
+            operations = [
+                {"apply": "Conversation.moveToTrash", "target": {"ids": [conversation_id]}}
+            ]
+            return submit_bundle(
+                client,
+                operations,
+                f"flaskbb-trash-{conversation_id}-{secrets.token_hex(4)}",
+                lambda: url_for("conversations_inbox"),
+            )
+        except AipError as error:
+            reject_aip_error(error)
+
+    @app.post("/conversations/<int:conversation_id>/restore")
+    def conversation_restore(conversation_id):
+        identity = session_store.get(request.cookies.get("aip_session"))
+        if not identity:
+            abort(401)
+        require_csrf(identity)
+        client = aip_client()
+        try:
+            operations = [
+                {"apply": "Conversation.restoreFromTrash", "target": {"ids": [conversation_id]}}
+            ]
+            return submit_bundle(
+                client,
+                operations,
+                f"flaskbb-restore-{conversation_id}-{secrets.token_hex(4)}",
+                lambda: url_for("conversations_trash"),
+            )
+        except AipError as error:
+            reject_aip_error(error)
 
     @app.errorhandler(401)
     def unauthenticated(_error):

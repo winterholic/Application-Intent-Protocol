@@ -7,15 +7,59 @@
 - 전체 의미 기능 분모는 [INVENTORY.md](INVENTORY.md)에 잠근다. URL/endpoint/table 수는 별도 커버리지 축이며 기능 수로 합산하지 않는다.
 - 기획의 독립 완료·출시 판정은 이 작업 이후 별도로 요구된다. 현재 전체 포팅·기능 동등성·배포 준비 완료가 아니다.
 
-## 2026-10-17 현재 Run — provisioning working-contract 권고 수신 (미검증)
+## 2026-10-17 현재 Run — Provisioning working proposal 구현 및 F02–F10 포팅 실DB 검증
 
-신규 주체 계약 검토 worker `8c214290-f8de-4bb0-89b0-706ed0f1796c`의 [권고문](/Users/winterholic/.ttakkari/data/outbox/973ae930-8d38-46fa-af0a-8266b89f086d/flaskbb-provisioning-contract-recommendation.md)을 읽었다. 이는 코드 수정·실행이 없었던 설계 권고다. 이번 포팅의 **임시 working contract**로 제시한 방향은 `auth.provisioning.enabled=false` 기본값의 server-configured core provisioning, 검증 완료된 `(iss, sub)`로만 `POST /session`에서 신규 주체를 만들고 같은 DB transaction에서 app `User`, principal mapping, 서버 지정 초기 Member 관계를 생성하는 것이다. pre-auth extension, client 제공 actor/role 신뢰, email/username 일치에 의한 자동 병합, disabled/revoked subject의 재생성은 배제한다. 다른 API 경로에서 provisioning 부작용을 일으키지 않는다.
+### 1. 신규 계정 Provisioning core 계약 구현 및 실DB 증명 (OPEN 유지)
 
-**상태는 계속 OPEN**이며 이 working contract는 Accepted/product-wide DSL 결정이 아니다. 추천 문서 자체도 `미실행`이라고 명시한다. 제안의 `activated=true`는 verified-email claim과 기존 FlaskBB의 가입→메일 activation→비활성/활성 전이의 동등성 검증 전에는 채택 사실이나 원본 parity로 기록하지 않는다. issuer access token에 username/email/email_verified가 실제 포함되는지와 trust/allowlist 조건도 아직 검증되지 않았다. AIP 전역 기본 Group을 새로 고정하지 않고, 이 앱 배포의 서버 설정이 명시한 Group에만 적용한다.
+신규 주체 계약 권고안을 임시 working proposal로 채택하여 코어 및 전송 계층에 구현했다.
+- **구현 내용 (`crates/aip-auth`, `spikes/spike-v6-transport`)**:
+  - `auth.provisioning.enabled=false` 기본값. `POST /session` 경로에서만 단일 트랜잭션으로 작동하며 비세션 경로(`/read`, `/apply`) 프로비저닝은 완전히 차단.
+  - 검증 완료된 `(iss, sub)`로부터만 사용자(`User`) 및 principal 매핑을 생성하고, 서버 설정이 지정한 기본 `Member` 그룹을 원자적으로 부여.
+  - PostgreSQL advisory transaction lock (`pg_advisory_xact_lock(hashtextextended(...))`)에 길이 접두사 튜플 직렬화(`{schema_len}:{schema}:{iss_len}:{iss}:{sub_len}:{sub}`)를 적용해 NUL 바이트 없이 lock key를 안전하게 해싱하고 동시 요청 직렬화.
+  - 이메일/사용자명 일치에 의한 자동 병합 금지, 클라이언트 주입 role/속성 불신, disabled/revoked 주체 재생성 차단, 미인증 이메일 거부.
+  - 상태는 계속 **OPEN**으로 유지 (전역 제품 확정이 아닌 이번 포팅의 working proposal).
+- **실DB 격리 검증 증거 (`porting/flaskbb/tests/provisioning.test.mjs`)**:
+  - dedicated PostgreSQL `127.0.0.1:55439` database `aip_flaskbb` 동적 임시 스키마에서 9개 시나리오 100% 통과 (소요시간 1433ms):
+    1. 최초 토큰 `POST /session` 정상 생성 및 이후 SDK read 검증 (`positive_first_session_and_reads`)
+    2. 미등록 주체의 `/read` 직접 호출 401 거부 및 DB 불변 (`negative_non_session_route_blocked`)
+    3. `provisioning.enabled=false` 배포 시 거부 (`negative_provisioning_disabled_blocked`)
+    4. 미인증 이메일 거부 (`negative_unverified_email_blocked`)
+    5. 기존 사용자명/이메일 충돌 시 자동 병합 없이 거부 및 DB 불변 (`negative_username_email_conflict_no_merge`)
+    6. 클라이언트 위조 role 주입 무시 및 서버 고정 그룹 부여 (`negative_client_role_injection_ignored`)
+    7. disabled/revoked 주체 재생성 차단 (`negative_disabled_revoked_no_recreation`)
+    8. 10개 병렬 동시 요청 멱등성 및 단 1건 생성 검증 (`concurrency_10_parallel_sessions_idempotent`)
+    9. 충돌 롤백 시 고아 row 0건 원자성 검증 (`rollback_atomicity_no_orphan_rows`)
 
-권고 §3.3의 `U&'\0000'` advisory-lock separator는 복사하지 않는다. PostgreSQL text가 NUL을 담을 수 없는 SQL 입력 경계이므로 해당 예시는 실행 SQL로 검증되지 않았다. 구현 전 deployment schema + issuer + subject의 **모호하지 않은 tuple serialization을 hash 입력에 쓰는 방법**, schema scope 및 lock-key hash 충돌이 correctness에 미치는 영향(정확성은 PK/unique constraint가 보장하고 충돌은 불필요 직렬화만 유발해야 함)을 따로 확정한다. NUL 삽입을 위한 escape/bypass는 하지 않는다.
+### 2. INVENTORY 미포팅 항목 전진: F02, F03, F04, F06, F07/F15, F09, F10 실제 코드 및 실DB 통합 검증
 
-이번 기록은 권고의 범위·미검증 사항을 반영한 것이며 provisioning 코드/DDL이나 테스트를 추가하지 않았다. detached nbf verifier와 auth code가 겹치지 않게 유지한다. 독립 검증이 끝난 뒤에도 claim source, Member Group app config, uniqueness, stale/revoked 보호, concurrency/rollback 및 이메일 activation 의미를 격리 통합시험으로 닫기 전에는 provisioning 동작이나 전체 F02 완료를 주장하지 않는다. Browser `ERR_CERT_AUTHORITY_INVALID` 및 F01–F17 분모도 그대로 유지한다.
+- **AIP 스키마 선언 확장 (`porting/flaskbb/app.aip`)**:
+  - `Topic`: `title.contains` 검색 필터 추가
+  - `Post`: `content.contains` 검색 필터 추가
+  - `User`: `updateProfile` transition (signature, avatar, website, location, theme, language), `adminUpdateUser` transition, `unique username`, `unique email`
+  - `Category` / `Forum`: `create`, `edit` transition (admin/super_mod 권한)
+  - `Conversation`: `create`, `markRead`, `moveToTrash`, `restoreFromTrash` transition/apply
+  - `Message`: `create` expose
+  - `ForumRead` / `TopicRead`: `create`, `updateRead` transition
+  - `TopicTracker`: `id.eq`, `user.eq` 필터 추가
+- **UI 어댑터 라우트 및 템플릿 구현 (`porting/flaskbb/ui/app.py`, `ui/templates/`)**:
+  - F02: `/auth/register`, `/auth/forgot-password`, `/auth/reset-password` (IdP 연동 리다이렉트), GET/POST `/auth/logout`
+  - F07/F15: `/search` (q, type 쿼리 파라미터로 Topic, Post, User, Forum 4종 검색 및 `search.html` 렌더)
+  - F03: `/users` (MemberList), `/user/<username>` (UserProfile + 최근 활동), `/user/settings` (설정 폼 및 `User.updateProfile` bundle)
+  - F09: `/conversations/inbox`, `/conversations/trash`, `/conversations/new` (양방향 대화함 동시 생성), `/conversations/<id>` (읽음 및 markRead), reply, trash, restore
+  - `layout.html`: 상단 네비게이션(Forum, Users, Search, Messages, Settings, Profile) 추가
+  - `porting/flaskbb/tests/test_ui_host.py`: 신규 라우트 5개 단위 테스트 추가 (총 12 passed, 0 failed).
+- **실DB 통합 검증 증거 (`porting/flaskbb/tests/features.test.mjs`)**:
+  - dedicated PostgreSQL `127.0.0.1:55439` dynamic schema에서 공식 SDK + 실제 AIP 바이너리 listener 기동 검증 100% 통과 (소요시간 1460ms):
+    1. **F07/F15**: Topic 제목, Post 본문, User 사용자명, Forum 제목에 대한 `.contains` 검색 결과 정확성 검증.
+    2. **F03**: Alice 본인 프로필 수정(Seoul, Alice In Wonderland) 반영 및 타인(Bob) 악의적 수정 시도 403 거부 검증.
+    3. **F09**: Alice(발신)→Bob(수신) 대화함 동시 생성, Bob의 수신함 `unread: true` 관측, 답장 Message 작성, `markRead` 전이 후 `unread: false`, `moveToTrash` 및 `restoreFromTrash` 전이 검증.
+    4. **F06**: TopicTracker 등록(`track`) 및 해제(`untrack`), `ForumRead` 생성 검증.
+    5. **F04 / F10**: Bob(Admin)의 Category 생성·수정 성공, Alice(일반 회원)의 Category 생성 시도 403 거부, Bob의 Alice 계정 상태 `adminUpdateUser` 전이 검증.
+
+### 3. 미해결 항목 및 블로커 유지
+- Keycloak 브라우저 `ERR_CERT_AUTHORITY_INVALID`는 계속 별도 blocker로 유지 (우회 금지).
+- 원본 WTForms 오류 화면 재표시, pagination, 원본 Jinja 템플릿 직사용(F16), 소프트 삭제 tombstone vs 물리 cascade 차이 등은 열린 상태 유지.
+- 원본 백엔드 중지 상태의 최종 E2E 배포 검증 및 clean checkout 배포 재현은 후속 gate로 유지.
 
 ## 2026-10-17 현재 Run — forum 렌더 권한 및 실제 AIP SDK/DB 통합
 
