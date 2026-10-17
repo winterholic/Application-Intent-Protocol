@@ -32,7 +32,7 @@ async fn migration_lock_linearizes_requests_and_old_listener_rejects_new_facts()
     let schema =
         format!("aip_fence_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("clock").as_nanos());
     sqlgen::try_set_schema(&schema).expect("test schema context");
-    let db_url = "host=localhost dbname=postgres";
+    let db_url = aip_test_support::test_database_url!();
     let db = connect_owned_with_url(db_url).await.expect("local PostgreSQL");
     db.batch_execute(&format!(
         "CREATE SCHEMA {schema}; CREATE TABLE {schema}.aip_migrate_meta(singleton boolean PRIMARY KEY, facts_digest text NOT NULL); INSERT INTO {schema}.aip_migrate_meta VALUES(true,'{old}'); CREATE TABLE {schema}.aip_idem(principal text,key text,request text,result jsonb,PRIMARY KEY(principal,key))",

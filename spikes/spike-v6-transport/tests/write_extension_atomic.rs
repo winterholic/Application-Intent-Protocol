@@ -46,7 +46,7 @@ async fn write_effects_and_idempotent_result_commit_together_without_worker_repl
     let facts: Value = load_str(SPEC, Form::A).unwrap_or_else(|errors| panic!("{errors:?}")).execution;
     let schema = format!("aip_write_atomic_{unique}");
     sqlgen::set_schema(&schema);
-    let mut db = connect_with_url("host=localhost dbname=postgres").await.expect("local PostgreSQL");
+    let mut db = connect_with_url(aip_test_support::test_database_url!()).await.expect("local PostgreSQL");
     let ddl = sqlgen::create_ddl(&facts).unwrap();
     db.batch_execute(&ddl[0]).await.expect("fresh schema ownership");
     let caller = Caller { actor_id: Some(1), now: "2026-10-05T00:00:00Z".into() };
@@ -99,7 +99,7 @@ async fn write_effects_and_idempotent_result_commit_together_without_worker_repl
                 }
                 db.batch_execute(&format!("UPDATE {schema}.event SET checked=false; TRUNCATE {schema}.aip_idem")).await?;
                 fs::write(owned.0.join("counter"), "").unwrap();
-                let mut parallel = connect_with_url("host=localhost dbname=postgres").await.expect("local PostgreSQL");
+                let mut parallel = connect_with_url(aip_test_support::test_database_url!()).await.expect("local PostgreSQL");
                 let concurrent_body = json!({"key":"concurrent","request":request});
                 let (left,right) = tokio::join!(
                     apply_observed_fixture(&mut db,&facts,&concurrent_body,&caller,wire,&config),

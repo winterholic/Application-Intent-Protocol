@@ -35,7 +35,7 @@ impl PgConnectionFactory for TestFactory {
 }
 
 fn database_url() -> String {
-    std::env::var("AIP_TEST_DATABASE_URL").unwrap_or_else(|_| "host=localhost dbname=postgres".to_owned())
+    aip_test_support::database_url().to_owned()
 }
 
 fn schema() -> String {

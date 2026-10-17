@@ -585,7 +585,8 @@ async fn http(addr: std::net::SocketAddr, intent: &str, token: Option<&str>, bod
 async fn serve(e: Arc<Engine>, secret: &[u8]) -> std::net::SocketAddr {
     let port = std::net::TcpListener::bind("127.0.0.1:0").expect("bind").local_addr().expect("addr").port();
     let state =
-        aip_runtime::http::AppState::new(e, Arc::new(secret.to_vec()), false, false, Arc::new(json!({})), "postgres://localhost/postgres").await;
+        aip_runtime::http::AppState::new(e, Arc::new(secret.to_vec()), false, false, Arc::new(json!({})), aip_test_support::test_database_url!())
+            .await;
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     tokio::spawn(async move {
         let _ = aip_runtime::http::serve(state, addr).await;

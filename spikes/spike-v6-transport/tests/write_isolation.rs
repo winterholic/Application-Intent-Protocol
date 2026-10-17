@@ -15,7 +15,7 @@ use tokio::{
 };
 
 const SPEC: &str = include_str!("fixtures/write-extension.aip");
-const DB: &str = "host=localhost dbname=postgres";
+const DB: &str = aip_test_support::test_database_url!();
 
 struct Owned(PathBuf);
 impl Drop for Owned {
@@ -88,7 +88,7 @@ async fn write_extension_pins_its_transaction_to_read_committed() {
     .await;
     assert_eq!(rejected["code"], "WIRE.INVARIANT_VIOLATED", "{rejected}");
 
-    let server_db = "host=localhost dbname=postgres options='-c default_transaction_isolation=serializable'";
+    let server_db = aip_test_support::database_url_with_option(DB, "options", "-c default_transaction_isolation=serializable");
     let server = listen_with_prototype_options(
         facts.clone(),
         IdWire::DecimalString,

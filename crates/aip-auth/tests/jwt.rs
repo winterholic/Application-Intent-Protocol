@@ -15,7 +15,7 @@ impl Drop for SchemaGuard {
 }
 
 fn psql(sql: &str) -> std::process::Output {
-    Command::new("psql").args(["-X", "-q", "-d", "host=localhost dbname=postgres", "-Atc", sql]).output().expect("test setup")
+    Command::new("psql").args(["-X", "-q", "-d", aip_test_support::test_database_url!(), "-Atc", sql]).output().expect("test setup")
 }
 
 fn mapped_schema() -> SchemaGuard {
@@ -51,7 +51,7 @@ fn token(key: &EncodingKey, claims: Value, typ: &str, kid: &str) -> String {
 #[tokio::test]
 async fn accepts_only_api_access_token_profile() {
     let (_dir, config, key) = fixture();
-    let auth = AuthenticatorImpl::new(config, "host=localhost dbname=postgres".into(), "aip_example".into()).await.expect("test setup");
+    let auth = AuthenticatorImpl::new(config, aip_test_support::test_database_url!().into(), "aip_example".into()).await.expect("test setup");
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("test setup").as_secs();
     let claims = json!({"iss":"https://issuer.example","aud":"aip-api","sub":"user-1","iat":now,"nbf":now,"exp":now+300});
     let good = token(&key, claims.clone(), "at+jwt", "current");
@@ -69,7 +69,7 @@ async fn accepts_only_api_access_token_profile() {
 #[tokio::test]
 async fn extreme_signed_timestamps_are_rejected_without_panicking() {
     let (_dir, config, key) = fixture();
-    let auth = AuthenticatorImpl::new(config, "host=localhost dbname=postgres".into(), "aip_example".into()).await.expect("test setup");
+    let auth = AuthenticatorImpl::new(config, aip_test_support::test_database_url!().into(), "aip_example".into()).await.expect("test setup");
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("test setup").as_secs();
     let claims = json!({"iss":"https://issuer.example","aud":"aip-api","sub":"user-1","iat":i64::MIN,"nbf":now,"exp":now+300});
     assert!(auth.verify_token(&token(&key, claims, "at+jwt", "current")).await.is_err());
@@ -78,7 +78,7 @@ async fn extreme_signed_timestamps_are_rejected_without_panicking() {
 #[tokio::test]
 async fn negative_not_before_is_rejected() {
     let (_dir, config, key) = fixture();
-    let auth = AuthenticatorImpl::new(config, "host=localhost dbname=postgres".into(), "aip_example".into()).await.expect("test setup");
+    let auth = AuthenticatorImpl::new(config, aip_test_support::test_database_url!().into(), "aip_example".into()).await.expect("test setup");
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("test setup").as_secs();
     let claims = json!({"iss":"https://issuer.example","aud":"aip-api","sub":"user-1","iat":now,"nbf":-1,"exp":now+300});
     assert!(auth.verify_token(&token(&key, claims, "at+jwt", "current")).await.is_err());
@@ -88,14 +88,14 @@ async fn negative_not_before_is_rejected() {
 async fn configured_issuer_cannot_include_a_query() {
     let (_dir, mut config, _key) = fixture();
     config.issuer = "https://issuer.example?tracking=1".into();
-    assert!(AuthenticatorImpl::new(config, "host=localhost dbname=postgres".into(), "aip_example".into()).await.is_err());
+    assert!(AuthenticatorImpl::new(config, aip_test_support::test_database_url!().into(), "aip_example".into()).await.is_err());
 }
 
 #[tokio::test]
 async fn maps_verified_subject_to_existing_actor_and_checks_revocation_each_call() {
     let schema = mapped_schema();
     let (_dir, config, key) = fixture();
-    let auth = AuthenticatorImpl::new(config, "host=localhost dbname=postgres".into(), schema.0.clone()).await.expect("test setup");
+    let auth = AuthenticatorImpl::new(config, aip_test_support::test_database_url!().into(), schema.0.clone()).await.expect("test setup");
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("test setup").as_secs();
     let claims = json!({"iss":"https://issuer.example","aud":"aip-api","sub":"user-1","iat":now,"nbf":now,"exp":now+300});
     let token = token(&key, claims, "at+jwt", "current");
@@ -114,7 +114,7 @@ async fn file_jwks_rotation_replaces_the_accepted_key() {
     let (second_dir, _, second_key) = fixture();
     let path = first_dir.path().join("jwks.json");
     let second = std::fs::read_to_string(second_dir.path().join("jwks.json")).expect("test setup").replace("current", "next");
-    let auth = AuthenticatorImpl::new(config, "host=localhost dbname=postgres".into(), "aip_example".into()).await.expect("test setup");
+    let auth = AuthenticatorImpl::new(config, aip_test_support::test_database_url!().into(), "aip_example".into()).await.expect("test setup");
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("test setup").as_secs();
     let claims = json!({"iss":"https://issuer.example","aud":"aip-api","sub":"user-1","iat":now,"nbf":now,"exp":now+300});
     let old = token(&first_key, claims.clone(), "at+jwt", "current");
@@ -131,7 +131,7 @@ async fn signing_only_jwk_is_not_a_verification_key() {
     let mut jwks: Value = serde_json::from_slice(&std::fs::read(&path).expect("test setup")).expect("test setup");
     jwks["keys"][0]["key_ops"] = json!(["sign"]);
     std::fs::write(path, jwks.to_string()).expect("test setup");
-    assert!(AuthenticatorImpl::new(config, "host=localhost dbname=postgres".into(), "aip_example".into()).await.is_err());
+    assert!(AuthenticatorImpl::new(config, aip_test_support::test_database_url!().into(), "aip_example".into()).await.is_err());
 }
 
 #[tokio::test]
@@ -145,7 +145,7 @@ async fn rsa_modulus_below_2048_bits_cannot_be_padded_into_acceptance() {
     jwks["keys"][0]["n"] = json!(URL_SAFE_NO_PAD.encode(padded));
     jwks["keys"][0]["e"] = json!(URL_SAFE_NO_PAD.encode(weak.e().to_bytes_be()));
     std::fs::write(path, jwks.to_string()).expect("test setup");
-    assert!(AuthenticatorImpl::new(config, "host=localhost dbname=postgres".into(), "aip_example".into()).await.is_err());
+    assert!(AuthenticatorImpl::new(config, aip_test_support::test_database_url!().into(), "aip_example".into()).await.is_err());
 }
 
 #[tokio::test]
@@ -155,7 +155,7 @@ async fn rsa_public_exponent_one_is_rejected_from_jwks() {
     let mut jwks: Value = serde_json::from_slice(&std::fs::read(&path).expect("test setup")).expect("test setup");
     jwks["keys"][0]["e"] = json!(URL_SAFE_NO_PAD.encode([1_u8]));
     std::fs::write(path, jwks.to_string()).expect("test setup");
-    let result = AuthenticatorImpl::new(config, "host=localhost dbname=postgres".into(), "aip_example".into()).await;
+    let result = AuthenticatorImpl::new(config, aip_test_support::test_database_url!().into(), "aip_example".into()).await;
     assert!(result.is_err(), "a JWKS RSA key with invalid public exponent e=1 must be rejected during configuration");
 }
 
@@ -165,7 +165,7 @@ async fn principal_lookups_share_the_server_pool_and_its_limit() {
     use spike_v6_transport::pool::{ConnectionPool, PoolOptions};
     let schema = mapped_schema();
     let (_dir, config, key) = fixture();
-    let auth = AuthenticatorImpl::new(config, "host=localhost dbname=postgres".into(), schema.0.clone()).await.expect("test setup");
+    let auth = AuthenticatorImpl::new(config, aip_test_support::test_database_url!().into(), schema.0.clone()).await.expect("test setup");
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("test setup").as_secs();
     let claims = json!({"iss":"https://issuer.example","aud":"aip-api","sub":"user-1","iat":now,"nbf":now,"exp":now+300});
     let token = token(&key, claims, "at+jwt", "current");
@@ -173,7 +173,7 @@ async fn principal_lookups_share_the_server_pool_and_its_limit() {
     // The server hands its pool to the authenticator. With the only slot checked out, a lookup has to wait for the
     // pool and give up at its acquire deadline instead of opening a private connection that bypasses the limit.
     let options = PoolOptions { max_size: 1, acquire_timeout: std::time::Duration::from_millis(200), ..PoolOptions::default() };
-    let pool = std::sync::Arc::new(ConnectionPool::new("host=localhost dbname=postgres", options).expect("test setup"));
+    let pool = std::sync::Arc::new(ConnectionPool::new(aip_test_support::test_database_url!(), options).expect("test setup"));
     auth.use_pool(pool.clone());
     let held = pool.acquire().await.expect("test setup");
     let started = std::time::Instant::now();

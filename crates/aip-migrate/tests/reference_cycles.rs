@@ -1,7 +1,7 @@
 use aip_migrate::{apply, init, plan, preflight};
 use spike_v1_fixture::{Form, load_str};
 
-const DB: &str = "host=localhost dbname=postgres";
+const DB: &str = aip_test_support::test_database_url!();
 
 fn facts(source: &str) -> serde_json::Value {
     load_str(source, Form::A).unwrap_or_else(|errors| panic!("V1: {errors:?}")).execution

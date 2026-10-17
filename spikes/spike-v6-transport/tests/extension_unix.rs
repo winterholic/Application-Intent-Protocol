@@ -107,7 +107,7 @@ async fn post_extension(address: SocketAddr, token: &str, fingerprint: &str) -> 
 async fn mac_net_deny_blocks_a_live_unix_socket_for_node_and_python() {
     let facts = facts();
     let mut failures = Vec::new();
-    let db_url = spike_v2_read::DB_URL;
+    let db_url = aip_test_support::test_database_url!();
     let mut db = match connect_with_url(db_url).await {
         Ok(db) => db,
         Err(error) => panic!("local PostgreSQL connection failed: {error}"),

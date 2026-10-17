@@ -19,7 +19,7 @@ use tokio::{
     process::Command,
 };
 
-const DB: &str = "host=localhost dbname=postgres";
+const DB: &str = aip_test_support::test_database_url!();
 const APP: &str = include_str!("../../../prototype/example/app.aip");
 const ORIGIN: &str = "https://app.example.com";
 

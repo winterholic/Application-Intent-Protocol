@@ -19,7 +19,7 @@
 
 ## 실행
 
-PostgreSQL 15 이상, 로컬 `host=localhost dbname=postgres`에 시험 DB·역할을 만들 수 있는 계정, Node·Python·Rust와 SDK TypeScript 도구가 필요하다. 인증 키는 메모리에서 새로 생성하며 저장된 인증 정보나 `.env`를 읽지 않는다.
+PostgreSQL 15 이상이 필요하다. 테스트 실행 전에 실행자 전용 PostgreSQL의 `AIP_TEST_DATABASE_URL` 및 `AIP_TEST_ADMIN_URL`을 명시해야 하며, 두 값은 같은 전용 고포트 endpoint를 가리켜야 한다. 기본 호스트·포트·데이터베이스 fallback은 허용되지 않는다. Node·Python·Rust와 SDK TypeScript 도구도 필요하다. 인증 키는 메모리에서 새로 생성하며 저장된 인증 정보나 `.env`를 읽지 않는다.
 
 ```sh
 cargo build -p aip-cli --locked

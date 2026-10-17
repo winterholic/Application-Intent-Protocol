@@ -21,6 +21,7 @@ rsa = { version = "0.9", features = ["pem", "sha2"] }
 rand = "0.8"
 tempfile = "3"
 rustls = { version = "0.23.35", default-features = false, features = ["ring", "std", "tls12"] }
+aip-test-support = { path = "../aip-test-support", features = ["strict-db"] }
 
 [lints]
 workspace = true

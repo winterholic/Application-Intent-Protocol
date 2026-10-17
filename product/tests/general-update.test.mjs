@@ -6,10 +6,12 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, cpSync, rmSync } f
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { once } from "node:events";
+import { requireTestDatabase } from "../test-support/postgres-guard.mjs";
 
 const root = resolve(import.meta.dirname, "../..");
 const binary = join(root,"target/debug/aip");
-const env = {PATH:process.env.PATH,HOME:process.env.HOME,TMPDIR:process.env.TMPDIR,AIP_TEST_DATABASE:"host=localhost dbname=postgres",npm_config_cache:"/tmp/aip-update-npm-cache"};
+const testDb = requireTestDatabase();
+const env = {PATH:process.env.PATH,HOME:process.env.HOME,TMPDIR:process.env.TMPDIR,AIP_TEST_DATABASE:testDb.raw,npm_config_cache:"/tmp/aip-update-npm-cache"};
 function run(cmd,args,options={}) {
   const result=spawnSync(cmd,args,{cwd:root,env,encoding:"utf8",timeout:120000,...options});
   assert.equal(result.status,0,`${cmd} failed:\n${result.stdout}\n${result.stderr}`);

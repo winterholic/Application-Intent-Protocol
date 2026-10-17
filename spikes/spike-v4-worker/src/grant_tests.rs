@@ -41,7 +41,7 @@ fn invoke_token(worker: &Worker, known_before: &HashSet<String>) -> Option<Strin
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn completed_grants_are_released_and_retired_tokens_are_bounded() {
     let facts = facts();
-    let mut db = connect_with_url("host=localhost dbname=postgres").await.expect("local PostgreSQL connection");
+    let mut db = connect_with_url(aip_test_support::test_database_url!()).await.expect("worker PostgreSQL connection");
     let ext_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/extensions");
     let mut failures = Vec::new();
 
@@ -99,7 +99,7 @@ async fn completed_grants_are_released_and_retired_tokens_are_bounded() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn broken_worker_stdin_does_not_retain_a_grant() {
     let facts = facts();
-    let mut db = connect_with_url("host=localhost dbname=postgres").await.expect("local PostgreSQL connection");
+    let mut db = connect_with_url(aip_test_support::test_database_url!()).await.expect("worker PostgreSQL connection");
     let ext_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/extensions");
     let mut failures = Vec::new();
 
@@ -134,7 +134,7 @@ impl Drop for OwnedDir {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn externally_cancelled_grant_is_retired_before_the_next_valid_call() {
     let facts = facts();
-    let mut db = connect_with_url("host=localhost dbname=postgres").await.expect("local PostgreSQL connection");
+    let mut db = connect_with_url(aip_test_support::test_database_url!()).await.expect("worker PostgreSQL connection");
     let mut failures = Vec::new();
     for lang in [Lang::Node, Lang::Python] {
         let path = std::env::temp_dir().join(format!("aip-cancelled-grant-{}-{lang:?}", std::process::id()));

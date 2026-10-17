@@ -27,8 +27,7 @@ fn key() -> String {
 }
 
 fn db_url(db: &str) -> String {
-    let admin = std::env::var("AIP_TEST_ADMIN_URL").unwrap_or_else(|_| "postgres://localhost/postgres".into());
-    admin.rsplit_once('/').map(|(base, _)| format!("{base}/{db}")).expect("url")
+    aip_test_support::admin_database_url_for(db)
 }
 
 /// Starts a server for `e` on a free port; the hub is returned too so a test can read how often it re-ran subscriptions.

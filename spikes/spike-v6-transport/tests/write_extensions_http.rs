@@ -48,7 +48,7 @@ async fn write_extensions_require_session_contract_and_opt_in_then_replay_atomic
     let facts: Value = load_str(SPEC, Form::A).unwrap().execution;
     let schema = format!("aip_write_http_{unique}");
     sqlgen::set_schema(&schema);
-    let db = connect_with_url("host=localhost dbname=postgres").await.unwrap();
+    let db = connect_with_url(aip_test_support::test_database_url!()).await.unwrap();
     let ddl = sqlgen::create_ddl(&facts).unwrap();
     db.batch_execute(&ddl[0]).await.expect("fresh schema ownership");
     let mut failures = vec![];
@@ -132,7 +132,7 @@ async fn write_extensions_require_session_contract_and_opt_in_then_replay_atomic
                     facts.clone(),
                     wire,
                     "127.0.0.1:0".parse().unwrap(),
-                    "host=localhost dbname=postgres".into(),
+                    aip_test_support::test_database_url!().into(),
                     Some(config),
                     ServerOptions::default(),
                     true,

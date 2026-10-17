@@ -9,7 +9,7 @@ use spike_v2_read::{connect_with_url, plan::Caller, sqlgen};
 use spike_v3_write::{apply, Knobs};
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
-const DB: &str = "host=localhost dbname=postgres";
+const DB: &str = aip_test_support::test_database_url!();
 const SPEC: &str = r#"
 enum Status { OPEN, CLAIMED }
 resource Member { fields { id: Id } }

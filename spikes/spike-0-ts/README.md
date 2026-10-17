@@ -20,7 +20,7 @@ node src/cli.ts run examples/shop/app.aipoc --port 4000
 curl localhost:4000/aip/describe
 ```
 
-테스트는 `aip_test` DB를 매번 새로 만듭니다. 접속 정보는 `AIP_TEST_ADMIN_URL`(기본 `postgres://localhost/postgres`), 런타임은 `DATABASE_URL`(기본 `postgres://localhost/aip_dev`)을 씁니다.
+테스트는 실행자 전용 PostgreSQL의 `AIP_TEST_DATABASE_URL`과 `AIP_TEST_ADMIN_URL`을 모두 명시해야 합니다. 두 값은 같은 전용 고포트 endpoint를 가리켜야 하며, PG* 환경변수와 암묵적 기본값은 허용하지 않습니다. CLI 런타임의 `DATABASE_URL` 설정은 테스트 DSN과 별개입니다.
 
 ## 구조
 

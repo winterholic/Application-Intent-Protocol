@@ -8,7 +8,8 @@ Rust/Cargo와 rustfmt·clippy, Node.js 26, npm, Python 3, PostgreSQL client/serv
 
 ```sh
 npm ci --prefix spikes/spike-0-ts --ignore-scripts --no-audit --no-fund
-psql -X -d 'host=localhost dbname=postgres' -Atc 'SELECT 1'
+Before running DB-backed tests, set `AIP_TEST_DATABASE_URL` to a worker-owned `aip_test_*` database and `AIP_TEST_ADMIN_URL` to its maintenance database on the same explicit high port. Leave every `PG*` variable unset. The shared guard rejects missing DSNs, implicit libpq settings, and the PostgreSQL default port before any connection.
+`psql -X "$AIP_TEST_DATABASE_URL" -Atc 'SELECT 1'`
 bash tools/verify.sh
 ```
 

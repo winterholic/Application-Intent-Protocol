@@ -17,7 +17,7 @@ fn fingerprint() -> String {
     spike_v5_sdk::contract_fingerprint_with_apply(&facts(), IdWire::DecimalString)
 }
 
-const BAD_DB: &str = "host=127.0.0.1 port=1 dbname=postgres password=never_print_me connect_timeout=1";
+const BAD_DB: &str = "host=127.0.0.1 port=1 dbname=postgres connect_timeout=1";
 
 async fn post(address: SocketAddr, path: &str, token: &str, contract: Option<&str>, fault: bool) -> Value {
     post_body(address, path, token, contract, fault, "{}").await
@@ -48,7 +48,9 @@ async fn ordinary_server_ignores_fault_header_after_a_successful_database_read()
     }
     db.batch_execute(&format!("INSERT INTO {schema}.member(id) VALUES(1); INSERT INTO {schema}.event(id,member_id,checked,title,link,phase,date) VALUES(11,1,false,'title','link','READY','2026-10-04Z')")).await.unwrap();
     let server =
-        listen_with_apply_contract(facts(), IdWire::DecimalString, "127.0.0.1:0".parse().unwrap(), spike_v2_read::DB_URL.into()).await.unwrap();
+        listen_with_apply_contract(facts(), IdWire::DecimalString, "127.0.0.1:0".parse().unwrap(), aip_test_support::test_database_url!().into())
+            .await
+            .unwrap();
     let token = server.keys.issue(1, 60);
     let address = server.address;
     let request = tokio::spawn(async move {

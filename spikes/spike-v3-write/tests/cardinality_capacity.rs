@@ -3,7 +3,7 @@ use spike_v1_fixture::{load_str, Form};
 use spike_v2_read::{connect_with_url, plan::Caller, sqlgen};
 use spike_v3_write::{apply, Knobs};
 
-const DB: &str = "host=localhost dbname=postgres";
+const DB: &str = aip_test_support::test_database_url!();
 const SPEC: &str = r#"
 resource Member { fields { id: Id } }
 actor Member

@@ -4,7 +4,7 @@ use spike_v2_read::{
     connect_with_url, execute,
     id_wire::{encode_rows, IdWire},
     plan::{plan_read, plan_read_with_wire, Caller, Reject},
-    sqlgen, DB_URL,
+    sqlgen,
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio_postgres::Client;
@@ -161,7 +161,8 @@ async fn relation_target_aggregate_preserves_planning_policy_cost_dependencies_a
     low_cost["resources"]["Recruitment"]["exposeRead"]["budget"]["cost"] = json!(17);
     check_code(&low_cost, &request(3), &who, "WIRE.COST_EXCEEDED").unwrap();
 
-    let mut db = connect_with_url(DB_URL).await.expect("connect to local PostgreSQL for owned-schema integration test");
+    let mut db =
+        connect_with_url(aip_test_support::test_database_url!()).await.expect("connect to local PostgreSQL for owned-schema integration test");
     let ddl = sqlgen::create_ddl(&facts).expect("generate CREATE-only DDL");
     let mut owns_schema = false;
     let mut setup_error = None;

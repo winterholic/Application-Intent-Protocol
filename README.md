@@ -63,7 +63,7 @@ PoC 현황: Rust 구현이 네 예제(`examples/ariari`, `shop`, `saas`, `cms`)�
 
 ```bash
 export PATH="$HOME/.cargo/bin:$PATH"
-cargo test -q --workspace            # 로컬 PostgreSQL 필요(postgres://localhost/postgres)
+cargo test -q --workspace            # AIP_TEST_DATABASE_URL / AIP_TEST_ADMIN_URL 필수 (전용 고포트 PostgreSQL)
 cargo test -q -p aip-cli --features poc-runtime   # PoC runtime e2e(run/migrate 등)는 이 feature가 필요
 ./target/debug/aip check examples/ariari/app.aipoc
 ./target/debug/aip core examples/ariari/app.aipoc --digest

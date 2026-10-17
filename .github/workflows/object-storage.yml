@@ -17,6 +17,23 @@ jobs:
   object-storage:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: runner
+          POSTGRES_DB: aip_test_ci
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - '127.0.0.1:5433:5432'
+        options: >-
+          --health-cmd "pg_isready -U runner -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      AIP_TEST_DATABASE_URL: host=127.0.0.1 port=5433 dbname=aip_test_ci user=runner
+      AIP_TEST_ADMIN_URL: host=127.0.0.1 port=5433 dbname=postgres user=runner
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:

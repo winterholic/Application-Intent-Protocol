@@ -42,7 +42,7 @@ async fn invariant_errors_admit_existence_but_never_carry_a_hidden_rows_id_or_va
     let facts = load_str(SOURCE, Form::A).unwrap_or_else(|errors| panic!("{errors:?}")).execution;
     let schema = format!("aip_o27_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
     sqlgen::set_schema(&schema);
-    let mut db = connect_with_url("host=localhost dbname=postgres").await.unwrap();
+    let mut db = connect_with_url(aip_test_support::test_database_url!()).await.unwrap();
     for statement in sqlgen::create_ddl_in(&schema, &facts).unwrap() {
         db.batch_execute(&statement).await.unwrap();
     }

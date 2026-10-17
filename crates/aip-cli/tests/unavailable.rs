@@ -38,7 +38,7 @@ async fn unavailable_database_is_a_retryable_error() {
 async fn unavailable_database_answers_http_503() {
     let engine = engine_without_database();
     let port = std::net::TcpListener::bind("127.0.0.1:0").expect("bind").local_addr().expect("addr").port();
-    let state = AppState::new(engine, Arc::new(b"test".to_vec()), false, false, Arc::new(json!({})), "postgres://localhost/postgres").await;
+    let state = AppState::new(engine, Arc::new(b"test".to_vec()), false, false, Arc::new(json!({})), aip_test_support::test_database_url!()).await;
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     tokio::spawn(async move {
         let _ = serve(state, addr).await;

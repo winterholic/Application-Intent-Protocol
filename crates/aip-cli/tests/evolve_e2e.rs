@@ -20,12 +20,12 @@ fn build(src: &str) -> Built {
 }
 
 async fn fresh(db: &str) -> Pool {
-    let admin_url = std::env::var("AIP_TEST_ADMIN_URL").unwrap_or_else(|_| "postgres://localhost/postgres".into());
+    let admin_url = aip_test_support::admin_database_url();
     let admin = aip_runtime::pool(&admin_url, 1).expect("admin pool");
     let c = admin.get().await.expect("admin connection");
     c.execute(format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)").as_str(), &[]).await.expect("drop");
     c.execute(format!("CREATE DATABASE {db}").as_str(), &[]).await.expect("create");
-    let url = admin_url.rsplit_once('/').map(|(base, _)| format!("{base}/{db}")).expect("url");
+    let url = aip_test_support::admin_database_url_for(db);
     aip_runtime::pool(&url, 16).expect("pool")
 }
 
@@ -363,8 +363,8 @@ async fn changes_the_planner_does_not_know_how_to_carry_are_refused() {
 #[tokio::test]
 async fn the_commands_plan_apply_and_compare_against_the_deployed_program() {
     let pool = fresh("aip_e2e_evolve_cli").await;
-    let admin_url = std::env::var("AIP_TEST_ADMIN_URL").unwrap_or_else(|_| "postgres://localhost/postgres".into());
-    let url = admin_url.rsplit_once('/').map(|(base, _)| format!("{base}/aip_e2e_evolve_cli")).expect("url");
+    let admin_url = aip_test_support::admin_database_url();
+    let url = aip_test_support::admin_database_url_for("aip_e2e_evolve_cli");
     let dir = std::env::temp_dir().join("aip-evolve-cli");
     std::fs::create_dir_all(&dir).expect("dir");
     let file = dir.join("app.aipoc");

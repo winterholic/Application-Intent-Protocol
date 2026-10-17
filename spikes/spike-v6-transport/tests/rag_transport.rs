@@ -124,8 +124,8 @@ async fn real_http_rag_rechecks_principal_after_provider_work() {
     let schema = format!("aip_rag_http_{}", std::process::id());
     sqlgen::try_set_schema(&schema).unwrap();
     let facts=load_str("actor principal\noperation read noop {\n input {}\n output { value: Int }\n allow actor != null\n effect none\n deadline 1s\n implementation \"jobs.noop\"\n}",Form::A).unwrap().execution;
-    aip_migrate::init_with_wire(spike_v2_read::DB_URL, &schema, &facts, "safe").await.unwrap();
-    let db = spike_v2_read::connect_owned_with_url(spike_v2_read::DB_URL).await.unwrap();
+    aip_migrate::init_with_wire(aip_test_support::test_database_url!(), &schema, &facts, "safe").await.unwrap();
+    let db = spike_v2_read::connect_owned_with_url(aip_test_support::test_database_url!()).await.unwrap();
     db.batch_execute(&format!(
         "INSERT INTO {schema}.aip_actors VALUES(1); INSERT INTO {schema}.aip_principals(issuer,subject,actor_id) VALUES('test','alice',1)"
     ))
@@ -152,7 +152,9 @@ async fn real_http_rag_rechecks_principal_after_provider_work() {
     let storage_schema = aip_execution::infrastructure_schema(&schema).unwrap();
     let store = Arc::new(
         aip_execution::rag::PgJsonVectorStore::with_factory(
-            Arc::new(spike_v6_transport::rag_transport::RagConnectionFactory::new(spike_v2_read::DB_URL, Default::default()).unwrap()),
+            Arc::new(
+                spike_v6_transport::rag_transport::RagConnectionFactory::new(aip_test_support::test_database_url!(), Default::default()).unwrap(),
+            ),
             &storage_schema,
         )
         .unwrap(),
@@ -180,7 +182,7 @@ async fn real_http_rag_rechecks_principal_after_provider_work() {
         facts.clone(),
         IdWire::SafeNumber,
         "127.0.0.1:0".parse().unwrap(),
-        spike_v2_read::DB_URL.into(),
+        aip_test_support::test_database_url!().into(),
         None,
         ServerOptions::default(),
         false,
@@ -217,7 +219,9 @@ async fn real_http_rag_rechecks_principal_after_provider_work() {
     gate.resume.notify_one();
     let response = request.await.unwrap();
     server.shutdown().await.unwrap();
-    aip_migrate::preflight(spike_v2_read::DB_URL, &schema, &facts).await.expect("runtime tables must not cause application catalog drift on restart");
+    aip_migrate::preflight(aip_test_support::test_database_url!(), &schema, &facts)
+        .await
+        .expect("runtime tables must not cause application catalog drift on restart");
     db.batch_execute(&format!("DROP SCHEMA {schema} CASCADE; DROP SCHEMA {storage_schema} CASCADE")).await.unwrap();
     let body: Value = serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
     assert_eq!(body["code"], "WIRE.UNAUTHENTICATED", "{body}");

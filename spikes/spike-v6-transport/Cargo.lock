@@ -47,6 +47,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "aip-test-support"
+version = "0.1.0"
+dependencies = [
+ "url",
+]
+
+[[package]]
 name = "amq-protocol"
 version = "10.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2468,6 +2475,7 @@ version = "0.0.0"
 dependencies = [
  "aip-execution",
  "aip-migrate",
+ "aip-test-support",
  "base64 0.22.1",
  "chrono",
  "chrono-tz",

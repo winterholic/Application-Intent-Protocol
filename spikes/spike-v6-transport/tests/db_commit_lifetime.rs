@@ -36,7 +36,8 @@ async fn hold_commit(
     block_next_clock: Arc<AtomicBool>,
     after_clock: bool,
 ) {
-    let db = TcpStream::connect("127.0.0.1:5432").await.unwrap();
+    let (db_host, db_port) = aip_test_support::endpoint(aip_test_support::test_database_url!()).unwrap();
+    let db = TcpStream::connect((db_host.as_str(), db_port)).await.unwrap();
     let (mut input, mut output) = socket.into_split();
     let (mut db_input, mut db_output) = db.into_split();
     let frontend = async { tokio::io::copy(&mut input, &mut db_output).await };
@@ -109,7 +110,7 @@ async fn committed_but_missing_reply_stays_unknown_and_recovers_without_duplicat
     let facts = load_str(include_str!("fixtures/write-extension.aip"), Form::A).unwrap().execution;
     let schema = format!("aip_commit_life_{unique}");
     sqlgen::set_schema(&schema);
-    let db = connect_owned_with_url("host=localhost dbname=postgres").await.unwrap();
+    let db = connect_owned_with_url(aip_test_support::test_database_url!()).await.unwrap();
     let ddl = sqlgen::create_ddl(&facts).unwrap();
     db.batch_execute(&ddl[0]).await.expect("fresh schema ownership");
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

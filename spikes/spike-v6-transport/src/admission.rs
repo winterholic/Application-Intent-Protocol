@@ -138,7 +138,9 @@ mod tests {
 
     async fn setup() -> (crate::pool::ConnectionPool, Admission, String) {
         let schema = format!("aip_admission_{}_{}", std::process::id(), NEXT_SCHEMA.fetch_add(1, Ordering::Relaxed));
-        let pool = crate::pool::ConnectionPool::new(spike_v2_read::DB_URL, crate::pool::PoolOptions { max_size: 12, ..Default::default() }).unwrap();
+        let pool =
+            crate::pool::ConnectionPool::new(aip_test_support::test_database_url!(), crate::pool::PoolOptions { max_size: 12, ..Default::default() })
+                .unwrap();
         let db = pool.acquire().await.unwrap();
         db.batch_execute(&format!("CREATE SCHEMA {schema}")).await.unwrap();
         db.release().await.unwrap();
@@ -284,7 +286,7 @@ mod tests {
             realtime_slots: tokio::sync::Semaphore::new(8),
             realtime_preauth: tokio::sync::Semaphore::new(8),
             object_slots: tokio::sync::Semaphore::new(4),
-            db_url: spike_v2_read::DB_URL.into(),
+            db_url: aip_test_support::test_database_url!().into(),
             broker: None,
             enable_file_uploads: false,
             fault_injection: false,
@@ -338,7 +340,7 @@ mod tests {
             realtime_slots: tokio::sync::Semaphore::new(8),
             realtime_preauth: tokio::sync::Semaphore::new(8),
             object_slots: tokio::sync::Semaphore::new(4),
-            db_url: spike_v2_read::DB_URL.into(),
+            db_url: aip_test_support::test_database_url!().into(),
             broker: None,
             enable_file_uploads: false,
             fault_injection: false,
@@ -398,7 +400,7 @@ mod tests {
             realtime_slots: tokio::sync::Semaphore::new(8),
             realtime_preauth: tokio::sync::Semaphore::new(8),
             object_slots: tokio::sync::Semaphore::new(4),
-            db_url: spike_v2_read::DB_URL.into(),
+            db_url: aip_test_support::test_database_url!().into(),
             broker: None,
             enable_file_uploads: false,
             fault_injection: false,

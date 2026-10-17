@@ -3,7 +3,7 @@ use serde_json::json;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio_postgres::{Client, NoTls};
 
-const DB: &str = "host=localhost dbname=postgres";
+const DB: &str = aip_test_support::test_database_url!();
 const OWNER: &str = "https://issuer.example|subject-1";
 static NEXT: AtomicU64 = AtomicU64::new(0);
 

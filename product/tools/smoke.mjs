@@ -4,10 +4,12 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { requireTestDatabase } from "../test-support/postgres-guard.mjs";
 
 const productDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoDir = resolve(productDir, "..");
-const testDatabase = "host=localhost dbname=postgres";
+const testDb = requireTestDatabase();
+const testDatabase = testDb.raw;
 const issuer = "https://issuer.example";
 const audience = "aip-api";
 

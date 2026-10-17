@@ -26,7 +26,8 @@ async fn hold_sql(socket: TcpStream, held: Arc<AtomicUsize>, closed: Arc<AtomicU
 }
 
 async fn proxy_sql(socket: TcpStream, held: Arc<AtomicUsize>, closed: Arc<AtomicUsize>, after_clock: bool) {
-    let db = TcpStream::connect("127.0.0.1:5432").await.unwrap();
+    let (db_host, db_port) = aip_test_support::endpoint(aip_test_support::test_database_url!()).unwrap();
+    let db = TcpStream::connect((db_host.as_str(), db_port)).await.unwrap();
     let (mut input, mut output) = socket.into_split();
     let (mut db_input, mut db_output) = db.into_split();
     let ready = Arc::new(AtomicBool::new(false));
