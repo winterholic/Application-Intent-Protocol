@@ -373,3 +373,28 @@ async fn live_multipart_is_charged_completed_and_an_idle_upload_is_aborted_in_th
 async fn owner_of(fixture: &Fixture) -> String {
     fixture.db.query_one(&format!("SELECT owner FROM {}.aip_object_ledger LIMIT 1", fixture.infra), &[]).await.unwrap().get(0)
 }
+
+/// KNOWN LIMIT, pinned on purpose: the ledger counts what was signed for until the reservation is settled against the store. An upload that
+/// is still running when the reservation is released (65 minutes after signing in production; forced here) lands in the bucket without a
+/// ledger row, so the owner quota does not cover it. The quota is therefore a bound on signed-for and confirmed bytes, not a hard cap on
+/// what an owner can leave in the bucket; the bucket's own lifecycle and capacity controls have to cover the rest (INFRASTRUCTURE.md).
+/// If the ledger ever learns to adopt late objects, this test should fail and be rewritten.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "run through scripts/test-minio-object-storage.sh with the TLS MinIO fixture"]
+async fn live_known_limit_an_upload_finishing_after_its_reservation_was_released_is_not_counted() {
+    let (store, client) = live_store(10 * MIB, 10);
+    let fixture = Fixture::start(store).await;
+    let signed = fixture.control("alice", "/objects/sign", put_request(3 * MIB)).await;
+    assert_eq!(signed["ok"], true, "{signed}");
+    assert_eq!(fixture.number(BYTES).await, 3 * MIB as i64);
+
+    // The reservation ends before the upload does.
+    fixture.make_all_due().await;
+    fixture.wait_until("the unused reservation is released", ROWS, 0).await;
+
+    // The signed URL is still valid, so the transfer that was "still running" completes now.
+    assert!(put_to(&client, &signed, vec![3; (3 * MIB) as usize]).await.is_success());
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    assert_eq!(fixture.number(BYTES).await, 0, "the object exists in the bucket but the ledger does not count it");
+    assert_eq!(fixture.number(ROWS).await, 0);
+}

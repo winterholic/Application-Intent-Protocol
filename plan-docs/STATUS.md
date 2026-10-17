@@ -1,5 +1,9 @@
 # 진행 현황과 쌓인 질문
 
+## 2026-10-18 WBS 8.7 main 게이트 실행 (Claude 실행, 독립 검증 대기)
+
+다른 트랙이 fmt·clippy를 정리한 뒤 main `a97f1b9`를 고정해 `scripts/release-gate.sh --baseline 4c27040`을 실행했고 모든 단계가 통과했다(Rust 1212 passed). 앞선 후보 `4e78ddb` 결과는 별개로 남겼고 main 성공으로 바꿔 적지 않았다. S3 quota의 65분 이후 미계상 경계는 하드 상한이 아님을 시험으로 고정하고 영향을 [릴리스 게이트](../product/RELEASE-GATE.md)에 적었다. 인계 목록도 같은 문서에 있다. 독립 검증 전이므로 완료로 표시하지 않는다.
+
 ## 2026-10-18 WBS 8.10 독립 검증 결함 6건 수정 (Claude 구현, 독립 검증 대기)
 
 nbf 선택 claim 허용과 실제 Keycloak smoke, IdP smoke 17번째 확인의 본문 검사, Python 코드젠의 3.9/3.10 import, job span 부모 연결과 실제 경로 시험, poc-runtime all-targets clippy, prototype smoke 전용 DSN 가드를 고쳤다. 명령과 결과, 확인하지 못한 것은 [제품 검증](../product/VERIFICATION.md)의 WBS 8.10 절을 따른다. 독립 검증 전이므로 완료로 표시하지 않는다.

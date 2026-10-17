@@ -44,6 +44,24 @@
 
 따라서 **main의 최종 커밋에 대해 게이트를 다시 실행해야 한다.** 위 표는 "main에서 MySQL 트랙의 미완 커밋을 뺀 트리"의 결과다.
 
+### main 커밋에서의 실행 (후보 `4e78ddb`와 별개)
+
+위 후보 결과는 main에서의 성공으로 바꿔 읽지 않는다. 다른 트랙이 fmt·clippy 실패를 정리한 뒤, main의 커밋 `a97f1b9c2d44175e52030da30c6da03a7a6cfd40`을 고정해 같은 명령을 다시 실행했다.
+
+`scripts/release-gate.sh --baseline 4c27040 --ref a97f1b9 --out /tmp/aip-claude-gate-main1` (같은 환경, 같은 전용 PostgreSQL 17)
+
+| 단계 | 결과 | 시간 |
+| --- | --- | --- |
+| clone·checkout(후보, 기준)·npm-ci | 통과, clone 깨끗함 | 1s 이내 |
+| full-regression | 통과. Rust 1212 passed·0 failed·9 ignored, Node 154 pass·0 fail, Python 32 OK(이 중 `fmt --check`와 `clippy -D warnings` 포함) | 606s |
+| release-build·package·artifact-checksums·artifact-binary | 통과 | 32s·1s·0s·1s |
+| artifact-smoke(두 wire, Python worker) | 통과 | 3s |
+| baseline-build·upgrade-drill | 통과(`"ok": true`) | 12s·2s |
+
+이 묶음의 `bin/aip` SHA-256은 `ce8ae6f0…a056a20`, SDK tarball은 `a73c9434…d0219`다. 묶음은 후보 때와 달리 8.10 수정(nbf 선택 허용, Python 3.9/3.10 코드젠, job span 부모)과 retention·S3 ledger를 모두 포함한다. 원시 로그와 `summary.txt`는 실행한 Mac Studio의 `/tmp/aip-claude-gate-main1/`에 있다(저장소에는 넣지 않았다).
+
+이 실행이 증명하지 않는 것은 위 "게이트가 증명하지 않는 것"과 같다. 추가로 이 게이트에는 실제 Keycloak smoke(`scripts/smoke-keycloak.sh`)·IdP/TLS smoke·MinIO live 시험이 들어 있지 않다. 그 결과는 [제품 검증](VERIFICATION.md)의 WBS 8.5·8.10 절에 따로 있다. 같은 Run의 구현·실행이므로 독립 검증은 별도 8.x 검증 세션이 한다. 이 커밋 이후의 main 변경은 이 결과에 포함되지 않는다.
+
 ### 업그레이드·롤백 드릴 결과
 
 이전 릴리스(`4c27040`)의 실제 binary가 `service init`한 schema에 쓰기·job을 만든 뒤 새 binary로 올렸다(workers=python, durable job 포함).
@@ -71,9 +89,24 @@
 
 ## 게이트가 증명하지 않는 것
 
-- main 최종 커밋(위 설명). 독립 검증자는 main에서 다시 돌려야 한다.
+- main 최종 커밋: 후보 결과만으로는 아니다. `a97f1b9`에서는 위 절에서 따로 통과했고, 그 뒤의 커밋은 포함하지 않는다. 독립 검증자는 자기가 고정한 SHA에서 다시 돌린다.
 - Linux 격리(Bubblewrap)·cgroup 실행, 외부 IdP 실계정, 실제 AWS S3·GCS 계정, 대형 부하·장기 운영, Windows. 일부는 CI와 이전 회차 기록([제품 검증](VERIFICATION.md))에 있으나 이 게이트가 다시 실행한 것은 아니다.
 - 의존성 취약점·라이선스 점검(`tools/dependency-check.sh`, cargo-audit·cargo-deny 설치됨): 미실행: 이번 회차에 시간을 쓰지 않았다. 독립 검증 때 실행한다.
 - `python3 tools/check_plan_docs.py`: 12개 ERROR. 모두 `plan-docs/alignment/D-development-experience.md`가 저장소 밖의 `../../../../ariari/...` 경로를 링크한 것이다. 게이트에 넣지 않았다.
 - 기준 릴리스는 `4c27040` 하나다. 그 사이 다른 시점에서의 업그레이드, 정의가 바뀐 migration과의 조합은 실행하지 않았다.
 - 같은 Run의 구현·실행이다. 독립 검증 전이다.
+
+## S3 owner quota의 1.0 보장 범위
+
+owner별 S3 quota는 **서명한 크기와 저장소에서 확인된 크기의 합계**에 대한 상한이다. 소유자가 bucket에 남길 수 있는 바이트의 하드 상한이 아니다. 서명 후 65분(URL 수명 5분 + 진행 중 업로드용 1시간)에 예약을 저장소와 대조하는데, 그때까지 끝나지 않은 업로드는 예약이 풀린 뒤 완료돼도 장부에 없다. 실제 MinIO에서 이를 고정하는 시험이 있다(`live_known_limit_an_upload_finishing_after_its_reservation_was_released_is_not_counted`: 예약 해제 뒤 서명 URL로 올리면 객체는 bucket에 있고 장부는 0바이트).
+
+- **영향:** 악의적 소유자는 매번 새 URL을 서명한 뒤 5분 안에 느린 전송을 시작하고 65분 넘게 끌어 예약이 풀린 뒤에 완료시키는 방식으로 quota를 우회해 저장 공간을 늘릴 수 있다. 우회 크기는 동시에 열어 둘 수 있는 전송 수와 객체당 5GiB 상한, 대기 시간에 묶인다. 정상 사용자의 큰 파일(65분 이상)도 같은 이유로 세어지지 않는다. 객체는 owner 접두어 아래 있으므로 소유자 격리와 다운로드 권한에는 영향이 없다.
+- **1.0에서의 표기:** 이 quota를 "owner당 저장 용량을 보장한다"고 광고하지 않는다. 운영자는 bucket 수명 주기 규칙과 provider 쪽 용량·비용 제한을 함께 설정해야 한다([서버 인프라](INFRASTRUCTURE.md)).
+- **메울 수 있는 방법(미구현):** (1) 예약을 풀 때 객체가 없으면 감시 행을 24시간 더 두고 나타나면 확정(초과 상태 포함)한다. (2) owner 접두어를 주기적으로 `ListObjectsV2`로 훑어 장부와 대조해 장부에 없는 객체를 확정한다(장부 이전에 올린 객체도 함께 다룬다). (2)가 근본적이지만 owner 해시와 원문 owner를 매핑하는 열과 목록 호출 비용 설계가 필요하다. 어느 쪽도 이번 릴리스에서 구현하지 않았다.
+
+## 인계 (2026-10-18)
+
+- **현재 변경(main, 모두 push됨):** 8.11 `c542d90`, 8.5 `0088a88`·`dc4129d`, 8.7 `b1b7d1b`·`cc5aa71`·`b8da233`·`f896f72`·`4ee67e7`·`b7f592e`, 8.10 후속 6건 `a8b0d0b`·`5b7f23c`·`791367b`·`99e1052`·`3b0925f`·`dc95dc9`·`a97f1b9`. 모두 같은 Claude Run의 구현이며 독립 검증 전이다.
+- **검증 위치:** 항목별 명령·결과는 [제품 검증](VERIFICATION.md)의 WBS 8.11·8.5·8.10 절, 게이트 결과는 이 문서다.
+- **미완료·열린 것:** 위 "증명하지 않는 것", 중첩 job의 span 부모 시험 없음, Python 3.11·3.12 미실행, Auth0·Entra 미실행, `tools/dependency-check.sh` 미실행, S3 quota 우회 경계(위), main의 `spike-v6-transport`가 `cargo clippy --all-targets -D warnings`에서 `src/server.rs`의 `items after a test module`로 실패(다른 트랙 파일, 게이트 단계에는 없음).
+- **독립 검증이 필요한 설계:** S3 장부(서명 크기 기준, 65분 유예, 임대·`version` 경쟁), retention 쿼리 비용, nbf 선택 허용, `trace_id` 컬럼의 `<trace>-<span>` 의미, Python 코드젠 호환 방식, 구버전 schema 인식 수정.
