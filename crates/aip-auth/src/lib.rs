@@ -470,7 +470,11 @@ impl AuthenticatorImpl {
         let mut validation = Validation::new(Algorithm::RS256);
         validation.set_issuer(&[&self.config.issuer]);
         validation.set_audience(&[&self.config.audience]);
-        validation.set_required_spec_claims(&["iss", "aud", "sub", "exp", "nbf"]);
+        // `nbf` is optional in RFC 7519 and absent from RFC 9068's required set; real providers (Keycloak) do not emit it. It would add
+        // nothing here: `iat` is required and may not be in the future, and the lifetime is capped from `iat`, so a token is never usable
+        // before it was issued. A present `nbf` is still enforced (`validate_nbf`, no leeway) and must be a sane integer.
+        validation.set_required_spec_claims(&["iss", "aud", "sub", "exp"]);
+        validation.validate_nbf = true;
         validation.leeway = 0;
         let decoded = decode::<Claims>(token, &key, &validation).map_err(|error| match error.kind() {
             ErrorKind::ExpiredSignature => AuthError::Expired,
@@ -483,10 +487,9 @@ impl AuthenticatorImpl {
             || claims.sub.chars().any(char::is_control)
             || claims.iss != self.config.issuer
             || claims.iat < 0
-            || claims.nbf < 0
+            || claims.nbf.is_some_and(|nbf| nbf < 0 || nbf > now)
             || claims.exp < 0
             || claims.iat > now
-            || claims.nbf > now
             || claims.exp <= now
             || !matches!(claims.exp.checked_sub(claims.iat), Some(1..=900))
         {
@@ -579,8 +582,14 @@ struct Claims {
     iss: String,
     sub: String,
     iat: i64,
-    nbf: i64,
+    /// Absent is fine. Present must be an integer: an explicit `null` or a string fails the whole token.
+    #[serde(default, deserialize_with = "present_integer")]
+    nbf: Option<i64>,
     exp: i64,
+}
+
+fn present_integer<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<i64>, D::Error> {
+    i64::deserialize(deserializer).map(Some)
 }
 
 impl spike_v6_transport::auth::Authenticator for AuthenticatorImpl {

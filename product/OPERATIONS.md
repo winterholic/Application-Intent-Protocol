@@ -19,7 +19,7 @@ root의 `aip service`는 caller 정의와 공통 Rust 실행 엔진, 설치형 T
 }
 ```
 
-issuer·audience·JWKS URL은 실제 제공자에 맞춰 설정한다. 인증 프로필은 RS256, `typ=at+jwt`, 정확한 API audience와 issuer, `sub/iat/nbf/exp`, 최대 900초 수명이다. 이 프로필을 발급하도록 제공자를 설정해야 한다. 로그인·refresh token은 제공자와 앱이 담당한다. 토큰의 role이나 actorId는 AIP 권한으로 사용하지 않는다.
+issuer·audience·JWKS URL은 실제 제공자에 맞춰 설정한다. 인증 프로필은 RS256, `typ=at+jwt`, 정확한 API audience와 issuer, `sub/iat/exp`(`nbf`는 선택, 있으면 강제), 최대 900초 수명이다. 이 프로필을 발급하도록 제공자를 설정해야 한다. 로그인·refresh token은 제공자와 앱이 담당한다. 토큰의 role이나 actorId는 AIP 권한으로 사용하지 않는다.
 
 Durable job이나 서버 확장이 필요한 경우에만 선택적으로 `workers`를 추가한다. 생략하면 worker와 HTTP integration이 비활성화되고 SDK 직접 파일 업로드도 사용할 수 없다. `enable_file_uploads`는 SDK route 설정이며 worker의 `ctx.files`는 선언된 capability로 제한된다. 전체 설정 필드와 outbound 제한은 [관리형 durable execution](MANAGED-EXECUTION.md)을 따른다.
 

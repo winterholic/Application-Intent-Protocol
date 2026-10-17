@@ -26,7 +26,7 @@ issue tokens, create actors, or decide application permissions.
    onboarding policy.
 
 The accepted token profile is an asymmetric RS256 JWT access token with
-`typ=at+jwt`, exact issuer and API audience, `sub`, `exp`, `nbf`, and `iat`.
+`typ=at+jwt`, exact issuer and API audience, `sub`, `exp` and `iat`. `nbf` is optional (RFC 7519; Keycloak does not emit it) and is enforced when present.
 Its lifetime is at most 900 seconds. Public JWKs come from an explicitly
 configured local file or HTTPS URL. A missing/disabled mapping fails closed.
 The mapping table is `aip_principals(issuer, subject, actor_id, enabled,
