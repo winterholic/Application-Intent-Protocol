@@ -109,7 +109,7 @@ fn internal(e: impl ToString) -> Reject {
     Reject { code: "WIRE.INTERNAL", msg: e.to_string() }
 }
 
-fn keys(o: &Map<String, Value>, allowed: &[&str], what: &str) -> Result<(), Reject> {
+pub fn keys(o: &Map<String, Value>, allowed: &[&str], what: &str) -> Result<(), Reject> {
     match o.keys().find(|k| !allowed.contains(&k.as_str())) {
         Some(k) => rej("WIRE.UNKNOWN_KEY", format!("{what}에 알 수 없는 키 `{k}`")),
         None => Ok(()),
@@ -269,7 +269,7 @@ fn parse_ids(facts: &Value, res: &str, raw: &Value, bulk: i64, wire: IdWire) -> 
     Ok(v)
 }
 
-fn parse_target(facts: &Value, res: &str, ex: &Value, tg: &Value, wire: IdWire) -> Result<TargetSpec, Reject> {
+pub fn parse_target(facts: &Value, res: &str, ex: &Value, tg: &Value, wire: IdWire) -> Result<TargetSpec, Reject> {
     let rf = &facts["resources"][res];
     let bulk = ex["bulkMaxRows"].as_i64().unwrap_or(1);
     let forms: Vec<&str> = ex["target"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
@@ -1042,7 +1042,7 @@ async fn begin<'a>(db: &'a mut Client, serializable: bool) -> Result<Transaction
     Ok(tx)
 }
 
-fn exposed<'a>(facts: &'a Value, name: &str) -> Result<(&'a str, &'a str, &'a Value), Reject> {
+pub fn exposed<'a>(facts: &'a Value, name: &str) -> Result<(&'a str, &'a str, &'a Value), Reject> {
     let (res, tr) = name.split_once('.').ok_or(bad("apply는 `Resource.transition`"))?;
     let ex = &facts["resources"][res]["exposeApply"][tr];
     if ex.is_null() {
@@ -1054,13 +1054,13 @@ fn exposed<'a>(facts: &'a Value, name: &str) -> Result<(&'a str, &'a str, &'a Va
 }
 
 #[derive(Default)]
-struct ApplyInput {
-    values: Vec<(String, Src)>,
-    expected: Vec<(String, Src)>,
+pub struct ApplyInput {
+    pub values: Vec<(String, Src)>,
+    pub expected: Vec<(String, Src)>,
 }
 
 /// 입력 값은 SQL 식이 아니다. 공통 scalar/Id wire 검증을 거친 바인드 값만 받는다.
-fn apply_input(facts: &Value, res: &str, tr: &str, request: &Map<String, Value>, wire: IdWire) -> Result<ApplyInput, Reject> {
+pub fn apply_input(facts: &Value, res: &str, tr: &str, request: &Map<String, Value>, wire: IdWire) -> Result<ApplyInput, Reject> {
     let declaration = &facts["resources"][res]["transitions"][tr];
     let mut input = ApplyInput::default();
     for (key, declared, dest) in [("values", "patch", &mut input.values), ("expect", "expect", &mut input.expected)] {
@@ -1131,7 +1131,7 @@ async fn apply_inner(
     Ok(a)
 }
 
-fn literal(facts: &Value, res: &str, field: &str, v: &Value, wire: IdWire) -> Result<Src, Reject> {
+pub fn literal(facts: &Value, res: &str, field: &str, v: &Value, wire: IdWire) -> Result<Src, Reject> {
     let ty = facts["resources"][res]["fields"][field]["ty"]
         .as_str()
         .ok_or(Reject { code: "WIRE.UNKNOWN_FIELD", msg: format!("`{res}.{field}` 없음") })?;
@@ -1197,7 +1197,7 @@ async fn bundle_once(
 }
 
 /// 요청 형식과 크기 상한을 트랜잭션 전에 검사한다.
-fn bundle_ops(req: &Value) -> Result<&Vec<Value>, Reject> {
+pub fn bundle_ops(req: &Value) -> Result<&Vec<Value>, Reject> {
     let o = req.as_object().ok_or(bad("요청은 객체"))?;
     keys(o, &["atomic"], "묶음 요청")?;
     let ops = o.get("atomic").and_then(Value::as_array).ok_or(bad("atomic 배열 필요"))?;

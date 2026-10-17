@@ -11,7 +11,7 @@ use mysql_async::prelude::Queryable;
 use serde_json::Value;
 use spike_v2_read::backend::{BackendFuture, RelationalBackend};
 use spike_v2_read::id_wire::IdWire;
-use spike_v2_read::plan::{MAX_OUTPUT_BYTES, Plan, Reject};
+use spike_v2_read::plan::{Caller, MAX_OUTPUT_BYTES, Plan, Reject};
 use spike_v2_read::sqlgen::Dialect;
 
 pub struct MysqlBackend {
@@ -90,6 +90,14 @@ impl RelationalBackend for MysqlBackend {
                 conn.query_first("SELECT DATE_FORMAT(UTC_TIMESTAMP(6), '%Y-%m-%dT%H:%i:%s.%fZ')").await.map_err(|_| "WIRE.DB_UNAVAILABLE")?;
             now.ok_or("WIRE.DB_UNAVAILABLE")
         })
+    }
+
+    fn apply<'a>(&'a self, facts: &'a Value, body: &'a Value, caller: &'a Caller, wire: IdWire) -> BackendFuture<'a, Value> {
+        Box::pin(crate::mysql_write::handle_apply(&self.driver, &self.fence, facts, body, caller, wire))
+    }
+
+    fn status<'a>(&'a self, body: &'a Value, caller: &'a Caller, wire: IdWire) -> BackendFuture<'a, Value> {
+        Box::pin(crate::mysql_write::handle_status(&self.driver, body, caller, wire))
     }
 
     fn read<'a>(&'a self, plan: &'a Plan, _wire: IdWire) -> BackendFuture<'a, Result<Vec<Value>, Reject>> {

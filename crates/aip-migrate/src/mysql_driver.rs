@@ -201,6 +201,26 @@ impl MysqlDriver {
         .await
     }
 
+    /// Read-write fenced transaction for the write path. Same pre-pin and fingerprint checks as a read, over the write set
+    /// (meta write tables included), at READ COMMITTED, or SERIALIZABLE for transitions whose policy reads other rows.
+    pub async fn begin_fenced_write_transaction(
+        &self,
+        fence: &MysqlDeploymentFence,
+        serializable: bool,
+    ) -> Result<FencedMysqlTransaction, CatalogError> {
+        let isolation = if serializable { IsolationLevel::Serializable } else { IsolationLevel::ReadCommitted };
+        self.begin_fenced_inner(
+            false,
+            isolation,
+            &fence.meta_schema,
+            &fence.source_schema,
+            fence.bound_tables_for(false),
+            &fence.expected_facts_digest,
+            &fence.expected_structure_digest,
+        )
+        .await
+    }
+
     /// Single-connection fenced transaction lifecycle:
     /// Starts a transaction on one pooled connection, pins every bound table with a metadata lock,
     /// verifies the meta marker and the schema-wide catalog fingerprint, and finally proves that the
@@ -212,6 +232,29 @@ impl MysqlDriver {
     pub async fn begin_fenced_transaction_with_bounds(
         &self,
         read_only: bool,
+        meta_schema: &str,
+        source_schema: &str,
+        bound_tables: &[(String, String)],
+        expected_facts_digest: &str,
+        expected_structure_digest: &str,
+    ) -> Result<FencedMysqlTransaction, CatalogError> {
+        self.begin_fenced_inner(
+            read_only,
+            IsolationLevel::RepeatableRead,
+            meta_schema,
+            source_schema,
+            bound_tables,
+            expected_facts_digest,
+            expected_structure_digest,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn begin_fenced_inner(
+        &self,
+        read_only: bool,
+        isolation: IsolationLevel,
         meta_schema: &str,
         source_schema: &str,
         bound_tables: &[(String, String)],
@@ -232,7 +275,7 @@ impl MysqlDriver {
         // Step 1: start the transaction through mysql_async so its own cleanup path owns rollback,
         // then pre-pin metadata locks before any INFORMATION_SCHEMA read.
         let mut tx_options = TxOpts::default();
-        tx_options.with_isolation_level(IsolationLevel::RepeatableRead).with_readonly(read_only);
+        tx_options.with_isolation_level(isolation).with_readonly(read_only);
         let mut tx: Transaction<'static> = tokio::time::timeout(self.connect_timeout, self.pool.start_transaction(tx_options))
             .await
             .map_err(|_| CatalogError::new("MySQL connection timed out"))?
@@ -382,12 +425,35 @@ impl FencedMysqlTransaction {
         Ok(())
     }
 
+    /// COMMIT with the outcome classified by whether it was sent. `on_send` runs right before COMMIT leaves.
+    pub async fn commit_classified(mut self, on_send: impl FnOnce()) -> Result<(), CommitFailure> {
+        let Some(tx) = self.tx.take() else { return Err(CommitFailure::NotSent) };
+        on_send();
+        match tx.commit().await {
+            Ok(()) => Ok(()),
+            Err(mysql_async::Error::Server(server)) => Err(CommitFailure::Rejected { code: server.code }),
+            // The connection broke, or the reply could not be read, after COMMIT was sent: the server may have committed.
+            Err(_) => Err(CommitFailure::Unknown),
+        }
+    }
+
     pub async fn rollback(mut self) -> Result<(), CatalogError> {
         if let Some(tx) = self.tx.take() {
             tx.rollback().await.map_err(|e| CatalogError::new(format!("MySQL rollback failed: {e}")))?;
         }
         Ok(())
     }
+}
+
+/// How a COMMIT ended, split by whether the server could have committed.
+#[derive(Debug)]
+pub enum CommitFailure {
+    /// No transaction was left to commit.
+    NotSent,
+    /// COMMIT was sent and the connection failed before the reply: the outcome is unknown.
+    Unknown,
+    /// The server refused the COMMIT (deadlock victim, constraint): rolled back.
+    Rejected { code: u16 },
 }
 
 pub(crate) const META_TABLE: &str = "aip_migrate_meta";
@@ -450,11 +516,51 @@ pub(crate) async fn create_meta_tables<Q: Queryable>(conn: &mut Q, meta_schema: 
                applied_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)) ENGINE=InnoDB"
         ),
     ];
-    for table in META_WRITE_TABLES {
-        statements.push(format!(
-            "CREATE TABLE IF NOT EXISTS `{meta_schema}`.`{table}` (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY) ENGINE=InnoDB"
-        ));
+    // Write path (WBS 7.2.1.2). Idempotency journal, append-only audit, outbox and the transaction lock buckets.
+    statements.push(format!(
+        "CREATE TABLE IF NOT EXISTS `{meta_schema}`.`aip_idem` (\
+           principal VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL, \
+           idem_key VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL, \
+           request MEDIUMTEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL, result JSON NOT NULL, \
+           created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), PRIMARY KEY (principal, idem_key)) ENGINE=InnoDB"
+    ));
+    statements.push(format!(
+        "CREATE TABLE IF NOT EXISTS `{meta_schema}`.`aip_audit` (\
+           id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY, recorded_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), \
+           actor_id BIGINT NULL, via VARCHAR(16) NOT NULL, request_key VARCHAR(100) NULL, resource VARCHAR(128) NOT NULL, \
+           transition VARCHAR(128) NOT NULL, target_id VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, \
+           before_values JSON NOT NULL, after_values JSON NOT NULL, KEY aip_audit_target (resource, target_id, id)) ENGINE=InnoDB"
+    ));
+    statements.push(format!(
+        "CREATE TABLE IF NOT EXISTS `{meta_schema}`.`aip_outbox` (\
+           id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY, topic VARCHAR(255) NOT NULL, recipient_id VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin NULL, \
+           source VARCHAR(128) NOT NULL, source_id VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin NULL, \
+           created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)) ENGINE=InnoDB"
+    ));
+    // Transaction-scoped named locks. MySQL has no `pg_advisory_xact_lock`; a row lock on one of a fixed set of buckets
+    // lives exactly until COMMIT or ROLLBACK, and a crashed connection releases it with the transaction.
+    statements.push(format!("CREATE TABLE IF NOT EXISTS `{meta_schema}`.`aip_tx_locks` (bucket SMALLINT UNSIGNED NOT NULL PRIMARY KEY) ENGINE=InnoDB"));
+    statements.push(format!(
+        "INSERT IGNORE INTO `{meta_schema}`.`aip_tx_locks` (bucket) \
+         SELECT a.n * 100 + b.n * 10 + c.n FROM \
+           (SELECT 0 n UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9) a, \
+           (SELECT 0 n UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9) b, \
+           (SELECT 0 n UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9) c"
+    ));
+    for table in ["aip_events", "aip_jobs"] {
+        statements.push(format!("CREATE TABLE IF NOT EXISTS `{meta_schema}`.`{table}` (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY) ENGINE=InnoDB"));
     }
+    // The audit trail only grows.
+    statements.push(format!("DROP TRIGGER IF EXISTS `{meta_schema}`.`aip_audit_no_update`"));
+    statements.push(format!(
+        "CREATE TRIGGER `{meta_schema}`.`aip_audit_no_update` BEFORE UPDATE ON `{meta_schema}`.`aip_audit` FOR EACH ROW \
+         SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'aip_audit rows are append-only'"
+    ));
+    statements.push(format!("DROP TRIGGER IF EXISTS `{meta_schema}`.`aip_audit_no_delete`"));
+    statements.push(format!(
+        "CREATE TRIGGER `{meta_schema}`.`aip_audit_no_delete` BEFORE DELETE ON `{meta_schema}`.`aip_audit` FOR EACH ROW \
+         SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'aip_audit rows are append-only'"
+    ));
     // A binding keeps its actor: changing it would silently move a user's identity to another account.
     statements.push(format!("DROP TRIGGER IF EXISTS `{meta_schema}`.`aip_principal_actor_immutable`"));
     statements.push(format!(
@@ -853,6 +959,8 @@ fn build_mysql_opts(config: &MysqlDriverConfig, ca_cert: Option<PathBuf>) -> Res
         .db_name(Some(config.database.clone()))
         .pool_opts(PoolOpts::default().with_constraints(constraints))
         .ssl_opts(tls)
+        // An UPDATE reports the rows it matched, like PostgreSQL's RETURNING count, not only the rows whose values changed.
+        .client_found_rows(true)
         .init(vec![statement_timeout_query])
         .into();
     Ok(opts)

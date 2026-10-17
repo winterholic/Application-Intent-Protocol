@@ -4,9 +4,10 @@
 //! 전송 계층이 조용히 흉내 내지 않고 `WIRE.ADAPTER_UNSUPPORTED`로 거부한다.
 use crate::{
     id_wire::IdWire,
-    plan::{Plan, Reject},
+    plan::{Caller, Plan, Reject},
     sqlgen::Dialect,
 };
+use serde_json::{json, Value};
 use std::{future::Future, pin::Pin};
 
 pub type BackendFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -26,4 +27,21 @@ pub trait RelationalBackend: Send + Sync {
 
     /// 읽기 계획 하나를 펜스된 읽기 전용 트랜잭션에서 실행하고, 계획 출력 타입에 맞게 정규화한 행 JSON을 돌려준다.
     fn read<'a>(&'a self, plan: &'a Plan, wire: IdWire) -> BackendFuture<'a, Result<Vec<serde_json::Value>, Reject>>;
+
+    /// `/apply`: one write request (`body` is the whole request body with `key` and `request`) in one transaction behind the
+    /// deployment fence. The answer is the wire response itself. An adapter without a write path refuses by name.
+    fn apply<'a>(&'a self, _facts: &'a Value, _body: &'a Value, _caller: &'a Caller, _wire: IdWire) -> BackendFuture<'a, Value> {
+        let adapter = self.adapter();
+        Box::pin(async move {
+            json!({"ok": false, "code": "WIRE.ADAPTER_UNSUPPORTED", "msg": format!("{adapter} adapter는 /apply를 아직 지원하지 않음")})
+        })
+    }
+
+    /// `/status`: the stored result of a write key.
+    fn status<'a>(&'a self, _body: &'a Value, _caller: &'a Caller, _wire: IdWire) -> BackendFuture<'a, Value> {
+        let adapter = self.adapter();
+        Box::pin(async move {
+            json!({"ok": false, "code": "WIRE.ADAPTER_UNSUPPORTED", "msg": format!("{adapter} adapter는 /status를 아직 지원하지 않음")})
+        })
+    }
 }

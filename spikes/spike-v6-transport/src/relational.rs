@@ -14,7 +14,7 @@ fn err(e: Reject) -> Value {
 }
 
 pub(crate) async fn handle(backend: &dyn RelationalBackend, facts: &Value, path: &str, body: &Value, actor_id: Option<i64>, wire: IdWire) -> Value {
-    if path != "/read" {
+    if !matches!(path, "/read" | "/apply" | "/status") {
         return json!({
             "ok": false,
             "code": "WIRE.ADAPTER_UNSUPPORTED",
@@ -27,6 +27,11 @@ pub(crate) async fn handle(backend: &dyn RelationalBackend, facts: &Value, path:
         Err(_) => return json!({ "ok": false, "code": "WIRE.DB_UNAVAILABLE", "msg": "실행 전 DB 조회 기한 초과" }),
     };
     let caller = Caller { actor_id, now };
+    match path {
+        "/apply" => return backend.apply(facts, body, &caller, wire).await,
+        "/status" => return backend.status(body, &caller, wire).await,
+        _ => {}
+    }
     let plan = match plan_read_in(backend.dialect(), facts, &body["query"], &caller, wire) {
         Ok(plan) => plan,
         Err(e) => return err(e),

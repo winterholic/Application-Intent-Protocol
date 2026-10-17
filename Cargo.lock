@@ -172,8 +172,10 @@ dependencies = [
  "sha2 0.10.9",
  "spike-v1-fixture",
  "spike-v2-read",
+ "spike-v3-write",
  "tokio",
  "tokio-postgres",
+ "uuid",
 ]
 
 [[package]]
