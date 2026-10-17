@@ -215,6 +215,27 @@ managed effect journal의 변경은 제품 동작 변경이다. 두 가지가 �
 - 다른 crate의 직접 COMMIT(`aip-runtime`, `aip-execution`, `aip-migrate`, `aip-service`의 `tx.commit()`)은 이번 범위가 아니라 분류를 확인하지 않았다. 대부분 `map_err(|_| ...)`로 오류를 종류와 상관없이 자기 코드(`COMMIT_UNSETTLED`, `JOBS_UNSETTLED` 등)나 `WIRE.COMMIT_UNKNOWN`으로 한 번에 내므로, COMMIT 전 단절을 `DB_UNAVAILABLE`로 가르는 규칙이 필요한지는 별도로 봐야 한다.
 - GPT 독립 검증 전이다. 완료가 아니라 "독립 검증 대기"다.
 
+## WBS 8.10 독립 검증 결함 6건 수정 (2026-10-18, Claude 구현 / 독립 검증 대기)
+
+GPT 독립 검증(기준 HEAD `7585ec5`)이 찾은 결함이다. 상세 재현 보고서는 가드가 읽기를 막아 읽지 못했고 요청에 적힌 요약으로 작업했다. DB는 이 Run의 PostgreSQL 17 컨테이너(`127.0.0.1:32801`)만 썼고, Keycloak·MinIO·Caddy는 이 Run이 띄운 컨테이너다. 모두 같은 Run의 구현과 실행이며 독립 검증 전이다.
+
+| # | 결함 | 수정 | 증거 | 커밋 |
+|---|---|---|---|---|
+| 1 | 실제 Keycloak 26.2.5 토큰에는 `nbf`가 없어 거부됨 | `nbf`를 선택 claim으로 바꿈. 있으면 여전히 강제하고(미래 값, 음수, null, 문자열은 거부) `iat` 필수·미래 `iat` 거부·900초 상한은 그대로다. 근거: RFC 7519 선택 claim, RFC 9068 필수 목록에 없음, `iat`가 사용 시작을 이미 묶음. runbook 갱신 | 실제 Keycloak 컨테이너 smoke(`scripts/smoke-keycloak.sh`, TLS와 HTTPS JWKS, `aud` 배열, 암호화 키가 섞인 JWKS): 수정 전 12개 중 2 FAIL(세션과 operation), 수정 뒤 12개 모두 PASS. `cargo test -p aip-auth` 15·2·11 passed | `3b0925f` |
+| 2 | IdP smoke의 17번째 확인이 HTTP 200만 보고 본문 `WIRE.BAD_REQUEST`를 놓침 | 선언된 operation(`length`)을 호출해 본문 `ok:true`와 `output.length===3`을 검사하고, 토큰 없는 같은 호출이 본문에서 `WIRE.UNAUTHENTICATED`인지 검사 | `scripts/smoke-idp-proxy.sh`: `[SUCCESS] All 18 checks passed!` | `99e1052` |
+| 3 | Python 코드젠이 `typing.Never`·`NotRequired`(3.11+)와 import 시 평가되는 `A \| B`·`X \| None`(3.10+)을 써 3.9/3.10에서 ImportError | `NoReturn`, `Union`, `Optional`, 버전 분기한 `NotRequired`(3.11 미만은 런타임 stand-in, 정적 검사는 `typing_extensions`). 소스 검사 시험 추가(수정 전 코드에서 실패) | `uv run --python 3.9`(3.9.6)·`3.10`(3.10.21)·`3.13`(3.13.15)에서 `python -m unittest product.tests.python_sdk_test` 각각 `Ran 23 tests ... OK`. 처음 두 시도는 3.9에서 실제로 실패해 `Union`·`Optional`까지 넓혔다 | `5b7f23c` |
+| 4 | trace E2E가 손으로 만든 span이라 동어반복이고 job span에 부모가 없음 | 요청 span id를 요청 시작 때 고정하고 enqueue 때 trace와 함께 기존 `trace_id` text 컬럼에 `<trace>-<span>`으로 저장(스키마 변경 없음, trace만 적힌 기존 행은 그대로 읽힘). job span의 `parentSpanId`가 그 요청 span이다. trace id fallback이 span 크기(16자) id를 쓰던 것도 고침. 손으로 span을 내보내는 시험을 지우고 HTTP enqueue부터 서버가 내보낸 span을 읽는 시험 2개로 교체 | `cargo test --test otlp`(spike-v6): 6 passed. 새 시험 2개는 이전 코드에서 `parentSpanId` 없음으로 실패. spike-v6 전체 227 passed·0 failed, `aip-execution` 124 passed | `dc95dc9` |
+| 5 | `cargo clippy --features poc-runtime --all-targets` 14개 타깃 실패 | 8곳(불필요한 borrow 3, `unwrap` 3, 미사용 변수 2)을 고쳐 `tools/verify.sh`의 clippy 단계를 `--all-targets`로 올림 | `cargo clippy -p aip-cli --features poc-runtime --all-targets --locked -- -D warnings` 통과, 고친 e2e 5개 모음 4+9+15+1+4 passed | `791367b` |
+| 6 | `prototype/tools/*.py` 기본 DSN이 `host=localhost dbname=postgres` | 공통 가드(`dedicated_db.py`)가 명시적 host·고포트(5432 제외)·user·`aip_test_*` DB, `PG*` 변수 미설정을 요구. 기본값 없이 `--db-url` 또는 `AIP_TEST_DATABASE_URL`만 받음. 묶음 README 예시도 전용 DSN 변수로 변경 | `python3 -m unittest product.tests.dedicated_db_test` 5 OK(13개 거부 DSN 포함). 인자 없이 실행 시 `refusing PostgreSQL target: no DSN given`, 옛 기본값은 `the port must be explicit` | `a8b0d0b` |
+
+### 확인하지 못했거나 남은 것
+
+- 3의 3.11·3.12는 실행하지 않았다(3.9·3.10·3.13만). 3.9/3.10에서 `NotRequired` 키는 런타임에서 선택 여부를 구분하지 못한다(정적 검사에서만).
+- 4의 중첩 job(job이 enqueue한 job)이 부모를 이어받는 경로는 코드로 연결했지만 시험하지 못했다. `report` job은 이 시험 구성에서 파일·이벤트 설정이 없어 실패했고, 확인한 것은 `count` job의 요청 span 부모다.
+- 6의 `prototype/tools/smoke.py`는 가드를 통과한 뒤 TypeScript 컴파일에서 `OperationBinding`이 prototype SDK에 없다는 기존 오류로 실패한다. 이번 변경과 무관해 고치지 않았다.
+- 1은 Keycloak만 확인했다. Auth0·Entra ID는 계정이 없어 미실행이다. 발급 토큰의 `aud` 문자열 형태와 배열 형태 중 배열만 실제 provider로 봤다.
+- main의 `spike-v6-transport`는 `cargo clippy --all-targets -D warnings`가 `src/server.rs:724`의 `items after a test module`로 실패한다. 다른 트랙의 변경이라 건드리지 않았다.
+
 ## WBS 8.5 보존 정리와 S3 owner quota (2026-10-18, Claude 구현 / 독립 검증 대기)
 
 DB 테스트는 이 Run이 띄운 PostgreSQL 17 컨테이너(`aip-claude-wbs8-pg-1018`, `127.0.0.1:32801`, DB `aip_test_wbs8_1018`)에서만 실행했고 공유 5432에는 접속하지 않았다. 객체 저장소 live 테스트는 이 Run이 만든 임시 CA의 TLS MinIO 컨테이너(`aip-claude-wbs8-minio`, `127.0.0.1:32802`, 이미지 `aip-minio-fixture:local`, 서버 `RELEASE.2025-09-06T17-38-46Z`)에서 실행했다. AWS S3와 GCS 실계정은 미실행이다.
