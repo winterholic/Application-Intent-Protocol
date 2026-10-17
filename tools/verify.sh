@@ -25,6 +25,10 @@ cargo clippy -p aip-auth -p aip-migrate -p aip-service --all-targets --locked --
 cargo clippy -p aip-cli --features poc-runtime --all-targets --locked -- -D warnings
 # The MySQL adapter is an optional package too: its code and live tests (ignored without a container) must stay lint-clean and compile.
 cargo clippy -p aip-migrate -p aip-service -p aip-cli --features mysql,aip-cli/mysql --all-targets --locked -- -D warnings
+# The excluded engine crates were not linted before; a clippy regression in one (spike-v6 server.rs) reached main unnoticed.
+for engine in spike-v1-fixture spike-v2-read spike-v3-write spike-v4-worker spike-v5-sdk spike-v6-transport; do
+  cargo clippy --manifest-path "spikes/$engine/Cargo.toml" --all-targets --locked --target-dir target -- -D warnings
+done
 cargo test --workspace --locked
 cargo test -p aip-cli --features poc-runtime --locked
 # These product engines are path dependencies excluded from the root workspace.

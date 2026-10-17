@@ -483,7 +483,7 @@ fn extension(name: &str, value: &Lit, span: Span, operation: bool) -> R<Extensio
         deadline_ms: None,
         implementation: String::new(),
         allow: None,
-        span: span,
+        span,
     };
     if let Some((p, ps)) = get(eo, "input") {
         ext.input = params(p, ps)?;

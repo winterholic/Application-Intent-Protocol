@@ -205,7 +205,7 @@ pub fn parse_uuid(text: &str) -> Result<EntityId, Reject> {
     }
     Ok(EntityId::Uuid(bytes))
 }
-pub fn id_kind<'a>(facts: &'a Value, resource: &str) -> &'static str {
+pub fn id_kind(facts: &Value, resource: &str) -> &'static str {
     if facts["resources"][resource]["idKind"] == "uuid" {
         "uuid"
     } else {

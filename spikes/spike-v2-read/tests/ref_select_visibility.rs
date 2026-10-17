@@ -60,7 +60,7 @@ async fn setup(src: &str) -> (Value, tokio_postgres::Client, String) {
     let schema =
         format!("aip_ref_select_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
     sqlgen::set_schema(&schema);
-    let mut db = connect_with_url(DB).await.unwrap();
+    let db = connect_with_url(DB).await.unwrap();
     for statement in sqlgen::create_ddl_in(&schema, &facts).unwrap() {
         db.batch_execute(&statement).await.unwrap();
     }

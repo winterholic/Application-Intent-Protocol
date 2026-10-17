@@ -720,6 +720,54 @@ impl ReadExtensions {
         Ok(Self { lang: self.lang, dir })
     }
 }
+
+/// Serve over a non-PostgreSQL relational adapter. Only what the adapter implements is served; infrastructure that needs
+/// the PostgreSQL pool (durable jobs, files, rate limits, product authentication) is not configured here and its paths
+/// answer `WIRE.ADAPTER_UNSUPPORTED`.
+pub async fn listen_relational(
+    facts: Value,
+    wire: IdWire,
+    address: SocketAddr,
+    backend: Arc<dyn spike_v2_read::backend::RelationalBackend>,
+    options: ServerOptions,
+    infrastructure: crate::infrastructure::Infrastructure,
+    authenticator: Option<Arc<dyn crate::auth::Authenticator>>,
+) -> io::Result<Server> {
+    options.validate()?;
+    if infrastructure.rate_limit.is_some() {
+        // The limiter's counters live in PostgreSQL; serving without them would drop the limit silently.
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "rate limiting is not available for relational adapters"));
+    }
+    let fingerprint = facts["resources"].is_object().then(|| spike_v5_sdk::contract_fingerprint_with_apply(&facts, wire).into());
+    listen_with_fingerprint(
+        facts,
+        wire,
+        address,
+        Runtime {
+            infrastructure: crate::infrastructure::Infrastructure { relational: Some(backend), ..infrastructure },
+            db_pool: None,
+            admission: None,
+            realtime_slots: tokio::sync::Semaphore::new(32),
+            realtime_preauth: tokio::sync::Semaphore::new(32),
+            object_slots: tokio::sync::Semaphore::new(4),
+            db_url: String::new(),
+            broker: None,
+            enable_file_uploads: false,
+            fault_injection: false,
+            extensions: None,
+            write_extensions: false,
+            extension_slots: tokio::sync::Semaphore::new(4),
+            principal_slots: crate::slots::PrincipalSlotSet::unlimited(),
+            options,
+            authenticator,
+            deployment: None,
+            otlp: None,
+        },
+        fingerprint,
+    )
+    .await
+}
+
 #[cfg(test)]
 mod extension_config_tests {
     use super::*;
@@ -963,51 +1011,4 @@ mod extension_config_tests {
         let all = [missing_module, malformed, identifier, absent, legacy, gone_message];
         assert_eq!(all.iter().collect::<std::collections::HashSet<_>>().len(), all.len(), "each cause has its own sentence");
     }
-}
-
-/// Serve over a non-PostgreSQL relational adapter. Only what the adapter implements is served; infrastructure that needs
-/// the PostgreSQL pool (durable jobs, files, rate limits, product authentication) is not configured here and its paths
-/// answer `WIRE.ADAPTER_UNSUPPORTED`.
-pub async fn listen_relational(
-    facts: Value,
-    wire: IdWire,
-    address: SocketAddr,
-    backend: Arc<dyn spike_v2_read::backend::RelationalBackend>,
-    options: ServerOptions,
-    infrastructure: crate::infrastructure::Infrastructure,
-    authenticator: Option<Arc<dyn crate::auth::Authenticator>>,
-) -> io::Result<Server> {
-    options.validate()?;
-    if infrastructure.rate_limit.is_some() {
-        // The limiter's counters live in PostgreSQL; serving without them would drop the limit silently.
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "rate limiting is not available for relational adapters"));
-    }
-    let fingerprint = facts["resources"].is_object().then(|| spike_v5_sdk::contract_fingerprint_with_apply(&facts, wire).into());
-    listen_with_fingerprint(
-        facts,
-        wire,
-        address,
-        Runtime {
-            infrastructure: crate::infrastructure::Infrastructure { relational: Some(backend), ..infrastructure },
-            db_pool: None,
-            admission: None,
-            realtime_slots: tokio::sync::Semaphore::new(32),
-            realtime_preauth: tokio::sync::Semaphore::new(32),
-            object_slots: tokio::sync::Semaphore::new(4),
-            db_url: String::new(),
-            broker: None,
-            enable_file_uploads: false,
-            fault_injection: false,
-            extensions: None,
-            write_extensions: false,
-            extension_slots: tokio::sync::Semaphore::new(4),
-            principal_slots: crate::slots::PrincipalSlotSet::unlimited(),
-            options,
-            authenticator,
-            deployment: None,
-            otlp: None,
-        },
-        fingerprint,
-    )
-    .await
 }
