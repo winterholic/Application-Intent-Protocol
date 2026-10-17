@@ -4,7 +4,7 @@ use crate::mysql_catalog::{
 };
 use mysql_async::prelude::Queryable;
 use mysql_async::{Opts, OptsBuilder, Pool, PoolConstraints, PoolOpts, Row, SslOpts, from_row_opt};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 fn logical_name(name: &str) -> String {
@@ -29,7 +29,10 @@ fn render_mysql_draft(
         return Err(CatalogError::new("source schema has no base tables"));
     }
     let mut mapping = spike_v2_read::external::Mapping { schema: schema.to_owned(), tables: Default::default() };
-    for (table_name, _) in catalog {
+    for (table_name, (_, foreign_keys)) in catalog {
+        if foreign_keys.iter().any(|key| key.columns.len() != 1 || key.referenced_columns.len() != 1) {
+            return Err(CatalogError::new("composite foreign keys require a manual definition"));
+        }
         let resource = logical_name(table_name);
         if !valid_ident(&resource) || resource.starts_with("Aip") || mapping.tables.contains_key(&resource) {
             return Err(CatalogError::new("resource names are ambiguous; manual mapping is required"));
@@ -110,36 +113,16 @@ impl MysqlDriver {
     /// Parse server configuration from the URL and create a real driver pool.
     /// `AIP_MYSQL_CA_CERT` may point to an additional trusted PEM/DER CA bundle.
     pub fn from_url(url: &str) -> Result<Self, CatalogError> {
-        let config = MysqlDriverConfig::parse_url(url)?;
-        let constraints =
-            PoolConstraints::new(config.pool_min, config.pool_max).ok_or_else(|| CatalogError::new("invalid MySQL pool constraints"))?;
         let ca_cert = std::env::var_os("AIP_MYSQL_CA_CERT").map(PathBuf::from);
-        let tls = if config.tls_required || ca_cert.is_some() {
-            let mut ssl = SslOpts::default();
-            if let Some(path) = ca_cert {
-                ssl = ssl.with_root_certs(vec![path.into()]);
-            }
-            Some(ssl)
-        } else {
-            None
-        };
-        let statement_timeout_ms = config.statement_timeout_ms;
-        let statement_timeout_query = if config.mariadb {
-            format!("SET SESSION max_statement_time = {}.{:03}", statement_timeout_ms / 1000, statement_timeout_ms % 1000)
-        } else {
-            format!("SET SESSION max_execution_time = {statement_timeout_ms}")
-        };
-        let opts: Opts = OptsBuilder::default()
-            .ip_or_hostname(config.host)
-            .tcp_port(config.port)
-            .user(Some(config.user))
-            .pass(config.password)
-            .db_name(Some(config.database))
-            .pool_opts(PoolOpts::default().with_constraints(constraints))
-            .ssl_opts(tls)
-            .init(vec![statement_timeout_query])
-            .into();
-        Ok(Self { pool: Pool::new(opts), connect_timeout: Duration::from_millis(config.connect_timeout_ms) })
+        Self::from_url_with_ca(url, ca_cert.as_deref())
+    }
+
+    /// Build a driver using the service's configured database CA, when present.
+    pub fn from_url_with_ca(url: &str, ca_cert: Option<&Path>) -> Result<Self, CatalogError> {
+        let config = MysqlDriverConfig::parse_url(url)?;
+        let opts = build_mysql_opts(&config, ca_cert.map(Path::to_path_buf))?;
+        let connect_timeout = Duration::from_millis(config.connect_timeout_ms);
+        Ok(Self { pool: Pool::new(opts), connect_timeout })
     }
 
     /// Establish a connection now; `Pool::new` itself is lazy.
@@ -166,6 +149,37 @@ impl MysqlDriver {
             .map_err(|_| CatalogError::new("MySQL connection failed"))?;
         conn.exec(query, params).await.map_err(|_| CatalogError::new("MySQL catalog query failed"))
     }
+}
+
+fn build_mysql_opts(config: &MysqlDriverConfig, ca_cert: Option<PathBuf>) -> Result<Opts, CatalogError> {
+    let constraints =
+        PoolConstraints::new(config.pool_min, config.pool_max).ok_or_else(|| CatalogError::new("invalid MySQL pool constraints"))?;
+    let tls = if config.tls_required || ca_cert.is_some() {
+        let mut ssl = SslOpts::default();
+        if let Some(path) = ca_cert {
+            ssl = ssl.with_root_certs(vec![path.into()]);
+        }
+        Some(ssl)
+    } else {
+        None
+    };
+    let statement_timeout_ms = config.statement_timeout_ms;
+    let statement_timeout_query = if config.mariadb {
+        format!("SET SESSION max_statement_time = {}.{:03}", statement_timeout_ms / 1000, statement_timeout_ms % 1000)
+    } else {
+        format!("SET SESSION max_execution_time = {statement_timeout_ms}")
+    };
+    let opts: Opts = OptsBuilder::default()
+        .ip_or_hostname(config.host.clone())
+        .tcp_port(config.port)
+        .user(Some(config.user.clone()))
+        .pass(config.password.clone())
+        .db_name(Some(config.database.clone()))
+        .pool_opts(PoolOpts::default().with_constraints(constraints))
+        .ssl_opts(tls)
+        .init(vec![statement_timeout_query])
+        .into();
+    Ok(opts)
 }
 
 impl MysqlCatalogReader for MysqlDriver {
@@ -260,6 +274,17 @@ pub async fn introspect_url(
     driver.introspect(schema).await
 }
 
+pub async fn introspect_draft_with_ca(url: &str, schema: &str, ca_cert: Option<&Path>) -> Result<serde_json::Value, CatalogError> {
+    let driver = if let Some(ca_cert) = ca_cert {
+        MysqlDriver::from_url_with_ca(url, Some(ca_cert))?
+    } else {
+        MysqlDriver::from_url(url)?
+    };
+    driver.check_connection().await?;
+    let catalog = driver.introspect(schema).await?;
+    render_mysql_draft(schema, &catalog)
+}
+
 pub async fn introspect_draft(url: &str, schema: &str) -> Result<serde_json::Value, CatalogError> {
     let driver = MysqlDriver::from_url(url)?;
     driver.check_connection().await?;
@@ -296,6 +321,29 @@ mod tests {
         assert_eq!(opts.pool_opts().constraints(), PoolConstraints::new(2, 7).unwrap());
         assert!(opts.ssl_opts().is_some());
         assert_eq!(config.connect_timeout_ms, 3_000);
+    }
+
+    #[test]
+    fn mysql_opts_keep_certificate_and_hostname_validation_with_configured_ca() {
+        let config = MysqlDriverConfig::parse_url("mysql://reader:secret@db.example/facereview").unwrap();
+        let ca_path = PathBuf::from("/private/tmp/database-ca.pem");
+        let opts = build_mysql_opts(&config, Some(ca_path.clone())).unwrap();
+        let ssl = opts.ssl_opts().expect("remote connection must enable TLS");
+        assert!(!ssl.accept_invalid_certs());
+        assert!(!ssl.skip_domain_validation());
+        assert_eq!(ssl.root_certs(), &[ca_path.into()]);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a disposable TLS-enabled MySQL fixture and generated CA"]
+    async fn live_tls_accepts_configured_ca_and_rejects_untrusted_ca_and_hostname_mismatch() {
+        let trusted_url = std::env::var("AIP_TEST_MYSQL_TLS_URL").expect("set disposable fixture TLS URL");
+        let mismatch_url = std::env::var("AIP_TEST_MYSQL_TLS_MISMATCH_URL").expect("set TLS hostname mismatch URL");
+        let ca_path = PathBuf::from(std::env::var_os("AIP_TEST_MYSQL_TLS_CA").expect("set fixture CA path"));
+
+        MysqlDriver::from_url_with_ca(&trusted_url, Some(&ca_path)).unwrap().check_connection().await.unwrap();
+        assert!(MysqlDriver::from_url_with_ca(&trusted_url, None).unwrap().check_connection().await.is_err());
+        assert!(MysqlDriver::from_url_with_ca(&mismatch_url, Some(&ca_path)).unwrap().check_connection().await.is_err());
     }
 
     #[test]
@@ -336,6 +384,59 @@ mod tests {
         assert!(draft["definition"].as_str().unwrap().contains("id: Id"));
         assert_eq!(draft["mapping"]["tables"]["Users"]["table"], "users");
         assert_eq!(draft["mapping"]["tables"]["Users"]["columns"]["id"], "user_id");
+    }
+
+    #[test]
+    fn introspection_draft_rejects_composite_foreign_keys_instead_of_dropping_them() {
+        let integer = || Column {
+            name: String::new(),
+            ordinal_position: 1,
+            logical_type: LogicalType::Integer { bits: 32, unsigned: false, display_width: None, boolean_alias: false },
+            nullable: false,
+            default: crate::mysql_catalog::CatalogDefault::NullOrAbsent,
+            generated: false,
+        };
+        let table = |name: &str, columns: Vec<Column>, indexes: Vec<Index>| TableManifest {
+            name: name.into(),
+            columns,
+            indexes,
+            diagnostics: vec![],
+        };
+        let mut parent_id = integer();
+        parent_id.name = "id".into();
+        let mut left = integer();
+        left.name = "left_code".into();
+        let mut right = integer();
+        right.name = "right_code".into();
+        let mut child_id = integer();
+        child_id.name = "id".into();
+        let foreign_key = crate::mysql_catalog::ForeignKey {
+            source_schema: "app".into(),
+            source_table: "children".into(),
+            name: "fk_children_parent_pair".into(),
+            columns: vec!["left_code".into(), "right_code".into()],
+            referenced_schema: "app".into(),
+            referenced_table: "parents".into(),
+            referenced_columns: vec!["left_code".into(), "right_code".into()],
+            on_delete: crate::mysql_catalog::ReferentialAction::Cascade,
+            on_update: crate::mysql_catalog::ReferentialAction::Restrict,
+        };
+        let mut catalog = std::collections::BTreeMap::new();
+        catalog.insert(
+            "parents".into(),
+            (table("parents", vec![parent_id, left.clone(), right.clone()], vec![Index {
+                name: "PRIMARY".into(), unique: true, primary: true, columns: vec!["id".into()],
+            }]), vec![]),
+        );
+        catalog.insert(
+            "children".into(),
+            (table("children", vec![child_id, left, right], vec![Index {
+                name: "PRIMARY".into(), unique: true, primary: true, columns: vec!["id".into()],
+            }]), vec![foreign_key]),
+        );
+
+        let error = render_mysql_draft("app", &catalog).unwrap_err();
+        assert!(error.to_string().contains("composite foreign keys require a manual definition"));
     }
 
     #[tokio::test]

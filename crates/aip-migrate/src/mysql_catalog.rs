@@ -564,7 +564,7 @@ impl MysqlDriverConfig {
             return Err(CatalogError("database name is required in database URL".into()));
         }
 
-        let mut tls_required = false;
+        let mut ssl_mode: Option<String> = None;
         let mut connect_timeout_ms = 5_000;
         let mut statement_timeout_ms = 10_000;
         let mut pool_min = 1;
@@ -572,35 +572,46 @@ impl MysqlDriverConfig {
 
         if let Some(q) = query {
             for pair in q.split('&') {
-                if let Some((k, v)) = pair.split_once('=') {
-                    let key = k.trim().to_ascii_lowercase();
-                    let val = v.trim().to_ascii_lowercase();
-                    if key == "sslmode" || key == "ssl-mode" {
-                        if matches!(val.as_str(), "required" | "verify-ca" | "verify-full" | "require") {
-                            tls_required = true;
-                        } else if matches!(val.as_str(), "disable" | "disabled" | "prefer") {
-                            tls_required = false;
-                        }
-                    } else if key == "connect_timeout" || key == "connect-timeout" {
-                        if let Ok(secs) = val.parse::<u64>() {
-                            connect_timeout_ms = secs.saturating_mul(1000);
-                        }
-                    } else if key == "statement_timeout" || key == "statement-timeout" {
-                        if let Ok(secs) = val.parse::<u64>() {
-                            statement_timeout_ms = secs.saturating_mul(1000);
-                        }
-                    } else if key == "pool_min" {
-                        if let Ok(value) = val.parse::<usize>() {
-                            pool_min = value;
-                        }
-                    } else if key == "pool_max" {
-                        if let Ok(value) = val.parse::<usize>() {
-                            pool_max = value;
-                        }
+                let (k, v) = match pair.split_once('=') {
+                    Some(values) => values,
+                    None if pair.eq_ignore_ascii_case("sslmode") || pair.eq_ignore_ascii_case("ssl-mode") => {
+                        return Err(CatalogError::new("invalid MySQL sslmode"));
+                    }
+                    None => continue,
+                };
+                let key = k.trim().to_ascii_lowercase();
+                let val = v.trim().to_ascii_lowercase();
+                if key == "sslmode" || key == "ssl-mode" {
+                    if ssl_mode.replace(val).is_some() {
+                        return Err(CatalogError::new("duplicate MySQL sslmode"));
+                    }
+                } else if key == "connect_timeout" || key == "connect-timeout" {
+                    if let Ok(secs) = val.parse::<u64>() {
+                        connect_timeout_ms = secs.saturating_mul(1000);
+                    }
+                } else if key == "statement_timeout" || key == "statement-timeout" {
+                    if let Ok(secs) = val.parse::<u64>() {
+                        statement_timeout_ms = secs.saturating_mul(1000);
+                    }
+                } else if key == "pool_min" {
+                    if let Ok(value) = val.parse::<usize>() {
+                        pool_min = value;
+                    }
+                } else if key == "pool_max" {
+                    if let Ok(value) = val.parse::<usize>() {
+                        pool_max = value;
                     }
                 }
             }
         }
+        let local = is_local_mysql_host(&host);
+        let tls_required = match ssl_mode.as_deref() {
+            Some("required" | "require" | "verify-ca" | "verify-full") => true,
+            Some("disable" | "disabled") if local => false,
+            Some("disable" | "disabled") => return Err(CatalogError::new("remote MySQL connections require verified TLS")),
+            Some(_) => return Err(CatalogError::new("unsupported MySQL sslmode")),
+            None => !local,
+        };
         if pool_max == 0 || pool_min > pool_max {
             return Err(CatalogError::new("invalid MySQL pool constraints"));
         }
@@ -629,6 +640,14 @@ impl MysqlDriverConfig {
         };
         format!("mysql://{}{}:{}/{}", auth, self.host, self.port, self.database)
     }
+}
+
+fn is_local_mysql_host(host: &str) -> bool {
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    let unwrapped = host.strip_prefix('[').and_then(|value| value.strip_suffix(']')).unwrap_or(host);
+    unwrapped.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback())
 }
 
 /// Normalized database errors mapping MySQL server errors into standard AIP codes.

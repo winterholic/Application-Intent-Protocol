@@ -774,11 +774,22 @@ fn mysql_driver_config_parses_various_url_configurations_safely() {
     let ssl_req = "mysql://app:pw@10.0.0.1:3306/db?sslmode=required";
     assert!(MysqlDriverConfig::parse_url(ssl_req).unwrap().tls_required);
 
-    let ssl_dis = "mysql://app:pw@10.0.0.1:3306/db?sslmode=disabled";
+    let ssl_dis = "mysql://app:pw@127.0.0.1:3306/db?sslmode=disabled";
     assert!(!MysqlDriverConfig::parse_url(ssl_dis).unwrap().tls_required);
 
     let ssl_full = "mysql://app:pw@10.0.0.1:3306/db?ssl-mode=verify-full";
     assert!(MysqlDriverConfig::parse_url(ssl_full).unwrap().tls_required);
+}
+
+#[test]
+fn mysql_driver_config_requires_verified_tls_for_remote_hosts_and_rejects_bad_modes() {
+    assert!(MysqlDriverConfig::parse_url("mysql://app:pw@db.example/app").unwrap().tls_required);
+    assert!(!MysqlDriverConfig::parse_url("mysql://app:pw@127.0.0.1/app").unwrap().tls_required);
+    assert!(MysqlDriverConfig::parse_url("mysql://app:pw@db.example/app?sslmode=disabled").is_err());
+    assert!(MysqlDriverConfig::parse_url("mysql://app:pw@db.example/app?sslmode=typo").is_err());
+    assert!(MysqlDriverConfig::parse_url("mysql://app:pw@db.example/app?sslmode").is_err());
+    assert!(MysqlDriverConfig::parse_url("mysql://app:pw@db.example/app?sslmode=&ssl-mode=require").is_err());
+    assert!(MysqlDriverConfig::parse_url("mysql://app:pw@localhost/app?sslmode=prefer").is_err());
 }
 
 #[test]

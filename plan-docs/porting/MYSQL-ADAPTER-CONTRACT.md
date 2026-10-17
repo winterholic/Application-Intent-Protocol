@@ -85,6 +85,18 @@
 
 외래키 action 의미는 [MySQL 8.4 FOREIGN KEY 문서](https://dev.mysql.com/doc/refman/8.4/en/create-table-foreign-keys.html)와 [`INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS`](https://dev.mysql.com/doc/refman/8.4/en/information-schema-referential-constraints-table.html)를 기준으로 한다. MySQL 8.4 문서는 InnoDB에서 `NO ACTION`을 `RESTRICT`와 동등하게 즉시 거부 처리하고 `SET DEFAULT` 정의는 거부된다고 명시한다. Manifest는 원본 action 표기를 서로 다른 enum 값으로 보존한다. MariaDB semantics는 이 근거로 추정하지 않는다.
 
+### 2026-10-17 Stage5 교정 결과
+
+기준은 `feat/mysql-adapter`의 `82c253060eddeee133ba61cc4f1cfca050d81450`이며, 이 변경은 Stage5 draft/introspection 결함 범위에 한정한다.
+
+- `normalize_foreign_keys`가 보존한 복합 FK ordered column pairs가 draft 변환 중 사라지지 않도록, 복합 FK가 포함된 introspection은 `composite foreign keys require a manual definition` 진단으로 실패시킨다. 단일 컬럼 FK 자동 매핑은 유지한다.
+- TLS 기준은 제품 운영 문서의 원격 DB `sslmode=require` 및 인증서·호스트명 검증이다([OPERATIONS](../../product/OPERATIONS.md), [DATABASE-ROLES](../../product/DATABASE-ROLES.md)). MySQL URL은 원격 호스트에서 TLS를 기본 적용하고 `disable`/`disabled`를 거부한다. localhost와 loopback IP는 기존 로컬 개발 예외로 기본 평문을 허용한다. 잘못된 모드, `prefer`, 값이 없는 `sslmode`, 중복 모드는 거부한다. TLS는 `mysql_async::SslOpts::default()`를 유지해 CA 검증과 호스트명 검증을 끄지 않는다.
+- 서비스의 `database_ca_file`은 MySQL introspection 경로에 파일 경로로 전달돼 실제 드라이버의 root certificate 설정에 들어간다. `AIP_MYSQL_CA_CERT` 환경변수 경로도 기존 사용을 유지한다. 두 CA 경로 모두 선택된 TLS 연결의 신뢰 root를 추가하며 기본 검증을 대체하지 않는다.
+- disposable MySQL 8.4에서는 설정 `database_ca_file`을 사용한 단일 FK `service introspect`가 성공했다. 복합 FK 두 컬럼을 포함한 live schema는 같은 명령에서 exit 1 및 명시 진단으로 거부됐다. 별도 TLS handshake는 구성 CA 성공, CA 미설정 실패, SAN과 다른 `localhost` host 검증 실패를 확인했다.
+- 최소 회귀: 기본 및 `mysql` feature의 `aip-migrate` 테스트 전체, `aip-service` 테스트, 실제 MySQL 8.4 catalog live test와 TLS live test를 실행했다. 상세 원시 명령/exit/log는 Run 증거 파일에 둔다.
+
+이 교정은 catalog/introspection 경로의 성공·거부 동작만 보강한다. production CA 배포 구성, MariaDB, FaceReview 원본 전체 스키마, 일반 service policy read/write, transaction/rollback은 여기서 검증하지 않았다. MySQL/MariaDB 저장 어댑터와 전체 FaceReview 포팅은 계속 미완료다.
+
 ## 원본과 현재 엔진의 접점
 
 페이스리뷰 원본은 `new-facereview@7948b7e721837fdb73c427cb54e12cad4ec2d5af`.

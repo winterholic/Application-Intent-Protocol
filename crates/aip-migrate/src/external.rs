@@ -44,6 +44,11 @@ fn scalar(ty: &str) -> Option<&'static str> {
 }
 /// Read-only discovery. Unsupported keys/types fail with an actionable report, never disappear from the draft.
 pub async fn introspect(url: &str, source: &str) -> Result<Value, Value> {
+    introspect_with_ca(url, source, None).await
+}
+
+/// Read-only discovery with the configured database CA forwarded to the selected driver.
+pub async fn introspect_with_ca(url: &str, source: &str, _database_ca_file: Option<&std::path::Path>) -> Result<Value, Value> {
     if !spike_v2_read::external::valid_name(source) {
         return Err(failure("원본 schema 식별자 오류"));
     }
@@ -52,7 +57,7 @@ pub async fn introspect(url: &str, source: &str) -> Result<Value, Value> {
         if s == "mysql" || s == "mariadb" {
             #[cfg(feature = "mysql")]
             {
-                return crate::mysql_driver::introspect_draft(url, source)
+                return crate::mysql_driver::introspect_draft_with_ca(url, source, _database_ca_file)
                     .await
                     .map_err(|e| err("DB_INTROSPECT", &e.to_string()));
             }

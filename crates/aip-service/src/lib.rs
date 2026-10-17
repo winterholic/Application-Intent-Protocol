@@ -41,7 +41,7 @@ pub enum Command {
         #[arg(long, value_enum, default_value = "ts")]
         lang: BindingLanguage,
     },
-    /// Read an external PostgreSQL schema; write a deny-all definition draft and physical mapping.
+    /// Read an external schema; write a deny-all definition draft and physical mapping.
     Introspect {
         #[arg(long)]
         config: PathBuf,
@@ -851,7 +851,8 @@ pub async fn run(command: Command) -> Result<Value, Value> {
             if out.exists() || mapping_out.exists() || out == mapping_out {
                 return Err(error("OUTPUT_EXISTS", "introspect 출력 파일은 새 경로여야 함"));
             }
-            let discovered = aip_migrate::external::introspect(&database_url(&c)?, &source_schema).await?;
+            let url = database_url(&c)?;
+            let discovered = aip_migrate::external::introspect_with_ca(&url, &source_schema, c.database_ca_file.as_deref()).await?;
             write_binding(
                 &config,
                 &mapping_out,
