@@ -82,7 +82,9 @@ const part = await client.objects.part({...upload, partNumber:1, size:chunk.size
 // 각 PUT 응답의 ETag를 모아서 complete({ ...upload, parts:[{number:1,etag}] }) 호출.
 ```
 
-SigV4는 Content-Length를 서명해 선언한 크기보다 큰 PUT/part를 막는다. URL 수명은 300초다. presigned URL은 소지자가 사용할 수 있고 발급 이후 principal 폐기가 즉시 URL을 취소하지 않는다. S3 control에는 동시 실행 제한이 있지만 **owner별 S3 합계 quota와 미완료 multipart 자동 정리는 아직 없다**. 배포 시 bucket 정책·수명 주기·비용 제한을 설정해야 한다. provider에서 Content-Length 서명, path-style URL, ETag, CORS 동작을 검증해야 한다. [TLS MinIO 통합 workflow](../.github/workflows/object-storage.yml)는 실제 S3 호환 HTTP와 multipart를 검사한다. 이는 AWS 계정에서의 IAM·CORS·운영 연동 확인을 대체하지 않는다.
+SigV4는 Content-Length를 서명해 선언한 크기보다 큰 PUT/part를 막는다. URL 수명은 300초다. presigned URL은 소지자가 사용할 수 있고 발급 이후 principal 폐기가 즉시 URL을 취소하지 않는다. S3 control에는 동시 실행 제한과 owner별 quota가 있다. 객체 bytes는 서버를 지나지 않으므로 서버가 **서명한 크기**를 장부(`aip_infra_<digest>.aip_object_ledger`)에 예약하고 owner 합계(기본 10GiB·1,000개, `objects`의 `max_total_bytes`·`max_objects`로 조정)에 넣어 검사한다. 넘으면 URL을 돌려주지 않고 `WIRE.QUOTA_EXCEEDED`를 낸다. 같은 객체를 다시 서명하면 이전 예약을 대체한다. multipart는 `start`가 객체 한 개, 서명한 part 크기가 같은 part 번호는 대체되어 누적된다. 아직 장부에 없는 upload id의 part 서명과 complete는 `WIRE.NOT_FOUND`다.
+
+예약은 사용되지 않아도 시간이 지나면 정리된다. 서명한 PUT은 발급 65분 뒤(URL 수명 5분과 진행 중 업로드를 위한 1시간), part 서명이 24시간 없던 multipart는 그 시점에, 서버가 `HEAD`로 저장소를 확인한다. 객체가 있으면 실제 크기로 확정하고(계속 quota에 포함), 없으면 예약을 풀며 multipart는 저장소에서 abort한다. 서명한 DELETE는 URL을 쓰지 않았을 수 있으므로 저장소가 객체 없음을 확인할 때까지 quota를 유지한다. 60초마다 모든 인스턴스가 돌지만 행마다 임대를 잡아 한 곳만 처리한다. 한계: ① 장부가 생기기 전에 올린 객체는 quota에 세지 않는다. ② 정리 시점까지 끝나지 않은 아주 큰 PUT은 이후 완료되어도 세지 않으므로 bucket 수명 주기 규칙으로 보완한다. ③ 이 장부는 서명한 크기 기준이며 provider 비용이나 bucket 전체 용량을 대신하지 않는다. 배포 시 bucket 정책·수명 주기·비용 제한은 여전히 설정해야 한다. provider에서 Content-Length 서명, path-style URL, ETag, CORS 동작을 검증해야 한다. [TLS MinIO 통합 workflow](../.github/workflows/object-storage.yml)는 실제 S3 호환 HTTP와 multipart를 검사한다. 이는 AWS 계정에서의 IAM·CORS·운영 연동 확인을 대체하지 않는다.
 
 Google Cloud Storage XML API의 HMAC 호환 backend도 같은 객체 API를 사용한다. 실제 설정은 `{"kind":"gcs_hmac","bucket":"app-files","access_key_env":"AIP_GCS_HMAC_ACCESS_ID","secret_key_env":"AIP_GCS_HMAC_SECRET"}`다. endpoint는 Google Storage로 고정하고 서명 scope는 `auto/s3/aws4_request`를 사용한다. ADC·Workload Identity를 사용하는 공식 Node/Python SDK 어댑터는 [providers](providers/README.md)를 참고한다. 이 어댑터는 신뢰한 서버 bridge용이며 `gcs_hmac` 인증과 구분한다. 실제 AWS/GCP 계정 검증은 자격증명 없이 실행할 수 없다.
 
@@ -204,6 +206,6 @@ Python 공급 경로도 같은 구조다. 호출자 SDK는 TypeScript `@aip/sdk`
 
 ## 확인된 미해결 운영 경계
 
-다중 프로세스 schema 분리, 운영 tracing/metrics, tenant 전체 broadcast, S3 누적 quota는 후속 검증·구현 대상이다. 현재 동시 quota·lease 경쟁·부분 요청 disconnect·느린 WebSocket 소비자·pool 취소를 검사하지만, 실제 운영 트래픽의 장시간 부하나 가용성 SLO를 보증하지 않는다. 기존 HTTP listener는 loopback TLS reverse proxy 뒤에 두는 모델을 유지한다.
+다중 프로세스 schema 분리, 운영 tracing/metrics, tenant 전체 broadcast는 후속 검증·구현 대상이다. S3 owner quota와 만료 정리는 [위](#파일과-대용량-객체) 장부로 구현했고 실제 MinIO(TLS)로 검증했으며, AWS·GCS 실계정 검증은 미실행이다. 현재 동시 quota·lease 경쟁·부분 요청 disconnect·느린 WebSocket 소비자·pool 취소를 검사하지만, 실제 운영 트래픽의 장시간 부하나 가용성 SLO를 보증하지 않는다. 기존 HTTP listener는 loopback TLS reverse proxy 뒤에 두는 모델을 유지한다.
 
 참고한 공식 자료: [Bubblewrap README](https://github.com/containers/bubblewrap/blob/main/README.md), [AWS multipart 의미와 수명 주기](https://docs.aws.amazon.com/AmazonS3/latest/userguide/mpuoverview.html). 타 프로젝트 소스를 복사하지 않았으며 Bubblewrap은 배포 환경의 별도 도구로 실행한다.

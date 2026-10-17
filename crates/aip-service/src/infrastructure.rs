@@ -98,12 +98,21 @@ pub enum ObjectsConfig {
         access_key_env: String,
         secret_key_env: String,
         session_token_env: Option<String>,
+        /// Per-owner ceiling on bytes signed for or stored, enforced by the server's object ledger.
+        #[serde(default = "owner_object_bytes")]
+        max_total_bytes: u64,
+        #[serde(default = "owner_object_count")]
+        max_objects: usize,
     },
     #[serde(rename = "gcs_hmac")]
     GcsHmac {
         bucket: String,
         access_key_env: String,
         secret_key_env: String,
+        #[serde(default = "owner_object_bytes")]
+        max_total_bytes: u64,
+        #[serde(default = "owner_object_count")]
+        max_objects: usize,
     },
 }
 fn owner_object_bytes() -> u64 {
@@ -276,21 +285,29 @@ pub(super) fn build_with_environment(config: &super::Config, lookup: &impl Fn(&s
                 .map_err(|_| configuration_error())?,
             )))
         }
-        Some(ObjectsConfig::S3 { endpoint, bucket, region, access_key_env, secret_key_env, session_token_env }) => {
+        Some(ObjectsConfig::S3 { endpoint, bucket, region, access_key_env, secret_key_env, session_token_env, max_total_bytes, max_objects }) => {
+            if *max_total_bytes == 0 || *max_total_bytes > i64::MAX as u64 || *max_objects == 0 || *max_objects > 100_000 {
+                return Err(configuration_error());
+            }
             let mut s = aip_execution::objects::S3Config::new(
                 endpoint,
                 bucket,
                 region,
                 credential(access_key_env, lookup)?,
                 credential(secret_key_env, lookup)?,
-            );
+            )
+            .with_owner_quota(*max_total_bytes, *max_objects);
             if let Some(name) = session_token_env {
                 s = s.with_session_token(credential(name, lookup)?);
             }
             Some(ObjectStorage::S3(Arc::new(aip_execution::objects::S3Store::new(s).map_err(|_| configuration_error())?)))
         }
-        Some(ObjectsConfig::GcsHmac { bucket, access_key_env, secret_key_env }) => {
-            let config = aip_execution::gcs::GcsConfig::new(bucket, credential(access_key_env, lookup)?, credential(secret_key_env, lookup)?);
+        Some(ObjectsConfig::GcsHmac { bucket, access_key_env, secret_key_env, max_total_bytes, max_objects }) => {
+            if *max_total_bytes == 0 || *max_total_bytes > i64::MAX as u64 || *max_objects == 0 || *max_objects > 100_000 {
+                return Err(configuration_error());
+            }
+            let config = aip_execution::gcs::GcsConfig::new(bucket, credential(access_key_env, lookup)?, credential(secret_key_env, lookup)?)
+                .with_owner_quota(*max_total_bytes, *max_objects);
             Some(ObjectStorage::GcsHmac(Arc::new(aip_execution::gcs::GcsStore::new(config).map_err(|_| configuration_error())?)))
         }
     };
@@ -363,6 +380,7 @@ pub(super) fn build_with_environment(config: &super::Config, lookup: &impl Fn(&s
         client_consume: config.messaging.client_consume,
         resource_limits,
         object_transfer_lifetime: Duration::from_millis(config.object_transfer_lifetime_ms),
+        object_reconcile_interval: Duration::from_secs(60),
         rag: None,
         rag_client_index: false,
         triggers: Default::default(),

@@ -86,3 +86,6 @@ AIP_MINIO_ACCESS_KEY=aip-test-access \
 AIP_MINIO_SECRET_KEY=aip-test-secret-please-rotate \
 AIP_MINIO_CA_PEM="$task_dir/ca.pem" \
   cargo test -p aip-execution --test cloud_storage minio_https_actual_object_and_multipart_contract --locked -- --ignored --nocapture
+
+# Per-owner quota and expired-upload cleanup through the real server (needs the dedicated test PostgreSQL, see VALIDATION.md).
+cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --test object_ledger_s3 --locked -- --ignored --nocapture

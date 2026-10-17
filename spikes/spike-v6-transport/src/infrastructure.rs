@@ -93,6 +93,8 @@ pub struct Infrastructure {
     pub client_consume: bool,
     pub resource_limits: ResourceLimits,
     pub object_transfer_lifetime: std::time::Duration,
+    /// How often expired S3 reservations are checked against the store. Tests shorten it; production keeps the default.
+    pub object_reconcile_interval: std::time::Duration,
     pub rag: Option<Arc<aip_execution::rag::RagEngine>>,
     pub rag_client_index: bool,
     pub triggers: Arc<crate::triggers::Triggers>,
@@ -121,6 +123,7 @@ impl Default for Infrastructure {
             client_consume: false,
             resource_limits: ResourceLimits::default(),
             object_transfer_lifetime: std::time::Duration::from_secs(15 * 60),
+            object_reconcile_interval: std::time::Duration::from_secs(60),
             rag: None,
             rag_client_index: false,
             triggers: Arc::default(),

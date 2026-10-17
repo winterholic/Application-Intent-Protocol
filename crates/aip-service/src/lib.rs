@@ -1536,6 +1536,39 @@ mod managed_config_tests {
     }
 
     #[test]
+    fn s3_owner_quota_defaults_match_local_objects_and_zero_or_unbounded_values_are_rejected() {
+        let build = |objects: Value| {
+            let config: Config = serde_json::from_value(json!({
+                "schema":"aip_test",
+                "auth":{"issuer":"https://issuer.example","audience":"aip","jwks":{"kind":"file","path":"jwks.json"}},
+                "objects":objects
+            }))
+            .unwrap();
+            infrastructure::build_with_environment(&config, &|_| Some("secret".to_owned()))
+        };
+        let s3 = |extra: Value| {
+            let mut value = json!({"kind":"s3","endpoint":"https://objects.example.test","bucket":"b","region":"us-east-1","access_key_env":"A","secret_key_env":"S"});
+            for (key, field) in extra.as_object().unwrap() {
+                value[key] = field.clone();
+            }
+            value
+        };
+        let Some(spike_v6_transport::infrastructure::ObjectStorage::S3(store)) = build(s3(json!({}))).unwrap().objects else { panic!("S3 storage") };
+        assert_eq!(store.owner_quota(), (10 * 1024 * 1024 * 1024, 1000), "same defaults as local object storage");
+        let Some(spike_v6_transport::infrastructure::ObjectStorage::S3(store)) =
+            build(s3(json!({"max_total_bytes":1048576,"max_objects":7}))).unwrap().objects
+        else {
+            panic!("S3 storage")
+        };
+        assert_eq!(store.owner_quota(), (1048576, 7));
+        for invalid in [json!({"max_total_bytes":0}), json!({"max_objects":0}), json!({"max_objects":100001}), json!({"max_total_bytes":u64::MAX})] {
+            assert_eq!(build(s3(invalid)).err().unwrap()["code"], "INFRASTRUCTURE_CONFIG");
+        }
+        let gcs = build(json!({"kind":"gcs_hmac","bucket":"b","access_key_env":"A","secret_key_env":"S","max_total_bytes":0}));
+        assert_eq!(gcs.err().unwrap()["code"], "INFRASTRUCTURE_CONFIG");
+    }
+
+    #[test]
     fn resource_limit_overrides_are_honored_and_zero_values_are_rejected() {
         let defaults: Config = serde_json::from_value(json!({
             "schema":"aip_test",

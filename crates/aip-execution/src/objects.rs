@@ -448,6 +448,8 @@ pub struct S3Config {
     secret_key: String,
     session_token: Option<String>,
     root_certificates_pem: Vec<Vec<u8>>,
+    max_owner_bytes: u64,
+    max_objects: usize,
 }
 impl S3Config {
     pub fn new(
@@ -465,8 +467,19 @@ impl S3Config {
             secret_key: secret_key.into(),
             session_token: None,
             root_certificates_pem: Vec::new(),
+            max_owner_bytes: DEFAULT_MAX_OWNER_BYTES,
+            max_objects: DEFAULT_MAX_OBJECTS,
         }
     }
+
+    /// Per-owner ceiling on reserved plus stored bytes and on object count. The server enforces it through the
+    /// object ledger because S3 transfers never pass through it.
+    pub fn with_owner_quota(mut self, max_total_bytes: u64, max_objects: usize) -> Self {
+        self.max_owner_bytes = max_total_bytes;
+        self.max_objects = max_objects;
+        self
+    }
+
     pub fn with_session_token(mut self, token: impl Into<String>) -> Self {
         self.session_token = Some(token.into());
         self
@@ -516,6 +529,8 @@ impl S3Store {
             || config.access_key.chars().any(char::is_control)
             || config.secret_key.chars().any(char::is_control)
             || config.session_token.as_ref().is_some_and(|v| v.is_empty() || v.chars().any(char::is_control))
+            || config.max_owner_bytes == 0
+            || config.max_objects == 0
         {
             return Err(Error::InvalidConfig);
         }
@@ -642,17 +657,43 @@ impl S3Store {
         Ok(())
     }
 
+    /// Aborts a multipart upload. A store that no longer knows the upload (already completed, aborted or expired)
+    /// answers 404, reported as `NotFound` so a cleanup can tell "nothing left to free" from a real failure.
     pub async fn abort_multipart(&self, upload: &MultipartUpload) -> Result<(), Error> {
         if !valid_upload_id(&upload.upload_id) {
             return Err(Error::InvalidMultipart);
         }
         let mut url = self.object_url(&upload.key)?;
         url.query_pairs_mut().append_pair("uploadId", &upload.upload_id);
-        let response = self.signed_request(Method::DELETE, url, Vec::new(), Vec::new()).await?;
-        if !response.status().is_success() {
-            return Err(Error::Http(format!("object store returned {}", response.status())));
+        let response = self.signed_request_any_status(Method::DELETE, url, Vec::new(), Vec::new()).await?;
+        match response.status() {
+            status if status.is_success() => Ok(()),
+            reqwest::StatusCode::NOT_FOUND => Err(Error::NotFound),
+            status => Err(Error::Http(format!("object store returned {status}"))),
         }
-        Ok(())
+    }
+
+    /// Size of a stored object, or `None` when the store has no such object. Used to reconcile what a presigned
+    /// transfer did, because the server never sees those bytes.
+    pub async fn head_object(&self, key: &ObjectKey) -> Result<Option<u64>, Error> {
+        let url = self.object_url(key)?;
+        let response = self.signed_request_any_status(Method::HEAD, url, Vec::new(), Vec::new()).await?;
+        match response.status() {
+            status if status.is_success() => response
+                .headers()
+                .get(reqwest::header::CONTENT_LENGTH)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse::<u64>().ok())
+                .map(Some)
+                .ok_or_else(|| Error::Protocol("object store omitted content-length".into())),
+            reqwest::StatusCode::NOT_FOUND => Ok(None),
+            status => Err(Error::Http(format!("object store returned {status}"))),
+        }
+    }
+
+    /// Owner ceilings the server applies to presigned uploads: total bytes and object count.
+    pub fn owner_quota(&self) -> (u64, usize) {
+        (self.config.max_owner_bytes, self.config.max_objects)
     }
 
     fn presign(&self, method: &str, key: &ObjectKey, params: Vec<(&str, String)>, expires_seconds: u64) -> Result<String, Error> {
@@ -705,6 +746,21 @@ impl S3Store {
     }
 
     async fn signed_request(&self, method: Method, url: Url, extra_headers: Vec<(&str, String)>, body: Vec<u8>) -> Result<reqwest::Response, Error> {
+        let response = self.signed_request_any_status(method, url, extra_headers, body).await?;
+        if !response.status().is_success() {
+            return Err(Error::Http(format!("object store returned {}", response.status())));
+        }
+        Ok(response)
+    }
+
+    /// Like `signed_request` but hands every HTTP status back, for callers that treat 404 as an answer.
+    async fn signed_request_any_status(
+        &self,
+        method: Method,
+        url: Url,
+        extra_headers: Vec<(&str, String)>,
+        body: Vec<u8>,
+    ) -> Result<reqwest::Response, Error> {
         let (date, short_date) = aws_time(SystemTime::now())?;
         let payload_hash = hex(&Sha256::digest(&body));
         let host = format!("{}{}", url.host_str().ok_or(Error::InvalidConfig)?, url.port().map(|v| format!(":{v}")).unwrap_or_default());
@@ -734,11 +790,7 @@ impl S3Store {
                 request = request.header(name, value);
             }
         }
-        let response = request.send().await.map_err(|e| Error::Http(e.to_string()))?;
-        if !response.status().is_success() {
-            return Err(Error::Http(format!("object store returned {}", response.status())));
-        }
-        Ok(response)
+        request.send().await.map_err(|e| Error::Http(e.to_string()))
     }
 
     fn object_url(&self, key: &ObjectKey) -> Result<Url, Error> {

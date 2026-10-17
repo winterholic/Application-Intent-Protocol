@@ -3,6 +3,7 @@
 //! lived URLs and small JSON control requests.
 
 use crate::{auth::Session, cors, durable, infrastructure::ObjectStorage, server::Runtime};
+use aip_execution::object_ledger::{Error as LedgerError, Kind as LedgerKind, ObjectLedger, Outcome};
 use aip_execution::objects::{
     CompletedPart, Error as ObjectError, LocalStore, MultipartUpload, ObjectKey, S3Store, MAX_S3_OBJECT_BYTES, MAX_S3_PART_BYTES,
 };
@@ -19,6 +20,16 @@ const IO_TIMEOUT: Duration = Duration::from_secs(30);
 const PIPE_DEPTH: usize = 2;
 const STREAM_CHUNK: usize = 64 * 1024;
 const PRESIGN_SECONDS: u64 = 300;
+/// A signed PUT is checked against the store this long after it was issued. The URL only has to be valid when the
+/// transfer starts, so a large upload can still be running after it expires; the extra hour covers those. An upload
+/// that is still running when the reservation is released is not counted afterwards, which the bucket's own
+/// lifecycle rules have to cover.
+const PUT_RECONCILE_SECONDS: u64 = PRESIGN_SECONDS + 3600;
+const DELETE_RECONCILE_SECONDS: u64 = PRESIGN_SECONDS + 60;
+/// A multipart upload with no signed part for this long is aborted and its charge released.
+const MULTIPART_IDLE_SECONDS: u64 = 24 * 3600;
+const RECONCILE_BATCH: i64 = 100;
+const RECONCILE_LEASE_SECONDS: u64 = 300;
 
 /// Handles raw object paths and streams request/response bytes without loading
 /// the full object into memory. Returns false only for paths owned by another
@@ -266,12 +277,16 @@ pub(crate) async fn control(rt: &Runtime, facts: &Value, wire: IdWire, session: 
         Ok(store) => store,
         Err(_) => return failure("WIRE.BAD_REQUEST"),
     };
+    let ledger = match ledger_for(rt, &base) {
+        Ok(ledger) => ledger,
+        Err(code) => return failure(code),
+    };
     let response = match path {
-        "/objects/sign" => sign(&store, body),
-        "/objects/multipart/start" => multipart_start(&store, body).await,
-        "/objects/multipart/part" => multipart_part(&store, body),
-        "/objects/multipart/complete" => multipart_complete(&store, body).await,
-        "/objects/multipart/abort" => multipart_abort(&store, body).await,
+        "/objects/sign" => sign_with_ledger(rt, &ledger, &owner, &store, body).await,
+        "/objects/multipart/start" => multipart_start_with_ledger(rt, &ledger, &owner, &store, body).await,
+        "/objects/multipart/part" => multipart_part_with_ledger(rt, &ledger, &owner, &store, body).await,
+        "/objects/multipart/complete" => multipart_complete_with_ledger(rt, &ledger, &owner, &store, body).await,
+        "/objects/multipart/abort" => multipart_abort_with_ledger(rt, &ledger, &owner, &store, body).await,
         _ => failure("WIRE.NOT_FOUND"),
     };
     let postflight = if session.remaining_ms() == 0 { Err("WIRE.TOKEN_EXPIRED") } else { validate_owner(rt, facts, wire, session).await };
@@ -279,11 +294,170 @@ pub(crate) async fn control(rt: &Runtime, facts: &Value, wire: IdWire, session: 
         if path == "/objects/multipart/start" && response["ok"] == true {
             if let Some(upload) = parse_upload(&json!({"id":response["id"],"uploadId":response["uploadId"]})) {
                 let _ = store.abort_multipart(&upload).await;
+                if let Ok(mut db) = connect(rt).await {
+                    let _ = ledger.abort_multipart(&mut db, &owner, &upload.key.to_string(), &upload.upload_id).await;
+                }
             }
         }
         return failure(code);
     }
     response
+}
+
+fn ledger_for(rt: &Runtime, base: &S3Store) -> Result<ObjectLedger, &'static str> {
+    let deployment = rt.deployment.as_ref().ok_or("WIRE.NOT_AVAILABLE")?;
+    let schema = aip_execution::infrastructure_schema(&deployment.schema).map_err(|_| "WIRE.BAD_CONFIGURATION")?;
+    let (bytes, objects) = base.owner_quota();
+    ObjectLedger::new(schema, bytes, objects).map_err(|_| "WIRE.BAD_CONFIGURATION")
+}
+
+async fn connect(rt: &Runtime) -> Result<crate::pool::PooledConnection, &'static str> {
+    rt.db_pool.as_ref().ok_or("WIRE.DB_UNAVAILABLE")?.acquire().await.map_err(|_| "WIRE.DB_UNAVAILABLE")
+}
+
+/// Ledger errors a caller can cause or recover from keep their own code; the rest are a database problem.
+fn ledger_code(error: &LedgerError) -> &'static str {
+    match error {
+        LedgerError::QuotaExceeded => "WIRE.QUOTA_EXCEEDED",
+        LedgerError::NotFound => "WIRE.NOT_FOUND",
+        LedgerError::InvalidRequest => "WIRE.BAD_REQUEST",
+        LedgerError::InvalidSchema | LedgerError::Database(_) => "WIRE.DB_UNAVAILABLE",
+    }
+}
+
+/// Runs one ledger step on a pooled connection and hands the connection back reset.
+async fn with_db<T, F, Fut>(rt: &Runtime, step: F) -> Result<T, &'static str>
+where
+    F: FnOnce(crate::pool::PooledConnection) -> Fut,
+    Fut: std::future::Future<Output = (crate::pool::PooledConnection, Result<T, LedgerError>)>,
+{
+    let db = connect(rt).await?;
+    let (db, result) = step(db).await;
+    let _ = db.release().await;
+    result.map_err(|error| ledger_code(&error))
+}
+
+async fn sign_with_ledger(rt: &Runtime, ledger: &ObjectLedger, owner: &str, store: &S3Store, body: &Value) -> Value {
+    let response = sign(store, body);
+    if response["ok"] != true {
+        return response;
+    }
+    let (Some(method), Some(id)) = (response["method"].as_str(), response["id"].as_str()) else { return response };
+    // The URL exists only in `response`; it is discarded if the ledger refuses, so a refused PUT leaves nothing usable.
+    let step = match method {
+        "PUT" => {
+            let Some(size) = body["size"].as_u64() else { return failure("WIRE.BAD_REQUEST") };
+            let (ledger, owner, id) = (ledger.clone(), owner.to_owned(), id.to_owned());
+            with_db(rt, move |mut db| async move {
+                let result = ledger.reserve_put(&mut db, &owner, &id, size, PUT_RECONCILE_SECONDS).await;
+                (db, result)
+            })
+            .await
+        }
+        "DELETE" => {
+            let (ledger, owner, id) = (ledger.clone(), owner.to_owned(), id.to_owned());
+            with_db(rt, move |mut db| async move {
+                let result = ledger.delete_signed(&mut db, &owner, &id, DELETE_RECONCILE_SECONDS).await;
+                (db, result)
+            })
+            .await
+        }
+        _ => return response,
+    };
+    match step {
+        Ok(()) => response,
+        Err(code) => failure(code),
+    }
+}
+
+async fn multipart_start_with_ledger(rt: &Runtime, ledger: &ObjectLedger, owner: &str, store: &S3Store, body: &Value) -> Value {
+    let response = multipart_start(store, body).await;
+    if response["ok"] != true {
+        return response;
+    }
+    let Some(upload) = parse_upload(&json!({"id":response["id"],"uploadId":response["uploadId"]})) else { return response };
+    let (ledger_owned, owner_owned, id, upload_id) = (ledger.clone(), owner.to_owned(), upload.key.to_string(), upload.upload_id.clone());
+    let recorded = with_db(rt, move |mut db| async move {
+        let result = ledger_owned.start_multipart(&mut db, &owner_owned, &id, &upload_id, MULTIPART_IDLE_SECONDS).await;
+        (db, result)
+    })
+    .await;
+    match recorded {
+        Ok(()) => response,
+        Err(code) => {
+            // The store already created the upload; without a ledger row nothing would ever clean it up.
+            let _ = store.abort_multipart(&upload).await;
+            failure(code)
+        }
+    }
+}
+
+async fn multipart_part_with_ledger(rt: &Runtime, ledger: &ObjectLedger, owner: &str, store: &S3Store, body: &Value) -> Value {
+    let response = multipart_part(store, body);
+    if response["ok"] != true {
+        return response;
+    }
+    let (Some(id), Some(upload_id), Some(number), Some(size)) =
+        (body["id"].as_str(), body["uploadId"].as_str(), body["partNumber"].as_u64().and_then(|n| u16::try_from(n).ok()), body["size"].as_u64())
+    else {
+        return failure("WIRE.BAD_REQUEST");
+    };
+    let (ledger, owner, id, upload_id) = (ledger.clone(), owner.to_owned(), id.to_owned(), upload_id.to_owned());
+    let charged = with_db(rt, move |mut db| async move {
+        let result = ledger.reserve_part(&mut db, &owner, &id, &upload_id, number, size, MULTIPART_IDLE_SECONDS).await;
+        (db, result)
+    })
+    .await;
+    match charged {
+        Ok(()) => response,
+        Err(code) => failure(code),
+    }
+}
+
+async fn multipart_complete_with_ledger(rt: &Runtime, ledger: &ObjectLedger, owner: &str, store: &S3Store, body: &Value) -> Value {
+    let Some(upload) = parse_upload(body) else { return multipart_complete(store, body).await };
+    let id = upload.key.to_string();
+    let (ledger_owned, owner_owned, id_owned, upload_id) = (ledger.clone(), owner.to_owned(), id.clone(), upload.upload_id.clone());
+    let open = with_db(rt, move |mut db| async move {
+        let result = ledger_owned.require_open_multipart(&mut db, &owner_owned, &id_owned, &upload_id).await;
+        (db, result)
+    })
+    .await;
+    if let Err(code) = open {
+        return failure(code);
+    }
+    let response = multipart_complete(store, body).await;
+    if response["ok"] != true {
+        return response;
+    }
+    let (ledger, owner, upload_id) = (ledger.clone(), owner.to_owned(), upload.upload_id);
+    let recorded = with_db(rt, move |mut db| async move {
+        let result = ledger.complete_multipart(&mut db, &owner, &id, &upload_id).await;
+        (db, result)
+    })
+    .await;
+    if recorded.is_err() {
+        // The object exists. The row stays pending, and the reconciler turns it into a stored object once its timer ends.
+        eprintln!("{}", json!({"event":"object_ledger_complete_failed"}));
+    }
+    response
+}
+
+async fn multipart_abort_with_ledger(rt: &Runtime, ledger: &ObjectLedger, owner: &str, store: &S3Store, body: &Value) -> Value {
+    let response = multipart_abort(store, body).await;
+    // A store that no longer knows the upload (404) counts as aborted, so a retried abort succeeds.
+    let aborted = response["ok"] == true || response["code"] == "WIRE.NOT_FOUND";
+    let Some(upload) = parse_upload(body).filter(|_| aborted) else { return response };
+    let (ledger, owner, id, upload_id) = (ledger.clone(), owner.to_owned(), upload.key.to_string(), upload.upload_id);
+    let released = with_db(rt, move |mut db| async move {
+        let result = ledger.abort_multipart(&mut db, &owner, &id, &upload_id).await;
+        (db, result)
+    })
+    .await;
+    match released {
+        Ok(_) => json!({"ok":true,"id":upload.key.to_string()}),
+        Err(code) => failure(code),
+    }
 }
 
 fn sign(store: &S3Store, body: &Value) -> Value {
@@ -412,8 +586,63 @@ async fn multipart_abort(store: &S3Store, body: &Value) -> Value {
     match store.abort_multipart(&upload).await {
         Ok(()) => json!({"ok":true,"id":upload.key.to_string()}),
         Err(ObjectError::InvalidMultipart) => failure("WIRE.BAD_REQUEST"),
+        Err(ObjectError::NotFound) => failure("WIRE.NOT_FOUND"),
         Err(_) => failure("WIRE.OBJECT_STORE_ERROR"),
     }
+}
+
+/// Settles ledger rows whose timer ran out against what the store holds. Runs on every instance; the lease taken in
+/// `claim_due` keeps instances off each other's rows.
+pub(crate) async fn reconcile_loop(rt: Arc<Runtime>) {
+    loop {
+        tokio::time::sleep(rt.infrastructure.object_reconcile_interval).await;
+        if let Err(code) = reconcile_once(&rt).await {
+            eprintln!("{}", json!({"event":"object_reconcile_failed","code":code}));
+        }
+    }
+}
+
+pub(crate) async fn reconcile_once(rt: &Runtime) -> Result<usize, &'static str> {
+    let base = match &rt.infrastructure.objects {
+        Some(ObjectStorage::S3(base)) => base.as_ref().clone(),
+        Some(ObjectStorage::GcsHmac(base)) => base.s3_compatible_store().clone(),
+        _ => return Ok(0),
+    };
+    let ledger = ledger_for(rt, &base)?;
+    let claim_ledger = ledger.clone();
+    let due = with_db(rt, move |mut db| async move {
+        let result = claim_ledger.claim_due(&mut db, RECONCILE_BATCH, RECONCILE_LEASE_SECONDS).await;
+        (db, result)
+    })
+    .await?;
+    let mut settled = 0;
+    for item in due {
+        let Ok(store) = base.for_owner(&item.owner) else { continue };
+        let Ok(key) = ObjectKey::parse(&item.object_id) else { continue };
+        // A failed store call leaves the row leased; it comes back when the lease ends.
+        let outcome = match store.head_object(&key).await {
+            Ok(Some(size)) => Outcome::Stored(size),
+            Ok(None) if item.kind == LedgerKind::Multipart => {
+                let Some(upload_id) = item.upload_id.clone() else { continue };
+                match store.abort_multipart(&MultipartUpload { key: key.clone(), upload_id }).await {
+                    Ok(()) | Err(ObjectError::NotFound) => Outcome::Absent,
+                    Err(_) => continue,
+                }
+            }
+            Ok(None) => Outcome::Absent,
+            Err(_) => continue,
+        };
+        let ledger = ledger.clone();
+        let resolved = with_db(rt, move |mut db| async move {
+            let result = ledger.resolve(&mut db, &item, outcome).await;
+            (db, result)
+        })
+        .await;
+        if matches!(resolved, Ok(true)) {
+            settled += 1;
+        }
+    }
+    Ok(settled)
 }
 
 fn parse_upload(body: &Value) -> Option<MultipartUpload> {
