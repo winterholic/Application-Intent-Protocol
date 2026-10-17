@@ -179,6 +179,10 @@ MySQL은 `UPDATE`의 `SET`을 왼쪽에서 오른쪽으로 평가하고 뒤의 �
 
 미완료: `/jobs/*` HTTP 연결, job 실행(worker·effect journal·확장 호출), 메시지·파일·이벤트 저장소, schedule·webhook 트리거. 이들은 설정에 나타나면 DB 접속 전에 거부한다. job 실행과 확장은 worker 프로토콜이 DB에 닿는 곳(`spike-v4-worker`의 `write.rs`, `lib.rs`의 `serve_call`, `outbox.rs`)이 좁지만 PostgreSQL 트랜잭션 타입에 묶여 있어, MySQL 트랜잭션에서 읽기 계획과 `apply`를 부르는 추상이 먼저 필요하다. 또 읽기 확장의 `ctx`는 이름 붙은 집계만 읽을 수 있어 비밀번호 해시 같은 행 값을 확장이 읽는 로그인 확장은 지금 구조로는 만들 수 없다.
 
+### 요청당 catalog 비용 (2026-10-18 측정)
+
+배포 펜스는 캐시를 두지 않고 요청마다 바인딩된 표의 `INFORMATION_SCHEMA`와 marker를 읽어 지문을 다시 계산한다. 그래서 DDL 변경이 다음 요청에서 바로 닫히지만 비용이 표 수에 비례한다. 같은 호스트의 격리 MySQL 8.4(debug 빌드, 표당 열 10개)에서 읽기 요청 하나의 중앙값은 표 1개 8.8ms, 10개 13.5ms, 30개 22.5ms, 60개 35.7ms, 120개 62.6ms였다(요청 100회, 단일 실행). 표당 약 0.45ms다. 완화 후보는 지문을 짧은 TTL로 캐시하는 것이지만 그러면 TTL 동안 drift가 열리므로, 이 계약의 "다음 요청에서 닫힘"을 약속한 채로는 택하지 않았다. 결정은 사용자 몫이다.
+
 ### 조달 실행환경 기록
 
 - 이전 nested-worker 기록은 `cargo add mysql_async --package aip-migrate --dry-run` 중 crates.io index fetch에서 SSL[60]을 관측했다고 보고했으나, raw log와 전체 환경 증거는 독립 검증에 제공되지 않았다. 따라서 원인은 확정하지 않는다.

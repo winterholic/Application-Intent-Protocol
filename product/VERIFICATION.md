@@ -324,11 +324,13 @@ DB 테스트는 이 Run이 띄운 PostgreSQL 17 컨테이너(`aip-claude-wbs8-pg
 
 2026-10-18 후속 실행(같은 컨테이너, 같은 명령 형식): `AIP_TEST_JOBS_URL`을 MariaDB로 두고 `cargo test -p aip-migrate --features mysql --test mysql_jobs -- --include-ignored`를 실행하면 3 passed(상태 기계·8 worker 동시 claim·outbox 릴레이)이고, MySQL 8.4에서도 3 passed다. MariaDB에서 claim의 `SKIP LOCKED`를 빼면 `mysql_concurrent_claims_never_hand_a_run_to_two_workers`가 실패한다. `mysql_capability_gate`는 4 passed(job 저장소 프로파일은 MariaDB를 통과시키고 서비스 프로파일은 계속 거부). `mysql_write_http`는 6 passed(`where` target, `sameScope`, 단일 `update` 효과 추가). 이 항목의 "MariaDB는 job 저장소를 실행하지 않았다"는 서술은 이로써 낡았다.
 
+요청당 catalog 비용(측정, `product/tests/fixtures/facereview-mysql/reference/big.py`): 펜스는 캐시 없이 요청마다 바인딩된 모든 표의 catalog를 읽는다. 표 하나에 약 8.8ms(중앙값), 10개 13.5ms, 30개 22.5ms, 60개 35.7ms, 120개 62.6ms로 표당 약 0.45ms씩 선형으로 늘었다(p95는 중앙값보다 3~4ms 위). FaceReview 9개 표는 읽기 요청당 약 13.7ms다. 조건은 debug 빌드, 같은 호스트의 loopback MySQL 8.4, 표당 열 10개, 요청 100회 단일 실행이다. 운영 환경의 지연과 같다고 주장하지 않으며, 표 수가 수십 개를 넘는 배포에서는 캐시 없는 fail-closed 설계의 비용이 눈에 띈다는 것이 확인된 내용이다.
+
 환경 한계: `aip-cli`의 `least_privilege`는 비밀번호 인증 PostgreSQL에서는 역할 접속이 실패하고, trust 인증 PostgreSQL 컨테이너에서는 통과한다(이번 변경과 무관). 시험 DB 비밀번호와 계정은 모두 이 시험을 위해 만든 일회용이다.
 
 변이 확인(보호 장치를 하나씩 끄고 시험이 실패하는지 확인): 용량 잠금, 키 잠금, 매칭 행 수 확인, SERIALIZABLE(`mysql_write_http`), 후보 행 잠금, lease epoch 검사, epoch 증가(`mysql_jobs`)는 각각 시험을 실패시켰다. 쓰기 판정의 `FOR UPDATE`만은 끄면 통과하며, 뒤의 `UPDATE`가 같은 행 잠금과 `from` 재확인을 해서 결과가 같기 때문이다.
 
-미실행·미검증: MariaDB의 읽기·쓰기 경로와 job 저장소(능력 부족으로 거부), HTTP `/jobs/*`·job 실행, `compose`, `where` target·`sameScope`·`effect update` 단일 일치, OIDC 외부 IdP로 UUID actor를 묶는 CLI 경로, 큰 schema의 catalog 조회 비용, 다른 OS.
+미실행·미검증: MariaDB의 읽기·쓰기 경로(능력 부족으로 거부), HTTP `/jobs/*`·job 실행, `compose`, 확장 쓰기, OIDC 외부 IdP로 UUID actor를 묶는 CLI 경로의 IdP 연동(UUID actor 바인딩 자체는 FaceReview 시험이 실행), 다른 OS. 이 문장은 이후 실행으로 일부 갱신됐다(아래 후속 단락).
 
 ## MySQL catalog 변환 계층과 fail-closed 경계 (2026-10-17)
 
