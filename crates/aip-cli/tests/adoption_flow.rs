@@ -1,7 +1,10 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use futures_util::FutureExt;
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use rsa::{RsaPrivateKey, pkcs1::EncodeRsaPrivateKey, traits::PublicKeyParts};
+
 use serde_json::{Value, json};
 use spike_v2_read::id_wire::IdWire;
 use spike_v6_transport::server::{ServerOptions, listen_with_prototype_options};
@@ -219,7 +222,7 @@ async fn adoption_preserves_legacy_decimal_idempotency_and_fences_wire_mode() {
         let legacy_token = server.keys.issue(42, 120);
         legacy_server = Some(server);
         let apply = json!({"key":"product-mark","request":{"apply":"Event.mark","target":{"ids":["11"]}}});
-        let original = post(&legacy_address, "/apply", &legacy_token, &legacy_fingerprint, None, apply.clone()).await;
+        let original = post(&legacy_address, "/apply", &legacy_token, legacy_fingerprint, None, apply.clone()).await;
         assert_eq!(original["ok"], true, "{original}");
         assert_eq!(original["changed"], json!(["11"]), "the legacy server must commit the actual decimal-ID write");
         legacy_server.take().unwrap().shutdown().await.expect("stop legacy server before adoption");

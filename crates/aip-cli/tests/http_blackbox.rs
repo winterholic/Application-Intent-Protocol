@@ -4,6 +4,9 @@
 //! no forged or malformed request ever reaches a handler as an authenticated one, no attack changes data, error bodies never
 //! leak secrets or internals, and the server keeps answering a legitimate caller after every attack. Observations (status and
 //! body of each attack) are printed so a run documents what the server actually does, including behavior that is merely odd.
+
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use hmac::{Hmac, Mac};
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};

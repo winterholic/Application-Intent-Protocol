@@ -1,5 +1,8 @@
 //! O-22: the migration role owns the schema; the runtime role only holds the grants documented in
 //! `product/DATABASE-ROLES.md`. This runs the documented grants end to end so the guide cannot drift from the code.
+
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use futures_util::FutureExt;
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
@@ -134,7 +137,7 @@ async fn a_runtime_role_with_only_the_documented_grants_serves_while_the_migrati
             .unwrap();
 
         // Without the infrastructure objects the runtime role cannot start, and it says what to do about it.
-        let failure = start(&config, &file, &runtime_db).await.err().expect("serve must refuse to start without provisioned infrastructure");
+        let failure = start(&config, &file, &runtime_db).await.expect_err("serve must refuse to start without provisioned infrastructure");
         assert!(failure.contains("aip service provision"), "the startup error must tell the operator how to fix it: {failure}");
 
         // Provisioning under the migration role fixes that; then the runtime grants for the infrastructure schema follow.
