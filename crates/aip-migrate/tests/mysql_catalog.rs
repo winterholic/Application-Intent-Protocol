@@ -688,8 +688,10 @@ async fn mysql_catalog_reader_introspect_pipeline_and_sql_constants() {
 
 #[tokio::test]
 async fn schema_wide_introspect_produces_identical_catalog_to_sequential_introspect() {
-    assert!(SQL_COLUMNS_BY_SCHEMA.contains("WHERE TABLE_SCHEMA = ?"));
-    assert!(SQL_COLUMNS_BY_SCHEMA.contains("ORDER BY TABLE_NAME ASC, ORDINAL_POSITION ASC"));
+    assert!(SQL_COLUMNS_BY_SCHEMA.contains("WHERE c.TABLE_SCHEMA = ?"));
+    assert!(SQL_COLUMNS_BY_SCHEMA.contains("ORDER BY c.TABLE_NAME ASC, c.ORDINAL_POSITION ASC"));
+    // INFORMATION_SCHEMA.COLUMNS also lists view columns; the schema-wide read must stay on base tables.
+    assert!(SQL_COLUMNS_BY_SCHEMA.contains("t.TABLE_TYPE = 'BASE TABLE'"));
     assert!(SQL_STATISTICS_BY_SCHEMA.contains("ORDER BY TABLE_NAME ASC, INDEX_NAME ASC, SEQ_IN_INDEX ASC"));
     assert!(SQL_STATISTICS_MARIADB_BY_SCHEMA.contains("NULL AS EXPRESSION"));
     assert!(SQL_FOREIGN_KEYS_BY_SCHEMA.contains("WHERE k.CONSTRAINT_SCHEMA = ? AND k.REFERENCED_TABLE_NAME IS NOT NULL"));

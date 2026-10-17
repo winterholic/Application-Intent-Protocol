@@ -472,6 +472,8 @@ fn read_bounded(path: &Path, limit: usize, code: &str) -> Result<String, Value> 
 /// The definition diagnostic registry of the product path, for `aip explain-code` and `aip diagnostics --area def`.
 pub use spike_v1_fixture::codes as definition_registry;
 /// The codes the SDKs raise themselves, for `aip explain-code`.
+#[cfg(feature = "mysql")]
+mod mysql_service;
 pub use spike_v6_transport::client_codes as client_registry;
 /// The codes of the product HTTP API (retry and fix), for `aip explain-code`.
 pub use spike_v6_transport::wire_codes as wire_registry;
@@ -488,14 +490,28 @@ pub fn load(file: &Path, dev_checks: bool) -> Result<spike_v11_dev_checks::Check
     )
 }
 fn configuration(path: &Path) -> Result<Config, Value> {
-    configuration_with_mode(path, false)
+    configuration_with_mode(path, Gate::Standard)
 }
 
 fn configuration_for_introspection(path: &Path) -> Result<Config, Value> {
-    configuration_with_mode(path, true)
+    configuration_with_mode(path, Gate::CatalogOnly)
 }
 
-fn configuration_with_mode(path: &Path, catalog_only: bool) -> Result<Config, Value> {
+/// For `adopt-external`, `principal` and `serve`: the commands the MySQL adapter implements. Everything else keeps the
+/// standard gate and refuses MySQL before it connects.
+#[cfg(feature = "mysql")]
+fn configuration_for_runtime(path: &Path) -> Result<Config, Value> {
+    configuration_with_mode(path, Gate::MysqlRuntime)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Gate {
+    Standard,
+    CatalogOnly,
+    MysqlRuntime,
+}
+
+fn configuration_with_mode(path: &Path, gate: Gate) -> Result<Config, Value> {
     let source = read_bounded(path, CONFIG_BYTES, "CONFIG_IO")?;
     let mut config: Config = serde_json::from_str(&source).map_err(|e| json_error("BAD_CONFIG", "제품 설정 형식 오류", &e))?;
     if let Some(mapping) = &mut config.external_mapping
@@ -548,10 +564,10 @@ fn configuration_with_mode(path: &Path, catalog_only: bool) -> Result<Config, Va
     if let Some(worker) = &config.workers {
         validate_integrations_shape(&worker.integrations)?;
     }
-    if catalog_only {
-        require_built_features_for_introspection(&config)?;
-    } else {
-        require_built_features(&config)?;
+    match gate {
+        Gate::CatalogOnly => require_built_features_for_introspection(&config)?,
+        Gate::MysqlRuntime => require_built_features_mode(&config, Gate::MysqlRuntime)?,
+        Gate::Standard => require_built_features(&config)?,
     }
     Ok(config)
 }
@@ -862,6 +878,8 @@ pub async fn run(command: Command) -> Result<Value, Value> {
                 json!({"ok":true,"structureDigest":discovered["structureDigest"],"definition":out,"mapping":mapping_out,"authorization":"deny-all; review before exposing read/write"}),
             )
         }
+        #[cfg(feature = "mysql")]
+        Command::AdoptExternal { file, config, apply } if mysql_selected(&config)? => mysql_service::adopt_external(&file, &config, apply).await,
         Command::AdoptExternal { file, config, apply } => {
             let c = configuration(&config)?;
             let facts = load(&file, false)?.output.execution;
@@ -909,11 +927,25 @@ pub async fn run(command: Command) -> Result<Value, Value> {
             }
         }
         Command::Provision { config } => provision(configuration(&config)?).await,
+        #[cfg(feature = "mysql")]
+        Command::Serve { file, config } if mysql_selected(&config)? => mysql_service::serve(&file, configuration_for_runtime(&config)?).await,
         Command::Serve { file, config } => serve(&file, configuration(&config)?).await,
+        #[cfg(feature = "mysql")]
+        Command::Principal { config, command } if mysql_selected(&config)? => {
+            mysql_service::principal(configuration_for_runtime(&config)?, command).await
+        }
         Command::Principal { config, command } => principal(configuration(&config)?, command).await,
         Command::Jobs { config, command } => jobs(configuration(&config)?, command).await,
         Command::Audit { config, command } => audit(configuration(&config)?, command).await,
     }
+}
+
+/// Whether this configuration selects the MySQL adapter. The check runs on the runtime-capable gate so that a MySQL
+/// configuration is recognized (and a MariaDB one refused with its own diagnostic) before the standard gate would reject it.
+#[cfg(feature = "mysql")]
+fn mysql_selected(path: &Path) -> Result<bool, Value> {
+    let config = configuration_for_runtime(path)?;
+    mysql_service::selected(&config)
 }
 
 /// Installs the infrastructure objects under the migration role. Idempotent; run it again after enabling rate limiting,
@@ -1291,14 +1323,14 @@ pub fn resolve_database_adapter(config: &Config) -> Result<String, Value> {
 /// Rejects configuration that needs an optional package this binary was built without,
 /// or configuration attempting to use unsupported MySQL runtime connectors before connection.
 pub fn require_built_features(config: &Config) -> Result<(), Value> {
-    require_built_features_mode(config, false)
+    require_built_features_mode(config, Gate::Standard)
 }
 
 fn require_built_features_for_introspection(config: &Config) -> Result<(), Value> {
-    require_built_features_mode(config, true)
+    require_built_features_mode(config, Gate::CatalogOnly)
 }
 
-fn require_built_features_mode(config: &Config, catalog_only: bool) -> Result<(), Value> {
+fn require_built_features_mode(config: &Config, gate: Gate) -> Result<(), Value> {
     #[cfg(not(feature = "external-brokers"))]
     if config.broker.is_some() {
         return Err(error("BROKER_FEATURE_DISABLED", "broker 설정을 사용하려면 external-brokers feature로 빌드해야 함"));
@@ -1319,7 +1351,18 @@ fn require_built_features_mode(config: &Config, catalog_only: bool) -> Result<()
 
     #[cfg(feature = "mysql")]
     {
-        if !catalog_only && (adapter == "mysql" || adapter == "mariadb" || has_mysql_url) {
+        let wants_mysql = adapter == "mysql" || adapter == "mariadb" || has_mysql_url;
+        // The MySQL runtime gate lets MySQL through; MariaDB stays refused until its own compatibility gate passes.
+        if gate == Gate::MysqlRuntime && wants_mysql {
+            let mariadb = adapter == "mariadb"
+                || [&config.database_url_env].into_iter().chain(config.migrate_database_url_env.as_ref()).any(|name| extract_url_scheme(name).is_some_and(|scheme| scheme == "mariadb"));
+            if mariadb {
+                return Err(error(
+                    "DB_ADAPTER_UNSUPPORTED",
+                    "MariaDB는 서빙·채택을 아직 지원하지 않음: read compiler가 쓰는 LATERAL을 MariaDB가 제공하지 않으며 별도 호환 게이트가 필요함",
+                ));
+            }
+        } else if gate != Gate::CatalogOnly && wants_mysql {
             return Err(error(
                 "DB_ADAPTER_UNSUPPORTED",
                 "MySQL/MariaDB adapter는 현재 catalog introspection만 지원되며 CLI/서빙/마이그레이션 런타임은 아직 구현되지 않음",
@@ -1329,7 +1372,7 @@ fn require_built_features_mode(config: &Config, catalog_only: bool) -> Result<()
 
     let _ = adapter;
     let _ = has_mysql_url;
-    let _ = catalog_only;
+    let _ = gate;
     let _ = config;
     Ok(())
 }

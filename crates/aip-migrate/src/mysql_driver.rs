@@ -135,6 +135,10 @@ impl MysqlDriver {
         Ok(driver)
     }
 
+    pub fn is_mariadb(&self) -> bool {
+        self.mariadb
+    }
+
     pub fn opts(&self) -> &Opts {
         &self.opts
     }
@@ -305,31 +309,8 @@ impl MysqlDriver {
         }
         let mut conn = self.get_conn_with_timeout().await?;
 
-        // Step A
-        conn.query_drop(format!("CREATE DATABASE IF NOT EXISTS `{meta_schema}`"))
-            .await
-            .map_err(|err| CatalogError::new(format!("meta schema creation failed: {err}")))?;
-        conn.query_drop(format!(
-            "CREATE TABLE IF NOT EXISTS `{meta_schema}`.`{META_TABLE}` (singleton TINYINT NOT NULL PRIMARY KEY, \
-             facts_digest VARCHAR(64) NOT NULL, schema_sha256 VARCHAR(64) NOT NULL, status VARCHAR(32) NOT NULL) ENGINE=InnoDB"
-        ))
-        .await
-        .map_err(|err| CatalogError::new(format!("meta table creation failed: {err}")))?;
-
-        // Step B: marker first, before the remaining meta tables exist.
-        write_meta_status_migrating(&mut conn, meta_schema).await?;
-
-        // NOTE: stub columns only; 7.2.1.2/7.2.1.3 own the real runtime table shapes and will migrate them.
-        for table in META_READ_TABLES.iter().chain(META_WRITE_TABLES.iter()).filter(|table| **table != META_TABLE) {
-            let id_column = if *table == "aip_principals" {
-                "id VARCHAR(36) NOT NULL PRIMARY KEY"
-            } else {
-                "id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY"
-            };
-            conn.query_drop(format!("CREATE TABLE IF NOT EXISTS `{meta_schema}`.`{table}` ({id_column}) ENGINE=InnoDB"))
-                .await
-                .map_err(|err| CatalogError::new(format!("meta table creation failed: {err}")))?;
-        }
+        // Steps A and B: schema, marker table, `MIGRATING` marker, then the remaining meta tables.
+        begin_meta_bootstrap(&mut conn, meta_schema).await?;
 
         // Step C
         let _ = conn.query_drop("SET SESSION information_schema_stats_expiry = 0").await;
@@ -348,7 +329,7 @@ impl MysqlDriver {
         Ok(fingerprint)
     }
 
-    async fn get_conn_with_timeout(&self) -> Result<mysql_async::Conn, CatalogError> {
+    pub(crate) async fn get_conn_with_timeout(&self) -> Result<mysql_async::Conn, CatalogError> {
         tokio::time::timeout(self.connect_timeout, self.pool.get_conn())
             .await
             .map_err(|_| CatalogError::new("MySQL connection timed out"))?
@@ -409,15 +390,84 @@ impl FencedMysqlTransaction {
     }
 }
 
-const META_TABLE: &str = "aip_migrate_meta";
+pub(crate) const META_TABLE: &str = "aip_migrate_meta";
 /// Meta tables every runtime transaction reads (the marker and the principals).
 const META_READ_TABLES: [&str; 2] = [META_TABLE, "aip_principals"];
 /// Additional meta tables a read-write transaction touches.
 const META_WRITE_TABLES: [&str; 6] = ["aip_idem", "aip_audit", "aip_events", "aip_tx_locks", "aip_jobs", "aip_outbox"];
 
-fn validate_ident(kind: &str, name: &str) -> Result<(), CatalogError> {
+pub(crate) fn validate_ident(kind: &str, name: &str) -> Result<(), CatalogError> {
     if name.trim().is_empty() || name.contains('`') || name.contains('\0') {
         return Err(CatalogError::drift(format!("{kind} must be a non-empty identifier without backticks")));
+    }
+    Ok(())
+}
+
+/// Steps A and B of the bootstrap: the marker is written as `MIGRATING` before any other meta table exists, so an
+/// interrupted run can never leave a half-built meta schema that looks ready.
+pub(crate) async fn begin_meta_bootstrap<Q: Queryable>(conn: &mut Q, meta_schema: &str) -> Result<(), CatalogError> {
+    conn.query_drop(format!("CREATE DATABASE IF NOT EXISTS `{meta_schema}`"))
+        .await
+        .map_err(|err| CatalogError::new(format!("meta schema creation failed: {err}")))?;
+    conn.query_drop(format!(
+        "CREATE TABLE IF NOT EXISTS `{meta_schema}`.`{META_TABLE}` (singleton TINYINT NOT NULL PRIMARY KEY, \
+         facts_digest VARCHAR(64) NOT NULL, schema_sha256 VARCHAR(64) NOT NULL, status VARCHAR(32) NOT NULL, \
+         facts JSON NULL, runtime_wire VARCHAR(32) NULL, ddl_digest VARCHAR(64) NULL, generator_version INT NULL) ENGINE=InnoDB"
+    ))
+    .await
+    .map_err(|err| CatalogError::new(format!("meta table creation failed: {err}")))?;
+    write_meta_status_migrating(conn, meta_schema).await?;
+    create_meta_tables(conn, meta_schema).await
+}
+
+/// The AIP-owned tables of a MySQL deployment. The read path needs the marker, the principal bindings and the actor handle
+/// tables; the write tables (`aip_idem`, `aip_audit`, ...) are placeholders until the write slice (WBS 7.2.1.2/7.2.1.3)
+/// gives them their real shape.
+///
+/// `issuer` and `subject` use a binary collation: a JWT subject is case sensitive, and a case-insensitive collation would let
+/// `Alice` and `alice` resolve to one binding.
+pub(crate) async fn create_meta_tables<Q: Queryable>(conn: &mut Q, meta_schema: &str) -> Result<(), CatalogError> {
+    let mut statements = vec![
+        format!(
+            "CREATE TABLE IF NOT EXISTS `{meta_schema}`.`aip_principals` (\
+               issuer VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL, \
+               subject VARCHAR(256) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL, \
+               actor_id BIGINT NOT NULL, enabled TINYINT(1) NOT NULL DEFAULT 1, min_iat BIGINT NOT NULL DEFAULT 0, \
+               PRIMARY KEY (issuer, subject), CONSTRAINT aip_principals_actor_positive CHECK (actor_id > 0)) ENGINE=InnoDB"
+        ),
+        format!(
+            "CREATE TABLE IF NOT EXISTS `{meta_schema}`.`aip_actors` (id BIGINT NOT NULL PRIMARY KEY, CONSTRAINT aip_actors_positive CHECK (id > 0)) ENGINE=InnoDB"
+        ),
+        format!(
+            "CREATE TABLE IF NOT EXISTS `{meta_schema}`.`aip_actor_identities` (\
+               id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY, \
+               resource_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, UNIQUE KEY aip_actor_identities_resource (resource_id)) ENGINE=InnoDB"
+        ),
+        format!(
+            "CREATE TABLE IF NOT EXISTS `{meta_schema}`.`aip_journal` (\
+               id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY, plan_digest VARCHAR(64) NOT NULL, old_digest VARCHAR(64) NULL, \
+               new_digest VARCHAR(64) NOT NULL, steps JSON NOT NULL, approval VARCHAR(64) NULL, \
+               applied_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)) ENGINE=InnoDB"
+        ),
+    ];
+    for table in META_WRITE_TABLES {
+        statements.push(format!(
+            "CREATE TABLE IF NOT EXISTS `{meta_schema}`.`{table}` (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY) ENGINE=InnoDB"
+        ));
+    }
+    // A binding keeps its actor: changing it would silently move a user's identity to another account.
+    statements.push(format!("DROP TRIGGER IF EXISTS `{meta_schema}`.`aip_principal_actor_immutable`"));
+    statements.push(format!(
+        "CREATE TRIGGER `{meta_schema}`.`aip_principal_actor_immutable` BEFORE UPDATE ON `{meta_schema}`.`aip_principals` FOR EACH ROW \
+         BEGIN IF NEW.actor_id <> OLD.actor_id THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'principal actor_id is immutable'; END IF; END"
+    ));
+    statements.push(format!("DROP TRIGGER IF EXISTS `{meta_schema}`.`aip_actor_resource_immutable`"));
+    statements.push(format!(
+        "CREATE TRIGGER `{meta_schema}`.`aip_actor_resource_immutable` BEFORE UPDATE ON `{meta_schema}`.`aip_actor_identities` FOR EACH ROW \
+         BEGIN IF NEW.resource_id <> OLD.resource_id THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'actor resource identity is immutable'; END IF; END"
+    ));
+    for statement in statements {
+        conn.query_drop(statement).await.map_err(|err| CatalogError::new(format!("meta table creation failed: {err}")))?;
     }
     Ok(())
 }

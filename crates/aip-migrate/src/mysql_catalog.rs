@@ -367,6 +367,11 @@ fn parse_action(value: Option<&str>, name: &str, operation: &str) -> Result<Refe
     }
 }
 
+/// The neutral type of a live column, for callers that only need the type (adoption validation).
+pub fn logical_type_of(data_type: &str, column_type: &str) -> LogicalType {
+    logical_type(data_type, column_type).0
+}
+
 fn logical_type(data_type: &str, column_type: &str) -> (LogicalType, Vec<String>) {
     let lower = column_type.to_ascii_lowercase();
     let unsigned = lower.split_whitespace().any(|part| part == "unsigned");

@@ -13,6 +13,7 @@ use spike_v1_fixture::{Form, load_str};
 use spike_v2_read::external::{Mapping, Table};
 use spike_v2_read::id_wire::IdWire;
 use spike_v2_read::sqlgen;
+use spike_v6_transport::infrastructure::Infrastructure;
 use spike_v6_transport::server::{ServerOptions, listen_relational};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -174,8 +175,17 @@ async fn mysql_read_path_serves_policy_reads_and_fences_ddl() {
 
     let wire = IdWire::Legacy;
     let contract = spike_v5_sdk::contract_fingerprint_with_apply(&facts, wire);
-    let server =
-        listen_relational(facts.clone(), wire, "127.0.0.1:0".parse().unwrap(), Arc::new(backend), ServerOptions::default()).await.expect("listen");
+    let server = listen_relational(
+        facts.clone(),
+        wire,
+        "127.0.0.1:0".parse().unwrap(),
+        Arc::new(backend),
+        ServerOptions::default(),
+        Infrastructure::default(),
+        None,
+    )
+    .await
+    .expect("listen");
     let addr = server.address;
     let (anon, member1, member2) = (None, Some(server.keys.issue(1, 600)), Some(server.keys.issue(2, 600)));
     let list = |token: &Option<String>, query: Value| {

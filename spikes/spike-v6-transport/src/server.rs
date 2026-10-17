@@ -940,15 +940,21 @@ pub async fn listen_relational(
     address: SocketAddr,
     backend: Arc<dyn spike_v2_read::backend::RelationalBackend>,
     options: ServerOptions,
+    infrastructure: crate::infrastructure::Infrastructure,
+    authenticator: Option<Arc<dyn crate::auth::Authenticator>>,
 ) -> io::Result<Server> {
     options.validate()?;
+    if infrastructure.rate_limit.is_some() {
+        // The limiter's counters live in PostgreSQL; serving without them would drop the limit silently.
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "rate limiting is not available for relational adapters"));
+    }
     let fingerprint = facts["resources"].is_object().then(|| spike_v5_sdk::contract_fingerprint_with_apply(&facts, wire).into());
     listen_with_fingerprint(
         facts,
         wire,
         address,
         Runtime {
-            infrastructure: crate::infrastructure::Infrastructure { relational: Some(backend), ..crate::infrastructure::Infrastructure::default() },
+            infrastructure: crate::infrastructure::Infrastructure { relational: Some(backend), ..infrastructure },
             db_pool: None,
             admission: None,
             realtime_slots: tokio::sync::Semaphore::new(32),
@@ -963,7 +969,7 @@ pub async fn listen_relational(
             extension_slots: tokio::sync::Semaphore::new(4),
             principal_slots: crate::slots::PrincipalSlotSet::unlimited(),
             options,
-            authenticator: None,
+            authenticator,
             deployment: None,
             otlp: None,
         },
