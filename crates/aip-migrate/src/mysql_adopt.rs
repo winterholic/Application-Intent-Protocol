@@ -65,7 +65,7 @@ async fn columns(conn: &mut Conn, schema: &str, table: &str) -> Result<Vec<Colum
                         column_type_raw: column_type,
                         nullable: nullable == "YES",
                         max_chars,
-                        generated: !generation.is_empty() || extra.contains("generated"),
+                        generated: !generation.is_empty() || crate::mysql_catalog::extra_is_generated(&extra),
                         auto_increment: extra.contains("auto_increment"),
                         has_default: default.is_some(),
                     }

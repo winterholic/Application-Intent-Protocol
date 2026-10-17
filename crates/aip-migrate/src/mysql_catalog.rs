@@ -217,9 +217,8 @@ pub fn normalize_table(name: &str, mut columns: Vec<ColumnRow>, rows: Vec<IndexR
                 reason: format!("{} length is not represented by the text manifest", row.data_type.to_ascii_lowercase()),
             });
         }
-        let generated = !row.generation_expression.is_empty()
-            || row.extra.to_ascii_lowercase().contains("generated")
-            || row.extra.to_ascii_lowercase().contains("auto_increment");
+        let generated =
+            !row.generation_expression.is_empty() || extra_is_generated(&row.extra) || row.extra.to_ascii_lowercase().contains("auto_increment");
         if !row.generation_expression.is_empty() {
             diagnostics.push(Diagnostic { field: row.name.clone(), reason: "generation expression is not represented".into() });
         }
@@ -365,6 +364,13 @@ fn parse_action(value: Option<&str>, name: &str, operation: &str) -> Result<Refe
         Some("SET DEFAULT") => Err(CatalogError(format!("unsupported {operation} rule SET DEFAULT for foreign key {name}"))),
         _ => Err(CatalogError(format!("unsupported {operation} rule for foreign key {name}"))),
     }
+}
+
+/// `VIRTUAL GENERATED` and `STORED GENERATED` are generated columns. `DEFAULT_GENERATED` is a column whose DEFAULT is an
+/// expression such as `(UTC_TIMESTAMP())`; the application may still write it, so it is not a generated column.
+pub fn extra_is_generated(extra: &str) -> bool {
+    let lower = extra.to_ascii_lowercase();
+    lower.contains("virtual generated") || lower.contains("stored generated")
 }
 
 /// The neutral type of a live column, for callers that only need the type (adoption validation).

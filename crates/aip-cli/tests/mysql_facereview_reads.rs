@@ -1,6 +1,6 @@
 #![cfg(feature = "mysql")]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
-//! WBS 7.2.3: the real FaceReview MySQL schema (11 tables as the original SQLAlchemy models emit them, pinned revision
+//! WBS 7.2.3 and the first write slice of 7.2.2/7.2.4: the real FaceReview MySQL schema (11 tables as the original SQLAlchemy models emit them, pinned revision
 //! new-facereview@7948b7e7) adopted without business DDL and read through the real `aip service` binary. The original schema has no
 //! DB defaults, so adoption must refuse `default database` fields until the DBA step in `db-defaults.sql` is applied. The expected
 //! rows were first compared with the original app's own SQLAlchemy queries (product/tests/fixtures/facereview-mysql/README.md).
@@ -262,6 +262,74 @@ async fn facereview_schema_is_adopted_without_business_ddl_and_read_with_origina
     // An offset past the declared bound is refused rather than clamped.
     let deep = read(None, json!({"read": "Video", "select": ["id"], "limit": 1, "offset": 10_000_000})).await;
     assert_eq!(deep["code"], "WIRE.OFFSET_EXCEEDED", "{deep}");
+
+    // Writes the original app performs in Python: the service fills the id, the DB defaults fill flags and UTC timestamps.
+    let apply = |token: Option<String>, key: &'static str, request: Value| {
+        let (address, fingerprint) = (address.clone(), fingerprint.clone());
+        async move { post(&address, "/apply", token.as_deref(), &fingerprint, &json!({"key": key, "request": request})).await }
+    };
+    let create = |token: Option<String>, key: &'static str, resource: &'static str, values: Value| {
+        apply(token, key, json!({"atomic": [{"create": resource, "values": values}]}))
+    };
+    let made = create(Some(alice.clone()), "fr-c1", "Comment", json!({"video": CAT_VIDEO, "user": ALICE, "content": "새 댓글"})).await;
+    assert_eq!(made["ok"], true, "{made}");
+    let comment_id = made["created"][0]["id"].as_str().unwrap().to_string();
+    assert_eq!((comment_id.len(), comment_id.as_bytes()[14]), (36, b'4'), "a version 4 UUID, as the original's uuid4: {comment_id}");
+    let stored: Option<(i8, i8, String)> =
+        setup.query_first(format!("SELECT is_modified, is_deleted, user_id FROM comment WHERE comment_id = '{comment_id}'")).await.unwrap();
+    assert_eq!(stored, Some((0, 0, ALICE.to_string())), "DB defaults filled the flags");
+    let drift: Option<i64> = setup
+        .query_first(format!("SELECT ABS(TIMESTAMPDIFF(SECOND, created_at, UTC_TIMESTAMP())) FROM comment WHERE comment_id = '{comment_id}'"))
+        .await
+        .unwrap();
+    assert!(drift.is_some_and(|seconds| seconds < 120), "created_at is the UTC now the original stored: {drift:?}");
+    // Not the caller's identity, a deleted video, or no identity at all: refused, and no row.
+    for (key, token, user, video) in [
+        ("fr-c2", Some(alice.clone()), BOB, CAT_VIDEO),
+        ("fr-c3", Some(alice.clone()), ALICE, "aaaaaaaa-0000-4000-8000-000000000003"),
+        ("fr-c4", None, ALICE, CAT_VIDEO),
+    ] {
+        let refused = create(token, key, "Comment", json!({"video": video, "user": user, "content": "거절"})).await;
+        assert_eq!(refused["code"], "WIRE.MISSING_TARGET", "{key}: {refused}");
+    }
+    let refused_rows: Option<i64> = setup.query_first("SELECT COUNT(*) FROM comment WHERE content = '거절'").await.unwrap();
+    assert_eq!(refused_rows, Some(0));
+    let theirs = apply(
+        Some(bob.clone()),
+        "fr-e1",
+        json!({"apply": "Comment.edit", "target": {"ids": [comment_id.clone()]}, "values": {"content": "남의 수정"}}),
+    )
+    .await;
+    assert_ne!(theirs["ok"], true, "{theirs}");
+    let edited = apply(
+        Some(alice.clone()),
+        "fr-e2",
+        json!({"apply": "Comment.edit", "target": {"ids": [comment_id.clone()]}, "values": {"content": "수정됨"}}),
+    )
+    .await;
+    assert_eq!(edited["ok"], true, "{edited}");
+    let after: Option<(i8, String)> =
+        setup.query_first(format!("SELECT is_modified, content FROM comment WHERE comment_id = '{comment_id}'")).await.unwrap();
+    assert_eq!(after, Some((1, "수정됨".to_string())));
+    let deleted = apply(Some(alice.clone()), "fr-d1", json!({"apply": "Comment.delete", "target": {"ids": [comment_id.clone()]}})).await;
+    assert_eq!(deleted["ok"], true, "{deleted}");
+    let kept: Option<i8> = setup.query_first(format!("SELECT is_deleted FROM comment WHERE comment_id = '{comment_id}'")).await.unwrap();
+    assert_eq!(kept, Some(1), "the original soft-deletes: the row stays, flagged");
+    let again = apply(Some(alice.clone()), "fr-d2", json!({"apply": "Comment.delete", "target": {"ids": [comment_id.clone()]}})).await;
+    assert_ne!(again["ok"], true, "{again}");
+    // The unique (user, video) index is a definite answer, never a server error; cancelling a like (a physical delete) is not expressible.
+    let like = create(Some(alice.clone()), "fr-l1", "VideoLike", json!({"video": CAT_VIDEO, "user": ALICE})).await;
+    assert_eq!(like["code"], "WIRE.ALREADY_EXISTS", "alice already liked this video in the seed: {like}");
+    let request = create(
+        Some(alice.clone()),
+        "fr-r1",
+        "VideoRequest",
+        json!({"user": ALICE, "youtube_url": "newreq00001", "youtube_full_url": "https://www.youtube.com/watch?v=newreq00001"}),
+    )
+    .await;
+    assert_eq!(request["ok"], true, "{request}");
+    let status: Option<String> = setup.query_first("SELECT status FROM video_request WHERE youtube_url = 'newreq00001'").await.unwrap();
+    assert_eq!(status.as_deref(), Some("PENDING"), "DB default");
 
     for schema in [META, SOURCE] {
         setup.query_drop(format!("DROP DATABASE IF EXISTS `{schema}`")).await.unwrap();

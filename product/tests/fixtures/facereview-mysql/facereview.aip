@@ -63,6 +63,23 @@ resource Comment {
     updated_at: Time default database
   }
   rows read when is_deleted = false and video.is_deleted = false
+  transition edit {
+    allow user = actor
+    from is_deleted = false
+    patch content
+    to is_modified = true, updated_at = now
+  }
+  transition delete {
+    allow user = actor
+    from is_deleted = false
+    to is_deleted = true, updated_at = now
+  }
+  expose create {
+    fields video, user, content
+    allow user = actor and video.is_deleted = false
+  }
+  expose apply edit { target id; bulk maxRows 1 }
+  expose apply delete { target id; bulk maxRows 1 }
   expose read {
     select id, video, user, content, is_modified, created_at, updated_at
     refIds video, user
@@ -76,6 +93,10 @@ resource Comment {
 resource VideoLike {
   fields { id: Uuid; video: Video; user: User; created_at: Time default database }
   rows read when user = actor
+  expose create {
+    fields video, user
+    allow user = actor and video.is_deleted = false
+  }
   expose read {
     select id, video, user, created_at
     refIds video, user
@@ -88,6 +109,10 @@ resource VideoLike {
 resource VideoBookmark {
   fields { id: Uuid; video: Video; user: User; created_at: Time default database }
   rows read when user = actor
+  expose create {
+    fields video, user
+    allow user = actor and video.is_deleted = false
+  }
   expose read {
     select id, video, user, created_at
     refIds video, user
@@ -103,12 +128,16 @@ resource VideoRequest {
     user: User
     youtube_url: Text(1..50)
     youtube_full_url: Text(1..255)
-    status: RequestStatus
+    status: RequestStatus default database
     admin_comment: Text(1..255)?
     created_at: Time default database
     updated_at: Time default database
   }
   rows read when user = actor
+  expose create {
+    fields user, youtube_url, youtube_full_url
+    allow user = actor
+  }
   expose read {
     select id, user, youtube_url, youtube_full_url, status, admin_comment, created_at, updated_at
     refIds user
