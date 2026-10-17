@@ -4,39 +4,17 @@ use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use rand::thread_rng;
 use rsa::{RsaPrivateKey, pkcs1::EncodeRsaPrivateKey, traits::PublicKeyParts};
 use serde_json::{Value, json};
-use std::process::Command;
+mod common;
 
-fn check_not_default_db(url: &str) {
-    let lower = url.to_ascii_lowercase();
-    if lower.contains("dbname=postgres")
-        || lower.ends_with("/postgres")
-        || lower.contains("/postgres?")
-        || lower.contains("user=postgres")
-        || lower.contains("postgresql://postgres:")
-        || lower.contains("postgres://postgres:")
-        || (lower.contains("localhost:5432") && lower.contains("postgres"))
-    {
-        panic!("Refusing to connect to default postgres database or postgres user: {}", url);
-    }
-}
+use common::{get_dummy_db_url, get_test_endpoint, run_psql};
 
 fn test_database_url() -> String {
-    let url = std::env::var("AIP_TEST_DATABASE_URL")
-        .or_else(|_| std::env::var("TEST_DATABASE_URL"))
-        .expect("fail-closed: AIP_TEST_DATABASE_URL or TEST_DATABASE_URL environment variable is required for tests requiring database access");
-    assert!(!url.trim().is_empty(), "test database URL must not be empty");
-    check_not_default_db(&url);
-    url
+    let endpoint = get_test_endpoint("tests requiring database access");
+    endpoint.to_normalized_url()
 }
 
 fn dummy_db_url() -> String {
-    match std::env::var("AIP_TEST_DATABASE_URL").or_else(|_| std::env::var("TEST_DATABASE_URL")) {
-        Ok(url) if !url.trim().is_empty() => {
-            check_not_default_db(&url);
-            url
-        }
-        _ => "postgresql://unconfigured.test.invalid:5432/unconfigured".into(),
-    }
+    get_dummy_db_url()
 }
 
 struct SchemaGuard(String);
@@ -48,8 +26,8 @@ impl Drop for SchemaGuard {
 }
 
 fn psql(sql: &str) -> std::process::Output {
-    let conn = test_database_url();
-    Command::new("psql").args(["-X", "-q", "-d", &conn, "-Atc", sql]).output().expect("test setup")
+    let endpoint = get_test_endpoint("tests requiring database access");
+    run_psql(&endpoint, sql)
 }
 
 fn mapped_schema() -> SchemaGuard {
@@ -73,7 +51,12 @@ fn fixture() -> (tempfile::TempDir, Config, EncodingKey) {
     std::fs::write(&path, jwks.to_string()).expect("test setup");
     let der = private.to_pkcs1_der().expect("test setup");
     let key = EncodingKey::from_rsa_der(der.as_bytes());
-    let config = Config { issuer: "https://issuer.example".into(), audience: "aip-api".into(), jwks: JwksSource::File { path }, provisioning: aip_auth::ProvisioningConfig::default() };
+    let config = Config {
+        issuer: "https://issuer.example".into(),
+        audience: "aip-api".into(),
+        jwks: JwksSource::File { path },
+        provisioning: aip_auth::ProvisioningConfig::default(),
+    };
     (dir, config, key)
 }
 

@@ -5,7 +5,9 @@ use rand::thread_rng;
 use rsa::{RsaPrivateKey, pkcs1::EncodeRsaPrivateKey, traits::PublicKeyParts};
 use serde_json::json;
 use spike_v6_transport::auth::Authenticator;
-use std::process::Command;
+mod common;
+
+use common::{get_test_endpoint, run_psql};
 
 struct SchemaGuard(String);
 
@@ -15,32 +17,14 @@ impl Drop for SchemaGuard {
     }
 }
 
-fn check_not_default_db(url: &str) {
-    let lower = url.to_ascii_lowercase();
-    if lower.contains("dbname=postgres")
-        || lower.ends_with("/postgres")
-        || lower.contains("/postgres?")
-        || lower.contains("user=postgres")
-        || lower.contains("postgresql://postgres:")
-        || lower.contains("postgres://postgres:")
-        || (lower.contains("localhost:5432") && lower.contains("postgres"))
-    {
-        panic!("Refusing to connect to default postgres database or postgres user: {}", url);
-    }
-}
-
 fn db_conn() -> String {
-    let url = std::env::var("AIP_TEST_DATABASE_URL")
-        .or_else(|_| std::env::var("TEST_DATABASE_URL"))
-        .expect("fail-closed: AIP_TEST_DATABASE_URL or TEST_DATABASE_URL environment variable is required for durable integration tests");
-    assert!(!url.trim().is_empty(), "test database URL must not be empty");
-    check_not_default_db(&url);
-    url
+    let endpoint = get_test_endpoint("durable integration tests");
+    endpoint.to_normalized_url()
 }
 
 fn psql(sql: &str) -> std::process::Output {
-    let conn = db_conn();
-    Command::new("psql").args(["-X", "-q", "-d", &conn, "-Atc", sql]).output().expect("test setup")
+    let endpoint = get_test_endpoint("durable integration tests");
+    run_psql(&endpoint, sql)
 }
 
 fn mapped_schema() -> SchemaGuard {
@@ -63,7 +47,16 @@ fn fixture() -> (tempfile::TempDir, Config, EncodingKey) {
     let path = dir.path().join("jwks.json");
     std::fs::write(&path, jwks.to_string()).expect("test setup");
     let key = EncodingKey::from_rsa_der(private.to_pkcs1_der().expect("test setup").as_bytes());
-    (dir, Config { issuer: "https://issuer.example".into(), audience: "aip-api".into(), jwks: JwksSource::File { path }, provisioning: aip_auth::ProvisioningConfig::default() }, key)
+    (
+        dir,
+        Config {
+            issuer: "https://issuer.example".into(),
+            audience: "aip-api".into(),
+            jwks: JwksSource::File { path },
+            provisioning: aip_auth::ProvisioningConfig::default(),
+        },
+        key,
+    )
 }
 
 #[tokio::test]
