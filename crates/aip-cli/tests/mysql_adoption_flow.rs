@@ -3,7 +3,7 @@
 //! WBS 7.2.1.1 through the real `aip service` binary against a real MySQL 8.4: plan and apply an external adoption, bind a
 //! user, serve policy reads to an RS256 access token, then drift the business schema and watch the very next request close.
 //!
-//! The runtime account is read-only on the business schema, the adoption account is the admin of a run-owned container.
+//! The runtime account has DML on the business schema and the AIP schema; the adoption account is the admin of a run-owned container.
 //! Run with `-- --ignored` after `scripts/mysql-live-fixture.sh up` (see that script for the environment).
 use aip_migrate::mysql_driver::{MysqlDriver, mysql_async::prelude::Queryable};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -33,6 +33,8 @@ resource Note {
     sort created, score, id
     budget { rows 20; depth 1; deadline 2s; cost 1000 }
   }
+  transition finish { from done = false; allow actor != null; to done = true; repeat unchanged }
+  expose apply finish { target id; bulk maxRows 5 }
 }
 ";
 const META: &str = "aip_t_mysql_cli";
@@ -239,7 +241,8 @@ async fn external_mysql_adoption_binding_serving_and_drift() {
     }
     setup.query_drop("DROP USER IF EXISTS 'aip_t_cli_rt'@'%'").await.unwrap();
     setup.query_drop("CREATE USER 'aip_t_cli_rt'@'%' IDENTIFIED BY 'runtime_test_only'").await.unwrap();
-    setup.query_drop(format!("GRANT SELECT ON `{SOURCE}`.* TO 'aip_t_cli_rt'@'%'")).await.unwrap();
+    // Reads need SELECT; the write path also locks and changes business rows, so it needs DML on them.
+    setup.query_drop(format!("GRANT SELECT, INSERT, UPDATE, DELETE ON `{SOURCE}`.* TO 'aip_t_cli_rt'@'%'")).await.unwrap();
     // The AIP schema does not exist yet; the runtime account is granted on it by pattern, as an operator would.
     setup.query_drop(format!("GRANT SELECT, INSERT, UPDATE, DELETE ON `{META}`.* TO 'aip_t_cli_rt'@'%'")).await.unwrap();
     let host = admin_url.split_once('@').unwrap().1.split('/').next().unwrap().to_string();
@@ -347,8 +350,32 @@ async fn external_mysql_adoption_binding_serving_and_drift() {
     assert_eq!(notes["rows"][0]["score"], "10.50");
     assert_eq!(notes["rows"][0]["created"], "2026-10-01T09:30:00.1234+00:00");
 
+    // A write through the same binary: authenticated by the JWT, applied once, replayed by key, journaled with the audit row.
+    let finish = json!({"key": "cli-finish-1", "request": {"apply": "Note.finish", "target": {"ids": ["2"]}}});
+    let (_, written) = http(&address, "POST", "/apply", Some(&user1), &fingerprint, &finish).await;
+    assert_eq!(written["ok"], true, "{written}");
+    assert_eq!(written["changed"], json!(["2"]), "{written}");
+    let (_, replayed) = http(&address, "POST", "/apply", Some(&user1), &fingerprint, &finish).await;
+    assert_eq!((replayed["ok"].clone(), replayed["replayed"].clone()), (json!(true), json!(true)), "{replayed}");
+    let (_, anonymous_write) = http(
+        &address,
+        "POST",
+        "/apply",
+        None,
+        &fingerprint,
+        &json!({"key": "cli-finish-2", "request": {"apply": "Note.finish", "target": {"ids": ["1"]}}}),
+    )
+    .await;
+    assert_eq!(anonymous_write["code"], "WIRE.FORBIDDEN", "an anonymous caller does not pass `actor != null`: {anonymous_write}");
+    let done: Option<i64> = setup.query_first(format!("SELECT done FROM `{SOURCE}`.`note` WHERE id = 2")).await.unwrap();
+    assert_eq!(done, Some(1));
+    let audited: Option<i64> =
+        setup.query_first(format!("SELECT COUNT(*) FROM `{META}`.`aip_audit` WHERE request_key = 'cli-finish-1' AND actor_id = 1")).await.unwrap();
+    assert_eq!(audited, Some(1), "one audit row, written with the change");
+
     // What the adapter does not implement is refused by name, and nothing was written.
-    let (_, refused) = http(&address, "POST", "/apply", Some(&user1), &fingerprint, &json!({"key": "k", "request": {"compose": "Note", "steps": []}})).await;
+    let (_, refused) =
+        http(&address, "POST", "/apply", Some(&user1), &fingerprint, &json!({"key": "k", "request": {"compose": "Note", "steps": []}})).await;
     assert_eq!(refused["code"], "WIRE.ADAPTER_UNSUPPORTED", "{refused}");
 
     // A forged or revoked identity gets nothing.

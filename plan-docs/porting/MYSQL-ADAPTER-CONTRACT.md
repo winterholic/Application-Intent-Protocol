@@ -2,7 +2,7 @@
 
 2026-10-15 조사에서 시작한 구현 작업의 현재 기록이다. 원본 앱이 MySQL에서 실행되는 것과 AIP가 MySQL을 지원하는 것은 다른 판정이다.
 
-**현재 상태: MySQL 8.4 읽기 경로(WBS 7.2.1.1)가 `aip service`의 `adopt-external`·`principal`·`serve`까지 연결돼 실제 MySQL 8.4에서 검증됐다. `/read`와 `/ready`만 제공하고 `/apply`, 작업, 파일, 이벤트, rate limit 등 나머지는 `WIRE.ADAPTER_UNSUPPORTED` 또는 설정 거부로 명시 거절한다(7.2.1.2·7.2.1.3 대상). MariaDB는 서빙·채택을 지원하지 않고 `DB_ADAPTER_UNSUPPORTED`로 거부한다(LATERAL 부재, 별도 게이트). 이 문서의 구현은 독립 검증을 받지 않았다.**
+**현재 상태: MySQL 8.4 읽기 경로(WBS 7.2.1.1)와 쓰기 경로(WBS 7.2.1.2: `/apply` 전이·`atomic` 묶음·create, `/status`)가 `aip service`의 `adopt-external`·`principal`·`serve`까지 연결돼 실제 MySQL 8.4에서 검증됐다. 작업(job)·outbox 전달·파일·이벤트·rate limit·`compose`·확장 쓰기는 `WIRE.ADAPTER_UNSUPPORTED` 또는 설정 거부로 명시 거절한다(7.2.1.3 대상). MariaDB는 서빙·채택을 지원하지 않고 `DB_ADAPTER_UNSUPPORTED`로 거부한다(LATERAL 부재, 별도 게이트). 이 문서의 구현은 독립 검증을 받지 않았다.**
 
 ## 2026-10-17 실제 제품 경로 확인
 
@@ -104,6 +104,37 @@
 | MariaDB | 드라이버·펜스·catalog만 통과. 서빙·채택은 거부 | 읽기 경로 전체(LATERAL 부재) |
 
 **실행.** `scripts/mysql-live-fixture.sh up`이 TLS가 켜진 MySQL 8.4와 MariaDB 11.4 컨테이너(loopback, tmpfs)를 띄우고 시드를 넣는다. `eval "$(scripts/mysql-live-fixture.sh env mysql)"` 뒤에 `cargo test -p aip-migrate --features mysql -- --include-ignored mysql --skip every_semantic_ddl`, `cargo test -p aip-migrate --features mysql --test mysql_drift_matrix -- --ignored`, `cargo test -p aip-service --features mysql --test mysql_read_http -- --ignored`, `cargo test -p aip-cli --features mysql --test mysql_adoption_flow -- --ignored`를 실행한다. MariaDB는 `env mariadb`로 같은 변수를 바꿔 드라이버·펜스 시험만 돌린다. PostgreSQL 기본 빌드가 `AIP_TEST_DATABASE_URL`을 요구하므로 격리 PG 컨테이너가 하나 더 필요하다.
+
+### 2026-10-18 쓰기 경로: `/apply`·멱등·감사·용량·COMMIT 분류 (WBS 7.2.1.2)
+
+**구현.** `crates/aip-migrate/src/mysql_write.rs`가 PostgreSQL 쓰기 계약(`spike-v3-write`)을 InnoDB 기본 도구로 다시 만든다. PostgreSQL 쪽은 `RETURNING`, `xmin`, advisory lock, 타입 있는 `NULL`에 기대는데 MySQL에는 없다. 요청 해석(target·patch·expect·literal·묶음 상한)은 `spike-v3-write`의 공통 함수를 그대로 써 한 계약을 유지한다.
+
+| PostgreSQL 쪽 | MySQL 쪽 |
+|---|---|
+| `SELECT .. FOR UPDATE OF t`(id 순) 뒤 `UPDATE .. RETURNING`의 개수 비교 | 같은 순서로 판정·잠금, `UPDATE` 매칭 행 수(`CLIENT_FOUND_ROWS`)가 판정 수와 같아야 하고 아니면 전체 rollback(`WIRE.CONFLICT`). 매칭 행과 값이 바뀐 행을 혼동하지 않는다 |
+| `xmin = pg_current_xact_id()`로 "이 트랜잭션이 바꾼 행" | 엔진이 쓰는 즉시 `touched` 집합에 기록해 커밋 시점 `check`와 용량 검사가 정확히 그 행만 본다 |
+| `pg_advisory_xact_lock` | `aip_tx_locks` 1000개 bucket 중 하나의 행 잠금. COMMIT/ROLLBACK까지 유지되고 끊긴 연결과 함께 풀린다. 여러 잠금은 bucket 순서로 잡는다 |
+| `RETURNING id` | 숫자 id는 `AUTO_INCREMENT`와 `LAST_INSERT_ID()`, UUID id는 엔진이 만들거나 호출자가 연 `id` 필드 값 |
+| 벌크 `INSERT .. SELECT`(create 효과) | 대상 행마다 `INSERT` 하나. 새 행 id를 정확히 알아야 하기 때문(인터리브 잠금 모드의 AUTO_INCREMENT는 연속이 아니다) |
+| `to_jsonb` 감사 스냅숏 | `JSON_OBJECT`를 읽어 출력 타입(Bool·Time·Decimal)으로 정규화한 뒤 `aip_audit`에 저장. 같은 트랜잭션, append-only 트리거 |
+| `SERIALIZABLE`+40001 재시도 | `SERIALIZABLE`+1213(교착 victim)을 같은 재시도 규칙으로 처리. `not exists` 같은 부재 정책에서만 쓴다 |
+| 멱등 키 `pg_advisory_xact_lock(hashtext)`+`aip_idem` | 키 bucket 잠금+`aip_idem`(principal·키는 `utf8mb4_bin`). 결과는 같은 트랜잭션에서 저장되어 커밋됐으면 키가 있고 아니면 없다 |
+
+COMMIT은 보낸 시점으로 가른다. COMMIT 전 연결 단절은 `WIRE.DB_UNAVAILABLE`(커밋 없음, 같은 키 재전송 안전), COMMIT을 보낸 뒤 연결이 끊기면 `WIRE.COMMIT_UNKNOWN`, 서버가 거절한 COMMIT(교착 등)은 확정 코드다. `innodb_lock_wait_timeout`은 쓰기 기한(2초)에 맞추고 초과는 `WIRE.DEADLINE_EXCEEDED`다.
+
+**거절하는 것.** `compose`와 확장 쓰기(`WIRE.ADAPTER_UNSUPPORTED`), 소유 schema의 create(채택 배포만), 정책이 변경 대상 테이블을 하위 조회로 읽는 전이(MySQL 오류 1093을 그대로 `WIRE.ADAPTER_UNSUPPORTED`로 알림, 다시 쓰는 변환을 추측하지 않음). 런타임 계정에 업무 테이블 `SELECT·INSERT·UPDATE·DELETE`가 없으면 `FOR UPDATE`가 1142로 실패하고 응답이 필요한 권한을 말한다. view를 거친 쓰기는 view가 `SQL SECURITY INVOKER`라 권한이 올라가지 않는다. 운영 참고: GRANT는 이미 열린 연결의 데이터베이스 권한에 즉시 반영되지 않는다(`USE` 이후).
+
+| 이번 확인 | 결과 |
+|---|---|
+| 원자성·멱등·감사(실 MySQL 8.4.11) | `mysql_apply_is_atomic_idempotent_audited_and_fenced`: patch+expect, create·notify 효과, 감사 before/after, 같은 키 재생·다른 요청 거부, `/status`, 오래된 expect의 전체 rollback(효과·journal 포함), 인가·값·MISSING_TARGET, 커밋 시점 check, repeat unchanged·bulk, 증가 범위, 묶음 create와 일부 거절의 전체 취소, 감사 append-only, drift 시 쓰기 거절 |
+| 동시성 | `mysql_concurrent_writes_keep_capacity_counters_and_keys_exact`: 용량(3요청 중 정확히 2개 성공, 5회), 8개 동시 증가가 범위 5에서 정확히 멈춤, 같은 키 6개 동시 요청이 한 번만 실행, 같은 expect의 한 요청만 성공 |
+| 변이 확인 | 용량 잠금·키 잠금·매칭 수 확인을 각각 끄면 위 시험이 실패한다. 판정의 `FOR UPDATE`만 끄면 통과한다: 뒤의 `UPDATE`가 자체로 행 잠금을 잡고 `from`을 다시 걸어 같은 결과가 나기 때문이며, PostgreSQL 경로와 같은 설계를 유지하려고 남겼다 |
+| UUID·교차 행 정책·부재 경쟁 | `mysql_uuid_resources_cross_row_policies_effects_and_absence_races`: UUID 리소스와 UUID actor handle, 소유자 정책(FOR SHARE), `update many` 효과, 위조 author 거부, 같은 slot 승인 8개 동시 요청에서 예약 정확히 1건. `serializable`을 끄면 7~8건이 통과해 이중 예약이 생기는 것을 확인 |
+| COMMIT 연결 단절(W4) | `mysql_connection_loss_around_commit_...`: MySQL 프로토콜 fault proxy로 세 경우 확인. 문장 단계 차단은 `DB_UNAVAILABLE`+재전송 성공, COMMIT 차단은 `COMMIT_UNKNOWN`(서버는 rollback)+재전송이 쓰기 수행, COMMIT 응답만 유실은 `COMMIT_UNKNOWN`(서버는 commit)+같은 키가 저장 결과를 재생하고 효과는 한 번 |
+| 권한 | `mysql_write_without_business_grants_...`: SELECT만 있으면 읽기는 되고 쓰기는 필요한 권한을 말하며 아무것도 커밋되지 않는다 |
+| CLI 전 과정 | `mysql_adoption_flow`에 JWT `/apply`(적용·재생·익명 거부·감사 한 행) 추가 |
+
+미확인: `where` target과 `sameScope`, `effect update`(단일 일치) 경로의 전용 시험, `compose`, 외부 OIDC 사용자의 쓰기, 큰 번들의 시간 한도, MariaDB.
 
 ### 조달 실행환경 기록
 

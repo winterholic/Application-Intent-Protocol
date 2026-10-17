@@ -248,7 +248,10 @@ async fn mysql_read_path_serves_policy_reads_and_fences_ddl() {
     // 1:N traverse: hidden children do not take a slot, the definition's `sort id desc` and `limit 3` decide the list, and the
     // per-field policy redacts a secret to null unless the caller is its author.
     let many = |token: &Option<String>| {
-        list(token, json!({ "read": "Note", "select": ["id", {"comments": {"select": ["id", "body", "secret"]}}], "sort": [{"field":"id","dir":"asc"}] }))
+        list(
+            token,
+            json!({ "read": "Note", "select": ["id", {"comments": {"select": ["id", "body", "secret"]}}], "sort": [{"field":"id","dir":"asc"}] }),
+        )
     };
     let (as_anon, as_author) = (many(&anon).await, many(&member1).await);
     let comment_ids = |response: &Value, note: usize| -> Vec<i64> {

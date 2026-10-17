@@ -55,7 +55,10 @@ fn ddl_for(facts: &Value) -> Vec<String> {
             let ty = fd["ty"].as_str().unwrap();
             let base = ty.trim_end_matches('?');
             let column = sqlgen::column(facts, resource, field).unwrap();
-            let sql_ty = if field == "id" {
+            let uuid_key = |res: &str| facts["resources"][res]["idKind"] == "uuid";
+            let sql_ty = if field == "id" && uuid_key(resource) {
+                "CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL PRIMARY KEY".to_string()
+            } else if field == "id" {
                 "BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY".to_string()
             } else {
                 let physical = if let Some(target) = base.strip_prefix("Ref<").and_then(|rest| rest.strip_suffix('>')) {
@@ -64,19 +67,27 @@ fn ddl_for(facts: &Value) -> Vec<String> {
                         sqlgen::snake(resource),
                         sqlgen::snake(target)
                     ));
-                    "BIGINT".to_string()
+                    if uuid_key(target) { "CHAR(36) CHARACTER SET ascii COLLATE ascii_bin".to_string() } else { "BIGINT".to_string() }
+                } else if base.starts_with("Enum<") {
+                    "VARCHAR(16)".to_string()
                 } else if let Some(inner) = base.strip_prefix("Decimal<").and_then(|rest| rest.strip_suffix('>')) {
                     format!("DECIMAL({inner})")
                 } else {
                     match base {
-                        "Text" | "Email" | "Url" => "VARCHAR(8)".to_string(),
+                        "Text" | "Email" | "Url" => "VARCHAR(255)".to_string(),
                         "Int" => "BIGINT".to_string(),
                         "Bool" => "TINYINT(1)".to_string(),
                         "Time" => "DATETIME(6)".to_string(),
                         other => panic!("test DDL has no type for {other}"),
                     }
                 };
-                let default = if base == "Bool" || base == "Int" { " DEFAULT 0" } else { "" };
+                let enum_default = base
+                    .strip_prefix("Enum<")
+                    .and_then(|rest| rest.strip_suffix('>'))
+                    .and_then(|name| facts["enums"][name][0].as_str())
+                    .filter(|_| fd["databaseDefault"] == true)
+                    .map(|first| format!(" DEFAULT '{first}'"));
+                let default = enum_default.unwrap_or_else(|| if base == "Bool" || base == "Int" { " DEFAULT 0".to_string() } else { String::new() });
                 format!("{physical}{}{default}", if ty.ends_with('?') { " NULL" } else { " NOT NULL" })
             };
             columns.push(format!("`{column}` {sql_ty}"));
@@ -85,8 +96,24 @@ fn ddl_for(facts: &Value) -> Vec<String> {
         statements.push(format!("CREATE TABLE `{SOURCE}`.`{}` ({}) ENGINE=InnoDB", sqlgen::snake(resource), columns.join(", ")));
     }
     // Referenced tables first.
-    statements.sort_by_key(|s| (s.contains("REFERENCES"), s.clone()));
-    statements
+    let mut done: Vec<String> = vec![];
+    let mut ordered = vec![];
+    while !statements.is_empty() {
+        let before = statements.len();
+        statements.retain(|statement| {
+            let mine = statement.split('`').nth(3).unwrap().to_string();
+            let parents: Vec<&str> = statement.split("REFERENCES `").skip(1).map(|rest| rest.split('`').next().unwrap()).collect();
+            if parents.iter().all(|parent| *parent == mine || done.iter().any(|d| d == parent)) {
+                done.push(mine);
+                ordered.push(statement.clone());
+                false
+            } else {
+                true
+            }
+        });
+        assert!(statements.len() < before, "reference cycle in test DDL");
+    }
+    ordered
 }
 
 async fn post(addr: std::net::SocketAddr, path: &str, token: Option<&str>, fingerprint: &str, body: &Value) -> Value {
@@ -135,10 +162,21 @@ async fn harness() -> Harness {
 
 /// `proxy`: a fault proxy the runtime account connects through (the admin connection stays direct).
 async fn harness_via(proxy: Option<&MysqlProxy>) -> Harness {
+    let seed = [
+        "INSERT INTO `{SOURCE}`.`member` (id) VALUES (1), (2)".to_string(),
+        "INSERT INTO `{SOURCE}`.`note` (id, owner_id, title, content, version, done, hits) VALUES \
+         (10, 1, 'before', 'body', 0, 0, 0), (11, 1, 'second', NULL, 0, 0, 0), (12, 2, 'theirs', NULL, 0, 0, 0)"
+            .to_string(),
+    ];
+    harness_with(DEFINITION, &seed, "SELECT, INSERT, UPDATE, DELETE", proxy).await
+}
+
+/// `seed`: SQL run on the business schema before adoption; `{SOURCE}` stands for its name.
+async fn harness_with(definition: &str, seed: &[String], source_grants: &str, proxy: Option<&MysqlProxy>) -> Harness {
     let admin_url = std::env::var("AIP_TEST_MYSQL_URL").expect("set AIP_TEST_MYSQL_URL to a run-owned MySQL 8.4 container");
     aip_test_support::validate_mysql_admin_url(&admin_url).unwrap_or_else(|reason| panic!("AIP_TEST_MYSQL_URL is unsafe: {reason}"));
     assert!(admin_url.starts_with("mysql://"), "this test targets MySQL 8.4");
-    let facts = load_str(DEFINITION, Form::A).unwrap_or_else(|e| panic!("{e:?}")).execution;
+    let facts = load_str(definition, Form::A).unwrap_or_else(|e| panic!("{e:?}")).execution;
     sqlgen::try_set_schema(META).unwrap();
     let admin = MysqlDriver::connect(&admin_url).await.expect("admin connection");
     let mut setup = admin.pool().get_conn().await.unwrap();
@@ -149,14 +187,10 @@ async fn harness_via(proxy: Option<&MysqlProxy>) -> Harness {
     for statement in ddl_for(&facts) {
         setup.query_drop(&statement).await.unwrap_or_else(|e| panic!("{statement}: {e}"));
     }
-    setup.query_drop(format!("INSERT INTO `{SOURCE}`.`member` (id) VALUES (1), (2)")).await.unwrap();
-    setup
-        .query_drop(format!(
-            "INSERT INTO `{SOURCE}`.`note` (id, owner_id, title, content, version, done, hits) VALUES \
-             (10, 1, 'before', 'body', 0, 0, 0), (11, 1, 'second', NULL, 0, 0, 0), (12, 2, 'theirs', NULL, 0, 0, 0)"
-        ))
-        .await
-        .unwrap();
+    for statement in seed {
+        let statement = statement.replace("{SOURCE}", SOURCE);
+        setup.query_drop(&statement).await.unwrap_or_else(|e| panic!("{statement}: {e}"));
+    }
     let mut mapping = Mapping { schema: SOURCE.into(), tables: Default::default() };
     for (resource, definition) in facts["resources"].as_object().unwrap() {
         let columns =
@@ -166,9 +200,8 @@ async fn harness_via(proxy: Option<&MysqlProxy>) -> Harness {
     // The runtime account may read and write the business tables and the AIP schema, nothing more.
     setup.query_drop("DROP USER IF EXISTS 'aip_t_writer'@'%'").await.unwrap();
     setup.query_drop("CREATE USER 'aip_t_writer'@'%' IDENTIFIED BY 'writer_test_only'").await.unwrap();
-    for schema in [META, SOURCE] {
-        setup.query_drop(format!("GRANT SELECT, INSERT, UPDATE, DELETE ON `{schema}`.* TO 'aip_t_writer'@'%'")).await.unwrap();
-    }
+    setup.query_drop(format!("GRANT SELECT, INSERT, UPDATE, DELETE ON `{META}`.* TO 'aip_t_writer'@'%'")).await.unwrap();
+    setup.query_drop(format!("GRANT {source_grants} ON `{SOURCE}`.* TO 'aip_t_writer'@'%'")).await.unwrap();
     drop(setup);
 
     let plan = mysql_adopt::plan_external(&admin_url, META, &facts, &mapping, "decimal").await.unwrap_or_else(|e| panic!("plan: {e}"));
@@ -200,7 +233,6 @@ async fn harness_via(proxy: Option<&MysqlProxy>) -> Harness {
     let (owner, other) = (server.keys.issue(1, 600), server.keys.issue(2, 600));
     Harness { addr: server.address, contract, owner, other, admin, _server: server }
 }
-
 
 /// One-shot MySQL fault injection between the server's runtime account and the database. Faults fire on the first matching
 /// COM_QUERY and every later connection passes through untouched.
@@ -444,11 +476,11 @@ async fn mysql_apply_is_atomic_idempotent_audited_and_fenced() {
     assert!(conn.query_drop(format!("DELETE FROM {}", meta("aip_audit"))).await.is_err(), "audit rows are append-only");
 
     // Drift closes the write path as it does the read path, and writes nothing.
-    conn.query_drop(format!("ALTER TABLE `{SOURCE}`.`log` MODIFY `title` VARCHAR(9) NOT NULL")).await.unwrap();
+    conn.query_drop(format!("ALTER TABLE `{SOURCE}`.`log` MODIFY `title` VARCHAR(254) NOT NULL")).await.unwrap();
     let drifted = h.apply(&h.owner, "after-drift", json!({"apply": "Note.hit", "target": {"ids": ["11"]}})).await;
     assert_eq!(drifted["code"], "WIRE.DEPLOYMENT_CHANGED", "{drifted}");
     assert_eq!(h.count(&format!("SELECT hits FROM `{SOURCE}`.`note` WHERE id = 11")).await, 0);
-    conn.query_drop(format!("ALTER TABLE `{SOURCE}`.`log` MODIFY `title` VARCHAR(8) NOT NULL")).await.unwrap();
+    conn.query_drop(format!("ALTER TABLE `{SOURCE}`.`log` MODIFY `title` VARCHAR(255) NOT NULL")).await.unwrap();
     assert_eq!(h.apply(&h.owner, "after-restore", json!({"apply": "Note.hit", "target": {"ids": ["11"]}})).await["ok"], true);
     let _ = &h.other;
 }
@@ -588,6 +620,176 @@ async fn mysql_connection_loss_around_commit_is_reported_by_what_could_have_happ
     assert_eq!(lost["code"], "WIRE.COMMIT_UNKNOWN", "{lost}");
     assert_eq!((h.count(&hits(11)).await, h.count(&journal("w4-b")).await), (3, 1), "server committed");
     let replayed = h.apply(&h.owner, "w4-b", hit("11")).await;
-    assert_eq!((replayed["ok"].clone(), replayed["replayed"].clone(), replayed["changed"].clone()), (json!(true), json!(true), json!(["11"])), "{replayed}");
+    assert_eq!(
+        (replayed["ok"].clone(), replayed["replayed"].clone(), replayed["changed"].clone()),
+        (json!(true), json!(true), json!(["11"])),
+        "{replayed}"
+    );
     assert_eq!(h.count(&hits(11)).await, 3, "no second effect");
+}
+
+const TEAMS: &str = r#"
+enum Role { OWNER, MEMBER }
+enum RequestState { PENDING, APPROVED }
+resource User { fields { id: Uuid; name: Text(1..20) } rows read when true }
+actor User
+resource Team { fields { id: Uuid; name: Text(1..20) } rows read when true }
+resource Membership { fields { id: Uuid; team: Team; user: User; role: Role } rows read when true }
+predicate ownerOf(u: User, t: Team) = exists Membership where team = t and user = u and role = OWNER
+predicate slotTaken(s: Slot) = exists Booking where slot = s
+resource Flag { fields { id: Uuid; post: Post; raised: Bool default database } rows read when false }
+resource Post {
+  fields { id: Uuid; team: Team; author: User; title: Text(1..20); pinned: Bool default database; likes: Int default database }
+  rows read when true
+  transition pin { from pinned = false; allow ownerOf(actor, team); to pinned = true
+    update many Flag maxRows 3 where post = this.id and raised = true { raised = false } }
+  transition like { from true; allow actor != null; to likes = likes + 1 }
+  expose apply pin { target id; bulk maxRows 5 }
+  expose apply like { target id; bulk maxRows 5 }
+  expose create { allow author = actor; fields team, author, title }
+  expose read { select id, title, pinned, likes; sort id; budget { rows 20; depth 1; deadline 2s; cost 1000 } }
+}
+resource Slot { fields { id: Uuid; name: Text(1..20) } rows read when true }
+resource Booking { fields { id: Uuid; slot: Slot; user: User } rows read when true }
+resource Request {
+  fields { id: Uuid; slot: Slot; user: User; state: RequestState default database }
+  rows read when true
+  transition approve { from state = PENDING; allow not slotTaken(slot)
+    to state = APPROVED
+    create Booking { slot = this.slot; user = this.user } }
+  expose apply approve { target id; bulk maxRows 1 }
+}
+"#;
+
+fn uuid(n: u32) -> String {
+    format!("00000000-0000-4000-8000-{n:012}")
+}
+
+/// UUID resources and actors, role policies that read other rows (locked FOR SHARE), the `update many` effect, and a policy
+/// that needs a row to be absent, which MySQL runs SERIALIZABLE and retries.
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+#[ignore = "live: needs a dedicated MySQL 8.4 container (scripts/mysql-live-fixture.sh); run with -- --ignored"]
+async fn mysql_uuid_resources_cross_row_policies_effects_and_absence_races() {
+    let _turn = SERIAL.lock().await;
+    let (u1, u2, team, post1, post2) = (uuid(1), uuid(2), uuid(10), uuid(20), uuid(21));
+    let mut seed = vec![
+        format!("INSERT INTO `{{SOURCE}}`.`user` (id, name) VALUES ('{u1}', 'owner'), ('{u2}', 'member')"),
+        format!("INSERT INTO `{{SOURCE}}`.`team` (id, name) VALUES ('{team}', 'team')"),
+        format!(
+            "INSERT INTO `{{SOURCE}}`.`membership` (id, team_id, user_id, role) VALUES ('{}', '{team}', '{u1}', 'OWNER'), ('{}', '{team}', '{u2}', 'MEMBER')",
+            uuid(30),
+            uuid(31)
+        ),
+        format!(
+            "INSERT INTO `{{SOURCE}}`.`post` (id, team_id, author_id, title, pinned, likes) VALUES ('{post1}', '{team}', '{u2}', 'one', 0, 0), ('{post2}', '{team}', '{u2}', 'two', 0, 0)"
+        ),
+        format!(
+            "INSERT INTO `{{SOURCE}}`.`flag` (id, post_id, raised) VALUES ('{}', '{post1}', 1), ('{}', '{post1}', 1), ('{}', '{post2}', 1)",
+            uuid(40),
+            uuid(41),
+            uuid(42)
+        ),
+        format!("INSERT INTO `{{SOURCE}}`.`slot` (id, name) VALUES ('{}', 'slot')", uuid(50)),
+    ];
+    for n in 0..8 {
+        seed.push(format!(
+            "INSERT INTO `{{SOURCE}}`.`request` (id, slot_id, user_id, state) VALUES ('{}', '{}', '{}', 'PENDING')",
+            uuid(100 + n),
+            uuid(50),
+            if n % 2 == 0 { &u1 } else { &u2 }
+        ));
+    }
+    let h = Arc::new(harness_with(TEAMS, &seed, "SELECT, INSERT, UPDATE, DELETE", None).await);
+    // Actors are UUID resources: a numeric handle per actor lives in aip_actor_identities, and tokens carry the handle.
+    h.sql(&format!("INSERT INTO `{META}`.`aip_actor_identities` (resource_id) VALUES ('{u1}'), ('{u2}')")).await;
+    assert_eq!(h.count(&format!("SELECT id FROM `{META}`.`aip_actor_identities` WHERE resource_id = '{u1}'")).await, 1);
+    let (owner, member) = (h.owner.clone(), h.other.clone());
+
+    // Role policy reads another table; the member is not an owner.
+    let pin = |id: &str| json!({"apply": "Post.pin", "target": {"ids": [id]}});
+    assert_eq!(h.apply(&member, "pin-denied", pin(&post1)).await["code"], "WIRE.FORBIDDEN");
+    let pinned = h.apply(&owner, "pin-1", pin(&post1)).await;
+    assert_eq!((pinned["ok"].clone(), pinned["changed"].clone()), (json!(true), json!([post1.clone()])), "{pinned}");
+    // The `update many` effect cleared exactly this post's flags, and nothing else.
+    assert_eq!(h.count(&format!("SELECT COUNT(*) FROM `{SOURCE}`.`flag` WHERE post_id = '{post1}' AND raised = 0")).await, 2);
+    assert_eq!(h.count(&format!("SELECT COUNT(*) FROM `{SOURCE}`.`flag` WHERE post_id = '{post2}' AND raised = 1")).await, 1);
+    assert_eq!(h.apply(&owner, "pin-again", pin(&post1)).await["code"], "WIRE.INVALID_STATE");
+
+    // Create with an engine-generated UUID; allow `author = actor` refuses a forged author.
+    let create = |author: &str| json!({"atomic": [{"create": "Post", "values": {"team": team, "author": author, "title": "fresh"}}]});
+    let made = h.apply(&member, "create-1", create(&u2)).await;
+    assert_eq!(made["ok"], true, "{made}");
+    let new_id = made["created"][0]["id"].as_str().unwrap().to_string();
+    assert_eq!(new_id.len(), 36, "{made}");
+    assert_eq!(h.count(&format!("SELECT COUNT(*) FROM `{SOURCE}`.`post` WHERE id = '{new_id}' AND author_id = '{u2}' AND title = 'fresh'")).await, 1);
+    let forged = h.apply(&member, "create-forged", create(&u1)).await;
+    assert_eq!(forged["code"], "WIRE.FORBIDDEN", "{forged}");
+    assert_eq!(h.count(&format!("SELECT COUNT(*) FROM `{SOURCE}`.`post` WHERE title = 'fresh'")).await, 1, "the refused create left no row");
+
+    // Increments by UUID target.
+    let like = h.apply(&member, "like-1", json!({"apply": "Post.like", "target": {"ids": [post2.clone()]}})).await;
+    assert_eq!(like["ok"], true, "{like}");
+    assert_eq!(h.count(&format!("SELECT likes FROM `{SOURCE}`.`post` WHERE id = '{post2}'")).await, 1);
+
+    // The read path shows the same rows through the UUID wire.
+    let read = post(
+        h.addr,
+        "/read",
+        Some(&member),
+        &h.contract,
+        &json!({"query": {"read": "Post", "select": ["id", "title", "pinned", "likes"], "sort": [{"field": "id", "dir": "asc"}]}}),
+    )
+    .await;
+    assert_eq!(read["ok"], true, "{read}");
+    assert_eq!(read["rows"][0]["id"], json!(post1), "{read}");
+    assert_eq!(read["rows"][0]["pinned"], true);
+
+    // Absence race: eight requests for one slot, approved at once. A policy that needs a row to be absent runs SERIALIZABLE
+    // and the server retries the deadlock victim, so exactly one booking ever exists.
+    let mut joins = vec![];
+    for n in 0..8u32 {
+        let (h, token, id) = (h.clone(), if n % 2 == 0 { owner.clone() } else { member.clone() }, uuid(100 + n));
+        joins.push(tokio::spawn(async move {
+            h.apply(&token, &format!("approve-{n}"), json!({"apply": "Request.approve", "target": {"ids": [id]}})).await
+        }));
+    }
+    let mut approved = 0;
+    for join in joins {
+        let answer = join.await.unwrap();
+        if answer["ok"] == true {
+            approved += 1;
+        } else {
+            assert!(matches!(answer["code"].as_str(), Some("WIRE.FORBIDDEN" | "WIRE.CONFLICT")), "{answer}");
+        }
+    }
+    assert_eq!(approved, 1, "exactly one request wins the slot");
+    assert_eq!(h.count(&format!("SELECT COUNT(*) FROM `{SOURCE}`.`booking`")).await, 1, "no double booking");
+    assert_eq!(h.count(&format!("SELECT COUNT(*) FROM `{SOURCE}`.`request` WHERE state = 'APPROVED'")).await, 1);
+}
+
+/// A read-only business grant is enough to serve reads and never enough to write: the failure names the missing grant and
+/// nothing is committed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "live: needs a dedicated MySQL 8.4 container (scripts/mysql-live-fixture.sh); run with -- --ignored"]
+async fn mysql_write_without_business_grants_names_the_missing_privilege() {
+    let _turn = SERIAL.lock().await;
+    let seed = [
+        "INSERT INTO `{SOURCE}`.`member` (id) VALUES (1), (2)".to_string(),
+        "INSERT INTO `{SOURCE}`.`note` (id, owner_id, title, version, done, hits) VALUES (10, 1, 'before', 0, 0, 0)".to_string(),
+    ];
+    let h = harness_with(DEFINITION, &seed, "SELECT", None).await;
+    let read = post(
+        h.addr,
+        "/read",
+        Some(&h.owner),
+        &h.contract,
+        &json!({"query": {"read": "Note", "select": ["id", "title"], "sort": [{"field": "id", "dir": "asc"}]}}),
+    )
+    .await;
+    assert_eq!(read["rows"][0]["title"], "before", "{read}");
+    let denied = h.apply(&h.owner, "no-grant", json!({"apply": "Note.hit", "target": {"ids": ["10"]}})).await;
+    assert_eq!(denied["code"], "WIRE.INTERNAL", "{denied}");
+    assert!(denied["msg"].as_str().unwrap().contains("INSERT·UPDATE·DELETE 권한"), "{denied}");
+    assert_eq!(h.count(&format!("SELECT hits FROM `{SOURCE}`.`note` WHERE id = 10")).await, 0);
+    assert_eq!(h.count(&format!("SELECT COUNT(*) FROM `{META}`.`aip_idem`")).await, 0);
 }

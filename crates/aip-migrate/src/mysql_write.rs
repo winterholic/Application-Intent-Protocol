@@ -126,6 +126,11 @@ fn classify_code(stage: &str, code: u16) -> Reject {
             code: "WIRE.ADAPTER_UNSUPPORTED",
             msg: format!("{stage}: 정책이 변경 대상 테이블을 하위 조회로 읽음. MySQL은 이를 허용하지 않아 이 어댑터는 흉내 내지 않음"),
         },
+        // The write path locks and changes business rows through the adoption views: the runtime account needs DML on them.
+        1044 | 1142 | 1143 | 1356 => Reject {
+            code: "WIRE.INTERNAL",
+            msg: format!("{stage} 실패(mysql errno {code}): 런타임 계정에 업무 테이블 SELECT·INSERT·UPDATE·DELETE 권한이 필요함"),
+        },
         code => Reject { code: "WIRE.INTERNAL", msg: format!("{stage} 실패(mysql errno {code})") },
     }
 }
@@ -263,12 +268,12 @@ impl Session<'_> {
         // The clock was read before the key and row lock waits; with the rows locked, decide again by the current time so a
         // deadline that passed during the wait is not honoured by a stale `now`.
         let mut now_used = caller.now.clone();
-        if self.knobs.fresh_now_after_lock {
-            if let Some(fresh) = self.clock(&caller.now).await? {
-                let (again, again_params) = self.judge_query(res, tr, target, bulk, scope, caller.actor_id, &fresh, false)?;
-                rows = self.rows("대상 재판정", &again, &again_params).await?;
-                now_used = fresh;
-            }
+        if self.knobs.fresh_now_after_lock
+            && let Some(fresh) = self.clock(&caller.now).await?
+        {
+            let (again, again_params) = self.judge_query(res, tr, target, bulk, scope, caller.actor_id, &fresh, false)?;
+            rows = self.rows("대상 재판정", &again, &again_params).await?;
+            now_used = fresh;
         }
         let mut judged = Judged { now: now_used, change: vec![], unchanged: vec![], scopes: vec![] };
         let mut seen = vec![];
@@ -675,17 +680,18 @@ impl Session<'_> {
             if facts["actor"].as_str() == Some(referenced) && caller.actor_id.map(EntityId::Number) == Some(id) {
                 continue;
             }
-            if facts["actor"].as_str() == Some(referenced) && id_kind(facts, referenced) == "uuid" {
-                if let Some(handle) = caller.actor_id {
-                    let lock = if self.knobs.skip_policy_lock { "" } else { " FOR SHARE OF i, t" };
-                    let sql = format!(
-                        "SELECT 1 FROM {} i JOIN {} t ON t.`id` = i.resource_id WHERE i.id = ? AND i.resource_id = ?{lock}",
-                        meta_table("aip_actor_identities"),
-                        Dialect::MySql.table(referenced),
-                    );
-                    if !self.rows("UUID actor 참조 확인", &sql, &[Some(handle.to_string()), Some(id.to_string())]).await?.is_empty() {
-                        continue;
-                    }
+            if facts["actor"].as_str() == Some(referenced)
+                && id_kind(facts, referenced) == "uuid"
+                && let Some(handle) = caller.actor_id
+            {
+                let lock = if self.knobs.skip_policy_lock { "" } else { " FOR SHARE OF i, t" };
+                let sql = format!(
+                    "SELECT 1 FROM {} i JOIN {} t ON t.`id` = i.resource_id WHERE i.id = ? AND i.resource_id = ?{lock}",
+                    meta_table("aip_actor_identities"),
+                    Dialect::MySql.table(referenced),
+                );
+                if !self.rows("UUID actor 참조 확인", &sql, &[Some(handle.to_string()), Some(id.to_string())]).await?.is_empty() {
+                    continue;
                 }
             }
             let mut cx = self.ctx(caller.actor_id, &caller.now, !self.knobs.skip_policy_lock);

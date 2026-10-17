@@ -4,6 +4,10 @@
 
 PMS에서 review였던 7.2.1.1은 `aip-migrate` 드라이버와 DDL 펜스만 있었고 서비스 경로가 없었다. 이번에 `aip service adopt-external`·`principal`·`serve`와 `/read`·`/ready`를 실제 MySQL 8.4에 연결했다. 읽기 계획기에 `Dialect`를 넣었고 PostgreSQL 출력은 바이트 단위로 같다. 원시 카탈로그 행을 펜스 지문에 넣기 전에는 VARCHAR 길이·collation·생성식·인덱스 속성·CHECK·스토리지 엔진 변경 열두 가지를 지문이 보지 못했고, ENUM·DATETIME·DECIMAL 열이나 view가 있는 schema에서는 지문 계산 자체가 실패했다. 셋 다 실DB 시험으로 재현한 뒤 고쳤다. 트리거는 최소 권한 계정에 보이지 않아 감지하지 못하는 한계로 남기고 시험으로 고정했다. MariaDB 서빙·채택은 거부한다(LATERAL 부재). `/apply`·작업·파일·rate limit 등은 7.2.1.2·7.2.1.3 대상이며 명시 거절한다. 실행 명령과 결과, 의미 차이(collation 등)는 [MySQL adapter 계약](porting/MYSQL-ADAPTER-CONTRACT.md)의 "읽기 경로" 절을 따른다. 독립 검증 전이므로 완료로 표시하지 않는다.
 
+## 2026-10-18 WBS 7.2.1.2 MySQL 쓰기 경로 (Claude 구현, 독립 검증 대기)
+
+`/apply`(전이·묶음·create)와 `/status`를 MySQL 8.4에 연결했다. PostgreSQL의 `RETURNING`·`xmin`·advisory lock이 없어 `FOR UPDATE` 판정, 매칭 행 수 확인, 엔진이 기록하는 touched 행, `aip_tx_locks` bucket 잠금, 같은 트랜잭션의 멱등 journal과 감사로 같은 계약을 다시 만들었다. 실 MySQL 8.4.11에서 원자성, 멱등 재생, 동시 용량·증가·같은 키·expect 경쟁, UUID 리소스, 부재 정책의 SERIALIZABLE 이중 예약 방지, COMMIT 전후 연결 단절 세 경우를 확인했고, 보호 장치를 하나씩 끄면 시험이 실패하는 것도 확인했다(판정 `FOR UPDATE`만은 `UPDATE`가 같은 보호를 해서 결과가 같다). `compose`·확장 쓰기·작업·outbox 전달은 명시 거절하고 7.2.1.3에 남긴다. 자세한 표와 한계는 [MySQL adapter 계약](porting/MYSQL-ADAPTER-CONTRACT.md)의 "쓰기 경로" 절이다. 독립 검증 전이므로 완료로 표시하지 않는다.
+
 ## 2026-10-18 WBS 8.9 후속: 나머지 COMMIT 경로와 spike-v6 사전 실패 (Claude 구현, 독립 검증 대기)
 
 분류 규칙(COMMIT 전 단절은 `WIRE.DB_UNAVAILABLE`, 전송 뒤 단절·해석 불가 응답은 `WIRE.COMMIT_UNKNOWN`, 서버 거절은 기존 코드)을 `spike-v3-write`의 `apply`·`bundle`·`compose`, `spike-v4-worker`의 `invoke_write`, `write_extension.rs`, `durable.rs`에 적용했다. 세 spike는 `aip-service`·`aip-auth`가 path dependency로 쓰는 제품 경로라 문서화에 그치지 않고 고쳤다. 판정과 COMMIT 전송은 `spike-v3-write`의 공통 함수(`connection_failed`, `send_commit`, `before_commit_rejection`)로 묶었고 v4·v6 `/apply`가 같은 함수를 쓴다. 경로마다 장애 지점별 재현 테스트를 붙였고, 구현 전 red(v3 14개 중 12, v4 9개 중 8, v6 `write_extension` 10개 중 8, job의 COMMIT 손실 3개 모두 실패)와 구현 뒤 green, 분류를 되돌리는 변이 20종이 모두 실패하는 것을 확인했다. 변경 중 제품 동작이 바뀌는 곳은 managed effect journal의 COMMIT이다. 응답을 잃은 job은 확장 오류 대신 `WIRE.COMMIT_UNKNOWN`으로 끝나고, COMMIT 전에 연결을 잃은 job은 `WIRE.DB_UNAVAILABLE`로 재시도된다.
