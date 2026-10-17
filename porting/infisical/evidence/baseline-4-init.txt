@@ -1,0 +1,1 @@
+{"ddlDigest":"22d78221e9e6a3b9393b2815319d414f2e14f5e2293c042b431832a72d9b8ea9","factsDigest":"a19fdbf577aa6ecac6ea99de78f15502dd1de0fba411df256318bbe78583c44e","ok":true,"schema":"aip_infisical_baseline","structureDigest":"bf6f8e2aa2d5cf8c457ba46f9e377380a6cba9bdcc451a870866b2cd798ce97e"}

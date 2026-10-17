@@ -66,9 +66,14 @@ fn rows(v: &Value) -> Vec<Value> {
 #[tokio::test]
 async fn hidden_phone_is_hidden_in_computed_items_filters_and_sort_keys() {
     let e = common::setup_program("aip_e2e_field_policy", compile()).await;
-    let alice =
-        ok(&e, "Register", None, json!({"nickname": "alice", "phone": "01012345678"}), Some("reg-alice")).await["id"].as_str().unwrap().to_string();
-    let bob = ok(&e, "Register", None, json!({"nickname": "bob", "phone": "01087654321"}), Some("reg-bob")).await["id"].as_str().unwrap().to_string();
+    let alice = ok(&e, "Register", None, json!({"nickname": "alice", "phone": "01012345678"}), Some("reg-alice")).await["id"]
+        .as_str()
+        .expect("alice id")
+        .to_string();
+    let bob = ok(&e, "Register", None, json!({"nickname": "bob", "phone": "01087654321"}), Some("reg-bob")).await["id"]
+        .as_str()
+        .expect("bob id")
+        .to_string();
 
     let as_alice = ok(&e, "Directory", Some(&alice), json!({}), None).await;
     let list = rows(&as_alice);
@@ -86,6 +91,6 @@ async fn hidden_phone_is_hidden_in_computed_items_filters_and_sort_keys() {
 
     // ordering by the hidden value must not follow it: with every hidden value equal, ties break by id
     let ordered = ok(&e, "ByPhoneOrder", Some(&bob), json!({}), None).await;
-    let names: Vec<_> = rows(&ordered).iter().map(|r| r["nickname"].as_str().unwrap().to_string()).collect();
+    let names: Vec<_> = rows(&ordered).iter().map(|r| r["nickname"].as_str().expect("nickname").to_string()).collect();
     assert_eq!(names, ["bob", "alice"].map(String::from), "bob sees his own phone (…321) before alice's hidden value, which sorts last as NULL");
 }

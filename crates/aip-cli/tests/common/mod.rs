@@ -57,7 +57,7 @@ pub async fn setup_program(db: &str, program: aip_plan::Program) -> Arc<Engine> 
 /// Like [`setup_program`], with the outbound webhook settings the test needs (the default refuses private addresses).
 pub async fn setup_program_with(db: &str, program: aip_plan::Program, outbound: aip_runtime::outbound::Settings) -> Arc<Engine> {
     let admin_url = aip_test_support::admin_database_url();
-    let admin = aip_runtime::pool(&admin_url, 1).expect("admin pool");
+    let admin = aip_runtime::pool(admin_url, 1).expect("admin pool");
     let c = admin.get().await.expect("admin connection");
     let exists = c.query_opt("SELECT 1 FROM pg_database WHERE datname = $1", &[&db]).await.expect("query");
     if exists.is_none() {

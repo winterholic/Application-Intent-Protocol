@@ -355,6 +355,47 @@ class GeneratedSdkTest(unittest.TestCase):
         result = subprocess.run(cmd, cwd=str(repo_root), capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, f"Generator failed:\nstdout: {result.stdout}\nstderr: {result.stderr}")
 
+    PYTHON_39_TYPING = {"TYPE_CHECKING", "Any", "Literal", "NewType", "NoReturn", "Optional", "TypedDict", "Union"}
+
+    def test_generated_module_imports_on_python_3_9(self):
+        """The package says `requires-python >= 3.9`. Whatever runs when the module loads must exist on 3.9: only `typing` names
+        from 3.9, and no `A | B` outside annotations (annotations stay unevaluated through `from __future__ import annotations`).
+        This checks the source on every interpreter; CI-less machines can also import the module with a real 3.9 (see VERIFICATION)."""
+        import ast, tempfile
+        repo_root = Path(__file__).resolve().parent.parent.parent
+        fixtures = [repo_root / "prototype" / "example" / "app.aip", repo_root / "spikes" / "spike-v6-transport" / "tests" / "fixtures" / "operations.aip"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            for index, fixture in enumerate(fixtures):
+                out = Path(tmpdir) / f"gen{index}.py"
+                self._generate_sdk_binding(fixture, out)
+                tree = ast.parse(out.read_text())
+
+                imported = {alias.name for node in tree.body if isinstance(node, ast.ImportFrom) and node.module == "typing" for alias in node.names}  # unguarded imports only
+                self.assertLessEqual(imported, self.PYTHON_39_TYPING, f"{fixture.name}: typing names newer than 3.9: {imported - self.PYTHON_39_TYPING}")
+
+                class Runtime(ast.NodeVisitor):
+                    found = []
+
+                    def visit_BinOp(self, node):
+                        if isinstance(node.op, ast.BitOr):
+                            self.found.append(ast.unparse(node))
+                        self.generic_visit(node)
+
+                    def visit_AnnAssign(self, node):  # the annotation is not evaluated, the assigned value is
+                        if node.value is not None:
+                            self.visit(node.value)
+
+                    def visit_FunctionDef(self, node):  # annotations and the return type are not evaluated, defaults and the body are
+                        for default in node.args.defaults + [d for d in node.args.kw_defaults if d is not None]:
+                            self.visit(default)
+                        for statement in node.body:
+                            self.visit(statement)
+
+                visitor = Runtime()
+                visitor.found = []
+                visitor.visit(tree)
+                self.assertEqual(visitor.found, [], f"{fixture.name}: `|` evaluated at import time needs Python 3.10: {visitor.found}")
+
     def test_generated_types_and_runtime_helpers_from_real_fixture(self):
         import importlib.util, shutil, subprocess, sys, tempfile
         repo_root = Path(__file__).resolve().parent.parent.parent

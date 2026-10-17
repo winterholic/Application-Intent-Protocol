@@ -241,7 +241,6 @@ async fn keys_rotate_and_rekey_reaches_every_copy() {
     assert!(raw(&both, "SELECT phone FROM member WHERE phone IS NOT NULL").await.starts_with("v1:k1:"), "untouched values keep their key");
 
     // rekey from the command line, keys from the environment like a deployment
-    let admin = aip_test_support::admin_database_url();
     let url = aip_test_support::admin_database_url_for("aip_enc_rotate");
     let rekey = || {
         Command::new(env!("CARGO_BIN_EXE_aip"))
