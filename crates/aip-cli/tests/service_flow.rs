@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use futures_util::FutureExt;
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
