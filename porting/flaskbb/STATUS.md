@@ -7,6 +7,27 @@
 - 전체 의미 기능 분모는 [INVENTORY.md](INVENTORY.md)에 잠근다. URL/endpoint/table 수는 별도 커버리지 축이며 기능 수로 합산하지 않는다.
 - 기획의 독립 완료·출시 판정은 이 작업 이후 별도로 요구된다. 현재 전체 포팅·기능 동등성·배포 준비 완료가 아니다.
 
+## 2026-10-18 후속 Run — 독립 검증 결함 F-1~F-5 수정과 7.5.2·7.5.3 실DB 실행
+
+**기준**: 대상 `81f397e`/`eb8c351`, branch `porting/flaskbb-full-2019`. 환경은 이 Run이 새로 띄운 격리 컨테이너만 쓴다: PostgreSQL 14.18 `aip-flaskbb-fix-pg-1018`(127.0.0.1:55471), Mailpit v1.27.8 `aip-flaskbb-fix-mailpit-1018`(SMTP 55472, HTTP 55473). 공유 5432와 55439는 쓰지 않았다. 시험은 `AIP_FLASKBB_TEST_DATABASE_URL`(`tests/env.sh`)로 DB를 바꿀 수 있고, 미지정 시 compose의 55439가 기본값이다. 원시 로그는 `evidence/run-751-*.log`, `run-752-*.log`.
+
+| ID | 상태 | 수정 전 | 수정 후 | 커밋 |
+|---|---|---|---|---|
+| F-1 | 수정·실DB PASS | `cargo test -p aip-auth --offline --test durable --test jwt`: jwt 2건 실패 `psql: 오류: "" 서비스 정의를 찾을 수 없음` | `PGSERVICE`를 `env_remove`. durable 2, jwt 12, db_guard 11 passed | `a98d78d` |
+| F-2 | 수정·실DB PASS | `features.test.mjs:966` `WIRE.MISSING_TARGET` | Topic create에 `hidden:false`. features 1 passed. 원본 `HideableMixin.hidden = Column(Boolean, default=False, nullable=True)`는 ORM 기본값이라 NULL은 raw insert에서만 생기고, `HideableQuery`의 `hidden != True`도 SQL 3값 논리로 NULL을 제외하므로 선언은 원본 읽기 의미와 같다. 선언 기본값은 필요 없고 [PRODUCT-GAPS](PRODUCT-GAPS.md) G-7에 기록 | `01b7b81` |
+| F-3 | 수정·실DB PASS, 제품 갭 기록 | 같은 설정의 SMTP worker가 `FAILED`/`WIRE.EXTENSION_ERROR`. 샌드박스 안 `socket.create_connection`은 `PermissionError`, 밖에서는 성공 | AIP에는 선언된 outbound HTTP broker(`access http.mail`, `ctx.http.call`, `workers.integrations`)가 있어 그 방식으로 전환. `mail-jobs.test.mjs`: worker 격리 상태에서 Mailpit에 활성화·재설정 메일 도착, 같은 key 재생 시 중복 없음, 다른 사람 주소로의 relay는 `allow … input.email = actor.email`로 거부(조건 제거 변이 시 시험 실패 확인). SMTP 자체와 공급자 계약은 G-1, 연결 거부의 `EFFECT_UNKNOWN` 분류는 G-2 | `a869afd` |
+| F-4 | 선언 오류로 규명·수정·실DB PASS | `moderation.test.mjs`: `user_group` 비었을 때 `moderator:false, forumModeratorOwnForum:false`. 무관한 행 1개를 넣으면 같은 시험 통과 | 문법이 `exists R where <expr>`의 `<expr>`를 `or` 사슬 전체로 읽는다(`spec/grammar.md` `set-expr`). 컴파일러 결함 아님. `canModerateForum`·`canDeleteTopic`의 `exists`를 괄호로 감쌈. 두 상태 모두 같은 표 통과. `spikes/spike-v1-fixture/tests/exists_scope.rs` 2 passed가 파서 동작을 고정. core 변경 없음. checker 경고 제안은 G-3 | `ea4ea6f` |
+| F-5 | 수정·실DB PASS | `conversations-security.test.mjs`(수정 전 변형 실행): 자기 mailbox의 `from_user=bob` 행, 자기 자신에게 쓴 행, 제3자 mailbox 오라벨·미리 휴지통·읽음·draft 행 7건이 `ACCEPTED`(`from_user=bob`·`user=carol` 조합만 거부) | `Conversation.create`는 `from_user = actor`, 수신자 ≠ 본인, 보낸이 사본 또는 unread·비휴지통·비draft 수신자 사본만 허용. `Message.create`는 `user = actor`와 mailbox 주인이 두 당사자 중 하나. 거부 시 행 수 불변 단언 포함 전부 PASS. features의 UI 대화 왕복도 통과. 잔여 위험 `shared_id`는 G-8 | `941c640` |
+
+**7.5.2 실DB 결과**: `features.test.mjs`(검색·프로필·대화·tracker·관리 CRUD·UI 호스트·비활성 차단·페이지네이션 3+3+1·offset 상한 거부·User 커서·Forum last-post·read marker·신고 큐 2+1)가 새 PG에서 처음 실제로 실행돼 PASS. 이전 세션이 "미실행"으로 남긴 9절이 이로써 실행 증거를 얻었다. `provisioning` 9 시나리오, `aip-read`, `contract`도 PASS. 미완료: sticky 정렬(G-5), 삭제·숨김 뒤 last-post 재계산(G-6), 사용자 물리 삭제·ban, 신고 일괄 처리, 대화 draft 수정·삭제, unread cutoff 계산.
+
+**7.5.3 실DB 결과**:
+- F13: `cli.test.mjs` PASS. `service init` → `seed/install.py`(고정 upstream 그룹 6·설정 4그룹 29건·admin·welcome forum을 fixture 파일에서 읽음) → 재설치 거부(전체 롤백, 행 수 불변) → `principal bind` → serve에서 admin이 Group 6·Setting 29·Welcome topic read → `Category.edit` 후 `service audit list`에 actor·via·before/after → `service migrate` 무변경 계획, 필드 추가 계획(Safe), 승인하지 않은 digest 거부, `--apply` 적용 후 행 보존, 새 정의로 serve → `principal revoke` 뒤 접근 거부. audit는 전이만 기록하며 create는 기록하지 않는다.
+- F14: 위 F-3 시험과 `mail-jobs` 2번째 시험(공급자 장애로 FAILED, `service jobs list --state FAILED`가 payload를 숨김, 복구 뒤 `jobs retry`는 `WIRE.EFFECT_UNKNOWN`으로 거부, 새 key job은 1건 전달). `test_mail_jobs.py` 6 passed.
+- F15: `search.test.mjs` PASS. 색인이 없어 쓰기·수정·숨김·삭제·복원이 즉시 검색에 반영되고 행 정책이 적용되며 재시작 뒤에도 같다. 의미 차이(대소문자 구분 부분 문자열, 순위·토큰화 없음)를 G-4로 고정.
+
+**아직 하지 않은 것**: 7.5.4 독립 검증 게이트, Keycloak 브라우저 흐름, clean deployment artifact, i18n, 원본 UI 대조. `cargo fmt --all -- --check`는 이전부터 미통과이고 이번에 다루지 않았다.
+
 ## 2026-10-18 Run — 7.5.1 잔여 DSN 가드 + 7.5.2 페이지네이션/last-post 선언 + 7.5.3 메일 job/CLI 대조
 
 **환경 제약 (이 세션)**: 실행 샌드박스가 listen 소켓을 전면 차단(`bind` EPERM)하고

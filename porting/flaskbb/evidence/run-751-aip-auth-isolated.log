@@ -1,0 +1,33 @@
+# 2026-10-17T19:08:37Z commit 447cdccb0112abdf110bf92d709a5509141182fe
+# db postgresql://***@127.0.0.1:55471/aip_flaskbb
+     Running tests/db_guard.rs (target/debug/deps/db_guard-775c931f65a1b68b)
+test test_partial_dsn_is_rejected ... ok
+test test_known_default_postgres_is_rejected ... ok
+test test_service_dsn_is_rejected ... ok
+test test_percent_encoded_default_user_and_db_are_rejected ... ok
+test test_query_overrides_are_rejected ... ok
+test test_explicit_fixture_is_accepted ... ok
+test test_encoded_db_hostaddr_bypass_is_rejected ... ok
+test test_missing_required_fields_are_rejected ... ok
+test test_unix_socket_and_multihost_are_rejected ... ok
+test test_caller_consistency_tokio_postgres_and_psql ... ok
+test test_panic_redacts_password_and_raw_url ... ok
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/durable.rs (target/debug/deps/durable-b79002ae40992daa)
+test durable_grant_is_bound_to_subject_actor_and_revocation_floor ... ok
+test durable_grant_survives_token_expiry_but_not_principal_revocation ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.99s
+     Running tests/jwt.rs (target/debug/deps/jwt-f556ee29bd41c922)
+test configured_issuer_cannot_include_a_query ... ok
+test rsa_public_exponent_one_is_rejected_from_jwks ... ok
+test principal_lookups_share_the_server_pool_and_its_limit ... ok
+test rejects_token_with_explicit_null_nbf ... ok
+test maps_verified_subject_to_existing_actor_and_checks_revocation_each_call ... ok
+test rsa_modulus_below_2048_bits_cannot_be_padded_into_acceptance ... ok
+test signing_only_jwk_is_not_a_verification_key ... ok
+test extreme_signed_timestamps_are_rejected_without_panicking ... ok
+test accepts_token_without_optional_nbf ... ok
+test file_jwks_rotation_replaces_the_accepted_key ... ok
+test accepts_only_api_access_token_profile ... ok
+test negative_not_before_is_rejected ... ok
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 16.27s

@@ -1,0 +1,11 @@
+# 2026-10-17T19:08:37Z commit 447cdccb0112abdf110bf92d709a5509141182fe
+{"schema":"aip_flaskbb_9d33c4edce","ok":true}
+✔ FlaskBB CLI lifecycle: init, install seed, bind, serve, migrate, audit, revoke (real PostgreSQL) (4168.321583ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4289.75325

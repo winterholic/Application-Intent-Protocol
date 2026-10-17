@@ -1,0 +1,11 @@
+# 2026-10-17T19:08:37Z commit 447cdccb0112abdf110bf92d709a5509141182fe
+{"schema":"aip_flaskbb_9283655a9b","ok":true,"tests":["positive_first_session_and_reads","negative_non_session_route_blocked","negative_provisioning_disabled_blocked","negative_unverified_email_blocked","negative_username_email_conflict_no_merge","negative_client_role_injection_ignored","negative_disabled_revoked_no_recreation","concurrency_10_parallel_sessions_idempotent","rollback_atomicity_no_orphan_rows"]}
+✔ AIP core provisioning working proposal (contract verification in real PostgreSQL) (2654.6595ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2792.286791
