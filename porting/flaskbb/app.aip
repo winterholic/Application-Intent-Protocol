@@ -304,12 +304,20 @@ resource TopicRead {
 }
 
 resource TopicTracker {
-  fields { id: Id; user: User; topic: Topic }
+  fields { id: Id; user: User; topic: Topic; active: Bool }
   unique user, topic
   rows read when user = actor
+  expose create {
+    allow user = actor and canReadTopic(actor, topic) and active
+    fields id, user, topic, active
+  }
+  transition untrack { allow user = actor and active; from active = true; to active = false }
+  expose apply untrack { target id; bulk maxRows 1 }
+  transition track { allow user = actor and canReadTopic(actor, topic) and not active; from active = false; to active = true }
+  expose apply track { target id; bulk maxRows 1 }
   expose read {
-    select id, user, topic
-    filter topic.eq
+    select id, user, topic, active
+    filter topic.eq, active.eq
     sort id
     budget { rows 1000; depth 2; cost 3000; deadline 2s }
   }
