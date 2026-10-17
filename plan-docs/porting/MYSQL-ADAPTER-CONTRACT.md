@@ -85,7 +85,7 @@
 
 **고친 결함 셋.** (1) `LogicalType`이 내부 태그 enum이라 ENUM·DATETIME·DECIMAL 열이 하나라도 있으면 catalog 직렬화가 실패해 지문 계산, 채택, 모든 요청이 막혔다. 인접 태그로 바꾸고 재현 테스트를 추가했다. (2) 스키마 전체 COLUMNS 쿼리가 view 컬럼도 가져와 업무 schema에 view가 하나만 있어도 지문이 실패했다. base table로 한정했다. (3) 지문이 중립 manifest만 해시해 아래 열두 가지 DDL을 보지 못했다. 원시 INFORMATION_SCHEMA 행을 지문에 넣었다.
 
-| 실제 MySQL 8.4에서 지문이 바뀌는 것(`mysql_drift_matrix` 34건) | 바뀌지 않는 것(알려진 한계) |
+| 실제 MySQL 8.4에서 지문이 바뀌는 것(`mysql_drift_matrix` 35건) | 바뀌지 않는 것(알려진 한계) |
 |---|---|
 | VARCHAR 길이, nullable, default, 정수 폭·부호, DECIMAL 정밀도, DATETIME 정밀도·TIMESTAMP 전환, ENUM 값, 컬럼·테이블 collation·charset, 컬럼 이름·순서·추가·삭제, AUTO_INCREMENT·ON UPDATE, 생성식, UNIQUE·인덱스 종류·prefix·방향·visible, 인덱스 열 순서, FK 동작·삭제, CHECK, 스토리지 엔진, 테이블 이름·추가·삭제 | 테이블 comment(의미 없음), 업무 schema의 view(AIP가 읽지 않음), **트리거** |
 

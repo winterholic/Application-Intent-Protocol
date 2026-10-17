@@ -301,6 +301,31 @@ DB 테스트는 이 Run이 띄운 PostgreSQL 17 컨테이너(`aip-claude-wbs8-pg
 
 # 제품 통합 검증 (2026-10-06)
 
+## MySQL 8.4 읽기·쓰기·작업 저장소 실행 검증 (2026-10-18, Claude 구현 / 독립 검증 대기)
+
+범위는 [MySQL adapter 계약](../plan-docs/porting/MYSQL-ADAPTER-CONTRACT.md)의 "읽기 경로", "쓰기 경로", "작업 저장소" 절이다. 실행 환경은 macOS arm64, Docker의 `mysql:8.4`(8.4.11)와 `mariadb:11.4`(11.4.13)를 `scripts/mysql-live-fixture.sh`로 loopback·tmpfs에 띄운 격리 컨테이너, 격리 PostgreSQL 17이다. 업무 DB·`.env`는 쓰지 않았다. 모든 라이브 시험은 `#[ignore]`이고 `-- --ignored` 또는 `--include-ignored`로 실행하며, 대상 URL이 없으면 통과가 아니라 실패한다.
+
+| 명령(요약) | 결과 |
+|---|---|
+| `cargo test -p aip-migrate --features mysql -- --include-ignored mysql --skip every_semantic_ddl` (MySQL) | 20 passed(드라이버 라이브 13 포함) |
+| 같은 명령 (MariaDB URL) | 20 passed |
+| `cargo test -p aip-migrate --features mysql --test mysql_fence_verification -- --include-ignored` (MySQL+MariaDB URL 동시) | 8 passed. 두 엔진 모두 |
+| `cargo test -p aip-migrate --features mysql --test mysql_drift_matrix -- --ignored` | 1 passed: 35개 DDL 변경 중 의미 있는 32개가 지문을 바꾸고 트리거·view·comment 3개가 바꾸지 않음(알려진 한계로 고정) |
+| `cargo test -p aip-migrate --features mysql --test mysql_jobs -- --ignored` | 3 passed: job 상태 기계, 40 run×8 worker 동시 claim, outbox 릴레이 |
+| `cargo test -p aip-migrate --features mysql --test mysql_capability_gate -- --ignored` | 2 passed: MySQL 8.4 통과, MariaDB 11.4 거부(LATERAL, FOR SHARE OF) |
+| `cargo test -p aip-service --features mysql --test mysql_read_http --test mysql_write_http -- --ignored --test-threads 1` | 읽기 1 + 쓰기 5 passed |
+| `cargo test -p aip-cli --features mysql --test mysql_adoption_flow -- --ignored` | 1 passed: 실제 `aip` 바이너리로 plan/apply/bind/serve/JWT 읽기·쓰기/drift |
+| `cargo test -p aip-migrate -p aip-service` (기본 feature) | 121 passed, 1 ignored |
+| `cd spikes/spike-v2-read && cargo test` (PostgreSQL) | 109 passed. 방언 도입 뒤에도 PostgreSQL SQL이 같다 |
+| `cd spikes/spike-v6-transport && cargo test --no-fail-fast` | 65 target 통과, 5 target 실패(`v12_typed`·`v13_idwire`·`v14_apply`·`v15_values`·`v16_bundle`). 다섯 모두 `tsc` 부재(`Os { code: 2, NotFound }`)로 기존 사전 실패와 같다 |
+| `cargo clippy -p aip-migrate -p aip-service -p aip-cli --features mysql,aip-cli/mysql --all-targets -- -D warnings` | 경고 0 |
+
+환경 한계: `aip-cli`의 `least_privilege`는 비밀번호 인증 PostgreSQL에서는 역할 접속이 실패하고, trust 인증 PostgreSQL 컨테이너에서는 통과한다(이번 변경과 무관). 시험 DB 비밀번호와 계정은 모두 이 시험을 위해 만든 일회용이다.
+
+변이 확인(보호 장치를 하나씩 끄고 시험이 실패하는지 확인): 용량 잠금, 키 잠금, 매칭 행 수 확인, SERIALIZABLE(`mysql_write_http`), 후보 행 잠금, lease epoch 검사, epoch 증가(`mysql_jobs`)는 각각 시험을 실패시켰다. 쓰기 판정의 `FOR UPDATE`만은 끄면 통과하며, 뒤의 `UPDATE`가 같은 행 잠금과 `from` 재확인을 해서 결과가 같기 때문이다.
+
+미실행·미검증: MariaDB의 읽기·쓰기 경로와 job 저장소(능력 부족으로 거부), HTTP `/jobs/*`·job 실행, `compose`, `where` target·`sameScope`·`effect update` 단일 일치, OIDC 외부 IdP로 UUID actor를 묶는 CLI 경로, 큰 schema의 catalog 조회 비용, 다른 OS.
+
 ## MySQL catalog 변환 계층과 fail-closed 경계 (2026-10-17)
 
 AIP external introspection은 현재 PostgreSQL 전용이다. MySQL URL 거부 guard는 유지하면서, `aip-migrate::mysql_catalog::normalize_table`에 driver 비의존 INFORMATION_SCHEMA 행→중립 manifest 변환을 추가했다. 원본 `facereview-inventory.json`의 11개 SQLAlchemy 모델과 PostgreSQL catalog/외부 채택 경로를 대조해 컬럼 타입·PK/인덱스 순서의 작은 범위로 제한했다. 아래 catalog 행들은 synthetic 회귀 fixture이며 실제 DB 관측이 아니다.
