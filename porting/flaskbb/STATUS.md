@@ -25,6 +25,8 @@
 - `/private/tmp/flaskbb-aip-host-venv/bin/python -m unittest porting.flaskbb.tests.test_ui_host` → 13 passed; `run-ui-host-unittest.log` (Mock 기반 단위시험이며 실통합 증거로 계산하지 않음).
 - `git diff --check` → exit 0. `cargo fmt --all -- --check` → exit 1; rustfmt formatting diff가 이 미커밋 auth 코드와 `spikes/spike-v6-transport/src/lib.rs` 같은 건드리지 않은 경로까지 보고됐다. workspace-wide formatting sweep은 하지 않았고, 이 check는 미통과로 남긴다.
 
+**커밋/원격**: 코드·테스트·evidence 증분은 `2bf962d860e0678abd6e4ff6317168291bc19a0b` (`fix(porting): close auth and messaging regressions`)로 `origin/porting/flaskbb-full-2019`에 push했다. 이 커밋의 `git diff --cached --check`는 통과했다.
+
 **계속 미완료**: 이 증분은 FlaskBB 전체 F01–F17 완료가 아니다. `activated=false`는 FlaskBB actor row policy에서 기존 token 쓰기를 막고 `activated=true` 재활성화 후 허용한다. core `aip_principals.enabled/min_iat`와 구분되며 core에 FlaskBB 표식을 하드코딩하지 않았다. 이 한 전이 외의 원본 계정수정/활성화 전체 의미는 미검증. Browser OIDC, Keycloak `ERR_CERT_AUTHORITY_INVALID`, 원본 backend-off, 가입·메일 활성화/reset/logout 전수, 재시작 보존, clean deployment는 열린 gate다. 독립 검증은 별도 세션이 배정할 예정이므로 이 실행의 자체 결과는 출시 판정이 아니다.
 
 ## 2026-10-17 현재 Run — Provisioning working proposal 구현 및 F02–F10 포팅 실DB 검증
