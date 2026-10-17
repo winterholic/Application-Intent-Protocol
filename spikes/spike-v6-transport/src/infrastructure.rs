@@ -50,6 +50,37 @@ impl ResourceLimits {
     }
 }
 
+/// How long the server keeps history that nothing else removes. Every limit is in whole days; `None` keeps the history.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Retention {
+    /// A dispatched outbox row and its dispatch record are removed this long after the relay turned the row into a job.
+    pub outbox_dispatched_days: u32,
+    /// An outbox row whose topic has no handler is removed this long after it was written. Rows of a handled topic that were
+    /// not dispatched yet are never removed, because they are still owed to a job.
+    pub outbox_unhandled_days: Option<u32>,
+    /// An event is removed this long after it was published, on top of the 1,000 most recent events a stream always keeps.
+    pub events_days: Option<u32>,
+}
+
+impl Retention {
+    pub const MAX_DAYS: u32 = 3650;
+
+    pub fn validate(&self) -> std::io::Result<()> {
+        let valid = |days: u32| (1..=Self::MAX_DAYS).contains(&days);
+        if !valid(self.outbox_dispatched_days) || self.outbox_unhandled_days.is_some_and(|d| !valid(d)) || self.events_days.is_some_and(|d| !valid(d))
+        {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid retention"));
+        }
+        Ok(())
+    }
+}
+
+impl Default for Retention {
+    fn default() -> Self {
+        Self { outbox_dispatched_days: 30, outbox_unhandled_days: None, events_days: None }
+    }
+}
+
 #[derive(Clone)]
 pub enum ObjectStorage {
     Local(Arc<aip_execution::objects::LocalStore>),
@@ -106,6 +137,7 @@ pub struct Infrastructure {
     pub data_changes: DataChanges,
     pub otlp: Option<crate::otlp::OtlpConfig>,
     pub otlp_exporter: Option<Arc<crate::otlp::OtlpExporter>>,
+    pub retention: Retention,
 }
 
 impl Default for Infrastructure {
@@ -132,6 +164,7 @@ impl Default for Infrastructure {
             data_changes: DataChanges::default(),
             otlp: None,
             otlp_exporter: None,
+            retention: Retention::default(),
         }
     }
 }
@@ -165,6 +198,7 @@ impl Infrastructure {
         }
         self.realtime.validate()?;
         self.resource_limits.validate()?;
+        self.retention.validate()?;
         if !(std::time::Duration::from_secs(1)..=std::time::Duration::from_secs(24 * 60 * 60)).contains(&self.object_transfer_lifetime) {
             return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid object transfer lifetime"));
         }

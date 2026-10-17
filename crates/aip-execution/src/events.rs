@@ -213,6 +213,38 @@ impl Store {
         Ok(Page { events: found, next_cursor })
     }
 
+    /// Drops events older than `days` from up to `max_streams` streams, raising each stream's replay floor past them so an
+    /// older cursor reads `CursorExpired` instead of a silent gap. Events of a stream are appended in cursor order under
+    /// the stream's row lock, so "older than" is always a prefix of the stream. The idempotency ledger and stream heads
+    /// stay, as with `prune`. Returns the number of events deleted. `created_at` has no index, so each pass reads the
+    /// events table once; run it infrequently.
+    pub async fn expire_older_than<C: GenericClient>(&self, client: &C, days: i64, max_streams: i64) -> Result<u64, Error> {
+        if !(1..=36_500).contains(&days) || !(1..=10_000).contains(&max_streams) {
+            return Err(Error::InvalidEvent);
+        }
+        let days = days as i32;
+        let streams = self.table(STREAMS);
+        let events = self.table(EVENTS);
+        let deleted = client
+            .execute(
+                &format!(
+                    "WITH old AS ( \
+                       SELECT owner,stream,max(cursor) AS through FROM {events} \
+                       WHERE created_at < clock_timestamp() - make_interval(days => $1) GROUP BY owner,stream LIMIT $2), \
+                     locked AS ( \
+                       SELECT s.owner,s.stream,old.through FROM {streams} s JOIN old ON old.owner=s.owner AND old.stream=s.stream \
+                       FOR UPDATE OF s SKIP LOCKED), \
+                     raised AS ( \
+                       UPDATE {streams} s SET retained_from=GREATEST(s.retained_from, locked.through+1) FROM locked \
+                       WHERE s.owner=locked.owner AND s.stream=locked.stream RETURNING s.owner,s.stream,locked.through) \
+                     DELETE FROM {events} e USING raised WHERE e.owner=raised.owner AND e.stream=raised.stream AND e.cursor<=raised.through"
+                ),
+                &[&days, &max_streams],
+            )
+            .await?;
+        Ok(deleted)
+    }
+
     /// Deletes replay payloads through a cursor while keeping the idempotency
     /// ledger and the stream head. Older clients then receive CursorExpired.
     pub async fn prune(&self, client: &mut Client, owner: &str, stream: &str, through: &str) -> Result<(), Error> {

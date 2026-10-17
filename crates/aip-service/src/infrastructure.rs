@@ -125,6 +125,27 @@ fn max_object_bytes() -> u64 {
     5 * 1024 * 1024 * 1024
 }
 
+/// Retention of server-side history, in whole days (1 to 3650). Omitted limits keep their defaults.
+#[derive(Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct RetentionConfig {
+    /// Days after dispatch that an outbox row and its dispatch record are removed. Applies when `outbox_handlers` exist.
+    pub outbox_dispatched_days: u32,
+    /// Days after which an outbox row whose topic has no handler is removed. `null` (default) keeps such rows forever,
+    /// because an operator may read them from the database directly. Undispatched rows of a handled topic are never removed.
+    pub outbox_unhandled_days: Option<u32>,
+    /// Days after which a published event is removed, in addition to the 1,000 most recent events a stream keeps.
+    /// `null` (default) keeps events until the per-stream count limit removes them.
+    pub events_days: Option<u32>,
+}
+
+impl Default for RetentionConfig {
+    fn default() -> Self {
+        let defaults = spike_v6_transport::infrastructure::Retention::default();
+        Self { outbox_dispatched_days: defaults.outbox_dispatched_days, outbox_unhandled_days: None, events_days: None }
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct RealtimeConfig {
@@ -389,6 +410,11 @@ pub(super) fn build_with_environment(config: &super::Config, lookup: &impl Fn(&s
         data_changes: Default::default(),
         otlp,
         otlp_exporter: None,
+        retention: spike_v6_transport::infrastructure::Retention {
+            outbox_dispatched_days: config.retention.outbox_dispatched_days,
+            outbox_unhandled_days: config.retention.outbox_unhandled_days,
+            events_days: config.retention.events_days,
+        },
     };
     result.validate().map_err(|_| configuration_error())?;
     Ok(result)

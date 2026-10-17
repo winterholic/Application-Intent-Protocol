@@ -18,6 +18,7 @@
     "max_total_bytes":10737418240, "max_objects":1000
   },
   "object_transfer_lifetime_ms":900000,
+  "retention":{"outbox_dispatched_days":30, "outbox_unhandled_days":null, "events_days":null},
   "db_pool":{"max_size":16,"acquire_timeout_ms":2000,"idle_timeout_ms":60000},
   "rate_limit":{"limit":120,"window_ms":60000},
   "limits":{"connections":64,"workers":4,"jobs":2,"uploads":4,"per_principal_realtime":4,"per_principal_workers":2,"per_principal_uploads":2},
@@ -41,6 +42,18 @@
 선택적 `rate_limit`은 같은 PostgreSQL schema를 쓰는 인스턴스 사이에서 계정과 고정 경로 분류별 quota를 공유한다. DB 시계와 원자적 갱신을 쓰는 fixed window 방식이며, 세션 재발급으로 계정 quota를 초기화하지 않는다. 초과하면 HTTP 429와 `Retry-After`, DB 오류면 실행 거부다. 브라우저 WebSocket은 첫 인증 프레임 뒤 검사하므로 초과 오류는 WebSocket error frame이다. 정적 공개 mount의 익명 quota는 공유 bucket이다. IP별 DDoS 방어나 sliding-window의 균일한 유량 보장은 아니며, TLS proxy의 요청 크기·연결 제한도 필요하다. `rate_limit`를 생략하면 principal·경로 분류별 분당 600회의 기본값이 켜진다(앱 사용 패턴에 맞게 올리거나, 필요하면 `"rate_limit":null`로 명시적으로 끈다). 시작할 때 인프라 schema에 limiter 테이블을 만든다.
 
 rate limiting과 RAG는 앱 schema 이름의 digest로 파생한 별도 `aip_infra_<digest>` schema에 저장한다. 앱 migration의 구조 지문을 유지하기 위한 분리다. 시작 시 schema/table 생성 권한이 필요하며 권한이 없으면 시작을 거부한다. 앱 schema만 선택하는 백업에는 이 데이터가 포함되지 않는다. 인프라 schema도 함께 백업하고, 앱 삭제·owner 폐기 시 데이터 보존과 정리를 별도로 수행한다. 앱 schema 삭제만으로 자동 삭제하지 않는다.
+
+### 기록 보존 정리(`retention`)
+
+서버가 쌓는 기록 중 다른 정리 경로가 없는 것을 정해진 기간 뒤에 지운다. 값은 1~3650일의 정수이고, 범위를 벗어나면 시작 시 거부한다. 정리는 durable job collector가 60초마다 한 인스턴스(advisory lock)에서만 돌린다.
+
+| 설정 | 기본 | 지우는 대상 |
+| --- | --- | --- |
+| `outbox_dispatched_days` | 30 | relay가 job으로 넘긴 outbox 행과 dispatch 기록을, 넘긴 뒤 이 기간이 지나면 지운다. `outbox_handlers`가 있을 때만 일어난다 |
+| `outbox_unhandled_days` | `null`(보존) | handler가 없는 topic의 outbox 행을, 쓴 뒤 이 기간이 지나면 지운다. 운영자가 DB에서 직접 읽는 행일 수 있어 기본은 지우지 않는다. handler가 있는 topic의 미전달 행은 job이 받아야 할 행이므로 이 설정과 무관하게 지우지 않는다 |
+| `events_days` | `null`(보존) | 발행 뒤 이 기간이 지난 이벤트. stream마다 최근 1,000개만 남기는 개수 상한은 이 설정과 별개로 항상 적용된다. 지운 범위의 cursor는 빈 구간이 아니라 `WIRE.CURSOR_EXPIRED`를 받는다. 멱등 key 장부와 stream head는 유지한다 |
+
+한계: outbox 행 정리는 id 순서로 가장 오래된 행부터 한 번에 1,000개씩 최대 10번 지우고 첫 번째로 젊은 행에서 멈춘다. `aip_events`의 `created_at`에는 index가 없어(앱 migration 지문을 바꾸지 않으려는 선택) 이벤트 정리는 10분마다 events 테이블을 한 번 훑고 한 번에 최대 1,000개 stream을 처리한다. 이벤트가 수백만 건인 서비스는 이 비용을 감안해 `events_days`를 켠다. 근거 테스트는 `spikes/spike-v6-transport/src/durable.rs`의 `retention_tests`와 `crates/aip-execution/tests/events.rs`다.
 
 ## 디렉터리 hosting
 
@@ -71,6 +84,8 @@ S3 설정은 `objects`를 다음으로 교체한다. 환경 변수 이름만 설
 ```json
 {"kind":"s3","endpoint":"https://objects.example.com","bucket":"app-files","region":"us-east-1","access_key_env":"AIP_OBJECT_ACCESS_KEY","secret_key_env":"AIP_OBJECT_SECRET_KEY"}
 ```
+
+선택 필드 `max_total_bytes`(기본 10GiB)와 `max_objects`(기본 1,000)는 owner별 합계 상한이며 `gcs_hmac`에도 있다. 0이나 허용 범위를 넘는 값은 시작 시 거부한다(`max_objects`는 최대 100,000). S3 객체를 쓰려면 배포 fence가 있는 `aip service serve`여야 한다.
 
 TypeScript 제품 client의 실제 API:
 

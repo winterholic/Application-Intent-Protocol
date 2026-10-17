@@ -202,3 +202,58 @@ async fn idempotency_ledger_is_bounded_beyond_the_replay_window() {
     store.publish(&mut db.client, "owner", "quiet", "only", json!({})).await.unwrap();
     assert_eq!(store.publish(&mut db.client, "owner", "quiet", "only", json!({})).await.unwrap(), "1");
 }
+
+/// Backdates the events of a stream so a time-based sweep sees them as old.
+async fn age(db: &Db, owner: &str, stream: &str, through_cursor: i64, days: i64) {
+    db.client
+        .execute(
+            &format!("UPDATE {}.aip_events SET created_at = clock_timestamp() - make_interval(days => $4::int) WHERE owner=$1 AND stream=$2 AND cursor<=$3", db.schema),
+            &[&owner, &stream, &through_cursor, &(days as i32)],
+        )
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn age_based_sweep_expires_old_events_per_stream_and_keeps_replay_and_ledger_semantics() {
+    let mut db = Db::new().await;
+    let store = db.store();
+    for n in 1..=5 {
+        store.publish(&mut db.client, "owner", "orders", &format!("k{n}"), json!({"n":n})).await.unwrap();
+    }
+    store.publish(&mut db.client, "owner", "quiet", "q1", json!({"n":1})).await.unwrap();
+    age(&db, "owner", "orders", 3, 40).await;
+    age(&db, "owner", "quiet", 1, 5).await;
+
+    assert_eq!(store.expire_older_than(&db.client, 30, 100).await.unwrap(), 3, "three events of one stream are older than 30 days");
+    assert!(matches!(store.scan(&db.client, "owner", "orders", "1", 10).await, Err(aip_execution::events::Error::CursorExpired)));
+    let page = store.scan(&db.client, "owner", "orders", "3", 10).await.unwrap();
+    assert_eq!(page.events.iter().map(|e| e.cursor.as_str()).collect::<Vec<_>>(), ["4", "5"]);
+    assert_eq!(store.scan(&db.client, "owner", "quiet", "0", 10).await.unwrap().events.len(), 1, "a stream whose events are younger is untouched");
+
+    // The stream keeps counting from its head and an old idempotency key still deduplicates.
+    assert_eq!(store.publish(&mut db.client, "owner", "orders", "k6", json!({"n":6})).await.unwrap(), "6");
+    assert_eq!(store.publish(&mut db.client, "owner", "orders", "k1", json!({"n":1})).await.unwrap(), "1");
+    assert_eq!(store.expire_older_than(&db.client, 30, 100).await.unwrap(), 0, "nothing further is old enough");
+}
+
+#[tokio::test]
+async fn age_based_sweep_is_bounded_by_streams_per_pass() {
+    let mut db = Db::new().await;
+    let store = db.store();
+    for stream in ["s1", "s2", "s3"] {
+        store.publish(&mut db.client, "owner", stream, "k", json!({"n":1})).await.unwrap();
+        age(&db, "owner", stream, 1, 60).await;
+    }
+    assert_eq!(store.expire_older_than(&db.client, 30, 2).await.unwrap(), 2);
+    assert_eq!(store.expire_older_than(&db.client, 30, 2).await.unwrap(), 1);
+    assert_eq!(store.expire_older_than(&db.client, 30, 2).await.unwrap(), 0);
+}
+
+#[tokio::test]
+async fn age_based_sweep_rejects_an_unusable_retention() {
+    let db = Db::new().await;
+    let store = db.store();
+    assert!(store.expire_older_than(&db.client, 0, 10).await.is_err());
+    assert!(store.expire_older_than(&db.client, 30, 0).await.is_err());
+}

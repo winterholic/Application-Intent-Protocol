@@ -287,6 +287,9 @@ pub struct Config {
     pub metrics: Option<infrastructure::MetricsConfig>,
     #[serde(default)]
     pub otlp: Option<spike_v6_transport::otlp::OtlpConfig>,
+    /// How long history that nothing else removes is kept (outbox rows, events). See `RetentionConfig`.
+    #[serde(default)]
+    pub retention: infrastructure::RetentionConfig,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1566,6 +1569,40 @@ mod managed_config_tests {
         }
         let gcs = build(json!({"kind":"gcs_hmac","bucket":"b","access_key_env":"A","secret_key_env":"S","max_total_bytes":0}));
         assert_eq!(gcs.err().unwrap()["code"], "INFRASTRUCTURE_CONFIG");
+    }
+
+    #[test]
+    fn retention_defaults_keep_unhandled_history_and_out_of_range_days_are_rejected() {
+        let build = |retention: Option<Value>| {
+            let mut value = json!({
+                "schema":"aip_test",
+                "auth":{"issuer":"https://issuer.example","audience":"aip","jwks":{"kind":"file","path":"jwks.json"}}
+            });
+            if let Some(retention) = retention {
+                value["retention"] = retention;
+            }
+            infrastructure::build(&serde_json::from_value::<Config>(value).unwrap())
+        };
+        let defaults = build(None).unwrap().retention;
+        assert_eq!((defaults.outbox_dispatched_days, defaults.outbox_unhandled_days, defaults.events_days), (30, None, None));
+        let custom = build(Some(json!({"outbox_dispatched_days":7,"outbox_unhandled_days":14,"events_days":90}))).unwrap().retention;
+        assert_eq!((custom.outbox_dispatched_days, custom.outbox_unhandled_days, custom.events_days), (7, Some(14), Some(90)));
+        for invalid in [
+            json!({"outbox_dispatched_days":0}),
+            json!({"outbox_unhandled_days":0}),
+            json!({"events_days":3651}),
+            json!({"outbox_dispatched_days":3651}),
+        ] {
+            assert_eq!(build(Some(invalid)).err().unwrap()["code"], "INFRASTRUCTURE_CONFIG");
+        }
+        assert!(
+            serde_json::from_value::<Config>(json!({
+                "schema":"aip_test",
+                "auth":{"issuer":"https://issuer.example","audience":"aip","jwks":{"kind":"file","path":"jwks.json"}},
+                "retention":{"unknown":1}
+            }))
+            .is_err()
+        );
     }
 
     #[test]

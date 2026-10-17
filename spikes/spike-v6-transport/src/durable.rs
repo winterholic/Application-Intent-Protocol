@@ -824,8 +824,19 @@ pub(crate) async fn handle(db: &mut Client, rt: &Runtime, facts: &Value, wire: I
 const MAX_RETAINED_JOB_BYTES: i64 = 64 * 1024 * 1024;
 const GC_BATCH: i64 = 1000;
 const GC_BATCHES_PER_SWEEP: usize = 10;
+const EVENTS_SWEEP_INTERVAL: Duration = Duration::from_secs(600);
 
-async fn collect_expired(db: &mut Client, s: &str, cleanup_messages: bool, cleanup_outbox: bool) -> Result<()> {
+/// What one collector sweep is asked to clean beyond jobs, files and effects.
+struct Sweep<'a> {
+    messages: bool,
+    retention: crate::infrastructure::Retention,
+    /// Topics with a configured handler. Their rows belong to the relay until dispatched.
+    handled_topics: &'a [String],
+    /// Event expiry reads the whole events table, so it runs on a slower cadence than the rest of the sweep.
+    events: bool,
+}
+
+async fn collect_expired(db: &mut Client, s: &str, sweep: &Sweep<'_>) -> Result<()> {
     let tx = db.transaction().await.map_err(db_error)?;
     tx.batch_execute("SET LOCAL lock_timeout='2s'; SET LOCAL statement_timeout='5s'").await.map_err(db_error)?;
     tx.query_one("SELECT pg_advisory_xact_lock_shared(1095323725,hashtext($1))", &[&s]).await.map_err(db_error)?;
@@ -840,7 +851,7 @@ async fn collect_expired(db: &mut Client, s: &str, cleanup_messages: bool, clean
     )
     .await
     .map_err(db_error)?;
-    if cleanup_messages {
+    if sweep.messages {
         aip_execution::messages::MessageStore::new(s)
             .map_err(|_| "WIRE.DB_UNAVAILABLE")?
             .cleanup_expired(&tx, 1000)
@@ -869,18 +880,19 @@ async fn collect_expired(db: &mut Client, s: &str, cleanup_messages: bool, clean
             break;
         }
     }
-    if cleanup_outbox {
+    if !sweep.handled_topics.is_empty() {
         // A dispatch row means the relay already turned the outbox row into a job; both are history once the job record is gone.
         let infra = aip_execution::infrastructure_schema(s).map_err(|_| "WIRE.BAD_CONFIGURATION")?;
+        let days = i32::try_from(sweep.retention.outbox_dispatched_days).map_err(|_| "WIRE.BAD_CONFIGURATION")?;
         for _ in 0..GC_BATCHES_PER_SWEEP {
             let removed = tx
                 .execute(
                     &format!(
-                        "WITH old AS (SELECT outbox_id,outbox_created_at FROM {infra}.aip_outbox_dispatch WHERE dispatched_at<clock_timestamp()-interval '30 days' ORDER BY dispatched_at LIMIT {GC_BATCH} FOR UPDATE SKIP LOCKED), \
+                        "WITH old AS (SELECT outbox_id,outbox_created_at FROM {infra}.aip_outbox_dispatch WHERE dispatched_at<clock_timestamp()-make_interval(days=>$1) ORDER BY dispatched_at LIMIT {GC_BATCH} FOR UPDATE SKIP LOCKED), \
                          gone AS (DELETE FROM {s}.aip_outbox o USING old WHERE o.id=old.outbox_id AND o.created_at=old.outbox_created_at) \
                          DELETE FROM {infra}.aip_outbox_dispatch d USING old WHERE d.outbox_id=old.outbox_id AND d.outbox_created_at=old.outbox_created_at"
                     ),
-                    &[],
+                    &[&days],
                 )
                 .await
                 .map_err(db_error)?;
@@ -889,13 +901,43 @@ async fn collect_expired(db: &mut Client, s: &str, cleanup_messages: bool, clean
             }
         }
     }
+    if let Some(days) = sweep.retention.outbox_unhandled_days {
+        // Rows of a topic nothing consumes. They are written in id order, so the oldest unhandled rows come first and the
+        // walk stops at the first one that is still young; a sweep never reads past the head of the table.
+        let days = i32::try_from(days).map_err(|_| "WIRE.BAD_CONFIGURATION")?;
+        for _ in 0..GC_BATCHES_PER_SWEEP {
+            let removed = tx
+                .execute(
+                    &format!(
+                        "WITH head AS (SELECT id,created_at FROM {s}.aip_outbox WHERE NOT (topic = ANY($1::text[])) ORDER BY id LIMIT {GC_BATCH}) \
+                         DELETE FROM {s}.aip_outbox o USING head WHERE o.id=head.id AND head.created_at<clock_timestamp()-make_interval(days=>$2)"
+                    ),
+                    &[&sweep.handled_topics, &days],
+                )
+                .await
+                .map_err(db_error)?;
+            if (removed as i64) < GC_BATCH {
+                break;
+            }
+        }
+    }
+    if sweep.events {
+        if let Some(days) = sweep.retention.events_days {
+            aip_execution::events::Store::new(s)
+                .map_err(|_| "WIRE.BAD_CONFIGURATION")?
+                .expire_older_than(&tx, i64::from(days), 1000)
+                .await
+                .map_err(|_| "WIRE.DB_UNAVAILABLE")?;
+        }
+    }
     tx.commit().await.map_err(db_error)
 }
 
 pub(crate) async fn supervisor(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire) {
     let mut tasks = tokio::task::JoinSet::new();
     let cleanup_messages = should_cleanup_messages(rt.infrastructure.messaging, &facts);
-    let cleanup_outbox = !rt.infrastructure.triggers.outbox.is_empty();
+    let handled_topics: Vec<String> = rt.infrastructure.triggers.outbox.iter().map(|handler| handler.topic.clone()).collect();
+    let mut events_swept: Option<tokio::time::Instant> = None;
     let worker =
         format!("{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos());
     let mut gc = tokio::time::Instant::now();
@@ -919,9 +961,14 @@ pub(crate) async fn supervisor(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire
         if gc.elapsed() >= Duration::from_secs(60) {
             if let Ok(mut db) = connect(&rt).await {
                 if let Ok(s) = schema(&rt) {
-                    if collect_expired(&mut db, s, cleanup_messages, cleanup_outbox).await.is_err() {
+                    let events = events_swept.is_none_or(|at| at.elapsed() >= EVENTS_SWEEP_INTERVAL);
+                    let sweep = Sweep { messages: cleanup_messages, retention: rt.infrastructure.retention, handled_topics: &handled_topics, events };
+                    if collect_expired(&mut db, s, &sweep).await.is_err() {
                         eprintln!("{{\"event\":\"job_gc_failed\"}}");
                     } else {
+                        if events {
+                            events_swept = Some(tokio::time::Instant::now());
+                        }
                         let _ = db.release().await;
                     }
                 }
@@ -1702,9 +1749,9 @@ mod safety_tests {
             .await
             .unwrap();
         db.execute(&format!("UPDATE {s}.aip_messages SET expires_at=clock_timestamp()-interval '1 second'"), &[]).await.unwrap();
-        collect_expired(&mut db, &s, false, false).await.unwrap();
+        collect_expired(&mut db, &s, &Sweep { messages: false, retention: Default::default(), handled_topics: &[], events: false }).await.unwrap();
         assert_eq!(db.query_one(&format!("SELECT count(*) FROM {s}.aip_messages"), &[]).await.unwrap().get::<_, i64>(0), 1);
-        collect_expired(&mut db, &s, true, false).await.unwrap();
+        collect_expired(&mut db, &s, &Sweep { messages: true, retention: Default::default(), handled_topics: &[], events: false }).await.unwrap();
         assert_eq!(db.query_one(&format!("SELECT count(*) FROM {s}.aip_messages"), &[]).await.unwrap().get::<_, i64>(0), 0);
         let rows =
             db.query(&format!("SELECT idempotency_key,input,grant_data,output FROM {s}.aip_jobs ORDER BY idempotency_key"), &[]).await.unwrap();
@@ -1788,7 +1835,9 @@ mod safety_tests {
         ))
         .await
         .unwrap();
-        collect_expired(&mut db, &s, false, true).await.unwrap();
+        collect_expired(&mut db, &s, &Sweep { messages: false, retention: Default::default(), handled_topics: &["t".to_owned()], events: false })
+            .await
+            .unwrap();
         let count = |table: String| {
             let db = &db;
             async move { db.query_one(&format!("SELECT count(*) FROM {table}"), &[]).await.unwrap().get::<_, i64>(0) }
@@ -1834,5 +1883,188 @@ mod owner_identity_tests {
     fn owner_of_a_never_revoked_principal_is_unchanged() {
         let legacy = spike_v1_fixture::digest(&serde_json::json!(["https://issuer.example", "user-1", 42, 0]));
         assert_eq!(owner(&grant(0)), legacy);
+    }
+}
+
+#[cfg(test)]
+mod retention_tests {
+    use super::*;
+
+    const TABLES: &str = "CREATE TABLE {s}.aip_effects(run_id uuid REFERENCES {s}.aip_jobs(id),result jsonb); \
+        CREATE TABLE {s}.aip_outbox (id bigserial PRIMARY KEY, topic text NOT NULL, recipient_id bigint, source text NOT NULL, source_id bigint, created_at timestamptz NOT NULL DEFAULT now())";
+
+    struct Fixture {
+        db: spike_v2_read::OwnedConnection,
+        s: String,
+        infra: String,
+    }
+
+    impl Fixture {
+        async fn new(name: &str) -> Self {
+            let s = format!("aip_retention_{name}_{}", std::process::id());
+            let infra = aip_execution::infrastructure_schema(&s).unwrap();
+            let db = spike_v2_read::connect_owned_with_url(aip_test_support::test_database_url!()).await.unwrap();
+            db.batch_execute(&format!(
+                "DROP SCHEMA IF EXISTS {s} CASCADE; DROP SCHEMA IF EXISTS {infra} CASCADE; CREATE SCHEMA {s}; CREATE SCHEMA {infra}; {}; {}; {}; {}; {}",
+                aip_execution::ddl(&s).unwrap(),
+                aip_execution::files::Store::new(&s).unwrap().ddl(),
+                aip_execution::events::Store::new(&s).unwrap().ddl(),
+                TABLES.replace("{s}", &s),
+                outbox_dispatch_ddl(&infra)
+            ))
+            .await
+            .unwrap();
+            Self { db, s, infra }
+        }
+
+        async fn count(&self, table: &str) -> i64 {
+            self.db
+                .query_one(&format!("SELECT count(*) FROM {}", table.replace("{s}", &self.s).replace("{infra}", &self.infra)), &[])
+                .await
+                .unwrap()
+                .get(0)
+        }
+
+        async fn sweep(&mut self, retention: crate::infrastructure::Retention, handled: &[&str], events: bool) {
+            let handled: Vec<String> = handled.iter().map(|topic| (*topic).to_owned()).collect();
+            let sweep = Sweep { messages: false, retention, handled_topics: &handled, events };
+            collect_expired(&mut self.db, &self.s, &sweep).await.unwrap();
+        }
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let (s, infra) = (self.s.clone(), self.infra.clone());
+            let _ = std::thread::spawn(move || {
+                let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+                runtime.block_on(async move {
+                    let db = spike_v2_read::connect_owned_with_url(aip_test_support::test_database_url!()).await.unwrap();
+                    let _ = db.batch_execute(&format!("DROP SCHEMA IF EXISTS {s} CASCADE; DROP SCHEMA IF EXISTS {infra} CASCADE")).await;
+                });
+            })
+            .join();
+        }
+    }
+
+    fn retention(dispatched: u32, unhandled: Option<u32>, events: Option<u32>) -> crate::infrastructure::Retention {
+        crate::infrastructure::Retention { outbox_dispatched_days: dispatched, outbox_unhandled_days: unhandled, events_days: events }
+    }
+
+    /// Four kinds of outbox rows, each aged 10 days: dispatched and unhandled and young ones differ only in what the sweep may do.
+    async fn seed_outbox(fixture: &Fixture) {
+        fixture
+            .db
+            .batch_execute(&format!(
+                "INSERT INTO {s}.aip_outbox(topic,source,source_id,created_at) VALUES \
+                   ('handled','x',1,clock_timestamp()-interval '10 days'), \
+                   ('handled','x',2,clock_timestamp()-interval '10 days'), \
+                   ('orphan','x',3,clock_timestamp()-interval '10 days'), \
+                   ('orphan','x',4,clock_timestamp()-interval '1 day')",
+                s = fixture.s
+            ))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn unhandled_outbox_rows_are_kept_by_default_and_removed_by_age_when_configured() {
+        let mut fixture = Fixture::new("unhandled").await;
+        seed_outbox(&fixture).await;
+        fixture.sweep(retention(30, None, None), &["handled"], false).await;
+        assert_eq!(fixture.count("{s}.aip_outbox").await, 4, "without outbox_unhandled_days nothing is removed");
+
+        fixture.sweep(retention(30, Some(5), None), &["handled"], false).await;
+        assert_eq!(fixture.count("{s}.aip_outbox WHERE topic='orphan'").await, 1, "the 10-day-old orphan row goes, the 1-day-old one stays");
+        assert_eq!(fixture.count("{s}.aip_outbox WHERE topic='handled'").await, 2, "undispatched rows of a handled topic are still owed to a job");
+
+        fixture.sweep(retention(30, Some(1), None), &[], false).await;
+        assert_eq!(fixture.count("{s}.aip_outbox").await, 0, "with no handlers every topic is unhandled; handled rows older than a day go too");
+    }
+
+    #[tokio::test]
+    async fn unhandled_sweep_walks_in_id_order_and_stops_at_the_first_young_row() {
+        let mut fixture = Fixture::new("walk").await;
+        fixture
+            .db
+            .batch_execute(&format!(
+                "INSERT INTO {s}.aip_outbox(topic,source,source_id,created_at) SELECT 'orphan','x',i,clock_timestamp()-interval '10 days' FROM generate_series(1,2500) i; \
+                 INSERT INTO {s}.aip_outbox(topic,source,source_id,created_at) SELECT 'orphan','x',i,clock_timestamp() FROM generate_series(1,40) i",
+                s = fixture.s
+            ))
+            .await
+            .unwrap();
+        fixture.sweep(retention(30, Some(5), None), &[], false).await;
+        assert_eq!(fixture.count("{s}.aip_outbox").await, 40, "all 2,500 old rows go in one sweep (3 batches), the 40 young rows stay");
+    }
+
+    #[tokio::test]
+    async fn dispatched_outbox_retention_is_configurable_and_never_touches_pending_rows() {
+        let mut fixture = Fixture::new("dispatched").await;
+        seed_outbox(&fixture).await;
+        // Row 1 was dispatched 10 days ago; row 2 is still pending.
+        let run = Store::new(&fixture.s)
+            .unwrap()
+            .enqueue(
+                &*fixture.db,
+                NewRun {
+                    owner: "service".into(),
+                    actor: 1,
+                    grant: json!({}),
+                    operation: "count".into(),
+                    contract: "c".into(),
+                    deployment: "d".into(),
+                    implementation: "i".into(),
+                    input: json!({}),
+                    key: "dispatched".into(),
+                    timeout_ms: 1000,
+                    max_attempts: 1,
+                    ttl_ms: 86_400_000,
+                    delay_ms: 0,
+                    trace_id: None,
+                },
+            )
+            .await
+            .unwrap();
+        fixture
+            .db
+            .execute(
+                &format!(
+                    "INSERT INTO {}.aip_outbox_dispatch(outbox_id,outbox_created_at,run_id,dispatched_at) \
+                     SELECT id,created_at,$1::text::uuid,clock_timestamp()-interval '10 days' FROM {}.aip_outbox WHERE topic='handled' AND source_id=1",
+                    fixture.infra, fixture.s
+                ),
+                &[&run.id],
+            )
+            .await
+            .unwrap();
+        fixture.sweep(retention(30, None, None), &["handled"], false).await;
+        assert_eq!(fixture.count("{infra}.aip_outbox_dispatch").await, 1, "dispatched 10 days ago is inside the default 30");
+        fixture.sweep(retention(7, None, None), &["handled"], false).await;
+        assert_eq!(fixture.count("{infra}.aip_outbox_dispatch").await, 0, "past a 7-day setting the dispatch record goes");
+        assert_eq!(fixture.count("{s}.aip_outbox WHERE topic='handled'").await, 1, "its outbox row goes with it; the pending row stays");
+    }
+
+    #[tokio::test]
+    async fn events_are_expired_by_age_only_when_configured_and_only_on_the_slow_cadence() {
+        let mut fixture = Fixture::new("events").await;
+        let store = aip_execution::events::Store::new(&fixture.s).unwrap();
+        for n in 1..=3 {
+            store.publish(&mut fixture.db, "owner", "orders", &format!("k{n}"), json!({"n":n})).await.unwrap();
+        }
+        fixture
+            .db
+            .batch_execute(&format!("UPDATE {}.aip_events SET created_at=clock_timestamp()-interval '40 days' WHERE cursor<=2", fixture.s))
+            .await
+            .unwrap();
+
+        fixture.sweep(retention(30, None, None), &[], true).await;
+        assert_eq!(fixture.count("{s}.aip_events").await, 3, "events_days unset keeps everything");
+        fixture.sweep(retention(30, None, Some(30)), &[], false).await;
+        assert_eq!(fixture.count("{s}.aip_events").await, 3, "the events sweep only runs when this pass is its turn");
+        fixture.sweep(retention(30, None, Some(30)), &[], true).await;
+        assert_eq!(fixture.count("{s}.aip_events").await, 1);
+        let expired = store.scan(&*fixture.db, "owner", "orders", "1", 10).await;
+        assert!(matches!(expired, Err(aip_execution::events::Error::CursorExpired)), "an older cursor reads as expired, not as a gap: {expired:?}");
+        assert_eq!(store.scan(&*fixture.db, "owner", "orders", "2", 10).await.unwrap().events.len(), 1);
     }
 }

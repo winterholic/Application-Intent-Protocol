@@ -1,5 +1,9 @@
 # 진행 현황과 쌓인 질문
 
+## 2026-10-18 WBS 8.5 보존 정리와 S3 owner quota (Claude 구현, 독립 검증 대기)
+
+S3 서명 업로드를 owner별 byte·개수 상한에 예약하는 장부와 만료 예약 정리(저장소 `HEAD` 확인 뒤 확정·해제·multipart abort), outbox 보존 기간 설정(`retention`)과 handler 없는 topic 정리, events 나이 기준 정리를 구현했다. 실제 TLS MinIO와 PostgreSQL 17에서 실행했고 AWS·GCS 실계정은 미실행이다. 기존 문서의 outbox 미정리 서술은 O-20 이전 상태여서 고쳤다. 실행 결과와 한계는 [제품 검증](../product/VERIFICATION.md)의 WBS 8.5를 따른다. 독립 검증 전이므로 완료로 표시하지 않는다.
+
 ## 2026-10-18 WBS 8.11 8.9 후속 (Claude 구현, 독립 검증 대기)
 
 spike-v3·v4 테스트의 사전 clippy 실패 3건을 정리해 세 spike의 `clippy --all-targets -D warnings`가 모두 통과한다. `Kind::Io`는 호출자의 COMMIT 호출에서 재현할 수 없어 접속 단계의 실제 Io 오류로 판정을 고정했다. 실행 결과는 [제품 검증](../product/VERIFICATION.md)의 WBS 8.11을 따른다. 독립 검증 전이므로 완료로 표시하지 않는다.
