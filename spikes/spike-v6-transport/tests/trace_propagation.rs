@@ -72,8 +72,8 @@ async fn the_trace_of_a_request_reaches_its_outbound_calls() {
     )
     .expect("definition")
     .execution;
-    aip_migrate::init_with_wire(spike_v2_read::DB_URL, &schema, &facts, "safe").await.expect("init");
-    let db = spike_v2_read::connect_owned_with_url(spike_v2_read::DB_URL).await.expect("db");
+    aip_migrate::init_with_wire(aip_test_support::test_database_url!(), &schema, &facts, "safe").await.expect("init");
+    let db = spike_v2_read::connect_owned_with_url(aip_test_support::test_database_url!()).await.expect("db");
     db.batch_execute(&format!(
         "INSERT INTO {schema}.aip_actors VALUES(1); INSERT INTO {schema}.aip_principals(issuer,subject,actor_id) VALUES('test','alice',1)"
     ))
@@ -100,7 +100,10 @@ async fn the_trace_of_a_request_reaches_its_outbound_calls() {
     let storage_schema = aip_execution::infrastructure_schema(&schema).expect("infra schema");
     let store = Arc::new(
         PgJsonVectorStore::with_factory(
-            Arc::new(spike_v6_transport::rag_transport::RagConnectionFactory::new(spike_v2_read::DB_URL, Default::default()).expect("factory")),
+            Arc::new(
+                spike_v6_transport::rag_transport::RagConnectionFactory::new(aip_test_support::test_database_url!(), Default::default())
+                    .expect("factory"),
+            ),
             &storage_schema,
         )
         .expect("store"),
@@ -123,7 +126,7 @@ async fn the_trace_of_a_request_reaches_its_outbound_calls() {
         facts.clone(),
         IdWire::SafeNumber,
         "127.0.0.1:0".parse().expect("address"),
-        spike_v2_read::DB_URL.into(),
+        aip_test_support::test_database_url!().into(),
         None,
         ServerOptions::default(),
         false,

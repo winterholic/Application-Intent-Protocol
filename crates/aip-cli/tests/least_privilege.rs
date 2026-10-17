@@ -15,7 +15,7 @@ use tokio::{
     process::Command,
 };
 
-const MIGRATE_DB: &str = "host=localhost dbname=postgres";
+const MIGRATE_DB: &str = aip_test_support::test_database_url!();
 const APP: &str = include_str!("../../../prototype/example/app.aip");
 
 async fn service(config: &Path, runtime_db: &str, args: &[&str]) -> std::process::Output {
@@ -87,7 +87,7 @@ async fn a_runtime_role_with_only_the_documented_grants_serves_while_the_migrati
     let unique = uuid::Uuid::new_v4().simple().to_string();
     let schema = format!("aip_lp_{unique}");
     let role = format!("aip_lp_rt_{}", &unique[..12]);
-    let runtime_db = format!("host=localhost dbname=postgres user={role}");
+    let runtime_db = aip_test_support::database_url_for_user(aip_test_support::test_database_url!(), &role);
     let config = dir.path().join("service.json");
     let file = dir.path().join("app.aip");
     std::fs::write(&file, APP).unwrap();

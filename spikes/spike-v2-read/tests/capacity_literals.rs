@@ -2,7 +2,7 @@ use serde_json::{json, Value};
 use spike_v1_fixture::{load_str, Form};
 use spike_v2_read::{connect_with_url, sqlgen};
 
-const DB: &str = "host=localhost dbname=postgres";
+const DB: &str = aip_test_support::test_database_url!();
 
 const SOURCE: &str = r#"
 enum State { ACTIVE, INACTIVE }

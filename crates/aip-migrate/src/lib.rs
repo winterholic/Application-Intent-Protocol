@@ -1398,7 +1398,7 @@ mod old_journal_tests {
     /// dropped by the next apply, together with a new structure digest, or A -> B -> A -> B keeps failing there.
     #[tokio::test]
     async fn a_deployment_with_the_old_unique_journal_digest_can_cycle() {
-        let url = "host=localhost dbname=postgres";
+        let url = aip_test_support::test_database_url!();
         let schema = format!("aip_oldjournal_{}", std::process::id());
         let a = spike_v1_fixture::load_str(include_str!("../../../prototype/example/app.aip"), spike_v1_fixture::Form::A).unwrap().execution;
         let mut b = a.clone();
@@ -1438,7 +1438,7 @@ mod trace_id_upgrade_tests {
     static NEXT: AtomicU64 = AtomicU64::new(0);
 
     fn database_url() -> String {
-        std::env::var("AIP_TRACE_UPGRADE_DATABASE_URL").expect("AIP_TRACE_UPGRADE_DATABASE_URL must point to the Run-owned PostgreSQL database")
+        aip_test_support::database_url().to_owned()
     }
 
     fn job_facts() -> Value {

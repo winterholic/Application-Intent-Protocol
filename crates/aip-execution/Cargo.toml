@@ -28,3 +28,4 @@ rdkafka = { version = "0.39.0", default-features = false, features = ["cmake-bui
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+aip-test-support = { path = "../aip-test-support", features = ["strict-db"] }

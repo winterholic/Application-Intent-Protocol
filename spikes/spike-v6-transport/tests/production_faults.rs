@@ -20,7 +20,7 @@ use tokio::{
 };
 use tokio_postgres::{Client, NoTls};
 
-const DB: &str = "host=localhost dbname=postgres";
+const DB: &str = aip_test_support::test_database_url!();
 static NEXT_SCHEMA: AtomicU64 = AtomicU64::new(0);
 
 fn schema(prefix: &str) -> String {

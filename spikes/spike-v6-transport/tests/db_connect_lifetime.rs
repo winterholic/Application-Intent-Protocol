@@ -76,7 +76,7 @@ async fn silent_database_handshake_releases_requests_sockets_and_extension_slots
         facts.clone(),
         IdWire::SafeNumber,
         "127.0.0.1:0".parse().unwrap(),
-        format!("host=127.0.0.1 port={} dbname=postgres", db_address.port()),
+        aip_test_support::database_url_via_proxy(db_address.port()),
         Some(ReadExtensions { lang: WorkerLang::Node, dir: path.clone() }),
         ServerOptions::default(),
         true,

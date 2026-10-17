@@ -14,7 +14,10 @@ if [[ ! -x spikes/spike-0-ts/node_modules/.bin/tsc ]]; then
   exit 1
 fi
 
-psql -X -q -d 'host=localhost dbname=postgres' -Atc 'SELECT 1'
+# Compile-time DB guard validates the explicit DSNs and matching non-default PGPORT
+# before psql or any database-backed test can connect.
+cargo test -p aip-test-support --features strict-db --locked
+psql -X -q "$AIP_TEST_DATABASE_URL" -Atc 'SELECT 1'
 cargo fmt --all --check
 cargo clippy --workspace --lib --bins --locked -- -D warnings
 cargo clippy -p aip-auth -p aip-migrate -p aip-service --all-targets --locked -- -D warnings
@@ -47,6 +50,7 @@ node --test \
   spikes/spike-v6-transport/client/request-id.test.ts \
   spikes/spike-v6-transport/client/hardening.test.ts \
   product/tests/general-update.test.mjs \
+  product/tests/postgres-guard.test.mjs \
   product/tests/uuid-external.test.mjs \
   product/tests/facereview-comments.test.mjs \
   product/tests/sdk-package.test.mjs \

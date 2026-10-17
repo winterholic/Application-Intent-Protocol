@@ -21,7 +21,7 @@ async fn committed_write_is_reported_even_when_its_admitting_session_expires_dur
     facts["resources"]["Event"]["extensions"]["run"]["deadlineMs"] = json!(4000);
     let schema = format!("aip_write_session_{unique}");
     sqlgen::set_schema(&schema);
-    let db = connect_owned_with_url("host=localhost dbname=postgres").await.unwrap();
+    let db = connect_owned_with_url(aip_test_support::test_database_url!()).await.unwrap();
     let ddl = sqlgen::create_ddl(&facts).unwrap();
     db.batch_execute(&ddl[0]).await.expect("fresh owned schema");
     let mut failures = vec![];
@@ -32,7 +32,7 @@ async fn committed_write_is_reported_even_when_its_admitting_session_expires_dur
         let sdk=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prototype/sdk/index.ts").canonicalize().unwrap();
         for lang in [WorkerLang::Node,WorkerLang::Python] {for wire in [IdWire::SafeNumber,IdWire::DecimalString] {
             db.batch_execute(&format!("UPDATE {schema}.event SET checked=false;TRUNCATE {schema}.aip_idem")).await?;
-            let server=listen_with_prototype_options(facts.clone(),wire,"127.0.0.1:0".parse().unwrap(),"host=localhost dbname=postgres".into(),Some(ReadExtensions{lang,dir:path.clone()}),ServerOptions::default(),true).await.unwrap();
+            let server=listen_with_prototype_options(facts.clone(),wire,"127.0.0.1:0".parse().unwrap(),aip_test_support::test_database_url!().into(),Some(ReadExtensions{lang,dir:path.clone()}),ServerOptions::default(),true).await.unwrap();
             fs::write(path.join("contract.ts"),contract_module_with_all_extensions(&facts,sdk.to_str().unwrap(),wire)).unwrap();
             let import=serde_json::to_string(sdk.to_str().unwrap()).unwrap();let id=spike_v2_read::id_wire::emit_id(11,wire).unwrap().to_string();
             fs::write(path.join("call.mts"),format!(r#"import assert from 'node:assert/strict';

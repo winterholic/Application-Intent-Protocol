@@ -24,7 +24,7 @@ async fn uuid_default_ref_cursor_and_transition_use_native_pg_uuid() {
     )
     .unwrap()
     .execution;
-    let mut db = spike_v2_read::connect_owned_with_url("postgres://localhost/postgres").await.unwrap();
+    let mut db = spike_v2_read::connect_owned_with_url(aip_test_support::test_database_url!()).await.unwrap();
     db.batch_execute("DROP SCHEMA IF EXISTS aip_uuid_engine_test CASCADE").await.unwrap();
     for ddl in sqlgen::ddl(&facts).unwrap() {
         db.batch_execute(&ddl).await.unwrap();

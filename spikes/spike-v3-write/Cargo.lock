@@ -20,6 +20,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "aip-test-support"
+version = "0.1.0"
+dependencies = [
+ "url",
+]
+
+[[package]]
 name = "async-trait"
 version = "0.1.92"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1169,6 +1176,7 @@ name = "spike-v2-read"
 version = "0.0.0"
 dependencies = [
  "aip-execution",
+ "aip-test-support",
  "chrono",
  "rustls",
  "serde",
@@ -1184,6 +1192,7 @@ dependencies = [
 name = "spike-v3-write"
 version = "0.0.0"
 dependencies = [
+ "aip-test-support",
  "serde_json",
  "spike-v1-fixture",
  "spike-v2-read",

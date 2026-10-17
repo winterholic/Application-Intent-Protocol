@@ -2,7 +2,7 @@
 //! API answers plaintext, a ciphertext moved to another row or field is refused, keys rotate, and the copies of a row
 //! (published version, history versions, job export) follow the same rules.
 //!
-//! Requires a local PostgreSQL; set AIP_TEST_ADMIN_URL to override `postgres://localhost/postgres`.
+//! Requires explicit AIP_TEST_DATABASE_URL and AIP_TEST_ADMIN_URL values for a worker-owned isolated PostgreSQL.
 //! Every key here is made from random bytes inside the tests; none is written down.
 
 mod common;
@@ -241,8 +241,8 @@ async fn keys_rotate_and_rekey_reaches_every_copy() {
     assert!(raw(&both, "SELECT phone FROM member WHERE phone IS NOT NULL").await.starts_with("v1:k1:"), "untouched values keep their key");
 
     // rekey from the command line, keys from the environment like a deployment
-    let admin = std::env::var("AIP_TEST_ADMIN_URL").unwrap_or_else(|_| "postgres://localhost/postgres".into());
-    let url = admin.rsplit_once('/').map(|(base, _)| format!("{base}/aip_enc_rotate")).expect("url");
+    let admin = aip_test_support::admin_database_url();
+    let url = aip_test_support::admin_database_url_for("aip_enc_rotate");
     let rekey = || {
         Command::new(env!("CARGO_BIN_EXE_aip"))
             .args(["rekey", APP_PATH])

@@ -3,7 +3,7 @@ use aip_execution::{NewRun, Store};
 use aip_service::{Command, Jobs};
 use serde_json::{Value, json};
 
-const DB: &str = "host=localhost dbname=postgres";
+const DB: &str = aip_test_support::test_database_url!();
 const DB_ENV: &str = "AIP_JOBS_CLI_TEST_DATABASE";
 
 struct Cleanup(String, std::path::PathBuf);

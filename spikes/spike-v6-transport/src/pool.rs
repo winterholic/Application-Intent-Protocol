@@ -202,7 +202,7 @@ mod tests {
 
     #[tokio::test]
     async fn closed_pool_and_expired_deadline_reject_checkout() {
-        let pool = ConnectionPool::new(spike_v2_read::DB_URL, PoolOptions::default()).unwrap();
+        let pool = ConnectionPool::new(aip_test_support::test_database_url!(), PoolOptions::default()).unwrap();
         assert!(matches!(pool.acquire_until(Instant::now()).await, Err(PoolError::Timeout)));
         pool.close();
         assert!(matches!(pool.acquire().await, Err(PoolError::Closed)));
@@ -210,7 +210,7 @@ mod tests {
 
     #[tokio::test]
     async fn release_reuses_connection_and_clears_session_state() {
-        let pool = ConnectionPool::new(spike_v2_read::DB_URL, PoolOptions::default()).unwrap();
+        let pool = ConnectionPool::new(aip_test_support::test_database_url!(), PoolOptions::default()).unwrap();
         let first = pool.acquire().await.unwrap();
         let pid: i32 = first.query_one("SELECT pg_backend_pid()", &[]).await.unwrap().get(0);
         let baseline_app_name: String = first.query_one("SELECT current_setting('application_name')", &[]).await.unwrap().get(0);
@@ -230,7 +230,7 @@ mod tests {
     #[tokio::test]
     async fn checkout_is_bounded_by_pool_capacity_and_acquire_deadline() {
         let pool = ConnectionPool::new(
-            spike_v2_read::DB_URL,
+            aip_test_support::test_database_url!(),
             PoolOptions { max_size: 1, acquire_timeout: Duration::from_millis(30), ..PoolOptions::default() },
         )
         .unwrap();
@@ -242,7 +242,7 @@ mod tests {
 
     #[tokio::test]
     async fn concurrent_checkouts_use_distinct_bounded_connections() {
-        let pool = ConnectionPool::new(spike_v2_read::DB_URL, PoolOptions { max_size: 2, ..PoolOptions::default() }).unwrap();
+        let pool = ConnectionPool::new(aip_test_support::test_database_url!(), PoolOptions { max_size: 2, ..PoolOptions::default() }).unwrap();
         let (first, second) = tokio::join!(pool.acquire(), pool.acquire());
         let first = first.unwrap();
         let second = second.unwrap();
@@ -256,7 +256,7 @@ mod tests {
 
     #[tokio::test]
     async fn dropping_lease_discards_connection_instead_of_reusing_it() {
-        let pool = ConnectionPool::new(spike_v2_read::DB_URL, PoolOptions { max_size: 1, ..PoolOptions::default() }).unwrap();
+        let pool = ConnectionPool::new(aip_test_support::test_database_url!(), PoolOptions { max_size: 1, ..PoolOptions::default() }).unwrap();
         let first = pool.acquire().await.unwrap();
         let first_pid: i32 = first.query_one("SELECT pg_backend_pid()", &[]).await.unwrap().get(0);
         drop(first);
@@ -270,7 +270,7 @@ mod tests {
     #[tokio::test]
     async fn idle_timeout_evicts_old_connection_on_checkout() {
         let pool = ConnectionPool::new(
-            spike_v2_read::DB_URL,
+            aip_test_support::test_database_url!(),
             PoolOptions { max_size: 1, idle_timeout: Duration::from_millis(20), ..PoolOptions::default() },
         )
         .unwrap();
@@ -298,7 +298,7 @@ mod tests {
 
     #[tokio::test]
     async fn canceled_query_lease_is_discarded() {
-        let pool = ConnectionPool::new(spike_v2_read::DB_URL, PoolOptions { max_size: 1, ..PoolOptions::default() }).unwrap();
+        let pool = ConnectionPool::new(aip_test_support::test_database_url!(), PoolOptions { max_size: 1, ..PoolOptions::default() }).unwrap();
         let first = pool.acquire().await.unwrap();
         let first_pid: i32 = first.query_one("SELECT pg_backend_pid()", &[]).await.unwrap().get(0);
         let query = first.query_one("SELECT pg_sleep(10)", &[]);

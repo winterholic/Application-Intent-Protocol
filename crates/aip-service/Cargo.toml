@@ -31,3 +31,4 @@ libc = "0.2"
 
 [dev-dependencies]
 uuid = { version = "1", features = ["v4"] }
+aip-test-support = { path = "../aip-test-support", features = ["strict-db"] }

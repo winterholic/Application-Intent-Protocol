@@ -59,7 +59,7 @@ async fn a_client_that_does_not_read_its_response_does_not_hold_a_pool_connectio
         facts(),
         IdWire::DecimalString,
         "127.0.0.1:0".parse().unwrap(),
-        spike_v2_read::DB_URL.into(),
+        aip_test_support::test_database_url!().into(),
         None,
         ServerOptions::default(),
         false,

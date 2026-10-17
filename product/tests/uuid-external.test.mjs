@@ -8,8 +8,11 @@ import {createInterface} from 'node:readline';
 import {once} from 'node:events';
 import {generateKeyPairSync,sign,randomUUID,createHash} from 'node:crypto';
 import {pathToFileURL} from 'node:url';
+import {requireTestDatabase,withDatabase,withUser} from '../test-support/postgres-guard.mjs';
 const root=resolve(import.meta.dirname,'../..');
 const cli=join(root,'target/debug/aip');
+// Worker-owned PostgreSQL only: the guard refuses missing, default-port and implicit libpq endpoints.
+const adminDb=requireTestDatabase({admin:true}).raw;
 function run(bin,args,env={},cwd=root) {const p=spawnSync(bin,args,{cwd,env:{...process.env,...env},encoding:'utf8',timeout:120000,maxBuffer:8<<20});assert.equal(p.status,0,`${bin} ${args.join(' ')}\n${p.stdout}\n${p.stderr}`);return p.stdout;}
 
 // Only a new, uniquely named database is touched. No .env files or saved credentials are used.
@@ -21,10 +24,10 @@ test('UUID owned and external PostgreSQL: introspect, adopt, restricted role, in
  const adopter=`aip_uuid_adopter_${process.pid}`;
  const owner=randomUUID(),other=randomUUID();
  let server;
- const sql=(text,db=dbname)=>{const file=join(temp,'fixture.sql');writeFileSync(file,text);return run('psql',['-X','-v','ON_ERROR_STOP=1','-d',`host=localhost dbname=${db}`,'-f',file]);};
- const admin=`host=localhost dbname=${dbname}`;
- const runtime=`host=localhost dbname=${dbname} user=${role}`;
- const migration=`host=localhost dbname=${dbname} user=${adopter}`;
+ const sql=(text,db=dbname)=>{const file=join(temp,'fixture.sql');writeFileSync(file,text);return run('psql',['-X','-v','ON_ERROR_STOP=1','-d',withDatabase(adminDb,db),'-f',file]);};
+ const admin=withDatabase(adminDb,dbname);
+ const runtime=withUser(admin,role);
+ const migration=withUser(admin,adopter);
  const cmd=(config,args,extra={})=>JSON.parse(run(cli,['service',...(['principal','audit'].includes(args[0])?[args[0],'--config',config,...args.slice(1)]:['check','gen'].includes(args[0])?args:[...args,'--config',config])],{AIP_UUID_DB:runtime,AIP_UUID_MIGRATION:migration,...extra},temp));
  try {
   sql(`CREATE DATABASE ${dbname};`, 'postgres');

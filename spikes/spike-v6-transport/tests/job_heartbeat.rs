@@ -31,7 +31,7 @@ impl Authenticator for Auth {
         g: &'a DurablePrincipal,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), AuthError>> + Send + 'a>> {
         Box::pin(async move {
-            let db = spike_v2_read::connect_owned_with_url(spike_v2_read::DB_URL).await.map_err(|_| AuthError::Unavailable)?;
+            let db = spike_v2_read::connect_owned_with_url(aip_test_support::test_database_url!()).await.map_err(|_| AuthError::Unavailable)?;
             let row = db
                 .query_opt(
                     &format!("SELECT enabled,min_iat FROM {}.aip_principals WHERE issuer=$1 AND subject=$2 AND actor_id=$3", self.schema),
@@ -71,8 +71,8 @@ async fn a_short_database_outage_does_not_restart_a_running_job() {
     let schema = format!("aip_heartbeat_{}", std::process::id());
     sqlgen::try_set_schema(&schema).unwrap();
     let facts = load_str(include_str!("fixtures/jobs.aip"), Form::A).unwrap().execution;
-    aip_migrate::init_with_wire(spike_v2_read::DB_URL, &schema, &facts, "safe").await.unwrap();
-    let db = spike_v2_read::connect_owned_with_url(spike_v2_read::DB_URL).await.unwrap();
+    aip_migrate::init_with_wire(aip_test_support::test_database_url!(), &schema, &facts, "safe").await.unwrap();
+    let db = spike_v2_read::connect_owned_with_url(aip_test_support::test_database_url!()).await.unwrap();
     db.batch_execute(&format!(
         "INSERT INTO {schema}.aip_actors VALUES(1); INSERT INTO {schema}.aip_principals(issuer,subject,actor_id) VALUES('test','owner',1)"
     ))
@@ -85,7 +85,7 @@ async fn a_short_database_outage_does_not_restart_a_running_job() {
         facts.clone(),
         IdWire::SafeNumber,
         "127.0.0.1:0".parse().unwrap(),
-        spike_v2_read::DB_URL.into(),
+        aip_test_support::test_database_url!().into(),
         Some(ReadExtensions { lang: WorkerLang::Node, dir: concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/jobs").into() }),
         ServerOptions::default(),
         false,
@@ -101,7 +101,7 @@ async fn a_short_database_outage_does_not_restart_a_running_job() {
     // The worker sleeps for 5 seconds. Hold the deployment lock exclusively for 3: the heartbeat's shared lock waits 2s
     // (its lock_timeout) and fails once, exactly what a migration in progress does.
     tokio::time::sleep(Duration::from_millis(700)).await;
-    let blocker = spike_v2_read::connect_owned_with_url(spike_v2_read::DB_URL).await.unwrap();
+    let blocker = spike_v2_read::connect_owned_with_url(aip_test_support::test_database_url!()).await.unwrap();
     blocker.query_one("SELECT pg_advisory_lock(1095323725,hashtext($1))", &[&schema]).await.unwrap();
     tokio::time::sleep(Duration::from_millis(3000)).await;
     blocker.query_one("SELECT pg_advisory_unlock(1095323725,hashtext($1))", &[&schema]).await.unwrap();

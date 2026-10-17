@@ -124,7 +124,7 @@ async fn otlp_exporter_receives_traces_and_metrics_with_correlated_trace_id() {
         facts,
         IdWire::SafeNumber,
         "127.0.0.1:0".parse().unwrap(),
-        spike_v2_read::DB_URL.into(),
+        aip_test_support::test_database_url!().into(),
         None,
         ServerOptions::default(),
         false,

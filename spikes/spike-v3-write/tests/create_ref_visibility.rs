@@ -35,7 +35,7 @@ async fn a_created_row_may_only_reference_rows_the_caller_can_read() {
     let schema =
         format!("aip_create_ref_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
     sqlgen::set_schema(&schema);
-    let mut db = connect_with_url("host=localhost dbname=postgres").await.unwrap();
+    let mut db = connect_with_url(aip_test_support::test_database_url!()).await.unwrap();
     for statement in sqlgen::create_ddl_in(&schema, &facts).unwrap() {
         db.batch_execute(&statement).await.unwrap();
     }

@@ -17,6 +17,9 @@ tokio = { version = "1.53.1", features = ["rt", "rt-multi-thread", "macros", "ti
 tokio-postgres = "0.7.18"
 spike-v3-write = { path = "../spike-v3-write" }
 
+[dev-dependencies]
+aip-test-support = { path = "../../crates/aip-test-support", features = ["strict-db"] }
+
 # 전체 DWARF 대신 줄 정보만 남겨 target 용량을 줄인다.
 [profile.dev]
 debug = "line-tables-only"

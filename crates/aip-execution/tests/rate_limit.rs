@@ -3,7 +3,7 @@ use std::time::Duration;
 
 #[tokio::test]
 async fn separate_connections_share_an_atomic_limit_and_expired_windows_reset() {
-    let (mut db, driver) = tokio_postgres::connect("host=localhost dbname=postgres", tokio_postgres::NoTls).await.unwrap();
+    let (mut db, driver) = tokio_postgres::connect(aip_test_support::test_database_url!(), tokio_postgres::NoTls).await.unwrap();
     let task = tokio::spawn(driver);
     let schema = format!("aip_rate_{}", std::process::id());
     db.batch_execute(&format!("CREATE SCHEMA {schema}")).await.unwrap();
@@ -13,7 +13,7 @@ async fn separate_connections_share_an_atomic_limit_and_expired_windows_reset() 
     for _ in 0..3 {
         assert_eq!(limiter.check(&mut db, "principal-a", "read", policy).await.unwrap(), Decision::Allowed);
     }
-    let (mut other, other_driver) = tokio_postgres::connect("host=localhost dbname=postgres", tokio_postgres::NoTls).await.unwrap();
+    let (mut other, other_driver) = tokio_postgres::connect(aip_test_support::test_database_url!(), tokio_postgres::NoTls).await.unwrap();
     let other_task = tokio::spawn(other_driver);
     assert!(matches!(limiter.check(&mut other, "principal-a", "read", policy).await.unwrap(), Decision::Limited { retry_after_ms: 1..=60000 }));
     assert_eq!(limiter.check(&mut other, "principal-b", "read", policy).await.unwrap(), Decision::Allowed);
@@ -33,7 +33,7 @@ fn invalid_policies_and_schema_are_rejected() {
 }
 
 async fn full_limiter(label: &str, reset_at: &str) -> (tokio_postgres::Client, tokio::task::JoinHandle<()>, RateLimiter, String) {
-    let (db, driver) = tokio_postgres::connect("host=localhost dbname=postgres", tokio_postgres::NoTls).await.unwrap();
+    let (db, driver) = tokio_postgres::connect(aip_test_support::test_database_url!(), tokio_postgres::NoTls).await.unwrap();
     let task = tokio::spawn(async move {
         let _ = driver.await;
     });

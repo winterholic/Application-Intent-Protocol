@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { requireTestDatabase } from '../../../product/test-support/postgres-guard.mjs';
 import pg from 'pg';
 import type { Analysis } from '../src/analyzer.ts';
 import { compileSource, hasErrors } from '../src/compile.ts';
@@ -9,8 +10,10 @@ import { migrate } from '../src/schema.ts';
 export const SHOP = new URL('../examples/shop/app.aipoc', import.meta.url).pathname;
 export const SHOP_SRC = readFileSync(SHOP, 'utf8');
 
-const ADMIN_URL = process.env.AIP_TEST_ADMIN_URL ?? 'postgres://localhost/postgres';
-const TEST_DB = process.env.AIP_TEST_DB ?? 'aip_test';
+const ADMIN_URL = requireTestDatabase({admin: true});
+const TEST_URL = requireTestDatabase();
+const TEST_DB = process.env.AIP_TEST_DB ?? TEST_URL.dbname;
+if (TEST_DB !== TEST_URL.dbname) throw new Error('AIP_TEST_DB must match the database in AIP_TEST_DATABASE_URL');
 
 export function compileOk(src: string, file = 'test.aipoc'): Analysis {
   const { analysis, diagnostics } = compileSource(src, file);
@@ -19,14 +22,12 @@ export function compileOk(src: string, file = 'test.aipoc'): Analysis {
 }
 
 export async function freshDb(a: Analysis): Promise<pg.Pool> {
-  const admin = new pg.Client({ connectionString: ADMIN_URL });
+  const admin = new pg.Client({ connectionString: ADMIN_URL.raw });
   await admin.connect();
   const { rows } = await admin.query('SELECT 1 FROM pg_database WHERE datname = $1', [TEST_DB]);
   if (!rows.length) await admin.query(`CREATE DATABASE "${TEST_DB}"`);
   await admin.end();
-  const url = new URL(ADMIN_URL);
-  url.pathname = `/${TEST_DB}`;
-  const pool = new pg.Pool({ connectionString: url.toString(), max: 20 });
+  const pool = new pg.Pool({ connectionString: TEST_URL.raw, max: 20 });
   const c = await pool.connect();
   try {
     await migrate(c, a.model, { reset: true });

@@ -106,7 +106,7 @@ async fn oversized_write_worker_frame_rolls_back_ctx_changes_and_next_call_commi
         Err(diags) => panic!("invalid test AIP: {diags:?}"),
     };
     let mut failures = Vec::new();
-    let mut db = match connect_with_url("host=localhost dbname=postgres").await {
+    let mut db = match connect_with_url(aip_test_support::test_database_url!()).await {
         Ok(client) => client,
         Err(spike_v2_read::ConnectError::Postgres(error)) => panic!("local PostgreSQL connection failed: {}", pg_error_code(&error)),
         Err(_) => panic!("local PostgreSQL connection policy or TLS configuration failed"),

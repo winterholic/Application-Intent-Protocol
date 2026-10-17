@@ -2,7 +2,7 @@
 //!
 //! Each rule here writes the same field, so the final value shows which rule ran last. The names are chosen
 //! so that declaration order, alphabetical order and the order of the rule table's rows all differ.
-//! Requires a local PostgreSQL; set AIP_TEST_ADMIN_URL to override `postgres://localhost/postgres`.
+//! Requires explicit AIP_TEST_DATABASE_URL and AIP_TEST_ADMIN_URL values for a worker-owned isolated PostgreSQL.
 
 mod common;
 

@@ -22,7 +22,7 @@ impl Drop for SchemaCleanup {
         let cleanup = std::thread::spawn(move || {
             let Ok(runtime) = tokio::runtime::Builder::new_current_thread().enable_all().build() else { return };
             runtime.block_on(async move {
-                if let Ok(db) = spike_v2_read::connect_owned_with_url(spike_v2_read::DB_URL).await {
+                if let Ok(db) = spike_v2_read::connect_owned_with_url(aip_test_support::test_database_url!()).await {
                     let _ = db.batch_execute(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE")).await;
                 }
             });
@@ -62,12 +62,12 @@ async fn readiness_tracks_database_and_deployment_while_liveness_stays_up() {
     sqlgen::try_set_schema(&schema).unwrap();
     let _cleanup = SchemaCleanup(schema.clone());
     let facts = load_str(include_str!("fixtures/job-data.aip"), Form::A).unwrap().execution;
-    aip_migrate::init_with_wire(spike_v2_read::DB_URL, &schema, &facts, "safe").await.unwrap();
+    aip_migrate::init_with_wire(aip_test_support::test_database_url!(), &schema, &facts, "safe").await.unwrap();
     let server = listen_with_managed(
         facts.clone(),
         IdWire::SafeNumber,
         "127.0.0.1:0".parse().unwrap(),
-        spike_v2_read::DB_URL.into(),
+        aip_test_support::test_database_url!().into(),
         None,
         ServerOptions::default(),
         false,
@@ -91,7 +91,7 @@ async fn readiness_tracks_database_and_deployment_while_liveness_stays_up() {
     assert!(head.contains("allow: get, head"));
 
     // After another deployment migrates the schema, this instance must leave the load balancer.
-    let db = spike_v2_read::connect_owned_with_url(spike_v2_read::DB_URL).await.unwrap();
+    let db = spike_v2_read::connect_owned_with_url(aip_test_support::test_database_url!()).await.unwrap();
     db.batch_execute(&format!("UPDATE {schema}.aip_migrate_meta SET facts_digest='{}'", "0".repeat(64))).await.unwrap();
     let (status, _, body) = request(addr, "GET", "/ready").await;
     assert_eq!((status, body["code"].as_str()), (503, Some("WIRE.DEPLOYMENT_CHANGED")), "{body}");
@@ -125,12 +125,12 @@ async fn a_probe_does_not_queue_behind_a_stuck_readiness_check() {
     sqlgen::try_set_schema(&schema).unwrap();
     let _cleanup = SchemaCleanup(schema.clone());
     let facts = load_str(include_str!("fixtures/job-data.aip"), Form::A).unwrap().execution;
-    aip_migrate::init_with_wire(spike_v2_read::DB_URL, &schema, &facts, "safe").await.unwrap();
+    aip_migrate::init_with_wire(aip_test_support::test_database_url!(), &schema, &facts, "safe").await.unwrap();
     let server = listen_with_managed(
         facts.clone(),
         IdWire::SafeNumber,
         "127.0.0.1:0".parse().unwrap(),
-        spike_v2_read::DB_URL.into(),
+        aip_test_support::test_database_url!().into(),
         None,
         ServerOptions::default(),
         false,
@@ -145,7 +145,7 @@ async fn a_probe_does_not_queue_behind_a_stuck_readiness_check() {
     assert_eq!(request(addr, "GET", "/ready").await.0, 200, "a first answer exists to fall back on");
 
     // The check reads aip_migrate_meta; an exclusive lock held by another session makes that read wait.
-    let blocker = spike_v2_read::connect_owned_with_url(spike_v2_read::DB_URL).await.unwrap();
+    let blocker = spike_v2_read::connect_owned_with_url(aip_test_support::test_database_url!()).await.unwrap();
     blocker.batch_execute(&format!("BEGIN; LOCK TABLE {schema}.aip_migrate_meta IN ACCESS EXCLUSIVE MODE")).await.unwrap();
     let stuck = tokio::spawn(async move { request(addr, "GET", "/ready").await });
     tokio::time::sleep(Duration::from_millis(400)).await;

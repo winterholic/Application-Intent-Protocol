@@ -62,7 +62,7 @@ fn result_label(result: Result<Value, spike_v2_read::plan::Reject>) -> (String, 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn worker_bounds_stdout_frames_and_drains_large_stderr_lines() {
     let facts = facts();
-    let mut db = connect_with_url("host=localhost dbname=postgres").await.expect("local PostgreSQL connection");
+    let mut db = connect_with_url(aip_test_support::test_database_url!()).await.expect("local PostgreSQL connection");
     let caller = Caller { actor_id: None, now: NOW.into() };
     let official_ext_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/extensions");
     let frame_limits = limits(256, 128);

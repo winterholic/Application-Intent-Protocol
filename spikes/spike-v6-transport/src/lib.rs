@@ -1456,7 +1456,7 @@ async fn start_with_fingerprint(facts: Value, wire: IdWire, contract_fingerprint
             realtime_slots: tokio::sync::Semaphore::new(32),
             realtime_preauth: tokio::sync::Semaphore::new(32),
             object_slots: tokio::sync::Semaphore::new(4),
-            db_url: spike_v2_read::DB_URL.into(),
+            db_url: spike_v2_read::test_database_url().into(),
             broker: None,
             enable_file_uploads: false,
             fault_injection: true,

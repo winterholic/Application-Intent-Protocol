@@ -14,9 +14,11 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import tls from "node:tls";
 import { fileURLToPath } from "node:url";
+import { requireTestDatabase } from "../test-support/postgres-guard.mjs";
 
 const repoDir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const testDatabase = "host=localhost dbname=postgres";
+const testDb = requireTestDatabase();
+const testDatabase = testDb.raw;
 const issuer = "https://issuer.example";
 const audience = "aip-api";
 const allowedOrigin = "https://app.example.test";

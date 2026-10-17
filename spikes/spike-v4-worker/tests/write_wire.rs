@@ -48,7 +48,7 @@ async fn write_wire_preserves_ctx_ids_and_rejects_outputs_before_commit() {
     unsafe_facts["resources"]["Event"]["extensions"]["run"]["implementation"] = json!("write.unsafe");
     let schema = format!("aip_write_wire_{unique}");
     sqlgen::set_schema(&schema);
-    let mut db = connect_with_url("host=localhost dbname=postgres").await.expect("local PostgreSQL");
+    let mut db = connect_with_url(aip_test_support::test_database_url!()).await.expect("local PostgreSQL");
     let ddl = sqlgen::create_ddl(&facts).unwrap();
     db.batch_execute(&ddl[0]).await.expect("fresh schema ownership");
     let mut failures = vec![];

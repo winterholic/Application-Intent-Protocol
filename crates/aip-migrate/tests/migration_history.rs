@@ -5,9 +5,11 @@ use serde_json::{Value, json};
 use spike_v1_fixture::{Form, load_str};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-const DB: &str = "host=localhost dbname=postgres";
+const DB: &str = aip_test_support::test_database_url!();
 // The migration runs in a session whose TimeZone is far from UTC.
-const DB_SEOUL: &str = "host=localhost dbname=postgres options='-c TimeZone=Asia/Seoul'";
+fn db_seoul() -> String {
+    aip_test_support::database_url_with_option(aip_test_support::test_database_url!(), "options", "-c TimeZone=Asia/Seoul")
+}
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
 struct OwnedSchema(String);
@@ -74,7 +76,7 @@ async fn time_to_date_conversion_uses_utc_whatever_the_session_time_zone() {
     let mut after = before.clone();
     after["resources"]["Member"]["fields"]["seen"] = json!({"ty":"Date?"});
     let conversion = Some(json!({"convert":[{"resource":"Member","field":"seen","to":"Date?"}]}));
-    step(DB_SEOUL, &schema.0, &after, &conversion).await.expect("Time -> Date");
+    step(&db_seoul(), &schema.0, &after, &conversion).await.expect("Time -> Date");
     let date: String = db.query_one(&format!("SELECT seen::text FROM {}.member WHERE id=1", schema.0), &[]).await.unwrap().get(0);
     assert_eq!(date, "2026-10-13", "the date of the instant in UTC, not in the migrating session's zone");
 }
@@ -90,7 +92,7 @@ async fn date_to_time_conversion_is_midnight_utc_whatever_the_session_time_zone(
     let mut after = before.clone();
     after["resources"]["Member"]["fields"]["since"] = json!({"ty":"Time?"});
     let conversion = Some(json!({"convert":[{"resource":"Member","field":"since","to":"Time?"}]}));
-    step(DB_SEOUL, &schema.0, &after, &conversion).await.expect("Date -> Time");
+    step(&db_seoul(), &schema.0, &after, &conversion).await.expect("Date -> Time");
     let instant: String = db
         .query_one(&format!("SELECT to_char(since AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS') FROM {}.member WHERE id=1", schema.0), &[])
         .await

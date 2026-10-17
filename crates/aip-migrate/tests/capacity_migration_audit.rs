@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 use spike_v1_fixture::{Form, load_str};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-const DB: &str = "host=localhost dbname=postgres";
+const DB: &str = aip_test_support::test_database_url!();
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
 struct OwnedSchema(String);

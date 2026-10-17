@@ -16,7 +16,7 @@ use tokio::{
     process::{Child, Command},
 };
 
-const DB: &str = "host=localhost dbname=postgres";
+const DB: &str = aip_test_support::test_database_url!();
 
 async fn product_output(config: &Path, args: &[&str]) -> std::process::Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_aip"));

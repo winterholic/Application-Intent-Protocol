@@ -61,7 +61,7 @@ async fn write_slots_deadlines_and_shutdown_release_children_and_uncommitted_eff
     let schema = format!("aip_write_lifetime_{unique}");
     sqlgen::set_schema(&schema);
     let facts = load_str(include_str!("fixtures/write-extension.aip"), Form::A).unwrap().execution;
-    let db = connect_with_url("host=localhost dbname=postgres").await.unwrap();
+    let db = connect_with_url(aip_test_support::test_database_url!()).await.unwrap();
     let ddl = sqlgen::create_ddl(&facts).unwrap();
     db.batch_execute(&ddl[0]).await.expect("fresh schema ownership");
     let mut failures = vec![];
@@ -75,7 +75,7 @@ async fn write_slots_deadlines_and_shutdown_release_children_and_uncommitted_eff
             let quoted=serde_json::to_string(root.to_str().unwrap()).unwrap();
             fs::write(root.join("write.mjs"),format!("import fs from 'node:fs';\nconst root={quoted};\nexport async function run(input,ctx){{const r=await ctx.data.apply('Event','mark',[input.id]);fs.appendFileSync(root+'/pids',process.pid+'\\n');if(!fs.existsSync(root+'/finish')){{while(true){{}}}}return {{id:r.changed[0]??r.unchanged[0],count:1}};}}\n")).unwrap();
             fs::write(root.join("write.py"),format!("import os\nfrom pathlib import Path\nroot=Path({quoted})\nasync def run(input,ctx):\n    r=await ctx.data.apply('Event','mark',[input['id']])\n    with (root/'pids').open('a') as f: f.write(str(os.getpid())+'\\n')\n    if not (root/'finish').exists():\n        while True: pass\n    return {{'id':(r['changed']+r['unchanged'])[0],'count':1}}\n")).unwrap();
-            let server=listen_with_prototype_launch(facts.clone(),IdWire::SafeNumber,"127.0.0.1:0".parse().unwrap(),"host=localhost dbname=postgres".into(),Some(ReadExtensions{lang,dir:root.clone()}),ServerOptions::default(),true,
+            let server=listen_with_prototype_launch(facts.clone(),IdWire::SafeNumber,"127.0.0.1:0".parse().unwrap(),aip_test_support::test_database_url!().into(),Some(ReadExtensions{lang,dir:root.clone()}),ServerOptions::default(),true,
                 // The fixture writes PID logs and spawns busy loops, which the default macOS worker sandbox forbids.
                 spike_v4_worker::WorkerLaunchConfig{isolation:spike_v4_worker::Isolation::None,..Default::default()}).await.unwrap();
             let fp=contract_fingerprint_with_all_extensions(&facts,IdWire::SafeNumber);
