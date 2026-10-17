@@ -89,8 +89,130 @@ Codex 작업 세션이 취소된 7개 브랜치를 이어받아 main에 통합�
 - `Kind::Io`는 연결 task 안에서만 생기고 호출자에게는 `Closed`로 전달된다. RST를 보내는 테스트도 호출자에게는 `Closed`로 보였다. 따라서 `Io` 자체의 호출자 쪽 재현은 못 했다. 표시 문구 비교는 tokio-postgres 0.7.18 기준이며, 그 문구가 바뀌면 해석 불가·예상 밖 응답 테스트가 깨지도록 했다.
 - 서버가 보내는 SQLSTATE 08·57P01(관리자 종료) 오류는 분류에 넣지 않았다. `pg_terminate_backend` 재현에서도 호출자는 FATAL 대신 `Closed`를 받아 그 경로를 만들 수 없었다.
 - COMMIT 호출 직전의 `is_closed` 검사와 실제 전송 사이의 짧은 경합에서 닫히면 `COMMIT_UNKNOWN`(보수적 쪽)으로 보고된다.
-- 이 보강은 `/apply` 핵심 경로(`apply_attempt`)만 고쳤다. 같은 COMMIT 분류가 필요할 수 있는 다른 경로는 실행하지 않았다: `write_extension.rs`(`classify_write_error("커밋", ..)`), `spike-v4-worker/src/write.rs`, `spike-v3-write/src/lib.rs`의 COMMIT, `durable.rs`.
+- 이 보강은 `/apply` 핵심 경로(`apply_attempt`)만 고쳤다. 같은 COMMIT 분류가 필요할 수 있는 다른 경로는 이 절에서 실행하지 않았다(다음 절 "WBS 8.9 나머지 COMMIT 경로"에서 실행했다): `write_extension.rs`(`classify_write_error("커밋", ..)`), `spike-v4-worker/src/write.rs`, `spike-v3-write/src/lib.rs`의 COMMIT, `durable.rs`.
 - COMMIT 전 단계에서 쓰기 엔진이 오류 원본을 지운 거절은 서버 FATAL(57P01 등)이면 `WIRE.INTERNAL`로 남는다.
+- GPT 독립 검증 전이다. 완료가 아니라 "독립 검증 대기"다.
+
+## WBS 8.9 나머지 COMMIT 경로와 spike-v6 사전 실패 (2026-10-18, Claude 구현 / 독립 검증 대기)
+
+앞 절의 분류 규칙을 `write_extension.rs`, `spike-v4-worker/src/write.rs`, `spike-v3-write/src/lib.rs`, `durable.rs`에 적용하고, spike-v6의 사전 실패 세 가지를 조사했다. 이 회차의 구현과 실행은 같은 Run의 Claude이고 별도 문맥의 독립 검증은 아직 없다. DB 테스트는 이 Run이 만든 PostgreSQL 17.11 컨테이너(`aip-pg-wbs89b-1018003521-51030`, `127.0.0.1:32787`, DB `aip_test_wbs89b_1018003521_51030`)에서만 실행했고 공유 `127.0.0.1:5432`에는 접속하지 않았다. 저장소의 DSN 가드(`aip-test-support`)가 켜진 상태다. 컨테이너는 이 Run이 띄웠고 작업이 끝난 뒤 정리했다.
+
+### spike v3·v4를 고친 근거
+
+세 spike는 실험 코드지만 제품 경로다. `aip-service`와 `aip-auth`, `aip-cli`가 `spike-v6-transport`를 path dependency로 쓰고, v6는 다시 v3·v4를 쓴다. README도 "독립 spike의 검증된 엔진을 path dependency로 재사용한다"고 적는다. 그래서 문서화만 하지 않고 고쳤다.
+
+### 공통 함수
+
+a5774b3의 판정(`connection_failed`, `lost_before_commit`, 거절 재분류, COMMIT 전송과 분류)은 v6 `lib.rs`에만 있었다. 의존 방향이 v6, v4, v3 순이라 가장 아래인 `spike-v3-write`로 옮겼고 v4와 v6는 그것을 쓴다.
+
+| 함수 | 역할 |
+|---|---|
+| `connection_failed(&Error)` | SQLSTATE가 없고 `is_closed`이거나 Io·UnexpectedMessage·Parse 문구인 오류 |
+| `lost_before_commit()` | COMMIT 전에 연결을 잃은 실패(`WIRE.DB_UNAVAILABLE`) |
+| `before_commit_rejection(&tx, Reject)` | 쓰기 엔진이 오류 원본을 지운 `WIRE.INTERNAL` 거절이 연결이 닫힌 뒤의 것이면 `DB_UNAVAILABLE`로 바꿈 |
+| `send_commit(tx, on_send)` | 연결이 이미 닫혔으면 `NotSent`, COMMIT을 보낸 뒤 연결 오류면 `Unknown`, 서버가 SQLSTATE로 거절하면 `Rejected(e)`. `on_send`는 보내기 직전에만 불려 결과 불명 표지를 올린다 |
+
+v6 `/apply`(`commit_attempt`)도 같은 `send_commit`을 쓰도록 바꿨다. 앞 절의 `commit_unknown_wire` 11개는 리팩터링 뒤에도 그대로 통과했다.
+
+### 경로별 적용
+
+| 경로 | COMMIT 전 연결 끊김 | COMMIT 전송 뒤 끊김·해석 불가 | 서버 거절 |
+|---|---|---|---|
+| v3 `apply`·`bundle`·`compose`(`commit`, 세 진입점) | `WIRE.DB_UNAVAILABLE`(수정 전 `WIRE.INTERNAL`) | `WIRE.COMMIT_UNKNOWN`(수정 전 `WIRE.INTERNAL`) | 기존 코드 유지 |
+| v4 `invoke_write` | `WIRE.DB_UNAVAILABLE`. 확장이 ctx 쓰기 중 연결을 잃은 경우도 포함(수정 전 `WIRE.EXTENSION_ERROR`) | `WIRE.COMMIT_UNKNOWN`(수정 전 `WIRE.INTERNAL`) | 기존 코드 유지 |
+| v6 `write_extension::apply` | `WIRE.DB_UNAVAILABLE`(수정 전 `WIRE.INTERNAL`) | `WIRE.COMMIT_UNKNOWN`(수정 전 `WIRE.INTERNAL`) | 기존 코드 유지 |
+| v6 `durable.rs` 쓰기 요청 COMMIT 두 곳(job 접수·파일·메시지 handler, trigger 접수) | 같다(이미 `DB_UNAVAILABLE`). COMMIT이 나가지 못한 경우만 `DB_UNAVAILABLE`로 바꿈(수정 전 `COMMIT_UNKNOWN`) | `WIRE.COMMIT_UNKNOWN`(같다) | 기존 `COMMIT_UNKNOWN`을 유지(넓히지도 좁히지도 않음) |
+| v6 `durable.rs` managed effect journal COMMIT(데이터 apply·파일·이벤트·메시지) | `WIRE.DB_UNAVAILABLE`. 이제 job이 이 코드로 재시도된다(수정 전에는 확장 오류로 `FAILED`) | `WIRE.COMMIT_UNKNOWN`으로 job 종료(수정 전 `FAILED`와 `WIRE.EXTENSION_ERROR`) | `WIRE.DB_UNAVAILABLE`(기존) |
+
+durable.rs의 나머지 COMMIT 지점은 바꾸지 않았다. 이유는 지점별로 다르다.
+
+- 읽기 전용이거나 principal 확인만 하는 트랜잭션(`guard`, 하트비트, 읽기 op, 파일 get, 재생 조회)과 만료 정리(GC)는 쓰기 결과를 호출자에게 보고하지 않거나 멱등이다.
+- 워커 내부에서 로그만 남기는 지점(job 결과·취소·admission 기록)은 이미 오류를 모두 같은 로그로 남기며 임대 만료가 복구한다.
+- HTTP effect의 journal(PENDING·UNKNOWN·SUCCEEDED 표시) COMMIT은 `status` 응답이 PENDING·UNKNOWN 행을 `WIRE.EFFECT_UNKNOWN`으로 덮어 보여 주는 별도 장치가 있다. 이 장치를 대체하지 않으려고 바꾸지 않았다.
+- 자식 job·operation 결과 기록(`state=$3,result=$4`)과 업무 거절 기록(`reject_data_effect`)은 재현하지 않아 바꾸지 않았다. 후자는 데이터가 바뀌지 않는다.
+
+managed effect journal의 변경은 제품 동작 변경이다. 두 가지가 바뀐다. 하나는 COMMIT을 보낸 뒤 응답을 잃으면 job이 확장 오류가 아니라 `WIRE.COMMIT_UNKNOWN`으로 끝나는 것이다(`FAILED`이지만 쓰기는 커밋됐을 수 있고, 자동 재시도하지 않는다). 다른 하나는 `WIRE.DB_UNAVAILABLE`을 job host가 확장에 넘기지 않고 job 시도 실패로 올려, 이미 있던 재시도 규칙(`retryable`)이 적용되는 것이다. `product/MANAGED-EXECUTION.md`의 "DB 장애는 아무것도 commit하지 않았으므로 ... 다시 시도할 수 있다"는 기존 문서 문장을 코드가 처음으로 지킨다. 확장이 `catch`로 DB 장애를 직접 처리하던 job은 이제 그 오류를 받지 못하고 시도 전체가 재시도된다. 이 동작 변경은 독립 검증에서 따로 봐야 한다.
+
+### 테스트 도구
+
+장애 지점마다 같은 TCP proxy가 필요해서 `crates/aip-test-fault-proxy`를 새로 만들었다. 테스트 DB 가드(`aip-test-support`)가 허용한 endpoint 앞에만 서고, 한 번만 장애를 일으킨다. 장애는 COMMIT 성공 응답 삭제(FIN·RST), COMMIT을 서버에 전달하지 않고 닫기, COMMIT 응답을 다른 메시지로 바꾸기, 지정 문장이 끝난 직후 닫기가 있고, COMMIT 단계 장애는 지정한 문장을 보낸 연결에서만 일으킬 수 있다(서버 배경 작업의 COMMIT이 장애를 먼저 쓰지 못하게 한다). 앞 절의 `commit_unknown_wire` 테스트는 자체 proxy를 그대로 쓴다.
+
+### 실행 결과
+
+모든 명령은 `/tmp/aip-wbs89b-20261018`(이 회차 worktree)에서 실행했다. spike 명령은 해당 `spikes/<crate>` 디렉터리에서 `cargo test --locked`다.
+
+| 대상 | red | green |
+|---|---|---|
+| v3 `commit_classification`(`apply`·`bundle`·`compose`) | 14개 중 12 failed(`WIRE.INTERNAL`, 구현 전). 통과 2개는 서버 거절 코드 유지와 판정 함수 대조 | 구현 뒤 14 passed. 이후 compose 3개와 BEGIN 단절 1개를 더해 18 passed |
+| v4 `commit_classification` | 9개 중 8 failed(`write.rs`를 HEAD로 되돌려 실행). 통과 1개는 서버 거절 코드 유지 | 9 passed. BEGIN 단절을 더해 10 passed |
+| v6 `write_extension_commit_classification` | 10개 중 8 failed(`write_extension.rs`를 HEAD로 되돌려 실행). 통과 2개는 서버 거절 코드 유지와, v4 수정이 이미 해결한 확장 쓰기 중 단절 | 10 passed. BEGIN 단절과 확장 세션 설정 단절을 더해 12 passed |
+| v6 `durable.rs` 단위 `commit_request_on_an_already_closed_connection_is_db_unavailable` | 스텁을 수정 전 동작으로 두고 1 failed(`COMMIT_UNKNOWN`) | 통과 |
+| v6 `durable_commit_classification`(HTTP `/jobs/enqueue`, 4개) | 처음부터 4 passed. 수정 전 코드도 이 단절 지점들은 이미 규칙대로였고, 이 테스트는 그 동작을 고정한다 | 4 passed |
+| v6 `durable_job_commit_loss`(job의 데이터 apply COMMIT 손실 2개, 전이 UPDATE 직후 단절 1개) | 3개 모두 failed(`WIRE.EXTENSION_ERROR`로 끝남. COMMIT 응답 손실 시에도 데이터는 커밋됨) | 3 passed(`COMMIT_UNKNOWN` 2개, 재시도 뒤 `SUCCEEDED`·시도 2회·쓰기 1회 1개) |
+| v6 `commit_unknown_wire`(앞 절) | 리팩터링 뒤에도 11 passed | BEGIN 단절 1개를 더해 12 passed |
+| 전체: v3, v4, v6 각 `cargo test --locked --no-fail-fast` | | v3 51 passed, v4 72 passed(1 ignored), v6 217 passed, 모두 0 failed |
+
+### 변이 확인
+
+분류를 되돌리거나 넓히는 변이를 하나씩 넣고 관련 스위트(v3·v4·v6)를 다시 실행했다. 20개 변이가 모두 실패로 잡혔다(killed). 처음 실행에서 살아남은 M9와 M12는 해당 지점을 겨냥한 테스트(v4의 `START TRANSACTION` 단절, v6 `write_extension`에서 v4가 보내는 세션 설정 문장 단절)를 더한 뒤 잡혔다. M19도 같은 방식으로 v6 `commit_unknown_wire`에 `START TRANSACTION` 단절 테스트를 더해 확인했다.
+
+| 변이 | 잡은 스위트와 실패 수 |
+|---|---|
+| M1 `connection_failed`에서 문구 판정 제거 | v3 2, v4 2, v6 4 |
+| M2 `send_commit`의 이미 닫힘 검사 제거 | v3 3, v4 1, v6 1, v6 lib 2 |
+| M3 `send_commit`이 전송 뒤 연결 오류를 서버 거절로 취급 | v3 8, v4 5, v6 13 |
+| M4 `before_commit_rejection`이 거절을 바꾸지 않음 | v3 3, v4 2, v6 2 |
+| M5 `connection_failed`가 항상 참 | v3 2, v4 1, v6 4 |
+| M6 v3 `begin_failure`가 항상 내부 오류 | v3 2 |
+| M7 v4 ctx 쓰기 연결 단절을 바꾸지 않음 | v4 1, v6 1 |
+| M8 v4 `invoke_write`의 거절 재분류 제거 | v4 1 |
+| M9 v4 `invoke_write`의 트랜잭션 시작 단절을 분류하지 않음 | v4 1 |
+| M10 v6 `write_extension`의 COMMIT 전 오류가 항상 `INTERNAL` | v6 4 |
+| M11 v6 `write_extension`이 전송 뒤 불명을 `DB_UNAVAILABLE`로 냄 | v6 5 |
+| M12 v6 `write_extension`이 준비 단계 거절을 재분류하지 않음 | v6 1 |
+| M13 v6 `commit_attempt`의 `NotSent`를 `COMMIT_UNKNOWN`으로 냄 | v6 1 |
+| M14 durable 쓰기 요청이 전송 뒤 불명을 `DB_UNAVAILABLE`로 냄 | v6 3 |
+| M15 durable 쓰기 요청이 `NotSent`를 `COMMIT_UNKNOWN`으로 냄 | v6 lib 1 |
+| M16 durable effect가 전송 뒤 불명을 `DB_UNAVAILABLE`로 냄 | v6 2 |
+| M17 durable effect가 `NotSent`를 `COMMIT_UNKNOWN`으로 냄 | v6 lib 1 |
+| M18 v4 job host가 `COMMIT_UNKNOWN`을 넘기지 않음 | v6 2 |
+| M19 v6 `/apply`의 트랜잭션 시작 단절을 분류하지 않음 | v6 1 |
+| M20 v4 job host가 `DB_UNAVAILABLE`을 넘기지 않음 | v6 1 |
+
+### 검사 명령
+
+| 명령 | 결과 |
+|---|---|
+| `cargo fmt --all --check` (루트) | 통과 |
+| `cargo clippy --workspace --lib --bins --locked -- -D warnings` | 통과 |
+| `cargo clippy -p aip-auth -p aip-migrate -p aip-service -p aip-test-fault-proxy -p aip-test-support --all-targets --locked -- -D warnings` | 통과 |
+| `cargo clippy -p aip-cli --features poc-runtime --bins --locked -- -D warnings` | 통과 |
+| `cargo clippy --all-targets --locked -- -D warnings` (spike-v6) | 통과 |
+| `cargo clippy --lib --test commit_classification --locked -- -D warnings` (spike-v3, spike-v4) | 각각 통과 |
+| `cargo clippy --all-targets --locked -- -D warnings` (spike-v3, spike-v4) | 실패. main(`a5774b3`)에서도 같다. v3는 `general_update` 테스트의 참조 오류 1건, v4는 lib 테스트의 `marker_processes` 미사용과 길이 비교 오류 2건이며 이번 변경 파일이 아니다 |
+| `cargo test --workspace --locked --no-fail-fast` | 405 passed, 0 failed, 5 ignored |
+| `cargo test -p aip-test-support --features strict-db --locked` | 7 passed, 0 failed |
+| `cargo test --locked --no-fail-fast` (spike-v3, spike-v4, spike-v6) | v3 51 passed, v4 72 passed(1 ignored), v6 217 passed, 모두 0 failed |
+
+워크스페이스 전체 실행에서 `aip-cli`의 `least_privilege`가 처음에 실패했다(`DB_CONNECT`). 이 Run의 컨테이너가 비밀번호 인증(`scram-sha-256`)만 받아 비밀번호 없는 `CREATE ROLE ... LOGIN` 역할이 접속하지 못한 것이고, 코드 변경 전 main(`a5774b3`)에서도 같은 실패였다. 이 Run 전용 컨테이너의 `pg_hba.conf`를 `trust`로 바꿔 다시 실행했더니 통과했고(위 405 passed), 공유 DB는 건드리지 않았다.
+
+
+### spike-v6 사전 실패 조사
+
+| 항목 | 판단 | 조치와 결과 |
+|---|---|---|
+| `write_isolation` | 제품 결함이 아니라 테스트 지원 함수 결함이다. `aip_test_support::database_url_with_option`이 URI의 option 값을 form 인코딩(`append_pair`)해 공백을 `+`로 썼다. libpq와 tokio-postgres는 URI query의 `+`를 공백으로 읽지 않아 서버가 `+default_transaction_isolation`이라는 이름의 설정으로 받고 `unrecognized configuration parameter`로 접속을 거부했다. 서버 pool이 연결을 못 얻어 `WIRE.DB_UNAVAILABLE`(pool checkout 오류)이 났다. `postgres://` 형식 DSN에서만 생기고 키워드 형식 DSN은 영향이 없다 | 값을 퍼센트 인코딩(공백은 `%20`)으로 쓰고 기존 query를 유지하도록 고쳤다. 단위 테스트(`uri_option_values_encode_spaces_as_percent_20`)는 수정 전 코드에서 failed, 수정 뒤 passed. `write_isolation` 1 passed. 같은 함수를 쓰는 `aip-migrate`의 `migration_history`도 main에서 2 failed(`DB_CONNECT`)였고 수정 뒤 3 passed |
+| pool 30ms 타임아웃 | 시간에 민감한 불안정 테스트다. `acquire_timeout`이 30ms인 pool에서 첫 `acquire()`가 새 연결을 만들면 연결 시간이 같은 30ms 기한을 쓴다. 부하가 있으면 첫 호출이 `Timeout`으로 먼저 실패했다(`pool.rs:237`의 `unwrap`). 두 번째 호출은 슬롯이 잡혀 있어 성공할 수 없으니 이 시간 의존은 불필요하다 | 연결을 idle 목록에 미리 넣어 첫 checkout이 연결을 만들지 않게 하고 두 번째 호출만 30ms 기한을 받게 했다. 최소 대기 시간 단언을 더했다. spike-v6 lib 테스트 전체를 연속 실행해 수정 전 8회 중 4회 실패, 수정 뒤 12회 중 0회 실패였다(둘 다 같은 부하의 다른 변이 실행이 겹친 상태) |
+| v12~v16 `tsc` 부재 | 환경 문제다. 이 테스트들은 `spikes/spike-0-ts/node_modules`의 `tsc`를 쓰는데 그 디렉터리는 추적되지 않는 설치물이라 새 worktree에는 없다. 주 checkout에는 있다 | 전역 설치는 하지 않았다. 저장소가 정한 경로 `npm ci --prefix spikes/spike-0-ts --ignore-scripts`로 설치(typescript 7.0.2)한 뒤 `v12_typed`, `v13_idwire`, `v14_apply`, `v15_values`, `v16_bundle` 5개가 모두 passed. 코드 변경은 없다 |
+
+### 미검증·남은 것
+
+- `Kind::Io`의 호출자 쪽 직접 재현, 서버가 보내는 SQLSTATE 08·57P01 오류의 분류는 앞 절과 같이 미실행이다.
+- `write_extension.rs`와 v4 `invoke_write`의 "COMMIT 호출 직전에 이미 닫힘" 검사는 `send_commit` 하나로 합쳤고, 그 분기는 v3의 세 경로(일시 정지 knob과 `pg_terminate_backend`), v4, v6 `commit_attempt`, durable 단위 테스트가 본다. `write_extension` 경로에서 이 분기에만 닿는 재현은 만들지 못했다(확장 뒤 멱등 INSERT가 먼저 닫힌 연결을 만난다).
+- `durable.rs`의 자식 job 결과 기록과 업무 거절 기록, GC·워커 내부 지점은 실행하지 않았다. managed effect journal에서 COMMIT 응답을 잃은 job을 운영자가 어떻게 확정하는지(명령)는 아직 없다.
+- 서버 거절 COMMIT(제약 위반·직렬화 실패)을 `durable.rs`의 쓰기 요청 경로가 `COMMIT_UNKNOWN`으로 내는 것은 기존 동작을 유지한 것이다. 확정 rollback인데 결과 불명으로 보고하는 보수적 분류이며, 바꿀지는 정하지 않았다.
+- managed effect journal의 job host 변경(`DB_UNAVAILABLE` 넘김, `COMMIT_UNKNOWN` 종료)은 제품 동작 변경이다. 이 변경이 다른 job 시나리오(HTTP effect, 중첩 job, 메시지)에 미치는 영향은 v6 전체 스위트가 통과한 범위까지만 확인했고 운영 환경은 미실행이다.
+- 다른 crate의 직접 COMMIT(`aip-runtime`, `aip-execution`, `aip-migrate`, `aip-service`의 `tx.commit()`)은 이번 범위가 아니라 분류를 확인하지 않았다. 대부분 `map_err(|_| ...)`로 오류를 종류와 상관없이 자기 코드(`COMMIT_UNSETTLED`, `JOBS_UNSETTLED` 등)나 `WIRE.COMMIT_UNKNOWN`으로 한 번에 내므로, COMMIT 전 단절을 `DB_UNAVAILABLE`로 가르는 규칙이 필요한지는 별도로 봐야 한다.
 - GPT 독립 검증 전이다. 완료가 아니라 "독립 검증 대기"다.
 
 ## WBS A: 외부 IdP·TLS reverse proxy 운영 smoke (2026-10-17)
