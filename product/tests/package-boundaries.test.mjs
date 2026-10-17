@@ -84,6 +84,39 @@ test("unchanged inputs produce a real SDK tarball and verifiable bundle manifest
   assert.ok(tar.stdout.includes("package/product/sdk/index.d.ts"));
 });
 
+test("--profile release packages the release binary, not the debug one, and a missing release build is reported", (t) => {
+  const root = fixture(t, "none", true);
+  const missing = spawnSync(process.execPath, [join(root, "product/tools/package.mjs"), "--out", join(root, "bundle"), "--profile", "release"], {
+    cwd: root, encoding: "utf8", timeout: 45_000, maxBuffer: 1024 * 1024,
+  });
+  assert.equal(missing.status, 1, missing.stdout);
+  const failure = JSON.parse(missing.stderr);
+  assert.equal(failure.code, "BINARY_MISSING");
+  assert.ok(failure.message.includes("target/release/aip"), failure.message);
+  assert.equal(existsSync(join(root, "bundle")), false);
+
+  mkdirSync(join(root, "target/release"), { recursive: true });
+  writeFileSync(join(root, "target/release/aip"), "release executable\n");
+  chmodSync(join(root, "target/release/aip"), 0o755);
+  const packaged = spawnSync(process.execPath, [join(root, "product/tools/package.mjs"), "--out", join(root, "bundle"), "--profile", "release"], {
+    cwd: root, encoding: "utf8", timeout: 45_000, maxBuffer: 1024 * 1024,
+  });
+  assert.equal(packaged.status, 0, packaged.stderr);
+  assert.equal(readFileSync(join(root, "bundle/bin/aip"), "utf8"), "release executable\n");
+  assertManifest(root, "SOURCE_SHA256SUMS", root);
+  assert.ok(readFileSync(join(root, "bundle/SOURCE_SHA256SUMS"), "utf8").includes("  crates/aip-execution/src/jobs.rs\n"));
+});
+
+test("an unknown --profile is rejected before anything is created", (t) => {
+  const root = fixture(t, "none");
+  const result = spawnSync(process.execPath, [join(root, "product/tools/package.mjs"), "--out", join(root, "bundle"), "--profile", "nightly"], {
+    cwd: root, encoding: "utf8", timeout: 45_000, maxBuffer: 1024 * 1024,
+  });
+  assert.equal(result.status, 1);
+  assert.equal(JSON.parse(result.stderr).code, "BAD_ARGS");
+  assert.equal(existsSync(join(root, "bundle")), false);
+});
+
 for (const [mutation, culprit] of [
   ["edit", "product/sdk/index.ts"],
   ["add", "spikes/spike-v5-sdk/sdk/added.ts"],

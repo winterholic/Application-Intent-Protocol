@@ -31,14 +31,18 @@ class PackageFailure extends Error {
 }
 
 function parseArgs(args) {
-  if (args.length === 0) {
+  let out;
+  let profile = "debug";
+  for (let index = 0; index < args.length; index++) {
+    if (args[index] === "--out" && args[index + 1]?.trim()) out = resolve(args[++index]);
+    else if (args[index] === "--profile" && ["debug", "release"].includes(args[index + 1])) profile = args[++index];
+    else throw new PackageFailure("BAD_ARGS", "usage: node product/tools/package.mjs [--out <fresh-directory>] [--profile debug|release]", "arguments");
+  }
+  if (!out) {
     const stamp = new Date().toISOString().replaceAll(":", "-").replaceAll(".", "-");
-    return resolve(productDir, "dist", stamp);
+    out = resolve(productDir, "dist", stamp);
   }
-  if (args.length !== 2 || args[0] !== "--out" || !args[1].trim()) {
-    throw new PackageFailure("BAD_ARGS", "usage: node product/tools/package.mjs [--out <fresh-directory>]", "arguments");
-  }
-  return resolve(args[1]);
+  return { out, profile };
 }
 
 function command(program, args, stage, cwd = repoDir) {
@@ -62,7 +66,7 @@ function packageReadme() {
 
 ## 파일
 
-- \`bin/aip\`: 패키징 시점의 저장소 \`target/debug/aip\`에서 복사한 로컬 빌드 실행 파일
+- \`bin/aip\`: 패키징 시점의 저장소 \`target/<profile>/aip\`(기본 debug, \`--profile release\`는 release 빌드)에서 복사한 로컬 빌드 실행 파일
 - \`sdk/aip-sdk-0.1.0.tgz\`: 로컬 TypeScript compiler로 만든 설치 가능한 \`@aip/sdk@0.1.0\` tarball
 - \`example.aip\`: 제품 service에서 검증할 수 있는 호출자 정의 예시
 - \`extensions/event.mjs\`, \`extensions/event.py\`: 정본 예제의 Node와 Python Event.confirm 구현
@@ -102,11 +106,12 @@ function exampleConfig() {
   };
 }
 
-async function packageArtifacts(out) {
-  const binary = resolve(repoDir, "target", "debug", "aip");
+async function packageArtifacts({ out, profile }) {
+  const binaryName = `target/${profile}/aip`;
+  const binary = resolve(repoDir, "target", profile, "aip");
   const binaryInfo = await stat(binary).catch(() => undefined);
   if (!binaryInfo?.isFile() || (binaryInfo.mode & 0o111) === 0) {
-    throw new PackageFailure("BINARY_MISSING", "root target/debug/aip 실행 파일이 필요합니다", "binary");
+    throw new PackageFailure("BINARY_MISSING", `root ${binaryName} 실행 파일이 필요합니다`, "binary");
   }
   const definition = join(repoDir, "prototype", "example", "app.aip");
   const nodeExtension = join(repoDir, "prototype", "example", "extensions", "event.mjs");
@@ -125,7 +130,7 @@ async function packageArtifacts(out) {
   try {
     const sourceFiles = await collectManifestSources();
     const inputs = new Map();
-    for (const name of [...sourceFiles, "target/debug/aip"]) {
+    for (const name of [...sourceFiles, binaryName]) {
       const digest = await fileDigest(join(repoDir, name)).catch((error) => {
         throw new PackageFailure(error.code === "ENOENT" ? "SOURCE_MISSING" : "SOURCE_IO", `source 입력을 읽을 수 없습니다: ${name}`, "source-manifest");
       });
@@ -159,7 +164,7 @@ async function packageArtifacts(out) {
     await writeFile(join(out, "config.example.json"), JSON.stringify(exampleConfig(), null, 2) + "\n", { flag: "wx" });
     await writeFile(join(out, "README.md"), packageReadme(), { flag: "wx" });
 
-    await verifyInputs(inputs, out);
+    await verifyInputs(inputs, out, binaryName);
     const sourceSums = sourceFiles.map((name) => `${inputs.get(name)}  ${name}`);
     await writeFile(join(out, "SOURCE_SHA256SUMS"), `${sourceSums.join("\n")}\n`, { flag: "wx" });
 
@@ -187,7 +192,7 @@ function changedInput(name) {
   return new PackageFailure("SOURCE_CHANGED", `패키징 중 입력이 변경됐습니다: ${name}`, "source-manifest");
 }
 
-async function verifyInputs(inputs, out) {
+async function verifyInputs(inputs, out, binaryName) {
   let sourceFiles;
   try {
     sourceFiles = await collectManifestSources();
@@ -195,14 +200,14 @@ async function verifyInputs(inputs, out) {
     if (error.code === "SOURCE_MISSING") throw changedInput(error.message);
     throw error;
   }
-  const currentNames = new Set([...sourceFiles, "target/debug/aip"]);
+  const currentNames = new Set([...sourceFiles, binaryName]);
   for (const name of new Set([...inputs.keys(), ...currentNames])) {
     if (!inputs.has(name) || !currentNames.has(name)) throw changedInput(name);
     const digest = await fileDigest(join(repoDir, name)).catch(() => { throw changedInput(name); });
     if (digest !== inputs.get(name)) throw changedInput(name);
   }
   for (const [source, artifact] of [
-    ["target/debug/aip", "bin/aip"],
+    [binaryName, "bin/aip"],
     ["prototype/example/app.aip", "example.aip"],
     ["prototype/example/extensions/event.mjs", "extensions/event.mjs"],
     ["prototype/example/extensions/event.py", "extensions/event.py"],

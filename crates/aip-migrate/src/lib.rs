@@ -455,6 +455,13 @@ async fn verified_marker_for_migration(db: &impl GenericClient, schema: &str) ->
 }
 
 fn parent_job_ddl_digest(schema: &str, facts: &Value) -> Result<String, Value> {
+    Ok(digest(&json!(parent_job_ddl(schema, facts)?)))
+}
+
+/// The creation statements as the version before `aip_jobs.trace_id` generated them. That version wrote
+/// `result_expires_at timestamptz, UNIQUE(...)`, so the column is removed together with its trailing space; leaving the space
+/// behind produced a statement no real deployment ever stored, and the upgrade then refused every genuine old schema.
+fn parent_job_ddl(schema: &str, facts: &Value) -> Result<Vec<String>, Value> {
     if !facts["operations"].as_object().is_some_and(|operations| operations.values().any(|operation| operation["kind"] == "job")) {
         return Err(err("WIRE.SCHEMA_MISMATCH", "알 수 없는 migration DDL marker"));
     }
@@ -463,11 +470,11 @@ fn parent_job_ddl_digest(schema: &str, facts: &Value) -> Result<String, Value> {
         .iter_mut()
         .find(|statement| statement.starts_with(&format!("CREATE TABLE {schema}.aip_jobs ")))
         .ok_or_else(|| err("WIRE.SCHEMA_MISMATCH", "알 수 없는 migration DDL marker"))?;
-    if jobs.matches("trace_id text").count() != 1 {
+    if jobs.matches("trace_id text, ").count() != 1 {
         return Err(err("WIRE.SCHEMA_MISMATCH", "durable job DDL이 알려진 이전 버전과 다름"));
     }
-    *jobs = jobs.replace("trace_id text,", "");
-    Ok(digest(&json!(ddl)))
+    *jobs = jobs.replace("trace_id text, ", "");
+    Ok(ddl)
 }
 
 pub async fn preflight(db_url: &str, schema: &str, facts: &Value) -> Result<Value, Value> {
@@ -1461,14 +1468,29 @@ mod trace_id_upgrade_tests {
         serde_json::from_slice(&output.stdout).unwrap()
     }
 
+    /// The pre-trace statement is pinned to the text the earlier release really stored (commit 4c27040), not derived from the
+    /// current generator, so a change to how the column is removed cannot quietly diverge from deployed schemas again.
+    #[test]
+    fn parent_job_ddl_is_the_statement_the_earlier_release_stored() {
+        let schema = "aip_parent_ddl";
+        let facts = job_facts();
+        let parent = parent_job_ddl(schema, &facts).unwrap();
+        let jobs = parent.iter().find(|ddl| ddl.starts_with(&format!("CREATE TABLE {schema}.aip_jobs "))).unwrap();
+        assert!(!jobs.contains("trace_id"), "{jobs}");
+        assert!(
+            jobs.ends_with("result_expires_at timestamptz, UNIQUE(owner,operation,contract_digest,deployment_digest,idempotency_key))"),
+            "the earlier release wrote one space between the last column and UNIQUE: {jobs}"
+        );
+        let (current, _) = creation(schema, &facts).unwrap();
+        assert_eq!(parent.len(), current.len());
+        assert_eq!(parent.iter().zip(&current).filter(|(old, new)| old != new).count(), 1, "only the aip_jobs statement differs");
+    }
+
     async fn make_parent_job_schema(db_url: &str, schema: &str, facts: &Value) {
         init(db_url, schema, facts).await.unwrap();
         let db = connect(db_url).await.unwrap();
         db.batch_execute(&format!("ALTER TABLE {schema}.aip_jobs DROP COLUMN trace_id")).await.unwrap();
-        let (mut parent_ddl, _) = creation(schema, facts).unwrap();
-        let jobs = parent_ddl.iter_mut().find(|ddl| ddl.starts_with(&format!("CREATE TABLE {schema}.aip_jobs "))).unwrap();
-        *jobs = jobs.replace("trace_id text,", "");
-        let parent_digest = digest(&json!(parent_ddl));
+        let parent_digest = parent_job_ddl_digest(schema, facts).unwrap();
         let structure_digest = structure(&*db, schema).await.unwrap();
         db.execute(&format!("UPDATE {schema}.{META} SET ddl_digest=$1,structure_digest=$2"), &[&parent_digest, &structure_digest]).await.unwrap();
     }
@@ -1506,10 +1528,7 @@ mod trace_id_upgrade_tests {
         // Recreate the exact pre-trace column shape and its original DDL/catalog marker as test fixture setup.
         let db = connect(&db_url).await.unwrap();
         db.batch_execute(&format!("ALTER TABLE {schema}.aip_jobs DROP COLUMN trace_id")).await.unwrap();
-        let (mut parent_ddl, _) = creation(&schema, &facts).unwrap();
-        let jobs = parent_ddl.iter_mut().find(|ddl| ddl.starts_with(&format!("CREATE TABLE {schema}.aip_jobs "))).unwrap();
-        *jobs = jobs.replace("trace_id text,", "");
-        let parent_digest = digest(&json!(parent_ddl));
+        let parent_digest = parent_job_ddl_digest(&schema, &facts).unwrap();
         let parent_structure = structure(&*db, &schema).await.unwrap();
         db.execute(&format!("UPDATE {schema}.{META} SET ddl_digest=$1,structure_digest=$2"), &[&parent_digest, &parent_structure]).await.unwrap();
         drop(db);
