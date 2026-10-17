@@ -167,7 +167,7 @@ MySQL은 `UPDATE`의 `SET`을 왼쪽에서 오른쪽으로 평가하고 뒤의 �
 
 이 probe는 연결 세션에 임시 표를 만들므로 런타임 계정에 업무 schema의 `CREATE TEMPORARY TABLES`가 필요하다. 권한이 없으면 서버 능력 부족으로 오판하지 않고 그 권한 이름을 대며 `DB_ADAPTER_UNSUPPORTED`로 거부한다.
 
-그래서 MariaDB는 traverse(LATERAL)와 정책 잠금(`FOR SHARE OF`)을 쓰는 읽기·쓰기 경로를 지원하지 못하고, 거부는 정확히 그 둘을 이름으로 말한다. SKIP LOCKED·JSON·CHECK는 있으므로 job 저장소만의 MariaDB 방언은 가능하지만, 저장소 SQL이 MariaDB에 없는 `CAST(? AS JSON)`과 `FOR UPDATE OF .. SKIP LOCKED`를 쓰므로 이번에는 MariaDB에서 job 저장소를 실행하지 않았다. 별도 방언은 후속이다.
+그래서 MariaDB는 traverse(LATERAL)와 정책 잠금(`FOR SHARE OF`)을 쓰는 읽기·쓰기 경로를 지원하지 못하고, 거부는 정확히 그 둘을 이름으로 말한다. SKIP LOCKED·JSON·CHECK는 있으므로 job 저장소와 outbox 릴레이는 MariaDB에서도 돈다. 차이는 둘이다: MariaDB에는 `CAST(? AS JSON)`이 없어(JSON이 검증이 붙은 `LONGTEXT`) 문서를 그대로 바인딩하고, `FOR UPDATE OF <표>`가 없어 `FOR UPDATE SKIP LOCKED`를 쓴다. `MysqlJobStore::for_mariadb`와 `MysqlOutboxRelay::for_mariadb`가 이 방언을 고르고, `check_job_store_profile`이 job 저장소에 필요한 능력(`LATERAL`·`FOR SHARE OF`는 빼고)만 서버에서 실행해 확인한다. 실제 MariaDB 11.4.13에서 MySQL과 같은 시험 3개(상태 기계, 8 worker 동시 claim, outbox 릴레이)가 통과하고, claim의 `SKIP LOCKED`를 빼면 MariaDB에서도 시험이 실패한다. 읽기·쓰기 경로는 그대로 MariaDB를 거부한다.
 
 | 이번 확인 | 결과 |
 |---|---|
@@ -177,7 +177,7 @@ MySQL은 `UPDATE`의 `SET`을 왼쪽에서 오른쪽으로 평가하고 뒤의 �
 | outbox 릴레이 | 실패 배치의 전체 rollback, 4개 동시 릴레이가 30행을 정확히 한 번씩(job 30, 영수증 30, 서로 다른 job 30), 다른 topic 불변, 재실행 0건 |
 | 능력 게이트 | `mysql_capability_gate` 2 passed: MySQL 8.4 통과, MariaDB 거부와 사유(LATERAL, FOR SHARE OF) |
 
-미완료: `/jobs/*` HTTP 연결, job 실행(worker·effect journal·확장 호출), 메시지·파일·이벤트 저장소, schedule·webhook 트리거, MariaDB 방언. 이들은 설정에 나타나면 DB 접속 전에 거부한다.
+미완료: `/jobs/*` HTTP 연결, job 실행(worker·effect journal·확장 호출), 메시지·파일·이벤트 저장소, schedule·webhook 트리거. 이들은 설정에 나타나면 DB 접속 전에 거부한다. job 실행과 확장은 worker 프로토콜이 DB에 닿는 곳(`spike-v4-worker`의 `write.rs`, `lib.rs`의 `serve_call`, `outbox.rs`)이 좁지만 PostgreSQL 트랜잭션 타입에 묶여 있어, MySQL 트랜잭션에서 읽기 계획과 `apply`를 부르는 추상이 먼저 필요하다. 또 읽기 확장의 `ctx`는 이름 붙은 집계만 읽을 수 있어 비밀번호 해시 같은 행 값을 확장이 읽는 로그인 확장은 지금 구조로는 만들 수 없다.
 
 ### 조달 실행환경 기록
 

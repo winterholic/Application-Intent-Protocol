@@ -39,15 +39,18 @@ struct Harness {
     driver: MysqlDriver,
     store: MysqlJobStore,
     _serial: tokio::sync::MutexGuard<'static, ()>,
+    is_mariadb: bool,
 }
 
 impl Harness {
     async fn new() -> Self {
         let serial = SERIAL.lock().await;
-        let url = std::env::var("AIP_TEST_MYSQL_URL").expect("set AIP_TEST_MYSQL_URL to a run-owned MySQL 8.4 container");
-        aip_test_support::validate_mysql_admin_url(&url).unwrap_or_else(|reason| panic!("AIP_TEST_MYSQL_URL is unsafe: {reason}"));
-        assert!(url.starts_with("mysql://"), "this test targets MySQL 8.4");
+        // The job store runs on MySQL 8.4 and on MariaDB 11.4: `AIP_TEST_JOBS_URL` picks the engine, MySQL by default.
+        let var = if std::env::var("AIP_TEST_JOBS_URL").is_ok() { "AIP_TEST_JOBS_URL" } else { "AIP_TEST_MYSQL_URL" };
+        let url = std::env::var(var).unwrap_or_else(|_| panic!("set {var} to a run-owned MySQL 8.4 or MariaDB 11.4 container"));
+        aip_test_support::validate_mysql_admin_url(&url).unwrap_or_else(|reason| panic!("{var} is unsafe: {reason}"));
         let driver = MysqlDriver::connect(&url).await.expect("admin connection");
+        aip_migrate::mysql_backend::check_job_store_profile(&driver).await.expect("the server runs the job store");
         let mut setup = driver.pool().get_conn().await.unwrap();
         for schema in [META, SOURCE] {
             setup.query_drop(format!("DROP DATABASE IF EXISTS `{schema}`")).await.unwrap();
@@ -55,8 +58,14 @@ impl Harness {
         setup.query_drop(format!("CREATE DATABASE `{SOURCE}`")).await.unwrap();
         setup.query_drop(format!("CREATE TABLE `{SOURCE}`.`t` (id INT PRIMARY KEY) ENGINE=InnoDB")).await.unwrap();
         drop(setup);
+        let store = MysqlJobStore::new(META).unwrap();
         driver.ensure_meta_schema_bootstrap(META, SOURCE, FACTS).await.expect("meta bootstrap creates the job tables");
-        Self { driver, store: MysqlJobStore::new(META).unwrap(), _serial: serial }
+        Self {
+            driver,
+            store: if url.starts_with("mariadb://") { store.for_mariadb() } else { store },
+            _serial: serial,
+            is_mariadb: url.starts_with("mariadb://"),
+        }
     }
 
     async fn conn(&self) -> aip_migrate::mysql_driver::mysql_async::Conn {
@@ -269,6 +278,7 @@ async fn mysql_outbox_relay_dispatches_each_row_once_and_rolls_back_a_failed_bat
     }
     h.sql(format!("INSERT INTO `{META}`.`aip_outbox` (topic, recipient_id, source, source_id) VALUES ('other.topic', '1', 'Note', '1')")).await;
     let relay = MysqlOutboxRelay::new(META).unwrap();
+    let relay = if h.is_mariadb { relay.for_mariadb() } else { relay };
     let count = |sql: &'static str| {
         let h = h.clone();
         async move { h.cell(sql.replace("{META}", META)).await.unwrap().parse::<i64>().unwrap() }

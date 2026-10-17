@@ -10,7 +10,7 @@
 
 ## 2026-10-18 WBS 7.2.1.3 MySQL 작업 저장소·outbox 릴레이·MariaDB 게이트 (Claude 구현, 독립 검증 대기)
 
-PostgreSQL job 저장소의 상태 기계를 MySQL 8.4로 옮겼다(`SKIP LOCKED` claim, DB 시계, 키 digest 유일 열, lease epoch fencing, backoff·deadline·cancel·redrive). 실 MySQL 8.4.11에서 40개 run을 8 worker가 정확히 한 번씩 claim했고, 후보 잠금·epoch 검사·epoch 증가를 각각 끄면 시험이 실패한다. outbox 릴레이는 claim·enqueue·영수증을 한 트랜잭션으로 해 4개 동시 릴레이가 30행을 한 번씩만 dispatch하고 실패 배치는 아무것도 남기지 않는다. 서버 능력 probe는 MySQL 8.4를 통과시키고 MariaDB 11.4.13을 LATERAL·`FOR SHARE OF` 부재로 이름을 대며 거부한다(SKIP LOCKED·JSON_ARRAYAGG·CHECK·InnoDB는 있다). HTTP `/jobs/*`와 job 실행(worker·effect journal), MariaDB용 job 저장소 방언은 연결하지 않았다. 표와 한계는 [MySQL adapter 계약](porting/MYSQL-ADAPTER-CONTRACT.md)의 "작업 저장소" 절이다. 독립 검증 전이므로 완료로 표시하지 않는다.
+PostgreSQL job 저장소의 상태 기계를 MySQL 8.4로 옮겼다(`SKIP LOCKED` claim, DB 시계, 키 digest 유일 열, lease epoch fencing, backoff·deadline·cancel·redrive). 실 MySQL 8.4.11에서 40개 run을 8 worker가 정확히 한 번씩 claim했고, 후보 잠금·epoch 검사·epoch 증가를 각각 끄면 시험이 실패한다. outbox 릴레이는 claim·enqueue·영수증을 한 트랜잭션으로 해 4개 동시 릴레이가 30행을 한 번씩만 dispatch하고 실패 배치는 아무것도 남기지 않는다. 서버 능력 probe는 MySQL 8.4를 통과시키고 MariaDB 11.4.13을 LATERAL·`FOR SHARE OF` 부재로 이름을 대며 거부한다(SKIP LOCKED·JSON_ARRAYAGG·CHECK·InnoDB는 있다). MariaDB 11.4에서도 같은 job 저장소·릴레이 시험 3개가 통과한다(방언 둘: JSON 바인딩, `FOR UPDATE OF` 없음). HTTP `/jobs/*`와 job 실행(worker·effect journal)은 연결하지 않았다. 표와 한계는 [MySQL adapter 계약](porting/MYSQL-ADAPTER-CONTRACT.md)의 "작업 저장소" 절이다. 독립 검증 전이므로 완료로 표시하지 않는다.
 
 ## 2026-10-18 WBS 8.5 보존 정리와 S3 owner quota (Claude 구현, 독립 검증 대기)
 

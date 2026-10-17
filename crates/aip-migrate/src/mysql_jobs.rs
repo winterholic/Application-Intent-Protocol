@@ -73,6 +73,7 @@ fn after(ms: &str) -> String {
 #[derive(Clone, Debug)]
 pub struct MysqlJobStore {
     schema: String,
+    mariadb: bool,
 }
 
 impl MysqlJobStore {
@@ -86,7 +87,25 @@ impl MysqlJobStore {
         {
             return Err(Error::InvalidSchema);
         }
-        Ok(Self { schema })
+        Ok(Self { schema, mariadb: false })
+    }
+
+    /// The same store on MariaDB 11.4: no `CAST(.. AS JSON)` (its JSON is `LONGTEXT` with a validity check, so the text is bound
+    /// as it is) and no `FOR UPDATE OF <table>`. Everything else the store relies on (`SKIP LOCKED`, `JSON_LENGTH`, microsecond
+    /// `UTC_TIMESTAMP`) exists there, which the live tests show.
+    #[must_use]
+    pub fn for_mariadb(mut self) -> Self {
+        self.mariadb = true;
+        self
+    }
+
+    pub(crate) fn is_mariadb(&self) -> bool {
+        self.mariadb
+    }
+
+    /// A bound JSON document.
+    fn json_param(&self) -> &'static str {
+        if self.mariadb { "?" } else { "CAST(? AS JSON)" }
     }
 
     fn table(&self) -> String {
@@ -124,9 +143,10 @@ impl MysqlJobStore {
         let insert = format!(
             "INSERT INTO {table} (id, owner, actor_id, grant_data, operation, contract_digest, deployment_digest, implementation_digest, input, input_digest, \
                idempotency_key, key_digest, state, timeout_ms, max_attempts, result_ttl_ms, initial_delay_ms, run_deadline, next_run_at, created_at, trace_id) \
-             VALUES (?, ?, ?, CAST(? AS JSON), ?, ?, ?, ?, CAST(? AS JSON), ?, ?, ?, 'QUEUED', ?, ?, ?, ?, {}, {}, UTC_TIMESTAMP(6), ?)",
+             VALUES (?, ?, ?, {json}, ?, ?, ?, ?, {json}, ?, ?, ?, 'QUEUED', ?, ?, ?, ?, {}, {}, UTC_TIMESTAMP(6), ?)",
             after("?"),
-            after("?")
+            after("?"),
+            json = self.json_param()
         );
         let params: Vec<MyValue> = vec![
             id.clone().into(),
@@ -267,8 +287,9 @@ impl MysqlJobStore {
             return Err(Error::PayloadTooLarge);
         }
         let sql = format!(
-            "UPDATE {} SET state = 'SUCCEEDED', output = CAST(? AS JSON), error = NULL, lease_owner = NULL, lease_until = NULL, result_expires_at = {} WHERE {}",
+            "UPDATE {} SET state = 'SUCCEEDED', output = {}, error = NULL, lease_owner = NULL, lease_until = NULL, result_expires_at = {} WHERE {}",
             self.table(),
+            self.json_param(),
             after("result_ttl_ms"),
             self.live()
         );

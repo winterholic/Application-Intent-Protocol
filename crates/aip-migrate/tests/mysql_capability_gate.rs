@@ -70,3 +70,16 @@ async fn an_account_without_temporary_table_privilege_is_told_so_not_blamed_on_t
     setup.query_drop("DROP USER IF EXISTS 'aip_gate_nopriv'@'%'").await.unwrap();
     setup.query_drop("DROP DATABASE IF EXISTS aip_gate_priv").await.unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live: needs dedicated MySQL 8.4 and MariaDB 11.4 containers (scripts/mysql-live-fixture.sh); run with -- --ignored"]
+async fn the_job_store_profile_admits_mariadb_which_the_service_profile_refuses() {
+    use aip_migrate::mysql_backend::check_job_store_profile;
+    let mysql = check_job_store_profile(&driver("AIP_TEST_MYSQL_URL", "mysql://").await).await.expect("MySQL 8.4 runs the job store");
+    assert_eq!(mysql.engine, "MySQL");
+    let maria = check_job_store_profile(&driver("AIP_TEST_MARIADB_URL", "mariadb://").await).await.expect("MariaDB 11.4 runs the job store");
+    assert_eq!(maria.engine, "MariaDB");
+    // The read and write paths still refuse it, for the two capabilities the job store does not use.
+    let refused = backend(driver("AIP_TEST_MARIADB_URL", "mariadb://").await).check_server_profile().await.unwrap_err();
+    assert!(refused.message.contains("LATERAL joins") && refused.message.contains("FOR SHARE OF"), "{refused}");
+}

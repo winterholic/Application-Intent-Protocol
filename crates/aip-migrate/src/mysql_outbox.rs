@@ -60,6 +60,13 @@ impl MysqlOutboxRelay {
         Ok(Self { schema, jobs })
     }
 
+    /// Relay on MariaDB 11.4 (see [`MysqlJobStore::for_mariadb`]).
+    #[must_use]
+    pub fn for_mariadb(mut self) -> Self {
+        self.jobs = self.jobs.for_mariadb();
+        self
+    }
+
     /// Dispatch up to `limit` pending rows of `topic`. `make_run` builds the job for a row; if it fails for any row the whole batch
     /// is rolled back (nothing dispatched, every row stays pending) and its error is returned. Returns the number dispatched.
     pub async fn relay_once<F, E>(&self, conn: &mut Conn, topic: &str, limit: u32, make_run: F) -> Result<usize, RelayError<E>>
@@ -67,6 +74,8 @@ impl MysqlOutboxRelay {
         F: Fn(&OutboxEvent) -> Result<NewRun, E>,
     {
         let (outbox, dispatch) = (format!("`{}`.`aip_outbox`", self.schema), format!("`{}`.`aip_outbox_dispatch`", self.schema));
+        // MariaDB has no `OF <table>`: there the lock covers the one table the statement reads rows from for update.
+        let locking = if self.jobs.is_mariadb() { "FOR UPDATE SKIP LOCKED" } else { "FOR UPDATE OF o SKIP LOCKED" };
         let mut options = TxOpts::default();
         options.with_isolation_level(IsolationLevel::ReadCommitted);
         let mut tx = conn.start_transaction(options).await.map_err(|e| RelayError::Store(db(e)))?;
@@ -76,7 +85,7 @@ impl MysqlOutboxRelay {
                     "SELECT o.id, o.source, o.source_id, o.recipient_id, DATE_FORMAT(o.created_at, '%Y-%m-%dT%H:%i:%s.%fZ'), \
                        CAST(TIMESTAMPDIFF(MICROSECOND, '1970-01-01 00:00:00', o.created_at) AS SIGNED) \
                      FROM {outbox} o WHERE o.topic = ? AND NOT EXISTS (SELECT 1 FROM {dispatch} d WHERE d.outbox_id = o.id) \
-                     ORDER BY o.id LIMIT {limit} FOR UPDATE OF o SKIP LOCKED"
+                     ORDER BY o.id LIMIT {limit} {locking}"
                 ),
                 (topic,),
             )

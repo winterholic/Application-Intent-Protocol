@@ -96,6 +96,38 @@ impl ServerCapabilities {
     }
 }
 
+impl ServerCapabilities {
+    /// What the durable job store and the outbox relay need, which is less than the read and write paths: no `LATERAL`, no
+    /// `FOR SHARE OF`. MariaDB 11.4 has all of it, MySQL needs 8.4 or newer.
+    pub fn missing_for_job_store(&self) -> Vec<&'static str> {
+        let version_ok = self.engine == "MariaDB" || self.major_minor_ok;
+        [
+            (version_ok, "MySQL 8.4 or newer"),
+            (self.strict_mode, "sql_mode STRICT_TRANS_TABLES"),
+            (self.skip_locked, "FOR UPDATE SKIP LOCKED"),
+            (self.json_arrayagg, "JSON functions"),
+            (self.check_enforced, "enforced CHECK constraints"),
+            (self.innodb, "InnoDB"),
+        ]
+        .into_iter()
+        .filter_map(|(ok, name)| (!ok).then_some(name))
+        .collect()
+    }
+}
+
+/// Refuse a server the job store cannot run on, naming what is missing. Probes on the given connection pool.
+pub async fn check_job_store_profile(driver: &MysqlDriver) -> Result<ServerCapabilities, CatalogError> {
+    let capabilities = probe_capabilities(driver).await?;
+    let missing = capabilities.missing_for_job_store();
+    if !missing.is_empty() {
+        return Err(CatalogError::with_code(
+            "DB_ADAPTER_UNSUPPORTED",
+            format!("{} {} lacks what the job store relies on: {}", capabilities.engine, capabilities.version, missing.join(", ")),
+        ));
+    }
+    Ok(capabilities)
+}
+
 /// Run one probe statement; any server error means the capability is absent.
 async fn works(conn: &mut mysql_async::Conn, sql: &str) -> bool {
     conn.query_drop(sql).await.is_ok()
