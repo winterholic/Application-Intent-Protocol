@@ -20,7 +20,7 @@ test('FlaskBB ported features: search, profile, conversations, tracker, admin CR
   const suffix = randomUUID().replaceAll('-', '').slice(0, 10);
   const schema = `aip_flaskbb_${suffix}`;
   const database = 'aip_flaskbb';
-  const dbUrl = `postgresql://aip_flaskbb:aip_flaskbb_fixture_password@127.0.0.1:55439/${database}`;
+  const dbUrl = process.env.AIP_FLASKBB_TEST_DATABASE_URL || `postgresql://aip_flaskbb:aip_flaskbb_fixture_password@127.0.0.1:55439/${database}`;
   const env = {...process.env, AIP_FLASKBB_DATABASE: dbUrl};
   const run = (command, args, options = {}) => {
     const result = spawnSync(command, args, {cwd: root, env, encoding: 'utf8', timeout: 20000, maxBuffer: 4 << 20, ...options});
@@ -957,7 +957,7 @@ test('FlaskBB ported features: search, profile, conversations, tracker, admin CR
       const postId = randomUUID();
       const probeIso = new Date().toISOString();
       const mkTopic = await alice.bundle({atomic: [
-        {create: 'Topic', values: {id: topicId, forum: '1', title: `Pagination probe topic ${i}`, user: '2', username: 'member-alice', locked: false, important: false, views: 0, published: false, deleted: false}},
+        {create: 'Topic', values: {id: topicId, forum: '1', title: `Pagination probe topic ${i}`, user: '2', username: 'member-alice', locked: false, important: false, views: 0, published: false, deleted: false, hidden: false}},
       ]}, {key: `page-topic-${i}`});
       assert.equal(mkTopic.ok, true, JSON.stringify(mkTopic));
       const mkPost = await alice.bundle({atomic: [
