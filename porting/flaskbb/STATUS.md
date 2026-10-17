@@ -7,6 +7,25 @@
 - 전체 의미 기능 분모는 [INVENTORY.md](INVENTORY.md)에 잠근다. URL/endpoint/table 수는 별도 커버리지 축이며 기능 수로 합산하지 않는다.
 - 기획의 독립 완료·출시 판정은 이 작업 이후 별도로 요구된다. 현재 전체 포팅·기능 동등성·배포 준비 완료가 아니다.
 
+## 2026-10-17 새 컨텍스트 — 독립 FAIL (db18f573) 비활성 쓰기 차단 및 auth DB 테스트 파라미터화
+
+**기준**: 시작 SHA `db18f573fd669ac6b95a512a698c7b395dfee49f`, branch `porting/flaskbb-full-2019`. 독립 검증(작업자 66f533e8, Claude Sonnet) 결과 FAIL 판정. 검증 보고서: `/Users/winterholic/.ttakkari/data/outbox/fecbc43e-400c-4c3f-a4e8-8124b658b9f4/flaskbb-independent-verification-20261017/verification-report.md`.
+
+**이번 증분**:
+- **비활성 계정(`activated=false`) 쓰기 전수 차단 (`porting/flaskbb/app.aip`)**:
+  - 원본 FlaskBB의 비활성 사용자 규칙을 기준으로 모든 쓰기 작업(Category/Forum create 및 edit, Topic bump 및 delete, Post edit 및 delete, TopicFirstPost create, ForumRead/TopicRead create 및 updateRead, TopicTracker create/track/untrack, Report create 및 submit, Conversation create/markRead/bump/moveToTrash/restoreFromTrash, Message create, canDeleteTopic/canDeletePost predicate)에 `actor.activated` / `viewer.activated` 검사를 전수 추가. core 하드코딩이 아닌 `app.aip` 정책으로 해결.
+  - `features.test.mjs`에 비활성 상태(`activated=false`)에서 쪽지함 trash 처리 거부 및 DB trash 컬럼 불변, 새 쪽지 저장 거부 및 DB 메시지 수 불변, 관리자 Category 생성 거부 및 DB category 수 불변 실DB 단언 추가.
+  - 비활성 계정 재활성화(`activated=true`) 후 Category 생성, Message 저장, 쪽지함 trash 처리가 정상 복귀하여 성공함을 실DB로 단언.
+- **`aip-auth` DB 테스트 파라미터화 및 fail-closed (`crates/aip-auth/tests/durable.rs`, `crates/aip-auth/tests/jwt.rs`)**:
+  - 하드코딩된 fixture DB URL을 제거하고 필수 환경변수(`AIP_TEST_DATABASE_URL` 또는 `TEST_DATABASE_URL`)를 읽도록 변경.
+  - 환경변수 미지정 시 fail-closed(명시적 panic 메시지) 처리 확인.
+  - 기본 DB `localhost:5432/postgres`나 사용자명이 postgres인 기본 DB 연결 시도를 사전 차단하는 `check_not_default_db` guard 유지 확인.
+  - `jwt.rs`에 RFC 9068 `nbf` absent 허용(`accepts_token_without_optional_nbf`) 및 `nbf: null` 거부(`rejects_token_with_explicit_null_nbf`) 테스트 케이스 추가.
+- **위조 mailbox ID 직접 호출 차단 검증**:
+  - `features.test.mjs`에 타인의 conversation_id를 대상으로 직접 `moveToTrash` 및 `markRead` 호출 시 거부되고 대상 mailbox의 DB 상태가 불변임을 실DB로 단언.
+- **fixture DB `aip_flaskbb_e22146d03c` 스키마**:
+  - 이전 실행 기록에서 생성 주체가 확인되지 않아 임의 삭제하지 않고 보존 상태로 보고.
+
 ## 2026-10-17 새 컨텍스트 — 독립 FAIL 반례 수정 및 실경로 재검증
 
 **기준**: 시작 SHA `7fea9bc126beb0a23bdaf7051781b2aea6b3a9bd`, branch `porting/flaskbb-full-2019`. 독립 교차검증 [보고서](/Users/winterholic/.ttakkari/data/outbox/41bc6349-377e-4b39-b1f8-f3512121b1b4/flaskbb-verification-7fea9bc/verification-report.md)는 해당 SHA를 FAIL로 판정했다. 기존 9개 미커밋 파일을 보존해 계속했고, 초기 patch backup은 Run outbox의 `flaskbb-preexisting-diff.patch`다.

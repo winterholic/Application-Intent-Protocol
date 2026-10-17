@@ -15,15 +15,32 @@ impl Drop for SchemaGuard {
     }
 }
 
+fn check_not_default_db(url: &str) {
+    let lower = url.to_ascii_lowercase();
+    if lower.contains("dbname=postgres")
+        || lower.ends_with("/postgres")
+        || lower.contains("/postgres?")
+        || lower.contains("user=postgres")
+        || lower.contains("postgresql://postgres:")
+        || lower.contains("postgres://postgres:")
+        || (lower.contains("localhost:5432") && lower.contains("postgres"))
+    {
+        panic!("Refusing to connect to default postgres database or postgres user: {}", url);
+    }
+}
+
 fn db_conn() -> String {
-    // These integration tests create and drop schemas. Keep them pinned to
-    // the dedicated FlaskBB fixture database even if a developer has a
-    // DATABASE_URL or TEST_DATABASE_URL in the environment.
-    "postgresql://aip_flaskbb:aip_flaskbb_fixture_password@127.0.0.1:55439/aip_flaskbb".into()
+    let url = std::env::var("AIP_TEST_DATABASE_URL")
+        .or_else(|_| std::env::var("TEST_DATABASE_URL"))
+        .expect("fail-closed: AIP_TEST_DATABASE_URL or TEST_DATABASE_URL environment variable is required for durable integration tests");
+    assert!(!url.trim().is_empty(), "test database URL must not be empty");
+    check_not_default_db(&url);
+    url
 }
 
 fn psql(sql: &str) -> std::process::Output {
-    Command::new("psql").args(["-X", "-q", "-d", &db_conn(), "-Atc", sql]).output().expect("test setup")
+    let conn = db_conn();
+    Command::new("psql").args(["-X", "-q", "-d", &conn, "-Atc", sql]).output().expect("test setup")
 }
 
 fn mapped_schema() -> SchemaGuard {

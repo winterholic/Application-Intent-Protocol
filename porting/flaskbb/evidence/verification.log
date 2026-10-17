@@ -266,3 +266,29 @@ Other fresh outputs:
 Observed code fixes: provision email now calls the existing AIP read scalar validator; UI converts route IDs to SDK decimal strings and invokes `Client.apply` with a request object; feature integration cleanup now closes spawned host/listener children. Status/inventory were updated. Browser/OIDC, upstream full parity, original backend-off, restart persistence and clean deployment remain unverified. Independent launch verdict must come from the separate verifier session.
 
 Final static gates for this increment: `git diff --check` exited 0. `cargo fmt --all -- --check` exited 1 with rustfmt suggestions in auth's pre-existing uncommitted working changes and untouched `spikes/spike-v6-transport/src/lib.rs`; no workspace-wide format rewrite was applied. See `run-cargo-fmt-check.log`. This formatter gate remains open.
+
+## 2026-10-17 — independent FAIL follow-up: deactivated actor writes rejection, test DB parameterization, and recovery
+
+Start SHA `db18f573fd669ac6b95a512a698c7b395dfee49f`, branch `porting/flaskbb-full-2019`. Independent report: `/Users/winterholic/.ttakkari/data/outbox/fecbc43e-400c-4c3f-a4e8-8124b658b9f4/flaskbb-independent-verification-20261017/verification-report.md`.
+
+Fixed defects:
+1. Deactivated actor write policy gap in `app.aip`:
+   - All write expose/transition operations (Category/Forum create & edit, Topic bump & delete, Post edit & delete, TopicFirstPost, ForumRead/TopicRead, TopicTracker, Report, Conversation create/markRead/bump/moveToTrash/restoreFromTrash, Message create) and canDeleteTopic/canDeletePost predicates now explicitly enforce `actor.activated` / `viewer.activated`.
+   - In `features.test.mjs`, verified real PostgreSQL assertions: deactivated Alice cannot trash mailbox or create messages (DB unchanged), deactivated Bob cannot create categories (DB unchanged).
+   - Verified reactivation recovery: once reactivated, Bob creates Category and Alice sends message & trashes mailbox successfully in real DB.
+2. Hardcoded DB in `aip-auth` tests:
+   - Replaced pinned `127.0.0.1:55439/aip_flaskbb` with `AIP_TEST_DATABASE_URL` / `TEST_DATABASE_URL` env variable lookup.
+   - Verified fail-closed behavior when env is absent (panics with clear message).
+   - Maintained offline default DB guard (`check_not_default_db`), rejecting localhost:5432/postgres and postgres user.
+   - Added `accepts_token_without_optional_nbf` and `rejects_token_with_explicit_null_nbf` to `jwt.rs`.
+3. Forged mailbox direct call rejection:
+   - Verified that Alice direct mutation on Bob's conversation ID is rejected and Bob's DB state is invariant.
+
+Test execution outputs:
+- `AIP_TEST_DATABASE_URL="postgresql://aip_flaskbb:aip_flaskbb_fixture_password@127.0.0.1:55439/aip_flaskbb" cargo test -p aip-auth --offline` → 17 unit passed, 2 durable passed, 12 jwt passed; 0 failed.
+- `node porting/flaskbb/tests/provisioning.test.mjs` → 1 test passed (9 scenarios in real PG).
+- `node porting/flaskbb/tests/features.test.mjs` → 1 test passed (real PG, renderer→SDK→AIP→PG, including deactivated write rejection, recovery, and forged mailbox rejection).
+- `/private/tmp/flaskbb-aip-host-venv/bin/python porting/flaskbb/tests/test_ui_host.py` → 13 tests passed.
+- `git diff --check` → exit 0.
+Residual schemas:
+- `aip_flaskbb_e22146d03c` schema ownership is not verified from prior logs, left preserved as instructed.

@@ -8,8 +8,8 @@ predicate canViewHidden(viewer: User?) = viewer != null and viewer.activated and
 predicate canModerateForum(viewer: User?, targetForum: Forum?) = viewer != null and viewer.activated and (viewer.primary_group.admin or viewer.primary_group.super_mod or viewer.primary_group.mod or exists UserGroup where user = viewer and (group.admin or group.super_mod or group.mod) or exists ForumModerator where forum = targetForum and user = viewer)
 predicate canStartTopic(viewer: User?, targetForum: Forum?) = viewer != null and viewer.activated and targetForum != null and canReadForum(viewer, targetForum) and not targetForum.locked and (canModerateForum(viewer, targetForum) or viewer.primary_group.posttopic or exists UserGroup where user = viewer and group.posttopic)
 predicate canReply(viewer: User?, targetTopic: Topic?) = viewer != null and viewer.activated and targetTopic != null and canReadForum(viewer, targetTopic.forum) and not targetTopic.hidden and (canModerateForum(viewer, targetTopic.forum) or (not targetTopic.locked and (viewer.primary_group.postreply or exists UserGroup where user = viewer and group.postreply)))
-predicate canDeleteTopic(viewer: User?, targetTopic: Topic?) = targetTopic != null and canReadForum(viewer, targetTopic.forum) and (viewer.primary_group.admin or viewer.primary_group.super_mod or exists UserGroup where user = viewer and (group.admin or group.super_mod) or (canModerateForum(viewer, targetTopic.forum) and (viewer.primary_group.deletetopic or exists UserGroup where user = viewer and group.deletetopic)) or (targetTopic.user = viewer and not targetTopic.locked and (viewer.primary_group.deletetopic or exists UserGroup where user = viewer and group.deletetopic)) or (canModerateForum(viewer, targetTopic.forum) and (viewer.primary_group.editpost or exists UserGroup where user = viewer and group.editpost)) or (targetTopic.user = viewer and not targetTopic.locked and (viewer.primary_group.editpost or exists UserGroup where user = viewer and group.editpost)))
-predicate canDeletePost(viewer: User?, targetPost: Post?) = targetPost != null and targetPost.published and canReadForum(viewer, targetPost.topic.forum) and (canDeleteTopic(viewer, targetPost.topic) and targetPost.topic.deleted or canModerateForum(viewer, targetPost.topic.forum) and (viewer.primary_group.editpost or exists UserGroup where user = viewer and group.editpost) or targetPost.user = viewer and not targetPost.topic.locked and (viewer.primary_group.editpost or exists UserGroup where user = viewer and group.editpost))
+predicate canDeleteTopic(viewer: User?, targetTopic: Topic?) = viewer != null and viewer.activated and targetTopic != null and canReadForum(viewer, targetTopic.forum) and (viewer.primary_group.admin or viewer.primary_group.super_mod or exists UserGroup where user = viewer and (group.admin or group.super_mod) or (canModerateForum(viewer, targetTopic.forum) and (viewer.primary_group.deletetopic or exists UserGroup where user = viewer and group.deletetopic)) or (targetTopic.user = viewer and not targetTopic.locked and (viewer.primary_group.deletetopic or exists UserGroup where user = viewer and group.deletetopic)) or (canModerateForum(viewer, targetTopic.forum) and (viewer.primary_group.editpost or exists UserGroup where user = viewer and group.editpost)) or (targetTopic.user = viewer and not targetTopic.locked and (viewer.primary_group.editpost or exists UserGroup where user = viewer and group.editpost)))
+predicate canDeletePost(viewer: User?, targetPost: Post?) = viewer != null and viewer.activated and targetPost != null and targetPost.published and canReadForum(viewer, targetPost.topic.forum) and (canDeleteTopic(viewer, targetPost.topic) and targetPost.topic.deleted or canModerateForum(viewer, targetPost.topic.forum) and (viewer.primary_group.editpost or exists UserGroup where user = viewer and group.editpost) or targetPost.user = viewer and not targetPost.topic.locked and (viewer.primary_group.editpost or exists UserGroup where user = viewer and group.editpost))
 predicate canHide(viewer: User?, targetForum: Forum?) = viewer != null and canModerateForum(viewer, targetForum) and (viewer.primary_group.makehidden or exists UserGroup where user = viewer and group.makehidden)
 predicate canReadTopic(viewer: User?, targetTopic: Topic?) = targetTopic != null and not targetTopic.deleted and canReadForum(viewer, targetTopic.forum) and (targetTopic.hidden != true or canViewHidden(viewer)) and (targetTopic.published or targetTopic.user = viewer)
 predicate canReadPost(viewer: User?, targetPost: Post?) = targetPost != null and not targetPost.deleted and (not targetPost.topic.deleted or canDeleteTopic(viewer, targetPost.topic) or (targetPost.topic.user = viewer and not targetPost.topic.locked and (viewer.primary_group.editpost or exists UserGroup where user = viewer and group.editpost))) and (targetPost.user = viewer or (targetPost.published and canReadForum(viewer, targetPost.forum))) and (targetPost.hidden != true or canViewHidden(viewer)) and (targetPost.topic.hidden != true or canViewHidden(viewer))
@@ -118,11 +118,11 @@ resource Category {
   fields { id: Id; title: Text(1..255); description: Text?; position: Int }
   rows read when true
   expose create {
-    allow actor.primary_group.admin or actor.primary_group.super_mod
+    allow actor.activated and (actor.primary_group.admin or actor.primary_group.super_mod)
     fields title, description, position
   }
   transition edit {
-    allow actor.primary_group.admin or actor.primary_group.super_mod
+    allow actor.activated and (actor.primary_group.admin or actor.primary_group.super_mod)
     from true
     patch title, description, position
   }
@@ -153,11 +153,11 @@ resource Forum {
   }
   rows read when canReadForum(actor, this)
   expose create {
-    allow actor.primary_group.admin or actor.primary_group.super_mod
+    allow actor.activated and (actor.primary_group.admin or actor.primary_group.super_mod)
     fields category, title, description, position, locked, external, show_moderators
   }
   transition edit {
-    allow actor.primary_group.admin or actor.primary_group.super_mod
+    allow actor.activated and (actor.primary_group.admin or actor.primary_group.super_mod)
     from true
     patch category, title, description, position, locked, external, show_moderators
   }
@@ -227,7 +227,7 @@ resource Topic {
     to published = true, date_created = now, last_updated = now
   }
   expose apply publish { target id; bulk maxRows 1 }
-  transition bump { allow published and hasNewerAuthoredPost(this, actor); from published = true; to last_updated = now }
+  transition bump { allow actor.activated and published and hasNewerAuthoredPost(this, actor); from published = true; to last_updated = now }
   expose apply bump { target id; bulk maxRows 1 }
   transition lock { allow canModerateForum(actor, forum); from locked = false; to locked = true }
   expose apply lock { target id; bulk maxRows 1 }
@@ -241,7 +241,7 @@ resource Topic {
   expose apply hide { target id; bulk maxRows 1 }
   transition unhide { allow canHide(actor, forum); from hidden = true and deleted = false; to hidden = false, hidden_at = null, hidden_by = null }
   expose apply unhide { target id; bulk maxRows 1 }
-  transition delete { allow canDeleteTopic(actor, this) or (user = actor and not locked and (actor.primary_group.editpost or exists UserGroup where user = actor and group.editpost)); from deleted = false; to deleted = true }
+  transition delete { allow actor.activated and (canDeleteTopic(actor, this) or (user = actor and not locked and (actor.primary_group.editpost or exists UserGroup where user = actor and group.editpost))); from deleted = false; to deleted = true }
   expose apply delete { target id; bulk maxRows 1 }
   expose read {
     select id, forum, title, user, username, date_created, last_updated, locked, important, views, published, hidden, hidden_at, hidden_by, post_count
@@ -282,7 +282,7 @@ resource Post {
   transition publish { allow user = actor and not published and canReply(actor, topic); from published = false; to published = true, date_created = now }
   expose apply publish { target id; bulk maxRows 1 }
   transition edit {
-    allow published and (canModerateForum(actor, topic.forum) or (user = actor and not topic.locked and (actor.primary_group.editpost or exists UserGroup where user = actor and group.editpost)))
+    allow actor.activated and published and (canModerateForum(actor, topic.forum) or (user = actor and not topic.locked and (actor.primary_group.editpost or exists UserGroup where user = actor and group.editpost)))
     from published = true
     patch content
     expect version
@@ -293,7 +293,7 @@ resource Post {
   expose apply hide { target id; bulk maxRows 1 }
   transition unhide { allow canHide(actor, forum) and not isFirstPost(this); from hidden = true and deleted = false; to hidden = false, hidden_at = null, hidden_by = null }
   expose apply unhide { target id; bulk maxRows 1 }
-  transition delete { allow canDeletePost(actor, this) and (not isFirstPost(this) or topic.deleted); from deleted = false; to deleted = true }
+  transition delete { allow actor.activated and canDeletePost(actor, this) and (not isFirstPost(this) or topic.deleted); from deleted = false; to deleted = true }
   expose apply delete { target id; bulk maxRows 1 }
   expose read {
     select id, topic, user, username, content, date_created, date_modified, modified_by, hidden, hidden_at, hidden_by, version
@@ -313,7 +313,7 @@ resource TopicFirstPost {
   unique post
   rows read when canReadTopic(actor, topic)
   expose create {
-    allow topic.user = actor and not topic.published and post.topic = topic and post.user = actor and post.published
+    allow actor.activated and topic.user = actor and not topic.published and post.topic = topic and post.user = actor and post.published
     fields topic, post
   }
   expose read {
@@ -329,11 +329,11 @@ resource ForumRead {
   unique user, forum
   rows read when user = actor
   expose create {
-    allow user = actor
+    allow actor.activated and user = actor
     fields user, forum, last_read, cleared
   }
   transition updateRead {
-    allow user = actor
+    allow actor.activated and user = actor
     from true
     to last_read = now
   }
@@ -351,11 +351,11 @@ resource TopicRead {
   unique user, topic, forum
   rows read when user = actor
   expose create {
-    allow user = actor
+    allow actor.activated and user = actor
     fields user, topic, forum, last_read
   }
   transition updateRead {
-    allow user = actor
+    allow actor.activated and user = actor
     from true
     to last_read = now
   }
@@ -373,12 +373,12 @@ resource TopicTracker {
   unique user, topic
   rows read when user = actor
   expose create {
-    allow user = actor and canReadTopic(actor, topic) and active
+    allow actor.activated and user = actor and canReadTopic(actor, topic) and active
     fields id, user, topic, active
   }
-  transition untrack { allow user = actor and active; from active = true; to active = false }
+  transition untrack { allow actor.activated and user = actor and active; from active = true; to active = false }
   expose apply untrack { target id; bulk maxRows 1 }
-  transition track { allow user = actor and canReadTopic(actor, topic) and not active; from active = false; to active = true }
+  transition track { allow actor.activated and user = actor and canReadTopic(actor, topic) and not active; from active = false; to active = true }
   expose apply track { target id; bulk maxRows 1 }
   expose read {
     select id, user, topic, active
@@ -392,10 +392,10 @@ resource Report {
   fields { id: Id; reporter: User?; reported: Time?; post: Post?; zapped: Time?; zapped_by: User?; reason: Text? }
   rows read when canReviewReports(actor) or (reporter = actor and reported = null)
   expose create {
-    allow reporter = actor and post != null and canReadPost(actor, post) and reported = null and zapped = null and zapped_by = null
+    allow actor.activated and reporter = actor and post != null and canReadPost(actor, post) and reported = null and zapped = null and zapped_by = null
     fields reporter, post, reason
   }
-  transition submit { allow reporter = actor and post != null and canReadPost(actor, post) and reported = null; from reported = null; to reported = now }
+  transition submit { allow actor.activated and reporter = actor and post != null and canReadPost(actor, post) and reported = null; from reported = null; to reported = now }
   expose apply submit { target id; bulk maxRows 1 }
   transition resolve { allow canReviewReports(actor) and zapped = null; from zapped = null; to zapped = now, zapped_by = actor }
   expose apply resolve { target id; bulk maxRows 1 }
@@ -425,29 +425,29 @@ resource Conversation {
   }
   rows read when user = actor or from_user = actor or to_user = actor
   expose create {
-    allow user = actor or from_user = actor
+    allow actor.activated and (user = actor or from_user = actor)
     fields user, from_user, to_user, shared_id, subject, date_created, date_modified, trash, draft, unread
   }
   transition markRead {
-    allow user = actor
+    allow actor.activated and user = actor
     from unread = true
     to unread = false
   }
   expose apply markRead { target id; bulk maxRows 50 }
   transition bump {
-    allow user = actor or from_user = actor or to_user = actor
+    allow actor.activated and (user = actor or from_user = actor or to_user = actor)
     from true
     to unread = true, date_modified = now
   }
   expose apply bump { target id; bulk maxRows 50 }
   transition moveToTrash {
-    allow user = actor
+    allow actor.activated and user = actor
     from trash = false
     to trash = true
   }
   expose apply moveToTrash { target id; bulk maxRows 50 }
   transition restoreFromTrash {
-    allow user = actor
+    allow actor.activated and user = actor
     from trash = true
     to trash = false
   }
@@ -466,7 +466,7 @@ resource Message {
   fields { id: Id; conversation: Conversation; user: User?; message: Text; date_created: Time }
   rows read when conversation.user = actor
   expose create {
-    allow (conversation.user = actor or user = actor) and (conversation.from_user = actor or conversation.to_user = actor)
+    allow actor.activated and (conversation.user = actor or user = actor) and (conversation.from_user = actor or conversation.to_user = actor)
     fields conversation, user, message, date_created
   }
   expose read {

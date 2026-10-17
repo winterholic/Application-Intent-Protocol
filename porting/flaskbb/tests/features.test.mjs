@@ -863,20 +863,90 @@ test('FlaskBB ported features: search, profile, conversations, tracker, admin CR
     assert.equal(sql(`SELECT trash FROM ${q}.conversation WHERE id=${aliceConversationId}`), 't');
     assert.equal(sql(`SELECT trash FROM ${q}.conversation WHERE id=${bobConversationId}`), 'f', 'trashing is per-user');
 
-    const editorUi = await launchUi('editor-sub', 'mod-editor');
-    const outsiderRead = await fetch(`${editorUi.base}/conversations/${aliceConversationId}`, {headers: {Cookie: cookie}});
-    assert.ok([403, 404].includes(outsiderRead.status), `nonparticipant read rejected, got ${outsiderRead.status}`);
-    const beforeOutsiderReply = sql(`SELECT count(*) FROM ${q}.message m JOIN ${q}.conversation c ON c.id=m.conversation_id WHERE c.subject='Live UI conversation round trip'`);
-    const outsiderReply = await fetch(`${editorUi.base}/conversations/${aliceConversationId}/reply`, {
-      method: 'POST', redirect: 'manual',
-      headers: {Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded'},
-      body: new URLSearchParams({csrf_token: csrf, message: 'forbidden outsider reply'}),
-    });
-    assert.ok([403, 404].includes(outsiderReply.status), `nonparticipant reply rejected, got ${outsiderReply.status}`);
-    await outsiderReply.arrayBuffer();
-    assert.equal(sql(`SELECT count(*) FROM ${q}.message m JOIN ${q}.conversation c ON c.id=m.conversation_id WHERE c.subject='Live UI conversation round trip'`), beforeOutsiderReply);
+    // Forged mailbox direct call rejection: Alice cannot mutate Bob's mailbox
+    const forgedTrash = await alice.bundle({
+      atomic: [{apply: 'Conversation.moveToTrash', target: {ids: [String(bobConversationId)]}}]
+    }, {key: 'forged-mailbox-trash'});
+    assert.equal(forgedTrash.ok, false, 'forged mailbox moveToTrash must be rejected');
+    assert.equal(sql(`SELECT trash FROM ${q}.conversation WHERE id=${bobConversationId}`), 'f', 'bob mailbox trash unchanged in DB');
 
-    console.log(JSON.stringify({schema, ok: true, featuresVerified: ['F07_search', 'F03_profile', 'F09_conversations', 'F06_tracker_read', 'F04_F10_admin_crud', 'UI_live_integration']}));
+    const forgedMarkRead = await alice.bundle({
+      atomic: [{apply: 'Conversation.markRead', target: {ids: [String(bobConversationId)]}}]
+    }, {key: 'forged-mailbox-markread'});
+    assert.equal(forgedMarkRead.ok, false, 'forged mailbox markRead must be rejected');
+
+    // Deactivated actor writes rejection & DB invariance
+    // 1. Suspend Alice
+    const suspendAlice = await bob.bundle({
+      atomic: [{apply: 'User.adminUpdateUser', target: {ids: ['2']}, values: {activated: false}}]
+    }, {key: 'test-suspend-alice'});
+    assert.equal(suspendAlice.ok, true);
+    assert.equal(sql(`SELECT activated FROM ${q}.user WHERE id=2`), 'f', 'alice deactivated in DB');
+
+    // 2. Deactivated Alice mailbox mutation attempt (moveToTrash)
+    // Note: un-trash Alice mailbox first so we test trashing while deactivated
+    sql(`UPDATE ${q}.conversation SET trash=false WHERE id=${aliceConversationId};`);
+    assert.equal(sql(`SELECT trash FROM ${q}.conversation WHERE id=${aliceConversationId}`), 'f');
+    const deactivatedMailboxWrite = await alice.bundle({
+      atomic: [{apply: 'Conversation.moveToTrash', target: {ids: [String(aliceConversationId)]}}]
+    }, {key: 'deactivated-mailbox-trash'});
+    assert.equal(deactivatedMailboxWrite.ok, false, 'deactivated actor moveToTrash rejected');
+    assert.equal(sql(`SELECT trash FROM ${q}.conversation WHERE id=${aliceConversationId}`), 'f', 'mailbox trash unchanged in DB');
+
+    // 3. Deactivated Alice message creation attempt
+    const beforeDeactivatedMsgCount = sql(`SELECT count(*) FROM ${q}.message WHERE conversation_id=${aliceConversationId}`);
+    const deactivatedMsgWrite = await alice.bundle({
+      atomic: [{create: 'Message', values: {conversation: String(aliceConversationId), user: '2', message: 'forbidden deactivated message', date_created: new Date().toISOString()}}]
+    }, {key: 'deactivated-msg-write'});
+    assert.equal(deactivatedMsgWrite.ok, false, 'deactivated actor message create rejected');
+    assert.equal(sql(`SELECT count(*) FROM ${q}.message WHERE conversation_id=${aliceConversationId}`), beforeDeactivatedMsgCount, 'message count unchanged in DB');
+
+    // 4. Suspend Bob (Admin) and test admin write rejection
+    const suspendBob = await bob.bundle({
+      atomic: [{apply: 'User.adminUpdateUser', target: {ids: ['3']}, values: {activated: false}}]
+    }, {key: 'test-suspend-bob'});
+    assert.equal(suspendBob.ok, true);
+    assert.equal(sql(`SELECT activated FROM ${q}.user WHERE id=3`), 'f', 'bob deactivated in DB');
+
+    const deactivatedAdminCategory = await bob.bundle({
+      atomic: [{create: 'Category', values: {title: 'Suspended Admin Category', description: 'probe', position: 101}}]
+    }, {key: 'deactivated-admin-category'});
+    assert.equal(deactivatedAdminCategory.ok, false, 'deactivated admin category creation rejected');
+    assert.equal(sql(`SELECT count(*) FROM ${q}.category WHERE title='Suspended Admin Category'`), '0', 'category table unchanged in DB');
+
+    // 5. Reactivation & recovery to normal state
+    // Restore Bob in DB directly since actor is deactivated
+    sql(`UPDATE ${q}.user SET activated=true WHERE id=3;`);
+    assert.equal(sql(`SELECT activated FROM ${q}.user WHERE id=3`), 't', 'bob reactivated in DB');
+
+    // Bob can now create Category normally
+    const reactivatedAdminCategory = await bob.bundle({
+      atomic: [{create: 'Category', values: {title: 'Reactivated Admin Category', description: 'recovered', position: 102}}]
+    }, {key: 'reactivated-admin-category'});
+    assert.equal(reactivatedAdminCategory.ok, true, 'reactivated admin can create category');
+    assert.equal(sql(`SELECT count(*) FROM ${q}.category WHERE title='Reactivated Admin Category'`), '1', 'category created in DB');
+
+    // Bob reactivates Alice via AIP API
+    const reactivateAlicePostRecovery = await bob.bundle({
+      atomic: [{apply: 'User.adminUpdateUser', target: {ids: ['2']}, values: {activated: true}}]
+    }, {key: 'test-reactivate-alice'});
+    assert.equal(reactivateAlicePostRecovery.ok, true);
+    assert.equal(sql(`SELECT activated FROM ${q}.user WHERE id=2`), 't', 'alice reactivated in DB');
+
+    // Alice can now create message and trash conversation normally
+    const reactivatedAliceMsg = await alice.bundle({
+      atomic: [{create: 'Message', values: {conversation: String(aliceConversationId), user: '2', message: 'reactivated alice message', date_created: new Date().toISOString()}}]
+    }, {key: 'reactivated-alice-msg'});
+    assert.equal(reactivatedAliceMsg.ok, true, 'reactivated alice can send message');
+    assert.equal(sql(`SELECT count(*) FROM ${q}.message WHERE conversation_id=${aliceConversationId} AND message='reactivated alice message'`), '1');
+
+    const reactivatedTrash = await alice.bundle({
+      atomic: [{apply: 'Conversation.moveToTrash', target: {ids: [String(aliceConversationId)]}}]
+    }, {key: 'reactivated-alice-trash'});
+    assert.equal(reactivatedTrash.ok, true, 'reactivated alice can trash conversation');
+    assert.equal(sql(`SELECT trash FROM ${q}.conversation WHERE id=${aliceConversationId}`), 't', 'mailbox trashed after reactivation');
+
+    console.log(JSON.stringify({schema, ok: true, featuresVerified: ['F07_search', 'F03_profile', 'F09_conversations', 'F06_tracker_read', 'F04_F10_admin_crud', 'UI_live_integration', 'deactivated_writes_rejected', 'reactivation_recovered', 'forged_mailbox_rejected']}));
   } catch (error) {
     console.error(error);
     throw error;
