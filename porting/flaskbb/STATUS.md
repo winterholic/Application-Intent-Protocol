@@ -7,6 +7,16 @@
 - 전체 의미 기능 분모는 [INVENTORY.md](INVENTORY.md)에 잠근다. URL/endpoint/table 수는 별도 커버리지 축이며 기능 수로 합산하지 않는다.
 - 기획의 독립 완료·출시 판정은 이 작업 이후 별도로 요구된다. 현재 전체 포팅·기능 동등성·배포 준비 완료가 아니다.
 
+## 2026-10-17 새 컨텍스트 — 계정 연결 계약 대조 및 브라우저 UI 기준선
+
+현재 계약 대조 결과, 신규 가입→AIP 회원/principal 연결은 현 제품 경로에 맞춰 배선할 수 있는 작은 UI 변경이 아니다. `product/EXECUTION.md`의 신원 절은 `service principal bind`를 명시적 운영 작업으로 한정하고, `product/OPERATIONS.md`는 앱 사용자 actor가 먼저 존재해야 한다고 규정한다. 실제 서버는 `/session` 전에 토큰을 검증한 뒤 `(issuer, subject)`의 활성 principal mapping을 조회한다. `porting/flaskbb/app.aip`의 `User`는 actor resource이고 read만 노출한다. renderer의 callback은 official SDK `discover()`를 호출하며 연결 없는 subject를 거절한다. 즉 등록 뒤 SDK/운영 CLI를 이용하거나 원본 FlaskBB DB를 우회하면 기존 계약을 깨거나 금지된 업무-backend bridge가 된다.
+
+따라서 core 선언형 provisioning 계약(검증된 IdP 주체 + 서버가 정한 신규 actor/User 기본값 + principal mapping을 제한된 opt-in 정책 아래 원자적으로 생성)은 새 인증/저장 제품 계약이다. 기존 요청 중 자동등록 금지, 재배정·활성화 불가 정책과 맞물리므로 구현 전 계약·정책 선택 및 음성/동시성 회귀 범위를 확정해야 한다. 대안은 인증된 actor의 extension hook을 새로 설계하는 것이지만 현재 hook 계약에는 unauthenticated subject를 처리할 권한이 없으며 core 트랜잭션 경계를 확장한다. 앱 proxy/직접 SQL/운영 bind 자동 호출은 기존 제품 정책을 우회하므로 제외한다. 이 OPEN 항목은 승인·구현으로 간주하지 않는다. F02 원본 대비 차이(비밀번호/login·가입/activation/reset의 IdP 위임, local-only logout)는 동등성 gate에 계속 남는다.
+
+이번 새 컨텍스트에서 `docker ps --format ...`으로 전용 baseline FlaskBB·Keycloak·Mailpit·두 PostgreSQL 컨테이너가 실행 중임을 확인했다. `curl` 기준 원본 FlaskBB `127.0.0.1:58080/`은 HTTP 200, 당시 renderer `:58082`와 AIP `:58083/health`는 `curl (7) Couldn't connect`였다. 기존 격리 venv와 test-only random session secret으로 renderer를 `127.0.0.1:58082`에 기동하고 configured `ttakkari_browser`로 열어 `Login - FlaskBB` 및 `Continue to login`, IdP 가입 링크, 원본 CSS/font 로드(200)를 확인한 뒤 브라우저를 닫고 호스트를 중지했다. `favicon.ico` 404가 browser console의 유일한 error였다. 등록 링크를 따라 Keycloak에 접근하거나 callback/SDK/AIP 요청은 실행하지 않았다. UI screenshot/snapshot: Run outbox `browser/page-2026-10-17T01-13-03-784Z.yml`. 상세 환경·명령은 [검증 로그](evidence/verification.log)에 기록했다.
+
+진행 판정: 이 단계에서 실제 새 가입→principal 연결, authenticated SDK 조회/주제 작성, logout/denial 흐름은 아직 성립하지 않는다. 그 계약 결정을 기다리는 동안에도 F01/F05 AIP UI의 upstream 템플릿·폼 의미와 검증 가능한 배선은 계속 진행한다. F01–F17 v0.1 scope, 전체 backend 중단 gate, clean deployment gate 및 기존/비활성/revoked principal 보호는 그대로다.
+
 ## 2026-10-17 현재 Run — 원본 인증 UI 재관측과 AIP 가입 경계 결정 필요
 
 이번 `ttakkari_browser` 관측은 **원본 기준선**이다. `http://127.0.0.1:58080/`에서 원본 Forum 홈, Login 링크(`/auth/login`), Register 링크(`/auth/register`)를 열었다. 로그인 화면은 username/email·password·remember-me와 가입/비밀번호 재설정 링크를 표시했고, 가입 화면은 username·email·password·confirm·language·약관 checkbox를 표시했다. form은 아직 제출하지 않았다. 이 페이지들은 원본 FlaskBB server-rendered UI이며 새 AIP UI나 AIP 요청 증거가 아니다. Browser MCP로 페이지를 닫았다. 접근성 snapshot은 Run outbox `browser/page-2026-10-17T00-54-30-454Z.yml`, `page-2026-10-17T00-55-35-080Z.yml`, `page-2026-10-17T00-55-37-820Z.yml`에 등록됐다.
