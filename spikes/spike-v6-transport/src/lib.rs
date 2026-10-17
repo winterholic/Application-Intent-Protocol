@@ -309,8 +309,13 @@ async fn apply_attempt(
             // 직렬화 실패로 커밋이 거절되면 커밋되지 않았다. 재시도 구간에서 다시 보내기 전에 표지를 내린다.
             if matches!(e.code().map(|c| c.code()), Some("40001") | Some("40P01")) {
                 commit_sent.store(false, std::sync::atomic::Ordering::SeqCst);
+                err(classify_write_error("커밋", e))
+            } else if e.is_closed() {
+                // COMMIT 응답 전에 PostgreSQL 연결이 닫히면 서버가 커밋했는지 이 연결로는 알 수 없다.
+                json!({"ok":false,"code":"WIRE.COMMIT_UNKNOWN"})
+            } else {
+                err(classify_write_error("커밋", e))
             }
-            err(classify_write_error("커밋", e))
         }
     }
 }
@@ -1456,7 +1461,7 @@ async fn start_with_fingerprint(facts: Value, wire: IdWire, contract_fingerprint
             realtime_slots: tokio::sync::Semaphore::new(32),
             realtime_preauth: tokio::sync::Semaphore::new(32),
             object_slots: tokio::sync::Semaphore::new(4),
-            db_url: spike_v2_read::test_database_url().into(),
+            db_url: spike_v2_read::test_database_url(),
             broker: None,
             enable_file_uploads: false,
             fault_injection: true,
