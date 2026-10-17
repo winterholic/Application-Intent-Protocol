@@ -40,6 +40,13 @@ JSON 실패 본문은 `requestId`와 이 레지스트리의 `retry`를 싣는다
 - 원인: An extension asked its context for an access that the extension does not list.
 - 수정: Add the access to the `access` list of the extension, or stop calling it.
 
+### `WIRE.ADAPTER_UNSUPPORTED`
+
+`class` availability, `retry` never
+
+- 원인: The configured database adapter does not implement this route or feature yet; it is refused instead of being emulated.
+- 수정: Operator: use the PostgreSQL adapter for this feature, or wait for the adapter to implement it. The same request fails the same way.
+
 ### `WIRE.ALREADY_EXISTS`
 
 `class` request, `retry` never
