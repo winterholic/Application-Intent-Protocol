@@ -33,6 +33,7 @@ test('AIP server enforces forum group visibility and unique link relations with 
   const jwksPath = join(temp, 'jwks.json');
   const bindingPath = join(temp, 'binding.ts');
   let server;
+  const uiHosts = [];
   try {
     const {publicKey, privateKey} = generateKeyPairSync('rsa', {modulusLength: 2048});
     const jwk = {...publicKey.export({format: 'jwk'}), kid: 'flaskbb-fixture', alg: 'RS256', use: 'sig', key_ops: ['verify']};
@@ -97,6 +98,48 @@ test('AIP server enforces forum group visibility and unique link relations with 
     const admin = connect(`http://${started.address}`, token('admin-fixture'), contract);
     const readOnly = connect(`http://${started.address}`, token('readonly-fixture'), contract);
     const guest = connect(`http://${started.address}`, null, contract);
+
+    const python = '/private/tmp/flaskbb-aip-host-venv/bin/python';
+    const launchUi = async subject => {
+      const uiEnv = {
+        PATH: process.env.PATH,
+        PYTHONPATH: [join(track, 'ui'), join(root, 'product/python')].join(':'),
+        FLASKBB_TEST_INTEGRATION: '1',
+        FLASKBB_TEST_ACCESS_TOKEN: token(subject),
+        FLASKBB_TEST_SUBJECT: subject,
+        FLASKBB_TEST_USERNAME: subject,
+        FLASKBB_TEST_AIP_URL: `http://${started.address}`,
+      };
+      const host = spawn(python, ['tests/run_ui_host.py'], {cwd: track, env: uiEnv, stdio: ['ignore', 'pipe', 'pipe']});
+      uiHosts.push(host);
+      let hostStderr = '';
+      host.stderr.on('data', data => {hostStderr += data;});
+      const lines = createInterface({input: host.stdout});
+      const listening = await Promise.race([
+        once(lines, 'line').then(([line]) => JSON.parse(line)),
+        once(host, 'exit').then(([code]) => {throw new Error(`UI host exit ${code}: ${hostStderr}`);}),
+        new Promise((_, reject) => setTimeout(() => reject(new Error(`UI host timeout: ${hostStderr}`)), 15000).unref())
+      ]);
+      return {host, base: `http://127.0.0.1:${listening.port}`};
+    };
+    const readonlyUi = await launchUi('readonly-fixture');
+    const cookie = 'aip_session=aip-integration-session';
+    const csrf = 'aip-integration-csrf-token';
+    const readonlyForumResponse = await fetch(`${readonlyUi.base}/forum/2`, {headers: {Cookie: cookie}});
+    assert.equal(readonlyForumResponse.status, 200);
+    const readonlyForumHtml = await readonlyForumResponse.text();
+    assert.doesNotMatch(readonlyForumHtml, /Start a topic/, 'read-only members must not see the topic form');
+    const readonlyTopicResponse = await fetch(`${readonlyUi.base}/topic/00000000-0000-4000-8000-000000000002`, {headers: {Cookie: cookie}});
+    assert.equal(readonlyTopicResponse.status, 200);
+    assert.doesNotMatch(await readonlyTopicResponse.text(), /<button[^>]*>Reply<\/button>/, 'read-only members must not see the reply form');
+    const beforeReadonlyUiPost = sql(`SELECT count(*) FROM ${q}.topic`);
+    const readonlyPostResponse = await fetch(`${readonlyUi.base}/forum/2/topic`, {
+      method: 'POST', redirect: 'manual', headers: {Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded'},
+      body: new URLSearchParams({csrf_token: csrf, title: 'Denied UI topic', content: 'Must not persist'})
+    });
+    assert.equal(readonlyPostResponse.status, 403, 'AIP denies a forged hidden-form submission');
+    assert.equal(sql(`SELECT count(*) FROM ${q}.topic`), beforeReadonlyUiPost, 'denied UI write leaves the DB unchanged');
+
     const query = {read: 'Forum', select: ['id', 'title', 'category'], sort: [{field: 'id', dir: 'asc'}], limit: 100};
     const memberRows = (await member.read(query)).rows;
     const guestRows = (await guest.read(query)).rows;
@@ -251,8 +294,42 @@ test('AIP server enforces forum group visibility and unique link relations with 
     assert.equal((await member.read({read: 'Post', select: ['id'], filter: [{field: 'id', op: 'eq', value: firstPostId}], limit: 1})).rows.length, 0);
     const countsAfterDelete = (await member.read({read: 'Forum', select: ['topic_count', 'post_count'], filter: [{field: 'id', op: 'eq', value: '2'}], limit: 1})).rows[0];
     assert.deepEqual([countsAfterDelete.topic_count, countsAfterDelete.post_count], [1, 1], 'deleted topic cascade is absent from member reads and aggregates');
-    console.log(JSON.stringify({schema, ...init, memberVisible: memberRows.map(row => row.title), guestVisible: guestRows.map(row => row.title), duplicateLinkRejected: true}));
+    const memberUi = await launchUi('member-fixture');
+    const memberForumResponse = await fetch(`${memberUi.base}/forum/2`, {headers: {Cookie: cookie}});
+    assert.equal(memberForumResponse.status, 200);
+    const memberForumHtml = await memberForumResponse.text();
+    assert.match(memberForumHtml, /Start a topic/, 'authorized member sees the original topic form');
+    assert.match(memberForumHtml, /maxlength="255"[^>]*required/, 'AIP title cap and required-field constraints are rendered');
+    const uiTopicTitle = `UI integration ${randomUUID()}`;
+    const uiTopicBody = 'Created through the Flask renderer and AIP SDK';
+    const uiTopicResponse = await fetch(`${memberUi.base}/forum/2/topic`, {
+      method: 'POST', redirect: 'manual', headers: {Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded'},
+      body: new URLSearchParams({csrf_token: csrf, title: uiTopicTitle, content: uiTopicBody})
+    });
+    assert.equal(uiTopicResponse.status, 303, `UI topic create response: ${uiTopicResponse.status}`);
+    const uiTopicPath = uiTopicResponse.headers.get('location');
+    const uiTopicId = uiTopicPath?.split('/').at(-1);
+    assert.ok(uiTopicId);
+    assert.equal(sql(`SELECT count(*) FROM ${q}.topic WHERE id='${uiTopicId}' AND title='${uiTopicTitle}' AND published`), '1');
+    assert.equal(sql(`SELECT count(*) FROM ${q}.post WHERE topic_id='${uiTopicId}' AND content='${uiTopicBody}' AND published`), '1');
+    const memberTopicHtml = await (await fetch(`${memberUi.base}${uiTopicPath}`, {headers: {Cookie: cookie}})).text();
+    assert.match(memberTopicHtml, /Reply/);
+    const uiReplyResponse = await fetch(`${memberUi.base}/topic/${uiTopicId}/reply`, {
+      method: 'POST', redirect: 'manual', headers: {Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded'},
+      body: new URLSearchParams({csrf_token: csrf, content: 'Reply through AIP SDK'})
+    });
+    assert.equal(uiReplyResponse.status, 303, `UI reply response: ${uiReplyResponse.status}`);
+    assert.equal(sql(`SELECT count(*) FROM ${q}.post WHERE topic_id='${uiTopicId}' AND content='Reply through AIP SDK' AND published`), '1');
+    const uiTopicRows = (await member.read({read: 'Topic', select: ['id', 'title', 'published'], filter: [{field: 'id', op: 'eq', value: uiTopicId}], limit: 1})).rows;
+    assert.deepEqual(uiTopicRows.map(row => [row.title, row.published]), [[uiTopicTitle, true]], 'official SDK sees UI-created topic');
+    console.log(JSON.stringify({schema, ...init, memberVisible: memberRows.map(row => row.title), guestVisible: guestRows.map(row => row.title), duplicateLinkRejected: true, uiTopicAndReplyPersisted: true, readonlyUiWriteDenied: true}));
   } finally {
+    for (const uiHost of uiHosts) {
+      if (uiHost.exitCode === null) {
+        uiHost.kill('SIGTERM');
+        await Promise.race([once(uiHost, 'exit'), new Promise(resolve => setTimeout(resolve, 3000))]);
+      }
+    }
     if (server && server.exitCode === null) {
       server.kill('SIGTERM');
       await Promise.race([once(server, 'exit'), new Promise(resolve => setTimeout(resolve, 3000))]);

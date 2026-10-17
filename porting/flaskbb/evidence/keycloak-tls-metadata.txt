@@ -1,0 +1,6 @@
+$ openssl x509 -in /private/tmp/flaskbb-kc-tls/cert.pem -noout -subject -issuer -ext subjectAltName -fingerprint -sha256
+subject=CN=127.0.0.1
+issuer=CN=127.0.0.1
+X509v3 Subject Alternative Name: 
+    IP Address:127.0.0.1, DNS:localhost
+sha256 Fingerprint=00:C0:B4:D7:4B:6E:D7:E8:AD:5C:EB:FB:BF:0D:B0:9C:5E:21:97:12:22:88:C0:88:4B:50:A3:E2:54:49:7B:82

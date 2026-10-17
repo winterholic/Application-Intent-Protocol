@@ -211,3 +211,27 @@ Executed commands and outcomes (all `--offline`; logs contain full stdout/stderr
 - `cargo fmt --package aip-auth -- --check` and `git diff --check` → exit 0.
 
 The three selected `tests/jwt.rs` tests only exercise `verify_token`; no `psql`, principal lookup or database-backed test was run. In particular, no connection to user DB `localhost:5432` was attempted. Browser, provisioning, UI-to-AIP flow and full F01–F17 gates were not executed by this narrow correction and remain governed by the active porting task.
+
+## 2026-10-17 — Renderer permission RED/GREEN and actual AIP SDK/DB writes
+
+Starting checkout `/private/tmp/aip-porting-full-20261017`, branch `porting/flaskbb-full-2019`, HEAD `86b307543d12aeccfdc032c8a62b324a278a1f19`. No auth code was changed; the detached independent `nbf` verifier remains separate. Original screen/form analysis covered upstream `layout.html`, `forum/index.html`, `forum/category_layout.html`, `forum/forum.html`, `forum/topic.html`, `forum/new_topic.html`, `forum/forms.py`, and `forum/views.py`. Current renderer preserves Aurora assets/classes, category/forum title/description/lock state, topic title/author/post count/date, post content, source-required title/body validation, the AIP contract's title max 255, CSRF, and group/moderator-based form visibility. It still lacks upstream Jinja reuse, WTForms field-error re-render, plugin hooks, tracker checkbox, editor help/preview, unread markers, moderator/post controls, pagination, last-post author/title, and search/profile/management screens.
+
+TDD RED was captured in `evidence/ui-authz-red.log` using the test added to `porting/flaskbb/tests/aip-read.test.mjs`: an actual renderer GET for pre-bound `readonly-fixture` returned HTTP 200 but exposed the topic form. Assertion: `read-only members must not see the topic form`; 0 passed, 1 failed, exit 1. `evidence/ui-authz-harness-path-error.log` records and scopes an initial test harness invocation path mistake; the invocation was corrected to `tests/run_ui_host.py` before RED.
+
+Changed the UI-only permission projection in `ui/app.py` and template conditions in `ui/templates/forum_view.html` and `topic_view.html`. The UI reads AIP User, Group, UserGroup and ForumModerator through the official Python SDK; server AIP policy remains authoritative on mutations. Added a guarded integration-only UI host harness and expanded `aip-read.test.mjs` to exercise the renderer with the same live local AIP listener.
+
+Command: `node --test porting/flaskbb/tests/aip-read.test.mjs` (Node test runtime spawns the actual AIP service, Python Flask renderer, official Python SDK, and `psql`; all DB commands use explicit `postgresql://...@127.0.0.1:55439/aip_flaskbb`, per-run schema `aip_flaskbb_6cae7b2c96`; no connection to localhost:5432). GREEN raw output is `evidence/ui-sdk-integration-green.log`:
+```
+{"schema":"aip_flaskbb_6cae7b2c96","ddlDigest":"8b02ccef359c3f5860e95ee13ccb9ad10f26440c7af39db5c8139c9fa5e0b9a7","factsDigest":"713eb99bf8b831af80bf88f96c657ca28c277f6dd7f26549de8f1f11fbf204f9","ok":true,"structureDigest":"b79beafed7e0f7a8749cbb654b79a19c6bd8207149f00fcad974643aad3ba211","memberVisible":["Private fixture"],"guestVisible":["Public forum"],"duplicateLinkRejected":true,"uiTopicAndReplyPersisted":true,"readonlyUiWriteDenied":true}
+✔ AIP server enforces forum group visibility and unique link relations with the SDK (4368.393458ms)
+ℹ tests 1
+ℹ pass 1
+ℹ fail 0
+ℹ duration_ms 7407.123125
+```
+
+Scope: integration actors (`member-fixture`, `admin-fixture`, `readonly-fixture`) are synthetic and operator-bound to existing seed actors inside the test schema. Member UI topic POST and reply POST each returned 303; SQL reads confirmed published Topic/first Post/reply rows; official SDK read saw the new Topic. Read-only form was absent; a direct valid-CSRF POST returned 403 and the pre/post topic count was unchanged. The dynamic schema cleanup is in `finally`. These are renderer→SDK→AIP listener→dedicated PG tests, not browser OIDC/account provisioning or full UI parity. The aggregate direct SDK behavior remains bounded to this single named test.
+
+Keycloak browser trust stage: no browser retry in this run. Read-only command `openssl x509 -in /private/tmp/flaskbb-kc-tls/cert.pem -noout -subject -issuer -ext subjectAltName -fingerprint -sha256` output is saved at `evidence/keycloak-tls-metadata.txt`: subject/issuer both `CN=127.0.0.1`; SAN `IP Address:127.0.0.1, DNS:localhost`; fingerprint `00:C0:B4:D7:4B:6E:D7:E8:AD:5C:EB:FB:BF:0D:B0:9C:5E:21:97:12:22:88:C0:88:4B:50:A3:E2:54:49:7B:82`. URL hostname matches SAN. Together with the previously observed configured-browser `ERR_CERT_AUTHORITY_INVALID`, authority/client trust is the blocked stage (inference from public certificate metadata plus observed browser error); browser trust store and server chain validation were not inspected or changed. Explicit-CA server SDK TLS and browser E2E are not exercised by this run.
+
+Remaining: upstream template/behavior parity; per-field validation feedback; all F01–F17; IdP browser flow and issuer trust; A/B provisioning contract (OPEN, not user-approved); account activation/reset and Keycloak Mailpit separation; original business-backend stop; delete/tombstone and tracker semantic gaps; restart persistence; clean build/deploy gate. This single UI integration does not change the overall completion verdict.

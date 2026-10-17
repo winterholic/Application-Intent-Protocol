@@ -87,13 +87,59 @@ def create_app(config=None, sdk_factory=connect, sessions=None, flows=None):
             abort(401)
         users = client.read({
             "read": "User",
-            "select": ["id", "username", "activated"],
+            "select": ["id", "username", "primary_group", "activated"],
             "filter": [{"field": "id", "op": "eq", "value": actor_id}],
             "limit": 1,
         })
         if not users or not users[0].get("activated"):
             abort(403)
         return users[0]
+
+    def can_contribute(client, user, target, permission):
+        """Mirror upstream's visible post controls; AIP still decides every mutation."""
+        if not user or not user.get("primary_group"):
+            return False
+        if permission == "posttopic" and target.get("locked"):
+            return False
+        if permission == "postreply" and target.get("hidden"):
+            return False
+        try:
+            groups = client.read({
+                "read": "Group",
+                "select": ["id", "admin", "super_mod", "mod", "posttopic", "postreply"],
+                "limit": 100,
+            })
+            memberships = client.read({
+                "read": "UserGroup",
+                "select": ["id", "user", "group"],
+                "filter": [{"field": "user", "op": "eq", "value": user["id"]}],
+                "limit": 1000,
+            })
+            moderators = client.read({
+                "read": "ForumModerator",
+                "select": ["id"],
+                "filter": [
+                    {"field": "forum", "op": "eq", "value": target["forum_id"]},
+                    {"field": "user", "op": "eq", "value": user["id"]},
+                ],
+                "limit": 1,
+            })
+        except AipError as error:
+            app.logger.warning("AIP permission metadata unavailable code=%s request_id=%s", error.code, error.request_id)
+            return False
+
+        memberships_ids = {str(row.get("group")) for row in memberships}
+        memberships_ids.add(str(user["primary_group"]))
+        user_groups = [row for row in groups if str(row.get("id")) in memberships_ids]
+        is_moderator = bool(moderators) or any(
+            group.get("admin") or group.get("super_mod") or group.get("mod") for group in user_groups
+        )
+        has_permission = any(group.get(permission) for group in user_groups)
+        if permission == "posttopic":
+            return is_moderator or has_permission
+        if permission == "postreply":
+            return is_moderator or (not target.get("locked") and has_permission)
+        return False
 
     def submit_bundle(client, operations, key, on_success):
         result = client.bundle(operations, key=key)
@@ -241,7 +287,15 @@ def create_app(config=None, sdk_factory=connect, sessions=None, flows=None):
         if not forum:
             abort(404)
         identity = session_store.get(request.cookies.get("aip_session"), {})
-        return render_template("forum_view.html", forum=forum[0], topics=topics, logout_url=url_for("logout"), csrf_token=identity.get("csrf_token"))
+        try:
+            user = current_aip_user(client) if identity else None
+        except AipError as error:
+            reject_aip_error(error)
+        return render_template(
+            "forum_view.html", forum=forum[0], topics=topics, logout_url=url_for("logout"),
+            csrf_token=identity.get("csrf_token"),
+            can_post_topic=can_contribute(client, user, {**forum[0], "forum_id": forum_id}, "posttopic"),
+        )
 
     @app.post("/forum/<forum_id>/topic")
     def create_topic(forum_id):
@@ -305,7 +359,17 @@ def create_app(config=None, sdk_factory=connect, sessions=None, flows=None):
         if not topics:
             abort(404)
         identity = session_store.get(request.cookies.get("aip_session"), {})
-        return render_template("topic_view.html", topic=topics[0], posts=posts, logout_url=url_for("logout"), csrf_token=identity.get("csrf_token"))
+        client = aip_client()
+        try:
+            user = current_aip_user(client) if identity else None
+        except AipError as error:
+            reject_aip_error(error)
+        topic = {**topics[0], "forum_id": topics[0]["forum"]}
+        return render_template(
+            "topic_view.html", topic=topic, posts=posts, logout_url=url_for("logout"),
+            csrf_token=identity.get("csrf_token"),
+            can_reply=can_contribute(client, user, topic, "postreply"),
+        )
 
     @app.errorhandler(401)
     def unauthenticated(_error):

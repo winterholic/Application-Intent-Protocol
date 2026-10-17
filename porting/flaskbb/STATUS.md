@@ -7,6 +7,24 @@
 - 전체 의미 기능 분모는 [INVENTORY.md](INVENTORY.md)에 잠근다. URL/endpoint/table 수는 별도 커버리지 축이며 기능 수로 합산하지 않는다.
 - 기획의 독립 완료·출시 판정은 이 작업 이후 별도로 요구된다. 현재 전체 포팅·기능 동등성·배포 준비 완료가 아니다.
 
+## 2026-10-17 현재 Run — forum 렌더 권한 및 실제 AIP SDK/DB 통합
+
+원본 `layout.html`, `forum/index.html`, `forum/category_layout.html`, `forum/forum.html`, `forum/topic.html`, `forum/new_topic.html`, `forum/forms.py`, `forum/views.py`를 대조했다. 현재 adapted renderer에서 보존된 항목은 Aurora 정적 자원과 FlaskBB class 구조, 카테고리/포럼 제목·설명·잠금 표시, 주제 제목·작성자·게시물 수·날짜, 게시글 본문, 원본의 필수 제목/본문 검사, AIP contract의 제목 255자 상한, 로그인 회원의 CSRF 폼이다. upstream 권한 경계에 맞춰 로그인·활성 AIP actor, 포럼 읽기 접근, locked/hidden 상태, primary/additional group 권한과 moderator 관계를 조회해 새 주제/답글 폼을 노출하고, 실제 mutation 인가는 계속 AIP 서버가 최종 결정한다.
+
+원본과 아직 다른 부분: upstream Jinja template을 그대로 재사용하지 않았고 WTForms의 필드 오류 재표시, form/plugin hooks, topic tracking checkbox, editor help/preview, last-post 작성자·제목, unread/read markers, moderator links/actions, reply/edit/delete controls, pagination, 검색·profile·관리 UI는 보존하지 않았다. 빈 값은 브라우저 `required`와 서버 검증을 거치지만 기존 WTForms 오류 화면과 동등하다고 보지 않는다. 한 UI 통합은 전체 original UI 흐름이나 F01–F05 전체 동등성 판정이 아니다.
+
+### 격리 통합 증거
+
+- 먼저 추가한 실제 renderer 권한 회귀는 GREEN 전 `evidence/ui-authz-red.log`에서 실패했다: UI 통합 fixture의 read-only 계정이 `/forum/2` 화면에서 “Start a topic”을 보았다. 이후 권한 계산을 화면에 연결했다.
+- `node --test porting/flaskbb/tests/aip-read.test.mjs`를 다시 실행: 1 test passed, 0 failed. 전체 원시 출력과 실제 dynamic schema 식별자는 `evidence/ui-sdk-integration-green.log`에 있다. 시험은 테스트용 AIP listener를 ephemeral loopback 포트에 기동하고 dedicated PostgreSQL host `127.0.0.1:55439` database `aip_flaskbb` 안에 임의 schema를 만들었다. localhost:5432는 사용하지 않았다.
+- 같은 실제 SDK/API 환경에서 pre-bound synthetic `readonly-fixture`의 topic 폼은 숨겨졌고, 유효 CSRF를 넣은 위조 POST는 HTTP 403 및 topic row 변화 없음. `member-fixture`는 화면의 topic 폼을 제출해 303을 받고 Topic + 첫 Post가 publish된 상태로 DB에 저장됐다. reply 폼에서 POST한 답글도 303 및 publish된 Post 행으로 저장됐다. 공식 SDK의 후속 `Topic` read에서 UI가 만든 topic이 확인됐다. 이들은 사전 운영자 bind를 사용하는 테스트 actor이며 새 가입/계정 provisioning 증거가 아니다. 모든 seed/schema는 test 전용이고 dynamic schema는 `finally`에서 제거한다.
+
+### TLS 차단 stage
+
+이번 Run에서는 browser를 다시 호출하지 않았다. 이전 configured browser 증거는 Keycloak `https://127.0.0.1:58094`에서 `ERR_CERT_AUTHORITY_INVALID`였다. 공개 인증서 metadata만 `evidence/keycloak-tls-metadata.txt`에 읽었다: subject와 issuer가 모두 `CN=127.0.0.1`, SAN은 `IP:127.0.0.1`과 `DNS:localhost`. 따라서 issuer URL host와 SAN은 일치하고, self-issued 인증서를 browser client trust chain이 신뢰하지 않는 stage가 관측된 오류와 일치한다(원인은 metadata+오류를 합친 추론이며 browser trust store를 읽거나 변경하지 않았다). 서버 SDK용 CA 명시 TLS 경로는 별도 미실행이며 browser 검증으로 간주하지 않는다. HTTP server/SDK integration 성공은 OIDC browser login, Keycloak issuer trust, authorization code/callback을 검증하지 않는다.
+
+F01–F17, 새 IdP 주체 provisioning A/B 계약, 원본 business backend 중단, F01–F05 전체 화면/업무 parity, 재시작 보존 및 clean deployment gate는 계속 미완료다. 독립 `nbf` 검증자는 별도 detached tree에서 확인 중이므로 이번 변경에서 auth 코드는 건드리지 않았다. 20a95a9 mock UI suite 접수 범위 및 진행 중인 계정연결 검토는 이 통합 증분으로 완료 판정하지 않는다.
+
 ## 2026-10-17 새 컨텍스트 — 계정 연결 계약 대조 및 브라우저 UI 기준선
 
 현재 계약 대조 결과, 신규 가입→AIP 회원/principal 연결은 현 제품 경로에 맞춰 배선할 수 있는 작은 UI 변경이 아니다. `product/EXECUTION.md`의 신원 절은 `service principal bind`를 명시적 운영 작업으로 한정하고, `product/OPERATIONS.md`는 앱 사용자 actor가 먼저 존재해야 한다고 규정한다. 실제 서버는 `/session` 전에 토큰을 검증한 뒤 `(issuer, subject)`의 활성 principal mapping을 조회한다. `porting/flaskbb/app.aip`의 `User`는 actor resource이고 read만 노출한다. renderer의 callback은 official SDK `discover()`를 호출하며 연결 없는 subject를 거절한다. 즉 등록 뒤 SDK/운영 CLI를 이용하거나 원본 FlaskBB DB를 우회하면 기존 계약을 깨거나 금지된 업무-backend bridge가 된다.
