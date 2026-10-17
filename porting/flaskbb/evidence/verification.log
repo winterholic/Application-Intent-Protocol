@@ -131,3 +131,17 @@ Compared the frozen route listing (`evidence/routes.txt`: 120 URL rules, 91 dist
 Source scan command: `rg -n 'FileStorage|request\\.files|upload|send_file|send_from_directory|socketio|WebSocket|websocket|SSE|ServerSent|events\\(' porting/flaskbb/upstream/flaskbb porting/flaskbb/extensions-source -g '*.py' -g '*.html'`. No upload/download, WebSocket/SSE, or public REST handler was found in the frozen core or installed plugins. One `FORMAT_CLASSES` match was unrelated to file handling. This is a negative source finding, not a claim about external reverse proxies or unlisted custom deployments.
 
 Result: source-derived scope denominator v0.1 is locked for the fixed upstream revision plus these installed official plugins. Route/source counts remain coverage evidence only, never feature counts. Runtime observation and the per-row permission, empty/error, state/cascade, async-effect and UI equivalence tests are not complete. No completion percentage is calculated. A newly found upstream/plugin behavior must be added through a versioned inventory amendment, not silently excluded or reweighted.
+
+## 2026-10-17 — 원본 auth UI live re-observation (porting UI/AIP는 미실행)
+
+Environment: configured `ttakkari_browser` MCP against the actual original app `http://127.0.0.1:58080/`; isolated FlaskBB baseline PostgreSQL remains port `55438`. No user secret or real account was entered; only pages were opened. This observation does not exercise any test account or external identity provider.
+
+Actions/results:
+- `browser_navigate(http://127.0.0.1:58080/)` → page title `FlaskBB - A lightweight forum software in Flask`; Forum home displayed the seeded categories/forums/topics.
+- `browser_click(Login link)` → `/auth/login`, title `Login - FlaskBB`; accessibility snapshot exposed username/email, password, remember-me, registration and reset links.
+- `browser_click(Not a member yet?)` → `/auth/register`, title `Register - FlaskBB`; snapshot exposed username, email, password, confirmation, language, Terms checkbox, Register submit.
+- No form submission, AIP/BFF navigation, AIP SDK request or network-to-AIP event occurred. Browser was closed with `browser_close`.
+
+Environment probe: in the macOS command environment, `curl -sS -i http://127.0.0.1:58083/health` returned `curl: (7) Couldn't connect to server`; no AIP listener was available at that endpoint in this observation. This is not a test of deployed AIP availability. `python3 -c 'import flask,requests,jinja2'` failed at `ModuleNotFoundError: No module named 'flask'` in the Mac interpreter; Flask is installed only in the isolated original container venv (`/opt/flaskbb-venv`). No browser shell or fallback browser was launched.
+
+Source contract checked: `porting/flaskbb/app.aip` `resource User` exposes read and has no create exposure. `product/EXECUTION.md` says principal rows are explicitly added by `service principal bind`, not automatically at request time. The exact reusable provisioning design and alternatives are in `STATUS.md` under “새 IdP 주체의 AIP 사용자 생성과 연결” and remain OPEN for product planning. Existing Keycloak/password-grant + operator-bound actor → official SDK evidence remains scoped to an existing actor; it is not browser login or signup.

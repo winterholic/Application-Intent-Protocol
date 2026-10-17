@@ -7,6 +7,22 @@
 - 전체 의미 기능 분모는 [INVENTORY.md](INVENTORY.md)에 잠근다. URL/endpoint/table 수는 별도 커버리지 축이며 기능 수로 합산하지 않는다.
 - 기획의 독립 완료·출시 판정은 이 작업 이후 별도로 요구된다. 현재 전체 포팅·기능 동등성·배포 준비 완료가 아니다.
 
+## 2026-10-17 현재 Run — 원본 인증 UI 재관측과 AIP 가입 경계 결정 필요
+
+이번 `ttakkari_browser` 관측은 **원본 기준선**이다. `http://127.0.0.1:58080/`에서 원본 Forum 홈, Login 링크(`/auth/login`), Register 링크(`/auth/register`)를 열었다. 로그인 화면은 username/email·password·remember-me와 가입/비밀번호 재설정 링크를 표시했고, 가입 화면은 username·email·password·confirm·language·약관 checkbox를 표시했다. form은 아직 제출하지 않았다. 이 페이지들은 원본 FlaskBB server-rendered UI이며 새 AIP UI나 AIP 요청 증거가 아니다. Browser MCP로 페이지를 닫았다. 접근성 snapshot은 Run outbox `browser/page-2026-10-17T00-54-30-454Z.yml`, `page-2026-10-17T00-55-35-080Z.yml`, `page-2026-10-17T00-55-37-820Z.yml`에 등록됐다.
+
+### [열림 — 제품 아키텍처 결정] 새 IdP 주체의 AIP 사용자 생성과 연결
+
+**문제:** 고정 원본의 가입은 계정 필드 검증·중복/blacklist 검사·기본 Member 권한·비활성 계정·activation email/token으로 이어진다. 로그인은 username 또는 email과 password hash를 검증하고 활성화/비활성화·실패·reauth 정책을 적용한다. AIP 계약에는 `User` read만 있고 `User` create가 없다(`porting/flaskbb/app.aip` `resource User`). AIP 서버는 검증된 `(issuer, subject)`가 이미 actor에 연결되어야 `/session`에서 주체를 돌려주며 현재 연결 경로는 운영자 `service principal bind`다(`product/EXECUTION.md` 신원 절, `product/OPERATIONS.md`); 기존 actor 수동 연결과 bearer token은 새 가입자 생성/연결을 대신할 수 없다. 따라서 새 사용자의 가입 이후 권한에 맞는 앱 actor가 생기는 흐름을 현재 계약만으로 정직하게 실행할 수 없다.
+
+**최소 제품안(권고, 아직 미승인·미구현):** AIP core에 선언형, 원자적 principal-provisioning 경로를 추가한다. AIP가 먼저 JWT 서명·issuer·audience·수명·subject를 검증한 뒤 `(iss, sub)`만으로 서버가 actor ID를 발급하고, 앱이 선언한 `User` actor resource row와 principal mapping을 한 DB transaction에서 생성한다. role/group·`activated` 기본값은 서버 선언에 고정하고, 요청자는 actor ID나 role을 지정할 수 없다. 이름/email claim mapping은 allowlist된 claim만 사용하고 uniqueness·IdP email verified/activation 조건을 실패폐쇄로 검사한다. 같은 주체의 재시도는 멱등, 동시 가입은 한 연결만 성공, 중복 email/username 및 잘못된 claim은 행/바인딩 불변이어야 한다. activation/reset은 사용자가 설정한 IdP/메일 공급자에서 실제 token 효과를 검증한 후 이 경로와 연결한다.
+
+**결정할 대안:** (A) 위 core declarative provisioning contract — principal, actor row, 앱 정책이 한 transaction/검증 경로에 있어 재사용과 권한 경계를 core가 보장. (B) 인증 이전 extension hook — 현재 extension은 인증된 actor의 작업 경로로 설명돼 있어 unauthenticated subject의 identity·row를 결합할 수 있는 계약부터 설계해야 하고, core transaction/policy 보장을 hook에 노출하는 폭이 더 크다. 앱 전용 proxy가 운영자 bind나 SQL로 우회하는 방안은 채택할 수 없다. 사용자/기획의 선택 전까지 이 항목은 `OPEN`으로 두고, 열린 결정을 승인된 것으로 기록하지 않는다.
+
+**이번 Run에서 실행되지 않은 것:** 브라우저 authorization-code/PKCE, FlaskBB 화면의 AIP SDK 요청, AIP DB 행 변경, 새 IdP 가입→AIP actor 연결, 로그인 이후 forum 목록/주제 CRUD, 로그아웃/거부. 현재 command environment에서 `curl http://127.0.0.1:58083/health`는 `curl: (7) Couldn't connect`로 끝났다. 이 관측은 macOS command environment에서 해당 시각 AIP listener에 연결되지 않았다는 뜻뿐이며 AIP/production 장애 판정이 아니다. 원본 UI는 port `58080`에서 응답했다. 자세한 command 범위는 `evidence/verification.log` 마지막 항목.
+
+**다음 진척:** 결정 전에도 고정 원본 auth source/runtime의 누락 edge와 기존 AIP Forum/Topic/Post read/apply를 실제 renderer와 연결하는 UI host 골격은 진행할 수 있다. 다만 signup 완료/인증된 새 사용자 경로 또는 UI→AIP 성공을 선언할 수는 없다. 큰 인증 계약 결정은 위 대안과 함께 기획으로 올린다. F01–F17 분모, 전체 앱 backend 중단 gate, 삭제/tombstone 및 tracker 의미 차이는 그대로 유지한다.
+
 ## 실행 환경과 원본 고정본 실제 결과
 
 OrbStack Docker 29.4.0의 Linux/aarch64에서 실행. Python 3.7.17 Bullseye image digest는 `f36f6fe9ddb2622aab9803944cbe7e2bc50be75d624a081f7895e60e7c6b7f0a`. 공개 upstream은 read-only clone에서 고정 SHA로 export했다. 컨테이너 안 `/opt/flaskbb`는 실행용 사본이며 upstream snapshot은 수정하지 않았다.
