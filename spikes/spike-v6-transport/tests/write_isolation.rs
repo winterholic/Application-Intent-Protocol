@@ -93,7 +93,7 @@ async fn write_extension_pins_its_transaction_to_read_committed() {
         facts.clone(),
         IdWire::DecimalString,
         "127.0.0.1:0".parse().unwrap(),
-        server_db.into(),
+        server_db,
         Some(ReadExtensions { lang: WorkerLang::Node, dir: owned.0.clone() }),
         ServerOptions::default(),
         true,
