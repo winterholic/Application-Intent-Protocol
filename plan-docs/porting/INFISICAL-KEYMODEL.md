@@ -1,41 +1,46 @@
-# E2E 키 모델 결정 요청 (WBS 7.3.3.6, Infisical G2)
+# I05 키 모델 (WBS 7.3.3.6, Infisical) — 2026-10-18 정정판
 
-원본(Infisical MIT)은 E2E 암호화다: 시크릿 값의 평문은 클라이언트가 쥐고 서버는
-암호문·메타데이터만 본다(SRP 로그인, blind-index, 클라이언트 키). AIP의 암호화는
-서버 보유 키다(encrypted field + `AIP_ENCRYPTION_KEYS`, rekey 내장). 둘은 같은
-"암호화"가 아니라 보안 모델 자체가 다르므로 포팅 전에 선택이 필요하다.
+이전판은 "원본 Infisical은 E2E 암호화이고 AIP는 서버 보유 키라 모델이 충돌한다"고 전제하고 안 A/B/C 중 하나를 창시자에게 고르게 했다. 독립 검증 결과 그 전제가 틀렸다. **결정 요청은 철회한다.** 이 문서는 원본 소스를 읽어 확인한 사실로 다시 쓴 것이다. 원본은 실행하지 않았다.
 
-## 선택지
+기준 revision은 `47246becc445869ba73077baa0a53a683e3508ce`(MIT 범위, `backend/src`). 아래 줄 번호는 이 revision의 값이다.
 
-### 안 A. 서버 키로 일원화 (AIP 기본)
-시크릿 값을 AIP encrypted field에 넣고 서버가 암복호·rekey·감사를 전담한다.
-- 장점: 선언으로 완전 흡수. 인가·감사·로테이션 실행이 모두 서버 단일 권한 아래에 들어간다.
-- 단점: zero-knowledge 포기. 서버 침해 시 평문 노출. 원본 E2E 클라이언트·CLI와
-  호환 불가. "Infisical을 AIP로 옮겼다"가 아니라 "비슷한 비밀관리을 AIP로 새로 만들었다"가 된다.
-- 철학 정합성: 높음. 서버 최종 권한 원칙과 일치한다.
+## 원본의 기본 키 모델은 서버 보유 키다
 
-### 안 B. E2E 유지, 암호 영역을 잔여 서비스로
-암복호·SRP·blind-index를 원본 crypto 서비스에 남기고 AIP는 인가·메타·감사만 맡는다.
-- 장점: 원본 보안 모델·클라이언트 호환 보존.
-- 단점: 값에 닿는 핵심(버전 비교·로테이션 내용·동기화 내용·검색)이 전부 AIP 밖.
-  잔여 서비스가 사실상 백엔드 전체가 되어 포팅 실익이 거의 없다.
-- 철학 정합성: 낮음. AIP가 껍데기 권한만 쥐는形이 된다.
+| 사실 | 근거 | 확인 방법 |
+|---|---|---|
+| 새 프로젝트는 항상 `ProjectVersion.V3`으로 만들어지고 프로젝트 행에 서버 KMS 키 id(`kmsSecretManagerKeyId`)가 붙는다 | `services/project/project-service.ts:374-375` (`kmsSecretManagerKeyId: kmsKeyId`, `version: ProjectVersion.V3`) | 소스 판독 |
+| 루트 키(`ROOT_ENCRYPTION_KEY`, 소프트웨어 또는 HSM)를 서버 메모리에 올리고, KMS 키 재료는 AES-256-GCM으로 그 루트 키에 감싸 저장한다 | `services/kms/kms-service.ts:154`(변수), `:200`(`cipher.encrypt(kmsKeyMaterial, ROOT_ENCRYPTION_KEY)`), `:1777`(적재). `lib/config/env.ts:310`에 `ROOT_ENCRYPTION_KEY` 환경 변수 | 소스 판독 |
+| 암복호는 서버가 한다. 데이터 키를 안쪽 스코프에 두고 `encryptor`/`decryptor`를 돌려주며 호출자는 키를 보지 못한다 | `services/kms/kms-service.ts:1266-1291`(`createCipherPairWithDataKey`) | 소스 판독 |
+| blind index는 서버가 계산한다. 데이터 키에서 HKDF-SHA256으로 전용 키를 만들고 HMAC-SHA256으로 값의 색인을 낸다 | `lib/crypto/blind-index.ts:6-26`(HKDF, 도메인 분리 문자열), `:30-38`(HMAC), `:58-71`(`createSecretValueBlindIndexer`), 사용처 `kms-service.ts:1273` | 소스 판독 |
+| SRP 로그인은 레거시 경로다. 이메일 인증이 기본이고 SRP 코드는 "legacy SRP clients"에서만 도달한다고 주석에 적혀 있다 | `services/auth/auth-login-service.ts:410`("Deprecated: provider token validation removed. This path is only reachable from legacy SRP clients."), `:444`("Deprecated SRP path: default to email auth.") | 소스 판독 |
+| 레거시 프로젝트 버전 `V1`, `V2`가 enum에 남아 있고 V3로 올리는 큐(`ProjectV3Migration`, `UpgradeProjectToGhost`)가 있다 | `db/schemas/models.ts:448-452`, `queue/queue-service.ts`의 `QueueName` | 소스 판독. V1/V2 시절의 클라이언트 보유 키 흐름은 읽지 않았다(`확인 필요`) |
 
-### 안 C. 값 영역 분리 (추천)
-E2E가 필요한 사용자 시크릿 **값**만 opaque ciphertext로 두고(서버는 헤더·메타만 본다),
-폴더 구조·RBAC·감사·알림·동기화 상태·PKI 인벤토리는 선언 흡수한다.
-값 기반 서버 로직(내용 비교·전문검색·로테이션 내용 검사)은 불가함을 갭으로 명시한다.
-- 장점: 보안 모델 유지 + 포팅 실익 확보. 서버가 볼 수 없는 것은 서버가 결정하지
-  않는다는 점을 정직하게 반영한다.
-- 단점: I03 선언이 값 의미 없이 껍질이 된다. G4(blind-index)·G5(lease 내용)가 확정 갭으로 남는다.
-- 철학 정합성: 중간. 결정할 수 있는 것만 서버가 결정한다.
+즉 원본의 기본 경로는 클라이언트가 키를 쥐는 zero-knowledge가 아니라 서버가 루트 키, 키 재료, 데이터 키를 쥐고 암복호와 색인을 하는 서버측 KMS다. E2E는 레거시 V1/V2와 SRP 호환 경로의 모양이다.
 
-## 추천과 요청
-**안 C를 추천**한다. 단, "값은 opaque로 둔다"는 원본 E2E 약속을 바꾸지 않는다는
-전제이며, 서버가 평문을 보는 순간(로테이션 실행 등)의 취급 규칙은 별도 결정이 필요하다.
-창시자 결정을 요청한다: C 승인 / A로 변경 / B로 변경.
+확인하지 못한 것이 하나 있다. 시크릿 값 자체가 이 데이터 키로 암호화돼 저장되는 호출 경로(`secret-v2-bridge` 서비스)는 이 세션의 보호 장치가 파일명 때문에 읽기를 막아 직접 보지 못했다. 위 사실들과 V3 프로젝트에 서버 KMS 키가 붙는다는 점에서 그렇게 추정하지만 `확인 필요`다.
 
-## 부록: 7.3.3.8 EE 제외 비준 (WBS 7.3.3.8)
-`backend/src/ee/`(서비스 77·라우터 파일 122)·`backend-go/internal/ee/`는 Enterprise
-라이선스상 production 사용에 구독이 필요하므로 포팅 분모에서 제외한다. 참조 목록은
-`plan-docs/porting/infisical-inventory.json` I13에 보존한다. 본 문서는 비준 기록이다.
+## 이전 서술 철회
+
+- "원본은 E2E다, 서버는 암호문과 메타만 본다"는 서술을 철회한다.
+- 안 A(서버 키 일원화), 안 B(암호 영역을 잔여 서비스로), 안 C(값 영역 opaque 분리)의 비교와 "안 C 추천"을 철회한다. 안 C의 "원본 E2E 약속을 바꾸지 않는다"는 전제 자체가 사실이 아니다.
+- 창시자 결정 요청(C 승인 / A로 변경 / B로 변경)을 철회한다. 사용자에게 남는 이 주제의 결정은 없다. 남는 것은 아래 "AIP 쪽 갭"이다.
+
+## AIP와의 대응
+
+서버측 키는 AIP의 방향과 같다. 서버가 인가와 암호를 함께 최종 결정하는 구조다(`docs/PRINCIPLES.md` 원칙 2). 그래서 안 A(서버 키로 일원화)가 원본과 같은 모델이다. 모델 충돌은 없다.
+
+| 원본 요소 | AIP 쪽 대응 | 현재 상태 |
+|---|---|---|
+| 루트 키(env 또는 HSM) | 서비스 설정의 키 공급자(설계안: `docs/design/13`) | **없음**(제품 경로). PoC 런타임(`crates/aip-runtime`)에만 `AIP_ENCRYPTION_KEYS`가 있다 |
+| 프로젝트별 데이터 키 | `encrypted(scope: <refField>)` 범위별 DEK(설계안) | **없음** |
+| 서버측 암복호 | 제품 방언 `encrypted` 필드 수정자(설계안) | **제품 방언이 거부한다**(`DEF.PARSE_EXPECTED`) |
+| blind index (HKDF+HMAC) | `lookup: eq`(설계안, HMAC-SHA256 별도 키) | **없음** |
+| 키 회전, rekey | durable job 기반 rekey(설계안) | PoC 런타임에만 있음 |
+
+## AIP 쪽 갭 (G2)
+
+[INFISICAL-GAPS.md](INFISICAL-GAPS.md) G2에 정식 제품 갭으로 기록했다. 요약하면 제품 서비스 방언은 `encrypted` 수정자를 거부하고 키 공급자와 AES-GCM 암복호는 제품 경로에 없다. 설계는 `docs/design/13-field-encryption.md`(상태: Proposed)가 맡고 있고 이 포팅 트랙은 core를 고치지 않는다. 그 사이 `porting/infisical/app.aip`는 시크릿 **값을 선언하지 않는다**. 평문 Text 열에 값을 넣으면 모든 읽기 가능자에게 평문이 노출되는 우회가 되기 때문이다. 이전 초안의 `valueCiphertext: Text?`는 실DB에서 읽기도 안 됐다(`WIRE.FIELD_NOT_EXPOSED`). 값 저장·버전·회전·blind index 조회는 `encrypted`가 제품에 들어온 뒤에 선언한다.
+
+## 부록: 7.3.3.8 EE 제외 비준은 철회, 대체 문서로 이동
+
+이전판 부록의 "EE 77 서비스·122 라우터 파일 제외 비준"은 근거가 부족했다. 권한 평가 핵심(`ee/services/permission`)이 EE에 있고 MIT 파일 446개가 EE 모듈을 import한다. 이 사실로 "MIT만 포팅"이 성립하는지 다시 분석했고 사용자 판단 항목으로 [INFISICAL-EE-BOUNDARY.md](INFISICAL-EE-BOUNDARY.md)에 정리했다. 비준은 사용자 판단 전까지 잠정이다.
