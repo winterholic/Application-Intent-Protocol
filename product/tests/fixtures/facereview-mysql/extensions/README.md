@@ -1,5 +1,10 @@
 # Slice13-B: FaceReview home list extensions (WBS 7.2.3)
 
+The pure Slice13-D recommendation math and ranked-pool helpers live in
+`recommendation_math.py` and `recommendation_pool_builder.py`. They are not
+bound to an AIP definition or service route yet; the accompanying original-source
+oracle tests run separately with `FACEREVIEW_SOURCE_PATH` set.
+
 `slice13b_lists.py` ports three original endpoints (`new-facereview@7948b7e7`, `app/services/home_service.py`):
 
 | Original | Extension | Original method |

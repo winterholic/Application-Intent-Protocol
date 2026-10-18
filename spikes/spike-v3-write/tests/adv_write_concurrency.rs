@@ -175,7 +175,13 @@ async fn racing_writers_cannot_double_claim_lose_updates_exceed_capacity_or_hang
         let row = db.query_one(&format!("SELECT status,attempts FROM {schema}.task WHERE id=40"), &[]).await.unwrap();
         let applied_bumps = outcomes[..20].iter().filter(|(_, outcome)| outcome.is_ok()).count() as i64;
         assert_eq!(row.get::<_, i64>(1), applied_bumps, "round {round}: a bump was reported without being stored, or stored without a report");
-        assert_eq!(row.get::<_, String>(0), "OPEN", "round {round}: the release must have taken effect");
+        assert_eq!(
+            row.get::<_, String>(0),
+            "OPEN",
+            "round {round}: the release must have taken effect; release outcome={:?}; outcomes={:?}",
+            outcomes[20].1,
+            tally(&outcomes)
+        );
         assert!(outcomes[20].1.is_ok(), "round {round}: {:?}", outcomes[20].1);
         for (code, count) in tally(&outcomes) {
             *observed.entry("bump vs release x21".into()).or_default().entry(code).or_insert(0) += count;
