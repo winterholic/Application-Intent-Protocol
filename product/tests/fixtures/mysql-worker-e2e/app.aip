@@ -1,0 +1,42 @@
+resource Member { fields { id: Id } }
+actor Member
+resource Video {
+  fields { id: Id; owner: Member; views: Int(0..100) default database }
+  rows read when true
+  transition increment { from views < 100; allow owner = actor; to views = views + 1 }
+  transition reset { from views > 0; allow owner = actor; to views = 0 }
+  expose apply increment { target id; bulk maxRows 1 }
+  expose apply reset { target id; bulk maxRows 1 }
+  extension write view {
+    input { id: Video.Id }
+    output { count: Int(0..10) }
+    access Video.increment
+    effect db
+    deadline 5s
+    implementation "worker.view"
+  }
+  extension write twice {
+    input { first: Video.Id; second: Video.Id }
+    output { count: Int(0..10) }
+    access Video.increment
+    effect db
+    deadline 5s
+    implementation "worker.twice"
+  }
+  extension write badOutput {
+    input { id: Video.Id }
+    output { count: Int(0..10) }
+    access Video.increment
+    effect db
+    deadline 5s
+    implementation "worker.badOutput"
+  }
+  extension write undeclared {
+    input { id: Video.Id }
+    output { count: Int(0..10) }
+    access Video.increment
+    effect db
+    deadline 5s
+    implementation "worker.undeclared"
+  }
+}

@@ -1,0 +1,9 @@
+CREATE TABLE member (id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY) ENGINE=InnoDB;
+CREATE TABLE video (
+  id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  owner_id BIGINT NOT NULL,
+  views BIGINT NOT NULL DEFAULT 0,
+  CONSTRAINT fk_video_owner_id FOREIGN KEY (owner_id) REFERENCES member (id)
+) ENGINE=InnoDB;
+INSERT INTO member (id) VALUES (1), (2);
+INSERT INTO video (id, owner_id, views) VALUES (10, 1, 0), (11, 2, 0), (12, 1, 0);
