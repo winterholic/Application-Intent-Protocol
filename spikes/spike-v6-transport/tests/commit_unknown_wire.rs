@@ -129,6 +129,9 @@ async fn proxy_connection(caller: TcpStream, backend_address: SocketAddr, state:
     let Ok(backend) = TcpStream::connect(backend_address).await else {
         return;
     };
+    // 프록시는 메시지를 헤더·본문 두 번에 나눠 쓴다. Nagle이 켜져 있으면 Linux에서 상대의 지연 ACK(약 40ms)를 기다려 메시지마다 멈춘다.
+    let _ = caller.set_nodelay(true);
+    let _ = backend.set_nodelay(true);
     let (mut caller_read, mut caller_write) = caller.into_split();
     let (mut backend_read, mut backend_write) = backend.into_split();
     let pid = Arc::new(AtomicI32::new(0));
@@ -160,8 +163,13 @@ async fn proxy_connection(caller: TcpStream, backend_address: SocketAddr, state:
                     }
                     if state.fault == Fault::TerminateAtCommit && state.take() {
                         let target = pid.load(Ordering::SeqCst);
-                        state.control.execute("SELECT pg_terminate_backend($1)", &[&target]).await.expect("terminate the proxied backend");
-                        state.fire("COMMIT was sent by the client and withheld; backend terminated with pg_terminate_backend").await;
+                        // 백엔드가 닫히면 아래 루프가 front를 abort한다. 종료 요청과 fire가 거기서 잘리지 않게 떼어 실행한다.
+                        let state = state.clone();
+                        let _ = tokio::spawn(async move {
+                            state.control.execute("SELECT pg_terminate_backend($1)", &[&target]).await.expect("terminate the proxied backend");
+                            state.fire("COMMIT was sent by the client and withheld; backend terminated with pg_terminate_backend").await;
+                        })
+                        .await;
                         continue;
                     }
                 }
