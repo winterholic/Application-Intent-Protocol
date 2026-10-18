@@ -5,7 +5,22 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 /// Uppercase string literals of the read, write, worker and transport layers that are not wire codes.
-const NOT_CODES: &[&str] = &["DESC", "HOME", "PATH", "PLAIN", "PRIVATE_VALUE", "PYTHONPATH", "ROLLBACK", "CARGO_MANIFEST_DIR"];
+const NOT_CODES: &[&str] = &[
+    "DESC",
+    "HOME",
+    "PATH",
+    "PLAIN",
+    "PRIVATE_VALUE",
+    "PYTHONPATH",
+    "ROLLBACK",
+    "CARGO_MANIFEST_DIR",
+    // the MySQL column type named in a malformed-row message
+    "JSON",
+    // Redis command names that the managed Redis capability sends to the store
+    "EVAL_RO",
+    "EXISTS",
+    "PING",
+];
 /// Job status values: a state of a job, not an error code, so they keep their bare names. `RETRY`, `PENDING` and
 /// `RUNNING` are the attempt states that the job metrics and the OTLP span status mapping name.
 const JOB_STATUSES: &[&str] = &["CANCELLED", "CANCEL_REQUESTED", "FAILED", "PENDING", "RETRY", "RUNNING", "SUCCEEDED"];

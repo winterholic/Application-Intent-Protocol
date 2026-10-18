@@ -40,6 +40,13 @@ JSON 실패 본문은 `requestId`와 이 레지스트리의 `retry`를 싣는다
 - 원인: An extension asked its context for an access that the extension does not list.
 - 수정: Add the access to the `access` list of the extension, or stop calling it.
 
+### `WIRE.ADAPTER_UNAVAILABLE`
+
+`class` availability, `retry` later
+
+- 원인: A managed Mongo or Redis capability that the extension called is not configured on this server, cannot be reached, timed out, or failed its read; an empty result is never substituted.
+- 수정: Operator: configure the adapter (`workers.mongo` or `workers.redis`) and check that the store is reachable. The same request succeeds again once the adapter is ready.
+
 ### `WIRE.ADAPTER_UNSUPPORTED`
 
 `class` availability, `retry` never
@@ -58,7 +65,7 @@ JSON 실패 본문은 `requestId`와 이 레지스트리의 `retry`를 싣는다
 
 `class` server, `retry` never
 
-- 원인: A managed job or extension is configured inconsistently (a missing file name or deadline).
+- 원인: A managed job or extension is configured inconsistently (a missing file name or deadline, or an out-of-range Mongo or Redis capability setting).
 - 수정: Operator: fix the service configuration or the definition and restart.
 
 ### `WIRE.BAD_CURSOR`
@@ -102,6 +109,13 @@ JSON 실패 본문은 `requestId`와 이 레지스트리의 `retry`를 싣는다
 
 - 원인: A job was asked to cancel, but its worker has not confirmed that it stopped.
 - 수정: Read `/jobs/status` until the job has a final status before assuming it stopped.
+
+### `WIRE.CAPABILITY_DENIED`
+
+`class` server, `retry` never
+
+- 원인: The extension listed this Mongo or Redis access, but the server-owned capability refuses the call: the collection or key prefix is not allowlisted, the command is not an allowed read command, or an MGET names a key outside the allowed scope. An access that the extension does not list is `WIRE.ACCESS_NOT_DECLARED` instead.
+- 수정: Use only the collections, key prefixes and read commands that the server capability allows (see product/MANAGED-EXECUTION.md), or ask the operator to extend the server allowlist. The same call fails the same way.
 
 ### `WIRE.CHECK_FAILED`
 
