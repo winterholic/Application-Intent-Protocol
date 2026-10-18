@@ -1401,12 +1401,15 @@ impl<'a> Ctx<'a> {
 
     fn aggregate(&mut self, r: &Resource, a: &Aggregate) -> Option<Value> {
         let tt = self.type_of(Some(&r.name), &a.ty)?;
-        for (k, v, allowed) in [("callerFilter", &a.caller_filter, "none"), ("rowOutput", &a.row_output, "none")] {
-            match v.as_deref() {
-                None => self.d("DEF.MISSING_ITEM", format!("aggregate `{}`에 `{k}` 필요", a.name), a.span),
-                Some(x) if x != allowed => self.d("DEF.UNSUPPORTED", format!("`{k} {x}`는 spike에서 지원하지 않음(허용: {allowed})"), a.span),
-                _ => {}
-            }
+        match a.caller_filter.as_deref() {
+            None => self.d("DEF.MISSING_ITEM", format!("aggregate `{}`에 `callerFilter` 필요", a.name), a.span),
+            Some("none" | "read") => {}
+            Some(x) => self.d("DEF.UNSUPPORTED", format!("`callerFilter {x}`는 spike에서 지원하지 않음(허용: none, read)"), a.span),
+        }
+        match a.row_output.as_deref() {
+            None => self.d("DEF.MISSING_ITEM", format!("aggregate `{}`에 `rowOutput` 필요", a.name), a.span),
+            Some("none") => {}
+            Some(x) => self.d("DEF.UNSUPPORTED", format!("`rowOutput {x}`는 spike에서 지원하지 않음(허용: none)"), a.span),
         }
         let source = a.source.clone().unwrap_or_else(|| r.name.clone());
         if !self.res.contains_key(source.as_str()) {

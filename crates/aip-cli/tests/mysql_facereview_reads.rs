@@ -322,6 +322,111 @@ async fn facereview_schema_is_adopted_without_business_ddl_and_read_with_origina
     let total_member = read(Some(&alice), json!({"aggregate": "Video.totalCount", "input": {}})).await;
     assert_eq!(total_member["ok"], true, "{total_member}");
     assert_eq!(total_member["rows"][0], 2, "active member sees the same total: {total_member}");
+
+    // Filtered Video.totalCount matching original HomeService.get_search_videos count contract:
+    // 1) Title-only in OR:
+    let tot_title = read(
+        None,
+        json!({"aggregate": "Video.totalCount", "input": {}, "filter": [{"or": [
+            {"field": "title", "op": "contains", "value": "요리"},
+            {"field": "channel_name", "op": "contains", "value": "없는채널"}
+        ]}]}),
+    )
+    .await;
+    assert_eq!(tot_title["rows"][0], 1, "filtered total matches read row count: {tot_title}");
+
+    // 2) Channel-only in OR:
+    let tot_channel = read(
+        None,
+        json!({"aggregate": "Video.totalCount", "input": {}, "filter": [{"or": [
+            {"field": "title", "op": "contains", "value": "없는제목"},
+            {"field": "channel_name", "op": "contains", "value": "냥채널"}
+        ]}]}),
+    )
+    .await;
+    assert_eq!(tot_channel["rows"][0], 1, "filtered total matches read row count: {tot_channel}");
+
+    // 3) Both match in OR:
+    let tot_both = read(
+        None,
+        json!({"aggregate": "Video.totalCount", "input": {}, "filter": [{"or": [
+            {"field": "title", "op": "contains", "value": "고양이"},
+            {"field": "channel_name", "op": "contains", "value": "쿡채널"}
+        ]}]}),
+    )
+    .await;
+    assert_eq!(tot_both["rows"][0], 2, "filtered total matches read row count: {tot_both}");
+
+    // 4) Neither matches in OR:
+    let tot_none = read(
+        None,
+        json!({"aggregate": "Video.totalCount", "input": {}, "filter": [{"or": [
+            {"field": "title", "op": "contains", "value": "없는제목"},
+            {"field": "channel_name", "op": "contains", "value": "없는채널"}
+        ]}]}),
+    )
+    .await;
+    assert_eq!(tot_none["rows"][0], 0, "filtered total is 0: {tot_none}");
+
+    // 5) AND + OR combined in totalCount:
+    let tot_and_or = read(
+        None,
+        json!({"aggregate": "Video.totalCount", "input": {}, "filter": [
+            {"field": "category", "op": "eq", "value": "cook"},
+            {"or": [
+                {"field": "title", "op": "contains", "value": "고양이"},
+                {"field": "channel_name", "op": "contains", "value": "쿡채널"}
+            ]}
+        ]}),
+    )
+    .await;
+    assert_eq!(tot_and_or["rows"][0], 1, "AND+OR total matches read row count: {tot_and_or}");
+
+    // 6) Pagination has_next check: page 1 (limit 1, offset 0) -> offset + limit < total (0 + 1 < 2 => true)
+    let total_val = tot_both["rows"][0].as_i64().unwrap();
+    let has_next_p1 = (0 + 1) < total_val;
+    assert!(has_next_p1, "page 1 has next page");
+    // page 2 (limit 1, offset 1) -> offset + limit < total (1 + 1 < 2 => false)
+    let has_next_p2 = (1 + 1) < total_val;
+    assert!(!has_next_p2, "page 2 is last page (no next page)");
+
+    // 7) Wildcard and empty search string semantics (MySQL LIKE '%kw%'):
+    // Empty search string ("") matches all active non-deleted videos:
+    let read_empty = read(None, json!({"read": "Video", "select": ["id"], "filter": [{"field": "title", "op": "contains", "value": ""}], "sort": newest})).await;
+    assert_eq!(ids(&read_empty), vec!["aaaaaaaa-0000-4000-8000-000000000002", CAT_VIDEO], "{read_empty}");
+    let tot_empty = read(None, json!({"aggregate": "Video.totalCount", "input": {}, "filter": [{"field": "title", "op": "contains", "value": ""}]})).await;
+    assert_eq!(tot_empty["rows"][0], 2, "{tot_empty}");
+
+    // Wildcard '%' matches all active non-deleted videos:
+    let read_pct = read(None, json!({"read": "Video", "select": ["id"], "filter": [{"field": "title", "op": "contains", "value": "%"}], "sort": newest})).await;
+    assert_eq!(ids(&read_pct), vec!["aaaaaaaa-0000-4000-8000-000000000002", CAT_VIDEO], "{read_pct}");
+    let tot_pct = read(None, json!({"aggregate": "Video.totalCount", "input": {}, "filter": [{"field": "title", "op": "contains", "value": "%"}]})).await;
+    assert_eq!(tot_pct["rows"][0], 2, "{tot_pct}");
+
+    // Wildcard '_' matches non-empty characters:
+    let read_under = read(None, json!({"read": "Video", "select": ["id"], "filter": [{"field": "title", "op": "contains", "value": "_"}], "sort": newest})).await;
+    assert_eq!(ids(&read_under), vec!["aaaaaaaa-0000-4000-8000-000000000002", CAT_VIDEO], "{read_under}");
+    let tot_under = read(None, json!({"aggregate": "Video.totalCount", "input": {}, "filter": [{"field": "title", "op": "contains", "value": "_"}]})).await;
+    assert_eq!(tot_under["rows"][0], 2, "{tot_under}");
+
+    // Deleted videos (is_deleted = 1, e.g. aaaaaaaa-0000-4000-8000-000000000003) and NULL flag videos (aaaaaaaa-0000-4000-8000-000000000004)
+    // are NEVER returned or counted by %, _, or empty string:
+    for res_ids in [&ids(&read_empty), &ids(&read_pct), &ids(&read_under)] {
+        assert!(!res_ids.contains(&"aaaaaaaa-0000-4000-8000-000000000003".to_string()));
+        assert!(!res_ids.contains(&"aaaaaaaa-0000-4000-8000-000000000004".to_string()));
+    }
+
+    // 8) Case-insensitivity verification (MySQL utf8mb4_0900_ai_ci collation):
+    setup.query_drop("INSERT INTO video (video_id, youtube_url, title, channel_name, category, duration, view_count, is_deleted, created_at, updated_at) VALUES ('aaaaaaaa-0000-4000-8000-000000000099', 'engtestvid', 'English Cat Video', 'CatChannel', 'animal', 100, 1, 0, '2026-10-07 10:00:00', '2026-10-07 10:00:00')").await.unwrap();
+    let read_upper = read(None, json!({"read": "Video", "select": ["id"], "filter": [{"field": "title", "op": "contains", "value": "CAT"}]})).await;
+    let read_lower = read(None, json!({"read": "Video", "select": ["id"], "filter": [{"field": "title", "op": "contains", "value": "cat"}]})).await;
+    assert_eq!(ids(&read_upper), vec!["aaaaaaaa-0000-4000-8000-000000000099"], "{read_upper}");
+    assert_eq!(ids(&read_lower), vec!["aaaaaaaa-0000-4000-8000-000000000099"], "{read_lower}");
+    let tot_upper = read(None, json!({"aggregate": "Video.totalCount", "input": {}, "filter": [{"field": "title", "op": "contains", "value": "CAT"}]})).await;
+    let tot_lower = read(None, json!({"aggregate": "Video.totalCount", "input": {}, "filter": [{"field": "title", "op": "contains", "value": "cat"}]})).await;
+    assert_eq!(tot_upper["rows"][0], 1, "{tot_upper}");
+    assert_eq!(tot_lower["rows"][0], 1, "{tot_lower}");
+    setup.query_drop("DELETE FROM video WHERE video_id = 'aaaaaaaa-0000-4000-8000-000000000099'").await.unwrap();
     let detail = read(
         None,
         json!({"read": "Video", "select": ["id", "title", "channel_name", "category", "duration", "view_count", "created_at"],

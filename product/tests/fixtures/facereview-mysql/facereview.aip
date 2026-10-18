@@ -96,7 +96,7 @@ resource Video {
     source Video
     sourceAccess activeUserOrGuest(actor)
     where is_deleted = false
-    callerFilter none
+    callerFilter read
     rowOutput none
     release count
   }

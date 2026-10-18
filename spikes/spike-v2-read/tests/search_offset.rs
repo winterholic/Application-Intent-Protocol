@@ -64,8 +64,8 @@ fn contains_value_rules() {
     let f = open();
     let c = who(Some(1));
     assert_eq!(MAX_CONTAINS_CHARS, 200);
-    // 빈 문자열은 모든 행과 같아 필터가 아니다. 거부한다.
-    assert_eq!(code(plan_read(&f, &contains(json!("")), &c)), "WIRE.BAD_VALUE");
+    // 빈 문자열은 원본 LIKE '%%'와 동일하게 허용된다(모든 행과 매치).
+    assert_eq!(code(plan_read(&f, &contains(json!("")), &c)), "OK");
     for bad in [json!(null), json!(1), json!(true), json!(["a"]), json!({"a":1}), json!("a\u{0}b")] {
         assert_eq!(code(plan_read(&f, &contains(bad.clone()), &c)), "WIRE.BAD_VALUE", "{bad}");
     }
@@ -78,16 +78,15 @@ fn contains_value_rules() {
 }
 
 #[test]
-fn contains_binds_literal_and_never_uses_like() {
+fn contains_binds_literal_and_uses_like_semantics() {
     ensure_test_schema();
     let f = open();
     let c = who(Some(1));
     for v in ["100%", "a_b", "\\", "x'); DROP TABLE y; --", "%", "_"] {
         let p = plan_read(&f, &contains(json!(v)), &c).unwrap();
-        assert!(p.params.contains(&Some(v.to_string())), "{:?}", p.params);
-        assert!(p.sql.contains("strpos("), "{}", p.sql);
-        assert!(!p.sql.to_uppercase().contains("LIKE"), "{}", p.sql);
-        assert!(!p.sql.contains(v) || v.len() <= 1, "값이 SQL에 들어감: {}", p.sql);
+        let expected_pattern = format!("%{v}%");
+        assert!(p.params.contains(&Some(expected_pattern)), "{:?}", p.params);
+        assert!(p.sql.contains(" ILIKE "), "{}", p.sql);
         assert!(!p.sql.contains("DROP"), "{}", p.sql);
     }
 }
@@ -198,12 +197,13 @@ async fn db_contains_and_offset_never_bypass_row_policy() {
     check!("contains 만료(정책으로 숨김)", run(&mut db, &f, Some(1), contains(json!("만료"))).await, Vec::<i64>::new());
     check!("contains B(다른 학교)", run(&mut db, &f, Some(1), contains(json!("B 모집"))).await, Vec::<i64>::new());
     check!("contains B 학교2 사용자", run(&mut db, &f, Some(3), contains(json!("B 모집"))).await, vec![101]);
-    check!("contains 대소문자 구분", run(&mut db, &f, Some(1), contains(json!("SALE"))).await, Vec::<i64>::new());
-    // 와일드카드는 리터럴: `%`는 `50%`에만, `_`는 `a_b`에만 일치한다(LIKE였다면 전부/한 글자 일치).
-    check!("contains %", run(&mut db, &f, Some(1), contains(json!("%"))).await, vec![106]);
-    check!("contains 50%", run(&mut db, &f, Some(1), contains(json!("50%"))).await, vec![106]);
-    check!("contains _", run(&mut db, &f, Some(1), contains(json!("_"))).await, vec![107]);
-    check!("contains 50_", run(&mut db, &f, Some(1), contains(json!("50_"))).await, Vec::<i64>::new());
+    check!("contains 대소문자 비구분(LIKE/ILIKE)", run(&mut db, &f, Some(1), contains(json!("SALE"))).await, vec![106, 107]);
+    // LIKE/ILIKE 와일드카드 처리: `%`는 임의 문자열, `_`는 한 글자, 빈 검색어는 전체 매치
+    check!("contains %", run(&mut db, &f, Some(1), contains(json!("%"))).await, vec![100, 102, 106, 107]);
+    check!("contains 50%", run(&mut db, &f, Some(1), contains(json!("50%"))).await, vec![106, 107]);
+    check!("contains _", run(&mut db, &f, Some(1), contains(json!("_"))).await, vec![100, 102, 106, 107]);
+    check!("contains 50_", run(&mut db, &f, Some(1), contains(json!("50_"))).await, vec![106, 107]);
+    check!("contains 빈 검색어", run(&mut db, &f, Some(1), contains(json!(""))).await, vec![100, 102, 106, 107]);
     check!("contains 중간", run(&mut db, &f, Some(1), contains(json!("ale 5"))).await, vec![106, 107]);
     check!("contains 전체 일치", run(&mut db, &f, Some(1), contains(json!("A 모집"))).await, vec![100]);
     check!("contains 따옴표", run(&mut db, &f, Some(1), contains(json!("x'; --"))).await, Vec::<i64>::new());

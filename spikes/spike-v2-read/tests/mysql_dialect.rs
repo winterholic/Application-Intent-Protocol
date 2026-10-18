@@ -53,7 +53,7 @@ fn postgres_output_is_unchanged_by_the_dialect_plumbing() {
     // Pinned: numbered `$n::text::cast` bindings, unquoted snake names, json_build_object, strpos, LATERAL.
     assert!(a.sql.starts_with("SELECT json_build_object('id', t.id, 'title', t.title, 'periodEnd', t.period_end, 'club', j"), "{}", a.sql);
     assert!(a.sql.contains("LEFT JOIN LATERAL (SELECT json_build_object('id', r"), "{}", a.sql);
-    assert!(a.sql.contains("strpos(t.title, $") && a.sql.ends_with("LIMIT $8::text::bigint"), "{}", a.sql);
+    assert!(a.sql.contains("t.title ILIKE $") && a.sql.ends_with("LIMIT $8::text::bigint"), "{}", a.sql);
     assert!(a.sql.contains("t.club_id IN ($") && a.sql.contains("::text::timestamptz"), "{}", a.sql);
 }
 
@@ -67,7 +67,7 @@ fn mysql_sql_has_no_postgres_syntax_and_quotes_every_identifier() {
     assert!(sql.starts_with("SELECT CAST(JSON_OBJECT('id', t.`id`, 'title', t.`title`, 'periodEnd', t.`period_end`"), "{sql}");
     assert!(sql.contains("FROM `aip_mysql_dialect`.`recruitment` t"), "{sql}");
     assert!(sql.contains("LEFT JOIN LATERAL (SELECT JSON_OBJECT('id', r"), "{sql}");
-    assert!(sql.contains("LOCATE(?, t.`title`) > 0"), "{sql}");
+    assert!(sql.contains("t.`title` LIKE ?"), "{sql}");
     // LIMIT takes a literal: MySQL rejects a string-typed bound parameter there.
     assert!(sql.ends_with("LIMIT 5"), "{sql}");
     assert_eq!(plan.deps, vec!["Club".to_string(), "Member".to_string(), "Recruitment".to_string()]);
