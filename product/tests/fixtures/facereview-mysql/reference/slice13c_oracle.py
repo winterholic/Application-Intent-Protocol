@@ -81,9 +81,13 @@ failures = []
 checks = 0
 
 
+RECORDS = []
+
+
 def check(name, aip, original):
     global checks
     checks += 1
+    RECORDS.append({"case": name, "module": aip, "original": original, "equal": aip == original})
     ok = aip == original
     print(("OK   " if ok else "FAIL ") + name)
     if not ok:
@@ -97,6 +101,10 @@ def check(name, aip, original):
 # ---------------------------------------------------------------------------------------------------------------------
 class CapabilityViolation(Exception):
     pass
+
+
+class WireBadValue(Exception):
+    code = "WIRE.BAD_VALUE"
 
 
 class FakeData:
@@ -122,7 +130,7 @@ class FakeData:
 class FakeCtx:
     def __init__(self, actor):
         self.actor = actor
-        self.reads, self.aggregates, self.mongo_calls = [], [], []
+        self.reads, self.aggregates, self.mongo_calls, self.mongo_page_sizes = [], [], [], []
         self.data = FakeData(self)
 
     # planner double: only the query shapes the module emits; anything else is a test failure, not a silent pass.
@@ -204,7 +212,11 @@ class FakeCtx:
         if inp.get("sort_by"):
             cursor = cursor.sort([("_id", 1)])
         cursor = cursor.skip(inp.get("skip", 0)).limit(limit)
-        return {"docs": list(cursor)}
+        docs = list(cursor)
+        self.mongo_page_sizes.append(limit)
+        if len(json.dumps(docs, default=str)) > 1_048_576:
+            raise WireBadValue("Mongo result byte limit exceeded")  # refused whole, never clipped (capability.rs max_bytes)
+        return {"docs": docs}
 
 
 def run(coro):
@@ -556,13 +568,112 @@ def view_count_original():
         check("original: a guest call also increments (login_optional)", view_count_of(vid), 11)
 
 
+def outcome(fn):
+    """Value or the exception type name: a failure must be a failure on both sides, never a default."""
+    try:
+        return fn()
+    except Exception as error:  # noqa: BLE001
+        return {"raises": type(error).__name__}
+
+
+def edge_cases():
+    rng = random.Random(55)
+    with app.app_context():
+        reset_all()
+        alice = add_user("alice")
+
+        def one(label, timeline_docs, duration=100):
+            vid = add_video(rng.randint(5000, 9999), duration=duration)
+            for t in timeline_docs:
+                add_session(vid, alice, t)
+            o = outcome(lambda: original_detail(vid, alice)["timeline_data"])
+            m = outcome(lambda: module_detail(vid, alice)[0]["timeline_data"])
+            check(label, m, o)
+            return m, o
+
+        # negative time keys: Python negative indexing from the end, IndexError when beyond the list
+        m, _ = one("edge: key -5 on duration 100 lands in the first bucket (int(-0.05) == 0)", [{"-5": [10, 20, 30, 40, 50], "0": [1, 1, 1, 1, 1]}])
+        m, _ = one("edge: key -250 wraps to the second-to-last bucket (int(-2.5) == -2, x=99)", [{"-250": [10, 20, 30, 40, 50]}])
+        check("edge: -250 really landed at x=99 (index -2) and nowhere else", [p["x"] for p in m["happy"] if p["y"] != 0.0], [99])
+        m, o = one("edge: key -100000 raises IndexError on both sides (never a default)", [{"-100000": [1, 2, 3, 4, 5]}])
+        check("edge: -100000 is a failure, not a timeline", m, {"raises": "IndexError"})
+        # duration 0, None, negative, 1 second window
+        one("edge: duration 1 -> 1 second window, key 150 clamps to the last bucket", [{"0": [5, 5, 5, 5, 5], "150": [9, 9, 9, 9, 9], "99": [7, 7, 7, 7, 7]}], 1)
+        one("edge: negative duration", [{"0": [5, 5, 5, 5, 5], "50": [6, 6, 6, 6, 6]}], -3)
+        # no usable numeric key: valid score rows exist, so it is 100 zero points and NOT the 1-point default
+        m, o = one("edge: only non-numeric key with valid scores -> 100 zero points", [{"abc": [1, 2, 3, 4, 5]}])
+        check("edge: that result has 100 points per emotion (default would be 1)", (len(m["happy"]), len(o["happy"])), (100, 100))
+        m, o = one("edge: score rows all shorter than 5 -> 1-point default", [{"0": [1, 2], "50": [3]}])
+        check("edge: that result has 1 point per emotion", (len(m["happy"]), len(o["happy"])), (1, 1))
+        # non-numeric scores: original raises, module must raise too
+        m, o = one("edge: non-numeric score string raises ValueError on both sides", [{"0": [1, "x", 3, 4, 5]}])
+        check("edge: ValueError is not hidden as a success", m, {"raises": "ValueError"})
+        m, o = one("edge: null score raises TypeError on both sides", [{"0": [1, None, 3, 4, 5]}])
+        check("edge: TypeError is not hidden as a success", m, {"raises": "TypeError"})
+        one("edge: numeric strings are accepted by float() on both sides", [{"0": ["1.5", "2", 3, 4, 5]}])
+        one("edge: bool scores", [{"0": [True, False, 3, 4, 5]}])
+        # binary-float rounding at .x5 boundaries: Python round() on the same float sums
+        halves = [0.05, 0.15, 0.25, 0.35, 0.45, 0.55, 0.65, 0.75, 0.85, 0.95, 2.675, 1.005, 0.125, 8.35, 99.95]
+        docs = []
+        for k in range(len(halves)):
+            docs.append({str(k * 50): [halves[k], halves[(k + 1) % len(halves)], halves[(k + 2) % len(halves)], halves[(k + 3) % len(halves)], halves[(k + 4) % len(halves)]],
+                         str(k * 50 + 1): [halves[k], halves[k], halves[k], halves[k], halves[k]]})
+        one("edge: .x5 float boundaries round exactly like the original", docs, 1)
+        # several sessions share one bucket, and a key present in only some sessions (per-key counts differ)
+        one("edge: per-key session counts differ", [{"0": [10, 0, 0, 0, 0], "50": [5, 5, 5, 5, 5]}, {"0": [20, 0, 0, 0, 0]}, {"50": [1, 1, 1, 1, 1], "70": [3, 3, 3, 3, 3]}], 3)
+
+        # Mongo completeness: 30 sessions x 3000 keys is ~7 MB, far past 100 docs/1 MiB per call
+        vid = add_video(9990, duration=300)
+        for _ in range(30):
+            add_session(vid, alice, {str(k * 10): [rng.uniform(0, 100) for _ in range(5)] for k in range(3000)})
+        o = outcome(lambda: original_detail(vid, alice)["timeline_data"])
+        ctx = FakeCtx(alice)
+        m = outcome(lambda: json.loads(run(port.watchDetail({"video": vid}, ctx))["timeline_data_json"]))
+        check("completeness: 30 oversized sessions are all read (no silent truncation at the 1 MiB page cap)", m, o)
+        check("completeness: the module had to shrink the page below 100 and then covered every document",
+              (min(ctx.mongo_page_sizes) < 100, max(ctx.mongo_page_sizes)), (True, 100))
+        # a single document above 1 MiB cannot be fetched: explicit error, never a default timeline
+        vid = add_video(9991, duration=300)
+        add_session(vid, alice, {str(k): [1.0, 2.0, 3.0, 4.0, 5.0] for k in range(40000)})
+        check("completeness: one document over 1 MiB fails explicitly instead of returning a partial result",
+              outcome(lambda: module_detail(vid, alice))["raises"], "WireBadValue")
+        # 250 distribution documents scanned in $in chunks stay complete
+        # (covered by the 200-video recommended case; here the exact page accounting)
+        check("completeness: pure accumulate+compress_sums equals compress_timeline", port.compress_sums(*port.accumulate_sessions(
+            [{"emotion_score_timeline": {"0": [1, 2, 3, 4, 5]}}]), 10), port.compress_timeline([{"emotion_score_timeline": {"0": [1, 2, 3, 4, 5]}}], 10))
+
+
+def view_count_lost_update_original():
+    """The original's `video.view_count += 1` is a read-modify-write in Python: two overlapping requests lose one increment.
+    Shown with the original's own Video model and two sessions (the service function cannot be paused midway)."""
+    from sqlalchemy.orm import Session
+    with app.app_context():
+        reset_all()
+        vid = add_video(1, views=7)
+        with Session(db.engine) as one, Session(db.engine) as two:
+            a = one.query(Video).filter_by(video_id=vid).first()
+            b = two.query(Video).filter_by(video_id=vid).first()
+            a.view_count += 1
+            b.view_count += 1
+            one.commit()
+            two.commit()
+        check("original ORM pattern: two overlapping increments from 7 end at 8 (one is lost); AIP's SQL increment is covered by the E2E",
+              view_count_of(vid), 8)
+
+
 if __name__ == "__main__":
     try:
         timeline_cases()
         detail_cases()
         recommended_cases()
         view_count_original()
+        edge_cases()
+        view_count_lost_update_original()
     finally:
         mongo_client.drop_database(MONGO_DB)
+    dump = os.environ.get("S13C_ORACLE_DUMP")
+    if dump:
+        with open(dump, "w", encoding="utf-8") as handle:
+            json.dump({"oracle": "new-facereview@7948b7e721837fdb73c427cb54e12cad4ec2d5af WatchService", "records": RECORDS}, handle, ensure_ascii=False, default=str)
     print(f"\n{checks} checks, {len(failures)} failed")
     sys.exit(1 if failures else 0)

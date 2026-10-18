@@ -40,11 +40,12 @@ def default_timeline():
     return {"happy": list(point), "neutral": list(point), "surprise": list(point), "sad": list(point), "angry": list(point)}
 
 
-def compress_timeline(docs, duration):
-    """_get_compressed_timeline_data after the Mongo read: docs carry emotion_score_timeline only."""
-    if not docs:
-        return default_timeline()
+def accumulate_sessions(docs):
+    """Per time_key: the sum of the five scores over every session that has the key, and how many sessions had it.
 
+    float(scores[i]) raises ValueError/TypeError for a non-numeric score exactly as the original does; that failure is
+    surfaced (EXTENSION_ERROR), never turned into a default timeline.
+    """
     emotion_sums = {}
     counts_per_key = {}
     for doc in docs:
@@ -58,7 +59,17 @@ def compress_timeline(docs, duration):
             for i in range(5):
                 emotion_sums[time_key][i] += float(scores[i])
             counts_per_key[time_key] += 1
+    return emotion_sums, counts_per_key
 
+
+def compress_sums(emotion_sums, counts_per_key, duration):
+    """The bucketing half of _get_compressed_timeline_data.
+
+    Original quirks kept on purpose: duration 0/None means a 1 second window; a negative or tiny bucket_size or a negative
+    time key indexes the bucket list from the end (Python negative index) and an index beyond it raises IndexError; a
+    non-numeric key is skipped but still counts as "has data", so the result is 100 zero points rather than the 1-point default.
+    This is also the entry for a future server-side aggregate (sums and counts only, no session or user identity).
+    """
     if not counts_per_key:
         return default_timeline()
 
@@ -84,6 +95,14 @@ def compress_timeline(docs, duration):
             y = round(bucket_sums[x][i] / count, 1) if count > 0 else 0.0
             lists[emotion].append({"x": x + 1, "y": y})
     return {name: lists[name] for name in ("happy", "neutral", "surprise", "sad", "angry")}
+
+
+def compress_timeline(docs, duration):
+    """_get_compressed_timeline_data after the Mongo read: docs carry emotion_score_timeline only."""
+    if not docs:
+        return default_timeline()
+    emotion_sums, counts_per_key = accumulate_sessions(docs)
+    return compress_sums(emotion_sums, counts_per_key, duration)
 
 
 def current_dominant_emotion(distribution_doc):
@@ -206,24 +225,43 @@ async def _owned(ctx, resource, video_id):
     return bool(rows)
 
 
-async def _watching_docs(ctx, video_id):
+MAX_MONGO_DOCS = 20000  # per find; beyond this the call fails instead of running past the deadline
+
+
+async def _find_all(ctx, collection, flt, projection=None):
+    """Every matching document, never a silently truncated first page.
+
+    The capability returns at most 100 documents and 1 MiB per call (an oversized page is refused with WIRE.BAD_VALUE,
+    not clipped). Pages are cut with a stable _id sort and skip; an oversized page is retried with half the size.
+    If a single document cannot be fetched, or MAX_MONGO_DOCS is reached, the call raises.
+    """
     docs = []
+    size = PAGE
     skip = 0
     while True:
-        res = await ctx.call("mongo", WATCH_COLLECTION, {
-            "command": "find",
-            "filter": {"video_id": video_id},
-            "projection": {"emotion_score_timeline": 1},
-            "sort_by": "_id",
-            "desc": False,
-            "limit": PAGE,
-            "skip": skip,
-        })
+        request = {"command": "find", "filter": flt, "sort_by": "_id", "desc": False, "limit": size, "skip": skip}
+        if projection is not None:
+            request["projection"] = projection
+        try:
+            res = await ctx.call("mongo", collection, request)
+        except Exception as error:  # AipError carries .code; anything else is not ours to swallow
+            if getattr(error, "code", None) == "WIRE.BAD_VALUE" and size > 1:
+                size = max(1, size // 2)
+                continue
+            raise
         page = res.get("docs", []) if isinstance(res, dict) else res
+        if len(page) > size:
+            raise BudgetExceeded("mongo returned more documents than the requested limit")
         docs.extend(page)
-        if len(page) < PAGE:
+        if len(docs) >= MAX_MONGO_DOCS:
+            raise BudgetExceeded(f"more than {MAX_MONGO_DOCS} documents in {collection}; refusing a partial result")
+        if len(page) < size:
             return docs
-        skip += PAGE
+        skip += size
+
+
+async def _watching_docs(ctx, video_id):
+    return await _find_all(ctx, WATCH_COLLECTION, {"video_id": video_id}, {"emotion_score_timeline": 1})
 
 
 async def watchDetail(input, ctx):  # noqa: N802 — worker entry names are the definition's implementation names
@@ -287,13 +325,10 @@ async def _same_category(ctx, video, ordered):
 async def _distributions(ctx, ids, emotion):
     docs = []
     for i in range(0, len(ids), PAGE):
-        chunk = ids[i:i + PAGE]
-        flt = {"video_id": {"$in": chunk}}
+        flt = {"video_id": {"$in": ids[i:i + PAGE]}}
         if emotion:
             flt["dominant_emotion"] = emotion
-        res = await ctx.call("mongo", DIST_COLLECTION, {"command": "find", "filter": flt, "limit": PAGE})
-        got = res.get("docs", []) if isinstance(res, dict) else res
-        docs.extend(got)
+        docs.extend(await _find_all(ctx, DIST_COLLECTION, flt))
     return docs
 
 

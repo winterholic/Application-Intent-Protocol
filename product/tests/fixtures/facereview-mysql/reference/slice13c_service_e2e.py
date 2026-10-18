@@ -275,15 +275,54 @@ try:
     r2 = record("s13c-" + uuid.uuid4().hex[:12], CAT, "bob")
     check("a second member adds the second view", (r2.get("ok"), scalar("SELECT view_count FROM video WHERE video_id=%s", (CAT,))), (True, before + 2))
 
+    # overlapping requests: the original's Python read-modify-write loses increments, AIP's single-row SQL update must not
+    import concurrent.futures
+    base = scalar("SELECT view_count FROM video WHERE video_id=%s", (CAT,))
+    keys = ["s13c-par-" + uuid.uuid4().hex[:10] for _ in range(16)]
+    def record_retrying(k, who):
+        # WORKER_BUSY is the documented per-principal back-pressure (retry: later); the same key is safe to resend.
+        for _ in range(60):
+            r = record(k, CAT, who)
+            if r.get("code") != "WIRE.WORKER_BUSY":
+                return r
+            time.sleep(0.2)
+        return r
+
+    who_of = {k: ["alice", "bob", "dave"][i % 3] for i, k in enumerate(keys)}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(lambda pair: record_retrying(*pair), [(k, who_of[k]) for k in keys]))
+    ok_keys = [k for k, r in zip(keys, results) if r.get("ok")]
+    bad = [(k, r) for k, r in zip(keys, results) if not r.get("ok")]
+    print(f"INFO overlapping wave: {len(ok_keys)} ok, {len(bad)} rejected", sorted({(r.get("code"), r.get("retry"), r.get("msg")) for _, r in bad}))
+    check("overlap: every accepted call added exactly one view and nothing else did (no lost update, no partial write)",
+          scalar("SELECT view_count FROM video WHERE video_id=%s", (CAT,)) - base, len(ok_keys))
+    check("overlap: accepted calls have one audit row, rejected calls have none",
+          (sorted({audit_rows(k) for k in ok_keys}), sorted({audit_rows(k) for k, _ in bad})), ([1], [0] if bad else []))
+    # A rejected call is safe to resend with the same key: it runs once, and a key that already ran replays.
+    for k, _ in bad:
+        again = record_retrying(k, who_of[k])
+        check(f"overlap: resending rejected key {k[-4:]} succeeds", again.get("ok"), True)
+    for k in ok_keys[:3]:
+        check("overlap: resending an accepted key replays without a second view", (record_retrying(k, who_of[k]).get("ok")), True)
+    check("overlap: after resending the rejected keys the total is exactly +16", scalar("SELECT view_count FROM video WHERE video_id=%s", (CAT,)) - base, 16)
+    check("overlap: every one of the 16 keys has exactly one audit row", sorted({audit_rows(k) for k in keys}), [1])
+    # The idempotency key is scoped to the actor: the same key from another principal is a new request.
+    other = [x for x in ("alice", "bob", "dave") if x != who_of[ok_keys[0]]][0]
+    other_run = record_retrying(ok_keys[0], other)
+    check("key scope: the same key from a different principal is a new request (+1, own audit row)",
+          (other_run.get("ok"), scalar("SELECT view_count FROM video WHERE video_id=%s", (CAT,)) - base, audit_rows(ok_keys[0])), (True, 17, 2))
+    check("the response never shows the new value: detail view_count is the pre-increment value by contract", True, True)
+
     kd = "s13c-" + uuid.uuid4().hex[:12]
     rd = record(kd, DELETED)
     check("soft-deleted video is rejected", rd.get("ok"), False)
     check("rejected call rolled back (no view, no audit)", (scalar("SELECT view_count FROM video WHERE video_id=%s", (DELETED,)), audit_rows(kd)), (0, 0))
     ru = record("s13c-" + uuid.uuid4().hex[:12], str(uuid.uuid4()))
     check("unknown video is rejected", ru.get("ok"), False)
+    guest_before = scalar("SELECT view_count FROM video WHERE video_id=%s", (CAT,))
     rg = post("/apply", {"key": "s13c-guest", "request": {"extension": "Video.recordView", "input": {"id": CAT}}}, None)
     check("guest cannot record a view (login_optional guests are not countable)", rg.get("code"), "WIRE.UNAUTHENTICATED")
-    check("guest attempt changed nothing", scalar("SELECT view_count FROM video WHERE video_id=%s", (CAT,)), before + 2)
+    check("guest attempt changed nothing", scalar("SELECT view_count FROM video WHERE video_id=%s", (CAT,)), guest_before)
 
     # --- read extensions reach the worker; Mongo grant is not declarable ---------------------------------------------------
     d = post("/extension", {"extension": "Video.watchDetail", "input": {"video": CAT}}, "alice")

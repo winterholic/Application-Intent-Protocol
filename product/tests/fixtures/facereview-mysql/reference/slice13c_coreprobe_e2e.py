@@ -222,6 +222,25 @@ try:
                                                 "emotion_averages": {"happy": avg}, "recommendation_scores": {"happy": score}})
     mongo["video_distribution"].insert_one({"video_id": "cccccccc-1111-4111-8111-000000000001", "dominant_emotion": "sad",
                                             "emotion_averages": {"sad": 0.7}, "recommendation_scores": {"sad": 9.0}})
+    # Reply-size ladder on the real service: one session document of N timeline keys per numeric actor id 1..4, a different video each.
+    import random
+    rng = random.Random(3)
+    ladder = [(300, "bbbbbbbb-0000-4000-8000-000000000000"), (900, "bbbbbbbb-0000-4000-8000-000000000001"),
+              (1500, "bbbbbbbb-0000-4000-8000-000000000002"), (3000, "cccccccc-1111-4111-8111-000000000001")]
+    for keys, video in ladder:
+        for uid in (1, 2, 3, 4):
+            mongo["youtube_watching_data"].insert_one({"video_id": video, "user_id": uid, "emotion_score_timeline":
+                {str(k * 50): [round(rng.uniform(0, 100), 3) for _ in range(5)] for k in range(keys)}})
+    for keys, video in ladder:
+        size = len(json.dumps(mongo["youtube_watching_data"].find_one({"video_id": video}, {"_id": 0})))
+        got = post("/extension", {"extension": "Video.watchDetail", "input": {"video": video}}, "alice")
+        print(f"PROBE reply ladder keys={keys} docbytes={size} -> ok={got.get('ok')} code={got.get('code')} sessions={got.get('output', {}).get('timeline_sessions')}")
+        if size < 60000:
+            check(f"reply ladder: a {size}-byte session document is served", (got.get("ok"), got.get("output", {}).get("timeline_sessions")), (True, 1))
+        else:
+            # D6: the Python worker reads ctx replies through asyncio.StreamReader's default 64 KiB line limit, far under the
+            # capability's own 1 MiB cap. Fail-closed is the required behavior here; success with a partial/empty timeline is not.
+            check(f"reply ladder GAP evidence: a {size}-byte session document fails closed (worker 64 KiB line limit)", (got.get("ok"), got.get("code") in ("WIRE.WORKER_FAILED", "WIRE.EXTENSION_ERROR")), (False, True))
     rec = post("/extension", {"extension": "Video.watchRecommended", "input": {"video": COOK, "page": 1, "size": 10}}, "alice")
     if rec.get("ok"):
         got = json.loads(rec["output"]["videos_json"])
