@@ -242,5 +242,52 @@ class CategoryFlow(unittest.TestCase):
         self.assertEqual({c[0] for c in ctx.calls}, {'redis.hgetall', 'read'})
 
 
+class DeclarationContract(unittest.TestCase):
+    """The extension blocks in the real facereview.aip must match the worker entries they name."""
+
+    DEFINITION = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fixtures', 'facereview-mysql', 'facereview.aip')
+
+    def blocks(self):
+        import re
+        source = open(self.DEFINITION, encoding='utf-8').read()
+        found = {}
+        for m in re.finditer(r'extension read (\w+) \{(.*?)\n  \}', source, re.S):
+            body = m.group(2)
+            found[m.group(1)] = {
+                'input': re.search(r'input \{([^}]*)\}', body).group(1).strip(),
+                'output': re.search(r'output \{([^}]*)\}', body).group(1).strip(),
+                'effect': re.search(r'effect (\w+)', body).group(1),
+                'deadline': re.search(r'deadline (\w+)', body).group(1),
+                'implementation': re.search(r'implementation "([^"]+)"', body).group(1),
+                'access': re.search(r'^\s*access\s', body, re.M) is not None,
+            }
+        return found
+
+    def test_exactly_the_two_declared_extensions(self):
+        self.assertEqual(sorted(self.blocks()), ['homeCategory', 'homePersonalized'])
+
+    def test_contract_fields(self):
+        for name, b in self.blocks().items():
+            self.assertEqual((b['effect'], b['deadline'], b['input']), ('none', '5s', ''), name)
+            self.assertFalse(b['access'], f'{name}: the language cannot declare grants yet; the tests attach them')
+
+    def test_entry_exists_is_async_and_returns_exactly_the_declared_output(self):
+        import inspect
+        pool = oracle.make_pool(random.Random(61), 30)
+        cats = {'music': json.dumps([{k: pool[0][k] for k in ('video_id', 'youtube_url', 'title', 'dominant_emotion', 'dominant_emotion_per')}])}
+        for name, b in self.blocks().items():
+            module, function = b['implementation'].split('.')
+            self.assertEqual(module, 'slice13d_home')
+            entry = getattr(HOME, function)
+            self.assertTrue(inspect.iscoroutinefunction(entry), name)
+            self.assertEqual(list(inspect.signature(entry).parameters), ['input', 'ctx'], name)
+            key, ty = [p.strip() for p in b['output'].split(':')]
+            self.assertEqual(ty, 'Text', name)
+            ctx = FakeCtx(pool=pool, categories=cats)
+            out = asyncio.run(entry({}, ctx))
+            self.assertEqual(list(out), [key], name)
+            self.assertIsInstance(json.loads(out[key]), list)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

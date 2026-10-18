@@ -102,6 +102,23 @@ resource Video {
     release count
   }
   expose aggregate totalCount
+  // Slice13-D: GET /home/category and GET /home/personalized (read-only; see extensions/slice13d_home.py). The language cannot
+  // yet declare the read./mongo./redis. grants these need and cannot return a list, so the output is one JSON Text value and
+  // the grants are attached by the tests; both gaps are reported dependencies, not features of this declaration.
+  extension read homeCategory {
+    input { }
+    output { video_data: Text }
+    effect none
+    deadline 5s
+    implementation "slice13d_home.category"
+  }
+  extension read homePersonalized {
+    input { }
+    output { videos: Text }
+    effect none
+    deadline 5s
+    implementation "slice13d_home.personalized"
+  }
 }
 
 resource Comment {

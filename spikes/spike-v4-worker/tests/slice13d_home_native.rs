@@ -81,25 +81,60 @@ impl RelationalBackend for ScriptedBackend {
     }
 }
 
+const DECLARED: [(&str, &str, &str, &[&str]); 2] = [
+    ("homeCategory", "slice13d_home.category", "video_data", &["read.VideoBookmark", "redis.facereview:reco:*"]),
+    (
+        "homePersonalized",
+        "slice13d_home.personalized",
+        "videos",
+        &["read.User", "read.UserFavoriteGenre", "read.VideoViewLog", "read.VideoBookmark", "mongo.youtube_watching_data", "redis.facereview:reco:*"],
+    ),
+];
+
+/// The FaceReview definition as the product loader compiles it. The two extensions come from `facereview.aip`; only the
+/// capability grants are attached here, because the language cannot declare them yet (reported dependency D1).
 fn facts() -> Value {
     let mut facts = load_str(DEFINITION, Form::A).expect("FaceReview definition").execution;
-    // The product definition language cannot declare read./mongo./redis. grants yet and extension outputs cannot be lists
-    // (both reported dependencies), so the facts are injected like Slice13-A's bridge test and the list is a JSON Text value.
-    let ext = |implementation: &str, output: &str, access: &[&str]| {
-        json!({
-            "kind": "read", "effect": "none", "deadlineMs": 5000, "input": [], "output": [[output, "Text"]],
-            "access": access.iter().map(|a| ((*a).to_string(), json!({}))).collect::<serde_json::Map<_, _>>(),
-            "implementation": implementation,
-        })
-    };
-    facts["resources"]["Video"]["extensions"] = json!({
-        "homeCategory": ext("slice13d_home.category", "video_data", &["read.VideoBookmark", "redis.facereview:reco:*"]),
-        "homePersonalized": ext(
-            "slice13d_home.personalized", "videos",
-            &["read.User", "read.UserFavoriteGenre", "read.VideoViewLog", "read.VideoBookmark", "mongo.youtube_watching_data", "redis.facereview:reco:*"],
-        ),
-    });
+    for (name, implementation, output, grants) in DECLARED {
+        let ext = &mut facts["resources"]["Video"]["extensions"][name];
+        assert_eq!(ext["access"], json!({}), "{name}: the language declares no grants; attaching them is this test's job");
+        assert_eq!((ext["kind"].as_str(), ext["effect"].as_str(), ext["deadlineMs"].as_u64()), (Some("read"), Some("none"), Some(5000)), "{name}");
+        assert_eq!(ext["input"], json!([]), "{name}");
+        assert_eq!(ext["output"], json!([[output, "Text", null]]), "{name}");
+        assert_eq!(ext["implementation"], implementation, "{name}");
+        ext["access"] = grants.iter().map(|g| ((*g).to_string(), json!({}))).collect::<serde_json::Map<_, _>>().into();
+    }
     facts
+}
+
+#[test]
+fn declared_contract_comes_from_facereview_aip_and_names_a_real_worker_entry() {
+    let facts = load_str(DEFINITION, Form::A).expect("FaceReview definition").execution;
+    let extensions = facts["resources"]["Video"]["extensions"].as_object().expect("Video extensions");
+    let mut names: Vec<&str> = extensions.keys().map(String::as_str).collect();
+    names.sort();
+    assert_eq!(names, ["homeCategory", "homePersonalized"], "exactly the two Slice13-D extensions");
+    let source = std::fs::read_to_string(format!("{EXT_DIR}/slice13d_home.py")).expect("extension module");
+    for (name, implementation, _, _) in DECLARED {
+        let function = implementation.strip_prefix("slice13d_home.").expect("module-qualified implementation");
+        assert!(source.contains(&format!("\nasync def {function}(input, ctx):")), "{name}: worker entry `{function}` must be an async (input, ctx) function");
+        assert_eq!(extensions[name]["implementation"], implementation);
+    }
+    // Shared-definition guard: no other resource gained an extension, and no write/job kind was added.
+    let total: usize = facts["resources"].as_object().unwrap().values().map(|r| r["extensions"].as_object().map_or(0, |m| m.len())).sum();
+    assert_eq!(total, 2);
+}
+
+#[test]
+fn gap_language_cannot_declare_extension_grants() {
+    // D1: the product loader rejects every grant spelling these extensions need. Replace with a positive test once it can.
+    let anchor = "    effect none\n    deadline 5s\n    implementation \"slice13d_home.category\"";
+    assert!(DEFINITION.contains(anchor));
+    for access in ["read.VideoBookmark", "mongo.youtube_watching_data", "redis.facereview"] {
+        let source = DEFINITION.replace(anchor, &format!("    access {access}\n{anchor}"));
+        let diagnostics = load_str(&source, Form::A).err().unwrap_or_else(|| panic!("`access {access}` unexpectedly compiles"));
+        assert!(diagnostics.iter().any(|d| d.code == "DEF.UNKNOWN_SYMBOL"), "{access}: {diagnostics:?}");
+    }
 }
 
 async fn mongo_fixture() -> (String, mongodb::Collection<mongodb::bson::Document>) {
@@ -330,4 +365,73 @@ async fn gap_read_extension_reads_a_resource_it_never_declared() {
     let out = invoke_with_host(&mut host, &mut worker, &probe_facts, "Video.probe", &json!({}), &caller, IdWire::Legacy).await.expect("probe");
     worker.stop().await;
     assert_eq!(out["result"], "READ_OK rows=1", "undeclared User read succeeded: {out}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn gap_category_order_follows_the_capability_map_not_the_redis_hash() {
+    // The original returns hgetall's own order. The capability hands the worker a JSON object (serde_json without
+    // preserve_order, built from a HashMap), so the hash's field order never reaches the extension. Whether the original
+    // order is a public contract is not established; this pins what the server delivers today and claims nothing more.
+    let g = golden();
+    let (_, mut con) = redis_conn().await;
+    clear_redis(&mut con).await;
+    for cat in ["music", "game", "drama"] {
+        let _: () = redis::cmd("HSET")
+            .arg("facereview:reco:category")
+            .arg(cat)
+            .arg(g["categories"][cat].to_string())
+            .query_async(&mut con)
+            .await
+            .expect("seed hash in non-alphabetical insertion order");
+    }
+    let (mongo, redis) = drivers().await;
+    let out = run("Video.homeCategory", &backend_from(&g, json!(1)), Some(mongo), Some(redis), 1).await.expect("category");
+    clear_redis(&mut con).await;
+    let decoded: Value = serde_json::from_str(out["video_data"].as_str().unwrap()).unwrap();
+    let order: Vec<&str> = decoded.as_array().unwrap().iter().map(|group| group["category_name"].as_str().unwrap()).collect();
+    assert_eq!(order, ["drama", "game", "music"], "insertion order was music, game, drama");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn gap_one_field_exclusion_cannot_match_the_original_three_field_projection() {
+    // Original find_recent_summaries_by_user_id excludes emotion_score_timeline, most_emotion_timeline AND client_info.
+    // The driver accepts projection keys only from its 7-field allowlist, so only emotion_score_timeline can be excluded;
+    // most_emotion_timeline and client_info still travel to the worker and count against the 1 MiB result cap.
+    let g = golden();
+    let (_, collection) = mongo_fixture().await;
+    collection.delete_many(mongodb::bson::doc! {"user_id": 1_i64}).await.expect("clear");
+    let heavy: Vec<mongodb::bson::Document> = (0..20)
+        .map(|i| {
+            mongodb::bson::doc! {
+                "user_id": 1_i64, "video_id": g["pool"][i]["video_id"].as_str().unwrap(), "dominant_emotion": "happy",
+                "emotion_percentages": {"happy": 1.0}, "created_at": 1000_i64 - i as i64,
+                "most_emotion_timeline": "x".repeat(60_000), "client_info": {"user_agent": "probe"},
+            }
+        })
+        .collect();
+    collection.insert_many(heavy).await.expect("seed heavy summaries");
+    let driver = MongoDriverCapability::connect(&endpoint("AIP_TEST_MONGO_URL", "35441"), DB, 2, Duration::from_secs(2)).await.expect("driver");
+    let owner = principal(Some(1));
+    for projection in [
+        json!({"emotion_score_timeline": 0, "most_emotion_timeline": 0, "client_info": 0}),
+        json!({"client_info": 0}),
+        json!({"most_emotion_timeline": 0}),
+    ] {
+        let err = driver.call(&owner, "youtube_watching_data", &json!({"command":"find","filter":{},"projection":projection})).await.unwrap_err();
+        assert_eq!(err.code, "WIRE.BAD_VALUE", "{projection}: {}", err.msg);
+    }
+    let only_allowed = driver
+        .call(&owner, "youtube_watching_data", &json!({"command":"find","filter":{},"projection":{"emotion_score_timeline":0},"limit":20}))
+        .await
+        .unwrap_err();
+    assert_eq!(only_allowed.code, "WIRE.BAD_VALUE", "20 x 60 KB most_emotion_timeline exceeds the 1 MiB cap: {}", only_allowed.msg);
+
+    let (_, mut con) = redis_conn().await;
+    seed_pool(&mut con, &g).await;
+    let (mongo, redis) = drivers().await;
+    let err = run("Video.homePersonalized", &backend_from(&g, json!(1)), Some(mongo), Some(redis), 1).await.unwrap_err();
+    collection.delete_many(mongodb::bson::doc! {"user_id": 1_i64}).await.expect("cleanup");
+    clear_redis(&mut con).await;
+    assert_eq!(err.code, "WIRE.EXTENSION_ERROR");
+    assert!(err.msg.contains("WIRE.BAD_VALUE"), "the user fails outright instead of getting a profile: {}", err.msg);
 }
