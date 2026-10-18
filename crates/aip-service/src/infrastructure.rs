@@ -411,6 +411,8 @@ pub(super) fn build_with_environment(config: &super::Config, lookup: &impl Fn(&s
         otlp,
         otlp_exporter: None,
         relational: None,
+        mongo: None,
+        redis: None,
         retention: spike_v6_transport::infrastructure::Retention {
             outbox_dispatched_days: config.retention.outbox_dispatched_days,
             outbox_unhandled_days: config.retention.outbox_unhandled_days,

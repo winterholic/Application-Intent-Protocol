@@ -733,12 +733,36 @@ pub async fn listen_relational(
     infrastructure: crate::infrastructure::Infrastructure,
     authenticator: Option<Arc<dyn crate::auth::Authenticator>>,
 ) -> io::Result<Server> {
+    listen_relational_with_extensions(facts, wire, address, backend, None, options, infrastructure, authenticator).await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn listen_relational_with_extensions(
+    facts: Value,
+    wire: IdWire,
+    address: SocketAddr,
+    backend: Arc<dyn spike_v2_read::backend::RelationalBackend>,
+    extensions: Option<ReadExtensions>,
+    options: ServerOptions,
+    infrastructure: crate::infrastructure::Infrastructure,
+    authenticator: Option<Arc<dyn crate::auth::Authenticator>>,
+) -> io::Result<Server> {
     options.validate()?;
     if infrastructure.rate_limit.is_some() {
         // The limiter's counters live in PostgreSQL; serving without them would drop the limit silently.
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "rate limiting is not available for relational adapters"));
     }
-    let fingerprint = facts["resources"].is_object().then(|| spike_v5_sdk::contract_fingerprint_with_apply(&facts, wire).into());
+    let extensions = extensions.map(|config| config.validate(&facts, wire)).transpose()?;
+    if let Some(extensions) = &extensions {
+        infrastructure.worker_launch.probe(extensions.lang, &extensions.dir).await?;
+    }
+    let fingerprint = facts["resources"].is_object().then(|| {
+        if extensions.is_some() {
+            spike_v5_sdk::contract_fingerprint_with_extensions(&facts, wire).into()
+        } else {
+            spike_v5_sdk::contract_fingerprint_with_apply(&facts, wire).into()
+        }
+    });
     listen_with_fingerprint(
         facts,
         wire,
@@ -754,7 +778,7 @@ pub async fn listen_relational(
             broker: None,
             enable_file_uploads: false,
             fault_injection: false,
-            extensions: None,
+            extensions,
             write_extensions: false,
             extension_slots: tokio::sync::Semaphore::new(4),
             principal_slots: crate::slots::PrincipalSlotSet::unlimited(),

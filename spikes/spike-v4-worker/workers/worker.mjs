@@ -30,6 +30,35 @@ function makeCtx(token, job) {
     events: { publish: (stream, key, payload) => call("events", stream, {key,payload}) },
     messages: { publish: (queue, payload, key) => call("messages", queue, {payload,key}) },
     jobs: { run: (name, input, key) => call("jobs", name, {input,key}) },
+    mongo: {
+      find: async (collection, filter, projection, limit) => {
+        const res = await call("mongo", collection, { command: "find", filter: filter ?? {}, projection, limit });
+        return res?.docs ?? res;
+      },
+      findOne: async (collection, filter, projection) => {
+        const res = await call("mongo", collection, { command: "find_one", filter: filter ?? {}, projection });
+        return res?.doc;
+      },
+      countDocuments: async (collection, filter) => {
+        const res = await call("mongo", collection, { command: "count_documents", filter: filter ?? {} });
+        return res?.count ?? 0;
+      },
+    },
+    redis: {
+      get: async (key) => {
+        const res = await call("redis", key, { command: "get" });
+        return res?.value;
+      },
+      hgetall: async (key) => {
+        const res = await call("redis", key, { command: "hgetall" });
+        return res?.value;
+      },
+      exists: async (key) => {
+        const res = await call("redis", key, { command: "exists" });
+        return res?.exists ?? false;
+      },
+      mget: (keys) => call("redis", keys?.[0] ?? "", { command: "mget", keys }),
+    },
     // durable job 전용: 실행 id와 몇 번째 시도인지(1부터). job이 아니면 null이다.
     job: job ?? null,
     // durable job 전용: `throw ctx.retryLater("이유")`로 같은 job을 backoff 뒤 다시 시도하게 한다.

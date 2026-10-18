@@ -6,8 +6,13 @@ mod reap;
 pub use cgroup::WorkerResourceLimits;
 pub use isolation::{Isolation, WorkerLaunchConfig};
 
+pub mod capability;
+pub mod host;
 pub mod outbox;
 pub mod write;
+
+pub use capability::{ManagedMongoCapability, ManagedRedisCapability, MongoCapability, RedisCapability};
+pub use host::{PgWorkerHost, RelationalWorkerHost, WorkerHost};
 
 #[cfg(all(test, unix))]
 mod cleanup_tests;
@@ -45,7 +50,6 @@ mod stable_key_tests {
 
 use framing::BoundedLines;
 use serde_json::{json, Map, Value};
-use spike_v2_read::execute;
 use spike_v2_read::id_wire::IdWire;
 use spike_v2_read::plan::{Caller, Reject};
 use std::collections::{HashMap, VecDeque};
@@ -457,10 +461,23 @@ pub async fn invoke_with_wire(
     caller: &Caller,
     wire: IdWire,
 ) -> Result<Value, Reject> {
+    let mut host = host::PgWorkerHost { client: db };
+    invoke_with_host(&mut host, w, facts, name, input, caller, wire).await
+}
+
+pub async fn invoke_with_host(
+    host: &mut dyn WorkerHost,
+    w: &mut Worker,
+    facts: &Value,
+    name: &str,
+    input: &Value,
+    caller: &Caller,
+    wire: IdWire,
+) -> Result<Value, Reject> {
     validate_read(facts, name, input, wire)?;
     let (res, ext) = name.split_once('.').ok_or(Reject { code: "WIRE.BAD_REQUEST", msg: "확장은 `Resource.name`".into() })?;
     let x = &facts["resources"][res]["extensions"][ext];
-    invoke_contract(Some(db), w, facts, x, input, caller, wire, None).await
+    invoke_contract(Some(host), w, facts, x, input, caller, wire, None).await
 }
 
 pub fn validate_operation(facts: &Value, name: &str, input: &Value, wire: IdWire) -> Result<(), Reject> {
@@ -518,20 +535,20 @@ pub async fn invoke_job(
 
 #[allow(clippy::too_many_arguments)]
 async fn invoke_contract(
-    mut db: Option<&mut Client>,
+    mut host: Option<&mut dyn WorkerHost>,
     w: &mut Worker,
     facts: &Value,
     x: &Value,
     input: &Value,
     caller: &Caller,
     wire: IdWire,
-    mut host: Option<&mut dyn JobHost>,
+    mut job_host: Option<&mut dyn JobHost>,
 ) -> Result<Value, Reject> {
     let deadline = Duration::from_millis(x["deadlineMs"].as_u64().unwrap_or(1000));
     // 집계 입력은 확장 계약의 binding대로 확장 입력 값에 고정한다. worker가 다른 값을 넣으면 거부한다.
     let mut access = HashMap::new();
     for (agg, binding) in x["access"].as_object().unwrap() {
-        if host.is_some() {
+        if job_host.is_some() {
             continue;
         }
         let mut fixed = Map::new();
@@ -548,8 +565,8 @@ async fn invoke_contract(
     let expires = Instant::now() + deadline;
     w.tokens.insert(token.clone(), Grant { actor_id: caller.actor_id, now: caller.now.clone(), access, id_wire: wire, expires, active: true });
     let mut invoke = json!({ "type": "invoke", "invoke": invoke_id, "impl": x["implementation"], "input": input, "token": token });
-    if let Some(host) = host.as_deref() {
-        invoke["job"] = host.job();
+    if let Some(jh) = job_host.as_deref() {
+        invoke["job"] = jh.job();
     }
     if let Err(error) = w.send_before(&invoke, expires).await {
         w.retire(&token);
@@ -573,12 +590,12 @@ async fn invoke_contract(
         };
         match m["type"].as_str() {
             Some("call") => {
-                if host.is_none() && db.is_none() {
+                if job_host.is_none() && host.is_none() {
                     break rej("WIRE.ACCESS_NOT_DECLARED", "순수 operation은 ctx 호출을 허용하지 않음");
                 }
                 let left = expires.saturating_duration_since(Instant::now());
                 let call = async {
-                    if let Some(host) = host.as_deref_mut() {
+                    if let Some(jh) = job_host.as_deref_mut() {
                         managed_calls += 1;
                         if managed_calls > 64 {
                             return rej("WIRE.COST_EXCEEDED", "job capability 호출 상한");
@@ -597,14 +614,14 @@ async fn invoke_contract(
                         {
                             return rej("WIRE.BAD_VALUE", "managed effect에는 안정적인 key가 필요함");
                         }
-                        host.call(op, name, &m["input"]).await
-                    } else if let Some(db) = db.as_deref_mut() {
+                        jh.call(op, name, &m["input"]).await
+                    } else if let Some(h) = host.as_mut() {
                         // 읽기·operation 확장도 deadline 안에서 DB 호출을 무한히 보낼 수 없게 한다(쓰기 20, job 64와 같은 취지).
                         db_calls += 1;
                         if db_calls > MAX_READ_CTX_CALLS {
                             return rej("WIRE.CALL_LIMIT", "ctx 호출 상한");
                         }
-                        serve_call(db, w, facts, &m).await
+                        serve_call(*h, w, facts, &m).await
                     } else {
                         rej("WIRE.ACCESS_NOT_DECLARED", "순수 operation은 ctx 호출을 허용하지 않음")
                     }
@@ -616,7 +633,7 @@ async fn invoke_contract(
                 if reply.as_ref().is_err_and(|e| e.code == "WIRE.CALL_LIMIT") {
                     break reply;
                 }
-                if host.is_some()
+                if job_host.is_some()
                     && reply.as_ref().is_err_and(|e| {
                         [
                             "WIRE.ACCESS_NOT_DECLARED",
@@ -643,7 +660,7 @@ async fn invoke_contract(
             Some("done") if m["invoke"] == json!(invoke_id) => {
                 if let Some(e) = m.get("error") {
                     // Only a durable job can be retried, so only there does the explicit request keep its code.
-                    if host.is_some() && e["code"] == "WIRE.RETRY_LATER" {
+                    if job_host.is_some() && e["code"] == "WIRE.RETRY_LATER" {
                         // The extension may choose the wait (`afterMs`); it rides in the message because `Reject` is shared by every path.
                         break match e["afterMs"].as_u64() {
                             Some(after_ms) => rej("WIRE.RETRY_LATER", format!("{RETRY_LATER_MESSAGE}; {RETRY_AFTER_KEY}{after_ms}")),
@@ -679,7 +696,7 @@ pub(crate) fn grant_token(kind: char, invoke_id: u64) -> String {
 }
 
 /// worker의 ctx 요청 하나를 처리한다. actor는 토큰에서만 온다.
-async fn serve_call(db: &mut Client, w: &mut Worker, facts: &Value, m: &Value) -> Result<Value, Reject> {
+async fn serve_call(host: &mut dyn WorkerHost, w: &mut Worker, facts: &Value, m: &Value) -> Result<Value, Reject> {
     let o = m.as_object().unwrap();
     if let Some(k) = o.keys().find(|k| !["type", "call", "token", "op", "name", "input"].contains(&k.as_str())) {
         return rej("WIRE.UNKNOWN_KEY", format!("ctx 요청에 알 수 없는 키 `{k}`"));
@@ -694,21 +711,53 @@ async fn serve_call(db: &mut Client, w: &mut Worker, facts: &Value, m: &Value) -
     if !g.active || Instant::now() > g.expires {
         return rej("WIRE.TOKEN_EXPIRED", "끝났거나 기한이 지난 호출의 ctx");
     }
-    if m["op"] != "aggregate" {
-        return rej("WIRE.UNSUPPORTED", "ctx는 aggregate만 지원");
-    }
+
+    let op = m["op"].as_str().unwrap_or("");
     let name = m["name"].as_str().unwrap_or("");
-    let Some(fixed) = g.access.get(name) else {
-        return rej("WIRE.ACCESS_NOT_DECLARED", format!("확장 계약에 `{name}` 접근이 없음"));
-    };
-    if m["input"].as_object() != Some(fixed) {
-        return rej("WIRE.INPUT_BINDING", "집계 입력은 확장 입력에 묶인 값과 같아야 함");
-    }
-    let caller = Caller { actor_id: g.actor_id, now: g.now.clone() };
-    let mut plan = spike_v2_read::plan::plan_read_with_wire(facts, &json!({ "aggregate": name, "input": fixed }), &caller, g.id_wire)?;
-    // DB 문장 기한도 확장 호출의 남은 시간 이하로 줄인다.
     let left = g.expires.saturating_duration_since(Instant::now()).as_millis() as u64;
-    plan.deadline_ms = plan.deadline_ms.min(left.max(1));
-    let v = execute(db, &plan).await?;
-    Ok(json!({ "value": v[0] }))
+
+    match op {
+        "aggregate" => {
+            let Some(fixed) = g.access.get(name) else {
+                return rej("WIRE.ACCESS_NOT_DECLARED", format!("확장 계약에 `{name}` 접근이 없음"));
+            };
+            if m["input"].as_object() != Some(fixed) {
+                return rej("WIRE.INPUT_BINDING", "집계 입력은 확장 입력에 묶인 값과 같아야 함");
+            }
+            let caller = Caller { actor_id: g.actor_id, now: g.now.clone() };
+            let mut plan = spike_v2_read::plan::plan_read_in(
+                host.dialect(),
+                facts,
+                &json!({ "aggregate": name, "input": fixed }),
+                &caller,
+                g.id_wire,
+            )?;
+            // DB 문장 기한도 확장 호출의 남은 시간 이하로 줄인다.
+            plan.deadline_ms = plan.deadline_ms.min(left.max(1));
+            let v = host.execute(&plan, g.id_wire).await?;
+            Ok(json!({ "value": v[0] }))
+        }
+        "read" => {
+            let query = &m["input"];
+            if !query.is_object() {
+                return rej("WIRE.BAD_VALUE", "read query는 객체여야 함");
+            }
+            if query.get("read").and_then(|v| v.as_str()) != Some(name) {
+                return rej("WIRE.BAD_VALUE", "query의 `read` 대상이 일치하지 않음");
+            }
+            if !facts["resources"].get(name).is_some_and(Value::is_object) {
+                return rej("WIRE.NOT_EXPOSED", format!("등록되지 않은 resource `{name}`"));
+            }
+            let caller = Caller { actor_id: g.actor_id, now: g.now.clone() };
+            let mut plan = spike_v2_read::plan::plan_read_in(host.dialect(), facts, query, &caller, g.id_wire)?;
+            plan.deadline_ms = plan.deadline_ms.min(left.max(1));
+            let rows = host.execute(&plan, g.id_wire).await?;
+            let encoded = spike_v2_read::id_wire::encode_rows(rows, &plan.output_type, g.id_wire)?;
+            Ok(json!({ "rows": encoded }))
+        }
+        "mongo" => host.mongo(name, &m["input"]).await,
+        "redis" => host.redis(name, &m["input"]).await,
+        "apply" => rej("WIRE.ACCESS_DENIED", "읽기 확장에서 쓰기(apply) 호출 거부"),
+        _ => rej("WIRE.UNSUPPORTED", format!("지원하지 않는 ctx op `{op}`")),
+    }
 }

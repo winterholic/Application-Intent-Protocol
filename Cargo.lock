@@ -251,6 +251,7 @@ dependencies = [
  "spike-v1-fixture",
  "spike-v11-dev-checks",
  "spike-v2-read",
+ "spike-v4-worker",
  "spike-v5-sdk",
  "spike-v6-transport",
  "tokio",
