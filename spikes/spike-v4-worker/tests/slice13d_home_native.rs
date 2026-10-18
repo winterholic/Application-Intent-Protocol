@@ -335,7 +335,7 @@ async fn gap_driver_field_allowlist_and_read_only_limits() {
         .call(&principal(Some(2)), "youtube_watching_data", &json!({"command":"find","filter":{},"projection":{"emotion_score_timeline":0}}))
         .await
         .unwrap_err();
-    assert_eq!(timeline_only.code, "WIRE.BAD_VALUE", "most_emotion_timeline cannot be excluded, so the 1 MiB cap trips: {}", timeline_only.msg);
+    assert_eq!(timeline_only.code, "WIRE.BAD_VALUE", "synthetic 1.1 MB most_emotion_timeline document; it cannot be excluded, so the 1 MiB cap trips: {}", timeline_only.msg);
     let exclude_other = driver
         .call(&principal(Some(2)), "youtube_watching_data", &json!({"command":"find","filter":{},"projection":{"most_emotion_timeline":0}}))
         .await
@@ -371,10 +371,12 @@ async fn gap_read_extension_reads_a_resource_it_never_declared() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn gap_category_order_follows_the_capability_map_not_the_redis_hash() {
-    // The original returns hgetall's own order. The capability hands the worker a JSON object (serde_json without
-    // preserve_order, built from a HashMap), so the hash's field order never reaches the extension. Whether the original
-    // order is a public contract is not established; this pins what the server delivers today and claims nothing more.
+async fn category_order_delivered_by_the_driver_path_is_unguaranteed_information() {
+    // NOT a defect and NOT an equivalence claim. Redis does not guarantee hash field order (the planner measured the order
+    // changing after a restart when the hash is a hashtable), and both frontends look categories up by `category_name`.
+    // The capability hands the worker a JSON object (serde_json without preserve_order, built from a HashMap), so on this
+    // path the order observed below is name-sorted. That is a probe observation of today's driver, not a contract: nothing
+    // may rely on it, and it is pinned here only so a change in it is noticed, not because it is guaranteed.
     let g = golden();
     let (_, mut con) = redis_conn().await;
     clear_redis(&mut con).await;
@@ -392,17 +394,42 @@ async fn gap_category_order_follows_the_capability_map_not_the_redis_hash() {
     clear_redis(&mut con).await;
     let decoded: Value = serde_json::from_str(out["video_data"].as_str().unwrap()).unwrap();
     let order: Vec<&str> = decoded.as_array().unwrap().iter().map(|group| group["category_name"].as_str().unwrap()).collect();
-    assert_eq!(order, ["drama", "game", "music"], "insertion order was music, game, drama");
+    assert_eq!(order, ["drama", "game", "music"], "observation only; insertion order was music, game, drama");
+    // The content per category is what matters to the frontends and it does not depend on order.
+    for group in decoded.as_array().unwrap() {
+        assert_eq!(group["videos"].as_array().unwrap().len(), g["categories"][group["category_name"].as_str().unwrap()].as_array().unwrap().len());
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn gap_one_field_exclusion_cannot_match_the_original_three_field_projection() {
+async fn projection_excludes_only_one_of_the_original_three_fields() {
     // Original find_recent_summaries_by_user_id excludes emotion_score_timeline, most_emotion_timeline AND client_info.
     // The driver accepts projection keys only from its 7-field allowlist, so only emotion_score_timeline can be excluded;
-    // most_emotion_timeline and client_info still travel to the worker and count against the 1 MiB result cap.
+    // most_emotion_timeline and client_info are delivered to the worker. Part 1 shows the fields actually returned (small
+    // documents, no size claim). Part 2 is a SYNTHETIC boundary check of the 1 MiB cap; real document sizes were not
+    // measured here, so nothing below says real data reaches the cap.
     let g = golden();
     let (_, collection) = mongo_fixture().await;
     collection.delete_many(mongodb::bson::doc! {"user_id": 1_i64}).await.expect("clear");
+
+    collection
+        .insert_one(mongodb::bson::doc! {
+            "user_id": 1_i64, "video_id": "small", "dominant_emotion": "happy", "emotion_percentages": {"happy": 1.0}, "created_at": 1_i64,
+            "emotion_score_timeline": {"0": [0, 100, 0, 0, 0]}, "most_emotion_timeline": {"0": "happy"}, "client_info": {"user_agent": "probe"},
+        })
+        .await
+        .expect("seed small document");
+    let driver0 = MongoDriverCapability::connect(&endpoint("AIP_TEST_MONGO_URL", "35441"), DB, 2, Duration::from_secs(2)).await.expect("driver");
+    let returned = driver0
+        .call(&principal(Some(1)), "youtube_watching_data", &json!({"command":"find","filter":{},"projection":{"emotion_score_timeline":0}}))
+        .await
+        .expect("exclusion of the one allowed field");
+    let doc = &returned["docs"][0];
+    assert!(doc.get("emotion_score_timeline").is_none(), "the excluded field is gone: {doc}");
+    assert!(doc.get("most_emotion_timeline").is_some() && doc.get("client_info").is_some(), "the other two original exclusions are delivered: {doc}");
+    assert_eq!(doc["emotion_percentages"]["happy"], 1.0);
+    collection.delete_many(mongodb::bson::doc! {"user_id": 1_i64}).await.expect("clear small");
+
     let heavy: Vec<mongodb::bson::Document> = (0..20)
         .map(|i| {
             mongodb::bson::doc! {
@@ -427,7 +454,7 @@ async fn gap_one_field_exclusion_cannot_match_the_original_three_field_projectio
         .call(&owner, "youtube_watching_data", &json!({"command":"find","filter":{},"projection":{"emotion_score_timeline":0},"limit":20}))
         .await
         .unwrap_err();
-    assert_eq!(only_allowed.code, "WIRE.BAD_VALUE", "20 x 60 KB most_emotion_timeline exceeds the 1 MiB cap: {}", only_allowed.msg);
+    assert_eq!(only_allowed.code, "WIRE.BAD_VALUE", "synthetic 20 x 60 KB most_emotion_timeline exceeds the 1 MiB cap: {}", only_allowed.msg);
 
     let (_, mut con) = redis_conn().await;
     seed_pool(&mut con, &g).await;
@@ -436,5 +463,5 @@ async fn gap_one_field_exclusion_cannot_match_the_original_three_field_projectio
     collection.delete_many(mongodb::bson::doc! {"user_id": 1_i64}).await.expect("cleanup");
     clear_redis(&mut con).await;
     assert_eq!(err.code, "WIRE.EXTENSION_ERROR");
-    assert!(err.msg.contains("WIRE.BAD_VALUE"), "the user fails outright instead of getting a profile: {}", err.msg);
+    assert!(err.msg.contains("WIRE.BAD_VALUE"), "with these synthetic sizes the extension surfaces the driver error rather than a partial profile: {}", err.msg);
 }

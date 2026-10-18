@@ -24,19 +24,25 @@
 - 런타임 Redis 장애: 원본은 `redis_client.get`/`hgetall` 호출을 감싸는 try/except가 없어 예외가 그대로 올라간다(코드 읽기, `home_service.py` 312-322, 325-347). 기획이 원본 실행으로 예외 전파를 실증했다고 전달받았다(이 Run은 원문을 읽지 못해 재현하지 않음). 이 포팅도 장애를 삼키지 않는다: 어댑터가 없거나 실패하면 `WIRE.ADAPTER_UNAVAILABLE`이 `WIRE.EXTENSION_ERROR "확장 실패: WIRE.ADAPTER_UNAVAILABLE"`로 전달된다(어댑터 없음은 실행 확인: `category_absent_adapter_and_cache_miss_are_explicit_errors`). 의미는 맞다. 다만 클라이언트에는 코드가 `WIRE.EXTENSION_ERROR`로 감싸여 보인다(D6).
 - startup fail-fast: 설정된 어댑터가 연결·ping에 실패하면 서비스는 listening 전에 기동 실패한다(`product/MANAGED-EXECUTION.md` 서비스 설정 절). 이 포팅은 그 동작을 바꾸지 않았다. 어댑터를 설정하지 않은 경우만 호출 시점에 `ADAPTER_UNAVAILABLE`이다. 이 Run은 startup 경로를 실행하지 않았다(문서 인용).
 
-## category 순서: 실측과 미실측
+## category 순서: 비보장 정보 (결함도, 동등성 실패도 아니다)
 
-실측(이 Run, 실제 프로세스):
-- 실제 Redis 7.4.11에서 16개 필드를 알파벳 순이 아닌 순서로 HSET하면 HGETALL이 **삽입 순서 그대로** 돌려준다(OBJECT ENCODING = listpack).
-- 이 포팅의 서버 경로(실제 `RedisDriverCapability` → worker)로는 music, game, drama 순으로 넣은 해시가 **drama, game, music(이름순)** 으로 확장에 도착한다(`gap_category_order_follows_the_capability_map_not_the_redis_hash`). 코드 읽기상 드라이버가 HGETALL을 `HashMap`에 담아 `serde_json`(preserve_order 없음)으로 넘기기 때문이다. 확장은 받은 순서 그대로 응답한다.
-- 원본 코드상 해시 삽입 순서는 `by_category`의 첫 등장 순서(base_score 내림차순 스캔에서 카테고리가 처음 나온 순서), 이어서 부족 카테고리 보충분이다(코드 읽기).
+원본의 `get_videos_by_category_emotions` 응답 카테고리 순서는 Redis HGETALL이 준 순서이고, **Redis는 해시 필드 순서를 보장하지 않는다.** 이 문서는 순서 차이를 결함이나 원본 동등성 실패로 세지 않는다.
 
-미실측 / 단정하지 않는 것:
-- 원본의 카테고리 순서가 프론트나 공개 계약이 보장하는 것인지.
-- 운영 Redis에서 해시가 항상 listpack(삽입 순서 유지)인지. Redis는 해시 필드 순서를 문서상 보장하지 않는다. 필드 수·값 크기가 임계치를 넘으면 hashtable 인코딩이 되어 순서가 달라질 수 있다(미실측).
-- 기획 쪽 실증(삽입 순서 HGETALL 18/18, 정렬 16/18, 카테고리 순서 2건 차이)은 전달받은 수치이며 이 Run이 원문을 읽거나 재현하지 못했다.
+- 기획 재분류(전달받은 내용, 이 Run은 원문을 읽지 못해 재현하지 않음): 원본 해시 순서는 비보장이고 재시작 뒤 hashtable 순서가 달라지는 것이 실측됐다. 프론트 2종은 `category_name`으로 `find`해서 쓰며 내용은 일치한다.
+- 이 Run의 관측(probe, 보장 아님): 작은 해시(16필드, listpack)는 실제 Redis 7.4.11에서 삽입 순서를 유지했다. 이 포팅의 드라이버 경로(`RedisDriverCapability` → worker)에서는 music, game, drama 순으로 넣은 해시가 drama, game, music(이름순)으로 도착했다. 코드 읽기상 드라이버가 HGETALL을 `HashMap`에 담아 `serde_json`(preserve_order 없음)으로 넘기기 때문이다.
+- 이 이름순은 probe 근거의 추론이며 **새 계약으로 보장하지 않는다.** 아무도 이 순서에 의존하면 안 된다. 시험(`category_order_delivered_by_the_driver_path_is_unguaranteed_information`)은 바뀌면 알아채려는 관측 고정일 뿐이며, 같은 시험이 카테고리별 내용(영상 수)이 순서와 무관하게 맞음을 확인한다.
+- `preserve_order`를 켜거나 임의로 정렬하지 않았다.
 
-순서를 맞추려고 `preserve_order`를 켜거나 임의로 정렬하지 않았다. 순서가 계약이면 코어가 해시를 순서 있는 쌍 목록으로 넘기는 변경이 필요하다(기획 결정).
+## Mongo projection: 원본 3필드 중 1필드만 제외 가능
+
+원본 `find_recent_summaries_by_user_id`는 `emotion_score_timeline`, `most_emotion_timeline`, `client_info` 3개를 제외한다. 현재 드라이버는 projection 키를 허용목록 7개(`_id, video_id, user_id, dominant_emotion, created_at, emotion_score_timeline, total_frames`) 안에서만 받는다.
+
+실행 확인(실제 mongod, `projection_excludes_only_one_of_the_original_three_fields`):
+- 3필드 동시 제외, `{client_info:0}` 단독, `{most_emotion_timeline:0}` 단독은 모두 `WIRE.BAD_VALUE`로 거부된다.
+- `{emotion_score_timeline:0}`만 허용되며, 이때 반환 문서에서 `emotion_score_timeline`은 빠지고 `most_emotion_timeline`과 `client_info`는 **그대로 worker로 전달**된다(작은 문서로 확인).
+- 확장은 이 1필드만 제외한다.
+
+경계(합성 크기, 실측 아님): 드라이버 결과 상한은 1 MiB다. 시험은 합성 문서(60,000자 `most_emotion_timeline` x 20, 1.1 MB 한 건)로 상한 초과 시 `BAD_VALUE`가 나는 메커니즘만 보인다. **실제 `youtube_watching_data` 문서 크기는 측정하지 않았으므로 실데이터에서 상한에 닿는다거나 장애가 난다고 단정하지 않는다.** 영향 판단에는 실제 문서 크기 분포 측정이 필요하다(미실측). 이 필드들의 개인정보 민감도도 확인하지 않았으므로 민감도에 대한 평가는 하지 않는다. 이 branch는 코어를 바꾸지 않는다(허용목록은 UUID 수정 worker 소유의 `capability.rs`).
 
 ## user_id (UUID)와 개인 프로필
 
