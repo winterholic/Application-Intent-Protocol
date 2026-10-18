@@ -435,7 +435,7 @@ async fn worker_action_validator_decides_commit_without_database() {
     assert_eq!(host.calls.len(), 1);
 
     // Prefix near-misses of a granted transition never reach the host at all.
-    for name in ["Video.incrementX", "Video.incremen"] {
+    for name in ["Video.incremen", "Video.incrementX", "Video.increment*", "Video.*"] {
         let mut host = FakeHost { calls: vec![] };
         let mut peer = play(vec![(name.to_string(), json!({"ids":["10"]}))], Some(json!({"count":1})));
         let denied = invoke_write_action(&mut host, &mut peer, &facts, "Video.view", &input, &caller, wire).await;
@@ -477,6 +477,8 @@ async fn mysql_write_action_coupling_commits_or_rolls_back_same_transaction() {
     let request = json!({"extension":"Video.view","input":{"id":"10"}});
     let views = |id: i64| format!("SELECT views FROM `{SOURCE}`.`video` WHERE id = {id}");
     let idem = |key: &str| format!("SELECT COUNT(*) FROM `{META}`.`aip_idem` WHERE idem_key = '{key}'");
+    let audit = |key: &str| format!("SELECT COUNT(*) FROM `{META}`.`aip_audit` WHERE request_key = '{key}'");
+    let total_audit = format!("SELECT COUNT(*) FROM `{META}`.`aip_audit`");
 
     // Success through the real entry point: the validated output commits the same transaction.
     let start = harness.backend.begin_worker_write(&harness.facts, "couple-ok", &request, &caller, wire).await.unwrap();
@@ -485,12 +487,16 @@ async fn mysql_write_action_coupling_commits_or_rolls_back_same_transaction() {
     let mut peer = play(vec![("Video.increment".to_string(), json!({"ids":["10"]}))], Some(json!({"count":1})));
     let prepared = invoke_write_action(&mut host, &mut peer, &harness.facts, "Video.view", &request["input"], &caller, wire).await.unwrap();
     assert_eq!(prepared.output, json!({"count": 1}));
+    let total_before = harness.count(&total_audit).await;
     let committed = host.session.commit(json!({"ok":true,"output":prepared.output,"tags":["Video"]})).await.unwrap();
     assert_eq!(committed["output"]["count"], 1);
     assert_eq!(harness.count(&views(10)).await, 1);
     assert_eq!(harness.count(&idem("couple-ok")).await, 1);
+    assert_eq!(harness.count(&audit("couple-ok")).await, 1);
+    assert_eq!(harness.count(&total_audit).await, total_before + 1);
 
     // First callback applied, second forbidden: dropping the session undoes both writes.
+    let total_before = harness.count(&total_audit).await;
     let start = harness.backend.begin_worker_write(&harness.facts, "couple-poison", &request, &caller, wire).await.unwrap();
     let spike_v2_read::backend::RelationalWorkerWriteStart::New(session) = start else { panic!("poison case must start a transaction") };
     let mut host = CouplingHost { session };
@@ -505,8 +511,11 @@ async fn mysql_write_action_coupling_commits_or_rolls_back_same_transaction() {
     assert_eq!(harness.count(&views(10)).await, 1, "the first callback's write was undone too");
     assert_eq!(harness.count(&views(11)).await, 0);
     assert_eq!(harness.count(&idem("couple-poison")).await, 0);
+    assert_eq!(harness.count(&audit("couple-poison")).await, 0);
+    assert_eq!(harness.count(&total_audit).await, total_before);
 
     // The real validator rejects the worker output before commit: nothing is kept.
+    let total_before = harness.count(&total_audit).await;
     let start = harness.backend.begin_worker_write(&harness.facts, "couple-invalid", &request, &caller, wire).await.unwrap();
     let spike_v2_read::backend::RelationalWorkerWriteStart::New(session) = start else { panic!("invalid case must start a transaction") };
     let mut host = CouplingHost { session };
@@ -516,7 +525,48 @@ async fn mysql_write_action_coupling_commits_or_rolls_back_same_transaction() {
     assert_eq!(error.code, "WIRE.OUTPUT_INVALID");
     drop(host);
     assert_eq!(harness.count(&views(10)).await, 1);
+    assert_eq!(harness.count(&views(11)).await, 0);
     assert_eq!(harness.count(&idem("couple-invalid")).await, 0);
+    assert_eq!(harness.count(&audit("couple-invalid")).await, 0);
+    assert_eq!(harness.count(&total_audit).await, total_before);
+
+    // Prefix near-misses and wildcards of a granted transition are rejected at both entry points
+    // (real invoke_write_action entry and real session.apply) and leave DB views/idem/audit untouched.
+    for name in ["Video.incremen", "Video.incrementX", "Video.increment*", "Video.*"] {
+        // 1. Rejected at the real entry point with a real session behind it.
+        let total_before = harness.count(&total_audit).await;
+        let key_entry = format!("couple-prefix-entry-{}", name.replace('.', "-").replace('*', "wild"));
+        let start = harness.backend.begin_worker_write(&harness.facts, &key_entry, &request, &caller, wire).await.unwrap();
+        let spike_v2_read::backend::RelationalWorkerWriteStart::New(session) = start else { panic!("prefix entry case must start a transaction") };
+        let mut host = CouplingHost { session };
+        let mut peer = play(vec![(name.to_string(), json!({"ids":["10"]}))], Some(json!({"count":1})));
+        let denied = invoke_write_action(&mut host, &mut peer, &harness.facts, "Video.view", &request["input"], &caller, wire).await;
+        let Err(error) = denied else { panic!("{name} entry must fail") };
+        assert_eq!(error.code, "WIRE.EXTENSION_ERROR", "{name} entry error code");
+        drop(host);
+        assert_eq!(harness.count(&views(10)).await, 1, "{name} entry views untouched");
+        assert_eq!(harness.count(&views(11)).await, 0, "{name} entry views untouched");
+        assert_eq!(harness.count(&idem(&key_entry)).await, 0, "{name} entry idem empty");
+        assert_eq!(harness.count(&audit(&key_entry)).await, 0, "{name} entry audit empty");
+        assert_eq!(harness.count(&total_audit).await, total_before, "{name} entry total audit untouched");
+
+        // 2. Rejected at the real session apply directly.
+        let total_before = harness.count(&total_audit).await;
+        let key_session = format!("couple-prefix-sess-{}", name.replace('.', "-").replace('*', "wild"));
+        let start = harness.backend.begin_worker_write(&harness.facts, &key_session, &request, &caller, wire).await.unwrap();
+        let spike_v2_read::backend::RelationalWorkerWriteStart::New(mut session) = start else {
+            panic!("prefix session case must start a transaction")
+        };
+        let forged_transition = json!({"apply": name, "target": {"ids": ["10"]}});
+        let err = session.apply(name, &forged_transition, &caller, wire).await.unwrap_err();
+        assert_eq!(err.code, "WIRE.ACCESS_NOT_DECLARED", "{name} session grant expansion");
+        drop(session);
+        assert_eq!(harness.count(&views(10)).await, 1, "{name} session views untouched");
+        assert_eq!(harness.count(&views(11)).await, 0, "{name} session views untouched");
+        assert_eq!(harness.count(&idem(&key_session)).await, 0, "{name} session idem empty");
+        assert_eq!(harness.count(&audit(&key_session)).await, 0, "{name} session audit empty");
+        assert_eq!(harness.count(&total_audit).await, total_before, "{name} session total audit untouched");
+    }
 }
 
 /// One-shot MySQL fault injection between the server's runtime account and the database. Faults fire on the first matching
