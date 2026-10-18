@@ -73,6 +73,47 @@ fn driver_for(config: &Config, url: &str) -> Result<MysqlDriver, Value> {
     MysqlDriver::from_url_with_ca(url, config.database_ca_file.as_deref()).map_err(catalog_error)
 }
 
+async fn configure_optional_read_adapters(
+    infrastructure: &mut spike_v6_transport::infrastructure::Infrastructure,
+    workers: Option<&Workers>,
+    uri_for: impl Fn(&str) -> Option<String>,
+) -> Result<(), Value> {
+    let Some(workers) = workers else { return Ok(()) };
+    if let Some(store) = &workers.mongo {
+        let uri = uri_for(&store.uri_env).ok_or_else(|| error("MONGO_CAPABILITY_CONFIG", "Mongo URI 환경 변수가 설정되지 않음"))?;
+        let driver = spike_v4_worker::MongoDriverCapability::connect(
+            &uri,
+            &store.database,
+            store.max_pool_size,
+            std::time::Duration::from_millis(store.timeout_ms),
+        )
+        .await
+        .map_err(|_| error("MONGO_CAPABILITY_UNAVAILABLE", "Mongo 연결/readiness를 확인할 수 없음"))?;
+        infrastructure.mongo = Some(Arc::new(driver));
+    }
+    if let Some(store) = &workers.redis {
+        let uri = uri_for(&store.uri_env).ok_or_else(|| error("REDIS_CAPABILITY_CONFIG", "Redis URI 환경 변수가 설정되지 않음"))?;
+        let driver = spike_v4_worker::RedisDriverCapability::connect_with_limit(
+            &uri,
+            store.prefixes.clone(),
+            std::time::Duration::from_millis(store.timeout_ms),
+            store.max_in_flight,
+        )
+        .await
+        .map_err(|_| error("REDIS_CAPABILITY_UNAVAILABLE", "Redis 연결/readiness를 확인할 수 없음"))?;
+        infrastructure.redis = Some(Arc::new(driver));
+    }
+    Ok(())
+}
+
+fn mysql_listening_event(address: SocketAddr, fingerprint: String, id_wire: &str, read_adapters: Value) -> Value {
+    json!({
+        "ok": true, "event": "listening", "address": address.to_string(), "adapter": "mysql",
+        "fingerprint": fingerprint, "idWire": id_wire, "authentication": "jwt-access-token",
+        "readAdapters": read_adapters,
+    })
+}
+
 pub(crate) async fn adopt_external(file: &Path, config: &Path, apply: Option<String>) -> Result<Value, Value> {
     let c = configuration_for_runtime(config)?;
     reject_unsupported_infrastructure(&c)?;
@@ -341,32 +382,8 @@ pub(crate) async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
             Language::Python => spike_v6_transport::server::WorkerLang::Python,
         },
     });
-    if let Some(workers) = &config.workers {
-        if let Some(store) = &workers.mongo {
-            let uri = std::env::var(&store.uri_env).map_err(|_| error("MONGO_CAPABILITY_CONFIG", "Mongo URI 환경 변수가 설정되지 않음"))?;
-            let driver = spike_v4_worker::MongoDriverCapability::connect(
-                &uri,
-                &store.database,
-                store.max_pool_size,
-                std::time::Duration::from_millis(store.timeout_ms),
-            )
-            .await
-            .map_err(|_| error("MONGO_CAPABILITY_UNAVAILABLE", "Mongo 연결/readiness를 확인할 수 없음"))?;
-            infrastructure.mongo = Some(Arc::new(driver));
-        }
-        if let Some(store) = &workers.redis {
-            let uri = std::env::var(&store.uri_env).map_err(|_| error("REDIS_CAPABILITY_CONFIG", "Redis URI 환경 변수가 설정되지 않음"))?;
-            let driver = spike_v4_worker::RedisDriverCapability::connect_with_limit(
-                &uri,
-                store.prefixes.clone(),
-                std::time::Duration::from_millis(store.timeout_ms),
-                store.max_in_flight,
-            )
-            .await
-            .map_err(|_| error("REDIS_CAPABILITY_UNAVAILABLE", "Redis 연결/readiness를 확인할 수 없음"))?;
-            infrastructure.redis = Some(Arc::new(driver));
-        }
-    }
+    configure_optional_read_adapters(&mut infrastructure, config.workers.as_ref(), |name| std::env::var(name).ok()).await?;
+    let read_adapters = infrastructure.catalog()["readAdapters"].clone();
     let options = spike_v6_transport::server::ServerOptions { allowed_origins: config.allowed_origins };
     #[cfg(unix)]
     let mut termination =
@@ -388,11 +405,7 @@ pub(crate) async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
     } else {
         spike_v5_sdk::contract_fingerprint_with_apply(&deployed, config.wire.id_wire())
     };
-    let event = json!({
-        "ok": true, "event": "listening", "address": server.address.to_string(), "adapter": "mysql",
-        "fingerprint": fingerprint,
-        "idWire": config.wire.id_wire().label(), "authentication": "jwt-access-token",
-    });
+    let event = mysql_listening_event(server.address, fingerprint, config.wire.id_wire().label(), read_adapters);
     if report(&event).is_err() {
         server.shutdown().await.map_err(|_| error("SERVER_STOP", "출력 실패 후 종료 실패"))?;
         return Err(error("OUTPUT_IO", "기동 결과 출력 실패"));
@@ -414,6 +427,87 @@ pub(crate) async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn read_worker_config(mongo: bool, redis: bool, timeout_ms: u64) -> Workers {
+        let mut config = json!({"directory":".","language":"python"});
+        if mongo {
+            config["mongo"] = json!({"uri_env":"TEST_MONGO_URI","database":"aip_test_slice13a","max_pool_size":2,"timeout_ms":timeout_ms});
+        }
+        if redis {
+            config["redis"] = json!({"uri_env":"TEST_REDIS_URI","prefixes":["facereview:reco:"],"max_in_flight":2,"timeout_ms":timeout_ms});
+        }
+        serde_json::from_value(config).unwrap()
+    }
+
+    fn adapter_uri(name: &str, mongo_uri: &str, redis_uri: &str) -> Option<String> {
+        match name {
+            "TEST_MONGO_URI" => Some(mongo_uri.to_owned()),
+            "TEST_REDIS_URI" => Some(redis_uri.to_owned()),
+            _ => None,
+        }
+    }
+
+    #[tokio::test]
+    async fn optional_adapter_combinations_are_reported_by_discovery_and_listening_output() {
+        let mongo_uri = std::env::var("AIP_TEST_MONGO_URL").expect("start the native-stores Mongo fixture");
+        let redis_uri = std::env::var("AIP_TEST_REDIS_URL").expect("start the native-stores Redis fixture");
+
+        let mut no_workers = spike_v6_transport::infrastructure::Infrastructure::default();
+        configure_optional_read_adapters(&mut no_workers, None, |_| panic!("unconfigured adapters must not read URI values")).await.unwrap();
+        assert_eq!(
+            no_workers.catalog()["readAdapters"],
+            json!({
+                "mongo":{"configured":false,"status":"unavailable"},
+                "redis":{"configured":false,"status":"unavailable"}
+            })
+        );
+
+        for (mongo, redis) in [(false, false), (true, false), (false, true), (true, true)] {
+            let workers = read_worker_config(mongo, redis, 2_000);
+            let mut infrastructure = spike_v6_transport::infrastructure::Infrastructure::default();
+            configure_optional_read_adapters(&mut infrastructure, Some(&workers), |name| adapter_uri(name, &mongo_uri, &redis_uri)).await.unwrap();
+
+            let discovery = infrastructure.catalog();
+            let expected_mongo = json!({"configured":mongo,"status":if mongo {"ready"} else {"unavailable"}});
+            let expected_redis = json!({"configured":redis,"status":if redis {"ready"} else {"unavailable"}});
+            assert_eq!(discovery["readAdapters"]["mongo"], expected_mongo);
+            assert_eq!(discovery["readAdapters"]["redis"], expected_redis);
+            assert!(!discovery.to_string().contains(&mongo_uri));
+            assert!(!discovery.to_string().contains(&redis_uri));
+            assert!(!discovery.to_string().contains("TEST_MONGO_URI"));
+            assert!(!discovery.to_string().contains("TEST_REDIS_URI"));
+
+            let event =
+                mysql_listening_event("127.0.0.1:0".parse().unwrap(), "test-fingerprint".into(), "decimal", discovery["readAdapters"].clone());
+            assert_eq!(event["event"], "listening");
+            assert_eq!(event["readAdapters"]["mongo"], expected_mongo);
+            assert_eq!(event["readAdapters"]["redis"], expected_redis);
+            assert!(!event.to_string().contains(&mongo_uri));
+            assert!(!event.to_string().contains(&redis_uri));
+            assert!(!event.to_string().contains("TEST_MONGO_URI"));
+            assert!(!event.to_string().contains("TEST_REDIS_URI"));
+        }
+    }
+
+    #[tokio::test]
+    async fn configured_unreachable_adapters_fail_startup_without_leaking_uri() {
+        for (mongo, redis, expected_code) in [(true, false, "MONGO_CAPABILITY_UNAVAILABLE"), (false, true, "REDIS_CAPABILITY_UNAVAILABLE")] {
+            let workers = read_worker_config(mongo, redis, 100);
+            let mut infrastructure = spike_v6_transport::infrastructure::Infrastructure::default();
+            let unavailable = if mongo { "mongodb://127.0.0.1:15443/aip_test_slice13a" } else { "redis://127.0.0.1:15443/" };
+            let result = configure_optional_read_adapters(&mut infrastructure, Some(&workers), |name| match name {
+                "TEST_MONGO_URI" => Some("mongodb://127.0.0.1:15443/aip_test_slice13a".into()),
+                "TEST_REDIS_URI" => Some("redis://127.0.0.1:15443/".into()),
+                _ => None,
+            })
+            .await;
+            let err = result.unwrap_err();
+            assert_eq!(err["code"], expected_code);
+            assert!(!err.to_string().contains(unavailable));
+            assert_eq!(infrastructure.catalog()["readAdapters"]["mongo"]["configured"], false);
+            assert_eq!(infrastructure.catalog()["readAdapters"]["redis"]["configured"], false);
+        }
+    }
 
     #[test]
     fn reject_unsupported_allows_read_workers_and_rejects_writes() {

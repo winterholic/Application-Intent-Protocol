@@ -79,6 +79,8 @@ SDK는 `npm install --offline <aip-sdk.tgz>`로 별도 소비자에 설치한다
 
 응답은 `cache-control: no-store`이며 digest·버전·DB 주소·오류 원문을 포함하지 않는다. readiness 검사는 2초로 제한한다. 인증 없는 probe가 요청 pool을 고갈시키지 않도록 process당 동시에 하나의 readiness 검사만 DB 연결을 사용한다. 검사가 진행 중일 때 들어온 probe는 줄을 서지 않고 직전 응답(최대 10초 전까지)을 바로 돌려받으므로 probe flood가 load balancer의 probe를 막지 못한다. 한가할 때는 매번 새로 검사한다. 공개 proxy에 두지 않고 내부 listener에서만 probe를 열려면 proxy에서 `/health`·`/ready` 경로를 외부로 노출하지 않는다. probe 경로는 webhook 경로로 설정할 수 없다. readiness가 worker 확장 import나 외부 provider 연결까지 보증하지는 않는다.
 
+선택형 Mongo/Redis read adapter 상태는 MySQL `service serve`의 `listening` JSON과 `POST /capabilities`의 infrastructure catalog에서 확인한다. `configured:false, status:"unavailable"`은 해당 adapter가 설정되지 않았음을 뜻하며 서비스 전체를 unready로 만들지 않는다. 설정된 adapter의 연결/readiness 실패는 listening 전에 startup 오류로 반환된다. 전체 probe 의미는 위 `/ready` 계약 그대로다.
+
 ### 서비스 주체와 trigger
 
 스케줄과 webhook은 요청 사용자가 없으므로 운영자가 별도 subject를 bind해 서비스 주체로 쓴다. 예: `aip service principal --config service.json bind --subject svc-scheduler --actor 9000`. 이 주체의 actor에 필요한 행 정책·`allow` 권한만 주고, 사용자 subject와 공유하지 않는다. 설정 형식과 실행 경계는 [관리형 execution의 스케줄과 웹훅 수신](MANAGED-EXECUTION.md#스케줄과-웹훅-수신)을 따른다.

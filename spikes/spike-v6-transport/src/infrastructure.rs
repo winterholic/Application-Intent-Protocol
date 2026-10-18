@@ -193,6 +193,10 @@ impl Infrastructure {
             "objects":{"backend":backend,"transferLifetimeMs":self.object_transfer_lifetime.as_millis()},
             "events":{"polling":true,"sse":self.realtime.enabled,"websocket":self.realtime.enabled,"dataSubscriptions":self.realtime.enabled,"maxConnections":self.resource_limits.realtime_capacity(self.realtime.max_connections)},
             "messages":{"enabled":self.messaging,"clientPublish":self.client_publish,"clientConsume":self.client_consume,"delivery":"at-least-once"},
+            "readAdapters":{
+                "mongo":{"configured":self.mongo.is_some(),"status":if self.mongo.is_some() {"ready"} else {"unavailable"}},
+                "redis":{"configured":self.redis.is_some(),"status":if self.redis.is_some() {"ready"} else {"unavailable"}}
+            },
             "limits":{"connections":self.resource_limits.connections,"workers":self.resource_limits.workers,"jobs":self.resource_limits.jobs,"uploads":self.resource_limits.uploads},
             "rag":{"enabled":self.rag.is_some(),"clientIndex":self.rag.is_some() && self.rag_client_index},
             "otlp":{"enabled":self.otlp.is_some()}
@@ -291,6 +295,14 @@ mod object_transfer_lifetime_tests {
 #[cfg(test)]
 mod catalog_tests {
     use super::*;
+
+    #[test]
+    fn catalog_marks_unconfigured_optional_read_adapters_unavailable() {
+        let catalog = Infrastructure::default().catalog();
+        assert_eq!(catalog["readAdapters"]["mongo"], serde_json::json!({"configured":false,"status":"unavailable"}));
+        assert_eq!(catalog["readAdapters"]["redis"], serde_json::json!({"configured":false,"status":"unavailable"}));
+    }
+
     #[test]
     fn catalog_describes_runtime_choices_without_host_paths_or_environment() {
         let mut infrastructure = Infrastructure::default();
