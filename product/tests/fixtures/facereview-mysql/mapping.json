@@ -108,6 +108,33 @@
     "created_at": "created_at",
     "updated_at": "updated_at"
    }
+  },
+  "UserEmotionDna": {
+   "table": "user_emotion_dna",
+   "columns": {
+    "id": "user_id",
+    "dna_type": "dna_type",
+    "dna_data": "dna_data",
+    "based_on_videos": "based_on_videos",
+    "generated_at": "generated_at",
+    "expires_at": "expires_at"
+   }
+  },
+  "UserEmotionSummary": {
+   "table": "user_emotion_summary",
+   "columns": {
+    "id": "user_id",
+    "neutral_seconds": "neutral_seconds",
+    "happy_seconds": "happy_seconds",
+    "surprise_seconds": "surprise_seconds",
+    "sad_seconds": "sad_seconds",
+    "angry_seconds": "angry_seconds",
+    "last_finalized_at": "last_finalized_at",
+    "last_session_id": "last_session_id",
+    "lock_version": "lock_version",
+    "created_at": "created_at",
+    "updated_at": "updated_at"
+   }
   }
  }
 }

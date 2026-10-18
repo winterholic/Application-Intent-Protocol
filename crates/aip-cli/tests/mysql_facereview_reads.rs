@@ -6,7 +6,7 @@
 //! rows were first compared with the original app's own SQLAlchemy queries (product/tests/fixtures/facereview-mysql/README.md).
 //!
 //! Run with `-- --ignored` after `scripts/mysql-live-fixture.sh up`; the adoption account is the container admin.
-use aip_migrate::mysql_driver::{MysqlDriver, mysql_async::prelude::Queryable};
+use aip_migrate::mysql_driver::{MysqlDeploymentFence, MysqlDriver, mysql_async::prelude::Queryable};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use rsa::{RsaPrivateKey, pkcs1::EncodeRsaPrivateKey, traits::PublicKeyParts};
@@ -146,6 +146,24 @@ async fn facereview_schema_is_adopted_without_business_ddl_and_read_with_origina
     setup.query_drop("SET FOREIGN_KEY_CHECKS=0").await.unwrap();
     run_script(&mut setup, SCHEMA).await;
     run_script(&mut setup, SEED).await;
+    setup.query_drop("SET FOREIGN_KEY_CHECKS=1").await.unwrap();
+    // These are the two distinct source-side constraints: Summary's SQLAlchemy FK rejects an orphan,
+    // while the original DNA model has no FK and permits an orphan row that AIP must never expose to Alice.
+    let orphan_summary = setup.query_drop(
+        "INSERT INTO user_emotion_summary (user_id, neutral_seconds, happy_seconds, surprise_seconds, sad_seconds, angry_seconds, lock_version, created_at, updated_at) VALUES ('99999999-0000-4000-8000-000000000099', 0, 0, 0, 0, 0, 0, NOW(), NOW())",
+    ).await;
+    assert!(orphan_summary.is_err(), "the original Summary FK rejects a missing parent");
+    setup.query_drop(
+        "INSERT INTO user_emotion_dna (user_id, dna_type, dna_data, based_on_videos, generated_at, expires_at) VALUES ('99999999-0000-4000-8000-000000000099', 'ORPHAN', JSON_OBJECT('traits', JSON_ARRAY()), 0, NOW(), DATE_ADD(NOW(), INTERVAL 1 DAY))",
+    ).await.expect("the original DNA table intentionally permits orphan rows");
+    let duplicate_summary = setup.query_drop(
+        "INSERT INTO user_emotion_summary (user_id, neutral_seconds, happy_seconds, surprise_seconds, sad_seconds, angry_seconds, lock_version, created_at, updated_at) VALUES ('11111111-1111-4111-8111-111111111111', 0, 0, 0, 0, 0, 0, NOW(), NOW())",
+    ).await;
+    assert!(duplicate_summary.is_err(), "a second Summary row with the shared key is rejected by the PK");
+    let duplicate_dna = setup.query_drop(
+        "INSERT INTO user_emotion_dna (user_id, dna_type, dna_data, based_on_videos, generated_at, expires_at) VALUES ('11111111-1111-4111-8111-111111111111', 'DUPLICATE', JSON_OBJECT(), 0, NOW(), DATE_ADD(NOW(), INTERVAL 1 DAY))",
+    ).await;
+    assert!(duplicate_dna.is_err(), "a second DNA row with the shared key is rejected by the PK");
     setup.query_drop("DROP USER IF EXISTS 'aip_t_fr_rt'@'%'").await.unwrap();
     setup.query_drop("CREATE USER 'aip_t_fr_rt'@'%' IDENTIFIED BY 'runtime_test_only'").await.unwrap();
     for schema in [SOURCE, META] {
@@ -192,7 +210,17 @@ async fn facereview_schema_is_adopted_without_business_ddl_and_read_with_origina
     let plan = run(&env, &["adopt-external", file_arg], &config).await.expect("plan after the DBA defaults");
     assert_eq!(plan["businessDDL"], json!([]), "adoption changes no business table: {plan}");
     let digest = plan["digest"].as_str().unwrap().to_string();
+    let catalog_now = admin.catalog_fingerprint(SOURCE).await.expect("fresh source schema fingerprint");
+    println!("SHARED_PK_CATALOG planned={} fresh={catalog_now}", plan["structureDigest"]);
+    assert_eq!(catalog_now, plan["structureDigest"].as_str().unwrap(), "adoption used the same live catalog fingerprint");
     run(&env, &["adopt-external", file_arg, "--apply", &digest], &config).await.expect("apply");
+    let mut logical_facts = plan["facts"].clone();
+    logical_facts.as_object_mut().unwrap().remove("externalStorage");
+    let mapping_value: spike_v2_read::external::Mapping = serde_json::from_value(mapping.clone()).unwrap();
+    let deployment =
+        aip_migrate::mysql_adopt::deployment(&admin_url, META, &logical_facts, &mapping_value, "decimal").await.expect("load adopted deployment");
+    let fence = MysqlDeploymentFence::new(META, SOURCE, &deployment.source_tables, &deployment.facts_digest, &deployment.structure_digest).unwrap();
+    admin.begin_fenced_transaction(true, &fence).await.expect("fresh MySQL deployment fence");
     for (subject, actor) in [("alice", ALICE), ("bob", BOB), ("carol", CAROL), ("dave", DAVE), ("erin", ERIN)] {
         run(&env, &["principal", "bind", "--subject", subject, "--actor", actor], &config).await.expect("bind");
     }
@@ -211,6 +239,33 @@ async fn facereview_schema_is_adopted_without_business_ddl_and_read_with_origina
         async move { post(&address, "/read", token.as_deref(), &fingerprint, &json!({"query": query})).await }
     };
     let newest = json!([{"field": "created_at", "dir": "desc"}]);
+
+    // Shared PK/FK rows return the original SQLAlchemy model columns. The JSON DNA payload stays a JSON object,
+    // and neither a caller nor an administrator gets another user's row from these personal endpoints.
+    let dna = read(Some(&alice), json!({"read": "UserEmotionDna", "select": ["id", "dna_type", "dna_data", "based_on_videos"]})).await;
+    assert_eq!(dna["ok"], true, "{dna}");
+    assert_eq!(dna["rows"].as_array().unwrap().len(), 1, "{dna}");
+    assert_eq!(dna["rows"][0]["id"], ALICE);
+    assert_eq!(dna["rows"][0]["dna_type"], "JOYFUL_EXPLORER");
+    assert_eq!(dna["rows"][0]["dna_data"]["emotion_radar"]["happy"], 75, "JSON remains structured: {dna}");
+    let summary = read(Some(&alice), json!({"read": "UserEmotionSummary", "select": ["id", "neutral_seconds", "happy_seconds", "surprise_seconds", "sad_seconds", "angry_seconds", "last_session_id", "lock_version"]})).await;
+    assert_eq!(summary["ok"], true, "{summary}");
+    assert_eq!(
+        summary["rows"],
+        json!([{"id": ALICE, "neutral_seconds": 20, "happy_seconds": 60, "surprise_seconds": 10, "sad_seconds": 5, "angry_seconds": 2, "last_session_id": "view-alice-1", "lock_version": 3}]),
+        "{summary}"
+    );
+    let cross_user =
+        read(Some(&alice), json!({"read": "UserEmotionDna", "select": ["id"], "filter": [{"field": "id", "op": "eq", "value": BOB}]})).await;
+    assert_eq!(cross_user["rows"], json!([]), "shared id is scoped to actor: {cross_user}");
+    let admin_personal = read(Some(&erin), json!({"read": "UserEmotionSummary", "select": ["id"]})).await;
+    assert_eq!(admin_personal["rows"], json!([]), "admin role does not widen personal model visibility: {admin_personal}");
+    let orphan_hidden = read(
+        Some(&alice),
+        json!({"read": "UserEmotionDna", "select": ["id"], "filter": [{"field": "id", "op": "eq", "value": "99999999-0000-4000-8000-000000000099"}]}),
+    )
+    .await;
+    assert_eq!(orphan_hidden["rows"], json!([]), "orphan row is not visible to another actor: {orphan_hidden}");
 
     // Same questions the original HomeService asks, newest first, soft-deleted and NULL-flag videos excluded.
     let all = read(None, json!({"read": "Video", "select": ["id"], "sort": newest})).await;
@@ -925,6 +980,15 @@ async fn facereview_schema_is_adopted_without_business_ddl_and_read_with_origina
         .await
         .unwrap();
     assert_eq!(seeded_bookmark, Some(1), "explicitly seeded bookmark is preserved after withdrawal");
+
+    // Soft-deleting the parent invalidates this actor even though its shared-key child rows remain stored.
+    setup.query_drop(format!("UPDATE user SET is_deleted=1 WHERE user_id='{ALICE}'")).await.unwrap();
+    let deleted_parent_dna = read(Some(&alice), json!({"read": "UserEmotionDna", "select": ["id"]})).await;
+    let deleted_parent_summary = read(Some(&alice), json!({"read": "UserEmotionSummary", "select": ["id"]})).await;
+    assert_eq!(deleted_parent_dna["rows"], json!([]), "DNA hidden after parent soft delete: {deleted_parent_dna}");
+    assert_eq!(deleted_parent_summary["rows"], json!([]), "summary hidden after parent soft delete: {deleted_parent_summary}");
+    let retained: Option<(i64, i64)> = setup.query_first(format!("SELECT (SELECT COUNT(*) FROM user_emotion_dna WHERE user_id='{ALICE}'), (SELECT COUNT(*) FROM user_emotion_summary WHERE user_id='{ALICE}')")).await.unwrap();
+    assert_eq!(retained, Some((1, 1)), "soft delete preserves both shared-key rows");
 
     for schema in [META, SOURCE] {
         setup.query_drop(format!("DROP DATABASE IF EXISTS `{schema}`")).await.unwrap();

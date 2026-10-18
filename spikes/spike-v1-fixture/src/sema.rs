@@ -14,6 +14,7 @@ pub enum Ty {
     Int,
     Decimal(u8, u8),
     Bool,
+    Json,
     Enum(String),
     Ref(String),
     Null,
@@ -40,6 +41,7 @@ impl TT {
             Ty::Int => "Int".into(),
             Ty::Decimal(precision, scale) => format!("Decimal<{precision},{scale}>"),
             Ty::Bool => "Bool".into(),
+            Ty::Json => "Json".into(),
             Ty::Enum(e) => format!("Enum<{e}>"),
             Ty::Ref(r) => format!("Ref<{r}>"),
             Ty::Null => "Null".into(),
@@ -285,6 +287,7 @@ impl<'a> Ctx<'a> {
                     }
                 },
                 "Bool" => Ty::Bool,
+                "Json" => Ty::Json,
                 n if self.enums.contains_key(n) => Ty::Enum(n.to_string()),
                 n if self.res.contains_key(n) => Ty::Ref(n.to_string()),
                 n => {
@@ -325,6 +328,7 @@ impl<'a> Ctx<'a> {
                 "Int" => Ty::Int,
                 "Decimal" => Ty::Decimal(t.decimal?.0, t.decimal?.1),
                 "Bool" => Ty::Bool,
+                "Json" => Ty::Json,
                 n if self.enums.contains_key(n) => Ty::Enum(n.to_string()),
                 n => Ty::Ref(n.to_string()),
             }
@@ -772,8 +776,18 @@ impl<'a> Ctx<'a> {
 
     fn resource(&mut self, r: &Resource, limits: &Map<String, Value>) -> Value {
         let mut o = Map::new();
-        if r.fields.iter().any(|f| f.name == "id" && f.ty.name == "Uuid") {
-            o.insert("idKind".into(), json!("uuid"));
+        if let Some(id) = r.fields.iter().find(|f| f.name == "id") {
+            if id.ty.name == "Uuid" {
+                o.insert("idKind".into(), json!("uuid"));
+            } else if !id.ty.id_of && self.res.contains_key(id.ty.name.as_str()) {
+                // `id: User` explicitly opts this resource into User's identity space (a shared PK/FK).
+                let target = self.res.get(id.ty.name.as_str()).expect("checked above");
+                let target_uuid = target.fields.iter().any(|field| field.name == "id" && field.ty.name == "Uuid");
+                if target_uuid {
+                    o.insert("idKind".into(), json!("uuid"));
+                }
+                o.insert("sharedPrimaryKey".into(), json!(id.ty.name));
+            }
         }
         // 같은 resource 안 이름 충돌은 마지막 선언이 앞을 덮어쓰지 않게 거부한다(F09).
         let mut names: BTreeSet<String> = r.fields.iter().map(|f| f.name.clone()).collect();
@@ -858,8 +872,14 @@ impl<'a> Ctx<'a> {
             }
         }
         // 비공개 관계 테이블은 id 없이도 exists의 원본이 될 수 있다.
-        if fields.get("id").is_some_and(|id| id["ty"] != format!("Id<{}>", r.name)) {
-            self.d("DEF.TYPE_MISMATCH", format!("`{}.id`는 non-null 자기 resource의 Id여야 함", r.name), r.span);
+        if let Some(id) = fields.get("id") {
+            let valid_self_id = id["ty"] == format!("Id<{}>", r.name);
+            let valid_shared_id = id["ty"].as_str().is_some_and(|ty| {
+                !ty.ends_with('?') && ty.strip_prefix("Ref<").and_then(|inner| inner.strip_suffix('>')).is_some_and(|target| target != r.name)
+            });
+            if !valid_self_id && !valid_shared_id {
+                self.d("DEF.TYPE_MISMATCH", format!("`{}.id`는 non-null 자기 Id 또는 공유 기본키 참조여야 함", r.name), r.span);
+            }
         }
         o.insert("fields".into(), Value::Object(fields));
 
@@ -1621,9 +1641,7 @@ impl<'a> Ctx<'a> {
                 );
             }
             match self.field_tt(&r.name, s) {
-                Some(TT { ty: Ty::Ref(_), .. }) | Some(TT { ty: Ty::Bool, .. }) => {
-                    self.d("DEF.OP_TYPE_MISMATCH", format!("`{s}`는 정렬 불가 타입"), *sp)
-                }
+                Some(TT { ty: Ty::Ref(_) | Ty::Json | Ty::Bool, .. }) => self.d("DEF.OP_TYPE_MISMATCH", format!("`{s}`는 정렬 불가 타입"), *sp),
                 Some(_) => {}
                 None => self.d("DEF.UNKNOWN_FIELD", format!("sort 대상 `{s}` 없음"), *sp),
             }
@@ -1706,7 +1724,7 @@ impl<'a> Ctx<'a> {
                         self.d("DEF.POLICY_FIELD_NOT_FILTERABLE", format!("`{f}`에는 field read 정책이 있어 정렬에 쓸 수 없음"), *fsp);
                     }
                     match self.field_tt(&m.child, f) {
-                        Some(TT { ty: Ty::Ref(_), .. }) | Some(TT { ty: Ty::Bool, .. }) => {
+                        Some(TT { ty: Ty::Ref(_) | Ty::Json | Ty::Bool, .. }) => {
                             self.d("DEF.OP_TYPE_MISMATCH", format!("`{f}`는 정렬 불가 타입"), *fsp)
                         }
                         Some(_) => {}

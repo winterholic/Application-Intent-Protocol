@@ -250,7 +250,7 @@ a name reads as both a field and a variable
 a type that is not declared
 
 - 원인: A field or parameter uses a type that is neither built in nor an `enum` or `resource` of this definition. Errors that depend on this field (its enum values, its policies) usually follow and disappear when it is fixed.
-- 수정: Spell the type as declared: `Id`, `Uuid` (primary identity), `Text`, `Int`, `Bool`, `Time`, `Date`, `Url`, `Email`, `Decimal(p,s)`, an `enum` or `resource` name, `X.Id`, with `?` for nullable. Declare the enum or resource if it is missing.
+- 수정: Spell the type as declared: `Id`, `Uuid` (primary identity), `Text`, `Int`, `Bool`, `Json`, `Time`, `Date`, `Url`, `Email`, `Decimal(p,s)`, an `enum` or `resource` name, `X.Id`, with `?` for nullable. Declare the enum or resource if it is missing.
 
 ```aip
 actor Member

@@ -40,7 +40,7 @@ fn valid_ident(name: &str) -> bool {
 
 fn valid_field_type(ty: &str) -> bool {
     let base = ty.trim_end_matches('?');
-    if matches!(base, "Text" | "Email" | "Url" | "Time" | "Date" | "Int" | "Bool") {
+    if matches!(base, "Text" | "Email" | "Url" | "Time" | "Date" | "Int" | "Bool" | "Json") {
         return true;
     }
     if decimal_type(base).is_some() {
@@ -100,7 +100,7 @@ fn validate_facts(facts: &Value) -> Result<(), Value> {
             {
                 return Err(err("BAD_FACTS", "Enum 선언 누락"));
             }
-            let col = if ty.starts_with("Ref<") { format!("{}_id", sqlgen::snake(field)) } else { sqlgen::snake(field) };
+            let col = if field != "id" && ty.starts_with("Ref<") { format!("{}_id", sqlgen::snake(field)) } else { sqlgen::snake(field) };
             if !valid_ident(field) || !valid_ident(&col) || !columns.insert(col) || !valid_field_type(ty) {
                 return Err(err("BAD_FACTS", "필드 이름/타입 오류"));
             }
@@ -693,6 +693,7 @@ fn backfill_cast(facts: &Value, ty: &str) -> Option<String> {
         "Bool" => Some("boolean".into()),
         "Time" => Some("timestamptz".into()),
         "Date" => Some("date".into()),
+        "Json" => Some("jsonb".into()),
         t if t.starts_with("Enum<") && t.ends_with('>') => Some("text".into()),
         t if (t.starts_with("Ref<") || t.starts_with("Id<")) && t.ends_with('>') => Some(spike_v2_read::id_wire::id_cast(facts, t).into()),
         _ => None,
@@ -709,6 +710,7 @@ fn physical_type(facts: &Value, ty: &str) -> Option<String> {
         "Bool" => Some("boolean".into()),
         "Time" => Some("timestamptz".into()),
         "Date" => Some("date".into()),
+        "Json" => Some("jsonb".into()),
         t if t.starts_with("Enum<") && t.ends_with('>') => Some("text".into()),
         t if (t.starts_with("Ref<") || t.starts_with("Id<")) && t.ends_with('>') => Some(spike_v2_read::id_wire::id_cast(facts, t).into()),
         _ => None,

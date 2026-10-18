@@ -43,6 +43,11 @@ fn normalize_value(value: Value, ty: &Value) -> Result<Value, Reject> {
     }
     let base = ty["ty"].as_str().unwrap_or("");
     match base {
+        "Json" => match value {
+            Value::String(text) => serde_json::from_str(&text).map_err(|_| malformed("JSON")),
+            value @ (Value::Object(_) | Value::Array(_) | Value::Bool(_) | Value::Number(_)) => Ok(value),
+            _ => Err(malformed("JSON")),
+        },
         "Bool" => match value {
             Value::Bool(_) => Ok(value),
             Value::Number(n) => match n.as_i64() {

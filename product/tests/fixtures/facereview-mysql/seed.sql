@@ -31,3 +31,7 @@ INSERT INTO user_favorite_genre (user_favorite_genre_id, user_id, genre, created
 INSERT INTO user_point_history (user_point_history_id, user_id, video_id, amount, watch_time, description, created_at, updated_at) VALUES
  ('77777777-0000-4000-8000-000000000001', '11111111-1111-4111-8111-111111111111', 'aaaaaaaa-0000-4000-8000-000000000001', 10, 200, '시청', '2026-10-16 10:00:00', '2026-10-16 10:00:00'),
  ('77777777-0000-4000-8000-000000000002', '11111111-1111-4111-8111-111111111111', NULL, -5, NULL, '사용', '2026-10-17 10:00:00', '2026-10-17 10:00:00');
+INSERT INTO user_emotion_dna (user_id, dna_type, dna_data, based_on_videos, generated_at, expires_at) VALUES
+ ('11111111-1111-4111-8111-111111111111', 'JOYFUL_EXPLORER', '{"traits":[{"trait":"호기심","score":82}],"emotion_radar":{"happy":75,"sad":10}}', 12, '2026-10-16 10:00:00', '2026-10-23 10:00:00');
+INSERT INTO user_emotion_summary (user_id, neutral_seconds, happy_seconds, surprise_seconds, sad_seconds, angry_seconds, last_finalized_at, last_session_id, lock_version, created_at, updated_at) VALUES
+ ('11111111-1111-4111-8111-111111111111', 20, 60, 10, 5, 2, '2026-10-16 10:00:00', 'view-alice-1', 3, '2026-10-15 10:00:00', '2026-10-16 10:00:00');
