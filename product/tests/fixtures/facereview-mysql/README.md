@@ -41,6 +41,6 @@ cargo test -p aip-cli --features aip-cli/mysql --test mysql_facereview_reads -- 
 - 비활성화된 회원의 요청은 원본의 401(`AUTH_INVALID_TOKEN`)이 아니라 200과 빈 결과(쓰기는 거절)다. 인증은 외부 토큰 검증이고 가시성은 정책이라서다. 상태 코드까지 같게 하려면 actor 유효 조건을 정의 수준에서 선언하는 기능이 필요하다.
 - 관리자용 별도 resource. 한 표에 resource 둘을 연결하는 매핑은 어댑션이 거절한다(표당 resource 하나). 그래서 관리자는 같은 resource의 정책(`isAdmin`)으로 풀었고, 그 결과 ADMIN은 사용자 화면의 댓글 목록에서도 삭제된 댓글을 받는다(`is_deleted.eq` 필터로 거를 수 있으나 호출자가 정한다).
 - 관리자 요청 승인(영상 생성)은 승인자가 고르는 제목·채널·길이·카테고리가 요청 행에 없어서, 그리고 Mongo 초기 분포 쓰기가 따라와서 정의하지 않았다.
-- 좋아요·북마크 취소(실제 행 삭제). 정의 언어에 물리 삭제가 없다. 같은 요청을 두 번 보내는 토글 의미를 흉내 내지 않고 `WIRE.ALREADY_EXISTS`로 남긴다.
+- 좋아요·북마크 취소는 `VideoLike.remove`·`VideoBookmark.remove`로 행을 물리 삭제한다. AIP는 생성과 제거를 분리된 호출로 제공한다. 원본 `WatchService.toggle_like`와 `HomeService.toggle_bookmark`의 단일 토글 호출·응답 계약과는 다르므로 API 전체 동등성을 뜻하지 않는다. 원본 bookmark endpoint와 저장 상태 비교는 WBS 7.2.4 통합 근거에 기록한다.
 - 비밀번호 로그인·refresh·logout 등 인증 자체의 이전. MySQL adapter는 서버 확장(워커)을 아직 지원하지 않아 Werkzeug 비밀번호 검사를 AIP 안에서 할 수 없다(7.2.2의 남은 부분).
 - 사용자 생성(가입)은 비밀번호 해시를 서버 확장이 만들어야 해서 정의하지 않았다.
