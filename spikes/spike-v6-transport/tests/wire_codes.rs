@@ -100,6 +100,12 @@ fn the_retry_of_the_codes_that_decide_a_write_is_the_documented_one() {
 }
 
 #[test]
+fn value_too_long_documents_every_read_filter_operator_that_emits_it() {
+    let code = wire_codes::lookup("WIRE.VALUE_TOO_LONG").expect("registered");
+    assert!(code.explain.contains("`like`"), "like emits WIRE.VALUE_TOO_LONG and belongs in its explanation");
+}
+
+#[test]
 fn spec_wire_errors_is_generated_from_the_registry() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../spec/wire-errors.md");
     let generated = wire_codes::render_markdown();

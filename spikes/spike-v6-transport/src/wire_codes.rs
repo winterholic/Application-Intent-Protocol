@@ -217,7 +217,7 @@ pub static REGISTRY: &[Info] = &[
     w("WIRE.UNSUPPORTED", Sv, Never, "The runtime does not support this kind of declaration or the extension does not fit the operation contract.", "Use the supported form named in `msg`."),
     w("WIRE.UNSUPPORTED_ISOLATION", Sv, Never, "A write with a capacity constraint needs a READ COMMITTED or SERIALIZABLE transaction.", "Operator: do not change the transaction isolation of the service connection."),
     w("WIRE.VALUE_SOURCE_NOT_ALLOWED", Rq, Never, "A value of a composed write comes from a source the contract does not list, or a reference was given as a constant.", "Take values only from the sources the exposure lists."),
-    w("WIRE.VALUE_TOO_LONG", Li, Never, "A `contains` or `prefix` value is longer than the limit.", "Send at most 200 characters."),
+    w("WIRE.VALUE_TOO_LONG", Li, Never, "A `contains`, `like` or `prefix` value is longer than the limit.", "Send at most 200 characters."),
     w("WIRE.WORKER_BUSY", Av, Later, "The limit of concurrent extension calls is reached.", "Send again after a short delay."),
     w("WIRE.WORKER_CONFIG", Sv, Never, "The extension worker could not be started with the configured settings.", "Operator: fix the worker configuration."),
     w("WIRE.WORKER_FAILED", Sv, Later, "The official extension worker failed to run or answer. A job step is retried by the server itself.", "Send again after a short delay; report the `x-request-id` if it persists."),
