@@ -332,9 +332,11 @@ def builder_inputs(fixtures):
 
 
 class PoolBuilderOracle(unittest.TestCase):
-    def run_both(self, fixtures, seed=1, raw_by_cat=None):
+    def run_both(self, fixtures, seed=1, raw_by_cat=None, as_generator=False):
         install_fixture(fixtures)
         videos, dist_docs, like_map = builder_inputs(fixtures)
+        if as_generator:
+            videos = iter(videos)
         redis = FakeRedis()
         EXT_STUB.redis_client = redis
         HS._MEM_CACHE.update(pool=None, categories=None, ts=0.0)
@@ -478,6 +480,24 @@ class PoolBuilderOracle(unittest.TestCase):
         pool, _ = self.run_both(fixtures, seed=9)
         by_id = {e['video_id']: e['base_score'] for e in pool}
         self.assertEqual(by_id['lz'], by_id['lm'])
+
+    def test_null_is_deleted_matches_sql_exclusion(self):
+        rng = random.Random(99)
+        fixtures = [make_fixture(rng, 'null1', category='music', is_deleted=None)]
+        pool, cats = self.run_both(fixtures, seed=1)
+        self.assertEqual(pool, [])
+        self.assertEqual(cats.get('music'), [])
+
+    def test_generator_input_matches_list_for_pad_only(self):
+        rng = random.Random(77)
+        fixtures = [make_fixture(rng, 'padonly1', category='music', with_dist=False)]
+        pool, cats = self.run_both(fixtures, seed=2, as_generator=True)
+        self.assertEqual(pool, [])
+        padded = cats['music']
+        self.assertEqual(len(padded), 1)
+        self.assertEqual(padded[0]['video_id'], 'padonly1')
+        self.assertEqual(padded[0]['dominant_emotion'], None)
+        self.assertEqual(padded[0]['base_score'], 0.0)
 
     def test_created_at_none(self):
         rng = random.Random(30)

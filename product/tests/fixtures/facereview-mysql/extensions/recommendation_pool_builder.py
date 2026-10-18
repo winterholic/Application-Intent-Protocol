@@ -23,9 +23,9 @@
 #    convention as recommendation_math.rank_personalized). The original shuffles the
 #    padding source with the process-global random; pass random.Random(seed) to
 #    reproduce a seeded original draw exactly.
-#  - A video counts as active when its is_deleted flag is falsy (0/False/None/absent
-#    all mean active). SQL NULL never matches `is_deleted = 0`, so a NULL flag is a
-#    documented edge where this pure form keeps the row; fixtures use 0/1.
+#  - A video counts as active only when is_deleted == 0, exactly like the
+#    original `Video.query.filter_by(is_deleted=0)`: SQL NULL never matches
+#    `= 0`, so a NULL/absent flag is excluded here as well.
 import importlib.util
 import os
 import random
@@ -75,7 +75,9 @@ def build_ranked_pool(videos, dist_docs, like_map, all_genres, rng=None, raw_by_
 
     videos: iterable of mappings with video_id, youtube_url, title, category
         (plain value or Enum with .value), view_count, created_at (ISO string,
-        datetime or None) and is_deleted (falsy means active).
+        datetime or None) and is_deleted (only 0 means active, like SQL
+        `is_deleted = 0`; None/absent is excluded). The iterable is
+        materialized once, so a list and a one-shot iterator behave the same.
     dist_docs: mapping video_id -> raw distribution doc with dominant_emotion,
         emotion_averages, total_frames, emotion_counts and average_completion_rate.
     like_map: mapping video_id -> like count; absent means 0.
@@ -90,10 +92,11 @@ def build_ranked_pool(videos, dist_docs, like_map, all_genres, rng=None, raw_by_
     rng = rng if rng is not None else random
     dist_docs = dist_docs or {}
     like_map = like_map or {}
+    videos = list(videos or [])
 
     scored = []
-    for v in videos or []:
-        if _row_field(v, 'is_deleted'):
+    for v in videos:
+        if _row_field(v, 'is_deleted') != 0:
             continue
         doc = dist_docs.get(_row_field(v, 'video_id'))
         if not doc or not doc.get('dominant_emotion'):
@@ -133,8 +136,8 @@ def build_ranked_pool(videos, dist_docs, like_map, all_genres, rng=None, raw_by_
     if deficient:
         if raw_by_cat is None:
             raw_by_cat = {}
-            for v in videos or []:
-                if _row_field(v, 'is_deleted'):
+            for v in videos:
+                if _row_field(v, 'is_deleted') != 0:
                     continue
                 cat = _category_of(v)
                 if cat in deficient:
