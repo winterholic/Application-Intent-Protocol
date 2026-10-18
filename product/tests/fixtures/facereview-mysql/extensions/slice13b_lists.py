@@ -283,4 +283,3 @@ async def homeSearch(input, ctx):
         return _result([], 0, page, size, False)
     total, docs = await _mongo_page_over_ids(ctx, candidate_ids, {"dominant_emotion": {"$in": emotions}}, page, size)
     return await _from_docs(ctx, docs, total, page, size)
-
