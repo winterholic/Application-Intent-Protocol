@@ -26,10 +26,16 @@ fn main() -> ExitCode {
                     serde_json::to_string_pretty(&json!({
                         "executionDigest": ed, "metadataDigest": md,
                         "execution": o.execution, "metadata": o.metadata, "spans": o.spans,
+                        "advisories": o.advisories.iter().map(|d| d.json()).collect::<Vec<_>>(),
                     }))
                     .unwrap()
                 ),
-                _ => println!("ok {form:?} exec={} meta={}", &ed[..16], &md[..16]),
+                _ => {
+                    println!("ok {form:?} exec={} meta={}", &ed[..16], &md[..16]);
+                    for d in o.advisories {
+                        println!("warning: {}", d.render(path));
+                    }
+                }
             }
             ExitCode::SUCCESS
         }

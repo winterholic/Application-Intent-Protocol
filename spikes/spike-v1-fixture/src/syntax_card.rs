@@ -119,7 +119,7 @@ pub const NOTES: &[(&str, &str, &str, &str)] = &[
         "aggregate",
         "callerFilter",
         "callerFilter none | read",
-        "호출자의 aggregate filter 허용 여부. none은 거부하고 read는 선언된 resource read 필터를 집계에 적용한다",
+        "호출자의 aggregate filter 허용 여부. none은 거부하고 read는 요청 필터를 허용한다. 단독 집계는 source의 rows read 정책을 물려받지 않으므로, rows read 정책이 있는 source에서 callerFilter read를 쓰면 aggregate where에 같은 행 정책을 직접 적는다. 생략하면 숨긴 행의 존재를 필터로 셀 수 있어 정의 검사에서 경고한다",
     ),
     ("aggregate", "rowOutput", "rowOutput none", "집계가 행을 내보내는지"),
     ("aggregate", "release", "release count  |  sum(f)  |  min(f)  |  max(f)", "내보내는 값"),

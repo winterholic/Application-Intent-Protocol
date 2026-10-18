@@ -125,6 +125,8 @@ pub struct Output {
     pub execution: Value,
     pub metadata: Value,
     pub spans: Value,
+    /// Non-blocking diagnostics for definitions that compile but have a documented privacy risk.
+    pub advisories: Vec<Diag>,
 }
 
 struct Ctx<'a> {
@@ -136,6 +138,7 @@ struct Ctx<'a> {
     limits: BTreeMap<&'a str, &'a Limit>,
     actor: Option<String>,
     diags: Vec<Diag>,
+    advisories: Vec<Diag>,
 }
 
 #[derive(Clone, Default)]
@@ -163,6 +166,7 @@ pub fn analyze(spec: &Spec) -> Result<Output, Vec<Diag>> {
         limits: BTreeMap::new(),
         actor: None,
         diags: vec![],
+        advisories: vec![],
     };
     cx.collect();
     let execution = cx.build();
@@ -170,7 +174,7 @@ pub fn analyze(spec: &Spec) -> Result<Output, Vec<Diag>> {
         return Err(cx.diags);
     }
     let (metadata, spans) = metadata_of(spec);
-    Ok(Output { execution, metadata, spans })
+    Ok(Output { execution, metadata, spans, advisories: cx.advisories })
 }
 
 fn metadata_of(spec: &Spec) -> (Value, Value) {
@@ -189,6 +193,10 @@ fn metadata_of(spec: &Spec) -> (Value, Value) {
 impl<'a> Ctx<'a> {
     fn d(&mut self, code: &'static str, msg: impl Into<String>, span: Span) {
         self.diags.push(Diag::new(code, msg, span));
+    }
+
+    fn advisory(&mut self, code: &'static str, msg: impl Into<String>, span: Span) {
+        self.advisories.push(Diag::new(code, msg, span));
     }
 
     /// JavaScript treats `__proto__` as the prototype accessor, not an own key, so a generated descriptor or SDK object
@@ -1415,6 +1423,16 @@ impl<'a> Ctx<'a> {
         if !self.res.contains_key(source.as_str()) {
             self.d("DEF.UNKNOWN_SYMBOL", format!("집계 source `{source}` 없음"), a.span);
             return None;
+        }
+        if a.caller_filter.as_deref() == Some("read")
+            && a.where_.is_none()
+            && self.res.get(source.as_str()).is_some_and(|source| source.row_read.is_some())
+        {
+            self.advisory(
+                "DEF.ADVISORY_CALLER_FILTER_POLICY",
+                format!("aggregate `{}` uses `callerFilter read` without `where` although `{source}` has a row read policy; its count can reveal matching rows the caller cannot read", a.name),
+                a.span,
+            );
         }
         let (release, release_field) = match a.release.as_deref() {
             None => {

@@ -42,7 +42,7 @@ pub fn all() -> &'static [Info] {
 
 /// Plain text for `aip explain-code`.
 pub fn render_text(c: &Info) -> String {
-    let mut out = format!("{}  definition error  {}\n\nwhy:\n  {}\n\nfix:\n  {}\n", c.code, c.title, c.explain, c.fix);
+    let mut out = format!("{}  definition diagnostic  {}\n\nwhy:\n  {}\n\nfix:\n  {}\n", c.code, c.title, c.explain, c.fix);
     if !c.example.is_empty() {
         out.push_str("\nexample (an accepted definition in the .aip form):\n");
         for l in c.example.lines() {
@@ -610,6 +610,13 @@ pub static REGISTRY: &[Info] = &[
         "a predicate that nothing uses (advisory)",
         "Not an error: the definition is accepted. An unused predicate is usually a rule that was meant to be applied and is not.",
         "Use the predicate in a `rows read`, `field ... read`, `allow` or `access`, or remove it.",
+        "",
+    ),
+    i(
+        "DEF.ADVISORY_CALLER_FILTER_POLICY",
+        "a caller-filtered aggregate omits its source row policy (advisory)",
+        "Not an error: the definition is accepted. A standalone aggregate does not inherit the source resource's `rows read` policy. With `callerFilter read` and no aggregate `where`, the count may reveal whether rows hidden from the caller match a supplied filter.",
+        "Repeat the intended row policy in the aggregate's `where`.",
         "",
     ),
 ];

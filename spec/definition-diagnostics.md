@@ -627,3 +627,10 @@ a predicate that nothing uses (advisory)
 
 - 원인: Not an error: the definition is accepted. An unused predicate is usually a rule that was meant to be applied and is not.
 - 수정: Use the predicate in a `rows read`, `field ... read`, `allow` or `access`, or remove it.
+
+### `DEF.ADVISORY_CALLER_FILTER_POLICY`
+
+a caller-filtered aggregate omits its source row policy (advisory)
+
+- 원인: Not an error: the definition is accepted. A standalone aggregate does not inherit the source resource's `rows read` policy. With `callerFilter read` and no aggregate `where`, the count may reveal whether rows hidden from the caller match a supplied filter.
+- 수정: Repeat the intended row policy in the aggregate's `where`.
