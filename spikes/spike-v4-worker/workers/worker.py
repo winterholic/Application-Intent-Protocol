@@ -1,6 +1,8 @@
 # AIP 확장 worker(Python). 서버와 stdin/stdout JSON 줄로만 통신한다. DB 연결 정보는 받지 않는다.
 import asyncio, importlib.util, inspect, json, os, sys
 
+MAX_FRAME_BYTES = 1024 * 1024
+
 ext_dir = sys.argv[1]
 pending = {}
 seq = 0
@@ -153,7 +155,8 @@ async def run_invoke(m):
 
 async def main():
     loop = asyncio.get_running_loop()
-    reader = asyncio.StreamReader()
+    # StreamReader's limit counts bytes before `\n`; the host frame cap includes it.
+    reader = asyncio.StreamReader(limit=MAX_FRAME_BYTES - 1)
     await loop.connect_read_pipe(lambda: asyncio.StreamReaderProtocol(reader), sys.stdin)
     while line := await reader.readline():
         m = json.loads(line)
