@@ -3,7 +3,7 @@ use crate::mysql_catalog::{
     CatalogError, ColumnRow, ForeignKeyRow, IndexRow, MysqlCatalogReader, MysqlDriverConfig, TableManifest, introspect_schema,
 };
 use mysql_async::prelude::Queryable;
-use mysql_async::{Opts, OptsBuilder, Pool, PoolConstraints, PoolOpts, Row, SslOpts, from_row_opt};
+use mysql_async::{Opts, OptsBuilder, Pool, PoolConstraints, PoolOpts, Row, SslOpts, Transaction, TxOpts, from_row_opt};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -192,26 +192,19 @@ impl MysqlDriver {
         expected_facts_digest: &str,
         expected_structure_digest: &str,
     ) -> Result<FencedMysqlTransaction, CatalogError> {
-        let mut conn = tokio::time::timeout(self.connect_timeout, self.pool.get_conn())
+        let mut tx_options = TxOpts::default();
+        tx_options.with_readonly(read_only);
+        let mut transaction = tokio::time::timeout(self.connect_timeout, self.pool.start_transaction(tx_options))
             .await
             .map_err(|_| CatalogError::new("MySQL connection timed out"))?
             .map_err(|_| CatalogError::new("MySQL connection failed"))?;
 
         // Disable stats caching for immediate I_S accuracy (MySQL 8.4; ignore on MariaDB)
-        let _ = conn.query_drop("SET SESSION information_schema_stats_expiry = 0").await;
-
-        let tx_start = if read_only {
-            "START TRANSACTION READ ONLY"
-        } else {
-            "START TRANSACTION"
-        };
-        if let Err(err) = conn.query_drop(tx_start).await {
-            return Err(CatalogError::new(format!("failed to start transaction: {err}")));
-        }
+        let _ = transaction.query_drop("SET SESSION information_schema_stats_expiry = 0").await;
 
         // Step 1: Pre-MDL Pinning
-        if let Err(err) = pin_bound_tables_on_conn(&mut conn, bound_tables).await {
-            let _ = conn.query_drop("ROLLBACK").await;
+        if let Err(err) = pin_bound_tables_on_conn(&mut transaction, bound_tables).await {
+            let _ = transaction.rollback().await;
             return Err(err);
         }
 
@@ -220,10 +213,10 @@ impl MysqlDriver {
         let meta_sql = format!(
             "SELECT facts_digest, schema_sha256, status FROM `{meta_schema}`.`aip_migrate_meta` WHERE singleton = 1"
         );
-        let meta_row: Option<(String, String, String)> = match conn.exec_first(&meta_sql, ()).await {
+        let meta_row: Option<(String, String, String)> = match transaction.exec_first(&meta_sql, ()).await {
             Ok(row) => row,
             Err(err) => {
-                let _ = conn.query_drop("ROLLBACK").await;
+                let _ = transaction.rollback().await;
                 if is_drift_error(&err) {
                     return Err(CatalogError::drift(format!("meta table access failed: {err}")));
                 }
@@ -234,36 +227,47 @@ impl MysqlDriver {
         match meta_row {
             Some((facts_digest, _schema_sha256, status)) => {
                 if facts_digest != expected_facts_digest || status != "READY" {
-                    let _ = conn.query_drop("ROLLBACK").await;
+                    let _ = transaction.rollback().await;
                     return Err(CatalogError::drift(format!(
                         "aip_migrate_meta deployment changed (facts_digest: {facts_digest}, status: {status})"
                     )));
                 }
             }
             None => {
-                let _ = conn.query_drop("ROLLBACK").await;
+                let _ = transaction.rollback().await;
                 return Err(CatalogError::drift("aip_migrate_meta singleton row missing"));
             }
         }
 
         // 2b: Schema-wide 4-query catalog verification
-        let fingerprint = match catalog_fingerprint_on_conn(&mut conn, source_schema, self.mariadb).await {
+        let fingerprint = match catalog_fingerprint_on_conn(&mut transaction, source_schema, self.mariadb).await {
             Ok(fp) => fp,
             Err(err) => {
-                let _ = conn.query_drop("ROLLBACK").await;
+                let _ = transaction.rollback().await;
                 return Err(err);
             }
         };
 
         if !fingerprint.digest.eq_ignore_ascii_case(expected_structure_digest) {
-            let _ = conn.query_drop("ROLLBACK").await;
+            let _ = transaction.rollback().await;
             return Err(CatalogError::drift(format!(
                 "MySQL schema changed since deployed catalog fingerprint was recorded (actual: {}, expected: {})",
                 fingerprint.digest, expected_structure_digest
             )));
         }
 
-        Ok(FencedMysqlTransaction { conn: Some(conn) })
+        // The caller's MDL set must cover every table represented by the catalog fence,
+        // plus every runtime metadata table this transaction can read or write. Without
+        // this equality check a caller could omit one table, pass the schema digest check,
+        // and return a transaction whose catalog validation is not protected from DDL.
+        let catalog_tables = fingerprint.catalog.keys().cloned().collect::<Vec<_>>();
+        let expected_bound_tables = canonical_bound_tables(meta_schema, source_schema, &catalog_tables, !read_only);
+        if bound_tables != expected_bound_tables.as_slice() {
+            let _ = transaction.rollback().await;
+            return Err(CatalogError::drift("bound table set does not exactly cover the verified catalog and runtime metadata tables"));
+        }
+
+        Ok(FencedMysqlTransaction { transaction: Some(transaction) })
     }
 
     async fn query_rows(&self, query: &str, params: impl Into<mysql_async::Params> + Send) -> Result<Vec<Row>, CatalogError> {
@@ -282,36 +286,32 @@ pub struct MysqlCatalogFingerprint {
 }
 
 pub struct FencedMysqlTransaction {
-    conn: Option<mysql_async::Conn>,
+    transaction: Option<Transaction<'static>>,
 }
 
 impl std::fmt::Debug for FencedMysqlTransaction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FencedMysqlTransaction")
-            .field("active", &self.conn.is_some())
+            .field("active", &self.transaction.is_some())
             .finish()
     }
 }
 
 impl FencedMysqlTransaction {
-    pub fn conn(&mut self) -> &mut mysql_async::Conn {
-        self.conn.as_mut().expect("fenced transaction connection is active")
-    }
-
-    pub fn into_conn(mut self) -> mysql_async::Conn {
-        self.conn.take().expect("fenced transaction connection is active")
+    pub fn conn(&mut self) -> &mut Transaction<'static> {
+        self.transaction.as_mut().expect("fenced transaction is active")
     }
 
     pub async fn commit(mut self) -> Result<(), CatalogError> {
-        if let Some(mut conn) = self.conn.take() {
-            conn.query_drop("COMMIT").await.map_err(|e| CatalogError::new(format!("MySQL commit failed: {e}")))?;
+        if let Some(transaction) = self.transaction.take() {
+            transaction.commit().await.map_err(|e| CatalogError::new(format!("MySQL commit failed: {e}")))?;
         }
         Ok(())
     }
 
     pub async fn rollback(mut self) -> Result<(), CatalogError> {
-        if let Some(mut conn) = self.conn.take() {
-            conn.query_drop("ROLLBACK").await.map_err(|e| CatalogError::new(format!("MySQL rollback failed: {e}")))?;
+        if let Some(transaction) = self.transaction.take() {
+            transaction.rollback().await.map_err(|e| CatalogError::new(format!("MySQL rollback failed: {e}")))?;
         }
         Ok(())
     }
@@ -319,11 +319,7 @@ impl FencedMysqlTransaction {
 
 impl Drop for FencedMysqlTransaction {
     fn drop(&mut self) {
-        if let Some(mut conn) = self.conn.take() {
-            tokio::spawn(async move {
-                let _ = conn.query_drop("ROLLBACK").await;
-            });
-        }
+        drop(self.transaction.take());
     }
 }
 
@@ -367,8 +363,8 @@ pub fn canonical_bound_tables(
     tables
 }
 
-pub async fn pin_bound_tables_on_conn(
-    conn: &mut mysql_async::Conn,
+pub async fn pin_bound_tables_on_conn<Q: Queryable>(
+    conn: &mut Q,
     bound_tables: &[(String, String)],
 ) -> Result<(), CatalogError> {
     if bound_tables.is_empty() {
@@ -399,8 +395,8 @@ pub async fn pin_bound_tables_on_conn(
     }
 }
 
-pub async fn catalog_fingerprint_on_conn(
-    conn: &mut mysql_async::Conn,
+pub async fn catalog_fingerprint_on_conn<Q: Queryable>(
+    conn: &mut Q,
     schema_name: &str,
     is_mariadb: bool,
 ) -> Result<MysqlCatalogFingerprint, CatalogError> {
