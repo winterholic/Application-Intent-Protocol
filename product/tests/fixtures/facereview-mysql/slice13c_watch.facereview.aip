@@ -108,7 +108,7 @@ resource Video {
     input { video: Video.Id }
     output {
       video_id: Text; youtube_url: Text; title: Text; channel_name: Text; category: Text; duration: Int; view_count: Int
-      like_count: Int; comment_count: Int; user_is_liked: Bool; is_bookmarked: Bool; timeline_data_json: Text; timeline_scope: Text
+      like_count: Int; comment_count: Int; user_is_liked: Bool; is_bookmarked: Bool; timeline_data_json: Text; timeline_scope: Text; timeline_sessions: Int
     }
     access VideoLike.countForVideo, Comment.countForVideo
     effect none

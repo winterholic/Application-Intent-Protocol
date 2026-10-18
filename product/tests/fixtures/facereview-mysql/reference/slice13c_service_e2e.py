@@ -92,6 +92,13 @@ with admin_conn(SRC) as c, c.cursor() as cur:
                     (f"bbbbbbbb-0000-4000-8000-00000000000{i}", f"cookvid{i}", f"cook {i}", [3, 3, 9][i], f"2026-10-0{i + 1} 00:00:00", f"2026-10-0{i + 1} 00:00:00"))
     cur.execute("INSERT INTO video_bookmark (video_bookmark_id, video_id, user_id, created_at) VALUES (%s, %s, %s, NOW())",
                 ("eeeeeeee-0000-4000-8000-000000000002", "bbbbbbbb-0000-4000-8000-000000000002", ALICE))
+    # 150 more 'cook' videos so that a full 100-row budget page and a second page exist; every 6th is soft-deleted
+    cur.executemany("INSERT INTO video (video_id, youtube_url, title, channel_name, category, duration, view_count, is_deleted, created_at, updated_at) "
+                    "VALUES (%s, %s, %s, 'ch', 'cook', 60, %s, %s, %s, %s)",
+                    [(f"cccccccc-1111-4111-8111-{i:012d}", f"bulk{i:06d}", f"bulk {i}", i % 17, int(i % 6 == 0), "2026-09-01 00:00:00", "2026-09-01 00:00:00")
+                     for i in range(150)])
+    cur.executemany("INSERT INTO video_bookmark (video_bookmark_id, video_id, user_id, created_at) VALUES (%s, %s, %s, NOW())",
+                    [(f"eeeeeeee-1111-4111-8111-{i:012d}", f"cccccccc-1111-4111-8111-{i:012d}", ALICE) for i in range(60)])
 with admin_conn() as c, c.cursor() as cur:
     cur.execute(f"CREATE DATABASE `{META}` DEFAULT CHARSET utf8mb4")
     cur.execute(f"CREATE USER '{RT_USER}'@'%' IDENTIFIED BY '{RT_PASS}'")
@@ -193,11 +200,34 @@ try:
     with admin_conn(SRC) as c, c.cursor() as cur:
         cur.execute("SELECT video_id FROM video WHERE category='cook' AND is_deleted=0 ORDER BY view_count DESC, created_at DESC, video_id ASC")
         expected = [row["video_id"] for row in cur.fetchall()]
-    check("shape: Video category eq + 3-key sort + limit/offset", ids(r), expected)
+    check("shape: Video category eq + 3-key sort + limit/offset (default page is the 100-row budget)", ids(r), expected[:100])
     r = read("Video", ["id"], "alice", filter=cook, limit=1, offset=1,
              sort=[{"field": "view_count", "dir": "desc"}, {"field": "created_at", "dir": "desc"}, {"field": "id", "dir": "asc"}])
     check("shape: offset pages the same order", ids(r), expected[1:2])
 
+    # read budgets the module relies on (Video: rows 100, cost 1000, offset 100000)
+    sort3 = [{"field": "view_count", "dir": "desc"}, {"field": "created_at", "dir": "desc"}, {"field": "id", "dir": "asc"}]
+    page1 = read("Video", ["id", "youtube_url", "title", "view_count", "created_at"], "alice", filter=cook, limit=100, offset=0, sort=sort3)
+    page2 = read("Video", ["id", "youtube_url", "title", "view_count", "created_at"], "alice", filter=cook, limit=100, offset=100, sort=sort3)
+    live_cook = scalar("SELECT COUNT(*) FROM video WHERE category='cook' AND is_deleted=0")
+    check("budget: a 100-row Video page fits the read budget", (page1.get("ok"), len(page1.get("rows", []))), (True, 100))
+    check("budget: second page carries the rest, soft-deleted rows never appear", (page2.get("ok"), len(page2.get("rows", []))), (True, live_cook - 100))
+    check("budget: pages are disjoint and complete", len({x["id"] for x in page1["rows"] + page2["rows"]}), live_cook)
+    over = read("Video", ["id"], "alice", filter=cook, limit=101, sort=sort3)
+    print("INFO limit 101 ->", over.get("ok"), over.get("code"))
+    check("budget: limit 101 is refused, never silently clipped", over.get("ok"), False)
+    deep = read("Video", ["id"], "alice", filter=cook, limit=1, offset=100001, sort=sort3)
+    check("budget: offset beyond 100000 is refused", deep.get("ok"), False)
+    # soft-deleted videos (i % 6 == 0) hide their bookmark rows through the ref, which is harmless for the page intersection
+    ids60 = [f"cccccccc-1111-4111-8111-{i:012d}" for i in range(60) if i % 6 != 0]
+    for width in (10, 11, 25):
+        wide = read("VideoBookmark", ["video"], "alice", limit=100,
+                    filter=[{"or": [{"field": "video", "op": "eq", "value": v} for v in ids60[:width]]}])
+        print(f"INFO bookmark OR width {width} ->", wide.get("ok"), wide.get("code"), len(wide.get("rows", [])))
+    wide10 = read("VideoBookmark", ["video"], "alice", limit=100, filter=[{"or": [{"field": "video", "op": "eq", "value": v} for v in ids60[:10]]}])
+    check("budget: the module's 10-wide bookmark OR chunk is accepted and exact", (wide10.get("ok"), len(wide10.get("rows", []))), (True, 10))
+    wide11 = read("VideoBookmark", ["video"], "alice", limit=100, filter=[{"or": [{"field": "video", "op": "eq", "value": v} for v in ids60[:11]]}])
+    check("budget: an 11-wide OR is refused (WIRE.OR_LIST_EXCEEDED), which is why the chunk is 10", wide11.get("code"), "WIRE.OR_LIST_EXCEEDED")
     or_filter = [{"or": [{"field": "video", "op": "eq", "value": v} for v in (COOK, "bbbbbbbb-0000-4000-8000-000000000002", CAT)]}]
     r = read("VideoBookmark", ["video"], "alice", filter=or_filter, limit=100)
     check("shape: bookmark OR of eq on ref, own rows only", sorted(x["video"] for x in r.get("rows", ["ERR"])),

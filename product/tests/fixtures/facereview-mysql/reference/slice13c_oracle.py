@@ -147,6 +147,8 @@ class FakeCtx:
                 "video": "video_id", "category": "category"}
         for i, item in enumerate(flt):
             if "or" in item:
+                if len(item["or"]) > 10:
+                    raise CapabilityViolation("OR list exceeds the planner limit of 10 conditions")
                 ors = []
                 for j, sub in enumerate(item["or"]):
                     assert sub["op"] == "eq"
@@ -473,6 +475,8 @@ def recommended_cases():
               [0, 100, 200][-3:] if len([r for r in ctx.reads if r["read"] == "Video"]) >= 3 else [0, 100][-3:])
         check("recommended emotion branch: Mongo $in chunks of <=100", max(len(c[1]["filter"]["video_id"]["$in"]) for c in ctx.mongo_calls
                                                                                 if "$in" in str(c[1]["filter"].get("video_id", ""))), 100)
+        bookmark_reads = [r for r in ctx.reads if r["read"] == "VideoBookmark"]
+        check("recommended: bookmark lookups for a 50-row page are 5 OR-of-10 reads", len(bookmark_reads), 5)
         check("recommended emotion branch: page 4 of 50", module_recommended(big_current, 4, 50, alice)[0], original_recommended(big_current, 4, 50, alice))
 
         # fallback branch: current emotion missing (insufficient frames) -> view_count desc, created_at desc, badges from distributions

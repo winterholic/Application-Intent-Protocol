@@ -1,0 +1,16 @@
+diff --git a/spikes/spike-v1-fixture/src/sema.rs b/spikes/spike-v1-fixture/src/sema.rs
+index ae746f4..cd28c6c 100644
+--- a/spikes/spike-v1-fixture/src/sema.rs
++++ b/spikes/spike-v1-fixture/src/sema.rs
+@@ -1936,6 +1936,11 @@ impl<'a> Ctx<'a> {
+         let (_, oj) = self.params(&x.output);
+         let mut binding = Map::new();
+         for (rn, an) in &x.access {
++            // CORE-PROBE (scratch, not for merge): accept mongo.<collection> / redis.<key> grants as empty bindings.
++            if rn == "mongo" || rn == "redis" {
++                binding.insert(format!("{rn}.{an}"), Value::Object(Map::new()));
++                continue;
++            }
+             let Some(agg) = self.res.get(rn.as_str()).and_then(|r| r.aggregates.iter().find(|a| &a.name == an)) else {
+                 self.d("DEF.UNKNOWN_SYMBOL", format!("access 대상 `{rn}.{an}` 없음"), x.span);
+                 continue;

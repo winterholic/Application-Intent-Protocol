@@ -15,7 +15,7 @@ EMOTIONS = ["neutral", "happy", "surprise", "sad", "angry"]
 N_BUCKETS = 100
 PAGE = 100  # Video read budget rows and Mongo limit/$in are both capped at 100 per call
 READ_OFFSET_CAP = 100000  # Video read budget offset
-BOOKMARK_OR_CHUNK = 25
+BOOKMARK_OR_CHUNK = 10  # planner MAX_OR_CONDITIONS; measured: a 25-wide OR is refused with WIRE.OR_LIST_EXCEEDED
 DIST_COLLECTION = "video_distribution"
 WATCH_COLLECTION = "youtube_watching_data"
 VIDEO_FIELDS = ["id", "youtube_url", "title", "channel_name", "category", "duration", "view_count", "created_at"]
@@ -236,7 +236,8 @@ async def watchDetail(input, ctx):  # noqa: N802 — worker entry names are the 
     bookmarked = await _owned(ctx, "VideoBookmark", video_id)
     like_count = _count(await ctx.data.aggregate("VideoLike", "countForVideo", {"video": video_id}))
     comment_count = _count(await ctx.data.aggregate("Comment", "countForVideo", {"video": video_id}))
-    timeline = compress_timeline(await _watching_docs(ctx, video_id), video.get("duration"))
+    docs = await _watching_docs(ctx, video_id)
+    timeline = compress_timeline(docs, video.get("duration"))
 
     # view_count is the value before this visit, as in the original; recordView is the explicit +1 write.
     return {
@@ -253,6 +254,8 @@ async def watchDetail(input, ctx):  # noqa: N802 — worker entry names are the 
         "is_bookmarked": bookmarked,
         "timeline_data_json": _dump(timeline),
         "timeline_scope": "caller",
+        # lets a client tell "no sessions visible" from a real all-zero timeline, which the default point alone cannot
+        "timeline_sessions": len(docs),
     }
 
 
