@@ -33,6 +33,7 @@ jobs:
           POSTGRES_HOST_AUTH_METHOD: trust
         ports:
           - '127.0.0.1:5433:5432'
+          - '127.0.0.1:5432:5432'
         options: >-
           --health-cmd "pg_isready -U runner -d postgres"
           --health-interval 5s
