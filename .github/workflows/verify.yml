@@ -22,6 +22,8 @@ jobs:
       AIP_TEST_ADMIN_URL: host=127.0.0.1 port=5433 dbname=postgres user=runner
       # Disposable native-stores fixture credentials; no service secrets are used.
       AIP_TEST_MONGO_URL: mongodb://aip_test_slice13a:local_fixture_only_13a@127.0.0.1:15441/aip_test_slice13a?authSource=admin
+      # Isolated mongod used only by the UUID ownership integration tests.
+      AIP_TEST_MONGO_UUID_URL: mongodb://127.0.0.1:15443/aip_test_uuid_ci
       AIP_TEST_REDIS_URL: redis://:local_fixture_only_13a@127.0.0.1:15442/
     services:
       postgres:
@@ -79,7 +81,7 @@ jobs:
         run: AIP_TEST_BWRAP=1 cargo test --manifest-path spikes/spike-v4-worker/Cargo.toml --lib cleanup_tests --locked --target-dir target
       - name: Start native driver fixtures
         id: native-fixtures
-        run: docker compose --project-name aip-ci-native -f spikes/spike-v4-worker/tests/fixtures/native-stores/compose.yaml up --wait --wait-timeout 120 mongo redis
+        run: docker compose --project-name aip-ci-native -f spikes/spike-v4-worker/tests/fixtures/native-stores/compose.yaml up --wait --wait-timeout 120 mongo mongo-uuid redis
       - name: Verify compiler, runtime, product, worker, transport and SDK
         run: bash tools/verify.sh
       - name: Verify real HTTP to Node and Python workers to MySQL
@@ -89,7 +91,7 @@ jobs:
         run: bash scripts/verify-mysql-worker-e2e.sh run-ci
       - name: Show native fixture logs on failure
         if: failure() && steps.native-fixtures.outcome != '' && steps.native-fixtures.outcome != 'skipped'
-        run: docker compose --project-name aip-ci-native -f spikes/spike-v4-worker/tests/fixtures/native-stores/compose.yaml logs --no-color mongo redis
+        run: docker compose --project-name aip-ci-native -f spikes/spike-v4-worker/tests/fixtures/native-stores/compose.yaml logs --no-color mongo mongo-uuid redis
       - name: Stop native driver fixtures
         if: always() && steps.native-fixtures.outcome != '' && steps.native-fixtures.outcome != 'skipped'
         run: docker compose --project-name aip-ci-native -f spikes/spike-v4-worker/tests/fixtures/native-stores/compose.yaml down --volumes

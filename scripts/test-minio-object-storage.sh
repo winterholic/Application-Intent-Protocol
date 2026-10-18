@@ -79,13 +79,14 @@ cp "$task_dir/ca.pem" "$task_dir/mc-config/certs/CAs/test-ca.pem"
 MC_CONFIG_DIR="$task_dir/mc-config" mc alias set aip-test "https://localhost:${port}" aip-test-access aip-test-secret-please-rotate >/dev/null
 MC_CONFIG_DIR="$task_dir/mc-config" mc mb aip-test/object-test-bucket >/dev/null
 
+export AIP_MINIO_ENDPOINT="https://localhost:${port}"
+export AIP_MINIO_BUCKET=object-test-bucket
+export AIP_MINIO_ACCESS_KEY=aip-test-access
+export AIP_MINIO_SECRET_KEY=aip-test-secret-please-rotate
+export AIP_MINIO_CA_PEM="$task_dir/ca.pem"
+
 cd "$repo_root"
-AIP_MINIO_ENDPOINT="https://localhost:${port}" \
-AIP_MINIO_BUCKET=object-test-bucket \
-AIP_MINIO_ACCESS_KEY=aip-test-access \
-AIP_MINIO_SECRET_KEY=aip-test-secret-please-rotate \
-AIP_MINIO_CA_PEM="$task_dir/ca.pem" \
-  cargo test -p aip-execution --test cloud_storage minio_https_actual_object_and_multipart_contract --locked -- --ignored --nocapture
+cargo test -p aip-execution --test cloud_storage minio_https_actual_object_and_multipart_contract --locked -- --ignored --nocapture
 
 # Per-owner quota and expired-upload cleanup through the real server (needs the dedicated test PostgreSQL, see VALIDATION.md).
 cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --test object_ledger_s3 --locked -- --ignored --nocapture

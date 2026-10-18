@@ -81,5 +81,7 @@ jobs:
             PATH="$PATH" \
             CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" \
             RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}" \
+            AIP_TEST_DATABASE_URL="$AIP_TEST_DATABASE_URL" \
+            AIP_TEST_ADMIN_URL="$AIP_TEST_ADMIN_URL" \
             AIP_CARGO_BIN="$cargo_bin" \
             bash spikes/spike-v4-worker/tests/cgroup-v2-ci.sh
