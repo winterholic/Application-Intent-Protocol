@@ -321,6 +321,39 @@ pub struct Workers {
     pub cgroup_root: Option<PathBuf>,
     #[serde(default)]
     pub resource_limits: Option<infrastructure::WorkerResourceLimitsConfig>,
+    #[serde(default)]
+    pub mongo: Option<MongoStoreConfig>,
+    #[serde(default)]
+    pub redis: Option<RedisStoreConfig>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MongoStoreConfig {
+    pub uri_env: String,
+    pub database: String,
+    #[serde(default = "default_capability_pool")]
+    pub max_pool_size: u32,
+    #[serde(default = "default_capability_timeout")]
+    pub timeout_ms: u64,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RedisStoreConfig {
+    pub uri_env: String,
+    pub prefixes: Vec<String>,
+    #[serde(default = "default_capability_timeout")]
+    pub timeout_ms: u64,
+    #[serde(default = "default_redis_in_flight")]
+    pub max_in_flight: u32,
+}
+fn default_capability_pool() -> u32 {
+    8
+}
+fn default_capability_timeout() -> u64 {
+    2_000
+}
+fn default_redis_in_flight() -> u32 {
+    32
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -568,6 +601,36 @@ fn configuration_with_mode(path: &Path, gate: Gate) -> Result<Config, Value> {
     }
     if let Some(worker) = &config.workers {
         validate_integrations_shape(&worker.integrations)?;
+        if let Some(mongo) = &worker.mongo
+            && (!valid_env_name(&mongo.uri_env)
+                || mongo.database.is_empty()
+                || mongo.database.len() > 63
+                || !mongo.database.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+                || !(1..=64).contains(&mongo.max_pool_size)
+                || !(1..=30_000).contains(&mongo.timeout_ms)
+                || worker.environment.contains_key(&mongo.uri_env))
+        {
+            return Err(error("MONGO_CAPABILITY_CONFIG", "Mongo capability 설정 또는 worker 환경 전달 경로가 유효하지 않음"));
+        }
+        if let Some(redis) = &worker.redis
+            && (!valid_env_name(&redis.uri_env)
+                || !(1..=30_000).contains(&redis.timeout_ms)
+                || redis.prefixes.is_empty()
+                || redis.prefixes.len() > 32
+                || redis.prefixes.iter().any(|p| p.is_empty() || p.len() > 128 || p.to_ascii_lowercase().contains("session"))
+                || !(1..=256).contains(&redis.max_in_flight)
+                || worker.environment.contains_key(&redis.uri_env))
+        {
+            return Err(error("REDIS_CAPABILITY_CONFIG", "Redis capability 설정 또는 worker 환경 전달 경로가 유효하지 않음"));
+        }
+        if worker.environment.keys().any(|key| {
+            let key = key.to_ascii_uppercase();
+            ["DATABASE", "DB_URL", "DSN", "MONGO", "REDIS", "PASSWORD", "SECRET", "TOKEN", "CREDENTIAL", "API_KEY"]
+                .iter()
+                .any(|needle| key.contains(needle))
+        }) {
+            return Err(error("WORKER_ENVIRONMENT", "worker subprocess 환경에는 DB 주소·자격증명·secret을 전달할 수 없음"));
+        }
     }
     match gate {
         Gate::CatalogOnly => require_built_features_for_introspection(&config)?,

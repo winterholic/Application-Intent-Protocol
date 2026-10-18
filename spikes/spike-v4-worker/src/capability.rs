@@ -9,48 +9,49 @@ use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 pub type CapabilityFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
+/// Identity and exact capability grants derived by the server for this invocation.
+#[derive(Clone, Debug, Default)]
+pub struct CapabilityPrincipal {
+    pub actor_id: Option<i64>,
+    pub grants: HashSet<String>,
+}
+
+impl CapabilityPrincipal {
+    pub fn permits(&self, kind: &str, resource: &str) -> bool {
+        let exact = format!("{kind}.{resource}");
+        self.grants.contains(&exact)
+            || (kind == "redis"
+                && self.grants.iter().any(|grant| {
+                    grant
+                        .strip_suffix('*')
+                        .is_some_and(|prefix| prefix.starts_with("redis.") && prefix.len() > "redis.".len() && exact.starts_with(prefix))
+                }))
+    }
+}
+
 /// Mongo 접근 capability 경계.
 pub trait MongoCapability: Send + Sync {
-    fn call<'a>(&'a self, collection: &'a str, input: &'a Value) -> CapabilityFuture<'a, Result<Value, Reject>>;
+    fn call<'a>(&'a self, principal: &'a CapabilityPrincipal, collection: &'a str, input: &'a Value) -> CapabilityFuture<'a, Result<Value, Reject>>;
 }
 
 /// Redis 접근 capability 경계.
 pub trait RedisCapability: Send + Sync {
-    fn call<'a>(&'a self, key: &'a str, input: &'a Value) -> CapabilityFuture<'a, Result<Value, Reject>>;
+    fn call<'a>(&'a self, principal: &'a CapabilityPrincipal, key: &'a str, input: &'a Value) -> CapabilityFuture<'a, Result<Value, Reject>>;
 }
 
 /// 화이트리스트로 제한된 관리형 MongoDB capability.
 #[derive(Clone)]
-pub struct ManagedMongoCapability {
+pub struct MemoryMongoCapability {
     pub allowed_collections: HashSet<String>,
     pub allowed_commands: HashSet<String>,
     data: Arc<Mutex<HashMap<String, Vec<Value>>>>,
 }
 
-impl Default for ManagedMongoCapability {
-    fn default() -> Self {
-        let mut allowed_collections = HashSet::new();
-        allowed_collections.insert("video_distribution".to_string());
-        allowed_collections.insert("youtube_watching_data".to_string());
-        allowed_collections.insert("video_timeline_emotion_count".to_string());
-
-        let mut allowed_commands = HashSet::new();
-        allowed_commands.insert("find".to_string());
-        allowed_commands.insert("find_one".to_string());
-        allowed_commands.insert("count_documents".to_string());
-
-        Self {
-            allowed_collections,
-            allowed_commands,
-            data: Arc::new(Mutex::new(HashMap::new())),
-        }
-    }
-}
-
-impl ManagedMongoCapability {
+impl MemoryMongoCapability {
     pub fn new(allowed_collections: &[&str], allowed_commands: &[&str]) -> Self {
         Self {
             allowed_collections: allowed_collections.iter().map(|s| (*s).to_string()).collect(),
@@ -66,24 +67,21 @@ impl ManagedMongoCapability {
     }
 }
 
-impl MongoCapability for ManagedMongoCapability {
-    fn call<'a>(&'a self, collection: &'a str, input: &'a Value) -> CapabilityFuture<'a, Result<Value, Reject>> {
+impl MongoCapability for MemoryMongoCapability {
+    fn call<'a>(&'a self, principal: &'a CapabilityPrincipal, collection: &'a str, input: &'a Value) -> CapabilityFuture<'a, Result<Value, Reject>> {
         Box::pin(async move {
+            if !principal.permits("mongo", collection) {
+                return Err(reject("WIRE.ACCESS_NOT_DECLARED", "Mongo capability가 확장에 선언되지 않음"));
+            }
             // 1. 컬렉션 화이트리스트 검증
             if !self.allowed_collections.contains(collection) {
-                return Err(Reject {
-                    code: "WIRE.CAPABILITY_DENIED",
-                    msg: format!("비인가 Mongo 컬렉션 접근 거부: `{collection}`"),
-                });
+                return Err(Reject { code: "WIRE.CAPABILITY_DENIED", msg: format!("비인가 Mongo 컬렉션 접근 거부: `{collection}`") });
             }
 
             // 2. 명령어 검증 (읽기 전용 제한)
             let command = input["command"].as_str().unwrap_or("find");
             if !self.allowed_commands.contains(command) {
-                return Err(Reject {
-                    code: "WIRE.CAPABILITY_DENIED",
-                    msg: format!("허용되지 않은 Mongo 명령: `{command}`"),
-                });
+                return Err(Reject { code: "WIRE.CAPABILITY_DENIED", msg: format!("허용되지 않은 Mongo 명령: `{command}`") });
             }
 
             // 3. 인메모리/저장소 조회 수행
@@ -91,16 +89,31 @@ impl MongoCapability for ManagedMongoCapability {
             let docs = map.get(collection).cloned().unwrap_or_default();
 
             let filter = input.get("filter");
+            if filter.is_some_and(|f| !f.is_object()) {
+                return Err(reject("WIRE.BAD_VALUE", "Mongo filter는 객체여야 함"));
+            }
+            let private_actor = if collection == "youtube_watching_data" {
+                let Some(actor_id) = principal.actor_id else {
+                    return Err(reject("WIRE.ACCESS_DENIED", "인증 principal이 필요함"));
+                };
+                if filter.and_then(|f| f.get("user_id")).is_some_and(|v| v != &json!(actor_id)) {
+                    return Err(reject("WIRE.ACCESS_DENIED", "요청 actor가 인증 principal과 다름"));
+                }
+                Some(actor_id)
+            } else {
+                None
+            };
             let filtered: Vec<Value> = if let Some(f) = filter.and_then(Value::as_object) {
                 docs.into_iter()
                     .filter(|doc| {
-                        f.iter().all(|(k, v)| {
-                            if let Some(in_arr) = v.as_object().and_then(|o| o.get("$in")).and_then(Value::as_array) {
-                                doc.get(k).is_some_and(|val| in_arr.contains(val))
-                            } else {
-                                doc.get(k) == Some(v)
-                            }
-                        })
+                        private_actor.is_none_or(|actor| doc.get("user_id") == Some(&json!(actor)))
+                            && f.iter().all(|(k, v)| {
+                                if let Some(in_arr) = v.as_object().and_then(|o| o.get("$in")).and_then(Value::as_array) {
+                                    doc.get(k).is_some_and(|val| in_arr.contains(val))
+                                } else {
+                                    doc.get(k) == Some(v)
+                                }
+                            })
                     })
                     .collect()
             } else {
@@ -116,7 +129,11 @@ impl MongoCapability for ManagedMongoCapability {
                         let desc = input.get("desc").and_then(Value::as_bool).unwrap_or(false);
                         res.sort_by(|a, b| {
                             let cmp = a.get(sort_field).and_then(Value::as_str).cmp(&b.get(sort_field).and_then(Value::as_str));
-                            if desc { cmp.reverse() } else { cmp }
+                            if desc {
+                                cmp.reverse()
+                            } else {
+                                cmp
+                            }
                         });
                     }
                     if let Some(skip) = input.get("skip").and_then(Value::as_u64) {
@@ -131,10 +148,7 @@ impl MongoCapability for ManagedMongoCapability {
                     }
                     Ok(json!({ "docs": res }))
                 }
-                _ => Err(Reject {
-                    code: "WIRE.CAPABILITY_DENIED",
-                    msg: format!("미구현 Mongo 명령: `{command}`"),
-                }),
+                _ => Err(Reject { code: "WIRE.CAPABILITY_DENIED", msg: format!("미구현 Mongo 명령: `{command}`") }),
             }
         })
     }
@@ -142,32 +156,14 @@ impl MongoCapability for ManagedMongoCapability {
 
 /// 화이트리스트로 제한된 관리형 Redis capability.
 #[derive(Clone)]
-pub struct ManagedRedisCapability {
+pub struct MemoryRedisCapability {
     pub allowed_prefixes: Vec<String>,
     pub allowed_commands: HashSet<String>,
     strings: Arc<Mutex<HashMap<String, String>>>,
     hashes: Arc<Mutex<HashMap<String, HashMap<String, String>>>>,
 }
 
-impl Default for ManagedRedisCapability {
-    fn default() -> Self {
-        let allowed_prefixes = vec!["facereview:reco:".to_string(), "facereview:session:".to_string()];
-        let mut allowed_commands = HashSet::new();
-        allowed_commands.insert("get".to_string());
-        allowed_commands.insert("hgetall".to_string());
-        allowed_commands.insert("exists".to_string());
-        allowed_commands.insert("mget".to_string());
-
-        Self {
-            allowed_prefixes,
-            allowed_commands,
-            strings: Arc::new(Mutex::new(HashMap::new())),
-            hashes: Arc::new(Mutex::new(HashMap::new())),
-        }
-    }
-}
-
-impl ManagedRedisCapability {
+impl MemoryRedisCapability {
     pub fn new(allowed_prefixes: &[&str], allowed_commands: &[&str]) -> Self {
         Self {
             allowed_prefixes: allowed_prefixes.iter().map(|s| (*s).to_string()).collect(),
@@ -195,24 +191,21 @@ impl ManagedRedisCapability {
     }
 }
 
-impl RedisCapability for ManagedRedisCapability {
-    fn call<'a>(&'a self, key: &'a str, input: &'a Value) -> CapabilityFuture<'a, Result<Value, Reject>> {
+impl RedisCapability for MemoryRedisCapability {
+    fn call<'a>(&'a self, principal: &'a CapabilityPrincipal, key: &'a str, input: &'a Value) -> CapabilityFuture<'a, Result<Value, Reject>> {
         Box::pin(async move {
+            if !principal.permits("redis", key) {
+                return Err(reject("WIRE.ACCESS_NOT_DECLARED", "Redis key capability가 확장에 선언되지 않음"));
+            }
             // 1. 키 패턴/네임스페이스 검증
             if !self.allowed_prefixes.iter().any(|prefix| key.starts_with(prefix)) {
-                return Err(Reject {
-                    code: "WIRE.CAPABILITY_DENIED",
-                    msg: format!("비인가 Redis 키 접근 거부: `{key}`"),
-                });
+                return Err(Reject { code: "WIRE.CAPABILITY_DENIED", msg: format!("비인가 Redis 키 접근 거부: `{key}`") });
             }
 
             // 2. 명령어 검증 (읽기 전용 제한)
             let command = input["command"].as_str().unwrap_or("get");
             if !self.allowed_commands.contains(command) {
-                return Err(Reject {
-                    code: "WIRE.CAPABILITY_DENIED",
-                    msg: format!("허용되지 않은 Redis 명령: `{command}`"),
-                });
+                return Err(Reject { code: "WIRE.CAPABILITY_DENIED", msg: format!("허용되지 않은 Redis 명령: `{command}`") });
             }
 
             match command {
@@ -232,12 +225,404 @@ impl RedisCapability for ManagedRedisCapability {
                     let exists = s.contains_key(key) || h.contains_key(key);
                     Ok(json!({ "exists": exists }))
                 }
-                _ => Err(Reject {
-                    code: "WIRE.CAPABILITY_DENIED",
-                    msg: format!("미구현 Redis 명령: `{command}`"),
-                }),
+                "mget" => {
+                    let Some(keys) = input.get("keys").and_then(Value::as_array) else {
+                        return Err(reject("WIRE.BAD_VALUE", "Redis mget keys는 배열이어야 함"));
+                    };
+                    if keys.is_empty() || keys.len() > 64 {
+                        return Err(reject("WIRE.BAD_VALUE", "Redis mget 키 개수 범위 오류"));
+                    }
+                    let strings = self.strings.lock().unwrap();
+                    let mut values = Vec::with_capacity(keys.len());
+                    for candidate in keys {
+                        let Some(candidate) = candidate.as_str() else {
+                            return Err(reject("WIRE.BAD_VALUE", "Redis key는 문자열이어야 함"));
+                        };
+                        if !principal.permits("redis", candidate) || !self.allowed_prefixes.iter().any(|p| candidate.starts_with(p)) {
+                            return Err(reject("WIRE.CAPABILITY_DENIED", "Redis mget에 허용되지 않은 키가 포함됨"));
+                        }
+                        values.push(strings.get(candidate).cloned().map(Value::String).unwrap_or(Value::Null));
+                    }
+                    Ok(json!({ "values": values }))
+                }
+                _ => Err(Reject { code: "WIRE.CAPABILITY_DENIED", msg: format!("미구현 Redis 명령: `{command}`") }),
             }
         })
+    }
+}
+
+fn reject(code: &'static str, msg: &str) -> Reject {
+    Reject { code, msg: msg.to_string() }
+}
+
+/// Real MongoDB read capability. The client's own per-server pool is bounded by `max_pool_size`.
+#[derive(Clone)]
+pub struct MongoDriverCapability {
+    client: mongodb::Client,
+    database: String,
+    allowed_collections: HashSet<String>,
+    allowed_fields: HashSet<String>,
+    max_docs: i64,
+    max_bytes: usize,
+    timeout: Duration,
+}
+
+impl MongoDriverCapability {
+    pub async fn connect(uri: &str, database: &str, max_pool_size: u32, timeout: Duration) -> Result<Self, Reject> {
+        if database.is_empty()
+            || database.len() > 63
+            || max_pool_size == 0
+            || max_pool_size > 64
+            || timeout.is_zero()
+            || timeout > Duration::from_secs(30)
+        {
+            return Err(reject("WIRE.BAD_CONFIG", "Mongo capability 설정 범위 오류"));
+        }
+        let mut options =
+            mongodb::options::ClientOptions::parse(uri).await.map_err(|_| reject("WIRE.ADAPTER_UNAVAILABLE", "Mongo 설정을 읽지 못함"))?;
+        options.max_pool_size = Some(max_pool_size);
+        options.connect_timeout = Some(timeout);
+        options.server_selection_timeout = Some(timeout);
+        let client = mongodb::Client::with_options(options).map_err(|_| reject("WIRE.ADAPTER_UNAVAILABLE", "Mongo client 초기화 실패"))?;
+        tokio::time::timeout(timeout, client.database(database).run_command(mongodb::bson::doc! {"ping": 1}))
+            .await
+            .map_err(|_| reject("WIRE.ADAPTER_UNAVAILABLE", "Mongo readiness timeout"))?
+            .map_err(|_| reject("WIRE.ADAPTER_UNAVAILABLE", "Mongo readiness 실패"))?;
+        let allowed_collections =
+            ["video_distribution", "youtube_watching_data", "video_timeline_emotion_count"].into_iter().map(str::to_string).collect();
+        let allowed_fields = ["_id", "video_id", "user_id", "dominant_emotion", "created_at", "emotion_score_timeline", "total_frames"]
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+        Ok(Self { client, database: database.into(), allowed_collections, allowed_fields, max_docs: 100, max_bytes: 1_048_576, timeout })
+    }
+
+    fn validate_filter(&self, collection: &str, filter: &Value, principal: &CapabilityPrincipal) -> Result<mongodb::bson::Document, Reject> {
+        let Some(object) = filter.as_object() else {
+            return Err(reject("WIRE.BAD_VALUE", "Mongo filter는 객체여야 함"));
+        };
+        let mut filter_value = filter.clone();
+        if collection == "youtube_watching_data" {
+            let Some(actor) = principal.actor_id else {
+                return Err(reject("WIRE.ACCESS_DENIED", "인증 principal이 필요함"));
+            };
+            if object.get("user_id").is_some_and(|v| v != &json!(actor)) {
+                return Err(reject("WIRE.ACCESS_DENIED", "다른 user_id filter는 허용하지 않음"));
+            }
+            filter_value["user_id"] = json!(actor);
+        }
+        fn validate(value: &Value, fields: &HashSet<String>, inside_field: bool) -> Result<(), Reject> {
+            let Some(map) = value.as_object() else {
+                return Err(reject("WIRE.BAD_VALUE", "Mongo filter 값 형식 오류"));
+            };
+            for (key, value) in map {
+                if key.starts_with('$') {
+                    if !inside_field || key != "$in" {
+                        return Err(reject("WIRE.BAD_VALUE", "지원하지 않는 Mongo filter operator"));
+                    }
+                    let Some(items) = value.as_array() else {
+                        return Err(reject("WIRE.BAD_VALUE", "$in은 배열이어야 함"));
+                    };
+                    if items.len() > 100 {
+                        return Err(reject("WIRE.BAD_VALUE", "$in 개수 상한 초과"));
+                    }
+                } else {
+                    if !fields.contains(key) {
+                        return Err(reject("WIRE.BAD_VALUE", "Mongo filter field가 허용되지 않음"));
+                    }
+                    if value.is_object() {
+                        validate(value, fields, true)?;
+                    }
+                }
+            }
+            Ok(())
+        }
+        validate(&filter_value, &self.allowed_fields, false)?;
+        mongodb::bson::serialize_to_document(&filter_value).map_err(|_| reject("WIRE.BAD_VALUE", "Mongo filter 변환 실패"))
+    }
+}
+
+impl MongoCapability for MongoDriverCapability {
+    fn call<'a>(&'a self, principal: &'a CapabilityPrincipal, collection: &'a str, input: &'a Value) -> CapabilityFuture<'a, Result<Value, Reject>> {
+        Box::pin(async move {
+            if !principal.permits("mongo", collection) {
+                return Err(reject("WIRE.ACCESS_NOT_DECLARED", "Mongo capability가 확장에 선언되지 않음"));
+            }
+            if !self.allowed_collections.contains(collection) {
+                return Err(reject("WIRE.CAPABILITY_DENIED", "Mongo collection이 허용되지 않음"));
+            }
+            let Some(command) = input.get("command").and_then(Value::as_str) else {
+                return Err(reject("WIRE.BAD_VALUE", "Mongo command 누락"));
+            };
+            if !["find", "find_one", "count_documents"].contains(&command) {
+                return Err(reject("WIRE.CAPABILITY_DENIED", "Mongo read command가 허용되지 않음"));
+            }
+            let allowed_input = ["command", "filter", "projection", "limit", "skip", "sort", "sort_by", "desc"];
+            if input.as_object().is_none_or(|m| m.keys().any(|k| !allowed_input.contains(&k.as_str()))) {
+                return Err(reject("WIRE.BAD_VALUE", "Mongo command input field가 허용되지 않음"));
+            }
+            if command == "count_documents" && ["projection", "limit", "skip", "sort", "sort_by", "desc"].iter().any(|k| input.get(*k).is_some()) {
+                return Err(reject("WIRE.BAD_VALUE", "count_documents는 filter만 받음"));
+            }
+            if command == "find_one" && ["skip", "sort", "sort_by", "desc"].iter().any(|k| input.get(*k).is_some()) {
+                return Err(reject("WIRE.BAD_VALUE", "find_one은 skip/sort를 지원하지 않음"));
+            }
+            let filter = input.get("filter").unwrap_or(&Value::Null);
+            let filter = self.validate_filter(collection, filter, principal)?;
+            let limit = match input.get("limit") {
+                None => {
+                    if command == "find_one" {
+                        1
+                    } else {
+                        100
+                    }
+                }
+                Some(v) if v.as_i64().is_some_and(|n| n > 0 && n <= self.max_docs) => v.as_i64().unwrap(),
+                _ => return Err(reject("WIRE.BAD_VALUE", "Mongo limit은 양수 bounded integer여야 함")),
+            };
+            let projection = input
+                .get("projection")
+                .map(|v| {
+                    let Some(map) = v.as_object() else {
+                        return Err(reject("WIRE.BAD_VALUE", "Mongo projection은 객체여야 함"));
+                    };
+                    let modes: HashSet<bool> = map
+                        .iter()
+                        .filter(|(key, _)| key.as_str() != "_id")
+                        .filter_map(|(_, v)| {
+                            if let Some(b) = v.as_bool() {
+                                Some(b)
+                            } else if v.as_i64() == Some(1) {
+                                Some(true)
+                            } else if v.as_i64() == Some(0) {
+                                Some(false)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    if map.len() > self.allowed_fields.len()
+                        || map.keys().any(|k| !self.allowed_fields.contains(k))
+                        || modes.len() != 1
+                        || map.values().any(|v| !v.is_boolean() && ![Some(0), Some(1)].contains(&v.as_i64()))
+                    {
+                        return Err(reject("WIRE.BAD_VALUE", "Mongo projection이 허용되지 않음"));
+                    }
+                    mongodb::bson::serialize_to_document(v).map_err(|_| reject("WIRE.BAD_VALUE", "Mongo projection 변환 실패"))
+                })
+                .transpose()?;
+            if input.get("sort").is_some() && (input.get("sort_by").is_some() || input.get("desc").is_some()) {
+                return Err(reject("WIRE.BAD_VALUE", "sort와 sort_by 방식은 함께 사용할 수 없음"));
+            }
+            let skip = match input.get("skip") {
+                None => 0,
+                Some(v) if v.as_u64().is_some_and(|n| n <= 100_000) => v.as_u64().unwrap(),
+                _ => return Err(reject("WIRE.BAD_VALUE", "Mongo skip 범위 오류")),
+            };
+            let sort = input
+                .get("sort")
+                .map(|v| {
+                    let Some(map) = v.as_object() else {
+                        return Err(reject("WIRE.BAD_VALUE", "Mongo sort는 객체여야 함"));
+                    };
+                    if map.is_empty()
+                        || map.len() > 4
+                        || map.keys().any(|k| !self.allowed_fields.contains(k))
+                        || map.values().any(|v| !matches!(v.as_i64(), Some(-1 | 1)))
+                    {
+                        return Err(reject("WIRE.BAD_VALUE", "Mongo sort field/direction이 허용되지 않음"));
+                    }
+                    mongodb::bson::serialize_to_document(v).map_err(|_| reject("WIRE.BAD_VALUE", "Mongo sort 변환 실패"))
+                })
+                .transpose()?;
+            let coll = self.client.database(&self.database).collection::<mongodb::bson::Document>(collection);
+            let result = tokio::time::timeout(self.timeout, async {
+                match command {
+                    "count_documents" => {
+                        Ok(json!({"count": coll.count_documents(filter).await.map_err(|_| reject("WIRE.ADAPTER_UNAVAILABLE", "Mongo read 실패"))?}))
+                    }
+                    "find_one" => {
+                        let mut action = coll.find_one(filter);
+                        if let Some(projection) = projection {
+                            action = action.projection(projection);
+                        }
+                        let doc = action.await.map_err(|_| reject("WIRE.ADAPTER_UNAVAILABLE", "Mongo read 실패"))?;
+                        let value = doc.map(|d| mongodb::bson::deserialize_from_document::<Value>(d).unwrap_or(Value::Null));
+                        if value.as_ref().is_some_and(|v| serde_json::to_vec(v).map_or(true, |b| b.len() > self.max_bytes)) {
+                            return Err(reject("WIRE.BAD_VALUE", "Mongo result byte limit exceeded"));
+                        }
+                        Ok(json!({"doc": value}))
+                    }
+                    _ => {
+                        let mut action = coll.find(filter).limit(limit).skip(skip);
+                        if let Some(projection) = projection {
+                            action = action.projection(projection);
+                        }
+                        if let Some(sort) = sort {
+                            action = action.sort(sort);
+                        }
+                        if let (Some(field), Some(desc)) = (input.get("sort_by"), input.get("desc")) {
+                            let Some(field) = field.as_str() else {
+                                return Err(reject("WIRE.BAD_VALUE", "sort_by는 문자열이어야 함"));
+                            };
+                            let Some(desc) = desc.as_bool() else {
+                                return Err(reject("WIRE.BAD_VALUE", "desc는 boolean이어야 함"));
+                            };
+                            if !self.allowed_fields.contains(field) {
+                                return Err(reject("WIRE.BAD_VALUE", "sort_by field가 허용되지 않음"));
+                            }
+                            action = action.sort(mongodb::bson::doc! { field: if desc { -1 } else { 1 } });
+                        } else if input.get("sort_by").is_some() || input.get("desc").is_some() {
+                            return Err(reject("WIRE.BAD_VALUE", "sort_by와 desc는 함께 지정해야 함"));
+                        }
+                        let mut cursor = action.await.map_err(|_| reject("WIRE.ADAPTER_UNAVAILABLE", "Mongo read 실패"))?;
+                        let mut docs = Vec::new();
+                        let mut bytes = 0usize;
+                        use futures_util::StreamExt;
+                        while let Some(doc) = cursor.next().await.transpose().map_err(|_| reject("WIRE.ADAPTER_UNAVAILABLE", "Mongo cursor 실패"))?
+                        {
+                            let value = mongodb::bson::deserialize_from_document::<Value>(doc)
+                                .map_err(|_| reject("WIRE.BAD_VALUE", "Mongo document serialization 실패"))?;
+                            bytes = bytes
+                                .saturating_add(serde_json::to_vec(&value).map_err(|_| reject("WIRE.BAD_VALUE", "Mongo serialization 실패"))?.len());
+                            if bytes > self.max_bytes {
+                                return Err(reject("WIRE.BAD_VALUE", "Mongo result byte limit exceeded"));
+                            }
+                            docs.push(value);
+                        }
+                        Ok(json!({"docs": docs}))
+                    }
+                }
+            })
+            .await
+            .map_err(|_| reject("WIRE.ADAPTER_UNAVAILABLE", "Mongo query timeout"))?;
+            result
+        })
+    }
+}
+
+/// Real Redis read-only capability with a reconnecting bounded single connection manager.
+#[derive(Clone)]
+pub struct RedisDriverCapability {
+    manager: redis::aio::ConnectionManager,
+    prefixes: Vec<String>,
+    timeout: Duration,
+    in_flight: Arc<tokio::sync::Semaphore>,
+}
+
+impl RedisDriverCapability {
+    pub async fn connect(uri: &str, prefixes: Vec<String>, timeout: Duration) -> Result<Self, Reject> {
+        Self::connect_with_limit(uri, prefixes, timeout, 32).await
+    }
+    pub async fn connect_with_limit(uri: &str, prefixes: Vec<String>, timeout: Duration, max_in_flight: u32) -> Result<Self, Reject> {
+        if prefixes.is_empty()
+            || prefixes.iter().any(String::is_empty)
+            || timeout.is_zero()
+            || timeout > Duration::from_secs(30)
+            || !(1..=256).contains(&max_in_flight)
+        {
+            return Err(reject("WIRE.BAD_CONFIG", "Redis capability 설정 범위 오류"));
+        }
+        let client = redis::Client::open(uri).map_err(|_| reject("WIRE.ADAPTER_UNAVAILABLE", "Redis 설정을 읽지 못함"))?;
+        let manager = tokio::time::timeout(timeout, client.get_connection_manager())
+            .await
+            .map_err(|_| reject("WIRE.ADAPTER_UNAVAILABLE", "Redis readiness timeout"))?
+            .map_err(|_| reject("WIRE.ADAPTER_UNAVAILABLE", "Redis readiness 실패"))?;
+        let mut probe = manager.clone();
+        let _: String = tokio::time::timeout(timeout, redis::cmd("PING").query_async(&mut probe))
+            .await
+            .map_err(|_| reject("WIRE.ADAPTER_UNAVAILABLE", "Redis PING timeout"))?
+            .map_err(|_| reject("WIRE.ADAPTER_UNAVAILABLE", "Redis PING 실패"))?;
+        Ok(Self { manager, prefixes, timeout, in_flight: Arc::new(tokio::sync::Semaphore::new(max_in_flight as usize)) })
+    }
+    fn allowed(&self, key: &str) -> bool {
+        self.prefixes.iter().any(|prefix| key.starts_with(prefix))
+    }
+}
+
+impl RedisCapability for RedisDriverCapability {
+    fn call<'a>(&'a self, principal: &'a CapabilityPrincipal, key: &'a str, input: &'a Value) -> CapabilityFuture<'a, Result<Value, Reject>> {
+        Box::pin(async move {
+            let command = input.get("command").and_then(Value::as_str).ok_or_else(|| reject("WIRE.BAD_VALUE", "Redis command 누락"))?;
+            if input.as_object().is_none_or(|m| m.keys().any(|k| !["command", "keys"].contains(&k.as_str())))
+                || (command != "mget" && input.get("keys").is_some())
+            {
+                return Err(reject("WIRE.BAD_VALUE", "Redis command input field가 허용되지 않음"));
+            }
+            let keys: Vec<&str> = if command == "mget" {
+                let Some(values) = input.get("keys").and_then(Value::as_array) else {
+                    return Err(reject("WIRE.BAD_VALUE", "Redis mget keys 형식 오류"));
+                };
+                if values.is_empty() || values.len() > 64 {
+                    return Err(reject("WIRE.BAD_VALUE", "Redis mget key count 범위 오류"));
+                }
+                values.iter().map(|v| v.as_str().ok_or_else(|| reject("WIRE.BAD_VALUE", "Redis key는 문자열이어야 함"))).collect::<Result<_, _>>()?
+            } else {
+                vec![key]
+            };
+            for k in &keys {
+                if k.is_empty() || k.len() > 512 {
+                    return Err(reject("WIRE.BAD_VALUE", "Redis key length 범위 오류"));
+                }
+                if !principal.permits("redis", k) {
+                    return Err(reject("WIRE.ACCESS_NOT_DECLARED", "Redis key capability가 확장에 선언되지 않음"));
+                }
+                if !self.allowed(k) {
+                    return Err(reject("WIRE.CAPABILITY_DENIED", "Redis key namespace가 허용되지 않음"));
+                }
+            }
+            if !["get", "hgetall", "exists", "mget"].contains(&command) {
+                return Err(reject("WIRE.CAPABILITY_DENIED", "Redis read command가 허용되지 않음"));
+            }
+            let _permit = tokio::time::timeout(self.timeout, self.in_flight.clone().acquire_owned())
+                .await
+                .map_err(|_| reject("WIRE.ADAPTER_UNAVAILABLE", "Redis capacity timeout"))?
+                .map_err(|_| reject("WIRE.ADAPTER_UNAVAILABLE", "Redis capability가 종료됨"))?;
+            let mut con = self.manager.clone();
+            let future = async {
+                match command {
+                    "get" => {
+                        let script = "local n=redis.call('STRLEN',KEYS[1]); if n>1048576 then return redis.error_reply('AIP_RESULT_LIMIT') end; return redis.call('GET',KEYS[1])";
+                        let value: Option<String> =
+                            redis::cmd("EVAL_RO").arg(script).arg(1).arg(key).query_async(&mut con).await.map_err(redis_failure)?;
+                        Ok(json!({"value":value}))
+                    }
+                    "exists" => {
+                        let value: bool = redis::cmd("EXISTS")
+                            .arg(key)
+                            .query_async(&mut con)
+                            .await
+                            .map_err(|_| reject("WIRE.ADAPTER_UNAVAILABLE", "Redis EXISTS 실패"))?;
+                        Ok(json!({"exists":value}))
+                    }
+                    "hgetall" => {
+                        let script = "local c=redis.call('HLEN',KEYS[1]); if c>10000 then return redis.error_reply('AIP_RESULT_LIMIT') end; local ks=redis.call('HKEYS',KEYS[1]); local n=0; local out={}; for _,k in ipairs(ks) do n=n+#k; if n>1048576 then return redis.error_reply('AIP_RESULT_LIMIT') end; local v=redis.call('HGET',KEYS[1],k); n=n+#v; if n>1048576 then return redis.error_reply('AIP_RESULT_LIMIT') end; table.insert(out,k); table.insert(out,v); end; return out";
+                        let flat: Vec<String> =
+                            redis::cmd("EVAL_RO").arg(script).arg(1).arg(key).query_async(&mut con).await.map_err(redis_failure)?;
+                        if !flat.len().is_multiple_of(2) {
+                            return Err(reject("WIRE.ADAPTER_UNAVAILABLE", "Redis HGETALL 응답 형식 오류"));
+                        }
+                        let value: HashMap<String, String> = flat.as_chunks::<2>().0.iter().map(|pair| (pair[0].clone(), pair[1].clone())).collect();
+                        Ok(json!({"value":value}))
+                    }
+                    _ => {
+                        let script = "local out={}; local n=0; for i,k in ipairs(KEYS) do local z=redis.call('STRLEN',k); n=n+z; if n>1048576 then return redis.error_reply('AIP_RESULT_LIMIT') end; out[i]=redis.call('GET',k); end; return out";
+                        let values: Vec<Option<String>> =
+                            redis::cmd("EVAL_RO").arg(script).arg(keys.len()).arg(&keys).query_async(&mut con).await.map_err(redis_failure)?;
+                        Ok(json!({"values":values}))
+                    }
+                }
+            };
+            tokio::time::timeout(self.timeout, future).await.map_err(|_| reject("WIRE.ADAPTER_UNAVAILABLE", "Redis command timeout"))?
+        })
+    }
+}
+
+fn redis_failure(error: redis::RedisError) -> Reject {
+    if error.to_string().contains("AIP_RESULT_LIMIT") {
+        reject("WIRE.BAD_VALUE", "Redis result limit exceeded")
+    } else {
+        reject("WIRE.ADAPTER_UNAVAILABLE", "Redis read failed")
     }
 }
 
@@ -245,104 +630,219 @@ impl RedisCapability for ManagedRedisCapability {
 mod tests {
     use super::*;
 
+    #[test]
+    fn mongo_scope_requires_exact_grant_while_redis_prefix_grants_stay_namespaced() {
+        let mongo_wildcard = CapabilityPrincipal { actor_id: Some(1), grants: ["mongo.*".into()].into_iter().collect() };
+        assert!(!mongo_wildcard.permits("mongo", "youtube_watching_data"));
+        let redis_prefix = CapabilityPrincipal { actor_id: Some(1), grants: ["redis.facereview:reco:*".into()].into_iter().collect() };
+        assert!(redis_prefix.permits("redis", "facereview:reco:popular"));
+        assert!(!redis_prefix.permits("redis", "facereview:session:private"));
+    }
+
+    fn mongo_test() -> MemoryMongoCapability {
+        MemoryMongoCapability::new(&["video_distribution", "youtube_watching_data"], &["find", "find_one", "count_documents"])
+    }
+    fn redis_test() -> MemoryRedisCapability {
+        MemoryRedisCapability::new(&["facereview:reco:"], &["get", "hgetall", "exists", "mget"])
+    }
+
+    fn test_principal() -> CapabilityPrincipal {
+        CapabilityPrincipal {
+            actor_id: Some(1),
+            grants: [
+                "mongo.youtube_watching_data".to_string(),
+                "mongo.video_distribution".to_string(),
+                "mongo.admin_secrets".to_string(),
+                "redis.facereview:reco:*".to_string(),
+                "redis.other_app:secret".to_string(),
+            ]
+            .into_iter()
+            .collect(),
+        }
+    }
+
     #[tokio::test]
     async fn mongo_capability_allows_whitelisted_collection_and_read_command() {
-        let mongo = ManagedMongoCapability::default();
-        mongo.seed("video_distribution", vec![
-            json!({ "video_id": 1, "dominant_emotion": "happy" }),
-            json!({ "video_id": 2, "dominant_emotion": "neutral" }),
-            json!({ "video_id": 3, "dominant_emotion": "happy" }),
-        ]);
+        let mongo = mongo_test();
+        mongo.seed(
+            "video_distribution",
+            vec![
+                json!({ "video_id": 1, "dominant_emotion": "happy" }),
+                json!({ "video_id": 2, "dominant_emotion": "neutral" }),
+                json!({ "video_id": 3, "dominant_emotion": "happy" }),
+            ],
+        );
 
         // find with filter
-        let res = mongo.call("video_distribution", &json!({
-            "command": "find",
-            "filter": { "dominant_emotion": "happy" }
-        })).await.unwrap();
+        let res = mongo
+            .call(
+                &test_principal(),
+                "video_distribution",
+                &json!({
+                    "command": "find",
+                    "filter": { "dominant_emotion": "happy" }
+                }),
+            )
+            .await
+            .unwrap();
         assert_eq!(res["docs"].as_array().unwrap().len(), 2);
 
         // count_documents
-        let count_res = mongo.call("video_distribution", &json!({
-            "command": "count_documents",
-            "filter": { "dominant_emotion": "neutral" }
-        })).await.unwrap();
+        let count_res = mongo
+            .call(
+                &test_principal(),
+                "video_distribution",
+                &json!({
+                    "command": "count_documents",
+                    "filter": { "dominant_emotion": "neutral" }
+                }),
+            )
+            .await
+            .unwrap();
         assert_eq!(count_res["count"], 1);
 
         // find_one
-        let one_res = mongo.call("video_distribution", &json!({
-            "command": "find_one",
-            "filter": { "video_id": 2 }
-        })).await.unwrap();
+        let one_res = mongo
+            .call(
+                &test_principal(),
+                "video_distribution",
+                &json!({
+                    "command": "find_one",
+                    "filter": { "video_id": 2 }
+                }),
+            )
+            .await
+            .unwrap();
         assert_eq!(one_res["doc"]["video_id"], 2);
     }
 
     #[tokio::test]
     async fn mongo_capability_rejects_unauthorized_collection_or_write_command() {
-        let mongo = ManagedMongoCapability::default();
+        let mongo = mongo_test();
 
         // 1. 비인가 컬렉션 거부
-        let err = mongo.call("admin_secrets", &json!({ "command": "find" })).await.unwrap_err();
+        let err = mongo.call(&test_principal(), "admin_secrets", &json!({ "command": "find" })).await.unwrap_err();
         assert_eq!(err.code, "WIRE.CAPABILITY_DENIED");
         assert!(err.msg.contains("비인가 Mongo 컬렉션"));
 
         // 2. 비인가 쓰기 명령 거부
-        let err_write = mongo.call("video_distribution", &json!({
-            "command": "insert",
-            "doc": { "video_id": 99 }
-        })).await.unwrap_err();
+        let err_write = mongo
+            .call(
+                &test_principal(),
+                "video_distribution",
+                &json!({
+                    "command": "insert",
+                    "doc": { "video_id": 99 }
+                }),
+            )
+            .await
+            .unwrap_err();
         assert_eq!(err_write.code, "WIRE.CAPABILITY_DENIED");
         assert!(err_write.msg.contains("허용되지 않은 Mongo 명령"));
 
         // 3. 삭제 명령 거부
-        let err_del = mongo.call("video_distribution", &json!({
-            "command": "delete",
-            "filter": { "video_id": 1 }
-        })).await.unwrap_err();
+        let err_del = mongo
+            .call(
+                &test_principal(),
+                "video_distribution",
+                &json!({
+                    "command": "delete",
+                    "filter": { "video_id": 1 }
+                }),
+            )
+            .await
+            .unwrap_err();
         assert_eq!(err_del.code, "WIRE.CAPABILITY_DENIED");
     }
 
     #[tokio::test]
     async fn redis_capability_allows_whitelisted_keys_and_read_commands() {
-        let redis = ManagedRedisCapability::default();
+        let redis = redis_test();
         redis.set_str("facereview:reco:pool", "[\"v1\",\"v2\"]");
         let mut cat_fields = HashMap::new();
         cat_fields.insert("Comedy".to_string(), "[\"v1\"]".to_string());
         redis.set_hash("facereview:reco:category", cat_fields);
 
         // get
-        let get_res = redis.call("facereview:reco:pool", &json!({ "command": "get" })).await.unwrap();
+        let get_res = redis.call(&test_principal(), "facereview:reco:pool", &json!({ "command": "get" })).await.unwrap();
         assert_eq!(get_res["value"], "[\"v1\",\"v2\"]");
 
         // hgetall
-        let hash_res = redis.call("facereview:reco:category", &json!({ "command": "hgetall" })).await.unwrap();
+        let hash_res = redis.call(&test_principal(), "facereview:reco:category", &json!({ "command": "hgetall" })).await.unwrap();
         assert_eq!(hash_res["value"]["Comedy"], "[\"v1\"]");
 
         // exists
-        let exists_res = redis.call("facereview:reco:pool", &json!({ "command": "exists" })).await.unwrap();
+        let exists_res = redis.call(&test_principal(), "facereview:reco:pool", &json!({ "command": "exists" })).await.unwrap();
         assert_eq!(exists_res["exists"], true);
     }
 
     #[tokio::test]
     async fn redis_capability_rejects_unauthorized_keys_or_write_commands() {
-        let redis = ManagedRedisCapability::default();
+        let redis = redis_test();
 
         // 1. 비인가 키 네임스페이스 거부
-        let err_key = redis.call("other_app:secret", &json!({ "command": "get" })).await.unwrap_err();
+        let err_key = redis.call(&test_principal(), "other_app:secret", &json!({ "command": "get" })).await.unwrap_err();
         assert_eq!(err_key.code, "WIRE.CAPABILITY_DENIED");
         assert!(err_key.msg.contains("비인가 Redis 키 접근 거부"));
 
         // 2. 비인가 쓰기 명령 거부
-        let err_set = redis.call("facereview:reco:pool", &json!({
-            "command": "set",
-            "value": "injected"
-        })).await.unwrap_err();
+        let err_set = redis
+            .call(
+                &test_principal(),
+                "facereview:reco:pool",
+                &json!({
+                    "command": "set",
+                    "value": "injected"
+                }),
+            )
+            .await
+            .unwrap_err();
         assert_eq!(err_set.code, "WIRE.CAPABILITY_DENIED");
         assert!(err_set.msg.contains("허용되지 않은 Redis 명령"));
 
         // 3. 비인가 삭제 명령 거부
-        let err_del = redis.call("facereview:reco:pool", &json!({
-            "command": "del"
-        })).await.unwrap_err();
+        let err_del = redis
+            .call(
+                &test_principal(),
+                "facereview:reco:pool",
+                &json!({
+                    "command": "del"
+                }),
+            )
+            .await
+            .unwrap_err();
         assert_eq!(err_del.code, "WIRE.CAPABILITY_DENIED");
+    }
+
+    #[tokio::test]
+    async fn advertised_mget_reads_all_keys_from_the_backend() {
+        let redis = redis_test();
+        redis.seed("facereview:reco:first", "one");
+        redis.seed("facereview:reco:second", "two");
+        let result = redis
+            .call(
+                &test_principal(),
+                "facereview:reco:first",
+                &json!({
+                    "command":"mget", "keys":["facereview:reco:first", "facereview:reco:second"]
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result["values"], json!(["one", "two"]));
+    }
+
+    #[tokio::test]
+    async fn private_watch_data_forces_the_principal_actor_and_rejects_spoofed_filters() {
+        let mongo = mongo_test();
+        mongo.seed("youtube_watching_data", vec![json!({"user_id": 7, "video_id": 1}), json!({"user_id": 8, "video_id": 2})]);
+        let principal = CapabilityPrincipal { actor_id: Some(7), grants: ["mongo.youtube_watching_data".to_string()].into_iter().collect() };
+        let ok = mongo.call(&principal, "youtube_watching_data", &json!({"command":"find","filter":{}})).await.unwrap();
+        assert_eq!(ok["docs"].as_array().unwrap().len(), 1);
+        assert_eq!(ok["docs"][0]["video_id"], 1);
+        let forged = mongo.call(&principal, "youtube_watching_data", &json!({"command":"find","filter":{"user_id": 8}})).await.unwrap_err();
+        assert_eq!(forged.code, "WIRE.ACCESS_DENIED");
+        let guest = CapabilityPrincipal { actor_id: None, grants: ["mongo.youtube_watching_data".to_string()].into_iter().collect() };
+        assert_eq!(mongo.call(&guest, "youtube_watching_data", &json!({"command":"find","filter":{}})).await.unwrap_err().code, "WIRE.ACCESS_DENIED");
     }
 }

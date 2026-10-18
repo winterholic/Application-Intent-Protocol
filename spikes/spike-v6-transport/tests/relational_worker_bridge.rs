@@ -6,7 +6,7 @@ use spike_v2_read::{
     plan::{Plan, Reject},
     sqlgen::Dialect,
 };
-use spike_v4_worker::{ManagedMongoCapability, ManagedRedisCapability};
+use spike_v4_worker::{MemoryMongoCapability, MemoryRedisCapability};
 use spike_v6_transport::{
     infrastructure::Infrastructure,
     server::{listen_relational_with_extensions, ReadExtensions, ServerOptions, WorkerLang},
@@ -38,14 +38,7 @@ impl MockRelationalBackend {
     fn new() -> (Self, QueryStore, RowsStore) {
         let executed_queries = Arc::new(Mutex::new(Vec::new()));
         let rows_override = Arc::new(Mutex::new(None));
-        (
-            Self {
-                executed_queries: executed_queries.clone(),
-                rows_override: rows_override.clone(),
-            },
-            executed_queries,
-            rows_override,
-        )
+        (Self { executed_queries: executed_queries.clone(), rows_override: rows_override.clone() }, executed_queries, rows_override)
     }
 }
 
@@ -95,7 +88,10 @@ fn setup_facts() -> Value {
             "deadlineMs": 3000,
             "input": base_input,
             "output": base_output,
-            "access": {},
+            "access": {
+                "mongo.video_distribution": {},
+                "redis.facereview:reco:*": {}
+            },
             "implementation": impl_name,
         })
     };
@@ -133,29 +129,19 @@ async fn test_relational_worker_mysql_read_and_mongo_redis_combined() {
     let facts = setup_facts();
     let (backend, executed_queries, _) = MockRelationalBackend::new();
 
-    let mongo = ManagedMongoCapability::default();
+    let mongo = MemoryMongoCapability::new(&["video_distribution"], &["find", "find_one", "count_documents"]);
     mongo.seed(
         "video_distribution",
-        vec![
-            json!({ "clubId": "10", "views": 100, "region": "KR" }),
-            json!({ "clubId": "10", "views": 250, "region": "US" }),
-        ],
+        vec![json!({ "clubId": "10", "views": 100, "region": "KR" }), json!({ "clubId": "10", "views": 250, "region": "US" })],
     );
 
-    let redis = ManagedRedisCapability::default();
+    let redis = MemoryRedisCapability::new(&["facereview:reco:"], &["get", "hgetall", "exists", "mget"]);
     redis.seed("facereview:reco:10", "recommended-item-alpha");
 
-    let infra = Infrastructure {
-        mongo: Some(Arc::new(mongo)),
-        redis: Some(Arc::new(redis)),
-        ..Infrastructure::default()
-    };
+    let infra = Infrastructure { mongo: Some(Arc::new(mongo)), redis: Some(Arc::new(redis)), ..Infrastructure::default() };
 
     let ext_dir = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/slice13a"));
-    let read_extensions = ReadExtensions {
-        lang: WorkerLang::Python,
-        dir: ext_dir,
-    };
+    let read_extensions = ReadExtensions { lang: WorkerLang::Python, dir: ext_dir };
 
     let server = listen_relational_with_extensions(
         facts.clone(),
@@ -189,11 +175,7 @@ async fn test_relational_worker_mysql_read_and_mongo_redis_combined() {
     {
         let queries = executed_queries.lock().unwrap();
         assert!(!queries.is_empty(), "RelationalBackend must have executed at least 1 plan");
-        assert!(
-            queries[0].0.to_lowercase().contains("recruitment"),
-            "Plan SQL must reference recruitment table: {}",
-            queries[0].0
-        );
+        assert!(queries[0].0.to_lowercase().contains("recruitment"), "Plan SQL must reference recruitment table: {}", queries[0].0);
     }
 
     server.shutdown().await.unwrap();
@@ -204,13 +186,10 @@ async fn test_relational_worker_redis_cache_read() {
     let facts = setup_facts();
     let (backend, _, _) = MockRelationalBackend::new();
 
-    let redis = ManagedRedisCapability::default();
+    let redis = MemoryRedisCapability::new(&["facereview:reco:"], &["get", "hgetall", "exists", "mget"]);
     redis.seed("facereview:reco:10", "cached-reco-xyz");
 
-    let infra = Infrastructure {
-        redis: Some(Arc::new(redis)),
-        ..Infrastructure::default()
-    };
+    let infra = Infrastructure { redis: Some(Arc::new(redis)), ..Infrastructure::default() };
 
     let ext_dir = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/slice13a"));
     let server = listen_relational_with_extensions(
@@ -246,11 +225,8 @@ async fn test_relational_worker_rejects_unauthorized_mongo_collection() {
     let facts = setup_facts();
     let (backend, _, _) = MockRelationalBackend::new();
 
-    let mongo = ManagedMongoCapability::default();
-    let infra = Infrastructure {
-        mongo: Some(Arc::new(mongo)),
-        ..Infrastructure::default()
-    };
+    let mongo = MemoryMongoCapability::new(&["video_distribution"], &["find", "find_one", "count_documents"]);
+    let infra = Infrastructure { mongo: Some(Arc::new(mongo)), ..Infrastructure::default() };
 
     let ext_dir = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/slice13a"));
     let server = listen_relational_with_extensions(
@@ -276,10 +252,7 @@ async fn test_relational_worker_rejects_unauthorized_mongo_collection() {
     });
     let resp = post(server.address, Some(&token), Some(&contract), &body).await.unwrap();
     assert_eq!(resp["ok"], true);
-    assert_eq!(
-        resp["output"]["clubName"], "WIRE.CAPABILITY_DENIED",
-        "Unauthorized mongo collection must be denied with WIRE.CAPABILITY_DENIED"
-    );
+    assert_eq!(resp["output"]["clubName"], "WIRE.CAPABILITY_DENIED", "Unauthorized mongo collection must be denied with WIRE.CAPABILITY_DENIED");
 
     server.shutdown().await.unwrap();
 }
@@ -289,11 +262,8 @@ async fn test_relational_worker_rejects_unauthorized_mongo_write() {
     let facts = setup_facts();
     let (backend, _, _) = MockRelationalBackend::new();
 
-    let mongo = ManagedMongoCapability::default();
-    let infra = Infrastructure {
-        mongo: Some(Arc::new(mongo)),
-        ..Infrastructure::default()
-    };
+    let mongo = MemoryMongoCapability::new(&["video_distribution"], &["find", "find_one", "count_documents"]);
+    let infra = Infrastructure { mongo: Some(Arc::new(mongo)), ..Infrastructure::default() };
 
     let ext_dir = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/slice13a"));
     let server = listen_relational_with_extensions(
@@ -332,11 +302,8 @@ async fn test_relational_worker_rejects_unauthorized_redis_key() {
     let facts = setup_facts();
     let (backend, _, _) = MockRelationalBackend::new();
 
-    let redis = ManagedRedisCapability::default();
-    let infra = Infrastructure {
-        redis: Some(Arc::new(redis)),
-        ..Infrastructure::default()
-    };
+    let redis = MemoryRedisCapability::new(&["facereview:reco:"], &["get", "hgetall", "exists", "mget"]);
+    let infra = Infrastructure { redis: Some(Arc::new(redis)), ..Infrastructure::default() };
 
     let ext_dir = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/slice13a"));
     let server = listen_relational_with_extensions(
@@ -362,10 +329,7 @@ async fn test_relational_worker_rejects_unauthorized_redis_key() {
     });
     let resp = post(server.address, Some(&token), Some(&contract), &body).await.unwrap();
     assert_eq!(resp["ok"], true);
-    assert_eq!(
-        resp["output"]["clubName"], "WIRE.CAPABILITY_DENIED",
-        "Unauthorized redis namespace must be denied with WIRE.CAPABILITY_DENIED"
-    );
+    assert_eq!(resp["output"]["clubName"], "WIRE.CAPABILITY_DENIED", "Unauthorized redis namespace must be denied with WIRE.CAPABILITY_DENIED");
 
     server.shutdown().await.unwrap();
 }
@@ -399,10 +363,7 @@ async fn test_relational_worker_rejects_unauthorized_apply_in_read_extension() {
     });
     let resp = post(server.address, Some(&token), Some(&contract), &body).await.unwrap();
     assert_eq!(resp["ok"], true);
-    assert_eq!(
-        resp["output"]["clubName"], "WIRE.ACCESS_DENIED",
-        "Calling apply in read extension must be rejected with ACCESS_DENIED"
-    );
+    assert_eq!(resp["output"]["clubName"], "WIRE.ACCESS_DENIED", "Calling apply in read extension must be rejected with ACCESS_DENIED");
 
     server.shutdown().await.unwrap();
 }
@@ -436,10 +397,7 @@ async fn test_relational_worker_principal_policy_guest_vs_owner() {
     // 1. Guest request (without token): must be immediately rejected at transport boundary
     let guest_resp = post(server.address, None, Some(&contract), &body).await.unwrap();
     assert_eq!(guest_resp["ok"], false);
-    assert_eq!(
-        guest_resp["code"], "WIRE.UNAUTHENTICATED",
-        "Guest request without signed session must be rejected with UNAUTHENTICATED"
-    );
+    assert_eq!(guest_resp["code"], "WIRE.UNAUTHENTICATED", "Guest request without signed session must be rejected with UNAUTHENTICATED");
 
     // 2. Actor 1 request (with signed token for actor 1)
     let token1 = server.keys.issue(1, 600);

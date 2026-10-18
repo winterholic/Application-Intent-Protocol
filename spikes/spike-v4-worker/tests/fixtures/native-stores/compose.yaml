@@ -1,0 +1,41 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: aip-slice13a-mysql-fixture
+    environment:
+      MYSQL_DATABASE: aip_test_slice13a
+      MYSQL_USER: aip_test_slice13a
+      MYSQL_PASSWORD: local_fixture_only_13a
+      MYSQL_ROOT_PASSWORD: local_root_only_13a
+    ports:
+      - "127.0.0.1:15440:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "-plocal_root_only_13a"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+  mongo:
+    image: mongo:8.0
+    container_name: aip-slice13a-mongo-fixture
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: aip_test_slice13a
+      MONGO_INITDB_ROOT_PASSWORD: local_fixture_only_13a
+      MONGO_INITDB_DATABASE: aip_test_slice13a
+    ports:
+      - "127.0.0.1:15441:27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--username", "aip_test_slice13a", "--password", "local_fixture_only_13a", "--authenticationDatabase", "admin", "--eval", "db.adminCommand({ping:1}).ok"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+  redis:
+    image: redis:7.4
+    container_name: aip-slice13a-redis-fixture
+    command: ["redis-server", "--requirepass", "local_fixture_only_13a", "--appendonly", "no"]
+    ports:
+      - "127.0.0.1:15442:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "local_fixture_only_13a", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 30

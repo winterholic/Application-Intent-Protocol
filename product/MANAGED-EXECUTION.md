@@ -163,6 +163,21 @@ for await (const event of client.events.watch("notifications", { after: "0", int
 
 secret은 명시한 process environment variable에서만 읽고 `.env`는 불러오지 않는다. startup은 DNS를 최대 2초 동안 조회하고 결과 주소를 고정한다. HTTPS를 사용하며 기본적으로 private/special-use 주소와 redirect, proxy를 차단한다. 서버 endpoint별 `allow_private_networks:true`는 사설 unicast HTTPS 연동을 허용하지만 link-local 등 특수 주소는 계속 거부한다. 명시적으로 `allow_loopback:true`인 개발 설정만 loopback HTTP를 쓸 수 있다. endpoint, DNS 답, method, 제한값, secret의 digest가 implementation bundle fingerprint에 포함되므로 값이 바뀐 worker 설정으로 기존 job을 이어 실행하지 않는다. 설정 오류 출력은 endpoint URL이나 secret 값을 노출하지 않는다.
 
+MySQL read extensions can also use server-owned MongoDB and Redis read adapters. Configure `workers.mongo` and/or `workers.redis` with environment variable **names**; the service reads URI values in its own process and never adds them to the worker subprocess environment. Mongo uses the Rust driver's bounded connection pool (1–64) and readiness ping. Redis uses a reconnecting connection manager with a bounded in-flight semaphore (1–256) and readiness ping. Timeouts are 1–30,000 ms. If an adapter is absent, the corresponding capability call fails with `WIRE.ADAPTER_UNAVAILABLE`; an empty in-memory result is never substituted.
+
+```json
+{
+  "workers": {
+    "directory": "./extensions",
+    "language": "python",
+    "mongo": {"uri_env":"AIP_MONGO_URL", "database":"facereview", "max_pool_size":8, "timeout_ms":2000},
+    "redis": {"uri_env":"AIP_REDIS_URL", "prefixes":["facereview:reco:"], "max_in_flight":32, "timeout_ms":2000}
+  }
+}
+```
+
+Each extension must separately declare a least-privilege `access` grant such as `mongo.video_distribution` or `redis.facereview:reco:*`. The server checks the grant on every call. `youtube_watching_data` is private: the server requires an authenticated actor and adds its `user_id` predicate; a caller supplied predicate for another user is denied. Redis `facereview:session:` is not a supported capability because there is no server-owned session-to-principal mapping. A configured Redis prefix alone does not grant access. Mongo supports only allowlisted collections, fields and read commands; filter/projection/sort shapes, positive limits, result bytes, command time and Redis MGET key count/bytes are bounded. Extension reads still reject `ctx.data.apply` with `WIRE.ACCESS_DENIED`.
+
 ### Circuit breaker
 
 endpoint마다 `circuit_breaker`를 설정하면 Resilience4j·opossum과 같은 방식으로 장애 provider에 요청을 계속 보내지 않는다.

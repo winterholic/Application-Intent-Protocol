@@ -341,12 +341,31 @@ pub(crate) async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
             Language::Python => spike_v6_transport::server::WorkerLang::Python,
         },
     });
-    // WBS 7.2.3 Slice13-A: 관리형 Mongo/Redis capability 연결
-    if infrastructure.mongo.is_none() {
-        infrastructure.mongo = Some(Arc::new(spike_v4_worker::ManagedMongoCapability::default()));
-    }
-    if infrastructure.redis.is_none() {
-        infrastructure.redis = Some(Arc::new(spike_v4_worker::ManagedRedisCapability::default()));
+    if let Some(workers) = &config.workers {
+        if let Some(store) = &workers.mongo {
+            let uri = std::env::var(&store.uri_env).map_err(|_| error("MONGO_CAPABILITY_CONFIG", "Mongo URI 환경 변수가 설정되지 않음"))?;
+            let driver = spike_v4_worker::MongoDriverCapability::connect(
+                &uri,
+                &store.database,
+                store.max_pool_size,
+                std::time::Duration::from_millis(store.timeout_ms),
+            )
+            .await
+            .map_err(|_| error("MONGO_CAPABILITY_UNAVAILABLE", "Mongo 연결/readiness를 확인할 수 없음"))?;
+            infrastructure.mongo = Some(Arc::new(driver));
+        }
+        if let Some(store) = &workers.redis {
+            let uri = std::env::var(&store.uri_env).map_err(|_| error("REDIS_CAPABILITY_CONFIG", "Redis URI 환경 변수가 설정되지 않음"))?;
+            let driver = spike_v4_worker::RedisDriverCapability::connect_with_limit(
+                &uri,
+                store.prefixes.clone(),
+                std::time::Duration::from_millis(store.timeout_ms),
+                store.max_in_flight,
+            )
+            .await
+            .map_err(|_| error("REDIS_CAPABILITY_UNAVAILABLE", "Redis 연결/readiness를 확인할 수 없음"))?;
+            infrastructure.redis = Some(Arc::new(driver));
+        }
     }
     let options = spike_v6_transport::server::ServerOptions { allowed_origins: config.allowed_origins };
     #[cfg(unix)]

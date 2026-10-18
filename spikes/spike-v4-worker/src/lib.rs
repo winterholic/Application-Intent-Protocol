@@ -11,7 +11,9 @@ pub mod host;
 pub mod outbox;
 pub mod write;
 
-pub use capability::{ManagedMongoCapability, ManagedRedisCapability, MongoCapability, RedisCapability};
+pub use capability::{
+    CapabilityPrincipal, MemoryMongoCapability, MemoryRedisCapability, MongoCapability, MongoDriverCapability, RedisCapability, RedisDriverCapability,
+};
 pub use host::{PgWorkerHost, RelationalWorkerHost, WorkerHost};
 
 #[cfg(all(test, unix))]
@@ -106,6 +108,7 @@ struct Grant {
     now: String,
     /// 확장 계약의 access 목록과 각 집계 입력에 묶인 확장 입력 값.
     access: HashMap<String, Map<String, Value>>,
+    capability_grants: std::collections::HashSet<String>,
     id_wire: IdWire,
     expires: Instant,
     active: bool,
@@ -547,7 +550,14 @@ async fn invoke_contract(
     let deadline = Duration::from_millis(x["deadlineMs"].as_u64().unwrap_or(1000));
     // 집계 입력은 확장 계약의 binding대로 확장 입력 값에 고정한다. worker가 다른 값을 넣으면 거부한다.
     let mut access = HashMap::new();
+    let mut capability_grants = std::collections::HashSet::new();
     for (agg, binding) in x["access"].as_object().unwrap() {
+        if agg.starts_with("mongo.") || agg.starts_with("redis.") {
+            if binding.as_object().is_none_or(|map| !map.is_empty()) {
+                return rej("WIRE.BAD_VALUE", "mongo/redis capability grant must be an empty object");
+            }
+            capability_grants.insert(agg.clone());
+        }
         if job_host.is_some() {
             continue;
         }
@@ -563,7 +573,10 @@ async fn invoke_contract(
     let invoke_id = w.next_invoke;
     let token = grant_token('g', invoke_id);
     let expires = Instant::now() + deadline;
-    w.tokens.insert(token.clone(), Grant { actor_id: caller.actor_id, now: caller.now.clone(), access, id_wire: wire, expires, active: true });
+    w.tokens.insert(
+        token.clone(),
+        Grant { actor_id: caller.actor_id, now: caller.now.clone(), access, capability_grants, id_wire: wire, expires, active: true },
+    );
     let mut invoke = json!({ "type": "invoke", "invoke": invoke_id, "impl": x["implementation"], "input": input, "token": token });
     if let Some(jh) = job_host.as_deref() {
         invoke["job"] = jh.job();
@@ -725,13 +738,8 @@ async fn serve_call(host: &mut dyn WorkerHost, w: &mut Worker, facts: &Value, m:
                 return rej("WIRE.INPUT_BINDING", "집계 입력은 확장 입력에 묶인 값과 같아야 함");
             }
             let caller = Caller { actor_id: g.actor_id, now: g.now.clone() };
-            let mut plan = spike_v2_read::plan::plan_read_in(
-                host.dialect(),
-                facts,
-                &json!({ "aggregate": name, "input": fixed }),
-                &caller,
-                g.id_wire,
-            )?;
+            let mut plan =
+                spike_v2_read::plan::plan_read_in(host.dialect(), facts, &json!({ "aggregate": name, "input": fixed }), &caller, g.id_wire)?;
             // DB 문장 기한도 확장 호출의 남은 시간 이하로 줄인다.
             plan.deadline_ms = plan.deadline_ms.min(left.max(1));
             let v = host.execute(&plan, g.id_wire).await?;
@@ -755,8 +763,14 @@ async fn serve_call(host: &mut dyn WorkerHost, w: &mut Worker, facts: &Value, m:
             let encoded = spike_v2_read::id_wire::encode_rows(rows, &plan.output_type, g.id_wire)?;
             Ok(json!({ "rows": encoded }))
         }
-        "mongo" => host.mongo(name, &m["input"]).await,
-        "redis" => host.redis(name, &m["input"]).await,
+        "mongo" => {
+            let context = CapabilityPrincipal { actor_id: g.actor_id, grants: g.capability_grants.clone() };
+            host.mongo(&context, name, &m["input"]).await
+        }
+        "redis" => {
+            let context = CapabilityPrincipal { actor_id: g.actor_id, grants: g.capability_grants.clone() };
+            host.redis(&context, name, &m["input"]).await
+        }
         "apply" => rej("WIRE.ACCESS_DENIED", "읽기 확장에서 쓰기(apply) 호출 거부"),
         _ => rej("WIRE.UNSUPPORTED", format!("지원하지 않는 ctx op `{op}`")),
     }
