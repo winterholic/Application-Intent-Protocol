@@ -37,8 +37,15 @@ fn reject_unsupported_infrastructure(config: &Config) -> Result<(), Value> {
     if external_mapping(config)?.is_none() {
         return Err(error("EXTERNAL_MAPPING_REQUIRED", "MySQL adapter는 기존 업무 DB 채택만 지원하므로 external_mapping 설정이 필요함"));
     }
-    let checks: [(&str, bool, &str); 13] = [
-        ("workers", config.workers.is_some(), "확장 worker와 외부 연동은 쓰기·작업 slice 이후"),
+    if let Some(workers) = &config.workers {
+        if workers.enable_writes {
+            return Err(unsupported("workers.enable_writes", "MySQL adapter는 worker write 확장을 아직 지원하지 않음(쓰기·작업 slice 이후)"));
+        }
+        if workers.enable_file_uploads {
+            return Err(unsupported("workers.enable_file_uploads", "MySQL adapter는 worker 파일 업로드를 아직 지원하지 않음"));
+        }
+    }
+    let checks: [(&str, bool, &str); 12] = [
         ("objects", config.objects.is_some(), "객체 저장소 metadata가 PostgreSQL에 있음"),
         ("broker", config.broker.is_some(), "broker offset·outbox가 PostgreSQL에 있음"),
         ("rag", config.rag.is_some(), "RAG 색인이 PostgreSQL(pgvector)에 있음"),
@@ -327,24 +334,44 @@ pub(crate) async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
     // Subscriptions wake on commits of this process; the read-only adapter has none, so the transport answers
     // WIRE.NOT_AVAILABLE for event streams instead of serving a stream that never fires.
     infrastructure.realtime.enabled = false;
+    let extensions = config.workers.as_ref().map(|w| spike_v6_transport::server::ReadExtensions {
+        dir: w.directory.clone(),
+        lang: match w.language {
+            Language::Node => spike_v6_transport::server::WorkerLang::Node,
+            Language::Python => spike_v6_transport::server::WorkerLang::Python,
+        },
+    });
+    // WBS 7.2.3 Slice13-A: 관리형 Mongo/Redis capability 연결
+    if infrastructure.mongo.is_none() {
+        infrastructure.mongo = Some(Arc::new(spike_v4_worker::ManagedMongoCapability::default()));
+    }
+    if infrastructure.redis.is_none() {
+        infrastructure.redis = Some(Arc::new(spike_v4_worker::ManagedRedisCapability::default()));
+    }
     let options = spike_v6_transport::server::ServerOptions { allowed_origins: config.allowed_origins };
     #[cfg(unix)]
     let mut termination =
         tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).map_err(|_| error("SIGNAL_CONFIG", "종료 signal 등록 실패"))?;
-    let mut server = spike_v6_transport::server::listen_relational(
+    let mut server = spike_v6_transport::server::listen_relational_with_extensions(
         deployed.clone(),
         config.wire.id_wire(),
         config.listen,
         Arc::new(backend),
+        extensions,
         options,
         infrastructure,
         Some(authenticator),
     )
     .await
     .map_err(|e| server_start_error(&e))?;
+    let fingerprint = if config.workers.is_some() {
+        spike_v5_sdk::contract_fingerprint_with_extensions(&deployed, config.wire.id_wire())
+    } else {
+        spike_v5_sdk::contract_fingerprint_with_apply(&deployed, config.wire.id_wire())
+    };
     let event = json!({
         "ok": true, "event": "listening", "address": server.address.to_string(), "adapter": "mysql",
-        "fingerprint": spike_v5_sdk::contract_fingerprint_with_apply(&deployed, config.wire.id_wire()),
+        "fingerprint": fingerprint,
         "idWire": config.wire.id_wire().label(), "authentication": "jwt-access-token",
     });
     if report(&event).is_err() {
@@ -363,4 +390,77 @@ pub(crate) async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
         result = server.wait() => { result.map_err(|_| error("SERVER_FAILED", "서버 실행 실패"))?; },
     }
     Ok(json!({"ok": true, "event": "stopped"}))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reject_unsupported_allows_read_workers_and_rejects_writes() {
+        let tmp_map = std::env::temp_dir().join("aip_test_mapping.json");
+        std::fs::write(
+            &tmp_map,
+            serde_json::to_string(&json!({
+                "schema": "test_src",
+                "tables": { "Video": { "table": "video", "columns": { "id": "id" } } }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let base_json = json!({
+            "schema": "test_schema",
+            "database_url_env": "DATABASE_URL",
+            "external_mapping": tmp_map.to_str().unwrap(),
+            "auth": {
+                "issuer": "https://auth.example.com",
+                "audience": "test_app",
+                "jwks": { "kind": "https", "url": "https://auth.example.com/.well-known/jwks.json" }
+            },
+            "rate_limit": null
+        });
+
+        // 1. 읽기 워커는 허용
+        let mut read_worker_json = base_json.clone();
+        read_worker_json["workers"] = json!({
+            "directory": "extensions",
+            "language": "python"
+        });
+        let config: Config = serde_json::from_value(read_worker_json).unwrap();
+        assert!(reject_unsupported_infrastructure(&config).is_ok());
+
+        // 2. 쓰기 워커는 거부
+        let mut write_worker_json = base_json.clone();
+        write_worker_json["workers"] = json!({
+            "directory": "extensions",
+            "language": "python",
+            "enable_writes": true
+        });
+        let config: Config = serde_json::from_value(write_worker_json).unwrap();
+        let err = reject_unsupported_infrastructure(&config).unwrap_err();
+        assert_eq!(err["code"], "DB_ADAPTER_UNSUPPORTED");
+        assert!(err["message"].as_str().unwrap().contains("workers.enable_writes"));
+
+        // 3. 파일 업로드 워커는 거부
+        let mut upload_worker_json = base_json.clone();
+        upload_worker_json["workers"] = json!({
+            "directory": "extensions",
+            "language": "python",
+            "enable_file_uploads": true
+        });
+        let config: Config = serde_json::from_value(upload_worker_json).unwrap();
+        let err = reject_unsupported_infrastructure(&config).unwrap_err();
+        assert_eq!(err["code"], "DB_ADAPTER_UNSUPPORTED");
+        assert!(err["message"].as_str().unwrap().contains("workers.enable_file_uploads"));
+
+        // 4. external_mapping 부재 시 거부
+        let mut no_mapping_json = base_json.clone();
+        no_mapping_json["external_mapping"] = Value::Null;
+        let config: Config = serde_json::from_value(no_mapping_json).unwrap();
+        let err = reject_unsupported_infrastructure(&config).unwrap_err();
+        assert_eq!(err["code"], "EXTERNAL_MAPPING_REQUIRED");
+
+        let _ = std::fs::remove_file(tmp_map);
+    }
 }

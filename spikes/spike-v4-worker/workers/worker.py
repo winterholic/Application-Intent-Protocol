@@ -62,6 +62,37 @@ class Jobs:
     def __init__(self, ctx): self.ctx = ctx
     async def run(self, name, inp, key): return await self.ctx.call("jobs", name, {"input": inp, "key": key})
 
+class Mongo:
+    def __init__(self, ctx): self.ctx = ctx
+    async def find(self, collection, filter=None, projection=None, limit=None):
+        inp = {"command": "find", "filter": filter or {}}
+        if projection is not None: inp["projection"] = projection
+        if limit is not None: inp["limit"] = limit
+        res = await self.ctx.call("mongo", collection, inp)
+        return res.get("docs", []) if isinstance(res, dict) else res
+    async def find_one(self, collection, filter=None, projection=None):
+        inp = {"command": "find_one", "filter": filter or {}}
+        if projection is not None: inp["projection"] = projection
+        res = await self.ctx.call("mongo", collection, inp)
+        return res.get("doc") if isinstance(res, dict) else res
+    async def count_documents(self, collection, filter=None):
+        res = await self.ctx.call("mongo", collection, {"command": "count_documents", "filter": filter or {}})
+        return res.get("count", 0) if isinstance(res, dict) else res
+
+class Redis:
+    def __init__(self, ctx): self.ctx = ctx
+    async def get(self, key):
+        res = await self.ctx.call("redis", key, {"command": "get"})
+        return res.get("value") if isinstance(res, dict) else res
+    async def hgetall(self, key):
+        res = await self.ctx.call("redis", key, {"command": "hgetall"})
+        return res.get("value") if isinstance(res, dict) else res
+    async def exists(self, key):
+        res = await self.ctx.call("redis", key, {"command": "exists"})
+        return res.get("exists") if isinstance(res, dict) else False
+    async def mget(self, keys):
+        return await self.ctx.call("redis", keys[0] if keys else "", {"command": "mget", "keys": keys})
+
 class Ctx:
     def __init__(self, token, job=None):
         self.token = token
@@ -74,6 +105,8 @@ class Ctx:
         self.events = Events(self)
         self.jobs = Jobs(self)
         self.messages = Messages(self)
+        self.mongo = Mongo(self)
+        self.redis = Redis(self)
 
     # durable job 전용: `raise ctx.retry_later("이유")`로 같은 job을 backoff 뒤 다시 시도하게 한다.
     # `after_ms`를 주면 기본 backoff 대신 그 시간(서버가 1초~1시간으로 맞춘다) 뒤에 다시 시도한다.

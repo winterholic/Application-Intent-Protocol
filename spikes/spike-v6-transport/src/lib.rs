@@ -1226,6 +1226,71 @@ async fn serve_conn(
         None
     };
     if let Some(backend) = runtime.infrastructure.relational.clone() {
+        if path == "/extension" {
+            let Some(config) = runtime.extensions.as_ref() else {
+                return reply(&mut w, &err("WIRE.ADAPTER_UNSUPPORTED", "확장 worker가 설정되지 않음")).await;
+            };
+            let mut worker = match spike_v4_worker::Worker::try_start_configured(
+                config.lang,
+                config.dir.to_str().unwrap(),
+                runtime.infrastructure.worker_launch.clone(),
+            )
+            .await
+            {
+                Ok(worker) => worker,
+                Err(_) => return reply(&mut w, &err("WIRE.WORKER_FAILED", "공식 worker 실행 실패")).await,
+            };
+            let Some(name) = body["extension"].as_str() else {
+                worker.stop().await;
+                return reply(&mut w, &err("WIRE.BAD_REQUEST", "확장 이름(`extension`) 필요")).await;
+            };
+            let Some((resource, extension)) = name.split_once('.') else {
+                worker.stop().await;
+                return reply(&mut w, &err("WIRE.BAD_REQUEST", "확장은 `Resource.name`")).await;
+            };
+            let deadline = facts["resources"][resource]["extensions"][extension]["deadlineMs"].as_u64().unwrap_or(1000);
+            let now = match tokio::time::timeout(server::DB_PREFLIGHT_TIMEOUT, backend.now()).await {
+                Ok(Ok(now)) => now,
+                Ok(Err(code)) => {
+                    worker.stop().await;
+                    return reply(&mut w, &err(code, "실행 전 DB 조회 실패")).await;
+                }
+                Err(_) => {
+                    worker.stop().await;
+                    return reply(&mut w, &err("WIRE.DB_UNAVAILABLE", "실행 전 DB 조회 기한 초과")).await;
+                }
+            };
+            let caller = Caller { actor_id: session.as_ref().map(|s| s.actor_id), now };
+            let mut host = spike_v4_worker::RelationalWorkerHost::with_capabilities(
+                &*backend,
+                runtime.infrastructure.mongo.clone(),
+                runtime.infrastructure.redis.clone(),
+            );
+            let output = tokio::time::timeout(
+                std::time::Duration::from_millis(deadline),
+                spike_v4_worker::invoke_with_host(&mut host, &mut worker, &facts, name, &body["input"], &caller, wire),
+            )
+            .await;
+            worker.stop().await;
+            let mut result = match output {
+                Ok(Ok(output)) => json!({ "ok": true, "output": output }),
+                Ok(Err(e)) => json!({ "ok": false, "code": e.code, "msg": "공식 읽기 확장 호출 거부" }),
+                Err(_) => json!({ "ok": false, "code": "WIRE.DEADLINE_EXCEEDED", "msg": "공식 읽기 확장 기한 초과" }),
+            };
+            if result["ok"] == true {
+                if let Some(fingerprint) = contract_fingerprint {
+                    result["contractFingerprint"] = json!(&*fingerprint);
+                }
+                if let Some(session) = session {
+                    let remaining = session.remaining_ms();
+                    if remaining == 0 {
+                        return reply(&mut w, &err("WIRE.TOKEN_EXPIRED", "읽는 동안 세션 만료")).await;
+                    }
+                }
+            }
+            return reply(&mut w, &result.to_string()).await;
+        }
+
         let mut result = relational::handle(&*backend, &facts, &path, &body, session.as_ref().map(|s| s.actor_id), wire).await;
         if path == "/read" && result["ok"] == true {
             if let Some(fingerprint) = contract_fingerprint {

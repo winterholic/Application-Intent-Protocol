@@ -23,6 +23,7 @@ url = "2"
 base64 = "0.22.1"
 spike-v1-fixture = { path = "../../spikes/spike-v1-fixture" }
 spike-v2-read = { path = "../../spikes/spike-v2-read" }
+spike-v4-worker = { path = "../../spikes/spike-v4-worker" }
 spike-v5-sdk = { path = "../../spikes/spike-v5-sdk" }
 spike-v6-transport = { path = "../../spikes/spike-v6-transport" }
 spike-v11-dev-checks = { path = "../../spikes/spike-v11-dev-checks" }
