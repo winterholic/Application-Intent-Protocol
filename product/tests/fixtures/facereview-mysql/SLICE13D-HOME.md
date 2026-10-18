@@ -48,6 +48,20 @@
 
 FaceReview의 `user_id`는 MySQL과 Mongo 모두 UUID 문자열이다. 현재 `CapabilityPrincipal`은 i64 handle만 갖고 있어 private `youtube_watching_data`와 UUID 문서를 맞출 수 없다(실제 mongod에서 0건/`ACCESS_DENIED` 실증, 기획 확인). 별도 core worker가 수정한다. 확장은 입력의 userId를 신뢰하지 않고, 정책이 걸린 `User` 행의 `id`만 필터에 쓴다. 숫자 id로 통과하는 통합 시험은 "배관이 원본 순위를 낸다"만 보이며 **실제 UUID 사용자 프로필 동등성은 미검증**이다.
 
+### 본인 식별 (admin 다중 User 가시성)
+
+`User` 행 정책은 `(id = actor and active(actor)) or isAdmin(actor)`(`facereview.aip` 30행)라서 ADMIN/SUPER_ADMIN이 호출하면 `read User`가 여러 사용자를 돌려줄 수 있고, 필터·정렬 없는 `limit 1`의 첫 행이 본인이라는 보장이 없다. 이 추론은 reviewer가 제기했고 기획이 정의 코드로 대조했다. 이 Run은 정의의 정책 줄을 직접 읽어 확인했지만, **실제 MySQL·실제 admin·실제 플래너 SQL로는 실행하지 않았다**(scripted 다중행 시험만).
+
+지원되는 self-selection 확인 결과:
+- `read` 필터에 호출자를 가리키는 값이 없다(`id.eq`는 리터럴 값). worker `ctx`에도 공개 identity가 없다. 호출 input의 임의 UUID는 신뢰하지 않는다.
+- 서버가 `user = actor`로만 거르는 자원(`VideoViewLog`, `UserFavoriteGenre`)의 행은 `user` 값이 곧 본인이다(서버 파생).
+
+확장의 처리(`_resolve_self`):
+- `User`를 `limit 2`로 읽는다. 1행이면 본인 행(회원은 본인만, admin도 자기 자신은 항상 보임)이고, own-only 행의 `user`와 모순되면 `SLICE13D.SELF_IDENTITY_MISMATCH`.
+- 2행 이상이면 admin이다. own-only 행의 `user`가 정확히 하나면 그 값을 본인으로 쓰고, 없으면 `SLICE13D.SELF_IDENTITY_UNRESOLVED`, 둘 이상이면 `MISMATCH`. 추측한 id는 private Mongo 질의에 보내지 않는다.
+- 한계(설계 의존): 시청 기록도 선호 장르도 없는 admin은 본인을 확정할 수 없어 오류가 난다. 이를 풀려면 "호출자 본인 id"를 서버가 확장에 주는 공개 경로(core)가 필요하며 이 branch는 새 API를 만들지 않았다.
+- 증거: `product/tests/slice13d_home_extension_test.py`의 `SelfIdentity` 5건(scripted). 수정 전 코드(`bd0bd23`)에 같은 시험을 돌리면 3건 실패·1건 오류로, 스크립트된 admin 응답에서 Mongo에 **다른 사용자의 id**로 질의하는 것이 재현된다.
+
 ## 증거 구분
 
 | 증거 | 내용 |

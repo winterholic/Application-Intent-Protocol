@@ -146,16 +146,36 @@ def rank_with_fallback(pool, recent_watching, favorite_genres, viewed_ids, limit
     return rng.sample(candidates, min(limit, len(candidates)))
 
 
+def _resolve_self(user_rows, own_rows):
+    # The User row policy is `(id = actor and active(actor)) or isAdmin(actor)`: a plain member sees exactly their own row, but
+    # an ADMIN sees every user, so "the first visible row" can belong to someone else. No query filter can name the caller and
+    # the worker ctx exposes no identity, so the only server-derived proof of "me" is the `user` of rows whose policy is
+    # strictly `user = actor` (VideoViewLog, UserFavoriteGenre). Anything that cannot be resolved this way is an error; a
+    # guessed id would be handed to the private Mongo gate and, for an admin, could request another member's summaries.
+    own = {r['user'] for r in own_rows if r.get('user') is not None}
+    if len(user_rows) == 1:
+        # Visible to the caller, so it is their own row (a member sees only theirs; an admin always sees themself).
+        user_id = user_rows[0]['id']
+        if own and own != {user_id}:
+            raise _fail('SLICE13D.SELF_IDENTITY_MISMATCH')
+        return user_id
+    if len(own) == 1:
+        return next(iter(own))
+    raise _fail('SLICE13D.SELF_IDENTITY_UNRESOLVED' if not own else 'SLICE13D.SELF_IDENTITY_MISMATCH')
+
+
 async def personalized(input, ctx):
-    me = await ctx.data.read({'read': 'User', 'select': ['id'], 'limit': 1})
-    if not me.get('rows'):
+    me = await ctx.data.read({'read': 'User', 'select': ['id'], 'limit': 2})
+    user_rows = me.get('rows', [])
+    if not user_rows:
         raise _fail('SLICE13D.USER_NOT_FOUND')
-    user_id = me['rows'][0]['id']
 
     # Original order is the unordered dynamic relationship, i.e. storage order; created_at, id is the closest stable choice.
-    genre_rows = await _read_all(ctx, 'UserFavoriteGenre', ['genre'], [{'field': 'created_at', 'dir': 'asc'}])
+    genre_rows = await _read_all(ctx, 'UserFavoriteGenre', ['genre', 'user'], [{'field': 'created_at', 'dir': 'asc'}])
     favorite_genres = [r['genre'] for r in genre_rows]
-    viewed_ids = {r['video'] for r in await _read_all(ctx, 'VideoViewLog', ['video'], [{'field': 'created_at', 'dir': 'asc'}])}
+    view_rows = await _read_all(ctx, 'VideoViewLog', ['video', 'user'], [{'field': 'created_at', 'dir': 'asc'}])
+    viewed_ids = {r['video'] for r in view_rows}
+    user_id = _resolve_self(user_rows, genre_rows + view_rows)
 
     # Only the exclusion projection the server allows today; see the report for the field-allowlist gap.
     found = await ctx.call('mongo', 'youtube_watching_data', {

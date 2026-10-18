@@ -32,12 +32,14 @@ class FakeCtx:
     """Scripted peer: records every call and answers from fixed state. Any non-read op fails the test."""
 
     def __init__(self, pool=None, summaries=None, favorites=(), viewed=(), bookmarks=(), categories=None,
-                 redis_error=None, mongo_error=None, actor_rows=True, page_override=None):
+                 redis_error=None, mongo_error=None, actor_rows=True, page_override=None, user_rows=None, own_user=None):
         self.calls = []
         self.pool, self.summaries = pool, summaries or []
         self.favorites, self.viewed, self.bookmarks = list(favorites), list(viewed), list(bookmarks)
         self.categories, self.redis_error, self.mongo_error = categories, redis_error, mongo_error
         self.actor_rows, self.page_override = actor_rows, page_override
+        # user_rows: what a scripted server would return for `read User` (it honours `limit`, like the real planner).
+        self.user_rows, self.own_user = user_rows, own_user if own_user is not None else UID
         ctx = self
         self.data = type('D', (), {'read': staticmethod(ctx._read)})()
         self.redis = type('R', (), {'get': staticmethod(ctx._get), 'hgetall': staticmethod(ctx._hgetall)})()
@@ -46,9 +48,11 @@ class FakeCtx:
         self.calls.append(('read', q))
         res = q['read']
         if res == 'User':
+            if self.user_rows is not None:
+                return {'rows': self.user_rows[:q['limit']]}
             return {'rows': [{'id': UID}] if self.actor_rows else []}
-        source = {'UserFavoriteGenre': [{'genre': g} for g in self.favorites],
-                  'VideoViewLog': [{'video': v} for v in self.viewed],
+        source = {'UserFavoriteGenre': [{'genre': g, 'user': self.own_user} for g in self.favorites],
+                  'VideoViewLog': [{'video': v, 'user': self.own_user} for v in self.viewed],
                   'VideoBookmark': [{'video': v} for v in self.bookmarks]}[res]
         if self.page_override is not None:
             return {'rows': [source[0]] * q['limit'] if source else [{'video': 'x', 'genre': 'drama'}] * q['limit']}
@@ -242,6 +246,59 @@ class CategoryFlow(unittest.TestCase):
         ctx = FakeCtx(categories=self.cats)
         run(HOME.category({}, ctx))
         self.assertEqual({c[0] for c in ctx.calls}, {'redis.hgetall', 'read'})
+
+
+class SelfIdentity(unittest.TestCase):
+    """Reviewer REPORT4 inference, reproduced against a SCRIPTED server.
+
+    `User` rows are visible as `(id = actor and active(actor)) or isAdmin(actor)` (facereview.aip line 30), so an ADMIN's
+    `read User limit 1` can return someone else's row. These tests script that multi-row answer; they show what the
+    extension does with it. They are NOT a run against a real MySQL, a real admin, or the real planner's SQL.
+    """
+
+    OTHER = '00000000-0000-4000-8000-000000000001'      # sorts before UID, so it is the "first row" an id-ordered read returns
+    BYSTANDER = '00000000-0000-4000-8000-000000000002'
+
+    def setUp(self):
+        self.pool = oracle.make_pool(random.Random(71), 40)
+
+    def mongo_filters(self, ctx):
+        return [c[2]['filter'] for c in ctx.calls if c[0] == 'mongo']
+
+    def test_admin_whose_first_visible_row_is_someone_else_still_queries_only_their_own_id(self):
+        ctx = FakeCtx(self.pool, [], ['music'], [self.pool[0]['video_id']], user_rows=[{'id': self.OTHER}, {'id': UID}, {'id': self.BYSTANDER}])
+        run(HOME.personalized({}, ctx))
+        self.assertEqual(self.mongo_filters(ctx), [{'user_id': UID}])
+        user_read = [c[1] for c in ctx.calls if c[0] == 'read' and c[1]['read'] == 'User'][0]
+        self.assertEqual(user_read['limit'], 2, 'two rows are enough to tell a member from an admin')
+
+    def test_admin_with_no_own_only_rows_gets_an_explicit_error_and_no_private_query(self):
+        ctx = FakeCtx(self.pool, [], [], [], user_rows=[{'id': self.OTHER}, {'id': UID}])
+        with self.assertRaises(HOME.Slice13dError) as cm:
+            run(HOME.personalized({}, ctx))
+        self.assertEqual(cm.exception.code, 'SLICE13D.SELF_IDENTITY_UNRESOLVED')
+        self.assertEqual(self.mongo_filters(ctx), [], 'a guessed id must never reach the private collection')
+        self.assertFalse([c for c in ctx.calls if c[0] == 'redis.get'])
+
+    def test_single_visible_row_that_contradicts_the_own_only_rows_is_rejected(self):
+        ctx = FakeCtx(self.pool, [], ['music'], [], user_rows=[{'id': self.OTHER}], own_user=UID)
+        with self.assertRaises(HOME.Slice13dError) as cm:
+            run(HOME.personalized({}, ctx))
+        self.assertEqual(cm.exception.code, 'SLICE13D.SELF_IDENTITY_MISMATCH')
+        self.assertEqual(self.mongo_filters(ctx), [])
+
+    def test_member_with_single_row_and_no_own_rows_still_works(self):
+        ctx = FakeCtx(self.pool, [], [], [], user_rows=[{'id': UID}])
+        run(HOME.personalized({}, ctx))
+        self.assertEqual(self.mongo_filters(ctx), [{'user_id': UID}])
+
+    def test_resolve_self_unit(self):
+        r = HOME._resolve_self
+        self.assertEqual(r([{'id': 'a'}], []), 'a')
+        self.assertEqual(r([{'id': 'a'}, {'id': 'b'}], [{'user': 'b'}, {'user': 'b'}]), 'b')
+        for rows, own in (([{'id': 'a'}, {'id': 'b'}], []), ([{'id': 'a'}, {'id': 'b'}], [{'user': 'a'}, {'user': 'b'}]), ([{'id': 'a'}], [{'user': 'b'}])):
+            with self.assertRaises(HOME.Slice13dError):
+                r(rows, own)
 
 
 class DeclarationContract(unittest.TestCase):
