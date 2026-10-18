@@ -23,7 +23,7 @@ jobs:
       # Disposable native-stores fixture credentials; no service secrets are used.
       AIP_TEST_MONGO_URL: mongodb://aip_test_slice13a:local_fixture_only_13a@127.0.0.1:15441/aip_test_slice13a?authSource=admin
       # Isolated mongod used only by the UUID ownership integration tests.
-      AIP_TEST_MONGO_UUID_URL: mongodb://127.0.0.1:15443/aip_test_uuid_ci
+      AIP_TEST_MONGO_UUID_URL: mongodb://127.0.0.1:25443/aip_test_uuid_ci
       AIP_TEST_REDIS_URL: redis://:local_fixture_only_13a@127.0.0.1:15442/
     services:
       postgres:

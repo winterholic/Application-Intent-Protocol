@@ -32,7 +32,7 @@ services:
     image: mongo:8.0
     container_name: aip-ci-uuid-mongo-fixture
     ports:
-      - "127.0.0.1:15443:27017"
+      - "127.0.0.1:25443:27017"
     healthcheck:
       test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand({ping:1}).ok"]
       interval: 2s

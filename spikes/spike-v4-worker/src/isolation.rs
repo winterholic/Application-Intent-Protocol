@@ -663,7 +663,8 @@ mod tests {
     #[tokio::test]
     async fn runtime_probe_rejects_success_without_version_output() {
         let dir = TempDir::new("probe-empty");
-        let config = probe_runtime(&dir, "#!/bin/sh\nexit 0\n");
+        let runtime = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/empty-runtime.sh");
+        let config = WorkerLaunchConfig { isolation: Isolation::None, runtime_executable: Some(runtime), ..WorkerLaunchConfig::default() };
         let error = config.probe(Lang::Node, dir.path()).await.unwrap_err();
         assert_eq!(error.kind(), std::io::ErrorKind::UnexpectedEof);
         assert!(error.to_string().contains("no version output"));
