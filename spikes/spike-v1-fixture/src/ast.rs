@@ -140,6 +140,7 @@ pub struct Transition {
     pub expect: Vec<(String, Span)>,
     pub from: Expr,
     pub to: Vec<(String, Expr)>,
+    pub delete: bool,
     pub allow: Expr,
     pub repeat: Option<(String, Span)>,
     pub effects: Vec<Effect>,
@@ -160,6 +161,12 @@ pub enum Effect {
         max_rows: Option<i64>,
         matches: Vec<(String, Expr)>,
         values: Vec<(String, Expr)>,
+        span: Span,
+    },
+    Delete {
+        resource: String,
+        max_rows: Option<i64>,
+        matches: Vec<(String, Expr)>,
         span: Span,
     },
     Notify {

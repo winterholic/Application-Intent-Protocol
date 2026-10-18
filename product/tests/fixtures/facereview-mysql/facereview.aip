@@ -40,7 +40,20 @@ resource User {
     patch role
     to updated_at = now
   }
+  // 회원 본인 탈퇴 (원본 MypageService.withdraw_user 대응 — 5개 테이블 물리 삭제 + 댓글 soft delete)
+  transition withdraw {
+    allow id = actor and active(actor)
+    from is_deleted = false
+    to is_deleted = true, updated_at = now
+    update many Comment maxRows 1000 where user = this.id { is_deleted = true; updated_at = now }
+    delete many VideoLike maxRows 1000 where user = this.id
+    delete many VideoViewLog maxRows 1000 where user = this.id
+    delete many VideoRequest maxRows 1000 where user = this.id
+    delete many UserFavoriteGenre maxRows 1000 where user = this.id
+    delete many UserPointHistory maxRows 1000 where user = this.id
+  }
   expose apply deactivate { target id; bulk maxRows 1 }
+  expose apply withdraw { target id; bulk maxRows 1 }
   expose apply changeRole { target id; bulk maxRows 1 }
   expose read {
     select id, email, name, role, profile_image_id, is_tutorial_done, is_verify_email_done, is_deleted, created_at
@@ -132,6 +145,12 @@ resource VideoLike {
     fields video, user
     allow user = actor and active(actor) and video.is_deleted = false
   }
+  transition remove {
+    allow user = actor and active(actor)
+    from true
+    delete
+  }
+  expose apply remove { target id; bulk maxRows 1 }
   expose read {
     select id, video, user, created_at
     refIds video, user
@@ -148,6 +167,12 @@ resource VideoBookmark {
     fields video, user
     allow user = actor and active(actor) and video.is_deleted = false
   }
+  transition remove {
+    allow user = actor and active(actor)
+    from true
+    delete
+  }
+  expose apply remove { target id; bulk maxRows 1 }
   expose read {
     select id, video, user, created_at
     refIds video, user

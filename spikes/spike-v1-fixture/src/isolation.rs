@@ -60,8 +60,9 @@ pub fn mark(facts: &mut Value) {
     for (name, rf) in &resources {
         for (tr, t) in rf["transitions"].as_object().into_iter().flatten() {
             // writes reach the resource itself and the targets of its effects
-            let targets = std::iter::once(name.as_str())
-                .chain(t["effects"].as_array().into_iter().flatten().flat_map(|e| ["create", "update"].into_iter().filter_map(|k| e[k].as_str())));
+            let targets = std::iter::once(name.as_str()).chain(
+                t["effects"].as_array().into_iter().flatten().flat_map(|e| ["create", "update", "delete"].into_iter().filter_map(|k| e[k].as_str())),
+            );
             if reads(&t["allow"], &predicates) || reads(&t["from"], &predicates) || targets.into_iter().any(|x| checked.contains(x)) {
                 transition_marks.push((name.clone(), tr.clone()));
             }

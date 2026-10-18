@@ -362,7 +362,7 @@ fn judge_query(
         done.push(format!("(t.{col} IS NOT DISTINCT FROM {val})"));
     }
     // 호출자 patch는 매번 실제 쓰기다. 멱등 재시도는 같은 key의 저장 결과를 재생한다.
-    let done = if t.get("patch").is_some() { "FALSE".into() } else { format!("({})", done.join(" AND ")) };
+    let done = if t.get("patch").is_some() || t["delete"] == true || done.is_empty() { "FALSE".into() } else { format!("({})", done.join(" AND ")) };
     let scope_sql = if scope.is_null() { "NULL::text".to_string() } else { format!("({})::text", cx.value(scope, &env).map_err(internal)?) };
     let lock = if !locked || knobs.skip_row_lock { "" } else { " FOR UPDATE OF t" };
     let sel = match target {
@@ -567,6 +567,58 @@ async fn update(
     Ok(())
 }
 
+async fn delete_rows(
+    tx: &Transaction<'_>,
+    facts: &Value,
+    res: &str,
+    tr: &str,
+    change: &[EntityId],
+    caller: &Caller,
+    knobs: &Knobs,
+) -> Result<(), Reject> {
+    if change.is_empty() {
+        return Ok(());
+    }
+    let t = &facts["resources"][res]["transitions"][tr];
+    let mut cx = Ctx::new(facts, caller.actor_id, &caller.now);
+    let env = Env { this: Some(("t".into(), res.to_string())), ..Default::default() };
+    let from = cx.cond(&t["from"], &env).map_err(internal)?;
+    let ip = cx.params.bind(Some(id_array(change)), id_array_cast(facts, res));
+    let audit_table = AUDIT_TABLE.read().map_err(|_| internal("감사 테이블 잠금"))?.clone();
+    let del = match audit_table {
+        None => format!("DELETE FROM {} t WHERE t.id = ANY({ip}) AND {from} RETURNING t.id", table(res)),
+        Some(audit) => {
+            let pairs: Vec<String> = facts["resources"][res]["fields"]
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(|f| format!("'{f}', to_jsonb(t.{})", column(facts, res, f).unwrap()))
+                .collect();
+            let parts: Vec<String> = pairs.chunks(50).map(|chunk| format!("jsonb_build_object({})", chunk.join(", "))).collect();
+            let snapshot = if parts.is_empty() { "'{}'::jsonb".to_string() } else { parts.join(" || ") };
+            let actor = cx.params.bind(caller.actor_id.map(|id| id.to_string()), "bigint");
+            let via = cx.params.bind(Some(knobs.audit_via.unwrap_or("apply").to_string()), "text");
+            let key = cx.params.bind(knobs.audit_key.clone(), "text");
+            let resource = cx.params.bind(Some(res.to_string()), "text");
+            let transition = cx.params.bind(Some(tr.to_string()), "text");
+            format!(
+                "WITH deleted AS (DELETE FROM {table} t WHERE t.id = ANY({ip}) AND {from} RETURNING t.id, {snapshot} AS before), \
+                 recorded AS (INSERT INTO {audit}(actor_id, via, request_key, resource, transition, target_id, before, after) \
+                 SELECT {actor}, {via}, {key}, {resource}, {transition}, id, before, 'null'::jsonb FROM deleted) \
+                 SELECT id FROM deleted",
+                table = table(res),
+            )
+        }
+    };
+    let params = cx.params.values.clone();
+    let rows = typed_query(tx, del.as_str(), &params).await.map_err(|e| write_err("삭제", e))?;
+    let n = rows.len();
+    if n != change.len() {
+        return rej("WIRE.CONFLICT", format!("판정 {}개와 실제 삭제 {n}개가 다름. 전체 취소", change.len()));
+    }
+    Ok(())
+}
+
 /// 연결이 끊기거나 응답을 읽을 수 없어 서버가 문장을 끝냈는지 알 수 없는 오류인지 가른다.
 /// SQLSTATE가 있는 서버 오류는 문장 결과가 확정이라(제약 위반·직렬화 실패 등) 여기에 넣지 않는다.
 /// tokio-postgres는 오류 종류를 공개하지 않아 `is_closed`와 표시 문구(Io·UnexpectedMessage·Parse)로 가른다.
@@ -644,7 +696,15 @@ fn write_err(stage: &str, e: tokio_postgres::Error) -> Reject {
 }
 
 /// 서버가 정의한 전이 효과. 값은 바뀐 대상 행에서 계산한다(W2).
-async fn effects(tx: &Transaction<'_>, facts: &Value, res: &str, tr: &str, change: &[EntityId], caller: &Caller) -> Result<(), Reject> {
+async fn effects(
+    tx: &Transaction<'_>,
+    facts: &Value,
+    res: &str,
+    tr: &str,
+    change: &[EntityId],
+    caller: &Caller,
+    knobs: &Knobs,
+) -> Result<(), Reject> {
     if change.is_empty() {
         return Ok(());
     }
@@ -699,6 +759,96 @@ async fn effects(tx: &Transaction<'_>, facts: &Value, res: &str, tr: &str, chang
             got.sort();
             if children.is_some_and(|count| count != got.len()) || (children.is_none() && got != change) {
                 return rej("WIRE.EFFECT_TARGET_MISSING", format!("`{target}` 갱신 대상이 대상 행마다 하나가 아님"));
+            }
+            continue;
+        }
+        if let Some(target) = e["delete"].as_str() {
+            let mut conds = vec![];
+            for (f, v) in e["match"].as_object().unwrap() {
+                conds.push(format!("u.{} = {}", column(facts, target, f).unwrap(), cx.value(v, &env).map_err(internal)?));
+            }
+            let ip = cx.params.bind(Some(id_array(change)), id_array_cast(facts, res));
+            let max_rows = e
+                .get("maxRows")
+                .map(|value| value.as_i64().filter(|n| (1..=1000).contains(n)).ok_or_else(|| internal("many delete 상한 오류")))
+                .transpose()?;
+            let limit = max_rows.unwrap_or(change.len() as i64) + 1;
+            let select = format!(
+                "SELECT t.id, u.id FROM {} u JOIN {} t ON {} WHERE t.id = ANY({ip}) ORDER BY u.id LIMIT {limit} FOR UPDATE OF u",
+                table(target),
+                table(res),
+                conds.join(" AND ")
+            );
+            let pairs = typed_query(tx, &select, &cx.params.values).await.map_err(|err| write_err("전이 효과", err))?;
+            let mut parents_hit: Vec<EntityId> = pairs.iter().map(|row| row.get(0)).collect();
+            let mut children: Vec<EntityId> = pairs.iter().map(|row| row.get(1)).collect();
+            if max_rows.is_some_and(|max| children.len() as i64 > max) {
+                return rej("WIRE.EFFECT_TARGET_MISSING", "선언한 전이 효과 범위를 처리할 수 없음");
+            }
+            if max_rows.is_none() {
+                parents_hit.sort();
+                let mut expected = change.to_vec();
+                expected.sort();
+                if parents_hit != expected {
+                    return rej("WIRE.EFFECT_TARGET_MISSING", format!("`{target}` 삭제 대상이 대상 행마다 하나가 아님"));
+                }
+            }
+            if children.is_empty() {
+                continue;
+            }
+            children.sort();
+
+            // Delete the exact locked child IDs. RETURNING supplies the full before snapshot used by the audit row,
+            // so the audited rows and affected-row check share one database statement and transaction.
+            let mut del_cx = Ctx::new(facts, caller.actor_id, &caller.now);
+            let child_ids = del_cx.params.bind(Some(id_array(&children)), id_array_cast(facts, target));
+            let audit_table = AUDIT_TABLE.read().map_err(|_| internal("감사 테이블 잠금"))?.clone();
+            let rows = if let Some(audit) = audit_table {
+                let pairs: Vec<String> = facts["resources"][target]["fields"]
+                    .as_object()
+                    .ok_or_else(|| internal("효과 대상 필드 누락"))?
+                    .keys()
+                    .map(|field| {
+                        let key = field.replace('\'', "''");
+                        let col = column(facts, target, field).ok_or_else(|| internal("효과 대상 열 누락"))?;
+                        Ok(format!("'{key}', to_jsonb(u.{col})"))
+                    })
+                    .collect::<Result<_, Reject>>()?;
+                let chunks: Vec<String> = pairs.chunks(50).map(|chunk| format!("jsonb_build_object({})", chunk.join(", "))).collect();
+                let snapshot = if chunks.is_empty() { "'{}'::jsonb".to_string() } else { chunks.join(" || ") };
+                let actor = del_cx.params.bind(caller.actor_id.map(|id| id.to_string()), "bigint");
+                let via = del_cx.params.bind(Some(knobs.audit_via.unwrap_or("apply").to_string()), "text");
+                let key = del_cx.params.bind(knobs.audit_key.clone(), "text");
+                let resource = del_cx.params.bind(Some(target.to_string()), "text");
+                let transition = del_cx.params.bind(Some(format!("{tr}:delete")), "text");
+                let params = del_cx.params.values.clone();
+                let audit_id = if id_kind(facts, target) == "uuid" { "id::text" } else { "id" };
+                let sql = format!(
+                    "WITH deleted AS (DELETE FROM {} u WHERE u.id = ANY({child_ids}) RETURNING u.id AS id, {snapshot} AS before), \
+                     recorded AS (INSERT INTO {audit}(actor_id, via, request_key, resource, transition, target_id, before, after) \
+                     SELECT {actor}, {via}, {key}, {resource}, {transition}, {audit_id}, before, 'null'::jsonb FROM deleted RETURNING target_id::text AS id_text) \
+                     SELECT id_text FROM recorded",
+                    table(target)
+                );
+                typed_query(tx, &sql, &params).await.map_err(|e| write_err("전이 효과 감사", e))?
+            } else {
+                let params = del_cx.params.values.clone();
+                let sql = format!("DELETE FROM {} u WHERE u.id = ANY({child_ids}) RETURNING u.id::text", table(target));
+                typed_query(tx, &sql, &params).await.map_err(|e| write_err("전이 효과 삭제", e))?
+            };
+            let mut got = Vec::with_capacity(rows.len());
+            for row in rows {
+                let text: String = row.get(0);
+                let id = if id_kind(facts, target) == "uuid" {
+                    parse_entity_id(facts, target, &json!(text), IdWire::DecimalString)?
+                } else {
+                    EntityId::Number(text.parse().map_err(|_| internal("삭제된 효과 ID가 정수가 아님"))?)
+                };
+                got.push(id);
+            }
+            got.sort();
+            if got != children {
+                return rej("WIRE.EFFECT_TARGET_MISSING", format!("`{target}` 삭제 대상이 대상 행마다 하나가 아님"));
             }
             continue;
         }
@@ -1110,8 +1260,13 @@ async fn apply_op(
     let j = judge(tx, facts, res, tr, &target, ex["bulkMaxRows"].as_i64().unwrap_or(1), &ex["sameScope"], caller, knobs).await?;
     let decided = Caller { actor_id: caller.actor_id, now: j.now.clone() };
     ensure_refs_readable(tx, facts, res, &input.values, &decided, knobs).await?;
-    update(tx, facts, res, tr, &j.change, &decided, knobs, Some(&input)).await?;
-    effects(tx, facts, res, tr, &j.change, &decided).await?;
+    if facts["resources"][res]["transitions"][tr]["delete"] == true {
+        effects(tx, facts, res, tr, &j.change, &decided, knobs).await?;
+        delete_rows(tx, facts, res, tr, &j.change, &decided, knobs).await?;
+    } else {
+        update(tx, facts, res, tr, &j.change, &decided, knobs, Some(&input)).await?;
+        effects(tx, facts, res, tr, &j.change, &decided, knobs).await?;
+    }
     Ok(Applied { changed: j.change, unchanged: j.unchanged })
 }
 
@@ -1493,7 +1648,7 @@ async fn compose_exec(
                     return rej("WIRE.BAD_VALUE", "patch/expect 전이는 values/expect를 제공하는 bundle.apply로 호출해야 함");
                 }
                 update(tx, facts, res, t, &j.change, &decided, knobs, None).await?;
-                effects(tx, facts, res, t, &j.change, &decided).await?;
+                effects(tx, facts, res, t, &j.change, &decided, knobs).await?;
                 out.applied.push(Applied { changed: j.change, unchanged: j.unchanged });
             }
             Step::Create(target, vals) => {

@@ -203,17 +203,23 @@ impl Session<'_> {
         let allow = cx.cond(&t["allow"], &env).map_err(internal)?;
         let from = cx.cond(&t["from"], &env).map_err(internal)?;
         let mut done = vec![];
-        for (f, v) in t["to"].as_object().ok_or_else(|| internal("전이 to 누락"))? {
-            if v.get("increment").is_some() {
-                // An increment has no "already in the target state"; sema forbids combining it with `repeat unchanged`.
-                done.push("FALSE".to_string());
-                continue;
+        if let Some(to_map) = t["to"].as_object() {
+            for (f, v) in to_map {
+                if v.get("increment").is_some() {
+                    // An increment has no "already in the target state"; sema forbids combining it with `repeat unchanged`.
+                    done.push("FALSE".to_string());
+                    continue;
+                }
+                let val = cx.value(v, &env).map_err(internal)?;
+                done.push(format!("({} <=> {val})", cx.qualified("t", &column(facts, res, f).ok_or_else(|| internal("열 누락"))?)));
             }
-            let val = cx.value(v, &env).map_err(internal)?;
-            done.push(format!("({} <=> {val})", cx.qualified("t", &column(facts, res, f).ok_or_else(|| internal("열 누락"))?)));
         }
         // A caller patch is a real write every time; an idempotent retry replays the stored result of the same key.
-        let done = if t.get("patch").is_some() { "FALSE".to_string() } else { format!("({})", done.join(" AND ")) };
+        let done = if t.get("patch").is_some() || t["delete"] == true || done.is_empty() {
+            "FALSE".to_string()
+        } else {
+            format!("({})", done.join(" AND "))
+        };
         let scope_sql = if scope.is_null() {
             "NULL".to_string()
         } else {
@@ -472,6 +478,33 @@ impl Session<'_> {
         self.touch(res, change.iter().copied());
         Ok(())
     }
+
+    async fn delete_rows(&mut self, res: &str, tr: &str, change: &[EntityId], caller: &Caller) -> Result<(), Reject> {
+        if change.is_empty() {
+            return Ok(());
+        }
+        let facts = self.facts;
+        let t = &facts["resources"][res]["transitions"][tr];
+        let audited: Vec<String> = facts["resources"][res]["fields"].as_object().map(|f| f.keys().cloned().collect()).unwrap_or_default();
+        let before = self.snapshot(res, &audited, change, caller.actor_id, &caller.now).await?;
+        let mut cx = self.ctx(caller.actor_id, &caller.now, false);
+        let env = Env { this: Some(("t".into(), res.to_string())), ..Default::default() };
+        let from = cx.cond(&t["from"], &env).map_err(internal)?;
+        let list = self.ids(&mut cx, res, change);
+        let id_col = cx.qualified("t", "id");
+        let sql = format!("DELETE t FROM {} t WHERE {id_col} IN {list} AND {from}", cx.table(res));
+        let (sql, params) = cx.params.finish(sql);
+        let (matched, _) = self.run("삭제", &sql, &params).await?;
+        if matched != change.len() as u64 {
+            return rej("WIRE.CONFLICT", format!("판정 {}개와 실제 삭제 {matched}개가 다름. 전체 취소", change.len()));
+        }
+        let mut after = BTreeMap::new();
+        for id in change {
+            after.insert(*id, Value::Null);
+        }
+        self.record_audit(res, tr, caller, &before, &after).await?;
+        Ok(())
+    }
 }
 
 impl Session<'_> {
@@ -486,6 +519,8 @@ impl Session<'_> {
             let env = Env { this: Some(("t".into(), res.to_string())), ..Default::default() };
             if let Some(target) = e["update"].as_str() {
                 self.effect_update(res, target, e, change, caller, &env).await?;
+            } else if let Some(target) = e["delete"].as_str() {
+                self.effect_delete(res, tr, target, e, change, caller, &env).await?;
             } else if let Some(target) = e["create"].as_str() {
                 self.effect_create(res, target, e, change, caller, &env).await?;
             } else {
@@ -587,6 +622,94 @@ impl Session<'_> {
         if matched != children.len() as u64 {
             return rej("WIRE.EFFECT_TARGET_MISSING", format!("`{target}` 갱신 대상이 대상 행마다 하나가 아님"));
         }
+        self.touch(target, children);
+        Ok(())
+    }
+
+    async fn effect_delete(
+        &mut self,
+        res: &str,
+        tr: &str,
+        target: &str,
+        e: &Value,
+        change: &[EntityId],
+        caller: &Caller,
+        env: &Env,
+    ) -> Result<(), Reject> {
+        let facts = self.facts;
+        let mut cx = self.ctx(caller.actor_id, &caller.now, false);
+        let mut conds = vec![];
+        for (f, v) in e["match"].as_object().ok_or_else(|| internal("효과 match 누락"))? {
+            conds.push(format!(
+                "{} = {}",
+                cx.qualified("u", &column(facts, target, f).ok_or_else(|| internal("열 누락"))?),
+                cx.value(v, env).map_err(internal)?
+            ));
+        }
+        let parents = self.ids(&mut cx, res, change);
+        let (tid, uid) = (cx.qualified("t", "id"), cx.qualified("u", "id"));
+        let (rtable, ttable) = (cx.table(res), cx.table(target));
+        // Lock the child rows first, in id order, and learn which rows the effect touches.
+        let limit = match e.get("maxRows") {
+            Some(max) => Some(max.as_i64().filter(|n| (1..=1000).contains(n)).ok_or_else(|| internal("many delete 상한 오류"))?),
+            None => None,
+        };
+        let select = format!(
+            "SELECT {tid}, {uid} FROM {ttable} u JOIN {rtable} t ON {} WHERE {tid} IN {parents} ORDER BY {uid}{} FOR UPDATE OF u",
+            conds.join(" AND "),
+            limit.map(|max| format!(" LIMIT {}", max + 1)).unwrap_or_default()
+        );
+        let (select, params) = cx.params.finish(select);
+        let pairs = self.rows("전이 효과", &select, &params).await?;
+        let mut children = vec![];
+        let mut parents_hit = vec![];
+        for pair in &pairs {
+            parents_hit.push(entity(facts, res, pair.as_ref(0))?);
+            children.push(entity(facts, target, pair.as_ref(1))?);
+        }
+        match limit {
+            Some(max) => {
+                if pairs.len() as i64 > max {
+                    return rej("WIRE.EFFECT_TARGET_MISSING", "선언한 전이 효과 범위를 처리할 수 없음");
+                }
+                if children.is_empty() {
+                    return Ok(());
+                }
+            }
+            None => {
+                // Exactly one child per changed parent, or the whole write is cancelled.
+                parents_hit.sort();
+                let mut want = change.to_vec();
+                want.sort();
+                if parents_hit != want {
+                    return rej("WIRE.EFFECT_TARGET_MISSING", format!("`{target}` 삭제 대상이 대상 행마다 하나가 아님"));
+                }
+            }
+        }
+        if children.is_empty() {
+            return Ok(());
+        }
+
+        let fields: Vec<String> =
+            facts["resources"][target]["fields"].as_object().ok_or_else(|| internal("효과 대상 필드 누락"))?.keys().cloned().collect();
+        let before = self.snapshot(target, &fields, &children, caller.actor_id, &caller.now).await?;
+        let mut snapshot_ids: Vec<EntityId> = before.keys().copied().collect();
+        let mut expected_ids = children.clone();
+        snapshot_ids.sort();
+        expected_ids.sort();
+        if snapshot_ids != expected_ids {
+            return rej("WIRE.CONFLICT", format!("`{target}` 감사 스냅숏과 잠근 삭제 대상이 다름"));
+        }
+        let mut cx = self.ctx(caller.actor_id, &caller.now, false);
+        let kids = self.ids(&mut cx, target, &children);
+        let sql = format!("DELETE u FROM {} u WHERE {} IN {kids}", cx.table(target), cx.qualified("u", "id"));
+        let (sql, params) = cx.params.finish(sql);
+        let (deleted, _) = self.run("전이 효과", &sql, &params).await?;
+        if deleted != children.len() as u64 {
+            return rej("WIRE.EFFECT_TARGET_MISSING", format!("`{target}` 삭제 대상이 대상 행마다 하나가 아님"));
+        }
+        let after: BTreeMap<EntityId, Value> = children.iter().copied().map(|id| (id, Value::Null)).collect();
+        self.record_audit(target, &format!("{tr}:delete"), caller, &before, &after).await?;
         self.touch(target, children);
         Ok(())
     }
@@ -789,8 +912,13 @@ impl Session<'_> {
         let judged = self.judge(res, tr, &target, ex["bulkMaxRows"].as_i64().unwrap_or(1), &ex["sameScope"], caller).await?;
         let decided = Caller { actor_id: caller.actor_id, now: judged.now.clone() };
         self.ensure_refs_readable(res, &input.values, &decided).await?;
-        self.update(res, tr, &judged.change, &decided, Some(&input)).await?;
-        self.effects(res, tr, &judged.change, &decided).await?;
+        if facts["resources"][res]["transitions"][tr]["delete"] == true {
+            self.effects(res, tr, &judged.change, &decided).await?;
+            self.delete_rows(res, tr, &judged.change, &decided).await?;
+        } else {
+            self.update(res, tr, &judged.change, &decided, Some(&input)).await?;
+            self.effects(res, tr, &judged.change, &decided).await?;
+        }
         Ok(Applied { changed: judged.change, unchanged: judged.unchanged })
     }
 
@@ -942,7 +1070,7 @@ fn write_tags(facts: &Value, name: &str) -> Vec<String> {
     let Some((res, tr)) = name.split_once('.') else { return vec![] };
     let mut out = vec![res.to_string()];
     for e in facts["resources"][res]["transitions"][tr]["effects"].as_array().into_iter().flatten() {
-        for k in ["create", "update"] {
+        for k in ["create", "update", "delete"] {
             if let Some(t) = e[k].as_str() {
                 out.push(t.to_string());
             }

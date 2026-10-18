@@ -205,6 +205,7 @@ async fn facereview_schema_is_adopted_without_business_ddl_and_read_with_origina
     let fingerprint = listening["fingerprint"].as_str().unwrap().to_string();
     let (alice, bob) = (token(&private, "alice"), token(&private, "bob"));
     let (carol, dave) = (token(&private, "carol"), token(&private, "dave"));
+    let erin = token(&private, "erin");
     let read = |token: Option<&str>, query: Value| {
         let (address, fingerprint, token) = (address.clone(), fingerprint.clone(), token.map(str::to_string));
         async move { post(&address, "/read", token.as_deref(), &fingerprint, &json!({"query": query})).await }
@@ -321,9 +322,161 @@ async fn facereview_schema_is_adopted_without_business_ddl_and_read_with_origina
     assert_eq!(kept, Some(1), "the original soft-deletes: the row stays, flagged");
     let again = apply(Some(alice.clone()), "fr-d2", json!({"apply": "Comment.delete", "target": {"ids": [comment_id.clone()]}})).await;
     assert_ne!(again["ok"], true, "{again}");
-    // The unique (user, video) index is a definite answer, never a server error; cancelling a like (a physical delete) is not expressible.
+    // The unique (user, video) index is a definite answer, never a server error.
     let like = create(Some(alice.clone()), "fr-l1", "VideoLike", json!({"video": CAT_VIDEO, "user": ALICE})).await;
     assert_eq!(like["code"], "WIRE.ALREADY_EXISTS", "alice already liked this video in the seed: {like}");
+    // WBS 7.2.4: 좋아요 취소 (물리 삭제) 및 재등록 (토글 완성)
+    let alice_like_id: Option<String> =
+        setup.query_first(format!("SELECT video_like_id FROM video_like WHERE user_id = '{ALICE}' AND video_id = '{CAT_VIDEO}'")).await.unwrap();
+    assert!(alice_like_id.is_some(), "alice has a seeded like");
+    let alice_like_id = alice_like_id.unwrap();
+    let unlike = apply(Some(alice.clone()), "fr-ul1", json!({"apply": "VideoLike.remove", "target": {"ids": [alice_like_id.clone()]}})).await;
+    assert_eq!(unlike["ok"], true, "unlike ok: {unlike}");
+    assert_eq!(unlike["tags"], json!(["VideoLike"]), "delete transition exposes its cache invalidation tag");
+    let unlike_replay = apply(Some(alice.clone()), "fr-ul1", json!({"apply": "VideoLike.remove", "target": {"ids": [alice_like_id.clone()]}})).await;
+    assert_eq!(unlike_replay["replayed"], true, "same key replays the committed remove: {unlike_replay}");
+    let unlike_audit: Option<(String, String, String, String, String, String)> = setup
+        .query_first(format!(
+            "SELECT via, request_key, resource, transition, target_id, JSON_TYPE(after_values) FROM `{META}`.aip_audit WHERE request_key = 'fr-ul1'"
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        unlike_audit,
+        Some(("apply".into(), "fr-ul1".into(), "VideoLike".into(), "remove".into(), alice_like_id.clone(), "NULL".into())),
+        "audit records the physical delete and null after snapshot"
+    );
+    let unlike_audit_count: Option<i64> =
+        setup.query_first("SELECT COUNT(*) FROM aip_t_fr_meta.aip_audit WHERE request_key = 'fr-ul1'").await.unwrap();
+    assert_eq!(unlike_audit_count, Some(1), "idempotent replay does not duplicate the audit record");
+    let like_count: Option<i64> =
+        setup.query_first(format!("SELECT COUNT(*) FROM video_like WHERE user_id = '{ALICE}' AND video_id = '{CAT_VIDEO}'")).await.unwrap();
+    assert_eq!(like_count, Some(0), "like is physically deleted");
+    let alice_likes_after_remove = read(Some(&alice), json!({"read": "VideoLike", "select": ["id"]})).await;
+    assert_eq!(ids(&alice_likes_after_remove), Vec::<String>::new(), "service read observes the committed removal");
+    let relike = create(Some(alice.clone()), "fr-l2", "VideoLike", json!({"video": CAT_VIDEO, "user": ALICE})).await;
+    assert_eq!(relike["ok"], true, "re-like ok after remove: {relike}");
+    let relike_count: Option<i64> =
+        setup.query_first(format!("SELECT COUNT(*) FROM video_like WHERE user_id = '{ALICE}' AND video_id = '{CAT_VIDEO}'")).await.unwrap();
+    assert_eq!(relike_count, Some(1), "re-like leaves exactly one row");
+    let bob_like_remove =
+        apply(Some(alice.clone()), "fr-ul-other", json!({"apply": "VideoLike.remove", "target": {"ids": ["dddddddd-0000-4000-8000-000000000002"]}}))
+            .await;
+    assert_ne!(bob_like_remove["ok"], true, "a caller cannot remove another user's like: {bob_like_remove}");
+    let anonymous_like_remove =
+        apply(None, "fr-ul-anon", json!({"apply": "VideoLike.remove", "target": {"ids": ["dddddddd-0000-4000-8000-000000000002"]}})).await;
+    assert_ne!(anonymous_like_remove["ok"], true, "anonymous like remove is refused: {anonymous_like_remove}");
+    let bob_like_count: Option<i64> = setup
+        .query_first(format!("SELECT COUNT(*) FROM video_like WHERE user_id = '{BOB}' AND video_id = 'aaaaaaaa-0000-4000-8000-000000000002'"))
+        .await
+        .unwrap();
+    assert_eq!(bob_like_count, Some(1), "refused removals preserve the other user's like");
+    let racing_like_id: Option<String> =
+        setup.query_first(format!("SELECT video_like_id FROM video_like WHERE user_id = '{ALICE}' AND video_id = '{CAT_VIDEO}'")).await.unwrap();
+    let racing_like_id = racing_like_id.expect("the re-created Alice like is present");
+    let racing_request = json!({"apply": "VideoLike.remove", "target": {"ids": [racing_like_id]}});
+    let (race_a, race_b) =
+        tokio::join!(apply(Some(alice.clone()), "fr-ul-race", racing_request.clone()), apply(Some(alice.clone()), "fr-ul-race", racing_request),);
+    assert_eq!(
+        (race_a["ok"].clone(), race_b["ok"].clone()),
+        (json!(true), json!(true)),
+        "concurrent same-key removals both resolve: {race_a} {race_b}"
+    );
+    let replay_count = [race_a["replayed"] == true, race_b["replayed"] == true].into_iter().filter(|replayed| *replayed).count();
+    assert_eq!(replay_count, 1, "one concurrent request executes; the other replays");
+    let race_like_count: Option<i64> =
+        setup.query_first(format!("SELECT COUNT(*) FROM video_like WHERE user_id = '{ALICE}' AND video_id = '{CAT_VIDEO}'")).await.unwrap();
+    let race_audit_count: Option<i64> =
+        setup.query_first("SELECT COUNT(*) FROM aip_t_fr_meta.aip_audit WHERE request_key = 'fr-ul-race'").await.unwrap();
+    assert_eq!((race_like_count, race_audit_count), (Some(0), Some(1)), "concurrent deletion leaves no row and one audit");
+
+    let distinct_key_like = create(Some(alice.clone()), "fr-ul-distinct-seed", "VideoLike", json!({"video": CAT_VIDEO, "user": ALICE})).await;
+    assert_eq!(distinct_key_like["ok"], true, "seed distinct-key race target: {distinct_key_like}");
+    let distinct_key_id: Option<String> =
+        setup.query_first(format!("SELECT video_like_id FROM video_like WHERE user_id = '{ALICE}' AND video_id = '{CAT_VIDEO}'")).await.unwrap();
+    let distinct_key_id = distinct_key_id.expect("distinct-key race target exists");
+    let distinct_key_request = json!({"apply": "VideoLike.remove", "target": {"ids": [distinct_key_id]}});
+    let (distinct_a, distinct_b) = tokio::join!(
+        apply(Some(alice.clone()), "fr-ul-distinct-a", distinct_key_request.clone()),
+        apply(Some(alice.clone()), "fr-ul-distinct-b", distinct_key_request),
+    );
+    assert_eq!(
+        [distinct_a["ok"] == true, distinct_b["ok"] == true].into_iter().filter(|ok| *ok).count(),
+        1,
+        "distinct-key concurrent removals execute exactly once: {distinct_a} {distinct_b}"
+    );
+    let distinct_race_like_count: Option<i64> =
+        setup.query_first(format!("SELECT COUNT(*) FROM video_like WHERE user_id = '{ALICE}' AND video_id = '{CAT_VIDEO}'")).await.unwrap();
+    let distinct_race_audit_count: Option<i64> = setup
+        .query_first("SELECT COUNT(*) FROM aip_t_fr_meta.aip_audit WHERE request_key IN ('fr-ul-distinct-a', 'fr-ul-distinct-b')")
+        .await
+        .unwrap();
+    assert_eq!((distinct_race_like_count, distinct_race_audit_count), (Some(0), Some(1)), "distinct keys leave one physical delete and one audit");
+
+    // Both toggle paths exercise create -> physical remove -> zero rows -> create -> one row.
+    let carol_like = create(Some(carol.clone()), "fr-lc1", "VideoLike", json!({"video": CAT_VIDEO, "user": CAROL})).await;
+    assert_eq!(carol_like["ok"], true, "create Carol's like: {carol_like}");
+    let carol_like_id: Option<String> =
+        setup.query_first(format!("SELECT video_like_id FROM video_like WHERE user_id = '{CAROL}' AND video_id = '{CAT_VIDEO}'")).await.unwrap();
+    let carol_like_id = carol_like_id.expect("Carol like was seeded by create");
+    let carol_unlike = apply(Some(carol.clone()), "fr-lc2", json!({"apply": "VideoLike.remove", "target": {"ids": [carol_like_id]}})).await;
+    assert_eq!(carol_unlike["ok"], true, "remove Carol's like: {carol_unlike}");
+    let carol_like_count: Option<i64> =
+        setup.query_first(format!("SELECT COUNT(*) FROM video_like WHERE user_id = '{CAROL}' AND video_id = '{CAT_VIDEO}'")).await.unwrap();
+    assert_eq!(carol_like_count, Some(0));
+    let carol_likes_after_remove = read(Some(&carol), json!({"read": "VideoLike", "select": ["id"]})).await;
+    assert_eq!(ids(&carol_likes_after_remove), Vec::<String>::new(), "service read observes the committed removal");
+    let carol_relike = create(Some(carol.clone()), "fr-lc3", "VideoLike", json!({"video": CAT_VIDEO, "user": CAROL})).await;
+    assert_eq!(carol_relike["ok"], true, "recreate Carol's like: {carol_relike}");
+    let carol_like_count: Option<i64> =
+        setup.query_first(format!("SELECT COUNT(*) FROM video_like WHERE user_id = '{CAROL}' AND video_id = '{CAT_VIDEO}'")).await.unwrap();
+    assert_eq!(carol_like_count, Some(1));
+    setup.query_drop(format!("DELETE FROM video_like WHERE user_id = '{CAROL}' AND video_id = '{CAT_VIDEO}'")).await.unwrap();
+    setup.query_drop(format!("INSERT INTO video_like (video_like_id, video_id, user_id, created_at) VALUES ('eeeeeeee-0000-4000-8000-000000000012', 'aaaaaaaa-0000-4000-8000-000000000002', '{CAROL}', NOW())")).await.unwrap();
+    let carol_withdraw_like_seed: Option<i64> =
+        setup.query_first(format!("SELECT COUNT(*) FROM video_like WHERE user_id = '{CAROL}'")).await.unwrap();
+    assert_eq!(carol_withdraw_like_seed, Some(1), "withdraw starts with one explicitly seeded like");
+
+    let carol_bookmark = create(Some(carol.clone()), "fr-bc1", "VideoBookmark", json!({"video": CAT_VIDEO, "user": CAROL})).await;
+    assert_eq!(carol_bookmark["ok"], true, "create Carol's bookmark: {carol_bookmark}");
+    let carol_bookmark_id: Option<String> = setup
+        .query_first(format!("SELECT video_bookmark_id FROM video_bookmark WHERE user_id = '{CAROL}' AND video_id = '{CAT_VIDEO}'"))
+        .await
+        .unwrap();
+    let carol_bookmark_id = carol_bookmark_id.expect("Carol bookmark was seeded by create");
+    let carol_unbookmark =
+        apply(Some(carol.clone()), "fr-bc2", json!({"apply": "VideoBookmark.remove", "target": {"ids": [carol_bookmark_id]}})).await;
+    assert_eq!(carol_unbookmark["ok"], true, "remove Carol's bookmark: {carol_unbookmark}");
+    let carol_bookmark_count: Option<i64> =
+        setup.query_first(format!("SELECT COUNT(*) FROM video_bookmark WHERE user_id = '{CAROL}' AND video_id = '{CAT_VIDEO}'")).await.unwrap();
+    assert_eq!(carol_bookmark_count, Some(0));
+    let carol_bookmarks_after_remove = read(Some(&carol), json!({"read": "VideoBookmark", "select": ["id"]})).await;
+    assert_eq!(ids(&carol_bookmarks_after_remove), Vec::<String>::new(), "service read observes the committed removal");
+    let carol_rebookmark = create(Some(carol.clone()), "fr-bc3", "VideoBookmark", json!({"video": CAT_VIDEO, "user": CAROL})).await;
+    assert_eq!(carol_rebookmark["ok"], true, "recreate Carol's bookmark: {carol_rebookmark}");
+    let carol_bookmark_count: Option<i64> =
+        setup.query_first(format!("SELECT COUNT(*) FROM video_bookmark WHERE user_id = '{CAROL}' AND video_id = '{CAT_VIDEO}'")).await.unwrap();
+    assert_eq!(carol_bookmark_count, Some(1));
+    let bob_bookmark =
+        create(Some(bob.clone()), "fr-bb1", "VideoBookmark", json!({"video": "aaaaaaaa-0000-4000-8000-000000000002", "user": BOB})).await;
+    assert_eq!(bob_bookmark["ok"], true, "seed another user's bookmark for authorization checks: {bob_bookmark}");
+    let bob_bookmark_id: Option<String> = setup
+        .query_first(format!(
+            "SELECT video_bookmark_id FROM video_bookmark WHERE user_id = '{BOB}' AND video_id = 'aaaaaaaa-0000-4000-8000-000000000002'"
+        ))
+        .await
+        .unwrap();
+    let bob_bookmark_id = bob_bookmark_id.expect("Bob bookmark exists");
+    let other_bookmark_remove =
+        apply(Some(alice.clone()), "fr-bb2", json!({"apply": "VideoBookmark.remove", "target": {"ids": [bob_bookmark_id.clone()]}})).await;
+    assert_ne!(other_bookmark_remove["ok"], true, "a caller cannot remove another user's bookmark: {other_bookmark_remove}");
+    let anonymous_bookmark_remove = apply(None, "fr-bb3", json!({"apply": "VideoBookmark.remove", "target": {"ids": [bob_bookmark_id]}})).await;
+    assert_ne!(anonymous_bookmark_remove["ok"], true, "anonymous bookmark remove is refused: {anonymous_bookmark_remove}");
+    let bob_bookmark_count: Option<i64> = setup
+        .query_first(format!("SELECT COUNT(*) FROM video_bookmark WHERE user_id = '{BOB}' AND video_id = 'aaaaaaaa-0000-4000-8000-000000000002'"))
+        .await
+        .unwrap();
+    assert_eq!(bob_bookmark_count, Some(1), "refused removals preserve the other user's bookmark");
     let request = create(
         Some(alice.clone()),
         "fr-r1",
@@ -346,6 +499,90 @@ async fn facereview_schema_is_adopted_without_business_ddl_and_read_with_origina
     assert_ne!(deactivate(&bob, "fr-a2", ERIN).await["ok"], true, "an ADMIN cannot deactivate another ADMIN");
     let still: Option<i8> = setup.query_first(format!("SELECT is_deleted FROM user WHERE user_id = '{ERIN}'")).await.unwrap();
     assert_eq!(still, Some(0));
+
+    // A failed child audit insert must roll back all earlier withdrawal effects in this MySQL transaction.
+    setup.query_drop(format!("INSERT INTO video_like (video_like_id, video_id, user_id, created_at) VALUES ('eeeeeeee-0000-4000-8000-000000000013', '{CAT_VIDEO}', '{DAVE}', NOW())")).await.unwrap();
+    setup.query_drop(format!("CREATE TRIGGER `{META}`.reject_child_delete_audit BEFORE INSERT ON `{META}`.aip_audit FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='injected child audit failure'")).await.unwrap();
+    let audit_failure = apply(Some(dave.clone()), "fr-w-audit-failure", json!({"apply": "User.withdraw", "target": {"ids": [DAVE]}})).await;
+    assert_ne!(audit_failure["ok"], true, "child audit insertion failure rejects withdrawal: {audit_failure}");
+    let failure_snapshot: Option<(i8, i64, i64)> = setup.query_first(format!(
+        "SELECT (SELECT is_deleted FROM user WHERE user_id='{DAVE}'), (SELECT COUNT(*) FROM video_like WHERE video_like_id='eeeeeeee-0000-4000-8000-000000000013'), (SELECT COUNT(*) FROM `{META}`.aip_audit WHERE request_key='fr-w-audit-failure')"
+    )).await.unwrap();
+    println!("MYSQL_SNAPSHOT child_audit_insert_failure: {failure_snapshot:?}");
+    assert_eq!(failure_snapshot, Some((0, 1, 0)), "audit failure rolls back parent mutation, child delete, and all audit inserts");
+    setup.query_drop(format!("DROP TRIGGER `{META}`.reject_child_delete_audit")).await.unwrap();
+    setup.query_drop("DELETE FROM video_like WHERE video_like_id='eeeeeeee-0000-4000-8000-000000000013'").await.unwrap();
+
+    // Erin has no delete-effect child rows: withdrawal records only its parent transition.
+    let zero_child = apply(Some(erin.clone()), "fr-w-zero-child", json!({"apply": "User.withdraw", "target": {"ids": [ERIN]}})).await;
+    assert_eq!(zero_child["ok"], true, "zero-child withdrawal succeeds: {zero_child}");
+    let zero_child_audit: Option<(i64, i64)> = setup.query_first(format!(
+        "SELECT (SELECT COUNT(*) FROM `{META}`.aip_audit WHERE request_key='fr-w-zero-child' AND resource='User'), (SELECT COUNT(*) FROM `{META}`.aip_audit WHERE request_key='fr-w-zero-child' AND transition='withdraw:delete')"
+    )).await.unwrap();
+    println!("MYSQL_SNAPSHOT zero_child_audit: {zero_child_audit:?}");
+    assert_eq!(zero_child_audit, Some((1, 0)));
+
+    // maxRows+1 must roll back the earlier Comment update and child-table deletes together with the User state.
+    let overflow_comment = "eeeeeeee-0000-4000-8000-000000000001";
+    setup.query_drop(format!("INSERT INTO comment (comment_id, video_id, user_id, content, is_modified, is_deleted, created_at, updated_at) VALUES ('{overflow_comment}', '{CAT_VIDEO}', '{DAVE}', 'wbs724 rollback probe', 0, 0, NOW(), NOW())")).await.unwrap();
+    setup.query_drop(format!("INSERT INTO video_like (video_like_id, video_id, user_id, created_at) VALUES ('eeeeeeee-0000-4000-8000-000000000002', 'aaaaaaaa-0000-4000-8000-000000000002', '{DAVE}', NOW())")).await.unwrap();
+    setup.query_drop(format!("INSERT INTO video_view_log (video_view_log_id, video_id, user_id, created_at, updated_at) VALUES ('eeeeeeee-0000-4000-8000-000000000003', '{CAT_VIDEO}', '{DAVE}', NOW(), NOW())")).await.unwrap();
+    setup.query_drop(format!("INSERT INTO video_request (video_request_id, user_id, youtube_url, youtube_full_url, status, created_at, updated_at) VALUES ('eeeeeeee-0000-4000-8000-000000000004', '{DAVE}', 'wbs724overflw', 'https://www.youtube.com/watch?v=wbs724overflw', 'PENDING', NOW(), NOW())")).await.unwrap();
+    setup.query_drop(format!("INSERT INTO user_favorite_genre (user_favorite_genre_id, user_id, genre, created_at, updated_at) VALUES ('eeeeeeee-0000-4000-8000-000000000005', '{DAVE}', 'etc', NOW(), NOW())")).await.unwrap();
+    setup.query_drop(format!("INSERT INTO user_point_history (user_point_history_id, user_id, video_id, amount, description, created_at, updated_at) SELECT UUID(), '{DAVE}', '{CAT_VIDEO}', 1, 'wbs724-overflow', NOW(), NOW() FROM information_schema.columns LIMIT 1001")).await.unwrap();
+    let overflow_rows: Option<i64> = setup
+        .query_first(format!("SELECT COUNT(*) FROM user_point_history WHERE user_id = '{DAVE}' AND description = 'wbs724-overflow'"))
+        .await
+        .unwrap();
+    assert_eq!(overflow_rows, Some(1001), "the test creates maxRows+1 child rows");
+    let overflow = apply(Some(dave.clone()), "fr-w-overflow", json!({"apply": "User.withdraw", "target": {"ids": [DAVE]}})).await;
+    assert_ne!(overflow["ok"], true, "withdraw over maxRows is refused: {overflow}");
+    let overflow_audit: Option<i64> =
+        setup.query_first("SELECT COUNT(*) FROM aip_t_fr_meta.aip_audit WHERE request_key = 'fr-w-overflow'").await.unwrap();
+    let overflow_idempotency: Option<i64> =
+        setup.query_first("SELECT COUNT(*) FROM aip_t_fr_meta.aip_idem WHERE idem_key = 'fr-w-overflow'").await.unwrap();
+    assert_eq!((overflow_audit, overflow_idempotency), (Some(0), Some(0)), "failed atomic withdrawal leaves no audit or idempotency record");
+    let dave_state: Option<i8> = setup.query_first(format!("SELECT is_deleted FROM user WHERE user_id = '{DAVE}'")).await.unwrap();
+    assert_eq!(dave_state, Some(0), "parent update rolled back");
+    let rollback_comment: Option<i8> =
+        setup.query_first(format!("SELECT is_deleted FROM comment WHERE comment_id = '{overflow_comment}'")).await.unwrap();
+    assert_eq!(rollback_comment, Some(0), "comment soft delete rolled back");
+    let rollback_like: Option<i64> =
+        setup.query_first(format!("SELECT COUNT(*) FROM video_like WHERE video_like_id = 'eeeeeeee-0000-4000-8000-000000000002'")).await.unwrap();
+    let rollback_log: Option<i64> = setup
+        .query_first(format!("SELECT COUNT(*) FROM video_view_log WHERE video_view_log_id = 'eeeeeeee-0000-4000-8000-000000000003'"))
+        .await
+        .unwrap();
+    let rollback_request: Option<i64> = setup
+        .query_first(format!("SELECT COUNT(*) FROM video_request WHERE video_request_id = 'eeeeeeee-0000-4000-8000-000000000004'"))
+        .await
+        .unwrap();
+    let rollback_genre: Option<i64> = setup
+        .query_first(format!("SELECT COUNT(*) FROM user_favorite_genre WHERE user_favorite_genre_id = 'eeeeeeee-0000-4000-8000-000000000005'"))
+        .await
+        .unwrap();
+    assert_eq!(
+        (rollback_like, rollback_log, rollback_request, rollback_genre),
+        (Some(1), Some(1), Some(1), Some(1)),
+        "prior child deletes rolled back"
+    );
+    setup.query_drop(format!("DELETE FROM comment WHERE comment_id = '{overflow_comment}'")).await.unwrap();
+    for id in [
+        "eeeeeeee-0000-4000-8000-000000000002",
+        "eeeeeeee-0000-4000-8000-000000000003",
+        "eeeeeeee-0000-4000-8000-000000000004",
+        "eeeeeeee-0000-4000-8000-000000000005",
+    ] {
+        let (table, field) = match id {
+            "eeeeeeee-0000-4000-8000-000000000002" => ("video_like", "video_like_id"),
+            "eeeeeeee-0000-4000-8000-000000000003" => ("video_view_log", "video_view_log_id"),
+            "eeeeeeee-0000-4000-8000-000000000004" => ("video_request", "video_request_id"),
+            _ => ("user_favorite_genre", "user_favorite_genre_id"),
+        };
+        setup.query_drop(format!("DELETE FROM `{table}` WHERE `{field}` = '{id}'")).await.unwrap();
+    }
+    setup.query_drop(format!("DELETE FROM user_point_history WHERE user_id = '{DAVE}' AND description = 'wbs724-overflow'")).await.unwrap();
+
     assert_eq!(deactivate(&bob, "fr-a3", DAVE).await["ok"], true, "an ADMIN deactivates a GENERAL member");
     let hidden: Option<i64> = setup.query_first(format!("SELECT COUNT(*) FROM comment WHERE user_id = '{DAVE}' AND is_deleted = 0")).await.unwrap();
     assert_eq!(hidden, Some(0), "the member's comments are hidden in the same transaction");
@@ -398,6 +635,82 @@ async fn facereview_schema_is_adopted_without_business_ddl_and_read_with_origina
     assert_ne!(write["ok"], true, "{write}");
     let none: Option<i64> = setup.query_first("SELECT COUNT(*) FROM comment WHERE content = '복귀 시도'").await.unwrap();
     assert_eq!(none, Some(0));
+
+    // WBS 7.2.4: 회원 본인 탈퇴 (User.withdraw) - 5개 테이블 물리 삭제 + 댓글/회원 soft delete + bookmark 남김
+    setup.query_drop(format!(
+        "INSERT INTO video_view_log (video_view_log_id, video_id, user_id, created_at, updated_at) VALUES (UUID(), 'aaaaaaaa-0000-4000-8000-000000000002', '{CAROL}', NOW(), NOW())"
+    )).await.unwrap();
+    setup.query_drop(format!(
+        "INSERT INTO video_request (video_request_id, user_id, youtube_url, youtube_full_url, status, created_at, updated_at) VALUES (UUID(), '{CAROL}', 'carolwithdraw1', 'https://www.youtube.com/watch?v=carolwithdraw1', 'PENDING', NOW(), NOW())"
+    )).await.unwrap();
+    setup.query_drop(format!(
+        "INSERT INTO comment (comment_id, video_id, user_id, content, is_modified, is_deleted, created_at, updated_at) VALUES ('eeeeeeee-0000-4000-8000-000000000011', 'aaaaaaaa-0000-4000-8000-000000000002', '{CAROL}', 'carol withdraw soft-delete probe', 0, 0, NOW(), NOW())"
+    )).await.unwrap();
+    setup.query_drop(format!(
+        "INSERT INTO user_favorite_genre (user_favorite_genre_id, user_id, genre, created_at, updated_at) VALUES (UUID(), '{CAROL}', 'drama', NOW(), NOW())"
+    )).await.unwrap();
+    setup.query_drop(format!(
+        "INSERT INTO user_point_history (user_point_history_id, user_id, video_id, amount, created_at, updated_at) VALUES (UUID(), '{CAROL}', 'aaaaaaaa-0000-4000-8000-000000000002', 100, NOW(), NOW())"
+    )).await.unwrap();
+    setup.query_drop(format!(
+        "INSERT INTO video_bookmark (video_bookmark_id, video_id, user_id, created_at) VALUES (UUID(), 'aaaaaaaa-0000-4000-8000-000000000002', '{CAROL}', NOW())"
+    )).await.unwrap();
+
+    let other_withdraw = apply(Some(alice.clone()), "fr-w-other", json!({"apply": "User.withdraw", "target": {"ids": [CAROL]}})).await;
+    assert_ne!(other_withdraw["ok"], true, "one member cannot withdraw another member: {other_withdraw}");
+    let anonymous_withdraw = apply(None, "fr-w-anon", json!({"apply": "User.withdraw", "target": {"ids": [CAROL]}})).await;
+    assert_ne!(anonymous_withdraw["ok"], true, "anonymous withdrawal is refused: {anonymous_withdraw}");
+    let carol_still_active: Option<i8> = setup.query_first(format!("SELECT is_deleted FROM user WHERE user_id = '{CAROL}'")).await.unwrap();
+    let carol_like_still_seeded: Option<i64> = setup.query_first(format!("SELECT COUNT(*) FROM video_like WHERE user_id = '{CAROL}'")).await.unwrap();
+    assert_eq!((carol_still_active, carol_like_still_seeded), (Some(0), Some(1)), "refused withdrawal preserves parent and child rows");
+
+    let withdraw = apply(Some(carol.clone()), "fr-w1", json!({"apply": "User.withdraw", "target": {"ids": [CAROL]}})).await;
+    assert_eq!(withdraw["ok"], true, "carol withdraw ok: {withdraw}");
+    assert_eq!(
+        withdraw["tags"],
+        json!(["Comment", "User", "UserFavoriteGenre", "UserPointHistory", "VideoLike", "VideoRequest", "VideoViewLog"]),
+        "withdraw advertises the parent and every affected resource tag"
+    );
+    let withdrawal_parent_audit: Option<i64> = setup.query_first(format!("SELECT COUNT(*) FROM `{META}`.aip_audit WHERE request_key = 'fr-w1' AND resource = 'User' AND transition = 'withdraw' AND target_id = '{CAROL}'")).await.unwrap();
+    assert_eq!(withdrawal_parent_audit, Some(1), "withdraw audit retains the parent User transition");
+    let withdrawal_child_audit: Option<i64> = setup.query_first(format!(
+        "SELECT COUNT(*) FROM `{META}`.aip_audit WHERE request_key = 'fr-w1' AND actor_id = (SELECT actor_id FROM `{META}`.aip_audit WHERE request_key='fr-w1' AND resource='User' AND transition='withdraw') AND via = 'apply' AND transition = 'withdraw:delete' AND after_values = CAST('null' AS JSON) AND resource IN ('VideoLike','VideoViewLog','VideoRequest','UserFavoriteGenre','UserPointHistory')"
+    )).await.unwrap();
+    assert_eq!(withdrawal_child_audit, Some(5), "each deleted child gets a same-request null-after audit row");
+    let exact_child_audit_snapshots: Option<i64> = setup.query_first(format!(
+        "SELECT COUNT(*) FROM `{META}`.aip_audit WHERE request_key='fr-w1' AND actor_id=(SELECT actor_id FROM `{META}`.aip_audit WHERE request_key='fr-w1' AND resource='User' AND transition='withdraw') AND via='apply' AND transition='withdraw:delete' AND after_values=CAST('null' AS JSON) AND JSON_UNQUOTE(JSON_EXTRACT(before_values,'$.id'))=target_id AND JSON_UNQUOTE(JSON_EXTRACT(before_values,'$.user'))='{CAROL}' AND JSON_LENGTH(before_values)=CASE resource WHEN 'VideoLike' THEN 4 WHEN 'VideoViewLog' THEN 6 WHEN 'VideoRequest' THEN 8 WHEN 'UserFavoriteGenre' THEN 5 WHEN 'UserPointHistory' THEN 8 END"
+    )).await.unwrap();
+    assert_eq!(exact_child_audit_snapshots, Some(5), "each before snapshot has its deleted row ID, owner, and every declared field");
+    let child_audit_rows: Vec<(String, String, String, String)> = setup.query(format!(
+        "SELECT resource,target_id,CAST(before_values AS CHAR),CAST(after_values AS CHAR) FROM `{META}`.aip_audit WHERE request_key='fr-w1' AND transition='withdraw:delete' ORDER BY resource,target_id"
+    )).await.unwrap();
+    println!("MYSQL_AUDIT child_effect_exact_snapshots={child_audit_rows:?}");
+    let carol_deleted: Option<i8> = setup.query_first(format!("SELECT is_deleted FROM user WHERE user_id = '{CAROL}'")).await.unwrap();
+    assert_eq!(carol_deleted, Some(1), "user is soft deleted");
+    let carol_likes: Option<i64> = setup.query_first(format!("SELECT COUNT(*) FROM video_like WHERE user_id = '{CAROL}'")).await.unwrap();
+    assert_eq!(carol_likes, Some(0), "video_like physically deleted");
+    let carol_logs: Option<i64> = setup.query_first(format!("SELECT COUNT(*) FROM video_view_log WHERE user_id = '{CAROL}'")).await.unwrap();
+    assert_eq!(carol_logs, Some(0), "video_view_log physically deleted");
+    let guest_log_preserved: Option<i64> = setup.query_first(
+        "SELECT COUNT(*) FROM video_view_log WHERE video_view_log_id='99999999-0000-4000-8000-000000000002' AND user_id IS NULL AND guest_token='guest-xyz'"
+    ).await.unwrap();
+    assert_eq!(guest_log_preserved, Some(1), "the unrelated guest row with a NULL user FK is preserved");
+    let carol_genres: Option<i64> = setup.query_first(format!("SELECT COUNT(*) FROM user_favorite_genre WHERE user_id = '{CAROL}'")).await.unwrap();
+    assert_eq!(carol_genres, Some(0), "user_favorite_genre physically deleted");
+    let carol_points: Option<i64> = setup.query_first(format!("SELECT COUNT(*) FROM user_point_history WHERE user_id = '{CAROL}'")).await.unwrap();
+    assert_eq!(carol_points, Some(0), "user_point_history physically deleted");
+    let carol_requests: Option<i64> = setup.query_first(format!("SELECT COUNT(*) FROM video_request WHERE user_id = '{CAROL}'")).await.unwrap();
+    assert_eq!(carol_requests, Some(0), "video_request physically deleted");
+    let carol_comment: Option<(i8, String)> =
+        setup.query_first("SELECT is_deleted, content FROM comment WHERE comment_id = 'eeeeeeee-0000-4000-8000-000000000011'").await.unwrap();
+    assert_eq!(carol_comment, Some((1, "carol withdraw soft-delete probe".to_string())), "active comment is soft-deleted and row remains");
+    let carol_bookmarks: Option<i64> = setup.query_first(format!("SELECT COUNT(*) FROM video_bookmark WHERE user_id = '{CAROL}'")).await.unwrap();
+    assert_eq!(carol_bookmarks, Some(2), "both the toggle bookmark and separately seeded bookmark remain (parity baseline)");
+    let seeded_bookmark: Option<i64> = setup
+        .query_first(format!("SELECT COUNT(*) FROM video_bookmark WHERE user_id = '{CAROL}' AND video_id = 'aaaaaaaa-0000-4000-8000-000000000002'"))
+        .await
+        .unwrap();
+    assert_eq!(seeded_bookmark, Some(1), "explicitly seeded bookmark is preserved after withdrawal");
 
     for schema in [META, SOURCE] {
         setup.query_drop(format!("DROP DATABASE IF EXISTS `{schema}`")).await.unwrap();

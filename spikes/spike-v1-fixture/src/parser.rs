@@ -448,6 +448,7 @@ impl Parser {
                     self.expect_sym("{")?;
                     let (mut from, mut to, mut allow, mut repeat) = (None, vec![], None, None);
                     let (mut patch, mut expect) = (vec![], vec![]);
+                    let mut delete = false;
                     let mut effects = vec![];
                     let mut tseen = BTreeSet::new();
                     loop {
@@ -457,12 +458,43 @@ impl Parser {
                         }
                         let ksp = self.span();
                         let key = self.ident()?;
-                        if key != "create" && key != "notify" && key != "update" {
+                        let is_delete_effect = key == "delete"
+                            && (self.is_kw("many")
+                                || (matches!(self.peek(), Tok::Ident(s) if s.chars().next().is_some_and(|c| c.is_uppercase()))
+                                    && self.pos + 1 < self.toks.len()
+                                    && matches!(&self.toks[self.pos + 1].tok, Tok::Ident(w) if w == "where")));
+                        if key != "create" && key != "notify" && key != "update" && !is_delete_effect {
                             once(&mut tseen, &key, ksp, "transition")?;
                         }
                         match key.as_str() {
                             "from" => from = Some(self.expr()?),
                             "to" => to = self.assignments()?,
+                            "delete" if !is_delete_effect => delete = true,
+                            "delete" => {
+                                let many = self.is_kw("many");
+                                if many {
+                                    self.next();
+                                }
+                                let resource = self.ident()?;
+                                let max_rows = if many {
+                                    self.expect_kw("maxRows")?;
+                                    Some(self.int()?)
+                                } else {
+                                    None
+                                };
+                                self.expect_kw("where")?;
+                                let mut matches = vec![];
+                                loop {
+                                    let f = self.ident()?;
+                                    self.expect_sym("=")?;
+                                    matches.push((f, self.unary()?));
+                                    if !self.is_kw("and") {
+                                        break;
+                                    }
+                                    self.next();
+                                }
+                                effects.push(Effect::Delete { resource, max_rows, matches, span: ksp });
+                            }
                             "patch" => patch = self.ident_list()?,
                             "expect" => expect = self.ident_list()?,
                             "allow" => allow = Some(self.expr()?),
@@ -526,10 +558,10 @@ impl Parser {
                         }
                     }
                     match (from, allow) {
-                        (Some(from), Some(allow)) if !to.is_empty() || !patch.is_empty() => {
-                            r.transitions.push(Transition { name, patch, expect, from, to, allow, repeat, effects, span: sp })
+                        (Some(from), Some(allow)) if delete || !to.is_empty() || !patch.is_empty() => {
+                            r.transitions.push(Transition { name, patch, expect, from, to, delete, allow, repeat, effects, span: sp })
                         }
-                        _ => return Err(Diag::new("DEF.MISSING_ITEM", "transition에는 from/allow와 to 또는 patch가 필요", sp)),
+                        _ => return Err(Diag::new("DEF.MISSING_ITEM", "transition에는 from/allow와 to, patch 또는 delete가 필요", sp)),
                     }
                 }
                 "unique" => r.uniques.push((self.ident_list()?, sp)),

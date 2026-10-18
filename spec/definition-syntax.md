@@ -45,7 +45,7 @@
 | `field` | `field name read when condition` | 필드별 읽기 조건. 조건이 거짓인 행에서 select하면 null이고 출력 타입은 nullable이다(열이 필수여도). 이 필드는 filter·sort·집계에 쓸 수 없다 |
 | `expose` | `expose read {..} \| expose apply T {..} \| expose create {..} \| expose compose {..} \| expose aggregate name` | 호출자에게 여는 것. 쓰지 않은 것은 열리지 않는다 |
 | `aggregate` | `aggregate name: Int { source R; sourceAccess a; groupKey ref; release count }` | 행별 또는 단독 집계 |
-| `transition` | `transition name { from cond; to f = v; allow cond }` | 상태 전이. from·allow와 to 또는 patch가 필요하다. 숫자는 f = f + 1처럼만 바꾼다 |
+| `transition` | `transition name { from cond; to f = v; allow cond }  \|  transition name { from cond; delete; allow cond }` | 상태 전이. from·allow와 to, patch 또는 delete가 필요하다. 숫자는 f = f + 1처럼만 바꾼다 |
 | `unique` | `unique a, b` | 유일 제약 |
 | `check` | `check name when condition` | 쓰기 뒤 행이 만족해야 하는 조건 |
 | `invariant` | `invariant limitName per refField [deferred]` | limit을 참조 필드별로 적용한다(유일 인덱스로 집행) |
@@ -112,12 +112,19 @@
 |---|---|---|
 | `from` | `from condition` | 전이를 시작할 수 있는 행의 조건 |
 | `to` | `to f = v; g = g + 1` | 바뀌는 값 |
+| `delete` | `delete` | 대상 행 물리 삭제. to·patch·expect·repeat unchanged와 함께 쓸 수 없다 |
 | `patch` | `patch title, content` | 호출자의 values에서 수정할 수 있는 필드. 타입·범위는 fields와 같으며 누락은 유지, null은 nullable만. 기본키·to 대입과 중복 불가 |
 | `expect` | `expect version` | 호출자의 expect에서 모두 제공해야 하는 이전 값. 인가 뒤 잠근 행과 NULL-safe 비교하며 불일치는 WIRE.CONFLICT. version 증감 to와 조합하면 낙관적 잠금 |
 | `allow` | `allow condition` | 누가 부를 수 있는지 |
 | `repeat` | `repeat unchanged \| reject` | 이미 to 상태인 행에 다시 부를 때의 처리 |
+
+### transition effect
+
+| 키 | 형태 | 뜻 |
+|---|---|---|
 | `create` | `create R { f = v }` | 같은 트랜잭션에서 행을 만든다 |
 | `update` | `update R where f = v { g = w }  \|  update many R maxRows N where f = v { g = w }` | 같은 트랜잭션에서 다른 행을 바꾼다. many는 maxRows(1~1000)와 부모 참조 조건이 필요하다 |
+| `delete` | `delete R where f = v  \|  delete many R maxRows N where f = v` | 같은 트랜잭션에서 다른 행을 물리 삭제한다. many는 maxRows(1~1000)와 부모 참조 조건이 필요하다 |
 | `notify` | `notify actorRef "topic"` | 알림. 대상은 actor 타입 참조여야 한다 |
 
 ### expose apply

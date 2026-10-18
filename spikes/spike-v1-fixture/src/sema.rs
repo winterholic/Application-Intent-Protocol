@@ -980,7 +980,24 @@ impl<'a> Ctx<'a> {
             if to.contains_key("id") {
                 self.d("DEF.UNSUPPORTED_EFFECT", "전이는 잠근 대상의 기본키 id를 바꿀 수 없음", t.span);
             }
+            if t.delete {
+                if !t.to.is_empty() {
+                    self.d("DEF.UNSUPPORTED", format!("transition `{}`: delete 전이는 to 대입과 함께 쓸 수 없음", t.name), t.span);
+                }
+                if !t.patch.is_empty() {
+                    self.d("DEF.UNSUPPORTED", format!("transition `{}`: delete 전이는 patch와 함께 쓸 수 없음", t.name), t.span);
+                }
+                if !t.expect.is_empty() {
+                    self.d("DEF.UNSUPPORTED", format!("transition `{}`: delete 전이는 expect와 함께 쓸 수 없음", t.name), t.span);
+                }
+                if t.repeat.as_ref().is_some_and(|(r, _)| r == "unchanged") {
+                    self.d("DEF.UNSUPPORTED", format!("transition `{}`: delete 전이는 repeat unchanged를 지원하지 않음", t.name), t.span);
+                }
+            }
             let mut declaration = json!({ "from": from, "to": to, "allow": allow, "repeat": repeat, "effects": effects });
+            if t.delete {
+                declaration["delete"] = json!(true);
+            }
             for (key, names) in [("patch", &t.patch), ("expect", &t.expect)] {
                 let mut fields = std::collections::BTreeSet::new();
                 for (f, sp) in names {
@@ -1314,6 +1331,57 @@ impl<'a> Ctx<'a> {
                         Some(field) if v.contains_key(field) => {
                             self.d("DEF.UNSUPPORTED_EFFECT", "many update의 부모 범위 참조는 바꿀 수 없음", *span);
                         }
+                        Some(_) => {}
+                    }
+                    effect["maxRows"] = json!(max);
+                }
+                Some(effect)
+            }
+            Effect::Delete { resource, max_rows, matches, span } => {
+                if !self.res.contains_key(resource.as_str()) {
+                    self.d("DEF.UNKNOWN_SYMBOL", format!("삭제 대상 `{resource}` 없음"), *span);
+                    return None;
+                }
+                let typed = |pairs: &Vec<(String, Expr)>, what: &str, cx: &mut Self| -> Map<String, Value> {
+                    let mut out = Map::new();
+                    for (f, v) in pairs {
+                        if out.contains_key(f) {
+                            cx.d("DEF.DUPLICATE", format!("`{resource}.{f}` {what} 중복"), *span);
+                            continue;
+                        }
+                        let Some(ft) = cx.field_tt(resource, f) else {
+                            cx.d("DEF.UNKNOWN_FIELD", format!("`{resource}`에 필드 `{f}` 없음"), *span);
+                            continue;
+                        };
+                        let res = cx.expect(v, sc, Some(&ft)).and_then(|(val, vt)| {
+                            if same_target(&vt.ty, &ft.ty) && (!vt.nullable || ft.nullable) {
+                                Ok(val)
+                            } else {
+                                Err(Diag::new("DEF.TYPE_MISMATCH", format!("`{resource}.{f}`({})에 `{}` 불가", ft.show(), vt.show()), *span))
+                            }
+                        });
+                        if let Some(val) = cx.run(res) {
+                            out.insert(f.clone(), val);
+                        }
+                    }
+                    out
+                };
+                let m = typed(matches, "조건", self);
+                if m.is_empty() {
+                    self.d("DEF.MISSING_ITEM", "delete 효과에는 찾을 조건이 필요", *span);
+                }
+                let mut effect = json!({ "delete": resource, "match": m });
+                if let Some(max) = max_rows {
+                    if !(1..=1000).contains(max) {
+                        self.d("DEF.BAD_BUDGET", "many delete maxRows는 1..1000", *span);
+                    }
+                    let scope = m.iter().find_map(|(field, value)| {
+                        let ty = self.field_tt(resource, field)?;
+                        let parent = matches!(&ty.ty, Ty::Ref(target) if target == &r.name);
+                        (parent && value["path"]["root"] == "this" && value["path"]["segs"] == json!([])).then_some(field)
+                    });
+                    match scope {
+                        None => self.d("DEF.UNSUPPORTED_EFFECT", "many delete에는 부모 참조 = this.id 조건 필요", *span),
                         Some(_) => {}
                     }
                     effect["maxRows"] = json!(max);
@@ -2089,6 +2157,9 @@ fn validate_policy_expansion(spec: &Spec) -> Vec<Diag> {
                     Effect::Create { values, span, .. } => roots.extend(values.iter().map(|(_, expr)| (expr, *span))),
                     Effect::Update { matches, values, span, .. } => {
                         roots.extend(matches.iter().chain(values).map(|(_, expr)| (expr, *span)));
+                    }
+                    Effect::Delete { matches, span, .. } => {
+                        roots.extend(matches.iter().map(|(_, expr)| (expr, *span)));
                     }
                     Effect::Notify { to, span, .. } => roots.push((to, *span)),
                 }

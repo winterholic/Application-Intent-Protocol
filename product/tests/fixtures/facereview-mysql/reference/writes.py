@@ -120,19 +120,61 @@ if cid:
     again = apply("Comment.delete", cid, "d2-" + tag, "alice")
     case("deleting a deleted comment is refused", again.get("ok"), False)
 
-# 3. like / bookmark create + unique(user, video)
+# 3. like / bookmark create + unique(user, video) + remove (toggle)
 like = create("VideoLike", {"video": CAT, "user": BOB}, "l-" + tag, "bob")
 case("like create ok or already liked", like.get("ok") or like.get("code"), True if like.get("ok") else like.get("code"))
 dup = create("VideoLike", {"video": CAT, "user": BOB}, "l2-" + tag, "bob")
 print("     duplicate like ->", dup.get("code"), dup.get("message"))
 case("duplicate like is a definite refusal, not a server error", dup.get("ok") is False and dup.get("code") not in (None, "WIRE.INTERNAL"), True)
 case("duplicate like left one row", row("SELECT COUNT(*) AS n FROM video_like WHERE user_id = %s AND video_id = %s", BOB, CAT)["n"], 1)
+
+like_row = row("SELECT video_like_id FROM video_like WHERE user_id = %s AND video_id = %s", BOB, CAT)
+if like_row:
+    lid = like_row["video_like_id"]
+    unliked = apply("VideoLike.remove", lid, "lr-" + tag, "bob")
+    case("like remove (toggle off) ok", unliked.get("ok"), True)
+    case("like physically deleted from DB", row("SELECT COUNT(*) AS n FROM video_like WHERE user_id = %s AND video_id = %s", BOB, CAT)["n"], 0)
+    relike = create("VideoLike", {"video": CAT, "user": BOB}, "l3-" + tag, "bob")
+    case("re-like (toggle on) ok", relike.get("ok"), True)
+    case("re-like left one row", row("SELECT COUNT(*) AS n FROM video_like WHERE user_id = %s AND video_id = %s", BOB, CAT)["n"], 1)
+
 bookmark = create("VideoBookmark", {"video": CAT, "user": BOB}, "b-" + tag, "bob")
 case("bookmark create ok", bookmark.get("ok"), True)
+bm_row = row("SELECT video_bookmark_id FROM video_bookmark WHERE user_id = %s AND video_id = %s", BOB, CAT)
+if bm_row:
+    bmid = bm_row["video_bookmark_id"]
+    unbookmarked = apply("VideoBookmark.remove", bmid, "br-" + tag, "bob")
+    case("bookmark remove (toggle off) ok", unbookmarked.get("ok"), True)
+    case("bookmark physically deleted from DB", row("SELECT COUNT(*) AS n FROM video_bookmark WHERE user_id = %s AND video_id = %s", BOB, CAT)["n"], 0)
+    rebookmark = create("VideoBookmark", {"video": CAT, "user": BOB}, "b2-" + tag, "bob")
+    case("re-bookmark (toggle on) ok", rebookmark.get("ok"), True)
+
 req = create("VideoRequest", {"user": ALICE, "youtube_url": "req" + tag[-8:], "youtube_full_url": "https://www.youtube.com/watch?v=req" + tag[-8:]}, "r-" + tag, "alice")
 case("video request create ok", req.get("ok"), True)
 stored = row("SELECT status FROM video_request WHERE youtube_url = %s", "req" + tag[-8:])
 case("request status defaults to PENDING (DB default)", stored and stored["status"], "PENDING")
+
+# 4. user withdraw parity: 5 child tables physically deleted, comments/user soft deleted, bookmarks preserved
+# Seed child data for ALICE
+cur.execute("INSERT IGNORE INTO video_like (video_like_id, video_id, user_id, created_at) VALUES (UUID(), %s, %s, NOW())", (CAT, ALICE))
+cur.execute("INSERT IGNORE INTO video_view_log (video_view_log_id, video_id, user_id, created_at, updated_at) VALUES (UUID(), %s, %s, NOW(), NOW())", (CAT, ALICE))
+cur.execute("INSERT IGNORE INTO user_favorite_genre (user_favorite_genre_id, user_id, genre, created_at, updated_at) VALUES (UUID(), %s, 'drama', NOW(), NOW())", (ALICE,))
+cur.execute("INSERT IGNORE INTO user_point_history (user_point_history_id, user_id, video_id, amount, created_at, updated_at) VALUES (UUID(), %s, %s, 100, NOW(), NOW())", (ALICE, CAT))
+cur.execute("INSERT IGNORE INTO video_bookmark (video_bookmark_id, video_id, user_id, created_at) VALUES (UUID(), %s, %s, NOW())", (CAT, ALICE))
+
+withdrawn = apply("User.withdraw", ALICE, "w1-" + tag, "alice")
+case("user withdraw ok", withdrawn.get("ok"), True)
+case("user marked deleted", row("SELECT is_deleted FROM user WHERE user_id = %s", ALICE)["is_deleted"], 1)
+case("user comments soft deleted", row("SELECT COUNT(*) AS n FROM comment WHERE user_id = %s AND is_deleted = 0", ALICE)["n"], 0)
+case("user likes physically deleted", row("SELECT COUNT(*) AS n FROM video_like WHERE user_id = %s", ALICE)["n"], 0)
+case("user view logs physically deleted", row("SELECT COUNT(*) AS n FROM video_view_log WHERE user_id = %s", ALICE)["n"], 0)
+case("user requests physically deleted", row("SELECT COUNT(*) AS n FROM video_request WHERE user_id = %s", ALICE)["n"], 0)
+case("user favorite genres physically deleted", row("SELECT COUNT(*) AS n FROM user_favorite_genre WHERE user_id = %s", ALICE)["n"], 0)
+case("user point histories physically deleted", row("SELECT COUNT(*) AS n FROM user_point_history WHERE user_id = %s", ALICE)["n"], 0)
+case("user bookmarks preserved (parity baseline)", row("SELECT COUNT(*) AS n FROM video_bookmark WHERE user_id = %s", ALICE)["n"] >= 1, True)
+
+after_withdraw_like = create("VideoLike", {"video": CAT, "user": ALICE}, "al-" + tag, "alice")
+case("withdrawn user is refused (active check)", after_withdraw_like.get("ok"), False)
 
 server.terminate()
 print("\n%d failing case(s)" % len(failures))

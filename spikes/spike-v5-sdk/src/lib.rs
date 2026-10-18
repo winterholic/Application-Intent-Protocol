@@ -431,7 +431,7 @@ pub fn write_tags(facts: &Value, name: &str) -> Vec<String> {
     let (res, tr) = name.split_once('.').unwrap();
     let mut out = vec![res.to_string()];
     for e in facts["resources"][res]["transitions"][tr]["effects"].as_array().into_iter().flatten() {
-        for k in ["create", "update"] {
+        for k in ["create", "update", "delete"] {
             if let Some(t) = e[k].as_str() {
                 out.push(t.to_string());
             }

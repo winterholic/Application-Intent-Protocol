@@ -307,14 +307,15 @@ fn resource(name: &str, l: &Lit, span: Span) -> R<Resource> {
     if let Some((x, xs)) = get(o, "transitions") {
         for (n, v, vs) in obj(x, xs, "transitions")? {
             let to = obj(v, *vs, "transition")?;
-            keys(to, &["from", "to", "patch", "expect", "allow", "repeat", "effects"], "transition")?;
+            keys(to, &["from", "to", "delete", "patch", "expect", "allow", "repeat", "effects"], "transition")?;
             let (f, fs) = req(to, "from", *vs, "transition")?;
             let (a, asp) = req(to, "allow", *vs, "transition")?;
             let names = |key| get(to, key).map(|(v, vs)| strs(v, vs, key)).transpose().map(|v| v.unwrap_or_default());
             let patch = names("patch")?;
             let assigns = get(to, "to").map(|(v, vs)| parse_assignments_str(s(v, vs, "to")?, inner(vs))).transpose()?.unwrap_or_default();
-            if patch.is_empty() && assigns.is_empty() {
-                return Err(Diag::new("DEF.MISSING_ITEM", "transition에는 to 또는 patch가 필요", *vs));
+            let delete = get(to, "delete").map(|(v, vs)| boolean(v, vs, "delete")).transpose()?.unwrap_or(false);
+            if !delete && patch.is_empty() && assigns.is_empty() {
+                return Err(Diag::new("DEF.MISSING_ITEM", "transition에는 to, patch 또는 delete가 필요", *vs));
             }
             r.transitions.push(Transition {
                 name: n.clone(),
@@ -322,6 +323,7 @@ fn resource(name: &str, l: &Lit, span: Span) -> R<Resource> {
                 expect: names("expect")?,
                 from: expr(f, fs, "from")?,
                 to: assigns,
+                delete,
                 allow: expr(a, asp, "allow")?,
                 repeat: get(to, "repeat").map(|(v, vs)| s(v, vs, "repeat").map(|x| (x.to_string(), vs))).transpose()?,
                 effects: match get(to, "effects") {
@@ -435,8 +437,8 @@ fn effect_values(value: &Lit, span: Span, what: &str) -> R<Vec<(String, Expr)>> 
 
 fn transition_effect(value: &Lit, span: Span) -> R<Effect> {
     let eo = obj(value, span, "effect")?;
-    if ["create", "update", "notify"].iter().filter(|key| get(eo, key).is_some()).count() != 1 {
-        return Err(Diag::new("DEF.H_SHAPE", "effect는 create/update/notify 중 하나", span));
+    if ["create", "update", "delete", "notify"].iter().filter(|key| get(eo, key).is_some()).count() != 1 {
+        return Err(Diag::new("DEF.H_SHAPE", "effect는 create/update/delete/notify 중 하나", span));
     }
     if let Some((target, ts)) = get(eo, "create") {
         keys(eo, &["create", "values"], "create effect")?;
@@ -458,6 +460,15 @@ fn transition_effect(value: &Lit, span: Span) -> R<Effect> {
             values: effect_values(values, vs, "values")?,
             span,
         })
+    } else if let Some((target, ts)) = get(eo, "delete") {
+        keys(eo, &["delete", "where", "many", "maxRows"], "delete effect")?;
+        let max_rows = match (get(eo, "many"), get(eo, "maxRows")) {
+            (None, None) => None,
+            (Some((Lit::Bool(true), _)), Some((n, ns))) => Some(int(n, ns, "maxRows")?),
+            _ => return Err(Diag::new("DEF.H_SHAPE", "many delete에는 many:true와 maxRows가 함께 필요", span)),
+        };
+        let (matches, ms) = req(eo, "where", span, "delete effect")?;
+        Ok(Effect::Delete { resource: s(target, ts, "delete")?.to_string(), max_rows, matches: effect_values(matches, ms, "where")?, span })
     } else {
         keys(eo, &["notify", "topic"], "notify effect")?;
         let (target, ts) = req(eo, "notify", span, "notify effect")?;
