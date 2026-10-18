@@ -265,7 +265,7 @@ async fn http_apply_runs_real_node_and_python_workers_in_one_mysql_transaction()
         let guest = apply(None, &fingerprint, key("guest"), view("10")).await;
         assert_eq!(code(&guest), "WIRE.UNAUTHENTICATED", "{language}: {guest}");
         assert_eq!((db.snapshot().await, db.audit(&key("guest")).await), ([0, 0, 0], 0), "{language}: guest changed state");
-        let stale = apply(Some(&alice), "stale-contract", key("stale"), view("10")).await;
+        let stale = apply(Some(&alice), &"0".repeat(64), key("stale"), view("10")).await;
         assert_eq!(code(&stale), "WIRE.CONTRACT_MISMATCH", "{language}: {stale}");
         assert_eq!((db.snapshot().await, db.audit(&key("stale")).await), ([0, 0, 0], 0), "{language}: stale contract changed state");
         // A verified JWT whose subject has no aip_principals row: MysqlAuthenticator (mysql_service.rs) answers
