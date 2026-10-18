@@ -1337,6 +1337,100 @@ async fn apply_inner(db_url: &str, schema: &str, new_facts: &Value, migration: &
 mod old_journal_tests {
     use super::*;
 
+    /// Isolated fixture for the durable-job trace-column upgrade review.
+    /// Requires an explicitly supplied test-only PostgreSQL URL; no localhost fallback.
+    #[tokio::test]
+    async fn flash_parent_job_schema_upgrade_and_store_probe() {
+        use aip_execution::{NewRun, Store};
+
+        let url = std::env::var("AIP_FLASH_VERIFY_DATABASE_URL").expect("explicit isolated PostgreSQL URL required");
+        let schema = format!("aip_flash_{}", std::process::id());
+        let facts = spike_v1_fixture::load_str(
+            &include_str!("../../../spikes/spike-v6-transport/tests/fixtures/operations.aip").replace("operation read", "operation job"),
+            spike_v1_fixture::Form::A,
+        )
+        .unwrap()
+        .execution;
+
+        init_with_wire(&url, &schema, &facts, "safe").await.unwrap();
+        let (db, connection) = tokio_postgres::connect(&url, tokio_postgres::NoTls).await.unwrap();
+        tokio::spawn(async move { let _ = connection.await; });
+
+        // Reconstruct the job table created by the parent revision (4e8e212^).
+        let parent_job_ddl = format!(
+            "CREATE TABLE {schema}.aip_jobs (\
+               id uuid PRIMARY KEY, owner text NOT NULL, actor_id bigint NOT NULL CHECK(actor_id>0), grant_data jsonb NOT NULL, \
+               operation text NOT NULL, contract_digest text NOT NULL, deployment_digest text NOT NULL, implementation_digest text NOT NULL, \
+               input jsonb NOT NULL, input_digest text NOT NULL, idempotency_key text NOT NULL, \
+               state text NOT NULL CHECK(state IN ('QUEUED','RUNNING','CANCEL_REQUESTED','SUCCEEDED','FAILED','CANCELLED')), \
+               attempt integer NOT NULL DEFAULT 0 CHECK(attempt>=0), max_attempts integer NOT NULL CHECK(max_attempts>0), \
+               lease_epoch bigint NOT NULL DEFAULT 0 CHECK(lease_epoch>=0), lease_owner text, lease_until timestamptz, attempt_deadline timestamptz, \
+               timeout_ms bigint NOT NULL CHECK(timeout_ms>0), run_deadline timestamptz NOT NULL, next_run_at timestamptz NOT NULL DEFAULT clock_timestamp(), \
+               cancel_requested_at timestamptz, output jsonb, error text, result_ttl_ms bigint NOT NULL CHECK(result_ttl_ms>0), \
+               initial_delay_ms bigint NOT NULL CHECK(initial_delay_ms>=0), created_at timestamptz NOT NULL DEFAULT clock_timestamp(), result_expires_at timestamptz, \
+               UNIQUE(owner,operation,contract_digest,deployment_digest,idempotency_key))"
+        );
+        db.batch_execute(&format!("DROP TABLE {schema}.aip_effects; DROP TABLE {schema}.aip_jobs;"))
+            .await
+            .unwrap();
+        db.batch_execute(&parent_job_ddl).await.unwrap();
+        db.batch_execute(&format!(
+            "CREATE TABLE {schema}.aip_effects (run_id uuid NOT NULL REFERENCES {schema}.aip_jobs(id), effect_key text NOT NULL, request_digest text NOT NULL, state text NOT NULL CHECK(state IN ('PENDING','SUCCEEDED','UNKNOWN','FAILED')), result jsonb, PRIMARY KEY(run_id,effect_key))"
+        )).await.unwrap();
+
+        let mut parent_ddl = creation(&schema, &facts).unwrap().0;
+        let job_ddl_index = parent_ddl.iter().position(|sql| sql.starts_with(&format!("CREATE TABLE {schema}.aip_jobs "))).unwrap();
+        parent_ddl[job_ddl_index] = parent_job_ddl;
+        let parent_ddl_digest = digest(&json!(parent_ddl));
+        let old_structure = structure(&db, &schema).await.unwrap();
+        db.execute(&format!("UPDATE {schema}.{META} SET ddl_digest=$1,structure_digest=$2 WHERE singleton=true"), &[&parent_ddl_digest, &old_structure])
+            .await
+            .unwrap();
+        db.execute(
+            &format!("INSERT INTO {schema}.aip_jobs(id,owner,actor_id,grant_data,operation,contract_digest,deployment_digest,implementation_digest,input,input_digest,idempotency_key,state,max_attempts,timeout_ms,run_deadline,result_ttl_ms,initial_delay_ms) VALUES('00000000-0000-4000-8000-000000000001','https://issuer.example|legacy',17,'{{}}','normalize','contract-a','deployment-a','sha256:impl-a','{{\"legacy\":true}}','legacy-digest','legacy-row','QUEUED',3,30000,clock_timestamp()+interval '1 hour',60000,0)"),
+            &[],
+        ).await.unwrap();
+        let missing_column = plan(&url, &schema, &facts, &None).await.unwrap_err();
+        println!("planner_on_parent_schema={missing_column}");
+        assert_eq!(missing_column["code"], "WIRE.SCHEMA_MISMATCH");
+        let has_trace: bool = db.query_one(
+            "SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=$1 AND table_name='aip_jobs' AND column_name='trace_id')",
+            &[&schema],
+        ).await.unwrap().get(0);
+        assert!(!has_trace);
+
+        let store = Store::new(&schema).unwrap();
+        let make_run = |trace_id: Option<&str>| NewRun {
+            owner: "https://issuer.example|new".into(), actor: 18, grant: json!({"scope":"operation:normalize"}),
+            operation: "normalize".into(), contract: "contract-a".into(), deployment: "deployment-a".into(),
+            implementation: "sha256:impl-a".into(), input: json!({"x":1}), key: "new-run".into(),
+            timeout_ms: 30_000, max_attempts: 3, ttl_ms: 60_000, delay_ms: 0, trace_id: trace_id.map(str::to_owned),
+        };
+        let enqueue_error = store.enqueue(&db, make_run(Some("0123456789abcdef0123456789abcdef"))).await.unwrap_err();
+        println!("enqueue_on_parent_schema={enqueue_error:?}");
+        assert!(format!("{enqueue_error:?}").contains("42703"));
+        let claim_error = store.claim(&db, "flash-verifier").await.unwrap_err();
+        println!("claim_on_parent_schema={claim_error:?}");
+        assert!(format!("{claim_error:?}").contains("42703"));
+
+        db.batch_execute(&format!("ALTER TABLE {schema}.aip_jobs ADD COLUMN trace_id text")).await.unwrap();
+        let legacy_trace: Option<String> = db.query_one(&format!("SELECT trace_id FROM {schema}.aip_jobs WHERE id='00000000-0000-4000-8000-000000000001'"), &[]).await.unwrap().get(0);
+        assert_eq!(legacy_trace, None);
+        let first = store.enqueue(&db, make_run(Some("0123456789abcdef0123456789abcdef"))).await.unwrap();
+        let replay = store.enqueue(&db, make_run(Some("fedcba9876543210fedcba9876543210"))).await.unwrap();
+        assert_eq!(first.id, replay.id);
+        let legacy_lease = store.claim(&db, "flash-verifier").await.unwrap().unwrap();
+        assert_eq!(legacy_lease.trace_id, None);
+        let new_lease = store.claim(&db, "flash-verifier").await.unwrap().unwrap();
+        assert_eq!(new_lease.run_id.to_string(), first.id);
+        assert_eq!(new_lease.trace_id.as_deref(), Some("0123456789abcdef0123456789abcdef"));
+        assert!(store.retry(&db, &new_lease, "verification retry").await.unwrap());
+        let after_retry: Option<String> = db.query_one(&format!("SELECT trace_id FROM {schema}.aip_jobs WHERE id=$1::text::uuid"), &[&first.id]).await.unwrap().get(0);
+        assert_eq!(after_retry.as_deref(), Some("0123456789abcdef0123456789abcdef"));
+        println!("manual_trace_column_store_probe=enqueue, replay, legacy-claim, traced-claim, retry-preserved");
+        db.batch_execute(&format!("DROP SCHEMA {schema} CASCADE")).await.unwrap();
+    }
+
     /// A deployment created before the journal stopped requiring unique plan digests still has that constraint. It must be
     /// dropped by the next apply, together with a new structure digest, or A -> B -> A -> B keeps failing there.
     #[tokio::test]
