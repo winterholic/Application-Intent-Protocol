@@ -64,6 +64,7 @@ node --test \
   product/tests/dev-jwt.test.mjs \
   product/tests/google-storage-provider.test.mjs
 python3 -m unittest product.tests.google_storage_provider_test product.tests.python_sdk_test product.tests.dedicated_db_test
+python3 spikes/spike-v4-worker/tests/python_frame_limit.py -v
 
 # Test feature combinations can replace target/debug/aip; rebuild the product last.
 cargo build -p aip-cli --locked
