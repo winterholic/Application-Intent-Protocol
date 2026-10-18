@@ -40,7 +40,7 @@
 
 | 키 | 형태 | 뜻 |
 |---|---|---|
-| `fields` | `fields { id: Id; name: Text(1..100); owner: Member? }` | 열. id: Uuid는 UUID 기본키. 외부 schema의 기본값 필드는 타입 뒤 default database로 선언한다(읽기 nullable은 유지, create 입력은 생략 가능). ?는 null 허용. owner: Member는 외래 키가 있는 참조(조인·traverse 가능). fields 안에서 `X.Id`는 쓸 수 없고 오류다(DEF.ID_FIELD_NEEDS_REFERENCE). 참조 `X`를 쓴다. resource마다 한 번 |
+| `fields` | `fields { id: Id; name: Text(1..100); owner: Member? }` | 열. id: Uuid는 UUID 기본키, id: Member는 Member.id를 공유하는 1:1 기본키/외래 키다. 공유 기본키는 참조 대상의 UUID/숫자 identity와 같은 wire 형식을 쓰며 null일 수 없다. Json은 JSON 값을 읽기 위한 타입이다. 외부 schema의 기본값 필드는 타입 뒤 default database로 선언한다(읽기 nullable은 유지, create 입력은 생략 가능). ?는 null 허용. owner: Member는 외래 키가 있는 참조(조인·traverse 가능). fields 안에서 `X.Id`는 쓸 수 없고 오류다(DEF.ID_FIELD_NEEDS_REFERENCE). 참조 `X`를 쓴다. resource마다 한 번 |
 | `rows` | `rows read when condition` | 호출자가 읽을 수 있는 행. 쓰지 않으면 읽을 수 있는 행이 없다 |
 | `field` | `field name read when condition` | 필드별 읽기 조건. 조건이 거짓인 행에서 select하면 null이고 출력 타입은 nullable이다(열이 필수여도). 이 필드는 filter·sort·집계에 쓸 수 없다 |
 | `expose` | `expose read {..} \| expose apply T {..} \| expose create {..} \| expose compose {..} \| expose aggregate name` | 호출자에게 여는 것. 쓰지 않은 것은 열리지 않는다 |

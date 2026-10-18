@@ -276,3 +276,44 @@ resource UserPointHistory {
     budget { rows 100; depth 1; cost 1000; deadline 2s; offset 100000 }
   }
 }
+
+// 1:1 shared primary keys: id is the User FK and the table's PK at once.
+resource UserEmotionDna {
+  fields {
+    id: User
+    dna_type: Text(1..50)
+    dna_data: Json
+    based_on_videos: Int
+    generated_at: Time
+    expires_at: Time
+  }
+  rows read when id = actor and active(actor)
+  expose read {
+    select id, dna_type, dna_data, based_on_videos, generated_at, expires_at
+    filter id.eq
+    budget { rows 1; depth 1; cost 100; deadline 1s }
+  }
+}
+
+resource UserEmotionSummary {
+  fields {
+    id: User
+    neutral_seconds: Int
+    happy_seconds: Int
+    surprise_seconds: Int
+    sad_seconds: Int
+    angry_seconds: Int
+    last_finalized_at: Time?
+    last_session_id: Text(1..64)?
+    lock_version: Int
+    created_at: Time
+    updated_at: Time
+  }
+  rows read when id = actor and active(actor)
+  expose read {
+    select id, neutral_seconds, happy_seconds, surprise_seconds, sad_seconds, angry_seconds,
+      last_finalized_at, last_session_id, lock_version, created_at, updated_at
+    filter id.eq
+    budget { rows 1; depth 1; cost 100; deadline 1s }
+  }
+}

@@ -84,7 +84,7 @@ pub fn json_scalar(ty: &str, sql: &str) -> String {
 
 pub fn column(facts: &Value, res: &str, field: &str) -> Option<String> {
     let ty = facts["resources"][res]["fields"][field]["ty"].as_str()?;
-    Some(if ty.starts_with("Ref<") { format!("{}_id", snake(field)) } else { snake(field) })
+    Some(if field != "id" && ty.starts_with("Ref<") { format!("{}_id", snake(field)) } else { snake(field) })
 }
 
 /// SQL을 만드는 대상 엔진. PostgreSQL 출력은 기존 그대로 두고 MySQL은 같은 의미를 별도 구문으로 낸다.
@@ -726,6 +726,7 @@ pub fn create_ddl_in(namespace: &str, facts: &Value) -> R<Vec<String>> {
                         // 쓰기 경로(sema의 상수 대입 검사, v3 증감 뒤 검사)에서 집행한다.
                         "Int" => "bigint".into(),
                         "Bool" => "boolean".into(),
+                        "Json" => "jsonb".into(),
                         b => return Err(format!("DDL 미지원 타입 {b}")),
                     }
                 };

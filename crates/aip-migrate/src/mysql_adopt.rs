@@ -135,6 +135,7 @@ fn type_problem(facts: &Value, field: &Value, column: &ColumnInfo) -> Option<Str
         return (column.column_type != expected).then(|| format!("{expected} 컬럼이어야 함(실제 {})", column.column_type));
     }
     match base {
+        "Json" => (column.data_type != "json").then(|| format!("Json은 JSON 컬럼이어야 함(실제 {})", column.column_type)),
         "Text" | "Email" | "Url" => {
             if !TEXT_TYPES.contains(&column.data_type.as_str()) {
                 return Some(format!("문자열 컬럼이어야 함(실제 {})", column.column_type));
@@ -227,7 +228,11 @@ async fn validate(
                         && fk.referenced_table == other.table
                         && fk.referenced_columns == [other_id.clone()]
                 });
-                if !correct {
+                // The explicit `id: User` shared-PK form is a narrow compatibility opt-in for legacy 1:1 tables
+                // whose PK is the parent identity but whose original DDL omitted a physical FK (FaceReview DNA).
+                // All ordinary Ref fields still require the catalog FK; shared-PK columns still must be the mapped PK.
+                let shared_pk_without_fk = field == "id" && rf["sharedPrimaryKey"] == target && primary.columns == [physical.clone()];
+                if !correct && !shared_pk_without_fk {
                     return Err(failure("Ref 매핑과 기존 FK가 다름"));
                 }
             }

@@ -1,6 +1,6 @@
 # FaceReview MySQL 읽기 포팅 fixture (WBS 7.2.3)
 
-원본 FaceReview 서버(new-facereview@7948b7e721837fdb73c427cb54e12cad4ec2d5af)의 RDB 모델 11개 중 9개를 실제 MySQL 스키마 위에서 AIP로 읽는다.
+원본 FaceReview 서버(new-facereview@7948b7e721837fdb73c427cb54e12cad4ec2d5af)의 RDB 모델 11개를 실제 MySQL 스키마 위에서 AIP로 읽는다.
 실험 baseline이며 운영 서버와 같다는 주장은 하지 않는다.
 
 | 파일 | 출처 |
@@ -8,7 +8,7 @@
 | `schema.sql` | 고정 revision의 SQLAlchemy 모델을 `db.metadata.create_all`로 MySQL 8.4에 만든 뒤 `SHOW CREATE TABLE`로 뽑은 11개 표. 사람이 고치지 않았다 |
 | `db-defaults.sql` | 이 포팅이 추가한 DBA 단계. 원본은 `created_at`·`updated_at`·`is_deleted` 같은 값을 Python(`default=`, `onupdate=`)에서 채워 표에 DB default가 없다 |
 | `seed.sql` | 이 시험용 행. 숨김 영상, 플래그 NULL 영상, 삭제된 댓글, 음수 포인트, 비로그인 시청 기록을 일부러 넣었다 |
-| `facereview.aip` | 9개 resource의 읽기 정의, 사용자 쓰기 조각(댓글 생성·수정·soft 삭제, 좋아요·북마크·영상 요청 생성), 관리자 권한 조각(사용자 비활성화·권한 변경, 요청 거절, 댓글·영상 soft 삭제) |
+| `facereview.aip` | 11개 resource의 읽기 정의, 사용자 쓰기 조각(댓글 생성·수정·soft 삭제, 좋아요·북마크·영상 요청 생성), 관리자 권한 조각(사용자 비활성화·권한 변경, 요청 거절, 댓글·영상 soft 삭제) |
 | `mapping.json` | 필드 이름과 실제 열 이름(`id`→`video_id` 등) 대응. 스키마 이름은 시험이 덮어쓴다 |
 | `reference/admin.py` | 같은 방식의 권한 비교(원본 `admin_required`·`super_admin_required`와 AdminService 효과). 5명(GENERAL 2, ADMIN 2, SUPER_ADMIN 1)으로 확인 |
 | `reference/writes.py` | AIP 제품 HTTP 쓰기 경로와 고정된 DB 결과 조건을 검사하는 product-side helper. 원본 SQLAlchemy 함수를 직접 호출하지 않으므로 단독으로 원본 대조라고 부르지 않는다 |
@@ -60,7 +60,7 @@ python3.9 product/tests/fixtures/facereview-mysql/reference/writes.py
 
 - 제목 OR 채널 검색. 읽기 `filter`는 AND만 있다.
 - 목록 응답의 전체 건수(`total`). 원본은 매 페이지에 돌려주지만 AIP 읽기 응답에는 없다.
-- `user_emotion_dna`와 `user_emotion_summary`. 두 표는 기본키가 곧 `user`의 외래 키(1:1 공유 키)다. resource의 `id: Uuid`는 `actor`(`Ref<User>`)와 타입이 달라 `rows read when id = actor`가 `DEF.TYPE_MISMATCH`이고, 같은 열을 `id`와 `user` 두 필드에 매핑하면 어댑션이 `컬럼 매핑 중복`으로 거절한다(둘 다 실제로 시도). 정의 언어에 "기본키가 참조인 resource"가 생기기 전에는 본인 행만 읽는 정책을 쓸 수 없다. `dna_data` JSON 열은 JSON 타입이 없어 선언하지 않아도 되는지는 이 표들이 막혀 있어 확인하지 못했다.
+- `user_emotion_dna`와 `user_emotion_summary`: `id: User`로 공유 PK/FK를 한 필드에 표현하고 `rows read when id = actor and active(actor)`로 본인 행만 연다. DNA의 `dna_data`는 JSON 값으로 읽는다. 원본 DNA 표에는 FK 제약이 없어 orphan 행도 가능하지만 actor ID와 다르면 AIP에서 읽히지 않는다. summary의 FK는 원본대로 유지한다.
 - 음수 범위 `Int(-1000..1000)`은 문법이 지원하지 않아 `user_point_history.amount`는 범위 없는 `Int`다.
 - Mongo(감정 분포)·Redis에 의존하는 목록(`get_all_videos`, 북마크 영상, 추천)은 이 fixture 범위 밖이다.
 - 비활성화된 회원의 요청은 원본의 401(`AUTH_INVALID_TOKEN`)이 아니라 200과 빈 결과(쓰기는 거절)다. 인증은 외부 토큰 검증이고 가시성은 정책이라서다. 상태 코드까지 같게 하려면 actor 유효 조건을 정의 수준에서 선언하는 기능이 필요하다.

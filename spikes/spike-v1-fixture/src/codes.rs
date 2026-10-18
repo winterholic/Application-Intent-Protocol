@@ -310,7 +310,7 @@ pub static REGISTRY: &[Info] = &[
         "DEF.UNKNOWN_TYPE",
         "a type that is not declared",
         "A field or parameter uses a type that is neither built in nor an `enum` or `resource` of this definition. Errors that depend on this field (its enum values, its policies) usually follow and disappear when it is fixed.",
-        "Spell the type as declared: `Id`, `Uuid` (primary identity), `Text`, `Int`, `Bool`, `Time`, `Date`, `Url`, `Email`, `Decimal(p,s)`, an `enum` or `resource` name, `X.Id`, with `?` for nullable. Declare the enum or resource if it is missing.",
+        "Spell the type as declared: `Id`, `Uuid` (primary identity), `Text`, `Int`, `Bool`, `Json`, `Time`, `Date`, `Url`, `Email`, `Decimal(p,s)`, an `enum` or `resource` name, `X.Id`, with `?` for nullable. Declare the enum or resource if it is missing.",
         concat!(base!(), "enum Status { OPEN, CLOSED }\nresource Ticket {\n  fields { id: Id; status: Status; reporter: Member? }\n}\n"),
     ),
     i(
