@@ -18,9 +18,12 @@ MONGO_SKIP_MAX = 100000
 # Upper bound of video ids the extension will gather before Mongo paging (emotion-filtered search, bookmark list).
 MAX_CANDIDATES = 5000
 # The original sorts `[('created_at', -1), ('_id', -1)]`. The host's Mongo `sort` object loses key order (the JSON map is
-# alphabetical, so `_id` would win), which would change page membership. The single-key `sort_by`/`desc` form keeps `created_at`
-# first; documents with an identical created_at (millisecond) then come back in Mongo's natural order instead of `_id` desc. The
-# chunked paths below (more than MONGO_IN ids) sort client-side by (created_at, _id) and are exact.
+# alphabetical, so `_id` would win), which would change page membership. So the order is rebuilt client-side:
+#   - id-list queries (emotion-filtered search, bookmarks): every matching document is fetched (video_id is unique, at most
+#     MONGO_IN per chunk), sorted by (created_at, _id) here, then sliced. Exact for any number of ids.
+#   - video/all: `sort_by created_at` pages through a window around the requested slice, groups of equal created_at inside the
+#     window are re-sorted by `_id` desc. If a group of equal created_at reaches the window edge (more than TIE_MARGIN equal
+#     timestamps next to the page) or the host answers inconsistently, the call fails loudly instead of guessing.
 # The RDB IN lookup order of the original is unspecified; this port answers in Mongo page order.
 
 
@@ -89,14 +92,6 @@ async def _mongo_count(ctx, query):
     return (await _mongo(ctx, "video_distribution", command="count_documents", filter=query))["count"]
 
 
-async def _mongo_page(ctx, query, page, size):
-    skip = (page - 1) * size
-    if skip > MONGO_SKIP_MAX:
-        raise Exception(f"page {page} x size {size} exceeds the Mongo skip limit {MONGO_SKIP_MAX}")
-    res = await _mongo(ctx, "video_distribution", command="find", filter=query, sort_by="created_at", desc=True, skip=skip, limit=size)
-    return res["docs"]
-
-
 def _sort_key(doc):
     # Extended-JSON shapes of created_at and _id as the host returns them; anything else is refused rather than mis-sorted.
     created = doc.get("created_at")
@@ -110,29 +105,77 @@ def _sort_key(doc):
     return (str(created) if not isinstance(created, (int, float)) else f"{int(created):020d}", str(oid))
 
 
+TIE_MARGIN = 100
+LIGHT = {"video_id": 1, "created_at": 1}
+
+
+async def _light_window(ctx, query, start, stop):
+    # Documents at sorted positions [start, stop) as {_id, video_id, created_at}, fetched in host-sized pieces.
+    docs = []
+    position = start
+    while position < stop:
+        take = min(MONGO_IN, stop - position)
+        res = await _mongo(ctx, "video_distribution", command="find", filter=query, projection=LIGHT, sort_by="created_at", desc=True,
+                           skip=position, limit=take)
+        docs.extend(res["docs"])
+        if len(res["docs"]) < take:
+            break
+        position += take
+    return docs
+
+
+def _created(doc):
+    return _sort_key(doc)[0]
+
+
+async def _full_docs(ctx, video_ids):
+    full = {}
+    for chunk in _chunks(list(video_ids), MONGO_IN):
+        res = await _mongo(ctx, "video_distribution", command="find", filter={"video_id": {"$in": chunk}}, limit=MONGO_IN)
+        full.update({doc["video_id"]: doc for doc in res["docs"]})
+    return full
+
+
+async def _mongo_page(ctx, query, page, size):
+    # `find(query).sort([('created_at', -1), ('_id', -1)]).skip((page - 1) * size).limit(size)` without an id list.
+    skip = (page - 1) * size
+    start = max(0, skip - TIE_MARGIN - 1)
+    stop = skip + size + TIE_MARGIN + 1
+    if stop > MONGO_SKIP_MAX + MONGO_IN:
+        raise Exception(f"page {page} x size {size} exceeds the Mongo skip limit {MONGO_SKIP_MAX}")
+    window = await _light_window(ctx, query, start, stop)
+    ids = [doc["video_id"] for doc in window]
+    if len(set(ids)) != len(ids):
+        raise Exception("the host returned overlapping Mongo pages (unstable order among equal created_at)")
+    stamps = [_created(doc) for doc in window]
+    page_lo, page_hi = skip - start, skip - start + size
+    if len(window) <= page_lo:
+        return []  # the page starts beyond the last document
+    if start > 0 and not any(stamps[i] != stamps[i + 1] for i in range(0, min(page_lo, len(stamps) - 1))):
+        raise Exception(f"more than {TIE_MARGIN} documents share one created_at before the requested page")
+    if len(window) == stop - start and not any(stamps[i] != stamps[i + 1] for i in range(max(page_hi - 1, 0), len(stamps) - 1)):
+        raise Exception(f"more than {TIE_MARGIN} documents share one created_at after the requested page")
+    window.sort(key=_sort_key, reverse=True)
+    wanted = [doc["video_id"] for doc in window[page_lo:page_hi]]
+    full = await _full_docs(ctx, wanted)
+    return [full[video_id] for video_id in wanted if video_id in full]
+
+
 async def _mongo_page_over_ids(ctx, video_ids, extra, page, size):
     # `{'video_id': {'$in': ids}, **extra}` with the original's count/sort/skip/limit, for any number of ids.
-    # video_id is unique in the collection, so per-chunk counts add up and per-chunk results are disjoint.
-    if len(video_ids) <= MONGO_IN:
-        query = {"video_id": {"$in": video_ids}, **extra}
-        return await _mongo_count(ctx, query), await _mongo_page(ctx, query, page, size)
-    total = 0
+    # video_id is unique, so the per-chunk results are disjoint and `total` is their sum.
     light = []
     for chunk in _chunks(video_ids, MONGO_IN):
         query = {"video_id": {"$in": chunk}, **extra}
-        total += await _mongo_count(ctx, query)
-        res = await _mongo(ctx, "video_distribution", command="find", filter=query, projection={"video_id": 1, "created_at": 1}, limit=MONGO_IN)
+        res = await _mongo(ctx, "video_distribution", command="find", filter=query, projection=LIGHT, limit=MONGO_IN)
+        if len(res["docs"]) > len(chunk):
+            raise Exception("more Mongo documents than ids: video_id is not unique in video_distribution")
         light.extend(res["docs"])
     light.sort(key=_sort_key, reverse=True)
     skip = (page - 1) * size
     wanted = [doc["video_id"] for doc in light[skip:skip + size]]
-    if not wanted:
-        return total, []
-    full = {}
-    for chunk in _chunks(wanted, MONGO_IN):
-        res = await _mongo(ctx, "video_distribution", command="find", filter={"video_id": {"$in": chunk}}, limit=MONGO_IN)
-        full.update({doc["video_id"]: doc for doc in res["docs"]})
-    return total, [full[video_id] for video_id in wanted if video_id in full]
+    full = await _full_docs(ctx, wanted)
+    return len(light), [full[video_id] for video_id in wanted if video_id in full]
 
 
 def _percent(doc, dominant):

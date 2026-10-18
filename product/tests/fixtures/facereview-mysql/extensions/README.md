@@ -19,6 +19,14 @@ with `crates/aip-service/tests/slice13b_host.rs` (real MySQL adapter, real Mongo
 compares each HTTP answer with the **original `HomeService` imported from the pinned checkout** running against the same databases.
 Environment variables are listed in the script's docstring; it has no default endpoint or credential.
 
+## Independent reviewer oracle
+
+`reference/slice13b_review_oracle.py` runs the 27 B cases of the reviewer's frozen `oracle_cases.json` (pinned original on SQLite and
+mongomock) against the same seed loaded into real MySQL 8.4 and mongod, and also runs the original HomeService on that MySQL
+(authoritative for the collation cases B-s-4 and B-s-8). Intended differences (deleted videos hidden by row policy, guests refused by
+the host, a stand-in user for B-bm-4) are printed per case. Guest cases additionally check the data logic through a member without
+bookmarks.
+
 ## Differences from the original, all deliberate
 
 - Deleted videos are not shown. The original looks videos up with `video_id IN (...)` without `is_deleted`, so `video/all` and
@@ -39,9 +47,10 @@ Environment variables are listed in the script's docstring; it has no default en
 3. `/extension` requires a signed session (`WIRE.UNAUTHENTICATED`), so the original's `login_optional` guests of `home/search`
    and `home/video/all` cannot be served.
 4. The host's Mongo `sort` object loses key order (the JSON map is alphabetical), so `[('created_at', -1), ('_id', -1)]` cannot be
-   expressed. The extension uses `sort_by`/`desc` (`created_at` only); documents with an identical millisecond `created_at` come
-   back in natural order instead of `_id` descending. `S13B_TIE_PROBE=1` demonstrates the one affected case. The chunked paths sort
-   client-side by (`created_at`, `_id`) and are exact.
+   expressed to the host. The extension rebuilds the order itself: id-list paths sort all matching documents by (`created_at`, `_id`)
+   client-side; `video/all` pages a window around the slice with `sort_by created_at` and re-sorts equal-`created_at` groups by `_id`.
+   More than 100 documents with one identical `created_at` next to a page, or an unstable host answer, fails loudly. A host-side
+   ordered multi-key sort would remove the window reads. `S13B_TIE_PROBE=1` seeds a tie group that straddles pages (passes).
 5. Extension error messages are replaced by a fixed text, so a failing extension shows only `WIRE.EXTENSION_ERROR`.
 6. The canonical `facereview.aip` is not edited. The driver derives the definition it adopts from it by adding `id.in` to
    `Video`'s filter list, `video.in` to `VideoBookmark`'s filter list, two enums and the three extension declarations (without the
