@@ -314,3 +314,20 @@ async fn gap_driver_field_allowlist_and_read_only_limits() {
         assert_eq!(err.code, "WIRE.CAPABILITY_DENIED", "{command}: {}", err.msg);
     }
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn gap_read_extension_reads_a_resource_it_never_declared() {
+    // Probe for the suspected missing `read.<Resource>` check in serve_call: the extension declares no grants at all.
+    let mut probe_facts = facts();
+    probe_facts["resources"]["Video"]["extensions"] = json!({
+        "probe": {"kind": "read", "effect": "none", "deadlineMs": 5000, "input": [], "output": [["result", "Text"]],
+                  "access": {}, "implementation": "slice13d_probe.undeclared_read"}
+    });
+    let backend = backend_from(&golden(), json!(1));
+    let mut worker = Worker::start_with(Lang::Python, EXT_DIR, isolation()).await;
+    let mut host = RelationalWorkerHost::new(&backend);
+    let caller = Caller { actor_id: Some(1), now: NOW.into() };
+    let out = invoke_with_host(&mut host, &mut worker, &probe_facts, "Video.probe", &json!({}), &caller, IdWire::Legacy).await.expect("probe");
+    worker.stop().await;
+    assert_eq!(out["result"], "READ_OK rows=1", "undeclared User read succeeded: {out}");
+}
