@@ -423,6 +423,38 @@ def main():
                  {"page": 2, "size": 12, "keyword_type": "all", "keyword": "브이로그", "emotions": ["happy", "sad", "neutral", "surprise", "angry"]})
             case(f"search {who} emotion filter empty result", "search", "Video.homeSearch", subject,
                  {"page": 1, "size": 10, "keyword_type": "title", "keyword": "없는제목", "emotions": ["happy"]})
+        # more than one Mongo $in (126 visible candidates) in the emotion-filtered search: exact client-side (created_at, _id) merge
+        case("search alice all:'' (all videos) happy+sad p1 size 20", "search", "Video.homeSearch", "alice",
+             {"page": 1, "size": 20, "keyword_type": "all", "keyword": "", "emotions": ["happy", "sad"]})
+        case("search alice all:'' (all videos) every emotion p2 size 50", "search", "Video.homeSearch", "alice",
+             {"page": 2, "size": 50, "keyword_type": "all", "keyword": "", "emotions": ["happy", "sad", "neutral", "surprise", "angry"]})
+        case("search alice title:_라이브 (LIKE wildcard kept as in the original)", "search", "Video.homeSearch", "alice",
+             {"page": 1, "size": 10, "keyword_type": "title", "keyword": "_라이브", "emotions": []})
+        case("video/all alice all p2 size 100", "all", "Video.homeVideoAll", "alice", {"page": 2, "size": 100, "emotion": "all"}, expect_hidden_deleted=True)
+        # Inputs the original route schemas reject (422) are refused at the extension boundary; none of them reach the data stores.
+        for name, extension, ext_input in (
+            ("unknown emotion", "Video.homeVideoAll", {"page": 1, "size": 10, "emotion": "joy"}),
+            ("page 0", "Video.homeVideoAll", {"page": 0, "size": 10, "emotion": "all"}),
+            ("size 101", "Video.homeVideoAll", {"page": 1, "size": 101, "emotion": "all"}),
+            ("keyword_type other", "Video.homeSearch", {"page": 1, "size": 10, "keyword_type": "tag", "keyword": "a", "emotions": ""}),
+            ("bookmark unknown emotion", "Video.homeBookmark", {"page": 1, "size": 10, "emotion": "joy"}),
+        ):
+            response = host.post(extension, ext_input, "alice")
+            ok = response.get("ok") is False and response.get("code") in ("WIRE.BAD_VALUE", "WIRE.VALUE_TOO_LONG", "WIRE.BAD_REQUEST")
+            print(f"{'PASS' if ok else 'FAIL'} reject {name}: {response.get('code')}")
+            count += 1
+            if not ok:
+                failures.append(f"reject {name}")
+        response = host.post("Video.homeVideoAll", {"page": 1, "size": 10, "emotion": "all"}, "nobody")
+        print(f"{'PASS' if response.get('code') == 'WIRE.UNAUTHENTICATED' else 'FAIL'} unknown principal subject: {response.get('code')}")
+        count += 1
+        # Skip beyond the host's Mongo skip cap is refused instead of answered from a truncated window.
+        response = host.post("Video.homeVideoAll", {"page": 1002, "size": 100, "emotion": "all"}, "alice")
+        refused = response.get("ok") is False
+        print(f"{'PASS' if refused else 'FAIL'} page 1002 x size 100 beyond the Mongo skip cap: {response.get('code')}")
+        count += 1
+        if not refused:
+            failures.append("skip cap")
         # login_optional endpoints of the original serve guests; the host's extension route requires a signed session (core gap).
         for extension, ext_input in (("Video.homeVideoAll", {"page": 1, "size": 10, "emotion": "all"}),
                                      ("Video.homeSearch", {"page": 1, "size": 10, "keyword_type": "all", "keyword": "냥", "emotions": ""})):
