@@ -9,7 +9,7 @@ use crate::Form;
 use std::collections::{BTreeMap, BTreeSet};
 
 const TYPES: &[&str] = &["Id", "Text", "Int", "Bool", "Time", "Date", "Url", "Email", "Decimal"];
-const OPERATORS: &[&str] = &["eq", "in", "isNull", "gte", "lte", "gt", "lt", "prefix", "contains"];
+const OPERATORS: &[&str] = &["eq", "in", "isNull", "gte", "lte", "gt", "lt", "prefix", "contains", "like"];
 /// First words of lines that are a declaration on their own (no block), so a diagnostic on them
 /// names that declaration even though no brace was opened.
 const LINE_DECLS: &[&str] =

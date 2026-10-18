@@ -363,8 +363,21 @@ fn compile_filter_item(
         if n > MAX_CONTAINS_CHARS {
             return rej("WIRE.VALUE_TOO_LONG", format!("contains 값 {n}자 > 상한 {MAX_CONTAINS_CHARS}자"));
         }
-        let pattern = format!("%{v}%");
-        let p = cx.params.bind(Some(pattern), cast);
+        let p = cx.params.bind(Some(v), cast);
+        // Preserve the original contract: wildcards and backslashes are literal. PostgreSQL strpos
+        // is case-sensitive; MySQL LOCATE follows the column's collation, as it did before WBS 7.2.3.
+        let cond = if dialect.is_mysql() { format!("(LOCATE({p}, {tcol}) > 0)") } else { format!("(strpos({tcol}, {p}) > 0)") };
+        return Ok((key, and_visible(cond)));
+    }
+    if op == "like" {
+        let Value::String(text) = raw else { return rej("WIRE.BAD_VALUE", "like 값은 문자열") };
+        let n = text.chars().count();
+        if n > MAX_CONTAINS_CHARS {
+            return rej("WIRE.VALUE_TOO_LONG", format!("like 값 {n}자 > 상한 {MAX_CONTAINS_CHARS}자"));
+        }
+        // This is the source application's LIKE '%keyword%' contract: %, _ and backslash retain
+        // native SQL LIKE behavior. PostgreSQL ILIKE mirrors FaceReview's MySQL ai_ci collation.
+        let p = cx.params.bind(Some(format!("%{v}%")), cast);
         let cond = if dialect.is_mysql() { format!("({tcol} LIKE {p})") } else { format!("({tcol} ILIKE {p})") };
         return Ok((key, and_visible(cond)));
     }
@@ -376,11 +389,8 @@ fn compile_filter_item(
         }
         let p = cx.params.bind(Some(v), cast);
         // A prefix is a literal string; SQL wildcard and escape characters keep their meaning as text.
-        let cond = if dialect.is_mysql() {
-            format!("(LEFT({tcol}, CHAR_LENGTH({p})) = {p})")
-        } else {
-            format!("(left({tcol}, char_length({p})) = {p})")
-        };
+        let cond =
+            if dialect.is_mysql() { format!("(LEFT({tcol}, CHAR_LENGTH({p})) = {p})") } else { format!("(left({tcol}, char_length({p})) = {p})") };
         return Ok((key, and_visible(cond)));
     }
     let sop = match op {

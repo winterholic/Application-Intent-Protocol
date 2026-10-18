@@ -314,13 +314,13 @@ a resource that is not declared
 a filter operator that does not exist
 
 - 원인: Filters are `field.operator`; the operators are fixed.
-- 수정: Use `eq`, `in`, `isNull`, `gte`, `lte`, `gt`, `lt`, `prefix` or `contains`, whichever the field type supports (DEF.OP_TYPE_MISMATCH tells which).
+- 수정: Use `eq`, `in`, `isNull`, `gte`, `lte`, `gt`, `lt`, `prefix`, `contains` or `like`, whichever the field type supports (DEF.OP_TYPE_MISMATCH tells which).
 
 ### `DEF.OP_TYPE_MISMATCH`
 
 the operator is not defined for the type of the field
 
-- 원인: For example `gte` needs an ordered type (Time, Date, Int, Decimal), `prefix` and `contains` need Text, `isNull` needs a nullable field, and Bool or reference fields cannot be sorted.
+- 원인: For example `gte` needs an ordered type (Time, Date, Int, Decimal), `prefix`, `contains` and `like` need Text, `isNull` needs a nullable field, and Bool or reference fields cannot be sorted.
 - 수정: Use an operator that fits the type, or filter by another field.
 
 ### `DEF.TYPE_MISMATCH`

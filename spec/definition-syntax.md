@@ -58,7 +58,7 @@
 |---|---|---|
 | `select` | `select a, b` | 읽을 수 있는 필드·집계 이름 |
 | `refIds` | `refIds a, b` | select한 참조 필드 가운데 원시 외래 키 id를 대상 행의 가시성과 무관하게 공개할 것. 쓰지 않은 참조 select는 대상 resource의 `rows read`를 적용해 호출자가 대상 행을 볼 수 없으면 null이 된다(출력 타입도 nullable) |
-| `filter` | `filter f.op, g.op` | 필터 허용 목록. 연산 eq in isNull gte lte gt lt prefix contains 중 필드 타입이 지원하는 것 |
+| `filter` | `filter f.op, g.op` | 필터 허용 목록. contains는 리터럴 부분일치이며 MySQL은 column collation, PostgreSQL은 대소문자 구분 비교를 쓴다. like는 SQL LIKE 와일드카드(%·_)를 쓰며 MySQL은 column collation, PostgreSQL은 ILIKE로 비교한다. 연산 eq in isNull gte lte gt lt prefix contains like 중 필드 타입이 지원하는 것 |
 | `sort` | `sort a, b` | 정렬 허용 목록 |
 | `traverse` | `traverse rel { select a }  \|  traverse Child via field { select a; limit N }` | 참조를 따라 포함한다. 대상 resource의 expose select 안에서만 |
 | `budget` | `budget { rows N; depth N; deadline 2s; cost N }` | 이 읽기를 루트로 부를 수 있게 하는 한도. 네 값이 모두 필요하다 |
@@ -91,7 +91,7 @@
 | `sourceAccess` | `sourceAccess name  \|  name(args)` | 원본 행을 읽는 근거가 되는 access. 반드시 쓴다(원본 행 정책을 물려받지 않는다) |
 | `groupKey` | `groupKey ref` | 원본에서 이 resource를 가리키는 참조 필드. 있으면 행별 집계 |
 | `where` | `where condition` | 집계에 넣을 원본 행 조건 |
-| `callerFilter` | `callerFilter none` | 호출자가 집계 범위를 좁히는 것을 허용하는지 |
+| `callerFilter` | `callerFilter none \| read` | 호출자의 aggregate filter 허용 여부. none은 거부하고 read는 선언된 resource read 필터를 집계에 적용한다 |
 | `rowOutput` | `rowOutput none` | 집계가 행을 내보내는지 |
 | `release` | `release count  \|  sum(f)  \|  min(f)  \|  max(f)` | 내보내는 값 |
 

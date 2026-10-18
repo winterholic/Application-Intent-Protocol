@@ -5,11 +5,7 @@ use spike_v2_read::plan::{plan_read, Caller};
 const SOURCE: &str = include_str!("../../spike-v1-fixture/fixture/recruitment.aip");
 
 fn facts() -> Value {
-    let source = SOURCE.replacen(
-        "filter periodEnd.gte, periodEnd.lte",
-        "filter periodEnd.gte, periodEnd.lte, title.contains",
-        1,
-    );
+    let source = SOURCE.replacen("filter periodEnd.gte, periodEnd.lte", "filter periodEnd.gte, periodEnd.lte, title.contains, title.like", 1);
     load_str(&source, Form::A).expect("compile the test definition").execution
 }
 
@@ -20,7 +16,7 @@ fn read_wire_accepts_or_disjunction_filter() {
     let valid = json!({
         "read": "Recruitment",
         "select": ["id"],
-        "filter": [{"field": "title", "op": "contains", "value": "cat"}]
+        "filter": [{"field": "title", "op": "like", "value": "cat"}]
     });
     assert!(plan_read(&facts, &valid, &caller).is_ok());
 
@@ -28,8 +24,8 @@ fn read_wire_accepts_or_disjunction_filter() {
         "read": "Recruitment",
         "select": ["id"],
         "filter": [{"or": [
-            {"field": "title", "op": "contains", "value": "cat"},
-            {"field": "title", "op": "contains", "value": "dog"}
+            {"field": "title", "op": "like", "value": "cat"},
+            {"field": "title", "op": "like", "value": "dog"}
         ]}]
     });
     let plan = match plan_read(&facts, &disjunction, &caller) {
@@ -37,10 +33,7 @@ fn read_wire_accepts_or_disjunction_filter() {
         Err(e) => panic!("OR disjunction should be accepted: {e:?}"),
     };
     let sql = plan.sql;
-    assert!(
-        sql.contains(" ILIKE ") && sql.contains(" OR "),
-        "expected OR condition in SQL: {sql}"
-    );
+    assert!(sql.contains(" ILIKE ") && sql.contains(" OR "), "expected OR condition in SQL: {sql}");
     assert!(plan.params.contains(&Some("%cat%".to_string())));
     assert!(plan.params.contains(&Some("%dog%".to_string())));
 }
@@ -53,7 +46,7 @@ fn read_wire_rejects_unexposed_field_in_or() {
         "read": "Recruitment",
         "select": ["id"],
         "filter": [{"or": [
-            {"field": "title", "op": "contains", "value": "cat"},
+            {"field": "title", "op": "like", "value": "cat"},
             {"field": "views", "op": "gt", "value": 10}
         ]}]
     });
@@ -68,16 +61,13 @@ fn read_wire_rejects_unexposed_field_in_or() {
 fn read_wire_rejects_policy_redacted_field_in_or() {
     let mut facts = facts();
     // Simulate facts that bypassed sema to verify defense-in-depth runtime check
-    facts["resources"]["Recruitment"]["exposeRead"]["filter"]
-        .as_array_mut()
-        .unwrap()
-        .push(json!("internalNote.contains"));
+    facts["resources"]["Recruitment"]["exposeRead"]["filter"].as_array_mut().unwrap().push(json!("internalNote.contains"));
     let caller = Caller { actor_id: Some(1), now: "2026-10-18T00:00:00Z".into() };
     let redacted = json!({
         "read": "Recruitment",
         "select": ["id"],
         "filter": [{"or": [
-            {"field": "title", "op": "contains", "value": "cat"},
+            {"field": "title", "op": "like", "value": "cat"},
             {"field": "internalNote", "op": "contains", "value": "secret"}
         ]}]
     });
@@ -112,8 +102,8 @@ fn read_wire_or_preserves_row_read_policy() {
         "read": "Recruitment",
         "select": ["id"],
         "filter": [{"or": [
-            {"field": "title", "op": "contains", "value": "cat"},
-            {"field": "title", "op": "contains", "value": "dog"}
+            {"field": "title", "op": "like", "value": "cat"},
+            {"field": "title", "op": "like", "value": "dog"}
         ]}]
     });
     let plan = match plan_read(&facts, &disjunction, &caller) {
@@ -142,7 +132,7 @@ fn read_wire_or_across_multiple_fields() {
         "read": "Recruitment",
         "select": ["id"],
         "filter": [{"or": [
-            {"field": "title", "op": "contains", "value": "cat"},
+            {"field": "title", "op": "like", "value": "cat"},
             {"field": "periodEnd", "op": "gte", "value": "2026-10-01T00:00:00Z"}
         ]}]
     });
@@ -166,8 +156,8 @@ fn read_wire_or_with_and_combination() {
         "filter": [
             {"field": "periodEnd", "op": "gte", "value": "2026-10-01T00:00:00Z"},
             {"or": [
-                {"field": "title", "op": "contains", "value": "cat"},
-                {"field": "title", "op": "contains", "value": "dog"}
+                {"field": "title", "op": "like", "value": "cat"},
+                {"field": "title", "op": "like", "value": "dog"}
             ]}
         ]
     });
@@ -187,7 +177,7 @@ fn read_wire_rejects_nested_or() {
         "read": "Recruitment",
         "select": ["id"],
         "filter": [{"or": [
-            {"or": [{"field": "title", "op": "contains", "value": "cat"}]}
+            {"or": [{"field": "title", "op": "like", "value": "cat"}]}
         ]}]
     });
     let err = match plan_read(&facts, &nested, &caller) {
@@ -203,7 +193,7 @@ fn read_wire_rejects_exceeded_or_list() {
     let caller = Caller { actor_id: Some(1), now: "2026-10-18T00:00:00Z".into() };
     let mut or_items = vec![];
     for i in 0..11 {
-        or_items.push(json!({"field": "title", "op": "contains", "value": format!("test{i}")}));
+        or_items.push(json!({"field": "title", "op": "like", "value": format!("test{i}")}));
     }
     let exceeded = json!({
         "read": "Recruitment",
@@ -225,8 +215,8 @@ fn read_wire_rejects_duplicate_or_items() {
         "read": "Recruitment",
         "select": ["id"],
         "filter": [{"or": [
-            {"field": "title", "op": "contains", "value": "cat"},
-            {"field": "title", "op": "contains", "value": "cat"}
+            {"field": "title", "op": "like", "value": "cat"},
+            {"field": "title", "op": "like", "value": "cat"}
         ]}]
     });
     let err = match plan_read(&facts, &dup, &caller) {
@@ -245,8 +235,8 @@ fn read_wire_or_prevents_sql_injection() {
         "read": "Recruitment",
         "select": ["id"],
         "filter": [{"or": [
-            {"field": "title", "op": "contains", "value": injection_input},
-            {"field": "title", "op": "contains", "value": "dog"}
+            {"field": "title", "op": "like", "value": injection_input},
+            {"field": "title", "op": "like", "value": "dog"}
         ]}]
     });
     let plan = match plan_read(&facts, &disjunction, &caller) {
@@ -266,8 +256,8 @@ fn read_wire_or_with_mysql_dialect() {
         "read": "Recruitment",
         "select": ["id"],
         "filter": [{"or": [
-            {"field": "title", "op": "contains", "value": "cat"},
-            {"field": "title", "op": "contains", "value": "dog"}
+            {"field": "title", "op": "like", "value": "cat"},
+            {"field": "title", "op": "like", "value": "dog"}
         ]}]
     });
     let plan = spike_v2_read::plan::plan_read_in(
@@ -276,11 +266,9 @@ fn read_wire_or_with_mysql_dialect() {
         &disjunction,
         &caller,
         spike_v2_read::id_wire::IdWire::Legacy,
-    ).expect("MySQL OR plan");
-    assert!(
-        plan.sql.contains("LIKE") && plan.sql.contains(" OR "),
-        "MySQL must use LIKE for contains in OR: {}", plan.sql
-    );
+    )
+    .expect("MySQL OR plan");
+    assert!(plan.sql.contains("LIKE") && plan.sql.contains(" OR "), "MySQL must use LIKE for contains in OR: {}", plan.sql);
     assert!(plan.params.contains(&Some("%cat%".to_string())));
     assert!(plan.params.contains(&Some("%dog%".to_string())));
 }
@@ -299,20 +287,16 @@ fn facereview_video_or_search_planner_mysql() {
         "read": "Video",
         "select": ["id", "title", "channel_name"],
         "filter": [{"or": [
-            {"field": "title", "op": "contains", "value": "고양이"},
-            {"field": "channel_name", "op": "contains", "value": "쿡채널"}
+            {"field": "title", "op": "like", "value": "고양이"},
+            {"field": "channel_name", "op": "like", "value": "쿡채널"}
         ]}],
         "sort": [{"field": "created_at", "dir": "desc"}],
         "limit": 10,
         "offset": 0
     });
-    let plan = spike_v2_read::plan::plan_read_in(
-        spike_v2_read::sqlgen::Dialect::MySql,
-        &facts,
-        &query,
-        &caller,
-        spike_v2_read::id_wire::IdWire::Legacy,
-    ).expect("FaceReview Video OR search plan");
+    let plan =
+        spike_v2_read::plan::plan_read_in(spike_v2_read::sqlgen::Dialect::MySql, &facts, &query, &caller, spike_v2_read::id_wire::IdWire::Legacy)
+            .expect("FaceReview Video OR search plan");
 
     let sql = plan.sql;
     assert!(sql.contains("LIKE"), "MySQL LIKE must be used: {sql}");
@@ -328,25 +312,16 @@ fn facereview_video_total_count_aggregate_mysql() {
     // 1. Anonymous guest caller without filter
     let guest = Caller { actor_id: None, now: "2026-10-18T00:00:00Z".into() };
     let req = json!({"aggregate": "Video.totalCount", "input": {}});
-    let plan = spike_v2_read::plan::plan_read_in(
-        spike_v2_read::sqlgen::Dialect::MySql,
-        &facts,
-        &req,
-        &guest,
-        spike_v2_read::id_wire::IdWire::Legacy,
-    ).expect("guest Video totalCount aggregate");
+    let plan = spike_v2_read::plan::plan_read_in(spike_v2_read::sqlgen::Dialect::MySql, &facts, &req, &guest, spike_v2_read::id_wire::IdWire::Legacy)
+        .expect("guest Video totalCount aggregate");
     assert!(plan.sql.to_ascii_lowercase().contains("count(*)"), "count(*) must be present: {}", plan.sql);
     assert_eq!(plan.output_type["value"]["ty"], "Int");
 
     // 2. Authenticated active member caller without filter
     let member = Caller { actor_id: Some(1), now: "2026-10-18T00:00:00Z".into() };
-    let plan = spike_v2_read::plan::plan_read_in(
-        spike_v2_read::sqlgen::Dialect::MySql,
-        &facts,
-        &req,
-        &member,
-        spike_v2_read::id_wire::IdWire::Legacy,
-    ).expect("member Video totalCount aggregate");
+    let plan =
+        spike_v2_read::plan::plan_read_in(spike_v2_read::sqlgen::Dialect::MySql, &facts, &req, &member, spike_v2_read::id_wire::IdWire::Legacy)
+            .expect("member Video totalCount aggregate");
     assert!(plan.sql.to_ascii_lowercase().contains("count(*)"), "count(*) must be present: {}", plan.sql);
 
     // 3. Aggregate with OR caller filter (title OR channel_name)
@@ -354,8 +329,8 @@ fn facereview_video_total_count_aggregate_mysql() {
         "aggregate": "Video.totalCount",
         "input": {},
         "filter": [{"or": [
-            {"field": "title", "op": "contains", "value": "고양이"},
-            {"field": "channel_name", "op": "contains", "value": "쿡채널"}
+            {"field": "title", "op": "like", "value": "고양이"},
+            {"field": "channel_name", "op": "like", "value": "쿡채널"}
         ]}]
     });
     let plan_filtered = spike_v2_read::plan::plan_read_in(
@@ -364,7 +339,8 @@ fn facereview_video_total_count_aggregate_mysql() {
         &filtered_req,
         &guest,
         spike_v2_read::id_wire::IdWire::Legacy,
-    ).expect("guest Video totalCount with OR filter");
+    )
+    .expect("guest Video totalCount with OR filter");
     assert!(plan_filtered.sql.contains("LIKE") && plan_filtered.sql.contains(" OR "), "LIKE and OR in aggregate: {}", plan_filtered.sql);
     assert!(plan_filtered.params.contains(&Some("%고양이%".to_string())));
     assert!(plan_filtered.params.contains(&Some("%쿡채널%".to_string())));
@@ -406,7 +382,7 @@ fn caller_filter_none_aggregate_rejects_filter() {
 }
 
 #[test]
-fn wildcards_and_empty_contains_semantics() {
+fn wildcards_and_empty_like_semantics() {
     let facts = facts();
     let caller = Caller { actor_id: Some(1), now: "2026-10-18T00:00:00Z".into() };
 
@@ -414,7 +390,7 @@ fn wildcards_and_empty_contains_semantics() {
     let empty_query = json!({
         "read": "Recruitment",
         "select": ["id"],
-        "filter": [{"field": "title", "op": "contains", "value": ""}]
+        "filter": [{"field": "title", "op": "like", "value": ""}]
     });
     let plan = plan_read(&facts, &empty_query, &caller).expect("empty search string must be accepted");
     assert!(plan.params.contains(&Some("%%".to_string())));
@@ -423,7 +399,7 @@ fn wildcards_and_empty_contains_semantics() {
     let pct_query = json!({
         "read": "Recruitment",
         "select": ["id"],
-        "filter": [{"field": "title", "op": "contains", "value": "%"}]
+        "filter": [{"field": "title", "op": "like", "value": "%"}]
     });
     let plan = plan_read(&facts, &pct_query, &caller).expect("% query must be accepted");
     assert!(plan.params.contains(&Some("%%%".to_string())));
@@ -432,9 +408,61 @@ fn wildcards_and_empty_contains_semantics() {
     let underscore_query = json!({
         "read": "Recruitment",
         "select": ["id"],
-        "filter": [{"field": "title", "op": "contains", "value": "_"}]
+        "filter": [{"field": "title", "op": "like", "value": "_"}]
     });
     let plan = plan_read(&facts, &underscore_query, &caller).expect("_ query must be accepted");
     assert!(plan.params.contains(&Some("%_%".to_string())));
 }
 
+#[test]
+fn contains_keeps_literal_substring_semantics_per_dialect() {
+    let facts = facts();
+    let caller = Caller { actor_id: Some(1), now: "2026-10-18T00:00:00Z".into() };
+
+    for needle in ["CAT", "%", "_", "\\"] {
+        let request = json!({
+            "read": "Recruitment", "select": ["id"],
+            "filter": [{"field": "title", "op": "contains", "value": needle}]
+        });
+        let pg = spike_v2_read::plan::plan_read(&facts, &request, &caller).expect("PG contains plan");
+        assert!(pg.sql.contains("strpos("), "contains must use literal PostgreSQL substring: {}", pg.sql);
+        assert!(pg.params.contains(&Some(needle.to_string())), "needle must be bound literally: {:?}", pg.params);
+
+        let mysql = spike_v2_read::plan::plan_read_in(
+            spike_v2_read::sqlgen::Dialect::MySql,
+            &facts,
+            &request,
+            &caller,
+            spike_v2_read::id_wire::IdWire::Legacy,
+        )
+        .expect("MySQL contains plan");
+        assert!(mysql.sql.contains("LOCATE("), "contains must use literal MySQL substring: {}", mysql.sql);
+        assert!(mysql.params.contains(&Some(needle.to_string())), "needle must be bound literally: {:?}", mysql.params);
+    }
+}
+
+#[test]
+fn like_is_separate_wildcard_substring_operator() {
+    let facts = facts();
+    let caller = Caller { actor_id: Some(1), now: "2026-10-18T00:00:00Z".into() };
+    for needle in ["", "%", "_", "CAT", r"\"] {
+        let request = json!({
+            "read": "Recruitment", "select": ["id"],
+            "filter": [{"field": "title", "op": "like", "value": needle}]
+        });
+        let pg = spike_v2_read::plan::plan_read(&facts, &request, &caller).expect("PG like plan");
+        assert!(pg.sql.contains("ILIKE"), "PG like follows source MySQL case-insensitive collation: {}", pg.sql);
+        assert!(pg.params.contains(&Some(format!("%{needle}%"))));
+
+        let mysql = spike_v2_read::plan::plan_read_in(
+            spike_v2_read::sqlgen::Dialect::MySql,
+            &facts,
+            &request,
+            &caller,
+            spike_v2_read::id_wire::IdWire::Legacy,
+        )
+        .expect("MySQL like plan");
+        assert!(mysql.sql.contains(" LIKE "), "MySQL like must use native collation: {}", mysql.sql);
+        assert!(mysql.params.contains(&Some(format!("%{needle}%"))));
+    }
+}

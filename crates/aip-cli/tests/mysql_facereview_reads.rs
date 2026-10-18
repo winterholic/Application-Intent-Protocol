@@ -216,8 +216,7 @@ async fn facereview_schema_is_adopted_without_business_ddl_and_read_with_origina
     let all = read(None, json!({"read": "Video", "select": ["id"], "sort": newest})).await;
     assert_eq!(ids(&all), vec!["aaaaaaaa-0000-4000-8000-000000000002", CAT_VIDEO], "{all}");
     let by_title =
-        read(None, json!({"read": "Video", "select": ["id"], "filter": [{"field": "title", "op": "contains", "value": "고양이"}], "sort": newest}))
-            .await;
+        read(None, json!({"read": "Video", "select": ["id"], "filter": [{"field": "title", "op": "like", "value": "고양이"}], "sort": newest})).await;
     assert_eq!(ids(&by_title), vec!["aaaaaaaa-0000-4000-8000-000000000002", CAT_VIDEO], "{by_title}");
     let by_category = read(None, json!({"read": "Video", "select": ["id"], "filter": [{"field": "category", "op": "eq", "value": "cook"}]})).await;
     assert_eq!(ids(&by_category), vec!["aaaaaaaa-0000-4000-8000-000000000002"], "{by_category}");
@@ -229,8 +228,8 @@ async fn facereview_schema_is_adopted_without_business_ddl_and_read_with_origina
     let or_title_only = read(
         None,
         json!({"read": "Video", "select": ["id"], "filter": [{"or": [
-            {"field": "title", "op": "contains", "value": "요리"},
-            {"field": "channel_name", "op": "contains", "value": "없는채널"}
+            {"field": "title", "op": "like", "value": "요리"},
+            {"field": "channel_name", "op": "like", "value": "없는채널"}
         ]}], "sort": newest}),
     )
     .await;
@@ -240,8 +239,8 @@ async fn facereview_schema_is_adopted_without_business_ddl_and_read_with_origina
     let or_channel_only = read(
         None,
         json!({"read": "Video", "select": ["id"], "filter": [{"or": [
-            {"field": "title", "op": "contains", "value": "없는제목"},
-            {"field": "channel_name", "op": "contains", "value": "냥채널"}
+            {"field": "title", "op": "like", "value": "없는제목"},
+            {"field": "channel_name", "op": "like", "value": "냥채널"}
         ]}], "sort": newest}),
     )
     .await;
@@ -251,8 +250,8 @@ async fn facereview_schema_is_adopted_without_business_ddl_and_read_with_origina
     let or_both = read(
         None,
         json!({"read": "Video", "select": ["id"], "filter": [{"or": [
-            {"field": "title", "op": "contains", "value": "고양이"},
-            {"field": "channel_name", "op": "contains", "value": "쿡채널"}
+            {"field": "title", "op": "like", "value": "고양이"},
+            {"field": "channel_name", "op": "like", "value": "쿡채널"}
         ]}], "sort": newest}),
     )
     .await;
@@ -262,8 +261,8 @@ async fn facereview_schema_is_adopted_without_business_ddl_and_read_with_origina
     let or_none = read(
         None,
         json!({"read": "Video", "select": ["id"], "filter": [{"or": [
-            {"field": "title", "op": "contains", "value": "없는제목"},
-            {"field": "channel_name", "op": "contains", "value": "없는채널"}
+            {"field": "title", "op": "like", "value": "없는제목"},
+            {"field": "channel_name", "op": "like", "value": "없는채널"}
         ]}], "sort": newest}),
     )
     .await;
@@ -273,8 +272,8 @@ async fn facereview_schema_is_adopted_without_business_ddl_and_read_with_origina
     let or_p1 = read(
         None,
         json!({"read": "Video", "select": ["id"], "filter": [{"or": [
-            {"field": "title", "op": "contains", "value": "고양이"},
-            {"field": "channel_name", "op": "contains", "value": "쿡채널"}
+            {"field": "title", "op": "like", "value": "고양이"},
+            {"field": "channel_name", "op": "like", "value": "쿡채널"}
         ]}], "sort": newest, "limit": 1, "offset": 0}),
     )
     .await;
@@ -283,8 +282,8 @@ async fn facereview_schema_is_adopted_without_business_ddl_and_read_with_origina
     let or_p2 = read(
         None,
         json!({"read": "Video", "select": ["id"], "filter": [{"or": [
-            {"field": "title", "op": "contains", "value": "고양이"},
-            {"field": "channel_name", "op": "contains", "value": "쿡채널"}
+            {"field": "title", "op": "like", "value": "고양이"},
+            {"field": "channel_name", "op": "like", "value": "쿡채널"}
         ]}], "sort": newest, "limit": 1, "offset": 1}),
     )
     .await;
@@ -293,8 +292,8 @@ async fn facereview_schema_is_adopted_without_business_ddl_and_read_with_origina
     let or_p3 = read(
         None,
         json!({"read": "Video", "select": ["id"], "filter": [{"or": [
-            {"field": "title", "op": "contains", "value": "고양이"},
-            {"field": "channel_name", "op": "contains", "value": "쿡채널"}
+            {"field": "title", "op": "like", "value": "고양이"},
+            {"field": "channel_name", "op": "like", "value": "쿡채널"}
         ]}], "sort": newest, "limit": 1, "offset": 2}),
     )
     .await;
@@ -306,8 +305,8 @@ async fn facereview_schema_is_adopted_without_business_ddl_and_read_with_origina
         json!({"read": "Video", "select": ["id"], "filter": [
             {"field": "category", "op": "eq", "value": "cook"},
             {"or": [
-                {"field": "title", "op": "contains", "value": "고양이"},
-                {"field": "channel_name", "op": "contains", "value": "쿡채널"}
+                {"field": "title", "op": "like", "value": "고양이"},
+                {"field": "channel_name", "op": "like", "value": "쿡채널"}
             ]}
         ], "sort": newest}),
     )
@@ -328,8 +327,8 @@ async fn facereview_schema_is_adopted_without_business_ddl_and_read_with_origina
     let tot_title = read(
         None,
         json!({"aggregate": "Video.totalCount", "input": {}, "filter": [{"or": [
-            {"field": "title", "op": "contains", "value": "요리"},
-            {"field": "channel_name", "op": "contains", "value": "없는채널"}
+            {"field": "title", "op": "like", "value": "요리"},
+            {"field": "channel_name", "op": "like", "value": "없는채널"}
         ]}]}),
     )
     .await;
@@ -339,8 +338,8 @@ async fn facereview_schema_is_adopted_without_business_ddl_and_read_with_origina
     let tot_channel = read(
         None,
         json!({"aggregate": "Video.totalCount", "input": {}, "filter": [{"or": [
-            {"field": "title", "op": "contains", "value": "없는제목"},
-            {"field": "channel_name", "op": "contains", "value": "냥채널"}
+            {"field": "title", "op": "like", "value": "없는제목"},
+            {"field": "channel_name", "op": "like", "value": "냥채널"}
         ]}]}),
     )
     .await;
@@ -350,8 +349,8 @@ async fn facereview_schema_is_adopted_without_business_ddl_and_read_with_origina
     let tot_both = read(
         None,
         json!({"aggregate": "Video.totalCount", "input": {}, "filter": [{"or": [
-            {"field": "title", "op": "contains", "value": "고양이"},
-            {"field": "channel_name", "op": "contains", "value": "쿡채널"}
+            {"field": "title", "op": "like", "value": "고양이"},
+            {"field": "channel_name", "op": "like", "value": "쿡채널"}
         ]}]}),
     )
     .await;
@@ -361,8 +360,8 @@ async fn facereview_schema_is_adopted_without_business_ddl_and_read_with_origina
     let tot_none = read(
         None,
         json!({"aggregate": "Video.totalCount", "input": {}, "filter": [{"or": [
-            {"field": "title", "op": "contains", "value": "없는제목"},
-            {"field": "channel_name", "op": "contains", "value": "없는채널"}
+            {"field": "title", "op": "like", "value": "없는제목"},
+            {"field": "channel_name", "op": "like", "value": "없는채널"}
         ]}]}),
     )
     .await;
@@ -374,8 +373,8 @@ async fn facereview_schema_is_adopted_without_business_ddl_and_read_with_origina
         json!({"aggregate": "Video.totalCount", "input": {}, "filter": [
             {"field": "category", "op": "eq", "value": "cook"},
             {"or": [
-                {"field": "title", "op": "contains", "value": "고양이"},
-                {"field": "channel_name", "op": "contains", "value": "쿡채널"}
+                {"field": "title", "op": "like", "value": "고양이"},
+                {"field": "channel_name", "op": "like", "value": "쿡채널"}
             ]}
         ]}),
     )
@@ -392,21 +391,26 @@ async fn facereview_schema_is_adopted_without_business_ddl_and_read_with_origina
 
     // 7) Wildcard and empty search string semantics (MySQL LIKE '%kw%'):
     // Empty search string ("") matches all active non-deleted videos:
-    let read_empty = read(None, json!({"read": "Video", "select": ["id"], "filter": [{"field": "title", "op": "contains", "value": ""}], "sort": newest})).await;
+    let read_empty =
+        read(None, json!({"read": "Video", "select": ["id"], "filter": [{"field": "title", "op": "like", "value": ""}], "sort": newest})).await;
     assert_eq!(ids(&read_empty), vec!["aaaaaaaa-0000-4000-8000-000000000002", CAT_VIDEO], "{read_empty}");
-    let tot_empty = read(None, json!({"aggregate": "Video.totalCount", "input": {}, "filter": [{"field": "title", "op": "contains", "value": ""}]})).await;
+    let tot_empty =
+        read(None, json!({"aggregate": "Video.totalCount", "input": {}, "filter": [{"field": "title", "op": "like", "value": ""}]})).await;
     assert_eq!(tot_empty["rows"][0], 2, "{tot_empty}");
 
     // Wildcard '%' matches all active non-deleted videos:
-    let read_pct = read(None, json!({"read": "Video", "select": ["id"], "filter": [{"field": "title", "op": "contains", "value": "%"}], "sort": newest})).await;
+    let read_pct =
+        read(None, json!({"read": "Video", "select": ["id"], "filter": [{"field": "title", "op": "like", "value": "%"}], "sort": newest})).await;
     assert_eq!(ids(&read_pct), vec!["aaaaaaaa-0000-4000-8000-000000000002", CAT_VIDEO], "{read_pct}");
-    let tot_pct = read(None, json!({"aggregate": "Video.totalCount", "input": {}, "filter": [{"field": "title", "op": "contains", "value": "%"}]})).await;
+    let tot_pct = read(None, json!({"aggregate": "Video.totalCount", "input": {}, "filter": [{"field": "title", "op": "like", "value": "%"}]})).await;
     assert_eq!(tot_pct["rows"][0], 2, "{tot_pct}");
 
     // Wildcard '_' matches non-empty characters:
-    let read_under = read(None, json!({"read": "Video", "select": ["id"], "filter": [{"field": "title", "op": "contains", "value": "_"}], "sort": newest})).await;
+    let read_under =
+        read(None, json!({"read": "Video", "select": ["id"], "filter": [{"field": "title", "op": "like", "value": "_"}], "sort": newest})).await;
     assert_eq!(ids(&read_under), vec!["aaaaaaaa-0000-4000-8000-000000000002", CAT_VIDEO], "{read_under}");
-    let tot_under = read(None, json!({"aggregate": "Video.totalCount", "input": {}, "filter": [{"field": "title", "op": "contains", "value": "_"}]})).await;
+    let tot_under =
+        read(None, json!({"aggregate": "Video.totalCount", "input": {}, "filter": [{"field": "title", "op": "like", "value": "_"}]})).await;
     assert_eq!(tot_under["rows"][0], 2, "{tot_under}");
 
     // Deleted videos (is_deleted = 1, e.g. aaaaaaaa-0000-4000-8000-000000000003) and NULL flag videos (aaaaaaaa-0000-4000-8000-000000000004)
@@ -417,13 +421,19 @@ async fn facereview_schema_is_adopted_without_business_ddl_and_read_with_origina
     }
 
     // 8) Case-insensitivity verification (MySQL utf8mb4_0900_ai_ci collation):
-    setup.query_drop("INSERT INTO video (video_id, youtube_url, title, channel_name, category, duration, view_count, is_deleted, created_at, updated_at) VALUES ('aaaaaaaa-0000-4000-8000-000000000099', 'engtestvid', 'English Cat Video', 'CatChannel', 'animal', 100, 1, 0, '2026-10-07 10:00:00', '2026-10-07 10:00:00')").await.unwrap();
-    let read_upper = read(None, json!({"read": "Video", "select": ["id"], "filter": [{"field": "title", "op": "contains", "value": "CAT"}]})).await;
-    let read_lower = read(None, json!({"read": "Video", "select": ["id"], "filter": [{"field": "title", "op": "contains", "value": "cat"}]})).await;
+    setup.query_drop("INSERT INTO video (video_id, youtube_url, title, channel_name, category, duration, view_count, is_deleted, created_at, updated_at) VALUES ('aaaaaaaa-0000-4000-8000-000000000099', 'engtestvid', 'English Cat %', 'CatChannel', 'animal', 100, 1, 0, '2026-10-07 10:00:00', '2026-10-07 10:00:00')").await.unwrap();
+    let read_upper = read(None, json!({"read": "Video", "select": ["id"], "filter": [{"field": "title", "op": "like", "value": "CAT"}]})).await;
+    let read_lower = read(None, json!({"read": "Video", "select": ["id"], "filter": [{"field": "title", "op": "like", "value": "cat"}]})).await;
     assert_eq!(ids(&read_upper), vec!["aaaaaaaa-0000-4000-8000-000000000099"], "{read_upper}");
     assert_eq!(ids(&read_lower), vec!["aaaaaaaa-0000-4000-8000-000000000099"], "{read_lower}");
-    let tot_upper = read(None, json!({"aggregate": "Video.totalCount", "input": {}, "filter": [{"field": "title", "op": "contains", "value": "CAT"}]})).await;
-    let tot_lower = read(None, json!({"aggregate": "Video.totalCount", "input": {}, "filter": [{"field": "title", "op": "contains", "value": "cat"}]})).await;
+    // MySQL's default LIKE escape makes a trailing backslash escape the wrapper's final `%`.
+    // This deliberately pins the original SQLAlchemy pattern behavior through the HTTP read path.
+    let read_backslash = read(None, json!({"read": "Video", "select": ["id"], "filter": [{"field": "title", "op": "like", "value": "\\"}]})).await;
+    assert_eq!(ids(&read_backslash), vec!["aaaaaaaa-0000-4000-8000-000000000099"], "{read_backslash}");
+    let tot_upper =
+        read(None, json!({"aggregate": "Video.totalCount", "input": {}, "filter": [{"field": "title", "op": "like", "value": "CAT"}]})).await;
+    let tot_lower =
+        read(None, json!({"aggregate": "Video.totalCount", "input": {}, "filter": [{"field": "title", "op": "like", "value": "cat"}]})).await;
     assert_eq!(tot_upper["rows"][0], 1, "{tot_upper}");
     assert_eq!(tot_lower["rows"][0], 1, "{tot_lower}");
     setup.query_drop("DELETE FROM video WHERE video_id = 'aaaaaaaa-0000-4000-8000-000000000099'").await.unwrap();

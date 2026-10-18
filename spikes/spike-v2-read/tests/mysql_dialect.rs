@@ -16,7 +16,7 @@ fn facts() -> Value {
     SCHEMA.call_once(|| sqlgen::set_schema("aip_mysql_dialect"));
     let src = A.replacen("fields { id: Id; name: Text }\n}", "fields { id: Id; name: Text }\n  rows read when true\n}", 1).replacen(
         "filter periodEnd.gte, periodEnd.lte",
-        "filter periodEnd.gte, periodEnd.lte, club.eq, club.in, status.in, title.in, title.contains, title.prefix",
+        "filter periodEnd.gte, periodEnd.lte, club.eq, club.in, status.in, title.in, title.like, title.prefix",
         1,
     );
     load_str(&src, Form::A).unwrap_or_else(|e| panic!("{e:?}")).execution
@@ -32,7 +32,7 @@ fn request() -> Value {
         "select": ["id", "title", "periodEnd", {"club": {"select": ["id", "name"]}}],
         "filter": [
             {"field": "club", "op": "in", "value": [10, 11]},
-            {"field": "title", "op": "contains", "value": "x"},
+            {"field": "title", "op": "like", "value": "x"},
             {"field": "periodEnd", "op": "gte", "value": "2026-10-05T00:00:00Z"}
         ],
         "sort": [{"field": "views", "dir": "desc"}],

@@ -152,7 +152,10 @@ pub static REGISTRY: &[Info] = &[
         "unknown unit in a duration",
         "A duration is an integer followed by one unit.",
         "Use `ms`, `s` or `m` after the integer, for example `250ms`, `2s`, `5m`.",
-        concat!(base!(), "resource Note {\n  fields { id: Id; body: Text; owner: Member }\n  expose read { select id, body\n    budget { rows 10; depth 1; deadline 2s; cost 100 } }\n}\n"),
+        concat!(
+            base!(),
+            "resource Note {\n  fields { id: Id; body: Text; owner: Member }\n  expose read { select id, body\n    budget { rows 10; depth 1; deadline 2s; cost 100 } }\n}\n"
+        ),
     ),
     i(
         "DEF.LEX_DURATION_RANGE",
@@ -181,7 +184,10 @@ pub static REGISTRY: &[Info] = &[
         "a key that the block does not accept",
         "Unknown keys are never ignored silently: a misspelled key would otherwise leave a policy or a limit out of the definition without a sign.",
         "Use one of the keys listed in the help. Every block and key is described in spec/definition-syntax.md.",
-        concat!(base!(), "resource Note {\n  fields { id: Id; body: Text; owner: Member }\n  expose read { select id, body; sort id\n    budget { rows 10; depth 1; deadline 2s; cost 100 } }\n}\n"),
+        concat!(
+            base!(),
+            "resource Note {\n  fields { id: Id; body: Text; owner: Member }\n  expose read { select id, body; sort id\n    budget { rows 10; depth 1; deadline 2s; cost 100 } }\n}\n"
+        ),
     ),
     i(
         "DEF.PARSE_NESTING",
@@ -273,7 +279,10 @@ pub static REGISTRY: &[Info] = &[
         "a required part is missing",
         "Some declarations have no safe default, so the definition must say the value: there is no unlimited bulk size, no implicit aggregate source access, no implicit actor. The message names the missing part.",
         "Add the part the message names.",
-        concat!(base!(), "resource Note {\n  fields { id: Id; body: Text; owner: Member }\n  rows read when owner = actor\n  transition archive {\n    from body != \"\"\n    to body = \"\"\n    allow owner = actor\n  }\n  expose apply archive { target id; bulk maxRows 1 }\n}\n"),
+        concat!(
+            base!(),
+            "resource Note {\n  fields { id: Id; body: Text; owner: Member }\n  rows read when owner = actor\n  transition archive {\n    from body != \"\"\n    to body = \"\"\n    allow owner = actor\n  }\n  expose apply archive { target id; bulk maxRows 1 }\n}\n"
+        ),
     ),
     i(
         "DEF.DUPLICATE",
@@ -323,7 +332,10 @@ pub static REGISTRY: &[Info] = &[
         "a field that the resource does not have",
         "A select, filter, sort, policy or effect names a field the resource does not declare.",
         "Use a declared field (the help offers close names when there are any) or declare the field in `fields`.",
-        concat!(base!(), "resource Note {\n  fields { id: Id; body: Text; owner: Member }\n  expose read { select id, body\n    budget { rows 10; depth 1; deadline 2s; cost 100 } }\n}\n"),
+        concat!(
+            base!(),
+            "resource Note {\n  fields { id: Id; body: Text; owner: Member }\n  expose read { select id, body\n    budget { rows 10; depth 1; deadline 2s; cost 100 } }\n}\n"
+        ),
     ),
     i(
         "DEF.UNKNOWN_RESOURCE",
@@ -336,13 +348,13 @@ pub static REGISTRY: &[Info] = &[
         "DEF.UNKNOWN_OPERATOR",
         "a filter operator that does not exist",
         "Filters are `field.operator`; the operators are fixed.",
-        "Use `eq`, `in`, `isNull`, `gte`, `lte`, `gt`, `lt`, `prefix` or `contains`, whichever the field type supports (DEF.OP_TYPE_MISMATCH tells which).",
+        "Use `eq`, `in`, `isNull`, `gte`, `lte`, `gt`, `lt`, `prefix`, `contains` or `like`, whichever the field type supports (DEF.OP_TYPE_MISMATCH tells which).",
         "",
     ),
     i(
         "DEF.OP_TYPE_MISMATCH",
         "the operator is not defined for the type of the field",
-        "For example `gte` needs an ordered type (Time, Date, Int, Decimal), `prefix` and `contains` need Text, `isNull` needs a nullable field, and Bool or reference fields cannot be sorted.",
+        "For example `gte` needs an ordered type (Time, Date, Int, Decimal), `prefix`, `contains` and `like` need Text, `isNull` needs a nullable field, and Bool or reference fields cannot be sorted.",
         "Use an operator that fits the type, or filter by another field.",
         "",
     ),
@@ -488,13 +500,7 @@ pub static REGISTRY: &[Info] = &[
         "Select a plain field, or read the aggregate on the child resource itself.",
         "",
     ),
-    i(
-        "DEF.BAD_LIMIT",
-        "a traverse limit outside 1..1000",
-        "Every traverse is bounded.",
-        "Use a number from 1 to 1000.",
-        "",
-    ),
+    i("DEF.BAD_LIMIT", "a traverse limit outside 1..1000", "Every traverse is bounded.", "Use a number from 1 to 1000.", ""),
     i(
         "DEF.BAD_BUDGET",
         "a budget or bulk size outside its range",
@@ -581,19 +587,16 @@ pub static REGISTRY: &[Info] = &[
         "Pass `{ \"devChecks\": true }` or `{ \"devChecks\": false }`.",
         "",
     ),
-    i(
-        "DEF.UNKNOWN_OPTION",
-        "a check option that does not exist",
-        "Unknown options are rejected, not ignored.",
-        "Use only `devChecks`.",
-        "",
-    ),
+    i("DEF.UNKNOWN_OPTION", "a check option that does not exist", "Unknown options are rejected, not ignored.", "Use only `devChecks`.", ""),
     i(
         "DEF.ADVISORY_UNREACHABLE_READ",
         "an expose read that no caller can reach (advisory)",
         "Not an error: the definition is accepted. An `expose read` without `budget` is only a target of another resource's `traverse`; when no resource traverses it, every read of it fails at run time with WIRE.NOT_ROOT_QUERYABLE. The usual cause is a forgotten `budget`.",
         "Add `budget { rows N; depth 1; deadline 2s; cost N }` to the `expose read` to make it readable on its own, or traverse it from the resource that should embed it.",
-        concat!(base!(), "resource Note {\n  fields { id: Id; body: Text; owner: Member }\n  expose read { select id, body\n    budget { rows 10; depth 1; deadline 2s; cost 100 } }\n}\n"),
+        concat!(
+            base!(),
+            "resource Note {\n  fields { id: Id; body: Text; owner: Member }\n  expose read { select id, body\n    budget { rows 10; depth 1; deadline 2s; cost 100 } }\n}\n"
+        ),
     ),
     i(
         "DEF.ADVISORY_ABSENCE_POLICY",

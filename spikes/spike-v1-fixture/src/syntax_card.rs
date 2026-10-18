@@ -34,7 +34,12 @@ pub const NOTES: &[(&str, &str, &str, &str)] = &[
         "열. id: Uuid는 UUID 기본키. 외부 schema의 기본값 필드는 타입 뒤 default database로 선언한다(읽기 nullable은 유지, create 입력은 생략 가능). ?는 null 허용. owner: Member는 외래 키가 있는 참조(조인·traverse 가능). fields 안에서 `X.Id`는 쓸 수 없고 오류다(DEF.ID_FIELD_NEEDS_REFERENCE). 참조 `X`를 쓴다. resource마다 한 번",
     ),
     ("resource", "rows", "rows read when condition", "호출자가 읽을 수 있는 행. 쓰지 않으면 읽을 수 있는 행이 없다"),
-    ("resource", "field", "field name read when condition", "필드별 읽기 조건. 조건이 거짓인 행에서 select하면 null이고 출력 타입은 nullable이다(열이 필수여도). 이 필드는 filter·sort·집계에 쓸 수 없다"),
+    (
+        "resource",
+        "field",
+        "field name read when condition",
+        "필드별 읽기 조건. 조건이 거짓인 행에서 select하면 null이고 출력 타입은 nullable이다(열이 필수여도). 이 필드는 filter·sort·집계에 쓸 수 없다",
+    ),
     (
         "resource",
         "expose",
@@ -49,8 +54,18 @@ pub const NOTES: &[(&str, &str, &str, &str)] = &[
         "상태 전이. from·allow와 to, patch 또는 delete가 필요하다. 숫자는 f = f + 1처럼만 바꾼다",
     ),
     ("resource", "unique", "unique a, b", "유일 제약"),
-    ("transition", "patch", "patch title, content", "호출자의 values에서 수정할 수 있는 필드. 타입·범위는 fields와 같으며 누락은 유지, null은 nullable만. 기본키·to 대입과 중복 불가"),
-    ("transition", "expect", "expect version", "호출자의 expect에서 모두 제공해야 하는 이전 값. 인가 뒤 잠근 행과 NULL-safe 비교하며 불일치는 WIRE.CONFLICT. version 증감 to와 조합하면 낙관적 잠금"),
+    (
+        "transition",
+        "patch",
+        "patch title, content",
+        "호출자의 values에서 수정할 수 있는 필드. 타입·범위는 fields와 같으며 누락은 유지, null은 nullable만. 기본키·to 대입과 중복 불가",
+    ),
+    (
+        "transition",
+        "expect",
+        "expect version",
+        "호출자의 expect에서 모두 제공해야 하는 이전 값. 인가 뒤 잠근 행과 NULL-safe 비교하며 불일치는 WIRE.CONFLICT. version 증감 to와 조합하면 낙관적 잠금",
+    ),
     ("resource", "check", "check name when condition", "쓰기 뒤 행이 만족해야 하는 조건"),
     ("resource", "invariant", "invariant limitName per refField [deferred]", "limit을 참조 필드별로 적용한다(유일 인덱스로 집행)"),
     (
@@ -67,7 +82,12 @@ pub const NOTES: &[(&str, &str, &str, &str)] = &[
         "refIds a, b",
         "select한 참조 필드 가운데 원시 외래 키 id를 대상 행의 가시성과 무관하게 공개할 것. 쓰지 않은 참조 select는 대상 resource의 `rows read`를 적용해 호출자가 대상 행을 볼 수 없으면 null이 된다(출력 타입도 nullable)",
     ),
-    ("expose read", "filter", "filter f.op, g.op", "필터 허용 목록. 연산 eq in isNull gte lte gt lt prefix contains 중 필드 타입이 지원하는 것"),
+    (
+        "expose read",
+        "filter",
+        "filter f.op, g.op",
+        "필터 허용 목록. contains는 리터럴 부분일치이며 MySQL은 column collation, PostgreSQL은 대소문자 구분 비교를 쓴다. like는 SQL LIKE 와일드카드(%·_)를 쓰며 MySQL은 column collation, PostgreSQL은 ILIKE로 비교한다. 연산 eq in isNull gte lte gt lt prefix contains like 중 필드 타입이 지원하는 것",
+    ),
     ("expose read", "sort", "sort a, b", "정렬 허용 목록"),
     (
         "expose read",
@@ -95,7 +115,12 @@ pub const NOTES: &[(&str, &str, &str, &str)] = &[
     ),
     ("aggregate", "groupKey", "groupKey ref", "원본에서 이 resource를 가리키는 참조 필드. 있으면 행별 집계"),
     ("aggregate", "where", "where condition", "집계에 넣을 원본 행 조건"),
-    ("aggregate", "callerFilter", "callerFilter none", "호출자가 집계 범위를 좁히는 것을 허용하는지"),
+    (
+        "aggregate",
+        "callerFilter",
+        "callerFilter none | read",
+        "호출자의 aggregate filter 허용 여부. none은 거부하고 read는 선언된 resource read 필터를 집계에 적용한다",
+    ),
     ("aggregate", "rowOutput", "rowOutput none", "집계가 행을 내보내는지"),
     ("aggregate", "release", "release count  |  sum(f)  |  min(f)  |  max(f)", "내보내는 값"),
     ("extension", "input", "input { x: Type }", "확장이 받는 값"),

@@ -113,7 +113,7 @@ fn an_unknown_filter_operator_lists_the_operators() {
     let d = &ds[0];
     assert_eq!(text(d, "code"), "DEF.UNKNOWN_OPERATOR");
     assert!(text(d, "help").contains("did you mean `gte`?"), "{d}");
-    assert!(text(d, "help").contains("operators: eq, in, isNull, gte, lte, gt, lt, prefix, contains."), "{d}");
+    assert!(text(d, "help").contains("operators: eq, in, isNull, gte, lte, gt, lt, prefix, contains, like."), "{d}");
 }
 
 #[test]

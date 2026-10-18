@@ -19,8 +19,7 @@ fn codes(src: &str) -> Vec<String> {
     }
 }
 
-const CLUB_OK: &str =
-    "expose read { select id, name, logo; filter school.eq, school.in, school.isNull, logo.isNull; budget { rows 50; depth 1; deadline 2s; cost 1000 } }";
+const CLUB_OK: &str = "expose read { select id, name, logo; filter school.eq, school.in, school.isNull, logo.isNull; budget { rows 50; depth 1; deadline 2s; cost 1000 } }";
 
 #[test]
 fn new_operators_are_accepted_and_listed_in_facts() {
@@ -64,20 +63,26 @@ fn operators_are_rejected_on_types_that_do_not_fit() {
 }
 
 #[test]
-fn contains_is_text_only_and_icontains_stays_unknown() {
+fn contains_and_like_are_text_only_and_icontains_stays_unknown() {
     let ok = with("filter periodEnd.gte, periodEnd.lte, title.contains", CLUB_EXPOSE);
     let facts = load_str(&ok, Form::A).unwrap_or_else(|e| panic!("{e:?}")).execution;
     let rec = facts["resources"]["Recruitment"]["exposeRead"]["filter"].as_array().unwrap().clone();
     assert!(rec.iter().any(|x| x == "title.contains"), "{rec:?}");
+    let like = with("filter periodEnd.gte, periodEnd.lte, title.like", CLUB_EXPOSE);
+    let like_facts = load_str(&like, Form::A).unwrap_or_else(|e| panic!("{e:?}")).execution;
+    assert!(like_facts["resources"]["Recruitment"]["exposeRead"]["filter"].as_array().unwrap().iter().any(|x| x == "title.like"));
     let cases: &[(&str, &str)] = &[
         ("filter views.contains", "DEF.OP_TYPE_MISMATCH"),
         ("filter periodEnd.contains", "DEF.OP_TYPE_MISMATCH"),
         ("filter status.contains", "DEF.OP_TYPE_MISMATCH"),
         ("filter club.contains", "DEF.OP_TYPE_MISMATCH"),
-        // 대소문자 무시는 이번 범위가 아니다(보류). 문법에도 열지 않는다.
+        ("filter views.like", "DEF.OP_TYPE_MISMATCH"),
+        ("filter periodEnd.like", "DEF.OP_TYPE_MISMATCH"),
+        ("filter status.like", "DEF.OP_TYPE_MISMATCH"),
+        ("filter club.like", "DEF.OP_TYPE_MISMATCH"),
+        // 별도 icontains 명칭은 열지 않는다. SQL LIKE 패턴은 `like`로 명시한다.
         ("filter title.icontains", "DEF.UNKNOWN_OPERATOR"),
         ("filter title.contain", "DEF.UNKNOWN_OPERATOR"),
-        ("filter title.like", "DEF.UNKNOWN_OPERATOR"),
         // field read 정책 필드는 부분일치로도 값을 추론할 수 있다
         ("filter internalNote.contains", "DEF.POLICY_FIELD_NOT_FILTERABLE"),
     ];

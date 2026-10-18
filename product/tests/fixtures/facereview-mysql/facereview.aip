@@ -88,7 +88,7 @@ resource Video {
   expose apply remove { target id; bulk maxRows 1 }
   expose read {
     select id, youtube_url, title, channel_name, category, duration, view_count, created_at
-    filter id.eq, category.eq, title.contains, channel_name.contains, youtube_url.eq
+    filter id.eq, category.eq, title.like, channel_name.like, youtube_url.eq
     sort created_at, id, view_count
     budget { rows 100; depth 1; cost 1000; deadline 2s; offset 100000 }
   }

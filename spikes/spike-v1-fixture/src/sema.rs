@@ -365,7 +365,7 @@ impl<'a> Ctx<'a> {
                     "DEF.THIS_IN_EXISTS",
                     "exists 조건 안의 `this`는 안쪽 행으로 다시 묶여 `team = this.team`이 항상 참이 된다. 안쪽 필드는 맨 이름으로 쓰고, 바깥 행 값은 predicate 인자로 넘겨라",
                     sp,
-                ))
+                ));
             }
             "this" => match &sc.this {
                 Some(t) => ("this".to_string(), TT::new(Ty::Ref(t.clone())), &segs[1..]),
@@ -1581,6 +1581,8 @@ impl<'a> Ctx<'a> {
                 "prefix" => tt.ty == Ty::Text,
                 // contains: 리터럴 부분일치(Text만). 대소문자 무시(icontains)는 DB collation 의존이라 보류.
                 "contains" => tt.ty == Ty::Text,
+                // like: SQL LIKE pattern semantics; % and _ are wildcards (Text only).
+                "like" => tt.ty == Ty::Text,
                 _ => {
                     self.d("DEF.UNKNOWN_OPERATOR", format!("filter 연산 `{op}` 없음"), *sp);
                     continue;

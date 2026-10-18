@@ -1,4 +1,4 @@
-//! 부분일치 `contains`와 opt-in `offset`. 허용 목록·값 바인딩·행 정책 유지·상한을 확인한다.
+//! 부분일치 `contains`/`like`와 opt-in `offset`. 허용 목록·값 바인딩·행 정책 유지·상한을 확인한다.
 use serde_json::{json, Value};
 use spike_v1_fixture::{load_str, Form};
 use spike_v2_read::plan::{plan_read, Caller, Plan, Reject, MAX_CONTAINS_CHARS};
@@ -21,7 +21,7 @@ fn load(filter: &str, budget: &str) -> Value {
 
 /// contains와 offset(최대 100)을 모두 연 정의.
 fn open() -> Value {
-    load("filter periodEnd.gte, periodEnd.lte, title.contains", "budget { rows 50; depth 2; deadline 2s; cost 1000; offset 100 }")
+    load("filter periodEnd.gte, periodEnd.lte, title.contains, title.like", "budget { rows 50; depth 2; deadline 2s; cost 1000; offset 100 }")
 }
 
 fn who(id: Option<i64>) -> Caller {
@@ -30,6 +30,10 @@ fn who(id: Option<i64>) -> Caller {
 
 fn contains(v: Value) -> Value {
     json!({ "read": "Recruitment", "select": ["id"], "filter": [{ "field": "title", "op": "contains", "value": v }] })
+}
+
+fn like(v: Value) -> Value {
+    json!({ "read": "Recruitment", "select": ["id"], "filter": [{ "field": "title", "op": "like", "value": v }] })
 }
 
 fn paged(offset: Value) -> Value {
@@ -78,15 +82,14 @@ fn contains_value_rules() {
 }
 
 #[test]
-fn contains_binds_literal_and_uses_like_semantics() {
+fn contains_binds_literal_and_keeps_substring_semantics() {
     ensure_test_schema();
     let f = open();
     let c = who(Some(1));
     for v in ["100%", "a_b", "\\", "x'); DROP TABLE y; --", "%", "_"] {
         let p = plan_read(&f, &contains(json!(v)), &c).unwrap();
-        let expected_pattern = format!("%{v}%");
-        assert!(p.params.contains(&Some(expected_pattern)), "{:?}", p.params);
-        assert!(p.sql.contains(" ILIKE "), "{}", p.sql);
+        assert!(p.params.contains(&Some(v.to_string())), "{:?}", p.params);
+        assert!(p.sql.contains("strpos("), "{}", p.sql);
         assert!(!p.sql.contains("DROP"), "{}", p.sql);
     }
 }
@@ -197,16 +200,34 @@ async fn db_contains_and_offset_never_bypass_row_policy() {
     check!("contains 만료(정책으로 숨김)", run(&mut db, &f, Some(1), contains(json!("만료"))).await, Vec::<i64>::new());
     check!("contains B(다른 학교)", run(&mut db, &f, Some(1), contains(json!("B 모집"))).await, Vec::<i64>::new());
     check!("contains B 학교2 사용자", run(&mut db, &f, Some(3), contains(json!("B 모집"))).await, vec![101]);
-    check!("contains 대소문자 비구분(LIKE/ILIKE)", run(&mut db, &f, Some(1), contains(json!("SALE"))).await, vec![106, 107]);
+    check!("like 대소문자 무시(원본 MySQL 의미)", run(&mut db, &f, Some(1), like(json!("SALE"))).await, vec![106, 107]);
     // LIKE/ILIKE 와일드카드 처리: `%`는 임의 문자열, `_`는 한 글자, 빈 검색어는 전체 매치
-    check!("contains %", run(&mut db, &f, Some(1), contains(json!("%"))).await, vec![100, 102, 106, 107]);
-    check!("contains 50%", run(&mut db, &f, Some(1), contains(json!("50%"))).await, vec![106, 107]);
-    check!("contains _", run(&mut db, &f, Some(1), contains(json!("_"))).await, vec![100, 102, 106, 107]);
-    check!("contains 50_", run(&mut db, &f, Some(1), contains(json!("50_"))).await, vec![106, 107]);
-    check!("contains 빈 검색어", run(&mut db, &f, Some(1), contains(json!(""))).await, vec![100, 102, 106, 107]);
-    check!("contains 중간", run(&mut db, &f, Some(1), contains(json!("ale 5"))).await, vec![106, 107]);
-    check!("contains 전체 일치", run(&mut db, &f, Some(1), contains(json!("A 모집"))).await, vec![100]);
-    check!("contains 따옴표", run(&mut db, &f, Some(1), contains(json!("x'; --"))).await, Vec::<i64>::new());
+    check!("like %", run(&mut db, &f, Some(1), like(json!("%"))).await, vec![100, 102, 106, 107]);
+    check!("like 50%", run(&mut db, &f, Some(1), like(json!("50%"))).await, vec![106, 107]);
+    check!("like _", run(&mut db, &f, Some(1), like(json!("_"))).await, vec![100, 102, 106, 107]);
+    check!("like 50_", run(&mut db, &f, Some(1), like(json!("50_"))).await, vec![106, 107]);
+    check!("like 빈 검색어", run(&mut db, &f, Some(1), like(json!(""))).await, vec![100, 102, 106, 107]);
+    check!("like 중간", run(&mut db, &f, Some(1), like(json!("ale 5"))).await, vec![106, 107]);
+    check!("like 전체 일치", run(&mut db, &f, Some(1), like(json!("A 모집"))).await, vec![100]);
+    check!("like 따옴표", run(&mut db, &f, Some(1), like(json!("x'; --"))).await, Vec::<i64>::new());
+    check!("contains 대소문자 구분", run(&mut db, &f, Some(1), contains(json!("SALE"))).await, Vec::<i64>::new());
+    check!("contains literal percent", run(&mut db, &f, Some(1), contains(json!("%"))).await, vec![106]);
+    check!("contains literal underscore", run(&mut db, &f, Some(1), contains(json!("_"))).await, vec![107]);
+    check!("contains empty", run(&mut db, &f, Some(1), contains(json!(""))).await, vec![100, 102, 106, 107]);
+    let backslash = char::from(92);
+    db.batch_execute(&format!("INSERT INTO {}.club (id, name, logo, school_id) VALUES (16, 'Backslash', NULL, 1)", sqlgen::schema()))
+        .await
+        .expect("insert temporary club witness");
+    db.batch_execute(&format!(
+        "INSERT INTO {}.recruitment (id, title, period_end, status, views, club_id) VALUES (108, 'path{backslash}video', '2026-10-10T00:00:00Z', 'PUBLISHED', 1, 16)",
+        sqlgen::schema()
+    ))
+    .await
+    .expect("insert temporary literal-backslash witness");
+    check!("contains literal backslash", run(&mut db, &f, Some(1), contains(json!("\\"))).await, vec![108]);
+    check!("like backslash retains SQL pattern escape", run(&mut db, &f, Some(1), like(json!("\\"))).await, Vec::<i64>::new());
+    db.batch_execute(&format!("DELETE FROM {}.recruitment WHERE id = 108", sqlgen::schema())).await.expect("remove temporary witness");
+    db.batch_execute(&format!("DELETE FROM {}.club WHERE id = 16", sqlgen::schema())).await.expect("remove temporary club witness");
 
     // offset: 정렬 periodEnd asc → 102(10-08), 그다음 10-10 동률 100,106,107은 id로 고정
     let page = |limit: i64, off: i64| json!({"read":"Recruitment","select":["id"],"sort":[{"field":"periodEnd"}],"limit":limit,"offset":off});
@@ -222,9 +243,9 @@ async fn db_contains_and_offset_never_bypass_row_policy() {
     // 정책 우회 불가: 학교 2 사용자의 offset 0은 자기 행(101,102)만, offset이 정책으로 숨겨진 행을 건너뛰어 노출하지 않는다.
     check!("학교2 offset 0", run(&mut db, &f, Some(3), page(5, 0)).await, vec![102, 101]);
     check!("학교2 offset 1", run(&mut db, &f, Some(3), page(5, 1)).await, vec![101]);
-    // contains + offset 결합
-    let both = json!({"read":"Recruitment","select":["id"],"filter":[{"field":"title","op":"contains","value":"sale"}],"limit":1,"offset":1});
-    check!("contains+offset", run(&mut db, &f, Some(1), both).await, vec![107]);
+    // LIKE + offset 결합
+    let both = json!({"read":"Recruitment","select":["id"],"filter":[{"field":"title","op":"like","value":"sale"}],"limit":1,"offset":1});
+    check!("like+offset", run(&mut db, &f, Some(1), both).await, vec![107]);
 
     db.batch_execute(&format!("DROP SCHEMA IF EXISTS {} CASCADE", sqlgen::schema())).await.ok();
     assert!(fails.is_empty(), "\n{}", fails.join("\n"));
