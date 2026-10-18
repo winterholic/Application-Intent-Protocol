@@ -7,6 +7,7 @@
 # Deliberate differences from the original, none of which may be "fixed" by faking a result:
 #  - No in-process _MEM_CACHE fallback. An absent Redis/Mongo adapter surfaces as WIRE.ADAPTER_UNAVAILABLE
 #    from the server; it is never replaced by sample data or an empty list.
+#  - Output is one JSON Text value (see _envelope) because extension outputs cannot be lists or records yet.
 #  - The server only grants read capabilities. A cache miss would need the original's synchronous
 #    _build_and_cache_ranked_pool (Redis SET/HSET/EXPIRE plus a per-video like count). That is reported as
 #    SLICE13D.POOL_CACHE_MISS / SLICE13D.CATEGORY_CACHE_MISS instead of building a different answer.
@@ -16,6 +17,7 @@ import importlib.util
 import json
 import os
 import random
+import sys
 
 _here = os.path.dirname(os.path.abspath(__file__))
 _spec = importlib.util.spec_from_file_location('slice13d_recommendation_math', os.path.join(_here, 'recommendation_math.py'))
@@ -41,6 +43,19 @@ class Slice13dError(RuntimeError):
         self.code = code
 
 
+def _fail(code):
+    # The server forwards only AipError codes ("확장 실패: <code>"); any other exception collapses to WIRE.EXTENSION_ERROR.
+    # The worker runs as __main__, so its AipError is reachable there; outside a worker (unit tests) the local class is used.
+    aip_error = getattr(sys.modules.get('__main__'), 'AipError', None)
+    return aip_error(code) if aip_error else Slice13dError(code)
+
+
+def _envelope(value):
+    # STOPGAP: a read extension output can only be scalar (Json/list are rejected with WIRE.OUTPUT_INVALID), so the
+    # response travels as one JSON Text value. A caller must json.loads it; this is not the original response shape.
+    return json.dumps(value, ensure_ascii=False, separators=(',', ':'))
+
+
 async def _read_all(ctx, resource, select, sort=None):
     # Pages through a policy-filtered read. Stopping at MAX_PAGES silently would drop viewed videos or bookmarks,
     # so reaching the cap while pages are still full is an explicit failure.
@@ -55,7 +70,7 @@ async def _read_all(ctx, resource, select, sort=None):
         rows.extend(chunk)
         if len(chunk) < PAGE_ROWS:
             return rows
-    raise Slice13dError('SLICE13D.READ_TRUNCATED')
+    raise _fail('SLICE13D.READ_TRUNCATED')
 
 
 async def _bookmarked_ids(ctx, video_ids):
@@ -83,22 +98,22 @@ def _parse_json(raw, code):
     try:
         return json.loads(raw)
     except (TypeError, ValueError):
-        raise Slice13dError(code)
+        raise _fail(code)
 
 
 async def category(input, ctx):
     raw = await ctx.redis.hgetall(RECO_CATEGORY_CACHE_KEY)
     if not raw:
-        raise Slice13dError('SLICE13D.CATEGORY_CACHE_MISS')
+        raise _fail('SLICE13D.CATEGORY_CACHE_MISS')
     groups = []
     for cat_name, videos_json in raw.items():
         entries = _parse_json(videos_json, 'SLICE13D.CATEGORY_CACHE_CORRUPT')
         groups.append((cat_name, entries))
     bookmarked = await _bookmarked_ids(ctx, [e['video_id'] for _, entries in groups for e in entries])
-    return {'video_data': [
+    return {'video_data': _envelope([
         {'category_name': cat_name, 'videos': [_video_dto(e, bookmarked) for e in entries]}
         for cat_name, entries in groups
-    ]}
+    ])}
 
 
 def _recent_watching(summaries, pool_category_map):
@@ -134,7 +149,7 @@ def rank_with_fallback(pool, recent_watching, favorite_genres, viewed_ids, limit
 async def personalized(input, ctx):
     me = await ctx.data.read({'read': 'User', 'select': ['id'], 'limit': 1})
     if not me.get('rows'):
-        raise Slice13dError('SLICE13D.USER_NOT_FOUND')
+        raise _fail('SLICE13D.USER_NOT_FOUND')
     user_id = me['rows'][0]['id']
 
     # Original order is the unordered dynamic relationship, i.e. storage order; created_at, id is the closest stable choice.
@@ -151,10 +166,10 @@ async def personalized(input, ctx):
 
     raw_pool = await ctx.redis.get(RECO_POOL_CACHE_KEY)
     if not raw_pool:
-        raise Slice13dError('SLICE13D.POOL_CACHE_MISS')
+        raise _fail('SLICE13D.POOL_CACHE_MISS')
     pool = _parse_json(raw_pool, 'SLICE13D.POOL_CACHE_CORRUPT')
     pool_category_map = {v['video_id']: v['category'] for v in pool}
 
     recommended = rank_with_fallback(pool, _recent_watching(summaries, pool_category_map), favorite_genres, viewed_ids, PERSONALIZED_LIMIT)
     bookmarked = await _bookmarked_ids(ctx, [v['video_id'] for v in recommended])
-    return {'videos': [_video_dto(v, bookmarked) for v in recommended]}
+    return {'videos': _envelope([_video_dto(v, bookmarked) for v in recommended])}

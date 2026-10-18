@@ -1,0 +1,2843 @@
+{
+ "bookmarks": [
+  "v0054",
+  "v0071"
+ ],
+ "categories": {
+  "drama": [
+   {
+    "dominant_emotion": "neutral",
+    "dominant_emotion_per": 33.08,
+    "title": "t26",
+    "video_id": "v0026",
+    "youtube_url": "u26"
+   },
+   {
+    "dominant_emotion": "happy",
+    "dominant_emotion_per": 46.17,
+    "title": "t10",
+    "video_id": "v0010",
+    "youtube_url": "u10"
+   },
+   {
+    "dominant_emotion": "angry",
+    "dominant_emotion_per": 50.32,
+    "title": "t105",
+    "video_id": "v0105",
+    "youtube_url": "u105"
+   },
+   {
+    "dominant_emotion": "happy",
+    "dominant_emotion_per": 33.52,
+    "title": "t58",
+    "video_id": "v0058",
+    "youtube_url": "u58"
+   },
+   {
+    "dominant_emotion": "angry",
+    "dominant_emotion_per": 46.89,
+    "title": "t4",
+    "video_id": "v0004",
+    "youtube_url": "u4"
+   }
+  ],
+  "game": [
+   {
+    "dominant_emotion": "angry",
+    "dominant_emotion_per": 54.56,
+    "title": "t82",
+    "video_id": "v0082",
+    "youtube_url": "u82"
+   },
+   {
+    "dominant_emotion": "angry",
+    "dominant_emotion_per": 54.93,
+    "title": "t25",
+    "video_id": "v0025",
+    "youtube_url": "u25"
+   },
+   {
+    "dominant_emotion": "surprise",
+    "dominant_emotion_per": 39.47,
+    "title": "t74",
+    "video_id": "v0074",
+    "youtube_url": "u74"
+   },
+   {
+    "dominant_emotion": "happy",
+    "dominant_emotion_per": 46.04,
+    "title": "t68",
+    "video_id": "v0068",
+    "youtube_url": "u68"
+   },
+   {
+    "dominant_emotion": "surprise",
+    "dominant_emotion_per": 63.46,
+    "title": "t22",
+    "video_id": "v0022",
+    "youtube_url": "u22"
+   }
+  ],
+  "music": [
+   {
+    "dominant_emotion": "sad",
+    "dominant_emotion_per": 54.93,
+    "title": "t67",
+    "video_id": "v0067",
+    "youtube_url": "u67"
+   },
+   {
+    "dominant_emotion": "sad",
+    "dominant_emotion_per": 49.25,
+    "title": "t23",
+    "video_id": "v0023",
+    "youtube_url": "u23"
+   },
+   {
+    "dominant_emotion": "sad",
+    "dominant_emotion_per": 52.31,
+    "title": "t60",
+    "video_id": "v0060",
+    "youtube_url": "u60"
+   },
+   {
+    "dominant_emotion": "surprise",
+    "dominant_emotion_per": 81.08,
+    "title": "t128",
+    "video_id": "v0128",
+    "youtube_url": "u128"
+   },
+   {
+    "dominant_emotion": "surprise",
+    "dominant_emotion_per": 51.85,
+    "title": "t70",
+    "video_id": "v0070",
+    "youtube_url": "u70"
+   }
+  ]
+ },
+ "expected_personalized": [
+  "v0082",
+  "v0102",
+  "v0101",
+  "v0001",
+  "v0023",
+  "v0137",
+  "v0114",
+  "v0025",
+  "v0054",
+  "v0056",
+  "v0100",
+  "v0148",
+  "v0095",
+  "v0071",
+  "v0060",
+  "v0014",
+  "v0074",
+  "v0036",
+  "v0058",
+  "v0106"
+ ],
+ "favorites": [
+  "music",
+  "game",
+  "horror"
+ ],
+ "pool": [
+  {
+   "base_score": 99.7894,
+   "category": "drama",
+   "dominant_emotion": "neutral",
+   "dominant_emotion_per": 33.08,
+   "emotion_distribution": {
+    "angry": 0.2531,
+    "happy": 0.2926,
+    "neutral": 0.3308,
+    "sad": 0.05,
+    "surprise": 0.0736
+   },
+   "title": "t26",
+   "video_id": "v0026",
+   "youtube_url": "u26"
+  },
+  {
+   "base_score": 99.4651,
+   "category": "show",
+   "dominant_emotion": "sad",
+   "dominant_emotion_per": 50.96,
+   "emotion_distribution": {
+    "angry": 0.004,
+    "happy": 0.0094,
+    "neutral": 0.0974,
+    "sad": 0.5096,
+    "surprise": 0.3797
+   },
+   "title": "t34",
+   "video_id": "v0034",
+   "youtube_url": "u34"
+  },
+  {
+   "base_score": 99.4113,
+   "category": "drama",
+   "dominant_emotion": "happy",
+   "dominant_emotion_per": 46.17,
+   "emotion_distribution": {
+    "angry": 0.0223,
+    "happy": 0.4617,
+    "neutral": 0.216,
+    "sad": 0.2927,
+    "surprise": 0.0073
+   },
+   "title": "t10",
+   "video_id": "v0010",
+   "youtube_url": "u10"
+  },
+  {
+   "base_score": 99.0409,
+   "category": "animal",
+   "dominant_emotion": "sad",
+   "dominant_emotion_per": 40.49,
+   "emotion_distribution": {
+    "angry": 0.0984,
+    "happy": 0.3186,
+    "neutral": 0.1761,
+    "sad": 0.4049,
+    "surprise": 0.002
+   },
+   "title": "t147",
+   "video_id": "v0147",
+   "youtube_url": "u147"
+  },
+  {
+   "base_score": 97.8864,
+   "category": "sports",
+   "dominant_emotion": "surprise",
+   "dominant_emotion_per": 54.28,
+   "emotion_distribution": {
+    "angry": 0.0163,
+    "happy": 0.3244,
+    "neutral": 0.0372,
+    "sad": 0.0792,
+    "surprise": 0.5428
+   },
+   "title": "t93",
+   "video_id": "v0093",
+   "youtube_url": "u93"
+  },
+  {
+   "base_score": 97.055,
+   "category": "exercise",
+   "dominant_emotion": "surprise",
+   "dominant_emotion_per": 44.96,
+   "emotion_distribution": {
+    "angry": 0.0509,
+    "happy": 0.1664,
+    "neutral": 0.3242,
+    "sad": 0.0089,
+    "surprise": 0.4496
+   },
+   "title": "t78",
+   "video_id": "v0078",
+   "youtube_url": "u78"
+  },
+  {
+   "base_score": 96.3877,
+   "category": "music",
+   "dominant_emotion": "sad",
+   "dominant_emotion_per": 54.93,
+   "emotion_distribution": {
+    "angry": 0.0999,
+    "happy": 0.0049,
+    "neutral": 0.0657,
+    "sad": 0.5493,
+    "surprise": 0.2802
+   },
+   "title": "t67",
+   "video_id": "v0067",
+   "youtube_url": "u67"
+  },
+  {
+   "base_score": 92.3755,
+   "category": "exercise",
+   "dominant_emotion": "surprise",
+   "dominant_emotion_per": 57.25,
+   "emotion_distribution": {
+    "angry": 0.0072,
+    "happy": 0.207,
+    "neutral": 0.2,
+    "sad": 0.0132,
+    "surprise": 0.5725
+   },
+   "title": "t120",
+   "video_id": "v0120",
+   "youtube_url": "u120"
+  },
+  {
+   "base_score": 91.9542,
+   "category": "etc",
+   "dominant_emotion": "sad",
+   "dominant_emotion_per": 79.89,
+   "emotion_distribution": {
+    "angry": 0.0085,
+    "happy": 0.0238,
+    "neutral": 0.0554,
+    "sad": 0.7989,
+    "surprise": 0.1134
+   },
+   "title": "t77",
+   "video_id": "v0077",
+   "youtube_url": "u77"
+  },
+  {
+   "base_score": 90.5243,
+   "category": "vlog",
+   "dominant_emotion": "neutral",
+   "dominant_emotion_per": 34.91,
+   "emotion_distribution": {
+    "angry": 0.0436,
+    "happy": 0.3311,
+    "neutral": 0.3491,
+    "sad": 0.119,
+    "surprise": 0.1572
+   },
+   "title": "t145",
+   "video_id": "v0145",
+   "youtube_url": "u145"
+  },
+  {
+   "base_score": 89.9883,
+   "category": "exercise",
+   "dominant_emotion": "happy",
+   "dominant_emotion_per": 36.5,
+   "emotion_distribution": {
+    "angry": 0.3388,
+    "happy": 0.365,
+    "neutral": 0.128,
+    "sad": 0.1674,
+    "surprise": 0.0008
+   },
+   "title": "t72",
+   "video_id": "v0072",
+   "youtube_url": "u72"
+  },
+  {
+   "base_score": 89.1925,
+   "category": "beauty",
+   "dominant_emotion": "angry",
+   "dominant_emotion_per": 29.24,
+   "emotion_distribution": {
+    "angry": 0.2924,
+    "happy": 0.1898,
+    "neutral": 0.2695,
+    "sad": 0.0875,
+    "surprise": 0.1608
+   },
+   "title": "t44",
+   "video_id": "v0044",
+   "youtube_url": "u44"
+  },
+  {
+   "base_score": 88.7096,
+   "category": "comedy",
+   "dominant_emotion": "surprise",
+   "dominant_emotion_per": 79.56,
+   "emotion_distribution": {
+    "angry": 0.0453,
+    "happy": 0.0123,
+    "neutral": 0.1357,
+    "sad": 0.0111,
+    "surprise": 0.7956
+   },
+   "title": "t121",
+   "video_id": "v0121",
+   "youtube_url": "u121"
+  },
+  {
+   "base_score": 87.3384,
+   "category": "drama",
+   "dominant_emotion": "angry",
+   "dominant_emotion_per": 50.32,
+   "emotion_distribution": {
+    "angry": 0.5032,
+    "happy": 0.0016,
+    "neutral": 0.0993,
+    "sad": 0.1894,
+    "surprise": 0.2065
+   },
+   "title": "t105",
+   "video_id": "v0105",
+   "youtube_url": "u105"
+  },
+  {
+   "base_score": 86.8665,
+   "category": "eating",
+   "dominant_emotion": "happy",
+   "dominant_emotion_per": 49.2,
+   "emotion_distribution": {
+    "angry": 0.0189,
+    "happy": 0.492,
+    "neutral": 0.1211,
+    "sad": 0.1912,
+    "surprise": 0.1768
+   },
+   "title": "t144",
+   "video_id": "v0144",
+   "youtube_url": "u144"
+  },
+  {
+   "base_score": 86.6467,
+   "category": "eating",
+   "dominant_emotion": "neutral",
+   "dominant_emotion_per": 58.06,
+   "emotion_distribution": {
+    "angry": 0.1172,
+    "happy": 0.0077,
+    "neutral": 0.5806,
+    "sad": 0.2945,
+    "surprise": 0.0
+   },
+   "title": "t108",
+   "video_id": "v0108",
+   "youtube_url": "u108"
+  },
+  {
+   "base_score": 86.3983,
+   "category": "etc",
+   "dominant_emotion": "surprise",
+   "dominant_emotion_per": 40.08,
+   "emotion_distribution": {
+    "angry": 0.1556,
+    "happy": 0.2528,
+    "neutral": 0.1309,
+    "sad": 0.06,
+    "surprise": 0.4008
+   },
+   "title": "t132",
+   "video_id": "v0132",
+   "youtube_url": "u132"
+  },
+  {
+   "base_score": 86.2733,
+   "category": "exercise",
+   "dominant_emotion": "neutral",
+   "dominant_emotion_per": 34.8,
+   "emotion_distribution": {
+    "angry": 0.0616,
+    "happy": 0.0291,
+    "neutral": 0.348,
+    "sad": 0.2945,
+    "surprise": 0.2669
+   },
+   "title": "t31",
+   "video_id": "v0031",
+   "youtube_url": "u31"
+  },
+  {
+   "base_score": 85.7922,
+   "category": "comedy",
+   "dominant_emotion": "neutral",
+   "dominant_emotion_per": 50.93,
+   "emotion_distribution": {
+    "angry": 0.2245,
+    "happy": 0.0111,
+    "neutral": 0.5093,
+    "sad": 0.001,
+    "surprise": 0.2541
+   },
+   "title": "t83",
+   "video_id": "v0083",
+   "youtube_url": "u83"
+  },
+  {
+   "base_score": 85.6073,
+   "category": "exercise",
+   "dominant_emotion": "happy",
+   "dominant_emotion_per": 71.92,
+   "emotion_distribution": {
+    "angry": 0.0953,
+    "happy": 0.7192,
+    "neutral": 0.0765,
+    "sad": 0.1084,
+    "surprise": 0.0006
+   },
+   "title": "t38",
+   "video_id": "v0038",
+   "youtube_url": "u38"
+  },
+  {
+   "base_score": 85.0262,
+   "category": "comedy",
+   "dominant_emotion": "happy",
+   "dominant_emotion_per": 32.0,
+   "emotion_distribution": {
+    "angry": 0.012,
+    "happy": 0.32,
+    "neutral": 0.2466,
+    "sad": 0.1648,
+    "surprise": 0.2566
+   },
+   "title": "t143",
+   "video_id": "v0143",
+   "youtube_url": "u143"
+  },
+  {
+   "base_score": 84.8559,
+   "category": "comedy",
+   "dominant_emotion": "angry",
+   "dominant_emotion_per": 36.15,
+   "emotion_distribution": {
+    "angry": 0.3615,
+    "happy": 0.0127,
+    "neutral": 0.1818,
+    "sad": 0.1165,
+    "surprise": 0.3274
+   },
+   "title": "t73",
+   "video_id": "v0073",
+   "youtube_url": "u73"
+  },
+  {
+   "base_score": 84.5794,
+   "category": "sports",
+   "dominant_emotion": "happy",
+   "dominant_emotion_per": 35.84,
+   "emotion_distribution": {
+    "angry": 0.0427,
+    "happy": 0.3584,
+    "neutral": 0.2063,
+    "sad": 0.1358,
+    "surprise": 0.2569
+   },
+   "title": "t13",
+   "video_id": "v0013",
+   "youtube_url": "u13"
+  },
+  {
+   "base_score": 83.8858,
+   "category": "beauty",
+   "dominant_emotion": "happy",
+   "dominant_emotion_per": 34.4,
+   "emotion_distribution": {
+    "angry": 0.0571,
+    "happy": 0.344,
+    "neutral": 0.1811,
+    "sad": 0.2023,
+    "surprise": 0.2155
+   },
+   "title": "t84",
+   "video_id": "v0084",
+   "youtube_url": "u84"
+  },
+  {
+   "base_score": 82.9452,
+   "category": "animal",
+   "dominant_emotion": "angry",
+   "dominant_emotion_per": 51.85,
+   "emotion_distribution": {
+    "angry": 0.5185,
+    "happy": 0.0009,
+    "neutral": 0.0,
+    "sad": 0.3697,
+    "surprise": 0.1109
+   },
+   "title": "t24",
+   "video_id": "v0024",
+   "youtube_url": "u24"
+  },
+  {
+   "base_score": 82.7702,
+   "category": "game",
+   "dominant_emotion": "angry",
+   "dominant_emotion_per": 54.56,
+   "emotion_distribution": {
+    "angry": 0.5456,
+    "happy": 0.3266,
+    "neutral": 0.0604,
+    "sad": 0.0469,
+    "surprise": 0.0205
+   },
+   "title": "t82",
+   "video_id": "v0082",
+   "youtube_url": "u82"
+  },
+  {
+   "base_score": 81.6215,
+   "category": "animal",
+   "dominant_emotion": "angry",
+   "dominant_emotion_per": 58.46,
+   "emotion_distribution": {
+    "angry": 0.5846,
+    "happy": 0.0774,
+    "neutral": 0.0004,
+    "sad": 0.3353,
+    "surprise": 0.0022
+   },
+   "title": "t56",
+   "video_id": "v0056",
+   "youtube_url": "u56"
+  },
+  {
+   "base_score": 81.4925,
+   "category": "horror",
+   "dominant_emotion": "sad",
+   "dominant_emotion_per": 40.32,
+   "emotion_distribution": {
+    "angry": 0.0115,
+    "happy": 0.0197,
+    "neutral": 0.2815,
+    "sad": 0.4032,
+    "surprise": 0.284
+   },
+   "title": "t101",
+   "video_id": "v0101",
+   "youtube_url": "u101"
+  },
+  {
+   "base_score": 80.0525,
+   "category": "etc",
+   "dominant_emotion": "surprise",
+   "dominant_emotion_per": 35.28,
+   "emotion_distribution": {
+    "angry": 0.043,
+    "happy": 0.3303,
+    "neutral": 0.147,
+    "sad": 0.1268,
+    "surprise": 0.3528
+   },
+   "title": "t102",
+   "video_id": "v0102",
+   "youtube_url": "u102"
+  },
+  {
+   "base_score": 79.8538,
+   "category": "travel",
+   "dominant_emotion": "happy",
+   "dominant_emotion_per": 27.16,
+   "emotion_distribution": {
+    "angry": 0.0808,
+    "happy": 0.2716,
+    "neutral": 0.1724,
+    "sad": 0.2294,
+    "surprise": 0.2458
+   },
+   "title": "t1",
+   "video_id": "v0001",
+   "youtube_url": "u1"
+  },
+  {
+   "base_score": 77.2641,
+   "category": "horror",
+   "dominant_emotion": "neutral",
+   "dominant_emotion_per": 46.55,
+   "emotion_distribution": {
+    "angry": 0.0483,
+    "happy": 0.2329,
+    "neutral": 0.4655,
+    "sad": 0.037,
+    "surprise": 0.2163
+   },
+   "title": "t54",
+   "video_id": "v0054",
+   "youtube_url": "u54"
+  },
+  {
+   "base_score": 76.512,
+   "category": "travel",
+   "dominant_emotion": "neutral",
+   "dominant_emotion_per": 53.18,
+   "emotion_distribution": {
+    "angry": 0.0662,
+    "happy": 0.1287,
+    "neutral": 0.5318,
+    "sad": 0.2715,
+    "surprise": 0.0019
+   },
+   "title": "t71",
+   "video_id": "v0071",
+   "youtube_url": "u71"
+  },
+  {
+   "base_score": 74.6104,
+   "category": "cook",
+   "dominant_emotion": "surprise",
+   "dominant_emotion_per": 40.2,
+   "emotion_distribution": {
+    "angry": 0.2496,
+    "happy": 0.1634,
+    "neutral": 0.0222,
+    "sad": 0.1628,
+    "surprise": 0.402
+   },
+   "title": "t95",
+   "video_id": "v0095",
+   "youtube_url": "u95"
+  },
+  {
+   "base_score": 74.5037,
+   "category": "etc",
+   "dominant_emotion": "angry",
+   "dominant_emotion_per": 31.55,
+   "emotion_distribution": {
+    "angry": 0.3155,
+    "happy": 0.0013,
+    "neutral": 0.1683,
+    "sad": 0.2444,
+    "surprise": 0.2706
+   },
+   "title": "t137",
+   "video_id": "v0137",
+   "youtube_url": "u137"
+  },
+  {
+   "base_score": 74.2479,
+   "category": "beauty",
+   "dominant_emotion": "neutral",
+   "dominant_emotion_per": 43.68,
+   "emotion_distribution": {
+    "angry": 0.3642,
+    "happy": 0.1191,
+    "neutral": 0.4368,
+    "sad": 0.0077,
+    "surprise": 0.0722
+   },
+   "title": "t106",
+   "video_id": "v0106",
+   "youtube_url": "u106"
+  },
+  {
+   "base_score": 74.0503,
+   "category": "sports",
+   "dominant_emotion": "neutral",
+   "dominant_emotion_per": 35.61,
+   "emotion_distribution": {
+    "angry": 0.2708,
+    "happy": 0.0156,
+    "neutral": 0.3561,
+    "sad": 0.0961,
+    "surprise": 0.2615
+   },
+   "title": "t148",
+   "video_id": "v0148",
+   "youtube_url": "u148"
+  },
+  {
+   "base_score": 73.4569,
+   "category": "eating",
+   "dominant_emotion": "neutral",
+   "dominant_emotion_per": 78.93,
+   "emotion_distribution": {
+    "angry": 0.0114,
+    "happy": 0.1129,
+    "neutral": 0.7893,
+    "sad": 0.0427,
+    "surprise": 0.0437
+   },
+   "title": "t36",
+   "video_id": "v0036",
+   "youtube_url": "u36"
+  },
+  {
+   "base_score": 73.4051,
+   "category": "game",
+   "dominant_emotion": "angry",
+   "dominant_emotion_per": 54.93,
+   "emotion_distribution": {
+    "angry": 0.5493,
+    "happy": 0.3251,
+    "neutral": 0.003,
+    "sad": 0.0841,
+    "surprise": 0.0385
+   },
+   "title": "t25",
+   "video_id": "v0025",
+   "youtube_url": "u25"
+  },
+  {
+   "base_score": 72.4228,
+   "category": "eating",
+   "dominant_emotion": "sad",
+   "dominant_emotion_per": 43.51,
+   "emotion_distribution": {
+    "angry": 0.1483,
+    "happy": 0.0508,
+    "neutral": 0.2765,
+    "sad": 0.4351,
+    "surprise": 0.0893
+   },
+   "title": "t114",
+   "video_id": "v0114",
+   "youtube_url": "u114"
+  },
+  {
+   "base_score": 72.3747,
+   "category": "eating",
+   "dominant_emotion": "neutral",
+   "dominant_emotion_per": 43.62,
+   "emotion_distribution": {
+    "angry": 0.1493,
+    "happy": 0.0031,
+    "neutral": 0.4362,
+    "sad": 0.3624,
+    "surprise": 0.049
+   },
+   "title": "t100",
+   "video_id": "v0100",
+   "youtube_url": "u100"
+  },
+  {
+   "base_score": 71.8105,
+   "category": "cook",
+   "dominant_emotion": "angry",
+   "dominant_emotion_per": 43.4,
+   "emotion_distribution": {
+    "angry": 0.434,
+    "happy": 0.0842,
+    "neutral": 0.0606,
+    "sad": 0.0152,
+    "surprise": 0.4061
+   },
+   "title": "t16",
+   "video_id": "v0016",
+   "youtube_url": "u16"
+  },
+  {
+   "base_score": 71.2742,
+   "category": "drama",
+   "dominant_emotion": "happy",
+   "dominant_emotion_per": 33.52,
+   "emotion_distribution": {
+    "angry": 0.0598,
+    "happy": 0.3352,
+    "neutral": 0.3131,
+    "sad": 0.0014,
+    "surprise": 0.2905
+   },
+   "title": "t58",
+   "video_id": "v0058",
+   "youtube_url": "u58"
+  },
+  {
+   "base_score": 70.8495,
+   "category": "music",
+   "dominant_emotion": "sad",
+   "dominant_emotion_per": 49.25,
+   "emotion_distribution": {
+    "angry": 0.0265,
+    "happy": 0.0694,
+    "neutral": 0.2452,
+    "sad": 0.4925,
+    "surprise": 0.1664
+   },
+   "title": "t23",
+   "video_id": "v0023",
+   "youtube_url": "u23"
+  },
+  {
+   "base_score": 69.3203,
+   "category": "travel",
+   "dominant_emotion": "angry",
+   "dominant_emotion_per": 34.69,
+   "emotion_distribution": {
+    "angry": 0.3469,
+    "happy": 0.1601,
+    "neutral": 0.1461,
+    "sad": 0.2349,
+    "surprise": 0.112
+   },
+   "title": "t14",
+   "video_id": "v0014",
+   "youtube_url": "u14"
+  },
+  {
+   "base_score": 68.6523,
+   "category": "animal",
+   "dominant_emotion": "angry",
+   "dominant_emotion_per": 40.3,
+   "emotion_distribution": {
+    "angry": 0.403,
+    "happy": 0.0108,
+    "neutral": 0.2795,
+    "sad": 0.0112,
+    "surprise": 0.2955
+   },
+   "title": "t124",
+   "video_id": "v0124",
+   "youtube_url": "u124"
+  },
+  {
+   "base_score": 67.6165,
+   "category": "comedy",
+   "dominant_emotion": "surprise",
+   "dominant_emotion_per": 32.96,
+   "emotion_distribution": {
+    "angry": 0.0141,
+    "happy": 0.2812,
+    "neutral": 0.1774,
+    "sad": 0.1977,
+    "surprise": 0.3296
+   },
+   "title": "t129",
+   "video_id": "v0129",
+   "youtube_url": "u129"
+  },
+  {
+   "base_score": 66.7591,
+   "category": "cook",
+   "dominant_emotion": "angry",
+   "dominant_emotion_per": 36.52,
+   "emotion_distribution": {
+    "angry": 0.3652,
+    "happy": 0.1189,
+    "neutral": 0.1846,
+    "sad": 0.0095,
+    "surprise": 0.3219
+   },
+   "title": "t51",
+   "video_id": "v0051",
+   "youtube_url": "u51"
+  },
+  {
+   "base_score": 64.5166,
+   "category": "animal",
+   "dominant_emotion": "happy",
+   "dominant_emotion_per": 36.41,
+   "emotion_distribution": {
+    "angry": 0.1263,
+    "happy": 0.3641,
+    "neutral": 0.3366,
+    "sad": 0.0,
+    "surprise": 0.1729
+   },
+   "title": "t20",
+   "video_id": "v0020",
+   "youtube_url": "u20"
+  },
+  {
+   "base_score": 63.9576,
+   "category": "beauty",
+   "dominant_emotion": "surprise",
+   "dominant_emotion_per": 34.23,
+   "emotion_distribution": {
+    "angry": 0.0042,
+    "happy": 0.0359,
+    "neutral": 0.3032,
+    "sad": 0.3144,
+    "surprise": 0.3423
+   },
+   "title": "t19",
+   "video_id": "v0019",
+   "youtube_url": "u19"
+  },
+  {
+   "base_score": 63.5464,
+   "category": "travel",
+   "dominant_emotion": "surprise",
+   "dominant_emotion_per": 33.05,
+   "emotion_distribution": {
+    "angry": 0.1636,
+    "happy": 0.2684,
+    "neutral": 0.2347,
+    "sad": 0.0028,
+    "surprise": 0.3305
+   },
+   "title": "t28",
+   "video_id": "v0028",
+   "youtube_url": "u28"
+  },
+  {
+   "base_score": 62.2231,
+   "category": "game",
+   "dominant_emotion": "surprise",
+   "dominant_emotion_per": 39.47,
+   "emotion_distribution": {
+    "angry": 0.3666,
+    "happy": 0.1896,
+    "neutral": 0.0,
+    "sad": 0.0491,
+    "surprise": 0.3947
+   },
+   "title": "t74",
+   "video_id": "v0074",
+   "youtube_url": "u74"
+  },
+  {
+   "base_score": 61.5138,
+   "category": "travel",
+   "dominant_emotion": "happy",
+   "dominant_emotion_per": 35.48,
+   "emotion_distribution": {
+    "angry": 0.3227,
+    "happy": 0.3548,
+    "neutral": 0.0647,
+    "sad": 0.2499,
+    "surprise": 0.0079
+   },
+   "title": "t112",
+   "video_id": "v0112",
+   "youtube_url": "u112"
+  },
+  {
+   "base_score": 61.174,
+   "category": "drama",
+   "dominant_emotion": "angry",
+   "dominant_emotion_per": 46.89,
+   "emotion_distribution": {
+    "angry": 0.4689,
+    "happy": 0.0787,
+    "neutral": 0.3287,
+    "sad": 0.0843,
+    "surprise": 0.0394
+   },
+   "title": "t4",
+   "video_id": "v0004",
+   "youtube_url": "u4"
+  },
+  {
+   "base_score": 61.0312,
+   "category": "travel",
+   "dominant_emotion": "neutral",
+   "dominant_emotion_per": 37.13,
+   "emotion_distribution": {
+    "angry": 0.1679,
+    "happy": 0.2351,
+    "neutral": 0.3713,
+    "sad": 0.0908,
+    "surprise": 0.1349
+   },
+   "title": "t79",
+   "video_id": "v0079",
+   "youtube_url": "u79"
+  },
+  {
+   "base_score": 60.5888,
+   "category": "music",
+   "dominant_emotion": "sad",
+   "dominant_emotion_per": 52.31,
+   "emotion_distribution": {
+    "angry": 0.1503,
+    "happy": 0.0447,
+    "neutral": 0.0214,
+    "sad": 0.5231,
+    "surprise": 0.2604
+   },
+   "title": "t60",
+   "video_id": "v0060",
+   "youtube_url": "u60"
+  },
+  {
+   "base_score": 60.5336,
+   "category": "game",
+   "dominant_emotion": "happy",
+   "dominant_emotion_per": 46.04,
+   "emotion_distribution": {
+    "angry": 0.1227,
+    "happy": 0.4604,
+    "neutral": 0.102,
+    "sad": 0.2943,
+    "surprise": 0.0205
+   },
+   "title": "t68",
+   "video_id": "v0068",
+   "youtube_url": "u68"
+  },
+  {
+   "base_score": 59.6732,
+   "category": "exercise",
+   "dominant_emotion": "angry",
+   "dominant_emotion_per": 45.93,
+   "emotion_distribution": {
+    "angry": 0.4593,
+    "happy": 0.0048,
+    "neutral": 0.11,
+    "sad": 0.0486,
+    "surprise": 0.3772
+   },
+   "title": "t135",
+   "video_id": "v0135",
+   "youtube_url": "u135"
+  },
+  {
+   "base_score": 59.5095,
+   "category": "animal",
+   "dominant_emotion": "angry",
+   "dominant_emotion_per": 31.72,
+   "emotion_distribution": {
+    "angry": 0.3172,
+    "happy": 0.0019,
+    "neutral": 0.2912,
+    "sad": 0.1248,
+    "surprise": 0.2649
+   },
+   "title": "t12",
+   "video_id": "v0012",
+   "youtube_url": "u12"
+  },
+  {
+   "base_score": 59.4929,
+   "category": "music",
+   "dominant_emotion": "surprise",
+   "dominant_emotion_per": 81.08,
+   "emotion_distribution": {
+    "angry": 0.0155,
+    "happy": 0.1528,
+    "neutral": 0.0113,
+    "sad": 0.0096,
+    "surprise": 0.8108
+   },
+   "title": "t128",
+   "video_id": "v0128",
+   "youtube_url": "u128"
+  },
+  {
+   "base_score": 58.9655,
+   "category": "exercise",
+   "dominant_emotion": "surprise",
+   "dominant_emotion_per": 34.85,
+   "emotion_distribution": {
+    "angry": 0.0818,
+    "happy": 0.235,
+    "neutral": 0.0233,
+    "sad": 0.3114,
+    "surprise": 0.3485
+   },
+   "title": "t103",
+   "video_id": "v0103",
+   "youtube_url": "u103"
+  },
+  {
+   "base_score": 58.9203,
+   "category": "etc",
+   "dominant_emotion": "surprise",
+   "dominant_emotion_per": 55.62,
+   "emotion_distribution": {
+    "angry": 0.0944,
+    "happy": 0.0218,
+    "neutral": 0.1995,
+    "sad": 0.1281,
+    "surprise": 0.5562
+   },
+   "title": "t75",
+   "video_id": "v0075",
+   "youtube_url": "u75"
+  },
+  {
+   "base_score": 56.9746,
+   "category": "sports",
+   "dominant_emotion": "angry",
+   "dominant_emotion_per": 48.28,
+   "emotion_distribution": {
+    "angry": 0.4828,
+    "happy": 0.0002,
+    "neutral": 0.0257,
+    "sad": 0.3351,
+    "surprise": 0.1563
+   },
+   "title": "t126",
+   "video_id": "v0126",
+   "youtube_url": "u126"
+  },
+  {
+   "base_score": 56.3433,
+   "category": "eating",
+   "dominant_emotion": "happy",
+   "dominant_emotion_per": 83.22,
+   "emotion_distribution": {
+    "angry": 0.0555,
+    "happy": 0.8322,
+    "neutral": 0.0716,
+    "sad": 0.0292,
+    "surprise": 0.0115
+   },
+   "title": "t17",
+   "video_id": "v0017",
+   "youtube_url": "u17"
+  },
+  {
+   "base_score": 56.0968,
+   "category": "sports",
+   "dominant_emotion": "angry",
+   "dominant_emotion_per": 53.37,
+   "emotion_distribution": {
+    "angry": 0.5337,
+    "happy": 0.0459,
+    "neutral": 0.3272,
+    "sad": 0.0931,
+    "surprise": 0.0002
+   },
+   "title": "t138",
+   "video_id": "v0138",
+   "youtube_url": "u138"
+  },
+  {
+   "base_score": 54.5499,
+   "category": "comedy",
+   "dominant_emotion": "angry",
+   "dominant_emotion_per": 43.88,
+   "emotion_distribution": {
+    "angry": 0.4388,
+    "happy": 0.1819,
+    "neutral": 0.1083,
+    "sad": 0.0389,
+    "surprise": 0.2321
+   },
+   "title": "t115",
+   "video_id": "v0115",
+   "youtube_url": "u115"
+  },
+  {
+   "base_score": 54.1634,
+   "category": "game",
+   "dominant_emotion": "surprise",
+   "dominant_emotion_per": 63.46,
+   "emotion_distribution": {
+    "angry": 0.0187,
+    "happy": 0.0067,
+    "neutral": 0.1854,
+    "sad": 0.1547,
+    "surprise": 0.6346
+   },
+   "title": "t22",
+   "video_id": "v0022",
+   "youtube_url": "u22"
+  },
+  {
+   "base_score": 53.9963,
+   "category": "game",
+   "dominant_emotion": "angry",
+   "dominant_emotion_per": 44.09,
+   "emotion_distribution": {
+    "angry": 0.4409,
+    "happy": 0.111,
+    "neutral": 0.09,
+    "sad": 0.0126,
+    "surprise": 0.3455
+   },
+   "title": "t116",
+   "video_id": "v0116",
+   "youtube_url": "u116"
+  },
+  {
+   "base_score": 53.4053,
+   "category": "horror",
+   "dominant_emotion": "neutral",
+   "dominant_emotion_per": 36.58,
+   "emotion_distribution": {
+    "angry": 0.1401,
+    "happy": 0.3556,
+    "neutral": 0.3658,
+    "sad": 0.1325,
+    "surprise": 0.0059
+   },
+   "title": "t11",
+   "video_id": "v0011",
+   "youtube_url": "u11"
+  },
+  {
+   "base_score": 52.0365,
+   "category": "exercise",
+   "dominant_emotion": "sad",
+   "dominant_emotion_per": 36.44,
+   "emotion_distribution": {
+    "angry": 0.0567,
+    "happy": 0.1702,
+    "neutral": 0.047,
+    "sad": 0.3644,
+    "surprise": 0.3617
+   },
+   "title": "t111",
+   "video_id": "v0111",
+   "youtube_url": "u111"
+  },
+  {
+   "base_score": 51.7919,
+   "category": "sports",
+   "dominant_emotion": "angry",
+   "dominant_emotion_per": 73.6,
+   "emotion_distribution": {
+    "angry": 0.736,
+    "happy": 0.0233,
+    "neutral": 0.0036,
+    "sad": 0.0007,
+    "surprise": 0.2364
+   },
+   "title": "t113",
+   "video_id": "v0113",
+   "youtube_url": "u113"
+  },
+  {
+   "base_score": 49.5523,
+   "category": "cook",
+   "dominant_emotion": "surprise",
+   "dominant_emotion_per": 46.8,
+   "emotion_distribution": {
+    "angry": 0.2921,
+    "happy": 0.1612,
+    "neutral": 0.0384,
+    "sad": 0.0403,
+    "surprise": 0.468
+   },
+   "title": "t80",
+   "video_id": "v0080",
+   "youtube_url": "u80"
+  },
+  {
+   "base_score": 49.0309,
+   "category": "horror",
+   "dominant_emotion": "surprise",
+   "dominant_emotion_per": 72.52,
+   "emotion_distribution": {
+    "angry": 0.0271,
+    "happy": 0.2247,
+    "neutral": 0.0004,
+    "sad": 0.0226,
+    "surprise": 0.7252
+   },
+   "title": "t122",
+   "video_id": "v0122",
+   "youtube_url": "u122"
+  },
+  {
+   "base_score": 48.6699,
+   "category": "exercise",
+   "dominant_emotion": "angry",
+   "dominant_emotion_per": 42.44,
+   "emotion_distribution": {
+    "angry": 0.4244,
+    "happy": 0.0105,
+    "neutral": 0.2122,
+    "sad": 0.0529,
+    "surprise": 0.2999
+   },
+   "title": "t50",
+   "video_id": "v0050",
+   "youtube_url": "u50"
+  },
+  {
+   "base_score": 48.4454,
+   "category": "horror",
+   "dominant_emotion": "angry",
+   "dominant_emotion_per": 30.73,
+   "emotion_distribution": {
+    "angry": 0.3073,
+    "happy": 0.1379,
+    "neutral": 0.1246,
+    "sad": 0.2959,
+    "surprise": 0.1342
+   },
+   "title": "t5",
+   "video_id": "v0005",
+   "youtube_url": "u5"
+  },
+  {
+   "base_score": 48.1999,
+   "category": "cook",
+   "dominant_emotion": "sad",
+   "dominant_emotion_per": 51.61,
+   "emotion_distribution": {
+    "angry": 0.0524,
+    "happy": 0.3859,
+    "neutral": 0.0055,
+    "sad": 0.5161,
+    "surprise": 0.04
+   },
+   "title": "t99",
+   "video_id": "v0099",
+   "youtube_url": "u99"
+  },
+  {
+   "base_score": 46.8912,
+   "category": "music",
+   "dominant_emotion": "surprise",
+   "dominant_emotion_per": 51.85,
+   "emotion_distribution": {
+    "angry": 0.2486,
+    "happy": 0.1855,
+    "neutral": 0.0004,
+    "sad": 0.047,
+    "surprise": 0.5185
+   },
+   "title": "t70",
+   "video_id": "v0070",
+   "youtube_url": "u70"
+  },
+  {
+   "base_score": 46.7137,
+   "category": "animal",
+   "dominant_emotion": "happy",
+   "dominant_emotion_per": 34.46,
+   "emotion_distribution": {
+    "angry": 0.2019,
+    "happy": 0.3446,
+    "neutral": 0.0004,
+    "sad": 0.1953,
+    "surprise": 0.2577
+   },
+   "title": "t53",
+   "video_id": "v0053",
+   "youtube_url": "u53"
+  },
+  {
+   "base_score": 46.7123,
+   "category": "music",
+   "dominant_emotion": "happy",
+   "dominant_emotion_per": 32.01,
+   "emotion_distribution": {
+    "angry": 0.1555,
+    "happy": 0.3201,
+    "neutral": 0.2379,
+    "sad": 0.2855,
+    "surprise": 0.0009
+   },
+   "title": "t3",
+   "video_id": "v0003",
+   "youtube_url": "u3"
+  },
+  {
+   "base_score": 45.9142,
+   "category": "animal",
+   "dominant_emotion": "surprise",
+   "dominant_emotion_per": 25.59,
+   "emotion_distribution": {
+    "angry": 0.1102,
+    "happy": 0.2169,
+    "neutral": 0.2344,
+    "sad": 0.1825,
+    "surprise": 0.2559
+   },
+   "title": "t8",
+   "video_id": "v0008",
+   "youtube_url": "u8"
+  },
+  {
+   "base_score": 45.8832,
+   "category": "music",
+   "dominant_emotion": "sad",
+   "dominant_emotion_per": 34.33,
+   "emotion_distribution": {
+    "angry": 0.1453,
+    "happy": 0.1771,
+    "neutral": 0.2845,
+    "sad": 0.3433,
+    "surprise": 0.0498
+   },
+   "title": "t40",
+   "video_id": "v0040",
+   "youtube_url": "u40"
+  },
+  {
+   "base_score": 45.0617,
+   "category": "cook",
+   "dominant_emotion": "sad",
+   "dominant_emotion_per": 33.71,
+   "emotion_distribution": {
+    "angry": 0.0732,
+    "happy": 0.035,
+    "neutral": 0.3156,
+    "sad": 0.3371,
+    "surprise": 0.2392
+   },
+   "title": "t76",
+   "video_id": "v0076",
+   "youtube_url": "u76"
+  },
+  {
+   "base_score": 44.6042,
+   "category": "exercise",
+   "dominant_emotion": "happy",
+   "dominant_emotion_per": 62.04,
+   "emotion_distribution": {
+    "angry": 0.0903,
+    "happy": 0.6204,
+    "neutral": 0.2801,
+    "sad": 0.0009,
+    "surprise": 0.0082
+   },
+   "title": "t134",
+   "video_id": "v0134",
+   "youtube_url": "u134"
+  },
+  {
+   "base_score": 43.884,
+   "category": "game",
+   "dominant_emotion": "neutral",
+   "dominant_emotion_per": 44.35,
+   "emotion_distribution": {
+    "angry": 0.0653,
+    "happy": 0.0294,
+    "neutral": 0.4435,
+    "sad": 0.4009,
+    "surprise": 0.0609
+   },
+   "title": "t66",
+   "video_id": "v0066",
+   "youtube_url": "u66"
+  },
+  {
+   "base_score": 43.0786,
+   "category": "beauty",
+   "dominant_emotion": "happy",
+   "dominant_emotion_per": 54.01,
+   "emotion_distribution": {
+    "angry": 0.1308,
+    "happy": 0.5401,
+    "neutral": 0.2058,
+    "sad": 0.051,
+    "surprise": 0.0722
+   },
+   "title": "t48",
+   "video_id": "v0048",
+   "youtube_url": "u48"
+  },
+  {
+   "base_score": 42.4003,
+   "category": "information",
+   "dominant_emotion": "sad",
+   "dominant_emotion_per": 61.23,
+   "emotion_distribution": {
+    "angry": 0.1339,
+    "happy": 0.0109,
+    "neutral": 0.0701,
+    "sad": 0.6123,
+    "surprise": 0.1728
+   },
+   "title": "t18",
+   "video_id": "v0018",
+   "youtube_url": "u18"
+  },
+  {
+   "base_score": 42.2968,
+   "category": "comedy",
+   "dominant_emotion": "angry",
+   "dominant_emotion_per": 45.52,
+   "emotion_distribution": {
+    "angry": 0.4552,
+    "happy": 0.2354,
+    "neutral": 0.1631,
+    "sad": 0.1444,
+    "surprise": 0.0019
+   },
+   "title": "t149",
+   "video_id": "v0149",
+   "youtube_url": "u149"
+  },
+  {
+   "base_score": 42.081,
+   "category": "eating",
+   "dominant_emotion": "neutral",
+   "dominant_emotion_per": 30.72,
+   "emotion_distribution": {
+    "angry": 0.2248,
+    "happy": 0.2224,
+    "neutral": 0.3072,
+    "sad": 0.0142,
+    "surprise": 0.2314
+   },
+   "title": "t85",
+   "video_id": "v0085",
+   "youtube_url": "u85"
+  },
+  {
+   "base_score": 39.2962,
+   "category": "vlog",
+   "dominant_emotion": "happy",
+   "dominant_emotion_per": 42.49,
+   "emotion_distribution": {
+    "angry": 0.1468,
+    "happy": 0.4249,
+    "neutral": 0.1063,
+    "sad": 0.3054,
+    "surprise": 0.0166
+   },
+   "title": "t136",
+   "video_id": "v0136",
+   "youtube_url": "u136"
+  },
+  {
+   "base_score": 39.0518,
+   "category": "game",
+   "dominant_emotion": "surprise",
+   "dominant_emotion_per": 50.19,
+   "emotion_distribution": {
+    "angry": 0.1558,
+    "happy": 0.0019,
+    "neutral": 0.3355,
+    "sad": 0.0049,
+    "surprise": 0.5019
+   },
+   "title": "t52",
+   "video_id": "v0052",
+   "youtube_url": "u52"
+  },
+  {
+   "base_score": 38.8515,
+   "category": "music",
+   "dominant_emotion": "angry",
+   "dominant_emotion_per": 85.33,
+   "emotion_distribution": {
+    "angry": 0.8533,
+    "happy": 0.0111,
+    "neutral": 0.0009,
+    "sad": 0.0,
+    "surprise": 0.1347
+   },
+   "title": "t117",
+   "video_id": "v0117",
+   "youtube_url": "u117"
+  },
+  {
+   "base_score": 38.809,
+   "category": "drama",
+   "dominant_emotion": "angry",
+   "dominant_emotion_per": 27.46,
+   "emotion_distribution": {
+    "angry": 0.2746,
+    "happy": 0.1336,
+    "neutral": 0.1116,
+    "sad": 0.2644,
+    "surprise": 0.2158
+   },
+   "title": "t90",
+   "video_id": "v0090",
+   "youtube_url": "u90"
+  },
+  {
+   "base_score": 37.8878,
+   "category": "horror",
+   "dominant_emotion": "sad",
+   "dominant_emotion_per": 39.22,
+   "emotion_distribution": {
+    "angry": 0.3109,
+    "happy": 0.0467,
+    "neutral": 0.0033,
+    "sad": 0.3922,
+    "surprise": 0.2469
+   },
+   "title": "t59",
+   "video_id": "v0059",
+   "youtube_url": "u59"
+  },
+  {
+   "base_score": 37.589,
+   "category": "vlog",
+   "dominant_emotion": "angry",
+   "dominant_emotion_per": 36.38,
+   "emotion_distribution": {
+    "angry": 0.3638,
+    "happy": 0.0144,
+    "neutral": 0.1827,
+    "sad": 0.162,
+    "surprise": 0.2772
+   },
+   "title": "t47",
+   "video_id": "v0047",
+   "youtube_url": "u47"
+  },
+  {
+   "base_score": 36.9931,
+   "category": "animal",
+   "dominant_emotion": "surprise",
+   "dominant_emotion_per": 54.82,
+   "emotion_distribution": {
+    "angry": 0.0272,
+    "happy": 0.0,
+    "neutral": 0.0004,
+    "sad": 0.4242,
+    "surprise": 0.5482
+   },
+   "title": "t127",
+   "video_id": "v0127",
+   "youtube_url": "u127"
+  },
+  {
+   "base_score": 36.7987,
+   "category": "exercise",
+   "dominant_emotion": "neutral",
+   "dominant_emotion_per": 95.08,
+   "emotion_distribution": {
+    "angry": 0.0026,
+    "happy": 0.0142,
+    "neutral": 0.9508,
+    "sad": 0.0309,
+    "surprise": 0.0013
+   },
+   "title": "t27",
+   "video_id": "v0027",
+   "youtube_url": "u27"
+  },
+  {
+   "base_score": 36.3269,
+   "category": "vlog",
+   "dominant_emotion": "neutral",
+   "dominant_emotion_per": 34.85,
+   "emotion_distribution": {
+    "angry": 0.0894,
+    "happy": 0.2369,
+    "neutral": 0.3485,
+    "sad": 0.0148,
+    "surprise": 0.3104
+   },
+   "title": "t30",
+   "video_id": "v0030",
+   "youtube_url": "u30"
+  },
+  {
+   "base_score": 36.1195,
+   "category": "travel",
+   "dominant_emotion": "happy",
+   "dominant_emotion_per": 38.02,
+   "emotion_distribution": {
+    "angry": 0.0509,
+    "happy": 0.3802,
+    "neutral": 0.0009,
+    "sad": 0.3033,
+    "surprise": 0.2647
+   },
+   "title": "t33",
+   "video_id": "v0033",
+   "youtube_url": "u33"
+  },
+  {
+   "base_score": 35.7257,
+   "category": "cook",
+   "dominant_emotion": "angry",
+   "dominant_emotion_per": 51.21,
+   "emotion_distribution": {
+    "angry": 0.5121,
+    "happy": 0.0222,
+    "neutral": 0.0243,
+    "sad": 0.2174,
+    "surprise": 0.224
+   },
+   "title": "t97",
+   "video_id": "v0097",
+   "youtube_url": "u97"
+  },
+  {
+   "base_score": 35.5523,
+   "category": "vlog",
+   "dominant_emotion": "neutral",
+   "dominant_emotion_per": 45.45,
+   "emotion_distribution": {
+    "angry": 0.171,
+    "happy": 0.2859,
+    "neutral": 0.4545,
+    "sad": 0.0517,
+    "surprise": 0.037
+   },
+   "title": "t98",
+   "video_id": "v0098",
+   "youtube_url": "u98"
+  },
+  {
+   "base_score": 30.9762,
+   "category": "comedy",
+   "dominant_emotion": "angry",
+   "dominant_emotion_per": 35.8,
+   "emotion_distribution": {
+    "angry": 0.358,
+    "happy": 0.0506,
+    "neutral": 0.3215,
+    "sad": 0.0021,
+    "surprise": 0.2678
+   },
+   "title": "t133",
+   "video_id": "v0133",
+   "youtube_url": "u133"
+  },
+  {
+   "base_score": 30.8809,
+   "category": "show",
+   "dominant_emotion": "neutral",
+   "dominant_emotion_per": 28.82,
+   "emotion_distribution": {
+    "angry": 0.1128,
+    "happy": 0.2076,
+    "neutral": 0.2882,
+    "sad": 0.1541,
+    "surprise": 0.2373
+   },
+   "title": "t57",
+   "video_id": "v0057",
+   "youtube_url": "u57"
+  },
+  {
+   "base_score": 29.8062,
+   "category": "eating",
+   "dominant_emotion": "neutral",
+   "dominant_emotion_per": 28.64,
+   "emotion_distribution": {
+    "angry": 0.1433,
+    "happy": 0.2277,
+    "neutral": 0.2864,
+    "sad": 0.1597,
+    "surprise": 0.1828
+   },
+   "title": "t6",
+   "video_id": "v0006",
+   "youtube_url": "u6"
+  },
+  {
+   "base_score": 28.8576,
+   "category": "music",
+   "dominant_emotion": "angry",
+   "dominant_emotion_per": 68.57,
+   "emotion_distribution": {
+    "angry": 0.6857,
+    "happy": 0.0122,
+    "neutral": 0.2402,
+    "sad": 0.0614,
+    "surprise": 0.0004
+   },
+   "title": "t125",
+   "video_id": "v0125",
+   "youtube_url": "u125"
+  },
+  {
+   "base_score": 28.5775,
+   "category": "eating",
+   "dominant_emotion": "sad",
+   "dominant_emotion_per": 48.74,
+   "emotion_distribution": {
+    "angry": 0.2604,
+    "happy": 0.215,
+    "neutral": 0.0183,
+    "sad": 0.4874,
+    "surprise": 0.0189
+   },
+   "title": "t63",
+   "video_id": "v0063",
+   "youtube_url": "u63"
+  },
+  {
+   "base_score": 26.6989,
+   "category": "exercise",
+   "dominant_emotion": "neutral",
+   "dominant_emotion_per": 33.81,
+   "emotion_distribution": {
+    "angry": 0.0457,
+    "happy": 0.1533,
+    "neutral": 0.3381,
+    "sad": 0.2091,
+    "surprise": 0.2539
+   },
+   "title": "t92",
+   "video_id": "v0092",
+   "youtube_url": "u92"
+  },
+  {
+   "base_score": 25.6374,
+   "category": "drama",
+   "dominant_emotion": "neutral",
+   "dominant_emotion_per": 34.79,
+   "emotion_distribution": {
+    "angry": 0.0748,
+    "happy": 0.2261,
+    "neutral": 0.3479,
+    "sad": 0.3442,
+    "surprise": 0.0069
+   },
+   "title": "t29",
+   "video_id": "v0029",
+   "youtube_url": "u29"
+  },
+  {
+   "base_score": 25.3933,
+   "category": "show",
+   "dominant_emotion": "sad",
+   "dominant_emotion_per": 54.14,
+   "emotion_distribution": {
+    "angry": 0.009,
+    "happy": 0.1134,
+    "neutral": 0.0344,
+    "sad": 0.5414,
+    "surprise": 0.3018
+   },
+   "title": "t7",
+   "video_id": "v0007",
+   "youtube_url": "u7"
+  },
+  {
+   "base_score": 25.0805,
+   "category": "comedy",
+   "dominant_emotion": "neutral",
+   "dominant_emotion_per": 53.91,
+   "emotion_distribution": {
+    "angry": 0.0002,
+    "happy": 0.014,
+    "neutral": 0.5391,
+    "sad": 0.1677,
+    "surprise": 0.2791
+   },
+   "title": "t32",
+   "video_id": "v0032",
+   "youtube_url": "u32"
+  },
+  {
+   "base_score": 24.7741,
+   "category": "show",
+   "dominant_emotion": "happy",
+   "dominant_emotion_per": 27.44,
+   "emotion_distribution": {
+    "angry": 0.208,
+    "happy": 0.2744,
+    "neutral": 0.0306,
+    "sad": 0.2186,
+    "surprise": 0.2685
+   },
+   "title": "t110",
+   "video_id": "v0110",
+   "youtube_url": "u110"
+  },
+  {
+   "base_score": 24.6319,
+   "category": "eating",
+   "dominant_emotion": "angry",
+   "dominant_emotion_per": 48.23,
+   "emotion_distribution": {
+    "angry": 0.4823,
+    "happy": 0.2487,
+    "neutral": 0.0771,
+    "sad": 0.0458,
+    "surprise": 0.1461
+   },
+   "title": "t107",
+   "video_id": "v0107",
+   "youtube_url": "u107"
+  },
+  {
+   "base_score": 22.3796,
+   "category": "beauty",
+   "dominant_emotion": "angry",
+   "dominant_emotion_per": 42.36,
+   "emotion_distribution": {
+    "angry": 0.4236,
+    "happy": 0.2091,
+    "neutral": 0.0947,
+    "sad": 0.2706,
+    "surprise": 0.002
+   },
+   "title": "t104",
+   "video_id": "v0104",
+   "youtube_url": "u104"
+  },
+  {
+   "base_score": 22.1064,
+   "category": "etc",
+   "dominant_emotion": "happy",
+   "dominant_emotion_per": 35.69,
+   "emotion_distribution": {
+    "angry": 0.0416,
+    "happy": 0.3569,
+    "neutral": 0.0,
+    "sad": 0.273,
+    "surprise": 0.3285
+   },
+   "title": "t131",
+   "video_id": "v0131",
+   "youtube_url": "u131"
+  },
+  {
+   "base_score": 21.3702,
+   "category": "horror",
+   "dominant_emotion": "surprise",
+   "dominant_emotion_per": 77.02,
+   "emotion_distribution": {
+    "angry": 0.0636,
+    "happy": 0.0006,
+    "neutral": 0.0004,
+    "sad": 0.1652,
+    "surprise": 0.7702
+   },
+   "title": "t43",
+   "video_id": "v0043",
+   "youtube_url": "u43"
+  },
+  {
+   "base_score": 20.3189,
+   "category": "animal",
+   "dominant_emotion": "happy",
+   "dominant_emotion_per": 35.22,
+   "emotion_distribution": {
+    "angry": 0.0967,
+    "happy": 0.3522,
+    "neutral": 0.041,
+    "sad": 0.2231,
+    "surprise": 0.2869
+   },
+   "title": "t142",
+   "video_id": "v0142",
+   "youtube_url": "u142"
+  },
+  {
+   "base_score": 20.1349,
+   "category": "travel",
+   "dominant_emotion": "angry",
+   "dominant_emotion_per": 36.35,
+   "emotion_distribution": {
+    "angry": 0.3635,
+    "happy": 0.0683,
+    "neutral": 0.2897,
+    "sad": 0.0028,
+    "surprise": 0.2757
+   },
+   "title": "t94",
+   "video_id": "v0094",
+   "youtube_url": "u94"
+  },
+  {
+   "base_score": 19.7681,
+   "category": "etc",
+   "dominant_emotion": "angry",
+   "dominant_emotion_per": 49.24,
+   "emotion_distribution": {
+    "angry": 0.4924,
+    "happy": 0.1293,
+    "neutral": 0.0647,
+    "sad": 0.0743,
+    "surprise": 0.2394
+   },
+   "title": "t15",
+   "video_id": "v0015",
+   "youtube_url": "u15"
+  },
+  {
+   "base_score": 18.8404,
+   "category": "eating",
+   "dominant_emotion": "happy",
+   "dominant_emotion_per": 35.96,
+   "emotion_distribution": {
+    "angry": 0.1702,
+    "happy": 0.3596,
+    "neutral": 0.3453,
+    "sad": 0.0422,
+    "surprise": 0.0827
+   },
+   "title": "t62",
+   "video_id": "v0062",
+   "youtube_url": "u62"
+  },
+  {
+   "base_score": 18.6959,
+   "category": "beauty",
+   "dominant_emotion": "neutral",
+   "dominant_emotion_per": 55.2,
+   "emotion_distribution": {
+    "angry": 0.005,
+    "happy": 0.4321,
+    "neutral": 0.552,
+    "sad": 0.0006,
+    "surprise": 0.0103
+   },
+   "title": "t139",
+   "video_id": "v0139",
+   "youtube_url": "u139"
+  },
+  {
+   "base_score": 18.2547,
+   "category": "information",
+   "dominant_emotion": "neutral",
+   "dominant_emotion_per": 61.06,
+   "emotion_distribution": {
+    "angry": 0.0615,
+    "happy": 0.053,
+    "neutral": 0.6106,
+    "sad": 0.256,
+    "surprise": 0.0189
+   },
+   "title": "t88",
+   "video_id": "v0088",
+   "youtube_url": "u88"
+  },
+  {
+   "base_score": 17.9866,
+   "category": "sports",
+   "dominant_emotion": "neutral",
+   "dominant_emotion_per": 44.71,
+   "emotion_distribution": {
+    "angry": 0.0007,
+    "happy": 0.3925,
+    "neutral": 0.4471,
+    "sad": 0.0297,
+    "surprise": 0.1301
+   },
+   "title": "t123",
+   "video_id": "v0123",
+   "youtube_url": "u123"
+  },
+  {
+   "base_score": 16.9816,
+   "category": "animal",
+   "dominant_emotion": "sad",
+   "dominant_emotion_per": 40.01,
+   "emotion_distribution": {
+    "angry": 0.1221,
+    "happy": 0.0025,
+    "neutral": 0.3664,
+    "sad": 0.4001,
+    "surprise": 0.1089
+   },
+   "title": "t96",
+   "video_id": "v0096",
+   "youtube_url": "u96"
+  },
+  {
+   "base_score": 16.8986,
+   "category": "etc",
+   "dominant_emotion": "angry",
+   "dominant_emotion_per": 29.46,
+   "emotion_distribution": {
+    "angry": 0.2946,
+    "happy": 0.0022,
+    "neutral": 0.2713,
+    "sad": 0.2583,
+    "surprise": 0.1737
+   },
+   "title": "t87",
+   "video_id": "v0087",
+   "youtube_url": "u87"
+  },
+  {
+   "base_score": 16.6374,
+   "category": "travel",
+   "dominant_emotion": "surprise",
+   "dominant_emotion_per": 61.83,
+   "emotion_distribution": {
+    "angry": 0.1223,
+    "happy": 0.2365,
+    "neutral": 0.0033,
+    "sad": 0.0197,
+    "surprise": 0.6183
+   },
+   "title": "t42",
+   "video_id": "v0042",
+   "youtube_url": "u42"
+  },
+  {
+   "base_score": 15.8355,
+   "category": "beauty",
+   "dominant_emotion": "sad",
+   "dominant_emotion_per": 80.61,
+   "emotion_distribution": {
+    "angry": 0.0199,
+    "happy": 0.1043,
+    "neutral": 0.0676,
+    "sad": 0.8061,
+    "surprise": 0.0022
+   },
+   "title": "t37",
+   "video_id": "v0037",
+   "youtube_url": "u37"
+  },
+  {
+   "base_score": 15.8287,
+   "category": "sports",
+   "dominant_emotion": "happy",
+   "dominant_emotion_per": 68.93,
+   "emotion_distribution": {
+    "angry": 0.0031,
+    "happy": 0.6893,
+    "neutral": 0.1171,
+    "sad": 0.0821,
+    "surprise": 0.1084
+   },
+   "title": "t140",
+   "video_id": "v0140",
+   "youtube_url": "u140"
+  },
+  {
+   "base_score": 14.064,
+   "category": "eating",
+   "dominant_emotion": "angry",
+   "dominant_emotion_per": 31.4,
+   "emotion_distribution": {
+    "angry": 0.314,
+    "happy": 0.1653,
+    "neutral": 0.0627,
+    "sad": 0.293,
+    "surprise": 0.165
+   },
+   "title": "t119",
+   "video_id": "v0119",
+   "youtube_url": "u119"
+  },
+  {
+   "base_score": 13.5005,
+   "category": "travel",
+   "dominant_emotion": "surprise",
+   "dominant_emotion_per": 69.88,
+   "emotion_distribution": {
+    "angry": 0.018,
+    "happy": 0.23,
+    "neutral": 0.0086,
+    "sad": 0.0447,
+    "surprise": 0.6988
+   },
+   "title": "t118",
+   "video_id": "v0118",
+   "youtube_url": "u118"
+  },
+  {
+   "base_score": 12.9046,
+   "category": "cook",
+   "dominant_emotion": "happy",
+   "dominant_emotion_per": 39.99,
+   "emotion_distribution": {
+    "angry": 0.0076,
+    "happy": 0.3999,
+    "neutral": 0.3418,
+    "sad": 0.0413,
+    "surprise": 0.2094
+   },
+   "title": "t45",
+   "video_id": "v0045",
+   "youtube_url": "u45"
+  },
+  {
+   "base_score": 12.6056,
+   "category": "game",
+   "dominant_emotion": "neutral",
+   "dominant_emotion_per": 38.84,
+   "emotion_distribution": {
+    "angry": 0.1526,
+    "happy": 0.044,
+    "neutral": 0.3884,
+    "sad": 0.1382,
+    "surprise": 0.2767
+   },
+   "title": "t39",
+   "video_id": "v0039",
+   "youtube_url": "u39"
+  },
+  {
+   "base_score": 12.5097,
+   "category": "vlog",
+   "dominant_emotion": "neutral",
+   "dominant_emotion_per": 44.26,
+   "emotion_distribution": {
+    "angry": 0.0327,
+    "happy": 0.1949,
+    "neutral": 0.4426,
+    "sad": 0.015,
+    "surprise": 0.3148
+   },
+   "title": "t65",
+   "video_id": "v0065",
+   "youtube_url": "u65"
+  },
+  {
+   "base_score": 12.0215,
+   "category": "horror",
+   "dominant_emotion": "surprise",
+   "dominant_emotion_per": 53.0,
+   "emotion_distribution": {
+    "angry": 0.0155,
+    "happy": 0.0086,
+    "neutral": 0.2646,
+    "sad": 0.1813,
+    "surprise": 0.53
+   },
+   "title": "t130",
+   "video_id": "v0130",
+   "youtube_url": "u130"
+  },
+  {
+   "base_score": 11.2532,
+   "category": "vlog",
+   "dominant_emotion": "neutral",
+   "dominant_emotion_per": 54.97,
+   "emotion_distribution": {
+    "angry": 0.0556,
+    "happy": 0.0626,
+    "neutral": 0.5497,
+    "sad": 0.0014,
+    "surprise": 0.3308
+   },
+   "title": "t146",
+   "video_id": "v0146",
+   "youtube_url": "u146"
+  },
+  {
+   "base_score": 10.856,
+   "category": "information",
+   "dominant_emotion": "surprise",
+   "dominant_emotion_per": 59.54,
+   "emotion_distribution": {
+    "angry": 0.1243,
+    "happy": 0.2216,
+    "neutral": 0.0005,
+    "sad": 0.0582,
+    "surprise": 0.5954
+   },
+   "title": "t69",
+   "video_id": "v0069",
+   "youtube_url": "u69"
+  },
+  {
+   "base_score": 10.1555,
+   "category": "music",
+   "dominant_emotion": "sad",
+   "dominant_emotion_per": 43.8,
+   "emotion_distribution": {
+    "angry": 0.068,
+    "happy": 0.0572,
+    "neutral": 0.0418,
+    "sad": 0.438,
+    "surprise": 0.3951
+   },
+   "title": "t35",
+   "video_id": "v0035",
+   "youtube_url": "u35"
+  },
+  {
+   "base_score": 10.1349,
+   "category": "music",
+   "dominant_emotion": "neutral",
+   "dominant_emotion_per": 34.6,
+   "emotion_distribution": {
+    "angry": 0.3253,
+    "happy": 0.0657,
+    "neutral": 0.346,
+    "sad": 0.035,
+    "surprise": 0.2281
+   },
+   "title": "t64",
+   "video_id": "v0064",
+   "youtube_url": "u64"
+  },
+  {
+   "base_score": 9.3145,
+   "category": "eating",
+   "dominant_emotion": "neutral",
+   "dominant_emotion_per": 38.63,
+   "emotion_distribution": {
+    "angry": 0.2774,
+    "happy": 0.0614,
+    "neutral": 0.3863,
+    "sad": 0.0205,
+    "surprise": 0.2543
+   },
+   "title": "t81",
+   "video_id": "v0081",
+   "youtube_url": "u81"
+  },
+  {
+   "base_score": 9.2032,
+   "category": "show",
+   "dominant_emotion": "neutral",
+   "dominant_emotion_per": 35.91,
+   "emotion_distribution": {
+    "angry": 0.333,
+    "happy": 0.0646,
+    "neutral": 0.3591,
+    "sad": 0.2425,
+    "surprise": 0.0008
+   },
+   "title": "t21",
+   "video_id": "v0021",
+   "youtube_url": "u21"
+  },
+  {
+   "base_score": 9.1471,
+   "category": "horror",
+   "dominant_emotion": "angry",
+   "dominant_emotion_per": 76.63,
+   "emotion_distribution": {
+    "angry": 0.7663,
+    "happy": 0.1092,
+    "neutral": 0.0109,
+    "sad": 0.0116,
+    "surprise": 0.102
+   },
+   "title": "t86",
+   "video_id": "v0086",
+   "youtube_url": "u86"
+  },
+  {
+   "base_score": 8.2701,
+   "category": "game",
+   "dominant_emotion": "surprise",
+   "dominant_emotion_per": 39.21,
+   "emotion_distribution": {
+    "angry": 0.1779,
+    "happy": 0.2287,
+    "neutral": 0.011,
+    "sad": 0.1904,
+    "surprise": 0.3921
+   },
+   "title": "t89",
+   "video_id": "v0089",
+   "youtube_url": "u89"
+  },
+  {
+   "base_score": 7.7566,
+   "category": "information",
+   "dominant_emotion": "neutral",
+   "dominant_emotion_per": 43.12,
+   "emotion_distribution": {
+    "angry": 0.0875,
+    "happy": 0.102,
+    "neutral": 0.4312,
+    "sad": 0.0062,
+    "surprise": 0.3731
+   },
+   "title": "t141",
+   "video_id": "v0141",
+   "youtube_url": "u141"
+  },
+  {
+   "base_score": 6.9885,
+   "category": "vlog",
+   "dominant_emotion": "sad",
+   "dominant_emotion_per": 34.55,
+   "emotion_distribution": {
+    "angry": 0.1451,
+    "happy": 0.0,
+    "neutral": 0.2659,
+    "sad": 0.3455,
+    "surprise": 0.2434
+   },
+   "title": "t55",
+   "video_id": "v0055",
+   "youtube_url": "u55"
+  },
+  {
+   "base_score": 6.491,
+   "category": "vlog",
+   "dominant_emotion": "neutral",
+   "dominant_emotion_per": 48.96,
+   "emotion_distribution": {
+    "angry": 0.0013,
+    "happy": 0.3091,
+    "neutral": 0.4896,
+    "sad": 0.1678,
+    "surprise": 0.0322
+   },
+   "title": "t0",
+   "video_id": "v0000",
+   "youtube_url": "u0"
+  },
+  {
+   "base_score": 5.9251,
+   "category": "beauty",
+   "dominant_emotion": "angry",
+   "dominant_emotion_per": 33.03,
+   "emotion_distribution": {
+    "angry": 0.3303,
+    "happy": 0.2531,
+    "neutral": 0.2393,
+    "sad": 0.153,
+    "surprise": 0.0243
+   },
+   "title": "t9",
+   "video_id": "v0009",
+   "youtube_url": "u9"
+  },
+  {
+   "base_score": 5.842,
+   "category": "horror",
+   "dominant_emotion": "surprise",
+   "dominant_emotion_per": 50.5,
+   "emotion_distribution": {
+    "angry": 0.3421,
+    "happy": 0.0211,
+    "neutral": 0.0045,
+    "sad": 0.1272,
+    "surprise": 0.505
+   },
+   "title": "t91",
+   "video_id": "v0091",
+   "youtube_url": "u91"
+  },
+  {
+   "base_score": 5.6551,
+   "category": "comedy",
+   "dominant_emotion": "surprise",
+   "dominant_emotion_per": 63.46,
+   "emotion_distribution": {
+    "angry": 0.1656,
+    "happy": 0.0099,
+    "neutral": 0.0257,
+    "sad": 0.1643,
+    "surprise": 0.6346
+   },
+   "title": "t2",
+   "video_id": "v0002",
+   "youtube_url": "u2"
+  },
+  {
+   "base_score": 3.2711,
+   "category": "vlog",
+   "dominant_emotion": "surprise",
+   "dominant_emotion_per": 39.92,
+   "emotion_distribution": {
+    "angry": 0.0212,
+    "happy": 0.2086,
+    "neutral": 0.3696,
+    "sad": 0.0014,
+    "surprise": 0.3992
+   },
+   "title": "t61",
+   "video_id": "v0061",
+   "youtube_url": "u61"
+  },
+  {
+   "base_score": 1.9593,
+   "category": "drama",
+   "dominant_emotion": "sad",
+   "dominant_emotion_per": 33.81,
+   "emotion_distribution": {
+    "angry": 0.3205,
+    "happy": 0.0,
+    "neutral": 0.1831,
+    "sad": 0.3381,
+    "surprise": 0.1582
+   },
+   "title": "t109",
+   "video_id": "v0109",
+   "youtube_url": "u109"
+  },
+  {
+   "base_score": 1.7487,
+   "category": "beauty",
+   "dominant_emotion": "surprise",
+   "dominant_emotion_per": 29.14,
+   "emotion_distribution": {
+    "angry": 0.2813,
+    "happy": 0.0039,
+    "neutral": 0.2013,
+    "sad": 0.2222,
+    "surprise": 0.2914
+   },
+   "title": "t46",
+   "video_id": "v0046",
+   "youtube_url": "u46"
+  },
+  {
+   "base_score": 0.6899,
+   "category": "music",
+   "dominant_emotion": "angry",
+   "dominant_emotion_per": 55.97,
+   "emotion_distribution": {
+    "angry": 0.5597,
+    "happy": 0.0112,
+    "neutral": 0.2715,
+    "sad": 0.1195,
+    "surprise": 0.0381
+   },
+   "title": "t41",
+   "video_id": "v0041",
+   "youtube_url": "u41"
+  },
+  {
+   "base_score": 0.6742,
+   "category": "sports",
+   "dominant_emotion": "happy",
+   "dominant_emotion_per": 42.93,
+   "emotion_distribution": {
+    "angry": 0.1014,
+    "happy": 0.4293,
+    "neutral": 0.2573,
+    "sad": 0.0737,
+    "surprise": 0.1382
+   },
+   "title": "t49",
+   "video_id": "v0049",
+   "youtube_url": "u49"
+  }
+ ],
+ "source": {
+  "file": "common/utils/recommendation_alg.py",
+  "repo": "new-facereview",
+  "seed": "1018_13",
+  "sha": "7948b7e721837fdb73c427cb54e12cad4ec2d5af"
+ },
+ "summaries": [
+  {
+   "created_at": 1000,
+   "dominant_emotion": "surprise",
+   "emotion_percentages": {
+    "angry": 0.0,
+    "happy": 0.3387,
+    "neutral": 0.0018,
+    "sad": 0.033,
+    "surprise": 0.6265
+   },
+   "user_id": 1,
+   "video_id": "v0087"
+  },
+  {
+   "created_at": 999,
+   "dominant_emotion": "angry",
+   "emotion_percentages": {
+    "angry": 0.2958,
+    "happy": 0.2105,
+    "neutral": 0.1916,
+    "sad": 0.202,
+    "surprise": 0.1
+   },
+   "user_id": 1,
+   "video_id": "v0108"
+  },
+  {
+   "created_at": 998,
+   "dominant_emotion": "angry",
+   "emotion_percentages": {
+    "angry": 0.3163,
+    "happy": 0.1136,
+    "neutral": 0.1776,
+    "sad": 0.0818,
+    "surprise": 0.3107
+   },
+   "user_id": 1,
+   "video_id": "v0036"
+  },
+  {
+   "created_at": 997,
+   "dominant_emotion": null,
+   "emotion_percentages": {
+    "angry": 0.0023,
+    "happy": 0.448,
+    "neutral": 0.2056,
+    "sad": 0.2864,
+    "surprise": 0.0577
+   },
+   "user_id": 1,
+   "video_id": "v0117"
+  },
+  {
+   "created_at": 996,
+   "dominant_emotion": "angry",
+   "emotion_percentages": {
+    "angry": 0.3699,
+    "happy": 0.1805,
+    "neutral": 0.0981,
+    "sad": 0.0019,
+    "surprise": 0.3496
+   },
+   "user_id": 1,
+   "video_id": "v0030"
+  },
+  {
+   "created_at": 995,
+   "dominant_emotion": "happy",
+   "emotion_percentages": {
+    "angry": 0.0348,
+    "happy": 0.4869,
+    "neutral": 0.0125,
+    "sad": 0.431,
+    "surprise": 0.0349
+   },
+   "user_id": 1,
+   "video_id": "v0140"
+  },
+  {
+   "created_at": 994,
+   "dominant_emotion": "sad",
+   "emotion_percentages": {
+    "angry": 0.2803,
+    "happy": 0.0282,
+    "neutral": 0.2829,
+    "sad": 0.3353,
+    "surprise": 0.0733
+   },
+   "user_id": 1,
+   "video_id": "v0068"
+  },
+  {
+   "created_at": 993,
+   "dominant_emotion": "sad",
+   "emotion_percentages": {
+    "angry": 0.2838,
+    "happy": 0.0651,
+    "neutral": 0.1687,
+    "sad": 0.4801,
+    "surprise": 0.0022
+   },
+   "user_id": 1,
+   "video_id": "v0109"
+  },
+  {
+   "created_at": 992,
+   "dominant_emotion": "neutral",
+   "emotion_percentages": {
+    "angry": 0.0793,
+    "happy": 0.0459,
+    "neutral": 0.7476,
+    "sad": 0.1032,
+    "surprise": 0.024
+   },
+   "user_id": 1,
+   "video_id": "v0132"
+  },
+  {
+   "created_at": 991,
+   "dominant_emotion": "neutral",
+   "emotion_percentages": {
+    "angry": 0.2025,
+    "happy": 0.0048,
+    "neutral": 0.3454,
+    "sad": 0.1687,
+    "surprise": 0.2786
+   },
+   "user_id": 1,
+   "video_id": "v0094"
+  },
+  {
+   "created_at": 990,
+   "dominant_emotion": "sad",
+   "emotion_percentages": {
+    "angry": 0.1897,
+    "happy": 0.0499,
+    "neutral": 0.1111,
+    "sad": 0.6483,
+    "surprise": 0.0011
+   },
+   "user_id": 1,
+   "video_id": "v0128"
+  },
+  {
+   "created_at": 989,
+   "dominant_emotion": "surprise",
+   "emotion_percentages": {
+    "angry": 0.1437,
+    "happy": 0.1015,
+    "neutral": 0.0814,
+    "sad": 0.3258,
+    "surprise": 0.3476
+   },
+   "user_id": 1,
+   "video_id": "v0025"
+  },
+  {
+   "created_at": 988,
+   "dominant_emotion": "happy",
+   "emotion_percentages": {
+    "angry": 0.0943,
+    "happy": 0.5328,
+    "neutral": 0.269,
+    "sad": 0.0929,
+    "surprise": 0.011
+   },
+   "user_id": 1,
+   "video_id": "v0095"
+  },
+  {
+   "created_at": 987,
+   "dominant_emotion": "sad",
+   "emotion_percentages": {
+    "angry": 0.3596,
+    "happy": 0.0637,
+    "neutral": 0.0613,
+    "sad": 0.4595,
+    "surprise": 0.0559
+   },
+   "user_id": 1,
+   "video_id": "v0054"
+  },
+  {
+   "created_at": 986,
+   "dominant_emotion": "sad",
+   "emotion_percentages": {
+    "angry": 0.0931,
+    "happy": 0.0195,
+    "neutral": 0.0039,
+    "sad": 0.5514,
+    "surprise": 0.3321
+   },
+   "user_id": 1,
+   "video_id": "v0087"
+  },
+  {
+   "created_at": 985,
+   "dominant_emotion": "neutral",
+   "emotion_percentages": {
+    "angry": 0.0848,
+    "happy": 0.2159,
+    "neutral": 0.3408,
+    "sad": 0.1567,
+    "surprise": 0.2017
+   },
+   "user_id": 1,
+   "video_id": "v0123"
+  },
+  {
+   "created_at": 984,
+   "dominant_emotion": "surprise",
+   "emotion_percentages": {
+    "angry": 0.1959,
+    "happy": 0.1284,
+    "neutral": 0.0239,
+    "sad": 0.1584,
+    "surprise": 0.4934
+   },
+   "user_id": 1,
+   "video_id": "v0136"
+  },
+  {
+   "created_at": 983,
+   "dominant_emotion": "angry",
+   "emotion_percentages": {
+    "angry": 0.4304,
+    "happy": 0.0244,
+    "neutral": 0.0226,
+    "sad": 0.3756,
+    "surprise": 0.1471
+   },
+   "user_id": 1,
+   "video_id": "v0102"
+  },
+  {
+   "created_at": 982,
+   "dominant_emotion": "neutral",
+   "emotion_percentages": {
+    "angry": 0.1737,
+    "happy": 0.1732,
+    "neutral": 0.3071,
+    "sad": 0.1872,
+    "surprise": 0.1589
+   },
+   "user_id": 1,
+   "video_id": "v0002"
+  },
+  {
+   "created_at": 981,
+   "dominant_emotion": "sad",
+   "emotion_percentages": {
+    "angry": 0.0607,
+    "happy": 0.2774,
+    "neutral": 0.0051,
+    "sad": 0.5401,
+    "surprise": 0.1168
+   },
+   "user_id": 1,
+   "video_id": "v0055"
+  }
+ ],
+ "viewed": [
+  "v0026",
+  "v0034",
+  "v0010",
+  "v0147",
+  "v0093",
+  "v0078",
+  "v0067",
+  "v0120",
+  "v0077",
+  "v0145",
+  "v0072",
+  "v0044",
+  "v0121",
+  "v0105",
+  "v0144",
+  "v0108",
+  "v0132",
+  "v0031",
+  "v0083",
+  "v0038",
+  "v0143",
+  "v0073",
+  "v0013",
+  "v0084",
+  "v0024"
+ ]
+}

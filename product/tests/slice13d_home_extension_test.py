@@ -74,7 +74,9 @@ class FakeCtx:
 
 
 def run(coro):
-    return asyncio.run(coro)
+    out = asyncio.run(coro)
+    # the extension returns its list as one JSON Text value; decode for assertions
+    return {k: json.loads(v) for k, v in out.items()} if isinstance(out, dict) else out
 
 
 def seeded_home(seed):
