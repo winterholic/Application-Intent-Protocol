@@ -245,14 +245,15 @@ async fn test_relational_worker_rejects_unauthorized_mongo_collection() {
     let contract = spike_v5_sdk::contract_fingerprint_with_extensions(&facts, IdWire::SafeNumber);
     let token = server.keys.issue(1, 600);
 
-    // Case 3: Unauthorized Mongo collection 'admin_secrets'
+    // Case 3: Mongo collection 'admin_secrets' is not in the extension's `access` list. The per-extension grant is checked
+    // before the server allowlist, so this is ACCESS_NOT_DECLARED (spec/wire-errors.md); CAPABILITY_DENIED is for declared grants the server refuses.
     let body = json!({
         "extension": "Recruitment.unauthMongoCollection",
         "input": { "clubId": 10 }
     });
     let resp = post(server.address, Some(&token), Some(&contract), &body).await.unwrap();
     assert_eq!(resp["ok"], true);
-    assert_eq!(resp["output"]["clubName"], "WIRE.CAPABILITY_DENIED", "Unauthorized mongo collection must be denied with WIRE.CAPABILITY_DENIED");
+    assert_eq!(resp["output"]["clubName"], "WIRE.ACCESS_NOT_DECLARED", "Undeclared mongo collection must be denied with WIRE.ACCESS_NOT_DECLARED");
 
     server.shutdown().await.unwrap();
 }
@@ -322,14 +323,14 @@ async fn test_relational_worker_rejects_unauthorized_redis_key() {
     let contract = spike_v5_sdk::contract_fingerprint_with_extensions(&facts, IdWire::SafeNumber);
     let token = server.keys.issue(1, 600);
 
-    // Case 5: Unauthorized Redis key 'other_app:secret'
+    // Case 5: Redis key 'other_app:secret' matches no declared `redis.<prefix>*` grant, so the grant check rejects it first.
     let body = json!({
         "extension": "Recruitment.unauthRedisKey",
         "input": { "clubId": 10 }
     });
     let resp = post(server.address, Some(&token), Some(&contract), &body).await.unwrap();
     assert_eq!(resp["ok"], true);
-    assert_eq!(resp["output"]["clubName"], "WIRE.CAPABILITY_DENIED", "Unauthorized redis namespace must be denied with WIRE.CAPABILITY_DENIED");
+    assert_eq!(resp["output"]["clubName"], "WIRE.ACCESS_NOT_DECLARED", "Undeclared redis key must be denied with WIRE.ACCESS_NOT_DECLARED");
 
     server.shutdown().await.unwrap();
 }
