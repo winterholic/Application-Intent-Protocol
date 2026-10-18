@@ -4,6 +4,7 @@
 //! 데이터베이스/컬렉션/키/명령어에 접근한다. 확장이 선언한 접근 중 허용되지 않은 컬렉션, 키 패턴, 쓰기 명령은 즉시 `WIRE.CAPABILITY_DENIED`로, 선언하지 않은 접근은 `WIRE.ACCESS_NOT_DECLARED`로 거부된다.
 
 use serde_json::{json, Value};
+use spike_v2_read::id_wire::{parse_uuid, EntityId};
 use spike_v2_read::plan::Reject;
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
@@ -16,11 +17,38 @@ pub type CapabilityFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 /// Identity and exact capability grants derived by the server for this invocation.
 #[derive(Clone, Debug, Default)]
 pub struct CapabilityPrincipal {
+    /// Internal numeric handle of the session actor (`aip_principals.actor_id`).
     pub actor_id: Option<i64>,
+    /// Public id of a `User.id: Uuid` actor. Set only by `resolve_actor_uuid` from the server-verified session,
+    /// never from the extension input or a caller filter. When present it, not the internal handle, owns private rows.
+    pub actor_uuid: Option<EntityId>,
     pub grants: HashSet<String>,
 }
 
+/// Turns the session's server-verified public actor id into the Uuid that owns private Mongo rows.
+/// `None` means an integer-keyed actor (the public id is absent or is that actor's own decimal id).
+/// Any other value that is not the canonical lowercase UUID fails closed instead of falling back to the internal handle.
+pub fn resolve_actor_uuid(actor_id: Option<i64>, public_id: Option<&str>) -> Result<Option<EntityId>, Reject> {
+    let Some(public_id) = public_id else {
+        return Ok(None);
+    };
+    match parse_uuid(public_id) {
+        Ok(uuid) => Ok(Some(uuid)),
+        Err(_) if actor_id.is_some_and(|id| id.to_string() == public_id) => Ok(None),
+        Err(_) => Err(reject("WIRE.ACCESS_DENIED", "세션 actor 공개 id를 확인할 수 없음")),
+    }
+}
+
 impl CapabilityPrincipal {
+    /// Value the private `user_id` column must equal for this actor: the canonical UUID string, or the integer handle.
+    fn private_user_id(&self) -> Option<Value> {
+        match self.actor_uuid {
+            Some(id @ EntityId::Uuid(_)) => Some(json!(id.to_string())),
+            Some(EntityId::Number(_)) => None,
+            None => self.actor_id.map(|id| json!(id)),
+        }
+    }
+
     pub fn permits(&self, kind: &str, resource: &str) -> bool {
         let exact = format!("{kind}.{resource}");
         self.grants.contains(&exact)
@@ -93,20 +121,20 @@ impl MongoCapability for MemoryMongoCapability {
                 return Err(reject("WIRE.BAD_VALUE", "Mongo filter는 객체여야 함"));
             }
             let private_actor = if collection == "youtube_watching_data" {
-                let Some(actor_id) = principal.actor_id else {
+                let Some(actor) = principal.private_user_id() else {
                     return Err(reject("WIRE.ACCESS_DENIED", "인증 principal이 필요함"));
                 };
-                if filter.and_then(|f| f.get("user_id")).is_some_and(|v| v != &json!(actor_id)) {
+                if filter.and_then(|f| f.get("user_id")).is_some_and(|v| v != &actor) {
                     return Err(reject("WIRE.ACCESS_DENIED", "요청 actor가 인증 principal과 다름"));
                 }
-                Some(actor_id)
+                Some(actor)
             } else {
                 None
             };
             let filtered: Vec<Value> = if let Some(f) = filter.and_then(Value::as_object) {
                 docs.into_iter()
                     .filter(|doc| {
-                        private_actor.is_none_or(|actor| doc.get("user_id") == Some(&json!(actor)))
+                        private_actor.as_ref().is_none_or(|actor| doc.get("user_id") == Some(actor))
                             && f.iter().all(|(k, v)| {
                                 if let Some(in_arr) = v.as_object().and_then(|o| o.get("$in")).and_then(Value::as_array) {
                                     doc.get(k).is_some_and(|val| in_arr.contains(val))
@@ -303,13 +331,13 @@ impl MongoDriverCapability {
         };
         let mut filter_value = filter.clone();
         if collection == "youtube_watching_data" {
-            let Some(actor) = principal.actor_id else {
+            let Some(actor) = principal.private_user_id() else {
                 return Err(reject("WIRE.ACCESS_DENIED", "인증 principal이 필요함"));
             };
-            if object.get("user_id").is_some_and(|v| v != &json!(actor)) {
+            if object.get("user_id").is_some_and(|v| v != &actor) {
                 return Err(reject("WIRE.ACCESS_DENIED", "다른 user_id filter는 허용하지 않음"));
             }
-            filter_value["user_id"] = json!(actor);
+            filter_value["user_id"] = actor;
         }
         fn validate(value: &Value, fields: &HashSet<String>, inside_field: bool) -> Result<(), Reject> {
             let Some(map) = value.as_object() else {
@@ -632,9 +660,10 @@ mod tests {
 
     #[test]
     fn mongo_scope_requires_exact_grant_while_redis_prefix_grants_stay_namespaced() {
-        let mongo_wildcard = CapabilityPrincipal { actor_id: Some(1), grants: ["mongo.*".into()].into_iter().collect() };
+        let mongo_wildcard = CapabilityPrincipal { actor_id: Some(1), actor_uuid: None, grants: ["mongo.*".into()].into_iter().collect() };
         assert!(!mongo_wildcard.permits("mongo", "youtube_watching_data"));
-        let redis_prefix = CapabilityPrincipal { actor_id: Some(1), grants: ["redis.facereview:reco:*".into()].into_iter().collect() };
+        let redis_prefix =
+            CapabilityPrincipal { actor_id: Some(1), actor_uuid: None, grants: ["redis.facereview:reco:*".into()].into_iter().collect() };
         assert!(redis_prefix.permits("redis", "facereview:reco:popular"));
         assert!(!redis_prefix.permits("redis", "facereview:session:private"));
     }
@@ -649,6 +678,7 @@ mod tests {
     fn test_principal() -> CapabilityPrincipal {
         CapabilityPrincipal {
             actor_id: Some(1),
+            actor_uuid: None,
             grants: [
                 "mongo.youtube_watching_data".to_string(),
                 "mongo.video_distribution".to_string(),
@@ -836,13 +866,57 @@ mod tests {
     async fn private_watch_data_forces_the_principal_actor_and_rejects_spoofed_filters() {
         let mongo = mongo_test();
         mongo.seed("youtube_watching_data", vec![json!({"user_id": 7, "video_id": 1}), json!({"user_id": 8, "video_id": 2})]);
-        let principal = CapabilityPrincipal { actor_id: Some(7), grants: ["mongo.youtube_watching_data".to_string()].into_iter().collect() };
+        let principal =
+            CapabilityPrincipal { actor_id: Some(7), actor_uuid: None, grants: ["mongo.youtube_watching_data".to_string()].into_iter().collect() };
         let ok = mongo.call(&principal, "youtube_watching_data", &json!({"command":"find","filter":{}})).await.unwrap();
         assert_eq!(ok["docs"].as_array().unwrap().len(), 1);
         assert_eq!(ok["docs"][0]["video_id"], 1);
         let forged = mongo.call(&principal, "youtube_watching_data", &json!({"command":"find","filter":{"user_id": 8}})).await.unwrap_err();
         assert_eq!(forged.code, "WIRE.ACCESS_DENIED");
-        let guest = CapabilityPrincipal { actor_id: None, grants: ["mongo.youtube_watching_data".to_string()].into_iter().collect() };
+        let guest =
+            CapabilityPrincipal { actor_id: None, actor_uuid: None, grants: ["mongo.youtube_watching_data".to_string()].into_iter().collect() };
         assert_eq!(mongo.call(&guest, "youtube_watching_data", &json!({"command":"find","filter":{}})).await.unwrap_err().code, "WIRE.ACCESS_DENIED");
+    }
+
+    #[tokio::test]
+    async fn uuid_actor_owns_uuid_string_documents_not_the_internal_handle_documents() {
+        const ALICE: &str = "0b1f4c7e-52a1-4d3e-9c1a-7f2b8d6e4a10";
+        const BOB: &str = "9d3c2b1a-8e7f-4a6b-b5c4-1e0f9a8b7c6d";
+        let mongo = mongo_test();
+        mongo.seed(
+            "youtube_watching_data",
+            vec![
+                json!({"user_id": ALICE, "video_id": 1}),
+                json!({"user_id": BOB, "video_id": 2}),
+                json!({"user_id": 7, "video_id": 3}),
+                json!({"user_id": "7", "video_id": 4}),
+            ],
+        );
+        let grants: HashSet<String> = ["mongo.youtube_watching_data".to_string()].into_iter().collect();
+        let alice = CapabilityPrincipal { actor_id: Some(7), actor_uuid: Some(parse_uuid(ALICE).unwrap()), grants: grants.clone() };
+        let ok = mongo.call(&alice, "youtube_watching_data", &json!({"command":"find","filter":{}})).await.unwrap();
+        assert_eq!(ok["docs"].as_array().unwrap().len(), 1);
+        assert_eq!(ok["docs"][0]["video_id"], 1);
+        for filter in [
+            json!({"user_id": BOB}),
+            json!({"user_id": 7}),
+            json!({"user_id": "7"}),
+            json!({"user_id": {"$ne": ALICE}}),
+            json!({"user_id": {"$in": [ALICE, BOB]}}),
+        ] {
+            let rejected = mongo.call(&alice, "youtube_watching_data", &json!({"command":"find","filter":filter})).await.unwrap_err();
+            assert_eq!(rejected.code, "WIRE.ACCESS_DENIED");
+        }
+        // UUID가 아닌 actor_uuid는 숫자 handle로 대체되지 않고 거부된다.
+        let not_uuid = CapabilityPrincipal { actor_id: Some(7), actor_uuid: Some(EntityId::Number(7)), grants: grants.clone() };
+        assert_eq!(
+            mongo.call(&not_uuid, "youtube_watching_data", &json!({"command":"find","filter":{}})).await.unwrap_err().code,
+            "WIRE.ACCESS_DENIED"
+        );
+        // 정수 actor는 기존대로 숫자 문서만 본다.
+        let integer = CapabilityPrincipal { actor_id: Some(7), actor_uuid: None, grants };
+        let docs = mongo.call(&integer, "youtube_watching_data", &json!({"command":"find","filter":{}})).await.unwrap();
+        assert_eq!(docs["docs"].as_array().unwrap().len(), 1);
+        assert_eq!(docs["docs"][0]["video_id"], 3);
     }
 }

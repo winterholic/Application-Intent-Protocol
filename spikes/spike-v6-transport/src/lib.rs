@@ -1372,7 +1372,16 @@ async fn serve_conn(
             );
             let output = tokio::time::timeout(
                 std::time::Duration::from_millis(deadline),
-                spike_v4_worker::invoke_with_host(&mut host, &mut worker, &facts, name, &body["input"], &caller, wire),
+                spike_v4_worker::invoke_with_host_as(
+                    &mut host,
+                    &mut worker,
+                    &facts,
+                    name,
+                    &body["input"],
+                    &caller,
+                    wire,
+                    session.as_ref().and_then(|s| s.actor_resource_id.as_deref()),
+                ),
             )
             .await;
             worker.stop().await;

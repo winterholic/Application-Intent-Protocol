@@ -105,6 +105,8 @@ pub struct Worker {
 /// ctx 토큰 하나가 허락하는 것. worker가 보낸 값이 아니라 서버가 정한다.
 struct Grant {
     actor_id: Option<i64>,
+    /// 세션 인증 출처가 검증한 actor 공개 id. Mongo capability 호출에서만 principal로 해석한다.
+    actor_public_id: Option<String>,
     now: String,
     /// 확장 계약의 access 목록과 각 집계 입력에 묶인 확장 입력 값.
     access: HashMap<String, Map<String, Value>>,
@@ -477,10 +479,26 @@ pub async fn invoke_with_host(
     caller: &Caller,
     wire: IdWire,
 ) -> Result<Value, Reject> {
+    invoke_with_host_as(host, w, facts, name, input, caller, wire, None).await
+}
+
+/// `invoke_with_host` with the session's server-verified public actor id, so a Uuid actor owns its private Mongo rows.
+/// The id comes from the session authentication source only; `Caller` and extension input stay unchanged.
+#[allow(clippy::too_many_arguments)]
+pub async fn invoke_with_host_as(
+    host: &mut dyn WorkerHost,
+    w: &mut Worker,
+    facts: &Value,
+    name: &str,
+    input: &Value,
+    caller: &Caller,
+    wire: IdWire,
+    actor_public_id: Option<&str>,
+) -> Result<Value, Reject> {
     validate_read(facts, name, input, wire)?;
     let (res, ext) = name.split_once('.').ok_or(Reject { code: "WIRE.BAD_REQUEST", msg: "확장은 `Resource.name`".into() })?;
     let x = &facts["resources"][res]["extensions"][ext];
-    invoke_contract(Some(host), w, facts, x, input, caller, wire, None).await
+    invoke_contract(Some(host), w, facts, x, input, caller, wire, actor_public_id, None).await
 }
 
 pub fn validate_operation(facts: &Value, name: &str, input: &Value, wire: IdWire) -> Result<(), Reject> {
@@ -496,7 +514,7 @@ pub fn validate_operation(facts: &Value, name: &str, input: &Value, wire: IdWire
 
 pub async fn invoke_operation(worker: &mut Worker, facts: &Value, name: &str, input: &Value, caller: &Caller, wire: IdWire) -> Result<Value, Reject> {
     validate_operation(facts, name, input, wire)?;
-    invoke_contract(None, worker, facts, &facts["operations"][name], input, caller, wire, None).await
+    invoke_contract(None, worker, facts, &facts["operations"][name], input, caller, wire, None, None).await
 }
 
 pub trait JobHost: Send {
@@ -533,7 +551,7 @@ pub async fn invoke_job(
     host: &mut dyn JobHost,
 ) -> Result<Value, Reject> {
     validate_job(facts, name, input, wire)?;
-    invoke_contract(None, worker, facts, &facts["operations"][name], input, caller, wire, Some(host)).await
+    invoke_contract(None, worker, facts, &facts["operations"][name], input, caller, wire, None, Some(host)).await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -545,6 +563,7 @@ async fn invoke_contract(
     input: &Value,
     caller: &Caller,
     wire: IdWire,
+    actor_public_id: Option<&str>,
     mut job_host: Option<&mut dyn JobHost>,
 ) -> Result<Value, Reject> {
     let deadline = Duration::from_millis(x["deadlineMs"].as_u64().unwrap_or(1000));
@@ -575,7 +594,16 @@ async fn invoke_contract(
     let expires = Instant::now() + deadline;
     w.tokens.insert(
         token.clone(),
-        Grant { actor_id: caller.actor_id, now: caller.now.clone(), access, capability_grants, id_wire: wire, expires, active: true },
+        Grant {
+            actor_id: caller.actor_id,
+            actor_public_id: actor_public_id.map(str::to_string),
+            now: caller.now.clone(),
+            access,
+            capability_grants,
+            id_wire: wire,
+            expires,
+            active: true,
+        },
     );
     let mut invoke = json!({ "type": "invoke", "invoke": invoke_id, "impl": x["implementation"], "input": input, "token": token });
     if let Some(jh) = job_host.as_deref() {
@@ -764,11 +792,12 @@ async fn serve_call(host: &mut dyn WorkerHost, w: &mut Worker, facts: &Value, m:
             Ok(json!({ "rows": encoded }))
         }
         "mongo" => {
-            let context = CapabilityPrincipal { actor_id: g.actor_id, grants: g.capability_grants.clone() };
+            let actor_uuid = capability::resolve_actor_uuid(g.actor_id, g.actor_public_id.as_deref())?;
+            let context = CapabilityPrincipal { actor_id: g.actor_id, actor_uuid, grants: g.capability_grants.clone() };
             host.mongo(&context, name, &m["input"]).await
         }
         "redis" => {
-            let context = CapabilityPrincipal { actor_id: g.actor_id, grants: g.capability_grants.clone() };
+            let context = CapabilityPrincipal { actor_id: g.actor_id, actor_uuid: None, grants: g.capability_grants.clone() };
             host.redis(&context, name, &m["input"]).await
         }
         "apply" => rej("WIRE.ACCESS_DENIED", "읽기 확장에서 쓰기(apply) 호출 거부"),
