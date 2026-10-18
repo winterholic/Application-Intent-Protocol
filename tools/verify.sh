@@ -62,6 +62,7 @@ node --test \
   product/tests/memoir-folder-rename.test.mjs \
   product/tests/sdk-package.test.mjs \
   product/tests/package-boundaries.test.mjs \
+  product/tests/app-manifest.test.mjs \
   product/tests/dev-jwt.test.mjs \
   product/tests/google-storage-provider.test.mjs
 python3 -m unittest product.tests.google_storage_provider_test product.tests.python_sdk_test product.tests.dedicated_db_test

@@ -4,6 +4,7 @@ import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadAndValidateAppManifest, ManifestFailure } from "./app-manifest.mjs";
 
 const productDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoDir = resolve(productDir, "..");
@@ -18,7 +19,7 @@ const manifestFiles = [
   "spikes/spike-v1-fixture", "spikes/spike-v2-read", "spikes/spike-v3-write", "spikes/spike-v4-worker",
   "spikes/spike-v5-sdk", "spikes/spike-v6-transport", "spikes/spike-v11-dev-checks",
   "prototype/src/schema_catalog.sql",
-  "product/sdk/index.ts", "product/tools/build-sdk.mjs", "product/tools/package.mjs", "product/tools/smoke.mjs",
+  "product/sdk/index.ts", "product/tools/build-sdk.mjs", "product/tools/package.mjs", "product/tools/app-manifest.mjs", "product/tools/smoke.mjs",
   "prototype/example/app.aip", "prototype/example/extensions/event.mjs", "prototype/example/extensions/event.py",
 ];
 
@@ -33,16 +34,20 @@ class PackageFailure extends Error {
 function parseArgs(args) {
   let out;
   let profile = "debug";
+  let manifest;
+  let validateOnly = false;
   for (let index = 0; index < args.length; index++) {
     if (args[index] === "--out" && args[index + 1]?.trim()) out = resolve(args[++index]);
     else if (args[index] === "--profile" && ["debug", "release"].includes(args[index + 1])) profile = args[++index];
-    else throw new PackageFailure("BAD_ARGS", "usage: node product/tools/package.mjs [--out <fresh-directory>] [--profile debug|release]", "arguments");
+    else if (args[index] === "--manifest" && args[index + 1]?.trim()) manifest = resolve(args[++index]);
+    else if (args[index] === "--validate-only" || args[index] === "--check-only") validateOnly = true;
+    else throw new PackageFailure("BAD_ARGS", "usage: node product/tools/package.mjs [--out <fresh-directory>] [--profile debug|release] [--manifest <aip.app.json>] [--validate-only]", "arguments");
   }
-  if (!out) {
+  if (!out && !validateOnly) {
     const stamp = new Date().toISOString().replaceAll(":", "-").replaceAll(".", "-");
     out = resolve(productDir, "dist", stamp);
   }
-  return { out, profile };
+  return { out, profile, manifest, validateOnly };
 }
 
 function command(program, args, stage, cwd = repoDir) {
@@ -260,10 +265,22 @@ async function collectSourceTree(directory, files) {
 }
 
 try {
-  const out = parseArgs(process.argv.slice(2));
-  console.log(JSON.stringify(await packageArtifacts(out)));
+  const options = parseArgs(process.argv.slice(2));
+  if (options.manifest) {
+    const appContract = await loadAndValidateAppManifest(options.manifest);
+    if (options.validateOnly) {
+      console.log(JSON.stringify(appContract, null, 2));
+      process.exit(0);
+    }
+  }
+  console.log(JSON.stringify(await packageArtifacts(options)));
 } catch (error) {
-  const failure = error instanceof PackageFailure ? error : new PackageFailure("OUTPUT_IO", "제품 artifact 생성 실패", "package");
+  const failure =
+    error instanceof PackageFailure
+      ? error
+      : error instanceof ManifestFailure
+      ? error
+      : new PackageFailure("OUTPUT_IO", "제품 artifact 생성 실패", "package");
   console.error(JSON.stringify({ ok: false, code: failure.code, stage: failure.stage, message: failure.message }));
   process.exitCode = 1;
 }
