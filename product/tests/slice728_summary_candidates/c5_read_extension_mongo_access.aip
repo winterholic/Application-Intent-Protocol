@@ -1,0 +1,14 @@
+resource Member { fields { id: Id } }
+actor Member
+resource Summary {
+  fields { id: Id; owner: Member; neutral_seconds: Int(0..1000000) default database }
+  rows read when true
+  extension read compute {
+    input { id: Summary.Id }
+    output { count: Int(0..10) }
+    access mongo.youtube_watching_data
+    effect none
+    deadline 3s
+    implementation "worker.compute"
+  }
+}

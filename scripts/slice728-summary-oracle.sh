@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # WBS 7.2.8 emotion summary/DNA: oracle differential tests, plus the Mongo capability gap test
 # when the caller provides a run-owned loopback Mongo (never a shared server).
+# Optional: AIP_BIN=<built aip> also runs the definition-checker gap cases.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

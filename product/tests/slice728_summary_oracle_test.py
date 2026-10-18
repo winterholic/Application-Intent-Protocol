@@ -1195,5 +1195,45 @@ class PlatformGapCanaryTest(unittest.TestCase):
         self.assertIn("숫자는 f = f + 1처럼만 바꾼다", syntax)
 
 
+class DefinitionGapTest(unittest.TestCase):
+    """Runs the real `aip service check` on candidate definitions (set AIP_BIN to a built aip).
+
+    c1/c4 are controls that pass. The other three show what a cache-delta write and a
+    Mongo-reading extension cannot be written as in today's definition language.
+    """
+
+    CANDIDATES = HERE / "slice728_summary_candidates"
+
+    def check(self, name):
+        binary = os.environ.get("AIP_BIN")
+        if not binary:
+            self.skipTest("set AIP_BIN to a built `aip` binary to run the definition checker")
+        out = subprocess.run([binary, "service", "check", str(self.CANDIDATES / name)],
+                             capture_output=True, text=True)
+        import json
+        return out.returncode, json.loads(out.stdout or out.stderr)
+
+    def test_literal_integer_steps_pass(self):
+        for name in ("c1_literal_step_control.aip", "c4_literal_five.aip"):
+            code, body = self.check(name)
+            self.assertEqual((code, body["ok"]), (0, True), name)
+
+    def test_a_delta_that_is_not_a_literal_is_rejected(self):
+        code, body = self.check("c2_variable_delta.aip")
+        self.assertEqual(code, 1)
+        self.assertEqual([d["code"] for d in body["diagnostics"]], ["DEF.ARITH_NOT_ALLOWED"])
+
+    def test_a_write_extension_takes_one_access_clause_so_it_cannot_add_a_mongo_grant(self):
+        code, body = self.check("c3_write_extension_mongo_access.aip")
+        self.assertEqual(code, 1)
+        self.assertEqual([d["code"] for d in body["diagnostics"]], ["DEF.DUPLICATE"])
+
+    def test_the_language_cannot_declare_a_mongo_grant(self):
+        code, body = self.check("c5_read_extension_mongo_access.aip")
+        self.assertEqual(code, 1)
+        self.assertEqual([d["code"] for d in body["diagnostics"]], ["DEF.UNKNOWN_SYMBOL"])
+        self.assertIn("mongo.youtube_watching_data", body["diagnostics"][0]["message"])
+
+
 if __name__ == "__main__":
     unittest.main()
