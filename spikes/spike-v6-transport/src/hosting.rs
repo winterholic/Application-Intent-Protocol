@@ -358,10 +358,16 @@ fn hex_value(value: u8) -> Option<u8> {
     }
 }
 
-#[cfg(target_os = "linux")]
+// Linux open(2) flag values differ per architecture. On aarch64 the x86_64 values of
+// O_DIRECTORY/O_NOFOLLOW are O_DIRECT/O_LARGEFILE, so symlinks would be followed silently.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const O_DIRECTORY: i32 = 0x10000;
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const O_NOFOLLOW: i32 = 0x20000;
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+const O_DIRECTORY: i32 = 0x4000;
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+const O_NOFOLLOW: i32 = 0x8000;
 #[cfg(target_os = "linux")]
 const O_CLOEXEC: i32 = 0x80000;
 #[cfg(target_os = "linux")]
@@ -378,9 +384,11 @@ const O_NONBLOCK: i32 = 0x4;
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 compile_error!("secure static mounts currently support Linux and macOS only");
+#[cfg(all(target_os = "linux", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
+compile_error!("secure static mounts have verified Linux open(2) flag values only for x86_64 and aarch64");
 
 unsafe extern "C" {
-    fn openat(dirfd: i32, pathname: *const i8, flags: i32, ...) -> i32;
+    fn openat(dirfd: i32, pathname: *const std::ffi::c_char, flags: i32, ...) -> i32;
 }
 
 fn open_beneath(root: &Path, components: &[String]) -> io::Result<File> {
