@@ -156,9 +156,8 @@ async fn redis_driver_reads_every_mget_key_and_rejects_mixed_scope() {
 
 #[tokio::test]
 async fn missing_driver_endpoints_fail_instead_of_returning_empty_data() {
-    let mongo =
-        MongoDriverCapability::connect("mongodb://127.0.0.1:15443/aip_test_slice13a", "aip_test_slice13a", 1, Duration::from_millis(100)).await;
+    let mongo = MongoDriverCapability::connect("mongodb://127.0.0.1:0/aip_test_slice13a", "aip_test_slice13a", 1, Duration::from_millis(100)).await;
     assert_eq!(mongo.err().unwrap().code, "WIRE.ADAPTER_UNAVAILABLE");
-    let redis = RedisDriverCapability::connect("redis://127.0.0.1:15443/", vec!["facereview:reco:".into()], Duration::from_millis(100)).await;
+    let redis = RedisDriverCapability::connect("redis://127.0.0.1:0/", vec!["facereview:reco:".into()], Duration::from_millis(100)).await;
     assert_eq!(redis.err().unwrap().code, "WIRE.ADAPTER_UNAVAILABLE");
 }
