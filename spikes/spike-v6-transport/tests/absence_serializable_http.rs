@@ -11,7 +11,12 @@ use serde_json::{json, Value};
 use spike_v1_fixture::{load_str, Form};
 use spike_v2_read::{id_wire::IdWire, sqlgen};
 use spike_v6_transport::server::listen_with_apply_contract;
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    net::SocketAddr,
+    sync::Arc,
+    time::Duration,
+};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
@@ -113,17 +118,117 @@ async fn race(
     (by_room, conflicts)
 }
 
-/// One success and one business refusal per room; returns the winning slot of each room.
-fn one_winner_per_room(by_room: &std::collections::BTreeMap<i64, Vec<(i64, Value)>>) -> Vec<(i64, i64)> {
+/// Evaluates results per room: returns (winners, winner_keys, loser_keys).
+/// Asserts exactly one winner and one loser per room, and that the loser receives WIRE.FORBIDDEN.
+fn partition_room_keys(
+    by_room: &BTreeMap<i64, Vec<(i64, Value)>>,
+) -> (Vec<(i64, i64)>, BTreeSet<String>, BTreeSet<String>) {
     let mut winners = vec![];
+    let mut winner_keys = BTreeSet::new();
+    let mut loser_keys = BTreeSet::new();
     for (room, results) in by_room {
         let ok: Vec<_> = results.iter().filter(|(_, r)| r["ok"] == true).collect();
         let losers: Vec<_> = results.iter().filter(|(_, r)| r["ok"] != true).collect();
         assert_eq!((ok.len(), losers.len()), (1, 1), "room {room}: {results:?}");
         assert_eq!(losers[0].1["code"], "WIRE.FORBIDDEN", "the loser gets the business answer: {results:?}");
-        winners.push((*room, ok[0].0));
+        let w_slot = ok[0].0;
+        let l_slot = losers[0].0;
+        winners.push((*room, w_slot));
+        winner_keys.insert(format!("k-{room}-{w_slot}"));
+        loser_keys.insert(format!("k-{room}-{l_slot}"));
     }
+    (winners, winner_keys, loser_keys)
+}
+
+/// Backward compatible helper: returns only the winning slots.
+#[allow(dead_code)]
+fn one_winner_per_room(by_room: &BTreeMap<i64, Vec<(i64, Value)>>) -> Vec<(i64, i64)> {
+    let (winners, _, _) = partition_room_keys(by_room);
     winners
+}
+
+/// Asserts exact set equality, mutual exclusion, and complete key accounting for idempotency keys.
+fn assert_idem_key_invariants(
+    db_idem_keys: &BTreeSet<String>,
+    winner_keys: &BTreeSet<String>,
+    loser_keys: &BTreeSet<String>,
+    expected_all_keys: &BTreeSet<String>,
+) {
+    // 1. Mutually exclusive winners and losers
+    assert!(
+        winner_keys.is_disjoint(loser_keys),
+        "winner keys and loser keys must be mutually exclusive"
+    );
+    // 2. All request keys account for either winner or loser
+    let union_keys: BTreeSet<_> = winner_keys.union(loser_keys).cloned().collect();
+    assert_eq!(
+        &union_keys, expected_all_keys,
+        "all request keys must partition exactly into winners and losers"
+    );
+    // 3. Exact set equality between DB stored keys and actual winner keys
+    assert_eq!(
+        db_idem_keys, winner_keys,
+        "DB idempotency keys must match winner keys exactly"
+    );
+    // 4. No loser keys present in DB (mutual exclusion with stored keys)
+    assert!(
+        db_idem_keys.is_disjoint(loser_keys),
+        "no loser key may be present in DB idempotency table"
+    );
+}
+
+/// Negative controls: mutates key sets and asserts that assert_idem_key_invariants catches each mutation.
+fn verify_negative_controls(
+    db_idem_keys: &BTreeSet<String>,
+    winner_keys: &BTreeSet<String>,
+    loser_keys: &BTreeSet<String>,
+    expected_all_keys: &BTreeSet<String>,
+) {
+    // Mutation 1: Missing winner key in DB
+    let missing_winner = {
+        let mut m = db_idem_keys.clone();
+        let first = m.iter().next().cloned().expect("at least one key");
+        m.remove(&first);
+        m
+    };
+    assert!(
+        std::panic::catch_unwind(|| {
+            assert_idem_key_invariants(&missing_winner, winner_keys, loser_keys, expected_all_keys);
+        })
+        .is_err(),
+        "negative control failed: missing winner key in DB must trigger assertion failure"
+    );
+
+    // Mutation 2: Loser key inserted into DB
+    let added_loser = {
+        let mut m = db_idem_keys.clone();
+        let loser = loser_keys.iter().next().cloned().expect("at least one loser key");
+        m.insert(loser);
+        m
+    };
+    assert!(
+        std::panic::catch_unwind(|| {
+            assert_idem_key_invariants(&added_loser, winner_keys, loser_keys, expected_all_keys);
+        })
+        .is_err(),
+        "negative control failed: loser key present in DB must trigger assertion failure"
+    );
+
+    // Mutation 3: Substituted / tampered key in DB
+    let substituted_key = {
+        let mut m = db_idem_keys.clone();
+        let first = m.iter().next().cloned().expect("at least one key");
+        m.remove(&first);
+        m.insert("k-tampered-foreign-key".to_string());
+        m
+    };
+    assert!(
+        std::panic::catch_unwind(|| {
+            assert_idem_key_invariants(&substituted_key, winner_keys, loser_keys, expected_all_keys);
+        })
+        .is_err(),
+        "negative control failed: substituted key in DB must trigger assertion failure"
+    );
 }
 
 async fn count(db: &tokio_postgres::Client, sql: String) -> i64 {
@@ -163,7 +268,7 @@ async fn simultaneous_requests_for_one_room_over_http_confirm_exactly_one() {
     let crowd: Vec<Vec<i64>> = vec![(1..=ROOMS).collect()];
     let (by_room, conflicts) = race(address, &token, &crowd, true).await;
     eprintln!("crowd: {conflicts} WIRE.CONFLICT answers resent with the same key");
-    one_winner_per_room(&by_room);
+    let (_, crowd_winner_keys, crowd_loser_keys) = partition_room_keys(&by_room);
 
     // A pair whose only rival is the other request of the same room: the server's retries settle it, never CONFLICT.
     // The trigger keeps the first transaction open long enough that the second one always reads before it commits.
@@ -176,7 +281,7 @@ async fn simultaneous_requests_for_one_room_over_http_confirm_exactly_one() {
     let pairs: Vec<Vec<i64>> = (ROOMS + 1..=ROOMS + PAIRS).map(|room| vec![room]).collect();
     let (by_room, conflicts) = race(address, &token, &pairs, false).await;
     assert_eq!(conflicts, 0, "a racing pair must be settled by the server: {by_room:?}");
-    let winners = one_winner_per_room(&by_room);
+    let (winners, pair_winner_keys, pair_loser_keys) = partition_room_keys(&by_room);
 
     let confirmed = count(&db, format!("SELECT count(*) FROM {schema}.booking WHERE status='CONFIRMED'")).await;
     assert_eq!(confirmed, ROOMS + PAIRS, "one confirmed booking per room");
@@ -186,6 +291,40 @@ async fn simultaneous_requests_for_one_room_over_http_confirm_exactly_one() {
     )
     .await;
     assert_eq!(duplicated, 0, "no room has two confirmed bookings");
+
+    // Gather all winner and loser keys across crowd and pair
+    let mut all_winner_keys = crowd_winner_keys;
+    all_winner_keys.extend(pair_winner_keys);
+    let mut all_loser_keys = crowd_loser_keys;
+    all_loser_keys.extend(pair_loser_keys);
+
+    let expected_all_request_keys: BTreeSet<String> = (1..=ROOMS + PAIRS)
+        .flat_map(|room| [format!("k-{room}-1"), format!("k-{room}-2")])
+        .collect();
+
+    // Query actual keys stored in DB idempotency table
+    let rows = db
+        .query(format!("SELECT key FROM {schema}.aip_idem").as_str(), &[])
+        .await
+        .unwrap();
+    let db_idem_keys: BTreeSet<String> = rows.into_iter().map(|r| r.get::<_, String>(0)).collect();
+
+    // Invariant assertions: exact set equality, mutual exclusion, no unconfirmed keys
+    assert_idem_key_invariants(
+        &db_idem_keys,
+        &all_winner_keys,
+        &all_loser_keys,
+        &expected_all_request_keys,
+    );
+
+    // Negative controls: prove that assertions fail on missing winner, added loser, or tampered key
+    verify_negative_controls(
+        &db_idem_keys,
+        &all_winner_keys,
+        &all_loser_keys,
+        &expected_all_request_keys,
+    );
+
     // the winner's key replays the stored result and does not run again
     let (room, slot) = winners[0];
     let (replay, _) = post_apply(address, &token, &format!("k-{room}-{slot}"), room * 10 + slot, None, false).await;
