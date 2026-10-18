@@ -49,8 +49,9 @@ FaceReview의 `user_id`는 MySQL과 Mongo 모두 UUID 문자열이다. 현재 `C
 | 원본 실함수 oracle | 고정 SHA의 `recommendation_alg.py` 실행 대조 (`slice13d_home_oracle_test.py`) |
 | scripted peer | 가짜 ctx. DB/드라이버/HTTP 증거 아님 (`slice13d_home_extension_test.py`) |
 | 실제 드라이버 + worker | 전용 mongo/redis, Python worker, 실제 로더가 컴파일한 정의. MySQL은 scripted (`slice13d_home_native.rs`) |
-| 미검증 | 실제 MySQL, 서비스 HTTP `/extension` E2E, 원본 `HomeService` 실행, 실 UUID 프로필, `mysql_facereview_reads` |
+| 실제 HTTP 서버 + worker | `spikes/spike-v6-transport/tests/slice13d_home_http.rs`: 실제 `POST /extension`, 계약 지문 검사, 토큰, 실제 정의. MySQL 행과 Mongo/Redis는 **scripted(메모리 capability)** 이라 드라이버 증거 아님 |
+| 미검증 | 실제 MySQL, `service serve` 경유 E2E(시험은 `listen_relational_with_extensions`를 직접 사용), 원본 `HomeService` 실행, 실 UUID 프로필, `mysql_facereview_reads` |
 
 ## 알려진 코어 의존성
 
-D1 `.aip`가 `read./mongo./redis.` grant를 선언 못 함(선언은 grant 없이 두고 시험이 붙임), D2 확장 출력이 스칼라뿐(응답이 JSON Text 하나), D3 UUID principal, D4 Mongo projection 허용목록(원본은 `emotion_score_timeline`, `most_emotion_timeline`, `client_info` 3개를 제외하나 1개만 제외 가능), D5 Redis 쓰기·like 전체 COUNT, D6 오류 코드 래핑, D7 미선언 resource read 허용.
+D1 `.aip`가 `read./mongo./redis.` grant를 선언 못 함(선언은 grant 없이 두고 시험이 붙임), D2 확장 출력이 스칼라뿐(응답이 JSON Text 하나), D3 UUID principal, D4 Mongo projection 허용목록(원본은 `emotion_score_timeline`, `most_emotion_timeline`, `client_info` 3개를 제외하나 1개만 제외 가능), D5 Redis 쓰기·like 전체 COUNT, D6 오류 코드 래핑(HTTP에서는 내부 코드가 아예 사라져 어댑터 없음·캐시 miss·권한 거부가 모두 같은 `WIRE.EXTENSION_ERROR "공식 읽기 확장 호출 거부"`로 보임, 실행 확인), D7 미선언 resource read 허용(HTTP 서버 경로에서도 `READ_OK` 실행 확인).
