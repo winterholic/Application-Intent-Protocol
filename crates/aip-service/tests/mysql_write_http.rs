@@ -239,6 +239,39 @@ async fn harness_with(definition: &str, seed: &[String], source_grants: &str, pr
 
 const WORKER_ACTION: &str = include_str!("../../../product/tests/fixtures/mysql-worker-action/video-action.aip");
 
+/// A callback name that merely resembles a declared transition must never widen its exact grant.
+#[tokio::test]
+#[ignore = "requires a run-owned MySQL 8.4 fixture on AIP_TEST_MYSQL_URL"]
+async fn mysql_worker_action_rejects_transition_prefix_and_wildcard_grants() {
+    let harness = harness_with(
+        WORKER_ACTION,
+        &[
+            "INSERT INTO `{SOURCE}`.`member` (id) VALUES (1)".into(),
+            "INSERT INTO `{SOURCE}`.`video` (id, owner_id, views) VALUES (10, 1, 0)".into(),
+        ],
+        "SELECT, INSERT, UPDATE, DELETE",
+        None,
+    )
+    .await;
+    let wire = IdWire::DecimalString;
+    let caller = spike_v2_read::plan::Caller { actor_id: Some(1), now: harness.backend.now().await.unwrap() };
+    let request = json!({"extension":"Video.view","input":{"id":"10"}});
+    let start = harness.backend.begin_worker_write(&harness.facts, "exact-grant", &request, &caller, wire).await.unwrap();
+    let spike_v2_read::backend::RelationalWorkerWriteStart::New(mut session) = start else { panic!("new key must start a transaction") };
+    for name in ["Video.incremen", "Video.incrementExtra", "Video.increment*", "Video.*"] {
+        let forged_transition = json!({"apply":name,"target":{"ids":["10"]}});
+        assert_eq!(
+            session.apply(name, &forged_transition, &caller, wire).await.unwrap_err().code,
+            "WIRE.ACCESS_NOT_DECLARED",
+            "grant expansion through {name}"
+        );
+    }
+    drop(session);
+    assert_eq!(harness.count(&format!("SELECT views FROM `{SOURCE}`.`video` WHERE id=10")).await, 0);
+    assert_eq!(harness.count(&format!("SELECT COUNT(*) FROM `{META}`.`aip_audit` WHERE request_key = 'exact-grant'")).await, 0);
+    assert_eq!(harness.count(&format!("SELECT COUNT(*) FROM `{META}`.`aip_idem` WHERE idem_key = 'exact-grant'")).await, 0);
+}
+
 #[tokio::test]
 #[ignore = "requires a run-owned MySQL 8.4 fixture on AIP_TEST_MYSQL_URL"]
 async fn mysql_worker_action_uses_one_fenced_idempotent_transaction() {
