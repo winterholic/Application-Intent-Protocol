@@ -383,7 +383,7 @@ async fn facereview_schema_is_adopted_without_business_ddl_and_read_with_origina
 
     // 6) Pagination has_next check: page 1 (limit 1, offset 0) -> offset + limit < total (0 + 1 < 2 => true)
     let total_val = tot_both["rows"][0].as_i64().unwrap();
-    let has_next_p1 = (0 + 1) < total_val;
+    let has_next_p1 = 1 < total_val;
     assert!(has_next_p1, "page 1 has next page");
     // page 2 (limit 1, offset 1) -> offset + limit < total (1 + 1 < 2 => false)
     let has_next_p2 = (1 + 1) < total_val;
@@ -762,17 +762,17 @@ async fn facereview_schema_is_adopted_without_business_ddl_and_read_with_origina
         setup.query_first(format!("SELECT is_deleted FROM comment WHERE comment_id = '{overflow_comment}'")).await.unwrap();
     assert_eq!(rollback_comment, Some(0), "comment soft delete rolled back");
     let rollback_like: Option<i64> =
-        setup.query_first(format!("SELECT COUNT(*) FROM video_like WHERE video_like_id = 'eeeeeeee-0000-4000-8000-000000000002'")).await.unwrap();
+        setup.query_first("SELECT COUNT(*) FROM video_like WHERE video_like_id = 'eeeeeeee-0000-4000-8000-000000000002'".to_string()).await.unwrap();
     let rollback_log: Option<i64> = setup
-        .query_first(format!("SELECT COUNT(*) FROM video_view_log WHERE video_view_log_id = 'eeeeeeee-0000-4000-8000-000000000003'"))
+        .query_first("SELECT COUNT(*) FROM video_view_log WHERE video_view_log_id = 'eeeeeeee-0000-4000-8000-000000000003'".to_string())
         .await
         .unwrap();
     let rollback_request: Option<i64> = setup
-        .query_first(format!("SELECT COUNT(*) FROM video_request WHERE video_request_id = 'eeeeeeee-0000-4000-8000-000000000004'"))
+        .query_first("SELECT COUNT(*) FROM video_request WHERE video_request_id = 'eeeeeeee-0000-4000-8000-000000000004'".to_string())
         .await
         .unwrap();
     let rollback_genre: Option<i64> = setup
-        .query_first(format!("SELECT COUNT(*) FROM user_favorite_genre WHERE user_favorite_genre_id = 'eeeeeeee-0000-4000-8000-000000000005'"))
+        .query_first("SELECT COUNT(*) FROM user_favorite_genre WHERE user_favorite_genre_id = 'eeeeeeee-0000-4000-8000-000000000005'".to_string())
         .await
         .unwrap();
     assert_eq!(
