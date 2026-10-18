@@ -358,40 +358,20 @@ fn hex_value(value: u8) -> Option<u8> {
     }
 }
 
-#[cfg(target_os = "linux")]
-const O_DIRECTORY: i32 = 0x10000;
-#[cfg(target_os = "linux")]
-const O_NOFOLLOW: i32 = 0x20000;
-#[cfg(target_os = "linux")]
-const O_CLOEXEC: i32 = 0x80000;
-#[cfg(target_os = "linux")]
-const O_NONBLOCK: i32 = 0x800;
-
-#[cfg(target_os = "macos")]
-const O_DIRECTORY: i32 = 0x100000;
-#[cfg(target_os = "macos")]
-const O_NOFOLLOW: i32 = 0x100;
-#[cfg(target_os = "macos")]
-const O_CLOEXEC: i32 = 0x1000000;
-#[cfg(target_os = "macos")]
-const O_NONBLOCK: i32 = 0x4;
-
+// The open flags and openat come from libc: their values differ per architecture (O_NOFOLLOW is 0x20000 on
+// x86_64 Linux but 0x8000 on aarch64 Linux), and a wrong value silently drops the symlink protection.
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 compile_error!("secure static mounts currently support Linux and macOS only");
-
-unsafe extern "C" {
-    fn openat(dirfd: i32, pathname: *const i8, flags: i32, ...) -> i32;
-}
 
 fn open_beneath(root: &Path, components: &[String]) -> io::Result<File> {
     let mut directory = File::open(root)?;
     for (index, component) in components.iter().enumerate() {
         let name = CString::new(component.as_bytes()).map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "nul in path"))?;
         let is_last = index + 1 == components.len();
-        let flags = O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK | if is_last { 0 } else { O_DIRECTORY };
+        let flags = libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK | if is_last { 0 } else { libc::O_DIRECTORY };
         // SAFETY: `name` is NUL-terminated and stays alive through openat. The returned
         // descriptor is owned exactly once by File; intermediate descriptors close on reassignment.
-        let fd = unsafe { openat(directory.as_raw_fd(), name.as_ptr(), flags) };
+        let fd = unsafe { libc::openat(directory.as_raw_fd(), name.as_ptr(), flags) };
         if fd < 0 {
             return Err(io::Error::last_os_error());
         }
