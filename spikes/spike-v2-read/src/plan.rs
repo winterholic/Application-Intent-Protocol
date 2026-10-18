@@ -287,17 +287,19 @@ const MAX_OR_CONDITIONS: usize = 10;
 const MAX_OR_GROUPS: usize = 1;
 const MAX_FILTER_CONDITIONS: usize = 32;
 
-fn compile_filter_item(
+struct FilterContext<'a, 'b> {
     dialect: Dialect,
-    facts: &Value,
-    res: &str,
-    rf: &Value,
-    ex: &Value,
-    cx: &mut Ctx<'_>,
-    t: &str,
-    fo: &Map<String, Value>,
+    facts: &'b Value,
+    res: &'b str,
+    rf: &'b Value,
+    ex: &'b Value,
+    cx: &'b mut Ctx<'a>,
+    alias: &'b str,
     wire: crate::id_wire::IdWire,
-) -> Result<(String, String), Reject> {
+}
+
+fn compile_filter_item(context: &mut FilterContext<'_, '_>, fo: &Map<String, Value>) -> Result<(String, String), Reject> {
+    let FilterContext { dialect, facts, res, rf, ex, cx, alias: t, wire } = context;
     keys(fo, &["field", "op", "value"], "filter")?;
     let (field, op) = (fo.get("field").and_then(Value::as_str).unwrap_or(""), fo.get("op").and_then(Value::as_str).unwrap_or(""));
     let key = format!("{field}.{op}");
@@ -351,14 +353,14 @@ fn compile_filter_item(
         let mut seen = std::collections::HashSet::new();
         let mut marks = vec![];
         for item in items {
-            let (v, cast) = check_value(facts, fty, item, wire)?;
+            let (v, cast) = check_value(facts, fty, item, *wire)?;
             if seen.insert(v.clone()) {
                 marks.push(cx.params.bind(Some(v), cast));
             }
         }
         return Ok((key, and_visible(format!("({tcol} IN ({}))", marks.join(", ")))));
     }
-    let (v, cast) = check_value(facts, fty, raw, wire)?;
+    let (v, cast) = check_value(facts, fty, raw, *wire)?;
     if op == "contains" {
         let Value::String(text) = raw else { return rej("WIRE.BAD_VALUE", "contains 값은 문자열") };
         if text.is_empty() {
@@ -411,17 +413,7 @@ fn compile_filter_item(
     Ok((key, and_visible(format!("({tcol} {sop} {p})"))))
 }
 
-fn compile_filters(
-    dialect: Dialect,
-    facts: &Value,
-    res: &str,
-    rf: &Value,
-    ex: &Value,
-    cx: &mut Ctx<'_>,
-    t: &str,
-    fl: &Value,
-    wire: crate::id_wire::IdWire,
-) -> Result<Vec<String>, Reject> {
+fn compile_filters(context: &mut FilterContext<'_, '_>, fl: &Value) -> Result<Vec<String>, Reject> {
     let mut wh = vec![];
     let mut seen_filter = std::collections::HashSet::new();
     let filters = fl.as_array().ok_or(Reject { code: "WIRE.BAD_REQUEST", msg: "filter 배열".into() })?;
@@ -461,7 +453,7 @@ fn compile_filters(
                 if item_obj.contains_key("or") {
                     return rej("WIRE.BAD_REQUEST", "중첩된 or 조건은 미지원");
                 }
-                let (k, cond) = compile_filter_item(dialect, facts, res, rf, ex, cx, t, item_obj, wire)?;
+                let (k, cond) = compile_filter_item(context, item_obj)?;
                 let item_sig = serde_json::to_string(item_obj).unwrap_or_default();
                 if !or_seen.insert(item_sig) {
                     return rej("WIRE.DUPLICATE", format!("or 항목 중복: {k}"));
@@ -470,7 +462,7 @@ fn compile_filters(
             }
             wh.push(format!("({})", or_parts.join(" OR ")));
         } else {
-            let (key, cond) = compile_filter_item(dialect, facts, res, rf, ex, cx, t, fo, wire)?;
+            let (key, cond) = compile_filter_item(context, fo)?;
             if !seen_filter.insert(key.clone()) {
                 return rej("WIRE.DUPLICATE", format!("filter `{key}` 중복"));
             }
@@ -657,7 +649,8 @@ fn plan_read_inner(dialect: Dialect, facts: &Value, req: &Value, caller: &Caller
     }
     let mut wh = vec![cx.cond(&rf["rowRead"], &env).map_err(internal)?];
     if let Some(fl) = o.get("filter") {
-        let f_wh = compile_filters(dialect, facts, res, rf, ex, &mut cx, &t, fl, wire)?;
+        let mut filter_context = FilterContext { dialect, facts, res, rf, ex, cx: &mut cx, alias: &t, wire };
+        let f_wh = compile_filters(&mut filter_context, fl)?;
         wh.extend(f_wh);
     }
 
@@ -952,7 +945,8 @@ fn plan_aggregate(dialect: Dialect, facts: &Value, o: &Map<String, Value>, calle
         if ex.is_null() {
             return rej("WIRE.FILTER_NOT_ALLOWED", format!("`{src}`에 exposeRead가 없어 filter를 적용할 수 없음"));
         }
-        let filter_wh = compile_filters(dialect, facts, src, rf_src, ex, &mut cx, &al, fl, wire)?;
+        let mut filter_context = FilterContext { dialect, facts, res: src, rf: rf_src, ex, cx: &mut cx, alias: &al, wire };
+        let filter_wh = compile_filters(&mut filter_context, fl)?;
         wh_parts.extend(filter_wh);
     }
     let w = if wh_parts.is_empty() { "TRUE".to_string() } else { wh_parts.join(" AND ") };

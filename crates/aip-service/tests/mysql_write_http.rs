@@ -195,7 +195,7 @@ async fn harness_with(definition: &str, seed: &[String], source_grants: &str, pr
     for (resource, definition) in facts["resources"].as_object().unwrap() {
         let columns =
             definition["fields"].as_object().unwrap().keys().map(|field| (field.clone(), sqlgen::column(&facts, resource, field).unwrap())).collect();
-        mapping.tables.insert(resource.clone(), Table { table: sqlgen::snake(resource), columns });
+        mapping.tables.insert(resource.clone(), Table { table: sqlgen::snake(resource), columns, shared_pk_without_fk: false });
     }
     // The runtime account may read and write the business tables and the AIP schema, nothing more.
     setup.query_drop("DROP USER IF EXISTS 'aip_t_writer'@'%'").await.unwrap();

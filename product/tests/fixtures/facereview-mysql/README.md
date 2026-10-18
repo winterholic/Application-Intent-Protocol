@@ -50,7 +50,7 @@ python3.9 product/tests/fixtures/facereview-mysql/reference/writes.py
 ## 확인한 것
 
 - DB default 없이 `adopt-external`을 계획하면 `default database 선언에 실제 DB default가 없음`으로 거절되고, `db-defaults.sql` 뒤에는 업무 DDL 0건으로 통과한다.
-- 원본 쿼리와 같은 결과(`reference/compare.py`, 21개 비교 모두 일치): 제목·채널 검색, 카테고리, 최신순 목록과 NULL·삭제 플래그 제외, offset 페이징 1~4쪽, 영상별 댓글(삭제된 댓글·삭제된 영상의 댓글 제외), 본인 전용 표(좋아요·북마크·요청·시청 기록·선호 장르·포인트), 사용자 본인 행과 필드 값(enum 대소문자, 널 허용 정수·불리언), 비밀번호 열 비공개.
+- 원본 쿼리와 같은 결과(`reference/compare.py`): 기존 읽기 비교에 더해 `AIP_JSON_ONLY=1` 모드는 SQLAlchemy 원본과 실행 중인 AIP HTTP `/read`를 같은 MySQL 8.4 DB에 붙여 DNA JSON 11개 경계를 비교한다. Rust 라이브 통합시험은 `FACEREVIEW_SOURCE_PATH`와 `FACEREVIEW_PYTHON`을 주면 이 모드를 자동 실행한다.
 - AIP 쓰기(제품 HTTP 통합시험 및 `reference/writes.py`): 댓글 생성이 UUID v4 id, DB default 플래그, UTC `created_at`을 남기고, 수정은 `is_modified=1`·`updated_at`을 바꾸고, 삭제는 행을 지우지 않고 `is_deleted=1`로 둔다. 남의 `user`로 만들기, 삭제된 영상에 댓글, 익명 생성, 남의 댓글 수정, 이미 삭제된 댓글 재삭제는 거절되고 행이 남지 않는다. 같은 키 재전송은 다시 쓰지 않는다. `(user, video)` 유일 인덱스는 `WIRE.ALREADY_EXISTS`로 확정 거절된다. 영상 요청은 DB default `PENDING`을 쓴다. 원본 의미의 출처는 고정된 원본 서비스 코드 및 별도 SQLAlchemy 메서드 실행 증거이며, helper 자체가 원본 코드를 실행하는 것은 아니다.
 - 권한(시험과 `reference/admin.py`, 판정은 호출자 자신의 행): 회원은 자기 행만, ADMIN·SUPER_ADMIN은 전 사용자를 읽는다. 비활성화는 SUPER_ADMIN은 누구나, ADMIN은 GENERAL만이고 같은 트랜잭션에서 그 회원의 댓글을 숨긴다. 권한 변경은 SUPER_ADMIN만, 활성 회원에게만, enum 안의 값만. 영상 요청 거절은 ADMIN 이상이 PENDING에 한 번만. 댓글·영상 soft 삭제는 ADMIN 이상이고 행은 남는다. 거절된 호출은 행을 바꾸지 않는다.
 - 비활성화된 회원은 바로 무효 호출자다. 원본 `login_required`가 `is_deleted=False`만 통과시키는 규칙을 모든 정책에 `active(actor)`로 적었다. 이 규칙이 없으면 비활성화한 회원이 자기 행을 읽고 댓글도 쓸 수 있었다(admin.py가 처음에 3건 실패로 드러냄, 시험도 그 줄을 빼면 실패함을 확인).
@@ -60,7 +60,9 @@ python3.9 product/tests/fixtures/facereview-mysql/reference/writes.py
 
 - 제목 OR 채널 검색. 읽기 `filter`는 AND만 있다.
 - 목록 응답의 전체 건수(`total`). 원본은 매 페이지에 돌려주지만 AIP 읽기 응답에는 없다.
-- `user_emotion_dna`와 `user_emotion_summary`: `id: User`로 공유 PK/FK를 한 필드에 표현하고 `rows read when id = actor and active(actor)`로 본인 행만 연다. DNA의 `dna_data`는 JSON 값으로 읽는다. 원본 DNA 표에는 FK 제약이 없어 orphan 행도 가능하지만 actor ID와 다르면 AIP에서 읽히지 않는다. summary의 FK는 원본대로 유지한다.
+- `user_emotion_dna`와 `user_emotion_summary`: `id: User`로 공유 PK/FK를 한 필드에 표현하고 `rows read when id = actor and active(actor)`로 본인 행만 연다. 외부 매핑은 DNA 테이블에만 `shared_pk_without_fk: true`를 명시한다. 이는 원본 DNA DDL에 물리 FK가 없는 사실을 기록하며, 이 opt-in이 있어도 `user_id`에 다른 대상 FK가 있으면 채택이 거부된다. Summary는 기본값(false)으로 원본 User FK의 대상 테이블과 컬럼을 검증하며 FK 제거나 오지정을 거부한다. DNA의 `dna_data`는 JSON 문서 값으로 읽고 문자열 값은 다시 파싱하지 않는다. 원본 DNA 표에는 FK 제약이 없어 orphan 행도 가능하지만 actor ID와 다르면 AIP에서 읽히지 않는다.
+
+MariaDB 11.4.13에서 확인한 `JSON` 열은 catalog에 `DATA_TYPE=longtext, COLUMN_TYPE=longtext`로 노출된다. 이 포팅의 `Json` 선언은 catalog의 실제 JSON 타입을 요구하므로 `dna_data` 어댑션은 `EXTERNAL_SCHEMA`로 거절된다. MariaDB `mysql_read_http` 실행은 별도로 시도했지만 test process의 driver 연결이 `CATALOG_ERROR: MySQL connection failed`로 실패해 HTTP 경로는 검증되지 않았다.
 - 음수 범위 `Int(-1000..1000)`은 문법이 지원하지 않아 `user_point_history.amount`는 범위 없는 `Int`다.
 - Mongo(감정 분포)·Redis에 의존하는 목록(`get_all_videos`, 북마크 영상, 추천)은 이 fixture 범위 밖이다.
 - 비활성화된 회원의 요청은 원본의 401(`AUTH_INVALID_TOKEN`)이 아니라 200과 빈 결과(쓰기는 거절)다. 인증은 외부 토큰 검증이고 가시성은 정책이라서다. 상태 코드까지 같게 하려면 actor 유효 조건을 정의 수준에서 선언하는 기능이 필요하다.

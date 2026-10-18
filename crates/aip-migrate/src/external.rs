@@ -85,7 +85,7 @@ pub async fn introspect_with_ca(url: &str, source: &str, _database_ca_file: Opti
         if !valid_ident(&name) || name.starts_with("Aip") || mapping.tables.contains_key(&name) {
             return Err(failure("resource 이름을 안전하게 만들 수 없음; 수동 매핑 필요"));
         }
-        mapping.tables.insert(name, Table { table, columns: BTreeMap::new() });
+        mapping.tables.insert(name, Table { table, columns: BTreeMap::new(), shared_pk_without_fk: false });
     }
     let mut definition = String::from("// Introspection draft: review authorization before publishing read/write.\nactor principal\n");
     for (name, t) in &mut mapping.tables {

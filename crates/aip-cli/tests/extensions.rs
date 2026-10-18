@@ -77,6 +77,34 @@ fn service_commands_name_the_poc_extension() {
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
 }
 
+#[test]
+fn service_check_surfaces_the_caller_filter_policy_advisory() {
+    let source = r#"
+        actor Member
+        access allMembers(a: Member) = true
+        resource Member {
+          fields { id: Uuid; owner: Member; name: Text(1..100) }
+          rows read when owner = actor
+          aggregate nameCount: Int {
+            source Member
+            sourceAccess allMembers(actor)
+            callerFilter read
+            rowOutput none
+            release count
+          }
+          expose aggregate nameCount
+        }
+    "#;
+    let file = temp_file("caller-filter.aip", source);
+    let out = aip(&["service", "check", &file.to_string_lossy(), "--dev-checks"]);
+    std::fs::remove_dir_all(file.parent().expect("dir")).ok();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let result: Value = serde_json::from_slice(&out.stdout).expect("service check JSON result");
+    let has_caller_filter_advisory =
+        result["advisories"].as_array().into_iter().flatten().any(|advisory| advisory["code"] == "DEF.ADVISORY_CALLER_FILTER_POLICY");
+    assert!(has_caller_filter_advisory, "{result}");
+}
+
 fn files(dir: &Path, extension: &str, out: &mut Vec<PathBuf>) {
     let Ok(rd) = std::fs::read_dir(dir) else { return };
     for e in rd.flatten() {

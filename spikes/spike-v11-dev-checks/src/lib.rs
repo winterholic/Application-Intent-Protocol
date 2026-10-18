@@ -163,6 +163,11 @@ pub fn load_checked(src: &str, form: Form, options: &Value) -> Result<Checked, V
     let output = spike_v1_fixture::load_str(src, form)?;
     let mut advisories = Vec::new();
     if enabled {
+        advisories.extend(output.advisories.iter().map(|diag| Advisory {
+            code: diag.code,
+            anchor: format!("line:{}:col:{}", diag.span.line, diag.span.col),
+            msg: diag.msg.clone(),
+        }));
         advisories.extend(direct_reference_advice(&output.execution));
         advisories.extend(unreachable_read_advice(&output.execution));
         advisories.extend(absence_policy_advice(&output.execution));

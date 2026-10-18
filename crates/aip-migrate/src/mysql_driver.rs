@@ -38,7 +38,9 @@ fn render_mysql_draft(
         if !valid_ident(&resource) || resource.starts_with("Aip") || mapping.tables.contains_key(&resource) {
             return Err(CatalogError::new("resource names are ambiguous; manual mapping is required"));
         }
-        mapping.tables.insert(resource, spike_v2_read::external::Table { table: table_name.clone(), columns: Default::default() });
+        mapping
+            .tables
+            .insert(resource, spike_v2_read::external::Table { table: table_name.clone(), columns: Default::default(), shared_pk_without_fk: false });
     }
 
     let mut definition = String::from("// Introspection draft: review authorization before publishing read/write.\nactor principal\n");

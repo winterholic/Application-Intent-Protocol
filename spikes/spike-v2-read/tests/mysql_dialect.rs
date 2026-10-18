@@ -169,3 +169,23 @@ fn result_normalization_refuses_values_that_do_not_fit_their_declared_type() {
     // A missing field too.
     assert_eq!(normalize(json!({}), &ty("Int")).unwrap_err().code, "WIRE.INTERNAL");
 }
+
+#[test]
+fn mysql_json_values_are_already_decoded_and_keep_their_json_type() {
+    let ty = json!({"rows": {"v": {"ty": "Json", "nullable": false}}});
+    let cases = [
+        (json!("hello"), json!("hello")),
+        (json!("123"), json!("123")),
+        (json!("true"), json!("true")),
+        (json!("null"), json!("null")),
+        (json!("{\"a\":1}"), json!("{\"a\":1}")),
+        (json!({"a": [1, true, null]}), json!({"a": [1, true, null]})),
+        (json!(["한글", "🌿", 1.5]), json!(["한글", "🌿", 1.5])),
+        (json!(true), json!(true)),
+        (json!(12345678901234567890_u64), json!(12345678901234567890_u64)),
+        (Value::Null, Value::Null),
+    ];
+    for (input, expected) in cases {
+        assert_eq!(normalize(json!({"v": input}), &ty).unwrap()["v"], expected);
+    }
+}

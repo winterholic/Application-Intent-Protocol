@@ -111,6 +111,7 @@
   },
   "UserEmotionDna": {
    "table": "user_emotion_dna",
+   "shared_pk_without_fk": true,
    "columns": {
     "id": "user_id",
     "dna_type": "dna_type",

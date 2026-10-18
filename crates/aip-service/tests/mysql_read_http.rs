@@ -163,7 +163,7 @@ async fn mysql_read_path_serves_policy_reads_and_fences_ddl() {
     for (resource, definition) in facts["resources"].as_object().unwrap() {
         let columns =
             definition["fields"].as_object().unwrap().keys().map(|field| (field.clone(), sqlgen::column(&facts, resource, field).unwrap())).collect();
-        mapping.tables.insert(resource.clone(), Table { table: sqlgen::snake(resource), columns });
+        mapping.tables.insert(resource.clone(), Table { table: sqlgen::snake(resource), columns, shared_pk_without_fk: false });
     }
     let facts_digest = spike_v1_fixture::digest(&facts);
     let fingerprint = admin.ensure_meta_schema_bootstrap(META, SOURCE, &facts_digest).await.expect("meta bootstrap");

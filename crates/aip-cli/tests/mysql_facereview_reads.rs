@@ -207,6 +207,54 @@ async fn facereview_schema_is_adopted_without_business_ddl_and_read_with_origina
     assert!(refused["message"].as_str().unwrap().contains("default database"), "{refused}");
 
     run_script(&mut setup, DEFAULTS).await;
+
+    // Shared PK adoption has an explicit source-FK contract. Keep the source DDL
+    // drift cases separate from the live read path below and restore each shape.
+    let plan_adoption = || async { run(&env, &["adopt-external", file.to_str().unwrap()], &config).await };
+    assert!(plan_adoption().await.is_ok(), "the source fixture's declared FK shape is accepted");
+    setup.query_drop("SET FOREIGN_KEY_CHECKS=0").await.unwrap();
+    setup.query_drop("ALTER TABLE user_emotion_dna ADD CONSTRAINT dna_user_fk FOREIGN KEY (user_id) REFERENCES user(user_id)").await.unwrap();
+    setup.query_drop("SET FOREIGN_KEY_CHECKS=1").await.unwrap();
+    assert!(plan_adoption().await.is_ok(), "a correct optional DNA FK is accepted");
+    setup.query_drop("SET FOREIGN_KEY_CHECKS=0").await.unwrap();
+    setup
+        .query_drop(
+            "ALTER TABLE user_emotion_dna DROP FOREIGN KEY dna_user_fk, ADD CONSTRAINT dna_video_fk FOREIGN KEY (user_id) REFERENCES video(video_id)",
+        )
+        .await
+        .unwrap();
+    setup.query_drop("SET FOREIGN_KEY_CHECKS=1").await.unwrap();
+    assert!(plan_adoption().await.is_err(), "a DNA shared-PK FK to the wrong table is refused");
+    setup.query_drop("SET FOREIGN_KEY_CHECKS=0").await.unwrap();
+    setup.query_drop("ALTER TABLE user_emotion_dna DROP FOREIGN KEY dna_video_fk").await.unwrap();
+    setup.query_drop("SET FOREIGN_KEY_CHECKS=1").await.unwrap();
+
+    setup.query_drop("SET FOREIGN_KEY_CHECKS=0").await.unwrap();
+    setup.query_drop("ALTER TABLE user_emotion_summary DROP FOREIGN KEY user_emotion_summary_ibfk_1, ADD CONSTRAINT summary_video_fk FOREIGN KEY (user_id) REFERENCES video(video_id)")
+        .await
+        .unwrap();
+    setup.query_drop("SET FOREIGN_KEY_CHECKS=1").await.unwrap();
+    assert!(plan_adoption().await.is_err(), "a Summary shared-PK FK to the wrong table is refused");
+    setup.query_drop("SET FOREIGN_KEY_CHECKS=0").await.unwrap();
+    setup.query_drop("ALTER TABLE user_emotion_summary DROP FOREIGN KEY summary_video_fk").await.unwrap();
+    setup.query_drop("SET FOREIGN_KEY_CHECKS=1").await.unwrap();
+    assert!(plan_adoption().await.is_err(), "the original Summary FK cannot be removed");
+    setup.query_drop("SET FOREIGN_KEY_CHECKS=0").await.unwrap();
+    setup.query_drop("ALTER TABLE user_emotion_summary ADD CONSTRAINT user_emotion_summary_ibfk_1 FOREIGN KEY (user_id) REFERENCES user(user_id) ON DELETE CASCADE ON UPDATE CASCADE")
+        .await
+        .unwrap();
+    setup.query_drop("SET FOREIGN_KEY_CHECKS=1").await.unwrap();
+
+    setup.query_drop("ALTER TABLE user_emotion_dna MODIFY dna_data LONGTEXT NOT NULL").await.unwrap();
+    assert!(plan_adoption().await.is_err(), "a JSON field mapped to LONGTEXT is refused");
+    setup.query_drop("ALTER TABLE user_emotion_dna MODIFY dna_data JSON NOT NULL").await.unwrap();
+    setup.query_drop("ALTER TABLE user_emotion_dna DROP PRIMARY KEY, ADD PRIMARY KEY (dna_type)").await.unwrap();
+    assert!(plan_adoption().await.is_err(), "a shared PK on another column is refused");
+    setup.query_drop("ALTER TABLE user_emotion_dna DROP PRIMARY KEY, ADD PRIMARY KEY (user_id)").await.unwrap();
+    setup.query_drop("ALTER TABLE user_emotion_dna DROP PRIMARY KEY, ADD UNIQUE KEY dna_user_unique (user_id)").await.unwrap();
+    assert!(plan_adoption().await.is_err(), "UNIQUE does not substitute for the shared primary key");
+    setup.query_drop("ALTER TABLE user_emotion_dna DROP INDEX dna_user_unique, ADD PRIMARY KEY (user_id)").await.unwrap();
+
     let plan = run(&env, &["adopt-external", file_arg], &config).await.expect("plan after the DBA defaults");
     assert_eq!(plan["businessDDL"], json!([]), "adoption changes no business table: {plan}");
     let digest = plan["digest"].as_str().unwrap().to_string();
@@ -231,6 +279,30 @@ async fn facereview_schema_is_adopted_without_business_ddl_and_read_with_origina
     let (_child, listening) = start_server(&env, &file, &config).await.expect("serve starts on the adopted deployment");
     let address = listening["address"].as_str().unwrap().to_string();
     let fingerprint = listening["fingerprint"].as_str().unwrap().to_string();
+    if let (Ok(source_root), Ok(python)) = (std::env::var("FACEREVIEW_SOURCE_PATH"), std::env::var("FACEREVIEW_PYTHON")) {
+        let key_path = directory.path().join("private.pem");
+        std::fs::write(&key_path, private.to_pkcs1_pem(rsa::pkcs1::LineEnding::LF).unwrap()).unwrap();
+        let source_url = env.adopt_url.rsplit_once('/').unwrap().0.to_owned() + "/" + SOURCE;
+        let output = std::process::Command::new(python)
+            .arg("product/tests/fixtures/facereview-mysql/reference/compare.py")
+            .current_dir(env!("CARGO_MANIFEST_DIR").split("/crates/").next().unwrap())
+            .env("AIP_EXTERNAL_ADDRESS", &address)
+            .env("AIP_EXTERNAL_FINGERPRINT", &fingerprint)
+            .env("AIP_EXTERNAL_PRIVATE_KEY", &key_path)
+            .env("AIP_JSON_ONLY", "1")
+            .env("AIP_FR_ADOPT_URL", &env.adopt_url)
+            .env("FACEREVIEW_SOURCE_PATH", source_root)
+            .env("FACEREVIEW_SOURCE_URL", source_url)
+            .output()
+            .expect("run original SQLAlchemy comparison");
+        assert!(
+            output.status.success(),
+            "SQLAlchemy parity comparison failed:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        println!("SQLALCHEMY_PARITY {}", String::from_utf8_lossy(&output.stdout).lines().filter(|line| line.starts_with("OK   ")).count());
+    }
     let (alice, bob) = (token(&private, "alice"), token(&private, "bob"));
     let (carol, dave) = (token(&private, "carol"), token(&private, "dave"));
     let erin = token(&private, "erin");
@@ -248,12 +320,33 @@ async fn facereview_schema_is_adopted_without_business_ddl_and_read_with_origina
     assert_eq!(dna["rows"][0]["id"], ALICE);
     assert_eq!(dna["rows"][0]["dna_type"], "JOYFUL_EXPLORER");
     assert_eq!(dna["rows"][0]["dna_data"]["emotion_radar"]["happy"], 75, "JSON remains structured: {dna}");
+    let duplicate_dna_write = post(
+        &address,
+        "/apply",
+        Some(&alice),
+        &fingerprint,
+        &json!({"key": "shared-pk-duplicate-dna", "request": {"atomic": [{"create": "UserEmotionDna", "values": {"id": ALICE}}]}}),
+    )
+    .await;
+    assert_ne!(duplicate_dna_write["ok"], true, "the AIP contract exposes no write that could duplicate this shared key: {duplicate_dna_write}");
     let summary = read(Some(&alice), json!({"read": "UserEmotionSummary", "select": ["id", "neutral_seconds", "happy_seconds", "surprise_seconds", "sad_seconds", "angry_seconds", "last_session_id", "lock_version"]})).await;
     assert_eq!(summary["ok"], true, "{summary}");
     assert_eq!(
         summary["rows"],
         json!([{"id": ALICE, "neutral_seconds": 20, "happy_seconds": 60, "surprise_seconds": 10, "sad_seconds": 5, "angry_seconds": 2, "last_session_id": "view-alice-1", "lock_version": 3}]),
         "{summary}"
+    );
+    let duplicate_summary_write = post(
+        &address,
+        "/apply",
+        Some(&alice),
+        &fingerprint,
+        &json!({"key": "shared-pk-duplicate-summary", "request": {"atomic": [{"create": "UserEmotionSummary", "values": {"id": ALICE}}]}}),
+    )
+    .await;
+    assert_ne!(
+        duplicate_summary_write["ok"], true,
+        "the AIP contract exposes no write that could duplicate this shared key: {duplicate_summary_write}"
     );
     let cross_user =
         read(Some(&alice), json!({"read": "UserEmotionDna", "select": ["id"], "filter": [{"field": "id", "op": "eq", "value": BOB}]})).await;

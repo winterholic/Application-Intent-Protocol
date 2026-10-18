@@ -15,6 +15,9 @@ pub struct Mapping {
 pub struct Table {
     pub table: String,
     pub columns: BTreeMap<String, String>,
+    /// Permit the legacy shared-PK shape only when the source model intentionally has no physical FK.
+    #[serde(default)]
+    pub shared_pk_without_fk: bool,
 }
 pub fn quote(s: &str) -> String {
     format!("\"{}\"", s.replace('"', "\"\""))

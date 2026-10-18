@@ -32,6 +32,12 @@ fn normalize_object(value: Value, fields: &Map<String, Value>) -> Result<Value, 
 
 fn normalize_value(value: Value, ty: &Value) -> Result<Value, Reject> {
     if value.is_null() {
+        // Inside JSON_OBJECT a JSON document's literal null and SQL NULL both decode to JSON null.
+        // MySQL JSON columns are schema-checked as NOT NULL when declared non-null; preserve the
+        // JSON document value here instead of treating it as a missing SQL field.
+        if ty["ty"] == "Json" {
+            return Ok(Value::Null);
+        }
         return if ty["nullable"] == true { Ok(Value::Null) } else { Err(malformed("null 불가 필드가 null")) };
     }
     if let Some(fields) = ty["object"].as_object() {
@@ -44,8 +50,7 @@ fn normalize_value(value: Value, ty: &Value) -> Result<Value, Reject> {
     let base = ty["ty"].as_str().unwrap_or("");
     match base {
         "Json" => match value {
-            Value::String(text) => serde_json::from_str(&text).map_err(|_| malformed("JSON")),
-            value @ (Value::Object(_) | Value::Array(_) | Value::Bool(_) | Value::Number(_)) => Ok(value),
+            value @ (Value::String(_) | Value::Object(_) | Value::Array(_) | Value::Bool(_) | Value::Number(_)) => Ok(value),
             _ => Err(malformed("JSON")),
         },
         "Bool" => match value {

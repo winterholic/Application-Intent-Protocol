@@ -228,10 +228,14 @@ async fn validate(
                         && fk.referenced_table == other.table
                         && fk.referenced_columns == [other_id.clone()]
                 });
-                // The explicit `id: User` shared-PK form is a narrow compatibility opt-in for legacy 1:1 tables
-                // whose PK is the parent identity but whose original DDL omitted a physical FK (FaceReview DNA).
-                // All ordinary Ref fields still require the catalog FK; shared-PK columns still must be the mapped PK.
-                let shared_pk_without_fk = field == "id" && rf["sharedPrimaryKey"] == target && primary.columns == [physical.clone()];
+                // A missing source FK is tolerated only when the external mapping opts in for this table,
+                // the shared id is the physical PK, and no FK actually exists on that column. Any present
+                // FK must still point to the declared target and target id.
+                let shared_pk_without_fk = field == "id"
+                    && rf["sharedPrimaryKey"] == target
+                    && primary.columns == [physical.clone()]
+                    && table.shared_pk_without_fk
+                    && !foreign_keys.iter().any(|fk| fk.columns == [physical.clone()]);
                 if !correct && !shared_pk_without_fk {
                     return Err(failure("Ref 매핑과 기존 FK가 다름"));
                 }

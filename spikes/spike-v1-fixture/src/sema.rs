@@ -1408,9 +1408,8 @@ impl<'a> Ctx<'a> {
                         let parent = matches!(&ty.ty, Ty::Ref(target) if target == &r.name);
                         (parent && value["path"]["root"] == "this" && value["path"]["segs"] == json!([])).then_some(field)
                     });
-                    match scope {
-                        None => self.d("DEF.UNSUPPORTED_EFFECT", "many delete에는 부모 참조 = this.id 조건 필요", *span),
-                        Some(_) => {}
+                    if scope.is_none() {
+                        self.d("DEF.UNSUPPORTED_EFFECT", "many delete에는 부모 참조 = this.id 조건 필요", *span);
                     }
                     effect["maxRows"] = json!(max);
                 }

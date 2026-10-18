@@ -12,11 +12,13 @@ import urllib.request
 
 import jwt
 
-BIN = "/private/tmp/aip-721-target/debug/aip"
-RUN = "/private/tmp/fr-port/run"
-DEF = "/private/tmp/fr-port/facereview.aip"
-ENV = dict(os.environ, AIP_FR_ADOPT_URL="mysql://root:aip_fixture_pw_721@127.0.0.1:34391/fr_src",
-           AIP_FR_RUNTIME_URL="mysql://aip_fr_rt:runtime_test_only@127.0.0.1:34391/fr_src")
+BIN = os.environ.get("AIP_BIN", "/private/tmp/aip-721-target/debug/aip")
+RUN = os.environ.get("AIP_RUN", "/private/tmp/fr-port/run")
+DEF = os.environ.get("AIP_DEF", "/private/tmp/fr-port/facereview.aip")
+ENV = dict(os.environ)
+ENV.setdefault("AIP_FR_ADOPT_URL", "mysql://root:aip_fixture_pw_721@127.0.0.1:34391/fr_src")
+ENV.setdefault("AIP_FR_RUNTIME_URL", "mysql://aip_fr_rt:runtime_test_only@127.0.0.1:34391/fr_src")
+SOURCE_ROOT = os.environ.get("FACEREVIEW_SOURCE_PATH", "/private/tmp/fr-port")
 ALICE, BOB = "11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"
 
 
@@ -25,21 +27,28 @@ def cli(*args):
     return out
 
 
-for subject, actor in [("alice", ALICE), ("bob", BOB)]:
-    r = subprocess.run([BIN, "service", "principal", "--config", RUN + "/service.json", "bind", "--subject", subject, "--actor", actor],
-                       env=ENV, capture_output=True, text=True, cwd=RUN)
-    if r.returncode != 0 and "already" not in r.stderr and "PRINCIPAL_CONFLICT" not in r.stderr:
-        print("bind failed", r.stderr)
-        sys.exit(2)
+server = None
+if os.environ.get("AIP_EXTERNAL_ADDRESS"):
+    ADDRESS = os.environ["AIP_EXTERNAL_ADDRESS"]
+    FINGERPRINT = os.environ["AIP_EXTERNAL_FINGERPRINT"]
+    PRIVATE_PATH = os.environ["AIP_EXTERNAL_PRIVATE_KEY"]
+else:
+    for subject, actor in [("alice", ALICE), ("bob", BOB)]:
+        r = subprocess.run([BIN, "service", "principal", "--config", RUN + "/service.json", "bind", "--subject", subject, "--actor", actor],
+                           env=ENV, capture_output=True, text=True, cwd=RUN)
+        if r.returncode != 0 and "already" not in r.stderr and "PRINCIPAL_CONFLICT" not in r.stderr:
+            print("bind failed", r.stderr)
+            sys.exit(2)
 
-server = subprocess.Popen([BIN, "service", "serve", DEF, "--config", RUN + "/service.json"], env=ENV, cwd=RUN,
-                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-listening = json.loads(server.stdout.readline() or "{}")
-if not listening:
-    print("server did not start:", server.stderr.read())
-    sys.exit(2)
-ADDRESS, FINGERPRINT = listening["address"], listening["fingerprint"]
-PRIVATE = open(RUN + "/private.pem").read()
+    server = subprocess.Popen([BIN, "service", "serve", DEF, "--config", RUN + "/service.json"], env=ENV, cwd=RUN,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    listening = json.loads(server.stdout.readline() or "{}")
+    if not listening:
+        print("server did not start:", server.stderr.read())
+        sys.exit(2)
+    ADDRESS, FINGERPRINT = listening["address"], listening["fingerprint"]
+    PRIVATE_PATH = RUN + "/private.pem"
+PRIVATE = open(PRIVATE_PATH).read()
 
 
 def token(subject):
@@ -68,7 +77,7 @@ def read(resource, select, subject=None, **extra):
 # --- the original app's queries, through its own SQLAlchemy models -------------------------------------------------------------
 os.environ.update(DB_USERNAME="x", DB_PASSWORD="x", DB_HOST="127.0.0.1", DB_PORT="1", DB_NAME="x", MONGO_HOST="127.0.0.1", MONGO_PORT="1",
                   MONGO_DB_NAME="x", REDIS_URL="redis://127.0.0.1:1/0", SECRET_KEY="x", JWT_SECRET_KEY="x")
-sys.path.insert(0, "/private/tmp/fr-port")
+sys.path.insert(0, SOURCE_ROOT)
 import importlib  # noqa: E402
 
 from sqlalchemy import create_engine, or_  # noqa: E402
@@ -83,13 +92,16 @@ from app.models.comment import Comment  # noqa: E402
 from app.models.user import User  # noqa: E402
 from app.models.user_favorite_genre import UserFavoriteGenre  # noqa: E402
 from app.models.user_point_history import UserPointHistory  # noqa: E402
+from app.models.user_emotion_dna import UserEmotionDna  # noqa: E402
+from app.models.user_emotion_summary import UserEmotionSummary  # noqa: E402
 from app.models.video import Video  # noqa: E402
 from app.models.video_bookmark import VideoBookmark  # noqa: E402
 from app.models.video_like import VideoLike  # noqa: E402
 from app.models.video_request import VideoRequest  # noqa: E402
 from app.models.video_view_log import VideoViewLog  # noqa: E402
 
-engine = create_engine("mysql+pymysql://root:aip_fixture_pw_721@127.0.0.1:34391/fr_src?charset=utf8mb4")
+sqlalchemy_url = os.environ.get("FACEREVIEW_SOURCE_URL", ENV["AIP_FR_ADOPT_URL"]).replace("mysql://", "mysql+pymysql://", 1)
+engine = create_engine(sqlalchemy_url + ("&" if "?" in sqlalchemy_url else "?") + "charset=utf8mb4")
 session = Session(engine)
 failures = []
 
@@ -105,6 +117,29 @@ def ids(response):
     if response.get("ok") is not True:
         return ["ERR", response.get("code"), response.get("message")]
     return [row["id"] for row in response["rows"]]
+
+
+if os.environ.get("AIP_JSON_ONLY") == "1":
+    original_dna = session.query(UserEmotionDna).filter_by(user_id=ALICE).one().dna_data
+    json_cases = [
+        ("string hello", "hello"), ("string numeric", "123"), ("string boolean", "true"), ("string null", "null"),
+        ("string object syntax", '{"a":1}'), ("object", {"traits": [{"score": 1}]}), ("array", ["한글", "🌿", 1, True, None]),
+        ("boolean", True), ("large integer", 12345678901234567890), ("unicode", {"감정": "기쁨🌿"}), ("JSON null", None),
+    ]
+    for label, payload in json_cases:
+        dna = session.query(UserEmotionDna).filter_by(user_id=ALICE).one()
+        dna.dna_data = payload
+        session.commit()
+        session.expire_all()
+        original_value = session.query(UserEmotionDna).filter_by(user_id=ALICE).one().dna_data
+        aip_value = read("UserEmotionDna", ["dna_data"], "alice")["rows"][0]["dna_data"]
+        case(f"DNA JSON {label}", aip_value, original_value)
+    dna = session.query(UserEmotionDna).filter_by(user_id=ALICE).one()
+    dna.dna_data = original_dna
+    session.commit()
+    session.close()
+    print("\n%d failing case(s)" % len(failures))
+    sys.exit(1 if failures else 0)
 
 
 # Search videos as HomeService.get_search_videos does (title / channel / both), newest first.
@@ -175,9 +210,28 @@ mine = session.get(User, ALICE)
 case("user scalar fields", {k: user.get(k) for k in ["email", "name", "role", "profile_image_id", "is_tutorial_done", "is_verify_email_done"]},
      {"email": mine.email, "name": mine.name, "role": mine.role.value if hasattr(mine.role, "value") else mine.role,
       "profile_image_id": mine.profile_image_id, "is_tutorial_done": bool(mine.is_tutorial_done), "is_verify_email_done": bool(mine.is_verify_email_done)})
+
+# Compare every JSON boundary case through the original SQLAlchemy ORM and AIP's live MySQL read path.
+json_cases = [
+    ("string hello", "hello"), ("string numeric", "123"), ("string boolean", "true"), ("string null", "null"),
+    ("string object syntax", '{"a":1}'), ("object", {"traits": [{"score": 1}]}), ("array", ["한글", "🌿", 1, True, None]),
+    ("boolean", True), ("large integer", 12345678901234567890), ("unicode", {"감정": "기쁨🌿"}), ("JSON null", None),
+]
+for label, payload in json_cases:
+    dna = session.query(UserEmotionDna).filter_by(user_id=ALICE).one()
+    dna.dna_data = payload
+    session.commit()
+    session.expire_all()
+    original_value = session.query(UserEmotionDna).filter_by(user_id=ALICE).one().dna_data
+    aip_value = read("UserEmotionDna", ["dna_data"], "alice")["rows"][0]["dna_data"]
+    case(f"DNA JSON {label}", aip_value, original_value)
+
+case("Summary ORM row uses one shared-key record", ids(read("UserEmotionSummary", ["id"], "alice")),
+     [row.user_id for row in session.query(UserEmotionSummary).filter_by(user_id=ALICE).all()])
 password_leak = read("User", ["id", "password"], "alice")
 case("password column is not readable", password_leak.get("ok"), False)
 
-server.terminate()
+if server is not None:
+    server.terminate()
 print("\n%d failing case(s)" % len(failures))
 sys.exit(1 if failures else 0)

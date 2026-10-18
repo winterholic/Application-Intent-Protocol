@@ -30,6 +30,12 @@ use std::collections::{BTreeMap, BTreeSet};
 const WRITE_DEADLINE_MS: u64 = spike_v3_write::WRITE_DEADLINE_MS;
 const LOCK_BUCKETS: u64 = 1000;
 
+#[derive(Clone, Copy)]
+struct EffectSource<'a> {
+    resource: &'a str,
+    transition: &'a str,
+}
+
 fn rej<T>(code: &'static str, msg: impl Into<String>) -> Result<T, Reject> {
     Err(Reject { code, msg: msg.into() })
 }
@@ -520,7 +526,7 @@ impl Session<'_> {
             if let Some(target) = e["update"].as_str() {
                 self.effect_update(res, target, e, change, caller, &env).await?;
             } else if let Some(target) = e["delete"].as_str() {
-                self.effect_delete(res, tr, target, e, change, caller, &env).await?;
+                self.effect_delete(EffectSource { resource: res, transition: tr }, target, e, change, caller, &env).await?;
             } else if let Some(target) = e["create"].as_str() {
                 self.effect_create(res, target, e, change, caller, &env).await?;
             } else {
@@ -628,8 +634,7 @@ impl Session<'_> {
 
     async fn effect_delete(
         &mut self,
-        res: &str,
-        tr: &str,
+        source: EffectSource<'_>,
         target: &str,
         e: &Value,
         change: &[EntityId],
@@ -646,9 +651,9 @@ impl Session<'_> {
                 cx.value(v, env).map_err(internal)?
             ));
         }
-        let parents = self.ids(&mut cx, res, change);
+        let parents = self.ids(&mut cx, source.resource, change);
         let (tid, uid) = (cx.qualified("t", "id"), cx.qualified("u", "id"));
-        let (rtable, ttable) = (cx.table(res), cx.table(target));
+        let (rtable, ttable) = (cx.table(source.resource), cx.table(target));
         // Lock the child rows first, in id order, and learn which rows the effect touches.
         let limit = match e.get("maxRows") {
             Some(max) => Some(max.as_i64().filter(|n| (1..=1000).contains(n)).ok_or_else(|| internal("many delete 상한 오류"))?),
@@ -664,7 +669,7 @@ impl Session<'_> {
         let mut children = vec![];
         let mut parents_hit = vec![];
         for pair in &pairs {
-            parents_hit.push(entity(facts, res, pair.as_ref(0))?);
+            parents_hit.push(entity(facts, source.resource, pair.as_ref(0))?);
             children.push(entity(facts, target, pair.as_ref(1))?);
         }
         match limit {
@@ -709,7 +714,7 @@ impl Session<'_> {
             return rej("WIRE.EFFECT_TARGET_MISSING", format!("`{target}` 삭제 대상이 대상 행마다 하나가 아님"));
         }
         let after: BTreeMap<EntityId, Value> = children.iter().copied().map(|id| (id, Value::Null)).collect();
-        self.record_audit(target, &format!("{tr}:delete"), caller, &before, &after).await?;
+        self.record_audit(target, &format!("{}:delete", source.transition), caller, &before, &after).await?;
         self.touch(target, children);
         Ok(())
     }
