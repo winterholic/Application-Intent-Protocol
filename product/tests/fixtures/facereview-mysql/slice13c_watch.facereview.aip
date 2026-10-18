@@ -1,0 +1,380 @@
+// Slice13-C: facereview.aip plus the minimum declarations that the watch/video and watch/recommended ports need.
+// Everything outside the marked "slice13c" blocks is byte-identical to facereview.aip (checked by slice13c_definition_delta.py).
+// FaceReview relational models over the original MySQL schema (WBS 7.2.3). Reads only; writes come with 7.2.2/7.2.4.
+// The original app fills created_at/updated_at in Python, so the business tables need DB defaults before adoption
+// (see fr-port/db-defaults.sql); `default database` is checked against the live catalog at adoption.
+actor User
+
+// The original's admin_required: ADMIN and SUPER_ADMIN, judged from the caller's own row.
+predicate isAdmin(a: User) = a.role in (ADMIN, SUPER_ADMIN) and a.is_deleted = false
+// A deactivated member (is_deleted) is no longer a valid caller; NULL counts as deactivated, as filter_by(is_deleted=False) does.
+predicate active(a: User) = a.is_deleted = false
+
+access activeUserOrGuest(a: User) = true
+
+enum Role { GENERAL, ADMIN, SUPER_ADMIN }
+enum Genre { drama, eating, travel, cook, show, information, game, sports, music, animal, beauty, comedy, horror, exercise, vlog, etc }
+enum RequestStatus { PENDING, ACCEPTED, REJECTED }
+
+resource User {
+  fields {
+    id: Uuid
+    email: Text(1..255)
+    name: Text(1..50)
+    role: Role
+    profile_image_id: Int(0..1000000)?
+    is_tutorial_done: Bool?
+    is_verify_email_done: Bool?
+    is_deleted: Bool?
+    created_at: Time default database
+    updated_at: Time default database
+  }
+  rows read when (id = actor and active(actor)) or isAdmin(actor)
+  // SUPER_ADMIN may deactivate anyone, ADMIN only a GENERAL member; the member's comments are hidden in the same transaction.
+  transition deactivate {
+    allow actor.role = SUPER_ADMIN or (actor.role = ADMIN and role = GENERAL)
+    from true
+    to is_deleted = true, updated_at = now
+    update many Comment maxRows 1000 where user = this.id { is_deleted = true; updated_at = now }
+    repeat unchanged
+  }
+  transition changeRole {
+    allow actor.role = SUPER_ADMIN
+    from is_deleted = false
+    patch role
+    to updated_at = now
+  }
+  // 회원 본인 탈퇴 (원본 MypageService.withdraw_user 대응 — 5개 테이블 물리 삭제 + 댓글 soft delete)
+  transition withdraw {
+    allow id = actor and active(actor)
+    from is_deleted = false
+    to is_deleted = true, updated_at = now
+    update many Comment maxRows 1000 where user = this.id { is_deleted = true; updated_at = now }
+    delete many VideoLike maxRows 1000 where user = this.id
+    delete many VideoViewLog maxRows 1000 where user = this.id
+    delete many VideoRequest maxRows 1000 where user = this.id
+    delete many UserFavoriteGenre maxRows 1000 where user = this.id
+    delete many UserPointHistory maxRows 1000 where user = this.id
+  }
+  expose apply deactivate { target id; bulk maxRows 1 }
+  expose apply withdraw { target id; bulk maxRows 1 }
+  expose apply changeRole { target id; bulk maxRows 1 }
+  expose read {
+    select id, email, name, role, profile_image_id, is_tutorial_done, is_verify_email_done, is_deleted, created_at
+    filter id.eq, role.eq, is_deleted.eq, name.contains, email.contains
+    sort created_at, id
+    budget { rows 100; depth 1; cost 1000; deadline 2s; offset 100000 }
+  }
+}
+
+resource Video {
+  fields {
+    id: Uuid
+    youtube_url: Text(1..50)
+    title: Text(1..255)
+    channel_name: Text(1..100)?
+    category: Genre
+    duration: Int(0..1000000)?
+    view_count: Int(0..1000000000) // slice13c: non-null so that view_count + 1 is expressible; the live column is nullable (see delta note)
+    is_deleted: Bool?
+    created_at: Time default database
+    updated_at: Time default database
+  }
+  rows read when is_deleted = false and (actor = null or active(actor))
+  transition remove {
+    allow isAdmin(actor)
+    from true
+    to is_deleted = true, updated_at = now
+    repeat unchanged
+  }
+  // slice13c begin: original WatchService.get_video_detail ends with `video.view_count += 1` in the same transaction.
+  // Members only: a guest is never a transport principal for a write extension (login_optional guests cannot be counted).
+  transition incrementViewCount {
+    allow actor != null and active(actor)
+    from is_deleted = false
+    to view_count = view_count + 1, updated_at = now
+  }
+  expose apply incrementViewCount { target id; bulk maxRows 1 }
+  extension write recordView {
+    input { id: Video.Id }
+    output { changed: Int(0..1) }
+    access Video.incrementViewCount
+    effect db
+    deadline 3s
+    implementation "slice13c_watch.recordView"
+  }
+  extension read watchDetail {
+    input { video: Video.Id }
+    output {
+      video_id: Text; youtube_url: Text; title: Text; channel_name: Text; category: Text; duration: Int; view_count: Int
+      like_count: Int; comment_count: Int; user_is_liked: Bool; is_bookmarked: Bool; timeline_data: Json; timeline_scope: Text
+    }
+    access VideoLike.countForVideo, Comment.countForVideo
+    effect none
+    deadline 5s
+    implementation "slice13c_watch.watchDetail"
+  }
+  extension read watchRecommended {
+    input { video: Video.Id; page: Int(1..1000000); size: Int(1..50) }
+    output { videos: Json; total: Int; page: Int; size: Int; has_next: Bool }
+    effect none
+    deadline 10s
+    implementation "slice13c_watch.watchRecommended"
+  }
+  // slice13c end
+  expose apply remove { target id; bulk maxRows 1 }
+  expose read {
+    select id, youtube_url, title, channel_name, category, duration, view_count, created_at
+    filter id.eq, category.eq, title.like, channel_name.like, youtube_url.eq
+    sort created_at, id, view_count
+    budget { rows 100; depth 1; cost 1000; deadline 2s; offset 100000 }
+  }
+  aggregate totalCount: Int {
+    source Video
+    sourceAccess activeUserOrGuest(actor)
+    // Match the list's row policy explicitly; standalone aggregates do not inherit it.
+    where is_deleted = false and (actor = null or active(actor))
+    callerFilter read
+    rowOutput none
+    release count
+  }
+  expose aggregate totalCount
+}
+
+resource Comment {
+  fields {
+    id: Uuid
+    video: Video
+    user: User
+    content: Text(1..500)
+    is_modified: Bool?
+    is_deleted: Bool?
+    created_at: Time default database
+    updated_at: Time default database
+  }
+  rows read when (is_deleted = false and video.is_deleted = false and (actor = null or active(actor))) or isAdmin(actor)
+  transition edit {
+    allow user = actor and active(actor)
+    from is_deleted = false
+    patch content
+    to is_modified = true, updated_at = now
+  }
+  transition delete {
+    allow user = actor and active(actor)
+    from is_deleted = false
+    to is_deleted = true, updated_at = now
+  }
+  expose create {
+    fields video, user, content
+    allow user = actor and active(actor) and video.is_deleted = false
+  }
+  transition remove {
+    allow isAdmin(actor)
+    from true
+    to is_deleted = true, updated_at = now
+    repeat unchanged
+  }
+  expose apply edit { target id; bulk maxRows 1 }
+  expose apply delete { target id; bulk maxRows 1 }
+  // slice13c begin: original `Comment.filter_by(video_id=..., is_deleted=0).count()`; releases only a count.
+  aggregate countForVideo: Int {
+    input { video: Video.Id }
+    source Comment
+    sourceAccess activeUserOrGuest(actor)
+    where video.id = input.video and is_deleted = false
+    callerFilter none
+    rowOutput none
+    release count
+  }
+  expose aggregate countForVideo
+  // slice13c end
+  expose apply remove { target id; bulk maxRows 1 }
+  expose read {
+    select id, video, user, content, is_modified, is_deleted, created_at, updated_at
+    refIds video, user
+    filter id.eq, video.eq, is_deleted.eq, content.contains
+    sort created_at, id
+    traverse user { select id, name }
+    budget { rows 100; depth 2; cost 2000; deadline 2s; offset 100000 }
+  }
+}
+
+resource VideoLike {
+  fields { id: Uuid; video: Video; user: User; created_at: Time default database }
+  rows read when user = actor and active(actor)
+  expose create {
+    fields video, user
+    allow user = actor and active(actor) and video.is_deleted = false
+  }
+  transition remove {
+    allow user = actor and active(actor)
+    from true
+    delete
+  }
+  // slice13c begin: original `VideoLike.filter_by(video_id=...).count()` over every member; releases only a count.
+  aggregate countForVideo: Int {
+    input { video: Video.Id }
+    source VideoLike
+    sourceAccess activeUserOrGuest(actor)
+    where video.id = input.video
+    callerFilter none
+    rowOutput none
+    release count
+  }
+  expose aggregate countForVideo
+  // slice13c end
+  expose apply remove { target id; bulk maxRows 1 }
+  expose read {
+    select id, video, user, created_at
+    refIds video, user
+    filter video.eq
+    sort created_at, id
+    budget { rows 100; depth 1; cost 1000; deadline 2s; offset 100000 }
+  }
+}
+
+resource VideoBookmark {
+  fields { id: Uuid; video: Video; user: User; created_at: Time default database }
+  rows read when user = actor and active(actor)
+  expose create {
+    fields video, user
+    allow user = actor and active(actor) and video.is_deleted = false
+  }
+  transition remove {
+    allow user = actor and active(actor)
+    from true
+    delete
+  }
+  expose apply remove { target id; bulk maxRows 1 }
+  expose read {
+    select id, video, user, created_at
+    refIds video, user
+    filter video.eq
+    sort created_at, id
+    budget { rows 100; depth 1; cost 1000; deadline 2s; offset 100000 }
+  }
+}
+
+resource VideoRequest {
+  fields {
+    id: Uuid
+    user: User
+    youtube_url: Text(1..50)
+    youtube_full_url: Text(1..255)
+    status: RequestStatus default database
+    admin_comment: Text(1..255)?
+    created_at: Time default database
+    updated_at: Time default database
+  }
+  rows read when (user = actor and active(actor)) or isAdmin(actor)
+  transition reject {
+    allow isAdmin(actor)
+    from status = PENDING
+    patch admin_comment
+    to status = REJECTED, updated_at = now
+  }
+  expose apply reject { target id; bulk maxRows 1 }
+  expose create {
+    fields user, youtube_url, youtube_full_url
+    allow user = actor and active(actor)
+  }
+  expose read {
+    select id, user, youtube_url, youtube_full_url, status, admin_comment, created_at, updated_at
+    refIds user
+    filter id.eq, user.eq, status.eq
+    sort created_at, id
+    budget { rows 100; depth 1; cost 1000; deadline 2s; offset 100000 }
+  }
+}
+
+resource VideoViewLog {
+  fields {
+    id: Uuid
+    video: Video
+    user: User?
+    guest_token: Text(1..255)?
+    created_at: Time default database
+    updated_at: Time default database
+  }
+  rows read when user = actor and active(actor)
+  expose read {
+    select id, video, user, created_at
+    refIds video, user
+    filter video.eq
+    sort created_at, id
+    budget { rows 100; depth 1; cost 1000; deadline 2s; offset 100000 }
+  }
+}
+
+resource UserFavoriteGenre {
+  fields { id: Uuid; user: User; genre: Genre; created_at: Time default database; updated_at: Time default database }
+  rows read when user = actor and active(actor)
+  expose read {
+    select id, user, genre, created_at
+    refIds user
+    sort created_at, id
+    budget { rows 100; depth 1; cost 1000; deadline 2s; offset 100000 }
+  }
+}
+
+resource UserPointHistory {
+  fields {
+    id: Uuid
+    user: User
+    video: Video?
+    amount: Int
+    watch_time: Int(0..1000000)?
+    description: Text(1..255)?
+    created_at: Time default database
+    updated_at: Time default database
+  }
+  rows read when user = actor and active(actor)
+  expose read {
+    select id, user, video, amount, watch_time, description, created_at
+    refIds user, video
+    filter video.eq
+    sort created_at, id
+    budget { rows 100; depth 1; cost 1000; deadline 2s; offset 100000 }
+  }
+}
+
+// 1:1 shared primary keys: id is the User FK and the table's PK at once.
+resource UserEmotionDna {
+  fields {
+    id: User
+    dna_type: Text(1..50)
+    dna_data: Json
+    based_on_videos: Int
+    generated_at: Time
+    expires_at: Time
+  }
+  rows read when id = actor and active(actor)
+  expose read {
+    select id, dna_type, dna_data, based_on_videos, generated_at, expires_at
+    filter id.eq
+    budget { rows 1; depth 1; cost 100; deadline 1s }
+  }
+}
+
+resource UserEmotionSummary {
+  fields {
+    id: User
+    neutral_seconds: Int
+    happy_seconds: Int
+    surprise_seconds: Int
+    sad_seconds: Int
+    angry_seconds: Int
+    last_finalized_at: Time?
+    last_session_id: Text(1..64)?
+    lock_version: Int
+    created_at: Time
+    updated_at: Time
+  }
+  rows read when id = actor and active(actor)
+  expose read {
+    select id, neutral_seconds, happy_seconds, surprise_seconds, sad_seconds, angry_seconds,
+      last_finalized_at, last_session_id, lock_version, created_at, updated_at
+    filter id.eq
+    budget { rows 1; depth 1; cost 100; deadline 1s }
+  }
+}
