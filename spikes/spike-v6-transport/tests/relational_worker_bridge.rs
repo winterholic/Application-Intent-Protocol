@@ -90,6 +90,8 @@ fn setup_facts() -> Value {
             "output": base_output,
             "access": {
                 "mongo.video_distribution": {},
+                // 읽기 확장의 ctx.data.read는 resource별 선언이 필요하다(수동 facts 표기).
+                "read.Recruitment": true,
                 "redis.facereview:reco:*": {}
             },
             "implementation": impl_name,

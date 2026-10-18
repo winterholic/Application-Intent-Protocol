@@ -577,6 +577,15 @@ async fn invoke_contract(
             }
             capability_grants.insert(agg.clone());
         }
+        // 읽기 확장의 `ctx.data.read(Resource)` 권한. managed job과 같은 `"read.<Resource>": true` 표기만 받고 다른 값은 거부한다.
+        // 현재 언어는 읽기 확장에서 이 항목을 선언할 수 없어 수동 facts에만 존재할 수 있다.
+        if job_host.is_none() && agg.starts_with("read.") {
+            if binding != &Value::Bool(true) {
+                return rej("WIRE.BAD_VALUE", "read capability grant must be `true`");
+            }
+            capability_grants.insert(agg.clone());
+            continue;
+        }
         if job_host.is_some() {
             continue;
         }
@@ -774,6 +783,9 @@ async fn serve_call(host: &mut dyn WorkerHost, w: &mut Worker, facts: &Value, m:
             Ok(json!({ "value": v[0] }))
         }
         "read" => {
+            if !g.capability_grants.contains(&job_capability("read", name)) {
+                return rej("WIRE.ACCESS_NOT_DECLARED", format!("확장 계약에 `read.{name}` 접근이 없음"));
+            }
             let query = &m["input"];
             if !query.is_object() {
                 return rej("WIRE.BAD_VALUE", "read query는 객체여야 함");
