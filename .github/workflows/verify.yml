@@ -82,6 +82,11 @@ jobs:
         run: docker compose --project-name aip-ci-native -f spikes/spike-v4-worker/tests/fixtures/native-stores/compose.yaml up --wait --wait-timeout 120 mongo redis
       - name: Verify compiler, runtime, product, worker, transport and SDK
         run: bash tools/verify.sh
+      - name: Verify real HTTP to Node and Python workers to MySQL
+        env:
+          AIP_E2E_TAG: ci-${{ github.run_id }}-${{ github.run_attempt }}
+          AIP_E2E_MYSQL_PORT: '55441'
+        run: bash scripts/verify-mysql-worker-e2e.sh run-ci
       - name: Show native fixture logs on failure
         if: failure() && steps.native-fixtures.outcome != '' && steps.native-fixtures.outcome != 'skipped'
         run: docker compose --project-name aip-ci-native -f spikes/spike-v4-worker/tests/fixtures/native-stores/compose.yaml logs --no-color mongo redis
