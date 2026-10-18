@@ -8,6 +8,7 @@ const DEF: &str = "
 resource Member { fields { id: Id } }
 actor Member
 access totalOfVisibleOrder = totalOfVisible(Order)
+access countAll(a: Member) = true
 resource Order {
   fields { id: Id }
   rows read when true
@@ -15,6 +16,8 @@ resource Order {
   aggregate itemTotal: Int { source Item; sourceAccess totalOfVisibleOrder; groupKey order; callerFilter none; rowOutput none; release sum(price) }
   aggregate cheapest: Int? { source Item; sourceAccess totalOfVisibleOrder; groupKey order; callerFilter none; rowOutput none; release min(price) }
   aggregate itemCount: Int { source Item; sourceAccess totalOfVisibleOrder; groupKey order; callerFilter none; rowOutput none; release count }
+  aggregate allItemCount: Int { source Item; sourceAccess countAll(actor); callerFilter none; rowOutput none; release count }
+  expose aggregate allItemCount
 }
 resource Item {
   fields { id: Id; order: Order; seller: Member; price: Int }
@@ -29,7 +32,7 @@ async fn row(db: &mut tokio_postgres::Client, f: &Value, actor: Option<i64>) -> 
 }
 
 #[tokio::test]
-async fn value_aggregates_skip_rows_the_caller_cannot_read() {
+async fn value_aggregates_skip_rows_the_caller_cannot_read_and_standalone_none_keeps_base() {
     sqlgen::set_schema(&format!("aip_v2_aggpol_{}", std::process::id()));
     let f = load_str(DEF, Form::A).unwrap().execution;
     let mut db = connect().await;
@@ -39,7 +42,7 @@ async fn value_aggregates_skip_rows_the_caller_cannot_read() {
     let s = sqlgen::schema();
     db.batch_execute(&format!(
         "INSERT INTO {s}.member (id) VALUES (1), (2); INSERT INTO {s}.order (id) VALUES (1);
-         INSERT INTO {s}.item (id, order_id, seller_id, price) VALUES (1, 1, 1, 100), (2, 1, 2, 3), (3, 1, 2, 7777)"
+         INSERT INTO {s}.item (id, order_id, seller_id, price) VALUES (1, 1, 1, 100), (2, 1, 2, 3), (3, 1, 2, 7777), (4, 1, 2, 5), (5, 1, 2, 6)"
     ))
     .await
     .unwrap();
@@ -48,6 +51,12 @@ async fn value_aggregates_skip_rows_the_caller_cannot_read() {
     let anonymous = row(&mut db, &f, None).await;
     assert_eq!((anonymous["itemTotal"].clone(), anonymous["cheapest"].clone()), (json!(0), Value::Null), "{anonymous}");
     // count는 선언(totalOfVisible)대로 원본 행 정책 없이 센다.
-    assert_eq!(anonymous["itemCount"], json!(3));
+    assert_eq!(anonymous["itemCount"], json!(5));
+    for actor_id in [Some(1), Some(2)] {
+        let plan =
+            plan_read(&f, &json!({"aggregate":"Order.allItemCount", "input":{}}), &Caller { actor_id, now: "2026-10-18T00:00:00Z".into() }).unwrap();
+        let result = execute(&mut db, &plan).await.unwrap();
+        assert_eq!(result[0], json!(5), "callerFilter none preserves the base aggregate for actor {actor_id:?}: {}", plan.sql);
+    }
     db.batch_execute(&format!("DROP SCHEMA {s} CASCADE")).await.unwrap();
 }

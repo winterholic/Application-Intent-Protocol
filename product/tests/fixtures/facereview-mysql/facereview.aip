@@ -95,7 +95,8 @@ resource Video {
   aggregate totalCount: Int {
     source Video
     sourceAccess activeUserOrGuest(actor)
-    where is_deleted = false
+    // Match the list's row policy explicitly; standalone aggregates do not inherit it.
+    where is_deleted = false and (actor = null or active(actor))
     callerFilter read
     rowOutput none
     release count

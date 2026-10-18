@@ -86,7 +86,7 @@ pub const NOTES: &[(&str, &str, &str, &str)] = &[
         "expose read",
         "filter",
         "filter f.op, g.op",
-        "필터 허용 목록. contains는 리터럴 부분일치이며 MySQL은 column collation, PostgreSQL은 대소문자 구분 비교를 쓴다. like는 SQL LIKE 와일드카드(%·_)를 쓰며 MySQL은 column collation, PostgreSQL은 ILIKE로 비교한다. 연산 eq in isNull gte lte gt lt prefix contains like 중 필드 타입이 지원하는 것",
+        "필터 허용 목록. contains는 리터럴 부분일치이며 MySQL은 column collation, PostgreSQL은 대소문자 구분 비교를 쓴다. like는 SQL LIKE 와일드카드(%·_)를 쓰며 MySQL은 column collation, PostgreSQL은 DB locale에 따른 ILIKE(대소문자 무시, 악센트·문자 폭은 구분)로 비교한다. 연산 eq in isNull gte lte gt lt prefix contains like 중 필드 타입이 지원하는 것",
     ),
     ("expose read", "sort", "sort a, b", "정렬 허용 목록"),
     (

@@ -157,7 +157,7 @@ fn negative_controls_reject_with_expected_code() {
         (Form::A, "club.school = null or club.school", "club.school = 3 or club.school", "DEF.TYPE_MISMATCH"),
         (Form::A, "from status = PUBLISHED", "from title = null", "DEF.NULL_COMPARE_NON_NULLABLE"),
         (Form::A, "filter periodEnd.gte", "filter title.gte", "DEF.OP_TYPE_MISMATCH"),
-        (Form::A, "periodEnd.lte", "periodEnd.like", "DEF.UNKNOWN_OPERATOR"),
+        (Form::A, "periodEnd.lte", "periodEnd.likes", "DEF.UNKNOWN_OPERATOR"),
         (Form::A, "traverse club { select id, name, logo }", "traverse club { select id, name, school }", "DEF.TRAVERSE_NOT_EXPOSED"),
         (Form::A, "allow managerOf(actor, club)", "allow managerof(actor, club)", "DEF.UNKNOWN_SYMBOL"),
         (

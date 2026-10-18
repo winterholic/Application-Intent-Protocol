@@ -181,6 +181,7 @@ pub static REGISTRY: &[Info] = &[
     w("WIRE.NOT_FOUND", Rq, Never, "The object, job, document or route does not exist or is not visible to the caller (the two are not told apart).", "Check the identifier and the caller."),
     w("WIRE.NOT_ROOT_QUERYABLE", Rq, Never, "The resource has an `expose read` without `budget`, so it can only be read through another resource's traverse.", "Add `budget` to the definition to read it directly, or read it through its parent."),
     w("WIRE.NOT_SAME_SCOPE", Rq, Never, "The targets do not share the `sameScope` value that the exposure requires.", "Send targets of one scope per call."),
+    w("WIRE.OR_LIST_EXCEEDED", Li, Never, "A read filter exceeds the OR group or condition limit.", "Send at most one OR group with at most 10 items, and no more than 32 filter conditions in total."),
     w("WIRE.OBJECT_CAPACITY", Av, Later, "The limit of concurrent object transfers was reached.", "Send again after a short delay."),
     w("WIRE.OBJECT_STORE_ERROR", Av, Later, "The object store failed to complete the operation.", "Send again after a short delay; report the `x-request-id` if it persists."),
     w("WIRE.OFFSET_EXCEEDED", Li, Never, "`offset` is above the `offset` limit of the budget.", "Page with `after` or lower the offset."),

@@ -453,6 +453,13 @@ JSON 실패 본문은 `requestId`와 이 레지스트리의 `retry`를 싣는다
 - 원인: The targets do not share the `sameScope` value that the exposure requires.
 - 수정: Send targets of one scope per call.
 
+### `WIRE.OR_LIST_EXCEEDED`
+
+`class` limit, `retry` never
+
+- 원인: A read filter exceeds the OR group or condition limit.
+- 수정: Send at most one OR group with at most 10 items, and no more than 32 filter conditions in total.
+
 ### `WIRE.OBJECT_CAPACITY`
 
 `class` availability, `retry` later
@@ -702,7 +709,7 @@ JSON 실패 본문은 `requestId`와 이 레지스트리의 `retry`를 싣는다
 
 `class` limit, `retry` never
 
-- 원인: A `contains`, `like` or `prefix` value is longer than the limit.
+- 원인: A `contains` or `prefix` value is longer than the limit.
 - 수정: Send at most 200 characters.
 
 ### `WIRE.WORKER_BUSY`

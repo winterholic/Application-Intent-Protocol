@@ -68,8 +68,8 @@ fn contains_value_rules() {
     let f = open();
     let c = who(Some(1));
     assert_eq!(MAX_CONTAINS_CHARS, 200);
-    // 빈 문자열은 원본 LIKE '%%'와 동일하게 허용된다(모든 행과 매치).
-    assert_eq!(code(plan_read(&f, &contains(json!("")), &c)), "OK");
+    // origin/main 계약: contains 빈 문자열은 전체 매치 대신 거부한다. 빈 검색어 LIKE는 별도 연산자다.
+    assert_eq!(code(plan_read(&f, &contains(json!("")), &c)), "WIRE.BAD_VALUE");
     for bad in [json!(null), json!(1), json!(true), json!(["a"]), json!({"a":1}), json!("a\u{0}b")] {
         assert_eq!(code(plan_read(&f, &contains(bad.clone()), &c)), "WIRE.BAD_VALUE", "{bad}");
     }
@@ -213,7 +213,6 @@ async fn db_contains_and_offset_never_bypass_row_policy() {
     check!("contains 대소문자 구분", run(&mut db, &f, Some(1), contains(json!("SALE"))).await, Vec::<i64>::new());
     check!("contains literal percent", run(&mut db, &f, Some(1), contains(json!("%"))).await, vec![106]);
     check!("contains literal underscore", run(&mut db, &f, Some(1), contains(json!("_"))).await, vec![107]);
-    check!("contains empty", run(&mut db, &f, Some(1), contains(json!(""))).await, vec![100, 102, 106, 107]);
     let backslash = char::from(92);
     db.batch_execute(&format!("INSERT INTO {}.club (id, name, logo, school_id) VALUES (16, 'Backslash', NULL, 1)", sqlgen::schema()))
         .await

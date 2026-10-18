@@ -284,6 +284,8 @@ pub fn plan_read_in(dialect: Dialect, facts: &Value, req: &Value, caller: &Calle
 }
 
 const MAX_OR_CONDITIONS: usize = 10;
+const MAX_OR_GROUPS: usize = 1;
+const MAX_FILTER_CONDITIONS: usize = 32;
 
 fn compile_filter_item(
     dialect: Dialect,
@@ -359,6 +361,9 @@ fn compile_filter_item(
     let (v, cast) = check_value(facts, fty, raw, wire)?;
     if op == "contains" {
         let Value::String(text) = raw else { return rej("WIRE.BAD_VALUE", "contains 값은 문자열") };
+        if text.is_empty() {
+            return rej("WIRE.BAD_VALUE", "contains 값은 비울 수 없음");
+        }
         let n = text.chars().count();
         if n > MAX_CONTAINS_CHARS {
             return rej("WIRE.VALUE_TOO_LONG", format!("contains 값 {n}자 > 상한 {MAX_CONTAINS_CHARS}자"));
@@ -376,7 +381,8 @@ fn compile_filter_item(
             return rej("WIRE.VALUE_TOO_LONG", format!("like 값 {n}자 > 상한 {MAX_CONTAINS_CHARS}자"));
         }
         // This is the source application's LIKE '%keyword%' contract: %, _ and backslash retain
-        // native SQL LIKE behavior. PostgreSQL ILIKE mirrors FaceReview's MySQL ai_ci collation.
+        // native SQL LIKE behavior. PostgreSQL ILIKE ignores case using the database locale; it
+        // does not reproduce MySQL accent- or width-insensitive collations.
         let p = cx.params.bind(Some(format!("%{v}%")), cast);
         let cond = if dialect.is_mysql() { format!("({tcol} LIKE {p})") } else { format!("({tcol} ILIKE {p})") };
         return Ok((key, and_visible(cond)));
@@ -418,7 +424,26 @@ fn compile_filters(
 ) -> Result<Vec<String>, Reject> {
     let mut wh = vec![];
     let mut seen_filter = std::collections::HashSet::new();
-    for f in fl.as_array().ok_or(Reject { code: "WIRE.BAD_REQUEST", msg: "filter 배열".into() })? {
+    let filters = fl.as_array().ok_or(Reject { code: "WIRE.BAD_REQUEST", msg: "filter 배열".into() })?;
+    let mut or_groups = 0usize;
+    let mut conditions = 0usize;
+    for f in filters {
+        let fo = f.as_object().ok_or(Reject { code: "WIRE.BAD_REQUEST", msg: "filter 항목은 객체".into() })?;
+        if fo.contains_key("or") {
+            or_groups += 1;
+            let items = fo["or"].as_array().ok_or(Reject { code: "WIRE.BAD_REQUEST", msg: "or 값은 배열".into() })?;
+            conditions = conditions.saturating_add(items.len());
+        } else {
+            conditions = conditions.saturating_add(1);
+        }
+    }
+    if or_groups > MAX_OR_GROUPS {
+        return rej("WIRE.OR_LIST_EXCEEDED", format!("요청의 OR 그룹 수 {or_groups}개 > 상한 {MAX_OR_GROUPS}"));
+    }
+    if conditions > MAX_FILTER_CONDITIONS {
+        return rej("WIRE.OR_LIST_EXCEEDED", format!("요청의 전체 filter 조건 수 {conditions}개 > 상한 {MAX_FILTER_CONDITIONS}"));
+    }
+    for f in filters {
         let fo = f.as_object().ok_or(Reject { code: "WIRE.BAD_REQUEST", msg: "filter 항목은 객체".into() })?;
         if fo.contains_key("or") {
             keys(fo, &["or"], "filter OR 조건")?;
@@ -918,8 +943,6 @@ fn plan_aggregate(dialect: Dialect, facts: &Value, o: &Map<String, Value>, calle
     let al = cx.alias("s");
     let wenv = Env { this: Some((al.clone(), src.to_string())), vars: HashMap::new(), input };
     let mut wh_parts = vec![];
-    let row = cx.cond(&rf_src["rowRead"], &wenv).map_err(internal)?;
-    wh_parts.push(row);
     if !a["where"].is_null() {
         let w_decl = cx.cond(&a["where"], &wenv).map_err(internal)?;
         wh_parts.push(w_decl);
@@ -932,7 +955,7 @@ fn plan_aggregate(dialect: Dialect, facts: &Value, o: &Map<String, Value>, calle
         let filter_wh = compile_filters(dialect, facts, src, rf_src, ex, &mut cx, &al, fl, wire)?;
         wh_parts.extend(filter_wh);
     }
-    let w = wh_parts.join(" AND ");
+    let w = if wh_parts.is_empty() { "TRUE".to_string() } else { wh_parts.join(" AND ") };
     // guard가 거짓이면 NULL을 돌려 ACCESS_DENIED로 바꾼다. 없는 동아리와 남의 동아리를 같은 결과로 만든다.
     let measured = measure(facts, &mut cx, a, &al)?;
     let value = format!("(CASE WHEN {guard} THEN (SELECT {measured} FROM {} {al} WHERE {w}) END)", cx.table(src));

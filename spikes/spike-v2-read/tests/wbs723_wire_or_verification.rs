@@ -208,6 +208,81 @@ fn read_wire_rejects_exceeded_or_list() {
 }
 
 #[test]
+fn read_wire_rejects_too_many_total_conditions() {
+    let facts = facts();
+    let caller = Caller { actor_id: None, now: "2026-10-18T00:00:00Z".into() };
+    let filters =
+        (0..33).map(|i| json!({"field": "periodEnd", "op": "gte", "value": format!("2026-10-{:02}T00:00:00Z", i % 28 + 1)})).collect::<Vec<_>>();
+    let err = match plan_read(&facts, &json!({"read":"Recruitment", "select":["id"], "filter":filters}), &caller) {
+        Err(err) => err,
+        Ok(_) => panic!("total condition limit must be enforced"),
+    };
+    assert_eq!(err.code, "WIRE.OR_LIST_EXCEEDED");
+}
+
+#[test]
+fn read_wire_accepts_total_condition_limit_before_duplicate_validation() {
+    let facts = facts();
+    let caller = Caller { actor_id: None, now: "2026-10-18T00:00:00Z".into() };
+    let filters =
+        (0..32).map(|i| json!({"field": "periodEnd", "op": "gte", "value": format!("2026-10-{:02}T00:00:00Z", i % 28 + 1)})).collect::<Vec<_>>();
+    let err = match plan_read(&facts, &json!({"read":"Recruitment", "select":["id"], "filter":filters}), &caller) {
+        Err(err) => err,
+        Ok(_) => panic!("repeated filters must be rejected after the total condition boundary check"),
+    };
+    assert_eq!(err.code, "WIRE.DUPLICATE", "32 conditions are within the request limit");
+}
+
+#[test]
+fn read_wire_rejects_multiple_or_groups() {
+    let facts = facts();
+    let caller = Caller { actor_id: None, now: "2026-10-18T00:00:00Z".into() };
+    let err = match plan_read(
+        &facts,
+        &json!({"read":"Recruitment", "select":["id"], "filter":[
+            {"or":[{"field":"title", "op":"like", "value":"first"}]},
+            {"or":[{"field":"title", "op":"like", "value":"second"}]}
+        ]}),
+        &caller,
+    ) {
+        Err(err) => err,
+        Ok(_) => panic!("OR group limit must be enforced"),
+    };
+    assert_eq!(err.code, "WIRE.OR_LIST_EXCEEDED");
+}
+
+#[test]
+fn total_count_rejects_too_many_conditions_for_guest() {
+    let mut facts = facts();
+    facts["resources"]["Apply"]["aggregates"]["approvedCount"]["callerFilter"] = json!("read");
+    facts["resources"]["Apply"]["aggregates"]["approvedCount"]["source"] = json!("Recruitment");
+    facts["resources"]["Apply"]["aggregates"]["approvedCount"]["where"] = Value::Null;
+    let caller = Caller { actor_id: None, now: "2026-10-18T00:00:00Z".into() };
+    let filters =
+        (0..33).map(|i| json!({"field": "periodEnd", "op": "gte", "value": format!("2026-10-{:02}T00:00:00Z", i % 28 + 1)})).collect::<Vec<_>>();
+    let err = match plan_read(&facts, &json!({"aggregate":"Apply.approvedCount", "input":{"clubId":"10"}, "filter":filters}), &caller) {
+        Err(err) => err,
+        Ok(_) => panic!("aggregate total condition limit must be enforced"),
+    };
+    assert_eq!(err.code, "WIRE.OR_LIST_EXCEEDED");
+}
+
+#[test]
+fn contains_empty_is_rejected_but_like_empty_is_allowed() {
+    let facts = facts();
+    let caller = Caller { actor_id: None, now: "2026-10-18T00:00:00Z".into() };
+    let contains_empty = json!({"read":"Recruitment", "select":["id"], "filter":[{"field":"title", "op":"contains", "value":""}]});
+    let err = match plan_read(&facts, &contains_empty, &caller) {
+        Err(err) => err,
+        Ok(_) => panic!("contains empty must be rejected"),
+    };
+    assert_eq!(err.code, "WIRE.BAD_VALUE");
+
+    let like_empty = json!({"read":"Recruitment", "select":["id"], "filter":[{"field":"title", "op":"like", "value":""}]});
+    assert!(plan_read(&facts, &like_empty, &caller).is_ok());
+}
+
+#[test]
 fn read_wire_rejects_duplicate_or_items() {
     let facts = facts();
     let caller = Caller { actor_id: Some(1), now: "2026-10-18T00:00:00Z".into() };

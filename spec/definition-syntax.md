@@ -58,7 +58,7 @@
 |---|---|---|
 | `select` | `select a, b` | 읽을 수 있는 필드·집계 이름 |
 | `refIds` | `refIds a, b` | select한 참조 필드 가운데 원시 외래 키 id를 대상 행의 가시성과 무관하게 공개할 것. 쓰지 않은 참조 select는 대상 resource의 `rows read`를 적용해 호출자가 대상 행을 볼 수 없으면 null이 된다(출력 타입도 nullable) |
-| `filter` | `filter f.op, g.op` | 필터 허용 목록. contains는 리터럴 부분일치이며 MySQL은 column collation, PostgreSQL은 대소문자 구분 비교를 쓴다. like는 SQL LIKE 와일드카드(%·_)를 쓰며 MySQL은 column collation, PostgreSQL은 ILIKE로 비교한다. 연산 eq in isNull gte lte gt lt prefix contains like 중 필드 타입이 지원하는 것 |
+| `filter` | `filter f.op, g.op` | 필터 허용 목록. contains는 리터럴 부분일치이며 MySQL은 column collation, PostgreSQL은 대소문자 구분 비교를 쓴다. like는 SQL LIKE 와일드카드(%·_)를 쓰며 MySQL은 column collation, PostgreSQL은 DB locale에 따른 ILIKE(대소문자 무시, 악센트·문자 폭은 구분)로 비교한다. 연산 eq in isNull gte lte gt lt prefix contains like 중 필드 타입이 지원하는 것 |
 | `sort` | `sort a, b` | 정렬 허용 목록 |
 | `traverse` | `traverse rel { select a }  \|  traverse Child via field { select a; limit N }` | 참조를 따라 포함한다. 대상 resource의 expose select 안에서만 |
 | `budget` | `budget { rows N; depth N; deadline 2s; cost N }` | 이 읽기를 루트로 부를 수 있게 하는 한도. 네 값이 모두 필요하다 |
