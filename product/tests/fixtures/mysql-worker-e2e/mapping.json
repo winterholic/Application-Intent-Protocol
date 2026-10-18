@@ -1,0 +1,7 @@
+{
+  "schema": "aip_e2e_src",
+  "tables": {
+    "Member": { "table": "member", "columns": { "id": "id" } },
+    "Video": { "table": "video", "columns": { "id": "id", "owner": "owner_id", "views": "views" } }
+  }
+}
