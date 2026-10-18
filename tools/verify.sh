@@ -59,6 +59,7 @@ node --test \
   product/tests/postgres-guard.test.mjs \
   product/tests/uuid-external.test.mjs \
   product/tests/facereview-comments.test.mjs \
+  product/tests/memoir-folder-rename.test.mjs \
   product/tests/sdk-package.test.mjs \
   product/tests/package-boundaries.test.mjs \
   product/tests/dev-jwt.test.mjs \

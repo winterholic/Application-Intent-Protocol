@@ -68,6 +68,14 @@ Codex 작업 세션이 취소된 7개 브랜치를 이어받아 검증하고 mai
 
 AIP MySQL/MariaDB adapter의 실제 연결·catalog/read/write 검증은 여전히 미실행이다. `aip-migrate`의 PostgreSQL `tokio_postgres` 경로에 붙이지 않고, 허용된 기존 의존성으로 MySQL `INFORMATION_SCHEMA` 입력을 중립 manifest로 바꾸는 순수 함수·타입 계층을 추가했다. 합성 행 회귀는 PK/index/FK 순서·unsigned·enum·tinyint(1) 표시 폭·nullable/default/generated와 FK 대상·referential action을 보존하고, 중복/누락 metadata·미지원 action은 거부하며 varchar 길이·NULL default 모호성과 collation·생성식·on-update 등 표현 밖 의미를 진단한다. 원본 11개 RDB 모델의 선언 기준은 [FK 기준 manifest](porting/facereview-fk-manifest.json)다. 기존 댓글 PostgreSQL fixture는 Comment의 두 참조만 담으며 전체 모델 기준선은 아니다. 이는 DB 관측이나 MySQL adapter 지원이 아니다. MySQL/MariaDB URL의 `DB_ADAPTER_UNSUPPORTED` guard는 유지한다. 실제 driver·catalog query 연결과 MySQL 8.4 실 DB 검증, 이후 MariaDB 별도 실행 및 read/write는 남아 있으며 WBS 7.2.1 전체는 미완료다. 인증·권한 포팅은 그 뒤다. 코드 revision: `28bb463f4bb73f461ff813ec8da3f57ad726e165`.
 
+## Infisical 후보 조사 및 Memoir PostgreSQL 작은 업무 적용 (2026-10-17)
+
+공식 공개 저장소 `Infisical/infisical`의 고정판 `188cf58173019bf0fe59972ed1c7ef715bec979c`를 코드 검토했다. root 코드는 MIT Expat이고 `ee/`는 별도 상용 라이선스다. 프로젝트 편집 권한은 normalized Membership→MembershipRole 관계와 역할 평가를 거치며, 현재 DSL에 없는 관계 집합 권한 조회를 요구했다. 이를 한두 개 actor 참조로 축약하면 원본 권한 모델과 달라져 이 단위는 채택하지 않았다. Infisical 원본 서비스·운영 API·DB는 실행/접속하지 않았고 home-server secret/credential/settings도 읽지 않았다. 따라서 Infisical 적용·실DB 검증은 없다.
+
+기록상 기존 PostgreSQL 후보 `port-trials/memoir-notes`에서 기존 실행 예제의 Note create/favorite/delete와 겹치지 않는 Folder rename을 선택했다. 고정 비교 commit `26396070917ee065b988b0de296baf54f6266322`의 `FolderService`, `FolderRepository`, entity와 request/controller를 기계적으로 대조한 범위 및 제한은 [시험 기록](../product/tests/fixtures/memoir-folder-rename/README.md)에 있다. 원본 worktree는 36개 사용자 변경이 있어 보존했고 HEAD의 해당 파일만 읽었다. 별도 전용 PostgreSQL DB에서 synthetic source-shaped row와 AIP resource를 채우고 서비스·설치형 TS SDK로 owner read/rename, unrelated actor의 빈 조회/거부, 거부 뒤 DB 무변경을 실행했다. 결과는 **코드 기준 적용 / 실DB AIP 검증**이다. Memoir 원본 서비스/API/DB는 실행하지 않아 원본 E2E 동등성은 주장하지 않는다.
+
+실행 출력, 실제 저장값, 제한과 제외 범위는 [제품 검증](../product/VERIFICATION.md#memoir-folder-rename-실db-aip-검증-2026-10-17)을 따른다. 이 작은 시험은 Memoir 전체 포팅, Infisical 적용 또는 인증/권한 WBS 완료가 아니다. FaceReview WBS 7.1/7.2 gate, Infisical 전체 포팅 WBS 7.3, MySQL adapter gate는 그대로 미완료다.
+
 ## 페이스리뷰 원본 포팅 기준선 후속 (2026-10-17)
 
 고정 원본 backend에서 허용된 로컬 Origin의 Socket.IO polling 연결, 빈 `watch_frame` 입력 거부, 연결 종료를 실제 확인했다.

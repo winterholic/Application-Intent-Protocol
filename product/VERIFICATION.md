@@ -295,6 +295,20 @@ DB 테스트는 이 Run이 띄운 PostgreSQL 17 컨테이너(`aip-claude-wbs8-pg
 | `cargo test --locked --test commit_unknown_wire` (spike-v6) | 13 passed |
 | `cargo test --locked --no-fail-fast` (spike-v3, spike-v4) | 모두 0 failed |
 
+## Memoir Folder rename 실DB AIP 검증 (2026-10-17)
+
+Infisical은 공식 공개판 `188cf58173019bf0fe59972ed1c7ef715bec979c`에서 프로젝트 권한이 normalized Membership→MembershipRole 관계를 거쳐 결정됨을 확인했다. 기본 Member의 Settings 편집도 `ee/` 코드에서만 확인할 수 있었고, [root LICENSE](https://github.com/Infisical/infisical/blob/188cf58173019bf0fe59972ed1c7ef715bec979c/LICENSE)는 MIT Expat, [`ee/LICENSE.md`](https://github.com/Infisical/infisical/blob/188cf58173019bf0fe59972ed1c7ef715bec979c/backend/src/ee/LICENSE.md)는 별도 상용 라이선스다. AIP 현재 정책 DSL로 그 관계 평가를 그대로 표현하려면 큰 계약 확장이 필요해 이 실험은 기각했다. Infisical source service/API/DB를 실행하거나 운영 서비스·secret에 접속한 검증은 없으며, Infisical 적용으로 계산하지 않는다.
+
+대체 후보는 기록에 있던 `port-trials/memoir-notes`이며, 그 시험의 Note create/favorite/delete와 겹치지 않는 Folder rename 한 업무를 택했다. [기계적 source 비교·제외 범위](tests/fixtures/memoir-folder-rename/README.md)에 따라 Memoir committed source revision `26396070917ee065b988b0de296baf54f6266322`의 owner-scoped update와 UUID Folder model을 AIP resource/read/apply에 연결했다. 원본 저장소 worktree에는 36개 변경 파일이 있어 건드리거나 pull하지 않았다. 이 commit과 local `origin/main` ref는 같지만 원격은 fetch하지 않아 freshness는 확인되지 않았다.
+
+전용 PostgreSQL DB마다 synthetic source-shaped `memoir_source`와 AIP-owned schema를 생성했다. 원본 서비스/API/DB는 시작하지 않았다. 따라서 결과는 **코드 기준 적용 / 실DB AIP 검증**이며 original E2E 동등성이나 Memoir 전체 포팅을 뜻하지 않는다.
+
+| 실제 실행 | 결과 | 확인한 범위 |
+|---|---|---|
+| `CARGO_TARGET_DIR=/Users/winterholic/development/projects/aip/aip/target AIP_TSC=/Users/winterholic/development/projects/aip/aip/spikes/spike-0-ts/node_modules/.bin/tsc node --test product/tests/memoir-folder-rename.test.mjs` | 4 passed, 0 failed, 0 skipped | CLI init/migrate/provision/bind/serve, 생성 TS binding strict typecheck, SDK offline build/install. Owner가 UUID folder를 읽고 `name/sortOrder`를 `Research/3`→`Engineering/7`로 바꿈. 무관 actor는 read 결과 0행, apply `WIRE.MISSING_TARGET`; 거부 후 새 연결 조회와 실제 AIP DB 값은 계속 `Engineering/7`. |
+
+합성 원본형 row는 변경 전후 `Research|3`으로 유지됐고 AIP-owned row만 `Engineering|7`이 됐다. 테스트 종료 뒤 전용 DB와 runtime role을 제거했다. 초기에 발생한 parser/fixture SQL/ref ID 오류는 fixture를 바로잡은 후 회귀가 통과했으며 AIP core gap은 발견되지 않아 코어 제품 코드는 수정하지 않았다. 원본 `@RequiresPlan` entitlement, 이름 공백 validation 경계, parent folder 흐름, source API/DB와 전체 Note model은 범위 밖이다.
+
 ## WBS A: 외부 IdP·TLS reverse proxy 운영 smoke (2026-10-17)
 
 `conformance/idp-proxy/idp/server.mjs`는 저장소 자체의 경량 RSA/JWKS/JWT fixture이며, 실제 Keycloak·Entra·Google 연동이나 RFC 9068 전체 conformance 적합성은 미검증이다. Caddy TLS reverse proxy(자체 서명 SAN 인증서) 환경에서 `aip service` 운영 인증 및 프록시 헤더 처리를 검증했다.
