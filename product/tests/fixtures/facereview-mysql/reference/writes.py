@@ -1,36 +1,114 @@
-"""Write parity on the real FaceReview schema: what the original app's SQLAlchemy code would leave in the rows versus what the
-adopted AIP service leaves. Run after adopt.sh. Prints one line per case; exit 1 on any difference."""
+"""Check AIP write behavior against the fixed FaceReview MySQL fixture.
+
+This is a product-side assertion runner, not an original-SQLAlchemy oracle.
+Set all AIP_FR_* variables listed in the fixture README; no endpoint defaults
+are provided. Prints one line per case and exits 1 on any mismatch.
+"""
+import argparse
+import atexit
 import json
 import os
 import subprocess
 import sys
 import time
+from pathlib import Path
+from urllib.parse import unquote, urlparse
 import urllib.request
 
+def required_env(name):
+    value = os.environ.get(name)
+    if not value:
+        raise SystemExit("missing required environment variable: " + name)
+    return value
+
+
+def mysql_url_options(name):
+    import pymysql
+
+    try:
+        parsed = urlparse(required_env(name))
+        port = parsed.port
+    except ValueError:
+        raise SystemExit(name + " must be a valid MySQL URL") from None
+    if parsed.scheme not in ("mysql", "mariadb") or parsed.hostname not in ("127.0.0.1", "localhost", "::1"):
+        raise SystemExit(name + " must use a loopback MySQL URL")
+    if port is None or port <= 1024 or port == 3306:
+        raise SystemExit(name + " must use an explicit dedicated high port")
+    if not parsed.username or unquote(parsed.username).lower() == "root" or not parsed.password:
+        raise SystemExit(name + " must use a dedicated non-root role with a password")
+    if not parsed.path.strip("/"):
+        raise SystemExit(name + " must include a database name")
+    return {
+        "host": parsed.hostname,
+        "port": port,
+        "user": unquote(parsed.username),
+        "password": unquote(parsed.password),
+        "database": parsed.path.strip("/"),
+        "autocommit": True,
+        "cursorclass": pymysql.cursors.DictCursor,
+    }
+
+
+parser = argparse.ArgumentParser(description=__doc__)
+parser.parse_args()
+BIN = Path(required_env("AIP_FR_BIN")).resolve()
+RUN = Path(required_env("AIP_FR_RUN_DIR")).resolve()
+DEF = Path(required_env("AIP_FR_DEFINITION")).resolve()
+if not BIN.is_file() or not os.access(str(BIN), os.X_OK):
+    raise SystemExit("AIP_FR_BIN must point to an executable file")
+if not (RUN / "service.json").is_file() or not (RUN / "private.pem").is_file():
+    raise SystemExit("AIP_FR_RUN_DIR must contain service.json and private.pem")
+if not DEF.is_file():
+    raise SystemExit("AIP_FR_DEFINITION must point to a file")
+adopt_url = required_env("AIP_FR_ADOPT_DATABASE_URL")
+runtime_url = required_env("AIP_FR_RUNTIME_DATABASE_URL")
+adopt_db = mysql_url_options("AIP_FR_ADOPT_DATABASE_URL")
+runtime_db = mysql_url_options("AIP_FR_RUNTIME_DATABASE_URL")
+test_db = mysql_url_options("AIP_FR_TEST_DATABASE_URL")
+if len({adopt_db["user"], runtime_db["user"], test_db["user"]}) != 3:
+    raise SystemExit("adopt, runtime, and test database URLs must use separate roles")
+if len({(value["host"], value["port"]) for value in (adopt_db, runtime_db, test_db)}) != 1:
+    raise SystemExit("all database URLs must target the same explicit loopback fixture endpoint")
+if runtime_db["database"] != test_db["database"]:
+    raise SystemExit("runtime and test database URLs must target the same fixture database")
+ENV = dict(os.environ, AIP_FR_ADOPT_URL=adopt_url, AIP_FR_RUNTIME_URL=runtime_url)
 import jwt
 import pymysql
 
-BIN = "/private/tmp/aip-721-target/debug/aip"
-RUN = "/private/tmp/fr-port/run"
-DEF = "/private/tmp/fr-port/facereview.aip"
-ENV = dict(os.environ, AIP_FR_ADOPT_URL="mysql://root:aip_fixture_pw_721@127.0.0.1:34391/fr_src",
-           AIP_FR_RUNTIME_URL="mysql://aip_fr_rt:runtime_test_only@127.0.0.1:34391/fr_src")
 ALICE, BOB = "11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"
 CAT, DELETED = "aaaaaaaa-0000-4000-8000-000000000001", "aaaaaaaa-0000-4000-8000-000000000003"
 
 for subject, actor in [("alice", ALICE), ("bob", BOB)]:
-    subprocess.run([BIN, "service", "principal", "--config", RUN + "/service.json", "bind", "--subject", subject, "--actor", actor],
-                   env=ENV, capture_output=True, text=True, cwd=RUN)
-server = subprocess.Popen([BIN, "service", "serve", DEF, "--config", RUN + "/service.json"], env=ENV, cwd=RUN,
+    bound = subprocess.run([str(BIN), "service", "principal", "--config", str(RUN / "service.json"), "bind", "--subject", subject, "--actor", actor],
+                           env=ENV, capture_output=True, text=True, cwd=str(RUN))
+    if bound.returncode:
+        raise SystemExit("AIP principal setup failed for " + subject + " (exit " + str(bound.returncode) + ")")
+server = subprocess.Popen([str(BIN), "service", "serve", str(DEF), "--config", str(RUN / "service.json")], env=ENV, cwd=str(RUN),
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+
+def stop_server():
+    if server.poll() is None:
+        server.terminate()
+        try:
+            server.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            server.kill()
+            server.wait()
+    if server.stderr:
+        server.stderr.close()
+    if server.stdout:
+        server.stdout.close()
+
+
+atexit.register(stop_server)
 listening = json.loads(server.stdout.readline() or "{}")
 if not listening:
-    print("server did not start:", server.stderr.read())
+    server.stderr.read()
     sys.exit(2)
 ADDRESS, FINGERPRINT = listening["address"], listening["fingerprint"]
-PRIVATE = open(RUN + "/private.pem").read()
-db = pymysql.connect(host="127.0.0.1", port=34391, user="root", password="aip_fixture_pw_721", database="fr_src", autocommit=True,
-                     cursorclass=pymysql.cursors.DictCursor)
+PRIVATE = (RUN / "private.pem").read_text()
+db = pymysql.connect(**test_db)
 cur = db.cursor()
 
 
@@ -176,6 +254,7 @@ case("user bookmarks preserved (parity baseline)", row("SELECT COUNT(*) AS n FRO
 after_withdraw_like = create("VideoLike", {"video": CAT, "user": ALICE}, "al-" + tag, "alice")
 case("withdrawn user is refused (active check)", after_withdraw_like.get("ok"), False)
 
-server.terminate()
+stop_server()
+db.close()
 print("\n%d failing case(s)" % len(failures))
 sys.exit(1 if failures else 0)
