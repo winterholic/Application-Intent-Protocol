@@ -58,8 +58,7 @@ python3.9 product/tests/fixtures/facereview-mysql/reference/writes.py
 
 ## 아직 되지 않는 것(조용히 흉내 내지 않고 남긴 차이)
 
-- 제목 OR 채널 검색. 읽기 `filter`는 AND만 있다.
-- 목록 응답의 전체 건수(`total`). 원본은 매 페이지에 돌려주지만 AIP 읽기 응답에는 없다.
+- `Video` 검색은 `title.like`와 `channel_name.like` OR 조건을 AND 필터와 조합할 수 있고, 동일한 row policy·검색 필터를 적용하는 `Video.totalCount` aggregate도 제공한다. 목록과 total은 한 응답에 묶이지 않아 원본 페이지 응답과 호출 형태는 다르다.
 - `user_emotion_dna`와 `user_emotion_summary`: `id: User`로 공유 PK/FK를 한 필드에 표현하고 `rows read when id = actor and active(actor)`로 본인 행만 연다. 외부 매핑은 DNA 테이블에만 `shared_pk_without_fk: true`를 명시한다. 이는 원본 DNA DDL에 물리 FK가 없는 사실을 기록하며, 이 opt-in이 있어도 `user_id`에 다른 대상 FK가 있으면 채택이 거부된다. Summary는 기본값(false)으로 원본 User FK의 대상 테이블과 컬럼을 검증하며 FK 제거나 오지정을 거부한다. DNA의 `dna_data`는 JSON 문서 값으로 읽고 문자열 값은 다시 파싱하지 않는다. 원본 DNA 표에는 FK 제약이 없어 orphan 행도 가능하지만 actor ID와 다르면 AIP에서 읽히지 않는다.
 
 MariaDB 11.4.13에서 확인한 `JSON` 열은 catalog에 `DATA_TYPE=longtext, COLUMN_TYPE=longtext`로 노출된다. 이 포팅의 `Json` 선언은 catalog의 실제 JSON 타입을 요구하므로 `dna_data` 어댑션은 `EXTERNAL_SCHEMA`로 거절된다. MariaDB `mysql_read_http` 실행은 별도로 시도했지만 test process의 driver 연결이 `CATALOG_ERROR: MySQL connection failed`로 실패해 HTTP 경로는 검증되지 않았다.
