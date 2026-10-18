@@ -256,7 +256,10 @@ fn ts_type(facts: &Value, ty: &str) -> String {
     } else if let Some(r) = base.strip_prefix("Ref<").and_then(|x| x.strip_suffix('>')) {
         format!("Id<\"{r}\">")
     } else if let Some(e) = base.strip_prefix("Enum<").and_then(|x| x.strip_suffix('>')) {
-        facts["enums"][e].as_array().unwrap().iter().map(|v| format!("\"{}\"", v.as_str().unwrap())).collect::<Vec<_>>().join(" | ")
+        let Some(variants) = facts.get("enums").and_then(|m| m.get(e)).and_then(Value::as_array) else {
+            panic!("unknown enum: {e}");
+        };
+        variants.iter().map(|v| format!("\"{}\"", v.as_str().unwrap())).collect::<Vec<_>>().join(" | ")
     } else {
         match base {
             "Text" | "Email" | "Url" | "Time" | "Date" => "string".into(),

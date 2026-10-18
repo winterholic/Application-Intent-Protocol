@@ -15,4 +15,3 @@ packages = ["aip_sdk"]
 
 [tool.setuptools.package-data]
 aip_sdk = ["py.typed"]
-

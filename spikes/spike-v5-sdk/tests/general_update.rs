@@ -75,4 +75,3 @@ fn python_codegen_generates_read_apply_and_operation_types() {
     let output = child.wait_with_output().unwrap();
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
 }
-

@@ -77,3 +77,21 @@ fn python_codegen_panics_on_unknown_resource_ref() {
     facts["operations"]["length"]["input"][0][1] = serde_json::json!("Id<NonExistentResource>");
     let _ = spike_v5_sdk::contract_module_python(&facts, IdWire::DecimalString);
 }
+
+#[test]
+#[should_panic(expected = "unknown enum")]
+fn python_codegen_panics_on_unknown_enum() {
+    let mut facts = load_str(include_str!("../../spike-v6-transport/tests/fixtures/operations.aip"), Form::A).unwrap().execution;
+    facts["operations"]["length"]["input"][0][1] = serde_json::json!("Enum<NonExistentEnum>");
+    let _ = spike_v5_sdk::contract_module_python(&facts, IdWire::DecimalString);
+}
+
+#[test]
+#[should_panic(expected = "unsupported reference to principal without principal actor")]
+fn python_codegen_panics_on_principal_ref_without_principal_actor() {
+    let mut facts = load_str(include_str!("../../spike-v6-transport/tests/fixtures/operations.aip"), Form::A).unwrap().execution;
+    facts["actor"] = serde_json::json!("none");
+    facts["actorMode"] = serde_json::json!("none");
+    facts["operations"]["length"]["input"][0][1] = serde_json::json!("Ref<principal>");
+    let _ = spike_v5_sdk::contract_module_python(&facts, IdWire::DecimalString);
+}

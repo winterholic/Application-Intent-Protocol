@@ -79,4 +79,3 @@ print('OPS_IMPORT_OK')
     assert!(py_check.status.success(), "python import failed:\nstdout: {}\nstderr: {}", String::from_utf8_lossy(&py_check.stdout), String::from_utf8_lossy(&py_check.stderr));
     assert!(String::from_utf8_lossy(&py_check.stdout).contains("OPS_IMPORT_OK"));
 }
-

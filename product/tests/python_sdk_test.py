@@ -442,36 +442,85 @@ class GeneratedSdkTest(unittest.TestCase):
                 if sys_path_entry in sys.path:
                     sys.path.remove(sys_path_entry)
 
-            # 3. Static type check with mypy
+            # 3. Static type check with mypy (--warn-return-any, typed consumer positive and negative checks)
             uv_path = shutil.which("uv")
             mypy_path = shutil.which("mypy")
+            if not (uv_path or mypy_path):
+                self.fail("정적 타입 검사 실패: uv 또는 mypy 도구가 환경(PATH)에 없어 타입 검사를 수행할 수 없습니다 (의존성 없음)")
+
             env = dict(sys.modules["os"].environ, PYTHONPATH=str(repo_root / "product" / "python"))
-            if uv_path:
-                for gen_file in (app_out, ops_out):
-                    mypy_run = subprocess.run(
-                        [uv_path, "run", "--with", "mypy", "mypy", str(gen_file)],
-                        capture_output=True,
-                        text=True,
-                        env=env,
-                    )
-                    self.assertEqual(
-                        mypy_run.returncode,
-                        0,
-                        f"mypy typecheck failed for {gen_file}:\n{mypy_run.stdout}\n{mypy_run.stderr}",
-                    )
-            elif mypy_path:
-                for gen_file in (app_out, ops_out):
-                    mypy_run = subprocess.run(
-                        [mypy_path, str(gen_file)],
-                        capture_output=True,
-                        text=True,
-                        env=env,
-                    )
-                    self.assertEqual(
-                        mypy_run.returncode,
-                        0,
-                        f"mypy typecheck failed for {gen_file}:\n{mypy_run.stdout}\n{mypy_run.stderr}",
-                    )
+            mypy_base_cmd = [uv_path, "run"]
+            if os.environ.get("UV_OFFLINE") == "1" or os.environ.get("CARGO_NET_OFFLINE") == "true":
+                mypy_base_cmd.append("--offline")
+            mypy_base_cmd.extend(["--with", "mypy", "mypy"])
+            mypy_flags = ["--warn-return-any", "--show-error-codes"]
+
+            def run_mypy(target_path: Path):
+                cmd = (mypy_base_cmd if uv_path else [mypy_path]) + mypy_flags + [str(target_path)]
+                return subprocess.run(cmd, capture_output=True, text=True, env=env)
+
+            for gen_file in (app_out, ops_out):
+                mypy_run = run_mypy(gen_file)
+                self.assertEqual(
+                    mypy_run.returncode,
+                    0,
+                    f"mypy typecheck (--warn-return-any) failed for {gen_file}:\n{mypy_run.stdout}\n{mypy_run.stderr}",
+                )
+
+            # Typed consumer checks for operations.aip
+            # (1) Positive: correctly typed return inference and access
+            consumer_ok = temp_dir / "typed_consumer_ok.py"
+            consumer_ok.write_text(
+                f"import sys\n"
+                f"sys.path.insert(0, r'{temp_dir}')\n"
+                f"import {ops_out.stem} as ops\n"
+                f"from aip_sdk import Client\n"
+                f"def check(c: Client) -> int:\n"
+                f"    res: ops.LengthOperationOutput = ops.call_length(c, {{'text': 'abc', 'owner': ops.principalId('p1')}})\n"
+                f"    length: int = res['length']\n"
+                f"    return length\n",
+                encoding="utf-8",
+            )
+            run_ok = run_mypy(consumer_ok)
+            self.assertEqual(run_ok.returncode, 0, f"Valid typed consumer should pass mypy:\n{run_ok.stdout}\n{run_ok.stderr}")
+
+            # (2) Negative: accessing nonexistent field on TypedDict output is rejected
+            consumer_bad_field = temp_dir / "typed_consumer_bad_field.py"
+            consumer_bad_field.write_text(
+                f"import sys\n"
+                f"sys.path.insert(0, r'{temp_dir}')\n"
+                f"import {ops_out.stem} as ops\n"
+                f"from aip_sdk import Client\n"
+                f"def check(c: Client) -> None:\n"
+                f"    res = ops.call_length(c, {{'text': 'abc', 'owner': ops.principalId('p1')}})\n"
+                f"    bad = res['nonexistent_output_field']\n",
+                encoding="utf-8",
+            )
+            run_bad_field = run_mypy(consumer_bad_field)
+            self.assertNotEqual(run_bad_field.returncode, 0, "Typed consumer with bad output field must be rejected by mypy")
+            self.assertTrue(
+                "typeddict-item" in run_bad_field.stdout or "TypedDict" in run_bad_field.stdout,
+                f"Expected typeddict error for bad field, got:\n{run_bad_field.stdout}",
+            )
+
+            # (3) Negative: assigning output field to incompatible type is rejected
+            consumer_bad_type = temp_dir / "typed_consumer_bad_type.py"
+            consumer_bad_type.write_text(
+                f"import sys\n"
+                f"sys.path.insert(0, r'{temp_dir}')\n"
+                f"import {ops_out.stem} as ops\n"
+                f"from aip_sdk import Client\n"
+                f"def check(c: Client) -> None:\n"
+                f"    res = ops.call_length(c, {{'text': 'abc', 'owner': ops.principalId('p1')}})\n"
+                f"    wrong: str = res['length']\n",
+                encoding="utf-8",
+            )
+            run_bad_type = run_mypy(consumer_bad_type)
+            self.assertNotEqual(run_bad_type.returncode, 0, "Typed consumer with incompatible output type must be rejected by mypy")
+            self.assertTrue(
+                "assignment" in run_bad_type.stdout or "Incompatible types" in run_bad_type.stdout,
+                f"Expected assignment error for bad type, got:\n{run_bad_type.stdout}",
+            )
 
 
 class PackageSmokeTest(unittest.TestCase):
@@ -551,5 +600,3 @@ class PackageSmokeTest(unittest.TestCase):
         self.assertFalse((pkg_dir / "build").exists(), "build directory should not leak into product/python")
         self.assertFalse((pkg_dir / "dist").exists(), "dist directory should not leak into product/python")
         self.assertEqual(list(pkg_dir.glob("*.egg-info")), [], "egg-info should not leak into product/python")
-
-
