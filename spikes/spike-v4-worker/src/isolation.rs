@@ -157,11 +157,15 @@ impl WorkerLaunchConfig {
             let stdout = stdout?;
             let stderr = stderr?;
             if !status.success() {
-                return Err(std::io::Error::other(format!(
-                    "worker runtime probe exited with {status}; stdout={:?}; stderr={:?}",
-                    String::from_utf8_lossy(&stdout),
-                    String::from_utf8_lossy(&stderr)
-                )));
+                let stderr_text = String::from_utf8_lossy(&stderr).to_ascii_lowercase();
+                let stderr_class = if ["operation not permitted", "permission denied", "sandbox"].iter().any(|needle| stderr_text.contains(needle)) {
+                    "permission_or_sandbox_denial"
+                } else if ["not found", "no such file"].iter().any(|needle| stderr_text.contains(needle)) {
+                    "runtime_path_missing"
+                } else {
+                    "runtime_failure_unclassified"
+                };
+                return Err(std::io::Error::other(format!("worker runtime probe exited with {status}; stderr_class={stderr_class}")));
             }
             if stdout.is_empty() && stderr.is_empty() {
                 return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "worker runtime probe produced no version output"));

@@ -403,6 +403,13 @@ fn server_start_error(e: &std::io::Error) -> Value {
             "권한 거부로 listener 또는 worker 런타임을 시작하지 못함(포트 권한, 런타임 실행 권한, 격리 설정 확인)".to_owned()
         }
         ErrorKind::NotFound => "worker 런타임 실행 파일을 찾지 못함(workers.language의 node 또는 python3가 PATH에 있어야 함)".to_owned(),
+        ErrorKind::Other if e.to_string().starts_with("worker runtime probe exited with ") => {
+            // The probe error also contains child stdout/stderr, which may contain credentials.
+            // Preserve only its stable exit-status prefix while identifying the failing stage.
+            let cause = e.to_string();
+            let (status, diagnostic) = cause.split_once("; stderr_class=").unwrap_or((&cause, "unclassified"));
+            format!("서버 시작 준비 단계 실패(io other, stage=worker_runtime_probe): {status}; stderr_class={diagnostic}")
+        }
         kind => format!(
             "서버 시작 준비 단계 실패(io {kind}): worker 런타임 점검, rate limit·outbox·audit 저장소 설치, listener 바인딩 중 하나이며 DB 연결과 권한을 먼저 확인"
         ),
