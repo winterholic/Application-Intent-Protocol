@@ -12,6 +12,19 @@ use std::{future::Future, pin::Pin};
 
 pub type BackendFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
+/// A server-owned write transaction opened by a relational adapter for one explicit worker action.
+/// The same session remains alive until the worker output is validated and the caller commits it.
+pub trait RelationalWorkerWrite: Send {
+    fn apply<'a>(&'a mut self, transition: &'a str, request: &'a Value, caller: &'a Caller, wire: IdWire)
+        -> BackendFuture<'a, Result<Value, Reject>>;
+    fn commit(self: Box<Self>, output: Value) -> BackendFuture<'static, Result<Value, Reject>>;
+}
+
+pub enum RelationalWorkerWriteStart {
+    Replay(Value),
+    New(Box<dyn RelationalWorkerWrite>),
+}
+
 pub trait RelationalBackend: Send + Sync {
     /// 계획 생성에 쓸 SQL 방언.
     fn dialect(&self) -> Dialect;
@@ -42,6 +55,22 @@ pub trait RelationalBackend: Send + Sync {
         let adapter = self.adapter();
         Box::pin(async move {
             json!({"ok": false, "code": "WIRE.ADAPTER_UNSUPPORTED", "msg": format!("{adapter} adapter는 /status를 아직 지원하지 않음")})
+        })
+    }
+
+    /// Begin the write session for an explicitly declared worker action. Adapters must keep callback writes,
+    /// idempotency records and the final worker result in one server-owned transaction.
+    fn begin_worker_write<'a>(
+        &'a self,
+        _facts: &'a Value,
+        _key: &'a str,
+        _request: &'a Value,
+        _caller: &'a Caller,
+        _wire: IdWire,
+    ) -> BackendFuture<'a, Result<RelationalWorkerWriteStart, Reject>> {
+        let adapter = self.adapter();
+        Box::pin(async move {
+            Err(Reject { code: "WIRE.ADAPTER_UNSUPPORTED", msg: format!("{adapter} adapter는 worker write action을 아직 지원하지 않음") })
         })
     }
 }

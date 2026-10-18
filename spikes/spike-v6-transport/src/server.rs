@@ -747,17 +747,36 @@ pub async fn listen_relational_with_extensions(
     infrastructure: crate::infrastructure::Infrastructure,
     authenticator: Option<Arc<dyn crate::auth::Authenticator>>,
 ) -> io::Result<Server> {
+    listen_relational_with_worker_writes(facts, wire, address, backend, extensions, false, options, infrastructure, authenticator).await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn listen_relational_with_worker_writes(
+    facts: Value,
+    wire: IdWire,
+    address: SocketAddr,
+    backend: Arc<dyn spike_v2_read::backend::RelationalBackend>,
+    extensions: Option<ReadExtensions>,
+    enable_write_extensions: bool,
+    options: ServerOptions,
+    infrastructure: crate::infrastructure::Infrastructure,
+    authenticator: Option<Arc<dyn crate::auth::Authenticator>>,
+) -> io::Result<Server> {
     options.validate()?;
     if infrastructure.rate_limit.is_some() {
         // The limiter's counters live in PostgreSQL; serving without them would drop the limit silently.
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "rate limiting is not available for relational adapters"));
     }
-    let extensions = extensions.map(|config| config.validate(&facts, wire)).transpose()?;
+    let extensions = extensions
+        .map(|config| if enable_write_extensions { config.validate_with_writes(&facts, wire) } else { config.validate(&facts, wire) })
+        .transpose()?;
     if let Some(extensions) = &extensions {
         infrastructure.worker_launch.probe(extensions.lang, &extensions.dir).await?;
     }
     let fingerprint = facts["resources"].is_object().then(|| {
-        if extensions.is_some() {
+        if enable_write_extensions {
+            spike_v5_sdk::contract_fingerprint_with_all_extensions(&facts, wire).into()
+        } else if extensions.is_some() {
             spike_v5_sdk::contract_fingerprint_with_extensions(&facts, wire).into()
         } else {
             spike_v5_sdk::contract_fingerprint_with_apply(&facts, wire).into()
@@ -779,7 +798,7 @@ pub async fn listen_relational_with_extensions(
             enable_file_uploads: false,
             fault_injection: false,
             extensions,
-            write_extensions: false,
+            write_extensions: enable_write_extensions,
             extension_slots: tokio::sync::Semaphore::new(4),
             principal_slots: crate::slots::PrincipalSlotSet::unlimited(),
             options,

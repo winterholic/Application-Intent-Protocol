@@ -21,11 +21,203 @@ use mysql_async::prelude::Queryable;
 use mysql_async::{Row, Transaction, Value as MyValue};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
+use spike_v2_read::backend::{BackendFuture, RelationalWorkerWrite, RelationalWorkerWriteStart};
 use spike_v2_read::id_wire::{EntityId, IdWire, emit_entity_id, id_kind, parse_uuid};
 use spike_v2_read::plan::{Caller, Reject};
 use spike_v2_read::sqlgen::{self, Ctx, Dialect, Env, Params, column};
 use spike_v3_write::{Applied, ApplyInput, BundleResult, Knobs, Src, TargetSpec};
 use std::collections::{BTreeMap, BTreeSet};
+
+/// One fenced transaction shared by all declared `ctx.apply` calls and the validated worker result.
+pub struct MysqlWorkerWrite {
+    tx: Option<FencedMysqlTransaction>,
+    facts: Value,
+    key: String,
+    request_text: String,
+    principal: String,
+    caller: Caller,
+    expires: std::time::Instant,
+    allowed: BTreeSet<String>,
+    touched: BTreeMap<String, BTreeSet<EntityId>>,
+    poisoned: Option<Reject>,
+}
+
+impl RelationalWorkerWrite for MysqlWorkerWrite {
+    fn apply<'a>(
+        &'a mut self,
+        transition: &'a str,
+        request: &'a Value,
+        caller: &'a Caller,
+        wire: IdWire,
+    ) -> BackendFuture<'a, Result<Value, Reject>> {
+        Box::pin(async move {
+            // The principal was captured by the server before the transaction started. Never use an actor from a
+            // callback message (or another adapter caller) to evaluate the transition policy.
+            let authoritative_caller = Caller { actor_id: self.caller.actor_id, now: self.caller.now.clone() };
+            let _ = caller;
+            let (resource, action) =
+                transition.split_once('.').ok_or_else(|| Reject { code: "WIRE.BAD_VALUE", msg: "전이 이름 형식 오류".into() })?;
+            if !self.allowed.contains(transition) {
+                return Err(Reject { code: "WIRE.ACCESS_NOT_DECLARED", msg: "전이가 worker write grant에 없음".into() });
+            }
+            let declaration = &self.facts["resources"][resource]["exposeApply"][action];
+            if declaration.is_null() {
+                return Err(Reject { code: "WIRE.ACCESS_NOT_DECLARED", msg: "공개되지 않은 전이".into() });
+            }
+            if request["apply"] != transition || request["target"]["ids"].as_array().is_none_or(Vec::is_empty) {
+                return Err(Reject { code: "WIRE.BAD_VALUE", msg: "ctx.apply 요청 형식 오류".into() });
+            }
+            let tx = self
+                .tx
+                .as_mut()
+                .and_then(|tx| tx.as_mut().ok())
+                .ok_or_else(|| Reject { code: "WIRE.INTERNAL", msg: "write transaction 없음".into() })?;
+            let mut session = Session {
+                tx,
+                facts: &self.facts,
+                knobs: Knobs { audit_via: Some("extension"), audit_key: Some(self.key.clone()), fresh_now_after_lock: true, ..Knobs::default() },
+                touched: std::mem::take(&mut self.touched),
+            };
+            let result = run_write(&mut session, request, &authoritative_caller, wire)
+                .await
+                .map(|result| json!({"changed":result["changed"],"unchanged":result["unchanged"]}));
+            self.touched = session.touched;
+            if let Err(error) = &result {
+                self.poisoned.get_or_insert_with(|| Reject { code: error.code, msg: error.msg.clone() });
+            }
+            result
+        })
+    }
+
+    fn commit(mut self: Box<Self>, output: Value) -> BackendFuture<'static, Result<Value, Reject>> {
+        Box::pin(async move {
+            if let Some(error) = self.poisoned.take() {
+                return Err(error);
+            }
+            let mut fenced = self.tx.take().ok_or_else(|| Reject { code: "WIRE.INTERNAL", msg: "write transaction 없음".into() })?;
+            if self.expires.saturating_duration_since(std::time::Instant::now()) < std::time::Duration::from_millis(spike_v3_write::COMMIT_MARGIN_MS)
+            {
+                return Err(Reject { code: "WIRE.DEADLINE_EXCEEDED", msg: "worker write commit 여유 시간 부족".into() });
+            }
+            let tx = fenced.as_mut().map_err(|_| Reject { code: "WIRE.INTERNAL", msg: "write transaction 없음".into() })?;
+            let mut session = Session {
+                tx,
+                facts: &self.facts,
+                knobs: Knobs { audit_via: Some("extension"), audit_key: Some(self.key.clone()), fresh_now_after_lock: true, ..Knobs::default() },
+                touched: std::mem::take(&mut self.touched),
+            };
+            session.run_checks(&self.caller).await?;
+            let result = if output.get("ok").is_some() { output } else { json!({"ok": true, "output": output, "tags": []}) };
+            session
+                .run(
+                    "worker 멱등 기록",
+                    &format!("INSERT INTO {} (principal, idem_key, request, result) VALUES (?, ?, ?, CAST(? AS JSON))", meta_table("aip_idem")),
+                    &[Some(self.principal), Some(self.key), Some(self.request_text), Some(result.to_string())],
+                )
+                .await?;
+            drop(session);
+            let left = self.expires.saturating_duration_since(std::time::Instant::now());
+            if left < std::time::Duration::from_millis(spike_v3_write::COMMIT_MARGIN_MS) {
+                return Err(Reject { code: "WIRE.DEADLINE_EXCEEDED", msg: "worker write commit 여유 시간 부족".into() });
+            }
+            let commit_sent = std::sync::atomic::AtomicBool::new(false);
+            match tokio::time::timeout(left, fenced.commit_classified(|| commit_sent.store(true, std::sync::atomic::Ordering::SeqCst))).await {
+                Ok(Ok(())) => {}
+                Ok(Err(CommitFailure::NotSent)) => return Err(spike_v3_write::lost_before_commit()),
+                Ok(Err(CommitFailure::Unknown)) => {
+                    return Err(Reject { code: "WIRE.COMMIT_UNKNOWN", msg: "worker write commit outcome unknown".into() });
+                }
+                Ok(Err(CommitFailure::Rejected { code })) => return Err(classify_code("worker commit", code)),
+                Err(_) if commit_sent.load(std::sync::atomic::Ordering::SeqCst) => {
+                    return Err(Reject { code: "WIRE.COMMIT_UNKNOWN", msg: "worker write commit outcome unknown".into() });
+                }
+                Err(_) => return Err(Reject { code: "WIRE.DEADLINE_EXCEEDED", msg: "worker write commit deadline exceeded".into() }),
+            }
+            Ok(result)
+        })
+    }
+}
+
+pub async fn begin_worker_write(
+    driver: &MysqlDriver,
+    fence: &MysqlDeploymentFence,
+    facts: &Value,
+    key: &str,
+    request: &Value,
+    caller: &Caller,
+    wire: IdWire,
+) -> Result<RelationalWorkerWriteStart, Reject> {
+    if !valid_key(key) {
+        return rej("WIRE.BAD_REQUEST", "key 형식 오류");
+    }
+    let principal = principal_key(caller.actor_id, wire);
+    let saved_caller = Caller { actor_id: caller.actor_id, now: caller.now.clone() };
+    let request_text = request.to_string();
+    let (resource, extension) = request["extension"]
+        .as_str()
+        .and_then(|name| name.split_once('.'))
+        .ok_or_else(|| Reject { code: "WIRE.BAD_REQUEST", msg: "worker write extension 이름 오류".into() })?;
+    let declaration = &facts["resources"][resource]["extensions"][extension];
+    if declaration["kind"] != "write" || declaration["effect"] != "db" {
+        return rej("WIRE.UNSUPPORTED", "MySQL worker write에는 명시 write/db extension이 필요");
+    }
+    let allowed: BTreeSet<String> = declaration["access"].as_object().into_iter().flatten().map(|(name, _)| name.clone()).collect();
+    if allowed.is_empty() {
+        return rej("WIRE.ACCESS_NOT_DECLARED", "worker write extension은 전이 access를 선언해야 함");
+    }
+    let deadline_ms = facts["resources"][resource]["extensions"][extension]["deadlineMs"]
+        .as_u64()
+        .filter(|ms| *ms > 0 && *ms <= 30_000)
+        .ok_or_else(|| Reject { code: "WIRE.UNSUPPORTED", msg: "worker write deadline 계약 오류".into() })?;
+    let expires = std::time::Instant::now() + std::time::Duration::from_millis(deadline_ms);
+    let mut fenced = driver.begin_fenced_write_transaction(fence, true).await.map_err(|error| Reject {
+        code: if error.code == "MIGRATE.DRIFT_DETECTED" { "WIRE.DEPLOYMENT_CHANGED" } else { "WIRE.DB_UNAVAILABLE" },
+        msg: "MySQL write fence 거부".into(),
+    })?;
+    let tx = fenced.as_mut().map_err(|_| Reject { code: "WIRE.INTERNAL", msg: "write transaction 없음".into() })?;
+    tx.query_drop(format!(
+        "SET SESSION time_zone = '+00:00', SESSION innodb_lock_wait_timeout = {}, SESSION max_execution_time = {deadline_ms}",
+        deadline_ms.div_ceil(1000)
+    ))
+    .await
+    .map_err(|error| classify("worker 세션 설정", &error))?;
+    let mut session = Session { tx, facts, knobs: Knobs::default(), touched: BTreeMap::new() };
+    session.lock("worker 멱등 잠금", &format!("idem:{principal}:{key}")).await?;
+    let rows = session
+        .rows(
+            "worker 멱등 조회",
+            &format!(
+                "SELECT request, CAST(result AS CHAR CHARACTER SET utf8mb4) FROM {} WHERE principal = ? AND idem_key = ?",
+                meta_table("aip_idem")
+            ),
+            &[Some(principal.clone()), Some(key.to_string())],
+        )
+        .await?;
+    if let Some(row) = rows.first() {
+        if vtext(row.as_ref(0)).as_deref() != Some(request_text.as_str()) {
+            return rej("WIRE.IDEMPOTENCY_MISMATCH", "같은 key에 다른 worker 요청");
+        }
+        let Some(Ok(mut result)) = vtext(row.as_ref(1)).map(|text| serde_json::from_str::<Value>(&text)) else {
+            return rej("WIRE.INTERNAL", "저장된 worker 결과를 읽을 수 없음");
+        };
+        result["replayed"] = json!(true);
+        let _ = fenced.rollback().await;
+        return Ok(RelationalWorkerWriteStart::Replay(result));
+    }
+    drop(session);
+    Ok(RelationalWorkerWriteStart::New(Box::new(MysqlWorkerWrite {
+        tx: Some(fenced),
+        facts: facts.clone(),
+        key: key.to_string(),
+        request_text,
+        principal,
+        caller: saved_caller,
+        expires,
+        allowed,
+        touched: BTreeMap::new(),
+        poisoned: None,
+    })))
+}
 
 const WRITE_DEADLINE_MS: u64 = spike_v3_write::WRITE_DEADLINE_MS;
 const LOCK_BUCKETS: u64 = 1000;

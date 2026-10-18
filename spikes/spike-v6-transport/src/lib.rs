@@ -30,6 +30,7 @@ pub mod triggers;
 pub mod wire_codes;
 pub mod write_extension;
 use serde_json::{json, Value};
+use spike_v2_read::backend::{RelationalWorkerWrite, RelationalWorkerWriteStart};
 use spike_v2_read::id_wire::{emit_entity_id, encode_rows, IdWire};
 use spike_v2_read::plan::{plan_read_with_wire, Caller, Reject};
 use spike_v2_read::{execute, sqlgen};
@@ -44,6 +45,22 @@ fn capability_available(operation: &Value, worker_configured: bool, authenticato
         worker_configured && authenticator_configured && deployment_configured
     } else {
         worker_configured
+    }
+}
+
+struct RelationalWriteActionHost {
+    session: Box<dyn RelationalWorkerWrite>,
+}
+
+impl spike_v4_worker::write::WriteActionHost for RelationalWriteActionHost {
+    fn apply<'a>(
+        &'a mut self,
+        transition: &'a str,
+        request: &'a Value,
+        caller: &'a Caller,
+        wire: IdWire,
+    ) -> spike_v4_worker::host::HostFuture<'a, Result<Value, Reject>> {
+        self.session.apply(transition, request, caller, wire)
     }
 }
 
@@ -1226,6 +1243,93 @@ async fn serve_conn(
         None
     };
     if let Some(backend) = runtime.infrastructure.relational.clone() {
+        if write_extension {
+            let Some(config) = runtime.extensions.as_ref() else {
+                return reply(&mut w, &err("WIRE.ADAPTER_UNSUPPORTED", "worker write 설정이 없음")).await;
+            };
+            let request = body["request"].clone();
+            let name = request["extension"].as_str().unwrap();
+            let now = match tokio::time::timeout(server::DB_PREFLIGHT_TIMEOUT, backend.now()).await {
+                Ok(Ok(now)) => now,
+                Ok(Err(code)) => return reply(&mut w, &err(code, "worker write 사전 검사 실패")).await,
+                Err(_) => return reply(&mut w, &err("WIRE.DB_UNAVAILABLE", "worker write 사전 검사 기한 초과")).await,
+            };
+            let caller = Caller { actor_id: session.as_ref().map(|session| session.actor_id), now };
+            let start =
+                match tokio::time::timeout_at(deadline, backend.begin_worker_write(&facts, body["key"].as_str().unwrap(), &request, &caller, wire))
+                    .await
+                {
+                    Ok(Ok(start)) => start,
+                    Ok(Err(error)) => return reply(&mut w, &err(error.code, &error.msg)).await,
+                    Err(_) => return reply(&mut w, &err("WIRE.DEADLINE_EXCEEDED", "worker write transaction 시작 기한 초과")).await,
+                };
+            let session_write = match start {
+                RelationalWorkerWriteStart::Replay(mut result) => {
+                    if let Some(fingerprint) = contract_fingerprint {
+                        result["contractFingerprint"] = json!(&*fingerprint);
+                    }
+                    return reply(&mut w, &result.to_string()).await;
+                }
+                RelationalWorkerWriteStart::New(session_write) => session_write,
+            };
+            let mut host = RelationalWriteActionHost { session: session_write };
+            let mut worker = match spike_v4_worker::Worker::try_start_configured(
+                config.lang,
+                config.dir.to_str().unwrap(),
+                runtime.infrastructure.worker_launch.clone(),
+            )
+            .await
+            {
+                Ok(worker) => worker,
+                Err(_) => return reply(&mut w, &err("WIRE.WORKER_FAILED", "공식 worker 실행 실패")).await,
+            };
+            let output = tokio::time::timeout_at(
+                deadline,
+                spike_v4_worker::write::invoke_write_action(&mut host, &mut worker, &facts, name, &request["input"], &caller, wire),
+            )
+            .await;
+            worker.stop().await;
+            let prepared = match output {
+                Ok(Ok(prepared)) => prepared,
+                Ok(Err(error)) => return reply(&mut w, &err(error.code, "공식 WRITE 확장 호출 거부")).await,
+                Err(_) => return reply(&mut w, &err("WIRE.DEADLINE_EXCEEDED", "공식 WRITE 확장 기한 초과")).await,
+            };
+            let (resource, extension) = name.split_once('.').unwrap();
+            let mut tags = facts["resources"][resource]["extensions"][extension]["access"]
+                .as_object()
+                .into_iter()
+                .flatten()
+                .flat_map(|(transition, _)| write_tags(&facts, transition))
+                .collect::<Vec<_>>();
+            tags.sort();
+            tags.dedup();
+            let result = json!({"ok":true,"output":prepared.output,"tags":tags});
+            // Recheck the same server-verified principal before committing callback effects.
+            let token = token.as_deref().unwrap_or("");
+            let current = match &runtime.authenticator {
+                Some(provider) => match tokio::time::timeout(server::DB_PREFLIGHT_TIMEOUT, provider.verify_session(token)).await {
+                    Ok(result) => result,
+                    Err(_) => Err(auth::AuthError::Unavailable),
+                },
+                None => Err(auth::AuthError::Unavailable),
+            };
+            let rejection = match current {
+                Ok(current) if Some(current.actor_id) == caller.actor_id => None,
+                Err(auth::AuthError::Expired) => Some(("WIRE.TOKEN_EXPIRED", "세션 만료")),
+                Err(auth::AuthError::Unavailable) => Some(("WIRE.DB_UNAVAILABLE", "principal 재검증 실패")),
+                _ => Some(("WIRE.UNAUTHENTICATED", "principal 재검증 실패")),
+            };
+            if let Some((code, message)) = rejection {
+                return reply(&mut w, &err(code, message)).await;
+            }
+            let mut result = match host.session.commit(result.clone()).await {
+                Ok(committed) => committed,
+                Err(error) => return reply(&mut w, &err(error.code, &error.msg)).await,
+            };
+            runtime.infrastructure.data_changes.notify();
+            result["contractFingerprint"] = json!(contract_fingerprint.as_deref().unwrap_or(""));
+            return reply(&mut w, &result.to_string()).await;
+        }
         if path == "/extension" {
             let Some(config) = runtime.extensions.as_ref() else {
                 return reply(&mut w, &err("WIRE.ADAPTER_UNSUPPORTED", "확장 worker가 설정되지 않음")).await;

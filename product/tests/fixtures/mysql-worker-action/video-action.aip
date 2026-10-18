@@ -1,0 +1,16 @@
+resource Member { fields { id: Id } }
+actor Member
+resource Video {
+  fields { id: Id; owner: Member; views: Int(0..100) default database }
+  rows read when true
+  transition increment { from views < 100; allow owner = actor; to views = views + 1 }
+  expose apply increment { target id; bulk maxRows 1 }
+  extension write view {
+    input { id: Video.Id }
+    output { count: Int(0..10) }
+    access Video.increment
+    effect db
+    deadline 3s
+    implementation "worker.view"
+  }
+}

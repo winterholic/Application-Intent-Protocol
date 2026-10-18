@@ -36,6 +36,130 @@ fn write_invocation<'a>(facts: &'a Value, name: &str, input: &Value, wire: IdWir
     Ok(WriteInvocation { declaration, wire, deadline, expires: Instant::now() + deadline })
 }
 
+/// A host that applies a declared public transition in the same transaction as the worker result.
+pub trait WriteActionHost: Send {
+    fn apply<'a>(
+        &'a mut self,
+        transition: &'a str,
+        request: &'a Value,
+        caller: &'a Caller,
+        wire: IdWire,
+    ) -> crate::host::HostFuture<'a, Result<Value, Reject>>;
+}
+
+/// Run a write extension using an adapter-owned transaction session. The adapter commits only after this returns a
+/// contract-valid output; any callback error, worker failure or invalid output leaves commit responsibility with it.
+pub async fn invoke_write_action(
+    host: &mut dyn WriteActionHost,
+    w: &mut Worker,
+    facts: &Value,
+    name: &str,
+    input: &Value,
+    caller: &Caller,
+    wire: IdWire,
+) -> Result<PreparedWrite, Reject> {
+    let invocation = write_invocation(facts, name, input, wire)?;
+    let x = invocation.declaration;
+    let expires = invocation.expires;
+    let allowed: std::collections::HashSet<&str> = x["access"].as_object().into_iter().flat_map(|access| access.keys().map(String::as_str)).collect();
+    w.next_invoke += 1;
+    let invoke_id = w.next_invoke;
+    let token = crate::grant_token('w', invoke_id);
+    w.send_before(&json!({"type":"invoke","invoke":invoke_id,"impl":x["implementation"],"input":input,"token":token}), expires).await?;
+    let mut poisoned: Option<&'static str> = None;
+    let mut calls = 0usize;
+    let result: Result<Value, Reject> = loop {
+        let left = expires.saturating_duration_since(Instant::now());
+        let line = match tokio::time::timeout(left, w.read_line()).await {
+            Err(_) => break rej("WIRE.DEADLINE_EXCEEDED", "쓰기 action worker 기한 초과"),
+            Ok(Err(_)) | Ok(Ok(None)) => break rej("WIRE.WORKER_FAILED", "worker가 종료됨"),
+            Ok(Ok(Some(line))) => line,
+        };
+        let Ok(message) = serde_json::from_str::<Value>(&line) else { break rej("WIRE.WORKER_FAILED", "worker 메시지 형식 오류") };
+        match message["type"].as_str() {
+            Some("call") => {
+                let mine = message["token"] == json!(token);
+                if mine {
+                    calls += 1;
+                }
+                let reply = if !mine {
+                    rej("WIRE.TOKEN_EXPIRED", "이 worker 호출의 ctx가 아님")
+                } else if calls > MAX_CTX_CALLS {
+                    rej("WIRE.CALL_LIMIT", format!("ctx 쓰기는 호출당 {MAX_CTX_CALLS}번까지"))
+                } else if message
+                    .as_object()
+                    .is_some_and(|object| object.keys().any(|key| !["type", "call", "token", "op", "name", "input"].contains(&key.as_str())))
+                {
+                    rej("WIRE.UNKNOWN_KEY", "ctx 요청에 알 수 없는 키")
+                } else if message["op"] != "apply" {
+                    rej("WIRE.UNSUPPORTED", "쓰기 action ctx는 apply만")
+                } else if !allowed.contains(message["name"].as_str().unwrap_or("")) {
+                    rej("WIRE.ACCESS_NOT_DECLARED", "전이가 action access에 선언되지 않음")
+                } else {
+                    let request = ctx_request(&message, wire);
+                    match request {
+                        Err(error) => Err(error),
+                        Ok(request) => {
+                            let transition = message["name"].as_str().unwrap_or("");
+                            match tokio::time::timeout(
+                                expires.saturating_duration_since(Instant::now()),
+                                host.apply(transition, &request, caller, wire),
+                            )
+                            .await
+                            {
+                                Ok(result) => result,
+                                Err(_) => break rej("WIRE.DEADLINE_EXCEEDED", "ctx 쓰기 기한 초과"),
+                            }
+                        }
+                    }
+                };
+                let reply = reply.map_err(|error| {
+                    if mine {
+                        poisoned.get_or_insert(error.code);
+                    }
+                    error
+                });
+                let response = match reply {
+                    Ok(value) => json!({"type":"reply","call":message["call"],"value":value}),
+                    Err(error) => json!({"type":"reply","call":message["call"],"error":{"code":error.code}}),
+                };
+                if let Err(error) = w.send_before(&response, expires).await {
+                    break Err(error);
+                }
+            }
+            Some("done") if message["invoke"] == json!(invoke_id) => {
+                if Instant::now() > expires {
+                    break rej("WIRE.DEADLINE_EXCEEDED", "기한 뒤 완료");
+                }
+                if let Some(code) = poisoned {
+                    break rej("WIRE.EXTENSION_ERROR", format!("ctx 실패 뒤 성공 반환: {code}"));
+                }
+                if let Some(error) = message.get("error") {
+                    break rej("WIRE.EXTENSION_ERROR", format!("확장 실패: {}", error["code"].as_str().unwrap_or("?")));
+                }
+                let output = message["output"].clone();
+                break validate_write_output(facts, name, &output, wire).map(|_| output);
+            }
+            _ => continue,
+        }
+    };
+    let output = result?;
+    if expires.saturating_duration_since(Instant::now()) < Duration::from_millis(COMMIT_MARGIN_MS) {
+        return rej("WIRE.DEADLINE_EXCEEDED", "커밋 전 남은 기한 부족");
+    }
+    Ok(PreparedWrite { output, expires })
+}
+
+/// Validate the worker's final record against the declared write output before its host commits.
+pub fn validate_write_output(facts: &Value, name: &str, output: &Value, wire: IdWire) -> Result<(), Reject> {
+    let (resource, extension) = name.split_once('.').ok_or(Reject { code: "WIRE.BAD_REQUEST", msg: "확장은 `Resource.name`".into() })?;
+    let declaration = &facts["resources"][resource]["extensions"][extension];
+    if declaration.is_null() || declaration["kind"] != "write" {
+        return rej("WIRE.NOT_EXPOSED", format!("쓰기 확장 `{name}` 없음"));
+    }
+    check_write_record(facts, &declaration["output"], output, "출력", wire)
+}
+
 pub fn validate_write(facts: &Value, name: &str, input: &Value, wire: IdWire) -> Result<Duration, Reject> {
     write_invocation(facts, name, input, wire).map(|invocation| invocation.deadline)
 }

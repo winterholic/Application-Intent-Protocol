@@ -37,13 +37,10 @@ fn reject_unsupported_infrastructure(config: &Config) -> Result<(), Value> {
     if external_mapping(config)?.is_none() {
         return Err(error("EXTERNAL_MAPPING_REQUIRED", "MySQL adapter는 기존 업무 DB 채택만 지원하므로 external_mapping 설정이 필요함"));
     }
-    if let Some(workers) = &config.workers {
-        if workers.enable_writes {
-            return Err(unsupported("workers.enable_writes", "MySQL adapter는 worker write 확장을 아직 지원하지 않음(쓰기·작업 slice 이후)"));
-        }
-        if workers.enable_file_uploads {
-            return Err(unsupported("workers.enable_file_uploads", "MySQL adapter는 worker 파일 업로드를 아직 지원하지 않음"));
-        }
+    if let Some(workers) = &config.workers
+        && workers.enable_file_uploads
+    {
+        return Err(unsupported("workers.enable_file_uploads", "MySQL adapter는 worker 파일 업로드를 아직 지원하지 않음"));
     }
     let checks: [(&str, bool, &str); 12] = [
         ("objects", config.objects.is_some(), "객체 저장소 metadata가 PostgreSQL에 있음"),
@@ -388,19 +385,23 @@ pub(crate) async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
     #[cfg(unix)]
     let mut termination =
         tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).map_err(|_| error("SIGNAL_CONFIG", "종료 signal 등록 실패"))?;
-    let mut server = spike_v6_transport::server::listen_relational_with_extensions(
+    let enable_worker_writes = config.workers.as_ref().is_some_and(|workers| workers.enable_writes);
+    let mut server = spike_v6_transport::server::listen_relational_with_worker_writes(
         deployed.clone(),
         config.wire.id_wire(),
         config.listen,
         Arc::new(backend),
         extensions,
+        enable_worker_writes,
         options,
         infrastructure,
         Some(authenticator),
     )
     .await
     .map_err(|e| server_start_error(&e))?;
-    let fingerprint = if config.workers.is_some() {
+    let fingerprint = if enable_worker_writes {
+        spike_v5_sdk::contract_fingerprint_with_all_extensions(&deployed, config.wire.id_wire())
+    } else if config.workers.is_some() {
         spike_v5_sdk::contract_fingerprint_with_extensions(&deployed, config.wire.id_wire())
     } else {
         spike_v5_sdk::contract_fingerprint_with_apply(&deployed, config.wire.id_wire())
@@ -543,7 +544,7 @@ mod tests {
         let config: Config = serde_json::from_value(read_worker_json).unwrap();
         assert!(reject_unsupported_infrastructure(&config).is_ok());
 
-        // 2. 쓰기 워커는 거부
+        // 2. explicit write extension worker is supported; unrelated infrastructure remains gated below.
         let mut write_worker_json = base_json.clone();
         write_worker_json["workers"] = json!({
             "directory": "extensions",
@@ -551,9 +552,7 @@ mod tests {
             "enable_writes": true
         });
         let config: Config = serde_json::from_value(write_worker_json).unwrap();
-        let err = reject_unsupported_infrastructure(&config).unwrap_err();
-        assert_eq!(err["code"], "DB_ADAPTER_UNSUPPORTED");
-        assert!(err["message"].as_str().unwrap().contains("workers.enable_writes"));
+        assert!(reject_unsupported_infrastructure(&config).is_ok());
 
         // 3. 파일 업로드 워커는 거부
         let mut upload_worker_json = base_json.clone();

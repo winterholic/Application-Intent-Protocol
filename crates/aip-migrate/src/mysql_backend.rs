@@ -9,7 +9,7 @@ use crate::mysql_driver::{MysqlDeploymentFence, MysqlDriver};
 use mysql_async::Row;
 use mysql_async::prelude::Queryable;
 use serde_json::Value;
-use spike_v2_read::backend::{BackendFuture, RelationalBackend};
+use spike_v2_read::backend::{BackendFuture, RelationalBackend, RelationalWorkerWriteStart};
 use spike_v2_read::id_wire::IdWire;
 use spike_v2_read::plan::{Caller, MAX_OUTPUT_BYTES, Plan, Reject};
 use spike_v2_read::sqlgen::Dialect;
@@ -200,6 +200,17 @@ impl RelationalBackend for MysqlBackend {
 
     fn apply<'a>(&'a self, facts: &'a Value, body: &'a Value, caller: &'a Caller, wire: IdWire) -> BackendFuture<'a, Value> {
         Box::pin(crate::mysql_write::handle_apply(&self.driver, &self.fence, facts, body, caller, wire))
+    }
+
+    fn begin_worker_write<'a>(
+        &'a self,
+        facts: &'a Value,
+        key: &'a str,
+        request: &'a Value,
+        caller: &'a Caller,
+        wire: IdWire,
+    ) -> BackendFuture<'a, Result<RelationalWorkerWriteStart, Reject>> {
+        Box::pin(crate::mysql_write::begin_worker_write(&self.driver, &self.fence, facts, key, request, caller, wire))
     }
 
     fn status<'a>(&'a self, body: &'a Value, caller: &'a Caller, wire: IdWire) -> BackendFuture<'a, Value> {

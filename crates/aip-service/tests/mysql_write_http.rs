@@ -10,6 +10,7 @@ use aip_migrate::mysql_driver::mysql_async::{Row, prelude::Queryable};
 use aip_migrate::mysql_driver::{MysqlDeploymentFence, MysqlDriver};
 use serde_json::{Value, json};
 use spike_v1_fixture::{Form, load_str};
+use spike_v2_read::backend::RelationalBackend;
 use spike_v2_read::external::{Mapping, Table};
 use spike_v2_read::id_wire::IdWire;
 use spike_v2_read::sqlgen;
@@ -139,6 +140,8 @@ struct Harness {
     owner: String,
     other: String,
     admin: MysqlDriver,
+    facts: Value,
+    backend: Arc<MysqlBackend>,
     _server: spike_v6_transport::server::Server,
 }
 
@@ -214,16 +217,16 @@ async fn harness_with(definition: &str, seed: &[String], source_grants: &str, pr
     let deployment = mysql_adopt::deployment(&runtime_url, META, &facts, &mapping, "decimal").await.unwrap_or_else(|e| panic!("deployment: {e}"));
     let runtime = MysqlDriver::from_url(&runtime_url).unwrap();
     let fence = MysqlDeploymentFence::new(META, SOURCE, &deployment.source_tables, &deployment.facts_digest, &deployment.structure_digest).unwrap();
-    let backend = MysqlBackend::new(runtime, fence);
+    let backend = Arc::new(MysqlBackend::new(runtime, fence));
     backend.check_server_profile().await.expect("MySQL 8.4 strict profile");
     let wire = IdWire::DecimalString;
     let deployed = deployment.facts;
     let contract = spike_v5_sdk::contract_fingerprint_with_apply(&deployed, wire);
     let server = listen_relational(
-        deployed,
+        deployed.clone(),
         wire,
         "127.0.0.1:0".parse().unwrap(),
-        Arc::new(backend),
+        backend.clone(),
         ServerOptions::default(),
         Infrastructure::default(),
         None,
@@ -231,7 +234,83 @@ async fn harness_with(definition: &str, seed: &[String], source_grants: &str, pr
     .await
     .expect("listen");
     let (owner, other) = (server.keys.issue(1, 600), server.keys.issue(2, 600));
-    Harness { addr: server.address, contract, owner, other, admin, _server: server }
+    Harness { addr: server.address, contract, owner, other, admin, facts: deployed, backend, _server: server }
+}
+
+const WORKER_ACTION: &str = include_str!("../../../product/tests/fixtures/mysql-worker-action/video-action.aip");
+
+#[tokio::test]
+#[ignore = "requires a run-owned MySQL 8.4 fixture on AIP_TEST_MYSQL_URL"]
+async fn mysql_worker_action_uses_one_fenced_idempotent_transaction() {
+    let harness = harness_with(
+        WORKER_ACTION,
+        &[
+            "INSERT INTO `{SOURCE}`.`member` (id) VALUES (1), (2)".into(),
+            "INSERT INTO `{SOURCE}`.`video` (id, owner_id, views) VALUES (10, 1, 0), (11, 2, 0)".into(),
+        ],
+        "SELECT, INSERT, UPDATE, DELETE",
+        None,
+    )
+    .await;
+    let wire = IdWire::DecimalString;
+    let now = harness.backend.now().await.unwrap();
+    let caller = spike_v2_read::plan::Caller { actor_id: Some(1), now };
+    let request = json!({"extension":"Video.view","input":{"id":"10"}});
+    let transition = json!({"apply":"Video.increment","target":{"ids":["10"]}});
+    let forged_caller = spike_v2_read::plan::Caller { actor_id: Some(2), now: caller.now.clone() };
+    let start = harness.backend.begin_worker_write(&harness.facts, "action-ok", &request, &caller, wire).await.unwrap();
+    let spike_v2_read::backend::RelationalWorkerWriteStart::New(mut session) = start else { panic!("new key must start a transaction") };
+    let applied = session.apply("Video.increment", &transition, &forged_caller, wire).await.unwrap();
+    assert_eq!(applied["changed"], json!(["10"]));
+    let committed = session.commit(json!({"ok":true,"output":{"count":1},"tags":["Video"]})).await.unwrap();
+    assert_eq!(committed["output"]["count"], 1);
+    assert_eq!(harness.count(&format!("SELECT views FROM `{SOURCE}`.`video` WHERE id=10")).await, 1);
+    assert_eq!(harness.count(&format!("SELECT COUNT(*) FROM `{META}`.`aip_audit` WHERE request_key = 'action-ok'")).await, 1);
+
+    let mut no_grant_facts = harness.facts.clone();
+    no_grant_facts["resources"]["Video"]["extensions"]["view"]["access"] = json!({});
+    let no_grant = harness.backend.begin_worker_write(&no_grant_facts, "action-no-grant", &request, &caller, wire).await;
+    assert_eq!(no_grant.err().unwrap().code, "WIRE.ACCESS_NOT_DECLARED");
+    assert_eq!(harness.count(&format!("SELECT views FROM `{SOURCE}`.`video` WHERE id=10")).await, 1);
+
+    let replay = harness.backend.begin_worker_write(&harness.facts, "action-ok", &request, &caller, wire).await.unwrap();
+    let spike_v2_read::backend::RelationalWorkerWriteStart::Replay(replay) = replay else { panic!("same request must replay") };
+    assert_eq!(replay["replayed"], true);
+    assert_eq!(harness.count(&format!("SELECT views FROM `{SOURCE}`.`video` WHERE id=10")).await, 1);
+    assert_eq!(harness.count(&format!("SELECT COUNT(*) FROM `{META}`.`aip_audit` WHERE request_key = 'action-ok'")).await, 1);
+
+    let conflicting_request = json!({"extension":"Video.view","input":{"id":"11"}});
+    let conflict = harness.backend.begin_worker_write(&harness.facts, "action-ok", &conflicting_request, &caller, wire).await;
+    assert_eq!(conflict.err().unwrap().code, "WIRE.IDEMPOTENCY_MISMATCH");
+    assert_eq!(
+        spike_v4_worker::write::validate_write(&harness.facts, "Video.view", &json!({"id":"10","actor":2}), wire).unwrap_err().code,
+        "WIRE.BAD_VALUE"
+    );
+
+    let other_owner_request = json!({"apply":"Video.increment","target":{"ids":["11"]}});
+    let start = harness.backend.begin_worker_write(&harness.facts, "action-denied", &request, &caller, wire).await.unwrap();
+    let spike_v2_read::backend::RelationalWorkerWriteStart::New(mut session) = start else { panic!("new denial case") };
+    assert_eq!(session.apply("Video.increment", &other_owner_request, &forged_caller, wire).await.unwrap_err().code, "WIRE.FORBIDDEN");
+    drop(session);
+    assert_eq!(harness.count(&format!("SELECT views FROM `{SOURCE}`.`video` WHERE id=11")).await, 0);
+
+    let mut deadline_facts = harness.facts.clone();
+    deadline_facts["resources"]["Video"]["extensions"]["view"]["deadlineMs"] = json!(10);
+    let start = harness.backend.begin_worker_write(&deadline_facts, "action-deadline", &request, &caller, wire).await.unwrap();
+    let spike_v2_read::backend::RelationalWorkerWriteStart::New(mut session) = start else { panic!("new rollback case") };
+    session.apply("Video.increment", &transition, &caller, wire).await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    assert_eq!(session.commit(json!({"ok":true})).await.unwrap_err().code, "WIRE.DEADLINE_EXCEEDED");
+    assert_eq!(harness.count(&format!("SELECT views FROM `{SOURCE}`.`video` WHERE id=10")).await, 1);
+
+    let start = harness.backend.begin_worker_write(&harness.facts, "action-invalid-output", &request, &caller, wire).await.unwrap();
+    let spike_v2_read::backend::RelationalWorkerWriteStart::New(mut session) = start else { panic!("new invalid output case") };
+    session.apply("Video.increment", &transition, &caller, wire).await.unwrap();
+    let invalid_output = spike_v4_worker::write::validate_write_output(&harness.facts, "Video.view", &json!({"count":11}), wire);
+    assert_eq!(invalid_output.unwrap_err().code, "WIRE.OUTPUT_INVALID");
+    // The transport returns this validation error without calling commit, so dropping the owned session rolls back.
+    drop(session);
+    assert_eq!(harness.count(&format!("SELECT views FROM `{SOURCE}`.`video` WHERE id=10")).await, 1);
 }
 
 /// One-shot MySQL fault injection between the server's runtime account and the database. Faults fire on the first matching
