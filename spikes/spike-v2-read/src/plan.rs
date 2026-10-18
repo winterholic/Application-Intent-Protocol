@@ -459,117 +459,157 @@ fn plan_read_inner(dialect: Dialect, facts: &Value, req: &Value, caller: &Caller
         }
     }
 
+fn compile_filter_item(
+    dialect: Dialect,
+    facts: &Value,
+    res: &str,
+    rf: &Value,
+    ex: &Value,
+    cx: &mut Ctx,
+    t: &str,
+    fo: &Map<String, Value>,
+    wire: crate::id_wire::IdWire,
+) -> Result<(String, String), Reject> {
+    keys(fo, &["field", "op", "value"], "filter")?;
+    let (field, op) = (fo.get("field").and_then(Value::as_str).unwrap_or(""), fo.get("op").and_then(Value::as_str).unwrap_or(""));
+    let key = format!("{field}.{op}");
+    // 같은 조건을 반복하면 요청 크기만 커진다. 허용 목록 항목당 한 번만 받는다(R2B-03).
+    if !ex["filter"].as_array().unwrap().iter().any(|x| x == &json!(key)) {
+        let allowed = allowed_names(ex["filter"].as_array().unwrap().iter().filter_map(Value::as_str));
+        return rej("WIRE.FILTER_NOT_ALLOWED", format!("`{key}` 필터는 계약에 없음(선택 가능 여부와 별개). 허용: {allowed}"));
+    }
+    // facts가 sema를 거치지 않고 들어와도, 정책으로 가려지는 값이 filter 결과 유무로 새지 않게 막는다.
+    if !rf["fieldRead"][field].is_null() {
+        return rej("WIRE.POLICY_FIELD_NOT_FILTERABLE", format!("`{field}`에는 field read 정책이 있어 filter에 쓸 수 없음"));
+    }
+    let fty = rf["fields"][field]["ty"].as_str().unwrap();
+    let col = column(facts, res, field).unwrap();
+    let tcol = cx.qualified(t, &col);
+    let raw = fo.get("value").unwrap_or(&Value::Null);
+    // Ref는 traverse와 같게 대상 행 정책을 통과한 경우에만 값이 있는 것으로 본다.
+    // 아니면 traverse에서 null로 가린 대상 id를 eq/in으로 확인할 수 있다.
+    let visible = match fty.trim_end_matches('?').strip_prefix("Ref<").and_then(|x| x.strip_suffix('>')) {
+        Some(target) => {
+            let ta = cx.alias("v");
+            let tenv = Env { this: Some((ta.clone(), target.to_string())), ..Default::default() };
+            let row = cx.cond(&facts["resources"][target]["rowRead"], &tenv).map_err(internal)?;
+            Some(format!("EXISTS (SELECT 1 FROM {} {ta} WHERE {} = {tcol} AND {row})", cx.table(target), cx.qualified(&ta, "id")))
+        }
+        None => None,
+    };
+    let and_visible = |cond: String| match &visible {
+        Some(v) => format!("({cond} AND {v})"),
+        None => cond,
+    };
+    if op == "isNull" {
+        // 값은 bool 하나. 조건 문자열(IS NULL)은 고정이고 true/false만 매개변수로 비교한다.
+        let Value::Bool(b) = raw else { return rej("WIRE.BAD_VALUE", "isNull 값은 bool") };
+        let p = cx.params.bind(Some(b.to_string()), "boolean");
+        let is_null = match &visible {
+            Some(v) => format!("({tcol} IS NULL OR NOT {v})"),
+            None => format!("({tcol} IS NULL)"),
+        };
+        return Ok((key, format!("({is_null} = {p})")));
+    }
+    if op == "in" {
+        let items = raw.as_array().ok_or(Reject { code: "WIRE.BAD_VALUE", msg: "in 값은 배열".into() })?;
+        if items.is_empty() {
+            return rej("WIRE.BAD_VALUE", "in 배열이 비었음. 조건이 없으면 필터를 빼야 함");
+        }
+        if items.len() > MAX_IN_VALUES {
+            return rej("WIRE.IN_LIST_EXCEEDED", format!("in 배열 {}개 > 상한 {MAX_IN_VALUES}", items.len()));
+        }
+        // 같은 값은 한 번만 바인딩한다. 비교는 검사를 거친 정규 문자열 기준이라 `10`과 `"10"`은 같은 값이다.
+        let mut seen = std::collections::HashSet::new();
+        let mut marks = vec![];
+        for item in items {
+            let (v, cast) = check_value(facts, fty, item, wire)?;
+            if seen.insert(v.clone()) {
+                marks.push(cx.params.bind(Some(v), cast));
+            }
+        }
+        return Ok((key, and_visible(format!("({tcol} IN ({}))", marks.join(", ")))));
+    }
+    let (v, cast) = check_value(facts, fty, raw, wire)?;
+    if op == "contains" {
+        let Value::String(text) = raw else { return rej("WIRE.BAD_VALUE", "contains 값은 문자열") };
+        // 빈 문자열은 모든 행에 일치하므로 필터가 아니다.
+        if text.is_empty() {
+            return rej("WIRE.BAD_VALUE", "contains 값이 비었음. 조건이 없으면 필터를 빼야 함");
+        }
+        let n = text.chars().count();
+        if n > MAX_CONTAINS_CHARS {
+            return rej("WIRE.VALUE_TOO_LONG", format!("contains 값 {n}자 > 상한 {MAX_CONTAINS_CHARS}자"));
+        }
+        let p = cx.params.bind(Some(v), cast);
+        // strpos는 인자를 리터럴로 비교한다. LIKE와 달리 %, _, \\가 특별한 뜻을 갖지 않는다. MySQL의 LOCATE도 같다(대소문자는 열 collation을 따른다).
+        let cond = if dialect.is_mysql() { format!("(LOCATE({p}, {tcol}) > 0)") } else { format!("(strpos({tcol}, {p}) > 0)") };
+        return Ok((key, and_visible(cond)));
+    }
+    if op == "prefix" {
+        // contains와 같은 상한. 긴 값은 검색어가 아니라 비용만 키운다.
+        let n = v.chars().count();
+        if n > MAX_CONTAINS_CHARS {
+            return rej("WIRE.VALUE_TOO_LONG", format!("prefix 값 {n}자 > 상한 {MAX_CONTAINS_CHARS}자"));
+        }
+        let p = cx.params.bind(Some(v), cast);
+        // A prefix is a literal string; SQL wildcard and escape characters keep their meaning as text.
+        let cond = if dialect.is_mysql() {
+            format!("(LEFT({tcol}, CHAR_LENGTH({p})) = {p})")
+        } else {
+            format!("(left({tcol}, char_length({p})) = {p})")
+        };
+        return Ok((key, and_visible(cond)));
+    }
+    let sop = match op {
+        "eq" => "=",
+        "gte" => ">=",
+        "lte" => "<=",
+        "gt" => ">",
+        "lt" => "<",
+        _ => return rej("WIRE.FILTER_NOT_ALLOWED", format!("연산 `{op}` 미지원")),
+    };
+    let p = cx.params.bind(Some(v), cast);
+    Ok((key, and_visible(format!("({tcol} {sop} {p})"))))
+}
+
     let mut wh = vec![cx.cond(&rf["rowRead"], &env).map_err(internal)?];
     let mut seen_filter = std::collections::HashSet::new();
+    const MAX_OR_CONDITIONS: usize = 10;
     if let Some(fl) = o.get("filter") {
         for f in fl.as_array().ok_or(Reject { code: "WIRE.BAD_REQUEST", msg: "filter 배열".into() })? {
             let fo = f.as_object().ok_or(Reject { code: "WIRE.BAD_REQUEST", msg: "filter 항목은 객체".into() })?;
-            keys(fo, &["field", "op", "value"], "filter")?;
-            let (field, op) = (fo.get("field").and_then(Value::as_str).unwrap_or(""), fo.get("op").and_then(Value::as_str).unwrap_or(""));
-            let key = format!("{field}.{op}");
-            // 같은 조건을 반복하면 요청 크기만 커진다. 허용 목록 항목당 한 번만 받는다(R2B-03).
-            if !seen_filter.insert(key.clone()) {
-                return rej("WIRE.DUPLICATE", format!("filter `{key}` 중복"));
-            }
-            if !ex["filter"].as_array().unwrap().iter().any(|x| x == &json!(key)) {
-                let allowed = allowed_names(ex["filter"].as_array().unwrap().iter().filter_map(Value::as_str));
-                return rej("WIRE.FILTER_NOT_ALLOWED", format!("`{key}` 필터는 계약에 없음(선택 가능 여부와 별개). 허용: {allowed}"));
-            }
-            // facts가 sema를 거치지 않고 들어와도, 정책으로 가려지는 값이 filter 결과 유무로 새지 않게 막는다.
-            if !rf["fieldRead"][field].is_null() {
-                return rej("WIRE.POLICY_FIELD_NOT_FILTERABLE", format!("`{field}`에는 field read 정책이 있어 filter에 쓸 수 없음"));
-            }
-            let fty = rf["fields"][field]["ty"].as_str().unwrap();
-            let col = column(facts, res, field).unwrap();
-            let tcol = cx.qualified(&t, &col);
-            let raw = fo.get("value").unwrap_or(&Value::Null);
-            // Ref는 traverse와 같게 대상 행 정책을 통과한 경우에만 값이 있는 것으로 본다.
-            // 아니면 traverse에서 null로 가린 대상 id를 eq/in으로 확인할 수 있다.
-            let visible = match fty.trim_end_matches('?').strip_prefix("Ref<").and_then(|x| x.strip_suffix('>')) {
-                Some(target) => {
-                    let ta = cx.alias("v");
-                    let tenv = Env { this: Some((ta.clone(), target.to_string())), ..Default::default() };
-                    let row = cx.cond(&facts["resources"][target]["rowRead"], &tenv).map_err(internal)?;
-                    Some(format!("EXISTS (SELECT 1 FROM {} {ta} WHERE {} = {tcol} AND {row})", cx.table(target), cx.qualified(&ta, "id")))
+            if fo.contains_key("or") {
+                keys(fo, &["or"], "filter OR 조건")?;
+                let or_items = fo["or"].as_array().ok_or(Reject { code: "WIRE.BAD_REQUEST", msg: "or 값은 배열".into() })?;
+                if or_items.is_empty() {
+                    return rej("WIRE.BAD_VALUE", "or 배열이 비었음. 조건이 없으면 필터를 빼야 함");
                 }
-                None => None,
-            };
-            let and_visible = |cond: String| match &visible {
-                Some(v) => format!("({cond} AND {v})"),
-                None => cond,
-            };
-            if op == "isNull" {
-                // 값은 bool 하나. 조건 문자열(IS NULL)은 고정이고 true/false만 매개변수로 비교한다.
-                let Value::Bool(b) = raw else { return rej("WIRE.BAD_VALUE", "isNull 값은 bool") };
-                let p = cx.params.bind(Some(b.to_string()), "boolean");
-                let is_null = match &visible {
-                    Some(v) => format!("({tcol} IS NULL OR NOT {v})"),
-                    None => format!("({tcol} IS NULL)"),
-                };
-                wh.push(format!("({is_null} = {p})"));
-                continue;
-            }
-            if op == "in" {
-                let items = raw.as_array().ok_or(Reject { code: "WIRE.BAD_VALUE", msg: "in 값은 배열".into() })?;
-                if items.is_empty() {
-                    return rej("WIRE.BAD_VALUE", "in 배열이 비었음. 조건이 없으면 필터를 빼야 함");
+                if or_items.len() > MAX_OR_CONDITIONS {
+                    return rej("WIRE.OR_LIST_EXCEEDED", format!("or 조건 수 {}개 > 상한 {MAX_OR_CONDITIONS}", or_items.len()));
                 }
-                if items.len() > MAX_IN_VALUES {
-                    return rej("WIRE.IN_LIST_EXCEEDED", format!("in 배열 {}개 > 상한 {MAX_IN_VALUES}", items.len()));
-                }
-                // 같은 값은 한 번만 바인딩한다. 비교는 검사를 거친 정규 문자열 기준이라 `10`과 `"10"`은 같은 값이다.
-                let mut seen = std::collections::HashSet::new();
-                let mut marks = vec![];
-                for item in items {
-                    let (v, cast) = check_value(facts, fty, item, wire)?;
-                    if seen.insert(v.clone()) {
-                        marks.push(cx.params.bind(Some(v), cast));
+                let mut or_parts = vec![];
+                let mut or_seen = std::collections::HashSet::new();
+                for item in or_items {
+                    let item_obj = item.as_object().ok_or(Reject { code: "WIRE.BAD_REQUEST", msg: "or 항목은 객체".into() })?;
+                    if item_obj.contains_key("or") {
+                        return rej("WIRE.BAD_REQUEST", "중첩된 or 조건은 미지원");
                     }
+                    let (k, cond) = compile_filter_item(dialect, facts, res, rf, ex, &mut cx, &t, item_obj, wire)?;
+                    let item_sig = serde_json::to_string(item_obj).unwrap_or_default();
+                    if !or_seen.insert(item_sig) {
+                        return rej("WIRE.DUPLICATE", format!("or 항목 중복: {k}"));
+                    }
+                    or_parts.push(cond);
                 }
-                wh.push(and_visible(format!("({tcol} IN ({}))", marks.join(", "))));
-                continue;
+                wh.push(format!("({})", or_parts.join(" OR ")));
+            } else {
+                let (key, cond) = compile_filter_item(dialect, facts, res, rf, ex, &mut cx, &t, fo, wire)?;
+                if !seen_filter.insert(key.clone()) {
+                    return rej("WIRE.DUPLICATE", format!("filter `{key}` 중복"));
+                }
+                wh.push(cond);
             }
-            let (v, cast) = check_value(facts, fty, raw, wire)?;
-            if op == "contains" {
-                let Value::String(text) = raw else { return rej("WIRE.BAD_VALUE", "contains 값은 문자열") };
-                // 빈 문자열은 모든 행에 일치하므로 필터가 아니다.
-                if text.is_empty() {
-                    return rej("WIRE.BAD_VALUE", "contains 값이 비었음. 조건이 없으면 필터를 빼야 함");
-                }
-                let n = text.chars().count();
-                if n > MAX_CONTAINS_CHARS {
-                    return rej("WIRE.VALUE_TOO_LONG", format!("contains 값 {n}자 > 상한 {MAX_CONTAINS_CHARS}자"));
-                }
-                let p = cx.params.bind(Some(v), cast);
-                // strpos는 인자를 리터럴로 비교한다. LIKE와 달리 %, _, \\가 특별한 뜻을 갖지 않는다. MySQL의 LOCATE도 같다(대소문자는 열 collation을 따른다).
-                wh.push(if dialect.is_mysql() { format!("(LOCATE({p}, {tcol}) > 0)") } else { format!("(strpos({tcol}, {p}) > 0)") });
-                continue;
-            }
-            if op == "prefix" {
-                // contains와 같은 상한. 긴 값은 검색어가 아니라 비용만 키운다.
-                let n = v.chars().count();
-                if n > MAX_CONTAINS_CHARS {
-                    return rej("WIRE.VALUE_TOO_LONG", format!("prefix 값 {n}자 > 상한 {MAX_CONTAINS_CHARS}자"));
-                }
-                let p = cx.params.bind(Some(v), cast);
-                // A prefix is a literal string; SQL wildcard and escape characters keep their meaning as text.
-                wh.push(if dialect.is_mysql() {
-                    format!("(LEFT({tcol}, CHAR_LENGTH({p})) = {p})")
-                } else {
-                    format!("(left({tcol}, char_length({p})) = {p})")
-                });
-                continue;
-            }
-            let sop = match op {
-                "eq" => "=",
-                "gte" => ">=",
-                "lte" => "<=",
-                "gt" => ">",
-                "lt" => "<",
-                _ => return rej("WIRE.FILTER_NOT_ALLOWED", format!("연산 `{op}` 미지원")),
-            };
-            let p = cx.params.bind(Some(v), cast);
-            wh.push(and_visible(format!("({tcol} {sop} {p})")));
         }
     }
 

@@ -223,6 +223,105 @@ async fn facereview_schema_is_adopted_without_business_ddl_and_read_with_origina
     assert_eq!(ids(&by_category), vec!["aaaaaaaa-0000-4000-8000-000000000002"], "{by_category}");
     let paged = read(None, json!({"read": "Video", "select": ["id"], "sort": newest, "limit": 1, "offset": 1})).await;
     assert_eq!(ids(&paged), vec![CAT_VIDEO], "{paged}");
+
+    // WBS 7.2.3: Single logical OR search (title OR channel_name) as in original HomeService.get_search_videos(keyword_type='all')
+    // 1) Title-only match in OR:
+    let or_title_only = read(
+        None,
+        json!({"read": "Video", "select": ["id"], "filter": [{"or": [
+            {"field": "title", "op": "contains", "value": "요리"},
+            {"field": "channel_name", "op": "contains", "value": "없는채널"}
+        ]}], "sort": newest}),
+    )
+    .await;
+    assert_eq!(ids(&or_title_only), vec!["aaaaaaaa-0000-4000-8000-000000000002"], "{or_title_only}");
+
+    // 2) Channel-only match in OR:
+    let or_channel_only = read(
+        None,
+        json!({"read": "Video", "select": ["id"], "filter": [{"or": [
+            {"field": "title", "op": "contains", "value": "없는제목"},
+            {"field": "channel_name", "op": "contains", "value": "냥채널"}
+        ]}], "sort": newest}),
+    )
+    .await;
+    assert_eq!(ids(&or_channel_only), vec![CAT_VIDEO], "{or_channel_only}");
+
+    // 3) Both match and overlap: global sort (created_at desc) and deduplication preserved without disjoint set artifact
+    let or_both = read(
+        None,
+        json!({"read": "Video", "select": ["id"], "filter": [{"or": [
+            {"field": "title", "op": "contains", "value": "고양이"},
+            {"field": "channel_name", "op": "contains", "value": "쿡채널"}
+        ]}], "sort": newest}),
+    )
+    .await;
+    assert_eq!(ids(&or_both), vec!["aaaaaaaa-0000-4000-8000-000000000002", CAT_VIDEO], "{or_both}");
+
+    // 4) Neither matches (empty result):
+    let or_none = read(
+        None,
+        json!({"read": "Video", "select": ["id"], "filter": [{"or": [
+            {"field": "title", "op": "contains", "value": "없는제목"},
+            {"field": "channel_name", "op": "contains", "value": "없는채널"}
+        ]}], "sort": newest}),
+    )
+    .await;
+    assert_eq!(ids(&or_none), Vec::<String>::new(), "{or_none}");
+
+    // 5) Pagination on OR search (page 1, page 2, empty trailing page):
+    let or_p1 = read(
+        None,
+        json!({"read": "Video", "select": ["id"], "filter": [{"or": [
+            {"field": "title", "op": "contains", "value": "고양이"},
+            {"field": "channel_name", "op": "contains", "value": "쿡채널"}
+        ]}], "sort": newest, "limit": 1, "offset": 0}),
+    )
+    .await;
+    assert_eq!(ids(&or_p1), vec!["aaaaaaaa-0000-4000-8000-000000000002"], "{or_p1}");
+
+    let or_p2 = read(
+        None,
+        json!({"read": "Video", "select": ["id"], "filter": [{"or": [
+            {"field": "title", "op": "contains", "value": "고양이"},
+            {"field": "channel_name", "op": "contains", "value": "쿡채널"}
+        ]}], "sort": newest, "limit": 1, "offset": 1}),
+    )
+    .await;
+    assert_eq!(ids(&or_p2), vec![CAT_VIDEO], "{or_p2}");
+
+    let or_p3 = read(
+        None,
+        json!({"read": "Video", "select": ["id"], "filter": [{"or": [
+            {"field": "title", "op": "contains", "value": "고양이"},
+            {"field": "channel_name", "op": "contains", "value": "쿡채널"}
+        ]}], "sort": newest, "limit": 1, "offset": 2}),
+    )
+    .await;
+    assert_eq!(ids(&or_p3), Vec::<String>::new(), "{or_p3}");
+
+    // 6) Combination of AND filter and OR filter:
+    let and_or = read(
+        None,
+        json!({"read": "Video", "select": ["id"], "filter": [
+            {"field": "category", "op": "eq", "value": "cook"},
+            {"or": [
+                {"field": "title", "op": "contains", "value": "고양이"},
+                {"field": "channel_name", "op": "contains", "value": "쿡채널"}
+            ]}
+        ], "sort": newest}),
+    )
+    .await;
+    assert_eq!(ids(&and_or), vec!["aaaaaaaa-0000-4000-8000-000000000002"], "{and_or}");
+
+    // WBS 7.2.3: Video total count aggregate over the same policy and live MySQL rows
+    let total_guest = read(None, json!({"aggregate": "Video.totalCount", "input": {}})).await;
+    assert_eq!(total_guest["ok"], true, "{total_guest}");
+    assert_eq!(total_guest["rows"][0], 2, "2 active videos in seed: {total_guest}");
+
+    let total_member = read(Some(&alice), json!({"aggregate": "Video.totalCount", "input": {}})).await;
+    assert_eq!(total_member["ok"], true, "{total_member}");
+    assert_eq!(total_member["rows"][0], 2, "active member sees the same total: {total_member}");
     let detail = read(
         None,
         json!({"read": "Video", "select": ["id", "title", "channel_name", "category", "duration", "view_count", "created_at"],

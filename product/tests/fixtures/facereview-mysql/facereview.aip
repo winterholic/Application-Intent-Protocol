@@ -8,6 +8,8 @@ predicate isAdmin(a: User) = a.role in (ADMIN, SUPER_ADMIN) and a.is_deleted = f
 // A deactivated member (is_deleted) is no longer a valid caller; NULL counts as deactivated, as filter_by(is_deleted=False) does.
 predicate active(a: User) = a.is_deleted = false
 
+access activeUserOrGuest(a: User) = true
+
 enum Role { GENERAL, ADMIN, SUPER_ADMIN }
 enum Genre { drama, eating, travel, cook, show, information, game, sports, music, animal, beauty, comedy, horror, exercise, vlog, etc }
 enum RequestStatus { PENDING, ACCEPTED, REJECTED }
@@ -90,6 +92,15 @@ resource Video {
     sort created_at, id, view_count
     budget { rows 100; depth 1; cost 1000; deadline 2s; offset 100000 }
   }
+  aggregate totalCount: Int {
+    source Video
+    sourceAccess activeUserOrGuest(actor)
+    where is_deleted = false
+    callerFilter none
+    rowOutput none
+    release count
+  }
+  expose aggregate totalCount
 }
 
 resource Comment {
