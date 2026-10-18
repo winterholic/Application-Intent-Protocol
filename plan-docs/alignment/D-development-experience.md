@@ -11,14 +11,14 @@
 
 | 근거 | 이번에 확인한 내용 |
 |---|---|
-| [RecruitmentController](../../../../ariari/ariari/ariari-backend/src/main/java/com/ariari/ariari/domain/recruitment/recruitment/RecruitmentController.java) 72행, [RecruitmentListService](../../../../ariari/ariari/ariari-backend/src/main/java/com/ariari/ariari/domain/recruitment/recruitment/RecruitmentListService.java) 34행 | 요청 조건·페이지 전달, 사용자 학교 조회·교내 인증 |
-| [RecruitmentRepositoryImpl](../../../../ariari/ariari/ariari-backend/src/main/java/com/ariari/ariari/domain/recruitment/recruitment/RecruitmentRepositoryImpl.java) 38·50·59행 | 가시성 조건·count 조건, 호출자 sort 문자열의 PathBuilder 사용 |
-| [RecruitmentData](../../../../ariari/ariari/ariari-backend/src/main/java/com/ariari/ariari/domain/recruitment/recruitment/dto/RecruitmentData.java) 31·75행, [프론트 api](../../../../ariari/ariari/ariari-frontend/app/api/recruitment/api.ts), [프론트 타입](../../../../ariari/ariari/ariari-frontend/app/types/recruitment.ts) | 평면 응답 DTO·명시적 호출 래퍼·대응 TS 타입. 동아리 로고/총 북마크 수 필드는 해당 DTO에 없음 |
-| [MemberAlarmService](../../../../ariari/ariari/ariari-backend/src/main/java/com/ariari/ariari/domain/member/alarm/MemberAlarmService.java) 68행 | ID+소유자 조회, 미읽음만 읽음 변경. [mutation hook](../../../../ariari/ariari/ariari-frontend/app/hooks/notification/useNotificationMutation.tsx) 27행에서 알림 읽기 캐시 무효화 |
-| [ApplyService](../../../../ariari/ariari/ariari-backend/src/main/java/com/ariari/ariari/domain/recruitment/apply/ApplyService.java) 94행 | 트랜잭션, 같은 동아리·MANAGER 이상·거절 상태·기존 회원 검사, 회원 생성·알림 이벤트 |
+| [RecruitmentController](../../../../ariari/ariari-backend/src/main/java/com/ariari/ariari/domain/recruitment/recruitment/RecruitmentController.java) 72행, [RecruitmentListService](../../../../ariari/ariari-backend/src/main/java/com/ariari/ariari/domain/recruitment/recruitment/RecruitmentListService.java) 34행 | 요청 조건·페이지 전달, 사용자 학교 조회·교내 인증 |
+| [RecruitmentRepositoryImpl](../../../../ariari/ariari-backend/src/main/java/com/ariari/ariari/domain/recruitment/recruitment/RecruitmentRepositoryImpl.java) 38·50·59행 | 가시성 조건·count 조건, 호출자 sort 문자열의 PathBuilder 사용 |
+| [RecruitmentData](../../../../ariari/ariari-backend/src/main/java/com/ariari/ariari/domain/recruitment/recruitment/dto/RecruitmentData.java) 31·75행, [프론트 api](../../../../ariari/ariari/ariari-frontend/app/api/recruitment/api.ts), [프론트 타입](../../../../ariari/ariari/ariari-frontend/app/types/recruitment.ts) | 평면 응답 DTO·명시적 호출 래퍼·대응 TS 타입. 동아리 로고/총 북마크 수 필드는 해당 DTO에 없음 |
+| [MemberAlarmService](../../../../ariari/ariari-backend/src/main/java/com/ariari/ariari/domain/member/alarm/MemberAlarmService.java) 68행 | ID+소유자 조회, 미읽음만 읽음 변경. [mutation hook](../../../../ariari/ariari/ariari-frontend/app/hooks/notification/useNotificationMutation.tsx) 27행에서 알림 읽기 캐시 무효화 |
+| [ApplyService](../../../../ariari/ariari-backend/src/main/java/com/ariari/ariari/domain/recruitment/apply/ApplyService.java) 94행 | 트랜잭션, 같은 동아리·MANAGER 이상·거절 상태·기존 회원 검사, 회원 생성·알림 이벤트 |
 | [승인 mutation hook](../../../../ariari/ariari/ariari-frontend/app/hooks/apply/useApplicationMutation.tsx) 30행 | 지원 목록·각 상세 무효화. 이 hook에서는 새 회원으로 인한 회원 목록 갱신을 찾지 못함. 앱 전체의 최종 UI 오동작은 미재현 |
-| [ClubMemberService](../../../../ariari/ariari/ariari-backend/src/main/java/com/ariari/ariari/domain/club/clubmember/ClubMemberService.java) 74행 | 위임 대상 ADMIN, 요청자 GENERAL 두 쓰기. 자기 위임의 실제 오류는 미재현 |
-| [KakaoAuthManager](../../../../ariari/ariari/ariari-backend/src/main/java/com/ariari/ariari/commons/auth/oauth/KakaoAuthManager.java) 58·87·121행 | 외부 OAuth HTTP 연동 코드 경로 존재. 외부 호출 성공·보안·성능은 미검증 |
+| [ClubMemberService](../../../../ariari/ariari-backend/src/main/java/com/ariari/ariari/domain/club/clubmember/ClubMemberService.java) 74행 | 위임 대상 ADMIN, 요청자 GENERAL 두 쓰기. 자기 위임의 실제 오류는 미재현 |
+| [KakaoAuthManager](../../../../ariari/ariari-backend/src/main/java/com/ariari/ariari/commons/auth/oauth/KakaoAuthManager.java) 58·87·121행 | 외부 OAuth HTTP 연동 코드 경로 존재. 외부 호출 성공·보안·성능은 미검증 |
 | [당시 PoC 모집 query](../../examples/ariari/app.aipoc) 425행, [tsgen](../../crates/aip-contract/src/tsgen.rs) 238행 | 서버 select 고정·정렬 enum·이름 호출. 당시 PoC에는 호출자가 select를 조합하는 경로가 없었음 |
 
 ‘파일 수정 필요’는 검토해야 할 계층과 구분한다. 현재 요청·결과·정책으로 충분하면 controller나 service가 반드시 바뀌는 것은 아니다. 기존 코드가 허용하는 임의 sort는 AIP가 새로 만든 유연성으로 계산하지 않는다.
