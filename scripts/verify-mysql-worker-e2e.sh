@@ -21,6 +21,8 @@
 # Ownership: every container and volume this script creates carries labels aip.e2e.tag=<tag> and aip.e2e.run=<run id>.
 # Cleanup (exit trap and `down`) removes only objects whose label matches; a same-named object created by anything else
 # is never removed. Name collisions are checked before the trap is installed and before anything is created.
+# The MySQL fixture also proves itself to the test: a random run marker is written into the container's admin database
+# (table aip_e2e_owner) and passed as AIP_E2E_FIXTURE_MARKER; the test fails closed before any DDL without a match.
 # Other options: AIP_E2E_PLATFORM (run only, default linux/amd64), AIP_E2E_NODE_VERSION (run only, default 26.9.0),
 # AIP_E2E_KEEP=1 to keep this run's objects.
 set -euo pipefail
@@ -127,11 +129,20 @@ wait_for_mysql() { # <container port as seen by mysqladmin inside the container>
   [[ -n "$ready" ]] || { echo "ERROR: $mysql_name did not become ready" >&2; exit 1; }
 }
 
+# Proves to the test that this MySQL was started by this run: a random marker, written into the container this script
+# just created and handed to the test as AIP_E2E_FIXTURE_MARKER. The test refuses destructive DDL without a match.
+fixture_marker="aip-e2e-$run_id-$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n')"
+write_owner_marker() { # <container port>
+  docker exec -e MYSQL_PWD="$password" "$mysql_name" mysql -h127.0.0.1 -P"$1" -uroot "$database" \
+    -e "CREATE TABLE aip_e2e_owner (marker VARCHAR(128) NOT NULL PRIMARY KEY); INSERT INTO aip_e2e_owner (marker) VALUES ('$fixture_marker')"
+}
+
 if [[ "$mode" == run-ci ]]; then
   echo "=== Starting run-owned MySQL 8.4 ($mysql_name, 127.0.0.1:$AIP_E2E_MYSQL_PORT) ==="
   docker run -d --name "$mysql_name" "${labels[@]}" -e MYSQL_ROOT_PASSWORD="$password" -e MYSQL_DATABASE="$database" \
     -p "127.0.0.1:$AIP_E2E_MYSQL_PORT:3306" --tmpfs /var/lib/mysql mysql:8.4 >/dev/null
   wait_for_mysql 3306
+  write_owner_marker 3306
 
   echo "=== Preflight: does the runner's Bubblewrap ($(command -v bwrap)) create namespaces? ==="
   if ! bwrap --unshare-all --ro-bind / / --proc /proc --dev /dev true; then
@@ -144,6 +155,7 @@ if [[ "$mode" == run-ci ]]; then
   export AIP_TEST_DATABASE_URL="${AIP_TEST_DATABASE_URL:-host=127.0.0.1 port=55473 dbname=aip_test_run user=runner}"
   export AIP_TEST_ADMIN_URL="${AIP_TEST_ADMIN_URL:-host=127.0.0.1 port=55473 dbname=postgres user=runner}"
   export AIP_TEST_MYSQL_URL="mysql://root:$password@127.0.0.1:$AIP_E2E_MYSQL_PORT/$database"
+  export AIP_E2E_FIXTURE_MARKER="$fixture_marker"
   cd "$repo"
   echo "=== Verifying the target test exists ==="
   cargo test "${cargo_args[@]}" -- --list --ignored 2>&1 | tee /tmp/aip-e2e-list-"$tag".txt | tail -3
@@ -158,6 +170,7 @@ echo "=== Starting run-owned MySQL 8.4 ($mysql_name, 127.0.0.1:$AIP_E2E_MYSQL_PO
 docker run -d --name "$mysql_name" "${labels[@]}" -e MYSQL_ROOT_PASSWORD="$password" -e MYSQL_DATABASE="$database" \
   --tmpfs /var/lib/mysql mysql:8.4 --port="$AIP_E2E_MYSQL_PORT" --bind-address=127.0.0.1 >/dev/null
 wait_for_mysql "$AIP_E2E_MYSQL_PORT"
+write_owner_marker "$AIP_E2E_MYSQL_PORT"
 
 echo "=== Starting Linux builder ($builder_name) ==="
 docker volume create "${labels[@]}" "$target_volume" >/dev/null
@@ -166,6 +179,7 @@ docker run -d --name "$builder_name" "${labels[@]}" --platform "$platform" --net
   -v "$repo":/src:ro -v "$target_volume":/target -v "$cargo_volume":/usr/local/cargo/registry \
   -e CARGO_TARGET_DIR=/target \
   -e AIP_TEST_MYSQL_URL="mysql://root:$password@127.0.0.1:$AIP_E2E_MYSQL_PORT/$database" \
+  -e AIP_E2E_FIXTURE_MARKER="$fixture_marker" \
   -e AIP_TEST_DATABASE_URL="host=127.0.0.1 port=55473 dbname=aip_test_run user=runner" \
   -e AIP_TEST_ADMIN_URL="host=127.0.0.1 port=55473 dbname=postgres user=runner" \
   -w /src rust:1 sleep infinity >/dev/null

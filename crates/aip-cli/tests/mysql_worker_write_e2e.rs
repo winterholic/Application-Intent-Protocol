@@ -118,6 +118,42 @@ fn code(response: &Value) -> &str {
     response["code"].as_str().unwrap_or_else(|| panic!("failure without code: {response}"))
 }
 
+/// Name of the table the run script creates in the fixture's admin database to prove it started this MySQL.
+const OWNER_TABLE: &str = "aip_e2e_owner";
+
+/// Fail closed unless the fixture proves it belongs to this run. A high-port loopback URL alone is not ownership:
+/// the marker is random per run, written by `scripts/verify-mysql-worker-e2e.sh` into the container it just created, and
+/// handed to this test through `AIP_E2E_FIXTURE_MARKER`. The test runs destructive DDL only after this returns Ok.
+fn fixture_owner_decision(expected: Option<&str>, found: Result<Vec<String>, String>) -> Result<(), String> {
+    let expected =
+        expected.filter(|marker| !marker.is_empty()).ok_or("AIP_E2E_FIXTURE_MARKER is not set; run through scripts/verify-mysql-worker-e2e.sh")?;
+    if expected.len() < 16 {
+        return Err("AIP_E2E_FIXTURE_MARKER is too short to be a run marker".into());
+    }
+    let rows = found.map_err(|reason| format!("the fixture has no readable {OWNER_TABLE} marker ({reason}); it was not started by this run"))?;
+    match rows.as_slice() {
+        [marker] if marker == expected => Ok(()),
+        [_] => Err("the fixture's owner marker does not match this run; refusing destructive DDL".into()),
+        other => Err(format!("the fixture must hold exactly one owner marker, found {}", other.len())),
+    }
+}
+
+async fn assert_fixture_owned(admin: &MysqlDriver, admin_url: &str) {
+    let database = admin_url.split_once('@').and_then(|(_, rest)| rest.split_once('/')).map(|(_, tail)| tail.split('?').next().unwrap_or(""));
+    let found = match database {
+        Some(database) if !database.is_empty() => match admin.pool().get_conn().await {
+            Ok(mut conn) => {
+                conn.query::<String, _>(format!("SELECT marker FROM `{database}`.`{OWNER_TABLE}`")).await.map_err(|error| error.to_string())
+            }
+            Err(error) => Err(error.to_string()),
+        },
+        _ => Err("the admin URL names no database".into()),
+    };
+    if let Err(reason) = fixture_owner_decision(std::env::var("AIP_E2E_FIXTURE_MARKER").ok().as_deref(), found) {
+        panic!("fixture ownership not proven, no DDL was run: {reason}");
+    }
+}
+
 struct Db(aip_migrate::mysql_driver::mysql_async::Conn);
 
 impl Db {
@@ -129,6 +165,9 @@ impl Db {
     }
     async fn audit(&mut self, key: &str) -> i64 {
         self.count(&format!("SELECT COUNT(*) FROM `{META}`.`aip_audit` WHERE request_key = '{key}'")).await
+    }
+    async fn snapshot(&mut self) -> [i64; 3] {
+        [self.views(10).await, self.views(11).await, self.views(12).await]
     }
     async fn reset(&mut self) {
         self.0.query_drop(format!("UPDATE `{SOURCE}`.`video` SET views = 0")).await.unwrap();
@@ -150,6 +189,7 @@ async fn http_apply_runs_real_node_and_python_workers_in_one_mysql_transaction()
     std::fs::write(extensions.join("worker.py"), WORKER_PY).unwrap();
 
     let admin = MysqlDriver::connect(&admin_url).await.expect("admin connection");
+    assert_fixture_owned(&admin, &admin_url).await;
     let mut setup = admin.pool().get_conn().await.unwrap();
     for schema in [META, SOURCE] {
         setup.query_drop(format!("DROP DATABASE IF EXISTS `{schema}`")).await.unwrap();
@@ -221,15 +261,18 @@ async fn http_apply_runs_real_node_and_python_workers_in_one_mysql_transaction()
         let view = |id: &str| json!({"extension": "Video.view", "input": {"id": id}});
         let key = |name: &str| format!("{name}-{language}");
 
-        // Guest, stale contract and an unbound principal never reach a worker or a business row.
+        // Guest, stale contract and an unbound principal never reach a worker, a business row or an audit row.
         let guest = apply(None, &fingerprint, key("guest"), view("10")).await;
         assert_eq!(code(&guest), "WIRE.UNAUTHENTICATED", "{language}: {guest}");
+        assert_eq!((db.snapshot().await, db.audit(&key("guest")).await), ([0, 0, 0], 0), "{language}: guest changed state");
         let stale = apply(Some(&alice), "stale-contract", key("stale"), view("10")).await;
         assert_eq!(code(&stale), "WIRE.CONTRACT_MISMATCH", "{language}: {stale}");
+        assert_eq!((db.snapshot().await, db.audit(&key("stale")).await), ([0, 0, 0], 0), "{language}: stale contract changed state");
+        // A verified JWT whose subject has no aip_principals row: MysqlAuthenticator (mysql_service.rs) answers
+        // AuthError::BadSignature, which the /apply transport (spike-v6 lib.rs) reports as WIRE.UNAUTHENTICATED.
         let unbound = apply(Some(&mallory), &fingerprint, key("unbound"), view("10")).await;
-        println!("{language}: unbound principal -> {unbound}");
-        assert_eq!(unbound["ok"], false, "{language}: an unbound subject must not run a write action: {unbound}");
-        assert_eq!((db.views(10).await, db.audit(&key("guest")).await, db.audit(&key("unbound")).await), (0, 0, 0), "{language}");
+        assert_eq!(code(&unbound), "WIRE.UNAUTHENTICATED", "{language}: {unbound}");
+        assert_eq!((db.snapshot().await, db.audit(&key("unbound")).await), ([0, 0, 0], 0), "{language}: unbound principal changed state");
 
         // Minimal success: one callback, valid output, +1 and one audit row in the same transaction.
         let first = apply(Some(&alice), &fingerprint, key("ok"), view("10")).await;
@@ -270,5 +313,39 @@ async fn http_apply_runs_real_node_and_python_workers_in_one_mysql_transaction()
         assert_eq!(after["ok"], true, "{language}: {after}");
         assert_eq!((db.views(12).await, db.audit(&key("after")).await), (1, 1), "{language}");
         drop(child);
+    }
+}
+
+#[cfg(test)]
+mod ownership_guard {
+    use super::*;
+
+    const MARKER: &str = "aip-e2e-run-0123456789abcdef";
+
+    #[test]
+    fn only_the_runs_own_marker_proves_ownership() {
+        assert!(fixture_owner_decision(Some(MARKER), Ok(vec![MARKER.into()])).is_ok());
+    }
+
+    #[test]
+    fn missing_short_wrong_or_unreadable_markers_fail_closed() {
+        assert!(fixture_owner_decision(None, Ok(vec![MARKER.into()])).is_err(), "marker env not set");
+        assert!(fixture_owner_decision(Some(""), Ok(vec![String::new()])).is_err(), "empty marker env");
+        assert!(fixture_owner_decision(Some("short"), Ok(vec!["short".into()])).is_err(), "short marker");
+        assert!(fixture_owner_decision(Some(MARKER), Err("table does not exist".into())).is_err(), "another fixture without the table");
+        assert!(fixture_owner_decision(Some(MARKER), Ok(vec![])).is_err(), "table without a row");
+        assert!(fixture_owner_decision(Some(MARKER), Ok(vec!["aip-e2e-run-other-run-marker".into()])).is_err(), "marker of another run");
+        assert!(fixture_owner_decision(Some(MARKER), Ok(vec![MARKER.into(), MARKER.into()])).is_err(), "more than one marker row");
+    }
+
+    /// Source-order guard: the proof runs before the first destructive statement of the live test.
+    #[test]
+    fn the_proof_precedes_every_destructive_statement() {
+        let source = include_str!("mysql_worker_write_e2e.rs");
+        let live = &source[source.find("async fn http_apply_runs_real").unwrap()..source.find("#[cfg(test)]").unwrap()];
+        let proof = live.find("assert_fixture_owned(&admin").expect("the live test must prove ownership");
+        for statement in ["DROP DATA", "CREATE DATA", "DROP USER", "CREATE USER", "GRANT "] {
+            assert!(proof < live.find(statement).expect(statement), "{statement} must come after the ownership proof");
+        }
     }
 }
