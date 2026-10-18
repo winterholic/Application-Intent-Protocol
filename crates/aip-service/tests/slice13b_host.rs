@@ -80,7 +80,8 @@ async fn slice13b_host_serves_the_adopted_facereview_deployment_with_mongo_grant
     sqlgen::try_set_schema(&meta).unwrap();
     let deployment = mysql_adopt::deployment(&runtime_url, &meta, &facts, &mapping, "decimal").await.unwrap_or_else(|e| panic!("deployment: {e}"));
     let driver = MysqlDriver::from_url(&runtime_url).unwrap();
-    let fence = MysqlDeploymentFence::new(&meta, &mapping.schema, &deployment.source_tables, &deployment.facts_digest, &deployment.structure_digest).unwrap();
+    let fence =
+        MysqlDeploymentFence::new(&meta, &mapping.schema, &deployment.source_tables, &deployment.facts_digest, &deployment.structure_digest).unwrap();
     let backend = Arc::new(MysqlBackend::new(driver.clone(), fence));
     backend.check_server_profile().await.expect("MySQL 8.4 strict profile");
 
