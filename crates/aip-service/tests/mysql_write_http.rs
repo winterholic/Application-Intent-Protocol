@@ -10,13 +10,17 @@ use aip_migrate::mysql_driver::mysql_async::{Row, prelude::Queryable};
 use aip_migrate::mysql_driver::{MysqlDeploymentFence, MysqlDriver};
 use serde_json::{Value, json};
 use spike_v1_fixture::{Form, load_str};
-use spike_v2_read::backend::RelationalBackend;
+use spike_v2_read::backend::{RelationalBackend, RelationalWorkerWrite};
 use spike_v2_read::external::{Mapping, Table};
 use spike_v2_read::id_wire::IdWire;
+use spike_v2_read::plan::{Caller, Reject};
 use spike_v2_read::sqlgen;
+use spike_v4_worker::host::HostFuture;
+use spike_v4_worker::write::{WriteActionHost, WriteWorker, invoke_write_action};
 use spike_v6_transport::infrastructure::Infrastructure;
 use spike_v6_transport::server::{ServerOptions, listen_relational};
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
@@ -311,6 +315,208 @@ async fn mysql_worker_action_uses_one_fenced_idempotent_transaction() {
     // The transport returns this validation error without calling commit, so dropping the owned session rolls back.
     drop(session);
     assert_eq!(harness.count(&format!("SELECT views FROM `{SOURCE}`.`video` WHERE id=10")).await, 1);
+}
+
+// --- P2 supplement: the real `invoke_write_action` entry decides commit vs rollback ---
+//
+// The test above drives `session.apply`/`session.commit` by hand and never enters
+// `spike_v4_worker::write::invoke_write_action`, so the callback -> output-validation ->
+// commit coupling was unverified. The tests below enter the real function with a scripted
+// in-process worker peer (no Node/Python subprocess, no HTTP): the peer only replays fixed
+// protocol lines, while callback auth, the real validator and the real DB transaction stay.
+// Transport (`spike-v6-transport`) calls `session.commit` only when `invoke_write_action`
+// returns `Ok`; on `Err` the owned session is dropped and MySQL rolls back. Both tests
+// below mirror that decision one-to-one.
+
+/// One scripted worker line per server frame.
+type ScriptFn = Box<dyn FnMut(&[Value]) -> Option<String> + Send>;
+
+/// In-process stand-in for the Node/Python worker process: replays fixed protocol lines.
+/// Only the peer is scripted; `invoke_write_action`, its validator and the host are real.
+struct ScriptedPeer {
+    next: u64,
+    sent: Vec<Value>,
+    next_line: ScriptFn,
+}
+
+impl ScriptedPeer {
+    fn new(script: impl FnMut(&[Value]) -> Option<String> + Send + 'static) -> Self {
+        Self { next: 0, sent: Vec::new(), next_line: Box::new(script) }
+    }
+}
+
+impl WriteWorker for ScriptedPeer {
+    fn next_invoke_id(&mut self) -> u64 {
+        self.next += 1;
+        self.next
+    }
+
+    fn read_line<'a>(&'a mut self) -> HostFuture<'a, std::io::Result<Option<String>>> {
+        let line = (self.next_line)(&self.sent);
+        Box::pin(async move { Ok(line) })
+    }
+
+    fn send_before<'a>(&'a mut self, message: &'a Value, _expires: Instant) -> HostFuture<'a, Result<(), Reject>> {
+        self.sent.push(message.clone());
+        Box::pin(async move { Ok(()) })
+    }
+}
+
+/// Plays `calls` (apply callbacks) then one `done`, reading the real invoke token/id back
+/// from the invoke line the server sent.
+fn play(calls: Vec<(String, Value)>, done_output: Option<Value>) -> ScriptedPeer {
+    let mut step = 0usize;
+    ScriptedPeer::new(move |sent: &[Value]| {
+        step += 1;
+        let token = sent[0]["token"].clone();
+        let invoke = sent[0]["invoke"].clone();
+        if step <= calls.len() {
+            let (name, input) = &calls[step - 1];
+            Some(json!({"type":"call","call":step,"token":token,"op":"apply","name":name,"input":input}).to_string())
+        } else if step == calls.len() + 1 {
+            done_output.clone().map(|output| json!({"type":"done","invoke":invoke,"output":output}).to_string())
+        } else {
+            None
+        }
+    })
+}
+
+/// No-database host: applying to ids ["11"] is forbidden, everything else applies.
+/// Records the authoritative caller each callback arrived with.
+struct FakeHost {
+    calls: Vec<(String, Value, Option<i64>)>,
+}
+
+impl WriteActionHost for FakeHost {
+    fn apply<'a>(&'a mut self, transition: &'a str, request: &'a Value, caller: &'a Caller, _wire: IdWire) -> HostFuture<'a, Result<Value, Reject>> {
+        Box::pin(async move {
+            self.calls.push((transition.to_string(), request.clone(), caller.actor_id));
+            if request["target"]["ids"] == json!(["11"]) {
+                return Err(Reject { code: "WIRE.FORBIDDEN", msg: "not yours".into() });
+            }
+            Ok(json!({"changed": request["target"]["ids"].clone(), "unchanged": []}))
+        })
+    }
+}
+
+/// The validator outcome routes to commit or rollback, without any database.
+#[tokio::test]
+async fn worker_action_validator_decides_commit_without_database() {
+    let facts: Value = load_str(WORKER_ACTION, Form::A).unwrap_or_else(|e| panic!("{e:?}")).execution;
+    let wire = IdWire::DecimalString;
+    let caller = Caller { actor_id: Some(1), now: "2026-10-18T00:00:00Z".into() };
+    let input = json!({"id":"10"});
+
+    // Success: one callback and a valid output. Transport commits only on this path.
+    let mut host = FakeHost { calls: vec![] };
+    let mut peer = play(vec![("Video.increment".to_string(), json!({"ids":["10"]}))], Some(json!({"count":1})));
+    let prepared = invoke_write_action(&mut host, &mut peer, &facts, "Video.view", &input, &caller, wire).await;
+    assert_eq!(prepared.unwrap().output, json!({"count": 1}));
+    assert_eq!(host.calls.len(), 1);
+    assert_eq!(host.calls[0].2, Some(1), "the authoritative caller reaches the host, never a peer-forged actor");
+
+    // First callback applied, second forbidden: poisoned, so a later success is refused.
+    let mut host = FakeHost { calls: vec![] };
+    let mut peer = play(
+        vec![("Video.increment".to_string(), json!({"ids":["10"]})), ("Video.increment".to_string(), json!({"ids":["11"]}))],
+        Some(json!({"count": 2})),
+    );
+    let poisoned = invoke_write_action(&mut host, &mut peer, &facts, "Video.view", &input, &caller, wire).await;
+    let Err(error) = poisoned else { panic!("a poisoned run must fail") };
+    assert_eq!(error.code, "WIRE.EXTENSION_ERROR");
+    assert_eq!(host.calls.len(), 2);
+
+    // The real validator rejects the worker output before any commit.
+    let mut host = FakeHost { calls: vec![] };
+    let mut peer = play(vec![("Video.increment".to_string(), json!({"ids":["10"]}))], Some(json!({"count":11})));
+    let invalid = invoke_write_action(&mut host, &mut peer, &facts, "Video.view", &input, &caller, wire).await;
+    let Err(error) = invalid else { panic!("an invalid output must fail") };
+    assert_eq!(error.code, "WIRE.OUTPUT_INVALID");
+    assert_eq!(host.calls.len(), 1);
+
+    // Prefix near-misses of a granted transition never reach the host at all.
+    for name in ["Video.incrementX", "Video.incremen"] {
+        let mut host = FakeHost { calls: vec![] };
+        let mut peer = play(vec![(name.to_string(), json!({"ids":["10"]}))], Some(json!({"count":1})));
+        let denied = invoke_write_action(&mut host, &mut peer, &facts, "Video.view", &input, &caller, wire).await;
+        let Err(error) = denied else { panic!("{name} must fail") };
+        assert_eq!(error.code, "WIRE.EXTENSION_ERROR", "{name}");
+        assert!(host.calls.is_empty(), "{name} must not touch the database");
+    }
+}
+
+/// The real fenced session behind the real entry point: validated output commits the same
+/// transaction, a poisoned or invalid run rolls everything back on drop.
+struct CouplingHost {
+    session: Box<dyn RelationalWorkerWrite>,
+}
+
+impl WriteActionHost for CouplingHost {
+    fn apply<'a>(&'a mut self, transition: &'a str, request: &'a Value, caller: &'a Caller, wire: IdWire) -> HostFuture<'a, Result<Value, Reject>> {
+        Box::pin(async move { self.session.apply(transition, request, caller, wire).await })
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires a run-owned MySQL 8.4 fixture on AIP_TEST_MYSQL_URL"]
+async fn mysql_write_action_coupling_commits_or_rolls_back_same_transaction() {
+    let _turn = SERIAL.lock().await;
+    let harness = harness_with(
+        WORKER_ACTION,
+        &[
+            "INSERT INTO `{SOURCE}`.`member` (id) VALUES (1), (2)".into(),
+            "INSERT INTO `{SOURCE}`.`video` (id, owner_id, views) VALUES (10, 1, 0), (11, 2, 0)".into(),
+        ],
+        "SELECT, INSERT, UPDATE, DELETE",
+        None,
+    )
+    .await;
+    let wire = IdWire::DecimalString;
+    let now = harness.backend.now().await.unwrap();
+    let caller = Caller { actor_id: Some(1), now };
+    let request = json!({"extension":"Video.view","input":{"id":"10"}});
+    let views = |id: i64| format!("SELECT views FROM `{SOURCE}`.`video` WHERE id = {id}");
+    let idem = |key: &str| format!("SELECT COUNT(*) FROM `{META}`.`aip_idem` WHERE idem_key = '{key}'");
+
+    // Success through the real entry point: the validated output commits the same transaction.
+    let start = harness.backend.begin_worker_write(&harness.facts, "couple-ok", &request, &caller, wire).await.unwrap();
+    let spike_v2_read::backend::RelationalWorkerWriteStart::New(session) = start else { panic!("new key must start a transaction") };
+    let mut host = CouplingHost { session };
+    let mut peer = play(vec![("Video.increment".to_string(), json!({"ids":["10"]}))], Some(json!({"count":1})));
+    let prepared = invoke_write_action(&mut host, &mut peer, &harness.facts, "Video.view", &request["input"], &caller, wire).await.unwrap();
+    assert_eq!(prepared.output, json!({"count": 1}));
+    let committed = host.session.commit(json!({"ok":true,"output":prepared.output,"tags":["Video"]})).await.unwrap();
+    assert_eq!(committed["output"]["count"], 1);
+    assert_eq!(harness.count(&views(10)).await, 1);
+    assert_eq!(harness.count(&idem("couple-ok")).await, 1);
+
+    // First callback applied, second forbidden: dropping the session undoes both writes.
+    let start = harness.backend.begin_worker_write(&harness.facts, "couple-poison", &request, &caller, wire).await.unwrap();
+    let spike_v2_read::backend::RelationalWorkerWriteStart::New(session) = start else { panic!("poison case must start a transaction") };
+    let mut host = CouplingHost { session };
+    let mut peer = play(
+        vec![("Video.increment".to_string(), json!({"ids":["10"]})), ("Video.increment".to_string(), json!({"ids":["11"]}))],
+        Some(json!({"count":2})),
+    );
+    let poisoned = invoke_write_action(&mut host, &mut peer, &harness.facts, "Video.view", &request["input"], &caller, wire).await;
+    let Err(error) = poisoned else { panic!("a poisoned run must fail") };
+    assert_eq!(error.code, "WIRE.EXTENSION_ERROR");
+    drop(host);
+    assert_eq!(harness.count(&views(10)).await, 1, "the first callback's write was undone too");
+    assert_eq!(harness.count(&views(11)).await, 0);
+    assert_eq!(harness.count(&idem("couple-poison")).await, 0);
+
+    // The real validator rejects the worker output before commit: nothing is kept.
+    let start = harness.backend.begin_worker_write(&harness.facts, "couple-invalid", &request, &caller, wire).await.unwrap();
+    let spike_v2_read::backend::RelationalWorkerWriteStart::New(session) = start else { panic!("invalid case must start a transaction") };
+    let mut host = CouplingHost { session };
+    let mut peer = play(vec![("Video.increment".to_string(), json!({"ids":["10"]}))], Some(json!({"count":11})));
+    let invalid = invoke_write_action(&mut host, &mut peer, &harness.facts, "Video.view", &request["input"], &caller, wire).await;
+    let Err(error) = invalid else { panic!("an invalid output must fail") };
+    assert_eq!(error.code, "WIRE.OUTPUT_INVALID");
+    drop(host);
+    assert_eq!(harness.count(&views(10)).await, 1);
+    assert_eq!(harness.count(&idem("couple-invalid")).await, 0);
 }
 
 /// One-shot MySQL fault injection between the server's runtime account and the database. Faults fire on the first matching

@@ -36,6 +36,31 @@ fn write_invocation<'a>(facts: &'a Value, name: &str, input: &Value, wire: IdWir
     Ok(WriteInvocation { declaration, wire, deadline, expires: Instant::now() + deadline })
 }
 
+/// The worker side of a write action: the server sends invoke/reply frames and reads the
+/// worker's call/done lines. [`Worker`] speaks this over its child-process pipes; tests use a
+/// scripted in-process peer so `invoke_write_action` and its validator run without spawning
+/// a Node/Python runtime.
+pub trait WriteWorker: Send {
+    fn next_invoke_id(&mut self) -> u64;
+    fn read_line<'a>(&'a mut self) -> crate::host::HostFuture<'a, std::io::Result<Option<String>>>;
+    fn send_before<'a>(&'a mut self, message: &'a Value, expires: Instant) -> crate::host::HostFuture<'a, Result<(), Reject>>;
+}
+
+impl WriteWorker for Worker {
+    fn next_invoke_id(&mut self) -> u64 {
+        self.next_invoke += 1;
+        self.next_invoke
+    }
+
+    fn read_line<'a>(&'a mut self) -> crate::host::HostFuture<'a, std::io::Result<Option<String>>> {
+        Box::pin(async move { Worker::read_line(self).await })
+    }
+
+    fn send_before<'a>(&'a mut self, message: &'a Value, expires: Instant) -> crate::host::HostFuture<'a, Result<(), Reject>> {
+        Box::pin(async move { Worker::send_before(self, message, expires).await })
+    }
+}
+
 /// A host that applies a declared public transition in the same transaction as the worker result.
 pub trait WriteActionHost: Send {
     fn apply<'a>(
@@ -51,7 +76,7 @@ pub trait WriteActionHost: Send {
 /// contract-valid output; any callback error, worker failure or invalid output leaves commit responsibility with it.
 pub async fn invoke_write_action(
     host: &mut dyn WriteActionHost,
-    w: &mut Worker,
+    w: &mut impl WriteWorker,
     facts: &Value,
     name: &str,
     input: &Value,
@@ -62,8 +87,7 @@ pub async fn invoke_write_action(
     let x = invocation.declaration;
     let expires = invocation.expires;
     let allowed: std::collections::HashSet<&str> = x["access"].as_object().into_iter().flat_map(|access| access.keys().map(String::as_str)).collect();
-    w.next_invoke += 1;
-    let invoke_id = w.next_invoke;
+    let invoke_id = w.next_invoke_id();
     let token = crate::grant_token('w', invoke_id);
     w.send_before(&json!({"type":"invoke","invoke":invoke_id,"impl":x["implementation"],"input":input,"token":token}), expires).await?;
     let mut poisoned: Option<&'static str> = None;
@@ -113,11 +137,10 @@ pub async fn invoke_write_action(
                         }
                     }
                 };
-                let reply = reply.map_err(|error| {
+                let reply = reply.inspect_err(|error| {
                     if mine {
                         poisoned.get_or_insert(error.code);
                     }
-                    error
                 });
                 let response = match reply {
                     Ok(value) => json!({"type":"reply","call":message["call"],"value":value}),
