@@ -11,7 +11,7 @@ fn endpoint(name: &str, expected_port: &str) -> String {
 }
 
 fn principal(actor_id: Option<i64>, grants: &[&str]) -> CapabilityPrincipal {
-    CapabilityPrincipal { actor_id, grants: grants.iter().map(|v| (*v).to_string()).collect::<HashSet<_>>() }
+    CapabilityPrincipal { actor_id, actor_uuid: None, grants: grants.iter().map(|v| (*v).to_string()).collect::<HashSet<_>>() }
 }
 
 #[tokio::test]
