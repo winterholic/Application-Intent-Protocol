@@ -257,8 +257,11 @@ async fn category_absent_adapter_and_cache_miss_are_explicit_errors() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn personalized_matches_original_rank_when_principal_and_document_ids_have_the_same_type() {
-    // The golden documents use user_id = 1 (the numeric actor id). With a UUID user id this path is blocked: see gap_*.
+async fn personalized_plumbing_matches_original_rank_with_numeric_test_identity_not_a_real_user_profile() {
+    // NOT real-user evidence. The golden documents carry user_id = 1 and the scripted User row returns 1, so the numeric
+    // actor id happens to equal the document id. A real FaceReview user is a UUID in MySQL and in Mongo; that path is blocked
+    // by the CapabilityPrincipal i64 handle (D3, see gap_uuid_user_cannot_read_own_private_summaries) and is unverified here.
+    // What this proves: given identical inputs the worker, driver reads and extension produce the original rank order.
     let g = golden();
     let (_, mut con) = redis_conn().await;
     seed_pool(&mut con, &g).await;

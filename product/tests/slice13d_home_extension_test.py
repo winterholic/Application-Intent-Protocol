@@ -3,6 +3,8 @@
 # EVIDENCE SCOPE: a scripted ctx stands in for the AIP server, MySQL, Mongo and Redis. This proves the extension's
 # request shapes, error propagation and use of the math module. It is NOT real-database, real-driver or HTTP evidence.
 # The ranking itself is checked against the original functions through slice13d_home_oracle_test.
+# UID below is a fabricated UUID served by the scripted User row: results here are NOT evidence of equivalence for a real
+# user profile (the real private-Mongo identity path is blocked by D3 and unverified).
 #
 #   FACEREVIEW_SOURCE_PATH=/path/to/new-facereview python3 product/tests/slice13d_home_extension_test.py
 import asyncio
