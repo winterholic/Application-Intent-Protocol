@@ -44,8 +44,8 @@ JSON 실패 본문은 `requestId`와 이 레지스트리의 `retry`를 싣는다
 
 `class` availability, `retry` later
 
-- 원인: A managed Mongo or Redis capability that the extension called is not configured on this server, cannot be reached, timed out, or failed its read; an empty result is never substituted.
-- 수정: Operator: configure the adapter (`workers.mongo` or `workers.redis`) and check that the store is reachable. The same request succeeds again once the adapter is ready.
+- 원인: The managed Mongo or Redis capability that an extension called could not serve the call. The causes are: the adapter is not configured on this server, its settings could not be read, its connection or readiness check failed, the store timed out or closed the connection, or the store answered with an unexpected shape. An empty result is never substituted. The code does not name the cause; `msg` does.
+- 수정: Operator: check `workers.mongo` or `workers.redis`, that the store is reachable, and `msg`. Send the same request again only when the cause was an outage or a timeout, and not in a tight loop; a missing or unreadable setting fails the same way until the operator fixes it.
 
 ### `WIRE.ADAPTER_UNSUPPORTED`
 
@@ -61,11 +61,18 @@ JSON 실패 본문은 `requestId`와 이 레지스트리의 `retry`를 싣는다
 - 원인: A unique constraint rejected the write: a row with these values exists. The response never names that row or its values, because it may be one the caller cannot read.
 - 수정: Read the existing row instead of creating it, or send different values.
 
+### `WIRE.BAD_CONFIG`
+
+`class` server, `retry` never
+
+- 원인: A Mongo or Redis capability setting is out of range when the server creates the adapter: a database name that is empty or longer than 63 bytes, a pool size outside 1 to 64, a timeout of zero or over 30 seconds, an empty Redis prefix list or prefix, or a Redis in-flight limit outside 1 to 256. It is not `WIRE.BAD_CONFIGURATION`, which covers a managed job or extension that is configured inconsistently. `aip service serve` reports any failure to create an adapter as `MONGO_CAPABILITY_UNAVAILABLE` or `REDIS_CAPABILITY_UNAVAILABLE`, so an HTTP caller normally does not receive this code.
+- 수정: Operator: put the value inside its range and restart. Sending the same request again does not help.
+
 ### `WIRE.BAD_CONFIGURATION`
 
 `class` server, `retry` never
 
-- 원인: A managed job or extension is configured inconsistently (a missing file name or deadline, or an out-of-range Mongo or Redis capability setting).
+- 원인: A managed job or extension is configured inconsistently (a missing file name or deadline).
 - 수정: Operator: fix the service configuration or the definition and restart.
 
 ### `WIRE.BAD_CURSOR`
@@ -114,8 +121,8 @@ JSON 실패 본문은 `requestId`와 이 레지스트리의 `retry`를 싣는다
 
 `class` server, `retry` never
 
-- 원인: The extension listed this Mongo or Redis access, but the server-owned capability refuses the call: the collection or key prefix is not allowlisted, the command is not an allowed read command, or an MGET names a key outside the allowed scope. An access that the extension does not list is `WIRE.ACCESS_NOT_DECLARED` instead.
-- 수정: Use only the collections, key prefixes and read commands that the server capability allows (see product/MANAGED-EXECUTION.md), or ask the operator to extend the server allowlist. The same call fails the same way.
+- 원인: The server-owned Mongo or Redis capability refused a call that the extension did list in its `access`: the collection or key prefix is not on the server allowlist, the command is not an allowed read command or is not implemented, an MGET names a key outside the allowed scope, or the database host of this server provides no Mongo or Redis capability at all. An access that the extension does not list is `WIRE.ACCESS_NOT_DECLARED` instead. The code reaches the extension as the error of its ctx call; an extension that does not catch it ends with `WIRE.EXTENSION_ERROR` naming it.
+- 수정: Use only the collections, key prefixes and read commands that the server capability allows (see product/MANAGED-EXECUTION.md), or ask the operator to extend the allowlist. The same call fails the same way.
 
 ### `WIRE.CHECK_FAILED`
 

@@ -14,9 +14,12 @@ const NOT_CODES: &[&str] = &[
     "PYTHONPATH",
     "ROLLBACK",
     "CARGO_MANIFEST_DIR",
-    // the MySQL column type named in a malformed-row message
+    // The value `JSON` is the name of a MySQL column type that spike-v2-read/src/mysql_rows.rs puts into a
+    // `WIRE.INTERNAL` message (`malformed("JSON")`). It is never a code.
     "JSON",
-    // Redis command names that the managed Redis capability sends to the store
+    // `EVAL_RO`, `EXISTS` and `PING` are Redis commands that spike-v4-worker/src/capability.rs sends to the store with
+    // `redis::cmd(..)`. Only these three are listed: every other bare uppercase literal, including other Redis
+    // commands, is still reported by `no_code_is_written_without_its_area`.
     "EVAL_RO",
     "EXISTS",
     "PING",
@@ -39,26 +42,36 @@ fn scan() -> (BTreeSet<String>, BTreeSet<String>) {
                 continue;
             }
             let text = std::fs::read_to_string(&path).expect("source");
-            for literal in text.split('"').skip(1).step_by(2) {
-                let code_like = |l: &str| {
-                    l.len() >= 4
-                        && l.starts_with(|c: char| c.is_ascii_uppercase())
-                        && l.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
-                };
-                if literal.strip_prefix("WIRE.").is_some_and(code_like) {
-                    found.insert(literal.to_string());
-                // methods and environment variables are not codes
-                } else if code_like(literal)
-                    && !literal.starts_with("AIP_")
-                    && !["GET", "POST", "HEAD", "PUT", "PATCH", "DELETE", "NULL", "TRUE", "FALSE", "NONE", "OPTIONS"].contains(&literal)
-                {
-                    bare.insert(literal.to_string());
-                }
-            }
+            scan_literals(&text, &mut found, &mut bare);
         }
     }
+    (found, strays(bare))
+}
+
+/// Sorts the string literals of one source text into `WIRE.` codes and uppercase literals without an area.
+fn scan_literals(text: &str, found: &mut BTreeSet<String>, bare: &mut BTreeSet<String>) {
+    for literal in text.split('"').skip(1).step_by(2) {
+        let code_like = |l: &str| {
+            l.len() >= 4
+                && l.starts_with(|c: char| c.is_ascii_uppercase())
+                && l.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
+        };
+        if literal.strip_prefix("WIRE.").is_some_and(code_like) {
+            found.insert(literal.to_string());
+        // methods and environment variables are not codes
+        } else if code_like(literal)
+            && !literal.starts_with("AIP_")
+            && !["GET", "POST", "HEAD", "PUT", "PATCH", "DELETE", "NULL", "TRUE", "FALSE", "NONE", "OPTIONS"].contains(&literal)
+        {
+            bare.insert(literal.to_string());
+        }
+    }
+}
+
+/// The bare literals that are neither listed non-codes nor job statuses.
+fn strays(mut bare: BTreeSet<String>) -> BTreeSet<String> {
     bare.retain(|c| !NOT_CODES.contains(&c.as_str()) && !JOB_STATUSES.contains(&c.as_str()));
-    (found, bare)
+    bare
 }
 
 fn emitted() -> BTreeSet<String> {
@@ -112,6 +125,47 @@ fn the_retry_of_the_codes_that_decide_a_write_is_the_documented_one() {
     assert_eq!(retry("WIRE.DB_UNAVAILABLE"), Retry::Later);
     assert_eq!(retry("WIRE.TOKEN_EXPIRED"), Retry::Reauthenticate);
     assert_eq!(retry("WIRE.BAD_VALUE"), Retry::Never);
+}
+
+/// The managed Mongo/Redis codes carry a class and a retry that keep the operator in charge of configuration faults.
+#[test]
+fn the_managed_capability_codes_keep_their_class_and_retry() {
+    use wire_codes::Class;
+    let entry = |code: &str| wire_codes::lookup(code).unwrap_or_else(|| panic!("{code} is registered"));
+    // refused although declared: the same call fails the same way
+    assert_eq!((entry("WIRE.CAPABILITY_DENIED").class, entry("WIRE.CAPABILITY_DENIED").retry), (Class::Server, Retry::Never));
+    // not declared at all stays a separate code from the one above
+    assert_eq!((entry("WIRE.ACCESS_NOT_DECLARED").class, entry("WIRE.ACCESS_NOT_DECLARED").retry), (Class::Server, Retry::Never));
+    assert!(entry("WIRE.CAPABILITY_DENIED").explain.contains("WIRE.ACCESS_NOT_DECLARED"));
+    // an out-of-range setting is never cured by sending the request again, and it is not BAD_CONFIGURATION
+    assert_eq!((entry("WIRE.BAD_CONFIG").class, entry("WIRE.BAD_CONFIG").retry), (Class::Server, Retry::Never));
+    assert!(entry("WIRE.BAD_CONFIG").explain.contains("WIRE.BAD_CONFIGURATION"));
+    assert_eq!((entry("WIRE.BAD_CONFIGURATION").class, entry("WIRE.BAD_CONFIGURATION").retry), (Class::Server, Retry::Never));
+    // an adapter fault mixes outages with missing settings: retry is `later`, but the fix text must not promise success
+    let unavailable = entry("WIRE.ADAPTER_UNAVAILABLE");
+    assert_eq!((unavailable.class, unavailable.retry), (Class::Availability, Retry::Later));
+    assert!(unavailable.explain.contains("not configured") && unavailable.explain.contains("timed out"), "every cause group is named");
+    assert!(unavailable.fix.contains("only when the cause was an outage or a timeout"), "the retry condition is conservative");
+    assert!(unavailable.fix.contains("fails the same way until the operator fixes it"), "a configuration fault is not auto-retried");
+}
+
+/// The scan must keep catching what it exists for: a code that is not registered and a code without its area.
+#[test]
+fn an_injected_code_or_bare_literal_is_detected() {
+    let (mut found, mut bare) = (BTreeSet::new(), BTreeSet::new());
+    scan_literals(
+        r#"reject("WIRE.GHOST_CODE"); reject("GHOST_CODE"); redis::cmd("HGETALL"); redis::cmd("EXISTS"); malformed("JSON");"#,
+        &mut found,
+        &mut bare,
+    );
+    let registered: BTreeSet<String> = wire_codes::all().iter().map(|c| c.code.to_string()).collect();
+    assert!(found.iter().any(|c| c == "WIRE.GHOST_CODE") && !registered.contains("WIRE.GHOST_CODE"), "an unregistered WIRE code is reported");
+    let stray = strays(bare);
+    // only the four listed literals are exempt: an unlisted Redis command and a made-up bare code are still reported
+    assert_eq!(stray, ["GHOST_CODE", "HGETALL"].map(String::from).into_iter().collect::<BTreeSet<_>>());
+    for exempt in ["EVAL_RO", "EXISTS", "PING", "JSON"] {
+        assert!(NOT_CODES.contains(&exempt), "{exempt} is listed");
+    }
 }
 
 #[test]

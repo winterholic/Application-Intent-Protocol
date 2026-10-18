@@ -1,7 +1,7 @@
 //! 관리형 Mongo/Redis capability 경계 및 호스트 인터페이스 (WBS 7.2.3 Slice13-A).
 //!
 //! 워커는 DB 연결 DSN이나 운영 자격증명을 직접 받지 않으며, 서버가 확정한 principal과 화이트리스트 정책 아래에서만
-//! 데이터베이스/컬렉션/키/명령어에 접근한다. 확장이 선언한 접근 중 허용되지 않은 컬렉션, 키 패턴, 쓰기 명령은 즉시 `WIRE.CAPABILITY_DENIED`로, 선언하지 않은 접근은 `WIRE.ACCESS_NOT_DECLARED`로 거부된다.
+//! 데이터베이스/컬렉션/키/명령어에 접근한다. 허용되지 않은 컬렉션, 키 패턴, 쓰기 명령은 즉시 `WIRE.CAPABILITY_DENIED`로 거부된다.
 
 use serde_json::{json, Value};
 use spike_v2_read::plan::Reject;
@@ -276,7 +276,7 @@ impl MongoDriverCapability {
             || timeout.is_zero()
             || timeout > Duration::from_secs(30)
         {
-            return Err(reject("WIRE.BAD_CONFIGURATION", "Mongo capability 설정 범위 오류"));
+            return Err(reject("WIRE.BAD_CONFIG", "Mongo capability 설정 범위 오류"));
         }
         let mut options =
             mongodb::options::ClientOptions::parse(uri).await.map_err(|_| reject("WIRE.ADAPTER_UNAVAILABLE", "Mongo 설정을 읽지 못함"))?;
@@ -521,7 +521,7 @@ impl RedisDriverCapability {
             || timeout > Duration::from_secs(30)
             || !(1..=256).contains(&max_in_flight)
         {
-            return Err(reject("WIRE.BAD_CONFIGURATION", "Redis capability 설정 범위 오류"));
+            return Err(reject("WIRE.BAD_CONFIG", "Redis capability 설정 범위 오류"));
         }
         let client = redis::Client::open(uri).map_err(|_| reject("WIRE.ADAPTER_UNAVAILABLE", "Redis 설정을 읽지 못함"))?;
         let manager = tokio::time::timeout(timeout, client.get_connection_manager())
