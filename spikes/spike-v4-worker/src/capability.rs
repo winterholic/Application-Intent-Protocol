@@ -42,6 +42,8 @@ pub fn resolve_actor_uuid(actor_id: Option<i64>, public_id: Option<&str>) -> Res
 impl CapabilityPrincipal {
     /// Value the private `user_id` column must equal for this actor: the canonical UUID string, or the integer handle.
     fn private_user_id(&self) -> Option<Value> {
+        // 인증된 actor_id가 없는 principal은 guest다. actor_uuid만으로 소유권을 인정하지 않는다.
+        self.actor_id?;
         match self.actor_uuid {
             Some(id @ EntityId::Uuid(_)) => Some(json!(id.to_string())),
             Some(EntityId::Number(_)) => None,
