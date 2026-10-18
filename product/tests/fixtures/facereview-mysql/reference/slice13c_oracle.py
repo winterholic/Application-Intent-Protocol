@@ -14,6 +14,7 @@ Run: <venv python> slice13c_oracle.py   (exit 1 on any mismatch; prints one line
 """
 import asyncio
 import importlib.util
+import json
 import os
 import random
 import sys
@@ -273,12 +274,15 @@ def original_recommended(video_id, page, size, user_id):
 def module_detail(video_id, actor):
     ctx = FakeCtx(actor)
     out = run(port.watchDetail({"video": video_id}, ctx))
+    out["timeline_data"] = json.loads(out.pop("timeline_data_json"))
     return out, ctx
 
 
 def module_recommended(video_id, page, size, actor):
     ctx = FakeCtx(actor)
-    return run(port.watchRecommended({"video": video_id, "page": page, "size": size}, ctx)), ctx
+    out = run(port.watchRecommended({"video": video_id, "page": page, "size": size}, ctx))
+    out["videos"] = json.loads(out.pop("videos_json"))
+    return out, ctx
 
 
 # ---------------------------------------------------------------------------------------------------------------------

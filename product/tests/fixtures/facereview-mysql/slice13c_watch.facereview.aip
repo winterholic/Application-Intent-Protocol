@@ -103,11 +103,12 @@ resource Video {
     deadline 3s
     implementation "slice13c_watch.recordView"
   }
+  // Extension output is scalar-only (Json/list outputs fail WIRE.OUTPUT_INVALID), so timeline_data and videos travel as JSON text.
   extension read watchDetail {
     input { video: Video.Id }
     output {
       video_id: Text; youtube_url: Text; title: Text; channel_name: Text; category: Text; duration: Int; view_count: Int
-      like_count: Int; comment_count: Int; user_is_liked: Bool; is_bookmarked: Bool; timeline_data: Json; timeline_scope: Text
+      like_count: Int; comment_count: Int; user_is_liked: Bool; is_bookmarked: Bool; timeline_data_json: Text; timeline_scope: Text
     }
     access VideoLike.countForVideo, Comment.countForVideo
     effect none
@@ -116,7 +117,7 @@ resource Video {
   }
   extension read watchRecommended {
     input { video: Video.Id; page: Int(1..1000000); size: Int(1..50) }
-    output { videos: Json; total: Int; page: Int; size: Int; has_next: Bool }
+    output { videos_json: Text; total: Int; page: Int; size: Int; has_next: Bool }
     effect none
     deadline 10s
     implementation "slice13c_watch.watchRecommended"

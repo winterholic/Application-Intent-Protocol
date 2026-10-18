@@ -8,6 +8,8 @@
 #     the caller's own sessions. timeline_scope says so; it is "caller" until a server-side aggregate contract exists.
 #   * Mongo/Redis grants cannot yet be declared in a definition (extension access accepts Resource.aggregate/transition only).
 
+import json
+
 NOT_FOUND = "VIDEO_NOT_FOUND"
 EMOTIONS = ["neutral", "happy", "surprise", "sad", "angry"]
 N_BUCKETS = 100
@@ -168,6 +170,11 @@ def build_recommendations(same_category, dist_docs, current_emotion, page, size,
 # ---------------------------------------------------------------------------------------------------------------------
 # worker entries
 # ---------------------------------------------------------------------------------------------------------------------
+def _dump(value):
+    # Extension output is scalar-only on the wire; the original JSON shape is carried as text, unchanged.
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
 def _rows(response):
     return response.get("rows", []) if isinstance(response, dict) else response
 
@@ -244,7 +251,7 @@ async def watchDetail(input, ctx):  # noqa: N802 — worker entry names are the 
         "comment_count": comment_count,
         "user_is_liked": liked,
         "is_bookmarked": bookmarked,
-        "timeline_data": timeline,
+        "timeline_data_json": _dump(timeline),
         "timeline_scope": "caller",
     }
 
@@ -317,7 +324,9 @@ async def watchRecommended(input, ctx):  # noqa: N802
     scored = rank_recommendations(same_category, dist_docs, emotion)
     ids = [v["video_id"] for v in page_slice(scored, page, size)]
     bookmarked = await _bookmarked(ctx, ids)
-    return page_recommendations(scored, page, size, bookmarked)
+    page_result = page_recommendations(scored, page, size, bookmarked)
+    videos = page_result.pop("videos")
+    return {**page_result, "videos_json": _dump(videos)}
 
 
 async def recordView(input, ctx):  # noqa: N802
