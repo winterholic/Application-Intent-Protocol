@@ -382,7 +382,7 @@ DB 테스트는 이 Run이 띄운 PostgreSQL 17 컨테이너(`aip-claude-wbs8-pg
 
 ### 한계·미검증
 
-- 장부가 생기기 전에 올린 객체는 quota에 세지 않는다. 장부가 필요한 객체를 소급하려면 bucket을 목록 조회해야 하는데 구현하지 않았다.
+- 장부가 생기기 전에 올린 객체는 quota에 세지 않는다. (2026-10-19 증분으로 바뀜) 소유자가 `POST /objects/confirm`을 호출하면 provider HEAD 크기로 소급 계상된다(Verify 39210323292·Object storage 39210323219). 호출하지 않은 객체의 자동 발견(bucket 목록 스캔·이벤트 대조)은 여전히 미구현이며 후속 8.5.1·8.5.2로 인계한다.
 - (2026-10-18 후속으로 바뀜) 첫 확인 뒤에 끝나는 PUT은 이제 보류 후 확정된다. 두 번째 확인(약 25시간) 뒤에 끝나는 PUT은 여전히 세지 않는다. bucket 수명 주기 규칙이 필요하다. 상세는 [릴리스 게이트](RELEASE-GATE.md)의 "후속 증분".
 - 업그레이드 중에 장부가 생기기 전에 시작한 multipart는 part 서명과 complete가 `WIRE.NOT_FOUND`다(재시작해야 한다).
 - quota는 서명한 크기 기준이다. provider 비용이나 bucket 전체 용량을 대신하지 않는다.
