@@ -2,13 +2,13 @@
 
 ## 2026-10-20 F14 토큰 라이프사이클 — 미구현 고정과 설계안 (G-13)
 
-원본은 SECRET_KEY 서명 1시간 timed 토큰(payload `{id, op}`)을 발급하고 소비 시 서명·만료·operation 검사와 이메일 일치 verifier 뒤 `activated=True`/비밀번호 변경을 한다(`tokens/serializer.py`, `auth/services/activation.py`·`password.py`, 소비 경로는 `/auth/reset-password/<token>`·`/auth/activate/confirm`). 포팅의 두 mail job은 호출자가 준 불투명 토큰을 검증 없이 링크에 넣고, 렌더러는 소비 경로를 서빙하지 않으며(`/auth/reset-password`는 IdP 리다이렉트), 메일 링크는 배포 base URL(기본값 원본 58080) 아래 절대 URL이라 포팅 안 소비처가 없다. 선언에서 서명 검증도 불가하다(`allow hmac(input.token, "k") = "x"` → `service check` `DEF.UNKNOWN_SYMBOL`, predicate `hmac` 없음). 구현 위치·비밀키 관리·F02 IdP 위임과의 모순 해소는 제품 결정 사항이라 임의로 만들지 않고 [PRODUCT-GAPS G-13](PRODUCT-GAPS.md)에 설계안과 결정 항목을 남겼다.
+원본은 SECRET_KEY 서명 1시간 timed 토큰(payload `{id, op}`)을 발급하고(`tokens/serializer.py`) 소비 시 서명·만료·operation 검사를 한다. 재설정 경로(`auth/services/password.py`)는 이메일 일치 verifier(`tokens/verifiers.py` `EmailMatchesUserToken`, `auth/services/factories.py`에서 주입) 뒤 비밀번호를 변경하고, 활성화 경로(`auth/services/activation.py`)는 verifier 없이 토큰의 사용자 ID로 조회해 `activated=True`를 한다(소비 경로는 `/auth/reset-password/<token>`·`/auth/activate/confirm`). 포팅의 두 mail job은 호출자가 준 불투명 토큰을 검증 없이 링크에 넣고, 렌더러는 소비 경로를 서빙하지 않으며(`/auth/reset-password`는 IdP 리다이렉트), 메일 링크는 배포 base URL(기본값 원본 58080) 아래 절대 URL이라 포팅 안 소비처가 없다. 선언에서 서명 검증도 불가하다(`allow hmac(input.token, "k") = "x"` → `service check` `DEF.UNKNOWN_SYMBOL`, predicate `hmac` 없음). 구현 위치·비밀키 관리·F02 IdP 위임과의 모순 해소는 제품 결정 사항이라 임의로 만들지 않고 [PRODUCT-GAPS G-13](PRODUCT-GAPS.md)에 설계안과 결정 항목을 남겼다.
 
 고정 테스트 4건(토큰 불투명 삽입·메일 링크 외부 지향·렌더러 소비 경로 부재·링크 404)을 RED(원본 기대 2건 실패) → GREEN으로 추가했고 `test_ui_host`+`test_mail_jobs` 29/29를 DB 없이 로컬에서 직접 실행해 통과했다(CI unittest 단계에도 그대로 포함). 이 고정 단언은 라이프사이클이 생기면 뒤집어야 한다. G-13은 닫히지 않았고 7.5.3의 이 항목은 미완료로 유지한다.
 
 ## 2026-10-20 F13 CLI 회귀 해소 확인·F14 범위 정정 (관측, 구현 없음)
 
-HEAD `7ba0a26`의 Linux worker-jobs check-run이 completed success이며(`cli.test.mjs` 포함), b39633a의 Welcome Topic `post_count` `WIRE.DEADLINE_EXCEEDED` 회귀가 473c528 JIT-off 증분 이후 재현되지 않아 F13 CLI lifecycle 회귀는 해소로 본다(공개 API로 run 결론까지만 확인, 로그 미열람). 별도 대조에서 원본에는 토픽 알림 메일이 없음도 확인했다(`email.py`의 celery task는 활성화·재설정 2종뿐이고 `forum/`에 메일 호출처 없음). PMS 7.5.3의 "토픽 알림 메일"은 원본에 없는 범위이므로 별도 구현 항목에서 제외하고, 토픽 추적 자체는 F06(7.5.2) 범위다.
+HEAD `7ba0a26`의 Linux worker-jobs check-run이 completed success이며(`cli.test.mjs` 포함), b39633a의 Welcome Topic `post_count` `WIRE.DEADLINE_EXCEEDED` 회귀가 473c528 JIT-off 증분 이후 재현되지 않아 F13 CLI lifecycle 회귀는 해소로 본다(공개 API로 run 결론까지만 확인, 로그 미열람). 별도 대조에서 원본에는 토픽 알림 메일이 없음도 확인했다(`email.py`의 celery task는 활성화·재설정 2종과 범용 `send_async_email` 1종이며 upstream 내 호출처는 활성화·재설정 서비스뿐이고 `forum/`에 메일 호출처 없음). PMS 7.5.3의 "토픽 알림 메일"은 원본에 없는 범위이므로 별도 구현 항목에서 제외하고, 토픽 추적 자체는 F06(7.5.2) 범위다.
 
 ## 2026-10-20 unread cutoff 계산 — 구현됨, 실DB E2E는 Linux CI 판정 대기
 
