@@ -612,24 +612,12 @@ impl AuthenticatorImpl {
             }
         }
 
-        let username = claims
-            .claims
-            .get(&self.config.provisioning.username_claim)
-            .and_then(Value::as_str)
-            .ok_or(AuthError::Invalid)?;
-        if username.is_empty()
-            || username.len() > 200
-            || username.trim() != username
-            || username.chars().any(char::is_control)
-        {
+        let username = claims.claims.get(&self.config.provisioning.username_claim).and_then(Value::as_str).ok_or(AuthError::Invalid)?;
+        if username.is_empty() || username.len() > 200 || username.trim() != username || username.chars().any(char::is_control) {
             return Err(AuthError::Invalid);
         }
 
-        let email = claims
-            .claims
-            .get(&self.config.provisioning.email_claim)
-            .and_then(Value::as_str)
-            .ok_or(AuthError::Invalid)?;
+        let email = claims.claims.get(&self.config.provisioning.email_claim).and_then(Value::as_str).ok_or(AuthError::Invalid)?;
         if email.len() < 3
             || email.len() > 200
             || !spike_v2_read::scalar::valid_email(email)
@@ -684,9 +672,10 @@ impl AuthenticatorImpl {
             return Err(AuthError::Unavailable);
         }
 
-        let lock_key = format!("{}:{}:{}:{}:{}:{}", self.schema.len(), self.schema, claims.issuer.len(), claims.issuer, claims.subject.len(), claims.subject);
-        let lock_res = tokio::time::timeout(DB_TIMEOUT, db.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0::bigint))", &[&lock_key]))
-            .await;
+        let lock_key =
+            format!("{}:{}:{}:{}:{}:{}", self.schema.len(), self.schema, claims.issuer.len(), claims.issuer, claims.subject.len(), claims.subject);
+        let lock_res =
+            tokio::time::timeout(DB_TIMEOUT, db.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0::bigint))", &[&lock_key])).await;
 
         if !matches!(lock_res, Ok(Ok(_))) {
             let _ = db.batch_execute("ROLLBACK").await;
@@ -694,9 +683,8 @@ impl AuthenticatorImpl {
             return Err(AuthError::Unavailable);
         }
 
-        let double_check = tokio::time::timeout(DB_TIMEOUT, db.query_opt(&sql, &[&claims.issuer, &claims.subject]))
-            .await
-            .map_err(|_| AuthError::Unavailable);
+        let double_check =
+            tokio::time::timeout(DB_TIMEOUT, db.query_opt(&sql, &[&claims.issuer, &claims.subject])).await.map_err(|_| AuthError::Unavailable);
 
         let row_opt = match double_check {
             Ok(Ok(r)) => r,
@@ -743,14 +731,15 @@ impl AuthenticatorImpl {
             "SELECT id FROM \"{}\".\"group\" WHERE name = $1 AND admin = FALSE AND super_mod = FALSE AND mod = FALSE AND banned = FALSE AND guest = FALSE ORDER BY id ASC LIMIT 1",
             self.schema
         );
-        let group_row = match tokio::time::timeout(DB_TIMEOUT, db.query_opt(&group_sql, &[&self.config.provisioning.fixed_defaults.primary_group_name])).await {
-            Ok(Ok(Some(r))) => r,
-            _ => {
-                let _ = db.batch_execute("ROLLBACK").await;
-                lookup.finish().await;
-                return Err(AuthError::Unavailable);
-            }
-        };
+        let group_row =
+            match tokio::time::timeout(DB_TIMEOUT, db.query_opt(&group_sql, &[&self.config.provisioning.fixed_defaults.primary_group_name])).await {
+                Ok(Ok(Some(r))) => r,
+                _ => {
+                    let _ = db.batch_execute("ROLLBACK").await;
+                    lookup.finish().await;
+                    return Err(AuthError::Unavailable);
+                }
+            };
         let group_id: i64 = match group_row.try_get(0) {
             Ok(id) => id,
             Err(_) => {
@@ -784,11 +773,10 @@ impl AuthenticatorImpl {
             }
         };
 
-        let principal_sql = format!(
-            "INSERT INTO \"{}\".aip_principals (issuer, subject, actor_id, enabled, min_iat) VALUES ($1, $2, $3, TRUE, $4)",
-            self.schema
-        );
-        let insert_principal_res = tokio::time::timeout(DB_TIMEOUT, db.execute(&principal_sql, &[&claims.issuer, &claims.subject, &actor_id, &claims.issued_at])).await;
+        let principal_sql =
+            format!("INSERT INTO \"{}\".aip_principals (issuer, subject, actor_id, enabled, min_iat) VALUES ($1, $2, $3, TRUE, $4)", self.schema);
+        let insert_principal_res =
+            tokio::time::timeout(DB_TIMEOUT, db.execute(&principal_sql, &[&claims.issuer, &claims.subject, &actor_id, &claims.issued_at])).await;
         if !matches!(insert_principal_res, Ok(Ok(_))) {
             let _ = db.batch_execute("ROLLBACK").await;
             lookup.finish().await;
