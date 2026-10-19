@@ -261,7 +261,7 @@ async fn owner_checks_scope_claim_ack_and_dlq_and_expiry_cleanup_is_bounded() {
     let db = Db::new().await;
     let store = db.store();
     let mut input = message("private", "k1", json!({"secret":"payload"}));
-    input.ttl_ms = 25;
+    input.ttl_ms = 60_000;
     let msg = store.enqueue(&db.client, input).await.unwrap();
     assert!(store.claim(&db.client, "other-owner", "private", "worker-a", 250).await.unwrap().is_none());
     let lease = store.claim(&db.client, OWNER, "private", "worker-a", 250).await.unwrap().unwrap();
@@ -269,7 +269,14 @@ async fn owner_checks_scope_claim_ack_and_dlq_and_expiry_cleanup_is_bounded() {
     forged.owner = "other-owner".into();
     assert!(!store.ack(&db.client, &forged).await.unwrap());
     assert!(store.ack(&db.client, &lease).await.unwrap());
-    tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+    // Expiry must not race the owner/lease assertions on a loaded CI runner.
+    db.client
+        .execute(
+            &format!("UPDATE {}.aip_messages SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1", db.schema),
+            &[&uuid::Uuid::parse_str(&msg.id).unwrap()],
+        )
+        .await
+        .unwrap();
     let deleted = store.cleanup_expired(&db.client, 10).await.unwrap();
     assert_eq!(deleted, vec![uuid::Uuid::parse_str(&msg.id).unwrap()]);
     assert!(store.dead_letters(&db.client, OWNER, "private", 10).await.unwrap().is_empty());

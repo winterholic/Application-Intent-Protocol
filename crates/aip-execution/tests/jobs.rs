@@ -185,14 +185,22 @@ async fn expired_result_payload_is_hidden_while_status_tombstone_remains() {
     let db = Db::new().await;
     let store = db.store();
     let mut input = new_run("k1", json!({"x":1}));
-    input.ttl_ms = 25;
+    // A 25ms TTL could expire between finish and the first read on a loaded CI runner.
+    // Keep the live side observable, then advance the stored DB deadline explicitly.
+    input.ttl_ms = 60_000;
     let run = store.enqueue(&db.client, input).await.unwrap();
     let lease = store.claim(&db.client, "worker-a").await.unwrap().unwrap();
     assert!(store.finish(&db.client, &lease, json!({"secret":"result"})).await.unwrap());
     let result = store.result(&db.client, &run.id, "https://issuer.example|subject-1").await.unwrap().unwrap();
     assert_eq!(result.operation, "normalize");
     assert_eq!(result.output, json!({"secret":"result"}));
-    tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+    db.client
+        .execute(
+            &format!("UPDATE {}.aip_jobs SET result_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1", db.schema),
+            &[&uuid::Uuid::parse_str(&run.id).unwrap()],
+        )
+        .await
+        .unwrap();
     assert_eq!(store.result(&db.client, &run.id, "https://issuer.example|subject-1").await.unwrap(), None);
     assert_eq!(store.status(&db.client, &run.id, "https://issuer.example|subject-1").await.unwrap().unwrap().state, "SUCCEEDED");
     let cancelled = store.cancel(&db.client, &run.id, "https://issuer.example|subject-1").await.unwrap().unwrap();
@@ -467,12 +475,18 @@ async fn operator_lists_without_payloads_and_redrives_a_failed_run_as_the_same_f
     // Once the payload is collected, the run is a tombstone and cannot be redriven.
     let mut gone = new_run("gone", json!({"x":2}));
     gone.max_attempts = 1;
-    gone.ttl_ms = 1;
+    gone.ttl_ms = 60_000;
     let gone = store.enqueue(&db.client, gone).await.unwrap();
     let lease = store.claim(&db.client, "worker-c").await.unwrap().unwrap();
     assert_eq!(lease.run_id.to_string(), gone.id);
     assert!(store.fail(&db.client, &lease, "WIRE.EXTENSION_ERROR").await.unwrap());
-    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    db.client
+        .execute(
+            &format!("UPDATE {}.aip_jobs SET result_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1", db.schema),
+            &[&uuid::Uuid::parse_str(&gone.id).unwrap()],
+        )
+        .await
+        .unwrap();
     store.expire_payloads(&db.client).await.unwrap();
     assert_eq!(store.redrive(&db.client, &gone.id, "deployment-a").await.unwrap(), Redrive::Expired);
 }
