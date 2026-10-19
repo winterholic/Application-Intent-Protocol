@@ -492,12 +492,13 @@ async fn durable_job_status_mapping_conforms_to_otlp_spec() {
     assert_ne!(retry_span["status"]["code"].as_i64(), Some(1), "Job state RETRY must NEVER map to 1 (STATUS_CODE_OK in OTLP)");
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test(flavor = "current_thread")]
 async fn otlp_exporter_queue_saturation_drops_spans_without_blocking() {
     let unreachable_addr: SocketAddr = "127.0.0.1:19999".parse().unwrap();
     let otlp_config = OtlpConfig { endpoint: format!("http://{unreachable_addr}"), headers: HashMap::new(), timeout_ms: 100 };
     let exporter = spike_v6_transport::otlp::OtlpExporter::start(otlp_config).unwrap();
     let now = spike_v6_transport::otlp::now_nanos();
+    let dropped_before = spike_v6_transport::otlp::dropped_span_count();
 
     // Export 5000 spans (exceeding queue capacity of 4096)
     let start = std::time::Instant::now();
@@ -516,10 +517,60 @@ async fn otlp_exporter_queue_saturation_drops_spans_without_blocking() {
         });
     }
     let elapsed = start.elapsed();
+    assert!(spike_v6_transport::otlp::dropped_span_count() >= dropped_before + 5000 - 4096);
     assert!(elapsed < Duration::from_millis(100), "Enqueuing 5000 spans must complete non-blockingly under 100ms, took {elapsed:?}");
 }
 
 // ---- the real path: HTTP enqueue -> job row -> worker run -> spans from the server's own exporter ----
+
+#[tokio::test(flavor = "current_thread")]
+async fn queue_drop_counter_reaches_the_otlp_collector() {
+    let collector = MockCollector::start().await;
+    let before = spike_v6_transport::otlp::dropped_span_count();
+    let exporter = spike_v6_transport::otlp::OtlpExporter::start(OtlpConfig {
+        endpoint: format!("http://{}", collector.addr),
+        headers: HashMap::new(),
+        timeout_ms: 1000,
+    })
+    .unwrap();
+    for i in 0..5000 {
+        exporter.export_span(spike_v6_transport::otlp::SpanData {
+            trace_id: format!("{:032x}", i + 1),
+            span_id: format!("{:016x}", i + 1),
+            parent_span_id: None,
+            name: "queue-counter".into(),
+            kind: 1,
+            start_time_nanos: 1,
+            end_time_nanos: 2,
+            attributes: vec![],
+            status_code: spike_v6_transport::otlp::SpanStatusCode::Ok,
+            status_message: None,
+        });
+    }
+    let start = std::time::Instant::now();
+    loop {
+        let found = collector.received_metrics.lock().unwrap().iter().any(|batch| {
+            batch["resourceMetrics"].as_array().into_iter().flatten().any(|resource| {
+                resource["scopeMetrics"].as_array().into_iter().flatten().any(|scope| {
+                    scope["metrics"].as_array().into_iter().flatten().any(|metric| {
+                        metric["name"] == "aip_otlp_spans_dropped_total"
+                            && metric["sum"]["isMonotonic"] == true
+                            && metric["sum"]["aggregationTemporality"] == 2
+                            && metric["sum"]["dataPoints"][0]["asInt"]
+                                .as_str()
+                                .and_then(|n| n.parse::<u64>().ok())
+                                .is_some_and(|n| n >= before + 5000 - 4096)
+                    })
+                })
+            })
+        });
+        if found {
+            break;
+        }
+        assert!(start.elapsed() < Duration::from_secs(5), "collector never received the cumulative queue-drop counter");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
 
 // sqlgen keeps one schema per process: the two tests below share its name and run one after the other.
 static SCHEMA_GATE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -687,6 +738,7 @@ async fn a_job_enqueued_over_http_is_exported_as_a_child_of_the_request_span() {
     assert_eq!(run_span["traceId"], trace_id);
     assert_eq!(run_span["parentSpanId"].as_str(), Some(enqueue_span_id), "the job run must be a child of the request that enqueued it");
     assert_eq!(run_span["status"]["code"].as_i64(), Some(1));
+    assert!(run_span["attributes"].as_array().unwrap().iter().any(|a| a["key"] == "job.id" && a["value"]["stringValue"] == job_id));
 
     // What was stored in the row is the trace and the enqueuing span, nothing else.
     let stored: String = db.query_one(&format!("SELECT trace_id FROM {schema}.aip_jobs WHERE id::text=$1"), &[&job_id]).await.unwrap().get(0);

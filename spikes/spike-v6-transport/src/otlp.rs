@@ -111,6 +111,11 @@ pub struct OtlpExporter {
     dropped: Arc<AtomicU64>,
 }
 
+/// Process-wide cumulative queue-overflow count, also exposed by the metrics exporters.
+pub fn dropped_span_count() -> u64 {
+    crate::metrics::dropped_span_count()
+}
+
 impl OtlpExporter {
     pub fn start(config: OtlpConfig) -> std::io::Result<Arc<Self>> {
         config.validate()?;
@@ -173,6 +178,7 @@ impl OtlpExporter {
     pub fn export_span(&self, span: SpanData) {
         if let Err(mpsc::error::TrySendError::Full(_)) = self.tx.try_send(span) {
             self.dropped.fetch_add(1, Ordering::Relaxed);
+            crate::metrics::observe_otlp_span_drop();
         }
     }
 }
@@ -307,6 +313,19 @@ async fn send_metrics(client: &reqwest::Client, url: &str, headers: &HashMap<Str
     let now = now_nanos().to_string();
 
     let mut metrics: Vec<Value> = Vec::new();
+
+    if snap.otlp_spans_dropped > 0 {
+        metrics.push(json!({
+            "name": "aip_otlp_spans_dropped_total",
+            "description": "Spans dropped because the OTLP export queue was full",
+            "unit": "1",
+            "sum": {
+                "dataPoints": [{"timeUnixNano": now, "asInt": snap.otlp_spans_dropped.to_string(), "attributes": []}],
+                "aggregationTemporality": 2,
+                "isMonotonic": true
+            }
+        }));
+    }
 
     // Requests counter
     if !snap.requests.is_empty() {
@@ -471,6 +490,33 @@ async fn send_metrics(client: &reqwest::Client, url: &str, headers: &HashMap<Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn queue_overflow_is_counted_in_the_prometheus_scrape() {
+        fn count() -> Option<u64> {
+            crate::metrics::render().lines().find_map(|line| line.strip_prefix("aip_otlp_spans_dropped_total ")?.parse().ok())
+        }
+        let before = count().unwrap_or(0);
+        let exporter =
+            OtlpExporter::start(OtlpConfig { endpoint: "http://127.0.0.1:19999".into(), headers: HashMap::new(), timeout_ms: 100 }).unwrap();
+        // No await on this single-thread runtime: the consumer cannot drain the queue.
+        for i in 0..5000 {
+            exporter.export_span(SpanData {
+                trace_id: format!("{:032x}", i + 1),
+                span_id: format!("{:016x}", i + 1),
+                parent_span_id: None,
+                name: "queue-overflow".into(),
+                kind: 1,
+                start_time_nanos: 1,
+                end_time_nanos: 2,
+                attributes: vec![],
+                status_code: SpanStatusCode::Ok,
+                status_message: None,
+            });
+        }
+        let after = count().expect("scrape must expose the dropped-span counter");
+        assert_eq!(after - before, 5000 - 4096);
+    }
 
     #[test]
     fn span_status_code_enum_values_match_official_trace_proto() {

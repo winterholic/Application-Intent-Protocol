@@ -7,11 +7,23 @@
 //! `/metrics` is served only when the operator configured a token; the scrape sends it as a Bearer token.
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
 /// Upper bounds in seconds. Requests are bounded by the 30 s request deadline, so larger buckets add nothing.
 pub const BUCKETS: [f64; 12] = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0];
+
+static OTLP_SPANS_DROPPED: AtomicU64 = AtomicU64::new(0);
+
+/// Queue overflow must remain nonblocking and independent of the resettable log batch.
+pub(crate) fn observe_otlp_span_drop() {
+    OTLP_SPANS_DROPPED.fetch_add(1, Ordering::Relaxed);
+}
+
+pub(crate) fn dropped_span_count() -> u64 {
+    OTLP_SPANS_DROPPED.load(Ordering::Relaxed)
+}
 
 #[derive(Clone, Default)]
 struct Histogram {
@@ -103,6 +115,7 @@ pub type DurationHistogramData = (String, Vec<(f64, u64)>, u64, f64);
 
 #[derive(Clone, Debug, Default)]
 pub struct MetricsSnapshot {
+    pub otlp_spans_dropped: u64,
     pub requests: Vec<((String, u16, String), u64)>,
     pub request_durations: Vec<DurationHistogramData>,
     pub operations: Vec<((String, u16, String), u64)>,
@@ -115,6 +128,7 @@ pub struct MetricsSnapshot {
 pub fn snapshot() -> MetricsSnapshot {
     let Ok(registry) = REGISTRY.lock() else { return MetricsSnapshot::default() };
     MetricsSnapshot {
+        otlp_spans_dropped: dropped_span_count(),
         requests: registry.requests.iter().map(|((r, s, c), n)| ((r.to_string(), *s, c.clone()), *n)).collect(),
         request_durations: registry
             .durations
@@ -140,6 +154,9 @@ pub fn snapshot() -> MetricsSnapshot {
 pub(crate) fn render() -> String {
     let Ok(registry) = REGISTRY.lock() else { return String::new() };
     let mut out = String::new();
+    out.push_str("# HELP aip_otlp_spans_dropped_total Spans dropped because the OTLP export queue was full.\n");
+    out.push_str("# TYPE aip_otlp_spans_dropped_total counter\n");
+    out.push_str(&format!("aip_otlp_spans_dropped_total {}\n", dropped_span_count()));
     out.push_str("# HELP aip_requests_total Finished HTTP requests by route, status and AIP error code.\n");
     out.push_str("# TYPE aip_requests_total counter\n");
     for ((route, status, code), n) in &registry.requests {

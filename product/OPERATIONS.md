@@ -181,6 +181,10 @@ W3C `traceparent`가 유효한 헤더 하나로 들어오면 요청 로그의 `t
 
 ## OpenTelemetry (OTLP/HTTP) exporter
 
+OTLP 큐가 가득 차 버린 span은 `aip_otlp_spans_dropped_total` 누적 counter로 확인한다.
+Prometheus `/metrics`에 항상 노출하고, 1건 이상이면 OTLP `/v1/metrics`에도 monotonic cumulative sum으로 보낸다.
+이 값은 큐 포화로 인한 드롭만 세며 process 재시작 때 0이 된다. 주기적 `otlp_spans_dropped` 로그의 배치 카운터가 초기화되어도 누적 값은 유지된다.
+
 `{"otlp":{"endpoint":"http://collector:4318","headers":{},"timeout_ms":5000}}`을 설정하면 OpenTelemetry Collector로 traces와 metrics를 HTTP/JSON 규격으로 내보낸다. 기본값은 off(미설정)이며, 꺼져 있을 때는 단순 `Option` 검사만 수행되어 추가 런타임 비용이 없다.
 - `/v1/traces`: HTTP 요청 span(`HTTP <route>`, kind SERVER)과 durable job run span(`JOB <operation>`, kind INTERNAL)을 비동기 bounded queue(4096)를 통해 논블로킹으로 전송한다.
 - `/v1/metrics`: 요청·operation·job 카운터 및 지연 histogram 데이터를 2초 간격으로 OTLP JSON 규격으로 전송한다.

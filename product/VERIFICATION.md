@@ -1,5 +1,12 @@
 # 제품 통합 검증 (2026-10-17)
 
+## WBS 8.15 OTLP 큐 드롭 계측과 제품 job 연결 (2026-10-19)
+
+- 기존 Linux Verify `da5817e`의 원시 로그에서 `otlp.rs` **6 passed, 0 failed**와 HTTP enqueue→저장 trace→worker→collector 연결 2개를 확인했다. 이 검사는 서버가 내보낸 span을 받으며 테스트가 span을 대신 만들어 성공시키지 않는다.
+- 큐 포화는 이전에 latency만 확인했다. `aip_otlp_spans_dropped_total` 누적 counter를 Prometheus와 OTLP monotonic cumulative sum에 추가했다. 로그 배치 카운터 초기화와 분리하고, 단일-thread runtime에서 5000개를 enqueue해 queue 4096개를 넘는 **904개 드롭**을 검사한다. 실제 collector 수신도 확인했다.
+- 로컬 `cargo test --lib otlp::tests`: **4 passed**. queue saturation **1 passed**, 실제 OTLP collector counter 수신 **1 passed**, transport all-targets clippy `-D warnings` 통과. 이 검사는 DB를 쓰지 않는다.
+- 실제 job E2E에는 collector의 `job.id`와 enqueue 결과 ID 일치 검사를 추가했다. 이 추가 단언의 Linux/DB 실행은 다음 Verify CI에서 확인하며 로컬 sandbox의 DB 실행으로 합산하지 않는다.
+
 ## WBS 8.13 prototype CLI·검증 게이트 복구 (2026-10-19)
 
 - 현행 prototype에서 `--locked` 실패와 CLI 2개 실패를 재현했다. 공유 생성기는 `OperationBinding`을 내보내는데 prototype SDK 진입점에 이 타입이 없었다. SDK의 누락된 binding 타입을 내보내고, 이전 `PrototypeBinding` 문자열만 요구하던 검사를 현재 계약에 맞췄다. 실제 SDK를 import하는 TypeScript 호출부 컴파일 검사도 함께 통과한다.
@@ -72,7 +79,7 @@ Codex 작업 세션이 취소된 7개 브랜치를 이어받아 main에 통합�
 - 당시 `prototype` 테스트 `cli`의 2개(`gen_emits_a_typed_binding_...`, `generated_binding_resolves_...`)는 main에서도 `OperationBinding` 미export로 실패했다. **2026-10-19 후속에서 수정·13개 통과**, 위 WBS 8.13 기록 참조.
 - 당시 `cargo clippy --all-targets`는 spike-v2-read의 `needless_lifetimes` 때문에 실패했다. **2026-10-19 현행 v2 all-targets `-D warnings` 통과**, 위 WBS 8.13 기록 참조.
 - `prototype/Cargo.lock`은 main에서 `--locked` 검사가 이미 실패했고 이번에 갱신했다.
-- 8.3 큐 포화 테스트는 호출이 100ms 안에 끝나는지만 본다. 드롭 카운터는 검증하지 않는다.
+- 당시 8.3 큐 포화 테스트는 호출 latency만 확인했다. **2026-10-19 후속에서 누적 드롭 counter 및 collector 수신 검사를 추가**, 위 WBS 8.15 기록 참조.
 - 8.9는 연결이 닫힌 경우(`is_closed`)만 `COMMIT_UNKNOWN`으로 분류한다. 그 밖의 연결 오류 형태는 실행해 보지 않았다. (다음 절 "WBS 8.9 분류 보강"에서 실행했다.)
 - GitHub Actions 워크플로 변경, 실제 Kafka·RabbitMQ·MinIO smoke, Linux 격리는 이번 회차에 실행하지 않았다.
 
