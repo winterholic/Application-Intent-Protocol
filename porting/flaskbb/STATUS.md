@@ -8,7 +8,7 @@
 
 RED→GREEN: 단위 2건이 구현 전 실패(필터 없음 KeyError 1·길이 오류 미표시 3 subtest)했고 구현 뒤 `test_ui_host`+`test_mail_jobs` 35/35를 DB 없이 로컬에서 직접 실행해 통과했다. 신규 실DB `users-search.test.mjs`(이름 일치·공유 부분문자열·대소문자 고정·이메일 불가·무효 질의 전체목록 폴백)는 `node --check` 통과, 로컬 실DB는 검증 샌드박스의 사용자 조회 차단(`initdb: 501 UID를 찾을 수 없음`, 1회 기록 후 미재시도)으로 미실행이며 `worker-jobs-linux.yml` Revalidate 단계에 등록해 Linux CI로 판정한다.
 
-CI 경과(공개 API 확인, gh 미인증): 890b02c의 worker-jobs(run 39307000950)는 Revalidate 단계에서 실패했고 같은 run의 unittest 단계(신규 단위 2건 포함)는 통과했다. logs API 403·빈 annotations/output으로 실패 시험을 특정하지 못했고, 직전 4개 커밋의 worker-jobs는 연속 성공이었다. 빈 커밋 재기동(28ce6d6)은 paths 필터에 걸려 worker-jobs가 기동하지 않았으므로, 이 문서 갱신 커밋으로 재기동해 다시 판정한다.
+CI 경과(공개 API 확인, gh 미인증): 890b02c의 worker-jobs(run 39307000950)는 Revalidate 단계에서 실패했고 같은 run의 unittest 단계(신규 단위 2건 포함)는 통과했다. logs API 403·빈 annotations/output으로 실패 시험을 특정하지 못했고, 직전 4개 커밋의 worker-jobs는 연속 성공이었다. 빈 커밋 재기동(28ce6d6)은 paths 필터에 걸려 worker-jobs가 기동하지 않았다. 동일 코드의 문서 갱신 재기동(d2e4c03, run 39309709948)도 Revalidate에서 실패해 2연속 실패이며, 신규 `users-search.test.mjs`가 유력 용의자이나 로그 없이는 미확정이다(단정하지 않음). 로컬 PG도 샌드박스 차단이라 재현 불가. 다음 단계: gh 인증 환경에서 run 39309709948의 Revalidate 로그로 실패 시험을 특정한다. 이 항목은 CI 판정까지 미완료로 유지한다.
 
 ## 2026-10-20 F15 검색 색인 필드·질의 검증 동등화 — 구현됨, 실DB 로컬 통과, Linux CI 판정 대기
 
