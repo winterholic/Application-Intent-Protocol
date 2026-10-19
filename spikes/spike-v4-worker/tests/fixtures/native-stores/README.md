@@ -1,6 +1,6 @@
 # Slice 13-A native driver fixture
 
-This fixture binds only loopback high ports: MySQL 8.4 at `15440`, MongoDB 8.0 at `15441`, Redis 7.4 at `15442`, and a separate UUID ownership MongoDB 8.0 at `25443`. The UUID fixture has no credentials and its tests use process-scoped database names. It does not use shared service ports. Credentials are local fixture values and must not be reused.
+This fixture binds only loopback high ports: MySQL 8.4 at `15440`, MongoDB 7.0 at `15441`, Redis 7.4 at `15442`, and a separate UUID ownership MongoDB 7.0 at `25443`. MongoDB stays on 7.0 because 8.x refuses to start on Linux kernel 6.19+ (SERVER-121912). The UUID fixture has no credentials and its tests use process-scoped database names. It does not use shared service ports. Credentials are local fixture values and must not be reused.
 
 ```sh
 docker compose -f spikes/spike-v4-worker/tests/fixtures/native-stores/compose.yaml up -d --wait

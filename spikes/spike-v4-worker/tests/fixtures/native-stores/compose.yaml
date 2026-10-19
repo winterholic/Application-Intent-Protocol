@@ -15,7 +15,10 @@ services:
       timeout: 2s
       retries: 30
   mongo:
-    image: mongo:8.0
+    # NOTE: stay on 7.0 while CI runners use Linux kernel 6.19+. MongoDB 8.x
+    # refuses to start there (SERVER-121912, TCMalloc rseq ABI). Revisit if 8.x
+    # ever supports those kernels again.
+    image: mongo:7.0
     container_name: aip-slice13a-mongo-fixture
     environment:
       MONGO_INITDB_ROOT_USERNAME: aip_test_slice13a
@@ -29,7 +32,8 @@ services:
       timeout: 2s
       retries: 30
   mongo-uuid:
-    image: mongo:8.0
+    # NOTE: same kernel-6.19 guard as above; keep in sync with `mongo`.
+    image: mongo:7.0
     container_name: aip-ci-uuid-mongo-fixture
     ports:
       - "127.0.0.1:25443:27017"
