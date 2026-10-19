@@ -315,7 +315,7 @@ resource PersonalSecret {
 operation job secretReminder {
   input { secret: Secret.Id }
   output { reminded: Int }
-  allow actor != null and exists Secret where id = input.secret and canReadProject(actor, folder.env.project)
+  allow actor != null and exists Secret where id = input.secret and canReadProject(actor, folder.env.project) and folder.env.softDeletedAt = null
   access read.Secret, Secret.remind
   effect managed
   deadline 30s
