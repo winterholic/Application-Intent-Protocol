@@ -62,30 +62,37 @@ test('FlaskBB member list searches usernames within the original 3-50 bounds (re
       return res.text();
     };
 
+    // The layout navbar prints the signed-in username (member-carol here), so
+    // membership is judged on the member table rows only, never the full page.
+    const listed = html => {
+      const body = /<tbody>([\s\S]*?)<\/tbody>/.exec(html);
+      assert.ok(body, 'member table rendered');
+      return [...body[1].matchAll(/<strong>([^<]*)<\/strong>/g)].map(match => match[1]).sort();
+    };
+
     const all = await page({});
-    assert.ok(all.includes('member-alice'), 'full list without a query');
-    assert.ok(all.includes('member-carol'), 'full list without a query');
+    assert.ok(all.includes('href="/user/member-carol"'), 'precondition: the navbar names the signed-in user outside the table');
+    assert.deepEqual(listed(all), ['admin-bob', 'guest-fixture', 'member-alice', 'member-carol', 'mod-editor', 'super-mod'], 'full list without a query');
     assert.ok(!all.includes('between 3 and 50'), 'no bounds error without a query');
 
     const byName = await page({q: 'alice'});
-    assert.ok(byName.includes('member-alice'), 'username match listed');
-    assert.ok(!byName.includes('member-carol'), 'non-matching member stays out');
+    assert.deepEqual(listed(byName), ['member-alice'], 'only the username match is listed; non-matching members stay out');
     assert.ok(byName.includes('Members matching "alice"'), 'results heading names the query');
 
     const shared = await page({q: 'member-'});
-    assert.ok(shared.includes('member-alice') && shared.includes('member-carol'), 'shared substring matches both');
+    assert.deepEqual(listed(shared), ['member-alice', 'member-carol'], 'shared substring matches both');
 
     const upper = await page({q: 'ALICE'});
-    assert.ok(!upper.includes('member-alice'), 'matching is case-sensitive until Whoosh parity (flip with G-4)');
+    assert.deepEqual(listed(upper), [], 'matching is case-sensitive until Whoosh parity (flip with G-4)');
 
     const byEmail = await page({q: 'alice@example.test'});
-    assert.ok(!byEmail.includes('member-alice'), 'registered emails are not searchable');
+    assert.deepEqual(listed(byEmail), [], 'registered emails are not searchable');
 
     // Invalid queries re-render the full list with errors, like the upstream form.
     for (const [q, text] of [['ab', 'between 3 and 50'], ['x'.repeat(51), 'between 3 and 50'], ['   ', 'required']]) {
       const html = await page({q});
       assert.ok(html.includes(text), `error for ${JSON.stringify(q)}`);
-      assert.ok(html.includes('member-alice') && html.includes('member-carol'), `full list fallback for ${JSON.stringify(q)}`);
+      assert.deepEqual(listed(html), listed(all), `full list fallback for ${JSON.stringify(q)}`);
       assert.ok(!html.includes('Members matching'), 'no results heading for an invalid query');
     }
 
