@@ -10,6 +10,7 @@ default = []
 mysql = ["aip-execution/mysql", "dep:mysql_async", "dep:spike-v3-write", "dep:uuid"]
 
 [dependencies]
+aip-crypto = { path = "../aip-crypto" }
 aip-execution = { path = "../aip-execution", default-features = false }
 serde.workspace = true
 serde_json.workspace = true

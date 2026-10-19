@@ -197,6 +197,7 @@ dependencies = [
 name = "aip-migrate"
 version = "0.1.0"
 dependencies = [
+ "aip-crypto",
  "aip-execution",
  "aip-test-support",
  "futures-util",

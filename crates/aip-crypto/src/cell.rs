@@ -131,6 +131,46 @@ pub(crate) fn encode_fields(domain: &[u8], fields: &[&[u8]]) -> Result<Vec<u8>, 
     Ok(output)
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct CellHeader<'a> {
+    pub tag: &'a str,
+    pub dek_id: &'a str,
+    pub version: u32,
+    pub nonce_len: usize,
+    pub ciphertext_and_tag_len: usize,
+}
+
+/// Inspects and parses a v2 cell frame header without decrypting or requiring the data key.
+/// Verifies frame length, v2 prefix, dek_id identifier rules, version format, nonce size (12 bytes),
+/// and ciphertext minimum tag length (>= 16 bytes).
+pub fn parse_header<'a>(frame: &'a str) -> Result<CellHeader<'a>, Error> {
+    if frame.len() > MAX_FRAME_BYTES {
+        return Err(Error::Corrupted);
+    }
+    let mut parts = frame.split(':');
+    let (Some("v2"), Some(tag), Some(id), Some(version), Some(nonce), Some(body), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return Err(Error::Corrupted);
+    };
+    if !valid_id(id) {
+        return Err(Error::Corrupted);
+    }
+    let ver = version.parse::<u32>().map_err(|_| Error::Corrupted)?;
+    if ver == 0 {
+        return Err(Error::Corrupted);
+    }
+    let nonce_bytes = STANDARD.decode(nonce).map_err(|_| Error::Corrupted)?;
+    if nonce_bytes.len() != 12 {
+        return Err(Error::Corrupted);
+    }
+    let body_bytes = STANDARD.decode(body).map_err(|_| Error::Corrupted)?;
+    if !(16..=MAX_CELL_BYTES + 16).contains(&body_bytes.len()) {
+        return Err(Error::Corrupted);
+    }
+    Ok(CellHeader { tag, dek_id: id, version: ver, nonce_len: nonce_bytes.len(), ciphertext_and_tag_len: body_bytes.len() })
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -151,5 +191,22 @@ mod tests {
     fn framing_separates_component_boundaries_and_domains() {
         assert_ne!(encode_fields(b"aip.enc.v2", &[b"a|b", b"c"]).unwrap(), encode_fields(b"aip.enc.v2", &[b"a", b"b|c"]).unwrap());
         assert_ne!(encode_fields(b"aip.enc.v2", &[b"a", b"b"]).unwrap(), encode_fields(b"aip.dek.v2", &[b"a", b"b"]).unwrap());
+    }
+    #[test]
+    fn parse_header_validates_v2_cell_structure() {
+        let key = DataKey::new("dek1", 1, [0x42; 32]).unwrap();
+        let ctx = Context { schema: "s", resource: "Secret", field: "value", row_id: "1", scope_kind: "service", scope_id: "global" };
+        let frame = key.seal(&ctx, b"secret data").unwrap();
+        let header = parse_header(&frame).unwrap();
+        assert_eq!(header.tag, "s");
+        assert_eq!(header.dek_id, "dek1");
+        assert_eq!(header.version, 1);
+        assert_eq!(header.nonce_len, 12);
+        assert_eq!(header.ciphertext_and_tag_len, 11 + 16);
+
+        // Negative: malformed or corrupted frames
+        assert_eq!(parse_header("v1:s:dek1:1:nonce:body"), Err(Error::Corrupted));
+        assert_eq!(parse_header("v2:s:bad-dek:0:nonce:body"), Err(Error::Corrupted));
+        assert_eq!(parse_header("not a valid frame"), Err(Error::Corrupted));
     }
 }

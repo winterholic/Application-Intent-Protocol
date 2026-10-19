@@ -1,7 +1,7 @@
 //! Explicit adoption of a PostgreSQL schema that AIP does not own.
 //! Physical names are translated through security-invoker, automatically updatable views.
 use super::*;
-use spike_v2_read::external::{Mapping, Table, quote, snapshot};
+pub use spike_v2_read::external::{Mapping, Table, quote, snapshot};
 
 fn failure(msg: &str) -> Value {
     err("EXTERNAL_SCHEMA", msg)
@@ -141,6 +141,47 @@ pub async fn introspect_with_ca(url: &str, source: &str, _database_ca_file: Opti
     Ok(json!({"ok":true,"definition":definition,"mapping":mapping,"structureDigest":digest(&cat),"catalog":cat}))
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn validate_encrypted_rows(
+    db: &impl GenericClient,
+    schema: &str,
+    table: &str,
+    pk_col: &str,
+    col: &str,
+    res: &str,
+    field: &str,
+    expected_tag: &str,
+) -> Result<(), Value> {
+    const BATCH_SIZE: i64 = 500;
+    let mut offset: i64 = 0;
+    loop {
+        let query_str = format!(
+            "SELECT {} FROM {}.{} WHERE {} IS NOT NULL ORDER BY {} ASC LIMIT {} OFFSET {}",
+            quote(col),
+            quote(schema),
+            quote(table),
+            quote(col),
+            quote(pk_col),
+            BATCH_SIZE,
+            offset
+        );
+        let rows = db.query(&query_str, &[]).await.map_err(|_| failure("암호화 컬럼 검증 질의 실패"))?;
+        let count = rows.len();
+        for r in rows {
+            let val: String = r.get(0);
+            let header = aip_crypto::cell::parse_header(&val).map_err(|_| failure(&format!("암호화 셀 포맷 오류: {res}.{field}")))?;
+            if header.tag != expected_tag {
+                return Err(failure(&format!("암호화 셀 태그 불일치: {res}.{field}")));
+            }
+        }
+        if (count as i64) < BATCH_SIZE {
+            break;
+        }
+        offset += count as i64;
+    }
+    Ok(())
+}
+
 async fn validate(db: &impl GenericClient, target: &str, facts: &Value, mapping: &Mapping) -> Result<(), Value> {
     if !spike_v2_read::external::valid_name(&mapping.schema)
         || mapping.schema == target
@@ -203,6 +244,16 @@ async fn validate(db: &impl GenericClient, target: &str, facts: &Value, mapping:
                 if !correct {
                     return Err(failure("Ref 매핑과 기존 FK가 다름"));
                 }
+            }
+            if let Some(enc) = fd.get("encrypted") {
+                let expected_tag = match enc["scope"]["kind"].as_str() {
+                    Some("service") => "s",
+                    Some("ref") => "r",
+                    Some("owner") => "o",
+                    _ => return Err(failure("지원하지 않거나 누락된 scope kind")),
+                };
+                let pk_col = pk["columns"][0].as_str().unwrap();
+                validate_encrypted_rows(db, &mapping.schema, &t.table, pk_col, physical, res, field, expected_tag).await?;
             }
         }
         for unique in rf["unique"].as_array().into_iter().flatten() {
