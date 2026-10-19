@@ -58,7 +58,7 @@ where
     if path != "/objects/put" && !path.starts_with("/objects/") {
         return false;
     }
-    if path == "/objects/sign" || path.starts_with("/objects/multipart/") {
+    if path == "/objects/sign" || path == "/objects/confirm" || path.starts_with("/objects/multipart/") {
         return false;
     }
     let cors_headers = cors::actual_response_headers(origin);
@@ -285,6 +285,7 @@ pub(crate) async fn control(rt: &Runtime, facts: &Value, wire: IdWire, session: 
     };
     let response = match path {
         "/objects/sign" => sign_with_ledger(rt, &ledger, &owner, &store, body).await,
+        "/objects/confirm" => confirm_with_ledger(rt, &ledger, &owner, &store, body).await,
         "/objects/multipart/start" => multipart_start_with_ledger(rt, &ledger, &owner, &store, body).await,
         "/objects/multipart/part" => multipart_part_with_ledger(rt, &ledger, &owner, &store, body).await,
         "/objects/multipart/complete" => multipart_complete_with_ledger(rt, &ledger, &owner, &store, body).await,
@@ -368,6 +369,29 @@ async fn sign_with_ledger(rt: &Runtime, ledger: &ObjectLedger, owner: &str, stor
     };
     match step {
         Ok(()) => response,
+        Err(code) => failure(code),
+    }
+}
+
+async fn confirm_with_ledger(rt: &Runtime, ledger: &ObjectLedger, owner: &str, store: &S3Store, body: &Value) -> Value {
+    if !exact(body, &["id"]) {
+        return failure("WIRE.BAD_REQUEST");
+    }
+    let Some(key) = parse_key(body) else { return failure("WIRE.BAD_REQUEST") };
+    // for_owner above binds the HEAD to the authenticated owner's hashed prefix. Never trust caller size.
+    let bytes = match store.head_object(&key).await {
+        Ok(Some(bytes)) => bytes,
+        Ok(None) => return failure("WIRE.NOT_FOUND"),
+        Err(_) => return failure("WIRE.STORAGE_UNAVAILABLE"),
+    };
+    let (ledger, owner, id) = (ledger.clone(), owner.to_owned(), key.to_string());
+    let result = with_db(rt, move |mut db| async move {
+        let result = ledger.adopt_object(&mut db, &owner, &id, bytes).await;
+        (db, result)
+    })
+    .await;
+    match result {
+        Ok(()) => json!({"ok":true,"id":key.to_string(),"size":bytes}),
         Err(code) => failure(code),
     }
 }

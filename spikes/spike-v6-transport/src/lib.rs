@@ -898,7 +898,7 @@ async fn serve_request(
         let _ = hosting::serve_with_origin(&mut tap, mount, &method, &path, &headers, w.origin.as_deref()).await;
         return;
     }
-    if object_path && path != "/objects/sign" && !path.starts_with("/objects/multipart/") {
+    if object_path && path != "/objects/sign" && path != "/objects/confirm" && !path.starts_with("/objects/multipart/") {
         if expected_contract.as_deref() != contract_fingerprint.as_deref() || expected_contract.is_none() {
             return reply_object(&mut w, &err("WIRE.CONTRACT_MISMATCH", "object API 계약 지문 필요")).await;
         }
@@ -1017,7 +1017,7 @@ async fn serve_request(
             return;
         }
     }
-    if path == "/objects/sign" || path.starts_with("/objects/multipart/") {
+    if path == "/objects/sign" || path == "/objects/confirm" || path.starts_with("/objects/multipart/") {
         if expected_contract.as_deref() != contract_fingerprint.as_deref() || expected_contract.is_none() {
             return reply_object(&mut w, &err("WIRE.CONTRACT_MISMATCH", "object API 계약 지문 필요")).await;
         }

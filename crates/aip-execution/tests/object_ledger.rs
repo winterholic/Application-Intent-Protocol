@@ -419,3 +419,59 @@ async fn invalid_configuration_and_inputs_are_rejected() {
     assert_eq!(ledger.reserve_put(&mut db.client, "alice", "a", u64::MAX, 600).await, Err(Error::QuotaExceeded));
     assert_eq!(ledger.reserve_put(&mut db.client, "alice", "a", 1, 0).await, Err(Error::InvalidRequest));
 }
+
+#[tokio::test]
+async fn observed_existing_objects_are_counted_even_when_they_exceed_quota() {
+    let mut db = Db::new().await;
+    let ledger = db.ledger(10, 1);
+    ledger.adopt_object(&mut db.client, "alice", "historical", 12).await.unwrap();
+    ledger.adopt_object(&mut db.client, "alice", "historical", 12).await.unwrap();
+    assert_eq!(ledger.usage(&db.client, "alice").await.unwrap(), Usage { bytes: 12, objects: 1 });
+    assert_eq!(ledger.reserve_put(&mut db.client, "alice", "next", 1, 600).await, Err(Error::QuotaExceeded));
+    ledger.adopt_object(&mut db.client, "bob", "empty", 0).await.unwrap();
+    assert_eq!(ledger.usage(&db.client, "bob").await.unwrap(), Usage { bytes: 0, objects: 1 });
+    assert!(ledger.adopt_object(&mut db.client, "alice", "bad", u64::MAX).await.is_err());
+    assert_eq!(db.rows().await, 2);
+}
+
+#[tokio::test]
+async fn confirmation_never_releases_a_pending_put_or_delete_and_fences_stale_reconciliation() {
+    let mut db = Db::new().await;
+    let ledger = db.ledger(100, 10);
+    ledger.reserve_put(&mut db.client, "alice", "pending", 90, 600).await.unwrap();
+    db.expire_all().await;
+    let due = ledger.claim_due(&mut db.client, 10, 60).await.unwrap().pop().unwrap();
+    ledger.adopt_object(&mut db.client, "alice", "pending", 3).await.unwrap();
+    assert_eq!(ledger.usage(&db.client, "alice").await.unwrap().bytes, 90);
+    assert!(!ledger.resolve(&mut db.client, &due, Outcome::Absent).await.unwrap());
+    let state: String = db
+        .client
+        .query_one(&format!("SELECT state FROM {}.aip_object_ledger WHERE object_id='pending' AND expires_at IS NOT NULL", db.schema), &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(state, "PENDING");
+    ledger.adopt_object(&mut db.client, "alice", "stored", 10).await.unwrap();
+    ledger.delete_signed(&mut db.client, "alice", "stored", 600).await.unwrap();
+    ledger.adopt_object(&mut db.client, "alice", "stored", 2).await.unwrap();
+    assert_eq!(ledger.usage(&db.client, "alice").await.unwrap().bytes, 100);
+    let state: String = db
+        .client
+        .query_one(&format!("SELECT state FROM {}.aip_object_ledger WHERE object_id='stored' AND expires_at IS NOT NULL", db.schema), &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(state, "DELETING");
+}
+
+#[tokio::test]
+async fn confirmation_cannot_convert_an_active_multipart_into_a_completed_object() {
+    let mut db = Db::new().await;
+    let ledger = db.ledger(100, 10);
+    ledger.start_multipart(&mut db.client, "alice", "active", "upload", 600).await.unwrap();
+    ledger.reserve_part(&mut db.client, "alice", "active", "upload", 1, 90, 600).await.unwrap();
+    assert_eq!(ledger.adopt_object(&mut db.client, "alice", "active", 1).await, Err(Error::InvalidRequest));
+    ledger.require_open_multipart(&mut db.client, "alice", "active", "upload").await.unwrap();
+    assert_eq!(db.part_rows().await, 1);
+    assert_eq!(ledger.usage(&db.client, "alice").await.unwrap().bytes, 90);
+}

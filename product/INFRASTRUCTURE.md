@@ -92,10 +92,13 @@ TypeScript 제품 client의 실제 API:
 ```ts
 const signed = await client.objects.sign({method:"PUT", size:file.size, contentType:"application/octet-stream"});
 await fetch(signed.url, {method:signed.method, headers:signed.headers, body:file});
+const confirmed = await client.objects.confirm({id:signed.id}); // provider HEAD의 실제 크기로 장부 대조
 const upload = await client.objects.multipartStart({contentType:"application/octet-stream"});
 const part = await client.objects.part({...upload, partNumber:1, size:chunk.size});
 // 각 PUT 응답의 ETag를 모아서 complete({ ...upload, parts:[{number:1,etag}] }) 호출.
 ```
+
+`POST /objects/confirm`은 인증된 owner의 접두어 안에서 `HEAD`한 크기를 장부에 반영한다. 요청은 `id`만 받으며 caller가 크기를 정할 수 없다. 장부 이전 객체와 두 번째 확인 뒤 도착한 PUT도 명시적으로 복구할 수 있고, 기존 객체가 이미 quota를 초과해도 실제 사용량을 기록해 다음 서명을 막는다. 진행 중인 PUT/DELETE의 예약·타이머는 유지하고, 활성 multipart는 완료 처리하지 않는다. 확인 실패·404는 기존 장부를 지우거나 0바이트로 바꾸지 않는다. 이 API는 소유자가 자발적으로 호출하는 복구 수단이며 자동 목록 스캔/이벤트 대조를 대신하지 않는다. 아래 미계상 한계는 확인 API를 호출하지 않은 객체에 계속 적용된다.
 
 SigV4는 Content-Length를 서명해 선언한 크기보다 큰 PUT/part를 막는다. URL 수명은 300초다. presigned URL은 소지자가 사용할 수 있고 발급 이후 principal 폐기가 즉시 URL을 취소하지 않는다. S3 control에는 동시 실행 제한과 owner별 quota가 있다. 객체 bytes는 서버를 지나지 않으므로 서버가 **서명한 크기**를 장부(`aip_infra_<digest>.aip_object_ledger`)에 예약하고 owner 합계(기본 10GiB·1,000개, `objects`의 `max_total_bytes`·`max_objects`로 조정)에 넣어 검사한다. 넘으면 URL을 돌려주지 않고 `WIRE.QUOTA_EXCEEDED`를 낸다. 같은 객체를 다시 서명하면 이전 예약을 대체한다. multipart는 `start`가 객체 한 개, 서명한 part 크기가 같은 part 번호는 대체되어 누적된다. 아직 장부에 없는 upload id의 part 서명과 complete는 `WIRE.NOT_FOUND`다.
 

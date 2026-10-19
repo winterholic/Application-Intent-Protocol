@@ -70,6 +70,7 @@ export type SseEvent = Readonly<{ event: string; data: string; id?: string; retr
 export type InfrastructureClient = Readonly<{
   objects: Readonly<{
     sign(input: { readonly method: ObjectMethod; readonly size?: number; readonly contentType?: string; readonly id?: string }): Promise<SignedObject>;
+    confirm(input: { readonly id: string }): Promise<Readonly<{ id: string; size: number }>>;
     multipartStart(input: { readonly contentType: string }): Promise<MultipartUpload>;
     part(input: { readonly id: string; readonly uploadId: string; readonly partNumber: number; readonly size: number }): Promise<SignedPart>;
     complete(input: { readonly id: string; readonly uploadId: string; readonly parts: readonly MultipartPart[] }): Promise<Readonly<{ id: string; completed: true }>>;
@@ -361,6 +362,13 @@ export function createInfrastructureClient(send: ManagedSend, fingerprint: strin
   }
 
   const objects = {
+    async confirm(input: { readonly id: string }): Promise<Readonly<{ id: string; size: number }>> {
+      if (!input || !isUuid(input.id)) badValue();
+      const id = input.id.toLowerCase();
+      const response = await call("/objects/confirm", { id });
+      if (response.id !== id || !Number.isSafeInteger(response.size) || (response.size as number) < 0) protocolError();
+      return deepFreeze({ id, size: response.size as number });
+    },
     async sign(input: { readonly method: ObjectMethod; readonly size?: number; readonly contentType?: string; readonly id?: string }): Promise<SignedObject> {
       if (!input || !["PUT", "GET", "HEAD", "DELETE"].includes(input.method)) badValue();
       if (input.method === "PUT") {

@@ -407,6 +407,41 @@ impl ObjectLedger {
         Ok(Usage { bytes: row.get::<_, i64>(0) as u64, objects: row.get::<_, i64>(1) as u64 })
     }
 
+    /// Records a size observed by the trusted provider HEAD, including objects that predate the ledger.
+    /// Existing bytes must be recorded even above quota: rejecting an observation would undercount reality.
+    /// This does not prove no older signed PUT/DELETE is in flight, so their timers and conservative charge
+    /// survive. Active multipart reservations cannot be finalized through a HEAD of an older object.
+    pub async fn adopt_object(&self, client: &mut Client, owner: &str, object_id: &str, bytes: u64) -> Result<(), Error> {
+        let bytes = i64::try_from(bytes).map_err(|_| Error::InvalidRequest)?;
+        let tx = client.transaction().await?;
+        let result = self.adopt_object_in(&tx, owner, object_id, bytes).await;
+        finish(tx, result).await
+    }
+
+    async fn adopt_object_in(&self, tx: &Transaction<'_>, owner: &str, object_id: &str, bytes: i64) -> Result<(), Error> {
+        self.lock(tx, owner).await?;
+        let active = tx
+            .query_opt(
+                &format!("SELECT 1 FROM {} WHERE owner=$1 AND object_id=$2 AND kind='MULTIPART' AND state='PENDING' FOR UPDATE", self.ledger()),
+                &[&owner, &object_id],
+            )
+            .await?;
+        if active.is_some() {
+            return Err(Error::InvalidRequest);
+        }
+        tx.execute(
+            &format!(
+                "INSERT INTO {} (owner,object_id,kind,state,bytes) VALUES ($1,$2,'PUT','COMPLETE',$3) \
+                 ON CONFLICT (owner,object_id) DO UPDATE SET bytes=CASE WHEN {0}.state IN ('PENDING','DELETING') \
+                 THEN GREATEST({0}.bytes,$3) ELSE $3 END,version={0}.version+1",
+                self.ledger()
+            ),
+            &[&owner, &object_id, &bytes],
+        )
+        .await?;
+        Ok(())
+    }
+
     async fn lock(&self, tx: &Transaction<'_>, owner: &str) -> Result<(), Error> {
         tx.query_one("SELECT pg_advisory_xact_lock($1,hashtext($2))", &[&OWNER_LOCK, &format!("{}:{owner}", self.schema)]).await?;
         Ok(())

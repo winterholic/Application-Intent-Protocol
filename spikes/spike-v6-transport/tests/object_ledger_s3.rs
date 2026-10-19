@@ -454,6 +454,10 @@ async fn live_known_limit_an_upload_finishing_after_the_hold_ended_is_not_counte
     tokio::time::sleep(Duration::from_millis(1500)).await;
     assert_eq!(fixture.number(BYTES).await, 0, "the object exists in the bucket but the ledger does not count it");
     assert_eq!(fixture.number(ROWS).await, 0);
+    let confirmed = fixture.control("alice", "/objects/confirm", json!({"id":signed["id"]})).await;
+    assert_eq!(confirmed["ok"], true, "{confirmed}");
+    assert_eq!(confirmed["size"], 3 * MIB);
+    assert_eq!(fixture.number(BYTES).await, 3 * MIB as i64, "explicit provider confirmation adopts the late object");
 }
 
 /// KNOWN LIMIT, pinned on purpose: only objects the ledger has seen are counted. An object that was already in the bucket before the ledger
@@ -475,4 +479,24 @@ async fn live_known_limit_an_object_that_predates_the_ledger_is_not_counted() {
     let second = fixture.control("alice", "/objects/sign", put_request(10 * MIB)).await;
     assert_eq!(second["ok"], true, "a full quota can be signed on top of the uncounted object: {second}");
     assert_eq!(fixture.number(BYTES).await, 10 * MIB as i64);
+    let id = signed["id"].as_str().unwrap();
+    let other = fixture.control("bob", "/objects/confirm", json!({"id":id})).await;
+    assert_eq!(other["code"], "WIRE.NOT_FOUND", "HEAD must use the authenticated owner's prefix: {other}");
+    let confirmed = fixture.control("alice", "/objects/confirm", json!({"id":id})).await;
+    assert_eq!(confirmed["ok"], true, "actual existing bytes are recorded even above quota: {confirmed}");
+    assert_eq!(fixture.number(BYTES).await, 13 * MIB as i64);
+    assert_eq!(fixture.control("alice", "/objects/confirm", json!({"id":id})).await["ok"], true);
+    assert_eq!(fixture.number(BYTES).await, 13 * MIB as i64, "a repeated confirmation does not double count");
+    let over = fixture.control("alice", "/objects/sign", put_request(1)).await;
+    assert_eq!(over["code"], "WIRE.QUOTA_EXCEEDED");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn confirm_rejects_caller_sizes_and_invalid_keys_before_provider_io() {
+    let fixture = Fixture::start(offline_store(10 * MIB, 3)).await;
+    for body in [json!({}), json!({"id":"bad"}), json!({"id":"00000000-0000-4000-8000-000000000001","size":1})] {
+        let response = fixture.control("alice", "/objects/confirm", body).await;
+        assert_eq!(response["code"], "WIRE.BAD_REQUEST", "{response}");
+        assert_eq!(fixture.number(ROWS).await, 0);
+    }
 }

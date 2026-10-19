@@ -215,3 +215,34 @@ test("a signed URL cannot point at another origin through protocol-relative or b
   }
   assert.equal((await sign(respond("/objects/local-put"))).url, "/objects/local-put");
 });
+
+test("object confirmation validates the provider response and sends no caller size", async () => {
+  const calls: unknown[][] = [];
+  const client = createInfrastructureClient(async (route, body) => {
+    calls.push([route, body]);
+    return ok({id, size: 0});
+  }, fingerprint);
+  const confirmed = await client.objects.confirm({id});
+  assert.deepEqual(confirmed, {id, size: 0});
+  assert.ok(Object.isFrozen(confirmed));
+  assert.deepEqual(calls, [["/objects/confirm", {id}]]);
+  await assert.rejects(client.objects.confirm({id:"bad"}));
+  for (const response of [{id, size:-1},{id, size:1.5},{id, size:Number.MAX_SAFE_INTEGER+1},{id:"00000000-0000-4000-8000-000000000001",size:1}]) {
+    const broken = createInfrastructureClient(async () => ok(response),fingerprint);
+    await assert.rejects(broken.objects.confirm({id}));
+  }
+});
+
+test("confirmation is a managed transport route carrying the generated contract", async () => {
+  const {connect} = await import("./transport.ts");
+  const fetcher: typeof fetch = async (url, init) => {
+    if (new URL(String(url)).pathname === "/session") return new Response(JSON.stringify({ok:true,principal:{actorId:"1"},remainingMs:60000}));
+    assert.equal(new URL(String(url)).pathname, "/objects/confirm");
+    assert.equal(new Headers(init?.headers).get("x-aip-contract"), fingerprint);
+    assert.deepEqual(JSON.parse(String(init?.body)), {id});
+    return new Response(JSON.stringify(ok({id,size:12})));
+  };
+  const transport = connect("http://objects.invalid","token",fetcher,{contractFingerprint:fingerprint,idWire:"safe-number-v13"});
+  const client = createInfrastructureClient(transport.callManaged,fingerprint);
+  assert.deepEqual(await client.objects.confirm({id}),{id,size:12});
+});
