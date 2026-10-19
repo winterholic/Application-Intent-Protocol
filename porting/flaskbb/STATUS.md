@@ -4,7 +4,7 @@
 
 원본의 `DeleteConversation`(소유자 mailbox+메시지), `DeleteReport`(moderator 이상), `DeleteUser`(admin, 자기 제외)를 `app.aip`의 `purge` 전이(`delete` 플래그) 3개로 선언했다. 효과는 대상 삭제보다 먼저 같은 트랜잭션에서 실행되고 둘 다 감사에 남는다. upstream FK 대조 결과 `posts`·`topics`·`reports`의 user FK에는 ondelete가 없어 원본도 참조 계정 삭제를 거부하므로, `User.purge`의 `userPurgeable` 가드(11개 `not exists`)는 그 경우 원본과 같다. upstream CASCADE(membership·tracker·reads·moderatorship)는 `delete many` 효과로, `Report.purge`는 단건·최대 50 일괄로 둔다. `Topic`/`Post.delete` tombstone은 그대로다.
 
-`purge.test.mjs`(실DB 3건)가 대화 purge의 상대방 보존·비소유자 거부, 신고 단건·일괄 purge와 혼합 배치 전체 거부, 사용자 purge의 동반 삭제·비admin·자기·참조 계정·unknown id 거부와 감사(`purge`, `purge:delete`)를 고정한다. 잔여 차이는 mailbox 복사 보유 계정(2-hop 정리 불가, `DEF.PARSE_EXPECTED`)과 원본 SET NULL 컬럼(nullable many-update 불가, `DEF.TYPE_MISMATCH`+`DEF.UNSUPPORTED_EFFECT`)의 거부이며 [PRODUCT-GAPS G-11](PRODUCT-GAPS.md)에 거부 근거와 결정 항목을 남겼다. 로컬 실DB 실행은 검증 샌드박스의 사용자 조회 차단(`initdb: 501 UID를 찾을 수 없음`, 1회 기록 후 미재시도)으로 미실행이며 Linux CI로 판정한다. G-11은 닫혔고 7.5.2 잔여는 G-6·G-10(미해결 고정)·대화 draft 수정·unread cutoff다.
+`purge.test.mjs`(실DB 3건)가 대화 purge의 상대방 보존·비소유자 거부, 신고 단건·일괄 purge와 혼합 배치 전체 거부, 사용자 purge의 동반 삭제·비admin·자기·참조 계정·unknown id 거부와 감사(`purge`, `purge:delete`)를 고정한다. 잔여 차이는 mailbox 복사 보유 계정(2-hop 정리 불가, `DEF.PARSE_EXPECTED`)과 원본 SET NULL 컬럼(nullable many-update 불가, `DEF.TYPE_MISMATCH`+`DEF.UNSUPPORTED_EFFECT`)의 거부이며 [PRODUCT-GAPS G-11](PRODUCT-GAPS.md)에 거부 근거와 결정 항목을 남겼다. 로컬 실DB 실행은 검증 샌드박스의 사용자 조회 차단(`initdb: 501 UID를 찾을 수 없음`, 1회 기록 후 미재시도)으로 미실행이며 Linux CI로 판정한다. CI(95a6dd1) worker-jobs는 Revalidate 단계에서 실패했고 로그는 gh 미인증·logs API 403으로 미확인이다. G-11은 CI 통과까지 미확정으로 두고 7.5.2 잔여는 G-6·G-10(미해결 고정)·G-11(검증 대기)·대화 draft 수정·unread cutoff다.
 
 ## 2026-10-20 G-10 모더레이터 차단 — 구현 불가, 현재 동작 고정과 설계안
 
