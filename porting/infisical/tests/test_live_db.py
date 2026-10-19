@@ -634,6 +634,37 @@ class LiveDbTests(unittest.TestCase):
         self.assertTrue(self.override(CAROL, secret_id).get("ok"), "another user may have their own")
         self.assertEqual(self.override_rows(secret_id), 2)
 
+    def test_soft_deleted_environment_hides_personal_overrides_and_restore_keeps_them(self):
+        env_id, root = self.env_with_root(BOB, "override-soft-hidden", 90)
+        secret_id = self.shared_secret("OVR_SOFT_HIDDEN", folder=root)
+        bob = self.override(BOB, secret_id)
+        carol = self.override(CAROL, secret_id)
+        self.assertTrue(bob.get("ok"), bob)
+        self.assertTrue(carol.get("ok"), carol)
+        ids = {BOB: bob["created"][0]["id"], CAROL: carol["created"][0]["id"]}
+
+        def own_rows(who):
+            # Read by the override's own id, without filtering on a hidden Secret reference.
+            # A reference filter could hide a leaked row while a plain read still returned it.
+            return self.c[who].read({"read": "PersonalSecret", "select": ["id", "secret", "user"],
+                                     "filter": eq("id", ids[who])})
+
+        for who in (BOB, CAROL):
+            self.assertEqual([r["id"] for r in own_rows(who)], [ids[who]])
+        self.assertTrue(lh.transition(self.c[BOB], "Environment.softDelete", [env_id]).get("ok"))
+        for who in (BOB, CAROL):
+            self.assertEqual(own_rows(who), [], f"{who}: the override itself must be hidden")
+            hidden_delete = lh.transition(self.c[who], "PersonalSecret.delete", [ids[who]])
+            self.assertEqual(hidden_delete.get("code"), "WIRE.MISSING_TARGET", hidden_delete)
+        hidden_create = self.override(ALICE, secret_id)
+        self.assertEqual(hidden_create.get("code"), "WIRE.MISSING_TARGET", hidden_create)
+        self.assertEqual(self.override_rows(secret_id), 2, "hidden rows remain stored")
+        self.assertTrue(lh.transition(self.c[BOB], "Environment.restore", [env_id]).get("ok"))
+        for who in (BOB, CAROL):
+            self.assertEqual([r["id"] for r in own_rows(who)], [ids[who]])
+            self.assertEqual(own_rows(who)[0]["secret"], secret_id)
+        self.assertEqual(self.override_rows(secret_id), 2)
+
     # upstream lists rows whose userId is null or the caller (secret-v2-bridge-dal.ts:381-413)
     def test_overrides_are_visible_to_their_owner_only(self):
         secret_id = self.shared_secret("OVR_PRIVATE")
