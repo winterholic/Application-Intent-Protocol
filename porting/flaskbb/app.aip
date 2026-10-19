@@ -407,7 +407,7 @@ resource Report {
   transition submit { allow actor.activated and reporter = actor and post != null and canReadPost(actor, post) and reported = null; from reported = null; to reported = now }
   expose apply submit { target id; bulk maxRows 1 }
   transition resolve { allow canReviewReports(actor) and zapped = null; from zapped = null; to zapped = now, zapped_by = actor }
-  expose apply resolve { target id; bulk maxRows 1 }
+  expose apply resolve { target id; bulk maxRows 50 }
   expose read {
     select id, reporter, reported, post, zapped, zapped_by, reason
     filter id.eq, post.eq, reporter.eq, zapped.eq
