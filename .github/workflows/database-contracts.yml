@@ -1,0 +1,106 @@
+name: Database contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/aip-test-support/**'
+      - 'crates/aip-cli/tests/least_privilege.rs'
+      - 'crates/aip-migrate/**'
+      - 'spikes/spike-v2-read/src/**'
+      - '.github/workflows/database-contracts.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: database-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  postgres-runtime-role:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      # Disposable CI fixture credentials only. A wrong-password control proves trust auth is disabled.
+      AIP_TEST_DATABASE_URL: host=127.0.0.1 port=55473 dbname=aip_test_ci user=runner password=ci_fixture_admin
+      AIP_TEST_ADMIN_URL: host=127.0.0.1 port=55473 dbname=postgres user=runner password=ci_fixture_admin
+      AIP_TEST_REQUIRE_PASSWORD_AUTH: '1'
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: runner
+          POSTGRES_DB: aip_test_ci
+          POSTGRES_PASSWORD: ci_fixture_admin
+          POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+        ports:
+          - '127.0.0.1:55473:5432'
+        options: >-
+          --health-cmd "pg_isready -U runner -d aip_test_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Select stable Rust
+        run: |
+          rustup update stable
+          rustup default stable
+      - name: Verify credential replacement and documented runtime grants under SCRAM
+        run: |
+          cargo test -p aip-test-support --locked
+          cargo test -p aip-cli --test least_privilege --locked -- --nocapture
+
+  mysql-and-mariadb-fences:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      AIP_TEST_DATABASE_URL: host=127.0.0.1 port=55473 dbname=aip_test_ci user=runner
+      AIP_TEST_ADMIN_URL: host=127.0.0.1 port=55473 dbname=postgres user=runner
+      AIP_TEST_MYSQL_URL: mysql://root:ci_fixture_admin@127.0.0.1:34391/aip_test_admin
+      AIP_TEST_MARIADB_URL: mariadb://root:ci_fixture_admin@127.0.0.1:34392/aip_test_admin
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: ci_fixture_admin
+          MYSQL_ROOT_HOST: '%'
+          MYSQL_DATABASE: aip_test_admin
+        ports:
+          - '127.0.0.1:34391:3306'
+        options: >-
+          --health-cmd "mysqladmin ping -h127.0.0.1 -uroot -pci_fixture_admin"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+      mariadb:
+        image: mariadb:11.4
+        env:
+          MARIADB_ROOT_PASSWORD: ci_fixture_admin
+          MARIADB_ROOT_HOST: '%'
+          MARIADB_DATABASE: aip_test_admin
+        ports:
+          - '127.0.0.1:34392:3306'
+        options: >-
+          --health-cmd "mariadb-admin ping -h127.0.0.1 -uroot -pci_fixture_admin"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Select stable Rust
+        run: |
+          rustup update stable
+          rustup default stable
+      - name: Verify both engines, DDL races, DML-only grants and interrupted deployment recovery
+        run: |
+          cargo test -p aip-migrate --features mysql --test mysql_fence_verification --locked -- --test-threads=1
+          cargo test -p aip-migrate --features mysql --test mysql_fence_verification --locked -- --ignored --nocapture --test-threads=1
+          cargo test -p aip-migrate --features mysql --test mysql_drift_matrix --locked -- --ignored --nocapture --test-threads=1
+          cargo test -p aip-migrate --features mysql --test mysql_capability_gate --locked -- --ignored --nocapture --test-threads=1

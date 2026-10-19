@@ -90,7 +90,8 @@ async fn a_runtime_role_with_only_the_documented_grants_serves_while_the_migrati
     let unique = uuid::Uuid::new_v4().simple().to_string();
     let schema = format!("aip_lp_{unique}");
     let role = format!("aip_lp_rt_{}", &unique[..12]);
-    let runtime_db = aip_test_support::database_url_for_user(aip_test_support::test_database_url!(), &role);
+    let runtime_password = format!("fixture_{}", uuid::Uuid::new_v4().simple());
+    let runtime_db = aip_test_support::database_url_for_user_with_password(MIGRATE_DB, &role, &runtime_password);
     let config = dir.path().join("service.json");
     let file = dir.path().join("app.aip");
     std::fs::write(&file, APP).unwrap();
@@ -114,10 +115,18 @@ async fn a_runtime_role_with_only_the_documented_grants_serves_while_the_migrati
     // `aip_execution::infrastructure_schema`: aip_infra_ plus the first 52 hex digits of the SHA-256 of the schema name.
     let infra: String =
         admin.query_one("SELECT 'aip_infra_' || left(encode(sha256(convert_to($1::text, 'UTF8')), 'hex'), 52)", &[&schema]).await.unwrap().get(0);
-    admin.batch_execute(&format!("CREATE ROLE {role} LOGIN")).await.unwrap();
+    admin.batch_execute(&format!("CREATE ROLE {role} LOGIN PASSWORD '{runtime_password}'")).await.unwrap();
     let outcome = AssertUnwindSafe(async {
+        if std::env::var("AIP_TEST_REQUIRE_PASSWORD_AUTH").as_deref() == Ok("1") {
+            let bad_db = aip_test_support::database_url_for_user_with_password(MIGRATE_DB, &role, "incorrect_fixture_password");
+            let failure = start(&config, &file, &bad_db).await.expect_err("password-auth fixture must reject the wrong runtime password");
+            assert!(failure.contains("DB_CONNECT"), "wrong password must fail at DB connection: {failure}");
+            println!("password-auth negative control: incorrect runtime password rejected as DB_CONNECT");
+        }
         // The migration role creates and owns everything.
         ok(&config, &runtime_db, &["init", file.to_str().unwrap()]).await;
+        let database: String = admin.query_one("SELECT current_database()", &[]).await.unwrap().get(0);
+        let quoted_database = database.replace('"', "\"\"");
         admin
             .batch_execute(&format!(
                 "INSERT INTO {schema}.member(id) VALUES(42),(99); INSERT INTO {schema}.event(id,member_id,checked,title,link,phase,date) VALUES(11,42,false,'owned','https://example.com','READY','2026-10-05Z'),(12,99,false,'other','https://example.com','READY','2026-10-05Z')"
@@ -128,7 +137,7 @@ async fn a_runtime_role_with_only_the_documented_grants_serves_while_the_migrati
         // and the audit table is insert-only.
         admin
             .batch_execute(&format!(
-                "GRANT CONNECT ON DATABASE postgres TO {role}; \
+                "GRANT CONNECT ON DATABASE \"{quoted_database}\" TO {role}; \
                  GRANT USAGE ON SCHEMA {schema} TO {role}; \
                  GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA {schema} TO {role}; \
                  GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA {schema} TO {role};"

@@ -1,5 +1,11 @@
 # 제품 통합 검증 (2026-10-17)
 
+## WBS 8.16 최소 권한 fixture와 DB 계약 CI (2026-10-19)
+
+- PMS의 과거 수정 완료 서술과 달리 현재 main에는 runtime role의 비밀번호 지정과 DSN password 치환이 없었다. 기존 admin 비밀번호가 유지되는 음성 대조를 재현하고 keyword/URI DSN에서 role·password를 함께 바꾸는 helper와 특수 문자·중복 query password 회귀를 추가했다. `aip-test-support` **10 passed**, 관련 CLI/helper all-targets clippy 통과.
+- 최소 권한 fixture는 `LOGIN PASSWORD`와 실제 `current_database()`의 CONNECT 권한을 쓰며, SCRAM fixture에서는 틀린 비밀번호가 CLI `DB_CONNECT`로 거부되는지 확인한다. `Database contracts`에 전용 PostgreSQL 17 SCRAM fixture와 MySQL 8.4/MariaDB 11.4 live fence·drift·capability 검사를 연결했다. 실DB 결과는 CI 확인 전이므로 아직 완료로 세지 않는다.
+- WBS 8.2는 main `9d2c39f`의 [Deployment checks](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39205855579) 원시 로그에서 Caddy **16/16**, OIDC/TLS **18/18**, 실제 Keycloak **12/12** 통과를 확인했다. 인증된 operation의 선언 출력 본문과 무인증·주체 revoke 거부까지 검사했다. 실제 운영 IdP 계정·운영 배포 검증은 아니다.
+
 ## WBS 8.2 IdP/TLS CI와 동시성 회귀 재현 (2026-10-19)
 
 - `Deployment checks`에 기존 Caddy proxy 검사뿐 아니라 전체 OIDC/TLS fixture와 실제 Keycloak smoke를 연결했다. native fixture는 host loopback upstream과 소유 TLS 파일 경로를 렌더링한다. 렌더러 양성·음성 테스트 **2개 통과**, 실제 `caddy adapt` 성공, Node·shell 문법 검사 통과. 전체 DB/API 검사는 Linux CI에서 확인하며 로컬 실행으로 합산하지 않는다.

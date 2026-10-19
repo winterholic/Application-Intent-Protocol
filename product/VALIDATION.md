@@ -26,15 +26,18 @@ bash tools/verify.sh
 | 검사 | 확인하는 것 | 별도 확인이 필요한 것 |
 |---|---|---|
 | `cargo fmt --all --check` | root workspace 포맷 | workspace 밖 spike·prototype 포맷 |
-| workspace `clippy --lib --bins -D warnings` | 제품 및 PoC 실행 코드 | CLI 통합 테스트의 `unwrap_used` 진단 정리 |
-| 제품 3 crate `clippy --all-targets` | 인증·migration·service와 그 테스트 | root CLI 전체 all-targets 검사 |
+| workspace `clippy --lib --bins -D warnings` | 제품 및 PoC 실행 코드 | DB 실실행 |
+| 제품 3 crate 및 CLI `poc-runtime`·`mysql` `clippy --all-targets` | 인증·migration·service·CLI와 feature별 테스트 | lint 성공은 테스트 실행 성공을 뜻하지 않음 |
 | `cargo test --workspace --locked` | compiler, PoC E2E, JWT, migration/adoption, 제품 CLI | workspace에서 제외된 엔진의 독립 테스트 |
-| 제품 엔진 v1·v2·v3·v5의 독립 Cargo suite | 다섯 작성 형식, 스칼라·SQL·읽기·전이·정원 경쟁·생성 SDK 타입 | worker·HTTP transport의 전체 독립 suite |
+| 제품 엔진 v1~v6의 독립 Cargo suite·all-targets clippy | 다섯 작성 형식, 스칼라·SQL·읽기·전이·정원 경쟁·worker·transport·SDK | 외부 broker/provider 실실행 |
+| prototype CLI suite | 공유 생성기와 SDK 타입 export·실제 소비자 컴파일·committed lock | legacy prototype 운영 배포 |
 | 선택한 SDK/transport Node 단위 테스트 | cache TTL·무효화, 세션 교체, pending 복구, 계약/Id 응답 검사 | 실제 HTTP transport E2E, 브라우저 |
 | 설치 SDK 테스트 | offline pack/install, declaration closure, strict 타입 음성 대조, 출력 보호 | 실제 IdP·배포 환경 |
 | 마지막 CLI build | 테스트 feature 조합 뒤 제품 실행 파일 복원 | 실행 파일 재배치와 worker 실행 |
 
 `.github/workflows/verify.yml`은 push/PR마다 core 검증과 Linux worker 격리 경계 검사를 Ubuntu 및 폐기 가능한 PostgreSQL 17 fixture에서 실행한다. durable worker의 Node/Python job·retry·cron·서명 webhook·notify outbox와 설치 SDK smoke는 별도 [Linux worker jobs workflow](../.github/workflows/worker-jobs-linux.yml)에서 Bubblewrap을 적용해 실행한다. 이 결과가 macOS Seatbelt 동작을 대신하지는 않는다. GitHub Actions 구성의 근거는 [PostgreSQL service container 공식 문서](https://docs.github.com/en/actions/tutorials/use-containerized-services/create-postgresql-service-containers)다.
+
+[Database contracts](../.github/workflows/database-contracts.yml)는 별도의 SCRAM PostgreSQL 17에서 잘못된 runtime 비밀번호의 `DB_CONNECT` 거부와 문서화된 최소 권한을 확인한다. MySQL 8.4·MariaDB 11.4의 전용 service container에서는 ignored live fence·DDL drift·capability gate를 명시적으로 실행한다. 누락된 URL을 skip으로 통과시키지 않는다. MariaDB의 제품 read/write profile 거부와 job-store profile 지원을 구분한다. CI 서비스는 runner가 소유·정리하며 로컬 DB나 기존 컨테이너는 사용하지 않는다.
 
 ## 제품 실행 및 엔진 회귀
 
@@ -45,7 +48,7 @@ cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --locked
 
 첫 명령은 재배치한 binary와 설치한 SDK로 decimal/safe 두 wire를 검사하고 Node/Python worker도 실행한다. Linux에서는 기본 Bubblewrap, macOS에서는 `sandbox-exec`가 적용된다. Ttakkari sandbox가 macOS `sandbox-exec`를 막는 경우 일반 macOS Terminal에서 [worker smoke 스크립트](../scripts/verify-macos-worker-smoke.sh)를 실행한다. Core 검증 뒤 실행할 때는 마지막 build의 제품 binary를 사용한다.
 
-v1·v2·v3·v5의 전체 독립 suite는 `tools/verify.sh`에서도 실행한다. root target 디렉터리를 공유해 이미 빌드한 의존성을 재사용한다. 그 밖의 `spikes/spike-v4-worker`, `spike-v7-migrate`, `spike-v11-dev-checks`의 Cargo.toml에도 같은 독립 테스트 명령을 적용할 수 있다. 이 세 엔진과 v6의 전체 suite는 자동 core 검증과 별도다.
+v1~v6의 전체 독립 suite와 prototype CLI는 `tools/verify.sh`에서도 실행한다. root target 디렉터리를 공유해 이미 빌드한 의존성을 재사용한다. 그 밖의 `spikes/spike-v7-migrate`, `spike-v11-dev-checks`의 Cargo.toml에도 같은 독립 테스트 명령을 적용할 수 있다. 이 두 실험 엔진은 자동 core 검증과 별도다.
 
 ## 2026-10-06 보완
 

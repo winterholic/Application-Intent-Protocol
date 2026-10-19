@@ -53,6 +53,11 @@ pub fn database_url_for_user(raw: &str, user: &str) -> String {
     replace_keyword(raw, "user", user)
 }
 
+/// Derive credentials for a test role without inheriting the fixture administrator's password.
+pub fn database_url_for_user_with_password(raw: &str, user: &str, password: &str) -> String {
+    replace_keyword(&replace_keyword(raw, "user", user), "password", password)
+}
+
 /// Derive a DSN with one additional PostgreSQL connection option.
 pub fn database_url_with_option(raw: &str, key: &str, value: &str) -> String {
     if raw.starts_with("postgres://") || raw.starts_with("postgresql://") {
@@ -113,6 +118,20 @@ fn replace_keyword(raw: &str, key: &str, value: &str) -> String {
             "dbname" => url.set_path(&format!("/{}", url::form_urlencoded::byte_serialize(value.as_bytes()).collect::<String>())),
             "user" => {
                 let _ = url.set_username(value);
+            }
+            "password" => {
+                let _ = url.set_password(Some(value));
+                // A query password would override the new authority credentials in libpq.
+                let query = url.query().map(|query| {
+                    query
+                        .split('&')
+                        .filter(|pair| {
+                            !url::form_urlencoded::parse(pair.as_bytes()).next().is_some_and(|(key, _)| key.eq_ignore_ascii_case("password"))
+                        })
+                        .collect::<Vec<_>>()
+                        .join("&")
+                });
+                url.set_query(query.as_deref().filter(|query| !query.is_empty()));
             }
             _ => unreachable!("only identity fields are replaceable"),
         }
@@ -311,6 +330,36 @@ fn parse_keywords(raw: &str) -> Result<HashMap<String, String>, &'static str> {
 #[cfg(test)]
 mod tests {
     use super::{database_url_with_option, parse_dsn, validate_admin_url, validate_database_url};
+
+    #[test]
+    fn runtime_role_password_replaces_admin_credentials_for_keyword_and_uri_dsns() {
+        let password = "run ' pass\\word@:#%+";
+        for source in [
+            "host=127.0.0.1 port=55432 dbname=aip_test_run user=runner password=admin sslmode=disable",
+            "postgresql://runner:admin@127.0.0.1:55432/aip_test_run?sslmode=disable",
+            "postgresql://runner:admin@127.0.0.1:55432/aip_test_run?sslmode=disable&password=admin&application_name=literal+plus",
+        ] {
+            let result = super::database_url_for_user_with_password(source, "runtime_role", password);
+            assert!(validate_database_url(&result).is_ok());
+            let fields = parse_dsn(&result).unwrap();
+            assert_eq!(fields["user"], "runtime_role");
+            assert_eq!(fields["port"], "55432");
+            assert_eq!(fields["sslmode"], "disable");
+            if result.starts_with("postgresql://") {
+                let url = url::Url::parse(&result).unwrap();
+                let encoded = url.password().unwrap().replace('+', "%2B");
+                let decoded = url::form_urlencoded::parse(format!("p={encoded}").as_bytes()).next().unwrap().1.into_owned();
+                assert_eq!(decoded, password);
+                assert!(!url.query_pairs().any(|(key, _)| key == "password"));
+                if source.contains("application_name") {
+                    assert!(result.contains("application_name=literal+plus"));
+                }
+            } else {
+                assert_eq!(fields["password"], password);
+            }
+            assert!(!result.contains("admin"));
+        }
+    }
 
     /// libpq와 tokio-postgres는 URI query의 `+`를 공백으로 읽지 않고 퍼센트 인코딩만 푼다.
     /// `options=-c+TimeZone=...`은 서버에 `+TimeZone`이라는 이름의 설정으로 전달돼 접속 자체가 거부된다.
