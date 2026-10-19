@@ -4,7 +4,7 @@ use spike_v1_fixture::{load_str, Form};
 use spike_v2_read::plan::Caller;
 use spike_v2_read::{connect, sqlgen};
 use spike_v3_write::{apply, bundle, compose, Knobs};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 const A: &str = include_str!("../../spike-v1-fixture/fixture/recruitment.aip");
 const NOW: &str = "2026-10-04T00:00:00Z";
@@ -122,10 +122,7 @@ async fn r3_regressions() {
 
     // R3-03 커밋 검사의 근거 행(승인된 Apply 305)은 검사 뒤 커밋까지 잠긴다. 철회는 회원 생성 커밋 뒤에 반영된다.
     db.batch_execute(&seed).await.unwrap();
-    let (lock_wait, final_state) = check_race(&f, false).await;
-    if !(lock_wait >= 400) {
-        fails.push(format!("R3-03 철회가 검사 근거 잠금을 기다리지 않음 {lock_wait}ms"));
-    }
+    let final_state = check_race(&f).await;
     // 사후조건 계약: 커밋 시점에는 근거가 있었고, 이후 철회는 별개 쓰기다. 회원은 남는다(전역 불변식 아님).
     if final_state != "apply[300:PENDING,302:PENDING,304:REJECT,305:REJECT] members[10:1,10:8,10:9,11:8]" {
         fails.push(format!("R3-03 최종 상태 {final_state}"));
@@ -158,22 +155,55 @@ async fn r3_regressions() {
     assert!(fails.is_empty(), "\n{}", fails.join("\n"));
 }
 
-/// T1: 운영진 1이 승인된 지원 305(회원 9)를 근거로 W0 회원 생성(검사 뒤 커밋 전 600ms 멈춤). T2: 그 사이 305 철회.
-async fn check_race(f: &Value, skip_policy_lock: bool) -> (u128, String) {
+/// T1의 deferred trigger를 advisory lock으로 멈춘 뒤, T2가 T1의 근거 행 잠금을 기다리는지 DB에서 확인한다.
+async fn check_race(f: &Value) -> String {
     let s = sqlgen::schema();
+    let observer = connect().await;
+    // Session-scoped gate: a panic closes this connection and releases the gate too.
+    observer.batch_execute("SELECT pg_advisory_lock(305, 9)").await.unwrap();
+    observer
+        .batch_execute(&format!(
+            "CREATE FUNCTION {s}.hold_check_commit() RETURNS trigger AS $$ BEGIN
+               PERFORM pg_advisory_xact_lock(305, 9); RETURN NULL; END $$ LANGUAGE plpgsql;
+             CREATE CONSTRAINT TRIGGER hold_check_commit AFTER INSERT ON {s}.club_member
+               DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION {s}.hold_check_commit();"
+        ))
+        .await
+        .unwrap();
+    let mut creator = connect().await;
+    let mut revoker = connect().await;
+    let creator_pid: i32 = creator.query_one("SELECT pg_backend_pid()", &[]).await.unwrap().get(0);
+    let revoker_pid: i32 = revoker.query_one("SELECT pg_backend_pid()", &[]).await.unwrap().get(0);
+    let observer_pid: i32 = observer.query_one("SELECT pg_backend_pid()", &[]).await.unwrap().get(0);
     let f1 = f.clone();
     let t1 = tokio::spawn(async move {
-        let mut db = connect().await;
-        let k = Knobs { pause_before_commit_ms: 600, skip_policy_lock, ..Default::default() };
         let req = json!({ "atomic": [{ "create": "ClubMember", "values": { "club": "10", "member": "9", "role": "MEMBER" } }] });
-        code(bundle(&mut db, &f1, &req, &who(1), &k).await)
+        code(bundle(&mut creator, &f1, &req, &who(1), &Knobs::default()).await)
     });
-    tokio::time::sleep(Duration::from_millis(150)).await;
-    let mut db = connect().await;
-    let st = Instant::now();
-    let r2 = code(apply(&mut db, f, &json!({ "apply": "Apply.retract", "target": { "ids": ["305"] } }), &who(1), &Knobs::default()).await);
-    let waited = st.elapsed().as_millis();
+    wait_for_blocker(&observer, creator_pid, observer_pid).await;
+    let f2 = f.clone();
+    let t2 = tokio::spawn(async move {
+        code(apply(&mut revoker, &f2, &json!({ "apply": "Apply.retract", "target": { "ids": ["305"] } }), &who(1), &Knobs::default()).await)
+    });
+    wait_for_blocker(&observer, revoker_pid, creator_pid).await;
+    observer.batch_execute("SELECT pg_advisory_unlock(305, 9)").await.unwrap();
     let r1 = t1.await.unwrap();
+    let r2 = t2.await.unwrap();
     assert_eq!((r1.as_str(), r2.as_str()), ("OK", "OK"), "check_race 결과");
-    (waited, state(&db, s).await)
+    observer.batch_execute(&format!("DROP TRIGGER hold_check_commit ON {s}.club_member; DROP FUNCTION {s}.hold_check_commit()")).await.unwrap();
+    state(&observer, s).await
+}
+
+async fn wait_for_blocker(db: &tokio_postgres::Client, waiter: i32, blocker: i32) {
+    tokio::time::timeout(Duration::from_millis(800), async {
+        loop {
+            let blocked: bool = db.query_one("SELECT $2::int = ANY(pg_blocking_pids($1::int))", &[&waiter, &blocker]).await.unwrap().get(0);
+            if blocked {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("backend {waiter} did not wait for backend {blocker}"));
 }

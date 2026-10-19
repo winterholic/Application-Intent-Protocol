@@ -7,6 +7,11 @@ on:
       - 'product/tools/proxy-check.mjs'
       - 'spikes/spike-v6-transport/src/**'
       - 'crates/aip-service/**'
+      - 'crates/aip-auth/**'
+      - 'conformance/idp-proxy/**'
+      - 'conformance/keycloak/**'
+      - 'scripts/smoke-idp-proxy.sh'
+      - 'scripts/smoke-keycloak.sh'
       - '.github/workflows/deploy-checks.yml'
   workflow_dispatch:
 
@@ -79,3 +84,14 @@ jobs:
         run: cargo build -p aip-cli --locked
       - name: Verify Origin, headers, request id, SSE and WebSocket through Caddy
         run: node product/tools/proxy-check.mjs
+      - name: Verify the native fixture uses host loopback and owned TLS files
+        run: node --test conformance/idp-proxy/native-config.test.mjs
+      - name: Verify OIDC profile and API operations through the TLS proxy
+        env:
+          AIP_IDP_PROXY_NATIVE: '1'
+          AIP_BINARY: ${{ github.workspace }}/target/debug/aip
+        run: bash scripts/smoke-idp-proxy.sh
+      - name: Verify real Keycloak access tokens and HTTPS JWKS
+        env:
+          AIP_BINARY: ${{ github.workspace }}/target/debug/aip
+        run: bash scripts/smoke-keycloak.sh

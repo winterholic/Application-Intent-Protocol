@@ -235,3 +235,5 @@ aip service jobs --config service.json retry --id 7f3c...
 최소 Caddy 설정은 `reverse_proxy 127.0.0.1:<서비스 포트>` 한 줄이다. Caddy는 WebSocket 업그레이드와 `text/event-stream` flush를 자동 처리한다. nginx를 쓰면 SSE 경로에 `proxy_buffering off`, WebSocket 경로에 `proxy_http_version 1.1`과 `Upgrade`·`Connection` 헤더 전달이 필요하다. 이 설정은 nginx로 실행해 보지 않았다(`확인 못함: nginx 미설치`).
 
 실제 외부 IdP 연결은 [IdP runbook](IDP-RUNBOOK.md)을 따른다.
+
+`Deployment checks`의 Linux fixture는 위 proxy 검사에 이어 `AIP_IDP_PROXY_NATIVE=1 bash scripts/smoke-idp-proxy.sh`와 `bash scripts/smoke-keycloak.sh`를 실행한다. 앞 검사는 Caddy와 시험용 IdP를 host loopback에서 실행해 서비스의 loopback 바인딩을 유지하고, Run 소유 임시 경로에 TLS 파일을 만든다. 뒤 검사는 고정 버전 Keycloak 컨테이너가 실제 발급한 access token과 HTTPS JWKS로 API 응답 본문까지 검사한다. 둘 다 임시 schema·인증서·자식 프로세스/컨테이너를 정리한다. 이 CI fixture 결과를 실제 운영 IdP 계정의 검증으로 합산하지 않는다.

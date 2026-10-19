@@ -8,6 +8,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { requireTestDatabase } from "../../product/test-support/postgres-guard.mjs";
+import { nativeProxyConfig } from "./native-config.mjs";
 
 const conformanceDir = resolve(dirname(fileURLToPath(import.meta.url)));
 const repoDir = resolve(conformanceDir, "..", "..");
@@ -15,7 +16,7 @@ const testDb = requireTestDatabase();
 const testDatabase = testDb.raw;
 const binary = process.env.AIP_BINARY || resolve(repoDir, "target/debug/aip");
 const composeFile = join(conformanceDir, "docker-compose.yml");
-const certsDir = join(conformanceDir, "certs");
+const native = process.env.AIP_IDP_PROXY_NATIVE === "1";
 
 const results = [];
 function check(name, ok, detail = "") {
@@ -96,12 +97,15 @@ async function waitForLine(child, predicate, label) {
 
 async function main() {
   const work = await mkdtemp(join(tmpdir(), "aip-idp-proxy-smoke-"));
+  const certsDir = native ? join(work, "certs") : join(conformanceDir, "certs");
   const schema = `aip_idp_smoke_${randomUUID().replaceAll("-", "")}`;
   const allowedOrigin = "https://app.example.test";
   const disallowedOrigin = "https://unauthorized.attacker.test";
 
   let serviceChild = null;
   let containersStarted = false;
+  const nativeChildren = [];
+  let nativeLogs = "";
 
   const cleanup = async () => {
     console.log("==> Cleaning up idp-proxy smoke environment...");
@@ -112,6 +116,14 @@ async function main() {
     if (containersStarted) {
       run("docker", ["compose", "-f", composeFile, "down", "-v"]);
       containersStarted = false;
+    }
+    for (const child of nativeChildren) {
+      if (!child.pid || child.exitCode !== null || child.signalCode !== null) continue;
+      await new Promise((resolveExit) => {
+        const timer = setTimeout(() => child.kill("SIGKILL"), 5000);
+        child.once("exit", () => { clearTimeout(timer); resolveExit(); });
+        child.kill("SIGTERM");
+      });
     }
     run("psql", ["-X", "-q", "-d", testDatabase, "-c", `DROP SCHEMA IF EXISTS ${schema} CASCADE`]);
     await rm(certsDir, { recursive: true, force: true }).catch(() => {});
@@ -168,11 +180,27 @@ IP.1=127.0.0.1
     const ca = await readFile(join(certsDir, "ca.pem"));
 
     const backendPort = await freePort();
-    console.log(`==> 2. Starting Caddy and OIDC IdP containers (backendPort=${backendPort})...`);
-    run("docker", ["compose", "-f", composeFile, "up", "-d"], {
-      env: { ...process.env, AIP_BACKEND_PORT: String(backendPort) },
-    });
-    containersStarted = true;
+    console.log(`==> 2. Starting Caddy and OIDC IdP (${native ? "native loopback" : "containers"}, backendPort=${backendPort})...`);
+    if (native) {
+      const idpPort = await freePort();
+      const configPath = join(work, "Caddyfile");
+      await writeFile(configPath, nativeProxyConfig(await readFile(join(conformanceDir, "Caddyfile"), "utf8"), certsDir, backendPort, idpPort));
+      for (const [program, args, env] of [
+        [process.execPath, [join(conformanceDir, "idp", "server.mjs")], { ...process.env, HOST: "127.0.0.1", PORT: String(idpPort), IDP_ISSUER: "https://localhost:8444", IDP_AUDIENCE: "aip-api" }],
+        ["caddy", ["run", "--config", configPath, "--adapter", "caddyfile"], process.env],
+      ]) {
+        const child = spawn(program, args, { cwd: repoDir, env, stdio: ["ignore", "pipe", "pipe"] });
+        child.stdout.on("data", (chunk) => { nativeLogs += chunk.toString(); });
+        child.stderr.on("data", (chunk) => { nativeLogs += chunk.toString(); });
+        child.once("error", (error) => { nativeLogs += error.message; });
+        nativeChildren.push(child);
+      }
+    } else {
+      run("docker", ["compose", "-f", composeFile, "up", "-d"], {
+        env: { ...process.env, AIP_BACKEND_PORT: String(backendPort) },
+      });
+      containersStarted = true;
+    }
 
     console.log("==> 3. Waiting for Caddy and IdP to become healthy...");
     let idpReady = false;
@@ -187,9 +215,12 @@ IP.1=127.0.0.1
       await new Promise((r) => setTimeout(r, 1000));
     }
     if (!idpReady) {
-      console.error("Caddy container logs:\n", run("docker", ["compose", "-f", composeFile, "logs", "caddy"]));
-      console.error("IdP container logs:\n", run("docker", ["compose", "-f", composeFile, "logs", "idp"]));
-      throw new Error("IdP container via Caddy (port 8444) did not become ready");
+      if (native) console.error("Native Caddy/IdP logs:\n", nativeLogs);
+      else {
+        console.error("Caddy container logs:\n", run("docker", ["compose", "-f", composeFile, "logs", "caddy"]));
+        console.error("IdP container logs:\n", run("docker", ["compose", "-f", composeFile, "logs", "idp"]));
+      }
+      throw new Error("IdP via Caddy (port 8444) did not become ready");
     }
     check("OIDC IdP container is healthy behind Caddy TLS proxy", true);
 

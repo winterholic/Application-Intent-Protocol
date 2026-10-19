@@ -1,5 +1,10 @@
 # 제품 통합 검증 (2026-10-17)
 
+## WBS 8.2 IdP/TLS CI와 동시성 회귀 재현 (2026-10-19)
+
+- `Deployment checks`에 기존 Caddy proxy 검사뿐 아니라 전체 OIDC/TLS fixture와 실제 Keycloak smoke를 연결했다. native fixture는 host loopback upstream과 소유 TLS 파일 경로를 렌더링한다. 렌더러 양성·음성 테스트 **2개 통과**, 실제 `caddy adapt` 성공, Node·shell 문법 검사 통과. 전체 DB/API 검사는 Linux CI에서 확인하며 로컬 실행으로 합산하지 않는다.
+- main `b4ce7ed`의 Linux Verify는 `v3_r3`에서 생성/철회 결과 `(WIRE.CHECK_FAILED, OK)`로 실패했다. 테스트가 고정 150ms 뒤 철회를 시작해 생성 검사가 먼저 실행됐다는 보장이 없었다. 커밋의 deferred trigger를 시험용 advisory lock으로 멈추고 `pg_blocking_pids`로 생성의 검사 완료와 철회의 실제 근거 행 잠금 대기를 확인하도록 바꿨다. 제품 잠금·정책을 완화하지 않았다. 새 테스트의 실DB 실행은 Linux CI 확인 전이다.
+
 ## WBS 8.4 Python binding의 엄격 타입·출력 계약 (2026-10-19)
 
 - `mypy --warn-return-any`에서 생성된 operation helper 7개의 `Returning Any` 오류를 재현했다. TypedDict 반환 전에 같은 공개 scalar descriptor로 실제 객체·키·null·타입·범위·ID/enum/Decimal/날짜를 검사한다. 정상·잘못된 소비자 타입 검사도 추가해 input/return 타입이 Any로 빠지는 것을 막는다. 검사기 미설치는 실패로 처리한다.

@@ -114,6 +114,6 @@ const server = http.createServer((req, res) => {
   res.end(JSON.stringify({ error: "not_found" }));
 });
 
-server.listen(port, "0.0.0.0", () => {
+server.listen(port, process.env.HOST || "0.0.0.0", () => {
   console.log(`Mock OIDC IdP listening on port ${port}, issuer=${issuer}`);
 });
