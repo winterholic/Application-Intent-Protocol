@@ -10,6 +10,7 @@ pub mod auth;
 pub mod client_codes;
 mod cors;
 mod durable;
+pub mod encryption;
 mod health;
 pub mod hosting;
 pub mod infrastructure;
@@ -285,7 +286,18 @@ async fn apply_attempt(
         tx.query_opt(format!("SELECT request, result::text FROM {s}.aip_idem WHERE principal = $1 AND key = $2").as_str(), &[&principal, &key]).await
     {
         let (stored_req, result): (String, String) = (row.get(0), row.get(1));
-        if stored_req != req_text {
+        let matches = if stored_req == req_text {
+            true
+        } else if let Some(crypto) = encryption::get_runtime_crypto() {
+            if let (Ok(s_val), Ok(i_val)) = (serde_json::from_str::<Value>(&stored_req), serde_json::from_str::<Value>(req_text)) {
+                encryption::verify_idempotency_request(facts, &s_val, &i_val, &crypto, s, principal, key)
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        if !matches {
             return json!({ "ok": false, "code": "WIRE.IDEMPOTENCY_MISMATCH", "msg": "같은 키에 다른 요청" });
         }
         let Ok(mut v) = serde_json::from_str::<Value>(&result) else {
@@ -295,18 +307,33 @@ async fn apply_attempt(
         return v;
     }
     let knobs = Knobs { audit_via: Some("apply"), audit_key: Some(key.to_string()), fresh_now_after_lock: true, ..Knobs::default() };
+    let mut write_req = req.clone();
+    if let Some(crypto) = encryption::get_runtime_crypto() {
+        if let Err(e) = encryption::resolve_row_ids_for_create(&tx, facts, &mut write_req).await {
+            return err(Reject { code: e.code, msg: e.msg });
+        }
+        write_req = match encryption::encrypt_request_for_write(facts, &write_req, &crypto, s, "0") {
+            Ok(r) => r,
+            Err(e) => return err(Reject { code: e.code, msg: e.msg }),
+        };
+    }
     // 전이 하나, 묶음(atomic), 조합(compose)은 같은 트랜잭션·같은 멱등 키·같은 커밋 시점 검사를 쓴다.
-    let result = match run_write(&tx, facts, req, caller, &knobs, wire).await {
+    let result = match run_write(&tx, facts, &write_req, caller, &knobs, wire).await {
         Ok(result) => result,
         Err(e) => return err(spike_v3_write::before_commit_rejection(&tx, e)),
     };
     if let Err(e) = checks_in(&tx, facts, caller, &knobs).await {
         return err(spike_v3_write::before_commit_rejection(&tx, e));
     }
+    let req_to_store = if let Some(crypto) = encryption::get_runtime_crypto() {
+        encryption::mask_request_for_idempotency(facts, req, &crypto, s, principal, key).to_string()
+    } else {
+        req_text.to_string()
+    };
     if let Err(error) = tx
         .execute(
             format!("INSERT INTO {s}.aip_idem (principal, key, request, result) VALUES ($1, $2, $3, $4::text::jsonb)").as_str(),
-            &[&principal, &key, &req_text, &result.to_string()],
+            &[&principal, &key, &req_to_store, &result.to_string()],
         )
         .await
     {
@@ -349,24 +376,38 @@ pub async fn commit_attempt(tx: tokio_postgres::Transaction<'_>, commit_sent: &s
     }
 }
 
-async fn handle(db: &mut Client, facts: &Value, path: &str, body: &Value, caller: &Caller, wire: IdWire) -> Value {
+#[doc(hidden)]
+pub async fn handle(db: &mut Client, facts: &Value, path: &str, body: &Value, caller: &Caller, wire: IdWire) -> Value {
     match path {
-        "/read" => match plan_read_with_wire(facts, &body["query"], caller, wire) {
-            Ok(p) => match tokio::time::timeout(std::time::Duration::from_millis(p.deadline_ms), execute(db, &p)).await {
-                Ok(Ok(rows)) => {
-                    let rows = match encode_rows(rows, &p.output_type, wire) {
-                        Ok(rows) => rows,
-                        Err(e) => return err(e),
-                    };
-                    // 현재 Ctx는 now를 반드시 이 값으로 바인딩한다. 같은 값의 일반 필터는 보수적으로 미캐시.
-                    let time_dependent = p.params.iter().any(|v| v.as_deref() == Some(caller.now.as_str()));
-                    json!({ "ok": true, "rows": rows, "deps": p.deps, "maxAgeMs": if time_dependent { 0 } else { READ_CACHE_MS } })
-                }
-                Ok(Err(e)) => err(e),
-                Err(_) => json!({"ok":false,"code":"WIRE.DEADLINE_EXCEEDED"}),
-            },
-            Err(e) => err(e),
-        },
+        "/read" => {
+            let mut query = body["query"].clone();
+            if let Some(crypto) = encryption::get_runtime_crypto() {
+                let s = sqlgen::schema();
+                encryption::prepare_query_blind_index(facts, &mut query, &crypto, s);
+            }
+            match plan_read_with_wire(facts, &query, caller, wire) {
+                Ok(p) => match tokio::time::timeout(std::time::Duration::from_millis(p.deadline_ms), execute(db, &p)).await {
+                    Ok(Ok(rows)) => {
+                        let mut rows = match encode_rows(rows, &p.output_type, wire) {
+                            Ok(rows) => rows,
+                            Err(e) => return err(e),
+                        };
+                        if let Some(crypto) = encryption::get_runtime_crypto() {
+                            let s = sqlgen::schema();
+                            if let Err(rej) = encryption::decrypt_rows(facts, &mut rows, &p.output_type, &crypto, s) {
+                                return err(Reject { code: rej.code, msg: rej.msg });
+                            }
+                        }
+                        // 현재 Ctx는 now를 반드시 이 값으로 바인딩한다. 같은 값의 일반 필터는 보수적으로 미캐시.
+                        let time_dependent = p.params.iter().any(|v| v.as_deref() == Some(caller.now.as_str()));
+                        json!({ "ok": true, "rows": rows, "deps": p.deps, "maxAgeMs": if time_dependent { 0 } else { READ_CACHE_MS } })
+                    }
+                    Ok(Err(e)) => err(e),
+                    Err(_) => json!({"ok":false,"code":"WIRE.DEADLINE_EXCEEDED"}),
+                },
+                Err(e) => err(e),
+            }
+        }
         "/apply" => handle_apply(db, facts, body, caller, wire).await,
         "/status" => {
             let principal = principal_key(caller.actor_id, wire);
@@ -377,15 +418,29 @@ async fn handle(db: &mut Client, facts: &Value, path: &str, body: &Value, caller
             let q = format!("SELECT request, result::text FROM {}.aip_idem WHERE principal = $1 AND key = $2", sqlgen::schema());
             match tokio::time::timeout(server::DB_PREFLIGHT_TIMEOUT, db.query_opt(q.as_str(), &[&principal, &key])).await {
                 // 키만으로 결과를 주지 않는다. 같은 요청인지 확인한다(r7 R7-01).
-                Ok(Ok(Some(r))) if r.get::<_, String>(0) != request_text => {
-                    json!({ "ok": false, "code": "WIRE.IDEMPOTENCY_MISMATCH", "msg": "같은 키에 다른 요청" })
-                }
                 Ok(Ok(Some(r))) => {
-                    let Ok(mut v) = serde_json::from_str::<Value>(&r.get::<_, String>(1)) else {
-                        return json!({ "ok": false, "code": "WIRE.INTERNAL", "msg": "저장된 멱등 결과를 읽을 수 없음" });
+                    let stored_req: String = r.get(0);
+                    let matches = if stored_req == request_text {
+                        true
+                    } else if let Some(crypto) = encryption::get_runtime_crypto() {
+                        let s = sqlgen::schema();
+                        if let (Ok(s_val), Ok(i_val)) = (serde_json::from_str::<Value>(&stored_req), serde_json::from_str::<Value>(&request_text)) {
+                            encryption::verify_idempotency_request(facts, &s_val, &i_val, &crypto, s, &principal, key)
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
                     };
-                    v["replayed"] = json!(true);
-                    v
+                    if !matches {
+                        json!({ "ok": false, "code": "WIRE.IDEMPOTENCY_MISMATCH", "msg": "같은 키에 다른 요청" })
+                    } else {
+                        let Ok(mut v) = serde_json::from_str::<Value>(&r.get::<_, String>(1)) else {
+                            return json!({ "ok": false, "code": "WIRE.INTERNAL", "msg": "저장된 멱등 결과를 읽을 수 없음" });
+                        };
+                        v["replayed"] = json!(true);
+                        v
+                    }
                 }
                 // 조회 시점에 커밋된 결과가 없다는 뜻일 뿐, 진행 중일 수 있다(r7 R7-02). 확정은 같은 키 재요청으로 한다.
                 Ok(Ok(None)) => json!({ "ok": false, "code": "WIRE.NOT_FOUND" }),

@@ -76,7 +76,19 @@ pub async fn apply_with_launch(
         }
         match tx.query_opt(&format!("SELECT request,result::text FROM {schema}.aip_idem WHERE principal=$1 AND key=$2"), &[&principal, &key]).await {
             Ok(Some(row)) => {
-                if row.get::<_, String>(0) != request_text {
+                let stored: String = row.get(0);
+                let matches = if stored == request_text {
+                    true
+                } else if let Some(crypto) = crate::encryption::get_runtime_crypto() {
+                    if let (Ok(s_val), Ok(i_val)) = (serde_json::from_str::<Value>(&stored), serde_json::from_str::<Value>(&request_text)) {
+                        crate::encryption::verify_idempotency_request(facts, &s_val, &i_val, &crypto, schema, &principal, key)
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+                if !matches {
                     return failure("WIRE.IDEMPOTENCY_MISMATCH");
                 }
                 let mut result: Value = match serde_json::from_str(&row.get::<_, String>(1)) {
@@ -127,11 +139,16 @@ pub async fn apply_with_launch(
         if left < Duration::from_millis(300) {
             return failure("WIRE.DEADLINE_EXCEEDED");
         }
+        let req_to_store = if let Some(crypto) = crate::encryption::get_runtime_crypto() {
+            crate::encryption::mask_request_for_idempotency(facts, request, &crypto, schema, &principal, key).to_string()
+        } else {
+            request_text
+        };
         let insert = tokio::time::timeout(
             left,
             tx.execute(
                 &format!("INSERT INTO {schema}.aip_idem(principal,key,request,result) VALUES($1,$2,$3,$4::text::jsonb)"),
-                &[&principal, &key, &request_text, &result.to_string()],
+                &[&principal, &key, &req_to_store, &result.to_string()],
             ),
         )
         .await;

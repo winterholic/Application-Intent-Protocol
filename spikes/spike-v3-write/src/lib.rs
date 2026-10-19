@@ -543,7 +543,21 @@ async fn update(
                     .unwrap()
                     .keys()
                     .chain(input.into_iter().flat_map(|i| i.values.iter().map(|(f, _)| f)))
-                    .map(|f| format!("'{f}', to_jsonb({alias}.{})", column(facts, res, f).unwrap()))
+                    .map(|f| {
+                        let col = column(facts, res, f).unwrap();
+                        if facts["resources"][res]["fields"][f].get("encrypted").is_some() {
+                            format!(
+                                "'{f}', CASE WHEN {alias}.{col} IS NULL THEN 'null'::jsonb \
+                                 ELSE jsonb_build_object(\
+                                     '$encrypted', true, \
+                                     'changed', (aip_p.{col} IS DISTINCT FROM t.{col}), \
+                                     'keyVersion', NULLIF(split_part({alias}.{col}, ':', 4), '')::int\
+                                 ) END"
+                            )
+                        } else {
+                            format!("'{f}', to_jsonb({alias}.{col})")
+                        }
+                    })
                     .collect();
                 // jsonb_build_object takes at most 100 arguments, so wide transitions are built in parts.
                 let parts: Vec<String> = pairs.chunks(50).map(|chunk| format!("jsonb_build_object({})", chunk.join(", "))).collect();
@@ -609,7 +623,21 @@ async fn delete_rows(
                 .as_object()
                 .unwrap()
                 .keys()
-                .map(|f| format!("'{f}', to_jsonb(t.{})", column(facts, res, f).unwrap()))
+                .map(|f| {
+                    let col = column(facts, res, f).unwrap();
+                    if facts["resources"][res]["fields"][f].get("encrypted").is_some() {
+                        format!(
+                            "'{f}', CASE WHEN t.{col} IS NULL THEN 'null'::jsonb \
+                             ELSE jsonb_build_object(\
+                                 '$encrypted', true, \
+                                 'changed', true, \
+                                 'keyVersion', NULLIF(split_part(t.{col}, ':', 4), '')::int\
+                             ) END"
+                        )
+                    } else {
+                        format!("'{f}', to_jsonb(t.{col})")
+                    }
+                })
                 .collect();
             let parts: Vec<String> = pairs.chunks(50).map(|chunk| format!("jsonb_build_object({})", chunk.join(", "))).collect();
             let snapshot = if parts.is_empty() { "'{}'::jsonb".to_string() } else { parts.join(" || ") };
@@ -828,7 +856,18 @@ async fn effects(
                     .map(|field| {
                         let key = field.replace('\'', "''");
                         let col = column(facts, target, field).ok_or_else(|| internal("효과 대상 열 누락"))?;
-                        Ok(format!("'{key}', to_jsonb(u.{col})"))
+                        if facts["resources"][target]["fields"][field].get("encrypted").is_some() {
+                            Ok(format!(
+                                "'{key}', CASE WHEN u.{col} IS NULL THEN 'null'::jsonb \
+                                 ELSE jsonb_build_object(\
+                                     '$encrypted', true, \
+                                     'changed', true, \
+                                     'keyVersion', NULLIF(split_part(u.{col}, ':', 4), '')::int\
+                                 ) END"
+                            ))
+                        } else {
+                            Ok(format!("'{key}', to_jsonb(u.{col})"))
+                        }
                     })
                     .collect::<Result<_, Reject>>()?;
                 let chunks: Vec<String> = pairs.chunks(50).map(|chunk| format!("jsonb_build_object({})", chunk.join(", "))).collect();
@@ -1001,8 +1040,9 @@ async fn create_row(
     // 비공개 관계 테이블은 `id` 열이 없을 수 있다. 그런 행은 id를 돌려줄 수 없다.
     let has_id = facts["resources"][target]["fields"].get("id").is_some();
     let returning = if has_id { "id" } else { "1" };
+    let overriding = if cols.contains(&"id".to_string()) { " OVERRIDING SYSTEM VALUE" } else { "" };
     let sql = format!(
-        "INSERT INTO {}{insert_cols} SELECT {} FROM (SELECT {}{from}) v WHERE {allow} RETURNING {returning}",
+        "INSERT INTO {}{insert_cols}{overriding} SELECT {} FROM (SELECT {}{from}) v WHERE {allow} RETURNING {returning}",
         table(target),
         cols.iter().map(|c| format!("v.{c}")).collect::<Vec<_>>().join(", "),
         exprs.join(", ")
@@ -1305,6 +1345,13 @@ async fn apply_inner(
 }
 
 pub fn literal(facts: &Value, res: &str, field: &str, v: &Value, wire: IdWire) -> Result<Src, Reject> {
+    if field.ends_with("__bidx") {
+        let base_field = field.strip_suffix("__bidx").unwrap();
+        if facts["resources"][res]["fields"][base_field]["encrypted"]["lookup"] == "eq" {
+            let s = v.as_str().ok_or_else(|| bad("blind index는 문자열"))?;
+            return Ok(Src::Lit(s.to_string(), "text"));
+        }
+    }
     let ty = facts["resources"][res]["fields"][field]["ty"]
         .as_str()
         .ok_or(Reject { code: "WIRE.UNKNOWN_FIELD", msg: format!("`{res}.{field}` 없음") })?;
@@ -1316,6 +1363,13 @@ pub fn literal(facts: &Value, res: &str, field: &str, v: &Value, wire: IdWire) -
         // Id wire(숫자·십진 문자열)에 맞는 표기만 받는다. 전이 대상 id와 같은 규칙이다.
         let (id, cast) = parse_typed_id(facts, base, v, wire)?;
         return Ok(Src::Lit(id, cast));
+    }
+    if facts["resources"][res]["fields"][field].get("encrypted").is_some() {
+        if let Some(s) = v.as_str() {
+            if s.starts_with("v2:") {
+                return Ok(Src::Lit(s.to_string(), "text"));
+            }
+        }
     }
     let (s, cast) = spike_v2_read::scalar::parse(facts, base, v)?;
     let range = &facts["resources"][res]["fields"][field]["range"];
@@ -1439,7 +1493,11 @@ async fn bundle_run(
             let allowed: Vec<&str> = ec["fields"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
             let mut row = vec![];
             for (f, v) in vals {
-                if !allowed.contains(&f.as_str()) {
+                let is_allowed = allowed.contains(&f.as_str())
+                    || (f == "id" && facts["resources"][res]["fields"].get("id").is_some())
+                    || (f.ends_with("__bidx")
+                        && facts["resources"][res]["fields"].get(f.strip_suffix("__bidx").unwrap()).and_then(|fd| fd.get("encrypted")).is_some());
+                if !is_allowed {
                     return rej("WIRE.FIELD_NOT_EXPOSED", format!("`{res}.{f}`는 생성 계약에 없음"));
                 }
                 row.push((f.clone(), literal(facts, res, f, v, wire)?));

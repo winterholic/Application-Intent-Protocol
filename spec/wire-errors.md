@@ -292,6 +292,27 @@ JSON 실패 본문은 `requestId`와 이 레지스트리의 `retry`를 싣는다
 - 원인: An effect of a job step may have run, but its result was lost; it is not repeated automatically.
 - 수정: Look at the state the effect changes before running it again.
 
+### `WIRE.ENCRYPTED_FIELD_NOT_QUERYABLE`
+
+`class` request, `retry` never
+
+- 원인: An encrypted field cannot be used in unsupported filters, sorting, cursor pagination, or aggregates.
+- 수정: Remove the encrypted field from sort, filter, or cursor expressions; only exact equality with lookup: eq and bound single-scope is queryable.
+
+### `WIRE.ENCRYPTION_CORRUPTED`
+
+`class` server, `retry` never
+
+- 원인: The encrypted cell payload or authentication tag is corrupted or tampered.
+- 수정: Operator: verify database integrity and encryption key consistency. The data cannot be decrypted.
+
+### `WIRE.ENCRYPTION_UNAVAILABLE`
+
+`class` availability, `retry` later
+
+- 원인: The required encryption key or key provider is currently unavailable.
+- 수정: Operator: ensure the encryption provider and key material are active. A write keeps its idempotency key.
+
 ### `WIRE.EVENT_INVALID`
 
 `class` request, `retry` never

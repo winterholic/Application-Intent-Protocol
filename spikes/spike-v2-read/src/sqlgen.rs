@@ -83,6 +83,11 @@ pub fn json_scalar(ty: &str, sql: &str) -> String {
 }
 
 pub fn column(facts: &Value, res: &str, field: &str) -> Option<String> {
+    if field.ends_with("__bidx") {
+        let base = field.strip_suffix("__bidx")?;
+        let _ = facts["resources"][res]["fields"][base].get("encrypted")?;
+        return Some(field.to_string());
+    }
     let ty = facts["resources"][res]["fields"][field]["ty"].as_str()?;
     Some(if field != "id" && ty.starts_with("Ref<") { format!("{}_id", snake(field)) } else { snake(field) })
 }

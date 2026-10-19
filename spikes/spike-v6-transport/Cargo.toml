@@ -13,6 +13,7 @@ default = []
 external-brokers = ["aip-execution/external-brokers"]
 
 [dependencies]
+aip-crypto = { path = "../../crates/aip-crypto" }
 aip-execution = { path = "../../crates/aip-execution" }
 serde = { version = "1", features = ["derive"] }
 spike-v4-worker = { path = "../spike-v4-worker" }

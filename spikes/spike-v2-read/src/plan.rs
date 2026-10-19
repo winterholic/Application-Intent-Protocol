@@ -124,6 +124,11 @@ fn measure(facts: &Value, cx: &mut Ctx<'_>, aggregate: &Value, alias: &str) -> R
     if matches!(release, Some("count") | None) && field.is_none() {
         return Ok("count(*)".into());
     }
+    if let Some(f) = field {
+        if facts["resources"][source]["fields"][f].get("encrypted").is_some() {
+            return rej("WIRE.ENCRYPTED_FIELD_NOT_QUERYABLE", format!("암호화 필드 `{source}.{f}`는 집계에 쓸 수 없음"));
+        }
+    }
     let env = Env { this: Some((alias.to_string(), source.to_string())), ..Default::default() };
     let visible = cx.cond(&facts["resources"][source]["rowRead"], &env).map_err(internal)?;
     match (release, field) {
@@ -303,6 +308,11 @@ fn compile_filter_item(context: &mut FilterContext<'_, '_>, fo: &Map<String, Val
     keys(fo, &["field", "op", "value"], "filter")?;
     let (field, op) = (fo.get("field").and_then(Value::as_str).unwrap_or(""), fo.get("op").and_then(Value::as_str).unwrap_or(""));
     let key = format!("{field}.{op}");
+    if let Some(enc) = rf["fields"][field].get("encrypted") {
+        if enc["lookup"] != "eq" || op != "eq" {
+            return rej("WIRE.ENCRYPTED_FIELD_NOT_QUERYABLE", format!("암호화 필드 `{field}`는 lookup: eq 선언과 eq 검색 외에는 질의할 수 없음"));
+        }
+    }
     // 같은 조건을 반복하면 요청 크기만 커진다. 허용 목록 항목당 한 번만 받는다(R2B-03).
     if !ex["filter"].as_array().unwrap().iter().any(|x| x == &json!(key)) {
         let allowed = allowed_names(ex["filter"].as_array().unwrap().iter().filter_map(Value::as_str));
@@ -313,7 +323,8 @@ fn compile_filter_item(context: &mut FilterContext<'_, '_>, fo: &Map<String, Val
         return rej("WIRE.POLICY_FIELD_NOT_FILTERABLE", format!("`{field}`에는 field read 정책이 있어 filter에 쓸 수 없음"));
     }
     let fty = rf["fields"][field]["ty"].as_str().unwrap();
-    let col = column(facts, res, field).unwrap();
+    let base_col = column(facts, res, field).unwrap();
+    let col = if rf["fields"][field].get("encrypted").is_some() { format!("{base_col}__bidx") } else { base_col };
     let tcol = cx.qualified(t, &col);
     let raw = fo.get("value").unwrap_or(&Value::Null);
     // Ref는 traverse와 같게 대상 행 정책을 통과한 경우에만 값이 있는 것으로 본다.
@@ -552,7 +563,12 @@ fn plan_read_inner(dialect: Dialect, facts: &Value, req: &Value, caller: &Caller
                             expr = format!("CASE WHEN {c} THEN {expr} END");
                         }
                         cols.push((f.clone(), cx.json_scalar(fty, &expr)));
-                        out.insert(f.clone(), out_ty(fty, policy || guarded));
+                        let mut meta = out_ty(fty, policy || guarded);
+                        if let Some(enc) = rf["fields"][f].get("encrypted") {
+                            meta["encrypted"] = enc.clone();
+                            meta["resource"] = json!(res);
+                        }
+                        out.insert(f.clone(), meta);
                     }
                 }
             }
@@ -619,7 +635,30 @@ fn plan_read_inner(dialect: Dialect, facts: &Value, req: &Value, caller: &Caller
                         e = format!("CASE WHEN {} THEN {e} END", cx.cond(&tf["fieldRead"][f], &tenv).map_err(internal)?);
                     }
                     pairs.push(format!("'{f}', {}", cx.json_scalar(fty, &e)));
-                    tout.insert(f.to_string(), out_ty(fty, redact || guarded));
+                    let mut meta = out_ty(fty, redact || guarded);
+                    if let Some(enc) = tf["fields"][f].get("encrypted") {
+                        meta["encrypted"] = enc.clone();
+                        meta["resource"] = json!(target);
+                    }
+                    tout.insert(f.to_string(), meta);
+                }
+                if tout.values().any(|v| v.get("encrypted").is_some()) {
+                    let id_col = cx.qualified(&ta, &column(facts, target, "id").unwrap_or_else(|| "id".to_string()));
+                    pairs.push(format!("'__aip_id', {}", cx.json_scalar("String", &id_col)));
+                    tout.insert("__aip_id".to_string(), json!({ "ty": "String", "nullable": true, "hidden": true }));
+                    for (_, m) in tout.clone().iter() {
+                        if let Some(enc) = m.get("encrypted") {
+                            if enc["scope"]["kind"] == "ref" {
+                                if let Some(ref_f) = enc["scope"]["field"].as_str() {
+                                    if !tout.contains_key("__aip_scope") {
+                                        let ref_c = cx.qualified(&ta, &column(facts, target, ref_f).unwrap_or_else(|| ref_f.to_string()));
+                                        pairs.push(format!("'__aip_scope', {}", cx.json_scalar("String", &ref_c)));
+                                        tout.insert("__aip_scope".to_string(), json!({ "ty": "String", "nullable": true, "hidden": true }));
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
                 // 대상 resource의 행 정책을 다시 적용한다. 안 보이는 관계는 null이 된다.
                 let row = cx.cond(&tf["rowRead"], &tenv).map_err(internal)?;
@@ -647,6 +686,24 @@ fn plan_read_inner(dialect: Dialect, facts: &Value, req: &Value, caller: &Caller
             _ => return rej("WIRE.BAD_REQUEST", format!("select 항목 형식 오류 {s}")),
         }
     }
+    if out.values().any(|v| v.get("encrypted").is_some()) {
+        let id_col = cx.qualified(&t, &column(facts, res, "id").unwrap_or_else(|| "id".to_string()));
+        cols.push(("__aip_id".to_string(), cx.json_scalar("String", &id_col)));
+        out.insert("__aip_id".to_string(), json!({ "ty": "String", "nullable": true, "hidden": true }));
+        for (_, m) in out.clone().iter() {
+            if let Some(enc) = m.get("encrypted") {
+                if enc["scope"]["kind"] == "ref" {
+                    if let Some(ref_f) = enc["scope"]["field"].as_str() {
+                        if !out.contains_key("__aip_scope") {
+                            let ref_c = cx.qualified(&t, &column(facts, res, ref_f).unwrap_or_else(|| ref_f.to_string()));
+                            cols.push(("__aip_scope".to_string(), cx.json_scalar("String", &ref_c)));
+                            out.insert("__aip_scope".to_string(), json!({ "ty": "String", "nullable": true, "hidden": true }));
+                        }
+                    }
+                }
+            }
+        }
+    }
     let mut wh = vec![cx.cond(&rf["rowRead"], &env).map_err(internal)?];
     if let Some(fl) = o.get("filter") {
         let mut filter_context = FilterContext { dialect, facts, res, rf, ex, cx: &mut cx, alias: &t, wire };
@@ -665,6 +722,9 @@ fn plan_read_inner(dialect: Dialect, facts: &Value, req: &Value, caller: &Caller
             let f = so.get("field").and_then(Value::as_str).unwrap_or("");
             if !seen_sort.insert(f.to_string()) {
                 return rej("WIRE.DUPLICATE", format!("sort `{f}` 중복"));
+            }
+            if rf["fields"][f].get("encrypted").is_some() {
+                return rej("WIRE.ENCRYPTED_FIELD_NOT_QUERYABLE", format!("암호화 필드 `{f}`는 sort에 쓸 수 없음"));
             }
             if !ex["sort"].as_array().unwrap().iter().any(|x| x == f) {
                 let allowed = allowed_names(ex["sort"].as_array().unwrap().iter().filter_map(Value::as_str));
@@ -708,6 +768,9 @@ fn plan_read_inner(dialect: Dialect, facts: &Value, req: &Value, caller: &Caller
             }
             if !rf["fieldRead"][f.as_str()].is_null() {
                 return rej("WIRE.POLICY_FIELD_NOT_FILTERABLE", format!("`{f}`에는 field read 정책이 있어 cursor에 쓸 수 없음"));
+            }
+            if rf["fields"][f.as_str()].get("encrypted").is_some() {
+                return rej("WIRE.ENCRYPTED_FIELD_NOT_QUERYABLE", format!("암호화 필드 `{f}`는 cursor 경계로 쓸 수 없음"));
             }
             let (v, cast) = check_value(facts, fty, &am[f.as_str()], wire)?;
             let p = cx.params.bind(Some(v), cast);
@@ -848,7 +911,30 @@ fn plan_traverse_many(
             e = format!("CASE WHEN {} THEN {e} END", cx.cond(&tf["fieldRead"][f], &outer_env).map_err(internal)?);
         }
         pairs.push(format!("'{f}', {}", cx.json_scalar(fty, &e)));
-        tout.insert(f.to_string(), out_ty(fty, redact || guarded));
+        let mut meta = out_ty(fty, redact || guarded);
+        if let Some(enc) = tf["fields"][f].get("encrypted") {
+            meta["encrypted"] = enc.clone();
+            meta["resource"] = json!(target);
+        }
+        tout.insert(f.to_string(), meta);
+    }
+    if tout.values().any(|v| v.get("encrypted").is_some()) {
+        let id_col = cx.qualified(&ob, &column(facts, target, "id").unwrap_or_else(|| "id".to_string()));
+        pairs.push(format!("'__aip_id', {}", cx.json_scalar("String", &id_col)));
+        tout.insert("__aip_id".to_string(), json!({ "ty": "String", "nullable": true, "hidden": true }));
+        for (_, m) in tout.clone().iter() {
+            if let Some(enc) = m.get("encrypted") {
+                if enc["scope"]["kind"] == "ref" {
+                    if let Some(ref_f) = enc["scope"]["field"].as_str() {
+                        if !tout.contains_key("__aip_scope") {
+                            let ref_c = cx.qualified(&ob, &column(facts, target, ref_f).unwrap_or_else(|| ref_f.to_string()));
+                            pairs.push(format!("'__aip_scope', {}", cx.json_scalar("String", &ref_c)));
+                            tout.insert("__aip_scope".to_string(), json!({ "ty": "String", "nullable": true, "hidden": true }));
+                        }
+                    }
+                }
+            }
+        }
     }
     let row = cx.cond(&tf["rowRead"], &inner_env).map_err(internal)?;
     let fk = column(facts, target, tm["via"].as_str().unwrap()).unwrap();

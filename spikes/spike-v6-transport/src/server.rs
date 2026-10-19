@@ -225,8 +225,10 @@ pub(crate) async fn listen_with_fingerprint(
     mut runtime: Runtime,
     fingerprint: Option<Arc<str>>,
 ) -> io::Result<Server> {
-    spike_v1_fixture::sema::require_supported_runtime(&facts)
-        .map_err(|_| io::Error::new(io::ErrorKind::Unsupported, "field encryption storage is not enabled in this runtime"))?;
+    if crate::encryption::get_runtime_crypto().is_none() {
+        spike_v1_fixture::sema::require_supported_runtime(&facts)
+            .map_err(|_| io::Error::new(io::ErrorKind::Unsupported, "field encryption storage is not enabled in this runtime"))?;
+    }
     if !address.ip().is_loopback() {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "prototype server requires loopback"));
     }
