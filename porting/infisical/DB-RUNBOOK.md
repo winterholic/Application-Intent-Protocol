@@ -60,7 +60,7 @@ bash porting/infisical/run-baseline.sh
 
 ```sh
 cd porting/infisical/tests
-python3 -m unittest test_live_db -v        # 63건. AIP_TEST_DATABASE_URL이 없으면 skip
+python3 -m unittest test_live_db -v        # 실DB. AIP_TEST_DATABASE_URL이 없으면 skip
 python3 mutation_check.py                  # 규칙을 하나씩 풀면 해당 시험이 실패하는지 확인
 python3 -m unittest legacy_repro -v        # 수정 전 정의(53b1537)의 결함 10건 재현. 모두 FAIL이 정상
 python3 -m unittest test_identity_jwt -v   # DB 없이 17건

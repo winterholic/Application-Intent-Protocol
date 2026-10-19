@@ -53,7 +53,7 @@
 
 `expose create`에는 `transition`의 `create` 효과가 없다. 조직을 만든 사용자가 그 조직의 첫 admin이 되려면 별도 요청이 필요하다. 이전 초안은 이 단계가 없어 만든 조직을 만든 사람이 읽을 수도 없는 고아 조직이 됐다(**재현**).
 
-현재 포팅 처리: `Organization.createdBy`를 `actor`로 강제하고, 조직의 생성자만 구성원이 0명인 조직에서 자기 자신을 admin으로 한 번 등록할 수 있게 `OrgMembership.create`의 `allow`를 구성했다(**재현**: `test_organization_creator_becomes_admin_exactly_once`). 두 요청 사이 짧은 구간이 남는다. 2026-10-20 환경 표 도입 뒤 같은 방식으로 환경의 첫 루트 폴더도 별도 요청이며, 이 구간의 경주 상태는 [G16](#g16)에 적었다.
+현재 포팅 처리: `Organization.createdBy`를 `actor`로 강제하고, 조직의 생성자만 구성원이 0명인 조직에서 자기 자신을 admin으로 한 번 등록할 수 있게 `OrgMembership.create`의 `allow`를 구성했다(**재현**: `test_organization_creator_becomes_admin_exactly_once`). 두 요청 사이 짧은 구간이 남는다. 2026-10-20 환경 표 도입 뒤 같은 방식으로 환경의 첫 루트 폴더도 별도 요청이며, 두 요청 사이 구간과 동시 생성 검증은 [G16](#g16)에 적었다.
 
 ### G12. create 결과 id를 다음 연산에 넘기는 일반 조합이 없다 (시크릿 이름·세대 분리로는 해당 없음)
 
@@ -117,7 +117,7 @@
 - 삭제 권한은 프로젝트 쓰기 권한(admin·member)이다. 원본의 `SecretFolders` `Delete` 권한(환경·경로 조건)은 EE 권한 평가에 있어 읽지 않았다.
 
 <a id="g16"></a>
-### G16. 환경 표: 생성·수정·소프트/하드 삭제·복원은 원본과 동등, 위치 이동·유예 기간·루트 동시 생성은 미구현 (2026-10-20)
+### G16. 환경 표의 선언 동작과 원본 차이: 위치 이동·유예 기간은 미구현, 루트 동시 생성은 기존 격리로 방지 (2026-10-20 정정)
 
 이전 포팅의 `Folder.env`는 `Text(1..64)` 문자열이었고 환경이라는 행이 없었다(환경 이름만 폴더에 복사). 원본은 환경이 `project_environments` 행이고 폴더가 `envId`로 참조한다. 그래서 `Environment` resource를 두고 `Folder.env`를 그 참조로 바꿨고, `Folder.project`는 없애고 `env.project`로 얻는다.
 
@@ -145,13 +145,13 @@
 
 - **위치 밀기·틈 메우기·자동 끝 붙이기**: 한 요청에서 프로젝트의 다른 환경들 위치를 바꿔야 한다. 전이의 `update many`에 `position = position - 1`(또는 `+ 1`)을 쓰면 `DEF.PARSE_EXPECTED`("이름 필요, `-` 발견"/"`+` 발견"), 같은 프로젝트 전체를 고르는 `where project = this.project`는 `DEF.UNSUPPORTED_EFFECT`("many update에는 non-null 부모 참조 = this.id 조건 필요")로 거부된다. 포팅은 호출자가 위치를 주고, 이미 있는 위치는 거부하며(`unique project, position`), 틈을 메우지 않는다. 소프트 삭제된 환경은 위치를 그대로 쥔다(원본은 맨 뒤로 옮긴다).
 - **14일 유예와 영구 삭제**: `softDeletedAt`만 기록한다. 시각 산술(`to deleteAfter = now + 20160m`)은 `DEF.PARSE_EXPECTED`("식 필요, `1209600000ms` 발견")로 거부되고, 시간 단위는 `ms`, `s`, `m`뿐이며(`d`, `h`, `days`는 `DEF.LEX_BAD_DURATION`) 지속 시간 리터럴은 식에 쓸 수 없다. 그래서 `deleteAfter` 열도, "유예가 지났으면 복원 거부"도, 유예 뒤 영구 삭제 cron도 없다. 소프트 삭제된 환경은 `hardDelete`를 직접 부를 때까지 남는다.
-- **루트 폴더 동시 생성**: `expose create`는 다른 행을 함께 만들 수 없다([G11](#g11)). 환경과 루트 사이에 요청이 하나 더 있다. 두 요청이 동시에 오면 둘 다 "루트 없음"을 통과해 루트가 둘 생길 수 있다(`unique parent, name`은 `parent`가 null이면 막지 못한다). 이 경주 상태는 테스트하지 않았다.
+- **루트 폴더 생성은 두 요청, 동시 생성은 방지됨**: `expose create`는 다른 행을 함께 만들 수 없어([G11](#g11)) 환경과 루트 사이에 요청이 하나 더 있다. 이전 판은 nullable `unique parent, name`만 보고 루트가 둘 생길 수 있다고 추정했지만, `envHasNoRoot`의 `not exists`에 기존 컴파일러가 SERIALIZABLE 격리를 표시하고 서버가 충돌을 재시도한다. 29efc12의 실제 PostgreSQL 시험 `test_concurrent_root_creates_commit_exactly_one_root`는 fixture 전용 BEFORE INSERT trigger에서 두 요청을 advisory gate에 함께 대기시킨 뒤 해제해 성공 1개·저장 루트 1개를 확인했다. 다른 환경의 루트와 이 루트의 자식 생성도 허용했다. 따라서 동시 중복을 미구현 갭으로 세지 않는다. 단 환경·루트의 원본 단일 트랜잭션 생성과 같다는 뜻은 아니다.
 - **시크릿이 있는 환경의 `hardDelete`**: 시크릿은 환경에서 두 단계 떨어져 있다(시크릿 → 폴더 → 환경). 효과 `delete many Secret ... where folder.env = this.id`는 `DEF.PARSE_EXPECTED`("`=` 필요, `.` 발견", G14와 같은 제약)로 거부된다. 포팅은 환경 안에 시크릿이 하나라도 있으면 `hardDelete`를 거부한다. `Secret.delete`로 시크릿을 먼저 지우면 같은 결과에 도달한다.
 - **slug 문자 검증**: `Text`에 문자열 형식 제약이 없다(G14). 길이만 제한한다.
 - **환경 수 상한**(`plan.environmentLimit`, `project-env-service.ts:104`)은 라이선스 서비스에서 온다. EE 모듈이라 읽지 않았고 선언하지 않았다.
 - **`deletedByIdentityId`**: 포팅의 행위자는 `User`뿐이라 `deletedBy`만 둔다(머신 아이덴티티 행위자는 I02 미구현).
 - 삭제의 승인 정책 거부와 `Environments` 권한 조건은 EE 범위라 이 포팅에 없다.
-- 환경이 소프트 삭제된 동안 폴더와 시크릿이 숨겨지는 방식은 읽기 정책(`env.softDeletedAt = null`)이다. 원본에서는 환경 조회가 실패해서 생기는 결과다. `PersonalSecret`은 가리키는 시크릿이 숨겨지는 것으로 간접히 막힌다(직접 검증하지 않았다).
+- 환경이 소프트 삭제된 동안 폴더·시크릿·개인 재정의는 각 읽기 정책의 환경 `softDeletedAt = null` 조건으로 숨긴다. 원본에서는 환경 조회가 실패해서 생기는 결과다. 이전 `PersonalSecret`의 간접 차단 추정은 독립 DB 시험에서 틀린 것으로 드러났다: f1a6de0의 소유자 id 직접 조회가 `secret: null`인 개인 행을 반환했다. 29efc12는 개인 행 정책에도 삭제 조건을 명시했다. `test_soft_deleted_environment_hides_personal_overrides_and_restore_keeps_them`이 읽기·쓰기 권한자 본인의 id 직접 조회와 삭제를 거부하고, org admin의 생성도 거부하며, 저장된 두 행을 보존하고 복원 뒤 같은 id·참조를 다시 보여 주는 것을 확인했다. 조건 제거 변이는 같은 시험이 잡았다. 근거: Linux worker 39334547563(RED 1건), 39335227406(GREEN 82건 = live DB 65 + JWT 17).
 
 설계안(결정은 제품 담당 몫): 효과의 일치 조건에 한 단계 참조 경로를 허용하면 시크릿이 있는 환경 삭제와 정해진 깊이의 자식 삭제를 표현할 수 있다. G14의 임의 깊이 하위 트리 전체 삭제에는 별도의 재귀 의미와 깊이 상한이 필요하며, 한 단계 참조만으로 모두 해결됐다고 세지 않는다. 위치 밀기는 같은 부모 아래 행의 순서 값을 다시 매기는 효과가 필요하고, 유예는 `Time` 값에 지속 시간을 더하는 식과 날짜 단위가 필요하다.
 

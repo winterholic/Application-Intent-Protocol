@@ -7,6 +7,7 @@ Prints one line per mutation and exits non-zero if any mutation survives (all te
 
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -54,6 +55,8 @@ MUTATIONS = [
      "test_the_root_folder_of_an_environment_is_created_once_by_a_writer"),
     ("second root folder", "(parent = null and name = \"root\" and envHasNoRoot(env))", "(parent = null and name = \"root\")",
      "test_the_root_folder_of_an_environment_is_created_once_by_a_writer"),
+    ("concurrent root creates unrestricted", "(parent = null and name = \"root\" and envHasNoRoot(env))", "(parent = null and name = \"root\")",
+     "test_concurrent_root_creates_commit_exactly_one_root"),
     ("folder in a soft-deleted environment", "allow canWriteProject(actor, env.project) and env.softDeletedAt = null and ((parent", "allow canWriteProject(actor, env.project) and ((parent",
      "test_soft_deleted_environment_keeps_its_slug_and_position_and_cannot_be_changed"),
     ("soft-deleted folders visible", "rows read when canReadProject(actor, env.project) and env.softDeletedAt = null", "rows read when canReadProject(actor, env.project)",
@@ -153,10 +156,14 @@ def main():
             survivors += 1
         else:
             reason = "skipped" if "skipped" in run.stderr else "caught"
-            if "has no attribute" in run.stderr or "AttributeError" in run.stderr:
-                reason = "BROKEN"  # the named test does not exist; an import error is not a caught mutation
+            named_failure = re.search(rf"^(?:FAIL|ERROR): {re.escape(test)} \(", run.stderr, re.MULTILINE)
+            executed_one = re.search(r"^Ran 1 test\b", run.stderr, re.MULTILINE)
+            fixture_failure = re.search(r"^(?:FAIL|ERROR): (?:setUpClass|tearDownClass|setUpModule|tearDownModule)\b", run.stderr, re.MULTILINE)
+            if not named_failure or not executed_one or fixture_failure or "AttributeError" in run.stderr or "unittest.loader._FailedTest" in run.stderr:
+                reason = "BROKEN"  # fixture/import failures are not evidence against the mutated policy
             print(f"{reason:8} {label}: {test}")
             if reason in ("skipped", "BROKEN"):
+                print(run.stderr[-2000:])
                 survivors += 1
     for label, old, new in EQUIVALENT:
         if source.count(old) != 1:
@@ -169,9 +176,11 @@ def main():
             env = dict(os.environ, INFISICAL_APP_AIP=str(mutated))
             run = subprocess.run([sys.executable, "-m", "unittest", "test_live_db"],
                                  cwd=HERE, env=env, capture_output=True, text=True)
-        verdict = "EQUIV" if run.returncode == 0 else "CHANGED"
-        print(f"{verdict:8} {label}: whole suite {'unchanged' if run.returncode == 0 else 'now fails, review the rule'}")
-        if run.returncode != 0:
+        executed = re.search(r"^Ran [1-9][0-9]* tests?\b", run.stderr, re.MULTILINE) and "skipped=" not in run.stderr
+        verdict = "EQUIV" if run.returncode == 0 and executed else ("BROKEN" if run.returncode == 0 else "CHANGED")
+        print(f"{verdict:8} {label}: whole suite {'unchanged' if verdict == 'EQUIV' else 'failed or did not execute, review the rule'}")
+        if verdict != "EQUIV":
+            print(run.stderr[-2000:])
             survivors += 1
     return 1 if survivors else 0
 
