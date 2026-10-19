@@ -6,7 +6,9 @@
 
 포팅은 `/search`와 같은 GET `?q=`로 받는다(원본 POST가 아니라 포팅 내 규칙을 따름). `ui/search_fields.py`의 질의 검증을 `validate_query`로 분리해 `/search`와 공유하고, 유효한 질의는 선언된 `User.username.contains` 필터(`app.aip` 122행, 선언 변경 없음) 하나로 읽고 `Members matching "…"` 머리말을 단다. 무효한 질의는 원본처럼 오류와 함께 전체 목록을 다시 보여주고, `q`가 없으면 기존 전체 목록 그대로다. 이메일로는 검색하지 않고(G-4 oracle 제외 유지) 대소문자를 구분한다(Whoosh 동등성은 별도 잔여 항목).
 
-RED→GREEN: 단위 2건이 구현 전 실패(필터 없음 KeyError 1·길이 오류 미표시 3 subtest)했고 구현 뒤 `test_ui_host`+`test_mail_jobs` 35/35를 DB 없이 로컬에서 직접 실행해 통과했다. 신규 실DB `users-search.test.mjs`(이름 일치·공유 부분문자열·대소문자 고정·이메일 불가·무효 질의 전체목록 폴백)는 `node --check` 통과, 로컬 실DB는 검증 샌드박스의 사용자 조회 차단(`initdb: 501 UID를 찾을 수 없음`, 1회 기록 후 미재시도)으로 미실행이며 `worker-jobs-linux.yml` Revalidate 단계에 등록해 Linux CI로 판정한다. CI 결과는 push 뒤 확인한다.
+RED→GREEN: 단위 2건이 구현 전 실패(필터 없음 KeyError 1·길이 오류 미표시 3 subtest)했고 구현 뒤 `test_ui_host`+`test_mail_jobs` 35/35를 DB 없이 로컬에서 직접 실행해 통과했다. 신규 실DB `users-search.test.mjs`(이름 일치·공유 부분문자열·대소문자 고정·이메일 불가·무효 질의 전체목록 폴백)는 `node --check` 통과, 로컬 실DB는 검증 샌드박스의 사용자 조회 차단(`initdb: 501 UID를 찾을 수 없음`, 1회 기록 후 미재시도)으로 미실행이며 `worker-jobs-linux.yml` Revalidate 단계에 등록해 Linux CI로 판정한다.
+
+CI 경과(공개 API 확인, gh 미인증): 890b02c의 worker-jobs(run 39307000950)는 Revalidate 단계에서 실패했고 같은 run의 unittest 단계(신규 단위 2건 포함)는 통과했다. logs API 403·빈 annotations/output으로 실패 시험을 특정하지 못했고, 직전 4개 커밋의 worker-jobs는 연속 성공이었다. 빈 커밋 재기동(28ce6d6)은 paths 필터에 걸려 worker-jobs가 기동하지 않았으므로, 이 문서 갱신 커밋으로 재기동해 다시 판정한다.
 
 ## 2026-10-20 F15 검색 색인 필드·질의 검증 동등화 — 구현됨, 실DB 로컬 통과, Linux CI 판정 대기
 
