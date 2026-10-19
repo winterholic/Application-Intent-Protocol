@@ -57,9 +57,13 @@ async fn hold_commit(
                 wrote = true;
             }
             // Reads also commit; inject uncertainty only after an actual write, independently of pooled connection order.
+            // Only a written COMMIT may consume the hold budget; other backend messages must not drain it.
             #[allow(deprecated)]
-            let decremented = remaining.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1)).is_ok();
-            if kind == b'C' && bytes == b"COMMIT\0" && wrote && decremented {
+            let decremented = kind == b'C'
+                && bytes == b"COMMIT\0"
+                && wrote
+                && remaining.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1)).is_ok();
+            if decremented {
                 holding = true;
                 held.fetch_add(1, Ordering::SeqCst);
                 if sdk_case.load(Ordering::SeqCst) {
