@@ -654,6 +654,25 @@ async fn serve_conn(
     runtime: Arc<server::Runtime>,
     deadline: tokio::time::Instant,
 ) {
+    serve_request(&mut sock, facts, keys, contract_fingerprint, wire, runtime, deadline).await;
+    // Closing with unread request bytes resets TCP on macOS/Linux and can erase the
+    // error reply at a reverse proxy. Send FIN first, then discard a bounded tail.
+    // The peer sees the reply immediately, even when it never sends its body.
+    let _ = sock.shutdown().await;
+    let mut tail = (&mut sock).take((MAX_BODY * 2) as u64);
+    let mut discard = tokio::io::sink();
+    let _ = tokio::time::timeout(std::time::Duration::from_millis(200), tokio::io::copy(&mut tail, &mut discard)).await;
+}
+
+async fn serve_request(
+    sock: &mut TcpStream,
+    facts: Arc<Value>,
+    keys: auth::Keyring,
+    contract_fingerprint: Option<Arc<str>>,
+    wire: IdWire,
+    runtime: Arc<server::Runtime>,
+    deadline: tokio::time::Instant,
+) {
     let Ok(local) = sock.local_addr() else {
         return;
     };

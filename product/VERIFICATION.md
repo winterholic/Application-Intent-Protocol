@@ -1,5 +1,15 @@
 # 제품 통합 검증 (2026-10-17)
 
+## WBS 9.3~9.5 패키지 배포와 WBS 8.14 TLS 후속 (2026-10-19)
+
+- main `db358fa`의 [App packages](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39189959354)는 Linux x64에서 경계 검사 73개, release 두 앱 이동·SDK 소비자 검사 1개, native/Docker/복원/worker lifecycle 1개가 모두 통과했다. 원본 입력과 중간 bundle을 지운 설치 경로의 binary·정의·SDK·확장을 사용했다. 검사 harness 및 TypeScript/Python 시험 도구는 checkout에 있다.
+- lifecycle은 인증 HTTP read/apply, SIGTERM 종료와 재기동, 잘못된 migration digest 거부, nullable 필드 추가와 데이터·멱등 기록 보존, 구버전 정의의 schema fence 거부, 변경 전 dump 복원 후 이전 패키지 조회·멱등 처리를 확인한다. Linux에서는 별도로 non-root/read-only/cap-drop Docker image의 build·ready·인증 조회·정상종료·재생성과 외부 DB/설정 보존, 네이티브 Node/Python 격리 worker와 durable job을 두 wire로 검사했다. 운영 배포나 Docker 안의 worker 성공을 뜻하지 않는다.
+- 같은 CI의 Docker namespace 사전 probe는 `docker exec <run-owned-container> bwrap --unshare-user --unshare-net --ro-bind / / -- /bin/true`가 exit 1, `No permissions to create a new namespace`였다. 따라서 이 **기본 Docker 정책 안**의 worker 격리는 지원 조건 미충족이다. 별도 네이티브 Linux worker 실행은 통과했다. privileged·무격리로 우회하지 않았다.
+- macOS arm64에서 관련 Node 검사 75 passed / 0 failed. `event-checkin`과 `folder-notes` 예제도 실제 release package 생성 → 입력 삭제 → install → 중간 bundle 삭제 → 설치 경로 check를 통과했다. macOS의 Linux 전용 Docker/worker 단계는 `NOT RUN`으로 출력한다.
+- 추가 실행한 [Deployment checks](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39189659128)는 큰 본문에서 Caddy 502가 나 15/16이었다. 직접 TCP 회귀 시험도 수정 전 `ConnectionReset`으로 1/2 실패했다. 응답 전송 후 write-half FIN과 최대 200ms/2MiB의 bounded discard를 추가했다. 요청 본문 상한을 늘리거나 초과 본문을 실행하지 않는다.
+- `cargo test --offline --locked --manifest-path spikes/spike-v6-transport/Cargo.toml --target-dir target --test rejected_body_close --test v8_headers`는 수정 후 2+2 passed / 0 failed, 같은 library/두 test의 clippy `-D warnings`와 fmt도 통과했다. 이 두 socket 시험은 DB를 호출하지 않으며 명시적인 비접속 시험 DSN을 guard에 전달했다. 처음 실행의 DSN 미설정 build guard 실패는 행동 RED로 세지 않았다.
+- 원본 worker 설정을 잠시 제거한 로컬 Caddy 진단에서는 큰 본문 검사가 PASS였으나 SSE가 `WIRE.NOT_AVAILABLE`로 실패해 전체는 15/16이었다. 이 진단 변경은 되돌렸다. **원래 worker 설정의 최종 TLS 16개와 TCP 수정 후 전체 main CI는 재검증 전**이다. 앞선 성공을 최종 SHA 성공으로 바꾸어 적지 않는다.
+
 ## WBS 9.2 앱별 release 패키징 (2026-10-19, macOS arm64, Codex 자체 검증)
 
 - `node --test product/tests/app-package.test.mjs product/tests/app-manifest.test.mjs product/tests/package-boundaries.test.mjs product/tests/sdk-package.test.mjs`: 58 passed, 0 failed. 앱 두 종류의 원본 제거 후 무결성, 보조 확장 파일 포함, target/feature·lockfile·경로·credential·출력 보존, 동시 입력 변경 및 실패 정리를 검사했다.

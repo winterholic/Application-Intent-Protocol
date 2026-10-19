@@ -40,7 +40,9 @@ read-only rootfs, 모든 capability 제거, no-new-privileges, 제한된 `/tmp` 
 
 worker 앱은 `workers.directory=/opt/aip/app/<manifest extensions.directory>`와 올바른 언어·쓰기 권한을 설정한다. Node/Python의 추가 의존성은 별도로 준비한다. Bubblewrap 도구 설치와 실제 격리 실행 가능 여부는 다르다. 기본 Docker seccomp·user namespace·AppArmor 정책에 따라 내부 Bubblewrap이 거절될 수 있다.
 
-그 경우 worker 컨테이너 배포는 지원 조건 미충족으로 남긴다. `privileged`, `seccomp=unconfined`, `isolation=none`으로 바꿔 통과시키지 않는다. 검증된 네이티브 Linux/Bubblewrap 경로를 사용하거나 기존 허용 정책에서 실제 격리 검사를 통과한 환경을 준비한다. 도구가 존재하거나 `/ready`가 200인 것만으로 worker 실행 성공을 주장하지 않는다. 기본 Docker 구성의 worker 실행은 CI에서 별도 양성 실행 증거가 나오기 전까지 미검증이다.
+그 경우 worker 컨테이너 배포는 지원 조건 미충족으로 남긴다. `privileged`, `seccomp=unconfined`, `isolation=none`으로 바꿔 통과시키지 않는다. 검증된 네이티브 Linux/Bubblewrap 경로를 사용하거나 기존 허용 정책에서 실제 격리 검사를 통과한 환경을 준비한다. 도구가 존재하거나 `/ready`가 200인 것만으로 worker 실행 성공을 주장하지 않는다.
+
+2026-10-19 main `db358fa`의 Linux x64 CI에서 이 기본 Docker 정책(UID 10001, cap-drop ALL, no-new-privileges) 안의 `bwrap --unshare-user --unshare-net --ro-bind / / -- /bin/true`는 exit 1, `No permissions to create a new namespace`였다. 이 구성의 worker는 지원 조건 미충족으로 판정한다. 같은 CI의 **네이티브 Linux 경로**에서는 Node/Python 제품 worker와 durable job이 실제 통과했다. 다른 Docker 호스트·정책까지 같은 결과라고 일반화하지 않는다. 상세 원문과 실행 범위는 [검증 기록](VERIFICATION.md#wbs-9395-패키지-배포와-wbs-814-tls-후속-2026-10-19)을 따른다.
 
 ## systemd 네이티브 실행
 
