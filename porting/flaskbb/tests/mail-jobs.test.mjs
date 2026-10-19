@@ -23,7 +23,6 @@ const b64 = value => Buffer.from(JSON.stringify(value)).toString('base64url');
 test('FlaskBB account mail jobs deliver through the declared HTTP integration under worker network isolation', {timeout: 120000}, async () => {
   const temp = mkdtempSync(join(tmpdir(), 'aip-flaskbb-mail-'));
   const schema = `aip_flaskbb_${randomUUID().replaceAll('-', '').slice(0, 10)}`;
-  const dbUrl = process.env.AIP_FLASKBB_TEST_DATABASE_URL || 'postgresql://aip_flaskbb:aip_flaskbb_fixture_password@127.0.0.1:55439/aip_flaskbb';
   const env = {...process.env, AIP_FLASKBB_DATABASE: dbUrl};
   const run = (command, args, options = {}) => {
     const result = spawnSync(command, args, {cwd: root, env, encoding: 'utf8', timeout: 30000, maxBuffer: 4 << 20, ...options});

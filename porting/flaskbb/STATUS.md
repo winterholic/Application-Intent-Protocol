@@ -1,5 +1,9 @@
 # FlaskBB 전체 포팅 상태
 
+## 2026-10-19 main 통합 후 독립 검증
+
+`4b8631d`에 `unique user, shared_id` 선언이 들어갔지만 check와 Python SDK 검사만으로 7.5.5 전체를 완료할 수 없다. fixture의 DB fallback을 제거하고 main의 strict guard를 재사용했다. DSN 누락·기본 포트/DB·PGSERVICE·alias 불일치의 로컬 음성 대조·명시적 DSN 양성 대조·독립 suite import 차단 3개가 통과했다. 두 mailbox 생성의 동시 경합·중복 거부·정상 양방향 메시지는 Linux CI에서 재검증한다. 기존 중복의 비파괴적 처리 절차는 [README](README.md)에 있으며, 전용 legacy fixture는 채택과 UNIQUE 생성 실패가 두 행을 보존하는지 검사한다. 이 DB 증분들은 CI 대기이고 전체 F01–F17 parity 완료가 아니다.
+
 ## 고정 기준
 
 - upstream: `https://github.com/flaskbb/flaskbb`, commit `0885238df7c54826adda8cfbe8a831e846e2cb64` (2019-10-25, 2019-10-31 고정 release 시점 이전). 비교·선정 근거는 [선정 기록](../../plan-docs/porting/FLASKBB-SELECTION.md), snapshot은 `upstream/`.

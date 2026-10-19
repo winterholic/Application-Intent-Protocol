@@ -1,8 +1,8 @@
 // Shared real-PostgreSQL fixture for the FlaskBB port tests: dynamic schema,
 // `aip service init/serve` on loopback, ephemeral RS256 issuer, official SDK.
-// The database comes from AIP_FLASKBB_TEST_DATABASE_URL (isolated container);
-// the committed fallback is the fixture compose database, never a shared server.
-import {generateKeyPairSync, sign, randomUUID} from 'node:crypto';
+// The database must be explicitly supplied through the main isolated-test DSN guard.
+import {createHash, generateKeyPairSync, sign, randomUUID} from 'node:crypto';
+import {requireTestDatabase} from '../../../product/test-support/postgres-guard.mjs';
 import {mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
@@ -15,7 +15,10 @@ const track = resolve(new URL('..', import.meta.url).pathname);
 export const root = resolve(track, '../..');
 export const binary = process.env.AIP_BINARY || join(root, 'target/debug/aip');
 export const definition = join(track, 'app.aip');
-export const dbUrl = process.env.AIP_FLASKBB_TEST_DATABASE_URL || 'postgresql://aip_flaskbb:aip_flaskbb_fixture_password@127.0.0.1:55439/aip_flaskbb';
+export const dbUrl = requireTestDatabase().raw;
+if (process.env.AIP_FLASKBB_TEST_DATABASE_URL && process.env.AIP_FLASKBB_TEST_DATABASE_URL !== dbUrl) {
+  throw new Error('AIP_FLASKBB_TEST_DATABASE_URL must match AIP_TEST_DATABASE_URL');
+}
 const b64 = value => Buffer.from(JSON.stringify(value)).toString('base64url');
 
 export const GROUPS_SQL = schema => `INSERT INTO "${schema}"."group" (id,name,guest,admin,super_mod,mod,banned,editpost,deletepost,deletetopic,posttopic,postreply,viewhidden,makehidden,mod_edituser,mod_banuser,description) VALUES
@@ -59,7 +62,9 @@ export async function startFixture({prefix = 'aip-flaskbb-test-', seed, actors =
       if (server.exitCode === null && server.signalCode === null) server.kill('SIGKILL');
       await closed;
     }
-    try { sql(`DROP SCHEMA IF EXISTS "${schema}" CASCADE;`); } catch {}
+    const infra = `aip_infra_${createHash('sha256').update(schema).digest('hex').slice(0, 52)}`;
+    try { sql(`DROP SCHEMA IF EXISTS "${schema}" CASCADE; DROP SCHEMA IF EXISTS "${infra}" CASCADE;`); }
+    catch { console.error('FlaskBB fixture cleanup failed for its owned schemas'); }
     rmSync(temp, {recursive: true, force: true});
   };
   try {

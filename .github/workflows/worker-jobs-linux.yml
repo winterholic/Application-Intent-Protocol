@@ -8,6 +8,7 @@ on:
       - '.github/workflows/worker-jobs-linux.yml'
       - 'crates/**'
       - 'product/**'
+      - 'porting/flaskbb/**'
       - 'spikes/spike-v1-fixture/**'
       - 'spikes/spike-v3-write/**'
       - 'spikes/spike-v4-worker/**'
@@ -87,3 +88,7 @@ jobs:
         run: cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --locked --target-dir target --test job_retry --test job_breaker --test triggers --test outbox --test otlp --test encryption_gate --test bundle_http
       - name: Run installed product SDK smoke with Node and Python workers
         run: node --test product/tests/service-smoke.test.mjs
+      - name: Verify FlaskBB fixture guard and mailbox uniqueness
+        run: |
+          node --test porting/flaskbb/tests/fixture-env.test.mjs porting/flaskbb/tests/conversations-security.test.mjs
+          cargo test -p aip-migrate --locked --test foreign_shared_uniqueness

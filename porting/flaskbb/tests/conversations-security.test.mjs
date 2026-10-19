@@ -84,6 +84,22 @@ test('FlaskBB conversations cannot forge the sender or mislabel a third party ma
     const labels = sql(`SELECT string_agg(user_id || '/' || from_user_id || '/' || to_user_id, ',' ORDER BY id) FROM ${q}.conversation`);
     assert.equal(labels, '2/2/6,6/2/6,2/2/6', 'only the legitimate sender copy, recipient copy and own draft exist');
 
+    // Two independent clients race to create the same sender/recipient mailbox pair. The
+    // losing transaction must roll back both copies and leave one row per mailbox.
+    const racedShared = randomUUID();
+    const attempts = await Promise.all([0, 1].map(attempt => client('alice-sub').bundle({atomic: [
+      {create: 'Conversation', values: row(2, 2, 6, {shared_id: racedShared})},
+      {create: 'Conversation', values: row(6, 2, 6, {shared_id: racedShared, unread: true})},
+    ]}, {key: `f5-shared-race-${attempt}`})));
+    assert.equal(attempts.filter(result => result.ok).length, 1, JSON.stringify(attempts));
+    assert.equal(attempts.find(result => !result.ok)?.code, 'WIRE.ALREADY_EXISTS', JSON.stringify(attempts));
+    assert.equal(sql(`SELECT string_agg(user_id::text, ',' ORDER BY user_id) FROM ${q}.conversation WHERE shared_id='${racedShared}'`), '2,6');
+    const beforeDuplicate = counts();
+    const duplicate = await create(alice, row(6, 2, 6, {shared_id: shared, unread: true}));
+    assert.equal(duplicate.ok, false);
+    assert.equal(duplicate.code, 'WIRE.ALREADY_EXISTS');
+    assert.equal(counts(), beforeDuplicate, 'a duplicate mailbox copy must not change messages or conversations');
+
     console.log(JSON.stringify({schema: fx.schema, ok: true}));
   } finally {
     await fx.stop();

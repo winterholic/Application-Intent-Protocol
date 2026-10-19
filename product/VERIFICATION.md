@@ -12,6 +12,12 @@
 
 이 정정 이후의 Linux 전체 회귀 결과는 새 main SHA별 CI에서 별도로 판정한다. 아래의 이전 통과·대기 기록을 최신 전체 성공으로 재사용하지 않는다.
 
+## 2026-10-19 FlaskBB 통합 완료 판정 보류
+
+`4b8631d`의 7.5.5 완료 표시는 코드·이전 DoD 대조 후 review로 정정했다. 테스트 5곳에 DB 주소 fallback이 남아 있어 main의 strict DB guard를 재사용하도록 바꿨다. `node --test porting/flaskbb/tests/fixture-env.test.mjs`는 3 passed/0 failed이며, 명시적 DSN 없이도 import가 성공하던 수정 전 2 failed를 보존했다. 같은 guard를 사용하는 독립 suite 4곳도 DB 접근 전에 거부함을 확인했다.
+
+독립 클라이언트의 mailbox 쌍 생성 경합·중복 거부와 기존 양방향 메시지 검사를 Linux worker jobs에 연결했다. `foreign_shared_uniqueness`는 기존 중복이 있는 외부 테이블의 채택 거부·UNIQUE 생성 실패 후 두 행과 원본 ID 보존을 검사한다. 이 새 DB 실행들은 로컬 clippy/구문 검사까지이며 CI 대기다. 기존 데이터 처리 절차는 [FlaskBB README](../porting/flaskbb/README.md)에 기록했고 자동 삭제·병합은 구현하지 않는다.
+
 ## 2026-10-19 최신 실행 범위
 
 - WBS 8.18.2: main `11cf652`의 [Linux worker jobs 39214468985](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39214468985)가 성공했다. 진단 21개·암호화 정규화 10개·migrate gate 1개·transport gate 1개를 원시 로그에서 확인했다. 암호화 정의 정규화와 실행 차단 경계가 해당 task의 범위이며 제품 저장 통합 완료로 세지 않는다.

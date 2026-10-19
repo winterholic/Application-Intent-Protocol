@@ -1,3 +1,4 @@
+import {dbUrl} from './harness.mjs';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {generateKeyPairSync, sign, randomUUID, createHash} from 'node:crypto';
@@ -19,8 +20,6 @@ test('AIP server enforces forum group visibility and unique link relations with 
   const temp = mkdtempSync(join(tmpdir(), 'aip-flaskbb-read-'));
   const suffix = randomUUID().replaceAll('-', '').slice(0, 10);
   const schema = `aip_flaskbb_${suffix}`;
-  const database = 'aip_flaskbb';
-  const dbUrl = process.env.AIP_FLASKBB_TEST_DATABASE_URL || `postgresql://aip_flaskbb:aip_flaskbb_fixture_password@127.0.0.1:55439/${database}`;
   const env = {...process.env, AIP_FLASKBB_DATABASE: dbUrl};
   const run = (command, args, options = {}) => {
     const result = spawnSync(command, args, {cwd: root, env, encoding: 'utf8', timeout: 20000, maxBuffer: 4 << 20, ...options});
