@@ -48,14 +48,10 @@ async fn trusted_ctx_deadlines_are_terminal_but_worker_codes_stay_untrusted() {
             let mut worker = Worker::start_with(lang, directory, Isolation::None).await;
             let mut host = BudgetHost { code: host_code, calls: 0 };
             let result =
-                invoke_with_host(&mut host, &mut worker, &facts, "Recruitment.stats", &json!({"clubId":"10"}), &caller, IdWire::Legacy)
-                    .await;
+                invoke_with_host(&mut host, &mut worker, &facts, "Recruitment.stats", &json!({"clubId":"10"}), &caller, IdWire::Legacy).await;
             worker.stop().await;
             let actual = result.as_ref().err().map(|error| error.code);
-            if actual != expected_code
-                || host.calls != expected_calls
-                || (expected_code.is_none() && result != Ok(json!({"approvedApplicants":0})))
-            {
+            if actual != expected_code || host.calls != expected_calls || (expected_code.is_none() && result != Ok(json!({"approvedApplicants":0}))) {
                 failures.push(format!("{lang:?}/{implementation}/{host_code}: result={result:?}, host_calls={}", host.calls));
             }
         }
