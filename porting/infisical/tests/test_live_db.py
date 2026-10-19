@@ -352,6 +352,126 @@ class LiveDbTests(unittest.TestCase):
         self.assertEqual(rows[0]["before"], {"name": "AUDIT_RENAME", "description": None})
         self.assertEqual(rows[0]["after"], {"name": "AUDIT_RENAMED", "description": "d"})
 
+    # -- personal overrides (upstream secrets_v2 rows with type = personal and userId = the owner) ----------------------
+    def override(self, who, secret_id, user=None, key=None):
+        user = user or {"alice": "1", "bob": "2", "carol": "3", "dan": "6", "eve": "5", "mallory": "4"}[who]
+        return lh.create(self.c[who], "PersonalSecret", {"secret": secret_id, "user": user}, key=key)
+
+    def override_rows(self, secret_id):
+        return int(self.dep.sql(f"SELECT count(*) FROM :schema.personal_secret WHERE secret_id = {secret_id}").strip())
+
+    def shared_secret(self, key, folder="1"):
+        return self.create_secret(BOB, key, folder=folder)["created"][0]["id"]
+
+    def test_override_needs_an_existing_shared_secret_and_its_own_user(self):
+        secret_id = self.shared_secret("OVR_BASE")
+        missing = self.override(BOB, "999999")
+        self.assertEqual(missing.get("code"), "WIRE.MISSING_TARGET", missing)
+        for_someone_else = self.override(BOB, secret_id, user="3")
+        self.assertEqual(for_someone_else.get("code"), "WIRE.FORBIDDEN", for_someone_else)
+        self.assertEqual(self.override_rows(secret_id), 0)
+        self.assertTrue(self.override(BOB, secret_id).get("ok"))
+        self.assertEqual(self.override_rows(secret_id), 1)
+
+    # upstream needs only describe/read access for a personal override, so a viewer may have one; no access or another
+    # organization may not (secret-v2-bridge-service.ts:420-424)
+    def test_override_follows_read_access_not_write_access(self):
+        secret_id = self.shared_secret("OVR_READERS")
+        viewer = self.override(CAROL, secret_id)
+        self.assertTrue(viewer.get("ok"), viewer)
+        self.assertEqual(self.override(DAN, secret_id).get("code"), "WIRE.MISSING_TARGET")
+        self.assertEqual(self.override(EVE, secret_id).get("code"), "WIRE.MISSING_TARGET")
+        self.assertEqual(self.override_rows(secret_id), 1)
+
+    def test_one_override_per_user_and_secret(self):
+        secret_id = self.shared_secret("OVR_ONCE")
+        self.assertTrue(self.override(BOB, secret_id).get("ok"))
+        again = self.override(BOB, secret_id, key="ovr-once-2")
+        self.assertEqual(again.get("code"), "WIRE.ALREADY_EXISTS", again)
+        self.assertTrue(self.override(CAROL, secret_id).get("ok"), "another user may have their own")
+        self.assertEqual(self.override_rows(secret_id), 2)
+
+    # upstream lists rows whose userId is null or the caller (secret-v2-bridge-dal.ts:381-413)
+    def test_overrides_are_visible_to_their_owner_only(self):
+        secret_id = self.shared_secret("OVR_PRIVATE")
+        bob_row = self.override(BOB, secret_id)["created"][0]["id"]
+        self.assertTrue(self.override(CAROL, secret_id).get("ok"))
+        read = lambda who: [r["id"] for r in self.c[who].read({"read": "PersonalSecret", "select": ["id"], "filter": eq("secret", secret_id)})]
+        self.assertEqual(read(BOB), [bob_row])
+        self.assertEqual(len(read(CAROL)), 1)
+        self.assertNotEqual(read(CAROL), [bob_row])
+        self.assertEqual(read(ALICE), [], "not even an organization admin sees someone else's override")
+        self.assertEqual(read(DAN), [])
+        self.assertEqual(self.override_rows(secret_id), 2)
+
+    def test_an_override_can_be_deleted_by_its_owner_only(self):
+        secret_id = self.shared_secret("OVR_DELETE")
+        bob_row = self.override(BOB, secret_id)["created"][0]["id"]
+        carol_row = self.override(CAROL, secret_id)["created"][0]["id"]
+        stolen = lh.transition(self.c[CAROL], "PersonalSecret.delete", [bob_row])
+        self.assertEqual(stolen.get("code"), "WIRE.MISSING_TARGET", stolen)
+        admin = lh.transition(self.c[ALICE], "PersonalSecret.delete", [bob_row])
+        self.assertEqual(admin.get("code"), "WIRE.MISSING_TARGET", admin)
+        self.assertEqual(self.override_rows(secret_id), 2)
+        self.assertTrue(lh.transition(self.c[BOB], "PersonalSecret.delete", [bob_row]).get("ok"))
+        self.assertEqual(self.override_rows(secret_id), 1)
+        self.assertEqual(len(self.c[CAROL].read({"read": "PersonalSecret", "select": ["id"], "filter": eq("id", carol_row)})), 1)
+        self.assertEqual(self.secrets(BOB, "OVR_DELETE")[0]["key"], "OVR_DELETE", "the shared secret stays")
+
+    # upstream deleteMany also deletes every user's personal row of a deleted shared secret (dal :364-370)
+    def test_deleting_the_shared_secret_deletes_every_users_override(self):
+        first, second = self.shared_secret("OVR_CASCADE_1"), self.shared_secret("OVR_CASCADE_2")
+        keep = self.shared_secret("OVR_CASCADE_KEEP")
+        for sid in (first, second, keep):
+            self.assertTrue(self.override(BOB, sid).get("ok"))
+            self.assertTrue(self.override(CAROL, sid).get("ok"))
+        done = lh.transition(self.c[BOB], "Secret.delete", [first, second], key="ovr-cascade")
+        self.assertTrue(done.get("ok"), done)
+        self.assertEqual((self.override_rows(first), self.override_rows(second), self.override_rows(keep)), (0, 0, 2))
+        self.assertEqual(self.rows_named("OVR_CASCADE_1"), 0)
+        again = self.create_secret(BOB, "OVR_CASCADE_1")
+        self.assertTrue(again.get("ok"), again)
+        self.assertEqual(self.override_rows(again["created"][0]["id"]), 0, "a recreated name starts without overrides")
+
+    def test_secret_delete_audits_the_removed_overrides(self):
+        secret_id = self.shared_secret("OVR_AUDIT")
+        override_id = self.override(CAROL, secret_id)["created"][0]["id"]
+        self.assertTrue(lh.transition(self.c[BOB], "Secret.delete", [secret_id], key="ovr-audit").get("ok"))
+        listing = self.dep.cli("audit", "--config", str(self.dep.work / "service.json"), "list",
+                               "--resource", "PersonalSecret", "--target-id", override_id)
+        rows = [r for r in listing["audit"] if r["requestKey"] == "ovr-audit"]
+        self.assertEqual(len(rows), 1, listing)
+        self.assertEqual((rows[0]["transition"], rows[0]["actorId"]), ("delete:delete", 2))
+        self.assertEqual(rows[0]["before"]["user"], 3)
+        self.assertIsNone(rows[0]["after"])
+
+    # the delete effect is capped at 1000 rows; more overrides than that make the delete refuse as a whole
+    def test_secret_delete_refuses_more_overrides_than_the_effect_cap_and_changes_nothing(self):
+        secret_id = self.shared_secret("OVR_BIG")
+        self.dep.sql("INSERT INTO :schema.\"user\" (email) SELECT 'ovr-big-' || g || '@acme.test' FROM generate_series(1, 1001) g")
+        self.dep.sql("INSERT INTO :schema.personal_secret (secret_id, user_id) "
+                     f"SELECT {secret_id}, id FROM :schema.\"user\" WHERE email LIKE 'ovr-big-%'")
+        refused = lh.transition(self.c[BOB], "Secret.delete", [secret_id])
+        self.assertEqual(refused.get("code"), "WIRE.EFFECT_TARGET_MISSING", refused)
+        self.assertEqual((self.rows_named("OVR_BIG"), self.override_rows(secret_id)), (1, 1001))
+        self.dep.sql("DELETE FROM :schema.personal_secret WHERE secret_id = %s AND user_id = (SELECT min(id) FROM :schema.\"user\" WHERE email LIKE 'ovr-big-%%')" % secret_id)
+        done = lh.transition(self.c[BOB], "Secret.delete", [secret_id], key="ovr-big-1000")
+        self.assertTrue(done.get("ok"), done)
+        self.assertEqual((self.rows_named("OVR_BIG"), self.override_rows(secret_id)), (0, 0))
+
+    # Folder.forceDelete removes secrets with a plain delete effect, which cannot also remove their overrides
+    # (INFISICAL-GAPS G15). It refuses instead of failing on the foreign key.
+    def test_force_delete_refuses_a_folder_whose_secrets_still_have_overrides(self):
+        folder_id = self.make_folder(BOB, "OVR_FORCE")["created"][0]["id"]
+        secret_id = self.create_secret(BOB, "OVR_IN_FOLDER", folder=folder_id)["created"][0]["id"]
+        override_id = self.override(CAROL, secret_id)["created"][0]["id"]
+        refused = lh.transition(self.c[BOB], "Folder.forceDelete", [folder_id])
+        self.assertEqual(refused.get("code"), "WIRE.INVALID_STATE", refused)
+        self.assertEqual((self.folder_rows(folder_id), self.secret_rows_in(folder_id), self.override_rows(secret_id)), (1, 1, 1))
+        self.assertTrue(lh.transition(self.c[CAROL], "PersonalSecret.delete", [override_id]).get("ok"))
+        self.assertTrue(lh.transition(self.c[BOB], "Folder.forceDelete", [folder_id]).get("ok"))
+        self.assertEqual((self.folder_rows(folder_id), self.secret_rows_in(folder_id)), (0, 0))
+
     # -- users and organizations -------------------------------------------------------------------------------
     def test_non_member_sees_only_themselves(self):
         emails = {r["email"] for r in self.c[MALLORY].read({"read": "User", "select": ["id", "email"]})}

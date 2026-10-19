@@ -124,6 +124,7 @@ resource ProjectMembership {
 // seed), so a secret always lives in a folder and the (folder, key) uniqueness below has no NULL hole. Users create
 // only non-root folders, in the same project and environment as their parent.
 predicate hasSubfolder(f: Folder?) = f != null and exists Folder where parent = f
+predicate hasOverriddenSecret(f: Folder?) = f != null and exists PersonalSecret where secret.folder = f
 predicate folderIsEmpty(f: Folder?) = f != null and not (exists Secret where folder = f) and not (hasSubfolder(f))
 
 resource Folder {
@@ -154,10 +155,12 @@ resource Folder {
   expose apply delete { target id; bulk maxRows 1 }
   // forceDelete = true: upstream deletes the folder and the database cascades to its secrets and subfolders
   // (ON DELETE CASCADE on secrets_v2.folderId and secret_folders.parentId). The secrets go in the same transaction.
-  // A folder that still has subfolders is refused: the product has no two-hop delete effect (G14).
+  // A folder that still has subfolders is refused: the product has no two-hop delete effect (G14). So is a folder whose
+  // secrets still have personal overrides: the secrets are removed by a plain delete effect that cannot also remove
+  // the overrides referencing them (G15).
   transition forceDelete {
     allow canWriteProject(actor, project)
-    from parent != null and not (hasSubfolder(this))
+    from parent != null and not (hasSubfolder(this)) and not (hasOverriddenSecret(this))
     delete
     delete many Secret maxRows 1000 where folder = this.id
   }
@@ -190,6 +193,8 @@ resource Secret {
     allow canWriteProject(actor, folder.project)
     from true
     delete
+    // Upstream deleteMany also removes every user's personal override of the deleted shared secret.
+    delete many PersonalSecret maxRows 1000 where secret = this.id
   }
   expose apply delete { target id; bulk maxRows 100 }
   // Reminder record for the owner (an outbox notification, not a delivered mail).
@@ -206,6 +211,36 @@ resource Secret {
     filter id.eq, folder.eq, key.eq, key.prefix, owner.eq
     sort key, id
     traverse folder { select id, name, env }
+    budget { rows 500; depth 2; cost 3000; deadline 2s; offset 2000 }
+  }
+}
+
+// A user's private override of a shared secret: upstream stores it as another secrets_v2 row with type = 'personal' and
+// userId = the owner (backend/src/db/migrations/20240730181850_secret-v2.ts:13,21-22). It exists only next to a shared
+// secret of the same key in the same folder (secret-v2-bridge-service.ts:406-410), is listed to its owner only
+// (secret-v2-bridge-dal.ts:381-413) and cannot be renamed (secret-v2-bridge-service.ts:621-623), so the port keeps just the
+// link (secret, user). Upstream has no unique index for personal rows (the partial index covers type = 'shared'); the
+// port makes (secret, user) unique, which is stricter. The value, and the personal-over-shared priority that merges
+// the override into a listing (secret-v2-bridge-service.ts:1517-1536), need the value columns (G2).
+resource PersonalSecret {
+  fields { id: Id; secret: Secret; user: User }
+  unique secret, user
+  rows read when user = actor and canReadProject(actor, secret.folder.project)
+  expose create {
+    allow user = actor and canReadProject(actor, secret.folder.project)
+    fields secret, user
+  }
+  transition delete {
+    allow user = actor
+    from true
+    delete
+  }
+  expose apply delete { target id; bulk maxRows 100 }
+  expose read {
+    select id, secret, user
+    filter id.eq, secret.eq
+    sort id
+    traverse secret { select id, key }
     budget { rows 500; depth 2; cost 3000; deadline 2s; offset 2000 }
   }
 }

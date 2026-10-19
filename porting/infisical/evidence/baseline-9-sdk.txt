@@ -48,7 +48,7 @@
         "code": "WIRE.FORBIDDEN",
         "msg": "`Secret` 생성 권한 없음",
         "ok": false,
-        "requestId": "req_61e5a06b9979c99f4758a714",
+        "requestId": "req_5a2fe35c36efb34a638d69de",
         "retry": "never"
       }
     },
@@ -66,7 +66,7 @@
       "detail": {
         "attempt": 1,
         "error": null,
-        "id": "3f5291be-bedf-4558-bde1-9ed3ff41d85a",
+        "id": "6520d9a3-b1f3-4f13-9bac-c138736b242a",
         "operation": "secretReminder",
         "output": null,
         "state": "SUCCEEDED"
@@ -84,6 +84,7 @@
         ],
         "ok": true,
         "tags": [
+          "PersonalSecret",
           "Secret"
         ],
         "unchanged": []

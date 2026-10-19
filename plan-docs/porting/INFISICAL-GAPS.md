@@ -40,7 +40,7 @@
 현재 포팅(`app.aip`): `Secret` 하나(`folder`, `key`, `owner`, `remindedAt`)에 `unique folder, key`와 `delete` 전이를 선언했다. 공유 시크릿만 다루므로 원본의 부분 인덱스와 같은 집합에 대한 유일 제약이고, 삭제는 행이 실제로 사라진다. `SecretKey`, `deleted` 필드, `limit`, `invariant`는 제거했다. **재현**(실DB, 임시 PostgreSQL 17): `tests/test_live_db.py`의 `test_secret_name_is_unique_in_a_folder_including_the_root`(중복 `WIRE.ALREADY_EXISTS`), `test_delete_removes_the_row_and_the_name_can_be_recreated_twice`(삭제 뒤 SQL로 행 0개, 3번 재생성하면 id가 모두 다름), `test_bulk_delete_removes_every_named_secret_and_no_other`, `test_delete_leaves_a_before_image_in_the_audit_log`(감사 행 1건, `before.key`, `after` null). 새 테스트는 수정 전 정의에서 12건이 실패했고(RED, 5 FAIL + 7 ERROR) 새 정의에서 20건 통과했다.
 
 아직 원본과 다른 점(미구현, 갭 또는 범위 밖):
-- 개인 재정의(`type = personal`) 행과 그 연쇄 삭제: 모델에 `type`이 없다.
+- 개인 재정의(`type = personal`): 값과 우선 병합은 G2 대기, 연결 행과 연쇄 삭제는 [G15](#g15)로 선언했다.
 - 삭제 권한은 프로젝트 쓰기 권한(admin·member)이다. 원본은 환경·경로·이름·태그 조건이 붙은 `Delete` 액션이다(G7).
 - 폴더 커밋(PIT)·버전 행: 값과 버전이 없다(G2). 원본 `deleteMany`는 `secrets_v2`만 지운다(`:355-374`에 버전 표 접근이 없음, 판독).
 - 삭제 시 리마인더 제거는 `remindedAt`이 같은 행에 있어 자연히 따라 없어진다. 원본의 별도 리마인더 표 모델은 가져오지 않았다. 삭제된 시크릿에 대한 `secretReminder` job은 enqueue 단계의 `allow`가 거부한다(`exists Secret`).
@@ -55,6 +55,34 @@
 ### G12. create 결과 id를 다음 연산에 넘기는 일반 조합이 없다 (시크릿 이름·세대 분리로는 해당 없음)
 
 이전 판은 `SecretKey`를 만든 id를 `Secret` create에 쓰는 두 요청 구조를 이 갭의 예로 들었다. 2026-10-20에 두 resource를 하나로 합쳐 시크릿 생성은 한 요청이다. 갭 자체(`product/SDK.md` "연산 사이로 값을 넘기는 일반 조합은 없다")는 제품에 남아 있으나 이 포팅에서 당장 쓰는 곳은 없다.
+
+<a id="g15"></a>
+### G15. 개인 재정의 시크릿: 연결·가시성·연쇄 삭제는 동등, 값 병합은 G2 대기 (2026-10-20)
+
+원본 동작(`infisical-upstream` 고정 47246bec, MIT 파일만 읽음):
+
+| 사실 | 근거 |
+|---|---|
+| 개인 재정의는 `secrets_v2`의 같은 표 행이다. `type`(기본 `shared`)과 nullable `userId`(users FK, ON DELETE CASCADE) | `backend/src/db/migrations/20240730181850_secret-v2.ts:13,21-22` |
+| 개인 재정의는 같은 폴더에 같은 키의 공유 시크릿이 있어야 만들 수 있다. 사용자(USER)만 만든다 | `secret-v2-bridge-service.ts:391-392,406-410` |
+| 만들 때 `userId`는 호출자다 | `:499` (`userId: type === Personal ? actorId : null`) |
+| 개인 재정의는 읽기·describe 수준 권한이면 만들고 관리할 수 있다(쓰기 권한 불요). 권한 판정 본체는 EE라 읽지 않았다 | 주석과 호출 `:420-424`, `:634-640`, `:966-977` |
+| 이름 변경은 거부된다 | `:621-623` |
+| 개인 재정의의 수정·삭제는 `(key, folder, type=personal, userId=호출자)`로 찾는다. 남의 행은 대상이 아니다 | `:642-650`, `:954-958`, `secret-v2-bridge-dal.ts:359-363` |
+| 목록은 `userId`가 null이거나 호출자인 행만 읽는다 | `secret-v2-bridge-dal.ts:381-413` (`:396-397`) |
+| 목록 우선순위 `Priority`: 같은 키의 개인 값이 공유 값을 대체한다. `NeverInclude`는 공유만, `IncludeAll`은 모두 | `secret-v2-bridge-service.ts:1513-1536` |
+| 공유 시크릿을 지우면 모든 사용자의 같은 키 개인 행이 같은 `deleteMany`에서 지워진다 | `secret-v2-bridge-dal.ts:364-370`, `service.ts:1053-1055` |
+| 유일 인덱스는 `type = 'shared'`에만 걸려 있다. 개인 행의 중복을 막는 인덱스는 없고 생성 때 중복 검사도 하지 않는다 | `20260623144551_secret-folder-unique-index.ts`(`WHERE "type" = 'shared'`), `service.ts:395-410`(중복 검사는 공유만) |
+
+현재 포팅(`app.aip`): `PersonalSecret{secret, user}`, `unique secret, user`. 행은 소유자만 읽는다(`rows read when user = actor and canReadProject(...)`), 소유자만 만들 수 있고(`user = actor`) 프로젝트 읽기 권한이면 충분하다. 소유자만 `PersonalSecret.delete`로 지운다. `Secret.delete`는 `delete many PersonalSecret ... where secret = this.id` 효과로 같은 트랜잭션에서 모든 사용자의 재정의를 지운다. **재현**(실DB, 임시 PostgreSQL 17, `tests/test_live_db.py`): 없는 시크릿·남의 이름 `WIRE.MISSING_TARGET`·`WIRE.FORBIDDEN`, 읽기 전용 사용자는 만들 수 있고 권한 없음·다른 조직은 `WIRE.MISSING_TARGET`, 같은 사용자 두 번째는 `WIRE.ALREADY_EXISTS`, 소유자 외에는 조직 admin도 보지 못하고 지우지 못함, 공유 시크릿 일괄 삭제가 두 시크릿의 모든 재정의를 지우고 다른 시크릿의 것은 남김, 효과 감사 행 `delete:delete`(전이 `Secret.delete`의 효과, before `user` 3, after null), 재정의 1001개는 `WIRE.EFFECT_TARGET_MISSING`으로 통째 거부·1000개는 통과(수정 전 정의에서 신규 9건 모두 실패 후 통과).
+
+원본과 다른 점:
+- **값과 우선 병합**: 개인 값, 그것이 공유 값을 덮는 목록 병합(`Priority`)은 값 열이 있어야 선언할 수 있다. 값이 없는 지금은 "재정의가 있다"는 사실만 소유자가 읽는다(G2 대기).
+- **유일성이 더 엄격**: 원본은 개인 행 중복을 막지 않는다(위 표). 포팅은 `(secret, user)`를 DB 유일로 둔다. 원본에서 같은 사용자의 중복 행이 실제로 생기는지는 실행하지 않아 확인 필요.
+- **폴더 `forceDelete`와 재정의**: 원본은 폴더 삭제의 DB 연쇄가 개인 행도 지운다. 포팅의 `Folder.forceDelete`는 시크릿을 지우는 효과가 그 시크릿의 재정의까지 지우지 못한다(두 단계 일치 `where secret.folder = this.id`는 `service check`가 `DEF.PARSE_EXPECTED`로 거부, G14와 같은 제약). 외래 키 위반으로 미확정 실패를 내는 대신 재정의가 남은 시크릿이 있는 폴더의 `forceDelete`를 `WIRE.INVALID_STATE`로 거부한다. 재정의를 먼저 지우거나 시크릿을 `Secret.delete`로 지우면 된다.
+- **재정의 1000개 상한**: 공유 시크릿 하나에 재정의가 1000개를 넘으면 삭제가 통째로 거부된다(원본은 무제한).
+- **사용자 삭제 연쇄**: 원본은 users FK 연쇄로 그 사용자의 개인 행이 지워진다. 포팅은 `User` 삭제 전이를 선언하지 않았다.
+- 개인 재정의의 `remind`·태그·메타데이터는 대상 아님(값이 없음).
 
 ### G14. 폴더 트리 삭제: 한 단계 폴더와 시크릿은 원본과 동등, 하위 트리 연쇄 삭제·이름 문자 검증은 미구현 (2026-10-20)
 

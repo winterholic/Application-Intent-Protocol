@@ -59,16 +59,31 @@ MUTATIONS = [
      "test_root_folder_cannot_be_renamed"),
     ("rename may move the folder", "    patch name, description", "    patch name, description, parent",
      "test_update_cannot_move_a_folder_or_change_its_project_or_environment"),
+    ("override for another user", "allow user = actor and canReadProject(actor, secret.folder.project)", "allow canReadProject(actor, secret.folder.project)",
+     "test_override_needs_an_existing_shared_secret_and_its_own_user"),
+    ("override needs write access", "allow user = actor and canReadProject(actor, secret.folder.project)", "allow user = actor and canWriteProject(actor, secret.folder.project)",
+     "test_override_follows_read_access_not_write_access"),
+    ("overrides visible to everyone", "rows read when user = actor and canReadProject(actor, secret.folder.project)", "rows read when canReadProject(actor, secret.folder.project)",
+     "test_overrides_are_visible_to_their_owner_only"),
+    ("duplicate overrides", "  unique secret, user\n", "",
+     "test_one_override_per_user_and_secret"),
+    ("secret delete keeps overrides", "    delete many PersonalSecret maxRows 1000 where secret = this.id\n", "",
+     "test_deleting_the_shared_secret_deletes_every_users_override"),
+    ("force delete ignores overrides", " and not (hasOverriddenSecret(this))", "",
+     "test_force_delete_refuses_a_folder_whose_secrets_still_have_overrides"),
 ]
 
 
 # Equivalent mutants: weakening these clauses changes nothing observable today because another rule already
 # refuses the request (an organization is visible only to its creator or members, and unique(user, org) blocks
-# a second seat). They stay in the definition as defense in depth; this list fails if a mutant stops being
+# a second seat; an override is listed to its owner only, so deleting someone else's override already finds no
+# target, and a secret the caller cannot read is no valid override target). They stay in the definition as defense in depth; this list fails if a mutant stops being
 # equivalent without the test noticing.
 EQUIVALENT = [
     ("claim without creator check", " and org.createdBy = actor and orgHasNoMember(org)", " and orgHasNoMember(org)"),
     ("claim without empty-org check", " and org.createdBy = actor and orgHasNoMember(org)", " and org.createdBy = actor"),
+    ("override create without project check", "allow user = actor and canReadProject(actor, secret.folder.project)", "allow user = actor"),
+    ("override delete without owner check", "transition delete {\n    allow user = actor\n", "transition delete {\n    allow canReadProject(actor, secret.folder.project)\n"),
 ]
 
 
