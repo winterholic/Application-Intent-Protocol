@@ -1,5 +1,11 @@
 # FlaskBB 전체 포팅 상태
 
+## 2026-10-19 main b39633a Linux 실행 결과
+
+[Linux worker jobs 39236890861](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39236890861) 원시 로그에서 Mailpit 메일 전달·동일 endpoint 복구 2 passed, 중요 주제의 페이지 경계·moderation 정렬 1 passed, UI·메일 단위 20 passed를 확인했다. 기존 포팅 suite는 8개 중 7 passed/1 failed다. 실제 UI→SDK→AIP→PG·검색 일관성·권한·프로비저닝은 통과했지만 CLI의 초기 Welcome Topic `post_count` 조회가 `WIRE.DEADLINE_EXCEEDED`로 실패했다. PostgreSQL은 동일 쿼리에 statement timeout을 기록했다.
+
+제한 시간·정책을 완화하지 않고, 같은 정의·정본 seed·쿼리를 쓰는 `flaskbb_read_plan`에서 JIT on/off EXPLAIN ANALYZE를 별도 측정한다. JIT 원인은 측정 전 가설이다. 이 실패를 전체 7.5.3 성공으로 바꾸지 않으며 다음 CI 원시 결과로 판정한다. 아래의 증분별 대기 표시는 당시 이력이다.
+
 ## 2026-10-19 main 통합 후 독립 검증
 
 `4b8631d`에 `unique user, shared_id` 선언이 들어갔지만 check와 Python SDK 검사만으로 7.5.5 전체를 완료할 수 없다. fixture의 DB fallback을 제거하고 main의 strict guard를 재사용했다. DSN 누락·기본 포트/DB·PGSERVICE·alias 불일치의 로컬 음성 대조·명시적 DSN 양성 대조·독립 suite import 차단 3개가 통과했다. 두 mailbox 생성의 동시 경합·중복 거부·정상 양방향 메시지는 Linux CI에서 재검증한다. 기존 중복의 비파괴적 처리 절차는 [README](README.md)에 있으며, 전용 legacy fixture는 채택과 UNIQUE 생성 실패가 두 행을 보존하는지 검사한다. 이 DB 증분들은 main `80f1fd9` Linux worker CI [39233091978](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39233091978)에서 Node 4개와 legacy 보존 1개가 통과했다. 같은 SHA의 전체 Verify [39233092131](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39233092131)도 통과했다. WBS 7.5.5의 통합·가드·유일성·legacy 보존 범위의 근거이며 전체 F01–F17 parity 완료가 아니다.
