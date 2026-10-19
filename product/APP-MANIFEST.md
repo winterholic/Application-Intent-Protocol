@@ -108,13 +108,14 @@ AIP는 Spring의 Gradle/JAR/WAR 배포 모델처럼 임의의 AIP 앱을 선언 
 5. **허용 외 / 비밀 파일 혼입 방지 (`DISALLOWED_FILE`, `CREDENTIAL_LEAK`)**:
    - `.env`, `.git`, `node_modules`, `target` 등 비밀 파일이나 빌드 부산물을 참조하는 것은 거부됩니다.
    - 개인키 파일(`*.pem`, `*.key`, `id_rsa`) 참조는 `DISALLOWED_FILE`로 거부됩니다.
+   - 경로 이름뿐만 아니라 심볼릭 링크 별칭의 실제 대상(canonical real target)의 앱 상대 경로 구성요소 전체에도 동일한 금지 규칙이 엄격히 적용됩니다.
    - `config_template` 내에 하드코딩된 비밀번호(`postgres://user:secret@...` 또는 `password`/`secret` 필드에 실제 값 포함)가 있으면 `CREDENTIAL_LEAK`로 거부됩니다. 환경 변수 이름(`database_url_env`)을 사용해야 합니다.
 6. **고정 의존성 범위 한정**:
    - 지정된 의존성 명세 파일(`package.json`, `package-lock.json`, `requirements.txt`)만 번들에 포함 대상으로 등록하며, 빈 문자열이나 부적절한 falsy 값은 거부됩니다. 전역 디렉터리 무단 복사는 차단됩니다.
 7. **출력 충돌 및 보존 (`OUTPUT_EXISTS`)**:
    - 패키징 출력 디렉터리가 이미 존재하고 비어있지 않으면 기존 파일 보존을 위해 `OUTPUT_EXISTS`로 즉시 중단합니다.
 8. **정적 자산 파일 무결성 및 경계 (`STATIC_ASSET_MISSING`, `DISALLOWED_FILE`, `SYMLINK_ESCAPES_APP`)**:
-   - `static_assets`에 지정된 파일 및 디렉터리 하위의 모든 파일은 유한·결정적으로 순회하여 `AppContract`의 `files` 목록(`role: "static_asset"`) 및 `contractDigest`에 반영됩니다. 하위의 비밀·금지 파일(`.env` 등)이나 외부 symlink는 거부됩니다.
+   - `static_assets`에 지정된 파일 및 디렉터리 하위의 모든 파일은 유한·결정적으로 순회하여 `AppContract`의 `files` 목록(`role: "static_asset"`) 및 `contractDigest`에 반영됩니다. 동일 디렉터리를 가리키는 서로 다른 정상 별칭 경로는 모두 계약 `files`에 수집되며, 재귀 경로 조상(ancestry)을 참조하는 순환 심볼릭 링크는 무한 순환 방지를 위해 조상 재방문을 중단하는 유한 정책으로 결정적 종료를 보장합니다. 하위의 비밀·금지 파일(`.env` 등)이나 외부 symlink는 거부됩니다.
 
 ---
 

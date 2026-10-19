@@ -38,15 +38,13 @@ const ALLOWED_PYTHON_DEP_KEYS = new Set(["requirements", "lockfile"]);
 const ALLOWED_STATIC_ASSET_KEYS = new Set(["mount", "path"]);
 
 const DISALLOWED_FILE_PATTERNS = [
-  /^\.env/u,
-  /\.env$/u,
-  /\.env\./u,
+  /\.env/u,
   /\.pem$/u,
   /\.key$/u,
   /id_rsa/u,
   /^\.git/u,
   /node_modules/u,
-  /^target\//u,
+  /^target$/u,
 ];
 
 const CREDENTIAL_URL_PATTERN = /[a-zA-Z0-9+.-]+:\/\/[^:]+:[^@]+@/u;
@@ -58,6 +56,7 @@ function fail(code, message, stage = "manifest") {
 function checkDisallowedName(pathStr, label) {
   const normalized = pathStr.split(sep).join("/");
   for (const part of normalized.split("/")) {
+    if (!part || part === ".") continue;
     for (const pattern of DISALLOWED_FILE_PATTERNS) {
       if (pattern.test(part)) {
         fail("DISALLOWED_FILE", `${label}에 허용되지 않는 보안 또는 빌드 부산물 파일이 포함되어 있습니다: ${pathStr}`, "security");
@@ -96,6 +95,8 @@ async function resolveSafePath(appDir, relPath, label) {
   if (relReal.startsWith("..") || isAbsolute(relReal)) {
     fail("SYMLINK_ESCAPES_APP", `${label} 심볼릭 링크가 앱 루트 외부를 가리킵니다: ${relPath}`, "security");
   }
+
+  checkDisallowedName(relReal, label);
 
   return { resolved, rel: relFromApp, exists: true, isFile: fileStat.isFile(), isDirectory: fileStat.isDirectory() };
 }
@@ -161,6 +162,8 @@ export async function loadAndValidateAppManifest(targetPath) {
   if (relManifestFromRealApp.startsWith("..") || isAbsolute(relManifestFromRealApp)) {
     fail("SYMLINK_ESCAPES_APP", `매니페스트 심볼릭 링크가 앱 루트 외부를 가리킵니다: ${manifestPath}`, "security");
   }
+  checkDisallowedName(relative(appDir, manifestPath), "매니페스트 파일");
+  checkDisallowedName(relManifestFromRealApp, "매니페스트 파일");
 
   const rawManifestText = await readFile(manifestPath, "utf8").catch(() => {
     fail("MANIFEST_MISSING", `매니페스트 파일을 읽을 수 없습니다: ${manifestPath}`, "input");
@@ -333,13 +336,13 @@ export async function loadAndValidateAppManifest(targetPath) {
           sha256: digest,
         });
       } else if (assetInfo.isDirectory) {
-        const visitedDirs = new Set();
-        const walkDir = async (currentDir) => {
+        const walkDir = async (currentDir, ancestry = new Set()) => {
           const realCurrent = await realpath(currentDir).catch(() => currentDir);
-          if (visitedDirs.has(realCurrent)) {
+          if (ancestry.has(realCurrent)) {
             return;
           }
-          visitedDirs.add(realCurrent);
+          const nextAncestry = new Set(ancestry);
+          nextAncestry.add(realCurrent);
 
           const relFromApp = relative(appDir, currentDir);
           if (relFromApp.startsWith("..") || isAbsolute(relFromApp)) {
@@ -349,6 +352,7 @@ export async function loadAndValidateAppManifest(targetPath) {
           if (relReal.startsWith("..") || isAbsolute(relReal)) {
             fail("SYMLINK_ESCAPES_APP", `static_assets 심볼릭 링크가 앱 루트 외부를 가리킵니다: ${relFromApp}`, "security");
           }
+          checkDisallowedName(relReal, `static_assets 디렉터리 (${relFromApp.split(sep).join("/")})`);
 
           const entries = await readdir(currentDir, { withFileTypes: true });
           entries.sort((a, b) => a.name.localeCompare(b.name));
@@ -369,11 +373,12 @@ export async function loadAndValidateAppManifest(targetPath) {
               if (relRealTarget.startsWith("..") || isAbsolute(relRealTarget)) {
                 fail("SYMLINK_ESCAPES_APP", `static_assets 심볼릭 링크가 앱 루트 외부를 가리킵니다: ${normalizedRel}`, "security");
               }
+              checkDisallowedName(relRealTarget, `static_assets 하위 항목 (${normalizedRel})`);
+
               const targetStat = await stat(realTarget);
               if (targetStat.isDirectory()) {
-                await walkDir(entryPath);
+                await walkDir(entryPath, nextAncestry);
               } else if (targetStat.isFile()) {
-                checkDisallowedName(normalizedRel, `static_assets 하위 파일 (${normalizedRel})`);
                 const digest = await fileDigest(entryPath);
                 filesToTrack.push({
                   role: "static_asset",
@@ -384,7 +389,7 @@ export async function loadAndValidateAppManifest(targetPath) {
                 fail("DISALLOWED_FILE", `static_assets에 특수 파일이 포함되어 있습니다: ${normalizedRel}`, "security");
               }
             } else if (entry.isDirectory()) {
-              await walkDir(entryPath);
+              await walkDir(entryPath, nextAncestry);
             } else if (entry.isFile()) {
               const digest = await fileDigest(entryPath);
               filesToTrack.push({

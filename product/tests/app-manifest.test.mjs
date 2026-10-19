@@ -621,3 +621,136 @@ test("Dependencies reject explicit falsy / invalid values with BAD_MANIFEST", (t
   resEmpty = runCommand(process.execPath, [manifestScript, manifestPath]);
   assert.equal(resEmpty.status, 0);
 });
+
+test("Symlink aliases pointing to disallowed targets (.env dir, *.pem file, target dir) in static_assets are rejected with DISALLOWED_FILE", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "aip-manifest-test-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  // Case 1: benign alias pointing to internal .env directory
+  const app1 = createFixtureApp1(join(root, "app1"));
+  mkdirSync(join(app1, "real.envdir"), { recursive: true });
+  writeFileSync(join(app1, "real.envdir/nested.txt"), "placeholder\n");
+  symlinkSync("../real.envdir", join(app1, "public/harmless-dir"));
+  let res1 = runCommand(process.execPath, [manifestScript, join(app1, "aip.app.json")]);
+  assert.equal(res1.status, 1, "Expected rejection for alias to .env directory");
+  assert.equal(JSON.parse(res1.stderr).code, "DISALLOWED_FILE");
+
+  // Case 2: benign alias pointing to internal .pem file
+  const app2 = createFixtureApp1(join(root, "app2"));
+  writeFileSync(join(app2, "secret.pem"), "placeholder certificate\n");
+  symlinkSync("../secret.pem", join(app2, "public/harmless.pem"));
+  let res2 = runCommand(process.execPath, [manifestScript, join(app2, "aip.app.json")]);
+  assert.equal(res2.status, 1, "Expected rejection for alias to .pem file");
+  assert.equal(JSON.parse(res2.stderr).code, "DISALLOWED_FILE");
+
+  // Case 3: benign alias pointing to internal target directory
+  const app3 = createFixtureApp1(join(root, "app3"));
+  mkdirSync(join(app3, "target"), { recursive: true });
+  writeFileSync(join(app3, "target/build.txt"), "build artifact placeholder\n");
+  symlinkSync("../target", join(app3, "public/harmless-target"));
+  let res3 = runCommand(process.execPath, [manifestScript, join(app3, "aip.app.json")]);
+  assert.equal(res3.status, 1, "Expected rejection for alias to target directory");
+  assert.equal(JSON.parse(res3.stderr).code, "DISALLOWED_FILE");
+});
+
+test("Symlink aliases pointing to disallowed targets across manifest roles (definition, extensions, dependencies) are rejected with DISALLOWED_FILE", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "aip-manifest-test-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  // Definition alias pointing to .env file
+  const appDef = createFixtureApp1(join(root, "app-def"));
+  writeFileSync(join(appDef, "secret.env"), "SYNTHETIC_ENV=1\n");
+  symlinkSync("secret.env", join(appDef, "safe.aip"));
+  const mDef = JSON.parse(readFileSync(join(appDef, "aip.app.json"), "utf8"));
+  mDef.definition = "./safe.aip";
+  writeFileSync(join(appDef, "aip.app.json"), JSON.stringify(mDef, null, 2));
+  let resDef = runCommand(process.execPath, [manifestScript, join(appDef, "aip.app.json")]);
+  assert.equal(resDef.status, 1, "Expected rejection for definition pointing to .env file");
+  assert.equal(JSON.parse(resDef.stderr).code, "DISALLOWED_FILE");
+
+  // Extensions directory alias pointing to .env directory
+  const appExt = createFixtureApp1(join(root, "app-ext"));
+  mkdirSync(join(appExt, "real.envdir"), { recursive: true });
+  writeFileSync(join(appExt, "real.envdir/event.mjs"), "export async function confirm() { return { ok: true }; }\n");
+  symlinkSync("real.envdir", join(appExt, "safe-ext"));
+  const mExt = JSON.parse(readFileSync(join(appExt, "aip.app.json"), "utf8"));
+  mExt.extensions.directory = "./safe-ext";
+  writeFileSync(join(appExt, "aip.app.json"), JSON.stringify(mExt, null, 2));
+  let resExt = runCommand(process.execPath, [manifestScript, join(appExt, "aip.app.json")]);
+  assert.equal(resExt.status, 1, "Expected rejection for extensions.directory pointing to .env directory");
+  assert.equal(JSON.parse(resExt.stderr).code, "DISALLOWED_FILE");
+
+  // Dependency package_json alias pointing to .pem file
+  const appDep1 = createFixtureApp1(join(root, "app-dep1"));
+  writeFileSync(join(appDep1, "secret.pem"), "placeholder key\n");
+  symlinkSync("secret.pem", join(appDep1, "safe-pkg.json"));
+  const mDep1 = JSON.parse(readFileSync(join(appDep1, "aip.app.json"), "utf8"));
+  mDep1.dependencies.node.package_json = "./safe-pkg.json";
+  writeFileSync(join(appDep1, "aip.app.json"), JSON.stringify(mDep1, null, 2));
+  let resDep1 = runCommand(process.execPath, [manifestScript, join(appDep1, "aip.app.json")]);
+  assert.equal(resDep1.status, 1, "Expected rejection for package_json pointing to .pem file");
+  assert.equal(JSON.parse(resDep1.stderr).code, "DISALLOWED_FILE");
+
+  // Dependency lockfile alias pointing to .pem file
+  const appDep2 = createFixtureApp1(join(root, "app-dep2"));
+  writeFileSync(join(appDep2, "secret.pem"), "placeholder key\n");
+  symlinkSync("secret.pem", join(appDep2, "safe-lock.json"));
+  const mDep2 = JSON.parse(readFileSync(join(appDep2, "aip.app.json"), "utf8"));
+  mDep2.dependencies.node.lockfile = "./safe-lock.json";
+  writeFileSync(join(appDep2, "aip.app.json"), JSON.stringify(mDep2, null, 2));
+  let resDep2 = runCommand(process.execPath, [manifestScript, join(appDep2, "aip.app.json")]);
+  assert.equal(resDep2.status, 1, "Expected rejection for lockfile pointing to .pem file");
+  assert.equal(JSON.parse(resDep2.stderr).code, "DISALLOWED_FILE");
+});
+
+test("Static assets with benign internal aliases pointing to the same real directory include all distinct logical paths in contract files", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "aip-manifest-test-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  const appDir = createFixtureApp1(root);
+  mkdirSync(join(appDir, "public/real"), { recursive: true });
+  writeFileSync(join(appDir, "public/real/f.txt"), "synthetic asset\n");
+  symlinkSync("real", join(appDir, "public/alias"));
+
+  const manifestPath = join(appDir, "aip.app.json");
+  const res = runCommand(process.execPath, [manifestScript, manifestPath]);
+  assert.equal(res.status, 0, res.stderr);
+
+  const contract = JSON.parse(res.stdout);
+  const staticFiles = contract.files.filter((f) => f.role === "static_asset").map((f) => f.path);
+  assert.ok(staticFiles.includes("public/real/f.txt"), "public/real/f.txt must be included in contract files");
+  assert.ok(staticFiles.includes("public/alias/f.txt"), "public/alias/f.txt must be included in contract files");
+});
+
+test("Static assets with cyclic directory symlinks terminate finitely and collect non-cyclic assets", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "aip-manifest-test-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  const appDir = createFixtureApp1(root);
+  writeFileSync(join(appDir, "public/ok.txt"), "ok content\n");
+  symlinkSync(".", join(appDir, "public/loop"));
+
+  const manifestPath = join(appDir, "aip.app.json");
+  const res = runCommand(process.execPath, [manifestScript, manifestPath], { timeout: 5000 });
+  assert.equal(res.status, 0, res.stderr);
+
+  const contract = JSON.parse(res.stdout);
+  const staticFiles = contract.files.filter((f) => f.role === "static_asset").map((f) => f.path);
+  assert.ok(staticFiles.includes("public/ok.txt"), "public/ok.txt must be included");
+  assert.ok(staticFiles.includes("public/index.html"), "public/index.html must be included");
+});
+
+test("Valid app whose root directory is accessed via symlink validates and produces AppContract", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "aip-manifest-test-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  const realAppDir = createFixtureApp1(join(root, "real-app"));
+  const symlinkAppDir = join(root, "symlink-app");
+  symlinkSync(realAppDir, symlinkAppDir);
+
+  const res = runCommand(process.execPath, [manifestScript, symlinkAppDir]);
+  assert.equal(res.status, 0, res.stderr);
+  const contract = JSON.parse(res.stdout);
+  assert.equal(contract.ok, true);
+  assert.equal(contract.app.name, "event-app");
+});
