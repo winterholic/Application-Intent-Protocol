@@ -142,10 +142,10 @@ run = client.jobs.wait(job["id"])
 | 쓰기 복구 | 통신 실패·`WIRE.COMMIT_UNKNOWN`·`WIRE.INTERNAL`이면 같은 key·같은 본문으로 다시 보낸다. 재시도에서 실행 전 거부를 받으면 확정으로 보지 않고 `WriteUnsettled`를 던진다. 같은 key에 다른 본문은 `WIRE.IDEMPOTENCY_MISMATCH` |
 | 세션 교체 | `replace_session(token)`은 같은 principal일 때만 바꾸고 미확정 쓰기를 다시 확정한다. 다른 사용자면 `ScopeConflict` |
 | 관리 API | `jobs.enqueue/status/result/cancel/wait`, `files.put/get/delete`, `events.read/watch`. SSE·WebSocket helper는 없다 |
-| 타입 | `service gen --lang python`의 공개 apply TypedDict·helper를 제공한다. 전체 읽기·operation·job 정적 타입은 없다. 입력·출력 계약은 서버가 검사하고 오류 코드를 `AipError.code`로 돌려준다 |
+| 타입 | `service gen --lang python`은 read Row/ReadResult, apply 입력·helper, operation 입력·출력·helper 및 JobState/JobRun 타입을 생성한다. read query와 일반 `Client.operation()`은 동적 API다. 생성된 `call_*`는 공통 scalar descriptor로 반환 객체의 키·타입·범위를 검사한 뒤 TypedDict로 돌려준다. nullable 출력도 키가 있고 값이 None이다. 계약 불일치는 `CLIENT.PROTOCOL_ERROR`이며 값 자체는 오류에 싣지 않는다 |
 | 캐시 | read 캐시가 없다 |
 
-설치는 `pip install ./product/python`이다(배포용 wheel·PyPI 게시는 아직 없음). 단위 검증은 `python3 -m unittest product.tests.python_sdk_test`, 실제 서비스 검증은 `node --test product/tests/service-smoke.test.mjs`다. smoke는 TypeScript 소비자가 커밋한 쓰기를 Python 소비자가 같은 key로 재생하는지까지 확인한다.
+설치는 `pip install ./product/python`이다(PyPI 게시는 아직 없음). 새 binding과 같은 revision의 SDK를 함께 설치한다. 클린 wheel 빌드·설치와 타입 검사는 `python3 -W error::ResourceWarning -m unittest product.tests.python_sdk_test`, 실제 서비스 검증은 `node --test product/tests/service-smoke.test.mjs`다. 타입 검사는 mypy 2.4.0 또는 uv가 필요하며 도구가 없으면 실패한다. smoke는 TypeScript 소비자가 커밋한 쓰기를 Python 소비자가 같은 key로 재생하는지까지 확인한다.
 
 
 ## UUID Id

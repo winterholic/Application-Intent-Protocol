@@ -1,5 +1,12 @@
 # 제품 통합 검증 (2026-10-17)
 
+## WBS 8.4 Python binding의 엄격 타입·출력 계약 (2026-10-19)
+
+- `mypy --warn-return-any`에서 생성된 operation helper 7개의 `Returning Any` 오류를 재현했다. TypedDict 반환 전에 같은 공개 scalar descriptor로 실제 객체·키·null·타입·범위·ID/enum/Decimal/날짜를 검사한다. 정상·잘못된 소비자 타입 검사도 추가해 input/return 타입이 Any로 빠지는 것을 막는다. 검사기 미설치는 실패로 처리한다.
+- Python **3.9.6 / 3.10.21 / 3.11.16 / 3.12.14 / 3.13.15 / 3.14.7** 각각 SDK **25개 통과**, ResourceWarning·unclosed socket 출력 없음. 각 runtime에서 생성 module import와 별도 venv의 wheel 설치·repo 밖 import를 검사했다. mypy 검사는 host Python 3.14.7 / mypy 2.4.0으로 실행했으며 각 runtime 자체에서 mypy를 돌렸다고 합산하지 않는다.
+- 생성기 회귀 **9개 통과**: 실제 생성된 Python helper를 safe/decimal 두 wire에서 실행해 잘못된 출력 24종을 거부했다. 관련 SDK crate all-targets clippy와 fmt 통과. 재빌드한 CLI로 생성한 operation fixture의 mypy 출력은 `Success: no issues found in 1 source file`이다.
+- 이전 package build/egg-info 산출물은 Git HEAD의 SDK와 byte 일치를 확인하고 제거했다. 새 wheel은 소유 임시 경로에서 만들고 설치·검증 후 제거한다. CI는 mypy 2.4.0을 명시적으로 설치하고 ResourceWarning을 오류로 올린다.
+
 ## WBS 8.15 OTLP 큐 드롭 계측과 제품 job 연결 (2026-10-19)
 
 - 기존 Linux Verify `da5817e`의 원시 로그에서 `otlp.rs` **6 passed, 0 failed**와 HTTP enqueue→저장 trace→worker→collector 연결 2개를 확인했다. 이 검사는 서버가 내보낸 span을 받으며 테스트가 span을 대신 만들어 성공시키지 않는다.

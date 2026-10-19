@@ -51,11 +51,15 @@ jobs:
       - name: Install verification tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y postgresql-client bubblewrap apparmor
+          sudo apt-get install -y postgresql-client bubblewrap apparmor python3-venv
           rustup update stable
           rustup default stable
           rustup component add rustfmt clippy
           npm ci --prefix spikes/spike-0-ts --ignore-scripts --no-audit --no-fund
+          python3 --version
+          python3 -m venv "$RUNNER_TEMP/aip-python-checks"
+          "$RUNNER_TEMP/aip-python-checks/bin/pip" install --no-cache-dir mypy==2.4.0 setuptools wheel
+          echo "$RUNNER_TEMP/aip-python-checks/bin" >> "$GITHUB_PATH"
       - name: Configure CI Bubblewrap user namespace policy
         shell: bash
         run: |

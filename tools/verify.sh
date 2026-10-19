@@ -9,6 +9,10 @@ for program in cargo node npm psql python3; do
     exit 1
   fi
 done
+if ! command -v mypy >/dev/null 2>&1 && ! command -v uv >/dev/null 2>&1; then
+  printf 'Install mypy 2.4.0 or uv for Python binding verification.\n' >&2
+  exit 1
+fi
 if [[ ! -x spikes/spike-0-ts/node_modules/.bin/tsc ]]; then
   printf 'Install the SDK toolchain: npm ci --prefix spikes/spike-0-ts\n' >&2
   exit 1
@@ -71,7 +75,7 @@ node --test \
   product/tests/smoke-options.test.mjs \
   product/tests/dev-jwt.test.mjs \
   product/tests/google-storage-provider.test.mjs
-python3 -m unittest product.tests.google_storage_provider_test product.tests.python_sdk_test product.tests.dedicated_db_test
+python3 -W error::ResourceWarning -m unittest product.tests.google_storage_provider_test product.tests.python_sdk_test product.tests.dedicated_db_test
 python3 spikes/spike-v4-worker/tests/python_frame_limit.py -v
 
 # Test feature combinations can replace target/debug/aip; rebuild the product last.

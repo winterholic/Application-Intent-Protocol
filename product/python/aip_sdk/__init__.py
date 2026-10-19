@@ -18,7 +18,7 @@ import urllib.request
 import uuid
 from typing import Any, Callable, Iterator, Optional
 
-__all__ = ["connect", "Client", "AipError", "WriteUnsettled", "ScopeConflict"]
+__all__ = ["connect", "Client", "AipError", "WriteUnsettled", "ScopeConflict", "validate_operation_output"]
 __version__ = "0.1.0"
 
 _FINGERPRINT = re.compile(r"^[a-f0-9]{64}$")
@@ -59,6 +59,90 @@ class WriteUnsettled(AipError):
 class ScopeConflict(AipError):
     def __init__(self) -> None:
         super().__init__("CLIENT.SCOPE_CONFLICT", "다른 사용자 세션으로 미확정 쓰기를 이관할 수 없음")
+
+
+def _operation_scalar(value: object, descriptor: dict, wire: str) -> bool:
+    if value is None:
+        return descriptor.get("nullable") is True
+    kind = descriptor.get("type")
+    if not isinstance(kind, str):
+        return False
+    bounds = descriptor.get("range")
+    if bounds is not None:
+        if not isinstance(bounds, list) or len(bounds) != 2 or any(type(n) is not int for n in bounds):
+            return False
+        measured = len(value) if isinstance(value, str) else value if type(value) is int else None
+        if measured is None or not bounds[0] <= measured <= bounds[1]:
+            return False
+    if kind == "Bool":
+        return type(value) is bool
+    if kind == "Int":
+        return type(value) is int and -9007199254740991 <= value <= 9007199254740991
+    if kind in ("Id", "Ref"):
+        if wire == "safe-number-v13":
+            return type(value) is int and 0 <= value <= 9007199254740991
+        if not isinstance(value, str) or not value.isascii() or not value.isdigit():
+            return False
+        if wire == "legacy":
+            return True
+        return wire == "decimal-string-v13" and len(value) <= 19 and (value == "0" or value[0] != "0") and int(value) <= 9223372036854775807
+    if kind == "Uuid":
+        return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", value) is not None
+    if kind == "Enum":
+        return isinstance(value, str) and value in descriptor.get("values", [])
+    if kind in ("Text", "Url"):
+        return isinstance(value, str) and "\0" not in value
+    if kind == "Email":
+        if not isinstance(value, str) or "\0" in value or any(c.isspace() for c in value) or value.count("@") != 1:
+            return False
+        local, domain = value.split("@")
+        return bool(local and domain and "." in domain and not domain.startswith(".") and not domain.endswith("."))
+    if kind in ("Date", "Time"):
+        if not isinstance(value, str):
+            return False
+        pattern = r"([0-9]{4})-([0-9]{2})-([0-9]{2})"
+        if kind == "Time":
+            if not 20 <= len(value) <= 35:
+                return False
+            pattern += r"[Tt]([0-9]{2}):([0-9]{2}):([0-9]{2})(?:\.[0-9]+)?(?:[Zz]|[+-]([0-9]{2}):([0-9]{2}))"
+        match = re.fullmatch(pattern, value)
+        if match is None:
+            return False
+        year, month, day = map(int, match.groups()[:3])
+        from datetime import date
+        try:
+            date(year, month, day)
+        except ValueError:
+            return False
+        if kind == "Date":
+            return True
+        hour, minute, second = map(int, match.groups()[3:6])
+        offset_hour, offset_minute = match.groups()[6:8]
+        return hour <= 23 and minute <= 59 and second <= 60 and (offset_hour is None or (int(offset_hour) <= 23 and int(offset_minute) <= 59))
+    if kind.startswith("Decimal<"):
+        shape = re.fullmatch(r"Decimal<([0-9]+),([0-9]+)>", kind)
+        if shape is None or not isinstance(value, str) or len(value) > 41:
+            return False
+        precision, scale = map(int, shape.groups())
+        number = re.fullmatch(r"-?(0|[1-9][0-9]*)(?:\.([0-9]+))?", value)
+        if not 1 <= precision <= 38 or not 0 <= scale <= precision or number is None:
+            return False
+        integer, fraction = number.groups()
+        return len(fraction or "") <= scale and (0 if integer == "0" else len(integer)) <= precision - scale
+    return False
+
+
+def validate_operation_output(value: object, fields: dict, wire: str) -> dict[str, object]:
+    """Check the shared public scalar descriptors before a generated TypedDict cast.
+
+    Nullable output fields are present with None; missing or extra keys are protocol errors.
+    Never include response values in this error, since operation outputs may contain private data.
+    """
+    if not isinstance(value, dict) or value.keys() != fields.keys() or any(
+        not _operation_scalar(value[name], descriptor, wire) for name, descriptor in fields.items()
+    ):
+        raise AipError("CLIENT.PROTOCOL_ERROR", "Operation output does not match the generated contract")
+    return dict(value)
 
 
 # A transport returns the body, or `(body, response_headers)` when it can also give the response headers.

@@ -6,6 +6,10 @@
 
 Rust/Cargo와 rustfmt·clippy, Node.js 26, npm, Python 3, PostgreSQL client/server가 필요하다. 현재 검증은 Rust 1.98.1과 PostgreSQL 17에서 실행했다. Python 3은 호스트 문자열의 실제 의미와 정적 추출 결과를 대조하는 core 검사에도 사용한다. 아래 명령은 저장소 루트에서 실행한다.
 
+Python binding 검증에는 mypy 2.4.0 또는 uv도 필요하다. CI는 별도 임시 venv에 mypy를 설치한다.
+생성 파일의 `--warn-return-any`와 실제 소비자의 정상/잘못된 입력·반환 타입을 검사하며,
+검사기가 없으면 건너뛰어 성공으로 세지 않는다. Python SDK suite는 ResourceWarning을 오류로 실행한다.
+
 ```sh
 npm ci --prefix spikes/spike-0-ts --ignore-scripts --no-audit --no-fund
 Before running DB-backed tests, set `AIP_TEST_DATABASE_URL` to a worker-owned `aip_test_*` database and `AIP_TEST_ADMIN_URL` to its maintenance database on the same explicit high port. Leave every `PG*` variable unset. The shared guard rejects missing DSNs, implicit libpq settings, and the PostgreSQL default port before any connection.

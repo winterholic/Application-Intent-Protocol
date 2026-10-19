@@ -355,7 +355,7 @@ class GeneratedSdkTest(unittest.TestCase):
         result = subprocess.run(cmd, cwd=str(repo_root), capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, f"Generator failed:\nstdout: {result.stdout}\nstderr: {result.stderr}")
 
-    PYTHON_39_TYPING = {"TYPE_CHECKING", "Any", "Literal", "NewType", "NoReturn", "Optional", "TypedDict", "Union"}
+    PYTHON_39_TYPING = {"TYPE_CHECKING", "Any", "Literal", "NewType", "NoReturn", "Optional", "TypedDict", "Union", "cast"}
 
     def test_generated_module_imports_on_python_3_9(self):
         """The package says `requires-python >= 3.9`. Whatever runs when the module loads must exist on 3.9: only `typing` names
@@ -487,10 +487,19 @@ class GeneratedSdkTest(unittest.TestCase):
             uv_path = shutil.which("uv")
             mypy_path = shutil.which("mypy")
             env = dict(sys.modules["os"].environ, PYTHONPATH=str(repo_root / "product" / "python"))
-            if uv_path:
+            if mypy_path:
                 for gen_file in (app_out, ops_out):
                     mypy_run = subprocess.run(
-                        [uv_path, "run", "--with", "mypy", "mypy", str(gen_file)],
+                        [mypy_path, "--warn-return-any", "--follow-imports=silent", "--no-incremental", str(gen_file)],
+                        capture_output=True,
+                        text=True,
+                        env=env,
+                    )
+                    self.assertEqual(mypy_run.returncode, 0, f"mypy typecheck failed for {gen_file}:\n{mypy_run.stdout}\n{mypy_run.stderr}")
+            elif uv_path:
+                for gen_file in (app_out, ops_out):
+                    mypy_run = subprocess.run(
+                        [uv_path, "run", "--no-project", "--with", "mypy==2.4.0", "mypy", "--warn-return-any", "--follow-imports=silent", "--no-incremental", str(gen_file)],
                         capture_output=True,
                         text=True,
                         env=env,
@@ -500,19 +509,36 @@ class GeneratedSdkTest(unittest.TestCase):
                         0,
                         f"mypy typecheck failed for {gen_file}:\n{mypy_run.stdout}\n{mypy_run.stderr}",
                     )
-            elif mypy_path:
-                for gen_file in (app_out, ops_out):
-                    mypy_run = subprocess.run(
-                        [mypy_path, str(gen_file)],
-                        capture_output=True,
-                        text=True,
-                        env=env,
-                    )
-                    self.assertEqual(
-                        mypy_run.returncode,
-                        0,
-                        f"mypy typecheck failed for {gen_file}:\n{mypy_run.stdout}\n{mypy_run.stderr}",
-                    )
+            else:
+                self.fail("Python codegen verification requires mypy or uv; install the verification tools")
+
+
+    def test_generated_operation_consumer_keeps_input_and_output_types(self):
+        import shutil, subprocess, tempfile
+        repo_root = Path(__file__).resolve().parent.parent.parent
+        checker = shutil.which("mypy")
+        if checker:
+            command = [checker]
+        elif shutil.which("uv"):
+            command = ["uv", "run", "--no-project", "--with", "mypy==2.4.0", "mypy"]
+        else:
+            self.fail("Python codegen verification requires mypy or uv")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            directory = Path(tmpdir)
+            self._generate_sdk_binding(repo_root / "spikes/spike-v6-transport/tests/fixtures/operations.aip", directory / "binding.py")
+            consumer = directory / "consumer.py"
+            consumer.write_text('from aip_sdk import Client\nfrom binding import call_length, principalId\n'
+                                'def use(client: Client) -> int:\n'
+                                '    return call_length(client, {"text": "hello", "owner": principalId("1")})["length"]\n')
+            env = dict(os.environ, MYPYPATH=os.pathsep.join([str(directory), str(repo_root / "product/python")]))
+            args = command + ["--warn-return-any", "--follow-imports=silent", "--no-incremental", str(consumer)]
+            good = subprocess.run(args, env=env, capture_output=True, text=True)
+            self.assertEqual(good.returncode, 0, good.stdout + good.stderr)
+            consumer.write_text(consumer.read_text().replace('-> int:', '-> str:').replace('"text": "hello"', '"text": 42'))
+            bad = subprocess.run(args, env=env, capture_output=True, text=True)
+            self.assertNotEqual(bad.returncode, 0)
+            self.assertIn("[typeddict-item]", bad.stdout)
+            self.assertIn("[return-value]", bad.stdout)
 
 
 class PackageSmokeTest(unittest.TestCase):
