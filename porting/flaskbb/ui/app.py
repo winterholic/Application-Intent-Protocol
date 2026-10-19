@@ -18,6 +18,8 @@ from joserfc.jwt import JWTClaimsRegistry
 
 from aip_sdk import AipError, connect
 
+from read_tracking import forum_is_unread, topic_is_unread
+
 TRACK = Path(__file__).resolve().parents[1]
 UPSTREAM = TRACK / "upstream"
 
@@ -277,13 +279,21 @@ def create_app(config=None, sdk_factory=connect, sessions=None, flows=None):
                 abort(401)
             user_rows = client.read({"read": "User", "select": ["id", "username", "primary_group", "activated"], "filter": [{"field": "id", "op": "eq", "value": session_info["actorId"]}], "limit": 1})
             categories = client.read({"read": "Category", "select": ["id", "title", "description", "position"]})
-            forums = client.read({"read": "Forum", "select": ["id", "category", "title", "description", "position", "locked", "topic_count", "post_count"]})
+            forums = client.read({"read": "Forum", "select": ["id", "category", "title", "description", "position", "locked", "topic_count", "post_count", "last_post", "last_post_created"]})
+            forum_marks = client.read({"read": "ForumRead", "select": ["forum", "last_read", "cleared"]})
         except AipError as error:
             reject_aip_error(error)
         if not user_rows or not user_rows[0].get("activated"):
             abort(403)
+        marks_by_forum = {str(row["forum"]): row for row in forum_marks}
         categories_by_id = {str(row["id"]): {**row, "forums": []} for row in categories}
         for forum in forums:
+            forum["unread"] = forum_is_unread(
+                topic_count=forum.get("topic_count") or 0,
+                last_post_id=forum.get("last_post"),
+                last_post_created=forum.get("last_post_created"),
+                forumsread=marks_by_forum.get(str(forum["id"])),
+            )
             categories_by_id.get(str(forum["category"]), {"forums": []})["forums"].append(forum)
         return render_template("forum_index.html", categories=list(categories_by_id.values()), user=user_rows[0], logout_url=url_for("logout"))
 
@@ -292,16 +302,30 @@ def create_app(config=None, sdk_factory=connect, sessions=None, flows=None):
         client = aip_client()
         try:
             forum = client.read({"read": "Forum", "select": ["id", "category", "title", "description", "locked"], "filter": [{"field": "id", "op": "eq", "value": forum_id}], "limit": 1})
-            topics = client.read({"read": "Topic", "select": ["id", "forum", "title", "username", "date_created", "last_updated", "locked", "important", "views", "post_count"], "filter": [{"field": "forum", "op": "eq", "value": forum_id}], "sort": [{"field": "important", "dir": "desc"}, {"field": "last_updated", "dir": "desc"}, {"field": "id", "dir": "asc"}]})
+            topics = client.read({"read": "Topic", "select": ["id", "forum", "title", "username", "date_created", "last_updated", "locked", "important", "hidden", "views", "post_count"], "filter": [{"field": "forum", "op": "eq", "value": forum_id}], "sort": [{"field": "important", "dir": "desc"}, {"field": "last_updated", "dir": "desc"}, {"field": "id", "dir": "asc"}]})
         except AipError as error:
             reject_aip_error(error)
         if not forum:
             abort(404)
         identity = session_store.get(request.cookies.get("aip_session"), {})
+        topic_marks = {}
+        forum_mark = None
         try:
             user = current_aip_user(client) if identity else None
+            if identity:
+                topic_mark_rows = client.read({"read": "TopicRead", "select": ["topic", "last_read"], "filter": [{"field": "forum", "op": "eq", "value": forum_id}]})
+                forum_mark_rows = client.read({"read": "ForumRead", "select": ["last_read", "cleared"], "filter": [{"field": "forum", "op": "eq", "value": forum_id}], "limit": 1})
+                topic_marks = {str(row["topic"]): row["last_read"] for row in topic_mark_rows}
+                forum_mark = forum_mark_rows[0] if forum_mark_rows else None
         except AipError as error:
             reject_aip_error(error)
+        cleared = forum_mark.get("cleared") if forum_mark else None
+        topics = [{**row, "unread": topic_is_unread(
+            last_updated=row.get("last_updated"),
+            topicsread_last_read=topic_marks.get(str(row["id"])),
+            forumsread_cleared=cleared,
+            authenticated=bool(identity),
+        )} for row in topics]
         return render_template(
             "forum_view.html", forum=forum[0], topics=topics, logout_url=url_for("logout"),
             csrf_token=identity.get("csrf_token"),

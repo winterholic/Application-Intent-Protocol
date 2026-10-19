@@ -1,5 +1,11 @@
 # FlaskBB 전체 포팅 상태
 
+## 2026-10-20 unread cutoff 계산 — 구현됨, 실DB E2E는 Linux CI 판정 대기
+
+원본 `topic_is_unread`/`forum_is_unread`(`upstream/flaskbb/utils/helpers.py`, `read_cutoff = now - TRACKER_LENGTH days`, 0이면 tracker 비활성)을 렌더러 `ui/read_tracking.py` 순수 함수로 포팅하고 포럼 목록(`/`)·주제 목록(`/forum/<id>`)에 연결했다. AIP read는 select/filter/sort만 노출해 cutoff 선언이 불가하고, 렌더러가 뷰어 세션으로 동작해 `Setting`(admin/super_mod 전용)을 읽을 수 없어 `tracker_length`는 fixture 기본값 7일(`upstream/flaskbb/fixtures/settings.py`)을 상수로 둔다(관리자 변경값 미반영은 PRODUCT-GAPS G-12). 목록 템플릿의 미읽음 아이콘은 원본 `forum.html`/`category_layout.html`의 분기·클래스(locked→hidden→important star→comment, `topic-unread`/`forum-unread`)를 그대로 둔다. 원본의 cleared+stale-last_read 포럼 판정 quirk도 그대로 고정했다.
+
+Python `test_ui_host.py` 19/19 통과(RED: `ModuleNotFoundError: No module named 'read_tracking'` → GREEN, 기존 14건 포함·mock 2건은 새 읽기 추가로만 확장). 신규 `unread-cutoff.test.mjs`는 실DB E2E(마커 4분기·cleared·cutoff 경과·인덱스 3포럼)이며 `worker-jobs-linux.yml` Revalidate 단계에 등록했다. E2E의 RED 근거: 변경 전 템플릿에 `topic-unread`/`forum-unread` 문자열이 없음(`git grep HEAD` 0건). 로컬 실DB는 검증 샌드박스의 사용자 조회 차단(`initdb: 501 UID를 찾을 수 없음`, 1회 기록 후 미재시도·기지 차단)으로 미실행이며 Linux CI로 판정한다. CI 결과는 push 뒤 확인한다. 7.5.2 잔여는 G-6·G-10(미해결 고정)·unread cutoff(E2E 검증 대기).
+
 ## 2026-10-20 G-11 물리 삭제 — 구현됨, 두 가지 잔여 차이 문서화
 
 원본의 `DeleteConversation`(소유자 mailbox+메시지), `DeleteReport`(moderator 이상), `DeleteUser`(admin, 자기 제외)를 `app.aip`의 `purge` 전이(`delete` 플래그) 3개로 선언했다. 효과는 대상 삭제보다 먼저 같은 트랜잭션에서 실행되고 둘 다 감사에 남는다. upstream FK 대조 결과 `posts`·`topics`·`reports`의 user FK에는 ondelete가 없어 원본도 참조 계정 삭제를 거부하므로, `User.purge`의 `userPurgeable` 가드(11개 `not exists`)는 그 경우 원본과 같다. upstream CASCADE(membership·tracker·reads·moderatorship)는 `delete many` 효과로, `Report.purge`는 단건·최대 50 일괄로 둔다. `Topic`/`Post.delete` tombstone은 그대로다.

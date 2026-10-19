@@ -133,4 +133,5 @@ jobs:
           porting/flaskbb/tests/moderation.test.mjs
           porting/flaskbb/tests/provisioning.test.mjs
           porting/flaskbb/tests/aip-read.test.mjs
+          porting/flaskbb/tests/unread-cutoff.test.mjs
           porting/flaskbb/tests/features.test.mjs

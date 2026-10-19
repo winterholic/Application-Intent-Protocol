@@ -9,7 +9,7 @@
             <div class="category-meta"><div class="col-md-7 col-sm-7 col-xs-8 forum-name">Forum</div><div class="col-md-2 hidden-xs forum-stats">Topics</div><div class="col-md-3 col-xs-4 forum-last-post">Posts</div></div>
             {% for forum in category.forums %}
             <div class="row category-row hover">
-                <div class="col-md-7 col-sm-7 col-xs-8 forum-info"><div class="row"><div class="col-md-1 col-sm-2 col-xs-2 forum-status">{% if forum.locked %}<span class="fa fa-lock forum-locked"></span>{% else %}<span class="fa fa-comments-o forum-read"></span>{% endif %}</div><div class="col-md-11 col-sm-10 col-xs-10"><div class="forum-name"><a href="{{ url_for('forum_view', forum_id=forum.id) }}">{{ forum.title }}</a></div><div class="forum-description">{{ forum.description or '' }}</div></div></div></div>
+                <div class="col-md-7 col-sm-7 col-xs-8 forum-info"><div class="row"><div class="col-md-1 col-sm-2 col-xs-2 forum-status">{% if forum.locked %}<span class="fa fa-lock forum-locked"></span>{% elif forum.unread %}<span class="fa fa-comments fa-fw forum-unread"></span>{% else %}<span class="fa fa-comments-o forum-read"></span>{% endif %}</div><div class="col-md-11 col-sm-10 col-xs-10"><div class="forum-name"><a href="{{ url_for('forum_view', forum_id=forum.id) }}">{{ forum.title }}</a></div><div class="forum-description">{{ forum.description or '' }}</div></div></div></div>
                 <div class="col-md-2 hidden-xs forum-topics">{{ forum.topic_count }}</div>
                 <div class="col-md-3 col-xs-4 forum-posts">{{ forum.post_count }}</div>
             </div>

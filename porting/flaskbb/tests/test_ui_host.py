@@ -1,5 +1,6 @@
 import sys
 import unittest
+from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlparse
 from pathlib import Path
 from unittest.mock import Mock
@@ -8,6 +9,7 @@ UI_ROOT = Path(__file__).resolve().parents[1] / "ui"
 sys.path.insert(0, str(UI_ROOT))
 
 from app import create_app  # noqa: E402
+import read_tracking  # noqa: E402
 
 
 class UiHostTests(unittest.TestCase):
@@ -18,6 +20,8 @@ class UiHostTests(unittest.TestCase):
         client_api.read.side_effect = lambda query: {
             "Forum": [{"id": "2", "title": "Support", "locked": False}],
             "Topic": [],
+            "TopicRead": [],
+            "ForumRead": [],
             "User": [{"id": "2", "username": "member", "activated": True}],
         }[query["read"]]
         app = create_app(
@@ -87,6 +91,7 @@ class UiHostTests(unittest.TestCase):
             "Category": [{"id": "1", "title": "Support", "description": "Questions", "position": 1}],
             "Forum": [{"id": "2", "category": "1", "title": "Support", "description": "Questions", "position": 1,
                        "locked": False, "topic_count": 2, "post_count": 4}],
+            "ForumRead": [],
         }[query["read"]]
         client_factory = Mock(return_value=client_api)
         sessions = {"opaque-test-session": {"access_token": "test-only-token"}}
@@ -103,9 +108,10 @@ class UiHostTests(unittest.TestCase):
         self.assertIn(b"Support", response.data)
         client_factory.assert_called_once_with("http://aip.test", "test-only-token")
         client_api.session.assert_called_once_with()
-        self.assertEqual([call.args[0]["read"] for call in client_api.read.call_args_list], ["User", "Category", "Forum"])
-        forum_query = client_api.read.call_args_list[-1].args[0]
+        self.assertEqual([call.args[0]["read"] for call in client_api.read.call_args_list], ["User", "Category", "Forum", "ForumRead"])
+        forum_query = next(call.args[0] for call in client_api.read.call_args_list if call.args[0]["read"] == "Forum")
         self.assertIn("title", forum_query["select"])
+        self.assertIn("last_post_created", forum_query["select"])
 
     def test_new_topic_posts_one_authorized_atomic_aip_bundle(self):
         client_api = Mock()
@@ -364,6 +370,147 @@ class UiHostTests(unittest.TestCase):
         self.assertEqual(ops[1]["values"]["message"], "Reply message text")
         self.assertEqual(ops[2]["apply"], "Conversation.bump")
         self.assertEqual(ops[2]["target"], {"ids": ["102"]})
+
+
+class ReadTrackingCutoffTests(unittest.TestCase):
+    """Unread cutoff rules mirror upstream helpers.py topic/forum_is_unread."""
+
+    def test_topic_unread_matches_upstream_cutoff_rules(self):
+        now = datetime(2026, 10, 20, tzinfo=timezone.utc)
+        fresh = now - timedelta(hours=1)
+        old = now - timedelta(days=30)
+        self.assertFalse(read_tracking.topic_is_unread(last_updated=fresh, authenticated=False, now=now))
+        self.assertFalse(read_tracking.topic_is_unread(last_updated=fresh, tracker_length=0, now=now))
+        self.assertFalse(read_tracking.topic_is_unread(last_updated=old, now=now))
+        self.assertTrue(read_tracking.topic_is_unread(last_updated=now - timedelta(days=7), now=now))
+        self.assertTrue(read_tracking.topic_is_unread(last_updated=fresh, now=now))
+        self.assertTrue(read_tracking.topic_is_unread(
+            last_updated=fresh, forumsread_cleared=now - timedelta(hours=2), now=now))
+        self.assertFalse(read_tracking.topic_is_unread(
+            last_updated=fresh, forumsread_cleared=now, now=now))
+        self.assertTrue(read_tracking.topic_is_unread(
+            last_updated=fresh, topicsread_last_read=now - timedelta(hours=2), now=now))
+        self.assertFalse(read_tracking.topic_is_unread(
+            last_updated=fresh, topicsread_last_read=fresh, now=now))
+        self.assertFalse(read_tracking.topic_is_unread(last_updated=None, now=now))
+
+    def test_forum_unread_matches_upstream_cutoff_rules(self):
+        now = datetime(2026, 10, 20, tzinfo=timezone.utc)
+        fresh = now - timedelta(hours=1)
+        old = now - timedelta(days=30)
+        self.assertFalse(read_tracking.forum_is_unread(
+            topic_count=3, last_post_id="p", last_post_created=fresh, authenticated=False, now=now))
+        self.assertFalse(read_tracking.forum_is_unread(
+            topic_count=3, last_post_id="p", last_post_created=fresh, tracker_length=0, now=now))
+        self.assertFalse(read_tracking.forum_is_unread(
+            topic_count=0, last_post_id="p", last_post_created=fresh, now=now))
+        self.assertFalse(read_tracking.forum_is_unread(
+            topic_count=3, last_post_id=None, last_post_created=fresh, now=now))
+        self.assertFalse(read_tracking.forum_is_unread(
+            topic_count=3, last_post_id="p", last_post_created=old, now=now))
+        self.assertTrue(read_tracking.forum_is_unread(
+            topic_count=3, last_post_id="p", last_post_created=fresh, now=now))
+        self.assertFalse(read_tracking.forum_is_unread(
+            topic_count=3, last_post_id="p", last_post_created=fresh,
+            forumsread={"last_read": now, "cleared": None}, now=now))
+        self.assertTrue(read_tracking.forum_is_unread(
+            topic_count=3, last_post_id="p", last_post_created=fresh,
+            forumsread={"last_read": now - timedelta(hours=2), "cleared": None}, now=now))
+        # Upstream quirk, pinned as-is: a cleared forum with a stale last_read
+        # still counts as unread (the cleared branch falls through to the
+        # last_read comparison), unlike the topic rule.
+        self.assertTrue(read_tracking.forum_is_unread(
+            topic_count=3, last_post_id="p", last_post_created=fresh,
+            forumsread={"last_read": now - timedelta(hours=2), "cleared": now}, now=now))
+        self.assertFalse(read_tracking.forum_is_unread(
+            topic_count=3, last_post_id="p", last_post_created=fresh,
+            forumsread={"last_read": now, "cleared": now}, now=now))
+
+    def test_iso_timestamps_parse_like_sdk_rows(self):
+        now = datetime(2026, 10, 20, tzinfo=timezone.utc)
+        self.assertTrue(read_tracking.topic_is_unread(
+            last_updated=(now - timedelta(hours=1)).isoformat(), now=now))
+        self.assertFalse(read_tracking.topic_is_unread(
+            last_updated=(now - timedelta(days=30)).isoformat(), now=now))
+        self.assertFalse(read_tracking.topic_is_unread(
+            last_updated=(now - timedelta(hours=1)).isoformat(),
+            topicsread_last_read=now.isoformat(), now=now))
+
+
+class ForumTopicUnreadRenderingTests(unittest.TestCase):
+    def test_forum_view_marks_unread_and_read_topics(self):
+        now = datetime.now(timezone.utc)
+        fresh = (now - timedelta(hours=1)).isoformat()
+        old = (now - timedelta(days=30)).isoformat()
+        stamped = now.isoformat()
+        client_api = Mock()
+        client_api.session.return_value = {"actorId": "2"}
+        client_api.read.side_effect = lambda query: {
+            "Forum": [{"id": "1", "title": "Fresh", "locked": False}],
+            "Topic": [
+                {"id": "t1", "title": "Fresh unread", "username": "a", "post_count": 1,
+                 "last_updated": fresh, "locked": False, "important": False, "hidden": False},
+                {"id": "t2", "title": "Fresh read", "username": "a", "post_count": 1,
+                 "last_updated": fresh, "locked": False, "important": False, "hidden": False},
+                {"id": "t4", "title": "Old below cutoff", "username": "a", "post_count": 1,
+                 "last_updated": old, "locked": False, "important": False, "hidden": False},
+            ],
+            "TopicRead": [{"id": "m2", "topic": "t2", "forum": "1", "last_read": stamped}],
+            "ForumRead": [],
+            "User": [{"id": "2", "username": "member", "activated": True}],
+        }[query["read"]]
+        app = create_app(
+            {"TESTING": True, "SECRET_KEY": "test-only-secret"},
+            sdk_factory=Mock(return_value=client_api),
+            sessions={"s": {"access_token": "test-only-token"}},
+        )
+        browser = app.test_client()
+        browser.set_cookie("aip_session", "s")
+        response = browser.get("/forum/1")
+        self.assertEqual(response.status_code, 200)
+        rows = response.data.decode().split("forum-row")
+        row = {title: next(chunk for chunk in rows if title in chunk)
+               for title in ("Fresh unread", "Fresh read", "Old below cutoff")}
+        self.assertIn("topic-unread", row["Fresh unread"])
+        self.assertIn("topic-read", row["Fresh read"])
+        self.assertNotIn("topic-unread", row["Fresh read"])
+        self.assertIn("topic-read", row["Old below cutoff"])
+
+    def test_forum_index_marks_unread_and_read_forums(self):
+        now = datetime.now(timezone.utc)
+        fresh = (now - timedelta(hours=1)).isoformat()
+        old = (now - timedelta(days=30)).isoformat()
+        stamped = now.isoformat()
+        client_api = Mock()
+        client_api.session.return_value = {"actorId": "2"}
+        client_api.read.side_effect = lambda query: {
+            "User": [{"id": "2", "username": "member", "primary_group": "2", "activated": True}],
+            "Category": [{"id": "1", "title": "General", "description": "", "position": 1}],
+            "Forum": [
+                {"id": "1", "category": "1", "title": "Fresh Forum", "description": "",
+                 "position": 1, "locked": False, "topic_count": 2, "post_count": 4,
+                 "last_post": "p1", "last_post_created": fresh},
+                {"id": "2", "category": "1", "title": "Quiet Forum", "description": "",
+                 "position": 2, "locked": False, "topic_count": 1, "post_count": 1,
+                 "last_post": "p2", "last_post_created": old},
+            ],
+            "ForumRead": [{"id": "m", "forum": "2", "last_read": stamped, "cleared": stamped}],
+        }[query["read"]]
+        app = create_app(
+            {"TESTING": True, "SECRET_KEY": "test-only-secret"},
+            sdk_factory=Mock(return_value=client_api),
+            sessions={"s": {"access_token": "test-only-token"}},
+        )
+        browser = app.test_client()
+        browser.set_cookie("aip_session", "s")
+        response = browser.get("/")
+        self.assertEqual(response.status_code, 200)
+        rows = response.data.decode().split("category-row")
+        fresh_row = next(chunk for chunk in rows if "Fresh Forum" in chunk)
+        quiet_row = next(chunk for chunk in rows if "Quiet Forum" in chunk)
+        self.assertIn("forum-unread", fresh_row)
+        self.assertIn("forum-read", quiet_row)
+        self.assertNotIn("forum-unread", quiet_row)
 
 
 if __name__ == "__main__":
