@@ -11,6 +11,31 @@ from app import create_app  # noqa: E402
 
 
 class UiHostTests(unittest.TestCase):
+    def test_forum_topics_request_sticky_then_recent_order_from_aip(self):
+        client_api = Mock()
+        client_api.discover.return_value = {"ok": True}
+        client_api.session.return_value = {"actorId": "2"}
+        client_api.read.side_effect = lambda query: {
+            "Forum": [{"id": "2", "title": "Support", "locked": False}],
+            "Topic": [],
+            "User": [{"id": "2", "username": "member", "activated": True}],
+        }[query["read"]]
+        app = create_app(
+            {"TESTING": True, "SECRET_KEY": "test-only-secret"},
+            sdk_factory=Mock(return_value=client_api),
+            sessions={"sticky-session": {"access_token": "test-only-token"}},
+        )
+        browser = app.test_client()
+        browser.set_cookie("aip_session", "sticky-session")
+        response = browser.get("/forum/2")
+        self.assertEqual(response.status_code, 200)
+        query = next(call.args[0] for call in client_api.read.call_args_list if call.args[0]["read"] == "Topic")
+        self.assertEqual(query["sort"], [
+            {"field": "important", "dir": "desc"},
+            {"field": "last_updated", "dir": "desc"},
+            {"field": "id", "dir": "asc"},
+        ])
+
     def test_login_redirect_starts_oidc_code_flow_with_pkce(self):
         flows = {}
         app = create_app(

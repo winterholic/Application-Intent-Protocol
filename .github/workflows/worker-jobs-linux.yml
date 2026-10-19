@@ -57,7 +57,7 @@ jobs:
       - name: Install PostgreSQL client and Bubblewrap
         run: |
           sudo apt-get update
-          sudo apt-get install -y postgresql-client bubblewrap apparmor
+          sudo apt-get install -y postgresql-client bubblewrap apparmor python3-venv
           rustup update stable
           rustup default stable
       - name: Configure scoped Bubblewrap user namespace profile
@@ -102,3 +102,9 @@ jobs:
         run: |
           node --test porting/flaskbb/tests/fixture-env.test.mjs porting/flaskbb/tests/conversations-security.test.mjs
           cargo test -p aip-migrate --locked --test foreign_shared_uniqueness
+      - name: Verify FlaskBB topic ordering and UI requests
+        run: |
+          python3 -m venv "$RUNNER_TEMP/flaskbb-ui"
+          "$RUNNER_TEMP/flaskbb-ui/bin/pip" install --no-cache-dir -r porting/flaskbb/ui/requirements.txt
+          PYTHONPATH="$GITHUB_WORKSPACE/product/python" "$RUNNER_TEMP/flaskbb-ui/bin/python" -m unittest porting.flaskbb.tests.test_ui_host porting.flaskbb.tests.test_mail_jobs
+          node --test porting/flaskbb/tests/sticky-order.test.mjs

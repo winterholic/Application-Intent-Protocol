@@ -292,7 +292,7 @@ def create_app(config=None, sdk_factory=connect, sessions=None, flows=None):
         client = aip_client()
         try:
             forum = client.read({"read": "Forum", "select": ["id", "category", "title", "description", "locked"], "filter": [{"field": "id", "op": "eq", "value": forum_id}], "limit": 1})
-            topics = client.read({"read": "Topic", "select": ["id", "forum", "title", "username", "date_created", "last_updated", "locked", "important", "views", "post_count"], "filter": [{"field": "forum", "op": "eq", "value": forum_id}]})
+            topics = client.read({"read": "Topic", "select": ["id", "forum", "title", "username", "date_created", "last_updated", "locked", "important", "views", "post_count"], "filter": [{"field": "forum", "op": "eq", "value": forum_id}], "sort": [{"field": "important", "dir": "desc"}, {"field": "last_updated", "dir": "desc"}, {"field": "id", "dir": "asc"}]})
         except AipError as error:
             reject_aip_error(error)
         if not forum:
