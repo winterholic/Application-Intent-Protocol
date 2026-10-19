@@ -2462,6 +2462,7 @@ dependencies = [
 name = "spike-v6-transport"
 version = "0.0.0"
 dependencies = [
+ "aip-crypto",
  "aip-execution",
  "base64 0.22.1",
  "chrono",
