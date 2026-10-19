@@ -1,5 +1,11 @@
 # FlaskBB 전체 포팅 상태
 
+## 2026-10-20 G-6 삭제·숨김 뒤 last-post 재계산 — 구현 불가, 현재 동작 고정과 설계안
+
+원본은 `Post.hide`·`Post.delete`에서 그 글이 topic·forum의 마지막 글이면 forum의 `last_post*`를 남은 최근 글(없으면 NULL)로, topic `last_updated`를 새 마지막 글 시각으로 되돌린다. 이 포팅의 `update` 효과는 현재 행·actor·`now` 값만 받아 집합 값을 못 만든다. 집계·`latest` 값은 `service check`가 `DEF.PARSE_EXPECTED`로 거부했고 경로 값만 통과했다. core 기능이 필요한 범위라 임의로 만들지 않고 [PRODUCT-GAPS G-6](PRODUCT-GAPS.md)에 설계안과 결정 항목을 남겼다.
+
+`last-post-recompute.test.mjs`(실DB)는 원본과 같은 쪽(forum 마지막 글이 아닌 글의 hide는 forum 불변)과 다른 쪽(마지막 글 hide·delete 뒤 `Forum.last_post_*`와 Topic `last_updated`가 그대로)을 현재 동작으로 고정한다. 이 시험의 "stale" 단언은 원본 동등 기능이 생기면 원본 값(a2, `Topic A`)으로 뒤집어야 한다. G-6은 닫히지 않았고 7.5.2의 이 항목은 미완료로 유지한다.
+
 ## 2026-10-19 main 473c528 재실행과 JIT 비용 측정
 
 [Linux worker CI 39238123662](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39238123662)에서 실제 메일 2개·sticky 정렬 1개·원래 포팅 suite 8개·UI/메일 unit 20개가 통과했다. 같은 Topic post_count SQL의 JIT on은 1,223.152ms(518개 함수 컴파일 1,220.835ms), off는 0.221ms였다. 앞선 2초 deadline 실패가 이번에는 재현되지 않았지만 컴파일 비용이 짧은 읽기 예산의 대부분임을 측정했다. 이전 실패의 cold/load 상태는 동일 재현하지 않았다.

@@ -118,6 +118,7 @@ jobs:
           "$RUNNER_TEMP/flaskbb-ui/bin/pip" install --no-cache-dir -r porting/flaskbb/ui/requirements.txt
           PYTHONPATH="$GITHUB_WORKSPACE/product/python" "$RUNNER_TEMP/flaskbb-ui/bin/python" -m unittest porting.flaskbb.tests.test_ui_host porting.flaskbb.tests.test_mail_jobs
           node --test porting/flaskbb/tests/sticky-order.test.mjs
+          node --test porting/flaskbb/tests/last-post-recompute.test.mjs
       - name: Revalidate FlaskBB core, CLI and search consistency on main
         env:
           AIP_FLASKBB_TEST_PYTHON: ${{ runner.temp }}/flaskbb-ui/bin/python
