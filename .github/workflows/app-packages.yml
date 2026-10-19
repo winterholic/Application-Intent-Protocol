@@ -30,6 +30,8 @@ jobs:
           rustup default stable
           npm ci --prefix spikes/spike-0-ts --ignore-scripts --no-audit --no-fund
       - name: Verify app packaging boundaries
-        run: node --test product/tests/app-package.test.mjs product/tests/app-manifest.test.mjs product/tests/package-boundaries.test.mjs
+        run: node --test product/tests/app-package.test.mjs product/tests/app-manifest.test.mjs product/tests/package-boundaries.test.mjs product/tests/app-deploy.test.mjs
       - name: Verify relocated release packages and installed SDK consumers
         run: node --test product/tests/app-package-e2e.test.mjs
+      - name: Verify native deployment lifecycle and schema migration on an owned PostgreSQL
+        run: node --test product/tests/app-deploy-live.test.mjs

@@ -42,6 +42,10 @@ test("release CLI packages two apps; moved packages check, regenerate and instal
       const moved = join(base, `${name}-moved`);
       renameSync(out, moved);
       rmSync(app, { recursive: true });
+      const installed = join(base, `${name}-installed`);
+      execute(process.execPath, [join(moved, "tools/app-deploy.mjs"), "install", "--out", installed], moved);
+      execute(process.execPath, [join(installed, "tools/app-deploy.mjs"), "check"], base);
+      rmSync(installed, { recursive: true });
       assert.equal(existsSync(join(moved, "app/.env")), false);
       const contract = JSON.parse(readFileSync(join(moved, "APP_CONTRACT.json")));
       const binary = join(moved, "bin/aip");

@@ -18,6 +18,7 @@ function fixture(t, overrides = {}) {
   put(join(root, "Cargo.lock"), 'version = 4\n');
   put(join(root, "crates/aip-cli/Cargo.toml"), '[features]\ndefault = []\nmysql = []\nexternal-brokers = []\npoc-runtime = []\n');
   put(join(root, "crates/aip-cli/src/main.rs"), 'fn main() {}\n');
+  put(join(root, "product/tools/app-deploy.mjs"), readFileSync(new URL("../tools/app-deploy.mjs", import.meta.url), "utf8"));
   put(join(root, "prototype/example/app.aip"), 'resource Embedded { fields { id: Id } }\n');
   put(join(app, "defs/service.aip"), 'resource Member { fields { id: Id } }\nactor Member\n');
   put(join(app, "workers/main.mjs"), 'export { value } from "./helper.mjs";\n');
@@ -94,6 +95,7 @@ test("two distinct applications remain self-contained after removing their input
     const contract = JSON.parse(readFileSync(join(f.out, "APP_CONTRACT.json")));
     assert.equal(existsSync(join(f.out, contract.packageLayout.definition)), true);
     assert.equal(existsSync(join(f.out, contract.packageLayout.manifest)), true);
+    assert.equal(readFileSync(join(f.out, "tools/app-deploy.mjs"), "utf8"), readFileSync(new URL("../tools/app-deploy.mjs", import.meta.url), "utf8"));
     const serialized = readFileSync(join(f.out, "BUILD.json"), "utf8") + readFileSync(join(f.out, "APP_CONTRACT.json"), "utf8");
     assert.ok(!serialized.includes(f.base), "metadata must not depend on the input checkout");
     rmSync(f.app, { recursive: true });

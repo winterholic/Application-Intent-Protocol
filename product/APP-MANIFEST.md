@@ -237,4 +237,4 @@ Node 의존성은 같은 디렉터리의 `package.json`과 npm `package-lock.jso
 
 출력은 앱 입력 밖의 새 디렉터리여야 한다. 기존 파일·디렉터리·symlink는 보존한다. 빌드/생성/입력 재검증 실패 시 자신이 만든 불완전 출력만 제거하고, SDK 임시 폴더와 npm 캐시는 `finally`에서 회수한다. 엔진 `target`은 공유 빌드 캐시로 재사용한다. 입력의 추가·삭제·변경과 바이너리 교체를 감지하면 `SOURCE_CHANGED`로 실패한다. 해시와 Git revision은 서명된 provenance 또는 바이트 단위 재현성 보증은 아니다.
 
-설치·기동·준비상태·변경배포의 통합 명령은 WBS 9.3, Docker 경로는 9.4, 실제 HTTP/worker/DB의 패키지 E2E는 9.5에서 다룬다. 이 단계의 package 성공은 운영 배포 성공을 뜻하지 않는다.
+패키지에는 `tools/app-deploy.mjs`도 포함한다. [설치·기동·변경배포 명령](APP-DEPLOY.md)은 외부 운영 설정과 환경 변수를 받아 기존 제품 엔진을 호출한다. Docker 경로는 9.4, 확장·복원을 포함한 패키지 E2E는 9.5에서 다룬다. package 성공은 운영 배포 성공을 뜻하지 않는다.
