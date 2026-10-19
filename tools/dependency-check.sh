@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Known-vulnerability, license, source and yanked-crate checks for every lock file in the repository, plus npm audit.
-# Needs: cargo install cargo-audit cargo-deny --locked. Policy and the one justified exception live in deny.toml.
+# Needs: cargo install cargo-audit cargo-deny --locked. Advisory and package license exceptions live in deny.toml.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -32,7 +32,7 @@ for manifest in "${manifests[@]}"; do
   printf '== %s\n' "$manifest"
   # RUSTSEC-2023-0071 is the one accepted exception; its reason is in deny.toml, so audit gets the same id.
   cargo audit -f "$lock" --ignore RUSTSEC-2023-0071 || failed=1
-  cargo deny --manifest-path "$manifest" check || failed=1
+  cargo deny --manifest-path "$manifest" --locked check || failed=1
 done
 
 printf '== npm audit (spikes/spike-0-ts)\n'
