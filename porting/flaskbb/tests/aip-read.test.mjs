@@ -1,4 +1,5 @@
 import {dbUrl} from './harness.mjs';
+import {stopOwnedProcess} from './mail-fixture.mjs';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {generateKeyPairSync, sign, randomUUID, createHash} from 'node:crypto';
@@ -17,6 +18,8 @@ const file = join(track, 'app.aip');
 const b64 = value => Buffer.from(JSON.stringify(value)).toString('base64url');
 
 test('AIP server enforces forum group visibility and unique link relations with the SDK', {timeout: 60000}, async () => {
+  const python = process.env.AIP_FLASKBB_TEST_PYTHON;
+  assert.ok(python, 'AIP_FLASKBB_TEST_PYTHON must name the run-owned UI Python environment');
   const temp = mkdtempSync(join(tmpdir(), 'aip-flaskbb-read-'));
   const suffix = randomUUID().replaceAll('-', '').slice(0, 10);
   const schema = `aip_flaskbb_${suffix}`;
@@ -98,7 +101,6 @@ test('AIP server enforces forum group visibility and unique link relations with 
     const readOnly = connect(`http://${started.address}`, token('readonly-fixture'), contract);
     const guest = connect(`http://${started.address}`, null, contract);
 
-    const python = '/private/tmp/flaskbb-aip-host-venv/bin/python';
     const launchUi = async subject => {
       const uiEnv = {
         PATH: process.env.PATH,
@@ -116,6 +118,7 @@ test('AIP server enforces forum group visibility and unique link relations with 
       const lines = createInterface({input: host.stdout});
       const listening = await Promise.race([
         once(lines, 'line').then(([line]) => JSON.parse(line)),
+        once(host, 'error').then(([error]) => {throw error;}),
         once(host, 'exit').then(([code]) => {throw new Error(`UI host exit ${code}: ${hostStderr}`);}),
         new Promise((_, reject) => setTimeout(() => reject(new Error(`UI host timeout: ${hostStderr}`)), 15000).unref())
       ]);
@@ -323,20 +326,12 @@ test('AIP server enforces forum group visibility and unique link relations with 
     assert.deepEqual(uiTopicRows.map(row => [row.title, row.published]), [[uiTopicTitle, true]], 'official SDK sees UI-created topic');
     console.log(JSON.stringify({schema, ...init, memberVisible: memberRows.map(row => row.title), guestVisible: guestRows.map(row => row.title), duplicateLinkRejected: true, uiTopicAndReplyPersisted: true, readonlyUiWriteDenied: true}));
   } finally {
-    for (const uiHost of uiHosts) {
-      if (uiHost.exitCode === null) {
-        uiHost.kill('SIGTERM');
-        await Promise.race([once(uiHost, 'exit'), new Promise(resolve => setTimeout(resolve, 3000))]);
-      }
-    }
-    if (server && server.exitCode === null) {
-      server.kill('SIGTERM');
-      await Promise.race([once(server, 'exit'), new Promise(resolve => setTimeout(resolve, 3000))]);
-    }
-    if (/^aip_flaskbb_[a-f0-9]{10}$/.test(schema)) {
-      const adminUrl = dbUrl;
-      spawnSync('psql', ['-X', '-v', 'ON_ERROR_STOP=1', '-d', adminUrl, '-c', `DROP SCHEMA IF EXISTS "${schema}" CASCADE`], {encoding: 'utf8', env});
-    }
-    rmSync(temp, {recursive: true, force: true});
+    const stopped = await Promise.allSettled([...uiHosts, server].filter(Boolean).map(child => stopOwnedProcess(child)));
+    try {
+      const failed = stopped.find(result => result.status === 'rejected');
+      if (failed) throw failed.reason;
+      const infra = `aip_infra_${createHash('sha256').update(schema).digest('hex').slice(0, 52)}`;
+      sql(`DROP SCHEMA IF EXISTS "${schema}" CASCADE; DROP SCHEMA IF EXISTS "${infra}" CASCADE;`);
+    } finally { rmSync(temp, {recursive: true, force: true}); }
   }
 });

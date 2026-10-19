@@ -16,6 +16,12 @@
 
 원본 `Forum.get_topics`는 `important desc, last_updated desc`를 쓴다. core의 Bool 정렬 지원을 Topic 공개 sort에 연결하고 UI의 SDK 요청에 같은 순서 및 동률용 `id asc`를 넣었다. UI 회귀는 누락된 sort로 실패한 뒤 전체 UI·메일 단위 검사 20개가 통과했다. 실제 PostgreSQL 시험은 2+2+1 페이지의 sticky/일반 경계, 동률 UUID 순서, 숨김·삭제 제외, highlight/trivialize 뒤 순서 변경을 검사하도록 CI에 추가했다. 해당 새 DB 시험이 끝나기 전 G-5의 실통합 검증 완료로 취급하지 않는다.
 
+## 2026-10-19 기존 포팅 시험의 재현성 보완 — 통합 실행 대기
+
+`aip-read`와 `features`의 Mac `/private/tmp` Python 절대경로를 제거하고 `AIP_FLASKBB_TEST_PYTHON`을 필수로 받는다. 누락 시 fixture·DB 호출 전에 실패한다. 독립 fixture 3개의 server/UI 종료를 소유 ChildProcess의 bounded SIGTERM/SIGKILL 경로로 통일하고, 앱 schema와 파생 infra schema 및 임시 폴더를 함께 정리한다. 정리 오류는 더 이상 통과로 삼지 않는다.
+
+CLI·검색 일관성·ban·moderation·provisioning·read·features 원래 suite를 Linux CI에 연결했다. 로컬 guard/정의/종료 검사 8 passed/1 Linux-only skipped이며, 새 광범위 suite의 실제 DB/UI 결과는 아직 대기다. 성공하더라도 Whoosh 동등성·물리 삭제·전체 UI/원본 업무 backend 중단 등 미구현 항목은 자동 완료하지 않는다.
+
 ## 고정 기준
 
 - upstream: `https://github.com/flaskbb/flaskbb`, commit `0885238df7c54826adda8cfbe8a831e846e2cb64` (2019-10-25, 2019-10-31 고정 release 시점 이전). 비교·선정 근거는 [선정 기록](../../plan-docs/porting/FLASKBB-SELECTION.md), snapshot은 `upstream/`.

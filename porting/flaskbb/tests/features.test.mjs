@@ -1,7 +1,8 @@
 import {dbUrl} from './harness.mjs';
+import {stopOwnedProcess} from './mail-fixture.mjs';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {generateKeyPairSync, sign, randomUUID} from 'node:crypto';
+import {generateKeyPairSync, sign, randomUUID, createHash} from 'node:crypto';
 import {mkdtempSync, readFileSync, writeFileSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
@@ -17,6 +18,8 @@ const file = join(track, 'app.aip');
 const b64 = value => Buffer.from(JSON.stringify(value)).toString('base64url');
 
 test('FlaskBB ported features: search, profile, conversations, tracker, admin CRUD in real PostgreSQL', {timeout: 60000}, async () => {
+  const python = process.env.AIP_FLASKBB_TEST_PYTHON;
+  assert.ok(python, 'AIP_FLASKBB_TEST_PYTHON must name the run-owned UI Python environment');
   const temp = mkdtempSync(join(tmpdir(), 'aip-flaskbb-feat-'));
   const suffix = randomUUID().replaceAll('-', '').slice(0, 10);
   const schema = `aip_flaskbb_${suffix}`;
@@ -722,7 +725,7 @@ test('FlaskBB ported features: search, profile, conversations, tracker, admin CR
     // 8. Live UI Renderer Integration (UI -> SDK -> AIP -> PG):
     //    Flask UI 렌더러를 직접 기동하여 실제 HTTP 요청으로 Search(검색 비유출), Profile(수정 및 DB반영), Conversations(조회) 검증
     // =========================================================================
-    const python = '/private/tmp/flaskbb-aip-host-venv/bin/python';
+
     const launchUi = async (subject, username) => {
       const uiEnv = {
         PATH: process.env.PATH,
@@ -741,6 +744,7 @@ test('FlaskBB ported features: search, profile, conversations, tracker, admin CR
       const lines = createInterface({input: host.stdout});
       const listening = await Promise.race([
         once(lines, 'line').then(([line]) => JSON.parse(line)),
+        once(host, 'error').then(([error]) => {throw error;}),
         once(host, 'exit').then(([code]) => {throw new Error(`UI host exit ${code}: ${host.stderrText}`);}),
         new Promise((_, reject) => setTimeout(() => reject(new Error(`UI host timeout: ${host.stderrText}`)), 15000).unref())
       ]);
@@ -1087,13 +1091,12 @@ test('FlaskBB ported features: search, profile, conversations, tracker, admin CR
     console.error(error);
     throw error;
   } finally {
-    for (const child of [...uiHosts, server].filter(Boolean)) {
-      if (child.closed) continue;
-      const closed = once(child, 'close');
-      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
-      await closed;
-    }
-    sql(`DROP SCHEMA IF EXISTS "${schema}" CASCADE;`);
-    rmSync(temp, {recursive: true, force: true});
+    const stopped = await Promise.allSettled([...uiHosts, server].filter(Boolean).map(child => stopOwnedProcess(child)));
+    try {
+      const failed = stopped.find(result => result.status === 'rejected');
+      if (failed) throw failed.reason;
+      const infra = `aip_infra_${createHash('sha256').update(schema).digest('hex').slice(0, 52)}`;
+      sql(`DROP SCHEMA IF EXISTS "${schema}" CASCADE; DROP SCHEMA IF EXISTS "${infra}" CASCADE;`);
+    } finally { rmSync(temp, {recursive: true, force: true}); }
   }
 });

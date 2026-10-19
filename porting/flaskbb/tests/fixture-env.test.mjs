@@ -31,3 +31,14 @@ test('all standalone FlaskBB DB suites refuse missing DSN before fixture setup',
     assert.notEqual(r.status,0,name);assert.match(r.stdout+r.stderr,/AIP_TEST_DATABASE_URL is required/,name);
   }
 });
+
+test('live UI suites require their run-owned Python before creating fixtures',()=>{
+  const env=Object.fromEntries(Object.entries(process.env).filter(([key])=>!key.startsWith('PG')&&!['AIP_TEST_DATABASE_URL','AIP_FLASKBB_TEST_DATABASE_URL','AIP_FLASKBB_TEST_PYTHON','NODE_TEST_CONTEXT','NODE_CHANNEL_FD'].includes(key)));
+  for (const name of ['aip-read.test.mjs','features.test.mjs']) {
+    const module=new URL(name,import.meta.url).href;
+    const r=spawnSync(process.execPath,['--input-type=module','-e',`await import(${JSON.stringify(module)});`],{env:{...env,AIP_TEST_DATABASE_URL:valid},encoding:'utf8',timeout:10000});
+    assert.notEqual(r.status,0,name);
+    assert.match(r.stdout+r.stderr,/AIP_FLASKBB_TEST_PYTHON must name the run-owned UI Python environment/,name);
+    assert.doesNotMatch(r.stdout+r.stderr,/service init|psql/, 'configuration failure must precede database calls');
+  }
+});

@@ -108,3 +108,16 @@ jobs:
           "$RUNNER_TEMP/flaskbb-ui/bin/pip" install --no-cache-dir -r porting/flaskbb/ui/requirements.txt
           PYTHONPATH="$GITHUB_WORKSPACE/product/python" "$RUNNER_TEMP/flaskbb-ui/bin/python" -m unittest porting.flaskbb.tests.test_ui_host porting.flaskbb.tests.test_mail_jobs
           node --test porting/flaskbb/tests/sticky-order.test.mjs
+      - name: Revalidate FlaskBB core, CLI and search consistency on main
+        env:
+          AIP_FLASKBB_TEST_PYTHON: ${{ runner.temp }}/flaskbb-ui/bin/python
+        run: >-
+          node --test --test-concurrency=1
+          porting/flaskbb/tests/contract.test.mjs
+          porting/flaskbb/tests/cli.test.mjs
+          porting/flaskbb/tests/search.test.mjs
+          porting/flaskbb/tests/ban.test.mjs
+          porting/flaskbb/tests/moderation.test.mjs
+          porting/flaskbb/tests/provisioning.test.mjs
+          porting/flaskbb/tests/aip-read.test.mjs
+          porting/flaskbb/tests/features.test.mjs

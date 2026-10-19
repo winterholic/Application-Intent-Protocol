@@ -12,6 +12,8 @@ Tests require the same explicit `AIP_TEST_DATABASE_URL` used by the main test ha
 
 For a new, run-owned Compose fixture, choose an unused `FLASKBB_FIX_PG_PORT` and a unique Compose project name, start only `aip-postgres`, then source `tests/env.sh`. The fixture database is `aip_test_flaskbb`; this change does not rename or modify an existing database. The upstream `flaskbb_baseline` database stays separate. CI uses its own disposable PostgreSQL database rather than a local fallback.
 
+The two live UI suites (`aip-read.test.mjs`, `features.test.mjs`) also require `AIP_FLASKBB_TEST_PYTHON` to point to a Python environment owned by that run. Install `ui/requirements.txt` there. A historical Mac temporary venv is never selected implicitly. CI creates its environment under `RUNNER_TEMP`. `mail-jobs.test.mjs` requires an explicit loopback `AIP_FLASKBB_TEST_MAILPIT_URL`; CI owns its Mailpit service and removes it after the job. Tests stop only their child processes, drop their application and derived infrastructure schemas, and remove their own temporary directories. A cleanup failure fails the suite.
+
 ## Existing duplicate mailbox copies (WBS 7.5.5)
 
 `unique user, shared_id` prevents two copies for the same mailbox; the sender and recipient may each retain one copy. An existing source database needs the corresponding physical unique constraint before external adoption. AIP must refuse the missing constraint and must not silently create it or delete data.

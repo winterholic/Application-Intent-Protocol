@@ -1,8 +1,9 @@
 import {dbUrl} from './harness.mjs';
+import {stopOwnedProcess} from './mail-fixture.mjs';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {generateKeyPairSync, sign, randomUUID} from 'node:crypto';
-import {mkdtempSync, readFileSync, writeFileSync} from 'node:fs';
+import {generateKeyPairSync, sign, randomUUID, createHash} from 'node:crypto';
+import {mkdtempSync, readFileSync, writeFileSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
 import {once} from 'node:events';
@@ -432,12 +433,12 @@ test('AIP core provisioning working proposal (contract verification in real Post
       ]
     }));
   } finally {
-    if (server) {
-      server.kill('SIGTERM');
-    }
-    if (serverDisabled) {
-      serverDisabled.kill('SIGTERM');
-    }
-    sql(`DROP SCHEMA IF EXISTS "${schema}" CASCADE;`);
+    const stopped = await Promise.allSettled([server, serverDisabled].filter(Boolean).map(child => stopOwnedProcess(child)));
+    try {
+      const failed = stopped.find(result => result.status === 'rejected');
+      if (failed) throw failed.reason;
+      const infra = `aip_infra_${createHash('sha256').update(schema).digest('hex').slice(0, 52)}`;
+      sql(`DROP SCHEMA IF EXISTS "${schema}" CASCADE; DROP SCHEMA IF EXISTS "${infra}" CASCADE;`);
+    } finally { rmSync(temp, {recursive: true, force: true}); }
   }
 });
