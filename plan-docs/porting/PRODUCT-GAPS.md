@@ -11,7 +11,7 @@
 |---|---|---|
 | 물리 삭제·참조 정리 | 제품 delete 전이는 존재한다. 파서의 `delete_effects` 회귀와 FaceReview 취소 의미를 앱별 삭제 정책·감사·FK 검증과 구분한다. 과거의 문법 부재 서술을 전체 앱 삭제 완료로 바꾸지 않는다 | 먼저 기존 증거 대조, 7.2.4·7.3·7.5 |
 | 음수 Int 범위 | `Int(-1000..1000)` 거부를 재현 후 수정. 5형식 같은 실행 계약, 역전·overflow·unsigned 문맥 거부, operation 안전 정수 영역, 쓰기 값 양 끝/초과 검증. 아래 실행 범위 참조 | 작은 공통 결함부터 처리, 7.2.3 |
-| Bool 정렬 | `sema.rs`는 루트와 1:N 정렬에서 Bool을 제외한다. false/true/NULL·asc/desc·cursor·PG/MySQL 순서를 검증해야 한다 | 다음 작은 언어 후보, 7.5.2 |
+| Bool 정렬 | 루트·1:N 정렬의 Bool 거부를 재현 후 수정. false/true·NULL·asc/desc·id 동률·cursor 값 타입과 행 정책 회귀를 추가했다. 로컬 PostgreSQL initdb는 Codex 명령 샌드박스의 shmget 권한 거부로 차단돼 실DB 검증은 Linux CI에 남는다. MySQL은 SQL·바인딩 검사이며 실DB 동작으로 합산하지 않는다 | 작은 공통 결함부터 처리, 7.5.2 |
 | 상수 기본값 | 파서는 `default database`만 지원한다. create 입력 생략·DDL/adopt·기존 행·계약 hash를 함께 정해야 한다 | 후속 계약 필요, 7.2.3·7.3·7.5.2 |
 | OR·total | 현행 FaceReview 정의에 OR 필터와 total aggregate가 있다. 목록/total을 한 응답으로 주는 원본과 호출 형태가 다르다. 이번 변경에서 실DB oracle 재실행 안 함 | 기존 구현 재사용, 7.2.3 |
 | 공유 기본키·JSON | 현행 fixture의 `id: User`와 Json 지원을 기존 MySQL 증거와 대조한다. Ref 정렬 거부를 공유 PK 자체 거부로 오인하지 않는다. MariaDB longtext는 별도 차이다 | 기존 구현 재사용, 7.2.3 |

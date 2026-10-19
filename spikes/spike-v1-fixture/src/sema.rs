@@ -1640,7 +1640,7 @@ impl<'a> Ctx<'a> {
                 );
             }
             match self.field_tt(&r.name, s) {
-                Some(TT { ty: Ty::Ref(_) | Ty::Json | Ty::Bool, .. }) => self.d("DEF.OP_TYPE_MISMATCH", format!("`{s}`는 정렬 불가 타입"), *sp),
+                Some(TT { ty: Ty::Ref(_) | Ty::Json, .. }) => self.d("DEF.OP_TYPE_MISMATCH", format!("`{s}`는 정렬 불가 타입"), *sp),
                 Some(_) => {}
                 None => self.d("DEF.UNKNOWN_FIELD", format!("sort 대상 `{s}` 없음"), *sp),
             }
@@ -1723,9 +1723,7 @@ impl<'a> Ctx<'a> {
                         self.d("DEF.POLICY_FIELD_NOT_FILTERABLE", format!("`{f}`에는 field read 정책이 있어 정렬에 쓸 수 없음"), *fsp);
                     }
                     match self.field_tt(&m.child, f) {
-                        Some(TT { ty: Ty::Ref(_) | Ty::Json | Ty::Bool, .. }) => {
-                            self.d("DEF.OP_TYPE_MISMATCH", format!("`{f}`는 정렬 불가 타입"), *fsp)
-                        }
+                        Some(TT { ty: Ty::Ref(_) | Ty::Json, .. }) => self.d("DEF.OP_TYPE_MISMATCH", format!("`{f}`는 정렬 불가 타입"), *fsp),
                         Some(_) => {}
                         None => self.d("DEF.UNKNOWN_FIELD", format!("sort 대상 `{f}` 없음"), *fsp),
                     }

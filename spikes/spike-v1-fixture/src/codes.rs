@@ -354,7 +354,7 @@ pub static REGISTRY: &[Info] = &[
     i(
         "DEF.OP_TYPE_MISMATCH",
         "the operator is not defined for the type of the field",
-        "For example `gte` needs an ordered type (Time, Date, Int, Decimal), `prefix`, `contains` and `like` need Text, `isNull` needs a nullable field, and Bool or reference fields cannot be sorted.",
+        "For example `gte` needs an ordered type (Time, Date, Int, Decimal), `prefix`, `contains` and `like` need Text, `isNull` needs a nullable field, and Json or reference fields cannot be sorted.",
         "Use an operator that fits the type, or filter by another field.",
         "",
     ),

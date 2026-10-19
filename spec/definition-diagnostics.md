@@ -320,7 +320,7 @@ a filter operator that does not exist
 
 the operator is not defined for the type of the field
 
-- 원인: For example `gte` needs an ordered type (Time, Date, Int, Decimal), `prefix`, `contains` and `like` need Text, `isNull` needs a nullable field, and Bool or reference fields cannot be sorted.
+- 원인: For example `gte` needs an ordered type (Time, Date, Int, Decimal), `prefix`, `contains` and `like` need Text, `isNull` needs a nullable field, and Json or reference fields cannot be sorted.
 - 수정: Use an operator that fits the type, or filter by another field.
 
 ### `DEF.TYPE_MISMATCH`
