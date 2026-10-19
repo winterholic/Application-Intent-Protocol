@@ -1,5 +1,11 @@
 # FlaskBB 전체 포팅 상태
 
+## 2026-10-20 G-10 모더레이터 차단 — 구현 불가, 현재 동작 고정과 설계안
+
+원본은 `mod_banuser` 보유자(Moderator·Super Moderator, secondary 포함)가 `user.ban()`·`unban()`으로 primary group을 Banned·Member로 교체한다(자기 차단·moderator의 admin 차단만 거부). 이 포팅의 `to`는 경로 값(`actor.`·`this.` 참조)만 받아 서버가 고른 Banned·Member 행을 대입할 수 없고, `patch` 값도 조건으로 제한할 수 없다. `service check` 재확인: `the Group where banned`·`patch … where`는 `DEF.PARSE_UNKNOWN_KEY`, 상수 `6`·`"6"`은 `DEF.TYPE_MISMATCH`, `allow`의 `input.primary_group`은 `DEF.UNKNOWN_FIELD`로 거부됐고 경로 값만 통과했다. core 기능이 필요한 범위라 임의로 만들지 않고 [PRODUCT-GAPS G-10](PRODUCT-GAPS.md)에 거부 근거와 결정 항목(대상 보호·복귀처·self-ban의 원본 조건 유지 여부)을 남겼다.
+
+`moderator-ban.test.mjs`(실DB)는 원본과 다른 쪽(`mod_banuser=true` Moderator·Super Moderator·secondary 보유자의 ban 거부, moderator 자기 승격 거부)과 결과만 같은 쪽(moderator의 admin 차단 거부), 그리고 거부가 권한 거부임을 보이는 관리자 positive control을 현재 동작으로 고정한다. 이 시험의 거부 단언은 원본 동등 기능이 생기면 허용으로 뒤집어야 한다. 로컬 실DB 실행은 검증 샌드박스의 named SysV shm 거부로 미실행이며 Linux CI로 판정한다. G-10은 닫히지 않았고 7.5.2의 이 항목은 미완료로 유지한다.
+
 ## 2026-10-20 G-6 삭제·숨김 뒤 last-post 재계산 — 구현 불가, 현재 동작 고정과 설계안
 
 원본은 `Post.hide`·`Post.delete`에서 그 글이 topic·forum의 마지막 글이면 forum의 `last_post*`를 남은 최근 글(없으면 NULL)로, topic `last_updated`를 새 마지막 글 시각으로 되돌린다. 이 포팅의 `update` 효과는 현재 행·actor·`now` 값만 받아 집합 값을 못 만든다. 집계·`latest` 값은 `service check`가 `DEF.PARSE_EXPECTED`로 거부했고 경로 값만 통과했다. core 기능이 필요한 범위라 임의로 만들지 않고 [PRODUCT-GAPS G-6](PRODUCT-GAPS.md)에 설계안과 결정 항목을 남겼다.
