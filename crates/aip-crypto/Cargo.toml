@@ -1,0 +1,30 @@
+[package]
+name = "aip-crypto"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+# Offline migration code is absent from normal product builds.
+legacy-import = []
+
+[dependencies]
+aes-gcm = { version = "0.11.1", features = ["zeroize"] }
+base64 = "0.22"
+hkdf = "0.12"
+hmac = "0.12"
+sha2 = "0.10"
+zeroize = { version = "1", features = ["std"] }
+lru = "0.18"
+tokio = { version = "1", features = ["rt", "time"] }
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["fs", "process"] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt", "time", "test-util"] }
+
+[lints]
+workspace = true

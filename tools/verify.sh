@@ -34,6 +34,9 @@ for engine in spike-v1-fixture spike-v2-read spike-v3-write spike-v4-worker spik
   cargo clippy --manifest-path "spikes/$engine/Cargo.toml" --all-targets --locked --target-dir target -- -D warnings
 done
 cargo test --workspace --locked
+# Legacy import is isolated from runtime builds but remains part of the offline migration gate.
+cargo clippy -p aip-crypto --all-targets --all-features --locked -- -D warnings
+cargo test -p aip-crypto --all-features --locked
 cargo test -p aip-cli --features poc-runtime --locked
 # These product engines are path dependencies excluded from the root workspace.
 # v4 (worker) and v6 (transport) are included because their regressions (S-24) were otherwise caught only by CI.
