@@ -1,0 +1,17 @@
+{
+  "schema": "aip_flaskbb",
+  "database_url_env": "AIP_FLASKBB_DATABASE",
+  "listen": "127.0.0.1:0",
+  "wire": "decimal",
+  "allowed_origins": [
+    "http://127.0.0.1:58080"
+  ],
+  "auth": {
+    "issuer": "https://flaskbb.test",
+    "audience": "aip-flaskbb",
+    "jwks": {
+      "kind": "file",
+      "path": "./fixture-jwks.json"
+    }
+  }
+}

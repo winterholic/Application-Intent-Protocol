@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="FlaskBB forum">
+    <title>{% block title %}FlaskBB{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/pygments.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+</head>
+<body>
+<div class="flaskbb-layout"><div class="container">
+    <header class="flaskbb-header">
+        <div class="flaskbb-meta"><div class="flaskbb-title">FlaskBB</div><div class="flaskbb-subtitle">A lightweight forum software in Flask</div></div>
+    </header>
+    <nav class="navbar navbar-default" role="navigation"><div class="collapse navbar-collapse">
+        <ul class="nav navbar-nav forum-nav">
+            <li><a href="{{ url_for('forum_index') }}"><span class="fa fa-comment"></span> Forum</a></li>
+            <li><a href="{{ url_for('member_list') }}"><span class="fa fa-users"></span> Users</a></li>
+            <li><a href="{{ url_for('search') }}"><span class="fa fa-search"></span> Search</a></li>
+            {% if user %}
+            <li><a href="{{ url_for('conversations_inbox') }}"><span class="fa fa-envelope"></span> Messages</a></li>
+            {% endif %}
+        </ul>
+        <ul class="nav navbar-nav navbar-right">
+            {% if logout_url and user and user.username %}
+            <li><a class="btn btn-default navbar-btn" href="{{ url_for('user_profile', username=user.username) }}">{{ user.username }}</a></li>
+            <li><a class="btn btn-default navbar-btn" href="{{ url_for('user_settings') }}"><span class="fa fa-cog"></span> Settings</a></li>
+            <li><form method="post" action="{{ logout_url }}" style="display:inline;"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn btn-default navbar-btn">Logout</button></form></li>
+            {% elif logout_url %}
+            <li><form method="post" action="{{ logout_url }}" style="display:inline;"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn btn-default navbar-btn">Logout</button></form></li>
+            {% else %}
+            <li><a class="btn btn-primary navbar-btn" href="{{ url_for('login') }}"><span class="fa fa-user"></span> Login</a></li>
+            <li><a class="btn btn-default navbar-btn" href="{{ url_for('register') }}">Register</a></li>
+            {% endif %}
+        </ul>
+    </div></nav>
+    <main>{% block content %}{% endblock %}</main>
+</div>
+<footer class="flaskbb-footer"><div class="container"><div class="text-muted">powered by <a href="https://flaskbb.org">FlaskBB</a> · © 2013 - FlaskBB Team</div></div></footer>
+</div>
+</body>
+</html>

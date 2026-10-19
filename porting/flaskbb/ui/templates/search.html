@@ -1,0 +1,90 @@
+{% extends "layout.html" %}
+{% block title %}Search - FlaskBB{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Search</h1>
+</div>
+
+<div class="panel panel-default">
+    <div class="panel-body">
+        <form method="get" action="{{ url_for('search') }}" class="form-inline">
+            <div class="form-group">
+                <input type="text" name="q" value="{{ query or '' }}" class="form-control" placeholder="Search keywords..." style="width: 300px;" required>
+            </div>
+            <div class="form-group">
+                <select name="type" class="form-control">
+                    <option value="all" {% if search_type == 'all' %}selected{% endif %}>All</option>
+                    <option value="topic" {% if search_type == 'topic' %}selected{% endif %}>Topics</option>
+                    <option value="post" {% if search_type == 'post' %}selected{% endif %}>Posts</option>
+                    <option value="user" {% if search_type == 'user' %}selected{% endif %}>Users</option>
+                    <option value="forum" {% if search_type == 'forum' %}selected{% endif %}>Forums</option>
+                </select>
+            </div>
+            <button type="submit" class="btn btn-primary"><span class="fa fa-search"></span> Search</button>
+        </form>
+    </div>
+</div>
+
+{% if query %}
+<h3>Search Results for "{{ query }}"</h3>
+
+{% if search_type in ['all', 'topic'] and topics %}
+<div class="panel panel-default">
+    <div class="panel-heading"><h4>Matching Topics ({{ topics|length }})</h4></div>
+    <ul class="list-group">
+        {% for t in topics %}
+        <li class="list-group-item">
+            <a href="{{ url_for('topic_view', topic_id=t.id) }}"><strong>{{ t.title }}</strong></a>
+            <span class="text-muted">by {{ t.username }}</span>
+        </li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
+{% if search_type in ['all', 'post'] and posts %}
+<div class="panel panel-default">
+    <div class="panel-heading"><h4>Matching Posts ({{ posts|length }})</h4></div>
+    <ul class="list-group">
+        {% for p in posts %}
+        <li class="list-group-item">
+            <span class="text-muted">In topic <a href="{{ url_for('topic_view', topic_id=p.topic) }}">{{ p.topic }}</a> by {{ p.username }}:</span>
+            <p>{{ p.content }}</p>
+        </li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
+{% if search_type in ['all', 'user'] and users %}
+<div class="panel panel-default">
+    <div class="panel-heading"><h4>Matching Users ({{ users|length }})</h4></div>
+    <ul class="list-group">
+        {% for u in users %}
+        <li class="list-group-item">
+            <a href="{{ url_for('user_profile', username=u.username) }}"><strong>{{ u.username }}</strong></a>
+        </li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
+{% if search_type in ['all', 'forum'] and forums %}
+<div class="panel panel-default">
+    <div class="panel-heading"><h4>Matching Forums ({{ forums|length }})</h4></div>
+    <ul class="list-group">
+        {% for f in forums %}
+        <li class="list-group-item">
+            <a href="{{ url_for('forum_view', forum_id=f.id) }}"><strong>{{ f.title }}</strong></a>
+            <span class="text-muted">{{ f.description or '' }}</span>
+        </li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
+{% if not topics and not posts and not users and not forums %}
+<div class="alert alert-info">No matching results found.</div>
+{% endif %}
+{% endif %}
+{% endblock %}

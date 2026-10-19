@@ -1,0 +1,53 @@
+services:
+  aip-postgres:
+    image: postgres:14.18-alpine
+    environment:
+      POSTGRES_DB: aip_flaskbb
+      POSTGRES_USER: aip_flaskbb
+      POSTGRES_PASSWORD: aip_flaskbb_fixture_password
+    ports:
+      - "127.0.0.1:55439:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aip_flaskbb -d aip_flaskbb"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    tmpfs:
+      - /var/lib/postgresql/data
+  postgres:
+    image: postgres:14.18-alpine
+    environment:
+      POSTGRES_DB: flaskbb_baseline
+      POSTGRES_USER: flaskbb
+      POSTGRES_PASSWORD: flaskbb_fixture_password
+    ports:
+      - "127.0.0.1:55438:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flaskbb -d flaskbb_baseline"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    tmpfs:
+      - /var/lib/postgresql/data
+  redis:
+    image: redis:5.0.14-alpine
+    ports:
+      - "127.0.0.1:56379:6379"
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+  app:
+    build:
+      context: ../../
+      dockerfile: porting/flaskbb/compat/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      - ./runtime:/runtime:ro
+      - ./state:/state
+    environment:
+      FLASKBB_SETTINGS: /runtime/flaskbb.cfg
+      PYTHONDONTWRITEBYTECODE: "1"
+    ports:
+      - "127.0.0.1:58080:5000"

@@ -1,0 +1,19 @@
+Scope: captured excerpt, not a complete raw log. The full command output was overwritten by a later rerun before it was saved.
+Execution environment: Mac Studio command runner; cargo test subprocess, not a deployed service runtime.
+Command:
+DATABASE_URL='postgresql://localhost:5432/postgres' TEST_DATABASE_URL='postgresql://localhost:5432/postgres' CARGO_TARGET_DIR=/private/tmp/aip-flaskbb-verifier-target cargo test -p aip-auth --offline
+Failed stage: integration test binary tests/jwt.rs, test maps_verified_subject_to_existing_actor_and_checks_revocation_each_call. That file's psql and AuthenticatorImpl calls had hardcoded `host=localhost dbname=postgres`, bypassing both environment variables and the dedicated fixture DB.
+Observed excerpt:
+---- maps_verified_subject_to_existing_actor_and_checks_revocation_each_call stdout ----
+thread 'maps_verified_subject_to_existing_actor_and_checks_revocation_each_call' panicked at crates/aip-auth/tests/jwt.rs:27:5:
+ERROR: duplicate key value violates unique constraint "pg_namespace_nspname_index"
+DETAIL: Key (nspname)=(aip_auth_19387_1792219434204611000) already exists.
+
+failures:
+    maps_verified_subject_to_existing_actor_and_checks_revocation_each_call
+
+test result: FAILED. 9 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out
+error: test failed, to rerun pass `-p aip-auth --test jwt`
+
+Follow-up boundary: code was changed so both aip-auth integration test files use only 127.0.0.1:55439/aip_flaskbb. The full suite was rerun with the same hostile environment variables and passed. The default endpoint/schema was not inspected, cleaned, or used again; whether any residual state exists is unverified.
+Additional earlier invocation in this Run: `CARGO_TARGET_DIR=/private/tmp/aip-flaskbb-verifier-target TEST_DATABASE_URL='postgresql://aip_flaskbb:...@127.0.0.1:55439/aip_flaskbb' cargo test -p aip-auth --offline` reported all tests passed, but this was not an isolated-DB pass: `durable.rs` used the environment override while `jwt.rs` ignored it and used `host=localhost dbname=postgres`. Its test used a dynamic schema and SchemaGuard::drop attempted cleanup, but cleanup output is discarded; no connection was made to verify the residual state. Its output was saved as `run-cargo-test-aip-auth.log` and must be treated as mixed-target/unusable for the isolated-DB claim. Neither default-DB invocation was repeated after both test files were pinned.

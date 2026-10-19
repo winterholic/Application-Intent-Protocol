@@ -1,0 +1,28 @@
+{% extends "layout.html" %}
+{% block title %}Members - FlaskBB{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Member List</h1>
+</div>
+
+<div class="panel panel-default">
+    <table class="table table-striped">
+        <thead>
+            <tr>
+                <th>Username</th>
+                <th>Group</th>
+                <th>Posts</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for m in members %}
+            <tr>
+                <td><a href="{{ url_for('user_profile', username=m.username) }}"><strong>{{ m.username }}</strong></a></td>
+                <td>{{ m.primary_group.name if m.primary_group else 'Member' }}</td>
+                <td>{{ m.post_count or 0 }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

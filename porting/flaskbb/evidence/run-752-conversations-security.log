@@ -1,0 +1,11 @@
+# 2026-10-17T22:52:28Z commit ade4a89cd905dd3b76d137f80b9685b71c7efd2a
+{"schema":"aip_flaskbb_e41f88d20c","ok":true}
+✔ FlaskBB conversations cannot forge the sender or mislabel a third party mailbox (real PostgreSQL) (1844.608792ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1924.7795

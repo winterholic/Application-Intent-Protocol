@@ -1,0 +1,5 @@
+200 /
+200 /portal/
+200 /auth/login
+200 /memberlist
+302 /admin/

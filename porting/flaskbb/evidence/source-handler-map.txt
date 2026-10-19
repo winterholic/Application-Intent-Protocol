@@ -1,0 +1,256 @@
+porting/flaskbb/extensions-source/conversations/views.py:44:def check_message_box_space(redirect_to=None):
+porting/flaskbb/extensions-source/conversations/views.py:63:def require_message_box_space(f):
+porting/flaskbb/extensions-source/conversations/views.py:74:class Inbox(MethodView):
+porting/flaskbb/extensions-source/conversations/views.py:90:        return render_template("inbox.html", conversations=conversations)
+porting/flaskbb/extensions-source/conversations/views.py:93:class ViewConversation(MethodView):
+porting/flaskbb/extensions-source/conversations/views.py:108:        return render_template(
+porting/flaskbb/extensions-source/conversations/views.py:163:        return render_template(
+porting/flaskbb/extensions-source/conversations/views.py:168:class NewConversation(MethodView):
+porting/flaskbb/extensions-source/conversations/views.py:175:        return render_template(
+porting/flaskbb/extensions-source/conversations/views.py:229:        return render_template(
+porting/flaskbb/extensions-source/conversations/views.py:234:class EditConversation(MethodView):
+porting/flaskbb/extensions-source/conversations/views.py:252:        return render_template(
+porting/flaskbb/extensions-source/conversations/views.py:310:        return render_template(
+porting/flaskbb/extensions-source/conversations/views.py:315:class RawMessage(MethodView):
+porting/flaskbb/extensions-source/conversations/views.py:335:class MoveConversation(MethodView):
+porting/flaskbb/extensions-source/conversations/views.py:349:class RestoreConversation(MethodView):
+porting/flaskbb/extensions-source/conversations/views.py:362:class DeleteConversation(MethodView):
+porting/flaskbb/extensions-source/conversations/views.py:374:class SentMessages(MethodView):
+porting/flaskbb/extensions-source/conversations/views.py:392:        return render_template("sent.html", conversations=conversations)
+porting/flaskbb/extensions-source/conversations/views.py:395:class DraftMessages(MethodView):
+porting/flaskbb/extensions-source/conversations/views.py:412:        return render_template("drafts.html", conversations=conversations)
+porting/flaskbb/extensions-source/conversations/views.py:415:class TrashedMessages(MethodView):
+porting/flaskbb/extensions-source/conversations/views.py:431:        return render_template("trash.html", conversations=conversations)
+porting/flaskbb/extensions-source/conversations/utils.py:21:def get_unread_count(user):
+porting/flaskbb/extensions-source/conversations/utils.py:32:def get_message_count(user):
+porting/flaskbb/extensions-source/conversations/utils.py:44:def get_latest_messages(user):
+porting/flaskbb/extensions-source/conversations/utils.py:59:def invalidate_cache(user):
+porting/flaskbb/extensions-source/conversations/__init__.py:33:def flaskbb_load_migrations():
+porting/flaskbb/extensions-source/conversations/__init__.py:38:def flaskbb_load_translations():
+porting/flaskbb/extensions-source/conversations/__init__.py:43:def flaskbb_load_blueprints(app):
+porting/flaskbb/extensions-source/conversations/__init__.py:48:def flaskbb_tpl_user_nav_loggedin_before():
+porting/flaskbb/extensions-source/conversations/__init__.py:49:    return render_template(
+porting/flaskbb/extensions-source/conversations/__init__.py:57:def flaskbb_tpl_profile_sidebar_stats(user):
+porting/flaskbb/extensions-source/conversations/__init__.py:58:    return render_template("_inject_new_message_button.html", user=user)
+porting/flaskbb/extensions-source/conversations/__init__.py:62:def flaskbb_tpl_post_author_info_after(user, post):
+porting/flaskbb/extensions-source/conversations/__init__.py:63:    return render_template(
+porting/flaskbb/upstream/flaskbb/forum/views.py:50:class ForumIndex(MethodView):
+porting/flaskbb/upstream/flaskbb/forum/views.py:73:        return render_template(
+porting/flaskbb/upstream/flaskbb/forum/views.py:85:class ViewCategory(MethodView):
+porting/flaskbb/upstream/flaskbb/forum/views.py:92:        return render_template(
+porting/flaskbb/upstream/flaskbb/forum/views.py:97:class ViewForum(MethodView):
+porting/flaskbb/upstream/flaskbb/forum/views.py:124:        return render_template(
+porting/flaskbb/upstream/flaskbb/forum/views.py:132:class ViewPost(MethodView):
+porting/flaskbb/upstream/flaskbb/forum/views.py:163:class ViewTopic(MethodView):
+porting/flaskbb/upstream/flaskbb/forum/views.py:207:        return render_template(
+porting/flaskbb/upstream/flaskbb/forum/views.py:251:class NewTopic(MethodView):
+porting/flaskbb/upstream/flaskbb/forum/views.py:266:        return render_template(
+porting/flaskbb/upstream/flaskbb/forum/views.py:280:        return render_template(
+porting/flaskbb/upstream/flaskbb/forum/views.py:292:class EditTopic(MethodView):
+porting/flaskbb/upstream/flaskbb/forum/views.py:311:        return render_template(
+porting/flaskbb/upstream/flaskbb/forum/views.py:326:        return render_template(
+porting/flaskbb/upstream/flaskbb/forum/views.py:335:class ManageForum(MethodView):
+porting/flaskbb/upstream/flaskbb/forum/views.py:371:        return render_template(
+porting/flaskbb/upstream/flaskbb/forum/views.py:509:class NewPost(MethodView):
+porting/flaskbb/upstream/flaskbb/forum/views.py:534:        return render_template(
+porting/flaskbb/upstream/flaskbb/forum/views.py:550:        return render_template("forum/new_post.html", topic=topic, form=form)
+porting/flaskbb/upstream/flaskbb/forum/views.py:557:class EditPost(MethodView):
+porting/flaskbb/upstream/flaskbb/forum/views.py:579:        return render_template(
+porting/flaskbb/upstream/flaskbb/forum/views.py:592:        return render_template(
+porting/flaskbb/upstream/flaskbb/forum/views.py:601:class ReportView(MethodView):
+porting/flaskbb/upstream/flaskbb/forum/views.py:606:        return render_template("forum/report_post.html", form=self.form())
+porting/flaskbb/upstream/flaskbb/forum/views.py:615:        return render_template("forum/report_post.html", form=form)
+porting/flaskbb/upstream/flaskbb/forum/views.py:618:class MemberList(MethodView):
+porting/flaskbb/upstream/flaskbb/forum/views.py:641:        return render_template(
+porting/flaskbb/upstream/flaskbb/forum/views.py:667:            return render_template(
+porting/flaskbb/upstream/flaskbb/forum/views.py:674:        return render_template(
+porting/flaskbb/upstream/flaskbb/forum/views.py:679:class TopicTracker(MethodView):
+porting/flaskbb/upstream/flaskbb/forum/views.py:705:        return render_template("forum/topictracker.html", topics=topics)
+porting/flaskbb/upstream/flaskbb/forum/views.py:723:class Search(MethodView):
+porting/flaskbb/upstream/flaskbb/forum/views.py:727:        return render_template("forum/search_form.html", form=self.form())
+porting/flaskbb/upstream/flaskbb/forum/views.py:733:            return render_template(
+porting/flaskbb/upstream/flaskbb/forum/views.py:737:        return render_template("forum/search_form.html", form=form)
+porting/flaskbb/upstream/flaskbb/forum/views.py:740:class DeleteTopic(MethodView):
+porting/flaskbb/upstream/flaskbb/forum/views.py:760:class LockTopic(MethodView):
+porting/flaskbb/upstream/flaskbb/forum/views.py:781:class UnlockTopic(MethodView):
+porting/flaskbb/upstream/flaskbb/forum/views.py:802:class HighlightTopic(MethodView):
+porting/flaskbb/upstream/flaskbb/forum/views.py:823:class TrivializeTopic(MethodView):
+porting/flaskbb/upstream/flaskbb/forum/views.py:844:class DeletePost(MethodView):
+porting/flaskbb/upstream/flaskbb/forum/views.py:871:class RawPost(MethodView):
+porting/flaskbb/upstream/flaskbb/forum/views.py:889:class MarkRead(MethodView):
+porting/flaskbb/upstream/flaskbb/forum/views.py:955:class WhoIsOnline(MethodView):
+porting/flaskbb/upstream/flaskbb/forum/views.py:962:        return render_template(
+porting/flaskbb/upstream/flaskbb/forum/views.py:967:class TrackTopic(MethodView):
+porting/flaskbb/upstream/flaskbb/forum/views.py:987:class UntrackTopic(MethodView):
+porting/flaskbb/upstream/flaskbb/forum/views.py:1007:class HideTopic(MethodView):
+porting/flaskbb/upstream/flaskbb/forum/views.py:1024:class UnhideTopic(MethodView):
+porting/flaskbb/upstream/flaskbb/forum/views.py:1040:class HidePost(MethodView):
+porting/flaskbb/upstream/flaskbb/forum/views.py:1070:class UnhidePost(MethodView):
+porting/flaskbb/upstream/flaskbb/forum/views.py:1091:class MarkdownPreview(MethodView):
+porting/flaskbb/upstream/flaskbb/forum/views.py:1113:def flaskbb_load_blueprints(app):
+porting/flaskbb/upstream/flaskbb/user/views.py:42:class UserSettings(MethodView):
+porting/flaskbb/upstream/flaskbb/user/views.py:70:        return render_template("user/general_settings.html", form=self.form)
+porting/flaskbb/upstream/flaskbb/user/views.py:77:class ChangePassword(MethodView):
+porting/flaskbb/upstream/flaskbb/user/views.py:104:        return render_template("user/change_password.html", form=self.form)
+porting/flaskbb/upstream/flaskbb/user/views.py:111:class ChangeEmail(MethodView):
+porting/flaskbb/upstream/flaskbb/user/views.py:138:        return render_template("user/change_email.html", form=self.form)
+porting/flaskbb/upstream/flaskbb/user/views.py:145:class ChangeUserDetails(MethodView):
+porting/flaskbb/upstream/flaskbb/user/views.py:173:        return render_template("user/change_user_details.html", form=self.form)
+porting/flaskbb/upstream/flaskbb/user/views.py:179:class AllUserTopics(MethodView):  # pragma: no cover
+porting/flaskbb/upstream/flaskbb/user/views.py:184:        return render_template("user/all_topics.html", user=user, topics=topics)
+porting/flaskbb/upstream/flaskbb/user/views.py:187:class AllUserPosts(MethodView):  # pragma: no cover
+porting/flaskbb/upstream/flaskbb/user/views.py:192:        return render_template("user/all_posts.html", user=user, posts=posts)
+porting/flaskbb/upstream/flaskbb/user/views.py:195:class UserProfile(MethodView):  # pragma: no cover
+porting/flaskbb/upstream/flaskbb/user/views.py:198:        return render_template("user/profile.html", user=user)
+porting/flaskbb/upstream/flaskbb/user/views.py:202:def flaskbb_load_blueprints(app):
+porting/flaskbb/extensions-source/portal/views.py:25:def inject_portal_link():
+porting/flaskbb/extensions-source/portal/views.py:26:    return render_template("navigation_snippet.html")
+porting/flaskbb/extensions-source/portal/views.py:29:@portal.route("/")
+porting/flaskbb/extensions-source/portal/views.py:30:def index():
+porting/flaskbb/extensions-source/portal/views.py:78:    return render_template(
+porting/flaskbb/upstream/flaskbb/forum/locals.py:18:def current_post():
+porting/flaskbb/upstream/flaskbb/forum/locals.py:23:def current_topic():
+porting/flaskbb/upstream/flaskbb/forum/locals.py:30:def current_forum():
+porting/flaskbb/upstream/flaskbb/forum/locals.py:37:def current_category():
+porting/flaskbb/upstream/flaskbb/forum/locals.py:43:def _get_item(model, view_arg, name):
+porting/flaskbb/upstream/flaskbb/management/views.py:49:class ManagementSettings(MethodView):
+porting/flaskbb/upstream/flaskbb/management/views.py:102:        return render_template(
+porting/flaskbb/upstream/flaskbb/management/views.py:129:        return render_template(
+porting/flaskbb/upstream/flaskbb/management/views.py:138:class ManageUsers(MethodView):
+porting/flaskbb/upstream/flaskbb/management/views.py:159:        return render_template(
+porting/flaskbb/upstream/flaskbb/management/views.py:170:            return render_template(
+porting/flaskbb/upstream/flaskbb/management/views.py:178:        return render_template(
+porting/flaskbb/upstream/flaskbb/management/views.py:183:class EditUser(MethodView):
+porting/flaskbb/upstream/flaskbb/management/views.py:225:        return render_template(
+porting/flaskbb/upstream/flaskbb/management/views.py:270:        return render_template(
+porting/flaskbb/upstream/flaskbb/management/views.py:275:class DeleteUser(MethodView):
+porting/flaskbb/upstream/flaskbb/management/views.py:309:            return jsonify(
+porting/flaskbb/upstream/flaskbb/management/views.py:327:class AddUser(MethodView):
+porting/flaskbb/upstream/flaskbb/management/views.py:341:        return render_template(
+porting/flaskbb/upstream/flaskbb/management/views.py:352:        return render_template(
+porting/flaskbb/upstream/flaskbb/management/views.py:357:class BannedUsers(MethodView):
+porting/flaskbb/upstream/flaskbb/management/views.py:378:        return render_template(
+porting/flaskbb/upstream/flaskbb/management/views.py:396:            return render_template(
+porting/flaskbb/upstream/flaskbb/management/views.py:402:        return render_template(
+porting/flaskbb/upstream/flaskbb/management/views.py:409:class BanUser(MethodView):
+porting/flaskbb/upstream/flaskbb/management/views.py:459:            return jsonify(
+porting/flaskbb/upstream/flaskbb/management/views.py:480:class UnbanUser(MethodView):
+porting/flaskbb/upstream/flaskbb/management/views.py:520:            return jsonify(
+porting/flaskbb/upstream/flaskbb/management/views.py:537:class Groups(MethodView):
+porting/flaskbb/upstream/flaskbb/management/views.py:557:        return render_template("management/groups.html", groups=groups)
+porting/flaskbb/upstream/flaskbb/management/views.py:560:class AddGroup(MethodView):
+porting/flaskbb/upstream/flaskbb/management/views.py:574:        return render_template(
+porting/flaskbb/upstream/flaskbb/management/views.py:587:        return render_template(
+porting/flaskbb/upstream/flaskbb/management/views.py:592:class EditGroup(MethodView):
+porting/flaskbb/upstream/flaskbb/management/views.py:608:        return render_template(
+porting/flaskbb/upstream/flaskbb/management/views.py:626:        return render_template(
+porting/flaskbb/upstream/flaskbb/management/views.py:631:class DeleteGroup(MethodView):
+porting/flaskbb/upstream/flaskbb/management/views.py:661:                return jsonify(
+porting/flaskbb/upstream/flaskbb/management/views.py:667:            return jsonify(
+porting/flaskbb/upstream/flaskbb/management/views.py:693:class Forums(MethodView):
+porting/flaskbb/upstream/flaskbb/management/views.py:707:        return render_template("management/forums.html", categories=categories)
+porting/flaskbb/upstream/flaskbb/management/views.py:710:class EditForum(MethodView):
+porting/flaskbb/upstream/flaskbb/management/views.py:735:        return render_template(
+porting/flaskbb/upstream/flaskbb/management/views.py:756:        return render_template(
+porting/flaskbb/upstream/flaskbb/management/views.py:761:class AddForum(MethodView):
+porting/flaskbb/upstream/flaskbb/management/views.py:783:        return render_template(
+porting/flaskbb/upstream/flaskbb/management/views.py:800:        return render_template(
+porting/flaskbb/upstream/flaskbb/management/views.py:805:class DeleteForum(MethodView):
+porting/flaskbb/upstream/flaskbb/management/views.py:830:class AddCategory(MethodView):
+porting/flaskbb/upstream/flaskbb/management/views.py:844:        return render_template(
+porting/flaskbb/upstream/flaskbb/management/views.py:858:        return render_template(
+porting/flaskbb/upstream/flaskbb/management/views.py:863:class EditCategory(MethodView):
+porting/flaskbb/upstream/flaskbb/management/views.py:881:        return render_template(
+porting/flaskbb/upstream/flaskbb/management/views.py:897:        return render_template(
+porting/flaskbb/upstream/flaskbb/management/views.py:904:class DeleteCategory(MethodView):
+porting/flaskbb/upstream/flaskbb/management/views.py:929:class Reports(MethodView):
+porting/flaskbb/upstream/flaskbb/management/views.py:947:        return render_template("management/reports.html", reports=reports)
+porting/flaskbb/upstream/flaskbb/management/views.py:950:class UnreadReports(MethodView):
+porting/flaskbb/upstream/flaskbb/management/views.py:969:        return render_template("management/reports.html", reports=reports)
+porting/flaskbb/upstream/flaskbb/management/views.py:972:class MarkReportRead(MethodView):
+porting/flaskbb/upstream/flaskbb/management/views.py:1005:            return jsonify(
+porting/flaskbb/upstream/flaskbb/management/views.py:1043:class DeleteReport(MethodView):
+porting/flaskbb/upstream/flaskbb/management/views.py:1073:            return jsonify(
+porting/flaskbb/upstream/flaskbb/management/views.py:1086:class CeleryStatus(MethodView):
+porting/flaskbb/upstream/flaskbb/management/views.py:1108:        return jsonify(celery_running=celery_running, status=200)
+porting/flaskbb/upstream/flaskbb/management/views.py:1111:class ManagementOverview(MethodView):
+porting/flaskbb/upstream/flaskbb/management/views.py:1163:        return render_template("management/overview.html", **stats)
+porting/flaskbb/upstream/flaskbb/management/views.py:1166:class PluginsView(MethodView):
+porting/flaskbb/upstream/flaskbb/management/views.py:1180:        return render_template("management/plugins.html", plugins=plugins)
+porting/flaskbb/upstream/flaskbb/management/views.py:1183:class EnablePlugin(MethodView):
+porting/flaskbb/upstream/flaskbb/management/views.py:1218:class DisablePlugin(MethodView):
+porting/flaskbb/upstream/flaskbb/management/views.py:1252:class UninstallPlugin(MethodView):
+porting/flaskbb/upstream/flaskbb/management/views.py:1273:class InstallPlugin(MethodView):
+porting/flaskbb/upstream/flaskbb/management/views.py:1304:def flaskbb_load_blueprints(app):
+porting/flaskbb/extensions-source/conversations/migrations/201802171929_0625bc75ab77_add_conversations.py:20:def upgrade():
+porting/flaskbb/extensions-source/conversations/migrations/201802171929_0625bc75ab77_add_conversations.py:54:def downgrade():
+porting/flaskbb/upstream/flaskbb/user/services/factories.py:34:def details_update_factory():
+porting/flaskbb/upstream/flaskbb/user/services/factories.py:45:def password_update_handler():
+porting/flaskbb/upstream/flaskbb/user/services/factories.py:55:def email_update_handler():
+porting/flaskbb/upstream/flaskbb/user/services/factories.py:65:def settings_update_handler():
+porting/flaskbb/upstream/flaskbb/user/services/factories.py:69:def settings_form_factory():
+porting/flaskbb/upstream/flaskbb/user/services/factories.py:82:def change_password_form_factory():
+porting/flaskbb/upstream/flaskbb/user/services/factories.py:86:def change_email_form_factory():
+porting/flaskbb/upstream/flaskbb/user/services/factories.py:90:def change_details_form_factory():
+porting/flaskbb/upstream/flaskbb/forum/utils.py:18:def force_login_if_needed():
+porting/flaskbb/upstream/flaskbb/forum/utils.py:28:def should_force_login(user, forum):
+porting/flaskbb/upstream/flaskbb/auth/views.py:67:class Logout(MethodView):
+porting/flaskbb/upstream/flaskbb/auth/views.py:76:class Login(MethodView):
+porting/flaskbb/upstream/flaskbb/auth/views.py:88:        return render_template("auth/login.html", form=self.form())
+porting/flaskbb/upstream/flaskbb/auth/views.py:105:        return render_template("auth/login.html", form=form)
+porting/flaskbb/upstream/flaskbb/auth/views.py:108:class Reauth(MethodView):
+porting/flaskbb/upstream/flaskbb/auth/views.py:117:            return render_template("auth/reauth.html", form=self.form())
+porting/flaskbb/upstream/flaskbb/auth/views.py:138:        return render_template("auth/reauth.html", form=form)
+porting/flaskbb/upstream/flaskbb/auth/views.py:141:class Register(MethodView):
+porting/flaskbb/upstream/flaskbb/auth/views.py:157:        return render_template("auth/register.html", form=self.form())
+porting/flaskbb/upstream/flaskbb/auth/views.py:172:                service.register(registration_info)
+porting/flaskbb/upstream/flaskbb/auth/views.py:175:                return render_template("auth/register.html", form=form)
+porting/flaskbb/upstream/flaskbb/auth/views.py:185:                    return render_template("auth/register.html", form=form)
+porting/flaskbb/upstream/flaskbb/auth/views.py:192:        return render_template("auth/register.html", form=form)
+porting/flaskbb/upstream/flaskbb/auth/views.py:195:class ForgotPassword(MethodView):
+porting/flaskbb/upstream/flaskbb/auth/views.py:203:        return render_template("auth/forgot_password.html", form=self.form())
+porting/flaskbb/upstream/flaskbb/auth/views.py:223:        return render_template("auth/forgot_password.html", form=form)
+porting/flaskbb/upstream/flaskbb/auth/views.py:226:class ResetPassword(MethodView):
+porting/flaskbb/upstream/flaskbb/auth/views.py:236:        return render_template("auth/reset_password.html", form=form)
+porting/flaskbb/upstream/flaskbb/auth/views.py:252:                return render_template("auth/reset_password.html", form=form)
+porting/flaskbb/upstream/flaskbb/auth/views.py:270:        return render_template("auth/reset_password.html", form=form)
+porting/flaskbb/upstream/flaskbb/auth/views.py:273:class RequestActivationToken(MethodView):
+porting/flaskbb/upstream/flaskbb/auth/views.py:281:        return render_template(
+porting/flaskbb/upstream/flaskbb/auth/views.py:302:        return render_template(
+porting/flaskbb/upstream/flaskbb/auth/views.py:307:class AutoActivateAccount(MethodView):
+porting/flaskbb/upstream/flaskbb/auth/views.py:347:class ActivateAccount(MethodView):
+porting/flaskbb/upstream/flaskbb/auth/views.py:355:        return render_template(
+porting/flaskbb/upstream/flaskbb/auth/views.py:393:        return render_template("auth/account_activation.html", form=form)
+porting/flaskbb/upstream/flaskbb/auth/views.py:397:def flaskbb_load_blueprints(app):
+porting/flaskbb/upstream/flaskbb/auth/views.py:429:        return render_template(
+porting/flaskbb/upstream/flaskbb/user/plugins.py:32:def flaskbb_tpl_profile_settings_menu():
+porting/flaskbb/upstream/flaskbb/user/plugins.py:50:def flaskbb_tpl_profile_sidebar_links(user):
+porting/flaskbb/upstream/flaskbb/user/plugins.py:76:def flaskbb_gather_password_validators():
+porting/flaskbb/upstream/flaskbb/user/plugins.py:81:def flaskbb_gather_email_validators():
+porting/flaskbb/upstream/flaskbb/user/plugins.py:86:def flaskbb_gather_details_update_validators():
+porting/flaskbb/upstream/flaskbb/management/forms.py:53:def selectable_forums():
+porting/flaskbb/upstream/flaskbb/management/forms.py:57:def selectable_categories():
+porting/flaskbb/upstream/flaskbb/management/forms.py:61:def selectable_groups():
+porting/flaskbb/upstream/flaskbb/management/forms.py:65:def select_primary_group():
+porting/flaskbb/extensions-source/portal/__init__.py:27:def available_forums():
+porting/flaskbb/extensions-source/portal/__init__.py:33:def flaskbb_load_migrations():
+porting/flaskbb/extensions-source/portal/__init__.py:38:def flaskbb_load_translations():
+porting/flaskbb/extensions-source/portal/__init__.py:43:def flaskbb_load_blueprints(app):
+porting/flaskbb/extensions-source/portal/__init__.py:50:def flaskbb_tpl_navigation_before():
+porting/flaskbb/extensions-source/portal/__init__.py:51:    return render_template("navigation_snippet.html")
+porting/flaskbb/upstream/flaskbb/management/plugins.py:10:def flaskbb_tpl_admin_settings_menu(user):
+porting/flaskbb/upstream/flaskbb/management/plugins.py:36:def flaskbb_tpl_admin_settings_sidebar():
+porting/flaskbb/upstream/flaskbb/auth/plugins.py:42:def flaskbb_authenticate(identifier, secret):
+porting/flaskbb/upstream/flaskbb/auth/plugins.py:47:def flaskbb_post_authenticate(user):
+porting/flaskbb/upstream/flaskbb/auth/plugins.py:58:def flaskbb_authentication_failed(identifier):
+porting/flaskbb/upstream/flaskbb/auth/plugins.py:63:def flaskbb_reauth_attempt(user, secret):
+porting/flaskbb/upstream/flaskbb/auth/plugins.py:68:def flaskbb_reauth_failed(user):
+porting/flaskbb/upstream/flaskbb/auth/plugins.py:73:def flaskbb_post_reauth(user):
+porting/flaskbb/upstream/flaskbb/auth/plugins.py:78:def flaskbb_errorhandlers(app):
+porting/flaskbb/upstream/flaskbb/auth/plugins.py:90:def flaskbb_gather_registration_validators():
+porting/flaskbb/upstream/flaskbb/auth/plugins.py:109:def flaskbb_registration_post_processor(user):
+porting/flaskbb/upstream/flaskbb/auth/services/factories.py:27:def registration_service_factory():
+porting/flaskbb/upstream/flaskbb/auth/services/factories.py:31:def reset_service_factory():
+porting/flaskbb/upstream/flaskbb/auth/services/factories.py:41:def account_activator_factory():
+porting/flaskbb/upstream/flaskbb/auth/services/factories.py:48:def authentication_manager_factory():
+porting/flaskbb/upstream/flaskbb/auth/services/factories.py:52:def reauthentication_manager_factory():

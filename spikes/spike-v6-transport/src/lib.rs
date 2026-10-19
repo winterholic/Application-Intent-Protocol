@@ -994,11 +994,21 @@ async fn serve_request(
         };
         body
     };
+    let is_session_route = path == "/session" && method == "POST";
     let verification = match token.as_deref() {
         None => None,
         Some(token) => Some(match &runtime.authenticator {
             None => keys.verify_session(token),
-            Some(provider) => match tokio::time::timeout_at(deadline, provider.verify_session(token)).await {
+            Some(provider) => match tokio::time::timeout_at(
+                deadline,
+                if is_session_route {
+                    provider.provision_or_verify_session(token)
+                } else {
+                    provider.verify_session(token)
+                },
+            )
+            .await
+            {
                 Ok(result) => result,
                 Err(_) => Err(auth::AuthError::Unavailable),
             },

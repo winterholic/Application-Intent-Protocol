@@ -1,0 +1,11 @@
+# 2026-10-17T22:52:28Z commit ade4a89cd905dd3b76d137f80b9685b71c7efd2a
+{"schema":"aip_flaskbb_c64ef3152d","ddlDigest":"420a1dda8f5c86f43cd8a047b5dd9a2269c7b7dbb9b60930729d19c6213a4aa1","factsDigest":"1ae8cee8bca3dad7695374bf5e0e2470f6a57d449b9c2d61d1ca039ed9f5ff93","ok":true,"structureDigest":"ad0903cfcd70e669dbd289e9019d3e770b6c9a38363078ffdf7c2b97dad1ecc5","memberVisible":["Private fixture"],"guestVisible":["Public forum"],"duplicateLinkRejected":true,"uiTopicAndReplyPersisted":true,"readonlyUiWriteDenied":true}
+✔ AIP server enforces forum group visibility and unique link relations with the SDK (3190.162417ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 6204.09675

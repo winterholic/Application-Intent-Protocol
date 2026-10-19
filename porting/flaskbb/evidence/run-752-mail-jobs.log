@@ -1,0 +1,12 @@
+# 2026-10-17T22:52:28Z commit ade4a89cd905dd3b76d137f80b9685b71c7efd2a
+{"schema":"aip_flaskbb_a77bc2030e","ok":true,"verified":["worker_net_isolated","broker_http_delivery","activation_mail","reset_mail","same_key_replay_no_duplicate","foreign_recipient_refused"]}
+✔ FlaskBB account mail jobs deliver through the declared HTTP integration under worker network isolation (2170.829625ms)
+✔ FlaskBB mail provider outage dead-letters the job; redrive is refused as unconfirmed and a new job delivers once (1866.182583ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4121.509

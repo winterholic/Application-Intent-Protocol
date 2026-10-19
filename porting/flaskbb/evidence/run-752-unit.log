@@ -1,0 +1,9 @@
+# 2026-10-17T22:52:28Z commit ade4a89cd905dd3b76d137f80b9685b71c7efd2a
+......
+----------------------------------------------------------------------
+Ran 6 tests in 0.001s
+
+OK
+test exists_where_absorbs_the_trailing_or_chain ... ok
+test parenthesized_exists_leaves_the_trailing_disjunct_outside ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

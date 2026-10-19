@@ -137,7 +137,7 @@ pub fn parse(facts: &Value, ty: &str, value: &Value) -> Result<(String, &'static
     }
 }
 
-fn valid_email(s: &str) -> bool {
+pub fn valid_email(s: &str) -> bool {
     if s.contains('\0') || s.chars().any(char::is_whitespace) {
         return false;
     }

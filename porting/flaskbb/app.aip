@@ -1,0 +1,590 @@
+// FlaskBB 2019 port. F01-F10 reads/writes are declared; offset paging is
+// open on list reads (original paginate() semantics, 10/page defaults) and
+// Post.publish maintains the Forum last-post projection in the same
+// transaction. Full source workflow coverage remains F01-F17 in INVENTORY.md.
+// `exists R where a or b` scopes the whole or-chain to the row set, so every
+// exists that is followed by another disjunct is parenthesized below.
+actor User
+predicate hasGroup(viewer: User?, targetGroup: Group) = viewer != null and viewer.activated and (viewer.primary_group = targetGroup or exists UserGroup where user = viewer and group = targetGroup)
+predicate hasElevatedGroup(target: User?) = target != null and (target.primary_group.admin or target.primary_group.super_mod or exists UserGroup where user = target and (group.admin or group.super_mod))
+predicate canReadForum(viewer: User?, targetForum: Forum?) = exists ForumGroupAccess where forum = targetForum and ((viewer = null and group.guest) or hasGroup(viewer, group))
+predicate canViewHidden(viewer: User?) = viewer != null and viewer.activated and (viewer.primary_group.viewhidden or exists UserGroup where user = viewer and group.viewhidden)
+predicate canModerateForum(viewer: User?, targetForum: Forum?) = viewer != null and viewer.activated and (viewer.primary_group.admin or viewer.primary_group.super_mod or viewer.primary_group.mod or (exists UserGroup where user = viewer and (group.admin or group.super_mod or group.mod)) or (exists ForumModerator where forum = targetForum and user = viewer))
+predicate canStartTopic(viewer: User?, targetForum: Forum?) = viewer != null and viewer.activated and targetForum != null and canReadForum(viewer, targetForum) and not targetForum.locked and (canModerateForum(viewer, targetForum) or viewer.primary_group.posttopic or exists UserGroup where user = viewer and group.posttopic)
+predicate canReply(viewer: User?, targetTopic: Topic?) = viewer != null and viewer.activated and targetTopic != null and canReadForum(viewer, targetTopic.forum) and not targetTopic.hidden and (canModerateForum(viewer, targetTopic.forum) or (not targetTopic.locked and (viewer.primary_group.postreply or exists UserGroup where user = viewer and group.postreply)))
+predicate canDeleteTopic(viewer: User?, targetTopic: Topic?) = viewer != null and viewer.activated and targetTopic != null and canReadForum(viewer, targetTopic.forum) and (viewer.primary_group.admin or viewer.primary_group.super_mod or (exists UserGroup where user = viewer and (group.admin or group.super_mod)) or (canModerateForum(viewer, targetTopic.forum) and (viewer.primary_group.deletetopic or exists UserGroup where user = viewer and group.deletetopic)) or (targetTopic.user = viewer and not targetTopic.locked and (viewer.primary_group.deletetopic or exists UserGroup where user = viewer and group.deletetopic)) or (canModerateForum(viewer, targetTopic.forum) and (viewer.primary_group.editpost or exists UserGroup where user = viewer and group.editpost)) or (targetTopic.user = viewer and not targetTopic.locked and (viewer.primary_group.editpost or exists UserGroup where user = viewer and group.editpost)))
+predicate canDeletePost(viewer: User?, targetPost: Post?) = viewer != null and viewer.activated and targetPost != null and targetPost.published and canReadForum(viewer, targetPost.topic.forum) and (canDeleteTopic(viewer, targetPost.topic) and targetPost.topic.deleted or canModerateForum(viewer, targetPost.topic.forum) and (viewer.primary_group.editpost or exists UserGroup where user = viewer and group.editpost) or targetPost.user = viewer and not targetPost.topic.locked and (viewer.primary_group.editpost or exists UserGroup where user = viewer and group.editpost))
+predicate canHide(viewer: User?, targetForum: Forum?) = viewer != null and canModerateForum(viewer, targetForum) and (viewer.primary_group.makehidden or exists UserGroup where user = viewer and group.makehidden)
+predicate canReadTopic(viewer: User?, targetTopic: Topic?) = targetTopic != null and not targetTopic.deleted and canReadForum(viewer, targetTopic.forum) and (targetTopic.hidden != true or canViewHidden(viewer)) and (targetTopic.published or targetTopic.user = viewer)
+predicate canReadPost(viewer: User?, targetPost: Post?) = targetPost != null and not targetPost.deleted and (not targetPost.topic.deleted or canDeleteTopic(viewer, targetPost.topic) or (targetPost.topic.user = viewer and not targetPost.topic.locked and (viewer.primary_group.editpost or exists UserGroup where user = viewer and group.editpost))) and (targetPost.user = viewer or (targetPost.published and canReadForum(viewer, targetPost.forum))) and (targetPost.hidden != true or canViewHidden(viewer)) and (targetPost.topic.hidden != true or canViewHidden(viewer))
+predicate canReviewReports(viewer: User?) = viewer != null and viewer.activated and (viewer.primary_group.admin or viewer.primary_group.super_mod or viewer.primary_group.mod or exists UserGroup where user = viewer and (group.admin or group.super_mod or group.mod))
+predicate hasFirstPost(targetTopic: Topic, viewer: User?) = exists TopicFirstPost where topic = targetTopic and post.user = viewer and post.published
+predicate isFirstPost(targetPost: Post) = exists TopicFirstPost where post = targetPost
+predicate hasNewerAuthoredPost(targetTopic: Topic, viewer: User?) = exists Post where topic = targetTopic and user = viewer and published and date_created > targetTopic.last_updated
+access visibleUserTotal = totalOfVisible(User)
+access visibleForumTotal = totalOfVisible(Forum)
+access visibleTopicTotal = totalOfVisible(Topic)
+
+resource Group {
+  fields {
+    id: Id
+    name: Text(1..80)
+    guest: Bool
+    admin: Bool
+    super_mod: Bool
+    mod: Bool
+    banned: Bool
+    editpost: Bool
+    deletepost: Bool
+    deletetopic: Bool
+    posttopic: Bool
+    postreply: Bool
+    viewhidden: Bool
+    makehidden: Bool
+    mod_edituser: Bool
+    mod_banuser: Bool
+    description: Text?
+  }
+  rows read when true
+  expose read {
+    select id, name, guest, admin, super_mod, mod, banned, editpost, deletepost, deletetopic, posttopic, postreply, viewhidden, makehidden
+    sort id
+    budget { rows 100; depth 1; cost 1000; deadline 2s; offset 500 }
+  }
+}
+
+resource User {
+  fields {
+    id: Id
+    username: Text(1..200)
+    email: Text(3..200)
+    date_joined: Time
+    lastseen: Time?
+    birthday: Date?
+    gender: Text(1..10)?
+    website: Url?
+    location: Text(1..100)?
+    signature: Text?
+    avatar: Url?
+    notes: Text?
+    primary_group: Group
+    activated: Bool
+    language: Text(1..15)?
+    theme: Text(1..15)?
+  }
+  unique username
+  unique email
+  rows read when true
+  transition updateProfile {
+    allow actor = this and this.activated = true
+    from true
+    patch signature, avatar, website, location, birthday, gender, notes, theme, language
+  }
+  expose apply updateProfile { target id; bulk maxRows 1 }
+  transition adminUpdateUser {
+    allow actor.primary_group.admin and actor.activated
+    from true
+    patch primary_group, activated
+  }
+  expose apply adminUpdateUser { target id; bulk maxRows 1 }
+  transition moderatorEditUser {
+    allow actor.activated
+      and (actor.primary_group.admin or actor.primary_group.super_mod or actor.primary_group.mod or exists UserGroup where user = actor and (group.admin or group.super_mod or group.mod))
+      and (actor.primary_group.mod_edituser or exists UserGroup where user = actor and group.mod_edituser)
+      and not hasElevatedGroup(this)
+    from true
+    patch username, email, birthday, gender, website, location, signature, avatar, notes, language, theme
+  }
+  expose apply moderatorEditUser { target id; bulk maxRows 1 }
+  expose read {
+    select id, username, primary_group, activated, date_joined, lastseen, birthday, gender, website, location, signature, avatar, notes, language, theme, post_count
+    filter id.eq, username.prefix, username.contains
+    sort id, username
+    traverse primary_group { select id, name }
+    budget { rows 100; depth 2; cost 2000; deadline 2s; offset 1000; cursor }
+  }
+  aggregate post_count: Int { source Post; sourceAccess visibleUserTotal; groupKey user; where canReadPost(actor, this) and not topic.deleted and published = true; callerFilter none; rowOutput none; release count }
+}
+
+resource UserGroup {
+  fields { id: Id; user: User; group: Group }
+  unique user, group
+  rows read when true
+  expose read {
+    select id, user, group
+    filter user.eq, group.eq
+    sort id
+    budget { rows 1000; depth 2; cost 3000; deadline 2s; offset 2000 }
+  }
+}
+
+resource Category {
+  fields { id: Id; title: Text(1..255); description: Text?; position: Int }
+  rows read when true
+  expose create {
+    allow actor.activated and (actor.primary_group.admin or actor.primary_group.super_mod)
+    fields title, description, position
+  }
+  transition edit {
+    allow actor.activated and (actor.primary_group.admin or actor.primary_group.super_mod)
+    from true
+    patch title, description, position
+  }
+  expose apply edit { target id; bulk maxRows 1 }
+  expose read {
+    select id, title, description, position
+    filter id.eq, title.contains
+    sort position, id
+    budget { rows 100; depth 1; cost 1000; deadline 2s; offset 500 }
+  }
+}
+
+resource Forum {
+  fields {
+    id: Id
+    category: Category
+    title: Text(1..255)
+    description: Text?
+    position: Int
+    locked: Bool
+    external: Url?
+    show_moderators: Bool
+    last_post: Post?
+    last_post_user: User?
+    last_post_title: Text(1..255)?
+    last_post_username: Text(1..255)?
+    last_post_created: Time?
+  }
+  rows read when canReadForum(actor, this)
+  expose create {
+    allow actor.activated and (actor.primary_group.admin or actor.primary_group.super_mod)
+    fields category, title, description, position, locked, external, show_moderators
+  }
+  transition edit {
+    allow actor.activated and (actor.primary_group.admin or actor.primary_group.super_mod)
+    from true
+    patch category, title, description, position, locked, external, show_moderators
+  }
+  expose apply edit { target id; bulk maxRows 1 }
+  expose read {
+    select id, category, title, description, position, locked, external, show_moderators, last_post, last_post_user, last_post_title, last_post_username, last_post_created, topic_count, post_count
+    filter id.eq, category.eq, title.contains
+    sort position, id
+    traverse category { select id, title, position }
+    budget { rows 200; depth 2; cost 4000; deadline 2s; offset 1000 }
+  }
+  aggregate topic_count: Int { source Topic; sourceAccess visibleForumTotal; groupKey forum; where canReadTopic(actor, this) and published = true; callerFilter none; rowOutput none; release count }
+  aggregate post_count: Int { source Post; sourceAccess visibleForumTotal; groupKey forum; where canReadPost(actor, this) and not topic.deleted and published = true; callerFilter none; rowOutput none; release count }
+}
+
+resource ForumGroupAccess {
+  fields { id: Id; forum: Forum; group: Group }
+  unique forum, group
+  rows read when true
+  expose read {
+    select id, forum, group
+    filter forum.eq, group.eq
+    sort id
+    budget { rows 1000; depth 2; cost 3000; deadline 2s; offset 2000 }
+  }
+}
+
+resource ForumModerator {
+  fields { id: Id; forum: Forum; user: User }
+  unique forum, user
+  rows read when true
+  expose read {
+    select id, forum, user
+    filter forum.eq, user.eq
+    sort id
+    budget { rows 1000; depth 2; cost 3000; deadline 2s; offset 2000 }
+  }
+}
+
+resource Topic {
+  fields {
+    id: Uuid
+    forum: Forum
+    title: Text(1..255)
+    user: User?
+    username: Text(1..200)
+    date_created: Time?
+    last_updated: Time?
+    locked: Bool
+    important: Bool
+    views: Int
+    published: Bool
+    deleted: Bool
+    hidden: Bool?
+    hidden_at: Time?
+    hidden_by: User?
+  }
+  rows read when canReadTopic(actor, this)
+  check publishedTopicHasDates when not published or (date_created != null and last_updated != null)
+  expose create {
+    allow user = actor and username = actor.username and not published and not deleted and canStartTopic(actor, forum)
+    fields id, forum, title, user, username, locked, important, views, published, deleted, hidden, hidden_at, hidden_by
+  }
+  transition publish {
+    allow user = actor and not published and canStartTopic(actor, forum) and hasFirstPost(this, actor)
+    from published = false
+    to published = true, date_created = now, last_updated = now
+  }
+  expose apply publish { target id; bulk maxRows 1 }
+  transition bump { allow actor.activated and published and hasNewerAuthoredPost(this, actor); from published = true; to last_updated = now }
+  expose apply bump { target id; bulk maxRows 1 }
+  transition lock { allow canModerateForum(actor, forum); from locked = false; to locked = true }
+  expose apply lock { target id; bulk maxRows 1 }
+  transition unlock { allow canModerateForum(actor, forum); from locked = true; to locked = false }
+  expose apply unlock { target id; bulk maxRows 1 }
+  transition highlight { allow canModerateForum(actor, forum); from important = false; to important = true }
+  expose apply highlight { target id; bulk maxRows 1 }
+  transition trivialize { allow canModerateForum(actor, forum); from important = true; to important = false }
+  expose apply trivialize { target id; bulk maxRows 1 }
+  transition hide { allow canHide(actor, forum); from hidden != true and deleted = false; to hidden = true, hidden_at = now, hidden_by = actor }
+  expose apply hide { target id; bulk maxRows 1 }
+  transition unhide { allow canHide(actor, forum); from hidden = true and deleted = false; to hidden = false, hidden_at = null, hidden_by = null }
+  expose apply unhide { target id; bulk maxRows 1 }
+  transition delete { allow actor.activated and (canDeleteTopic(actor, this) or (user = actor and not locked and (actor.primary_group.editpost or exists UserGroup where user = actor and group.editpost))); from deleted = false; to deleted = true }
+  expose apply delete { target id; bulk maxRows 1 }
+  expose read {
+    select id, forum, title, user, username, date_created, last_updated, locked, important, views, published, hidden, hidden_at, hidden_by, post_count
+    filter id.eq, forum.eq, user.eq, locked.eq, important.eq, title.contains
+    sort id, last_updated, views
+    traverse forum { select id, category, title, position }
+    traverse user { select id, username }
+    budget { rows 200; depth 3; cost 8000; deadline 2s; offset 2000 }
+  }
+  aggregate post_count: Int { source Post; sourceAccess visibleTopicTotal; groupKey topic; where canReadPost(actor, this) and not topic.deleted and published = true; callerFilter none; rowOutput none; release count }
+}
+
+resource Post {
+  fields {
+    id: Uuid
+    topic: Topic
+    forum: Forum
+    user: User?
+    username: Text(1..200)
+    content: Text
+    date_created: Time?
+    date_modified: Time?
+    modified_by: Text(1..200)?
+    hidden: Bool
+    hidden_at: Time?
+    hidden_by: User?
+    published: Bool
+    version: Int
+    deleted: Bool
+  }
+  rows read when canReadPost(actor, this)
+  check postForumMatchesTopic when topic.forum = forum
+  check publishedPostHasDate when not published or date_created != null
+  expose create {
+    allow user = actor and username = actor.username and not published and not deleted and not hidden and canReply(actor, topic) and forum = topic.forum
+    fields id, topic, forum, user, username, content, hidden, published, version, deleted
+  }
+  transition publish {
+    allow user = actor and not published and canReply(actor, topic)
+    from published = false
+    to published = true, date_created = now
+    update Forum where id = this.forum { last_post = this; last_post_user = actor; last_post_title = this.topic.title; last_post_username = this.username; last_post_created = now }
+  }
+  expose apply publish { target id; bulk maxRows 1 }
+  transition edit {
+    allow actor.activated and published and (canModerateForum(actor, topic.forum) or (user = actor and not topic.locked and (actor.primary_group.editpost or exists UserGroup where user = actor and group.editpost)))
+    from published = true
+    patch content
+    expect version
+    to version = version + 1, date_modified = now, modified_by = actor.username
+  }
+  expose apply edit { target id; bulk maxRows 1 }
+  transition hide { allow canHide(actor, forum) and not isFirstPost(this); from hidden = false and deleted = false; to hidden = true, hidden_at = now, hidden_by = actor }
+  expose apply hide { target id; bulk maxRows 1 }
+  transition unhide { allow canHide(actor, forum) and not isFirstPost(this); from hidden = true and deleted = false; to hidden = false, hidden_at = null, hidden_by = null }
+  expose apply unhide { target id; bulk maxRows 1 }
+  transition delete { allow actor.activated and canDeletePost(actor, this) and (not isFirstPost(this) or topic.deleted); from deleted = false; to deleted = true }
+  expose apply delete { target id; bulk maxRows 1 }
+  expose read {
+    select id, topic, user, username, content, date_created, date_modified, modified_by, hidden, hidden_at, hidden_by, version
+    filter id.eq, topic.eq, user.eq, hidden.eq, content.contains
+    sort id, date_created
+    traverse topic { select id, forum, title, locked, hidden }
+    traverse user { select id, username }
+    budget { rows 500; depth 3; cost 10000; deadline 2s; offset 5000 }
+  }
+}
+
+// Internal one-to-one relation keeps the source app's special first-post rules
+// without a cyclic Topic↔Post foreign key.
+resource TopicFirstPost {
+  fields { id: Id; topic: Topic; post: Post }
+  unique topic
+  unique post
+  rows read when canReadTopic(actor, topic)
+  expose create {
+    allow actor.activated and topic.user = actor and not topic.published and post.topic = topic and post.user = actor and post.published
+    fields topic, post
+  }
+  expose read {
+    select id, topic, post
+    filter topic.eq, post.eq
+    sort id
+    budget { rows 100; depth 2; cost 2000; deadline 2s; offset 500 }
+  }
+}
+
+resource ForumRead {
+  fields { id: Id; user: User; forum: Forum; last_read: Time; cleared: Time? }
+  unique user, forum
+  rows read when user = actor
+  expose create {
+    allow actor.activated and user = actor
+    fields user, forum, last_read, cleared
+  }
+  transition updateRead {
+    allow actor.activated and user = actor
+    from true
+    to last_read = now
+  }
+  expose apply updateRead { target id; bulk maxRows 1 }
+  expose read {
+    select id, user, forum, last_read, cleared
+    filter id.eq, forum.eq, user.eq
+    sort id
+    budget { rows 1000; depth 2; cost 3000; deadline 2s; offset 1000; cursor }
+  }
+}
+
+resource TopicRead {
+  fields { id: Id; user: User; topic: Topic; forum: Forum; last_read: Time }
+  unique user, topic, forum
+  rows read when user = actor
+  expose create {
+    allow actor.activated and user = actor
+    fields user, topic, forum, last_read
+  }
+  transition updateRead {
+    allow actor.activated and user = actor
+    from true
+    to last_read = now
+  }
+  expose apply updateRead { target id; bulk maxRows 1 }
+  expose read {
+    select id, user, topic, forum, last_read
+    filter id.eq, topic.eq, forum.eq, user.eq
+    sort id
+    budget { rows 1000; depth 2; cost 3000; deadline 2s; offset 1000; cursor }
+  }
+}
+
+resource TopicTracker {
+  fields { id: Id; user: User; topic: Topic; active: Bool }
+  unique user, topic
+  rows read when user = actor
+  expose create {
+    allow actor.activated and user = actor and canReadTopic(actor, topic) and active
+    fields id, user, topic, active
+  }
+  transition untrack { allow actor.activated and user = actor and active; from active = true; to active = false }
+  expose apply untrack { target id; bulk maxRows 1 }
+  transition track { allow actor.activated and user = actor and canReadTopic(actor, topic) and not active; from active = false; to active = true }
+  expose apply track { target id; bulk maxRows 1 }
+  expose read {
+    select id, user, topic, active
+    filter id.eq, topic.eq, active.eq, user.eq
+    sort id
+    budget { rows 1000; depth 2; cost 3000; deadline 2s; offset 1000; cursor }
+  }
+}
+
+resource Report {
+  fields { id: Id; reporter: User?; reported: Time?; post: Post?; zapped: Time?; zapped_by: User?; reason: Text? }
+  rows read when canReviewReports(actor) or (reporter = actor and reported = null)
+  expose create {
+    allow actor.activated and reporter = actor and post != null and canReadPost(actor, post) and reported = null and zapped = null and zapped_by = null
+    fields reporter, post, reason
+  }
+  transition submit { allow actor.activated and reporter = actor and post != null and canReadPost(actor, post) and reported = null; from reported = null; to reported = now }
+  expose apply submit { target id; bulk maxRows 1 }
+  transition resolve { allow canReviewReports(actor) and zapped = null; from zapped = null; to zapped = now, zapped_by = actor }
+  expose apply resolve { target id; bulk maxRows 1 }
+  expose read {
+    select id, reporter, reported, post, zapped, zapped_by, reason
+    filter id.eq, post.eq, reporter.eq, zapped.eq
+    sort id, reported
+    traverse reporter { select id, username }
+    traverse post { select id, topic, username, content, date_created }
+    budget { rows 200; depth 3; cost 8000; deadline 2s; offset 1000 }
+  }
+}
+
+resource Conversation {
+  fields {
+    id: Id
+    user: User
+    from_user: User?
+    to_user: User?
+    shared_id: Text(36..36)
+    subject: Text(1..255)?
+    date_created: Time
+    date_modified: Time
+    trash: Bool
+    draft: Bool
+    unread: Bool
+  }
+  unique user, shared_id
+  rows read when user = actor or from_user = actor or to_user = actor
+  expose create {
+    // Original send path: the sender copy (user = from_user = actor) and the
+    // recipient copy (user = to_user, from_user = actor, delivered unread).
+    // The sender is always the caller and nobody mails themselves.
+    allow actor.activated and from_user = actor and to_user != null and to_user != actor and (user = actor or (user = to_user and unread and not trash and not draft))
+    fields user, from_user, to_user, shared_id, subject, date_created, date_modified, trash, draft, unread
+  }
+  transition markRead {
+    allow actor.activated and user = actor
+    from unread = true
+    to unread = false
+  }
+  expose apply markRead { target id; bulk maxRows 50 }
+  transition bump {
+    allow actor.activated and (user = actor or from_user = actor or to_user = actor)
+    from true
+    to unread = true, date_modified = now
+  }
+  expose apply bump { target id; bulk maxRows 50 }
+  transition moveToTrash {
+    allow actor.activated and user = actor
+    from trash = false
+    to trash = true
+  }
+  expose apply moveToTrash { target id; bulk maxRows 50 }
+  transition restoreFromTrash {
+    allow actor.activated and user = actor
+    from trash = true
+    to trash = false
+  }
+  expose apply restoreFromTrash { target id; bulk maxRows 50 }
+  expose read {
+    select id, user, from_user, to_user, shared_id, subject, date_created, date_modified, trash, draft, unread
+    filter id.eq, trash.eq, draft.eq, unread.eq, shared_id.eq, user.eq
+    sort date_modified, id
+    traverse from_user { select id, username }
+    traverse to_user { select id, username }
+    budget { rows 100; depth 3; cost 6000; deadline 2s; offset 1000; cursor }
+  }
+}
+
+resource Message {
+  fields { id: Id; conversation: Conversation; user: User?; message: Text; date_created: Time }
+  rows read when conversation.user = actor
+  expose create {
+    // The author is the caller; the target mailbox row belongs to one of the
+    // two parties and the caller is the other (or the same) party.
+    allow actor.activated and user = actor and (conversation.from_user = actor or conversation.to_user = actor) and (conversation.user = conversation.from_user or conversation.user = conversation.to_user)
+    fields conversation, user, message, date_created
+  }
+  expose read {
+    select id, conversation, user, message, date_created
+    filter conversation.eq, user.eq
+    sort id, date_created
+    traverse user { select id, username }
+    budget { rows 200; depth 3; cost 6000; deadline 2s; offset 2000; cursor }
+  }
+}
+
+resource SettingsGroup {
+  fields { id: Id; key: Text(1..255); name: Text(1..255); description: Text }
+  unique key
+  rows read when actor.primary_group.admin or actor.primary_group.super_mod
+  expose read {
+    select id, key, name, description
+    filter key.eq
+    sort key
+    budget { rows 100; depth 1; cost 1000; deadline 2s; offset 500 }
+  }
+}
+
+resource Setting {
+  fields {
+    id: Id
+    key: Text(1..255)
+    value_json: Text
+    group: SettingsGroup
+    name: Text(1..200)
+    description: Text
+    value_type: Text(1..32)
+    extra_json: Text?
+  }
+  unique key
+  rows read when actor.primary_group.admin or actor.primary_group.super_mod
+  expose read {
+    select id, key, value_json, group, name, description, value_type, extra_json
+    filter group.eq, key.eq
+    sort key
+    traverse group { select id, key, name }
+    budget { rows 500; depth 2; cost 3000; deadline 2s; offset 1000 }
+  }
+}
+
+resource PluginRegistry {
+  fields { id: Id; name: Text(1..255); enabled: Bool? }
+  unique name
+  rows read when actor.primary_group.admin or actor.primary_group.super_mod
+  expose read {
+    select id, name, enabled
+    filter id.eq, name.prefix, enabled.eq
+    sort name
+    budget { rows 100; depth 1; cost 1000; deadline 2s; offset 500 }
+  }
+}
+
+resource PluginStore {
+  fields {
+    id: Id
+    key: Text(1..255)
+    value_json: Text
+    value_type: Text(1..32)
+    extra_json: Text?
+    plugin: PluginRegistry?
+    name: Text(1..255)
+    description: Text?
+  }
+  unique key, plugin
+  rows read when actor.primary_group.admin or actor.primary_group.super_mod
+  expose read {
+    select id, key, value_json, value_type, extra_json, plugin, name, description
+    filter plugin.eq, key.eq
+    sort key
+    traverse plugin { select id, name, enabled }
+    budget { rows 500; depth 2; cost 3000; deadline 2s; offset 1000 }
+  }
+}
+
+// F02/F14 account emails. The job carries only caller-supplied values and
+// touches no rows: the caller reads the account through normal reads first.
+// Delivery runs in the Python worker dir as flaskbb_mail.send_*. The worker has
+// no network (OS isolation), so it cannot use the original's SMTP; it sends
+// through the declared outbound HTTP integration `mail` (access http.mail),
+// whose URL and credentials live in the service config, not here. A recipient
+// is limited to the caller's own account address so the job cannot relay mail
+// to other people; deployments should still rate-limit it like the original's
+// self-service endpoints.
+operation job sendActivationEmail {
+  input { email: Text(3..200); username: Text(1..200); token: Text(1..500) }
+  output { accepted: Bool }
+  allow actor != null and input.email = actor.email and input.username = actor.username
+  access http.mail
+  effect managed
+  deadline 30s
+  implementation "flaskbb_mail.send_activation_email"
+}
+operation job sendPasswordResetEmail {
+  input { email: Text(3..200); username: Text(1..200); token: Text(1..500) }
+  output { accepted: Bool }
+  allow actor != null and input.email = actor.email and input.username = actor.username
+  access http.mail
+  effect managed
+  deadline 30s
+  implementation "flaskbb_mail.send_password_reset_email"
+}

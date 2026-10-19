@@ -1,0 +1,26 @@
+✖ AIP server enforces forum group visibility and unique link relations with the SDK (1662.590833ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4705.548875
+
+✖ failing tests:
+
+test at porting/flaskbb/tests/aip-read.test.mjs:18:1
+✖ AIP server enforces forum group visibility and unique link relations with the SDK (1662.590833ms)
+  AssertionError [ERR_ASSERTION]: read-only members must not see the topic form
+      at TestContext.<anonymous> (file:///private/tmp/aip-porting-full-20261017/porting/flaskbb/tests/aip-read.test.mjs:125:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: '<!doctype html>\n<html lang="en">\n<head>\n    <meta charset="utf-8">\n    <meta name="viewport" content="width=device-width, initial-scale=1">\n    <meta name="description" content="FlaskBB forum">\n    <title>Private fixture - FlaskBB</title>\n    <link rel="stylesheet" href="/static/css/pygments.css">\n    <link rel="stylesheet" href="/static/css/styles.css">\n</head>\n<body>\n<div class="flaskbb-layout"><div class="container">\n    <header class="flaskbb-header">\n        <div class="flaskbb-meta"><div class="flaskbb-title">FlaskBB</div><div class="flaskbb-subtitle">A lightweight forum software in Flask</div></div>\n    </header>\n    <nav class="navbar navbar-default" role="navigation"><div class="collapse navbar-collapse">\n        <ul class="nav navbar-nav forum-nav">\n            <li><a href="/"><span class="fa fa-comment"></span> Forum</a></li>\n        </ul>\n        <ul class="nav navbar-nav navbar-right">\n            <li><span class="btn btn-primary navbar-btn">readonly-fixture</span></li>\n            <li><form method="post" action="/auth/logout"><input type="hidden" name="csrf_token" value="aip-integration-csrf-token"><button class="btn btn-default navbar-btn">Logout</button></form></li>\n            \n        </ul>\n    </div></nav>\n    <main>\n<div class="forum-view">\n    <ol class="breadcrumb flaskbb-breadcrumb"><li><a href="/">Forum</a></li><li class="active">Private fixture</li></ol>\n    <div class="panel forum-panel"><div class="panel-heading forum-head">Private fixture</div><div class="panel-body forum-body">\n        <div class="forum-meta"><div class="col-md-7 col-xs-8 topic-name">Topic</div><div class="col-md-2 hidden-xs topic-stats">Posts</div><div class="col-md-3 col-xs-4 topic-last-post">Last Post</div></div>\n        <div class="row forum-row hover clearfix"><div class="col-md-7 col-xs-8 topic-info"><div class="topic-name"><a href="/topic/00000000-0000-4000-8000-000000000002">Private topic</a></div><div class="topic-meta">Started by member-fixture</div></div><div class="col-md-2 hidden-xs topic-stats">1</div><div class="col-md-3 col-xs-4 topic-last-post">2026-10-17T01:22:08.716884+00:00</div></div>\n        \n    </div></div>\n    \n    <div class="panel new-topic-panel"><div class="panel-heading">Start a topic</div><div class="panel-body">\n        <form method="post" action="/forum/2/topic">\n            <input type="hidden" name="csrf_token" value="aip-integration-csrf-token">\n            <div class="form-group"><label for="topic-title">Topic title</label><input class="form-control" id="topic-title" name="title" maxlength="255" required></div>\n            <div class="form-group"><label for="topic-content">Content</label><textarea class="form-control" id="topic-content" name="content" rows="7" required></textarea></div>\n            <button class="btn btn-primary" type="submit">Post topic</button>\n        </form>\n    </div></div>\n    \n</div>\n</main>\n</div>\n<footer class="flaskbb-footer"><div class="container"><div class="text-muted">powered by <a href="https://flaskbb.org">FlaskBB</a> · © 2013 - FlaskBB Team</div></div></footer>\n</div>\n</body>\n</html>',
+    expected: /Start a topic/,
+    operator: 'doesNotMatch',
+    diff: 'simple'
+  }

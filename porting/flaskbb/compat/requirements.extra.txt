@@ -1,0 +1,7 @@
+# PostgreSQL driver required by upstream's documented PostgreSQL URL.
+psycopg2-binary==2.8.6
+# Kombu 4.6 calls entry_points().get(), removed by newer importlib-metadata.
+importlib-metadata==4.13.0
+# The upstream requirements file uses a mutable branch. Pin the exact source
+# revision observed in the successful baseline installation.
+flask-allows @ git+https://github.com/justanr/flask-allows.git@ee303da3f5055b3b3d66ece2316dd93976a26b33

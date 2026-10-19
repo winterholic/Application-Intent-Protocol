@@ -1,0 +1,21 @@
+✖ AIP server enforces forum group visibility and unique link relations with the SDK (1442.505375ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4476.631167
+
+✖ failing tests:
+
+test at porting/flaskbb/tests/aip-read.test.mjs:18:1
+✖ AIP server enforces forum group visibility and unique link relations with the SDK (1442.505375ms)
+  Error: UI host exit 2: /opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python: can't open file '/private/tmp/aip-porting-full-20261017/porting/flaskbb/porting/flaskbb/tests/run_ui_host.py': [Errno 2] No such file or directory
+  
+      at file:///private/tmp/aip-porting-full-20261017/porting/flaskbb/tests/aip-read.test.mjs:118:52
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (file:///private/tmp/aip-porting-full-20261017/porting/flaskbb/tests/aip-read.test.mjs:116:23)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)

@@ -1,0 +1,65 @@
+{% extends "layout.html" %}
+{% block title %}{{ profile_user.username }}'s Profile - FlaskBB{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>{{ profile_user.username }}</h1>
+</div>
+
+<div class="row">
+    <div class="col-md-4">
+        <div class="panel panel-default">
+            <div class="panel-heading"><h3 class="panel-title">User Info</h3></div>
+            <div class="panel-body">
+                {% if profile_user.avatar %}
+                <p><img src="{{ profile_user.avatar }}" alt="avatar" class="img-thumbnail" style="max-width: 150px;"></p>
+                {% endif %}
+                <p><strong>Username:</strong> {{ profile_user.username }}</p>
+                <p><strong>Group:</strong> {{ profile_user.primary_group.name if profile_user.primary_group else 'Member' }}</p>
+                {% if profile_user.location %}
+                <p><strong>Location:</strong> {{ profile_user.location }}</p>
+                {% endif %}
+                {% if profile_user.website %}
+                <p><strong>Website:</strong> <a href="{{ profile_user.website }}" rel="nofollow">{{ profile_user.website }}</a></p>
+                {% endif %}
+                {% if profile_user.signature %}
+                <p><strong>Signature:</strong><br><em>{{ profile_user.signature }}</em></p>
+                {% endif %}
+                {% if user and user.username != profile_user.username %}
+                <p><a class="btn btn-default" href="{{ url_for('conversation_new', to=profile_user.username) }}"><span class="fa fa-envelope"></span> Send Message</a></p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    <div class="col-md-8">
+        <div class="panel panel-default">
+            <div class="panel-heading"><h3 class="panel-title">Recent Activity</h3></div>
+            <div class="panel-body">
+                <h4>Recent Topics</h4>
+                {% if topics %}
+                <ul class="list-group">
+                    {% for t in topics %}
+                    <li class="list-group-item"><a href="{{ url_for('topic_view', topic_id=t.id) }}">{{ t.title }}</a></li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <p class="text-muted">No topics created yet.</p>
+                {% endif %}
+
+                <h4>Recent Posts</h4>
+                {% if posts %}
+                <ul class="list-group">
+                    {% for p in posts %}
+                    <li class="list-group-item">
+                        <span class="text-muted">In topic <a href="{{ url_for('topic_view', topic_id=p.topic) }}">{{ p.topic }}</a>:</span>
+                        <p>{{ p.content }}</p>
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <p class="text-muted">No posts written yet.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

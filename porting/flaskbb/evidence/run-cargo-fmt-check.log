@@ -1,0 +1,178 @@
+Diff in /private/tmp/aip-porting-full-20261017/spikes/spike-v6-transport/src/lib.rs:948:
+             None => keys.verify_session(token),
+             Some(provider) => match tokio::time::timeout_at(
+                 deadline,
+-                if is_session_route {
+-                    provider.provision_or_verify_session(token)
+-                } else {
+-                    provider.verify_session(token)
+-                },
++                if is_session_route { provider.provision_or_verify_session(token) } else { provider.verify_session(token) },
+             )
+             .await
+             {
+Diff in /private/tmp/aip-porting-full-20261017/crates/aip-auth/src/idp_tests.rs:105:
+
+     /// Builds the authenticator exactly as `new_explained` would, but trusting the test CA.
+     async fn authenticator(&self, jwks_url: &str) -> AuthenticatorImpl {
+-        let config = Config { issuer: ISSUER.into(), audience: AUDIENCE.into(), jwks: JwksSource::Https { url: jwks_url.into() }, provisioning: ProvisioningConfig::default() };
++        let config = Config {
++            issuer: ISSUER.into(),
++            audience: AUDIENCE.into(),
++            jwks: JwksSource::Https { url: jwks_url.into() },
++            provisioning: ProvisioningConfig::default(),
++        };
+         let http = self.client();
+         let document = read_jwks(&config.jwks, &http).await.expect("initial JWKS fetch");
+         let keys = parse_jwks(&document).expect("initial JWKS parses");
+Diff in /private/tmp/aip-porting-full-20261017/crates/aip-auth/src/idp_tests.rs:251:
+     let keys = parse_jwks(document).expect("initial JWKS parses");
+     AuthenticatorImpl {
+         actor_resource_sql: None,
+-        config: Config { issuer: ISSUER.into(), audience: AUDIENCE.into(), jwks: JwksSource::File { path: path.to_owned() }, provisioning: ProvisioningConfig::default() },
++        config: Config {
++            issuer: ISSUER.into(),
++            audience: AUDIENCE.into(),
++            jwks: JwksSource::File { path: path.to_owned() },
++            provisioning: ProvisioningConfig::default(),
++        },
+         db_url: "host=unused".into(),
+         schema: "aip_app".into(),
+         http: reqwest::Client::new(),
+Diff in /private/tmp/aip-porting-full-20261017/crates/aip-auth/src/lib.rs:552:
+         {
+             return Err(if claims.exp <= now { AuthError::Expired } else { AuthError::Invalid });
+         }
+-        Ok(VerifiedClaims {
+-            issuer: claims.iss,
+-            subject: claims.sub,
+-            issued_at: claims.iat,
+-            expires_at: claims.exp,
+-            claims: claims.claims,
+-        })
++        Ok(VerifiedClaims { issuer: claims.iss, subject: claims.sub, issued_at: claims.iat, expires_at: claims.exp, claims: claims.claims })
+     }
+
+     pub async fn session_for(&self, token: &str) -> Result<spike_v6_transport::auth::Session, AuthError> {
+Diff in /private/tmp/aip-porting-full-20261017/crates/aip-auth/src/lib.rs:652:
+             }
+         }
+
+-        let username = claims
+-            .claims
+-            .get(&self.config.provisioning.username_claim)
+-            .and_then(Value::as_str)
+-            .ok_or(AuthError::Invalid)?;
+-        if username.is_empty()
+-            || username.len() > 200
+-            || username.trim() != username
+-            || username.chars().any(char::is_control)
+-        {
++        let username = claims.claims.get(&self.config.provisioning.username_claim).and_then(Value::as_str).ok_or(AuthError::Invalid)?;
++        if username.is_empty() || username.len() > 200 || username.trim() != username || username.chars().any(char::is_control) {
+             return Err(AuthError::Invalid);
+         }
+
+Diff in /private/tmp/aip-porting-full-20261017/crates/aip-auth/src/lib.rs:668:
+-        let email = claims
+-            .claims
+-            .get(&self.config.provisioning.email_claim)
+-            .and_then(Value::as_str)
+-            .ok_or(AuthError::Invalid)?;
++        let email = claims.claims.get(&self.config.provisioning.email_claim).and_then(Value::as_str).ok_or(AuthError::Invalid)?;
+         if email.len() < 3
+             || email.len() > 200
+             || !spike_v2_read::scalar::valid_email(email)
+Diff in /private/tmp/aip-porting-full-20261017/crates/aip-auth/src/lib.rs:724:
+             return Err(AuthError::Unavailable);
+         }
+
+-        let lock_key = format!("{}:{}:{}:{}:{}:{}", self.schema.len(), self.schema, claims.issuer.len(), claims.issuer, claims.subject.len(), claims.subject);
++        let lock_key =
++            format!("{}:{}:{}:{}:{}:{}", self.schema.len(), self.schema, claims.issuer.len(), claims.issuer, claims.subject.len(), claims.subject);
+         let lock_res = tokio::time::timeout(DB_TIMEOUT, db.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0::bigint))", &[&lock_key]))
+             .await
+             .map_err(|_| AuthError::Unavailable);
+Diff in /private/tmp/aip-porting-full-20261017/crates/aip-auth/src/lib.rs:735:
+             return Err(AuthError::Unavailable);
+         }
+
+-        let double_check = tokio::time::timeout(DB_TIMEOUT, db.query_opt(&sql, &[&claims.issuer, &claims.subject]))
+-            .await
+-            .map_err(|_| AuthError::Unavailable);
++        let double_check =
++            tokio::time::timeout(DB_TIMEOUT, db.query_opt(&sql, &[&claims.issuer, &claims.subject])).await.map_err(|_| AuthError::Unavailable);
+
+         let row_opt = match double_check {
+             Ok(Ok(r)) => r,
+Diff in /private/tmp/aip-porting-full-20261017/crates/aip-auth/src/lib.rs:784:
+             "SELECT id FROM \"{}\".\"group\" WHERE name = $1 AND admin = FALSE AND super_mod = FALSE AND mod = FALSE AND banned = FALSE AND guest = FALSE ORDER BY id ASC LIMIT 1",
+             self.schema
+         );
+-        let group_row = match tokio::time::timeout(DB_TIMEOUT, db.query_opt(&group_sql, &[&self.config.provisioning.fixed_defaults.primary_group_name])).await {
+-            Ok(Ok(Some(r))) => r,
+-            _ => {
+-                let _ = db.batch_execute("ROLLBACK").await;
+-                lookup.finish().await;
+-                return Err(AuthError::Unavailable);
+-            }
+-        };
++        let group_row =
++            match tokio::time::timeout(DB_TIMEOUT, db.query_opt(&group_sql, &[&self.config.provisioning.fixed_defaults.primary_group_name])).await {
++                Ok(Ok(Some(r))) => r,
++                _ => {
++                    let _ = db.batch_execute("ROLLBACK").await;
++                    lookup.finish().await;
++                    return Err(AuthError::Unavailable);
++                }
++            };
+         let group_id: i64 = match group_row.try_get(0) {
+             Ok(id) => id,
+             Err(_) => {
+Diff in /private/tmp/aip-porting-full-20261017/crates/aip-auth/src/lib.rs:825:
+             }
+         };
+
+-        let principal_sql = format!(
+-            "INSERT INTO \"{}\".aip_principals (issuer, subject, actor_id, enabled, min_iat) VALUES ($1, $2, $3, TRUE, $4)",
+-            self.schema
+-        );
+-        let insert_principal_res = tokio::time::timeout(DB_TIMEOUT, db.execute(&principal_sql, &[&claims.issuer, &claims.subject, &actor_id, &claims.issued_at])).await;
++        let principal_sql =
++            format!("INSERT INTO \"{}\".aip_principals (issuer, subject, actor_id, enabled, min_iat) VALUES ($1, $2, $3, TRUE, $4)", self.schema);
++        let insert_principal_res =
++            tokio::time::timeout(DB_TIMEOUT, db.execute(&principal_sql, &[&claims.issuer, &claims.subject, &actor_id, &claims.issued_at])).await;
+         if insert_principal_res.is_err() || insert_principal_res.as_ref().unwrap().is_err() {
+             let _ = db.batch_execute("ROLLBACK").await;
+             lookup.finish().await;
+Diff in /private/tmp/aip-porting-full-20261017/crates/aip-auth/tests/durable.rs:46:
+     let path = dir.path().join("jwks.json");
+     std::fs::write(&path, jwks.to_string()).expect("test setup");
+     let key = EncodingKey::from_rsa_der(private.to_pkcs1_der().expect("test setup").as_bytes());
+-    (dir, Config { issuer: "https://issuer.example".into(), audience: "aip-api".into(), jwks: JwksSource::File { path }, provisioning: aip_auth::ProvisioningConfig::default() }, key)
++    (
++        dir,
++        Config {
++            issuer: "https://issuer.example".into(),
++            audience: "aip-api".into(),
++            jwks: JwksSource::File { path },
++            provisioning: aip_auth::ProvisioningConfig::default(),
++        },
++        key,
++    )
+ }
+
+ #[tokio::test]
+Diff in /private/tmp/aip-porting-full-20261017/crates/aip-auth/tests/jwt.rs:43:
+     std::fs::write(&path, jwks.to_string()).expect("test setup");
+     let der = private.to_pkcs1_der().expect("test setup");
+     let key = EncodingKey::from_rsa_der(der.as_bytes());
+-    let config = Config { issuer: "https://issuer.example".into(), audience: "aip-api".into(), jwks: JwksSource::File { path }, provisioning: aip_auth::ProvisioningConfig::default() };
++    let config = Config {
++        issuer: "https://issuer.example".into(),
++        audience: "aip-api".into(),
++        jwks: JwksSource::File { path },
++        provisioning: aip_auth::ProvisioningConfig::default(),
++    };
+     (dir, config, key)
+ }

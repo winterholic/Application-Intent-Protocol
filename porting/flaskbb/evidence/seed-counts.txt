@@ -1,0 +1,7 @@
+users|5
+groups|6
+categories|2
+forums|4
+topics|4
+posts|8
+conversations|0
