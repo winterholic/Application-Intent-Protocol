@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "workers"))
 
 import infisical_jobs
 from joserfc import jwt as _jwt
+from joserfc import jws as _jws
 from joserfc.jwk import RSAKey as _RSAKey
 
 
@@ -79,6 +80,70 @@ class IdentityJwtTests(unittest.TestCase):
         os.environ.pop("INFISICAL_JWKS_JSON", None)
         with self.assertRaises(RuntimeError):
             infisical_jobs.verify_identity_token(self._token(self._claims()))
+
+    def test_expiration_rejects_non_finite_and_non_numeric_dates(self):
+        for exp in (float("nan"), float("inf"), float("-inf"), True, False,
+                    "300", None, [], {}):
+            with self.subTest(exp=exp), self.assertRaises(ValueError):
+                infisical_jobs.verify_identity_token(self._token(self._claims(exp=exp)), now=0)
+
+    def test_not_before_rejects_malformed_dates_instead_of_ignoring_them(self):
+        for nbf in (float("nan"), float("inf"), float("-inf"), True, False,
+                    "300", None, [], {}):
+            with self.subTest(nbf=nbf), self.assertRaises(ValueError):
+                infisical_jobs.verify_identity_token(self._token(self._claims(nbf=nbf)), now=self.now)
+
+    def test_issued_at_rejects_malformed_dates_when_present(self):
+        for iat in (float("nan"), float("inf"), float("-inf"), True, False,
+                    "300", None, [], {}):
+            with self.subTest(iat=iat), self.assertRaises(ValueError):
+                infisical_jobs.verify_identity_token(self._token(self._claims(iat=iat)), now=self.now)
+
+    def test_subject_requires_a_nonempty_string(self):
+        for subject in (None, "", True, 7, ["machine-7"], {"id": "machine-7"}):
+            with self.subTest(subject=subject), self.assertRaisesRegex(ValueError, "subject"):
+                infisical_jobs.verify_identity_token(self._token(self._claims(sub=subject)), now=self.now)
+
+    def test_audience_requires_strings_even_if_one_entry_matches(self):
+        for audience in (["infisical-spike", 7], ["infisical-spike", None],
+                         ["infisical-spike", []]):
+            with self.subTest(audience=audience), self.assertRaisesRegex(ValueError, "audience"):
+                infisical_jobs.verify_identity_token(self._token(self._claims(aud=audience)), now=self.now)
+
+    def test_expiration_boundary_includes_configured_skew(self):
+        # RFC 7519: time MUST be before exp; equality after leeway has elapsed is expired.
+        for skew in (0, 60):
+            os.environ["INFISICAL_JWT_SKEW_S"] = str(skew)
+            token = self._token(self._claims(exp=self.now - skew))
+            with self.subTest(skew=skew), self.assertRaisesRegex(ValueError, "expired"):
+                infisical_jobs.verify_identity_token(token, now=self.now)
+
+    def test_fractional_dates_and_not_before_boundary_are_accepted(self):
+        os.environ["INFISICAL_JWT_SKEW_S"] = "0"
+        token = self._token(self._claims(exp=self.now + 0.5, nbf=self.now,
+                                        aud=["other", "infisical-spike"]))
+        subject, claims = infisical_jobs.verify_identity_token(token, now=self.now)
+        self.assertEqual(subject, "machine-7")
+        self.assertEqual(claims["nbf"], self.now)
+
+    def test_negative_or_invalid_skew_is_configuration_failure(self):
+        for skew in ("-1", "nan", "1.5"):
+            os.environ["INFISICAL_JWT_SKEW_S"] = skew
+            with self.subTest(skew=skew), self.assertRaisesRegex(RuntimeError, "skew"):
+                infisical_jobs.verify_identity_token(self._token(self._claims()), now=self.now)
+
+    def test_signed_payload_must_be_a_claims_object(self):
+        for payload in ([], [self._claims()], "identity", None, 7):
+            token = _jws.serialize_compact({"alg": "RS256"}, json.dumps(payload).encode(), self.key)
+            with self.subTest(payload=payload), self.assertRaisesRegex(ValueError, "claims"):
+                infisical_jobs.verify_identity_token(token, now=self.now)
+
+    def test_optional_dates_may_be_absent_and_large_integer_dates_stay_exact(self):
+        claims = self._claims(exp=10 ** 400)
+        claims.pop("iat")
+        subject, verified = infisical_jobs.verify_identity_token(self._token(claims), now=self.now)
+        self.assertEqual(subject, "machine-7")
+        self.assertEqual(verified["exp"], 10 ** 400)
 
 
 if __name__ == "__main__":

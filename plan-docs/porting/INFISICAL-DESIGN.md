@@ -65,7 +65,7 @@
 - ✅🟡 **7.3.3.4 I04 RBAC predicate** — 같은 파일. admin/member/viewer/no-access, 조직 admin 암묵 접근, 조직 격리, 프로젝트 멤버 추가 규칙, 조직 생성자 첫 admin, 사용자 가시성을 실DB로 확인. 원본 CASL 조건식, 커스텀 역할, 그룹, 비율 제한은 ⬜. 규칙마다 약화하면 시험이 실패하는지 `tests/mutation_check.py`로 확인(8개 잡힘, 2개는 다른 규칙과 중복이라 동등 변이로 표시).
 - 🟡 **7.3.3.5 큐→job 매핑** — [JOBS](INFISICAL-JOBS.md). 54개 큐 분류표. job 구현은 `secretReminder` 1개(알림 기록, 전송 아님)이고 53개는 미선언. 이전의 "16개 job 선언 완료"는 철회.
 - 📄 **7.3.3.6 I05 키 모델** — [KEYMODEL](INFISICAL-KEYMODEL.md). 원본이 서버측 KMS임을 판독으로 확정, 결정 요청 철회. 구현은 ⏸(제품 갭 G2, 설계 13은 승인 전이고 독립 정적 리뷰가 현 초안을 구현에 넘기지 말라고 판정했다. 상세는 GAPS의 G2).
-- 🟡 **7.3.3.7 I02 identity 확장 spike** — `workers/infisical_jobs.py`의 JWT 검증 순수 함수와 `tests/test_identity_jwt.py` 7건 통과(DB 없음). `app.aip`에 연결된 operation이 없어 서비스에서 도달할 수 없다. 나머지 12개 인증 방식 ⬜.
+- 🟡 **7.3.3.7 I02 identity 확장 spike** — `workers/infisical_jobs.py`의 JWT 검증 순수 함수와 `tests/test_identity_jwt.py` 17건 통과(DB 없음; claim 형식·유한 시각·만료 경계 포함, [AUTHN](INFISICAL-AUTHN.md)). `app.aip`에 연결된 operation이 없어 서비스에서 도달할 수 없다. 나머지 12개 인증 방식 ⬜.
 - ⏸ **7.3.3.8 EE 제외 비준** — 철회. [EE-BOUNDARY](INFISICAL-EE-BOUNDARY.md)의 사용자 판단 항목 5개 대기.
 - ✅🟡 **7.3.3.9 실DB 기준선** — `porting/infisical/DB-RUNBOOK.md`와 `run-baseline.sh`를 새 컨테이너·새 venv에서 처음부터 실행해 종료 코드 0, SDK 점검 11개 통과(2026-10-20 재실행은 10개, 이름·세대 분리 제거로 점검 하나가 합쳐짐), job `SUCCEEDED`, 감사 행 확인(`porting/infisical/evidence/baseline-*.txt`). 기준선이 다루는 범위는 위 7.3.3.3/4와 job 1종이다. 원본 Infisical과의 동작 동등성은 비교하지 않았다.
 

@@ -12,6 +12,7 @@ with skew, issuer and audience allowlists from env. Everything else
 """
 
 import json
+import math
 import os
 import time
 
@@ -23,7 +24,12 @@ def _config():
     raw = os.environ.get("INFISICAL_JWKS_JSON", "")
     issuers = [i for i in os.environ.get("INFISICAL_JWT_ISSUERS", "").split(",") if i]
     audience = os.environ.get("INFISICAL_JWT_AUDIENCE", "")
-    skew = int(os.environ.get("INFISICAL_JWT_SKEW_S", "60") or 60)
+    try:
+        skew = int(os.environ.get("INFISICAL_JWT_SKEW_S", "60") or 60)
+    except ValueError as exc:
+        raise RuntimeError("identity JWT misconfigured, skew must be nonnegative integer seconds") from exc
+    if skew < 0:
+        raise RuntimeError("identity JWT misconfigured, skew must be nonnegative integer seconds")
     if not raw:
         raise RuntimeError("identity JWT not configured, missing INFISICAL_JWKS_JSON")
     if not issuers:
@@ -41,6 +47,12 @@ def _config():
     return keys, issuers, audience, skew
 
 
+def _is_numeric_date(value):
+    # bool is an int subclass in Python, but a JSON boolean is not a NumericDate.
+    # Keep integer dates exact; converting a large JSON integer to float can overflow.
+    return type(value) is int or (type(value) is float and math.isfinite(value))
+
+
 def verify_identity_token(token, now=None):
     """Pure verification core (no I/O): returns (subject, claims dict).
 
@@ -54,23 +66,35 @@ def verify_identity_token(token, now=None):
         raise ValueError(f"identity JWT signature rejected: {exc}") from exc
 
     claims = decoded.claims
+    if not isinstance(claims, dict):
+        raise ValueError("identity JWT claims must be an object")
     moment = now if now is not None else time.time()
     exp = claims.get("exp")
-    if not isinstance(exp, (int, float)) or exp + skew < moment:
+    if not _is_numeric_date(exp):
+        raise ValueError("identity JWT expiration must be a finite NumericDate")
+    if exp <= moment - skew:
         raise ValueError("identity JWT expired")
-    nbf = claims.get("nbf")
-    if isinstance(nbf, (int, float)) and nbf - skew > moment:
-        raise ValueError("identity JWT not yet valid")
+    if "nbf" in claims:
+        nbf = claims["nbf"]
+        if not _is_numeric_date(nbf):
+            raise ValueError("identity JWT not-before must be a finite NumericDate")
+        if nbf > moment + skew:
+            raise ValueError("identity JWT not yet valid")
+    if "iat" in claims and not _is_numeric_date(claims["iat"]):
+        raise ValueError("identity JWT issued-at must be a finite NumericDate")
     if claims.get("iss") not in issuers:
         raise ValueError("identity JWT issuer not allowed")
+    aud = claims.get("aud")
+    if "aud" in claims and not (isinstance(aud, str) or
+                                (isinstance(aud, list) and all(isinstance(a, str) for a in aud))):
+        raise ValueError("identity JWT audience must be a string or array of strings")
     if audience:
-        aud = claims.get("aud")
         auds = aud if isinstance(aud, list) else [aud]
         if audience not in auds:
             raise ValueError("identity JWT audience mismatch")
     subject = claims.get("sub")
-    if not subject:
-        raise ValueError("identity JWT has no subject")
+    if not isinstance(subject, str) or not subject:
+        raise ValueError("identity JWT subject must be a nonempty string")
     return subject, dict(claims)
 
 

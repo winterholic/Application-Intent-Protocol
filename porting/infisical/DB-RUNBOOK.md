@@ -60,10 +60,10 @@ bash porting/infisical/run-baseline.sh
 
 ```sh
 cd porting/infisical/tests
-python3 -m unittest test_live_db -v        # 48건. AIP_TEST_DATABASE_URL이 없으면 skip
+python3 -m unittest test_live_db -v        # 63건. AIP_TEST_DATABASE_URL이 없으면 skip
 python3 mutation_check.py                  # 규칙을 하나씩 풀면 해당 시험이 실패하는지 확인
 python3 -m unittest legacy_repro -v        # 수정 전 정의(53b1537)의 결함 10건 재현. 모두 FAIL이 정상
-python3 -m unittest test_identity_jwt -v   # DB 없이 7건
+python3 -m unittest test_identity_jwt -v   # DB 없이 17건
 ```
 
 `test_live_db`는 실행마다 고유한 schema를 만들고 끝나면 지운다. `legacy_repro`는 수정 전 정의가 가진 결함을 보존한 회귀 재현이라 현재 정의에서는 쓰지 않는다.

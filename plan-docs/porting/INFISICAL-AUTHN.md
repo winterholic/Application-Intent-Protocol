@@ -35,8 +35,16 @@
 
 ## I02 확장 spike 상태
 
-`porting/infisical/workers/infisical_jobs.py`의 `verify_identity_token`/`verify_identity_jwt`는 JWT 1종의 서명(JWKS), 만료·nbf, issuer·audience를 검증하는 순수 함수이고 `tests/test_identity_jwt.py` 7건이 통과한다(소켓·외부 호출 없음, DB 없이 실행).
+`porting/infisical/workers/infisical_jobs.py`의 `verify_identity_token`/`verify_identity_jwt`는 JWT 1종의 서명(JWKS), 만료·nbf, issuer·audience를 검증하는 순수 함수이고 `tests/test_identity_jwt.py` 17건으로 확인한다(소켓·외부 호출 없음, DB 없이 실행).
 
 - **서비스에서 도달할 수 없다.** 이 함수를 가리키는 `operation`이 `app.aip`에 선언돼 있지 않다. 단위 시험이 검증한 것은 함수일 뿐 AIP 서비스 경로가 아니다.
 - 원본의 머신 아이덴티티 인증 서비스 디렉터리는 13개다(`identity-ua`(universal-auth)와 `identity-*-auth` 12개: alicloud, aws, azure, gcp, jwt, kubernetes, ldap, oci, oidc, spiffe, tls-cert, token). 단위 시험이 있는 jwt 외 12개는 구현이 없다.
 - 외부 IdP 검증은 서버(확장) 안에서 끝나고 선언 세계에는 검증된 `(issuer, subject, claims)`만 들어간다는 방침은 유지한다.
+
+### 2026-10-20 JWT claim 경계 보완
+
+서명 검증에는 계속 `joserfc`를 사용한다. `decode`만으로 claim 검증이 끝나는 것은 아니다([라이브러리 문서](https://jose.authlib.org/en/guide/jwt/)). 시험 함수는 필수 `exp`와 선택 `nbf`·`iat`를 유한한 JSON 숫자로 제한하고, Python에서 정수의 하위 타입인 boolean도 거부한다. `sub`는 비어 있지 않은 문자열, `aud`는 문자열 또는 문자열 배열만 허용한다. 서명된 JSON의 최상위 값도 객체여야 한다.
+
+만료는 설정된 clock skew를 더한 경계에서도 거부한다(`now >= exp + skew`). `nbf` 경계는 허용하고 소수 시각도 허용한다([RFC 7519 §4.1.2–4.1.6](https://www.rfc-editor.org/rfc/rfc7519.html#section-4.1.2)). 음수·숫자가 아닌 skew 설정은 `RuntimeError`로 실패한다. 잘못된 날짜·subject·audience를 넣은 실제 RSA 서명 토큰으로 수정 전 실패를 확인했다(15개 시험 실행, 실패 31개·오류 2개; subtest 합계). 보완 뒤 17개 시험이 로컬에서 통과했다. 큰 정수 날짜도 float 변환 없이 처리한다. 이 함수에는 제품 access token의 최대 수명 프로필을 추가하지 않았으며, 기존 선택적 audience 설정도 유지한다.
+
+이 변경은 서비스 연결, 머신 주체 발급·매핑, 토큰 폐기, 나머지 12개 인증 방식 또는 전체 Infisical 인증 동등성을 증명하지 않는다. 이 함수가 서비스에서 도달할 수 없다는 위 상태는 그대로다.
