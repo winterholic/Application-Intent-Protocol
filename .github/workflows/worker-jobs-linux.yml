@@ -132,6 +132,8 @@ jobs:
           porting/flaskbb/tests/ban.test.mjs
           porting/flaskbb/tests/moderator-ban.test.mjs
           porting/flaskbb/tests/purge.test.mjs
+          porting/flaskbb/tests/cli-users-delete.test.mjs
+          porting/flaskbb/tests/cli-upgrade.test.mjs
           porting/flaskbb/tests/moderation.test.mjs
           porting/flaskbb/tests/provisioning.test.mjs
           porting/flaskbb/tests/aip-read.test.mjs

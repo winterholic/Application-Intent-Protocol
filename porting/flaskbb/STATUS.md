@@ -1,5 +1,13 @@
 # FlaskBB 전체 포팅 상태
 
+## 2026-10-20 F13 CLI 매핑: `users delete` 고정·`upgrade` 절반 매핑, 갭 G-14·G-15 기록
+
+원본 확인(파일·행 직접): `flaskbb users delete`는 `cli/users.py:67-89`에서 username 프롬프트(73-77), 정확 일치 조회(79), 없으면 오류(80-82), `--force` 없으면 확인(84-86), `user.delete()`(88)이며 그 본체는 `user/models.py:465-468`의 `db.session.delete`+commit이다. 권한 검사는 없다. `flaskbb upgrade`는 `cli/main.py:232-263`에서 `--all`이면 `alembic.upgrade()`(244), `--fixture`나 `--all`이면 `flaskbb.fixtures.<이름>`을 읽어(248-254) `update_settings_from_fixture`(257-259, 본체 `utils/populate.py:87-145`)로 없는 그룹·설정을 추가하고 `--force`일 때만 덮어쓴다.
+
+AIP 대응: `service` CLI에는 비즈니스 전이를 실행하는 명령이 없어(`aip service --help`: check·gen·introspect·adopt-external·init·migrate·adopt·provision·serve·principal·jobs·audit) `users delete`는 admin 신원을 `principal bind`한 호출자의 `User` read(조회)와 `User.purge`(G-11) 적용으로 매핑했다. 실DB `cli-users-delete.test.mjs`가 없는 이름·접두 불일치·삭제·재실행·감사를 고정한다. RED: 처음에는 `principal bind`한 계정도 삭제될 것이라 단언했고 실DB에서 `쓰기 결과를 아직 확정하지 못함`(`retry: later`)으로 실패했다. PG 로그의 원인은 `aip_principals_actor_id_fkey` FK 위반이었고 `principal revoke`는 행을 `enabled=f`로만 바꿔 같은 결과라서(G-14), 시험을 현재 동작(바인딩 있는 계정은 삭제 불가·행 보존·`retry === 'later'`)으로 고쳐 GREEN으로 고정했다. `upgrade`는 마이그레이션 절반만 `service migrate`로 매핑했고(`cli-upgrade.test.mjs`: Safe 필드 추가 `--apply` 뒤 settings 행·운영자 수정 값 불변) fixture 갱신 절반은 `Setting`·`SettingsGroup`에 쓰기 전이가 없고 `seed/install.py`가 설치 전용이라 대응이 없다(G-15, 설계안만, 구현·우회 없음).
+
+실행(로컬 실DB, `/private/tmp` 임시 PG17 loopback 55611, `AIP_TEST_DATABASE_URL`): 신규 2건 + 인접 `cli.test.mjs`·`purge.test.mjs` 4건 = 6/6 통과. 신규 두 시험은 `worker-jobs-linux.yml` Revalidate 단계에 등록했다. Linux CI 결과는 아래 커밋 기록·PMS를 따른다. 이 항목으로 7.5.3이나 F13 전체가 완료됐다고 주장하지 않는다.
+
 ## 2026-10-20 F15 회원 목록(/users) 검색 — 구현됨, unit 로컬 통과, 실DB는 Linux CI 판정 대기
 
 원본 `UserSearchForm`(`upstream/flaskbb/forum/forms.py` 167-176행)은 `search_query`에 `DataRequired`+`Length(min=3, max=50)`를 두고 `get_results()`가 `User.query.whooshee_search(query)`를 돌린다. `MemberList`(`forum/views.py` 618-676행, 경로 `/memberlist` 1154-1158행)는 POST에서 폼이 유효하면 검색 결과를 페이지네이션하고, 무효하면 전체 정렬 목록을 폼(오류 포함)과 함께 다시 렌더한다. User whoosh 색인은 `username`·`email`이다(`utils/search.py` 120-147행). 이전 포팅의 `/users`는 GET 전체 목록만 있고 검색이 없었다.
