@@ -885,6 +885,19 @@ class LiveDbTests(unittest.TestCase):
             code = lh.error_code(self.c[who].jobs.enqueue, "secretReminder", {"secret": secret_id}, key=f"{who}-probe")
             self.assertIsNotNone(code, f"{who} enqueued a job for a project they cannot read")
 
+    def test_reminder_job_rejects_a_soft_deleted_environment_before_enqueue(self):
+        env_id, root = self.env_with_root(BOB, "reminder-soft-hidden", 93)
+        secret_id = self.shared_secret("REMINDER_SOFT_HIDDEN", folder=root)
+        self.assertTrue(lh.transition(self.c[BOB], "Environment.softDelete", [env_id]).get("ok"))
+        for who in (BOB, CAROL, ALICE):
+            with self.subTest(who=who):
+                code = lh.error_code(self.c[who].jobs.enqueue, "secretReminder", {"secret": secret_id},
+                                     key=f"hidden-reminder-{who}")
+                self.assertEqual(code, "WIRE.ACCESS_DENIED", "hidden secrets must be rejected before a job is created")
+        self.assertTrue(lh.transition(self.c[BOB], "Environment.restore", [env_id]).get("ok"))
+        receipt = lh.job_receipt(self.c[CAROL], "secretReminder", {"secret": secret_id}, "restored-reminder")
+        self.assertEqual(receipt["state"], "SUCCEEDED", receipt)
+
     def test_every_served_job_has_a_worker_function(self):
         text = APP.read_text(encoding="utf-8")
         worker = (PORT / "workers" / "infisical_jobs.py").read_text(encoding="utf-8")
