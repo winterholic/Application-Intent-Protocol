@@ -14,6 +14,7 @@
 ### 부분 구현: `secret-reminder` → `operation job secretReminder`
 
 - 입력 `secret: Secret.Id`. enqueue 시점의 `allow`가 호출자가 그 시크릿을 읽을 수 있는 프로젝트 구성원인지 확인한다(원본 큐 payload 모양은 아직 대조하지 않았다).
+- 환경이 소프트 삭제돼 시크릿이 숨겨진 동안에는 enqueue를 `WIRE.ACCESS_DENIED`로 거부한다. 읽기 권한뿐 아니라 환경의 `softDeletedAt = null`도 job의 `allow`에서 명시한다. 환경 복원 뒤에는 다시 enqueue할 수 있다.
 - worker `infisical_jobs.secret_reminder`가 job 주체 권한으로 `Secret`을 읽고 공개 전이 `Secret.remind`를 적용한다. 전이는 `remindedAt`을 갱신하고 소유자에게 outbox 알림(`notify`)을 남긴다.
 - **이것은 알림 기록이지 발송이 아니다.** 메일·Slack 전송, 수신자 계산, 반복 일정은 구현하지 않았다. 전송 증명은 전송 receipt이며 outbox 기록이나 job 성공은 메일 발송이 아니다.
 - **동작 확인**(실제 PostgreSQL 17): 읽기 가능한 구성원 enqueue 후 `SUCCEEDED`, 외부인·무권한 구성원은 enqueue 거부, outbox 행 생성, 감사 행(`via: job`). `tests/test_live_db.py`의 `test_reminder_job_*`와 `evidence/baseline-9-sdk.txt`, `baseline-10-*.txt`.
