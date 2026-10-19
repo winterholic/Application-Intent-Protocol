@@ -713,6 +713,8 @@ pub fn create_ddl_in(namespace: &str, facts: &Value) -> R<Vec<String>> {
                     format!("text CHECK ({col} IN ({}))", vs.join(", "))
                 } else if let Some((precision, scale)) = decimal_type(base) {
                     format!("numeric({precision},{scale})")
+                } else if fd.get("encrypted").is_some() {
+                    "text".into()
                 } else {
                     match base {
                         "Text" | "Email" | "Url" => match fd["range"].as_array() {
@@ -732,6 +734,13 @@ pub fn create_ddl_in(namespace: &str, facts: &Value) -> R<Vec<String>> {
                 };
                 let nn = if nullable || sql_ty.contains("PRIMARY KEY") { "" } else { " NOT NULL" };
                 cols.push(format!("{col} {sql_ty}{nn}"));
+                if let Some(enc) = fd.get("encrypted") {
+                    if enc.get("lookup").and_then(Value::as_str) == Some("eq") {
+                        let bidx_nn = if nullable { "" } else { " NOT NULL" };
+                        cols.push(format!("{col}__bidx text{bidx_nn}"));
+                        cols.push(format!("{col}__bidx_next text"));
+                    }
+                }
             }
             out.push(format!("CREATE TABLE {} ({})", table(name), cols.join(", ")));
             done.push(name.clone());
@@ -768,7 +777,21 @@ pub fn create_ddl_in(namespace: &str, facts: &Value) -> R<Vec<String>> {
     }
     for (name, r) in res {
         for (i, cols) in r["unique"].as_array().into_iter().flatten().enumerate() {
-            let cs: Vec<String> = cols.as_array().unwrap().iter().map(|c| column(facts, name, c.as_str().unwrap()).unwrap()).collect();
+            let cs: Vec<String> = cols
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|c| {
+                    let field = c.as_str().unwrap();
+                    let col = column(facts, name, field).unwrap();
+                    let fd = &r["fields"][field];
+                    if fd.get("encrypted").and_then(|e| e.get("lookup")).and_then(Value::as_str) == Some("eq") {
+                        format!("{col}__bidx")
+                    } else {
+                        col
+                    }
+                })
+                .collect();
             out.push(format!("CREATE UNIQUE INDEX {}_unique_{i} ON {} ({})", snake(name), table(name), cs.join(", ")));
         }
         for (inv, d) in r["invariants"].as_object().unwrap() {

@@ -88,13 +88,44 @@ fn validate_facts(facts: &Value) -> Result<(), Value> {
         }
         let mut columns = BTreeSet::new();
         for (field, desc) in fields {
-            // Until encryption DDL/adoption and runtime journals are implemented, never silently
-            // erase future encryption metadata and provision this as an ordinary plaintext column.
-            if desc.get("encrypted").is_some() {
-                return Err(err("BAD_FACTS", "암호화 metadata는 아직 제품 마이그레이션에서 지원하지 않음"));
+            if let Some(enc) = desc.get("encrypted") {
+                let Some(enc_obj) = enc.as_object() else {
+                    return Err(err("BAD_FACTS", "encrypted 메타데이터는 객체여야 함"));
+                };
+                let Some(scope) = enc_obj.get("scope").and_then(Value::as_object) else {
+                    return Err(err("BAD_FACTS", "encrypted scope 객체 누락"));
+                };
+                let Some(kind) = scope.get("kind").and_then(Value::as_str) else {
+                    return Err(err("BAD_FACTS", "encrypted scope kind 누락"));
+                };
+                match kind {
+                    "service" | "owner" => {}
+                    "ref" => {
+                        let Some(target) = scope.get("target").and_then(Value::as_str) else {
+                            return Err(err("BAD_FACTS", "encrypted ref scope target 누락"));
+                        };
+                        let Some(ref_field) = scope.get("field").and_then(Value::as_str) else {
+                            return Err(err("BAD_FACTS", "encrypted ref scope field 누락"));
+                        };
+                        if !resources.contains_key(target) || !fields.contains_key(ref_field) {
+                            return Err(err("BAD_FACTS", "encrypted ref scope 대상 resource/필드 누락"));
+                        }
+                    }
+                    _ => return Err(err("BAD_FACTS", "지원하지 않는 encrypted scope 종류")),
+                }
+                let lookup = enc_obj.get("lookup").and_then(Value::as_str).unwrap_or("none");
+                if lookup != "none" && lookup != "eq" {
+                    return Err(err("BAD_FACTS", "지원하지 않는 encrypted lookup 종류"));
+                }
+                if desc.get("databaseDefault").is_some_and(|v| v == true) {
+                    return Err(err("BAD_FACTS", "default database와 encrypted는 함께 사용할 수 없음"));
+                }
             }
             let ty = desc["ty"].as_str().ok_or_else(|| err("BAD_FACTS", "필드 타입 누락"))?;
             let base = ty.trim_end_matches('?');
+            if desc.get("encrypted").is_some() && !matches!(base, "Text" | "Email" | "Url") && decimal_type(base).is_none() {
+                return Err(err("BAD_FACTS", "암호화는 Text, Email, Url, Decimal 타입만 지원함"));
+            }
             if let Some(target) = base.strip_prefix("Ref<").and_then(|s| s.strip_suffix('>'))
                 && !resources.contains_key(target)
             {
@@ -121,6 +152,14 @@ fn validate_facts(facts: &Value) -> Result<(), Value> {
         for item in resource["unique"].as_array().into_iter().flatten() {
             if !item.as_array().is_some_and(|a| a.iter().all(|v| v.as_str().is_some_and(|s| fields.contains_key(s)))) {
                 return Err(err("BAD_FACTS", "unique 필드 오류"));
+            }
+            for col_val in item.as_array().unwrap() {
+                let field_name = col_val.as_str().unwrap();
+                if let Some(enc) = fields[field_name].get("encrypted")
+                    && enc.get("lookup").and_then(Value::as_str) != Some("eq")
+                {
+                    return Err(err("BAD_FACTS", "unique에 포함된 암호화 필드는 lookup: eq 선언이 필요함"));
+                }
             }
         }
         for key in resource["invariants"].as_object().into_iter().flat_map(|m| m.keys()) {
@@ -1013,6 +1052,12 @@ async fn derive(db: &impl GenericClient, schema: &str, new_facts: &Value, migrat
                 let old_def = old_cols.get(&col);
                 let new_def = new_cols.get(&new_col);
                 if fd != new_fd || old_def != new_def {
+                    let old_enc = fd.get("encrypted");
+                    let new_enc = new_fd.get("encrypted");
+                    if old_enc != new_enc {
+                        blocked = true;
+                        changes.push(json!({"class":"Blocked","reason":format!("{res}.{field} 암호화 상태·범위 변경은 차단됨: plaintext와 encrypted 간 전환 또는 scope 변경 불가")}));
+                    }
                     if old_def == new_def {
                         changes.push(json!({"class":"SecurityReview","reason":format!("{res}.{field} 의미 타입 변경")}));
                         if new_fd["ty"].as_str().is_some_and(|ty| ty.trim_end_matches('?') == "Email")
