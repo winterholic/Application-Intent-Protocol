@@ -1,5 +1,13 @@
 # FlaskBB 전체 포팅 상태
 
+## 2026-10-20 F15 검색 색인 필드·질의 검증 동등화 — 구현됨, 실DB 로컬 통과, Linux CI 판정 대기
+
+원본 `upstream/flaskbb/utils/search.py`의 whoosheer 스키마는 Post(`username`·`modified_by`·`content`), Topic(`title`·`username`·첫 글 `content`), Forum(`title`·`description`), User(`username`·`email`)이고, `SearchPageForm`(`forum/forms.py` 179-195행)은 질의에 `DataRequired`+`Length(min=3, max=50)`, 타입에 `DataRequired`를 둔다. 같은 파일 167-176행의 `UserSearchForm`(회원 목록 검색)도 같은 길이 제한이다. 이전 포팅은 타입당 필드 하나(`title`/`content`/`username`/`title`)만 `contains`로 읽었고 길이·타입 검증이 없었다.
+
+`app.aip`에 `Topic.username`·`Post.username`·`Post.modified_by`·`Forum.description` `contains` 필터를 추가하고(`service check` ok), 렌더러 `ui/search_fields.py`가 타입별 필드마다 한 번씩 읽어 id로 병합한다. 질의가 공백뿐이거나 3자 미만·50자 초과, 알 수 없는 타입이면 읽기 없이 오류를 표시한다(오류 문구는 포팅 자체 문구이며 WTForms 기본 문구와의 일치는 확인하지 않았다). User `email` 필터는 `service check`를 통과하지만 이메일 탐지 oracle이 되어 선언하지 않았고, Topic 첫 글 본문은 필터 경로가 없어 제외했다. 근거와 결정 항목은 [PRODUCT-GAPS G-4](PRODUCT-GAPS.md)에 있다. Whoosh의 대소문자 무시·토큰화·순위 동등성은 core 필터 연산이 필요해 계속 미구현이다.
+
+RED→GREEN: 실DB 신규 `search-fields.test.mjs`는 변경 전 `WIRE.FILTER_NOT_ALLOWED`로 실패했고 변경 뒤 통과했다. Python `test_ui_host.py`는 5건이 실패한 뒤 `test_ui_host`+`test_mail_jobs` 33건이 통과했다(기존 `test_search_route_invokes_aip_filters`는 필드별 읽기를 기대하도록 바꿨다). 인접 실DB `contract`·`search`·`aip-read`·`features`·`moderation`·`unread-cutoff` 통과. 신규 시험은 `worker-jobs-linux.yml` Revalidate 단계에 등록했고 Linux CI 결과는 push 뒤 확인한다.
+
 ## 2026-10-20 F14 토큰 라이프사이클 — 미구현 고정과 설계안 (G-13)
 
 원본은 SECRET_KEY 서명 1시간 timed 토큰(payload `{id, op}`)을 발급하고(`tokens/serializer.py`) 소비 시 서명·만료·operation 검사를 한다. 재설정 경로(`auth/services/password.py`)는 이메일 일치 verifier(`tokens/verifiers.py` `EmailMatchesUserToken`, `auth/services/factories.py`에서 주입) 뒤 비밀번호를 변경하고, 활성화 경로(`auth/services/activation.py`)는 verifier 없이 토큰의 사용자 ID로 조회해 `activated=True`를 한다(소비 경로는 `/auth/reset-password/<token>`·`/auth/activate/confirm`). 포팅의 두 mail job은 호출자가 준 불투명 토큰을 검증 없이 링크에 넣고, 렌더러는 소비 경로를 서빙하지 않으며(`/auth/reset-password`는 IdP 리다이렉트), 메일 링크는 배포 base URL(기본값 원본 58080) 아래 절대 URL이라 포팅 안 소비처가 없다. 선언에서 서명 검증도 불가하다(`allow hmac(input.token, "k") = "x"` → `service check` `DEF.UNKNOWN_SYMBOL`, predicate `hmac` 없음). 구현 위치·비밀키 관리·F02 IdP 위임과의 모순 해소는 제품 결정 사항이라 임의로 만들지 않고 [PRODUCT-GAPS G-13](PRODUCT-GAPS.md)에 설계안과 결정 항목을 남겼다.

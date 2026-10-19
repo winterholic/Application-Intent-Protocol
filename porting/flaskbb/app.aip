@@ -189,7 +189,7 @@ resource Forum {
   expose apply edit { target id; bulk maxRows 1 }
   expose read {
     select id, category, title, description, position, locked, external, show_moderators, last_post, last_post_user, last_post_title, last_post_username, last_post_created, topic_count, post_count
-    filter id.eq, category.eq, title.contains
+    filter id.eq, category.eq, title.contains, description.contains
     sort position, id
     traverse category { select id, title, position }
     budget { rows 200; depth 2; cost 4000; deadline 2s; offset 1000 }
@@ -270,7 +270,7 @@ resource Topic {
   expose apply delete { target id; bulk maxRows 1 }
   expose read {
     select id, forum, title, user, username, date_created, last_updated, locked, important, views, published, hidden, hidden_at, hidden_by, post_count
-    filter id.eq, forum.eq, user.eq, locked.eq, important.eq, title.contains
+    filter id.eq, forum.eq, user.eq, locked.eq, important.eq, title.contains, username.contains
     sort id, important, last_updated, views
     traverse forum { select id, category, title, position }
     traverse user { select id, username }
@@ -327,7 +327,7 @@ resource Post {
   expose apply delete { target id; bulk maxRows 1 }
   expose read {
     select id, topic, user, username, content, date_created, date_modified, modified_by, hidden, hidden_at, hidden_by, version
-    filter id.eq, topic.eq, user.eq, hidden.eq, content.contains
+    filter id.eq, topic.eq, user.eq, hidden.eq, content.contains, username.contains, modified_by.contains
     sort id, date_created
     traverse topic { select id, forum, title, locked, hidden }
     traverse user { select id, username }

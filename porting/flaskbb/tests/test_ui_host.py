@@ -221,10 +221,77 @@ class UiHostTests(unittest.TestCase):
         res = browser.get("/search?q=testkeyword&type=all")
         self.assertEqual(res.status_code, 200)
         self.assertIn(b"Search Results for \"testkeyword\"", res.data)
-        read_resources = [c.args[0]["read"] for c in client_api.read.call_args_list]
-        self.assertEqual(read_resources, ["Topic", "Post", "User", "Forum"])
-        topic_filter = client_api.read.call_args_list[0].args[0]["filter"]
-        self.assertEqual(topic_filter, [{"field": "title", "op": "contains", "value": "testkeyword"}])
+        # Upstream whoosheers index several fields per type (utils/search.py) and
+        # whooshee_search matches any of them, so each field gets its own read.
+        issued = sorted(
+            (c.args[0]["read"], c.args[0]["filter"][0]["field"])
+            for c in client_api.read.call_args_list
+        )
+        self.assertEqual(issued, [
+            ("Forum", "description"), ("Forum", "title"),
+            ("Post", "content"), ("Post", "modified_by"), ("Post", "username"),
+            ("Topic", "title"), ("Topic", "username"),
+            ("User", "username"),
+        ])
+        for call in client_api.read.call_args_list:
+            self.assertEqual(call.args[0]["filter"][0]["op"], "contains")
+            self.assertEqual(call.args[0]["filter"][0]["value"], "testkeyword")
+
+    def _search_browser(self, read):
+        client_api = Mock()
+        client_api.read.side_effect = read
+        sessions = {"session": {"access_token": "token", "csrf_token": "csrf"}}
+        app = create_app(
+            {"TESTING": True, "SECRET_KEY": "test-only-secret", "AIP_URL": "http://aip.test"},
+            sdk_factory=Mock(return_value=client_api),
+            sessions=sessions,
+        )
+        browser = app.test_client()
+        browser.set_cookie("aip_session", "session")
+        return browser, client_api
+
+    def test_search_merges_field_matches_without_duplicates(self):
+        def read(query):
+            if query["read"] == "Topic":
+                # Same topic matches by title and by author name; another only by author.
+                rows = {"title": [{"id": "t1", "title": "Alpha", "username": "x", "forum": "1"}],
+                        "username": [{"id": "t1", "title": "Alpha", "username": "x", "forum": "1"},
+                                     {"id": "t2", "title": "Beta", "username": "keyword-user", "forum": "1"}]}
+                return rows[query["filter"][0]["field"]]
+            return []
+        browser, _ = self._search_browser(read)
+        res = browser.get("/search?q=keyword&type=topic")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data.count(b"Alpha"), 1)
+        self.assertEqual(res.data.count(b"Beta"), 1)
+        self.assertIn(b"Matching Topics (2)", res.data)
+
+    def test_search_rejects_query_outside_original_length_bounds_without_reading(self):
+        # Upstream SearchPageForm: DataRequired + Length(min=3, max=50) (forum/forms.py).
+        for q, text in (("ab", b"between 3 and 50"), ("x" * 51, b"between 3 and 50"), ("   ", b"required")):
+            with self.subTest(q=q):
+                browser, client_api = self._search_browser(lambda query: [])
+                res = browser.get("/search", query_string={"q": q, "type": "all"})
+                self.assertEqual(res.status_code, 200)
+                self.assertIn(text, res.data)
+                self.assertNotIn(b"Search Results for", res.data)
+                client_api.read.assert_not_called()
+
+    def test_search_accepts_query_at_original_length_bounds(self):
+        for q in ("abc", "x" * 50):
+            with self.subTest(length=len(q)):
+                browser, client_api = self._search_browser(lambda query: [])
+                res = browser.get("/search", query_string={"q": q, "type": "user"})
+                self.assertEqual(res.status_code, 200)
+                self.assertNotIn(b"between 3 and 50", res.data)
+                self.assertEqual(client_api.read.call_count, 1)
+
+    def test_search_rejects_unknown_type_without_reading(self):
+        browser, client_api = self._search_browser(lambda query: [])
+        res = browser.get("/search?q=keyword&type=bogus")
+        self.assertEqual(res.status_code, 200)
+        self.assertIn(b"not a valid", res.data)
+        client_api.read.assert_not_called()
 
     def test_member_list_and_user_profile(self):
         client_api = Mock()

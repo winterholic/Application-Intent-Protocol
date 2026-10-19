@@ -18,6 +18,7 @@ from joserfc.jwt import JWTClaimsRegistry
 
 from aip_sdk import AipError, connect
 
+import search_fields
 from read_tracking import forum_is_unread, topic_is_unread
 
 TRACK = Path(__file__).resolve().parents[1]
@@ -408,51 +409,46 @@ def create_app(config=None, sdk_factory=connect, sessions=None, flows=None):
 
     @app.get("/search")
     def search():
-        q = request.args.get("q", "").strip()
+        submitted = "q" in request.args
+        raw_query = request.args.get("q", "")
+        q = raw_query.strip()
         search_type = request.args.get("type", "all")
-        topics, posts, users, forums = [], [], [], []
-        if q:
+        errors = search_fields.validate(raw_query, search_type) if submitted else []
+        results = {"topic": [], "post": [], "user": [], "forum": []}
+        selects = {
+            "topic": ["id", "forum", "title", "username", "date_created"],
+            "post": ["id", "topic", "username", "content", "date_created"],
+            "user": ["id", "username"],
+            "forum": ["id", "category", "title", "description"],
+        }
+        if submitted and not errors:
             client = aip_client()
             try:
-                if search_type in {"all", "topic"}:
-                    topics = client.read({
-                        "read": "Topic",
-                        "select": ["id", "forum", "title", "username", "date_created"],
-                        "filter": [{"field": "title", "op": "contains", "value": q}],
-                        "limit": 50,
-                    })
-                if search_type in {"all", "post"}:
-                    posts = client.read({
-                        "read": "Post",
-                        "select": ["id", "topic", "username", "content", "date_created"],
-                        "filter": [{"field": "content", "op": "contains", "value": q}],
-                        "limit": 50,
-                    })
-                if search_type in {"all", "user"}:
-                    users = client.read({
-                        "read": "User",
-                        "select": ["id", "username"],
-                        "filter": [{"field": "username", "op": "contains", "value": q}],
-                        "limit": 50,
-                    })
-                if search_type in {"all", "forum"}:
-                    forums = client.read({
-                        "read": "Forum",
-                        "select": ["id", "category", "title", "description"],
-                        "filter": [{"field": "title", "op": "contains", "value": q}],
-                        "limit": 50,
-                    })
+                for kind, (resource, fields) in search_fields.FIELDS.items():
+                    if search_type not in {"all", kind}:
+                        continue
+                    results[kind] = search_fields.merge_by_id(
+                        client.read({
+                            "read": resource,
+                            "select": selects[kind],
+                            "filter": [{"field": field, "op": "contains", "value": q}],
+                            "limit": 50,
+                        })
+                        for field in fields
+                    )
             except AipError as error:
                 reject_aip_error(error)
         identity = session_store.get(request.cookies.get("aip_session"), {})
         return render_template(
             "search.html",
-            query=q,
+            query=q if submitted and not errors else "",
+            form_value=raw_query,
+            errors=errors,
             search_type=search_type,
-            topics=topics,
-            posts=posts,
-            users=users,
-            forums=forums,
+            topics=results["topic"],
+            posts=results["post"],
+            users=results["user"],
+            forums=results["forum"],
             logout_url=url_for("logout") if identity else None,
             csrf_token=identity.get("csrf_token"),
         )

@@ -9,7 +9,7 @@
     <div class="panel-body">
         <form method="get" action="{{ url_for('search') }}" class="form-inline">
             <div class="form-group">
-                <input type="text" name="q" value="{{ query or '' }}" class="form-control" placeholder="Search keywords..." style="width: 300px;" required>
+                <input type="text" name="q" value="{{ form_value or '' }}" class="form-control" placeholder="Search keywords..." style="width: 300px;" required>
             </div>
             <div class="form-group">
                 <select name="type" class="form-control">
@@ -24,6 +24,10 @@
         </form>
     </div>
 </div>
+
+{% for error in errors %}
+<div class="alert alert-danger">{{ error }}</div>
+{% endfor %}
 
 {% if query %}
 <h3>Search Results for "{{ query }}"</h3>
