@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   release-packages:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -29,9 +29,34 @@ jobs:
           rustup update stable
           rustup default stable
           npm ci --prefix spikes/spike-0-ts --ignore-scripts --no-audit --no-fund
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client bubblewrap apparmor
+      - name: Prepare isolated CI worker namespace policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          # This is a disposable GitHub runner fixture, matching deploy-checks.yml.
+          # No production host policy or worker isolation mode is changed.
+          if [[ -r /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]] && [[ $(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns) == 1 ]]; then
+            sandbox_bin="$RUNNER_TEMP/aip-ci-bwrap"
+            mkdir -p "$sandbox_bin"
+            cp "$(command -v bwrap)" "$sandbox_bin/bwrap"
+            sudo tee /etc/apparmor.d/aip-ci-bwrap >/dev/null <<EOF
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile aip-ci-bwrap "$sandbox_bin/bwrap" flags=(unconfined) {
+            userns,
+          }
+          EOF
+            sudo apparmor_parser -r /etc/apparmor.d/aip-ci-bwrap
+            echo "$sandbox_bin" >> "$GITHUB_PATH"
+          fi
       - name: Verify app packaging boundaries
-        run: node --test product/tests/app-package.test.mjs product/tests/app-manifest.test.mjs product/tests/package-boundaries.test.mjs product/tests/app-deploy.test.mjs
+        run: node --test product/tests/app-package.test.mjs product/tests/app-manifest.test.mjs product/tests/package-boundaries.test.mjs product/tests/app-deploy.test.mjs product/tests/smoke-options.test.mjs
       - name: Verify relocated release packages and installed SDK consumers
         run: node --test product/tests/app-package-e2e.test.mjs
       - name: Verify native deployment lifecycle and schema migration on an owned PostgreSQL
+        env:
+          AIP_TEST_APP_DOCKER: '1'
+          AIP_TEST_APP_WORKERS: '1'
         run: node --test product/tests/app-deploy-live.test.mjs

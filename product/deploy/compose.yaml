@@ -1,0 +1,30 @@
+# Linux Docker Engine template: the product intentionally listens on loopback.
+# Host networking shares the host network namespace. No ports: mapping is applicable.
+services:
+  app:
+    image: ${AIP_APP_IMAGE:?Set an immutable local tag or image digest}
+    init: true
+    network_mode: host
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=64m
+    volumes:
+      - type: bind
+        source: ${AIP_OPERATOR_DIRECTORY:?Set external config and public JWKS directory}
+        target: /run/aip
+        read_only: true
+    environment:
+      # Rename these keys to match service.json. Values are injected at runtime only.
+      APP_RUNTIME_DATABASE_URL: ${APP_RUNTIME_DATABASE_URL:?Set runtime role DSN}
+    restart: unless-stopped
+    stop_grace_period: 30s
+    mem_limit: 512m
+    pids_limit: 128
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"

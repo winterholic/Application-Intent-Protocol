@@ -76,11 +76,12 @@ test("wrong platform is rejected before executing binary", async t => {
   await assert.rejects(module.verifyPackage(f.root), e => e.code === "TARGET_MISMATCH");
 });
 
-for (const mutation of ["worker-path", "worker-language", "isolation", "secret", "schema", "listen"]) test(`configuration refuses ${mutation}`, async t => {
+for (const mutation of ["worker-path", "worker-language", "worker-runtime", "isolation", "secret", "schema", "listen"]) test(`configuration refuses ${mutation}`, async t => {
   assert.equal(typeof module.prepareCommand, "function");
   const f = await fixture(t);
   if (mutation === "worker-path") f.config.workers.directory = f.base;
   if (mutation === "worker-language") f.config.workers.language = "python";
+  if (mutation === "worker-runtime") f.config.workers.runtime_executable = "/nonexistent-aip-worker-runtime";
   if (mutation === "isolation") f.config.workers.isolation = "none";
   if (mutation === "secret") f.config.password = "NEVER_PRINT_THIS";
   if (mutation === "schema") f.config.schema = "public";

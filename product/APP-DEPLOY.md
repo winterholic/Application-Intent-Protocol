@@ -84,4 +84,6 @@ node --test product/tests/app-package-e2e.test.mjs
 node --test product/tests/app-deploy-live.test.mjs
 ```
 
-live 검사는 원본 입력과 중간 번들을 지운 뒤 설치 디렉터리에서 init, 인증 HTTP read/apply, SIGTERM 종료·재기동, 잘못된 digest 거부, 새 nullable 필드 migration, 데이터·멱등 기록 보존을 확인한다. 이는 일회용 PostgreSQL에서의 제품 통합 검증이며 운영 서버 배포 증거가 아니다. Node/Python 확장·Docker 이미지·구버전 거부·백업 복원 등 WBS 9.4/9.5의 추가 표면은 별도 검증한다.
+live 검사는 원본 입력과 중간 번들을 지운 뒤 설치 디렉터리에서 init, 인증 HTTP read/apply, SIGTERM 종료·재기동, 잘못된 digest 거부, 새 nullable 필드 migration, 데이터·멱등 기록 보존, 구버전 정의의 fence 거부, 변경 전 PostgreSQL dump 복원 후 이전 패키지의 조회·멱등 기록을 확인한다. 이는 일회용 PostgreSQL에서의 제품 통합 검증이며 운영 서버 배포 증거가 아니다.
+
+Linux에서 `AIP_TEST_APP_DOCKER=1 AIP_TEST_APP_WORKERS=1`을 설정하면 [Docker 이미지 실행](DOCKER.md)과 Node/Python의 설치 SDK·실제 HTTP·격리 worker·durable job을 두 Id wire로 추가 검증한다. worker 검사는 패키지의 정의·확장·binary·SDK를 사용하며 원본 앱 입력은 지워져 있다. 검증 harness와 TypeScript compiler·Python SDK 시험 helper는 checkout에 남아 있으므로 서버뿐 아니라 검사 도구도 checkout 없이 동작한다는 주장은 아니다. macOS에서는 두 Linux 전용 단계가 명시적으로 `NOT RUN`이다.

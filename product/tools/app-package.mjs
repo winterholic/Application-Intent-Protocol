@@ -34,11 +34,11 @@ async function sourceSnapshot(root) {
       for (const name of (await readdir(path)).sort()) {
         if (!["target", "node_modules", "__pycache__", ".git", ".cache", "dist"].includes(name)) await collect(join(path, name));
       }
-    } else if (info.isFile() && /\.(?:rs|toml|lock|sql|ts|tsx|js|mjs|json|py|aip)$/u.test(path)) {
+    } else if (info.isFile() && (/\.(?:rs|toml|lock|sql|ts|tsx|js|mjs|json|py|aip|yaml|service)$/u.test(path) || ["Dockerfile", "dockerignore"].includes(basename(path)))) {
       files.set(portable(relative(root, path)), hash(await readFile(path)));
     }
   };
-  for (const path of ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo", "crates", "spikes", "prototype/src", "prototype/example", "product/sdk", "product/tools"]) await collect(join(root, path));
+  for (const path of ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo", "crates", "spikes", "prototype/src", "prototype/example", "product/sdk", "product/tools", "product/deploy"]) await collect(join(root, path));
   if (!files.has("Cargo.toml") || !files.has("Cargo.lock")) fail("SOURCE_MISSING", "Cargo.toml과 Cargo.lock이 필요합니다", "source-manifest");
   return files;
 }
@@ -153,6 +153,8 @@ export async function packageApplication({ manifest, out, profile = "release" },
     await write("bin/aip", await readFile(binary));
     await chmod(join(out, "bin/aip"), 0o755);
     await write("tools/app-deploy.mjs", await readFile(join(root, "product/tools/app-deploy.mjs")));
+    for (const name of ["Dockerfile", "compose.yaml", "aip-app.service"]) await write(`deploy/${name}`, await readFile(join(root, "product/deploy", name)));
+    await write(".dockerignore", await readFile(join(root, "product/deploy/dockerignore")));
     run(join(out, "bin/aip"), ["service", "gen", join(out, "app", contract.app.definition), "--wire", "decimal", "--out", join(out, "bindings.ts"), "--sdk-import", "@aip/sdk"], "bindings", out);
     if (!(await stat(join(out, "bindings.ts"))).isFile()) fail("BINDINGS_MISSING", "binding 산출물이 없습니다", "bindings");
     packagedFiles.add("bindings.ts");

@@ -1,0 +1,27 @@
+# Copy and edit for a prepared Linux host; this file is never installed automatically.
+[Unit]
+Description=AIP application package
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=aip-app
+Group=aip-app
+WorkingDirectory=/srv/my-app/1.0.0
+EnvironmentFile=/srv/my-app/operator/service.env
+ExecStartPre=/usr/bin/node /srv/my-app/1.0.0/tools/app-deploy.mjs preflight --config /srv/my-app/operator/service.json
+ExecStart=/usr/bin/node /srv/my-app/1.0.0/tools/app-deploy.mjs serve --config /srv/my-app/operator/service.json
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+KillSignal=SIGTERM
+KillMode=mixed
+UMask=0077
+# Restrict package/config write permissions with ownership. Kernel namespace hardening
+# must be checked against Bubblewrap on the deployment host, not disabled to force a pass.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

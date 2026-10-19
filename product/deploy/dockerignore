@@ -1,0 +1,10 @@
+# The context is an already verified bundle, with no runtime settings or installed dependencies.
+**/.env*
+**/*.pem
+**/*.key
+**/id_rsa*
+**/.git
+**/target
+**/node_modules
+**/__pycache__
+**/.cache

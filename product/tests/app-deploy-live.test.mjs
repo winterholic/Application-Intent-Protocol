@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { generateKeyPairSync, randomUUID, sign } from "node:crypto";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:net";
@@ -27,6 +27,7 @@ test("moved app package initializes, serves HTTP, stops, migrates by digest and 
   const base = await realpath(await mkdtemp(join(tmpdir(), "aip-app-deploy-live-")));
   const container = `aip-app-deploy-${randomUUID().slice(0, 8)}`;
   let owned = false; let server;
+  let image; let imageContainer;
   const stop = async () => {
     if (!server || server.exitCode !== null || server.signalCode !== null) return;
     const stopped = once(server, "exit"); server.kill("SIGTERM");
@@ -89,6 +90,7 @@ test("moved app package initializes, serves HTTP, stops, migrates by digest and 
     assert.equal((await call("/apply", { request: { apply: "Item.mark", target: { ids: ["11"] } }, key: "deploy-write-1" })).ok, true);
     await stop();
     await assert.rejects(fetch(`http://${listen}/ready`));
+    const backup = run("docker", ["exec", container, "pg_dump", "-U", "postgres", "-d", "aip_test_app_deploy", "--clean", "--if-exists", "--no-owner", "--no-privileges"]);
     const plan = JSON.parse(command(bundles[1], "plan").output);
     assert.equal(plan.blocked, false); assert.match(plan.digest, /^[a-f0-9]{64}$/u);
     const rejected = spawnSync(process.execPath, [join(bundles[1], "tools/app-deploy.mjs"), "migrate", "--config", configPath, "--digest", "0".repeat(64)], { env, encoding: "utf8" });
@@ -98,10 +100,72 @@ test("moved app package initializes, serves HTTP, stops, migrates by digest and 
     assert.equal((await call("/read", { query: { read: "Item", select: ["id", "checked"] } })).rows[0].checked, true);
     assert.equal((await call("/apply", { request: { apply: "Item.mark", target: { ids: ["11"] } }, key: "deploy-write-1" })).replayed, true);
     await stop(); await start(bundles[1]); assert.equal(command(bundles[1], "ready").ok, true); await stop();
+    const oldVersion = spawnSync(process.execPath, [join(bundles[0], "tools/app-deploy.mjs"), "serve", "--config", configPath], { cwd: base, env, encoding: "utf8", timeout: 5000 });
+    assert.equal(oldVersion.error, undefined, "old definition must be rejected, not hang serving changed schema");
+    assert.notEqual(oldVersion.status, 0); assert.match(oldVersion.stdout + oldVersion.stderr, /SCHEMA_MISMATCH/u);
     console.log("relocated package: init, authenticated HTTP read/apply, SIGTERM, restart, wrong digest refusal, migration, preserved row/idempotency PASS");
-  } finally {
+    if (process.platform === "linux" && process.env.AIP_TEST_APP_DOCKER === "1") {
+      image = `aip-app-deploy-test:${randomUUID().slice(0, 8)}`;
+      run("docker", ["build", "--tag", image, "--file", join(bundles[1], "deploy/Dockerfile"), bundles[1]]);
+      const metadata = JSON.parse(run("docker", ["image", "inspect", image]))[0];
+      assert.equal(metadata.Config.User, "10001:10001");
+      await chmod(base, 0o755);
+      const operator = join(base, "operator"); await mkdir(operator);
+      await writeFile(join(operator, "service.json"), await readFile(configPath));
+      await writeFile(join(operator, "jwks.json"), await readFile(join(base, "jwks.json")));
+      for (let cycle = 0; cycle < 2; cycle++) {
+        imageContainer = `aip-app-image-${randomUUID().slice(0, 8)}`;
+        run("docker", ["run", "--detach", "--name", imageContainer, "--init", "--network", "host", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true", "--tmpfs", "/tmp:rw,nosuid,nodev,size=64m", "--mount", `type=bind,source=${operator},target=/run/aip,readonly`, "--env", "AIP_DEPLOY_TEST_DSN", image], { env });
+        let healthy = false;
+        for (let attempt = 0; attempt < 150; attempt++) {
+          try { if ((await fetch(`http://${listen}/ready`)).status === 200) { healthy = true; break; } } catch {}
+          if (run("docker", ["inspect", "--format", "{{.State.Running}}", imageContainer]) !== "true") break;
+          await sleep(100);
+        }
+        assert.equal(healthy, true, run("docker", ["logs", imageContainer]));
+        assert.equal((await call("/read", { query: { read: "Item", select: ["id", "checked"] } })).rows[0].checked, true);
+        run("docker", ["exec", imageContainer, "node", "tools/app-deploy.mjs", "ready", "--config", "/run/aip/service.json"]);
+        run("docker", ["stop", "--time", "15", imageContainer]);
+        assert.equal(run("docker", ["inspect", "--format", "{{.State.ExitCode}}", imageContainer]), "0");
+        run("docker", ["rm", imageContainer]); imageContainer = undefined;
+      }
+      assert.equal(sql("SELECT checked FROM aip_deploy_live.item WHERE id=11;"), "t");
+      assert.deepEqual(JSON.parse(await readFile(join(operator, "jwks.json"))), { keys: [jwk] });
+      console.log("Linux app image: build, non-root/read-only/cap-drop, ready, authenticated read, SIGTERM, recreate, external DB/config preservation PASS");
+    } else console.log("Docker image lifecycle NOT RUN: requires Linux and AIP_TEST_APP_DOCKER=1");
+    sql(backup);
+    contract = fingerprint(bundles[0]); await start(bundles[0]);
+    assert.equal((await call("/read", { query: { read: "Item", select: ["id", "checked"] } })).rows[0].checked, true);
+    assert.equal((await call("/apply", { request: { apply: "Item.mark", target: { ids: ["11"] } }, key: "deploy-write-1" })).replayed, true);
     await stop();
-    if (owned) run("docker", ["rm", "--force", container]);
-    await rm(base, { recursive: true, force: true });
+    console.log("old definition rejected after migration; pre-upgrade PostgreSQL dump restored; old package read/idempotency PASS");
+    if (process.platform === "linux" && process.env.AIP_TEST_APP_WORKERS === "1") {
+      for (const language of ["node", "python"]) {
+        const input = join(base, `worker-input-${language}`); const bundle = join(base, `worker-bundle-${language}`);
+        await mkdir(join(input, "extensions"), { recursive: true });
+        const extension = language === "node" ? "mjs" : "py";
+        await writeFile(join(input, "app.aip"), await readFile(join(repo, "prototype/example/app.aip")));
+        await writeFile(join(input, `extensions/event.${extension}`), await readFile(join(repo, `prototype/example/extensions/event.${extension}`)));
+        await writeFile(join(input, "aip.app.json"), JSON.stringify({ name: `worker-${language}`, version: "1.0.0", definition: "app.aip", extensions: { directory: "extensions", language, entrypoints: [`event.${extension}`], enable_writes: true } }));
+        run(process.execPath, [join(repo, "product/tools/package.mjs"), "--manifest", input, "--out", bundle]);
+        const installed = join(base, `worker-installed-${language}`);
+        run(process.execPath, [join(bundle, "tools/app-deploy.mjs"), "install", "--out", installed], { cwd: base });
+        await rm(input, { recursive: true }); await rm(bundle, { recursive: true });
+        const report = JSON.parse(run(process.execPath, [join(repo, "product/tools/smoke.mjs"), "--bin", join(installed, "bin/aip"), "--sdk-package", join(installed, "sdk/aip-sdk-0.1.0.tgz"), "--app-definition", join(installed, "app/app.aip"), "--workers", language, "--extension-dir", join(installed, "app/extensions")], { cwd: base, env: { ...env, AIP_TEST_DATABASE_URL: env.AIP_DEPLOY_TEST_DSN } }));
+        assert.equal(report.ok, true); assert.equal(report.worker, language);
+        for (const wire of report.wires) { assert.equal(wire.extension.writesApplied, 1); assert.equal(wire.operation.job.status, "SUCCEEDED"); }
+        console.log(`${language} installed package: both Id wires, installed SDK, authenticated HTTP read/apply, isolated extension and durable job PASS`);
+      }
+    } else console.log("Packaged worker execution NOT RUN: requires Linux and AIP_TEST_APP_WORKERS=1");
+  } finally {
+    try { await stop(); } finally {
+      try {
+        if (imageContainer) run("docker", ["rm", "--force", imageContainer]);
+        if (owned) run("docker", ["rm", "--force", container]);
+      } finally {
+        if (image) spawnSync("docker", ["image", "rm", image], { stdio: "ignore" });
+        await rm(base, { recursive: true, force: true });
+      }
+    }
   }
 });

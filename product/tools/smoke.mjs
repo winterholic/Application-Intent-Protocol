@@ -27,11 +27,12 @@ function argumentsFrom(argv) {
   let sdkPackage;
   let worker;
   let extensionDir;
+  let appDefinition = join(repoDir, "prototype", "example", "app.aip");
   let wires = ["decimal", "safe"];
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index];
     if (arg === "--help" || arg === "-h") {
-      console.log("usage: node product/tools/smoke.mjs [--bin <aip-binary>] [--sdk-package <package.tgz>] [--wire decimal|safe] [--workers node|python] [--extension-dir <directory>]");
+      console.log("usage: node product/tools/smoke.mjs [--bin <aip-binary>] [--sdk-package <package.tgz>] [--app-definition <packaged-app.aip>] [--wire decimal|safe] [--workers node|python] [--extension-dir <directory>]");
       process.exit(0);
     }
     if (arg === "--bin" && argv[index + 1]) {
@@ -50,6 +51,10 @@ function argumentsFrom(argv) {
       extensionDir = resolve(argv[++index]);
       continue;
     }
+    if (arg === "--app-definition" && argv[index + 1]) {
+      appDefinition = resolve(argv[++index]);
+      continue;
+    }
     if (arg === "--wire" && ["decimal", "safe"].includes(argv[index + 1])) {
       wires = [argv[++index]];
       continue;
@@ -57,7 +62,7 @@ function argumentsFrom(argv) {
     throw new SmokeFailure("arguments", "BAD_ARGS", "알 수 없는 인자 또는 인자값이 없습니다");
   }
   if (extensionDir && !worker) throw new SmokeFailure("arguments", "BAD_ARGS", "--extension-dir는 --workers와 함께 지정해야 합니다");
-  return { binary, sdkPackage, worker, extensionDir, wires };
+  return { binary, sdkPackage, worker, extensionDir, wires, appDefinition };
 }
 
 const childEnv = (extra = {}) => ({
@@ -299,12 +304,12 @@ async function typecheckAndInstall(workDir, tarball, wire, bindingPath) {
   return { consumerDir, runnerPath: join(outputDir, "smoke.js") };
 }
 
-async function runWire({ binary, wire, workRoot, tarball, worker, extensionDir }) {
+async function runWire({ binary, wire, workRoot, tarball, worker, extensionDir, appDefinition }) {
   const wireDir = join(workRoot, wire);
   await mkdir(wireDir, { recursive: true });
   const schema = `aip_product_${randomUUID().replaceAll("-", "")}`;
   const appPath = join(wireDir, "app.aip");
-  await writeFile(appPath, await readFile(join(repoDir, "prototype", "example", "app.aip")), { flag: "wx" });
+  await writeFile(appPath, await readFile(appDefinition), { flag: "wx" });
   const { jwksPath, token } = await createAuthFiles(wireDir);
   const configPath = await writeConfig(wireDir, schema, wire, jwksPath, worker, extensionDir);
   const init = runJson(binary, ["service", "init", appPath, "--config", configPath], "init");
@@ -439,12 +444,13 @@ async function buildAndPack(workRoot, suppliedPackage) {
 }
 
 async function smoke() {
-  const { binary, sdkPackage, worker, extensionDir, wires } = argumentsFrom(process.argv.slice(2));
+  const { binary, sdkPackage, worker, extensionDir, wires, appDefinition } = argumentsFrom(process.argv.slice(2));
+  if (!(await stat(appDefinition).catch(() => undefined))?.isFile()) throw new SmokeFailure("arguments", "APP_MISSING", "지정한 앱 정의 파일이 없습니다");
   const workRoot = await mkdtemp(join(tmpdir(), "aip-product-sdk-smoke-"));
   try {
     const sdk = await buildAndPack(workRoot, sdkPackage);
     const results = [];
-    for (const wire of wires) results.push(await runWire({ binary, wire, workRoot, tarball: sdk.tarball, worker, extensionDir }));
+    for (const wire of wires) results.push(await runWire({ binary, wire, workRoot, tarball: sdk.tarball, worker, extensionDir, appDefinition }));
     return {
       ok: true,
       package: { name: sdk.metadata.name, version: sdk.metadata.version, packed: true, installed: true },

@@ -19,6 +19,7 @@ function fixture(t, overrides = {}) {
   put(join(root, "crates/aip-cli/Cargo.toml"), '[features]\ndefault = []\nmysql = []\nexternal-brokers = []\npoc-runtime = []\n');
   put(join(root, "crates/aip-cli/src/main.rs"), 'fn main() {}\n');
   put(join(root, "product/tools/app-deploy.mjs"), readFileSync(new URL("../tools/app-deploy.mjs", import.meta.url), "utf8"));
+  for (const name of ["Dockerfile", "dockerignore", "compose.yaml", "aip-app.service"]) put(join(root, "product/deploy", name), readFileSync(new URL(`../deploy/${name}`, import.meta.url), "utf8"));
   put(join(root, "prototype/example/app.aip"), 'resource Embedded { fields { id: Id } }\n');
   put(join(app, "defs/service.aip"), 'resource Member { fields { id: Id } }\nactor Member\n');
   put(join(app, "workers/main.mjs"), 'export { value } from "./helper.mjs";\n');
@@ -96,6 +97,8 @@ test("two distinct applications remain self-contained after removing their input
     assert.equal(existsSync(join(f.out, contract.packageLayout.definition)), true);
     assert.equal(existsSync(join(f.out, contract.packageLayout.manifest)), true);
     assert.equal(readFileSync(join(f.out, "tools/app-deploy.mjs"), "utf8"), readFileSync(new URL("../tools/app-deploy.mjs", import.meta.url), "utf8"));
+    assert.equal(readFileSync(join(f.out, "deploy/Dockerfile"), "utf8"), readFileSync(new URL("../deploy/Dockerfile", import.meta.url), "utf8"));
+    assert.equal(existsSync(join(f.out, ".dockerignore")), true);
     const serialized = readFileSync(join(f.out, "BUILD.json"), "utf8") + readFileSync(join(f.out, "APP_CONTRACT.json"), "utf8");
     assert.ok(!serialized.includes(f.base), "metadata must not depend on the input checkout");
     rmSync(f.app, { recursive: true });
@@ -139,13 +142,13 @@ test("rejects output nested inside the app without creating files", async (t) =>
   assert.equal(existsSync(f.out), false);
 });
 
-for (const mutation of ["app", "engine", "binary", "embedded-definition"]) {
+for (const mutation of ["app", "engine", "binary", "embedded-definition", "deploy-template"]) {
   test(`detects concurrent ${mutation} mutation and removes incomplete output`, async (t) => {
     const f = fixture(t);
     const run = (program, args, stage) => {
       const result = f.run(program, args, stage);
       if (stage === "sdk-build") f.put(join(mutation === "app" ? f.app : f.root,
-        mutation === "app" ? "workers/helper.mjs" : mutation === "engine" ? "crates/aip-cli/src/main.rs" : mutation === "embedded-definition" ? "prototype/example/app.aip" : "target/release/aip"), "changed\n");
+        mutation === "app" ? "workers/helper.mjs" : mutation === "engine" ? "crates/aip-cli/src/main.rs" : mutation === "embedded-definition" ? "prototype/example/app.aip" : mutation === "deploy-template" ? "product/deploy/Dockerfile" : "target/release/aip"), "changed\n");
       return result;
     };
     await assert.rejects(build(f, run), e => e.code === "SOURCE_CHANGED");

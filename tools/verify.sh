@@ -65,6 +65,7 @@ node --test \
   product/tests/app-manifest.test.mjs \
   product/tests/app-package.test.mjs \
   product/tests/app-deploy.test.mjs \
+  product/tests/smoke-options.test.mjs \
   product/tests/dev-jwt.test.mjs \
   product/tests/google-storage-provider.test.mjs
 python3 -m unittest product.tests.google_storage_provider_test product.tests.python_sdk_test product.tests.dedicated_db_test
