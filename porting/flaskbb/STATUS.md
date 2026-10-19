@@ -1,5 +1,11 @@
 # FlaskBB 전체 포팅 상태
 
+## 2026-10-19 main 473c528 재실행과 JIT 비용 측정
+
+[Linux worker CI 39238123662](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39238123662)에서 실제 메일 2개·sticky 정렬 1개·원래 포팅 suite 8개·UI/메일 unit 20개가 통과했다. 같은 Topic post_count SQL의 JIT on은 1,223.152ms(518개 함수 컴파일 1,220.835ms), off는 0.221ms였다. 앞선 2초 deadline 실패가 이번에는 재현되지 않았지만 컴파일 비용이 짧은 읽기 예산의 대부분임을 측정했다. 이전 실패의 cold/load 상태는 동일 재현하지 않았다.
+
+기한 2초 이하의 읽기 transaction에만 JIT off를 적용하는 core 증분과 성공/취소 뒤 session 복원·2000/2001ms 경계 검사를 추가했다. 로컬 clippy만 통과했으며 이 새 증분의 실제 DB 결과는 다음 CI에서 확인한다. 선언의 2초 기한·데이터·정책을 완화하지 않았다. 아래 이전 실패·대기는 이력이고 전체 포팅 parity의 열린 항목은 유지한다.
+
 ## 2026-10-19 main b39633a Linux 실행 결과
 
 [Linux worker jobs 39236890861](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39236890861) 원시 로그에서 Mailpit 메일 전달·동일 endpoint 복구 2 passed, 중요 주제의 페이지 경계·moderation 정렬 1 passed, UI·메일 단위 20 passed를 확인했다. 기존 포팅 suite는 8개 중 7 passed/1 failed다. 실제 UI→SDK→AIP→PG·검색 일관성·권한·프로비저닝은 통과했지만 CLI의 초기 Welcome Topic `post_count` 조회가 `WIRE.DEADLINE_EXCEEDED`로 실패했다. PostgreSQL은 동일 쿼리에 statement timeout을 기록했다.

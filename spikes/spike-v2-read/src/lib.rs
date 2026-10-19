@@ -231,7 +231,11 @@ pub async fn connect() -> Client {
 /// 읽기 전용 트랜잭션 + statement_timeout으로 실행한다. DB 오류 원문은 호출자에게 보내지 않는다.
 pub async fn execute(client: &mut Client, plan: &Plan) -> Result<Vec<serde_json::Value>, Reject> {
     let tx = client.transaction().await.map_err(|_| Reject { code: "WIRE.INTERNAL", msg: "트랜잭션 시작 실패".into() })?;
-    tx.batch_execute(&format!("SET TRANSACTION READ ONLY; SET LOCAL statement_timeout = '{}ms'; SET LOCAL TimeZone = 'UTC'", plan.deadline_ms))
+    // Policy subqueries can trigger hundreds of LLVM functions even for one row.
+    // Keep compilation out of reads with at most a 2s budget; longer analytical
+    // reads retain the operator's JIT preference. LOCAL also restores it on error.
+    let jit = if plan.deadline_ms <= 2000 { "; SET LOCAL jit = off" } else { "" };
+    tx.batch_execute(&format!("SET TRANSACTION READ ONLY; SET LOCAL statement_timeout = '{}ms'; SET LOCAL TimeZone = 'UTC'{jit}", plan.deadline_ms))
         .await
         .map_err(|_| Reject { code: "WIRE.INTERNAL", msg: "세션 설정 실패".into() })?;
     let params: Vec<&(dyn ToSql + Sync)> = plan.params.iter().map(|p| p as &(dyn ToSql + Sync)).collect();

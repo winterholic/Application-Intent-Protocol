@@ -1,5 +1,15 @@
 # 제품 통합 검증 (2026-10-17)
 
+## 2026-10-19 FlaskBB JIT 계측과 짧은 읽기 증분
+
+main `473c528` [Linux worker CI 39238123662](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39238123662)가 성공했다. Mailpit 2개·sticky 1개·전체 기존 포팅 suite 8개가 통과했고, 이전 ignored pre-trace CLI upgrade도 실제 1 passed다. OTLP 9개(실제 worker/DB 3개 포함)와 업그레이드 보존·drift 검사로 WBS 5.2.3을 완료했다. 전체 F01–F17/Whoosh/메일 lifecycle 및 전체 출시 완료를 뜻하지 않는다.
+
+동일 정본 seed/facts/Topic post_count SQL의 EXPLAIN ANALYZE에서 추정 cost 3,038,988.13, JIT on 1,223.152ms(함수 518개, JIT 1,220.835ms), off 0.221ms가 측정됐다. 이전 main b39633a의 같은 CLI 요청은 2초 statement timeout이었고 이번 재실행은 통과했다. JIT 비용은 측정했지만 이전 실패의 CPU/초기 로딩 상태를 동일하게 재현했다고 주장하지 않는다.
+
+2초 이하의 짧은 PostgreSQL 읽기에만 transaction-local JIT off를 적용하는 증분을 추가했다. 2000/2001ms 경계, 성공/취소 뒤 session의 JIT on 복원, 기존 statement deadline 거부를 실제 DB 회귀로 검사한다. 로컬 compile-only clippy는 통과했으며 이 새 실행 설정의 실제 DB/CLI 회귀는 다음 CI 대기다. 더 긴 읽기의 운영자 설정과 MySQL 경로를 바꾸지 않는다.
+
+아래 날짜별 대기는 당시 시점 기록이다. 최신 판정은 이 절과 해당 SHA별 실제 로그를 따른다.
+
 ## 2026-10-19 독립 CI 확정과 후속 증분
 
 main `80f1fd9`의 CI 8개가 모두 성공했다. [Linux worker jobs 39233091978](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39233091978) 원시 로그는 암호화 listener gate 2개, 공개 create HTTP 회귀, 전체 OTLP 9개(실제 worker/DB 3개 포함), FlaskBB guard/대화 4개와 legacy 중복 보존 1개의 통과를 확인한다. [전체 Verify 39233092131](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39233092131)는 `AIP core verification passed.`와 실제 HTTP→Node/Python→MySQL 검사를 완료했다. [Dependencies 39233092041](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39233092041)는 전체 lock graph 검사 성공이며 `--locked`로 lock 수정을 금지한다. 이 범위로 7.5.5를 완료했다. 아래의 당시 CI 대기 설명은 이력이며 최신 판정은 이 절을 따른다.

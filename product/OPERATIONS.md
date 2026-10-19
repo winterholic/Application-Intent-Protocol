@@ -68,6 +68,8 @@ actor 행은 실제 앱의 사용자 데이터가 먼저 존재해야 한다. `b
 
 SDK는 `npm install --offline <aip-sdk.tgz>`로 별도 소비자에 설치한다. `connect(baseUrl, accessToken, generatedBinding)`는 기존 typed transport·캐시·미확정 쓰기 복구를 사용한다. `wire` 설정과 binding 생성의 `--wire`를 맞춘다. 배포의 wire는 최초 연결 시 영속 고정하며 이후 설정만 바꿔 전환하지 않는다. 이 제한은 멱등 principal namespace가 바뀌어 이미 커밋한 쓰기가 재실행되는 것을 막는다.
 
+PostgreSQL 읽기의 선언 기한이 2초 이하이면 해당 읽기 트랜잭션에서만 `jit=off`를 설정한다. 복잡한 행 정책이 한 행 조회에도 LLVM 함수 수백 개를 만들 수 있어 짧은 응답 예산을 컴파일에 쓰지 않도록 한다. `SET LOCAL`이라 성공·오류 뒤 연결의 기존 설정으로 돌아가고, 더 긴 읽기는 운영자가 정한 JIT 설정을 따른다. 읽기 전용·행 정책·statement timeout은 유지한다. [PostgreSQL의 JIT 적용 기준](https://www.postgresql.org/docs/17/jit-decision.html)과 같은 짧은 질의의 컴파일 비용을 고려한 실행 설정이다.
+
 ### 상태 확인 probe
 
 `GET /health`와 `GET /ready`는 인증 없이 응답한다(HEAD도 허용). load balancer·Kubernetes probe에 쓴다.
