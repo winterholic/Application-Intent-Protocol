@@ -171,6 +171,7 @@ pub fn analyze(spec: &Spec) -> Result<Output, Vec<Diag>> {
         advisories: vec![],
     };
     cx.collect();
+    cx.diags.extend(crate::encryption::validate(spec));
     let execution = cx.build();
     if !cx.diags.is_empty() {
         return Err(cx.diags);
@@ -254,6 +255,19 @@ impl<'a> Ctx<'a> {
     }
 
     fn type_of(&mut self, owner: Option<&str>, t: &TypeRef) -> Option<TT> {
+        if let Some(encryption) = &t.encrypted {
+            if owner.is_none() {
+                self.d("DEF.ENCRYPTED_LOCATION_FORBIDDEN", "encrypted는 resource 필드에만 선언한다", encryption.span);
+            }
+            if t.database_default {
+                self.d("DEF.ENCRYPTED_DEFAULT_DB_FORBIDDEN", "encrypted와 default database를 함께 쓸 수 없음", encryption.span);
+            }
+            if t.id_of || t.name != "Text" {
+                self.d("DEF.ENCRYPTED_TYPE_UNSUPPORTED", "첫 암호화 구현은 Text만 지원한다", encryption.span);
+            }
+            // Parsing a modifier must never make existing plaintext engines silently accept it.
+            self.d("DEF.ENCRYPTION_RUNTIME_UNAVAILABLE", "암호화 문법은 인식하지만 제품 저장·읽기·저널 경계는 아직 연결되지 않음", encryption.span);
+        }
         if t.database_default && owner.is_none() {
             self.d("DEF.TYPE_MISMATCH", "default database는 resource 필드에만 선언한다", t.span);
         }
@@ -398,11 +412,17 @@ impl<'a> Ctx<'a> {
             },
         };
         let mut walked: Vec<String> = if root == "this" && first != "this" { vec![first.to_string()] } else { vec![] };
+        if !walked.is_empty() {
+            if let Some(owner) = &sc.this {
+                self.reject_encrypted_path(owner, first, sp)?;
+            }
+        }
         for s in rest {
             let target = match &tt.ty {
                 Ty::Ref(r) => r.clone(),
                 _ => return Err(Diag::new("DEF.UNKNOWN_FIELD", format!("`{}` 타입에는 필드 `{s}`가 없음", tt.show()), sp)),
             };
+            self.reject_encrypted_path(&target, s, sp)?;
             match self.field_tt(&target, s) {
                 Some(f) => {
                     let nullable = tt.nullable || f.nullable;
@@ -422,6 +442,17 @@ impl<'a> Ctx<'a> {
             }
         }
         Ok((json!({ "path": { "root": root, "segs": walked }, "ty": tt.show() }), tt))
+    }
+
+    fn reject_encrypted_path(&self, resource: &str, field: &str, span: Span) -> Result<(), Diag> {
+        if self
+            .res
+            .get(resource)
+            .is_some_and(|resource| resource.fields.iter().any(|candidate| candidate.name == field && candidate.ty.encrypted.is_some()))
+        {
+            return Err(Diag::new("DEF.ENCRYPTED_POLICY_EXPR_FORBIDDEN", "암호화 필드는 정책·표현식에서 참조할 수 없음", span));
+        }
+        Ok(())
     }
 
     fn expect(&self, e: &Expr, sc: &Scope, want: Option<&TT>) -> Result<(Value, TT), Diag> {

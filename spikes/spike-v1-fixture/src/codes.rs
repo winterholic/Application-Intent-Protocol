@@ -95,6 +95,25 @@ pub fn keys_of(block: &str) -> Option<&'static [&'static str]> {
 }
 
 pub static REGISTRY: &[Info] = &[
+    // Proposed encryption syntax: the runtime remains fail-closed until storage integration.
+    i("DEF.ENCRYPTED_MISSING_SCOPE", "encryption requires an explicit scope", "The encrypted modifier has no scope option.", "Use encrypted(scope: service) or a required reference field; storage integration remains gated.", ""),
+    i("DEF.ENCRYPTED_BAD_OPTION", "invalid encryption option", "Only scope and lookup: eq are recognized encryption options.", "Remove unknown options and use lookup: eq for planned equality lookup.", ""),
+    i("DEF.ENCRYPTED_REDUNDANT_OPTION", "duplicate encryption option", "An encryption modifier or one of its options appears more than once.", "Declare encrypted once, and each option once.", ""),
+    i("DEF.ENCRYPTED_LOCATION_FORBIDDEN", "encryption is restricted to resource fields", "An encrypted type appears in an operation, extension, predicate or aggregate contract.", "Keep sensitive values in resource fields. Job input encryption needs a separate lifecycle contract.", ""),
+    i("DEF.ENCRYPTED_DEFAULT_DB_FORBIDDEN", "encrypted database defaults are unsupported", "The database cannot validate and seal a default through the product key boundary.", "Remove default database from the encrypted field.", ""),
+    i("DEF.ENCRYPTED_TYPE_UNSUPPORTED", "unsupported encrypted scalar", "The first storage integration targets Text. Id, references and other scalars are not enabled.", "Use supported Text fields only after the product encryption integration gate passes.", ""),
+    i("DEF.ENCRYPTION_RUNTIME_UNAVAILABLE", "product encryption storage is not enabled", "The compiler recognizes the proposed encrypted modifier but product storage, reads and journals are not integrated. No executable facts are returned.", "Wait for WBS 8.18.3 through 8.18.5. Do not remove the modifier to store sensitive data as plaintext.", ""),
+    i("DEF.ENCRYPTED_ID_FORBIDDEN", "an identity cannot be encrypted", "The id participates in references and authenticated cell identity.", "Keep id unencrypted.", ""),
+    i("DEF.ENCRYPTED_REQUIRES_ID", "encrypted resources require an explicit id", "A stable row id is part of the authenticated cell identity.", "Declare an explicit id using the existing resource identity contract.", ""),
+    i("DEF.ENCRYPTED_BAD_SCOPE", "invalid encryption scope reference", "A reference scope must name a required unencrypted resource reference in the same row.", "Use service or a required resource reference. Nullable and encrypted references cannot bind the scope.", ""),
+    i("DEF.ENCRYPTED_AMBIGUOUS_OWNER", "owner scope is not unambiguous", "The resource is not the actor and does not have exactly one required unencrypted actor reference.", "Declare one required actor reference or choose an explicit reference scope.", ""),
+    i("DEF.ENCRYPTED_UNIQUE_REQUIRES_LOOKUP", "encrypted uniqueness needs equality lookup", "A unique constraint includes an encrypted field without lookup: eq.", "Declare lookup: eq and pass the blind-index uniqueness and rotation gates before activation.", ""),
+    i("DEF.ENCRYPTED_FILTER_FORBIDDEN", "unsupported encrypted filter", "Encrypted values do not support prefix, range, pattern or unindexed equality queries.", "Use only eq, in or nullable isNull with lookup: eq after runtime activation.", ""),
+    i("DEF.ENCRYPTED_SORT_FORBIDDEN", "encrypted values cannot be sorted", "Ordering ciphertext does not implement plaintext ordering. This includes traverse-many sorting.", "Sort by a non-sensitive unencrypted field.", ""),
+    i("DEF.ENCRYPTED_AGGREGATE_FORBIDDEN", "encrypted values cannot be aggregated", "An aggregate releases or groups by an encrypted value.", "Count permitted rows or aggregate a non-sensitive unencrypted field.", ""),
+    i("DEF.ENCRYPTED_TRANSITION_VALUE_FORBIDDEN", "unsupported encrypted transition value", "A transition assigns or compares encrypted values through a static value, effect or expect field.", "Use caller patch values through the encryption write boundary. Do not put secrets in definitions.", ""),
+    i("DEF.ENCRYPTED_MUTABLE_SCOPE", "an encryption scope reference is immutable", "A transition or update effect changes a reference that binds encrypted cells to their scope.", "Do not patch or assign the scope. Moving data across scopes needs an explicit resealing migration.", ""),
+    i("DEF.ENCRYPTED_POLICY_EXPR_FORBIDDEN", "encrypted values cannot be used in expressions", "A policy or computed expression reads an encrypted field directly or through a reference.", "Use non-sensitive identity and authorization metadata in policies.", ""),
     // The envelope the service puts around diagnostics.
     i(
         "DEF.INVALID_DEFINITION",

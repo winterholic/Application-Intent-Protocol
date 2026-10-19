@@ -21,11 +21,19 @@ pub struct EnumDecl {
 #[derive(Debug, Clone)]
 pub struct TypeRef {
     pub database_default: bool,
+    pub encrypted: Option<Encryption>,
     pub name: String,
     pub id_of: bool,
     pub nullable: bool,
     pub range: Option<(i64, i64)>,
     pub decimal: Option<(u8, u8)>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct Encryption {
+    pub scope: String,
+    pub lookup_eq: bool,
     pub span: Span,
 }
 

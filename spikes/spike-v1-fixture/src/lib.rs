@@ -1,6 +1,7 @@
 pub mod ast;
 pub mod codes;
 pub mod diag;
+mod encryption;
 mod enrich;
 pub mod extract;
 pub mod hlit;

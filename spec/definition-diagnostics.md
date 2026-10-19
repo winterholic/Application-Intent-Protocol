@@ -6,6 +6,132 @@
 
 모든 AIP 오류 코드는 `영역.이름` 형식이다. 이 문서의 영역은 `DEF`(제품 정의 검사기)이고, 제품 HTTP API의 `WIRE` 코드는 [wire-errors.md](wire-errors.md), PoC 언어와 런타임의 `POC` 코드는 [diagnostics.md](diagnostics.md)에 있다. 세 영역은 `aip explain-code`와 `aip diagnostics`로 함께 조회한다. 2026-10-13 이전에는 접두 없는 이름(`DEF.UNKNOWN_FIELD`)이었고 제품 wire 코드와 이름이 겹쳤다.
 
+### `DEF.ENCRYPTED_MISSING_SCOPE`
+
+encryption requires an explicit scope
+
+- 원인: The encrypted modifier has no scope option.
+- 수정: Use encrypted(scope: service) or a required reference field; storage integration remains gated.
+
+### `DEF.ENCRYPTED_BAD_OPTION`
+
+invalid encryption option
+
+- 원인: Only scope and lookup: eq are recognized encryption options.
+- 수정: Remove unknown options and use lookup: eq for planned equality lookup.
+
+### `DEF.ENCRYPTED_REDUNDANT_OPTION`
+
+duplicate encryption option
+
+- 원인: An encryption modifier or one of its options appears more than once.
+- 수정: Declare encrypted once, and each option once.
+
+### `DEF.ENCRYPTED_LOCATION_FORBIDDEN`
+
+encryption is restricted to resource fields
+
+- 원인: An encrypted type appears in an operation, extension, predicate or aggregate contract.
+- 수정: Keep sensitive values in resource fields. Job input encryption needs a separate lifecycle contract.
+
+### `DEF.ENCRYPTED_DEFAULT_DB_FORBIDDEN`
+
+encrypted database defaults are unsupported
+
+- 원인: The database cannot validate and seal a default through the product key boundary.
+- 수정: Remove default database from the encrypted field.
+
+### `DEF.ENCRYPTED_TYPE_UNSUPPORTED`
+
+unsupported encrypted scalar
+
+- 원인: The first storage integration targets Text. Id, references and other scalars are not enabled.
+- 수정: Use supported Text fields only after the product encryption integration gate passes.
+
+### `DEF.ENCRYPTION_RUNTIME_UNAVAILABLE`
+
+product encryption storage is not enabled
+
+- 원인: The compiler recognizes the proposed encrypted modifier but product storage, reads and journals are not integrated. No executable facts are returned.
+- 수정: Wait for WBS 8.18.3 through 8.18.5. Do not remove the modifier to store sensitive data as plaintext.
+
+### `DEF.ENCRYPTED_ID_FORBIDDEN`
+
+an identity cannot be encrypted
+
+- 원인: The id participates in references and authenticated cell identity.
+- 수정: Keep id unencrypted.
+
+### `DEF.ENCRYPTED_REQUIRES_ID`
+
+encrypted resources require an explicit id
+
+- 원인: A stable row id is part of the authenticated cell identity.
+- 수정: Declare an explicit id using the existing resource identity contract.
+
+### `DEF.ENCRYPTED_BAD_SCOPE`
+
+invalid encryption scope reference
+
+- 원인: A reference scope must name a required unencrypted resource reference in the same row.
+- 수정: Use service or a required resource reference. Nullable and encrypted references cannot bind the scope.
+
+### `DEF.ENCRYPTED_AMBIGUOUS_OWNER`
+
+owner scope is not unambiguous
+
+- 원인: The resource is not the actor and does not have exactly one required unencrypted actor reference.
+- 수정: Declare one required actor reference or choose an explicit reference scope.
+
+### `DEF.ENCRYPTED_UNIQUE_REQUIRES_LOOKUP`
+
+encrypted uniqueness needs equality lookup
+
+- 원인: A unique constraint includes an encrypted field without lookup: eq.
+- 수정: Declare lookup: eq and pass the blind-index uniqueness and rotation gates before activation.
+
+### `DEF.ENCRYPTED_FILTER_FORBIDDEN`
+
+unsupported encrypted filter
+
+- 원인: Encrypted values do not support prefix, range, pattern or unindexed equality queries.
+- 수정: Use only eq, in or nullable isNull with lookup: eq after runtime activation.
+
+### `DEF.ENCRYPTED_SORT_FORBIDDEN`
+
+encrypted values cannot be sorted
+
+- 원인: Ordering ciphertext does not implement plaintext ordering. This includes traverse-many sorting.
+- 수정: Sort by a non-sensitive unencrypted field.
+
+### `DEF.ENCRYPTED_AGGREGATE_FORBIDDEN`
+
+encrypted values cannot be aggregated
+
+- 원인: An aggregate releases or groups by an encrypted value.
+- 수정: Count permitted rows or aggregate a non-sensitive unencrypted field.
+
+### `DEF.ENCRYPTED_TRANSITION_VALUE_FORBIDDEN`
+
+unsupported encrypted transition value
+
+- 원인: A transition assigns or compares encrypted values through a static value, effect or expect field.
+- 수정: Use caller patch values through the encryption write boundary. Do not put secrets in definitions.
+
+### `DEF.ENCRYPTED_MUTABLE_SCOPE`
+
+an encryption scope reference is immutable
+
+- 원인: A transition or update effect changes a reference that binds encrypted cells to their scope.
+- 수정: Do not patch or assign the scope. Moving data across scopes needs an explicit resealing migration.
+
+### `DEF.ENCRYPTED_POLICY_EXPR_FORBIDDEN`
+
+encrypted values cannot be used in expressions
+
+- 원인: A policy or computed expression reads an encrypted field directly or through a reference.
+- 수정: Use non-sensitive identity and authorization metadata in policies.
+
 ### `DEF.INVALID_DEFINITION`
 
 the definition has errors

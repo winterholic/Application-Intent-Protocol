@@ -269,7 +269,7 @@ impl Parser {
     pub fn type_ref(&mut self) -> R<TypeRef> {
         let span = self.span();
         let name = self.ident()?;
-        let mut t = TypeRef { database_default: false, name, id_of: false, nullable: false, range: None, decimal: None, span };
+        let mut t = TypeRef { database_default: false, encrypted: None, name, id_of: false, nullable: false, range: None, decimal: None, span };
         if self.eat_sym(".") {
             self.expect_kw("Id")?;
             t.id_of = true;
@@ -295,10 +295,47 @@ impl Parser {
         if self.eat_sym("?") {
             t.nullable = true;
         }
-        if self.is_kw("default") {
-            self.next();
-            self.expect_kw("database")?;
-            t.database_default = true;
+        loop {
+            if self.is_kw("default") && !t.database_default {
+                self.next();
+                self.expect_kw("database")?;
+                t.database_default = true;
+            } else if self.is_kw("encrypted") && !self.toks.get(self.pos + 1).is_some_and(|next| next.tok == Tok::Sym(":")) {
+                let span = self.span();
+                self.next();
+                if t.encrypted.is_some() {
+                    return Err(Diag::new("DEF.ENCRYPTED_REDUNDANT_OPTION", "encrypted modifier 중복", span));
+                }
+                if !self.eat_sym("(") {
+                    return Err(Diag::new("DEF.ENCRYPTED_MISSING_SCOPE", "encrypted(scope: service|참조필드) 필요", span));
+                }
+                let mut seen = BTreeSet::new();
+                let mut scope = None;
+                let mut lookup_eq = false;
+                if !self.eat_sym(")") {
+                    loop {
+                        let option = self.ident()?;
+                        if !seen.insert(option.clone()) {
+                            return Err(Diag::new("DEF.ENCRYPTED_REDUNDANT_OPTION", "암호화 옵션 중복", span));
+                        }
+                        self.expect_sym(":")?;
+                        let value = self.ident()?;
+                        match option.as_str() {
+                            "scope" => scope = Some(value),
+                            "lookup" if value == "eq" => lookup_eq = true,
+                            _ => return Err(Diag::new("DEF.ENCRYPTED_BAD_OPTION", "암호화 옵션은 scope와 lookup: eq뿐임", span)),
+                        }
+                        if self.eat_sym(")") {
+                            break;
+                        }
+                        self.expect_sym(",")?;
+                    }
+                }
+                let scope = scope.ok_or_else(|| Diag::new("DEF.ENCRYPTED_MISSING_SCOPE", "암호화 scope를 명시한다", span))?;
+                t.encrypted = Some(Encryption { scope, lookup_eq, span });
+            } else {
+                break;
+            }
         }
         Ok(t)
     }
