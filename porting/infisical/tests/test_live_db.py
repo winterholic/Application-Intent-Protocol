@@ -6,10 +6,14 @@ that changes data uses its own key or organization so the cases do not depend on
   AIP_TEST_DATABASE_URL=postgresql://... python3 -m unittest discover -s porting/infisical/tests -p 'test_live_db.py' -v
 """
 
+import concurrent.futures
 import os
 import pathlib
 import re
+import subprocess
+import time
 import unittest
+import uuid
 
 import live_harness as lh
 
@@ -225,6 +229,76 @@ class LiveDbTests(unittest.TestCase):
         child = self.make_folder(BOB, "UNDER_NEW_ROOT", parent=root["created"][0]["id"], env=env_id)
         self.assertTrue(child.get("ok"), child)
         self.assertTrue(self.create_secret(BOB, "IN_NEW_ENV", folder=child["created"][0]["id"]).get("ok"))
+
+    def test_concurrent_root_creates_commit_exactly_one_root(self):
+        env = self.make_env(BOB, "root-race", 91)
+        self.assertTrue(env.get("ok"), env)
+        env_id = env["created"][0]["id"]
+        schema = self.dep.schema
+        lock_id = int(uuid.uuid4().hex[:7], 16)
+        # A fixture-only BEFORE INSERT trigger stops both requests after their allow
+        # predicate has accepted the empty environment. This removes scheduler luck
+        # from the race; a nullable unique(parent, name) cannot arbitrate the two roots.
+        self.dep.sql(f"""
+            CREATE FUNCTION {schema}.gate_root_race() RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN
+              IF NEW.env_id = {env_id} AND NEW.parent_id IS NULL THEN
+                PERFORM pg_advisory_xact_lock_shared({lock_id}::bigint);
+              END IF;
+              RETURN NEW;
+            END $$;
+            CREATE TRIGGER gate_root_race BEFORE INSERT ON {schema}.folder
+              FOR EACH ROW EXECUTE FUNCTION {schema}.gate_root_race();
+        """)
+        gate = None
+        try:
+            gate = subprocess.Popen(["psql", self.dep.url, "-X", "-q", "-v", "ON_ERROR_STOP=1"],
+                                    stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                                    text=True)
+            gate.stdin.write(f"SELECT pg_advisory_lock({lock_id}::bigint);\n")
+            gate.stdin.flush()
+
+            def locks(granted):
+                return int(self.dep.sql("SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' "
+                                        "AND database = (SELECT oid FROM pg_database WHERE datname = current_database()) "
+                                        f"AND classid = 0 AND objid = {lock_id} AND objsubid = 1 "
+                                        f"AND granted = {'true' if granted else 'false'}").strip())
+
+            until = time.monotonic() + 4
+            while locks(True) != 1 and time.monotonic() < until:
+                time.sleep(0.01)
+            self.assertEqual(locks(True), 1, "the fixture must hold its own gate")
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                requests = [pool.submit(lh.create, self.dep.client(BOB), "Folder",
+                                        {"env": env_id, "name": "root"}, key=f"root-race-{n}")
+                            for n in range(2)]
+                try:
+                    until = time.monotonic() + 4
+                    while locks(False) != 2 and time.monotonic() < until:
+                        time.sleep(0.01)
+                    self.assertEqual(locks(False), 2, "both creates must pass allow and reach INSERT")
+                finally:
+                    gate.terminate()
+                    try:
+                        gate.communicate(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        gate.kill()
+                        gate.communicate(timeout=5)
+                results = [request.result(timeout=10) for request in requests]
+            self.assertEqual(sum(bool(r.get("ok")) for r in results), 1, results)
+            self.assertEqual(self.dep.sql(f"SELECT count(*) FROM :schema.folder WHERE env_id = {env_id} AND parent_id IS NULL").strip(), "1")
+            # Different environments must retain their own root, and a child under
+            # the winning root must remain possible alongside root uniqueness.
+            winner = next(r["created"][0]["id"] for r in results if r.get("ok"))
+            self.assertTrue(self.make_folder(BOB, "RACE_CHILD", parent=winner, env=env_id).get("ok"))
+            other = self.make_env(BOB, "root-race-other", 92)
+            self.assertTrue(other.get("ok"), other)
+            self.assertTrue(self.make_root(BOB, other["created"][0]["id"]).get("ok"))
+        finally:
+            if gate is not None and gate.poll() is None:
+                gate.kill()
+                gate.communicate(timeout=5)
+            self.dep.sql(f"DROP TRIGGER gate_root_race ON {schema}.folder; DROP FUNCTION {schema}.gate_root_race()")
 
     def test_environment_update_changes_name_slug_and_position_for_a_writer_only(self):
         a = self.make_env(BOB, "upd-a", 40)["created"][0]["id"]

@@ -79,7 +79,7 @@ python3 -m unittest test_identity_jwt -v   # DB 없이 17건
 - 서버 job 1종(`secretReminder`)의 enqueue 권한 검사, 실행, outbox 알림, 감사 행.
 
 증명하지 않는 것:
-- **비밀 값 저장·조회·회전**: 제품 방언이 `encrypted`를 거부하는 갭(G2) 때문에 정의에 없다.
+- **비밀 값 저장·조회·회전**: 암호화 선언은 정규화되지만 제품 runtime·저장 통합이 차단된 상태(G2)라 정의에 없다.
 - 나머지 MIT BullMQ 큐: 선언도 없다(`plan-docs/porting/INFISICAL-JOBS.md`의 "선언만" 표).
 - 실제 메일·Slack 발송: job은 outbox 알림 기록까지다. 전송 receipt가 아니다.
 - 실제 IdP: 토큰은 시험용 키로 서명한 것이다.

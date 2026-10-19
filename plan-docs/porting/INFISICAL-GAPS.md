@@ -6,21 +6,23 @@
 
 ## 정식 제품 갭
 
-### G2. `encrypted` 필드 수정자와 서버 키 공급이 제품에 없다 (중요)
+### G2. 암호화 선언 정규화는 구현됐지만 제품 저장·읽기 통합은 미완 (중요, 2026-10-20 정정)
 
-원본 Infisical의 기본 경로는 서버측 KMS다([INFISICAL-KEYMODEL.md](INFISICAL-KEYMODEL.md)). 이것을 AIP로 옮기려면 서버가 키를 쥐고 필드를 암복호하는 기능이 필요한데 제품 경로에는 없다.
+원본 Infisical의 기본 경로는 서버측 KMS다([INFISICAL-KEYMODEL.md](INFISICAL-KEYMODEL.md)). AIP에서도 서버가 키를 쥐고 값을 암복호하는 제품 경로가 필요하지만 현재는 미완이라 기동·배포를 거부한다.
 
-| 사실 | 확인 |
+| 현재 사실 | 확인 |
 |---|---|
-| 제품 서비스 방언은 `value: Text encrypted`를 거부한다. 출력: `DEF.PARSE_EXPECTED`, "`:` 필요, `}` 발견", scope `resource User > fields` | **재현**: `aip service check`를 `fields { ...; secret: Text encrypted }` 정의로 실행 |
-| `AIP_ENCRYPTION_KEYS`는 PoC 런타임 `crates/aip-runtime`(`crypto.rs`, `rekey.rs`, `engine.rs`)에만 있다. `aip-service`와 `spikes/*`의 Cargo 의존성에 `aip-runtime`이 없다 | **재현**: `grep -rln AIP_ENCRYPTION_KEYS crates spikes product`와 Cargo.toml 대조 |
-| PoC 런타임은 `poc-runtime` feature로만 빌드되고 기본 빌드에서 `aip run/migrate/rekey`는 `RUNTIME_FEATURE_DISABLED`다 | **판독**: `crates/aip-cli/Cargo.toml`, `product/OPERATIONS.md` |
+| 제품 방언은 `value: Text encrypted(scope: service)`를 정규화한다. 개발 검사에서는 `DEF.ADVISORY_ENCRYPTION_RUNTIME_DISABLED`와 `ok: true`를 함께 출력한다 | **재현**: 2026-10-20 로컬 제품 binary의 `aip service check --dev-checks`. 최신 main 소스의 `encrypted_types`와 같은 선언 |
+| 서비스 listener 공통 진입점은 `DEF.ENCRYPTION_RUNTIME_UNAVAILABLE`로 실행을 차단한다. init·migration·adopt도 암호화 metadata를 거부한다 | **판독 + CI**: `sema::require_supported_runtime`, `aip-migrate`의 `encryption_gate` 4건·`encryption_activation_gate` 1건, transport `encryption_gate` 2건. main f567bd7 Linux worker 39330916472 원시 로그에서 통과 확인 |
+| `aip-crypto`와 `aip-execution::encryption::DekStore` 등 키·DEK primitive는 있다. 이것이 제품 resource의 저장·읽기·저널·인가·회전 통합을 완성한 것은 아니다 | **판독 + CI**: 같은 main의 `encryption_deks` 7건·`encryption_fence` 2건. writer fence 시험은 transaction 안의 scope/ACTIVE DEK 잠금 범위만 증명 |
 
-영향: 시크릿 값, 값 버전, 회전, blind index 조회(G4)를 선언할 수 없다. 비밀 관리 앱과 개인정보 앱을 AIP 제품 방언으로 만들 수 없다. 임시 평문 Text 열은 모든 읽기 가능자에게 평문이 노출되므로 우회로 판단해 쓰지 않았다.
+**이전 판정의 정정**: 2026-10-18의 `DEF.PARSE_EXPECTED` 재현은 당시 결과다. 지금의 명시적 scope 문법을 검증한 결과가 아니므로 "encrypted 수정자 자체가 없다"는 현재 판정으로 재사용하지 않는다. `AIP_ENCRYPTION_KEYS`라는 PoC 설정의 존재 여부만으로 새 제품 primitive의 부재를 추론하지도 않는다.
 
-설계 소유: 별도 세션의 `docs/design/13-field-encryption.md`(상태 Proposed, 창시자 승인 대기). 설계 13(`a257b8d`)은 GPT 독립 정적 리뷰에서 "현 초안 그대로 구현에 넘기지 않는다"는 판정을 받았다. P1은 blind index 회전과 unique, SKIP LOCKED 재개 누락, idempotency·job 평문 경로, HMAC 회전 뒤 재시도, 이전 binary rollback 호환성이다. 이 리뷰는 정적 검토이며 테스트·빌드·DB를 실행하지 않았으므로 실행상 고장의 증명은 아니다. 사용자 승인도 없다. 따라서 이 초안은 승인된 설계도 제품이 보증하는 기능도 아니고, 암호화에 의존하는 Infisical 포팅 항목(값·버전·회전·blind index·동기화 내용)은 **미구현·설계 미확정**으로 취급한다. 이 트랙은 그 문서를 수정하지 않는다. 문서가 인용한 `porting/infisical/app.aip:134` 등 줄 번호는 이 재작업 이후 달라졌다(`valueCiphertext`는 정의에서 제거).
+영향: 시크릿 값, 값 버전, 회전, blind index 조회(G4)를 실행 가능한 제품 정의로 제공할 수 없다. 평문 Text 열을 암호문이라 부르며 우회하지 않는다.
 
-현재 포팅 처리: `app.aip`는 값을 선언하지 않고 머리 주석과 `docs { summary }`로 갭을 표시한다. 값 없는 Secret은 폴더, 이름, 소유자, 리마인더 시각만 가진다.
+설계 소유는 `docs/design/13-field-encryption.md`(Proposed)다. 이전 a257b8d 초안에 대한 독립 정적 리뷰는 blind index 회전·unique, SKIP LOCKED 재개, idempotency·job 평문 경로, HMAC 회전 뒤 재시도, 이전 binary rollback 호환성을 P1으로 지적했다. 그 리뷰는 당시 초안의 정적 판정이고 현재 코드 전체에 대한 실행 판정이나 사용자 승인이 아니다. 이후 primitive·정적 검사가 추가됐어도 설계 승인과 제품 통합 완료를 대신하지 않는다. 이 포팅 트랙은 설계 13을 임의 승인하거나 runtime gate를 해제하지 않는다.
+
+현재 포팅 처리: `app.aip`는 값을 선언하지 않고 머리 주석과 `docs { summary }`로 갭을 표시한다. 값 없는 Secret은 폴더, 이름, 소유자, 리마인더 시각만 가진다. 암호화에 의존하는 값·버전·회전·개인 값 병합은 여전히 미구현이다.
 
 ### G10. 삭제 의미와 이름 유일 제약: 원본과 동등하게 해소 (2026-10-20)
 
@@ -151,7 +153,7 @@
 - 삭제의 승인 정책 거부와 `Environments` 권한 조건은 EE 범위라 이 포팅에 없다.
 - 환경이 소프트 삭제된 동안 폴더와 시크릿이 숨겨지는 방식은 읽기 정책(`env.softDeletedAt = null`)이다. 원본에서는 환경 조회가 실패해서 생기는 결과다. `PersonalSecret`은 가리키는 시크릿이 숨겨지는 것으로 간접히 막힌다(직접 검증하지 않았다).
 
-설계안(결정은 제품 담당 몫): 효과의 일치 조건에 한 단계 참조 경로를 허용하면 G14(하위 트리)와 이 갭(시크릿이 있는 환경 삭제)이 함께 풀린다. 위치 밀기는 같은 부모 아래 행의 순서 값을 다시 매기는 효과가 필요하고, 유예는 `Time` 값에 지속 시간을 더하는 식과 날짜 단위가 필요하다.
+설계안(결정은 제품 담당 몫): 효과의 일치 조건에 한 단계 참조 경로를 허용하면 시크릿이 있는 환경 삭제와 정해진 깊이의 자식 삭제를 표현할 수 있다. G14의 임의 깊이 하위 트리 전체 삭제에는 별도의 재귀 의미와 깊이 상한이 필요하며, 한 단계 참조만으로 모두 해결됐다고 세지 않는다. 위치 밀기는 같은 부모 아래 행의 순서 값을 다시 매기는 효과가 필요하고, 유예는 `Time` 값에 지속 시간을 더하는 식과 날짜 단위가 필요하다.
 
 ## 이전에 갭으로 적었으나 분류를 바꾼 것
 

@@ -2,13 +2,13 @@
 // verification of 2026-10-18). Upstream: Infisical 47246be (2026-10-17), MIT scope only.
 //
 // PRODUCT GAP, deliberately NOT worked around (plan-docs/porting/INFISICAL-GAPS.md, G2):
-//   Secret VALUES are not declared here. The product service dialect rejects the `encrypted` field
-//   modifier (DEF.PARSE_EXPECTED) and AIP_ENCRYPTION_KEYS exists only in the PoC runtime, so the only way to store a
-//   value today is a plain Text column, which would keep secrets in clear text and expose them to every reader. The
+//   Secret VALUES are not declared here. The product service dialect normalizes `encrypted(scope: ...)`,
+//   but deployment and listeners reject its unfinished storage/read/journal integration (DEF.ENCRYPTION_RUNTIME_UNAVAILABLE).
+//   A plain Text value would keep secrets in clear text and expose them to every reader. The
 //   previous draft did that under the name valueCiphertext; it was also unreadable (WIRE.FIELD_NOT_EXPOSED).
-//   Secret value storage, value versions, rotation and blind-index lookups stay undeclared until the
-//   an encryption design is approved and implemented (docs/design/13 is a Proposed draft that an independent
-//   static review did not clear for implementation). Everything below is names, folders, membership and permissions.
+//   Secret value storage, value versions, rotation and blind-index lookups stay undeclared until
+//   an encryption design is approved and its product integration is verified (docs/design/13 remains Proposed).
+//   Everything below is names, folders, membership and permissions.
 //
 // Behavior is checked on a real PostgreSQL by porting/infisical/tests/test_live_db.py. Declared jobs live only
 // when a worker implements them (see the job section at the end).
@@ -240,12 +240,12 @@ resource Folder {
 // per (key, folder) with the partial unique index uq_secrets_v2_key_folder_id_shared
 // (backend/src/db/migrations/20260623144551_secret-folder-unique-index.ts), and deleteMany removes the row for real
 // (backend/src/services/secret-v2-bridge/secret-v2-bridge-dal.ts, deleteMany). Personal overrides (type = personal)
-// and the value columns are not modelled here (value: G2 in plan-docs/porting/INFISICAL-GAPS.md).
+// are modelled as PersonalSecret below; value columns still need G2 in plan-docs/porting/INFISICAL-GAPS.md.
 resource Secret {
   fields { id: Id; folder: Folder; key: Text(1..500); owner: User; remindedAt: Time? }
   unique folder, key
   rows read when canReadProject(actor, folder.env.project) and folder.env.softDeletedAt = null
-  docs { summary "비밀 하나(폴더 안의 이름). 값 저장은 encrypted 수정자 제품 갭(G2)으로 선언하지 않음"; visibility internal }
+  docs { summary "비밀 하나(폴더 안의 이름). 값 저장은 암호화 runtime 통합 미완(G2)으로 선언하지 않음"; visibility internal }
   expose create {
     allow canWriteProject(actor, folder.env.project) and owner = actor
     fields folder, key, owner
@@ -287,7 +287,7 @@ resource Secret {
 resource PersonalSecret {
   fields { id: Id; secret: Secret; user: User }
   unique secret, user
-  rows read when user = actor and canReadProject(actor, secret.folder.env.project)
+  rows read when user = actor and canReadProject(actor, secret.folder.env.project) and secret.folder.env.softDeletedAt = null
   expose create {
     allow user = actor and canReadProject(actor, secret.folder.env.project)
     fields secret, user

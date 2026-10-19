@@ -15,7 +15,7 @@
 |---|---|---|
 | 원본은 E2E, AIP는 서버 키라 충돌, 창시자 결정 필요 | 원본 기본 경로가 서버측 KMS라 충돌 없음. 결정 요청 철회 | [KEYMODEL](INFISICAL-KEYMODEL.md) |
 | SRP 검증을 서버 확장으로 | SRP는 원본에서도 레거시. 로그인은 AIP 밖 IdP 몫 | [AUTHN](INFISICAL-AUTHN.md) |
-| 제품 갭 G2는 E2E 키 모델 | G2는 `encrypted` 수정자·키 공급이 제품에 없다는 갭으로 교체. 삭제·create 효과 등 갭 추가 | [GAPS](INFISICAL-GAPS.md) |
+| 제품 갭 G2는 E2E 키 모델 | G2는 암호화 제품 통합 미완 갭으로 교체(선언 정규화·primitive는 구현). 삭제·create 효과 등 갭 추가 | [GAPS](INFISICAL-GAPS.md) |
 | 라우트 903, 라우터 425개 중 EE 제외, 큐 16개 | 라우트 정의 1002, MIT 라우터 303, 큐 54개 | [SELECTION](INFISICAL-SELECTION.md) |
 | EE 제외 비준 | 비준 철회. 권한 핵심이 EE에 있고 MIT 파일 446개가 EE를 import. 사용자 판단 대기 | [EE-BOUNDARY](INFISICAL-EE-BOUNDARY.md) |
 | 큐 16개를 job 16개로 선언 | 구현 없는 선언은 실패하므로 제거. 구현은 1개 | [JOBS](INFISICAL-JOBS.md) |
@@ -31,7 +31,7 @@
 | I02 | 머신 아이덴티티 | 확장 중심 | 13개 인증 방식(universal-auth + `identity-*-auth` 12개)은 외부 검증이 본질이므로 `operation job`으로 감싼다. claim은 검증된 것만 소비 | JWT 1종 순수 함수 단위시험 7건(서비스 미연결, **서비스에서 도달 불가**). 나머지 12개 미구현 |
 | I03 | 시크릿·폴더 | 선언 중심 | 환경 표(생성·수정·소프트/하드 삭제·복원), 폴더 트리(환경마다 루트 `root`, 부모 참조), 시크릿(폴더+이름 유일)과 물리 삭제를 resource+transition으로. 값·버전·blind index는 갭 G2/G4 | 환경·이름·폴더 트리·시크릿과 폴더의 물리 삭제 **동작 확인**(원본 대조: [GAPS G10, G14, G16](INFISICAL-GAPS.md)). **값은 없음**. 공유·승인·태그·import·버전 미착수 |
 | I04 | 조직·RBAC | 선언 | 조직·프로젝트·멤버십·역할을 predicate와 행 정책으로. 원본 CASL 조건식과의 대조는 EE 경계 문서 | 역할 기반 규칙(admin/member/viewer/no-access) **동작 확인**. 조건식·커스텀 역할·그룹 미착수 |
-| I05 | 암호화·KMS | 갭 대기 | 원본이 서버측 KMS이므로 AIP의 `encrypted` 필드(설계 13, Proposed)가 대응 수단. 제품에 없어 선언할 수 없다 | **미착수**(제품 갭 G2). core 수정 금지 |
+| I05 | 암호화·KMS | 갭 대기 | 원본이 서버측 KMS이므로 AIP의 `encrypted` 필드(설계 13, Proposed)가 대응 수단. 선언 정규화는 구현됐으나 제품 저장·읽기 통합이 차단돼 실행할 수 없다 | **미착수**(제품 갭 G2). core 수정 금지 |
 | I06 | 비동기·알림 | 선언+확장 | 큐 54개 중 MIT 30(+미참조 3)을 job으로. 발송은 전송 capability 경유, 알림 기록은 전송이 아님 | 큐 1개만 부분 구현(알림 기록, **동작 확인**). 53개 미선언 |
 | I07 | 연동 | 잔여+선언 | provider 구현은 잔여 서비스. 연결 row·동기화 상태는 resource, 실행은 job | 미착수 |
 | I08 | PKI·인증서 | 확장+선언 | 발급·서명·갱신은 확장 job. 인벤토리·프로파일·정책은 선언 | 미착수 |
@@ -53,7 +53,7 @@
 
 ## 제품 갭
 
-[INFISICAL-GAPS.md](INFISICAL-GAPS.md)로 이동했다. 요약: G2 `encrypted` 수정자·서버 키 공급 부재(중요), G10 행 삭제·부분 유일 제약 부재, G11 create의 관련 행 동시 생성 부재, G12 create 결과 id 전달 조합 부재. G3(SRP)는 갭이 아님으로 분류를 바꿨고 G5는 EE로 옮겼다.
+[INFISICAL-GAPS.md](INFISICAL-GAPS.md)로 이동했다. 요약: G2 암호화 제품 통합 미완(중요), G10 시크릿 물리 삭제·이름 유일 제약은 해소, G11 create의 관련 행 동시 생성 부재, G12 create 결과 id 전달 조합 부재. G3(SRP)는 갭이 아님으로 분류를 바꿨고 G5는 EE로 옮겼다.
 
 ## 7.3.3 포팅 착수 작업 분해와 현재 상태
 

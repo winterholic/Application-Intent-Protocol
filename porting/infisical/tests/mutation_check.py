@@ -17,6 +17,9 @@ BINARY = os.environ.get("AIP_BIN", str(HERE.parent.parent.parent / "target" / "d
 
 # (label, text to find, replacement, test that must fail)
 MUTATIONS = [
+    ("soft-deleted overrides visible", "rows read when user = actor and canReadProject(actor, secret.folder.env.project) and secret.folder.env.softDeletedAt = null",
+     "rows read when user = actor and canReadProject(actor, secret.folder.env.project)",
+     "test_soft_deleted_environment_hides_personal_overrides_and_restore_keeps_them"),
     ("viewer may write", "role in (ADMIN, MEMBER))\npredicate isProjectAdmin", "role in (ADMIN, MEMBER, VIEWER))\npredicate isProjectAdmin",
      "test_viewer_cannot_create_folder_or_secret"),
     ("every user visible", "rows read when this = actor or sharesOrgWith(actor, this)", "rows read when true",

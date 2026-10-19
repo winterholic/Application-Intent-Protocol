@@ -33,7 +33,7 @@
 |---|---|---|
 | 루트 키(env 또는 HSM) | 서비스 설정의 키 공급자(설계안: `docs/design/13`) | **없음**(제품 경로). PoC 런타임(`crates/aip-runtime`)에만 `AIP_ENCRYPTION_KEYS`가 있다 |
 | 프로젝트별 데이터 키 | `encrypted(scope: <refField>)` 범위별 DEK(설계안) | **없음** |
-| 서버측 암복호 | 제품 방언 `encrypted` 필드 수정자(설계안) | **제품 방언이 거부한다**(`DEF.PARSE_EXPECTED`) |
+| 서버측 암복호 | 제품 방언 `encrypted` 필드 수정자(설계안) | **선언 정규화 구현, 실행·배포 차단**(`DEF.ENCRYPTION_RUNTIME_UNAVAILABLE`) |
 | blind index (HKDF+HMAC) | `lookup: eq`(설계안, HMAC-SHA256 별도 키) | **없음** |
 | 키 회전, rekey | durable job 기반 rekey(설계안) | PoC 런타임에만 있음 |
 
@@ -41,7 +41,7 @@
 
 위 표의 "설계안"은 `docs/design/13`(Proposed)이다. 설계 13(`a257b8d`)은 GPT 독립 정적 리뷰에서 "현 초안 그대로 구현에 넘기지 않는다"는 판정을 받았다. P1은 blind index 회전과 unique, SKIP LOCKED 재개 누락, idempotency·job 평문 경로, HMAC 회전 뒤 재시도, 이전 binary rollback 호환성이다. 이 리뷰는 정적 검토이며 테스트·빌드·DB를 실행하지 않았으므로 실행상 고장의 증명은 아니다. 사용자 승인도 없다. 따라서 이 초안은 승인된 설계도 제품이 보증하는 기능도 아니고, 암호화에 의존하는 Infisical 포팅 항목(값·버전·회전·blind index·동기화 내용)은 **미구현·설계 미확정**으로 취급한다.
 
-[INFISICAL-GAPS.md](INFISICAL-GAPS.md) G2에 정식 제품 갭으로 기록했다. 요약하면 제품 서비스 방언은 `encrypted` 수정자를 거부하고 키 공급자와 AES-GCM 암복호는 제품 경로에 없다. 설계는 `docs/design/13-field-encryption.md`(상태: Proposed)가 맡고 있고 이 포팅 트랙은 core를 고치지 않는다. 그 사이 `porting/infisical/app.aip`는 시크릿 **값을 선언하지 않는다**. 평문 Text 열에 값을 넣으면 모든 읽기 가능자에게 평문이 노출되는 우회가 되기 때문이다. 이전 초안의 `valueCiphertext: Text?`는 실DB에서 읽기도 안 됐다(`WIRE.FIELD_NOT_EXPOSED`). 값 저장·버전·회전·blind index 조회는 `encrypted`가 제품에 들어온 뒤에 선언한다.
+[INFISICAL-GAPS.md](INFISICAL-GAPS.md) G2에 정식 제품 갭으로 기록했다. 요약하면 `encrypted(scope: ...)` 선언과 키·DEK primitive는 있지만 제품 저장·읽기·저널 통합이 미완이라 실행·배포가 차단된다. 설계는 `docs/design/13-field-encryption.md`(상태: Proposed)가 맡고 있고 이 포팅 트랙은 core를 고치지 않는다. 그 사이 `porting/infisical/app.aip`는 시크릿 **값을 선언하지 않는다**. 평문 Text 열에 값을 넣으면 모든 읽기 가능자에게 평문이 노출되는 우회가 되기 때문이다. 이전 초안의 `valueCiphertext: Text?`는 실DB에서 읽기도 안 됐다(`WIRE.FIELD_NOT_EXPOSED`). 값 저장·버전·회전·blind index 조회는 설계 승인과 암호화 제품 통합이 검증된 뒤에 선언한다.
 
 ## 부록: 7.3.3.8 EE 제외 비준은 철회, 대체 문서로 이동
 
