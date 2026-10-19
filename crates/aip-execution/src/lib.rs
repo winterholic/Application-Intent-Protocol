@@ -34,3 +34,5 @@ pub fn infrastructure_schema(deployment_schema: &str) -> Result<String, &'static
     let hash = format!("{:x}", Sha256::digest(deployment_schema.as_bytes()));
     Ok(format!("aip_infra_{}", &hash[..52]))
 }
+
+pub mod encryption;

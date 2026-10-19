@@ -102,11 +102,13 @@ pub async fn provision_infrastructure(db_url: &str, deployment_schema: &str) -> 
     let uuid_audit = facts["resources"].as_object().is_some_and(|rs| rs.values().any(|r| r["idKind"] == "uuid"));
     let audit =
         if uuid_audit { format!("CREATE SCHEMA IF NOT EXISTS {infra}; {}", spike_v3_write::audit_ddl_with_uuid(&infra)) } else { audit_ddl(&infra) };
+    let encryption = aip_execution::encryption::DekStore::new(deployment_schema).map_err(|_| io::Error::other("invalid deployment schema"))?.ddl();
     for (ddl, what) in [
         (rate_limiter_ddl(&infra), "rate limiter"),
         (outbox_ddl(&infra), "outbox relay"),
         (object_ledger_ddl(&infra), "object ledger"),
         (audit, "audit"),
+        (encryption, "encryption metadata"),
     ] {
         tokio::time::timeout(DB_PREFLIGHT_TIMEOUT, db.batch_execute(&ddl))
             .await

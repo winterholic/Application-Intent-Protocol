@@ -11,6 +11,9 @@ external-brokers = ["dep:futures-util", "dep:lapin", "dep:rdkafka"]
 mysql = []
 
 [dependencies]
+aip-crypto = { path = "../aip-crypto" }
+getrandom = "0.3"
+zeroize = { version = "1", features = ["std"] }
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"

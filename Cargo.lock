@@ -164,9 +164,11 @@ dependencies = [
 name = "aip-execution"
 version = "0.1.0"
 dependencies = [
+ "aip-crypto",
  "aip-test-support",
  "base64 0.22.1",
  "futures-util",
+ "getrandom 0.3.4",
  "hmac 0.12.1",
  "lapin",
  "libc",
@@ -179,6 +181,7 @@ dependencies = [
  "tokio-postgres",
  "url",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]

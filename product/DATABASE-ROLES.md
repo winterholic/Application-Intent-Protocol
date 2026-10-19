@@ -22,7 +22,7 @@
 ## 순서
 
 1. migration 역할로 `aip service init app.aip --config service.json`을 실행한다. schema와 테이블은 이 역할이 소유한다.
-2. 같은 역할로 `aip service provision --config service.json`을 실행한다. rate limit, outbox dispatch, 업무 감사, RAG(설정한 경우) 테이블을 인프라 schema에 만든다. 여러 번 실행해도 안전하다. rate limit을 켜거나 outbox handler·RAG를 새로 설정한 뒤에는 다시 실행한다.
+2. 같은 역할로 `aip service provision --config service.json`을 실행한다. rate limit, outbox dispatch, 업무 감사, 암호화 scope/DEK metadata, RAG(설정한 경우) 테이블을 인프라 schema에 만든다. 여러 번 실행해도 안전하다. rate limit을 켜거나 outbox handler·RAG를 새로 설정한 뒤에는 다시 실행한다. 암호화 metadata 테이블 생성은 암호화 resource의 저장 지원을 활성화하지 않으며 서비스 실행 차단은 유지된다.
 3. 아래 권한을 runtime 역할에 준다.
 4. runtime 역할의 URL로 `serve`를 실행한다.
 

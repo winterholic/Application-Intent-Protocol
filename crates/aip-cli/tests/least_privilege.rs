@@ -152,6 +152,10 @@ async fn a_runtime_role_with_only_the_documented_grants_serves_while_the_migrati
         // Provisioning under the migration role fixes that; then the runtime grants for the infrastructure schema follow.
         let provisioned = ok(&config, &runtime_db, &["provision"]).await;
         assert_eq!(provisioned["ok"], true, "{provisioned}");
+        for table in ["aip_encryption_scopes", "aip_encryption_deks"] {
+            let exists: bool = admin.query_one("SELECT to_regclass($1) IS NOT NULL", &[&format!("{infra}.{table}")]).await.unwrap().get(0);
+            assert!(exists, "the migration role must provision {table}");
+        }
         admin
             .batch_execute(&format!(
                 "GRANT USAGE ON SCHEMA {infra} TO {role}; \
@@ -192,6 +196,8 @@ async fn a_runtime_role_with_only_the_documented_grants_serves_while_the_migrati
             format!("UPDATE {infra}.aip_audit SET via='x'"),
             format!("DELETE FROM {infra}.aip_audit"),
             format!("ALTER TABLE {infra}.aip_audit DISABLE TRIGGER ALL"),
+            format!("DROP TABLE {infra}.aip_encryption_deks"),
+            format!("ALTER TABLE {infra}.aip_encryption_scopes ADD COLUMN sneaky int"),
         ] {
             assert!(rt.batch_execute(&forbidden).await.is_err(), "the runtime role must not be able to run `{forbidden}`");
         }

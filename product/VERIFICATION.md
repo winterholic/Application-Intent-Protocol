@@ -2,6 +2,8 @@
 
 ## 2026-10-19 최신 실행 범위
 
+- WBS 8.18.2: main `11cf652`의 [Linux worker jobs 39214468985](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39214468985)가 성공했다. 진단 21개·암호화 정규화 10개·migrate gate 1개·transport gate 1개를 원시 로그에서 확인했다. 암호화 정의 정규화와 실행 차단 경계가 해당 task의 범위이며 제품 저장 통합 완료로 세지 않는다.
+- WBS 8.18.3 증분: DEK metadata의 최초 생성·scope 분리·caller rollback·KEK-only rewrap·DB 제약 회귀 7개를 추가했다. 로컬의 식별자 검사 1개, execution/service/CLI(MySQL 포함)/transport/prototype clippy와 기존 버전 보존을 포함한 잠금 파일 9개 metadata 검사를 확인했다. PostgreSQL을 쓰는 나머지 6개와 실제 provision 최소권한 증분은 Linux CI 대기다. 로컬 `initdb`의 기존 공유 메모리 권한 거부를 재시도하지 않았다.
 - WBS 8.3: `73cb6bd`의 [Linux worker jobs 39212001257](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39212001257)에서 `job_breaker` 2개, OTLP 9개가 통과했다. OTLP 중 실제 DB/worker 경로는 HTTP→job 2개와 Node/Python 중첩 실행 1개다. 중첩 `ctx.jobs.run`은 별도 durable row를 enqueue하지 않고 root lease 안에서 실행된다. root→middle→leaf의 고유 span·실제 부모·동일 trace/root job.id·DB run 1개·민감 canary 배제를 확인했다. 과거 아래의 "중첩 job이 enqueue한 job" 서술은 이 구현 의미와 다르며 당시 미검증 기록으로 남긴다.
 - WBS 8.5: `a8eb690` Verify 39210323292의 장부 25개와 [Object storage 39210323219](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39210323219)의 실제 TLS MinIO 6개가 통과했다. 기존 무장부 객체/두 번째 보류 종료 뒤 도착한 PUT의 명시적 confirm 복구, owner 격리, 중복 계상 방지, quota 초과 관측의 보존을 확인했다. 자동 목록/이벤트 발견과 provider 하드 상한은 여전히 보장하지 않는다.
 - WBS 8.16: [Database contracts 39207996436](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39207996436)의 SCRAM 최소권한 1개·password helper 10개·MySQL/MariaDB live fence 각 5개를 확인했다. 아래의 CI 대기 서술은 당시 이력이다.

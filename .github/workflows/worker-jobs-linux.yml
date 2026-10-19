@@ -79,6 +79,7 @@ jobs:
         run: |
           cargo test --manifest-path spikes/spike-v1-fixture/Cargo.toml --locked --target-dir target --test encrypted_types --test diagnostics
           cargo test -p aip-migrate --locked --test encryption_gate
+          cargo test -p aip-execution --locked --test encryption_deks
       - name: Prove Linux worker sandbox boundaries with Bubblewrap
         run: AIP_TEST_BWRAP=1 cargo test --manifest-path spikes/spike-v4-worker/Cargo.toml --lib isolation::tests --locked --target-dir target
       - name: Run durable worker, retry, schedule, webhook and outbox jobs

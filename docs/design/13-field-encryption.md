@@ -12,12 +12,13 @@
 
 - 제품 `spikes/spike-v1-fixture/src/parser.rs`의 `type_ref`는 `encrypted(scope: ...)`를 인식한다. `.aip`/`.e.ts`/`.e.py`는 추출 후 `parser::parse_spec`, `.h.ts`/`.h.py`는 `hmap::to_spec`→`parse_type_str`를 거쳐 같은 `type_ref`로 모인다. Text/Email/Url/Decimal·service/ref/owner 선언의 정적 제약과 5형식 동일 facts/digest를 검증했다. 개발 검사를 켜면 `DEF.ADVISORY_ENCRYPTION_RUNTIME_DISABLED`로 아직 배포할 수 없음을 알린다. 서비스 CLI의 PG/MySQL 기동 경로와 모든 transport listener의 공통 진입점은 개발 검사 옵션과 관계없이 `DEF.ENCRYPTION_RUNTIME_UNAVAILABLE`로 실행을 차단하고, migration/adopt는 metadata를 거부한다. 저장·읽기·저널 연결 전 평문 실행을 허용하지 않는다.
 - [aip-crypto](../../crates/aip-crypto/README.md)는 v2 셀·KEK wrapping·구조화 지문·TTL 캐시·feature-gated 명시적 v1 import를 제공한다. 제품 저장 경로와는 연결하지 않았다.
+- `aip-execution::encryption::DekStore`는 scope/DEK metadata DDL, caller transaction 안의 최초 키 생성·동시 생성 승자 확정·KEK-only rewrap API를 제공한다. `service provision`의 migration 역할이 해당 테이블을 생성한다. 이 증분의 실제 PostgreSQL 동시성·최소권한 검증은 CI 대기이며, 업무 행 암복호화·키별 사용량 예약·writer epoch 검사·durable rekey는 아직 연결하지 않았다.
 - PoC `crates/aip-runtime/src/crypto.rs`의 AES-GCM/v1과 `rekey.rs`는 제품 엔진에 연결돼 있지 않다. 제품을 평문 `valueCiphertext: Text`로 우회하면 암호화 지원으로 세지 않는다.
 - `spikes/spike-v2-read/src/scalar.rs::parse`는 Text/Email/Decimal 문자열을 검증하되 원문 문자열을 반환한다. Email 소문자화·Text NFC·Decimal 정규화를 이미 수행한다고 보지 않는다.
 - `aip service serve`가 현재 명령이다. 기존 문서의 `service run`과 실제 CLI를 혼동하지 않는다.
 - [Infisical 키 모델](../../plan-docs/porting/INFISICAL-KEYMODEL.md)의 기본 로컬 KMS+프로젝트 DEK는 env/file KEK 봉투 암호화로 표현할 수 있다. 벤더별 원격 KMS는 별도 구현이다.
 
-이하 표·포맷·상태 기계는 **Proposed 목표 계약**이다. 준비 단계 라이브러리·정적 진단만 구현했으며 제품 실행 증거는 §7의 각 게이트에서 별도로 수집한다.
+이하 표·포맷·상태 기계는 **Proposed 목표 계약**이다. 라이브러리·정적 진단·DEK metadata 기반을 단계적으로 구현하며 제품 실행 증거는 §7의 각 게이트에서 별도로 수집한다.
 
 ### 0.2 원칙 관문 8문항
 
