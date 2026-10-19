@@ -39,7 +39,16 @@ fn fixture() -> (tempfile::TempDir, Config, EncodingKey) {
     let path = dir.path().join("jwks.json");
     std::fs::write(&path, jwks.to_string()).expect("test setup");
     let key = EncodingKey::from_rsa_der(private.to_pkcs1_der().expect("test setup").as_bytes());
-    (dir, Config { issuer: "https://issuer.example".into(), audience: "aip-api".into(), jwks: JwksSource::File { path } }, key)
+    (
+        dir,
+        Config {
+            issuer: "https://issuer.example".into(),
+            audience: "aip-api".into(),
+            jwks: JwksSource::File { path },
+            provisioning: Default::default(),
+        },
+        key,
+    )
 }
 
 #[tokio::test]

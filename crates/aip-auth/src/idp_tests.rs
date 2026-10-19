@@ -105,7 +105,12 @@ impl Idp {
 
     /// Builds the authenticator exactly as `new_explained` would, but trusting the test CA.
     async fn authenticator(&self, jwks_url: &str) -> AuthenticatorImpl {
-        let config = Config { issuer: ISSUER.into(), audience: AUDIENCE.into(), jwks: JwksSource::Https { url: jwks_url.into() } };
+        let config = Config {
+            issuer: ISSUER.into(),
+            audience: AUDIENCE.into(),
+            jwks: JwksSource::Https { url: jwks_url.into() },
+            provisioning: Default::default(),
+        };
         let http = self.client();
         let document = read_jwks(&config.jwks, &http).await.expect("initial JWKS fetch");
         let keys = parse_jwks(&document).expect("initial JWKS parses");
@@ -251,7 +256,12 @@ async fn file_auth(path: &std::path::Path, document: &[u8]) -> AuthenticatorImpl
     let keys = parse_jwks(document).expect("initial JWKS parses");
     AuthenticatorImpl {
         actor_resource_sql: None,
-        config: Config { issuer: ISSUER.into(), audience: AUDIENCE.into(), jwks: JwksSource::File { path: path.to_owned() } },
+        config: Config {
+            issuer: ISSUER.into(),
+            audience: AUDIENCE.into(),
+            jwks: JwksSource::File { path: path.to_owned() },
+            provisioning: Default::default(),
+        },
         db_url: "host=unused".into(),
         schema: "aip_app".into(),
         http: reqwest::Client::new(),

@@ -1056,6 +1056,7 @@ mod tests {
             issuer: "https://issuer.example".into(),
             audience: "aip-api".into(),
             jwks: JwksSource::Https { url: format!("https://localhost:{port}/keys") },
+            provisioning: Default::default(),
         };
 
         let env_lookup = |name: &str| if name == "SSL_CERT_FILE" { Some(ca_path.clone()) } else { None };
@@ -1084,6 +1085,7 @@ mod tests {
                 issuer: "https://issuer.example".into(),
                 audience: "aip-api".into(),
                 jwks: JwksSource::Https { url: format!("https://localhost:{port}/keys") },
+                provisioning: Default::default(),
             };
             let env_lookup = |name: &str| if name == "AIP_AUTH_CA_PEM" { Some(ca_path.clone()) } else { None };
             let auth = AuthenticatorImpl::new_explained_with_lookup(config, "host=unused".into(), "aip_app".into(), &env_lookup)
@@ -1100,6 +1102,7 @@ mod tests {
                 issuer: "https://issuer.example".into(),
                 audience: "aip-api".into(),
                 jwks: JwksSource::Https { url: format!("https://localhost:{port}/keys") },
+                provisioning: Default::default(),
             };
             let env_lookup = |name: &str| match name {
                 "SSL_CERT_FILE" => Some(ca_path.clone()),
@@ -1120,6 +1123,7 @@ mod tests {
                 issuer: "https://issuer.example".into(),
                 audience: "aip-api".into(),
                 jwks: JwksSource::Https { url: format!("https://localhost:{port}/keys") },
+                provisioning: Default::default(),
             };
             let no_env = |_: &str| None;
             let err = AuthenticatorImpl::new_explained_with_lookup(config, "host=unused".into(), "aip_app".into(), &no_env)
@@ -1137,6 +1141,7 @@ mod tests {
                 issuer: "https://issuer.example".into(),
                 audience: "aip-api".into(),
                 jwks: JwksSource::Https { url: format!("https://localhost:{port}/keys") },
+                provisioning: Default::default(),
             };
             let bad_path_env = |name: &str| if name == "SSL_CERT_FILE" { Some("/nonexistent/invalid-ca.pem".into()) } else { None };
             let err = AuthenticatorImpl::new_explained_with_lookup(config, "host=unused".into(), "aip_app".into(), &bad_path_env)
@@ -1154,6 +1159,7 @@ mod tests {
                 issuer: "https://issuer.example".into(),
                 audience: "aip-api".into(),
                 jwks: JwksSource::Https { url: format!("https://127.0.0.1:{port}/keys") },
+                provisioning: Default::default(),
             };
             let env_lookup = |name: &str| if name == "SSL_CERT_FILE" { Some(ca_path.clone()) } else { None };
             let err = AuthenticatorImpl::new_explained_with_lookup(config, "host=unused".into(), "aip_app".into(), &env_lookup)
@@ -1166,7 +1172,7 @@ mod tests {
     }
 
     async fn explain(issuer: &str, audience: &str, jwks: JwksSource) -> ConfigFailure {
-        let config = Config { issuer: issuer.into(), audience: audience.into(), jwks };
+        let config = Config { issuer: issuer.into(), audience: audience.into(), jwks, provisioning: Default::default() };
         AuthenticatorImpl::new_explained(config, "host=x".into(), "aip_app".into()).await.err().expect("configuration must be rejected")
     }
 
