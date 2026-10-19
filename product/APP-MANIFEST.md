@@ -98,7 +98,7 @@ AIP는 Spring의 Gradle/JAR/WAR 배포 모델처럼 임의의 AIP 앱을 선언 
 2. **경로 탈출 차단 (`PATH_ESCAPES_APP`)**:
    - 절대 경로(`/...`) 또는 상위 디렉터리 탐색(`../`)으로 앱 루트 외부를 가리키는 모든 상대 경로는 거부됩니다.
 3. **심볼릭 링크 경계 검사 (`SYMLINK_ESCAPES_APP`)**:
-   - 매니페스트가 참조하는 파일 또는 디렉터리가 앱 루트 외부를 가리키는 symlink인 경우 즉시 거부됩니다.
+   - 매니페스트 파일 자체 또는 매니페스트가 참조하는 파일 또는 디렉터리가 앱 루트 외부를 가리키는 symlink인 경우 즉시 거부됩니다.
 4. **참조 파일 실재성 (`*_MISSING`)**:
    - `definition`: 파일이 없으면 `DEFINITION_MISSING`, 확장자가 `.aip`가 아니면 `INVALID_DEFINITION_EXTENSION`.
    - `extensions`: 디렉터리가 없거나 entrypoint 파일이 없으면 `EXTENSION_MISSING`. 언어별 확장자 불일치(Node에 `.py` 진입점 지정 등)는 `INVALID_EXTENSION_LANGUAGE`.
@@ -110,9 +110,11 @@ AIP는 Spring의 Gradle/JAR/WAR 배포 모델처럼 임의의 AIP 앱을 선언 
    - 개인키 파일(`*.pem`, `*.key`, `id_rsa`) 참조는 `DISALLOWED_FILE`로 거부됩니다.
    - `config_template` 내에 하드코딩된 비밀번호(`postgres://user:secret@...` 또는 `password`/`secret` 필드에 실제 값 포함)가 있으면 `CREDENTIAL_LEAK`로 거부됩니다. 환경 변수 이름(`database_url_env`)을 사용해야 합니다.
 6. **고정 의존성 범위 한정**:
-   - 지정된 의존성 명세 파일(`package.json`, `package-lock.json`, `requirements.txt`)만 번들에 포함 대상으로 등록하며, 전역 디렉터리 무단 복사는 차단됩니다.
+   - 지정된 의존성 명세 파일(`package.json`, `package-lock.json`, `requirements.txt`)만 번들에 포함 대상으로 등록하며, 빈 문자열이나 부적절한 falsy 값은 거부됩니다. 전역 디렉터리 무단 복사는 차단됩니다.
 7. **출력 충돌 및 보존 (`OUTPUT_EXISTS`)**:
    - 패키징 출력 디렉터리가 이미 존재하고 비어있지 않으면 기존 파일 보존을 위해 `OUTPUT_EXISTS`로 즉시 중단합니다.
+8. **정적 자산 파일 무결성 및 경계 (`STATIC_ASSET_MISSING`, `DISALLOWED_FILE`, `SYMLINK_ESCAPES_APP`)**:
+   - `static_assets`에 지정된 파일 및 디렉터리 하위의 모든 파일은 유한·결정적으로 순회하여 `AppContract`의 `files` 목록(`role: "static_asset"`) 및 `contractDigest`에 반영됩니다. 하위의 비밀·금지 파일(`.env` 등)이나 외부 symlink는 거부됩니다.
 
 ---
 
@@ -150,6 +152,7 @@ AIP는 Spring의 Gradle/JAR/WAR 배포 모델처럼 임의의 AIP 앱을 선언 
     { "role": "manifest", "path": "aip.app.json", "sha256": "..." },
     { "role": "definition", "path": "app.aip", "sha256": "..." },
     { "role": "extension", "path": "extensions/event.mjs", "sha256": "..." },
+    { "role": "static_asset", "path": "public/index.html", "sha256": "..." },
     { "role": "config_template", "path": "config.example.json", "sha256": "..." },
     { "role": "dependency", "path": "package.json", "sha256": "..." },
     { "role": "lockfile", "path": "package-lock.json", "sha256": "..." }

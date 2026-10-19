@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile, realpath, stat } from "node:fs/promises";
+import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -153,6 +153,13 @@ export async function loadAndValidateAppManifest(targetPath) {
     appDir = resolve(manifestPath, "..");
   } else {
     fail("BAD_MANIFEST", `올바른 매니페스트 파일이나 디렉터리가 아닙니다: ${targetPath}`, "input");
+  }
+
+  const realAppDir = await realpath(appDir).catch(() => appDir);
+  const realManifestPath = await realpath(manifestPath).catch(() => manifestPath);
+  const relManifestFromRealApp = relative(realAppDir, realManifestPath);
+  if (relManifestFromRealApp.startsWith("..") || isAbsolute(relManifestFromRealApp)) {
+    fail("SYMLINK_ESCAPES_APP", `매니페스트 심볼릭 링크가 앱 루트 외부를 가리킵니다: ${manifestPath}`, "security");
   }
 
   const rawManifestText = await readFile(manifestPath, "utf8").catch(() => {
@@ -317,6 +324,84 @@ export async function loadAndValidateAppManifest(targetPath) {
         mount: item.mount,
         path: assetInfo.rel.split(sep).join("/"),
       });
+
+      if (assetInfo.isFile) {
+        const digest = await fileDigest(assetInfo.resolved);
+        filesToTrack.push({
+          role: "static_asset",
+          path: assetInfo.rel.split(sep).join("/"),
+          sha256: digest,
+        });
+      } else if (assetInfo.isDirectory) {
+        const visitedDirs = new Set();
+        const walkDir = async (currentDir) => {
+          const realCurrent = await realpath(currentDir).catch(() => currentDir);
+          if (visitedDirs.has(realCurrent)) {
+            return;
+          }
+          visitedDirs.add(realCurrent);
+
+          const relFromApp = relative(appDir, currentDir);
+          if (relFromApp.startsWith("..") || isAbsolute(relFromApp)) {
+            fail("PATH_ESCAPES_APP", `static_assets 디렉터리가 앱 루트를 벗어납니다: ${relFromApp}`, "security");
+          }
+          const relReal = relative(realAppDir, realCurrent);
+          if (relReal.startsWith("..") || isAbsolute(relReal)) {
+            fail("SYMLINK_ESCAPES_APP", `static_assets 심볼릭 링크가 앱 루트 외부를 가리킵니다: ${relFromApp}`, "security");
+          }
+
+          const entries = await readdir(currentDir, { withFileTypes: true });
+          entries.sort((a, b) => a.name.localeCompare(b.name));
+
+          for (const entry of entries) {
+            const entryPath = join(currentDir, entry.name);
+            const entryRelToApp = relative(appDir, entryPath);
+            const normalizedRel = entryRelToApp.split(sep).join("/");
+
+            checkDisallowedName(entry.name, `static_assets 하위 항목 (${normalizedRel})`);
+
+            if (entry.isSymbolicLink()) {
+              const realTarget = await realpath(entryPath).catch(() => undefined);
+              if (!realTarget) {
+                fail("STATIC_ASSET_MISSING", `static_assets 심볼릭 링크 대상을 찾을 수 없습니다: ${normalizedRel}`, "static_assets");
+              }
+              const relRealTarget = relative(realAppDir, realTarget);
+              if (relRealTarget.startsWith("..") || isAbsolute(relRealTarget)) {
+                fail("SYMLINK_ESCAPES_APP", `static_assets 심볼릭 링크가 앱 루트 외부를 가리킵니다: ${normalizedRel}`, "security");
+              }
+              const targetStat = await stat(realTarget);
+              if (targetStat.isDirectory()) {
+                await walkDir(entryPath);
+              } else if (targetStat.isFile()) {
+                checkDisallowedName(normalizedRel, `static_assets 하위 파일 (${normalizedRel})`);
+                const digest = await fileDigest(entryPath);
+                filesToTrack.push({
+                  role: "static_asset",
+                  path: normalizedRel,
+                  sha256: digest,
+                });
+              } else {
+                fail("DISALLOWED_FILE", `static_assets에 특수 파일이 포함되어 있습니다: ${normalizedRel}`, "security");
+              }
+            } else if (entry.isDirectory()) {
+              await walkDir(entryPath);
+            } else if (entry.isFile()) {
+              const digest = await fileDigest(entryPath);
+              filesToTrack.push({
+                role: "static_asset",
+                path: normalizedRel,
+                sha256: digest,
+              });
+            } else {
+              fail("DISALLOWED_FILE", `static_assets에 특수 파일이 포함되어 있습니다: ${normalizedRel}`, "security");
+            }
+          }
+        };
+
+        await walkDir(assetInfo.resolved);
+      } else {
+        fail("STATIC_ASSET_MISSING", `static_assets 경로가 올바른 파일이나 디렉터리가 아닙니다: ${item.path}`, "static_assets");
+      }
     }
   }
 
@@ -344,7 +429,7 @@ export async function loadAndValidateAppManifest(targetPath) {
         }
       }
       normalizedDependencies.node = {};
-      if (nodeDep.package_json) {
+      if (nodeDep.package_json !== undefined) {
         const info = await resolveSafePath(appDir, nodeDep.package_json, "dependencies.node.package_json");
         if (!info.exists || !info.isFile) {
           fail("DEPENDENCY_MISSING", `package.json 파일을 찾을 수 없습니다: ${nodeDep.package_json}`, "dependencies");
@@ -353,7 +438,7 @@ export async function loadAndValidateAppManifest(targetPath) {
         filesToTrack.push({ role: "dependency", path: info.rel.split(sep).join("/"), sha256: digest });
         normalizedDependencies.node.package_json = info.rel.split(sep).join("/");
       }
-      if (nodeDep.lockfile) {
+      if (nodeDep.lockfile !== undefined) {
         const info = await resolveSafePath(appDir, nodeDep.lockfile, "dependencies.node.lockfile");
         if (!info.exists || !info.isFile) {
           fail("DEPENDENCY_MISSING", `lockfile 파일을 찾을 수 없습니다: ${nodeDep.lockfile}`, "dependencies");
@@ -375,7 +460,7 @@ export async function loadAndValidateAppManifest(targetPath) {
         }
       }
       normalizedDependencies.python = {};
-      if (pyDep.requirements) {
+      if (pyDep.requirements !== undefined) {
         const info = await resolveSafePath(appDir, pyDep.requirements, "dependencies.python.requirements");
         if (!info.exists || !info.isFile) {
           fail("DEPENDENCY_MISSING", `requirements 파일을 찾을 수 없습니다: ${pyDep.requirements}`, "dependencies");
@@ -384,7 +469,7 @@ export async function loadAndValidateAppManifest(targetPath) {
         filesToTrack.push({ role: "dependency", path: info.rel.split(sep).join("/"), sha256: digest });
         normalizedDependencies.python.requirements = info.rel.split(sep).join("/");
       }
-      if (pyDep.lockfile) {
+      if (pyDep.lockfile !== undefined) {
         const info = await resolveSafePath(appDir, pyDep.lockfile, "dependencies.python.lockfile");
         if (!info.exists || !info.isFile) {
           fail("DEPENDENCY_MISSING", `python lockfile 파일을 찾을 수 없습니다: ${pyDep.lockfile}`, "dependencies");
@@ -443,7 +528,15 @@ export async function loadAndValidateAppManifest(targetPath) {
   }
 
   // Deduplicate and sort files
-  filesToTrack.sort((a, b) => a.path.localeCompare(b.path));
+  const seenPaths = new Set();
+  const uniqueFiles = [];
+  for (const f of filesToTrack) {
+    if (!seenPaths.has(f.path)) {
+      seenPaths.add(f.path);
+      uniqueFiles.push(f);
+    }
+  }
+  uniqueFiles.sort((a, b) => a.path.localeCompare(b.path));
 
   // Compute contract digest
   const digestPayload = JSON.stringify({
@@ -456,7 +549,7 @@ export async function loadAndValidateAppManifest(targetPath) {
     targets: normalizedTargets,
     features: normalizedFeatures,
     config_template: normalizedConfigTemplate,
-    files: filesToTrack,
+    files: uniqueFiles,
   });
   const contractDigest = createHash("sha256").update(digestPayload).digest("hex");
 
@@ -474,7 +567,7 @@ export async function loadAndValidateAppManifest(targetPath) {
       features: normalizedFeatures,
       config_template: normalizedConfigTemplate,
     },
-    files: filesToTrack,
+    files: uniqueFiles,
     contractDigest,
     packageLayout: {
       bin: "bin/aip",

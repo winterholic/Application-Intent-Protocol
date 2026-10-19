@@ -476,3 +476,148 @@ test("package.mjs CLI integration: accepts --manifest and --validate-only", (t) 
   const err = JSON.parse(badRes.stderr);
   assert.equal(err.code, "BAD_MANIFEST");
 });
+
+test("package.mjs CLI: --manifest without --validate-only is rejected with BAD_ARGS in WBS 9.1", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "aip-manifest-test-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  const appDir = createFixtureApp1(root);
+  const manifestPath = join(appDir, "aip.app.json");
+
+  // --manifest without --validate-only
+  const res1 = runCommand(process.execPath, [packageScript, "--manifest", manifestPath]);
+  assert.equal(res1.status, 1);
+  const err1 = JSON.parse(res1.stderr);
+  assert.equal(err1.code, "BAD_ARGS");
+
+  // --validate-only without --manifest
+  const res2 = runCommand(process.execPath, [packageScript, "--validate-only"]);
+  assert.equal(res2.status, 1);
+  const err2 = JSON.parse(res2.stderr);
+  assert.equal(err2.code, "BAD_ARGS");
+});
+
+test("static_assets tracks files, changes contractDigest on asset modification, and rejects disallowed/symlink files", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "aip-manifest-test-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  const appDir = createFixtureApp1(root);
+  const manifestPath = join(appDir, "aip.app.json");
+
+  // Initial validation
+  const baseRes = runCommand(process.execPath, [manifestScript, manifestPath]);
+  assert.equal(baseRes.status, 0, baseRes.stderr);
+  const baseContract = JSON.parse(baseRes.stdout);
+  const staticFile = baseContract.files.find((f) => f.path === "public/index.html");
+  assert.ok(staticFile, "public/index.html should be tracked in contract files");
+  assert.equal(staticFile.role, "static_asset");
+
+  // Asset content modification must change contractDigest
+  writeFileSync(join(appDir, "public/index.html"), "<h1>Modified Event App</h1>\n");
+  const modRes = runCommand(process.execPath, [manifestScript, manifestPath]);
+  assert.equal(modRes.status, 0, modRes.stderr);
+  const modContract = JSON.parse(modRes.stdout);
+  assert.notEqual(baseContract.contractDigest, modContract.contractDigest);
+
+  // Asset addition must change contractDigest
+  writeFileSync(join(appDir, "public/style.css"), "body { color: red; }\n");
+  const addRes = runCommand(process.execPath, [manifestScript, manifestPath]);
+  assert.equal(addRes.status, 0, addRes.stderr);
+  const addContract = JSON.parse(addRes.stdout);
+  assert.notEqual(modContract.contractDigest, addContract.contractDigest);
+  assert.ok(addContract.files.some((f) => f.path === "public/style.css"));
+
+  // Disallowed file (.env) nested inside static directory is rejected with DISALLOWED_FILE
+  writeFileSync(join(appDir, "public/.env"), "SECRET=leak\n");
+  const disallowRes = runCommand(process.execPath, [manifestScript, manifestPath]);
+  assert.equal(disallowRes.status, 1);
+  assert.equal(JSON.parse(disallowRes.stderr).code, "DISALLOWED_FILE");
+  rmSync(join(appDir, "public/.env"));
+
+  // Symlink pointing outside app root nested inside static directory is rejected with SYMLINK_ESCAPES_APP
+  const outsideFile = join(root, "outside.txt");
+  writeFileSync(outsideFile, "outside content\n");
+  symlinkSync(outsideFile, join(appDir, "public/outside-link.txt"));
+  const symlinkRes = runCommand(process.execPath, [manifestScript, manifestPath]);
+  assert.equal(symlinkRes.status, 1);
+  assert.equal(JSON.parse(symlinkRes.stderr).code, "SYMLINK_ESCAPES_APP");
+});
+
+test("Manifest file itself cannot be a symlink pointing outside app root", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "aip-manifest-test-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  const appDir = createFixtureApp1(root);
+  const outsideManifest = join(root, "outside-manifest.json");
+  writeFileSync(outsideManifest, readFileSync(join(appDir, "aip.app.json")));
+  rmSync(join(appDir, "aip.app.json"));
+  symlinkSync(outsideManifest, join(appDir, "aip.app.json"));
+
+  // Directory input
+  const dirRes = runCommand(process.execPath, [manifestScript, appDir]);
+  assert.equal(dirRes.status, 1);
+  assert.equal(JSON.parse(dirRes.stderr).code, "SYMLINK_ESCAPES_APP");
+
+  // File input
+  const fileRes = runCommand(process.execPath, [manifestScript, join(appDir, "aip.app.json")]);
+  assert.equal(fileRes.status, 1);
+  assert.equal(JSON.parse(fileRes.stderr).code, "SYMLINK_ESCAPES_APP");
+});
+
+test("Dependencies reject explicit falsy / invalid values with BAD_MANIFEST", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "aip-manifest-test-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  const appDir = createFixtureApp1(root);
+  const manifestPath = join(appDir, "aip.app.json");
+
+  const originalText = readFileSync(manifestPath, "utf8");
+
+  for (const badValue of ["", false, 0, null]) {
+    // node.package_json
+    const m1 = JSON.parse(originalText);
+    m1.dependencies.node.package_json = badValue;
+    writeFileSync(manifestPath, JSON.stringify(m1, null, 2));
+    let res = runCommand(process.execPath, [manifestScript, manifestPath]);
+    assert.equal(res.status, 1, `Expected failure for node.package_json = ${JSON.stringify(badValue)}`);
+    assert.equal(JSON.parse(res.stderr).code, "BAD_MANIFEST");
+
+    // node.lockfile
+    const m2 = JSON.parse(originalText);
+    m2.dependencies.node.lockfile = badValue;
+    writeFileSync(manifestPath, JSON.stringify(m2, null, 2));
+    res = runCommand(process.execPath, [manifestScript, manifestPath]);
+    assert.equal(res.status, 1, `Expected failure for node.lockfile = ${JSON.stringify(badValue)}`);
+    assert.equal(JSON.parse(res.stderr).code, "BAD_MANIFEST");
+
+    // python.requirements
+    const m3 = JSON.parse(originalText);
+    delete m3.dependencies.node;
+    m3.dependencies.python = { requirements: badValue };
+    writeFileSync(manifestPath, JSON.stringify(m3, null, 2));
+    res = runCommand(process.execPath, [manifestScript, manifestPath]);
+    assert.equal(res.status, 1, `Expected failure for python.requirements = ${JSON.stringify(badValue)}`);
+    assert.equal(JSON.parse(res.stderr).code, "BAD_MANIFEST");
+
+    // python.lockfile
+    const m4 = JSON.parse(originalText);
+    delete m4.dependencies.node;
+    m4.dependencies.python = { lockfile: badValue };
+    writeFileSync(manifestPath, JSON.stringify(m4, null, 2));
+    res = runCommand(process.execPath, [manifestScript, manifestPath]);
+    assert.equal(res.status, 1, `Expected failure for python.lockfile = ${JSON.stringify(badValue)}`);
+    assert.equal(JSON.parse(res.stderr).code, "BAD_MANIFEST");
+  }
+
+  // Valid empty objects are accepted
+  const mEmpty = JSON.parse(readFileSync(manifestPath, "utf8"));
+  mEmpty.dependencies = {};
+  writeFileSync(manifestPath, JSON.stringify(mEmpty, null, 2));
+  let resEmpty = runCommand(process.execPath, [manifestScript, manifestPath]);
+  assert.equal(resEmpty.status, 0);
+
+  mEmpty.dependencies = { node: {} };
+  writeFileSync(manifestPath, JSON.stringify(mEmpty, null, 2));
+  resEmpty = runCommand(process.execPath, [manifestScript, manifestPath]);
+  assert.equal(resEmpty.status, 0);
+});

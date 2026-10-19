@@ -43,6 +43,12 @@ function parseArgs(args) {
     else if (args[index] === "--validate-only" || args[index] === "--check-only") validateOnly = true;
     else throw new PackageFailure("BAD_ARGS", "usage: node product/tools/package.mjs [--out <fresh-directory>] [--profile debug|release] [--manifest <aip.app.json>] [--validate-only]", "arguments");
   }
+  if (manifest && !validateOnly) {
+    throw new PackageFailure("BAD_ARGS", "임의 앱 패키징은 아직 지원되지 않습니다(WBS 9.2). WBS 9.1에서는 --validate-only와 함께 매니페스트 검증만 가능합니다", "arguments");
+  }
+  if (validateOnly && !manifest) {
+    throw new PackageFailure("BAD_ARGS", "--validate-only는 --manifest와 함께 지정해야 합니다", "arguments");
+  }
   if (!out && !validateOnly) {
     const stamp = new Date().toISOString().replaceAll(":", "-").replaceAll(".", "-");
     out = resolve(productDir, "dist", stamp);
@@ -266,12 +272,10 @@ async function collectSourceTree(directory, files) {
 
 try {
   const options = parseArgs(process.argv.slice(2));
-  if (options.manifest) {
+  if (options.manifest && options.validateOnly) {
     const appContract = await loadAndValidateAppManifest(options.manifest);
-    if (options.validateOnly) {
-      console.log(JSON.stringify(appContract, null, 2));
-      process.exit(0);
-    }
+    console.log(JSON.stringify(appContract, null, 2));
+    process.exit(0);
   }
   console.log(JSON.stringify(await packageArtifacts(options)));
 } catch (error) {
