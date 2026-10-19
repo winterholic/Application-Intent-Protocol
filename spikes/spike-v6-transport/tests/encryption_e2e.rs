@@ -245,10 +245,12 @@ async fn encryption_read_write_zero_plaintext_and_idempotency_rotation() {
     assert_eq!(status_mismatch_res["code"], "WIRE.IDEMPOTENCY_MISMATCH");
 
     // 7. TAMPERED CIPHERTEXT DETECTION (WIRE.ENCRYPTION_CORRUPTED)
-    // Directly tamper ciphertext in DB
-    db.batch_execute(&format!("UPDATE {schema}.secret_item SET secret_body = 'v2:service:dek1:1:AAAAAA:CorruptedPayload' WHERE id = {created_id}"))
-        .await
-        .unwrap();
+    // Directly tamper ciphertext in DB with valid header but invalid AEAD payload
+    db.batch_execute(&format!(
+        "UPDATE {schema}.secret_item SET secret_body = 'v2:s:dek1:1:AAAAAAAAAAAAAAAA:AAAAAAAAAAAAAAAAAAAAAA==' WHERE id = {created_id}"
+    ))
+    .await
+    .unwrap();
 
     let corrupted_read_res = spike_v6_transport::handle(&mut db, &facts, "/read", &read_query, &caller, wire).await;
     assert_eq!(corrupted_read_res["ok"], false);
@@ -256,7 +258,7 @@ async fn encryption_read_write_zero_plaintext_and_idempotency_rotation() {
 
     // 8. UNKNOWN KEY DETECTION (WIRE.ENCRYPTION_UNAVAILABLE)
     db.batch_execute(&format!(
-        "UPDATE {schema}.secret_item SET secret_body = 'v2:service:dek999:999:AAAAAAAAAAAAAAAA:AAAAAAAAAAAAAAAAAAAAAA==' WHERE id = {created_id}"
+        "UPDATE {schema}.secret_item SET secret_body = 'v2:s:dek999:999:AAAAAAAAAAAAAAAA:AAAAAAAAAAAAAAAAAAAAAA==' WHERE id = {created_id}"
     ))
     .await
     .unwrap();
