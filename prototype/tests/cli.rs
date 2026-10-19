@@ -177,7 +177,11 @@ fn excessive_definition_nesting_is_a_diagnostic_instead_of_a_process_abort() {
             ("arrays", format!("{}1{}", "[".repeat(10000), "]".repeat(10000))),
             ("objects", format!("{}1{}", "{\"a\":".repeat(5000), "}".repeat(5000))),
         ] {
-            cases.push((format!("{kind}.h.{suffix}"), format!("{} {key}: {value},\n{}", &source[..index], &source[index..]), "DEF.H_LITERAL_NESTING"));
+            cases.push((
+                format!("{kind}.h.{suffix}"),
+                format!("{} {key}: {value},\n{}", &source[..index], &source[index..]),
+                "DEF.H_LITERAL_NESTING",
+            ));
         }
     }
     let out = dir.path().join("contract.ts");
@@ -260,7 +264,7 @@ fn gen_emits_a_typed_binding_with_the_selected_wire_in_its_fingerprint() {
         [(&safe_source, "safe-number-v13", safe_fingerprint), (&decimal_source, "decimal-string-v13", decimal_fingerprint)]
     {
         assert!(generated.contains("../sdk/index.ts"), "SDK import is explicit");
-        assert!(generated.contains("PrototypeBinding"), "generated artifact binds the combined read/apply/WRITE prototype contract");
+        assert!(generated.contains("OperationBinding"), "generated artifact binds the current read/apply/extension/operation contract");
         assert!(generated.contains("readDescriptors:"), "generated read validation is present even without extensions");
         assert!(generated.contains("link: string"), "Url is exposed as a scalar string");
         assert!(generated.contains(wire), "artifact records its selected wire mode");

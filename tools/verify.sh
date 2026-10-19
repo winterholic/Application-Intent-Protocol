@@ -36,6 +36,9 @@ cargo test -p aip-cli --features poc-runtime --locked
 for engine in spike-v1-fixture spike-v2-read spike-v3-write spike-v4-worker spike-v5-sdk spike-v6-transport; do
   cargo test --manifest-path "spikes/$engine/Cargo.toml" --locked --target-dir target
 done
+# The legacy prototype imports the shared generator and must export every binding type it emits.
+# Keep its CLI and committed lock file in the product gate so an SDK change cannot silently break it.
+cargo test --manifest-path prototype/Cargo.toml --test cli --locked --target-dir target
 # The update smoke executes the product CLI; rebuild before its installed-SDK test.
 cargo build -p aip-cli --locked
 node --test \

@@ -1,5 +1,12 @@
 # 제품 통합 검증 (2026-10-17)
 
+## WBS 8.13 prototype CLI·검증 게이트 복구 (2026-10-19)
+
+- 현행 prototype에서 `--locked` 실패와 CLI 2개 실패를 재현했다. 공유 생성기는 `OperationBinding`을 내보내는데 prototype SDK 진입점에 이 타입이 없었다. SDK의 누락된 binding 타입을 내보내고, 이전 `PrototypeBinding` 문자열만 요구하던 검사를 현재 계약에 맞췄다. 실제 SDK를 import하는 TypeScript 호출부 컴파일 검사도 함께 통과한다.
+- `cargo test --manifest-path prototype/Cargo.toml --test cli --locked --target-dir target`: **13 passed, 0 failed**. `cargo clippy --manifest-path spikes/spike-v2-read/Cargo.toml --all-targets --locked --target-dir target -- -D warnings`와 prototype fmt, `git diff --check`도 통과했다. 이 CLI 검사는 DB에 연결하지 않는다.
+- prototype lock 파일에 누락된 현재 경로 의존성을 동기화하고 `tools/verify.sh`에 prototype CLI를 추가했다. 별도 workspace인 prototype도 `debug = "line-tables-only"`로 맞춰 공유 target에 전체 DWARF 빌드를 중복하지 않는다.
+- 앞선 main `da5817e`의 Verify 포함 5개 CI는 성공했다. 원시 Verify 로그에서 새 PostgreSQL Bool 정렬·NULL·커서·행 정책 검사와 전체 `AIP core verification passed.`를 확인했다. 이 prototype 변경의 CI 결과와는 구분한다.
+
 ## WBS 9.3~9.5 패키지 배포와 WBS 8.14 TLS 후속 (2026-10-19)
 
 - main `db358fa`의 [App packages](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39189959354)는 Linux x64에서 경계 검사 73개, release 두 앱 이동·SDK 소비자 검사 1개, native/Docker/복원/worker lifecycle 1개가 모두 통과했다. 원본 입력과 중간 bundle을 지운 설치 경로의 binary·정의·SDK·확장을 사용했다. 검사 harness 및 TypeScript/Python 시험 도구는 checkout에 있다.
@@ -62,8 +69,8 @@ Codex 작업 세션이 취소된 7개 브랜치를 이어받아 main에 통합�
 
 ### 이번 회차에도 남은 것
 
-- `prototype` 테스트 `cli`의 2개(`gen_emits_a_typed_binding_...`, `generated_binding_resolves_...`)는 main에서도 같은 이유(`OperationBinding` 미export)로 실패한다. 이번 변경과 무관하다.
-- `cargo clippy --all-targets`는 spike-v2-read의 `needless_lifetimes`(main에도 있음) 때문에 spike v2/v6에서 실패한다. `tools/verify.sh`가 요구하는 clippy 명령은 통과한다.
+- 당시 `prototype` 테스트 `cli`의 2개(`gen_emits_a_typed_binding_...`, `generated_binding_resolves_...`)는 main에서도 `OperationBinding` 미export로 실패했다. **2026-10-19 후속에서 수정·13개 통과**, 위 WBS 8.13 기록 참조.
+- 당시 `cargo clippy --all-targets`는 spike-v2-read의 `needless_lifetimes` 때문에 실패했다. **2026-10-19 현행 v2 all-targets `-D warnings` 통과**, 위 WBS 8.13 기록 참조.
 - `prototype/Cargo.lock`은 main에서 `--locked` 검사가 이미 실패했고 이번에 갱신했다.
 - 8.3 큐 포화 테스트는 호출이 100ms 안에 끝나는지만 본다. 드롭 카운터는 검증하지 않는다.
 - 8.9는 연결이 닫힌 경우(`is_closed`)만 `COMMIT_UNKNOWN`으로 분류한다. 그 밖의 연결 오류 형태는 실행해 보지 않았다. (다음 절 "WBS 8.9 분류 보강"에서 실행했다.)

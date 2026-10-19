@@ -20,3 +20,7 @@ spike-v6-transport = { path = "../spikes/spike-v6-transport" }
 
 [dev-dependencies]
 aip-test-support = { path = "../crates/aip-test-support", features = ["strict-db"] }
+
+# Match the shared product build profile instead of duplicating full DWARF artifacts.
+[profile.dev]
+debug = "line-tables-only"
