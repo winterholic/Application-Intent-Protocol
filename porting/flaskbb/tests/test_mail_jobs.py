@@ -80,6 +80,27 @@ class MailJobTests(unittest.TestCase):
             asyncio.run(flaskbb_mail.send_password_reset_email(
                 {"email": "x@example.test", "username": "u", "token": "t"}, ctx))
 
+    def test_mailed_token_is_opaque_and_unvalidated(self):
+        # PRODUCT-GAPS G-13: the original mints operation-scoped 1-hour timed
+        # tokens and verifies signature/expiry/operation on consume. The port
+        # has no mint/verify/consume: whatever the caller passes is embedded
+        # verbatim. If lifecycle enforcement ever lands, these flip to raises.
+        tampered = "eyJpZCI6M30.tampered.signature"
+        expired = "expired-opaque-token"
+        wrong_operation = "reset-token-inside-activation-mail"
+        for token in (tampered, expired, wrong_operation):
+            payload = flaskbb_mail.build_activation_email("a@example.test", "u", token)
+            self.assertIn(f"/auth/activate/{token}", payload["Text"])
+            payload = flaskbb_mail.build_password_reset_email("a@example.test", "u", token)
+            self.assertIn(f"/auth/reset/{token}", payload["Text"])
+
+    def test_mail_links_point_outside_the_port(self):
+        # PRODUCT-GAPS G-13: the renderer serves no consume route, so mailed
+        # links are absolute URLs under the deployment base (default: the
+        # original app's port). Consumption happens outside the port.
+        payload = flaskbb_mail.build_activation_email("a@example.test", "u", "tok-1")
+        self.assertIn("http://127.0.0.1:58080/auth/activate/tok-1", payload["Text"])
+
     def test_missing_sender_config_fails_closed(self):
         os.environ.pop("FLASKBB_MAIL_SENDER", None)
         with self.assertRaises(RuntimeError):

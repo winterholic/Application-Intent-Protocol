@@ -372,6 +372,29 @@ class UiHostTests(unittest.TestCase):
         self.assertEqual(ops[2]["target"], {"ids": ["102"]})
 
 
+class TokenConsumeRoutePinTests(unittest.TestCase):
+    """PRODUCT-GAPS G-13: mailed activation/reset links have no port consumer.
+
+    The original consumes tokens at /auth/reset-password/<token> and
+    /auth/activate/confirm; the port's mails link to /auth/activate/<token>
+    and /auth/reset/<token>, which the renderer does not serve (its
+    /auth/reset-password is an IdP redirect, pinned separately). If consume
+    routes ever land, these pins flip.
+    """
+
+    def test_renderer_serves_no_token_consume_routes(self):
+        app = create_app({"TESTING": True, "SECRET_KEY": "test-only-secret", "AIP_URL": "http://aip.test"})
+        rules = sorted(str(rule) for rule in app.url_map.iter_rules())
+        self.assertEqual([r for r in rules if r.startswith("/auth/activate")], [])
+        self.assertEqual([r for r in rules if r.startswith("/auth/reset/")], [])
+
+    def test_mailed_link_shapes_are_dead_in_the_port(self):
+        app = create_app({"TESTING": True, "SECRET_KEY": "test-only-secret", "AIP_URL": "http://aip.test"})
+        browser = app.test_client()
+        self.assertEqual(browser.get("/auth/activate/opaque-token-1").status_code, 404)
+        self.assertEqual(browser.get("/auth/reset/opaque-token-2").status_code, 404)
+
+
 class ReadTrackingCutoffTests(unittest.TestCase):
     """Unread cutoff rules mirror upstream helpers.py topic/forum_is_unread."""
 

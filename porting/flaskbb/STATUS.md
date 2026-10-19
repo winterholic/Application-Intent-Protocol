@@ -1,5 +1,15 @@
 # FlaskBB 전체 포팅 상태
 
+## 2026-10-20 F14 토큰 라이프사이클 — 미구현 고정과 설계안 (G-13)
+
+원본은 SECRET_KEY 서명 1시간 timed 토큰(payload `{id, op}`)을 발급하고 소비 시 서명·만료·operation 검사와 이메일 일치 verifier 뒤 `activated=True`/비밀번호 변경을 한다(`tokens/serializer.py`, `auth/services/activation.py`·`password.py`, 소비 경로는 `/auth/reset-password/<token>`·`/auth/activate/confirm`). 포팅의 두 mail job은 호출자가 준 불투명 토큰을 검증 없이 링크에 넣고, 렌더러는 소비 경로를 서빙하지 않으며(`/auth/reset-password`는 IdP 리다이렉트), 메일 링크는 배포 base URL(기본값 원본 58080) 아래 절대 URL이라 포팅 안 소비처가 없다. 선언에서 서명 검증도 불가하다(`allow hmac(input.token, "k") = "x"` → `service check` `DEF.UNKNOWN_SYMBOL`, predicate `hmac` 없음). 구현 위치·비밀키 관리·F02 IdP 위임과의 모순 해소는 제품 결정 사항이라 임의로 만들지 않고 [PRODUCT-GAPS G-13](PRODUCT-GAPS.md)에 설계안과 결정 항목을 남겼다.
+
+고정 테스트 4건(토큰 불투명 삽입·메일 링크 외부 지향·렌더러 소비 경로 부재·링크 404)을 RED(원본 기대 2건 실패) → GREEN으로 추가했고 `test_ui_host`+`test_mail_jobs` 29/29를 DB 없이 로컬에서 직접 실행해 통과했다(CI unittest 단계에도 그대로 포함). 이 고정 단언은 라이프사이클이 생기면 뒤집어야 한다. G-13은 닫히지 않았고 7.5.3의 이 항목은 미완료로 유지한다.
+
+## 2026-10-20 F13 CLI 회귀 해소 확인·F14 범위 정정 (관측, 구현 없음)
+
+HEAD `7ba0a26`의 Linux worker-jobs check-run이 completed success이며(`cli.test.mjs` 포함), b39633a의 Welcome Topic `post_count` `WIRE.DEADLINE_EXCEEDED` 회귀가 473c528 JIT-off 증분 이후 재현되지 않아 F13 CLI lifecycle 회귀는 해소로 본다(공개 API로 run 결론까지만 확인, 로그 미열람). 별도 대조에서 원본에는 토픽 알림 메일이 없음도 확인했다(`email.py`의 celery task는 활성화·재설정 2종뿐이고 `forum/`에 메일 호출처 없음). PMS 7.5.3의 "토픽 알림 메일"은 원본에 없는 범위이므로 별도 구현 항목에서 제외하고, 토픽 추적 자체는 F06(7.5.2) 범위다.
+
 ## 2026-10-20 unread cutoff 계산 — 구현됨, 실DB E2E는 Linux CI 판정 대기
 
 원본 `topic_is_unread`/`forum_is_unread`(`upstream/flaskbb/utils/helpers.py`, `read_cutoff = now - TRACKER_LENGTH days`, 0이면 tracker 비활성)을 렌더러 `ui/read_tracking.py` 순수 함수로 포팅하고 포럼 목록(`/`)·주제 목록(`/forum/<id>`)에 연결했다. AIP read는 select/filter/sort만 노출해 cutoff 선언이 불가하고, 렌더러가 뷰어 세션으로 동작해 `Setting`(admin/super_mod 전용)을 읽을 수 없어 `tracker_length`는 fixture 기본값 7일(`upstream/flaskbb/fixtures/settings.py`)을 상수로 둔다(관리자 변경값 미반영은 PRODUCT-GAPS G-12). 목록 템플릿의 미읽음 아이콘은 원본 `forum.html`/`category_layout.html`의 분기·클래스(locked→hidden→important star→comment, `topic-unread`/`forum-unread`)를 그대로 둔다. 원본의 cleared+stale-last_read 포럼 판정 quirk도 그대로 고정했다.
