@@ -39,6 +39,14 @@ allow = [
 ]
 confidence-threshold = 0.9
 
+# Redis's transitive hash implementation declares the Boost Software License 1.0.
+# Checked the locked crate's LICENSE against https://spdx.org/licenses/BSL-1.0.html.
+# Keep this scoped to the reviewed package version; other BSL crates stay denied.
+[[licenses.exceptions]]
+name = "xxhash-rust"
+version = "=0.8.19"
+allow = ["BSL-1.0"]
+
 [bans]
 # Duplicate versions come from the transitive tree of tokio, rustls and chrono; they are reported, not blocked.
 multiple-versions = "warn"
