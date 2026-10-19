@@ -455,19 +455,32 @@ def create_app(config=None, sdk_factory=connect, sessions=None, flows=None):
 
     @app.get("/users")
     def member_list():
+        # Upstream MemberList.post runs UserSearchForm (DataRequired +
+        # Length 3..50) over the member list and re-renders the full list
+        # with errors when the form is invalid.
+        submitted = "q" in request.args
+        raw_query = request.args.get("q", "")
+        q = raw_query.strip()
+        errors = search_fields.validate_query(raw_query) if submitted else []
+        read_query = {
+            "read": "User",
+            "select": ["id", "username", "primary_group", "post_count"],
+            "limit": 100,
+        }
+        if submitted and not errors:
+            read_query["filter"] = [{"field": "username", "op": "contains", "value": q}]
         client = aip_client()
         try:
-            members = client.read({
-                "read": "User",
-                "select": ["id", "username", "primary_group", "post_count"],
-                "limit": 100,
-            })
+            members = client.read(read_query)
         except AipError as error:
             reject_aip_error(error)
         identity = session_store.get(request.cookies.get("aip_session"), {})
         return render_template(
             "member_list.html",
             members=members,
+            query=q if submitted and not errors else "",
+            form_value=raw_query,
+            errors=errors,
             logout_url=url_for("logout") if identity else None,
             csrf_token=identity.get("csrf_token"),
         )

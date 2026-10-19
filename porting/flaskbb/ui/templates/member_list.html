@@ -6,6 +6,29 @@
 </div>
 
 <div class="panel panel-default">
+    <div class="panel-body">
+        <form method="get" action="{{ url_for('member_list') }}" class="form-inline">
+            <div class="form-group">
+                <input type="text" name="q" value="{{ form_value or '' }}" class="form-control" placeholder="Search members..." style="width: 300px;">
+            </div>
+            <button type="submit" class="btn btn-primary"><span class="fa fa-search"></span> Search</button>
+        </form>
+    </div>
+</div>
+
+{% for error in errors %}
+<div class="alert alert-danger">{{ error }}</div>
+{% endfor %}
+
+{% if query %}
+<h3>Members matching "{{ query }}" ({{ members|length }})</h3>
+{% endif %}
+
+{% if query and not members %}
+<div class="alert alert-info">No matching members found.</div>
+{% endif %}
+
+<div class="panel panel-default">
     <table class="table table-striped">
         <thead>
             <tr>

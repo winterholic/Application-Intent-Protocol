@@ -22,13 +22,19 @@ FIELDS = {
 TYPES = ("all", *FIELDS)
 
 
-def validate(query, search_type):
-    """Return form errors for a submitted query; empty when it may be searched."""
+def validate_query(query):
+    """Return query errors; empty when the query may be searched."""
     errors = []
     if not query.strip():
         errors.append("The search query is required.")
     elif not MIN_LENGTH <= len(query) <= MAX_LENGTH:
         errors.append(f"The search query must be between {MIN_LENGTH} and {MAX_LENGTH} characters long.")
+    return errors
+
+
+def validate(query, search_type):
+    """Return form errors for a submitted query; empty when it may be searched."""
+    errors = validate_query(query)
     if search_type not in TYPES:
         errors.append("The content type is not a valid choice.")
     return errors

@@ -1,5 +1,13 @@
 # FlaskBB 전체 포팅 상태
 
+## 2026-10-20 F15 회원 목록(/users) 검색 — 구현됨, unit 로컬 통과, 실DB는 Linux CI 판정 대기
+
+원본 `UserSearchForm`(`upstream/flaskbb/forum/forms.py` 167-176행)은 `search_query`에 `DataRequired`+`Length(min=3, max=50)`를 두고 `get_results()`가 `User.query.whooshee_search(query)`를 돌린다. `MemberList`(`forum/views.py` 618-676행, 경로 `/memberlist` 1154-1158행)는 POST에서 폼이 유효하면 검색 결과를 페이지네이션하고, 무효하면 전체 정렬 목록을 폼(오류 포함)과 함께 다시 렌더한다. User whoosh 색인은 `username`·`email`이다(`utils/search.py` 120-147행). 이전 포팅의 `/users`는 GET 전체 목록만 있고 검색이 없었다.
+
+포팅은 `/search`와 같은 GET `?q=`로 받는다(원본 POST가 아니라 포팅 내 규칙을 따름). `ui/search_fields.py`의 질의 검증을 `validate_query`로 분리해 `/search`와 공유하고, 유효한 질의는 선언된 `User.username.contains` 필터(`app.aip` 122행, 선언 변경 없음) 하나로 읽고 `Members matching "…"` 머리말을 단다. 무효한 질의는 원본처럼 오류와 함께 전체 목록을 다시 보여주고, `q`가 없으면 기존 전체 목록 그대로다. 이메일로는 검색하지 않고(G-4 oracle 제외 유지) 대소문자를 구분한다(Whoosh 동등성은 별도 잔여 항목).
+
+RED→GREEN: 단위 2건이 구현 전 실패(필터 없음 KeyError 1·길이 오류 미표시 3 subtest)했고 구현 뒤 `test_ui_host`+`test_mail_jobs` 35/35를 DB 없이 로컬에서 직접 실행해 통과했다. 신규 실DB `users-search.test.mjs`(이름 일치·공유 부분문자열·대소문자 고정·이메일 불가·무효 질의 전체목록 폴백)는 `node --check` 통과, 로컬 실DB는 검증 샌드박스의 사용자 조회 차단(`initdb: 501 UID를 찾을 수 없음`, 1회 기록 후 미재시도)으로 미실행이며 `worker-jobs-linux.yml` Revalidate 단계에 등록해 Linux CI로 판정한다. CI 결과는 push 뒤 확인한다.
+
 ## 2026-10-20 F15 검색 색인 필드·질의 검증 동등화 — 구현됨, 실DB 로컬 통과, Linux CI 판정 대기
 
 원본 `upstream/flaskbb/utils/search.py`의 whoosheer 스키마는 Post(`username`·`modified_by`·`content`), Topic(`title`·`username`·첫 글 `content`), Forum(`title`·`description`), User(`username`·`email`)이고, `SearchPageForm`(`forum/forms.py` 179-195행)은 질의에 `DataRequired`+`Length(min=3, max=50)`, 타입에 `DataRequired`를 둔다. 같은 파일 167-176행의 `UserSearchForm`(회원 목록 검색)도 같은 길이 제한이다. 이전 포팅은 타입당 필드 하나(`title`/`content`/`username`/`title`)만 `contains`로 읽었고 길이·타입 검증이 없었다.

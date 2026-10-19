@@ -320,6 +320,51 @@ class UiHostTests(unittest.TestCase):
         self.assertIn(b"My Topic", profile_res.data)
         self.assertIn(b"My Post", profile_res.data)
 
+    def _member_browser(self, rows):
+        client_api = Mock()
+        client_api.read.return_value = rows
+        sessions = {"session": {"access_token": "token", "csrf_token": "csrf"}}
+        app = create_app(
+            {"TESTING": True, "SECRET_KEY": "test-only-secret", "AIP_URL": "http://aip.test"},
+            sdk_factory=Mock(return_value=client_api),
+            sessions=sessions,
+        )
+        browser = app.test_client()
+        browser.set_cookie("aip_session", "session")
+        return browser, client_api
+
+    def test_member_list_search_filters_by_username_contains(self):
+        # Upstream MemberList.post runs UserSearchForm.get_results over the
+        # member list (forum/views.py); the port takes the query as GET ?q=
+        # like /search and reads the declared User username.contains filter.
+        browser, client_api = self._member_browser([
+            {"id": "2", "username": "member-alice", "primary_group": {"name": "Member"}, "post_count": 1},
+        ])
+        res = browser.get("/users", query_string={"q": "alice"})
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(client_api.read.call_count, 1)
+        query = client_api.read.call_args_list[0].args[0]
+        self.assertEqual(query["read"], "User")
+        self.assertEqual(query["filter"], [{"field": "username", "op": "contains", "value": "alice"}])
+        self.assertIn(b"member-alice", res.data)
+        self.assertIn(b'Members matching "alice"', res.data)
+
+    def test_member_list_search_rejects_query_outside_original_length_bounds(self):
+        # Upstream UserSearchForm: DataRequired + Length(min=3, max=50)
+        # (forum/forms.py). An invalid form re-renders the full member list
+        # with errors instead of searching.
+        for q, text in (("ab", b"between 3 and 50"), ("x" * 51, b"between 3 and 50"), ("   ", b"required")):
+            with self.subTest(q=q):
+                browser, client_api = self._member_browser([
+                    {"id": "2", "username": "member-alice", "primary_group": {"name": "Member"}, "post_count": 1},
+                ])
+                res = browser.get("/users", query_string={"q": q})
+                self.assertEqual(res.status_code, 200)
+                self.assertIn(text, res.data)
+                self.assertIn(b"member-alice", res.data)
+                self.assertEqual(client_api.read.call_count, 1)
+                self.assertNotIn("filter", client_api.read.call_args_list[0].args[0])
+
     def test_user_settings_post_calls_update_profile_bundle(self):
         client_api = Mock()
         client_api.session.return_value = {"actorId": "6"}

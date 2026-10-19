@@ -128,6 +128,7 @@ jobs:
           porting/flaskbb/tests/cli.test.mjs
           porting/flaskbb/tests/search.test.mjs
           porting/flaskbb/tests/search-fields.test.mjs
+          porting/flaskbb/tests/users-search.test.mjs
           porting/flaskbb/tests/ban.test.mjs
           porting/flaskbb/tests/moderator-ban.test.mjs
           porting/flaskbb/tests/purge.test.mjs
