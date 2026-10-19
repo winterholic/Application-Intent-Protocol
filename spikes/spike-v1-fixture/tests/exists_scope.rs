@@ -19,7 +19,10 @@ fn exists_where_absorbs_the_trailing_or_chain() {
             match &outer[1] {
                 Expr::Exists(source, condition, _) => {
                     assert_eq!(source, "UserGroup");
-                    assert!(matches!(**condition, Expr::Or(ref inner) if inner.len() == 2), "viewer.admin sits inside the exists condition: {condition:?}");
+                    assert!(
+                        matches!(**condition, Expr::Or(ref inner) if inner.len() == 2),
+                        "viewer.admin sits inside the exists condition: {condition:?}"
+                    );
                 }
                 other => panic!("second disjunct should be the exists: {other:?}"),
             }

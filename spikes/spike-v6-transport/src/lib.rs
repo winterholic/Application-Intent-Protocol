@@ -1001,11 +1001,7 @@ async fn serve_request(
             None => keys.verify_session(token),
             Some(provider) => match tokio::time::timeout_at(
                 deadline,
-                if is_session_route {
-                    provider.provision_or_verify_session(token)
-                } else {
-                    provider.verify_session(token)
-                },
+                if is_session_route { provider.provision_or_verify_session(token) } else { provider.verify_session(token) },
             )
             .await
             {
