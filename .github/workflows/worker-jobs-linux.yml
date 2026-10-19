@@ -82,6 +82,7 @@ jobs:
       - name: Install Node SDK test dependencies
         run: npm ci --prefix spikes/spike-0-ts --ignore-scripts --no-audit --no-fund
       - name: Build the product CLI
+        id: build_cli
         run: cargo build -p aip-cli --locked
       - name: Validate encryption definitions and closed storage boundaries
         run: |
@@ -130,6 +131,9 @@ jobs:
           cd porting/infisical/tests
           "$INFISICAL_PYTHON" -m unittest -v test_live_db test_identity_jwt
           "$INFISICAL_PYTHON" mutation_check.py
+      - name: Verify trusted ctx deadline failures on Node and Python
+        if: ${{ !cancelled() && steps.build_cli.outcome == 'success' }}
+        run: cargo test --manifest-path spikes/spike-v4-worker/Cargo.toml --locked --target-dir target --test ctx_deadline
       - name: Revalidate FlaskBB core, CLI and search consistency on main
         env:
           AIP_FLASKBB_TEST_PYTHON: ${{ runner.temp }}/flaskbb-ui/bin/python
