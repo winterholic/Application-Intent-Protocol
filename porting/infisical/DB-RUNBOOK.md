@@ -48,7 +48,7 @@ bash porting/infisical/run-baseline.sh
 | 3 | `service.json` 작성 | `schema`, `database_url_env`, `listen: 127.0.0.1:0`, `wire: decimal`, `auth`(issuer, audience, 파일 JWKS), **`workers`**(디렉터리 `porting/infisical/workers`, `language: python`, `runtime_executable`) |
 | 4 | `aip service init app.aip --config service.json` | `ok:true`와 digest 3개. 새 schema를 만든다 |
 | 5 | `aip service migrate app.aip --config service.json` | 읽기 전용 계획. 정의가 같으면 `changes: []`, `blocked:false` |
-| 6 | `seed.sql`의 `:schema`를 치환해 `psql -f` | users 6, folders 3 등. 사용자는 IdP가 만드는 행이라 운영자가 넣고 id를 고정한다. 명시 id는 identity 시퀀스를 올리지 않으므로 seed가 `setval`한다 |
+| 6 | `seed.sql`의 `:schema`를 치환해 `psql -f` | users 6, environments 3, folders 3 등. 사용자는 IdP가 만드는 행이라 운영자가 넣고 id를 고정한다. 명시 id는 identity 시퀀스를 올리지 않으므로 seed가 `setval`한다 |
 | 7 | `aip service principal --config service.json bind --subject <sub> --actor <id>` | 토큰의 `sub`를 actor로 연결. 연결이 없으면 `WIRE.UNAUTHENTICATED` |
 | 8 | `aip service serve app.aip --config service.json` | stdout 첫 줄이 `{"event":"listening","address":...,"fingerprint":...}`. `/ready`가 200 |
 | 9 | `python3 tools/baseline_client.py BASE FINGERPRINT WORK` | SDK로 읽기, 쓰기, viewer 거부, job, 물리 삭제와 이름 재사용 10개 점검이 모두 `pass: true` |

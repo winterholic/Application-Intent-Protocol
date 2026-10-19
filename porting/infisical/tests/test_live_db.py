@@ -16,6 +16,7 @@ import live_harness as lh
 PORT = pathlib.Path(__file__).resolve().parent.parent
 # INFISICAL_APP_AIP lets tests/mutation_check.py run the same cases against a deliberately weakened definition.
 APP = pathlib.Path(os.environ.get("INFISICAL_APP_AIP", PORT / "app.aip"))
+SEED = pathlib.Path(os.environ.get("INFISICAL_SEED_SQL", PORT / "seed.sql"))
 PRINCIPALS = [("alice", 1), ("bob", 2), ("carol", 3), ("mallory", 4), ("eve", 5), ("dan", 6)]
 ALICE, BOB, CAROL, MALLORY, EVE, DAN = "alice", "bob", "carol", "mallory", "eve", "dan"
 
@@ -28,7 +29,7 @@ class LiveDbTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         try:
-            cls.dep = lh.Deployment(APP, PORT / "seed.sql", PRINCIPALS, workers=True).start()
+            cls.dep = lh.Deployment(APP, SEED, PRINCIPALS, workers=True).start()
         except lh.HarnessUnavailable as why:
             raise unittest.SkipTest(str(why))
         cls.c = {name: cls.dep.client(name) for name, _ in PRINCIPALS}
@@ -51,7 +52,7 @@ class LiveDbTests(unittest.TestCase):
 
     # -- roles -------------------------------------------------------------------------------------------------
     def test_viewer_cannot_create_folder_or_secret(self):
-        folder = lh.create(self.c[CAROL], "Folder", {"project": "1", "env": "dev", "parent": "1", "name": "viewer"})
+        folder = lh.create(self.c[CAROL], "Folder", {"env": "1", "parent": "1", "name": "viewer"})
         self.assertFalse(folder.get("ok"), folder)
         made = self.create_secret(CAROL, "VIEWER_NAME")
         self.assertFalse(made.get("ok"), made)
@@ -67,7 +68,7 @@ class LiveDbTests(unittest.TestCase):
         self.assertEqual(self.rows_named("VIEWER_READS"), 1)
 
     def test_member_can_create_folder_and_secret(self):
-        folder = lh.create(self.c[BOB], "Folder", {"project": "1", "env": "dev", "parent": "1", "name": "member-made"})
+        folder = lh.create(self.c[BOB], "Folder", {"env": "1", "parent": "1", "name": "member-made"})
         self.assertTrue(folder.get("ok"), folder)
         made = self.create_secret(BOB, "MEMBER_KEY", folder=folder["created"][0]["id"])
         self.assertTrue(made.get("ok"), made)
@@ -103,7 +104,7 @@ class LiveDbTests(unittest.TestCase):
         self.assertEqual(self.rows_named("ROOT_DUP"), 1)
 
     def test_same_name_is_allowed_in_another_folder(self):
-        folder = lh.create(self.c[BOB], "Folder", {"project": "1", "env": "dev", "parent": "1", "name": "other"})
+        folder = lh.create(self.c[BOB], "Folder", {"env": "1", "parent": "1", "name": "other"})
         self.assertTrue(folder.get("ok"), folder)
         self.assertTrue(self.create_secret(BOB, "SAME_NAME").get("ok"))
         self.assertTrue(self.create_secret(BOB, "SAME_NAME", folder=folder["created"][0]["id"]).get("ok"))
@@ -145,9 +146,254 @@ class LiveDbTests(unittest.TestCase):
         self.assertEqual(row["before"]["key"], "AUDITED_DELETE")
         self.assertIsNone(row["after"])
 
+    # -- environments (upstream project_environments + the root folder created with each, project-env-service.ts) ------
+    def make_env(self, who, slug, position, project="1", name=None, key=None):
+        return lh.create(self.c[who], "Environment",
+                         {"project": project, "slug": slug, "name": name or slug.upper(), "position": position}, key=key)
+
+    def make_root(self, who, env_id, key=None):
+        return lh.create(self.c[who], "Folder", {"env": env_id, "name": "root"}, key=key)
+
+    def env_with_root(self, who, slug, position, project="1"):
+        env_id = self.make_env(who, slug, position, project=project)["created"][0]["id"]
+        return env_id, self.make_root(who, env_id)["created"][0]["id"]
+
+    def new_environment_with_root(self, who, project_slug, env_slug):
+        project = lh.create(self.c[who], "Project", {"org": "1", "name": project_slug, "slug": project_slug})
+        self.assertTrue(project.get("ok"), project)
+        return self.env_with_root(who, env_slug, 1, project=project["created"][0]["id"])
+
+    def env_row(self, env_id):
+        row = self.dep.sql("SELECT slug || '|' || name || '|' || position || '|' || project_id || '|' || (soft_deleted_at IS NOT NULL)"
+                           " || '|' || coalesce(deleted_by_id::text, '<null>') FROM :schema.environment "
+                           f"WHERE id = {env_id}").strip()
+        return row.split("|") if row else None
+
+    def env_children(self, env_id):
+        folders = int(self.dep.sql(f"SELECT count(*) FROM :schema.folder WHERE env_id = {env_id}").strip())
+        secrets = int(self.dep.sql("SELECT count(*) FROM :schema.secret s JOIN :schema.folder f ON f.id = s.folder_id "
+                                   f"WHERE f.env_id = {env_id}").strip())
+        return folders, secrets
+
+    def env_reads(self, who, **filters):
+        flt = [{"field": k, "op": "eq", "value": v} for k, v in filters.items()]
+        return self.c[who].read({"read": "Environment", "select": ["id", "slug", "position", "softDeletedAt"], "filter": flt})
+
+    def test_environment_is_created_by_a_project_writer_with_a_unique_slug_and_position(self):
+        made = self.make_env(BOB, "staging", 10)
+        self.assertTrue(made.get("ok"), made)
+        env_id = made["created"][0]["id"]
+        self.assertEqual(self.env_row(env_id), ["staging", "STAGING", "10", "1", "false", "<null>"])
+        self.assertEqual(self.make_env(CAROL, "viewer-env", 11).get("code"), "WIRE.FORBIDDEN", "a viewer cannot create")
+        self.assertEqual(self.make_env(DAN, "dan-env", 12).get("code"), "WIRE.MISSING_TARGET", "no project access")
+        self.assertEqual(self.make_env(EVE, "eve-env", 13).get("code"), "WIRE.MISSING_TARGET", "another organization")
+        same_slug = self.make_env(BOB, "staging", 14, key="env-dup-slug")
+        self.assertEqual(same_slug.get("code"), "WIRE.ALREADY_EXISTS", same_slug)
+        same_position = self.make_env(BOB, "other-staging", 10, key="env-dup-position")
+        self.assertEqual(same_position.get("code"), "WIRE.ALREADY_EXISTS", same_position)
+        for slug in ("viewer-env", "dan-env", "eve-env", "other-staging"):
+            self.assertEqual(int(self.dep.sql(f"SELECT count(*) FROM :schema.environment WHERE slug = '{slug}'").strip()), 0, slug)
+        project_two = self.make_env(EVE, "staging", 10, project="2")
+        self.assertTrue(project_two.get("ok"), "the same slug and position are fine in another project")
+
+    def test_environment_field_limits(self):
+        for slug, position, name in (("", 20, "x"), ("s" * 65, 21, "x"), ("ok-slug", 0, "x"), ("ok-slug", 22, ""), ("ok-slug", 23, "n" * 256)):
+            made = lh.create(self.c[BOB], "Environment", {"project": "1", "slug": slug, "name": name, "position": position})
+            self.assertEqual(made.get("code"), "WIRE.BAD_VALUE", (slug[:8], position, name[:8], made))
+        edge = lh.create(self.c[BOB], "Environment", {"project": "1", "slug": "s" * 64, "name": "n" * 255, "position": 24})
+        self.assertTrue(edge.get("ok"), "64 and 255 characters are the upper bounds")
+
+    def test_environment_is_read_by_project_readers_only(self):
+        seen = lambda who: sorted((r["slug"], r["position"]) for r in self.env_reads(who, project="1") if r["position"] < 10)
+        self.assertEqual(seen(CAROL), [("dev", 1), ("prod", 2)])
+        self.assertEqual(seen(BOB), [("dev", 1), ("prod", 2)])
+        self.assertEqual(self.env_reads(DAN), [], "no project access")
+        self.assertEqual([r["slug"] for r in self.env_reads(EVE, project="1")], [], "another organization")
+        self.assertEqual([r["id"] for r in self.env_reads(EVE, project="2") if r["position"] < 10], ["3"])
+
+    # upstream: the first folder of an environment is its root (parentId null, name "root"), created with the environment
+    def test_the_root_folder_of_an_environment_is_created_once_by_a_writer(self):
+        env_id = self.make_env(BOB, "rooted", 30)["created"][0]["id"]
+        self.assertEqual(self.make_root(CAROL, env_id).get("code"), "WIRE.FORBIDDEN", "a viewer cannot create the root")
+        not_root = lh.create(self.c[BOB], "Folder", {"env": env_id, "name": "NOT_ROOT_NAME"})
+        self.assertEqual(not_root.get("code"), "WIRE.FORBIDDEN", not_root)
+        root = self.make_root(BOB, env_id)
+        self.assertTrue(root.get("ok"), root)
+        again = self.make_root(BOB, env_id, key="second-root")
+        self.assertEqual(again.get("code"), "WIRE.FORBIDDEN", "an environment has one root")
+        self.assertEqual(self.env_children(env_id), (1, 0))
+        child = self.make_folder(BOB, "UNDER_NEW_ROOT", parent=root["created"][0]["id"], env=env_id)
+        self.assertTrue(child.get("ok"), child)
+        self.assertTrue(self.create_secret(BOB, "IN_NEW_ENV", folder=child["created"][0]["id"]).get("ok"))
+
+    def test_environment_update_changes_name_slug_and_position_for_a_writer_only(self):
+        a = self.make_env(BOB, "upd-a", 40)["created"][0]["id"]
+        b = self.make_env(BOB, "upd-b", 41)["created"][0]["id"]
+        denied = lh.transition(self.c[CAROL], "Environment.update", [a], values={"slug": "viewer-slug"})
+        self.assertEqual(denied.get("code"), "WIRE.FORBIDDEN", denied)
+        done = lh.transition(self.c[BOB], "Environment.update", [a], values={"name": "Renamed", "slug": "upd-a2", "position": 42}, key="env-update")
+        self.assertTrue(done.get("ok"), done)
+        self.assertEqual(self.env_row(a), ["upd-a2", "Renamed", "42", "1", "false", "<null>"])
+        only_name = lh.transition(self.c[BOB], "Environment.update", [a], values={"name": "Only the name"})
+        self.assertTrue(only_name.get("ok"), only_name)
+        self.assertEqual(self.env_row(a)[:3], ["upd-a2", "Only the name", "42"], "omitted fields keep their value")
+        taken_slug = lh.transition(self.c[BOB], "Environment.update", [a], values={"slug": "upd-b"}, key="env-taken-slug")
+        self.assertEqual(taken_slug.get("code"), "WIRE.ALREADY_EXISTS", taken_slug)
+        # upstream shifts the others when the position is taken; the port refuses (INFISICAL-GAPS G16)
+        taken_position = lh.transition(self.c[BOB], "Environment.update", [a], values={"position": 41}, key="env-taken-pos")
+        self.assertEqual(taken_position.get("code"), "WIRE.ALREADY_EXISTS", taken_position)
+        self.assertEqual(self.env_row(b)[:3], ["upd-b", "UPD-B", "41"], "the neighbour is not shifted")
+        self.assertEqual(self.env_row(a)[:3], ["upd-a2", "Only the name", "42"])
+        self.assertEqual(lh.transition(self.c[EVE], "Environment.update", [a], values={"name": "x"}).get("code"), "WIRE.MISSING_TARGET")
+
+    def test_environment_update_cannot_move_it_to_another_project(self):
+        env_id = self.make_env(BOB, "stays-here", 43)["created"][0]["id"]
+        other = lh.create(self.c[ALICE], "Project", {"org": "1", "name": "Env move target", "slug": "env-move-target"})
+        target = other["created"][0]["id"]  # alice may write both projects, so only the patch list can stop the move
+        refused = lh.transition(self.c[ALICE], "Environment.update", [env_id], values={"name": "x", "project": target})
+        self.assertFalse(refused.get("ok"), refused)
+        self.assertEqual(self.env_row(env_id)[3], "1")
+
+    def test_environment_update_leaves_a_before_and_after_image_in_the_audit_log(self):
+        env_id = self.make_env(BOB, "audit-env", 44)["created"][0]["id"]
+        self.assertTrue(lh.transition(self.c[BOB], "Environment.update", [env_id], values={"name": "Audited", "slug": "audit-env2", "position": 45}, key="env-audit").get("ok"))
+        listing = self.dep.cli("audit", "--config", str(self.dep.work / "service.json"), "list", "--resource", "Environment", "--target-id", env_id)
+        rows = [r for r in listing["audit"] if r["requestKey"] == "env-audit"]
+        self.assertEqual(len(rows), 1, listing)
+        self.assertEqual((rows[0]["transition"], rows[0]["actorId"]), ("update", 2))
+        self.assertEqual(rows[0]["before"], {"slug": "audit-env", "name": "AUDIT-ENV", "position": 44})
+        self.assertEqual(rows[0]["after"], {"slug": "audit-env2", "name": "Audited", "position": 45})
+
+    # upstream deleteEnvironment without hardDelete: mark the row, hide it, keep its slug reserved (project-env-service.ts:311-345)
+    def test_soft_delete_hides_the_environment_and_everything_below_it_from_readers(self):
+        env_id, root = self.env_with_root(BOB, "soft-me", 50)
+        folder = self.make_folder(BOB, "SOFT_CHILD", parent=root, env=env_id)["created"][0]["id"]
+        self.assertTrue(self.create_secret(BOB, "SOFT_SECRET", folder=folder).get("ok"))
+        denied = lh.transition(self.c[CAROL], "Environment.softDelete", [env_id])
+        self.assertEqual(denied.get("code"), "WIRE.FORBIDDEN", denied)
+        done = lh.transition(self.c[BOB], "Environment.softDelete", [env_id], key="soft-me")
+        self.assertTrue(done.get("ok"), done)
+        self.assertEqual(self.env_row(env_id)[4:], ["true", "2"], "marked, with the deleting user")
+        self.assertEqual(self.env_reads(CAROL, id=env_id), [], "a reader no longer sees it")
+        self.assertEqual(len(self.env_reads(BOB, id=env_id)), 1, "a writer still sees it, to restore or purge it")
+        self.assertIsNotNone(self.env_reads(BOB, id=env_id)[0]["softDeletedAt"])
+        for who in (CAROL, BOB):
+            self.assertEqual(self.c[who].read({"read": "Folder", "select": ["id"], "filter": eq("env", env_id)}), [], f"{who}: folders are hidden")
+            self.assertEqual(self.secrets(who, "SOFT_SECRET"), [], f"{who}: secrets are hidden")
+        self.assertEqual(self.env_children(env_id), (2, 1), "nothing is deleted")
+        new_folder = self.make_folder(BOB, "SOFT_NEW", parent=root, env=env_id)
+        self.assertEqual(new_folder.get("code"), "WIRE.MISSING_TARGET", new_folder)
+        new_secret = self.create_secret(BOB, "SOFT_NEW_SECRET", folder=folder)
+        self.assertEqual(new_secret.get("code"), "WIRE.MISSING_TARGET", new_secret)
+
+    def test_soft_deleted_environment_keeps_its_slug_and_position_and_cannot_be_changed(self):
+        env_id = self.make_env(BOB, "soft-held", 51)["created"][0]["id"]
+        self.assertTrue(lh.transition(self.c[BOB], "Environment.softDelete", [env_id]).get("ok"))
+        slug = self.make_env(BOB, "soft-held", 52, key="soft-slug")
+        self.assertEqual(slug.get("code"), "WIRE.ALREADY_EXISTS", "upstream: the slug is held by a pending-deletion environment")
+        position = self.make_env(BOB, "soft-other", 51, key="soft-position")
+        self.assertEqual(position.get("code"), "WIRE.ALREADY_EXISTS", position)
+        again = lh.transition(self.c[BOB], "Environment.softDelete", [env_id], key="soft-twice")
+        self.assertEqual(again.get("code"), "WIRE.INVALID_STATE", again)
+        update = lh.transition(self.c[BOB], "Environment.update", [env_id], values={"name": "Edited"}, key="soft-update")
+        self.assertEqual(update.get("code"), "WIRE.INVALID_STATE", update)
+        self.assertEqual(self.env_row(env_id)[:3], ["soft-held", "SOFT-HELD", "51"])
+        late_root = self.make_root(BOB, env_id)
+        self.assertEqual(late_root.get("code"), "WIRE.FORBIDDEN", "no folder is created in a soft-deleted environment")
+
+    def test_restore_brings_back_the_environment_with_its_contents(self):
+        env_id, root = self.env_with_root(BOB, "restore-me", 53)
+        folder = self.make_folder(BOB, "RESTORED_CHILD", parent=root, env=env_id)["created"][0]["id"]
+        self.assertTrue(self.create_secret(BOB, "RESTORED_SECRET", folder=folder).get("ok"))
+        active = lh.transition(self.c[BOB], "Environment.restore", [env_id], key="restore-active")
+        self.assertEqual(active.get("code"), "WIRE.INVALID_STATE", "only a soft-deleted environment is restored")
+        self.assertTrue(lh.transition(self.c[BOB], "Environment.softDelete", [env_id]).get("ok"))
+        viewer = lh.transition(self.c[CAROL], "Environment.restore", [env_id], key="restore-viewer")
+        self.assertEqual(viewer.get("code"), "WIRE.MISSING_TARGET", "a reader cannot even see it")
+        outsider = lh.transition(self.c[EVE], "Environment.restore", [env_id], key="restore-eve")
+        self.assertEqual(outsider.get("code"), "WIRE.MISSING_TARGET", outsider)
+        self.assertEqual(self.env_row(env_id)[4:], ["true", "2"])
+        done = lh.transition(self.c[BOB], "Environment.restore", [env_id], key="restore-ok")
+        self.assertTrue(done.get("ok"), done)
+        self.assertEqual(self.env_row(env_id), ["restore-me", "RESTORE-ME", "53", "1", "false", "<null>"])
+        self.assertEqual(len(self.env_reads(CAROL, id=env_id)), 1)
+        self.assertEqual([r["key"] for r in self.secrets(CAROL, "RESTORED_SECRET")], ["RESTORED_SECRET"])
+        self.assertTrue(lh.transition(self.c[BOB], "Environment.update", [env_id], values={"name": "Back"}).get("ok"))
+
+    # upstream deleteEnvironment with hardDelete = true deletes the row and the database cascades (project-env-service.ts:298-309)
+    def test_hard_delete_removes_the_environment_and_all_its_folders(self):
+        env_id, root = self.env_with_root(BOB, "purge-me", 60)
+        child = self.make_folder(BOB, "PURGE_CHILD", parent=root, env=env_id)["created"][0]["id"]
+        self.make_folder(BOB, "PURGE_GRANDCHILD", parent=child, env=env_id)
+        other_id, other_root = self.env_with_root(BOB, "purge-neighbour", 61)
+        self.assertEqual(self.env_children(env_id), (3, 0))
+        denied = lh.transition(self.c[CAROL], "Environment.hardDelete", [env_id])
+        self.assertEqual(denied.get("code"), "WIRE.FORBIDDEN", denied)
+        self.assertEqual(self.env_children(env_id), (3, 0))
+        done = lh.transition(self.c[BOB], "Environment.hardDelete", [env_id], key="purge-me")
+        self.assertTrue(done.get("ok"), done)
+        self.assertIsNone(self.env_row(env_id))
+        self.assertEqual(self.env_children(env_id), (0, 0))
+        self.assertEqual(self.env_children(other_id), (1, 0), "the neighbour keeps its folders")
+        # upstream closes the position gap (closePositionGap, :306); the port cannot, the neighbour keeps its position (G16)
+        self.assertEqual(self.env_row(other_id)[2], "61")
+        again = self.make_env(BOB, "purge-me", 60)
+        self.assertTrue(again.get("ok"), "slug and position are free again")
+
+    def test_hard_delete_works_on_a_soft_deleted_environment_too(self):
+        env_id, root = self.env_with_root(BOB, "purge-soft", 62)
+        self.assertTrue(lh.transition(self.c[BOB], "Environment.softDelete", [env_id]).get("ok"))
+        self.assertEqual(lh.transition(self.c[CAROL], "Environment.hardDelete", [env_id]).get("code"), "WIRE.MISSING_TARGET")
+        done = lh.transition(self.c[BOB], "Environment.hardDelete", [env_id], key="purge-soft")
+        self.assertTrue(done.get("ok"), done)
+        self.assertEqual((self.env_row(env_id), self.env_children(env_id)), (None, (0, 0)))
+
+    # secrets are two hops below the environment, so the delete effect cannot reach them (INFISICAL-GAPS G16)
+    def test_hard_delete_refuses_an_environment_that_still_holds_a_secret(self):
+        env_id, root = self.env_with_root(BOB, "purge-held", 63)
+        deep = self.make_folder(BOB, "DEEP", parent=root, env=env_id)["created"][0]["id"]
+        secret_id = self.create_secret(BOB, "KEEPS_ENV", folder=deep)["created"][0]["id"]
+        refused = lh.transition(self.c[BOB], "Environment.hardDelete", [env_id], key="purge-held")
+        self.assertEqual(refused.get("code"), "WIRE.INVALID_STATE", refused)
+        self.assertEqual((self.env_row(env_id) is not None, self.env_children(env_id)), (True, (2, 1)))
+        self.assertTrue(lh.transition(self.c[BOB], "Environment.softDelete", [env_id]).get("ok"))
+        hidden = lh.transition(self.c[BOB], "Environment.hardDelete", [env_id], key="purge-held-soft")
+        self.assertEqual(hidden.get("code"), "WIRE.INVALID_STATE", "secrets hidden by the soft delete still block the purge")
+        self.assertEqual(self.env_children(env_id), (2, 1))
+        self.assertTrue(lh.transition(self.c[BOB], "Environment.restore", [env_id]).get("ok"))
+        self.assertTrue(lh.transition(self.c[BOB], "Secret.delete", [secret_id]).get("ok"))
+        self.assertTrue(lh.transition(self.c[BOB], "Environment.hardDelete", [env_id], key="purge-held-empty").get("ok"))
+        self.assertEqual(self.env_children(env_id), (0, 0))
+
+    def test_hard_delete_refuses_more_folders_than_the_effect_cap_and_changes_nothing(self):
+        env_id, root = self.env_with_root(BOB, "purge-big", 64)
+        self.dep.sql("INSERT INTO :schema.folder (env_id, parent_id, name) "
+                     f"SELECT {env_id}, {root}, 'BIG_' || g FROM generate_series(1, 1000) g")
+        self.assertEqual(self.env_children(env_id), (1001, 0))
+        refused = lh.transition(self.c[BOB], "Environment.hardDelete", [env_id], key="purge-big")
+        self.assertEqual(refused.get("code"), "WIRE.EFFECT_TARGET_MISSING", refused)
+        self.assertEqual((self.env_row(env_id) is not None, self.env_children(env_id)), (True, (1001, 0)))
+        self.dep.sql(f"DELETE FROM :schema.folder WHERE env_id = {env_id} AND name = 'BIG_1000'")
+        done = lh.transition(self.c[BOB], "Environment.hardDelete", [env_id], key="purge-big-1000")
+        self.assertTrue(done.get("ok"), "exactly the cap still goes through")
+        self.assertEqual(self.env_children(env_id), (0, 0))
+
+    def test_hard_delete_audits_the_environment_and_each_folder(self):
+        env_id, root = self.env_with_root(BOB, "purge-audit", 65)
+        self.assertTrue(lh.transition(self.c[BOB], "Environment.hardDelete", [env_id], key="purge-audit").get("ok"))
+        listing = self.dep.cli("audit", "--config", str(self.dep.work / "service.json"), "list", "--resource", "Environment", "--target-id", env_id)
+        rows = [r for r in listing["audit"] if r["requestKey"] == "purge-audit"]
+        self.assertEqual(len(rows), 1, listing)
+        self.assertEqual((rows[0]["transition"], rows[0]["actorId"]), ("hardDelete", 2))
+        self.assertEqual(rows[0]["before"]["slug"], "purge-audit")
+        self.assertIsNone(rows[0]["after"])
+        folder_listing = self.dep.cli("audit", "--config", str(self.dep.work / "service.json"), "list", "--resource", "Folder", "--target-id", root)
+        folder_rows = [r for r in folder_listing["audit"] if r["requestKey"] == "purge-audit"]
+        self.assertEqual([r["transition"] for r in folder_rows], ["hardDelete:delete"], folder_listing)
+
     # -- folders (upstream: secret_folders is a tree, root has parentId null; deleteFolder in secret-folder-service.ts) --
-    def make_folder(self, who, name, parent="1", project="1", env="dev", key=None):
-        return lh.create(self.c[who], "Folder", {"project": project, "env": env, "parent": parent, "name": name}, key=key)
+    def make_folder(self, who, name, parent="1", env="1", key=None):
+        return lh.create(self.c[who], "Folder", {"env": env, "parent": parent, "name": name}, key=key)
 
     def folder_rows(self, folder_id):
         return int(self.dep.sql(f"SELECT count(*) FROM :schema.folder WHERE id = {folder_id}").strip())
@@ -155,20 +401,17 @@ class LiveDbTests(unittest.TestCase):
     def secret_rows_in(self, folder_id):
         return int(self.dep.sql(f"SELECT count(*) FROM :schema.secret WHERE folder_id = {folder_id}").strip())
 
-    def test_folder_must_hang_under_a_parent_of_the_same_project_and_environment(self):
-        no_parent = lh.create(self.c[BOB], "Folder", {"project": "1", "env": "dev", "name": "FAKE_ROOT"})
-        self.assertEqual(no_parent.get("code"), "WIRE.FORBIDDEN", "a root folder is created with its environment, never by a user")
-        wrong_env = self.make_folder(BOB, "WRONG_ENV", parent="1", env="prod")
+    def test_folder_must_hang_under_a_parent_of_the_same_environment(self):
+        no_parent = lh.create(self.c[BOB], "Folder", {"env": "1", "name": "FAKE_ROOT"})
+        self.assertEqual(no_parent.get("code"), "WIRE.FORBIDDEN", "a parentless folder must be the root of an environment without one")
+        wrong_env = self.make_folder(BOB, "WRONG_ENV", parent="1", env="2")
         self.assertEqual(wrong_env.get("code"), "WIRE.FORBIDDEN", wrong_env)
         # a parent the caller cannot read does not exist for them (row policy)
         hidden = self.make_folder(BOB, "HIDDEN_PARENT", parent="3")
         self.assertEqual(hidden.get("code"), "WIRE.MISSING_TARGET", hidden)
-        # a parent the caller can read but that belongs to another project is refused by the create rule itself
-        second = lh.create(self.c[ALICE], "Project", {"org": "1", "name": "Second", "slug": "second-folder-test"})
-        self.assertTrue(second.get("ok"), second)
-        second_root = self.dep.sql("INSERT INTO :schema.folder (project_id, env, parent_id, name) "
-                                   f"VALUES ({second['created'][0]['id']}, 'dev', NULL, 'root') RETURNING id").strip().split()[0]
-        foreign = lh.create(self.c[ALICE], "Folder", {"project": "1", "env": "dev", "parent": second_root, "name": "FOREIGN_PARENT"})
+        # a parent the caller can read but that belongs to another project's environment is refused by the create rule itself
+        second_root = self.new_environment_with_root(ALICE, "second-folder-test", "dev")[1]
+        foreign = lh.create(self.c[ALICE], "Folder", {"env": "1", "parent": second_root, "name": "FOREIGN_PARENT"})
         self.assertEqual(foreign.get("code"), "WIRE.FORBIDDEN", foreign)
         for name in ("FAKE_ROOT", "WRONG_ENV", "HIDDEN_PARENT", "FOREIGN_PARENT"):
             self.assertEqual(int(self.dep.sql(f"SELECT count(*) FROM :schema.folder WHERE name = '{name}'").strip()), 0, name)
@@ -265,28 +508,28 @@ class LiveDbTests(unittest.TestCase):
     # -- folder update (upstream updateFolder in secret-folder-service.ts: name and description of a non-root folder) --
     def folder_row(self, folder_id):
         row = self.dep.sql("SELECT name || '|' || coalesce(description, '<null>') || '|' || coalesce(parent_id::text, '<null>')"
-                           f" || '|' || project_id || '|' || env FROM :schema.folder WHERE id = {folder_id}").strip()
+                           f" || '|' || env_id FROM :schema.folder WHERE id = {folder_id}").strip()
         return row.split("|")
 
     def test_folder_can_be_renamed_and_described_by_a_writer_only(self):
         folder_id = self.make_folder(BOB, "RENAME_ME")["created"][0]["id"]
         denied = lh.transition(self.c[CAROL], "Folder.update", [folder_id], values={"name": "VIEWER_NAME", "description": "x"})
         self.assertEqual(denied.get("code"), "WIRE.FORBIDDEN", denied)
-        self.assertEqual(self.folder_row(folder_id), ["RENAME_ME", "<null>", "1", "1", "dev"])
+        self.assertEqual(self.folder_row(folder_id), ["RENAME_ME", "<null>", "1", "1"])
         done = lh.transition(self.c[BOB], "Folder.update", [folder_id], values={"name": "RENAMED", "description": "kept apart"})
         self.assertTrue(done.get("ok"), done)
-        self.assertEqual(self.folder_row(folder_id), ["RENAMED", "kept apart", "1", "1", "dev"], "parent, project and env are untouched")
+        self.assertEqual(self.folder_row(folder_id), ["RENAMED", "kept apart", "1", "1"], "parent, project and env are untouched")
         self.assertTrue(self.make_folder(BOB, "RENAME_ME").get("ok"), "the old name is free again")
 
     def test_folder_created_with_a_description_keeps_it(self):
-        made = lh.create(self.c[BOB], "Folder", {"project": "1", "env": "dev", "parent": "1", "name": "DESCRIBED", "description": "hello"})
+        made = lh.create(self.c[BOB], "Folder", {"env": "1", "parent": "1", "name": "DESCRIBED", "description": "hello"})
         self.assertTrue(made.get("ok"), made)
         self.assertEqual(self.folder_row(made["created"][0]["id"])[:2], ["DESCRIBED", "hello"])
 
     def test_root_folder_cannot_be_renamed(self):
         refused = lh.transition(self.c[ALICE], "Folder.update", ["2"], values={"name": "NOT_ROOT", "description": "x"})
         self.assertEqual(refused.get("code"), "WIRE.INVALID_STATE", refused)
-        self.assertEqual(self.folder_row("2"), ["root", "<null>", "<null>", "1", "prod"])
+        self.assertEqual(self.folder_row("2"), ["root", "<null>", "<null>", "2"])
 
     def test_rename_to_a_sibling_name_is_refused_but_the_same_name_or_another_parent_is_fine(self):
         first = self.make_folder(BOB, "SIB_A")["created"][0]["id"]
@@ -311,7 +554,7 @@ class LiveDbTests(unittest.TestCase):
 
     # upstream updateFolder passes `description` straight to the update: undefined keeps the stored text, null clears it
     def test_update_without_a_description_keeps_it_and_null_clears_it(self):
-        made = lh.create(self.c[BOB], "Folder", {"project": "1", "env": "dev", "parent": "1", "name": "DESC_KEEP", "description": "keep me"})
+        made = lh.create(self.c[BOB], "Folder", {"env": "1", "parent": "1", "name": "DESC_KEEP", "description": "keep me"})
         folder_id = made["created"][0]["id"]
         self.assertTrue(lh.transition(self.c[BOB], "Folder.update", [folder_id], values={"name": "DESC_KEEP_2"}).get("ok"))
         self.assertEqual(self.folder_row(folder_id)[:2], ["DESC_KEEP_2", "keep me"])
@@ -321,10 +564,10 @@ class LiveDbTests(unittest.TestCase):
     def test_update_cannot_move_a_folder_or_change_its_project_or_environment(self):
         target_parent = self.make_folder(BOB, "MOVE_TARGET")["created"][0]["id"]
         folder_id = self.make_folder(BOB, "STAYS_PUT")["created"][0]["id"]
-        for extra in ({"parent": target_parent}, {"env": "prod"}, {"project": "2"}):
+        for extra in ({"parent": target_parent}, {"env": "2"}, {"project": "2"}):
             refused = lh.transition(self.c[BOB], "Folder.update", [folder_id], values={"name": "STAYS_PUT", "description": "x", **extra})
             self.assertFalse(refused.get("ok"), f"{extra}: {refused}")
-            self.assertEqual(self.folder_row(folder_id), ["STAYS_PUT", "<null>", "1", "1", "dev"], extra)
+            self.assertEqual(self.folder_row(folder_id), ["STAYS_PUT", "<null>", "1", "1"], extra)
 
     def test_folder_name_cannot_be_blank(self):
         folder_id = self.make_folder(BOB, "NOT_BLANK")["created"][0]["id"]

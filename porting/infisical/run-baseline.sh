@@ -54,7 +54,7 @@ step "5 migrate plan (read-only; an unchanged definition must plan no change)"
 
 step "6 seed"
 sed "s/:schema/$SCHEMA/g" "$PORT_DIR/seed.sql" | psql "$AIP_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -X -q -1 -f - | log 6-seed
-psql "$AIP_TEST_DATABASE_URL" -At -c "SELECT 'users', count(*) FROM $SCHEMA.\"user\" UNION ALL SELECT 'folders', count(*) FROM $SCHEMA.folder" | log 6-seed-counts
+psql "$AIP_TEST_DATABASE_URL" -At -c "SELECT 'users', count(*) FROM $SCHEMA.\"user\" UNION ALL SELECT 'environments', count(*) FROM $SCHEMA.environment UNION ALL SELECT 'folders', count(*) FROM $SCHEMA.folder" | log 6-seed-counts
 
 step "7 principals (token subject -> actor id)"
 for pair in alice:1 bob:2 carol:3 mallory:4 eve:5 dan:6; do

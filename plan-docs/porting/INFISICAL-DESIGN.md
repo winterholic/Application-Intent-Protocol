@@ -29,7 +29,7 @@
 |---|---|---|---|---|
 | I01 | 사용자 인증 | 선언+IdP | 로그인·비밀번호·MFA·refresh는 AIP 밖 IdP. AIP는 principal binding과 `User` resource. 비밀번호·verifier는 AIP에서 다루지 않음 | `User` 행 정책만 **동작 확인**. 나머지 미착수 |
 | I02 | 머신 아이덴티티 | 확장 중심 | 13개 인증 방식(universal-auth + `identity-*-auth` 12개)은 외부 검증이 본질이므로 `operation job`으로 감싼다. claim은 검증된 것만 소비 | JWT 1종 순수 함수 단위시험 7건(서비스 미연결, **서비스에서 도달 불가**). 나머지 12개 미구현 |
-| I03 | 시크릿·폴더 | 선언 중심 | 폴더 트리(환경마다 루트 `root`, 부모 참조), 시크릿(폴더+이름 유일)과 물리 삭제를 resource+transition으로. 값·버전·blind index는 갭 G2/G4 | 이름·폴더 트리·시크릿과 폴더의 물리 삭제 **동작 확인**(원본 대조: [GAPS G10, G14](INFISICAL-GAPS.md)). **값은 없음**. 공유·승인·태그·import·버전 미착수 |
+| I03 | 시크릿·폴더 | 선언 중심 | 환경 표(생성·수정·소프트/하드 삭제·복원), 폴더 트리(환경마다 루트 `root`, 부모 참조), 시크릿(폴더+이름 유일)과 물리 삭제를 resource+transition으로. 값·버전·blind index는 갭 G2/G4 | 환경·이름·폴더 트리·시크릿과 폴더의 물리 삭제 **동작 확인**(원본 대조: [GAPS G10, G14, G16](INFISICAL-GAPS.md)). **값은 없음**. 공유·승인·태그·import·버전 미착수 |
 | I04 | 조직·RBAC | 선언 | 조직·프로젝트·멤버십·역할을 predicate와 행 정책으로. 원본 CASL 조건식과의 대조는 EE 경계 문서 | 역할 기반 규칙(admin/member/viewer/no-access) **동작 확인**. 조건식·커스텀 역할·그룹 미착수 |
 | I05 | 암호화·KMS | 갭 대기 | 원본이 서버측 KMS이므로 AIP의 `encrypted` 필드(설계 13, Proposed)가 대응 수단. 제품에 없어 선언할 수 없다 | **미착수**(제품 갭 G2). core 수정 금지 |
 | I06 | 비동기·알림 | 선언+확장 | 큐 54개 중 MIT 30(+미참조 3)을 job으로. 발송은 전송 capability 경유, 알림 기록은 전송이 아님 | 큐 1개만 부분 구현(알림 기록, **동작 확인**). 53개 미선언 |
