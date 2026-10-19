@@ -1,0 +1,18 @@
+resource Member { fields { id: Id } }
+actor Member
+resource Event {
+  fields { id: Id; owner: Member; checked: Bool }
+  rows read when owner = actor
+  transition mark {
+    allow owner = actor
+    from checked = false
+    to checked = true
+    repeat unchanged
+  }
+  expose read {
+    select id, checked
+    sort id
+    budget { rows 20; depth 1; deadline 1s; cost 100 }
+  }
+  expose apply mark { target id; bulk maxRows 1 }
+}

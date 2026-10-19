@@ -11,6 +11,7 @@ AIP는 백엔드 서버를 없애려는 것이 아니다. 기능마다 반복되
 2026-10-05 사용자 요청으로 운영 인증·일반 마이그레이션·본 `crates/` 제품 조립을 구현 범위에 포함했다. `aip service`가 검증된 caller 정의와 기존 read/apply·worker·SDK 엔진을 사용한다. 앱마다 새 endpoint를 만드는 구조로 바꾸지 않는다.
 
 - [시작 가이드](product/GETTING-STARTED.md): 빈 디렉터리에서 정의 하나를 배포하고 인증된 읽기·쓰기를 실행하기까지. 명령은 실제 실행해 확인했다.
+- [앱 패키지 설치·변경배포](product/APP-DEPLOY.md), [Docker·네이티브 서비스](product/DOCKER.md), [독립 앱 예제 두 개](product/examples/README.md): 앱별 release 산출물에서 기존 제품 엔진을 실행한다.
 - [제품 서비스](crates/aip-service/README.md): check/gen/init/adopt/migrate/serve/principal, 운영 설정과 실행 절차.
 - [운영 인증](crates/aip-auth/README.md): RS256 API access token, 공개 JWKS, 서버의 지속 actor 연결과 폐기.
 - [일반 마이그레이션](crates/aip-migrate/README.md): 변경 계획, 정형 backfill/convert, 실제 DDL 트랜잭션과 배포 저널. [기존 데이터 이관](crates/aip-migrate/ADOPTION.md)은 prototype 구조 marker를 검증한다.
