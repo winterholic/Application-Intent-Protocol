@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { spawn, spawnSync } from "node:child_process";
-import { generateKeyPairSync, sign } from "node:crypto";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, cpSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -102,6 +102,41 @@ console.log('memoir TS installed SDK: full/partial/null/denial/conflict/replay/r
     assert.match(pyOutput,/passed/);
     const state=run("psql",["-X","-At","-d",env.AIP_TEST_DATABASE,"-c",`SELECT version,(SELECT count(*) FROM ${schema}.aip_outbox) FROM ${schema}.note WHERE id=10`]);
     assert.equal(state,"4|4");
+    run("psql",["-X","-v","ON_ERROR_STOP=1","-d",env.AIP_TEST_DATABASE,"-c",`INSERT INTO ${schema}.note(id,owner_id,note_type,title,version,favorite,deleted) VALUES(30,1,'GENERAL','cache initial',0,false,false)`]);
+    const cacheScript=join(consumer,"two-client-cache.ts");
+    writeFileSync(cacheScript,`import assert from 'node:assert/strict'; import {spawnSync} from 'node:child_process'; import {setTimeout as delay} from 'node:timers/promises'; import {connect} from '@aip/sdk'; import {contract} from './binding.ts';
+const input=await new Promise<string>(r=>{let s='';process.stdin.on('data',d=>s+=d);process.stdin.on('end',()=>r(s));});
+const {token,database}=JSON.parse(input); const reads={a:0,b:0,fresh:0};
+const network=(name:keyof typeof reads):typeof fetch=>async(url,init)=>{if(String(url).endsWith('/read'))reads[name]++;return fetch(url,init);};
+const a=connect(process.argv[2],token,contract,network('a')),b=connect(process.argv[2],token,contract,network('b'));
+const query={read:'Note',select:['id','title','version']} as const;
+const read=(client:typeof a)=>client.read(query);
+const row=(result:Awaited<ReturnType<typeof read>>)=>{const item=result.rows.find(item=>item.id==='30');assert.ok(item);return item;};
+assert.equal(row(await b.read(query)).title,'cache initial');
+assert.equal(row(await a.read(query)).title,'cache initial');
+const started=performance.now();
+const written=await b.apply({apply:'Note.edit',target:{ids:['30']},values:{title:'cache own write'},expect:{version:0}},{key:'two-client-cache'});
+assert.equal(written.ok,true,JSON.stringify(written));
+const afterOther=await a.read(query); const elapsedOther=performance.now()-started;
+assert.equal(row(afterOther).title,afterOther.cached?'cache initial':'cache own write');
+const own=await b.read(query);assert.equal(own.cached,false);assert.equal(row(own).title,'cache own write');
+const external=spawnSync('psql',['-X','-v','ON_ERROR_STOP=1','-d',database,'-c',"UPDATE ${schema}.note SET title='cache external write',version=2 WHERE id=30"],{encoding:'utf8',timeout:10000});
+assert.equal(external.status,0,'external fixture SQL must commit');
+const afterExternal=await b.read(query);
+assert.equal(row(afterExternal).title,afterExternal.cached?'cache own write':'cache external write');
+const fresh=connect(process.argv[2],token,contract,network('fresh'));
+const direct=await fresh.read(query);assert.equal(direct.cached,false);assert.equal(row(direct).title,'cache external write');assert.equal(row(direct).version,2);
+// Expiry is measured with the real monotonic clock; no scheduler upper bound is assumed for the earlier cache hits.
+const waitStarted=performance.now();await delay(1100);assert.ok(performance.now()-waitStarted>=1000);
+for(const client of [a,b]){const result=await client.read(query);assert.equal(result.cached,false);assert.equal(row(result).title,'cache external write');assert.equal(row(result).version,2);}
+assert.equal(reads.a,afterOther.cached?2:3);assert.equal(reads.b,afterExternal.cached?3:4);assert.equal(reads.fresh,1);
+console.log(JSON.stringify({scenario:'two-client-postgres-cache',after_other:{cached:afterOther.cached,title:row(afterOther).title,elapsed_ms:Math.round(elapsedOther)},after_external:{cached:afterExternal.cached,title:row(afterExternal).title},expired_both:true,read_requests:reads}));
+`);
+    run(compiler,[...flags,"--typeRoots",join(root,"spikes/spike-0-ts/node_modules/@types"),"--types","node","two-client-cache.ts"],{cwd:consumer});
+    const cacheOutput=run(process.execPath,["--experimental-strip-types",cacheScript,`http://${server.address}`],{cwd:consumer,input:JSON.stringify({token,database:env.AIP_TEST_DATABASE})});
+    const cacheEvidence=JSON.parse(cacheOutput);
+    assert.equal(cacheEvidence.scenario,'two-client-postgres-cache');assert.equal(cacheEvidence.expired_both,true);
+    console.log(cacheOutput);
     const changed=join(dir,"changed.aip");
     writeFileSync(changed,readFileSync(file,"utf8").replace("patch title, content","patch title"));
     const migration=cli(["migrate",changed,"--config",config]);
@@ -111,7 +146,7 @@ console.log('memoir TS installed SDK: full/partial/null/denial/conflict/replay/r
     console.log(tsOutput); console.log(pyOutput); console.log(`PostgreSQL version/outbox = ${state}`);
   } finally {
     if(server){server.child.kill("SIGTERM");await once(server.child,"exit");}
-    if(initialized){const sql=join(dir,"cleanup.sql");writeFileSync(sql,`DROP SCHEMA ${schema} CASCADE;`);run("psql",["-X","-v","ON_ERROR_STOP=1","-d",env.AIP_TEST_DATABASE,"-f",sql]);}
+    if(initialized){const infra=`aip_infra_${createHash('sha256').update(schema).digest('hex').slice(0,52)}`;const sql=join(dir,"cleanup.sql");writeFileSync(sql,`DROP SCHEMA ${schema} CASCADE; DROP SCHEMA IF EXISTS ${infra} CASCADE;`);run("psql",["-X","-v","ON_ERROR_STOP=1","-d",env.AIP_TEST_DATABASE,"-f",sql]);}
     rmSync(dir,{recursive:true,force:true});
   }
 });
