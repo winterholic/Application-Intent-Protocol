@@ -1491,10 +1491,16 @@ async fn bundle_run(
             let res = facts["resources"].as_object().unwrap().keys().find(|k| *k == res).unwrap().as_str();
             let vals = m.get("values").and_then(Value::as_object).ok_or(bad("values 객체 필요"))?;
             let allowed: Vec<&str> = ec["fields"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
+            // The internal encryption prototype reserves an id before sealing a cell. It must
+            // never relax the public create allowlist for ordinary resources. Encrypted resources
+            // remain fenced at the product listener until a trusted internal write plan replaces
+            // this temporary payload convention.
+            let encrypted_prototype =
+                facts["resources"][res]["fields"].as_object().is_some_and(|fields| fields.values().any(|field| field.get("encrypted").is_some()));
             let mut row = vec![];
             for (f, v) in vals {
                 let is_allowed = allowed.contains(&f.as_str())
-                    || (f == "id" && facts["resources"][res]["fields"].get("id").is_some())
+                    || (encrypted_prototype && f == "id" && facts["resources"][res]["fields"].get("id").is_some())
                     || (f.ends_with("__bidx")
                         && facts["resources"][res]["fields"].get(f.strip_suffix("__bidx").unwrap()).and_then(|fd| fd.get("encrypted")).is_some());
                 if !is_allowed {

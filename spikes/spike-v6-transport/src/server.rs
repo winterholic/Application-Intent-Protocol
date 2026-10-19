@@ -225,10 +225,10 @@ pub(crate) async fn listen_with_fingerprint(
     mut runtime: Runtime,
     fingerprint: Option<Arc<str>>,
 ) -> io::Result<Server> {
-    if crate::encryption::get_runtime_crypto().is_none() {
-        spike_v1_fixture::sema::require_supported_runtime(&facts)
-            .map_err(|_| io::Error::new(io::ErrorKind::Unsupported, "field encryption storage is not enabled in this runtime"))?;
-    }
+    // A process-local key map does not establish deployment key readiness, scope isolation,
+    // writer fencing, or journal safety. Keep product activation closed until those gates pass.
+    spike_v1_fixture::sema::require_supported_runtime(&facts)
+        .map_err(|_| io::Error::new(io::ErrorKind::Unsupported, "field encryption storage is not enabled in this runtime"))?;
     if !address.ip().is_loopback() {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "prototype server requires loopback"));
     }

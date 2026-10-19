@@ -452,6 +452,8 @@ pub async fn adopt_external(url: &str, schema: &str, facts: &Value, mapping: &Ma
 }
 /// Load the saved baseline, never re-baseline drift at serve time.
 pub async fn deployment_facts(url: &str, schema: &str, facts: &Value, mapping: &Mapping) -> Result<Value, Value> {
+    configure_schema(schema)?;
+    validate_facts(facts)?;
     let db = connect(url).await?;
     let row =
         db.query_one(&format!("SELECT facts FROM {schema}.{META} WHERE singleton"), &[]).await.map_err(|_| failure("외부 채택 marker가 없음"))?;

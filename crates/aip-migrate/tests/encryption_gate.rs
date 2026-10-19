@@ -1,16 +1,9 @@
 use aip_crypto::cell::{Context, DataKey};
-use aip_migrate::external::{Mapping, Table, plan_external};
-use futures_util::FutureExt;
 use serde_json::json;
 use spike_v1_fixture::{Form, load_str};
-use std::collections::BTreeMap;
-use std::panic::AssertUnwindSafe;
-use std::time::{SystemTime, UNIX_EPOCH};
-
-const DB: &str = aip_test_support::test_database_url!();
 
 #[test]
-fn encrypted_fields_generate_proper_ddl_and_blind_indices() {
+fn encrypted_ddl_builder_is_a_preview_and_does_not_enable_deployment() {
     let source = r#"
 actor principal
 resource Project {
@@ -31,7 +24,9 @@ resource Secret {
 }
 "#;
     let facts = load_str(source, Form::A).unwrap().execution;
-    let (ddl, _) = aip_migrate::creation("aip_enc_fixture", &facts).unwrap();
+    // The SQL builder is preparation only; the deployment layer must still refuse these facts.
+    assert_eq!(aip_migrate::creation("aip_enc_fixture", &facts).unwrap_err()["code"], "BAD_FACTS");
+    let ddl = spike_v2_read::sqlgen::create_ddl_in("aip_enc_fixture", &facts).unwrap();
 
     // Check that Secret table was generated with text column (no range check for encrypted values)
     let secret_ddl = ddl.iter().find(|s| s.contains("CREATE TABLE aip_enc_fixture.secret")).expect("secret table must be created");
@@ -83,145 +78,24 @@ fn invalid_encryption_metadata_is_rejected() {
     assert_eq!(aip_migrate::creation("aip_enc_fixture", &no_lookup_unique).unwrap_err()["code"], "BAD_FACTS");
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn derive_blocks_plaintext_encrypted_transitions() {
-    let pid = std::process::id();
-    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-    let schema = format!("aip_derive_enc_{}_{}", pid, nanos);
-
-    let db = spike_v2_read::connect_owned_with_url(DB).await.unwrap();
-
-    let old_source = r#"
-actor principal
-resource Secret {
-  fields {
-    id: Id
-    val: Text
-  }
-}
-"#;
-    let new_source = r#"
-actor principal
-resource Secret {
-  fields {
-    id: Id
-    val: Text encrypted(scope: service)
-  }
-}
-"#;
-    let old_facts = load_str(old_source, Form::A).unwrap().execution;
-    let new_facts = load_str(new_source, Form::A).unwrap().execution;
-
-    let setup = AssertUnwindSafe(async {
-        // Initialize schema with old facts first
-        aip_migrate::init(DB, &schema, &old_facts).await.unwrap();
-
-        // Planning with new facts (transitioning plaintext -> encrypted) must be Blocked
-        let plan_v2 = aip_migrate::plan(DB, &schema, &new_facts, &None).await.unwrap();
-        assert_eq!(plan_v2["blocked"], true);
-        let blocked_change = plan_v2["changes"].as_array().unwrap().iter().find(|c| c["class"] == "Blocked").expect("Blocked change must exist");
-        assert!(
-            blocked_change["reason"].as_str().unwrap().contains("plaintext와 encrypted 간 전환 또는 scope 변경 불가"),
-            "reason: {blocked_change}"
-        );
-
-        // Applying this plan must also be rejected with MIGRATION_BLOCKED
-        let apply_err = aip_migrate::apply(DB, &schema, &new_facts, &None, plan_v2["digest"].as_str().unwrap())
-            .await
-            .expect_err("apply must reject blocked migration");
-        assert_eq!(apply_err["code"], "MIGRATION_BLOCKED");
-    })
-    .catch_unwind()
-    .await;
-
-    let _ = db.batch_execute(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE")).await;
-
-    if let Err(panic) = setup {
-        std::panic::resume_unwind(panic);
-    }
+#[test]
+fn a_well_formed_header_does_not_prove_cell_authentication() {
+    let key = DataKey::new("fixture-dek", 1, [42; 32]).unwrap();
+    let context = Context { schema: "aip_enc_fixture", resource: "Secret", field: "value", row_id: "101", scope_kind: "service", scope_id: "global" };
+    let frame = key.seal(&context, b"fixture-sensitive-value").unwrap();
+    let body_start = frame.rfind(':').unwrap() + 1;
+    let mut bytes = frame.into_bytes();
+    bytes[body_start] = if bytes[body_start] == b'Z' { b'Y' } else { b'Z' };
+    let tampered = String::from_utf8(bytes).unwrap();
+    assert!(aip_crypto::cell::parse_header(&tampered).is_ok(), "header shape cannot detect authentication-tag tampering");
+    assert!(key.open(&context, &tampered).is_err(), "AEAD must reject the tampered cell");
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn external_adopt_full_table_scan_detects_tampered_row() {
-    let pid = std::process::id();
-    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-    let source_schema = format!("aip_ext_src_{}_{}", pid, nanos);
-    let target_schema = format!("aip_ext_tgt_{}_{}", pid, nanos);
-
-    let db = spike_v2_read::connect_owned_with_url(DB).await.unwrap();
-
-    let key = DataKey::new("dek1", 1, [0x42; 32]).unwrap();
-
-    let setup = AssertUnwindSafe(async {
-        db.batch_execute(&format!(
-            "CREATE SCHEMA {source_schema}; CREATE TABLE {source_schema}.secrets (id serial PRIMARY KEY, secret_val text NOT NULL)"
-        ))
-        .await
-        .unwrap();
-
-        // Insert 150 valid v2 cell frames
-        for id in 1..=150 {
-            let ctx = Context {
-                schema: &target_schema,
-                resource: "Secret",
-                field: "secret_val",
-                row_id: &id.to_string(),
-                scope_kind: "service",
-                scope_id: "global",
-            };
-            let frame = key.seal(&ctx, format!("secret content {id}").as_bytes()).unwrap();
-            db.execute(&format!("INSERT INTO {source_schema}.secrets (secret_val) VALUES ($1)"), &[&frame]).await.unwrap();
-        }
-
-        let mut mapping = Mapping { schema: source_schema.clone(), tables: BTreeMap::new() };
-        let mut cols = BTreeMap::new();
-        cols.insert("id".to_string(), "id".to_string());
-        cols.insert("secret_val".to_string(), "secret_val".to_string());
-        mapping.tables.insert("Secret".to_string(), Table { table: "secrets".to_string(), columns: cols, shared_pk_without_fk: false });
-
-        let source = r#"
-actor principal
-resource Secret {
-  fields {
-    id: Id
-    secret_val: Text encrypted(scope: service)
-  }
-}
-"#;
-        let facts = load_str(source, Form::A).unwrap().execution;
-
-        // 1. All 150 rows are valid v2 cell frames -> plan_external succeeds!
-        let plan = plan_external(DB, &target_schema, &facts, &mapping, "decimal")
-            .await
-            .expect("plan_external must succeed when all 150 rows have valid v2 frames");
-        assert_eq!(plan["ok"], true);
-
-        // 2. Tamper the 101st row (past prefix 100 sample threshold) with plaintext
-        db.execute(&format!("UPDATE {source_schema}.secrets SET secret_val = 'tampered_plaintext_secret' WHERE id = 101"), &[]).await.unwrap();
-
-        let err = plan_external(DB, &target_schema, &facts, &mapping, "decimal").await.expect_err("plan_external must reject tampered 101st row");
-        assert_eq!(err["code"], "EXTERNAL_SCHEMA");
-        assert!(err["message"].as_str().unwrap().contains("암호화 셀 포맷 오류"), "error message should indicate cell format failure: {err}");
-
-        // 3. Tamper the 101st row with a tag mismatch (e.g. tag 'r' instead of 's')
-        let ref_ctx =
-            Context { schema: &target_schema, resource: "Secret", field: "secret_val", row_id: "101", scope_kind: "ref:project", scope_id: "p1" };
-        let ref_frame = key.seal(&ref_ctx, b"mismatched tag frame").unwrap();
-        db.execute(&format!("UPDATE {source_schema}.secrets SET secret_val = $1 WHERE id = 101"), &[&ref_frame]).await.unwrap();
-
-        let err_tag = plan_external(DB, &target_schema, &facts, &mapping, "decimal")
-            .await
-            .expect_err("plan_external must reject scope tag mismatch on 101st row");
-        assert_eq!(err_tag["code"], "EXTERNAL_SCHEMA");
-        assert!(err_tag["message"].as_str().unwrap().contains("암호화 셀 태그 불일치"), "error message should indicate tag mismatch: {err_tag}");
-    })
-    .catch_unwind()
-    .await;
-
-    // Resource cleanup
-    let _ = db.batch_execute(&format!("DROP SCHEMA IF EXISTS {source_schema} CASCADE; DROP SCHEMA IF EXISTS {target_schema} CASCADE")).await;
-
-    if let Err(panic) = setup {
-        std::panic::resume_unwind(panic);
-    }
+#[tokio::test]
+async fn encrypted_migration_is_rejected_before_opening_a_database() {
+    let facts = load_str("actor principal resource Secret {fields {id: Id; value: Text encrypted(scope: service)}}", Form::A).unwrap().execution;
+    let plan = aip_migrate::plan("invalid DSN must not be used", "aip_enc_fixture", &facts, &None).await.unwrap_err();
+    assert_eq!(plan["code"], "BAD_FACTS");
+    let apply = aip_migrate::apply("invalid DSN must not be used", "aip_enc_fixture", &facts, &None, "unused acknowledgement").await.unwrap_err();
+    assert_eq!(apply["code"], "BAD_FACTS");
 }

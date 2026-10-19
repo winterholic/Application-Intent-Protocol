@@ -66,6 +66,10 @@ fn decimal_type(ty: &str) -> Option<(u8, u8)> {
 }
 
 fn validate_facts(facts: &Value) -> Result<(), Value> {
+    // Header inspection and DDL generation do not authenticate existing cells or make a runtime
+    // safe to deploy. Keep initialization, adoption and migrations closed for encrypted facts.
+    spike_v1_fixture::sema::require_supported_runtime(facts)
+        .map_err(|_| err("BAD_FACTS", "암호화 배포는 키·AEAD 전수 검증·저장 경계가 준비될 때까지 지원하지 않음"))?;
     let resources = facts["resources"].as_object().ok_or_else(|| err("BAD_FACTS", "resources 객체 누락"))?;
     let enums = facts["enums"].as_object().ok_or_else(|| err("BAD_FACTS", "enums 객체 누락"))?;
     let mut tables = BTreeSet::new();
@@ -1368,6 +1372,7 @@ pub async fn plan(db_url: &str, schema: &str, new_facts: &Value, migration: &Opt
 
 async fn plan_inner(db_url: &str, schema: &str, new_facts: &Value, migration: &Option<Value>) -> Result<Value, Value> {
     configure_schema(schema)?;
+    validate_facts(new_facts)?;
     let mut db = connect(db_url).await?;
     let tx = db.transaction().await.map_err(|_| err("DB_PLAN", "계획 snapshot 시작 실패"))?;
     tx.batch_execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY; SET LOCAL statement_timeout='10s'; SET LOCAL TimeZone TO 'UTC'")
@@ -1386,6 +1391,7 @@ pub async fn apply(db_url: &str, schema: &str, new_facts: &Value, migration: &Op
 
 async fn apply_inner(db_url: &str, schema: &str, new_facts: &Value, migration: &Option<Value>, acknowledgement: &str) -> Result<Value, Value> {
     configure_schema(schema)?;
+    validate_facts(new_facts)?;
     parse_directives(migration)?;
     let mut db = connect(db_url).await?;
     let tx = db.transaction().await.map_err(|_| err("DB_APPLY", "적용 트랜잭션 시작 실패"))?;

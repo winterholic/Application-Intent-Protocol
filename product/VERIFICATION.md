@@ -1,5 +1,17 @@
 # 제품 통합 검증 (2026-10-17)
 
+## 2026-10-19 암호화 독립 검증 정정
+
+`1418944`와 미커밋 회전 구현을 GPT가 대조했다. 8.18.3·8.18.4의 완료 표시는 반려하고 PMS를 미완으로 정정했다. 고정 키 map과 내부 `handle`을 사용한 시험은 배포 키 공급·scope별 DEK·writer fence·모든 저널 경로의 검증을 대신하지 않는다. 실제 CLI의 암호화 서비스 실행 차단은 유지한다.
+
+- 로컬 `encryption_gate` 반례에서 process-local crypto를 설정하자 listener가 실행 차단을 우회했다(`1 failed`). 키 map 존재로 readiness gate를 해제하던 조건을 제거한 뒤 같은 listener 검사 2개가 통과했다.
+- 외부 채택은 모든 행을 읽더라도 `parse_header`와 scope tag만 검사했다. 같은 헤더를 유지한 ciphertext 변조가 parser에는 수용되고 AEAD에는 거부되는 음성 대조를 추가했다. 실제 AEAD/AAD/키 가용성 검증 전에는 deployment/init/adopt/migrate를 거부한다. SQL 생성은 준비용 builder 검사로 남기며 배포 성공으로 세지 않는다.
+- `cargo test -p aip-migrate --test encryption_gate --test encryption_activation_gate --locked --offline`: DB를 열지 않는 5개가 통과했다. 외부 채택·migration의 잘못된 DSN보다 암호화 readiness 거부가 먼저 발생하는지도 확인했다.
+- `1418944`의 Linux Verify 39228801875는 `bundle_http`에서 비공개 `id` 입력에 `WIRE.FIELD_NOT_EXPOSED` 대신 `WIRE.ALREADY_EXISTS`를 반환해 실패했다. 암호화용 내부 id 예외가 일반 resource에 적용되지 않도록 범위를 좁혔다. 기존 HTTP 반례의 수정 후 실제 DB 결과는 새 CI에서 확인하며 이 로컬 회차의 clippy 통과로 대신하지 않는다.
+- 회전·rekey의 미커밋 7개 파일은 복원 가능한 archive/patch와 SHA-256 manifest로 보존하고 CLI 연결에서 분리했다. 보존 구현에는 ciphertext에 대한 blind tag 계산, cutover 때 새 UNIQUE 없이 기존 열 제거, scope 없는 rekey scan 등 미해결 부분이 있다. 운영 기능으로 제공하지 않는다.
+
+이 정정 이후의 Linux 전체 회귀 결과는 새 main SHA별 CI에서 별도로 판정한다. 아래의 이전 통과·대기 기록을 최신 전체 성공으로 재사용하지 않는다.
+
 ## 2026-10-19 최신 실행 범위
 
 - WBS 8.18.2: main `11cf652`의 [Linux worker jobs 39214468985](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39214468985)가 성공했다. 진단 21개·암호화 정규화 10개·migrate gate 1개·transport gate 1개를 원시 로그에서 확인했다. 암호화 정의 정규화와 실행 차단 경계가 해당 task의 범위이며 제품 저장 통합 완료로 세지 않는다.
