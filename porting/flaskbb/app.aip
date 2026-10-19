@@ -19,6 +19,7 @@ predicate canReadTopic(viewer: User?, targetTopic: Topic?) = targetTopic != null
 predicate canReadPost(viewer: User?, targetPost: Post?) = targetPost != null and not targetPost.deleted and (not targetPost.topic.deleted or canDeleteTopic(viewer, targetPost.topic) or (targetPost.topic.user = viewer and not targetPost.topic.locked and (viewer.primary_group.editpost or exists UserGroup where user = viewer and group.editpost))) and (targetPost.user = viewer or (targetPost.published and canReadForum(viewer, targetPost.forum))) and (targetPost.hidden != true or canViewHidden(viewer)) and (targetPost.topic.hidden != true or canViewHidden(viewer))
 predicate canReviewReports(viewer: User?) = viewer != null and viewer.activated and (viewer.primary_group.admin or viewer.primary_group.super_mod or viewer.primary_group.mod or exists UserGroup where user = viewer and (group.admin or group.super_mod or group.mod))
 predicate hasFirstPost(targetTopic: Topic, viewer: User?) = exists TopicFirstPost where topic = targetTopic and post.user = viewer and post.published
+predicate hasOtherEarlierMessage(targetMessage: Message) = exists Message where conversation = targetMessage.conversation and id != targetMessage.id and date_created <= targetMessage.date_created
 predicate isFirstPost(targetPost: Post) = exists TopicFirstPost where post = targetPost
 predicate hasNewerAuthoredPost(targetTopic: Topic, viewer: User?) = exists Post where topic = targetTopic and user = viewer and published and date_created > targetTopic.last_updated
 predicate userPurgeable(targetUser: User?) = targetUser != null and not (exists Post where user = targetUser) and not (exists Post where hidden_by = targetUser) and not (exists Topic where user = targetUser) and not (exists Topic where hidden_by = targetUser) and not (exists Forum where last_post_user = targetUser) and not (exists Report where reporter = targetUser) and not (exists Report where zapped_by = targetUser) and not (exists Conversation where user = targetUser) and not (exists Conversation where from_user = targetUser) and not (exists Conversation where to_user = targetUser) and not (exists Message where user = targetUser)
@@ -481,6 +482,26 @@ resource Conversation {
     to unread = true, date_modified = now
   }
   expose apply bump { target id; bulk maxRows 50 }
+  // Upstream EditConversation "save": the owner of a draft changes the
+  // recipient and stays a draft. Subject is not editable there (the original
+  // form handler only rewrites to_user and the first message). The original
+  // does not validate the recipient on save, so neither does this.
+  transition editDraft {
+    allow actor.activated and user = actor and from_user = actor
+    from draft = true
+    patch to_user
+    to date_modified = now
+  }
+  expose apply editDraft { target id; bulk maxRows 1 }
+  // Upstream EditConversation "send": the draft becomes a sent message with a
+  // fresh date_created. The recipient copy is created by the caller in the same
+  // bundle, like a first send. The recipient must already be set and not self.
+  transition sendDraft {
+    allow actor.activated and user = actor and from_user = actor and to_user != null and to_user != actor
+    from draft = true
+    to draft = false, date_created = now, date_modified = now
+  }
+  expose apply sendDraft { target id; bulk maxRows 1 }
   transition moveToTrash {
     allow actor.activated and user = actor
     from trash = false
@@ -522,6 +543,14 @@ resource Message {
     allow actor.activated and user = actor and (conversation.from_user = actor or conversation.to_user = actor) and (conversation.user = conversation.from_user or conversation.user = conversation.to_user)
     fields conversation, user, message, date_created
   }
+  // Upstream EditConversation rewrites the draft's first message only; a sent
+  // conversation is never editable ("You cannot edit a sent message").
+  transition editDraftMessage {
+    allow actor.activated and user = actor and conversation.user = actor and conversation.draft and not hasOtherEarlierMessage(this)
+    from true
+    patch message
+  }
+  expose apply editDraftMessage { target id; bulk maxRows 1 }
   expose read {
     select id, conversation, user, message, date_created
     filter conversation.eq, user.eq

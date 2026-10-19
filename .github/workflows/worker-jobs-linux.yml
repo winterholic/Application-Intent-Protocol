@@ -110,7 +110,7 @@ jobs:
           node --test porting/flaskbb/tests/mail-jobs.test.mjs
       - name: Verify FlaskBB fixture guard and mailbox uniqueness
         run: |
-          node --test porting/flaskbb/tests/fixture-env.test.mjs porting/flaskbb/tests/conversations-security.test.mjs
+          node --test porting/flaskbb/tests/fixture-env.test.mjs porting/flaskbb/tests/conversations-security.test.mjs porting/flaskbb/tests/conversation-draft.test.mjs
           cargo test -p aip-migrate --locked --test foreign_shared_uniqueness
       - name: Verify FlaskBB topic ordering and UI requests
         run: |
