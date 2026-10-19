@@ -87,6 +87,14 @@ jobs:
           cargo test --manifest-path spikes/spike-v1-fixture/Cargo.toml --locked --target-dir target --test encrypted_types --test diagnostics
           cargo test -p aip-migrate --locked --test encryption_gate --test encryption_activation_gate
           cargo test -p aip-execution --locked --test encryption_deks
+      - name: Upgrade an actual pre-trace durable job schema with the product CLI
+        env:
+          AIP_TRACE_UPGRADE_DATABASE_URL: ${{ env.AIP_TEST_DATABASE_URL }}
+          AIP_SERVICE_CLI: ${{ github.workspace }}/target/debug/aip
+        run: >-
+          cargo test -p aip-migrate --lib --locked
+          trace_id_upgrade_tests::explicit_parent_job_schema_upgrade_adds_trace_id_and_rejects_drift
+          -- --ignored --exact
       - name: Prove Linux worker sandbox boundaries with Bubblewrap
         run: AIP_TEST_BWRAP=1 cargo test --manifest-path spikes/spike-v4-worker/Cargo.toml --lib isolation::tests --locked --target-dir target
       - name: Run durable worker, retry, schedule, webhook and outbox jobs

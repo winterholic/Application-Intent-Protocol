@@ -1,5 +1,15 @@
 # 제품 통합 검증 (2026-10-17)
 
+## 2026-10-19 독립 CI 확정과 후속 증분
+
+main `80f1fd9`의 CI 8개가 모두 성공했다. [Linux worker jobs 39233091978](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39233091978) 원시 로그는 암호화 listener gate 2개, 공개 create HTTP 회귀, 전체 OTLP 9개(실제 worker/DB 3개 포함), FlaskBB guard/대화 4개와 legacy 중복 보존 1개의 통과를 확인한다. [전체 Verify 39233092131](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39233092131)는 `AIP core verification passed.`와 실제 HTTP→Node/Python→MySQL 검사를 완료했다. [Dependencies 39233092041](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39233092041)는 전체 lock graph 검사 성공이며 `--locked`로 lock 수정을 금지한다. 이 범위로 7.5.5를 완료했다. 아래의 당시 CI 대기 설명은 이력이며 최신 판정은 이 절을 따른다.
+
+후속 main `269bf7d`의 실제 Mailpit 활성화·재설정·중복 방지·수신자 인가는 통과했다. 장애 복구 시험은 endpoint 변경으로 구현 지문이 바뀌어 `WIRE.IMPLEMENTATION_CHANGED`로 거부되었다. main `b39633a`에서 제품 fence를 유지하고 같은 endpoint에 소유 프록시로 공급자만 복구하도록 바꿨다. 이 회차의 실제 복구·sticky 정렬·원래 포팅 suite 전체 재실행은 새 CI 대기다. 로컬 guard/프록시/정의 검사는 9 passed/1 Linux-only skipped, UI·메일 단위 검사는 20 passed다.
+
+암호화 헤더 parser가 빈/미지원 scope tag와 비정규 `01`·`+1` version을 수용하는 반례를 로컬에서 재현했다. 형식 검사를 보완하고 유효한 s/r/o 및 u32 최대 version 양성 대조를 포함해 `cargo test -p aip-crypto --all-features --locked` 19 passed, 같은 패키지 all-targets/all-features clippy 통과를 확인했다. 이는 header 형식 검사이며 AEAD/AAD/키 가용성·외부 채택 안전성을 보증하지 않는다. 제품 암호화 readiness gate와 8.18.3–8.18.6 미완 판정은 유지한다.
+
+기존 pre-trace schema의 CLI 업그레이드 시험은 `80f1fd9` 전체 Verify에서 명시적으로 ignored였다. 일반 OTLP 9개 성공으로 그 시험을 실행했다고 주장하지 않고, disposable PostgreSQL과 built CLI를 가진 Linux worker CI에 해당 exact ignored test 실행을 추가했다. 이 추가 검증의 결과는 다음 CI에서 별도로 확인한다.
+
 ## 2026-10-19 암호화 독립 검증 정정
 
 `1418944`와 미커밋 회전 구현을 GPT가 대조했다. 8.18.3·8.18.4의 완료 표시는 반려하고 PMS를 미완으로 정정했다. 고정 키 map과 내부 `handle`을 사용한 시험은 배포 키 공급·scope별 DEK·writer fence·모든 저널 경로의 검증을 대신하지 않는다. 실제 CLI의 암호화 서비스 실행 차단은 유지한다.

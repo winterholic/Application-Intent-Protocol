@@ -1,5 +1,5 @@
 #![allow(clippy::unwrap_used)]
-use aip_crypto::cell::{Context, DataKey, Error};
+use aip_crypto::cell::{Context, DataKey, Error, parse_header};
 
 fn context() -> Context<'static> {
     Context { schema: "aip_fixture", resource: "Secret", field: "value", row_id: "42", scope_kind: "ref:Project", scope_id: "7" }
@@ -40,6 +40,28 @@ fn malformed_or_legacy_frames_never_fall_back_to_plaintext_or_poc_decryption() {
     let last = altered.len() - 3;
     altered[last] = if altered[last] == b'A' { b'B' } else { b'A' };
     assert_eq!(key.open(&context(), std::str::from_utf8(&altered).unwrap()), Err(Error::Corrupted));
+}
+
+#[test]
+fn header_parser_rejects_unknown_scope_tags_and_noncanonical_versions() {
+    let key = DataKey::new("dek-fixture", 1, [7; 32]).unwrap();
+    let frame = key.seal(&context(), b"fixture").unwrap();
+    let parts: Vec<_> = frame.split(':').collect();
+    for (index, value) in [(1, ""), (1, "x"), (1, "ref"), (1, "s/r"), (3, "01"), (3, "+1"), (3, "0001")] {
+        let mut changed = parts.clone();
+        changed[index] = value;
+        let corrupted = changed.join(":");
+        assert_eq!(parse_header(&corrupted), Err(Error::Corrupted), "element {index}: {value:?}");
+        assert_eq!(key.open(&context(), &corrupted), Err(Error::Corrupted));
+    }
+    for (scope_kind, scope_id, tag) in [("service", "global", "s"), ("ref:Project", "7", "r"), ("owner:User", "42", "o")] {
+        let ctx = Context { scope_kind, scope_id, ..context() };
+        let key = DataKey::new("dek-fixture", u32::MAX, [7; 32]).unwrap();
+        let frame = key.seal(&ctx, b"fixture").unwrap();
+        let header = parse_header(&frame).unwrap();
+        assert_eq!((header.tag, header.version), (tag, u32::MAX));
+        assert_eq!(key.open(&ctx, &frame).unwrap().as_slice(), b"fixture");
+    }
 }
 
 #[test]

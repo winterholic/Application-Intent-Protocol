@@ -141,8 +141,9 @@ pub struct CellHeader<'a> {
 }
 
 /// Inspects and parses a v2 cell frame header without decrypting or requiring the data key.
-/// Verifies frame length, v2 prefix, dek_id identifier rules, version format, nonce size (12 bytes),
-/// and ciphertext minimum tag length (>= 16 bytes).
+/// Checks frame length, v2 prefix, scope tag, dek_id identifier rules, canonical version format,
+/// nonce size (12 bytes), and ciphertext minimum tag length (>= 16 bytes).
+/// This structural inspection does not authenticate ciphertext, AAD, scope or key availability.
 pub fn parse_header<'a>(frame: &'a str) -> Result<CellHeader<'a>, Error> {
     if frame.len() > MAX_FRAME_BYTES {
         return Err(Error::Corrupted);
@@ -153,11 +154,11 @@ pub fn parse_header<'a>(frame: &'a str) -> Result<CellHeader<'a>, Error> {
     else {
         return Err(Error::Corrupted);
     };
-    if !valid_id(id) {
+    if !matches!(tag, "s" | "r" | "o") || !valid_id(id) {
         return Err(Error::Corrupted);
     }
     let ver = version.parse::<u32>().map_err(|_| Error::Corrupted)?;
-    if ver == 0 {
+    if ver == 0 || version != ver.to_string() {
         return Err(Error::Corrupted);
     }
     let nonce_bytes = STANDARD.decode(nonce).map_err(|_| Error::Corrupted)?;

@@ -7,6 +7,8 @@ writes, migrations, journals, CLI configuration or Infisical. Those remain separ
 - `cell`: AES-256-GCM v2 frames with length-prefixed AAD binding schema, resource, field, row, scope and
   immutable DEK identity/version. Random nonces come from the AEAD library's OS random source. Values are
   limited to 1 MiB; context and frame bounds are checked before decryption. Normal reads accept only v2.
+  `parse_header` checks structure, including the scope tag and canonical version; it does not authenticate
+  a stored frame or establish that external data is safe to adopt. Use AEAD open with the full trusted context.
 - `provider`: async `KekProvider` interface and local env/file KEK rings. HKDF derives wrapping keys;
   rotating the wrapping KEK preserves the DEK and existing data frames. Files must be owned regular files,
   0400/0600, at most 8192 bytes, with no symlink in any component. Unix paths are walked by file descriptors;
