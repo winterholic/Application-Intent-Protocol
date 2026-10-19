@@ -21,6 +21,7 @@ predicate canReviewReports(viewer: User?) = viewer != null and viewer.activated 
 predicate hasFirstPost(targetTopic: Topic, viewer: User?) = exists TopicFirstPost where topic = targetTopic and post.user = viewer and post.published
 predicate isFirstPost(targetPost: Post) = exists TopicFirstPost where post = targetPost
 predicate hasNewerAuthoredPost(targetTopic: Topic, viewer: User?) = exists Post where topic = targetTopic and user = viewer and published and date_created > targetTopic.last_updated
+predicate userPurgeable(targetUser: User?) = targetUser != null and not exists Post where user = targetUser and not exists Post where hidden_by = targetUser and not exists Topic where user = targetUser and not exists Topic where hidden_by = targetUser and not exists Forum where last_post_user = targetUser and not exists Report where reporter = targetUser and not exists Report where zapped_by = targetUser and not exists Conversation where user = targetUser and not exists Conversation where from_user = targetUser and not exists Conversation where to_user = targetUser and not exists Message where user = targetUser
 access visibleUserTotal = totalOfVisible(User)
 access visibleForumTotal = totalOfVisible(Forum)
 access visibleTopicTotal = totalOfVisible(Topic)
@@ -96,6 +97,25 @@ resource User {
     patch username, email, birthday, gender, website, location, signature, avatar, notes, language, theme
   }
   expose apply moderatorEditUser { target id; bulk maxRows 1 }
+  // Upstream DeleteUser: admin-only, never self. The delete-many effects run
+  // before the row delete in the same transaction and mirror the upstream DB
+  // cascades (memberships, trackers, reads, moderatorships). The from guard
+  // refuses referenced accounts: posts, topics and reports are RESTRICTed
+  // upstream too (no ondelete on those FKs). Mailbox copies and the
+  // upstream-SET-NULL columns (message authorship, last-post user) also
+  // refuse: two-hop child scope and nullable-FK many-update are not
+  // expressible (PRODUCT-GAPS.md G-11).
+  transition purge {
+    allow actor.activated and actor.primary_group.admin and this != actor
+    from userPurgeable(this)
+    delete
+    delete many UserGroup maxRows 1000 where user = this.id
+    delete many TopicTracker maxRows 1000 where user = this.id
+    delete many ForumRead maxRows 1000 where user = this.id
+    delete many TopicRead maxRows 1000 where user = this.id
+    delete many ForumModerator maxRows 1000 where user = this.id
+  }
+  expose apply purge { target id; bulk maxRows 1 }
   expose read {
     select id, username, primary_group, activated, date_joined, lastseen, birthday, gender, website, location, signature, avatar, notes, language, theme, post_count
     filter id.eq, username.prefix, username.contains
@@ -408,6 +428,14 @@ resource Report {
   expose apply submit { target id; bulk maxRows 1 }
   transition resolve { allow canReviewReports(actor) and zapped = null; from zapped = null; to zapped = now, zapped_by = actor }
   expose apply resolve { target id; bulk maxRows 50 }
+  // Upstream DeleteReport: moderator-or-above, no state precondition. Nothing
+  // references a report row, so no effects are needed.
+  transition purge {
+    allow canReviewReports(actor)
+    from true
+    delete
+  }
+  expose apply purge { target id; bulk maxRows 50 }
   expose read {
     select id, reporter, reported, post, zapped, zapped_by, reason
     filter id.eq, post.eq, reporter.eq, zapped.eq
@@ -465,6 +493,16 @@ resource Conversation {
     to trash = false
   }
   expose apply restoreFromTrash { target id; bulk maxRows 50 }
+  // Upstream DeleteConversation: the mailbox owner deletes her own copy with
+  // its messages (ORM cascade), with no trash precondition. The other
+  // party's copy is untouched.
+  transition purge {
+    allow actor.activated and user = actor
+    from true
+    delete
+    delete many Message maxRows 1000 where conversation = this.id
+  }
+  expose apply purge { target id; bulk maxRows 1 }
   expose read {
     select id, user, from_user, to_user, shared_id, subject, date_created, date_modified, trash, draft, unread
     filter id.eq, trash.eq, draft.eq, unread.eq, shared_id.eq, user.eq

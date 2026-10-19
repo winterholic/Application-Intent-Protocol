@@ -129,6 +129,7 @@ jobs:
           porting/flaskbb/tests/search.test.mjs
           porting/flaskbb/tests/ban.test.mjs
           porting/flaskbb/tests/moderator-ban.test.mjs
+          porting/flaskbb/tests/purge.test.mjs
           porting/flaskbb/tests/moderation.test.mjs
           porting/flaskbb/tests/provisioning.test.mjs
           porting/flaskbb/tests/aip-read.test.mjs
