@@ -54,8 +54,7 @@ AIP는 Spring의 Gradle/JAR/WAR 배포 모델처럼 임의의 AIP 앱을 선언 
     "aarch64-unknown-linux-gnu"
   ],
   "features": [
-    "realtime",
-    "metrics"
+    "mysql"
   ],
   "config_template": "./config.example.json"
 }
@@ -81,7 +80,7 @@ AIP는 Spring의 Gradle/JAR/WAR 배포 모델처럼 임의의 AIP 앱을 선언 
 | `dependencies.node` | 선택 | 객체 | Node.js 의존성 명세 (`package_json`, `lockfile`) |
 | `dependencies.python` | 선택 | 객체 | Python 의존성 명세 (`requirements` 또는 `lockfile`) |
 | `targets` | 선택 | 문자열 배열 | 배포 지원 대상 OS/CPU 트리플 (예: `x86_64-unknown-linux-gnu`) |
-| `features` | 선택 | 문자열 배열 | 앱이 요구하는 엔진 기능 (예: `realtime`, `outbox`, `rag`, `mysql`) |
+| `features` | 선택 | 문자열 배열 | 선택 Cargo feature: `mysql`, `external-brokers`, `poc-runtime`. 기본 기능은 별도 feature로 지정하지 않는다 |
 | `config_template` | 선택 | 상대 경로 (`*.json`) | 배포 시 참조할 예시 설정 파일 (비밀 없는 템플릿) |
 
 ---
@@ -146,7 +145,7 @@ AIP는 Spring의 Gradle/JAR/WAR 배포 모델처럼 임의의 AIP 앱을 선언 
       }
     },
     "targets": ["aarch64-apple-darwin", "x86_64-unknown-linux-gnu"],
-    "features": ["realtime", "metrics"],
+    "features": ["mysql"],
     "config_template": "config.example.json"
   },
   "files": [
@@ -196,3 +195,46 @@ node product/tools/package.mjs --manifest <path/to/aip.app.json> --validate-only
 # 기존 예제 패키징 (완전한 하위 호환성 유지)
 node product/tools/package.mjs --out dist/bundle --profile release
 ```
+
+### 5.3 앱별 빌드·패키징 (WBS 9.2)
+
+```sh
+# 최초 한 번 SDK 빌드 도구 준비
+npm ci --prefix spikes/spike-0-ts --ignore-scripts --no-audit --no-fund
+
+# manifest 파일 또는 앱 디렉터리. 기본 release, 기존 엔진 target 캐시 재사용
+node product/tools/package.mjs --manifest /path/to/my-app --out /path/to/fresh-bundle
+
+# 개발용 패키지만 debug를 명시
+node product/tools/package.mjs --manifest /path/to/my-app/aip.app.json --out /tmp/dev-bundle --profile debug
+
+# 원본 checkout과 앱 입력 없이, 디렉터리 전체를 다른 위치로 이동한 뒤
+cd /path/to/moved-bundle
+shasum -a 256 -c SHA256SUMS
+./bin/aip service check app/path/to/definition.aip
+npm install ./sdk/aip-sdk-0.1.0.tgz
+```
+
+패키징은 `cargo build --locked -p aip-cli --bin aip --release`(debug는 `--release` 생략)를 실행하고, 요구 feature를 추가한다. 현재 Rust host target만 빌드하며 `targets`가 지정되면 host가 그 목록에 있어야 한다. 다른 OS/CPU를 나열하는 것만으로 교차 컴파일하지 않는다. 지원하지 않는 feature는 `UNSUPPORTED_FEATURE`, 대상 불일치는 `TARGET_MISMATCH`로 빌드 전에 거부한다.
+
+배포 디렉터리는 다음을 포함한다.
+
+| 파일 | 내용 |
+| --- | --- |
+| `bin/aip` | 해당 profile/feature로 다시 빌드한 엔진 |
+| `app/` | 앱 루트 상대 경로를 유지한 manifest·정의·확장 디렉터리 전체·허용 정적 파일·설정 템플릿·의존성 명세 |
+| `sdk/aip-sdk-0.1.0.tgz`, `bindings.ts` | 공식 SDK tarball과 앱 정의에서 생성한 decimal wire TypeScript binding |
+| `APP_CONTRACT.json` | 입력 계약 및 실제 배포 파일 위치를 나타내는 `packageLayout` |
+| `BUILD.json` | 앱/엔진 버전, profile, Rust host/toolchain, 선택 feature, source revision/dirty 여부, binary·계약 digest |
+| `SHA256SUMS`, `APP_SHA256SUMS` | 각각 전체 배포 파일과 `app/` 파일의 SHA-256 |
+| `SOURCE_SHA256SUMS` | 원본 엔진 source의 해시. 원본 checkout에서만 검증 가능하며 배포 실행에 필요하지 않음 |
+
+`APP_CONTRACT.json`의 `app` 필드는 원본 앱 루트 상대 경로를 유지한다. `packageLayout.definition`, `manifest`, `config`, `extensions`는 번들 루트 상대 경로다. 따라서 입력 검증 단계의 layout과 배포 layout을 구분해야 한다. `static_assets[].path` 역시 `app/` 아래에 보존하며, 파일 포함만으로 서비스의 HTTP 정적 서빙이 활성화되지는 않는다.
+
+확장은 진입점 외에 import되는 보조 파일도 수집한다. 확장 디렉터리 하위에도 금지 파일·외부 symlink·특수 파일 검사를 적용하며 순환 symlink는 유한 순회 후 일반 파일로 복사한다. 앱에서 참조하지 않은 `.env`·별도 디렉터리는 포함하지 않는다. 선택 파일에 credential URL이나 개인키 본문이 있으면 `CREDENTIAL_LEAK`로 거부한다.
+
+Node 의존성은 같은 디렉터리의 `package.json`과 npm `package-lock.json`(v2/v3)이 필요하다. 직접 의존성의 불일치와 `file:`/`link:`/`workspace:` 경로 참조를 거부한다. Python은 `name==version` 형태의 고정 requirements만 지원하며 다른 lockfile 문법은 거부한다. 의존성은 **고정 명세만** 포함하고 `node_modules`·venv·다운로드 캐시를 복사하지 않는다. 대상 서버에서 명세에 따라 설치해야 하며 native 의존성·서버의 Node/Python·OS 격리 도구는 별도로 준비한다.
+
+출력은 앱 입력 밖의 새 디렉터리여야 한다. 기존 파일·디렉터리·symlink는 보존한다. 빌드/생성/입력 재검증 실패 시 자신이 만든 불완전 출력만 제거하고, SDK 임시 폴더와 npm 캐시는 `finally`에서 회수한다. 엔진 `target`은 공유 빌드 캐시로 재사용한다. 입력의 추가·삭제·변경과 바이너리 교체를 감지하면 `SOURCE_CHANGED`로 실패한다. 해시와 Git revision은 서명된 provenance 또는 바이트 단위 재현성 보증은 아니다.
+
+설치·기동·준비상태·변경배포의 통합 명령은 WBS 9.3, Docker 경로는 9.4, 실제 HTTP/worker/DB의 패키지 E2E는 9.5에서 다룬다. 이 단계의 package 성공은 운영 배포 성공을 뜻하지 않는다.

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadAndValidateAppManifest, ManifestFailure } from "./app-manifest.mjs";
+import { packageApplication } from "./app-package.mjs";
 
 const productDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoDir = resolve(productDir, "..");
@@ -19,7 +20,7 @@ const manifestFiles = [
   "spikes/spike-v1-fixture", "spikes/spike-v2-read", "spikes/spike-v3-write", "spikes/spike-v4-worker",
   "spikes/spike-v5-sdk", "spikes/spike-v6-transport", "spikes/spike-v11-dev-checks",
   "prototype/src/schema_catalog.sql",
-  "product/sdk/index.ts", "product/tools/build-sdk.mjs", "product/tools/package.mjs", "product/tools/app-manifest.mjs", "product/tools/smoke.mjs",
+  "product/sdk/index.ts", "product/tools/build-sdk.mjs", "product/tools/package.mjs", "product/tools/app-manifest.mjs", "product/tools/app-package.mjs", "product/tools/smoke.mjs",
   "prototype/example/app.aip", "prototype/example/extensions/event.mjs", "prototype/example/extensions/event.py",
 ];
 
@@ -33,7 +34,7 @@ class PackageFailure extends Error {
 
 function parseArgs(args) {
   let out;
-  let profile = "debug";
+  let profile;
   let manifest;
   let validateOnly = false;
   for (let index = 0; index < args.length; index++) {
@@ -43,9 +44,6 @@ function parseArgs(args) {
     else if (args[index] === "--validate-only" || args[index] === "--check-only") validateOnly = true;
     else throw new PackageFailure("BAD_ARGS", "usage: node product/tools/package.mjs [--out <fresh-directory>] [--profile debug|release] [--manifest <aip.app.json>] [--validate-only]", "arguments");
   }
-  if (manifest && !validateOnly) {
-    throw new PackageFailure("BAD_ARGS", "임의 앱 패키징은 아직 지원되지 않습니다(WBS 9.2). WBS 9.1에서는 --validate-only와 함께 매니페스트 검증만 가능합니다", "arguments");
-  }
   if (validateOnly && !manifest) {
     throw new PackageFailure("BAD_ARGS", "--validate-only는 --manifest와 함께 지정해야 합니다", "arguments");
   }
@@ -53,7 +51,7 @@ function parseArgs(args) {
     const stamp = new Date().toISOString().replaceAll(":", "-").replaceAll(".", "-");
     out = resolve(productDir, "dist", stamp);
   }
-  return { out, profile, manifest, validateOnly };
+  return { out, profile: profile ?? (manifest ? "release" : "debug"), manifest, validateOnly };
 }
 
 function command(program, args, stage, cwd = repoDir) {
@@ -152,7 +150,7 @@ async function packageArtifacts({ out, profile }) {
     const packDir = join(scratch, "pack");
     await mkdir(packDir);
     command(process.execPath, [builder, "--out", sdkDir], "sdk-build");
-    const packedText = command("npm", ["pack", "--offline", "--ignore-scripts", "--json", "--pack-destination", packDir, sdkDir], "sdk-pack");
+    const packedText = command("npm", ["pack", "--offline", "--ignore-scripts", "--json", "--cache", join(scratch, "npm-cache"), "--pack-destination", packDir, sdkDir], "sdk-pack");
     let packed;
     try {
       packed = JSON.parse(packedText);
@@ -277,7 +275,7 @@ try {
     console.log(JSON.stringify(appContract, null, 2));
     process.exit(0);
   }
-  console.log(JSON.stringify(await packageArtifacts(options)));
+  console.log(JSON.stringify(await (options.manifest ? packageApplication(options) : packageArtifacts(options))));
 } catch (error) {
   const failure =
     error instanceof PackageFailure

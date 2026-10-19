@@ -477,7 +477,7 @@ test("package.mjs CLI integration: accepts --manifest and --validate-only", (t) 
   assert.equal(err.code, "BAD_MANIFEST");
 });
 
-test("package.mjs CLI: --manifest without --validate-only is rejected with BAD_ARGS in WBS 9.1", (t) => {
+test("package.mjs CLI: application packaging rejects unknown features before building", (t) => {
   const root = mkdtempSync(join(tmpdir(), "aip-manifest-test-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
 
@@ -488,7 +488,7 @@ test("package.mjs CLI: --manifest without --validate-only is rejected with BAD_A
   const res1 = runCommand(process.execPath, [packageScript, "--manifest", manifestPath]);
   assert.equal(res1.status, 1);
   const err1 = JSON.parse(res1.stderr);
-  assert.equal(err1.code, "BAD_ARGS");
+  assert.equal(err1.code, "UNSUPPORTED_FEATURE");
 
   // --validate-only without --manifest
   const res2 = runCommand(process.execPath, [packageScript, "--validate-only"]);

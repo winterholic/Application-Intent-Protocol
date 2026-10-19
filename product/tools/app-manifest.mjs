@@ -292,6 +292,24 @@ export async function loadAndValidateAppManifest(targetPath) {
       normalizedEntrypoints.push(ep.split(sep).join("/"));
     }
 
+    // Helpers imported by entrypoints are runtime inputs too. Track the declared
+    // directory, with the same lexical/canonical boundary rules as entrypoints.
+    const collectExtensions = async (directoryPath, ancestry = new Set()) => {
+      const info = await resolveSafePath(appDir, relative(appDir, directoryPath), "extensions");
+      if (!info.exists) fail("EXTENSION_MISSING", "확장 입력이 사라졌습니다", "extensions");
+      if (info.isFile) {
+        filesToTrack.push({ role: "extension", path: info.rel.split(sep).join("/"), sha256: await fileDigest(info.resolved) });
+      } else if (info.isDirectory) {
+        const canonical = await realpath(directoryPath);
+        if (ancestry.has(canonical)) return;
+        const next = new Set([...ancestry, canonical]);
+        for (const entry of (await readdir(directoryPath)).sort()) await collectExtensions(join(directoryPath, entry), next);
+      } else {
+        fail("DISALLOWED_FILE", "확장에 특수 파일을 포함할 수 없습니다", "security");
+      }
+    };
+    await collectExtensions(dirInfo.resolved);
+
     normalizedExtensions = {
       directory: dirInfo.rel.split(sep).join("/"),
       language,

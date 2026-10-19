@@ -1,5 +1,13 @@
 # 제품 통합 검증 (2026-10-17)
 
+## WBS 9.2 앱별 release 패키징 (2026-10-19, macOS arm64, Codex 자체 검증)
+
+- `node --test product/tests/app-package.test.mjs product/tests/app-manifest.test.mjs product/tests/package-boundaries.test.mjs product/tests/sdk-package.test.mjs`: 58 passed, 0 failed. 앱 두 종류의 원본 제거 후 무결성, 보조 확장 파일 포함, target/feature·lockfile·경로·credential·출력 보존, 동시 입력 변경 및 실패 정리를 검사했다.
+- `node --test product/tests/app-package-e2e.test.mjs`: 1 passed, 0 failed. 실제 host release 엔진으로 Event/Review 두 앱을 패키징하고, 출력 이동 및 원본 앱 삭제 후 체크섬·실제 CLI check/gen·tarball 설치·엄격한 NodeNext binding 검사·SDK import를 각각 실행했다. Python 확장도 번들 입력으로 포함했지만 이 검사는 worker 실행·HTTP·DB E2E가 아니다.
+- 추가한 실패 테스트에서 내장 `.aip` 예제 변경을 감지하지 못하는 경우를 재현하고 source snapshot 범위를 보완했다. SDK 검사의 전역 npm cache 쓰기 거부는 이 Codex sandbox의 `EPERM`이며, 소유 임시 cache로 바꿔 실행·회수했다. 호스트 전체의 npm 장애로 판단하지 않았다.
+- `App packages` workflow는 Ubuntu의 release 이동 검증을 추가한다. 이 로컬 기록 시점에는 원격 CI를 아직 실행하지 않았다. 운영 배포·기동 자동화(9.3)와 Docker(9.4), HTTP/worker/DB 패키지 검증(9.5)은 이 결과에 포함하지 않는다.
+- SDK scratch/npm cache와 테스트 앱·번들은 각 테스트의 `finally`/종료 hook으로 제거한다. 별도 clone/worktree는 만들지 않았고 기존 엔진 `target` 한 곳을 재사용했다.
+
 운영 IdP·TLS reverse proxy 및 실제 broker(Kafka, RabbitMQ)·S3 호환 object storage(MinIO) 연동의 로컬 컨테이너 기반 종단간(E2E) smoke 검증 기록이다. 원 작업(커밋 `cbaa401`), 독립 교차 검증(`결과.md`), 그리고 후속 IdP 원인 진단(`idp-server-config-diagnostic.md`)의 실행 결과를 시점·환경·커밋별로 병기한다. CA 코드와 문서 보완은 독립 검증 PASS다. IdP 전체 smoke는 독립 교차 검증에서 FAILED(17개 중 3개 실행, 14개 미실행)였고, 아래 WBS 8.x 통합 회차에서 원래 설정으로 17 passed였다. 후자는 자체 실행이며 독립 검증은 남아 있다. (작업 기준 부모 커밋: `4e8e2126a91bd15e21afd870fe5373c0ccba9adb`).
 
 ## WBS 8.x 통합 회차 (2026-10-17, Claude 구현·통합 / GPT 독립 검증 미실시)

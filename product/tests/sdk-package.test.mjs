@@ -23,6 +23,7 @@ function run(program, args, options = {}) {
     encoding: "utf8",
     timeout: options.timeout ?? 20_000,
     maxBuffer: 4 * 1024 * 1024,
+    env: { ...process.env, npm_config_cache: join(suiteRoot, "npm-cache") },
     ...options,
   });
 }
