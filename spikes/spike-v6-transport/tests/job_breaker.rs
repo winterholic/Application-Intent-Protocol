@@ -240,7 +240,8 @@ async fn refused_connection_can_redrive_the_same_run_but_a_lost_reply_keeps_an_u
     use aip_execution::integrations::{Broker, EndpointConfig};
     use std::sync::atomic::{AtomicUsize, Ordering};
     let _gate = SCHEMA_GATE.lock().await;
-    let schema = format!("aip_job_connect_{}", std::process::id());
+    // sqlgen has one immutable namespace per process; SCHEMA_GATE and cleanup isolate each test's data.
+    let schema = format!("aip_job_breaker_{}", std::process::id());
     sqlgen::try_set_schema(&schema).unwrap();
     let _cleanup = SchemaCleanup(schema.clone());
     let facts = load_str(include_str!("fixtures/job-breaker.aip"), Form::A).unwrap().execution;
