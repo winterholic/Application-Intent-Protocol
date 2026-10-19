@@ -13,6 +13,7 @@ import tempfile
 
 HERE = pathlib.Path(__file__).resolve().parent
 APP = HERE.parent / "app.aip"
+BINARY = os.environ.get("AIP_BIN", str(HERE.parent.parent.parent / "target" / "debug" / "aip"))
 
 # (label, text to find, replacement, test that must fail)
 MUTATIONS = [
@@ -34,6 +35,24 @@ MUTATIONS = [
      "test_secret_cannot_be_created_in_someone_elses_name"),
     ("org member reads any project", "rows read when canReadProject(actor, this)", "rows read when true",
      "test_no_access_role_reads_nothing"),
+    ("plain folder delete ignores contents", "from parent != null and folderIsEmpty(this)", "from parent != null",
+     "test_plain_delete_refuses_a_folder_with_secrets_or_subfolders"),
+    ("root folder deletable", "from parent != null and folderIsEmpty(this)", "from folderIsEmpty(this)",
+     "test_root_folder_cannot_be_deleted"),
+    ("force delete over subfolders", "from parent != null and not (hasSubfolder(this))", "from parent != null",
+     "test_force_delete_refuses_a_folder_that_still_has_subfolders"),
+    ("force delete keeps secrets", "    delete many Secret maxRows 1000 where folder = this.id\n", "",
+     "test_force_delete_removes_the_folder_and_its_secrets_and_nothing_else"),
+    ("viewer may force delete", "transition forceDelete {\n    allow canWriteProject(actor, project)", "transition forceDelete {\n    allow canReadProject(actor, project)",
+     "test_force_delete_removes_the_folder_and_its_secrets_and_nothing_else"),
+    ("folder in another project", "parent.project = project and parent.env = env", "parent.env = env",
+     "test_folder_must_hang_under_a_parent_of_the_same_project_and_environment"),
+    ("folder in another environment", "parent.project = project and parent.env = env", "parent.project = project",
+     "test_folder_must_hang_under_a_parent_of_the_same_project_and_environment"),
+    ("user-made root folder", "parent != null and parent.project = project and parent.env = env", "(parent = null or (parent.project = project and parent.env = env))",
+     "test_folder_must_hang_under_a_parent_of_the_same_project_and_environment"),
+    ("duplicate folder names", "  unique parent, name\n", "",
+     "test_folder_name_is_unique_under_one_parent_only"),
 ]
 
 
@@ -59,6 +78,11 @@ def main():
             mutated = pathlib.Path(tmp) / "app.aip"
             mutated.write_text(source.replace(old, new), encoding="utf-8")
             env = dict(os.environ, INFISICAL_APP_AIP=str(mutated))
+            if '"ok":true' not in subprocess.run([BINARY, "service", "check", str(mutated)], capture_output=True, text=True).stdout:
+                # a definition the product rejects makes every test error out, which is not a caught mutation
+                print(f"BROKEN   {label}: the mutated definition does not pass `aip service check`")
+                survivors += 1
+                continue
             run = subprocess.run([sys.executable, "-m", "unittest", f"test_live_db.LiveDbTests.{test}"],
                                  cwd=HERE, env=env, capture_output=True, text=True)
         if run.returncode == 0:

@@ -119,20 +119,44 @@ resource ProjectMembership {
   }
 }
 
-// Every environment has a root folder with path "/", exactly like upstream. Secrets always live in a folder, so the
-// (folder, key) uniqueness below has no NULL hole.
+// Folders form a tree like upstream secret_folders (parentId, name; backend/src/db/migrations/20231218092441_secret-folder.ts).
+// Every environment has one root folder (parent null, name "root", created with the environment, here by the operator
+// seed), so a secret always lives in a folder and the (folder, key) uniqueness below has no NULL hole. Users create
+// only non-root folders, in the same project and environment as their parent.
+predicate hasSubfolder(f: Folder?) = f != null and exists Folder where parent = f
+predicate folderIsEmpty(f: Folder?) = f != null and not (exists Secret where folder = f) and not (hasSubfolder(f))
+
 resource Folder {
-  fields { id: Id; project: Project; path: Text(1..500); env: Text(1..64) }
-  unique project, path, env
+  fields { id: Id; project: Project; env: Text(1..64); parent: Folder?; name: Text(1..255) }
+  unique parent, name
   rows read when canReadProject(actor, project)
   expose create {
-    allow canWriteProject(actor, project)
-    fields project, path, env
+    allow canWriteProject(actor, project) and parent != null and parent.project = project and parent.env = env
+    fields project, env, parent, name
   }
+  // Upstream deleteFolder without forceDelete refuses a folder that holds secrets or subfolders
+  // (secret-folder-service.ts:741-870, the `!forceDelete` guard) and never deletes the root, which has no parent
+  // to be looked up under.
+  transition delete {
+    allow canWriteProject(actor, project)
+    from parent != null and folderIsEmpty(this)
+    delete
+  }
+  expose apply delete { target id; bulk maxRows 1 }
+  // forceDelete = true: upstream deletes the folder and the database cascades to its secrets and subfolders
+  // (ON DELETE CASCADE on secrets_v2.folderId and secret_folders.parentId). The secrets go in the same transaction.
+  // A folder that still has subfolders is refused: the product has no two-hop delete effect (G14).
+  transition forceDelete {
+    allow canWriteProject(actor, project)
+    from parent != null and not (hasSubfolder(this))
+    delete
+    delete many Secret maxRows 1000 where folder = this.id
+  }
+  expose apply forceDelete { target id; bulk maxRows 1 }
   expose read {
-    select id, project, path, env
-    filter id.eq, project.eq, path.prefix, env.eq
-    sort path, id
+    select id, project, env, parent, name
+    filter id.eq, project.eq, env.eq, parent.eq, name.eq, name.prefix
+    sort name, id
     traverse project { select id, slug }
     budget { rows 1000; depth 2; cost 3000; deadline 2s; offset 2000 }
   }
@@ -172,7 +196,7 @@ resource Secret {
     select id, folder, key, owner, remindedAt
     filter id.eq, folder.eq, key.eq, key.prefix, owner.eq
     sort key, id
-    traverse folder { select id, path, env }
+    traverse folder { select id, name, env }
     budget { rows 500; depth 2; cost 3000; deadline 2s; offset 2000 }
   }
 }

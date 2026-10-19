@@ -60,7 +60,7 @@ bash porting/infisical/run-baseline.sh
 
 ```sh
 cd porting/infisical/tests
-python3 -m unittest test_live_db -v        # 20건. AIP_TEST_DATABASE_URL이 없으면 skip
+python3 -m unittest test_live_db -v        # 29건. AIP_TEST_DATABASE_URL이 없으면 skip
 python3 mutation_check.py                  # 규칙을 하나씩 풀면 해당 시험이 실패하는지 확인
 python3 -m unittest legacy_repro -v        # 수정 전 정의(53b1537)의 결함 10건 재현. 모두 FAIL이 정상
 python3 -m unittest test_identity_jwt -v   # DB 없이 7건
@@ -73,6 +73,7 @@ python3 -m unittest test_identity_jwt -v   # DB 없이 7건
 증명하는 것(실제 PostgreSQL 17, 이 정의, 기본 빌드 binary):
 - 조직·프로젝트·폴더·시크릿의 읽기 정책과 쓰기 권한(admin, member, viewer, no-access, 조직 admin 암묵 권한, 다른 조직 격리).
 - 루트 폴더에서도 시크릿 이름 유일(다른 폴더는 같은 이름 허용), 물리 삭제 뒤 같은 이름 재생성, 일괄 삭제, 삭제 감사.
+- 폴더 트리: 같은 project·env의 부모 아래에서만 생성, 부모 아래 이름 유일, 빈 폴더 삭제, 내용이 있으면 삭제 거부, `forceDelete`가 폴더와 시크릿 1000개까지 지움(하위 폴더가 있으면 거부), 루트 삭제 거부.
 - 조직 생성자의 첫 admin 좌석 확보, 사용자 목록의 조직 범위 가시성.
 - 서버 job 1종(`secretReminder`)의 enqueue 권한 검사, 실행, outbox 알림, 감사 행.
 

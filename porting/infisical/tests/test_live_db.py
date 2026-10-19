@@ -51,7 +51,7 @@ class LiveDbTests(unittest.TestCase):
 
     # -- roles -------------------------------------------------------------------------------------------------
     def test_viewer_cannot_create_folder_or_secret(self):
-        folder = lh.create(self.c[CAROL], "Folder", {"project": "1", "path": "/viewer", "env": "dev"})
+        folder = lh.create(self.c[CAROL], "Folder", {"project": "1", "env": "dev", "parent": "1", "name": "viewer"})
         self.assertFalse(folder.get("ok"), folder)
         made = self.create_secret(CAROL, "VIEWER_NAME")
         self.assertFalse(made.get("ok"), made)
@@ -67,7 +67,7 @@ class LiveDbTests(unittest.TestCase):
         self.assertEqual(self.rows_named("VIEWER_READS"), 1)
 
     def test_member_can_create_folder_and_secret(self):
-        folder = lh.create(self.c[BOB], "Folder", {"project": "1", "path": "/member-made", "env": "dev"})
+        folder = lh.create(self.c[BOB], "Folder", {"project": "1", "env": "dev", "parent": "1", "name": "member-made"})
         self.assertTrue(folder.get("ok"), folder)
         made = self.create_secret(BOB, "MEMBER_KEY", folder=folder["created"][0]["id"])
         self.assertTrue(made.get("ok"), made)
@@ -103,7 +103,7 @@ class LiveDbTests(unittest.TestCase):
         self.assertEqual(self.rows_named("ROOT_DUP"), 1)
 
     def test_same_name_is_allowed_in_another_folder(self):
-        folder = lh.create(self.c[BOB], "Folder", {"project": "1", "path": "/other", "env": "dev"})
+        folder = lh.create(self.c[BOB], "Folder", {"project": "1", "env": "dev", "parent": "1", "name": "other"})
         self.assertTrue(folder.get("ok"), folder)
         self.assertTrue(self.create_secret(BOB, "SAME_NAME").get("ok"))
         self.assertTrue(self.create_secret(BOB, "SAME_NAME", folder=folder["created"][0]["id"]).get("ok"))
@@ -144,6 +144,123 @@ class LiveDbTests(unittest.TestCase):
         self.assertEqual((row["transition"], row["via"], row["actorId"]), ("delete", "apply", 2))
         self.assertEqual(row["before"]["key"], "AUDITED_DELETE")
         self.assertIsNone(row["after"])
+
+    # -- folders (upstream: secret_folders is a tree, root has parentId null; deleteFolder in secret-folder-service.ts) --
+    def make_folder(self, who, name, parent="1", project="1", env="dev", key=None):
+        return lh.create(self.c[who], "Folder", {"project": project, "env": env, "parent": parent, "name": name}, key=key)
+
+    def folder_rows(self, folder_id):
+        return int(self.dep.sql(f"SELECT count(*) FROM :schema.folder WHERE id = {folder_id}").strip())
+
+    def secret_rows_in(self, folder_id):
+        return int(self.dep.sql(f"SELECT count(*) FROM :schema.secret WHERE folder_id = {folder_id}").strip())
+
+    def test_folder_must_hang_under_a_parent_of_the_same_project_and_environment(self):
+        no_parent = lh.create(self.c[BOB], "Folder", {"project": "1", "env": "dev", "name": "FAKE_ROOT"})
+        self.assertEqual(no_parent.get("code"), "WIRE.FORBIDDEN", "a root folder is created with its environment, never by a user")
+        wrong_env = self.make_folder(BOB, "WRONG_ENV", parent="1", env="prod")
+        self.assertEqual(wrong_env.get("code"), "WIRE.FORBIDDEN", wrong_env)
+        # a parent the caller cannot read does not exist for them (row policy)
+        hidden = self.make_folder(BOB, "HIDDEN_PARENT", parent="3")
+        self.assertEqual(hidden.get("code"), "WIRE.MISSING_TARGET", hidden)
+        # a parent the caller can read but that belongs to another project is refused by the create rule itself
+        second = lh.create(self.c[ALICE], "Project", {"org": "1", "name": "Second", "slug": "second-folder-test"})
+        self.assertTrue(second.get("ok"), second)
+        second_root = self.dep.sql("INSERT INTO :schema.folder (project_id, env, parent_id, name) "
+                                   f"VALUES ({second['created'][0]['id']}, 'dev', NULL, 'root') RETURNING id").strip().split()[0]
+        foreign = lh.create(self.c[ALICE], "Folder", {"project": "1", "env": "dev", "parent": second_root, "name": "FOREIGN_PARENT"})
+        self.assertEqual(foreign.get("code"), "WIRE.FORBIDDEN", foreign)
+        for name in ("FAKE_ROOT", "WRONG_ENV", "HIDDEN_PARENT", "FOREIGN_PARENT"):
+            self.assertEqual(int(self.dep.sql(f"SELECT count(*) FROM :schema.folder WHERE name = '{name}'").strip()), 0, name)
+
+    def test_folder_name_is_unique_under_one_parent_only(self):
+        first = self.make_folder(BOB, "TREE_DUP")
+        again = self.make_folder(BOB, "TREE_DUP", key="tree-dup-2")
+        self.assertTrue(first.get("ok"), first)
+        self.assertFalse(again.get("ok"), again)
+        self.assertEqual(again.get("code"), "WIRE.ALREADY_EXISTS")
+        nested = self.make_folder(BOB, "TREE_DUP", parent=first["created"][0]["id"])
+        self.assertTrue(nested.get("ok"), "the same name is fine below another parent")
+
+    def test_empty_folder_can_be_deleted_by_a_writer_and_not_by_a_viewer(self):
+        folder_id = self.make_folder(BOB, "EMPTY_ME")["created"][0]["id"]
+        denied = lh.transition(self.c[CAROL], "Folder.delete", [folder_id])
+        self.assertEqual(denied.get("code"), "WIRE.FORBIDDEN", denied)
+        self.assertEqual(self.folder_rows(folder_id), 1)
+        deleted = lh.transition(self.c[BOB], "Folder.delete", [folder_id])
+        self.assertTrue(deleted.get("ok"), deleted)
+        self.assertEqual(self.folder_rows(folder_id), 0, "the row is physically gone")
+        self.assertTrue(self.make_folder(BOB, "EMPTY_ME").get("ok"), "the name is free again")
+
+    def test_root_folder_cannot_be_deleted(self):
+        for transition in ("Folder.delete", "Folder.forceDelete"):
+            refused = lh.transition(self.c[ALICE], transition, ["2"])
+            self.assertEqual(refused.get("code"), "WIRE.INVALID_STATE", f"{transition}: {refused}")
+        self.assertEqual(self.folder_rows("2"), 1)
+
+    def test_plain_delete_refuses_a_folder_with_secrets_or_subfolders(self):
+        with_secret = self.make_folder(BOB, "HAS_SECRET")["created"][0]["id"]
+        self.assertTrue(self.create_secret(BOB, "INSIDE", folder=with_secret).get("ok"))
+        refused = lh.transition(self.c[BOB], "Folder.delete", [with_secret])
+        self.assertEqual(refused.get("code"), "WIRE.INVALID_STATE", refused)
+        self.assertEqual((self.folder_rows(with_secret), self.secret_rows_in(with_secret)), (1, 1))
+        with_child = self.make_folder(BOB, "HAS_CHILD")["created"][0]["id"]
+        child = self.make_folder(BOB, "THE_CHILD", parent=with_child)["created"][0]["id"]
+        refused = lh.transition(self.c[BOB], "Folder.delete", [with_child])
+        self.assertEqual(refused.get("code"), "WIRE.INVALID_STATE", refused)
+        self.assertEqual((self.folder_rows(with_child), self.folder_rows(child)), (1, 1))
+
+    def test_force_delete_removes_the_folder_and_its_secrets_and_nothing_else(self):
+        target = self.make_folder(BOB, "FORCE_ME")["created"][0]["id"]
+        sibling = self.make_folder(BOB, "FORCE_SIBLING")["created"][0]["id"]
+        for n in range(3):
+            self.assertTrue(self.create_secret(BOB, f"F_{n}", folder=target).get("ok"))
+        self.assertTrue(self.create_secret(BOB, "F_KEEP", folder=sibling).get("ok"))
+        denied = lh.transition(self.c[CAROL], "Folder.forceDelete", [target])
+        self.assertEqual(denied.get("code"), "WIRE.FORBIDDEN", denied)
+        self.assertEqual((self.folder_rows(target), self.secret_rows_in(target)), (1, 3))
+        done = lh.transition(self.c[BOB], "Folder.forceDelete", [target], key="force-me")
+        self.assertTrue(done.get("ok"), done)
+        self.assertEqual((self.folder_rows(target), self.secret_rows_in(target)), (0, 0))
+        self.assertEqual((self.folder_rows(sibling), self.secret_rows_in(sibling)), (1, 1))
+
+    def test_force_delete_audits_the_folder_removal(self):
+        target = self.make_folder(BOB, "FORCE_AUDIT")["created"][0]["id"]
+        self.assertTrue(lh.transition(self.c[BOB], "Folder.forceDelete", [target], key="force-audit").get("ok"))
+        listing = self.dep.cli("audit", "--config", str(self.dep.work / "service.json"), "list",
+                               "--resource", "Folder", "--target-id", target)
+        rows = [r for r in listing["audit"] if r["requestKey"] == "force-audit"]
+        self.assertEqual(len(rows), 1, listing)
+        self.assertEqual((rows[0]["transition"], rows[0]["via"], rows[0]["actorId"]), ("forceDelete", "apply", 2))
+        self.assertEqual(rows[0]["before"]["name"], "FORCE_AUDIT")
+        self.assertIsNone(rows[0]["after"])
+
+    # Upstream deletes a whole subtree through ON DELETE CASCADE on parentId and folderId. The product has no
+    # two-hop delete effect, so a folder with subfolders is refused instead of being half-deleted (INFISICAL-GAPS G14).
+    def test_force_delete_refuses_a_folder_that_still_has_subfolders(self):
+        parent = self.make_folder(BOB, "FORCE_TREE")["created"][0]["id"]
+        child = self.make_folder(BOB, "FORCE_TREE_CHILD", parent=parent)["created"][0]["id"]
+        self.assertTrue(self.create_secret(BOB, "DEEP", folder=child).get("ok"))
+        refused = lh.transition(self.c[BOB], "Folder.forceDelete", [parent])
+        self.assertEqual(refused.get("code"), "WIRE.INVALID_STATE", refused)
+        self.assertEqual((self.folder_rows(parent), self.folder_rows(child), self.secret_rows_in(child)), (1, 1, 1))
+        # bottom-up still works
+        self.assertTrue(lh.transition(self.c[BOB], "Folder.forceDelete", [child]).get("ok"))
+        self.assertTrue(lh.transition(self.c[BOB], "Folder.delete", [parent]).get("ok"))
+        self.assertEqual((self.folder_rows(parent), self.folder_rows(child)), (0, 0))
+
+    # The delete effect is capped at 1000 rows per transition; a bigger folder is refused whole, never trimmed.
+    def test_force_delete_refuses_a_folder_over_the_effect_cap_and_changes_nothing(self):
+        target = self.make_folder(BOB, "FORCE_BIG")["created"][0]["id"]
+        self.dep.sql("INSERT INTO :schema.secret (folder_id, key, owner_id) "
+                     f"SELECT {target}, 'BIG_' || g, 2 FROM generate_series(1, 1001) g")
+        refused = lh.transition(self.c[BOB], "Folder.forceDelete", [target])
+        self.assertEqual(refused.get("code"), "WIRE.EFFECT_TARGET_MISSING", refused)
+        self.assertEqual((self.folder_rows(target), self.secret_rows_in(target)), (1, 1001))
+        self.dep.sql("DELETE FROM :schema.secret WHERE key = 'BIG_1001'")
+        done = lh.transition(self.c[BOB], "Folder.forceDelete", [target], key="force-big-1000")
+        self.assertTrue(done.get("ok"), "exactly the cap still goes through")
+        self.assertEqual((self.folder_rows(target), self.secret_rows_in(target)), (0, 0))
 
     # -- users and organizations -------------------------------------------------------------------------------
     def test_non_member_sees_only_themselves(self):

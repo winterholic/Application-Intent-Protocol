@@ -22,9 +22,10 @@ INSERT INTO :schema.project (id, org_id, name, slug) OVERRIDING SYSTEM VALUE VAL
   (1, 1, 'Web', 'web'), (2, 2, 'Secret Lab', 'lab');
 INSERT INTO :schema.project_membership (user_id, project_id, role) VALUES
   (2, 1, 'MEMBER'), (3, 1, 'VIEWER'), (5, 2, 'ADMIN');
--- Root folders ("/") per environment, as upstream has.
-INSERT INTO :schema.folder (id, project_id, path, env) OVERRIDING SYSTEM VALUE VALUES
-  (1, 1, '/', 'dev'), (2, 1, '/', 'prod'), (3, 2, '/', 'dev');
+-- Root folder per environment: parent null, name "root", as upstream creates with the environment
+-- (backend/src/services/project-env/project-env-service.ts:124).
+INSERT INTO :schema.folder (id, project_id, env, parent_id, name) OVERRIDING SYSTEM VALUE VALUES
+  (1, 1, 'dev', NULL, 'root'), (2, 1, 'prod', NULL, 'root'), (3, 2, 'dev', NULL, 'root');
 SELECT setval(pg_get_serial_sequence(':schema."user"', 'id'), 100);
 SELECT setval(pg_get_serial_sequence(':schema.organization', 'id'), 100);
 SELECT setval(pg_get_serial_sequence(':schema.project', 'id'), 100);
