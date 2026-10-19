@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {generateKeyPairSync, sign, randomUUID} from 'node:crypto';
+import {createHash, generateKeyPairSync, sign, randomUUID} from 'node:crypto';
 import {cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
@@ -9,6 +9,7 @@ import {createInterface} from 'node:readline';
 import {pathToFileURL} from 'node:url';
 import {spawn, spawnSync} from 'node:child_process';
 import {GROUPS_SQL, dbUrl, startFixture} from './harness.mjs';
+import {mailpitUrl, reserveRefusedPort, stopOwnedProcess} from './mail-fixture.mjs';
 
 // 7.5.3 F14: account mail jobs through `aip service serve` with the real worker
 // network isolation. The worker never opens a socket; delivery is the declared
@@ -17,7 +18,7 @@ const track = resolve(new URL('..', import.meta.url).pathname);
 const root = resolve(track, '../..');
 const binary = process.env.AIP_BINARY || join(root, 'target/debug/aip');
 const file = join(track, 'app.aip');
-const mailpit = process.env.AIP_FLASKBB_TEST_MAILPIT_URL || 'http://127.0.0.1:55473';
+const mailpit = mailpitUrl();
 const b64 = value => Buffer.from(JSON.stringify(value)).toString('base64url');
 
 test('FlaskBB account mail jobs deliver through the declared HTTP integration under worker network isolation', {timeout: 120000}, async () => {
@@ -174,20 +175,20 @@ test('FlaskBB account mail jobs deliver through the declared HTTP integration un
     console.error(error);
     throw error;
   } finally {
-    if (server && !server.closed) {
-      const closed = once(server, 'close');
-      if (server.exitCode === null && server.signalCode === null) server.kill('SIGKILL');
-      await closed;
+    try {await stopOwnedProcess(server);}
+    finally {
+      const infra=`aip_infra_${createHash('sha256').update(schema).digest('hex').slice(0,52)}`;
+      try {sql(`DROP SCHEMA IF EXISTS "${schema}" CASCADE; DROP SCHEMA IF EXISTS "${infra}" CASCADE;`);}
+      finally {rmSync(temp, {recursive: true, force: true});}
     }
-    sql(`DROP SCHEMA IF EXISTS "${schema}" CASCADE;`);
-    rmSync(temp, {recursive: true, force: true});
   }
 });
 
-test('FlaskBB mail provider outage dead-letters the job; redrive is refused as unconfirmed and a new job delivers once', {timeout: 120000}, async () => {
+test('FlaskBB connect-stage outage preserves the run and redrives it once after provider recovery', {timeout: 120000, skip: process.platform!=='linux'?'Linux bound-port outage fixture':false}, async () => {
   const runTag = randomUUID().replaceAll('-', '').slice(0, 12);
   const aliceMail = `alice-${runTag}@example.test`;
-  const dead = 'http://127.0.0.1:55499';
+  const reservation = await reserveRefusedPort();
+  const dead = reservation.url;
   const workers = url => ({
     directory: join(track, 'mail'),
     language: 'python',
@@ -203,12 +204,12 @@ test('FlaskBB mail provider outage dead-letters the job; redrive is refused as u
       sql(GROUPS_SQL(schema));
       sql(`INSERT INTO ${q}.user (id,username,email,date_joined,lastseen,primary_group_id,activated,language) VALUES (2,'member-alice','${aliceMail}',now(),now(),2,true,'en');`);
     },
-  });
+  }).catch(async error => {await reservation.close();throw error;});
   try {
     const alice = fx.client('alice-sub');
     const input = {email: aliceMail, username: 'member-alice', token: `payload-${runTag}`};
     const receipt = await alice.jobs.enqueue('sendActivationEmail', input, {key: `dlq-${runTag}`});
-    let receiptId = receipt.id;
+    const receiptId = receipt.id;
     const settled = async client => {
       let status;
       for (let attempt = 0; attempt < 300; attempt++) {
@@ -229,25 +230,22 @@ test('FlaskBB mail provider outage dead-letters the job; redrive is refused as u
     assert.deepEqual(listed.jobs.map(job => job.id), [receipt.id]);
     assert.ok(!JSON.stringify(listed).includes(`payload-${runTag}`), 'job payloads are not exposed by the listing');
 
-    // The provider comes back (config now points at Mailpit). A transport failure leaves the effect
-    // unconfirmed, so the platform refuses to redrive the same run (it cannot know the provider saw nothing).
+    // The broker classified the connect-stage failure as not sent and removed the pending
+    // intent. Restoring the provider must allow the original run to resume with its original key.
     const config = JSON.parse(readFileSync(fx.config, 'utf8'));
     config.workers = workers(mailpit);
     writeFileSync(fx.config, JSON.stringify(config));
     await fx.restart(file);
-    const refused = spawnSync(binary, ['service', 'jobs', '--config', fx.config, 'retry', '--id', receipt.id], {cwd: root, env: {...process.env, AIP_FLASKBB_DATABASE: dbUrl}, encoding: 'utf8'});
-    assert.notEqual(refused.status, 0);
-    assert.equal(JSON.parse(refused.stdout || refused.stderr).code, 'WIRE.EFFECT_UNKNOWN', `${refused.stdout}${refused.stderr}`);
-    assert.equal((await inbox()).length, 0, 'a refused redrive sends nothing');
-
-    // Operator procedure from OPERATIONS.md: confirm with the provider (nothing arrived), then enqueue a new job.
+    const resumed = JSON.parse(fx.run(binary, ['service', 'jobs', '--config', fx.config, 'retry', '--id', receipt.id]));
+    assert.equal(resumed.ok, true, JSON.stringify(resumed));
     const second = fx.client('alice-sub');
-    const fresh = await second.jobs.enqueue('sendActivationEmail', input, {key: `dlq-${runTag}-again`});
-    receiptId = fresh.id;
     status = await settled(second);
     assert.equal(status.status, 'SUCCEEDED', JSON.stringify(status));
-    assert.equal((await inbox()).length, 1, 'the new job delivers exactly one mail');
+    assert.equal((await inbox()).length, 1, 'the same run delivers exactly one mail after recovery');
+    const replay = await second.jobs.enqueue('sendActivationEmail', input, {key: `dlq-${runTag}`});
+    assert.equal(replay.id, receipt.id, 'enqueue replay must keep the original run');
+    assert.equal((await inbox()).length, 1, 'replaying the accepted enqueue key does not duplicate mail');
   } finally {
-    await fx.stop();
+    try {await fx.stop();}finally {await reservation.close();}
   }
 });

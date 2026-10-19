@@ -3,6 +3,7 @@
 // The database must be explicitly supplied through the main isolated-test DSN guard.
 import {createHash, generateKeyPairSync, sign, randomUUID} from 'node:crypto';
 import {requireTestDatabase} from '../../../product/test-support/postgres-guard.mjs';
+import {stopOwnedProcess} from './mail-fixture.mjs';
 import {mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
@@ -57,15 +58,10 @@ export async function startFixture({prefix = 'aip-flaskbb-test-', seed, actors =
   const sdkRoot = join(temp, 'sdk');
   let server;
   const stop = async () => {
-    if (server && !server.closed) {
-      const closed = once(server, 'close');
-      if (server.exitCode === null && server.signalCode === null) server.kill('SIGKILL');
-      await closed;
-    }
+    await stopOwnedProcess(server);
     const infra = `aip_infra_${createHash('sha256').update(schema).digest('hex').slice(0, 52)}`;
     try { sql(`DROP SCHEMA IF EXISTS "${schema}" CASCADE; DROP SCHEMA IF EXISTS "${infra}" CASCADE;`); }
-    catch { console.error('FlaskBB fixture cleanup failed for its owned schemas'); }
-    rmSync(temp, {recursive: true, force: true});
+    finally { rmSync(temp, {recursive: true, force: true}); }
   };
   try {
     const {publicKey, privateKey} = generateKeyPairSync('rsa', {modulusLength: 2048});
@@ -101,11 +97,7 @@ export async function startFixture({prefix = 'aip-flaskbb-test-', seed, actors =
       operations: section('operationDescriptors'),
     };
     const killServer = async () => {
-      if (server && !server.closed) {
-        const closed = once(server, 'close');
-        if (server.exitCode === null && server.signalCode === null) server.kill('SIGKILL');
-        await closed;
-      }
+      await stopOwnedProcess(server);
       server = undefined;
     };
     const start = async file => {

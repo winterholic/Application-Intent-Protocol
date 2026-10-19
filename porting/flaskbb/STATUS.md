@@ -2,7 +2,15 @@
 
 ## 2026-10-19 main 통합 후 독립 검증
 
-`4b8631d`에 `unique user, shared_id` 선언이 들어갔지만 check와 Python SDK 검사만으로 7.5.5 전체를 완료할 수 없다. fixture의 DB fallback을 제거하고 main의 strict guard를 재사용했다. DSN 누락·기본 포트/DB·PGSERVICE·alias 불일치의 로컬 음성 대조·명시적 DSN 양성 대조·독립 suite import 차단 3개가 통과했다. 두 mailbox 생성의 동시 경합·중복 거부·정상 양방향 메시지는 Linux CI에서 재검증한다. 기존 중복의 비파괴적 처리 절차는 [README](README.md)에 있으며, 전용 legacy fixture는 채택과 UNIQUE 생성 실패가 두 행을 보존하는지 검사한다. 이 DB 증분들은 CI 대기이고 전체 F01–F17 parity 완료가 아니다.
+`4b8631d`에 `unique user, shared_id` 선언이 들어갔지만 check와 Python SDK 검사만으로 7.5.5 전체를 완료할 수 없다. fixture의 DB fallback을 제거하고 main의 strict guard를 재사용했다. DSN 누락·기본 포트/DB·PGSERVICE·alias 불일치의 로컬 음성 대조·명시적 DSN 양성 대조·독립 suite import 차단 3개가 통과했다. 두 mailbox 생성의 동시 경합·중복 거부·정상 양방향 메시지는 Linux CI에서 재검증한다. 기존 중복의 비파괴적 처리 절차는 [README](README.md)에 있으며, 전용 legacy fixture는 채택과 UNIQUE 생성 실패가 두 행을 보존하는지 검사한다. 이 DB 증분들은 main `80f1fd9` Linux worker CI [39233091978](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39233091978)에서 Node 4개와 legacy 보존 1개가 통과했다. 같은 SHA의 전체 Verify는 아직 진행 중이며 전체 F01–F17 parity 완료가 아니다.
+
+## 2026-10-19 메일 복구 시험 정비 — Linux 통합 실행 대기
+
+기존 닫힌 고정 포트와 UNKNOWN 기대값은 현재 core 동작에 맞지 않았다. 전송 전 연결 실패는 같은 run·key를 재처리하고, 공급자 수신 여부가 불명인 실패는 재처리를 거부한다. 전용 Mailpit을 Linux worker CI 서비스로 두고, 장애 포트는 helper가 bind한 채 소유한다. local Codex/macOS command 환경에서는 이 bound-port 연결이 timeout되어 장애 시험을 Linux 전용으로 제한했다. 이를 host·운영 환경 장애로 일반화하지 않는다.
+
+명시적 Mailpit URL·DB guard·소유 프로세스의 SIGTERM 및 SIGKILL fallback 검사는 로컬 6 passed/1 Linux-only skipped다. 두 실제 메일 통합 시험은 새 CI 실행 전까지 미검증이다. fixture 종료 때 앱 schema·파생 infra schema·소유 임시 폴더를 정리한다. 검색의 Whoosh 토큰화·순위 동등성과 운영자 UNKNOWN 판정 명령은 여전히 미구현이다.
+
+아래 10-18 후속 Run은 당시 실행 기록이다. 그 절의 DB fallback·고정 장애 포트·연결 거부 UNKNOWN 설명은 현재 규칙으로 재사용하지 않는다. 현재 DB는 `AIP_TEST_DATABASE_URL`을 필수로 받고 legacy alias는 같은 값일 때만 허용한다.
 
 ## 고정 기준
 

@@ -28,6 +28,7 @@ jobs:
     env:
       AIP_TEST_DATABASE_URL: host=127.0.0.1 port=5433 dbname=aip_test_ci user=runner
       AIP_TEST_ADMIN_URL: host=127.0.0.1 port=5433 dbname=postgres user=runner
+      AIP_FLASKBB_TEST_MAILPIT_URL: http://127.0.0.1:55473
     services:
       postgres:
         image: postgres:17
@@ -42,6 +43,10 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      mailpit:
+        image: axllent/mailpit:v1.31.6
+        ports:
+          - '127.0.0.1:55473:8025'
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -88,6 +93,11 @@ jobs:
         run: cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --locked --target-dir target --test job_retry --test job_breaker --test triggers --test outbox --test otlp --test encryption_gate --test bundle_http
       - name: Run installed product SDK smoke with Node and Python workers
         run: node --test product/tests/service-smoke.test.mjs
+      - name: Verify isolated FlaskBB mail delivery and connect-stage recovery
+        run: |
+          curl --fail --silent --show-error --retry 10 --retry-connrefused --retry-delay 1 --max-time 5 "$AIP_FLASKBB_TEST_MAILPIT_URL/api/v1/info" >/dev/null
+          node --test porting/flaskbb/tests/mail-fixture.test.mjs
+          node --test porting/flaskbb/tests/mail-jobs.test.mjs
       - name: Verify FlaskBB fixture guard and mailbox uniqueness
         run: |
           node --test porting/flaskbb/tests/fixture-env.test.mjs porting/flaskbb/tests/conversations-security.test.mjs

@@ -12,7 +12,7 @@ AIP: `aip service <cmd>` (product path). 2026-10-18 후속 실행에서 `cli.tes
 | `flaskbb db` (alembic) | 마이그레이션 | `service migrate`(계획) / `--apply <digest>` | 실행됨: 무변경 계획, Safe 필드 추가 계획, 미승인 digest 거부, 적용 뒤 행 보존 |
 | `flaskbb upgrade` | 코드/데이터 업그레이드 | `service migrate` + 배포 artifact | 실행 미실행 |
 | `flaskbb users new/change/delete` | 사용자 생성/수정/삭제 | `service principal bind/revoke` + `User.adminUpdateUser`/`moderatorEditUser`; User 물리 삭제 전이 없음 | bind·revoke 실행됨, 삭제는 미선언 |
-| `flaskbb celery` | 비동기 worker 기동 | serve 내장 durable jobs + `service jobs list/retry` | 실행됨(mail-jobs). retry는 미확정 효과면 거부(G-2) |
+| `flaskbb celery` | 비동기 worker 기동 | serve 내장 durable jobs + `service jobs list/retry` | 기존 실행 근거 있음. 연결 전 실패의 같은 run retry는 Linux CI 재검증 대기; 미확정 효과는 계속 거부(G-2) |
 | `flaskbb shell` | 앱 컨텍스트 shell | `service audit list`/`service jobs list` 조회 | 실행됨. audit는 전이만 기록, create는 기록 없음 |
 | `flaskbb urls` | route 목록 | `service gen` 바인딩 + INVENTORY route map | `gen` 실행됨 (지문 기록) |
 | `flaskbb makeconfig` | 설정 생성 | service.json + env 문서화 | 문서만 |
