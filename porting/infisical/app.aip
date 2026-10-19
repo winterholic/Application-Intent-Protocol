@@ -138,58 +138,41 @@ resource Folder {
   }
 }
 
-// A secret NAME inside a folder. It is permanent (the product dialect has no row delete and no partial unique
-// index, G10); the live/deleted lifecycle sits on Secret and is capped at one live row per name by a limit.
-resource SecretKey {
-  fields { id: Id; folder: Folder; key: Text(1..200) }
+// One shared secret: a name in a folder. Upstream keeps the same shape in secrets_v2 and enforces one shared secret
+// per (key, folder) with the partial unique index uq_secrets_v2_key_folder_id_shared
+// (backend/src/db/migrations/20260623144551_secret-folder-unique-index.ts), and deleteMany removes the row for real
+// (backend/src/services/secret-v2-bridge/secret-v2-bridge-dal.ts, deleteMany). Personal overrides (type = personal)
+// and the value columns are not modelled here (value: G2 in plan-docs/porting/INFISICAL-GAPS.md).
+resource Secret {
+  fields { id: Id; folder: Folder; key: Text(1..500); owner: User; remindedAt: Time? }
   unique folder, key
   rows read when canReadProject(actor, folder.project)
+  docs { summary "비밀 하나(폴더 안의 이름). 값 저장은 encrypted 수정자 제품 갭(G2)으로 선언하지 않음"; visibility internal }
   expose create {
-    allow canWriteProject(actor, folder.project)
-    fields folder, key
+    allow canWriteProject(actor, folder.project) and owner = actor
+    fields folder, key, owner
   }
-  expose read {
-    select id, folder, key
-    filter id.eq, folder.eq, key.eq, key.prefix
-    sort key, id
-    traverse folder { select id, path, env }
-    budget { rows 500; depth 2; cost 3000; deadline 2s; offset 2000 }
-  }
-}
-
-limit atMostOneLiveSecret on Secret = atMost 1 where deleted = false
-
-// One generation of a secret name. No value column (see the gap note at the top).
-resource Secret {
-  fields { id: Id; secretKey: SecretKey; owner: User; deleted: Bool; remindedAt: Time? }
-  rows read when deleted = false and canReadProject(actor, secretKey.folder.project)
-  invariant atMostOneLiveSecret per secretKey
-  docs { summary "비밀 이름의 한 세대. 값 저장은 encrypted 수정자 제품 갭(G2)으로 선언하지 않음"; visibility internal }
-  expose create {
-    allow canWriteProject(actor, secretKey.folder.project) and owner = actor and deleted = false
-    fields secretKey, owner, deleted
-  }
-  // Soft delete: the row leaves every read and the name can get a new generation.
+  // Physical delete like upstream: the row is gone and the name can be created again.
   transition delete {
-    allow canWriteProject(actor, secretKey.folder.project)
-    from deleted = false
-    to deleted = true
+    allow canWriteProject(actor, folder.project)
+    from true
+    delete
   }
   expose apply delete { target id; bulk maxRows 100 }
   // Reminder record for the owner (an outbox notification, not a delivered mail).
   transition remind {
-    allow canReadProject(actor, secretKey.folder.project)
-    from deleted = false
+    allow canReadProject(actor, folder.project)
+    from true
     to remindedAt = now
     repeat unchanged
     notify owner "secret.reminder"
   }
   expose apply remind { target id; bulk maxRows 1 }
   expose read {
-    select id, secretKey, owner, remindedAt
-    filter id.eq, secretKey.eq, owner.eq
-    sort id
-    traverse secretKey { select id, key }
+    select id, folder, key, owner, remindedAt
+    filter id.eq, folder.eq, key.eq, key.prefix, owner.eq
+    sort key, id
+    traverse folder { select id, path, env }
     budget { rows 500; depth 2; cost 3000; deadline 2s; offset 2000 }
   }
 }
@@ -202,7 +185,7 @@ resource Secret {
 operation job secretReminder {
   input { secret: Secret.Id }
   output { reminded: Int }
-  allow actor != null and exists Secret where id = input.secret and canReadProject(actor, secretKey.folder.project)
+  allow actor != null and exists Secret where id = input.secret and canReadProject(actor, folder.project)
   access read.Secret, Secret.remind
   effect managed
   deadline 30s

@@ -9,7 +9,7 @@
 
 | 후보 | 현재 판정과 다음 확인 | 우선순위·기존 WBS |
 |---|---|---|
-| 물리 삭제·참조 정리 | 제품 delete 전이는 존재한다. 파서의 `delete_effects` 회귀와 FaceReview 취소 의미를 앱별 삭제 정책·감사·FK 검증과 구분한다. 과거의 문법 부재 서술을 전체 앱 삭제 완료로 바꾸지 않는다 | 먼저 기존 증거 대조, 7.2.4·7.3·7.5 |
+| 물리 삭제·참조 정리 | 제품 delete 전이는 존재한다. 파서의 `delete_effects` 회귀와 FaceReview 취소 의미를 앱별 삭제 정책·감사·FK 검증과 구분한다. 과거의 문법 부재 서술을 전체 앱 삭제 완료로 바꾸지 않는다. Infisical은 2026-10-20에 시크릿 물리 삭제와 폴더 안 이름 유일을 원본(`secret-v2-bridge-dal.ts` `deleteMany`, 부분 유일 인덱스)과 대조해 선언·실DB 확인했다([G10](INFISICAL-GAPS.md)) | 먼저 기존 증거 대조, 7.2.4·7.3·7.5 |
 | 음수 Int 범위 | `Int(-1000..1000)` 거부를 재현 후 수정. 5형식 같은 실행 계약, 역전·overflow·unsigned 문맥 거부, operation 안전 정수 영역, 쓰기 값 양 끝/초과 검증. 아래 실행 범위 참조 | 작은 공통 결함부터 처리, 7.2.3 |
 | Bool 정렬 | 루트·1:N 정렬의 Bool 거부를 재현 후 수정. false/true·NULL·asc/desc·id 동률·cursor 값 타입과 행 정책 회귀를 추가했다. main da5817e의 Linux Verify 원시 로그에서 실제 PostgreSQL 정렬·NULL·커서·정책 검사 통과를 확인했다. 로컬 initdb의 shmget 권한 거부와는 구분한다. MySQL은 SQL·바인딩 검사이며 실DB 동작으로 합산하지 않는다 | 작은 공통 결함부터 처리, 7.5.2 |
 | 상수 기본값 | 파서는 `default database`만 지원한다. create 입력 생략·DDL/adopt·기존 행·계약 hash를 함께 정해야 한다 | 후속 계약 필요, 7.2.3·7.3·7.5.2 |

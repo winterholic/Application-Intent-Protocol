@@ -26,23 +26,7 @@
       "pass": true,
       "detail": "dan sees no project"
     },
-    "member_creates_secret_name": {
-      "pass": true,
-      "detail": {
-        "applied": [],
-        "created": [
-          {
-            "id": "1",
-            "resource": "SecretKey"
-          }
-        ],
-        "ok": true,
-        "tags": [
-          "SecretKey"
-        ]
-      }
-    },
-    "member_creates_secret_generation": {
+    "member_creates_secret": {
       "pass": true,
       "detail": {
         "applied": [],
@@ -62,9 +46,9 @@
       "pass": true,
       "detail": {
         "code": "WIRE.FORBIDDEN",
-        "msg": "`SecretKey` 생성 권한 없음",
+        "msg": "`Secret` 생성 권한 없음",
         "ok": false,
-        "requestId": "req_a09b9436a2825e9a626cf972",
+        "requestId": "req_298091b0534bd65dff96b36f",
         "retry": "never"
       }
     },
@@ -82,7 +66,7 @@
       "detail": {
         "attempt": 1,
         "error": null,
-        "id": "7378ed1d-00ac-46d9-87a5-b79206a87b7c",
+        "id": "c2e741b2-c8c8-4e22-9458-b90db4d66a39",
         "operation": "secretReminder",
         "output": null,
         "state": "SUCCEEDED"

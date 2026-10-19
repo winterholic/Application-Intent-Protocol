@@ -38,17 +38,13 @@ def main(base, fingerprint, workdir):
            dan.read({"read": "Project", "select": ["id"]}) == [], "dan sees no project")
 
     # write as member, denied as viewer
-    name = bob.bundle([{"create": "SecretKey", "values": {"folder": "1", "key": "DB_URL"}}], key="baseline-name")
-    expect("member_creates_secret_name", name.get("ok") is True, name)
-    key_id = name["created"][0]["id"]
-    gen = bob.bundle([{"create": "Secret", "values": {"secretKey": key_id, "owner": "2", "deleted": False}}],
-                     key="baseline-gen")
-    expect("member_creates_secret_generation", gen.get("ok") is True, gen)
+    gen = bob.bundle([{"create": "Secret", "values": {"folder": "1", "key": "DB_URL", "owner": "2"}}], key="baseline-secret")
+    expect("member_creates_secret", gen.get("ok") is True, gen)
     secret_id = gen["created"][0]["id"]
-    denied = carol.bundle([{"create": "SecretKey", "values": {"folder": "1", "key": "VIEWER_WROTE"}}],
+    denied = carol.bundle([{"create": "Secret", "values": {"folder": "1", "key": "VIEWER_WROTE", "owner": "3"}}],
                           key="baseline-viewer")
     expect("viewer_write_denied", denied.get("ok") is False, denied)
-    seen = carol.read({"read": "SecretKey", "select": ["id", "key"], "filter": [{"field": "key", "op": "eq", "value": "DB_URL"}]})
+    seen = carol.read({"read": "Secret", "select": ["id", "key"], "filter": [{"field": "key", "op": "eq", "value": "DB_URL"}]})
     expect("viewer_reads_secret_name", [r["key"] for r in seen] == ["DB_URL"], seen)
 
     # job: enqueue as the viewer (a reader), outbox notification recorded
@@ -62,13 +58,12 @@ def main(base, fingerprint, workdir):
         refused = getattr(error, "code", repr(error))
     expect("job_enqueue_refused_without_project_access", refused is not None, refused)
 
-    # soft delete then new generation
+    # physical delete, then the same name again
     deleted = bob.apply({"apply": "Secret.delete", "target": {"ids": [secret_id]}}, key="baseline-delete")
     expect("member_deletes_secret", deleted.get("ok") is True, deleted)
-    live = bob.read({"read": "Secret", "select": ["id"], "filter": [{"field": "secretKey", "op": "eq", "value": key_id}]})
+    live = bob.read({"read": "Secret", "select": ["id"], "filter": [{"field": "id", "op": "eq", "value": secret_id}]})
     expect("deleted_secret_not_listed", live == [], live)
-    again = bob.bundle([{"create": "Secret", "values": {"secretKey": key_id, "owner": "2", "deleted": False}}],
-                       key="baseline-regen")
+    again = bob.bundle([{"create": "Secret", "values": {"folder": "1", "key": "DB_URL", "owner": "2"}}], key="baseline-regen")
     expect("name_can_be_recreated", again.get("ok") is True, again)
 
     print(json.dumps({"base": "loopback", "results": report, "failed": failures}, indent=2, ensure_ascii=False))

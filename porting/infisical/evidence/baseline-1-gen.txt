@@ -1,1 +1,1 @@
-{"fingerprint":"a48574f19012daae083940507b95317be62d3b47c2be2b4e239b43a243da1a7b","idWire":"decimal-string-v13","ok":true}
+{"fingerprint":"66eb99e1bd134ce2307a875621a39e3c5cd15d139e70ee04177c9982d9ed08b8","idWire":"decimal-string-v13","ok":true}

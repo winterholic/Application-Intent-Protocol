@@ -17,19 +17,21 @@ APP = HERE.parent / "app.aip"
 # (label, text to find, replacement, test that must fail)
 MUTATIONS = [
     ("viewer may write", "role in (ADMIN, MEMBER))\npredicate isProjectAdmin", "role in (ADMIN, MEMBER, VIEWER))\npredicate isProjectAdmin",
-     "test_viewer_cannot_create_folder_secret_name_or_generation"),
+     "test_viewer_cannot_create_folder_or_secret"),
     ("every user visible", "rows read when this = actor or sharesOrgWith(actor, this)", "rows read when true",
      "test_non_member_sees_only_themselves"),
-    ("several live generations", "  invariant atMostOneLiveSecret per secretKey\n", "",
-     "test_only_one_live_generation_per_name"),
+    ("duplicate secret names", "  unique folder, key\n", "",
+     "test_secret_name_is_unique_in_a_folder_including_the_root"),
     ("org created in another name", "allow actor != null and createdBy = actor", "allow actor != null",
      "test_organization_cannot_be_created_in_someone_elses_name"),
-    ("job open to any user", " and exists Secret where id = input.secret and canReadProject(actor, secretKey.folder.project)", "",
+    ("job open to any user", " and exists Secret where id = input.secret and canReadProject(actor, folder.project)", "",
      "test_reminder_job_rejects_callers_without_project_access"),
     ("outsider joins project", " and isOrgMember(user, project.org)", "",
      "test_project_membership_rules"),
-    ("deleted rows stay listed", "rows read when deleted = false and canReadProject", "rows read when canReadProject",
-     "test_deleted_secret_leaves_reads_and_the_name_can_be_recreated_twice"),
+    ("viewer may delete", "transition delete {\n    allow canWriteProject(actor, folder.project)", "transition delete {\n    allow canReadProject(actor, folder.project)",
+     "test_viewer_can_read_but_not_delete"),
+    ("secret owner is free", "allow canWriteProject(actor, folder.project) and owner = actor", "allow canWriteProject(actor, folder.project)",
+     "test_secret_cannot_be_created_in_someone_elses_name"),
     ("org member reads any project", "rows read when canReadProject(actor, this)", "rows read when true",
      "test_no_access_role_reads_nothing"),
 ]
@@ -64,8 +66,10 @@ def main():
             survivors += 1
         else:
             reason = "skipped" if "skipped" in run.stderr else "caught"
+            if "has no attribute" in run.stderr or "AttributeError" in run.stderr:
+                reason = "BROKEN"  # the named test does not exist; an import error is not a caught mutation
             print(f"{reason:8} {label}: {test}")
-            if reason == "skipped":
+            if reason in ("skipped", "BROKEN"):
                 survivors += 1
     for label, old, new in EQUIVALENT:
         if source.count(old) != 1:

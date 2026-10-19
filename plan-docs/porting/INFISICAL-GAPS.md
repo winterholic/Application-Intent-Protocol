@@ -20,13 +20,31 @@
 
 설계 소유: 별도 세션의 `docs/design/13-field-encryption.md`(상태 Proposed, 창시자 승인 대기). 설계 13(`a257b8d`)은 GPT 독립 정적 리뷰에서 "현 초안 그대로 구현에 넘기지 않는다"는 판정을 받았다. P1은 blind index 회전과 unique, SKIP LOCKED 재개 누락, idempotency·job 평문 경로, HMAC 회전 뒤 재시도, 이전 binary rollback 호환성이다. 이 리뷰는 정적 검토이며 테스트·빌드·DB를 실행하지 않았으므로 실행상 고장의 증명은 아니다. 사용자 승인도 없다. 따라서 이 초안은 승인된 설계도 제품이 보증하는 기능도 아니고, 암호화에 의존하는 Infisical 포팅 항목(값·버전·회전·blind index·동기화 내용)은 **미구현·설계 미확정**으로 취급한다. 이 트랙은 그 문서를 수정하지 않는다. 문서가 인용한 `porting/infisical/app.aip:134` 등 줄 번호는 이 재작업 이후 달라졌다(`valueCiphertext`는 정의에서 제거).
 
-현재 포팅 처리: `app.aip`는 값을 선언하지 않고 머리 주석과 `docs { summary }`로 갭을 표시한다. 값 없는 Secret은 이름과 세대, 소프트 삭제만 가진다.
+현재 포팅 처리: `app.aip`는 값을 선언하지 않고 머리 주석과 `docs { summary }`로 갭을 표시한다. 값 없는 Secret은 폴더, 이름, 소유자, 리마인더 시각만 가진다.
 
-### G10. 앱 삭제 의미와 조건부 유일 제약 대조가 남음
+### G10. 삭제 의미와 이름 유일 제약: 원본과 동등하게 해소 (2026-10-20)
 
-2026-10-19 정정: 현행 제품 방언에 `transition ... { delete; ... }`가 있으므로 이전의 "물리 delete가 없다"는 서술은 철회한다. `product/SDK.md`의 "선언 없는 ... 물리 delete는 열리지 않는다"도 선언된 delete의 부재를 뜻하지 않는다. 현재 제품과 포팅의 대조는 [공통 갭 조사](PRODUCT-GAPS.md)를 따른다. Infisical 포팅의 삭제 정책·참조 정리·이름 재사용은 이 구문 지원만으로 완료되지 않는다. 이전 초안의 null 삭제 근사에서는 삭제된 시크릿이 목록에 남고 이름을 재사용할 수 없었다(**과거 재현**, `evidence/before-legacy-53b1537.txt`). 조건부 유일 제약의 표현 가능성과 실제 DB 집행은 아래 모델 및 invariant와 따로 대조한다.
+이전 판은 "제품 방언에 물리 delete와 부분 유일 제약이 없다"고 보고 `SecretKey`(영구 이름)와 `Secret`(세대, `deleted` 플래그)로 나누어 소프트 삭제와 `limit atMostOneLiveSecret`으로 근사했다. 2026-10-19에 `transition ... { delete; ... }`가 있음이 확인됐고(FlaskBB `User.purge` 등), 원본을 다시 읽으니 그 근사는 원본과 달랐다.
 
-현재 포팅 처리(우회가 아닌 방언 안의 표현): 이름(`SecretKey`)과 세대(`Secret`)를 나누고 `limit atMostOneLiveSecret ... invariant ... per secretKey`로 "이름당 살아 있는 세대 1개"를 유일 인덱스로 강제한다. 삭제된 세대는 `rows read`에서 빠진다. **재현**: `tests/test_live_db.py::test_deleted_secret_leaves_reads_and_the_name_can_be_recreated_twice`. 비용: 삭제 행이 지워지지 않고 남는다(감사에는 유리, 용량에는 불리). 제품에 부분 유일 제약이 생기면 한 resource로 합칠 수 있다.
+원본 동작(`infisical-upstream` 고정 47246bec에서 직접 읽음):
+
+| 사실 | 근거 |
+|---|---|
+| 시크릿 삭제는 `secrets_v2` 행을 실제로 지운다(`.delete().returning("*")`) | `backend/src/services/secret-v2-bridge/secret-v2-bridge-dal.ts:348-379` `deleteMany` |
+| 공유 시크릿을 지우면 같은 키의 개인(personal) 재정의 행도 함께 지운다 | 같은 함수 `:364-370` |
+| 삭제 때 해당 시크릿의 리마인더를 제거하고 폴더 커밋 "Secret Deleted"를 만든다 | `secret-v2-bridge-fns.ts:426-490` `fnSecretBulkDelete`(`removeSecretReminder` `:452`, `createCommit` `:472`) |
+| 단건 삭제는 `Delete` 액션 권한(환경·경로·이름·태그 조건 포함)을 요구한다 | `secret-v2-bridge-service.ts:923-1000` `deleteSecret`(`:985`) |
+| 같은 폴더의 공유 시크릿 이름은 유일하다. 부분 유일 인덱스 `uq_secrets_v2_key_folder_id_shared ON (key, folderId) WHERE type = 'shared'` | `backend/src/db/migrations/20260623144551_secret-folder-unique-index.ts` |
+| 키 길이는 500 | `20240730181850_secret-v2.ts:14` `t.string("key", 500)` |
+
+현재 포팅(`app.aip`): `Secret` 하나(`folder`, `key`, `owner`, `remindedAt`)에 `unique folder, key`와 `delete` 전이를 선언했다. 공유 시크릿만 다루므로 원본의 부분 인덱스와 같은 집합에 대한 유일 제약이고, 삭제는 행이 실제로 사라진다. `SecretKey`, `deleted` 필드, `limit`, `invariant`는 제거했다. **재현**(실DB, 임시 PostgreSQL 17): `tests/test_live_db.py`의 `test_secret_name_is_unique_in_a_folder_including_the_root`(중복 `WIRE.ALREADY_EXISTS`), `test_delete_removes_the_row_and_the_name_can_be_recreated_twice`(삭제 뒤 SQL로 행 0개, 3번 재생성하면 id가 모두 다름), `test_bulk_delete_removes_every_named_secret_and_no_other`, `test_delete_leaves_a_before_image_in_the_audit_log`(감사 행 1건, `before.key`, `after` null). 새 테스트는 수정 전 정의에서 12건이 실패했고(RED, 5 FAIL + 7 ERROR) 새 정의에서 20건 통과했다.
+
+아직 원본과 다른 점(미구현, 갭 또는 범위 밖):
+- 개인 재정의(`type = personal`) 행과 그 연쇄 삭제: 모델에 `type`이 없다.
+- 삭제 권한은 프로젝트 쓰기 권한(admin·member)이다. 원본은 환경·경로·이름·태그 조건이 붙은 `Delete` 액션이다(G7).
+- 폴더 커밋(PIT)·버전 행: 값과 버전이 없다(G2). 원본 `deleteMany`는 `secrets_v2`만 지운다(`:355-374`에 버전 표 접근이 없음, 판독).
+- 삭제 시 리마인더 제거는 `remindedAt`이 같은 행에 있어 자연히 따라 없어진다. 원본의 별도 리마인더 표 모델은 가져오지 않았다. 삭제된 시크릿에 대한 `secretReminder` job은 enqueue 단계의 `allow`가 거부한다(`exists Secret`).
+- 시크릿을 지운 뒤 동기화(`syncSecrets`)·웹훅은 미선언(G13).
 
 ### G11. create가 같은 트랜잭션에서 관련 행을 만들지 못한다
 
@@ -34,9 +52,9 @@
 
 현재 포팅 처리: `Organization.createdBy`를 `actor`로 강제하고, 조직의 생성자만 구성원이 0명인 조직에서 자기 자신을 admin으로 한 번 등록할 수 있게 `OrgMembership.create`의 `allow`를 구성했다(**재현**: `test_organization_creator_becomes_admin_exactly_once`). 두 요청 사이 짧은 구간이 남는다.
 
-### G12. create 결과 id를 다음 연산에 넘기는 일반 조합이 없다
+### G12. create 결과 id를 다음 연산에 넘기는 일반 조합이 없다 (시크릿 이름·세대 분리로는 해당 없음)
 
-`SecretKey`를 만든 id를 `Secret` create에 쓰려면 요청이 둘이다(`product/SDK.md` "연산 사이로 값을 넘기는 일반 조합은 없다"). 원자 묶음이 필요한 곳은 `compose`의 `item`으로 제한된다. 포팅에서는 두 요청으로 처리하며 두 요청 사이 실패 시 이름만 남는다.
+이전 판은 `SecretKey`를 만든 id를 `Secret` create에 쓰는 두 요청 구조를 이 갭의 예로 들었다. 2026-10-20에 두 resource를 하나로 합쳐 시크릿 생성은 한 요청이다. 갭 자체(`product/SDK.md` "연산 사이로 값을 넘기는 일반 조합은 없다")는 제품에 남아 있으나 이 포팅에서 당장 쓰는 곳은 없다.
 
 ## 이전에 갭으로 적었으나 분류를 바꾼 것
 

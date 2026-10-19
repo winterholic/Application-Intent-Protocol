@@ -20,7 +20,7 @@
 | 원본 기능 | AIP 포팅 처리 | 상태 |
 |---|---|---|
 | 이메일/비밀번호 로그인, 비밀번호 해시, 실패 잠금, captcha | AIP 밖의 IdP가 담당. 자체 구현하지 않는다 | 포팅 대상 아님(경계 결정). 대체 IdP 선택은 사용자 몫 |
-| 토큰 발급, refresh, 로그아웃 | IdP 담당. AIP는 `at+jwt`(RS256, 수명 900초 이하)를 검증하고 subject를 actor에 연결(`principal bind`)한다 | AIP 쪽은 동작(`porting/infisical/DB-RUNBOOK.md` 7단계, 11개 점검) |
+| 토큰 발급, refresh, 로그아웃 | IdP 담당. AIP는 `at+jwt`(RS256, 수명 900초 이하)를 검증하고 subject를 actor에 연결(`principal bind`)한다 | AIP 쪽은 동작(`porting/infisical/DB-RUNBOOK.md` 7단계, 10개 점검(2026-10-20 재실행)) |
 | 로그아웃 후 구토큰, 정지 계정 | `principal revoke`가 해당 시각까지 발급한 토큰을 무효화한다 | AIP 제품 기능. 이 포팅의 시험에는 아직 없다 |
 | MFA, WebAuthn, TOTP | IdP 담당. 등록 row를 AIP resource로 둘지는 미정 | 미착수 |
 | SRP | 신규 구현하지 않는다. 레거시 클라이언트 호환이 필요하면 별도 서비스로 두고 AIP는 그 서비스가 발급한 토큰만 본다 | 미착수(결정: 승격 금지) |

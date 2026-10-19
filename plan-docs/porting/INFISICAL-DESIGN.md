@@ -29,7 +29,7 @@
 |---|---|---|---|---|
 | I01 | 사용자 인증 | 선언+IdP | 로그인·비밀번호·MFA·refresh는 AIP 밖 IdP. AIP는 principal binding과 `User` resource. 비밀번호·verifier는 AIP에서 다루지 않음 | `User` 행 정책만 **동작 확인**. 나머지 미착수 |
 | I02 | 머신 아이덴티티 | 확장 중심 | 13개 인증 방식(universal-auth + `identity-*-auth` 12개)은 외부 검증이 본질이므로 `operation job`으로 감싼다. claim은 검증된 것만 소비 | JWT 1종 순수 함수 단위시험 7건(서비스 미연결, **서비스에서 도달 불가**). 나머지 12개 미구현 |
-| I03 | 시크릿·폴더 | 선언 중심 | 폴더(환경마다 루트 `/`), 이름, 세대, 소프트 삭제를 resource+transition으로. 값·버전·blind index는 갭 G2/G4 | 이름·세대·폴더·삭제 **동작 확인**. **값은 없음**. 공유·승인·태그·import·버전 미착수 |
+| I03 | 시크릿·폴더 | 선언 중심 | 폴더(환경마다 루트 `/`), 시크릿(폴더+이름 유일)과 물리 삭제를 resource+transition으로. 값·버전·blind index는 갭 G2/G4 | 이름·폴더·물리 삭제 **동작 확인**(원본 대조: [GAPS G10](INFISICAL-GAPS.md)). **값은 없음**. 공유·승인·태그·import·버전 미착수 |
 | I04 | 조직·RBAC | 선언 | 조직·프로젝트·멤버십·역할을 predicate와 행 정책으로. 원본 CASL 조건식과의 대조는 EE 경계 문서 | 역할 기반 규칙(admin/member/viewer/no-access) **동작 확인**. 조건식·커스텀 역할·그룹 미착수 |
 | I05 | 암호화·KMS | 갭 대기 | 원본이 서버측 KMS이므로 AIP의 `encrypted` 필드(설계 13, Proposed)가 대응 수단. 제품에 없어 선언할 수 없다 | **미착수**(제품 갭 G2). core 수정 금지 |
 | I06 | 비동기·알림 | 선언+확장 | 큐 54개 중 MIT 30(+미참조 3)을 job으로. 발송은 전송 capability 경유, 알림 기록은 전송이 아님 | 큐 1개만 부분 구현(알림 기록, **동작 확인**). 53개 미선언 |
@@ -61,12 +61,12 @@
 
 - 🟡 **7.3.3.1 revision 잠금·인벤토리** — 라우트 정의 1002, 라우터 MIT 303 + EE 122, 서비스 디렉터리 126개 전부 배정, 큐 54개 분류, EE import 결합도. `tools/test_infisical_inventory.py` 14건과 재생성 동일성. 라우트 수는 정의 수이고 노출 endpoint 수가 아니며, 모듈 배정은 이름 기반 휴리스틱이다.
 - 📄 **7.3.3.2 SRP·인증 경계** — [AUTHN](INFISICAL-AUTHN.md). 소스 판독이며 동작 확인 없음. SRP는 승격하지 않고 로그인은 IdP 몫으로 정정.
-- ✅🟡 **7.3.3.3 I03 시크릿 resource** — `porting/infisical/app.aip`. 이름(`SecretKey`)·세대(`Secret`)·폴더·소프트 삭제·루트 폴더 유일·viewer 쓰기 거부를 실DB로 확인. **시크릿 값은 선언하지 않았다**(G2). 값·버전·회전·blind index는 ⬜.
+- ✅🟡 **7.3.3.3 I03 시크릿 resource** — `porting/infisical/app.aip`. 폴더 안 시크릿 이름 유일(원본 부분 유일 인덱스와 같은 집합)·물리 삭제·삭제 뒤 이름 재사용·일괄 삭제·삭제 감사·viewer 쓰기와 삭제 거부를 실DB로 확인(`test_live_db.py` 20건). 2026-10-20 이전의 `SecretKey`/세대/소프트 삭제 근사는 원본과 달라 제거했다. **시크릿 값은 선언하지 않았다**(G2). 값·버전·회전·blind index는 ⬜.
 - ✅🟡 **7.3.3.4 I04 RBAC predicate** — 같은 파일. admin/member/viewer/no-access, 조직 admin 암묵 접근, 조직 격리, 프로젝트 멤버 추가 규칙, 조직 생성자 첫 admin, 사용자 가시성을 실DB로 확인. 원본 CASL 조건식, 커스텀 역할, 그룹, 비율 제한은 ⬜. 규칙마다 약화하면 시험이 실패하는지 `tests/mutation_check.py`로 확인(8개 잡힘, 2개는 다른 규칙과 중복이라 동등 변이로 표시).
 - 🟡 **7.3.3.5 큐→job 매핑** — [JOBS](INFISICAL-JOBS.md). 54개 큐 분류표. job 구현은 `secretReminder` 1개(알림 기록, 전송 아님)이고 53개는 미선언. 이전의 "16개 job 선언 완료"는 철회.
 - 📄 **7.3.3.6 I05 키 모델** — [KEYMODEL](INFISICAL-KEYMODEL.md). 원본이 서버측 KMS임을 판독으로 확정, 결정 요청 철회. 구현은 ⏸(제품 갭 G2, 설계 13은 승인 전이고 독립 정적 리뷰가 현 초안을 구현에 넘기지 말라고 판정했다. 상세는 GAPS의 G2).
 - 🟡 **7.3.3.7 I02 identity 확장 spike** — `workers/infisical_jobs.py`의 JWT 검증 순수 함수와 `tests/test_identity_jwt.py` 7건 통과(DB 없음). `app.aip`에 연결된 operation이 없어 서비스에서 도달할 수 없다. 나머지 12개 인증 방식 ⬜.
 - ⏸ **7.3.3.8 EE 제외 비준** — 철회. [EE-BOUNDARY](INFISICAL-EE-BOUNDARY.md)의 사용자 판단 항목 5개 대기.
-- ✅🟡 **7.3.3.9 실DB 기준선** — `porting/infisical/DB-RUNBOOK.md`와 `run-baseline.sh`를 새 컨테이너·새 venv에서 처음부터 실행해 종료 코드 0, SDK 점검 11개 통과, job `SUCCEEDED`, 감사 행 확인(`porting/infisical/evidence/baseline-*.txt`). 기준선이 다루는 범위는 위 7.3.3.3/4와 job 1종이다. 원본 Infisical과의 동작 동등성은 비교하지 않았다.
+- ✅🟡 **7.3.3.9 실DB 기준선** — `porting/infisical/DB-RUNBOOK.md`와 `run-baseline.sh`를 새 컨테이너·새 venv에서 처음부터 실행해 종료 코드 0, SDK 점검 11개 통과(2026-10-20 재실행은 10개, 이름·세대 분리 제거로 점검 하나가 합쳐짐), job `SUCCEEDED`, 감사 행 확인(`porting/infisical/evidence/baseline-*.txt`). 기준선이 다루는 범위는 위 7.3.3.3/4와 job 1종이다. 원본 Infisical과의 동작 동등성은 비교하지 않았다.
 
 순서: 7.3.3.8(판단) → 7.3.3.2/7.3.3.6 → 7.3.3.3/7.3.3.4/7.3.3.5 → 7.3.3.7 → 7.3.3.9. 값이 필요한 후속(I03 값·버전, I05, 회전, 동기화)은 G2 해소가 선행이다.

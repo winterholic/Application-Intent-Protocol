@@ -51,7 +51,7 @@ bash porting/infisical/run-baseline.sh
 | 6 | `seed.sql`의 `:schema`를 치환해 `psql -f` | users 6, folders 3 등. 사용자는 IdP가 만드는 행이라 운영자가 넣고 id를 고정한다. 명시 id는 identity 시퀀스를 올리지 않으므로 seed가 `setval`한다 |
 | 7 | `aip service principal --config service.json bind --subject <sub> --actor <id>` | 토큰의 `sub`를 actor로 연결. 연결이 없으면 `WIRE.UNAUTHENTICATED` |
 | 8 | `aip service serve app.aip --config service.json` | stdout 첫 줄이 `{"event":"listening","address":...,"fingerprint":...}`. `/ready`가 200 |
-| 9 | `python3 tools/baseline_client.py BASE FINGERPRINT WORK` | SDK로 읽기, 쓰기, viewer 거부, job, 소프트 삭제 11개 점검이 모두 `pass: true` |
+| 9 | `python3 tools/baseline_client.py BASE FINGERPRINT WORK` | SDK로 읽기, 쓰기, viewer 거부, job, 물리 삭제와 이름 재사용 10개 점검이 모두 `pass: true` |
 | 10 | `aip service jobs --config ... list`, `aip service audit --config ... list` | job `SUCCEEDED`, 감사 행(`via: job`, `via: apply`) |
 
 토큰은 `tools/jwks.py token WORK SUBJECT`로 직접 만들 수도 있다. 수명은 기본 900초이고 900초를 넘기면 도구가 거부한다(제품 프로필이 `exp - iat <= 900`을 요구한다).
@@ -60,7 +60,7 @@ bash porting/infisical/run-baseline.sh
 
 ```sh
 cd porting/infisical/tests
-python3 -m unittest test_live_db -v        # 17건. AIP_TEST_DATABASE_URL이 없으면 skip
+python3 -m unittest test_live_db -v        # 20건. AIP_TEST_DATABASE_URL이 없으면 skip
 python3 mutation_check.py                  # 규칙을 하나씩 풀면 해당 시험이 실패하는지 확인
 python3 -m unittest legacy_repro -v        # 수정 전 정의(53b1537)의 결함 10건 재현. 모두 FAIL이 정상
 python3 -m unittest test_identity_jwt -v   # DB 없이 7건
@@ -71,8 +71,8 @@ python3 -m unittest test_identity_jwt -v   # DB 없이 7건
 ## 이 기준선이 증명하는 것과 증명하지 않는 것
 
 증명하는 것(실제 PostgreSQL 17, 이 정의, 기본 빌드 binary):
-- 조직·프로젝트·폴더·비밀 이름·세대의 읽기 정책과 쓰기 권한(admin, member, viewer, no-access, 조직 admin 암묵 권한, 다른 조직 격리).
-- 루트 폴더에서도 비밀 이름 유일, 이름당 살아 있는 세대 하나, 삭제 뒤 재생성.
+- 조직·프로젝트·폴더·시크릿의 읽기 정책과 쓰기 권한(admin, member, viewer, no-access, 조직 admin 암묵 권한, 다른 조직 격리).
+- 루트 폴더에서도 시크릿 이름 유일(다른 폴더는 같은 이름 허용), 물리 삭제 뒤 같은 이름 재생성, 일괄 삭제, 삭제 감사.
 - 조직 생성자의 첫 admin 좌석 확보, 사용자 목록의 조직 범위 가시성.
 - 서버 job 1종(`secretReminder`)의 enqueue 권한 검사, 실행, outbox 알림, 감사 행.
 

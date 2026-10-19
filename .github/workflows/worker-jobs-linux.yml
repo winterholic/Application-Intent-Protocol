@@ -9,6 +9,7 @@ on:
       - 'crates/**'
       - 'product/**'
       - 'porting/flaskbb/**'
+      - 'porting/infisical/**'
       - 'spikes/spike-v1-fixture/**'
       - 'spikes/spike-v3-write/**'
       - 'spikes/spike-v4-worker/**'
@@ -119,6 +120,16 @@ jobs:
           PYTHONPATH="$GITHUB_WORKSPACE/product/python" "$RUNNER_TEMP/flaskbb-ui/bin/python" -m unittest porting.flaskbb.tests.test_ui_host porting.flaskbb.tests.test_mail_jobs
           node --test porting/flaskbb/tests/sticky-order.test.mjs
           node --test porting/flaskbb/tests/last-post-recompute.test.mjs
+      - name: Verify Infisical port (secret uniqueness, physical delete, roles) on PostgreSQL
+        env:
+          AIP_TEST_DATABASE_URL: postgresql://runner@127.0.0.1:5433/aip_test_ci
+          INFISICAL_PYTHON: ${{ runner.temp }}/infisical-venv/bin/python
+        run: |
+          python3 -m venv "$RUNNER_TEMP/infisical-venv"
+          "$RUNNER_TEMP/infisical-venv/bin/pip" install --no-cache-dir joserfc ./product/python
+          cd porting/infisical/tests
+          "$INFISICAL_PYTHON" -m unittest -v test_live_db test_identity_jwt
+          "$INFISICAL_PYTHON" mutation_check.py
       - name: Revalidate FlaskBB core, CLI and search consistency on main
         env:
           AIP_FLASKBB_TEST_PYTHON: ${{ runner.temp }}/flaskbb-ui/bin/python
