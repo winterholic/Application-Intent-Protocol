@@ -69,6 +69,11 @@ test("migration preserves digest gate and separates migrate and runtime environm
   await assert.rejects(module.prepareCommand({ root: f.root, action: "init", config: f.configPath }, f.environment), e => e.code === "ENV_MISSING");
 });
 
+test("a digest cannot be silently ignored by init or plan", async t => {
+  const f = await fixture(t);
+  for (const action of ["init", "plan"]) await assert.rejects(module.prepareCommand({ root: f.root, action, config: f.configPath, digest: "b".repeat(64) }, f.environment), e => e.code === "BAD_ARGS");
+});
+
 test("wrong platform is rejected before executing binary", async t => {
   assert.equal(typeof module.verifyPackage, "function");
   const f = await fixture(t); f.build.target = "x86_64-pc-windows-msvc";

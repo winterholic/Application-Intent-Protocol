@@ -115,6 +115,8 @@ function executable(program, args) {
 }
 
 export async function prepareCommand({ root: input, action, config: configInput, digest: acknowledged, migration }, environment = process.env) {
+  if (acknowledged !== undefined && action !== "migrate") fail("BAD_ARGS", "--digest는 migrate에만 사용할 수 있습니다");
+  if (migration !== undefined && !["plan", "migrate"].includes(action)) fail("BAD_ARGS", "--migration은 plan/migrate에만 사용할 수 있습니다");
   const pkg = await verifyPackage(input);
   if (!["check", "preflight", "init", "plan", "migrate", "serve", "health", "ready"].includes(action)) fail("BAD_ARGS", "지원하지 않는 배포 동작입니다");
   const binary = safePath(pkg.root, pkg.contract.packageLayout.bin);
@@ -146,7 +148,6 @@ export async function prepareCommand({ root: input, action, config: configInput,
   const args = ["service", ["plan", "migrate"].includes(action) ? "migrate" : action === "preflight" ? "check" : action, definition];
   if (action !== "preflight") args.push("--config", configPath);
   if (migration) {
-    if (!["plan", "migrate"].includes(action)) fail("BAD_ARGS", "--migration은 plan/migrate에만 사용할 수 있습니다");
     args.push("--migration", await realpath(resolve(migration)));
   }
   if (action === "migrate") args.push("--apply", acknowledged);
@@ -190,6 +191,7 @@ function argumentsFor(args) {
   while (args.length) { const key = keys[args.shift()]; if (!key || options[key] !== undefined || !args[0] || args[0].startsWith("--")) fail("BAD_ARGS", "잘못된 배포 인자입니다"); options[key] = args.shift(); }
   if (!options.root) options.root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
   if (action === "install" && !options.out) fail("BAD_ARGS", "install --package <bundle> --out <fresh-directory>");
+  if (action === "install" && [options.config, options.digest, options.migration].some(value => value !== undefined)) fail("BAD_ARGS", "install에는 --package와 --out만 지정하십시오");
   if (!action || (action !== "install" && options.out)) fail("BAD_ARGS", "install|check|preflight|init|plan|migrate|serve|health|ready --package <bundle> [--config <external.json>] [--digest <plan-digest>]");
   return options;
 }

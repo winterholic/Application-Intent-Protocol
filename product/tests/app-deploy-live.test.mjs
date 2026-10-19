@@ -125,6 +125,12 @@ test("moved app package initializes, serves HTTP, stops, migrates by digest and 
         assert.equal(healthy, true, run("docker", ["logs", imageContainer]));
         assert.equal((await call("/read", { query: { read: "Item", select: ["id", "checked"] } })).rows[0].checked, true);
         run("docker", ["exec", imageContainer, "node", "tools/app-deploy.mjs", "ready", "--config", "/run/aip/service.json"]);
+        if (cycle === 0) {
+          const isolated = spawnSync("docker", ["exec", imageContainer, "bwrap", "--unshare-user", "--unshare-net", "--ro-bind", "/", "/", "--", "/bin/true"], { encoding: "utf8", timeout: 10_000 });
+          console.log(`Container Bubblewrap namespace prerequisite only: exit=${isolated.status}; signal=${isolated.signal}; error=${isolated.error?.code ?? "none"}; stderr=${isolated.stderr?.trim().slice(0, 500)}`);
+          // Failure is a supported container boundary, not permission to weaken the sandbox.
+          // A successful namespace probe would still not prove an actual product worker invocation.
+        }
         run("docker", ["stop", "--time", "15", imageContainer]);
         assert.equal(run("docker", ["inspect", "--format", "{{.State.ExitCode}}", imageContainer]), "0");
         run("docker", ["rm", imageContainer]); imageContainer = undefined;
