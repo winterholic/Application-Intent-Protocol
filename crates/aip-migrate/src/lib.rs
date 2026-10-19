@@ -88,6 +88,11 @@ fn validate_facts(facts: &Value) -> Result<(), Value> {
         }
         let mut columns = BTreeSet::new();
         for (field, desc) in fields {
+            // Until encryption DDL/adoption and runtime journals are implemented, never silently
+            // erase future encryption metadata and provision this as an ordinary plaintext column.
+            if desc.get("encrypted").is_some() {
+                return Err(err("BAD_FACTS", "암호화 metadata는 아직 제품 마이그레이션에서 지원하지 않음"));
+            }
             let ty = desc["ty"].as_str().ok_or_else(|| err("BAD_FACTS", "필드 타입 누락"))?;
             let base = ty.trim_end_matches('?');
             if let Some(target) = base.strip_prefix("Ref<").and_then(|s| s.strip_suffix('>'))
