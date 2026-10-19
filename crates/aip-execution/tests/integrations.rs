@@ -163,6 +163,48 @@ async fn named_call_uses_server_endpoint_secret_and_returns_only_bounded_json() 
 }
 
 #[tokio::test]
+async fn refused_connection_is_not_sent_but_response_loss_after_request_is_uncertain() {
+    use aip_execution::integrations::Error;
+    let reserved = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = reserved.local_addr().unwrap();
+    drop(reserved);
+    let broker = Broker::new(vec![config(format!("http://127.0.0.1:{}/effect", address.port()), vec![address], true)]).unwrap();
+    assert_eq!(broker.call_with_key("crm.createTicket", &json!({"message":"not-sent"}), Some("retry-me")).await, Err(Error::NotSent));
+    let mut endpoint = config(format!("http://127.0.0.1:{}/effect", address.port()), vec![address], true);
+    endpoint.circuit_breaker = Some(aip_execution::integrations::CircuitBreaker { failure_threshold: 1, open_for: Duration::from_secs(10) });
+    let broker = Broker::new(vec![endpoint]).unwrap();
+    assert_eq!(broker.call("crm.createTicket", &json!({})).await, Err(Error::NotSent));
+    assert_eq!(broker.call("crm.createTicket", &json!({})).await, Err(Error::CircuitOpen), "connection failures must still count toward the breaker");
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let provider = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        let mut request = Vec::new();
+        let mut buffer = [0_u8; 1024];
+        loop {
+            let n = stream.read(&mut buffer).unwrap();
+            assert_ne!(n, 0, "provider must receive the full request body");
+            request.extend_from_slice(&buffer[..n]);
+            if let Some(boundary) = request.windows(4).position(|bytes| bytes == b"\r\n\r\n") {
+                let headers = String::from_utf8_lossy(&request[..boundary]).to_ascii_lowercase();
+                let length: usize = headers.lines().find_map(|line| line.strip_prefix("content-length:")).unwrap().trim().parse().unwrap();
+                if request.len() >= boundary + 4 + length {
+                    assert_eq!(serde_json::from_slice::<serde_json::Value>(&request[boundary + 4..]).unwrap(), json!({"message":"received"}));
+                    break;
+                }
+            }
+        }
+        // The provider performed the effect, then the response was lost. Do not classify this as safe to resend.
+        stream.shutdown(std::net::Shutdown::Both).unwrap();
+    });
+    let broker = Broker::new(vec![config(format!("http://127.0.0.1:{}/effect", address.port()), vec![address], true)]).unwrap();
+    assert!(matches!(broker.call_with_key("crm.createTicket", &json!({"message":"received"}), Some("uncertain")).await, Err(Error::Transport(_))));
+    provider.join().unwrap();
+}
+
+#[tokio::test]
 async fn endpoint_response_over_limit_is_rejected() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();

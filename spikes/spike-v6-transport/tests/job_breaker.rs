@@ -13,6 +13,8 @@ use tokio::{
     net::TcpStream,
 };
 
+static SCHEMA_GATE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 struct SchemaCleanup(String);
 impl Drop for SchemaCleanup {
     fn drop(&mut self) {
@@ -95,6 +97,7 @@ async fn settle(addr: std::net::SocketAddr, fp: &str, id: &str) -> Value {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn an_open_circuit_rejects_without_sending_and_leaves_no_unknown_effect() {
+    let _gate = SCHEMA_GATE.lock().await;
     use aip_execution::integrations::{Broker, CircuitBreaker, EndpointConfig};
     let schema = format!("aip_job_breaker_{}", std::process::id());
     sqlgen::try_set_schema(&schema).unwrap();
@@ -230,4 +233,139 @@ async fn an_open_circuit_rejects_without_sending_and_leaves_no_unknown_effect() 
     let effects: i64 = db.query_one(&format!("SELECT count(*) FROM {schema}.aip_effects WHERE run_id=$1::text::uuid"), &[&id]).await.unwrap().get(0);
     assert_eq!(effects, 0, "a call refused for want of a token must not leave an effect");
     server.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn refused_connection_can_redrive_the_same_run_but_a_lost_reply_keeps_an_unknown_effect() {
+    use aip_execution::integrations::{Broker, EndpointConfig};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let _gate = SCHEMA_GATE.lock().await;
+    let schema = format!("aip_job_connect_{}", std::process::id());
+    sqlgen::try_set_schema(&schema).unwrap();
+    let _cleanup = SchemaCleanup(schema.clone());
+    let facts = load_str(include_str!("fixtures/job-breaker.aip"), Form::A).unwrap().execution;
+    aip_migrate::init_with_wire(aip_test_support::test_database_url!(), &schema, &facts, "safe").await.unwrap();
+    let mut db = spike_v2_read::connect_owned_with_url(aip_test_support::test_database_url!()).await.unwrap();
+    db.batch_execute(&format!(
+        "INSERT INTO {schema}.member(id) VALUES(1); INSERT INTO {schema}.aip_principals(issuer,subject,actor_id) VALUES('test','owner',1)"
+    ))
+    .await
+    .unwrap();
+    let iat = db.query_one("SELECT floor(extract(epoch FROM clock_timestamp()))::bigint", &[]).await.unwrap().get(0);
+    let auth = Arc::new(Auth { schema: schema.clone(), iat });
+    let digest = spike_v1_fixture::digest(&facts);
+    let fp = spike_v5_sdk::contract_fingerprint_with_all_extensions(&facts, IdWire::SafeNumber);
+    let store = aip_execution::Store::new(&schema).unwrap();
+
+    for lang in [WorkerLang::Node, WorkerLang::Python] {
+        for lose_reply in [false, true] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let endpoint = listener.local_addr().unwrap();
+            let provider = if lose_reply {
+                Some(listener)
+            } else {
+                drop(listener);
+                None
+            };
+            let received = Arc::new(AtomicUsize::new(0));
+            let start_provider = |listener: tokio::net::TcpListener| {
+                let received = received.clone();
+                tokio::spawn(async move {
+                    while let Ok((mut stream, _)) = listener.accept().await {
+                        let mut request = Vec::new();
+                        let mut buffer = [0_u8; 1024];
+                        loop {
+                            let n = tokio::time::timeout(Duration::from_secs(3), stream.read(&mut buffer)).await.unwrap().unwrap();
+                            assert_ne!(n, 0, "provider must receive the entire body");
+                            request.extend_from_slice(&buffer[..n]);
+                            if let Some(boundary) = request.windows(4).position(|bytes| bytes == b"\r\n\r\n") {
+                                let headers = String::from_utf8_lossy(&request[..boundary]).to_ascii_lowercase();
+                                let length: usize =
+                                    headers.lines().find_map(|line| line.strip_prefix("content-length:")).unwrap().trim().parse().unwrap();
+                                if request.len() >= boundary + 4 + length {
+                                    assert_eq!(&request[boundary + 4..], b"{}");
+                                    break;
+                                }
+                            }
+                        }
+                        received.fetch_add(1, Ordering::SeqCst);
+                        if !lose_reply {
+                            stream
+                                .write_all(b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\nconnection: close\r\ncontent-length: 2\r\n\r\n{}")
+                                .await
+                                .unwrap();
+                        }
+                        stream.shutdown().await.unwrap();
+                    }
+                })
+            };
+            let mut task = provider.map(start_provider);
+            let broker = Broker::new(vec![EndpointConfig {
+                name: "crm".into(),
+                url: format!("http://{endpoint}/crm"),
+                method: "POST".into(),
+                timeout: Duration::from_secs(2),
+                max_request_bytes: 4096,
+                max_response_bytes: 4096,
+                secret_header: None,
+                resolved: vec![endpoint],
+                allow_loopback: true,
+                allow_private_networks: false,
+                circuit_breaker: None,
+                oauth: None,
+            }])
+            .unwrap();
+            let server = listen_with_infrastructure(
+                facts.clone(),
+                IdWire::SafeNumber,
+                "127.0.0.1:0".parse().unwrap(),
+                aip_test_support::test_database_url!().into(),
+                Some(ReadExtensions { lang, dir: concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/job-retry").into() }),
+                ServerOptions::default(),
+                false,
+                auth.clone(),
+                Some(DeploymentFence::new(schema.clone(), digest.clone()).unwrap()),
+                Some(Arc::new(broker)),
+                false,
+                Infrastructure::default(),
+            )
+            .await
+            .unwrap();
+            let queued = post(
+                server.address,
+                "/jobs/enqueue",
+                &fp,
+                json!({"operation":"callout","input":{},"key":format!("connect-{lang:?}-{lose_reply}"),"delayMs":0}),
+            )
+            .await;
+            let id = queued["run"]["id"].as_str().unwrap().to_owned();
+            assert_eq!(settle(server.address, &fp, &id).await["run"]["state"], "FAILED");
+            let effects: Vec<String> = db
+                .query(&format!("SELECT state FROM {schema}.aip_effects WHERE run_id=$1::text::uuid"), &[&id])
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|row| row.get(0))
+                .collect();
+            if lose_reply {
+                assert_eq!(effects, vec!["UNKNOWN"], "{lang:?}: a received request with a lost reply stays uncertain");
+                assert_eq!(received.load(Ordering::SeqCst), 1, "an uncertain effect must not be sent again by automatic job retries");
+            } else {
+                assert!(effects.is_empty(), "{lang:?}: a refused connection must leave no unsettled intent: {effects:?}");
+                task = Some(start_provider(tokio::net::TcpListener::bind(endpoint).await.unwrap()));
+                let tx = db.transaction().await.unwrap();
+                assert_eq!(store.redrive(&tx, &id, &digest).await.unwrap(), aip_execution::Redrive::Queued);
+                tx.commit().await.unwrap();
+                assert_eq!(settle(server.address, &fp, &id).await["run"]["state"], "SUCCEEDED");
+                let result = post(server.address, "/jobs/result", &fp, json!({"id":id})).await;
+                assert_eq!(result["output"], json!({"first":200,"second":"sent","replayed":200}));
+                assert_eq!(received.load(Ordering::SeqCst), 2, "each effect sends once; repeating the first key replays its journal");
+            }
+            server.shutdown().await.unwrap();
+            if let Some(task) = task {
+                task.abort();
+                let _ = task.await;
+            }
+        }
+    }
 }

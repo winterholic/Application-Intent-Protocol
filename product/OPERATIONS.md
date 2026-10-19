@@ -225,6 +225,7 @@ aip service jobs --config service.json retry --id 7f3c...
 - `list`는 최신순으로 id·owner·operation·key·상태·시도 횟수·마지막 오류·`unsettledEffects`(결과를 모르는 외부 효과 수)·`redrivable`을 돌려준다. job 입력·출력·grant는 출력하지 않는다.
 - `retry`는 새 job을 만들지 않고 **같은 run**을 `QUEUED`로 되돌린다. id·key·owner·effect journal을 유지하므로 이미 기록된 파일·이벤트·메시지·HTTP·데이터 전이는 반복하지 않고 재생한다. 시도 횟수는 0부터 다시 세고 run 기한은 run에 기록된 시도 횟수로 다시 계산한다. lease epoch는 계속 증가하므로 이전 시도의 worker는 결과를 기록하지 못한다.
 - 실행할 때 principal 활성·배포 fence·`allow`를 다시 검사한다. 비활성화한 주체의 job은 재처리해도 다시 실패한다.
+- 관리 HTTP의 연결 단계에서 실패한 호출은 `WIRE.DELIVERY_FAILED`로 거부하며 해당 PENDING intent를 제거한다. redirect·자동 retry·환경 proxy를 끈 단일 요청에서 connect 오류만 이렇게 분류한다. 공급자가 요청을 받은 뒤 응답이 끊기거나 응답 본문을 읽다 실패한 경우는 UNKNOWN을 유지한다. 복구 뒤 같은 run을 재처리하면 기존 효과 key를 사용하며 성공 기록은 재생한다.
 - 거부하는 경우는 네 가지다. `FAILED`가 아니면 `JOB_NOT_FAILED`, 결과 보존 기간(24시간)이 지나 입력이 지워졌으면 `JOB_EXPIRED`, 다른 배포에서 수락했으면 `WIRE.DEPLOYMENT_CHANGED`, 결과를 모르는 외부 효과가 있으면 `WIRE.EFFECT_UNKNOWN`이다. 마지막 경우는 provider에서 실제 결과를 확인한 뒤 새 job으로 처리한다. 미확정 효과를 운영자가 확정하는 명령은 아직 없다.
 - 재처리는 owner의 active job 상한(100)을 다시 검사하지 않는다. 대량 재처리는 운영자가 나눠서 실행한다.
 

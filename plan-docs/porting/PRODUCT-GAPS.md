@@ -20,7 +20,7 @@
 | create 관련 행·결과 연쇄 | expose create 관련 효과와 일반 결과 id binding은 미지원 후보다. 기존 compose item 제한과 구분하고 두 요청 사이 실패를 원자 성공으로 세지 않는다 | 설계·구현 트랙, 7.3.2·7.3.3 |
 | patch 대상값 인가 | 제안된 input 경로 거부만으로 가능한 모든 표현 부재를 증명하지 않는다. 변경 전/후 평가·관련 행 정책·write skew 반례가 남음 | 앱 권한 트랙, 7.5.2 |
 | 메일 provider | 관리 HTTP capability는 있고 격리 worker의 직접 SMTP와 다르다. 전용 preset·템플릿·수신 동의 계약은 별도 후보 | 기존 관리 HTTP 재사용, 7.5.3 |
-| EFFECT_UNKNOWN 복구 | HTTP send 오류 분류와 운영자 확정 명령의 공백을 검토한다. 전송 전 실패·부분 전송·응답 손실의 장애 주입은 이번 변경에서 미실행 | 운영 장애 트랙, 7.5.3 |
+| EFFECT_UNKNOWN 복구 | connect 오류를 NotSent로 분리하고 durable PENDING intent를 제거하는 수정을 진행했다. 실제 연결 거부/전체 본문 수신 뒤 응답 손실 회귀 포함 broker11개 통과. Node/Python 동일 run redrive와 UNKNOWN 보존의 DB 검증은 CI 전이며 부분 전송·운영자 확정 명령은 미검증/미구현으로 남는다 | 운영 장애 트랙, 7.5.3 |
 | 읽기 캐시 | TS client의 최대 1초 캐시와 동일 client 쓰기 무효화를 다른 client·외부 DB 변경 통지와 구분한다. 두 client 시간 측정이 남음 | 통합 판정, 7.4 |
 | shared_id 유일성 | 앱 정의·실DB 제약·main 충돌을 함께 확인한다. 제품 기능 task를 중복 생성하지 않는다 | 기존 차단 항목, 7.5.5 |
 | 암호화·blind index | 평문 임시 필드로 해결하지 않는다. SRP 책임 분리·EE dynamic secret 제외는 구현 완료가 아닌 범위 분류다 | 별도 설계·구현 게이트, 8.17·8.18 |

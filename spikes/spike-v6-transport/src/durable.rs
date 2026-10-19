@@ -1472,6 +1472,7 @@ impl Host {
                     match broker.call_with_key(name, &input["input"], Some(&key)).await {
                         Ok(r) => Ok(json!({"status":r.status,"body":r.body,"retryAfterSeconds":r.retry_after_seconds})),
                         Err(aip_execution::integrations::Error::CircuitOpen) => Err(Some("WIRE.CIRCUIT_OPEN")),
+                        Err(aip_execution::integrations::Error::NotSent) => Err(Some("WIRE.DELIVERY_FAILED")),
                         Err(aip_execution::integrations::Error::TokenUnavailable) => Err(Some("WIRE.INTEGRATION_AUTH_FAILED")),
                         Err(_) => Err(None),
                     }

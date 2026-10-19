@@ -1,5 +1,10 @@
 # 제품 통합 검증 (2026-10-17)
 
+## 포팅 공통 HTTP 전송 전 실패 분류 (2026-10-19)
+
+- 닫힌 loopback 포트 연결이 `Transport`가 되어 durable effect를 UNKNOWN으로 남기는 반례를 재현했다. 자동 retry·redirect·환경 proxy를 끈 broker의 `send`에서 `is_connect()`인 오류만 `NotSent`로 분리한다. durable host는 `WIRE.DELIVERY_FAILED`와 intent 제거로 응답한다. 연결 이후 전송/응답 손실은 불확정을 유지한다.
+- 실제 연결 거부와 **전체 요청 본문 수신 후 응답 손실**을 구분하는 regression을 포함해 `aip-execution --test integrations` **11 passed**. execution 및 transport의 관련 all-targets clippy 통과. Node/Python job의 같은 run redrive·효과 key 재생과 수신 후 UNKNOWN 유지 회귀를 추가했으며 그 실DB 실행은 다음 Linux CI에서 확인한다. 로컬 DB 실행으로 합산하지 않는다.
+
 ## WBS 8.16 최소 권한 fixture와 DB 계약 CI (2026-10-19)
 
 - PMS의 과거 수정 완료 서술과 달리 현재 main에는 runtime role의 비밀번호 지정과 DSN password 치환이 없었다. 기존 admin 비밀번호가 유지되는 음성 대조를 재현하고 keyword/URI DSN에서 role·password를 함께 바꾸는 helper와 특수 문자·중복 query password 회귀를 추가했다. `aip-test-support` **10 passed**, 관련 CLI/helper all-targets clippy 통과.

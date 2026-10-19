@@ -23,6 +23,8 @@ pub enum Error {
     ResponseTooLarge,
     InvalidJsonResponse,
     Transport(String),
+    /// The connection failed before any HTTP request was sent. Safe to retry without reconciliation.
+    NotSent,
     /// The endpoint's circuit breaker is open, so the request was not sent. Unlike a transport
     /// error this outcome is certain, so a durable caller can retry it without reconciliation.
     CircuitOpen,
@@ -342,7 +344,10 @@ impl Broker {
             request = request.header(AUTHORIZATION, oauth.bearer().await?);
         }
         let outcome = async {
-            let response = request.send().await.map_err(|error| Error::Transport(error.to_string()))?;
+            // pinned_client disables redirects, proxies and automatic retries. A connect-stage failure therefore
+            // precedes the only outbound HTTP attempt; failures after connection stay uncertain.
+            let response =
+                request.send().await.map_err(|error| if error.is_connect() { Error::NotSent } else { Error::Transport(error.to_string()) })?;
             let status = response.status();
             let retry_after_seconds = response.headers().get(RETRY_AFTER).and_then(parse_retry_after);
             let body = read_bounded(response, endpoint.max_response_bytes).await?;
@@ -352,7 +357,9 @@ impl Broker {
         .await;
         if let Some(breaker) = &endpoint.breaker {
             // Body-shape errors mean the provider answered, so only an unreachable or failing provider counts.
-            breaker.record(matches!(&outcome, Err(Error::Transport(_))) || outcome.as_ref().is_ok_and(|response| response.status >= 500));
+            breaker.record(
+                matches!(&outcome, Err(Error::Transport(_) | Error::NotSent)) || outcome.as_ref().is_ok_and(|response| response.status >= 500),
+            );
         }
         // A rejected token (revoked or rotated early) is dropped so the next call fetches a new one.
         if let Some(oauth) = &endpoint.oauth
