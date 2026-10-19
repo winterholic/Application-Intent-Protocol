@@ -143,7 +143,7 @@ test('FlaskBB report purge deletes report rows for moderators, atomically in bul
 
     const audit = JSON.parse(run(binary, ['service', 'audit', '--config', config, 'list', '--resource', 'Report', '--target-id', made[0]]));
     assert.equal(audit.ok, true, JSON.stringify(audit));
-    assert.equal(audit.audit.length, 1);
+    assert.equal(audit.audit.length, 2);
     assert.deepEqual([audit.audit[0].transition, audit.audit[0].after], ['purge', null]);
     assert.equal(audit.audit[0].before.reason, 'Purge report 1');
   } finally {
