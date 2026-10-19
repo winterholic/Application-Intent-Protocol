@@ -9,7 +9,7 @@ import {createInterface} from 'node:readline';
 import {pathToFileURL} from 'node:url';
 import {spawn, spawnSync} from 'node:child_process';
 import {GROUPS_SQL, dbUrl, startFixture} from './harness.mjs';
-import {mailpitUrl, reserveRefusedPort, stopOwnedProcess} from './mail-fixture.mjs';
+import {mailpitUrl, reserveRefusedPort, startMailpitProxy, stopOwnedProcess} from './mail-fixture.mjs';
 
 // 7.5.3 F14: account mail jobs through `aip service serve` with the real worker
 // network isolation. The worker never opens a socket; delivery is the declared
@@ -188,6 +188,7 @@ test('FlaskBB connect-stage outage preserves the run and redrives it once after 
   const runTag = randomUUID().replaceAll('-', '').slice(0, 12);
   const aliceMail = `alice-${runTag}@example.test`;
   const reservation = await reserveRefusedPort();
+  let proxy;
   const dead = reservation.url;
   const workers = url => ({
     directory: join(track, 'mail'),
@@ -231,11 +232,10 @@ test('FlaskBB connect-stage outage preserves the run and redrives it once after 
     assert.ok(!JSON.stringify(listed).includes(`payload-${runTag}`), 'job payloads are not exposed by the listing');
 
     // The broker classified the connect-stage failure as not sent and removed the pending
-    // intent. Restoring the provider must allow the original run to resume with its original key.
-    const config = JSON.parse(readFileSync(fx.config, 'utf8'));
-    config.workers = workers(mailpit);
-    writeFileSync(fx.config, JSON.stringify(config));
-    await fx.restart(file);
+    // intent. Recover the same endpoint without changing the service configuration
+    // or implementation fingerprint; the original run keeps its original key.
+    await reservation.close();
+    proxy = await startMailpitProxy({port: reservation.port, target: mailpit});
     const resumed = JSON.parse(fx.run(binary, ['service', 'jobs', '--config', fx.config, 'retry', '--id', receipt.id]));
     assert.equal(resumed.ok, true, JSON.stringify(resumed));
     const second = fx.client('alice-sub');
@@ -246,6 +246,6 @@ test('FlaskBB connect-stage outage preserves the run and redrives it once after 
     assert.equal(replay.id, receipt.id, 'enqueue replay must keep the original run');
     assert.equal((await inbox()).length, 1, 'replaying the accepted enqueue key does not duplicate mail');
   } finally {
-    try {await fx.stop();}finally {await reservation.close();}
+    try {await fx.stop();}finally {try {await proxy?.close();}finally {await reservation.close();}}
   }
 });

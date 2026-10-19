@@ -3,7 +3,8 @@ import {test} from 'node:test';
 import net from 'node:net';
 import {spawn} from 'node:child_process';
 import {once} from 'node:events';
-import {mailpitUrl, reserveRefusedPort, stopOwnedProcess} from './mail-fixture.mjs';
+import {createServer} from 'node:http';
+import {mailpitUrl, reserveRefusedPort, startMailpitProxy, stopOwnedProcess} from './mail-fixture.mjs';
 
 test('Mailpit fixture URL must be explicit and local without credentials',()=>{
   assert.throws(()=>mailpitUrl({}),/is required/);
@@ -31,6 +32,27 @@ test('refused port stays owned while rejecting connects and is released on close
 
 test('unsupported outage fixture fails before starting a helper',{skip:process.platform==='linux'},async()=>{
   await assert.rejects(reserveRefusedPort(),/requires Linux/);
+});
+
+test('recovered endpoint forwards only the declared send route and releases its listener',async()=>{
+  let calls=0;
+  const provider=createServer(async(req,res)=>{
+    calls++;
+    assert.equal(req.url,'/api/v1/send');
+    const chunks=[];for await(const chunk of req)chunks.push(chunk);
+    assert.deepEqual(JSON.parse(Buffer.concat(chunks)),{Subject:'fixture'});
+    res.writeHead(201,{'Content-Type':'application/json'}).end('{"ID":"fixture-only"}');
+  });
+  await new Promise((resolve,reject)=>{provider.once('error',reject);provider.listen(0,'127.0.0.1',resolve);});
+  let proxy;
+  try {
+    proxy=await startMailpitProxy({target:`http://127.0.0.1:${provider.address().port}`});
+    assert.equal((await fetch(`${proxy.url}/unexpected`)).status,404);assert.equal(calls,0);
+    const reply=await fetch(`${proxy.url}/api/v1/send`,{method:'POST',body:'{"Subject":"fixture"}'});
+    assert.equal(reply.status,201);assert.deepEqual(await reply.json(),{ID:'fixture-only'});assert.equal(calls,1);
+    await proxy.close();await proxy.close();
+    await assert.rejects(fetch(`${proxy.url}/api/v1/send`,{method:'POST',signal:AbortSignal.timeout(2000)}));
+  }finally {await proxy?.close();provider.closeAllConnections();await new Promise(resolve=>provider.close(resolve));}
 });
 
 test('owned server gets graceful SIGTERM and a stuck child is force-stopped',async()=>{

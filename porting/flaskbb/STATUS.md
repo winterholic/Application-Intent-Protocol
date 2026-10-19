@@ -8,7 +8,7 @@
 
 기존 닫힌 고정 포트와 UNKNOWN 기대값은 현재 core 동작에 맞지 않았다. 전송 전 연결 실패는 같은 run·key를 재처리하고, 공급자 수신 여부가 불명인 실패는 재처리를 거부한다. 전용 Mailpit을 Linux worker CI 서비스로 두고, 장애 포트는 helper가 bind한 채 소유한다. local Codex/macOS command 환경에서는 이 bound-port 연결이 timeout되어 장애 시험을 Linux 전용으로 제한했다. 이를 host·운영 환경 장애로 일반화하지 않는다.
 
-명시적 Mailpit URL·DB guard·소유 프로세스의 SIGTERM 및 SIGKILL fallback 검사는 로컬 6 passed/1 Linux-only skipped다. 두 실제 메일 통합 시험은 새 CI 실행 전까지 미검증이다. fixture 종료 때 앱 schema·파생 infra schema·소유 임시 폴더를 정리한다. 검색의 Whoosh 토큰화·순위 동등성과 운영자 UNKNOWN 판정 명령은 여전히 미구현이다.
+명시적 Mailpit URL·DB guard·소유 프로세스의 SIGTERM 및 SIGKILL fallback 검사는 로컬 6 passed/1 Linux-only skipped다. main `269bf7d` Linux CI에서 실제 활성화·재설정 메일/동일 key 재생/타인 주소 거부 시험은 통과했다. 복구 시험은 endpoint 설정 변경이 `WIRE.IMPLEMENTATION_CHANGED`로 차단되어 실패했다. 구현 지문에 broker 설정이 포함되는 정상 fence이므로 제품을 완화하지 않고, 같은 endpoint에 소유 프록시를 기동해 공급자만 복구하도록 시험을 고쳤다. 이 수정의 같은 run 성공은 다음 CI 대기다. 로컬 소유 프록시의 경로 제한·본문 전달·종료 검사는 통과했다. fixture 종료 때 앱 schema·파생 infra schema·소유 임시 폴더를 정리한다. 검색의 Whoosh 토큰화·순위 동등성과 운영자 UNKNOWN 판정 명령은 여전히 미구현이다.
 
 아래 10-18 후속 Run은 당시 실행 기록이다. 그 절의 DB fallback·고정 장애 포트·연결 거부 UNKNOWN 설명은 현재 규칙으로 재사용하지 않는다. 현재 DB는 `AIP_TEST_DATABASE_URL`을 필수로 받고 legacy alias는 같은 값일 때만 허용한다.
 

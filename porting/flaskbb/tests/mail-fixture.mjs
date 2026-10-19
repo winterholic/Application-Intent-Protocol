@@ -1,6 +1,7 @@
 import {spawn} from 'node:child_process';
 import {once} from 'node:events';
 import {createInterface} from 'node:readline';
+import {createServer} from 'node:http';
 
 export async function stopOwnedProcess(child,{graceMs=8000,maxMs=10000}={}) {
   if (!child) return;
@@ -19,6 +20,32 @@ export function mailpitUrl(env=process.env) {
   if (raw.length>256 || url.protocol!=='http:' || !['localhost','127.0.0.1','[::1]'].includes(url.hostname)
       || !url.port || Number(url.port)<=1024 || url.username || url.password || url.pathname!=='/' || url.search || url.hash) throw invalid();
   return url.origin;
+}
+
+// Recover the same integration endpoint instead of editing its URL (which changes
+// the job's implementation fingerprint and correctly fences an old queued run).
+export async function startMailpitProxy({port=0, target}) {
+  target=mailpitUrl({AIP_FLASKBB_TEST_MAILPIT_URL:target});
+  const server=createServer(async(req,res)=>{
+    if (req.method!=='POST' || req.url!=='/api/v1/send') {res.writeHead(404).end();return;}
+    try {
+      const chunks=[];let bytes=0;
+      for await (const chunk of req) {
+        bytes+=chunk.length;if(bytes>65536){res.writeHead(413).end();return;}
+        chunks.push(chunk);
+      }
+      const reply=await fetch(`${target}/api/v1/send`,{method:'POST',headers:{'Content-Type':'application/json'},body:Buffer.concat(chunks),redirect:'error',signal:AbortSignal.timeout(5000)});
+      const body=Buffer.from(await reply.arrayBuffer());
+      if(body.length>65536) throw new Error('oversized fixture provider response');
+      res.writeHead(reply.status,{'Content-Type':'application/json'}).end(body);
+    }catch {res.writeHead(502).end();}
+  });
+  await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,'127.0.0.1',resolve);});
+  let closing;
+  return {
+    url:`http://127.0.0.1:${server.address().port}`,
+    close:()=>closing??=(async()=>{const closed=new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));server.closeAllConnections();await closed;})(),
+  };
 }
 
 // Binding without listening both owns the TCP port and makes connect fail before a request can
