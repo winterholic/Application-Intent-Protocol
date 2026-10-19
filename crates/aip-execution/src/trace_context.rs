@@ -89,6 +89,16 @@ impl TraceContext {
         self
     }
 
+    /// A nested execution in this trace. Preserve flags and name the active span as its parent.
+    pub fn child(&self, span_id: impl Into<String>) -> Self {
+        Self {
+            trace_id: self.trace_id.clone(),
+            parent_span_id: self.span_id.clone().or_else(|| self.parent_span_id.clone()),
+            span_id: Some(span_id.into()),
+            flags: self.flags,
+        }
+    }
+
     pub fn span_id(&self) -> Option<&str> {
         self.span_id.as_deref()
     }
@@ -194,5 +204,23 @@ mod job_value_tests {
             assert_ne!(run.trace_id(), TRACE, "{bad}");
             assert_eq!(run.parent_span_id(), None, "{bad}");
         }
+    }
+}
+
+#[cfg(test)]
+mod nested_span_tests {
+    use super::TraceContext;
+    #[test]
+    fn nested_span_uses_the_active_span_as_parent_and_preserves_sampling() {
+        let request = TraceContext::parse("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01").unwrap().with_span_id("1111111111111111");
+        let child = request.child("2222222222222222");
+        assert_eq!(child.trace_id(), request.trace_id());
+        assert_eq!(child.parent_span_id(), Some("1111111111111111"));
+        assert_eq!(child.span_id(), Some("2222222222222222"));
+        assert_eq!(child.flags(), 1);
+        let grandchild = child.child("3333333333333333");
+        assert_eq!(grandchild.parent_span_id(), child.span_id());
+        assert_eq!(request.span_id(), Some("1111111111111111"));
+        assert_eq!(request.parent_span_id(), Some("00f067aa0ba902b7"));
     }
 }

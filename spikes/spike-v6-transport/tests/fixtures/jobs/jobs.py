@@ -51,3 +51,8 @@ async def message(inp, ctx):
     await ctx.messages.publish("notifications", {"text": inp["text"]}, "dispatch")
     await ctx.messages.publish("notifications", {"text": inp["text"]}, "dispatch")
     return {"length": len(inp["text"])}
+
+async def traceRoot(inp, ctx):
+    return await ctx.jobs.run("traceMiddle", inp, "middle")
+async def traceMiddle(inp, ctx):
+    return await ctx.jobs.run("count", inp, "leaf")

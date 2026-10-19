@@ -77,6 +77,6 @@ jobs:
       - name: Prove Linux worker sandbox boundaries with Bubblewrap
         run: AIP_TEST_BWRAP=1 cargo test --manifest-path spikes/spike-v4-worker/Cargo.toml --lib isolation::tests --locked --target-dir target
       - name: Run durable worker, retry, schedule, webhook and outbox jobs
-        run: cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --locked --target-dir target --test job_retry --test triggers --test outbox
+        run: cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --locked --target-dir target --test job_retry --test job_breaker --test triggers --test outbox --test otlp
       - name: Run installed product SDK smoke with Node and Python workers
         run: node --test product/tests/service-smoke.test.mjs

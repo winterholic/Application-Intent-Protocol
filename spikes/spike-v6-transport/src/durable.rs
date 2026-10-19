@@ -1030,7 +1030,7 @@ pub(crate) async fn supervisor(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire
     }
 }
 async fn execute(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire, lease: Lease) {
-    // The run is a span of its own. Its id goes into the context so that work the run starts (a job it enqueues) can name it as parent.
+    // The run has its own active span. Nested ctx.jobs.run steps use it as their parent and keep the same durable lease.
     let trace_ctx = match &lease.trace_id {
         Some(stored) => aip_execution::trace_context::TraceContext::from_job_value(stored),
         None => aip_execution::trace_context::TraceContext::generate(),
@@ -1044,27 +1044,40 @@ async fn execute(rt: Arc<Runtime>, facts: Arc<Value>, wire: IdWire, lease: Lease
 }
 
 fn export_job_span(rt: &Runtime, lease: &Lease, state: &str, code: Option<&str>, started: std::time::Instant) {
+    export_job_execution_span(rt, lease, &lease.operation, 0, state, code, started);
+}
+
+fn export_job_execution_span(
+    rt: &Runtime,
+    lease: &Lease,
+    operation: &str,
+    depth: usize,
+    state: &str,
+    code: Option<&str>,
+    started: std::time::Instant,
+) {
     if let Some(otlp) = &rt.infrastructure.otlp_exporter {
         let end_time_nanos = crate::otlp::now_nanos();
         let duration_nanos = (started.elapsed().as_nanos() as u64).min(end_time_nanos);
         let start_time_nanos = end_time_nanos.saturating_sub(duration_nanos);
         let status_code = crate::otlp::SpanStatusCode::from_job_state(state);
         let mut attributes = vec![
-            ("job.operation".to_string(), serde_json::Value::String(lease.operation.clone())),
+            ("job.operation".to_string(), serde_json::Value::String(operation.to_owned())),
             ("job.id".to_string(), serde_json::Value::String(lease.run_id.to_string())),
+            ("job.depth".to_string(), serde_json::json!(depth)),
             ("job.epoch".to_string(), serde_json::json!(lease.epoch)),
             ("job.state".to_string(), serde_json::Value::String(state.to_string())),
         ];
         if let Some(c) = code {
             attributes.push(("aip.code".to_string(), serde_json::Value::String(c.to_string())));
         }
-        // Inside `execute`'s scope the context holds the trace, this run's span id and the enqueuing request's span as parent.
+        // The active execution scope holds this span and its actual parent: an HTTP request or a containing job step.
         let context = aip_execution::trace_context::current().unwrap_or_else(aip_execution::trace_context::TraceContext::generate);
         let span = crate::otlp::SpanData {
             trace_id: context.trace_id().to_string(),
             span_id: context.span_id().map_or_else(crate::otlp::random_span_id, str::to_owned),
             parent_span_id: context.parent_span_id().map(str::to_owned),
-            name: format!("JOB {}", lease.operation),
+            name: format!("JOB {operation}"),
             kind: 1,
             start_time_nanos,
             end_time_nanos,
@@ -1550,11 +1563,25 @@ impl Host {
                     budget: self.budget.clone(),
                     capabilities: child_caps,
                 };
-                let out = if self.facts["operations"][name]["kind"] == "read" {
-                    spike_v4_worker::invoke_operation(&mut worker, &self.facts, name, &input["input"], &caller, self.wire).await
-                } else {
-                    spike_v4_worker::invoke_job(&mut worker, &self.facts, name, &input["input"], &caller, self.wire, &mut child).await
-                };
+                let parent = aip_execution::trace_context::current().unwrap_or_else(aip_execution::trace_context::TraceContext::generate);
+                let child_trace = parent.child(crate::otlp::random_span_id());
+                let started = std::time::Instant::now();
+                let out = aip_execution::trace_context::scope(async {
+                    aip_execution::trace_context::set(child_trace);
+                    let out = if self.facts["operations"][name]["kind"] == "read" {
+                        spike_v4_worker::invoke_operation(&mut worker, &self.facts, name, &input["input"], &caller, self.wire).await
+                    } else {
+                        spike_v4_worker::invoke_job(&mut worker, &self.facts, name, &input["input"], &caller, self.wire, &mut child).await
+                    };
+                    let (state, code) = match &out {
+                        Ok(_) => ("SUCCEEDED", None),
+                        Err(error) => ("FAILED", Some(error.code)),
+                    };
+                    // Nested steps share the durable lease/id but have their own span and active parent context.
+                    export_job_execution_span(&self.rt, &self.lease, name, self.depth + 1, state, code, started);
+                    out
+                })
+                .await;
                 worker.stop().await;
                 let mut db = connect(&self.rt).await?;
                 let tx = db.transaction().await.map_err(db_error)?;

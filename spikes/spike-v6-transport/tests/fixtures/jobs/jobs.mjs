@@ -62,3 +62,10 @@ export async function message(input, ctx) {
   await ctx.messages.publish("notifications", {text:input.text}, "dispatch");
   return {length:[...input.text].length};
 }
+
+export async function traceRoot(input, ctx) {
+  return await ctx.jobs.run("traceMiddle", input, "middle");
+}
+export async function traceMiddle(input, ctx) {
+  return await ctx.jobs.run("count", input, "leaf");
+}

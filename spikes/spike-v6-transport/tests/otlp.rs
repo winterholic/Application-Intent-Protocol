@@ -43,6 +43,45 @@ struct MockCollector {
     _shutdown: tokio::sync::oneshot::Sender<()>,
 }
 
+async fn collector_request(socket: &mut TcpStream) -> Option<Vec<u8>> {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        let mut request = Vec::new();
+        loop {
+            if let Some(end) = request.windows(4).position(|bytes| bytes == b"\r\n\r\n") {
+                let head = std::str::from_utf8(&request[..end]).ok()?;
+                let length: usize = head
+                    .lines()
+                    .filter_map(|line| line.split_once(':'))
+                    .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))?
+                    .1
+                    .trim()
+                    .parse()
+                    .ok()?;
+                let expected = (end + 4).checked_add(length)?;
+                if expected > 256 * 1024 {
+                    return None;
+                }
+                if request.len() >= expected {
+                    request.truncate(expected);
+                    return Some(request);
+                }
+            }
+            if request.len() >= 256 * 1024 {
+                return None;
+            }
+            let mut chunk = [0; 4096];
+            let read = socket.read(&mut chunk).await.ok()?;
+            if read == 0 {
+                return None;
+            }
+            request.extend_from_slice(&chunk[..read]);
+        }
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
 impl MockCollector {
     async fn start() -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -63,12 +102,8 @@ impl MockCollector {
                         let traces = traces_store.clone();
                         let metrics = metrics_store.clone();
                         tokio::spawn(async move {
-                            let mut buf = vec![0u8; 64 * 1024];
-                            let n = match socket.read(&mut buf).await {
-                                Ok(n) if n > 0 => n,
-                                _ => return,
-                            };
-                            let req = String::from_utf8_lossy(&buf[..n]);
+                            let Some(buf) = collector_request(&mut socket).await else { return };
+                            let req = String::from_utf8_lossy(&buf);
                             let (head, body) = match req.split_once("\r\n\r\n") {
                                 Some(pair) => pair,
                                 None => return,
@@ -806,4 +841,136 @@ async fn a_job_without_an_inbound_trace_joins_the_trace_the_server_started() {
         assert!(started.elapsed() < Duration::from_secs(10), "the job span never arrived: {spans:?}");
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+}
+
+/// ctx.jobs.run executes nested steps in the root lease; each step must have its own span and its actual caller as parent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn nested_node_and_python_job_steps_form_a_span_tree_without_new_durable_runs() {
+    let _gate = SCHEMA_GATE.lock().await;
+    for (label, lang, trace_id) in
+        [("node", WorkerLang::Node, "4bf92f3577b34da6a3ce929d0e0e4738"), ("python", WorkerLang::Python, "4bf92f3577b34da6a3ce929d0e0e4739")]
+    {
+        let collector = MockCollector::start().await;
+        // Reuse the process's immutable sqlgen namespace under SCHEMA_GATE, with per-iteration cleanup.
+        let schema = format!("aip_otlp_job_{}", std::process::id());
+        let _cleanup = DropSchema(schema.clone());
+        sqlgen::set_schema(&schema);
+        let source = format!(
+            "{}\n{}",
+            include_str!("fixtures/jobs.aip"),
+            r#"
+operation job traceRoot {
+ input {text: Text} output {length: Int} allow actor != null
+ access jobs.traceMiddle, jobs.count effect managed deadline 30s implementation "jobs.traceRoot"
+}
+operation job traceMiddle {
+ input {text: Text} output {length: Int} allow actor != null
+ access jobs.count effect managed deadline 20s implementation "jobs.traceMiddle"
+}
+"#
+        );
+        let facts = load_str(&source, Form::A).unwrap().execution;
+        aip_migrate::init(aip_test_support::test_database_url!(), &schema, &facts).await.unwrap();
+        let db = spike_v2_read::connect_owned_with_url(aip_test_support::test_database_url!()).await.unwrap();
+        db.batch_execute(&format!(
+            "INSERT INTO {schema}.aip_actors VALUES(1); INSERT INTO {schema}.aip_principals(issuer,subject,actor_id) VALUES('test','owner',1)"
+        ))
+        .await
+        .unwrap();
+        let iat: i64 = db.query_one("SELECT floor(extract(epoch from clock_timestamp()))::bigint", &[]).await.unwrap().get(0);
+        let fingerprint = spike_v5_sdk::contract_fingerprint_with_all_extensions(&facts, IdWire::DecimalString);
+        let server = listen_with_infrastructure(
+            facts.clone(),
+            IdWire::DecimalString,
+            "127.0.0.1:0".parse().unwrap(),
+            aip_test_support::test_database_url!().into(),
+            Some(ReadExtensions { lang, dir: concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/jobs").into() }),
+            ServerOptions::default(),
+            false,
+            Arc::new(DbAuth { schema: schema.clone(), iat }),
+            Some(DeploymentFence::new(schema.clone(), spike_v1_fixture::digest(&facts)).unwrap()),
+            None,
+            false,
+            Infrastructure {
+                otlp: Some(OtlpConfig { endpoint: format!("http://{}", collector.addr), headers: HashMap::new(), timeout_ms: 3000 }),
+                ..Infrastructure::default()
+            },
+        )
+        .await
+        .unwrap();
+        let caller_span = "00f067aa0ba902b7";
+        let traceparent = format!("00-{trace_id}-{caller_span}-01");
+        let submitted = call(
+            server.address,
+            "/jobs/enqueue",
+            &fingerprint,
+            &[("traceparent", &traceparent)],
+            json!({"operation":"traceRoot","input":{"text":"TRACE_SENSITIVE"},"key":"nested-trace","delayMs":0}),
+        )
+        .await;
+        assert_eq!(submitted["ok"], true, "{label}: {submitted}");
+        let job_id = submitted["run"]["id"].as_str().unwrap();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+        loop {
+            let status = call(server.address, "/jobs/status", &fingerprint, &[], json!({"id":job_id})).await;
+            if status["run"]["state"] == "SUCCEEDED" {
+                break;
+            }
+            assert_ne!(status["run"]["state"], "FAILED", "{label}: {status}");
+            assert!(tokio::time::Instant::now() < deadline, "{label}: {status}");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        let spans = loop {
+            let spans = spans_of(&collector, trace_id);
+            if ["JOB traceRoot", "JOB traceMiddle", "JOB count"].iter().all(|name| spans.iter().any(|span| span["name"] == *name)) {
+                break spans;
+            }
+            assert!(tokio::time::Instant::now() < deadline, "{label}: missing nested spans: {spans:?}");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        };
+        let find = |name: &str| spans.iter().find(|span| span["name"] == name).unwrap();
+        let root = find("JOB traceRoot");
+        let middle = find("JOB traceMiddle");
+        let leaf = find("JOB count");
+        let request = spans.iter().find(|span| span["name"] == "HTTP jobs" && span["parentSpanId"] == caller_span).unwrap();
+        assert_eq!(root["parentSpanId"], request["spanId"], "{label}");
+        assert_eq!(middle["parentSpanId"], root["spanId"], "{label}");
+        assert_eq!(leaf["parentSpanId"], middle["spanId"], "{label}");
+        for span in [root, middle, leaf] {
+            assert_eq!(span["status"]["code"], 1);
+            assert_eq!(span["traceId"], trace_id);
+            assert!(span["attributes"].as_array().unwrap().iter().any(|a| a["key"] == "job.id" && a["value"]["stringValue"] == job_id));
+        }
+        assert_ne!(root["spanId"], middle["spanId"]);
+        assert_ne!(middle["spanId"], leaf["spanId"]);
+        assert_ne!(root["spanId"], leaf["spanId"]);
+        assert!(!serde_json::to_string(&spans).unwrap().contains("TRACE_SENSITIVE"));
+        let runs: i64 = db.query_one(&format!("SELECT count(*) FROM {schema}.aip_jobs"), &[]).await.unwrap().get(0);
+        assert_eq!(runs, 1, "nested steps share the root run; they do not enqueue new durable jobs");
+    }
+}
+
+#[tokio::test]
+async fn mock_collector_reassembles_a_fragmented_json_body() {
+    let collector = MockCollector::start().await;
+    let body = r#"{"resourceSpans":[]}"#;
+    let mut stream = TcpStream::connect(collector.addr).await.unwrap();
+    stream
+        .write_all(format!("POST /v1/traces HTTP/1.1\r\nhost: localhost\r\ncontent-length: {}\r\nconnection: close\r\n\r\n", body.len()).as_bytes())
+        .await
+        .unwrap();
+    let mut early = [0; 1];
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), stream.read(&mut early)).await.is_err(),
+        "collector acknowledged headers before receiving the JSON body"
+    );
+    for chunk in body.as_bytes().chunks(3) {
+        stream.write_all(chunk).await.unwrap();
+        tokio::task::yield_now().await;
+    }
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).await.unwrap();
+    assert!(response.starts_with(b"HTTP/1.1 200"));
+    assert_eq!(collector.received_traces.lock().unwrap().len(), 1);
 }
