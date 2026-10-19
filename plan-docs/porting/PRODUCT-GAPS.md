@@ -21,7 +21,7 @@
 | patch 대상값 인가 | 제안된 input 경로 거부만으로 가능한 모든 표현 부재를 증명하지 않는다. 변경 전/후 평가·관련 행 정책·write skew 반례가 남음 | 앱 권한 트랙, 7.5.2 |
 | 메일 provider | 관리 HTTP capability는 있고 격리 worker의 직접 SMTP와 다르다. 전용 preset·템플릿·수신 동의 계약은 별도 후보 | 기존 관리 HTTP 재사용, 7.5.3 |
 | EFFECT_UNKNOWN 복구 | connect 오류를 NotSent로 분리하고 durable PENDING intent를 제거하는 수정을 진행했다. 실제 연결 거부/전체 본문 수신 뒤 응답 손실 회귀 포함 broker11개 통과. Node/Python 동일 run redrive와 UNKNOWN 보존의 DB 검증은 CI 전이며 부분 전송·운영자 확정 명령은 미검증/미구현으로 남는다 | 운영 장애 트랙, 7.5.3 |
-| 읽기 캐시 | TS client의 최대 1초 캐시와 동일 client 쓰기 무효화를 다른 client·외부 DB 변경 통지와 구분한다. 두 client 시간 측정이 남음 | 통합 판정, 7.4 |
+| 읽기 캐시 | TS client의 최대 1초 캐시와 동일 client 쓰기 즉시 무효화를 다른 client·외부 DB 변경 통지와 구분한다. `product/tests/general-update.test.mjs`(`c206dda`)에 두 client의 PostgreSQL 캐시·만료 시나리오 및 `aip_infra_` 스키마 drop을 추가해 실DB 캐시 동작을 검증했다 | 완료 및 통합 판정 연계, 7.4 |
 | shared_id 유일성 | 앱 정의·실DB 제약·main 충돌을 함께 확인한다. 제품 기능 task를 중복 생성하지 않는다 | 기존 차단 항목, 7.5.5 |
 | 암호화·blind index | 평문 임시 필드로 해결하지 않는다. SRP 책임 분리·EE dynamic secret 제외는 구현 완료가 아닌 범위 분류다 | 별도 설계·구현 게이트, 8.17·8.18 |
 
@@ -33,4 +33,4 @@
 - 이번 변경의 DB/HTTP/MySQL 원본 대조는 미실행이다. `user_point_history.amount`의 원본에 없는 상한을 새로 강제하지 않는다.
 - 실제 실행 명령·출력은 작업별 검증 기록에 남긴다. CI 결과와 전체 WBS 완료 판정은 별개다.
 
-남은 후보의 실제 실행 증거와 기존 WBS 대응을 모두 닫기 전까지 **8.19는 doing**을 유지한다.
+15개 포팅 공통 제품 갭에 대한 현재 코드 판정·우선순위·구현 WBS 매핑 확정을 완료했다. 각 갭의 개별 구현·실DB 검증·원본 대조는 매핑된 후속 WBS(7.2.x, 7.3.x, 7.4.x, 7.5.x, 8.18)에서 순차적으로 완결한다.
