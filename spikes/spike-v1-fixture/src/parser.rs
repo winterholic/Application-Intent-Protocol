@@ -134,6 +134,13 @@ impl Parser {
             _ => self.err("정수"),
         }
     }
+    fn range_bound(&mut self, allow_negative: bool) -> R<i64> {
+        // Keep lengths, budgets and Decimal precision unsigned. Integer tokens are
+        // nonnegative i64 values, so negating one cannot overflow.
+        let negative = allow_negative && self.eat_sym("-");
+        let value = self.int()?;
+        Ok(if negative { -value } else { value })
+    }
     fn dur(&mut self) -> R<u64> {
         match *self.peek() {
             Tok::Dur(n) => {
@@ -278,9 +285,9 @@ impl Parser {
                 }
                 t.decimal = Some((precision as u8, scale as u8));
             } else {
-                let lo = self.int()?;
+                let lo = self.range_bound(t.name == "Int")?;
                 self.expect_sym("..")?;
-                let hi = self.int()?;
+                let hi = self.range_bound(t.name == "Int")?;
                 self.expect_sym(")")?;
                 t.range = Some((lo, hi));
             }

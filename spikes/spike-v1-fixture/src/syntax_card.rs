@@ -197,6 +197,13 @@ pub fn render_markdown() -> String {
             out.push_str(&format!("| `{key}` | `{}` | {meaning} |\n", shape.replace('|', "\\|")));
         }
     }
+    out.push_str(
+        "\n## 타입 범위\n\n\
+         `Int(lo..hi)`의 양 끝은 포함되며 음수 경계도 쓸 수 있다(예: `Int(-1000..1000)`, `Int(-1000..-1)`). \
+         범위는 `lo <= hi`여야 한다. 부호는 Int 범위에서만 허용하며 Text 길이·budget·Decimal 자릿수에는 허용하지 않는다. \
+         기존 정수 토큰의 크기 한도는 유지한다. operation 입출력 범위는 음수도 JavaScript 안전 정수 영역 안이어야 한다. \
+         이 구문은 범위 선언이며 식의 음수 리터럴 문법을 추가하지 않는다.\n",
+    );
     out.push_str("\n## 작성 예 1: 읽기, 정책, 집계, 관계\n\n```aip\n");
     out.push_str(include_str!("../fixture/recruitment.aip"));
     out.push_str("```\n\n## 작성 예 2: 쓰기, 연산, 확장\n\n```aip\n");

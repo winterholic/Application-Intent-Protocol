@@ -22,9 +22,9 @@
 
 현재 포팅 처리: `app.aip`는 값을 선언하지 않고 머리 주석과 `docs { summary }`로 갭을 표시한다. 값 없는 Secret은 이름과 세대, 소프트 삭제만 가진다.
 
-### G10. 행 삭제와 부분 유일 제약이 없다
+### G10. 앱 삭제 의미와 조건부 유일 제약 대조가 남음
 
-제품 방언에는 물리 delete가 없고(`product/SDK.md` "선언 없는 update나 물리 delete는 열리지 않는다") 조건부 유일 인덱스도 없다. 그래서 "삭제 후 같은 이름으로 다시 만들기"를 `unique (folder, key)`로 표현할 수 없다. 이전 초안은 삭제를 값 null 처리로 흉내 내서 삭제된 시크릿이 목록에 남고 이름을 재사용할 수 없었다(**재현**, `evidence/before-legacy-53b1537.txt`).
+2026-10-19 정정: 현행 제품 방언에 `transition ... { delete; ... }`가 있으므로 이전의 "물리 delete가 없다"는 서술은 철회한다. `product/SDK.md`의 "선언 없는 ... 물리 delete는 열리지 않는다"도 선언된 delete의 부재를 뜻하지 않는다. 현재 제품과 포팅의 대조는 [공통 갭 조사](PRODUCT-GAPS.md)를 따른다. Infisical 포팅의 삭제 정책·참조 정리·이름 재사용은 이 구문 지원만으로 완료되지 않는다. 이전 초안의 null 삭제 근사에서는 삭제된 시크릿이 목록에 남고 이름을 재사용할 수 없었다(**과거 재현**, `evidence/before-legacy-53b1537.txt`). 조건부 유일 제약의 표현 가능성과 실제 DB 집행은 아래 모델 및 invariant와 따로 대조한다.
 
 현재 포팅 처리(우회가 아닌 방언 안의 표현): 이름(`SecretKey`)과 세대(`Secret`)를 나누고 `limit atMostOneLiveSecret ... invariant ... per secretKey`로 "이름당 살아 있는 세대 1개"를 유일 인덱스로 강제한다. 삭제된 세대는 `rows read`에서 빠진다. **재현**: `tests/test_live_db.py::test_deleted_secret_leaves_reads_and_the_name_can_be_recreated_twice`. 비용: 삭제 행이 지워지지 않고 남는다(감사에는 유리, 용량에는 불리). 제품에 부분 유일 제약이 생기면 한 resource로 합칠 수 있다.
 

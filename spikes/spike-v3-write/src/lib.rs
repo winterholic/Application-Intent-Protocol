@@ -166,6 +166,23 @@ mod scalar_literal_tests {
     }
 
     #[test]
+    fn signed_range_definitions_enforce_negative_create_value_boundaries() {
+        let facts = spike_v1_fixture::load_str(
+            "actor principal resource Score { fields { id: Id; points: Int(-1000..1000) } \
+             expose create { fields points; allow actor != null } }",
+            spike_v1_fixture::Form::A,
+        )
+        .expect("signed range definition")
+        .execution;
+        for value in [-1000, -1, 0, 1000] {
+            assert!(matches!(literal(&facts, "Score", "points", &json!(value), IdWire::Legacy), Ok(Src::Lit(s, "bigint")) if s == value.to_string()));
+        }
+        for value in [json!(-1001), json!(1001), json!(-0.5), json!("-1"), json!(null)] {
+            assert_eq!(literal(&facts, "Score", "points", &value, IdWire::Legacy).err().expect("invalid create value").code, "WIRE.BAD_VALUE");
+        }
+    }
+
+    #[test]
     fn create_time_url_and_text_use_the_common_scalar_parser() {
         let facts = json!({"resources":{"Comment":{"fields":{
             "at":{"ty":"Time"},"url":{"ty":"Url"},"content":{"ty":"Text"}

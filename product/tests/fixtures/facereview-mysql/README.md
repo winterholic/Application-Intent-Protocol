@@ -62,7 +62,7 @@ python3.9 product/tests/fixtures/facereview-mysql/reference/writes.py
 - `user_emotion_dna`와 `user_emotion_summary`: `id: User`로 공유 PK/FK를 한 필드에 표현하고 `rows read when id = actor and active(actor)`로 본인 행만 연다. 외부 매핑은 DNA 테이블에만 `shared_pk_without_fk: true`를 명시한다. 이는 원본 DNA DDL에 물리 FK가 없는 사실을 기록하며, 이 opt-in이 있어도 `user_id`에 다른 대상 FK가 있으면 채택이 거부된다. Summary는 기본값(false)으로 원본 User FK의 대상 테이블과 컬럼을 검증하며 FK 제거나 오지정을 거부한다. DNA의 `dna_data`는 JSON 문서 값으로 읽고 문자열 값은 다시 파싱하지 않는다. 원본 DNA 표에는 FK 제약이 없어 orphan 행도 가능하지만 actor ID와 다르면 AIP에서 읽히지 않는다.
 
 MariaDB 11.4.13에서 확인한 `JSON` 열은 catalog에 `DATA_TYPE=longtext, COLUMN_TYPE=longtext`로 노출된다. 이 포팅의 `Json` 선언은 catalog의 실제 JSON 타입을 요구하므로 `dna_data` 어댑션은 `EXTERNAL_SCHEMA`로 거절된다. MariaDB `mysql_read_http` 실행은 별도로 시도했지만 test process의 driver 연결이 `CATALOG_ERROR: MySQL connection failed`로 실패해 HTTP 경로는 검증되지 않았다.
-- 음수 범위 `Int(-1000..1000)`은 문법이 지원하지 않아 `user_point_history.amount`는 범위 없는 `Int`다.
+- 2026-10-19: 음수 범위 `Int(-1000..1000)`의 문법 거부를 수정했다. 5가지 정의 형식의 같은 실행 계약과 쓰기 값의 양 끝·범위 초과 검사는 회귀 테스트로 확인한다. `user_point_history.amount`는 원본에서 -1000..1000 같은 범위를 보장하는지 별도 대조하지 않았으므로 범위 없는 `Int`를 유지한다. 이 문법 수정만으로 MySQL 원본 동등성 검증을 추가했다고 보지 않는다.
 - Mongo(감정 분포)·Redis에 의존하는 목록(`get_all_videos`, 북마크 영상, 추천)은 이 fixture 범위 밖이다.
 - 비활성화된 회원의 요청은 원본의 401(`AUTH_INVALID_TOKEN`)이 아니라 200과 빈 결과(쓰기는 거절)다. 인증은 외부 토큰 검증이고 가시성은 정책이라서다. 상태 코드까지 같게 하려면 actor 유효 조건을 정의 수준에서 선언하는 기능이 필요하다.
 - 관리자용 별도 resource. 한 표에 resource 둘을 연결하는 매핑은 어댑션이 거절한다(표당 resource 하나). 그래서 관리자는 같은 resource의 정책(`isAdmin`)으로 풀었고, 그 결과 ADMIN은 사용자 화면의 댓글 목록에서도 삭제된 댓글을 받는다(`is_deleted.eq` 필터로 거를 수 있으나 호출자가 정한다).
