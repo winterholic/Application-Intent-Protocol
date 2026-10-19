@@ -128,6 +128,8 @@ owner별 S3 quota는 **서명한 크기와 저장소에서 확인된 크기의 �
 
 ## 인계 (2026-10-18)
 
+2026-10-19 정정: 아래의 "중첩 job의 span 부모 시험 없음"은 `73cb6bd`에서 해소했다. [Linux worker jobs 39212001257](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39212001257)의 실제 Node/Python root→middle→leaf 실행에서 trace·고유 span·부모 연결·root job.id와 durable row 1개를 확인했다. `ctx.jobs.run`은 root lease의 동기 중첩 step이며 새 durable job enqueue를 구현했다는 뜻이 아니다. 전체 회귀·앱 포팅·출시 승인과 구분한다.
+
 - **현재 변경(main, 모두 push됨):** 8.11 `c542d90`, 8.5 `0088a88`·`dc4129d`, 8.7 `b1b7d1b`·`cc5aa71`·`b8da233`·`f896f72`·`4ee67e7`·`b7f592e`, 8.10 후속 6건 `a8b0d0b`·`5b7f23c`·`791367b`·`99e1052`·`3b0925f`·`dc95dc9`·`a97f1b9`. 모두 같은 Claude Run의 구현이며 독립 검증 전이다.
 - **검증 위치:** 항목별 명령·결과는 [제품 검증](VERIFICATION.md)의 WBS 8.11·8.5·8.10 절, 게이트 결과는 이 문서다.
 - **미완료·열린 것:** 위 "증명하지 않는 것", 중첩 job의 span 부모 시험 없음, Python 3.11·3.12 미실행, Auth0·Entra 미실행, S3 quota 우회 경계(위). spike-v6 clippy 실패와 의존성 점검은 아래 "후속 증분"에서 처리했다.

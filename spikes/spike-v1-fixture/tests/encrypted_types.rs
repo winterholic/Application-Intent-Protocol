@@ -30,10 +30,15 @@ fn malformed_modifiers_have_stable_diagnostics() {
 }
 
 #[test]
-fn declarations_fail_closed_until_product_storage_is_connected() {
+fn normalized_definitions_remain_blocked_at_the_runtime_boundary() {
     let src = "actor principal resource Secret {fields {id: Id; value: Text encrypted(scope: service)}}";
-    let errors = load_str(src, Form::A).err().expect("no plaintext fallback");
-    assert!(errors.iter().any(|e| e.code == "DEF.ENCRYPTION_RUNTIME_UNAVAILABLE"), "{errors:?}");
+    let definition = load_str(src, Form::A).unwrap_or_else(|errors| panic!("{errors:?}"));
+    assert_eq!(
+        definition.execution["resources"]["Secret"]["fields"]["value"]["encrypted"],
+        serde_json::json!({"scope":{"kind":"service"},"lookup":"none"})
+    );
+    assert_eq!(spike_v1_fixture::sema::require_supported_runtime(&definition.execution).unwrap_err().code, "DEF.ENCRYPTION_RUNTIME_UNAVAILABLE");
+    assert!(definition.advisories.iter().any(|advisory| advisory.code == "DEF.ADVISORY_ENCRYPTION_RUNTIME_DISABLED"));
 }
 
 fn rejects(source: &str, code: &str) {
@@ -79,9 +84,12 @@ fn encrypted_scope_cannot_be_patched_or_assigned_and_secret_expressions_are_reje
 }
 
 #[test]
-fn all_five_forms_recognize_the_modifier_and_fail_closed_with_the_same_code() {
+fn all_five_forms_normalize_encrypted_metadata_to_the_same_execution_digest() {
     let body = "actor principal resource Secret {fields {id: Id; value: Text encrypted(scope: service)}}";
     let literal = r#"{"actor":"principal","resources":{"Secret":{"fields":{"id":"Id","value":"Text encrypted(scope: service)"}}}}"#;
+    let expected = load_str(body, Form::A).unwrap().execution;
+    let plain = load_str("actor principal resource Secret {fields {id: Id; value: Text}}", Form::A).unwrap().execution;
+    assert_ne!(spike_v1_fixture::digest(&expected), spike_v1_fixture::digest(&plain));
     for (source, form) in [
         (body.to_string(), Form::A),
         (format!("import {{aip}} from '@aip/define'; export const spec = aip`{body}`;"), Form::ETs),
@@ -89,8 +97,9 @@ fn all_five_forms_recognize_the_modifier_and_fail_closed_with_the_same_code() {
         (format!("import {{define}} from '@aip/define'; export const spec = define({literal});"), Form::HTs),
         (format!("from aip.define import define\nSPEC = define({literal})"), Form::HPy),
     ] {
-        let errors = load_str(&source, form).err().expect("runtime gate");
-        assert_eq!(errors.iter().map(|e| e.code).collect::<Vec<_>>(), ["DEF.ENCRYPTION_RUNTIME_UNAVAILABLE"], "{form:?}: {errors:?}");
+        let actual = load_str(&source, form).unwrap_or_else(|errors| panic!("{form:?}: {errors:?}")).execution;
+        assert_eq!(actual, expected, "{form:?}");
+        assert_eq!(spike_v1_fixture::digest(&actual), spike_v1_fixture::digest(&expected));
     }
 }
 
@@ -108,4 +117,39 @@ fn cross_resource_effects_and_predicate_paths_cannot_bypass_scope_and_secret_gua
     rejects("actor principal predicate visible(s: Secret) = s.value = \"fixture\" resource Secret {fields {id: Id; value: Text encrypted(scope: service)}}", "DEF.ENCRYPTED_POLICY_EXPR_FORBIDDEN");
     let src = "actor Member resource Member {fields {id: Id}} resource Secret {fields {id: Id; first: Member; second: Member; value: Text encrypted(scope: owner)}}";
     rejects(src, "DEF.ENCRYPTED_AMBIGUOUS_OWNER");
+}
+
+#[test]
+fn reference_and_owner_scopes_are_resolved_to_immutable_resource_identity() {
+    let source="actor Member resource Member {fields {id: Uuid; note: Text encrypted(scope: owner)}} resource Secret {fields {id: Id; owner: Member; value: Text? encrypted(scope: owner); projectValue: Text encrypted(scope: owner, lookup: eq)}}";
+    let facts = load_str(source, Form::A).unwrap_or_else(|errors| panic!("{errors:?}")).execution;
+    assert_eq!(
+        facts["resources"]["Member"]["fields"]["note"]["encrypted"]["scope"],
+        serde_json::json!({"kind":"owner","field":"id","target":"Member"})
+    );
+    assert_eq!(
+        facts["resources"]["Secret"]["fields"]["value"]["encrypted"]["scope"],
+        serde_json::json!({"kind":"owner","field":"owner","target":"Member"})
+    );
+    let reference = source
+        .replace("scope: owner, lookup: eq", "scope: ownerRef, lookup: eq")
+        .replace("owner: Member; value:", "owner: Member; ownerRef: Member; value:")
+        .replace("value: Text? encrypted(scope: owner)", "value: Text? encrypted(scope: service)");
+    let reference = reference.replace("note: Text encrypted(scope: owner)", "note: Text encrypted(scope: service)");
+    let facts = load_str(&reference, Form::A).unwrap_or_else(|errors| panic!("{errors:?}")).execution;
+    assert_eq!(
+        facts["resources"]["Secret"]["fields"]["projectValue"]["encrypted"],
+        serde_json::json!({"scope":{"kind":"ref","field":"ownerRef","target":"Member"},"lookup":"eq"})
+    );
+}
+
+#[test]
+fn encrypted_scalar_facts_keep_public_types_and_repeat_cannot_compare_patch_secrets() {
+    for (ty, expected) in [("Email", "Email"), ("Url?", "Url?"), ("Decimal(8,2)", "Decimal<8,2>")] {
+        let source = format!("actor principal resource Secret {{fields {{id: Id; value: {ty} encrypted(scope: service)}}}}");
+        let facts = load_str(&source, Form::A).unwrap_or_else(|errors| panic!("{errors:?}")).execution;
+        assert_eq!(facts["resources"]["Secret"]["fields"]["value"]["ty"], expected);
+        assert_eq!(spike_v1_fixture::sema::require_supported_runtime(&facts).unwrap_err().code, "DEF.ENCRYPTION_RUNTIME_UNAVAILABLE");
+    }
+    rejects("actor principal resource Secret {fields {id: Id; value: Text encrypted(scope: service)} transition compare {patch value from true allow true repeat unchanged}}","DEF.UNSUPPORTED");
 }

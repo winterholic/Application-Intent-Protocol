@@ -525,6 +525,11 @@ pub fn load(file: &Path, dev_checks: bool) -> Result<spike_v11_dev_checks::Check
         |ds| json!({"ok":false,"code":"DEF.INVALID_DEFINITION","diagnostics":ds.iter().map(spike_v1_fixture::diag::Diag::json).collect::<Vec<_>>()}),
     )
 }
+
+fn require_supported_runtime(facts: &Value) -> Result<(), Value> {
+    spike_v1_fixture::sema::require_supported_runtime(facts)
+        .map_err(|diagnostic| json!({"ok":false,"code":"DEF.INVALID_DEFINITION","diagnostics":[diagnostic.json()]}))
+}
 fn configuration(path: &Path) -> Result<Config, Value> {
     configuration_with_mode(path, Gate::Standard)
 }
@@ -1459,6 +1464,7 @@ async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
         ));
     }
     let mut facts = load(file, false)?.output.execution;
+    require_supported_runtime(&facts)?;
     if let Some(mapping) = external_mapping(&config)? {
         facts = aip_migrate::external::deployment_facts(&database_url(&config)?, &config.schema, &facts, &mapping).await?;
     }

@@ -349,6 +349,7 @@ pub(crate) async fn principal(config: Config, command: Principal) -> Result<Valu
 pub(crate) async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
     reject_unsupported_infrastructure(&config)?;
     let facts = load(file, false)?.output.execution;
+    require_supported_runtime(&facts)?;
     let mapping: Mapping = external_mapping(&config)?.ok_or_else(|| error("EXTERNAL_MAPPING_REQUIRED", "external_mapping 설정이 필요함"))?;
     let url = database_url(&config)?;
     let deployment = aip_migrate::mysql_adopt::deployment(&url, &config.schema, &facts, &mapping, config.wire.deployment_label()).await?;

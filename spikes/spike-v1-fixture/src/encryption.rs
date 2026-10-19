@@ -1,4 +1,4 @@
-//! Structural encryption constraints. Runtime activation remains independently blocked in sema::type_of.
+//! Structural encryption constraints and normalized facts. Runtime activation is independently fenced.
 use crate::{ast::*, diag::Diag};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -140,4 +140,29 @@ pub(crate) fn validate(spec: &Spec) -> Vec<Diag> {
 
 fn encrypted<'a>(resource: &'a Resource, field: &str) -> Option<&'a Encryption> {
     resource.fields.iter().find(|candidate| candidate.name == field).and_then(|field| field.ty.encrypted.as_ref())
+}
+
+pub(crate) fn annotation(spec: &Spec, resource: &Resource, encryption: &Encryption) -> Option<serde_json::Value> {
+    use serde_json::json;
+    let scope = match encryption.scope.as_str() {
+        "service" => json!({"kind":"service"}),
+        "owner" => {
+            let actor = &spec.actor.as_ref()?.0;
+            let field = if actor == &resource.name {
+                "id"
+            } else {
+                &resource
+                    .fields
+                    .iter()
+                    .find(|field| !field.ty.nullable && !field.ty.id_of && field.ty.encrypted.is_none() && &field.ty.name == actor)?
+                    .name
+            };
+            json!({"kind":"owner","field":field,"target":actor})
+        }
+        name => {
+            let field = resource.fields.iter().find(|field| field.name == name)?;
+            json!({"kind":"ref","field":field.name,"target":field.ty.name})
+        }
+    };
+    Some(json!({"scope":scope,"lookup":if encryption.lookup_eq {"eq"} else {"none"}}))
 }

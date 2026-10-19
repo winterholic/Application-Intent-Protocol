@@ -158,6 +158,23 @@ const MAX_POLICY_EXPANDED_DEPTH: usize = 64;
 const MAX_POLICY_EXPANDED_NODES: usize = 16_384;
 const MAX_POLICY_PATH_SEGMENTS: usize = 64;
 
+/// Definition normalization can precede runtime support. Every product listener must enforce this
+/// before binding or connecting; unknown encryption metadata must never become plaintext execution.
+pub fn require_supported_runtime(facts: &Value) -> Result<(), Diag> {
+    if facts["resources"].as_object().is_some_and(|resources| {
+        resources
+            .values()
+            .any(|resource| resource["fields"].as_object().is_some_and(|fields| fields.values().any(|field| field.get("encrypted").is_some())))
+    }) {
+        return Err(Diag::new(
+            "DEF.ENCRYPTION_RUNTIME_UNAVAILABLE",
+            "암호화 저장·읽기·저널 경계는 아직 연결되지 않아 서비스를 실행할 수 없음",
+            Span::default(),
+        ));
+    }
+    Ok(())
+}
+
 pub fn analyze(spec: &Spec) -> Result<Output, Vec<Diag>> {
     let mut cx = Ctx {
         spec,
@@ -262,11 +279,9 @@ impl<'a> Ctx<'a> {
             if t.database_default {
                 self.d("DEF.ENCRYPTED_DEFAULT_DB_FORBIDDEN", "encrypted와 default database를 함께 쓸 수 없음", encryption.span);
             }
-            if t.id_of || t.name != "Text" {
-                self.d("DEF.ENCRYPTED_TYPE_UNSUPPORTED", "첫 암호화 구현은 Text만 지원한다", encryption.span);
+            if t.id_of || !matches!(t.name.as_str(), "Text" | "Email" | "Url" | "Decimal") {
+                self.d("DEF.ENCRYPTED_TYPE_UNSUPPORTED", "암호화 선언은 Text/Email/Url/Decimal만 지원한다", encryption.span);
             }
-            // Parsing a modifier must never make existing plaintext engines silently accept it.
-            self.d("DEF.ENCRYPTION_RUNTIME_UNAVAILABLE", "암호화 문법은 인식하지만 제품 저장·읽기·저널 경계는 아직 연결되지 않음", encryption.span);
         }
         if t.database_default && owner.is_none() {
             self.d("DEF.TYPE_MISMATCH", "default database는 resource 필드에만 선언한다", t.span);
@@ -899,6 +914,16 @@ impl<'a> Ctx<'a> {
                 fields.insert(f.name.clone(), json!({ "ty": tt.show(), "range": f.ty.range.map(|(a, b)| json!([a, b])) }));
                 if f.ty.database_default {
                     fields.get_mut(&f.name).unwrap()["databaseDefault"] = json!(true);
+                }
+                if let Some(encryption) = &f.ty.encrypted {
+                    if let Some(metadata) = crate::encryption::annotation(self.spec, r, encryption) {
+                        fields.get_mut(&f.name).unwrap()["encrypted"] = metadata;
+                    }
+                    self.advisory(
+                        "DEF.ADVISORY_ENCRYPTION_RUNTIME_DISABLED",
+                        "암호화 정의 facts는 정규화되지만 서비스 기동·마이그레이션은 아직 차단됨",
+                        encryption.span,
+                    );
                 }
             }
         }

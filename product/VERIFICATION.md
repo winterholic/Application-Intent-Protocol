@@ -1,5 +1,13 @@
 # 제품 통합 검증 (2026-10-17)
 
+## 2026-10-19 최신 실행 범위
+
+- WBS 8.3: `73cb6bd`의 [Linux worker jobs 39212001257](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39212001257)에서 `job_breaker` 2개, OTLP 9개가 통과했다. OTLP 중 실제 DB/worker 경로는 HTTP→job 2개와 Node/Python 중첩 실행 1개다. 중첩 `ctx.jobs.run`은 별도 durable row를 enqueue하지 않고 root lease 안에서 실행된다. root→middle→leaf의 고유 span·실제 부모·동일 trace/root job.id·DB run 1개·민감 canary 배제를 확인했다. 과거 아래의 "중첩 job이 enqueue한 job" 서술은 이 구현 의미와 다르며 당시 미검증 기록으로 남긴다.
+- WBS 8.5: `a8eb690` Verify 39210323292의 장부 25개와 [Object storage 39210323219](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39210323219)의 실제 TLS MinIO 6개가 통과했다. 기존 무장부 객체/두 번째 보류 종료 뒤 도착한 PUT의 명시적 confirm 복구, owner 격리, 중복 계상 방지, quota 초과 관측의 보존을 확인했다. 자동 목록/이벤트 발견과 provider 하드 상한은 여전히 보장하지 않는다.
+- WBS 8.16: [Database contracts 39207996436](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39207996436)의 SCRAM 최소권한 1개·password helper 10개·MySQL/MariaDB live fence 각 5개를 확인했다. 아래의 CI 대기 서술은 당시 이력이다.
+- WBS 8.18.1: `a8eb690` Verify의 all-features 구간에서 crypto 17개가 Linux 통과했다. WBS 8.18.2 준비 단계는 로컬 parser 164개·진단 21개·암호화 정규화 10개와 runtime/migrate gate 각 1개가 통과했다(164개에 진단/정규화 포함). 5형식 동일 facts/digest, Text/Email/Url/Decimal·owner/ref metadata, 실제 CLI check/gen, TS/Python binding 동일 지문과 암호 metadata 비노출을 확인했다. 개발 검사 옵션과 관계없이 서비스 기동과 migration/adopt는 암호화 metadata를 거부한다. 이는 실제 셀 저장·읽기·회전·저널 통합 완료가 아니다.
+- `a8eb690` 전체 Verify는 `job_breaker`의 두 테스트가 한 프로세스에서 다른 schema 이름을 써 실패했다. `62ac64c`에서 같은 이름을 재사용하도록 고쳤고 위 Linux 작업에서 두 테스트 모두 통과했다. 해당 전체 Verify를 성공으로 세지 않는다. 최신 전체 회귀는 별도로 확인한다.
+
 ## 포팅 공통 HTTP 전송 전 실패 분류 (2026-10-19)
 
 - 닫힌 loopback 포트 연결이 `Transport`가 되어 durable effect를 UNKNOWN으로 남기는 반례를 재현했다. 자동 retry·redirect·환경 proxy를 끈 broker의 `send`에서 `is_connect()`인 오류만 `NotSent`로 분리한다. durable host는 `WIRE.DELIVERY_FAILED`와 intent 제거로 응답한다. 연결 이후 전송/응답 손실은 불확정을 유지한다.

@@ -6,6 +6,13 @@
 
 모든 AIP 오류 코드는 `영역.이름` 형식이다. 이 문서의 영역은 `DEF`(제품 정의 검사기)이고, 제품 HTTP API의 `WIRE` 코드는 [wire-errors.md](wire-errors.md), PoC 언어와 런타임의 `POC` 코드는 [diagnostics.md](diagnostics.md)에 있다. 세 영역은 `aip explain-code`와 `aip diagnostics`로 함께 조회한다. 2026-10-13 이전에는 접두 없는 이름(`DEF.UNKNOWN_FIELD`)이었고 제품 wire 코드와 이름이 겹쳤다.
 
+### `DEF.ADVISORY_ENCRYPTION_RUNTIME_DISABLED`
+
+encrypted definitions cannot yet be deployed
+
+- 원인: Encryption metadata is normalized for schema planning, but runtime listeners and migrations still refuse it.
+- 수정: Keep the encryption modifier. Complete the storage and journal integration before deployment; do not switch sensitive fields to plaintext.
+
 ### `DEF.ENCRYPTED_MISSING_SCOPE`
 
 encryption requires an explicit scope
@@ -45,14 +52,14 @@ encrypted database defaults are unsupported
 
 unsupported encrypted scalar
 
-- 원인: The first storage integration targets Text. Id, references and other scalars are not enabled.
-- 수정: Use supported Text fields only after the product encryption integration gate passes.
+- 원인: Encrypted declarations support Text, Email, Url and Decimal. Id, references and other types cannot be encrypted.
+- 수정: Use Text, Email, Url or Decimal. Runtime storage remains disabled until the encryption integration gate passes.
 
 ### `DEF.ENCRYPTION_RUNTIME_UNAVAILABLE`
 
 product encryption storage is not enabled
 
-- 원인: The compiler recognizes the proposed encrypted modifier but product storage, reads and journals are not integrated. No executable facts are returned.
+- 원인: The runtime cannot serve encryption metadata until product storage, reads and journals are integrated. Definition facts alone do not enable execution.
 - 수정: Wait for WBS 8.18.3 through 8.18.5. Do not remove the modifier to store sensitive data as plaintext.
 
 ### `DEF.ENCRYPTED_ID_FORBIDDEN`

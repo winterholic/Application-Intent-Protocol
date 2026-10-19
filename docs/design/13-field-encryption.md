@@ -10,7 +10,7 @@
 
 2026-10-19 현재 코드 관측:
 
-- 제품 `spikes/spike-v1-fixture/src/parser.rs`의 `type_ref`는 준비 단계에서 `encrypted(scope: ...)`를 인식한다. `.aip`/`.e.ts`/`.e.py`는 추출 후 `parser::parse_spec`, `.h.ts`/`.h.py`는 `hmap::to_spec`→`parse_type_str`를 거쳐 같은 `type_ref`로 모인다. 정적 제약 검사 뒤에도 `DEF.ENCRYPTION_RUNTIME_UNAVAILABLE`로 로드를 거부하며 실행 facts를 반환하지 않는다. 저장·읽기·저널 연결 전 평문 실행을 허용하지 않는다.
+- 제품 `spikes/spike-v1-fixture/src/parser.rs`의 `type_ref`는 `encrypted(scope: ...)`를 인식한다. `.aip`/`.e.ts`/`.e.py`는 추출 후 `parser::parse_spec`, `.h.ts`/`.h.py`는 `hmap::to_spec`→`parse_type_str`를 거쳐 같은 `type_ref`로 모인다. Text/Email/Url/Decimal·service/ref/owner 선언의 정적 제약과 5형식 동일 facts/digest를 검증했다. 개발 검사를 켜면 `DEF.ADVISORY_ENCRYPTION_RUNTIME_DISABLED`로 아직 배포할 수 없음을 알린다. 서비스 CLI의 PG/MySQL 기동 경로와 모든 transport listener의 공통 진입점은 개발 검사 옵션과 관계없이 `DEF.ENCRYPTION_RUNTIME_UNAVAILABLE`로 실행을 차단하고, migration/adopt는 metadata를 거부한다. 저장·읽기·저널 연결 전 평문 실행을 허용하지 않는다.
 - [aip-crypto](../../crates/aip-crypto/README.md)는 v2 셀·KEK wrapping·구조화 지문·TTL 캐시·feature-gated 명시적 v1 import를 제공한다. 제품 저장 경로와는 연결하지 않았다.
 - PoC `crates/aip-runtime/src/crypto.rs`의 AES-GCM/v1과 `rekey.rs`는 제품 엔진에 연결돼 있지 않다. 제품을 평문 `valueCiphertext: Text`로 우회하면 암호화 지원으로 세지 않는다.
 - `spikes/spike-v2-read/src/scalar.rs::parse`는 Text/Email/Decimal 문자열을 검증하되 원문 문자열을 반환한다. Email 소문자화·Text NFC·Decimal 정규화를 이미 수행한다고 보지 않는다.
@@ -62,7 +62,7 @@ resource Secret {
 
 ### 1.3 타입·DDL
 
-첫 수직 구현은 PostgreSQL+Text다. Email/Url/Decimal과 owner는 각각 타입 의미·동치·scope 회귀를 통과한 후 붙인다. 전체 8.18 완료 기준에서 조용히 제외하지 않는다.
+정의 facts는 Text/Email/Url/Decimal과 owner 범위를 정규화한다. 실제 저장의 첫 수직 구현은 PostgreSQL+Text다. Email/Url/Decimal과 owner의 실제 암복호화·동치·scope 동작은 별도의 런타임 회귀 뒤에 활성화한다. 정의 수용을 저장 지원으로 세거나 전체 8.18 완료 기준에서 이 타입들을 조용히 제외하지 않는다.
 
 - id/Ref/Json/Int/Bool/Enum/Date/Time의 암호화는 이 설계 범위 밖이며 명시적으로 거부한다.
 - 물리 데이터 열은 text, 평문 범위/형식은 암호화 전에 검사한다. 프리픽스 CHECK는 형식 힌트일 뿐 인증 태그 검증을 대신하지 못한다.
@@ -79,7 +79,7 @@ resource Secret {
 
 ### 1.5 진단
 
-정의 진단은 `codes.rs`에 등록하고 생성 spec을 재생성했다. wire 진단은 제품 런타임 연결 때 `wire_codes.rs`에 등록한다. 준비 단계의 `DEF.ENCRYPTION_RUNTIME_UNAVAILABLE`는 모든 암호화 정의의 실행 facts 생성을 거부한다.
+정의 진단은 `codes.rs`에 등록하고 생성 spec을 재생성했다. wire 진단은 제품 런타임 연결 때 `wire_codes.rs`에 등록한다. 정의 facts 생성에는 runtime-disabled advisory를 내고, `DEF.ENCRYPTION_RUNTIME_UNAVAILABLE`는 제품 서비스 실행 경계에서 거부한다. 실제 암호화 저장 지원이 생기기 전 이 경계를 해제하지 않는다.
 
 | 정의 진단 | 거부 조건 |
 |---|---|
