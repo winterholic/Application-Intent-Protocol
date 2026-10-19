@@ -1,5 +1,11 @@
 # 제품 통합 검증 (2026-10-17)
 
+## 2026-10-19 main 9b75e89 Linux 실제 검증
+
+[Linux worker CI 39238943605](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39238943605)가 성공했다. 새 JIT 경계/세션 복원/deadline 검사와 정본 seed 집계 2개가 통과했다. 같은 쿼리 JIT on 2,160.881ms(컴파일 2,158.173ms), off 0.270ms를 측정했고, 실제 제품 executor는 선언 2초 이내에 Welcome count=1을 반환했다. CLI lifecycle을 포함한 포팅 8 suite·메일 2개·sticky 1개가 통과했다. 7개 workflow는 success이며 전체 Verify는 이 시점 진행 중이다.
+
+후속 암호화 metadata writer lookup과 `encryption_fence` 2개를 추가했다. 새 API 미존재의 compile red 후 compile-only clippy를 통과했으며 local DB를 실행하지 않았다. 이 primitive는 새 CI 전까지 실제 경합 검증 대기이고, 제품 resource 쓰기/인가/nonce budget/rekey 완료를 뜻하지 않는다.
+
 ## 2026-10-19 FlaskBB JIT 계측과 짧은 읽기 증분
 
 main `473c528` [Linux worker CI 39238123662](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39238123662)가 성공했다. Mailpit 2개·sticky 1개·전체 기존 포팅 suite 8개가 통과했고, 이전 ignored pre-trace CLI upgrade도 실제 1 passed다. OTLP 9개(실제 worker/DB 3개 포함)와 업그레이드 보존·drift 검사로 WBS 5.2.3을 완료했다. 전체 F01–F17/Whoosh/메일 lifecycle 및 전체 출시 완료를 뜻하지 않는다.

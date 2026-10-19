@@ -86,7 +86,7 @@ jobs:
         run: |
           cargo test --manifest-path spikes/spike-v1-fixture/Cargo.toml --locked --target-dir target --test encrypted_types --test diagnostics
           cargo test -p aip-migrate --locked --test encryption_gate --test encryption_activation_gate
-          cargo test -p aip-execution --locked --test encryption_deks
+          cargo test -p aip-execution --locked --test encryption_deks --test encryption_fence
       - name: Explain the seeded FlaskBB count query with and without JIT
         run: cargo test -p aip-migrate --locked --test flaskbb_read_plan -- --nocapture
       - name: Upgrade an actual pre-trace durable job schema with the product CLI

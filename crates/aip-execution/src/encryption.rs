@@ -85,6 +85,23 @@ impl Dek {
     }
 }
 
+/// Current database identity for a resource writer. Scope and DEK shared locks
+/// belong to the caller's transaction, not to this value; use this DEK while that
+/// transaction is live. This does not reserve nonce usage or authorize a row.
+#[derive(Debug)]
+pub struct WriteDek {
+    epoch: u64,
+    dek: Dek,
+}
+impl WriteDek {
+    pub fn epoch(&self) -> u64 {
+        self.epoch
+    }
+    pub fn dek(&self) -> &Dek {
+        &self.dek
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct DekStore {
     deployment: String,
@@ -194,6 +211,25 @@ impl DekStore {
         )
         .await?;
         Ok(Dek { id, id_text, version: 1, wrapped })
+    }
+    /// Locks the scope against promotion until commit/rollback, sharing it with
+    /// other writers. Cached active pointers are insufficient: select ACTIVE in
+    /// this same transaction and use the returned immutable identity. Missing or
+    /// retired keys fail closed; this lookup does not create metadata or run DDL.
+    pub async fn active_for_write_in(&self, tx: &Transaction<'_>, scope: &Scope) -> Result<WriteDek, Error> {
+        let row = tx
+            .query_opt(
+                &format!("SELECT write_epoch FROM {}.aip_encryption_scopes WHERE scope_kind=$1 AND scope_id=$2 FOR SHARE", self.infra),
+                &[&scope.kind, &scope.id],
+            )
+            .await?
+            .ok_or(Error::NotFound)?;
+        let epoch: i64 = row.try_get("write_epoch")?;
+        if epoch <= 0 {
+            return Err(Error::Corrupted);
+        }
+        let row=tx.query_opt(&format!("SELECT dek_id,version,kek_id,wrapped_dek FROM {}.aip_encryption_deks WHERE scope_kind=$1 AND scope_id=$2 AND state='ACTIVE' FOR SHARE",self.infra),&[&scope.kind,&scope.id]).await?.ok_or(Error::NotFound)?;
+        Ok(WriteDek { epoch: epoch as u64, dek: Dek::from_row(row)? })
     }
     /// Looks up the full immutable identity within its scope. This neither loads plaintext key
     /// material nor certifies that an old key is allowed for a new resource write.

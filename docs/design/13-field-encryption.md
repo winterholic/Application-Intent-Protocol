@@ -139,6 +139,8 @@ kek_id는 DEK metadata의 wrapping 정보다. KEK rewrap 후에도 데이터 헤
 5. 최종 배타 fence 아래에서 모든 대상 resource/field의 미전환 행 수=0을 확인한 뒤에만 이전 키를 RETIRED로 바꾼다. 삭제/키 파기는 백업·보존 정책까지 별도 확인한다.
 6. scope/field/version 조건을 SQL에 모두 넣고 실제 scope를 무시한 프리픽스 LIKE만으로 완료 판정하지 않는다. trigger를 끄지 않는다. 업무 행마다 이전 암호문을 감사 로그에 남기지 않는다.
 
+구현 증분(2026-10-19): `DekStore::active_for_write_in`은 caller transaction에서 scope/ACTIVE DEK를 공유 잠금으로 읽고 현재 epoch·불변 key identity를 반환하는 metadata primitive다. 누락·READABLE·RETIRED는 새 write key로 반환하지 않는다. 두 writer의 동시 공유, 직접 epoch UPDATE와 배타 승격 차단, 마지막 writer 종료 뒤 새 epoch/key 조회, 다른 scope 독립성을 `encryption_fence` 실DB 검사로 연결한다. 로컬은 compile-only clippy 단계이며 새 CI 결과 전까지 실제 fence 성공으로 세지 않는다. resource 쓰기·nonce 사용량 상한·durable rekey lease는 미연결이고 제품 암호화 실행 gate는 유지한다.
+
 ## 3. 조회·인가·유일성·평문 잔존 차단
 
 ### 3.1 기능 범위

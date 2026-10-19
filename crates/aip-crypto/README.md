@@ -28,8 +28,9 @@ all compiler/library copies are wiped or protect a compromised host. Distributed
 writer fencing, metadata transactions, startup key checks and operational rotation/backup policy belong to
 8.18.3–8.18.5 and must pass before this library is used for production storage.
 `aip-execution::encryption::DekStore` now supplies the metadata transaction foundation and migration-role
-provisioning. Its first-creation and KEK-only rewrap APIs do not connect resource writes, usage budgets,
-writer fencing or operational rekey, and do not remove the product's encryption execution gate.
+provisioning. Its writer lookup selects ACTIVE and holds shared scope/key locks in the caller's
+transaction, but resource writes, usage budgets and operational rekey are not connected. This metadata
+primitive does not remove the product's encryption execution gate.
 
 Validation: `cargo test -p aip-crypto --all-features --locked` and
 `cargo clippy -p aip-crypto --all-targets --all-features --locked -- -D warnings`. Tests include a NIST
