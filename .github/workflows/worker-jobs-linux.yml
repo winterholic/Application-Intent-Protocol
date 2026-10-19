@@ -133,7 +133,7 @@ jobs:
           "$INFISICAL_PYTHON" mutation_check.py
       - name: Verify trusted ctx deadline failures on Node and Python
         if: ${{ !cancelled() && steps.build_cli.outcome == 'success' }}
-        run: cargo test --manifest-path spikes/spike-v4-worker/Cargo.toml --locked --target-dir target --test ctx_deadline
+        run: cargo test --manifest-path spikes/spike-v4-worker/Cargo.toml --locked --target-dir target --test ctx_deadline --test v4_1
       - name: Revalidate FlaskBB core, CLI and search consistency on main
         env:
           AIP_FLASKBB_TEST_PYTHON: ${{ runner.temp }}/flaskbb-ui/bin/python

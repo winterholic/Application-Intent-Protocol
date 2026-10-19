@@ -671,7 +671,10 @@ async fn invoke_contract(
                     Ok(r) => r,
                     Err(_) => break rej("WIRE.DEADLINE_EXCEEDED", format!("확장 ctx 작업이 {}ms 안에 끝나지 않음", deadline.as_millis())),
                 };
-                if reply.as_ref().is_err_and(|e| e.code == "WIRE.CALL_LIMIT") {
+                // A trusted host budget failure ends this invocation. Forwarding it to the worker
+                // lets an uncaught error change its code, or lets a catch return success instead.
+                // Worker-supplied done.error codes remain untrusted and keep their existing handling.
+                if reply.as_ref().is_err_and(|e| matches!(e.code, "WIRE.CALL_LIMIT" | "WIRE.DEADLINE_EXCEEDED")) {
                     break reply;
                 }
                 if job_host.is_some()

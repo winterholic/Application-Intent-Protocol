@@ -8,6 +8,8 @@
 
 작업 전용 앱은 기존 `operation read`에 더해 `operation job`을 선언할 수 있다. job에는 입력·출력 계약, `allow`, deadline, `effect none` 또는 `effect managed`, 그리고 필요할 때 `access` capability 목록을 선언한다.
 
+읽기 확장과 job의 서버 ctx 호출이 `WIRE.DEADLINE_EXCEEDED`를 반환하면 서버는 그 코드로 호출을 끝낸다. 확장이 예외를 잡아 성공을 반환해도 서버의 기한 실패를 지울 수 없다. worker가 직접 같은 이름의 오류 코드를 보낸 경우는 신뢰하지 않고 `WIRE.EXTENSION_ERROR`로 처리한다. 검증 경로는 `spikes/spike-v4-worker/tests/ctx_deadline.rs`(실제 Node/Python IPC, 결정적 host 오류)와 `tests/v4_1.rs`(실제 PostgreSQL 잠금 대기)다.
+
 ```aip
 actor principal
 operation job report {
