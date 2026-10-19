@@ -127,13 +127,22 @@ predicate hasSubfolder(f: Folder?) = f != null and exists Folder where parent = 
 predicate folderIsEmpty(f: Folder?) = f != null and not (exists Secret where folder = f) and not (hasSubfolder(f))
 
 resource Folder {
-  fields { id: Id; project: Project; env: Text(1..64); parent: Folder?; name: Text(1..255) }
+  fields { id: Id; project: Project; env: Text(1..64); parent: Folder?; name: Text(1..255); description: Text(0..255)? }
   unique parent, name
   rows read when canReadProject(actor, project)
   expose create {
     allow canWriteProject(actor, project) and parent != null and parent.project = project and parent.env = env
-    fields project, env, parent, name
+    fields project, env, parent, name, description
   }
+  // Upstream updateFolder changes name and description of a non-root folder (secret-folder-service.ts:487-620). A duplicate
+  // sibling name is refused (unique parent, name); the same name is a no-op for the name. Moving is a different
+  // operation upstream (/move) and is not declared here.
+  transition update {
+    allow canWriteProject(actor, project)
+    from parent != null
+    patch name, description
+  }
+  expose apply update { target id; bulk maxRows 1 }
   // Upstream deleteFolder without forceDelete refuses a folder that holds secrets or subfolders
   // (secret-folder-service.ts:741-870, the `!forceDelete` guard) and never deletes the root, which has no parent
   // to be looked up under.
@@ -154,7 +163,7 @@ resource Folder {
   }
   expose apply forceDelete { target id; bulk maxRows 1 }
   expose read {
-    select id, project, env, parent, name
+    select id, project, env, parent, name, description
     filter id.eq, project.eq, env.eq, parent.eq, name.eq, name.prefix
     sort name, id
     traverse project { select id, slug }

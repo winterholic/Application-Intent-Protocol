@@ -53,6 +53,12 @@ MUTATIONS = [
      "test_folder_must_hang_under_a_parent_of_the_same_project_and_environment"),
     ("duplicate folder names", "  unique parent, name\n", "",
      "test_folder_name_is_unique_under_one_parent_only"),
+    ("viewer may rename folders", "transition update {\n    allow canWriteProject(actor, project)", "transition update {\n    allow canReadProject(actor, project)",
+     "test_folder_can_be_renamed_and_described_by_a_writer_only"),
+    ("root folder renamable", "    from parent != null\n    patch name, description", "    from true\n    patch name, description",
+     "test_root_folder_cannot_be_renamed"),
+    ("rename may move the folder", "    patch name, description", "    patch name, description, parent",
+     "test_update_cannot_move_a_folder_or_change_its_project_or_environment"),
 ]
 
 

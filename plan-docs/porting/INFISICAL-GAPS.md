@@ -74,12 +74,15 @@
 
 현재 포팅(`app.aip`): `Folder{project, env, parent?, name}`, `unique parent, name`. 사용자는 루트가 아닌 폴더만 만들 수 있고 부모와 같은 project·env여야 한다. `Folder.delete`는 시크릿과 하위 폴더가 없을 때만, `Folder.forceDelete`는 하위 폴더가 없을 때 같은 트랜잭션에서 폴더와 그 시크릿(최대 1000행)을 지운다. 루트는 둘 다 거부한다. **재현**(실DB, 임시 PostgreSQL 17, `tests/test_live_db.py`): 29건 중 10건이 수정 전 정의에서 실패했고(RED, 폴더 호출을 트리 모양으로 바꾼 기존 3건 포함. 루트 삭제 거부 테스트는 전이가 없어도 통과하므로 변이 검사로 보강), 새 정의에서 29건이 통과했다. 거부 사유 코드 단언은 첫 통과 뒤 실제 응답을 확인하고 추가했다. 거부 사유 코드를 고정했다: 내용·하위 폴더·루트 `WIRE.INVALID_STATE`, 읽기 전용·부모 불일치·루트 생성 `WIRE.FORBIDDEN`, 읽을 수 없는 부모 `WIRE.MISSING_TARGET`, 1001행 `WIRE.EFFECT_TARGET_MISSING`(1000행은 통과). 감사에는 전이 `forceDelete`와 효과 행 `forceDelete:delete`가 남는다.
 
+폴더 이름·설명 변경(2026-10-20 추가): 원본 `updateFolder`(`secret-folder-service.ts:487-620`)는 루트가 아닌 폴더(부모 아래에서 조회, `:525`)의 `name`과 `description`을 바꾼다. 이름이 바뀔 때만 같은 부모 아래 중복을 검사하고(`:531-546`) `{ name, description }`을 그대로 update에 넘긴다(`:560`, 라우트의 `description`은 `optional().nullable()`, `server/routes/v2/secret-folder-router.ts:144`). 설명 열은 `string`(255) nullable이다(`20250303213350_add-folder-description.ts`). 포팅은 `description: Text(0..255)?`와 `Folder.update`(`patch name, description`, `from parent != null`)를 선언했다. **재현**(실DB): 쓰기 권한자만 변경(읽기 전용 `WIRE.FORBIDDEN`), 루트 `WIRE.INVALID_STATE`, 형제 이름 충돌 `WIRE.ALREADY_EXISTS`, 같은 이름 유지·다른 부모 아래 같은 이름 허용, 빈 이름·256자 이름 `WIRE.BAD_VALUE`, 다른 조직 `WIRE.MISSING_TARGET`, 설명 생략은 기존 값 유지·`null`은 삭제(원본의 undefined/null과 같음), 이름 변경 뒤에도 시크릿과 하위 폴더가 붙어 있음, `parent`·`env`·`project`를 값으로 넘기면 거부되어 이동 불가, 감사에 전이 `update`와 before/after(`name`, `description`)가 남음(`tests/test_live_db.py`, 수정 전 정의에서 신규 8건 모두 실패 후 통과).
+
 원본과 다른 점(미구현, 이 트랙은 core를 수정하지 않았다):
 - **하위 트리 연쇄 삭제**: 원본은 `forceDelete`에서 임의 깊이의 하위 폴더와 그 시크릿을 한 번에 지운다. 하위 폴더의 시크릿을 지우려면 두 단계 일치(`where folder.parent = this.id`)가 필요한데 `service check`가 `DEF.PARSE_EXPECTED`("`=` 필요, `.` 발견")로 거부한다(재현). `delete many Folder ... where parent = this.id`는 통과하지만 한 단계뿐이고 그 폴더의 시크릿이 외래 키에 막힌다. 그래서 하위 폴더가 있는 폴더의 `forceDelete`는 부분 삭제 대신 거부한다. 아래에서 위로 지우면 원본과 같은 결과에 도달한다(`test_force_delete_refuses_a_folder_that_still_has_subfolders`). 설계안: 효과의 일치 조건에 한 단계 참조 경로를 허용하거나 재귀 효과(깊이 상한)를 두는 것. 결정은 제품 담당 몫이다.
 - **효과 상한**: 폴더당 시크릿이 1000개를 넘으면 `forceDelete`는 통째로 거부된다(원본은 무제한).
 - **폴더 이름 문자 검증**: 문자열 형식 제약이 `Text`에 없다(`Text(1..255) pattern "..."`과 `matches "..."` 모두 `DEF.PARSE_EXPECTED`, 재현). 이름 길이만 제한한다. 이전 포팅의 `path`도 같은 제약이 없었다.
 - **중간 폴더 자동 생성·경로 입력**: 생성은 부모 id를 받는다. 원본의 경로 문자열 해석과 누락 구간 생성은 클라이언트 몫이다.
-- 폴더 이동·이름 변경·설명, 환경(`projectEnv`)을 별도 표로 두는 모델, 폴더 버전·커밋(PIT), 삭제 뒤 동기화 큐, 동적 시크릿 검사(EE)는 미구현이다.
+- 폴더 이동(`/move`), 환경(`projectEnv`)을 별도 표로 두는 모델, 폴더 버전·커밋(PIT), 삭제 뒤 동기화 큐, 동적 시크릿 검사(EE)는 미구현이다. 이동은 대상이 자기 하위 폴더인지 확인하려면 임의 깊이 조상 검사가 필요한데 술어에 재귀가 없다.
+- 원본 삭제는 열린 변경 요청과 시크릿 승인 정책이 걸린 폴더도 거부한다(`secret-folder-service.ts` `$checkFolderPolicy`, 판정 함수는 `@app/ee/services/secret-approval-*`를 import, `:13-16`). 승인 정책·변경 요청은 EE 모듈이라 이 포팅에 없고 읽지 않았다.
 - 삭제 권한은 프로젝트 쓰기 권한(admin·member)이다. 원본의 `SecretFolders` `Delete` 권한(환경·경로 조건)은 EE 권한 평가에 있어 읽지 않았다.
 
 ## 이전에 갭으로 적었으나 분류를 바꾼 것

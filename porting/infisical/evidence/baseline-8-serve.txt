@@ -1,1 +1,1 @@
-{"address":"127.0.0.1:55436","authentication":"jwt-access-token","event":"listening","fingerprint":"7eb9f392c4f4a7f11c8eae9e063a5f4e712b8fc62d8cd5616fccbe5b5bda4bcc","idWire":"decimal-string-v13","ok":true}
+{"address":"127.0.0.1:59748","authentication":"jwt-access-token","event":"listening","fingerprint":"4080ff6ea46bae51714e1c80510f11bde4dfecc61f0debca780ea88983a74b03","idWire":"decimal-string-v13","ok":true}

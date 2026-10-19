@@ -262,6 +262,96 @@ class LiveDbTests(unittest.TestCase):
         self.assertTrue(done.get("ok"), "exactly the cap still goes through")
         self.assertEqual((self.folder_rows(target), self.secret_rows_in(target)), (0, 0))
 
+    # -- folder update (upstream updateFolder in secret-folder-service.ts: name and description of a non-root folder) --
+    def folder_row(self, folder_id):
+        row = self.dep.sql("SELECT name || '|' || coalesce(description, '<null>') || '|' || coalesce(parent_id::text, '<null>')"
+                           f" || '|' || project_id || '|' || env FROM :schema.folder WHERE id = {folder_id}").strip()
+        return row.split("|")
+
+    def test_folder_can_be_renamed_and_described_by_a_writer_only(self):
+        folder_id = self.make_folder(BOB, "RENAME_ME")["created"][0]["id"]
+        denied = lh.transition(self.c[CAROL], "Folder.update", [folder_id], values={"name": "VIEWER_NAME", "description": "x"})
+        self.assertEqual(denied.get("code"), "WIRE.FORBIDDEN", denied)
+        self.assertEqual(self.folder_row(folder_id), ["RENAME_ME", "<null>", "1", "1", "dev"])
+        done = lh.transition(self.c[BOB], "Folder.update", [folder_id], values={"name": "RENAMED", "description": "kept apart"})
+        self.assertTrue(done.get("ok"), done)
+        self.assertEqual(self.folder_row(folder_id), ["RENAMED", "kept apart", "1", "1", "dev"], "parent, project and env are untouched")
+        self.assertTrue(self.make_folder(BOB, "RENAME_ME").get("ok"), "the old name is free again")
+
+    def test_folder_created_with_a_description_keeps_it(self):
+        made = lh.create(self.c[BOB], "Folder", {"project": "1", "env": "dev", "parent": "1", "name": "DESCRIBED", "description": "hello"})
+        self.assertTrue(made.get("ok"), made)
+        self.assertEqual(self.folder_row(made["created"][0]["id"])[:2], ["DESCRIBED", "hello"])
+
+    def test_root_folder_cannot_be_renamed(self):
+        refused = lh.transition(self.c[ALICE], "Folder.update", ["2"], values={"name": "NOT_ROOT", "description": "x"})
+        self.assertEqual(refused.get("code"), "WIRE.INVALID_STATE", refused)
+        self.assertEqual(self.folder_row("2"), ["root", "<null>", "<null>", "1", "prod"])
+
+    def test_rename_to_a_sibling_name_is_refused_but_the_same_name_or_another_parent_is_fine(self):
+        first = self.make_folder(BOB, "SIB_A")["created"][0]["id"]
+        second = self.make_folder(BOB, "SIB_B")["created"][0]["id"]
+        clash = lh.transition(self.c[BOB], "Folder.update", [second], values={"name": "SIB_A", "description": "x"}, key="rename-clash")
+        self.assertEqual(clash.get("code"), "WIRE.ALREADY_EXISTS", clash)
+        self.assertEqual(self.folder_row(second)[:2], ["SIB_B", "<null>"])
+        same = lh.transition(self.c[BOB], "Folder.update", [second], values={"name": "SIB_B", "description": "only the text changed"})
+        self.assertTrue(same.get("ok"), same)
+        self.assertEqual(self.folder_row(second)[:2], ["SIB_B", "only the text changed"])
+        nested = self.make_folder(BOB, "SIB_C", parent=first)["created"][0]["id"]
+        moved_name = lh.transition(self.c[BOB], "Folder.update", [nested], values={"name": "SIB_B", "description": "x"})
+        self.assertTrue(moved_name.get("ok"), "SIB_B exists only below the root, not below SIB_A")
+
+    def test_rename_keeps_the_secrets_and_children_attached(self):
+        folder_id = self.make_folder(BOB, "KEEP_TREE")["created"][0]["id"]
+        child = self.make_folder(BOB, "KEEP_CHILD", parent=folder_id)["created"][0]["id"]
+        self.assertTrue(self.create_secret(BOB, "KEPT", folder=folder_id).get("ok"))
+        self.assertTrue(lh.transition(self.c[BOB], "Folder.update", [folder_id], values={"name": "KEPT_TREE", "description": "x"}).get("ok"))
+        self.assertEqual(self.secret_rows_in(folder_id), 1)
+        self.assertEqual(self.folder_row(child)[2], str(folder_id))
+
+    # upstream updateFolder passes `description` straight to the update: undefined keeps the stored text, null clears it
+    def test_update_without_a_description_keeps_it_and_null_clears_it(self):
+        made = lh.create(self.c[BOB], "Folder", {"project": "1", "env": "dev", "parent": "1", "name": "DESC_KEEP", "description": "keep me"})
+        folder_id = made["created"][0]["id"]
+        self.assertTrue(lh.transition(self.c[BOB], "Folder.update", [folder_id], values={"name": "DESC_KEEP_2"}).get("ok"))
+        self.assertEqual(self.folder_row(folder_id)[:2], ["DESC_KEEP_2", "keep me"])
+        self.assertTrue(lh.transition(self.c[BOB], "Folder.update", [folder_id], values={"name": "DESC_KEEP_2", "description": None}).get("ok"))
+        self.assertEqual(self.folder_row(folder_id)[:2], ["DESC_KEEP_2", "<null>"])
+
+    def test_update_cannot_move_a_folder_or_change_its_project_or_environment(self):
+        target_parent = self.make_folder(BOB, "MOVE_TARGET")["created"][0]["id"]
+        folder_id = self.make_folder(BOB, "STAYS_PUT")["created"][0]["id"]
+        for extra in ({"parent": target_parent}, {"env": "prod"}, {"project": "2"}):
+            refused = lh.transition(self.c[BOB], "Folder.update", [folder_id], values={"name": "STAYS_PUT", "description": "x", **extra})
+            self.assertFalse(refused.get("ok"), f"{extra}: {refused}")
+            self.assertEqual(self.folder_row(folder_id), ["STAYS_PUT", "<null>", "1", "1", "dev"], extra)
+
+    def test_folder_name_cannot_be_blank(self):
+        folder_id = self.make_folder(BOB, "NOT_BLANK")["created"][0]["id"]
+        blank = lh.transition(self.c[BOB], "Folder.update", [folder_id], values={"name": "", "description": "x"})
+        self.assertEqual(blank.get("code"), "WIRE.BAD_VALUE", blank)
+        too_long = lh.transition(self.c[BOB], "Folder.update", [folder_id], values={"name": "x" * 256, "description": "x"})
+        self.assertEqual(too_long.get("code"), "WIRE.BAD_VALUE", too_long)
+        self.assertEqual(self.folder_row(folder_id)[0], "NOT_BLANK")
+
+    def test_folder_update_is_not_possible_from_another_project_or_organization(self):
+        folder_id = self.make_folder(BOB, "FOREIGN_RENAME")["created"][0]["id"]
+        refused = lh.transition(self.c[EVE], "Folder.update", [folder_id], values={"name": "TAKEN_OVER", "description": "x"})
+        self.assertEqual(refused.get("code"), "WIRE.MISSING_TARGET", refused)
+        self.assertEqual(self.folder_row(folder_id)[0], "FOREIGN_RENAME")
+
+    def test_folder_update_leaves_a_before_and_after_image_in_the_audit_log(self):
+        folder_id = self.make_folder(BOB, "AUDIT_RENAME")["created"][0]["id"]
+        done = lh.transition(self.c[BOB], "Folder.update", [folder_id], values={"name": "AUDIT_RENAMED", "description": "d"}, key="audit-rename")
+        self.assertTrue(done.get("ok"), done)
+        listing = self.dep.cli("audit", "--config", str(self.dep.work / "service.json"), "list",
+                               "--resource", "Folder", "--target-id", folder_id)
+        rows = [r for r in listing["audit"] if r["requestKey"] == "audit-rename"]
+        self.assertEqual(len(rows), 1, listing)
+        self.assertEqual((rows[0]["transition"], rows[0]["via"], rows[0]["actorId"]), ("update", "apply", 2))
+        self.assertEqual(rows[0]["before"], {"name": "AUDIT_RENAME", "description": None})
+        self.assertEqual(rows[0]["after"], {"name": "AUDIT_RENAMED", "description": "d"})
+
     # -- users and organizations -------------------------------------------------------------------------------
     def test_non_member_sees_only_themselves(self):
         emails = {r["email"] for r in self.c[MALLORY].read({"read": "User", "select": ["id", "email"]})}
