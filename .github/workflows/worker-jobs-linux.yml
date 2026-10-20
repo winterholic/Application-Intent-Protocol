@@ -131,7 +131,7 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/infisical-venv"
           "$RUNNER_TEMP/infisical-venv/bin/pip" install --no-cache-dir joserfc ./product/python
           cd porting/infisical/tests
-          "$INFISICAL_PYTHON" -m unittest -v test_live_db test_identity_jwt test_mutation_checker test_project_membership
+          "$INFISICAL_PYTHON" -m unittest -v test_live_db test_identity_jwt test_mutation_checker test_project_membership test_principal_lifecycle
           "$INFISICAL_PYTHON" mutation_check.py
       - name: Verify trusted ctx deadline failures on Node and Python
         if: ${{ !cancelled() && steps.build_cli.outcome == 'success' }}

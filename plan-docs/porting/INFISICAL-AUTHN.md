@@ -21,7 +21,7 @@
 |---|---|---|
 | 이메일/비밀번호 로그인, 비밀번호 해시, 실패 잠금, captcha | AIP 밖의 IdP가 담당. 자체 구현하지 않는다 | 포팅 대상 아님(경계 결정). 대체 IdP 선택은 사용자 몫 |
 | 토큰 발급, refresh, 로그아웃 | IdP 담당. AIP는 `at+jwt`(RS256, 수명 900초 이하)를 검증하고 subject를 actor에 연결(`principal bind`)한다 | AIP 쪽은 동작(`porting/infisical/DB-RUNBOOK.md` 7단계, 10개 점검(2026-10-20 재실행)) |
-| 로그아웃 후 구토큰, 정지 계정 | `principal revoke`가 해당 시각까지 발급한 토큰을 무효화한다 | AIP 제품 기능. 이 포팅의 시험에는 아직 없다 |
+| 로그아웃 후 구토큰, 정지 계정 | 운영자 `principal revoke`가 연결을 비활성화하고 발급 시각 하한을 올린다 | 제품 서비스의 읽기·쓰기·멱등 재시도 거부와 재바인딩 경계를 실DB로 확인(`tests/test_principal_lifecycle.py`). 앱 로그아웃·IdP 연결은 미착수 |
 | MFA, WebAuthn, TOTP | IdP 담당. 등록 row를 AIP resource로 둘지는 미정 | 미착수 |
 | SRP | 신규 구현하지 않는다. 레거시 클라이언트 호환이 필요하면 별도 서비스로 두고 AIP는 그 서비스가 발급한 토큰만 본다 | 미착수(결정: 승격 금지) |
 | 사용자 목록 가시성 | `User` resource의 행 정책(본인과 같은 조직 구성원만) | **동작 확인**(`tests/test_live_db.py`) |
@@ -48,3 +48,15 @@
 만료는 설정된 clock skew를 더한 경계에서도 거부한다(`now >= exp + skew`). `nbf` 경계는 허용하고 소수 시각도 허용한다([RFC 7519 §4.1.2–4.1.6](https://www.rfc-editor.org/rfc/rfc7519.html#section-4.1.2)). 음수·숫자가 아닌 skew 설정은 `RuntimeError`로 실패한다. 잘못된 날짜·subject·audience를 넣은 실제 RSA 서명 토큰으로 수정 전 실패를 확인했다(15개 시험 실행, 실패 31개·오류 2개; subtest 합계). 보완 뒤 17개 시험이 로컬에서 통과했다. 큰 정수 날짜도 float 변환 없이 처리한다. 이 함수에는 제품 access token의 최대 수명 프로필을 추가하지 않았으며, 기존 선택적 audience 설정도 유지한다.
 
 이 변경은 서비스 연결, 머신 주체 발급·매핑, 토큰 폐기, 나머지 12개 인증 방식 또는 전체 Infisical 인증 동등성을 증명하지 않는다. 이 함수가 서비스에서 도달할 수 없다는 위 상태는 그대로다.
+
+## 2026-10-20 제품 principal 해지·재바인딩 검증
+
+JWT spike와 분리해, 실제 `aip service`와 공식 Python SDK·운영자 CLI·전용 PostgreSQL에서 8개 시험을 실행했다(`test_principal_lifecycle.py`, 로컬 `Ran 8 tests ... OK`). worker는 실행하지 않는다. 임시 배포가 생성한 키로 서명하며 실제 IdP·자격 증명은 사용하지 않는다.
+
+- 사용하던 SDK client도 `principal revoke` 뒤 `/read`, 새 쓰기, 성공한 쓰기의 같은 idempotency key 재시도를 `WIRE.UNAUTHENTICATED`로 거부한다. 기존 성공 행만 남고 새 행은 없다. SDK의 캐시된 `session()`을 재인증 증거로 사용하지 않는다.
+- 연결이 disabled인 동안 새 토큰의 더 늦은 발급 시각으로 활성화할 수 없다. 본인 actor로 `bind`하면 enabled가 복원되지만 기존 `min_iat`는 낮아지지 않는다. 구토큰은 계속 거부하고 하한과 같은 발급 시각의 새 토큰은 허용한다. revoke의 실제 하한은 DB에서 읽고 그 시각까지 조건부로 기다린다(최대 3초).
+- 명시한 `--not-before`의 직전은 거부, 같은 시각·직후는 허용한다. 낮은 not-before로 재바인딩해도 하한을 되돌리지 않는다.
+- 같은 issuer/subject를 다른 actor로 바꾸면 활성·해지 상태 모두 `PRINCIPAL_CONFLICT`다. 없는 연결의 revoke는 `PRINCIPAL_NOT_FOUND`이고 다른 연결을 건드리지 않는다.
+- 서명된 token에 `actorId`, `actor_id`, `role`, `roles`, `admin`을 넣어도 연결된 viewer actor로만 실행한다. 900초 수명은 허용, 901초는 거부하며 만료 토큰은 `WIRE.TOKEN_EXPIRED`다. 연결되지 않은 subject도 거부한다.
+
+운영자 명령을 시험한 것이며 앱의 로그아웃 endpoint, IdP 관리 연동, 서비스 미연결 I02 spike, 나머지 12개 인증이나 전체 인증 동등성을 완료로 세지 않는다. Linux에서도 같은 suite를 실행하도록 기존 worker CI에 추가했다. CI 실행 결과는 해당 커밋의 원시 로그로 별도 확인한다.
