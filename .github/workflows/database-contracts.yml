@@ -5,9 +5,12 @@ on:
     branches: [main]
     paths:
       - 'crates/aip-test-support/**'
-      - 'crates/aip-cli/tests/least_privilege.rs'
+      - 'crates/aip-cli/**'
+      - 'crates/aip-service/**'
       - 'crates/aip-migrate/**'
       - 'spikes/spike-v2-read/src/**'
+      - 'spikes/spike-v3-write/src/**'
+      - 'spikes/spike-v6-transport/src/**'
       - '.github/workflows/database-contracts.yml'
   workflow_dispatch:
 
