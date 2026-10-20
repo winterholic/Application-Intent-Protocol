@@ -1,5 +1,11 @@
 # 진행 현황과 쌓인 질문
 
+## 2026-10-20 WBS 7.2.1.3 HTTP job·관리 효과 연결 (구현, Linux worker CI 대기)
+
+MySQL `/jobs/enqueue`·`status`·`result`·`cancel`을 제품 principal·계약 지문 검사 뒤에 연결했다. supervisor가 기존 `MysqlJobStore`에서 claim하고 실제 worker를 실행하며 heartbeat·재시도·취소·종료를 관리한다. 데이터 읽기·집계와 전이, 중첩 job은 선언한 capability만 쓴다. 전이·감사·effect 영수증은 같은 fenced transaction에 커밋하며, stale epoch와 다른 요청의 같은 effect key는 거부한다. 기존 배포는 migration 계정의 `adopt-external --apply` 재실행으로 AIP effect journal을 준비한다. runtime은 DDL을 실행하지 않고 영수증의 InnoDB·복합 기본키·필수 열을 시작 전에 검사한다.
+
+Codex macOS 명령 환경에서 실제 MySQL HTTP·callback journal 통합 1 passed, MySQL/MariaDB 저장소 각각 3 passed, 기존 MySQL 쓰기 8 passed, 채택·JWT·기존 배포 journal 추가 2 passed다. 통합 시험의 dispatcher는 명시적으로 멈춰 두고 callback을 직접 실행하므로 실제 worker 실행 증거로 쓰지 않는다. 실제 HTTP→Node/Python job·재시도 중 effect 재생·중첩 job·실행 중 취소는 기존 Linux CI의 CLI E2E에 추가했으며 아직 실행 결과 대기다. WBS는 완료로 닫지 않는다. 메시지·파일·이벤트·HTTP 외부 capability와 trigger 연결, MySQL job 전용 OTLP span은 이 증분에서 검증하지 않았다. 아래 10월 18일의 미연결 설명은 당시 상태다.
+
 ## 2026-10-18 독립 검증 반영: spike clippy, S3 늦은 PUT 보수화, 의존성 (Claude 구현, 독립 검증 대기)
 
 spike-v6 `items after a test module`와 v1·v2 clippy를 고치고 `tools/verify.sh`가 workspace 밖 engine crate를 lint하게 했다. 서명 PUT의 첫 `HEAD` 부재가 예약을 풀던 경로를 "보류 후 한 번 더 확인"으로 바꿨고(`settling`), 두 번째 확인 뒤 도착하는 전송과 장부 이전 객체는 여전히 세지 못한다. rustls 0.23.46으로 올려 `tools/dependency-check.sh`가 통과한다. 전체 게이트는 이 증분 뒤 SHA에서 다시 돌리지 않았고 마지막 성공은 `a97f1b9`다. 자세한 명령·결과·한계는 [릴리스 게이트](../product/RELEASE-GATE.md)의 "후속 증분"을 따른다. 독립 검증 전이므로 8.5·8.7을 완료로 표시하지 않는다.

@@ -365,6 +365,9 @@ pub(crate) async fn listen_with_fingerprint(
     let task = tokio::spawn(async move {
         let mut requests = JoinSet::new();
         let mut background = JoinSet::new();
+        if let Some(jobs) = &runtime.infrastructure.relational_jobs {
+            background.spawn(jobs.clone().supervise());
+        }
         if crate::durable::enabled(&facts) && runtime.authenticator.is_some() && runtime.deployment.is_some() {
             background.spawn(crate::durable::supervisor(runtime.clone(), facts.clone(), wire));
         }
@@ -780,7 +783,7 @@ pub async fn listen_relational_with_worker_writes(
         infrastructure.worker_launch.probe(extensions.lang, &extensions.dir).await?;
     }
     let fingerprint = facts["resources"].is_object().then(|| {
-        if enable_write_extensions {
+        if enable_write_extensions || infrastructure.relational_jobs.is_some() {
             spike_v5_sdk::contract_fingerprint_with_all_extensions(&facts, wire).into()
         } else if extensions.is_some() {
             spike_v5_sdk::contract_fingerprint_with_extensions(&facts, wire).into()

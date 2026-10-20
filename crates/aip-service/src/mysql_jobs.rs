@@ -1,0 +1,1008 @@
+//! Durable MySQL execution behind the same catalog fence and principal binding as synchronous requests.
+use super::*;
+use aip_migrate::mysql_backend::MysqlBackend;
+use aip_migrate::mysql_driver::{CommitFailure, FencedMysqlTransaction, MysqlDeploymentFence, MysqlDriver, mysql_async};
+use aip_migrate::mysql_jobs::MysqlJobStore;
+use mysql_async::{Transaction, Value as SqlValue, prelude::Queryable};
+use spike_v2_read::backend::{BackendFuture, RelationalBackend};
+use spike_v2_read::plan::{Caller, Reject};
+use spike_v6_transport::auth::DurablePrincipal;
+use spike_v6_transport::relational_jobs::RelationalJobs;
+use spike_v6_transport::server::ReadExtensions;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
+
+type Result<T> = std::result::Result<T, &'static str>;
+
+pub(crate) struct MysqlJobs {
+    driver: MysqlDriver,
+    fence: MysqlDeploymentFence,
+    schema: String,
+    deployment: String,
+    facts: Arc<Value>,
+    wire: IdWire,
+    backend: Arc<MysqlBackend>,
+    workers: ReadExtensions,
+    launch: spike_v4_worker::WorkerLaunchConfig,
+    policies: std::collections::HashMap<String, spike_v6_transport::triggers::JobPolicy>,
+    concurrency: usize,
+}
+
+fn db<T>(_: T) -> &'static str {
+    "WIRE.DB_UNAVAILABLE"
+}
+fn store_error(error: aip_execution::Error) -> &'static str {
+    match error {
+        aip_execution::Error::InvalidRun => "WIRE.BAD_VALUE",
+        aip_execution::Error::IdempotencyConflict => "WIRE.IDEMPOTENCY_MISMATCH",
+        aip_execution::Error::PayloadTooLarge => "WIRE.PAYLOAD_TOO_LARGE",
+        _ => "WIRE.DB_UNAVAILABLE",
+    }
+}
+fn fence_error(error: aip_migrate::mysql_catalog::CatalogError) -> &'static str {
+    if error.code == "MIGRATE.DRIFT_DETECTED" { "WIRE.DEPLOYMENT_CHANGED" } else { "WIRE.DB_UNAVAILABLE" }
+}
+fn owner(grant: &DurablePrincipal) -> String {
+    spike_v1_fixture::digest(&json!([grant.issuer, grant.subject, grant.actor_id, 0]))
+}
+fn exact(body: &Value, fields: &[&str]) -> bool {
+    body.as_object().is_some_and(|body| body.len() == fields.len() && fields.iter().all(|key| body.contains_key(*key)))
+}
+fn text<'a>(body: &'a Value, key: &str) -> Result<&'a str> {
+    body[key].as_str().ok_or("WIRE.BAD_REQUEST")
+}
+fn valid_key(key: &str) -> bool {
+    spike_v6_transport::relational_jobs::valid_key(key)
+}
+
+impl MysqlJobs {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        driver: MysqlDriver,
+        fence: MysqlDeploymentFence,
+        schema: String,
+        deployment: String,
+        facts: Arc<Value>,
+        wire: IdWire,
+        backend: Arc<MysqlBackend>,
+        workers: ReadExtensions,
+        infrastructure: &spike_v6_transport::infrastructure::Infrastructure,
+    ) -> std::result::Result<Self, Value> {
+        let workers = workers.validate_with_writes(&facts, wire).map_err(|_| error("JOB_CONFIG", "job worker 구현 파일을 확인해야 함"))?;
+        // Storage-backed capabilities are opened only as their MySQL adapters are connected. Refuse the contract up front.
+        for (_, op) in facts["operations"].as_object().into_iter().flatten().filter(|(_, op)| op["kind"] == "job") {
+            for (capability, _) in op["access"].as_object().into_iter().flatten() {
+                if !capability.starts_with("read.") && !capability.starts_with("apply.") && !capability.starts_with("jobs.") {
+                    return Err(error("DB_ADAPTER_UNSUPPORTED", &format!("MySQL job capability 미지원: {capability}")));
+                }
+            }
+        }
+        Ok(Self {
+            driver,
+            fence,
+            schema,
+            deployment,
+            facts,
+            wire,
+            backend,
+            workers,
+            launch: infrastructure.worker_launch.clone(),
+            policies: infrastructure.job_policies.clone(),
+            concurrency: infrastructure.resource_limits.jobs,
+        })
+    }
+
+    pub(crate) async fn check_storage(&self) -> Result<()> {
+        let mut conn = self.driver.pool().get_conn().await.map_err(db)?;
+        let engine: Option<String> = conn
+            .exec_first("SELECT ENGINE FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=? AND TABLE_NAME='aip_effects'", (&self.schema,))
+            .await
+            .map_err(db)?;
+        let key: Option<Option<String>> = conn
+            .exec_first(
+                "SELECT GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX SEPARATOR ',') FROM INFORMATION_SCHEMA.STATISTICS \
+             WHERE TABLE_SCHEMA=? AND TABLE_NAME='aip_effects' AND INDEX_NAME='PRIMARY'",
+                (&self.schema,),
+            )
+            .await
+            .map_err(db)?;
+        if engine.as_deref() != Some("InnoDB") || key.flatten().as_deref() != Some("run_id,effect_key") {
+            return Err("WIRE.NOT_AVAILABLE");
+        }
+        let _: Vec<mysql_async::Row> = conn
+            .query(format!("SELECT run_id,effect_key,request_digest,state,result FROM {} WHERE 1=0", self.table("aip_effects")))
+            .await
+            .map_err(db)?;
+        Ok(())
+    }
+
+    fn store(&self) -> Result<MysqlJobStore> {
+        MysqlJobStore::new(&self.schema).map_err(store_error)
+    }
+    fn table(&self, table: &str) -> String {
+        format!("`{}`.`{table}`", self.schema)
+    }
+    fn contract(&self) -> String {
+        spike_v5_sdk::contract_fingerprint_with_all_extensions(&self.facts, self.wire)
+    }
+    fn policy(&self, name: &str) -> spike_v6_transport::triggers::JobPolicy {
+        self.policies.get(name).copied().unwrap_or_default()
+    }
+
+    fn bundle(&self) -> Result<String> {
+        let mut paths = std::fs::read_dir(&self.workers.dir)
+            .map_err(db)?
+            .map(|entry| entry.map(|entry| entry.path()))
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(db)?;
+        paths.sort();
+        let mut files = vec![];
+        let mut bytes = 0usize;
+        for path in paths {
+            if !path.extension().is_some_and(|ext| ext == "py" || ext == "mjs") {
+                continue;
+            }
+            let path = path.canonicalize().map_err(db)?;
+            if !path.starts_with(&self.workers.dir) {
+                return Err("WIRE.IMPLEMENTATION_CHANGED");
+            }
+            let content = std::fs::read(&path).map_err(db)?;
+            bytes = bytes.saturating_add(content.len());
+            if bytes > 32 << 20 {
+                return Err("WIRE.COST_EXCEEDED");
+            }
+            files.push(json!([
+                path.file_name().and_then(|name| name.to_str()).ok_or("WIRE.BAD_CONFIGURATION")?,
+                spike_v1_fixture::digest(&json!(content))
+            ]));
+        }
+        Ok(spike_v1_fixture::digest(&json!([
+            "aip-mysql-managed-execution/1",
+            format!("{:?}", self.workers.lang),
+            spike_v4_worker::worker_abi_digest(),
+            files,
+            format!("{:?}", self.launch.isolation),
+            self.launch.runtime_executable,
+            self.launch.read_only_paths,
+            self.launch.environment.iter().collect::<std::collections::BTreeMap<_, _>>(),
+            self.launch.cgroup_root,
+            self.launch.resource_limits.map(|limits| json!({"memoryBytes":limits.memory_bytes,"pidsMax":limits.pids_max,
+                "cpuQuotaMicros":limits.cpu_quota_micros,"cpuPeriodMicros":limits.cpu_period_micros}))
+        ])))
+    }
+
+    async fn begin(&self, grant: &DurablePrincipal) -> Result<FencedMysqlTransaction> {
+        let mut fenced = self.driver.begin_fenced_write_transaction(&self.fence, true).await.map_err(fence_error)?;
+        let tx = fenced.as_mut().map_err(db)?;
+        tx.query_drop("SET SESSION time_zone = '+00:00', SESSION innodb_lock_wait_timeout = 2, SESSION max_execution_time = 5000")
+            .await
+            .map_err(db)?;
+        self.check_grant(tx, grant).await?;
+        Ok(fenced)
+    }
+
+    async fn check_grant(&self, tx: &mut Transaction<'static>, grant: &DurablePrincipal) -> Result<()> {
+        let row: Option<(i64, i64, i64)> = tx
+            .exec_first(
+                format!("SELECT actor_id,enabled,min_iat FROM {} WHERE issuer=? AND subject=? FOR SHARE", self.table("aip_principals")),
+                (&grant.issuer, &grant.subject),
+            )
+            .await
+            .map_err(db)?;
+        if !row.is_some_and(|(actor, enabled, floor)| actor == grant.actor_id && enabled == 1 && floor == grant.min_iat && grant.issued_at >= floor) {
+            return Err("WIRE.UNAUTHENTICATED");
+        }
+        if self.facts["actorMode"] != "principal" {
+            let actor = self.facts["actor"].as_str().ok_or("WIRE.BAD_CONFIGURATION")?;
+            let view = self.table(&sqlgen::snake(actor));
+            let sql = if spike_v2_read::id_wire::id_kind(&self.facts, actor) == "uuid" {
+                format!("SELECT 1 FROM {view} a JOIN {} i ON i.resource_id=a.id WHERE i.id=? FOR SHARE", self.table("aip_actor_identities"))
+            } else {
+                format!("SELECT 1 FROM {view} WHERE id=? FOR SHARE")
+            };
+            let present: Option<i64> = tx.exec_first(sql, (grant.actor_id,)).await.map_err(db)?;
+            if present.is_none() {
+                return Err("WIRE.UNAUTHENTICATED");
+            }
+        }
+        Ok(())
+    }
+
+    async fn authorize(&self, tx: &mut Transaction<'static>, operation: &str, input: &Value, actor: i64) -> Result<Caller> {
+        let now: String =
+            tx.query_first("SELECT DATE_FORMAT(UTC_TIMESTAMP(6),'%Y-%m-%dT%H:%i:%s.%fZ')").await.map_err(db)?.ok_or("WIRE.DB_UNAVAILABLE")?;
+        let caller = Caller { actor_id: Some(actor), now };
+        let plan = spike_v2_read::plan::plan_operation_authorization_in(sqlgen::Dialect::MySql, &self.facts, operation, input, &caller, self.wire)
+            .map_err(|error| error.code)?;
+        let params: Vec<SqlValue> = plan.params.into_iter().map(|value| value.map_or(SqlValue::NULL, Into::into)).collect();
+        let allowed: Option<i64> = tx.exec_first(plan.sql, params).await.map_err(db)?;
+        if allowed != Some(1) {
+            return Err("WIRE.ACCESS_DENIED");
+        }
+        Ok(caller)
+    }
+
+    async fn commit(fenced: FencedMysqlTransaction) -> Result<()> {
+        fenced.commit_classified(|| ()).await.map_err(|failure| match failure {
+            CommitFailure::Unknown => "WIRE.COMMIT_UNKNOWN",
+            _ => "WIRE.DB_UNAVAILABLE",
+        })
+    }
+
+    async fn locked_lease(&self, tx: &mut Transaction<'static>, lease: &aip_execution::Lease) -> Result<()> {
+        let row: Option<i64> = tx
+            .exec_first(
+                format!(
+                    "SELECT 1 FROM {} WHERE id=? AND lease_epoch=? AND lease_owner=? AND owner=? AND state='RUNNING' \
+             AND lease_until>UTC_TIMESTAMP(6) AND attempt_deadline>UTC_TIMESTAMP(6) FOR UPDATE",
+                    self.table("aip_jobs")
+                ),
+                (lease.run_id.to_string(), lease.epoch, &lease.worker, &lease.owner),
+            )
+            .await
+            .map_err(db)?;
+        if row.is_none() {
+            return Err("WIRE.LEASE_LOST");
+        }
+        if lease.deployment != self.deployment || lease.contract != self.contract() {
+            return Err("WIRE.DEPLOYMENT_CHANGED");
+        }
+        if lease.implementation != self.bundle()? {
+            return Err("WIRE.IMPLEMENTATION_CHANGED");
+        }
+        Ok(())
+    }
+
+    async fn request(&self, path: &str, body: &Value, grant: &DurablePrincipal) -> Result<Value> {
+        let mut fenced = self.begin(grant).await?;
+        let tx = fenced.as_mut().map_err(db)?;
+        let owner = owner(grant);
+        let store = self.store()?;
+        let response = match path {
+            "/jobs/enqueue" => {
+                if !exact(body, &["operation", "input", "key", "delayMs"]) {
+                    return Err("WIRE.BAD_REQUEST");
+                }
+                let name = text(body, "operation")?;
+                let key = text(body, "key")?;
+                let delay = body["delayMs"].as_i64().ok_or("WIRE.BAD_REQUEST")?;
+                spike_v4_worker::validate_job(&self.facts, name, &body["input"], self.wire).map_err(|error| error.code)?;
+                if !valid_key(key)
+                    || !(0..=86_400_000).contains(&delay)
+                    || spike_v6_transport::triggers::RESERVED_KEY_PREFIXES.iter().any(|prefix| key.starts_with(prefix))
+                {
+                    return Err("WIRE.BAD_VALUE");
+                }
+                self.authorize(tx, name, &body["input"], grant.actor_id).await?;
+                let digest = spike_v1_fixture::digest(&json!(["aip-jobs", self.schema, owner]));
+                let bucket = u64::from_str_radix(&digest[..8], 16).map_err(db)? % 1000;
+                let locked: Option<u64> = tx
+                    .exec_first(format!("SELECT bucket FROM {} WHERE bucket=? FOR UPDATE", self.table("aip_tx_locks")), (bucket,))
+                    .await
+                    .map_err(db)?;
+                if locked.is_none() {
+                    return Err("WIRE.DB_UNAVAILABLE");
+                }
+                let contract = self.contract();
+                let replay: Option<i64> = tx
+                    .exec_first(
+                        format!(
+                            "SELECT 1 FROM {} WHERE owner=? AND operation=? AND idempotency_key=? AND contract_digest=? AND deployment_digest=?",
+                            self.table("aip_jobs")
+                        ),
+                        (&owner, name, key, &contract, &self.deployment),
+                    )
+                    .await
+                    .map_err(db)?;
+                if replay.is_none() {
+                    let counts: Option<(i64, i64, i64)> = tx
+                        .exec_first(
+                            format!(
+                                "SELECT COUNT(*),COALESCE(SUM(state IN ('QUEUED','RUNNING','CANCEL_REQUESTED')),0), \
+                         COALESCE(SUM(CASE WHEN state IN ('QUEUED','RUNNING','CANCEL_REQUESTED') OR result_expires_at>UTC_TIMESTAMP(6) \
+                         THEN OCTET_LENGTH(CAST(input AS CHAR))+COALESCE(OCTET_LENGTH(CAST(output AS CHAR)),0) ELSE 0 END),0) FROM {} WHERE owner=?",
+                                self.table("aip_jobs")
+                            ),
+                            (&owner,),
+                        )
+                        .await
+                        .map_err(db)?;
+                    let (total, active, bytes) = counts.ok_or("WIRE.DB_UNAVAILABLE")?;
+                    if total >= 10_000 || active >= 100 || bytes.saturating_add(body["input"].to_string().len() as i64) > 64 * 1024 * 1024 {
+                        return Err("WIRE.QUOTA_EXCEEDED");
+                    }
+                }
+                let trace = aip_execution::trace_context::current().unwrap_or_else(aip_execution::trace_context::TraceContext::generate).job_value();
+                let run = store
+                    .enqueue(
+                        tx,
+                        aip_execution::NewRun {
+                            owner,
+                            actor: grant.actor_id,
+                            grant: serde_json::to_value(grant).map_err(db)?,
+                            operation: name.into(),
+                            contract,
+                            deployment: self.deployment.clone(),
+                            implementation: self.bundle()?,
+                            input: body["input"].clone(),
+                            key: key.into(),
+                            timeout_ms: self.facts["operations"][name]["deadlineMs"].as_i64().ok_or("WIRE.BAD_CONFIGURATION")?,
+                            max_attempts: self.policy(name).max_attempts,
+                            ttl_ms: 86_400_000,
+                            delay_ms: delay,
+                            trace_id: Some(trace),
+                        },
+                    )
+                    .await
+                    .map_err(store_error)?;
+                json!({"ok":true,"run":run})
+            }
+            "/jobs/status" | "/jobs/cancel" | "/jobs/result" => {
+                if !exact(body, &["id"]) {
+                    return Err("WIRE.BAD_REQUEST");
+                }
+                let id = text(body, "id")?;
+                let mut run = if path == "/jobs/cancel" { store.cancel(tx, id, &owner).await } else { store.status(tx, id, &owner).await }
+                    .map_err(store_error)?
+                    .ok_or("WIRE.NOT_FOUND")?;
+                if path == "/jobs/result" {
+                    let result = store.result(tx, id, &owner).await.map_err(store_error)?.ok_or(match run.state.as_str() {
+                        "SUCCEEDED" => "WIRE.RESULT_EXPIRED",
+                        "FAILED" => "WIRE.JOB_FAILED",
+                        _ => "WIRE.JOB_NOT_READY",
+                    })?;
+                    let stored: Option<(String, String, String)> = tx
+                        .exec_first(
+                            format!(
+                                "SELECT CAST(input AS CHAR),contract_digest,deployment_digest FROM {} WHERE id=? AND owner=?",
+                                self.table("aip_jobs")
+                            ),
+                            (id, &owner),
+                        )
+                        .await
+                        .map_err(db)?;
+                    let (input, contract, deployment) = stored.ok_or("WIRE.NOT_FOUND")?;
+                    if contract != self.contract() || deployment != self.deployment {
+                        return Err("WIRE.DEPLOYMENT_CHANGED");
+                    }
+                    self.authorize(tx, &result.operation, &serde_json::from_str::<Value>(&input).map_err(db)?, grant.actor_id).await?;
+                    json!({"ok":true,"id":result.id,"operation":result.operation,"output":result.output})
+                } else {
+                    if matches!(run.state.as_str(), "FAILED" | "CANCELLED") && self.pending(tx, id).await? {
+                        run.error = Some(if path == "/jobs/cancel" { "WIRE.CANCELLATION_UNCONFIRMED" } else { "WIRE.EFFECT_UNKNOWN" }.into());
+                    }
+                    run.output = None;
+                    json!({"ok":true,"run":run})
+                }
+            }
+            _ => return Err("WIRE.NOT_FOUND"),
+        };
+        Self::commit(fenced).await?;
+        Ok(response)
+    }
+
+    async fn pending(&self, tx: &mut Transaction<'static>, id: &str) -> Result<bool> {
+        let pending: Option<i64> = tx
+            .exec_first(
+                format!("SELECT EXISTS(SELECT 1 FROM {} WHERE run_id=? AND state IN ('PENDING','UNKNOWN'))", self.table("aip_effects")),
+                (id,),
+            )
+            .await
+            .map_err(db)?;
+        Ok(pending == Some(1))
+    }
+}
+
+impl RelationalJobs for MysqlJobs {
+    fn handle<'a>(&'a self, path: &'a str, body: &'a Value, grant: &'a DurablePrincipal) -> BackendFuture<'a, Value> {
+        Box::pin(async move {
+            match self.request(path, body, grant).await {
+                Ok(value) => value,
+                Err(code) => json!({"ok":false,"code":code}),
+            }
+        })
+    }
+    fn supervise(self: Arc<Self>) -> BackendFuture<'static, ()> {
+        Box::pin(async move { self.run().await })
+    }
+}
+
+impl MysqlJobs {
+    async fn admission(&self, lease: &aip_execution::Lease, grant: &DurablePrincipal) -> Result<Caller> {
+        let mut fenced = self.begin(grant).await?;
+        let tx = fenced.as_mut().map_err(db)?;
+        self.locked_lease(tx, lease).await?;
+        let caller = self.authorize(tx, &lease.operation, &lease.input, lease.actor).await?;
+        Self::commit(fenced).await?;
+        Ok(caller)
+    }
+
+    async fn beat(&self, lease: &aip_execution::Lease, grant: &DurablePrincipal) -> Result<()> {
+        let mut fenced = self.begin(grant).await?;
+        let tx = fenced.as_mut().map_err(db)?;
+        self.locked_lease(tx, lease).await?;
+        self.authorize(tx, &lease.operation, &lease.input, lease.actor).await?;
+        if !self.store()?.heartbeat(tx, lease).await.map_err(store_error)? {
+            return Err("WIRE.LEASE_LOST");
+        }
+        Self::commit(fenced).await
+    }
+
+    async fn execute(self: Arc<Self>, lease: aip_execution::Lease) {
+        let started = std::time::Instant::now();
+        let grant = serde_json::from_value::<DurablePrincipal>(lease.grant.clone());
+        let mut after = None;
+        let result = async {
+            let grant = grant.map_err(|_| "WIRE.UNAUTHENTICATED")?;
+            let caller = self.admission(&lease, &grant).await?;
+            let dir = self.workers.dir.to_str().ok_or("WIRE.BAD_CONFIGURATION")?;
+            let mut worker =
+                spike_v4_worker::Worker::try_start_configured(self.workers.lang, dir, self.launch.clone()).await.map_err(|_| "WIRE.WORKER_FAILED")?;
+            let mut host = JobHost {
+                runtime: self.clone(),
+                lease: lease.clone(),
+                grant: grant.clone(),
+                prefix: String::new(),
+                depth: 0,
+                budget: Arc::new(AtomicUsize::new(0)),
+                capabilities: self.facts["operations"][&lease.operation]["access"]
+                    .as_object()
+                    .into_iter()
+                    .flatten()
+                    .map(|(key, _)| key.clone())
+                    .collect(),
+            };
+            let result = {
+                let future = spike_v4_worker::invoke_job(&mut worker, &self.facts, &lease.operation, &lease.input, &caller, self.wire, &mut host);
+                tokio::pin!(future);
+                let monitor = async {
+                    let mut timer = tokio::time::interval(Duration::from_millis(250));
+                    let mut last = tokio::time::Instant::now();
+                    loop {
+                        timer.tick().await;
+                        match self.beat(&lease, &grant).await {
+                            Ok(()) => last = tokio::time::Instant::now(),
+                            Err("WIRE.DB_UNAVAILABLE") if last.elapsed() < Duration::from_secs(12) => {}
+                            Err(code) => return Err::<Value, _>(code),
+                        }
+                    }
+                };
+                tokio::select! {
+                    output=&mut future=>output.map_err(|error| {after=spike_v4_worker::retry_after_ms(&error);error.code}),
+                    output=monitor=>output,
+                }
+            };
+            worker.stop().await;
+            let output = result?;
+            self.admission(&lease, &grant).await?;
+            Ok(output)
+        }
+        .await;
+        let code = result.as_ref().err().copied();
+        let retry = code.is_some_and(|code| {
+            matches!(code, "WIRE.DB_UNAVAILABLE" | "WIRE.WORKER_FAILED" | "WIRE.RETRY_LATER")
+                || code == "WIRE.EXTENSION_ERROR" && self.policy(&lease.operation).retry_uncaught
+        });
+        if let Err(code) = self.settle(&lease, result, retry, after).await {
+            eprintln!("{}", json!({"event":"mysql_job_outcome_rejected","id":lease.run_id.to_string(),"code":code}));
+        }
+        eprintln!(
+            "{}",
+            json!({"event":"mysql_job_attempt_finished","id":lease.run_id.to_string(),"attempt":lease.attempt,
+            "elapsedMs":started.elapsed().as_millis(),"code":code})
+        );
+    }
+
+    async fn settle(&self, lease: &aip_execution::Lease, mut output: Result<Value>, retry: bool, after: Option<i64>) -> Result<()> {
+        // Recording a refusal or an observed process stop is allowed after revocation. No business capability runs here.
+        let mut fenced = self.driver.begin_fenced_write_transaction(&self.fence, true).await.map_err(fence_error)?;
+        let tx = fenced.as_mut().map_err(db)?;
+        let state: Option<String> = tx
+            .exec_first(
+                format!("SELECT state FROM {} WHERE id=? AND lease_epoch=? AND lease_owner=? FOR UPDATE", self.table("aip_jobs")),
+                (lease.run_id.to_string(), lease.epoch, &lease.worker),
+            )
+            .await
+            .map_err(db)?;
+        let pending = self.pending(tx, &lease.run_id.to_string()).await?;
+        let store = self.store()?;
+        let updated = if state.as_deref() == Some("CANCEL_REQUESTED") {
+            if pending { store.reject_cancel(tx, lease, "WIRE.CANCELLATION_UNCONFIRMED").await } else { store.acknowledge_cancel(tx, lease).await }
+        } else {
+            if pending {
+                output = Err("WIRE.EFFECT_UNKNOWN");
+            }
+            // A principal can be revoked or an implementation changed between the last callback and this COMMIT.
+            // Keep its binding shared-locked until the result becomes visible.
+            if output.is_ok() {
+                let grant = serde_json::from_value::<DurablePrincipal>(lease.grant.clone()).map_err(|_| "WIRE.UNAUTHENTICATED")?;
+                let checked = async {
+                    self.check_grant(tx, &grant).await?;
+                    self.locked_lease(tx, lease).await?;
+                    self.authorize(tx, &lease.operation, &lease.input, lease.actor).await?;
+                    Ok::<(), &'static str>(())
+                }
+                .await;
+                if let Err(code) = checked {
+                    if code == "WIRE.DB_UNAVAILABLE" {
+                        return Err(code);
+                    }
+                    output = Err(code);
+                }
+            }
+            match output {
+                Ok(value) => store.finish(tx, lease, value).await,
+                Err(code) if retry && !pending => store.retry_after(tx, lease, code, after).await,
+                Err(code) => store.fail(tx, lease, code).await,
+            }
+        }
+        .map_err(store_error)?;
+        if !updated {
+            return Err("WIRE.LEASE_LOST");
+        }
+        Self::commit(fenced).await
+    }
+
+    async fn run(self: Arc<Self>) {
+        let worker = format!(
+            "mysql-jobs-{}-{}",
+            std::process::id(),
+            spike_v1_fixture::digest(&json!(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos()))
+        );
+        let mut tasks = tokio::task::JoinSet::new();
+        let mut gc = tokio::time::Instant::now();
+        loop {
+            while tasks.len() < self.concurrency {
+                let claim = async {
+                    let mut conn = self.driver.pool().get_conn().await.map_err(db)?;
+                    self.store()?.claim(&mut conn, &worker).await.map_err(store_error)
+                }
+                .await;
+                match claim {
+                    Ok(Some(lease)) => {
+                        let runtime = self.clone();
+                        tasks.spawn(async move {
+                            let context = lease
+                                .trace_id
+                                .as_ref()
+                                .map(|value| aip_execution::trace_context::TraceContext::from_job_value(value))
+                                .unwrap_or_else(aip_execution::trace_context::TraceContext::generate);
+                            aip_execution::trace_context::scope(async move {
+                                aip_execution::trace_context::set(context);
+                                runtime.execute(lease).await;
+                            })
+                            .await;
+                        });
+                    }
+                    Ok(None) => break,
+                    Err(code) => {
+                        eprintln!("{}", json!({"event":"mysql_job_claim_failed","code":code}));
+                        break;
+                    }
+                }
+            }
+            if gc.elapsed() > Duration::from_secs(30) {
+                let sweep = async {
+                    let mut conn = self.driver.pool().get_conn().await.map_err(db)?;
+                    self.store()?.expire_payloads(&mut conn).await.map_err(store_error)?;
+                    Ok::<(), &'static str>(())
+                }
+                .await;
+                if let Err(code) = sweep {
+                    eprintln!("{}", json!({"event":"mysql_job_gc_failed","code":code}));
+                }
+                gc = tokio::time::Instant::now();
+            }
+            tokio::select! {
+                _=tokio::time::sleep(Duration::from_millis(100))=>{},
+                Some(result)=tasks.join_next(),if !tasks.is_empty()=>{if result.is_err(){eprintln!("{{\"event\":\"mysql_job_task_failed\"}}");}},
+            }
+        }
+        // JoinSet aborts its attempts when the server drops this supervisor. Worker owns kill-on-drop children.
+    }
+}
+
+struct JobHost {
+    runtime: Arc<MysqlJobs>,
+    lease: aip_execution::Lease,
+    grant: DurablePrincipal,
+    prefix: String,
+    depth: usize,
+    budget: Arc<AtomicUsize>,
+    capabilities: Vec<String>,
+}
+impl spike_v4_worker::JobHost for JobHost {
+    fn call<'a>(&'a mut self, op: &'a str, name: &'a str, input: &'a Value) -> BackendFuture<'a, std::result::Result<Value, Reject>> {
+        Box::pin(async move { self.dispatch(op, name, input).await.map_err(|code| Reject { code, msg: "MySQL managed capability 거부".into() }) })
+    }
+    fn job(&self) -> Value {
+        json!({"id":self.lease.run_id.to_string(),"attempt":self.lease.attempt})
+    }
+}
+
+fn replay_error(code: &str) -> &'static str {
+    spike_v6_transport::relational_jobs::data_error(code)
+}
+impl JobHost {
+    async fn dispatch(&mut self, op: &str, name: &str, input: &Value) -> Result<Value> {
+        if self.depth > 8 || self.budget.fetch_add(1, Ordering::Relaxed) >= 64 {
+            return Err("WIRE.COST_EXCEEDED");
+        }
+        if !self.capabilities.contains(&spike_v4_worker::job_capability(op, name)) {
+            return Err("WIRE.ACCESS_NOT_DECLARED");
+        }
+        let rt = &self.runtime;
+        let mut fenced = rt.begin(&self.grant).await?;
+        let tx = fenced.as_mut().map_err(db)?;
+        rt.locked_lease(tx, &self.lease).await?;
+        let caller = rt.authorize(tx, &self.lease.operation, &self.lease.input, self.lease.actor).await?;
+        if matches!(op, "read" | "aggregate") {
+            let request = if op == "aggregate" {
+                json!({"aggregate":name,"input":input})
+            } else {
+                if input["read"] != name {
+                    return Err("WIRE.BAD_VALUE");
+                }
+                input.clone()
+            };
+            let plan = spike_v2_read::plan::plan_read_in(sqlgen::Dialect::MySql, &rt.facts, &request, &caller, rt.wire).map_err(|e| e.code)?;
+            MysqlJobs::commit(fenced).await?;
+            let rows = tokio::time::timeout(Duration::from_millis(plan.deadline_ms), rt.backend.read(&plan, rt.wire))
+                .await
+                .map_err(|_| "WIRE.DEADLINE_EXCEEDED")?
+                .map_err(|e| e.code)?;
+            return if op == "aggregate" {
+                Ok(json!({"value":rows.first().cloned().unwrap_or(Value::Null)}))
+            } else {
+                Ok(json!({"rows":spike_v2_read::id_wire::encode_rows(rows,&plan.output_type,rt.wire).map_err(|e|e.code)?}))
+            };
+        }
+        let key = text(input, "key")?;
+        if !valid_key(key) {
+            return Err("WIRE.BAD_VALUE");
+        }
+        let path = format!("{}{op}.{name}:{}", self.prefix, spike_v1_fixture::digest(&json!(key)));
+        let effect = spike_v1_fixture::digest(&json!(path));
+        let digest = spike_v1_fixture::digest(&json!([op, name, input, self.lease.implementation]));
+        if op == "jobs" {
+            rt.authorize(tx, name, &input["input"], self.lease.actor).await?;
+        }
+        let prior: Option<(String, String, Option<String>)> = tx
+            .exec_first(
+                format!("SELECT request_digest,state,CAST(result AS CHAR) FROM {} WHERE run_id=? AND effect_key=?", rt.table("aip_effects")),
+                (self.lease.run_id.to_string(), &effect),
+            )
+            .await
+            .map_err(db)?;
+        if let Some((request, state, result)) = prior {
+            if request != digest {
+                return Err("WIRE.IDEMPOTENCY_MISMATCH");
+            }
+            if state == "SUCCEEDED" {
+                let result = serde_json::from_str(&result.ok_or("WIRE.DB_UNAVAILABLE")?).map_err(db)?;
+                MysqlJobs::commit(fenced).await?;
+                return Ok(result);
+            }
+            if state == "FAILED" {
+                let result: Value = serde_json::from_str(&result.ok_or("WIRE.DB_UNAVAILABLE")?).map_err(db)?;
+                return Err(replay_error(result["code"].as_str().unwrap_or("")));
+            }
+            if op != "jobs" {
+                return Err("WIRE.EFFECT_UNKNOWN");
+            }
+        }
+        tx.exec_drop(
+            format!("INSERT IGNORE INTO {}(run_id,effect_key,request_digest,state) VALUES(?,?,?,'PENDING')", rt.table("aip_effects")),
+            (self.lease.run_id.to_string(), &effect, &digest),
+        )
+        .await
+        .map_err(db)?;
+        if op == "apply" {
+            let request = spike_v4_worker::write::job_apply_request(name, input, rt.wire).map_err(|e| e.code)?;
+            tx.query_drop("SAVEPOINT aip_job_effect").await.map_err(db)?;
+            let output = aip_migrate::mysql_write::apply_job_effect_in(
+                tx,
+                &rt.facts,
+                &request,
+                &caller,
+                rt.wire,
+                &format!("{}:{}", self.lease.run_id, &effect[..32]),
+            )
+            .await;
+            let (state, value) = match &output {
+                Ok(value) => ("SUCCEEDED", value.clone()),
+                Err(error) => {
+                    if matches!(error.code, "WIRE.DB_UNAVAILABLE" | "WIRE.INTERNAL" | "WIRE.CONFLICT" | "WIRE.DEADLINE_EXCEEDED") {
+                        return Err(error.code);
+                    }
+                    tx.query_drop("ROLLBACK TO SAVEPOINT aip_job_effect").await.map_err(db)?;
+                    ("FAILED", json!({"code":error.code}))
+                }
+            };
+            tx.exec_drop(
+                format!("UPDATE {} SET state=?,result=CAST(? AS JSON) WHERE run_id=? AND effect_key=?", rt.table("aip_effects")),
+                (state, value.to_string(), self.lease.run_id.to_string(), &effect),
+            )
+            .await
+            .map_err(db)?;
+            MysqlJobs::commit(fenced).await?;
+            return output.map_err(|error| error.code);
+        }
+        if op == "jobs" {
+            if self.depth >= 8 {
+                return Err("WIRE.COST_EXCEEDED");
+            }
+            let caps = rt.facts["operations"][name]["access"].as_object().ok_or("WIRE.NOT_EXPOSED")?.keys().cloned().collect::<Vec<_>>();
+            if caps.iter().any(|cap| !self.capabilities.contains(cap)) {
+                return Err("WIRE.ACCESS_NOT_DECLARED");
+            }
+            let caller = rt.authorize(tx, name, &input["input"], self.lease.actor).await?;
+            MysqlJobs::commit(fenced).await?;
+            let mut worker = spike_v4_worker::Worker::try_start_configured(
+                rt.workers.lang,
+                rt.workers.dir.to_str().ok_or("WIRE.BAD_CONFIGURATION")?,
+                rt.launch.clone(),
+            )
+            .await
+            .map_err(|_| "WIRE.WORKER_FAILED")?;
+            let mut child = JobHost {
+                runtime: rt.clone(),
+                lease: self.lease.clone(),
+                grant: self.grant.clone(),
+                prefix: format!("{path}/"),
+                depth: self.depth + 1,
+                budget: self.budget.clone(),
+                capabilities: caps,
+            };
+            let output = if rt.facts["operations"][name]["kind"] == "read" {
+                spike_v4_worker::invoke_operation(&mut worker, &rt.facts, name, &input["input"], &caller, rt.wire).await
+            } else {
+                spike_v4_worker::invoke_job(&mut worker, &rt.facts, name, &input["input"], &caller, rt.wire, &mut child).await
+            };
+            worker.stop().await;
+            let mut fenced = rt.begin(&self.grant).await?;
+            let tx = fenced.as_mut().map_err(db)?;
+            rt.locked_lease(tx, &self.lease).await?;
+            rt.authorize(tx, name, &input["input"], self.lease.actor).await?;
+            let (state, value) = match &output {
+                Ok(value) => ("SUCCEEDED", value.clone()),
+                Err(error) => ("FAILED", json!({"code":error.code})),
+            };
+            tx.exec_drop(
+                format!("UPDATE {} SET state=?,result=CAST(? AS JSON) WHERE run_id=? AND effect_key=?", rt.table("aip_effects")),
+                (state, value.to_string(), self.lease.run_id.to_string(), effect),
+            )
+            .await
+            .map_err(db)?;
+            MysqlJobs::commit(fenced).await?;
+            return output.map_err(|error| replay_error(error.code));
+        }
+        Err("WIRE.ACCESS_NOT_DECLARED")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    const META: &str = "aip_t_job_http";
+    const SOURCE: &str = "aip_t_job_http_src";
+    const DEFINITION: &str = r#"
+resource Member { fields { id: Id } }
+actor Member
+resource Video {
+ fields { id: Id; owner: Member; views: Int(0..100) default database }
+ rows read when true
+ transition increment { from views < 100; allow owner = actor; to views = views + 1 }
+ expose apply increment { target id; bulk maxRows 1 }
+ expose read { select id, views; sort id; budget { rows 20; depth 1; deadline 1s; cost 100 } }
+}
+operation job incrementJob {
+ input { id: Video.Id }
+ output { count: Int }
+ allow actor != null
+ access read.Video, Video.increment
+ effect managed
+ deadline 5s
+ implementation "worker.jobView"
+}
+"#;
+    struct Dir(std::path::PathBuf);
+    impl Drop for Dir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    struct Paused(Arc<MysqlJobs>);
+    impl RelationalJobs for Paused {
+        fn handle<'a>(&'a self, path: &'a str, body: &'a Value, grant: &'a DurablePrincipal) -> BackendFuture<'a, Value> {
+            self.0.handle(path, body, grant)
+        }
+        fn supervise(self: Arc<Self>) -> BackendFuture<'static, ()> {
+            Box::pin(std::future::pending())
+        }
+    }
+    fn grant(actor: i64) -> DurablePrincipal {
+        DurablePrincipal { issuer: "https://test.example".into(), subject: format!("user-{actor}"), actor_id: actor, issued_at: 1, min_iat: 0 }
+    }
+    struct Auth;
+    impl spike_v6_transport::auth::Authenticator for Auth {
+        fn verify_session<'a>(
+            &'a self,
+            token: &'a str,
+        ) -> BackendFuture<'a, std::result::Result<spike_v6_transport::auth::Session, spike_v6_transport::auth::AuthError>> {
+            Box::pin(async move {
+                let actor = token.parse::<i64>().map_err(|_| spike_v6_transport::auth::AuthError::BadSignature)?;
+                spike_v6_transport::auth::Session::new_durable(grant(actor), i64::MAX / 1000)
+            })
+        }
+    }
+    async fn post(address: SocketAddr, path: &str, contract: &str, actor: Option<i64>, body: Value) -> Value {
+        let auth = actor.map(|actor| format!("authorization: Bearer {actor}\r\n")).unwrap_or_default();
+        let body = body.to_string();
+        let mut socket = tokio::net::TcpStream::connect(address).await.unwrap();
+        socket
+            .write_all(
+                format!(
+                    "POST {path} HTTP/1.1\r\nhost: localhost\r\n{auth}x-aip-contract: {contract}\r\ncontent-length: {}\r\n\r\n{body}",
+                    body.len()
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+        let mut output = String::new();
+        tokio::time::timeout(Duration::from_secs(15), socket.read_to_string(&mut output)).await.unwrap().unwrap();
+        serde_json::from_str(output.split_once("\r\n\r\n").unwrap().1).unwrap()
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[ignore = "requires a run-owned MySQL 8.4 fixture; direct HTTP persistence and callback journal, no worker subprocess"]
+    async fn mysql_job_http_and_effect_journal_preserve_owner_lease_and_transaction_boundaries() {
+        let url = std::env::var("AIP_TEST_MYSQL_URL").unwrap();
+        aip_test_support::validate_mysql_admin_url(&url).unwrap();
+        let admin = MysqlDriver::connect(&url).await.unwrap();
+        let mut setup = admin.pool().get_conn().await.unwrap();
+        for schema in [META, SOURCE] {
+            setup.query_drop(format!("DROP DATABASE IF EXISTS `{schema}`")).await.unwrap();
+        }
+        setup.query_drop(format!("CREATE DATABASE `{SOURCE}`")).await.unwrap();
+        setup.query_drop(format!("CREATE TABLE `{SOURCE}`.member(id BIGINT PRIMARY KEY) ENGINE=InnoDB")).await.unwrap();
+        setup.query_drop(format!("CREATE TABLE `{SOURCE}`.video(id BIGINT PRIMARY KEY,owner_id BIGINT NOT NULL,views BIGINT NOT NULL DEFAULT 0,FOREIGN KEY(owner_id) REFERENCES `{SOURCE}`.member(id)) ENGINE=InnoDB")).await.unwrap();
+        setup.query_drop(format!("INSERT INTO `{SOURCE}`.member VALUES(1),(2)")).await.unwrap();
+        setup.query_drop(format!("INSERT INTO `{SOURCE}`.video VALUES(10,1,0),(11,2,0)")).await.unwrap();
+        let facts = spike_v1_fixture::load_str(DEFINITION, spike_v1_fixture::Form::A).unwrap().execution;
+        sqlgen::try_set_schema(META).unwrap();
+        let digest = spike_v1_fixture::digest(&facts);
+        let fingerprint = admin.ensure_meta_schema_bootstrap(META, SOURCE, &digest).await.unwrap();
+        setup.query_drop(format!("CREATE VIEW `{META}`.member AS SELECT * FROM `{SOURCE}`.member")).await.unwrap();
+        setup.query_drop(format!("CREATE VIEW `{META}`.video AS SELECT * FROM `{SOURCE}`.video")).await.unwrap();
+        setup.query_drop(format!("INSERT INTO `{META}`.aip_principals(issuer,subject,actor_id) VALUES('https://test.example','user-1',1),('https://test.example','user-2',2)")).await.unwrap();
+        setup.query_drop("DROP USER IF EXISTS 'aip_t_jobs_rt'@'%'").await.unwrap();
+        setup.query_drop("CREATE USER 'aip_t_jobs_rt'@'%' IDENTIFIED BY 'jobs_test_only'").await.unwrap();
+        for schema in [SOURCE, META] {
+            setup
+                .query_drop(format!("GRANT SELECT,INSERT,UPDATE,DELETE,CREATE TEMPORARY TABLES ON `{schema}`.* TO 'aip_t_jobs_rt'@'%'"))
+                .await
+                .unwrap();
+        }
+        let endpoint = url.split_once('@').unwrap().1.split('/').next().unwrap();
+        let driver = MysqlDriver::from_url(&format!("mysql://aip_t_jobs_rt:jobs_test_only@{endpoint}/{SOURCE}")).unwrap();
+        let fence = MysqlDeploymentFence::from_fingerprint(META, SOURCE, &digest, &fingerprint).unwrap();
+        let backend = Arc::new(MysqlBackend::new(driver.clone(), fence.clone()));
+        let dir = Dir(std::env::temp_dir().join(format!("aip-jobs-unit-{}", std::process::id())));
+        std::fs::create_dir_all(&dir.0).unwrap();
+        std::fs::write(dir.0.join("worker.py"), "async def jobView(input, ctx):\n return {'count': 1}\n").unwrap();
+        let workers = ReadExtensions { lang: spike_v6_transport::server::WorkerLang::Python, dir: dir.0.clone() };
+        let mut infra = spike_v6_transport::infrastructure::Infrastructure::default();
+        let runtime = Arc::new(
+            MysqlJobs::new(
+                driver.clone(),
+                fence,
+                META.into(),
+                digest,
+                Arc::new(facts.clone()),
+                IdWire::DecimalString,
+                backend.clone(),
+                workers,
+                &infra,
+            )
+            .unwrap(),
+        );
+        runtime.check_storage().await.unwrap();
+        // Pause only the dispatcher. All HTTP, catalog, principal, store and effect queries below are real MySQL.
+        infra.relational_jobs = Some(Arc::new(Paused(runtime.clone())));
+        let server = spike_v6_transport::server::listen_relational(
+            facts,
+            IdWire::DecimalString,
+            "127.0.0.1:0".parse().unwrap(),
+            backend,
+            spike_v6_transport::server::ServerOptions::default(),
+            infra,
+            Some(Arc::new(Auth)),
+        )
+        .await
+        .unwrap();
+        let address = server.address;
+        let contract = runtime.contract();
+        let request = json!({"operation":"incrementJob","input":{"id":"10"},"key":"작업 1","delayMs":0});
+        assert_eq!(post(address, "/jobs/enqueue", &contract, None, request.clone()).await["code"], "WIRE.UNAUTHENTICATED");
+        assert_eq!(post(address, "/jobs/enqueue", &"0".repeat(64), Some(1), request.clone()).await["code"], "WIRE.CONTRACT_MISMATCH");
+        let accepted = post(address, "/jobs/enqueue", &contract, Some(1), request.clone()).await;
+        assert_eq!(accepted["ok"], true, "{accepted}");
+        let id = accepted["run"]["id"].as_str().unwrap().to_owned();
+        assert_eq!(post(address, "/jobs/enqueue", &contract, Some(1), request.clone()).await["run"]["id"], id);
+        let mut conflict = request.clone();
+        conflict["input"]["id"] = json!("11");
+        assert_eq!(post(address, "/jobs/enqueue", &contract, Some(1), conflict).await["code"], "WIRE.IDEMPOTENCY_MISMATCH");
+        for path in ["/jobs/status", "/jobs/result", "/jobs/cancel"] {
+            assert_eq!(post(address, path, &contract, Some(2), json!({"id":id})).await["code"], "WIRE.NOT_FOUND");
+        }
+        assert_eq!(post(address, "/jobs/result", &contract, Some(1), json!({"id":id})).await["code"], "WIRE.JOB_NOT_READY");
+        let store = runtime.store().unwrap();
+        let mut conn = driver.pool().get_conn().await.unwrap();
+        let lease = store.claim(&mut conn, "test-dispatcher").await.unwrap().unwrap();
+        let mut host = JobHost {
+            runtime: runtime.clone(),
+            lease: lease.clone(),
+            grant: grant(1),
+            prefix: String::new(),
+            depth: 0,
+            budget: Arc::new(AtomicUsize::new(0)),
+            capabilities: vec!["apply.Video.increment".into(), "read.Video".into()],
+        };
+        let effect = json!({"ids":["10"],"key":"increment"});
+        let first = host.dispatch("apply", "Video.increment", &effect).await.unwrap();
+        assert_eq!(first["changed"], json!(["10"]));
+        let read = host.dispatch("read", "Video", &json!({"read":"Video","select":["id","views"]})).await.unwrap();
+        assert_eq!(read["rows"][0], json!({"id":"10","views":1}));
+        assert_eq!(host.dispatch("apply", "Video.increment", &effect).await.unwrap(), first, "same attempt replays");
+        assert_eq!(
+            host.dispatch("apply", "Video.increment", &json!({"ids":["11"],"key":"increment"})).await.unwrap_err(),
+            "WIRE.IDEMPOTENCY_MISMATCH"
+        );
+        assert_eq!(host.dispatch("apply", "Video.increment", &json!({"ids":["11"],"key":"denied"})).await.unwrap_err(), "WIRE.FORBIDDEN");
+        assert!(store.retry(&mut conn, &lease, "WIRE.WORKER_FAILED").await.unwrap());
+        setup.query_drop(format!("UPDATE `{META}`.aip_jobs SET next_run_at=UTC_TIMESTAMP(6)")).await.unwrap();
+        let next = store.claim(&mut conn, "test-dispatcher-2").await.unwrap().unwrap();
+        assert_eq!(next.epoch, lease.epoch + 1);
+        assert_eq!(host.dispatch("apply", "Video.increment", &effect).await.unwrap_err(), "WIRE.LEASE_LOST");
+        host.lease = next.clone();
+        assert_eq!(host.dispatch("apply", "Video.increment", &effect).await.unwrap(), first, "a recovered attempt replays the committed effect");
+        assert_eq!(
+            host.dispatch("apply", "Video.increment", &json!({"ids":["11"],"key":"denied"})).await.unwrap_err(),
+            "WIRE.FORBIDDEN",
+            "business refusal is journaled"
+        );
+        let changed: Option<i64> = setup.query_first(format!("SELECT views FROM `{SOURCE}`.video WHERE id=10")).await.unwrap();
+        assert_eq!(changed, Some(1));
+        let denied: Option<i64> = setup.query_first(format!("SELECT views FROM `{SOURCE}`.video WHERE id=11")).await.unwrap();
+        assert_eq!(denied, Some(0));
+        runtime.settle(&next, Ok(json!({"count":1})), false, None).await.unwrap();
+        let status = post(address, "/jobs/status", &contract, Some(1), json!({"id":id})).await;
+        assert_eq!(status["run"]["state"], "SUCCEEDED");
+        assert!(status["run"]["output"].is_null());
+        assert_eq!(post(address, "/jobs/result", &contract, Some(1), json!({"id":id})).await["output"], json!({"count":1}));
+        let mut delayed = request;
+        delayed["key"] = json!("cancel");
+        delayed["delayMs"] = json!(60000);
+        let accepted = post(address, "/jobs/enqueue", &contract, Some(1), delayed).await;
+        let cancelled = post(address, "/jobs/cancel", &contract, Some(1), json!({"id":accepted["run"]["id"]})).await;
+        assert_eq!(cancelled["run"]["state"], "CANCELLED", "{cancelled}");
+        setup.query_drop(format!("UPDATE `{META}`.aip_principals SET enabled=0 WHERE actor_id=1")).await.unwrap();
+        assert_eq!(post(address, "/jobs/result", &contract, Some(1), json!({"id":id})).await["code"], "WIRE.UNAUTHENTICATED");
+        setup.query_drop(format!("UPDATE `{META}`.aip_principals SET enabled=1 WHERE actor_id=1")).await.unwrap();
+        setup.query_drop(format!("ALTER TABLE `{SOURCE}`.video ADD COLUMN drift_probe INT")).await.unwrap();
+        assert_eq!(post(address, "/jobs/status", &contract, Some(1), json!({"id":id})).await["code"], "WIRE.DEPLOYMENT_CHANGED");
+        setup.query_drop(format!("ALTER TABLE `{META}`.aip_effects DROP PRIMARY KEY")).await.unwrap();
+        assert!(runtime.check_storage().await.is_err(), "an unkeyed effect journal cannot serve jobs");
+        setup.query_drop(format!("DROP TABLE `{META}`.aip_effects")).await.unwrap();
+        assert!(runtime.check_storage().await.is_err(), "an old deployment must provision its effect journal first");
+        server.shutdown().await.unwrap();
+        drop(conn);
+        setup.query_drop("DROP USER 'aip_t_jobs_rt'@'%'").await.unwrap();
+        for schema in [META, SOURCE] {
+            setup.query_drop(format!("DROP DATABASE `{schema}`")).await.unwrap();
+        }
+    }
+}

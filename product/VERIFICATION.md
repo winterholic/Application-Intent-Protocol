@@ -1,5 +1,11 @@
 # 제품 통합 검증 (2026-10-17)
 
+## 2026-10-20 MySQL HTTP job·effect journal 연결 (WBS 7.2.1.3, Linux worker CI 대기)
+
+Codex macOS 명령 환경의 Run 전용 MySQL 8.4/MariaDB 11.4(tmpfs, loopback 34571/34572)에서 실행했다. `cargo test -p aip-service --features mysql --lib mysql_jobs::tests::mysql_job_http_and_effect_journal_preserve_owner_lease_and_transaction_boundaries -- --ignored --exact --nocapture`는 1 passed, `aip-migrate --features mysql --test mysql_jobs -- --ignored`는 양엔진 각각 3 passed, `mysql_write_http -- --ignored`는 8 passed, `mysql_adoption_flow -- --ignored`는 2 passed다. 마지막 CLI 회귀에는 기존 배포의 누락 effect journal을 acknowledged adoption 재실행으로 추가하는 경로가 포함된다. 새 worker fixture의 `aip service check`는 `ok:true`, CLI E2E의 `--no-run`도 성공했다. 후자는 실제 worker 실행 증거가 아니다.
+
+HTTP 통합 시험은 dispatcher를 명시적으로 멈추고 실제 MySQL callback을 직접 실행한다. principal/contract/owner 거부, 키 수렴·충돌·한글 키, read/transition, effect의 같은 transaction 커밋과 epoch 재생, 거절된 전이 재생, 결과 재인가·출력 숨김, revoke·source DDL drift, 누락/무키 journal 시작 거부를 대조한다. 실제 HTTP→Node/Python job, effect 후 retry, 중첩 job, 대기/실행 취소는 Linux CLI E2E에 추가했으며 실행 결과 대기다. WBS는 아직 미완료다. 이번 컨테이너·cert 디렉터리는 각 시험 명령의 EXIT trap으로 제거했다. 원시 로그는 Run `6cb54067-06f5-4a7f-b9d1-0dce89718b73` outbox의 `mysql-jobs-http.log`, `mysql-job-store.log`, `mariadb-job-store.log`, `mysql-write-regression.log`, `mysql-adoption-regression.log`, `mysql-jobs-worker-build.log`다.
+
 ## 2026-10-20 MySQL 복합 키 경계 (WBS 7.2.1.1)
 
 macOS Codex 명령 환경에서 Run 소유 MySQL 8.4 컨테이너(tmpfs, 자동 할당 loopback 포트)로 실행했다. 복합 FK를 일반 정수 필드로 숨긴 수동 매핑의 채택 계획 허용을 RED 1 failed로 재현했다. 수정 후 CLI 실제 실행 2 passed(기존 채택·JWT·드리프트와 새 복합 FK/PK 경계), HTTP 읽기 1 passed·쓰기 9 passed, catalog 18 passed·초안 단위 2 passed다. 새 검사는 계획/적용/초안의 명시 코드·업무 데이터 보존·부분 출력과 인프라 부재·단일 키 복원 후 정상 허용을 대조한다. 복합 UNIQUE는 거부하지 않는다. 원시 로그: Run `43571658-180b-4a19-895f-3fd7feea8256`의 `mysql-keys-{red,green,cli,http,catalog,unit}.log`. Linux CI와 전체 WBS 완료는 이 로컬 결과만으로 주장하지 않는다.

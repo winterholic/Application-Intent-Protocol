@@ -23,6 +23,7 @@ pub mod pool;
 pub mod rag_transport;
 pub mod realtime;
 mod relational;
+pub mod relational_jobs;
 pub mod schedule;
 pub mod server;
 pub(crate) mod slots;
@@ -1323,6 +1324,23 @@ async fn serve_request(
         None
     };
     if let Some(backend) = runtime.infrastructure.relational.clone() {
+        if path.starts_with("/jobs/") {
+            let Some(jobs) = &runtime.infrastructure.relational_jobs else {
+                return reply(&mut w, &err("WIRE.ADAPTER_UNSUPPORTED", "durable job adapter가 설정되지 않음")).await;
+            };
+            let Some(grant) = session.as_ref().and_then(|session| session.durable.as_ref()) else {
+                return reply(&mut w, &err("WIRE.UNAUTHENTICATED", "job에는 제품 principal 세션이 필요함")).await;
+            };
+            let mut result = match tokio::time::timeout_at(deadline, jobs.handle(&path, &body, grant)).await {
+                Ok(result) => result,
+                Err(_) if path == "/jobs/enqueue" || path == "/jobs/cancel" => json!({"ok":false,"code":"WIRE.COMMIT_UNKNOWN"}),
+                Err(_) => json!({"ok":false,"code":"WIRE.DB_UNAVAILABLE"}),
+            };
+            if result["ok"] == true {
+                result["contractFingerprint"] = json!(contract_fingerprint.as_deref().unwrap_or(""));
+            }
+            return reply(&mut w, &result.to_string()).await;
+        }
         if write_extension {
             let Some(config) = runtime.extensions.as_ref() else {
                 return reply(&mut w, &err("WIRE.ADAPTER_UNSUPPORTED", "worker write 설정이 없음")).await;

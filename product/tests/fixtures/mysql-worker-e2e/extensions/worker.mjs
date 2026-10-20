@@ -23,3 +23,22 @@ export async function undeclared(input, ctx) {
   await ctx.data.apply("Video", "reset", [input.id]);
   return { count: 1 };
 }
+export async function jobView(input, ctx) {
+  const result = await ctx.data.apply("Video", "increment", [input.id], "increment");
+  return { count: result.changed.length };
+}
+
+export async function jobRetry(input, ctx) {
+  const result = await ctx.data.apply("Video", "increment", [input.id], "increment");
+  if (ctx.job.attempt === 1) throw ctx.retryLater("retry after committed effect");
+  return { count: result.changed.length };
+}
+
+export async function jobSlow() {
+  await new Promise(resolve => setTimeout(resolve, 5000));
+  return { count: 1 };
+}
+
+export async function jobNested(input, ctx) {
+  return await ctx.jobs.run("incrementJob", input, "child");
+}

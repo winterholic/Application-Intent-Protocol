@@ -140,6 +140,7 @@ pub struct Infrastructure {
     /// A non-PostgreSQL relational store. When set, the PostgreSQL pool is not used; requests the adapter cannot serve are
     /// refused with `WIRE.ADAPTER_UNSUPPORTED` instead of being emulated.
     pub relational: Option<Arc<dyn spike_v2_read::backend::RelationalBackend>>,
+    pub relational_jobs: Option<Arc<dyn crate::relational_jobs::RelationalJobs>>,
     pub mongo: Option<Arc<dyn spike_v4_worker::MongoCapability>>,
     pub redis: Option<Arc<dyn spike_v4_worker::RedisCapability>>,
     pub retention: Retention,
@@ -170,6 +171,7 @@ impl Default for Infrastructure {
             otlp: None,
             otlp_exporter: None,
             relational: None,
+            relational_jobs: None,
             mongo: None,
             redis: None,
             retention: Retention::default(),

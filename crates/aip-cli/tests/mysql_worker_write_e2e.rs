@@ -312,6 +312,78 @@ async fn http_apply_runs_real_node_and_python_workers_in_one_mysql_transaction()
         let after = apply(Some(&alice), &fingerprint, key("after"), view("12")).await;
         assert_eq!(after["ok"], true, "{language}: {after}");
         assert_eq!((db.views(12).await, db.audit(&key("after")).await), (1, 1), "{language}");
+
+        // Durable HTTP jobs execute real workers. A retry replays its committed effect instead of incrementing twice.
+        for operation in ["incrementJob", "retryJob", "nestedJob"] {
+            let body = json!({"operation":operation,"input":{"id":"10"},"key":key(operation),"delayMs":0});
+            let before = db.views(10).await;
+            let accepted = post(&address, "/jobs/enqueue", Some(&alice), &fingerprint, &body).await;
+            assert_eq!(accepted["ok"], true, "{language}/{operation}: {accepted}");
+            let id = accepted["run"]["id"].as_str().unwrap();
+            let duplicate = post(&address, "/jobs/enqueue", Some(&alice), &fingerprint, &body).await;
+            assert_eq!(duplicate["run"]["id"], id, "same key converges on one durable run");
+            let mut final_run = Value::Null;
+            for _ in 0..200 {
+                final_run = post(&address, "/jobs/status", Some(&alice), &fingerprint, &json!({"id":id})).await;
+                assert_eq!(final_run["ok"], true, "{final_run}");
+                if ["SUCCEEDED", "FAILED", "CANCELLED"].contains(&final_run["run"]["state"].as_str().unwrap()) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            assert_eq!(final_run["run"]["state"], "SUCCEEDED", "{language}/{operation}: {final_run}");
+            assert_eq!(final_run["run"]["output"], Value::Null, "status never exposes an output without result authorization");
+            if operation == "retryJob" {
+                assert_eq!(final_run["run"]["attempt"], 2);
+            }
+            let result = post(&address, "/jobs/result", Some(&alice), &fingerprint, &json!({"id":id})).await;
+            assert_eq!(result["output"], json!({"count":1}), "{language}: {result}");
+            assert_eq!(db.views(10).await, before + 1, "committed effect is not repeated");
+            assert_eq!(
+                db.count(&format!("SELECT COUNT(*) FROM `{META}`.`aip_effects` WHERE run_id='{id}' AND state='SUCCEEDED'")).await,
+                if operation == "nestedJob" { 2 } else { 1 }
+            );
+        }
+        let delayed = post(
+            &address,
+            "/jobs/enqueue",
+            Some(&alice),
+            &fingerprint,
+            &json!({"operation":"incrementJob","input":{"id":"10"},"key":key("cancel-job"),"delayMs":60000}),
+        )
+        .await;
+        assert_eq!(delayed["ok"], true, "{delayed}");
+        let cancelled = post(&address, "/jobs/cancel", Some(&alice), &fingerprint, &json!({"id":delayed["run"]["id"]})).await;
+        assert_eq!(cancelled["run"]["state"], "CANCELLED", "{cancelled}");
+        let slow = post(
+            &address,
+            "/jobs/enqueue",
+            Some(&alice),
+            &fingerprint,
+            &json!({"operation":"slowJob","input":{},"key":key("running-cancel"),"delayMs":0}),
+        )
+        .await;
+        assert_eq!(slow["ok"], true, "{slow}");
+        let slow_id = slow["run"]["id"].clone();
+        let mut running = Value::Null;
+        for _ in 0..100 {
+            running = post(&address, "/jobs/status", Some(&alice), &fingerprint, &json!({"id":slow_id})).await;
+            if running["run"]["state"] == "RUNNING" {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert_eq!(running["run"]["state"], "RUNNING", "{running}");
+        let cancel = post(&address, "/jobs/cancel", Some(&alice), &fingerprint, &json!({"id":slow_id})).await;
+        assert_eq!(cancel["ok"], true, "{cancel}");
+        for _ in 0..100 {
+            running = post(&address, "/jobs/status", Some(&alice), &fingerprint, &json!({"id":slow_id})).await;
+            if running["run"]["state"] == "CANCELLED" {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert_eq!(running["run"]["state"], "CANCELLED", "{language}: cancellation must follow the observed worker stop: {running}");
         drop(child);
     }
 }

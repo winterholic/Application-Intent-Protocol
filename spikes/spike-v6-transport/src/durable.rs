@@ -54,7 +54,7 @@ fn step_error(code: &str) -> &'static str {
     }
 }
 /// Business outcomes of data capabilities stay distinguishable so an extension can branch or compensate.
-fn data_error(code: &str) -> &'static str {
+pub(crate) fn data_error(code: &str) -> &'static str {
     match code {
         "WIRE.ACCESS_DENIED" => "WIRE.ACCESS_DENIED",
         "WIRE.NOT_FOUND" => "WIRE.NOT_FOUND",

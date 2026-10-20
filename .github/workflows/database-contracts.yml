@@ -125,3 +125,8 @@ jobs:
         run: >-
           cargo test -p aip-cli --features mysql --test mysql_adoption_flow --locked
           -- --ignored --nocapture --test-threads=1
+      - name: Verify MySQL HTTP job ownership and transactional effect replay
+        run: >-
+          cargo test -p aip-service --features mysql --lib --locked
+          mysql_jobs::tests::mysql_job_http_and_effect_journal_preserve_owner_lease_and_transaction_boundaries
+          -- --ignored --exact --nocapture

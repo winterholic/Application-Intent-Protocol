@@ -570,6 +570,9 @@ pub(crate) async fn create_meta_tables<Q: Queryable>(conn: &mut Q, meta_schema: 
            CONSTRAINT aip_jobs_actor CHECK (actor_id > 0), CONSTRAINT aip_jobs_attempts CHECK (attempt >= 0 AND max_attempts > 0), \
            CONSTRAINT aip_jobs_timeout CHECK (timeout_ms > 0 AND result_ttl_ms > 0 AND initial_delay_ms >= 0)) ENGINE=InnoDB"
     ));
+    // A managed data effect and this receipt commit in the same fenced transaction. Both keys are SHA-256 digests,
+    // so nested step paths cannot exceed InnoDB's index width or alias through a case-insensitive collation.
+    statements.push(job_effects_ddl(meta_schema));
     // The relay's receipt that an outbox row became a job: unique per row, written in the same transaction as the job.
     statements.push(format!(
         "CREATE TABLE IF NOT EXISTS `{meta_schema}`.`aip_outbox_dispatch` (\
@@ -629,6 +632,19 @@ async fn verify_meta_digest_on_conn<Q: Queryable>(conn: &mut Q, meta_schema: &st
         }
         None => Err(CatalogError::drift("aip_migrate_meta singleton row missing")),
     }
+}
+
+/// AIP-owned additive infrastructure. The schema is validated by both bootstrap and adoption callers.
+pub(crate) fn job_effects_ddl(meta_schema: &str) -> String {
+    format!(
+        "CREATE TABLE IF NOT EXISTS `{meta_schema}`.`aip_effects` (\
+           run_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, \
+           effect_key CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, \
+           request_digest CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, \
+           state VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, result JSON NULL, \
+           PRIMARY KEY (run_id, effect_key), \
+           CONSTRAINT aip_effects_state CHECK (state IN ('PENDING','SUCCEEDED','FAILED','UNKNOWN'))) ENGINE=InnoDB"
+    )
 }
 
 /// Immutable deployment fence: the canonical bound-table sets are computed once, at construction,

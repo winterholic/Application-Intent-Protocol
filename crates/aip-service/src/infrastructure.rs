@@ -406,6 +406,7 @@ pub(super) fn build_with_environment(config: &super::Config, lookup: &impl Fn(&s
         rag_client_index: false,
         triggers: Default::default(),
         job_policies: Default::default(),
+        relational_jobs: None,
         metrics_token: config.metrics.as_ref().map(|metrics| metrics_token(&metrics.token_env, lookup)).transpose()?,
         data_changes: Default::default(),
         otlp,

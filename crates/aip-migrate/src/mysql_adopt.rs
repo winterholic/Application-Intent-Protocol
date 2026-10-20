@@ -409,6 +409,7 @@ async fn apply_locked(
             .await
             .map_err(|_| failure("채택 journal 조회 실패"))?;
         if prior.as_ref().is_some_and(|(digest,)| digest == ack) && old.facts == *deployed {
+            conn.query_drop(crate::mysql_driver::job_effects_ddl(meta_schema)).await.map_err(|_| failure("MySQL job effect journal 준비 실패"))?;
             return Ok(json!({"ok": true, "schema": meta_schema, "alreadyApplied": true, "digest": ack}));
         }
     }
@@ -419,6 +420,9 @@ async fn apply_locked(
     let steps =
         if plan.old.is_some() { json!({"mode": "external-policy", "businessDDL": []}) } else { json!({"mode": "external", "businessDDL": []}) };
     if let Some(old) = &plan.old {
+        // Additive AIP metadata is installed with the adoption role before publishing the new policy.
+        // Existing deployments keep their source schema and synchronous write fence unchanged.
+        conn.query_drop(crate::mysql_driver::job_effects_ddl(meta_schema)).await.map_err(|_| failure("MySQL job effect journal 준비 실패"))?;
         // Policy-only update: shapes are unchanged, so the views stay. Marker and journal change in one transaction.
         let mut tx = conn.start_transaction(TxOpts::default()).await.map_err(|_| failure("정책 갱신 transaction 실패"))?;
         tx.exec_drop(

@@ -42,7 +42,7 @@ fn reject_unsupported_infrastructure(config: &Config) -> Result<(), Value> {
     {
         return Err(unsupported("workers.enable_file_uploads", "MySQL adapter는 worker 파일 업로드를 아직 지원하지 않음"));
     }
-    let checks: [(&str, bool, &str); 12] = [
+    let checks: [(&str, bool, &str); 11] = [
         ("objects", config.objects.is_some(), "객체 저장소 metadata가 PostgreSQL에 있음"),
         ("broker", config.broker.is_some(), "broker offset·outbox가 PostgreSQL에 있음"),
         ("rag", config.rag.is_some(), "RAG 색인이 PostgreSQL(pgvector)에 있음"),
@@ -52,7 +52,6 @@ fn reject_unsupported_infrastructure(config: &Config) -> Result<(), Value> {
         ("webhooks", !config.webhooks.is_empty(), "durable job 저장소가 PostgreSQL에 있음"),
         ("outbox_handlers", !config.outbox_handlers.is_empty(), "outbox가 PostgreSQL에 있음"),
         ("message_handlers", !config.message_handlers.is_empty(), "메시지 저장소가 PostgreSQL에 있음"),
-        ("job_policies", !config.job_policies.is_empty(), "durable job 저장소가 PostgreSQL에 있음"),
         ("messaging", config.messaging.enabled, "메시지 저장소가 PostgreSQL에 있음"),
         (
             "rate_limit",
@@ -357,7 +356,7 @@ pub(crate) async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
     let fence =
         MysqlDeploymentFence::new(&config.schema, &mapping.schema, &deployment.source_tables, &deployment.facts_digest, &deployment.structure_digest)
             .map_err(catalog_error)?;
-    let backend = MysqlBackend::new(driver.clone(), fence);
+    let backend = Arc::new(MysqlBackend::new(driver.clone(), fence.clone()));
     backend.check_server_profile().await.map_err(catalog_error)?;
     sqlgen::try_set_schema(&config.schema).map_err(|_| error("SCHEMA_CONTEXT", "프로세스당 한 schema만 실행할 수 있음"))?;
     let deployed = deployment.facts;
@@ -368,7 +367,7 @@ pub(crate) async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
     let verifier = aip_auth::AuthenticatorImpl::new_explained(config.auth, "mysql".into(), config.schema.clone())
         .await
         .map_err(|failure| error("AUTH_CONFIG", &format!("인증 설정 오류: {}", failure.reason)))?;
-    let authenticator = Arc::new(MysqlAuthenticator { verifier, driver, schema: config.schema.clone(), actor });
+    let authenticator = Arc::new(MysqlAuthenticator { verifier, driver: driver.clone(), schema: config.schema.clone(), actor });
     infrastructure.rate_limit = None;
     // Subscriptions wake on commits of this process; the read-only adapter has none, so the transport answers
     // WIRE.NOT_AVAILABLE for event streams instead of serving a stream that never fires.
@@ -381,6 +380,28 @@ pub(crate) async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
         },
     });
     configure_optional_read_adapters(&mut infrastructure, config.workers.as_ref(), |name| std::env::var(name).ok()).await?;
+    infrastructure.job_policies = triggers::build_job_policies(&config.job_policies).map_err(|message| error("JOB_POLICY_CONFIG", message))?;
+    let has_jobs = deployed["operations"].as_object().is_some_and(|ops| ops.values().any(|op| op["kind"] == "job"));
+    if has_jobs && let Some(extensions) = &extensions {
+        let jobs = super::mysql_jobs::MysqlJobs::new(
+            driver,
+            fence,
+            config.schema.clone(),
+            deployment.facts_digest,
+            Arc::new(deployed.clone()),
+            config.wire.id_wire(),
+            backend.clone(),
+            extensions.clone(),
+            &infrastructure,
+        )?;
+        tokio::time::timeout(DB_TIMEOUT, jobs.check_storage())
+            .await
+            .map_err(|_| error("JOB_STORAGE_NOT_READY", "MySQL effect journal 확인 시간 초과"))?
+            .map_err(|_| {
+                error("JOB_STORAGE_NOT_READY", "MySQL effect journal 미준비: migration 계정으로 adopt-external --apply를 다시 실행해야 함")
+            })?;
+        infrastructure.relational_jobs = Some(Arc::new(jobs));
+    }
     let read_adapters = infrastructure.catalog()["readAdapters"].clone();
     let options = spike_v6_transport::server::ServerOptions { allowed_origins: config.allowed_origins };
     #[cfg(unix)]
@@ -391,7 +412,7 @@ pub(crate) async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
         deployed.clone(),
         config.wire.id_wire(),
         config.listen,
-        Arc::new(backend),
+        backend,
         extensions,
         enable_worker_writes,
         options,
@@ -400,7 +421,7 @@ pub(crate) async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
     )
     .await
     .map_err(|e| server_start_error(&e))?;
-    let fingerprint = if enable_worker_writes {
+    let fingerprint = if enable_worker_writes || has_jobs {
         spike_v5_sdk::contract_fingerprint_with_all_extensions(&deployed, config.wire.id_wire())
     } else if config.workers.is_some() {
         spike_v5_sdk::contract_fingerprint_with_extensions(&deployed, config.wire.id_wire())
@@ -554,6 +575,13 @@ mod tests {
         });
         let config: Config = serde_json::from_value(write_worker_json).unwrap();
         assert!(reject_unsupported_infrastructure(&config).is_ok());
+
+        // A durable MySQL job uses the same retry-policy configuration as PostgreSQL.
+        let mut job_json = base_json.clone();
+        job_json["workers"] = json!({"directory":"extensions", "language":"python"});
+        job_json["job_policies"] = json!([{"operation":"settle","max_attempts":3,"retry_uncaught_errors":false}]);
+        let config: Config = serde_json::from_value(job_json).unwrap();
+        assert!(reject_unsupported_infrastructure(&config).is_ok(), "MySQL job policy must reach the durable runtime");
 
         // 3. 파일 업로드 워커는 거부
         let mut upload_worker_json = base_json.clone();

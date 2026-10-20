@@ -507,6 +507,8 @@ fn read_bounded(path: &Path, limit: usize, code: &str) -> Result<String, Value> 
 }
 /// The definition diagnostic registry of the product path, for `aip explain-code` and `aip diagnostics --area def`.
 pub use spike_v1_fixture::codes as definition_registry;
+#[cfg(feature = "mysql")]
+mod mysql_jobs;
 /// The codes the SDKs raise themselves, for `aip explain-code`.
 #[cfg(feature = "mysql")]
 mod mysql_service;

@@ -448,6 +448,21 @@ async fn external_mysql_adoption_binding_serving_and_drift() {
     let again = run(&env, &["adopt-external", file_arg, "--apply", &digest], &config).await.expect("re-apply");
     assert_eq!(again["alreadyApplied"], true, "{again}");
 
+    // A deployment adopted before durable execution has no effect journal. Re-applying the acknowledged
+    // adoption installs only additive AIP infrastructure, including on the alreadyApplied path.
+    let mut upgrade = admin.pool().get_conn().await.unwrap();
+    upgrade.query_drop(format!("DROP TABLE `{META}`.aip_effects")).await.unwrap();
+    let again = run(&env, &["adopt-external", file_arg, "--apply", &digest], &config).await.expect("additive job journal upgrade");
+    assert_eq!(again["alreadyApplied"], true, "{again}");
+    let installed: Option<i64> = upgrade
+        .query_first(format!(
+            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA='{META}' AND TABLE_NAME='aip_effects' AND ENGINE='InnoDB'"
+        ))
+        .await
+        .unwrap();
+    assert_eq!(installed, Some(1));
+    drop(upgrade);
+
     // User binding: unknown actor rows are refused, a real one is bound, a different actor cannot take the subject over.
     let missing_actor = run(&env, &["principal", "bind", "--subject", "user-1", "--actor", "999"], &config).await.unwrap_err();
     assert_eq!(missing_actor["code"], "BAD_PRINCIPAL", "{missing_actor}");

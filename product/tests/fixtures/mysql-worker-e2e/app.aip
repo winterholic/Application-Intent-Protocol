@@ -40,3 +40,39 @@ resource Video {
     implementation "worker.undeclared"
   }
 }
+
+operation job incrementJob {
+  input { id: Video.Id }
+  output { count: Int(0..10) }
+  allow actor != null
+  access Video.increment
+  effect managed
+  deadline 5s
+  implementation "worker.jobView"
+}
+operation job retryJob {
+  input { id: Video.Id }
+  output { count: Int(0..10) }
+  allow actor != null
+  access Video.increment
+  effect managed
+  deadline 5s
+  implementation "worker.jobRetry"
+}
+operation job slowJob {
+  input {}
+  output { count: Int }
+  allow actor != null
+  effect none
+  deadline 10s
+  implementation "worker.jobSlow"
+}
+operation job nestedJob {
+  input { id: Video.Id }
+  output { count: Int(0..10) }
+  allow actor != null
+  access jobs.incrementJob, Video.increment
+  effect managed
+  deadline 10s
+  implementation "worker.jobNested"
+}

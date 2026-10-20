@@ -1342,6 +1342,23 @@ async fn run_write(session: &mut Session<'_>, req: &Value, caller: &Caller, wire
     }))
 }
 
+/// Execute a managed job's data effect inside the caller's already fenced, lease-locked transaction.
+/// The caller commits the business change and effect receipt together, or rolls both back.
+pub async fn apply_job_effect_in(
+    tx: &mut Transaction<'static>,
+    facts: &Value,
+    request: &Value,
+    caller: &Caller,
+    wire: IdWire,
+    audit_key: &str,
+) -> Result<Value, Reject> {
+    let knobs = Knobs { audit_via: Some("job"), audit_key: Some(audit_key.to_string()), fresh_now_after_lock: true, ..Knobs::default() };
+    let mut session = Session { tx, facts, knobs, touched: BTreeMap::new() };
+    let result = run_write(&mut session, request, caller, wire).await?;
+    session.run_checks(caller).await?;
+    Ok(json!({"changed":result["changed"],"unchanged":result["unchanged"]}))
+}
+
 fn fence_reject(error: &crate::mysql_catalog::CatalogError) -> Value {
     match error.code.as_str() {
         "MIGRATE.DRIFT_DETECTED" => json!({"ok": false, "code": "WIRE.DEPLOYMENT_CHANGED", "msg": "배포 정의 또는 외부 업무 schema가 바뀜"}),

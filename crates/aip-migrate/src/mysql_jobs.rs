@@ -270,18 +270,19 @@ impl MysqlJobStore {
         vec![lease.run_id.to_string().into(), lease.epoch.into(), lease.worker.clone().into(), lease.owner.clone().into()]
     }
 
-    async fn changed(&self, conn: &mut Conn, sql: String, params: Vec<MyValue>) -> Result<bool, Error> {
+    async fn changed<Q: Queryable>(&self, conn: &mut Q, sql: String, params: Vec<MyValue>) -> Result<bool, Error> {
         conn.exec_drop(sql, params).await.map_err(db)?;
-        Ok(conn.affected_rows() == 1)
+        let changed: Option<u64> = conn.query_first("SELECT ROW_COUNT()").await.map_err(db)?;
+        Ok(changed == Some(1))
     }
 
-    pub async fn heartbeat(&self, conn: &mut Conn, lease: &Lease) -> Result<bool, Error> {
+    pub async fn heartbeat<Q: Queryable>(&self, conn: &mut Q, lease: &Lease) -> Result<bool, Error> {
         let sql =
             format!("UPDATE {} SET lease_until = LEAST(attempt_deadline, {}) WHERE {}", self.table(), after(&LEASE_MS.to_string()), self.live());
         self.changed(conn, sql, Self::live_params(lease)).await
     }
 
-    pub async fn finish(&self, conn: &mut Conn, lease: &Lease, output: Value) -> Result<bool, Error> {
+    pub async fn finish<Q: Queryable>(&self, conn: &mut Q, lease: &Lease, output: Value) -> Result<bool, Error> {
         let output = serde_json::to_string(&output).map_err(|error| Error::Database(error.to_string()))?;
         if output.len() > MAX_PAYLOAD_BYTES {
             return Err(Error::PayloadTooLarge);
@@ -298,14 +299,14 @@ impl MysqlJobStore {
         self.changed(conn, sql, params).await
     }
 
-    pub async fn retry(&self, conn: &mut Conn, lease: &Lease, error: &str) -> Result<bool, Error> {
+    pub async fn retry<Q: Queryable>(&self, conn: &mut Q, lease: &Lease, error: &str) -> Result<bool, Error> {
         self.retry_after(conn, lease, error, None).await
     }
 
     /// Like `retry`, with the wait before the next attempt chosen by the extension: replaces the default exponential backoff, is
     /// raised to one second and cut to one hour, and extends the run's deadline by what it adds over the default. The attempt limit
     /// still ends the run.
-    pub async fn retry_after(&self, conn: &mut Conn, lease: &Lease, error: &str, after_ms: Option<i64>) -> Result<bool, Error> {
+    pub async fn retry_after<Q: Queryable>(&self, conn: &mut Q, lease: &Lease, error: &str, after_ms: Option<i64>) -> Result<bool, Error> {
         let default_wait = "LEAST(30000, 1000 * POW(2, LEAST(attempt - 1, 15)))";
         let wait = format!("(CASE WHEN ? IS NULL THEN {default_wait} ELSE LEAST(3600000, GREATEST(1000, ?)) END)");
         let exhausted = "(attempt >= max_attempts OR run_deadline <= UTC_TIMESTAMP(6))";
@@ -332,7 +333,7 @@ impl MysqlJobStore {
         self.changed(conn, sql, params).await
     }
 
-    pub async fn fail(&self, conn: &mut Conn, lease: &Lease, code: &str) -> Result<bool, Error> {
+    pub async fn fail<Q: Queryable>(&self, conn: &mut Q, lease: &Lease, code: &str) -> Result<bool, Error> {
         let sql = format!(
             "UPDATE {} SET state = 'FAILED', error = ?, lease_owner = NULL, lease_until = NULL, result_expires_at = {} WHERE {}",
             self.table(),
@@ -344,7 +345,7 @@ impl MysqlJobStore {
         self.changed(conn, sql, params).await
     }
 
-    pub async fn check_lease(&self, conn: &mut Conn, lease: &Lease) -> Result<bool, Error> {
+    pub async fn check_lease<Q: Queryable>(&self, conn: &mut Q, lease: &Lease) -> Result<bool, Error> {
         let sql = format!("SELECT COUNT(*) FROM {} WHERE {}", self.table(), self.live());
         let count: Option<i64> = conn.exec_first(sql, Self::live_params(lease)).await.map_err(db)?;
         Ok(count == Some(1))
@@ -353,7 +354,7 @@ impl MysqlJobStore {
     const CANCEL_LIVE: &'static str = "id = ? AND lease_epoch = ? AND lease_owner = ? AND owner = ? AND state = 'CANCEL_REQUESTED' \
          AND lease_until > UTC_TIMESTAMP(6) AND attempt_deadline > UTC_TIMESTAMP(6)";
 
-    pub async fn acknowledge_cancel(&self, conn: &mut Conn, lease: &Lease) -> Result<bool, Error> {
+    pub async fn acknowledge_cancel<Q: Queryable>(&self, conn: &mut Q, lease: &Lease) -> Result<bool, Error> {
         let sql = format!(
             "UPDATE {} SET state = 'CANCELLED', lease_owner = NULL, lease_until = NULL, result_expires_at = {} WHERE {}",
             self.table(),
@@ -363,7 +364,7 @@ impl MysqlJobStore {
         self.changed(conn, sql, Self::live_params(lease)).await
     }
 
-    pub async fn reject_cancel(&self, conn: &mut Conn, lease: &Lease, error: &str) -> Result<bool, Error> {
+    pub async fn reject_cancel<Q: Queryable>(&self, conn: &mut Q, lease: &Lease, error: &str) -> Result<bool, Error> {
         let sql = format!(
             "UPDATE {} SET state = 'FAILED', error = ?, lease_owner = NULL, lease_until = NULL, result_expires_at = {} WHERE {}",
             self.table(),
@@ -375,7 +376,7 @@ impl MysqlJobStore {
         self.changed(conn, sql, params).await
     }
 
-    pub async fn cancel(&self, conn: &mut Conn, id: &str, owner: &str) -> Result<Option<Run>, Error> {
+    pub async fn cancel<Q: Queryable>(&self, conn: &mut Q, id: &str, owner: &str) -> Result<Option<Run>, Error> {
         let id = parse_id(id)?;
         // Assignments run left to right and see earlier ones, so the columns that read `state` come before `state` itself.
         let sql = format!(
@@ -413,7 +414,7 @@ impl MysqlJobStore {
         }))
     }
 
-    pub async fn result(&self, conn: &mut Conn, id: &str, owner: &str) -> Result<Option<JobResult>, Error> {
+    pub async fn result<Q: Queryable>(&self, conn: &mut Q, id: &str, owner: &str) -> Result<Option<JobResult>, Error> {
         let id = parse_id(id)?;
         let row: Option<Row> = conn
             .exec_first(
@@ -445,6 +446,7 @@ impl MysqlJobStore {
             .await
             .map_err(db)?;
         for id in &ids {
+            tx.exec_drop(format!("DELETE FROM `{}`.`aip_effects` WHERE run_id = ?", self.schema), (id.as_str(),)).await.map_err(db)?;
             tx.exec_drop(format!("UPDATE {table} SET input = JSON_OBJECT(), grant_data = JSON_OBJECT(), output = NULL WHERE id = ?"), (id.as_str(),))
                 .await
                 .map_err(db)?;
