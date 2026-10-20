@@ -14,6 +14,8 @@
 
 아래 날짜별 절의 미지원·미실행 표시는 당시 이력이며 현재 제품 범위는 문서 첫머리와 이 절을 따른다. MySQL 비동기 job 실행과 전체 FaceReview 포팅은 계속 미완이다.
 
+후속 완료 기준 대조에서 실제 HTTP 커서 페이지 시험이 빠져 있어 `mysql_read_http`를 보강했다. `cursor`를 켠 fixture의 DECIMAL 정렬값을 동률로 만들고, 페이지 크기 1로 오름차순 `[2,1,3]`·내림차순 `[1,3,2]`·Bool 필터 `[1,3]`를 끝까지 읽었다. id tie-break·누락/중복 부재·빈 마지막 페이지·누락된 정렬 키의 `WIRE.BAD_CURSOR`를 실제 MySQL에서 확인했다(`mysql-pagination-http.log`: 1 passed). 제품 실행 코드는 바꾸지 않았다.
+
 ## 2026-10-20 job 저장소의 두 엔진 CI 연결 (WBS 7.2.1.3 일부)
 
 기존 `mysql_jobs` 라이브 시험은 실제 MySQL 8.4와 MariaDB 11.4에서 각각 3 passed였다. 40개 run을 8개 연결에서 claim하는 경쟁, lease epoch·멱등·재시도·취소·결과 만료, outbox batch rollback 및 4개 relay의 중복 방지를 실행한다. `Database contracts`에 `AIP_TEST_JOBS_URL`을 각 엔진의 전용 service URL로 지정하는 별도 두 단계를 추가했다. 값이 없으면 skip이 아니라 실패하는 기존 시험을 그대로 쓴다. 원시 로컬 실행은 Run `43571658-180b-4a19-895f-3fd7feea8256` outbox의 `jobs-mysql.log`와 `jobs-mariadb.log`다. 실제 HTTP `/jobs/*`와 worker의 비동기 실행은 이 저장소 시험에 포함하지 않으며 7.2.1.3은 미완으로 유지한다.

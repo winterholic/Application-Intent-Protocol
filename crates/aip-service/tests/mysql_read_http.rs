@@ -29,7 +29,7 @@ resource Note {
     filter done.eq, score.gte, title.contains, created.lte
     sort created, score, id
     traverse comments via Comment.note { select id, body, secret; sort id desc; limit 3 }
-    budget { rows 20; depth 2; deadline 2s; cost 1000 }
+    budget { rows 20; depth 2; deadline 2s; cost 1000; cursor }
   }
 }
 enum NoteKind { MEMO, TODO }
@@ -276,6 +276,38 @@ async fn mysql_read_path_serves_policy_reads_and_fences_ddl() {
     // Out-of-contract requests keep the planner's own rejection codes.
     let rejected = filtered(json!({"field":"title","op":"eq","value":"x"})).await;
     assert_eq!(rejected["code"], "WIRE.FILTER_NOT_ALLOWED", "{rejected}");
+
+    // Keyset pages keep the id tie-break in both directions, preserve filters, and eventually end.
+    // Earlier scalar checks exercised the maximum decimal value; now two rows deliberately share a score.
+    let mut pagination_setup = admin.pool().get_conn().await.unwrap();
+    pagination_setup.query_drop(format!("UPDATE `{SOURCE}`.note SET score = 10.50 WHERE id = 3")).await.unwrap();
+    drop(pagination_setup);
+    for (direction, filter, expected) in
+        [("asc", None, vec![2, 1, 3]), ("desc", None, vec![1, 3, 2]), ("asc", Some(json!({"field":"done","op":"eq","value":true})), vec![1, 3])]
+    {
+        let mut query = json!({"read":"Note","select":["id","score"],"sort":[{"field":"score","dir":direction}],"limit":1});
+        if let Some(filter) = filter {
+            query["filter"] = json!([filter]);
+        }
+        let mut seen = Vec::new();
+        let mut ended = false;
+        for _ in 0..4 {
+            let page = list(&anon, query.clone()).await;
+            let page_ids = ids(&page);
+            assert!(page_ids.len() <= 1, "limit applies to every page: {page}");
+            if page_ids.is_empty() {
+                ended = true;
+                break;
+            }
+            seen.extend(page_ids);
+            query["after"] = json!({"id":page["rows"][0]["id"],"score":page["rows"][0]["score"]});
+        }
+        assert!(ended, "pagination must reach an empty page without repeating its boundary");
+        assert_eq!(seen, expected, "{direction}: tied decimals keep id ascending; filters hold on later pages");
+    }
+    let malformed = list(&anon, json!({"read":"Note","select":["id"],"sort":[{"field":"score"}],"after":{"id":1},"limit":1})).await;
+    assert_eq!(malformed["code"], "WIRE.BAD_CURSOR", "missing score must not restart pagination: {malformed}");
+    println!("MySQL keyset HTTP: ascending/descending decimal ties, filtered pages, termination and malformed cursor verified");
 
     // Everything outside the implemented read path is refused by name, not emulated.
     for path in ["/capabilities"] {
