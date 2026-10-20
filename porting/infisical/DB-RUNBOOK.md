@@ -61,6 +61,7 @@ bash porting/infisical/run-baseline.sh
 ```sh
 cd porting/infisical/tests
 python3 -m unittest test_live_db -v        # 실DB. AIP_TEST_DATABASE_URL이 없으면 skip
+python3 -m unittest test_project_membership -v # 실DB: 제거·탈퇴·접근 철회. Linux만 격리 job 시험 추가
 python3 mutation_check.py                  # 규칙을 하나씩 풀면 해당 시험이 실패하는지 확인
 python3 -m unittest legacy_repro -v        # 수정 전 정의(53b1537)의 결함 10건 재현. 모두 FAIL이 정상
 python3 -m unittest test_identity_jwt -v   # DB 없이 17건
@@ -77,6 +78,7 @@ python3 -m unittest test_mutation_checker -v # DB 없이 5건: 준비·정리 �
 - 폴더 트리: 같은 project·env의 부모 아래에서만 생성, 부모 아래 이름 유일, 빈 폴더 삭제, 내용이 있으면 삭제 거부, `forceDelete`가 폴더와 시크릿 1000개까지 지움(하위 폴더가 있으면 거부), 루트 삭제 거부, 폴더 이름·설명 변경(루트 제외, 형제 이름 충돌 거부, 이동 불가).
 - 개인 재정의: 공유 시크릿이 있어야 만들고 본인 것만, 읽기 권한이면 충분, 소유자만 보고 지움, 공유 시크릿 삭제가 모든 사용자의 재정의를 지움(1000개 상한), 재정의가 남은 폴더의 `forceDelete` 거부.
 - 조직 생성자의 첫 admin 좌석 확보, 사용자 목록의 조직 범위 가시성.
+- 프로젝트 구성원 제거·본인 탈퇴·no-access 본인 행 가시성·접근 철회·재가입·bulk rollback·감사·멱등 재시도([범위와 차이](../../plan-docs/porting/INFISICAL-MEMBERSHIP.md)).
 - 서버 job 1종(`secretReminder`)의 enqueue 권한 검사, 실행, outbox 알림, 감사 행.
 
 증명하지 않는 것:

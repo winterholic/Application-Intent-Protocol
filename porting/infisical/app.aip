@@ -99,7 +99,9 @@ resource Project {
 resource ProjectMembership {
   fields { id: Id; user: User; project: Project; role: ProjectRole }
   unique user, project
-  rows read when canReadProject(actor, project)
+  // A direct member can inspect and leave their own membership even with NO_ACCESS. This grants no
+  // visibility of the project or of another user's membership (each resource keeps its own row policy).
+  rows read when user = actor or canReadProject(actor, project)
   expose create {
     allow isProjectAdmin(actor, project) and isOrgMember(user, project.org)
     fields user, project, role
@@ -110,6 +112,23 @@ resource ProjectMembership {
     patch role
   }
   expose apply setRole { target id; bulk maxRows 1 }
+  // Upstream deleteProjectMemberships refuses removing yourself; use leaveProject for that
+  // (project-membership-service.ts:426-567, 575-673). This port's fixed ADMIN rule replaces the
+  // EE permission/privilege boundary; group access, approver policies and delivery recipients are not ported.
+  transition remove {
+    allow isProjectAdmin(actor, project) and user != actor
+    from true
+    delete
+  }
+  expose apply remove { target id; bulk maxRows 100 }
+  // The retain-admin guard is only for cert-manager/PAM/agent-vault upstream (membership-fns.ts:143,
+  // db/schemas/models.ts ADMIN_MEMBER_ONLY_PRODUCT_LABELS), not this Secret Manager project.
+  transition leave {
+    allow user = actor
+    from true
+    delete
+  }
+  expose apply leave { target id; bulk maxRows 1 }
   expose read {
     select id, user, project, role
     filter user.eq, project.eq
