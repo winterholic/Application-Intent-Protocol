@@ -1,8 +1,8 @@
 # 진행 현황과 쌓인 질문
 
-## 2026-10-21 WBS 7.2.1.3 MySQL job 외부 HTTP capability (구현, Linux CI 대기)
+## 2026-10-21 WBS 7.2.1.3 MySQL job 외부 HTTP capability (구현, Linux CI 통과)
 
-`access http.<name>`을 MySQL job에 연결했다. 서버 시작 시 선언된 연동이 `workers.integrations`·`outbound_webhooks`에 없으면 거부한다. 호출은 PostgreSQL 경로와 같은 규칙으로 effect 장부에 남긴다. 의도(PENDING)를 먼저 커밋한 뒤 요청을 보내고 답을 같은 fenced transaction에서 기록한다. 같은 effect로 재시도하면 기록된 답을 재생하고 다시 보내지 않는다. 요청이 확실히 나가지 않은 경우에는 의도를 지워 같은 키로 다시 보낼 수 있게 하고, 나갔는데 답을 잃은 경우는 UNKNOWN으로 남겨 반복하지 않는다. outbound webhook은 수신 쪽이 webhook-id로 중복을 걸러내므로 결과가 불명이어도 같은 id로 재전송한다. 실제 MySQL 8.4 단위 시험과 Node·Python 실제 worker E2E(첫 시도가 재시도를 요청하고 두 번째 시도가 같은 호출을 재생, peer 요청 1건)가 로컬에서 통과했다. Linux CI 결과는 아직 보지 못했다. 메시지·파일·이벤트 저장소 capability가 남아 7.2.1.3은 닫지 않는다. 명령과 결과는 [제품 검증](../product/VERIFICATION.md)의 같은 날짜 절이다.
+`access http.<name>`을 MySQL job에 연결했다. 서버 시작 시 선언된 연동이 `workers.integrations`·`outbound_webhooks`에 없으면 거부한다. 호출은 PostgreSQL 경로와 같은 규칙으로 effect 장부에 남긴다. 의도(PENDING)를 먼저 커밋한 뒤 요청을 보내고 답을 같은 fenced transaction에서 기록한다. 같은 effect로 재시도하면 기록된 답을 재생하고 다시 보내지 않는다. 요청이 확실히 나가지 않은 경우에는 의도를 지워 같은 키로 다시 보낼 수 있게 하고, 나갔는데 답을 잃은 경우는 UNKNOWN으로 남겨 반복하지 않는다. outbound webhook은 수신 쪽이 webhook-id로 중복을 걸러내므로 결과가 불명이어도 같은 id로 재전송한다. 실제 MySQL 8.4 단위 시험과 Node·Python 실제 worker E2E(첫 시도가 재시도를 요청하고 두 번째 시도가 같은 호출을 재생, peer 요청 1건)가 로컬에서 통과했다. Push 뒤 main bb6cc09의 Verify·Database contracts·Linux worker jobs 등 8종이 모두 success다(Verify 39451511559, Database contracts 39451511837). 메시지·파일·이벤트 저장소 capability가 남아 7.2.1.3은 닫지 않는다. 명령과 결과는 [제품 검증](../product/VERIFICATION.md)의 같은 날짜 절이다.
 
 ## 2026-10-21 WBS 7.2.1.3 MySQL 트리거(schedule·webhook·outbox)와 job 교착 수정 (구현, Linux CI 대기)
 
