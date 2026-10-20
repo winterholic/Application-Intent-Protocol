@@ -150,11 +150,25 @@ async fn live_fence_rejects_incomplete_bound_table_set() {
             let blocked = ddl.query_drop(format!("ALTER TABLE `{source}`.`{table}` ADD COLUMN rogue_col INT NULL")).await;
             assert!(blocked.as_ref().err().is_some_and(is_lock_wait_timeout), "{engine}: ALTER on {table} must hit 1205, got {blocked:?}");
         }
+        // Use the unreferenced child table: TRUNCATE on the referenced parent could fail for FK reasons
+        // without proving a metadata lock. Each destructive DDL must instead hit the actual lock timeout.
+        for statement in [
+            format!("DROP TABLE `{source}`.`children`"),
+            format!("RENAME TABLE `{source}`.`children` TO `{source}`.`renamed_children`"),
+            format!("TRUNCATE TABLE `{source}`.`children`"),
+        ] {
+            let blocked = ddl.query_drop(&statement).await;
+            assert!(blocked.as_ref().err().is_some_and(is_lock_wait_timeout), "{engine}: {statement} must hit 1205, got {blocked:?}");
+        }
         tx.rollback().await.expect("rollback fenced transaction");
+        ddl.query_drop(format!("TRUNCATE TABLE `{source}`.`children`")).await.expect("TRUNCATE proceeds after rollback");
+        ddl.query_drop(format!("RENAME TABLE `{source}`.`children` TO `{source}`.`renamed_children`")).await.expect("RENAME proceeds after rollback");
+        ddl.query_drop(format!("RENAME TABLE `{source}`.`renamed_children` TO `{source}`.`children`")).await.expect("restore the child table name");
         ddl.query_drop(format!("ALTER TABLE `{source}`.`children` ADD COLUMN rogue_col INT NULL")).await.expect("DDL proceeds after rollback");
 
         let drift = driver.begin_fenced_transaction(true, &fence).await.unwrap_err();
         assert_eq!(drift.code, DRIFT, "{engine}: next request after external ALTER must be rejected");
+        ddl.query_drop(format!("DROP TABLE `{source}`.`children`")).await.expect("DROP proceeds after rollback");
         drop(ddl);
         cleanup(&driver, &[meta, source]).await;
     }

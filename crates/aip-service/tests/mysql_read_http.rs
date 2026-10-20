@@ -67,6 +67,9 @@ fn source_ddl(facts: &Value) -> Vec<String> {
                         "Text" | "Email" | "Url" => "VARCHAR(255)",
                         "Int" => "BIGINT",
                         "Bool" => "TINYINT(1)",
+                        // Keep Recruitment.periodEnd as DATETIME while Note.created exercises TIMESTAMP.
+                        // Both physical types must produce the same UTC wire format below.
+                        "Time" if resource == "Note" && field == "created" => "TIMESTAMP(6)",
                         "Time" => "DATETIME(6)",
                         "Date" => "DATE",
                         other => panic!("test DDL has no type for {other}"),

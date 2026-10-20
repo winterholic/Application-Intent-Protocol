@@ -104,3 +104,11 @@ jobs:
           cargo test -p aip-migrate --features mysql --test mysql_fence_verification --locked -- --ignored --nocapture --test-threads=1
           cargo test -p aip-migrate --features mysql --test mysql_drift_matrix --locked -- --ignored --nocapture --test-threads=1
           cargo test -p aip-migrate --features mysql --test mysql_capability_gate --locked -- --ignored --nocapture --test-threads=1
+      - name: Verify MySQL policy reads, scalar types and atomic writes over HTTP
+        run: >-
+          cargo test -p aip-service --features mysql --test mysql_read_http --test mysql_write_http --locked
+          -- --include-ignored --nocapture --test-threads=1
+      - name: Verify actual MySQL adoption, principal binding and served JWT requests
+        run: >-
+          cargo test -p aip-cli --features mysql --test mysql_adoption_flow --locked
+          -- --ignored --nocapture --test-threads=1
