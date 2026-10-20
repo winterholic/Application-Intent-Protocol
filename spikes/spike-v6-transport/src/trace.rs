@@ -377,13 +377,20 @@ mod tests {
     #[test]
     fn the_line_has_the_outcome_and_no_payload() {
         let mut t = Trace::default();
-        t.begin("POST", "/apply?token=abc");
+        // A safe correlation id may legitimately contain the short hex substring "abc". Privacy checks
+        // must distinguish it from the query canary instead of flaking on random request/trace ids.
+        t.accept_inbound("proxy-abc-request-01");
+        t.begin("POST", "/apply?token=private-query-token-abc");
         t.record("200 OK", "{\"code\":\"WIRE.BAD_VALUE\",\"msg\":\"password=hunter2\",\"ok\":false}");
         let line = t.line();
         let v: serde_json::Value = serde_json::from_str(&line).expect("one JSON object");
         assert_eq!((v["event"].as_str(), v["method"].as_str(), v["route"].as_str()), (Some("request"), Some("POST"), Some("apply")));
         assert_eq!((v["status"].as_u64(), v["code"].as_str()), (Some(200), Some("WIRE.BAD_VALUE")));
-        assert!(!line.contains("hunter2") && !line.contains("abc"), "{line}");
+        assert_eq!(v["requestId"], "proxy-abc-request-01");
+        let keys: std::collections::BTreeSet<_> = v.as_object().unwrap().keys().map(String::as_str).collect();
+        let allowed = ["code", "event", "method", "ms", "requestId", "route", "status", "traceId"].into_iter().collect();
+        assert_eq!(keys, allowed, "only public correlation and outcome metadata reaches the log");
+        assert!(!line.contains("hunter2") && !line.contains("private-query-token-abc"), "{line}");
         t.record("200 OK", "{\"ok\":true}");
         assert!(t.line().contains("\"status\":200") && !t.line().contains("WIRE.BAD_VALUE"), "a later reply replaces the earlier outcome");
     }
