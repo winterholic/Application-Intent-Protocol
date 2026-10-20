@@ -1,10 +1,10 @@
 # 진행 현황과 쌓인 질문
 
-## 2026-10-20 WBS 7.2.1.3 HTTP job·관리 효과 연결 (구현, Linux worker CI 대기)
+## 2026-10-20 WBS 7.2.1.3 HTTP job·관리 효과 연결 (구현, Linux CI 통과)
 
 MySQL `/jobs/enqueue`·`status`·`result`·`cancel`을 제품 principal·계약 지문 검사 뒤에 연결했다. supervisor가 기존 `MysqlJobStore`에서 claim하고 실제 worker를 실행하며 heartbeat·재시도·취소·종료를 관리한다. 데이터 읽기·집계와 전이, 중첩 job은 선언한 capability만 쓴다. 전이·감사·effect 영수증은 같은 fenced transaction에 커밋하며, stale epoch와 다른 요청의 같은 effect key는 거부한다. 기존 배포는 migration 계정의 `adopt-external --apply` 재실행으로 AIP effect journal을 준비한다. runtime은 DDL을 실행하지 않고 영수증의 InnoDB·복합 기본키·필수 열을 시작 전에 검사한다.
 
-Codex macOS 명령 환경에서 실제 MySQL HTTP·callback journal 통합 1 passed, MySQL/MariaDB 저장소 각각 3 passed, 기존 MySQL 쓰기 8 passed, 채택·JWT·기존 배포 journal 추가 2 passed다. 통합 시험의 dispatcher는 명시적으로 멈춰 두고 callback을 직접 실행하므로 실제 worker 실행 증거로 쓰지 않는다. 실제 HTTP→Node/Python job·재시도 중 effect 재생·중첩 job·실행 중 취소는 기존 Linux CI의 CLI E2E에 추가했으며 아직 실행 결과 대기다. WBS는 완료로 닫지 않는다. 메시지·파일·이벤트·HTTP 외부 capability와 trigger 연결, MySQL job 전용 OTLP span은 이 증분에서 검증하지 않았다. 아래 10월 18일의 미연결 설명은 당시 상태다.
+Codex macOS 명령 환경에서 실제 MySQL HTTP·callback journal 통합 1 passed, MySQL/MariaDB 저장소 각각 3 passed, 기존 MySQL 쓰기 8 passed, 채택·JWT·기존 배포 journal 추가 2 passed다. 통합 시험의 dispatcher는 명시적으로 멈춰 두고 callback을 직접 실행하므로 실제 worker 실행 증거로 쓰지 않는다. 실제 HTTP→Node/Python job·재시도 중 effect 재생·중첩 job·실행 중 취소는 기존 Linux CI의 CLI E2E에 추가했고 Verify 39438678105에서 Node·Python 양쪽 모두 통과했다(`http_apply_runs_real_node_and_python_workers_in_one_mysql_transaction` ok. 같은 키 수렴, 재시도 attempt 2에서도 effect 1회, 중첩 effect 2건, 지연 취소, 실행 중 취소 포함). WBS는 완료로 닫지 않는다. 메시지·파일·이벤트·HTTP 외부 capability와 trigger 연결, MySQL job 전용 OTLP span은 이 증분에서 검증하지 않았다. 아래 10월 18일의 미연결 설명은 당시 상태다.
 
 ## 2026-10-18 독립 검증 반영: spike clippy, S3 늦은 PUT 보수화, 의존성 (Claude 구현, 독립 검증 대기)
 

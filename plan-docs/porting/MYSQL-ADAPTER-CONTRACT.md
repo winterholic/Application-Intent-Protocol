@@ -2,7 +2,7 @@
 
 2026-10-15 조사에서 시작한 구현 작업의 현재 기록이다. 원본 앱이 MySQL에서 실행되는 것과 AIP가 MySQL을 지원하는 것은 다른 판정이다.
 
-**현재 상태(2026-10-20 후속): MySQL 8.4 읽기·쓰기와 relational worker bridge에 이어 `/jobs/*` HTTP·supervisor·관리 데이터 effect journal을 연결했다. HTTP·callback 저장 의미는 실 MySQL에서 확인했으며 실제 Node/Python 비동기 worker E2E는 Linux CI 대기다. WBS 7.2.1.3은 아직 완료로 닫지 않는다. `workers` 설정을 허용하고 동기 확장 쓰기는 `enable_writes`로 켠다. outbox 릴레이는 라이브러리 수준이다. MariaDB 서비스 읽기·쓰기는 계속 LATERAL·`FOR SHARE OF` 부재로 거부하며, 파일·이벤트·메시지·rate limit·`compose`와 미연결 외부 capability도 명시 거부한다.**
+**현재 상태(2026-10-20 후속): MySQL 8.4 읽기·쓰기와 relational worker bridge에 이어 `/jobs/*` HTTP·supervisor·관리 데이터 effect journal을 연결했다. HTTP·callback 저장 의미는 실 MySQL에서 확인했으며 실제 Node/Python 비동기 worker E2E는 Verify 39438678105(0aead5f)에서 통과했다. WBS 7.2.1.3은 아직 완료로 닫지 않는다. `workers` 설정을 허용하고 동기 확장 쓰기는 `enable_writes`로 켠다. outbox 릴레이는 라이브러리 수준이다. MariaDB 서비스 읽기·쓰기는 계속 LATERAL·`FOR SHARE OF` 부재로 거부하며, 파일·이벤트·메시지·rate limit·`compose`와 미연결 외부 capability도 명시 거부한다.**
 
 2026-10-20 [Database contracts 39398093710](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39398093710)의 Linux MySQL 8.4 HTTP 읽기 1건·쓰기 9건 및 MySQL/MariaDB 펜스 시험이 통과했다. 읽기는 DATETIME·TIMESTAMP의 UTC 출력과 Bool·Decimal을, 펜스는 ALTER·DROP·RENAME·TRUNCATE의 실제 잠금 오류 1205 및 rollback 뒤 해제를 포함한다. 같은 실행의 CLI 채택 시험은 옛 `workers` 일괄 거부 단언에서 실패했다. 이 단언을 worker 설정 허용과 `workers.enable_file_uploads` 거부의 양방향 검사로 바꿨다. 전체 workflow 성공이나 실제 격리 Node/Python 실행은 이 부분 결과만으로 주장하지 않는다. 후속 결과는 수정 커밋의 CI 실행 기록을 기준으로 한다.
 
@@ -195,7 +195,7 @@ MySQL은 `UPDATE`의 `SET`을 왼쪽에서 오른쪽으로 평가하고 뒤의 �
 | outbox 릴레이 | 실패 배치의 전체 rollback, 4개 동시 릴레이가 30행을 정확히 한 번씩(job 30, 영수증 30, 서로 다른 job 30), 다른 topic 불변, 재실행 0건 |
 | 능력 게이트 | `mysql_capability_gate` 2 passed: MySQL 8.4 통과, MariaDB 거부와 사유(LATERAL, FOR SHARE OF) |
 
-2026-10-20 후속: HTTP `/jobs/*`·비동기 supervisor·데이터 effect journal을 연결했다. `mysql_job_http_and_effect_journal_preserve_owner_lease_and_transaction_boundaries`는 실제 DML 계정으로 HTTP 접수·키 수렴/충돌·타인 조회/취소 거부·결과 재인가·한글 키·관리 읽기·전이와 receipt 원자성·재시도 epoch 재생·권한 거절 재생·principal 폐기·DDL drift·누락/무키 journal 시작 거부를 확인했다. dispatcher는 시험에서 멈추고 callback을 직접 실행하므로 실제 worker 실행 증거는 아니다. MySQL/MariaDB 저장소 각각 3 passed와 기존 쓰기 8 passed를 재확인했다. 기존 배포의 `adopt-external --apply` 재실행이 effect journal을 추가하는 경로도 CLI 회귀 2 passed에 포함된다. 실제 Node/Python job·재시도·중첩·실행 중 취소는 Linux CI 대기다. 메시지·파일·이벤트·외부 HTTP capability와 schedule·webhook·outbox handler는 미연결이다. 원본 전체 포팅이나 모든 외부 capability 연결의 완료를 뜻하지 않는다.
+2026-10-20 후속: HTTP `/jobs/*`·비동기 supervisor·데이터 effect journal을 연결했다. `mysql_job_http_and_effect_journal_preserve_owner_lease_and_transaction_boundaries`는 실제 DML 계정으로 HTTP 접수·키 수렴/충돌·타인 조회/취소 거부·결과 재인가·한글 키·관리 읽기·전이와 receipt 원자성·재시도 epoch 재생·권한 거절 재생·principal 폐기·DDL drift·누락/무키 journal 시작 거부를 확인했다. dispatcher는 시험에서 멈추고 callback을 직접 실행하므로 실제 worker 실행 증거는 아니다. MySQL/MariaDB 저장소 각각 3 passed와 기존 쓰기 8 passed를 재확인했다. 기존 배포의 `adopt-external --apply` 재실행이 effect journal을 추가하는 경로도 CLI 회귀 2 passed에 포함된다. 실제 Node/Python job·재시도·중첩·실행 중 취소는 Verify 39438678105(0aead5f)에서 통과했다. 메시지·파일·이벤트·외부 HTTP capability와 schedule·webhook·outbox handler는 미연결이다. 원본 전체 포팅이나 모든 외부 capability 연결의 완료를 뜻하지 않는다.
 
 ### 요청당 catalog 비용 (2026-10-18 측정)
 
