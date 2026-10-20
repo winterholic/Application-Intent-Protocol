@@ -2,7 +2,9 @@
 
 2026-10-15 조사에서 시작한 구현 작업의 현재 기록이다. 원본 앱이 MySQL에서 실행되는 것과 AIP가 MySQL을 지원하는 것은 다른 판정이다.
 
-**현재 상태: MySQL 8.4 읽기 경로(WBS 7.2.1.1)와 쓰기 경로(WBS 7.2.1.2: `/apply` 전이·`atomic` 묶음·create, `/status`)가 `aip service`의 `adopt-external`·`principal`·`serve`까지 연결돼 실제 MySQL 8.4에서 검증됐다. Durable job 저장소(`mysql_jobs`)와 outbox 릴레이(`mysql_outbox`)는 라이브러리 수준에서 실제 MySQL 8.4로 검증했지만 HTTP `/jobs/*`와 worker 실행에는 연결하지 않았다(WBS 7.2.1.3 일부). 서버 능력 probe가 MySQL 8.4를 통과시키고 MariaDB 11.4를 LATERAL·`FOR SHARE OF` 부재로 이름을 대며 거부한다. 파일·이벤트·메시지·rate limit·`compose`·확장 쓰기·job 실행은 `WIRE.ADAPTER_UNSUPPORTED` 또는 설정 거부로 명시 거절한다. 이 문서의 구현은 독립 검증을 받지 않았다.**
+**현재 상태(2026-10-20 정정): MySQL 8.4 읽기 경로(WBS 7.2.1.1)와 쓰기 경로(WBS 7.2.1.2: `/apply` 전이·`atomic` 묶음·create, `/status`)가 `aip service`의 `adopt-external`·`principal`·`serve`까지 연결돼 있다. 후속 커밋 `ec5db25`와 `1c10788`에서 relational worker 읽기·쓰기 bridge도 연결됐다. `workers` 설정 자체는 허용하고 쓰기는 `enable_writes`로 켠다. Durable job 저장소(`mysql_jobs`)와 outbox 릴레이(`mysql_outbox`)는 라이브러리 수준이며 HTTP `/jobs/*`와 비동기 job 실행은 미연결이다(WBS 7.2.1.3 일부). 서버 능력 probe는 MariaDB 11.4의 서비스 읽기·쓰기를 LATERAL·`FOR SHARE OF` 부재로 거부한다. 파일·이벤트·메시지·rate limit·`compose`·비동기 job 실행은 계속 거부한다.**
+
+2026-10-20 [Database contracts 39398093710](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39398093710)의 Linux MySQL 8.4 HTTP 읽기 1건·쓰기 9건 및 MySQL/MariaDB 펜스 시험이 통과했다. 읽기는 DATETIME·TIMESTAMP의 UTC 출력과 Bool·Decimal을, 펜스는 ALTER·DROP·RENAME·TRUNCATE의 실제 잠금 오류 1205 및 rollback 뒤 해제를 포함한다. 같은 실행의 CLI 채택 시험은 옛 `workers` 일괄 거부 단언에서 실패했다. 이 단언을 worker 설정 허용과 `workers.enable_file_uploads` 거부의 양방향 검사로 바꿨다. 전체 workflow 성공이나 실제 격리 Node/Python 실행은 이 부분 결과만으로 주장하지 않는다. 후속 결과는 수정 커밋의 CI 실행 기록을 기준으로 한다.
 
 ## 2026-10-17 실제 제품 경로 확인
 
@@ -81,7 +83,7 @@
 
 `aip service adopt-external`은 PostgreSQL 채택과 같은 plan digest/`--apply <digest>` 절차다. 매핑을 실제 catalog와 대조하고(타입·nullable·FK·UNIQUE·InnoDB·UUID는 CHAR(36)·Text 최대 길이가 컬럼 길이 이내·DECIMAL 정밀도 일치), 별도 AIP schema에 엔진 이름으로 바꾼 `SQL SECURITY INVOKER` view, 신원 테이블, 배포 marker, journal을 만든다. MySQL DDL은 암묵 커밋이라 한 트랜잭션이 아니므로 marker를 `MIGRATING`으로 먼저 쓰고 모든 객체가 생긴 뒤 journal과 함께 `READY`로 바꾼다. 중단되면 런타임이 거부하고 같은 apply가 수렴한다. 정책만 바뀌면 view는 두고 marker와 journal을 한 트랜잭션에서 갱신한다. `principal bind/revoke`는 `aip_principals`(issuer·subject는 `utf8mb4_bin`)를 쓰고 기존 binding의 actor 변경을 거부한다. `serve`는 marker의 구조 digest와 실제 catalog가 다르면 기동하지 않으며, RS256 JWT 검증은 PostgreSQL 배포와 같은 `aip-auth` 검증기이고 principal 조회만 MySQL이다.
 
-**명시 거부.** `workers`, `objects`, `broker`, `rag`, `static_mounts`, `file_mounts`, `schedules`, `webhooks`, `outbox_handlers`, `message_handlers`, `job_policies`, `messaging`은 설정에 있으면 DB 접속 전에 `DB_ADAPTER_UNSUPPORTED`다. `rate_limit`은 기본값이 켜져 있어 `"rate_limit": null`을 명시해야 한다(앞단 proxy에서 제한해야 한다는 뜻). `external_mapping`이 없으면 `EXTERNAL_MAPPING_REQUIRED`다. `migrate`·`init`·`adopt`·`jobs`·`audit`·`provision`은 MySQL에서 계속 거부한다. 실시간 구독은 `WIRE.NOT_AVAILABLE`이다.
+**명시 거부(2026-10-20 정정).** `workers.enable_file_uploads`, `objects`, `broker`, `rag`, `static_mounts`, `file_mounts`, `schedules`, `webhooks`, `outbox_handlers`, `message_handlers`, `job_policies`, `messaging`은 설정에 있으면 DB 접속 전에 `DB_ADAPTER_UNSUPPORTED`다. 읽기·쓰기 worker 설정 자체는 허용한다. `rate_limit`은 기본값이 켜져 있어 `"rate_limit": null`을 명시해야 한다(앞단 proxy에서 제한해야 한다는 뜻). `external_mapping`이 없으면 `EXTERNAL_MAPPING_REQUIRED`다. `migrate`·`init`·`adopt`·`jobs`·`audit`·`provision`은 MySQL에서 계속 거부한다. 실시간 구독은 `WIRE.NOT_AVAILABLE`이다.
 
 **고친 결함 셋.** (1) `LogicalType`이 내부 태그 enum이라 ENUM·DATETIME·DECIMAL 열이 하나라도 있으면 catalog 직렬화가 실패해 지문 계산, 채택, 모든 요청이 막혔다. 인접 태그로 바꾸고 재현 테스트를 추가했다. (2) 스키마 전체 COLUMNS 쿼리가 view 컬럼도 가져와 업무 schema에 view가 하나만 있어도 지문이 실패했다. base table로 한정했다. (3) 지문이 중립 manifest만 해시해 아래 열두 가지 DDL을 보지 못했다. 원시 INFORMATION_SCHEMA 행을 지문에 넣었다.
 
@@ -122,7 +124,7 @@
 
 COMMIT은 보낸 시점으로 가른다. COMMIT 전 연결 단절은 `WIRE.DB_UNAVAILABLE`(커밋 없음, 같은 키 재전송 안전), COMMIT을 보낸 뒤 연결이 끊기면 `WIRE.COMMIT_UNKNOWN`, 서버가 거절한 COMMIT(교착 등)은 확정 코드다. `innodb_lock_wait_timeout`은 쓰기 기한(2초)에 맞추고 초과는 `WIRE.DEADLINE_EXCEEDED`다.
 
-**거절하는 것.** `compose`와 확장 쓰기(`WIRE.ADAPTER_UNSUPPORTED`), 소유 schema의 create(채택 배포만), 정책이 변경 대상 테이블을 하위 조회로 읽는 전이(MySQL 오류 1093을 그대로 `WIRE.ADAPTER_UNSUPPORTED`로 알림, 다시 쓰는 변환을 추측하지 않음). 런타임 계정에 업무 테이블 `SELECT·INSERT·UPDATE·DELETE`가 없으면 `FOR UPDATE`가 1142로 실패하고 응답이 필요한 권한을 말한다. view를 거친 쓰기는 view가 `SQL SECURITY INVOKER`라 권한이 올라가지 않는다. 운영 참고: GRANT는 이미 열린 연결의 데이터베이스 권한에 즉시 반영되지 않는다(`USE` 이후).
+**거절하는 것(2026-10-20 정정).** `compose`(`WIRE.ADAPTER_UNSUPPORTED`), 소유 schema의 create(채택 배포만), 정책이 변경 대상 테이블을 하위 조회로 읽는 전이(MySQL 오류 1093을 그대로 `WIRE.ADAPTER_UNSUPPORTED`로 알림, 다시 쓰는 변환을 추측하지 않음). 확장 쓰기는 후속 `1c10788`에서 MySQL의 같은 fenced transaction에 연결됐으며 `workers.enable_writes`를 명시한다. 런타임 계정에 업무 테이블 `SELECT·INSERT·UPDATE·DELETE`가 없으면 `FOR UPDATE`가 1142로 실패하고 응답이 필요한 권한을 말한다. view를 거친 쓰기는 view가 `SQL SECURITY INVOKER`라 권한이 올라가지 않는다. 운영 참고: GRANT는 이미 열린 연결의 데이터베이스 권한에 즉시 반영되지 않는다(`USE` 이후).
 
 | 이번 확인 | 결과 |
 |---|---|
@@ -177,7 +179,7 @@ MySQL은 `UPDATE`의 `SET`을 왼쪽에서 오른쪽으로 평가하고 뒤의 �
 | outbox 릴레이 | 실패 배치의 전체 rollback, 4개 동시 릴레이가 30행을 정확히 한 번씩(job 30, 영수증 30, 서로 다른 job 30), 다른 topic 불변, 재실행 0건 |
 | 능력 게이트 | `mysql_capability_gate` 2 passed: MySQL 8.4 통과, MariaDB 거부와 사유(LATERAL, FOR SHARE OF) |
 
-미완료: `/jobs/*` HTTP 연결, job 실행(worker·effect journal·확장 호출), 메시지·파일·이벤트 저장소, schedule·webhook 트리거. 이들은 설정에 나타나면 DB 접속 전에 거부한다. job 실행과 확장은 worker 프로토콜이 DB에 닿는 곳(`spike-v4-worker`의 `write.rs`, `lib.rs`의 `serve_call`, `outbox.rs`)이 좁지만 PostgreSQL 트랜잭션 타입에 묶여 있어, MySQL 트랜잭션에서 읽기 계획과 `apply`를 부르는 추상이 먼저 필요하다. 또 읽기 확장의 `ctx`는 이름 붙은 집계만 읽을 수 있어 비밀번호 해시 같은 행 값을 확장이 읽는 로그인 확장은 지금 구조로는 만들 수 없다.
+미완료(2026-10-20 정정): `/jobs/*` HTTP 연결, 비동기 job 실행·effect journal, 메시지·파일·이벤트 저장소, schedule·webhook 트리거. 동기 relational worker의 읽기·쓰기 bridge는 후속 `ec5db25`·`1c10788`로 연결돼 있어 그 부재를 비동기 job 미연결의 근거로 쓰지 않는다. 원본 전체 포팅이나 모든 외부 capability 연결을 완료했다는 뜻은 아니다.
 
 ### 요청당 catalog 비용 (2026-10-18 측정)
 
