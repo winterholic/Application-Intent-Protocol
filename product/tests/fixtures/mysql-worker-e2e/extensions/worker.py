@@ -56,3 +56,10 @@ async def jobTick(input, ctx):
 async def jobViewed(input, ctx):
     import json
     return {"count": 1 if json.loads(input["event"])["topic"] == "video.viewed" else 0}
+
+
+async def jobMail(input, ctx):
+    reply = await ctx.http.call("mail", {"video": input["id"]}, "send")
+    if ctx.job["attempt"] == 1:
+        raise ctx.retry_later("retry after the committed call")
+    return {"count": 1 if reply["status"] == 200 else 0}

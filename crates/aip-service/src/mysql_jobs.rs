@@ -23,6 +23,8 @@ pub(crate) struct MysqlJobs {
     wire: IdWire,
     backend: Arc<MysqlBackend>,
     workers: ReadExtensions,
+    /// External HTTP integrations and outbound webhooks a job may call through `http.<name>`.
+    broker: Option<Arc<aip_execution::integrations::Broker>>,
     launch: spike_v4_worker::WorkerLaunchConfig,
     policies: std::collections::HashMap<String, spike_v6_transport::triggers::JobPolicy>,
     triggers: Arc<spike_v6_transport::triggers::Triggers>,
@@ -79,13 +81,21 @@ impl MysqlJobs {
         wire: IdWire,
         backend: Arc<MysqlBackend>,
         workers: ReadExtensions,
+        broker: Option<Arc<aip_execution::integrations::Broker>>,
         infrastructure: &spike_v6_transport::infrastructure::Infrastructure,
     ) -> std::result::Result<Self, Value> {
         let workers = workers.validate_with_writes(&facts, wire).map_err(|_| error("JOB_CONFIG", "job worker 구현 파일을 확인해야 함"))?;
         // Storage-backed capabilities are opened only as their MySQL adapters are connected. Refuse the contract up front.
         for (_, op) in facts["operations"].as_object().into_iter().flatten().filter(|(_, op)| op["kind"] == "job") {
             for (capability, _) in op["access"].as_object().into_iter().flatten() {
-                if !capability.starts_with("read.") && !capability.starts_with("apply.") && !capability.starts_with("jobs.") {
+                if let Some(name) = capability.strip_prefix("http.") {
+                    if !broker.as_ref().is_some_and(|broker| broker.contains(name)) {
+                        return Err(error(
+                            "JOB_CONFIG",
+                            &format!("job이 선언한 HTTP 연동 `{name}`이 workers.integrations 또는 outbound_webhooks에 없음"),
+                        ));
+                    }
+                } else if !capability.starts_with("read.") && !capability.starts_with("apply.") && !capability.starts_with("jobs.") {
                     return Err(error("DB_ADAPTER_UNSUPPORTED", &format!("MySQL job capability 미지원: {capability}")));
                 }
             }
@@ -99,6 +109,7 @@ impl MysqlJobs {
             wire,
             backend,
             workers,
+            broker,
             launch: infrastructure.worker_launch.clone(),
             policies: infrastructure.job_policies.clone(),
             triggers: infrastructure.triggers.clone(),
@@ -841,7 +852,10 @@ impl JobHost {
                 let result: Value = serde_json::from_str(&result.ok_or("WIRE.DB_UNAVAILABLE")?).map_err(db)?;
                 return Err(replay_error(result["code"].as_str().unwrap_or("")));
             }
-            if op != "jobs" {
+            // A nested job reruns its steps, and a webhook subscriber dedupes on webhook-id, so a delivery whose outcome was lost
+            // is sent again. Any other call whose outcome is unknown may have happened and is never repeated.
+            let resendable = op == "jobs" || op == "http" && rt.broker.as_ref().is_some_and(|broker| broker.is_webhook(name));
+            if !resendable {
                 return Err("WIRE.EFFECT_UNKNOWN");
             }
         }
@@ -881,6 +895,64 @@ impl JobHost {
             .map_err(db)?;
             MysqlJobs::commit(fenced).await?;
             return output.map_err(|error| error.code);
+        }
+        if op == "http" {
+            let broker = rt.broker.clone().ok_or("WIRE.NOT_EXPOSED")?;
+            let webhook = broker.is_webhook(name).then(|| text(input, "url")).transpose()?;
+            // The intent commits before the call leaves, so a crash after sending leaves a PENDING row instead of a silent repeat.
+            MysqlJobs::commit(fenced).await?;
+            // Err(Some(code)) is a certain not-sent (or safely resendable) outcome; Err(None) is unknown.
+            let response: std::result::Result<Value, Option<&'static str>> = if let Some(url) = webhook {
+                use aip_execution::integrations::Error as E;
+                // Stable across attempts, so the subscriber's dedupe on webhook-id absorbs a resend.
+                let id = format!("msg_{}", spike_v1_fixture::digest(&json!([self.lease.run_id.to_string(), effect])));
+                match broker.deliver_webhook(name, url, &input["input"], &id).await {
+                    Ok(status) if (200..300).contains(&status) => Ok(json!({"status":status,"id":id})),
+                    Err(E::DestinationRejected) => Err(Some("WIRE.DESTINATION_REJECTED")),
+                    Err(E::RequestTooLarge) => Err(Some("WIRE.BAD_VALUE")),
+                    Ok(_) | Err(_) => Err(Some("WIRE.DELIVERY_FAILED")),
+                }
+            } else {
+                let key = format!("{}:{effect}", self.lease.run_id);
+                match broker.call_with_key(name, &input["input"], Some(&key)).await {
+                    Ok(r) => Ok(json!({"status":r.status,"body":r.body,"retryAfterSeconds":r.retry_after_seconds})),
+                    Err(aip_execution::integrations::Error::CircuitOpen) => Err(Some("WIRE.CIRCUIT_OPEN")),
+                    Err(aip_execution::integrations::Error::NotSent) => Err(Some("WIRE.DELIVERY_FAILED")),
+                    Err(aip_execution::integrations::Error::TokenUnavailable) => Err(Some("WIRE.INTEGRATION_AUTH_FAILED")),
+                    Err(_) => Err(None),
+                }
+            };
+            let mut fenced = rt.begin(&self.grant).await?;
+            let tx = fenced.as_mut().map_err(db)?;
+            rt.locked_lease(tx, &self.lease).await?;
+            let table = rt.table("aip_effects");
+            let run = self.lease.run_id.to_string();
+            return match response {
+                Ok(result) => {
+                    tx.exec_drop(
+                        format!("UPDATE {table} SET state='SUCCEEDED',result=CAST(? AS JSON) WHERE run_id=? AND effect_key=?"),
+                        (result.to_string(), &run, &effect),
+                    )
+                    .await
+                    .map_err(db)?;
+                    MysqlJobs::commit(fenced).await?;
+                    Ok(result)
+                }
+                Err(Some(code)) => {
+                    // Drop the intent instead of leaving an unknown effect; the extension can catch the code or
+                    // throw ctx.retryLater() and send the same key again.
+                    tx.exec_drop(format!("DELETE FROM {table} WHERE run_id=? AND effect_key=? AND state='PENDING'"), (&run, &effect))
+                        .await
+                        .map_err(db)?;
+                    MysqlJobs::commit(fenced).await?;
+                    Err(code)
+                }
+                Err(None) => {
+                    tx.exec_drop(format!("UPDATE {table} SET state='UNKNOWN' WHERE run_id=? AND effect_key=?"), (&run, &effect)).await.map_err(db)?;
+                    MysqlJobs::commit(fenced).await?;
+                    Err("WIRE.EFFECT_UNKNOWN")
+                }
+            };
         }
         if op == "jobs" {
             if self.depth >= 8 {
@@ -1059,6 +1131,7 @@ operation job incrementJob {
                 IdWire::DecimalString,
                 backend.clone(),
                 workers,
+                None,
                 &infra,
             )
             .unwrap(),
@@ -1305,6 +1378,7 @@ operation job onView {
                 IdWire::DecimalString,
                 backend.clone(),
                 workers,
+                None,
                 &infra,
             )
             .unwrap(),
@@ -1426,6 +1500,233 @@ operation job onView {
         );
 
         setup.query_drop("DROP USER 'aip_t_trig_rt'@'%'").await.unwrap();
+        for schema in [meta, source] {
+            setup.query_drop(format!("DROP DATABASE `{schema}`")).await.unwrap();
+        }
+    }
+
+    const HTTP_META: &str = "aip_t_job_extcall";
+    const HTTP_SOURCE: &str = "aip_t_job_extcall_src";
+    const HTTP_DEFINITION: &str = r#"
+resource Member { fields { id: Id } }
+actor Member
+resource Video {
+ fields { id: Id; owner: Member; views: Int(0..100) default database }
+ rows read when true
+ transition increment { from views < 100; allow owner = actor; to views = views + 1 }
+ expose apply increment { target id; bulk maxRows 1 }
+ expose read { select id, views; sort id; budget { rows 20; depth 1; deadline 1s; cost 100 } }
+}
+operation job notifyJob {
+ input { id: Video.Id }
+ output { count: Int }
+ allow actor != null
+ access http.mail, http.dead
+ effect managed
+ deadline 5s
+ implementation "worker.jobView"
+}
+"#;
+
+    /// A loopback HTTP peer that counts requests and either answers or hangs up after reading the request.
+    async fn peer(answer: Arc<std::sync::atomic::AtomicBool>, requests: Arc<AtomicUsize>) -> u16 {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else { return };
+                let (answer, requests) = (answer.clone(), requests.clone());
+                tokio::spawn(async move {
+                    let mut received = Vec::new();
+                    let mut chunk = [0u8; 4096];
+                    loop {
+                        let Ok(read) = socket.read(&mut chunk).await else { return };
+                        if read == 0 {
+                            return;
+                        }
+                        received.extend_from_slice(&chunk[..read]);
+                        let text = String::from_utf8_lossy(&received).to_string();
+                        if let Some((head, body)) = text.split_once("\r\n\r\n") {
+                            let length = head
+                                .lines()
+                                .find_map(|line| {
+                                    line.to_ascii_lowercase().strip_prefix("content-length:").map(|value| value.trim().parse::<usize>().unwrap_or(0))
+                                })
+                                .unwrap_or(0);
+                            if body.len() >= length {
+                                break;
+                            }
+                        }
+                    }
+                    requests.fetch_add(1, Ordering::SeqCst);
+                    if answer.load(Ordering::SeqCst) {
+                        let body = r#"{"queued":true}"#;
+                        let _ = socket
+                            .write_all(
+                                format!(
+                                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                                    body.len()
+                                )
+                                .as_bytes(),
+                            )
+                            .await;
+                    }
+                    // Without an answer the connection just closes: the request left, the outcome is unknown.
+                });
+            }
+        });
+        port
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[ignore = "requires a run-owned MySQL 8.4 fixture; external HTTP effects through the job host, no worker subprocess"]
+    async fn mysql_http_effects_are_journaled_and_an_unknown_outcome_is_never_repeated() {
+        let (meta, source) = (HTTP_META, HTTP_SOURCE);
+        let url = std::env::var("AIP_TEST_MYSQL_URL").unwrap();
+        aip_test_support::validate_mysql_admin_url(&url).unwrap();
+        let admin = MysqlDriver::connect(&url).await.unwrap();
+        let mut setup = admin.pool().get_conn().await.unwrap();
+        for schema in [meta, source] {
+            setup.query_drop(format!("DROP DATABASE IF EXISTS `{schema}`")).await.unwrap();
+        }
+        setup.query_drop(format!("CREATE DATABASE `{source}`")).await.unwrap();
+        setup.query_drop(format!("CREATE TABLE `{source}`.member(id BIGINT PRIMARY KEY) ENGINE=InnoDB")).await.unwrap();
+        setup.query_drop(format!("CREATE TABLE `{source}`.video(id BIGINT PRIMARY KEY,owner_id BIGINT NOT NULL,views BIGINT NOT NULL DEFAULT 0,FOREIGN KEY(owner_id) REFERENCES `{source}`.member(id)) ENGINE=InnoDB")).await.unwrap();
+        setup.query_drop(format!("INSERT INTO `{source}`.member VALUES(1)")).await.unwrap();
+        setup.query_drop(format!("INSERT INTO `{source}`.video VALUES(10,1,0)")).await.unwrap();
+        let facts = spike_v1_fixture::load_str(HTTP_DEFINITION, spike_v1_fixture::Form::A).unwrap().execution;
+        sqlgen::try_set_schema(meta).unwrap();
+        let digest = spike_v1_fixture::digest(&facts);
+        let fingerprint = admin.ensure_meta_schema_bootstrap(meta, source, &digest).await.unwrap();
+        setup.query_drop(format!("CREATE VIEW `{meta}`.member AS SELECT * FROM `{source}`.member")).await.unwrap();
+        setup.query_drop(format!("CREATE VIEW `{meta}`.video AS SELECT * FROM `{source}`.video")).await.unwrap();
+        setup
+            .query_drop(format!("INSERT INTO `{meta}`.aip_principals(issuer,subject,actor_id) VALUES('https://test.example','user-1',1)"))
+            .await
+            .unwrap();
+        setup.query_drop("DROP USER IF EXISTS 'aip_t_ext_rt'@'%'").await.unwrap();
+        setup.query_drop("CREATE USER 'aip_t_ext_rt'@'%' IDENTIFIED BY 'ext_test_only'").await.unwrap();
+        for schema in [source, meta] {
+            setup
+                .query_drop(format!("GRANT SELECT,INSERT,UPDATE,DELETE,CREATE TEMPORARY TABLES ON `{schema}`.* TO 'aip_t_ext_rt'@'%'"))
+                .await
+                .unwrap();
+        }
+        let endpoint = url.split_once('@').unwrap().1.split('/').next().unwrap();
+        let driver = MysqlDriver::from_url(&format!("mysql://aip_t_ext_rt:ext_test_only@{endpoint}/{source}")).unwrap();
+        let fence = MysqlDeploymentFence::from_fingerprint(meta, source, &digest, &fingerprint).unwrap();
+        let backend = Arc::new(MysqlBackend::new(driver.clone(), fence.clone()));
+        let dir = Dir(std::env::temp_dir().join(format!("aip-jobs-extcall-unit-{}", std::process::id())));
+        std::fs::create_dir_all(&dir.0).unwrap();
+        std::fs::write(dir.0.join("worker.py"), "async def jobView(input, ctx):\n return {'count': 1}\n").unwrap();
+        let workers = ReadExtensions { lang: spike_v6_transport::server::WorkerLang::Python, dir: dir.0.clone() };
+
+        let (answer, requests) = (Arc::new(std::sync::atomic::AtomicBool::new(true)), Arc::new(AtomicUsize::new(0)));
+        let port = peer(answer.clone(), requests.clone()).await;
+        let integration = |name: &str, port: u16| {
+            serde_json::from_value::<crate::IntegrationConfig>(json!({"name":name,"url":format!("http://127.0.0.1:{port}/send"),"method":"POST",
+                "timeout_ms":2000,"max_request_bytes":1024,"max_response_bytes":1024,"allow_loopback":true}))
+            .unwrap()
+        };
+        let configs = [integration("mail", port), integration("dead", 1)];
+        let broker = crate::build_broker_with_webhooks(&configs, &[]).await.unwrap();
+        let infra = spike_v6_transport::infrastructure::Infrastructure::default();
+        // A declared integration that is not configured is refused before the server starts.
+        assert!(
+            MysqlJobs::new(
+                driver.clone(),
+                fence.clone(),
+                meta.into(),
+                digest.clone(),
+                Arc::new(facts.clone()),
+                IdWire::DecimalString,
+                backend.clone(),
+                workers.clone(),
+                None,
+                &infra
+            )
+            .is_err()
+        );
+        let runtime = Arc::new(
+            MysqlJobs::new(
+                driver.clone(),
+                fence,
+                meta.into(),
+                digest,
+                Arc::new(facts.clone()),
+                IdWire::DecimalString,
+                backend,
+                workers,
+                broker,
+                &infra,
+            )
+            .unwrap(),
+        );
+        runtime.check_storage().await.unwrap();
+
+        let accepted =
+            runtime.handle("/jobs/enqueue", &json!({"operation":"notifyJob","input":{"id":"10"},"key":"mail job","delayMs":0}), &grant(1)).await;
+        assert_eq!(accepted["ok"], true, "{accepted}");
+        let store = runtime.store().unwrap();
+        let mut conn = driver.pool().get_conn().await.unwrap();
+        let lease = store.claim(&mut conn, "test-dispatcher").await.unwrap().unwrap();
+        let mut host = JobHost {
+            runtime: runtime.clone(),
+            lease: lease.clone(),
+            grant: grant(1),
+            prefix: String::new(),
+            depth: 0,
+            budget: Arc::new(AtomicUsize::new(0)),
+            capabilities: vec!["http.mail".into(), "http.dead".into()],
+        };
+        let effects = |state: &str| format!("SELECT COUNT(*) FROM `{meta}`.`aip_effects` WHERE state='{state}'");
+        let count = |sql: String| {
+            let driver = driver.clone();
+            async move { driver.pool().get_conn().await.unwrap().query_first::<i64, _>(sql).await.unwrap().unwrap() }
+        };
+
+        // A completed call is journaled with its answer and replayed, never sent twice.
+        let call = json!({"key":"welcome","input":{"to":"member@example.test"}});
+        let first = host.dispatch("http", "mail", &call).await.unwrap();
+        assert_eq!((first["status"].clone(), first["body"].clone()), (json!(200), json!({"queued":true})), "{first}");
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+        assert_eq!(host.dispatch("http", "mail", &call).await.unwrap(), first, "the same effect replays its recorded answer");
+        assert_eq!(requests.load(Ordering::SeqCst), 1, "a replay must not leave the process again");
+        assert_eq!(
+            host.dispatch("http", "mail", &json!({"key":"welcome","input":{"to":"someone-else@example.test"}})).await.unwrap_err(),
+            "WIRE.IDEMPOTENCY_MISMATCH"
+        );
+        assert_eq!(count(effects("SUCCEEDED")).await, 1);
+
+        // Declared capabilities only, and a key is required.
+        assert_eq!(host.dispatch("http", "billing", &call).await.unwrap_err(), "WIRE.ACCESS_NOT_DECLARED");
+        assert_eq!(host.dispatch("http", "mail", &json!({"input":{}})).await.unwrap_err(), "WIRE.BAD_REQUEST");
+
+        // The request certainly never left: the intent is dropped so the same key may be sent again.
+        assert_eq!(host.dispatch("http", "dead", &call).await.unwrap_err(), "WIRE.DELIVERY_FAILED");
+        assert_eq!(
+            count(format!("SELECT COUNT(*) FROM `{meta}`.`aip_effects` WHERE state='PENDING'")).await,
+            0,
+            "a certain not-sent leaves no intent behind"
+        );
+
+        // The request left and the answer was lost: the outcome is unknown, recorded as such, and never sent a second time.
+        answer.store(false, Ordering::SeqCst);
+        let lost = json!({"key":"receipt","input":{"to":"member@example.test"}});
+        assert_eq!(host.dispatch("http", "mail", &lost).await.unwrap_err(), "WIRE.EFFECT_UNKNOWN");
+        assert_eq!(requests.load(Ordering::SeqCst), 2);
+        assert_eq!(count(effects("UNKNOWN")).await, 1);
+        answer.store(true, Ordering::SeqCst);
+        assert_eq!(host.dispatch("http", "mail", &lost).await.unwrap_err(), "WIRE.EFFECT_UNKNOWN", "an unknown effect is never repeated");
+        assert_eq!(requests.load(Ordering::SeqCst), 2, "the unknown effect must not be sent again");
+
+        // The lease is checked when the answer is recorded: a recovered attempt cannot be written by the old one.
+        setup.query_drop(format!("UPDATE `{meta}`.aip_jobs SET lease_epoch = lease_epoch + 1")).await.unwrap();
+        assert_eq!(host.dispatch("http", "mail", &json!({"key":"after","input":{}})).await.unwrap_err(), "WIRE.LEASE_LOST");
+        assert_eq!(requests.load(Ordering::SeqCst), 2, "a lost lease is detected before anything is sent");
+
+        drop(conn);
+        setup.query_drop("DROP USER 'aip_t_ext_rt'@'%'").await.unwrap();
         for schema in [meta, source] {
             setup.query_drop(format!("DROP DATABASE `{schema}`")).await.unwrap();
         }

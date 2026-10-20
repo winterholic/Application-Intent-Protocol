@@ -1,5 +1,9 @@
 # 진행 현황과 쌓인 질문
 
+## 2026-10-21 WBS 7.2.1.3 MySQL job 외부 HTTP capability (구현, Linux CI 대기)
+
+`access http.<name>`을 MySQL job에 연결했다. 서버 시작 시 선언된 연동이 `workers.integrations`·`outbound_webhooks`에 없으면 거부한다. 호출은 PostgreSQL 경로와 같은 규칙으로 effect 장부에 남긴다. 의도(PENDING)를 먼저 커밋한 뒤 요청을 보내고 답을 같은 fenced transaction에서 기록한다. 같은 effect로 재시도하면 기록된 답을 재생하고 다시 보내지 않는다. 요청이 확실히 나가지 않은 경우에는 의도를 지워 같은 키로 다시 보낼 수 있게 하고, 나갔는데 답을 잃은 경우는 UNKNOWN으로 남겨 반복하지 않는다. outbound webhook은 수신 쪽이 webhook-id로 중복을 걸러내므로 결과가 불명이어도 같은 id로 재전송한다. 실제 MySQL 8.4 단위 시험과 Node·Python 실제 worker E2E(첫 시도가 재시도를 요청하고 두 번째 시도가 같은 호출을 재생, peer 요청 1건)가 로컬에서 통과했다. Linux CI 결과는 아직 보지 못했다. 메시지·파일·이벤트 저장소 capability가 남아 7.2.1.3은 닫지 않는다. 명령과 결과는 [제품 검증](../product/VERIFICATION.md)의 같은 날짜 절이다.
+
 ## 2026-10-21 WBS 7.2.1.3 MySQL 트리거(schedule·webhook·outbox)와 job 교착 수정 (구현, Linux CI 대기)
 
 `schedules`·`webhooks`·`outbox_handlers`를 MySQL job 저장소에 연결했다. 접수는 설정의 service principal로 같은 fenced transaction에서 사용자 enqueue와 같은 검사를 거친다. 서버가 만드는 키와 트리거 전용 연산은 사용자가 못 쓰게 막았고(MySQL 경로에는 키 접두사 검사만 있었다), outbox 영수증은 job 접수와 같은 트랜잭션에 쓴다. `message_handlers`는 계속 거부한다. 같은 작업에서 E2E를 반복하다 `/jobs/status`가 간헐적으로 `WIRE.DB_UNAVAILABLE`을 내는 기존 결함을 찾았다. MDL 고정 쿼리 `SELECT 1 ... LIMIT 1`이 직렬화 격리에서 인덱스 첫 레코드에 공유 락을 잡아 job claim·settle UPDATE와 교착했다. `WHERE 1=0`으로 바꿔 행 락 없이 MDL만 잡게 했다(InnoDB 교착 로그로 원인 확인, 새 시험은 옛 쿼리에서 실패). 로컬은 macOS Seatbelt에서 Node·Python 실제 worker로 확장 E2E를 4회 통과했다. Linux CI와 MariaDB 쪽 고정 쿼리 회귀는 CI 결과를 기준으로 한다. WBS는 메시지·파일·이벤트·외부 HTTP capability가 남아 완료로 닫지 않는다. 명령과 결과는 [제품 검증](../product/VERIFICATION.md)의 같은 날짜 절이다.

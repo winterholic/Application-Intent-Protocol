@@ -18,6 +18,10 @@ use serde_json::{Value, json};
 use std::{
     path::Path,
     process::Stdio,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::{
@@ -117,6 +121,53 @@ async fn webhook(address: &str, path: &str, signature: Option<&str>, body: &str)
     let status = response.split_whitespace().nth(1).and_then(|status| status.parse().ok()).expect("status line");
     let (_, body) = response.split_once("\r\n\r\n").expect("HTTP response");
     (status, serde_json::from_str(body).unwrap_or_else(|_| panic!("not JSON: {response}")))
+}
+
+/// A loopback HTTP peer for the `mail` integration: answers 200 and counts the requests that reached it. Returns its port.
+async fn mail_peer(requests: Arc<AtomicUsize>) -> u16 {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut socket, _)) = listener.accept().await else { return };
+            let requests = requests.clone();
+            tokio::spawn(async move {
+                let mut received = Vec::new();
+                let mut chunk = [0u8; 4096];
+                loop {
+                    let Ok(read) = socket.read(&mut chunk).await else { return };
+                    if read == 0 {
+                        return;
+                    }
+                    received.extend_from_slice(&chunk[..read]);
+                    let text = String::from_utf8_lossy(&received).to_string();
+                    if let Some((head, body)) = text.split_once("\r\n\r\n") {
+                        let length = head
+                            .lines()
+                            .find_map(|line| {
+                                line.to_ascii_lowercase().strip_prefix("content-length:").map(|value| value.trim().parse::<usize>().unwrap_or(0))
+                            })
+                            .unwrap_or(0);
+                        if body.len() >= length {
+                            break;
+                        }
+                    }
+                }
+                requests.fetch_add(1, Ordering::SeqCst);
+                let body = r#"{"queued":true}"#;
+                let _ = socket
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                            body.len()
+                        )
+                        .as_bytes(),
+                    )
+                    .await;
+            });
+        }
+    });
+    port
 }
 
 fn hook_signature(body: &str) -> String {
@@ -261,6 +312,8 @@ async fn http_apply_runs_real_node_and_python_workers_in_one_mysql_transaction()
         .to_string(),
     )
     .unwrap();
+    let mail_requests = Arc::new(AtomicUsize::new(0));
+    let mail_port = mail_peer(mail_requests.clone()).await;
     let config_for = |language: &str| {
         let config = directory.path().join(format!("service-{language}.json"));
         std::fs::write(
@@ -270,7 +323,9 @@ async fn http_apply_runs_real_node_and_python_workers_in_one_mysql_transaction()
                 "database_url_env": "AIP_E2E_RUNTIME_URL", "migrate_database_url_env": "AIP_E2E_ADOPT_URL",
                 "listen": "127.0.0.1:0", "wire": "decimal", "rate_limit": null,
                 "auth": {"issuer": ISSUER, "audience": "aip-api", "jwks": {"kind": "file", "path": "jwks.json"}},
-                "workers": {"directory": extensions, "language": language, "enable_writes": true},
+                "workers": {"directory": extensions, "language": language, "enable_writes": true,
+                    "integrations": [{"name": "mail", "url": format!("http://127.0.0.1:{mail_port}/send"), "method": "POST", "timeout_ms": 2000,
+                        "max_request_bytes": 1024, "max_response_bytes": 1024, "allow_loopback": true}]},
                 // Server triggers act as the bound `svc` principal: Alice's account, so the hook may increment her videos.
                 "schedules": [{"name": "tick", "operation": "tickJob", "cron": "* * * * *", "input": {"note": "tick"}, "principal": "svc"}],
                 "webhooks": [{"name": "hook", "path": "/hooks/video", "operation": "hookJob", "principal": "svc", "secret_env": "AIP_E2E_HOOK_SECRET",
@@ -493,6 +548,26 @@ async fn http_apply_runs_real_node_and_python_workers_in_one_mysql_transaction()
         let receipts = format!("SELECT COUNT(*) FROM `{META}`.`aip_outbox_dispatch`");
         wait_for(&mut db, &format!("SELECT ({viewed}) - ({receipts})"), |gap| gap == 0, "every relayed event to be handled").await;
         assert!(db.count(&receipts).await >= 1, "{language}: the earlier increments must have produced outbox rows");
+
+        // An outbound HTTP call is journaled: the retry after the call completed replays its answer and sends nothing.
+        let mail_before = mail_requests.load(Ordering::SeqCst);
+        let mail = post(
+            &address,
+            "/jobs/enqueue",
+            Some(&alice),
+            &fingerprint,
+            &json!({"operation": "mailJob", "input": {"id": "10"}, "key": key("mail"), "delayMs": 0}),
+        )
+        .await;
+        assert_eq!(mail["ok"], true, "{language}: {mail}");
+        let mail_id = mail["run"]["id"].as_str().unwrap().to_string();
+        let mail_done = format!("SELECT COUNT(*) FROM `{META}`.`aip_jobs` WHERE id = '{mail_id}' AND state = 'SUCCEEDED'");
+        wait_for(&mut db, &mail_done, |count| count == 1, "the mail job to succeed").await;
+        let mail_attempts = format!("SELECT attempt FROM `{META}`.`aip_jobs` WHERE id = '{mail_id}'");
+        assert_eq!(db.count(&mail_attempts).await, 2, "{language}: the first attempt asked to be retried");
+        assert_eq!(mail_requests.load(Ordering::SeqCst) - mail_before, 1, "{language}: the retry must replay the recorded call");
+        let mail_effects = format!("SELECT COUNT(*) FROM `{META}`.`aip_effects` WHERE run_id = '{mail_id}' AND state = 'SUCCEEDED'");
+        assert_eq!(db.count(&mail_effects).await, 1, "{language}: one journaled call");
         drop(child);
     }
 }

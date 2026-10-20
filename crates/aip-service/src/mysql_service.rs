@@ -388,6 +388,9 @@ pub(crate) async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
         return Err(error("TRIGGER_CONFIG", "schedules·webhooks·outbox_handlers는 job을 선언한 계약과 workers 설정이 있어야 함"));
     }
     if has_jobs && let Some(extensions) = &extensions {
+        let integrations = config.workers.as_ref().map(|workers| workers.integrations.as_slice()).unwrap_or_default();
+        let outbound_webhooks = config.workers.as_ref().map(|workers| workers.outbound_webhooks.as_slice()).unwrap_or_default();
+        let broker = build_broker_with_webhooks(integrations, outbound_webhooks).await?;
         let jobs = super::mysql_jobs::MysqlJobs::new(
             driver,
             fence,
@@ -397,6 +400,7 @@ pub(crate) async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
             config.wire.id_wire(),
             backend.clone(),
             extensions.clone(),
+            broker,
             &infrastructure,
         )?;
         tokio::time::timeout(DB_TIMEOUT, jobs.check_storage())

@@ -1,5 +1,11 @@
 # 제품 통합 검증 (2026-10-17)
 
+## 2026-10-21 MySQL job 외부 HTTP capability (WBS 7.2.1.3, Linux CI 대기)
+
+Run 소유 컨테이너(macOS 호스트, `mysql:8.4`, `--rm`·tmpfs, loopback 34411)에서 실행했다. `mysql_jobs::tests::mysql_http_effects_are_journaled_and_an_unknown_outcome_is_never_repeated`가 1 passed다. 완료된 호출의 답 재생(요청 1건 유지), 다른 입력의 `IDEMPOTENCY_MISMATCH`, 선언하지 않은 연동 `ACCESS_NOT_DECLARED`, 키 없음 `BAD_REQUEST`, 닿지 못한 연동 `DELIVERY_FAILED` 뒤 PENDING 0건, 답을 잃은 호출 `EFFECT_UNKNOWN`(UNKNOWN 1건, 재시도에도 요청 수 불변), 임차권 상실 `LEASE_LOST`를 확인했다. 설정에 없는 연동을 선언한 계약은 `MysqlJobs::new`가 거부한다. 같은 파일의 기존 두 시험(`..._preserve_owner_lease_and_transaction_boundaries`, `..._converge_on_server_minted_keys`)도 각각 1 passed다. 서비스는 프로세스당 schema 하나라서 시험을 한 프로세스에 하나씩 `--exact`로 실행해야 하고, 한 번에 묶으면 두 시험이 "프로세스당 한 schema" 오류로 실패한다.
+
+실제 worker E2E `mysql_worker_write_e2e`에 `mailJob`을 추가했다. 첫 시도가 호출 뒤 `retryLater`를 던지고 두 번째 시도(attempt 2)가 같은 호출을 재생한다. macOS Seatbelt의 Node·Python worker 양쪽에서 loopback peer가 받은 요청은 1건이고 `aip_effects`의 SUCCEEDED는 1건이며 `1 passed`다. `fmt --check`와 mysql feature `clippy --all-targets -D warnings`는 통과했다. Database contracts에 새 시험 단계를 추가했다. 미실행: Linux CI, MariaDB 경로(이 시험은 MySQL 8.4 전용), outbound webhook 재전송 경로의 실제 DB 시험(코드만 있다).
+
 ## 2026-10-21 MySQL 트리거와 job 교착 수정 (WBS 7.2.1.3, Linux CI 대기)
 
 Run 소유 컨테이너(macOS 호스트, Docker, `--rm`·tmpfs, loopback 55481/55491/55492)에서 실행했다. 서비스 단위 시험 `mysql_jobs::tests::mysql_triggers_run_as_the_service_principal_and_converge_on_server_minted_keys`는 1 passed다. 서비스 principal 접수·재전송 수렴·다른 본문 `IDEMPOTENCY_MISMATCH`, 사용자의 트리거 전용 연산·예약 키 거부(`ACCESS_DENIED`·`BAD_VALUE`), 미바인딩·비활성 principal `PRINCIPAL_UNAVAILABLE`, schedule slot당 한 job, 두 릴레이가 경쟁해도 outbox 행당 job 1·영수증 1, 다른 topic 미접촉, principal 비활성 중에는 영수증이 생기지 않고 복구 뒤 전달되는 것을 확인한다. 보호 장치를 하나씩 끄는 변이 3개(전용 연산 검사, 예약 키 검사, 영수증 기록)는 각각 해당 단언에서 실패했다.

@@ -136,3 +136,8 @@ jobs:
           cargo test -p aip-service --features mysql --lib --locked
           mysql_jobs::tests::mysql_triggers_run_as_the_service_principal_and_converge_on_server_minted_keys
           -- --ignored --exact --nocapture
+      - name: Verify MySQL job HTTP effects are journaled and an unknown outcome is never repeated
+        run: >-
+          cargo test -p aip-service --features mysql --lib --locked
+          mysql_jobs::tests::mysql_http_effects_are_journaled_and_an_unknown_outcome_is_never_repeated
+          -- --ignored --exact --nocapture

@@ -56,3 +56,10 @@ export async function jobTick(input) {
 export async function jobViewed(input) {
   return { count: JSON.parse(input.event).topic === "video.viewed" ? 1 : 0 };
 }
+
+// The first attempt asks to be retried after the call completed; the second must not send it again.
+export async function jobMail(input, ctx) {
+  const reply = await ctx.http.call("mail", { video: input.id }, "send");
+  if (ctx.job.attempt === 1) throw ctx.retryLater("retry after the committed call");
+  return { count: reply.status === 200 ? 1 : 0 };
+}

@@ -102,3 +102,14 @@ operation job nestedJob {
   deadline 10s
   implementation "worker.jobNested"
 }
+
+// One outbound HTTP call that is journaled, so a retry after it completed replays the answer instead of sending again.
+operation job mailJob {
+  input { id: Video.Id }
+  output { count: Int(0..10) }
+  allow actor != null
+  access http.mail
+  effect managed
+  deadline 5s
+  implementation "worker.jobMail"
+}
