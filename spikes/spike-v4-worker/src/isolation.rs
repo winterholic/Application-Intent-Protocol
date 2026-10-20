@@ -557,13 +557,10 @@ mod tests {
     }
 
     #[cfg(unix)]
-    fn probe_runtime(dir: &TempDir, script: &str) -> WorkerLaunchConfig {
-        use std::os::unix::fs::PermissionsExt;
-        let runtime = dir.path().join("runtime");
-        std::fs::write(&runtime, script).unwrap();
-        let mut permissions = std::fs::metadata(&runtime).unwrap().permissions();
-        permissions.set_mode(0o755);
-        std::fs::set_permissions(&runtime, permissions).unwrap();
+    fn probe_runtime(fixture: &str) -> WorkerLaunchConfig {
+        // Linux CI reported ETXTBSY for the freshly written hang fixture. Use checked-in scripts,
+        // as with the empty-output probe, so these tests do not write executables during startup.
+        let runtime = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(fixture);
         WorkerLaunchConfig { isolation: Isolation::None, runtime_executable: Some(runtime), ..WorkerLaunchConfig::default() }
     }
 
@@ -663,8 +660,7 @@ mod tests {
     #[tokio::test]
     async fn runtime_probe_rejects_success_without_version_output() {
         let dir = TempDir::new("probe-empty");
-        let runtime = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/empty-runtime.sh");
-        let config = WorkerLaunchConfig { isolation: Isolation::None, runtime_executable: Some(runtime), ..WorkerLaunchConfig::default() };
+        let config = probe_runtime("empty-runtime.sh");
         let error = config.probe(Lang::Node, dir.path()).await.unwrap_err();
         assert_eq!(error.kind(), std::io::ErrorKind::UnexpectedEof);
         assert!(error.to_string().contains("no version output"));
@@ -674,7 +670,7 @@ mod tests {
     #[tokio::test]
     async fn runtime_probe_reports_nonzero_status_and_bounded_diagnostics() {
         let dir = TempDir::new("probe-nonzero");
-        let config = probe_runtime(&dir, "#!/bin/sh\nprintf 'probe-failed\\n' >&2\nexit 42\n");
+        let config = probe_runtime("failed-runtime.sh");
         let error = config.probe(Lang::Node, dir.path()).await.unwrap_err();
         assert_eq!(error.kind(), std::io::ErrorKind::Other);
         assert!(error.to_string().contains("42"));
@@ -685,7 +681,7 @@ mod tests {
     #[tokio::test]
     async fn runtime_probe_drains_output_larger_than_capture_limit() {
         let dir = TempDir::new("probe-large-output");
-        let config = probe_runtime(&dir, "#!/bin/sh\n/usr/bin/head -c 131072 /dev/zero\n");
+        let config = probe_runtime("large-output-runtime.sh");
         config.probe(Lang::Node, dir.path()).await.unwrap();
     }
 
@@ -693,7 +689,7 @@ mod tests {
     #[tokio::test]
     async fn runtime_probe_deadline_kills_a_hung_runtime() {
         let dir = TempDir::new("probe-hang");
-        let config = probe_runtime(&dir, "#!/bin/sh\nexec /bin/sleep 10\n");
+        let config = probe_runtime("hung-runtime.sh");
         let started = tokio::time::Instant::now();
         let error = config.probe(Lang::Node, dir.path()).await.unwrap_err();
         assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
