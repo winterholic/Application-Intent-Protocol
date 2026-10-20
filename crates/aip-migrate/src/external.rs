@@ -59,7 +59,7 @@ pub async fn introspect_with_ca(url: &str, source: &str, _database_ca_file: Opti
             {
                 return crate::mysql_driver::introspect_draft_with_ca(url, source, _database_ca_file)
                     .await
-                    .map_err(|e| err("DB_INTROSPECT", &e.to_string()));
+                    .map_err(|e| err(if e.code == "CATALOG_ERROR" { "DB_INTROSPECT" } else { &e.code }, &e.message));
             }
             #[cfg(not(feature = "mysql"))]
             {

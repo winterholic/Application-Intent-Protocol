@@ -182,6 +182,7 @@ async fn validate(
             return Err(failure("테이블 매핑 충돌·식별자 오류"));
         }
         let (manifest, foreign_keys) = catalog.get(&table.table).ok_or_else(|| failure(&format!("매핑 테이블이 원본 schema에 없음: {res}")))?;
+        crate::mysql_catalog::require_single_column_keys(manifest, foreign_keys).map_err(from_catalog)?;
         match engine(conn, &mapping.schema, &table.table).await?.as_deref() {
             Some(engine) if engine.eq_ignore_ascii_case("InnoDB") => {}
             _ => return Err(failure(&format!("InnoDB 테이블만 채택할 수 있음: {res}"))),

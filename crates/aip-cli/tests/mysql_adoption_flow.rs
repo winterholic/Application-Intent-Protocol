@@ -214,6 +214,103 @@ fn ids(response: &Value) -> Vec<i64> {
     response["rows"].as_array().unwrap().iter().map(|row| row["id"].as_str().unwrap().parse().unwrap()).collect()
 }
 
+#[tokio::test]
+#[ignore = "live: needs a dedicated MySQL 8.4 container; run with -- --ignored"]
+async fn mysql_composite_keys_fail_before_introspection_outputs_or_adoption() {
+    const SOURCE: &str = "aip_t_mysql_keys_src";
+    const META: &str = "aip_t_mysql_keys_meta";
+    let url = std::env::var("AIP_TEST_MYSQL_URL").expect("dedicated MySQL fixture URL");
+    aip_test_support::validate_mysql_admin_url(&url).unwrap();
+    let admin = MysqlDriver::connect(&url).await.unwrap();
+    let mut db = admin.pool().get_conn().await.unwrap();
+    for schema in [META, SOURCE] {
+        db.query_drop(format!("DROP DATABASE IF EXISTS `{schema}`")).await.unwrap();
+    }
+    db.query_drop(format!("CREATE DATABASE `{SOURCE}`")).await.unwrap();
+    db.query_drop(format!(
+        "CREATE TABLE `{SOURCE}`.parents (id BIGINT PRIMARY KEY, tenant BIGINT NOT NULL, UNIQUE KEY pair_key (id, tenant)) ENGINE=InnoDB"
+    ))
+    .await
+    .unwrap();
+    db.query_drop(format!(
+        "CREATE TABLE `{SOURCE}`.children (id BIGINT PRIMARY KEY, parent_id BIGINT NOT NULL, tenant BIGINT NOT NULL) ENGINE=InnoDB"
+    ))
+    .await
+    .unwrap();
+    db.query_drop(format!("INSERT INTO `{SOURCE}`.parents VALUES (1, 7)")).await.unwrap();
+    db.query_drop(format!("INSERT INTO `{SOURCE}`.children VALUES (10, 1, 7)")).await.unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let file = directory.path().join("app.aip");
+    // Scalar fields deliberately hide the relationship from the definition. The physical FK must still be checked.
+    std::fs::write(&file, "actor principal\nresource Item { fields { id: Id; parentKey: Int; tenant: Int } rows read when true expose read { select id, parentKey, tenant } }\n").unwrap();
+    std::fs::write(
+        directory.path().join("mapping.json"),
+        json!({"schema":SOURCE,"tables":{"Item":{"table":"children","columns":{"id":"id","parentKey":"parent_id","tenant":"tenant"}}}}).to_string(),
+    )
+    .unwrap();
+    let config = directory.path().join("service.json");
+    std::fs::write(
+        &config,
+        json!({
+            "schema":META,"database_adapter":"mysql","external_mapping":"mapping.json",
+            "database_url_env":"AIP_T_MYSQL_RUNTIME_URL","migrate_database_url_env":"AIP_T_MYSQL_ADOPT_URL",
+            "rate_limit":null,"auth":{"issuer":ISSUER,"audience":"aip-api","jwks":{"kind":"file","path":"unused.json"}}
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let env = Env { adopt_url: url.clone(), runtime_url: url };
+    let file = file.to_str().unwrap();
+    let good = run(&env, &["adopt-external", file], &config).await.expect("single primary key and scalar columns are supported");
+    assert_eq!(good["businessDDL"], json!([]));
+    db.query_drop(format!(
+        "ALTER TABLE `{SOURCE}`.children ADD CONSTRAINT fk_pair FOREIGN KEY (parent_id, tenant) REFERENCES `{SOURCE}`.parents (id, tenant)"
+    ))
+    .await
+    .unwrap();
+    let draft = directory.path().join("draft.aip");
+    let mapping = directory.path().join("draft-mapping.json");
+    for (code, detail) in [("MYSQL.UNSUPPORTED_COMPOSITE_FK", "fk_pair"), ("MYSQL.UNSUPPORTED_COMPOSITE_PK", "children")] {
+        if code.ends_with("_PK") {
+            db.query_drop(format!("ALTER TABLE `{SOURCE}`.children DROP FOREIGN KEY fk_pair, DROP PRIMARY KEY, ADD PRIMARY KEY (id, tenant)"))
+                .await
+                .unwrap();
+        }
+        for args in [vec!["adopt-external", file], vec!["adopt-external", file, "--apply", good["digest"].as_str().unwrap()]] {
+            let error = run(&env, &args, &config).await.expect_err("unsupported physical key must be refused, including scalar-only mappings");
+            assert_eq!(error["code"], code, "{error}");
+            assert!(error["message"].as_str().unwrap().contains(detail), "{error}");
+        }
+        let error = run(
+            &env,
+            &["introspect", "--source-schema", SOURCE, "--out", draft.to_str().unwrap(), "--mapping-out", mapping.to_str().unwrap()],
+            &config,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error["code"], code, "{error}");
+        assert!(error["message"].as_str().unwrap().contains(detail), "{error}");
+        assert!(!draft.exists() && !mapping.exists(), "refusal cannot leave a partial draft");
+        let schemas: u64 = db.exec_first("SELECT COUNT(*) FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = ?", (META,)).await.unwrap().unwrap();
+        assert_eq!(schemas, 0, "rejected adoption cannot create infrastructure");
+        let row: (i64, i64, i64) = db.query_first(format!("SELECT id, parent_id, tenant FROM `{SOURCE}`.children")).await.unwrap().unwrap();
+        assert_eq!(row, (10, 1, 7), "business data must survive refusals");
+        println!("{code}: plan/apply/introspect refused; outputs and metadata absent; business row unchanged");
+    }
+    db.query_drop(format!("ALTER TABLE `{SOURCE}`.children DROP PRIMARY KEY, ADD PRIMARY KEY (id)")).await.unwrap();
+    assert_eq!(run(&env, &["adopt-external", file], &config).await.unwrap()["ok"], true, "removing unsupported keys reopens planning");
+    assert_eq!(
+        run(&env, &["introspect", "--source-schema", SOURCE, "--out", draft.to_str().unwrap(), "--mapping-out", mapping.to_str().unwrap()], &config)
+            .await
+            .unwrap()["ok"],
+        true
+    );
+    assert!(draft.exists() && mapping.exists());
+    for schema in [META, SOURCE] {
+        db.query_drop(format!("DROP DATABASE IF EXISTS `{schema}`")).await.unwrap();
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "live: needs a dedicated MySQL 8.4 container (scripts/mysql-live-fixture.sh); run with -- --ignored"]
 async fn external_mysql_adoption_binding_serving_and_drift() {

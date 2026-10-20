@@ -6,6 +6,14 @@
 
 2026-10-20 [Database contracts 39398093710](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39398093710)의 Linux MySQL 8.4 HTTP 읽기 1건·쓰기 9건 및 MySQL/MariaDB 펜스 시험이 통과했다. 읽기는 DATETIME·TIMESTAMP의 UTC 출력과 Bool·Decimal을, 펜스는 ALTER·DROP·RENAME·TRUNCATE의 실제 잠금 오류 1205 및 rollback 뒤 해제를 포함한다. 같은 실행의 CLI 채택 시험은 옛 `workers` 일괄 거부 단언에서 실패했다. 이 단언을 worker 설정 허용과 `workers.enable_file_uploads` 거부의 양방향 검사로 바꿨다. 전체 workflow 성공이나 실제 격리 Node/Python 실행은 이 부분 결과만으로 주장하지 않는다. 후속 결과는 수정 커밋의 CI 실행 기록을 기준으로 한다.
 
+## 2026-10-20 복합 키 채택 경계 보완 (WBS 7.2.1.1)
+
+수동 매핑이 복합 FK의 컬럼을 일반 `Int`로 선언하면 기존 채택 검사가 그 물리적 관계를 무시했다. 실제 MySQL 8.4에서 `adopt-external` 계획이 잘못 허용되는 RED를 확인했다. 자동 초안과 명시적 채택이 같은 키 검사를 사용하도록 바꿨다. 매핑된 표의 복합 FK는 `MYSQL.UNSUPPORTED_COMPOSITE_FK`, 복합 PK는 `MYSQL.UNSUPPORTED_COMPOSITE_PK`로 거부하며 표·제약 이름을 메시지에 담는다. `service introspect`도 이 코드를 JSON에 보존한다. 복합 UNIQUE 인덱스는 허용한다.
+
+실제 CLI 회귀는 단일 키 계획 허용 → 복합 FK 추가 → 계획/적용/초안 거부 → 복합 PK로 교체 → 같은 거부 → 단일 키 복원 후 계획/초안 허용을 실행한다. 거부 뒤 업무 행 보존·AIP schema 미생성·출력 파일 미생성도 검사한다. `cargo test -p aip-cli --features mysql --test mysql_adoption_flow --locked -- --ignored --nocapture --test-threads=1`은 MySQL 8.4 실DB에서 2 passed다. HTTP 읽기 1건·쓰기 9건, catalog 18건, 초안 단위 2건도 통과했다. 원시 RED/GREEN·회귀 로그는 Run `43571658-180b-4a19-895f-3fd7feea8256` outbox에 보존한다. Linux CI 결과는 해당 커밋 실행으로 별도 확인한다.
+
+아래 날짜별 절의 미지원·미실행 표시는 당시 이력이며 현재 제품 범위는 문서 첫머리와 이 절을 따른다. MySQL 비동기 job 실행과 전체 FaceReview 포팅은 계속 미완이다.
+
 ## 2026-10-17 실제 제품 경로 확인
 
 `aip-migrate::external::introspect`는 기본 빌드에서 MySQL/MariaDB URL을 `DB_ADAPTER_UNSUPPORTED`로 거부한다. `mysql` feature 빌드는 `mysql_async` 연결과 catalog 조회를 사용해 introspection draft 및 mapping을 만든다. 이 예외는 `service introspect` 전용이다. 일반 service/serve/migrate/adopt 경로는 계속 fail-closed다. URL 파싱·연결 오류에 원본 비밀번호를 포함하지 않는다.

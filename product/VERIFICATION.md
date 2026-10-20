@@ -1,5 +1,9 @@
 # 제품 통합 검증 (2026-10-17)
 
+## 2026-10-20 MySQL 복합 키 경계 (WBS 7.2.1.1)
+
+macOS Codex 명령 환경에서 Run 소유 MySQL 8.4 컨테이너(tmpfs, 자동 할당 loopback 포트)로 실행했다. 복합 FK를 일반 정수 필드로 숨긴 수동 매핑의 채택 계획 허용을 RED 1 failed로 재현했다. 수정 후 CLI 실제 실행 2 passed(기존 채택·JWT·드리프트와 새 복합 FK/PK 경계), HTTP 읽기 1 passed·쓰기 9 passed, catalog 18 passed·초안 단위 2 passed다. 새 검사는 계획/적용/초안의 명시 코드·업무 데이터 보존·부분 출력과 인프라 부재·단일 키 복원 후 정상 허용을 대조한다. 복합 UNIQUE는 거부하지 않는다. 원시 로그: Run `43571658-180b-4a19-895f-3fd7feea8256`의 `mysql-keys-{red,green,cli,http,catalog,unit}.log`. Linux CI와 전체 WBS 완료는 이 로컬 결과만으로 주장하지 않는다.
+
 ## 2026-10-19 main 9b75e89 Linux 실제 검증
 
 [Linux worker CI 39238943605](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39238943605)가 성공했다. 새 JIT 경계/세션 복원/deadline 검사와 정본 seed 집계 2개가 통과했다. 같은 쿼리 JIT on 2,160.881ms(컴파일 2,158.173ms), off 0.270ms를 측정했고, 실제 제품 executor는 선언 2초 이내에 Welcome count=1을 반환했다. CLI lifecycle을 포함한 포팅 8 suite·메일 2개·sticky 1개가 통과했다. 7개 workflow는 success이며 전체 Verify는 이 시점 진행 중이다.

@@ -30,10 +30,8 @@ fn render_mysql_draft(
         return Err(CatalogError::new("source schema has no base tables"));
     }
     let mut mapping = spike_v2_read::external::Mapping { schema: schema.to_owned(), tables: Default::default() };
-    for (table_name, (_, foreign_keys)) in catalog {
-        if foreign_keys.iter().any(|key| key.columns.len() != 1 || key.referenced_columns.len() != 1) {
-            return Err(CatalogError::new("composite foreign keys require a manual definition"));
-        }
+    for (table_name, (manifest, foreign_keys)) in catalog {
+        crate::mysql_catalog::require_single_column_keys(manifest, foreign_keys)?;
         let resource = logical_name(table_name);
         if !valid_ident(&resource) || resource.starts_with("Aip") || mapping.tables.contains_key(&resource) {
             return Err(CatalogError::new("resource names are ambiguous; manual mapping is required"));
@@ -47,9 +45,6 @@ fn render_mysql_draft(
     for (resource, mapped) in &mut mapping.tables {
         let (manifest, foreign_keys) = catalog.get(&mapped.table).ok_or_else(|| CatalogError::new("catalog table disappeared during mapping"))?;
         let primary = manifest.indexes.iter().find(|index| index.primary).ok_or_else(|| CatalogError::new("table has no primary key"))?;
-        if primary.columns.len() != 1 {
-            return Err(CatalogError::new("composite primary keys require a manual definition"));
-        }
         let primary_column = &primary.columns[0];
         definition.push_str(&format!("resource {resource} {{\n  fields {{\n"));
         for column in &manifest.columns {
@@ -1263,7 +1258,8 @@ mod tests {
         );
 
         let error = render_mysql_draft("app", &catalog).unwrap_err();
-        assert!(error.to_string().contains("composite foreign keys require a manual definition"));
+        assert_eq!(error.code, "MYSQL.UNSUPPORTED_COMPOSITE_FK");
+        assert!(error.message.contains("fk_children_parent_pair"));
     }
 
     #[tokio::test]

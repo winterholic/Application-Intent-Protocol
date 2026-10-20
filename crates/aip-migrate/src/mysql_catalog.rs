@@ -184,6 +184,28 @@ impl CatalogError {
     }
 }
 
+/// Draft generation and explicit adoption share the same physical key boundary. A scalar-only
+/// mapping must not hide a composite relationship that the runtime cannot represent.
+#[cfg(feature = "mysql")]
+pub(crate) fn require_single_column_keys(table: &TableManifest, foreign_keys: &[ForeignKey]) -> Result<(), CatalogError> {
+    if let Some(key) = foreign_keys.iter().find(|key| key.columns.len() != 1 || key.referenced_columns.len() != 1) {
+        return Err(CatalogError::with_code(
+            "MYSQL.UNSUPPORTED_COMPOSITE_FK",
+            format!(
+                "table {} foreign key {}: composite foreign keys are unsupported; introspection and adoption require single-column keys",
+                table.name, key.name
+            ),
+        ));
+    }
+    if table.indexes.iter().any(|index| index.primary && index.columns.len() != 1) {
+        return Err(CatalogError::with_code(
+            "MYSQL.UNSUPPORTED_COMPOSITE_PK",
+            format!("table {}: composite primary keys are unsupported; introspection and adoption require single-column keys", table.name),
+        ));
+    }
+    Ok(())
+}
+
 #[allow(non_snake_case)]
 pub(crate) fn CatalogError(message: String) -> CatalogError {
     CatalogError::new(message)
