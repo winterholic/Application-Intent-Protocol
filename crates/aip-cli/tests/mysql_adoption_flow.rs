@@ -278,13 +278,20 @@ async fn external_mysql_adoption_binding_serving_and_drift() {
     std::fs::write(&config, config_value.to_string()).unwrap();
     let file_arg = file.to_str().unwrap();
 
-    // Refusals before anything is created: PostgreSQL-only infrastructure, MariaDB, missing mapping.
+    // Read/write workers are supported by the current MySQL adapter. Adoption planning does not start
+    // a worker, and must accept its configuration; file uploads still require unsupported storage.
     let mut with_workers = config_value.clone();
     with_workers["workers"] = json!({"directory": ".", "language": "node"});
     std::fs::write(directory.path().join("workers.json"), with_workers.to_string()).unwrap();
-    let refused = run(&env, &["adopt-external", file_arg], &directory.path().join("workers.json")).await.unwrap_err();
+    let worker_plan = run(&env, &["adopt-external", file_arg], &directory.path().join("workers.json")).await.expect("worker adoption plan");
+    assert_eq!(worker_plan["ok"], true, "{worker_plan}");
+    assert_eq!(worker_plan["businessDDL"], json!([]), "planning leaves the business schema unchanged");
+    with_workers["workers"]["enable_file_uploads"] = json!(true);
+    std::fs::write(directory.path().join("uploads.json"), with_workers.to_string()).unwrap();
+    let refused = run(&env, &["adopt-external", file_arg], &directory.path().join("uploads.json")).await.unwrap_err();
     assert_eq!(refused["code"], "DB_ADAPTER_UNSUPPORTED", "{refused}");
-    assert!(refused["message"].as_str().unwrap().contains("workers"), "{refused}");
+    assert!(refused["message"].as_str().unwrap().contains("workers.enable_file_uploads"), "{refused}");
+    // Refusals before anything is created: PostgreSQL-only infrastructure, MariaDB, missing mapping.
     let mut default_limit = config_value.clone();
     default_limit.as_object_mut().unwrap().remove("rate_limit");
     std::fs::write(directory.path().join("limit.json"), default_limit.to_string()).unwrap();
