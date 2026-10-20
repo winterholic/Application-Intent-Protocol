@@ -306,6 +306,39 @@ async fn mysql_composite_keys_fail_before_introspection_outputs_or_adoption() {
         true
     );
     assert!(draft.exists() && mapping.exists());
+
+    // A pre-fix deployment could already contain the unsupported key. Reproduce its persisted
+    // marker with matching digests, so ordinary drift detection cannot hide the startup gap.
+    let plan = run(&env, &["adopt-external", file], &config).await.unwrap();
+    run(&env, &["adopt-external", file, "--apply", plan["digest"].as_str().unwrap()], &config).await.unwrap();
+    let facts = aip_service::load(Path::new(file), false).unwrap().output.execution;
+    let physical_mapping = serde_json::from_slice(&std::fs::read(directory.path().join("mapping.json")).unwrap()).unwrap();
+    for code in ["MYSQL.UNSUPPORTED_COMPOSITE_FK", "MYSQL.UNSUPPORTED_COMPOSITE_PK"] {
+        let ddl = if code.ends_with("_FK") {
+            format!(
+                "ALTER TABLE `{SOURCE}`.children ADD CONSTRAINT fk_pair FOREIGN KEY (parent_id, tenant) REFERENCES `{SOURCE}`.parents (id, tenant)"
+            )
+        } else {
+            format!("ALTER TABLE `{SOURCE}`.children DROP FOREIGN KEY fk_pair, DROP PRIMARY KEY, ADD PRIMARY KEY (id, tenant)")
+        };
+        db.query_drop(ddl).await.unwrap();
+        let structure = admin.catalog_fingerprint(SOURCE).await.unwrap();
+        let stored: String =
+            db.query_first(format!("SELECT CAST(facts AS CHAR) FROM `{META}`.aip_migrate_meta WHERE singleton = 1")).await.unwrap().unwrap();
+        let mut stored: Value = serde_json::from_str(&stored).unwrap();
+        stored["externalStorage"]["structureDigest"] = json!(structure);
+        db.exec_drop(
+            format!("UPDATE `{META}`.aip_migrate_meta SET facts = CAST(? AS JSON), facts_digest = ?, schema_sha256 = ? WHERE singleton = 1"),
+            (stored.to_string(), spike_v1_fixture::digest(&stored), structure),
+        )
+        .await
+        .unwrap();
+        let deployment = aip_migrate::mysql_adopt::deployment(&env.runtime_url, META, &facts, &physical_mapping, "decimal").await;
+        let error = deployment.err().expect("matching legacy digests cannot make composite keys supported");
+        assert_eq!(error["code"], code, "{error}");
+        assert_eq!(run(&env, &["serve", file], &config).await.unwrap_err()["code"], code, "serve must refuse the legacy deployment before listening");
+        println!("{code}: matching pre-fix deployment marker is refused before serving");
+    }
     for schema in [META, SOURCE] {
         db.query_drop(format!("DROP DATABASE IF EXISTS `{schema}`")).await.unwrap();
     }

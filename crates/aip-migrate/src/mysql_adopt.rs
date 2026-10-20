@@ -509,5 +509,11 @@ pub async fn deployment(url: &str, meta_schema: &str, facts: &Value, mapping: &M
     if live.digest != structure_digest {
         return Err(err("WIRE.DEPLOYMENT_CHANGED", "채택 뒤 원본 schema 구조가 바뀜"));
     }
+    // A marker produced before a stricter adapter boundary can still have matching digests.
+    // Recheck physical keys on startup so an old adoption cannot bypass today's support gate.
+    for table in mapping.tables.values() {
+        let (manifest, foreign_keys) = live.catalog.get(&table.table).ok_or_else(|| failure("채택된 테이블이 원본 schema에 없음"))?;
+        crate::mysql_catalog::require_single_column_keys(manifest, foreign_keys).map_err(from_catalog)?;
+    }
     Ok(Deployment { facts: deployed, facts_digest, structure_digest, source_tables: live.catalog.keys().cloned().collect() })
 }
