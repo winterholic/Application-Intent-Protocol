@@ -14,6 +14,10 @@
 
 아래 날짜별 절의 미지원·미실행 표시는 당시 이력이며 현재 제품 범위는 문서 첫머리와 이 절을 따른다. MySQL 비동기 job 실행과 전체 FaceReview 포팅은 계속 미완이다.
 
+## 2026-10-20 job 저장소의 두 엔진 CI 연결 (WBS 7.2.1.3 일부)
+
+기존 `mysql_jobs` 라이브 시험은 실제 MySQL 8.4와 MariaDB 11.4에서 각각 3 passed였다. 40개 run을 8개 연결에서 claim하는 경쟁, lease epoch·멱등·재시도·취소·결과 만료, outbox batch rollback 및 4개 relay의 중복 방지를 실행한다. `Database contracts`에 `AIP_TEST_JOBS_URL`을 각 엔진의 전용 service URL로 지정하는 별도 두 단계를 추가했다. 값이 없으면 skip이 아니라 실패하는 기존 시험을 그대로 쓴다. 원시 로컬 실행은 Run `43571658-180b-4a19-895f-3fd7feea8256` outbox의 `jobs-mysql.log`와 `jobs-mariadb.log`다. 실제 HTTP `/jobs/*`와 worker의 비동기 실행은 이 저장소 시험에 포함하지 않으며 7.2.1.3은 미완으로 유지한다.
+
 ## 2026-10-17 실제 제품 경로 확인
 
 `aip-migrate::external::introspect`는 기본 빌드에서 MySQL/MariaDB URL을 `DB_ADAPTER_UNSUPPORTED`로 거부한다. `mysql` feature 빌드는 `mysql_async` 연결과 catalog 조회를 사용해 introspection draft 및 mapping을 만든다. 이 예외는 `service introspect` 전용이다. 일반 service/serve/migrate/adopt 경로는 계속 fail-closed다. URL 파싱·연결 오류에 원본 비밀번호를 포함하지 않는다.
