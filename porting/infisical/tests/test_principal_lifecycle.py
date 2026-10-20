@@ -56,6 +56,17 @@ class PrincipalLifecycleTests(unittest.TestCase):
     def project(self, client):
         return client.read({"read": "Project", "select": ["id"], "filter": eq("id", "1")})
 
+    def watermark(self, subject):
+        return int(self.dep.sql(f"SELECT min_iat FROM :schema.aip_principals WHERE subject = '{subject}'"))
+
+    def wait_for_watermark(self, watermark):
+        # The product rejects future-issued JWTs, and revoke records server time + 1s.
+        # Wait for the observed boundary, so the disabled flag is tested without masking it with a stale iat.
+        deadline = time.monotonic() + 3
+        while int(time.time()) < watermark:
+            self.assertLess(time.monotonic(), deadline, "fixture clock did not reach the revocation watermark")
+            time.sleep(0.02)
+
     def test_revoke_blocks_an_already_used_client_read_write_and_idempotent_replay(self):
         subject = self.subject()
         client = self.client(subject)
@@ -81,25 +92,27 @@ class PrincipalLifecycleTests(unittest.TestCase):
         subject = self.subject()
         self.assertEqual(self.project(self.client(subject)), [{"id": "1"}])
         self.revoke(subject)
-        # A later iat cannot enable a disabled mapping; no process restart or token-side role is involved.
-        newer = self.client(subject, issued_at=int(time.time()))
+        watermark = self.watermark(subject)
+        self.wait_for_watermark(watermark)
+        newer = self.client(subject, issued_at=watermark)
         self.assertEqual(lh.error_code(self.project, newer), "WIRE.UNAUTHENTICATED")
+        # The same token must work after enabling the same binding, with its iat already at the unchanged floor.
+        # Otherwise a stale or future iat could have hidden a missing enabled check in the first assertion.
+        self.bind(subject)
+        self.assertEqual(self.watermark(subject), watermark)
+        self.assertEqual(self.project(newer), [{"id": "1"}])
 
     def test_rebind_preserves_revocation_watermark_and_actor(self):
         subject = self.subject()
         old = self.client(subject)
         self.assertEqual(self.project(old), [{"id": "1"}])
         self.revoke(subject)
-        watermark = int(self.dep.sql(f"SELECT min_iat FROM :schema.aip_principals WHERE subject = '{subject}'"))
+        watermark = self.watermark(subject)
         self.assertEqual(self.bind(subject), {"ok": True, "affected": 1})
         stored = self.dep.sql(f"SELECT enabled || '|' || min_iat || '|' || actor_id FROM :schema.aip_principals WHERE subject = '{subject}'").strip()
         self.assertEqual(stored, f"true|{watermark}|2")
         self.assertEqual(lh.error_code(self.project, old), "WIRE.UNAUTHENTICATED")
-        # Revoke uses server time + 1s. Wait for that observed boundary, not an assumed fixed delay.
-        deadline = time.monotonic() + 3
-        while int(time.time()) < watermark:
-            self.assertLess(time.monotonic(), deadline, "fixture clock did not reach the revocation watermark")
-            time.sleep(0.02)
+        self.wait_for_watermark(watermark)
         fresh = self.client(subject, issued_at=watermark)
         self.assertEqual(fresh.session(), {"actorId": "2"})
         self.assertEqual(self.project(fresh), [{"id": "1"}])
