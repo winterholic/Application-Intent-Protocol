@@ -3,7 +3,7 @@ actor Member
 resource Video {
   fields { id: Id; owner: Member; views: Int(0..100) default database }
   rows read when true
-  transition increment { from views < 100; allow owner = actor; to views = views + 1 }
+  transition increment { from views < 100; allow owner = actor; to views = views + 1; notify owner "video.viewed" }
   transition reset { from views > 0; allow owner = actor; to views = 0 }
   expose apply increment { target id; bulk maxRows 1 }
   expose apply reset { target id; bulk maxRows 1 }
@@ -66,6 +66,32 @@ operation job slowJob {
   effect none
   deadline 10s
   implementation "worker.jobSlow"
+}
+// Fed by a signed webhook, a schedule and the outbox relay. Users may not enqueue these operations themselves.
+operation job hookJob {
+  input { body: Text(1..4096) }
+  output { count: Int(0..10) }
+  allow actor != null
+  access Video.increment
+  effect managed
+  deadline 5s
+  implementation "worker.jobHook"
+}
+operation job tickJob {
+  input { note: Text(1..10) }
+  output { count: Int(0..10) }
+  allow actor != null
+  effect none
+  deadline 5s
+  implementation "worker.jobTick"
+}
+operation job viewedJob {
+  input { event: Text(1..4096) }
+  output { count: Int(0..10) }
+  allow actor != null
+  effect none
+  deadline 5s
+  implementation "worker.jobViewed"
 }
 operation job nestedJob {
   input { id: Video.Id }

@@ -473,13 +473,9 @@ async fn submit_as_service_marked(
 /// Fires the latest due slot of each schedule once. Older missed slots are skipped by design (coalesced),
 /// and the per-slot job key makes concurrent instances and restarts converge on one run.
 async fn fire_schedules(rt: &Runtime, facts: &Value, wire: IdWire) {
-    let now = chrono::Utc::now();
     for schedule in &rt.infrastructure.triggers.schedules {
-        let Ok(slot) = schedule.cron.latest_at_or_before(now) else { continue };
-        if (now - slot).to_std().unwrap_or_default() > schedule.misfire_grace {
-            continue;
-        }
-        let key = crate::triggers::schedule_key(&schedule.name, slot.timestamp());
+        let Some(slot) = schedule.due_slot() else { continue };
+        let key = crate::triggers::schedule_key(&schedule.name, slot);
         if let Err(code) = submit_as_service(rt, facts, wire, &schedule.principal, &schedule.operation, &schedule.input, &key, None).await {
             eprintln!("{}", json!({"event":"schedule_submit_failed","schedule":schedule.name,"code":code}));
         }

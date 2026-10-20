@@ -25,6 +25,16 @@ pub struct Schedule {
     pub misfire_grace: Duration,
 }
 
+impl Schedule {
+    /// Unix time of the slot to fire now: the latest slot at or before now, unless it is older than the misfire grace.
+    /// Older missed slots are skipped by design (coalesced).
+    pub fn due_slot(&self) -> Option<i64> {
+        let now = chrono::Utc::now();
+        let slot = self.cron.latest_at_or_before(now).ok()?;
+        ((now - slot).to_std().unwrap_or_default() <= self.misfire_grace).then(|| slot.timestamp())
+    }
+}
+
 pub enum Signature {
     /// Generic HMAC-SHA256 over the raw body, e.g. GitHub `x-hub-signature-256: sha256=<hex>` or Shopify base64.
     /// Only the body is signed, so the delivery identity is the body digest; unsigned headers never feed the key.

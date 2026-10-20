@@ -241,8 +241,18 @@ pub(crate) async fn listen_with_fingerprint(
         runtime.infrastructure.worker_launch.probe(extensions.lang, &extensions.dir).await?;
     }
     if !runtime.infrastructure.triggers.is_empty() {
-        if runtime.authenticator.is_none() || runtime.deployment.is_none() || runtime.extensions.is_none() || !crate::durable::enabled(&facts) {
+        // A relational adapter keeps its jobs in the adapter's own database and runs the schedule and outbox loops itself.
+        let relational_jobs = runtime.infrastructure.relational_jobs.is_some();
+        let ready = if relational_jobs {
+            runtime.authenticator.is_some() && runtime.extensions.is_some()
+        } else {
+            runtime.authenticator.is_some() && runtime.deployment.is_some() && runtime.extensions.is_some() && crate::durable::enabled(&facts)
+        };
+        if !ready {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "schedules and webhooks require durable jobs, workers and authentication"));
+        }
+        if relational_jobs && !runtime.infrastructure.triggers.messages.is_empty() {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "message handlers are not available for relational adapters"));
         }
         if !runtime.infrastructure.triggers.messages.is_empty() && !runtime.infrastructure.messaging {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "message handlers require messaging to be enabled"));
@@ -302,7 +312,7 @@ pub(crate) async fn listen_with_fingerprint(
         install?;
         runtime.admission = Some(Arc::new(admission));
     }
-    if !runtime.infrastructure.triggers.outbox.is_empty() {
+    if !runtime.infrastructure.triggers.outbox.is_empty() && runtime.infrastructure.relational_jobs.is_none() {
         let schema = &runtime.deployment.as_ref().expect("triggers require deployment").schema;
         let infra = aip_execution::infrastructure_schema(schema).map_err(|_| io::Error::other("invalid deployment schema"))?;
         let pool = runtime.db_pool.as_ref().expect("pool initialized");

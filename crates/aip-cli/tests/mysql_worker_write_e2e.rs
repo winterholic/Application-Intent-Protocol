@@ -11,6 +11,7 @@
 //! MySQL fixture and a Linux environment where Bubblewrap can create namespaces.
 use aip_migrate::mysql_driver::{MysqlDriver, mysql_async::prelude::Queryable};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use hmac::{Hmac, Mac};
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use rsa::{RsaPrivateKey, pkcs1::EncodeRsaPrivateKey, traits::PublicKeyParts};
 use serde_json::{Value, json};
@@ -33,6 +34,7 @@ const WORKER_PY: &str = include_str!("../../../product/tests/fixtures/mysql-work
 const META: &str = "aip_e2e_meta";
 const SOURCE: &str = "aip_e2e_src";
 const ISSUER: &str = "https://issuer.example";
+const HOOK_SECRET: &str = "e2e-webhook-secret-0123456789";
 
 struct Env {
     adopt_url: String,
@@ -47,7 +49,7 @@ fn cli(env: &Env, args: &[&str], config: &Path) -> Command {
     } else {
         command.args(args).arg("--config").arg(config);
     }
-    command.env("AIP_E2E_ADOPT_URL", &env.adopt_url).env("AIP_E2E_RUNTIME_URL", &env.runtime_url);
+    command.env("AIP_E2E_ADOPT_URL", &env.adopt_url).env("AIP_E2E_RUNTIME_URL", &env.runtime_url).env("AIP_E2E_HOOK_SECRET", HOOK_SECRET);
     command
 }
 
@@ -75,6 +77,15 @@ async fn start_server(env: &Env, file: &Path, config: &Path) -> Result<(Child, V
         return Err(serde_json::from_slice(&output.stderr).unwrap_or_else(|_| json!({"raw": String::from_utf8_lossy(&output.stderr)})));
     }
     tokio::spawn(async move { while reader.read_line(&mut String::new()).await.is_ok_and(|count| count > 0) {} });
+    // An undrained stderr pipe would eventually block the server, and its events are the only record of why a request failed.
+    let mut stderr = BufReader::new(child.stderr.take().unwrap());
+    tokio::spawn(async move {
+        let mut line = String::new();
+        while stderr.read_line(&mut line).await.is_ok_and(|count| count > 0) {
+            eprintln!("server: {}", line.trim_end());
+            line.clear();
+        }
+    });
     Ok((child, serde_json::from_str(&line).expect("listening event")))
 }
 
@@ -91,6 +102,27 @@ async fn post(address: &str, path: &str, token: Option<&str>, fingerprint: &str,
     tokio::time::timeout(Duration::from_secs(20), socket.read_to_string(&mut response)).await.expect("response deadline").expect("read response");
     let (_, body) = response.split_once("\r\n\r\n").expect("HTTP response");
     serde_json::from_str(body).unwrap_or_else(|_| panic!("not JSON: {response}"))
+}
+
+/// One inbound webhook delivery as a provider sends it: the raw body plus an optional signature header. Returns the HTTP status.
+async fn webhook(address: &str, path: &str, signature: Option<&str>, body: &str) -> (u16, Value) {
+    let header = signature.map(|value| format!("X-Hook-Signature: {value}\r\n")).unwrap_or_default();
+    let mut socket = tokio::net::TcpStream::connect(address).await.expect("connect");
+    socket
+        .write_all(format!("POST {path} HTTP/1.1\r\nHost: localhost\r\n{header}Content-Length: {}\r\n\r\n{body}", body.len()).as_bytes())
+        .await
+        .unwrap();
+    let mut response = String::new();
+    tokio::time::timeout(Duration::from_secs(20), socket.read_to_string(&mut response)).await.expect("response deadline").expect("read response");
+    let status = response.split_whitespace().nth(1).and_then(|status| status.parse().ok()).expect("status line");
+    let (_, body) = response.split_once("\r\n\r\n").expect("HTTP response");
+    (status, serde_json::from_str(body).unwrap_or_else(|_| panic!("not JSON: {response}")))
+}
+
+fn hook_signature(body: &str) -> String {
+    let mut mac = Hmac::<sha2::Sha256>::new_from_slice(HOOK_SECRET.as_bytes()).unwrap();
+    mac.update(body.as_bytes());
+    format!("sha256={}", mac.finalize().into_bytes().iter().map(|byte| format!("{byte:02x}")).collect::<String>())
 }
 
 fn token(private: &RsaPrivateKey, subject: &str) -> String {
@@ -152,6 +184,19 @@ async fn assert_fixture_owned(admin: &MysqlDriver, admin_url: &str) {
     if let Err(reason) = fixture_owner_decision(std::env::var("AIP_E2E_FIXTURE_MARKER").ok().as_deref(), found) {
         panic!("fixture ownership not proven, no DDL was run: {reason}");
     }
+}
+
+/// Polls a count until the asynchronous server loops have produced it. Jobs and relays run on the server's own schedule.
+async fn wait_for(db: &mut Db, sql: &str, done: impl Fn(i64) -> bool, what: &str) {
+    let mut last = 0;
+    for _ in 0..300 {
+        last = db.count(sql).await;
+        if done(last) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("timed out waiting for {what}; last value {last}; query: {sql}");
 }
 
 struct Db(aip_migrate::mysql_driver::mysql_async::Conn);
@@ -226,6 +271,11 @@ async fn http_apply_runs_real_node_and_python_workers_in_one_mysql_transaction()
                 "listen": "127.0.0.1:0", "wire": "decimal", "rate_limit": null,
                 "auth": {"issuer": ISSUER, "audience": "aip-api", "jwks": {"kind": "file", "path": "jwks.json"}},
                 "workers": {"directory": extensions, "language": language, "enable_writes": true},
+                // Server triggers act as the bound `svc` principal: Alice's account, so the hook may increment her videos.
+                "schedules": [{"name": "tick", "operation": "tickJob", "cron": "* * * * *", "input": {"note": "tick"}, "principal": "svc"}],
+                "webhooks": [{"name": "hook", "path": "/hooks/video", "operation": "hookJob", "principal": "svc", "secret_env": "AIP_E2E_HOOK_SECRET",
+                    "signature": {"kind": "hmac-sha256", "header": "x-hook-signature", "prefix": "sha256="}}],
+                "outbox_handlers": [{"topic": "video.viewed", "operation": "viewedJob", "principal": "svc"}],
             })
             .to_string(),
         )
@@ -239,7 +289,7 @@ async fn http_apply_runs_real_node_and_python_workers_in_one_mysql_transaction()
     let digest = plan["digest"].as_str().unwrap().to_string();
     run(&env, &["adopt-external", file_arg, "--apply", &digest], &node_config).await.expect("adopt");
     // Alice owns videos 10 and 12, Bob owns 11. A valid token for an unbound subject must not act.
-    for (subject, actor) in [("alice", "1"), ("bob", "2")] {
+    for (subject, actor) in [("alice", "1"), ("bob", "2"), ("svc", "1")] {
         run(&env, &["principal", "bind", "--subject", subject, "--actor", actor], &node_config).await.expect("bind");
     }
     let alice = token(&private, "alice");
@@ -384,6 +434,65 @@ async fn http_apply_runs_real_node_and_python_workers_in_one_mysql_transaction()
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
         assert_eq!(running["run"]["state"], "CANCELLED", "{language}: cancellation must follow the observed worker stop: {running}");
+
+        // Server triggers start the same durable jobs as the bound `svc` principal, and each source is verified by the server.
+        // Signed webhook: a missing or wrong signature never reaches the job store; a good delivery is accepted once.
+        let hook_body = json!({"id": "10", "language": language}).to_string();
+        let hook_jobs = format!("SELECT COUNT(*) FROM `{META}`.`aip_jobs` WHERE operation = 'hookJob'");
+        let hook_before = db.count(&hook_jobs).await;
+        let (status, unsigned) = webhook(&address, "/hooks/video", None, &hook_body).await;
+        assert_eq!((status, code(&unsigned)), (401, "WIRE.SIGNATURE_INVALID"), "{language}: {unsigned}");
+        let (status, forged) = webhook(&address, "/hooks/video", Some("sha256=00"), &hook_body).await;
+        assert_eq!((status, code(&forged)), (401, "WIRE.SIGNATURE_INVALID"), "{language}: {forged}");
+        assert_eq!(db.count(&hook_jobs).await, hook_before, "{language}: a rejected delivery created a job");
+        let views_before = db.views(10).await;
+        let signature = hook_signature(&hook_body);
+        let (status, delivered) = webhook(&address, "/hooks/video", Some(&signature), &hook_body).await;
+        assert_eq!((status, delivered["ok"].clone()), (202, json!(true)), "{language}: {delivered}");
+        let (status, redelivered) = webhook(&address, "/hooks/video", Some(&signature), &hook_body).await;
+        assert_eq!((status, &redelivered["id"]), (202, &delivered["id"]), "{language}: a redelivery converges on one job");
+        let hook_id = delivered["id"].as_str().unwrap().to_string();
+        let hook_done = format!("SELECT COUNT(*) FROM `{META}`.`aip_jobs` WHERE id = '{hook_id}' AND state = 'SUCCEEDED'");
+        wait_for(&mut db, &hook_done, |count| count == 1, "the webhook job to succeed").await;
+        assert_eq!(db.count(&hook_jobs).await, hook_before + 1, "{language}: one delivery, one job");
+        assert_eq!(db.views(10).await, views_before + 1, "{language}: the worker incremented through the service principal");
+        // A user cannot reach the trigger-fed operations or the server-minted key namespaces.
+        let forged_job = post(
+            &address,
+            "/jobs/enqueue",
+            Some(&alice),
+            &fingerprint,
+            &json!({"operation": "hookJob", "input": {"body": "{\"id\":\"10\"}"}, "key": key("forged-hook"), "delayMs": 0}),
+        )
+        .await;
+        assert_eq!(code(&forged_job), "WIRE.ACCESS_DENIED", "{language}: {forged_job}");
+        let claimed_key = post(
+            &address,
+            "/jobs/enqueue",
+            Some(&alice),
+            &fingerprint,
+            &json!({"operation": "incrementJob", "input": {"id": "10"}, "key": "webhook:hook:claimed", "delayMs": 0}),
+        )
+        .await;
+        assert_eq!(code(&claimed_key), "WIRE.BAD_VALUE", "{language}: {claimed_key}");
+        // Schedule: the current slot ran once, however many servers or restarts evaluated it.
+        let ticks = format!(
+            "SELECT COUNT(*) FROM `{META}`.`aip_jobs` WHERE operation = 'tickJob' AND state = 'SUCCEEDED' AND idempotency_key LIKE 'schedule:tick:%'"
+        );
+        wait_for(&mut db, &ticks, |count| count >= 1, "a schedule slot to run").await;
+        let duplicate_slots = format!("SELECT COUNT(*) - COUNT(DISTINCT idempotency_key) FROM `{META}`.`aip_jobs` WHERE operation = 'tickJob'");
+        assert_eq!(db.count(&duplicate_slots).await, 0, "{language}: one job per slot");
+        // Outbox: every committed `notify` row became exactly one job and one receipt, and the worker saw the event.
+        let undelivered = format!(
+            "SELECT (SELECT COUNT(*) FROM `{META}`.`aip_outbox` WHERE topic = 'video.viewed') - (SELECT COUNT(*) FROM `{META}`.`aip_outbox_dispatch`)"
+        );
+        wait_for(&mut db, &undelivered, |count| count == 0, "every outbox row to be relayed").await;
+        let viewed = format!(
+            "SELECT COUNT(*) FROM `{META}`.`aip_jobs` WHERE operation = 'viewedJob' AND state = 'SUCCEEDED' AND JSON_EXTRACT(output, '$.count') = 1"
+        );
+        let receipts = format!("SELECT COUNT(*) FROM `{META}`.`aip_outbox_dispatch`");
+        wait_for(&mut db, &format!("SELECT ({viewed}) - ({receipts})"), |gap| gap == 0, "every relayed event to be handled").await;
+        assert!(db.count(&receipts).await >= 1, "{language}: the earlier increments must have produced outbox rows");
         drop(child);
     }
 }

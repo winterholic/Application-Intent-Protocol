@@ -762,19 +762,25 @@ pub fn canonical_bound_tables(
     tables
 }
 
+/// One statement that takes a shared metadata lock on every bound table and reads no row. Opening the table is what pins it
+/// until COMMIT or ROLLBACK. `WHERE 1=0` matters: at SERIALIZABLE a plain row read is a shared record lock on the first entry of
+/// whichever index the optimizer scans, and that lock deadlocked with job and outbox UPDATEs (primary key first, then the
+/// secondary index) and held up legacy writers of the same row for the life of the transaction.
+pub(crate) fn pin_query(bound_tables: &[(String, String)]) -> String {
+    bound_tables
+        .iter()
+        .enumerate()
+        .map(|(idx, (schema, table))| format!("SELECT 1 FROM (SELECT 1 FROM `{schema}`.`{table}` WHERE 1=0) AS p{idx}"))
+        .collect::<Vec<_>>()
+        .join(" UNION ALL ")
+}
+
 pub async fn pin_bound_tables_on_conn<Q: Queryable>(conn: &mut Q, bound_tables: &[(String, String)]) -> Result<(), CatalogError> {
     if bound_tables.is_empty() {
         return Ok(());
     }
 
-    let unions = bound_tables
-        .iter()
-        .enumerate()
-        .map(|(idx, (schema, table))| format!("SELECT 1 FROM (SELECT 1 FROM `{schema}`.`{table}` LIMIT 1) AS p{idx}"))
-        .collect::<Vec<_>>()
-        .join(" UNION ALL ");
-
-    let pin_query = unions;
+    let pin_query = pin_query(bound_tables);
 
     let result: Result<Vec<i64>, _> = conn.query(&pin_query).await;
     match result {
@@ -1469,11 +1475,7 @@ mod tests {
 
         let baseline = driver.catalog_fingerprint(schema).await.expect("baseline fingerprint");
 
-        let pin_sql = format!(
-            "SELECT 1 FROM (SELECT 1 FROM `{schema}`.`comments` LIMIT 1) AS p0 \
-             UNION ALL \
-             SELECT 1 FROM (SELECT 1 FROM `{schema}`.`users` LIMIT 1) AS p1"
-        );
+        let pin_sql = pin_query(&[(schema.to_string(), "comments".to_string()), (schema.to_string(), "users".to_string())]);
 
         // -------------------------------------------------------------------------
         // CASE A (DURING + ROLLBACK): Pre-MDL pin blocks concurrent ALTER on any
@@ -1537,6 +1539,47 @@ mod tests {
 
         setup_conn.query_drop(format!("DROP DATABASE IF EXISTS `{schema}`")).await.expect("cleanup db");
         drop(setup_conn);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live MySQL/MariaDB via AIP_TEST_MYSQL_URL"]
+    async fn live_pre_mdl_pin_holds_the_metadata_lock_without_any_row_lock_at_serializable() {
+        let url = live_mysql_url();
+        let driver = MysqlDriver::connect(&url).await.expect("connect driver");
+        let pool = mysql_async::Pool::new(driver.opts().clone());
+        let schema = "aip_stage6_pin_lock_test";
+        let mut setup = pool.get_conn().await.expect("setup conn");
+        setup.query_drop(format!("DROP DATABASE IF EXISTS `{schema}`")).await.expect("drop old db");
+        setup.query_drop(format!("CREATE DATABASE `{schema}`")).await.expect("create db");
+        setup
+            .query_drop(format!("CREATE TABLE `{schema}`.`t` (id INT NOT NULL PRIMARY KEY, a INT NOT NULL, KEY t_a (a)) ENGINE=InnoDB"))
+            .await
+            .expect("create table");
+        setup.query_drop(format!("INSERT INTO `{schema}`.`t` VALUES (1, 1), (2, 2)")).await.expect("seed");
+
+        let mut pinned = pool.get_conn().await.expect("pinning conn");
+        pinned.query_drop("SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE").await.expect("serializable");
+        pinned.query_drop("START TRANSACTION").await.expect("start tx");
+        pin_bound_tables_on_conn(&mut pinned, &[(schema.to_string(), "t".to_string())]).await.expect("pin");
+
+        // The pin is a metadata lock only. The first row of every index stays writable for other transactions, which is what
+        // keeps a job's lease UPDATE and a legacy application's write from deadlocking with a request that merely pinned.
+        let mut writer = pool.get_conn().await.expect("writer conn");
+        writer.query_drop("SET SESSION innodb_lock_wait_timeout = 1").await.expect("lock wait");
+        writer.query_drop(format!("UPDATE `{schema}`.`t` SET a = a + 10 WHERE id = 1")).await.expect("the pinned row must not be locked");
+        writer
+            .query_drop(format!("UPDATE `{schema}`.`t` SET a = a + 10 WHERE a = 2"))
+            .await
+            .expect("the first secondary-index entry must not be locked");
+
+        // And the table definition is still pinned until the transaction ends.
+        writer.query_drop("SET SESSION lock_wait_timeout = 1").await.expect("lock wait");
+        let alter = writer.query_drop(format!("ALTER TABLE `{schema}`.`t` ADD COLUMN b INT NULL")).await.expect_err("ALTER must wait on the pin");
+        assert!(alter.to_string().contains("Lock wait timeout exceeded"), "{alter}");
+        pinned.query_drop("ROLLBACK").await.expect("rollback");
+        writer.query_drop(format!("ALTER TABLE `{schema}`.`t` ADD COLUMN b INT NULL")).await.expect("ALTER succeeds once the pin is released");
+
+        setup.query_drop(format!("DROP DATABASE IF EXISTS `{schema}`")).await.expect("cleanup db");
     }
 
     #[tokio::test]

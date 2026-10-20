@@ -41,3 +41,18 @@ async def jobSlow(input, ctx):
 
 async def jobNested(input, ctx):
     return await ctx.jobs.run("incrementJob", input, "child")
+
+
+async def jobHook(input, ctx):
+    import json
+    result = await ctx.data.apply("Video", "increment", [json.loads(input["body"])["id"]], "hook")
+    return {"count": len(result["changed"])}
+
+
+async def jobTick(input, ctx):
+    return {"count": 1 if input["note"] == "tick" else 0}
+
+
+async def jobViewed(input, ctx):
+    import json
+    return {"count": 1 if json.loads(input["event"])["topic"] == "video.viewed" else 0}

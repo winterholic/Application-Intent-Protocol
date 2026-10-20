@@ -1,5 +1,15 @@
 # 제품 통합 검증 (2026-10-17)
 
+## 2026-10-21 MySQL 트리거와 job 교착 수정 (WBS 7.2.1.3, Linux CI 대기)
+
+Run 소유 컨테이너(macOS 호스트, Docker, `--rm`·tmpfs, loopback 55481/55491/55492)에서 실행했다. 서비스 단위 시험 `mysql_jobs::tests::mysql_triggers_run_as_the_service_principal_and_converge_on_server_minted_keys`는 1 passed다. 서비스 principal 접수·재전송 수렴·다른 본문 `IDEMPOTENCY_MISMATCH`, 사용자의 트리거 전용 연산·예약 키 거부(`ACCESS_DENIED`·`BAD_VALUE`), 미바인딩·비활성 principal `PRINCIPAL_UNAVAILABLE`, schedule slot당 한 job, 두 릴레이가 경쟁해도 outbox 행당 job 1·영수증 1, 다른 topic 미접촉, principal 비활성 중에는 영수증이 생기지 않고 복구 뒤 전달되는 것을 확인한다. 보호 장치를 하나씩 끄는 변이 3개(전용 연산 검사, 예약 키 검사, 영수증 기록)는 각각 해당 단언에서 실패했다.
+
+실제 worker E2E(`mysql_worker_write_e2e`)를 서명된 webhook·schedule·outbox handler로 확장했다. macOS Seatbelt 격리의 Node·Python worker로 4회 연속 `1 passed`다. 서명 없음·틀린 서명은 401이고 job을 만들지 않으며, 올바른 전달은 202, 재전송은 같은 job으로 수렴하고 worker가 service principal로 영상 조회수를 1 올린다. outbox 12행이 영수증 12건과 `viewedJob` 12건이 되고 `tickJob`은 slot당 한 건이다. 이 값은 로컬 실행이며 Linux Bubblewrap 격리의 결과는 CI를 기준으로 한다. 시험은 서버 stderr를 비우고 출력하도록 고쳤다(읽지 않는 pipe는 서버를 막을 수 있고 실패 원인이 보이지 않았다).
+
+E2E 반복에서 `/jobs/status`가 간헐적으로 `WIRE.DB_UNAVAILABLE`을 냈다(6회 중 2회). `innodb_print_all_deadlocks`로 교착을 확인했다. 요청 트랜잭션의 고정 쿼리 `SELECT 1 FROM (SELECT 1 FROM t LIMIT 1)`이 직렬화 격리에서 보조 인덱스 첫 레코드에 공유 락을 잡고, claim·settle·cancel UPDATE는 PRIMARY 다음 보조 인덱스 순서로 잠가 순환했다. 고정 쿼리를 `WHERE 1=0`으로 바꿨고(`pin_query`), `live_pre_mdl_pin_holds_the_metadata_lock_without_any_row_lock_at_serializable`이 고정 중 첫 행·첫 인덱스 항목의 UPDATE가 막히지 않고 ALTER는 `1205`로 막히는 것을 확인한다. 옛 쿼리로 되돌리면 이 시험은 `1205`로 실패한다. 수정 뒤 E2E 6회와 확장 E2E 4회가 모두 통과했다. 남은 교착은 claim(보조 인덱스 순서)과 settle UPDATE(PRIMARY 순서)의 저장소 내부 건으로, 희생자인 claim이 100ms 뒤 재시도한다(`mysql_job_claim_failed` 로그).
+
+CI의 Database contracts MySQL·MariaDB 작업과 같은 명령을 두 엔진 컨테이너로 실행했다. `mysql_fence_verification` 3+5 passed(ALTER·DROP·RENAME·TRUNCATE 잠금 포함), `mysql_drift_matrix` 1, `mysql_capability_gate` 4, `mysql_jobs` MySQL 3·MariaDB 3, `mysql_read_http` 1·`mysql_write_http` 9, `mysql_adoption_flow` 2, 기존 HTTP job 시험 1이 통과했다. PostgreSQL 쪽 `triggers`·`outbox`·`trigger_guard` 6 passed로 `Schedule::due_slot` 정리와 서버 검증 분기가 기존 경로를 바꾸지 않음을 확인했다. aip-service·aip-migrate 기본 시험 141 passed, transport lib 73 passed, fmt·clippy(`-D warnings`)는 repo 절차 그대로 통과했다. 미실행: TLS 픽스처가 필요한 `live_tls_*`·`live_catalog_fence_*`·`live_mysql_catalog_*` 3건과 Mongo·Redis 픽스처가 필요한 `optional_adapter_combinations_*`(환경변수 없음, CI에도 없는 시험).
+
 ## 2026-10-20 MySQL HTTP job·effect journal 연결 (WBS 7.2.1.3, Linux CI 통과)
 
 Codex macOS 명령 환경의 Run 전용 MySQL 8.4/MariaDB 11.4(tmpfs, loopback 34571/34572)에서 실행했다. `cargo test -p aip-service --features mysql --lib mysql_jobs::tests::mysql_job_http_and_effect_journal_preserve_owner_lease_and_transaction_boundaries -- --ignored --exact --nocapture`는 1 passed, `aip-migrate --features mysql --test mysql_jobs -- --ignored`는 양엔진 각각 3 passed, `mysql_write_http -- --ignored`는 8 passed, `mysql_adoption_flow -- --ignored`는 2 passed다. 마지막 CLI 회귀에는 기존 배포의 누락 effect journal을 acknowledged adoption 재실행으로 추가하는 경로가 포함된다. 새 worker fixture의 `aip service check`는 `ok:true`, CLI E2E의 `--no-run`도 성공했다. 후자는 실제 worker 실행 증거가 아니다.

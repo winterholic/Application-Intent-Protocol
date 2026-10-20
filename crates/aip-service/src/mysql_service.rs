@@ -42,15 +42,12 @@ fn reject_unsupported_infrastructure(config: &Config) -> Result<(), Value> {
     {
         return Err(unsupported("workers.enable_file_uploads", "MySQL adapter는 worker 파일 업로드를 아직 지원하지 않음"));
     }
-    let checks: [(&str, bool, &str); 11] = [
+    let checks: [(&str, bool, &str); 8] = [
         ("objects", config.objects.is_some(), "객체 저장소 metadata가 PostgreSQL에 있음"),
         ("broker", config.broker.is_some(), "broker offset·outbox가 PostgreSQL에 있음"),
         ("rag", config.rag.is_some(), "RAG 색인이 PostgreSQL(pgvector)에 있음"),
         ("static_mounts", !config.static_mounts.is_empty(), "정적 mount는 아직 연결하지 않음"),
         ("file_mounts", !config.file_mounts.is_empty(), "관리 파일 저장소가 PostgreSQL에 있음"),
-        ("schedules", !config.schedules.is_empty(), "durable job 저장소가 PostgreSQL에 있음"),
-        ("webhooks", !config.webhooks.is_empty(), "durable job 저장소가 PostgreSQL에 있음"),
-        ("outbox_handlers", !config.outbox_handlers.is_empty(), "outbox가 PostgreSQL에 있음"),
         ("message_handlers", !config.message_handlers.is_empty(), "메시지 저장소가 PostgreSQL에 있음"),
         ("messaging", config.messaging.enabled, "메시지 저장소가 PostgreSQL에 있음"),
         (
@@ -364,6 +361,7 @@ pub(crate) async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
     let actor = (deployed["actorMode"] != "principal" && deployed["resources"].get(actor_name).is_some_and(Value::is_object))
         .then(|| ActorResource { view: sqlgen::snake(actor_name), uuid: spike_v2_read::id_wire::id_kind(&deployed, actor_name) == "uuid" });
     let mut infrastructure = infrastructure::build(&config)?;
+    let issuer = config.auth.issuer.clone();
     let verifier = aip_auth::AuthenticatorImpl::new_explained(config.auth, "mysql".into(), config.schema.clone())
         .await
         .map_err(|failure| error("AUTH_CONFIG", &format!("인증 설정 오류: {}", failure.reason)))?;
@@ -381,7 +379,14 @@ pub(crate) async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
     });
     configure_optional_read_adapters(&mut infrastructure, config.workers.as_ref(), |name| std::env::var(name).ok()).await?;
     infrastructure.job_policies = triggers::build_job_policies(&config.job_policies).map_err(|message| error("JOB_POLICY_CONFIG", message))?;
+    let built = triggers::build(&config.schedules, &config.webhooks, &config.outbox_handlers, &issuer, &|name| std::env::var(name).ok())
+        .map_err(|message| error("TRIGGER_CONFIG", message))?;
+    let has_triggers = !built.is_empty();
+    infrastructure.triggers = Arc::new(built);
     let has_jobs = deployed["operations"].as_object().is_some_and(|ops| ops.values().any(|op| op["kind"] == "job"));
+    if has_triggers && !(has_jobs && extensions.is_some()) {
+        return Err(error("TRIGGER_CONFIG", "schedules·webhooks·outbox_handlers는 job을 선언한 계약과 workers 설정이 있어야 함"));
+    }
     if has_jobs && let Some(extensions) = &extensions {
         let jobs = super::mysql_jobs::MysqlJobs::new(
             driver,
@@ -582,6 +587,19 @@ mod tests {
         job_json["job_policies"] = json!([{"operation":"settle","max_attempts":3,"retry_uncaught_errors":false}]);
         let config: Config = serde_json::from_value(job_json).unwrap();
         assert!(reject_unsupported_infrastructure(&config).is_ok(), "MySQL job policy must reach the durable runtime");
+
+        // Triggers start jobs from the adapter's own job store. Managed messages still live in PostgreSQL.
+        let mut trigger_json = base_json.clone();
+        trigger_json["workers"] = json!({"directory":"extensions", "language":"python"});
+        trigger_json["schedules"] = json!([{"name":"nightly","operation":"settle","cron":"0 3 * * *","principal":"svc"}]);
+        trigger_json["outbox_handlers"] = json!([{"topic":"video.requested","operation":"settle","principal":"svc"}]);
+        let config: Config = serde_json::from_value(trigger_json.clone()).unwrap();
+        assert!(reject_unsupported_infrastructure(&config).is_ok(), "MySQL triggers must reach the durable runtime");
+        trigger_json["message_handlers"] = json!([{"queue":"orders","operation":"settle","principal":"svc"}]);
+        let config: Config = serde_json::from_value(trigger_json).unwrap();
+        let err = reject_unsupported_infrastructure(&config).unwrap_err();
+        assert_eq!(err["code"], "DB_ADAPTER_UNSUPPORTED");
+        assert!(err["message"].as_str().unwrap().contains("message_handlers"));
 
         // 3. 파일 업로드 워커는 거부
         let mut upload_worker_json = base_json.clone();

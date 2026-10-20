@@ -1,5 +1,9 @@
 # 진행 현황과 쌓인 질문
 
+## 2026-10-21 WBS 7.2.1.3 MySQL 트리거(schedule·webhook·outbox)와 job 교착 수정 (구현, Linux CI 대기)
+
+`schedules`·`webhooks`·`outbox_handlers`를 MySQL job 저장소에 연결했다. 접수는 설정의 service principal로 같은 fenced transaction에서 사용자 enqueue와 같은 검사를 거친다. 서버가 만드는 키와 트리거 전용 연산은 사용자가 못 쓰게 막았고(MySQL 경로에는 키 접두사 검사만 있었다), outbox 영수증은 job 접수와 같은 트랜잭션에 쓴다. `message_handlers`는 계속 거부한다. 같은 작업에서 E2E를 반복하다 `/jobs/status`가 간헐적으로 `WIRE.DB_UNAVAILABLE`을 내는 기존 결함을 찾았다. MDL 고정 쿼리 `SELECT 1 ... LIMIT 1`이 직렬화 격리에서 인덱스 첫 레코드에 공유 락을 잡아 job claim·settle UPDATE와 교착했다. `WHERE 1=0`으로 바꿔 행 락 없이 MDL만 잡게 했다(InnoDB 교착 로그로 원인 확인, 새 시험은 옛 쿼리에서 실패). 로컬은 macOS Seatbelt에서 Node·Python 실제 worker로 확장 E2E를 4회 통과했다. Linux CI와 MariaDB 쪽 고정 쿼리 회귀는 CI 결과를 기준으로 한다. WBS는 메시지·파일·이벤트·외부 HTTP capability가 남아 완료로 닫지 않는다. 명령과 결과는 [제품 검증](../product/VERIFICATION.md)의 같은 날짜 절이다.
+
 ## 2026-10-20 WBS 7.2.1.3 HTTP job·관리 효과 연결 (구현, Linux CI 통과)
 
 MySQL `/jobs/enqueue`·`status`·`result`·`cancel`을 제품 principal·계약 지문 검사 뒤에 연결했다. supervisor가 기존 `MysqlJobStore`에서 claim하고 실제 worker를 실행하며 heartbeat·재시도·취소·종료를 관리한다. 데이터 읽기·집계와 전이, 중첩 job은 선언한 capability만 쓴다. 전이·감사·effect 영수증은 같은 fenced transaction에 커밋하며, stale epoch와 다른 요청의 같은 effect key는 거부한다. 기존 배포는 migration 계정의 `adopt-external --apply` 재실행으로 AIP effect journal을 준비한다. runtime은 DDL을 실행하지 않고 영수증의 InnoDB·복합 기본키·필수 열을 시작 전에 검사한다.

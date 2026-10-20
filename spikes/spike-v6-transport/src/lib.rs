@@ -690,7 +690,13 @@ async fn serve_webhook<R: tokio::io::AsyncRead + Unpin>(
     };
     let Ok(text) = String::from_utf8(body) else { return reply_with_status(w, "400 Bad Request", &fail("WIRE.BAD_VALUE"), "").await };
     let key = triggers::webhook_key(&webhook.name, &delivery);
-    match durable::submit_as_service(runtime, facts, wire, &webhook.principal, &webhook.operation, &json!({"body":text}), &key, None).await {
+    let input = json!({"body":text});
+    // A relational adapter owns its job storage; the PostgreSQL path accepts the job itself.
+    let submitted = match &runtime.infrastructure.relational_jobs {
+        Some(jobs) => jobs.submit_service(&webhook.principal, &webhook.operation, &input, &key).await,
+        None => durable::submit_as_service(runtime, facts, wire, &webhook.principal, &webhook.operation, &input, &key, None).await,
+    };
+    match submitted {
         Ok(run) => reply_with_status(w, "202 Accepted", &json!({"ok":true,"id":run.id,"state":run.state}).to_string(), "").await,
         Err("WIRE.IDEMPOTENCY_MISMATCH") => reply_with_status(w, "409 Conflict", &fail("WIRE.IDEMPOTENCY_MISMATCH"), "").await,
         Err("WIRE.BAD_VALUE") => reply_with_status(w, "400 Bad Request", &fail("WIRE.BAD_VALUE"), "").await,

@@ -42,3 +42,17 @@ export async function jobSlow() {
 export async function jobNested(input, ctx) {
   return await ctx.jobs.run("incrementJob", input, "child");
 }
+
+// The body is the provider's raw text; the server verified its signature before this job existed.
+export async function jobHook(input, ctx) {
+  const result = await ctx.data.apply("Video", "increment", [JSON.parse(input.body).id], "hook");
+  return { count: result.changed.length };
+}
+
+export async function jobTick(input) {
+  return { count: input.note === "tick" ? 1 : 0 };
+}
+
+export async function jobViewed(input) {
+  return { count: JSON.parse(input.event).topic === "video.viewed" ? 1 : 0 };
+}

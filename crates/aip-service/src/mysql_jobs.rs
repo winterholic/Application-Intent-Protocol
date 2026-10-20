@@ -25,8 +25,21 @@ pub(crate) struct MysqlJobs {
     workers: ReadExtensions,
     launch: spike_v4_worker::WorkerLaunchConfig,
     policies: std::collections::HashMap<String, spike_v6_transport::triggers::JobPolicy>,
+    triggers: Arc<spike_v6_transport::triggers::Triggers>,
     concurrency: usize,
 }
+
+/// What a server trigger adds to a job submission.
+struct Trigger {
+    /// The outbox row this job delivers; its dispatch receipt commits with the job.
+    outbox_id: Option<i64>,
+}
+
+/// id, source, source id, recipient id, created-at text, created-at microseconds since the epoch.
+type OutboxRow = (i64, String, Option<String>, Option<String>, String, i64);
+
+const SCHEDULE_TICK: Duration = Duration::from_secs(5);
+const OUTBOX_TICK: Duration = Duration::from_secs(1);
 
 fn db<T>(_: T) -> &'static str {
     "WIRE.DB_UNAVAILABLE"
@@ -88,6 +101,7 @@ impl MysqlJobs {
             workers,
             launch: infrastructure.worker_launch.clone(),
             policies: infrastructure.job_policies.clone(),
+            triggers: infrastructure.triggers.clone(),
             concurrency: infrastructure.resource_limits.jobs,
         })
     }
@@ -266,75 +280,7 @@ impl MysqlJobs {
                 let name = text(body, "operation")?;
                 let key = text(body, "key")?;
                 let delay = body["delayMs"].as_i64().ok_or("WIRE.BAD_REQUEST")?;
-                spike_v4_worker::validate_job(&self.facts, name, &body["input"], self.wire).map_err(|error| error.code)?;
-                if !valid_key(key)
-                    || !(0..=86_400_000).contains(&delay)
-                    || spike_v6_transport::triggers::RESERVED_KEY_PREFIXES.iter().any(|prefix| key.starts_with(prefix))
-                {
-                    return Err("WIRE.BAD_VALUE");
-                }
-                self.authorize(tx, name, &body["input"], grant.actor_id).await?;
-                let digest = spike_v1_fixture::digest(&json!(["aip-jobs", self.schema, owner]));
-                let bucket = u64::from_str_radix(&digest[..8], 16).map_err(db)? % 1000;
-                let locked: Option<u64> = tx
-                    .exec_first(format!("SELECT bucket FROM {} WHERE bucket=? FOR UPDATE", self.table("aip_tx_locks")), (bucket,))
-                    .await
-                    .map_err(db)?;
-                if locked.is_none() {
-                    return Err("WIRE.DB_UNAVAILABLE");
-                }
-                let contract = self.contract();
-                let replay: Option<i64> = tx
-                    .exec_first(
-                        format!(
-                            "SELECT 1 FROM {} WHERE owner=? AND operation=? AND idempotency_key=? AND contract_digest=? AND deployment_digest=?",
-                            self.table("aip_jobs")
-                        ),
-                        (&owner, name, key, &contract, &self.deployment),
-                    )
-                    .await
-                    .map_err(db)?;
-                if replay.is_none() {
-                    let counts: Option<(i64, i64, i64)> = tx
-                        .exec_first(
-                            format!(
-                                "SELECT COUNT(*),COALESCE(SUM(state IN ('QUEUED','RUNNING','CANCEL_REQUESTED')),0), \
-                         COALESCE(SUM(CASE WHEN state IN ('QUEUED','RUNNING','CANCEL_REQUESTED') OR result_expires_at>UTC_TIMESTAMP(6) \
-                         THEN OCTET_LENGTH(CAST(input AS CHAR))+COALESCE(OCTET_LENGTH(CAST(output AS CHAR)),0) ELSE 0 END),0) FROM {} WHERE owner=?",
-                                self.table("aip_jobs")
-                            ),
-                            (&owner,),
-                        )
-                        .await
-                        .map_err(db)?;
-                    let (total, active, bytes) = counts.ok_or("WIRE.DB_UNAVAILABLE")?;
-                    if total >= 10_000 || active >= 100 || bytes.saturating_add(body["input"].to_string().len() as i64) > 64 * 1024 * 1024 {
-                        return Err("WIRE.QUOTA_EXCEEDED");
-                    }
-                }
-                let trace = aip_execution::trace_context::current().unwrap_or_else(aip_execution::trace_context::TraceContext::generate).job_value();
-                let run = store
-                    .enqueue(
-                        tx,
-                        aip_execution::NewRun {
-                            owner,
-                            actor: grant.actor_id,
-                            grant: serde_json::to_value(grant).map_err(db)?,
-                            operation: name.into(),
-                            contract,
-                            deployment: self.deployment.clone(),
-                            implementation: self.bundle()?,
-                            input: body["input"].clone(),
-                            key: key.into(),
-                            timeout_ms: self.facts["operations"][name]["deadlineMs"].as_i64().ok_or("WIRE.BAD_CONFIGURATION")?,
-                            max_attempts: self.policy(name).max_attempts,
-                            ttl_ms: 86_400_000,
-                            delay_ms: delay,
-                            trace_id: Some(trace),
-                        },
-                    )
-                    .await
-                    .map_err(store_error)?;
+                let run = self.submit(tx, grant, name, &body["input"], key, delay, None).await?;
                 json!({"ok":true,"run":run})
             }
             "/jobs/status" | "/jobs/cancel" | "/jobs/result" => {
@@ -381,6 +327,194 @@ impl MysqlJobs {
         Ok(response)
     }
 
+    /// Accepts one durable job inside the caller's fenced transaction. A user enqueue and a server trigger share every check
+    /// that protects the business data; a trigger only skips the two that guard server-minted keys and verified inputs.
+    #[allow(clippy::too_many_arguments)]
+    async fn submit(
+        &self,
+        tx: &mut Transaction<'static>,
+        grant: &DurablePrincipal,
+        name: &str,
+        input: &Value,
+        key: &str,
+        delay: i64,
+        trigger: Option<&Trigger>,
+    ) -> Result<aip_execution::Run> {
+        spike_v4_worker::validate_job(&self.facts, name, input, self.wire).map_err(|error| error.code)?;
+        if !valid_key(key) || !(0..=86_400_000).contains(&delay) {
+            return Err("WIRE.BAD_VALUE");
+        }
+        if trigger.is_none() {
+            // Trigger keys are minted by the server, and a trigger's operation trusts input the server verified (signed body,
+            // configured schedule input, committed outbox row). A user who passes the operation's `allow` may do neither.
+            if spike_v6_transport::triggers::RESERVED_KEY_PREFIXES.iter().any(|prefix| key.starts_with(prefix)) {
+                return Err("WIRE.BAD_VALUE");
+            }
+            if self.triggers.targets_operation(name) {
+                return Err("WIRE.ACCESS_DENIED");
+            }
+        }
+        self.authorize(tx, name, input, grant.actor_id).await?;
+        let owner = owner(grant);
+        let digest = spike_v1_fixture::digest(&json!(["aip-jobs", self.schema, owner]));
+        let bucket = u64::from_str_radix(&digest[..8], 16).map_err(db)? % 1000;
+        let locked: Option<u64> =
+            tx.exec_first(format!("SELECT bucket FROM {} WHERE bucket=? FOR UPDATE", self.table("aip_tx_locks")), (bucket,)).await.map_err(db)?;
+        if locked.is_none() {
+            return Err("WIRE.DB_UNAVAILABLE");
+        }
+        let contract = self.contract();
+        let replay: Option<i64> = tx
+            .exec_first(
+                format!(
+                    "SELECT 1 FROM {} WHERE owner=? AND operation=? AND idempotency_key=? AND contract_digest=? AND deployment_digest=?",
+                    self.table("aip_jobs")
+                ),
+                (&owner, name, key, &contract, &self.deployment),
+            )
+            .await
+            .map_err(db)?;
+        if replay.is_none() {
+            let counts: Option<(i64, i64, i64)> = tx
+                .exec_first(
+                    format!(
+                        "SELECT COUNT(*),COALESCE(SUM(state IN ('QUEUED','RUNNING','CANCEL_REQUESTED')),0), \
+                         COALESCE(SUM(CASE WHEN state IN ('QUEUED','RUNNING','CANCEL_REQUESTED') OR result_expires_at>UTC_TIMESTAMP(6) \
+                         THEN OCTET_LENGTH(CAST(input AS CHAR))+COALESCE(OCTET_LENGTH(CAST(output AS CHAR)),0) ELSE 0 END),0) FROM {} WHERE owner=?",
+                        self.table("aip_jobs")
+                    ),
+                    (&owner,),
+                )
+                .await
+                .map_err(db)?;
+            let (total, active, bytes) = counts.ok_or("WIRE.DB_UNAVAILABLE")?;
+            // Trigger traffic is unbounded over time. A retained-history cap would silently stop every trigger that shares the
+            // service principal, while the active and payload bounds still limit its load.
+            if (trigger.is_none() && total >= 10_000) || active >= 100 || bytes.saturating_add(input.to_string().len() as i64) > 64 * 1024 * 1024 {
+                return Err("WIRE.QUOTA_EXCEEDED");
+            }
+        }
+        let trace = aip_execution::trace_context::current().unwrap_or_else(aip_execution::trace_context::TraceContext::generate).job_value();
+        let run = self
+            .store()?
+            .enqueue(
+                tx,
+                aip_execution::NewRun {
+                    owner,
+                    actor: grant.actor_id,
+                    grant: serde_json::to_value(grant).map_err(db)?,
+                    operation: name.into(),
+                    contract,
+                    deployment: self.deployment.clone(),
+                    implementation: self.bundle()?,
+                    input: input.clone(),
+                    key: key.into(),
+                    timeout_ms: self.facts["operations"][name]["deadlineMs"].as_i64().ok_or("WIRE.BAD_CONFIGURATION")?,
+                    max_attempts: self.policy(name).max_attempts,
+                    ttl_ms: 86_400_000,
+                    delay_ms: delay,
+                    trace_id: Some(trace),
+                },
+            )
+            .await
+            .map_err(store_error)?;
+        if let Some(outbox_id) = trigger.and_then(|trigger| trigger.outbox_id) {
+            // The receipt commits with the job, so an outbox row is never marked dispatched without its job, and a retry of the
+            // same row converges on the same key.
+            tx.exec_drop(
+                format!(
+                    "INSERT INTO {} (outbox_id, outbox_created_at, job_id) SELECT id, created_at, ? FROM {} WHERE id=? \
+                     ON DUPLICATE KEY UPDATE outbox_id=outbox_id",
+                    self.table("aip_outbox_dispatch"),
+                    self.table("aip_outbox")
+                ),
+                (&run.id, outbox_id),
+            )
+            .await
+            .map_err(db)?;
+        }
+        Ok(run)
+    }
+
+    /// The service principal's grant as of now. A disabled or unbound principal accepts nothing.
+    async fn service_grant(&self, principal: &spike_v6_transport::triggers::ServicePrincipal) -> Result<DurablePrincipal> {
+        let mut conn = self.driver.pool().get_conn().await.map_err(db)?;
+        let row: Option<(i64, i64, i64, i64)> = conn
+            .exec_first(
+                format!("SELECT actor_id,enabled,min_iat,UNIX_TIMESTAMP() FROM {} WHERE issuer=? AND subject=?", self.table("aip_principals")),
+                (&principal.issuer, &principal.subject),
+            )
+            .await
+            .map_err(db)?;
+        let (actor_id, _, min_iat, issued_at) = row.filter(|row| row.1 == 1).ok_or("WIRE.PRINCIPAL_UNAVAILABLE")?;
+        Ok(DurablePrincipal { issuer: principal.issuer.clone(), subject: principal.subject.clone(), actor_id, min_iat, issued_at })
+    }
+
+    /// One trigger submission in its own fenced transaction. `begin` re-reads the principal under a shared lock, so a binding
+    /// revoked after `service_grant` is still refused.
+    async fn submit_trigger(
+        &self,
+        principal: &spike_v6_transport::triggers::ServicePrincipal,
+        name: &str,
+        input: &Value,
+        key: &str,
+        outbox_id: Option<i64>,
+    ) -> Result<aip_execution::Run> {
+        let grant = self.service_grant(principal).await?;
+        let mut fenced = self.begin(&grant).await?;
+        let tx = fenced.as_mut().map_err(db)?;
+        let run = self.submit(tx, &grant, name, input, key, 0, Some(&Trigger { outbox_id })).await?;
+        Self::commit(fenced).await?;
+        Ok(run)
+    }
+
+    /// Fires the latest due slot of each schedule once. Older missed slots are skipped by design (coalesced), and the per-slot
+    /// job key makes concurrent instances and restarts converge on one run.
+    async fn fire_schedules(&self) {
+        for schedule in &self.triggers.schedules {
+            let Some(slot) = schedule.due_slot() else { continue };
+            let key = spike_v6_transport::triggers::schedule_key(&schedule.name, slot);
+            if let Err(code) = self.submit_trigger(&schedule.principal, &schedule.operation, &schedule.input, &key, None).await {
+                eprintln!("{}", json!({"event":"schedule_submit_failed","schedule":schedule.name,"code":code}));
+            }
+        }
+    }
+
+    /// Turns committed `notify` rows of configured topics into jobs. Each topic is scanned separately so a handler that keeps
+    /// failing cannot starve the others; each row becomes exactly one job through its key and one dispatch receipt.
+    async fn relay_outbox(&self) -> Result<()> {
+        for handler in &self.triggers.outbox {
+            let rows: Vec<OutboxRow> = {
+                let mut conn = self.driver.pool().get_conn().await.map_err(db)?;
+                conn.query_drop("SET SESSION time_zone = '+00:00'").await.map_err(db)?;
+                conn.exec(
+                    format!(
+                        "SELECT o.id, o.source, o.source_id, o.recipient_id, DATE_FORMAT(o.created_at, '%Y-%m-%dT%H:%i:%s.%fZ'), \
+                         CAST(TIMESTAMPDIFF(MICROSECOND, '1970-01-01 00:00:00', o.created_at) AS SIGNED) FROM {} o \
+                         WHERE o.topic=? AND NOT EXISTS (SELECT 1 FROM {} d WHERE d.outbox_id=o.id) ORDER BY o.id LIMIT 50",
+                        self.table("aip_outbox"),
+                        self.table("aip_outbox_dispatch")
+                    ),
+                    (&handler.topic,),
+                )
+                .await
+                .map_err(db)?
+            };
+            for (id, source, source_id, recipient_id, created_at, created_us) in rows {
+                let event = json!({"id":id.to_string(),"topic":handler.topic,"source":source,"sourceId":source_id,
+                    "recipientId":recipient_id,"createdAt":created_at});
+                let key = spike_v6_transport::triggers::outbox_key(id, created_us);
+                if let Err(code) =
+                    self.submit_trigger(&handler.principal, &handler.operation, &json!({"event":event.to_string()}), &key, Some(id)).await
+                {
+                    eprintln!("{}", json!({"event":"outbox_dispatch_failed","topic":handler.topic,"code":code}));
+                    break;
+                }
+            }
+        }
+        Ok(())
+    }
+
     async fn pending(&self, tx: &mut Transaction<'static>, id: &str) -> Result<bool> {
         let pending: Option<i64> = tx
             .exec_first(
@@ -404,6 +538,15 @@ impl RelationalJobs for MysqlJobs {
     }
     fn supervise(self: Arc<Self>) -> BackendFuture<'static, ()> {
         Box::pin(async move { self.run().await })
+    }
+    fn submit_service<'a>(
+        &'a self,
+        principal: &'a spike_v6_transport::triggers::ServicePrincipal,
+        operation: &'a str,
+        input: &'a Value,
+        key: &'a str,
+    ) -> BackendFuture<'a, Result<aip_execution::Run>> {
+        Box::pin(self.submit_trigger(principal, operation, input, key, None))
     }
 }
 
@@ -551,7 +694,18 @@ impl MysqlJobs {
         );
         let mut tasks = tokio::task::JoinSet::new();
         let mut gc = tokio::time::Instant::now();
+        let (mut scheduled, mut relayed): (Option<tokio::time::Instant>, Option<tokio::time::Instant>) = (None, None);
         loop {
+            if !self.triggers.outbox.is_empty() && relayed.is_none_or(|at| at.elapsed() >= OUTBOX_TICK) {
+                if let Err(code) = self.relay_outbox().await {
+                    eprintln!("{}", json!({"event":"outbox_relay_failed","code":code}));
+                }
+                relayed = Some(tokio::time::Instant::now());
+            }
+            if !self.triggers.schedules.is_empty() && scheduled.is_none_or(|at| at.elapsed() >= SCHEDULE_TICK) {
+                self.fire_schedules().await;
+                scheduled = Some(tokio::time::Instant::now());
+            }
             while tasks.len() < self.concurrency {
                 let claim = async {
                     let mut conn = self.driver.pool().get_conn().await.map_err(db)?;
@@ -1002,6 +1156,277 @@ operation job incrementJob {
         drop(conn);
         setup.query_drop("DROP USER 'aip_t_jobs_rt'@'%'").await.unwrap();
         for schema in [META, SOURCE] {
+            setup.query_drop(format!("DROP DATABASE `{schema}`")).await.unwrap();
+        }
+    }
+
+    const TRIGGER_META: &str = "aip_t_job_trig";
+    const TRIGGER_SOURCE: &str = "aip_t_job_trig_src";
+    const TRIGGER_DEFINITION: &str = r#"
+resource Member { fields { id: Id } }
+actor Member
+resource Video {
+ fields { id: Id; owner: Member; views: Int(0..100) default database }
+ rows read when true
+ transition increment { from views < 100; allow owner = actor; to views = views + 1; notify owner "video.viewed" }
+ expose apply increment { target id; bulk maxRows 1 }
+ expose read { select id, views; sort id; budget { rows 20; depth 1; deadline 1s; cost 100 } }
+}
+operation job incrementJob {
+ input { id: Video.Id }
+ output { count: Int }
+ allow actor != null
+ access read.Video, Video.increment
+ effect managed
+ deadline 5s
+ implementation "worker.jobView"
+}
+operation job hook {
+ input { body: Text(1..4096) }
+ output { count: Int }
+ allow actor != null
+ access read.Video
+ effect managed
+ deadline 5s
+ implementation "worker.jobView"
+}
+operation job tick {
+ input { note: Text(1..10) }
+ output { count: Int }
+ allow actor != null
+ access read.Video
+ effect managed
+ deadline 5s
+ implementation "worker.jobView"
+}
+operation job onView {
+ input { event: Text(1..4096) }
+ output { count: Int }
+ allow actor != null
+ access read.Video
+ effect managed
+ deadline 5s
+ implementation "worker.jobView"
+}
+"#;
+
+    /// Delegates the trigger path as well, so the adapter is exercised through the same trait the transport calls.
+    struct Delegating(Arc<MysqlJobs>);
+    impl RelationalJobs for Delegating {
+        fn handle<'a>(&'a self, path: &'a str, body: &'a Value, grant: &'a DurablePrincipal) -> BackendFuture<'a, Value> {
+            self.0.handle(path, body, grant)
+        }
+        fn supervise(self: Arc<Self>) -> BackendFuture<'static, ()> {
+            Box::pin(std::future::pending())
+        }
+        fn submit_service<'a>(
+            &'a self,
+            principal: &'a spike_v6_transport::triggers::ServicePrincipal,
+            operation: &'a str,
+            input: &'a Value,
+            key: &'a str,
+        ) -> BackendFuture<'a, Result<aip_execution::Run>> {
+            self.0.submit_service(principal, operation, input, key)
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[ignore = "requires a run-owned MySQL 8.4 fixture; trigger submission, schedule slots and outbox relay, no worker subprocess"]
+    async fn mysql_triggers_run_as_the_service_principal_and_converge_on_server_minted_keys() {
+        use spike_v6_transport::triggers::{OutboxHandler, Schedule, ServicePrincipal, Signature, Triggers, Webhook};
+        let (meta, source) = (TRIGGER_META, TRIGGER_SOURCE);
+        let url = std::env::var("AIP_TEST_MYSQL_URL").unwrap();
+        aip_test_support::validate_mysql_admin_url(&url).unwrap();
+        let admin = MysqlDriver::connect(&url).await.unwrap();
+        let mut setup = admin.pool().get_conn().await.unwrap();
+        for schema in [meta, source] {
+            setup.query_drop(format!("DROP DATABASE IF EXISTS `{schema}`")).await.unwrap();
+        }
+        setup.query_drop(format!("CREATE DATABASE `{source}`")).await.unwrap();
+        setup.query_drop(format!("CREATE TABLE `{source}`.member(id BIGINT PRIMARY KEY) ENGINE=InnoDB")).await.unwrap();
+        setup.query_drop(format!("CREATE TABLE `{source}`.video(id BIGINT PRIMARY KEY,owner_id BIGINT NOT NULL,views BIGINT NOT NULL DEFAULT 0,FOREIGN KEY(owner_id) REFERENCES `{source}`.member(id)) ENGINE=InnoDB")).await.unwrap();
+        setup.query_drop(format!("INSERT INTO `{source}`.member VALUES(1),(2)")).await.unwrap();
+        setup.query_drop(format!("INSERT INTO `{source}`.video VALUES(10,1,0),(11,2,0)")).await.unwrap();
+        let facts = spike_v1_fixture::load_str(TRIGGER_DEFINITION, spike_v1_fixture::Form::A).unwrap().execution;
+        sqlgen::try_set_schema(meta).unwrap();
+        let digest = spike_v1_fixture::digest(&facts);
+        let fingerprint = admin.ensure_meta_schema_bootstrap(meta, source, &digest).await.unwrap();
+        setup.query_drop(format!("CREATE VIEW `{meta}`.member AS SELECT * FROM `{source}`.member")).await.unwrap();
+        setup.query_drop(format!("CREATE VIEW `{meta}`.video AS SELECT * FROM `{source}`.video")).await.unwrap();
+        setup
+            .query_drop(format!("INSERT INTO `{meta}`.aip_principals(issuer,subject,actor_id) VALUES('https://test.example','user-1',1),('https://test.example','svc',2)"))
+            .await
+            .unwrap();
+        setup.query_drop("DROP USER IF EXISTS 'aip_t_trig_rt'@'%'").await.unwrap();
+        setup.query_drop("CREATE USER 'aip_t_trig_rt'@'%' IDENTIFIED BY 'trig_test_only'").await.unwrap();
+        for schema in [source, meta] {
+            setup
+                .query_drop(format!("GRANT SELECT,INSERT,UPDATE,DELETE,CREATE TEMPORARY TABLES ON `{schema}`.* TO 'aip_t_trig_rt'@'%'"))
+                .await
+                .unwrap();
+        }
+        let endpoint = url.split_once('@').unwrap().1.split('/').next().unwrap();
+        let driver = MysqlDriver::from_url(&format!("mysql://aip_t_trig_rt:trig_test_only@{endpoint}/{source}")).unwrap();
+        let fence = MysqlDeploymentFence::from_fingerprint(meta, source, &digest, &fingerprint).unwrap();
+        let backend = Arc::new(MysqlBackend::new(driver.clone(), fence.clone()));
+        let dir = Dir(std::env::temp_dir().join(format!("aip-jobs-trigger-unit-{}", std::process::id())));
+        std::fs::create_dir_all(&dir.0).unwrap();
+        std::fs::write(dir.0.join("worker.py"), "async def jobView(input, ctx):\n return {'count': 1}\n").unwrap();
+        let workers = ReadExtensions { lang: spike_v6_transport::server::WorkerLang::Python, dir: dir.0.clone() };
+        let service = ServicePrincipal { issuer: "https://test.example".into(), subject: "svc".into() };
+        let mut triggers = Triggers::default();
+        triggers.schedules.push(Schedule {
+            name: "tick".into(),
+            operation: "tick".into(),
+            cron: spike_v6_transport::schedule::Cron::parse("* * * * *", "UTC").unwrap(),
+            input: json!({"note":"x"}),
+            principal: service.clone(),
+            misfire_grace: Duration::from_secs(60),
+        });
+        triggers.outbox.push(OutboxHandler { topic: "video.viewed".into(), operation: "onView".into(), principal: service.clone() });
+        triggers.webhooks.push(Webhook {
+            name: "hook".into(),
+            path: "/hooks/hook".into(),
+            operation: "hook".into(),
+            principal: service.clone(),
+            secret: b"test-webhook-secret-0123456789".to_vec(),
+            signature: Signature::HmacSha256 { header: "x-signature".into(), prefix: String::new(), base64: false },
+            max_body_bytes: 4096,
+        });
+        triggers.validate(&facts, IdWire::DecimalString, &["/jobs"]).unwrap();
+        let infra = spike_v6_transport::infrastructure::Infrastructure { triggers: Arc::new(triggers), ..Default::default() };
+        let runtime = Arc::new(
+            MysqlJobs::new(
+                driver.clone(),
+                fence,
+                meta.into(),
+                digest,
+                Arc::new(facts.clone()),
+                IdWire::DecimalString,
+                backend.clone(),
+                workers,
+                &infra,
+            )
+            .unwrap(),
+        );
+        runtime.check_storage().await.unwrap();
+        let jobs: Arc<dyn RelationalJobs> = Arc::new(Delegating(runtime.clone()));
+        let scalar = |sql: String| {
+            let driver = driver.clone();
+            async move { driver.pool().get_conn().await.unwrap().query_first::<i64, _>(sql).await.unwrap().unwrap() }
+        };
+        let table = |name: &str| format!("`{meta}`.`{name}`");
+
+        // A webhook delivery key accepts one job per delivery, as the configured service principal.
+        let first = jobs.submit_service(&service, "hook", &json!({"body":"payload"}), "webhook:hook:d1").await.unwrap();
+        assert_eq!(first.state, "QUEUED");
+        let again = jobs.submit_service(&service, "hook", &json!({"body":"payload"}), "webhook:hook:d1").await.unwrap();
+        assert_eq!(again.id, first.id, "a redelivery converges on one run");
+        assert_eq!(
+            jobs.submit_service(&service, "hook", &json!({"body":"other"}), "webhook:hook:d1").await.unwrap_err(),
+            "WIRE.IDEMPOTENCY_MISMATCH"
+        );
+        assert!(
+            jobs.submit_service(&service, "hook", &json!({"body":""}), "webhook:hook:d2").await.is_err(),
+            "the operation's input contract still applies"
+        );
+        assert_eq!(scalar(format!("SELECT COUNT(*) FROM {} WHERE idempotency_key LIKE 'webhook:%'", table("aip_jobs"))).await, 1);
+
+        // A user may neither claim a server-minted key nor enqueue an operation a trigger feeds with verified input.
+        let user = grant(1);
+        let enqueue = |operation: &str, key: &str, input: Value| {
+            let body = json!({"operation":operation,"input":input,"key":key,"delayMs":0});
+            let runtime = runtime.clone();
+            let user = user.clone();
+            async move { runtime.handle("/jobs/enqueue", &body, &user).await }
+        };
+        assert_eq!(enqueue("hook", "forged", json!({"body":"x"})).await["code"], "WIRE.ACCESS_DENIED");
+        assert_eq!(enqueue("tick", "forged", json!({"note":"x"})).await["code"], "WIRE.ACCESS_DENIED");
+        assert_eq!(enqueue("onView", "forged", json!({"event":"{}"})).await["code"], "WIRE.ACCESS_DENIED");
+        assert_eq!(enqueue("incrementJob", "webhook:hook:d3", json!({"id":"10"})).await["code"], "WIRE.BAD_VALUE");
+        assert_eq!(enqueue("incrementJob", "outbox:1:1", json!({"id":"10"})).await["code"], "WIRE.BAD_VALUE");
+        assert_eq!(enqueue("incrementJob", "schedule:tick:1", json!({"id":"10"})).await["code"], "WIRE.BAD_VALUE");
+        assert_eq!(enqueue("incrementJob", "ordinary", json!({"id":"10"})).await["ok"], true);
+
+        // An unbound or disabled service principal accepts nothing, and takes effect without a restart.
+        let stranger = ServicePrincipal { issuer: "https://test.example".into(), subject: "nobody".into() };
+        assert_eq!(jobs.submit_service(&stranger, "hook", &json!({"body":"x"}), "webhook:hook:d4").await.unwrap_err(), "WIRE.PRINCIPAL_UNAVAILABLE");
+        setup.query_drop(format!("UPDATE {} SET enabled=0 WHERE subject='svc'", table("aip_principals"))).await.unwrap();
+        assert_eq!(jobs.submit_service(&service, "hook", &json!({"body":"x"}), "webhook:hook:d4").await.unwrap_err(), "WIRE.PRINCIPAL_UNAVAILABLE");
+        setup.query_drop(format!("UPDATE {} SET enabled=1 WHERE subject='svc'", table("aip_principals"))).await.unwrap();
+        assert!(jobs.submit_service(&service, "hook", &json!({"body":"x"}), "webhook:hook:d4").await.is_ok());
+
+        // One run per schedule slot, however often the slot is evaluated. Retry when a minute boundary falls inside the check.
+        let schedule = &infra.triggers.schedules[0];
+        loop {
+            let slot = schedule.due_slot();
+            runtime.fire_schedules().await;
+            runtime.fire_schedules().await;
+            if let Some(slot) = slot.filter(|slot| Some(*slot) == schedule.due_slot()) {
+                let key = spike_v6_transport::triggers::schedule_key("tick", slot);
+                assert_eq!(scalar(format!("SELECT COUNT(*) FROM {} WHERE idempotency_key='{key}'", table("aip_jobs"))).await, 1);
+                break;
+            }
+        }
+
+        // Outbox rows become one job each and one receipt each, even with two relays racing. Other topics stay untouched.
+        for topic in ["video.viewed", "video.viewed", "video.viewed", "other.topic"] {
+            setup
+                .query_drop(format!("INSERT INTO {}(topic,recipient_id,source,source_id) VALUES('{topic}','1','Video','10')", table("aip_outbox")))
+                .await
+                .unwrap();
+        }
+        let (a, b) = tokio::join!(runtime.relay_outbox(), runtime.relay_outbox());
+        a.unwrap();
+        b.unwrap();
+        assert_eq!(scalar(format!("SELECT COUNT(*) FROM {} WHERE idempotency_key LIKE 'outbox:%'", table("aip_jobs"))).await, 3);
+        assert_eq!(scalar(format!("SELECT COUNT(*) FROM {}", table("aip_outbox_dispatch"))).await, 3);
+        assert_eq!(
+            scalar(format!(
+                "SELECT COUNT(*) FROM {} d JOIN {} j ON j.id=d.job_id WHERE j.operation='onView' AND j.owner=(SELECT owner FROM {} WHERE operation='hook' LIMIT 1)",
+                table("aip_outbox_dispatch"),
+                table("aip_jobs"),
+                table("aip_jobs")
+            ))
+            .await,
+            3,
+            "each receipt names the job it created, owned by the service principal"
+        );
+        runtime.relay_outbox().await.unwrap();
+        assert_eq!(
+            scalar(format!("SELECT COUNT(*) FROM {} WHERE idempotency_key LIKE 'outbox:%'", table("aip_jobs"))).await,
+            3,
+            "a relayed row is not relayed again"
+        );
+        let input: String = setup
+            .query_first(format!("SELECT CAST(input AS CHAR) FROM {} WHERE operation='onView' LIMIT 1", table("aip_jobs")))
+            .await
+            .unwrap()
+            .unwrap();
+        let event: Value = serde_json::from_str(serde_json::from_str::<Value>(&input).unwrap()["event"].as_str().unwrap()).unwrap();
+        assert_eq!(
+            (event["topic"].as_str(), event["source"].as_str(), event["recipientId"].as_str()),
+            (Some("video.viewed"), Some("Video"), Some("1"))
+        );
+
+        // A rejected row keeps its receipt out: nothing is marked dispatched without its job.
+        setup.query_drop(format!("UPDATE {} SET enabled=0 WHERE subject='svc'", table("aip_principals"))).await.unwrap();
+        setup
+            .query_drop(format!("INSERT INTO {}(topic,recipient_id,source,source_id) VALUES('video.viewed','1','Video','11')", table("aip_outbox")))
+            .await
+            .unwrap();
+        runtime.relay_outbox().await.unwrap();
+        assert_eq!(scalar(format!("SELECT COUNT(*) FROM {}", table("aip_outbox_dispatch"))).await, 3);
+        setup.query_drop(format!("UPDATE {} SET enabled=1 WHERE subject='svc'", table("aip_principals"))).await.unwrap();
+        runtime.relay_outbox().await.unwrap();
+        assert_eq!(
+            scalar(format!("SELECT COUNT(*) FROM {}", table("aip_outbox_dispatch"))).await,
+            4,
+            "the row is delivered once the principal is back"
+        );
+
+        setup.query_drop("DROP USER 'aip_t_trig_rt'@'%'").await.unwrap();
+        for schema in [meta, source] {
             setup.query_drop(format!("DROP DATABASE `{schema}`")).await.unwrap();
         }
     }

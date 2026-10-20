@@ -130,3 +130,9 @@ jobs:
           cargo test -p aip-service --features mysql --lib --locked
           mysql_jobs::tests::mysql_job_http_and_effect_journal_preserve_owner_lease_and_transaction_boundaries
           -- --ignored --exact --nocapture
+      # The service keeps one process-wide schema, so this live test runs in its own process.
+      - name: Verify MySQL triggers run as the service principal and converge on server-minted keys
+        run: >-
+          cargo test -p aip-service --features mysql --lib --locked
+          mysql_jobs::tests::mysql_triggers_run_as_the_service_principal_and_converge_on_server_minted_keys
+          -- --ignored --exact --nocapture
