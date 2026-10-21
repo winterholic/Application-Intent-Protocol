@@ -1,6 +1,6 @@
 # 제품 통합 검증 (2026-10-17)
 
-## 2026-10-21 WBS 7.2.2 인증 포팅: 비밀번호 확장, 단회용 refresh 세션, `/auth/*` 로그인 경로 (구현, 로컬 실DB·HTTP 통과, Linux CI 대기)
+## 2026-10-21 WBS 7.2.2 인증 포팅: 비밀번호 확장, 단회용 refresh 세션, `/auth/*` 로그인 경로 (구현, 로컬 실DB·HTTP와 Linux CI 통과)
 
 **대조한 현재 경로(코드 확인, 서버 실행 아님).** AIP 서버는 외부 IdP가 발급한 RS256 `at+jwt`(최대 900초)만 검증하고 주체를 `service principal bind`로 묶는다([운영](OPERATIONS.md): "로그인·refresh token은 제공자와 앱이 담당"). 서버에는 비밀번호 로그인·토큰 발급·refresh 경로가 없다. 확장(worker)은 검증된 principal로만 실행되므로 로그인 같은 사전 인증 호출을 받을 등록 경로가 없고, `operation`의 입력은 클라이언트가 정한다. 따라서 서버가 직접 읽은 해시를 확장에 넘겨 판정만 받는 서버 주도 호출이 필요하다. 고정 원본(new-facereview `7948b7e`)의 해시는 `werkzeug.security`(requirements `Werkzeug==3.0.2`, bcrypt는 선언만 되고 import되지 않음)이며, 원본 `reissue`는 받은 refresh token을 무효화하지 않고 `logout`은 Redis 블랙리스트에 넣을 뿐 `reissue`가 이를 보지 않아 재발급 replay가 허용된다. 이 결함은 복제하지 않는다.
 
@@ -14,7 +14,13 @@
 
 회귀: `cargo test -p aip-cli --features mysql --test mysql_adoption_flow --test mysql_facereview_reads -- --ignored --test-threads=1`은 `2 passed`·`1 passed`(principal bind를 공용 함수로 뽑은 변경 뒤), `--test codes --test error_codes`는 `11 passed`·`4 passed`, `spike-v6-transport --test wire_codes`는 `9 passed`, `aip-auth --lib` `19 passed`(로컬 발급기 5개 포함), `cargo clippy ... --features mysql,aip-cli/mysql --all-targets -- -D warnings`와 spike-v6 clippy는 경고 없음이다. 로컬 발급기 시험은 발급한 토큰이 외부 IdP 토큰과 같은 검증기를 통과하고 모르는 키·kid는 거부되며 PKCS#1·PKCS#8 PEM은 받고 암호화·공개 키 PEM은 거부함을 확인한다.
 
-**알려진 한계·미구현.** 이 증분은 로컬(macOS) 결과이며 Linux CI는 push 뒤 같은 SHA의 결과로 따로 기록한다(`scripts/verify-mysql-worker-e2e.sh run-ci`가 Bubblewrap 안에서 같은 시험을 이어서 실행하도록 추가). 다음은 하지 않았다. (1) 로그인 시도 제한: 원본에도 없고 relational adapter는 rate limit이 없어 앞단 proxy가 맡아야 한다. 느린 해시는 동시 4개로 제한하고 넘으면 429 `WIRE.RATE_LIMITED`다. (2) 성공 로그인 때 약한 해시를 새 해시로 바꾸는 재해시(`rehash` 판정은 이미 반환). (3) 이메일 인증·비밀번호 변경·탈퇴 흐름과 `/me`·`/tutorial`(읽기와 전이 정의로 옮길 부분은 7.2.8). (4) 로그인 실패가 계정 존재를 알려 주던 원본의 A003/A004 구분은 일부러 합쳤다(`invalid_credentials`). 화면의 문구 분기는 7.2.10에서 맞춘다. 다만 `/auth/check-email`은 원본처럼 존재 여부를 공개한다. (5) 응답을 잃은 정상 클라이언트가 이미 쓴 refresh token을 다시 보내면 세션이 폐기되어 재로그인이 필요하다(유예 창 없음). (6) 접근 토큰마다 세션 표를 한 번 더 조회하는 비용을 측정하지 않았다. (7) 브라우저에서 `SameSite=None; Secure` 쿠키가 실제 교차 사이트 HTTPS 흐름에서 도는지는 실행하지 않았다(7.2.10).
+**동시 가입 결함(시험이 찾은 것).** 서로 다른 이메일 6개(같은 이메일 2개 포함)를 동시에 가입시키는 시험을 추가하자 약 3회 중 1회 한 요청이 503 `principal_bind_failed`였다. 원인은 코드로 확인했다. `principal bind`가 공유하는 함수가 아직 없는 `(issuer, subject)` 키를 `FOR UPDATE`로 읽어 gap lock이 겹치고 두 트랜잭션이 교착했다. 가입 경로의 선행 조회도 같은 종류의 gap lock을 걸어서 함께 없앴다(유일 인덱스가 중복을 판정). 이제 upsert를 먼저 하고 잠긴 행을 비교하며, 충돌이면 오류로 롤백한다. 수정 뒤 같은 시험을 연속 8회 돌려 8회 통과했다(수정 전 같은 방식으로 3회 중 1회 실패). 같은 시험은 해시 동시 4개 제한에서 6개 요청 중 일부가 429를 받는 것도 드러내 요청을 최대 5초 줄 세우도록 바꿨다. 회귀: `mysql_adoption_flow`(2)·`mysql_facereview_reads`(1)가 통과했고 `mysql_worker_write_e2e`는 스크립트가 주는 `AIP_E2E_FIXTURE_MARKER`가 없어 시작 전에 거부되어 CI 스크립트의 결과로 본다.
+
+**Linux CI(c4e55aa).** 같은 날 push한 `c4e55aa`에서 Verify 39584326845가 `scripts/verify-mysql-worker-e2e.sh run-ci`의 Bubblewrap 안에서 이 인증 시험을 실행해 `1 passed`, Database contracts 39584326930이 세션 저장소를 MySQL 8.4와 MariaDB 11.4에서 각 4건 통과했다. 이 SHA는 위 동시성 수정 전이므로 수정 뒤 SHA의 결과는 아래 최종 기록을 따른다. 같은 SHA의 Dependencies는 RUSTSEC-2026-0381·0382·0383(rustls-webpki·webpki 루트)으로 실패했고, 이는 이 작업과 무관한 새 공개 권고였으며 `Cargo.lock` 7개를 `rustls-webpki 0.103.16`·`webpki-roots`·`webpki-root-certs 1.0.10`으로 올려 `tools/dependency-check.sh`가 `Dependency check passed.`로 통과했다.
+
+**최종 Linux CI(2026-10-21).** 동시성 수정 `673ee0e`에서 Database contracts와 Deployment checks가 success다. 그 뒤 의존성 갱신 `30ad7b2`(코드는 같고 `Cargo.lock`만 다름)에서 Verify·Linux worker jobs·Linux cgroup v2·Object storage·External brokers·App packages·Dependencies 7종이 모두 completed/success다. Verify에서 Bubblewrap 안의 Node·Python worker 쓰기 E2E와 이 인증 E2E(`mysql_facereview_auth`)가 각각 `1 passed`로 끝났다. Database contracts와 Deployment checks는 경로 필터 때문에 `30ad7b2`에서는 실행되지 않아 `673ee0e`의 결과를 쓴다.
+
+**알려진 한계·미구현.** 다음은 하지 않았다. (0) 같은 refresh token을 두 탭이 동시에 쓰면 하나가 이기고 다른 하나는 replay로 보여 세션이 폐기된다(유예 창 없음). (1) 로그인 시도 제한: 원본에도 없고 relational adapter는 rate limit이 없어 앞단 proxy가 맡아야 한다. 느린 해시는 동시 4개로 제한하고 넘으면 429 `WIRE.RATE_LIMITED`다. (2) 성공 로그인 때 약한 해시를 새 해시로 바꾸는 재해시(`rehash` 판정은 이미 반환). (3) 이메일 인증·비밀번호 변경·탈퇴 흐름과 `/me`·`/tutorial`(읽기와 전이 정의로 옮길 부분은 7.2.8). (4) 로그인 실패가 계정 존재를 알려 주던 원본의 A003/A004 구분은 일부러 합쳤다(`invalid_credentials`). 화면의 문구 분기는 7.2.10에서 맞춘다. 다만 `/auth/check-email`은 원본처럼 존재 여부를 공개한다. (5) 응답을 잃은 정상 클라이언트가 이미 쓴 refresh token을 다시 보내면 세션이 폐기되어 재로그인이 필요하다(유예 창 없음). (6) 접근 토큰마다 세션 표를 한 번 더 조회하는 비용을 측정하지 않았다. (7) 브라우저에서 `SameSite=None; Secure` 쿠키가 실제 교차 사이트 HTTPS 흐름에서 도는지는 실행하지 않았다(7.2.10).
 
 ## 2026-10-21 MySQL 관리 파일 저장소 (WBS 7.2.1.3, Linux CI 통과)
 
