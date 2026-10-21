@@ -8,6 +8,8 @@ const pending = new Map();
 let seq = 0;
 const send = (m) => process.stdout.write(JSON.stringify(m) + "\n");
 
+const flag = (input, compensate) => (compensate ? { ...input, compensate: true } : input);
+
 function makeCtx(token, job) {
   const call = (op, name, input) =>
     new Promise((resolve, reject) => {
@@ -43,6 +45,15 @@ function makeCtx(token, job) {
         const res = await call("mongo", collection, { command: "count_documents", filter: filter ?? {} });
         return res?.count ?? 0;
       },
+      // Writes (write extensions only, `access mongo.<collection>`). compensate: true keeps a way back for a failed relational commit.
+      insertOne: async (collection, document, compensate) =>
+        (await call("mongo", collection, flag({ command: "insert_one", document }, compensate)))?.inserted_id,
+      updateOne: (collection, filter, update, upsert, compensate) =>
+        call("mongo", collection, flag({ command: "update_one", filter, update, upsert: upsert ?? false }, compensate)),
+      findOneAndUpdate: async (collection, filter, update, upsert, compensate) =>
+        (await call("mongo", collection, flag({ command: "find_one_and_update", filter, update, upsert: upsert ?? false }, compensate)))?.doc,
+      deleteOne: async (collection, filter, compensate) =>
+        (await call("mongo", collection, flag({ command: "delete_one", filter }, compensate)))?.deleted ?? 0,
     },
     redis: {
       get: async (key) => {
@@ -58,6 +69,19 @@ function makeCtx(token, job) {
         return res?.exists ?? false;
       },
       mget: (keys) => call("redis", keys?.[0] ?? "", { command: "mget", keys }),
+      lrange: async (key, start = 0, stop = -1) => (await call("redis", key, { command: "lrange", start, stop }))?.values ?? [],
+      replaceHashEx: async (key, fields, ttlSeconds) =>
+        (await call("redis", key, { command: "replace_hash_ex", fields, ttl_seconds: ttlSeconds }))?.replaced ?? 0,
+      // Writes (write extensions only, `access redis "<key or prefix:*>"`). Every key lives at most ttlSeconds (1 .. 30 days).
+      setEx: (key, value, ttlSeconds, compensate) => call("redis", key, flag({ command: "set_ex", value, ttl_seconds: ttlSeconds }, compensate)),
+      setNxEx: async (key, value, ttlSeconds, compensate) =>
+        (await call("redis", key, flag({ command: "set_nx_ex", value, ttl_seconds: ttlSeconds }, compensate)))?.set ?? false,
+      del: async (key, compensate) => (await call("redis", key, flag({ command: "del" }, compensate)))?.deleted ?? 0,
+      getdel: async (key, compensate) => (await call("redis", key, flag({ command: "getdel" }, compensate)))?.value,
+      incrExpire: async (key, ttlSeconds) => (await call("redis", key, { command: "incr_expire", ttl_seconds: ttlSeconds }))?.value,
+      expire: async (key, ttlSeconds) => (await call("redis", key, { command: "expire", ttl_seconds: ttlSeconds }))?.applied ?? false,
+      pushTrimExpire: (key, value, maxLen, ttlSeconds) =>
+        call("redis", key, { command: "push_trim_expire", value, max_len: maxLen, ttl_seconds: ttlSeconds }),
     },
     // durable job 전용: 실행 id와 몇 번째 시도인지(1부터). job이 아니면 null이다.
     job: job ?? null,

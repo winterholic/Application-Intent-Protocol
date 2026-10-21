@@ -338,6 +338,14 @@ pub struct MongoStoreConfig {
     pub max_pool_size: u32,
     #[serde(default = "default_capability_timeout")]
     pub timeout_ms: u64,
+    /// Collections write extensions may write (`youtube_watching_data`, `video_distribution`, `video_timeline_emotion_count`).
+    /// Empty (the default) keeps the capability read-only. The saga log `saga_transaction_log` is written whenever this is not empty.
+    #[serde(default)]
+    pub write_collections: Vec<String>,
+    /// Create the unique and lookup indexes the original repositories create, for the write collections and the saga log, at start.
+    /// Off by default: it needs a Mongo account that may create indexes.
+    #[serde(default)]
+    pub ensure_indexes: bool,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -626,6 +634,9 @@ fn configuration_with_mode(path: &Path, gate: Gate) -> Result<Config, Value> {
                 || !mongo.database.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
                 || !(1..=64).contains(&mongo.max_pool_size)
                 || !(1..=30_000).contains(&mongo.timeout_ms)
+                || mongo.write_collections.len() > 3
+                || mongo.write_collections.iter().any(|name| spike_v4_worker::capability::write_fields(name).is_empty())
+                || (mongo.ensure_indexes && mongo.write_collections.is_empty())
                 || worker.environment.contains_key(&mongo.uri_env))
         {
             return Err(error("MONGO_CAPABILITY_CONFIG", "Mongo capability 설정 또는 worker 환경 전달 경로가 유효하지 않음"));

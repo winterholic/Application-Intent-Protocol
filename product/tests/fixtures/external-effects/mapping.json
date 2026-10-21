@@ -1,0 +1,4 @@
+{"schema": "REPLACED", "tables": {
+  "User": {"table": "user", "columns": {"id": "user_id", "name": "name"}},
+  "Video": {"table": "video", "columns": {"id": "video_id", "title": "title", "view_count": "view_count"}}
+}}

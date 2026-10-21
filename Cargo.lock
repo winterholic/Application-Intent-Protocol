@@ -123,6 +123,7 @@ dependencies = [
  "jsonwebtoken",
  "mongodb",
  "rand 0.8.8",
+ "redis",
  "rsa",
  "serde_json",
  "sha2 0.10.9",

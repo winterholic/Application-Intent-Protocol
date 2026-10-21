@@ -1948,6 +1948,29 @@ impl<'a> Ctx<'a> {
         Some(value)
     }
 
+    /// `mongo.<collection>` or `redis "<key or prefix*>"` as the grant string the runtime checks (`mongo.<c>`, `redis.<key>`).
+    /// A Redis pattern is an exact key or a prefix with one trailing `*`; the key characters are the ones the original's keys use.
+    fn external_grant(&mut self, kind: &str, name: &str, span: Span) -> Option<String> {
+        if kind == "mongo" {
+            return Some(format!("mongo.{name}"));
+        }
+        let body = name.strip_suffix('*').unwrap_or(name);
+        let valid = !body.is_empty()
+            && name.len() <= 128
+            && !body.contains('*')
+            && body.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b':' | b'_' | b'-' | b'.'))
+            && (name == body || body.ends_with(':'));
+        if !valid {
+            self.d(
+                "DEF.BAD_CAPABILITY",
+                format!("redis grant `{name}`은 영숫자·`:_-.`로 된 키이거나 `:`로 끝나는 접두어 뒤의 `*`여야 함(128자 이하)"),
+                span,
+            );
+            return None;
+        }
+        Some(format!("redis.{name}"))
+    }
+
     fn extension(&mut self, x: &Extension) -> Option<Value> {
         if x.kind == "write" {
             // 쓰기 확장: 서버 트랜잭션 안에서 공개 전이만 부른다. 효과는 DB 쓰기(db)로 명시한다.
@@ -1961,6 +1984,15 @@ impl<'a> Ctx<'a> {
             let (_, oj) = self.params(&x.output);
             let mut acc = Map::new();
             for (rn, tn) in &x.access {
+                if rn == "mongo" || rn == "redis" {
+                    // 서버가 소유한 Mongo/Redis capability. 쓰기 확장도 선언한 grant 안에서만 쓸 수 있다(전이 access와 구분하려 빈 객체).
+                    if let Some(grant) = self.external_grant(rn, tn, x.span) {
+                        if acc.insert(grant.clone(), json!({})).is_some() {
+                            self.d("DEF.DUPLICATE", format!("capability `{grant}` 중복 선언"), x.span);
+                        }
+                    }
+                    continue;
+                }
                 let exposed = self.res.get(rn.as_str()).is_some_and(|r| r.expose_apply.iter().any(|e| &e.transition == tn));
                 if !exposed {
                     self.d("DEF.UNKNOWN_SYMBOL", format!("쓰기 access `{rn}.{tn}`는 공개된 전이(expose apply)여야 함"), x.span);
@@ -1990,14 +2022,16 @@ impl<'a> Ctx<'a> {
         let (_, oj) = self.params(&x.output);
         let mut binding = Map::new();
         for (rn, an) in &x.access {
-            if rn == "mongo" {
-                // 서버가 소유한 MongoDB 읽기 capability. 집계 입력 binding이 없어 빈 객체가 grant 표식이다.
-                if self.res.contains_key("mongo") {
-                    self.d("DEF.AMBIGUOUS", "resource 이름 `mongo`가 capability 영역과 겹침", x.span);
+            if rn == "mongo" || rn == "redis" {
+                // 서버가 소유한 MongoDB·Redis 읽기 capability. 집계 입력 binding이 없어 빈 객체가 grant 표식이다.
+                if self.res.contains_key(rn.as_str()) {
+                    self.d("DEF.AMBIGUOUS", format!("resource 이름 `{rn}`가 capability 영역과 겹침"), x.span);
                     continue;
                 }
-                if binding.insert(format!("mongo.{an}"), json!({})).is_some() {
-                    self.d("DEF.DUPLICATE", format!("capability `mongo.{an}` 중복 선언"), x.span);
+                if let Some(grant) = self.external_grant(rn, an, x.span) {
+                    if binding.insert(grant.clone(), json!({})).is_some() {
+                        self.d("DEF.DUPLICATE", format!("capability `{grant}` 중복 선언"), x.span);
+                    }
                 }
                 continue;
             }

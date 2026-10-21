@@ -1205,3 +1205,122 @@ async fn mysql_where_target_same_scope_and_single_update_effect() {
     let again = h.apply(&owner, "complete-2", json!({"apply": "Task.complete", "target": {"ids": ["15"]}})).await;
     assert_ne!(again["ok"], true, "a finished task is no longer a target: {again}");
 }
+
+// --- WBS 7.2.5: Mongo and Redis writes of a write extension reach the host only through a declared grant ---
+
+const EFFECTS: &str = include_str!("../../../product/tests/fixtures/external-effects/effects.aip");
+
+/// Like `play`, with the operation named per call (`apply`, `mongo`, `redis`, ...).
+fn play_ops(calls: Vec<(&'static str, String, Value)>, done_output: Option<Value>) -> ScriptedPeer {
+    let mut step = 0usize;
+    ScriptedPeer::new(move |sent: &[Value]| {
+        step += 1;
+        let token = sent[0]["token"].clone();
+        let invoke = sent[0]["invoke"].clone();
+        if step <= calls.len() {
+            let (op, name, input) = &calls[step - 1];
+            Some(json!({"type":"call","call":step,"token":token,"op":op,"name":name,"input":input}).to_string())
+        } else if step == calls.len() + 1 {
+            done_output.clone().map(|output| json!({"type":"done","invoke":invoke,"output":output}).to_string())
+        } else {
+            None
+        }
+    })
+}
+
+#[derive(Default)]
+struct ExternalHost {
+    applied: usize,
+    external: Vec<(String, String, Value)>,
+    fail_external: bool,
+}
+
+impl WriteActionHost for ExternalHost {
+    fn apply<'a>(
+        &'a mut self,
+        _transition: &'a str,
+        request: &'a Value,
+        _caller: &'a Caller,
+        _wire: IdWire,
+    ) -> HostFuture<'a, Result<Value, Reject>> {
+        Box::pin(async move {
+            self.applied += 1;
+            Ok(json!({"changed": request["target"]["ids"].clone(), "unchanged": []}))
+        })
+    }
+
+    fn external<'a>(&'a mut self, kind: &'a str, resource: &'a str, input: &'a Value) -> HostFuture<'a, Result<Value, Reject>> {
+        Box::pin(async move {
+            self.external.push((kind.to_string(), resource.to_string(), input.clone()));
+            if self.fail_external {
+                return Err(Reject { code: "WIRE.ADAPTER_UNAVAILABLE", msg: "store is down".into() });
+            }
+            Ok(json!({"set": true}))
+        })
+    }
+}
+
+#[tokio::test]
+async fn worker_action_external_writes_reach_the_host_only_through_a_declared_grant() {
+    let facts: Value = load_str(EFFECTS, Form::A).unwrap_or_else(|e| panic!("{e:?}")).execution;
+    let wire = IdWire::DecimalString;
+    let caller = Caller { actor_id: Some(1), now: "2026-10-22T00:00:00Z".into() };
+    let video = "bbbbbbbb-0000-4000-8000-000000000001";
+    let input = json!({"video_id": video, "log_id": "log-1", "scenario": "ok"});
+    let done = Some(json!({"counted": true, "frames": 1}));
+    let set = ("redis", "effects:dedupe:log-1".to_string(), json!({"command":"set_nx_ex","value":"1","ttl_seconds":60,"compensate":true}));
+    let upsert = (
+        "mongo",
+        "youtube_watching_data".to_string(),
+        json!({"command":"find_one_and_update","filter":{"video_view_log_id":"log-1"},"update":{"$inc":{"frame_count":1}},"upsert":true}),
+    );
+    let view = ("apply", "Video.view".to_string(), json!({"ids":[video]}));
+
+    // Granted Redis, Mongo and transition calls all arrive, in order, with the input the extension gave.
+    let mut host = ExternalHost::default();
+    let mut peer = play_ops(vec![set.clone(), upsert.clone(), view.clone()], done.clone());
+    let prepared = invoke_write_action(&mut host, &mut peer, &facts, "Video.track", &input, &caller, wire).await.unwrap();
+    assert_eq!(prepared.output, json!({"counted": true, "frames": 1}));
+    assert_eq!(host.applied, 1);
+    assert_eq!(host.external.len(), 2);
+    assert_eq!((host.external[0].0.as_str(), host.external[0].1.as_str()), ("redis", "effects:dedupe:log-1"));
+    assert_eq!((host.external[1].0.as_str(), host.external[1].1.as_str()), ("mongo", "youtube_watching_data"));
+    assert_eq!(host.external[0].2["compensate"], true);
+
+    // A store failure poisons the run: the extension cannot swallow it and report success.
+    let mut host = ExternalHost { fail_external: true, ..Default::default() };
+    let mut peer = play_ops(vec![set.clone()], done.clone());
+    let error = invoke_write_action(&mut host, &mut peer, &facts, "Video.track", &input, &caller, wire).await.err().expect("poisoned");
+    assert_eq!(error.code, "WIRE.EXTENSION_ERROR");
+    assert_eq!(host.external.len(), 1);
+
+    // An operation that is neither apply nor a declared store never reaches the host.
+    let mut host = ExternalHost::default();
+    let mut peer = play_ops(vec![("sql", "select 1".to_string(), json!({}))], done.clone());
+    assert!(invoke_write_action(&mut host, &mut peer, &facts, "Video.track", &input, &caller, wire).await.is_err());
+    assert!(host.external.is_empty() && host.applied == 0);
+
+    // An extension that declares no Mongo grant cannot write to Mongo even if the host would allow it.
+    let mut no_mongo = facts.clone();
+    no_mongo["resources"]["Video"]["extensions"]["track"]["access"] = json!({"Video.view": "transition", "redis.effects:dedupe:*": {}});
+    let mut host = ExternalHost::default();
+    let mut peer = play_ops(vec![upsert.clone()], done.clone());
+    assert!(invoke_write_action(&mut host, &mut peer, &no_mongo, "Video.track", &input, &caller, wire).await.is_err());
+    assert!(host.external.is_empty(), "no grant, no call");
+
+    // The 20-call budget counts external writes too.
+    let mut host = ExternalHost::default();
+    let mut peer = play_ops((0..21).map(|_| set.clone()).collect(), done.clone());
+    assert!(invoke_write_action(&mut host, &mut peer, &facts, "Video.track", &input, &caller, wire).await.is_err());
+    assert_eq!(host.external.len(), 20);
+
+    // The default host refuses external writes (a host that does not implement them).
+    struct Plain;
+    impl WriteActionHost for Plain {
+        fn apply<'a>(&'a mut self, _: &'a str, _: &'a Value, _: &'a Caller, _: IdWire) -> HostFuture<'a, Result<Value, Reject>> {
+            Box::pin(async { Ok(json!({"changed": [], "unchanged": []})) })
+        }
+    }
+    let mut peer = play_ops(vec![set], done);
+    assert!(invoke_write_action(&mut Plain, &mut peer, &facts, "Video.track", &input, &caller, wire).await.is_err());
+}

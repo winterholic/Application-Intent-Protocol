@@ -70,6 +70,12 @@ pub trait WriteActionHost: Send {
         caller: &'a Caller,
         wire: IdWire,
     ) -> crate::host::HostFuture<'a, Result<Value, Reject>>;
+
+    /// A Mongo (`kind` = `mongo`, `resource` = collection) or Redis (`redis`, key) write the extension declared with `access`.
+    /// The relational transaction cannot include it, so the host keeps its undo record (see [`crate::external::ExternalEffects`]).
+    fn external<'a>(&'a mut self, _kind: &'a str, _resource: &'a str, _input: &'a Value) -> crate::host::HostFuture<'a, Result<Value, Reject>> {
+        Box::pin(async { rej("WIRE.ADAPTER_UNSUPPORTED", "이 호스트는 Mongo/Redis 쓰기를 지원하지 않음") })
+    }
 }
 
 /// Run a write extension using an adapter-owned transaction session. The adapter commits only after this returns a
@@ -115,8 +121,27 @@ pub async fn invoke_write_action(
                     .is_some_and(|object| object.keys().any(|key| !["type", "call", "token", "op", "name", "input"].contains(&key.as_str())))
                 {
                     rej("WIRE.UNKNOWN_KEY", "ctx 요청에 알 수 없는 키")
+                } else if message["op"] == "mongo" || message["op"] == "redis" {
+                    let kind = message["op"].as_str().unwrap_or("");
+                    match message["name"].as_str() {
+                        None => rej("WIRE.BAD_VALUE", "external 쓰기의 대상 이름은 문자열이어야 함"),
+                        Some(_) if !allowed.iter().any(|grant| grant.strip_prefix(kind).is_some_and(|rest| rest.starts_with('.'))) => {
+                            rej("WIRE.ACCESS_NOT_DECLARED", format!("확장 계약에 `{kind}` 쓰기 access가 없음"))
+                        }
+                        Some(resource) => {
+                            match tokio::time::timeout(
+                                expires.saturating_duration_since(Instant::now()),
+                                host.external(kind, resource, &message["input"]),
+                            )
+                            .await
+                            {
+                                Ok(result) => result,
+                                Err(_) => break rej("WIRE.DEADLINE_EXCEEDED", "external 쓰기 기한 초과"),
+                            }
+                        }
+                    }
                 } else if message["op"] != "apply" {
-                    rej("WIRE.UNSUPPORTED", "쓰기 action ctx는 apply만")
+                    rej("WIRE.UNSUPPORTED", "쓰기 action ctx는 apply와 mongo·redis 쓰기만")
                 } else if !allowed.contains(message["name"].as_str().unwrap_or("")) {
                     rej("WIRE.ACCESS_NOT_DECLARED", "전이가 action access에 선언되지 않음")
                 } else {

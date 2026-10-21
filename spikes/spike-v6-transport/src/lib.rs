@@ -53,6 +53,8 @@ fn capability_available(operation: &Value, worker_configured: bool, authenticato
 
 struct RelationalWriteActionHost {
     session: Box<dyn RelationalWorkerWrite>,
+    /// The Mongo and Redis writes of this call, with the saga that undoes them when the relational transaction does not commit.
+    effects: spike_v4_worker::external::ExternalEffects,
 }
 
 impl spike_v4_worker::write::WriteActionHost for RelationalWriteActionHost {
@@ -65,6 +67,20 @@ impl spike_v4_worker::write::WriteActionHost for RelationalWriteActionHost {
     ) -> spike_v4_worker::host::HostFuture<'a, Result<Value, Reject>> {
         self.session.apply(transition, request, caller, wire)
     }
+
+    fn external<'a>(
+        &'a mut self,
+        kind: &'a str,
+        resource: &'a str,
+        input: &'a Value,
+    ) -> spike_v4_worker::host::HostFuture<'a, Result<Value, Reject>> {
+        Box::pin(self.effects.call(kind, resource, input))
+    }
+}
+
+/// What the caller is told when external effects could not be undone after a failed write: the effects may still be in place.
+fn compensation_failed(steps: &[String]) -> Value {
+    json!({"ok": false, "code": "WIRE.COMPENSATION_FAILED", "msg": format!("쓰기가 실패했고 외부 효과를 되돌리지 못한 단계가 있음: {}", steps.join(", "))})
 }
 
 async fn run_object_transfer<F>(lifetime: std::time::Duration, transfer: F) -> Result<bool, tokio::time::error::Elapsed>
@@ -1438,7 +1454,29 @@ async fn serve_request(
                 }
                 RelationalWorkerWriteStart::New(session_write) => session_write,
             };
-            let mut host = RelationalWriteActionHost { session: session_write };
+            let grants: std::collections::HashSet<String> = facts["resources"][name.split_once('.').map_or("", |(resource, _)| resource)]
+                ["extensions"][name.split_once('.').map_or("", |(_, extension)| extension)]["access"]
+                .as_object()
+                .into_iter()
+                .flatten()
+                .map(|(grant, _)| grant.clone())
+                .filter(|grant| grant.starts_with("mongo.") || grant.starts_with("redis."))
+                .collect();
+            let actor_uuid =
+                match spike_v4_worker::capability::resolve_actor_uuid(caller.actor_id, session.as_ref().and_then(|s| s.actor_resource_id.as_deref()))
+                {
+                    Ok(actor_uuid) => actor_uuid,
+                    Err(error) => return reply(&mut w, &err(error.code, &error.msg)).await,
+                };
+            let principal = spike_v4_worker::CapabilityPrincipal { actor_id: caller.actor_id, actor_uuid, grants };
+            let effects = spike_v4_worker::external::ExternalEffects::new(
+                runtime.infrastructure.mongo.clone(),
+                runtime.infrastructure.redis.clone(),
+                principal,
+                uuid::Uuid::new_v4().to_string(),
+                name,
+            );
+            let mut host = RelationalWriteActionHost { session: session_write, effects };
             let mut worker = match spike_v4_worker::Worker::try_start_configured(
                 config.lang,
                 config.dir.to_str().unwrap(),
@@ -1457,14 +1495,25 @@ async fn serve_request(
             worker.stop().await;
             let prepared = match output {
                 Ok(Ok(prepared)) => prepared,
-                Ok(Err(error)) => return reply(&mut w, &err(error.code, "공식 WRITE 확장 호출 거부")).await,
-                Err(_) => return reply(&mut w, &err("WIRE.DEADLINE_EXCEEDED", "공식 WRITE 확장 기한 초과")).await,
+                Ok(Err(error)) => {
+                    if let spike_v4_worker::external::RollbackOutcome::Failed { steps } = host.effects.rollback().await {
+                        return reply(&mut w, &compensation_failed(&steps).to_string()).await;
+                    }
+                    return reply(&mut w, &err(error.code, "공식 WRITE 확장 호출 거부")).await;
+                }
+                Err(_) => {
+                    if let spike_v4_worker::external::RollbackOutcome::Failed { steps } = host.effects.rollback().await {
+                        return reply(&mut w, &compensation_failed(&steps).to_string()).await;
+                    }
+                    return reply(&mut w, &err("WIRE.DEADLINE_EXCEEDED", "공식 WRITE 확장 기한 초과")).await;
+                }
             };
             let (resource, extension) = name.split_once('.').unwrap();
             let mut tags = facts["resources"][resource]["extensions"][extension]["access"]
                 .as_object()
                 .into_iter()
                 .flatten()
+                .filter(|(grant, _)| !grant.starts_with("mongo.") && !grant.starts_with("redis."))
                 .flat_map(|(transition, _)| write_tags(&facts, transition))
                 .collect::<Vec<_>>();
             tags.sort();
@@ -1486,11 +1535,25 @@ async fn serve_request(
                 _ => Some(("WIRE.UNAUTHENTICATED", "principal 재검증 실패")),
             };
             if let Some((code, message)) = rejection {
+                if let spike_v4_worker::external::RollbackOutcome::Failed { steps } = host.effects.rollback().await {
+                    return reply(&mut w, &compensation_failed(&steps).to_string()).await;
+                }
                 return reply(&mut w, &err(code, message)).await;
             }
             let mut result = match host.session.commit(result.clone()).await {
-                Ok(committed) => committed,
-                Err(error) => return reply(&mut w, &err(error.code, &error.msg)).await,
+                Ok(committed) => {
+                    host.effects.complete().await;
+                    committed
+                }
+                Err(error) => {
+                    // An unknown commit may have happened, so its effects stay; any other failure rolled the transaction back.
+                    if error.code == "WIRE.COMMIT_UNKNOWN" {
+                        host.effects.mark_unknown().await;
+                    } else if let spike_v4_worker::external::RollbackOutcome::Failed { steps } = host.effects.rollback().await {
+                        return reply(&mut w, &compensation_failed(&steps).to_string()).await;
+                    }
+                    return reply(&mut w, &err(error.code, &error.msg)).await;
+                }
             };
             runtime.infrastructure.data_changes.notify();
             result["contractFingerprint"] = json!(contract_fingerprint.as_deref().unwrap_or(""));

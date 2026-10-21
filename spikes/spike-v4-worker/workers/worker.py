@@ -64,6 +64,11 @@ class Jobs:
     def __init__(self, ctx): self.ctx = ctx
     async def run(self, name, inp, key): return await self.ctx.call("jobs", name, {"input": inp, "key": key})
 
+def _flag(inp, compensate):
+    if compensate:
+        inp["compensate"] = True
+    return inp
+
 class Mongo:
     def __init__(self, ctx): self.ctx = ctx
     async def find(self, collection, filter=None, projection=None, limit=None):
@@ -80,6 +85,19 @@ class Mongo:
     async def count_documents(self, collection, filter=None):
         res = await self.ctx.call("mongo", collection, {"command": "count_documents", "filter": filter or {}})
         return res.get("count", 0) if isinstance(res, dict) else res
+    # Writes (write extensions only, `access mongo.<collection>`). compensate=True keeps a way back: if the relational commit does not
+    # happen the server undoes the write (insert: delete; upsert: delete or restore the old document; delete: insert it back).
+    async def insert_one(self, collection, document, compensate=False):
+        res = await self.ctx.call("mongo", collection, _flag({"command": "insert_one", "document": document}, compensate))
+        return res.get("inserted_id")
+    async def update_one(self, collection, filter, update, upsert=False, compensate=False):
+        return await self.ctx.call("mongo", collection, _flag({"command": "update_one", "filter": filter, "update": update, "upsert": upsert}, compensate))
+    async def find_one_and_update(self, collection, filter, update, upsert=False, compensate=False):
+        res = await self.ctx.call("mongo", collection, _flag({"command": "find_one_and_update", "filter": filter, "update": update, "upsert": upsert}, compensate))
+        return res.get("doc")
+    async def delete_one(self, collection, filter, compensate=False):
+        res = await self.ctx.call("mongo", collection, _flag({"command": "delete_one", "filter": filter}, compensate))
+        return res.get("deleted", 0)
 
 class Redis:
     def __init__(self, ctx): self.ctx = ctx
@@ -94,6 +112,32 @@ class Redis:
         return res.get("exists") if isinstance(res, dict) else False
     async def mget(self, keys):
         return await self.ctx.call("redis", keys[0] if keys else "", {"command": "mget", "keys": keys})
+    async def lrange(self, key, start=0, stop=-1):
+        res = await self.ctx.call("redis", key, {"command": "lrange", "start": start, "stop": stop})
+        return res.get("values", [])
+    async def replace_hash_ex(self, key, fields, ttl_seconds):
+        res = await self.ctx.call("redis", key, {"command": "replace_hash_ex", "fields": fields, "ttl_seconds": ttl_seconds})
+        return res.get("replaced", 0)
+    # Writes (write extensions only, `access redis "<key or prefix:*>"`). Every key lives at most ttl_seconds (1 .. 30 days).
+    async def set_ex(self, key, value, ttl_seconds, compensate=False):
+        await self.ctx.call("redis", key, _flag({"command": "set_ex", "value": value, "ttl_seconds": ttl_seconds}, compensate))
+    async def set_nx_ex(self, key, value, ttl_seconds, compensate=False):
+        res = await self.ctx.call("redis", key, _flag({"command": "set_nx_ex", "value": value, "ttl_seconds": ttl_seconds}, compensate))
+        return res.get("set", False)
+    async def delete(self, key, compensate=False):
+        res = await self.ctx.call("redis", key, _flag({"command": "del"}, compensate))
+        return res.get("deleted", 0)
+    async def getdel(self, key, compensate=False):
+        res = await self.ctx.call("redis", key, _flag({"command": "getdel"}, compensate))
+        return res.get("value")
+    async def incr_expire(self, key, ttl_seconds):
+        res = await self.ctx.call("redis", key, {"command": "incr_expire", "ttl_seconds": ttl_seconds})
+        return res.get("value")
+    async def expire(self, key, ttl_seconds):
+        res = await self.ctx.call("redis", key, {"command": "expire", "ttl_seconds": ttl_seconds})
+        return res.get("applied", False)
+    async def push_trim_expire(self, key, value, max_len, ttl_seconds):
+        await self.ctx.call("redis", key, {"command": "push_trim_expire", "value": value, "max_len": max_len, "ttl_seconds": ttl_seconds})
 
 class Ctx:
     def __init__(self, token, job=None):

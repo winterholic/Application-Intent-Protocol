@@ -33,6 +33,10 @@ name = "mysql_facereview_watch"
 required-features = ["mysql"]
 
 [[test]]
+name = "mysql_external_effects"
+required-features = ["mysql"]
+
+[[test]]
 name = "mysql_facereview_admin"
 required-features = ["mysql"]
 
@@ -131,3 +135,4 @@ futures-util = "0.3.34"
 aip-test-support = { path = "../aip-test-support", features = ["strict-db"] }
 mongodb = { version = "3.9.1", default-features = false, features = ["bson-3", "compat-3-3-0", "rustls-tls", "dns-resolver"] }
 url = "2"
+redis = { version = "1.7.1", default-features = false, features = ["tokio-comp"] }

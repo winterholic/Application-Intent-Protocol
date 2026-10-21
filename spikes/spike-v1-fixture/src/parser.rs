@@ -849,8 +849,13 @@ impl Parser {
                 "output" => x.output = self.params_block()?,
                 "access" => loop {
                     let r = self.ident()?;
-                    self.expect_sym(".")?;
-                    x.access.push((r, self.ident()?));
+                    if r == "redis" && matches!(self.peek(), Tok::Str(_)) {
+                        // `redis "facereview:blacklist:*"`: key names carry `:` and `*`, which no identifier can.
+                        x.access.push((r, self.string()?));
+                    } else {
+                        self.expect_sym(".")?;
+                        x.access.push((r, self.ident()?));
+                    }
                     if !self.eat_sym(",") {
                         break;
                     }

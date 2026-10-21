@@ -12,6 +12,9 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+mod write;
+pub use write::{write_fields, EffectOutcome, SAGA_COLLECTION};
+
 pub type CapabilityFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 /// Identity and exact capability grants derived by the server for this invocation.
@@ -66,11 +69,47 @@ impl CapabilityPrincipal {
 /// Mongo 접근 capability 경계.
 pub trait MongoCapability: Send + Sync {
     fn call<'a>(&'a self, principal: &'a CapabilityPrincipal, collection: &'a str, input: &'a Value) -> CapabilityFuture<'a, Result<Value, Reject>>;
+
+    /// One write command of a write extension (`insert_one`, `update_one`, `find_one_and_update`, `delete_one`). A read-only
+    /// capability refuses every write.
+    fn write<'a>(
+        &'a self,
+        _principal: &'a CapabilityPrincipal,
+        _collection: &'a str,
+        _input: &'a Value,
+    ) -> CapabilityFuture<'a, Result<EffectOutcome, Reject>> {
+        Box::pin(async { Err(reject("WIRE.CAPABILITY_DENIED", "Mongo 쓰기 capability가 설정되지 않음")) })
+    }
+
+    /// Undoes one write from the record `write` returned.
+    fn compensate<'a>(&'a self, _collection: &'a str, _record: &'a Value) -> CapabilityFuture<'a, Result<(), Reject>> {
+        Box::pin(async { Err(reject("WIRE.CAPABILITY_DENIED", "Mongo 쓰기 capability가 설정되지 않음")) })
+    }
+
+    /// Saves the saga log document of an external-write transaction. A capability without a journal accepts and drops it.
+    fn journal<'a>(&'a self, _record: &'a Value) -> CapabilityFuture<'a, Result<(), Reject>> {
+        Box::pin(async { Ok(()) })
+    }
 }
 
 /// Redis 접근 capability 경계.
 pub trait RedisCapability: Send + Sync {
     fn call<'a>(&'a self, principal: &'a CapabilityPrincipal, key: &'a str, input: &'a Value) -> CapabilityFuture<'a, Result<Value, Reject>>;
+
+    /// One write command of a write extension (`set_ex`, `set_nx_ex`, `del`, `getdel`, `incr_expire`, `expire`, `push_trim_expire`).
+    fn write<'a>(
+        &'a self,
+        _principal: &'a CapabilityPrincipal,
+        _key: &'a str,
+        _input: &'a Value,
+    ) -> CapabilityFuture<'a, Result<EffectOutcome, Reject>> {
+        Box::pin(async { Err(reject("WIRE.CAPABILITY_DENIED", "Redis 쓰기 capability가 설정되지 않음")) })
+    }
+
+    /// Undoes one write from the record `write` returned.
+    fn compensate<'a>(&'a self, _key: &'a str, _record: &'a Value) -> CapabilityFuture<'a, Result<(), Reject>> {
+        Box::pin(async { Err(reject("WIRE.CAPABILITY_DENIED", "Redis 쓰기 capability가 설정되지 않음")) })
+    }
 }
 
 /// 화이트리스트로 제한된 관리형 MongoDB capability.
@@ -292,6 +331,7 @@ pub struct MongoDriverCapability {
     database: String,
     allowed_collections: HashSet<String>,
     allowed_fields: HashSet<String>,
+    write_collections: HashSet<String>,
     max_docs: i64,
     max_bytes: usize,
     timeout: Duration,
@@ -325,7 +365,16 @@ impl MongoDriverCapability {
                 .into_iter()
                 .map(str::to_string)
                 .collect();
-        Ok(Self { client, database: database.into(), allowed_collections, allowed_fields, max_docs: 100, max_bytes: 1_048_576, timeout })
+        Ok(Self {
+            client,
+            database: database.into(),
+            allowed_collections,
+            allowed_fields,
+            write_collections: HashSet::new(),
+            max_docs: 100,
+            max_bytes: 1_048_576,
+            timeout,
+        })
     }
 
     fn validate_filter(&self, collection: &str, filter: &Value, principal: &CapabilityPrincipal) -> Result<mongodb::bson::Document, Reject> {
@@ -687,6 +736,23 @@ impl MongoCapability for MongoDriverCapability {
             result
         })
     }
+
+    fn write<'a>(
+        &'a self,
+        principal: &'a CapabilityPrincipal,
+        collection: &'a str,
+        input: &'a Value,
+    ) -> CapabilityFuture<'a, Result<EffectOutcome, Reject>> {
+        Box::pin(self.write_effect(principal, collection, input))
+    }
+
+    fn compensate<'a>(&'a self, collection: &'a str, record: &'a Value) -> CapabilityFuture<'a, Result<(), Reject>> {
+        Box::pin(self.compensate_effect(collection, record))
+    }
+
+    fn journal<'a>(&'a self, record: &'a Value) -> CapabilityFuture<'a, Result<(), Reject>> {
+        Box::pin(self.journal_record(record))
+    }
 }
 
 /// Real Redis read-only capability with a reconnecting bounded single connection manager.
@@ -732,8 +798,9 @@ impl RedisCapability for RedisDriverCapability {
     fn call<'a>(&'a self, principal: &'a CapabilityPrincipal, key: &'a str, input: &'a Value) -> CapabilityFuture<'a, Result<Value, Reject>> {
         Box::pin(async move {
             let command = input.get("command").and_then(Value::as_str).ok_or_else(|| reject("WIRE.BAD_VALUE", "Redis command 누락"))?;
-            if input.as_object().is_none_or(|m| m.keys().any(|k| !["command", "keys"].contains(&k.as_str())))
+            if input.as_object().is_none_or(|m| m.keys().any(|k| !["command", "keys", "start", "stop"].contains(&k.as_str())))
                 || (command != "mget" && input.get("keys").is_some())
+                || (command != "lrange" && (input.get("start").is_some() || input.get("stop").is_some()))
             {
                 return Err(reject("WIRE.BAD_VALUE", "Redis command input field가 허용되지 않음"));
             }
@@ -759,7 +826,7 @@ impl RedisCapability for RedisDriverCapability {
                     return Err(reject("WIRE.CAPABILITY_DENIED", "Redis key namespace가 허용되지 않음"));
                 }
             }
-            if !["get", "hgetall", "exists", "mget"].contains(&command) {
+            if !["get", "hgetall", "exists", "mget", "lrange"].contains(&command) {
                 return Err(reject("WIRE.CAPABILITY_DENIED", "Redis read command가 허용되지 않음"));
             }
             let _permit = tokio::time::timeout(self.timeout, self.in_flight.clone().acquire_owned())
@@ -774,6 +841,26 @@ impl RedisCapability for RedisDriverCapability {
                         let value: Option<String> =
                             redis::cmd("EVAL_RO").arg(script).arg(1).arg(key).query_async(&mut con).await.map_err(redis_failure)?;
                         Ok(json!({"value":value}))
+                    }
+                    "lrange" => {
+                        // Window of at most 1000 elements starting within the first 10000, as the original's metrics list (`lrange 0 -1`).
+                        let start = input.get("start").and_then(Value::as_i64).unwrap_or(0);
+                        let stop = input.get("stop").and_then(Value::as_i64).unwrap_or(-1);
+                        if !(0..=10_000).contains(&start) || !(-1..=10_000).contains(&stop) || (stop >= 0 && stop < start) {
+                            return Err(reject("WIRE.BAD_VALUE", "Redis lrange 범위 오류"));
+                        }
+                        let last = if stop < 0 { start + 999 } else { stop.min(start + 999) };
+                        let script = "local r=redis.call('LRANGE',KEYS[1],ARGV[1],ARGV[2]); local n=0; for _,v in ipairs(r) do n=n+#v; if n>1048576 then return redis.error_reply('AIP_RESULT_LIMIT') end end; return r";
+                        let values: Vec<String> = redis::cmd("EVAL_RO")
+                            .arg(script)
+                            .arg(1)
+                            .arg(key)
+                            .arg(start)
+                            .arg(last)
+                            .query_async(&mut con)
+                            .await
+                            .map_err(redis_failure)?;
+                        Ok(json!({"values": values}))
                     }
                     "exists" => {
                         let value: bool = redis::cmd("EXISTS")
@@ -803,6 +890,19 @@ impl RedisCapability for RedisDriverCapability {
             };
             tokio::time::timeout(self.timeout, future).await.map_err(|_| reject("WIRE.ADAPTER_UNAVAILABLE", "Redis command timeout"))?
         })
+    }
+
+    fn write<'a>(
+        &'a self,
+        principal: &'a CapabilityPrincipal,
+        key: &'a str,
+        input: &'a Value,
+    ) -> CapabilityFuture<'a, Result<EffectOutcome, Reject>> {
+        Box::pin(self.write_effect(principal, key, input))
+    }
+
+    fn compensate<'a>(&'a self, key: &'a str, record: &'a Value) -> CapabilityFuture<'a, Result<(), Reject>> {
+        Box::pin(self.compensate_effect(key, record))
     }
 }
 

@@ -192,6 +192,19 @@ if [[ "$mode" == run-ci ]]; then
   grep -Fxq "$watch_test: test" /tmp/aip-e2e-watch-list-"$tag".txt
   cargo test "${watch_args[@]}" -- --ignored --exact "$watch_test" --nocapture --test-threads=1 2>&1 | tee /tmp/aip-e2e-watch-run-"$tag".txt
   grep -Fq "test result: ok. 1 passed; 0 failed;" /tmp/aip-e2e-watch-run-"$tag".txt
+  # The saga of a write extension (WBS 7.2.5): MongoDB and Redis effects next to the MySQL commit, compensation and unknown commit.
+  # verify.yml exports AIP_TEST_REDIS_URL for the native-stores Redis fixture next to AIP_TEST_MONGO_URL.
+  if [[ -z "${AIP_TEST_REDIS_URL:-}" ]]; then
+    echo "ERROR: run-ci needs AIP_TEST_REDIS_URL for the external effects end-to-end test (see the native fixtures step of verify.yml)" >&2
+    exit 2
+  fi
+  echo "=== Running the external effects end-to-end test (real aip binary, Python extension, MySQL, MongoDB, Redis) ==="
+  effects_args=(--locked -p aip-cli --features mysql --test mysql_external_effects)
+  effects_test="write_extension_effects_commit_or_compensate_with_the_relational_transaction"
+  cargo test "${effects_args[@]}" -- --list --ignored 2>&1 | tee /tmp/aip-e2e-effects-list-"$tag".txt | tail -3
+  grep -Fxq "$effects_test: test" /tmp/aip-e2e-effects-list-"$tag".txt
+  cargo test "${effects_args[@]}" -- --ignored --exact "$effects_test" --nocapture --test-threads=1 2>&1 | tee /tmp/aip-e2e-effects-run-"$tag".txt
+  grep -Fq "test result: ok. 1 passed; 0 failed;" /tmp/aip-e2e-effects-run-"$tag".txt
   # The administrator lists (WBS 7.2.9) compare the real server's reads and totals with the original AdminService's recorded answers.
   echo "=== Running the administrator list end-to-end test (real aip binary, real MySQL) ==="
   admin_args=(--locked -p aip-cli --features mysql --test mysql_facereview_admin)

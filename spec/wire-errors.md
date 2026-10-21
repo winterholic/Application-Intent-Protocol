@@ -138,6 +138,13 @@ JSON 실패 본문은 `requestId`와 이 레지스트리의 `retry`를 싣는다
 - 원인: The connection failed after COMMIT was sent: the change may or may not have been made.
 - 수정: Send the same request again with the same idempotency key (the recorded result is returned), or read the state. Never retry with a new key.
 
+### `WIRE.COMPENSATION_FAILED`
+
+`class` outcome, `retry` check-first
+
+- 원인: A write extension failed (or its commit was refused) after it had written to MongoDB or Redis, and at least one of those external writes could not be undone. The relational transaction is rolled back; the named steps may still be in place and the saga log (`saga_transaction_log`, status `failed`) says which.
+- 수정: Read the saga log of the call, undo the named steps by hand or retry the compensation, then send the request again. Never retry blind: the external effect may already exist.
+
 ### `WIRE.CONFLICT`
 
 `class` outcome, `retry` later

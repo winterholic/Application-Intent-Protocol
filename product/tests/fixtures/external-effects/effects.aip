@@ -1,0 +1,28 @@
+// WBS 7.2.5: a write extension that writes to MongoDB and Redis next to the relational transaction (the original's saga). Synthetic: a
+// FaceReview-shaped `video` table plus the grants of the extension, enough to test commit, rollback, compensation and unknown commit.
+actor User
+
+resource User {
+  fields { id: Uuid; name: Text(1..50) }
+  rows read when id = actor
+}
+
+resource Video {
+  fields { id: Uuid; title: Text(1..100); view_count: Int(0..1000) default database }
+  rows read when true
+  transition view { allow actor != null; from true; to view_count = this.view_count + 1 }
+  expose apply view { target id; bulk maxRows 1 }
+  expose read {
+    select id, title, view_count
+    sort id
+    budget { rows 100; depth 1; cost 1000; deadline 2s }
+  }
+  extension write track {
+    input { video_id: Video.Id; log_id: Text(1..64); scenario: Text(1..20) }
+    output { counted: Bool; frames: Int(0..1000000) }
+    access Video.view, mongo.youtube_watching_data, redis "effects:dedupe:*", redis "effects:counter:requests"
+    effect db
+    deadline 10s
+    implementation "effects.track"
+  }
+}

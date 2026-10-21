@@ -75,6 +75,17 @@ async fn configure_optional_read_adapters(
         )
         .await
         .map_err(|_| error("MONGO_CAPABILITY_UNAVAILABLE", "Mongo 연결/readiness를 확인할 수 없음"))?;
+        let driver = if store.write_collections.is_empty() {
+            driver
+        } else {
+            let collections: Vec<&str> = store.write_collections.iter().map(String::as_str).collect();
+            let driver =
+                driver.enable_writes(&collections).map_err(|_| error("MONGO_CAPABILITY_CONFIG", "Mongo 쓰기 collection 설정이 유효하지 않음"))?;
+            if store.ensure_indexes {
+                driver.ensure_write_indexes().await.map_err(|_| error("MONGO_CAPABILITY_UNAVAILABLE", "Mongo index를 만들 수 없음"))?;
+            }
+            driver
+        };
         infrastructure.mongo = Some(Arc::new(driver));
     }
     if let Some(store) = &workers.redis {

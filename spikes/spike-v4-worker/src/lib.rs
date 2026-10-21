@@ -7,12 +7,14 @@ pub use cgroup::WorkerResourceLimits;
 pub use isolation::{Isolation, WorkerLaunchConfig};
 
 pub mod capability;
+pub mod external;
 pub mod host;
 pub mod outbox;
 pub mod write;
 
 pub use capability::{
-    CapabilityPrincipal, MemoryMongoCapability, MemoryRedisCapability, MongoCapability, MongoDriverCapability, RedisCapability, RedisDriverCapability,
+    CapabilityPrincipal, EffectOutcome, MemoryMongoCapability, MemoryRedisCapability, MongoCapability, MongoDriverCapability, RedisCapability,
+    RedisDriverCapability,
 };
 pub use host::{PgWorkerHost, RelationalWorkerHost, WorkerHost};
 
