@@ -371,6 +371,19 @@ async fn facereview_schema_is_adopted_without_business_ddl_and_read_with_origina
     let paged = read(None, json!({"read": "Video", "select": ["id"], "sort": newest, "limit": 1, "offset": 1})).await;
     assert_eq!(ids(&paged), vec![CAT_VIDEO], "{paged}");
 
+    // Like and comment counts are public per video: Alice cannot read Bob's like row (own rows only) and an admin sees deleted
+    // comments through the Comment policy, yet every caller gets the original's `COUNT(video_like)` and `COUNT(comment, is_deleted=0)`.
+    for who in [None, Some(alice.as_str()), Some(erin.as_str())] {
+        let counts = read(who, json!({"read": "Video", "select": ["id", "likeCount", "commentCount"], "sort": newest})).await;
+        let rows: Vec<(String, i64, i64)> = counts["rows"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{counts}"))
+            .iter()
+            .map(|row| (row["id"].as_str().unwrap().to_string(), row["likeCount"].as_i64().unwrap(), row["commentCount"].as_i64().unwrap()))
+            .collect();
+        assert_eq!(rows, vec![("aaaaaaaa-0000-4000-8000-000000000002".to_string(), 1, 1), (CAT_VIDEO.to_string(), 1, 2)], "caller {who:?}: {counts}");
+    }
+
     // WBS 7.2.3: Single logical OR search (title OR channel_name) as in original HomeService.get_search_videos(keyword_type='all')
     // 1) Title-only match in OR:
     let or_title_only = read(

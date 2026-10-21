@@ -87,10 +87,29 @@ resource Video {
   }
   expose apply remove { target id; bulk maxRows 1 }
   expose read {
-    select id, youtube_url, title, channel_name, category, duration, view_count, created_at
+    select id, youtube_url, title, channel_name, category, duration, view_count, created_at, likeCount, commentCount
     filter id.eq, category.eq, title.like, channel_name.like, youtube_url.eq
     sort created_at, id, view_count
     budget { rows 100; depth 1; cost 1000; deadline 2s; offset 100000 }
+  }
+  // The original counts likes and visible comments for every caller (watch detail, pool scoring); row policies of
+  // VideoLike (own rows only) and Comment (admin sees deleted) do not apply to a public count.
+  aggregate likeCount: Int {
+    source VideoLike
+    sourceAccess activeUserOrGuest(actor)
+    groupKey video
+    callerFilter none
+    rowOutput none
+    release count
+  }
+  aggregate commentCount: Int {
+    source Comment
+    sourceAccess activeUserOrGuest(actor)
+    where is_deleted = false
+    groupKey video
+    callerFilter none
+    rowOutput none
+    release count
   }
   aggregate totalCount: Int {
     source Video
