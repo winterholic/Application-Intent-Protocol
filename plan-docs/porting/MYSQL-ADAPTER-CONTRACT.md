@@ -2,7 +2,11 @@
 
 2026-10-15 조사에서 시작한 구현 작업의 현재 기록이다. 원본 앱이 MySQL에서 실행되는 것과 AIP가 MySQL을 지원하는 것은 다른 판정이다.
 
-**현재 상태(2026-10-20 후속): MySQL 8.4 읽기·쓰기와 relational worker bridge에 이어 `/jobs/*` HTTP·supervisor·관리 데이터 effect journal을 연결했다. HTTP·callback 저장 의미는 실 MySQL에서 확인했으며 실제 Node/Python 비동기 worker E2E는 Verify 39438678105(0aead5f)에서 통과했다. WBS 7.2.1.3은 아직 완료로 닫지 않는다. `workers` 설정을 허용하고 동기 확장 쓰기는 `enable_writes`로 켠다. 2026-10-21부터 `schedules`·`webhooks`·`outbox_handlers`도 같은 job 저장소에 연결했다(아래 "트리거" 절). MariaDB 서비스 읽기·쓰기는 계속 LATERAL·`FOR SHARE OF` 부재로 거부하며, 파일·이벤트·메시지·rate limit·`compose`와 미연결 외부 capability도 명시 거부한다.**
+**현재 상태(2026-10-21): MySQL 8.4 읽기·쓰기, relational worker bridge, `/jobs/*` HTTP·supervisor·관리 데이터 effect journal, 트리거(`schedules`·`webhooks`·`outbox_handlers`), 외부 HTTP capability, 이벤트 스트림(`/events/read`), 메시지 큐(`/messages/*`)와 `message_handlers`, 관리 파일 저장소(`/files/put·get·delete`)가 연결되어 있다. main `a0daf81`의 Linux CI 8종이 success이며 WBS 7.2.1과 하위 7.2.1.3은 done이다. 아래 항목은 연결하지 않았고 후속 WBS에서 추적한다: SSE/WebSocket 이벤트 구독과 `events_days` 보존 정리(7.2.6 실시간·7.2.10), `file_mounts`·`/files/mount-get`·`objects` 객체 저장소(7.2.10 파일/UI 전환), 명시 handler owner 변형과 일부 실DB 경계 시험(각 기능을 쓰는 7.2.x 항목과 7.2.11 게이트에서 대조), MariaDB 서비스 읽기·쓰기(`LATERAL`·`FOR SHARE OF` 부재로 계속 거부하며 MariaDB 11.4에서는 DB 계약 시험만 실행, 7.2.11 미포팅 게이트에서 추적). 인증(7.2.2)은 외부 IdP JWT 검증만 있고 비밀번호 로그인·재발급·로그아웃 발급 경로는 아직 없다.**
+
+이전 요약(2026-10-20, 이력으로 보존):
+
+**(2026-10-20 당시) 현재 상태: MySQL 8.4 읽기·쓰기와 relational worker bridge에 이어 `/jobs/*` HTTP·supervisor·관리 데이터 effect journal을 연결했다. HTTP·callback 저장 의미는 실 MySQL에서 확인했으며 실제 Node/Python 비동기 worker E2E는 Verify 39438678105(0aead5f)에서 통과했다. WBS 7.2.1.3은 아직 완료로 닫지 않는다. `workers` 설정을 허용하고 동기 확장 쓰기는 `enable_writes`로 켠다. 2026-10-21부터 `schedules`·`webhooks`·`outbox_handlers`도 같은 job 저장소에 연결했다(아래 "트리거" 절). MariaDB 서비스 읽기·쓰기는 계속 LATERAL·`FOR SHARE OF` 부재로 거부하며, 파일·이벤트·메시지·rate limit·`compose`와 미연결 외부 capability도 명시 거부한다.**
 
 2026-10-20 [Database contracts 39398093710](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39398093710)의 Linux MySQL 8.4 HTTP 읽기 1건·쓰기 9건 및 MySQL/MariaDB 펜스 시험이 통과했다. 읽기는 DATETIME·TIMESTAMP의 UTC 출력과 Bool·Decimal을, 펜스는 ALTER·DROP·RENAME·TRUNCATE의 실제 잠금 오류 1205 및 rollback 뒤 해제를 포함한다. 같은 실행의 CLI 채택 시험은 옛 `workers` 일괄 거부 단언에서 실패했다. 이 단언을 worker 설정 허용과 `workers.enable_file_uploads` 거부의 양방향 검사로 바꿨다. 전체 workflow 성공이나 실제 격리 Node/Python 실행은 이 부분 결과만으로 주장하지 않는다. 후속 결과는 수정 커밋의 CI 실행 기록을 기준으로 한다.
 
