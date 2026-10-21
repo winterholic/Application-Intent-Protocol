@@ -535,6 +535,20 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
     let claimed_rows = read_users(Some(claimed)).await;
     assert_eq!(claimed_rows["rows"].as_array().map(Vec::len), Some(1), "a role claim does not widen what a GENERAL account reads: {claimed_rows}");
     assert_eq!(claimed_rows["rows"][0]["id"], LEGACY);
+    // A logged-in GENERAL account cannot raise its own role or touch an administrator, and nothing changes in the table.
+    let fresh_token = access(&fresh);
+    for (key, request) in [
+        ("auth-escalate-self", json!({"apply": "User.changeRole", "target": {"ids": [LEGACY]}, "values": {"role": "SUPER_ADMIN"}})),
+        ("auth-escalate-other", json!({"apply": "User.changeRole", "target": {"ids": [CAROL]}, "values": {"role": "GENERAL"}})),
+        ("auth-deactivate-admin", json!({"apply": "User.deactivate", "target": {"ids": [CAROL]}})),
+    ] {
+        let attempt = post(&address, "/apply", Some(&fresh_token), &fingerprint, &json!({"key": key, "request": request})).await;
+        assert_ne!(attempt["ok"], true, "{key}: {attempt}");
+    }
+    let roles: Vec<(String, String)> =
+        setup.exec("SELECT user_id, role FROM user WHERE user_id IN (?, ?) ORDER BY user_id", (LEGACY, CAROL)).await.unwrap();
+    assert_eq!(roles, [(CAROL.to_owned(), "SUPER_ADMIN".to_owned()), (LEGACY.to_owned(), "GENERAL".to_owned())]);
+    assert_eq!(cell(&mut setup, &format!("SELECT is_deleted FROM user WHERE user_id = '{CAROL}'")).await.as_deref(), Some("0"));
     let tampered = format!("{}x", access(&carol_login));
     assert_eq!(post(&address, "/session", Some(&tampered), "", &json!({})).await["code"], "WIRE.UNAUTHENTICATED");
 
