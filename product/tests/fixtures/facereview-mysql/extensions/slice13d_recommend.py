@@ -9,10 +9,11 @@
 # through ctx.call("mongo", ...) with exact grants.
 #
 # Deliberate differences from the original (see extensions/README.md):
-#  - No Redis pool cache. The original warms `facereview:reco:pool` from a Celery beat job and falls back to building the pool in the
-#    request. A read extension cannot write a cache, so every request builds the pool from the RDB and Mongo (what the original does
-#    on a cache miss). The cache is only a latency device: the pool is a pure function of the data.
-#  - The pool is built from at most MAX_POOL_VIDEOS active videos and fails loudly beyond that instead of truncating.
+#  - The pool cache is read, never written here (WBS 7.2.7). The original warms facereview:reco:pool and facereview:reco:category from a
+#    Celery beat job and builds the pool in the request when the cache is cold; a read extension cannot write a cache, so the job
+#    slice14a_pool.rebuildRecommendationPool does and a request builds the pool itself only on a cold, expired or unreachable cache.
+#  - A request that builds the pool itself reads at most MAX_POOL_VIDEOS active videos and fails loudly beyond that instead of truncating
+#    (its 64 ctx calls end the read at about 3000 videos: one RDB page and one Mongo chunk per 100). The job reads up to 15000.
 #  - Randomness is the original's: the exploration sample of the personalized list, the fallback sample and the padding of thin
 #    categories are drawn with the `random` module and are not reproducible.
 #  - Where the original relies on an unspecified database order (all active videos, Mongo natural order) this module orders by
@@ -55,7 +56,7 @@ async def _active_videos(ctx):
     # Video.query.filter_by(is_deleted=0).all(): the row policy is exactly that predicate (and refuses an inactive caller).
     rows = await _lists._read_all(ctx, {
         "read": "Video", "select": ["id", "youtube_url", "title", "category", "view_count", "created_at", "likeCount"], "sort": BY_ID,
-    }, cap=MAX_POOL_VIDEOS)
+    }, cap=MAX_POOL_VIDEOS, cursor=True)
     videos = [{"video_id": row["id"], "youtube_url": row["youtube_url"], "title": row["title"], "category": row["category"],
                "view_count": row["view_count"], "created_at": row["created_at"], "is_deleted": 0} for row in rows]
     return videos, {row["id"]: row["likeCount"] for row in rows}
@@ -76,6 +77,36 @@ async def _ranked_pool(ctx):
     return _pool.build_ranked_pool(videos, docs, like_map, list(GENRES))
 
 
+# The offline job (slice14a_pool.rebuildRecommendationPool, WBS 7.2.7) writes what the original's Celery beat task writes. A request
+# reads it first and builds the pool itself only when the cache is empty, expired or Redis does not answer, which is what the original's
+# _get_ranked_pool and _get_category_videos_from_cache do. The category hash loses its field order in the host, so the job also stores
+# the order the original's hset calls had (the original's reader serves the hash in that order).
+POOL_KEY = "facereview:reco:pool"
+CATEGORY_KEY = "facereview:reco:category"
+CATEGORY_ORDER_KEY = "facereview:reco:category_order"
+
+
+async def _cached_pool(ctx):
+    try:
+        raw = await ctx.redis.get(POOL_KEY)
+    except Exception:
+        return None
+    return json.loads(raw) if raw else None
+
+
+async def _cached_categories(ctx):
+    try:
+        fields = await ctx.redis.hgetall(CATEGORY_KEY)
+        order = await ctx.redis.get(CATEGORY_ORDER_KEY)
+    except Exception:
+        return None
+    if not fields:
+        return None
+    names = json.loads(order) if order else []
+    ordered = [name for name in names if name in fields] + sorted(name for name in fields if name not in names)
+    return {name: json.loads(fields[name]) for name in ordered}
+
+
 def _dto(entry, bookmarked):
     return {"video_id": entry["video_id"], "youtube_url": entry["youtube_url"], "title": entry["title"],
             "dominant_emotion": entry.get("dominant_emotion"), "dominant_emotion_per": entry.get("dominant_emotion_per", 0.0),
@@ -83,7 +114,9 @@ def _dto(entry, bookmarked):
 
 
 async def homeCategory(input, ctx):
-    _, by_category = await _ranked_pool(ctx)
+    by_category = await _cached_categories(ctx)
+    if by_category is None:
+        _, by_category = await _ranked_pool(ctx)
     ids = [entry["video_id"] for entries in by_category.values() for entry in entries]
     marked = await _lists._bookmarked_ids(ctx, ids) if ids else set()
     categories = [{"category_name": name, "videos": [_dto(entry, entry["video_id"] in marked) for entry in entries]}
@@ -122,7 +155,9 @@ async def _recent_watching(ctx, pool):
 async def homePersonalized(input, ctx):
     favorites = await _favorite_genres(ctx)
     viewed = await _viewed_video_ids(ctx)
-    pool, _ = await _ranked_pool(ctx)
+    pool = await _cached_pool(ctx)
+    if pool is None:
+        pool, _ = await _ranked_pool(ctx)
     recent = await _recent_watching(ctx, pool)
     picked = _math.rank_personalized(pool=pool, recent_watching=recent, favorite_genres=favorites, viewed_ids=viewed,
                                      limit=PERSONAL_LIMIT, top_n=150, random_n=50)

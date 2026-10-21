@@ -205,6 +205,14 @@ if [[ "$mode" == run-ci ]]; then
   grep -Fxq "$effects_test: test" /tmp/aip-e2e-effects-list-"$tag".txt
   cargo test "${effects_args[@]}" -- --ignored --exact "$effects_test" --nocapture --test-threads=1 2>&1 | tee /tmp/aip-e2e-effects-run-"$tag".txt
   grep -Fq "test result: ok. 1 passed; 0 failed;" /tmp/aip-e2e-effects-run-"$tag".txt
+  # The scheduled recommendation pool refresh (WBS 7.2.7): a durable job writes the Redis cache the recommendation lists read.
+  echo "=== Running the recommendation pool job end-to-end test (real aip binary, Python extension, MySQL, MongoDB, Redis, schedule) ==="
+  pool_args=(--locked -p aip-cli --features mysql --test mysql_facereview_pool_job)
+  pool_test="the_scheduled_pool_job_fills_the_cache_the_recommendation_lists_read"
+  cargo test "${pool_args[@]}" -- --list --ignored 2>&1 | tee /tmp/aip-e2e-pool-list-"$tag".txt | tail -3
+  grep -Fxq "$pool_test: test" /tmp/aip-e2e-pool-list-"$tag".txt
+  cargo test "${pool_args[@]}" -- --ignored --exact "$pool_test" --nocapture --test-threads=1 2>&1 | tee /tmp/aip-e2e-pool-run-"$tag".txt
+  grep -Fq "test result: ok. 1 passed; 0 failed;" /tmp/aip-e2e-pool-run-"$tag".txt
   # The administrator lists (WBS 7.2.9) compare the real server's reads and totals with the original AdminService's recorded answers.
   echo "=== Running the administrator list end-to-end test (real aip binary, real MySQL) ==="
   admin_args=(--locked -p aip-cli --features mysql --test mysql_facereview_admin)

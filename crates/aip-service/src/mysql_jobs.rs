@@ -36,10 +36,15 @@ pub(crate) struct MysqlJobs {
     messaging: Messaging,
     /// Clients may put files through `/files/put`; jobs may always put and get the buckets they declare.
     file_uploads: bool,
+    /// MongoDB and Redis capabilities a job may use through mongo.<collection> and redis "<key>"; writes are journaled per effect.
+    mongo: Option<Arc<dyn spike_v4_worker::MongoCapability>>,
+    redis: Option<Arc<dyn spike_v4_worker::RedisCapability>>,
     launch: spike_v4_worker::WorkerLaunchConfig,
     policies: std::collections::HashMap<String, spike_v6_transport::triggers::JobPolicy>,
     triggers: Arc<spike_v6_transport::triggers::Triggers>,
     concurrency: usize,
+    /// ctx calls one job run may make, across its nested jobs.
+    job_calls: usize,
 }
 
 /// What a server trigger adds to a job submission.
@@ -145,6 +150,8 @@ impl MysqlJobs {
     ) -> std::result::Result<Self, Value> {
         let workers = workers.validate_with_writes(&facts, wire).map_err(|_| error("JOB_CONFIG", "job worker 구현 파일을 확인해야 함"))?;
         // Storage-backed capabilities are opened only as their MySQL adapters are connected. Refuse the contract up front.
+        // A Mongo or Redis grant is not checked here: like the grants of a read extension it fails per call with WIRE.NOT_EXPOSED while
+        // workers.mongo or workers.redis is not configured, so one definition still serves a deployment without those stores.
         for (_, op) in facts["operations"].as_object().into_iter().flatten().filter(|(_, op)| op["kind"] == "job") {
             for (capability, _) in op["access"].as_object().into_iter().flatten() {
                 if let Some(name) = capability.strip_prefix("http.") {
@@ -154,7 +161,10 @@ impl MysqlJobs {
                             &format!("job이 선언한 HTTP 연동 `{name}`이 workers.integrations 또는 outbound_webhooks에 없음"),
                         ));
                     }
-                } else if !["read.", "apply.", "jobs.", "events.", "messages.", "files."].iter().any(|prefix| capability.starts_with(prefix)) {
+                } else if !["read.", "apply.", "jobs.", "events.", "messages.", "files.", "mongo.", "redis."]
+                    .iter()
+                    .any(|prefix| capability.starts_with(prefix))
+                {
                     return Err(error("DB_ADAPTER_UNSUPPORTED", &format!("MySQL job capability 미지원: {capability}")));
                 }
             }
@@ -175,10 +185,13 @@ impl MysqlJobs {
                 client_consume: infrastructure.client_consume,
             },
             file_uploads: false,
+            mongo: infrastructure.mongo.clone(),
+            redis: infrastructure.redis.clone(),
             launch: infrastructure.worker_launch.clone(),
             policies: infrastructure.job_policies.clone(),
             triggers: infrastructure.triggers.clone(),
             concurrency: infrastructure.resource_limits.jobs,
+            job_calls: infrastructure.resource_limits.job_calls,
         })
     }
 
@@ -1258,17 +1271,48 @@ impl spike_v4_worker::JobHost for JobHost {
     fn job(&self) -> Value {
         json!({"id":self.lease.run_id.to_string(),"attempt":self.lease.attempt})
     }
+    fn call_limit(&self) -> usize {
+        self.runtime.job_calls
+    }
 }
 
 fn replay_error(code: &str) -> &'static str {
     spike_v6_transport::relational_jobs::data_error(code)
 }
 impl JobHost {
+    /// The identity and exact Mongo and Redis grants the job declared; the capability checks them again on every call.
+    fn external_principal(&self, caller: &Caller) -> spike_v4_worker::CapabilityPrincipal {
+        spike_v4_worker::CapabilityPrincipal {
+            actor_id: caller.actor_id,
+            actor_uuid: None,
+            grants: self.capabilities.iter().filter(|grant| grant.starts_with("mongo.") || grant.starts_with("redis.")).cloned().collect(),
+        }
+    }
+
+    async fn external_call(
+        &self,
+        op: &str,
+        name: &str,
+        principal: &spike_v4_worker::CapabilityPrincipal,
+        input: &Value,
+        write: bool,
+    ) -> Result<Value> {
+        let rt = &self.runtime;
+        // The capability bounds every call with its configured timeout; the job's own deadline still ends the invocation.
+        let result = match (op, write) {
+            ("mongo", false) => rt.mongo.as_ref().ok_or("WIRE.NOT_EXPOSED")?.call(principal, name, input).await,
+            ("redis", false) => rt.redis.as_ref().ok_or("WIRE.NOT_EXPOSED")?.call(principal, name, input).await,
+            ("mongo", true) => rt.mongo.as_ref().ok_or("WIRE.NOT_EXPOSED")?.write(principal, name, input).await.map(|outcome| outcome.value),
+            _ => rt.redis.as_ref().ok_or("WIRE.NOT_EXPOSED")?.write(principal, name, input).await.map(|outcome| outcome.value),
+        };
+        result.map_err(|error| error.code)
+    }
+
     async fn dispatch(&mut self, op: &str, name: &str, input: &Value) -> Result<Value> {
-        if self.depth > 8 || self.budget.fetch_add(1, Ordering::Relaxed) >= 64 {
+        if self.depth > 8 || self.budget.fetch_add(1, Ordering::Relaxed) >= self.runtime.job_calls {
             return Err("WIRE.COST_EXCEEDED");
         }
-        if !self.capabilities.contains(&spike_v4_worker::job_capability(op, name)) {
+        if !spike_v4_worker::job_capability_granted(self.capabilities.iter().map(String::as_str), op, name) {
             return Err("WIRE.ACCESS_NOT_DECLARED");
         }
         let rt = &self.runtime;
@@ -1305,6 +1349,17 @@ impl JobHost {
             MysqlJobs::commit(fenced).await?;
             return Ok(json!({"file":file_json(&file),"base64":base64::engine::general_purpose::STANDARD.encode(&file.bytes)}));
         }
+        let external = matches!(op, "redis" | "mongo");
+        if external && !spike_v4_worker::is_external_write(op, input) {
+            // A read has no effect journal: the capability checks the grant and its own namespace on every call.
+            let principal = self.external_principal(&caller);
+            MysqlJobs::commit(fenced).await?;
+            return self.external_call(op, name, &principal, input, false).await;
+        }
+        if external && input.get("compensate").is_some_and(|flag| flag != &Value::Bool(false)) {
+            // A job has no saga: a retry converges on the journaled result, so there is nothing to undo.
+            return Err("WIRE.BAD_VALUE");
+        }
         let key = text(input, "key")?;
         if !valid_key(key) {
             return Err("WIRE.BAD_VALUE");
@@ -1337,7 +1392,9 @@ impl JobHost {
             }
             // A nested job reruns its steps, and a webhook subscriber dedupes on webhook-id, so a delivery whose outcome was lost
             // is sent again. Any other call whose outcome is unknown may have happened and is never repeated.
-            let resendable = op == "jobs" || op == "http" && rt.broker.as_ref().is_some_and(|broker| broker.is_webhook(name));
+            let resendable = op == "jobs"
+                || op == "http" && rt.broker.as_ref().is_some_and(|broker| broker.is_webhook(name))
+                || spike_v4_worker::external_write_is_repeatable(op, input);
             if !resendable {
                 return Err("WIRE.EFFECT_UNKNOWN");
             }
@@ -1428,6 +1485,52 @@ impl JobHost {
             .map_err(db)?;
             MysqlJobs::commit(fenced).await?;
             return Ok(output);
+        }
+        if external {
+            let principal = self.external_principal(&caller);
+            let mut command = input.clone();
+            if let Some(object) = command.as_object_mut() {
+                object.remove("key");
+                object.remove("compensate");
+            }
+            // The intent commits before the write leaves, so a crash after sending leaves a PENDING row instead of a silent repeat.
+            MysqlJobs::commit(fenced).await?;
+            // Err(Some(code)) is a write the capability certainly refused; Err(None) may have happened.
+            let response = match self.external_call(op, name, &principal, &command, true).await {
+                Ok(value) => Ok(value),
+                // Sending the same write again leaves the same data, so the extension may catch this and retry under the same key.
+                Err("WIRE.ADAPTER_UNAVAILABLE") if !spike_v4_worker::external_write_is_repeatable(op, &command) => Err(None),
+                Err(code) => Err(Some(code)),
+            };
+            let mut fenced = rt.begin(&self.grant).await?;
+            let tx = fenced.as_mut().map_err(db)?;
+            rt.locked_lease(tx, &self.lease).await?;
+            let table = rt.table("aip_effects");
+            let run = self.lease.run_id.to_string();
+            return match response {
+                Ok(result) => {
+                    tx.exec_drop(
+                        format!("UPDATE {table} SET state='SUCCEEDED',result=CAST(? AS JSON) WHERE run_id=? AND effect_key=?"),
+                        (result.to_string(), &run, &effect),
+                    )
+                    .await
+                    .map_err(db)?;
+                    MysqlJobs::commit(fenced).await?;
+                    Ok(result)
+                }
+                Err(Some(code)) => {
+                    tx.exec_drop(format!("DELETE FROM {table} WHERE run_id=? AND effect_key=? AND state='PENDING'"), (&run, &effect))
+                        .await
+                        .map_err(db)?;
+                    MysqlJobs::commit(fenced).await?;
+                    Err(code)
+                }
+                Err(None) => {
+                    tx.exec_drop(format!("UPDATE {table} SET state='UNKNOWN' WHERE run_id=? AND effect_key=?"), (&run, &effect)).await.map_err(db)?;
+                    MysqlJobs::commit(fenced).await?;
+                    Err("WIRE.EFFECT_UNKNOWN")
+                }
+            };
         }
         if op == "http" {
             let broker = rt.broker.clone().ok_or("WIRE.NOT_EXPOSED")?;
@@ -2260,6 +2363,298 @@ operation job notifyJob {
 
         drop(conn);
         setup.query_drop("DROP USER 'aip_t_ext_rt'@'%'").await.unwrap();
+        for schema in [meta, source] {
+            setup.query_drop(format!("DROP DATABASE `{schema}`")).await.unwrap();
+        }
+    }
+
+    const STORE_META: &str = "aip_t_job_store";
+    const STORE_SOURCE: &str = "aip_t_job_store_src";
+    const STORE_DEFINITION: &str = r#"
+resource Member { fields { id: Id } }
+actor Member
+resource Video {
+ fields { id: Id; owner: Member; views: Int(0..100) default database }
+ rows read when true
+ expose read { select id, views; sort id; budget { rows 20; depth 1; deadline 1s; cost 100 } }
+}
+operation job cacheJob {
+ input { id: Video.Id }
+ output { count: Int }
+ allow actor != null
+ access redis "ext:cache:*", mongo.docs
+ effect managed
+ deadline 5s
+ implementation "worker.jobView"
+}
+"#;
+
+    /// A Redis and Mongo capability that records what reached it and can be told to be unreachable.
+    #[derive(Default)]
+    struct FakeStore {
+        reads: std::sync::Mutex<Vec<(String, Value)>>,
+        writes: std::sync::Mutex<Vec<(String, Value)>>,
+        down: std::sync::atomic::AtomicBool,
+    }
+    impl FakeStore {
+        fn write(&self, resource: &str, input: &Value) -> std::result::Result<spike_v4_worker::EffectOutcome, Reject> {
+            if input["value"] == "refuse" {
+                return Err(Reject { code: "WIRE.BAD_VALUE", msg: "refused".into() });
+            }
+            self.writes.lock().unwrap().push((resource.to_string(), input.clone()));
+            if self.down.load(Ordering::SeqCst) {
+                return Err(Reject { code: "WIRE.ADAPTER_UNAVAILABLE", msg: "down".into() });
+            }
+            Ok(spike_v4_worker::EffectOutcome { value: json!({"ok":true,"resource":resource}), compensation: None })
+        }
+    }
+    impl spike_v4_worker::RedisCapability for FakeStore {
+        fn call<'a>(
+            &'a self,
+            _: &'a spike_v4_worker::CapabilityPrincipal,
+            key: &'a str,
+            input: &'a Value,
+        ) -> spike_v4_worker::capability::CapabilityFuture<'a, std::result::Result<Value, Reject>> {
+            self.reads.lock().unwrap().push((key.to_string(), input.clone()));
+            Box::pin(async { Ok(json!({"value":"cached"})) })
+        }
+        fn write<'a>(
+            &'a self,
+            _: &'a spike_v4_worker::CapabilityPrincipal,
+            key: &'a str,
+            input: &'a Value,
+        ) -> spike_v4_worker::capability::CapabilityFuture<'a, std::result::Result<spike_v4_worker::EffectOutcome, Reject>> {
+            let result = self.write(key, input);
+            Box::pin(async { result })
+        }
+    }
+    impl spike_v4_worker::MongoCapability for FakeStore {
+        fn call<'a>(
+            &'a self,
+            _: &'a spike_v4_worker::CapabilityPrincipal,
+            collection: &'a str,
+            input: &'a Value,
+        ) -> spike_v4_worker::capability::CapabilityFuture<'a, std::result::Result<Value, Reject>> {
+            self.reads.lock().unwrap().push((collection.to_string(), input.clone()));
+            Box::pin(async { Ok(json!({"docs":[]})) })
+        }
+        fn write<'a>(
+            &'a self,
+            _: &'a spike_v4_worker::CapabilityPrincipal,
+            collection: &'a str,
+            input: &'a Value,
+        ) -> spike_v4_worker::capability::CapabilityFuture<'a, std::result::Result<spike_v4_worker::EffectOutcome, Reject>> {
+            let result = self.write(collection, input);
+            Box::pin(async { result })
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[ignore = "requires a run-owned MySQL 8.4 fixture; Redis and Mongo writes through the job host with recording stand-ins, no worker subprocess"]
+    async fn mysql_external_writes_are_journaled_and_only_repeatable_unknowns_are_sent_again() {
+        let (meta, source) = (STORE_META, STORE_SOURCE);
+        let url = std::env::var("AIP_TEST_MYSQL_URL").unwrap();
+        aip_test_support::validate_mysql_admin_url(&url).unwrap();
+        let admin = MysqlDriver::connect(&url).await.unwrap();
+        let mut setup = admin.pool().get_conn().await.unwrap();
+        for schema in [meta, source] {
+            setup.query_drop(format!("DROP DATABASE IF EXISTS `{schema}`")).await.unwrap();
+        }
+        setup.query_drop(format!("CREATE DATABASE `{source}`")).await.unwrap();
+        setup.query_drop(format!("CREATE TABLE `{source}`.member(id BIGINT PRIMARY KEY) ENGINE=InnoDB")).await.unwrap();
+        setup.query_drop(format!("CREATE TABLE `{source}`.video(id BIGINT PRIMARY KEY,owner_id BIGINT NOT NULL,views BIGINT NOT NULL DEFAULT 0,FOREIGN KEY(owner_id) REFERENCES `{source}`.member(id)) ENGINE=InnoDB")).await.unwrap();
+        setup.query_drop(format!("INSERT INTO `{source}`.member VALUES(1)")).await.unwrap();
+        let facts = spike_v1_fixture::load_str(STORE_DEFINITION, spike_v1_fixture::Form::A).unwrap().execution;
+        sqlgen::try_set_schema(meta).unwrap();
+        let digest = spike_v1_fixture::digest(&facts);
+        let fingerprint = admin.ensure_meta_schema_bootstrap(meta, source, &digest).await.unwrap();
+        setup.query_drop(format!("CREATE VIEW `{meta}`.member AS SELECT * FROM `{source}`.member")).await.unwrap();
+        setup.query_drop(format!("CREATE VIEW `{meta}`.video AS SELECT * FROM `{source}`.video")).await.unwrap();
+        setup
+            .query_drop(format!("INSERT INTO `{meta}`.aip_principals(issuer,subject,actor_id) VALUES('https://test.example','user-1',1)"))
+            .await
+            .unwrap();
+        setup.query_drop("DROP USER IF EXISTS 'aip_t_sto_rt'@'%'").await.unwrap();
+        setup.query_drop("CREATE USER 'aip_t_sto_rt'@'%' IDENTIFIED BY 'sto_test_only'").await.unwrap();
+        for schema in [source, meta] {
+            setup
+                .query_drop(format!("GRANT SELECT,INSERT,UPDATE,DELETE,CREATE TEMPORARY TABLES ON `{schema}`.* TO 'aip_t_sto_rt'@'%'"))
+                .await
+                .unwrap();
+        }
+        let endpoint = url.split_once('@').unwrap().1.split('/').next().unwrap();
+        let driver = MysqlDriver::from_url(&format!("mysql://aip_t_sto_rt:sto_test_only@{endpoint}/{source}")).unwrap();
+        let fence = MysqlDeploymentFence::from_fingerprint(meta, source, &digest, &fingerprint).unwrap();
+        let backend = Arc::new(MysqlBackend::new(driver.clone(), fence.clone()));
+        let dir = Dir(std::env::temp_dir().join(format!("aip-jobs-store-unit-{}", std::process::id())));
+        std::fs::create_dir_all(&dir.0).unwrap();
+        std::fs::write(dir.0.join("worker.py"), "async def jobView(input, ctx):\n return {'count': 1}\n").unwrap();
+        let workers = ReadExtensions { lang: spike_v6_transport::server::WorkerLang::Python, dir: dir.0.clone() };
+
+        let store = Arc::new(FakeStore::default());
+        let mut infra = spike_v6_transport::infrastructure::Infrastructure::default();
+        // Without a configured store the grants still load; a call is refused as not exposed.
+        let bare = Arc::new(
+            MysqlJobs::new(
+                driver.clone(),
+                fence.clone(),
+                meta.into(),
+                digest.clone(),
+                Arc::new(facts.clone()),
+                IdWire::DecimalString,
+                backend.clone(),
+                workers.clone(),
+                None,
+                &infra,
+            )
+            .unwrap(),
+        );
+        infra.redis = Some(store.clone());
+        infra.mongo = Some(store.clone());
+        let runtime = Arc::new(
+            MysqlJobs::new(
+                driver.clone(),
+                fence,
+                meta.into(),
+                digest,
+                Arc::new(facts.clone()),
+                IdWire::DecimalString,
+                backend,
+                workers,
+                None,
+                &infra,
+            )
+            .unwrap(),
+        );
+        runtime.check_storage().await.unwrap();
+
+        let accepted =
+            runtime.handle("/jobs/enqueue", &json!({"operation":"cacheJob","input":{"id":"10"},"key":"store job","delayMs":0}), &grant(1)).await;
+        assert_eq!(accepted["ok"], true, "{accepted}");
+        let jobs = runtime.store().unwrap();
+        let mut conn = driver.pool().get_conn().await.unwrap();
+        let lease = jobs.claim(&mut conn, "test-dispatcher").await.unwrap().unwrap();
+        let mut host = JobHost {
+            runtime: runtime.clone(),
+            lease: lease.clone(),
+            grant: grant(1),
+            prefix: String::new(),
+            depth: 0,
+            budget: Arc::new(AtomicUsize::new(0)),
+            capabilities: vec!["redis.ext:cache:*".into(), "mongo.docs".into()],
+        };
+        let mut bare_host = JobHost {
+            runtime: bare,
+            lease: lease.clone(),
+            grant: grant(1),
+            prefix: String::new(),
+            depth: 0,
+            budget: Arc::new(AtomicUsize::new(0)),
+            capabilities: vec!["redis.ext:cache:*".into(), "mongo.docs".into()],
+        };
+        assert_eq!(bare_host.dispatch("redis", "ext:cache:pool", &json!({"command":"get"})).await.unwrap_err(), "WIRE.NOT_EXPOSED");
+        assert_eq!(
+            bare_host.dispatch("mongo", "docs", &json!({"key":"k","command":"delete_one","filter":{}})).await.unwrap_err(),
+            "WIRE.NOT_EXPOSED"
+        );
+        let count = |state: &'static str| {
+            let driver = driver.clone();
+            async move {
+                driver
+                    .pool()
+                    .get_conn()
+                    .await
+                    .unwrap()
+                    .query_first::<i64, _>(format!("SELECT COUNT(*) FROM `{meta}`.`aip_effects` WHERE state='{state}'"))
+                    .await
+                    .unwrap()
+                    .unwrap()
+            }
+        };
+        let written = || store.writes.lock().unwrap().len();
+
+        // A write is journaled with its answer and replayed, never sent twice. The journal key is not part of the command.
+        let set = json!({"key":"pool","command":"set_ex","value":"[1]","ttl_seconds":60});
+        let first = host.dispatch("redis", "ext:cache:pool", &set).await.unwrap();
+        assert_eq!(first["ok"], true, "{first}");
+        assert_eq!(store.writes.lock().unwrap()[0].1, json!({"command":"set_ex","value":"[1]","ttl_seconds":60}));
+        assert_eq!(host.dispatch("redis", "ext:cache:pool", &set).await.unwrap(), first, "the same effect replays its recorded answer");
+        assert_eq!(written(), 1, "a replay must not reach the store again");
+        assert_eq!(
+            host.dispatch("redis", "ext:cache:pool", &json!({"key":"pool","command":"set_ex","value":"[2]","ttl_seconds":60})).await.unwrap_err(),
+            "WIRE.IDEMPOTENCY_MISMATCH"
+        );
+        assert_eq!(count("SUCCEEDED").await, 1);
+
+        // Declared grants only, a stable key for every write, and no saga in a job.
+        assert_eq!(host.dispatch("redis", "other:pool", &set).await.unwrap_err(), "WIRE.ACCESS_NOT_DECLARED");
+        assert_eq!(host.dispatch("mongo", "videos", &json!({"command":"find_one"})).await.unwrap_err(), "WIRE.ACCESS_NOT_DECLARED");
+        assert_eq!(
+            host.dispatch("redis", "ext:cache:pool", &json!({"command":"set_ex","value":"x","ttl_seconds":60})).await.unwrap_err(),
+            "WIRE.BAD_REQUEST"
+        );
+        let saga = json!({"key":"saga","command":"set_ex","value":"x","ttl_seconds":60,"compensate":true});
+        assert_eq!(host.dispatch("redis", "ext:cache:pool", &saga).await.unwrap_err(), "WIRE.BAD_VALUE");
+        assert_eq!(written(), 1, "a refused call never reaches the store");
+
+        // A read needs no key and leaves no journal row.
+        let read = host.dispatch("redis", "ext:cache:pool", &json!({"command":"get"})).await.unwrap();
+        assert_eq!(read["value"], "cached");
+        assert_eq!(host.dispatch("mongo", "docs", &json!({"command":"find","filter":{}})).await.unwrap(), json!({"docs":[]}));
+        assert_eq!(count("SUCCEEDED").await, 1);
+
+        // The store refused the command: it certainly did not happen, so the intent is dropped and the key may be used again.
+        let refused = json!({"key":"refused","command":"set_ex","value":"refuse","ttl_seconds":60});
+        assert_eq!(host.dispatch("redis", "ext:cache:pool", &refused).await.unwrap_err(), "WIRE.BAD_VALUE");
+        assert_eq!(count("PENDING").await, 0, "a certain refusal leaves no intent behind");
+
+        // Unreachable: a write whose repeat leaves the same data fails retryably and may be sent again under the same key.
+        store.down.store(true, Ordering::SeqCst);
+        let repeatable = json!({"key":"again","command":"set_ex","value":"[3]","ttl_seconds":60});
+        assert_eq!(host.dispatch("redis", "ext:cache:pool", &repeatable).await.unwrap_err(), "WIRE.ADAPTER_UNAVAILABLE");
+        assert_eq!(count("PENDING").await, 0);
+        let upsert = json!({"key":"doc","command":"update_one","filter":{"video_id":"1"},"update":{"$setOnInsert":{"video_id":"1"}},"upsert":true});
+        assert_eq!(host.dispatch("mongo", "docs", &upsert).await.unwrap_err(), "WIRE.ADAPTER_UNAVAILABLE");
+        let before = written();
+        store.down.store(false, Ordering::SeqCst);
+        assert_eq!(host.dispatch("redis", "ext:cache:pool", &repeatable).await.unwrap()["ok"], true);
+        assert_eq!(host.dispatch("mongo", "docs", &upsert).await.unwrap()["ok"], true);
+        assert_eq!(written(), before + 2);
+
+        // Unreachable: a counter or an insert may or may not have happened. That is recorded and never sent a second time.
+        store.down.store(true, Ordering::SeqCst);
+        let counter = json!({"key":"hits","command":"incr_expire","ttl_seconds":60});
+        assert_eq!(host.dispatch("redis", "ext:cache:hits", &counter).await.unwrap_err(), "WIRE.EFFECT_UNKNOWN");
+        let increment = json!({"key":"inc","command":"update_one","filter":{"video_id":"1"},"update":{"$inc":{"n":1}},"upsert":false});
+        assert_eq!(host.dispatch("mongo", "docs", &increment).await.unwrap_err(), "WIRE.EFFECT_UNKNOWN");
+        assert_eq!(count("UNKNOWN").await, 2);
+        let before = written();
+        store.down.store(false, Ordering::SeqCst);
+        assert_eq!(
+            host.dispatch("redis", "ext:cache:hits", &counter).await.unwrap_err(),
+            "WIRE.EFFECT_UNKNOWN",
+            "an unknown write is never repeated"
+        );
+        assert_eq!(host.dispatch("mongo", "docs", &increment).await.unwrap_err(), "WIRE.EFFECT_UNKNOWN");
+        assert_eq!(written(), before, "the unknown writes must not be sent again");
+
+        // One run makes at most the operator's number of ctx calls (64 unless limits.job_calls raises it).
+        let get = json!({"command":"get"});
+        host.budget.store(63, Ordering::SeqCst);
+        assert!(host.dispatch("redis", "ext:cache:pool", &get).await.is_ok());
+        assert_eq!(host.dispatch("redis", "ext:cache:pool", &get).await.unwrap_err(), "WIRE.COST_EXCEEDED");
+        host.budget.store(0, Ordering::SeqCst);
+
+        // The lease is checked when the answer is recorded: a recovered attempt cannot be written by the old one.
+        setup.query_drop(format!("UPDATE `{meta}`.aip_jobs SET lease_epoch = lease_epoch + 1")).await.unwrap();
+        assert_eq!(
+            host.dispatch("redis", "ext:cache:pool", &json!({"key":"late","command":"set_ex","value":"x","ttl_seconds":60})).await.unwrap_err(),
+            "WIRE.LEASE_LOST"
+        );
+        assert_eq!(written(), before, "a lost lease is detected before anything is sent");
+
+        drop(conn);
+        setup.query_drop("DROP USER 'aip_t_sto_rt'@'%'").await.unwrap();
         for schema in [meta, source] {
             setup.query_drop(format!("DROP DATABASE `{schema}`")).await.unwrap();
         }

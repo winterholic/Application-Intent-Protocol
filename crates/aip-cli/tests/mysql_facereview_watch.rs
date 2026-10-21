@@ -35,12 +35,13 @@ const TIMELINE_SESSIONS: &str = include_str!("../../../product/tests/fixtures/fa
 const DISTRIBUTIONS: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/slice13d-video_distribution.json");
 const SESSIONS: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/slice13d-youtube_watching_data.json");
 const GOLDEN: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/slice13f-golden.json");
-const EXTENSIONS: [(&str, &str); 5] = [
+const EXTENSIONS: [(&str, &str); 6] = [
     ("slice13f_watch.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13f_watch.py")),
     ("slice13b_lists.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13b_lists.py")),
     ("slice13d_recommend.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13d_recommend.py")),
     ("recommendation_math.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/recommendation_math.py")),
     ("recommendation_pool_builder.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/recommendation_pool_builder.py")),
+    ("slice14a_pool.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice14a_pool.py")),
 ];
 const META: &str = "aip_t_wch_meta";
 const SOURCE: &str = "aip_t_wch_src";

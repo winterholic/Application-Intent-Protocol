@@ -36,18 +36,28 @@ async def _read_rows(ctx, query):
     return (await ctx.data.read(query))["rows"]
 
 
-async def _read_all(ctx, query, cap=MAX_CANDIDATES):
-    # Pages an RDB read with limit/offset. The sort the caller gives plus the server's id tie-breaker keep pages stable.
+async def _read_all(ctx, query, cap=MAX_CANDIDATES, cursor=False):
+    # Pages an RDB read. The sort the caller gives plus the server's id tie-breaker keep pages stable.
+    # limit/offset costs more with every page (the budget counts the offset: about 700 rows deep for a read with two aggregates), so a
+    # resource whose budget declares `cursor` is paged by keyset instead: each page continues after the last row of the one before,
+    # which needs every sort field and id in the select and non-null.
     rows = []
     offset = 0
+    after = None
+    sort_fields = [item["field"] for item in query.get("sort", [])]
+    keys = sort_fields + ([] if "id" in sort_fields else ["id"])
     while True:
-        page = await _read_rows(ctx, {**query, "limit": RDB_ROWS, "offset": offset})
+        paging = {"after": after} if after is not None else {}
+        if not cursor:
+            paging = {"offset": offset}
+        page = await _read_rows(ctx, {**query, "limit": RDB_ROWS, **paging})
         rows.extend(page)
         if len(rows) > cap:
             raise Exception(f"more than {cap} rows; unsupported by this extension")
         if len(page) < RDB_ROWS:
             return rows
         offset += RDB_ROWS
+        after = {key: page[-1][key] for key in keys}
 
 
 async def _visible_videos(ctx, video_ids):

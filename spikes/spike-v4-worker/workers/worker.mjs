@@ -8,7 +8,15 @@ const pending = new Map();
 let seq = 0;
 const send = (m) => process.stdout.write(JSON.stringify(m) + "\n");
 
-const flag = (input, compensate) => (compensate ? { ...input, compensate: true } : input);
+// `opts` is `true` (compensate) or `{compensate, key}`. A durable job names every write with a stable `key`, which the server journals.
+const flag = (input, opts) => {
+  if (opts === true) return { ...input, compensate: true };
+  if (!opts || typeof opts !== "object") return input;
+  const out = { ...input };
+  if (opts.compensate) out.compensate = true;
+  if (opts.key !== undefined) out.key = opts.key;
+  return out;
+};
 
 function makeCtx(token, job) {
   const call = (op, name, input) =>
@@ -45,7 +53,8 @@ function makeCtx(token, job) {
         const res = await call("mongo", collection, { command: "count_documents", filter: filter ?? {} });
         return res?.count ?? 0;
       },
-      // Writes (write extensions only, `access mongo.<collection>`). compensate: true keeps a way back for a failed relational commit.
+      // Writes (write extensions and durable jobs, `access mongo.<collection>`). A write extension passes `true` (or `{compensate: true}`) to keep
+      // a way back for a failed relational commit; a durable job passes `{key}` and has no saga (a retry converges on the journaled result).
       insertOne: async (collection, document, compensate) =>
         (await call("mongo", collection, flag({ command: "insert_one", document }, compensate)))?.inserted_id,
       updateOne: (collection, filter, update, upsert, compensate) =>
@@ -70,18 +79,19 @@ function makeCtx(token, job) {
       },
       mget: (keys) => call("redis", keys?.[0] ?? "", { command: "mget", keys }),
       lrange: async (key, start = 0, stop = -1) => (await call("redis", key, { command: "lrange", start, stop }))?.values ?? [],
-      replaceHashEx: async (key, fields, ttlSeconds) =>
-        (await call("redis", key, { command: "replace_hash_ex", fields, ttl_seconds: ttlSeconds }))?.replaced ?? 0,
-      // Writes (write extensions only, `access redis "<key or prefix:*>"`). Every key lives at most ttlSeconds (1 .. 30 days).
+      replaceHashEx: async (key, fields, ttlSeconds, opts) =>
+        (await call("redis", key, flag({ command: "replace_hash_ex", fields, ttl_seconds: ttlSeconds }, opts)))?.replaced ?? 0,
+      // Writes (write extensions and durable jobs, `access redis "<key or prefix:*>"`; the last argument is `true` or `{compensate, key}`).
+      // Every key lives at most ttlSeconds (1 .. 30 days).
       setEx: (key, value, ttlSeconds, compensate) => call("redis", key, flag({ command: "set_ex", value, ttl_seconds: ttlSeconds }, compensate)),
       setNxEx: async (key, value, ttlSeconds, compensate) =>
         (await call("redis", key, flag({ command: "set_nx_ex", value, ttl_seconds: ttlSeconds }, compensate)))?.set ?? false,
       del: async (key, compensate) => (await call("redis", key, flag({ command: "del" }, compensate)))?.deleted ?? 0,
       getdel: async (key, compensate) => (await call("redis", key, flag({ command: "getdel" }, compensate)))?.value,
-      incrExpire: async (key, ttlSeconds) => (await call("redis", key, { command: "incr_expire", ttl_seconds: ttlSeconds }))?.value,
-      expire: async (key, ttlSeconds) => (await call("redis", key, { command: "expire", ttl_seconds: ttlSeconds }))?.applied ?? false,
-      pushTrimExpire: (key, value, maxLen, ttlSeconds) =>
-        call("redis", key, { command: "push_trim_expire", value, max_len: maxLen, ttl_seconds: ttlSeconds }),
+      incrExpire: async (key, ttlSeconds, opts) => (await call("redis", key, flag({ command: "incr_expire", ttl_seconds: ttlSeconds }, opts)))?.value,
+      expire: async (key, ttlSeconds, opts) => (await call("redis", key, flag({ command: "expire", ttl_seconds: ttlSeconds }, opts)))?.applied ?? false,
+      pushTrimExpire: (key, value, maxLen, ttlSeconds, opts) =>
+        call("redis", key, flag({ command: "push_trim_expire", value, max_len: maxLen, ttl_seconds: ttlSeconds }, opts)),
     },
     // durable job 전용: 실행 id와 몇 번째 시도인지(1부터). job이 아니면 null이다.
     job: job ?? null,

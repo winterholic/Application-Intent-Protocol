@@ -129,7 +129,7 @@ resource Video {
     select id, youtube_url, title, channel_name, category, duration, view_count, created_at, likeCount, commentCount
     filter id.eq, id.in, category.eq, title.like, channel_name.like, youtube_url.eq
     sort created_at, id, view_count
-    budget { rows 100; depth 1; cost 1000; deadline 2s; offset 100000 }
+    budget { rows 100; depth 1; cost 1000; deadline 2s; offset 100000; cursor }
   }
   // The original counts likes and visible comments for every caller (watch detail, pool scoring); row policies of
   // VideoLike (own rows only) and Comment (admin sees deleted) do not apply to a public count.
@@ -190,7 +190,7 @@ resource Video {
   extension read homeCategory {
     input { }
     output { categories: Text }
-    access mongo.video_distribution
+    access mongo.video_distribution, redis "facereview:reco:*"
     effect none
     deadline 30s
     implementation "slice13d_recommend.homeCategory"
@@ -198,7 +198,7 @@ resource Video {
   extension read homePersonalized {
     input { }
     output { videos: Text }
-    access mongo.video_distribution, mongo.youtube_watching_data
+    access mongo.video_distribution, mongo.youtube_watching_data, redis "facereview:reco:*"
     effect none
     deadline 30s
     implementation "slice13d_recommend.homePersonalized"
@@ -459,4 +459,17 @@ resource UserEmotionSummary {
     filter id.eq
     budget { rows 1; depth 1; cost 100; deadline 1s }
   }
+}
+
+// WBS 7.2.7: the original's Celery beat task rebuild_recommendation_pool (every 30 minutes). A server schedule runs it as the service
+// principal bound to an administrator; the reads go through that principal's own row policies, so the pool holds exactly what a member
+// would see. The Redis keys are the original's (facereview:reco:*), written with their 7200 second expiry.
+operation job rebuildRecommendationPool {
+  input { }
+  output { pool: Int(0..100000); categories: Int(0..100) }
+  allow isAdmin(actor)
+  access read.Video, mongo.video_distribution, redis "facereview:reco:*"
+  effect managed
+  deadline 120s
+  implementation "slice14a_pool.rebuildRecommendationPool"
 }

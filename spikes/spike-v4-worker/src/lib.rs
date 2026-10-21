@@ -40,6 +40,53 @@ mod stable_key_tests {
     }
 
     #[test]
+    fn only_data_changing_redis_and_mongo_commands_need_a_key_and_a_journal_row() {
+        for command in ["set_ex", "set_nx_ex", "del", "getdel", "replace_hash_ex", "incr_expire", "expire", "push_trim_expire"] {
+            assert!(requires_stable_key("redis", &json!({"command": command})), "redis {command}");
+        }
+        for command in ["insert_one", "update_one", "find_one_and_update", "delete_one"] {
+            assert!(requires_stable_key("mongo", &json!({"command": command})), "mongo {command}");
+        }
+        for (op, command) in [("redis", "get"), ("redis", "hgetall"), ("redis", "lrange"), ("mongo", "find"), ("mongo", "count_documents")] {
+            assert!(!requires_stable_key(op, &json!({"command": command})), "{op} {command} is a read");
+        }
+        assert!(!requires_stable_key("redis", &json!({})), "no command is no write");
+    }
+
+    #[test]
+    fn a_write_is_repeatable_only_when_a_second_run_leaves_the_same_data() {
+        let repeatable = |op: &str, input: serde_json::Value| super::external_write_is_repeatable(op, &input);
+        for command in ["set_ex", "replace_hash_ex", "del", "expire"] {
+            assert!(repeatable("redis", json!({"command": command})), "redis {command}");
+        }
+        for command in ["set_nx_ex", "getdel", "incr_expire", "push_trim_expire"] {
+            assert!(!repeatable("redis", json!({"command": command})), "redis {command}");
+        }
+        assert!(repeatable("mongo", json!({"command": "delete_one"})));
+        assert!(repeatable("mongo", json!({"command": "update_one", "update": {"$set": {"a": 1}, "$setOnInsert": {"b": 2}}})));
+        assert!(!repeatable("mongo", json!({"command": "update_one", "update": {"$inc": {"a": 1}}})));
+        assert!(!repeatable("mongo", json!({"command": "update_one", "update": {"$set": {"a": 1}, "$push": {"b": 2}}})));
+        assert!(!repeatable("mongo", json!({"command": "insert_one", "document": {}})));
+        assert!(!repeatable("http", json!({"command": "set_ex"})));
+    }
+
+    #[test]
+    fn a_job_reaches_only_the_redis_keys_and_mongo_collections_it_declared() {
+        let declared = ["read.Video", "redis.facereview:reco:*", "redis.facereview:admin:wau", "mongo.video_distribution"];
+        let granted = |op: &str, name: &str| super::job_capability_granted(declared, op, name);
+        assert!(granted("redis", "facereview:reco:pool"), "a prefix grant covers keys under it");
+        assert!(granted("redis", "facereview:admin:wau"), "an exact grant covers its key");
+        assert!(!granted("redis", "facereview:admin:other"), "an exact grant is not a prefix");
+        assert!(!granted("redis", "facereview:reco"), "the prefix ends in a colon");
+        assert!(!granted("redis", "other:facereview:reco:pool"));
+        assert!(granted("mongo", "video_distribution"));
+        assert!(!granted("mongo", "youtube_watching_data"));
+        assert!(granted("read", "Video"));
+        assert!(granted("aggregate", "Video.total"), "an aggregate rides on the read grant");
+        assert!(!granted("read", "Comment"));
+    }
+
+    #[test]
     fn the_wait_an_extension_asked_for_is_read_back_only_from_its_own_retry_request() {
         let ask = |code: &'static str, msg: &str| Reject { code, msg: msg.to_owned() };
         let asked: Result<(), Reject> = rej("WIRE.RETRY_LATER", format!("{RETRY_LATER_MESSAGE}; {RETRY_AFTER_KEY}2500"));
@@ -134,7 +181,44 @@ pub(crate) fn rej<T>(code: &'static str, msg: impl Into<String>) -> Result<T, Re
 }
 
 fn requires_stable_key(op: &str, input: &Value) -> bool {
-    ["http", "integrations", "operations", "jobs", "events", "messages", "apply"].contains(&op) || op == "files" && input["action"] == "put"
+    ["http", "integrations", "operations", "jobs", "events", "messages", "apply"].contains(&op)
+        || op == "files" && input["action"] == "put"
+        || is_external_write(op, input)
+}
+
+/// `true` for a Redis or Mongo command that changes data. A durable job journals each one under a stable key; reads are not journaled.
+pub fn is_external_write(op: &str, input: &Value) -> bool {
+    let command = input["command"].as_str().unwrap_or("");
+    match op {
+        "redis" => ["set_ex", "set_nx_ex", "del", "getdel", "replace_hash_ex", "incr_expire", "expire", "push_trim_expire"].contains(&command),
+        "mongo" => ["insert_one", "update_one", "find_one_and_update", "delete_one"].contains(&command),
+        _ => false,
+    }
+}
+
+/// `true` when running the same write twice leaves the same data, so a job whose first attempt lost its outcome may send it again.
+/// A counter, a list push or an insert is not repeatable and stays unknown.
+pub fn external_write_is_repeatable(op: &str, input: &Value) -> bool {
+    let command = input["command"].as_str().unwrap_or("");
+    match op {
+        "redis" => ["set_ex", "replace_hash_ex", "del", "expire"].contains(&command),
+        "mongo" => {
+            command == "delete_one"
+                || command == "update_one"
+                    && input["update"].as_object().is_some_and(|update| update.keys().all(|key| key == "$set" || key == "$setOnInsert"))
+        }
+        _ => false,
+    }
+}
+
+/// Whether the capabilities a job declared allow this ctx call. A Redis grant may be a prefix ending in `*`; every other capability
+/// is an exact key.
+pub fn job_capability_granted<'a>(declared: impl IntoIterator<Item = &'a str>, op: &str, name: &str) -> bool {
+    let grants: std::collections::HashSet<String> = declared.into_iter().map(str::to_string).collect();
+    match op {
+        "redis" | "mongo" => CapabilityPrincipal { actor_id: None, actor_uuid: None, grants }.permits(op, name),
+        _ => grants.contains(&job_capability(op, name)),
+    }
 }
 
 /// Maps a worker ctx request to the declared job capability key.
@@ -530,6 +614,10 @@ pub trait JobHost: Send {
     fn job(&self) -> Value {
         Value::Null
     }
+    /// How many ctx calls one run of the job may make before the host answers WIRE.COST_EXCEEDED.
+    fn call_limit(&self) -> usize {
+        64
+    }
 }
 
 pub fn validate_job(facts: &Value, name: &str, input: &Value, wire: IdWire) -> Result<(), Reject> {
@@ -574,7 +662,9 @@ async fn invoke_contract(
     let mut capability_grants = std::collections::HashSet::new();
     for (agg, binding) in x["access"].as_object().unwrap() {
         if agg.starts_with("mongo.") || agg.starts_with("redis.") {
-            if binding.as_object().is_none_or(|map| !map.is_empty()) {
+            // A durable job declares its managed capabilities as true; every other extension marks this grant with an empty object.
+            let granted = if job_host.is_some() { binding == &Value::Bool(true) } else { binding.as_object().is_some_and(|map| map.is_empty()) };
+            if !granted {
                 return rej("WIRE.BAD_VALUE", "mongo/redis capability grant must be an empty object");
             }
             capability_grants.insert(agg.clone());
@@ -640,12 +730,18 @@ async fn invoke_contract(
                 let call = async {
                     if let Some(jh) = job_host.as_deref_mut() {
                         managed_calls += 1;
-                        if managed_calls > 64 {
+                        if managed_calls > jh.call_limit() {
                             return rej("WIRE.COST_EXCEEDED", "job capability 호출 상한");
                         }
                         let op = m["op"].as_str().unwrap_or("");
                         let name = m["name"].as_str().unwrap_or("");
-                        if m["token"] != token || x["access"][job_capability(op, name)] != true {
+                        let declared = x["access"]
+                            .as_object()
+                            .into_iter()
+                            .flatten()
+                            .filter(|(_, granted)| **granted == true)
+                            .map(|(capability, _)| capability.as_str());
+                        if m["token"] != token || !job_capability_granted(declared, op, name) {
                             return rej("WIRE.ACCESS_NOT_DECLARED", "선언되지 않은 job capability");
                         }
                         if requires_stable_key(op, &m["input"])

@@ -82,8 +82,8 @@ padding source has one outcome), and the pool is smaller than 150 (no exploratio
 
 ### Differences from the original (deliberate, or limits found)
 
-- No Redis pool cache: the original's request path builds the pool when the cache is cold, and so does this port, every time. A read
-  extension cannot write the cache. The offline refresh job belongs to WBS 7.2.7.
+- The Redis pool cache is read here and written by the job of WBS 7.2.7 (`slice14a_pool.py`, "Slice14-A" below). A cold, expired or
+  unreachable cache is built inside the request, as the original does.
 - At most 5000 active videos (and 5000 view-log rows of the caller) are gathered; beyond that the call fails loudly. The original
   is unbounded.
 - Random draws (padding of thin categories, the exploration sample of the personalized list, the fallback sample) are the
@@ -137,3 +137,26 @@ bucket averages. No session document, user id or per-session value leaves, and t
 `reference/slice13f_oracle.py` runs the original `get_video_detail` (which commits its own increment; the oracle records `+1` and restores
 the row) against the same MySQL 8.4 and MongoDB as the real server for 3 callers x 12 videos, then applies `Video.view`.
 `crates/aip-cli/tests/mysql_facereview_watch.rs` replays `slice13f-golden.json`. `reference/slice13f_make_seed.py` writes the sessions.
+
+## Slice14-A: the offline recommendation pool refresh (WBS 7.2.7)
+
+`slice14a_pool.py` ports the Celery beat task `rebuild_recommendation_pool` (`new-facereview@7948b7e7`, `common/tasks/scheduled_tasks.py`,
+every 30 minutes) as the durable job `rebuildRecommendationPool`, declared in `facereview.aip` with
+`access read.Video, mongo.video_distribution, redis "facereview:reco:*"`. A server schedule runs it as a service principal bound to an
+administrator (`schedules: [{name, operation: "rebuildRecommendationPool", cron: "*/30 * * * *", principal}]`, see `crates/aip-cli/tests/mysql_facereview_pool_job.rs`).
+
+| Original | AIP |
+|---|---|
+| `SET facereview:reco:pool <json> EX 7200` | `ctx.redis.set_ex(..., 7200, effect_key="pool")` |
+| `DEL`, `HSET` per category, `EXPIRE 7200` of `facereview:reco:category` | `ctx.redis.replace_hash_ex(...)` (one Lua script on the Redis side) |
+| (the hash comes back in Redis's internal order) | `facereview:reco:category_order`: the order of the original's own category list, so a warm cache answers in the order a cold request does |
+
+`Video.homeCategory` and `Video.homePersonalized` read the keys first and build the pool themselves when they are absent, expired or Redis
+does not answer. `reference/slice14a_oracle.py` runs the original `_build_and_cache_ranked_pool` against its own Redis database and the job
+against another on the same data: pool (19 entries), category fields (6 categories), category order and expiry all matched.
+
+Differences and limits: a read extension has 64 ctx calls, so a request that has to build the pool by itself fails loudly beyond about
+3000 active videos (the original has no bound); the job needs `limits.job_calls` (about `MAX_VIDEOS / 50`, 400 for the 15000 it reads) and
+fails with `WIRE.COST_EXCEEDED` otherwise, leaving the previous cache as it was. The three writes are not one transaction (the original's
+Redis pipeline is not atomic across a crash either). The Video read budget gained `cursor`: paging by `offset` costs more with every page
+(`limit x (1 + aggregates) + offset` against `cost 1000`), so a read of two aggregates could not go past about 700 rows deep.

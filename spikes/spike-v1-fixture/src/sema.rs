@@ -1891,6 +1891,19 @@ impl<'a> Ctx<'a> {
             let mut capabilities = Map::new();
             let mut data_access = false;
             for (domain, name) in &operation.access {
+                if domain == "mongo" || domain == "redis" {
+                    // 서버가 소유한 Mongo·Redis capability. 쓰기는 effect 장부에 key로 남고 서버 설정의 쓰기 허용 목록을 따로 거친다.
+                    if self.res.contains_key(domain.as_str()) {
+                        self.d("DEF.AMBIGUOUS", format!("resource 이름 `{domain}`이 managed capability 영역과 겹침"), operation.span);
+                        continue;
+                    }
+                    if let Some(grant) = self.external_grant(domain, name, operation.span) {
+                        if capabilities.insert(grant, json!(true)).is_some() {
+                            self.d("DEF.DUPLICATE", "managed capability 중복", operation.span);
+                        }
+                    }
+                    continue;
+                }
                 // 업무 데이터 접근은 job 주체의 기존 read/apply 정책을 그대로 거친다. 선언 없이 열리지 않는다.
                 if domain == "read" || self.res.contains_key(domain.as_str()) {
                     if ["http", "files", "events", "jobs", "messages", "read"].contains(&domain.as_str()) && self.res.contains_key(domain.as_str()) {

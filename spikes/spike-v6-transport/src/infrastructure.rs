@@ -11,6 +11,8 @@ pub struct ResourceLimits {
     pub connections: usize,
     pub workers: usize,
     pub jobs: usize,
+    /// How many ctx calls (reads, effects, nested jobs) one durable job run may make.
+    pub job_calls: usize,
     pub uploads: usize,
     /// How many realtime connections, workers and uploads one principal may hold at once. Without these a single
     /// authenticated principal could occupy every shared slot and lock the others out (O-05).
@@ -21,7 +23,16 @@ pub struct ResourceLimits {
 
 impl Default for ResourceLimits {
     fn default() -> Self {
-        Self { connections: 64, workers: 4, jobs: 2, uploads: 4, per_principal_realtime: 4, per_principal_workers: 2, per_principal_uploads: 2 }
+        Self {
+            connections: 64,
+            workers: 4,
+            jobs: 2,
+            job_calls: 64,
+            uploads: 4,
+            per_principal_realtime: 4,
+            per_principal_workers: 2,
+            per_principal_uploads: 2,
+        }
     }
 }
 
@@ -38,6 +49,8 @@ impl ResourceLimits {
             || self.workers > 32
             || self.jobs == 0
             || self.jobs > 32
+            || self.job_calls == 0
+            || self.job_calls > 2000
             || self.uploads == 0
             || self.uploads > 32
             || self.per_principal_realtime == 0

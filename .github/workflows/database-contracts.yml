@@ -151,6 +151,11 @@ jobs:
           cargo test -p aip-service --features mysql --lib --locked
           mysql_jobs::tests::mysql_http_effects_are_journaled_and_an_unknown_outcome_is_never_repeated
           -- --ignored --exact --nocapture
+      - name: Verify MySQL job Redis and Mongo writes are journaled and only repeatable unknowns are sent again
+        run: >-
+          cargo test -p aip-service --features mysql --lib --locked
+          mysql_jobs::tests::mysql_external_writes_are_journaled_and_only_repeatable_unknowns_are_sent_again
+          -- --ignored --exact --nocapture
       - name: Verify MySQL job event streams publish once, replay in order and expire explicitly
         run: >-
           cargo test -p aip-service --features mysql --lib --locked

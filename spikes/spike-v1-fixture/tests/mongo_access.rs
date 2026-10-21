@@ -106,3 +106,58 @@ fn a_write_extension_declares_transitions_next_to_mongo_and_redis_grants() {
     };
     assert_eq!(duplicate, ["DEF.DUPLICATE"]);
 }
+
+fn job_source(access: &str) -> String {
+    format!(
+        r#"
+actor principal
+resource Video {{
+  fields {{ id: Uuid; title: Text(1..100) }}
+  rows read when true
+  expose read {{
+    select id, title
+    sort id
+    budget {{ rows 10; depth 1; cost 100; deadline 2s }}
+  }}
+}}
+operation job rebuild {{
+  input {{ }}
+  output {{ total: Int(0..1000) }}
+  allow actor != null
+  {access}
+  effect managed
+  deadline 30s
+  implementation "pool.rebuild"
+}}
+"#
+    )
+}
+
+fn job_diagnostics(access: &str) -> Vec<String> {
+    match load_str(&job_source(access), Form::A) {
+        Ok(_) => vec![],
+        Err(found) => found.iter().map(|d| d.code.to_string()).collect(),
+    }
+}
+
+#[test]
+fn a_durable_job_declares_mongo_collections_and_redis_keys_as_managed_capabilities() {
+    let facts =
+        load_str(&job_source(r#"access read.Video, mongo.video_distribution, redis "facereview:reco:*", redis "facereview:admin:wau""#), Form::A)
+            .unwrap()
+            .execution;
+    let access = &facts["operations"]["rebuild"]["access"];
+    assert_eq!(
+        access,
+        &json!({"read.Video": true, "mongo.video_distribution": true, "redis.facereview:reco:*": true, "redis.facereview:admin:wau": true})
+    );
+}
+
+#[test]
+fn a_job_redis_grant_follows_the_same_key_rules_and_a_duplicate_is_refused() {
+    for bad in ["redis \"\"", "redis \"*\"", "redis \"facereview*\"", "redis \"a:*:b\""] {
+        assert_eq!(job_diagnostics(&format!("access {bad}")), ["DEF.BAD_CAPABILITY"], "{bad}");
+    }
+    assert_eq!(job_diagnostics(r#"access redis "facereview:reco:*", redis "facereview:reco:*""#), ["DEF.DUPLICATE"]);
+    assert_eq!(job_diagnostics("access mongo.video_distribution, mongo.video_distribution"), ["DEF.DUPLICATE"]);
+}

@@ -452,6 +452,8 @@ pub(crate) async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
     let has_triggers = !built.is_empty();
     infrastructure.triggers = Arc::new(built);
     let has_jobs = deployed["operations"].as_object().is_some_and(|ops| ops.values().any(|op| op["kind"] == "job"));
+    // The server fingerprints the contract with jobs only when it serves them, which needs worker settings (it prints what it checks).
+    let jobs_enabled = has_jobs && extensions.is_some();
     if has_triggers && !(has_jobs && extensions.is_some()) {
         return Err(error("TRIGGER_CONFIG", "schedules·webhooks·outbox_handlers는 job을 선언한 계약과 workers 설정이 있어야 함"));
     }
@@ -499,7 +501,7 @@ pub(crate) async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
     )
     .await
     .map_err(|e| server_start_error(&e))?;
-    let fingerprint = if enable_worker_writes || has_jobs {
+    let fingerprint = if enable_worker_writes || jobs_enabled {
         spike_v5_sdk::contract_fingerprint_with_all_extensions(&deployed, config.wire.id_wire())
     } else if config.workers.is_some() {
         spike_v5_sdk::contract_fingerprint_with_extensions(&deployed, config.wire.id_wire())

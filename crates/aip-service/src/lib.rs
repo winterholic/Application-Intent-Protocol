@@ -1948,6 +1948,14 @@ mod managed_config_tests {
             partial.resource_limits,
             spike_v6_transport::infrastructure::ResourceLimits { jobs: 5, ..spike_v6_transport::infrastructure::ResourceLimits::default() }
         );
+        let calls: Config = serde_json::from_value(json!({
+            "schema":"aip_test",
+            "auth":{"issuer":"https://issuer.example","audience":"aip","jwks":{"kind":"file","path":"jwks.json"}},
+            "limits":{"job_calls":500}
+        }))
+        .unwrap();
+        assert_eq!(infrastructure::build(&calls).unwrap().resource_limits.job_calls, 500);
+        assert_eq!(defaults.resource_limits.job_calls, 64, "a job keeps 64 ctx calls unless the operator raises it");
         let per_principal: Config = serde_json::from_value(json!({
             "schema":"aip_test",
             "auth":{"issuer":"https://issuer.example","audience":"aip","jwks":{"kind":"file","path":"jwks.json"}},
@@ -1961,6 +1969,8 @@ mod managed_config_tests {
             json!({"connections":0}),
             json!({"workers":0}),
             json!({"jobs":0}),
+            json!({"job_calls":0}),
+            json!({"job_calls":2001}),
             json!({"uploads":0}),
             json!({"per_principal_realtime":0}),
             json!({"per_principal_workers":0}),
