@@ -130,7 +130,7 @@ pub const NOTES: &[(&str, &str, &str, &str)] = &[
     ("aggregate", "release", "release count  |  sum(f)  |  min(f)  |  max(f)", "내보내는 값"),
     ("extension", "input", "input { x: Type }", "확장이 받는 값"),
     ("extension", "output", "output { y: Type }", "확장이 돌려주는 값"),
-    ("extension", "access", "access R.transition  |  R.aggregate", "확장이 쓸 수 있는 전이·집계"),
+    ("extension", "access", "access R.transition  |  R.aggregate  |  mongo.collection", "확장이 쓸 수 있는 전이·집계·Mongo 컬렉션"),
     ("extension", "effect", "effect none | db | managed", "read는 none, write는 db"),
     ("extension", "deadline", "deadline 2s", "실행 시간 한도"),
     ("extension", "implementation", "implementation \"module.function\"", "확장 모듈과 함수 이름"),

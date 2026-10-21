@@ -1990,6 +1990,17 @@ impl<'a> Ctx<'a> {
         let (_, oj) = self.params(&x.output);
         let mut binding = Map::new();
         for (rn, an) in &x.access {
+            if rn == "mongo" {
+                // 서버가 소유한 MongoDB 읽기 capability. 집계 입력 binding이 없어 빈 객체가 grant 표식이다.
+                if self.res.contains_key("mongo") {
+                    self.d("DEF.AMBIGUOUS", "resource 이름 `mongo`가 capability 영역과 겹침", x.span);
+                    continue;
+                }
+                if binding.insert(format!("mongo.{an}"), json!({})).is_some() {
+                    self.d("DEF.DUPLICATE", format!("capability `mongo.{an}` 중복 선언"), x.span);
+                }
+                continue;
+            }
             let Some(agg) = self.res.get(rn.as_str()).and_then(|r| r.aggregates.iter().find(|a| &a.name == an)) else {
                 self.d("DEF.UNKNOWN_SYMBOL", format!("access 대상 `{rn}.{an}` 없음"), x.span);
                 continue;

@@ -101,7 +101,7 @@
 |---|---|---|
 | `input` | `input { x: Type }` | 확장이 받는 값 |
 | `output` | `output { y: Type }` | 확장이 돌려주는 값 |
-| `access` | `access R.transition  \|  R.aggregate` | 확장이 쓸 수 있는 전이·집계 |
+| `access` | `access R.transition  \|  R.aggregate  \|  mongo.collection` | 확장이 쓸 수 있는 전이·집계·Mongo 컬렉션 |
 | `effect` | `effect none \| db \| managed` | read는 none, write는 db |
 | `deadline` | `deadline 2s` | 실행 시간 한도 |
 | `implementation` | `implementation "module.function"` | 확장 모듈과 함수 이름 |
