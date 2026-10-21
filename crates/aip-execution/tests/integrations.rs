@@ -18,6 +18,7 @@ fn config(url: String, resolved: Vec<SocketAddr>, allow_loopback: bool) -> Endpo
         allow_private_networks: false,
         circuit_breaker: None,
         oauth: None,
+        query: None,
     }
 }
 
@@ -390,4 +391,83 @@ fn oauth_config_debug_output_never_contains_the_client_secret() {
     };
     let text = format!("{oauth:?}");
     assert!(!text.contains("super-secret-value"), "{text}");
+}
+
+fn query_config(url: String, address: SocketAddr, allowed: &[&str], secret: Option<(&str, &str)>) -> EndpointConfig {
+    let mut config = config(url, vec![address], true);
+    config.method = "GET".into();
+    config.secret_header = None;
+    config.query = Some(aip_execution::integrations::QueryConfig {
+        allowed: allowed.iter().map(|name| (*name).to_string()).collect(),
+        secret: secret.map(|(name, value)| (name.to_string(), value.to_string())),
+    });
+    config
+}
+
+#[tokio::test]
+async fn a_query_endpoint_sends_only_allowed_scalar_parameters_and_adds_the_server_secret() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let request = read_request(&mut stream);
+        let body = br#"{"items":[]}"#;
+        write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).unwrap();
+        stream.write_all(body).unwrap();
+        request
+    });
+    let broker = Broker::new(vec![query_config(
+        format!("http://{address}/youtube/v3/videos"),
+        address,
+        &["part", "pageToken", "maxResults", "q"],
+        Some(("key", "api-key-from-the-server")),
+    )])
+    .unwrap();
+    let response = broker
+        .call("crm.createTicket", &json!({"part": "snippet,contentDetails", "maxResults": 50, "q": "먹방 한국 &x=1", "pageToken": "CAUQAA"}))
+        .await
+        .unwrap();
+    assert_eq!(response.body, json!({"items": []}));
+    let request = server.join().unwrap();
+    let line = request.lines().next().unwrap();
+    assert!(line.starts_with("GET /youtube/v3/videos?"), "{line}");
+    // The values are percent-encoded: a caller cannot add a parameter through a value.
+    assert!(line.contains("maxResults=50") && line.contains("pageToken=CAUQAA") && line.contains("part=snippet%2CcontentDetails"), "{line}");
+    assert!(line.contains("q=%EB%A8%B9%EB%B0%A9+%ED%95%9C%EA%B5%AD+%26x%3D1"), "{line}");
+    assert!(line.contains("key=api-key-from-the-server"), "{line}");
+    assert!(!request.to_ascii_lowercase().contains("content-type: application/json"), "a GET carries no JSON body: {request}");
+
+    // Nothing leaves for an unknown name, the secret's own name, a nested value or a missing object.
+    for input in [json!({"regionCode": "KR"}), json!({"key": "attacker"}), json!({"q": ["a"]}), json!({"q": {"a": 1}}), json!("q")] {
+        assert!(matches!(broker.call("crm.createTicket", &input).await, Err(aip_execution::integrations::Error::InvalidQuery)), "{input}");
+    }
+    // A value over 2048 bytes never leaves either (the request limit of this endpoint is 1024 bytes, which answers first).
+    assert!(broker.call("crm.createTicket", &json!({"q": "x".repeat(2049)})).await.is_err());
+}
+
+#[test]
+fn query_endpoint_configuration_is_closed_and_part_of_the_fingerprint() {
+    let address: SocketAddr = "127.0.0.1:9".parse().unwrap();
+    let url = || format!("http://{address}/v3/videos");
+    assert!(Broker::new(vec![query_config(url(), address, &["part"], Some(("key", "k")))]).is_ok());
+    assert!(Broker::new(vec![query_config(url(), address, &[], Some(("key", "k")))]).is_ok(), "a fixed query with only the secret is allowed");
+    for bad in [
+        query_config(url(), address, &[], None),
+        query_config(url(), address, &["part", "part"], None),
+        query_config(url(), address, &["bad name"], None),
+        query_config(url(), address, &["key"], Some(("key", "k"))),
+        query_config(url(), address, &["part"], Some(("", "k"))),
+        query_config(url(), address, &["part"], Some(("key", ""))),
+        query_config(format!("{}?fixed=1", url()), address, &["part"], None),
+    ] {
+        assert!(Broker::new(vec![bad]).is_err());
+    }
+    let mut post = query_config(url(), address, &["part"], None);
+    post.method = "POST".into();
+    assert!(Broker::new(vec![post]).is_err(), "a query endpoint is a GET endpoint");
+    let base = Broker::new(vec![query_config(url(), address, &["part"], Some(("key", "one")))]).unwrap();
+    let other_secret = Broker::new(vec![query_config(url(), address, &["part"], Some(("key", "two")))]).unwrap();
+    let other_names = Broker::new(vec![query_config(url(), address, &["part", "q"], Some(("key", "one")))]).unwrap();
+    assert_ne!(base.fingerprint(), other_secret.fingerprint());
+    assert_ne!(base.fingerprint(), other_names.fingerprint());
 }

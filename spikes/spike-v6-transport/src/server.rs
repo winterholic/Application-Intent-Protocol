@@ -999,6 +999,7 @@ mod extension_config_tests {
             allow_private_networks: false,
             circuit_breaker: None,
             oauth: None,
+            query: None,
         }])
         .unwrap();
         assert!(validate_job_broker(&facts, true, Some(&broker)).is_err());
@@ -1016,6 +1017,7 @@ mod extension_config_tests {
             allow_private_networks: false,
             circuit_breaker: None,
             oauth: None,
+            query: None,
         }])
         .unwrap();
         assert!(validate_job_broker(&facts, true, Some(&broker)).is_ok());

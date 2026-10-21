@@ -1390,10 +1390,10 @@ impl JobHost {
                 let result: Value = serde_json::from_str(&result.ok_or("WIRE.DB_UNAVAILABLE")?).map_err(db)?;
                 return Err(replay_error(result["code"].as_str().unwrap_or("")));
             }
-            // A nested job reruns its steps, and a webhook subscriber dedupes on webhook-id, so a delivery whose outcome was lost
-            // is sent again. Any other call whose outcome is unknown may have happened and is never repeated.
+            // A nested job reruns its steps, a webhook subscriber dedupes on webhook-id and a query endpoint only reads, so a call whose
+            // outcome was lost is sent again. Any other call whose outcome is unknown may have happened and is never repeated.
             let resendable = op == "jobs"
-                || op == "http" && rt.broker.as_ref().is_some_and(|broker| broker.is_webhook(name))
+                || op == "http" && rt.broker.as_ref().is_some_and(|broker| broker.is_webhook(name) || broker.is_query(name))
                 || spike_v4_worker::external_write_is_repeatable(op, input);
             if !resendable {
                 return Err("WIRE.EFFECT_UNKNOWN");
@@ -1555,6 +1555,9 @@ impl JobHost {
                     Err(aip_execution::integrations::Error::CircuitOpen) => Err(Some("WIRE.CIRCUIT_OPEN")),
                     Err(aip_execution::integrations::Error::NotSent) => Err(Some("WIRE.DELIVERY_FAILED")),
                     Err(aip_execution::integrations::Error::TokenUnavailable) => Err(Some("WIRE.INTEGRATION_AUTH_FAILED")),
+                    Err(aip_execution::integrations::Error::InvalidQuery) => Err(Some("WIRE.BAD_VALUE")),
+                    // A query endpoint only reads, so a lost answer is as good as not sent: the same key may ask again.
+                    Err(_) if broker.is_query(name) => Err(Some("WIRE.DELIVERY_FAILED")),
                     Err(_) => Err(None),
                 }
             };
@@ -2157,7 +2160,7 @@ operation job notifyJob {
  input { id: Video.Id }
  output { count: Int }
  allow actor != null
- access http.mail, http.dead
+ access http.mail, http.dead, http.videos
  effect managed
  deadline 5s
  implementation "worker.jobView"
@@ -2264,7 +2267,10 @@ operation job notifyJob {
                 "timeout_ms":2000,"max_request_bytes":1024,"max_response_bytes":1024,"allow_loopback":true}))
             .unwrap()
         };
-        let configs = [integration("mail", port), integration("dead", 1)];
+        let videos: crate::IntegrationConfig = serde_json::from_value(json!({"name":"videos","url":format!("http://127.0.0.1:{port}/v3/videos"),
+            "method":"GET","timeout_ms":2000,"max_request_bytes":1024,"max_response_bytes":1024,"allow_loopback":true,"query_params":["part"]}))
+        .unwrap();
+        let configs = [integration("mail", port), integration("dead", 1), videos];
         let broker = crate::build_broker_with_webhooks(&configs, &[]).await.unwrap();
         let infra = spike_v6_transport::infrastructure::Infrastructure::default();
         // A declared integration that is not configured is refused before the server starts.
@@ -2313,7 +2319,7 @@ operation job notifyJob {
             prefix: String::new(),
             depth: 0,
             budget: Arc::new(AtomicUsize::new(0)),
-            capabilities: vec!["http.mail".into(), "http.dead".into()],
+            capabilities: vec!["http.mail".into(), "http.dead".into(), "http.videos".into()],
         };
         let effects = |state: &str| format!("SELECT COUNT(*) FROM `{meta}`.`aip_effects` WHERE state='{state}'");
         let count = |sql: String| {
@@ -2356,10 +2362,25 @@ operation job notifyJob {
         assert_eq!(host.dispatch("http", "mail", &lost).await.unwrap_err(), "WIRE.EFFECT_UNKNOWN", "an unknown effect is never repeated");
         assert_eq!(requests.load(Ordering::SeqCst), 2, "the unknown effect must not be sent again");
 
+        // A query endpoint only reads: a lost answer is not unknown, the intent is dropped and the same key asks again.
+        let before = requests.load(Ordering::SeqCst);
+        answer.store(false, Ordering::SeqCst);
+        let ask = json!({"key":"page-1","input":{"part":"snippet"}});
+        assert_eq!(host.dispatch("http", "videos", &ask).await.unwrap_err(), "WIRE.DELIVERY_FAILED");
+        assert_eq!(requests.load(Ordering::SeqCst), before + 1);
+        assert_eq!(count(effects("UNKNOWN")).await, 1, "only the earlier mail call is unknown");
+        answer.store(true, Ordering::SeqCst);
+        let page = host.dispatch("http", "videos", &ask).await.unwrap();
+        assert_eq!(page["status"], 200);
+        assert_eq!(host.dispatch("http", "videos", &ask).await.unwrap(), page, "a finished query is replayed");
+        assert_eq!(requests.load(Ordering::SeqCst), before + 2);
+        assert_eq!(host.dispatch("http", "videos", &json!({"key":"page-2","input":{"regionCode":"KR"}})).await.unwrap_err(), "WIRE.BAD_VALUE");
+        assert_eq!(requests.load(Ordering::SeqCst), before + 2, "a parameter the endpoint does not allow never leaves");
+
         // The lease is checked when the answer is recorded: a recovered attempt cannot be written by the old one.
         setup.query_drop(format!("UPDATE `{meta}`.aip_jobs SET lease_epoch = lease_epoch + 1")).await.unwrap();
         assert_eq!(host.dispatch("http", "mail", &json!({"key":"after","input":{}})).await.unwrap_err(), "WIRE.LEASE_LOST");
-        assert_eq!(requests.load(Ordering::SeqCst), 2, "a lost lease is detected before anything is sent");
+        assert_eq!(requests.load(Ordering::SeqCst), before + 2, "a lost lease is detected before anything is sent");
 
         drop(conn);
         setup.query_drop("DROP USER 'aip_t_ext_rt'@'%'").await.unwrap();

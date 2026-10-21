@@ -144,6 +144,7 @@ async fn an_open_circuit_rejects_without_sending_and_leaves_no_unknown_effect() 
             allow_private_networks: false,
             circuit_breaker: Some(CircuitBreaker { failure_threshold: 1, open_for: Duration::from_secs(60) }),
             oauth: None,
+            query: None,
         }])
         .unwrap();
         let before = requests.load(std::sync::atomic::Ordering::SeqCst);
@@ -205,6 +206,7 @@ async fn an_open_circuit_rejects_without_sending_and_leaves_no_unknown_effect() 
             scope: None,
             basic_auth: true,
         }),
+        query: None,
     }])
     .unwrap();
     let server = listen_with_infrastructure(
@@ -314,6 +316,7 @@ async fn refused_connection_can_redrive_the_same_run_but_a_lost_reply_keeps_an_u
                 allow_private_networks: false,
                 circuit_breaker: None,
                 oauth: None,
+                query: None,
             }])
             .unwrap();
             let server = listen_with_infrastructure(

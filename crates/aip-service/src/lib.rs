@@ -385,6 +385,12 @@ pub struct IntegrationConfig {
     pub circuit_breaker: Option<CircuitBreakerConfig>,
     #[serde(default)]
     pub oauth2: Option<OAuthClientCredentialsConfig>,
+    /// Makes this a query-string endpoint (method GET): the extension sends only these parameter names, as scalar values.
+    #[serde(default)]
+    pub query_params: Vec<String>,
+    /// A query parameter the server adds to every request, for example an API key. Its value comes from the environment.
+    #[serde(default)]
+    pub secret_query_env: Option<SecretHeaderEnv>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -700,6 +706,12 @@ fn integration_shape_problem(item: &IntegrationConfig) -> Option<String> {
     if item.secret_header_env.as_ref().is_some_and(|secret| !valid_env_name(&secret.env)) {
         return Some(format!("'{name}': secret_header_env.env는 대문자·숫자·'_'로 된 환경 변수 이름이어야 함"));
     }
+    if item.secret_query_env.as_ref().is_some_and(|secret| !valid_env_name(&secret.env)) {
+        return Some(format!("'{name}': secret_query_env.env는 대문자·숫자·'_'로 된 환경 변수 이름이어야 함"));
+    }
+    if (!item.query_params.is_empty() || item.secret_query_env.is_some()) && !item.method.eq_ignore_ascii_case("GET") {
+        return Some(format!("'{name}': query_params·secret_query_env는 method GET에서만 쓸 수 있음"));
+    }
     if let Some(breaker) = &item.circuit_breaker {
         let max_open = aip_execution::integrations::MAX_BREAKER_OPEN.as_millis();
         if breaker.failure_threshold == 0 || breaker.failure_threshold > aip_execution::integrations::MAX_BREAKER_THRESHOLD {
@@ -780,6 +792,23 @@ async fn resolve_integrations(configs: &[IntegrationConfig]) -> Result<Vec<aip_e
         if secret_header.as_ref().is_some_and(|(_, value)| value.is_empty() || value.len() > 8192) {
             return Err(integration_resolution_error(&config.name, "secret_header_env의 값은 1~8192바이트여야 함(값은 출력하지 않음)"));
         }
+        let secret_query = config
+            .secret_query_env
+            .as_ref()
+            .map(|secret| {
+                std::env::var(&secret.env).map(|value| (secret.name.clone(), value)).map_err(|_| {
+                    integration_resolution_error(
+                        &config.name,
+                        "secret_query_env가 가리키는 환경 변수가 설정되어 있지 않음(변수 이름은 출력하지 않음)",
+                    )
+                })
+            })
+            .transpose()?;
+        if secret_query.as_ref().is_some_and(|(_, value)| value.is_empty() || value.len() > 8192) {
+            return Err(integration_resolution_error(&config.name, "secret_query_env의 값은 1~8192바이트여야 함(값은 출력하지 않음)"));
+        }
+        let query = (!config.query_params.is_empty() || secret_query.is_some())
+            .then(|| aip_execution::integrations::QueryConfig { allowed: config.query_params.clone(), secret: secret_query });
         endpoints.push(aip_execution::integrations::EndpointConfig {
             name: config.name.clone(),
             url: config.url.clone(),
@@ -796,6 +825,7 @@ async fn resolve_integrations(configs: &[IntegrationConfig]) -> Result<Vec<aip_e
                 open_for: std::time::Duration::from_millis(breaker.open_ms),
             }),
             oauth,
+            query,
         });
     }
     Ok(endpoints)
@@ -1708,6 +1738,8 @@ mod managed_config_tests {
             allow_private_networks: false,
             circuit_breaker: None,
             oauth2: None,
+            query_params: Vec::new(),
+            secret_query_env: None,
         };
         let error = validate_integrations_shape(&[item("crm", 90_000)]).unwrap_err();
         let message = error["message"].as_str().expect("message");
@@ -1716,6 +1748,16 @@ mod managed_config_tests {
         let error = validate_integrations_shape(&[item("bad name", 1000)]).unwrap_err();
         assert!(error["message"].as_str().expect("message").contains("name은"), "{error}");
         assert!(validate_integrations_shape(&[item("crm", 1000)]).is_ok());
+        // A query-string endpoint is a GET endpoint, and its secret names an environment variable.
+        let mut query = item("crm", 1000);
+        query.query_params = vec!["q".into()];
+        let message = validate_integrations_shape(&[query]).unwrap_err()["message"].as_str().unwrap().to_string();
+        assert!(message.contains("GET"), "{message}");
+        let mut secret = item("crm", 1000);
+        secret.method = "GET".into();
+        secret.secret_query_env = Some(SecretHeaderEnv { name: "key".into(), env: "lower".into() });
+        let message = validate_integrations_shape(&[secret]).unwrap_err()["message"].as_str().unwrap().to_string();
+        assert!(message.contains("secret_query_env"), "{message}");
     }
 
     #[test]

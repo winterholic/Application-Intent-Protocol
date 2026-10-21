@@ -32,6 +32,8 @@ pub enum Error {
     TokenUnavailable,
     /// A subscriber URL was malformed, not HTTPS or resolved to a non-public address; nothing was sent.
     DestinationRejected,
+    /// A query-string endpoint got a name it does not allow or a value that is not a short scalar; nothing was sent.
+    InvalidQuery,
 }
 
 const DNS_TIMEOUT: Duration = Duration::from_secs(2);
@@ -169,6 +171,28 @@ pub struct EndpointConfig {
     /// Not part of the fingerprint: it changes when requests are sent, not what a request means.
     pub circuit_breaker: Option<CircuitBreaker>,
     pub oauth: Option<OAuthConfig>,
+    /// A query-string endpoint (a GET API such as YouTube Data): the extension supplies scalar values for the allowed parameter
+    /// names instead of a JSON body, and the server appends a secret parameter the extension never sees.
+    pub query: Option<QueryConfig>,
+}
+
+pub struct QueryConfig {
+    /// The only parameter names a caller may send.
+    pub allowed: Vec<String>,
+    /// A parameter the server adds to every request (an API key). Its name must not be an allowed one.
+    pub secret: Option<(String, String)>,
+}
+
+struct EndpointQuery {
+    allowed: std::collections::BTreeSet<String>,
+    secret: Option<(String, String)>,
+}
+
+const MAX_QUERY_PARAMS: usize = 32;
+const MAX_QUERY_VALUE_BYTES: usize = 2048;
+
+fn valid_query_name(name: &str) -> bool {
+    !name.is_empty() && name.len() <= 64 && name.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-'))
 }
 
 struct Endpoint {
@@ -181,6 +205,7 @@ struct Endpoint {
     client: Client,
     breaker: Option<Breaker>,
     oauth: Option<OAuthClient>,
+    query: Option<EndpointQuery>,
 }
 
 pub struct Broker {
@@ -251,6 +276,12 @@ impl Broker {
             self.fingerprint = Sha256::digest(canonical).iter().map(|byte| format!("{byte:02x}")).collect();
         }
         Ok(self)
+    }
+
+    /// Whether `name` is a query-string endpoint: a GET that reads from the provider, so sending it again after a lost answer
+    /// changes nothing there.
+    pub fn is_query(&self, name: &str) -> bool {
+        self.endpoints.get(name).is_some_and(|endpoint| endpoint.query.is_some())
     }
 
     /// Whether `name` is an outbound webhook sender rather than a fixed endpoint.
@@ -325,12 +356,41 @@ impl Broker {
         if body.len() > endpoint.max_request_bytes {
             return Err(Error::RequestTooLarge);
         }
-        let mut request = endpoint
-            .client
-            .request(endpoint.method.clone(), endpoint.url.clone())
-            .timeout(endpoint.timeout)
-            .header(CONTENT_TYPE, "application/json")
-            .body(body);
+        let mut request = match &endpoint.query {
+            // The caller names allowed parameters and gives scalar values; the URL, the method and the secret stay the server's.
+            Some(query) => {
+                let mut url = endpoint.url.clone();
+                let object = input.as_object().ok_or(Error::InvalidQuery)?;
+                {
+                    let mut pairs = url.query_pairs_mut();
+                    for (name, value) in object {
+                        if !query.allowed.contains(name) {
+                            return Err(Error::InvalidQuery);
+                        }
+                        let text = match value {
+                            Value::String(text) => text.clone(),
+                            Value::Number(number) => number.to_string(),
+                            Value::Bool(flag) => flag.to_string(),
+                            _ => return Err(Error::InvalidQuery),
+                        };
+                        if text.len() > MAX_QUERY_VALUE_BYTES {
+                            return Err(Error::InvalidQuery);
+                        }
+                        pairs.append_pair(name, &text);
+                    }
+                    if let Some((name, value)) = &query.secret {
+                        pairs.append_pair(name, value);
+                    }
+                }
+                endpoint.client.request(endpoint.method.clone(), url).timeout(endpoint.timeout)
+            }
+            None => endpoint
+                .client
+                .request(endpoint.method.clone(), endpoint.url.clone())
+                .timeout(endpoint.timeout)
+                .header(CONTENT_TYPE, "application/json")
+                .body(body),
+        };
         if let Some((name, value)) = &endpoint.secret_header {
             request = request.header(name, value.clone());
         }
@@ -392,6 +452,15 @@ fn fingerprint(configs: &[EndpointConfig]) -> Result<String, Error> {
             "resolved": resolved,
             "allow_loopback": config.allow_loopback,
             "allow_private_networks": config.allow_private_networks,
+            "query": config.query.as_ref().map(|query| {
+                let mut allowed = query.allowed.clone();
+                allowed.sort();
+                let secret = query.secret.as_ref().map(|(name, value)| {
+                    let digest = Sha256::digest(value.as_bytes());
+                    (name.clone(), digest.iter().map(|byte| format!("{byte:02x}")).collect::<String>())
+                });
+                serde_json::json!({"allowed": allowed, "secret": secret})
+            }),
             // The token identity decides whose account a call acts on, so it is part of the meaning.
             "oauth": config.oauth.as_ref().map(|oauth| {
                 let mut resolved = oauth.resolved.iter().map(ToString::to_string).collect::<Vec<_>>();
@@ -443,6 +512,27 @@ fn build_endpoint(config: EndpointConfig) -> Result<(String, Endpoint), Error> {
             Ok((name, value))
         })
         .transpose()?;
+    let query = config
+        .query
+        .map(|query| {
+            let allowed: std::collections::BTreeSet<String> = query.allowed.iter().cloned().collect();
+            let secret_ok = query
+                .secret
+                .as_ref()
+                .is_none_or(|(name, value)| valid_query_name(name) && !allowed.contains(name) && !value.is_empty() && value.len() <= 8192);
+            if method != Method::GET
+                || (allowed.is_empty() && query.secret.is_none())
+                || allowed.len() != query.allowed.len()
+                || allowed.len() > MAX_QUERY_PARAMS
+                || !allowed.iter().all(|name| valid_query_name(name))
+                || !secret_ok
+                || url.query().is_some()
+            {
+                return Err(Error::InvalidConfiguration);
+            }
+            Ok(EndpointQuery { allowed, secret: query.secret })
+        })
+        .transpose()?;
     let client = pinned_client(&url, &config.resolved, config.timeout)?;
     let oauth = config
         .oauth
@@ -489,6 +579,7 @@ fn build_endpoint(config: EndpointConfig) -> Result<(String, Endpoint), Error> {
             client,
             breaker,
             oauth,
+            query,
         },
     ))
 }
