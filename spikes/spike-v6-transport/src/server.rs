@@ -268,6 +268,7 @@ pub(crate) async fn listen_with_fingerprint(
             "/rag",
             "/objects",
             "/messages",
+            "/auth",
             "/health",
             "/ready",
             "/metrics",

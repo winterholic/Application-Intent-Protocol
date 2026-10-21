@@ -1,0 +1,20 @@
+// The password checks behind the FaceReview login (WBS 7.2.2), appended to the relational definition. The service calls them
+// itself with a hash it read from a column no resource exposes; `allow false` keeps every client from calling them directly.
+// `password_auth.py` is the official extension (product/providers/password_auth.py), copied into the workers directory.
+operation read verifyPassword {
+  input { password: Text(1..256); hash: Text(1..255) }
+  output { ok: Bool; rehash: Bool }
+  allow false
+  effect none
+  deadline 10s
+  implementation "password_auth.verify_password"
+}
+
+operation read hashPassword {
+  input { password: Text(1..256) }
+  output { hash: Text(1..255) }
+  allow false
+  effect none
+  deadline 10s
+  implementation "password_auth.hash_password"
+}

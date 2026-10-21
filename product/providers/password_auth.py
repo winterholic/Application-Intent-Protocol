@@ -76,6 +76,15 @@ def needs_rehash(stored):
     return canonical != DEFAULT_METHOD
 
 
+async def hash_password(input, ctx):
+    """Extension entry for signup: the server hashes a new password here and stores only the result. The server bounds the
+    password length before calling; this refuses a non-text value the same way."""
+    password = input.get("password")
+    if not isinstance(password, str):
+        raise ValueError("password must be text")
+    return {"hash": generate_password_hash(password)}
+
+
 async def verify_password(input, ctx):
     """Extension entry. The server supplies the stored hash from its own read of the credential column; the extension
     answers only with a verdict so neither the hash nor the password leaves the sandbox."""

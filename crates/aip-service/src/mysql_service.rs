@@ -120,6 +120,8 @@ struct MysqlAuthenticator {
     schema: String,
     /// Resource that carries the actor's public identity (`None` for managed principals).
     actor: Option<ActorResource>,
+    /// Present when the service logs users in itself: an access token is honoured only while its login session lives.
+    sessions: Option<aip_migrate::mysql_auth_sessions::MysqlAuthSessions>,
 }
 
 struct ActorResource {
@@ -157,6 +159,17 @@ impl MysqlAuthenticator {
         let (actor_id, enabled, min_iat) = row.ok_or(AuthError::BadSignature)?;
         if enabled != 1 || claims.issued_at < min_iat {
             return Err(AuthError::BadSignature);
+        }
+        if let Some(sessions) = &self.sessions {
+            // A token without a session id was not minted by this service's login, so it is not accepted here.
+            let sid = claims.claims.get("sid").and_then(Value::as_str).ok_or(AuthError::BadSignature)?;
+            let live = tokio::time::timeout(DB_TIMEOUT, sessions.is_active(&mut conn, sid, &claims.subject))
+                .await
+                .map_err(|_| AuthError::Unavailable)?
+                .map_err(|_| AuthError::Unavailable)?;
+            if !live {
+                return Err(AuthError::BadSignature);
+            }
         }
         // The public actor id, and proof that the business row the binding points at still exists.
         let public_id: Option<String> = match &self.actor {
@@ -202,6 +215,87 @@ impl spike_v6_transport::auth::Authenticator for MysqlAuthenticator {
     }
 }
 
+/// Binds an identity subject to an actor row inside the caller's transaction, as `aip service principal bind` does.
+/// The caller commits; nothing here is reachable from a request except through the service's own login path.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn bind_principal(
+    tx: &mut mysql_async::Transaction<'_>,
+    schema: &str,
+    facts: &Value,
+    id_wire: IdWire,
+    managed: bool,
+    issuer: &str,
+    subject: &str,
+    actor: &str,
+    not_before: i64,
+) -> Result<(), Value> {
+    if subject.is_empty() || subject.chars().count() > 256 || not_before < 0 {
+        return Err(error("BAD_PRINCIPAL", "subject·actor·not-before 값 오류"));
+    }
+    let actor_resource = facts["actor"].as_str().unwrap_or("principal");
+    let view = sqlgen::snake(actor_resource);
+    let handle: i64 = if spike_v2_read::id_wire::id_kind(facts, actor_resource) == "uuid" {
+        let id = spike_v2_read::id_wire::parse_uuid(actor).map_err(|_| error("BAD_PRINCIPAL", "actor는 정규 UUID 문자열이어야 함"))?.to_string();
+        let present: Option<i64> = tx
+            .exec_first(format!("SELECT 1 FROM `{schema}`.`{view}` WHERE `id` = ?"), (id.as_str(),))
+            .await
+            .map_err(|_| error("BAD_PRINCIPAL", "actor resource 조회 실패"))?;
+        if present.is_none() {
+            return Err(error("BAD_PRINCIPAL", "actor resource 행이 없음"));
+        }
+        tx.exec_drop(
+            format!("INSERT INTO `{schema}`.`aip_actor_identities` (resource_id) VALUES (?) ON DUPLICATE KEY UPDATE resource_id = resource_id"),
+            (id.as_str(),),
+        )
+        .await
+        .map_err(|_| error("BAD_PRINCIPAL", "UUID 신원 연결 실패"))?;
+        tx.exec_first(format!("SELECT id FROM `{schema}`.`aip_actor_identities` WHERE resource_id = ?"), (id.as_str(),))
+            .await
+            .map_err(|_| error("BAD_PRINCIPAL", "UUID 신원 연결 실패"))?
+            .ok_or_else(|| error("BAD_PRINCIPAL", "UUID 신원 연결 실패"))?
+    } else {
+        let handle =
+            spike_v2_read::id_wire::parse_id(&json!(actor), IdWire::DecimalString).map_err(|_| error("BAD_PRINCIPAL", "actor 숫자 Id 형식 오류"))?;
+        if handle <= 0 {
+            return Err(error("BAD_PRINCIPAL", "actor 숫자 Id는 양수여야 함"));
+        }
+        if !managed {
+            let present: Option<i64> = tx
+                .exec_first(format!("SELECT 1 FROM `{schema}`.`{view}` WHERE `id` = ?"), (handle,))
+                .await
+                .map_err(|_| error("BAD_PRINCIPAL", "actor resource 조회 실패"))?;
+            if present.is_none() {
+                return Err(error("BAD_PRINCIPAL", "actor resource 행이 없음"));
+            }
+        }
+        if id_wire == IdWire::SafeNumber && handle > spike_v2_read::id_wire::MAX_SAFE_ID {
+            return Err(error("BAD_PRINCIPAL", "safe wire의 actor 안전 정수 상한 초과"));
+        }
+        tx.exec_drop(format!("INSERT IGNORE INTO `{schema}`.`aip_actors` (id) VALUES (?)"), (handle,))
+            .await
+            .map_err(|_| error("PRINCIPAL_FAILED", "운영 신원 등록 실패"))?;
+        handle
+    };
+    // An existing binding keeps its actor; only the same actor may be re-bound.
+    let existing: Option<i64> = tx
+        .exec_first(format!("SELECT actor_id FROM `{schema}`.`aip_principals` WHERE issuer = ? AND subject = ? FOR UPDATE"), (issuer, subject))
+        .await
+        .map_err(|_| error("PRINCIPAL_FAILED", "actor 존재·매핑 테이블·DB 권한을 확인해야 함"))?;
+    if existing.is_some_and(|current| current != handle) {
+        return Err(error("PRINCIPAL_CONFLICT", "이미 연결된 신원의 actor를 바꿀 수 없음"));
+    }
+    tx.exec_drop(
+        format!(
+            "INSERT INTO `{schema}`.`aip_principals` (issuer, subject, actor_id, enabled, min_iat) VALUES (?, ?, ?, 1, ?) \
+                         ON DUPLICATE KEY UPDATE enabled = 1, min_iat = GREATEST(min_iat, VALUES(min_iat))"
+        ),
+        (issuer, subject, handle, not_before),
+    )
+    .await
+    .map_err(|_| error("PRINCIPAL_FAILED", "actor 존재·매핑 테이블·DB 권한을 확인해야 함"))?;
+    Ok(())
+}
+
 pub(crate) async fn principal(config: Config, command: Principal) -> Result<Value, Value> {
     reject_unsupported_infrastructure(&config)?;
     let url = database_url(&config)?;
@@ -230,77 +324,7 @@ pub(crate) async fn principal(config: Config, command: Principal) -> Result<Valu
         let managed = facts["actorMode"] == "principal";
         let affected = match command {
             Principal::Bind { subject, actor, not_before } => {
-                if subject.is_empty() || subject.chars().count() > 256 || not_before < 0 {
-                    return Err(error("BAD_PRINCIPAL", "subject·actor·not-before 값 오류"));
-                }
-                let actor_resource = facts["actor"].as_str().unwrap_or("principal");
-                let view = sqlgen::snake(actor_resource);
-                let handle: i64 = if spike_v2_read::id_wire::id_kind(&facts, actor_resource) == "uuid" {
-                    let id = spike_v2_read::id_wire::parse_uuid(&actor)
-                        .map_err(|_| error("BAD_PRINCIPAL", "actor는 정규 UUID 문자열이어야 함"))?
-                        .to_string();
-                    let present: Option<i64> = tx
-                        .exec_first(format!("SELECT 1 FROM `{schema}`.`{view}` WHERE `id` = ?"), (id.as_str(),))
-                        .await
-                        .map_err(|_| error("BAD_PRINCIPAL", "actor resource 조회 실패"))?;
-                    if present.is_none() {
-                        return Err(error("BAD_PRINCIPAL", "actor resource 행이 없음"));
-                    }
-                    tx.exec_drop(
-                        format!(
-                            "INSERT INTO `{schema}`.`aip_actor_identities` (resource_id) VALUES (?) ON DUPLICATE KEY UPDATE resource_id = resource_id"
-                        ),
-                        (id.as_str(),),
-                    )
-                    .await
-                    .map_err(|_| error("BAD_PRINCIPAL", "UUID 신원 연결 실패"))?;
-                    tx.exec_first(format!("SELECT id FROM `{schema}`.`aip_actor_identities` WHERE resource_id = ?"), (id.as_str(),))
-                        .await
-                        .map_err(|_| error("BAD_PRINCIPAL", "UUID 신원 연결 실패"))?
-                        .ok_or_else(|| error("BAD_PRINCIPAL", "UUID 신원 연결 실패"))?
-                } else {
-                    let handle = spike_v2_read::id_wire::parse_id(&json!(actor), IdWire::DecimalString)
-                        .map_err(|_| error("BAD_PRINCIPAL", "actor 숫자 Id 형식 오류"))?;
-                    if handle <= 0 {
-                        return Err(error("BAD_PRINCIPAL", "actor 숫자 Id는 양수여야 함"));
-                    }
-                    if !managed {
-                        let present: Option<i64> = tx
-                            .exec_first(format!("SELECT 1 FROM `{schema}`.`{view}` WHERE `id` = ?"), (handle,))
-                            .await
-                            .map_err(|_| error("BAD_PRINCIPAL", "actor resource 조회 실패"))?;
-                        if present.is_none() {
-                            return Err(error("BAD_PRINCIPAL", "actor resource 행이 없음"));
-                        }
-                    }
-                    if id_wire == IdWire::SafeNumber && handle > spike_v2_read::id_wire::MAX_SAFE_ID {
-                        return Err(error("BAD_PRINCIPAL", "safe wire의 actor 안전 정수 상한 초과"));
-                    }
-                    tx.exec_drop(format!("INSERT IGNORE INTO `{schema}`.`aip_actors` (id) VALUES (?)"), (handle,))
-                        .await
-                        .map_err(|_| error("PRINCIPAL_FAILED", "운영 신원 등록 실패"))?;
-                    handle
-                };
-                // An existing binding keeps its actor; only the same actor may be re-bound.
-                let existing: Option<i64> = tx
-                    .exec_first(
-                        format!("SELECT actor_id FROM `{schema}`.`aip_principals` WHERE issuer = ? AND subject = ? FOR UPDATE"),
-                        (issuer.as_str(), subject.as_str()),
-                    )
-                    .await
-                    .map_err(|_| error("PRINCIPAL_FAILED", "actor 존재·매핑 테이블·DB 권한을 확인해야 함"))?;
-                if existing.is_some_and(|current| current != handle) {
-                    return Err(error("PRINCIPAL_CONFLICT", "이미 연결된 신원의 actor를 바꿀 수 없음"));
-                }
-                tx.exec_drop(
-                    format!(
-                        "INSERT INTO `{schema}`.`aip_principals` (issuer, subject, actor_id, enabled, min_iat) VALUES (?, ?, ?, 1, ?) \
-                         ON DUPLICATE KEY UPDATE enabled = 1, min_iat = GREATEST(min_iat, VALUES(min_iat))"
-                    ),
-                    (issuer.as_str(), subject.as_str(), handle, not_before),
-                )
-                .await
-                .map_err(|_| error("PRINCIPAL_FAILED", "actor 존재·매핑 테이블·DB 권한을 확인해야 함"))?;
+                bind_principal(&mut tx, &schema, &facts, id_wire, managed, &issuer, &subject, &actor, not_before).await?;
                 1_u64
             }
             Principal::Revoke { subject } => {
@@ -355,14 +379,10 @@ pub(crate) async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
         .then(|| ActorResource { view: sqlgen::snake(actor_name), uuid: spike_v2_read::id_wire::id_kind(&deployed, actor_name) == "uuid" });
     let mut infrastructure = infrastructure::build(&config)?;
     let issuer = config.auth.issuer.clone();
+    let audience = config.auth.audience.clone();
     let verifier = aip_auth::AuthenticatorImpl::new_explained(config.auth, "mysql".into(), config.schema.clone())
         .await
         .map_err(|failure| error("AUTH_CONFIG", &format!("인증 설정 오류: {}", failure.reason)))?;
-    let authenticator = Arc::new(MysqlAuthenticator { verifier, driver: driver.clone(), schema: config.schema.clone(), actor });
-    infrastructure.rate_limit = None;
-    // Subscriptions wake on commits of this process; the read-only adapter has none, so the transport answers
-    // WIRE.NOT_AVAILABLE for event streams instead of serving a stream that never fires.
-    infrastructure.realtime.enabled = false;
     let extensions = config.workers.as_ref().map(|w| spike_v6_transport::server::ReadExtensions {
         dir: w.directory.clone(),
         lang: match w.language {
@@ -370,6 +390,47 @@ pub(crate) async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
             Language::Python => spike_v6_transport::server::WorkerLang::Python,
         },
     });
+    let credential_service = match &config.credentials {
+        None => None,
+        Some(credentials) => {
+            let workers = extensions.clone().ok_or_else(|| error("CREDENTIALS_CONFIG", "credentials에는 workers 설정이 필요함"))?;
+            let service = super::mysql_auth::CredentialService::new(
+                credentials,
+                &mapping,
+                Arc::new(deployed.clone()),
+                config.wire.id_wire(),
+                driver.clone(),
+                fence.clone(),
+                &config.schema,
+                workers,
+                infrastructure.worker_launch.clone(),
+                &issuer,
+                &audience,
+            )
+            .await?;
+            service.check_storage().await?;
+            // A signing key whose public half is not in `auth.jwks` would mint tokens this very server rejects.
+            verifier
+                .verify_token(&service.probe_token()?)
+                .await
+                .map_err(|_| error("CREDENTIALS_CONFIG", "signing_key_file의 공개 키가 auth.jwks에 없거나 issuer·audience가 일치하지 않음"))?;
+            Some(Arc::new(service))
+        }
+    };
+    let authenticator = Arc::new(MysqlAuthenticator {
+        verifier,
+        driver: driver.clone(),
+        schema: config.schema.clone(),
+        actor,
+        sessions: credential_service.as_ref().map(|service| service.sessions()),
+    });
+    if let Some(service) = &credential_service {
+        infrastructure.credential_auth = Some(service.clone());
+    }
+    infrastructure.rate_limit = None;
+    // Subscriptions wake on commits of this process; the read-only adapter has none, so the transport answers
+    // WIRE.NOT_AVAILABLE for event streams instead of serving a stream that never fires.
+    infrastructure.realtime.enabled = false;
     configure_optional_read_adapters(&mut infrastructure, config.workers.as_ref(), |name| std::env::var(name).ok()).await?;
     infrastructure.job_policies = triggers::build_job_policies(&config.job_policies).map_err(|message| error("JOB_POLICY_CONFIG", message))?;
     let mut built = triggers::build(&config.schedules, &config.webhooks, &config.outbox_handlers, &issuer, &|name| std::env::var(name).ok())

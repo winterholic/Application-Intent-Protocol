@@ -291,6 +291,9 @@ pub struct Config {
     #[serde(default)]
     pub message_handlers: Vec<triggers::MessageHandlerConfig>,
     pub metrics: Option<infrastructure::MetricsConfig>,
+    /// Password login served by the service itself under the `/auth/*` paths (MySQL adapter only).
+    #[serde(default)]
+    pub credentials: Option<credentials::CredentialsConfig>,
     #[serde(default)]
     pub otlp: Option<spike_v6_transport::otlp::OtlpConfig>,
     /// How long history that nothing else removes is kept (outbox rows, events). See `RetentionConfig`.
@@ -507,6 +510,9 @@ fn read_bounded(path: &Path, limit: usize, code: &str) -> Result<String, Value> 
 }
 /// The definition diagnostic registry of the product path, for `aip explain-code` and `aip diagnostics --area def`.
 pub use spike_v1_fixture::codes as definition_registry;
+mod credentials;
+#[cfg(feature = "mysql")]
+mod mysql_auth;
 #[cfg(feature = "mysql")]
 mod mysql_jobs;
 /// The codes the SDKs raise themselves, for `aip explain-code`.
@@ -605,6 +611,11 @@ fn configuration_with_mode(path: &Path, gate: Gate) -> Result<Config, Value> {
         && worker.directory.is_relative()
     {
         worker.directory = parent.join(&worker.directory);
+    }
+    if let Some(credentials) = &mut config.credentials
+        && credentials.signing_key_file.is_relative()
+    {
+        credentials.signing_key_file = parent.join(&credentials.signing_key_file);
     }
     if let Some(worker) = &config.workers {
         validate_integrations_shape(&worker.integrations)?;
@@ -1458,6 +1469,12 @@ fn require_built_features_mode(config: &Config, gate: Gate) -> Result<(), Value>
 
 async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
     require_built_features(&config)?;
+    if config.credentials.is_some() {
+        return Err(error(
+            "CREDENTIALS_UNSUPPORTED",
+            "credentials(비밀번호 로그인)는 MySQL adapter에서만 지원하며 PostgreSQL 배포는 외부 IdP를 사용함",
+        ));
+    }
     let adapter = resolve_database_adapter(&config)?;
     if adapter == "mysql" || adapter == "mariadb" {
         return Err(error(

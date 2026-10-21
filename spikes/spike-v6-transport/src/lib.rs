@@ -9,6 +9,7 @@ mod admission;
 pub mod auth;
 pub mod client_codes;
 mod cors;
+pub mod credential_auth;
 mod durable;
 pub mod encryption;
 mod health;
@@ -707,6 +708,60 @@ async fn serve_webhook<R: tokio::io::AsyncRead + Unpin>(
     }
 }
 
+/// The `/auth/*` routes: bounded JSON in, the adapter's decision out. Replies are never cached and carry the origin's credentials grant,
+/// because the refresh cookie travels on them.
+#[allow(clippy::too_many_arguments)]
+async fn serve_credentials<R: tokio::io::AsyncRead + Unpin>(
+    w: &mut Response<impl AsyncWriteExt + Unpin>,
+    rd: &mut R,
+    method: &str,
+    path: &str,
+    len: Option<usize>,
+    content_type: Option<&str>,
+    headers: &[(String, String)],
+    runtime: &server::Runtime,
+) {
+    let fail = |code: &str| json!({"ok":false,"code":code}).to_string();
+    let no_store = "cache-control: no-store\r\n";
+    let Some(adapter) = runtime.infrastructure.credential_auth.as_ref() else {
+        return reply_with_status(w, "404 Not Found", &fail("WIRE.NOT_FOUND"), "").await;
+    };
+    if method != "POST" {
+        return reply_with_status(w, "405 Method Not Allowed", &fail("WIRE.BAD_REQUEST"), "allow: POST\r\ncache-control: no-store\r\n").await;
+    }
+    let length = len.unwrap_or(0);
+    if length > credential_auth::MAX_BODY {
+        return reply_with_status(w, "413 Payload Too Large", &fail("WIRE.PAYLOAD_TOO_LARGE"), no_store).await;
+    }
+    let mut raw = vec![0; length];
+    match tokio::time::timeout_at(w.deadline, rd.read_exact(&mut raw)).await {
+        Err(_) => return reply_with_status(w, "408 Request Timeout", &fail("WIRE.REQUEST_TIMEOUT"), no_store).await,
+        Ok(Err(_)) => return,
+        Ok(Ok(_)) => {}
+    }
+    // A body must say it is JSON. A cross-site form cannot, so a cookie-bearing request it forges is not mistaken for ours.
+    let body = if raw.is_empty() {
+        json!({})
+    } else {
+        let is_json =
+            content_type.is_some_and(|value| value.split(';').next().is_some_and(|kind| kind.trim().eq_ignore_ascii_case("application/json")));
+        match serde_json::from_slice::<Value>(&raw) {
+            Ok(value) if is_json && value.is_object() => value,
+            _ => return reply_with_status(w, "400 Bad Request", &fail("WIRE.BAD_REQUEST"), no_store).await,
+        }
+    };
+    let cookie = headers.iter().find(|(key, _)| key == "cookie").map(|(_, value)| value.as_str());
+    let reply = adapter.handle(credential_auth::AuthRequest { route: path, body, cookie }).await;
+    let mut extra = String::from(no_store);
+    if w.origin.is_some() {
+        extra.push_str("access-control-allow-credentials: true\r\n");
+    }
+    if let Some(cookie) = reply.set_cookie.as_deref().filter(|value| !value.bytes().any(|b| b.is_ascii_control())) {
+        extra.push_str(&format!("set-cookie: {cookie}\r\n"));
+    }
+    reply_with_status(w, credential_auth::status_line(reply.status), &reply.body.to_string(), &extra).await;
+}
+
 async fn serve_conn(
     mut sock: TcpStream,
     facts: Arc<Value>,
@@ -891,6 +946,7 @@ async fn serve_request(
     }
     let object_path = path.starts_with("/objects/");
     let messages_path = path.starts_with("/messages/");
+    let credential_path = runtime.infrastructure.credential_auth.is_some() && credential_auth::is_route(&path);
     if ![
         "/session",
         "/read",
@@ -919,6 +975,7 @@ async fn serve_request(
         && file_mount.is_none()
         && !object_path
         && !messages_path
+        && !credential_path
     {
         return reply(&mut w, &err("WIRE.NOT_FOUND", "알 수 없는 경로")).await;
     }
@@ -934,10 +991,15 @@ async fn serve_request(
         if w.origin.is_none() || !cors::allowed_request_headers(request_headers.as_deref()) || len.is_some_and(|len| len != 0) {
             return reply(&mut w, &err("WIRE.BAD_REQUEST", "잘못된 preflight")).await;
         }
+        // The origin was matched exactly against the allow-list above, so credentials may be allowed for it. Only the cookie routes need that.
+        let credentials = if credential_path { "access-control-allow-credentials: true\r\n" } else { "" };
         let extra = format!(
-            "vary: Origin, Access-Control-Request-Method, Access-Control-Request-Headers\r\naccess-control-allow-methods: {methods}\r\naccess-control-allow-headers: authorization, content-type, x-aip-contract\r\n"
+            "vary: Origin, Access-Control-Request-Method, Access-Control-Request-Headers\r\naccess-control-allow-methods: {methods}\r\naccess-control-allow-headers: authorization, content-type, x-aip-contract\r\n{credentials}"
         );
         return reply_with_headers(&mut w, &json!({"ok":true}).to_string(), &extra).await;
+    }
+    if credential_path {
+        return serve_credentials(&mut w, &mut rd, &method, &path, len, content_type.as_deref(), &header_values, &runtime).await;
     }
     if let Some(mount) = mount {
         let session = match verify_session(token.as_deref(), &keys, &runtime, deadline).await {

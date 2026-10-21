@@ -141,6 +141,8 @@ pub struct Infrastructure {
     /// refused with `WIRE.ADAPTER_UNSUPPORTED` instead of being emulated.
     pub relational: Option<Arc<dyn spike_v2_read::backend::RelationalBackend>>,
     pub relational_jobs: Option<Arc<dyn crate::relational_jobs::RelationalJobs>>,
+    /// Password login, signup and refresh under the `/auth/*` paths. Without one those paths do not exist.
+    pub credential_auth: Option<Arc<dyn crate::credential_auth::CredentialAuth>>,
     pub mongo: Option<Arc<dyn spike_v4_worker::MongoCapability>>,
     pub redis: Option<Arc<dyn spike_v4_worker::RedisCapability>>,
     pub retention: Retention,
@@ -172,6 +174,7 @@ impl Default for Infrastructure {
             otlp_exporter: None,
             relational: None,
             relational_jobs: None,
+            credential_auth: None,
             mongo: None,
             redis: None,
             retention: Retention::default(),

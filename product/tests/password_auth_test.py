@@ -6,6 +6,7 @@ import unittest
 from product.providers.password_auth import (
     check_password_hash,
     generate_password_hash,
+    hash_password,
     needs_rehash,
     verify_password,
 )
@@ -79,6 +80,14 @@ class PasswordAuthTest(unittest.TestCase):
         bad = asyncio.run(verify_password({"password": "nope-nope", "hash": stored}, None))
         self.assertEqual(bad, {"ok": False, "rehash": False})
         self.assertNotIn(stored, json.dumps([ok, bad]))
+
+    def test_worker_hash_entry_returns_a_hash_the_verifier_accepts(self):
+        produced = asyncio.run(hash_password({"password": "pw-pw-pw-pw"}, None))
+        self.assertEqual(set(produced), {"hash"})
+        self.assertTrue(check_password_hash(produced["hash"], "pw-pw-pw-pw"))
+        self.assertLessEqual(len(produced["hash"]), 255, "fits the original varchar(255) column")
+        with self.assertRaises(ValueError):
+            asyncio.run(hash_password({"password": None}, None))
 
 
 if __name__ == "__main__":

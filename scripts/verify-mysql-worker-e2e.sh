@@ -163,6 +163,14 @@ if [[ "$mode" == run-ci ]]; then
   echo "=== Running the end-to-end test (real aip binary, real workers, real MySQL) ==="
   cargo test "${cargo_args[@]}" -- --ignored --exact "$test_name" --nocapture --test-threads=1 2>&1 | tee /tmp/aip-e2e-run-"$tag".txt
   grep -Fq "test result: ok. 1 passed; 0 failed;" /tmp/aip-e2e-run-"$tag".txt
+  # The FaceReview password login (WBS 7.2.2) checks passwords in the same sandboxed Python worker, on the same fixture.
+  echo "=== Running the password login end-to-end test (real aip binary, Python extension in the sandbox, real MySQL) ==="
+  auth_args=(--locked -p aip-cli --features mysql --test mysql_facereview_auth)
+  auth_test="facereview_accounts_log_in_refresh_and_log_out_without_the_originals_replay_defect"
+  cargo test "${auth_args[@]}" -- --list --ignored 2>&1 | tee /tmp/aip-e2e-auth-list-"$tag".txt | tail -3
+  grep -Fxq "$auth_test: test" /tmp/aip-e2e-auth-list-"$tag".txt
+  cargo test "${auth_args[@]}" -- --ignored --exact "$auth_test" --nocapture --test-threads=1 2>&1 | tee /tmp/aip-e2e-auth-run-"$tag".txt
+  grep -Fq "test result: ok. 1 passed; 0 failed;" /tmp/aip-e2e-auth-run-"$tag".txt
   exit 0
 fi
 
