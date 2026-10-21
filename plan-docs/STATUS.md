@@ -1,5 +1,9 @@
 # 진행 현황과 쌓인 질문
 
+## 2026-10-21 WBS 7.2.1.3 MySQL 관리 파일 저장소 capability (구현, Linux CI 대기)
+
+`access files.<bucket>`과 클라이언트 경로 `/files/put·get·delete`를 MySQL에 연결했다. 저장소는 `aip_managed_files` 한 표다(PostgreSQL의 `aip_files`와 이름을 나눴다). 부트스트랩과 `adopt-external --apply` 재실행이 만들고, `workers.enable_file_uploads`이거나 job이 `files.*`를 선언한 서비스만 시작 때 표를 검사한다. 이제 `enable_file_uploads` 설정을 거절하지 않는다. 바이트는 표에 LONGBLOB로 1MiB까지 두고, 핸들은 불투명 UUID이며 경로나 URL은 노출하지 않는다. 같은 이름에 같은 바이트·형식·만료를 다시 넣으면 같은 파일이고 다르면 충돌이다. 읽기는 owner·bucket·만료를 호출마다 데이터베이스 시계로 다시 검사한다. owner당 100개·10MiB 한도를 `aip_tx_locks` 버킷 잠금 아래에서 검사하고(만료된 파일은 세지 않고 이미 있는 이름의 재전송은 새 파일로 세지 않는다), job의 파일은 run과 effect로 범위를 좁혀 재시도가 같은 파일로 수렴하며 run 기한 하루 뒤에 만료된다. job의 put은 effect 장부와 같은 fenced transaction에 커밋되고 get은 장부 없이 읽는다. 만료 파일은 supervisor의 30초 정리 주기에서 1000건씩 최대 10배치 지운다. `file_mounts`(HTTP로 파일을 서빙하는 mount)와 `/files/mount-get`, 객체 저장소(`objects`)는 연결하지 않았다. 이 증분으로 7.2.1.3의 메시지·파일·이벤트 저장소 capability가 모두 MySQL에 연결되었고, 남은 일은 Linux CI 확인과 MariaDB 게이트다. 명령과 결과는 [제품 검증](../product/VERIFICATION.md)의 같은 날짜 절이다.
+
 ## 2026-10-21 WBS 7.2.1.3 MySQL 메시지 핸들러와 만료 메시지 정리 (구현, Linux CI 대기)
 
 `message_handlers`를 MySQL에 연결했다. 서버가 설정된 큐의 준비된 메시지를 서비스 principal의 job으로 바꾸고, job 접수와 메시지 ack가 같은 fenced transaction에 커밋된다. job 키는 메시지 id라서 재전달은 같은 job으로 수렴한다. 접수가 거부되면 nack로 백오프를 거쳐 배달 횟수를 다 쓰면 dead letter가 되고, 서비스 principal이 비활성이면 메시지를 클레임하지도 않아 다시 바인딩할 때까지 준비 상태로 남는다. 시험에서 PostgreSQL 경로와 같은 결함을 찾았다. job 입력에 `deliveries`가 들어 있어서 접수와 ack 사이에 서버가 죽었다가 메시지가 재전달되면 입력이 달라 `IDEMPOTENCY_MISMATCH`가 되고, 이미 만들어진 job이 있는데도 메시지가 nack되어 결국 dead letter로 간다. MySQL 경로는 같은 키의 job이 이미 있으면 메시지를 ack하고 넘어가도록 고쳤다. PostgreSQL 경로(`spikes/spike-v6-transport/src/durable.rs`의 `relay_messages`)는 고치지 않았고 같은 결함이 남아 있다고 본다(코드 대조만 했고 PostgreSQL 실행은 하지 않았다). 만료된 메시지는 supervisor의 30초 정리 주기에서 1000건씩 최대 10배치 지운다. 파일 저장소 capability가 남아 7.2.1.3은 닫지 않는다. 명령과 결과는 [제품 검증](../product/VERIFICATION.md)의 같은 날짜 절이다.

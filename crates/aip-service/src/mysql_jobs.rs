@@ -34,6 +34,8 @@ pub(crate) struct MysqlJobs {
     broker: Option<Arc<aip_execution::integrations::Broker>>,
     /// Message queues are on, and whether clients may publish or consume through `/messages/*` themselves.
     messaging: Messaging,
+    /// Clients may put files through `/files/put`; jobs may always put and get the buckets they declare.
+    file_uploads: bool,
     launch: spike_v4_worker::WorkerLaunchConfig,
     policies: std::collections::HashMap<String, spike_v6_transport::triggers::JobPolicy>,
     triggers: Arc<spike_v6_transport::triggers::Triggers>,
@@ -73,6 +75,27 @@ fn fence_error(error: aip_migrate::mysql_catalog::CatalogError) -> &'static str 
 }
 fn owner(grant: &DurablePrincipal) -> String {
     spike_v1_fixture::digest(&json!([grant.issuer, grant.subject, grant.actor_id, 0]))
+}
+fn file_error(error: aip_execution::files::Error) -> &'static str {
+    use aip_execution::files::Error;
+    match error {
+        Error::FileConflict => "WIRE.IDEMPOTENCY_MISMATCH",
+        Error::InvalidFile => "WIRE.BAD_VALUE",
+        _ => "WIRE.DB_UNAVAILABLE",
+    }
+}
+fn file_json(file: &aip_execution::files::ManagedFile) -> Value {
+    json!({"id":file.handle.to_string(),"bucket":file.bucket,"name":file.name,"mediaType":file.media_type,"size":file.bytes.len()})
+}
+/// The canonical base64 of a body that fits a request, or the error a client should see.
+fn decode_base64(body: &Value) -> Result<Vec<u8>> {
+    use base64::Engine as _;
+    let engine = base64::engine::general_purpose::STANDARD;
+    let bytes = engine.decode(text(body, "base64")?).map_err(|_| "WIRE.BAD_VALUE")?;
+    if bytes.len() > 768 * 1024 - 1024 || engine.encode(&bytes) != body["base64"] {
+        return Err("WIRE.PAYLOAD_TOO_LARGE");
+    }
+    Ok(bytes)
 }
 fn message_error(error: aip_execution::messages::Error) -> &'static str {
     use aip_execution::messages::Error;
@@ -131,7 +154,7 @@ impl MysqlJobs {
                             &format!("job이 선언한 HTTP 연동 `{name}`이 workers.integrations 또는 outbound_webhooks에 없음"),
                         ));
                     }
-                } else if !["read.", "apply.", "jobs.", "events.", "messages."].iter().any(|prefix| capability.starts_with(prefix)) {
+                } else if !["read.", "apply.", "jobs.", "events.", "messages.", "files."].iter().any(|prefix| capability.starts_with(prefix)) {
                     return Err(error("DB_ADAPTER_UNSUPPORTED", &format!("MySQL job capability 미지원: {capability}")));
                 }
             }
@@ -151,6 +174,7 @@ impl MysqlJobs {
                 client_publish: infrastructure.client_publish,
                 client_consume: infrastructure.client_consume,
             },
+            file_uploads: false,
             launch: infrastructure.worker_launch.clone(),
             policies: infrastructure.job_policies.clone(),
             triggers: infrastructure.triggers.clone(),
@@ -195,6 +219,22 @@ impl MysqlJobs {
                 let _: Vec<mysql_async::Row> =
                     conn.query(format!("SELECT {columns} FROM {} WHERE 1=0", self.table(table))).await.map_err(|_| "WIRE.NOT_AVAILABLE")?;
             }
+        }
+        if self.file_uploads || self.declares("files.") {
+            let engine: Option<String> = conn
+                .exec_first("SELECT ENGINE FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=? AND TABLE_NAME='aip_managed_files'", (&self.schema,))
+                .await
+                .map_err(db)?;
+            if engine.as_deref() != Some("InnoDB") {
+                return Err("WIRE.NOT_AVAILABLE");
+            }
+            let _: Vec<mysql_async::Row> = conn
+                .query(format!(
+                    "SELECT handle,owner,bucket,name,object_key,media_type,content,expires_at,created_at FROM {} WHERE 1=0",
+                    self.table("aip_managed_files")
+                ))
+                .await
+                .map_err(|_| "WIRE.NOT_AVAILABLE")?;
         }
         if self.messaging.enabled || self.declares("messages.") {
             let engine: Option<String> = conn
@@ -285,6 +325,76 @@ impl MysqlJobs {
             .await
             .map_err(message_error)?;
         Ok(json!({"message":message}))
+    }
+
+    /// Lets clients put files through `/files/put`, like `workers.enable_file_uploads`.
+    pub(crate) fn with_file_uploads(mut self, enabled: bool) -> Self {
+        self.file_uploads = enabled;
+        self
+    }
+
+    fn files(&self) -> Result<aip_migrate::mysql_files::MysqlFileStore> {
+        aip_migrate::mysql_files::MysqlFileStore::new(&self.schema).map_err(|_| "WIRE.DB_UNAVAILABLE")
+    }
+
+    /// Per-owner file quota under a bucket lock: 100 files and 10 MiB, expired files not counted, and a re-put of a name that
+    /// already exists never counts as a new file.
+    async fn file_budget(&self, tx: &mut Transaction<'static>, owner: &str, bucket: &str, name: &str, size: i64, object_key: &str) -> Result<()> {
+        let digest = spike_v1_fixture::digest(&json!(["aip-files", self.schema, owner]));
+        let slot = u64::from_str_radix(&digest[..8], 16).map_err(db)? % 1000;
+        let locked: Option<u64> =
+            tx.exec_first(format!("SELECT bucket FROM {} WHERE bucket=? FOR UPDATE", self.table("aip_tx_locks")), (slot,)).await.map_err(db)?;
+        if locked.is_none() {
+            return Err("WIRE.DB_UNAVAILABLE");
+        }
+        let files = self.files()?;
+        files.expire_owner(tx, owner).await.map_err(file_error)?;
+        let (count, bytes, existing) = files.usage(tx, owner, bucket, name, object_key).await.map_err(file_error)?;
+        if !existing && (count >= 100 || bytes + size > 10 * 1024 * 1024) {
+            return Err("WIRE.QUOTA_EXCEEDED");
+        }
+        Ok(())
+    }
+
+    /// Stores the file of a put request for `owner`. A job's copy is scoped by its run and effect so a retry converges on it and
+    /// expires a day after the run's deadline; a client's copy keeps its first deadline across identical re-puts.
+    async fn put_file(
+        &self,
+        tx: &mut Transaction<'static>,
+        owner: &str,
+        bucket: &str,
+        input: &Value,
+        run: Option<&aip_execution::Lease>,
+        key_scope: &str,
+    ) -> Result<aip_execution::files::ManagedFile> {
+        let name = text(input, "name")?;
+        let bytes = decode_base64(input)?;
+        let object_key = run.map(|run| spike_v1_fixture::digest(&json!([run.run_id.to_string(), key_scope]))).unwrap_or_default();
+        self.file_budget(tx, owner, bucket, name, bytes.len() as i64, &object_key).await?;
+        let expires = match run {
+            Some(run) => {
+                let deadline: Option<i64> = tx
+                    .exec_first(
+                        format!(
+                            "SELECT CAST(TIMESTAMPDIFF(SECOND,'1970-01-01 00:00:00',run_deadline) AS SIGNED) FROM {} WHERE id=?",
+                            self.table("aip_jobs")
+                        ),
+                        (run.run_id.to_string(),),
+                    )
+                    .await
+                    .map_err(db)?;
+                deadline.ok_or("WIRE.DB_UNAVAILABLE")? + 86_400
+            }
+            None => match self.files()?.expiry_of(tx, owner, bucket, name, &object_key).await.map_err(file_error)? {
+                Some(expires) => expires,
+                None => {
+                    let now: Option<i64> =
+                        tx.query_first("SELECT CAST(TIMESTAMPDIFF(SECOND,'1970-01-01 00:00:00',UTC_TIMESTAMP()) AS SIGNED)").await.map_err(db)?;
+                    now.ok_or("WIRE.DB_UNAVAILABLE")? + 86_400
+                }
+            },
+        };
+        self.files()?.put_scoped(tx, owner, bucket, name, text(input, "mediaType")?, &bytes, Some(expires), &object_key).await.map_err(file_error)
     }
 
     fn events(&self) -> Result<aip_migrate::mysql_events::MysqlEventStore> {
@@ -498,6 +608,38 @@ impl MysqlJobs {
                     _ => "WIRE.DB_UNAVAILABLE",
                 })?;
                 json!({"ok":true,"events":page.events.iter().map(|e|json!({"cursor":e.cursor,"payload":e.payload})).collect::<Vec<_>>(),"cursor":page.next_cursor})
+            }
+            "/files/put" => {
+                if !self.file_uploads {
+                    return Err("WIRE.NOT_EXPOSED");
+                }
+                if !exact(body, &["bucket", "name", "mediaType", "base64"]) {
+                    return Err("WIRE.BAD_REQUEST");
+                }
+                let bucket = text(body, "bucket")?;
+                if !self.exposes(&format!("files.{bucket}")) {
+                    return Err("WIRE.NOT_EXPOSED");
+                }
+                let file = self.put_file(tx, &owner, bucket, body, None, "").await?;
+                json!({"ok":true,"file":file_json(&file)})
+            }
+            "/files/get" | "/files/delete" => {
+                use base64::Engine as _;
+                if !exact(body, &["id"]) {
+                    return Err("WIRE.BAD_REQUEST");
+                }
+                let id = text(body, "id")?.parse().map_err(|_| "WIRE.BAD_VALUE")?;
+                let files = self.files()?;
+                let file = files.get(tx, &owner, &id, None).await.map_err(file_error)?.ok_or("WIRE.NOT_FOUND")?;
+                if !self.exposes(&format!("files.{}", file.bucket)) {
+                    return Err("WIRE.NOT_EXPOSED");
+                }
+                if path == "/files/delete" {
+                    files.delete(tx, &owner, &id).await.map_err(file_error)?;
+                    json!({"ok":true,"deleted":true})
+                } else {
+                    json!({"ok":true,"file":file_json(&file),"base64":base64::engine::general_purpose::STANDARD.encode(&file.bytes)})
+                }
             }
             path if path.starts_with("/messages/") => self.messages_request(tx, &owner, path, body).await?,
             _ => return Err("WIRE.NOT_FOUND"),
@@ -1068,6 +1210,13 @@ impl MysqlJobs {
                 let sweep = async {
                     let mut conn = self.driver.pool().get_conn().await.map_err(db)?;
                     self.store()?.expire_payloads(&mut conn).await.map_err(store_error)?;
+                    if self.file_uploads || self.declares("files.") {
+                        for _ in 0..10 {
+                            if self.files()?.cleanup_expired(&mut conn, 1000).await.map_err(file_error)? < 1000 {
+                                break;
+                            }
+                        }
+                    }
                     if self.messaging.enabled {
                         // Drain expired messages in small batches so one sweep cannot hold a long transaction.
                         for _ in 0..10 {
@@ -1147,6 +1296,14 @@ impl JobHost {
             } else {
                 Ok(json!({"rows":spike_v2_read::id_wire::encode_rows(rows,&plan.output_type,rt.wire).map_err(|e|e.code)?}))
             };
+        }
+        if op == "files" && input["action"] == "get" {
+            // A read has no effect journal: the bytes are checked against the owner, the bucket and the expiry on every call.
+            use base64::Engine as _;
+            let id = text(input, "id")?.parse().map_err(|_| "WIRE.BAD_VALUE")?;
+            let file = rt.files()?.get(tx, &self.lease.owner, &id, Some(name)).await.map_err(file_error)?.ok_or("WIRE.NOT_FOUND")?;
+            MysqlJobs::commit(fenced).await?;
+            return Ok(json!({"file":file_json(&file),"base64":base64::engine::general_purpose::STANDARD.encode(&file.bytes)}));
         }
         let key = text(input, "key")?;
         if !valid_key(key) {
@@ -1231,6 +1388,22 @@ impl JobHost {
                 _ => "WIRE.EVENT_INVALID",
             })?;
             let output = json!({"cursor":cursor});
+            tx.exec_drop(
+                format!("UPDATE {} SET state='SUCCEEDED',result=CAST(? AS JSON) WHERE run_id=? AND effect_key=?", rt.table("aip_effects")),
+                (output.to_string(), self.lease.run_id.to_string(), &effect),
+            )
+            .await
+            .map_err(db)?;
+            MysqlJobs::commit(fenced).await?;
+            return Ok(output);
+        }
+        if op == "files" {
+            if input["action"] != "put" {
+                return Err("WIRE.BAD_REQUEST");
+            }
+            // The bytes and the journal row commit together with the lease check, so a retry sees one file.
+            let file = rt.put_file(tx, &self.lease.owner, name, input, Some(&self.lease), &effect).await?;
+            let output = file_json(&file);
             tx.exec_drop(
                 format!("UPDATE {} SET state='SUCCEEDED',result=CAST(? AS JSON) WHERE run_id=? AND effect_key=?", rt.table("aip_effects")),
                 (output.to_string(), self.lease.run_id.to_string(), &effect),

@@ -84,3 +84,10 @@ export async function jobRelay(input, ctx) {
 export async function jobHandle(input) {
   return { count: JSON.parse(input.message).payload.body ? 1 : 0 };
 }
+
+export async function jobFile(input, ctx) {
+  const file = await ctx.files.put("docs", { name: "report-" + input.id + ".txt", mediaType: "text/plain", base64: Buffer.from("hello").toString("base64") }, "report");
+  if (ctx.job.attempt === 1) throw ctx.retryLater("retry after the committed file");
+  const read = await ctx.files.get("docs", file.id);
+  return { count: Buffer.from(read.base64, "base64").toString() === "hello" ? 1 : 0 };
+}

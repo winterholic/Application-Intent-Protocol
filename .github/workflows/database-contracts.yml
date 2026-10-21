@@ -156,3 +156,8 @@ jobs:
           cargo test -p aip-service --features mysql --lib --locked
           mysql_jobs::mysql_job_stores_tests::mysql_message_handlers_turn_messages_into_jobs_and_ack_with_the_acceptance
           -- --ignored --exact --nocapture
+      - name: Verify MySQL managed files are put and read by jobs and clients under quota
+        run: >-
+          cargo test -p aip-service --features mysql --lib --locked
+          mysql_jobs::mysql_job_stores_tests::mysql_managed_files_are_put_and_read_by_jobs_and_clients_under_quota
+          -- --ignored --exact --nocapture

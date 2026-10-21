@@ -155,3 +155,14 @@ operation job handleJob {
   deadline 5s
   implementation "worker.jobHandle"
 }
+
+// A journaled file: the retry after the put committed replays the file and stores nothing more, and the job reads it back.
+operation job fileJob {
+  input { id: Video.Id }
+  output { count: Int(0..10) }
+  allow actor != null
+  access files.docs
+  effect managed
+  deadline 5s
+  implementation "worker.jobFile"
+}

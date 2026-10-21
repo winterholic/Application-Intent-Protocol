@@ -37,11 +37,6 @@ fn reject_unsupported_infrastructure(config: &Config) -> Result<(), Value> {
     if external_mapping(config)?.is_none() {
         return Err(error("EXTERNAL_MAPPING_REQUIRED", "MySQL adapter는 기존 업무 DB 채택만 지원하므로 external_mapping 설정이 필요함"));
     }
-    if let Some(workers) = &config.workers
-        && workers.enable_file_uploads
-    {
-        return Err(unsupported("workers.enable_file_uploads", "MySQL adapter는 worker 파일 업로드를 아직 지원하지 않음"));
-    }
     let checks: [(&str, bool, &str); 6] = [
         ("objects", config.objects.is_some(), "객체 저장소 metadata가 PostgreSQL에 있음"),
         ("broker", config.broker.is_some(), "broker offset·outbox가 PostgreSQL에 있음"),
@@ -402,6 +397,7 @@ pub(crate) async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
             broker,
             &infrastructure,
         )?;
+        let jobs = jobs.with_file_uploads(config.workers.as_ref().is_some_and(|workers| workers.enable_file_uploads));
         tokio::time::timeout(DB_TIMEOUT, jobs.check_storage())
             .await
             .map_err(|_| error("JOB_STORAGE_NOT_READY", "MySQL effect journal 확인 시간 초과"))?
@@ -603,7 +599,7 @@ mod tests {
         let config: Config = serde_json::from_value(trigger_json).unwrap();
         assert!(reject_unsupported_infrastructure(&config).is_ok(), "MySQL message handlers must reach the durable runtime");
 
-        // 3. 파일 업로드 워커는 거부
+        // 3. 파일 업로드 워커는 job 저장소의 관리 파일 표를 쓰므로 허용
         let mut upload_worker_json = base_json.clone();
         upload_worker_json["workers"] = json!({
             "directory": "extensions",
@@ -611,9 +607,7 @@ mod tests {
             "enable_file_uploads": true
         });
         let config: Config = serde_json::from_value(upload_worker_json).unwrap();
-        let err = reject_unsupported_infrastructure(&config).unwrap_err();
-        assert_eq!(err["code"], "DB_ADAPTER_UNSUPPORTED");
-        assert!(err["message"].as_str().unwrap().contains("workers.enable_file_uploads"));
+        assert!(reject_unsupported_infrastructure(&config).is_ok(), "MySQL file uploads must reach the durable runtime");
 
         // 4. external_mapping 부재 시 거부
         let mut no_mapping_json = base_json.clone();

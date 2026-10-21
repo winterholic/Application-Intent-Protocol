@@ -12,6 +12,8 @@ pub mod mysql_driver;
 pub mod mysql_events;
 pub mod mysql_external;
 #[cfg(feature = "mysql")]
+pub mod mysql_files;
+#[cfg(feature = "mysql")]
 pub mod mysql_jobs;
 #[cfg(feature = "mysql")]
 pub mod mysql_messages;

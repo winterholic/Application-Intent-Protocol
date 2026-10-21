@@ -562,3 +562,108 @@ async fn mysql_message_queue_leases_retries_dead_letters_and_expires() {
     }
     assert_eq!((total, seen.len()), (40, 40));
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+#[ignore = "live: needs a dedicated MySQL 8.4 container (scripts/mysql-live-fixture.sh); run with -- --ignored"]
+async fn mysql_file_store_is_owner_scoped_idempotent_and_expires() {
+    use aip_execution::files::Error as FileError;
+    use aip_migrate::mysql_files::MysqlFileStore;
+    let harness = Harness::new().await;
+    let store = MysqlFileStore::new(META).unwrap();
+    let mut conn = harness.conn().await;
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+    let bytes = vec![0u8, 1, 2, 255, 254, 0];
+
+    // A put stores the bytes under an opaque handle; the same bytes under the same name are the same file.
+    let file = store.put_scoped(&mut conn, "owner-a", "docs", "a.bin", "application/octet-stream", &bytes, Some(now + 3600), "").await.unwrap();
+    assert_eq!((file.bucket.as_str(), file.name.as_str(), file.expires_at), ("docs", "a.bin", Some(now + 3600)));
+    let again = store.put_scoped(&mut conn, "owner-a", "docs", "a.bin", "application/octet-stream", &bytes, Some(now + 3600), "").await.unwrap();
+    assert_eq!(again.handle, file.handle);
+    // Different bytes, type or deadline under the name are a conflict, never an overwrite.
+    for (media, content, expires) in [
+        ("text/plain", &bytes[..], now + 3600),
+        ("application/octet-stream", &[9u8][..], now + 3600),
+        ("application/octet-stream", &bytes[..], now + 7200),
+    ] {
+        assert_eq!(
+            store.put_scoped(&mut conn, "owner-a", "docs", "a.bin", media, content, Some(expires), "").await.unwrap_err(),
+            FileError::FileConflict
+        );
+    }
+    // Names are scoped by owner, bucket and object key.
+    let other_owner = store.put_scoped(&mut conn, "owner-b", "docs", "a.bin", "text/plain", b"b", Some(now + 3600), "").await.unwrap();
+    let other_key = store.put_scoped(&mut conn, "owner-a", "docs", "a.bin", "text/plain", b"k", Some(now + 3600), "scope-1").await.unwrap();
+    assert!(other_owner.handle != file.handle && other_key.handle != file.handle);
+    // Names, types and sizes are validated before anything is stored.
+    for (bucket, name, media, size) in [
+        ("docs", "..", "text/plain", 1),
+        ("bad bucket", "a", "text/plain", 1),
+        ("docs", "a", "nope", 1),
+        ("docs", "big", "text/plain", 1024 * 1024 + 1),
+    ] {
+        assert_eq!(
+            store.put_scoped(&mut conn, "owner-a", bucket, name, media, &vec![0u8; size], None, "").await.unwrap_err(),
+            FileError::InvalidFile
+        );
+    }
+    let biggest = store.put_scoped(&mut conn, "owner-a", "docs", "max.bin", "text/plain", &vec![7u8; 1024 * 1024], None, "").await.unwrap();
+
+    // Reads check the owner, the bucket and the deadline on every call.
+    let read = store.get(&mut conn, "owner-a", &file.handle, None).await.unwrap().unwrap();
+    assert_eq!((read.bytes.clone(), read.media_type.as_str(), read.expires_at), (bytes.clone(), "application/octet-stream", Some(now + 3600)));
+    assert_eq!(store.get(&mut conn, "owner-a", &file.handle, Some("docs")).await.unwrap().unwrap().handle, file.handle);
+    assert!(store.get(&mut conn, "owner-b", &file.handle, None).await.unwrap().is_none(), "another owner cannot read it");
+    assert!(store.get(&mut conn, "owner-a", &file.handle, Some("other")).await.unwrap().is_none(), "the bucket must match");
+    assert_eq!(store.get(&mut conn, "owner-a", &biggest.handle, None).await.unwrap().unwrap().bytes.len(), 1024 * 1024);
+    assert_eq!(store.expiry_of(&mut conn, "owner-a", "docs", "a.bin", "").await.unwrap(), Some(now + 3600));
+    assert_eq!(store.expiry_of(&mut conn, "owner-a", "docs", "max.bin", "").await.unwrap(), None);
+
+    // Usage counts the owner's own live files and says whether a name already exists.
+    assert_eq!(store.usage(&mut conn, "owner-a", "docs", "a.bin", "").await.unwrap(), (3, 6 + 1 + 1024 * 1024, true));
+    assert!(!store.usage(&mut conn, "owner-a", "docs", "new.bin", "").await.unwrap().2);
+
+    // A deleted file is gone for its owner only; an expired one is neither readable nor counted, and cleanup removes it.
+    assert!(!store.delete(&mut conn, "owner-b", &file.handle).await.unwrap());
+    assert!(store.delete(&mut conn, "owner-a", &other_key.handle).await.unwrap());
+    assert!(store.get(&mut conn, "owner-a", &other_key.handle, None).await.unwrap().is_none());
+    harness
+        .sql(format!(
+            "UPDATE `{META}`.aip_managed_files SET expires_at = DATE_SUB(UTC_TIMESTAMP(6), INTERVAL 1 SECOND) WHERE handle = '{}'",
+            file.handle
+        ))
+        .await;
+    assert!(store.get(&mut conn, "owner-a", &file.handle, None).await.unwrap().is_none(), "an expired file is not readable");
+    store.expire_owner(&mut conn, "owner-a").await.unwrap();
+    assert_eq!(store.usage(&mut conn, "owner-a", "docs", "a.bin", "").await.unwrap().0, 1, "only the file without a deadline is left");
+    harness
+        .sql(format!("UPDATE `{META}`.aip_managed_files SET expires_at = DATE_SUB(UTC_TIMESTAMP(6), INTERVAL 1 SECOND) WHERE owner = 'owner-b'"))
+        .await;
+    assert_eq!(store.cleanup_expired(&mut conn, 10).await.unwrap(), 1);
+    assert_eq!(store.cleanup_expired(&mut conn, 10).await.unwrap(), 0);
+    drop(conn);
+
+    // Concurrent identical puts converge on one file and a different body under the same name is a conflict.
+    let mut tasks = vec![];
+    for task in 0..8 {
+        let (driver, store) = (harness.driver.clone(), store.clone());
+        tasks.push(tokio::spawn(async move {
+            let mut conn = driver.pool().get_conn().await.unwrap();
+            let same = store.put_scoped(&mut conn, "owner-c", "docs", "race.bin", "text/plain", b"same", None, "").await;
+            let different =
+                store.put_scoped(&mut conn, "owner-c", "docs", "race2.bin", "text/plain", format!("body-{task}").as_bytes(), None, "").await;
+            (same.map(|file| file.handle), different.map(|file| file.handle))
+        }));
+    }
+    let mut same = std::collections::BTreeSet::new();
+    let mut winners = 0;
+    for task in tasks {
+        let (same_result, different_result) = task.await.unwrap();
+        same.insert(same_result.unwrap());
+        match different_result {
+            Ok(_) => winners += 1,
+            Err(error) => assert_eq!(error, FileError::FileConflict),
+        }
+    }
+    assert_eq!(same.len(), 1, "identical concurrent puts are one file");
+    assert_eq!(winners, 1, "exactly one body wins the name");
+}

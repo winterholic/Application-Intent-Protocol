@@ -87,3 +87,12 @@ async def jobRelay(input, ctx):
 async def jobHandle(input, ctx):
     import json
     return {"count": 1 if json.loads(input["message"])["payload"]["body"] else 0}
+
+
+async def jobFile(input, ctx):
+    import base64
+    file = await ctx.files.put("docs", {"name": "report-" + input["id"] + ".txt", "mediaType": "text/plain", "base64": base64.b64encode(b"hello").decode()}, "report")
+    if ctx.job["attempt"] == 1:
+        raise ctx.retry_later("retry after the committed file")
+    read = await ctx.files.get("docs", file["id"])
+    return {"count": 1 if base64.b64decode(read["base64"]) == b"hello" else 0}

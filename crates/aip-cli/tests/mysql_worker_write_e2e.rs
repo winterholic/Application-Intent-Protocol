@@ -267,7 +267,7 @@ impl Db {
     }
     async fn reset(&mut self) {
         self.0.query_drop(format!("UPDATE `{SOURCE}`.`video` SET views = 0")).await.unwrap();
-        for table in ["aip_event_log", "aip_event_streams", "aip_event_keys", "aip_message_queue"] {
+        for table in ["aip_event_log", "aip_event_streams", "aip_event_keys", "aip_message_queue", "aip_managed_files"] {
             self.0.query_drop(format!("DELETE FROM `{META}`.`{table}` WHERE owner <> ''")).await.unwrap();
         }
     }
@@ -327,7 +327,7 @@ async fn http_apply_runs_real_node_and_python_workers_in_one_mysql_transaction()
                 "listen": "127.0.0.1:0", "wire": "decimal", "rate_limit": null,
                 "messaging": {"enabled": true, "client_publish": true, "client_consume": true},
                 "auth": {"issuer": ISSUER, "audience": "aip-api", "jwks": {"kind": "file", "path": "jwks.json"}},
-                "workers": {"directory": extensions, "language": language, "enable_writes": true,
+                "workers": {"directory": extensions, "language": language, "enable_writes": true, "enable_file_uploads": true,
                     "integrations": [{"name": "mail", "url": format!("http://127.0.0.1:{mail_port}/send"), "method": "POST", "timeout_ms": 2000,
                         "max_request_bytes": 1024, "max_response_bytes": 1024, "allow_loopback": true}]},
                 // Server triggers act as the bound `svc` principal: Alice's account, so the hook may increment her videos.
@@ -626,6 +626,45 @@ async fn http_apply_runs_real_node_and_python_workers_in_one_mysql_transaction()
         assert_eq!(acked["acknowledged"], true, "{language}: {acked}");
         let drained = post(&address, "/messages/claim", Some(&alice), &fingerprint, &json!({"queue": "orders", "worker": "e2e"})).await;
         assert_eq!(drained["lease"], Value::Null, "{language}: {drained}");
+
+        // A stored file is journaled too: the retry replays it, stores nothing more, and the client reads and removes it.
+        let stored = post(
+            &address,
+            "/jobs/enqueue",
+            Some(&alice),
+            &fingerprint,
+            &json!({"operation": "fileJob", "input": {"id": "10"}, "key": key("file"), "delayMs": 0}),
+        )
+        .await;
+        assert_eq!(stored["ok"], true, "{language}: {stored}");
+        let file_run = stored["run"]["id"].as_str().unwrap().to_string();
+        let file_done = format!("SELECT COUNT(*) FROM `{META}`.`aip_jobs` WHERE id = '{file_run}' AND state = 'SUCCEEDED'");
+        wait_for(&mut db, &file_done, |count| count == 1, "the file job to succeed").await;
+        assert_eq!(
+            db.count(&format!("SELECT attempt FROM `{META}`.`aip_jobs` WHERE id = '{file_run}'")).await,
+            2,
+            "{language}: the first attempt asked to be retried"
+        );
+        assert_eq!(
+            db.count(&format!("SELECT COUNT(*) FROM `{META}`.`aip_managed_files` WHERE bucket = 'docs'")).await,
+            1,
+            "{language}: the retry must not store another copy"
+        );
+        let handle: String =
+            db.0.query_first(format!("SELECT handle FROM `{META}`.`aip_managed_files` WHERE bucket = 'docs'")).await.unwrap().unwrap();
+        let downloaded = post(&address, "/files/get", Some(&alice), &fingerprint, &json!({"id": handle})).await;
+        assert_eq!((downloaded["ok"].clone(), downloaded["base64"].clone()), (json!(true), json!("aGVsbG8=")), "{language}: {downloaded}");
+        let uploaded = post(
+            &address,
+            "/files/put",
+            Some(&alice),
+            &fingerprint,
+            &json!({"bucket": "docs", "name": "from-client.txt", "mediaType": "text/plain", "base64": "Y2xpZW50"}),
+        )
+        .await;
+        assert_eq!((uploaded["ok"].clone(), uploaded["file"]["size"].clone()), (json!(true), json!(6)), "{language}: {uploaded}");
+        let removed = post(&address, "/files/delete", Some(&alice), &fingerprint, &json!({"id": uploaded["file"]["id"].clone()})).await;
+        assert_eq!(removed["deleted"], true, "{language}: {removed}");
 
         // A message handler turns a ready message of the service principal's queue into one job, and acks it with the acceptance.
         let relay_body = json!({"id": "10", "language": language}).to_string();

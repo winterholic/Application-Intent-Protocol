@@ -43,7 +43,7 @@ impl Fixture {
 
     /// Like `start`, with the infrastructure the service would be configured with.
     pub(super) async fn start_with(tag: &str, access: &str, configure: impl FnOnce(&mut spike_v6_transport::infrastructure::Infrastructure)) -> Self {
-        Self::start_full(tag, access, "", configure).await
+        Self::start_full(tag, access, "", false, configure).await
     }
 
     /// Like `start_with`, with more of the contract appended after the one job the fixture always declares.
@@ -51,6 +51,7 @@ impl Fixture {
         tag: &str,
         access: &str,
         extra_definition: &str,
+        file_uploads: bool,
         configure: impl FnOnce(&mut spike_v6_transport::infrastructure::Infrastructure),
     ) -> Self {
         let (meta, source) = (format!("aip_t_{tag}"), format!("aip_t_{tag}_src"));
@@ -103,7 +104,8 @@ impl Fixture {
         configure(&mut infra);
         let runtime = Arc::new(
             MysqlJobs::new(driver.clone(), fence, meta.clone(), digest, Arc::new(facts), IdWire::DecimalString, backend, workers, None, &infra)
-                .unwrap(),
+                .unwrap()
+                .with_file_uploads(file_uploads),
         );
         runtime.check_storage().await.unwrap();
         Self { setup, driver, runtime, meta, _dir: dir }
@@ -311,7 +313,7 @@ async fn mysql_message_handlers_turn_messages_into_jobs_and_ack_with_the_accepta
     use spike_v6_transport::triggers::Triggers;
     let handler_job = "operation job handleMessage {\n input { message: Text }\n output { count: Int }\n allow actor != null\n access messages.orders\n effect managed\n \
                        deadline 5s\n implementation \"worker.jobView\"\n}\n";
-    let mut fixture = Fixture::start_full("job_msg_handler", "messages.orders", handler_job, |infra| {
+    let mut fixture = Fixture::start_full("job_msg_handler", "messages.orders", handler_job, false, |infra| {
         infra.messaging = true;
         let config: crate::triggers::MessageHandlerConfig =
             serde_json::from_value(json!({"queue":"orders","operation":"handleMessage","principal":"svc"})).unwrap();
@@ -399,4 +401,104 @@ async fn mysql_message_handlers_turn_messages_into_jobs_and_ack_with_the_accepta
     drop(fenced);
     assert_eq!(fixture.count(jobs("idempotency_key='message:stale'")).await, 0, "a lost lease leaves no job behind");
     fixture.finish("job_msg_handler").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires a run-owned MySQL 8.4 fixture; managed files through the job host and the /files/* routes"]
+async fn mysql_managed_files_are_put_and_read_by_jobs_and_clients_under_quota() {
+    use base64::Engine as _;
+    let b64 = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
+    let mut fixture = Fixture::start_full("job_files", "files.docs, files.private", "", true, |_| {}).await;
+    let meta = fixture.meta.clone();
+    let owner = owner(&grant(1));
+
+    // A job puts a file under its own run and effect, so a retry sees the same one; a read has no journal.
+    let mut host = fixture.host(&["files.docs"]).await;
+    let put = json!({"action":"put","key":"f1","name":"a.txt","mediaType":"text/plain","base64":b64(b"hello")});
+    let first = host.dispatch("files", "docs", &put).await.unwrap();
+    assert_eq!(
+        (first["bucket"].clone(), first["name"].clone(), first["mediaType"].clone(), first["size"].clone()),
+        (json!("docs"), json!("a.txt"), json!("text/plain"), json!(5))
+    );
+    assert_eq!(host.dispatch("files", "docs", &put).await.unwrap(), first, "the same effect replays its recorded file");
+    assert_eq!(fixture.count(format!("SELECT COUNT(*) FROM `{meta}`.aip_managed_files WHERE owner='{owner}'")).await, 1);
+    let other = json!({"action":"put","key":"f2","name":"a.txt","mediaType":"text/plain","base64":b64(b"another")});
+    let second = host.dispatch("files", "docs", &other).await.unwrap();
+    assert!(second["id"] != first["id"], "another effect is another file even under the same name");
+    assert_eq!(
+        host.dispatch("files", "docs", &json!({"action":"put","key":"f1","name":"a.txt","mediaType":"text/plain","base64":b64(b"changed")}))
+            .await
+            .unwrap_err(),
+        "WIRE.IDEMPOTENCY_MISMATCH"
+    );
+    let read = host.dispatch("files", "docs", &json!({"action":"get","id":first["id"]})).await.unwrap();
+    assert_eq!((read["file"]["name"].clone(), read["base64"].clone()), (json!("a.txt"), json!(b64(b"hello"))));
+    assert_eq!(host.dispatch("files", "docs", &json!({"action":"get","id":uuid::Uuid::new_v4().to_string()})).await.unwrap_err(), "WIRE.NOT_FOUND");
+    assert_eq!(host.dispatch("files", "private", &put).await.unwrap_err(), "WIRE.ACCESS_NOT_DECLARED");
+    assert_eq!(
+        host.dispatch("files", "docs", &json!({"action":"delete","key":"x","name":"a","mediaType":"text/plain","base64":""})).await.unwrap_err(),
+        "WIRE.BAD_REQUEST"
+    );
+    assert_eq!(
+        host.dispatch("files", "docs", &json!({"action":"put","key":"bad","name":"..","mediaType":"text/plain","base64":b64(b"x")}))
+            .await
+            .unwrap_err(),
+        "WIRE.BAD_VALUE"
+    );
+    assert_eq!(
+        host.dispatch("files", "docs", &json!({"action":"put","key":"b64","name":"n","mediaType":"text/plain","base64":"***"})).await.unwrap_err(),
+        "WIRE.BAD_VALUE"
+    );
+    assert_eq!(
+        host.dispatch("files", "docs", &json!({"action":"put","key":"big","name":"n","mediaType":"text/plain","base64":b64(&vec![0u8; 800_000])}))
+            .await
+            .unwrap_err(),
+        "WIRE.PAYLOAD_TOO_LARGE"
+    );
+
+    // A client reads what the job stored, puts and deletes its own files, and sees only the buckets a job declares.
+    let call = |path: &'static str, body: Value| {
+        let runtime = fixture.runtime.clone();
+        async move { runtime.handle(path, &body, &grant(1)).await }
+    };
+    let fetched = call("/files/get", json!({"id":first["id"]})).await;
+    assert_eq!((fetched["ok"].clone(), fetched["base64"].clone()), (json!(true), json!(b64(b"hello"))), "{fetched}");
+    let upload = json!({"bucket":"docs","name":"b.txt","mediaType":"text/plain","base64":b64(b"client")});
+    let uploaded = call("/files/put", upload.clone()).await;
+    assert_eq!((uploaded["ok"].clone(), uploaded["file"]["size"].clone()), (json!(true), json!(6)), "{uploaded}");
+    assert_eq!(call("/files/put", upload).await["file"]["id"], uploaded["file"]["id"], "an identical re-put is the same file");
+    let changed = call("/files/put", json!({"bucket":"docs","name":"b.txt","mediaType":"text/plain","base64":b64(b"different")})).await;
+    assert_eq!(changed["code"], "WIRE.IDEMPOTENCY_MISMATCH", "{changed}");
+    assert_eq!(
+        call("/files/put", json!({"bucket":"nope","name":"b.txt","mediaType":"text/plain","base64":b64(b"x")})).await["code"],
+        "WIRE.NOT_EXPOSED"
+    );
+    assert_eq!(call("/files/put", json!({"bucket":"docs","name":"b.txt"})).await["code"], "WIRE.BAD_REQUEST");
+    let id = uploaded["file"]["id"].clone();
+    assert_eq!(call("/files/delete", json!({"id":id.clone()})).await["deleted"], true);
+    assert_eq!(call("/files/get", json!({"id":id})).await["code"], "WIRE.NOT_FOUND");
+    assert_eq!(call("/files/get", json!({"id":"not-a-uuid"})).await["code"], "WIRE.BAD_VALUE");
+
+    // The per-owner quota stops a flood but never an identical re-put of a name that already exists.
+    fixture
+        .setup
+        .query_drop(format!(
+            "INSERT INTO `{meta}`.aip_managed_files(handle,owner,bucket,name,object_key,media_type,content,expires_at,created_at) \
+             WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<100) \
+             SELECT UUID(),'{owner}','docs',CONCAT('flood-',i),'','text/plain','x',DATE_ADD(UTC_TIMESTAMP(6),INTERVAL 1 DAY),UTC_TIMESTAMP(6) FROM n"
+        ))
+        .await
+        .unwrap();
+    let flooded = call("/files/put", json!({"bucket":"docs","name":"one-too-many","mediaType":"text/plain","base64":b64(b"x")})).await;
+    assert_eq!(flooded["code"], "WIRE.QUOTA_EXCEEDED", "{flooded}");
+
+    // The lease is checked when the file is written: a recovered attempt cannot be written by the old one.
+    fixture.setup.query_drop(format!("UPDATE `{meta}`.aip_jobs SET lease_epoch = lease_epoch + 1")).await.unwrap();
+    assert_eq!(
+        host.dispatch("files", "docs", &json!({"action":"put","key":"after","name":"z","mediaType":"text/plain","base64":b64(b"z")}))
+            .await
+            .unwrap_err(),
+        "WIRE.LEASE_LOST"
+    );
+    fixture.finish("job_files").await;
 }
