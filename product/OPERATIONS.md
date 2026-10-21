@@ -19,7 +19,7 @@ root의 `aip service`는 caller 정의와 공통 Rust 실행 엔진, 설치형 T
 }
 ```
 
-issuer·audience·JWKS URL은 실제 제공자에 맞춰 설정한다. 인증 프로필은 RS256, `typ=at+jwt`, 정확한 API audience와 issuer, `sub/iat/exp`(`nbf`는 선택, 있으면 강제), 최대 900초 수명이다. 이 프로필을 발급하도록 제공자를 설정해야 한다. 로그인·refresh token은 제공자와 앱이 담당한다. 토큰의 role이나 actorId는 AIP 권한으로 사용하지 않는다.
+issuer·audience·JWKS URL은 실제 제공자에 맞춰 설정한다. 인증 프로필은 RS256, `typ=at+jwt`, 정확한 API audience와 issuer, `sub/iat/exp`(`nbf`는 선택, 있으면 강제), 최대 900초 수명이다. 이 프로필을 발급하도록 제공자를 설정해야 한다. 로그인·refresh token은 제공자와 앱이 담당한다. 외부 제공자 없이 MySQL 업무 DB의 계정으로 서비스가 직접 로그인시키려면 `credentials`를 설정한다(MySQL adapter만, `workers` 필요). 서버가 `/auth/check-email·signup·login·reissue·logout`을 제공하고 비밀번호를 공식 Python 확장(`product/providers/password_auth.py`를 workers 디렉터리에 복사하고 `operation read`로 선언)으로 확인하며, 자체 RSA 키로 같은 `at+jwt` 프로필의 접근 토큰을 서명한다. 서명 키의 공개 키는 `auth.jwks`에 있어야 하고 없으면 시작이 실패한다. 자세한 동작과 한계는 [제품 검증](VERIFICATION.md)의 WBS 7.2.2 절을 따른다. 토큰의 role이나 actorId는 AIP 권한으로 사용하지 않는다.
 
 Durable job이나 서버 확장이 필요한 경우에만 선택적으로 `workers`를 추가한다. 생략하면 worker와 HTTP integration이 비활성화되고 SDK 직접 파일 업로드도 사용할 수 없다. `enable_file_uploads`는 SDK route 설정이며 worker의 `ctx.files`는 선언된 capability로 제한된다. 전체 설정 필드와 outbound 제한은 [관리형 durable execution](MANAGED-EXECUTION.md)을 따른다.
 
