@@ -184,6 +184,14 @@ if [[ "$mode" == run-ci ]]; then
   grep -Fxq "$recommend_test: test" /tmp/aip-e2e-recommend-list-"$tag".txt
   cargo test "${recommend_args[@]}" -- --ignored --exact "$recommend_test" --nocapture --test-threads=1 2>&1 | tee /tmp/aip-e2e-recommend-run-"$tag".txt
   grep -Fq "test result: ok. 1 passed; 0 failed;" /tmp/aip-e2e-recommend-run-"$tag".txt
+  # The administrator lists (WBS 7.2.9) compare the real server's reads and totals with the original AdminService's recorded answers.
+  echo "=== Running the administrator list end-to-end test (real aip binary, real MySQL) ==="
+  admin_args=(--locked -p aip-cli --features mysql --test mysql_facereview_admin)
+  admin_test="facereview_administrator_lists_match_the_original_admin_service_through_the_real_server"
+  cargo test "${admin_args[@]}" -- --list --ignored 2>&1 | tee /tmp/aip-e2e-admin-list-"$tag".txt | tail -3
+  grep -Fxq "$admin_test: test" /tmp/aip-e2e-admin-list-"$tag".txt
+  cargo test "${admin_args[@]}" -- --ignored --exact "$admin_test" --nocapture --test-threads=1 2>&1 | tee /tmp/aip-e2e-admin-run-"$tag".txt
+  grep -Fq "test result: ok. 1 passed; 0 failed;" /tmp/aip-e2e-admin-run-"$tag".txt
   exit 0
 fi
 

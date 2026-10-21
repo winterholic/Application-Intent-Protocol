@@ -71,7 +71,7 @@ def video_id(n):
 
 # ---- data ------------------------------------------------------------------------------------------------------------------
 
-def seed_mysql(admin_url):
+def seed_mysql(admin_url, extra_scripts=()):
     parsed = urllib.parse.urlparse(admin_url)
     conn = pymysql.connect(host=parsed.hostname, port=parsed.port, user=urllib.parse.unquote(parsed.username),
                            password=urllib.parse.unquote(parsed.password or ""), autocommit=True, charset="utf8mb4")
@@ -91,6 +91,8 @@ def seed_mysql(admin_url):
     script((FIXTURE / "schema.sql").read_text())
     script((FIXTURE / "seed.sql").read_text())
     script((FIXTURE / "slice13d-seed.sql").read_text())
+    for name in extra_scripts:
+        script((FIXTURE / name).read_text())
     cur.execute("SET FOREIGN_KEY_CHECKS=1")
     script((FIXTURE / "db-defaults.sql").read_text())
     cur.execute("DROP USER IF EXISTS %s@'%%'", (RUNTIME_USER,))
@@ -171,15 +173,25 @@ class Deployment:
         return jwt.encode({"iss": ISSUER, "aud": "aip-api", "sub": subject, "iat": issued, "nbf": issued, "exp": issued + 300}, self.pem,
                           algorithm="RS256", headers={"kid": "current", "typ": "at+jwt"})
 
-    def post(self, extension, input, subject):
-        request = urllib.request.Request(f"http://{self.address}/extension", data=json.dumps({"extension": extension, "input": input}).encode(),
-                                         headers={"content-type": "application/json", "x-aip-contract": self.fingerprint,
-                                                  "authorization": f"Bearer {self.token(subject)}"})
+    def request(self, path, body, subject):
+        headers = {"content-type": "application/json", "x-aip-contract": self.fingerprint}
+        if subject:
+            headers["authorization"] = f"Bearer {self.token(subject)}"
+        request = urllib.request.Request(f"http://{self.address}{path}", data=json.dumps(body).encode(), headers=headers)
         try:
             with urllib.request.urlopen(request, timeout=90) as response:
                 return json.loads(response.read())
         except urllib.error.HTTPError as error:
             return json.loads(error.read() or b"{}") | {"_http": error.code}
+
+    def post(self, extension, input, subject):
+        return self.request("/extension", {"extension": extension, "input": input}, subject)
+
+    def read(self, query, subject):
+        return self.request("/read", {"query": query}, subject)
+
+    def aggregate(self, name, query_filter, subject):
+        return self.request("/read", {"query": {"aggregate": name, "input": {}, "filter": query_filter}}, subject)
 
     def close(self):
         self.proc.terminate()

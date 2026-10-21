@@ -9,6 +9,8 @@ predicate isAdmin(a: User) = a.role in (ADMIN, SUPER_ADMIN) and a.is_deleted = f
 predicate active(a: User) = a.is_deleted = false
 
 access activeUserOrGuest(a: User) = true
+// The original's admin_required, for counts and totals only an administrator may ask for.
+access adminOnly(a: User) = isAdmin(a)
 
 enum Role { GENERAL, ADMIN, SUPER_ADMIN }
 enum Genre { drama, eating, travel, cook, show, information, game, sports, music, animal, beauty, comedy, horror, exercise, vlog, etc }
@@ -60,11 +62,37 @@ resource User {
   expose apply withdraw { target id; bulk maxRows 1 }
   expose apply changeRole { target id; bulk maxRows 1 }
   expose read {
-    select id, email, name, role, profile_image_id, is_tutorial_done, is_verify_email_done, is_deleted, created_at
-    filter id.eq, role.eq, is_deleted.eq, name.contains, email.contains
+    select id, email, name, role, profile_image_id, is_tutorial_done, is_verify_email_done, is_deleted, created_at, watchCount, commentCount
+    filter id.eq, role.eq, is_deleted.eq, name.contains, email.contains, name.like, email.like
     sort created_at, id
     budget { rows 100; depth 1; cost 1000; deadline 2s; offset 100000 }
   }
+  // AdminService.get_users counts every view-log row and every comment (deleted ones too) of the member.
+  aggregate watchCount: Int {
+    source VideoViewLog
+    sourceAccess activeUserOrGuest(actor)
+    groupKey user
+    callerFilter none
+    rowOutput none
+    release count
+  }
+  aggregate commentCount: Int {
+    source Comment
+    sourceAccess activeUserOrGuest(actor)
+    groupKey user
+    callerFilter none
+    rowOutput none
+    release count
+  }
+  aggregate totalCount: Int {
+    source User
+    sourceAccess adminOnly(actor)
+    where isAdmin(actor)
+    callerFilter read
+    rowOutput none
+    release count
+  }
+  expose aggregate totalCount
 }
 
 resource Video {
@@ -215,11 +243,21 @@ resource Comment {
   expose read {
     select id, video, user, content, is_modified, is_deleted, created_at, updated_at
     refIds video, user
-    filter id.eq, video.eq, is_deleted.eq, content.contains
+    filter id.eq, video.eq, is_deleted.eq, content.contains, content.like
     sort created_at, id
     traverse user { select id, name }
+    traverse video { select id, title }
     budget { rows 100; depth 2; cost 2000; deadline 2s; offset 100000 }
   }
+  aggregate totalCount: Int {
+    source Comment
+    sourceAccess adminOnly(actor)
+    where isAdmin(actor)
+    callerFilter read
+    rowOutput none
+    release count
+  }
+  expose aggregate totalCount
 }
 
 resource VideoLike {
@@ -294,8 +332,18 @@ resource VideoRequest {
     refIds user
     filter id.eq, user.eq, status.eq
     sort created_at, id
-    budget { rows 100; depth 1; cost 1000; deadline 2s; offset 100000 }
+    traverse user { select id, name }
+    budget { rows 100; depth 2; cost 2000; deadline 2s; offset 100000 }
   }
+  aggregate totalCount: Int {
+    source VideoRequest
+    sourceAccess adminOnly(actor)
+    where isAdmin(actor)
+    callerFilter read
+    rowOutput none
+    release count
+  }
+  expose aggregate totalCount
 }
 
 resource VideoViewLog {

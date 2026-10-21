@@ -13,6 +13,7 @@
 | `reference/admin.py` | 같은 방식의 권한 비교(원본 `admin_required`·`super_admin_required`와 AdminService 효과). 5명(GENERAL 2, ADMIN 2, SUPER_ADMIN 1)으로 확인 |
 | `reference/writes.py` | AIP 제품 HTTP 쓰기 경로와 고정된 DB 결과 조건을 검사하는 product-side helper. 원본 SQLAlchemy 함수를 직접 호출하지 않으므로 단독으로 원본 대조라고 부르지 않는다 |
 | `slice13d-seed.sql`, `slice13d-video_distribution.json`, `slice13d-youtube_watching_data.json`, `slice13d-golden.json` | 추천 목록 대조용 결정적 시드(`reference/slice13d_make_seed.py`가 만든다)와, 원본 서비스가 같은 데이터에서 낸 답(`reference/slice13d_oracle.py`가 전부 일치한 뒤에만 쓴다) |
+| `slice13e-seed.sql`, `slice13e-golden.json` | 관리자 목록 대조용 시드(`reference/slice13e_make_seed.py`)와 원본 `AdminService`의 답(`reference/slice13e_oracle.py`가 전부 일치한 뒤에만 쓴다. 알려진 차이 2건은 AIP쪽 기대값) |
 | `reference/compare.py` | 원본 앱의 SQLAlchemy 쿼리와 AIP 응답을 같은 질문으로 비교한 1회성 하네스. 경로·접속 정보는 그 실행 환경의 것이다 |
 
 ## MySQL adapter 테스트 실행
@@ -66,6 +67,7 @@ MariaDB 11.4.13에서 확인한 `JSON` 열은 catalog에 `DATA_TYPE=longtext, CO
 - 2026-10-19: 음수 범위 `Int(-1000..1000)`의 문법 거부를 수정했다. 5가지 정의 형식의 같은 실행 계약과 쓰기 값의 양 끝·범위 초과 검사는 회귀 테스트로 확인한다. `user_point_history.amount`는 원본에서 -1000..1000 같은 범위를 보장하는지 별도 대조하지 않았으므로 범위 없는 `Int`를 유지한다. 이 문법 수정만으로 MySQL 원본 동등성 검증을 추가했다고 보지 않는다.
 - Mongo(감정 분포)에 의존하는 목록(`get_all_videos`, 북마크 영상, 검색)과 추천(`home/category`, `home/personalized`, `watch/recommended`)은 `facereview.aip`가 읽기 확장으로 선언하고 [extensions/README.md](extensions/README.md)가 원본 대조를 설명한다. 원본의 Redis 풀 캐시는 쓰지 않고 요청마다 풀을 만든다(오프라인 갱신은 7.2.7). `watch/video`(전 시청자 타임라인 집계와 GET 안의 조회수 증가, 7.2.5)와 `POST home/video/recommend`(서버 파생 `youtube_full_url`과 전역 중복 거절, 7.2.9)는 아직 없다.
 - 비활성화된 회원의 요청은 원본의 401(`AUTH_INVALID_TOKEN`)이 아니라 200과 빈 결과(쓰기는 거절)다. 인증은 외부 토큰 검증이고 가시성은 정책이라서다. 상태 코드까지 같게 하려면 actor 유효 조건을 정의 수준에서 선언하는 기능이 필요하다.
+- 관리자 목록(WBS 7.2.9, `slice13e-*`): `AdminService.get_users·get_video_requests·get_videos·get_comments`는 `/read`와 관리자 전용 `totalCount` 집계(`User`·`VideoRequest`·`Comment`, 비관리자는 `WIRE.ACCESS_DENIED`)와 행별 집계(`User.watchCount`·`commentCount`, 삭제된 댓글도 센다)로 원본과 같은 58개 답을 냈다(`reference/slice13e_oracle.py`, 62개 사례 중 알려진 차이 2건 포함). 원본의 JSON 모양을 만드는 일은 SDK·UI 층의 몫이라 시험의 `compose`가 한다. **알려진 차이**: 삭제됐거나 `is_deleted`가 NULL인 영상은 `Video` 행 정책이 관리자에게도 숨기므로 그 영상 댓글의 `video_title`은 null이고(`video_id`는 읽힌다), `video` 필터로 그 영상의 댓글을 찾으면 Ref 필터 규칙 때문에 아무것도 나오지 않는다(필터 없는 목록에는 있다). 관리자 요청 승인·dashboard·시스템 상태·더미 데이터는 아직 없다.
 - 관리자용 별도 resource. 한 표에 resource 둘을 연결하는 매핑은 어댑션이 거절한다(표당 resource 하나). 그래서 관리자는 같은 resource의 정책(`isAdmin`)으로 풀었고, 그 결과 ADMIN은 사용자 화면의 댓글 목록에서도 삭제된 댓글을 받는다(`is_deleted.eq` 필터로 거를 수 있으나 호출자가 정한다).
 - 관리자 요청 승인(영상 생성)은 승인자가 고르는 제목·채널·길이·카테고리가 요청 행에 없어서, 그리고 Mongo 초기 분포 쓰기가 따라와서 정의하지 않았다.
 - 좋아요·북마크 취소는 `VideoLike.remove`·`VideoBookmark.remove`로 행을 물리 삭제한다. AIP는 생성과 제거를 분리된 호출로 제공한다. 원본 `WatchService.toggle_like`와 `HomeService.toggle_bookmark`의 단일 토글 호출·응답 계약과는 다르므로 API 전체 동등성을 뜻하지 않는다. 원본 bookmark endpoint와 저장 상태 비교는 WBS 7.2.4 통합 근거에 기록한다.
