@@ -1330,7 +1330,7 @@ async fn serve_request(
         None
     };
     if let Some(backend) = runtime.infrastructure.relational.clone() {
-        if path.starts_with("/jobs/") || path == "/events/read" {
+        if path.starts_with("/jobs/") || path == "/events/read" || path.starts_with("/messages/") {
             let Some(jobs) = &runtime.infrastructure.relational_jobs else {
                 return reply(&mut w, &err("WIRE.ADAPTER_UNSUPPORTED", "durable job adapter가 설정되지 않음")).await;
             };

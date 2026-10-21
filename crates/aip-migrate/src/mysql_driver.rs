@@ -574,6 +574,7 @@ pub(crate) async fn create_meta_tables<Q: Queryable>(conn: &mut Q, meta_schema: 
     // so nested step paths cannot exceed InnoDB's index width or alias through a case-insensitive collation.
     statements.push(job_effects_ddl(meta_schema));
     statements.extend(crate::mysql_events::event_store_ddl(meta_schema));
+    statements.push(crate::mysql_messages::message_store_ddl(meta_schema));
     // The relay's receipt that an outbox row became a job: unique per row, written in the same transaction as the job.
     statements.push(format!(
         "CREATE TABLE IF NOT EXISTS `{meta_schema}`.`aip_outbox_dispatch` (\
@@ -635,10 +636,11 @@ async fn verify_meta_digest_on_conn<Q: Queryable>(conn: &mut Q, meta_schema: &st
     }
 }
 
-/// Additive AIP infrastructure an existing deployment gains on re-adoption: the effect journal and the event streams.
+/// Additive AIP infrastructure an existing deployment gains on re-adoption: the effect journal, the event streams and the message queue.
 pub(crate) fn additive_ddl(meta_schema: &str) -> Vec<String> {
     let mut statements = vec![job_effects_ddl(meta_schema)];
     statements.extend(crate::mysql_events::event_store_ddl(meta_schema));
+    statements.push(crate::mysql_messages::message_store_ddl(meta_schema));
     statements
 }
 

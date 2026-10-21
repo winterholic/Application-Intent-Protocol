@@ -1,5 +1,9 @@
 # 진행 현황과 쌓인 질문
 
+## 2026-10-21 WBS 7.2.1.3 MySQL job 메시지 큐 capability (구현, Linux CI 대기)
+
+`access messages.<queue>`와 클라이언트 경로 `/messages/enqueue·claim·ack·nack·dead·redrive`를 MySQL에 연결했다. 저장소는 `aip_message_queue` 한 표다(PostgreSQL의 `aip_messages`와 헷갈리지 않게 이름을 나눴다). 부트스트랩과 `adopt-external --apply` 재실행이 만들고, `messaging.enabled`이거나 job이 `messages.*`를 선언한 서비스만 시작 때 표를 검사한다. 이제 `messaging` 설정을 거절하지 않는다. 발행은 owner당 1000건·64MiB 한도를 `aip_tx_locks` 버킷 잠금 아래에서 검사하고(이미 있는 키의 재전송은 한도를 건너뛴다), 같은 키·같은 본문은 같은 메시지이며 다른 본문은 충돌이다. job의 발행은 effect 장부와 같은 fenced transaction에 커밋되어 재시도가 같은 메시지를 재생한다. 클레임은 `SKIP LOCKED`로 후보를 고르고 조건부 갱신으로 가져가며(`RETURNING`이 없어 토큰으로 다시 읽는다), ack·nack는 살아 있는 임차권만 커밋하고 배달 횟수를 다 쓰면 dead letter가 된다. 만료된 임차권은 다음 클레임 때 READY나 DEAD로 돌아가고 redrive·만료 정리도 같은 계약이다. 클라이언트의 발행·소비는 설정의 `client_publish`·`client_consume`이 따로 켜야 하고 job이 선언하지 않은 큐는 `NOT_EXPOSED`다. `message_handlers`(메시지를 job으로 중계)와 만료 메시지 자동 정리 루프는 아직 연결하지 않았다. 파일 저장소가 남아 7.2.1.3은 닫지 않는다. 명령과 결과는 [제품 검증](../product/VERIFICATION.md)의 같은 날짜 절이다.
+
 ## 2026-10-21 WBS 7.2.1.3 MySQL job 이벤트 스트림 capability (구현, Linux CI 대기)
 
 `access events.<stream>`을 MySQL job에 연결했다. 이벤트 저장소는 `aip_event_streams`·`aip_event_log`·`aip_event_keys` 세 표다(`aip_events`는 쓰기 펜스 표로 이미 있어 `aip_event_log`로 이름을 나눴다). 부트스트랩과 `adopt-external --apply` 재실행이 만들고, job이 `events.*`를 선언한 계약만 서비스 시작 때 표 존재·엔진을 검사한다. 발행은 스트림 행 잠금으로 순서를 매기고 같은 키·같은 본문은 같은 cursor로 수렴하며 다른 본문은 충돌이다. job의 발행은 effect 장부와 같은 fenced transaction에 커밋되어 재시도가 같은 cursor를 재생한다. 클라이언트는 `/events/read`로 자기 owner의 스트림을 읽고, job이 선언하지 않은 스트림은 `NOT_EXPOSED`다. SSE·WebSocket 구독과 보존 일수(`events_days`) 정리는 연결하지 않았다. 같은 작업에서 outbox relay가 다른 relay가 막 커밋한 행을 다시 잡아 영수증 삽입이 중복 키로 실패하는 기존 경쟁(12회 중 1회)을 `INSERT IGNORE`와 실제 삽입 행 수 계산으로 고쳤다. 메시지·파일 저장소 capability가 남아 7.2.1.3은 닫지 않는다. 명령과 결과는 [제품 검증](../product/VERIFICATION.md)의 같은 날짜 절이다.

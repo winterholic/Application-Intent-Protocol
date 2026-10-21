@@ -14,6 +14,13 @@ use std::time::Duration;
 
 type Result<T> = std::result::Result<T, &'static str>;
 
+#[derive(Clone, Copy, Default)]
+struct Messaging {
+    enabled: bool,
+    client_publish: bool,
+    client_consume: bool,
+}
+
 pub(crate) struct MysqlJobs {
     driver: MysqlDriver,
     fence: MysqlDeploymentFence,
@@ -25,6 +32,8 @@ pub(crate) struct MysqlJobs {
     workers: ReadExtensions,
     /// External HTTP integrations and outbound webhooks a job may call through `http.<name>`.
     broker: Option<Arc<aip_execution::integrations::Broker>>,
+    /// Message queues are on, and whether clients may publish or consume through `/messages/*` themselves.
+    messaging: Messaging,
     launch: spike_v4_worker::WorkerLaunchConfig,
     policies: std::collections::HashMap<String, spike_v6_transport::triggers::JobPolicy>,
     triggers: Arc<spike_v6_transport::triggers::Triggers>,
@@ -59,6 +68,28 @@ fn fence_error(error: aip_migrate::mysql_catalog::CatalogError) -> &'static str 
 }
 fn owner(grant: &DurablePrincipal) -> String {
     spike_v1_fixture::digest(&json!([grant.issuer, grant.subject, grant.actor_id, 0]))
+}
+fn message_error(error: aip_execution::messages::Error) -> &'static str {
+    use aip_execution::messages::Error;
+    match error {
+        Error::IdempotencyConflict => "WIRE.IDEMPOTENCY_MISMATCH",
+        Error::Database(_) => "WIRE.DB_UNAVAILABLE",
+        Error::PayloadTooLarge => "WIRE.PAYLOAD_TOO_LARGE",
+        _ => "WIRE.BAD_VALUE",
+    }
+}
+fn number(body: &Value, key: &str, default: i64, min: i64, max: i64) -> Result<i64> {
+    body.get(key).map_or(Ok(default), |value| value.as_i64().filter(|n| (min..=max).contains(n)).ok_or("WIRE.BAD_VALUE"))
+}
+/// A body whose keys are exactly the required ones plus any of the optional ones.
+fn shape(body: &Value, required: &[&str], optional: &[&str]) -> Result<()> {
+    if !body.as_object().is_some_and(|object| {
+        required.iter().all(|key| object.contains_key(*key))
+            && object.keys().all(|key| required.contains(&key.as_str()) || optional.contains(&key.as_str()))
+    }) {
+        return Err("WIRE.BAD_REQUEST");
+    }
+    Ok(())
 }
 fn exact(body: &Value, fields: &[&str]) -> bool {
     body.as_object().is_some_and(|body| body.len() == fields.len() && fields.iter().all(|key| body.contains_key(*key)))
@@ -95,7 +126,7 @@ impl MysqlJobs {
                             &format!("job이 선언한 HTTP 연동 `{name}`이 workers.integrations 또는 outbound_webhooks에 없음"),
                         ));
                     }
-                } else if !["read.", "apply.", "jobs.", "events."].iter().any(|prefix| capability.starts_with(prefix)) {
+                } else if !["read.", "apply.", "jobs.", "events.", "messages."].iter().any(|prefix| capability.starts_with(prefix)) {
                     return Err(error("DB_ADAPTER_UNSUPPORTED", &format!("MySQL job capability 미지원: {capability}")));
                 }
             }
@@ -110,6 +141,11 @@ impl MysqlJobs {
             backend,
             workers,
             broker,
+            messaging: Messaging {
+                enabled: infrastructure.messaging,
+                client_publish: infrastructure.client_publish,
+                client_consume: infrastructure.client_consume,
+            },
             launch: infrastructure.worker_launch.clone(),
             policies: infrastructure.job_policies.clone(),
             triggers: infrastructure.triggers.clone(),
@@ -155,6 +191,23 @@ impl MysqlJobs {
                     conn.query(format!("SELECT {columns} FROM {} WHERE 1=0", self.table(table))).await.map_err(|_| "WIRE.NOT_AVAILABLE")?;
             }
         }
+        if self.messaging.enabled || self.declares("messages.") {
+            let engine: Option<String> = conn
+                .exec_first("SELECT ENGINE FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=? AND TABLE_NAME='aip_message_queue'", (&self.schema,))
+                .await
+                .map_err(db)?;
+            if engine.as_deref() != Some("InnoDB") {
+                return Err("WIRE.NOT_AVAILABLE");
+            }
+            let _: Vec<mysql_async::Row> = conn
+                .query(format!(
+                    "SELECT id,owner,queue,idempotency_key,payload,payload_digest,state,deliveries,max_deliveries,lease_epoch,lease_owner,lease_token,\
+                     lease_until,available_at,expires_at,last_error,acknowledged_at,created_at FROM {} WHERE 1=0",
+                    self.table("aip_message_queue")
+                ))
+                .await
+                .map_err(|_| "WIRE.NOT_AVAILABLE")?;
+        }
         Ok(())
     }
 
@@ -168,6 +221,65 @@ impl MysqlJobs {
     /// True when a job declares exactly this capability.
     fn exposes(&self, capability: &str) -> bool {
         self.facts["operations"].as_object().into_iter().flatten().any(|(_, op)| op["kind"] == "job" && op["access"][capability] == true)
+    }
+
+    fn messages(&self) -> Result<aip_migrate::mysql_messages::MysqlMessageStore> {
+        aip_migrate::mysql_messages::MysqlMessageStore::new(&self.schema).map_err(|_| "WIRE.DB_UNAVAILABLE")
+    }
+
+    /// Publishes inside the caller's fenced transaction. The per-owner quota is checked under a bucket lock so two publishers
+    /// cannot both pass it; a replay of a key that already exists skips the quota, like on PostgreSQL.
+    #[allow(clippy::too_many_arguments)]
+    async fn publish_message(
+        &self,
+        tx: &mut Transaction<'static>,
+        owner: &str,
+        queue: &str,
+        key: &str,
+        payload: Value,
+        delay_ms: i64,
+        ttl_ms: i64,
+        max_deliveries: i32,
+    ) -> Result<Value> {
+        let digest = spike_v1_fixture::digest(&json!(["aip-messages", self.schema, owner]));
+        let bucket = u64::from_str_radix(&digest[..8], 16).map_err(db)? % 1000;
+        let locked: Option<u64> =
+            tx.exec_first(format!("SELECT bucket FROM {} WHERE bucket=? FOR UPDATE", self.table("aip_tx_locks")), (bucket,)).await.map_err(db)?;
+        if locked.is_none() {
+            return Err("WIRE.DB_UNAVAILABLE");
+        }
+        let usage: Option<(i64, i64, i64)> = tx
+            .exec_first(
+                format!(
+                    "SELECT COUNT(*), CAST(COALESCE(SUM(LENGTH(CAST(payload AS CHAR))),0) AS SIGNED), CAST(COALESCE(MAX(queue=? AND idempotency_key=?),0) AS SIGNED) \
+                     FROM {} WHERE owner=? AND expires_at>UTC_TIMESTAMP(6)",
+                    self.table("aip_message_queue")
+                ),
+                (queue, key, owner),
+            )
+            .await
+            .map_err(db)?;
+        let (count, bytes, existing) = usage.ok_or("WIRE.DB_UNAVAILABLE")?;
+        if existing == 0 && (count >= 1000 || bytes + payload.to_string().len() as i64 > 64 * 1024 * 1024) {
+            return Err("WIRE.QUOTA_EXCEEDED");
+        }
+        let message = self
+            .messages()?
+            .enqueue(
+                tx,
+                aip_execution::messages::NewMessage {
+                    owner: owner.into(),
+                    queue: queue.into(),
+                    key: key.into(),
+                    payload,
+                    max_deliveries,
+                    ttl_ms,
+                    delay_ms,
+                },
+            )
+            .await
+            .map_err(message_error)?;
+        Ok(json!({"message":message}))
     }
 
     fn events(&self) -> Result<aip_migrate::mysql_events::MysqlEventStore> {
@@ -382,10 +494,79 @@ impl MysqlJobs {
                 })?;
                 json!({"ok":true,"events":page.events.iter().map(|e|json!({"cursor":e.cursor,"payload":e.payload})).collect::<Vec<_>>(),"cursor":page.next_cursor})
             }
+            path if path.starts_with("/messages/") => self.messages_request(tx, &owner, path, body).await?,
             _ => return Err("WIRE.NOT_FOUND"),
         };
         Self::commit(fenced).await?;
         Ok(response)
+    }
+
+    /// The client side of the message queues. A queue is exposed only through a job that declares `messages.<queue>`, and
+    /// publishing and consuming are separate switches that default to off.
+    async fn messages_request(&self, tx: &mut Transaction<'static>, owner: &str, path: &str, body: &Value) -> Result<Value> {
+        use aip_execution::messages::MessageLease;
+        if !self.messaging.enabled {
+            return Err("WIRE.NOT_EXPOSED");
+        }
+        match path {
+            "/messages/enqueue" if !self.messaging.client_publish => return Err("WIRE.NOT_EXPOSED"),
+            "/messages/claim" | "/messages/ack" | "/messages/nack" | "/messages/dead" | "/messages/redrive" if !self.messaging.client_consume => {
+                return Err("WIRE.NOT_EXPOSED");
+            }
+            "/messages/enqueue" | "/messages/claim" | "/messages/ack" | "/messages/nack" | "/messages/dead" | "/messages/redrive" => {}
+            _ => return Err("WIRE.NOT_FOUND"),
+        }
+        let queue = text(body, "queue")?;
+        if !self.exposes(&format!("messages.{queue}")) {
+            return Err("WIRE.NOT_EXPOSED");
+        }
+        let store = self.messages()?;
+        let mut out = match path {
+            "/messages/enqueue" => {
+                shape(body, &["queue", "key", "payload"], &["delayMs", "ttlMs", "maxDeliveries"])?;
+                self.publish_message(
+                    tx,
+                    owner,
+                    queue,
+                    text(body, "key")?,
+                    body["payload"].clone(),
+                    number(body, "delayMs", 0, 0, 86_400_000)?,
+                    number(body, "ttlMs", 86_400_000, 1, 86_400_000)?,
+                    number(body, "maxDeliveries", 3, 1, 100)? as i32,
+                )
+                .await?
+            }
+            "/messages/claim" => {
+                shape(body, &["queue", "worker"], &["leaseMs"])?;
+                json!({"lease":store.claim(tx, owner, queue, text(body, "worker")?, number(body, "leaseMs", 30_000, 100, 300_000)?).await.map_err(message_error)?})
+            }
+            "/messages/ack" | "/messages/nack" => {
+                shape(body, &["queue", "lease"], if path.ends_with("nack") { &["error"] } else { &[] })?;
+                let mut lease: MessageLease = serde_json::from_value(body["lease"].clone()).map_err(|_| "WIRE.BAD_REQUEST")?;
+                lease.owner = owner.into();
+                lease.queue = queue.into();
+                if path.ends_with("/ack") {
+                    json!({"acknowledged":store.ack(tx, &lease).await.map_err(message_error)?})
+                } else {
+                    let error = body.get("error").map_or(Ok("WIRE.CONSUMER_FAILED"), |value| value.as_str().ok_or("WIRE.BAD_REQUEST"))?;
+                    json!({"released":store.nack(tx, &lease, error).await.map_err(message_error)?})
+                }
+            }
+            "/messages/dead" => {
+                shape(body, &["queue"], &["limit", "after"])?;
+                let after = body.get("after").map(|value| value.as_str().ok_or("WIRE.BAD_REQUEST")).transpose()?;
+                serde_json::to_value(
+                    store.dead_letters_after(tx, owner, queue, after, number(body, "limit", 100, 1, 100)?).await.map_err(message_error)?,
+                )
+                .map_err(|_| "WIRE.INTERNAL")?
+            }
+            _ => {
+                shape(body, &["queue", "id"], &["maxDeliveries"])?;
+                json!({"redriven":store.redrive(tx, owner, queue, text(body, "id")?, number(body, "maxDeliveries", 3, 1, 100)? as i32).await.map_err(message_error)?})
+            }
+        };
+        out["ok"] = json!(true);
+        Ok(out)
     }
 
     /// Accepts one durable job inside the caller's fenced transaction. A user enqueue and a server trigger share every check
@@ -955,6 +1136,22 @@ impl JobHost {
                 _ => "WIRE.EVENT_INVALID",
             })?;
             let output = json!({"cursor":cursor});
+            tx.exec_drop(
+                format!("UPDATE {} SET state='SUCCEEDED',result=CAST(? AS JSON) WHERE run_id=? AND effect_key=?", rt.table("aip_effects")),
+                (output.to_string(), self.lease.run_id.to_string(), &effect),
+            )
+            .await
+            .map_err(db)?;
+            MysqlJobs::commit(fenced).await?;
+            return Ok(output);
+        }
+        if op == "messages" {
+            if !rt.messaging.enabled {
+                return Err("WIRE.NOT_EXPOSED");
+            }
+            // The message and its journal row commit together with the lease check, so a retry sees one message.
+            let message_key = spike_v1_fixture::digest(&json!([self.lease.run_id.to_string(), self.prefix, key]));
+            let output = rt.publish_message(tx, &self.lease.owner, name, &message_key, input["payload"].clone(), 0, 86_400_000, 3).await?;
             tx.exec_drop(
                 format!("UPDATE {} SET state='SUCCEEDED',result=CAST(? AS JSON) WHERE run_id=? AND effect_key=?", rt.table("aip_effects")),
                 (output.to_string(), self.lease.run_id.to_string(), &effect),

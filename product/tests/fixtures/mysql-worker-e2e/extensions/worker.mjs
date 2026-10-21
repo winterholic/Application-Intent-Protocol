@@ -69,3 +69,9 @@ export async function jobEvent(input, ctx) {
   if (ctx.job.attempt === 1) throw ctx.retryLater("retry after the committed event");
   return { count: published.cursor === "1" ? 1 : 0 };
 }
+
+export async function jobMessage(input, ctx) {
+  const sent = await ctx.messages.publish("orders", { video: input.id }, "video-" + input.id);
+  if (ctx.job.attempt === 1) throw ctx.retryLater("retry after the committed message");
+  return { count: sent.message.state === "READY" ? 1 : 0 };
+}

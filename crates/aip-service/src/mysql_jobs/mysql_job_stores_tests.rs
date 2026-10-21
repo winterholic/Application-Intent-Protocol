@@ -38,6 +38,11 @@ pub(super) struct Fixture {
 impl Fixture {
     /// A run-owned fixture: its schemas, a DML-only runtime account, one principal (actor 1) and a worker bundle.
     pub(super) async fn start(tag: &str, access: &str) -> Self {
+        Self::start_with(tag, access, |_| {}).await
+    }
+
+    /// Like `start`, with the infrastructure the service would be configured with.
+    pub(super) async fn start_with(tag: &str, access: &str, configure: impl FnOnce(&mut spike_v6_transport::infrastructure::Infrastructure)) -> Self {
         let (meta, source) = (format!("aip_t_{tag}"), format!("aip_t_{tag}_src"));
         let url = std::env::var("AIP_TEST_MYSQL_URL").unwrap();
         aip_test_support::validate_mysql_admin_url(&url).unwrap();
@@ -84,7 +89,8 @@ impl Fixture {
         std::fs::create_dir_all(&dir.0).unwrap();
         std::fs::write(dir.0.join("worker.py"), "async def jobView(input, ctx):\n return {'count': 1}\n").unwrap();
         let workers = ReadExtensions { lang: spike_v6_transport::server::WorkerLang::Python, dir: dir.0.clone() };
-        let infra = spike_v6_transport::infrastructure::Infrastructure::default();
+        let mut infra = spike_v6_transport::infrastructure::Infrastructure::default();
+        configure(&mut infra);
         let runtime = Arc::new(
             MysqlJobs::new(driver.clone(), fence, meta.clone(), digest, Arc::new(facts), IdWire::DecimalString, backend, workers, None, &infra)
                 .unwrap(),
@@ -207,4 +213,84 @@ async fn mysql_event_streams_publish_once_replay_in_order_and_expire_explicitly(
         2
     );
     fixture.finish("job_events").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires a run-owned MySQL 8.4 fixture; message queues through the job host and the /messages/* routes"]
+async fn mysql_message_queues_publish_from_jobs_and_serve_the_client_routes() {
+    let mut fixture = Fixture::start_with("job_messages", "messages.orders, messages.audit", |infra| {
+        infra.messaging = true;
+        infra.client_publish = true;
+        infra.client_consume = true;
+    })
+    .await;
+    let meta = fixture.meta.clone();
+    let owner = owner(&grant(1));
+
+    // The job host publishes in the lease owner's queue and journals the message, so a retry sees the same one.
+    let mut host = fixture.host(&["messages.orders"]).await;
+    let publish = json!({"key":"first","payload":{"n":1}});
+    let first = host.dispatch("messages", "orders", &publish).await.unwrap();
+    assert_eq!((first["message"]["state"].clone(), first["message"]["payload"].clone()), (json!("READY"), json!({"n":1})));
+    assert_eq!(host.dispatch("messages", "orders", &publish).await.unwrap(), first, "the same effect replays its recorded message");
+    assert_eq!(fixture.count(format!("SELECT COUNT(*) FROM `{meta}`.aip_message_queue WHERE owner='{owner}'")).await, 1);
+    assert_eq!(host.dispatch("messages", "orders", &json!({"key":"first","payload":{"n":2}})).await.unwrap_err(), "WIRE.IDEMPOTENCY_MISMATCH");
+    assert_eq!(host.dispatch("messages", "audit", &publish).await.unwrap_err(), "WIRE.ACCESS_NOT_DECLARED");
+    assert_eq!(host.dispatch("messages", "orders", &json!({"payload":{}})).await.unwrap_err(), "WIRE.BAD_REQUEST");
+    assert_eq!(
+        host.dispatch("messages", "orders", &json!({"key":"huge","payload":{"blob":"x".repeat(600_000)}})).await.unwrap_err(),
+        "WIRE.PAYLOAD_TOO_LARGE"
+    );
+
+    // A client consumes what the job published, with a lease only it can settle.
+    let call = |path: &'static str, body: Value| {
+        let runtime = fixture.runtime.clone();
+        async move { runtime.handle(path, &body, &grant(1)).await }
+    };
+    let claimed = call("/messages/claim", json!({"queue":"orders","worker":"w1","leaseMs":30000})).await;
+    assert_eq!(claimed["ok"], true, "{claimed}");
+    assert_eq!((claimed["lease"]["payload"].clone(), claimed["lease"]["deliveries"].clone()), (json!({"n":1}), json!(1)), "{claimed}");
+    let lease = claimed["lease"].clone();
+    let mut forged = lease.clone();
+    forged["token"] = json!(uuid::Uuid::new_v4().to_string());
+    assert_eq!(call("/messages/ack", json!({"queue":"orders","lease":forged})).await["acknowledged"], false);
+    assert_eq!(call("/messages/ack", json!({"queue":"orders","lease":lease.clone()})).await["acknowledged"], true);
+    assert_eq!(call("/messages/ack", json!({"queue":"orders","lease":lease})).await["acknowledged"], false, "acknowledged once");
+    assert_eq!(call("/messages/claim", json!({"queue":"orders","worker":"w1"})).await["lease"], Value::Null);
+
+    // A client publishes, a consumer fails it to the dead letters, and an operator redrives it.
+    let sent = call("/messages/enqueue", json!({"queue":"orders","key":"client-1","payload":{"c":1},"maxDeliveries":1})).await;
+    assert_eq!((sent["ok"].clone(), sent["message"]["state"].clone()), (json!(true), json!("READY")), "{sent}");
+    let lease = call("/messages/claim", json!({"queue":"orders","worker":"w2"})).await["lease"].clone();
+    assert_eq!(call("/messages/nack", json!({"queue":"orders","lease":lease,"error":"BROKEN"})).await["released"], true);
+    let dead = call("/messages/dead", json!({"queue":"orders"})).await;
+    assert_eq!((dead["items"][0]["last_error"].clone(), dead["items"][0]["payload"].clone()), (json!("BROKEN"), json!({"c":1})), "{dead}");
+    let id = dead["items"][0]["id"].as_str().unwrap().to_string();
+    assert_eq!(call("/messages/redrive", json!({"queue":"orders","id":id,"maxDeliveries":2})).await["redriven"], true);
+    assert_eq!(call("/messages/claim", json!({"queue":"orders","worker":"w3"})).await["lease"]["max_deliveries"], json!(2));
+
+    // Only a queue a job declares is reachable, and the body must have the documented shape.
+    assert_eq!(call("/messages/claim", json!({"queue":"ghost","worker":"w"})).await["code"], "WIRE.NOT_EXPOSED");
+    assert_eq!(call("/messages/enqueue", json!({"queue":"orders","key":"k"})).await["code"], "WIRE.BAD_REQUEST");
+    assert_eq!(call("/messages/claim", json!({"queue":"orders","worker":"w","leaseMs":5})).await["code"], "WIRE.BAD_VALUE");
+    assert_eq!(call("/messages/nothing", json!({"queue":"orders"})).await["code"], "WIRE.NOT_FOUND");
+
+    // The per-owner quota stops a flood but never a replay of a message that already exists.
+    fixture
+        .setup
+        .query_drop(format!(
+            "INSERT INTO `{meta}`.aip_message_queue(id,owner,queue,idempotency_key,payload,payload_digest,state,max_deliveries,available_at,expires_at,created_at) \
+             WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<1000) \
+             SELECT UUID(),'{owner}','orders',CONCAT('flood-',i),'{{}}',REPEAT('0',64),'READY',3,UTC_TIMESTAMP(6),DATE_ADD(UTC_TIMESTAMP(6),INTERVAL 1 DAY),UTC_TIMESTAMP(6) FROM n"
+        ))
+        .await
+        .unwrap();
+    assert_eq!(call("/messages/enqueue", json!({"queue":"orders","key":"one-too-many","payload":{}})).await["code"], "WIRE.QUOTA_EXCEEDED");
+    let replay = call("/messages/enqueue", json!({"queue":"orders","key":"client-1","payload":{"c":1},"maxDeliveries":1})).await;
+    assert_eq!(replay["ok"], true, "a replay is not a new message: {replay}");
+
+    // The lease is checked when the message is written: a recovered attempt cannot be written by the old one.
+    fixture.setup.query_drop(format!("UPDATE `{meta}`.aip_jobs SET lease_epoch = lease_epoch + 1")).await.unwrap();
+    assert_eq!(host.dispatch("messages", "orders", &json!({"key":"after","payload":{}})).await.unwrap_err(), "WIRE.LEASE_LOST");
+    fixture.finish("job_messages").await;
 }

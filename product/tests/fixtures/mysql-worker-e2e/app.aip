@@ -124,3 +124,14 @@ operation job eventJob {
   deadline 5s
   implementation "worker.jobEvent"
 }
+
+// A journaled message: the retry after the publish committed replays the message and enqueues nothing.
+operation job messageJob {
+  input { id: Video.Id }
+  output { count: Int(0..10) }
+  allow actor != null
+  access messages.orders
+  effect managed
+  deadline 5s
+  implementation "worker.jobMessage"
+}

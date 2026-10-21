@@ -70,3 +70,10 @@ async def jobEvent(input, ctx):
     if ctx.job["attempt"] == 1:
         raise ctx.retry_later("retry after the committed event")
     return {"count": 1 if published["cursor"] == "1" else 0}
+
+
+async def jobMessage(input, ctx):
+    sent = await ctx.messages.publish("orders", {"video": input["id"]}, "video-" + input["id"])
+    if ctx.job["attempt"] == 1:
+        raise ctx.retry_later("retry after the committed message")
+    return {"count": 1 if sent["message"]["state"] == "READY" else 0}

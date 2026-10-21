@@ -146,3 +146,8 @@ jobs:
           cargo test -p aip-service --features mysql --lib --locked
           mysql_jobs::mysql_job_stores_tests::mysql_event_streams_publish_once_replay_in_order_and_expire_explicitly
           -- --ignored --exact --nocapture
+      - name: Verify MySQL job message queues publish from jobs and serve the client routes
+        run: >-
+          cargo test -p aip-service --features mysql --lib --locked
+          mysql_jobs::mysql_job_stores_tests::mysql_message_queues_publish_from_jobs_and_serve_the_client_routes
+          -- --ignored --exact --nocapture

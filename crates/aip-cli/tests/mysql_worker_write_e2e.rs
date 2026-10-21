@@ -267,7 +267,7 @@ impl Db {
     }
     async fn reset(&mut self) {
         self.0.query_drop(format!("UPDATE `{SOURCE}`.`video` SET views = 0")).await.unwrap();
-        for table in ["aip_event_log", "aip_event_streams", "aip_event_keys"] {
+        for table in ["aip_event_log", "aip_event_streams", "aip_event_keys", "aip_message_queue"] {
             self.0.query_drop(format!("DELETE FROM `{META}`.`{table}` WHERE owner <> ''")).await.unwrap();
         }
     }
@@ -325,6 +325,7 @@ async fn http_apply_runs_real_node_and_python_workers_in_one_mysql_transaction()
                 "schema": META, "external_mapping": "mapping.json", "database_adapter": "mysql",
                 "database_url_env": "AIP_E2E_RUNTIME_URL", "migrate_database_url_env": "AIP_E2E_ADOPT_URL",
                 "listen": "127.0.0.1:0", "wire": "decimal", "rate_limit": null,
+                "messaging": {"enabled": true, "client_publish": true, "client_consume": true},
                 "auth": {"issuer": ISSUER, "audience": "aip-api", "jwks": {"kind": "file", "path": "jwks.json"}},
                 "workers": {"directory": extensions, "language": language, "enable_writes": true,
                     "integrations": [{"name": "mail", "url": format!("http://127.0.0.1:{mail_port}/send"), "method": "POST", "timeout_ms": 2000,
@@ -595,6 +596,33 @@ async fn http_apply_runs_real_node_and_python_workers_in_one_mysql_transaction()
         let read = post(&address, "/events/read", Some(&alice), &fingerprint, &json!({"stream": "audit", "after": "0", "limit": 10})).await;
         assert_eq!(read["ok"], true, "{language}: {read}");
         assert_eq!((read["events"][0]["payload"].clone(), read["cursor"].clone()), (json!({"video": "10"}), json!("1")), "{language}: {read}");
+
+        // A published message is journaled too: the retry replays it, enqueues nothing, and the client consumes it once.
+        let message = post(
+            &address,
+            "/jobs/enqueue",
+            Some(&alice),
+            &fingerprint,
+            &json!({"operation": "messageJob", "input": {"id": "10"}, "key": key("message"), "delayMs": 0}),
+        )
+        .await;
+        assert_eq!(message["ok"], true, "{language}: {message}");
+        let message_id = message["run"]["id"].as_str().unwrap().to_string();
+        let message_done = format!("SELECT COUNT(*) FROM `{META}`.`aip_jobs` WHERE id = '{message_id}' AND state = 'SUCCEEDED'");
+        wait_for(&mut db, &message_done, |count| count == 1, "the message job to succeed").await;
+        let message_attempts = format!("SELECT attempt FROM `{META}`.`aip_jobs` WHERE id = '{message_id}'");
+        assert_eq!(db.count(&message_attempts).await, 2, "{language}: the first attempt asked to be retried");
+        assert_eq!(
+            db.count(&format!("SELECT COUNT(*) FROM `{META}`.`aip_message_queue` WHERE queue = 'orders'")).await,
+            1,
+            "{language}: the retry must not enqueue again"
+        );
+        let claimed = post(&address, "/messages/claim", Some(&alice), &fingerprint, &json!({"queue": "orders", "worker": "e2e"})).await;
+        assert_eq!((claimed["ok"].clone(), claimed["lease"]["payload"].clone()), (json!(true), json!({"video": "10"})), "{language}: {claimed}");
+        let acked = post(&address, "/messages/ack", Some(&alice), &fingerprint, &json!({"queue": "orders", "lease": claimed["lease"].clone()})).await;
+        assert_eq!(acked["acknowledged"], true, "{language}: {acked}");
+        let drained = post(&address, "/messages/claim", Some(&alice), &fingerprint, &json!({"queue": "orders", "worker": "e2e"})).await;
+        assert_eq!(drained["lease"], Value::Null, "{language}: {drained}");
         drop(child);
     }
 }

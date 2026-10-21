@@ -422,3 +422,143 @@ async fn mysql_event_streams_publish_once_replay_in_order_and_expire_explicitly(
     let cursors: Vec<i64> = page.events.iter().map(|event| event.cursor.parse().unwrap()).collect();
     assert_eq!(cursors, (1..=81).collect::<Vec<i64>>(), "80 distinct events plus the shared one, in order and without a gap");
 }
+
+fn message(owner: &str, queue: &str, key: &str, payload: serde_json::Value) -> aip_execution::messages::NewMessage {
+    aip_execution::messages::NewMessage {
+        owner: owner.into(),
+        queue: queue.into(),
+        key: key.into(),
+        payload,
+        max_deliveries: 2,
+        ttl_ms: 60_000,
+        delay_ms: 0,
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+#[ignore = "live: needs a dedicated MySQL 8.4 container (scripts/mysql-live-fixture.sh); run with -- --ignored"]
+async fn mysql_message_queue_leases_retries_dead_letters_and_expires() {
+    use aip_execution::messages::Error as MessageError;
+    use aip_migrate::mysql_messages::MysqlMessageStore;
+    let harness = Harness::new().await;
+    let store = if harness.is_mariadb { MysqlMessageStore::new(META).unwrap().for_mariadb() } else { MysqlMessageStore::new(META).unwrap() };
+    let mut conn = harness.conn().await;
+
+    // Idempotent enqueue: the same key and payload is the same message, another payload under the key is a conflict.
+    let first = store.enqueue(&mut conn, message("owner-a", "orders", "k1", json!({"n": 1, "text": "한글"}))).await.unwrap();
+    assert_eq!((first.state.as_str(), first.deliveries, first.payload.clone()), ("READY", 0, json!({"n": 1, "text": "한글"})));
+    let again = store.enqueue(&mut conn, message("owner-a", "orders", "k1", json!({"n": 1, "text": "한글"}))).await.unwrap();
+    assert_eq!(again.id, first.id);
+    assert_eq!(store.enqueue(&mut conn, message("owner-a", "orders", "k1", json!({"n": 2}))).await.unwrap_err(), MessageError::IdempotencyConflict);
+    // Queues and owners are separate scopes.
+    let other_queue = store.enqueue(&mut conn, message("owner-a", "billing", "k1", json!({"n": 9}))).await.unwrap();
+    let other_owner = store.enqueue(&mut conn, message("owner-b", "orders", "k1", json!({"n": 9}))).await.unwrap();
+    assert!(other_queue.id != first.id && other_owner.id != first.id);
+    assert_eq!(store.enqueue(&mut conn, message("owner-a", "bad queue", "k", json!({}))).await.unwrap_err(), MessageError::InvalidMessage);
+    assert_eq!(
+        store.enqueue(&mut conn, message("owner-a", "orders", "big", json!({"blob": "x".repeat(600_000)}))).await.unwrap_err(),
+        MessageError::PayloadTooLarge
+    );
+    let mut delayed = message("owner-a", "orders", "later", json!({"later": true}));
+    delayed.delay_ms = 60_000;
+    store.enqueue(&mut conn, delayed).await.unwrap();
+
+    // A claim takes the oldest ready message and nothing else; the delayed one is not ready yet.
+    let lease = store.claim(&mut conn, "owner-a", "orders", "worker-1", 30_000).await.unwrap().unwrap();
+    assert_eq!((lease.id.as_str(), lease.deliveries, lease.epoch, lease.worker.as_str()), (first.id.as_str(), 1, 1, "worker-1"));
+    assert!(store.claim(&mut conn, "owner-a", "orders", "worker-2", 30_000).await.unwrap().is_none());
+    // Only the live lease commits: a forged token or another worker cannot ack.
+    let mut forged = lease.clone();
+    forged.token = uuid::Uuid::new_v4().to_string();
+    assert!(!store.ack(&mut conn, &forged).await.unwrap());
+    let mut stranger = lease.clone();
+    stranger.worker = "worker-2".into();
+    assert!(!store.ack(&mut conn, &stranger).await.unwrap());
+    assert!(store.ack(&mut conn, &lease).await.unwrap());
+    assert!(!store.ack(&mut conn, &lease).await.unwrap(), "a message is acknowledged once");
+
+    // A nack retries until the delivery budget is spent, then the message is dead and listed.
+    store.enqueue(&mut conn, message("owner-a", "retry", "r1", json!({"r": 1}))).await.unwrap();
+    let lease = store.claim(&mut conn, "owner-a", "retry", "worker-1", 30_000).await.unwrap().unwrap();
+    assert!(store.nack_after(&mut conn, &lease, "TEMPORARY", 0).await.unwrap());
+    let lease = store.claim(&mut conn, "owner-a", "retry", "worker-1", 30_000).await.unwrap().unwrap();
+    assert_eq!((lease.deliveries, lease.epoch), (2, 2));
+    assert!(store.nack_after(&mut conn, &lease, "TEMPORARY", 0).await.unwrap());
+    assert!(store.claim(&mut conn, "owner-a", "retry", "worker-1", 30_000).await.unwrap().is_none());
+    let dead = store.dead_letters_after(&mut conn, "owner-a", "retry", None, 10).await.unwrap();
+    assert_eq!((dead.items.len(), dead.items[0].last_error.clone(), dead.next_cursor.clone()), (1, Some("TEMPORARY".into()), None));
+    assert!(store.dead_letters_after(&mut conn, "owner-b", "retry", None, 10).await.unwrap().items.is_empty(), "the dead-letter set is owner-scoped");
+    // Redrive reopens it with a fresh budget and the original payload.
+    assert!(store.redrive(&mut conn, "owner-a", "retry", &dead.items[0].id, 3).await.unwrap());
+    assert!(!store.redrive(&mut conn, "owner-a", "retry", &dead.items[0].id, 3).await.unwrap(), "only a dead message can be redriven");
+    let lease = store.claim(&mut conn, "owner-a", "retry", "worker-1", 30_000).await.unwrap().unwrap();
+    assert_eq!((lease.deliveries, lease.max_deliveries, lease.payload.clone()), (1, 3, json!({"r": 1})));
+
+    // An expired lease returns the message to the queue, or kills it when the budget is gone; the old lease cannot ack.
+    store.enqueue(&mut conn, message("owner-a", "lapse", "l1", json!({"l": 1}))).await.unwrap();
+    let old = store.claim(&mut conn, "owner-a", "lapse", "worker-1", 100).await.unwrap().unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    assert!(!store.ack(&mut conn, &old).await.unwrap(), "an expired lease cannot commit");
+    let fresh = store.claim(&mut conn, "owner-a", "lapse", "worker-2", 30_000).await.unwrap().unwrap();
+    assert_eq!((fresh.deliveries, fresh.epoch), (2, 2));
+    assert!(!store.ack(&mut conn, &old).await.unwrap(), "a stale epoch cannot commit after the takeover");
+    harness
+        .sql(format!("UPDATE `{META}`.aip_message_queue SET lease_until = DATE_SUB(UTC_TIMESTAMP(6), INTERVAL 1 SECOND) WHERE id = '{}'", fresh.id))
+        .await;
+    assert!(store.claim(&mut conn, "owner-a", "lapse", "worker-3", 30_000).await.unwrap().is_none(), "the budget is spent, so it goes dead");
+    let dead = store.dead_letters_after(&mut conn, "owner-a", "lapse", None, 10).await.unwrap();
+    assert_eq!(dead.items[0].last_error.as_deref(), Some("LEASE_EXPIRED"));
+
+    // Dead letters page by id.
+    for n in 0..5 {
+        let key = format!("d{n}");
+        let mut dying = message("owner-a", "pages", &key, json!({"n": n}));
+        dying.max_deliveries = 1;
+        store.enqueue(&mut conn, dying).await.unwrap();
+        let lease = store.claim(&mut conn, "owner-a", "pages", "w", 30_000).await.unwrap().unwrap();
+        assert!(store.nack_after(&mut conn, &lease, "X", 0).await.unwrap());
+    }
+    let page = store.dead_letters_after(&mut conn, "owner-a", "pages", None, 2).await.unwrap();
+    assert_eq!(page.items.len(), 2);
+    let cursor = page.next_cursor.clone().expect("more pages");
+    let rest = store.dead_letters_after(&mut conn, "owner-a", "pages", Some(&cursor), 10).await.unwrap();
+    assert_eq!((rest.items.len(), rest.next_cursor), (3, None));
+    assert!(rest.items.iter().all(|item| item.id > cursor));
+
+    // Expired rows are deleted in bounded batches.
+    harness
+        .sql(format!("UPDATE `{META}`.aip_message_queue SET expires_at = DATE_SUB(UTC_TIMESTAMP(6), INTERVAL 1 SECOND) WHERE queue = 'pages'"))
+        .await;
+    assert_eq!(store.cleanup_expired(&mut conn, 3).await.unwrap().len(), 3);
+    assert_eq!(store.cleanup_expired(&mut conn, 10).await.unwrap().len(), 2);
+    assert!(store.cleanup_expired(&mut conn, 10).await.unwrap().is_empty());
+
+    // Concurrent claimers never take one message twice and together take all of them.
+    for n in 0..40 {
+        store.enqueue(&mut conn, message("owner-c", "load", &format!("m{n}"), json!({"n": n}))).await.unwrap();
+    }
+    drop(conn);
+    let mut tasks = vec![];
+    for task in 0..8 {
+        let (driver, store) = (harness.driver.clone(), store.clone());
+        tasks.push(tokio::spawn(async move {
+            let mut conn = driver.pool().get_conn().await.unwrap();
+            let mut taken = vec![];
+            while let Some(lease) = store.claim(&mut conn, "owner-c", "load", &format!("worker-{task}"), 30_000).await.unwrap() {
+                assert_eq!(lease.deliveries, 1);
+                assert!(store.ack(&mut conn, &lease).await.unwrap());
+                taken.push(lease.id);
+            }
+            taken
+        }));
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    let mut total = 0;
+    for task in tasks {
+        for id in task.await.unwrap() {
+            total += 1;
+            assert!(seen.insert(id), "a message was handed to two consumers");
+        }
+    }
+    assert_eq!((total, seen.len()), (40, 40));
+}

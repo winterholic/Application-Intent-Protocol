@@ -42,14 +42,13 @@ fn reject_unsupported_infrastructure(config: &Config) -> Result<(), Value> {
     {
         return Err(unsupported("workers.enable_file_uploads", "MySQL adapter는 worker 파일 업로드를 아직 지원하지 않음"));
     }
-    let checks: [(&str, bool, &str); 8] = [
+    let checks: [(&str, bool, &str); 7] = [
         ("objects", config.objects.is_some(), "객체 저장소 metadata가 PostgreSQL에 있음"),
         ("broker", config.broker.is_some(), "broker offset·outbox가 PostgreSQL에 있음"),
         ("rag", config.rag.is_some(), "RAG 색인이 PostgreSQL(pgvector)에 있음"),
         ("static_mounts", !config.static_mounts.is_empty(), "정적 mount는 아직 연결하지 않음"),
         ("file_mounts", !config.file_mounts.is_empty(), "관리 파일 저장소가 PostgreSQL에 있음"),
         ("message_handlers", !config.message_handlers.is_empty(), "메시지 저장소가 PostgreSQL에 있음"),
-        ("messaging", config.messaging.enabled, "메시지 저장소가 PostgreSQL에 있음"),
         (
             "rate_limit",
             config.rate_limit.is_some(),

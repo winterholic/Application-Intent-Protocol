@@ -1,5 +1,13 @@
 # 제품 통합 검증 (2026-10-17)
 
+## 2026-10-21 MySQL job 메시지 큐 (WBS 7.2.1.3, Linux CI 대기)
+
+Run 소유 컨테이너(macOS 호스트, `--rm`·tmpfs, MySQL 8.4 loopback 34411, 표준 fixture 스크립트의 MySQL 8.4 34421·MariaDB 11.4 34422)에서 실행했다. 저장소 시험 `mysql_jobs`(aip-migrate) `mysql_message_queue_leases_retries_dead_letters_and_expires`가 MySQL·MariaDB 양쪽에서 통과했고(같은 파일 5개 `5 passed`, MariaDB 실행 포함) MySQL에서 6회 반복해도 모두 통과했다. 같은 키·본문의 같은 메시지, 다른 본문 충돌, 큐·owner 분리, 잘못된 큐 이름과 600KB 본문 거부, 지연 메시지는 아직 클레임되지 않음, 위조 토큰·다른 worker·두 번째 ack 거부, nack 재시도와 배달 횟수 소진 뒤 dead letter, owner별 dead letter 분리, redrive는 DEAD에서만 동작하고 원본 본문 유지, 만료 임차권은 새 클레임 때 에포크가 오르고 옛 임차권은 ack 못 하며 예산을 다 쓰면 `LEASE_EXPIRED`로 DEAD, dead letter 키셋 페이지, 만료 정리 배치, 8개 동시 소비자가 40건을 한 건도 겹치지 않게 가져가는 것을 확인했다.
+
+서비스 시험 `mysql_jobs::mysql_job_stores_tests::mysql_message_queues_publish_from_jobs_and_serve_the_client_routes`는 MySQL 8.4에서 1 passed다. job 호스트의 발행 재생(같은 effect는 같은 메시지, 다른 본문 `IDEMPOTENCY_MISMATCH`, 미선언 큐 `ACCESS_NOT_DECLARED`, 키 없음 `BAD_REQUEST`, 600KB `PAYLOAD_TOO_LARGE`, 임차권 상실 `LEASE_LOST`)과 클라이언트 경로(job이 발행한 메시지 클레임, 위조 토큰 ack 거부, ack는 한 번만, 클라이언트 발행, nack, dead letter 조회, redrive, 선언 없는 큐 `NOT_EXPOSED`, 본문 형태·범위 오류, 모르는 경로 `NOT_FOUND`)을 확인한다. 1000건을 채운 owner는 새 키가 `QUOTA_EXCEEDED`이고 이미 있는 키의 재전송은 통과한다. 실제 worker E2E(`mysql_worker_write_e2e`)에 `messageJob`을 추가했다. Node·Python 양쪽에서 첫 시도가 재시도를 요청하고 두 번째 시도가 같은 발행을 재생해 큐에는 1건이며, HTTP `/messages/claim`이 그 payload를 주고 `/messages/ack`가 true이며 다음 클레임은 비어 `1 passed`다. 같은 컨테이너에서 기존 시험도 통과했다(이벤트 서비스·저장소, HTTP effect, 트리거, `mysql_adoption_flow` 2, `mysql_read_http` 1, `mysql_write_http` 9, fence 8·drift 1·capability gate 4).
+
+`cargo fmt --check`와 mysql feature `clippy --all-targets -D warnings`(aip-migrate·aip-service·aip-cli, spike-v6-transport)는 통과했다. 미실행: Linux CI, `message_handlers`와 만료 메시지 자동 정리 루프, `messaging` 설정을 끈 서비스의 `/messages/*`(`NOT_EXPOSED` 분기)와 `client_publish`·`client_consume` 개별 차단의 실DB 시험(코드만 있다).
+
 ## 2026-10-21 MySQL job 이벤트 스트림 (WBS 7.2.1.3, Linux CI 대기)
 
 Run 소유 컨테이너(macOS 호스트, `--rm`·tmpfs, MySQL 8.4 loopback 34411, 표준 fixture 스크립트의 MySQL 8.4 34421·MariaDB 11.4 34422)에서 실행했다. 저장소 시험 `mysql_jobs`(aip-migrate) `mysql_event_streams_publish_once_replay_in_order_and_expire_explicitly`가 MySQL·MariaDB 양쪽에서 4 passed(같은 파일의 기존 3개 포함)다. 같은 키·본문의 cursor 수렴, 다른 본문 충돌, owner·스트림 분리, 잘못된 이름·70KB 본문 거부, 페이지 재개, head 너머 cursor 거부, prune 뒤 `CursorExpired`와 남는 중복 방지 장부, 8개 동시 발행자 80건+공유 키 1건이 1..81 cursor로 빈틈 없이 쌓이는 것을 확인했다. 처음 구현은 동시 발행에서 교착(errno 1213)이 났다. `INSERT IGNORE`가 중복 행에 공유 잠금을 잡고 둘이 `FOR UPDATE`로 올리다 순환했고, `ON DUPLICATE KEY UPDATE head=head`로 바로 배타 잠금을 잡게 고쳤다. 처음에는 새 표 이름 `aip_events`가 부트스트랩의 쓰기 펜스 표와 겹쳐 `NOT_AVAILABLE`이 났고 `aip_event_log`로 바꿨다.

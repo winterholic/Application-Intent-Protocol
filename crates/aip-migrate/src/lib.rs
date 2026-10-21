@@ -14,6 +14,8 @@ pub mod mysql_external;
 #[cfg(feature = "mysql")]
 pub mod mysql_jobs;
 #[cfg(feature = "mysql")]
+pub mod mysql_messages;
+#[cfg(feature = "mysql")]
 pub mod mysql_outbox;
 #[cfg(feature = "mysql")]
 pub mod mysql_write;

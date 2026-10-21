@@ -525,7 +525,7 @@ pub async fn deployment(url: &str, meta_schema: &str, facts: &Value, mapping: &M
 /// The additive AIP tables an existing deployment needs before the new policy is published.
 async fn install_additive(conn: &mut Conn, meta_schema: &str) -> Result<(), Value> {
     for statement in crate::mysql_driver::additive_ddl(meta_schema) {
-        conn.query_drop(statement).await.map_err(|_| failure("MySQL job effect journal·event stream 준비 실패"))?;
+        conn.query_drop(statement).await.map_err(|_| failure("MySQL job effect journal·event stream·message queue 준비 실패"))?;
     }
     Ok(())
 }
