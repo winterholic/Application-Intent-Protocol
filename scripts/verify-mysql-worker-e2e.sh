@@ -171,6 +171,19 @@ if [[ "$mode" == run-ci ]]; then
   grep -Fxq "$auth_test: test" /tmp/aip-e2e-auth-list-"$tag".txt
   cargo test "${auth_args[@]}" -- --ignored --exact "$auth_test" --nocapture --test-threads=1 2>&1 | tee /tmp/aip-e2e-auth-run-"$tag".txt
   grep -Fq "test result: ok. 1 passed; 0 failed;" /tmp/aip-e2e-auth-run-"$tag".txt
+  # The FaceReview recommendation lists (WBS 7.2.3) read MongoDB through workers.mongo and compare with the original services' answers.
+  # verify.yml starts the native-stores MongoDB fixture and exports AIP_TEST_MONGO_URL for it; the test refuses a non-loopback URL.
+  if [[ -z "${AIP_TEST_MONGO_URL:-}" ]]; then
+    echo "ERROR: run-ci needs AIP_TEST_MONGO_URL for the recommendation end-to-end test (see the native fixtures step of verify.yml)" >&2
+    exit 2
+  fi
+  echo "=== Running the recommendation end-to-end test (real aip binary, Python extension in the sandbox, real MySQL and MongoDB) ==="
+  recommend_args=(--locked -p aip-cli --features mysql --test mysql_facereview_recommend)
+  recommend_test="facereview_recommendations_match_the_original_services_through_the_real_server"
+  cargo test "${recommend_args[@]}" -- --list --ignored 2>&1 | tee /tmp/aip-e2e-recommend-list-"$tag".txt | tail -3
+  grep -Fxq "$recommend_test: test" /tmp/aip-e2e-recommend-list-"$tag".txt
+  cargo test "${recommend_args[@]}" -- --ignored --exact "$recommend_test" --nocapture --test-threads=1 2>&1 | tee /tmp/aip-e2e-recommend-run-"$tag".txt
+  grep -Fq "test result: ok. 1 passed; 0 failed;" /tmp/aip-e2e-recommend-run-"$tag".txt
   exit 0
 fi
 

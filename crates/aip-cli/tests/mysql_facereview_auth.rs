@@ -28,6 +28,13 @@ const DEFAULTS: &str = include_str!("../../../product/tests/fixtures/facereview-
 const SEED: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/seed.sql");
 const WERKZEUG: &str = include_str!("../../../product/tests/fixtures/password-auth/werkzeug-3.0.2.json");
 const PASSWORD_AUTH_PY: &str = include_str!("../../../product/providers/password_auth.py");
+// The definition declares the home and watch list extensions, and `serve` refuses a worker directory that lacks any of them.
+const LIST_EXTENSIONS: [(&str, &str); 4] = [
+    ("slice13b_lists.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13b_lists.py")),
+    ("slice13d_recommend.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13d_recommend.py")),
+    ("recommendation_math.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/recommendation_math.py")),
+    ("recommendation_pool_builder.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/recommendation_pool_builder.py")),
+];
 const META: &str = "aip_t_auth_meta";
 const SOURCE: &str = "aip_t_auth_src";
 const ISSUER: &str = "https://login.facereview.example";
@@ -175,6 +182,9 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
     let extensions = directory.path().join("extensions");
     std::fs::create_dir(&extensions).unwrap();
     std::fs::write(extensions.join("password_auth.py"), PASSWORD_AUTH_PY).unwrap();
+    for (name, source) in LIST_EXTENSIONS {
+        std::fs::write(extensions.join(name), source).unwrap();
+    }
 
     let admin = MysqlDriver::connect(&admin_url).await.expect("admin connection");
     let mut setup = admin.pool().get_conn().await.unwrap();

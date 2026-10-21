@@ -25,6 +25,10 @@ name = "mysql_facereview_reads"
 required-features = ["mysql"]
 
 [[test]]
+name = "mysql_facereview_recommend"
+required-features = ["mysql"]
+
+[[test]]
 name = "field_policy_e2e"
 required-features = ["poc-runtime"]
 
@@ -117,3 +121,5 @@ axum = "0.8"
 tokio-tungstenite = "0.30.0"
 futures-util = "0.3.34"
 aip-test-support = { path = "../aip-test-support", features = ["strict-db"] }
+mongodb = { version = "3.9.1", default-features = false, features = ["bson-3", "compat-3-3-0", "rustls-tls", "dns-resolver"] }
+url = "2"

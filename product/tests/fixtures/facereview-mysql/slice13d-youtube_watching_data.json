@@ -1,0 +1,640 @@
+[
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000002",
+  "dominant_emotion": "neutral",
+  "emotion_percentages": {
+   "neutral": 3.7,
+   "happy": 18.52,
+   "surprise": 33.33,
+   "sad": 14.81,
+   "angry": 29.63
+  },
+  "emotion_score_timeline": {
+   "0": [
+    1.0,
+    2.0,
+    3.0,
+    4.0,
+    5.0
+   ]
+  },
+  "client_info": {
+   "agent": "seed"
+  },
+  "created_at": "2026-03-25T12:00:00"
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000008",
+  "dominant_emotion": "sad",
+  "emotion_percentages": {
+   "neutral": 8.7,
+   "happy": 26.09,
+   "surprise": 4.35,
+   "sad": 21.74,
+   "angry": 39.13
+  },
+  "emotion_score_timeline": {
+   "0": [
+    1.0,
+    2.0,
+    3.0,
+    4.0,
+    5.0
+   ]
+  },
+  "client_info": {
+   "agent": "seed"
+  },
+  "created_at": "2026-03-24T12:00:00"
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000015",
+  "dominant_emotion": "happy",
+  "emotion_percentages": {
+   "neutral": 15.79,
+   "happy": 36.84,
+   "surprise": 10.53,
+   "sad": 31.58,
+   "angry": 5.26
+  },
+  "emotion_score_timeline": {
+   "0": [
+    1.0,
+    2.0,
+    3.0,
+    4.0,
+    5.0
+   ]
+  },
+  "client_info": {
+   "agent": "seed"
+  },
+  "created_at": "2026-03-23T12:00:00"
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000019",
+  "dominant_emotion": "angry",
+  "emotion_percentages": {
+   "neutral": 16.67,
+   "happy": 33.33,
+   "surprise": 12.5,
+   "sad": 29.17,
+   "angry": 8.33
+  },
+  "emotion_score_timeline": {
+   "0": [
+    1.0,
+    2.0,
+    3.0,
+    4.0,
+    5.0
+   ]
+  },
+  "client_info": {
+   "agent": "seed"
+  },
+  "created_at": "2026-03-22T12:00:00"
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000024",
+  "dominant_emotion": null,
+  "emotion_percentages": {
+   "neutral": 17.24,
+   "happy": 31.03,
+   "surprise": 13.79,
+   "sad": 27.59,
+   "angry": 10.34
+  },
+  "emotion_score_timeline": {
+   "0": [
+    1.0,
+    2.0,
+    3.0,
+    4.0,
+    5.0
+   ]
+  },
+  "client_info": {
+   "agent": "seed"
+  },
+  "created_at": "2026-03-21T12:00:00"
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000003",
+  "dominant_emotion": "neutral",
+  "emotion_percentages": {
+   "neutral": 24.0,
+   "happy": 4.0,
+   "surprise": 20.0,
+   "sad": 36.0,
+   "angry": 16.0
+  },
+  "emotion_score_timeline": {
+   "0": [
+    1.0,
+    2.0,
+    3.0,
+    4.0,
+    5.0
+   ]
+  },
+  "client_info": {
+   "agent": "seed"
+  },
+  "created_at": "2026-03-20T12:00:00"
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000009",
+  "dominant_emotion": "sad",
+  "emotion_percentages": {
+   "neutral": 33.33,
+   "happy": 9.52,
+   "surprise": 28.57,
+   "sad": 4.76,
+   "angry": 23.81
+  },
+  "emotion_score_timeline": {
+   "0": [
+    1.0,
+    2.0,
+    3.0,
+    4.0,
+    5.0
+   ]
+  },
+  "client_info": {
+   "agent": "seed"
+  },
+  "created_at": "2026-03-19T12:00:00"
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000014",
+  "dominant_emotion": "happy",
+  "emotion_percentages": {
+   "neutral": 30.77,
+   "happy": 11.54,
+   "surprise": 26.92,
+   "sad": 7.69,
+   "angry": 23.08
+  },
+  "emotion_score_timeline": {
+   "0": [
+    1.0,
+    2.0,
+    3.0,
+    4.0,
+    5.0
+   ]
+  },
+  "client_info": {
+   "agent": "seed"
+  },
+  "created_at": "2026-03-18T12:00:00"
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000020",
+  "dominant_emotion": "angry",
+  "emotion_percentages": {
+   "neutral": 29.03,
+   "happy": 12.9,
+   "surprise": 25.81,
+   "sad": 9.68,
+   "angry": 22.58
+  },
+  "emotion_score_timeline": {
+   "0": [
+    1.0,
+    2.0,
+    3.0,
+    4.0,
+    5.0
+   ]
+  },
+  "client_info": {
+   "agent": "seed"
+  },
+  "created_at": "2026-03-17T12:00:00"
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000001",
+  "dominant_emotion": "surprise",
+  "emotion_percentages": {
+   "neutral": 3.7,
+   "happy": 18.52,
+   "surprise": 33.33,
+   "sad": 14.81,
+   "angry": 29.63
+  },
+  "emotion_score_timeline": {
+   "0": [
+    1.0,
+    2.0,
+    3.0,
+    4.0,
+    5.0
+   ]
+  },
+  "client_info": {
+   "agent": "seed"
+  },
+  "created_at": "2026-03-16T12:00:00"
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000002",
+  "dominant_emotion": "neutral",
+  "emotion_percentages": {
+   "neutral": 8.7,
+   "happy": 26.09,
+   "surprise": 4.35,
+   "sad": 21.74,
+   "angry": 39.13
+  },
+  "emotion_score_timeline": {
+   "0": [
+    1.0,
+    2.0,
+    3.0,
+    4.0,
+    5.0
+   ]
+  },
+  "client_info": {
+   "agent": "seed"
+  },
+  "created_at": "2026-03-15T12:00:00"
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000008",
+  "dominant_emotion": "sad",
+  "emotion_percentages": {
+   "neutral": 15.79,
+   "happy": 36.84,
+   "surprise": 10.53,
+   "sad": 31.58,
+   "angry": 5.26
+  },
+  "emotion_score_timeline": {
+   "0": [
+    1.0,
+    2.0,
+    3.0,
+    4.0,
+    5.0
+   ]
+  },
+  "client_info": {
+   "agent": "seed"
+  },
+  "created_at": "2026-03-14T12:00:00"
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000015",
+  "dominant_emotion": "happy",
+  "emotion_percentages": {
+   "neutral": 16.67,
+   "happy": 33.33,
+   "surprise": 12.5,
+   "sad": 29.17,
+   "angry": 8.33
+  },
+  "emotion_score_timeline": {
+   "0": [
+    1.0,
+    2.0,
+    3.0,
+    4.0,
+    5.0
+   ]
+  },
+  "client_info": {
+   "agent": "seed"
+  },
+  "created_at": "2026-03-13T12:00:00"
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000019",
+  "dominant_emotion": "angry",
+  "emotion_percentages": {
+   "neutral": 17.24,
+   "happy": 31.03,
+   "surprise": 13.79,
+   "sad": 27.59,
+   "angry": 10.34
+  },
+  "emotion_score_timeline": {
+   "0": [
+    1.0,
+    2.0,
+    3.0,
+    4.0,
+    5.0
+   ]
+  },
+  "client_info": {
+   "agent": "seed"
+  },
+  "created_at": "2026-03-12T12:00:00"
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000024",
+  "dominant_emotion": "surprise",
+  "emotion_percentages": {
+   "neutral": 24.0,
+   "happy": 4.0,
+   "surprise": 20.0,
+   "sad": 36.0,
+   "angry": 16.0
+  },
+  "emotion_score_timeline": {
+   "0": [
+    1.0,
+    2.0,
+    3.0,
+    4.0,
+    5.0
+   ]
+  },
+  "client_info": {
+   "agent": "seed"
+  },
+  "created_at": "2026-03-11T12:00:00"
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000003",
+  "dominant_emotion": "neutral",
+  "emotion_percentages": {
+   "neutral": 33.33,
+   "happy": 9.52,
+   "surprise": 28.57,
+   "sad": 4.76,
+   "angry": 23.81
+  },
+  "emotion_score_timeline": {
+   "0": [
+    1.0,
+    2.0,
+    3.0,
+    4.0,
+    5.0
+   ]
+  },
+  "client_info": {
+   "agent": "seed"
+  },
+  "created_at": "2026-03-10T12:00:00"
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000009",
+  "dominant_emotion": "sad",
+  "emotion_percentages": {
+   "neutral": 30.77,
+   "happy": 11.54,
+   "surprise": 26.92,
+   "sad": 7.69,
+   "angry": 23.08
+  },
+  "emotion_score_timeline": {
+   "0": [
+    1.0,
+    2.0,
+    3.0,
+    4.0,
+    5.0
+   ]
+  },
+  "client_info": {
+   "agent": "seed"
+  },
+  "created_at": "2026-03-09T12:00:00"
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000014",
+  "dominant_emotion": "happy",
+  "emotion_percentages": {
+   "neutral": 29.03,
+   "happy": 12.9,
+   "surprise": 25.81,
+   "sad": 9.68,
+   "angry": 22.58
+  },
+  "emotion_score_timeline": {
+   "0": [
+    1.0,
+    2.0,
+    3.0,
+    4.0,
+    5.0
+   ]
+  },
+  "client_info": {
+   "agent": "seed"
+  },
+  "created_at": "2026-03-08T12:00:00"
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000020",
+  "dominant_emotion": "angry",
+  "emotion_percentages": {
+   "neutral": 3.7,
+   "happy": 18.52,
+   "surprise": 33.33,
+   "sad": 14.81,
+   "angry": 29.63
+  },
+  "emotion_score_timeline": {
+   "0": [
+    1.0,
+    2.0,
+    3.0,
+    4.0,
+    5.0
+   ]
+  },
+  "client_info": {
+   "agent": "seed"
+  },
+  "created_at": "2026-03-07T12:00:00"
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000001",
+  "dominant_emotion": "surprise",
+  "emotion_percentages": {
+   "neutral": 8.7,
+   "happy": 26.09,
+   "surprise": 4.35,
+   "sad": 21.74,
+   "angry": 39.13
+  },
+  "emotion_score_timeline": {
+   "0": [
+    1.0,
+    2.0,
+    3.0,
+    4.0,
+    5.0
+   ]
+  },
+  "client_info": {
+   "agent": "seed"
+  },
+  "created_at": "2026-03-06T12:00:00"
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000002",
+  "dominant_emotion": "neutral",
+  "emotion_percentages": {
+   "neutral": 15.79,
+   "happy": 36.84,
+   "surprise": 10.53,
+   "sad": 31.58,
+   "angry": 5.26
+  },
+  "emotion_score_timeline": {
+   "0": [
+    1.0,
+    2.0,
+    3.0,
+    4.0,
+    5.0
+   ]
+  },
+  "client_info": {
+   "agent": "seed"
+  },
+  "created_at": "2026-03-05T12:00:00"
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000008",
+  "dominant_emotion": "sad",
+  "emotion_percentages": {
+   "neutral": 16.67,
+   "happy": 33.33,
+   "surprise": 12.5,
+   "sad": 29.17,
+   "angry": 8.33
+  },
+  "emotion_score_timeline": {
+   "0": [
+    1.0,
+    2.0,
+    3.0,
+    4.0,
+    5.0
+   ]
+  },
+  "client_info": {
+   "agent": "seed"
+  },
+  "created_at": "2026-03-04T12:00:00"
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000015",
+  "dominant_emotion": "happy",
+  "emotion_percentages": {
+   "neutral": 17.24,
+   "happy": 31.03,
+   "surprise": 13.79,
+   "sad": 27.59,
+   "angry": 10.34
+  },
+  "emotion_score_timeline": {
+   "0": [
+    1.0,
+    2.0,
+    3.0,
+    4.0,
+    5.0
+   ]
+  },
+  "client_info": {
+   "agent": "seed"
+  },
+  "created_at": "2026-03-03T12:00:00"
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000019",
+  "dominant_emotion": "angry",
+  "emotion_percentages": {
+   "neutral": 24.0,
+   "happy": 4.0,
+   "surprise": 20.0,
+   "sad": 36.0,
+   "angry": 16.0
+  },
+  "emotion_score_timeline": {
+   "0": [
+    1.0,
+    2.0,
+    3.0,
+    4.0,
+    5.0
+   ]
+  },
+  "client_info": {
+   "agent": "seed"
+  },
+  "created_at": "2026-03-02T12:00:00"
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000024",
+  "dominant_emotion": "surprise",
+  "emotion_percentages": {
+   "neutral": 33.33,
+   "happy": 9.52,
+   "surprise": 28.57,
+   "sad": 4.76,
+   "angry": 23.81
+  },
+  "emotion_score_timeline": {
+   "0": [
+    1.0,
+    2.0,
+    3.0,
+    4.0,
+    5.0
+   ]
+  },
+  "client_info": {
+   "agent": "seed"
+  },
+  "created_at": "2026-03-01T12:00:00"
+ },
+ {
+  "user_id": "22222222-2222-4222-8222-222222222222",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000001",
+  "dominant_emotion": "angry",
+  "emotion_percentages": {
+   "angry": 100.0,
+   "neutral": 0.0,
+   "happy": 0.0,
+   "sad": 0.0,
+   "surprise": 0.0
+  },
+  "created_at": "2026-03-26T12:00:00"
+ }
+]

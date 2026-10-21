@@ -121,6 +121,7 @@ dependencies = [
  "futures-util",
  "hmac 0.12.1",
  "jsonwebtoken",
+ "mongodb",
  "rand 0.8.8",
  "rsa",
  "serde_json",
@@ -132,6 +133,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite 0.30.0",
  "tracing-subscriber",
+ "url",
  "uuid",
 ]
 

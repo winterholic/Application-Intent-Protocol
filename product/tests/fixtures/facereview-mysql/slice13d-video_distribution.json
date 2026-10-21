@@ -1,0 +1,715 @@
+[
+ {
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000001",
+  "category": "animal",
+  "duration": 121,
+  "dominant_emotion": "neutral",
+  "emotion_averages": {
+   "neutral": 0.44,
+   "happy": 0.06,
+   "surprise": 0.04,
+   "sad": 0.05,
+   "angry": 0.06
+  },
+  "emotion_counts": {
+   "neutral": 31,
+   "happy": 4,
+   "surprise": 2,
+   "sad": 3,
+   "angry": 4
+  },
+  "total_frames": 71,
+  "average_completion_rate": 0.3,
+  "recommendation_scores": {
+   "neutral": 0.7,
+   "happy": 0.0,
+   "surprise": 0.3,
+   "sad": 0.6,
+   "angry": 0.9
+  },
+  "created_at": "2026-02-01T00:00:00",
+  "updated_at": "2026-02-01T00:00:00"
+ },
+ {
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000002",
+  "category": "animal",
+  "duration": 122,
+  "dominant_emotion": "happy",
+  "emotion_averages": {
+   "neutral": 0.06,
+   "happy": 0.47,
+   "surprise": 0.05,
+   "sad": 0.06,
+   "angry": 0.04
+  },
+  "emotion_counts": {
+   "neutral": 4,
+   "happy": 41,
+   "surprise": 4,
+   "sad": 4,
+   "angry": 3
+  },
+  "total_frames": 82,
+  "average_completion_rate": 0.4,
+  "recommendation_scores": {
+   "neutral": 0.4,
+   "happy": 0.7,
+   "surprise": 0.0,
+   "sad": 0.3,
+   "angry": 0.6
+  },
+  "created_at": "2026-02-02T00:00:00",
+  "updated_at": "2026-02-02T00:00:00"
+ },
+ {
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000003",
+  "category": "animal",
+  "duration": 123,
+  "dominant_emotion": "happy",
+  "emotion_averages": {
+   "neutral": 0.04,
+   "happy": 0.48,
+   "surprise": 0.06,
+   "sad": 0.04,
+   "angry": 0.05
+  },
+  "emotion_counts": {
+   "neutral": 3,
+   "happy": 52,
+   "surprise": 5,
+   "sad": 3,
+   "angry": 4
+  },
+  "total_frames": 93,
+  "average_completion_rate": 0.5,
+  "recommendation_scores": {
+   "neutral": 0.1,
+   "happy": 0.7,
+   "surprise": 0.7,
+   "sad": 0.0,
+   "angry": 0.3
+  },
+  "created_at": "2026-02-03T00:00:00",
+  "updated_at": "2026-02-03T00:00:00"
+ },
+ {
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000004",
+  "category": "animal",
+  "duration": 124,
+  "dominant_emotion": "happy",
+  "emotion_averages": {
+   "neutral": 0.05,
+   "happy": 0.49,
+   "surprise": 0.62,
+   "sad": 0.05,
+   "angry": 0.06
+  },
+  "emotion_counts": {
+   "neutral": 5,
+   "happy": 6,
+   "surprise": 64,
+   "sad": 5,
+   "angry": 6
+  },
+  "total_frames": 104,
+  "average_completion_rate": 0.6,
+  "recommendation_scores": {
+   "neutral": 0.8,
+   "happy": 0.9,
+   "surprise": 0.4,
+   "sad": 0.7,
+   "angry": 0.0
+  },
+  "created_at": "2026-02-04T00:00:00",
+  "updated_at": "2026-02-04T00:00:00"
+ },
+ {
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000005",
+  "category": "animal",
+  "duration": 125,
+  "dominant_emotion": "happy",
+  "emotion_averages": {
+   "neutral": 0.06,
+   "happy": 0.5,
+   "surprise": 0.68,
+   "sad": 0.06,
+   "angry": 0.04
+  },
+  "emotion_counts": {
+   "neutral": 6,
+   "happy": 4,
+   "surprise": 78,
+   "sad": 6,
+   "angry": 4
+  },
+  "total_frames": 115,
+  "average_completion_rate": 0.7,
+  "recommendation_scores": {
+   "neutral": 0.5,
+   "happy": 0.1,
+   "surprise": 0.1,
+   "sad": 0.4,
+   "angry": 0.7
+  },
+  "created_at": "2026-02-05T00:00:00",
+  "updated_at": "2026-02-05T00:00:00"
+ },
+ {
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000006",
+  "category": "animal",
+  "duration": 126,
+  "dominant_emotion": "sad",
+  "emotion_averages": {
+   "neutral": 0.04,
+   "happy": 0.05,
+   "surprise": 0.06,
+   "sad": 0.74,
+   "angry": 0.05
+  },
+  "emotion_counts": {
+   "neutral": 5,
+   "happy": 6,
+   "surprise": 7,
+   "sad": 93,
+   "angry": 6
+  },
+  "total_frames": 126,
+  "average_completion_rate": 0.2,
+  "recommendation_scores": {
+   "neutral": 0.2,
+   "happy": 0.5,
+   "surprise": 0.8,
+   "sad": 0.1,
+   "angry": 0.4
+  },
+  "created_at": "2026-02-06T00:00:00",
+  "updated_at": "2026-02-06T00:00:00"
+ },
+ {
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000007",
+  "category": "animal",
+  "duration": 127,
+  "dominant_emotion": "happy",
+  "emotion_averages": {
+   "neutral": 0.05,
+   "happy": 0.52,
+   "surprise": 0.04,
+   "sad": 0.38,
+   "angry": 0.06
+  },
+  "emotion_counts": {
+   "neutral": 6,
+   "happy": 8,
+   "surprise": 5,
+   "sad": 52,
+   "angry": 8
+  },
+  "total_frames": 137,
+  "average_completion_rate": 0.3,
+  "recommendation_scores": {
+   "neutral": 0.9,
+   "happy": 0.4,
+   "surprise": 0.5,
+   "sad": 0.8,
+   "angry": 0.1
+  },
+  "created_at": "2026-02-07T00:00:00",
+  "updated_at": "2026-02-07T00:00:00"
+ },
+ {
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000008",
+  "category": "cook",
+  "duration": 128,
+  "dominant_emotion": "angry",
+  "emotion_averages": {
+   "neutral": 0.06,
+   "happy": 0.04,
+   "surprise": 0.05,
+   "sad": 0.06,
+   "angry": 0.44
+  },
+  "emotion_counts": {
+   "neutral": 8,
+   "happy": 5,
+   "surprise": 7,
+   "sad": 8,
+   "angry": 65
+  },
+  "total_frames": 148,
+  "average_completion_rate": 0.4,
+  "recommendation_scores": {
+   "neutral": 0.6,
+   "happy": 0.9,
+   "surprise": 0.2,
+   "sad": 0.5,
+   "angry": 0.8
+  },
+  "created_at": "2026-02-08T00:00:00",
+  "updated_at": "2026-02-08T00:00:00"
+ },
+ {
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000009",
+  "category": "cook",
+  "duration": 129,
+  "dominant_emotion": "angry",
+  "emotion_averages": {
+   "neutral": 0.04,
+   "happy": 0.05,
+   "surprise": 0.06,
+   "sad": 0.04,
+   "angry": 0.5
+  },
+  "emotion_counts": {
+   "neutral": 6,
+   "happy": 7,
+   "surprise": 9,
+   "sad": 6,
+   "angry": 79
+  },
+  "total_frames": 159,
+  "average_completion_rate": 0.5,
+  "recommendation_scores": {
+   "neutral": 0.3,
+   "happy": 0.6,
+   "surprise": 0.9,
+   "sad": 0.2,
+   "angry": 0.5
+  },
+  "created_at": "2026-02-09T00:00:00",
+  "updated_at": "2026-02-09T00:00:00"
+ },
+ {
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000010",
+  "category": "cook",
+  "duration": 130,
+  "dominant_emotion": "neutral",
+  "emotion_averages": {
+   "neutral": 0.56,
+   "happy": 0.06,
+   "surprise": 0.04,
+   "sad": 0.05,
+   "angry": 0.06
+  },
+  "emotion_counts": {
+   "neutral": 95,
+   "happy": 10,
+   "surprise": 6,
+   "sad": 8,
+   "angry": 10
+  },
+  "total_frames": 170,
+  "average_completion_rate": 0.6,
+  "recommendation_scores": {
+   "neutral": 0.0,
+   "happy": 0.3,
+   "surprise": 0.6,
+   "sad": 0.9,
+   "angry": 0.2
+  },
+  "created_at": "2026-02-10T00:00:00",
+  "updated_at": "2026-02-10T00:00:00"
+ },
+ {
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000011",
+  "category": "cook",
+  "duration": 131,
+  "dominant_emotion": "neutral",
+  "emotion_averages": {
+   "neutral": 0.62,
+   "happy": 0.04,
+   "surprise": 0.05,
+   "sad": 0.06,
+   "angry": 0.04
+  },
+  "emotion_counts": {
+   "neutral": 112,
+   "happy": 7,
+   "surprise": 9,
+   "sad": 10,
+   "angry": 7
+  },
+  "total_frames": 181,
+  "average_completion_rate": 0.7,
+  "recommendation_scores": {
+   "neutral": 0.7,
+   "happy": 0.0,
+   "surprise": 0.3,
+   "sad": 0.6,
+   "angry": 0.9
+  },
+  "created_at": "2026-02-11T00:00:00",
+  "updated_at": "2026-02-11T00:00:00"
+ },
+ {
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000012",
+  "category": "cook",
+  "duration": 132,
+  "dominant_emotion": "happy",
+  "emotion_averages": {
+   "neutral": 0.04,
+   "happy": 0.68,
+   "surprise": 0.06,
+   "sad": 0.04,
+   "angry": 0.05
+  },
+  "emotion_counts": {
+   "neutral": 7,
+   "happy": 130,
+   "surprise": 11,
+   "sad": 7,
+   "angry": 9
+  },
+  "total_frames": 192,
+  "average_completion_rate": 0.2,
+  "recommendation_scores": {
+   "neutral": 0.4,
+   "happy": 0.7,
+   "surprise": 0.0,
+   "sad": 0.3,
+   "angry": 0.6
+  },
+  "created_at": "2026-02-12T00:00:00",
+  "updated_at": "2026-02-12T00:00:00"
+ },
+ {
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000013",
+  "category": "cook",
+  "duration": 133,
+  "dominant_emotion": "happy",
+  "emotion_averages": {
+   "neutral": 0.05,
+   "happy": 0.74,
+   "surprise": 0.04,
+   "sad": 0.05,
+   "angry": 0.06
+  },
+  "emotion_counts": {
+   "neutral": 10,
+   "happy": 150,
+   "surprise": 8,
+   "sad": 10,
+   "angry": 12
+  },
+  "total_frames": 203,
+  "average_completion_rate": 0.3,
+  "recommendation_scores": {
+   "neutral": 0.1,
+   "happy": 0.4,
+   "surprise": 0.7,
+   "sad": 0.0,
+   "angry": 0.3
+  },
+  "created_at": "2026-02-13T00:00:00",
+  "updated_at": "2026-02-13T00:00:00"
+ },
+ {
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000014",
+  "category": "vlog",
+  "duration": 134,
+  "dominant_emotion": "surprise",
+  "emotion_averages": {
+   "neutral": 0.06,
+   "happy": 0.04,
+   "surprise": 0.38,
+   "sad": 0.06,
+   "angry": 0.04
+  },
+  "emotion_counts": {
+   "neutral": 12,
+   "happy": 8,
+   "surprise": 81,
+   "sad": 12,
+   "angry": 8
+  },
+  "total_frames": 214,
+  "average_completion_rate": 0.4,
+  "recommendation_scores": {
+   "neutral": 0.8,
+   "happy": 0.1,
+   "surprise": 0.4,
+   "sad": 0.7,
+   "angry": 0.0
+  },
+  "created_at": "2026-02-14T00:00:00",
+  "updated_at": "2026-02-14T00:00:00"
+ },
+ {
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000015",
+  "category": "vlog",
+  "duration": 135,
+  "dominant_emotion": "surprise",
+  "emotion_averages": {
+   "neutral": 0.04,
+   "happy": 0.05,
+   "surprise": 0.44,
+   "sad": 0.04,
+   "angry": 0.05
+  },
+  "emotion_counts": {
+   "neutral": 9,
+   "happy": 11,
+   "surprise": 99,
+   "sad": 9,
+   "angry": 11
+  },
+  "total_frames": 225,
+  "average_completion_rate": 0.5,
+  "recommendation_scores": {
+   "neutral": 0.5,
+   "happy": 0.8,
+   "surprise": 0.1,
+   "sad": 0.4,
+   "angry": 0.7
+  },
+  "created_at": "2026-02-15T00:00:00",
+  "updated_at": "2026-02-15T00:00:00"
+ },
+ {
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000016",
+  "category": "vlog",
+  "duration": 136,
+  "dominant_emotion": null,
+  "emotion_averages": {
+   "neutral": 0.05,
+   "happy": 0.06,
+   "surprise": 0.04,
+   "sad": 0.5,
+   "angry": 0.06
+  },
+  "emotion_counts": {
+   "neutral": 11,
+   "happy": 14,
+   "surprise": 9,
+   "sad": 118,
+   "angry": 14
+  },
+  "total_frames": 236,
+  "average_completion_rate": 0.6,
+  "recommendation_scores": {
+   "neutral": 0.2,
+   "happy": 0.5,
+   "surprise": 0.8,
+   "sad": 0.1,
+   "angry": 0.4
+  },
+  "created_at": "2026-02-16T00:00:00",
+  "updated_at": "2026-02-16T00:00:00"
+ },
+ {
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000017",
+  "category": "vlog",
+  "duration": 137,
+  "dominant_emotion": "sad",
+  "emotion_averages": {
+   "neutral": 0.06,
+   "happy": 0.04,
+   "surprise": 0.05,
+   "sad": 0.56,
+   "angry": 0.04
+  },
+  "emotion_counts": {
+   "neutral": 14,
+   "happy": 9,
+   "surprise": 12,
+   "sad": 138,
+   "angry": 9
+  },
+  "total_frames": 247,
+  "average_completion_rate": 0.7,
+  "recommendation_scores": {
+   "neutral": 0.9,
+   "happy": 0.2,
+   "surprise": 0.5,
+   "sad": 0.8,
+   "angry": 0.1
+  },
+  "created_at": "2026-02-17T00:00:00",
+  "updated_at": "2026-02-17T00:00:00"
+ },
+ {
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000018",
+  "category": "vlog",
+  "duration": 138,
+  "dominant_emotion": "angry",
+  "emotion_averages": {
+   "neutral": 0.04,
+   "happy": 0.05,
+   "surprise": 0.06,
+   "sad": 0.04,
+   "angry": 0.62
+  },
+  "emotion_counts": {
+   "neutral": 10,
+   "happy": 12,
+   "surprise": 15,
+   "sad": 10,
+   "angry": 159
+  },
+  "total_frames": 258,
+  "average_completion_rate": 0.2,
+  "recommendation_scores": {
+   "neutral": 0.6,
+   "happy": 0.9,
+   "surprise": 0.2,
+   "sad": 0.5,
+   "angry": 0.8
+  },
+  "created_at": "2026-02-18T00:00:00",
+  "updated_at": "2026-02-18T00:00:00"
+ },
+ {
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000019",
+  "category": "game",
+  "duration": 139,
+  "dominant_emotion": "angry",
+  "emotion_averages": {
+   "neutral": 0.05,
+   "happy": 0.06,
+   "surprise": 0.04,
+   "sad": 0.05,
+   "angry": 0.68
+  },
+  "emotion_counts": {
+   "neutral": 13,
+   "happy": 16,
+   "surprise": 10,
+   "sad": 13,
+   "angry": 182
+  },
+  "total_frames": 269,
+  "average_completion_rate": 0.3,
+  "recommendation_scores": {
+   "neutral": 0.3,
+   "happy": 0.6,
+   "surprise": 0.9,
+   "sad": 0.2,
+   "angry": 0.5
+  },
+  "created_at": "2026-02-19T00:00:00",
+  "updated_at": "2026-02-19T00:00:00"
+ },
+ {
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000020",
+  "category": "game",
+  "duration": 140,
+  "dominant_emotion": "neutral",
+  "emotion_averages": {
+   "neutral": 0.74,
+   "happy": 0.04,
+   "surprise": 0.05,
+   "sad": 0.06,
+   "angry": 0.04
+  },
+  "emotion_counts": {
+   "neutral": 207,
+   "happy": 11,
+   "surprise": 14,
+   "sad": 16,
+   "angry": 11
+  },
+  "total_frames": 280,
+  "average_completion_rate": 0.4,
+  "recommendation_scores": {
+   "neutral": 0.0,
+   "happy": 0.3,
+   "surprise": 0.6,
+   "sad": 0.9,
+   "angry": 0.2
+  },
+  "created_at": "2026-02-20T00:00:00",
+  "updated_at": "2026-02-20T00:00:00"
+ },
+ {
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000021",
+  "category": "game",
+  "duration": 141,
+  "dominant_emotion": "neutral",
+  "emotion_averages": {
+   "neutral": 0.0,
+   "happy": 0.0,
+   "surprise": 0.0,
+   "sad": 0.0,
+   "angry": 0.0
+  },
+  "emotion_counts": {
+   "neutral": 110,
+   "happy": 14,
+   "surprise": 17,
+   "sad": 11,
+   "angry": 14
+  },
+  "total_frames": 291,
+  "average_completion_rate": 0.5,
+  "recommendation_scores": {
+   "neutral": 0.7,
+   "happy": 0.0,
+   "surprise": 0.3,
+   "sad": 0.6,
+   "angry": 0.9
+  },
+  "created_at": "2026-02-21T00:00:00",
+  "updated_at": "2026-02-21T00:00:00"
+ },
+ {
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000023",
+  "category": "travel",
+  "duration": 143,
+  "dominant_emotion": "happy",
+  "emotion_averages": {
+   "neutral": 0.06,
+   "happy": 0.5,
+   "surprise": 0.05,
+   "sad": 0.06,
+   "angry": 0.04
+  },
+  "emotion_counts": {
+   "neutral": 18,
+   "happy": 156,
+   "surprise": 15,
+   "sad": 18,
+   "angry": 12
+  },
+  "total_frames": 313,
+  "average_completion_rate": 0.7,
+  "recommendation_scores": {
+   "neutral": 0.1,
+   "happy": 0.4,
+   "surprise": 0.7,
+   "sad": 0.0,
+   "angry": 0.3
+  },
+  "created_at": "2026-02-23T00:00:00",
+  "updated_at": "2026-02-23T00:00:00"
+ },
+ {
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000024",
+  "category": "music",
+  "duration": 144,
+  "dominant_emotion": "surprise",
+  "emotion_averages": {
+   "neutral": 0.04,
+   "happy": 0.05,
+   "surprise": 0.56,
+   "sad": 0.04,
+   "angry": 0.05
+  },
+  "emotion_counts": {
+   "neutral": 12,
+   "happy": 16,
+   "surprise": 181,
+   "sad": 12,
+   "angry": 16
+  },
+  "total_frames": 324,
+  "average_completion_rate": 0.2,
+  "recommendation_scores": {
+   "neutral": 0.8,
+   "happy": 0.1,
+   "surprise": 0.4,
+   "sad": 0.7,
+   "angry": 0.0
+  },
+  "created_at": "2026-02-24T00:00:00",
+  "updated_at": "2026-02-24T00:00:00"
+ }
+]

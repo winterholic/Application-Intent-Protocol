@@ -61,55 +61,11 @@ def check_endpoint(url, what):
     return parsed
 
 
-# ---- definition: canonical facereview.aip + only what the three extensions need ---------------------------------------------
-
-EXTENSIONS = '''
-  extension read homeSearch {
-    input { page: Int(1..100000); size: Int(1..100); keyword_type: SearchKeywordType; keyword: Text; emotions: Text }
-    output { videos: Text; total: Int(0..1000000000); page: Int(1..100000); size: Int(1..100); has_next: Bool }
-    effect none
-    deadline 20s
-    implementation "slice13b_lists.homeSearch"
-  }
-  extension read homeVideoAll {
-    input { page: Int(1..100000); size: Int(1..100); emotion: ListEmotion }
-    output { videos: Text; total: Int(0..1000000000); page: Int(1..100000); size: Int(1..100); has_next: Bool }
-    effect none
-    deadline 20s
-    implementation "slice13b_lists.homeVideoAll"
-  }
-  extension read homeBookmark {
-    input { page: Int(1..100000); size: Int(1..100); emotion: ListEmotion }
-    output { videos: Text; total: Int(0..1000000000); page: Int(1..100000); size: Int(1..100); has_next: Bool }
-    effect none
-    deadline 20s
-    implementation "slice13b_lists.homeBookmark"
-  }
-'''
+# ---- definition: the canonical facereview.aip already declares the filters, enums and read extensions -------------------------
 
 
 def patched_definition():
-    text = (FIXTURE / "facereview.aip").read_text()
-
-    def once(old, new):
-        nonlocal text
-        if text.count(old) != 1:
-            sys.exit(f"canonical definition changed; `{old}` is not unique")
-        text = text.replace(old, new, 1)
-
-    once("enum RequestStatus { PENDING, ACCEPTED, REJECTED }\n",
-         "enum RequestStatus { PENDING, ACCEPTED, REJECTED }\n"
-         "enum SearchKeywordType { all, title, channel_name }\nenum ListEmotion { all, happy, sad, neutral, surprise, angry }\n")
-    once("    filter id.eq, category.eq, title.like, channel_name.like, youtube_url.eq\n",
-         "    filter id.eq, id.in, category.eq, title.like, channel_name.like, youtube_url.eq\n")
-    once("  expose aggregate totalCount\n", "  expose aggregate totalCount\n" + EXTENSIONS)
-    start = text.index("resource VideoBookmark {")
-    end = text.index("resource VideoRequest {")
-    block = text[start:end]
-    if block.count("    filter video.eq\n") != 1:
-        sys.exit("VideoBookmark filter changed")
-    text = text[:start] + block.replace("    filter video.eq\n", "    filter video.eq, video.in\n") + text[end:]
-    return text
+    return (FIXTURE / "facereview.aip").read_text()
 
 
 # ---- data -------------------------------------------------------------------------------------------------------------------
@@ -299,7 +255,11 @@ class Host:
 
 def load_original(root, mysql_admin_url, mongo_url):
     head = subprocess.run(["git", "-C", root, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
-    dirty = subprocess.run(["git", "-C", root, "status", "--porcelain", "--", "app", "common"], capture_output=True, text=True).stdout.strip()
+    # A checkout transferred with CRLF line endings shows every file as modified; only a content change counts as dirty.
+    changed = subprocess.run(["git", "-C", root, "diff", "--ignore-cr-at-eol", "--stat", "--", "app", "common"], capture_output=True, text=True).stdout.strip()
+    untracked = subprocess.run(["git", "-C", root, "ls-files", "--others", "--exclude-standard", "--", "app", "common"], capture_output=True,
+                               text=True).stdout
+    dirty = changed or "\n".join(line for line in untracked.splitlines() if "__pycache__" not in line and not line.endswith(".pyc"))
     if head != PINNED or dirty:
         sys.exit(f"original checkout must be clean at {PINNED}; head={head} dirty={bool(dirty)}")
     sys.dont_write_bytecode = True

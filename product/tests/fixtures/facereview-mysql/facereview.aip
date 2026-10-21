@@ -13,6 +13,8 @@ access activeUserOrGuest(a: User) = true
 enum Role { GENERAL, ADMIN, SUPER_ADMIN }
 enum Genre { drama, eating, travel, cook, show, information, game, sports, music, animal, beauty, comedy, horror, exercise, vlog, etc }
 enum RequestStatus { PENDING, ACCEPTED, REJECTED }
+enum SearchKeywordType { all, title, channel_name }
+enum ListEmotion { all, happy, sad, neutral, surprise, angry }
 
 resource User {
   fields {
@@ -88,7 +90,7 @@ resource Video {
   expose apply remove { target id; bulk maxRows 1 }
   expose read {
     select id, youtube_url, title, channel_name, category, duration, view_count, created_at, likeCount, commentCount
-    filter id.eq, category.eq, title.like, channel_name.like, youtube_url.eq
+    filter id.eq, id.in, category.eq, title.like, channel_name.like, youtube_url.eq
     sort created_at, id, view_count
     budget { rows 100; depth 1; cost 1000; deadline 2s; offset 100000 }
   }
@@ -121,6 +123,57 @@ resource Video {
     release count
   }
   expose aggregate totalCount
+
+  // Home and watch lists that need MongoDB (emotion distributions, watch sessions). Output lists are JSON text because extension
+  // output accepts scalars only. Source: new-facereview@7948b7e7 HomeService / WatchService; see extensions/README.md.
+  extension read homeSearch {
+    input { page: Int(1..100000); size: Int(1..100); keyword_type: SearchKeywordType; keyword: Text; emotions: Text }
+    output { videos: Text; total: Int(0..1000000000); page: Int(1..100000); size: Int(1..100); has_next: Bool }
+    access mongo.video_distribution
+    effect none
+    deadline 20s
+    implementation "slice13b_lists.homeSearch"
+  }
+  extension read homeVideoAll {
+    input { page: Int(1..100000); size: Int(1..100); emotion: ListEmotion }
+    output { videos: Text; total: Int(0..1000000000); page: Int(1..100000); size: Int(1..100); has_next: Bool }
+    access mongo.video_distribution
+    effect none
+    deadline 20s
+    implementation "slice13b_lists.homeVideoAll"
+  }
+  extension read homeBookmark {
+    input { page: Int(1..100000); size: Int(1..100); emotion: ListEmotion }
+    output { videos: Text; total: Int(0..1000000000); page: Int(1..100000); size: Int(1..100); has_next: Bool }
+    access mongo.video_distribution
+    effect none
+    deadline 20s
+    implementation "slice13b_lists.homeBookmark"
+  }
+  extension read homeCategory {
+    input { }
+    output { categories: Text }
+    access mongo.video_distribution
+    effect none
+    deadline 30s
+    implementation "slice13d_recommend.homeCategory"
+  }
+  extension read homePersonalized {
+    input { }
+    output { videos: Text }
+    access mongo.video_distribution, mongo.youtube_watching_data
+    effect none
+    deadline 30s
+    implementation "slice13d_recommend.homePersonalized"
+  }
+  extension read watchRecommended {
+    input { video_id: Video.Id; page: Int(1..100000); size: Int(1..100) }
+    output { videos: Text; total: Int(0..1000000000); page: Int(1..100000); size: Int(1..100); has_next: Bool }
+    access mongo.video_distribution
+    effect none
+    deadline 20s
+    implementation "slice13d_recommend.watchRecommended"
+  }
 }
 
 resource Comment {
@@ -207,7 +260,7 @@ resource VideoBookmark {
   expose read {
     select id, video, user, created_at
     refIds video, user
-    filter video.eq
+    filter video.eq, video.in
     sort created_at, id
     budget { rows 100; depth 1; cost 1000; deadline 2s; offset 100000 }
   }

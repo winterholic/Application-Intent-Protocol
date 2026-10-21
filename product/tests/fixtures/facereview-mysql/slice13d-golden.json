@@ -1,0 +1,2450 @@
+[
+ {
+  "name": "home/category alice",
+  "extension": "Video.homeCategory",
+  "subject": "alice",
+  "input": {},
+  "expected": [
+   {
+    "category_name": "travel",
+    "videos": [
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000023",
+      "youtube_url": "yt000000023",
+      "title": "추천 영상 23",
+      "dominant_emotion": "happy",
+      "dominant_emotion_per": 50.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000022",
+      "youtube_url": "yt000000022",
+      "title": "추천 영상 22",
+      "dominant_emotion": null,
+      "dominant_emotion_per": 0.0,
+      "is_bookmarked": false
+     }
+    ]
+   },
+   {
+    "category_name": "vlog",
+    "videos": [
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000017",
+      "youtube_url": "yt000000017",
+      "title": "추천 영상 17",
+      "dominant_emotion": "sad",
+      "dominant_emotion_per": 56.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000018",
+      "youtube_url": "yt000000018",
+      "title": "추천 영상 18",
+      "dominant_emotion": "angry",
+      "dominant_emotion_per": 62.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000015",
+      "youtube_url": "yt000000015",
+      "title": "추천 영상 15",
+      "dominant_emotion": "surprise",
+      "dominant_emotion_per": 44.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000014",
+      "youtube_url": "yt000000014",
+      "title": "추천 영상 14",
+      "dominant_emotion": "surprise",
+      "dominant_emotion_per": 38.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000016",
+      "youtube_url": "yt000000016",
+      "title": "추천 영상 16",
+      "dominant_emotion": null,
+      "dominant_emotion_per": 0.0,
+      "is_bookmarked": false
+     }
+    ]
+   },
+   {
+    "category_name": "game",
+    "videos": [
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000019",
+      "youtube_url": "yt000000019",
+      "title": "추천 영상 19",
+      "dominant_emotion": "angry",
+      "dominant_emotion_per": 68.0,
+      "is_bookmarked": true
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000020",
+      "youtube_url": "yt000000020",
+      "title": "추천 영상 20",
+      "dominant_emotion": "neutral",
+      "dominant_emotion_per": 74.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000021",
+      "youtube_url": "yt000000021",
+      "title": "추천 영상 21",
+      "dominant_emotion": null,
+      "dominant_emotion_per": 0.0,
+      "is_bookmarked": false
+     }
+    ]
+   },
+   {
+    "category_name": "music",
+    "videos": [
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000024",
+      "youtube_url": "yt000000024",
+      "title": "추천 영상 24",
+      "dominant_emotion": "surprise",
+      "dominant_emotion_per": 56.0,
+      "is_bookmarked": false
+     }
+    ]
+   },
+   {
+    "category_name": "cook",
+    "videos": [
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000012",
+      "youtube_url": "yt000000012",
+      "title": "추천 영상 12",
+      "dominant_emotion": "happy",
+      "dominant_emotion_per": 68.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000009",
+      "youtube_url": "yt000000009",
+      "title": "추천 영상 9",
+      "dominant_emotion": "angry",
+      "dominant_emotion_per": 50.0,
+      "is_bookmarked": true
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000008",
+      "youtube_url": "yt000000008",
+      "title": "추천 영상 8",
+      "dominant_emotion": "angry",
+      "dominant_emotion_per": 44.0,
+      "is_bookmarked": true
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000011",
+      "youtube_url": "yt000000011",
+      "title": "추천 영상 11",
+      "dominant_emotion": "neutral",
+      "dominant_emotion_per": 62.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000010",
+      "youtube_url": "yt000000010",
+      "title": "추천 영상 10",
+      "dominant_emotion": "neutral",
+      "dominant_emotion_per": 56.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "aaaaaaaa-0000-4000-8000-000000000002",
+      "youtube_url": "abcdefghijk",
+      "title": "요리 영상 고양이",
+      "dominant_emotion": null,
+      "dominant_emotion_per": 0.0,
+      "is_bookmarked": true
+     }
+    ]
+   },
+   {
+    "category_name": "animal",
+    "videos": [
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000005",
+      "youtube_url": "yt000000005",
+      "title": "추천 영상 5",
+      "dominant_emotion": "happy",
+      "dominant_emotion_per": 50.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000004",
+      "youtube_url": "yt000000004",
+      "title": "추천 영상 4",
+      "dominant_emotion": "happy",
+      "dominant_emotion_per": 49.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000007",
+      "youtube_url": "yt000000007",
+      "title": "추천 영상 7",
+      "dominant_emotion": "happy",
+      "dominant_emotion_per": 52.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000003",
+      "youtube_url": "yt000000003",
+      "title": "추천 영상 3",
+      "dominant_emotion": "happy",
+      "dominant_emotion_per": 48.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000002",
+      "youtube_url": "yt000000002",
+      "title": "추천 영상 2",
+      "dominant_emotion": "happy",
+      "dominant_emotion_per": 47.0,
+      "is_bookmarked": true
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000001",
+      "youtube_url": "yt000000001",
+      "title": "추천 영상 1",
+      "dominant_emotion": "neutral",
+      "dominant_emotion_per": 44.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "aaaaaaaa-0000-4000-8000-000000000001",
+      "youtube_url": "dQw4w9WgXcQ",
+      "title": "고양이 영상",
+      "dominant_emotion": null,
+      "dominant_emotion_per": 0.0,
+      "is_bookmarked": false
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "name": "home/category bob",
+  "extension": "Video.homeCategory",
+  "subject": "bob",
+  "input": {},
+  "expected": [
+   {
+    "category_name": "travel",
+    "videos": [
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000023",
+      "youtube_url": "yt000000023",
+      "title": "추천 영상 23",
+      "dominant_emotion": "happy",
+      "dominant_emotion_per": 50.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000022",
+      "youtube_url": "yt000000022",
+      "title": "추천 영상 22",
+      "dominant_emotion": null,
+      "dominant_emotion_per": 0.0,
+      "is_bookmarked": false
+     }
+    ]
+   },
+   {
+    "category_name": "vlog",
+    "videos": [
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000017",
+      "youtube_url": "yt000000017",
+      "title": "추천 영상 17",
+      "dominant_emotion": "sad",
+      "dominant_emotion_per": 56.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000018",
+      "youtube_url": "yt000000018",
+      "title": "추천 영상 18",
+      "dominant_emotion": "angry",
+      "dominant_emotion_per": 62.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000015",
+      "youtube_url": "yt000000015",
+      "title": "추천 영상 15",
+      "dominant_emotion": "surprise",
+      "dominant_emotion_per": 44.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000014",
+      "youtube_url": "yt000000014",
+      "title": "추천 영상 14",
+      "dominant_emotion": "surprise",
+      "dominant_emotion_per": 38.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000016",
+      "youtube_url": "yt000000016",
+      "title": "추천 영상 16",
+      "dominant_emotion": null,
+      "dominant_emotion_per": 0.0,
+      "is_bookmarked": false
+     }
+    ]
+   },
+   {
+    "category_name": "game",
+    "videos": [
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000019",
+      "youtube_url": "yt000000019",
+      "title": "추천 영상 19",
+      "dominant_emotion": "angry",
+      "dominant_emotion_per": 68.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000020",
+      "youtube_url": "yt000000020",
+      "title": "추천 영상 20",
+      "dominant_emotion": "neutral",
+      "dominant_emotion_per": 74.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000021",
+      "youtube_url": "yt000000021",
+      "title": "추천 영상 21",
+      "dominant_emotion": null,
+      "dominant_emotion_per": 0.0,
+      "is_bookmarked": false
+     }
+    ]
+   },
+   {
+    "category_name": "music",
+    "videos": [
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000024",
+      "youtube_url": "yt000000024",
+      "title": "추천 영상 24",
+      "dominant_emotion": "surprise",
+      "dominant_emotion_per": 56.0,
+      "is_bookmarked": false
+     }
+    ]
+   },
+   {
+    "category_name": "cook",
+    "videos": [
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000012",
+      "youtube_url": "yt000000012",
+      "title": "추천 영상 12",
+      "dominant_emotion": "happy",
+      "dominant_emotion_per": 68.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000009",
+      "youtube_url": "yt000000009",
+      "title": "추천 영상 9",
+      "dominant_emotion": "angry",
+      "dominant_emotion_per": 50.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000008",
+      "youtube_url": "yt000000008",
+      "title": "추천 영상 8",
+      "dominant_emotion": "angry",
+      "dominant_emotion_per": 44.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000011",
+      "youtube_url": "yt000000011",
+      "title": "추천 영상 11",
+      "dominant_emotion": "neutral",
+      "dominant_emotion_per": 62.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000010",
+      "youtube_url": "yt000000010",
+      "title": "추천 영상 10",
+      "dominant_emotion": "neutral",
+      "dominant_emotion_per": 56.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "aaaaaaaa-0000-4000-8000-000000000002",
+      "youtube_url": "abcdefghijk",
+      "title": "요리 영상 고양이",
+      "dominant_emotion": null,
+      "dominant_emotion_per": 0.0,
+      "is_bookmarked": false
+     }
+    ]
+   },
+   {
+    "category_name": "animal",
+    "videos": [
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000005",
+      "youtube_url": "yt000000005",
+      "title": "추천 영상 5",
+      "dominant_emotion": "happy",
+      "dominant_emotion_per": 50.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000004",
+      "youtube_url": "yt000000004",
+      "title": "추천 영상 4",
+      "dominant_emotion": "happy",
+      "dominant_emotion_per": 49.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000007",
+      "youtube_url": "yt000000007",
+      "title": "추천 영상 7",
+      "dominant_emotion": "happy",
+      "dominant_emotion_per": 52.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000003",
+      "youtube_url": "yt000000003",
+      "title": "추천 영상 3",
+      "dominant_emotion": "happy",
+      "dominant_emotion_per": 48.0,
+      "is_bookmarked": true
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000002",
+      "youtube_url": "yt000000002",
+      "title": "추천 영상 2",
+      "dominant_emotion": "happy",
+      "dominant_emotion_per": 47.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000001",
+      "youtube_url": "yt000000001",
+      "title": "추천 영상 1",
+      "dominant_emotion": "neutral",
+      "dominant_emotion_per": 44.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "aaaaaaaa-0000-4000-8000-000000000001",
+      "youtube_url": "dQw4w9WgXcQ",
+      "title": "고양이 영상",
+      "dominant_emotion": null,
+      "dominant_emotion_per": 0.0,
+      "is_bookmarked": false
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "name": "home/category dave",
+  "extension": "Video.homeCategory",
+  "subject": "dave",
+  "input": {},
+  "expected": [
+   {
+    "category_name": "travel",
+    "videos": [
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000023",
+      "youtube_url": "yt000000023",
+      "title": "추천 영상 23",
+      "dominant_emotion": "happy",
+      "dominant_emotion_per": 50.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000022",
+      "youtube_url": "yt000000022",
+      "title": "추천 영상 22",
+      "dominant_emotion": null,
+      "dominant_emotion_per": 0.0,
+      "is_bookmarked": false
+     }
+    ]
+   },
+   {
+    "category_name": "vlog",
+    "videos": [
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000017",
+      "youtube_url": "yt000000017",
+      "title": "추천 영상 17",
+      "dominant_emotion": "sad",
+      "dominant_emotion_per": 56.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000018",
+      "youtube_url": "yt000000018",
+      "title": "추천 영상 18",
+      "dominant_emotion": "angry",
+      "dominant_emotion_per": 62.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000015",
+      "youtube_url": "yt000000015",
+      "title": "추천 영상 15",
+      "dominant_emotion": "surprise",
+      "dominant_emotion_per": 44.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000014",
+      "youtube_url": "yt000000014",
+      "title": "추천 영상 14",
+      "dominant_emotion": "surprise",
+      "dominant_emotion_per": 38.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000016",
+      "youtube_url": "yt000000016",
+      "title": "추천 영상 16",
+      "dominant_emotion": null,
+      "dominant_emotion_per": 0.0,
+      "is_bookmarked": false
+     }
+    ]
+   },
+   {
+    "category_name": "game",
+    "videos": [
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000019",
+      "youtube_url": "yt000000019",
+      "title": "추천 영상 19",
+      "dominant_emotion": "angry",
+      "dominant_emotion_per": 68.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000020",
+      "youtube_url": "yt000000020",
+      "title": "추천 영상 20",
+      "dominant_emotion": "neutral",
+      "dominant_emotion_per": 74.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000021",
+      "youtube_url": "yt000000021",
+      "title": "추천 영상 21",
+      "dominant_emotion": null,
+      "dominant_emotion_per": 0.0,
+      "is_bookmarked": false
+     }
+    ]
+   },
+   {
+    "category_name": "music",
+    "videos": [
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000024",
+      "youtube_url": "yt000000024",
+      "title": "추천 영상 24",
+      "dominant_emotion": "surprise",
+      "dominant_emotion_per": 56.0,
+      "is_bookmarked": false
+     }
+    ]
+   },
+   {
+    "category_name": "cook",
+    "videos": [
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000012",
+      "youtube_url": "yt000000012",
+      "title": "추천 영상 12",
+      "dominant_emotion": "happy",
+      "dominant_emotion_per": 68.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000009",
+      "youtube_url": "yt000000009",
+      "title": "추천 영상 9",
+      "dominant_emotion": "angry",
+      "dominant_emotion_per": 50.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000008",
+      "youtube_url": "yt000000008",
+      "title": "추천 영상 8",
+      "dominant_emotion": "angry",
+      "dominant_emotion_per": 44.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000011",
+      "youtube_url": "yt000000011",
+      "title": "추천 영상 11",
+      "dominant_emotion": "neutral",
+      "dominant_emotion_per": 62.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000010",
+      "youtube_url": "yt000000010",
+      "title": "추천 영상 10",
+      "dominant_emotion": "neutral",
+      "dominant_emotion_per": 56.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "aaaaaaaa-0000-4000-8000-000000000002",
+      "youtube_url": "abcdefghijk",
+      "title": "요리 영상 고양이",
+      "dominant_emotion": null,
+      "dominant_emotion_per": 0.0,
+      "is_bookmarked": false
+     }
+    ]
+   },
+   {
+    "category_name": "animal",
+    "videos": [
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000005",
+      "youtube_url": "yt000000005",
+      "title": "추천 영상 5",
+      "dominant_emotion": "happy",
+      "dominant_emotion_per": 50.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000004",
+      "youtube_url": "yt000000004",
+      "title": "추천 영상 4",
+      "dominant_emotion": "happy",
+      "dominant_emotion_per": 49.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000007",
+      "youtube_url": "yt000000007",
+      "title": "추천 영상 7",
+      "dominant_emotion": "happy",
+      "dominant_emotion_per": 52.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000003",
+      "youtube_url": "yt000000003",
+      "title": "추천 영상 3",
+      "dominant_emotion": "happy",
+      "dominant_emotion_per": 48.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000002",
+      "youtube_url": "yt000000002",
+      "title": "추천 영상 2",
+      "dominant_emotion": "happy",
+      "dominant_emotion_per": 47.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000001",
+      "youtube_url": "yt000000001",
+      "title": "추천 영상 1",
+      "dominant_emotion": "neutral",
+      "dominant_emotion_per": 44.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "aaaaaaaa-0000-4000-8000-000000000001",
+      "youtube_url": "dQw4w9WgXcQ",
+      "title": "고양이 영상",
+      "dominant_emotion": null,
+      "dominant_emotion_per": 0.0,
+      "is_bookmarked": false
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "name": "home/category erin",
+  "extension": "Video.homeCategory",
+  "subject": "erin",
+  "input": {},
+  "expected": [
+   {
+    "category_name": "travel",
+    "videos": [
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000023",
+      "youtube_url": "yt000000023",
+      "title": "추천 영상 23",
+      "dominant_emotion": "happy",
+      "dominant_emotion_per": 50.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000022",
+      "youtube_url": "yt000000022",
+      "title": "추천 영상 22",
+      "dominant_emotion": null,
+      "dominant_emotion_per": 0.0,
+      "is_bookmarked": false
+     }
+    ]
+   },
+   {
+    "category_name": "vlog",
+    "videos": [
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000017",
+      "youtube_url": "yt000000017",
+      "title": "추천 영상 17",
+      "dominant_emotion": "sad",
+      "dominant_emotion_per": 56.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000018",
+      "youtube_url": "yt000000018",
+      "title": "추천 영상 18",
+      "dominant_emotion": "angry",
+      "dominant_emotion_per": 62.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000015",
+      "youtube_url": "yt000000015",
+      "title": "추천 영상 15",
+      "dominant_emotion": "surprise",
+      "dominant_emotion_per": 44.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000014",
+      "youtube_url": "yt000000014",
+      "title": "추천 영상 14",
+      "dominant_emotion": "surprise",
+      "dominant_emotion_per": 38.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000016",
+      "youtube_url": "yt000000016",
+      "title": "추천 영상 16",
+      "dominant_emotion": null,
+      "dominant_emotion_per": 0.0,
+      "is_bookmarked": false
+     }
+    ]
+   },
+   {
+    "category_name": "game",
+    "videos": [
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000019",
+      "youtube_url": "yt000000019",
+      "title": "추천 영상 19",
+      "dominant_emotion": "angry",
+      "dominant_emotion_per": 68.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000020",
+      "youtube_url": "yt000000020",
+      "title": "추천 영상 20",
+      "dominant_emotion": "neutral",
+      "dominant_emotion_per": 74.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000021",
+      "youtube_url": "yt000000021",
+      "title": "추천 영상 21",
+      "dominant_emotion": null,
+      "dominant_emotion_per": 0.0,
+      "is_bookmarked": false
+     }
+    ]
+   },
+   {
+    "category_name": "music",
+    "videos": [
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000024",
+      "youtube_url": "yt000000024",
+      "title": "추천 영상 24",
+      "dominant_emotion": "surprise",
+      "dominant_emotion_per": 56.0,
+      "is_bookmarked": false
+     }
+    ]
+   },
+   {
+    "category_name": "cook",
+    "videos": [
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000012",
+      "youtube_url": "yt000000012",
+      "title": "추천 영상 12",
+      "dominant_emotion": "happy",
+      "dominant_emotion_per": 68.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000009",
+      "youtube_url": "yt000000009",
+      "title": "추천 영상 9",
+      "dominant_emotion": "angry",
+      "dominant_emotion_per": 50.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000008",
+      "youtube_url": "yt000000008",
+      "title": "추천 영상 8",
+      "dominant_emotion": "angry",
+      "dominant_emotion_per": 44.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000011",
+      "youtube_url": "yt000000011",
+      "title": "추천 영상 11",
+      "dominant_emotion": "neutral",
+      "dominant_emotion_per": 62.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000010",
+      "youtube_url": "yt000000010",
+      "title": "추천 영상 10",
+      "dominant_emotion": "neutral",
+      "dominant_emotion_per": 56.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "aaaaaaaa-0000-4000-8000-000000000002",
+      "youtube_url": "abcdefghijk",
+      "title": "요리 영상 고양이",
+      "dominant_emotion": null,
+      "dominant_emotion_per": 0.0,
+      "is_bookmarked": false
+     }
+    ]
+   },
+   {
+    "category_name": "animal",
+    "videos": [
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000005",
+      "youtube_url": "yt000000005",
+      "title": "추천 영상 5",
+      "dominant_emotion": "happy",
+      "dominant_emotion_per": 50.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000004",
+      "youtube_url": "yt000000004",
+      "title": "추천 영상 4",
+      "dominant_emotion": "happy",
+      "dominant_emotion_per": 49.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000007",
+      "youtube_url": "yt000000007",
+      "title": "추천 영상 7",
+      "dominant_emotion": "happy",
+      "dominant_emotion_per": 52.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000003",
+      "youtube_url": "yt000000003",
+      "title": "추천 영상 3",
+      "dominant_emotion": "happy",
+      "dominant_emotion_per": 48.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000002",
+      "youtube_url": "yt000000002",
+      "title": "추천 영상 2",
+      "dominant_emotion": "happy",
+      "dominant_emotion_per": 47.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "bbbbbbbb-0000-4000-8000-000000000001",
+      "youtube_url": "yt000000001",
+      "title": "추천 영상 1",
+      "dominant_emotion": "neutral",
+      "dominant_emotion_per": 44.0,
+      "is_bookmarked": false
+     },
+     {
+      "video_id": "aaaaaaaa-0000-4000-8000-000000000001",
+      "youtube_url": "dQw4w9WgXcQ",
+      "title": "고양이 영상",
+      "dominant_emotion": null,
+      "dominant_emotion_per": 0.0,
+      "is_bookmarked": false
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "name": "home/personalized alice",
+  "extension": "Video.homePersonalized",
+  "subject": "alice",
+  "input": {},
+  "expected": [
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000009",
+    "youtube_url": "yt000000009",
+    "title": "추천 영상 9",
+    "dominant_emotion": "angry",
+    "dominant_emotion_per": 50.0,
+    "is_bookmarked": true
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000012",
+    "youtube_url": "yt000000012",
+    "title": "추천 영상 12",
+    "dominant_emotion": "happy",
+    "dominant_emotion_per": 68.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000005",
+    "youtube_url": "yt000000005",
+    "title": "추천 영상 5",
+    "dominant_emotion": "happy",
+    "dominant_emotion_per": 50.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000004",
+    "youtube_url": "yt000000004",
+    "title": "추천 영상 4",
+    "dominant_emotion": "happy",
+    "dominant_emotion_per": 49.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000017",
+    "youtube_url": "yt000000017",
+    "title": "추천 영상 17",
+    "dominant_emotion": "sad",
+    "dominant_emotion_per": 56.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000023",
+    "youtube_url": "yt000000023",
+    "title": "추천 영상 23",
+    "dominant_emotion": "happy",
+    "dominant_emotion_per": 50.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000019",
+    "youtube_url": "yt000000019",
+    "title": "추천 영상 19",
+    "dominant_emotion": "angry",
+    "dominant_emotion_per": 68.0,
+    "is_bookmarked": true
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000003",
+    "youtube_url": "yt000000003",
+    "title": "추천 영상 3",
+    "dominant_emotion": "happy",
+    "dominant_emotion_per": 48.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000018",
+    "youtube_url": "yt000000018",
+    "title": "추천 영상 18",
+    "dominant_emotion": "angry",
+    "dominant_emotion_per": 62.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000011",
+    "youtube_url": "yt000000011",
+    "title": "추천 영상 11",
+    "dominant_emotion": "neutral",
+    "dominant_emotion_per": 62.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000014",
+    "youtube_url": "yt000000014",
+    "title": "추천 영상 14",
+    "dominant_emotion": "surprise",
+    "dominant_emotion_per": 38.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000024",
+    "youtube_url": "yt000000024",
+    "title": "추천 영상 24",
+    "dominant_emotion": "surprise",
+    "dominant_emotion_per": 56.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000010",
+    "youtube_url": "yt000000010",
+    "title": "추천 영상 10",
+    "dominant_emotion": "neutral",
+    "dominant_emotion_per": 56.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000001",
+    "youtube_url": "yt000000001",
+    "title": "추천 영상 1",
+    "dominant_emotion": "neutral",
+    "dominant_emotion_per": 44.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000020",
+    "youtube_url": "yt000000020",
+    "title": "추천 영상 20",
+    "dominant_emotion": "neutral",
+    "dominant_emotion_per": 74.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000007",
+    "youtube_url": "yt000000007",
+    "title": "추천 영상 7",
+    "dominant_emotion": "happy",
+    "dominant_emotion_per": 52.0,
+    "is_bookmarked": false
+   }
+  ]
+ },
+ {
+  "name": "home/personalized bob",
+  "extension": "Video.homePersonalized",
+  "subject": "bob",
+  "input": {},
+  "expected": [
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000019",
+    "youtube_url": "yt000000019",
+    "title": "추천 영상 19",
+    "dominant_emotion": "angry",
+    "dominant_emotion_per": 68.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000018",
+    "youtube_url": "yt000000018",
+    "title": "추천 영상 18",
+    "dominant_emotion": "angry",
+    "dominant_emotion_per": 62.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000009",
+    "youtube_url": "yt000000009",
+    "title": "추천 영상 9",
+    "dominant_emotion": "angry",
+    "dominant_emotion_per": 50.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000024",
+    "youtube_url": "yt000000024",
+    "title": "추천 영상 24",
+    "dominant_emotion": "surprise",
+    "dominant_emotion_per": 56.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000023",
+    "youtube_url": "yt000000023",
+    "title": "추천 영상 23",
+    "dominant_emotion": "happy",
+    "dominant_emotion_per": 50.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000017",
+    "youtube_url": "yt000000017",
+    "title": "추천 영상 17",
+    "dominant_emotion": "sad",
+    "dominant_emotion_per": 56.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000004",
+    "youtube_url": "yt000000004",
+    "title": "추천 영상 4",
+    "dominant_emotion": "happy",
+    "dominant_emotion_per": 49.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000015",
+    "youtube_url": "yt000000015",
+    "title": "추천 영상 15",
+    "dominant_emotion": "surprise",
+    "dominant_emotion_per": 44.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000007",
+    "youtube_url": "yt000000007",
+    "title": "추천 영상 7",
+    "dominant_emotion": "happy",
+    "dominant_emotion_per": 52.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000003",
+    "youtube_url": "yt000000003",
+    "title": "추천 영상 3",
+    "dominant_emotion": "happy",
+    "dominant_emotion_per": 48.0,
+    "is_bookmarked": true
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000012",
+    "youtube_url": "yt000000012",
+    "title": "추천 영상 12",
+    "dominant_emotion": "happy",
+    "dominant_emotion_per": 68.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000014",
+    "youtube_url": "yt000000014",
+    "title": "추천 영상 14",
+    "dominant_emotion": "surprise",
+    "dominant_emotion_per": 38.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000002",
+    "youtube_url": "yt000000002",
+    "title": "추천 영상 2",
+    "dominant_emotion": "happy",
+    "dominant_emotion_per": 47.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000001",
+    "youtube_url": "yt000000001",
+    "title": "추천 영상 1",
+    "dominant_emotion": "neutral",
+    "dominant_emotion_per": 44.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000011",
+    "youtube_url": "yt000000011",
+    "title": "추천 영상 11",
+    "dominant_emotion": "neutral",
+    "dominant_emotion_per": 62.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000010",
+    "youtube_url": "yt000000010",
+    "title": "추천 영상 10",
+    "dominant_emotion": "neutral",
+    "dominant_emotion_per": 56.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000008",
+    "youtube_url": "yt000000008",
+    "title": "추천 영상 8",
+    "dominant_emotion": "angry",
+    "dominant_emotion_per": 44.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000020",
+    "youtube_url": "yt000000020",
+    "title": "추천 영상 20",
+    "dominant_emotion": "neutral",
+    "dominant_emotion_per": 74.0,
+    "is_bookmarked": false
+   }
+  ]
+ },
+ {
+  "name": "home/personalized carol",
+  "extension": "Video.homePersonalized",
+  "subject": "carol",
+  "input": {},
+  "expected": [
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000023",
+    "youtube_url": "yt000000023",
+    "title": "추천 영상 23",
+    "dominant_emotion": "happy",
+    "dominant_emotion_per": 50.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000017",
+    "youtube_url": "yt000000017",
+    "title": "추천 영상 17",
+    "dominant_emotion": "sad",
+    "dominant_emotion_per": 56.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000019",
+    "youtube_url": "yt000000019",
+    "title": "추천 영상 19",
+    "dominant_emotion": "angry",
+    "dominant_emotion_per": 68.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000024",
+    "youtube_url": "yt000000024",
+    "title": "추천 영상 24",
+    "dominant_emotion": "surprise",
+    "dominant_emotion_per": 56.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000018",
+    "youtube_url": "yt000000018",
+    "title": "추천 영상 18",
+    "dominant_emotion": "angry",
+    "dominant_emotion_per": 62.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000015",
+    "youtube_url": "yt000000015",
+    "title": "추천 영상 15",
+    "dominant_emotion": "surprise",
+    "dominant_emotion_per": 44.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000005",
+    "youtube_url": "yt000000005",
+    "title": "추천 영상 5",
+    "dominant_emotion": "happy",
+    "dominant_emotion_per": 50.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000014",
+    "youtube_url": "yt000000014",
+    "title": "추천 영상 14",
+    "dominant_emotion": "surprise",
+    "dominant_emotion_per": 38.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000012",
+    "youtube_url": "yt000000012",
+    "title": "추천 영상 12",
+    "dominant_emotion": "happy",
+    "dominant_emotion_per": 68.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000009",
+    "youtube_url": "yt000000009",
+    "title": "추천 영상 9",
+    "dominant_emotion": "angry",
+    "dominant_emotion_per": 50.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000004",
+    "youtube_url": "yt000000004",
+    "title": "추천 영상 4",
+    "dominant_emotion": "happy",
+    "dominant_emotion_per": 49.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000007",
+    "youtube_url": "yt000000007",
+    "title": "추천 영상 7",
+    "dominant_emotion": "happy",
+    "dominant_emotion_per": 52.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000008",
+    "youtube_url": "yt000000008",
+    "title": "추천 영상 8",
+    "dominant_emotion": "angry",
+    "dominant_emotion_per": 44.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000003",
+    "youtube_url": "yt000000003",
+    "title": "추천 영상 3",
+    "dominant_emotion": "happy",
+    "dominant_emotion_per": 48.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000002",
+    "youtube_url": "yt000000002",
+    "title": "추천 영상 2",
+    "dominant_emotion": "happy",
+    "dominant_emotion_per": 47.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000011",
+    "youtube_url": "yt000000011",
+    "title": "추천 영상 11",
+    "dominant_emotion": "neutral",
+    "dominant_emotion_per": 62.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000010",
+    "youtube_url": "yt000000010",
+    "title": "추천 영상 10",
+    "dominant_emotion": "neutral",
+    "dominant_emotion_per": 56.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000001",
+    "youtube_url": "yt000000001",
+    "title": "추천 영상 1",
+    "dominant_emotion": "neutral",
+    "dominant_emotion_per": 44.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000020",
+    "youtube_url": "yt000000020",
+    "title": "추천 영상 20",
+    "dominant_emotion": "neutral",
+    "dominant_emotion_per": 74.0,
+    "is_bookmarked": false
+   }
+  ]
+ },
+ {
+  "name": "home/personalized dave",
+  "extension": "Video.homePersonalized",
+  "subject": "dave",
+  "input": {},
+  "expected": [
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000023",
+    "youtube_url": "yt000000023",
+    "title": "추천 영상 23",
+    "dominant_emotion": "happy",
+    "dominant_emotion_per": 50.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000017",
+    "youtube_url": "yt000000017",
+    "title": "추천 영상 17",
+    "dominant_emotion": "sad",
+    "dominant_emotion_per": 56.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000019",
+    "youtube_url": "yt000000019",
+    "title": "추천 영상 19",
+    "dominant_emotion": "angry",
+    "dominant_emotion_per": 68.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000024",
+    "youtube_url": "yt000000024",
+    "title": "추천 영상 24",
+    "dominant_emotion": "surprise",
+    "dominant_emotion_per": 56.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000018",
+    "youtube_url": "yt000000018",
+    "title": "추천 영상 18",
+    "dominant_emotion": "angry",
+    "dominant_emotion_per": 62.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000015",
+    "youtube_url": "yt000000015",
+    "title": "추천 영상 15",
+    "dominant_emotion": "surprise",
+    "dominant_emotion_per": 44.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000005",
+    "youtube_url": "yt000000005",
+    "title": "추천 영상 5",
+    "dominant_emotion": "happy",
+    "dominant_emotion_per": 50.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000014",
+    "youtube_url": "yt000000014",
+    "title": "추천 영상 14",
+    "dominant_emotion": "surprise",
+    "dominant_emotion_per": 38.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000012",
+    "youtube_url": "yt000000012",
+    "title": "추천 영상 12",
+    "dominant_emotion": "happy",
+    "dominant_emotion_per": 68.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000009",
+    "youtube_url": "yt000000009",
+    "title": "추천 영상 9",
+    "dominant_emotion": "angry",
+    "dominant_emotion_per": 50.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000004",
+    "youtube_url": "yt000000004",
+    "title": "추천 영상 4",
+    "dominant_emotion": "happy",
+    "dominant_emotion_per": 49.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000007",
+    "youtube_url": "yt000000007",
+    "title": "추천 영상 7",
+    "dominant_emotion": "happy",
+    "dominant_emotion_per": 52.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000008",
+    "youtube_url": "yt000000008",
+    "title": "추천 영상 8",
+    "dominant_emotion": "angry",
+    "dominant_emotion_per": 44.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000003",
+    "youtube_url": "yt000000003",
+    "title": "추천 영상 3",
+    "dominant_emotion": "happy",
+    "dominant_emotion_per": 48.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000002",
+    "youtube_url": "yt000000002",
+    "title": "추천 영상 2",
+    "dominant_emotion": "happy",
+    "dominant_emotion_per": 47.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000011",
+    "youtube_url": "yt000000011",
+    "title": "추천 영상 11",
+    "dominant_emotion": "neutral",
+    "dominant_emotion_per": 62.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000010",
+    "youtube_url": "yt000000010",
+    "title": "추천 영상 10",
+    "dominant_emotion": "neutral",
+    "dominant_emotion_per": 56.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000001",
+    "youtube_url": "yt000000001",
+    "title": "추천 영상 1",
+    "dominant_emotion": "neutral",
+    "dominant_emotion_per": 44.0,
+    "is_bookmarked": false
+   },
+   {
+    "video_id": "bbbbbbbb-0000-4000-8000-000000000020",
+    "youtube_url": "yt000000020",
+    "title": "추천 영상 20",
+    "dominant_emotion": "neutral",
+    "dominant_emotion_per": 74.0,
+    "is_bookmarked": false
+   }
+  ]
+ },
+ {
+  "name": "home/personalized erin",
+  "extension": "Video.homePersonalized",
+  "subject": "erin",
+  "input": {},
+  "expected": []
+ },
+ {
+  "name": "watch/recommended alice animal with emotion",
+  "extension": "Video.watchRecommended",
+  "subject": "alice",
+  "input": {
+   "video_id": "bbbbbbbb-0000-4000-8000-000000000001",
+   "page": 1,
+   "size": 10
+  },
+  "expected": {
+   "videos": [],
+   "total": 0,
+   "page": 1,
+   "size": 10,
+   "has_next": false
+  }
+ },
+ {
+  "name": "watch/recommended alice animal happy tie order",
+  "extension": "Video.watchRecommended",
+  "subject": "alice",
+  "input": {
+   "video_id": "bbbbbbbb-0000-4000-8000-000000000002",
+   "page": 1,
+   "size": 10
+  },
+  "expected": {
+   "videos": [
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000004",
+     "youtube_url": "yt000000004",
+     "title": "추천 영상 4",
+     "dominant_emotion": "happy",
+     "dominant_emotion_per": 49.0,
+     "is_bookmarked": false
+    },
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000003",
+     "youtube_url": "yt000000003",
+     "title": "추천 영상 3",
+     "dominant_emotion": "happy",
+     "dominant_emotion_per": 48.0,
+     "is_bookmarked": false
+    },
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000007",
+     "youtube_url": "yt000000007",
+     "title": "추천 영상 7",
+     "dominant_emotion": "happy",
+     "dominant_emotion_per": 52.0,
+     "is_bookmarked": false
+    },
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000005",
+     "youtube_url": "yt000000005",
+     "title": "추천 영상 5",
+     "dominant_emotion": "happy",
+     "dominant_emotion_per": 50.0,
+     "is_bookmarked": false
+    }
+   ],
+   "total": 4,
+   "page": 1,
+   "size": 10,
+   "has_next": false
+  }
+ },
+ {
+  "name": "watch/recommended alice animal happy 4",
+  "extension": "Video.watchRecommended",
+  "subject": "alice",
+  "input": {
+   "video_id": "bbbbbbbb-0000-4000-8000-000000000004",
+   "page": 1,
+   "size": 10
+  },
+  "expected": {
+   "videos": [
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000002",
+     "youtube_url": "yt000000002",
+     "title": "추천 영상 2",
+     "dominant_emotion": "happy",
+     "dominant_emotion_per": 47.0,
+     "is_bookmarked": true
+    },
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000003",
+     "youtube_url": "yt000000003",
+     "title": "추천 영상 3",
+     "dominant_emotion": "happy",
+     "dominant_emotion_per": 48.0,
+     "is_bookmarked": false
+    },
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000007",
+     "youtube_url": "yt000000007",
+     "title": "추천 영상 7",
+     "dominant_emotion": "happy",
+     "dominant_emotion_per": 52.0,
+     "is_bookmarked": false
+    },
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000005",
+     "youtube_url": "yt000000005",
+     "title": "추천 영상 5",
+     "dominant_emotion": "happy",
+     "dominant_emotion_per": 50.0,
+     "is_bookmarked": false
+    }
+   ],
+   "total": 4,
+   "page": 1,
+   "size": 10,
+   "has_next": false
+  }
+ },
+ {
+  "name": "watch/recommended alice cook",
+  "extension": "Video.watchRecommended",
+  "subject": "alice",
+  "input": {
+   "video_id": "bbbbbbbb-0000-4000-8000-000000000009",
+   "page": 1,
+   "size": 10
+  },
+  "expected": {
+   "videos": [
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000008",
+     "youtube_url": "yt000000008",
+     "title": "추천 영상 8",
+     "dominant_emotion": "angry",
+     "dominant_emotion_per": 44.0,
+     "is_bookmarked": true
+    }
+   ],
+   "total": 1,
+   "page": 1,
+   "size": 10,
+   "has_next": false
+  }
+ },
+ {
+  "name": "watch/recommended alice cook angry",
+  "extension": "Video.watchRecommended",
+  "subject": "alice",
+  "input": {
+   "video_id": "bbbbbbbb-0000-4000-8000-000000000008",
+   "page": 1,
+   "size": 10
+  },
+  "expected": {
+   "videos": [
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000009",
+     "youtube_url": "yt000000009",
+     "title": "추천 영상 9",
+     "dominant_emotion": "angry",
+     "dominant_emotion_per": 50.0,
+     "is_bookmarked": true
+    }
+   ],
+   "total": 1,
+   "page": 1,
+   "size": 10,
+   "has_next": false
+  }
+ },
+ {
+  "name": "watch/recommended alice vlog",
+  "extension": "Video.watchRecommended",
+  "subject": "alice",
+  "input": {
+   "video_id": "bbbbbbbb-0000-4000-8000-000000000014",
+   "page": 1,
+   "size": 10
+  },
+  "expected": {
+   "videos": [
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000015",
+     "youtube_url": "yt000000015",
+     "title": "추천 영상 15",
+     "dominant_emotion": "surprise",
+     "dominant_emotion_per": 44.0,
+     "is_bookmarked": false
+    }
+   ],
+   "total": 1,
+   "page": 1,
+   "size": 10,
+   "has_next": false
+  }
+ },
+ {
+  "name": "watch/recommended alice vlog null dominant",
+  "extension": "Video.watchRecommended",
+  "subject": "alice",
+  "input": {
+   "video_id": "bbbbbbbb-0000-4000-8000-000000000016",
+   "page": 1,
+   "size": 10
+  },
+  "expected": {
+   "videos": [
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000018",
+     "youtube_url": "yt000000018",
+     "title": "추천 영상 18",
+     "dominant_emotion": "angry",
+     "dominant_emotion_per": 62.0,
+     "is_bookmarked": false
+    },
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000017",
+     "youtube_url": "yt000000017",
+     "title": "추천 영상 17",
+     "dominant_emotion": "sad",
+     "dominant_emotion_per": 56.0,
+     "is_bookmarked": false
+    },
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000015",
+     "youtube_url": "yt000000015",
+     "title": "추천 영상 15",
+     "dominant_emotion": "surprise",
+     "dominant_emotion_per": 44.0,
+     "is_bookmarked": false
+    },
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000014",
+     "youtube_url": "yt000000014",
+     "title": "추천 영상 14",
+     "dominant_emotion": "surprise",
+     "dominant_emotion_per": 38.0,
+     "is_bookmarked": false
+    }
+   ],
+   "total": 4,
+   "page": 1,
+   "size": 10,
+   "has_next": false
+  }
+ },
+ {
+  "name": "watch/recommended alice travel without distribution",
+  "extension": "Video.watchRecommended",
+  "subject": "alice",
+  "input": {
+   "video_id": "bbbbbbbb-0000-4000-8000-000000000022",
+   "page": 1,
+   "size": 10
+  },
+  "expected": {
+   "videos": [
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000023",
+     "youtube_url": "yt000000023",
+     "title": "추천 영상 23",
+     "dominant_emotion": "happy",
+     "dominant_emotion_per": 50.0,
+     "is_bookmarked": false
+    }
+   ],
+   "total": 1,
+   "page": 1,
+   "size": 10,
+   "has_next": false
+  }
+ },
+ {
+  "name": "watch/recommended alice music alone",
+  "extension": "Video.watchRecommended",
+  "subject": "alice",
+  "input": {
+   "video_id": "bbbbbbbb-0000-4000-8000-000000000024",
+   "page": 1,
+   "size": 10
+  },
+  "expected": {
+   "videos": [],
+   "total": 0,
+   "page": 1,
+   "size": 10,
+   "has_next": false
+  }
+ },
+ {
+  "name": "watch/recommended alice game",
+  "extension": "Video.watchRecommended",
+  "subject": "alice",
+  "input": {
+   "video_id": "bbbbbbbb-0000-4000-8000-000000000019",
+   "page": 1,
+   "size": 10
+  },
+  "expected": {
+   "videos": [],
+   "total": 0,
+   "page": 1,
+   "size": 10,
+   "has_next": false
+  }
+ },
+ {
+  "name": "watch/recommended alice animal happy page 1 size 2",
+  "extension": "Video.watchRecommended",
+  "subject": "alice",
+  "input": {
+   "video_id": "bbbbbbbb-0000-4000-8000-000000000002",
+   "page": 1,
+   "size": 2
+  },
+  "expected": {
+   "videos": [
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000004",
+     "youtube_url": "yt000000004",
+     "title": "추천 영상 4",
+     "dominant_emotion": "happy",
+     "dominant_emotion_per": 49.0,
+     "is_bookmarked": false
+    },
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000003",
+     "youtube_url": "yt000000003",
+     "title": "추천 영상 3",
+     "dominant_emotion": "happy",
+     "dominant_emotion_per": 48.0,
+     "is_bookmarked": false
+    }
+   ],
+   "total": 4,
+   "page": 1,
+   "size": 2,
+   "has_next": true
+  }
+ },
+ {
+  "name": "watch/recommended alice animal happy page 2 size 2",
+  "extension": "Video.watchRecommended",
+  "subject": "alice",
+  "input": {
+   "video_id": "bbbbbbbb-0000-4000-8000-000000000002",
+   "page": 2,
+   "size": 2
+  },
+  "expected": {
+   "videos": [
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000007",
+     "youtube_url": "yt000000007",
+     "title": "추천 영상 7",
+     "dominant_emotion": "happy",
+     "dominant_emotion_per": 52.0,
+     "is_bookmarked": false
+    },
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000005",
+     "youtube_url": "yt000000005",
+     "title": "추천 영상 5",
+     "dominant_emotion": "happy",
+     "dominant_emotion_per": 50.0,
+     "is_bookmarked": false
+    }
+   ],
+   "total": 4,
+   "page": 2,
+   "size": 2,
+   "has_next": false
+  }
+ },
+ {
+  "name": "watch/recommended alice animal happy page 3 size 2",
+  "extension": "Video.watchRecommended",
+  "subject": "alice",
+  "input": {
+   "video_id": "bbbbbbbb-0000-4000-8000-000000000002",
+   "page": 3,
+   "size": 2
+  },
+  "expected": {
+   "videos": [],
+   "total": 4,
+   "page": 3,
+   "size": 2,
+   "has_next": false
+  }
+ },
+ {
+  "name": "watch/recommended alice animal happy beyond last",
+  "extension": "Video.watchRecommended",
+  "subject": "alice",
+  "input": {
+   "video_id": "bbbbbbbb-0000-4000-8000-000000000002",
+   "page": 9,
+   "size": 2
+  },
+  "expected": {
+   "videos": [],
+   "total": 4,
+   "page": 9,
+   "size": 2,
+   "has_next": false
+  }
+ },
+ {
+  "name": "watch/recommended dave animal with emotion",
+  "extension": "Video.watchRecommended",
+  "subject": "dave",
+  "input": {
+   "video_id": "bbbbbbbb-0000-4000-8000-000000000001",
+   "page": 1,
+   "size": 10
+  },
+  "expected": {
+   "videos": [],
+   "total": 0,
+   "page": 1,
+   "size": 10,
+   "has_next": false
+  }
+ },
+ {
+  "name": "watch/recommended dave animal happy tie order",
+  "extension": "Video.watchRecommended",
+  "subject": "dave",
+  "input": {
+   "video_id": "bbbbbbbb-0000-4000-8000-000000000002",
+   "page": 1,
+   "size": 10
+  },
+  "expected": {
+   "videos": [
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000004",
+     "youtube_url": "yt000000004",
+     "title": "추천 영상 4",
+     "dominant_emotion": "happy",
+     "dominant_emotion_per": 49.0,
+     "is_bookmarked": false
+    },
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000003",
+     "youtube_url": "yt000000003",
+     "title": "추천 영상 3",
+     "dominant_emotion": "happy",
+     "dominant_emotion_per": 48.0,
+     "is_bookmarked": false
+    },
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000007",
+     "youtube_url": "yt000000007",
+     "title": "추천 영상 7",
+     "dominant_emotion": "happy",
+     "dominant_emotion_per": 52.0,
+     "is_bookmarked": false
+    },
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000005",
+     "youtube_url": "yt000000005",
+     "title": "추천 영상 5",
+     "dominant_emotion": "happy",
+     "dominant_emotion_per": 50.0,
+     "is_bookmarked": false
+    }
+   ],
+   "total": 4,
+   "page": 1,
+   "size": 10,
+   "has_next": false
+  }
+ },
+ {
+  "name": "watch/recommended dave animal happy 4",
+  "extension": "Video.watchRecommended",
+  "subject": "dave",
+  "input": {
+   "video_id": "bbbbbbbb-0000-4000-8000-000000000004",
+   "page": 1,
+   "size": 10
+  },
+  "expected": {
+   "videos": [
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000002",
+     "youtube_url": "yt000000002",
+     "title": "추천 영상 2",
+     "dominant_emotion": "happy",
+     "dominant_emotion_per": 47.0,
+     "is_bookmarked": false
+    },
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000003",
+     "youtube_url": "yt000000003",
+     "title": "추천 영상 3",
+     "dominant_emotion": "happy",
+     "dominant_emotion_per": 48.0,
+     "is_bookmarked": false
+    },
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000007",
+     "youtube_url": "yt000000007",
+     "title": "추천 영상 7",
+     "dominant_emotion": "happy",
+     "dominant_emotion_per": 52.0,
+     "is_bookmarked": false
+    },
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000005",
+     "youtube_url": "yt000000005",
+     "title": "추천 영상 5",
+     "dominant_emotion": "happy",
+     "dominant_emotion_per": 50.0,
+     "is_bookmarked": false
+    }
+   ],
+   "total": 4,
+   "page": 1,
+   "size": 10,
+   "has_next": false
+  }
+ },
+ {
+  "name": "watch/recommended dave cook",
+  "extension": "Video.watchRecommended",
+  "subject": "dave",
+  "input": {
+   "video_id": "bbbbbbbb-0000-4000-8000-000000000009",
+   "page": 1,
+   "size": 10
+  },
+  "expected": {
+   "videos": [
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000008",
+     "youtube_url": "yt000000008",
+     "title": "추천 영상 8",
+     "dominant_emotion": "angry",
+     "dominant_emotion_per": 44.0,
+     "is_bookmarked": false
+    }
+   ],
+   "total": 1,
+   "page": 1,
+   "size": 10,
+   "has_next": false
+  }
+ },
+ {
+  "name": "watch/recommended dave cook angry",
+  "extension": "Video.watchRecommended",
+  "subject": "dave",
+  "input": {
+   "video_id": "bbbbbbbb-0000-4000-8000-000000000008",
+   "page": 1,
+   "size": 10
+  },
+  "expected": {
+   "videos": [
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000009",
+     "youtube_url": "yt000000009",
+     "title": "추천 영상 9",
+     "dominant_emotion": "angry",
+     "dominant_emotion_per": 50.0,
+     "is_bookmarked": false
+    }
+   ],
+   "total": 1,
+   "page": 1,
+   "size": 10,
+   "has_next": false
+  }
+ },
+ {
+  "name": "watch/recommended dave vlog",
+  "extension": "Video.watchRecommended",
+  "subject": "dave",
+  "input": {
+   "video_id": "bbbbbbbb-0000-4000-8000-000000000014",
+   "page": 1,
+   "size": 10
+  },
+  "expected": {
+   "videos": [
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000015",
+     "youtube_url": "yt000000015",
+     "title": "추천 영상 15",
+     "dominant_emotion": "surprise",
+     "dominant_emotion_per": 44.0,
+     "is_bookmarked": false
+    }
+   ],
+   "total": 1,
+   "page": 1,
+   "size": 10,
+   "has_next": false
+  }
+ },
+ {
+  "name": "watch/recommended dave vlog null dominant",
+  "extension": "Video.watchRecommended",
+  "subject": "dave",
+  "input": {
+   "video_id": "bbbbbbbb-0000-4000-8000-000000000016",
+   "page": 1,
+   "size": 10
+  },
+  "expected": {
+   "videos": [
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000018",
+     "youtube_url": "yt000000018",
+     "title": "추천 영상 18",
+     "dominant_emotion": "angry",
+     "dominant_emotion_per": 62.0,
+     "is_bookmarked": false
+    },
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000017",
+     "youtube_url": "yt000000017",
+     "title": "추천 영상 17",
+     "dominant_emotion": "sad",
+     "dominant_emotion_per": 56.0,
+     "is_bookmarked": false
+    },
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000015",
+     "youtube_url": "yt000000015",
+     "title": "추천 영상 15",
+     "dominant_emotion": "surprise",
+     "dominant_emotion_per": 44.0,
+     "is_bookmarked": false
+    },
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000014",
+     "youtube_url": "yt000000014",
+     "title": "추천 영상 14",
+     "dominant_emotion": "surprise",
+     "dominant_emotion_per": 38.0,
+     "is_bookmarked": false
+    }
+   ],
+   "total": 4,
+   "page": 1,
+   "size": 10,
+   "has_next": false
+  }
+ },
+ {
+  "name": "watch/recommended dave travel without distribution",
+  "extension": "Video.watchRecommended",
+  "subject": "dave",
+  "input": {
+   "video_id": "bbbbbbbb-0000-4000-8000-000000000022",
+   "page": 1,
+   "size": 10
+  },
+  "expected": {
+   "videos": [
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000023",
+     "youtube_url": "yt000000023",
+     "title": "추천 영상 23",
+     "dominant_emotion": "happy",
+     "dominant_emotion_per": 50.0,
+     "is_bookmarked": false
+    }
+   ],
+   "total": 1,
+   "page": 1,
+   "size": 10,
+   "has_next": false
+  }
+ },
+ {
+  "name": "watch/recommended dave music alone",
+  "extension": "Video.watchRecommended",
+  "subject": "dave",
+  "input": {
+   "video_id": "bbbbbbbb-0000-4000-8000-000000000024",
+   "page": 1,
+   "size": 10
+  },
+  "expected": {
+   "videos": [],
+   "total": 0,
+   "page": 1,
+   "size": 10,
+   "has_next": false
+  }
+ },
+ {
+  "name": "watch/recommended dave game",
+  "extension": "Video.watchRecommended",
+  "subject": "dave",
+  "input": {
+   "video_id": "bbbbbbbb-0000-4000-8000-000000000019",
+   "page": 1,
+   "size": 10
+  },
+  "expected": {
+   "videos": [],
+   "total": 0,
+   "page": 1,
+   "size": 10,
+   "has_next": false
+  }
+ },
+ {
+  "name": "watch/recommended dave animal happy page 1 size 2",
+  "extension": "Video.watchRecommended",
+  "subject": "dave",
+  "input": {
+   "video_id": "bbbbbbbb-0000-4000-8000-000000000002",
+   "page": 1,
+   "size": 2
+  },
+  "expected": {
+   "videos": [
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000004",
+     "youtube_url": "yt000000004",
+     "title": "추천 영상 4",
+     "dominant_emotion": "happy",
+     "dominant_emotion_per": 49.0,
+     "is_bookmarked": false
+    },
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000003",
+     "youtube_url": "yt000000003",
+     "title": "추천 영상 3",
+     "dominant_emotion": "happy",
+     "dominant_emotion_per": 48.0,
+     "is_bookmarked": false
+    }
+   ],
+   "total": 4,
+   "page": 1,
+   "size": 2,
+   "has_next": true
+  }
+ },
+ {
+  "name": "watch/recommended dave animal happy page 2 size 2",
+  "extension": "Video.watchRecommended",
+  "subject": "dave",
+  "input": {
+   "video_id": "bbbbbbbb-0000-4000-8000-000000000002",
+   "page": 2,
+   "size": 2
+  },
+  "expected": {
+   "videos": [
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000007",
+     "youtube_url": "yt000000007",
+     "title": "추천 영상 7",
+     "dominant_emotion": "happy",
+     "dominant_emotion_per": 52.0,
+     "is_bookmarked": false
+    },
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000005",
+     "youtube_url": "yt000000005",
+     "title": "추천 영상 5",
+     "dominant_emotion": "happy",
+     "dominant_emotion_per": 50.0,
+     "is_bookmarked": false
+    }
+   ],
+   "total": 4,
+   "page": 2,
+   "size": 2,
+   "has_next": false
+  }
+ },
+ {
+  "name": "watch/recommended dave animal happy page 3 size 2",
+  "extension": "Video.watchRecommended",
+  "subject": "dave",
+  "input": {
+   "video_id": "bbbbbbbb-0000-4000-8000-000000000002",
+   "page": 3,
+   "size": 2
+  },
+  "expected": {
+   "videos": [],
+   "total": 4,
+   "page": 3,
+   "size": 2,
+   "has_next": false
+  }
+ },
+ {
+  "name": "watch/recommended dave animal happy beyond last",
+  "extension": "Video.watchRecommended",
+  "subject": "dave",
+  "input": {
+   "video_id": "bbbbbbbb-0000-4000-8000-000000000002",
+   "page": 9,
+   "size": 2
+  },
+  "expected": {
+   "videos": [],
+   "total": 4,
+   "page": 9,
+   "size": 2,
+   "has_next": false
+  }
+ },
+ {
+  "name": "watch/recommended alice canonical video without distribution",
+  "extension": "Video.watchRecommended",
+  "subject": "alice",
+  "input": {
+   "video_id": "aaaaaaaa-0000-4000-8000-000000000001",
+   "page": 1,
+   "size": 10
+  },
+  "expected": {
+   "videos": [
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000005",
+     "youtube_url": "yt000000005",
+     "title": "추천 영상 5",
+     "dominant_emotion": "happy",
+     "dominant_emotion_per": 50.0,
+     "is_bookmarked": false
+    },
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000004",
+     "youtube_url": "yt000000004",
+     "title": "추천 영상 4",
+     "dominant_emotion": "happy",
+     "dominant_emotion_per": 49.0,
+     "is_bookmarked": false
+    },
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000003",
+     "youtube_url": "yt000000003",
+     "title": "추천 영상 3",
+     "dominant_emotion": "happy",
+     "dominant_emotion_per": 48.0,
+     "is_bookmarked": false
+    },
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000002",
+     "youtube_url": "yt000000002",
+     "title": "추천 영상 2",
+     "dominant_emotion": "happy",
+     "dominant_emotion_per": 47.0,
+     "is_bookmarked": true
+    },
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000001",
+     "youtube_url": "yt000000001",
+     "title": "추천 영상 1",
+     "dominant_emotion": "neutral",
+     "dominant_emotion_per": 44.0,
+     "is_bookmarked": false
+    },
+    {
+     "video_id": "bbbbbbbb-0000-4000-8000-000000000007",
+     "youtube_url": "yt000000007",
+     "title": "추천 영상 7",
+     "dominant_emotion": "happy",
+     "dominant_emotion_per": 52.0,
+     "is_bookmarked": false
+    }
+   ],
+   "total": 6,
+   "page": 1,
+   "size": 10,
+   "has_next": false
+  }
+ },
+ {
+  "name": "watch/recommended alice soft-deleted video",
+  "extension": "Video.watchRecommended",
+  "subject": "alice",
+  "input": {
+   "video_id": "bbbbbbbb-0000-4000-8000-000000000006",
+   "page": 1,
+   "size": 10
+  },
+  "expect_error": true
+ },
+ {
+  "name": "watch/recommended alice NULL is_deleted video",
+  "extension": "Video.watchRecommended",
+  "subject": "alice",
+  "input": {
+   "video_id": "bbbbbbbb-0000-4000-8000-000000000013",
+   "page": 1,
+   "size": 10
+  },
+  "expect_error": true
+ },
+ {
+  "name": "watch/recommended alice unknown video",
+  "extension": "Video.watchRecommended",
+  "subject": "alice",
+  "input": {
+   "video_id": "cccccccc-0000-4000-8000-0000000000ff",
+   "page": 1,
+   "size": 10
+  },
+  "expect_error": true
+ }
+]
