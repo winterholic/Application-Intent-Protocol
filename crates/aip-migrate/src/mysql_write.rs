@@ -1356,6 +1356,10 @@ pub async fn apply_job_effect_in(
     let mut session = Session { tx, facts, knobs, touched: BTreeMap::new() };
     let result = run_write(&mut session, request, caller, wire).await?;
     session.run_checks(caller).await?;
+    // A creating request (an atomic bundle) answers with the ids of the new rows; a transition keeps its changed and unchanged ids.
+    if request.get("atomic").is_some() {
+        return Ok(json!({"created":result["created"]}));
+    }
     Ok(json!({"changed":result["changed"],"unchanged":result["unchanged"]}))
 }
 

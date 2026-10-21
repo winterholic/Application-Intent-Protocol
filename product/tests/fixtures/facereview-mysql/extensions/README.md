@@ -160,3 +160,28 @@ Differences and limits: a read extension has 64 ctx calls, so a request that has
 fails with `WIRE.COST_EXCEEDED` otherwise, leaving the previous cache as it was. The three writes are not one transaction (the original's
 Redis pipeline is not atomic across a crash either). The Video read budget gained `cursor`: paging by `offset` costs more with every page
 (`limit x (1 + aggregates) + offset` against `cost 1000`), so a read of two aggregates could not go past about 700 rows deep.
+
+## Slice14-B: the daily trending collection (WBS 7.2.7)
+
+`slice14b_trending.py` ports `YoutubeTrendingJob` (`new-facereview@7948b7e7`, `common/scheduler/jobs/youtube_trending_job.py`, daily 06:00 Asia/Seoul)
+as the job `fetchTrendingVideos`, with `youtube_common.py` (duration, saving a video) shared with the category fill of Slice14-C. The job
+declares `access read.Video, create.Video, http.youtube_videos, mongo.video_distribution, mongo.video_timeline_emotion_count`; the service
+configuration holds the query-string integration (`method` GET, `query_params` part/chart/regionCode/maxResults/pageToken,
+`secret_query_env` for the API key) and `workers.mongo.write_collections` for the two collections. `Video` gained an administrator-only
+`expose create` (the original's `_save_video` and, later, the approval of a video request) and the filter `youtube_url.in`.
+
+| Original | AIP |
+|---|---|
+| `requests.get(.../youtube/v3/videos, params)` with the key in the URL, 4 pages of 50 | `ctx.http.call("youtube_videos", {...}, key="trending:page:N")`; the key is the server's |
+| `Video(...)`, `db.session.add`, `flush` | `ctx.data.create("Video", {...}, key="video:<youtube id>")` |
+| `VideoDistributionRepository.upsert`, `VideoTimelineEmotionCountRepository.upsert` | `ctx.mongo.update_one(..., upsert=True)` with `$set` and `$setOnInsert`, which the server sends again after a lost answer |
+| `existing = Video.query.filter(youtube_url.in_(ids))` | `ctx.data.read` with `youtube_url.in` in chunks of 50, then the unique `youtube_url` as the backstop (`WIRE.ALREADY_EXISTS` is skipped) |
+
+`reference/slice14b_oracle.py` runs the original class on the same data: its category rules on 33 cases and the duration rules on 15
+(all equal), then its `execute()` against a stand-in YouTube and the AIP job against another: 6 new rows and 12 MongoDB documents equal.
+Two intended differences: a video without a title (the original saves an empty title) is skipped, and an empty channel name is NULL.
+
+Differences and limits: a call that cannot be made (the provider does not answer) asks for the run to be tried again after 5 seconds
+instead of ending the pages (a non-2xx answer still ends them, as in the original); each new video costs 3 ctx calls (row, two
+documents), so a run of 200 new videos needs `limits.job_calls` of about 700. The original saves a video even if the second MongoDB write
+fails (it logs and goes on); here the job is tried again and the journal replays the row.

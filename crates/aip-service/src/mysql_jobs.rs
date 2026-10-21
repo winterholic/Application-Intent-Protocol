@@ -161,7 +161,7 @@ impl MysqlJobs {
                             &format!("job이 선언한 HTTP 연동 `{name}`이 workers.integrations 또는 outbound_webhooks에 없음"),
                         ));
                     }
-                } else if !["read.", "apply.", "jobs.", "events.", "messages.", "files.", "mongo.", "redis."]
+                } else if !["read.", "apply.", "create.", "jobs.", "events.", "messages.", "files.", "mongo.", "redis."]
                     .iter()
                     .any(|prefix| capability.starts_with(prefix))
                 {
@@ -1405,8 +1405,12 @@ impl JobHost {
         )
         .await
         .map_err(db)?;
-        if op == "apply" {
-            let request = spike_v4_worker::write::job_apply_request(name, input, rt.wire).map_err(|e| e.code)?;
+        if op == "apply" || op == "create" {
+            let request = if op == "create" {
+                spike_v4_worker::write::job_create_request(name, input).map_err(|e| e.code)?
+            } else {
+                spike_v4_worker::write::job_apply_request(name, input, rt.wire).map_err(|e| e.code)?
+            };
             tx.query_drop("SAVEPOINT aip_job_effect").await.map_err(db)?;
             let output = aip_migrate::mysql_write::apply_job_effect_in(
                 tx,

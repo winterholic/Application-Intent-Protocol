@@ -34,6 +34,7 @@ mod stable_key_tests {
         for op in ["http", "integrations", "operations", "jobs", "events", "messages"] {
             assert!(requires_stable_key(op, &json!({})), "{op} requires a stable key");
         }
+        assert!(requires_stable_key("create", &json!({"values": {}})), "a created row is journaled under a key");
         assert!(requires_stable_key("files", &json!({"action":"put"})));
         assert!(!requires_stable_key("files", &json!({"action":"get"})));
         assert!(!requires_stable_key("data", &json!({})));
@@ -181,7 +182,7 @@ pub(crate) fn rej<T>(code: &'static str, msg: impl Into<String>) -> Result<T, Re
 }
 
 fn requires_stable_key(op: &str, input: &Value) -> bool {
-    ["http", "integrations", "operations", "jobs", "events", "messages", "apply"].contains(&op)
+    ["http", "integrations", "operations", "jobs", "events", "messages", "apply", "create"].contains(&op)
         || op == "files" && input["action"] == "put"
         || is_external_write(op, input)
 }

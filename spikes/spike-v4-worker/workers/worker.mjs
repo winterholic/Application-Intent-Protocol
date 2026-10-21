@@ -32,6 +32,8 @@ function makeCtx(token, job) {
       apply: (res, name, ids, key) => call("apply", `${res}.${name}`, key === undefined ? { ids: ids.map(String) } : { ids: ids.map(String), key }),
       // durable job 전용: 공개 read 요청을 job 주체의 정책으로 실행한다.
       read: (query) => call("read", query?.read, query),
+      // durable job 전용: 공개된 create(expose create)로 새 행 하나를 만든다. key는 effect 장부에 남는다. 만든 행의 id를 돌려준다.
+      create: async (res, values, key) => (await call("create", res, { values, key }))?.created?.[0]?.id,
     },
     http: { call: (name, input, key) => call("http", name, {input,key}) },
     // durable job 전용: 업무 데이터의 구독자 URL로 서명한 이벤트를 보낸다(access http.<name>, 서버 설정 outbound_webhooks).

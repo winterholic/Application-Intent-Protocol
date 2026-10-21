@@ -401,6 +401,16 @@ pub fn job_apply_request(name: &str, input: &Value, wire: IdWire) -> Result<Valu
     ctx_request(&json!({"name": name, "input": {"ids": input["ids"]}}), wire)
 }
 
+/// Builds the create request of a durable job's ctx.data.create: one row of an exposed create, as a one-operation atomic bundle, so the
+/// create contract (fields, allow, defaults) is the one a client would meet.
+pub fn job_create_request(name: &str, input: &Value) -> Result<Value, Reject> {
+    let exact = input.as_object().is_some_and(|object| object.keys().all(|key| key == "values" || key == "key") && object.contains_key("values"));
+    if !exact || !input["values"].is_object() {
+        return rej("WIRE.BAD_VALUE", "ctx.data.create 입력은 values와 key만 허용");
+    }
+    Ok(json!({"atomic": [{"create": name, "values": input["values"]}]}))
+}
+
 fn ctx_request(message: &Value, wire: IdWire) -> Result<Value, Reject> {
     let mut target = message["input"].clone();
     if wire != IdWire::Legacy {
@@ -420,4 +430,19 @@ fn ctx_request(message: &Value, wire: IdWire) -> Result<Value, Reject> {
         }
     }
     Ok(json!({"apply":message["name"],"target":target}))
+}
+
+#[cfg(test)]
+mod job_create_tests {
+    use super::job_create_request;
+    use serde_json::json;
+
+    #[test]
+    fn a_job_create_is_a_one_operation_bundle_of_exactly_values_and_key() {
+        let request = job_create_request("Video", &json!({"values": {"title": "t"}, "key": "video:a"})).unwrap();
+        assert_eq!(request, json!({"atomic": [{"create": "Video", "values": {"title": "t"}}]}));
+        for bad in [json!({}), json!({"values": "x"}), json!({"values": {}, "key": "k", "extra": 1}), json!({"key": "k"}), json!("x")] {
+            assert_eq!(job_create_request("Video", &bad).unwrap_err().code, "WIRE.BAD_VALUE", "{bad}");
+        }
+    }
 }

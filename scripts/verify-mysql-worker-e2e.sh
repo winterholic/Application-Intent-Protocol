@@ -213,6 +213,14 @@ if [[ "$mode" == run-ci ]]; then
   grep -Fxq "$pool_test: test" /tmp/aip-e2e-pool-list-"$tag".txt
   cargo test "${pool_args[@]}" -- --ignored --exact "$pool_test" --nocapture --test-threads=1 2>&1 | tee /tmp/aip-e2e-pool-run-"$tag".txt
   grep -Fq "test result: ok. 1 passed; 0 failed;" /tmp/aip-e2e-pool-run-"$tag".txt
+  # The trending video collection (WBS 7.2.7): a query-string integration, job-created rows and initial MongoDB documents.
+  echo "=== Running the trending video job end-to-end test (real aip binary, Python extension, MySQL, MongoDB, stand-in YouTube) ==="
+  trend_args=(--locked -p aip-cli --features mysql --test mysql_facereview_trending_job)
+  trend_test="the_trending_job_saves_new_videos_with_their_initial_documents"
+  cargo test "${trend_args[@]}" -- --list --ignored 2>&1 | tee /tmp/aip-e2e-trend-list-"$tag".txt | tail -3
+  grep -Fxq "$trend_test: test" /tmp/aip-e2e-trend-list-"$tag".txt
+  cargo test "${trend_args[@]}" -- --ignored --exact "$trend_test" --nocapture --test-threads=1 2>&1 | tee /tmp/aip-e2e-trend-run-"$tag".txt
+  grep -Fq "test result: ok. 1 passed; 0 failed;" /tmp/aip-e2e-trend-run-"$tag".txt
   # The administrator lists (WBS 7.2.9) compare the real server's reads and totals with the original AdminService's recorded answers.
   echo "=== Running the administrator list end-to-end test (real aip binary, real MySQL) ==="
   admin_args=(--locked -p aip-cli --features mysql --test mysql_facereview_admin)

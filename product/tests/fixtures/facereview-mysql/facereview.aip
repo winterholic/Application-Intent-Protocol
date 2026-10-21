@@ -125,9 +125,16 @@ resource Video {
   }
   expose apply remove { target id; bulk maxRows 1 }
   expose apply view { target id; bulk maxRows 1 }
+  // The original's YoutubeTrendingJob._save_video and YoutubeCategoryFillJob._save_video, and the approval of a video request (7.2.9):
+  // an administrator (the service principal of the collection jobs) registers a video as active. view_count and the timestamps come
+  // from the database defaults; the unique youtube_url answers WIRE.ALREADY_EXISTS for a video the service already has.
+  expose create {
+    fields youtube_url, title, channel_name, category, duration, is_deleted
+    allow isAdmin(actor)
+  }
   expose read {
     select id, youtube_url, title, channel_name, category, duration, view_count, created_at, likeCount, commentCount
-    filter id.eq, id.in, category.eq, title.like, channel_name.like, youtube_url.eq
+    filter id.eq, id.in, category.eq, title.like, channel_name.like, youtube_url.eq, youtube_url.in
     sort created_at, id, view_count
     budget { rows 100; depth 1; cost 1000; deadline 2s; offset 100000; cursor }
   }
@@ -472,4 +479,16 @@ operation job rebuildRecommendationPool {
   effect managed
   deadline 120s
   implementation "slice14a_pool.rebuildRecommendationPool"
+}
+
+// WBS 7.2.7: the original's Celery beat task fetch_youtube_trending_videos (every day 06:00 Asia/Seoul). The integration youtube_videos
+// is the server's GET endpoint of the YouTube Data API (query_params and secret_query_env in the service configuration).
+operation job fetchTrendingVideos {
+  input { }
+  output { fetched: Int(0..1000); fresh: Int(0..1000); saved: Int(0..1000) }
+  allow isAdmin(actor)
+  access read.Video, create.Video, http.youtube_videos, mongo.video_distribution, mongo.video_timeline_emotion_count
+  effect managed
+  deadline 600s
+  implementation "slice14b_trending.fetchTrendingVideos"
 }

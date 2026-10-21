@@ -46,13 +46,15 @@ const SEED_13D: &str = include_str!("../../../product/tests/fixtures/facereview-
 const DISTRIBUTIONS: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/slice13d-video_distribution.json");
 const SESSIONS: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/slice13d-youtube_watching_data.json");
 const GOLDEN: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/slice13d-golden.json");
-const EXTENSIONS: [(&str, &str); 6] = [
+const EXTENSIONS: [(&str, &str); 8] = [
     ("slice13f_watch.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13f_watch.py")),
     ("slice13b_lists.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13b_lists.py")),
     ("slice13d_recommend.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13d_recommend.py")),
     ("recommendation_math.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/recommendation_math.py")),
     ("recommendation_pool_builder.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/recommendation_pool_builder.py")),
     ("slice14a_pool.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice14a_pool.py")),
+    ("slice14b_trending.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice14b_trending.py")),
+    ("youtube_common.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/youtube_common.py")),
 ];
 const META: &str = "aip_t_pool_meta";
 const SOURCE: &str = "aip_t_pool_src";
@@ -386,6 +388,7 @@ async fn the_scheduled_pool_job_fills_the_cache_the_recommendation_lists_read() 
             "listen": "127.0.0.1:0", "wire": "decimal", "rate_limit": null,
             "auth": {"issuer": ISSUER, "audience": "aip-api", "jwks": {"kind": "file", "path": "jwks.json"}},
             "workers": {"directory": "extensions", "language": "python",
+                "integrations": [{"name": "youtube_videos", "url": "http://127.0.0.1:9/youtube/v3/videos", "method": "GET", "timeout_ms": 1000, "max_request_bytes": 1024, "max_response_bytes": 1024, "allow_loopback": true, "query_params": ["part"]}],
                 "mongo": {"uri_env": "AIP_T_POOL_MONGO_URL", "database": MONGO_DB, "max_pool_size": 4, "timeout_ms": 3000},
                 "redis": {"uri_env": "AIP_T_POOL_REDIS_URL", "prefixes": ["facereview:reco:"], "max_in_flight": 4, "timeout_ms": 3000}},
         });

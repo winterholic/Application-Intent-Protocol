@@ -161,3 +161,42 @@ fn a_job_redis_grant_follows_the_same_key_rules_and_a_duplicate_is_refused() {
     assert_eq!(job_diagnostics(r#"access redis "facereview:reco:*", redis "facereview:reco:*""#), ["DEF.DUPLICATE"]);
     assert_eq!(job_diagnostics("access mongo.video_distribution, mongo.video_distribution"), ["DEF.DUPLICATE"]);
 }
+
+#[test]
+fn a_durable_job_creates_rows_only_through_an_exposed_create() {
+    let with_create = r#"
+actor principal
+resource Video {
+  fields { id: Uuid; title: Text(1..100) }
+  rows read when true
+  expose create { fields title; allow actor != null }
+  expose read { select id, title; sort id; budget { rows 10; depth 1; cost 100; deadline 2s } }
+}
+resource Note {
+  fields { id: Uuid; text: Text(1..100) }
+  rows read when true
+  expose read { select id, text; sort id; budget { rows 10; depth 1; cost 100; deadline 2s } }
+}
+operation job collect {
+  input { }
+  output { total: Int(0..1000) }
+  allow actor != null
+  access ACCESS
+  effect managed
+  deadline 30s
+  implementation "pool.collect"
+}
+"#;
+    let ok = load_str(&with_create.replace("ACCESS", "read.Video, create.Video"), Form::A).unwrap().execution;
+    assert_eq!(ok["operations"]["collect"]["access"], json!({"read.Video": true, "create.Video": true}));
+    // No exposed create, or no such resource: refused at definition time.
+    for access in ["create.Note", "create.Missing"] {
+        let found =
+            load_str(&with_create.replace("ACCESS", access), Form::A).err().map(|found| found.iter().map(|d| d.code.to_string()).collect::<Vec<_>>());
+        assert_eq!(found, Some(vec!["DEF.UNKNOWN_SYMBOL".to_string()]), "{access}");
+    }
+    let duplicate = load_str(&with_create.replace("ACCESS", "create.Video, create.Video"), Form::A)
+        .err()
+        .map(|found| found.iter().map(|d| d.code.to_string()).collect::<Vec<_>>());
+    assert_eq!(duplicate, Some(vec!["DEF.DUPLICATE".to_string()]));
+}

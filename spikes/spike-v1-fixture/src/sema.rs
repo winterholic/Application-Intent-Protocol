@@ -1891,6 +1891,22 @@ impl<'a> Ctx<'a> {
             let mut capabilities = Map::new();
             let mut data_access = false;
             for (domain, name) in &operation.access {
+                if domain == "create" {
+                    // 공개된 create(expose create)로 새 행을 만든다. 호출은 job 주체의 create allow 규칙을 그대로 거친다.
+                    if !self.res.get(name.as_str()).is_some_and(|resource| resource.expose_create.is_some()) {
+                        self.d(
+                            "DEF.UNKNOWN_SYMBOL",
+                            format!("job 생성 access `create.{name}`는 공개된 create(expose create)여야 함"),
+                            operation.span,
+                        );
+                        continue;
+                    }
+                    data_access = true;
+                    if capabilities.insert(format!("create.{name}"), json!(true)).is_some() {
+                        self.d("DEF.DUPLICATE", "managed capability 중복", operation.span);
+                    }
+                    continue;
+                }
                 if domain == "mongo" || domain == "redis" {
                     // 서버가 소유한 Mongo·Redis capability. 쓰기는 effect 장부에 key로 남고 서버 설정의 쓰기 허용 목록을 따로 거친다.
                     if self.res.contains_key(domain.as_str()) {
