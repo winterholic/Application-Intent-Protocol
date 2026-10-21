@@ -1,5 +1,15 @@
 # 제품 통합 검증 (2026-10-17)
 
+## 2026-10-21 WBS 7.2.2 인증 포팅 1·2단계: 비밀번호 확장과 단회용 refresh 세션 (구현, CI 대기)
+
+**대조한 현재 경로(코드 확인, 서버 실행 아님).** AIP 서버는 외부 IdP가 발급한 RS256 `at+jwt`(최대 900초)만 검증하고 주체를 `service principal bind`로 묶는다([운영](OPERATIONS.md): "로그인·refresh token은 제공자와 앱이 담당"). 서버에는 비밀번호 로그인·토큰 발급·refresh 경로가 없다. 확장(worker)은 검증된 principal로만 실행되므로 로그인 같은 사전 인증 호출을 받을 등록 경로가 없고, `operation`의 입력은 클라이언트가 정한다. 따라서 서버가 직접 읽은 해시를 확장에 넘겨 판정만 받는 서버 주도 호출이 필요하다. 고정 원본(new-facereview `7948b7e`)의 해시는 `werkzeug.security`(requirements `Werkzeug==3.0.2`, bcrypt는 선언만 되고 import되지 않음)이며, 원본 `reissue`는 받은 refresh token을 무효화하지 않고 `logout`은 Redis 블랙리스트에 넣을 뿐 `reissue`가 이를 보지 않아 재발급 replay가 허용된다. 이 결함은 복제하지 않는다.
+
+1단계 `product/providers/password_auth.py`: Werkzeug 3.0.2 형식(`method$salt$hex`, scrypt와 pbkdf2)을 표준 라이브러리만으로 검증·생성한다. 실제 Werkzeug 3.0.2가 만든 해시 8종(scrypt 기본·소형, pbkdf2 sha1/256/512, 한글·이모지, 72자, `$` 포함)을 `fixtures/password-auth/werkzeug-3.0.2.json`에 고정했고 `python3 -m unittest product.tests.password_auth_test`는 7개 중 1개 skip으로 OK다. Werkzeug 3.0.2 venv에서는 `7 tests OK`이며 우리가 만든 해시를 원본 라이브러리가 검증하는 교차 시험이 실행된다. 저장된 해시는 데이터이므로 scrypt n 1024~2^17·r≤16·p≤4, pbkdf2 반복 ≤5,000,000, hash는 sha1/256/512로 제한하고 범위 밖·형식 오류·비문자 입력은 예외 없이 거부한다(원본은 임의 파라미터를 그대로 실행). 시드 fixture의 `pbkdf2:hash-a` 같은 가짜 값도 거부한다. 확장 진입점 `verify_password`는 판정과 재해시 필요 여부만 반환한다. 서버가 이 확장을 호출해 principal을 만드는 부분은 다음 단계이며 이번에는 연결하지 않았다.
+
+2단계 `aip_migrate::mysql_auth_sessions`: `aip_auth_sessions`·`aip_auth_refresh_tokens` 두 표(부트스트랩과 재채택 DDL에 포함)와 `MysqlAuthSessions`. refresh token은 한 번만 쓰고 SHA-256만 저장하며 판정은 DB 시계로 한다. 쓴 토큰의 재사용은 세션 전체 폐기(원본과 다른 의도된 차이), 로그아웃·계정 정지(`revoke_subject`)·idle 7일·절대 30일 만료를 지원한다. 실 MySQL 8.4(34741)와 MariaDB 11.4(34742) 격리 컨테이너에서 `cargo test -p aip-migrate --features mysql --test mysql_auth_sessions -- --ignored --test-threads=1`이 양쪽 모두 `4 passed`다. 8개 동시 refresh 경쟁에서 정확히 1개만 통과한다. 변이 확인: 사용 표시를 지우면 2개, 행 잠금을 지우면 경쟁 시험이 실패했다. `cargo clippy -p aip-migrate --features mysql --all-targets -- -D warnings` 통과, `mysql_jobs`·`mysql_capability_gate` 회귀 `4 passed`·`6 passed`. 한 쪽 동시성 한계: 응답을 잃은 정상 클라이언트가 이미 쓴 토큰을 다시 보내면 replay로 보고 세션을 폐기한다(재로그인 필요). 유예 창은 두지 않았다.
+
+**남은 7.2.2 증분(미구현).** (3) 서버 주도 로그인 경로: 해시 열 읽기(현재 `facereview.aip`의 User resource에 `password` 필드가 없어 서버가 읽는 경로 자체가 없음)와 확장 호출, 로컬 발급자(RS256 서명 키와 JWKS, 세션 id `sid`)와 principal 바인딩. (4) HTTP 경로 `/auth/*`(signup·login·reissue·logout)와 `Set-Cookie`(HttpOnly·Secure·SameSite=None)·CORS credentials. (5) 가입의 role 고정(GENERAL)·클라이언트 owner/role 거부·정지 계정·게스트·권한 상승 부정 시험. (6) 실제 HTTP→MySQL→Python worker E2E. 이 단계는 모두 미실행이다.
+
 ## 2026-10-21 MySQL 관리 파일 저장소 (WBS 7.2.1.3, Linux CI 통과)
 
 같은 Run 소유 컨테이너(MySQL 8.4 loopback 34411, 표준 fixture의 MySQL 8.4 34421·MariaDB 11.4 34422)에서 실행했다. 저장소 시험 `mysql_jobs`(aip-migrate) `mysql_file_store_is_owner_scoped_idempotent_and_expires`가 MySQL·MariaDB 양쪽에서 통과했다(같은 파일 6개 `6 passed`). 같은 이름·바이트·형식·만료의 재전송은 같은 핸들, 다른 바이트·형식·만료는 `FileConflict`, owner·bucket·object key별 이름 분리, 잘못된 이름(`..`)·bucket·형식과 1MiB 초과 거부, 1MiB 정확히는 저장, 다른 owner·다른 bucket의 읽기는 비어 있음, 삭제는 소유자만, 만료된 파일은 읽히지 않고 사용량에서 빠지며 정리가 지우는 것, 이진 바이트(0과 255 포함) 보존, 8개 동시 쓰기에서 같은 본문은 한 파일로 수렴하고 같은 이름의 서로 다른 본문은 정확히 하나만 이기는 것을 확인했다.
