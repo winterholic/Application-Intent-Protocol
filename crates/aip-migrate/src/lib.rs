@@ -4,6 +4,8 @@ pub mod external;
 #[cfg(feature = "mysql")]
 pub mod mysql_adopt;
 #[cfg(feature = "mysql")]
+pub mod mysql_auth_sessions;
+#[cfg(feature = "mysql")]
 pub mod mysql_backend;
 pub mod mysql_catalog;
 #[cfg(feature = "mysql")]

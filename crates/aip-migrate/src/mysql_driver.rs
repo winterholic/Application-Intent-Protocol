@@ -576,6 +576,7 @@ pub(crate) async fn create_meta_tables<Q: Queryable>(conn: &mut Q, meta_schema: 
     statements.extend(crate::mysql_events::event_store_ddl(meta_schema));
     statements.push(crate::mysql_messages::message_store_ddl(meta_schema));
     statements.push(crate::mysql_files::file_store_ddl(meta_schema));
+    statements.extend(crate::mysql_auth_sessions::auth_session_ddl(meta_schema));
     // The relay's receipt that an outbox row became a job: unique per row, written in the same transaction as the job.
     statements.push(format!(
         "CREATE TABLE IF NOT EXISTS `{meta_schema}`.`aip_outbox_dispatch` (\
@@ -643,6 +644,7 @@ pub(crate) fn additive_ddl(meta_schema: &str) -> Vec<String> {
     statements.extend(crate::mysql_events::event_store_ddl(meta_schema));
     statements.push(crate::mysql_messages::message_store_ddl(meta_schema));
     statements.push(crate::mysql_files::file_store_ddl(meta_schema));
+    statements.extend(crate::mysql_auth_sessions::auth_session_ddl(meta_schema));
     statements
 }
 

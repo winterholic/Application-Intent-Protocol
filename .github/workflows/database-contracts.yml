@@ -117,6 +117,16 @@ jobs:
           AIP_TEST_JOBS_URL="$AIP_TEST_MARIADB_URL"
           cargo test -p aip-migrate --features mysql --test mysql_jobs --locked
           -- --ignored --nocapture --test-threads=1
+      - name: Verify MySQL login sessions rotate single-use refresh tokens and revoke on replay
+        run: >-
+          AIP_TEST_JOBS_URL="$AIP_TEST_MYSQL_URL"
+          cargo test -p aip-migrate --features mysql --test mysql_auth_sessions --locked
+          -- --ignored --nocapture --test-threads=1
+      - name: Verify MariaDB login sessions rotate single-use refresh tokens and revoke on replay
+        run: >-
+          AIP_TEST_JOBS_URL="$AIP_TEST_MARIADB_URL"
+          cargo test -p aip-migrate --features mysql --test mysql_auth_sessions --locked
+          -- --ignored --nocapture --test-threads=1
       - name: Verify MySQL policy reads, scalar types and atomic writes over HTTP
         run: >-
           cargo test -p aip-service --features mysql --test mysql_read_http --test mysql_write_http --locked
