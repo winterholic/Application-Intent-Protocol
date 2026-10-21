@@ -373,11 +373,168 @@ impl MongoDriverCapability {
     }
 }
 
+/// Virtual collection served by [`MongoDriverCapability::video_timeline`]. It is a derived view over every viewer's
+/// `youtube_watching_data.emotion_score_timeline`, so a grant to it never opens a raw session document.
+pub const TIMELINE_COLLECTION: &str = "video_emotion_timeline";
+
+pub const TIMELINE_EMOTIONS: [&str; 5] = ["neutral", "happy", "surprise", "sad", "angry"];
+const TIMELINE_BUCKETS: usize = 100;
+/// The original loads every session of the video; this port fails loudly instead of growing without bound.
+const TIMELINE_MAX_DOCS: usize = 50_000;
+const TIMELINE_MAX_ENTRIES: usize = 5_000_000;
+
+/// One timeline key (centisecond offset) with the sum of every session's score per emotion and the number of sessions.
+pub struct TimelineKey {
+    pub key: String,
+    pub sessions: u64,
+    pub sums: [f64; 5],
+}
+
+/// Folds sessions into per-key sums the way `_get_compressed_timeline_data` does: keys in order of first appearance (sessions in
+/// natural order, a session's keys in stored order) and each key's scores added one session at a time with plain float addition.
+/// Mongo's own sum operator compensates its rounding error, which flips a bucket that sits exactly on a rounding boundary, so the
+/// sums are not delegated to the server.
+#[derive(Default)]
+pub struct TimelineAccumulator {
+    keys: Vec<TimelineKey>,
+    index: HashMap<String, usize>,
+    entries: usize,
+}
+
+impl TimelineAccumulator {
+    pub fn add_session(&mut self, timeline: &mongodb::bson::Document) -> Result<(), Reject> {
+        for (key, scores) in timeline {
+            let mongodb::bson::Bson::Array(scores) = scores else { continue };
+            if scores.len() < 5 {
+                continue;
+            }
+            let mut values = [0.0_f64; 5];
+            for (value, score) in values.iter_mut().zip(scores) {
+                *value = match score {
+                    mongodb::bson::Bson::Double(v) => *v,
+                    mongodb::bson::Bson::Int32(v) => f64::from(*v),
+                    mongodb::bson::Bson::Int64(v) => *v as f64,
+                    _ => return Err(reject("WIRE.BAD_VALUE", "timeline 점수가 숫자가 아님")),
+                };
+            }
+            self.entries += 1;
+            if self.entries > TIMELINE_MAX_ENTRIES {
+                return Err(reject("WIRE.BAD_VALUE", "timeline 항목 상한 초과"));
+            }
+            let position = match self.index.get(key) {
+                Some(position) => *position,
+                None => {
+                    self.keys.push(TimelineKey { key: key.clone(), sessions: 0, sums: [0.0; 5] });
+                    self.index.insert(key.clone(), self.keys.len() - 1);
+                    self.keys.len() - 1
+                }
+            };
+            let slot = &mut self.keys[position];
+            for (sum, value) in slot.sums.iter_mut().zip(values) {
+                *sum += value;
+            }
+            slot.sessions += 1;
+        }
+        Ok(())
+    }
+
+    pub fn into_keys(self) -> Vec<TimelineKey> {
+        self.keys
+    }
+}
+
+/// The original `WatchService._get_compressed_timeline_data` arithmetic: each key contributes its per-session average to the
+/// bucket its centisecond offset falls in (`duration` seconds split into 100 buckets), and a bucket reports the mean of its keys'
+/// averages rounded to one decimal. `None` is the original's "default timeline" (no usable key at all). Keys that are not a finite
+/// non-negative number are skipped (the original skips unparsable keys and would crash or wrap on the other odd ones).
+pub fn compress_timeline(keys: &[TimelineKey], duration: Option<i64>) -> Option<Value> {
+    if keys.is_empty() {
+        return None;
+    }
+    let total_cs = match duration {
+        Some(d) if d != 0 => d as f64 * 100.0,
+        _ => 100.0,
+    };
+    let bucket_size = total_cs / TIMELINE_BUCKETS as f64;
+    let mut sums = vec![[0.0_f64; 5]; TIMELINE_BUCKETS];
+    let mut counts = vec![0_u32; TIMELINE_BUCKETS];
+    for key in keys {
+        let Some(cs) = key.key.trim().parse::<f64>().ok().filter(|cs| cs.is_finite() && *cs >= 0.0) else { continue };
+        let index = ((cs / bucket_size) as usize).min(TIMELINE_BUCKETS - 1);
+        for (sum, total) in sums[index].iter_mut().zip(key.sums) {
+            *sum += total / key.sessions as f64;
+        }
+        counts[index] += 1;
+    }
+    let mut lists = serde_json::Map::new();
+    for (i, emotion) in TIMELINE_EMOTIONS.iter().enumerate() {
+        let points: Vec<Value> = (0..TIMELINE_BUCKETS)
+            .map(|x| {
+                let y = if counts[x] > 0 { round_one_decimal(sums[x][i] / f64::from(counts[x])) } else { 0.0 };
+                json!({"x": x + 1, "y": y})
+            })
+            .collect();
+        lists.insert((*emotion).to_string(), Value::Array(points));
+    }
+    Some(Value::Object(lists))
+}
+
+/// Python `round(x, 1)`: both round the exact binary value half to even, which `{:.1}` formatting does too.
+fn round_one_decimal(value: f64) -> f64 {
+    format!("{value:.1}").parse().unwrap_or(0.0)
+}
+
+impl MongoDriverCapability {
+    /// Server-side aggregate of all viewers' timelines of one video (original `GET watch/video` timeline). The caller names the
+    /// video and its duration and receives only the 100-bucket averages; no session document, user id or per-session value leaves.
+    async fn video_timeline(&self, input: &Value) -> Result<Value, Reject> {
+        let allowed = ["command", "video_id", "duration"];
+        if input.as_object().is_none_or(|m| m.keys().any(|k| !allowed.contains(&k.as_str()))) || input["command"] != "timeline" {
+            return Err(reject("WIRE.BAD_VALUE", "timeline 입력이 허용되지 않음"));
+        }
+        let Some(video_id) = input.get("video_id").and_then(Value::as_str).filter(|v| !v.is_empty() && v.len() <= 64) else {
+            return Err(reject("WIRE.BAD_VALUE", "timeline video_id는 문자열이어야 함"));
+        };
+        let duration = match input.get("duration") {
+            None | Some(Value::Null) => None,
+            Some(v) if v.as_i64().is_some_and(|n| (0..=1_000_000).contains(&n)) => v.as_i64(),
+            _ => return Err(reject("WIRE.BAD_VALUE", "timeline duration 범위 오류")),
+        };
+        let coll = self.client.database(&self.database).collection::<mongodb::bson::Document>("youtube_watching_data");
+        let keys = tokio::time::timeout(self.timeout, async {
+            use futures_util::StreamExt;
+            let mut cursor = coll
+                .find(mongodb::bson::doc! {"video_id": video_id})
+                .projection(mongodb::bson::doc! {"emotion_score_timeline": 1, "_id": 0})
+                .await
+                .map_err(|_| reject("WIRE.ADAPTER_UNAVAILABLE", "Mongo timeline 읽기 실패"))?;
+            let mut accumulator = TimelineAccumulator::default();
+            let mut sessions = 0usize;
+            while let Some(doc) = cursor.next().await.transpose().map_err(|_| reject("WIRE.ADAPTER_UNAVAILABLE", "Mongo cursor 실패"))? {
+                sessions += 1;
+                if sessions > TIMELINE_MAX_DOCS {
+                    return Err(reject("WIRE.BAD_VALUE", "timeline 세션 상한 초과"));
+                }
+                if let Ok(timeline) = doc.get_document("emotion_score_timeline") {
+                    accumulator.add_session(timeline)?;
+                }
+            }
+            Ok(accumulator.into_keys())
+        })
+        .await
+        .map_err(|_| reject("WIRE.ADAPTER_UNAVAILABLE", "Mongo timeline timeout"))??;
+        Ok(json!({"timeline": compress_timeline(&keys, duration)}))
+    }
+}
+
 impl MongoCapability for MongoDriverCapability {
     fn call<'a>(&'a self, principal: &'a CapabilityPrincipal, collection: &'a str, input: &'a Value) -> CapabilityFuture<'a, Result<Value, Reject>> {
         Box::pin(async move {
             if !principal.permits("mongo", collection) {
                 return Err(reject("WIRE.ACCESS_NOT_DECLARED", "Mongo capability가 확장에 선언되지 않음"));
+            }
+            if collection == TIMELINE_COLLECTION {
+                return self.video_timeline(input).await;
             }
             if !self.allowed_collections.contains(collection) {
                 return Err(reject("WIRE.CAPABILITY_DENIED", "Mongo collection이 허용되지 않음"));
@@ -660,6 +817,45 @@ fn redis_failure(error: redis::RedisError) -> Reject {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn timeline_key(key: &str, sessions: u64, sums: [f64; 5]) -> TimelineKey {
+        TimelineKey { key: key.into(), sessions, sums }
+    }
+
+    #[test]
+    fn timeline_buckets_average_each_key_first_then_each_bucket_like_the_original() {
+        assert!(compress_timeline(&[], Some(10)).is_none());
+        // 10 s video: bucket width is 10 cs. Keys 0 and 5 share bucket 0, key 10 is bucket 1.
+        // key "0": two sessions summing neutral 30 -> avg 15; key "5": one session neutral 50; bucket 0 mean = (15 + 50) / 2 = 32.5.
+        let keys = [
+            timeline_key("0", 2, [30.0, 10.0, 0.0, 0.0, 0.0]),
+            timeline_key("5", 1, [50.0, 0.0, 0.0, 0.0, 0.0]),
+            timeline_key("10", 1, [7.25, 0.0, 0.0, 0.0, 100.0]),
+            timeline_key("not-a-number", 1, [99.0; 5]),
+            timeline_key("-5", 1, [99.0; 5]),
+        ];
+        let timeline = compress_timeline(&keys, Some(10)).unwrap();
+        assert_eq!(timeline["neutral"][0], json!({"x": 1, "y": 32.5}));
+        assert_eq!(timeline["neutral"].as_array().unwrap().len(), 100);
+        assert_eq!(timeline["happy"][0], json!({"x": 1, "y": 2.5}));
+        assert_eq!(timeline["neutral"][1], json!({"x": 2, "y": 7.2}), "7.25 rounds half to even like Python");
+        assert_eq!(timeline["angry"][1], json!({"x": 2, "y": 100.0}));
+        assert_eq!(timeline["sad"][99], json!({"x": 100, "y": 0.0}));
+        // A key past the end lands in the last bucket; a missing or zero duration means one second, as `duration or 1`.
+        let late = compress_timeline(&[timeline_key("999999", 1, [40.0, 0.0, 0.0, 0.0, 0.0])], None).unwrap();
+        assert_eq!(late["neutral"][99], json!({"x": 100, "y": 40.0}));
+        let zero = compress_timeline(&[timeline_key("50", 1, [40.0, 0.0, 0.0, 0.0, 0.0])], Some(0)).unwrap();
+        assert_eq!(zero["neutral"][50], json!({"x": 51, "y": 40.0}));
+    }
+
+    #[test]
+    fn one_decimal_rounding_matches_python_round_half_even_on_the_binary_value() {
+        // Python: round(0.25, 1) == 0.2, round(0.35, 1) == 0.3 (0.35 is below .35), round(2.675, 2) differs but we only use 1 decimal.
+        assert_eq!(round_one_decimal(0.25), 0.2);
+        assert_eq!(round_one_decimal(0.35), 0.3);
+        assert_eq!(round_one_decimal(0.45), 0.5);
+        assert_eq!(round_one_decimal(12.34999), 12.3);
+    }
 
     #[test]
     fn mongo_scope_requires_exact_grant_while_redis_prefix_grants_stay_namespaced() {

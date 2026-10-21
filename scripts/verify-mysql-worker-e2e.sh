@@ -184,6 +184,14 @@ if [[ "$mode" == run-ci ]]; then
   grep -Fxq "$recommend_test: test" /tmp/aip-e2e-recommend-list-"$tag".txt
   cargo test "${recommend_args[@]}" -- --ignored --exact "$recommend_test" --nocapture --test-threads=1 2>&1 | tee /tmp/aip-e2e-recommend-run-"$tag".txt
   grep -Fq "test result: ok. 1 passed; 0 failed;" /tmp/aip-e2e-recommend-run-"$tag".txt
+  # The watch detail (WBS 7.2.5) adds the server-side all-viewer timeline aggregate and the `view` increment on the same fixtures.
+  echo "=== Running the watch detail end-to-end test (real aip binary, Python extension in the sandbox, real MySQL and MongoDB) ==="
+  watch_args=(--locked -p aip-cli --features mysql --test mysql_facereview_watch)
+  watch_test="facereview_watch_detail_matches_the_original_service_through_the_real_server"
+  cargo test "${watch_args[@]}" -- --list --ignored 2>&1 | tee /tmp/aip-e2e-watch-list-"$tag".txt | tail -3
+  grep -Fxq "$watch_test: test" /tmp/aip-e2e-watch-list-"$tag".txt
+  cargo test "${watch_args[@]}" -- --ignored --exact "$watch_test" --nocapture --test-threads=1 2>&1 | tee /tmp/aip-e2e-watch-run-"$tag".txt
+  grep -Fq "test result: ok. 1 passed; 0 failed;" /tmp/aip-e2e-watch-run-"$tag".txt
   # The administrator lists (WBS 7.2.9) compare the real server's reads and totals with the original AdminService's recorded answers.
   echo "=== Running the administrator list end-to-end test (real aip binary, real MySQL) ==="
   admin_args=(--locked -p aip-cli --features mysql --test mysql_facereview_admin)

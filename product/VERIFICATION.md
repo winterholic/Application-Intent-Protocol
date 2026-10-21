@@ -1,5 +1,21 @@
 # 제품 통합 검증 (2026-10-17)
 
+## 2026-10-22 WBS 7.2.5 조각 A: `GET watch/video` 전 시청자 타임라인 집계와 조회수 전이 (구현 조각, 로컬 실DB·실서버·원본 서비스 대조 통과, 7.2.5는 진행 중)
+
+7.2.3이 넘긴 두 가지를 풀었다. (1) Mongo capability에 **파생 컬렉션** `video_emotion_timeline`을 더했다. 확장이 `access mongo.video_emotion_timeline`을 선언하고 `{command: "timeline", video_id, duration}`을 부르면 서버가 그 영상의 모든 시청 세션을 읽어 원본 `_get_compressed_timeline_data`와 같은 계산(센티초 키별 세션 평균, `duration`초를 100버킷으로 나눈 키 평균, 소수 한 자리 반올림)을 하고 100개 버킷 평균만 돌려준다. 세션 문서·user_id·세션별 값은 나가지 않고, 이 grant는 원본 `youtube_watching_data`(호출자 본인 전용)를 열지 않는다. (2) `Video.view` 전이(`view_count = this.view_count + 1, updated_at = now`, 삭제된 영상 제외)와 `expose apply view`를 더해 원본이 GET 안에서 하던 증가를 호출자가 읽기 뒤에 명시 호출한다. 정의에 `Video.watchDetail` 읽기 확장이 생겨 원본 `VideoDetailDto`(좋아요·북마크 여부, 좋아요·댓글 수, 타임라인 포함)를 한 번에 돌려준다.
+
+정의 언어가 증감 대입을 null이 아닌 Int에만 허용해서, `video.view_count`를 NOT NULL로 바꾸는 DBA 단계(`db-defaults.sql`: NULL 보정 후 `NOT NULL DEFAULT 0`)를 더했다. 원본은 NULL을 쓰지 않고 NULL이면 500이다. 이 변경이 기존 대조에 영향을 주지 않는지 `mysql_facereview_reads`·`recommend`·`admin`·`auth`를 같은 컨테이너에서 다시 돌려 모두 `1 passed`였다.
+
+**대조(실제 `aip service serve`, 격리 MySQL 8.4 35441·MongoDB 7 35442).** `reference/slice13f_oracle.py`가 같은 데이터에서 고정 원본(`7948b7e7`)의 `WatchService.get_video_detail`을 직접 실행해 비교했다. 영상 12개(60초 영상 다세션, 길이 NULL, 길이 0, 세션 없음, 3초 영상, 시드 영상, 삭제·NULL 플래그·없는 영상)와 호출자 3명(36건)에 `view` 쓰기 5건과 증가 뒤 재읽기 1건을 더해 `42/42 cases matched`다. 원본 `get_video_detail`이 `@transactional`이라 자기 증가분을 커밋하므로 오라클이 증가분이 정확히 +1임을 확인한 뒤 행을 되돌려 양쪽이 같은 데이터를 읽게 했다. 같은 명령 3회 `slice13f-golden.json`이 동일(`cmp`)했다. 세션 시드는 고정 RNG(`slice13f_make_seed.py`)이고 세션 19개, 타임라인 항목 830개(무작위 소수 둘째 자리 점수)에 짧은 배열·숫자 아닌 키·빈 타임라인·정수 점수를 포함한다.
+
+**시험이 찾은 것.** 첫 실행은 39/42였다. 3초 영상의 한 버킷이 원본 48.1, 이 포트 48.2였다. MongoDB의 `$sum`은 합산 오차를 보정해서 원본의 단순 float 합과 마지막 비트가 달랐고, 그 값이 반올림 경계에 있었다. 서버 쪽 합산을 원본과 같은 순서의 단순 합으로 바꾸자(세션은 natural order, 세션 안 키는 저장 순서) 42/42가 되었다. 정의 언어는 nullable Int 증감을 거절하고 어댑터는 `NOT NULL`이 아닌 열을 NOT NULL 필드에 연결하지 않아서(`nullable 불일치`) 두 번 막힌 끝에 위의 DBA 단계를 택했다.
+
+**변이 확인.** 반올림을 내림(`floor(x*10)/10`)으로 바꾸자 `mysql_facereview_watch`가 `watch/video alice timeline 60s: timeline`에서 60.0 대 60.1로 실패했고, 되돌리자 통과했다.
+
+**명령(로컬).** `cargo test --test native_capabilities`(spike-v4-worker, 실제 Mongo 7·Redis 7.4 컨테이너) 4 passed(새 `timeline_collection_aggregates_all_viewers_without_exposing_sessions`: 두 시청자 합산, 깨진 세션·짧은 배열 건너뜀, 세션 필드가 응답에 없음, grant 없이는 `WIRE.ACCESS_NOT_DECLARED`, 원문 명령·추가 입력·음수 duration은 `WIRE.BAD_VALUE`, 이 grant로 원본 컬렉션 거절). `cargo test --lib -- timeline one_decimal` 2 passed. `cargo test -p aip-cli --features mysql --test mysql_facereview_watch -- --ignored`가 `1 passed`(골든 재생 36건과 `view` 두 번 뒤 조회수 12, 삭제·없는 영상 `WIRE.MISSING_TARGET`, 손님 `WIRE.UNAUTHENTICATED`). `cargo fmt --all --check`와 변경한 크레이트의 `clippy -D warnings`(aip-cli mysql·poc-runtime, spike-v4-worker, spike-v1-fixture, workspace lib·bins)는 경고 없이 통과했다.
+
+**알려진 차이·한계.** 위 README의 "Slice13-F"와 같다: 타임라인이 없는 영상의 기본 타임라인, 세션 50000개·항목 5000000개 상한(원본은 무제한), 음수·비유한 키 건너뜀, 비객체 타임라인(원본은 500)과 숫자가 아닌 점수(실패)의 처리, 없는/삭제된 영상은 `WIRE.EXTENSION_ERROR`, 손님은 확장 경로가 거절한다. Mongo 쓰기·Redis 쓰기·saga는 이 조각에 없다(7.2.5의 다음 조각).
+
 ## 2026-10-21 WBS 7.2.9 관리자 목록 읽기: 회원·영상 요청·영상·댓글 (구현 조각, 로컬 실DB·실서버·원본 서비스 대조 통과, 7.2.9는 미완)
 
 원본 `AdminService.get_users`·`get_video_requests`·`get_videos`·`get_comments`가 하는 읽기를 정식 정의로 옮겼다. 정의 변경: `User`에 행별 집계 `watchCount`(시청 기록 행 수)·`commentCount`(삭제된 댓글도 센다)와 관리자 전용 `totalCount`, `name.like`·`email.like` 필터, `VideoRequest`에 `traverse user`와 관리자 전용 `totalCount`, `Comment`에 `content.like`·`traverse video`와 관리자 전용 `totalCount`(`access adminOnly`). 총계는 호출자 필터를 받는 집계라 비관리자는 `WIRE.ACCESS_DENIED`다. 영상 목록은 7.2.3의 `likeCount`·`commentCount`와 `Video.totalCount`를 그대로 쓴다.

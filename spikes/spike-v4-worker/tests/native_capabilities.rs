@@ -116,6 +116,74 @@ async fn mongo_driver_reads_fixture_and_enforces_principal_and_input_bounds() {
 }
 
 #[tokio::test]
+async fn timeline_collection_aggregates_all_viewers_without_exposing_sessions() {
+    let uri = endpoint("AIP_TEST_MONGO_URL", "15441");
+    let database = "aip_test_slice13a";
+    let direct = mongodb::Client::with_uri_str(&uri).await.expect("dedicated Mongo fixture");
+    let collection = direct.database(database).collection::<mongodb::bson::Document>("youtube_watching_data");
+    let video = "timeline-slice-7-2-5";
+    let other = "timeline-slice-7-2-5-other";
+    collection.delete_many(mongodb::bson::doc! {"video_id":{"$in":[video, other]}}).await.expect("clear dedicated fixture rows");
+    collection
+        .insert_many([
+            // two viewers share key "0"; viewer 7 also has "5"; one malformed array and one non-object timeline are skipped
+            mongodb::bson::doc! {"user_id":7_i64, "video_id":video, "emotion_score_timeline":{"0":[10.0_f64,20.0,0.0,0.0,70.0],"5":[50_i32,0,0,0,50], "9":[1.0_f64,2.0]}},
+            mongodb::bson::doc! {"user_id":8_i64, "video_id":video, "emotion_score_timeline":{"0":[30.0_f64,0.0,0.0,0.0,70.0]}},
+            mongodb::bson::doc! {"user_id":9_i64, "video_id":video, "emotion_score_timeline":"broken"},
+            mongodb::bson::doc! {"user_id":9_i64, "video_id":video},
+            mongodb::bson::doc! {"user_id":8_i64, "video_id":other, "emotion_score_timeline":{"0":[99.0_f64,0.0,0.0,0.0,1.0]}},
+        ])
+        .await
+        .expect("seed dedicated fixture rows");
+    let driver = MongoDriverCapability::connect(&uri, database, 2, Duration::from_secs(2)).await.expect("driver readiness");
+    // The caller (user 11) owns none of these sessions: the aggregate must still answer, and must not be reachable without its grant.
+    let reader = principal(Some(11), &["mongo.video_emotion_timeline"]);
+    let answer = driver
+        .call(&reader, "video_emotion_timeline", &json!({"command":"timeline","video_id":video,"duration":1}))
+        .await
+        .expect("aggregate over every viewer");
+    let timeline = &answer["timeline"];
+    // key "0": neutral (10 + 30) / 2 = 20, angry 70; key "5": neutral 50, angry 50. Duration 1 s: bucket width 1 cs.
+    assert_eq!(timeline["neutral"][0], json!({"x":1,"y":20.0}));
+    assert_eq!(timeline["angry"][0], json!({"x":1,"y":70.0}));
+    assert_eq!(timeline["happy"][0], json!({"x":1,"y":10.0}));
+    assert_eq!(timeline["neutral"][5], json!({"x":6,"y":50.0}));
+    assert_eq!(timeline["neutral"][9], json!({"x":10,"y":0.0}), "the two-element array is not a usable key");
+    let serialized = answer.to_string();
+    for private in ["user_id", "video_view_log_id", "client_info"] {
+        assert!(!serialized.contains(private), "aggregate must not carry `{private}`");
+    }
+    let empty = driver
+        .call(&reader, "video_emotion_timeline", &json!({"command":"timeline","video_id":"timeline-slice-7-2-5-none"}))
+        .await
+        .expect("no sessions");
+    assert!(empty["timeline"].is_null(), "no usable key means the caller falls back to the default timeline");
+    // Without the grant, with raw-document commands, or with extra inputs the aggregate stays closed.
+    assert_eq!(
+        driver
+            .call(&principal(Some(11), &["mongo.youtube_watching_data"]), "video_emotion_timeline", &json!({"command":"timeline","video_id":video}))
+            .await
+            .unwrap_err()
+            .code,
+        "WIRE.ACCESS_NOT_DECLARED"
+    );
+    for bad in [
+        json!({"command":"find","filter":{}}),
+        json!({"command":"timeline"}),
+        json!({"command":"timeline","video_id":video,"filter":{"user_id":7}}),
+        json!({"command":"timeline","video_id":video,"duration":-1}),
+    ] {
+        assert_eq!(driver.call(&reader, "video_emotion_timeline", &bad).await.unwrap_err().code, "WIRE.BAD_VALUE", "{bad}");
+    }
+    // The grant to the aggregate does not open the raw collection.
+    assert_eq!(
+        driver.call(&reader, "youtube_watching_data", &json!({"command":"find","filter":{}})).await.unwrap_err().code,
+        "WIRE.ACCESS_NOT_DECLARED"
+    );
+    collection.delete_many(mongodb::bson::doc! {"video_id":{"$in":[video, other]}}).await.expect("clear dedicated fixture rows");
+}
+
+#[tokio::test]
 async fn redis_driver_reads_every_mget_key_and_rejects_mixed_scope() {
     let uri = endpoint("AIP_TEST_REDIS_URL", "15442");
     let client = redis::Client::open(uri.as_str()).expect("dedicated Redis fixture");

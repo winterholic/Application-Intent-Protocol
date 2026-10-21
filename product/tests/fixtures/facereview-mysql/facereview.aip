@@ -103,7 +103,7 @@ resource Video {
     channel_name: Text(1..100)?
     category: Genre
     duration: Int(0..1000000)?
-    view_count: Int(0..1000000000)?
+    view_count: Int(0..1000000000) default database
     is_deleted: Bool?
     created_at: Time default database
     updated_at: Time default database
@@ -115,7 +115,16 @@ resource Video {
     to is_deleted = true, updated_at = now
     repeat unchanged
   }
+  // The original's `video.view_count += 1` inside GET watch/video. A read cannot write, so the caller applies this after the
+  // detail read (the original answers with the count from before the increment). The column is NOT NULL after db-defaults.sql, so the
+  // original's 500 on a NULL count cannot happen here.
+  transition view {
+    allow actor = null or active(actor)
+    from is_deleted = false
+    to view_count = this.view_count + 1, updated_at = now
+  }
   expose apply remove { target id; bulk maxRows 1 }
+  expose apply view { target id; bulk maxRows 1 }
   expose read {
     select id, youtube_url, title, channel_name, category, duration, view_count, created_at, likeCount, commentCount
     filter id.eq, id.in, category.eq, title.like, channel_name.like, youtube_url.eq
@@ -201,6 +210,20 @@ resource Video {
     effect none
     deadline 20s
     implementation "slice13d_recommend.watchRecommended"
+  }
+  // GET watch/video: the detail with the all-viewer emotion timeline. The timeline is a server-side aggregate (`mongo.video_emotion_timeline`
+  // derives the 100 buckets; no session document is readable through it). The view count is not incremented here; see `view`.
+  extension read watchDetail {
+    input { video_id: Video.Id }
+    output {
+      video_id: Text; youtube_url: Text; title: Text; channel_name: Text; category: Text
+      duration: Int(0..1000000)?; view_count: Int(0..1000000000); like_count: Int(0..1000000000); comment_count: Int(0..1000000000)
+      user_is_liked: Bool; is_bookmarked: Bool; timeline_data: Text
+    }
+    access mongo.video_emotion_timeline
+    effect none
+    deadline 20s
+    implementation "slice13f_watch.watchDetail"
   }
 }
 

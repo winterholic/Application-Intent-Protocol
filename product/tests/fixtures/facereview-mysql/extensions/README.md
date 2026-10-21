@@ -101,10 +101,39 @@ padding source has one outcome), and the pool is smaller than 150 (no exploratio
 
 ### Not ported in WBS 7.2.3 (handed to the named items)
 
-- `GET watch/video` (detail, 7.2.5): its timeline averages every viewer's `emotion_score_timeline`, but the Mongo capability only
-  returns the caller's own sessions of `youtube_watching_data` by design, and a write extension can only call transitions, so the
-  detail read and the original's `view_count += 1` inside the GET cannot be one request. It needs an aggregate capability or a
-  derived collection, and an explicit view transition.
+- `GET watch/video` (detail): ported by WBS 7.2.5, see "Slice13-F" below.
 - `POST home/video/recommend` (7.2.9): `VideoRequest.create` exists, but the original derives `youtube_full_url` on the server, rejects
   a URL that any member requested before (the caller cannot read other members' requests) and stores the batch in one transaction.
   The derived value and the global duplicate check need a computed default and a unique index on `video_request.youtube_url`.
+
+## Slice13-F: watch detail (WBS 7.2.5)
+
+`slice13f_watch.py` ports `GET watch/video` (`new-facereview@7948b7e7`, `watch_service.py` `get_video_detail`):
+
+| Original | AIP | Notes |
+|---|---|---|
+| `GET watch/video` | `Video.watchDetail` (read extension) | the original's `VideoDetailDto`, `timeline_data` as JSON text |
+| `video.view_count += 1` inside the GET | `Video.view` (transition, `apply`) | the caller applies it after the read; the read answers with the count from before |
+
+The all-viewer timeline cannot come from `mongo.youtube_watching_data` (private to the caller). The extension declares
+`access mongo.video_emotion_timeline`, a **derived** collection of the Mongo capability (`spikes/spike-v4-worker/src/capability.rs`
+`video_timeline`): the server reads the video's sessions, adds the scores key by key in the original's order and returns only the 100
+bucket averages. No session document, user id or per-session value leaves, and the grant does not open the raw collection.
+
+### Differences from the original (deliberate, or limits found)
+
+- `view_count` is `NOT NULL` after `db-defaults.sql` (backfill of stray NULLs, `DEFAULT 0`): the definition language counts only on a
+  non-null Int, and the original never writes NULL (it returns a 500 on one).
+- A video with no usable timeline key gets the original's default timeline (one point `x=1, y=0.0` per emotion). A session whose
+  `emotion_score_timeline` is not an object, an array shorter than 5 and a key that is not a number are skipped, as the original does
+  (a non-object timeline crashes the original with a 500). A score that is not a number fails loudly.
+- At most 50000 sessions and 5000000 timeline entries of one video are read; beyond that the call fails loudly. The original is unbounded.
+- Keys are summed in the original's order (sessions in natural order, a session's keys in stored order) with plain float addition. Mongo's
+  own `$sum` compensates its rounding error, which moved one bucket sitting exactly on a rounding boundary (48.1 against 48.2) in the first run.
+- A negative or non-finite key is skipped (the original would wrap around or crash).
+- `GET watch/video` of an unknown or soft-deleted video is `WIRE.EXTENSION_ERROR` (original: 404 VIDEO_NOT_FOUND). Guests are refused by
+  the extension route (see the 7.2.3 list above).
+
+`reference/slice13f_oracle.py` runs the original `get_video_detail` (which commits its own increment; the oracle records `+1` and restores
+the row) against the same MySQL 8.4 and MongoDB as the real server for 3 callers x 12 videos, then applies `Video.view`.
+`crates/aip-cli/tests/mysql_facereview_watch.rs` replays `slice13f-golden.json`. `reference/slice13f_make_seed.py` writes the sessions.

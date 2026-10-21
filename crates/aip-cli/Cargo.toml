@@ -29,6 +29,10 @@ name = "mysql_facereview_recommend"
 required-features = ["mysql"]
 
 [[test]]
+name = "mysql_facereview_watch"
+required-features = ["mysql"]
+
+[[test]]
 name = "mysql_facereview_admin"
 required-features = ["mysql"]
 

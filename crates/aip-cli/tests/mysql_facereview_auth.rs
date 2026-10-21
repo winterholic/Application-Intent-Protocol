@@ -29,7 +29,8 @@ const SEED: &str = include_str!("../../../product/tests/fixtures/facereview-mysq
 const WERKZEUG: &str = include_str!("../../../product/tests/fixtures/password-auth/werkzeug-3.0.2.json");
 const PASSWORD_AUTH_PY: &str = include_str!("../../../product/providers/password_auth.py");
 // The definition declares the home and watch list extensions, and `serve` refuses a worker directory that lacks any of them.
-const LIST_EXTENSIONS: [(&str, &str); 4] = [
+const LIST_EXTENSIONS: [(&str, &str); 5] = [
+    ("slice13f_watch.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13f_watch.py")),
     ("slice13b_lists.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13b_lists.py")),
     ("slice13d_recommend.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13d_recommend.py")),
     ("recommendation_math.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/recommendation_math.py")),
