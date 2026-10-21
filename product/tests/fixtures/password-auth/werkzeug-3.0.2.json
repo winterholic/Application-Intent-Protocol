@@ -1,0 +1,37 @@
+{
+ "werkzeug": "3.0.2",
+ "cases": [
+  {
+   "password": "password123",
+   "hash": "scrypt:32768:8:1$laLbAANaOsRjhW77$c547ec80882bc474813d7ffb2b70d90e2653b875cfb8fc92903df365bef375d0fc0749a756eaa7eb087912050e96fd1062bd6d734b4fc75f9fffebc5f3bea673"
+  },
+  {
+   "password": "한글비밀번호🙂abc",
+   "hash": "scrypt:32768:8:1$URh2rwc0NCyv6CU1$309cdc5da54118e3cefa8035df2d5d6df7a934f4e94c49fb9995b5012046f1201deabc60c45dbd1a5388401cd0f31d851ed2430ca1fc9c341ccacd55412076f0"
+  },
+  {
+   "password": "pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+   "hash": "scrypt:32768:8:1$sVROjKhQCWomANcq$50cc4a81d4f7f32ca30f82c4d768af696f0517af626fa73599792c62d70024adcc4cf87e9727797e3a7eb312a027221f388d356477a4ae93bb325594fd9efe87"
+  },
+  {
+   "password": "short8!!",
+   "hash": "pbkdf2:sha256:600000$5Vkf2xPSvBqUcwEX$b9f766a2f58433c10a83726ef0e196bbfe57e75bdd11bf6d7b756511ae27242c"
+  },
+  {
+   "password": "sha1-legacy",
+   "hash": "pbkdf2:sha1:1000$ApMYvSzZ8RfEcV7d$b58a4fb6a3cce2092a1b0cfa1eb74b65d3e8113a"
+  },
+  {
+   "password": "sha512-case",
+   "hash": "pbkdf2:sha512:2000$zdr4O5Q0RlzOFCLg$1665c9590959182990333a9938f6553ee92dec2057903ceae124851fa9ea995b19a8c922893ae37f6b5b4e304a3fee79befe901e04d52a1770f3eedaeef75ecf"
+  },
+  {
+   "password": "scrypt-small",
+   "hash": "scrypt:1024:8:1$KJDQF7yQM11yDkgn$93ae0b8ac6b270b071f63d6d581be7e57ef83b1bd76415938be1f300b7962d1db34fcea736144e3660f5ee5bca9888cc32edcadd1ddd7f6bb6b7173063971731"
+  },
+  {
+   "password": "with$dollar$signs$",
+   "hash": "scrypt:32768:8:1$3R08G8VBrz2Q0K3R$986e1c7f38aa80ff31e7e58c1812138459f0322037fe8b96f69440a94e8ea19dbbad33492e8e7109d143b7b6853493e7d29c5ab2a20c6cdf12d04fc09d55da7b"
+  }
+ ]
+}
