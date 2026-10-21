@@ -378,6 +378,32 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
         (409, json!("WIRE.ALREADY_EXISTS"), json!("duplicate_email"))
     );
 
+    // --- concurrent signups: different emails all succeed (no gap-lock deadlock), the same email succeeds exactly once.
+    let mut signups = Vec::new();
+    for index in 0..6 {
+        let address = address.clone();
+        let email = if index < 4 { format!("burst{index}@example.com") } else { "twin@example.com".to_owned() };
+        signups.push(tokio::spawn(async move {
+            auth(
+                &address,
+                "/auth/signup",
+                &json!({"email": email, "password": "longenough1", "name": "동시가입", "favorite_genres": ["music"]}),
+                None,
+            )
+            .await
+        }));
+    }
+    let mut replies = Vec::new();
+    for signup in signups {
+        replies.push(signup.await.unwrap());
+    }
+    let mut statuses: Vec<u16> = replies.iter().map(|reply| reply.status).collect();
+    let bodies: Vec<String> = replies.iter().map(|reply| reply.body.to_string()).collect();
+    assert_eq!(statuses[..4], [201, 201, 201, 201], "{statuses:?} {bodies:?}");
+    statuses[4..].sort_unstable();
+    assert_eq!(statuses[4..], [201, 409], "{statuses:?} {bodies:?}");
+    assert_eq!(cell(&mut setup, "SELECT COUNT(*) FROM user WHERE email = 'twin@example.com'").await.as_deref(), Some("1"));
+
     // --- the token works as the bound actor, and as nothing more.
     let own = read_users(Some(newbie.clone())).await;
     assert_eq!(own["ok"], true, "{own}");
@@ -501,8 +527,8 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
     let carol_all = read_users(Some(access(&carol_login))).await;
     assert_eq!(
         carol_all["rows"].as_array().unwrap().len(),
-        7,
-        "the SUPER_ADMIN reads every account, by the row policy and not by a claim: {carol_all}"
+        12,
+        "the SUPER_ADMIN reads every account (5 seed, legacy, signed-up, 5 from the burst) by the row policy and not by a claim: {carol_all}"
     );
     let carol_sid = claims(&access(&carol_login))["sid"].as_str().unwrap().to_owned();
     let mint = |subject: &str, sid: &str, key: &RsaPrivateKey, kid: &str, extra: Value| {

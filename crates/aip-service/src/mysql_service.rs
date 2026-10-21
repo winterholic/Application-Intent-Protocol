@@ -276,14 +276,9 @@ pub(crate) async fn bind_principal(
             .map_err(|_| error("PRINCIPAL_FAILED", "운영 신원 등록 실패"))?;
         handle
     };
-    // An existing binding keeps its actor; only the same actor may be re-bound.
-    let existing: Option<i64> = tx
-        .exec_first(format!("SELECT actor_id FROM `{schema}`.`aip_principals` WHERE issuer = ? AND subject = ? FOR UPDATE"), (issuer, subject))
-        .await
-        .map_err(|_| error("PRINCIPAL_FAILED", "actor 존재·매핑 테이블·DB 권한을 확인해야 함"))?;
-    if existing.is_some_and(|current| current != handle) {
-        return Err(error("PRINCIPAL_CONFLICT", "이미 연결된 신원의 actor를 바꿀 수 없음"));
-    }
+    // An existing binding keeps its actor; only the same actor may be re-bound. The upsert comes first and the row it leaves (now locked
+    // by this transaction) is compared afterwards: a locking read of a key that does not exist yet takes a gap lock, and two
+    // transactions binding different new subjects at once then deadlock. A conflict returns an error, which rolls the upsert back.
     tx.exec_drop(
         format!(
             "INSERT INTO `{schema}`.`aip_principals` (issuer, subject, actor_id, enabled, min_iat) VALUES (?, ?, ?, 1, ?) \
@@ -293,6 +288,13 @@ pub(crate) async fn bind_principal(
     )
     .await
     .map_err(|_| error("PRINCIPAL_FAILED", "actor 존재·매핑 테이블·DB 권한을 확인해야 함"))?;
+    let bound: Option<i64> = tx
+        .exec_first(format!("SELECT actor_id FROM `{schema}`.`aip_principals` WHERE issuer = ? AND subject = ?"), (issuer, subject))
+        .await
+        .map_err(|_| error("PRINCIPAL_FAILED", "actor 존재·매핑 테이블·DB 권한을 확인해야 함"))?;
+    if bound != Some(handle) {
+        return Err(error("PRINCIPAL_CONFLICT", "이미 연결된 신원의 actor를 바꿀 수 없음"));
+    }
     Ok(())
 }
 

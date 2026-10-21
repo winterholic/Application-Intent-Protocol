@@ -24,6 +24,7 @@ use std::time::Duration;
 /// exhaust the host. Requests beyond it are told to come back instead of queueing.
 const MAX_CONCURRENT_HASHING: usize = 4;
 const HASH_DEADLINE: Duration = Duration::from_secs(10);
+const HASH_QUEUE: Duration = Duration::from_secs(5);
 /// A real, valid scrypt hash of a password nobody has. Checking a login for an unknown email against it keeps that
 /// answer as slow as a wrong password, so response time does not say which emails have accounts.
 const DECOY_HASH: &str = "scrypt:32768:8:1$U4NpDaHhisZBcgqK$2f67362298b732a37ce8754c4d643673eaccbd3631ced43122d83e24f1252c203bdf30d0cdf9ee5087b38c3255441d4efb564b104c8f663f613b11935a89450a";
@@ -332,7 +333,10 @@ impl CredentialService {
 
     /// One call of an extension operation in a fresh sandboxed worker. The input is built by the server, never by a request.
     async fn run_operation(&self, operation: &str, input: Value) -> Outcome<Value> {
-        let Ok(_permit) = self.hashing.try_acquire() else { return Err(Fail::Status(429, "WIRE.RATE_LIMITED", "busy")) };
+        // A short queue absorbs a burst of signups; a request that would wait longer than the queue allows is turned away.
+        let Ok(Ok(_permit)) = tokio::time::timeout(HASH_QUEUE, self.hashing.acquire()).await else {
+            return Err(Fail::Status(429, "WIRE.RATE_LIMITED", "busy"));
+        };
         let dir = self.workers.dir.to_str().ok_or(Fail::Status(503, "WIRE.WORKER_FAILED", "worker_failed"))?;
         let caller = Caller { actor_id: None, now: "1970-01-01T00:00:00.000000Z".into() };
         let work = async {
@@ -436,13 +440,8 @@ impl CredentialService {
 
         let mut fenced = self.begin().await?;
         let tx = fenced.as_mut().map_err(db)?;
-        let taken: Option<u8> = tx
-            .exec_first(format!("SELECT 1 FROM {} WHERE `{}` = ? FOR UPDATE", self.src(&self.table), self.identifier), (&email,))
-            .await
-            .map_err(db)?;
-        if taken.is_some() {
-            return Err(Fail::Status(409, "WIRE.ALREADY_EXISTS", "duplicate_email"));
-        }
+        // No look-before-insert: the identifier's UNIQUE index (checked at startup) decides. A locking pre-read would only add gap
+        // locks that make two concurrent signups deadlock.
         let mut columns =
             vec![self.id.clone(), self.identifier.clone(), self.secret.clone(), self.name.clone(), self.role.clone(), self.active.clone()];
         let mut values = vec!["?".to_owned(), "?".into(), "?".into(), "?".into(), "?".into(), "0".into()];
@@ -501,7 +500,7 @@ impl CredentialService {
     async fn bind(&self, tx: &mut Transaction<'static>, user_id: &str) -> Outcome<()> {
         let existing: Option<i64> = tx
             .exec_first(
-                format!("SELECT enabled FROM {} WHERE issuer = ? AND subject = ? FOR UPDATE", self.meta_table("aip_principals")),
+                format!("SELECT enabled FROM {} WHERE issuer = ? AND subject = ?", self.meta_table("aip_principals")),
                 (&self.issuer_name, user_id),
             )
             .await
