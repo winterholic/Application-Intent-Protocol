@@ -320,10 +320,11 @@ impl MongoDriverCapability {
             .map_err(|_| reject("WIRE.ADAPTER_UNAVAILABLE", "Mongo readiness 실패"))?;
         let allowed_collections =
             ["video_distribution", "youtube_watching_data", "video_timeline_emotion_count"].into_iter().map(str::to_string).collect();
-        let allowed_fields = ["_id", "video_id", "user_id", "dominant_emotion", "created_at", "emotion_score_timeline", "total_frames"]
-            .into_iter()
-            .map(str::to_string)
-            .collect();
+        let allowed_fields =
+            ["_id", "video_id", "user_id", "dominant_emotion", "created_at", "emotion_score_timeline", "emotion_percentages", "total_frames"]
+                .into_iter()
+                .map(str::to_string)
+                .collect();
         Ok(Self { client, database: database.into(), allowed_collections, allowed_fields, max_docs: 100, max_bytes: 1_048_576, timeout })
     }
 

@@ -21,13 +21,14 @@ async fn mongo_driver_reads_fixture_and_enforces_principal_and_input_bounds() {
     let direct = mongodb::Client::with_uri_str(&uri).await.expect("dedicated Mongo fixture");
     let collection = direct.database(database).collection::<mongodb::bson::Document>("youtube_watching_data");
     collection
-        .delete_many(mongodb::bson::doc! {"user_id":{"$in":[7_i64,8_i64]}, "video_id":{"$in":[1_i64,2_i64,3_i64]}})
+        .delete_many(mongodb::bson::doc! {"user_id":{"$in":[7_i64,8_i64]}, "video_id":{"$in":[1_i64,2_i64,3_i64,4_i64]}})
         .await
         .expect("clear dedicated fixture rows");
     collection
         .insert_many([
             mongodb::bson::doc! {"user_id":7_i64, "video_id":1_i64},
             mongodb::bson::doc! {"user_id":8_i64, "video_id":2_i64},
+            mongodb::bson::doc! {"user_id":7_i64, "video_id":4_i64, "emotion_percentages":{"happy":0.75_f64,"sad":0.25_f64}, "client_info":"private"},
             mongodb::bson::doc! {"user_id":7_i64, "video_id":3_i64, "emotion_score_timeline":"x".repeat(1_100_000)},
         ])
         .await
@@ -48,6 +49,21 @@ async fn mongo_driver_reads_fixture_and_enforces_principal_and_input_bounds() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0]["user_id"], 7);
     assert_eq!(rows[0]["video_id"], 1);
+    // The recommendation profile reads only the per-session emotion shares; fields outside the allowlist stay unreachable.
+    let shares = driver
+        .call(&owner, "youtube_watching_data", &json!({"command":"find","filter":{"video_id":4},"projection":{"video_id":1,"emotion_percentages":1}}))
+        .await
+        .expect("emotion percentages are projectable");
+    assert_eq!(shares["docs"][0]["emotion_percentages"], json!({"happy": 0.75, "sad": 0.25}));
+    assert!(shares["docs"][0].get("client_info").is_none());
+    assert_eq!(
+        driver
+            .call(&owner, "youtube_watching_data", &json!({"command":"find","filter":{"video_id":4},"projection":{"client_info":1}}))
+            .await
+            .unwrap_err()
+            .code,
+        "WIRE.BAD_VALUE"
+    );
     assert_eq!(
         driver.call(&owner, "youtube_watching_data", &json!({"command":"find","filter":{"user_id":8}})).await.unwrap_err().code,
         "WIRE.ACCESS_DENIED"
@@ -94,7 +110,7 @@ async fn mongo_driver_reads_fixture_and_enforces_principal_and_input_bounds() {
         "WIRE.CAPABILITY_DENIED"
     );
     collection
-        .delete_many(mongodb::bson::doc! {"user_id":{"$in":[7_i64,8_i64]}, "video_id":{"$in":[1_i64,2_i64,3_i64]}})
+        .delete_many(mongodb::bson::doc! {"user_id":{"$in":[7_i64,8_i64]}, "video_id":{"$in":[1_i64,2_i64,3_i64,4_i64]}})
         .await
         .expect("clear dedicated fixture rows");
 }
