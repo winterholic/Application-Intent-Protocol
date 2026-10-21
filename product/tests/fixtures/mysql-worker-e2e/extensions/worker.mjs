@@ -63,3 +63,9 @@ export async function jobMail(input, ctx) {
   if (ctx.job.attempt === 1) throw ctx.retryLater("retry after the committed call");
   return { count: reply.status === 200 ? 1 : 0 };
 }
+
+export async function jobEvent(input, ctx) {
+  const published = await ctx.events.publish("audit", "video-" + input.id, { video: input.id });
+  if (ctx.job.attempt === 1) throw ctx.retryLater("retry after the committed event");
+  return { count: published.cursor === "1" ? 1 : 0 };
+}

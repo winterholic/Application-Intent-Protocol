@@ -267,6 +267,9 @@ impl Db {
     }
     async fn reset(&mut self) {
         self.0.query_drop(format!("UPDATE `{SOURCE}`.`video` SET views = 0")).await.unwrap();
+        for table in ["aip_event_log", "aip_event_streams", "aip_event_keys"] {
+            self.0.query_drop(format!("DELETE FROM `{META}`.`{table}` WHERE owner <> ''")).await.unwrap();
+        }
     }
 }
 
@@ -568,6 +571,30 @@ async fn http_apply_runs_real_node_and_python_workers_in_one_mysql_transaction()
         assert_eq!(mail_requests.load(Ordering::SeqCst) - mail_before, 1, "{language}: the retry must replay the recorded call");
         let mail_effects = format!("SELECT COUNT(*) FROM `{META}`.`aip_effects` WHERE run_id = '{mail_id}' AND state = 'SUCCEEDED'");
         assert_eq!(db.count(&mail_effects).await, 1, "{language}: one journaled call");
+
+        // A published event is journaled too: the retry replays the cursor, appends nothing, and the client reads it back.
+        let event = post(
+            &address,
+            "/jobs/enqueue",
+            Some(&alice),
+            &fingerprint,
+            &json!({"operation": "eventJob", "input": {"id": "10"}, "key": key("event"), "delayMs": 0}),
+        )
+        .await;
+        assert_eq!(event["ok"], true, "{language}: {event}");
+        let event_id = event["run"]["id"].as_str().unwrap().to_string();
+        let event_done = format!("SELECT COUNT(*) FROM `{META}`.`aip_jobs` WHERE id = '{event_id}' AND state = 'SUCCEEDED'");
+        wait_for(&mut db, &event_done, |count| count == 1, "the event job to succeed").await;
+        let event_attempts = format!("SELECT attempt FROM `{META}`.`aip_jobs` WHERE id = '{event_id}'");
+        assert_eq!(db.count(&event_attempts).await, 2, "{language}: the first attempt asked to be retried");
+        assert_eq!(
+            db.count(&format!("SELECT COUNT(*) FROM `{META}`.`aip_event_log` WHERE stream = 'audit'")).await,
+            1,
+            "{language}: the retry must not append again"
+        );
+        let read = post(&address, "/events/read", Some(&alice), &fingerprint, &json!({"stream": "audit", "after": "0", "limit": 10})).await;
+        assert_eq!(read["ok"], true, "{language}: {read}");
+        assert_eq!((read["events"][0]["payload"].clone(), read["cursor"].clone()), (json!({"video": "10"}), json!("1")), "{language}: {read}");
         drop(child);
     }
 }

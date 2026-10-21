@@ -8,6 +8,8 @@ pub mod mysql_backend;
 pub mod mysql_catalog;
 #[cfg(feature = "mysql")]
 pub mod mysql_driver;
+#[cfg(feature = "mysql")]
+pub mod mysql_events;
 pub mod mysql_external;
 #[cfg(feature = "mysql")]
 pub mod mysql_jobs;

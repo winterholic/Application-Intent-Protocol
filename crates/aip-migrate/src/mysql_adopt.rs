@@ -409,7 +409,7 @@ async fn apply_locked(
             .await
             .map_err(|_| failure("채택 journal 조회 실패"))?;
         if prior.as_ref().is_some_and(|(digest,)| digest == ack) && old.facts == *deployed {
-            conn.query_drop(crate::mysql_driver::job_effects_ddl(meta_schema)).await.map_err(|_| failure("MySQL job effect journal 준비 실패"))?;
+            install_additive(conn, meta_schema).await?;
             return Ok(json!({"ok": true, "schema": meta_schema, "alreadyApplied": true, "digest": ack}));
         }
     }
@@ -422,7 +422,7 @@ async fn apply_locked(
     if let Some(old) = &plan.old {
         // Additive AIP metadata is installed with the adoption role before publishing the new policy.
         // Existing deployments keep their source schema and synchronous write fence unchanged.
-        conn.query_drop(crate::mysql_driver::job_effects_ddl(meta_schema)).await.map_err(|_| failure("MySQL job effect journal 준비 실패"))?;
+        install_additive(conn, meta_schema).await?;
         // Policy-only update: shapes are unchanged, so the views stay. Marker and journal change in one transaction.
         let mut tx = conn.start_transaction(TxOpts::default()).await.map_err(|_| failure("정책 갱신 transaction 실패"))?;
         tx.exec_drop(
@@ -520,4 +520,12 @@ pub async fn deployment(url: &str, meta_schema: &str, facts: &Value, mapping: &M
         crate::mysql_catalog::require_single_column_keys(manifest, foreign_keys).map_err(from_catalog)?;
     }
     Ok(Deployment { facts: deployed, facts_digest, structure_digest, source_tables: live.catalog.keys().cloned().collect() })
+}
+
+/// The additive AIP tables an existing deployment needs before the new policy is published.
+async fn install_additive(conn: &mut Conn, meta_schema: &str) -> Result<(), Value> {
+    for statement in crate::mysql_driver::additive_ddl(meta_schema) {
+        conn.query_drop(statement).await.map_err(|_| failure("MySQL job effect journal·event stream 준비 실패"))?;
+    }
+    Ok(())
 }

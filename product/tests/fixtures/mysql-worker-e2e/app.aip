@@ -113,3 +113,14 @@ operation job mailJob {
   deadline 5s
   implementation "worker.jobMail"
 }
+
+// A journaled event: the retry after the publish committed replays the cursor and appends nothing.
+operation job eventJob {
+  input { id: Video.Id }
+  output { count: Int(0..10) }
+  allow actor != null
+  access events.audit
+  effect managed
+  deadline 5s
+  implementation "worker.jobEvent"
+}

@@ -95,7 +95,7 @@ impl MysqlJobs {
                             &format!("job이 선언한 HTTP 연동 `{name}`이 workers.integrations 또는 outbound_webhooks에 없음"),
                         ));
                     }
-                } else if !capability.starts_with("read.") && !capability.starts_with("apply.") && !capability.starts_with("jobs.") {
+                } else if !["read.", "apply.", "jobs.", "events."].iter().any(|prefix| capability.starts_with(prefix)) {
                     return Err(error("DB_ADAPTER_UNSUPPORTED", &format!("MySQL job capability 미지원: {capability}")));
                 }
             }
@@ -138,7 +138,40 @@ impl MysqlJobs {
             .query(format!("SELECT run_id,effect_key,request_digest,state,result FROM {} WHERE 1=0", self.table("aip_effects")))
             .await
             .map_err(db)?;
+        if self.declares("events.") {
+            for (table, columns) in [
+                ("aip_event_streams", "owner,stream,head,retained_from"),
+                ("aip_event_log", "owner,stream,cursor_value,idempotency_key,payload,created_at"),
+                ("aip_event_keys", "owner,stream,idempotency_key,cursor_value,payload_digest"),
+            ] {
+                let engine: Option<String> = conn
+                    .exec_first("SELECT ENGINE FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=? AND TABLE_NAME=?", (&self.schema, table))
+                    .await
+                    .map_err(db)?;
+                if engine.as_deref() != Some("InnoDB") {
+                    return Err("WIRE.NOT_AVAILABLE");
+                }
+                let _: Vec<mysql_async::Row> =
+                    conn.query(format!("SELECT {columns} FROM {} WHERE 1=0", self.table(table))).await.map_err(|_| "WIRE.NOT_AVAILABLE")?;
+            }
+        }
         Ok(())
+    }
+
+    /// True when a job of the contract declares a capability with this prefix, so its infrastructure must exist.
+    fn declares(&self, prefix: &str) -> bool {
+        self.facts["operations"].as_object().into_iter().flatten().any(|(_, op)| {
+            op["kind"] == "job" && op["access"].as_object().is_some_and(|access| access.keys().any(|capability| capability.starts_with(prefix)))
+        })
+    }
+
+    /// True when a job declares exactly this capability.
+    fn exposes(&self, capability: &str) -> bool {
+        self.facts["operations"].as_object().into_iter().flatten().any(|(_, op)| op["kind"] == "job" && op["access"][capability] == true)
+    }
+
+    fn events(&self) -> Result<aip_migrate::mysql_events::MysqlEventStore> {
+        aip_migrate::mysql_events::MysqlEventStore::new(&self.schema).map_err(|_| "WIRE.DB_UNAVAILABLE")
     }
 
     fn store(&self) -> Result<MysqlJobStore> {
@@ -331,6 +364,23 @@ impl MysqlJobs {
                     run.output = None;
                     json!({"ok":true,"run":run})
                 }
+            }
+            "/events/read" => {
+                if !exact(body, &["stream", "after", "limit"]) {
+                    return Err("WIRE.BAD_REQUEST");
+                }
+                let stream = text(body, "stream")?;
+                // A stream is exposed to clients only through a job that declares `events.<stream>`.
+                if !self.exposes(&format!("events.{stream}")) {
+                    return Err("WIRE.NOT_EXPOSED");
+                }
+                let limit = body["limit"].as_i64().filter(|n| (1..=100).contains(n)).ok_or("WIRE.BAD_VALUE")?;
+                let page = self.events()?.scan(tx, &owner, stream, text(body, "after")?, limit).await.map_err(|error| match error {
+                    aip_execution::events::Error::CursorExpired => "WIRE.CURSOR_EXPIRED",
+                    aip_execution::events::Error::InvalidEvent => "WIRE.BAD_VALUE",
+                    _ => "WIRE.DB_UNAVAILABLE",
+                })?;
+                json!({"ok":true,"events":page.events.iter().map(|e|json!({"cursor":e.cursor,"payload":e.payload})).collect::<Vec<_>>(),"cursor":page.next_cursor})
             }
             _ => return Err("WIRE.NOT_FOUND"),
         };
@@ -895,6 +945,24 @@ impl JobHost {
             .map_err(db)?;
             MysqlJobs::commit(fenced).await?;
             return output.map_err(|error| error.code);
+        }
+        if op == "events" {
+            // The event and its journal row commit together with the lease check, so a retry sees one cursor.
+            let event_key = spike_v1_fixture::digest(&json!([self.lease.run_id.to_string(), self.prefix, key]));
+            let cursor = rt.events()?.publish_in(tx, &self.lease.owner, name, &event_key, &input["payload"]).await.map_err(|error| match error {
+                aip_execution::events::Error::IdempotencyConflict => "WIRE.IDEMPOTENCY_MISMATCH",
+                aip_execution::events::Error::Database(_) => "WIRE.DB_UNAVAILABLE",
+                _ => "WIRE.EVENT_INVALID",
+            })?;
+            let output = json!({"cursor":cursor});
+            tx.exec_drop(
+                format!("UPDATE {} SET state='SUCCEEDED',result=CAST(? AS JSON) WHERE run_id=? AND effect_key=?", rt.table("aip_effects")),
+                (output.to_string(), self.lease.run_id.to_string(), &effect),
+            )
+            .await
+            .map_err(db)?;
+            MysqlJobs::commit(fenced).await?;
+            return Ok(output);
         }
         if op == "http" {
             let broker = rt.broker.clone().ok_or("WIRE.NOT_EXPOSED")?;
@@ -1732,3 +1800,6 @@ operation job notifyJob {
         }
     }
 }
+
+#[cfg(test)]
+mod mysql_job_stores_tests;

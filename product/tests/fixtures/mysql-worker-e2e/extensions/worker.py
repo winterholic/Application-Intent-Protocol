@@ -63,3 +63,10 @@ async def jobMail(input, ctx):
     if ctx.job["attempt"] == 1:
         raise ctx.retry_later("retry after the committed call")
     return {"count": 1 if reply["status"] == 200 else 0}
+
+
+async def jobEvent(input, ctx):
+    published = await ctx.events.publish("audit", "video-" + input["id"], {"video": input["id"]})
+    if ctx.job["attempt"] == 1:
+        raise ctx.retry_later("retry after the committed event")
+    return {"count": 1 if published["cursor"] == "1" else 0}

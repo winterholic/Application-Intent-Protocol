@@ -141,3 +141,8 @@ jobs:
           cargo test -p aip-service --features mysql --lib --locked
           mysql_jobs::tests::mysql_http_effects_are_journaled_and_an_unknown_outcome_is_never_repeated
           -- --ignored --exact --nocapture
+      - name: Verify MySQL job event streams publish once, replay in order and expire explicitly
+        run: >-
+          cargo test -p aip-service --features mysql --lib --locked
+          mysql_jobs::mysql_job_stores_tests::mysql_event_streams_publish_once_replay_in_order_and_expire_explicitly
+          -- --ignored --exact --nocapture

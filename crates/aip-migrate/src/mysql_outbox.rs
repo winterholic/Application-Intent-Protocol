@@ -104,13 +104,16 @@ impl MysqlOutboxRelay {
             };
             let new = make_run(&event).map_err(RelayError::Rejected)?;
             let run = self.jobs.enqueue(&mut tx, new).await.map_err(RelayError::Store)?;
+            // Another relay can commit a row's receipt after this statement's snapshot and before its lock, so the row comes back
+            // here although it was dispatched. The deterministic job key already converged on that relay's run, so the receipt
+            // is a no-op and the row does not count as dispatched by this batch.
             tx.exec_drop(
-                format!("INSERT INTO {dispatch} (outbox_id, outbox_created_at, job_id) VALUES (?, ?, ?)"),
+                format!("INSERT IGNORE INTO {dispatch} (outbox_id, outbox_created_at, job_id) VALUES (?, ?, ?)"),
                 (event.id, event.created_at.replace('T', " ").trim_end_matches('Z'), run.id.as_str()),
             )
             .await
             .map_err(|e| RelayError::Store(db(e)))?;
-            dispatched += 1;
+            dispatched += usize::try_from(tx.affected_rows()).unwrap_or(0);
         }
         tx.commit().await.map_err(|e| RelayError::Store(db(e)))?;
         Ok(dispatched)

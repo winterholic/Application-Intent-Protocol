@@ -573,6 +573,7 @@ pub(crate) async fn create_meta_tables<Q: Queryable>(conn: &mut Q, meta_schema: 
     // A managed data effect and this receipt commit in the same fenced transaction. Both keys are SHA-256 digests,
     // so nested step paths cannot exceed InnoDB's index width or alias through a case-insensitive collation.
     statements.push(job_effects_ddl(meta_schema));
+    statements.extend(crate::mysql_events::event_store_ddl(meta_schema));
     // The relay's receipt that an outbox row became a job: unique per row, written in the same transaction as the job.
     statements.push(format!(
         "CREATE TABLE IF NOT EXISTS `{meta_schema}`.`aip_outbox_dispatch` (\
@@ -632,6 +633,13 @@ async fn verify_meta_digest_on_conn<Q: Queryable>(conn: &mut Q, meta_schema: &st
         }
         None => Err(CatalogError::drift("aip_migrate_meta singleton row missing")),
     }
+}
+
+/// Additive AIP infrastructure an existing deployment gains on re-adoption: the effect journal and the event streams.
+pub(crate) fn additive_ddl(meta_schema: &str) -> Vec<String> {
+    let mut statements = vec![job_effects_ddl(meta_schema)];
+    statements.extend(crate::mysql_events::event_store_ddl(meta_schema));
+    statements
 }
 
 /// AIP-owned additive infrastructure. The schema is validated by both bootstrap and adoption callers.

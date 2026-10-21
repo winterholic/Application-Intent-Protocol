@@ -342,3 +342,83 @@ async fn mysql_outbox_relay_dispatches_each_row_once_and_rolls_back_a_failed_bat
     let key = h.cell(format!("SELECT idempotency_key FROM `{META}`.`aip_jobs` ORDER BY created_at LIMIT 1")).await.unwrap();
     assert!(key.starts_with("outbox:"), "{key}");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+#[ignore = "live: needs a dedicated MySQL 8.4 container (scripts/mysql-live-fixture.sh); run with -- --ignored"]
+async fn mysql_event_streams_publish_once_replay_in_order_and_expire_explicitly() {
+    use aip_execution::events::Error as EventError;
+    use aip_migrate::mysql_driver::mysql_async::TxOpts;
+    use aip_migrate::mysql_events::MysqlEventStore;
+    let harness = Harness::new().await;
+    let store = if harness.is_mariadb { MysqlEventStore::new(META).unwrap().for_mariadb() } else { MysqlEventStore::new(META).unwrap() };
+    let mut conn = harness.conn().await;
+
+    // Idempotent publish: the same key and payload converges on one cursor, another payload under the key is a conflict.
+    assert_eq!(store.publish_in(&mut conn, "owner-a", "audit", "k1", &json!({"n": 1, "text": "한글"})).await.unwrap(), "1");
+    assert_eq!(store.publish_in(&mut conn, "owner-a", "audit", "k1", &json!({"n": 1, "text": "한글"})).await.unwrap(), "1");
+    assert_eq!(store.publish_in(&mut conn, "owner-a", "audit", "k1", &json!({"n": 2})).await.unwrap_err(), EventError::IdempotencyConflict);
+    assert_eq!(store.publish_in(&mut conn, "owner-a", "audit", "k2", &json!({"n": 2})).await.unwrap(), "2");
+    // Streams are scoped by owner and name.
+    assert_eq!(store.publish_in(&mut conn, "owner-b", "audit", "k1", &json!({"n": 9})).await.unwrap(), "1");
+    assert_eq!(store.publish_in(&mut conn, "owner-a", "other", "k1", &json!({"n": 9})).await.unwrap(), "1");
+    assert_eq!(store.publish_in(&mut conn, "owner-a", "bad stream", "k", &json!({})).await.unwrap_err(), EventError::InvalidEvent);
+    assert_eq!(
+        store.publish_in(&mut conn, "owner-a", "audit", "big", &json!({"blob": "x".repeat(70_000)})).await.unwrap_err(),
+        EventError::InvalidEvent
+    );
+
+    // Replay is ordered and bounded; the next cursor resumes where the page ended.
+    let page = store.scan(&mut conn, "owner-a", "audit", "0", 1).await.unwrap();
+    assert_eq!((page.events.len(), page.next_cursor.as_str(), page.events[0].payload.clone()), (1, "1", json!({"n": 1, "text": "한글"})));
+    let page = store.scan(&mut conn, "owner-a", "audit", &page.next_cursor, 10).await.unwrap();
+    assert_eq!((page.events.len(), page.next_cursor.as_str(), page.events[0].payload.clone()), (1, "2", json!({"n": 2})));
+    let page = store.scan(&mut conn, "owner-a", "audit", "2", 10).await.unwrap();
+    assert_eq!((page.events.len(), page.next_cursor.as_str()), (0, "2"));
+    assert_eq!(store.scan(&mut conn, "owner-a", "audit", "7", 10).await.unwrap_err(), EventError::InvalidEvent, "a cursor beyond the head");
+    assert_eq!(store.scan(&mut conn, "owner-a", "missing", "0", 10).await.unwrap().events.len(), 0);
+    assert_eq!(store.scan(&mut conn, "owner-b", "audit", "0", 10).await.unwrap().events.len(), 1, "another owner's stream is its own");
+
+    // A pruned window is an explicit error, never a silent gap; the idempotency ledger outlives the payloads.
+    store.prune(&mut conn, "owner-a", "audit", "1").await.unwrap();
+    assert_eq!(store.scan(&mut conn, "owner-a", "audit", "0", 10).await.unwrap_err(), EventError::CursorExpired);
+    assert_eq!(store.scan(&mut conn, "owner-a", "audit", "1", 10).await.unwrap().events.len(), 1);
+    assert_eq!(store.publish_in(&mut conn, "owner-a", "audit", "k1", &json!({"n": 1, "text": "한글"})).await.unwrap(), "1");
+    drop(conn);
+
+    // Concurrent publishers are serialized by the stream row: cursors are unique and gapless, and a key sent by every task once
+    // gets one cursor.
+    let mut tasks = vec![];
+    for task in 0..8 {
+        let (driver, store) = (harness.driver.clone(), store.clone());
+        tasks.push(tokio::spawn(async move {
+            let mut cursors = vec![];
+            for n in 0..10 {
+                let mut conn = driver.pool().get_conn().await.unwrap();
+                let mut tx = conn.start_transaction(TxOpts::default()).await.unwrap();
+                cursors.push(store.publish_in(&mut tx, "owner-c", "load", &format!("t{task}-{n}"), &json!({"task": task, "n": n})).await.unwrap());
+                let shared = store.publish_in(&mut tx, "owner-c", "load", "shared", &json!({"shared": true})).await.unwrap();
+                tx.commit().await.unwrap();
+                cursors.push(shared);
+            }
+            cursors
+        }));
+    }
+    let mut own = std::collections::BTreeSet::new();
+    let mut shared = std::collections::BTreeSet::new();
+    for task in tasks {
+        let cursors = task.await.unwrap();
+        for (index, cursor) in cursors.into_iter().enumerate() {
+            if index % 2 == 0 {
+                own.insert(cursor.parse::<i64>().unwrap());
+            } else {
+                shared.insert(cursor.parse::<i64>().unwrap());
+            }
+        }
+    }
+    assert_eq!(own.len(), 80, "every distinct key got its own cursor");
+    assert_eq!(shared.len(), 1, "a repeated key converges on one cursor");
+    let mut conn = harness.conn().await;
+    let page = store.scan(&mut conn, "owner-c", "load", "0", 1000).await.unwrap();
+    let cursors: Vec<i64> = page.events.iter().map(|event| event.cursor.parse().unwrap()).collect();
+    assert_eq!(cursors, (1..=81).collect::<Vec<i64>>(), "80 distinct events plus the shared one, in order and without a gap");
+}
