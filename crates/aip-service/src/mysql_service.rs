@@ -42,13 +42,12 @@ fn reject_unsupported_infrastructure(config: &Config) -> Result<(), Value> {
     {
         return Err(unsupported("workers.enable_file_uploads", "MySQL adapter는 worker 파일 업로드를 아직 지원하지 않음"));
     }
-    let checks: [(&str, bool, &str); 7] = [
+    let checks: [(&str, bool, &str); 6] = [
         ("objects", config.objects.is_some(), "객체 저장소 metadata가 PostgreSQL에 있음"),
         ("broker", config.broker.is_some(), "broker offset·outbox가 PostgreSQL에 있음"),
         ("rag", config.rag.is_some(), "RAG 색인이 PostgreSQL(pgvector)에 있음"),
         ("static_mounts", !config.static_mounts.is_empty(), "정적 mount는 아직 연결하지 않음"),
         ("file_mounts", !config.file_mounts.is_empty(), "관리 파일 저장소가 PostgreSQL에 있음"),
-        ("message_handlers", !config.message_handlers.is_empty(), "메시지 저장소가 PostgreSQL에 있음"),
         (
             "rate_limit",
             config.rate_limit.is_some(),
@@ -378,8 +377,9 @@ pub(crate) async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
     });
     configure_optional_read_adapters(&mut infrastructure, config.workers.as_ref(), |name| std::env::var(name).ok()).await?;
     infrastructure.job_policies = triggers::build_job_policies(&config.job_policies).map_err(|message| error("JOB_POLICY_CONFIG", message))?;
-    let built = triggers::build(&config.schedules, &config.webhooks, &config.outbox_handlers, &issuer, &|name| std::env::var(name).ok())
+    let mut built = triggers::build(&config.schedules, &config.webhooks, &config.outbox_handlers, &issuer, &|name| std::env::var(name).ok())
         .map_err(|message| error("TRIGGER_CONFIG", message))?;
+    built.messages = triggers::build_message_handlers(&config.message_handlers, &issuer);
     let has_triggers = !built.is_empty();
     infrastructure.triggers = Arc::new(built);
     let has_jobs = deployed["operations"].as_object().is_some_and(|ops| ops.values().any(|op| op["kind"] == "job"));
@@ -591,7 +591,7 @@ mod tests {
         let config: Config = serde_json::from_value(job_json).unwrap();
         assert!(reject_unsupported_infrastructure(&config).is_ok(), "MySQL job policy must reach the durable runtime");
 
-        // Triggers start jobs from the adapter's own job store. Managed messages still live in PostgreSQL.
+        // Triggers start jobs from the adapter's own job store, and so do the managed message queues.
         let mut trigger_json = base_json.clone();
         trigger_json["workers"] = json!({"directory":"extensions", "language":"python"});
         trigger_json["schedules"] = json!([{"name":"nightly","operation":"settle","cron":"0 3 * * *","principal":"svc"}]);
@@ -599,10 +599,9 @@ mod tests {
         let config: Config = serde_json::from_value(trigger_json.clone()).unwrap();
         assert!(reject_unsupported_infrastructure(&config).is_ok(), "MySQL triggers must reach the durable runtime");
         trigger_json["message_handlers"] = json!([{"queue":"orders","operation":"settle","principal":"svc"}]);
+        trigger_json["messaging"] = json!({"enabled": true});
         let config: Config = serde_json::from_value(trigger_json).unwrap();
-        let err = reject_unsupported_infrastructure(&config).unwrap_err();
-        assert_eq!(err["code"], "DB_ADAPTER_UNSUPPORTED");
-        assert!(err["message"].as_str().unwrap().contains("message_handlers"));
+        assert!(reject_unsupported_infrastructure(&config).is_ok(), "MySQL message handlers must reach the durable runtime");
 
         // 3. 파일 업로드 워커는 거부
         let mut upload_worker_json = base_json.clone();

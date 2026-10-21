@@ -1,5 +1,9 @@
 # 진행 현황과 쌓인 질문
 
+## 2026-10-21 WBS 7.2.1.3 MySQL 메시지 핸들러와 만료 메시지 정리 (구현, Linux CI 대기)
+
+`message_handlers`를 MySQL에 연결했다. 서버가 설정된 큐의 준비된 메시지를 서비스 principal의 job으로 바꾸고, job 접수와 메시지 ack가 같은 fenced transaction에 커밋된다. job 키는 메시지 id라서 재전달은 같은 job으로 수렴한다. 접수가 거부되면 nack로 백오프를 거쳐 배달 횟수를 다 쓰면 dead letter가 되고, 서비스 principal이 비활성이면 메시지를 클레임하지도 않아 다시 바인딩할 때까지 준비 상태로 남는다. 시험에서 PostgreSQL 경로와 같은 결함을 찾았다. job 입력에 `deliveries`가 들어 있어서 접수와 ack 사이에 서버가 죽었다가 메시지가 재전달되면 입력이 달라 `IDEMPOTENCY_MISMATCH`가 되고, 이미 만들어진 job이 있는데도 메시지가 nack되어 결국 dead letter로 간다. MySQL 경로는 같은 키의 job이 이미 있으면 메시지를 ack하고 넘어가도록 고쳤다. PostgreSQL 경로(`spikes/spike-v6-transport/src/durable.rs`의 `relay_messages`)는 고치지 않았고 같은 결함이 남아 있다고 본다(코드 대조만 했고 PostgreSQL 실행은 하지 않았다). 만료된 메시지는 supervisor의 30초 정리 주기에서 1000건씩 최대 10배치 지운다. 파일 저장소 capability가 남아 7.2.1.3은 닫지 않는다. 명령과 결과는 [제품 검증](../product/VERIFICATION.md)의 같은 날짜 절이다.
+
 ## 2026-10-21 WBS 7.2.1.3 MySQL job 메시지 큐 capability (구현, Linux CI 대기)
 
 `access messages.<queue>`와 클라이언트 경로 `/messages/enqueue·claim·ack·nack·dead·redrive`를 MySQL에 연결했다. 저장소는 `aip_message_queue` 한 표다(PostgreSQL의 `aip_messages`와 헷갈리지 않게 이름을 나눴다). 부트스트랩과 `adopt-external --apply` 재실행이 만들고, `messaging.enabled`이거나 job이 `messages.*`를 선언한 서비스만 시작 때 표를 검사한다. 이제 `messaging` 설정을 거절하지 않는다. 발행은 owner당 1000건·64MiB 한도를 `aip_tx_locks` 버킷 잠금 아래에서 검사하고(이미 있는 키의 재전송은 한도를 건너뛴다), 같은 키·같은 본문은 같은 메시지이며 다른 본문은 충돌이다. job의 발행은 effect 장부와 같은 fenced transaction에 커밋되어 재시도가 같은 메시지를 재생한다. 클레임은 `SKIP LOCKED`로 후보를 고르고 조건부 갱신으로 가져가며(`RETURNING`이 없어 토큰으로 다시 읽는다), ack·nack는 살아 있는 임차권만 커밋하고 배달 횟수를 다 쓰면 dead letter가 된다. 만료된 임차권은 다음 클레임 때 READY나 DEAD로 돌아가고 redrive·만료 정리도 같은 계약이다. 클라이언트의 발행·소비는 설정의 `client_publish`·`client_consume`이 따로 켜야 하고 job이 선언하지 않은 큐는 `NOT_EXPOSED`다. `message_handlers`(메시지를 job으로 중계)와 만료 메시지 자동 정리 루프는 아직 연결하지 않았다. 파일 저장소가 남아 7.2.1.3은 닫지 않는다. 명령과 결과는 [제품 검증](../product/VERIFICATION.md)의 같은 날짜 절이다.

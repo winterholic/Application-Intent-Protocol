@@ -43,6 +43,16 @@ impl Fixture {
 
     /// Like `start`, with the infrastructure the service would be configured with.
     pub(super) async fn start_with(tag: &str, access: &str, configure: impl FnOnce(&mut spike_v6_transport::infrastructure::Infrastructure)) -> Self {
+        Self::start_full(tag, access, "", configure).await
+    }
+
+    /// Like `start_with`, with more of the contract appended after the one job the fixture always declares.
+    pub(super) async fn start_full(
+        tag: &str,
+        access: &str,
+        extra_definition: &str,
+        configure: impl FnOnce(&mut spike_v6_transport::infrastructure::Infrastructure),
+    ) -> Self {
         let (meta, source) = (format!("aip_t_{tag}"), format!("aip_t_{tag}_src"));
         let url = std::env::var("AIP_TEST_MYSQL_URL").unwrap();
         aip_test_support::validate_mysql_admin_url(&url).unwrap();
@@ -63,7 +73,7 @@ impl Fixture {
         setup.query_drop(format!("INSERT INTO `{source}`.member VALUES(1)")).await.unwrap();
         setup.query_drop(format!("INSERT INTO `{source}`.video VALUES(10,1,0)")).await.unwrap();
         let definition = format!(
-            "{PREAMBLE}operation job storeJob {{\n input {{ id: Video.Id }}\n output {{ count: Int }}\n allow actor != null\n access {access}\n effect managed\n deadline 5s\n implementation \"worker.jobView\"\n}}\n"
+            "{PREAMBLE}operation job storeJob {{\n input {{ id: Video.Id }}\n output {{ count: Int }}\n allow actor != null\n access {access}\n effect managed\n deadline 5s\n implementation \"worker.jobView\"\n}}\n{extra_definition}"
         );
         let facts = spike_v1_fixture::load_str(&definition, spike_v1_fixture::Form::A).unwrap().execution;
         sqlgen::try_set_schema(&meta).unwrap();
@@ -293,4 +303,100 @@ async fn mysql_message_queues_publish_from_jobs_and_serve_the_client_routes() {
     fixture.setup.query_drop(format!("UPDATE `{meta}`.aip_jobs SET lease_epoch = lease_epoch + 1")).await.unwrap();
     assert_eq!(host.dispatch("messages", "orders", &json!({"key":"after","payload":{}})).await.unwrap_err(), "WIRE.LEASE_LOST");
     fixture.finish("job_messages").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires a run-owned MySQL 8.4 fixture; message handlers turn ready messages into jobs, at least once"]
+async fn mysql_message_handlers_turn_messages_into_jobs_and_ack_with_the_acceptance() {
+    use spike_v6_transport::triggers::Triggers;
+    let handler_job = "operation job handleMessage {\n input { message: Text }\n output { count: Int }\n allow actor != null\n access messages.orders\n effect managed\n \
+                       deadline 5s\n implementation \"worker.jobView\"\n}\n";
+    let mut fixture = Fixture::start_full("job_msg_handler", "messages.orders", handler_job, |infra| {
+        infra.messaging = true;
+        let config: crate::triggers::MessageHandlerConfig =
+            serde_json::from_value(json!({"queue":"orders","operation":"handleMessage","principal":"svc"})).unwrap();
+        infra.triggers =
+            Arc::new(Triggers { messages: crate::triggers::build_message_handlers(&[config], "https://test.example"), ..Default::default() });
+    })
+    .await;
+    let meta = fixture.meta.clone();
+    let svc = DurablePrincipal { issuer: "https://test.example".into(), subject: "svc".into(), actor_id: 1, issued_at: 1, min_iat: 0 };
+    let svc_owner = owner(&svc);
+    let store = aip_migrate::mysql_messages::MysqlMessageStore::new(&meta).unwrap();
+    let mut conn = fixture.driver.pool().get_conn().await.unwrap();
+    let new = |owner: &str, key: &str| aip_execution::messages::NewMessage {
+        owner: owner.into(),
+        queue: "orders".into(),
+        key: key.into(),
+        payload: json!({"order": key}),
+        max_deliveries: 3,
+        ttl_ms: 60_000,
+        delay_ms: 0,
+    };
+    let sent = store.enqueue(&mut conn, new(&svc_owner, "o-1")).await.unwrap();
+    let other = store.enqueue(&mut conn, new("someone-else", "o-2")).await.unwrap();
+    let jobs = |sql: &str| format!("SELECT COUNT(*) FROM `{meta}`.aip_jobs WHERE {sql}");
+    let state = |id: &str| format!("SELECT COUNT(*) FROM `{meta}`.aip_message_queue WHERE id='{id}' AND state='ACKED'");
+
+    // An unbound service principal accepts nothing: the message is not even claimed.
+    fixture.runtime.relay_messages("test-relay").await.unwrap();
+    assert_eq!(fixture.count(jobs("1=1")).await, 0);
+    assert_eq!(fixture.count(format!("SELECT deliveries FROM `{meta}`.aip_message_queue WHERE id='{}'", sent.id)).await, 0);
+
+    // A bound principal turns its own scope's message into one job, and the ack commits with it.
+    fixture
+        .setup
+        .query_drop(format!("INSERT INTO `{meta}`.aip_principals(issuer,subject,actor_id) VALUES('https://test.example','svc',1)"))
+        .await
+        .unwrap();
+    fixture.runtime.relay_messages("test-relay").await.unwrap();
+    assert_eq!(fixture.count(jobs(&format!("operation='handleMessage' AND idempotency_key='message:{}'", sent.id))).await, 1);
+    assert_eq!(fixture.count(state(&sent.id)).await, 1, "the message is acknowledged with the job's acceptance");
+    assert_eq!(fixture.count(state(&other.id)).await, 0, "another owner's scope is not consumed");
+    let input: String = conn
+        .query_first(format!("SELECT CAST(input AS CHAR) FROM `{meta}`.aip_jobs WHERE idempotency_key='message:{}'", sent.id))
+        .await
+        .unwrap()
+        .unwrap();
+    let input: Value = serde_json::from_str(&input).unwrap();
+    let message: Value = serde_json::from_str(input["message"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        (message["queue"].clone(), message["payload"].clone(), message["deliveries"].clone()),
+        (json!("orders"), json!({"order":"o-1"}), json!(1))
+    );
+
+    // A message that comes back after a crash between acceptance and ack converges on the same job.
+    fixture
+        .setup
+        .query_drop(format!(
+            "UPDATE `{meta}`.aip_message_queue SET state='READY',lease_owner=NULL,lease_token=NULL,lease_until=NULL,acknowledged_at=NULL WHERE id='{}'",
+            sent.id
+        ))
+        .await
+        .unwrap();
+    fixture.runtime.relay_messages("test-relay").await.unwrap();
+    assert_eq!(fixture.count(jobs("operation='handleMessage'")).await, 1, "a redelivery must not create a second job");
+    assert_eq!(fixture.count(state(&sent.id)).await, 1);
+
+    // A disabled principal stops future messages without a restart, and they stay ready for when it is bound again.
+    let later = store.enqueue(&mut conn, new(&svc_owner, "o-3")).await.unwrap();
+    fixture.setup.query_drop(format!("UPDATE `{meta}`.aip_principals SET enabled=0 WHERE subject='svc'")).await.unwrap();
+    fixture.runtime.relay_messages("test-relay").await.unwrap();
+    assert_eq!(fixture.count(jobs("operation='handleMessage'")).await, 1);
+    assert_eq!(fixture.count(format!("SELECT deliveries FROM `{meta}`.aip_message_queue WHERE id='{}'", later.id)).await, 0);
+
+    // A job another consumer already owns cannot be acked by a stale lease: the acceptance rolls back.
+    fixture.setup.query_drop(format!("UPDATE `{meta}`.aip_principals SET enabled=1 WHERE subject='svc'")).await.unwrap();
+    let lease = store.claim(&mut conn, &svc_owner, "orders", "intruder", 30_000).await.unwrap().unwrap();
+    assert_eq!(lease.id, later.id);
+    let mut fenced = fixture.runtime.begin(&svc).await.unwrap();
+    let tx = fenced.as_mut().unwrap();
+    let mut stale = lease.clone();
+    stale.epoch += 1;
+    let trigger = Trigger { outbox_id: None, message: Some(stale) };
+    let refused = fixture.runtime.submit(tx, &svc, "handleMessage", &json!({"message":"{}"}), "message:stale", 0, Some(&trigger)).await;
+    assert_eq!(refused.unwrap_err(), "WIRE.LEASE_LOST");
+    drop(fenced);
+    assert_eq!(fixture.count(jobs("idempotency_key='message:stale'")).await, 0, "a lost lease leaves no job behind");
+    fixture.finish("job_msg_handler").await;
 }

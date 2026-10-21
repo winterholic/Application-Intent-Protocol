@@ -251,9 +251,6 @@ pub(crate) async fn listen_with_fingerprint(
         if !ready {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "schedules and webhooks require durable jobs, workers and authentication"));
         }
-        if relational_jobs && !runtime.infrastructure.triggers.messages.is_empty() {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "message handlers are not available for relational adapters"));
-        }
         if !runtime.infrastructure.triggers.messages.is_empty() && !runtime.infrastructure.messaging {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "message handlers require messaging to be enabled"));
         }

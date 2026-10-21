@@ -77,3 +77,13 @@ async def jobMessage(input, ctx):
     if ctx.job["attempt"] == 1:
         raise ctx.retry_later("retry after the committed message")
     return {"count": 1 if sent["message"]["state"] == "READY" else 0}
+
+
+async def jobRelay(input, ctx):
+    sent = await ctx.messages.publish("orders", {"body": input["body"]}, "relay-" + __import__("json").loads(input["body"])["language"])
+    return {"count": 1 if sent["message"]["state"] == "READY" else 0}
+
+
+async def jobHandle(input, ctx):
+    import json
+    return {"count": 1 if json.loads(input["message"])["payload"]["body"] else 0}

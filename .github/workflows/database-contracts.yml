@@ -151,3 +151,8 @@ jobs:
           cargo test -p aip-service --features mysql --lib --locked
           mysql_jobs::mysql_job_stores_tests::mysql_message_queues_publish_from_jobs_and_serve_the_client_routes
           -- --ignored --exact --nocapture
+      - name: Verify MySQL message handlers turn messages into jobs and ack with the acceptance
+        run: >-
+          cargo test -p aip-service --features mysql --lib --locked
+          mysql_jobs::mysql_job_stores_tests::mysql_message_handlers_turn_messages_into_jobs_and_ack_with_the_acceptance
+          -- --ignored --exact --nocapture

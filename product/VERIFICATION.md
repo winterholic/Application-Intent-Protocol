@@ -1,5 +1,11 @@
 # 제품 통합 검증 (2026-10-17)
 
+## 2026-10-21 MySQL 메시지 핸들러 (WBS 7.2.1.3, Linux CI 대기)
+
+같은 Run 소유 컨테이너에서 실행했다. 서비스 시험 `mysql_jobs::mysql_job_stores_tests::mysql_message_handlers_turn_messages_into_jobs_and_ack_with_the_acceptance`가 MySQL 8.4에서 1 passed다. 바인딩이 없는 서비스 principal은 메시지를 클레임하지 않고(배달 횟수 0), 바인딩하면 자기 owner scope의 메시지가 `message:<id>` 키의 job 1개가 되며 같은 트랜잭션에서 ACKED가 된다. 다른 owner의 메시지는 소비하지 않고, job 입력의 `message`는 queue·payload·deliveries를 담는다. ack가 접수와 함께 커밋되는 것은 낡은 임차권의 접수가 `LEASE_LOST`로 롤백되고 job이 남지 않는 것으로 확인했다. 비활성 principal은 새 메시지를 가져가지 않고 준비 상태로 남긴다. 처음 구현은 접수 뒤 메시지를 다시 READY로 돌려 재전달을 흉내 내면 `IDEMPOTENCY_MISMATCH`로 nack되어 job은 1개인데 메시지가 dead letter로 갔다. 입력의 `deliveries`가 첫 접수와 달라지기 때문이며 PostgreSQL 경로의 입력 구성도 같다. 같은 키의 job이 있으면 ack하도록 고친 뒤 job은 1개로 수렴하고 메시지는 ACKED다.
+
+실제 서버 E2E(`mysql_worker_write_e2e`)에 서명된 웹훅 `/hooks/relay`가 서비스 principal의 `relayJob`으로 메시지를 큐에 넣고 `message_handlers`의 `handleJob`이 그 메시지를 받아 SUCCEEDED가 되며 큐에 READY·CLAIMED가 남지 않는 흐름을 추가했다. Node·Python 양쪽 모두 `1 passed`이고 서버 시작 검증(`messaging` 필수, 큐를 선언한 job, 입력이 `{ message: Text }`)도 이 경로에서 통과한다. 같은 컨테이너와 MySQL·MariaDB fixture에서 기존 시험도 모두 통과했다(저장소 `mysql_jobs` 5개 양 엔진, 이벤트·메시지 서비스, HTTP effect, 트리거, `mysql_adoption_flow` 2, `mysql_read_http` 1, `mysql_write_http` 9, fence 8·drift 1·capability gate 4). `cargo fmt --check`와 mysql feature `clippy --all-targets -D warnings`는 통과했다. 미실행: Linux CI, 명시 `owner`를 가진 핸들러, 접수 거부 뒤 nack·dead letter 경로의 실DB 시험, 만료 메시지 정리 루프(저장소의 `cleanup_expired`만 시험했고 supervisor의 주기 호출은 시험하지 않았다), PostgreSQL 경로의 같은 결함 재현.
+
 ## 2026-10-21 MySQL job 메시지 큐 (WBS 7.2.1.3, Linux CI 대기)
 
 Run 소유 컨테이너(macOS 호스트, `--rm`·tmpfs, MySQL 8.4 loopback 34411, 표준 fixture 스크립트의 MySQL 8.4 34421·MariaDB 11.4 34422)에서 실행했다. 저장소 시험 `mysql_jobs`(aip-migrate) `mysql_message_queue_leases_retries_dead_letters_and_expires`가 MySQL·MariaDB 양쪽에서 통과했고(같은 파일 5개 `5 passed`, MariaDB 실행 포함) MySQL에서 6회 반복해도 모두 통과했다. 같은 키·본문의 같은 메시지, 다른 본문 충돌, 큐·owner 분리, 잘못된 큐 이름과 600KB 본문 거부, 지연 메시지는 아직 클레임되지 않음, 위조 토큰·다른 worker·두 번째 ack 거부, nack 재시도와 배달 횟수 소진 뒤 dead letter, owner별 dead letter 분리, redrive는 DEAD에서만 동작하고 원본 본문 유지, 만료 임차권은 새 클레임 때 에포크가 오르고 옛 임차권은 ack 못 하며 예산을 다 쓰면 `LEASE_EXPIRED`로 DEAD, dead letter 키셋 페이지, 만료 정리 배치, 8개 동시 소비자가 40건을 한 건도 겹치지 않게 가져가는 것을 확인했다.

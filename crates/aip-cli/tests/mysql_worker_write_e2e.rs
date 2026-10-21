@@ -333,8 +333,11 @@ async fn http_apply_runs_real_node_and_python_workers_in_one_mysql_transaction()
                 // Server triggers act as the bound `svc` principal: Alice's account, so the hook may increment her videos.
                 "schedules": [{"name": "tick", "operation": "tickJob", "cron": "* * * * *", "input": {"note": "tick"}, "principal": "svc"}],
                 "webhooks": [{"name": "hook", "path": "/hooks/video", "operation": "hookJob", "principal": "svc", "secret_env": "AIP_E2E_HOOK_SECRET",
+                    "signature": {"kind": "hmac-sha256", "header": "x-hook-signature", "prefix": "sha256="}},
+                    {"name": "relay", "path": "/hooks/relay", "operation": "relayJob", "principal": "svc", "secret_env": "AIP_E2E_HOOK_SECRET",
                     "signature": {"kind": "hmac-sha256", "header": "x-hook-signature", "prefix": "sha256="}}],
                 "outbox_handlers": [{"topic": "video.viewed", "operation": "viewedJob", "principal": "svc"}],
+                "message_handlers": [{"queue": "orders", "operation": "handleJob", "principal": "svc"}],
             })
             .to_string(),
         )
@@ -623,6 +626,21 @@ async fn http_apply_runs_real_node_and_python_workers_in_one_mysql_transaction()
         assert_eq!(acked["acknowledged"], true, "{language}: {acked}");
         let drained = post(&address, "/messages/claim", Some(&alice), &fingerprint, &json!({"queue": "orders", "worker": "e2e"})).await;
         assert_eq!(drained["lease"], Value::Null, "{language}: {drained}");
+
+        // A message handler turns a ready message of the service principal's queue into one job, and acks it with the acceptance.
+        let relay_body = json!({"id": "10", "language": language}).to_string();
+        let (status, relayed) = webhook(&address, "/hooks/relay", Some(&hook_signature(&relay_body)), &relay_body).await;
+        assert_eq!((status, relayed["ok"].clone()), (202, json!(true)), "{language}: {relayed}");
+        let handled =
+            format!("SELECT COUNT(*) FROM `{META}`.`aip_jobs` WHERE operation = 'handleJob' AND state = 'SUCCEEDED' AND input LIKE '%{language}%'");
+        wait_for(&mut db, &handled, |count| count == 1, "the message handler job to succeed").await;
+        let unsettled = format!("SELECT COUNT(*) FROM `{META}`.`aip_message_queue` WHERE state IN ('READY', 'CLAIMED')");
+        wait_for(&mut db, &unsettled, |count| count == 0, "the handled message to be acknowledged").await;
+        assert_eq!(
+            db.count(&format!("SELECT COUNT(*) FROM `{META}`.`aip_jobs` WHERE operation = 'handleJob' AND input LIKE '%{language}%'")).await,
+            1,
+            "{language}: one message, one job"
+        );
         drop(child);
     }
 }

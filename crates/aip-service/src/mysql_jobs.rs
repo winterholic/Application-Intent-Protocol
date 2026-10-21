@@ -41,9 +41,12 @@ pub(crate) struct MysqlJobs {
 }
 
 /// What a server trigger adds to a job submission.
+#[derive(Default)]
 struct Trigger {
     /// The outbox row this job delivers; its dispatch receipt commits with the job.
     outbox_id: Option<i64>,
+    /// The claimed message this job delivers; its ack commits with the job.
+    message: Option<aip_execution::messages::MessageLease>,
 }
 
 /// id, source, source id, recipient id, created-at text, created-at microseconds since the epoch.
@@ -51,6 +54,8 @@ type OutboxRow = (i64, String, Option<String>, Option<String>, String, i64);
 
 const SCHEDULE_TICK: Duration = Duration::from_secs(5);
 const OUTBOX_TICK: Duration = Duration::from_secs(1);
+const MESSAGES_PER_TICK: usize = 50;
+const MESSAGE_LEASE_MS: i64 = 30_000;
 
 fn db<T>(_: T) -> &'static str {
     "WIRE.DB_UNAVAILABLE"
@@ -675,6 +680,12 @@ impl MysqlJobs {
             .await
             .map_err(db)?;
         }
+        if let Some(lease) = trigger.and_then(|trigger| trigger.message.as_ref()) {
+            // A lost lease means another consumer owns the message now; roll back so only one of them acks it.
+            if !self.messages()?.ack(tx, lease).await.map_err(message_error)? {
+                return Err("WIRE.LEASE_LOST");
+            }
+        }
         Ok(run)
     }
 
@@ -700,14 +711,76 @@ impl MysqlJobs {
         name: &str,
         input: &Value,
         key: &str,
-        outbox_id: Option<i64>,
+        trigger: Trigger,
     ) -> Result<aip_execution::Run> {
         let grant = self.service_grant(principal).await?;
         let mut fenced = self.begin(&grant).await?;
         let tx = fenced.as_mut().map_err(db)?;
-        let run = self.submit(tx, &grant, name, input, key, 0, Some(&Trigger { outbox_id })).await?;
+        let run = self.submit(tx, &grant, name, input, key, 0, Some(&trigger)).await?;
         Self::commit(fenced).await?;
         Ok(run)
+    }
+
+    /// Turns ready messages of configured queues into jobs, at least once. The job key is the message id, so a message that is
+    /// delivered again after a crash between acceptance and ack converges on the same job. Accepting the job and acking the
+    /// message commit together; a refused acceptance nacks the message, which ends in the dead letters after its budget.
+    async fn relay_messages(&self, worker: &str) -> Result<()> {
+        for handler in &self.triggers.messages {
+            let owner = match &handler.owner {
+                Some(owner) => owner.clone(),
+                None => match self.service_grant(&handler.principal).await {
+                    Ok(grant) => owner(&grant),
+                    Err(code) => {
+                        eprintln!("{}", json!({"event":"message_relay_failed","queue":handler.queue,"code":code}));
+                        continue;
+                    }
+                },
+            };
+            for _ in 0..MESSAGES_PER_TICK {
+                let lease = {
+                    let mut conn = self.driver.pool().get_conn().await.map_err(db)?;
+                    self.messages()?.claim(&mut conn, &owner, &handler.queue, worker, MESSAGE_LEASE_MS).await.map_err(message_error)?
+                };
+                let Some(lease) = lease else { break };
+                let message = json!({"id":lease.id,"queue":lease.queue,"payload":lease.payload,"deliveries":lease.deliveries});
+                let key = spike_v6_transport::triggers::message_key(&lease.id);
+                let trigger = Trigger { outbox_id: None, message: Some(lease.clone()) };
+                if let Err(code) =
+                    self.submit_trigger(&handler.principal, &handler.operation, &json!({"message":message.to_string()}), &key, trigger).await
+                {
+                    let mut conn = self.driver.pool().get_conn().await.map_err(db)?;
+                    // The input carries the delivery count, so a redelivery after a crash between acceptance and ack differs
+                    // from the job it already created. That job exists, so the message is done: ack it instead of nacking it
+                    // into the dead letters.
+                    if code == "WIRE.IDEMPOTENCY_MISMATCH" && self.message_job_exists(&handler.principal, &handler.operation, &key).await? {
+                        let _ = self.messages()?.ack(&mut conn, &lease).await;
+                        continue;
+                    }
+                    eprintln!("{}", json!({"event":"message_dispatch_failed","queue":handler.queue,"code":code}));
+                    let _ = self.messages()?.nack(&mut conn, &lease, code).await;
+                    break;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether the service principal already has a job under this trigger key. A consumed message's job belongs to the principal
+    /// that accepted it, not to the message's owner scope.
+    async fn message_job_exists(&self, principal: &spike_v6_transport::triggers::ServicePrincipal, operation: &str, key: &str) -> Result<bool> {
+        let grant = self.service_grant(principal).await?;
+        let mut conn = self.driver.pool().get_conn().await.map_err(db)?;
+        let found: Option<i64> = conn
+            .exec_first(
+                format!(
+                    "SELECT 1 FROM {} WHERE owner=? AND operation=? AND idempotency_key=? AND contract_digest=? AND deployment_digest=?",
+                    self.table("aip_jobs")
+                ),
+                (owner(&grant), operation, key, self.contract(), &self.deployment),
+            )
+            .await
+            .map_err(db)?;
+        Ok(found.is_some())
     }
 
     /// Fires the latest due slot of each schedule once. Older missed slots are skipped by design (coalesced), and the per-slot
@@ -716,7 +789,7 @@ impl MysqlJobs {
         for schedule in &self.triggers.schedules {
             let Some(slot) = schedule.due_slot() else { continue };
             let key = spike_v6_transport::triggers::schedule_key(&schedule.name, slot);
-            if let Err(code) = self.submit_trigger(&schedule.principal, &schedule.operation, &schedule.input, &key, None).await {
+            if let Err(code) = self.submit_trigger(&schedule.principal, &schedule.operation, &schedule.input, &key, Trigger::default()).await {
                 eprintln!("{}", json!({"event":"schedule_submit_failed","schedule":schedule.name,"code":code}));
             }
         }
@@ -746,8 +819,15 @@ impl MysqlJobs {
                 let event = json!({"id":id.to_string(),"topic":handler.topic,"source":source,"sourceId":source_id,
                     "recipientId":recipient_id,"createdAt":created_at});
                 let key = spike_v6_transport::triggers::outbox_key(id, created_us);
-                if let Err(code) =
-                    self.submit_trigger(&handler.principal, &handler.operation, &json!({"event":event.to_string()}), &key, Some(id)).await
+                if let Err(code) = self
+                    .submit_trigger(
+                        &handler.principal,
+                        &handler.operation,
+                        &json!({"event":event.to_string()}),
+                        &key,
+                        Trigger { outbox_id: Some(id), message: None },
+                    )
+                    .await
                 {
                     eprintln!("{}", json!({"event":"outbox_dispatch_failed","topic":handler.topic,"code":code}));
                     break;
@@ -788,7 +868,7 @@ impl RelationalJobs for MysqlJobs {
         input: &'a Value,
         key: &'a str,
     ) -> BackendFuture<'a, Result<aip_execution::Run>> {
-        Box::pin(self.submit_trigger(principal, operation, input, key, None))
+        Box::pin(self.submit_trigger(principal, operation, input, key, Trigger::default()))
     }
 }
 
@@ -936,8 +1016,15 @@ impl MysqlJobs {
         );
         let mut tasks = tokio::task::JoinSet::new();
         let mut gc = tokio::time::Instant::now();
-        let (mut scheduled, mut relayed): (Option<tokio::time::Instant>, Option<tokio::time::Instant>) = (None, None);
+        let (mut scheduled, mut relayed, mut messaged): (Option<tokio::time::Instant>, Option<tokio::time::Instant>, Option<tokio::time::Instant>) =
+            (None, None, None);
         loop {
+            if !self.triggers.messages.is_empty() && messaged.is_none_or(|at| at.elapsed() >= OUTBOX_TICK) {
+                if let Err(code) = self.relay_messages(&worker).await {
+                    eprintln!("{}", json!({"event":"message_relay_failed","code":code}));
+                }
+                messaged = Some(tokio::time::Instant::now());
+            }
             if !self.triggers.outbox.is_empty() && relayed.is_none_or(|at| at.elapsed() >= OUTBOX_TICK) {
                 if let Err(code) = self.relay_outbox().await {
                     eprintln!("{}", json!({"event":"outbox_relay_failed","code":code}));
@@ -981,6 +1068,14 @@ impl MysqlJobs {
                 let sweep = async {
                     let mut conn = self.driver.pool().get_conn().await.map_err(db)?;
                     self.store()?.expire_payloads(&mut conn).await.map_err(store_error)?;
+                    if self.messaging.enabled {
+                        // Drain expired messages in small batches so one sweep cannot hold a long transaction.
+                        for _ in 0..10 {
+                            if self.messages()?.cleanup_expired(&mut conn, 1000).await.map_err(message_error)?.len() < 1000 {
+                                break;
+                            }
+                        }
+                    }
                     Ok::<(), &'static str>(())
                 }
                 .await;

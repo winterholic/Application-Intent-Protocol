@@ -135,3 +135,23 @@ operation job messageJob {
   deadline 5s
   implementation "worker.jobMessage"
 }
+
+// Started by a signed webhook as the service principal: publishes one message into the service principal's own queue scope.
+operation job relayJob {
+  input { body: Text(1..4096) }
+  output { count: Int(0..10) }
+  allow actor != null
+  access messages.orders
+  effect managed
+  deadline 5s
+  implementation "worker.jobRelay"
+}
+// The message handler's job: the server turns each ready message of the queue into one of these.
+operation job handleJob {
+  input { message: Text(1..8192) }
+  output { count: Int(0..10) }
+  allow actor != null
+  effect managed
+  deadline 5s
+  implementation "worker.jobHandle"
+}

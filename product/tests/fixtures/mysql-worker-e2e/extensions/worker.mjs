@@ -75,3 +75,12 @@ export async function jobMessage(input, ctx) {
   if (ctx.job.attempt === 1) throw ctx.retryLater("retry after the committed message");
   return { count: sent.message.state === "READY" ? 1 : 0 };
 }
+
+export async function jobRelay(input, ctx) {
+  const sent = await ctx.messages.publish("orders", { body: input.body }, "relay-" + JSON.parse(input.body).language);
+  return { count: sent.message.state === "READY" ? 1 : 0 };
+}
+
+export async function jobHandle(input) {
+  return { count: JSON.parse(input.message).payload.body ? 1 : 0 };
+}
