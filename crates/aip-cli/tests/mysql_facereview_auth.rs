@@ -194,6 +194,19 @@ async fn cell(conn: &mut aip_migrate::mysql_driver::mysql_async::Conn, sql: &str
     conn.query_first::<Option<String>, _>(sql).await.unwrap().flatten()
 }
 
+fn run_facereview_ui_browser_journey(address: &str, phase: &str, root: &Path) -> std::process::Output {
+    let ui_root = std::env::var("AIP_FACEREVIEW_UI_DIR").expect("CI must provide the pinned FaceReview UI checkout");
+    let output = std::env::var("AIP_FACEREVIEW_BROWSER_OUTPUT").expect("CI must provide a run-owned browser artifact directory");
+    let python = std::env::var("AIP_FACEREVIEW_PYTHON").unwrap_or_else(|_| "python3".to_owned());
+    StdCommand::new(python)
+        .arg(root.join("product/tests/facereview-ui-member-browser.py"))
+        .args(["--ui", &ui_root, "--api", &format!("http://{address}"), "--phase", phase, "--out", &format!("{output}/{phase}")])
+        .env("AIP_FACEREVIEW_JOURNEY_EMAIL", "legacy@example.com")
+        .env("AIP_FACEREVIEW_JOURNEY_PASSWORD", "password123")
+        .output()
+        .expect("start the real React browser journey")
+}
+
 /// A stand-in mail provider: it records every JSON body it is sent and answers 200, or 500 while `fail` is set.
 struct Mailer {
     port: u16,
@@ -451,6 +464,37 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
     );
     print!("{}", String::from_utf8_lossy(&journey.stdout));
     eprint!("{}", String::from_utf8_lossy(&journey.stderr));
+
+    // Run real browser interactions only when the Verify workflow supplies the pinned UI and Playwright.
+    // The UI test uses the same live AIP service and fixture DB as the SDK journey above.
+    if std::env::var_os("AIP_FACEREVIEW_UI_DIR").is_some() {
+        let browser_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        assert_eq!(cell(&mut setup, "SELECT CAST(COUNT(*) AS CHAR) FROM video_bookmark WHERE user_id='77777777-7777-4777-8777-777777777777' AND video_id='aaaaaaaa-0000-4000-8000-000000000001'").await.as_deref(), Some("0"), "fixture member starts without a bookmark");
+        let add = run_facereview_ui_browser_journey(&address, "add", &browser_root);
+        assert!(
+            add.status.success(),
+            "React add-bookmark browser journey failed (status {:?})\nstdout: {}\nstderr: {}",
+            add.status.code(),
+            String::from_utf8_lossy(&add.stdout),
+            String::from_utf8_lossy(&add.stderr)
+        );
+        print!("{}", String::from_utf8_lossy(&add.stdout));
+        assert_eq!(cell(&mut setup, "SELECT CAST(COUNT(*) AS CHAR) FROM video_bookmark WHERE user_id='77777777-7777-4777-8777-777777777777' AND video_id='aaaaaaaa-0000-4000-8000-000000000001'").await.as_deref(), Some("1"), "browser bookmark add persists one row in MySQL");
+
+        let remove = run_facereview_ui_browser_journey(&address, "remove", &browser_root);
+        assert!(
+            remove.status.success(),
+            "React remove-bookmark browser journey failed (status {:?})\nstdout: {}\nstderr: {}",
+            remove.status.code(),
+            String::from_utf8_lossy(&remove.stdout),
+            String::from_utf8_lossy(&remove.stderr)
+        );
+        print!("{}", String::from_utf8_lossy(&remove.stdout));
+        assert_eq!(cell(&mut setup, "SELECT CAST(COUNT(*) AS CHAR) FROM video_bookmark WHERE user_id='77777777-7777-4777-8777-777777777777' AND video_id='aaaaaaaa-0000-4000-8000-000000000001'").await.as_deref(), Some("0"), "browser bookmark remove deletes the member row in MySQL");
+        println!("React browser journey: login, member video list, bookmark on/reload (MySQL rows=1), off/reload (MySQL rows=0)");
+    } else {
+        eprintln!("React browser journey skipped: AIP_FACEREVIEW_UI_DIR is unset; SDK/API journey is separate");
+    }
 
     let read_users = |token: Option<String>| {
         let (address, fingerprint) = (address.clone(), fingerprint.clone());

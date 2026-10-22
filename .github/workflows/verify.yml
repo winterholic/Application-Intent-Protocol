@@ -88,11 +88,40 @@ jobs:
         run: docker compose --project-name aip-ci-native -f spikes/spike-v4-worker/tests/fixtures/native-stores/compose.yaml up --wait --wait-timeout 120 mongo mongo-uuid redis
       - name: Verify compiler, runtime, product, worker, transport and SDK
         run: bash tools/verify.sh
+      - name: Prepare the pinned FaceReview React browser journey
+        run: |
+          set -euo pipefail
+          ui="$RUNNER_TEMP/aip-facereview-ui"
+          sdk="$RUNNER_TEMP/aip-facereview-sdk"
+          mkdir -p "$RUNNER_TEMP/aip-facereview-browser"
+          git clone --quiet --filter=blob:none --no-checkout --depth=1 \
+            https://github.com/joowon-jang/facereview-front.git "$ui"
+          git -C "$ui" fetch --quiet --depth=1 origin 2e7c021fa5abebd72278d841b8066a33d45cfbb3
+          git -C "$ui" checkout --quiet --detach 2e7c021fa5abebd72278d841b8066a33d45cfbb3
+          test "$(git -C "$ui" rev-parse HEAD)" = "2e7c021fa5abebd72278d841b8066a33d45cfbb3"
+          node product/tools/build-sdk.mjs --out "$sdk"
+          npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP" "$sdk"
+          AIP_CLI_BIN="$GITHUB_WORKSPACE/target/debug/aip" porting/facereview/apply-ui-overlay.sh "$ui"
+          (cd "$ui" && node .yarn/releases/yarn-4.12.0.cjs add "@aip/sdk@file:$RUNNER_TEMP/aip-sdk-0.1.0.tgz")
+          python3 -m venv "$RUNNER_TEMP/aip-browser"
+          "$RUNNER_TEMP/aip-browser/bin/pip" install --no-cache-dir playwright==1.64.0
+          "$RUNNER_TEMP/aip-browser/bin/python" -m playwright install --with-deps chromium
       - name: Verify real HTTP to Node and Python workers to MySQL
         env:
           AIP_E2E_TAG: ci-${{ github.run_id }}-${{ github.run_attempt }}
           AIP_E2E_MYSQL_PORT: '55441'
+          AIP_FACEREVIEW_UI_DIR: ${{ runner.temp }}/aip-facereview-ui
+          AIP_FACEREVIEW_PYTHON: ${{ runner.temp }}/aip-browser/bin/python
+          AIP_FACEREVIEW_BROWSER_OUTPUT: ${{ runner.temp }}/aip-facereview-browser
         run: bash scripts/verify-mysql-worker-e2e.sh run-ci
+      - name: Preserve FaceReview browser screenshots and safe network evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: facereview-ui-browser-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/aip-facereview-browser
+          if-no-files-found: warn
+          retention-days: 7
       - name: Show native fixture logs on failure
         if: failure() && steps.native-fixtures.outcome != '' && steps.native-fixtures.outcome != 'skipped'
         run: docker compose --project-name aip-ci-native -f spikes/spike-v4-worker/tests/fixtures/native-stores/compose.yaml logs --no-color mongo mongo-uuid redis
