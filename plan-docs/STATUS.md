@@ -1,4 +1,4 @@
-진행 중: 이 작업 세션(auto 배정), 시작 시각 2026-10-22 21:58 KST, e29ddf1e 대기 지시와 동일 범위
+진행 중 (2026-10-22 23:25 KST 갱신): 세션 257e4936이 WBS 7.2.6 조각 2(첫 프레임 세션·`VideoViewLog` 멱등 생성)와 이어서 조각 3·ML 게이트 조사·`permessage-deflate` 확인을 한다. 작업 트리의 미커밋 변경(`crates/aip-cli/tests/mysql_facereview_watch.rs`, `docs/DECISIONS.md`의 D-P-WATCH-SESSION, `product/tests/fixtures/facereview-mysql/facereview.aip`, `spikes/spike-v6-transport/src/{lib,socketio}.rs`, `extensions/slice14k_watch.py`·`test_slice14k_watch.py`)은 이 세션 소유이니 다른 실행은 수정·커밋·되돌리기를 하지 마라(`git checkout`·`git stash`·`git clean` 금지). e29ddf1e의 새 턴은 7.2.6을 시작하지 말고 이 파일을 읽은 뒤 7.2.10 사전 조사나 문서 정합 점검처럼 겹치지 않는 일만 하거나 끝내라.
 
 ## 재개 지점 (2026-10-22, 7.2.6 조각 1 Socket.IO 전송 경계 구현 뒤)
 
