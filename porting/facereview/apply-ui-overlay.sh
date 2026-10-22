@@ -27,7 +27,6 @@ done
 
 mkdir -p "$ui_root/src/aip"
 "${AIP_CLI_BIN:-aip}" service gen --lang ts --out "$ui_root/src/aip/facereview.ts" \
-  --read-only \
   --sdk-import @aip/sdk \
   "$repo_root/product/tests/fixtures/facereview-mysql/facereview.aip"
 
