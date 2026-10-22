@@ -375,6 +375,10 @@ fn judge_query(
             done.push("FALSE".into());
             continue;
         }
+        // 시계는 상태가 아니다: now로 정하는 필드(updated_at)는 절대 같을 수 없어 반복을 알아볼 수 없게 만든다.
+        if v.get("now").is_some() {
+            continue;
+        }
         let val = cx.value(v, &env).map_err(internal)?;
         done.push(format!("(t.{col} IS NOT DISTINCT FROM {val})"));
     }

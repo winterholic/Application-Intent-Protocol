@@ -631,4 +631,188 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
         let text = reply.body.to_string();
         assert!(!text.contains("scrypt:") && !text.contains("password123") && !text.contains("longenough1"), "{text}");
     }
+
+    // --- WBS 7.2.8: a hash that is weaker than today's default is replaced after a correct login, and only then.
+    let cases = vectors["cases"].as_array().unwrap();
+    let (weak_password, weak_hash) = (cases[4]["password"].as_str().unwrap(), cases[4]["hash"].as_str().unwrap());
+    assert!(weak_hash.starts_with("pbkdf2:sha1:1000$"), "{weak_hash}");
+    setup
+        .exec_drop(
+            "INSERT INTO user (user_id, email, password, name, role, is_tutorial_done, is_verify_email_done, is_deleted, created_at, updated_at) \
+             VALUES ('88888888-8888-4888-8888-888888888888', 'weak@example.com', ?, '약한해시', 'GENERAL', 1, 1, 0, '2026-10-01 00:00:00', '2026-10-01 00:00:00')",
+            (weak_hash,),
+        )
+        .await
+        .unwrap();
+    let stored = |email: &'static str| {
+        let sql = format!("SELECT password FROM user WHERE email = '{email}'");
+        async move { sql }
+    };
+    let weak_sql = stored("weak@example.com").await;
+    let refused = auth(&address, "/auth/login", &json!({"email": "weak@example.com", "password": "not-the-password"}), None).await;
+    assert_eq!(refused.status, 401);
+    assert_eq!(cell(&mut setup, &weak_sql).await.as_deref(), Some(weak_hash), "a wrong password never rewrites the hash");
+    let upgraded = auth(&address, "/auth/login", &json!({"email": "weak@example.com", "password": weak_password}), None).await;
+    assert_eq!(upgraded.status, 200, "{}", upgraded.body);
+    let new_hash = cell(&mut setup, &weak_sql).await.unwrap();
+    assert!(new_hash.starts_with("scrypt:32768:8:1$") && new_hash != weak_hash, "the hash was replaced by today's default: {new_hash}");
+    assert_eq!(
+        cell(&mut setup, "SELECT updated_at FROM user WHERE email = 'weak@example.com'").await.as_deref(),
+        Some("2026-10-01 00:00:00"),
+        "the account's updated_at is not touched by a rehash"
+    );
+    let again = auth(&address, "/auth/login", &json!({"email": "weak@example.com", "password": weak_password}), None).await;
+    assert_eq!(again.status, 200, "the new hash verifies the same password");
+    assert_eq!(cell(&mut setup, &weak_sql).await.as_deref(), Some(new_hash.as_str()), "a current hash is left alone");
+    let legacy_sql = stored("legacy@example.com").await;
+    assert_eq!(cell(&mut setup, &legacy_sql).await.as_deref(), Some(legacy_hash), "the original's own scrypt hash is already the default");
+
+    // --- WBS 7.2.8: the account screens (`/auth/me`, tutorial, profile, withdrawal) through the exposed reads and transitions.
+    let signed = auth(
+        &address,
+        "/auth/signup",
+        &json!({"email": "profile@example.com", "password": "longenough1", "name": "프로필", "favorite_genres": ["drama", "music"]}),
+        None,
+    )
+    .await;
+    assert_eq!(signed.status, 201, "{}", signed.body);
+    let (member, member_cookie) = (access(&signed), refresh_value(&set_cookie(&signed)));
+    let member_id = claims(&member)["sub"].as_str().unwrap().to_owned();
+    let apply = |token: String, key: &'static str, request: Value| {
+        let (address, fingerprint) = (address.clone(), fingerprint.clone());
+        async move { post(&address, "/apply", Some(&token), &fingerprint, &json!({"key": key, "request": request})).await }
+    };
+    let me = |token: String| {
+        let (address, fingerprint) = (address.clone(), fingerprint.clone());
+        async move {
+            let user = post(
+                &address,
+                "/read",
+                Some(&token),
+                &fingerprint,
+                &json!({"query": {"read": "User", "select": ["id", "email", "name", "profile_image_id", "is_tutorial_done", "is_verify_email_done", "role", "created_at"]}}),
+            )
+            .await;
+            let genres =
+                post(&address, "/read", Some(&token), &fingerprint, &json!({"query": {"read": "UserFavoriteGenre", "select": ["id", "genre"]}}))
+                    .await;
+            (user, genres)
+        }
+    };
+    let (profile, genre_rows) = me(member.clone()).await;
+    assert_eq!(profile["rows"].as_array().map(Vec::len), Some(1), "{profile}");
+    let row = &profile["rows"][0];
+    assert_eq!(
+        (
+            row["id"].as_str(),
+            row["email"].as_str(),
+            row["name"].as_str(),
+            row["role"].as_str(),
+            row["is_tutorial_done"].clone(),
+            row["is_verify_email_done"].clone()
+        ),
+        (Some(member_id.as_str()), Some("profile@example.com"), Some("프로필"), Some("GENERAL"), json!(false), json!(false)),
+        "/auth/me: the member's own row"
+    );
+    assert!(row["profile_image_id"].is_null() || row["profile_image_id"] == json!(0), "{row}");
+    let mut names: Vec<_> = genre_rows["rows"].as_array().unwrap().iter().map(|g| g["genre"].as_str().unwrap().to_owned()).collect();
+    names.sort();
+    assert_eq!(names, ["drama", "music"], "and the member's favorite genres");
+
+    // tutorial: once done, a repeat changes nothing; nobody else's row can be completed.
+    let others = apply(member.clone(), "tutorial-other", json!({"apply": "User.completeTutorial", "target": {"ids": [LEGACY]}})).await;
+    assert_ne!(others["ok"], true, "{others}");
+    assert_eq!(cell(&mut setup, &format!("SELECT is_tutorial_done FROM user WHERE user_id = '{LEGACY}'")).await.as_deref(), Some("1"));
+    let done = apply(member.clone(), "tutorial-1", json!({"apply": "User.completeTutorial", "target": {"ids": [member_id]}})).await;
+    assert_eq!(done["ok"], true, "{done}");
+    let sql = format!("SELECT CONCAT(is_tutorial_done, ' ', updated_at) FROM user WHERE user_id = '{member_id}'");
+    let after_first = cell(&mut setup, &sql).await.unwrap();
+    assert!(after_first.starts_with("1 "), "{after_first}");
+    setup.exec_drop("UPDATE user SET updated_at = '2026-10-02 00:00:00' WHERE user_id = ?", (&member_id,)).await.unwrap();
+    let repeat = apply(member.clone(), "tutorial-2", json!({"apply": "User.completeTutorial", "target": {"ids": [member_id]}})).await;
+    assert_eq!(repeat["ok"], true, "{repeat}");
+    assert_eq!(cell(&mut setup, &sql).await.as_deref(), Some("1 2026-10-02 00:00:00"), "a repeat leaves the row as it is");
+
+    // profile: each value only when sent; the genres are replaced in the same bundle.
+    let rename =
+        apply(member.clone(), "profile-1", json!({"apply": "User.updateProfile", "target": {"ids": [member_id]}, "values": {"name": "새이름"}}))
+            .await;
+    assert_eq!(rename["ok"], true, "{rename}");
+    let image =
+        apply(member.clone(), "profile-2", json!({"apply": "User.updateProfile", "target": {"ids": [member_id]}, "values": {"profile_image_id": 7}}))
+            .await;
+    assert_eq!(image["ok"], true, "{image}");
+    let row: (String, Option<i64>) =
+        setup.exec_first("SELECT name, profile_image_id FROM user WHERE user_id = ?", (&member_id,)).await.unwrap().unwrap();
+    assert_eq!(row, ("새이름".to_owned(), Some(7)), "a value that was not sent stays");
+    let foreign =
+        apply(member.clone(), "profile-foreign", json!({"apply": "User.updateProfile", "target": {"ids": [LEGACY]}, "values": {"name": "가로채기"}}))
+            .await;
+    assert_ne!(foreign["ok"], true, "{foreign}");
+    let forbidden =
+        apply(member.clone(), "profile-role", json!({"apply": "User.updateProfile", "target": {"ids": [member_id]}, "values": {"role": "ADMIN"}}))
+            .await;
+    assert_ne!(forbidden["ok"], true, "{forbidden}");
+    assert_eq!(cell(&mut setup, &format!("SELECT role FROM user WHERE user_id = '{member_id}'")).await.as_deref(), Some("GENERAL"));
+    let (_, genre_rows) = me(member.clone()).await;
+    let old_ids: Vec<Value> = genre_rows["rows"].as_array().unwrap().iter().map(|g| g["id"].clone()).collect();
+    assert_eq!(old_ids.len(), 2);
+    let replaced = apply(
+        member.clone(),
+        "profile-genres",
+        json!({"atomic": [
+            {"apply": "UserFavoriteGenre.remove", "target": {"ids": old_ids}},
+            {"create": "UserFavoriteGenre", "values": {"user": member_id, "genre": "horror"}},
+            {"create": "UserFavoriteGenre", "values": {"user": member_id, "genre": "music"}},
+        ]}),
+    )
+    .await;
+    assert_eq!(replaced["ok"], true, "{replaced}");
+    let genres: Vec<String> =
+        setup.exec("SELECT genre FROM user_favorite_genre WHERE user_id = ? ORDER BY CAST(genre AS CHAR)", (&member_id,)).await.unwrap();
+    assert_eq!(genres, ["horror", "music"], "the old genres are gone and the new ones are in");
+    let stolen = apply(
+        member.clone(),
+        "profile-genre-steal",
+        json!({"atomic": [{"create": "UserFavoriteGenre", "values": {"user": LEGACY, "genre": "horror"}}]}),
+    )
+    .await;
+    assert_ne!(stolen["ok"], true, "{stolen}");
+    let duplicate = apply(
+        member.clone(),
+        "profile-genre-twice",
+        json!({"atomic": [{"create": "UserFavoriteGenre", "values": {"user": member_id, "genre": "horror"}}]}),
+    )
+    .await;
+    assert_ne!(duplicate["ok"], true, "a genre the member already has is refused by the unique index: {duplicate}");
+    let genres: Vec<String> =
+        setup.exec("SELECT genre FROM user_favorite_genre WHERE user_id = ? ORDER BY CAST(genre AS CHAR)", (&member_id,)).await.unwrap();
+    assert_eq!(genres, ["horror", "music"], "and a refused bundle changes nothing");
+
+    // withdrawal: the member's own transition, then every session of the account is over.
+    let second = auth(&address, "/auth/login", &json!({"email": "profile@example.com", "password": "longenough1"}), None).await;
+    let (second_access, second_cookie) = (access(&second), refresh_value(&set_cookie(&second)));
+    let withdrawn = apply(member.clone(), "withdraw-1", json!({"apply": "User.withdraw", "target": {"ids": [member_id]}})).await;
+    assert_eq!(withdrawn["ok"], true, "{withdrawn}");
+    assert_eq!(cell(&mut setup, &format!("SELECT is_deleted FROM user WHERE user_id = '{member_id}'")).await.as_deref(), Some("1"));
+    assert_eq!(
+        cell(&mut setup, &format!("SELECT COUNT(*) FROM user_favorite_genre WHERE user_id = '{member_id}'")).await.as_deref(),
+        Some("0"),
+        "the favorite genres are deleted with the account, as the original does"
+    );
+    let (gone, _) = me(member.clone()).await;
+    assert_eq!(gone["rows"].as_array().map(Vec::len), Some(0), "a withdrawn account reads nothing, not even its own row: {gone}");
+    for (cookie, reason) in [(&member_cookie, "account_inactive"), (&second_cookie, "session_revoked")] {
+        let denied = auth(&address, "/auth/reissue", &json!({}), Some(cookie)).await;
+        assert_eq!((denied.status, denied.body["reason"].clone()), (401, json!(reason)), "{}", denied.body);
+    }
+    assert_eq!(
+        cell(&mut setup, &format!("SELECT COUNT(*) FROM `{META}`.aip_auth_sessions WHERE subject = '{member_id}' AND revoked_at IS NULL"))
+            .await
+            .as_deref(),
+        Some("0"),
+        "the first refresh after the withdrawal ended every session of the account, the other device's too"
+    );
+    assert_eq!(post(&address, "/session", Some(&second_access), "", &json!({})).await["code"], "WIRE.UNAUTHENTICATED");
+    assert_eq!(auth(&address, "/auth/login", &json!({"email": "profile@example.com", "password": "longenough1"}), None).await.status, 401);
 }

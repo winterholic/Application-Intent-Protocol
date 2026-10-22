@@ -1,5 +1,15 @@
 # 제품 통합 검증 (2026-10-17)
 
+## 2026-10-22 WBS 7.2.8 조각 A: 약한 해시 재해시, 튜토리얼, 프로필, 선호 장르, 탈퇴 세션 종료 (구현 조각, 로컬 실DB·실서버 통과, 7.2.8은 진행 중)
+
+**범위.** 7.2.2가 넘긴 인증 잔여와 마이페이지의 관계형 부분이다. (1) 로그인 성공 뒤 저장된 해시가 현재 기본(`scrypt:32768:8:1`)보다 약하면 서버가 같은 비밀번호로 새 해시를 만들어 바꾼다. 확장의 `verify_password`가 `rehash` 판정을 돌려주고, 갱신은 로그인 트랜잭션 안에서 "검사한 그 해시일 때만"(`WHERE password = <검사한 해시>`) 쓴다. 틀린 비밀번호는 아무것도 쓰지 않고 `updated_at`도 건드리지 않는다. 원본은 재해시를 하지 않으므로 의도한 보강이다. (2) 정식 정의에 `User.completeTutorial`(원본 `complete_tutorial`: 두 번째 호출은 행을 그대로 둠), `User.updateProfile`(`patch name, profile_image_id`: 보낸 값만 바꿈), `UserFavoriteGenre`의 `create`와 `remove`를 더했다. 선호 장르 교체는 한 묶음(`atomic`)에서 기존 행 `remove` 뒤 새 행 `create`다. (3) `/auth/me`는 호출자 본인의 `User` 읽기와 `UserFavoriteGenre` 읽기로 구성한다(별도 endpoint 없음). (4) 탈퇴는 이미 있던 `User.withdraw` 전이이고, 이번에 세션 종료를 시험으로 확인했다.
+
+**플랫폼 수정.** `repeat unchanged` 판정이 `to`의 모든 대입을 현재 행과 비교했는데, `updated_at = now`는 어떤 행과도 같지 않아서 이미 목표 상태인 행도 매번 다시 쓰였다(시험이 찾음: 튜토리얼 반복이 `updated_at`을 바꿈). 시계를 대입하는 필드를 판정에서 뺐다(MySQL `mysql_write.rs`, PostgreSQL `spike-v3-write`). 원본 SQLAlchemy는 값이 그대로면 UPDATE도 `onupdate`도 없으므로 원본에 더 가깝고, 관리자 댓글 삭제 `Comment.remove`·`User.deactivate`의 반복도 같은 영향을 받는다. 기존 시험(`mysql_facereview_reads`·`mysql_facereview_admin`·`mysql_external_effects`·`mysql_adoption_flow`·`service_flow`·`http_blackbox`, `spike-v3-write` 전체)이 그대로 통과했다.
+
+**실서버 시험(`mysql_facereview_auth`, `1 passed`, 약 8초).** (a) Werkzeug `pbkdf2:sha1:1000` 해시 계정: 틀린 비밀번호는 해시를 그대로 두고, 맞는 비밀번호로 로그인하면 `scrypt:32768:8:1$...`로 바뀌고 `updated_at`은 그대로이며, 다시 로그인하면 되고 현재 해시는 바뀌지 않는다. 원본이 만든 기본 scrypt 해시도 그대로다. (b) 가입한 회원의 읽기가 본인 행(이메일·이름·역할·튜토리얼·이메일 인증 여부)과 선호 장르 2개를 준다. (c) 튜토리얼: 남의 행은 거절, 본인은 완료, 반복은 행(`updated_at` 포함)을 그대로 둔다. (d) 프로필: 이름만, 이미지 ID만 보내면 보낸 값만 바뀌고, 남의 행·`role` 값은 거절된다. 선호 장르 교체 묶음이 성공하고, 남의 장르 생성과 이미 있는 장르 생성은 거절되며 거절된 묶음은 아무것도 바꾸지 않는다. (e) 탈퇴: 행은 `is_deleted`가 되고 선호 장르가 지워지며 탈퇴한 계정은 자기 행도 읽지 못한다. 첫 번째 기기의 reissue는 `account_inactive`로 모든 세션을 끝내고 두 번째 기기는 `session_revoked`이며 활성 세션이 0이다. 접근 토큰도 죽고 로그인도 401이다. **변이 확인:** 재해시를 끄자 해시가 그대로여서 시험이 실패했고 복원했다. `now` 판정 수정 전에는 튜토리얼 반복 단언이 `1 2026-10-22 01:16:02` 대 `1 2026-10-02 00:00:00`으로 실패했다.
+
+**알려진 차이와 한계.** (1) 원본 프로필 이름은 2~10자, 이 포팅의 `User.name`은 열 규칙인 1~50자다(가입은 서버 설정이 2~10자를 지킨다). 프로필에서 2~10자를 강제하려면 정의에 필드 단위 검사가 필요하다. (2) 원본 스키마의 "선호 장르는 보낼 경우 최소 1개"를 서버가 강제하지 못한다: 묶음 안의 `create` 개수를 서버가 세지 않아 클라이언트(SDK)가 지켜야 한다. (3) 값이 하나도 없는 프로필 수정(원본은 성공하며 아무것도 하지 않음)은 `values`가 비어서 거절되므로 클라이언트가 호출하지 않는다. (4) 탈퇴 직후 접근 토큰은 다음 reissue 전까지 세션상 살아 있지만 행 정책이 모든 읽기를 막는다. 원본은 presented refresh token만 블랙리스트에 올리고 다른 기기의 토큰은 살려 둔다. (5) 이메일 인증 코드·비밀번호 재설정(Redis와 메일), 마이페이지의 Mongo 감정 통계 화면은 다음 조각이다.
+
 ## 2026-10-22 WBS 7.2.7 조각 C: 카테고리 보충(`YoutubeCategoryFillJob`) (구현 조각, 로컬 실DB·실서버·원본 클래스 대조 통과, 7.2.7 완료 대상)
 
 **범위.** 원본 `YoutubeCategoryFillJob`(화·금 03:00 KST)을 durable job `fillCategoryVideos`로 옮겼다. 새 플랫폼 기능은 없다. 조각 B의 쿼리 문자열 연동(`youtube_search` 추가, `youtube_videos`에 `id` 허용)·job `create`·job Mongo 쓰기를 그대로 쓴다. 장르별 활성 영상 수는 `GROUP BY`가 없어 `Video`를 100개씩 읽어 센다.

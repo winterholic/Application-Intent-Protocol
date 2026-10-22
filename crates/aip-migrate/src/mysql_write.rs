@@ -408,6 +408,10 @@ impl Session<'_> {
                     done.push("FALSE".to_string());
                     continue;
                 }
+                // The clock is not a state: a field set to `now` (updated_at) would never equal it, so a repeat could not be recognised.
+                if v.get("now").is_some() {
+                    continue;
+                }
                 let val = cx.value(v, &env).map_err(internal)?;
                 done.push(format!("({} <=> {val})", cx.qualified("t", &column(facts, res, f).ok_or_else(|| internal("열 누락"))?)));
             }

@@ -58,8 +58,25 @@ resource User {
     delete many UserFavoriteGenre maxRows 1000 where user = this.id
     delete many UserPointHistory maxRows 1000 where user = this.id
   }
+  // AuthService.complete_tutorial: a second call leaves the row as it is.
+  transition completeTutorial {
+    allow id = actor and active(actor)
+    from true
+    to is_tutorial_done = true, updated_at = now
+    repeat unchanged
+  }
+  // MypageService.update_profile for the member's own row: the name and the profile image, each only when the caller sends it. The favorite genres
+  // are rows of UserFavoriteGenre (remove the old ones and create the new ones in the same bundle).
+  transition updateProfile {
+    allow id = actor and active(actor)
+    from is_deleted = false
+    patch name, profile_image_id
+    to updated_at = now
+  }
   expose apply deactivate { target id; bulk maxRows 1 }
   expose apply withdraw { target id; bulk maxRows 1 }
+  expose apply completeTutorial { target id; bulk maxRows 1 }
+  expose apply updateProfile { target id; bulk maxRows 1 }
   expose apply changeRole { target id; bulk maxRows 1 }
   expose read {
     select id, email, name, role, profile_image_id, is_tutorial_done, is_verify_email_done, is_deleted, created_at, watchCount, commentCount
@@ -398,6 +415,16 @@ resource VideoViewLog {
 resource UserFavoriteGenre {
   fields { id: Uuid; user: User; genre: Genre; created_at: Time default database; updated_at: Time default database }
   rows read when user = actor and active(actor)
+  expose create {
+    fields user, genre
+    allow user = actor and active(actor)
+  }
+  transition remove {
+    allow user = actor and active(actor)
+    from true
+    delete
+  }
+  expose apply remove { target id; bulk maxRows 16 }
   expose read {
     select id, user, genre, created_at
     refIds user

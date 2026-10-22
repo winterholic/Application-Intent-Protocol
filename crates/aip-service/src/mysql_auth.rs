@@ -350,9 +350,10 @@ impl CredentialService {
         tokio::time::timeout(HASH_DEADLINE, work).await.map_err(|_| Fail::Status(503, "WIRE.DEADLINE_EXCEEDED", "deadline_exceeded"))?
     }
 
-    async fn verify(&self, hash: &str, password: &str) -> Outcome<bool> {
+    /// The verdict, and whether the stored hash is weaker than the current default so a good login should replace it.
+    async fn verify(&self, hash: &str, password: &str) -> Outcome<(bool, bool)> {
         let output = self.run_operation(&self.verify_operation, json!({"password": password, "hash": hash})).await?;
-        Ok(output["ok"] == true)
+        Ok((output["ok"] == true, output["rehash"] == true))
     }
 
     async fn hash(&self, password: &str) -> Outcome<String> {
@@ -554,9 +555,13 @@ impl CredentialService {
             let _ = self.verify(DECOY_HASH, password).await?;
             return Err(invalid_credentials());
         };
-        if !self.verify(&hash, password).await? {
+        let (verified, rehash) = self.verify(&hash, password).await?;
+        if !verified {
             return Err(invalid_credentials());
         }
+        // A hash made with weaker parameters than today's default is replaced after the proof of the password. The new hash is
+        // made before the transaction opens, so the account row is not locked during the hashing.
+        let upgraded = if rehash { Some(self.hash(password).await?) } else { None };
         let mut fenced = self.begin().await?;
         let tx = fenced.as_mut().map_err(db)?;
         // The account may have been suspended while the password was being checked.
@@ -566,6 +571,15 @@ impl CredentialService {
             .map_err(db)?;
         if active.is_none() {
             return Err(invalid_credentials());
+        }
+        if let Some(upgraded) = &upgraded {
+            // Only while the stored hash is still the one that was checked, so a password changed in between is not undone.
+            tx.exec_drop(
+                format!("UPDATE {} SET `{}` = ? WHERE `{}` = ? AND `{}` = ?", self.src(&self.table), self.secret, self.id, self.secret),
+                (upgraded, &user_id, &hash),
+            )
+            .await
+            .map_err(db)?;
         }
         self.bind(tx, &user_id).await?;
         let session = self.sessions.open(tx, &user_id).await.map_err(db)?;
