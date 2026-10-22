@@ -1292,8 +1292,6 @@ async fn serve_request(
     if socketio && runtime.infrastructure.socketio.is_none() {
         return reply(&mut w, &err("WIRE.NOT_AVAILABLE", "Socket.IO 전송이 비활성화됨")).await;
     }
-    // A browser always offers `permessage-deflate`; a server may decline an extension, so the Socket.IO endpoint does not
-    // refuse the offer the way `/events/socket` does. It never echoes one, so frames are not compressed.
     let websocket = path == "/events/socket" || socketio;
     let sse = path == "/events/subscribe";
     let mut raw_body = Vec::new();
@@ -1311,7 +1309,8 @@ async fn serve_request(
             || !valid_connection
             || !key_valid
             || ws_version.as_deref() != Some("13")
-            || (ws_extensions.is_some() && !socketio)
+            // A browser always offers `permessage-deflate`. RFC 6455 section 9.1 lets the server accept none of the offered
+            // extensions, which is what the 101 reply below does (it never carries `sec-websocket-extensions`).
             || origin.is_none()
             || host.is_none()
             // The token travels in the CONNECT packet, never in a header, so one here is a client that is not a Socket.IO player.

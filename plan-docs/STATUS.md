@@ -1,6 +1,14 @@
 진행 중 (2026-10-22 23:25 KST 갱신): 세션 257e4936이 WBS 7.2.6 조각 2(첫 프레임 세션·`VideoViewLog` 멱등 생성)와 이어서 조각 3·ML 게이트 조사·`permessage-deflate` 확인을 한다. 작업 트리의 미커밋 변경(`crates/aip-cli/tests/mysql_facereview_watch.rs`, `docs/DECISIONS.md`의 D-P-WATCH-SESSION, `product/tests/fixtures/facereview-mysql/facereview.aip`, `spikes/spike-v6-transport/src/{lib,socketio}.rs`, `extensions/slice14k_watch.py`·`test_slice14k_watch.py`)은 이 세션 소유이니 다른 실행은 수정·커밋·되돌리기를 하지 마라(`git checkout`·`git stash`·`git clean` 금지). e29ddf1e의 새 턴은 7.2.6을 시작하지 말고 이 파일을 읽은 뒤 7.2.10 사전 조사나 문서 정합 점검처럼 겹치지 않는 일만 하거나 끝내라.
 
-## 재개 지점 (2026-10-23, 7.2.6 조각 2 첫 프레임 세션 구현 뒤)
+## 재개 지점 (2026-10-23, 7.2.6 조각 3 프레임 타임라인 저장 · ML 게이트 조사 · `/events/socket` 확장 협상 수정 뒤)
+
+**조각 3(ML 미연결).** 쓰기 확장 `User.recordFrame { id, centi }`이 프레임 점수를 Mongo 세션 문서의 두 타임라인 맵에 멱등하게 쓴다(결정 D-P-WATCH-FRAMES). 점수는 입력이 아니라 서버만 쓰는 Redis 키에서 한 번 꺼내 쓰므로 회원이 위조할 수 없다. 그 키를 쓰는 서버 코드는 아직 없어서 소켓은 이 확장을 부르지 않고 프레임 ack는 `WIRE.NOT_AVAILABLE`이다. 시험은 고정 숫자를 직접 그 키에 넣은 것이며 실추론이 아니다. 원본의 `$inc` 카운터(`frame_count`·`emotion_sum`)와 `emotion_percentages` 재계산은 멱등하지 않아서 쓰지 않았고 세션 확정·집계 조각이 타임라인에서 계산해야 한다. 근거는 [제품 검증](../product/VERIFICATION.md)의 「7.2.6 조각 3」이다.
+
+**ML 게이트 조사 결과(사용자 결정 필요).** `model.h5`는 git에 추적된 적이 없고(`rev-list --objects --all`에 `.h5` 0개) 저장소에 학습 데이터·학습 코드·LICENSE·출처 문서가 없다. 구조는 Keras 2.4.0으로 저장한 ResNet 계열 177층, 입력 96×96×1, 최적화기 가중치 포함이라 팀이 직접 학습한 모델로 보이지만 추정이다. 선택지는 (A) 원본 모델 사용(사용자가 소유·사용 권한을 확인), (B) 허가된 대체 모델(수치 대조 불가), (C) 보류(현재 상태). 재현 환경은 Python 3.10, `tensorflow==2.15.0`, `opencv-python==4.9.0.80`, `cvlib==0.2.7`, `Pillow==10.2.0`, `numpy==1.26.3`이고 Keras 2.4.0 H5의 TF 2.15 로드 호환성은 미검증이다. 사용 허가된 입력 영상·프레임은 저장소에 없다. 상세는 제품 검증의 「7.2.6 ML 게이트 조사」다.
+
+**`/events/socket`.** Chrome이 보내는 `permessage-deflate` 제안을 서버가 `WIRE.BAD_REQUEST`로 거절하던 것을 시험으로 재현하고(먼저 FAILED) 확장 거절 조건을 지웠다(RFC 6455 9.1절, 서버는 제안을 받지 않아도 된다). 실제 브라우저는 이 세션에 도구가 없어 실행하지 않았다. 다음은 사용자의 모델 결정을 기다리는 ML 조각을 제외하면 모델 없이 할 수 있는 일(점수를 쓰는 서버 코드의 자리, 평균 감정의 출처 결정, 세션 확정·집계 설계)과 7.2.10이다.
+
+## 이전 재개 지점 (2026-10-23, 7.2.6 조각 2 첫 프레임 세션 구현 뒤)
 
 7.2.6 조각 2를 구현했다(결정 D-P-WATCH-SESSION, 검증은 [제품 검증](../product/VERIFICATION.md)의 「7.2.6 조각 2」). 유효한 첫 `watch_frame`이 쓰기 확장 `User.startWatching`으로 `VideoViewLog` 한 행과 Redis 시청 세션을 만들고, 사용자는 프레임마다 다시 검증한 토큰에서만 얻는다. 같은 연결의 중복 프레임·재접속·다른 회원의 같은 id·폐기된 principal·토큰 만료를 실제 MySQL 서비스와 Redis로 확인했다. 쓰기 확장 호출 코드는 `run_relational_write_extension`으로 모아 `/extension` 쓰기와 공유한다. **프레임 ack는 여전히 `WIRE.NOT_AVAILABLE`이고 분석·Mongo timeline이 없어 실제 영상·웹캠·ML 흐름은 증명되지 않았다.** 다음은 조각 3(Mongo timeline 저장: 저장 경로·순서·중복 처리부터, 감정값은 ML 자리로 비워 둠), ML 게이트 조사(`model.h5` 출처·허가 근거, TF/OpenCV 요건; 구현 없음), `/events/socket`의 `permessage-deflate` 거절이 실제 브라우저를 막는지 최소 재현이다. 7.2.10은 그 뒤다. 세션 257e4936이 이 일을 하고 있으며 e29ddf1e 같은 다른 실행은 7.2.6을 겹쳐 시작하지 않는다.
 

@@ -38,7 +38,7 @@ const TIMELINE_SESSIONS: &str = include_str!("../../../product/tests/fixtures/fa
 const DISTRIBUTIONS: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/slice13d-video_distribution.json");
 const SESSIONS: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/slice13d-youtube_watching_data.json");
 const GOLDEN: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/slice13f-golden.json");
-const EXTENSIONS: [(&str, &str); 15] = [
+const EXTENSIONS: [(&str, &str); 16] = [
     ("slice13f_watch.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13f_watch.py")),
     ("slice13b_lists.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13b_lists.py")),
     ("slice13d_recommend.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13d_recommend.py")),
@@ -54,6 +54,7 @@ const EXTENSIONS: [(&str, &str); 15] = [
     ("slice14h_dashboard.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice14h_dashboard.py")),
     ("slice14j_dummy.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice14j_dummy.py")),
     ("slice14k_watch.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice14k_watch.py")),
+    ("slice14l_frame.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice14l_frame.py")),
 ];
 const META: &str = "aip_t_wch_meta";
 const SOURCE: &str = "aip_t_wch_src";
@@ -297,9 +298,27 @@ async fn facereview_watch_detail_matches_the_original_service_through_the_real_s
         .to_string(),
     )
     .unwrap();
+    // The original app creates the unique key of the session documents (`video_view_log_id`) itself. The seeded documents of the
+    // original's golden cases carry no such field, so the key is partial: only documents that have one are held to it.
+    mongo
+        .database(MONGO_DB)
+        .collection::<mongodb::bson::Document>("youtube_watching_data")
+        .create_index(
+            mongodb::IndexModel::builder()
+                .keys(mongodb::bson::doc! {"video_view_log_id": 1})
+                .options(
+                    mongodb::options::IndexOptions::builder()
+                        .unique(true)
+                        .partial_filter_expression(mongodb::bson::doc! {"video_view_log_id": {"$type": "string"}})
+                        .build(),
+                )
+                .build(),
+        )
+        .await
+        .expect("session key index");
     let config = directory.path().join("service.json");
     let write_config = |mongo: Value| {
-        let mut workers = json!({"directory": "extensions", "language": "python", "enable_writes": true, "integrations": [{"name": "youtube_videos", "url": "http://127.0.0.1:9/youtube/v3/videos", "method": "GET", "timeout_ms": 1000, "max_request_bytes": 1024, "max_response_bytes": 1024, "allow_loopback": true, "query_params": ["part"]}, {"name": "youtube_search", "url": "http://127.0.0.1:9/youtube/v3/search", "method": "GET", "timeout_ms": 1000, "max_request_bytes": 1024, "max_response_bytes": 1024, "allow_loopback": true, "query_params": ["part"]}], "redis": {"uri_env": "AIP_T_WCH_REDIS_URL", "prefixes": ["facereview:watch:active:"], "max_in_flight": 4, "timeout_ms": 3000}});
+        let mut workers = json!({"directory": "extensions", "language": "python", "enable_writes": true, "integrations": [{"name": "youtube_videos", "url": "http://127.0.0.1:9/youtube/v3/videos", "method": "GET", "timeout_ms": 1000, "max_request_bytes": 1024, "max_response_bytes": 1024, "allow_loopback": true, "query_params": ["part"]}, {"name": "youtube_search", "url": "http://127.0.0.1:9/youtube/v3/search", "method": "GET", "timeout_ms": 1000, "max_request_bytes": 1024, "max_response_bytes": 1024, "allow_loopback": true, "query_params": ["part"]}], "redis": {"uri_env": "AIP_T_WCH_REDIS_URL", "prefixes": ["facereview:watch:active:", "facereview:watch:frame:"], "max_in_flight": 4, "timeout_ms": 3000}});
         if !mongo.is_null() {
             workers["mongo"] = mongo;
         }
@@ -317,7 +336,8 @@ async fn facereview_watch_detail_matches_the_original_service_through_the_real_s
         )
         .unwrap();
     };
-    write_config(json!({"uri_env": "AIP_T_WCH_MONGO_URL", "database": MONGO_DB, "max_pool_size": 4, "timeout_ms": 3000}));
+    write_config(json!({"uri_env": "AIP_T_WCH_MONGO_URL", "database": MONGO_DB, "max_pool_size": 4, "timeout_ms": 3000,
+        "write_collections": ["youtube_watching_data"]}));
     let file_arg = file.to_str().unwrap();
     let plan = run(&env, &["adopt-external", file_arg], &config).await.expect("plan");
     let digest = plan["digest"].as_str().unwrap().to_string();
@@ -444,6 +464,95 @@ async fn facereview_watch_detail_matches_the_original_service_through_the_real_s
     .await
     .expect("the refused frame ends the connection");
     assert!(revoked_close.is_some());
+
+    // WBS 7.2.6 slice 3 (ML not connected): the frame store. No model runs here, so this test plays the part of the server code that
+    // would stage a frame's scores: it writes the Redis key itself. These are fixed numbers, not an emotion analysis, and they prove
+    // only the storage path, its order and its duplicate handling.
+    let video_duration: i64 = setup
+        .query_first::<i64, _>(format!("SELECT duration FROM `{SOURCE}`.`video` WHERE video_id = '{video}'"))
+        .await
+        .unwrap()
+        .expect("the video has a duration");
+    let sessions = mongo.database(MONGO_DB).collection::<mongodb::bson::Document>("youtube_watching_data");
+    let stage = |centi: u64| format!("facereview:watch:frame:{digest_hex}:{centi}");
+    let record = |subject: &'static str, key: String, input: Value| {
+        let bearer = tokens.iter().find(|(candidate, _)| *candidate == subject).unwrap().1.clone();
+        let (address, fingerprint) = (address.clone(), fingerprint.clone());
+        async move {
+            post(&address, "/apply", Some(&bearer), &fingerprint, &json!({"key": key, "request": {"extension": "User.recordFrame", "input": input}}))
+                .await
+        }
+    };
+    let stage_connection = redis_connection.clone();
+    let stage_scores = |centi: u64, scores: Value| {
+        let (mut connection, key) = (stage_connection.clone(), stage(centi));
+        async move {
+            let _: () = redis::cmd("SET").arg(key).arg(scores.to_string()).arg("EX").arg(60).query_async(&mut connection).await.unwrap();
+        }
+    };
+    let timeline_of = |document: &mongodb::bson::Document| -> Vec<(String, Vec<f64>)> {
+        document
+            .get_document("emotion_score_timeline")
+            .map(|map| {
+                map.iter()
+                    .map(|(key, value)| (key.clone(), value.as_array().unwrap().iter().map(|score| score.as_f64().unwrap()).collect()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+
+    // Nothing staged: the call records nothing and creates no session document.
+    let nothing = record("alice", "frame-0".into(), json!({"id": view_log_id, "centi": 150})).await;
+    assert_eq!(nothing["output"], json!({"recorded": false}), "{nothing}");
+    assert!(sessions.find_one(mongodb::bson::doc! {"video_view_log_id": view_log_id}).await.unwrap().is_none());
+
+    // Scores cannot be sent by the caller: the declared input has no such field.
+    let forged = record("alice", "frame-forged".into(), json!({"id": view_log_id, "centi": 150, "scores": {"happy": 100}})).await;
+    assert_eq!(forged["ok"], false, "{forged}");
+    assert!(sessions.find_one(mongodb::bson::doc! {"video_view_log_id": view_log_id}).await.unwrap().is_none());
+
+    // A staged frame is stored once, in the original's score order, under the verified user and the video of the member's own view log.
+    stage_scores(150, json!({"neutral": 10.5, "happy": 60.25, "surprise": 5.0, "sad": 4.25, "angry": 20.0})).await;
+    let first = record("alice", "frame-1".into(), json!({"id": view_log_id, "centi": 150})).await;
+    assert_eq!(first["output"], json!({"recorded": true}), "{first}");
+    let document = sessions.find_one(mongodb::bson::doc! {"video_view_log_id": view_log_id}).await.unwrap().expect("the session document");
+    assert_eq!(document.get_str("user_id").unwrap(), SUBJECTS[0].1, "the user of the document is the verified member");
+    assert_eq!(document.get_str("video_id").unwrap(), video);
+    assert_eq!(document.get_i32("duration").unwrap() as i64, video_duration, "the duration is the video's, not the browser's");
+    assert_eq!(timeline_of(&document), vec![("150".to_string(), vec![10.5, 60.25, 5.0, 4.25, 20.0])]);
+    assert_eq!(document.get_document("most_emotion_timeline").unwrap().get_str("150").unwrap(), "happy");
+    assert!(document.get("frame_count").is_none() && document.get("emotion_sum").is_none(), "no non-idempotent counters are written");
+    let leftover: Option<String> = redis::cmd("GET").arg(stage(150)).query_async(&mut redis_connection).await.unwrap();
+    assert!(leftover.is_none(), "the staged scores are taken once");
+
+    // The same frame time again (a duplicate frame, or a retry with a new key) overwrites its slot: one entry, not two.
+    stage_scores(150, json!({"neutral": 70.0, "happy": 10.0, "surprise": 5.0, "sad": 5.0, "angry": 10.0})).await;
+    let again = record("alice", "frame-2".into(), json!({"id": view_log_id, "centi": 150})).await;
+    assert_eq!(again["output"], json!({"recorded": true}), "{again}");
+    // An earlier time arriving later keeps its own slot.
+    stage_scores(50, json!({"neutral": 1.0, "happy": 1.0, "surprise": 1.0, "sad": 1.0, "angry": 96.0})).await;
+    assert_eq!(record("alice", "frame-3".into(), json!({"id": view_log_id, "centi": 50})).await["output"], json!({"recorded": true}));
+    let document = sessions.find_one(mongodb::bson::doc! {"video_view_log_id": view_log_id}).await.unwrap().unwrap();
+    assert_eq!(
+        timeline_of(&document),
+        vec![("150".to_string(), vec![70.0, 10.0, 5.0, 5.0, 10.0]), ("50".to_string(), vec![1.0, 1.0, 1.0, 1.0, 96.0])],
+        "one slot per time, in arrival order"
+    );
+    assert_eq!(sessions.count_documents(mongodb::bson::doc! {"video_view_log_id": view_log_id}).await.unwrap(), 1);
+
+    // Another member cannot record into Alice's session, and the scores staged for it stay where they were.
+    stage_scores(900, json!({"neutral": 100.0, "happy": 0.0, "surprise": 0.0, "sad": 0.0, "angry": 0.0})).await;
+    let intruder = record("bob", "frame-bob".into(), json!({"id": view_log_id, "centi": 900})).await;
+    assert_eq!(intruder["ok"], false, "{intruder}");
+    let still: Option<String> = redis::cmd("GET").arg(stage(900)).query_async(&mut redis_connection).await.unwrap();
+    assert!(still.is_some(), "a refused call does not take the staged scores");
+    let document = sessions.find_one(mongodb::bson::doc! {"video_view_log_id": view_log_id}).await.unwrap().unwrap();
+    assert_eq!(timeline_of(&document).len(), 2, "the intruder wrote nothing");
+    // Malformed staged scores are refused and the session document is untouched.
+    stage_scores(901, json!({"neutral": 100.0})).await;
+    let malformed = record("alice", "frame-bad".into(), json!({"id": view_log_id, "centi": 901})).await;
+    assert_eq!(malformed["ok"], false, "{malformed}");
+    assert_eq!(timeline_of(&sessions.find_one(mongodb::bson::doc! {"video_view_log_id": view_log_id}).await.unwrap().unwrap()).len(), 2);
 
     // The same token is checked again on each frame, and the connection also closes at its expiry deadline.
     let short_token = token_with_ttl(&private, "alice", 2);

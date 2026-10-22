@@ -115,7 +115,42 @@
 
 **소스 대조.** 원본 `video_watching_socket.py`(고정 `7948b7e…`)의 첫 프레임 처리 순서(캐시가 없으면 `init_watching_data` → 시청 기록 생성)와 `WatchingDataCache`의 `duration × 1.5`초(없으면 10800초) TTL을 옮겼다. 원본의 두 결함은 복제하지 않았다: 인증 없이 페이로드 `user_id`를 믿는 것, 프로세스 메모리에만 있어 재시작·다른 프로세스에서 세션이 사라지는 것.
 
-**한계·미검증.** (1) 감정 분석·Mongo timeline·집계는 없다. (2) 회원이 `/apply`로 자기 이름의 view log(임의 id·시각)를 직접 만들 수 있다(결정의 알려진 한계). (3) 같은 연결의 프레임마다 DB 멱등 조회(저장 결과 재생)가 한 번 일어난다. 부하 시험은 하지 않았고 상한은 정하지 않았다. (4) 실제 브라우저·카메라 입력, 연결 수 상한 운영값, 프레임별 재인증의 비용은 미검증이다. (5) 변이 검사는 이 조각에서 하지 않았다(조각 1의 헤더 토큰 거절 변이만 있다). 폐기된 principal의 프레임 거절은 라이브 시험이 직접 보인다. (6) CI는 push 뒤에 조회한다.
+**한계·미검증.** (1) 감정 분석·Mongo timeline·집계는 없다. (2) 회원이 `/apply`로 자기 이름의 view log(임의 id·시각)를 직접 만들 수 있다(결정의 알려진 한계). (3) 같은 연결의 프레임마다 DB 멱등 조회(저장 결과 재생)가 한 번 일어난다. 부하 시험은 하지 않았고 상한은 정하지 않았다. (4) 실제 브라우저·카메라 입력, 연결 수 상한 운영값, 프레임별 재인증의 비용은 미검증이다. (5) 변이 검사는 이 조각에서 하지 않았다(조각 1의 헤더 토큰 거절 변이만 있다). 폐기된 principal의 프레임 거절은 라이브 시험이 직접 보인다. (6) CI: 조각 2 커밋 `7f0f702a55303b3b1154430dc98a13d785754556`의 Linux worker jobs·App packages·Linux cgroup v2·External brokers·Database contracts·Object storage·Deployment checks 7종은 success다. Verify(run 39797221463)는 conclusion이 cancelled다: `core` job의 모든 시험 단계(단계 10 약 20분 30초, 단계 11 약 7분)가 success로 끝난 뒤 job이 시작 30분 7초 지점에서 `timeout-minutes: 30`에 걸려 마무리 단계에서 취소됐다. 시험 실패는 없었지만 workflow 결론이 success가 아니므로 success로 세지 않는다. 시험이 늘어 30분 상한에 닿은 것이라 `verify.yml`의 상한을 45분으로 올렸다(다음 push의 Verify로 확인한다).
+
+## 2026-10-23 WBS 7.2.6 조각 3: 프레임 타임라인 저장 경로 (ML 미연결, 구현 조각, 로컬 통과)
+
+**범위.** 결정 [D-P-WATCH-FRAMES](../docs/DECISIONS.md). 쓰기 확장 `User.recordFrame`(`extensions/slice14l_frame.py`, 입력 `{id, centi}`)이 프레임의 감정 점수를 Mongo `youtube_watching_data`의 `most_emotion_timeline.<centi>`와 `emotion_score_timeline.<centi>`(점수 순서 neutral, happy, surprise, sad, angry)에 `$set`으로 쓰고, 문서가 없으면 원본의 기본값으로 만든다. **감정 분석(ML)은 연결되지 않았다.** 점수는 입력이 아니라 서버만 쓰는 Redis 키 `facereview:watch:frame:<view log id sha256 hex>:<centi>`에서 `getdel`로 한 번 꺼내 쓴다(회원이 자기 세션과 모든 시청자 공용 타임라인을 위조하지 못하게 하기 위함). 이 키를 쓰는 서버 코드는 아직 없고 소켓은 이 확장을 부르지 않는다. 그래서 키가 없으면 `{recorded:false}`로 아무것도 쓰지 않으며 프레임 ack는 `WIRE.NOT_AVAILABLE` 그대로다. **아래 시험의 점수는 시험 코드가 Redis에 직접 쓴 고정 숫자이고 실추론이 아니다. ML E2E로 세지 않는다.**
+
+**실행한 검증(로컬 macOS, 이 Run 소유의 격리 MySQL 8.4·MongoDB 7·Redis 7.4).**
+
+| 명령 | 결과 |
+|---|---|
+| `python3 -m unittest test_slice14l_frame` (확장 디렉터리, 모의 ctx) | 구현 전 6 ERROR(모듈 없음)였고 구현 뒤 `Ran 6 tests ... OK`: 원본 점수 순서·동점 규칙, 점수 없으면 쓰지 않음, 남의 세션은 `session not found`이고 점수를 꺼내지 않음, 같은 키를 다시 쓰면 같은 자리·순서가 다른 키도 각자 자리, 잘못된 점수 8종 거절, 범위 밖 입력 거절. 소유 확인을 지우는 변이는 이 단위 시험을 FAILED로 만들었다 |
+| `cargo test -p aip-cli --features mysql --test mysql_facereview_watch --locked -- --ignored --nocapture --test-threads=1` (실제 `aip service serve`, `/apply`) | `test result: ok. 1 passed` (12초). 점수 없음은 `{recorded:false}`이고 세션 문서가 생기지 않는다. `scores` 필드를 얹은 호출은 `ok:false`다(선언된 입력이 아님). 점수를 두면 문서의 `user_id`는 토큰의 Alice이고 video·duration은 view log 행과 `video` 표의 값이며 `frame_count`·`emotion_sum`은 쓰이지 않는다. 같은 센티초를 다시 넣으면 한 칸이 덮어써지고 더 이른 시각이 늦게 와도 각자 칸을 가져 도착 순서대로 2칸이다. 문서는 1개다. Bob이 Alice의 id로 부르면 `ok:false`이고 Alice의 문서는 그대로이며 점수 키가 남아 있다(보상). 형식이 틀린 점수는 거절되고 문서는 그대로다 |
+| 같은 시험에서 소유 확인을 지우는 변이 | **시험이 잡지 못했다.** Bob의 호출이 확장의 확인 없이도 거절됐다: Mongo capability가 filter에 인증 principal의 `user_id`를 강제하고 `video_view_log_id` 유일 인덱스가 같은 id의 두 번째 문서를 막아 upsert가 실패하며, 보상이 점수 키를 되돌린다. 확장의 확인은 첫 방어선(아무것도 건드리기 전 거절)이고 위 두 가지가 두 번째 방어선이다. 첫 방어선은 단위 시험이 보인다 |
+| live 시험 8종(`trending_job`·`admin`·`reads`·`auth`·`recommend`·`pool_job`·`category_fill_job`·`watch`)과 `mysql_external_effects`를 정의 변경 뒤 재실행 | 모두 `test result: ok. 1 passed` (정의에 새 확장이 생겨 각 시험의 확장 목록에 `slice14l_frame.py`를 더했다) |
+
+**시험 환경의 주의.** 원본 골든 세션 문서에는 `video_view_log_id`가 없어서 서버의 `ensure_indexes`(유일 인덱스)가 실패한다. 시험은 부분 유일 인덱스(문자열 `video_view_log_id`가 있는 문서만)를 직접 만든다. 운영에서는 원본 앱이 만든 유일 인덱스가 이미 있다고 가정했고 그 DB는 확인하지 않았다.
+
+**알려진 한계·미검증.** (1) 점수를 쓰는 서버 코드, 평균 감정(`average_emotion`)의 출처, 세션 확정과 `frame_count`·`emotion_sum`·`emotion_percentages`·`dominant_emotion`·`completion_rate` 계산, `video_distribution` 갱신은 없다. 원본 소켓 흐름은 세션을 확정하지 않는다(고정 소스에서 `finalize`의 호출처를 찾지 못했다). (2) 프레임마다 쓰기 확장 한 번(워커 기동 포함)의 비용은 측정하지 않았다. (3) 보상은 점수 키만 되돌리고 Mongo 쓰기는 멱등이라 되돌리지 않는다(큰 문서의 pre-image를 읽지 않기 위함). (4) CI는 push 뒤에 조회한다.
+
+## 2026-10-23 WBS 7.2.6 ML 게이트 조사: `model.h5`의 출처·허가와 재현 환경 (조사만, 구현 없음)
+
+**읽은 곳**: 고정 backend `7948b7e…`의 저장소(`projects/facereview/new-facereview`, 작업 트리에 변경이 있어 파일 내용은 HEAD와 같은지 따로 확인하지 않았다), 그 git 이력, UI `2e7c021…`. 모델 파일은 읽기 전용으로 헤더와 메타데이터만 보았고 복사하지 않았다(임시 가상환경에서 `h5py`로 구조만 읽고 지웠다).
+
+**사실.**
+- 파일: `model.h5`와 `common/ml/model.h5`는 같은 바이트(396,829,992바이트, SHA-256 `c10287ebb2781f10f23acffb122aef8e4ce7efc5e6ea6269522b1669a1aa00b0`를 이번에 다시 계산해 둘이 같았다), 수정 시각 2025-11-28, HDF5 서명 확인. 저장소에 추적된 적이 없다(`git rev-list --objects --all`에 `.h5` 객체 없음, `git log -S model.h5`의 6개 커밋은 문서·CI·Docker 변경이며 파일 자체를 더하지 않는다). `.gitignore`가 `*.h5`를 막고 `docker-compose.yml` 주석이 "git/이미지에 없음, 서버에 scp로 올려둘 것"이라고 적는다.
+- 구조: Keras 2.4.0·TensorFlow 백엔드로 저장한 Functional 모델, 층 177개(Conv2D·BatchNormalization·ReLU·Add가 반복되는 잔차 블록, ResNet 계열), 입력 `[None, 96, 96, 1]`, 손실 `categorical_crossentropy`, 최적화기 Adam의 가중치까지 들어 있다. 클래스 5개(`happy, surprise, angry, sad, neutral` 순서는 `emotion_analyzer.py`)로 읽히나 출력층은 끝까지 확인하지 않았다.
+- 출처·허가: 저장소 어디에도 모델의 학습 데이터, 학습 코드, 라이선스, 출처 문서가 없다. `LICENSE` 파일이 없고 `README.md`·`CLAUDE.md`는 "얼굴 감정 분류" 이상을 적지 않는다. 2023년 팀 시절 코드(`origin-codes/*.py`, 수정 시각 2023-11~12)도 `keras.models.load_model('model.h5')`로 현재 디렉터리의 파일을 읽을 뿐이다. 커밋 작성자는 `winterholic`(116)과 `대선`(2)이다.
+- 이름과 입력이 이 서비스에 맞게 맞춰진 형태(96×96 흑백, 5클래스, 최적화기 가중치 포함)라서 **직접 학습해 저장한 모델로 보이지만 이것은 추정**이다. 누가 어떤 데이터로 학습했는지, 그 데이터의 라이선스는 확인하지 못했다.
+
+**재현 환경 요건(고정 소스 기준).** `requirements.txt`: `tensorflow==2.15.0`, `opencv-python==4.9.0.80`, `cvlib==0.2.7`, `Pillow==10.2.0`, `numpy==1.26.3`. `Dockerfile`은 `python:3.10-slim`(libgl1·libglib2.0-0 등 시스템 라이브러리 필요). 얼굴 검출은 `cvlib`의 OpenCV SSD(`res10_300x300_ssd_iter_140000.caffemodel`, `deploy.prototxt`)이고 cvlib(MIT)의 master 소스는 이를 패키지 데이터로 불러온다(0.2.7 배포본은 열어 보지 않았다: 확인 필요). 전처리: UI가 `getScreenshot()`의 `split(',')[1]`로 접두어를 뗀 순수 base64 JPEG → PIL → numpy 배열(RGB) → `cv.detect_face` → 첫 얼굴 crop → 96×96 resize → `COLOR_BGR2GRAY`(RGB 배열에 BGR 계수를 쓰는 원본의 채널 취급 그대로) → `/255` → `(1,96,96,1)` → `predict` → 각 값 `round(x*100, 2)`. 얼굴이 없거나 오류면 `neutral 100.0`의 기본값. Keras 2.4.0으로 저장한 H5를 TF 2.15(Keras 2.15)로 읽는 호환성은 실행하지 않았다(미검증). Apple Silicon에서 TF 2.15 설치 가능 여부도 확인하지 않았다(미검증). 실추론 시험의 입력으로 쓸 사용 허가된 영상·프레임이 저장소 어디에도 없다(앞선 조사와 같다).
+
+**결정이 필요한 항목(사용자).** 모델의 사용 허가 근거가 문서·이력으로는 확인되지 않는다. 선택지: (A) 원본 모델 사용: 사용자가 이 모델의 소유·사용 권한을 확인하고 학습 데이터의 라이선스 상태를 감수한다고 정하면, 위 환경을 CI(Linux x86_64)에 재현해 같은 입력으로 원본과 점수를 대조한다. (B) 허가된 대체 모델: 라이선스가 명확한 모델을 같은 입출력 계약(96×96×1 → 5클래스)으로 쓰되 점수가 달라져 원본과의 수치 대조는 못 한다. (C) 보류: 지금의 전송·세션·타임라인 저장 경로까지만 두고 감정 값은 비운 채 둔다(현재 상태). A·B는 모두 TensorFlow/OpenCV 전문 런타임을 서버 밖에 두는 의존을 남긴다(작업 지시의 "전문 ML runtime 유지 시 잔여 확장/운영 의존 표시").
+
+## 2026-10-23 `/events/socket`의 `permessage-deflate` 거절 (프로토콜 수준 재현·수정, 실제 브라우저는 미실행)
+
+원래 서버는 `Sec-WebSocket-Extensions` 헤더가 하나라도 있으면 핸드셰이크를 `WIRE.BAD_REQUEST`로 거절했다. 브라우저는 항상 `permessage-deflate`를 제안하므로(Chrome은 `permessage-deflate; client_max_window_bits`) 브라우저의 `/events/socket` 연결이 막힐 수 있다. RFC 6455 9.1절은 서버가 제안된 확장을 하나도 받지 않아도 된다고 한다. 시험 `a_browsers_extension_offer_is_declined_not_refused`(`browser_websocket.rs`)가 Chrome의 헤더 값으로 먼저 FAILED였다: `Http(Response { status: 200, ... "WIRE.BAD_REQUEST" ... "잘못된 WebSocket handshake" })`. 거절 조건을 지운 뒤 통과했고(`browser_websocket` 4 passed, `realtime` 3 passed, `socketio_transport` 5 passed) 101 응답에 `sec-websocket-extensions`가 없다. **실제 브라우저 실행은 하지 않았다**: 이 세션에는 브라우저 도구가 없고 지정된 사전 점검 없이 로컬 브라우저를 띄우지 않았다. 그래서 "브라우저가 막힌다"는 것은 헤더 값과 RFC로 뒷받침한 추정이고, 수정 뒤 브라우저가 연결된다는 것도 확인하지 못했다.
 
 ## 2026-10-22 WBS 7.2.10 사전 조사: 원본 UI의 data access 표면 (조사만, 구현 없음)
 

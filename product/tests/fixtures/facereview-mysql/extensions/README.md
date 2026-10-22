@@ -352,3 +352,17 @@ from the re-verified token (never the payload). Decision D-P-WATCH-SESSION, evid
 | `watching_cache.init_watching_data` on a cache miss | `ctx.redis.set_ex("facereview:watch:active:<sha256 of the view log id>")`, TTL `ceil(duration * 1.5)` or 10800 s | Redis instead of the process memory, so a reconnect continues the session |
 | `_create_video_view_log(video_view_log_id, user_id, video_id)` | exposed create `VideoViewLog` (own row), once; a reconnect reads the row and creates nothing | another member's id is `WIRE.ALREADY_EXISTS` |
 | emotion analysis, timeline, statistics | not connected | the frame answer is `WIRE.NOT_AVAILABLE`; no emotion is invented |
+
+## Slice14-L: the frame timeline store, ML not connected (WBS 7.2.6)
+
+`slice14l_frame.py` is the write extension `User.recordFrame { id, centi }`. Decision D-P-WATCH-FRAMES, evidence in `product/VERIFICATION.md`;
+the Python unit test is `test_slice14l_frame.py`. **No model runtime is connected.** The scores are not an input: the server would stage them
+under the Redis key `facereview:watch:frame:<sha256 hex of the view log id>:<centisecond>` and this extension takes them once with `getdel`.
+Nothing writes that key yet, so a call records nothing. The tests write fixed numbers into it; those are not an emotion analysis.
+
+| Original | AIP | Notes |
+|---|---|---|
+| `upsert_frame`: `$set` of `most_emotion_timeline.<key>` and `emotion_score_timeline.<key>` | the same two `$set`s through `ctx.mongo.update_one(upsert)` | key `str(int(t * 100))`, scores `[neutral, happy, surprise, sad, angry]` |
+| `$inc` of `frame_count` and `emotion_sum`, recompute of `emotion_percentages` and `dominant_emotion` | not written | a counter is not idempotent (a repeated frame counted twice in the original) and `find_one_and_update` returns the whole document; the finalization that reads the timeline computes them |
+| `user_id`, `video_id`, `duration` from the browser | the caller's own `VideoViewLog` row and its `Video` | the Mongo grant forces `user_id` to the verified member |
+| `video_timeline_emotion_count`, `video_distribution` incremented per frame | not written | the all-viewer timeline is computed from the session documents |

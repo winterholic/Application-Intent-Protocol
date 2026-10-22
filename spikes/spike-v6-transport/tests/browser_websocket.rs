@@ -225,3 +225,20 @@ async fn unauthenticated_browser_sockets_do_not_consume_authenticated_realtime_s
     assert!(result.is_ok(), "an authenticated socket must not be starved by anonymous pre-auth sockets: {:?}", result.err());
     server.shutdown().await.unwrap();
 }
+
+/// A real browser always offers `permessage-deflate` (Chrome sends `permessage-deflate; client_max_window_bits`). RFC 6455 section 9.1
+/// lets a server accept none of the offered extensions, so the offer alone must not refuse the connection.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_browsers_extension_offer_is_declined_not_refused() {
+    let _schema_lock = SCHEMA_LOCK.lock().await;
+    let (server, _fingerprint, _cleanup) = start_server().await;
+    let mut request = browser_request(server.address, true);
+    request.headers_mut().insert("sec-websocket-extensions", "permessage-deflate; client_max_window_bits".parse().unwrap());
+    let (mut socket, response) =
+        tokio_tungstenite::connect_async(request).await.expect("the extension offer is declined by the server, the upgrade still succeeds");
+    assert!(response.headers().get("sec-websocket-extensions").is_none(), "the server accepts none of the offered extensions");
+    socket.send(Message::Text(json!({"type":"auth","token":"browser-owner"}).to_string().into())).await.unwrap();
+    let ack = tokio::time::timeout(Duration::from_secs(5), socket.next()).await.unwrap().unwrap().unwrap();
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&ack.into_text().unwrap()).unwrap(), json!({"type":"authenticated"}));
+    server.shutdown().await.unwrap();
+}

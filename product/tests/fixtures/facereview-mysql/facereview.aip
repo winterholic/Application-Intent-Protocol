@@ -171,6 +171,16 @@ resource User {
     deadline 10s
     implementation "slice14k_watch.startWatching"
   }
+  // WBS 7.2.6 slice 3: the scores of one frame into the session document's timeline. The scores are not an input: the server stages them
+  // under a Redis key only it writes (no model runtime is connected yet, so nothing writes it and a call records nothing).
+  extension write recordFrame {
+    input { id: VideoViewLog.Id; centi: Int(0..100000000) }
+    output { recorded: Bool }
+    access read.VideoViewLog, read.Video, mongo.youtube_watching_data, redis "facereview:watch:frame:*"
+    effect db
+    deadline 10s
+    implementation "slice14l_frame.recordFrame"
+  }
   // WBS 7.2.9 dashboard (AdminService.get_signup_trend / _get_weekly_active_users). Administrator only; the caller sends the period, so the
   // clock of the period is the caller's: signupCount counts members created in [from, to) (deactivated ones too, as the original does),
   // weeklyActive the members with a view log at or after `since`.
