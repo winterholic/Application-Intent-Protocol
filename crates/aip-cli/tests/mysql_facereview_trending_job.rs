@@ -39,7 +39,7 @@ const SCHEMA: &str = include_str!("../../../product/tests/fixtures/facereview-my
 const DEFAULTS: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/db-defaults.sql");
 const SEED: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/seed.sql");
 const SEED_13D: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/slice13d-seed.sql");
-const EXTENSIONS: [(&str, &str); 8] = [
+const EXTENSIONS: [(&str, &str); 9] = [
     ("slice13f_watch.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13f_watch.py")),
     ("slice13b_lists.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13b_lists.py")),
     ("slice13d_recommend.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13d_recommend.py")),
@@ -48,6 +48,7 @@ const EXTENSIONS: [(&str, &str); 8] = [
     ("slice14a_pool.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice14a_pool.py")),
     ("slice14b_trending.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice14b_trending.py")),
     ("youtube_common.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/youtube_common.py")),
+    ("slice14c_category_fill.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice14c_category_fill.py")),
 ];
 const META: &str = "aip_t_yt_meta";
 const SOURCE: &str = "aip_t_yt_src";
@@ -394,7 +395,12 @@ async fn the_trending_job_saves_new_videos_with_their_initial_documents() {
                     "write_collections": ["video_distribution", "video_timeline_emotion_count"], "ensure_indexes": true},
                 "integrations": [{"name": "youtube_videos", "url": format!("http://{}/youtube/v3/videos", youtube.address), "method": "GET",
                     "timeout_ms": 3000, "max_request_bytes": 4096, "max_response_bytes": 1048576, "allow_loopback": true,
-                    "query_params": ["part", "chart", "regionCode", "maxResults", "pageToken"],
+                    "query_params": ["part", "chart", "regionCode", "maxResults", "pageToken", "id"],
+                    "secret_query_env": {"name": "key", "env": "AIP_T_YT_API_KEY"}},
+                    // The definition also declares the category fill job, which needs its own endpoint; this test never starts it.
+                    {"name": "youtube_search", "url": format!("http://{}/youtube/v3/search", youtube.address), "method": "GET",
+                    "timeout_ms": 3000, "max_request_bytes": 4096, "max_response_bytes": 1048576, "allow_loopback": true,
+                    "query_params": ["part", "q", "type", "regionCode", "relevanceLanguage", "maxResults", "order"],
                     "secret_query_env": {"name": "key", "env": "AIP_T_YT_API_KEY"}}]},
         })
         .to_string(),

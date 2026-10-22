@@ -1,4 +1,5 @@
-"""WBS 7.2.7: the trending video collection of the AIP job versus the ORIGINAL YoutubeTrendingJob.
+"""WBS 7.2.7: the trending video collection and the category fill of the AIP jobs versus the ORIGINAL YoutubeTrendingJob and
+YoutubeCategoryFillJob.
 
   ORACLE  the pinned original's YoutubeTrendingJob (common/scheduler/jobs/youtube_trending_job.py), imported from the original checkout:
             1. its _map_youtube_category and _classify_category_by_keywords on a table of videos, and the isodate duration it uses;
@@ -67,16 +68,39 @@ CLASSIFY_CASES = [
 DURATIONS = ["PT0S", "P0D", "PT45S", "PT3M25S", "PT1H2M3S", "PT10H", "P1DT1H", "PT1.9S", "PT0.4S", "P1W", "PT", "P", "garbage", "", "PT1H61M"]
 
 
+def fnv(text):
+    value = 2166136261
+    for byte in text.encode():
+        value = ((value ^ byte) * 16777619) & 0xFFFFFFFF
+    return f"{value:08x}"
+
+
+def fill_provider(path, query):
+    """The stand-in for the category fill: a search gives two ids the database already has and three new ones per query (and a channel
+    that is not a video); the details of any id are a plain video."""
+    if path.endswith("/search"):
+        digest = fnv(query["q"])
+        ids = ["yt000000001", "yt000000006"] + [f"fv{digest}{n}" for n in range(3)]
+        items = [{"id": {"kind": "youtube#channel", "channelId": "chan"}}] + [{"id": {"kind": "youtube#video", "videoId": i}} for i in ids]
+        return {"items": items}
+    ids = query["id"].split(",")
+    return {"items": [video(i, f"Title {i}", "Channel", "22", "PT5M") for i in ids]}
+
+
 class FakeYoutube(http.server.BaseHTTPRequestHandler):
     requests = []
 
     def do_GET(self):
         FakeYoutube.requests.append(self.path)
-        query = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(self.path).query))
-        page = int(query.get("pageToken", "page0")[4:]) if query.get("pageToken") else 0
-        body = {"items": PAGES[page]}
-        if page + 1 < len(PAGES):
-            body["nextPageToken"] = f"page{page + 1}"
+        parsed = urllib.parse.urlparse(self.path)
+        query = dict(urllib.parse.parse_qsl(parsed.query))
+        if "/search" in parsed.path or "id" in query:
+            body = fill_provider(parsed.path, query)
+        else:
+            page = int(query.get("pageToken", "page0")[4:]) if query.get("pageToken") else 0
+            body = {"items": PAGES[page]}
+            if page + 1 < len(PAGES):
+                body["nextPageToken"] = f"page{page + 1}"
         data = json.dumps(body).encode()
         self.send_response(200)
         self.send_header("content-type", "application/json")
@@ -88,13 +112,13 @@ class FakeYoutube(http.server.BaseHTTPRequestHandler):
         pass
 
 
-def snapshot(admin_url, mongo_url):
+def snapshot(admin_url, mongo_url, where="youtube_url LIKE 'ytnew%' OR youtube_url = 'ytnotitle1'"):
     parsed = urllib.parse.urlparse(admin_url)
     conn = pymysql.connect(host=parsed.hostname, port=parsed.port, user=urllib.parse.unquote(parsed.username),
                            password=urllib.parse.unquote(parsed.password or ""), autocommit=True, charset="utf8mb4")
     cur = conn.cursor()
     cur.execute(f"SELECT video_id, youtube_url, title, channel_name, category, duration, view_count, is_deleted FROM `{base.SOURCE_DB}`.video "
-                "WHERE youtube_url LIKE 'ytnew%' OR youtube_url = 'ytnotitle1' ORDER BY youtube_url")
+                f"WHERE {where} ORDER BY youtube_url")
     rows = cur.fetchall()
     conn.close()
     database = pymongo.MongoClient(mongo_url)[base.MONGO_DB]
@@ -221,10 +245,75 @@ def main():
         print("   aip     :", json.dumps(got_docs, ensure_ascii=False)[:800])
     check("provider requests", len(FakeYoutube.requests) == 3 and all("key=oracle-key" in path for path in FakeYoutube.requests),
           f"{len(FakeYoutube.requests)} requests")
+    # 4. The category fill: the original's execute() against the same stand-in, then the AIP job on the same starting data.
+    import common.scheduler.jobs.youtube_category_fill_job as fill_module  # noqa: E402
+
+    class FillResponse:
+        def __init__(self, status, payload):
+            self.status_code = status
+            self.payload = payload
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                import requests
+                raise requests.exceptions.HTTPError(f"{self.status_code}", response=self)
+
+        def json(self):
+            return self.payload
+
+    fill_requests = []
+
+    def fill_get(url, params=None, **kwargs):
+        fill_requests.append(url)
+        return FillResponse(200, fill_provider(urllib.parse.urlparse(url).path, params))
+
+    fill_module.requests.get = fill_get
+    base.seed_mysql(admin_url)
+    base.seed_mongo(mongo_url)
+    fill_where = "youtube_url LIKE 'fv%'"
+    with app.app_context():
+        fill_job = fill_module.YoutubeCategoryFillJob()
+        fill_job.execute()
+    want_rows, want_docs = snapshot(admin_url, mongo_url, fill_where)
+    want_quota = fill_job.quota_used
+    want_searches = sum(1 for url in fill_requests if url.endswith("/search"))
+
+    base.seed_mysql(admin_url)
+    base.seed_mongo(mongo_url)
+    FakeYoutube.requests.clear()
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), FakeYoutube)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    fill_work = work / "fill"
+    fill_work.mkdir()
+    deployment = deploy(fill_work, admin_url, mongo_url, f"http://127.0.0.1:{server.server_address[1]}/youtube/v3/videos", base.need("S14B_AIP_BIN"))
+    try:
+        accepted = deployment.request("/jobs/enqueue", {"operation": "fillCategoryVideos", "input": {}, "key": "oracle-fill", "delayMs": 0}, "bob")
+        if not accepted.get("ok"):
+            sys.exit(f"enqueue failed: {accepted}")
+        for _ in range(600):
+            status = deployment.request("/jobs/status", {"id": accepted["run"]["id"]}, "bob")["run"]
+            if status["state"] in ("SUCCEEDED", "FAILED", "CANCELLED"):
+                break
+            time.sleep(0.2)
+        if status["state"] != "SUCCEEDED":
+            sys.exit(f"the fill job did not succeed: {status}")
+        output = deployment.request("/jobs/result", {"id": accepted["run"]["id"]}, "bob")["output"]
+    finally:
+        deployment.close()
+        server.shutdown()
+    got_rows, got_docs = snapshot(admin_url, mongo_url, fill_where)
+    check("fill rows", got_rows == want_rows, f"{len(want_rows)} new videos in {len({row[3] for row in want_rows})} genres")
+    if got_rows != want_rows:
+        print("   original:", want_rows[:6])
+        print("   aip     :", got_rows[:6])
+    check("fill documents", got_docs == want_docs, f"{len(want_docs)} documents")
+    check("fill quota and searches", (output["quota"], output["searches"]) == (want_quota, want_searches),
+          f"original quota {want_quota} in {want_searches} searches, aip {output}")
+    check("fill saved", output["saved"] == len(want_rows), f"{output['saved']} saved")
     pymongo.MongoClient(mongo_url).drop_database(base.MONGO_DB)
     if failures:
         sys.exit("FAILED: " + ", ".join(failures))
-    print("the trending job matched the original")
+    print("the trending and the category fill jobs matched the original")
 
 
 def deploy(work, admin_url, mongo_url, youtube_url, bin_path):
@@ -246,12 +335,17 @@ def deploy(work, admin_url, mongo_url, youtube_url, bin_path):
         "schema": base.META_DB, "external_mapping": "mapping.json", "database_adapter": "mysql",
         "database_url_env": "S13D_RUNTIME_URL", "migrate_database_url_env": "S13D_ADOPT_URL", "listen": "127.0.0.1:0", "wire": "decimal",
         "rate_limit": None, "auth": {"issuer": base.ISSUER, "audience": "aip-api", "jwks": {"kind": "file", "path": "jwks.json"}},
+        "limits": {"job_calls": 1000},
         "workers": {"directory": "extensions", "language": "python",
                     "mongo": {"uri_env": "S13D_MONGO_URL", "database": base.MONGO_DB, "max_pool_size": 4, "timeout_ms": 3000,
                               "write_collections": ["video_distribution", "video_timeline_emotion_count"], "ensure_indexes": True},
                     "integrations": [{"name": "youtube_videos", "url": youtube_url, "method": "GET", "timeout_ms": 3000,
                                       "max_request_bytes": 4096, "max_response_bytes": 1048576, "allow_loopback": True,
-                                      "query_params": ["part", "chart", "regionCode", "maxResults", "pageToken"],
+                                      "query_params": ["part", "chart", "regionCode", "maxResults", "pageToken", "id"],
+                                      "secret_query_env": {"name": "key", "env": "S14B_API_KEY"}},
+                                     {"name": "youtube_search", "url": youtube_url.replace("/videos", "/search"), "method": "GET",
+                                      "timeout_ms": 3000, "max_request_bytes": 4096, "max_response_bytes": 1048576, "allow_loopback": True,
+                                      "query_params": ["part", "q", "type", "regionCode", "relevanceLanguage", "maxResults", "order"],
                                       "secret_query_env": {"name": "key", "env": "S14B_API_KEY"}}]}}))
     env = dict(os.environ, S13D_ADOPT_URL=admin_url.rstrip("/") + f"/{base.SOURCE_DB}", S13D_MONGO_URL=mongo_url, S14B_API_KEY="oracle-key",
                S13D_RUNTIME_URL=f"mysql://{base.RUNTIME_USER}:{base.RUNTIME_PASSWORD}@{host}/{base.SOURCE_DB}")

@@ -1,5 +1,17 @@
 # 제품 통합 검증 (2026-10-17)
 
+## 2026-10-22 WBS 7.2.7 조각 C: 카테고리 보충(`YoutubeCategoryFillJob`) (구현 조각, 로컬 실DB·실서버·원본 클래스 대조 통과, 7.2.7 완료 대상)
+
+**범위.** 원본 `YoutubeCategoryFillJob`(화·금 03:00 KST)을 durable job `fillCategoryVideos`로 옮겼다. 새 플랫폼 기능은 없다. 조각 B의 쿼리 문자열 연동(`youtube_search` 추가, `youtube_videos`에 `id` 허용)·job `create`·job Mongo 쓰기를 그대로 쓴다. 장르별 활성 영상 수는 `GROUP BY`가 없어 `Video`를 100개씩 읽어 센다.
+
+**원본과의 대조(`reference/slice14b_oracle.py`).** 같은 시작 데이터에서 원본 `execute()`(`requests.get` 대체)와 AIP job을 각각 돌렸다. 새 영상 36행(4개 장르), Mongo 문서 72개, quota 1212·검색 12회가 모두 같았다(`PASS fill rows/fill documents/fill quota and searches/fill saved`, `the trending and the category fill jobs matched the original`). 조각 B의 trending 대조도 같은 실행에서 그대로 통과했다.
+
+**실서버 종단 시험.** `crates/aip-cli/tests/mysql_facereview_category_fill_job.rs`(`1 passed`, 약 28초): 회원은 시작할 수 없고 관리자는 한다. 가장 비어 있는 4개 장르를 원본 순서로, 장르마다 3개 query, 검색 12회, 새 영상 36개(행 36, 분포·타임라인 문서 각 36)와 `{saved 36, searches 12, quota 1212}`, 제공자가 받은 요청 24건(모두 서버의 API key, 호출자가 key를 줄 수 없음). 같은 key는 한 run이고 제공자에게 다시 묻지 않는다. 5번째 검색이 403이면 그 검색이 quota에 들어가고 그 장르의 남은 query(6번째 검색)는 원본처럼 계속 검색하며 다음 장르부터는 검색하지 않는다(`{saved 15, searches 6, quota 1302}`). 응답 없이 끊는 제공자는 run을 다시 시도하게 하고(attempt 2) 이미 온 답은 장부가 재생해 결과가 처음과 같다(요청 25건 = 끊은 1건 + 한 run 24건). **변이 확인:** 장르 사이의 quota 검사를 빼자 `{saved 33, searches 12, quota 1908}` 대 `{saved 15, searches 6, quota 1302}`로 실패했고 복원했다.
+
+**함께 고친 것.** (1) 같은 영상이 두 장르의 검색에 나오면 create key `video:<id>`가 같은데 값(장르)이 달라 두 번째 요청이 거절되고 run이 `WIRE.EXTENSION_ERROR`로 실패했다(디버깅 하니스에서 검색 4회 이상일 때 관찰). key를 `video:<id>:<장르>`로 바꿨다(두 번째 create는 유일 `youtube_url`에 막혀 건너뛴다). (2) CI Verify(39664738540)의 실패 원인은 풀 job 시험의 경합이었다. 캐시 쓰기가 커밋된 직후 run이 SUCCEEDED로 정산되기 전에 개수를 한 번만 세어 0이 나왔다. 정산을 기다리는 폴링으로 고쳤고 로컬에서 62초에 통과했다. (3) 시험의 정렬 단언은 ENUM 열의 `ORDER BY`가 선언 순서라서 `CAST(category AS CHAR)`로 고쳤다.
+
+**알려진 한계.** (1) 한 run이 ctx 호출 약 150회를 쓰므로 서버의 `limits.job_calls`를 1000 이상으로 올려야 한다(기본 64로는 중간에 끝난다). (2) 예약(화·금 03:00)은 조각 A의 풀 job 시험이 보인 같은 경로이고 이 job만의 예약 시험은 하지 않았다. (3) 실제 YouTube credential이 없어서 live smoke는 미실행이다. (4) 프로세스가 커밋 전에 죽는 경우의 복구는 조각 B와 같은 한계를 따른다.
+
 ## 2026-10-22 WBS 7.2.7 조각 B: YouTube 인기 영상 수집(쿼리 문자열 연동, job의 행 생성) (구현 조각, 로컬 실DB·실서버·원본 서비스 대조 통과, 7.2.7은 진행 중)
 
 **범위.** 원본 `YoutubeTrendingJob`(매일 06:00 KST)을 durable job `fetchTrendingVideos`로 옮겼다. 플랫폼에 둘을 더했고 결정은 [DECISIONS](../docs/DECISIONS.md)의 D-P-QUERYEP·D-P-JOBCREATE다. (1) 외부 HTTP 연동의 쿼리 문자열 endpoint(`method` GET, `query_params` 허용 이름, `secret_query_env`로 서버가 붙이는 API key, 지문에 포함, GET이라 응답을 잃은 호출은 UNKNOWN이 아니라 같은 key로 다시 묻는다). (2) job의 `access create.<Resource>`와 `ctx.data.create`(공개 create를 한 연산짜리 atomic 묶음으로 같은 fenced transaction에서 실행). `Video`에 관리자 전용 `expose create`와 필터 `youtube_url.in`을 더했다.

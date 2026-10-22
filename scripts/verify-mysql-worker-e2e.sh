@@ -221,6 +221,14 @@ if [[ "$mode" == run-ci ]]; then
   grep -Fxq "$trend_test: test" /tmp/aip-e2e-trend-list-"$tag".txt
   cargo test "${trend_args[@]}" -- --ignored --exact "$trend_test" --nocapture --test-threads=1 2>&1 | tee /tmp/aip-e2e-trend-run-"$tag".txt
   grep -Fq "test result: ok. 1 passed; 0 failed;" /tmp/aip-e2e-trend-run-"$tag".txt
+  # The category fill (WBS 7.2.7): search queries per thinnest genre within the original's quota, saved under the searched genre.
+  echo "=== Running the category fill job end-to-end test (real aip binary, Python extension, MySQL, MongoDB, stand-in YouTube) ==="
+  fill_args=(--locked -p aip-cli --features mysql --test mysql_facereview_category_fill_job)
+  fill_test="the_category_fill_job_searches_the_thinnest_genres_within_the_original_budget"
+  cargo test "${fill_args[@]}" -- --list --ignored 2>&1 | tee /tmp/aip-e2e-fill-list-"$tag".txt | tail -3
+  grep -Fxq "$fill_test: test" /tmp/aip-e2e-fill-list-"$tag".txt
+  cargo test "${fill_args[@]}" -- --ignored --exact "$fill_test" --nocapture --test-threads=1 2>&1 | tee /tmp/aip-e2e-fill-run-"$tag".txt
+  grep -Fq "test result: ok. 1 passed; 0 failed;" /tmp/aip-e2e-fill-run-"$tag".txt
   # The administrator lists (WBS 7.2.9) compare the real server's reads and totals with the original AdminService's recorded answers.
   echo "=== Running the administrator list end-to-end test (real aip binary, real MySQL) ==="
   admin_args=(--locked -p aip-cli --features mysql --test mysql_facereview_admin)

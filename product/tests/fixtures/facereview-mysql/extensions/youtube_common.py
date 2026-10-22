@@ -34,6 +34,18 @@ def _error_code(error):
     return getattr(error, "code", None)
 
 
+async def existing_youtube_ids(ctx, youtube_ids, chunk_size=50):
+    """The ids among these that a Video the row policy shows already has: Video.query.filter(youtube_url.in_(ids)). A soft-deleted video
+    is not shown, so it is found out by the unique youtube_url when it is created again."""
+    found = set()
+    for start in range(0, len(youtube_ids), chunk_size):
+        chunk = youtube_ids[start:start + chunk_size]
+        page = await ctx.data.read({"read": "Video", "select": ["id", "youtube_url"], "limit": chunk_size,
+                                    "filter": [{"field": "youtube_url", "op": "in", "value": chunk}]})
+        found.update(row["youtube_url"] for row in page["rows"])
+    return found
+
+
 async def save_video(ctx, video, category):
     """Creates the Video row and the two initial documents. Returns True when the video is new, False when it already existed."""
     youtube_id = video["youtube_id"]
@@ -44,7 +56,7 @@ async def save_video(ctx, video, category):
         video_id = await ctx.data.create("Video", {
             "youtube_url": youtube_id, "title": title, "channel_name": video["channel_name"][:100] or None,
             "category": category, "duration": video["duration"], "is_deleted": False,
-        }, key=f"video:{youtube_id}")
+        }, key=f"video:{youtube_id}:{category}")  # a video found under two genres is two different requests
     except Exception as error:
         if _error_code(error) == "WIRE.ALREADY_EXISTS":
             return False

@@ -185,3 +185,23 @@ Differences and limits: a call that cannot be made (the provider does not answer
 instead of ending the pages (a non-2xx answer still ends them, as in the original); each new video costs 3 ctx calls (row, two
 documents), so a run of 200 new videos needs `limits.job_calls` of about 700. The original saves a video even if the second MongoDB write
 fails (it logs and goes on); here the job is tried again and the journal replays the row.
+
+## Slice14-C: the category fill (WBS 7.2.7)
+
+`slice14c_category_fill.py` ports `YoutubeCategoryFillJob` (`new-facereview@7948b7e7`, `common/scheduler/jobs/youtube_category_fill_job.py`,
+Tuesday and Friday 03:00 Asia/Seoul) as the job `fillCategoryVideos`. It declares `access read.Video, create.Video, http.youtube_search,
+http.youtube_videos, mongo.video_distribution, mongo.video_timeline_emotion_count`. The service configuration adds a second query-string
+integration `youtube_search` (`query_params` part/q/type/regionCode/relevanceLanguage/maxResults/order) and gives `youtube_videos` the
+`id` parameter; both use `secret_query_env` for the API key. The plan is the original's: count the active videos of each genre, take the
+genres under 20 (the five lowest when none is), 1 to 3 queries each by the shortage, at most 12 searches, a search costs 100 and a details
+call 1, and a 403 sets the used quota past the limit.
+
+Two details of the original that the port keeps: the quota is checked only between genres, so after a 403 the rest of that genre's
+queries are still searched; and a video found under two genres is saved under the first (the second create meets the unique
+`youtube_url`). The create key is `video:<youtube id>:<genre>`, because the same id searched under another genre is another request.
+The original counted genres with `GROUP BY`; the `Video` read has no grouping, so the job pages the active videos (100 per ctx call) and
+counts them.
+
+`reference/slice14b_oracle.py` also runs the original `execute()` against the same stand-in (two ids the database has and three new ones per
+query, plus a channel result that is not a video): 36 new rows in 4 genres, 72 MongoDB documents and the quota (1212 in 12 searches) equal.
+A run saves up to 36 videos with 3 ctx calls each plus about 70 reads and calls, so the service sets `limits.job_calls` to 1000.

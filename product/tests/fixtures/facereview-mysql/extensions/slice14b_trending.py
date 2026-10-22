@@ -58,7 +58,6 @@ KEYWORD_CATEGORY_MAPPING = {
 COOK_HINTS = {"요리", "레시피", "쿠킹", "cooking", "recipe", "집밥", "음식만들기", "cook"}
 MAX_PAGES = 4
 PAGE_SIZE = 50
-EXISTING_CHUNK = 50
 
 
 def classify_category_by_keywords(title, tags, description):
@@ -125,16 +124,6 @@ async def _fetch(ctx, region_code="KR", max_results=PAGE_SIZE, max_pages=MAX_PAG
     return videos
 
 
-async def _existing(ctx, youtube_ids):
-    found = set()
-    for start in range(0, len(youtube_ids), EXISTING_CHUNK):
-        chunk = youtube_ids[start:start + EXISTING_CHUNK]
-        page = await ctx.data.read({"read": "Video", "select": ["id", "youtube_url"], "limit": EXISTING_CHUNK,
-                                    "filter": [{"field": "youtube_url", "op": "in", "value": chunk}]})
-        found.update(row["youtube_url"] for row in page["rows"])
-    return found
-
-
 async def fetchTrendingVideos(input, ctx):
     videos = await _fetch(ctx)
     if not videos:
@@ -142,7 +131,7 @@ async def fetchTrendingVideos(input, ctx):
     # A video listed twice is saved once (the original tried twice and logged the second failure of the unique youtube_url).
     videos = list({video["youtube_id"]: video for video in reversed(videos)}.values())[::-1]
     youtube_ids = [video["youtube_id"] for video in videos]
-    existing = await _existing(ctx, youtube_ids)
+    existing = await _common.existing_youtube_ids(ctx, youtube_ids)
     new_videos = [video for video in videos if video["youtube_id"] not in existing]
     saved = 0
     for video in new_videos:

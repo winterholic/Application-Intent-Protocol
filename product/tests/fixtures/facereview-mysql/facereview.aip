@@ -492,3 +492,16 @@ operation job fetchTrendingVideos {
   deadline 600s
   implementation "slice14b_trending.fetchTrendingVideos"
 }
+
+// WBS 7.2.7: the original's Celery beat task fill_youtube_category_videos (Tuesday and Friday 03:00 Asia/Seoul). It searches YouTube
+// (youtube_search) for the genres that have the fewest active videos and saves what it finds. A run searches at most 12 times and each
+// new video costs 3 ctx calls, so the service sets limits.job_calls to 1000 or more for it.
+operation job fillCategoryVideos {
+  input { }
+  output { saved: Int(0..100000); searches: Int(0..100); quota: Int(0..1000000) }
+  allow isAdmin(actor)
+  access read.Video, create.Video, http.youtube_search, http.youtube_videos, mongo.video_distribution, mongo.video_timeline_emotion_count
+  effect managed
+  deadline 900s
+  implementation "slice14c_category_fill.fillCategoryVideos"
+}
