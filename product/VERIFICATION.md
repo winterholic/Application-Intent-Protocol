@@ -48,7 +48,7 @@
 
 **변이 확인.** 동점 규칙 `video_view_log_id >`를 `>=`로 바꾸면 "체크포인트가 첫 동점" 사례가 실패했고 복원했다. 낙관적 잠금(`expect lock_version`)을 정의와 확장에서 함께 빼도 시험이 통과했다: 동시 호출에서 MySQL 교착(1213)이 같은 `WIRE.CONFLICT`로 거절되어 이 시험은 `expect` 자체를 구별하지 못한다. `expect`의 판정은 전이 계약 시험(낡은 `lock_version` 거절)이 따로 확인한다.
 
-**알려진 차이와 한계.** 자세한 내용은 [extensions/README](tests/fixtures/facereview-mysql/extensions/README.md)의 Slice14-F다. 요약: 전이 `applyDelta`가 공개라서 회원이 자기 합계를 직접 쓸 수 있다(본인 화면만 영향), 첫 호출끼리 경쟁하면 한쪽이 `WIRE.ALREADY_EXISTS`, 잠금 충돌은 3회 재시도 대신 호출자가 다시 보낸다, 세션 20000개 상한.
+**알려진 차이와 한계.** 자세한 내용은 [extensions/README](tests/fixtures/facereview-mysql/extensions/README.md)의 Slice14-F다. 요약: 전이 `applyDelta`는 처음엔 공개라서 회원이 자기 합계를 직접 쓸 수 있었으나 아래 후속(D-P-INTERNAL-APPLY)에서 `internal`로 막았다. 첫 호출끼리 경쟁하면 한쪽이 `WIRE.ALREADY_EXISTS`, 잠금 충돌은 3회 재시도 대신 호출자가 다시 보낸다, 세션 20000개 상한.
 
 ## 2026-10-22 WBS 7.2.8 조각 D 후속: 감정 합계 전이 노출 차단
 

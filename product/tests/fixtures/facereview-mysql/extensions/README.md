@@ -275,9 +275,10 @@ rounds the checkpoint of a session finalized at `.4 s` down, so the next call co
 and 60 seconds on three calls with one new session). `db-defaults.sql` makes the column `datetime(3)`, as precise as MongoDB's
 `finalized_at`; the original keeps working on it and counts once. (2) A first call that races another first call fails
 (`WIRE.ALREADY_EXISTS` from the create) instead of reusing the row, and a call that loses the `lock_version` is `WIRE.CONFLICT` at once
-where the original tried three times: send the request again. (3) The transition is public (`expose apply`), so a member can write their
-own totals directly. Nothing else reads the table (checked in the original's code), so only their own summary screen is affected; a
-transition that only extensions may call would close it. (4) A session needs `finalized_at` and `video_view_log_id` for the later calls,
+where the original tried three times: send the request again. (3) The transition is `expose apply ...; internal` (D-P-INTERNAL-APPLY):
+a member's direct `/apply`, an `atomic` bundle (alone or behind an allowed step) and the public `create` with extra fields are all refused
+(`WIRE.NOT_EXPOSED` / not a creatable field), and only `User.myEmotionSummary`, through its `access` grant, writes the totals. The original
+let any member overwrite their own totals, so this is stricter than the original. (4) A session needs `finalized_at` and `video_view_log_id` for the later calls,
 or the call fails. (5) One call sums at most 20000 sessions and fails beyond that instead of answering with a partial total.
 
 ## Slice14-G: video request batch (WBS 7.2.9)
