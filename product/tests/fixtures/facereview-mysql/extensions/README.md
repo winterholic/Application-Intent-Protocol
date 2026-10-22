@@ -205,3 +205,24 @@ counts them.
 `reference/slice14b_oracle.py` also runs the original `execute()` against the same stand-in (two ids the database has and three new ones per
 query, plus a channel result that is not a video): 36 new rows in 4 genres, 72 MongoDB documents and the quota (1212 in 12 searches) equal.
 A run saves up to 36 videos with 3 ctx calls each plus about 70 reads and calls, so the service sets `limits.job_calls` to 1000.
+
+## Slice14-D: the approval of a video request (WBS 7.2.9)
+
+`slice14d_approve.py` ports `AdminService.approve_video_request` (`new-facereview@7948b7e7`, `app/services/admin_service.py`) as the job
+`approveVideoRequest(request, youtube_title, channel_name, duration, category)`, for administrators. It declares `access read.VideoRequest,
+read.Video, create.Video, VideoRequest.accept, mongo.video_distribution, mongo.video_timeline_emotion_count`, and reuses `save_video` of
+`youtube_common.py` (the Video row through the exposed create and the two initial documents as upserts). `VideoRequest` gained the transition
+`accept` (administrator, from `PENDING`, and only while a `Video` with the request's `youtube_url` exists, so a client cannot mark a request
+accepted without registering the video; the `reject` that was already there needs no video).
+
+| Original | AIP |
+|---|---|
+| request must exist and be `PENDING`, else `VIDEO_NOT_FOUND` / `INVALID_INPUT_VALUE` | the job reads the request and fails with that text in the error |
+| no `Video` with the request's `youtube_url`, else `VIDEO_DUPLICATE_URL` | the unique `youtube_url` refuses the create (`WIRE.ALREADY_EXISTS`), the job fails |
+| `Video(...)`, two repository upserts, `status = 'ACCEPTED'` in one union transaction with a saga | create, two upserts and the transition `accept`, each journaled; a retry replays what was done and finishes the rest |
+| the response carries the new `video_id` | the job result carries it (`/jobs/result`) |
+
+`reference/slice14b_oracle.py` runs the original method and the job on the same data: the video row (`reqvideo001`, title, channel, genre,
+length, 0 views, active), the two documents and the request status (`ACCEPTED`, no comment) are equal. Differences: the approval runs in the
+background (the administrator reads the result), a job has no saga (a failure between the create and the acceptance is repaired by the
+retry, not undone), and a request approved while a soft-deleted video holds the url fails like a duplicate.

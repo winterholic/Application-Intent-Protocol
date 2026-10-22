@@ -351,6 +351,9 @@ resource VideoBookmark {
   }
 }
 
+// The request's youtube_url already belongs to a registered video (the row policy of the caller applies to that look).
+predicate hasVideo(r: VideoRequest) = exists Video where youtube_url = r.youtube_url
+
 resource VideoRequest {
   fields {
     id: Uuid
@@ -369,7 +372,15 @@ resource VideoRequest {
     patch admin_comment
     to status = REJECTED, updated_at = now
   }
+  // AdminService.approve_video_request ends here, after the job approveVideoRequest made the Video: the request can only become
+  // ACCEPTED while a Video with its youtube_url exists, so a client cannot accept a request without registering the video.
+  transition accept {
+    allow isAdmin(actor)
+    from status = PENDING and hasVideo(this)
+    to status = ACCEPTED, updated_at = now
+  }
   expose apply reject { target id; bulk maxRows 1 }
+  expose apply accept { target id; bulk maxRows 1 }
   expose create {
     fields user, youtube_url, youtube_full_url
     allow user = actor and active(actor)
@@ -531,4 +542,17 @@ operation job fillCategoryVideos {
   effect managed
   deadline 900s
   implementation "slice14c_category_fill.fillCategoryVideos"
+}
+
+// WBS 7.2.9: the original's AdminService.approve_video_request. The administrator chooses the video's title, channel, length and genre
+// when approving; the job registers the Video with its two initial MongoDB documents and accepts the request. It runs in the background
+// (the administrator reads the new video id from the job result) and a retry converges on what was already done.
+operation job approveVideoRequest {
+  input { request: VideoRequest.Id; youtube_title: Text(1..255); channel_name: Text(1..100); duration: Int(0..1000000); category: Genre }
+  output { video_id: Video.Id }
+  allow isAdmin(actor)
+  access read.VideoRequest, read.Video, create.Video, VideoRequest.accept, mongo.video_distribution, mongo.video_timeline_emotion_count
+  effect managed
+  deadline 60s
+  implementation "slice14d_approve.approveVideoRequest"
 }

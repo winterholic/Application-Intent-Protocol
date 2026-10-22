@@ -310,10 +310,59 @@ def main():
     check("fill quota and searches", (output["quota"], output["searches"]) == (want_quota, want_searches),
           f"original quota {want_quota} in {want_searches} searches, aip {output}")
     check("fill saved", output["saved"] == len(want_rows), f"{output['saved']} saved")
+    # 5. The approval of a video request: the original AdminService.approve_video_request, then the AIP job on the same starting data.
+    request_id, title, channel, length, genre = "ffffffff-0000-4000-8000-000000000001", "승인된 영상", "승인 채널", 321, "vlog"
+    approve_where = "youtube_url = 'reqvideo001'"
+
+    def request_status():
+        parsed = urllib.parse.urlparse(admin_url)
+        conn = pymysql.connect(host=parsed.hostname, port=parsed.port, user=urllib.parse.unquote(parsed.username),
+                               password=urllib.parse.unquote(parsed.password or ""), autocommit=True, charset="utf8mb4")
+        cur = conn.cursor()
+        cur.execute(f"SELECT status, admin_comment FROM `{base.SOURCE_DB}`.video_request WHERE video_request_id = %s", (request_id,))
+        row = cur.fetchone()
+        conn.close()
+        return row
+
+    base.seed_mysql(admin_url)
+    base.seed_mongo(mongo_url)
+    import common.extensions as original_extensions  # noqa: E402
+
+    original_extensions.mongo_client = pymongo.MongoClient(mongo_url)  # the approval opens its own client, before the service is imported
+    app.config["MONGO_DB_NAME"] = base.MONGO_DB
+    from app.services.admin_service import AdminService  # noqa: E402
+    with app.app_context():
+        AdminService.approve_video_request(request_id, title, channel, length, genre)
+    want_rows, want_docs = snapshot(admin_url, mongo_url, approve_where)
+    want_status = request_status()
+
+    base.seed_mysql(admin_url)
+    base.seed_mongo(mongo_url)
+    approve_work = work / "approve"
+    approve_work.mkdir()
+    deployment = deploy(approve_work, admin_url, mongo_url, "http://127.0.0.1:9/youtube/v3/videos", base.need("S14B_AIP_BIN"))
+    try:
+        accepted = deployment.request("/jobs/enqueue", {"operation": "approveVideoRequest", "key": "oracle-approve", "delayMs": 0, "input": {
+            "request": request_id, "youtube_title": title, "channel_name": channel, "duration": length, "category": genre}}, "bob")
+        if not accepted.get("ok"):
+            sys.exit(f"enqueue failed: {accepted}")
+        for _ in range(600):
+            status = deployment.request("/jobs/status", {"id": accepted["run"]["id"]}, "bob")["run"]
+            if status["state"] in ("SUCCEEDED", "FAILED", "CANCELLED"):
+                break
+            time.sleep(0.2)
+        if status["state"] != "SUCCEEDED":
+            sys.exit(f"the approval job did not succeed: {status}")
+    finally:
+        deployment.close()
+    got_rows, got_docs = snapshot(admin_url, mongo_url, approve_where)
+    check("approve video", got_rows == want_rows, f"{want_rows}")
+    check("approve documents", got_docs == want_docs, f"{len(want_docs)} documents")
+    check("approve request status", request_status() == want_status, f"{want_status}")
     pymongo.MongoClient(mongo_url).drop_database(base.MONGO_DB)
     if failures:
         sys.exit("FAILED: " + ", ".join(failures))
-    print("the trending and the category fill jobs matched the original")
+    print("the trending, the category fill and the approval jobs matched the original")
 
 
 def deploy(work, admin_url, mongo_url, youtube_url, bin_path):

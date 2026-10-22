@@ -1,5 +1,15 @@
 # 제품 통합 검증 (2026-10-17)
 
+## 2026-10-22 WBS 7.2.9 요청 승인 (구현 조각, 로컬 실DB·실서버·원본 서비스 대조 통과, 7.2.9는 진행 중)
+
+**범위.** 원본 `AdminService.approve_video_request`(영상 생성, `video_distribution`·`video_timeline_emotion_count` 초기 문서, 요청 `ACCEPTED`를 한 union 트랜잭션에서)를 durable job `approveVideoRequest`로 옮겼다. 쓰기 확장은 전이만 부를 수 있어서 7.2.7의 job `create`·Mongo 쓰기를 쓰는 job으로 했다(관리자는 새 영상 id를 `/jobs/result`에서 읽는다). `VideoRequest`에 전이 `accept`(관리자, `PENDING`에서, 요청의 `youtube_url`을 가진 `Video`가 있을 때만)를 더해서 클라이언트가 영상 등록 없이 요청을 승인 상태로 만들 수 없다. 거절(`reject`)은 이미 있었다. `save_video`가 새 영상의 id를 돌려주도록 바꿨다(이미 있으면 None).
+
+**원본과의 대조(`reference/slice14b_oracle.py`).** 같은 시작 데이터에서 원본 `AdminService.approve_video_request`와 AIP job을 각각 돌렸다. 영상 행(`reqvideo001`, 관리자가 고른 제목·채널·길이 321·장르 vlog, 조회수 0, 활성), 두 Mongo 초기 문서, 요청 상태(`ACCEPTED`, 코멘트 없음)가 모두 같았다(`PASS approve video/documents/request status`, `the trending, the category fill and the approval jobs matched the original`).
+
+**실서버 시험(`mysql_facereview_trending_job`의 새 단계, `1 passed`, 약 16초).** 회원은 승인 job을 시작할 수 없다. 관리자의 승인은 영상을 만들고(관리자가 정한 값, 조회수 0, 활성) 문서 둘을 만들고 요청을 `ACCEPTED`로 하며 새 영상 id가 job 결과에 있다. 같은 key는 같은 run이다. 이미 처리된 요청, 이미 같은 `youtube_url`의 영상이 있는 요청, 없는 요청은 `FAILED`이고 요청 상태·영상·문서가 그대로다. 클라이언트가 `VideoRequest.accept`를 직접 부르면(영상 등록 없이) 거절되고 요청이 `PENDING`으로 남는다. **변이 확인:** 전이의 영상 존재 조건을 빼면 직접 승인이 통과해 실패했고, job에서 `accept` 호출을 빼면 요청이 `PENDING`으로 남아 실패했다. 둘 다 복원했다.
+
+**알려진 한계.** (1) 승인은 비동기 job이다(원본은 응답으로 `video_id`를 줌). (2) job에는 saga가 없다: 영상을 만든 뒤 Mongo나 `accept`가 실패하면 되돌리지 않고 재시도가 장부를 재생해 끝낸다. 재시도 중 사람이 같은 요청을 거절하면 영상은 남고 요청은 `REJECTED`다. (3) 중간 실패 뒤 재시도 수렴은 자동 시험으로 보이지 않았다(장부 재생 자체는 7.2.7 시험이 보인다). (4) 요청 생성 `POST home/video/recommend`(서버 파생 `youtube_full_url`, 전역 중복 거절), dashboard, 시스템 상태, 더미 데이터는 7.2.9에 남아 있다.
+
 ## 2026-10-22 WBS 7.2.8 조각 B: 이메일 인증번호와 비밀번호 재설정 (구현 조각, 로컬 실DB·실서버·MariaDB 저장소 통과, 7.2.8은 진행 중)
 
 **범위.** 원본 마이페이지의 `email/verification`, `email/verify`, `password/verification`, `password`(PATCH)를 서비스의 비밀번호 로그인 곁에 옮겼다. 결정과 대안은 [DECISIONS](../docs/DECISIONS.md)의 D-P-CREDMAIL이다. 서버 설정 `credentials.mail`(`integration`, `verified_field`, 선택 `updated_field`·`code_ttl_secs` 300·`reset_ttl_secs` 600·`max_attempts` 5)을 켜면 네 경로가 `POST /auth/email/verification`·`/auth/email/verify`·`/auth/password/verification`·`/auth/password`로 생기고 모두 Bearer 접근 토큰이 필요하다(전송 계층이 토큰을 그대로 넘기고 서비스가 다른 경로와 같은 검증기로 확인한다). 원본이 Redis에 두던 번호·토큰은 migration 계정의 `adopt-external --apply`가 만드는 `aip_auth_challenges` 표(주체·용도별 한 행, SHA-256 digest, 시도 횟수, 만료)에 둔다. 번호는 설정된 POST 연동(`{to, template, code, expires_in_secs}`)으로 보낸다.

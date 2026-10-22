@@ -47,11 +47,11 @@ async def existing_youtube_ids(ctx, youtube_ids, chunk_size=50):
 
 
 async def save_video(ctx, video, category):
-    """Creates the Video row and the two initial documents. Returns True when the video is new, False when it already existed."""
+    """Creates the Video row and the two initial documents. Returns the new video's id, or None when it already existed."""
     youtube_id = video["youtube_id"]
     title = video["title"][:255]
     if not title:
-        return False
+        return None
     try:
         video_id = await ctx.data.create("Video", {
             "youtube_url": youtube_id, "title": title, "channel_name": video["channel_name"][:100] or None,
@@ -59,7 +59,7 @@ async def save_video(ctx, video, category):
         }, key=f"video:{youtube_id}:{category}")  # a video found under two genres is two different requests
     except Exception as error:
         if _error_code(error) == "WIRE.ALREADY_EXISTS":
-            return False
+            return None
         raise
     try:
         # VideoDistributionRepository.upsert(VideoDistribution(video_id=...)): zero counts, no dominant emotion yet.
@@ -78,4 +78,4 @@ async def save_video(ctx, video, category):
         if _error_code(error) == "WIRE.ADAPTER_UNAVAILABLE":
             raise ctx.retry_later("MongoDB does not answer", after_ms=1000)
         raise
-    return True
+    return video_id

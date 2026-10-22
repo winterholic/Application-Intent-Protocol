@@ -39,7 +39,7 @@ const SCHEMA: &str = include_str!("../../../product/tests/fixtures/facereview-my
 const DEFAULTS: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/db-defaults.sql");
 const SEED: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/seed.sql");
 const SEED_13D: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/slice13d-seed.sql");
-const EXTENSIONS: [(&str, &str); 9] = [
+const EXTENSIONS: [(&str, &str); 10] = [
     ("slice13f_watch.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13f_watch.py")),
     ("slice13b_lists.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13b_lists.py")),
     ("slice13d_recommend.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13d_recommend.py")),
@@ -49,6 +49,7 @@ const EXTENSIONS: [(&str, &str); 9] = [
     ("slice14b_trending.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice14b_trending.py")),
     ("youtube_common.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/youtube_common.py")),
     ("slice14c_category_fill.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice14c_category_fill.py")),
+    ("slice14d_approve.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice14d_approve.py")),
 ];
 const META: &str = "aip_t_yt_meta";
 const SOURCE: &str = "aip_t_yt_src";
@@ -543,6 +544,95 @@ async fn the_trending_job_saves_new_videos_with_their_initial_documents() {
     // attempt 1: page 0 hung up; attempt 2: pages 0, 1 and 2 (page 0 was not journaled, as it never answered).
     assert_eq!(youtube.requests().len() - before, 4);
     assert_eq!(rows(saved_sql).await.len(), 6);
+
+    // ---- WBS 7.2.9: the approval of a video request registers the video, its two initial documents and the acceptance. ----
+    let approve = |token: String, key: &'static str, request: &'static str, category: &'static str| {
+        let (address, fingerprint) = (server.address.clone(), server.fingerprint.clone());
+        async move {
+            post(
+                &address,
+                "/jobs/enqueue",
+                Some(&token),
+                &fingerprint,
+                &json!({"operation": "approveVideoRequest", "key": key, "delayMs": 0, "input": {
+                    "request": request, "youtube_title": "승인된 영상", "channel_name": "승인 채널", "duration": 321, "category": category}}),
+            )
+            .await
+        }
+    };
+    const PENDING_REQUEST: &str = "ffffffff-0000-4000-8000-000000000001";
+    let status_of = |request: &'static str| {
+        let driver = admin.clone();
+        async move {
+            let mut conn = driver.pool().get_conn().await.unwrap();
+            conn.query_first::<String, _>(format!("SELECT status FROM `{SOURCE}`.video_request WHERE video_request_id = '{request}'")).await.unwrap()
+        }
+    };
+    let videos_of = |url: &'static str| {
+        let driver = admin.clone();
+        async move {
+            let mut conn = driver.pool().get_conn().await.unwrap();
+            conn.query::<(String, String, Option<String>, String, Option<i64>, Option<i64>, Option<i64>), _>(format!(
+                "SELECT video_id, title, channel_name, category, duration, view_count, is_deleted FROM `{SOURCE}`.video WHERE youtube_url = '{url}'"
+            ))
+            .await
+            .unwrap()
+        }
+    };
+    assert_eq!(approve(alice.clone(), "approve-alice", PENDING_REQUEST, "vlog").await["ok"], false, "a member cannot approve");
+    let first = approve(bob.clone(), "approve-1", PENDING_REQUEST, "vlog").await;
+    assert_eq!(first["ok"], true, "{first}");
+    let first_id = first["run"]["id"].as_str().unwrap().to_string();
+    let approved = server.run_until(&bob, &first_id, finished).await;
+    assert_eq!(approved["state"], "SUCCEEDED", "{approved}");
+    let outcome = server.post("/jobs/result", Some(&bob), &json!({"id": first_id})).await;
+    let new_video = outcome["output"]["video_id"].as_str().expect("the new video id is the job result").to_string();
+    assert_eq!(
+        videos_of("reqvideo001").await,
+        [(new_video.clone(), "승인된 영상".to_string(), Some("승인 채널".to_string()), "vlog".to_string(), Some(321), Some(0), Some(0))],
+        "the video the administrator described, active, with no views"
+    );
+    assert_eq!(status_of(PENDING_REQUEST).await.as_deref(), Some("ACCEPTED"));
+    for collection in [&distributions, &timelines] {
+        assert_eq!(collection.count_documents(mongodb::bson::doc! {"video_id": &new_video}).await.unwrap(), 1, "one initial document each");
+    }
+    let again = approve(bob.clone(), "approve-1", PENDING_REQUEST, "vlog").await;
+    assert_eq!(again["run"]["id"], first_id.as_str(), "the same key is the same run");
+
+    // Nothing is approved twice; a request for a video the service already has, and an unknown request, fail without a trace.
+    setup
+        .query_drop(format!(
+            "INSERT INTO `{SOURCE}`.video_request (video_request_id, user_id, youtube_url, youtube_full_url, status, created_at, updated_at) VALUES \
+             ('ffffffff-0000-4000-8000-000000000002', '11111111-1111-4111-8111-111111111111', 'yt000000001', 'https://www.youtube.com/watch?v=yt000000001', 'PENDING', NOW(), NOW()), \
+             ('ffffffff-0000-4000-8000-000000000003', '11111111-1111-4111-8111-111111111111', 'nvideo00001', 'https://www.youtube.com/watch?v=nvideo00001', 'PENDING', NOW(), NOW())"
+        ))
+        .await
+        .unwrap();
+    let before_documents = distributions.count_documents(mongodb::bson::doc! {}).await.unwrap();
+    for (key, request, label) in [
+        ("approve-2", PENDING_REQUEST, "already processed"),
+        ("approve-dup", "ffffffff-0000-4000-8000-000000000002", "the video exists"),
+        ("approve-none", "ffffffff-0000-4000-8000-0000000000ff", "no such request"),
+    ] {
+        let accepted = approve(bob.clone(), key, request, "vlog").await;
+        let run = server.run_until(&bob, accepted["run"]["id"].as_str().unwrap(), finished).await;
+        assert_eq!(run["state"], "FAILED", "{label}: {run}");
+    }
+    assert_eq!(status_of("ffffffff-0000-4000-8000-000000000002").await.as_deref(), Some("PENDING"), "a refused approval leaves the request");
+    assert_eq!(videos_of("reqvideo001").await.len(), 1);
+    assert_eq!(distributions.count_documents(mongodb::bson::doc! {}).await.unwrap(), before_documents, "and writes no document");
+
+    // A client cannot accept a request by itself while no video has been registered for it.
+    let direct = post(
+        &server.address,
+        "/apply",
+        Some(&bob),
+        &server.fingerprint,
+        &json!({"key": "accept-direct", "request": {"apply": "VideoRequest.accept", "target": {"ids": ["ffffffff-0000-4000-8000-000000000003"]}}}),
+    )
+    .await;
+    assert_ne!(direct["ok"], true, "{direct}");
+    assert_eq!(status_of("ffffffff-0000-4000-8000-000000000003").await.as_deref(), Some("PENDING"));
 
     mongo.database(MONGO_DB).drop().await.expect("drop the run-owned database");
     for schema in [META, SOURCE] {
