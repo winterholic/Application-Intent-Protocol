@@ -132,7 +132,7 @@
 
 **시험 환경의 주의.** 원본 골든 세션 문서에는 `video_view_log_id`가 없어서 서버의 `ensure_indexes`(유일 인덱스)가 실패한다. 시험은 부분 유일 인덱스(문자열 `video_view_log_id`가 있는 문서만)를 직접 만든다. 운영에서는 원본 앱이 만든 유일 인덱스가 이미 있다고 가정했고 그 DB는 확인하지 않았다.
 
-**알려진 한계·미검증.** (1) 점수를 쓰는 서버 코드, 평균 감정(`average_emotion`)의 출처, 세션 확정과 `frame_count`·`emotion_sum`·`emotion_percentages`·`dominant_emotion`·`completion_rate` 계산, `video_distribution` 갱신은 없다. 원본 소켓 흐름은 세션을 확정하지 않는다(고정 소스에서 `finalize`의 호출처를 찾지 못했다). (2) 프레임마다 쓰기 확장 한 번(워커 기동 포함)의 비용은 측정하지 않았다. (3) 보상은 점수 키만 되돌리고 Mongo 쓰기는 멱등이라 되돌리지 않는다(큰 문서의 pre-image를 읽지 않기 위함). (4) CI는 push 뒤에 조회한다.
+**알려진 한계·미검증.** (1) 점수를 쓰는 서버 코드, 평균 감정(`average_emotion`)의 출처, 세션 확정과 `frame_count`·`emotion_sum`·`emotion_percentages`·`dominant_emotion`·`completion_rate` 계산, `video_distribution` 갱신은 없다. 원본 소켓 흐름은 세션을 확정하지 않는다(고정 소스에서 `finalize`의 호출처를 찾지 못했다). (2) 프레임마다 쓰기 확장 한 번(워커 기동 포함)의 비용은 측정하지 않았다. (3) 보상은 점수 키만 되돌리고 Mongo 쓰기는 멱등이라 되돌리지 않는다(큰 문서의 pre-image를 읽지 않기 위함). (4) CI: 이 조각의 커밋 `7c3ec334bd8585612de4b93e00dce4787d0bae7b`는 동일 SHA의 8개 workflow가 모두 success다. Verify(run 39802081466, job 22분)의 로그에서 `a_browsers_extension_offer_is_declined_not_refused ... ok`, 실제 `socket.io-client` 종단 `... ok`, Python 단위 시험(`Ran 8 tests`), Linux runner의 `mysql_facereview_watch` 실행(`recordFrame` 단정 포함)을 확인했다. 앞선 `7f0f702`의 Verify가 30분 상한에 걸려 cancelled였던 것은 이 실행으로 해소됐다(같은 시험이 22분에 끝났다).
 
 ## 2026-10-23 WBS 7.2.6 ML 게이트 조사: `model.h5`의 출처·허가와 재현 환경 (조사만, 구현 없음)
 

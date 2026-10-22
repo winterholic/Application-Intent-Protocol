@@ -1,8 +1,10 @@
-진행 중 (2026-10-22 23:25 KST 갱신): 세션 257e4936이 WBS 7.2.6 조각 2(첫 프레임 세션·`VideoViewLog` 멱등 생성)와 이어서 조각 3·ML 게이트 조사·`permessage-deflate` 확인을 한다. 작업 트리의 미커밋 변경(`crates/aip-cli/tests/mysql_facereview_watch.rs`, `docs/DECISIONS.md`의 D-P-WATCH-SESSION, `product/tests/fixtures/facereview-mysql/facereview.aip`, `spikes/spike-v6-transport/src/{lib,socketio}.rs`, `extensions/slice14k_watch.py`·`test_slice14k_watch.py`)은 이 세션 소유이니 다른 실행은 수정·커밋·되돌리기를 하지 마라(`git checkout`·`git stash`·`git clean` 금지). e29ddf1e의 새 턴은 7.2.6을 시작하지 말고 이 파일을 읽은 뒤 7.2.10 사전 조사나 문서 정합 점검처럼 겹치지 않는 일만 하거나 끝내라.
+진행 중 (2026-10-23 00:35 KST 갱신): 세션 257e4936이 WBS 7.2.6 조각 2·3, ML 게이트 조사, `/events/socket` 확장 협상 수정을 끝내고 push했다(커밋 7f0f702, 7c3ec33; 7c3ec33의 CI 8종 success). 작업 트리의 미커밋 변경은 없다. 이어서 7.2.10(고정 UI의 data access를 SDK로 바꾸는 작업)의 첫 조각을 이 세션이 한다. 7.2.6의 나머지(실추론·평균 감정·세션 확정·브라우저 E2E)는 사용자의 모델 사용 결정(ML 게이트 조사 결과)을 기다린다. 다른 실행은 7.2.6·7.2.10을 겹쳐 시작하지 마라.
 
 ## 재개 지점 (2026-10-23, 7.2.6 조각 3 프레임 타임라인 저장 · ML 게이트 조사 · `/events/socket` 확장 협상 수정 뒤)
 
 **조각 3(ML 미연결).** 쓰기 확장 `User.recordFrame { id, centi }`이 프레임 점수를 Mongo 세션 문서의 두 타임라인 맵에 멱등하게 쓴다(결정 D-P-WATCH-FRAMES). 점수는 입력이 아니라 서버만 쓰는 Redis 키에서 한 번 꺼내 쓰므로 회원이 위조할 수 없다. 그 키를 쓰는 서버 코드는 아직 없어서 소켓은 이 확장을 부르지 않고 프레임 ack는 `WIRE.NOT_AVAILABLE`이다. 시험은 고정 숫자를 직접 그 키에 넣은 것이며 실추론이 아니다. 원본의 `$inc` 카운터(`frame_count`·`emotion_sum`)와 `emotion_percentages` 재계산은 멱등하지 않아서 쓰지 않았고 세션 확정·집계 조각이 타임라인에서 계산해야 한다. 근거는 [제품 검증](../product/VERIFICATION.md)의 「7.2.6 조각 3」이다.
+
+**CI.** 조각 3 커밋 `7c3ec334bd8585612de4b93e00dce4787d0bae7b`는 동일 SHA 8종 workflow가 모두 success다(Verify 39802081466, 22분). 조각 2 커밋 `7f0f702`는 7종 success이고 Verify는 30분 `timeout-minutes`에 걸려 cancelled였다(시험 단계는 모두 success, 상한을 45분으로 올림). 실제 `socket.io-client` 종단·`recordFrame` 단정·`permessage-deflate` 시험이 Linux runner에서 `ok`임을 로그로 확인했다.
 
 **ML 게이트 조사 결과(사용자 결정 필요).** `model.h5`는 git에 추적된 적이 없고(`rev-list --objects --all`에 `.h5` 0개) 저장소에 학습 데이터·학습 코드·LICENSE·출처 문서가 없다. 구조는 Keras 2.4.0으로 저장한 ResNet 계열 177층, 입력 96×96×1, 최적화기 가중치 포함이라 팀이 직접 학습한 모델로 보이지만 추정이다. 선택지는 (A) 원본 모델 사용(사용자가 소유·사용 권한을 확인), (B) 허가된 대체 모델(수치 대조 불가), (C) 보류(현재 상태). 재현 환경은 Python 3.10, `tensorflow==2.15.0`, `opencv-python==4.9.0.80`, `cvlib==0.2.7`, `Pillow==10.2.0`, `numpy==1.26.3`이고 Keras 2.4.0 H5의 TF 2.15 로드 호환성은 미검증이다. 사용 허가된 입력 영상·프레임은 저장소에 없다. 상세는 제품 검증의 「7.2.6 ML 게이트 조사」다.
 
