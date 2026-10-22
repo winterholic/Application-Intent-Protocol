@@ -3,7 +3,7 @@
 //! WBS 7.2.2: login sessions with single-use refresh tokens on a real MySQL 8.4 / MariaDB 11.4: rotation, replay revoking the
 //! whole session, logout, account suspension, expiry and a race between concurrent refreshes of one token.
 //! Run with `-- --ignored` against a run-owned container (`scripts/mysql-live-fixture.sh`).
-use aip_migrate::mysql_auth_sessions::{Consume, Error, MysqlAuthSessions, SessionPolicy};
+use aip_migrate::mysql_auth_sessions::{Consume, Error, MysqlAuthChallenges, MysqlAuthSessions, Purpose, SessionPolicy, Verdict};
 use aip_migrate::mysql_driver::MysqlDriver;
 use aip_migrate::mysql_driver::mysql_async::{TxOpts, prelude::Queryable};
 use std::sync::Arc;
@@ -220,4 +220,81 @@ fn policy_and_schema_are_validated() {
     assert_eq!(MysqlAuthSessions::new("meta", SessionPolicy::default()).unwrap_err(), Error::InvalidSchema);
     assert_eq!(MysqlAuthSessions::new(META, SessionPolicy { idle_secs: 0, absolute_secs: 10 }).unwrap_err(), Error::InvalidPolicy);
     assert_eq!(MysqlAuthSessions::new(META, SessionPolicy { idle_secs: 10, absolute_secs: 5 }).unwrap_err(), Error::InvalidPolicy);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+#[ignore = "live: needs a dedicated MySQL 8.4 container (scripts/mysql-live-fixture.sh); run with -- --ignored"]
+async fn mailbox_challenges_are_digests_spent_once_bounded_and_replaced_by_a_new_issue() {
+    let h = Harness::new().await;
+    let c = MysqlAuthChallenges::new(META, 3).unwrap();
+    let mut conn = h.conn().await;
+    c.issue(&mut conn, "user-1", Purpose::EmailCode, "123456", 300).await.unwrap();
+    let stored = h.cell(format!("SELECT HEX(secret_hash) FROM `{META}`.aip_auth_challenges WHERE subject = 'user-1'")).await.unwrap();
+    assert_eq!(stored.len(), 64, "a SHA-256 digest");
+    assert!(!stored.contains("123456"));
+
+    // Another purpose or another subject cannot spend it; a wrong answer is counted.
+    assert_eq!(c.redeem(&mut conn, "user-1", Purpose::ResetToken, "123456").await.unwrap(), Verdict::Absent);
+    assert_eq!(c.redeem(&mut conn, "user-2", Purpose::EmailCode, "123456").await.unwrap(), Verdict::Absent);
+    assert_eq!(c.redeem(&mut conn, "user-1", Purpose::EmailCode, "000000").await.unwrap(), Verdict::Wrong);
+    assert_eq!(h.cell(format!("SELECT attempts FROM `{META}`.aip_auth_challenges WHERE subject = 'user-1'")).await.as_deref(), Some("1"));
+    assert_eq!(c.redeem(&mut conn, "user-1", Purpose::EmailCode, "123456").await.unwrap(), Verdict::Accepted);
+    assert_eq!(c.redeem(&mut conn, "user-1", Purpose::EmailCode, "123456").await.unwrap(), Verdict::Absent, "spent by the first right answer");
+
+    // The attempt limit locks even the right secret; a new issue replaces the row and starts again.
+    c.issue(&mut conn, "user-1", Purpose::EmailCode, "222222", 300).await.unwrap();
+    for _ in 0..3 {
+        assert_eq!(c.redeem(&mut conn, "user-1", Purpose::EmailCode, "000000").await.unwrap(), Verdict::Wrong);
+    }
+    assert_eq!(c.redeem(&mut conn, "user-1", Purpose::EmailCode, "222222").await.unwrap(), Verdict::Locked);
+    c.issue(&mut conn, "user-1", Purpose::EmailCode, "333333", 300).await.unwrap();
+    assert_eq!(
+        c.redeem(&mut conn, "user-1", Purpose::EmailCode, "222222").await.unwrap(),
+        Verdict::Wrong,
+        "the old secret died with the replacement"
+    );
+    assert_eq!(c.redeem(&mut conn, "user-1", Purpose::EmailCode, "333333").await.unwrap(), Verdict::Accepted);
+
+    // Expiry follows the database clock, and clear ends everything of a subject.
+    c.issue(&mut conn, "user-1", Purpose::EmailCode, "444444", 300).await.unwrap();
+    c.issue(&mut conn, "user-1", Purpose::ResetToken, "token", 300).await.unwrap();
+    conn.query_drop(format!(
+        "UPDATE `{META}`.aip_auth_challenges SET expires_at = DATE_SUB(UTC_TIMESTAMP(6), INTERVAL 1 SECOND) WHERE purpose = 'email_code'"
+    ))
+    .await
+    .unwrap();
+    assert_eq!(c.redeem(&mut conn, "user-1", Purpose::EmailCode, "444444").await.unwrap(), Verdict::Absent, "expired");
+    c.clear(&mut conn, "user-1").await.unwrap();
+    assert_eq!(h.cell(format!("SELECT COUNT(*) FROM `{META}`.aip_auth_challenges")).await.as_deref(), Some("0"));
+
+    // Concurrent guesses are counted one by one: with 3 allowed, ten parallel wrong answers can never see more than 3 Wrong.
+    c.issue(&mut conn, "user-1", Purpose::EmailCode, "555555", 300).await.unwrap();
+    let mut guesses = Vec::new();
+    for _ in 0..10 {
+        let (driver, c) = (h.driver.clone(), c.clone());
+        guesses.push(tokio::spawn(async move {
+            let mut conn = driver.pool().get_conn().await.unwrap();
+            let mut tx = conn.start_transaction(TxOpts::default()).await.unwrap();
+            let verdict = c.redeem(&mut tx, "user-1", Purpose::EmailCode, "000000").await.unwrap();
+            tx.commit().await.unwrap();
+            verdict
+        }));
+    }
+    let mut wrong = 0;
+    for guess in guesses {
+        if guess.await.unwrap() == Verdict::Wrong {
+            wrong += 1;
+        }
+    }
+    assert_eq!(wrong, 3, "the lock held under concurrency");
+
+    // A password change ends the other sessions of the account and keeps the one that made it.
+    let s = store(SessionPolicy::default());
+    let keep = s.open(&mut conn, "user-9").await.unwrap();
+    let other = s.open(&mut conn, "user-9").await.unwrap();
+    let stranger = s.open(&mut conn, "user-8").await.unwrap();
+    assert_eq!(s.revoke_others(&mut conn, "user-9", &keep.family, "password_changed").await.unwrap(), 1);
+    assert!(s.is_active(&mut conn, &keep.family, "user-9").await.unwrap());
+    assert!(!s.is_active(&mut conn, &other.family, "user-9").await.unwrap());
+    assert!(s.is_active(&mut conn, &stranger.family, "user-8").await.unwrap(), "another account is untouched");
 }

@@ -233,6 +233,21 @@ impl MysqlAuthSessions {
         Ok(changed.unwrap_or(0))
     }
 
+    /// A password change ends every other login of the account and leaves the one that changed it.
+    pub async fn revoke_others<Q: Queryable>(&self, conn: &mut Q, subject: &str, keep_family: &str, reason: &str) -> Result<u64, Error> {
+        conn.exec_drop(
+            format!(
+                "UPDATE {} SET revoked_at = UTC_TIMESTAMP(6), revoked_reason = ? WHERE subject = ? AND family <> ? AND revoked_at IS NULL",
+                self.sessions()
+            ),
+            (reason, subject, keep_family),
+        )
+        .await
+        .map_err(db)?;
+        let changed: Option<u64> = conn.query_first("SELECT ROW_COUNT()").await.map_err(db)?;
+        Ok(changed.unwrap_or(0))
+    }
+
     /// Logout: ends the session that owns the presented token, whichever state the token is in. Returns whether a session ended.
     pub async fn revoke_by_token<Q: Queryable>(&self, conn: &mut Q, presented: &str, reason: &str) -> Result<bool, Error> {
         if presented.is_empty() || presented.len() > 256 {
@@ -284,6 +299,125 @@ impl MysqlAuthSessions {
     }
 }
 
+/// What a challenge proves. The email code is shared by the email confirmation and the password reset, as the original keeps one
+/// code per address; the reset token is the proof a code was just redeemed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Purpose {
+    EmailCode,
+    ResetToken,
+}
+
+impl Purpose {
+    fn name(self) -> &'static str {
+        match self {
+            Purpose::EmailCode => "email_code",
+            Purpose::ResetToken => "reset_token",
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Verdict {
+    /// The secret was right; the challenge is spent.
+    Accepted,
+    /// The secret was wrong. The attempt is counted, so the caller must commit.
+    Wrong,
+    /// Too many wrong attempts: the challenge no longer accepts anything, even the right secret.
+    Locked,
+    /// Nothing was issued, it expired, or it was already used.
+    Absent,
+}
+
+/// One-time secrets that prove control of a mailbox (WBS 7.2.8): a six-digit code and the reset token it is exchanged for. The
+/// original keeps them in Redis with no limit on guesses; here only the SHA-256 is stored, a challenge accepts a few wrong
+/// answers before it locks, and it is spent by the first right one. The database clock decides expiry.
+#[derive(Clone, Debug)]
+pub struct MysqlAuthChallenges {
+    schema: String,
+    max_attempts: u32,
+}
+
+impl MysqlAuthChallenges {
+    pub fn new(schema: impl Into<String>, max_attempts: u32) -> Result<Self, Error> {
+        let schema = schema.into();
+        let bytes = schema.as_bytes();
+        if bytes.len() > 63
+            || !bytes.starts_with(b"aip_")
+            || !bytes.get(4).is_some_and(u8::is_ascii_lowercase)
+            || !bytes[5..].iter().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'_')
+            || max_attempts == 0
+        {
+            return Err(Error::InvalidSchema);
+        }
+        Ok(Self { schema, max_attempts })
+    }
+
+    fn table(&self) -> String {
+        format!("`{}`.`aip_auth_challenges`", self.schema)
+    }
+
+    fn secret_hash(purpose: Purpose, secret: &str) -> Vec<u8> {
+        digest(&format!("{}:{secret}", purpose.name()))
+    }
+
+    /// Replaces any earlier challenge of this purpose for the subject; the attempt count starts again.
+    pub async fn issue<Q: Queryable>(&self, conn: &mut Q, subject: &str, purpose: Purpose, secret: &str, ttl_secs: u32) -> Result<(), Error> {
+        if !valid_subject(subject) {
+            return Err(Error::InvalidSubject);
+        }
+        conn.exec_drop(
+            format!(
+                "INSERT INTO {} (subject, purpose, secret_hash, attempts, created_at, expires_at) \
+                 VALUES (?, ?, ?, 0, UTC_TIMESTAMP(6), DATE_ADD(UTC_TIMESTAMP(6), INTERVAL ? SECOND)) \
+                 ON DUPLICATE KEY UPDATE secret_hash = VALUES(secret_hash), attempts = 0, created_at = VALUES(created_at), expires_at = VALUES(expires_at)",
+                self.table()
+            ),
+            (subject, purpose.name(), Self::secret_hash(purpose, secret), ttl_secs),
+        )
+        .await
+        .map_err(db)
+    }
+
+    /// Judges a presented secret. The row is locked while it is judged, so concurrent guesses are counted one by one.
+    pub async fn redeem<Q: Queryable>(&self, conn: &mut Q, subject: &str, purpose: Purpose, secret: &str) -> Result<Verdict, Error> {
+        let row: Option<(Vec<u8>, u32, i64)> = conn
+            .exec_first(
+                format!(
+                    "SELECT secret_hash, attempts, expires_at > UTC_TIMESTAMP(6) FROM {} WHERE subject = ? AND purpose = ? FOR UPDATE",
+                    self.table()
+                ),
+                (subject, purpose.name()),
+            )
+            .await
+            .map_err(db)?;
+        let Some((stored, attempts, live)) = row else { return Ok(Verdict::Absent) };
+        let delete = format!("DELETE FROM {} WHERE subject = ? AND purpose = ?", self.table());
+        if live == 0 {
+            conn.exec_drop(delete, (subject, purpose.name())).await.map_err(db)?;
+            return Ok(Verdict::Absent);
+        }
+        if attempts >= self.max_attempts {
+            return Ok(Verdict::Locked);
+        }
+        let presented = Self::secret_hash(purpose, secret);
+        // Compared without an early exit, so the time does not say how many leading bytes were right.
+        let same = stored.len() == presented.len() && stored.iter().zip(&presented).fold(0u8, |acc, (a, b)| acc | (a ^ b)) == 0;
+        if same {
+            conn.exec_drop(delete, (subject, purpose.name())).await.map_err(db)?;
+            return Ok(Verdict::Accepted);
+        }
+        conn.exec_drop(format!("UPDATE {} SET attempts = attempts + 1 WHERE subject = ? AND purpose = ?", self.table()), (subject, purpose.name()))
+            .await
+            .map_err(db)?;
+        Ok(Verdict::Wrong)
+    }
+
+    /// Ends every challenge of a subject (a password change or a suspension).
+    pub async fn clear<Q: Queryable>(&self, conn: &mut Q, subject: &str) -> Result<(), Error> {
+        conn.exec_drop(format!("DELETE FROM {} WHERE subject = ?", self.table()), (subject,)).await.map_err(db)
+    }
+}
+
 /// AIP-owned additive infrastructure shared by bootstrap and adoption.
 pub(crate) fn auth_session_ddl(meta_schema: &str) -> Vec<String> {
     vec![
@@ -300,6 +434,14 @@ pub(crate) fn auth_session_ddl(meta_schema: &str) -> Vec<String> {
                token_hash BINARY(32) NOT NULL PRIMARY KEY, family CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, \
                state VARCHAR(8) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, created_at DATETIME(6) NOT NULL, expires_at DATETIME(6) NOT NULL, \
                KEY aip_auth_refresh_family (family), CONSTRAINT aip_auth_refresh_state CHECK (state IN ('ACTIVE', 'USED'))) ENGINE=InnoDB"
+        ),
+        format!(
+            "CREATE TABLE IF NOT EXISTS `{meta_schema}`.`aip_auth_challenges` (\
+               subject VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL, \
+               purpose VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, secret_hash BINARY(32) NOT NULL, \
+               attempts INT UNSIGNED NOT NULL, created_at DATETIME(6) NOT NULL, expires_at DATETIME(6) NOT NULL, \
+               PRIMARY KEY (subject, purpose), KEY aip_auth_challenges_end (expires_at), \
+               CONSTRAINT aip_auth_challenges_purpose CHECK (purpose IN ('email_code', 'reset_token'))) ENGINE=InnoDB"
         ),
     ]
 }

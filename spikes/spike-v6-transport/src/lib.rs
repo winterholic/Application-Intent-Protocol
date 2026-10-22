@@ -767,7 +767,8 @@ async fn serve_credentials<R: tokio::io::AsyncRead + Unpin>(
         }
     };
     let cookie = headers.iter().find(|(key, _)| key == "cookie").map(|(_, value)| value.as_str());
-    let reply = adapter.handle(credential_auth::AuthRequest { route: path, body, cookie }).await;
+    let bearer = headers.iter().find(|(key, _)| key == "authorization").and_then(|(_, value)| value.strip_prefix("Bearer "));
+    let reply = adapter.handle(credential_auth::AuthRequest { route: path, body, cookie, bearer }).await;
     let mut extra = String::from(no_store);
     if w.origin.is_some() {
         extra.push_str("access-control-allow-credentials: true\r\n");

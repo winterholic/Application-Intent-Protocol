@@ -150,6 +150,11 @@ fn map_auth(error: aip_auth::AuthError) -> spike_v6_transport::auth::AuthError {
 
 impl MysqlAuthenticator {
     async fn session(&self, token: &str) -> Result<spike_v6_transport::auth::Session, spike_v6_transport::auth::AuthError> {
+        self.verified(token).await.map(|(session, _)| session)
+    }
+
+    /// The session of a token and the login session id it carries (present when the service logs users in itself).
+    async fn verified(&self, token: &str) -> Result<(spike_v6_transport::auth::Session, Option<String>), spike_v6_transport::auth::AuthError> {
         use spike_v6_transport::auth::AuthError;
         let claims = self.verifier.verify_token(token).await.map_err(map_auth)?;
         let mut conn = tokio::time::timeout(DB_TIMEOUT, self.driver.pool().get_conn())
@@ -171,9 +176,11 @@ impl MysqlAuthenticator {
         if enabled != 1 || claims.issued_at < min_iat {
             return Err(AuthError::BadSignature);
         }
+        let mut login_session = None;
         if let Some(sessions) = &self.sessions {
             // A token without a session id was not minted by this service's login, so it is not accepted here.
             let sid = claims.claims.get("sid").and_then(Value::as_str).ok_or(AuthError::BadSignature)?;
+            login_session = Some(sid.to_owned());
             let live = tokio::time::timeout(DB_TIMEOUT, sessions.is_active(&mut conn, sid, &claims.subject))
                 .await
                 .map_err(|_| AuthError::Unavailable)?
@@ -210,7 +217,16 @@ impl MysqlAuthenticator {
         };
         spike_v6_transport::auth::Session::new_durable(grant, claims.expires_at).map(|mut session| {
             session.actor_resource_id = public_id;
-            session
+            (session, login_session)
+        })
+    }
+}
+
+impl super::mysql_auth::BearerVerifier for MysqlAuthenticator {
+    fn verify<'a>(&'a self, token: &'a str) -> spike_v2_read::backend::BackendFuture<'a, Option<(String, String)>> {
+        Box::pin(async move {
+            let (session, login_session) = self.verified(token).await.ok()?;
+            Some((session.durable?.subject, login_session?))
         })
     }
 }
@@ -407,6 +423,12 @@ pub(crate) async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
         None => None,
         Some(credentials) => {
             let workers = extensions.clone().ok_or_else(|| error("CREDENTIALS_CONFIG", "credentials에는 workers 설정이 필요함"))?;
+            let mail_broker = if credentials.mail.is_some() {
+                let integrations = config.workers.as_ref().map(|workers| workers.integrations.as_slice()).unwrap_or_default();
+                build_broker_with_webhooks(integrations, &[]).await?
+            } else {
+                None
+            };
             let service = super::mysql_auth::CredentialService::new(
                 credentials,
                 &mapping,
@@ -419,6 +441,7 @@ pub(crate) async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
                 infrastructure.worker_launch.clone(),
                 &issuer,
                 &audience,
+                mail_broker,
             )
             .await?;
             service.check_storage().await?;
@@ -438,6 +461,7 @@ pub(crate) async fn serve(file: &Path, config: Config) -> Result<Value, Value> {
         sessions: credential_service.as_ref().map(|service| service.sessions()),
     });
     if let Some(service) = &credential_service {
+        service.attach_bearer_verifier(authenticator.clone());
         infrastructure.credential_auth = Some(service.clone());
     }
     infrastructure.rate_limit = None;

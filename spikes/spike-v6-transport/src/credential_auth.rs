@@ -7,7 +7,17 @@ use serde_json::Value;
 use spike_v2_read::backend::BackendFuture;
 
 /// The only paths served here. Every one is a POST.
-pub const ROUTES: [&str; 5] = ["/auth/check-email", "/auth/signup", "/auth/login", "/auth/reissue", "/auth/logout"];
+pub const ROUTES: [&str; 9] = [
+    "/auth/check-email",
+    "/auth/signup",
+    "/auth/login",
+    "/auth/reissue",
+    "/auth/logout",
+    "/auth/email/verification",
+    "/auth/email/verify",
+    "/auth/password/verification",
+    "/auth/password",
+];
 
 /// These bodies are an email, a password, a name and a short list. Anything larger is not one of them.
 pub const MAX_BODY: usize = 16 * 1024;
@@ -22,6 +32,8 @@ pub struct AuthRequest<'a> {
     pub body: Value,
     /// The raw `Cookie` header, for the adapter to read its own refresh cookie from.
     pub cookie: Option<&'a str>,
+    /// The bearer token of the request, unverified: the routes that act for a logged-in account verify it themselves.
+    pub bearer: Option<&'a str>,
 }
 
 pub struct AuthReply {

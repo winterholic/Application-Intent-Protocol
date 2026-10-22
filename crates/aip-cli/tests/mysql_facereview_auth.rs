@@ -14,7 +14,16 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use rsa::{RsaPrivateKey, pkcs1::EncodeRsaPrivateKey, traits::PublicKeyParts};
 use serde_json::{Value, json};
-use std::{collections::HashMap, path::Path, process::Stdio, time::Duration};
+use std::{
+    collections::HashMap,
+    path::Path,
+    process::Stdio,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     process::{Child, Command},
@@ -175,6 +184,60 @@ async fn cell(conn: &mut aip_migrate::mysql_driver::mysql_async::Conn, sql: &str
     conn.query_first::<Option<String>, _>(sql).await.unwrap().flatten()
 }
 
+/// A stand-in mail provider: it records every JSON body it is sent and answers 200, or 500 while `fail` is set.
+struct Mailer {
+    port: u16,
+    sent: Arc<Mutex<Vec<Value>>>,
+    fail: Arc<AtomicBool>,
+}
+
+async fn start_mailer() -> Mailer {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (sent, fail) = (Arc::new(Mutex::new(Vec::new())), Arc::new(AtomicBool::new(false)));
+    let (log, failing) = (sent.clone(), fail.clone());
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut socket, _)) = listener.accept().await else { return };
+            let (log, failing) = (log.clone(), failing.clone());
+            tokio::spawn(async move {
+                let mut raw = Vec::new();
+                let mut buffer = [0u8; 4096];
+                loop {
+                    let read = socket.read(&mut buffer).await.unwrap_or(0);
+                    if read == 0 {
+                        return;
+                    }
+                    raw.extend_from_slice(&buffer[..read]);
+                    let text = String::from_utf8_lossy(&raw).to_string();
+                    let Some((head, body)) = text.split_once("\r\n\r\n") else { continue };
+                    let length = head
+                        .lines()
+                        .find_map(|line| {
+                            line.to_ascii_lowercase().strip_prefix("content-length: ").and_then(|value| value.trim().parse::<usize>().ok())
+                        })
+                        .unwrap_or(0);
+                    if body.len() < length {
+                        continue;
+                    }
+                    if let Ok(value) = serde_json::from_str::<Value>(body) {
+                        log.lock().unwrap().push(value);
+                    }
+                    let status = if failing.load(Ordering::SeqCst) { "500 Internal Server Error" } else { "200 OK" };
+                    let _ = socket
+                        .write_all(
+                            format!("HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{{}}")
+                                .as_bytes(),
+                        )
+                        .await;
+                    return;
+                }
+            });
+        }
+    });
+    Mailer { port, sent, fail }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "live: needs a dedicated MySQL 8.4 container (scripts/mysql-live-fixture.sh) and a worker sandbox; run with -- --ignored"]
 async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_replay_defect() {
@@ -243,6 +306,8 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
         .to_string(),
     )
     .unwrap();
+    let mailer = start_mailer().await;
+    let mail_url = format!("http://127.0.0.1:{}/send", mailer.port);
     let config = directory.path().join("service.json");
     let write_config = |credentials: Value| {
         std::fs::write(
@@ -252,7 +317,7 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
                 "database_url_env": "AIP_T_AUTH_RUNTIME_URL", "migrate_database_url_env": "AIP_T_AUTH_ADOPT_URL",
                 "listen": "127.0.0.1:0", "wire": "decimal", "rate_limit": null, "allowed_origins": [ORIGIN],
                 "auth": {"issuer": ISSUER, "audience": AUDIENCE, "jwks": {"kind": "file", "path": "jwks.json"}},
-                "workers": {"directory": "extensions", "language": "python", "integrations": [{"name": "youtube_videos", "url": "http://127.0.0.1:9/youtube/v3/videos", "method": "GET", "timeout_ms": 1000, "max_request_bytes": 1024, "max_response_bytes": 1024, "allow_loopback": true, "query_params": ["part"]}, {"name": "youtube_search", "url": "http://127.0.0.1:9/youtube/v3/search", "method": "GET", "timeout_ms": 1000, "max_request_bytes": 1024, "max_response_bytes": 1024, "allow_loopback": true, "query_params": ["part"]}]},
+                "workers": {"directory": "extensions", "language": "python", "integrations": [{"name": "youtube_videos", "url": "http://127.0.0.1:9/youtube/v3/videos", "method": "GET", "timeout_ms": 1000, "max_request_bytes": 1024, "max_response_bytes": 1024, "allow_loopback": true, "query_params": ["part"]}, {"name": "youtube_search", "url": "http://127.0.0.1:9/youtube/v3/search", "method": "GET", "timeout_ms": 1000, "max_request_bytes": 1024, "max_response_bytes": 1024, "allow_loopback": true, "query_params": ["part"]}, {"name": "mail_send", "url": mail_url, "method": "POST", "timeout_ms": 3000, "max_request_bytes": 4096, "max_response_bytes": 4096, "allow_loopback": true}]},
                 "credentials": credentials,
             })
             .to_string(),
@@ -266,6 +331,7 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
         "favorites": {"resource": "UserFavoriteGenre", "user_field": "user", "value_field": "genre", "time_fields": ["created_at", "updated_at"]},
         "verify_operation": "verifyPassword", "hash_operation": "hashPassword",
         "signing_key_file": "signing.pem", "kid": "login-1", "access_ttl_secs": 300,
+        "mail": {"integration": "mail_send", "verified_field": "is_verify_email_done", "updated_field": "updated_at"},
     });
     write_config(credentials.clone());
     let file_arg = file.to_str().unwrap();
@@ -276,7 +342,7 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
     let session_tables =
         cell(&mut setup, &format!("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA='{META}' AND TABLE_NAME LIKE 'aip_auth_%'"))
             .await;
-    assert_eq!(session_tables.as_deref(), Some("2"), "adoption creates the session tables");
+    assert_eq!(session_tables.as_deref(), Some("3"), "adoption creates the session tables and the table of mail challenges");
 
     // A signing key the verifier does not trust must fail the start, not mint tokens the server then rejects.
     let other = RsaPrivateKey::new(&mut rand::thread_rng(), 2048).unwrap();
@@ -815,4 +881,171 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
     );
     assert_eq!(post(&address, "/session", Some(&second_access), "", &json!({})).await["code"], "WIRE.UNAUTHENTICATED");
     assert_eq!(auth(&address, "/auth/login", &json!({"email": "profile@example.com", "password": "longenough1"}), None).await.status, 401);
+
+    // --- WBS 7.2.8: proving the mailbox (email code, password reset token), for a logged-in account only.
+    let mail_post = |path: &'static str, token: Option<String>, body: Value| {
+        let address = address.clone();
+        async move {
+            let bearer = token.map(|token| format!("Bearer {token}"));
+            let mut headers = vec![("Content-Type", "application/json"), ("Origin", ORIGIN)];
+            if let Some(bearer) = bearer.as_deref() {
+                headers.push(("Authorization", bearer));
+            }
+            http(&address, "POST", path, &headers, Some(&body.to_string())).await
+        }
+    };
+    let signed = auth(
+        &address,
+        "/auth/signup",
+        &json!({"email": "mailer@example.com", "password": "longenough1", "name": "메일러", "favorite_genres": ["drama"]}),
+        None,
+    )
+    .await;
+    let (mailer_token, mailer_id) = (access(&signed), claims(&access(&signed))["sub"].as_str().unwrap().to_owned());
+    let other = auth(
+        &address,
+        "/auth/signup",
+        &json!({"email": "bystander@example.com", "password": "longenough1", "name": "곁사람", "favorite_genres": ["drama"]}),
+        None,
+    )
+    .await;
+    let other_token = access(&other);
+    let challenges = |purpose: &'static str, who: String| {
+        format!("SELECT CONCAT(attempts, ' ', HEX(secret_hash)) FROM `{META}`.aip_auth_challenges WHERE subject = '{who}' AND purpose = '{purpose}'")
+    };
+    let count_challenges = format!("SELECT COUNT(*) FROM `{META}`.aip_auth_challenges WHERE subject = '{mailer_id}'");
+    let last_code = |mailer: &Mailer| mailer.sent.lock().unwrap().last().unwrap()["code"].as_str().unwrap().to_owned();
+
+    for path in ["/auth/email/verification", "/auth/email/verify", "/auth/password/verification", "/auth/password"] {
+        let nobody = mail_post(path, None, json!({})).await;
+        assert_eq!((nobody.status, nobody.body["reason"].clone()), (401, json!("token_invalid")), "{path} without a token");
+        let forged = mail_post(path, Some(format!("{mailer_token}x")), json!({})).await;
+        assert_eq!(forged.status, 401, "{path} with a tampered token");
+    }
+    assert_eq!(
+        mail_post("/auth/email/verification", Some(mailer_token.clone()), json!({"email": "someone@else.com"})).await.status,
+        422,
+        "the address is the account's, not a request value"
+    );
+    assert!(mailer.sent.lock().unwrap().is_empty(), "nothing was mailed for the refused calls");
+
+    // A code goes to the account's own address, and only its digest is kept.
+    let sent = mail_post("/auth/email/verification", Some(mailer_token.clone()), json!({})).await;
+    assert_eq!((sent.status, sent.body["ok"].clone()), (200, json!(true)), "{}", sent.body);
+    let mail = mailer.sent.lock().unwrap().last().cloned().unwrap();
+    assert_eq!(
+        (mail["to"].as_str(), mail["template"].as_str(), mail["expires_in_secs"].clone()),
+        (Some("mailer@example.com"), Some("email-verification"), json!(300))
+    );
+    let code = last_code(&mailer);
+    assert!(code.len() == 6 && code.bytes().all(|b| b.is_ascii_digit()), "{code}");
+    let stored = cell(&mut setup, &challenges("email_code", mailer_id.clone())).await.unwrap();
+    assert!(stored.starts_with("0 ") && !stored.to_lowercase().contains(&code), "one pending code, no attempts, not stored in the clear: {stored}");
+    assert_eq!(cell(&mut setup, &format!("SELECT is_verify_email_done FROM user WHERE user_id = '{mailer_id}'")).await.as_deref(), Some("0"));
+
+    // A wrong code is refused and counted; a malformed one is not even a guess; someone else's session cannot spend it.
+    let wrong_code = if code == "000000" { "000001" } else { "000000" };
+    let wrong = mail_post("/auth/email/verify", Some(mailer_token.clone()), json!({"code": wrong_code})).await;
+    assert_eq!((wrong.status, wrong.body["reason"].clone()), (400, json!("verification_invalid")), "{}", wrong.body);
+    assert!(cell(&mut setup, &challenges("email_code", mailer_id.clone())).await.unwrap().starts_with("1 "), "the wrong answer was counted");
+    for malformed in [json!({"code": "12345"}), json!({"code": "12345a"}), json!({"code": 123456}), json!({})] {
+        assert_eq!(mail_post("/auth/email/verify", Some(mailer_token.clone()), malformed).await.status, 422);
+    }
+    let bystander = mail_post("/auth/email/verify", Some(other_token.clone()), json!({"code": code})).await;
+    assert_eq!(bystander.status, 400, "a code belongs to the account it was sent to: {}", bystander.body);
+    let right = mail_post("/auth/email/verify", Some(mailer_token.clone()), json!({"code": code})).await;
+    assert_eq!((right.status, right.body["ok"].clone()), (200, json!(true)), "{}", right.body);
+    assert_eq!(cell(&mut setup, &format!("SELECT is_verify_email_done FROM user WHERE user_id = '{mailer_id}'")).await.as_deref(), Some("1"));
+    assert_eq!(cell(&mut setup, &count_challenges).await.as_deref(), Some("0"), "a spent code is gone");
+    assert_eq!(mail_post("/auth/email/verify", Some(mailer_token.clone()), json!({"code": code})).await.status, 400, "and cannot be used twice");
+
+    // Guessing is bounded: five wrong answers lock the code, even against the right one.
+    mail_post("/auth/email/verification", Some(mailer_token.clone()), json!({})).await;
+    let code = last_code(&mailer);
+    let wrong_code = if code == "000000" { "000001" } else { "000000" };
+    for _ in 0..5 {
+        assert_eq!(mail_post("/auth/email/verify", Some(mailer_token.clone()), json!({"code": wrong_code})).await.status, 400);
+    }
+    let locked = mail_post("/auth/email/verify", Some(mailer_token.clone()), json!({"code": code})).await;
+    assert_eq!((locked.status, locked.body["reason"].clone()), (429, json!("too_many_attempts")), "{}", locked.body);
+    assert_eq!(
+        mail_post("/auth/password/verification", Some(mailer_token.clone()), json!({"code": code})).await.status,
+        429,
+        "the lock holds for the other route too"
+    );
+    // A new code replaces the locked one and starts counting again.
+    mail_post("/auth/email/verification", Some(mailer_token.clone()), json!({})).await;
+    assert!(cell(&mut setup, &challenges("email_code", mailer_id.clone())).await.unwrap().starts_with("0 "));
+
+    // An expired code is the same as none.
+    setup
+        .exec_drop(
+            format!("UPDATE `{META}`.aip_auth_challenges SET expires_at = DATE_SUB(UTC_TIMESTAMP(6), INTERVAL 1 SECOND) WHERE subject = ?"),
+            (&mailer_id,),
+        )
+        .await
+        .unwrap();
+    let expired = mail_post("/auth/email/verify", Some(mailer_token.clone()), json!({"code": last_code(&mailer)})).await;
+    assert_eq!((expired.status, expired.body["reason"].clone()), (400, json!("verification_invalid")), "{}", expired.body);
+    assert_eq!(cell(&mut setup, &count_challenges).await.as_deref(), Some("0"), "and the expired row is cleaned up");
+
+    // A mail the provider refuses leaves no redeemable code behind.
+    mailer.fail.store(true, Ordering::SeqCst);
+    let failed = mail_post("/auth/email/verification", Some(mailer_token.clone()), json!({})).await;
+    assert_eq!((failed.status, failed.body["reason"].clone()), (503, json!("mail_failed")), "{}", failed.body);
+    assert_eq!(cell(&mut setup, &count_challenges).await.as_deref(), Some("0"));
+    mailer.fail.store(false, Ordering::SeqCst);
+
+    // Password change: code -> reset token -> new password. The token belongs to the account and is spent by its use.
+    let other_session = auth(&address, "/auth/login", &json!({"email": "mailer@example.com", "password": "longenough1"}), None).await;
+    let other_session_access = access(&other_session);
+    mail_post("/auth/email/verification", Some(mailer_token.clone()), json!({})).await;
+    let code = last_code(&mailer);
+    assert_eq!(
+        mail_post("/auth/password", Some(mailer_token.clone()), json!({"reset_token": "no-such-token", "new_password": "brand-new-pass1"}))
+            .await
+            .status,
+        400
+    );
+    let exchanged = mail_post("/auth/password/verification", Some(mailer_token.clone()), json!({"code": code})).await;
+    assert_eq!(exchanged.status, 200, "{}", exchanged.body);
+    let reset = exchanged.body["reset_token"].as_str().unwrap().to_owned();
+    assert!(reset.len() == 64 && reset.bytes().all(|b| b.is_ascii_hexdigit()), "{reset}");
+    assert!(
+        !cell(&mut setup, &challenges("reset_token", mailer_id.clone())).await.unwrap().to_lowercase().contains(&reset),
+        "the token is stored as a digest"
+    );
+    assert_eq!(cell(&mut setup, &challenges("email_code", mailer_id.clone())).await, None, "the code was spent by the exchange");
+    let too_short = mail_post("/auth/password", Some(mailer_token.clone()), json!({"reset_token": reset, "new_password": "short"})).await;
+    assert_eq!((too_short.status, too_short.body["reason"].clone()), (422, json!("password_length")));
+    let stolen = mail_post("/auth/password", Some(other_token.clone()), json!({"reset_token": reset, "new_password": "brand-new-pass1"})).await;
+    assert_eq!(stolen.status, 400, "another account cannot use the token: {}", stolen.body);
+    assert_eq!(
+        auth(&address, "/auth/login", &json!({"email": "mailer@example.com", "password": "longenough1"}), None).await.status,
+        200,
+        "the password is unchanged so far"
+    );
+    let changed = mail_post("/auth/password", Some(mailer_token.clone()), json!({"reset_token": reset, "new_password": "brand-new-pass1"})).await;
+    assert_eq!((changed.status, changed.body["ok"].clone()), (200, json!(true)), "{}", changed.body);
+    let new_hash = cell(&mut setup, "SELECT password FROM user WHERE email = 'mailer@example.com'").await.unwrap();
+    assert!(new_hash.starts_with("scrypt:32768:8:1$") && !new_hash.contains("brand-new-pass1"), "{new_hash}");
+    assert_eq!(
+        auth(&address, "/auth/login", &json!({"email": "mailer@example.com", "password": "longenough1"}), None).await.status,
+        401,
+        "the old password is dead"
+    );
+    assert_eq!(auth(&address, "/auth/login", &json!({"email": "mailer@example.com", "password": "brand-new-pass1"}), None).await.status, 200);
+    assert_eq!(post(&address, "/session", Some(&mailer_token), "", &json!({})).await["ok"], true, "the session that changed it stays");
+    assert_eq!(
+        post(&address, "/session", Some(&other_session_access), "", &json!({})).await["code"],
+        "WIRE.UNAUTHENTICATED",
+        "every other login ended"
+    );
+    assert_eq!(
+        mail_post("/auth/password", Some(mailer_token.clone()), json!({"reset_token": reset, "new_password": "brand-new-pass2"})).await.status,
+        400,
+        "a token is used once"
+    );
+    assert_eq!(cell(&mut setup, &count_challenges).await.as_deref(), Some("0"));
+    assert_eq!(mailer.sent.lock().unwrap().len(), 5, "one mail per code request, the refused one included, and none for the refused calls");
 }

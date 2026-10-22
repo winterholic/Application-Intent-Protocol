@@ -10,7 +10,7 @@
 use super::*;
 use crate::credentials::CredentialsConfig;
 use aip_auth::issuer::LocalIssuer;
-use aip_migrate::mysql_auth_sessions::{Consume, MysqlAuthSessions, SessionPolicy};
+use aip_migrate::mysql_auth_sessions::{Consume, MysqlAuthChallenges, MysqlAuthSessions, Purpose, SessionPolicy, Verdict};
 use aip_migrate::mysql_driver::{CommitFailure, FencedMysqlTransaction, MysqlDeploymentFence, MysqlDriver, mysql_async};
 use mysql_async::prelude::Queryable;
 use mysql_async::{Transaction, Value as SqlValue};
@@ -91,6 +91,25 @@ pub(crate) struct CredentialService {
     refresh_max_age: u32,
     limits: Limits,
     hashing: tokio::sync::Semaphore,
+    challenges: MysqlAuthChallenges,
+    mail: Option<Mail>,
+    bearer: std::sync::OnceLock<Arc<dyn BearerVerifier>>,
+}
+
+/// What the routes that act for a logged-in account need to prove a mailbox (`credentials.mail`).
+struct Mail {
+    broker: Arc<aip_execution::integrations::Broker>,
+    integration: String,
+    verified: String,
+    updated: Option<String>,
+    code_ttl: u32,
+    reset_ttl: u32,
+}
+
+/// Verifies the access token of a request exactly as every other route does (signature, issuer, audience, principal, login
+/// session) and answers with the account's subject and the login session it belongs to.
+pub(crate) trait BearerVerifier: Send + Sync {
+    fn verify<'a>(&'a self, token: &'a str) -> spike_v2_read::backend::BackendFuture<'a, Option<(String, String)>>;
 }
 
 struct Limits {
@@ -137,6 +156,7 @@ impl CredentialService {
         launch: spike_v4_worker::WorkerLaunchConfig,
         issuer_name: &str,
         audience: &str,
+        broker: Option<Arc<aip_execution::integrations::Broker>>,
     ) -> Result<Self, Value> {
         let account =
             mapping.tables.get(&config.resource).ok_or_else(|| error("CREDENTIALS_CONFIG", "credentials.resource가 external_mapping에 없음"))?;
@@ -216,6 +236,27 @@ impl CredentialService {
         let pem = std::fs::read(&config.signing_key_file).map_err(|_| error("CREDENTIALS_CONFIG", "signing_key_file을 읽을 수 없음"))?;
         let issuer = LocalIssuer::from_pem(&pem, &config.kid, issuer_name, audience, config.access_ttl_secs)
             .map_err(|_| error("CREDENTIALS_CONFIG", "서명 키·kid·access_ttl_secs가 올바르지 않음"))?;
+        let mail = match &config.mail {
+            None => None,
+            Some(mail) => {
+                let broker = broker
+                    .filter(|broker| broker.contains(&mail.integration))
+                    .ok_or_else(|| error("CREDENTIALS_CONFIG", "credentials.mail.integration이 workers.integrations에 없음"))?;
+                if mail.code_ttl_secs == 0 || mail.reset_ttl_secs == 0 || mail.max_attempts == 0 {
+                    return Err(error("CREDENTIALS_CONFIG", "credentials.mail의 수명·시도 횟수는 0보다 커야 함"));
+                }
+                Some(Mail {
+                    broker,
+                    integration: mail.integration.clone(),
+                    verified: table.column(&mail.verified_field)?,
+                    updated: mail.updated_field.as_deref().map(|field| table.column(field)).transpose()?,
+                    code_ttl: mail.code_ttl_secs,
+                    reset_ttl: mail.reset_ttl_secs,
+                })
+            }
+        };
+        let max_attempts = config.mail.as_ref().map_or(5, |mail| mail.max_attempts);
+        let challenges = MysqlAuthChallenges::new(meta, max_attempts).map_err(|_| error("CREDENTIALS_CONFIG", "세션 정책이 올바르지 않음"))?;
         let policy = SessionPolicy { idle_secs: config.refresh_idle_days * 86_400, absolute_secs: config.refresh_absolute_days * 86_400 };
         let sessions = MysqlAuthSessions::new(meta, policy).map_err(|_| error("CREDENTIALS_CONFIG", "세션 정책이 올바르지 않음"))?;
         Ok(Self {
@@ -251,7 +292,15 @@ impl CredentialService {
             refresh_max_age: policy.idle_secs,
             limits: Limits { password: (config.password_min_chars, config.password_max_chars), name: (config.name_min_chars, config.name_max_chars) },
             hashing: tokio::sync::Semaphore::new(MAX_CONCURRENT_HASHING),
+            challenges,
+            mail,
+            bearer: std::sync::OnceLock::new(),
         })
+    }
+
+    /// Gives the routes that act for a logged-in account the verifier of the other routes. Called once, after both exist.
+    pub(crate) fn attach_bearer_verifier(&self, verifier: Arc<dyn BearerVerifier>) {
+        let _ = self.bearer.set(verifier);
     }
 
     /// A token signed the way a login signs one, for the startup check that the verifier trusts the signing key.
@@ -301,6 +350,15 @@ impl CredentialService {
             .map_err(|_| error("CREDENTIALS_STORAGE", "세션 표를 확인할 수 없음"))?;
         if tables.is_none() {
             return Err(error("CREDENTIALS_STORAGE", "세션 표가 없음: migration 계정으로 adopt-external --apply를 다시 실행해야 함"));
+        }
+        if self.mail.is_some() {
+            let challenges: Option<u8> = conn
+                .exec_first("SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'aip_auth_challenges'", (&self.meta,))
+                .await
+                .map_err(|_| error("CREDENTIALS_STORAGE", "인증 번호 표를 확인할 수 없음"))?;
+            if challenges.is_none() {
+                return Err(error("CREDENTIALS_STORAGE", "인증 번호 표가 없음: migration 계정으로 adopt-external --apply를 다시 실행해야 함"));
+            }
         }
         Ok(())
     }
@@ -632,6 +690,146 @@ impl CredentialService {
         self.tokens(&subject, &session, 200)
     }
 
+    fn mail(&self) -> Outcome<&Mail> {
+        self.mail.as_ref().ok_or(Fail::Status(404, "WIRE.NOT_FOUND", "unknown_route"))
+    }
+
+    /// The logged-in account of a request: its subject and the login session. A token that does not verify is not an identity.
+    async fn caller(&self, bearer: Option<&str>) -> Outcome<(String, String)> {
+        let unauthenticated = Fail::Status(401, "WIRE.UNAUTHENTICATED", "token_invalid");
+        let verifier = self.bearer.get().ok_or(Fail::Status(503, "WIRE.DB_UNAVAILABLE", "verifier_unavailable"))?;
+        match bearer {
+            Some(token) => verifier.verify(token).await.ok_or(unauthenticated),
+            None => Err(unauthenticated),
+        }
+    }
+
+    /// A six-digit code from 128 random bits; the reduction modulo a million bends nothing measurable.
+    fn new_code() -> String {
+        format!("{:06}", uuid::Uuid::new_v4().as_u128() % 1_000_000)
+    }
+
+    fn code_of(body: &Value) -> Outcome<&str> {
+        body["code"].as_str().filter(|code| code.len() == 6 && code.bytes().all(|b| b.is_ascii_digit())).ok_or(bad("code_invalid"))
+    }
+
+    /// Reply for a spent challenge. A wrong or missing secret is the original's 400; too many wrong ones lock until a new issue.
+    fn judged(verdict: &Verdict) -> Option<Fail> {
+        match verdict {
+            Verdict::Accepted => None,
+            Verdict::Wrong | Verdict::Absent => Some(Fail::Status(400, "WIRE.BAD_VALUE", "verification_invalid")),
+            Verdict::Locked => Some(Fail::Status(429, "WIRE.RATE_LIMITED", "too_many_attempts")),
+        }
+    }
+
+    async fn send_email_code(&self, bearer: Option<&str>, body: &Value) -> Outcome<AuthReply> {
+        let mail = self.mail()?;
+        let (subject, _) = self.caller(bearer).await?;
+        Self::only_keys(body, &[])?;
+        let mut conn = self.driver.pool().get_conn().await.map_err(db)?;
+        let email: Option<String> = conn
+            .exec_first(
+                format!("SELECT `{}` FROM {} WHERE `{}` = ? AND `{}` = 0", self.identifier, self.src(&self.table), self.id, self.active),
+                (&subject,),
+            )
+            .await
+            .map_err(db)?;
+        let email = email.ok_or(Fail::Status(401, "WIRE.UNAUTHENTICATED", "account_inactive"))?;
+        let code = Self::new_code();
+        self.challenges.issue(&mut conn, &subject, Purpose::EmailCode, &code, mail.code_ttl).await.map_err(db)?;
+        let request = json!({"to": email, "template": "email-verification", "code": code, "expires_in_secs": mail.code_ttl});
+        let sent = mail.broker.call(&mail.integration, &request).await;
+        if !sent.as_ref().is_ok_and(|answer| (200..300).contains(&answer.status)) {
+            // A code nobody received must not stay redeemable.
+            self.challenges.clear(&mut conn, &subject).await.map_err(db)?;
+            return Err(Fail::Status(503, "WIRE.ADAPTER_UNAVAILABLE", "mail_failed"));
+        }
+        Ok(AuthReply { status: 200, body: json!({"ok": true, "message": "인증번호가 발송되었습니다."}), set_cookie: None })
+    }
+
+    async fn verify_email_code(&self, bearer: Option<&str>, body: &Value) -> Outcome<AuthReply> {
+        let mail = self.mail()?;
+        let (subject, _) = self.caller(bearer).await?;
+        Self::only_keys(body, &["code"])?;
+        let code = Self::code_of(body)?;
+        let mut fenced = self.begin().await?;
+        let tx = fenced.as_mut().map_err(db)?;
+        let verdict = self.challenges.redeem(tx, &subject, Purpose::EmailCode, code).await.map_err(db)?;
+        if verdict == Verdict::Accepted {
+            let touched = mail.updated.as_ref().map(|column| format!(", `{column}` = UTC_TIMESTAMP()")).unwrap_or_default();
+            tx.exec_drop(
+                format!("UPDATE {} SET `{}` = 1{touched} WHERE `{}` = ? AND `{}` = 0", self.src(&self.table), mail.verified, self.id, self.active),
+                (&subject,),
+            )
+            .await
+            .map_err(db)?;
+        }
+        // A wrong answer is counted, so every verdict commits.
+        Self::commit(fenced).await?;
+        match Self::judged(&verdict) {
+            Some(fail) => Err(fail),
+            None => {
+                Ok(AuthReply { status: 200, body: json!({"ok": true, "message": "이메일 인증이 완료되었습니다."}), set_cookie: None })
+            }
+        }
+    }
+
+    async fn exchange_code_for_reset_token(&self, bearer: Option<&str>, body: &Value) -> Outcome<AuthReply> {
+        let mail = self.mail()?;
+        let (subject, _) = self.caller(bearer).await?;
+        Self::only_keys(body, &["code"])?;
+        let code = Self::code_of(body)?;
+        let token = format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple());
+        let mut fenced = self.begin().await?;
+        let tx = fenced.as_mut().map_err(db)?;
+        let verdict = self.challenges.redeem(tx, &subject, Purpose::EmailCode, code).await.map_err(db)?;
+        if verdict == Verdict::Accepted {
+            self.challenges.issue(tx, &subject, Purpose::ResetToken, &token, mail.reset_ttl).await.map_err(db)?;
+        }
+        Self::commit(fenced).await?;
+        match Self::judged(&verdict) {
+            Some(fail) => Err(fail),
+            None => Ok(AuthReply {
+                status: 200,
+                body: json!({"ok": true, "reset_token": token, "message": "비밀번호 재설정 토큰이 생성되었습니다."}),
+                set_cookie: None,
+            }),
+        }
+    }
+
+    async fn change_password(&self, bearer: Option<&str>, body: &Value) -> Outcome<AuthReply> {
+        self.mail()?;
+        let (subject, family) = self.caller(bearer).await?;
+        Self::only_keys(body, &["reset_token", "new_password"])?;
+        let token = body["reset_token"].as_str().filter(|token| !token.is_empty() && token.len() <= 128).ok_or(bad("reset_token_required"))?;
+        let password = body["new_password"].as_str().ok_or(bad("password_required"))?;
+        if !(self.limits.password.0..=self.limits.password.1).contains(&password.chars().count()) {
+            return Err(bad("password_length"));
+        }
+        // Hashed before the transaction opens, so the challenge row is not locked while the hash is made.
+        let hash = self.hash(password).await?;
+        let mut fenced = self.begin().await?;
+        let tx = fenced.as_mut().map_err(db)?;
+        let verdict = self.challenges.redeem(tx, &subject, Purpose::ResetToken, token).await.map_err(db)?;
+        if verdict == Verdict::Accepted {
+            tx.exec_drop(
+                format!("UPDATE {} SET `{}` = ? WHERE `{}` = ? AND `{}` = 0", self.src(&self.table), self.secret, self.id, self.active),
+                (&hash, &subject),
+            )
+            .await
+            .map_err(db)?;
+            // Whoever else was logged in with the old password is logged out; the session that changed it stays.
+            self.sessions.revoke_others(tx, &subject, &family, "password_changed").await.map_err(db)?;
+            self.challenges.clear(tx, &subject).await.map_err(db)?;
+        }
+        Self::commit(fenced).await?;
+        match Self::judged(&verdict) {
+            Some(Fail::Status(400, code, _)) => Err(Fail::Status(400, code, "reset_token_invalid")),
+            Some(fail) => Err(fail),
+            None => Ok(AuthReply { status: 200, body: json!({"ok": true, "message": "비밀번호가 변경되었습니다."}), set_cookie: None }),
+        }
+    }
+
     async fn logout(&self, cookie: Option<&str>) -> Outcome<AuthReply> {
         if let Some(presented) = self.refresh_from(cookie) {
             let mut conn = self.driver.pool().get_conn().await.map_err(db)?;
@@ -666,6 +864,10 @@ impl CredentialAuth for CredentialService {
                 "/auth/login" => self.login(&request.body).await,
                 "/auth/reissue" => self.reissue(request.cookie).await,
                 "/auth/logout" => self.logout(request.cookie).await,
+                "/auth/email/verification" => self.send_email_code(request.bearer, &request.body).await,
+                "/auth/email/verify" => self.verify_email_code(request.bearer, &request.body).await,
+                "/auth/password/verification" => self.exchange_code_for_reset_token(request.bearer, &request.body).await,
+                "/auth/password" => self.change_password(request.bearer, &request.body).await,
                 _ => Err(Fail::Status(404, "WIRE.NOT_FOUND", "unknown_route")),
             };
             result.unwrap_or_else(AuthReply::from)

@@ -56,6 +56,28 @@ pub struct CredentialsConfig {
     pub name_min_chars: usize,
     #[serde(default = "default_name_max")]
     pub name_max_chars: usize,
+    /// Mailbox proof for a logged-in account: the six-digit email code, the password reset token and the mail that carries the code.
+    #[serde(default)]
+    pub mail: Option<MailConfig>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MailConfig {
+    /// A `workers.integrations` endpoint (POST, JSON) the service calls to send the code. It receives `{to, template, code, expires_in_secs}`.
+    pub integration: String,
+    /// The account field set true when the code is confirmed.
+    pub verified_field: String,
+    /// The account field the service sets to the clock when it confirms the address (the original's `updated_at`), if the table keeps one.
+    #[serde(default)]
+    pub updated_field: Option<String>,
+    #[serde(default = "default_code_ttl")]
+    pub code_ttl_secs: u32,
+    #[serde(default = "default_reset_ttl")]
+    pub reset_ttl_secs: u32,
+    /// Wrong answers a code or token accepts before it locks.
+    #[serde(default = "default_attempts")]
+    pub max_attempts: u32,
 }
 
 #[derive(Deserialize)]
@@ -103,6 +125,15 @@ fn default_name_min() -> usize {
 }
 fn default_name_max() -> usize {
     10
+}
+fn default_code_ttl() -> u32 {
+    300
+}
+fn default_reset_ttl() -> u32 {
+    600
+}
+fn default_attempts() -> u32 {
+    5
 }
 fn default_one() -> usize {
     1
