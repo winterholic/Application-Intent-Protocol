@@ -28,6 +28,7 @@ pub mod relational_jobs;
 pub mod schedule;
 pub mod server;
 pub(crate) mod slots;
+pub mod socketio;
 pub mod trace;
 pub mod triggers;
 pub mod wire_codes;
@@ -971,6 +972,7 @@ async fn serve_request(
     if file_mount.is_some() {
         w.private_object = true;
     }
+    let socketio = socketio::is_endpoint(&path);
     let object_path = path.starts_with("/objects/");
     let messages_path = path.starts_with("/messages/");
     let credential_path = runtime.infrastructure.credential_auth.is_some() && credential_auth::is_route(&path);
@@ -998,6 +1000,7 @@ async fn serve_request(
         "/rag/delete",
     ]
     .contains(&path.as_str())
+        && !socketio
         && mount.is_none()
         && file_mount.is_none()
         && !object_path
@@ -1086,7 +1089,12 @@ async fn serve_request(
             Ok(false) => {}
         }
     }
-    let websocket = path == "/events/socket";
+    if socketio && runtime.infrastructure.socketio.is_none() {
+        return reply(&mut w, &err("WIRE.NOT_AVAILABLE", "Socket.IO 전송이 비활성화됨")).await;
+    }
+    // A browser always offers `permessage-deflate`; a server may decline an extension, so the Socket.IO endpoint does not
+    // refuse the offer the way `/events/socket` does. It never echoes one, so frames are not compressed.
+    let websocket = path == "/events/socket" || socketio;
     let sse = path == "/events/subscribe";
     let mut raw_body = Vec::new();
     let body = if websocket {
@@ -1103,9 +1111,11 @@ async fn serve_request(
             || !valid_connection
             || !key_valid
             || ws_version.as_deref() != Some("13")
-            || ws_extensions.is_some()
+            || (ws_extensions.is_some() && !socketio)
             || origin.is_none()
             || host.is_none()
+            // The token travels in the CONNECT packet, never in a header, so one here is a client that is not a Socket.IO player.
+            || (socketio && (token.is_some() || !socketio::is_websocket_target(&path)))
         {
             return reply(&mut w, &err("WIRE.BAD_REQUEST", "잘못된 WebSocket handshake")).await;
         }
@@ -1327,11 +1337,14 @@ async fn serve_request(
         return reply(&mut w, &result.to_string()).await;
     }
     if sse || websocket {
-        if !runtime.infrastructure.realtime.enabled {
+        if !socketio && !runtime.infrastructure.realtime.enabled {
             return reply(&mut w, &err("WIRE.NOT_AVAILABLE", "실시간 전송이 비활성화됨")).await;
         }
-        let Some(fingerprint) = contract_fingerprint.as_deref() else {
-            return reply(&mut w, &err("WIRE.NOT_AVAILABLE", "이벤트 계약 지문 없음")).await;
+        // Socket.IO has no place for a contract fingerprint: its one event is fixed by the transport, not by the contract.
+        let fingerprint = match contract_fingerprint.as_deref() {
+            Some(fingerprint) => fingerprint,
+            None if socketio => "",
+            None => return reply(&mut w, &err("WIRE.NOT_AVAILABLE", "이벤트 계약 지문 없음")).await,
         };
         let subscription = if sse {
             let subscription = match realtime::Subscription::parse(&raw_body) {
@@ -1384,6 +1397,15 @@ async fn serve_request(
             Ok(Err(_)) | Err(_) => return,
         }
         let io = tokio::io::join(rd, w.writer);
+        if let Some(options) = runtime.infrastructure.socketio.clone().filter(|_| socketio) {
+            let admit_runtime = runtime.clone();
+            let _ = socketio::serve(io, &options, move |token: &str| -> socketio::AdmitFuture {
+                let (token, runtime, slots) = (token.to_owned(), admit_runtime.clone(), browser_slots.clone());
+                Box::pin(async move { realtime::admit_browser_token(&runtime, slots.as_deref(), &token).await.map(std::time::Duration::from_millis) })
+            })
+            .await;
+            return;
+        }
         let _ = realtime::stream_ws(io, token, browser_slots, fingerprint.to_owned(), facts, runtime.clone(), wire).await;
         return;
     }

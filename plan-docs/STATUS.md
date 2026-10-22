@@ -1,6 +1,12 @@
 진행 중: 이 작업 세션(auto 배정), 시작 시각 2026-10-22 21:58 KST, e29ddf1e 대기 지시와 동일 범위
 
-## 재개 지점 (2026-10-22, applyDelta 권한 slice push 완료 · 7.2.6 transport 시작 전)
+## 재개 지점 (2026-10-22, 7.2.6 조각 1 Socket.IO 전송 경계 구현 뒤)
+
+7.2.6의 첫 조각으로 Socket.IO 호환 전송 경계(Engine.IO v4 WebSocket 전용, CONNECT `auth.token`, 패킷 상한, 서버 ping/pong, disconnect, `watch_frame` 필드 검증)를 `spikes/spike-v6-transport/src/socketio.rs`에 구현했다(결정 D-P-WATCH-SOCKET, 검증은 [제품 검증](../product/VERIFICATION.md)의 같은 날짜 절). 단위 24개, 실제 서버 통합 4개(PostgreSQL 17), 실제 `socket.io-client` 4.8.3 종단 1개가 로컬에서 통과했고 spike-v6 전체 시험은 EXIT=0이다. **유효한 프레임도 `WIRE.NOT_AVAILABLE`로 답한다. 분석·세션·view log·Mongo timeline이 없으므로 7.2.6의 실제 영상·웹캠·ML 흐름은 하나도 증명되지 않았다.** 다음 조각: 첫 프레임의 세션 초기화와 `VideoViewLog` 멱등 생성(쓰기 경로·principal 유도 `user_id`·프레임별 재검사), 그 뒤 모델 출처와 재현 가능한 ML 런타임(게이트: 모델 출처 권한과 TensorFlow/OpenCV 환경 미확인), Mongo timeline 저장, 원본 backend를 끈 실제 브라우저 trace. 이 서버의 MySQL 서비스 위 종단 실행과 실제 브라우저 접속은 미검증이다.
+
+7.2.8의 MySQL 종단 미검증은 로컬에서 갱신했다. `mysql_facereview_trending_job`을 이 Run의 격리 MySQL 8.4·MongoDB 7·Redis·PostgreSQL 컨테이너에서 실행해 `1 passed`(직접·atomic·중첩 우회 5가지의 `WIRE.NOT_EXPOSED`와 `myEmotionSummary` 정상 갱신 포함)였다. 앞 실행의 `SERVER_CONFIG` / `io other error`는 재현하지 못했고, Redis 미설정 가설은 변수만 뺀 통제 실행(같은 `1 passed`)으로 기각했다. 앞 실패의 원인은 확정하지 못했다(환경이 회수되어 검증 불가). Linux CI의 Verify(이 시험을 실제로 돌리는 workflow)는 `ab2f79f`분이 진행 중이었고 결과는 이 조각의 CI 확인 때 함께 적는다.
+
+## 이전 재개 지점 (2026-10-22, applyDelta 권한 slice push 완료 · 7.2.6 transport 시작 전)
 
 7.2.8 `UserEmotionSummary.applyDelta` 서버 전용 전이 slice는 `40b4539bd2a6495de5a2da6c00d0c0c5559aa2fa`로 main push했다. 직접 공개 apply, 직접 atomic, 허용된 변경 뒤 중첩 atomic은 `WIRE.NOT_EXPOSED`로 거절하는 계약 검증 2개, 실제 PostgreSQL write 통합 1개, worker 중복 첫 행 생성의 `WIRE.ALREADY_EXISTS`→`WIRE.CONFLICT` scripted 실행 1개가 통과했다. MySQL+Mongo 시험은 서비스 시작의 `SERVER_CONFIG` / 일반 io 오류에서 끝나 MySQL HTTP 경로와 실제 MySQL extension 갱신은 미검증이다. 오류 출력으로 worker runtime/readiness/listener 중 어느 하위 단계인지 특정할 수 없고 배포 backend 상태를 뜻하지 않는다. 동일 SHA CI는 Linux cgroup v2 success, 나머지 7 workflow가 마지막 조회 시 in_progress였다. 이전 marker 커밋 `fbe56656539de00d51ca786804c77b6d48b67433`는 Linux cgroup v2, Object storage, App packages, External brokers success; Verify cancelled (뒤 커밋 push로 취소)였다.
 

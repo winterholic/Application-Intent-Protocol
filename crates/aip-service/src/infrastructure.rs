@@ -4,6 +4,7 @@ use spike_v6_transport::{
     hosting::{MountAccess, StaticMount},
     infrastructure::{Infrastructure, ObjectStorage},
     realtime::RealTimeOptions,
+    socketio::SocketIoOptions,
 };
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 
@@ -160,6 +161,41 @@ pub struct RealtimeConfig {
 impl Default for RealtimeConfig {
     fn default() -> Self {
         Self { enabled: true, max_connections: 32, max_lifetime_ms: 900_000, heartbeat_ms: 15_000, poll_ms: 250, query_poll_ms: 5_000 }
+    }
+}
+/// The Socket.IO-compatible endpoint of the FaceReview watch player. An object here turns it on (`enabled: false` keeps it off).
+#[derive(Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SocketIoConfig {
+    enabled: bool,
+    max_packet_bytes: usize,
+    ping_interval_ms: u64,
+    ping_timeout_ms: u64,
+    connect_timeout_ms: u64,
+    max_lifetime_ms: u64,
+}
+impl Default for SocketIoConfig {
+    fn default() -> Self {
+        let defaults = SocketIoOptions::default();
+        Self {
+            enabled: true,
+            max_packet_bytes: defaults.max_packet_bytes,
+            ping_interval_ms: defaults.ping_interval.as_millis() as u64,
+            ping_timeout_ms: defaults.ping_timeout.as_millis() as u64,
+            connect_timeout_ms: defaults.connect_timeout.as_millis() as u64,
+            max_lifetime_ms: defaults.max_lifetime.as_millis() as u64,
+        }
+    }
+}
+impl SocketIoConfig {
+    fn build(&self) -> Option<SocketIoOptions> {
+        self.enabled.then(|| SocketIoOptions {
+            max_packet_bytes: self.max_packet_bytes,
+            ping_interval: Duration::from_millis(self.ping_interval_ms),
+            ping_timeout: Duration::from_millis(self.ping_timeout_ms),
+            connect_timeout: Duration::from_millis(self.connect_timeout_ms),
+            max_lifetime: Duration::from_millis(self.max_lifetime_ms),
+        })
     }
 }
 #[derive(Deserialize, Default)]
@@ -399,6 +435,7 @@ pub(super) fn build_with_environment(config: &super::Config, lookup: &impl Fn(&s
         file_mounts,
         objects,
         realtime,
+        socketio: config.socketio.as_ref().and_then(SocketIoConfig::build),
         worker_launch,
         messaging: config.messaging.enabled,
         client_publish: config.messaging.client_publish,

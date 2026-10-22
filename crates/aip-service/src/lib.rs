@@ -267,6 +267,9 @@ pub struct Config {
     pub objects: Option<infrastructure::ObjectsConfig>,
     #[serde(default)]
     pub realtime: infrastructure::RealtimeConfig,
+    /// The Socket.IO-compatible `watch_frame` endpoint (WBS 7.2.6). Absent means off.
+    #[serde(default)]
+    pub socketio: Option<infrastructure::SocketIoConfig>,
     #[serde(default)]
     pub messaging: infrastructure::MessagingConfig,
     #[serde(default)]
@@ -1790,6 +1793,57 @@ mod managed_config_tests {
         assert_eq!(build(json!({"query_poll_ms":2000})).unwrap().realtime.query_poll_interval, std::time::Duration::from_secs(2));
         assert_eq!(build(json!({"query_poll_ms":0})).err().unwrap()["code"], "INFRASTRUCTURE_CONFIG");
         assert_eq!(build(json!({"query_poll_ms":3_600_001})).err().unwrap()["code"], "INFRASTRUCTURE_CONFIG");
+    }
+
+    #[test]
+    fn the_socketio_endpoint_is_off_unless_configured_and_its_limits_are_bounded() {
+        let build = |socketio: Option<serde_json::Value>| {
+            let mut value = json!({
+                "schema":"aip_test",
+                "auth":{"issuer":"https://issuer.example","audience":"aip","jwks":{"kind":"file","path":"jwks.json"}}
+            });
+            if let Some(socketio) = socketio {
+                value["socketio"] = socketio;
+            }
+            let config: Config = serde_json::from_value(value).unwrap();
+            infrastructure::build(&config)
+        };
+        assert!(build(None).unwrap().socketio.is_none());
+        assert!(build(Some(json!({"enabled":false}))).unwrap().socketio.is_none());
+        let defaults = build(Some(json!({}))).unwrap().socketio.expect("an empty object turns it on with the defaults");
+        assert_eq!(defaults.max_packet_bytes, 512 * 1024);
+        let tuned = build(Some(
+            json!({"max_packet_bytes":65536,"ping_interval_ms":10000,"ping_timeout_ms":5000,"connect_timeout_ms":3000,"max_lifetime_ms":3600000}),
+        ))
+        .unwrap()
+        .socketio
+        .unwrap();
+        assert_eq!(
+            (
+                tuned.max_packet_bytes,
+                tuned.ping_interval.as_secs(),
+                tuned.ping_timeout.as_secs(),
+                tuned.connect_timeout.as_secs(),
+                tuned.max_lifetime.as_secs()
+            ),
+            (65536, 10, 5, 3, 3600)
+        );
+        for bad in [
+            json!({"max_packet_bytes":10}),
+            json!({"max_packet_bytes":67108864}),
+            json!({"ping_interval_ms":0}),
+            json!({"connect_timeout_ms":120000}),
+        ] {
+            assert_eq!(build(Some(bad.clone())).err().unwrap()["code"], "INFRASTRUCTURE_CONFIG", "{bad}");
+        }
+        assert!(
+            serde_json::from_value::<Config>(json!({
+                "schema":"aip_test",
+                "auth":{"issuer":"https://issuer.example","audience":"aip","jwks":{"kind":"file","path":"jwks.json"}},
+                "socketio":{"unknown_limit":1}
+            }))
+            .is_err()
+        );
     }
 
     #[test]

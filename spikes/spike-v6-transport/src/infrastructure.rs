@@ -131,6 +131,9 @@ pub struct Infrastructure {
     pub file_mounts: Vec<crate::hosting::ManagedFileMount>,
     pub objects: Option<ObjectStorage>,
     pub realtime: crate::realtime::RealTimeOptions,
+    /// The Socket.IO-compatible endpoint (`/socket.io/`) of the FaceReview watch player. Off unless configured; it shares the
+    /// realtime connection slots, so `realtime.max_connections` bounds it too.
+    pub socketio: Option<crate::socketio::SocketIoOptions>,
     pub worker_launch: spike_v4_worker::WorkerLaunchConfig,
     pub messaging: bool,
     pub client_publish: bool,
@@ -170,6 +173,7 @@ impl Default for Infrastructure {
             file_mounts: Vec::new(),
             objects: None,
             realtime: crate::realtime::RealTimeOptions::default(),
+            socketio: None,
             worker_launch: spike_v4_worker::WorkerLaunchConfig::default(),
             messaging: false,
             client_publish: false,
@@ -210,6 +214,7 @@ impl Infrastructure {
             "version":"aip-infrastructure/1", "staticMounts":static_mounts, "fileMounts":file_mounts,
             "objects":{"backend":backend,"transferLifetimeMs":self.object_transfer_lifetime.as_millis()},
             "events":{"polling":true,"sse":self.realtime.enabled,"websocket":self.realtime.enabled,"dataSubscriptions":self.realtime.enabled,"maxConnections":self.resource_limits.realtime_capacity(self.realtime.max_connections)},
+            "socketio":{"enabled":self.socketio.is_some()},
             "messages":{"enabled":self.messaging,"clientPublish":self.client_publish,"clientConsume":self.client_consume,"delivery":"at-least-once"},
             "readAdapters":{
                 "mongo":{"configured":self.mongo.is_some(),"status":if self.mongo.is_some() {"ready"} else {"unavailable"}},
@@ -227,6 +232,9 @@ impl Infrastructure {
             policy.validate().map_err(|message| std::io::Error::new(std::io::ErrorKind::InvalidInput, message))?;
         }
         self.realtime.validate()?;
+        if let Some(socketio) = &self.socketio {
+            socketio.validate()?;
+        }
         self.resource_limits.validate()?;
         self.retention.validate()?;
         if !(std::time::Duration::from_secs(1)..=std::time::Duration::from_secs(24 * 60 * 60)).contains(&self.object_transfer_lifetime) {

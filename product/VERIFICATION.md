@@ -70,6 +70,33 @@
 
 현재 tree를 처음 읽었을 때 production/runtime 코드와 회귀시험은 이미 uncommitted로 존재했고, 그 변경의 선행 TDD RED 명령·출력은 이 Run에서 회수되지 않았다. 이번에 추가한 worker conflict test의 첫 실행은 테스트 harness 결함(호출 메시지 필드·facts input shape)을 잡았고, 올바른 fixture로 수정 뒤 1 passed다. 따라서 이전 변경의 TDD RED가 있었다고 주장하지 않는다.
 
+## 2026-10-22 WBS 7.2.8 후속: applyDelta 공개 차단의 MySQL 종단 실행 (로컬 재실행, 앞 절의 미검증을 갱신)
+
+앞 절 「미검증」의 MySQL+Mongo 시험을 이 Run의 macOS shell(격리 fixture: MySQL 8.4 `127.0.0.1:36451`, MongoDB 7 인증 `36453`, Redis 7.4 `36454`, PostgreSQL 17 `36473`, 모두 이 Run 소유 컨테이너)에서 다시 실행했다. 명령은 `cargo test -p aip-cli --features mysql --test mysql_facereview_trending_job --locked -- --ignored --exact the_trending_job_saves_new_videos_with_their_initial_documents --nocapture --test-threads=1`이고 결과는 `test result: ok. 1 passed; 0 failed` (46.9초)다. 이 시험 안에서 `aip service serve`가 정상 기동했고, 직접 `UserEmotionSummary.applyDelta` apply·expect 없는 apply·atomic 단독·허용된 변경 뒤 중첩 atomic 5가지가 모두 `WIRE.NOT_EXPOSED`로 거절됐으며(시험 코드의 단정, 약 888~908행), 확장 `User.myEmotionSummary`의 정상 갱신과 원본 골든 재생이 같은 실행에서 통과했다. 이것은 로컬 macOS 실행이고 Linux CI와 배포 backend 결과가 아니다. 배포 환경은 미실행이다.
+
+앞 실행의 `SERVER_CONFIG` / `io other error`는 재현하지 못했고 원인은 여전히 확정하지 못했다. 통제 실험 한 가지를 했다: 앞 실행의 명령 기록에 `AIP_TEST_REDIS_URL`이 없었으므로 그 변수만 뺀 같은 명령을 다시 돌렸고 같은 `1 passed`였다(`redis_url`이 빈 문자열이어도 이 시험은 Redis를 쓰지 않는다). 따라서 Redis 미설정 가설은 기각됐다. 남은 후보(앞 실행의 fixture 포트·컨테이너 상태, 그 시점의 worker runtime 점검 실패 등)는 그 환경이 회수되어 검증하지 못한다. 같은 오류를 무작정 다시 돌리지 않았고 다시 나타나면 `server_start_error`가 숨기는 하위 단계(`crates/aip-service/src/lib.rs`)를 로그로 드러내야 한다. CI 쪽 근거: `40b4539` 커밋의 Linux worker jobs와 Database contracts는 success이지만 이 두 workflow는 위 시험을 포함하지 않는다. 이 시험은 Verify workflow의 `scripts/verify-mysql-worker-e2e.sh run-ci`가 돌리며, 해당 SHA의 Verify는 뒤 커밋 push로 취소됐고 `ab2f79f`의 Verify 결과는 이 절을 쓸 때 진행 중이었다(아래 CI 기록 줄에 결과를 적는다).
+
+## 2026-10-22 WBS 7.2.6 조각 1: Socket.IO 호환 전송 경계 (구현 조각, 로컬 통과, 7.2.6은 진행 중)
+
+**범위.** 결정 [D-P-WATCH-SOCKET](../docs/DECISIONS.md). `spikes/spike-v6-transport/src/socketio.rs`가 Engine.IO v4(WebSocket 전용)와 Socket.IO v5의 부분집합(기본 namespace, CONNECT·DISCONNECT·평문 EVENT·ACK, 서버 ping/pong)을 말한다. 서버 연결은 `lib.rs`의 `/socket.io/?EIO=4&transport=websocket`, 토큰 검사는 기존 브라우저 WebSocket과 같은 `realtime::admit_browser_token`(이 조각에서 `stream_ws`의 인라인 closure를 함수로 뺐다), 설정은 서비스 설정 `socketio`와 `Infrastructure.socketio`(기본 꺼짐)다. `watch_frame`은 필수 필드·타입·범위만 검사하고 통과해도 ack는 `WIRE.NOT_AVAILABLE`이다. **감정 분석, 세션·view log 저장, Mongo timeline은 이 조각에 없다.** 그래서 이 조각은 7.2.6의 실제 영상·웹캠·ML 흐름을 하나도 증명하지 않는다.
+
+**실행한 검증(로컬 macOS, 모두 이 Run의 격리 PostgreSQL 17 `127.0.0.1:36473` 사용).**
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --lib socketio --locked` (spike-v6, 구현 전 `todo!()` 뼈대) | 22 FAILED (RED: 구현 전) |
+| 같은 명령, 구현 뒤 | 이후 쿼리 검증·옵션 시험 2개를 더해 24개 통과(전체 실행의 일부) |
+| `cargo test --test socketio_transport --locked -- --test-threads=1` | 4 passed: 설정 없을 때 미서비스, Origin·쿼리·Authorization 거절과 `permessage-deflate` 제안 수용, 실제 principal 검사(없는 subject는 `44` 뒤 종료)·연결 상한·frame ack, disconnect·초과 패킷(close 1009) 뒤 슬롯 반환 |
+| 변이: 서버가 `Authorization` 헤더 토큰을 거절하는 조건을 지움 | `the_upgrade_accepts_only_a_browser_websocket_only_engine_io_v4_request` FAILED, 복원 뒤 4 passed |
+| `cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --locked --target-dir target --test socketio_transport -- --ignored` | 1 passed: 실제 `socket.io-client` 4.8.3(원본 UI `yarn.lock`이 잠근 버전, `transports:['websocket']`, `auth` 콜백)이 거절된 토큰의 `connect_error`(message·data.code), 정상 연결 id, 유효 frame ack, 누락 필드 ack, 알 수 없는 이벤트 ack, 클라이언트 `disconnect()`(`io client disconnect`)를 관찰했다 |
+| `cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --locked --target-dir target` (전체) | `EXIT=0`, `test result: ok` 76개 묶음, FAILED 없음 (realtime 리팩터링 회귀 확인) |
+| `cargo test -p aip-service --lib --locked` | 41 passed (새 `socketio` 설정 시험 포함) |
+| `cargo fmt --all --check`, spike-v6 `cargo clippy --all-targets -- -D warnings`, aip-auth·aip-migrate·aip-service·aip-cli(`mysql`) clippy | 모두 경고 없음 |
+
+**소스 대조.** 공식 문서(socket.io Engine.IO v4·Socket.IO protocol)를 읽고 패킷 부호화·open 패킷·ping 방향·CONNECT 선행 규칙을 따랐다. 원본 UI(`2e7c021…`)의 `socket/index.ts`와 `WatchPage.tsx`의 emit·ack 모양, 고정 backend(`7948b7e…`)의 응답 모양을 확인했다. 원본이 payload `user_id`를 신뢰하는 결함은 복제하지 않았다.
+
+**한계·미검증.** (1) 실제 브라우저(Chrome 등)로 붙는 시험은 하지 않았다. `permessage-deflate` 거절 문제는 Node `ws` 클라이언트가 아니라 브라우저가 항상 제안하는 값이라서 수용 경로를 서버 시험으로만 확인했다. (2) 기존 `/events/socket`이 확장 제안을 거절하는 동작은 이번에 고치지 않았고 실제 브라우저 영향은 미확인이다. (3) 토큰은 CONNECT에서 한 번만 검사하고 연결은 토큰 만료 시각까지 유지한다. 연결 중 principal을 비활성화해도 이 조각은 즉시 끊지 않는다. 프레임별 재검사는 쓰기 경로를 정하는 후속 조각에서 한다. (4) 연결 상한은 `realtime.max_connections`를 공유하고 기본 32다. 운영 값은 정하지 않았다. (5) MySQL 서비스(`aip service serve`)에 이 endpoint를 켜는 경로는 설정 구조만 만들었고 MySQL 서버 위의 종단 실행은 하지 않았다(PostgreSQL 기반 spike 서버에서만 실행). (6) Linux CI는 이 조각의 푸시 뒤에 조회한다. (7) 모델 출처·ML 런타임·고정 미디어 문제는 그대로이며 가짜 감정값은 만들지 않았다.
+
 ## 2026-10-22 WBS 7.2.8 조각 C: 마이페이지 감정 읽기 5개 (구현 조각, 로컬 실DB·실서버·원본 서비스 대조 통과, 7.2.8은 진행 중)
 
 **범위.** 원본 `MypageService`의 `get_recent_videos`·`get_highlight`·`get_emotion_calendar`·`get_moments`·`get_emotion_dna`를 읽기 확장 `User.myRecentVideos`·`myHighlight`·`myEmotionCalendar`·`myMoments`·`myEmotionDna`로 옮겼다. 결정과 대안은 [DECISIONS](../docs/DECISIONS.md)의 D-P-USERSTATS다. Mongo capability에 파생 컬렉션 `user_watch_stats`를 더했다: 호출자 본인의 `youtube_watching_data`만 읽고 명령 6개(`sessions`·`compress`·`highlight`·`calendar`·`moments`·`dna`)가 큰 프레임 타임라인을 화면에 필요한 수치로 줄여 돌려준다. 화면 규칙(반올림·묶기·DNA 유형·특성·재미 문구)은 원본 코드를 복사한 확장이 맡는다. `GET mypage/emotion/summary`는 아직 옮기지 않았다.

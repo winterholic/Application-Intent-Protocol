@@ -393,6 +393,37 @@ impl Drop for BrowserSlots {
     }
 }
 
+/// The check a browser WebSocket's token goes through before it may stream: a live product principal, the per-principal
+/// request limit, then the connection slots. Answers how many milliseconds the token still lives.
+pub(crate) async fn admit_browser_token(runtime: &Arc<crate::server::Runtime>, slots: Option<&BrowserSlots>, token: &str) -> Result<u64, PollError> {
+    let provider = runtime.authenticator.as_ref().ok_or("WIRE.UNAUTHENTICATED")?;
+    match tokio::time::timeout(crate::server::DB_PREFLIGHT_TIMEOUT, provider.verify_session(token)).await {
+        Ok(Ok(session)) if session.remaining_ms() > 0 && session.durable.is_some() => {
+            if let Some(admission) = runtime.admission.as_ref() {
+                let Some(pool) = runtime.db_pool.as_ref() else { return Err("WIRE.DB_UNAVAILABLE") };
+                let principal = crate::admission::principal(Some(&session));
+                match admission
+                    .check(pool, &principal, crate::admission::Route::Realtime, tokio::time::Instant::now() + crate::server::DB_PREFLIGHT_TIMEOUT)
+                    .await
+                {
+                    Ok(crate::admission::Outcome::Allowed) => {}
+                    Ok(crate::admission::Outcome::Limited { .. }) => return Err("WIRE.RATE_LIMITED"),
+                    Err(_) => return Err("WIRE.DB_UNAVAILABLE"),
+                }
+            }
+            if let Some(slots) = slots {
+                if !slots.promote(&crate::admission::principal(Some(&session))) {
+                    return Err("WIRE.SERVER_BUSY");
+                }
+            }
+            Ok(session.remaining_ms())
+        }
+        Ok(Ok(_)) | Ok(Err(crate::auth::AuthError::Expired)) => Err("WIRE.TOKEN_EXPIRED"),
+        Ok(Err(crate::auth::AuthError::Unavailable)) | Err(_) => Err("WIRE.DB_UNAVAILABLE"),
+        Ok(Err(_)) => Err("WIRE.UNAUTHENTICATED"),
+    }
+}
+
 pub(crate) async fn stream_ws<S>(
     io: S,
     token: Option<String>,
@@ -408,42 +439,8 @@ where
     let options = runtime.infrastructure.realtime.clone();
     let auth_runtime = runtime.clone();
     let mut authenticate = move |token: &str| -> AuthFuture {
-        let token = token.to_owned();
-        let runtime = auth_runtime.clone();
-        let slots = slots.clone();
-        Box::pin(async move {
-            let provider = runtime.authenticator.as_ref().ok_or("WIRE.UNAUTHENTICATED")?;
-            match tokio::time::timeout(crate::server::DB_PREFLIGHT_TIMEOUT, provider.verify_session(&token)).await {
-                Ok(Ok(session)) if session.remaining_ms() > 0 && session.durable.is_some() => {
-                    if let Some(admission) = runtime.admission.as_ref() {
-                        let Some(pool) = runtime.db_pool.as_ref() else { return Err("WIRE.DB_UNAVAILABLE") };
-                        let principal = crate::admission::principal(Some(&session));
-                        match admission
-                            .check(
-                                pool,
-                                &principal,
-                                crate::admission::Route::Realtime,
-                                tokio::time::Instant::now() + crate::server::DB_PREFLIGHT_TIMEOUT,
-                            )
-                            .await
-                        {
-                            Ok(crate::admission::Outcome::Allowed) => {}
-                            Ok(crate::admission::Outcome::Limited { .. }) => return Err("WIRE.RATE_LIMITED"),
-                            Err(_) => return Err("WIRE.DB_UNAVAILABLE"),
-                        }
-                    }
-                    if let Some(slots) = &slots {
-                        if !slots.promote(&crate::admission::principal(Some(&session))) {
-                            return Err("WIRE.SERVER_BUSY");
-                        }
-                    }
-                    Ok(())
-                }
-                Ok(Ok(_)) | Ok(Err(crate::auth::AuthError::Expired)) => Err("WIRE.TOKEN_EXPIRED"),
-                Ok(Err(crate::auth::AuthError::Unavailable)) | Err(_) => Err("WIRE.DB_UNAVAILABLE"),
-                Ok(Err(_)) => Err("WIRE.UNAUTHENTICATED"),
-            }
-        })
+        let (token, runtime, slots) = (token.to_owned(), auth_runtime.clone(), slots.clone());
+        Box::pin(async move { admit_browser_token(&runtime, slots.as_deref(), &token).await.map(|_| ()) })
     };
     let mut poll = |subscription: &Subscription, after: &str, token: &str| -> PollFuture {
         let (subscription, after, token, fingerprint, facts, runtime) =

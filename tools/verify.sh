@@ -43,6 +43,10 @@ cargo test -p aip-cli --features poc-runtime --locked
 for engine in spike-v1-fixture spike-v2-read spike-v3-write spike-v4-worker spike-v5-sdk spike-v6-transport; do
   cargo test --manifest-path "spikes/$engine/Cargo.toml" --locked --target-dir target
 done
+# The Socket.IO-compatible transport (WBS 7.2.6) is also run with the real socket.io-client the FaceReview player locks
+# (4.8.3, pinned by package-lock.json). Lifecycle scripts stay off: only the library files are installed.
+npm ci --ignore-scripts --no-audit --no-fund --prefix spikes/spike-v6-transport/tests/socketio-client
+cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --locked --target-dir target --test socketio_transport -- --ignored
 # The legacy prototype imports the shared generator and must export every binding type it emits.
 # Keep its CLI and committed lock file in the product gate so an SDK change cannot silently break it.
 cargo test --manifest-path prototype/Cargo.toml --test cli --locked --target-dir target

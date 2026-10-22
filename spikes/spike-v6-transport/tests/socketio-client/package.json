@@ -1,0 +1,9 @@
+{
+  "name": "aip-socketio-client-check",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Runs the real socket.io-client the FaceReview player uses (yarn.lock of UI 2e7c021: 4.8.3) against the AIP transport.",
+  "dependencies": {
+    "socket.io-client": "4.8.3"
+  }
+}
