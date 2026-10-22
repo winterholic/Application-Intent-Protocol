@@ -1,0 +1,636 @@
+[
+ {
+  "name": "alice: no row, first call sums the timelines of every session",
+  "subject": "alice",
+  "state": null,
+  "expected": {
+   "emotion_percentages": {
+    "neutral": 19.7,
+    "happy": 39.5,
+    "surprise": 9.9,
+    "sad": 20.4,
+    "angry": 10.5
+   },
+   "emotion_seconds": {
+    "neutral": 30,
+    "happy": 60,
+    "surprise": 15,
+    "sad": 31,
+    "angry": 16
+   }
+  },
+  "row": {
+   "seconds": [
+    30,
+    60,
+    15,
+    31,
+    16
+   ],
+   "session": "",
+   "version": 1,
+   "at": "recent",
+   "created": "recent",
+   "updated": "touched"
+  }
+ },
+ {
+  "name": "alice: row without a checkpoint",
+  "subject": "alice",
+  "state": {
+   "seconds": [
+    10,
+    20,
+    30,
+    40,
+    50
+   ],
+   "version": 4,
+   "at": null
+  },
+  "expected": {
+   "emotion_percentages": {
+    "neutral": 13.2,
+    "happy": 26.5,
+    "surprise": 14.9,
+    "sad": 23.5,
+    "angry": 21.9
+   },
+   "emotion_seconds": {
+    "neutral": 40,
+    "happy": 80,
+    "surprise": 45,
+    "sad": 71,
+    "angry": 66
+   }
+  },
+  "row": {
+   "seconds": [
+    40,
+    80,
+    45,
+    71,
+    66
+   ],
+   "session": "",
+   "version": 5,
+   "at": "recent",
+   "created": "2026-01-01 00:00:00",
+   "updated": "touched"
+  }
+ },
+ {
+  "name": "alice: checkpoint at the first tie, the second session and later ones",
+  "subject": "alice",
+  "state": {
+   "seconds": [
+    10,
+    20,
+    30,
+    40,
+    50
+   ],
+   "at": "2026-03-01T10:00:00",
+   "session": "log-1111-0001",
+   "version": 7
+  },
+  "expected": {
+   "emotion_percentages": {
+    "neutral": 15.9,
+    "happy": 27.7,
+    "surprise": 14.0,
+    "sad": 23.0,
+    "angry": 19.5
+   },
+   "emotion_seconds": {
+    "neutral": 58,
+    "happy": 101,
+    "surprise": 51,
+    "sad": 84,
+    "angry": 71
+   }
+  },
+  "row": {
+   "seconds": [
+    58,
+    101,
+    51,
+    84,
+    71
+   ],
+   "session": "log-1111-0012",
+   "version": 8,
+   "at": "2026-03-07T10:00:00",
+   "created": "2026-01-01 00:00:00",
+   "updated": "touched"
+  }
+ },
+ {
+  "name": "alice: checkpoint before everything",
+  "subject": "alice",
+  "state": {
+   "seconds": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "at": "2026-02-28T10:00:00",
+   "session": "",
+   "version": 0
+  },
+  "expected": {
+   "emotion_percentages": {
+    "neutral": 20.7,
+    "happy": 39.5,
+    "surprise": 10.3,
+    "sad": 19.2,
+    "angry": 10.3
+   },
+   "emotion_seconds": {
+    "neutral": 54,
+    "happy": 103,
+    "surprise": 27,
+    "sad": 50,
+    "angry": 27
+   }
+  },
+  "row": {
+   "seconds": [
+    54,
+    103,
+    27,
+    50,
+    27
+   ],
+   "session": "log-1111-0012",
+   "version": 1,
+   "at": "2026-03-07T10:00:00",
+   "created": "2026-01-01 00:00:00",
+   "updated": "touched"
+  }
+ },
+ {
+  "name": "alice: checkpoint with a missing session id",
+  "subject": "alice",
+  "state": {
+   "seconds": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "at": "2026-03-01T09:59:59",
+   "session": null,
+   "version": 2
+  },
+  "expected": {
+   "emotion_percentages": {
+    "neutral": 20.7,
+    "happy": 39.5,
+    "surprise": 10.3,
+    "sad": 19.2,
+    "angry": 10.3
+   },
+   "emotion_seconds": {
+    "neutral": 54,
+    "happy": 103,
+    "surprise": 27,
+    "sad": 50,
+    "angry": 27
+   }
+  },
+  "row": {
+   "seconds": [
+    54,
+    103,
+    27,
+    50,
+    27
+   ],
+   "session": "log-1111-0012",
+   "version": 3,
+   "at": "2026-03-07T10:00:00",
+   "created": "2026-01-01 00:00:00",
+   "updated": "touched"
+  }
+ },
+ {
+  "name": "alice: checkpoint in the middle",
+  "subject": "alice",
+  "state": {
+   "seconds": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "at": "2026-03-03T11:00:00",
+   "session": "",
+   "version": 9
+  },
+  "expected": {
+   "emotion_percentages": {
+    "neutral": 26.2,
+    "happy": 35.0,
+    "surprise": 8.8,
+    "sad": 21.2,
+    "angry": 8.8
+   },
+   "emotion_seconds": {
+    "neutral": 21,
+    "happy": 28,
+    "surprise": 7,
+    "sad": 17,
+    "angry": 7
+   }
+  },
+  "row": {
+   "seconds": [
+    21,
+    28,
+    7,
+    17,
+    7
+   ],
+   "session": "log-1111-0012",
+   "version": 10,
+   "at": "2026-03-07T10:00:00",
+   "created": "2026-01-01 00:00:00",
+   "updated": "touched"
+  }
+ },
+ {
+  "name": "alice: checkpoint after every session changes nothing",
+  "subject": "alice",
+  "state": {
+   "seconds": [
+    3,
+    1,
+    4,
+    1,
+    5
+   ],
+   "at": "2026-03-31T10:00:00",
+   "session": "log",
+   "version": 11
+  },
+  "expected": {
+   "emotion_percentages": {
+    "neutral": 21.4,
+    "happy": 7.1,
+    "surprise": 28.6,
+    "sad": 7.1,
+    "angry": 35.7
+   },
+   "emotion_seconds": {
+    "neutral": 3,
+    "happy": 1,
+    "surprise": 4,
+    "sad": 1,
+    "angry": 5
+   }
+  },
+  "row": {
+   "seconds": [
+    3,
+    1,
+    4,
+    1,
+    5
+   ],
+   "session": "log",
+   "version": 11,
+   "at": "2026-03-31T10:00:00",
+   "created": "2026-01-01 00:00:00",
+   "updated": "untouched"
+  }
+ },
+ {
+  "name": "alice: checkpoint on the last session changes nothing",
+  "subject": "alice",
+  "state": {
+   "seconds": [
+    3,
+    1,
+    4,
+    1,
+    5
+   ],
+   "at": "2026-03-07T10:00:00",
+   "session": "log-1111-0012",
+   "version": 12
+  },
+  "expected": {
+   "emotion_percentages": {
+    "neutral": 21.4,
+    "happy": 7.1,
+    "surprise": 28.6,
+    "sad": 7.1,
+    "angry": 35.7
+   },
+   "emotion_seconds": {
+    "neutral": 3,
+    "happy": 1,
+    "surprise": 4,
+    "sad": 1,
+    "angry": 5
+   }
+  },
+  "row": {
+   "seconds": [
+    3,
+    1,
+    4,
+    1,
+    5
+   ],
+   "session": "log-1111-0012",
+   "version": 12,
+   "at": "2026-03-07T10:00:00",
+   "created": "2026-01-01 00:00:00",
+   "updated": "untouched"
+  }
+ },
+ {
+  "name": "bob: no row and one session",
+  "subject": "bob",
+  "state": null,
+  "expected": {
+   "emotion_percentages": {
+    "neutral": 0.0,
+    "happy": 0.0,
+    "surprise": 0.0,
+    "sad": 0.0,
+    "angry": 0.0
+   },
+   "emotion_seconds": {
+    "neutral": 0,
+    "happy": 0,
+    "surprise": 0,
+    "sad": 0,
+    "angry": 0
+   }
+  },
+  "row": {
+   "seconds": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "session": "",
+   "version": 1,
+   "at": "recent",
+   "created": "recent",
+   "updated": "touched"
+  }
+ },
+ {
+  "name": "carol: no row",
+  "subject": "carol",
+  "state": null,
+  "expected": {
+   "emotion_percentages": {
+    "neutral": 0.0,
+    "happy": 0.0,
+    "surprise": 0.0,
+    "sad": 0.0,
+    "angry": 0.0
+   },
+   "emotion_seconds": {
+    "neutral": 0,
+    "happy": 0,
+    "surprise": 0,
+    "sad": 0,
+    "angry": 0
+   }
+  },
+  "row": {
+   "seconds": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "session": "",
+   "version": 1,
+   "at": "recent",
+   "created": "recent",
+   "updated": "touched"
+  }
+ },
+ {
+  "name": "carol: checkpoint before sessions finalized at fractions of a second",
+  "subject": "carol",
+  "state": {
+   "seconds": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "at": "2026-03-01T09:00:00",
+   "session": "",
+   "version": 0
+  },
+  "expected": {
+   "emotion_percentages": {
+    "neutral": 14.8,
+    "happy": 18.5,
+    "surprise": 18.5,
+    "sad": 22.2,
+    "angry": 25.9
+   },
+   "emotion_seconds": {
+    "neutral": 4,
+    "happy": 5,
+    "surprise": 5,
+    "sad": 6,
+    "angry": 7
+   }
+  },
+  "row": {
+   "seconds": [
+    4,
+    5,
+    5,
+    6,
+    7
+   ],
+   "session": "log-3333-0003",
+   "version": 1,
+   "at": "2026-03-02T10:00:00.600000",
+   "created": "2026-01-01 00:00:00",
+   "updated": "touched"
+  }
+ },
+ {
+  "name": "carol: checkpoint on the first fraction",
+  "subject": "carol",
+  "state": {
+   "seconds": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "at": "2026-03-02T10:00:00.400000",
+   "session": "log-3333-0002",
+   "version": 0
+  },
+  "expected": {
+   "emotion_percentages": {
+    "neutral": 0.0,
+    "happy": 100.0,
+    "surprise": 0.0,
+    "sad": 0.0,
+    "angry": 0.0
+   },
+   "emotion_seconds": {
+    "neutral": 0,
+    "happy": 1,
+    "surprise": 0,
+    "sad": 0,
+    "angry": 0
+   }
+  },
+  "row": {
+   "seconds": [
+    0,
+    1,
+    0,
+    0,
+    0
+   ],
+   "session": "log-3333-0003",
+   "version": 1,
+   "at": "2026-03-02T10:00:00.600000",
+   "created": "2026-01-01 00:00:00",
+   "updated": "touched"
+  }
+ },
+ {
+  "name": "erin: many sessions, no row",
+  "subject": "erin",
+  "state": null,
+  "expected": {
+   "emotion_percentages": {
+    "neutral": 20.0,
+    "happy": 20.0,
+    "surprise": 20.0,
+    "sad": 20.0,
+    "angry": 20.0
+   },
+   "emotion_seconds": {
+    "neutral": 720,
+    "happy": 720,
+    "surprise": 720,
+    "sad": 720,
+    "angry": 720
+   }
+  },
+  "row": {
+   "seconds": [
+    720,
+    720,
+    720,
+    720,
+    720
+   ],
+   "session": "",
+   "version": 1,
+   "at": "recent",
+   "created": "recent",
+   "updated": "touched"
+  }
+ },
+ {
+  "name": "erin: many sessions after a checkpoint in the middle",
+  "subject": "erin",
+  "state": {
+   "seconds": [
+    5,
+    5,
+    5,
+    5,
+    5
+   ],
+   "at": "2026-03-01T10:01:00",
+   "session": "log-5555-0060",
+   "version": 1
+  },
+  "expected": {
+   "emotion_percentages": {
+    "neutral": 25.3,
+    "happy": 17.1,
+    "surprise": 8.9,
+    "sad": 43.8,
+    "angry": 4.8
+   },
+   "emotion_seconds": {
+    "neutral": 185,
+    "happy": 125,
+    "surprise": 65,
+    "sad": 320,
+    "angry": 35
+   }
+  },
+  "row": {
+   "seconds": [
+    185,
+    125,
+    65,
+    320,
+    35
+   ],
+   "session": "log-5555-0120",
+   "version": 2,
+   "at": "2026-03-01T10:02:00",
+   "created": "2026-01-01 00:00:00",
+   "updated": "touched"
+  }
+ },
+ {
+  "name": "dave: no sessions",
+  "subject": "dave",
+  "state": null,
+  "expected": {
+   "emotion_percentages": {
+    "neutral": 0.0,
+    "happy": 0.0,
+    "surprise": 0.0,
+    "sad": 0.0,
+    "angry": 0.0
+   },
+   "emotion_seconds": {
+    "neutral": 0,
+    "happy": 0,
+    "surprise": 0,
+    "sad": 0,
+    "angry": 0
+   }
+  },
+  "row": {
+   "seconds": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "session": "",
+   "version": 1,
+   "at": "recent",
+   "created": "recent",
+   "updated": "touched"
+  }
+ }
+]

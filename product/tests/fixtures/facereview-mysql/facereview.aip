@@ -151,6 +151,15 @@ resource User {
     deadline 30s
     implementation "slice14e_mypage.myEmotionDna"
   }
+  // GET mypage/emotion/summary: the incremental total kept in UserEmotionSummary (the only write of the my page screens).
+  extension write myEmotionSummary {
+    input { }
+    output { body: Text }
+    access UserEmotionSummary.applyDelta, create.UserEmotionSummary, read.UserEmotionSummary, mongo.user_watch_stats
+    effect db
+    deadline 20s
+    implementation "slice14e_mypage.myEmotionSummary"
+  }
   expose aggregate totalCount
 }
 
@@ -528,18 +537,33 @@ resource UserEmotionDna {
 resource UserEmotionSummary {
   fields {
     id: User
-    neutral_seconds: Int
-    happy_seconds: Int
-    surprise_seconds: Int
-    sad_seconds: Int
-    angry_seconds: Int
+    neutral_seconds: Int default database
+    happy_seconds: Int default database
+    surprise_seconds: Int default database
+    sad_seconds: Int default database
+    angry_seconds: Int default database
     last_finalized_at: Time?
-    last_session_id: Text(1..64)?
-    lock_version: Int
-    created_at: Time
-    updated_at: Time
+    last_session_id: Text(0..64)?
+    lock_version: Int default database
+    created_at: Time default database
+    updated_at: Time default database
   }
   rows read when id = actor and active(actor)
+  // GET mypage/emotion/summary (WBS 7.2.8, User.myEmotionSummary). The first call creates the member's row with zero totals; each call then
+  // adds the sessions finalized since the checkpoint with the original's optimistic lock: the new totals are written only while lock_version
+  // still holds the value the extension read (a concurrent call makes `expect` fail with WIRE.CONFLICT and nothing changes).
+  expose create {
+    fields id
+    allow id = actor and active(actor)
+  }
+  transition applyDelta {
+    allow id = actor and active(actor)
+    from true
+    patch neutral_seconds, happy_seconds, surprise_seconds, sad_seconds, angry_seconds, last_finalized_at, last_session_id
+    expect lock_version
+    to lock_version = this.lock_version + 1, updated_at = now
+  }
+  expose apply applyDelta { target id; bulk maxRows 1 }
   expose read {
     select id, neutral_seconds, happy_seconds, surprise_seconds, sad_seconds, angry_seconds,
       last_finalized_at, last_session_id, lock_version, created_at, updated_at

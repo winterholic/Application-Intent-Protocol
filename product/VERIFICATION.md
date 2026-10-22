@@ -1,5 +1,17 @@
 # 제품 통합 검증 (2026-10-17)
 
+## 2026-10-22 WBS 7.2.8 조각 D: 마이페이지 감정 요약 (구현 조각, 로컬 실DB·실서버·원본 서비스 대조 통과, 마이페이지 읽기 6개 모두 구현)
+
+**범위.** 원본 `MypageService.get_emotion_summary`(`GET mypage/emotion/summary`)를 쓰기 확장 `User.myEmotionSummary`로 옮겼다. 결정과 대안은 [DECISIONS](../docs/DECISIONS.md)의 D-P-EMOSUMMARY다. 플랫폼에 더한 것: (1) 쓰기 확장 `access`의 `read.<Resource>`·`create.<Resource>`와 `ctx.data.read`(호출자 행 정책을 쓰기 트랜잭션 안에서), `ctx.data.create`(공개 create 한 행), `ctx.data.apply(..., values, expect)`(patch 전이의 값과 낙관적 기대값). (2) 쓰기 확장 안의 Mongo·Redis 읽기 명령이 효과 기록 없이 즉시 실행(전에는 쓰기 경로로만 가서 `WIRE.CAPABILITY_DENIED`). (3) 확장이 `expect` 충돌을 그대로 올리면 호출자가 `WIRE.CONFLICT`를 받는다. (4) 파생 컬렉션 `user_watch_stats`의 명령 `emotion_seconds`: 체크포인트가 없으면 본인 세션 전체를 한 번(타임라인을 초 단위로, 마지막 프레임이 이김), 있으면 `finalized_at > t 또는 (= t 이고 video_view_log_id >)` 세션을 그 두 키 순서로 더해 소수 합계와 새 체크포인트를 돌려준다(세션 20000개 상한). 정의의 `UserEmotionSummary`에 공개 create와 전이 `applyDelta`(`patch` 합계·체크포인트, `expect lock_version`)를 더했고, `db-defaults.sql`이 합계·`lock_version`·시각의 기본값과 `last_finalized_at datetime(3)`을 둔다.
+
+**원본과의 대조(`reference/slice14f_oracle.py`).** 같은 MySQL·MongoDB에서 사례마다 같은 시작 행으로 원본 서비스와 실제 `aip service serve`를 차례로 돌려 응답과 이후 행(합계·체크포인트·세션 id·`lock_version`)을 비교했다: `the emotion summary matched the original in 19 cases`. 행이 없는 첫 호출, 체크포인트 없는 행, 같은 `finalized_at`의 동점(세션 id 순서), 체크포인트가 기록의 앞·가운데·뒤·마지막 세션인 경우와 세션 id가 없는 경우, 저장된 초·타임라인(중복 초, 잘못된 감정·키)·비율×시청 시간(`duration`×`completion_rate` 상한 1, `timeline_len`, `frame_count`, 숫자가 아닌 `duration`)·문자열/실수 초, 소수 초 세션, 세션 800개(체크포인트 없이·가운데에서), 세션이 없는 회원, 반복 호출은 변화 없음, 늦게 끝난 세션은 정확히 한 번, 동시 두 호출(한쪽 `WIRE.CONFLICT`, 합계는 한 번), 게스트 거절. CI 재생: `mysql_facereview_trending_job`이 같은 세션(`slice14f-sessions.json`)과 시작 행으로 기록된 19개 답과 행(`slice14f-golden.json`)을 `/apply`로 재생하고, 한 회원이 4개 호출을 8번 동시에 보내도 합계가 한 번만 더해지고 한 번에 한 호출만 이기며(나머지 `WIRE.CONFLICT`, 로컬 확장 동시 호출 상한을 넘으면 `WIRE.WORKER_BUSY`), 전이의 낡은 `lock_version`은 거절되고 현재 값은 적용되며 다른 회원은 행을 바꾸지 못하고 게스트는 거절됨을 확인했다(`1 passed`, 약 24초).
+
+**원본 결함과 고친 방법.** 원본은 `last_finalized_at`을 소수 초 없는 `DATETIME`에 저장해 소수 초가 `.5` 미만인 세션의 체크포인트를 내림하므로 다음 호출이 같은 세션을 다시 더한다. 원본에서 직접 측정했다(새 세션 1개, 호출 3번: 40, 50, 60초). `db-defaults.sql`이 열을 `datetime(3)`으로 바꾸면 원본 앱도 그대로 한 번만 센다. 이 포팅의 대조는 바꾼 열 위에서 한다.
+
+**변이 확인.** 동점 규칙 `video_view_log_id >`를 `>=`로 바꾸면 "체크포인트가 첫 동점" 사례가 실패했고 복원했다. 낙관적 잠금(`expect lock_version`)을 정의와 확장에서 함께 빼도 시험이 통과했다: 동시 호출에서 MySQL 교착(1213)이 같은 `WIRE.CONFLICT`로 거절되어 이 시험은 `expect` 자체를 구별하지 못한다. `expect`의 판정은 전이 계약 시험(낡은 `lock_version` 거절)이 따로 확인한다.
+
+**알려진 차이와 한계.** 자세한 내용은 [extensions/README](tests/fixtures/facereview-mysql/extensions/README.md)의 Slice14-F다. 요약: 전이 `applyDelta`가 공개라서 회원이 자기 합계를 직접 쓸 수 있다(본인 화면만 영향), 첫 호출끼리 경쟁하면 한쪽이 `WIRE.ALREADY_EXISTS`, 잠금 충돌은 3회 재시도 대신 호출자가 다시 보낸다, 세션 20000개 상한.
+
 ## 2026-10-22 WBS 7.2.8 조각 C: 마이페이지 감정 읽기 5개 (구현 조각, 로컬 실DB·실서버·원본 서비스 대조 통과, 7.2.8은 진행 중)
 
 **범위.** 원본 `MypageService`의 `get_recent_videos`·`get_highlight`·`get_emotion_calendar`·`get_moments`·`get_emotion_dna`를 읽기 확장 `User.myRecentVideos`·`myHighlight`·`myEmotionCalendar`·`myMoments`·`myEmotionDna`로 옮겼다. 결정과 대안은 [DECISIONS](../docs/DECISIONS.md)의 D-P-USERSTATS다. Mongo capability에 파생 컬렉션 `user_watch_stats`를 더했다: 호출자 본인의 `youtube_watching_data`만 읽고 명령 6개(`sessions`·`compress`·`highlight`·`calendar`·`moments`·`dna`)가 큰 프레임 타임라인을 화면에 필요한 수치로 줄여 돌려준다. 화면 규칙(반올림·묶기·DNA 유형·특성·재미 문구)은 원본 코드를 복사한 확장이 맡는다. `GET mypage/emotion/summary`는 아직 옮기지 않았다.

@@ -197,6 +197,21 @@ pub fn is_external_write(op: &str, input: &Value) -> bool {
     }
 }
 
+/// `true` for a call that only reads: the plain read commands, and any command on a derived collection (which serves reads only and
+/// refuses every other command itself). A command this does not recognize is handled as a write, so it is journaled before it runs.
+pub fn is_external_read(op: &str, resource: &str, input: &Value) -> bool {
+    let command = input["command"].as_str().unwrap_or("");
+    match op {
+        "redis" => ["get", "hgetall", "exists", "mget", "lrange"].contains(&command),
+        "mongo" => {
+            resource == capability::TIMELINE_COLLECTION
+                || resource == capability::USER_STATS_COLLECTION
+                || ["find", "find_one", "count_documents"].contains(&command)
+        }
+        _ => false,
+    }
+}
+
 /// `true` when running the same write twice leaves the same data, so a job whose first attempt lost its outcome may send it again.
 /// A counter, a list push or an insert is not repeatable and stays unknown.
 pub fn external_write_is_repeatable(op: &str, input: &Value) -> bool {

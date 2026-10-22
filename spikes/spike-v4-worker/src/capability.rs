@@ -694,6 +694,71 @@ fn session_moments(timeline: &mongodb::bson::Document) -> Result<Vec<(i64, usize
     Ok(found)
 }
 
+/// Python `float(x)` of a stored value for the summary rules: numbers, booleans and numeric text. `None` is the original's
+/// `TypeError`/`ValueError`, which each rule catches or lets fail as its own code does.
+fn py_float(value: Option<&mongodb::bson::Bson>) -> Option<f64> {
+    use mongodb::bson::Bson;
+    match value? {
+        Bson::Double(v) => Some(*v),
+        Bson::Int32(v) => Some(f64::from(*v)),
+        Bson::Int64(v) => Some(*v as f64),
+        Bson::Boolean(v) => Some(f64::from(u8::from(*v))),
+        Bson::String(text) => text.trim().parse::<f64>().ok().filter(|v| v.is_finite()),
+        _ => None,
+    }
+}
+
+/// Python `int(x)` of a stored value (truncation of numbers); anything else counts as 0 like the original's `except`.
+fn py_int_or_zero(value: Option<&mongodb::bson::Bson>) -> i64 {
+    py_float(value).map_or(0, |v| v as i64)
+}
+
+/// The original `_estimate_watch_seconds_from_summary` for a session document without its frame timelines.
+fn estimated_watch_seconds(doc: &mongodb::bson::Document, with_timeline_len: bool) -> f64 {
+    if let (Some(duration), Some(completion)) = (py_float(doc.get("duration")), py_float(doc.get("completion_rate"))) {
+        if duration > 0.0 && completion > 0.0 {
+            return (duration * completion.min(1.0)).max(0.0);
+        }
+    }
+    if with_timeline_len {
+        let length = py_int_or_zero(doc.get("timeline_len"));
+        if length > 0 {
+            return length as f64 / 2.0;
+        }
+    }
+    let frames = py_int_or_zero(doc.get("frame_count"));
+    if frames > 0 {
+        return frames as f64 / 2.0;
+    }
+    0.0
+}
+
+/// `datetime.fromisoformat` of the UTC text the service writes for a `Time` field (`Z`, `+00:00` or no zone), as milliseconds since the epoch.
+fn parse_iso_millis(text: &str) -> Option<i64> {
+    let text = text.strip_suffix("+00:00").or_else(|| text.strip_suffix('Z')).unwrap_or(text);
+    let (date, time) = text.split_once('T').or_else(|| text.split_once(' '))?;
+    let mut ymd = date.split('-');
+    let (year, month, day): (i64, i64, i64) = (ymd.next()?.parse().ok()?, ymd.next()?.parse().ok()?, ymd.next()?.parse().ok()?);
+    if ymd.next().is_some() || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    let (clock, fraction) = time.split_once('.').map_or((time, ""), |(clock, fraction)| (clock, fraction));
+    let mut hms = clock.split(':');
+    let (hour, minute, second): (i64, i64, i64) = (hms.next()?.parse().ok()?, hms.next()?.parse().ok()?, hms.next().unwrap_or("0").parse().ok()?);
+    if hms.next().is_some() || hour > 23 || minute > 59 || second > 59 || !fraction.bytes().all(|b| b.is_ascii_digit()) || fraction.len() > 9 {
+        return None;
+    }
+    let millis: i64 = format!("{fraction:0<3}")[..3].parse().ok()?;
+    // Days since 1970-01-01 of a civil date (Howard Hinnant's algorithm, the inverse of `iso_of`).
+    let y = year - i64::from(month <= 2);
+    let era = y.div_euclid(400);
+    let yoe = y.rem_euclid(400);
+    let doy = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    Some(((days * 24 + hour) * 60 + minute) * 60_000 + second * 1000 + millis)
+}
+
 impl MongoDriverCapability {
     async fn user_watch_stats(&self, principal: &CapabilityPrincipal, input: &Value) -> Result<Value, Reject> {
         let Some(user) = principal.private_user_id() else {
@@ -708,6 +773,7 @@ impl MongoDriverCapability {
             "calendar" => &["command", "start", "end"],
             "moments" => &["command", "limit"],
             "dna" | "highlight" => &["command"],
+            "emotion_seconds" => &["command", "after"],
             _ => return Err(reject("WIRE.BAD_VALUE", "알 수 없는 stats command")),
         };
         if input.as_object().is_none_or(|m| m.keys().any(|k| !allowed.contains(&k.as_str()))) {
@@ -911,6 +977,112 @@ impl MongoDriverCapability {
                         }
                     }
                     Ok(json!({"count": count, "night": night, "completion": completion, "sums": sums, "videos": videos}))
+                }
+                "emotion_seconds" => {
+                    // The original `get_emotion_summary`: without a checkpoint the whole history is summed (its timelines, once), with one
+                    // only the sessions finalized after it (their stored `emotion_seconds`), oldest first, so the last one is the new
+                    // checkpoint. The sums stay unrounded: the original truncates the total, not each session.
+                    let after = match input.get("after") {
+                        None | Some(Value::Null) => None,
+                        Some(Value::Object(after)) if after.keys().all(|k| k == "at" || k == "session") => {
+                            let at = after.get("at").and_then(Value::as_str).and_then(parse_iso_millis);
+                            let session = after.get("session").and_then(Value::as_str);
+                            match (at, session) {
+                                (Some(at), Some(session)) if session.len() <= 64 => Some((at, session.to_owned())),
+                                _ => return Err(reject("WIRE.BAD_VALUE", "stats after 오류")),
+                            }
+                        }
+                        _ => return Err(reject("WIRE.BAD_VALUE", "stats after 오류")),
+                    };
+                    let mut sums = [0.0_f64; 5];
+                    let mut count = 0u64;
+                    let mut last: Option<(i64, String)> = None;
+                    let bad = |message: &'static str| reject("WIRE.BAD_VALUE", message);
+                    let mut cursor = match &after {
+                        None => {
+                            coll.find(mongodb::bson::doc! {"user_id": &user})
+                                .projection(mongodb::bson::doc! {"most_emotion_timeline": 1, "emotion_percentages": 1, "duration": 1, "completion_rate": 1, "frame_count": 1})
+                                .await
+                        }
+                        Some((at, session)) => {
+                            let at = mongodb::bson::DateTime::from_millis(*at);
+                            coll.find(mongodb::bson::doc! {"user_id": &user, "$or": [
+                                {"finalized_at": {"$gt": at}},
+                                {"finalized_at": at, "video_view_log_id": {"$gt": session}},
+                            ]})
+                            .projection(mongodb::bson::doc! {"emotion_score_timeline": 0, "most_emotion_timeline": 0, "client_info": 0})
+                            .sort(mongodb::bson::doc! {"finalized_at": 1, "video_view_log_id": 1})
+                            .await
+                        }
+                    }
+                    .map_err(|_| unavailable())?;
+                    while let Some(doc) = cursor.next().await.transpose().map_err(|_| unavailable())? {
+                        count += 1;
+                        if count as usize > STATS_MAX_DOCS {
+                            return Err(bad("stats 세션 상한 초과"));
+                        }
+                        if after.is_some() {
+                            let (Some(at), Ok(session)) = (millis_of(&doc, "finalized_at"), doc.get_str("video_view_log_id")) else {
+                                return Err(bad("마감 시각 또는 세션 id가 없음"));
+                            };
+                            last = Some((at, session.to_owned()));
+                            if let Ok(precomputed) = doc.get_document("emotion_seconds") {
+                                for (sum, emotion) in sums.iter_mut().zip(STATS_EMOTIONS) {
+                                    *sum += py_float(precomputed.get(emotion)).unwrap_or(0.0);
+                                }
+                                continue;
+                            }
+                        } else {
+                            let per_second = match doc.get("most_emotion_timeline") {
+                                None | Some(mongodb::bson::Bson::Null) => None,
+                                Some(mongodb::bson::Bson::Document(timeline)) => {
+                                    let mut seconds: std::collections::BTreeMap<i64, usize> = Default::default();
+                                    for (key, value) in timeline {
+                                        let Some(slot) = value.as_str().and_then(|name| STATS_EMOTIONS.iter().position(|e| *e == name)) else { continue };
+                                        let Ok(offset) = key.trim().parse::<f64>() else { continue };
+                                        if offset.is_nan() {
+                                            continue;
+                                        }
+                                        if offset.is_infinite() {
+                                            return Err(bad("timeline 키가 유한하지 않음"));
+                                        }
+                                        seconds.insert((offset / 100.0).floor() as i64, slot);
+                                    }
+                                    Some(seconds).filter(|seconds| !seconds.is_empty())
+                                }
+                                Some(_) => return Err(bad("most_emotion_timeline 형식 오류")),
+                            };
+                            if let Some(seconds) = per_second {
+                                for slot in seconds.values() {
+                                    sums[*slot] += 1.0;
+                                }
+                                continue;
+                            }
+                        }
+                        let percentages = match doc.get("emotion_percentages") {
+                            None | Some(mongodb::bson::Bson::Null) => None,
+                            Some(mongodb::bson::Bson::Document(percentages)) => Some(percentages),
+                            Some(_) => return Err(bad("emotion_percentages 형식 오류")),
+                        };
+                        let seconds = estimated_watch_seconds(&doc, after.is_some());
+                        if let Some(percentages) = percentages {
+                            for (sum, emotion) in sums.iter_mut().zip(STATS_EMOTIONS) {
+                                if let Some(value) = percentages.get(emotion) {
+                                    *sum += py_float(Some(value)).ok_or_else(|| bad("감정 비율이 숫자가 아님"))? * seconds;
+                                }
+                            }
+                        }
+                    }
+                    let checkpoint = match (&after, last) {
+                        (Some(_), Some((at, session))) => json!({"at": iso_of(at), "session": session}),
+                        (Some(_), None) => Value::Null,
+                        (None, _) => {
+                            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64);
+                            json!({"at": iso_of(now), "session": ""})
+                        }
+                    };
+                    // The verified caller's id is answered so a first call can create the member's own summary row.
+                    Ok(json!({"user": user, "count": count, "seconds": sums, "checkpoint": checkpoint}))
                 }
                 _ => Err(reject("WIRE.BAD_VALUE", "알 수 없는 stats command")),
             }
@@ -1267,6 +1439,47 @@ mod tests {
 
     fn timeline_key(key: &str, sessions: u64, sums: [f64; 5]) -> TimelineKey {
         TimelineKey { key: key.into(), sessions, sums }
+    }
+
+    #[test]
+    fn the_checkpoint_text_of_a_time_field_is_read_in_every_form_the_service_writes() {
+        // 2026-03-01T10:00:00Z = 1772359200 s; a fraction keeps its first three digits.
+        for text in ["2026-03-01T10:00:00", "2026-03-01T10:00:00Z", "2026-03-01T10:00:00+00:00", "2026-03-01 10:00:00", "2026-03-01T10:00:00.000000"]
+        {
+            assert_eq!(parse_iso_millis(text), Some(1_772_359_200_000), "{text}");
+        }
+        assert_eq!(parse_iso_millis("2026-03-01T10:00:00.4"), Some(1_772_359_200_400));
+        assert_eq!(parse_iso_millis("2026-03-01T10:00:00.600000+00:00"), Some(1_772_359_200_600));
+        assert_eq!(parse_iso_millis("1970-01-01T00:00:00"), Some(0));
+        assert_eq!(parse_iso_millis("2024-02-29T23:59:59.999"), Some(1_709_251_199_999));
+        for bad in ["", "2026-03-01", "2026-13-01T00:00:00", "2026-03-01T24:00:00", "2026-03-01T10:00:00+09:00", "x", "2026-03-01T10:00:00.12x"] {
+            assert_eq!(parse_iso_millis(bad), None, "{bad}");
+        }
+        // The round trip with the text the server answers.
+        for millis in [0, 1_772_359_200_400, 1_709_251_199_999, 951_782_400_000] {
+            assert_eq!(parse_iso_millis(&iso_of(millis)), Some(millis));
+        }
+    }
+
+    #[test]
+    fn watch_seconds_follow_the_originals_estimate_order() {
+        let estimate = |doc: mongodb::bson::Document, with_timeline_len: bool| estimated_watch_seconds(&doc, with_timeline_len);
+        use mongodb::bson::doc;
+        assert_eq!(estimate(doc! {"duration": 100, "completion_rate": 0.5}, false), 50.0);
+        assert_eq!(estimate(doc! {"duration": 40.0, "completion_rate": 1.5}, false), 40.0, "completion above 1 counts as 1");
+        // Only one of the two usable: fall through to the frame count.
+        assert_eq!(estimate(doc! {"duration": 100, "completion_rate": 0.0, "frame_count": 9}, false), 4.5);
+        assert_eq!(
+            estimate(doc! {"duration": "abc", "completion_rate": 0.5, "frame_count": 21}, false),
+            10.5,
+            "text that is not a number drops both"
+        );
+        assert_eq!(estimate(doc! {"timeline_len": 40, "frame_count": 10}, true), 20.0);
+        assert_eq!(estimate(doc! {"timeline_len": 40, "frame_count": 10}, false), 5.0, "the first pass never reads timeline_len");
+        assert_eq!(estimate(doc! {}, true), 0.0);
+        assert_eq!(py_float(Some(&mongodb::bson::Bson::String(" 2.5 ".into()))), Some(2.5));
+        assert_eq!(py_float(Some(&mongodb::bson::Bson::String("nan".into()))), None);
+        assert_eq!(py_float(Some(&mongodb::bson::Bson::Null)), None);
     }
 
     #[test]

@@ -121,6 +121,16 @@ fn write_tags(facts: &Value, name: &str) -> Vec<String> {
     out
 }
 
+/// Cache tags of one `access` grant of a write extension: a transition names its resource and effect targets, a create its
+/// resource, a read nothing.
+fn grant_write_tags(facts: &Value, grant: &str) -> Vec<String> {
+    match grant.split_once('.') {
+        Some(("read", _)) => vec![],
+        Some(("create", target)) => vec![target.to_string()],
+        _ => write_tags(facts, grant),
+    }
+}
+
 fn err(e: Reject) -> Value {
     json!({ "ok": false, "code": e.code, "msg": e.msg })
 }
@@ -1515,7 +1525,7 @@ async fn serve_request(
                 .into_iter()
                 .flatten()
                 .filter(|(grant, _)| !grant.starts_with("mongo.") && !grant.starts_with("redis."))
-                .flat_map(|(transition, _)| write_tags(&facts, transition))
+                .flat_map(|(grant, _)| grant_write_tags(&facts, grant))
                 .collect::<Vec<_>>();
             tags.sort();
             tags.dedup();

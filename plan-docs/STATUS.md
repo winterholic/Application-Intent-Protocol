@@ -1,6 +1,10 @@
 # 진행 현황과 쌓인 질문
 
-## 재개 지점 (2026-10-22, 7.2.8 조각 C 뒤 기록)
+## 재개 지점 (2026-10-22, 7.2.8 조각 D 뒤 기록)
+
+7.2.8의 마지막 읽기 `GET mypage/emotion/summary`를 쓰기 확장 `User.myEmotionSummary`로 옮겼다(결정 D-P-EMOSUMMARY). 이로써 7.2.8의 마이페이지 읽기 6개가 모두 구현됐다. 플랫폼에 더한 것: 쓰기 확장의 `access read.<Resource>`·`create.<Resource>`와 `ctx.data.read`·`create`·`apply(values, expect)`, 쓰기 확장 안의 Mongo·Redis 읽기를 효과 기록 없이 즉시 실행, `expect` 충돌을 `WIRE.CONFLICT`로 호출자에게 전달, 서버 파생 명령 `emotion_seconds`. 원본 `get_emotion_summary`와 19개 사례의 응답·행이 같았고(`reference/slice14f_oracle.py`, CI 재생은 `mysql_facereview_trending_job`) 원본 결함 하나(체크포인트 `DATETIME` 반올림으로 같은 세션을 매 호출 다시 더함)는 열을 `datetime(3)`으로 바꿔 고쳤다. 한계: 전이 `applyDelta`가 공개라서 회원이 자기 합계를 직접 쓸 수 있고(본인 화면만 영향), 확장만 부르는 전이 표시는 새 언어 기능으로 남겼다. 7.2.8의 미구현 잔여는 없으나 실제 메일 provider live smoke는 미실행이다. 다음은 7.2.9 잔여 4개(`home/video/recommend`, dashboard, 시스템 상태, 더미 데이터). 시험 환경(이번 조각): MySQL 8.4·MariaDB 11.4(`AIP_FIXTURE_TAG=s148`), mongo:7 인증(15441), mongo:7(25443), redis:7.4 인증(15442), postgres:17(5433), venv `/private/tmp/aip-s148-venv`는 항목 끝에 회수한다.
+
+## 이전 재개 지점 (2026-10-22, 7.2.8 조각 C 뒤 기록)
 
 마이페이지 감정 읽기 5개(최근 시청·하이라이트·캘린더·모먼트·DNA)를 서버 파생 읽기 명령 `user_watch_stats`와 읽기 확장으로 옮겼고 원본 `MypageService`와 66개 사례가 같았다(`reference/slice14e_oracle.py`, CI 재생은 `mysql_facereview_trending_job`). 7.2.8의 남은 것: `GET mypage/emotion/summary`(`user_emotion_summary` 낙관적 잠금 증분 집계, 쓰기 필요: `UserEmotionSummary` 전이와 새 파생 명령 `emotion_seconds`가 필요하다). 그 뒤 7.2.9 잔여(`home/video/recommend`, dashboard, 시스템 상태, 더미 데이터). 시험 환경은 항목 끝에 회수한다(MySQL 8.4 `--rm`, mongo:7 인증, redis:7.4 인증, `/private/tmp`의 venv). 로컬 검증은 `CARGO_INCREMENTAL=0`과 저장소 루트 `--target-dir target` 하나만 쓴다.
 

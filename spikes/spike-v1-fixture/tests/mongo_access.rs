@@ -107,6 +107,52 @@ fn a_write_extension_declares_transitions_next_to_mongo_and_redis_grants() {
     assert_eq!(duplicate, ["DEF.DUPLICATE"]);
 }
 
+#[test]
+fn a_write_extension_creates_and_reads_only_what_the_definition_exposes() {
+    fn source(access: &str, with_create: bool) -> String {
+        let create = if with_create { "expose create { fields title; allow actor != null }" } else { "" };
+        format!(
+            r#"
+actor principal
+resource Video {{
+  fields {{ id: Uuid; title: Text(1..100) }}
+  rows read when true
+  {create}
+  expose read {{
+    select id, title
+    sort id
+    budget {{ rows 10; depth 1; cost 100; deadline 2s }}
+  }}
+  extension write track {{
+    input {{ page: Int(1..100) }}
+    output {{ total: Int(0..1000) }}
+    access {access}
+    effect db
+    deadline 2s
+    implementation "lists.track"
+  }}
+}}
+"#
+        )
+    }
+    let codes = |access: &str, with_create: bool| match load_str(&source(access, with_create), Form::A) {
+        Ok(_) => vec![],
+        Err(found) => found.iter().map(|d| d.code.to_string()).collect::<Vec<_>>(),
+    };
+    let facts = load_str(&source("create.Video, read.Video, mongo.youtube_watching_data", true), Form::A).unwrap().execution;
+    assert_eq!(
+        facts["resources"]["Video"]["extensions"]["track"]["access"],
+        json!({"create.Video": "create", "read.Video": "read", "mongo.youtube_watching_data": {}})
+    );
+    // A create needs an exposed create, a read any resource; both name a known resource and are declared once.
+    assert_eq!(codes("create.Video", false), ["DEF.UNKNOWN_SYMBOL"]);
+    assert_eq!(codes("create.Missing", true), ["DEF.UNKNOWN_SYMBOL"]);
+    assert_eq!(codes("read.Missing", true), ["DEF.UNKNOWN_SYMBOL"]);
+    assert_eq!(codes("read.Video, read.Video", true), ["DEF.DUPLICATE"]);
+    assert_eq!(codes("create.Video, create.Video", true), ["DEF.DUPLICATE"]);
+    assert!(codes("read.Video", false).is_empty());
+}
+
 fn job_source(access: &str) -> String {
     format!(
         r#"

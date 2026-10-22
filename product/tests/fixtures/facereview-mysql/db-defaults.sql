@@ -18,3 +18,11 @@ ALTER TABLE video_request ALTER COLUMN created_at SET DEFAULT (UTC_TIMESTAMP()),
 ALTER TABLE video_view_log ALTER COLUMN created_at SET DEFAULT (UTC_TIMESTAMP()), ALTER COLUMN updated_at SET DEFAULT (UTC_TIMESTAMP());
 ALTER TABLE user_favorite_genre ALTER COLUMN created_at SET DEFAULT (UTC_TIMESTAMP()), ALTER COLUMN updated_at SET DEFAULT (UTC_TIMESTAMP());
 ALTER TABLE user_point_history ALTER COLUMN created_at SET DEFAULT (UTC_TIMESTAMP()), ALTER COLUMN updated_at SET DEFAULT (UTC_TIMESTAMP());
+-- WBS 7.2.8: the summary row is created by the first GET mypage/emotion/summary with zero totals, as the original's column defaults did.
+ALTER TABLE user_emotion_summary ALTER COLUMN neutral_seconds SET DEFAULT 0, ALTER COLUMN happy_seconds SET DEFAULT 0,
+  ALTER COLUMN surprise_seconds SET DEFAULT 0, ALTER COLUMN sad_seconds SET DEFAULT 0, ALTER COLUMN angry_seconds SET DEFAULT 0,
+  ALTER COLUMN lock_version SET DEFAULT 0, ALTER COLUMN created_at SET DEFAULT (UTC_TIMESTAMP()), ALTER COLUMN updated_at SET DEFAULT (UTC_TIMESTAMP());
+-- The checkpoint is compared with the finalized_at of MongoDB sessions, which keep milliseconds. A DATETIME without fractions rounds the
+-- stored checkpoint, so a session finalized at .4 s was counted again by the next call (and one at .6 s could be skipped). The original
+-- app keeps working: its datetimes carry microseconds, which the column rounds to milliseconds.
+ALTER TABLE user_emotion_summary MODIFY last_finalized_at datetime(3) NULL;

@@ -140,8 +140,48 @@ pub async fn invoke_write_action(
                             }
                         }
                     }
+                } else if message["op"] == "create" {
+                    // A row of an exposed create, as a one-operation atomic bundle in the same transaction (access `create.<Resource>`).
+                    let resource = message["name"].as_str().unwrap_or("");
+                    let grant = format!("create.{resource}");
+                    if !allowed.contains(grant.as_str()) {
+                        rej("WIRE.ACCESS_NOT_DECLARED", "create가 action access에 선언되지 않음")
+                    } else {
+                        match job_create_request(resource, &message["input"]) {
+                            Err(error) => Err(error),
+                            Ok(request) => match tokio::time::timeout(
+                                expires.saturating_duration_since(Instant::now()),
+                                host.apply(&grant, &request, caller, wire),
+                            )
+                            .await
+                            {
+                                Ok(result) => result,
+                                Err(_) => break rej("WIRE.DEADLINE_EXCEEDED", "ctx 쓰기 기한 초과"),
+                            },
+                        }
+                    }
+                } else if message["op"] == "read" {
+                    // A public read of the caller's rows inside the write transaction (access `read.<Resource>`), so the extension sees
+                    // the row the following patch is checked against (`expect`).
+                    let resource = message["name"].as_str().unwrap_or("");
+                    let grant = format!("read.{resource}");
+                    if !allowed.contains(grant.as_str()) {
+                        rej("WIRE.ACCESS_NOT_DECLARED", "read가 action access에 선언되지 않음")
+                    } else if message["input"]["read"].as_str() != Some(resource) {
+                        rej("WIRE.BAD_VALUE", "ctx.data.read 요청의 read 이름이 다름")
+                    } else {
+                        match tokio::time::timeout(
+                            expires.saturating_duration_since(Instant::now()),
+                            host.apply(&grant, &message["input"], caller, wire),
+                        )
+                        .await
+                        {
+                            Ok(result) => result,
+                            Err(_) => break rej("WIRE.DEADLINE_EXCEEDED", "ctx 쓰기 기한 초과"),
+                        }
+                    }
                 } else if message["op"] != "apply" {
-                    rej("WIRE.UNSUPPORTED", "쓰기 action ctx는 apply와 mongo·redis 쓰기만")
+                    rej("WIRE.UNSUPPORTED", "쓰기 action ctx는 apply·create·read와 mongo·redis 쓰기만")
                 } else if !allowed.contains(message["name"].as_str().unwrap_or("")) {
                     rej("WIRE.ACCESS_NOT_DECLARED", "전이가 action access에 선언되지 않음")
                 } else {
@@ -178,6 +218,10 @@ pub async fn invoke_write_action(
             Some("done") if message["invoke"] == json!(invoke_id) => {
                 if Instant::now() > expires {
                     break rej("WIRE.DEADLINE_EXCEEDED", "기한 뒤 완료");
+                }
+                // The extension passed on the refusal of an optimistic `expect` unchanged: the caller may send the request again.
+                if poisoned == Some("WIRE.CONFLICT") && message["error"]["code"] == "WIRE.CONFLICT" {
+                    break rej("WIRE.CONFLICT", "확장이 읽은 뒤 행이 바뀜(expect 불일치): 다시 보내면 됨");
                 }
                 if let Some(code) = poisoned {
                     break rej("WIRE.EXTENSION_ERROR", format!("ctx 실패 뒤 성공 반환: {code}"));
@@ -429,7 +473,17 @@ fn ctx_request(message: &Value, wire: IdWire) -> Result<Value, Reject> {
             target["ids"] = json!(encoded);
         }
     }
-    Ok(json!({"apply":message["name"],"target":target}))
+    // A patch transition takes the caller's values and the expected current values (GENERAL-UPDATE); they are not part of the target.
+    let mut request = json!({"apply":message["name"]});
+    if let Some(object) = target.as_object_mut() {
+        for key in ["values", "expect"] {
+            if let Some(value) = object.remove(key) {
+                request[key] = value;
+            }
+        }
+    }
+    request["target"] = target;
+    Ok(request)
 }
 
 #[cfg(test)]
@@ -444,5 +498,21 @@ mod job_create_tests {
         for bad in [json!({}), json!({"values": "x"}), json!({"values": {}, "key": "k", "extra": 1}), json!({"key": "k"}), json!("x")] {
             assert_eq!(job_create_request("Video", &bad).unwrap_err().code, "WIRE.BAD_VALUE", "{bad}");
         }
+    }
+}
+
+#[cfg(test)]
+mod ctx_request_tests {
+    use super::ctx_request;
+    use serde_json::json;
+    use spike_v2_read::id_wire::IdWire;
+
+    #[test]
+    fn a_patch_transition_carries_values_and_expect_next_to_its_target() {
+        let message = json!({"name": "R.t", "input": {"ids": ["u"], "values": {"a": 1}, "expect": {"lock_version": 3}, "key": "k"}});
+        let request = ctx_request(&message, IdWire::Legacy).unwrap();
+        assert_eq!(request, json!({"apply": "R.t", "values": {"a": 1}, "expect": {"lock_version": 3}, "target": {"ids": ["u"], "key": "k"}}));
+        let plain = ctx_request(&json!({"name": "R.t", "input": {"ids": ["u"]}}), IdWire::Legacy).unwrap();
+        assert_eq!(plain, json!({"apply": "R.t", "target": {"ids": ["u"]}}));
     }
 }

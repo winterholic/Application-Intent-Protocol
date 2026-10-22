@@ -1,0 +1,9231 @@
+[
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000001",
+  "video_view_log_id": "log-1111-0001",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358600000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.4,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359200000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 5,
+   "happy": 20,
+   "surprise": 3,
+   "sad": 2,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "happy"
+  },
+  "duration": 100
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000002",
+  "video_view_log_id": "log-1111-0002",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358600000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359200000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 1,
+   "happy": 1,
+   "surprise": 1,
+   "sad": 1,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "sad",
+   "100": "sad"
+  }
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000003",
+  "video_view_log_id": "log-1111-0003",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772445000000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772445600000"
+   }
+  },
+  "most_emotion_timeline": {
+   "0": "happy",
+   "50": "sad",
+   "99": "angry",
+   "100": "neutral",
+   "150": "neutral",
+   "200": "happy",
+   "260": "bogus",
+   "300": "surprise",
+   "x": "sad"
+  },
+  "duration": 100
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000004",
+  "video_view_log_id": "log-1111-0004",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772448600000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772449200000"
+   }
+  },
+  "duration": 100,
+  "frame_count": 9
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000005",
+  "video_view_log_id": "log-1111-0005",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772531400000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.0,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772532000000"
+   }
+  },
+  "frame_count": 61
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000006",
+  "video_view_log_id": "log-1111-0006",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772535000000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.0,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772535600000"
+   }
+  },
+  "timeline_len": 40,
+  "frame_count": 10
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000007",
+  "video_view_log_id": "log-1111-0007",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772617800000"
+   }
+  },
+  "emotion_percentages": null,
+  "completion_rate": 0.0,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772618400000"
+   }
+  }
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000008",
+  "video_view_log_id": "log-1111-0008",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772621400000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 1.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772622000000"
+   }
+  },
+  "duration": 40
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000009",
+  "video_view_log_id": "log-1111-0009",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772704200000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772704800000"
+   }
+  },
+  "duration": "abc",
+  "frame_count": 21
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000010",
+  "video_view_log_id": "log-1111-0010",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358600000"
+   }
+  },
+  "emotion_percentages": {},
+  "completion_rate": 0.0,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 9,
+   "happy": 9,
+   "surprise": 9,
+   "sad": 9,
+   "angry": 9
+  }
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000011",
+  "video_view_log_id": "log-1111-0011",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772790600000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772791200000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": "7",
+   "happy": "x",
+   "sad": 2.9
+  },
+  "most_emotion_timeline": {
+   "0": "angry"
+  }
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000012",
+  "video_view_log_id": "log-1111-0012",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772877000000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.3,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772877600000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 0,
+   "happy": 0,
+   "surprise": 0,
+   "sad": 0,
+   "angry": 0
+  },
+  "most_emotion_timeline": {},
+  "duration": 30
+ },
+ {
+  "user_id": "33333333-3333-4333-8333-333333333333",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000001",
+  "video_view_log_id": "log-3333-0001",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358600000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359200000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 3,
+   "happy": 4,
+   "surprise": 5,
+   "sad": 6,
+   "angry": 7
+  }
+ },
+ {
+  "user_id": "33333333-3333-4333-8333-333333333333",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000002",
+  "video_view_log_id": "log-3333-0002",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772445000400"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772445600400"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 1,
+   "happy": 0,
+   "surprise": 0,
+   "sad": 0,
+   "angry": 0
+  }
+ },
+ {
+  "user_id": "33333333-3333-4333-8333-333333333333",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000003",
+  "video_view_log_id": "log-3333-0003",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772445000600"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772445600600"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 0,
+   "happy": 1,
+   "surprise": 0,
+   "sad": 0,
+   "angry": 0
+  }
+ },
+ {
+  "user_id": "22222222-2222-4222-8222-222222222222",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000001",
+  "video_view_log_id": "log-2222-0001",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358600000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359200000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 100,
+   "happy": 100,
+   "surprise": 100,
+   "sad": 100,
+   "angry": 100
+  }
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000001",
+  "video_view_log_id": "log-5555-0001",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358601000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359201000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 1,
+   "happy": 1,
+   "surprise": 1,
+   "sad": 1,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "happy",
+   "100": "surprise",
+   "200": "sad",
+   "300": "angry",
+   "400": "neutral",
+   "500": "happy",
+   "600": "surprise",
+   "700": "sad",
+   "800": "angry",
+   "900": "neutral",
+   "1000": "happy",
+   "1100": "surprise",
+   "1200": "sad",
+   "1300": "angry",
+   "1400": "neutral",
+   "1500": "happy",
+   "1600": "surprise",
+   "1700": "sad",
+   "1800": "angry",
+   "1900": "neutral",
+   "2000": "happy",
+   "2100": "surprise",
+   "2200": "sad",
+   "2300": "angry",
+   "2400": "neutral",
+   "2500": "happy",
+   "2600": "surprise",
+   "2700": "sad",
+   "2800": "angry",
+   "2900": "neutral"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000002",
+  "video_view_log_id": "log-5555-0002",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358602000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359202000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 2,
+   "happy": 2,
+   "surprise": 2,
+   "sad": 2,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "surprise",
+   "100": "sad",
+   "200": "angry",
+   "300": "neutral",
+   "400": "happy",
+   "500": "surprise",
+   "600": "sad",
+   "700": "angry",
+   "800": "neutral",
+   "900": "happy",
+   "1000": "surprise",
+   "1100": "sad",
+   "1200": "angry",
+   "1300": "neutral",
+   "1400": "happy",
+   "1500": "surprise",
+   "1600": "sad",
+   "1700": "angry",
+   "1800": "neutral",
+   "1900": "happy",
+   "2000": "surprise",
+   "2100": "sad",
+   "2200": "angry",
+   "2300": "neutral",
+   "2400": "happy",
+   "2500": "surprise",
+   "2600": "sad",
+   "2700": "angry",
+   "2800": "neutral",
+   "2900": "happy"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000003",
+  "video_view_log_id": "log-5555-0003",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358603000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359203000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 3,
+   "happy": 3,
+   "surprise": 0,
+   "sad": 3,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "sad",
+   "100": "angry",
+   "200": "neutral",
+   "300": "happy",
+   "400": "surprise",
+   "500": "sad",
+   "600": "angry",
+   "700": "neutral",
+   "800": "happy",
+   "900": "surprise",
+   "1000": "sad",
+   "1100": "angry",
+   "1200": "neutral",
+   "1300": "happy",
+   "1400": "surprise",
+   "1500": "sad",
+   "1600": "angry",
+   "1700": "neutral",
+   "1800": "happy",
+   "1900": "surprise",
+   "2000": "sad",
+   "2100": "angry",
+   "2200": "neutral",
+   "2300": "happy",
+   "2400": "surprise",
+   "2500": "sad",
+   "2600": "angry",
+   "2700": "neutral",
+   "2800": "happy",
+   "2900": "surprise"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000004",
+  "video_view_log_id": "log-5555-0004",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358604000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359204000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 4,
+   "happy": 4,
+   "surprise": 1,
+   "sad": 4,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "angry",
+   "100": "neutral",
+   "200": "happy",
+   "300": "surprise",
+   "400": "sad",
+   "500": "angry",
+   "600": "neutral",
+   "700": "happy",
+   "800": "surprise",
+   "900": "sad",
+   "1000": "angry",
+   "1100": "neutral",
+   "1200": "happy",
+   "1300": "surprise",
+   "1400": "sad",
+   "1500": "angry",
+   "1600": "neutral",
+   "1700": "happy",
+   "1800": "surprise",
+   "1900": "sad",
+   "2000": "angry",
+   "2100": "neutral",
+   "2200": "happy",
+   "2300": "surprise",
+   "2400": "sad",
+   "2500": "angry",
+   "2600": "neutral",
+   "2700": "happy",
+   "2800": "surprise",
+   "2900": "sad"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000005",
+  "video_view_log_id": "log-5555-0005",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358605000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359205000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 5,
+   "happy": 0,
+   "surprise": 2,
+   "sad": 5,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "neutral",
+   "100": "happy",
+   "200": "surprise",
+   "300": "sad",
+   "400": "angry",
+   "500": "neutral",
+   "600": "happy",
+   "700": "surprise",
+   "800": "sad",
+   "900": "angry",
+   "1000": "neutral",
+   "1100": "happy",
+   "1200": "surprise",
+   "1300": "sad",
+   "1400": "angry",
+   "1500": "neutral",
+   "1600": "happy",
+   "1700": "surprise",
+   "1800": "sad",
+   "1900": "angry",
+   "2000": "neutral",
+   "2100": "happy",
+   "2200": "surprise",
+   "2300": "sad",
+   "2400": "angry",
+   "2500": "neutral",
+   "2600": "happy",
+   "2700": "surprise",
+   "2800": "sad",
+   "2900": "angry"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000006",
+  "video_view_log_id": "log-5555-0006",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358606000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359206000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 6,
+   "happy": 1,
+   "surprise": 0,
+   "sad": 6,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "happy",
+   "100": "surprise",
+   "200": "sad",
+   "300": "angry",
+   "400": "neutral",
+   "500": "happy",
+   "600": "surprise",
+   "700": "sad",
+   "800": "angry",
+   "900": "neutral",
+   "1000": "happy",
+   "1100": "surprise",
+   "1200": "sad",
+   "1300": "angry",
+   "1400": "neutral",
+   "1500": "happy",
+   "1600": "surprise",
+   "1700": "sad",
+   "1800": "angry",
+   "1900": "neutral",
+   "2000": "happy",
+   "2100": "surprise",
+   "2200": "sad",
+   "2300": "angry",
+   "2400": "neutral",
+   "2500": "happy",
+   "2600": "surprise",
+   "2700": "sad",
+   "2800": "angry",
+   "2900": "neutral"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000007",
+  "video_view_log_id": "log-5555-0007",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358607000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359207000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 0,
+   "happy": 2,
+   "surprise": 1,
+   "sad": 7,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "surprise",
+   "100": "sad",
+   "200": "angry",
+   "300": "neutral",
+   "400": "happy",
+   "500": "surprise",
+   "600": "sad",
+   "700": "angry",
+   "800": "neutral",
+   "900": "happy",
+   "1000": "surprise",
+   "1100": "sad",
+   "1200": "angry",
+   "1300": "neutral",
+   "1400": "happy",
+   "1500": "surprise",
+   "1600": "sad",
+   "1700": "angry",
+   "1800": "neutral",
+   "1900": "happy",
+   "2000": "surprise",
+   "2100": "sad",
+   "2200": "angry",
+   "2300": "neutral",
+   "2400": "happy",
+   "2500": "surprise",
+   "2600": "sad",
+   "2700": "angry",
+   "2800": "neutral",
+   "2900": "happy"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000008",
+  "video_view_log_id": "log-5555-0008",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358608000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359208000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 1,
+   "happy": 3,
+   "surprise": 2,
+   "sad": 8,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "sad",
+   "100": "angry",
+   "200": "neutral",
+   "300": "happy",
+   "400": "surprise",
+   "500": "sad",
+   "600": "angry",
+   "700": "neutral",
+   "800": "happy",
+   "900": "surprise",
+   "1000": "sad",
+   "1100": "angry",
+   "1200": "neutral",
+   "1300": "happy",
+   "1400": "surprise",
+   "1500": "sad",
+   "1600": "angry",
+   "1700": "neutral",
+   "1800": "happy",
+   "1900": "surprise",
+   "2000": "sad",
+   "2100": "angry",
+   "2200": "neutral",
+   "2300": "happy",
+   "2400": "surprise",
+   "2500": "sad",
+   "2600": "angry",
+   "2700": "neutral",
+   "2800": "happy",
+   "2900": "surprise"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000009",
+  "video_view_log_id": "log-5555-0009",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358609000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359209000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 2,
+   "happy": 4,
+   "surprise": 0,
+   "sad": 9,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "angry",
+   "100": "neutral",
+   "200": "happy",
+   "300": "surprise",
+   "400": "sad",
+   "500": "angry",
+   "600": "neutral",
+   "700": "happy",
+   "800": "surprise",
+   "900": "sad",
+   "1000": "angry",
+   "1100": "neutral",
+   "1200": "happy",
+   "1300": "surprise",
+   "1400": "sad",
+   "1500": "angry",
+   "1600": "neutral",
+   "1700": "happy",
+   "1800": "surprise",
+   "1900": "sad",
+   "2000": "angry",
+   "2100": "neutral",
+   "2200": "happy",
+   "2300": "surprise",
+   "2400": "sad",
+   "2500": "angry",
+   "2600": "neutral",
+   "2700": "happy",
+   "2800": "surprise",
+   "2900": "sad"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000010",
+  "video_view_log_id": "log-5555-0010",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358610000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359210000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 3,
+   "happy": 0,
+   "surprise": 1,
+   "sad": 10,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "neutral",
+   "100": "happy",
+   "200": "surprise",
+   "300": "sad",
+   "400": "angry",
+   "500": "neutral",
+   "600": "happy",
+   "700": "surprise",
+   "800": "sad",
+   "900": "angry",
+   "1000": "neutral",
+   "1100": "happy",
+   "1200": "surprise",
+   "1300": "sad",
+   "1400": "angry",
+   "1500": "neutral",
+   "1600": "happy",
+   "1700": "surprise",
+   "1800": "sad",
+   "1900": "angry",
+   "2000": "neutral",
+   "2100": "happy",
+   "2200": "surprise",
+   "2300": "sad",
+   "2400": "angry",
+   "2500": "neutral",
+   "2600": "happy",
+   "2700": "surprise",
+   "2800": "sad",
+   "2900": "angry"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000011",
+  "video_view_log_id": "log-5555-0011",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358611000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359211000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 4,
+   "happy": 1,
+   "surprise": 2,
+   "sad": 0,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "happy",
+   "100": "surprise",
+   "200": "sad",
+   "300": "angry",
+   "400": "neutral",
+   "500": "happy",
+   "600": "surprise",
+   "700": "sad",
+   "800": "angry",
+   "900": "neutral",
+   "1000": "happy",
+   "1100": "surprise",
+   "1200": "sad",
+   "1300": "angry",
+   "1400": "neutral",
+   "1500": "happy",
+   "1600": "surprise",
+   "1700": "sad",
+   "1800": "angry",
+   "1900": "neutral",
+   "2000": "happy",
+   "2100": "surprise",
+   "2200": "sad",
+   "2300": "angry",
+   "2400": "neutral",
+   "2500": "happy",
+   "2600": "surprise",
+   "2700": "sad",
+   "2800": "angry",
+   "2900": "neutral"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000012",
+  "video_view_log_id": "log-5555-0012",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358612000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359212000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 5,
+   "happy": 2,
+   "surprise": 0,
+   "sad": 1,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "surprise",
+   "100": "sad",
+   "200": "angry",
+   "300": "neutral",
+   "400": "happy",
+   "500": "surprise",
+   "600": "sad",
+   "700": "angry",
+   "800": "neutral",
+   "900": "happy",
+   "1000": "surprise",
+   "1100": "sad",
+   "1200": "angry",
+   "1300": "neutral",
+   "1400": "happy",
+   "1500": "surprise",
+   "1600": "sad",
+   "1700": "angry",
+   "1800": "neutral",
+   "1900": "happy",
+   "2000": "surprise",
+   "2100": "sad",
+   "2200": "angry",
+   "2300": "neutral",
+   "2400": "happy",
+   "2500": "surprise",
+   "2600": "sad",
+   "2700": "angry",
+   "2800": "neutral",
+   "2900": "happy"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000013",
+  "video_view_log_id": "log-5555-0013",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358613000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359213000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 6,
+   "happy": 3,
+   "surprise": 1,
+   "sad": 2,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "sad",
+   "100": "angry",
+   "200": "neutral",
+   "300": "happy",
+   "400": "surprise",
+   "500": "sad",
+   "600": "angry",
+   "700": "neutral",
+   "800": "happy",
+   "900": "surprise",
+   "1000": "sad",
+   "1100": "angry",
+   "1200": "neutral",
+   "1300": "happy",
+   "1400": "surprise",
+   "1500": "sad",
+   "1600": "angry",
+   "1700": "neutral",
+   "1800": "happy",
+   "1900": "surprise",
+   "2000": "sad",
+   "2100": "angry",
+   "2200": "neutral",
+   "2300": "happy",
+   "2400": "surprise",
+   "2500": "sad",
+   "2600": "angry",
+   "2700": "neutral",
+   "2800": "happy",
+   "2900": "surprise"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000014",
+  "video_view_log_id": "log-5555-0014",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358614000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359214000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 0,
+   "happy": 4,
+   "surprise": 2,
+   "sad": 3,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "angry",
+   "100": "neutral",
+   "200": "happy",
+   "300": "surprise",
+   "400": "sad",
+   "500": "angry",
+   "600": "neutral",
+   "700": "happy",
+   "800": "surprise",
+   "900": "sad",
+   "1000": "angry",
+   "1100": "neutral",
+   "1200": "happy",
+   "1300": "surprise",
+   "1400": "sad",
+   "1500": "angry",
+   "1600": "neutral",
+   "1700": "happy",
+   "1800": "surprise",
+   "1900": "sad",
+   "2000": "angry",
+   "2100": "neutral",
+   "2200": "happy",
+   "2300": "surprise",
+   "2400": "sad",
+   "2500": "angry",
+   "2600": "neutral",
+   "2700": "happy",
+   "2800": "surprise",
+   "2900": "sad"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000015",
+  "video_view_log_id": "log-5555-0015",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358615000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359215000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 1,
+   "happy": 0,
+   "surprise": 0,
+   "sad": 4,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "neutral",
+   "100": "happy",
+   "200": "surprise",
+   "300": "sad",
+   "400": "angry",
+   "500": "neutral",
+   "600": "happy",
+   "700": "surprise",
+   "800": "sad",
+   "900": "angry",
+   "1000": "neutral",
+   "1100": "happy",
+   "1200": "surprise",
+   "1300": "sad",
+   "1400": "angry",
+   "1500": "neutral",
+   "1600": "happy",
+   "1700": "surprise",
+   "1800": "sad",
+   "1900": "angry",
+   "2000": "neutral",
+   "2100": "happy",
+   "2200": "surprise",
+   "2300": "sad",
+   "2400": "angry",
+   "2500": "neutral",
+   "2600": "happy",
+   "2700": "surprise",
+   "2800": "sad",
+   "2900": "angry"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000016",
+  "video_view_log_id": "log-5555-0016",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358616000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359216000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 2,
+   "happy": 1,
+   "surprise": 1,
+   "sad": 5,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "happy",
+   "100": "surprise",
+   "200": "sad",
+   "300": "angry",
+   "400": "neutral",
+   "500": "happy",
+   "600": "surprise",
+   "700": "sad",
+   "800": "angry",
+   "900": "neutral",
+   "1000": "happy",
+   "1100": "surprise",
+   "1200": "sad",
+   "1300": "angry",
+   "1400": "neutral",
+   "1500": "happy",
+   "1600": "surprise",
+   "1700": "sad",
+   "1800": "angry",
+   "1900": "neutral",
+   "2000": "happy",
+   "2100": "surprise",
+   "2200": "sad",
+   "2300": "angry",
+   "2400": "neutral",
+   "2500": "happy",
+   "2600": "surprise",
+   "2700": "sad",
+   "2800": "angry",
+   "2900": "neutral"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000017",
+  "video_view_log_id": "log-5555-0017",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358617000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359217000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 3,
+   "happy": 2,
+   "surprise": 2,
+   "sad": 6,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "surprise",
+   "100": "sad",
+   "200": "angry",
+   "300": "neutral",
+   "400": "happy",
+   "500": "surprise",
+   "600": "sad",
+   "700": "angry",
+   "800": "neutral",
+   "900": "happy",
+   "1000": "surprise",
+   "1100": "sad",
+   "1200": "angry",
+   "1300": "neutral",
+   "1400": "happy",
+   "1500": "surprise",
+   "1600": "sad",
+   "1700": "angry",
+   "1800": "neutral",
+   "1900": "happy",
+   "2000": "surprise",
+   "2100": "sad",
+   "2200": "angry",
+   "2300": "neutral",
+   "2400": "happy",
+   "2500": "surprise",
+   "2600": "sad",
+   "2700": "angry",
+   "2800": "neutral",
+   "2900": "happy"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000018",
+  "video_view_log_id": "log-5555-0018",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358618000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359218000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 4,
+   "happy": 3,
+   "surprise": 0,
+   "sad": 7,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "sad",
+   "100": "angry",
+   "200": "neutral",
+   "300": "happy",
+   "400": "surprise",
+   "500": "sad",
+   "600": "angry",
+   "700": "neutral",
+   "800": "happy",
+   "900": "surprise",
+   "1000": "sad",
+   "1100": "angry",
+   "1200": "neutral",
+   "1300": "happy",
+   "1400": "surprise",
+   "1500": "sad",
+   "1600": "angry",
+   "1700": "neutral",
+   "1800": "happy",
+   "1900": "surprise",
+   "2000": "sad",
+   "2100": "angry",
+   "2200": "neutral",
+   "2300": "happy",
+   "2400": "surprise",
+   "2500": "sad",
+   "2600": "angry",
+   "2700": "neutral",
+   "2800": "happy",
+   "2900": "surprise"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000019",
+  "video_view_log_id": "log-5555-0019",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358619000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359219000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 5,
+   "happy": 4,
+   "surprise": 1,
+   "sad": 8,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "angry",
+   "100": "neutral",
+   "200": "happy",
+   "300": "surprise",
+   "400": "sad",
+   "500": "angry",
+   "600": "neutral",
+   "700": "happy",
+   "800": "surprise",
+   "900": "sad",
+   "1000": "angry",
+   "1100": "neutral",
+   "1200": "happy",
+   "1300": "surprise",
+   "1400": "sad",
+   "1500": "angry",
+   "1600": "neutral",
+   "1700": "happy",
+   "1800": "surprise",
+   "1900": "sad",
+   "2000": "angry",
+   "2100": "neutral",
+   "2200": "happy",
+   "2300": "surprise",
+   "2400": "sad",
+   "2500": "angry",
+   "2600": "neutral",
+   "2700": "happy",
+   "2800": "surprise",
+   "2900": "sad"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000020",
+  "video_view_log_id": "log-5555-0020",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358620000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359220000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 6,
+   "happy": 0,
+   "surprise": 2,
+   "sad": 9,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "neutral",
+   "100": "happy",
+   "200": "surprise",
+   "300": "sad",
+   "400": "angry",
+   "500": "neutral",
+   "600": "happy",
+   "700": "surprise",
+   "800": "sad",
+   "900": "angry",
+   "1000": "neutral",
+   "1100": "happy",
+   "1200": "surprise",
+   "1300": "sad",
+   "1400": "angry",
+   "1500": "neutral",
+   "1600": "happy",
+   "1700": "surprise",
+   "1800": "sad",
+   "1900": "angry",
+   "2000": "neutral",
+   "2100": "happy",
+   "2200": "surprise",
+   "2300": "sad",
+   "2400": "angry",
+   "2500": "neutral",
+   "2600": "happy",
+   "2700": "surprise",
+   "2800": "sad",
+   "2900": "angry"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000021",
+  "video_view_log_id": "log-5555-0021",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358621000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359221000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 0,
+   "happy": 1,
+   "surprise": 0,
+   "sad": 10,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "happy",
+   "100": "surprise",
+   "200": "sad",
+   "300": "angry",
+   "400": "neutral",
+   "500": "happy",
+   "600": "surprise",
+   "700": "sad",
+   "800": "angry",
+   "900": "neutral",
+   "1000": "happy",
+   "1100": "surprise",
+   "1200": "sad",
+   "1300": "angry",
+   "1400": "neutral",
+   "1500": "happy",
+   "1600": "surprise",
+   "1700": "sad",
+   "1800": "angry",
+   "1900": "neutral",
+   "2000": "happy",
+   "2100": "surprise",
+   "2200": "sad",
+   "2300": "angry",
+   "2400": "neutral",
+   "2500": "happy",
+   "2600": "surprise",
+   "2700": "sad",
+   "2800": "angry",
+   "2900": "neutral"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000022",
+  "video_view_log_id": "log-5555-0022",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358622000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359222000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 1,
+   "happy": 2,
+   "surprise": 1,
+   "sad": 0,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "surprise",
+   "100": "sad",
+   "200": "angry",
+   "300": "neutral",
+   "400": "happy",
+   "500": "surprise",
+   "600": "sad",
+   "700": "angry",
+   "800": "neutral",
+   "900": "happy",
+   "1000": "surprise",
+   "1100": "sad",
+   "1200": "angry",
+   "1300": "neutral",
+   "1400": "happy",
+   "1500": "surprise",
+   "1600": "sad",
+   "1700": "angry",
+   "1800": "neutral",
+   "1900": "happy",
+   "2000": "surprise",
+   "2100": "sad",
+   "2200": "angry",
+   "2300": "neutral",
+   "2400": "happy",
+   "2500": "surprise",
+   "2600": "sad",
+   "2700": "angry",
+   "2800": "neutral",
+   "2900": "happy"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000023",
+  "video_view_log_id": "log-5555-0023",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358623000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359223000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 2,
+   "happy": 3,
+   "surprise": 2,
+   "sad": 1,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "sad",
+   "100": "angry",
+   "200": "neutral",
+   "300": "happy",
+   "400": "surprise",
+   "500": "sad",
+   "600": "angry",
+   "700": "neutral",
+   "800": "happy",
+   "900": "surprise",
+   "1000": "sad",
+   "1100": "angry",
+   "1200": "neutral",
+   "1300": "happy",
+   "1400": "surprise",
+   "1500": "sad",
+   "1600": "angry",
+   "1700": "neutral",
+   "1800": "happy",
+   "1900": "surprise",
+   "2000": "sad",
+   "2100": "angry",
+   "2200": "neutral",
+   "2300": "happy",
+   "2400": "surprise",
+   "2500": "sad",
+   "2600": "angry",
+   "2700": "neutral",
+   "2800": "happy",
+   "2900": "surprise"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000024",
+  "video_view_log_id": "log-5555-0024",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358624000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359224000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 3,
+   "happy": 4,
+   "surprise": 0,
+   "sad": 2,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "angry",
+   "100": "neutral",
+   "200": "happy",
+   "300": "surprise",
+   "400": "sad",
+   "500": "angry",
+   "600": "neutral",
+   "700": "happy",
+   "800": "surprise",
+   "900": "sad",
+   "1000": "angry",
+   "1100": "neutral",
+   "1200": "happy",
+   "1300": "surprise",
+   "1400": "sad",
+   "1500": "angry",
+   "1600": "neutral",
+   "1700": "happy",
+   "1800": "surprise",
+   "1900": "sad",
+   "2000": "angry",
+   "2100": "neutral",
+   "2200": "happy",
+   "2300": "surprise",
+   "2400": "sad",
+   "2500": "angry",
+   "2600": "neutral",
+   "2700": "happy",
+   "2800": "surprise",
+   "2900": "sad"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000025",
+  "video_view_log_id": "log-5555-0025",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358625000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359225000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 4,
+   "happy": 0,
+   "surprise": 1,
+   "sad": 3,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "neutral",
+   "100": "happy",
+   "200": "surprise",
+   "300": "sad",
+   "400": "angry",
+   "500": "neutral",
+   "600": "happy",
+   "700": "surprise",
+   "800": "sad",
+   "900": "angry",
+   "1000": "neutral",
+   "1100": "happy",
+   "1200": "surprise",
+   "1300": "sad",
+   "1400": "angry",
+   "1500": "neutral",
+   "1600": "happy",
+   "1700": "surprise",
+   "1800": "sad",
+   "1900": "angry",
+   "2000": "neutral",
+   "2100": "happy",
+   "2200": "surprise",
+   "2300": "sad",
+   "2400": "angry",
+   "2500": "neutral",
+   "2600": "happy",
+   "2700": "surprise",
+   "2800": "sad",
+   "2900": "angry"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000026",
+  "video_view_log_id": "log-5555-0026",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358626000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359226000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 5,
+   "happy": 1,
+   "surprise": 2,
+   "sad": 4,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "happy",
+   "100": "surprise",
+   "200": "sad",
+   "300": "angry",
+   "400": "neutral",
+   "500": "happy",
+   "600": "surprise",
+   "700": "sad",
+   "800": "angry",
+   "900": "neutral",
+   "1000": "happy",
+   "1100": "surprise",
+   "1200": "sad",
+   "1300": "angry",
+   "1400": "neutral",
+   "1500": "happy",
+   "1600": "surprise",
+   "1700": "sad",
+   "1800": "angry",
+   "1900": "neutral",
+   "2000": "happy",
+   "2100": "surprise",
+   "2200": "sad",
+   "2300": "angry",
+   "2400": "neutral",
+   "2500": "happy",
+   "2600": "surprise",
+   "2700": "sad",
+   "2800": "angry",
+   "2900": "neutral"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000027",
+  "video_view_log_id": "log-5555-0027",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358627000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359227000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 6,
+   "happy": 2,
+   "surprise": 0,
+   "sad": 5,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "surprise",
+   "100": "sad",
+   "200": "angry",
+   "300": "neutral",
+   "400": "happy",
+   "500": "surprise",
+   "600": "sad",
+   "700": "angry",
+   "800": "neutral",
+   "900": "happy",
+   "1000": "surprise",
+   "1100": "sad",
+   "1200": "angry",
+   "1300": "neutral",
+   "1400": "happy",
+   "1500": "surprise",
+   "1600": "sad",
+   "1700": "angry",
+   "1800": "neutral",
+   "1900": "happy",
+   "2000": "surprise",
+   "2100": "sad",
+   "2200": "angry",
+   "2300": "neutral",
+   "2400": "happy",
+   "2500": "surprise",
+   "2600": "sad",
+   "2700": "angry",
+   "2800": "neutral",
+   "2900": "happy"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000028",
+  "video_view_log_id": "log-5555-0028",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358628000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359228000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 0,
+   "happy": 3,
+   "surprise": 1,
+   "sad": 6,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "sad",
+   "100": "angry",
+   "200": "neutral",
+   "300": "happy",
+   "400": "surprise",
+   "500": "sad",
+   "600": "angry",
+   "700": "neutral",
+   "800": "happy",
+   "900": "surprise",
+   "1000": "sad",
+   "1100": "angry",
+   "1200": "neutral",
+   "1300": "happy",
+   "1400": "surprise",
+   "1500": "sad",
+   "1600": "angry",
+   "1700": "neutral",
+   "1800": "happy",
+   "1900": "surprise",
+   "2000": "sad",
+   "2100": "angry",
+   "2200": "neutral",
+   "2300": "happy",
+   "2400": "surprise",
+   "2500": "sad",
+   "2600": "angry",
+   "2700": "neutral",
+   "2800": "happy",
+   "2900": "surprise"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000029",
+  "video_view_log_id": "log-5555-0029",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358629000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359229000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 1,
+   "happy": 4,
+   "surprise": 2,
+   "sad": 7,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "angry",
+   "100": "neutral",
+   "200": "happy",
+   "300": "surprise",
+   "400": "sad",
+   "500": "angry",
+   "600": "neutral",
+   "700": "happy",
+   "800": "surprise",
+   "900": "sad",
+   "1000": "angry",
+   "1100": "neutral",
+   "1200": "happy",
+   "1300": "surprise",
+   "1400": "sad",
+   "1500": "angry",
+   "1600": "neutral",
+   "1700": "happy",
+   "1800": "surprise",
+   "1900": "sad",
+   "2000": "angry",
+   "2100": "neutral",
+   "2200": "happy",
+   "2300": "surprise",
+   "2400": "sad",
+   "2500": "angry",
+   "2600": "neutral",
+   "2700": "happy",
+   "2800": "surprise",
+   "2900": "sad"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000030",
+  "video_view_log_id": "log-5555-0030",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358630000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359230000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 2,
+   "happy": 0,
+   "surprise": 0,
+   "sad": 8,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "neutral",
+   "100": "happy",
+   "200": "surprise",
+   "300": "sad",
+   "400": "angry",
+   "500": "neutral",
+   "600": "happy",
+   "700": "surprise",
+   "800": "sad",
+   "900": "angry",
+   "1000": "neutral",
+   "1100": "happy",
+   "1200": "surprise",
+   "1300": "sad",
+   "1400": "angry",
+   "1500": "neutral",
+   "1600": "happy",
+   "1700": "surprise",
+   "1800": "sad",
+   "1900": "angry",
+   "2000": "neutral",
+   "2100": "happy",
+   "2200": "surprise",
+   "2300": "sad",
+   "2400": "angry",
+   "2500": "neutral",
+   "2600": "happy",
+   "2700": "surprise",
+   "2800": "sad",
+   "2900": "angry"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000031",
+  "video_view_log_id": "log-5555-0031",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358631000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359231000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 3,
+   "happy": 1,
+   "surprise": 1,
+   "sad": 9,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "happy",
+   "100": "surprise",
+   "200": "sad",
+   "300": "angry",
+   "400": "neutral",
+   "500": "happy",
+   "600": "surprise",
+   "700": "sad",
+   "800": "angry",
+   "900": "neutral",
+   "1000": "happy",
+   "1100": "surprise",
+   "1200": "sad",
+   "1300": "angry",
+   "1400": "neutral",
+   "1500": "happy",
+   "1600": "surprise",
+   "1700": "sad",
+   "1800": "angry",
+   "1900": "neutral",
+   "2000": "happy",
+   "2100": "surprise",
+   "2200": "sad",
+   "2300": "angry",
+   "2400": "neutral",
+   "2500": "happy",
+   "2600": "surprise",
+   "2700": "sad",
+   "2800": "angry",
+   "2900": "neutral"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000032",
+  "video_view_log_id": "log-5555-0032",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358632000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359232000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 4,
+   "happy": 2,
+   "surprise": 2,
+   "sad": 10,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "surprise",
+   "100": "sad",
+   "200": "angry",
+   "300": "neutral",
+   "400": "happy",
+   "500": "surprise",
+   "600": "sad",
+   "700": "angry",
+   "800": "neutral",
+   "900": "happy",
+   "1000": "surprise",
+   "1100": "sad",
+   "1200": "angry",
+   "1300": "neutral",
+   "1400": "happy",
+   "1500": "surprise",
+   "1600": "sad",
+   "1700": "angry",
+   "1800": "neutral",
+   "1900": "happy",
+   "2000": "surprise",
+   "2100": "sad",
+   "2200": "angry",
+   "2300": "neutral",
+   "2400": "happy",
+   "2500": "surprise",
+   "2600": "sad",
+   "2700": "angry",
+   "2800": "neutral",
+   "2900": "happy"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000033",
+  "video_view_log_id": "log-5555-0033",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358633000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359233000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 5,
+   "happy": 3,
+   "surprise": 0,
+   "sad": 0,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "sad",
+   "100": "angry",
+   "200": "neutral",
+   "300": "happy",
+   "400": "surprise",
+   "500": "sad",
+   "600": "angry",
+   "700": "neutral",
+   "800": "happy",
+   "900": "surprise",
+   "1000": "sad",
+   "1100": "angry",
+   "1200": "neutral",
+   "1300": "happy",
+   "1400": "surprise",
+   "1500": "sad",
+   "1600": "angry",
+   "1700": "neutral",
+   "1800": "happy",
+   "1900": "surprise",
+   "2000": "sad",
+   "2100": "angry",
+   "2200": "neutral",
+   "2300": "happy",
+   "2400": "surprise",
+   "2500": "sad",
+   "2600": "angry",
+   "2700": "neutral",
+   "2800": "happy",
+   "2900": "surprise"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000034",
+  "video_view_log_id": "log-5555-0034",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358634000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359234000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 6,
+   "happy": 4,
+   "surprise": 1,
+   "sad": 1,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "angry",
+   "100": "neutral",
+   "200": "happy",
+   "300": "surprise",
+   "400": "sad",
+   "500": "angry",
+   "600": "neutral",
+   "700": "happy",
+   "800": "surprise",
+   "900": "sad",
+   "1000": "angry",
+   "1100": "neutral",
+   "1200": "happy",
+   "1300": "surprise",
+   "1400": "sad",
+   "1500": "angry",
+   "1600": "neutral",
+   "1700": "happy",
+   "1800": "surprise",
+   "1900": "sad",
+   "2000": "angry",
+   "2100": "neutral",
+   "2200": "happy",
+   "2300": "surprise",
+   "2400": "sad",
+   "2500": "angry",
+   "2600": "neutral",
+   "2700": "happy",
+   "2800": "surprise",
+   "2900": "sad"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000035",
+  "video_view_log_id": "log-5555-0035",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358635000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359235000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 0,
+   "happy": 0,
+   "surprise": 2,
+   "sad": 2,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "neutral",
+   "100": "happy",
+   "200": "surprise",
+   "300": "sad",
+   "400": "angry",
+   "500": "neutral",
+   "600": "happy",
+   "700": "surprise",
+   "800": "sad",
+   "900": "angry",
+   "1000": "neutral",
+   "1100": "happy",
+   "1200": "surprise",
+   "1300": "sad",
+   "1400": "angry",
+   "1500": "neutral",
+   "1600": "happy",
+   "1700": "surprise",
+   "1800": "sad",
+   "1900": "angry",
+   "2000": "neutral",
+   "2100": "happy",
+   "2200": "surprise",
+   "2300": "sad",
+   "2400": "angry",
+   "2500": "neutral",
+   "2600": "happy",
+   "2700": "surprise",
+   "2800": "sad",
+   "2900": "angry"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000036",
+  "video_view_log_id": "log-5555-0036",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358636000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359236000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 1,
+   "happy": 1,
+   "surprise": 0,
+   "sad": 3,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "happy",
+   "100": "surprise",
+   "200": "sad",
+   "300": "angry",
+   "400": "neutral",
+   "500": "happy",
+   "600": "surprise",
+   "700": "sad",
+   "800": "angry",
+   "900": "neutral",
+   "1000": "happy",
+   "1100": "surprise",
+   "1200": "sad",
+   "1300": "angry",
+   "1400": "neutral",
+   "1500": "happy",
+   "1600": "surprise",
+   "1700": "sad",
+   "1800": "angry",
+   "1900": "neutral",
+   "2000": "happy",
+   "2100": "surprise",
+   "2200": "sad",
+   "2300": "angry",
+   "2400": "neutral",
+   "2500": "happy",
+   "2600": "surprise",
+   "2700": "sad",
+   "2800": "angry",
+   "2900": "neutral"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000037",
+  "video_view_log_id": "log-5555-0037",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358637000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359237000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 2,
+   "happy": 2,
+   "surprise": 1,
+   "sad": 4,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "surprise",
+   "100": "sad",
+   "200": "angry",
+   "300": "neutral",
+   "400": "happy",
+   "500": "surprise",
+   "600": "sad",
+   "700": "angry",
+   "800": "neutral",
+   "900": "happy",
+   "1000": "surprise",
+   "1100": "sad",
+   "1200": "angry",
+   "1300": "neutral",
+   "1400": "happy",
+   "1500": "surprise",
+   "1600": "sad",
+   "1700": "angry",
+   "1800": "neutral",
+   "1900": "happy",
+   "2000": "surprise",
+   "2100": "sad",
+   "2200": "angry",
+   "2300": "neutral",
+   "2400": "happy",
+   "2500": "surprise",
+   "2600": "sad",
+   "2700": "angry",
+   "2800": "neutral",
+   "2900": "happy"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000038",
+  "video_view_log_id": "log-5555-0038",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358638000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359238000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 3,
+   "happy": 3,
+   "surprise": 2,
+   "sad": 5,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "sad",
+   "100": "angry",
+   "200": "neutral",
+   "300": "happy",
+   "400": "surprise",
+   "500": "sad",
+   "600": "angry",
+   "700": "neutral",
+   "800": "happy",
+   "900": "surprise",
+   "1000": "sad",
+   "1100": "angry",
+   "1200": "neutral",
+   "1300": "happy",
+   "1400": "surprise",
+   "1500": "sad",
+   "1600": "angry",
+   "1700": "neutral",
+   "1800": "happy",
+   "1900": "surprise",
+   "2000": "sad",
+   "2100": "angry",
+   "2200": "neutral",
+   "2300": "happy",
+   "2400": "surprise",
+   "2500": "sad",
+   "2600": "angry",
+   "2700": "neutral",
+   "2800": "happy",
+   "2900": "surprise"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000039",
+  "video_view_log_id": "log-5555-0039",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358639000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359239000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 4,
+   "happy": 4,
+   "surprise": 0,
+   "sad": 6,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "angry",
+   "100": "neutral",
+   "200": "happy",
+   "300": "surprise",
+   "400": "sad",
+   "500": "angry",
+   "600": "neutral",
+   "700": "happy",
+   "800": "surprise",
+   "900": "sad",
+   "1000": "angry",
+   "1100": "neutral",
+   "1200": "happy",
+   "1300": "surprise",
+   "1400": "sad",
+   "1500": "angry",
+   "1600": "neutral",
+   "1700": "happy",
+   "1800": "surprise",
+   "1900": "sad",
+   "2000": "angry",
+   "2100": "neutral",
+   "2200": "happy",
+   "2300": "surprise",
+   "2400": "sad",
+   "2500": "angry",
+   "2600": "neutral",
+   "2700": "happy",
+   "2800": "surprise",
+   "2900": "sad"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000040",
+  "video_view_log_id": "log-5555-0040",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358640000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359240000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 5,
+   "happy": 0,
+   "surprise": 1,
+   "sad": 7,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "neutral",
+   "100": "happy",
+   "200": "surprise",
+   "300": "sad",
+   "400": "angry",
+   "500": "neutral",
+   "600": "happy",
+   "700": "surprise",
+   "800": "sad",
+   "900": "angry",
+   "1000": "neutral",
+   "1100": "happy",
+   "1200": "surprise",
+   "1300": "sad",
+   "1400": "angry",
+   "1500": "neutral",
+   "1600": "happy",
+   "1700": "surprise",
+   "1800": "sad",
+   "1900": "angry",
+   "2000": "neutral",
+   "2100": "happy",
+   "2200": "surprise",
+   "2300": "sad",
+   "2400": "angry",
+   "2500": "neutral",
+   "2600": "happy",
+   "2700": "surprise",
+   "2800": "sad",
+   "2900": "angry"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000041",
+  "video_view_log_id": "log-5555-0041",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358641000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359241000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 6,
+   "happy": 1,
+   "surprise": 2,
+   "sad": 8,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "happy",
+   "100": "surprise",
+   "200": "sad",
+   "300": "angry",
+   "400": "neutral",
+   "500": "happy",
+   "600": "surprise",
+   "700": "sad",
+   "800": "angry",
+   "900": "neutral",
+   "1000": "happy",
+   "1100": "surprise",
+   "1200": "sad",
+   "1300": "angry",
+   "1400": "neutral",
+   "1500": "happy",
+   "1600": "surprise",
+   "1700": "sad",
+   "1800": "angry",
+   "1900": "neutral",
+   "2000": "happy",
+   "2100": "surprise",
+   "2200": "sad",
+   "2300": "angry",
+   "2400": "neutral",
+   "2500": "happy",
+   "2600": "surprise",
+   "2700": "sad",
+   "2800": "angry",
+   "2900": "neutral"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000042",
+  "video_view_log_id": "log-5555-0042",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358642000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359242000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 0,
+   "happy": 2,
+   "surprise": 0,
+   "sad": 9,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "surprise",
+   "100": "sad",
+   "200": "angry",
+   "300": "neutral",
+   "400": "happy",
+   "500": "surprise",
+   "600": "sad",
+   "700": "angry",
+   "800": "neutral",
+   "900": "happy",
+   "1000": "surprise",
+   "1100": "sad",
+   "1200": "angry",
+   "1300": "neutral",
+   "1400": "happy",
+   "1500": "surprise",
+   "1600": "sad",
+   "1700": "angry",
+   "1800": "neutral",
+   "1900": "happy",
+   "2000": "surprise",
+   "2100": "sad",
+   "2200": "angry",
+   "2300": "neutral",
+   "2400": "happy",
+   "2500": "surprise",
+   "2600": "sad",
+   "2700": "angry",
+   "2800": "neutral",
+   "2900": "happy"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000043",
+  "video_view_log_id": "log-5555-0043",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358643000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359243000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 1,
+   "happy": 3,
+   "surprise": 1,
+   "sad": 10,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "sad",
+   "100": "angry",
+   "200": "neutral",
+   "300": "happy",
+   "400": "surprise",
+   "500": "sad",
+   "600": "angry",
+   "700": "neutral",
+   "800": "happy",
+   "900": "surprise",
+   "1000": "sad",
+   "1100": "angry",
+   "1200": "neutral",
+   "1300": "happy",
+   "1400": "surprise",
+   "1500": "sad",
+   "1600": "angry",
+   "1700": "neutral",
+   "1800": "happy",
+   "1900": "surprise",
+   "2000": "sad",
+   "2100": "angry",
+   "2200": "neutral",
+   "2300": "happy",
+   "2400": "surprise",
+   "2500": "sad",
+   "2600": "angry",
+   "2700": "neutral",
+   "2800": "happy",
+   "2900": "surprise"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000044",
+  "video_view_log_id": "log-5555-0044",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358644000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359244000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 2,
+   "happy": 4,
+   "surprise": 2,
+   "sad": 0,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "angry",
+   "100": "neutral",
+   "200": "happy",
+   "300": "surprise",
+   "400": "sad",
+   "500": "angry",
+   "600": "neutral",
+   "700": "happy",
+   "800": "surprise",
+   "900": "sad",
+   "1000": "angry",
+   "1100": "neutral",
+   "1200": "happy",
+   "1300": "surprise",
+   "1400": "sad",
+   "1500": "angry",
+   "1600": "neutral",
+   "1700": "happy",
+   "1800": "surprise",
+   "1900": "sad",
+   "2000": "angry",
+   "2100": "neutral",
+   "2200": "happy",
+   "2300": "surprise",
+   "2400": "sad",
+   "2500": "angry",
+   "2600": "neutral",
+   "2700": "happy",
+   "2800": "surprise",
+   "2900": "sad"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000045",
+  "video_view_log_id": "log-5555-0045",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358645000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359245000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 3,
+   "happy": 0,
+   "surprise": 0,
+   "sad": 1,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "neutral",
+   "100": "happy",
+   "200": "surprise",
+   "300": "sad",
+   "400": "angry",
+   "500": "neutral",
+   "600": "happy",
+   "700": "surprise",
+   "800": "sad",
+   "900": "angry",
+   "1000": "neutral",
+   "1100": "happy",
+   "1200": "surprise",
+   "1300": "sad",
+   "1400": "angry",
+   "1500": "neutral",
+   "1600": "happy",
+   "1700": "surprise",
+   "1800": "sad",
+   "1900": "angry",
+   "2000": "neutral",
+   "2100": "happy",
+   "2200": "surprise",
+   "2300": "sad",
+   "2400": "angry",
+   "2500": "neutral",
+   "2600": "happy",
+   "2700": "surprise",
+   "2800": "sad",
+   "2900": "angry"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000046",
+  "video_view_log_id": "log-5555-0046",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358646000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359246000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 4,
+   "happy": 1,
+   "surprise": 1,
+   "sad": 2,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "happy",
+   "100": "surprise",
+   "200": "sad",
+   "300": "angry",
+   "400": "neutral",
+   "500": "happy",
+   "600": "surprise",
+   "700": "sad",
+   "800": "angry",
+   "900": "neutral",
+   "1000": "happy",
+   "1100": "surprise",
+   "1200": "sad",
+   "1300": "angry",
+   "1400": "neutral",
+   "1500": "happy",
+   "1600": "surprise",
+   "1700": "sad",
+   "1800": "angry",
+   "1900": "neutral",
+   "2000": "happy",
+   "2100": "surprise",
+   "2200": "sad",
+   "2300": "angry",
+   "2400": "neutral",
+   "2500": "happy",
+   "2600": "surprise",
+   "2700": "sad",
+   "2800": "angry",
+   "2900": "neutral"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000047",
+  "video_view_log_id": "log-5555-0047",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358647000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359247000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 5,
+   "happy": 2,
+   "surprise": 2,
+   "sad": 3,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "surprise",
+   "100": "sad",
+   "200": "angry",
+   "300": "neutral",
+   "400": "happy",
+   "500": "surprise",
+   "600": "sad",
+   "700": "angry",
+   "800": "neutral",
+   "900": "happy",
+   "1000": "surprise",
+   "1100": "sad",
+   "1200": "angry",
+   "1300": "neutral",
+   "1400": "happy",
+   "1500": "surprise",
+   "1600": "sad",
+   "1700": "angry",
+   "1800": "neutral",
+   "1900": "happy",
+   "2000": "surprise",
+   "2100": "sad",
+   "2200": "angry",
+   "2300": "neutral",
+   "2400": "happy",
+   "2500": "surprise",
+   "2600": "sad",
+   "2700": "angry",
+   "2800": "neutral",
+   "2900": "happy"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000048",
+  "video_view_log_id": "log-5555-0048",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358648000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359248000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 6,
+   "happy": 3,
+   "surprise": 0,
+   "sad": 4,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "sad",
+   "100": "angry",
+   "200": "neutral",
+   "300": "happy",
+   "400": "surprise",
+   "500": "sad",
+   "600": "angry",
+   "700": "neutral",
+   "800": "happy",
+   "900": "surprise",
+   "1000": "sad",
+   "1100": "angry",
+   "1200": "neutral",
+   "1300": "happy",
+   "1400": "surprise",
+   "1500": "sad",
+   "1600": "angry",
+   "1700": "neutral",
+   "1800": "happy",
+   "1900": "surprise",
+   "2000": "sad",
+   "2100": "angry",
+   "2200": "neutral",
+   "2300": "happy",
+   "2400": "surprise",
+   "2500": "sad",
+   "2600": "angry",
+   "2700": "neutral",
+   "2800": "happy",
+   "2900": "surprise"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000049",
+  "video_view_log_id": "log-5555-0049",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358649000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359249000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 0,
+   "happy": 4,
+   "surprise": 1,
+   "sad": 5,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "angry",
+   "100": "neutral",
+   "200": "happy",
+   "300": "surprise",
+   "400": "sad",
+   "500": "angry",
+   "600": "neutral",
+   "700": "happy",
+   "800": "surprise",
+   "900": "sad",
+   "1000": "angry",
+   "1100": "neutral",
+   "1200": "happy",
+   "1300": "surprise",
+   "1400": "sad",
+   "1500": "angry",
+   "1600": "neutral",
+   "1700": "happy",
+   "1800": "surprise",
+   "1900": "sad",
+   "2000": "angry",
+   "2100": "neutral",
+   "2200": "happy",
+   "2300": "surprise",
+   "2400": "sad",
+   "2500": "angry",
+   "2600": "neutral",
+   "2700": "happy",
+   "2800": "surprise",
+   "2900": "sad"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000050",
+  "video_view_log_id": "log-5555-0050",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358650000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359250000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 1,
+   "happy": 0,
+   "surprise": 2,
+   "sad": 6,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "neutral",
+   "100": "happy",
+   "200": "surprise",
+   "300": "sad",
+   "400": "angry",
+   "500": "neutral",
+   "600": "happy",
+   "700": "surprise",
+   "800": "sad",
+   "900": "angry",
+   "1000": "neutral",
+   "1100": "happy",
+   "1200": "surprise",
+   "1300": "sad",
+   "1400": "angry",
+   "1500": "neutral",
+   "1600": "happy",
+   "1700": "surprise",
+   "1800": "sad",
+   "1900": "angry",
+   "2000": "neutral",
+   "2100": "happy",
+   "2200": "surprise",
+   "2300": "sad",
+   "2400": "angry",
+   "2500": "neutral",
+   "2600": "happy",
+   "2700": "surprise",
+   "2800": "sad",
+   "2900": "angry"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000051",
+  "video_view_log_id": "log-5555-0051",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358651000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359251000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 2,
+   "happy": 1,
+   "surprise": 0,
+   "sad": 7,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "happy",
+   "100": "surprise",
+   "200": "sad",
+   "300": "angry",
+   "400": "neutral",
+   "500": "happy",
+   "600": "surprise",
+   "700": "sad",
+   "800": "angry",
+   "900": "neutral",
+   "1000": "happy",
+   "1100": "surprise",
+   "1200": "sad",
+   "1300": "angry",
+   "1400": "neutral",
+   "1500": "happy",
+   "1600": "surprise",
+   "1700": "sad",
+   "1800": "angry",
+   "1900": "neutral",
+   "2000": "happy",
+   "2100": "surprise",
+   "2200": "sad",
+   "2300": "angry",
+   "2400": "neutral",
+   "2500": "happy",
+   "2600": "surprise",
+   "2700": "sad",
+   "2800": "angry",
+   "2900": "neutral"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000052",
+  "video_view_log_id": "log-5555-0052",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358652000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359252000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 3,
+   "happy": 2,
+   "surprise": 1,
+   "sad": 8,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "surprise",
+   "100": "sad",
+   "200": "angry",
+   "300": "neutral",
+   "400": "happy",
+   "500": "surprise",
+   "600": "sad",
+   "700": "angry",
+   "800": "neutral",
+   "900": "happy",
+   "1000": "surprise",
+   "1100": "sad",
+   "1200": "angry",
+   "1300": "neutral",
+   "1400": "happy",
+   "1500": "surprise",
+   "1600": "sad",
+   "1700": "angry",
+   "1800": "neutral",
+   "1900": "happy",
+   "2000": "surprise",
+   "2100": "sad",
+   "2200": "angry",
+   "2300": "neutral",
+   "2400": "happy",
+   "2500": "surprise",
+   "2600": "sad",
+   "2700": "angry",
+   "2800": "neutral",
+   "2900": "happy"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000053",
+  "video_view_log_id": "log-5555-0053",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358653000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359253000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 4,
+   "happy": 3,
+   "surprise": 2,
+   "sad": 9,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "sad",
+   "100": "angry",
+   "200": "neutral",
+   "300": "happy",
+   "400": "surprise",
+   "500": "sad",
+   "600": "angry",
+   "700": "neutral",
+   "800": "happy",
+   "900": "surprise",
+   "1000": "sad",
+   "1100": "angry",
+   "1200": "neutral",
+   "1300": "happy",
+   "1400": "surprise",
+   "1500": "sad",
+   "1600": "angry",
+   "1700": "neutral",
+   "1800": "happy",
+   "1900": "surprise",
+   "2000": "sad",
+   "2100": "angry",
+   "2200": "neutral",
+   "2300": "happy",
+   "2400": "surprise",
+   "2500": "sad",
+   "2600": "angry",
+   "2700": "neutral",
+   "2800": "happy",
+   "2900": "surprise"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000054",
+  "video_view_log_id": "log-5555-0054",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358654000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359254000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 5,
+   "happy": 4,
+   "surprise": 0,
+   "sad": 10,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "angry",
+   "100": "neutral",
+   "200": "happy",
+   "300": "surprise",
+   "400": "sad",
+   "500": "angry",
+   "600": "neutral",
+   "700": "happy",
+   "800": "surprise",
+   "900": "sad",
+   "1000": "angry",
+   "1100": "neutral",
+   "1200": "happy",
+   "1300": "surprise",
+   "1400": "sad",
+   "1500": "angry",
+   "1600": "neutral",
+   "1700": "happy",
+   "1800": "surprise",
+   "1900": "sad",
+   "2000": "angry",
+   "2100": "neutral",
+   "2200": "happy",
+   "2300": "surprise",
+   "2400": "sad",
+   "2500": "angry",
+   "2600": "neutral",
+   "2700": "happy",
+   "2800": "surprise",
+   "2900": "sad"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000055",
+  "video_view_log_id": "log-5555-0055",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358655000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359255000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 6,
+   "happy": 0,
+   "surprise": 1,
+   "sad": 0,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "neutral",
+   "100": "happy",
+   "200": "surprise",
+   "300": "sad",
+   "400": "angry",
+   "500": "neutral",
+   "600": "happy",
+   "700": "surprise",
+   "800": "sad",
+   "900": "angry",
+   "1000": "neutral",
+   "1100": "happy",
+   "1200": "surprise",
+   "1300": "sad",
+   "1400": "angry",
+   "1500": "neutral",
+   "1600": "happy",
+   "1700": "surprise",
+   "1800": "sad",
+   "1900": "angry",
+   "2000": "neutral",
+   "2100": "happy",
+   "2200": "surprise",
+   "2300": "sad",
+   "2400": "angry",
+   "2500": "neutral",
+   "2600": "happy",
+   "2700": "surprise",
+   "2800": "sad",
+   "2900": "angry"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000056",
+  "video_view_log_id": "log-5555-0056",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358656000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359256000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 0,
+   "happy": 1,
+   "surprise": 2,
+   "sad": 1,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "happy",
+   "100": "surprise",
+   "200": "sad",
+   "300": "angry",
+   "400": "neutral",
+   "500": "happy",
+   "600": "surprise",
+   "700": "sad",
+   "800": "angry",
+   "900": "neutral",
+   "1000": "happy",
+   "1100": "surprise",
+   "1200": "sad",
+   "1300": "angry",
+   "1400": "neutral",
+   "1500": "happy",
+   "1600": "surprise",
+   "1700": "sad",
+   "1800": "angry",
+   "1900": "neutral",
+   "2000": "happy",
+   "2100": "surprise",
+   "2200": "sad",
+   "2300": "angry",
+   "2400": "neutral",
+   "2500": "happy",
+   "2600": "surprise",
+   "2700": "sad",
+   "2800": "angry",
+   "2900": "neutral"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000057",
+  "video_view_log_id": "log-5555-0057",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358657000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359257000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 1,
+   "happy": 2,
+   "surprise": 0,
+   "sad": 2,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "surprise",
+   "100": "sad",
+   "200": "angry",
+   "300": "neutral",
+   "400": "happy",
+   "500": "surprise",
+   "600": "sad",
+   "700": "angry",
+   "800": "neutral",
+   "900": "happy",
+   "1000": "surprise",
+   "1100": "sad",
+   "1200": "angry",
+   "1300": "neutral",
+   "1400": "happy",
+   "1500": "surprise",
+   "1600": "sad",
+   "1700": "angry",
+   "1800": "neutral",
+   "1900": "happy",
+   "2000": "surprise",
+   "2100": "sad",
+   "2200": "angry",
+   "2300": "neutral",
+   "2400": "happy",
+   "2500": "surprise",
+   "2600": "sad",
+   "2700": "angry",
+   "2800": "neutral",
+   "2900": "happy"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000058",
+  "video_view_log_id": "log-5555-0058",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358658000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359258000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 2,
+   "happy": 3,
+   "surprise": 1,
+   "sad": 3,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "sad",
+   "100": "angry",
+   "200": "neutral",
+   "300": "happy",
+   "400": "surprise",
+   "500": "sad",
+   "600": "angry",
+   "700": "neutral",
+   "800": "happy",
+   "900": "surprise",
+   "1000": "sad",
+   "1100": "angry",
+   "1200": "neutral",
+   "1300": "happy",
+   "1400": "surprise",
+   "1500": "sad",
+   "1600": "angry",
+   "1700": "neutral",
+   "1800": "happy",
+   "1900": "surprise",
+   "2000": "sad",
+   "2100": "angry",
+   "2200": "neutral",
+   "2300": "happy",
+   "2400": "surprise",
+   "2500": "sad",
+   "2600": "angry",
+   "2700": "neutral",
+   "2800": "happy",
+   "2900": "surprise"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000059",
+  "video_view_log_id": "log-5555-0059",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358659000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359259000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 3,
+   "happy": 4,
+   "surprise": 2,
+   "sad": 4,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "angry",
+   "100": "neutral",
+   "200": "happy",
+   "300": "surprise",
+   "400": "sad",
+   "500": "angry",
+   "600": "neutral",
+   "700": "happy",
+   "800": "surprise",
+   "900": "sad",
+   "1000": "angry",
+   "1100": "neutral",
+   "1200": "happy",
+   "1300": "surprise",
+   "1400": "sad",
+   "1500": "angry",
+   "1600": "neutral",
+   "1700": "happy",
+   "1800": "surprise",
+   "1900": "sad",
+   "2000": "angry",
+   "2100": "neutral",
+   "2200": "happy",
+   "2300": "surprise",
+   "2400": "sad",
+   "2500": "angry",
+   "2600": "neutral",
+   "2700": "happy",
+   "2800": "surprise",
+   "2900": "sad"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000060",
+  "video_view_log_id": "log-5555-0060",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358660000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359260000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 4,
+   "happy": 0,
+   "surprise": 0,
+   "sad": 5,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "neutral",
+   "100": "happy",
+   "200": "surprise",
+   "300": "sad",
+   "400": "angry",
+   "500": "neutral",
+   "600": "happy",
+   "700": "surprise",
+   "800": "sad",
+   "900": "angry",
+   "1000": "neutral",
+   "1100": "happy",
+   "1200": "surprise",
+   "1300": "sad",
+   "1400": "angry",
+   "1500": "neutral",
+   "1600": "happy",
+   "1700": "surprise",
+   "1800": "sad",
+   "1900": "angry",
+   "2000": "neutral",
+   "2100": "happy",
+   "2200": "surprise",
+   "2300": "sad",
+   "2400": "angry",
+   "2500": "neutral",
+   "2600": "happy",
+   "2700": "surprise",
+   "2800": "sad",
+   "2900": "angry"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000061",
+  "video_view_log_id": "log-5555-0061",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358661000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359261000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 5,
+   "happy": 1,
+   "surprise": 1,
+   "sad": 6,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "happy",
+   "100": "surprise",
+   "200": "sad",
+   "300": "angry",
+   "400": "neutral",
+   "500": "happy",
+   "600": "surprise",
+   "700": "sad",
+   "800": "angry",
+   "900": "neutral",
+   "1000": "happy",
+   "1100": "surprise",
+   "1200": "sad",
+   "1300": "angry",
+   "1400": "neutral",
+   "1500": "happy",
+   "1600": "surprise",
+   "1700": "sad",
+   "1800": "angry",
+   "1900": "neutral",
+   "2000": "happy",
+   "2100": "surprise",
+   "2200": "sad",
+   "2300": "angry",
+   "2400": "neutral",
+   "2500": "happy",
+   "2600": "surprise",
+   "2700": "sad",
+   "2800": "angry",
+   "2900": "neutral"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000062",
+  "video_view_log_id": "log-5555-0062",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358662000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359262000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 6,
+   "happy": 2,
+   "surprise": 2,
+   "sad": 7,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "surprise",
+   "100": "sad",
+   "200": "angry",
+   "300": "neutral",
+   "400": "happy",
+   "500": "surprise",
+   "600": "sad",
+   "700": "angry",
+   "800": "neutral",
+   "900": "happy",
+   "1000": "surprise",
+   "1100": "sad",
+   "1200": "angry",
+   "1300": "neutral",
+   "1400": "happy",
+   "1500": "surprise",
+   "1600": "sad",
+   "1700": "angry",
+   "1800": "neutral",
+   "1900": "happy",
+   "2000": "surprise",
+   "2100": "sad",
+   "2200": "angry",
+   "2300": "neutral",
+   "2400": "happy",
+   "2500": "surprise",
+   "2600": "sad",
+   "2700": "angry",
+   "2800": "neutral",
+   "2900": "happy"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000063",
+  "video_view_log_id": "log-5555-0063",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358663000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359263000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 0,
+   "happy": 3,
+   "surprise": 0,
+   "sad": 8,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "sad",
+   "100": "angry",
+   "200": "neutral",
+   "300": "happy",
+   "400": "surprise",
+   "500": "sad",
+   "600": "angry",
+   "700": "neutral",
+   "800": "happy",
+   "900": "surprise",
+   "1000": "sad",
+   "1100": "angry",
+   "1200": "neutral",
+   "1300": "happy",
+   "1400": "surprise",
+   "1500": "sad",
+   "1600": "angry",
+   "1700": "neutral",
+   "1800": "happy",
+   "1900": "surprise",
+   "2000": "sad",
+   "2100": "angry",
+   "2200": "neutral",
+   "2300": "happy",
+   "2400": "surprise",
+   "2500": "sad",
+   "2600": "angry",
+   "2700": "neutral",
+   "2800": "happy",
+   "2900": "surprise"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000064",
+  "video_view_log_id": "log-5555-0064",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358664000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359264000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 1,
+   "happy": 4,
+   "surprise": 1,
+   "sad": 9,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "angry",
+   "100": "neutral",
+   "200": "happy",
+   "300": "surprise",
+   "400": "sad",
+   "500": "angry",
+   "600": "neutral",
+   "700": "happy",
+   "800": "surprise",
+   "900": "sad",
+   "1000": "angry",
+   "1100": "neutral",
+   "1200": "happy",
+   "1300": "surprise",
+   "1400": "sad",
+   "1500": "angry",
+   "1600": "neutral",
+   "1700": "happy",
+   "1800": "surprise",
+   "1900": "sad",
+   "2000": "angry",
+   "2100": "neutral",
+   "2200": "happy",
+   "2300": "surprise",
+   "2400": "sad",
+   "2500": "angry",
+   "2600": "neutral",
+   "2700": "happy",
+   "2800": "surprise",
+   "2900": "sad"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000065",
+  "video_view_log_id": "log-5555-0065",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358665000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359265000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 2,
+   "happy": 0,
+   "surprise": 2,
+   "sad": 10,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "neutral",
+   "100": "happy",
+   "200": "surprise",
+   "300": "sad",
+   "400": "angry",
+   "500": "neutral",
+   "600": "happy",
+   "700": "surprise",
+   "800": "sad",
+   "900": "angry",
+   "1000": "neutral",
+   "1100": "happy",
+   "1200": "surprise",
+   "1300": "sad",
+   "1400": "angry",
+   "1500": "neutral",
+   "1600": "happy",
+   "1700": "surprise",
+   "1800": "sad",
+   "1900": "angry",
+   "2000": "neutral",
+   "2100": "happy",
+   "2200": "surprise",
+   "2300": "sad",
+   "2400": "angry",
+   "2500": "neutral",
+   "2600": "happy",
+   "2700": "surprise",
+   "2800": "sad",
+   "2900": "angry"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000066",
+  "video_view_log_id": "log-5555-0066",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358666000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359266000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 3,
+   "happy": 1,
+   "surprise": 0,
+   "sad": 0,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "happy",
+   "100": "surprise",
+   "200": "sad",
+   "300": "angry",
+   "400": "neutral",
+   "500": "happy",
+   "600": "surprise",
+   "700": "sad",
+   "800": "angry",
+   "900": "neutral",
+   "1000": "happy",
+   "1100": "surprise",
+   "1200": "sad",
+   "1300": "angry",
+   "1400": "neutral",
+   "1500": "happy",
+   "1600": "surprise",
+   "1700": "sad",
+   "1800": "angry",
+   "1900": "neutral",
+   "2000": "happy",
+   "2100": "surprise",
+   "2200": "sad",
+   "2300": "angry",
+   "2400": "neutral",
+   "2500": "happy",
+   "2600": "surprise",
+   "2700": "sad",
+   "2800": "angry",
+   "2900": "neutral"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000067",
+  "video_view_log_id": "log-5555-0067",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358667000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359267000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 4,
+   "happy": 2,
+   "surprise": 1,
+   "sad": 1,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "surprise",
+   "100": "sad",
+   "200": "angry",
+   "300": "neutral",
+   "400": "happy",
+   "500": "surprise",
+   "600": "sad",
+   "700": "angry",
+   "800": "neutral",
+   "900": "happy",
+   "1000": "surprise",
+   "1100": "sad",
+   "1200": "angry",
+   "1300": "neutral",
+   "1400": "happy",
+   "1500": "surprise",
+   "1600": "sad",
+   "1700": "angry",
+   "1800": "neutral",
+   "1900": "happy",
+   "2000": "surprise",
+   "2100": "sad",
+   "2200": "angry",
+   "2300": "neutral",
+   "2400": "happy",
+   "2500": "surprise",
+   "2600": "sad",
+   "2700": "angry",
+   "2800": "neutral",
+   "2900": "happy"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000068",
+  "video_view_log_id": "log-5555-0068",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358668000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359268000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 5,
+   "happy": 3,
+   "surprise": 2,
+   "sad": 2,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "sad",
+   "100": "angry",
+   "200": "neutral",
+   "300": "happy",
+   "400": "surprise",
+   "500": "sad",
+   "600": "angry",
+   "700": "neutral",
+   "800": "happy",
+   "900": "surprise",
+   "1000": "sad",
+   "1100": "angry",
+   "1200": "neutral",
+   "1300": "happy",
+   "1400": "surprise",
+   "1500": "sad",
+   "1600": "angry",
+   "1700": "neutral",
+   "1800": "happy",
+   "1900": "surprise",
+   "2000": "sad",
+   "2100": "angry",
+   "2200": "neutral",
+   "2300": "happy",
+   "2400": "surprise",
+   "2500": "sad",
+   "2600": "angry",
+   "2700": "neutral",
+   "2800": "happy",
+   "2900": "surprise"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000069",
+  "video_view_log_id": "log-5555-0069",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358669000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359269000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 6,
+   "happy": 4,
+   "surprise": 0,
+   "sad": 3,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "angry",
+   "100": "neutral",
+   "200": "happy",
+   "300": "surprise",
+   "400": "sad",
+   "500": "angry",
+   "600": "neutral",
+   "700": "happy",
+   "800": "surprise",
+   "900": "sad",
+   "1000": "angry",
+   "1100": "neutral",
+   "1200": "happy",
+   "1300": "surprise",
+   "1400": "sad",
+   "1500": "angry",
+   "1600": "neutral",
+   "1700": "happy",
+   "1800": "surprise",
+   "1900": "sad",
+   "2000": "angry",
+   "2100": "neutral",
+   "2200": "happy",
+   "2300": "surprise",
+   "2400": "sad",
+   "2500": "angry",
+   "2600": "neutral",
+   "2700": "happy",
+   "2800": "surprise",
+   "2900": "sad"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000070",
+  "video_view_log_id": "log-5555-0070",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358670000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359270000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 0,
+   "happy": 0,
+   "surprise": 1,
+   "sad": 4,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "neutral",
+   "100": "happy",
+   "200": "surprise",
+   "300": "sad",
+   "400": "angry",
+   "500": "neutral",
+   "600": "happy",
+   "700": "surprise",
+   "800": "sad",
+   "900": "angry",
+   "1000": "neutral",
+   "1100": "happy",
+   "1200": "surprise",
+   "1300": "sad",
+   "1400": "angry",
+   "1500": "neutral",
+   "1600": "happy",
+   "1700": "surprise",
+   "1800": "sad",
+   "1900": "angry",
+   "2000": "neutral",
+   "2100": "happy",
+   "2200": "surprise",
+   "2300": "sad",
+   "2400": "angry",
+   "2500": "neutral",
+   "2600": "happy",
+   "2700": "surprise",
+   "2800": "sad",
+   "2900": "angry"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000071",
+  "video_view_log_id": "log-5555-0071",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358671000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359271000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 1,
+   "happy": 1,
+   "surprise": 2,
+   "sad": 5,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "happy",
+   "100": "surprise",
+   "200": "sad",
+   "300": "angry",
+   "400": "neutral",
+   "500": "happy",
+   "600": "surprise",
+   "700": "sad",
+   "800": "angry",
+   "900": "neutral",
+   "1000": "happy",
+   "1100": "surprise",
+   "1200": "sad",
+   "1300": "angry",
+   "1400": "neutral",
+   "1500": "happy",
+   "1600": "surprise",
+   "1700": "sad",
+   "1800": "angry",
+   "1900": "neutral",
+   "2000": "happy",
+   "2100": "surprise",
+   "2200": "sad",
+   "2300": "angry",
+   "2400": "neutral",
+   "2500": "happy",
+   "2600": "surprise",
+   "2700": "sad",
+   "2800": "angry",
+   "2900": "neutral"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000072",
+  "video_view_log_id": "log-5555-0072",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358672000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359272000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 2,
+   "happy": 2,
+   "surprise": 0,
+   "sad": 6,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "surprise",
+   "100": "sad",
+   "200": "angry",
+   "300": "neutral",
+   "400": "happy",
+   "500": "surprise",
+   "600": "sad",
+   "700": "angry",
+   "800": "neutral",
+   "900": "happy",
+   "1000": "surprise",
+   "1100": "sad",
+   "1200": "angry",
+   "1300": "neutral",
+   "1400": "happy",
+   "1500": "surprise",
+   "1600": "sad",
+   "1700": "angry",
+   "1800": "neutral",
+   "1900": "happy",
+   "2000": "surprise",
+   "2100": "sad",
+   "2200": "angry",
+   "2300": "neutral",
+   "2400": "happy",
+   "2500": "surprise",
+   "2600": "sad",
+   "2700": "angry",
+   "2800": "neutral",
+   "2900": "happy"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000073",
+  "video_view_log_id": "log-5555-0073",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358673000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359273000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 3,
+   "happy": 3,
+   "surprise": 1,
+   "sad": 7,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "sad",
+   "100": "angry",
+   "200": "neutral",
+   "300": "happy",
+   "400": "surprise",
+   "500": "sad",
+   "600": "angry",
+   "700": "neutral",
+   "800": "happy",
+   "900": "surprise",
+   "1000": "sad",
+   "1100": "angry",
+   "1200": "neutral",
+   "1300": "happy",
+   "1400": "surprise",
+   "1500": "sad",
+   "1600": "angry",
+   "1700": "neutral",
+   "1800": "happy",
+   "1900": "surprise",
+   "2000": "sad",
+   "2100": "angry",
+   "2200": "neutral",
+   "2300": "happy",
+   "2400": "surprise",
+   "2500": "sad",
+   "2600": "angry",
+   "2700": "neutral",
+   "2800": "happy",
+   "2900": "surprise"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000074",
+  "video_view_log_id": "log-5555-0074",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358674000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359274000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 4,
+   "happy": 4,
+   "surprise": 2,
+   "sad": 8,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "angry",
+   "100": "neutral",
+   "200": "happy",
+   "300": "surprise",
+   "400": "sad",
+   "500": "angry",
+   "600": "neutral",
+   "700": "happy",
+   "800": "surprise",
+   "900": "sad",
+   "1000": "angry",
+   "1100": "neutral",
+   "1200": "happy",
+   "1300": "surprise",
+   "1400": "sad",
+   "1500": "angry",
+   "1600": "neutral",
+   "1700": "happy",
+   "1800": "surprise",
+   "1900": "sad",
+   "2000": "angry",
+   "2100": "neutral",
+   "2200": "happy",
+   "2300": "surprise",
+   "2400": "sad",
+   "2500": "angry",
+   "2600": "neutral",
+   "2700": "happy",
+   "2800": "surprise",
+   "2900": "sad"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000075",
+  "video_view_log_id": "log-5555-0075",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358675000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359275000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 5,
+   "happy": 0,
+   "surprise": 0,
+   "sad": 9,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "neutral",
+   "100": "happy",
+   "200": "surprise",
+   "300": "sad",
+   "400": "angry",
+   "500": "neutral",
+   "600": "happy",
+   "700": "surprise",
+   "800": "sad",
+   "900": "angry",
+   "1000": "neutral",
+   "1100": "happy",
+   "1200": "surprise",
+   "1300": "sad",
+   "1400": "angry",
+   "1500": "neutral",
+   "1600": "happy",
+   "1700": "surprise",
+   "1800": "sad",
+   "1900": "angry",
+   "2000": "neutral",
+   "2100": "happy",
+   "2200": "surprise",
+   "2300": "sad",
+   "2400": "angry",
+   "2500": "neutral",
+   "2600": "happy",
+   "2700": "surprise",
+   "2800": "sad",
+   "2900": "angry"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000076",
+  "video_view_log_id": "log-5555-0076",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358676000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359276000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 6,
+   "happy": 1,
+   "surprise": 1,
+   "sad": 10,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "happy",
+   "100": "surprise",
+   "200": "sad",
+   "300": "angry",
+   "400": "neutral",
+   "500": "happy",
+   "600": "surprise",
+   "700": "sad",
+   "800": "angry",
+   "900": "neutral",
+   "1000": "happy",
+   "1100": "surprise",
+   "1200": "sad",
+   "1300": "angry",
+   "1400": "neutral",
+   "1500": "happy",
+   "1600": "surprise",
+   "1700": "sad",
+   "1800": "angry",
+   "1900": "neutral",
+   "2000": "happy",
+   "2100": "surprise",
+   "2200": "sad",
+   "2300": "angry",
+   "2400": "neutral",
+   "2500": "happy",
+   "2600": "surprise",
+   "2700": "sad",
+   "2800": "angry",
+   "2900": "neutral"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000077",
+  "video_view_log_id": "log-5555-0077",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358677000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359277000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 0,
+   "happy": 2,
+   "surprise": 2,
+   "sad": 0,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "surprise",
+   "100": "sad",
+   "200": "angry",
+   "300": "neutral",
+   "400": "happy",
+   "500": "surprise",
+   "600": "sad",
+   "700": "angry",
+   "800": "neutral",
+   "900": "happy",
+   "1000": "surprise",
+   "1100": "sad",
+   "1200": "angry",
+   "1300": "neutral",
+   "1400": "happy",
+   "1500": "surprise",
+   "1600": "sad",
+   "1700": "angry",
+   "1800": "neutral",
+   "1900": "happy",
+   "2000": "surprise",
+   "2100": "sad",
+   "2200": "angry",
+   "2300": "neutral",
+   "2400": "happy",
+   "2500": "surprise",
+   "2600": "sad",
+   "2700": "angry",
+   "2800": "neutral",
+   "2900": "happy"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000078",
+  "video_view_log_id": "log-5555-0078",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358678000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359278000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 1,
+   "happy": 3,
+   "surprise": 0,
+   "sad": 1,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "sad",
+   "100": "angry",
+   "200": "neutral",
+   "300": "happy",
+   "400": "surprise",
+   "500": "sad",
+   "600": "angry",
+   "700": "neutral",
+   "800": "happy",
+   "900": "surprise",
+   "1000": "sad",
+   "1100": "angry",
+   "1200": "neutral",
+   "1300": "happy",
+   "1400": "surprise",
+   "1500": "sad",
+   "1600": "angry",
+   "1700": "neutral",
+   "1800": "happy",
+   "1900": "surprise",
+   "2000": "sad",
+   "2100": "angry",
+   "2200": "neutral",
+   "2300": "happy",
+   "2400": "surprise",
+   "2500": "sad",
+   "2600": "angry",
+   "2700": "neutral",
+   "2800": "happy",
+   "2900": "surprise"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000079",
+  "video_view_log_id": "log-5555-0079",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358679000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359279000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 2,
+   "happy": 4,
+   "surprise": 1,
+   "sad": 2,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "angry",
+   "100": "neutral",
+   "200": "happy",
+   "300": "surprise",
+   "400": "sad",
+   "500": "angry",
+   "600": "neutral",
+   "700": "happy",
+   "800": "surprise",
+   "900": "sad",
+   "1000": "angry",
+   "1100": "neutral",
+   "1200": "happy",
+   "1300": "surprise",
+   "1400": "sad",
+   "1500": "angry",
+   "1600": "neutral",
+   "1700": "happy",
+   "1800": "surprise",
+   "1900": "sad",
+   "2000": "angry",
+   "2100": "neutral",
+   "2200": "happy",
+   "2300": "surprise",
+   "2400": "sad",
+   "2500": "angry",
+   "2600": "neutral",
+   "2700": "happy",
+   "2800": "surprise",
+   "2900": "sad"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000080",
+  "video_view_log_id": "log-5555-0080",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358680000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359280000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 3,
+   "happy": 0,
+   "surprise": 2,
+   "sad": 3,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "neutral",
+   "100": "happy",
+   "200": "surprise",
+   "300": "sad",
+   "400": "angry",
+   "500": "neutral",
+   "600": "happy",
+   "700": "surprise",
+   "800": "sad",
+   "900": "angry",
+   "1000": "neutral",
+   "1100": "happy",
+   "1200": "surprise",
+   "1300": "sad",
+   "1400": "angry",
+   "1500": "neutral",
+   "1600": "happy",
+   "1700": "surprise",
+   "1800": "sad",
+   "1900": "angry",
+   "2000": "neutral",
+   "2100": "happy",
+   "2200": "surprise",
+   "2300": "sad",
+   "2400": "angry",
+   "2500": "neutral",
+   "2600": "happy",
+   "2700": "surprise",
+   "2800": "sad",
+   "2900": "angry"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000081",
+  "video_view_log_id": "log-5555-0081",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358681000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359281000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 4,
+   "happy": 1,
+   "surprise": 0,
+   "sad": 4,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "happy",
+   "100": "surprise",
+   "200": "sad",
+   "300": "angry",
+   "400": "neutral",
+   "500": "happy",
+   "600": "surprise",
+   "700": "sad",
+   "800": "angry",
+   "900": "neutral",
+   "1000": "happy",
+   "1100": "surprise",
+   "1200": "sad",
+   "1300": "angry",
+   "1400": "neutral",
+   "1500": "happy",
+   "1600": "surprise",
+   "1700": "sad",
+   "1800": "angry",
+   "1900": "neutral",
+   "2000": "happy",
+   "2100": "surprise",
+   "2200": "sad",
+   "2300": "angry",
+   "2400": "neutral",
+   "2500": "happy",
+   "2600": "surprise",
+   "2700": "sad",
+   "2800": "angry",
+   "2900": "neutral"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000082",
+  "video_view_log_id": "log-5555-0082",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358682000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359282000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 5,
+   "happy": 2,
+   "surprise": 1,
+   "sad": 5,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "surprise",
+   "100": "sad",
+   "200": "angry",
+   "300": "neutral",
+   "400": "happy",
+   "500": "surprise",
+   "600": "sad",
+   "700": "angry",
+   "800": "neutral",
+   "900": "happy",
+   "1000": "surprise",
+   "1100": "sad",
+   "1200": "angry",
+   "1300": "neutral",
+   "1400": "happy",
+   "1500": "surprise",
+   "1600": "sad",
+   "1700": "angry",
+   "1800": "neutral",
+   "1900": "happy",
+   "2000": "surprise",
+   "2100": "sad",
+   "2200": "angry",
+   "2300": "neutral",
+   "2400": "happy",
+   "2500": "surprise",
+   "2600": "sad",
+   "2700": "angry",
+   "2800": "neutral",
+   "2900": "happy"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000083",
+  "video_view_log_id": "log-5555-0083",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358683000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359283000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 6,
+   "happy": 3,
+   "surprise": 2,
+   "sad": 6,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "sad",
+   "100": "angry",
+   "200": "neutral",
+   "300": "happy",
+   "400": "surprise",
+   "500": "sad",
+   "600": "angry",
+   "700": "neutral",
+   "800": "happy",
+   "900": "surprise",
+   "1000": "sad",
+   "1100": "angry",
+   "1200": "neutral",
+   "1300": "happy",
+   "1400": "surprise",
+   "1500": "sad",
+   "1600": "angry",
+   "1700": "neutral",
+   "1800": "happy",
+   "1900": "surprise",
+   "2000": "sad",
+   "2100": "angry",
+   "2200": "neutral",
+   "2300": "happy",
+   "2400": "surprise",
+   "2500": "sad",
+   "2600": "angry",
+   "2700": "neutral",
+   "2800": "happy",
+   "2900": "surprise"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000084",
+  "video_view_log_id": "log-5555-0084",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358684000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359284000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 0,
+   "happy": 4,
+   "surprise": 0,
+   "sad": 7,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "angry",
+   "100": "neutral",
+   "200": "happy",
+   "300": "surprise",
+   "400": "sad",
+   "500": "angry",
+   "600": "neutral",
+   "700": "happy",
+   "800": "surprise",
+   "900": "sad",
+   "1000": "angry",
+   "1100": "neutral",
+   "1200": "happy",
+   "1300": "surprise",
+   "1400": "sad",
+   "1500": "angry",
+   "1600": "neutral",
+   "1700": "happy",
+   "1800": "surprise",
+   "1900": "sad",
+   "2000": "angry",
+   "2100": "neutral",
+   "2200": "happy",
+   "2300": "surprise",
+   "2400": "sad",
+   "2500": "angry",
+   "2600": "neutral",
+   "2700": "happy",
+   "2800": "surprise",
+   "2900": "sad"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000085",
+  "video_view_log_id": "log-5555-0085",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358685000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359285000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 1,
+   "happy": 0,
+   "surprise": 1,
+   "sad": 8,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "neutral",
+   "100": "happy",
+   "200": "surprise",
+   "300": "sad",
+   "400": "angry",
+   "500": "neutral",
+   "600": "happy",
+   "700": "surprise",
+   "800": "sad",
+   "900": "angry",
+   "1000": "neutral",
+   "1100": "happy",
+   "1200": "surprise",
+   "1300": "sad",
+   "1400": "angry",
+   "1500": "neutral",
+   "1600": "happy",
+   "1700": "surprise",
+   "1800": "sad",
+   "1900": "angry",
+   "2000": "neutral",
+   "2100": "happy",
+   "2200": "surprise",
+   "2300": "sad",
+   "2400": "angry",
+   "2500": "neutral",
+   "2600": "happy",
+   "2700": "surprise",
+   "2800": "sad",
+   "2900": "angry"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000086",
+  "video_view_log_id": "log-5555-0086",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358686000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359286000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 2,
+   "happy": 1,
+   "surprise": 2,
+   "sad": 9,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "happy",
+   "100": "surprise",
+   "200": "sad",
+   "300": "angry",
+   "400": "neutral",
+   "500": "happy",
+   "600": "surprise",
+   "700": "sad",
+   "800": "angry",
+   "900": "neutral",
+   "1000": "happy",
+   "1100": "surprise",
+   "1200": "sad",
+   "1300": "angry",
+   "1400": "neutral",
+   "1500": "happy",
+   "1600": "surprise",
+   "1700": "sad",
+   "1800": "angry",
+   "1900": "neutral",
+   "2000": "happy",
+   "2100": "surprise",
+   "2200": "sad",
+   "2300": "angry",
+   "2400": "neutral",
+   "2500": "happy",
+   "2600": "surprise",
+   "2700": "sad",
+   "2800": "angry",
+   "2900": "neutral"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000087",
+  "video_view_log_id": "log-5555-0087",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358687000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359287000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 3,
+   "happy": 2,
+   "surprise": 0,
+   "sad": 10,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "surprise",
+   "100": "sad",
+   "200": "angry",
+   "300": "neutral",
+   "400": "happy",
+   "500": "surprise",
+   "600": "sad",
+   "700": "angry",
+   "800": "neutral",
+   "900": "happy",
+   "1000": "surprise",
+   "1100": "sad",
+   "1200": "angry",
+   "1300": "neutral",
+   "1400": "happy",
+   "1500": "surprise",
+   "1600": "sad",
+   "1700": "angry",
+   "1800": "neutral",
+   "1900": "happy",
+   "2000": "surprise",
+   "2100": "sad",
+   "2200": "angry",
+   "2300": "neutral",
+   "2400": "happy",
+   "2500": "surprise",
+   "2600": "sad",
+   "2700": "angry",
+   "2800": "neutral",
+   "2900": "happy"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000088",
+  "video_view_log_id": "log-5555-0088",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358688000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359288000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 4,
+   "happy": 3,
+   "surprise": 1,
+   "sad": 0,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "sad",
+   "100": "angry",
+   "200": "neutral",
+   "300": "happy",
+   "400": "surprise",
+   "500": "sad",
+   "600": "angry",
+   "700": "neutral",
+   "800": "happy",
+   "900": "surprise",
+   "1000": "sad",
+   "1100": "angry",
+   "1200": "neutral",
+   "1300": "happy",
+   "1400": "surprise",
+   "1500": "sad",
+   "1600": "angry",
+   "1700": "neutral",
+   "1800": "happy",
+   "1900": "surprise",
+   "2000": "sad",
+   "2100": "angry",
+   "2200": "neutral",
+   "2300": "happy",
+   "2400": "surprise",
+   "2500": "sad",
+   "2600": "angry",
+   "2700": "neutral",
+   "2800": "happy",
+   "2900": "surprise"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000089",
+  "video_view_log_id": "log-5555-0089",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358689000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359289000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 5,
+   "happy": 4,
+   "surprise": 2,
+   "sad": 1,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "angry",
+   "100": "neutral",
+   "200": "happy",
+   "300": "surprise",
+   "400": "sad",
+   "500": "angry",
+   "600": "neutral",
+   "700": "happy",
+   "800": "surprise",
+   "900": "sad",
+   "1000": "angry",
+   "1100": "neutral",
+   "1200": "happy",
+   "1300": "surprise",
+   "1400": "sad",
+   "1500": "angry",
+   "1600": "neutral",
+   "1700": "happy",
+   "1800": "surprise",
+   "1900": "sad",
+   "2000": "angry",
+   "2100": "neutral",
+   "2200": "happy",
+   "2300": "surprise",
+   "2400": "sad",
+   "2500": "angry",
+   "2600": "neutral",
+   "2700": "happy",
+   "2800": "surprise",
+   "2900": "sad"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000090",
+  "video_view_log_id": "log-5555-0090",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358690000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359290000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 6,
+   "happy": 0,
+   "surprise": 0,
+   "sad": 2,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "neutral",
+   "100": "happy",
+   "200": "surprise",
+   "300": "sad",
+   "400": "angry",
+   "500": "neutral",
+   "600": "happy",
+   "700": "surprise",
+   "800": "sad",
+   "900": "angry",
+   "1000": "neutral",
+   "1100": "happy",
+   "1200": "surprise",
+   "1300": "sad",
+   "1400": "angry",
+   "1500": "neutral",
+   "1600": "happy",
+   "1700": "surprise",
+   "1800": "sad",
+   "1900": "angry",
+   "2000": "neutral",
+   "2100": "happy",
+   "2200": "surprise",
+   "2300": "sad",
+   "2400": "angry",
+   "2500": "neutral",
+   "2600": "happy",
+   "2700": "surprise",
+   "2800": "sad",
+   "2900": "angry"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000091",
+  "video_view_log_id": "log-5555-0091",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358691000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359291000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 0,
+   "happy": 1,
+   "surprise": 1,
+   "sad": 3,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "happy",
+   "100": "surprise",
+   "200": "sad",
+   "300": "angry",
+   "400": "neutral",
+   "500": "happy",
+   "600": "surprise",
+   "700": "sad",
+   "800": "angry",
+   "900": "neutral",
+   "1000": "happy",
+   "1100": "surprise",
+   "1200": "sad",
+   "1300": "angry",
+   "1400": "neutral",
+   "1500": "happy",
+   "1600": "surprise",
+   "1700": "sad",
+   "1800": "angry",
+   "1900": "neutral",
+   "2000": "happy",
+   "2100": "surprise",
+   "2200": "sad",
+   "2300": "angry",
+   "2400": "neutral",
+   "2500": "happy",
+   "2600": "surprise",
+   "2700": "sad",
+   "2800": "angry",
+   "2900": "neutral"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000092",
+  "video_view_log_id": "log-5555-0092",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358692000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359292000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 1,
+   "happy": 2,
+   "surprise": 2,
+   "sad": 4,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "surprise",
+   "100": "sad",
+   "200": "angry",
+   "300": "neutral",
+   "400": "happy",
+   "500": "surprise",
+   "600": "sad",
+   "700": "angry",
+   "800": "neutral",
+   "900": "happy",
+   "1000": "surprise",
+   "1100": "sad",
+   "1200": "angry",
+   "1300": "neutral",
+   "1400": "happy",
+   "1500": "surprise",
+   "1600": "sad",
+   "1700": "angry",
+   "1800": "neutral",
+   "1900": "happy",
+   "2000": "surprise",
+   "2100": "sad",
+   "2200": "angry",
+   "2300": "neutral",
+   "2400": "happy",
+   "2500": "surprise",
+   "2600": "sad",
+   "2700": "angry",
+   "2800": "neutral",
+   "2900": "happy"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000093",
+  "video_view_log_id": "log-5555-0093",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358693000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359293000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 2,
+   "happy": 3,
+   "surprise": 0,
+   "sad": 5,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "sad",
+   "100": "angry",
+   "200": "neutral",
+   "300": "happy",
+   "400": "surprise",
+   "500": "sad",
+   "600": "angry",
+   "700": "neutral",
+   "800": "happy",
+   "900": "surprise",
+   "1000": "sad",
+   "1100": "angry",
+   "1200": "neutral",
+   "1300": "happy",
+   "1400": "surprise",
+   "1500": "sad",
+   "1600": "angry",
+   "1700": "neutral",
+   "1800": "happy",
+   "1900": "surprise",
+   "2000": "sad",
+   "2100": "angry",
+   "2200": "neutral",
+   "2300": "happy",
+   "2400": "surprise",
+   "2500": "sad",
+   "2600": "angry",
+   "2700": "neutral",
+   "2800": "happy",
+   "2900": "surprise"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000094",
+  "video_view_log_id": "log-5555-0094",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358694000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359294000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 3,
+   "happy": 4,
+   "surprise": 1,
+   "sad": 6,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "angry",
+   "100": "neutral",
+   "200": "happy",
+   "300": "surprise",
+   "400": "sad",
+   "500": "angry",
+   "600": "neutral",
+   "700": "happy",
+   "800": "surprise",
+   "900": "sad",
+   "1000": "angry",
+   "1100": "neutral",
+   "1200": "happy",
+   "1300": "surprise",
+   "1400": "sad",
+   "1500": "angry",
+   "1600": "neutral",
+   "1700": "happy",
+   "1800": "surprise",
+   "1900": "sad",
+   "2000": "angry",
+   "2100": "neutral",
+   "2200": "happy",
+   "2300": "surprise",
+   "2400": "sad",
+   "2500": "angry",
+   "2600": "neutral",
+   "2700": "happy",
+   "2800": "surprise",
+   "2900": "sad"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000095",
+  "video_view_log_id": "log-5555-0095",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358695000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359295000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 4,
+   "happy": 0,
+   "surprise": 2,
+   "sad": 7,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "neutral",
+   "100": "happy",
+   "200": "surprise",
+   "300": "sad",
+   "400": "angry",
+   "500": "neutral",
+   "600": "happy",
+   "700": "surprise",
+   "800": "sad",
+   "900": "angry",
+   "1000": "neutral",
+   "1100": "happy",
+   "1200": "surprise",
+   "1300": "sad",
+   "1400": "angry",
+   "1500": "neutral",
+   "1600": "happy",
+   "1700": "surprise",
+   "1800": "sad",
+   "1900": "angry",
+   "2000": "neutral",
+   "2100": "happy",
+   "2200": "surprise",
+   "2300": "sad",
+   "2400": "angry",
+   "2500": "neutral",
+   "2600": "happy",
+   "2700": "surprise",
+   "2800": "sad",
+   "2900": "angry"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000096",
+  "video_view_log_id": "log-5555-0096",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358696000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359296000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 5,
+   "happy": 1,
+   "surprise": 0,
+   "sad": 8,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "happy",
+   "100": "surprise",
+   "200": "sad",
+   "300": "angry",
+   "400": "neutral",
+   "500": "happy",
+   "600": "surprise",
+   "700": "sad",
+   "800": "angry",
+   "900": "neutral",
+   "1000": "happy",
+   "1100": "surprise",
+   "1200": "sad",
+   "1300": "angry",
+   "1400": "neutral",
+   "1500": "happy",
+   "1600": "surprise",
+   "1700": "sad",
+   "1800": "angry",
+   "1900": "neutral",
+   "2000": "happy",
+   "2100": "surprise",
+   "2200": "sad",
+   "2300": "angry",
+   "2400": "neutral",
+   "2500": "happy",
+   "2600": "surprise",
+   "2700": "sad",
+   "2800": "angry",
+   "2900": "neutral"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000097",
+  "video_view_log_id": "log-5555-0097",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358697000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359297000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 6,
+   "happy": 2,
+   "surprise": 1,
+   "sad": 9,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "surprise",
+   "100": "sad",
+   "200": "angry",
+   "300": "neutral",
+   "400": "happy",
+   "500": "surprise",
+   "600": "sad",
+   "700": "angry",
+   "800": "neutral",
+   "900": "happy",
+   "1000": "surprise",
+   "1100": "sad",
+   "1200": "angry",
+   "1300": "neutral",
+   "1400": "happy",
+   "1500": "surprise",
+   "1600": "sad",
+   "1700": "angry",
+   "1800": "neutral",
+   "1900": "happy",
+   "2000": "surprise",
+   "2100": "sad",
+   "2200": "angry",
+   "2300": "neutral",
+   "2400": "happy",
+   "2500": "surprise",
+   "2600": "sad",
+   "2700": "angry",
+   "2800": "neutral",
+   "2900": "happy"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000098",
+  "video_view_log_id": "log-5555-0098",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358698000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359298000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 0,
+   "happy": 3,
+   "surprise": 2,
+   "sad": 10,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "sad",
+   "100": "angry",
+   "200": "neutral",
+   "300": "happy",
+   "400": "surprise",
+   "500": "sad",
+   "600": "angry",
+   "700": "neutral",
+   "800": "happy",
+   "900": "surprise",
+   "1000": "sad",
+   "1100": "angry",
+   "1200": "neutral",
+   "1300": "happy",
+   "1400": "surprise",
+   "1500": "sad",
+   "1600": "angry",
+   "1700": "neutral",
+   "1800": "happy",
+   "1900": "surprise",
+   "2000": "sad",
+   "2100": "angry",
+   "2200": "neutral",
+   "2300": "happy",
+   "2400": "surprise",
+   "2500": "sad",
+   "2600": "angry",
+   "2700": "neutral",
+   "2800": "happy",
+   "2900": "surprise"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000099",
+  "video_view_log_id": "log-5555-0099",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358699000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359299000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 1,
+   "happy": 4,
+   "surprise": 0,
+   "sad": 0,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "angry",
+   "100": "neutral",
+   "200": "happy",
+   "300": "surprise",
+   "400": "sad",
+   "500": "angry",
+   "600": "neutral",
+   "700": "happy",
+   "800": "surprise",
+   "900": "sad",
+   "1000": "angry",
+   "1100": "neutral",
+   "1200": "happy",
+   "1300": "surprise",
+   "1400": "sad",
+   "1500": "angry",
+   "1600": "neutral",
+   "1700": "happy",
+   "1800": "surprise",
+   "1900": "sad",
+   "2000": "angry",
+   "2100": "neutral",
+   "2200": "happy",
+   "2300": "surprise",
+   "2400": "sad",
+   "2500": "angry",
+   "2600": "neutral",
+   "2700": "happy",
+   "2800": "surprise",
+   "2900": "sad"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000100",
+  "video_view_log_id": "log-5555-0100",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358700000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359300000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 2,
+   "happy": 0,
+   "surprise": 1,
+   "sad": 1,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "neutral",
+   "100": "happy",
+   "200": "surprise",
+   "300": "sad",
+   "400": "angry",
+   "500": "neutral",
+   "600": "happy",
+   "700": "surprise",
+   "800": "sad",
+   "900": "angry",
+   "1000": "neutral",
+   "1100": "happy",
+   "1200": "surprise",
+   "1300": "sad",
+   "1400": "angry",
+   "1500": "neutral",
+   "1600": "happy",
+   "1700": "surprise",
+   "1800": "sad",
+   "1900": "angry",
+   "2000": "neutral",
+   "2100": "happy",
+   "2200": "surprise",
+   "2300": "sad",
+   "2400": "angry",
+   "2500": "neutral",
+   "2600": "happy",
+   "2700": "surprise",
+   "2800": "sad",
+   "2900": "angry"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000101",
+  "video_view_log_id": "log-5555-0101",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358701000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359301000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 3,
+   "happy": 1,
+   "surprise": 2,
+   "sad": 2,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "happy",
+   "100": "surprise",
+   "200": "sad",
+   "300": "angry",
+   "400": "neutral",
+   "500": "happy",
+   "600": "surprise",
+   "700": "sad",
+   "800": "angry",
+   "900": "neutral",
+   "1000": "happy",
+   "1100": "surprise",
+   "1200": "sad",
+   "1300": "angry",
+   "1400": "neutral",
+   "1500": "happy",
+   "1600": "surprise",
+   "1700": "sad",
+   "1800": "angry",
+   "1900": "neutral",
+   "2000": "happy",
+   "2100": "surprise",
+   "2200": "sad",
+   "2300": "angry",
+   "2400": "neutral",
+   "2500": "happy",
+   "2600": "surprise",
+   "2700": "sad",
+   "2800": "angry",
+   "2900": "neutral"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000102",
+  "video_view_log_id": "log-5555-0102",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358702000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359302000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 4,
+   "happy": 2,
+   "surprise": 0,
+   "sad": 3,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "surprise",
+   "100": "sad",
+   "200": "angry",
+   "300": "neutral",
+   "400": "happy",
+   "500": "surprise",
+   "600": "sad",
+   "700": "angry",
+   "800": "neutral",
+   "900": "happy",
+   "1000": "surprise",
+   "1100": "sad",
+   "1200": "angry",
+   "1300": "neutral",
+   "1400": "happy",
+   "1500": "surprise",
+   "1600": "sad",
+   "1700": "angry",
+   "1800": "neutral",
+   "1900": "happy",
+   "2000": "surprise",
+   "2100": "sad",
+   "2200": "angry",
+   "2300": "neutral",
+   "2400": "happy",
+   "2500": "surprise",
+   "2600": "sad",
+   "2700": "angry",
+   "2800": "neutral",
+   "2900": "happy"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000103",
+  "video_view_log_id": "log-5555-0103",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358703000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359303000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 5,
+   "happy": 3,
+   "surprise": 1,
+   "sad": 4,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "sad",
+   "100": "angry",
+   "200": "neutral",
+   "300": "happy",
+   "400": "surprise",
+   "500": "sad",
+   "600": "angry",
+   "700": "neutral",
+   "800": "happy",
+   "900": "surprise",
+   "1000": "sad",
+   "1100": "angry",
+   "1200": "neutral",
+   "1300": "happy",
+   "1400": "surprise",
+   "1500": "sad",
+   "1600": "angry",
+   "1700": "neutral",
+   "1800": "happy",
+   "1900": "surprise",
+   "2000": "sad",
+   "2100": "angry",
+   "2200": "neutral",
+   "2300": "happy",
+   "2400": "surprise",
+   "2500": "sad",
+   "2600": "angry",
+   "2700": "neutral",
+   "2800": "happy",
+   "2900": "surprise"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000104",
+  "video_view_log_id": "log-5555-0104",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358704000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359304000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 6,
+   "happy": 4,
+   "surprise": 2,
+   "sad": 5,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "angry",
+   "100": "neutral",
+   "200": "happy",
+   "300": "surprise",
+   "400": "sad",
+   "500": "angry",
+   "600": "neutral",
+   "700": "happy",
+   "800": "surprise",
+   "900": "sad",
+   "1000": "angry",
+   "1100": "neutral",
+   "1200": "happy",
+   "1300": "surprise",
+   "1400": "sad",
+   "1500": "angry",
+   "1600": "neutral",
+   "1700": "happy",
+   "1800": "surprise",
+   "1900": "sad",
+   "2000": "angry",
+   "2100": "neutral",
+   "2200": "happy",
+   "2300": "surprise",
+   "2400": "sad",
+   "2500": "angry",
+   "2600": "neutral",
+   "2700": "happy",
+   "2800": "surprise",
+   "2900": "sad"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000105",
+  "video_view_log_id": "log-5555-0105",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358705000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359305000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 0,
+   "happy": 0,
+   "surprise": 0,
+   "sad": 6,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "neutral",
+   "100": "happy",
+   "200": "surprise",
+   "300": "sad",
+   "400": "angry",
+   "500": "neutral",
+   "600": "happy",
+   "700": "surprise",
+   "800": "sad",
+   "900": "angry",
+   "1000": "neutral",
+   "1100": "happy",
+   "1200": "surprise",
+   "1300": "sad",
+   "1400": "angry",
+   "1500": "neutral",
+   "1600": "happy",
+   "1700": "surprise",
+   "1800": "sad",
+   "1900": "angry",
+   "2000": "neutral",
+   "2100": "happy",
+   "2200": "surprise",
+   "2300": "sad",
+   "2400": "angry",
+   "2500": "neutral",
+   "2600": "happy",
+   "2700": "surprise",
+   "2800": "sad",
+   "2900": "angry"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000106",
+  "video_view_log_id": "log-5555-0106",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358706000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359306000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 1,
+   "happy": 1,
+   "surprise": 1,
+   "sad": 7,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "happy",
+   "100": "surprise",
+   "200": "sad",
+   "300": "angry",
+   "400": "neutral",
+   "500": "happy",
+   "600": "surprise",
+   "700": "sad",
+   "800": "angry",
+   "900": "neutral",
+   "1000": "happy",
+   "1100": "surprise",
+   "1200": "sad",
+   "1300": "angry",
+   "1400": "neutral",
+   "1500": "happy",
+   "1600": "surprise",
+   "1700": "sad",
+   "1800": "angry",
+   "1900": "neutral",
+   "2000": "happy",
+   "2100": "surprise",
+   "2200": "sad",
+   "2300": "angry",
+   "2400": "neutral",
+   "2500": "happy",
+   "2600": "surprise",
+   "2700": "sad",
+   "2800": "angry",
+   "2900": "neutral"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000107",
+  "video_view_log_id": "log-5555-0107",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358707000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359307000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 2,
+   "happy": 2,
+   "surprise": 2,
+   "sad": 8,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "surprise",
+   "100": "sad",
+   "200": "angry",
+   "300": "neutral",
+   "400": "happy",
+   "500": "surprise",
+   "600": "sad",
+   "700": "angry",
+   "800": "neutral",
+   "900": "happy",
+   "1000": "surprise",
+   "1100": "sad",
+   "1200": "angry",
+   "1300": "neutral",
+   "1400": "happy",
+   "1500": "surprise",
+   "1600": "sad",
+   "1700": "angry",
+   "1800": "neutral",
+   "1900": "happy",
+   "2000": "surprise",
+   "2100": "sad",
+   "2200": "angry",
+   "2300": "neutral",
+   "2400": "happy",
+   "2500": "surprise",
+   "2600": "sad",
+   "2700": "angry",
+   "2800": "neutral",
+   "2900": "happy"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000108",
+  "video_view_log_id": "log-5555-0108",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358708000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359308000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 3,
+   "happy": 3,
+   "surprise": 0,
+   "sad": 9,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "sad",
+   "100": "angry",
+   "200": "neutral",
+   "300": "happy",
+   "400": "surprise",
+   "500": "sad",
+   "600": "angry",
+   "700": "neutral",
+   "800": "happy",
+   "900": "surprise",
+   "1000": "sad",
+   "1100": "angry",
+   "1200": "neutral",
+   "1300": "happy",
+   "1400": "surprise",
+   "1500": "sad",
+   "1600": "angry",
+   "1700": "neutral",
+   "1800": "happy",
+   "1900": "surprise",
+   "2000": "sad",
+   "2100": "angry",
+   "2200": "neutral",
+   "2300": "happy",
+   "2400": "surprise",
+   "2500": "sad",
+   "2600": "angry",
+   "2700": "neutral",
+   "2800": "happy",
+   "2900": "surprise"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000109",
+  "video_view_log_id": "log-5555-0109",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358709000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359309000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 4,
+   "happy": 4,
+   "surprise": 1,
+   "sad": 10,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "angry",
+   "100": "neutral",
+   "200": "happy",
+   "300": "surprise",
+   "400": "sad",
+   "500": "angry",
+   "600": "neutral",
+   "700": "happy",
+   "800": "surprise",
+   "900": "sad",
+   "1000": "angry",
+   "1100": "neutral",
+   "1200": "happy",
+   "1300": "surprise",
+   "1400": "sad",
+   "1500": "angry",
+   "1600": "neutral",
+   "1700": "happy",
+   "1800": "surprise",
+   "1900": "sad",
+   "2000": "angry",
+   "2100": "neutral",
+   "2200": "happy",
+   "2300": "surprise",
+   "2400": "sad",
+   "2500": "angry",
+   "2600": "neutral",
+   "2700": "happy",
+   "2800": "surprise",
+   "2900": "sad"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000110",
+  "video_view_log_id": "log-5555-0110",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358710000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359310000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 5,
+   "happy": 0,
+   "surprise": 2,
+   "sad": 0,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "neutral",
+   "100": "happy",
+   "200": "surprise",
+   "300": "sad",
+   "400": "angry",
+   "500": "neutral",
+   "600": "happy",
+   "700": "surprise",
+   "800": "sad",
+   "900": "angry",
+   "1000": "neutral",
+   "1100": "happy",
+   "1200": "surprise",
+   "1300": "sad",
+   "1400": "angry",
+   "1500": "neutral",
+   "1600": "happy",
+   "1700": "surprise",
+   "1800": "sad",
+   "1900": "angry",
+   "2000": "neutral",
+   "2100": "happy",
+   "2200": "surprise",
+   "2300": "sad",
+   "2400": "angry",
+   "2500": "neutral",
+   "2600": "happy",
+   "2700": "surprise",
+   "2800": "sad",
+   "2900": "angry"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000111",
+  "video_view_log_id": "log-5555-0111",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358711000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359311000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 6,
+   "happy": 1,
+   "surprise": 0,
+   "sad": 1,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "happy",
+   "100": "surprise",
+   "200": "sad",
+   "300": "angry",
+   "400": "neutral",
+   "500": "happy",
+   "600": "surprise",
+   "700": "sad",
+   "800": "angry",
+   "900": "neutral",
+   "1000": "happy",
+   "1100": "surprise",
+   "1200": "sad",
+   "1300": "angry",
+   "1400": "neutral",
+   "1500": "happy",
+   "1600": "surprise",
+   "1700": "sad",
+   "1800": "angry",
+   "1900": "neutral",
+   "2000": "happy",
+   "2100": "surprise",
+   "2200": "sad",
+   "2300": "angry",
+   "2400": "neutral",
+   "2500": "happy",
+   "2600": "surprise",
+   "2700": "sad",
+   "2800": "angry",
+   "2900": "neutral"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000112",
+  "video_view_log_id": "log-5555-0112",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358712000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359312000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 0,
+   "happy": 2,
+   "surprise": 1,
+   "sad": 2,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "surprise",
+   "100": "sad",
+   "200": "angry",
+   "300": "neutral",
+   "400": "happy",
+   "500": "surprise",
+   "600": "sad",
+   "700": "angry",
+   "800": "neutral",
+   "900": "happy",
+   "1000": "surprise",
+   "1100": "sad",
+   "1200": "angry",
+   "1300": "neutral",
+   "1400": "happy",
+   "1500": "surprise",
+   "1600": "sad",
+   "1700": "angry",
+   "1800": "neutral",
+   "1900": "happy",
+   "2000": "surprise",
+   "2100": "sad",
+   "2200": "angry",
+   "2300": "neutral",
+   "2400": "happy",
+   "2500": "surprise",
+   "2600": "sad",
+   "2700": "angry",
+   "2800": "neutral",
+   "2900": "happy"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000113",
+  "video_view_log_id": "log-5555-0113",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358713000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359313000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 1,
+   "happy": 3,
+   "surprise": 2,
+   "sad": 3,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "sad",
+   "100": "angry",
+   "200": "neutral",
+   "300": "happy",
+   "400": "surprise",
+   "500": "sad",
+   "600": "angry",
+   "700": "neutral",
+   "800": "happy",
+   "900": "surprise",
+   "1000": "sad",
+   "1100": "angry",
+   "1200": "neutral",
+   "1300": "happy",
+   "1400": "surprise",
+   "1500": "sad",
+   "1600": "angry",
+   "1700": "neutral",
+   "1800": "happy",
+   "1900": "surprise",
+   "2000": "sad",
+   "2100": "angry",
+   "2200": "neutral",
+   "2300": "happy",
+   "2400": "surprise",
+   "2500": "sad",
+   "2600": "angry",
+   "2700": "neutral",
+   "2800": "happy",
+   "2900": "surprise"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000114",
+  "video_view_log_id": "log-5555-0114",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358714000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359314000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 2,
+   "happy": 4,
+   "surprise": 0,
+   "sad": 4,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "angry",
+   "100": "neutral",
+   "200": "happy",
+   "300": "surprise",
+   "400": "sad",
+   "500": "angry",
+   "600": "neutral",
+   "700": "happy",
+   "800": "surprise",
+   "900": "sad",
+   "1000": "angry",
+   "1100": "neutral",
+   "1200": "happy",
+   "1300": "surprise",
+   "1400": "sad",
+   "1500": "angry",
+   "1600": "neutral",
+   "1700": "happy",
+   "1800": "surprise",
+   "1900": "sad",
+   "2000": "angry",
+   "2100": "neutral",
+   "2200": "happy",
+   "2300": "surprise",
+   "2400": "sad",
+   "2500": "angry",
+   "2600": "neutral",
+   "2700": "happy",
+   "2800": "surprise",
+   "2900": "sad"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000115",
+  "video_view_log_id": "log-5555-0115",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358715000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359315000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 3,
+   "happy": 0,
+   "surprise": 1,
+   "sad": 5,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "neutral",
+   "100": "happy",
+   "200": "surprise",
+   "300": "sad",
+   "400": "angry",
+   "500": "neutral",
+   "600": "happy",
+   "700": "surprise",
+   "800": "sad",
+   "900": "angry",
+   "1000": "neutral",
+   "1100": "happy",
+   "1200": "surprise",
+   "1300": "sad",
+   "1400": "angry",
+   "1500": "neutral",
+   "1600": "happy",
+   "1700": "surprise",
+   "1800": "sad",
+   "1900": "angry",
+   "2000": "neutral",
+   "2100": "happy",
+   "2200": "surprise",
+   "2300": "sad",
+   "2400": "angry",
+   "2500": "neutral",
+   "2600": "happy",
+   "2700": "surprise",
+   "2800": "sad",
+   "2900": "angry"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000116",
+  "video_view_log_id": "log-5555-0116",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358716000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359316000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 4,
+   "happy": 1,
+   "surprise": 2,
+   "sad": 6,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "happy",
+   "100": "surprise",
+   "200": "sad",
+   "300": "angry",
+   "400": "neutral",
+   "500": "happy",
+   "600": "surprise",
+   "700": "sad",
+   "800": "angry",
+   "900": "neutral",
+   "1000": "happy",
+   "1100": "surprise",
+   "1200": "sad",
+   "1300": "angry",
+   "1400": "neutral",
+   "1500": "happy",
+   "1600": "surprise",
+   "1700": "sad",
+   "1800": "angry",
+   "1900": "neutral",
+   "2000": "happy",
+   "2100": "surprise",
+   "2200": "sad",
+   "2300": "angry",
+   "2400": "neutral",
+   "2500": "happy",
+   "2600": "surprise",
+   "2700": "sad",
+   "2800": "angry",
+   "2900": "neutral"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000117",
+  "video_view_log_id": "log-5555-0117",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358717000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359317000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 5,
+   "happy": 2,
+   "surprise": 0,
+   "sad": 7,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "surprise",
+   "100": "sad",
+   "200": "angry",
+   "300": "neutral",
+   "400": "happy",
+   "500": "surprise",
+   "600": "sad",
+   "700": "angry",
+   "800": "neutral",
+   "900": "happy",
+   "1000": "surprise",
+   "1100": "sad",
+   "1200": "angry",
+   "1300": "neutral",
+   "1400": "happy",
+   "1500": "surprise",
+   "1600": "sad",
+   "1700": "angry",
+   "1800": "neutral",
+   "1900": "happy",
+   "2000": "surprise",
+   "2100": "sad",
+   "2200": "angry",
+   "2300": "neutral",
+   "2400": "happy",
+   "2500": "surprise",
+   "2600": "sad",
+   "2700": "angry",
+   "2800": "neutral",
+   "2900": "happy"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000118",
+  "video_view_log_id": "log-5555-0118",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358718000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359318000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 6,
+   "happy": 3,
+   "surprise": 1,
+   "sad": 8,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "sad",
+   "100": "angry",
+   "200": "neutral",
+   "300": "happy",
+   "400": "surprise",
+   "500": "sad",
+   "600": "angry",
+   "700": "neutral",
+   "800": "happy",
+   "900": "surprise",
+   "1000": "sad",
+   "1100": "angry",
+   "1200": "neutral",
+   "1300": "happy",
+   "1400": "surprise",
+   "1500": "sad",
+   "1600": "angry",
+   "1700": "neutral",
+   "1800": "happy",
+   "1900": "surprise",
+   "2000": "sad",
+   "2100": "angry",
+   "2200": "neutral",
+   "2300": "happy",
+   "2400": "surprise",
+   "2500": "sad",
+   "2600": "angry",
+   "2700": "neutral",
+   "2800": "happy",
+   "2900": "surprise"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000119",
+  "video_view_log_id": "log-5555-0119",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358719000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359319000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 0,
+   "happy": 4,
+   "surprise": 2,
+   "sad": 9,
+   "angry": 1
+  },
+  "most_emotion_timeline": {
+   "0": "angry",
+   "100": "neutral",
+   "200": "happy",
+   "300": "surprise",
+   "400": "sad",
+   "500": "angry",
+   "600": "neutral",
+   "700": "happy",
+   "800": "surprise",
+   "900": "sad",
+   "1000": "angry",
+   "1100": "neutral",
+   "1200": "happy",
+   "1300": "surprise",
+   "1400": "sad",
+   "1500": "angry",
+   "1600": "neutral",
+   "1700": "happy",
+   "1800": "surprise",
+   "1900": "sad",
+   "2000": "angry",
+   "2100": "neutral",
+   "2200": "happy",
+   "2300": "surprise",
+   "2400": "sad",
+   "2500": "angry",
+   "2600": "neutral",
+   "2700": "happy",
+   "2800": "surprise",
+   "2900": "sad"
+  },
+  "duration": 60
+ },
+ {
+  "user_id": "55555555-5555-4555-8555-555555555555",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000120",
+  "video_view_log_id": "log-5555-0120",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772358720000"
+   }
+  },
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.4,
+   "surprise": 0.1,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 50,
+    "happy": 10,
+    "surprise": 10,
+    "sad": 10,
+    "angry": 20
+   }
+  },
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772359320000"
+   }
+  },
+  "emotion_seconds": {
+   "neutral": 1,
+   "happy": 0,
+   "surprise": 0,
+   "sad": 10,
+   "angry": 0
+  },
+  "most_emotion_timeline": {
+   "0": "neutral",
+   "100": "happy",
+   "200": "surprise",
+   "300": "sad",
+   "400": "angry",
+   "500": "neutral",
+   "600": "happy",
+   "700": "surprise",
+   "800": "sad",
+   "900": "angry",
+   "1000": "neutral",
+   "1100": "happy",
+   "1200": "surprise",
+   "1300": "sad",
+   "1400": "angry",
+   "1500": "neutral",
+   "1600": "happy",
+   "1700": "surprise",
+   "1800": "sad",
+   "1900": "angry",
+   "2000": "neutral",
+   "2100": "happy",
+   "2200": "surprise",
+   "2300": "sad",
+   "2400": "angry",
+   "2500": "neutral",
+   "2600": "happy",
+   "2700": "surprise",
+   "2800": "sad",
+   "2900": "angry"
+  },
+  "duration": 60
+ }
+]

@@ -365,7 +365,7 @@ def main():
     print("the trending, the category fill and the approval jobs matched the original")
 
 
-def deploy(work, admin_url, mongo_url, youtube_url, bin_path):
+def deploy(work, admin_url, mongo_url, youtube_url, bin_path, enable_writes=False):
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
     parsed = urllib.parse.urlparse(admin_url)
@@ -385,7 +385,7 @@ def deploy(work, admin_url, mongo_url, youtube_url, bin_path):
         "database_url_env": "S13D_RUNTIME_URL", "migrate_database_url_env": "S13D_ADOPT_URL", "listen": "127.0.0.1:0", "wire": "decimal",
         "rate_limit": None, "auth": {"issuer": base.ISSUER, "audience": "aip-api", "jwks": {"kind": "file", "path": "jwks.json"}},
         "limits": {"job_calls": 1000},
-        "workers": {"directory": "extensions", "language": "python",
+        "workers": {"directory": "extensions", "language": "python", **({"enable_writes": True} if enable_writes else {}),
                     "mongo": {"uri_env": "S13D_MONGO_URL", "database": base.MONGO_DB, "max_pool_size": 4, "timeout_ms": 3000,
                               "write_collections": ["video_distribution", "video_timeline_emotion_count"], "ensure_indexes": True},
                     "integrations": [{"name": "youtube_videos", "url": youtube_url, "method": "GET", "timeout_ms": 3000,

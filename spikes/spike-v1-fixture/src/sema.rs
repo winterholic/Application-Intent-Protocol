@@ -2022,6 +2022,23 @@ impl<'a> Ctx<'a> {
                     }
                     continue;
                 }
+                if rn == "create" || rn == "read" {
+                    // 같은 트랜잭션 안에서 호출자 정책으로 공개 create 한 행을 만들거나 공개 read로 행을 읽는다(ctx.data.create·read).
+                    if self.res.contains_key(rn.as_str()) {
+                        self.d("DEF.AMBIGUOUS", format!("resource 이름 `{rn}`이 capability 영역과 겹침"), x.span);
+                        continue;
+                    }
+                    let known = self.res.get(tn.as_str()).is_some_and(|r| rn == "read" || r.expose_create.is_some());
+                    if !known {
+                        let what = if rn == "read" { "resource" } else { "공개된 create(expose create)가 있는 resource" };
+                        self.d("DEF.UNKNOWN_SYMBOL", format!("쓰기 access `{rn}.{tn}`의 대상은 {what}여야 함"), x.span);
+                        continue;
+                    }
+                    if acc.insert(format!("{rn}.{tn}"), json!(rn)).is_some() {
+                        self.d("DEF.DUPLICATE", format!("capability `{rn}.{tn}` 중복 선언"), x.span);
+                    }
+                    continue;
+                }
                 let exposed = self.res.get(rn.as_str()).is_some_and(|r| r.expose_apply.iter().any(|e| &e.transition == tn));
                 if !exposed {
                     self.d("DEF.UNKNOWN_SYMBOL", format!("쓰기 access `{rn}.{tn}`는 공개된 전이(expose apply)여야 함"), x.span);

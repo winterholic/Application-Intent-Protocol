@@ -4,6 +4,7 @@
 #   GET mypage/emotion/calendar MypageService.get_emotion_calendar -> User.myEmotionCalendar
 #   GET mypage/moments         MypageService.get_moments        -> User.myMoments
 #   GET mypage/emotion-dna     MypageService.get_emotion_dna    -> User.myEmotionDna
+#   GET mypage/emotion/summary MypageService.get_emotion_summary -> User.myEmotionSummary (a write extension, Slice14-F)
 # Source of truth: new-facereview@7948b7e7 app/services/mypage_service.py. The sessions of the caller live in MongoDB with per-frame
 # timelines far too large for an extension to read, so the server reduces them (derived collection `user_watch_stats`, decision
 # D-P-USERSTATS) to the figures the screens need: the latest sessions, the 40 bucket sums of a timeline, the calendar rows, the peak
@@ -305,3 +306,43 @@ async def myEmotionDna(input, ctx):
                           'sad': int(sad_pct * 100), 'angry': int(angry_pct * 100)},
         'fun_facts': _compute_fun_facts(happy_pct, avg_completion, n),
         'generated_at': generated_at.isoformat(), 'based_on_videos': n})}
+
+
+_SUMMARY_COLUMNS = ["neutral_seconds", "happy_seconds", "surprise_seconds", "sad_seconds", "angry_seconds"]
+
+
+def _summary_dto(seconds):
+    """The original `_build_emotion_summary_from_docs` result for totals that are already seconds per emotion."""
+    total = float(sum(seconds.values()))
+    return {
+        'emotion_percentages': {e: round((s / total) * 100, 1) if total > 0 else 0.0 for e, s in seconds.items()},
+        'emotion_seconds': {e: int(s) for e, s in seconds.items()},
+    }
+
+
+def _utc_text(text):
+    return text if text.endswith("Z") else text + "Z"
+
+
+async def myEmotionSummary(input, ctx):
+    page = await ctx.data.read({"read": "UserEmotionSummary", "limit": 1, "select": ["id", "last_finalized_at", "last_session_id", "lock_version"] + _SUMMARY_COLUMNS})
+    row = page["rows"][0] if page["rows"] else None
+    if row is not None and row["last_finalized_at"] is not None:
+        after = {"at": row["last_finalized_at"], "session": row["last_session_id"] or ""}
+    else:
+        after = None
+    stats = await _stats(ctx, command="emotion_seconds", **({"after": after} if after else {}))
+    if row is None:
+        # The first call creates the member's row with zero totals (the original's `UserEmotionSummary(user_id=...)`).
+        await ctx.data.create("UserEmotionSummary", {"id": stats["user"]})
+        row = {"id": stats["user"], "lock_version": 0, **{column: 0 for column in _SUMMARY_COLUMNS}}
+    base = {emotion: int(row[column]) for emotion, column in zip(EMOTIONS, _SUMMARY_COLUMNS)}
+    if after is not None and stats["checkpoint"] is None:
+        return {"body": _text(_summary_dto(base))}
+    merged = {emotion: base[emotion] + int(stats["seconds"][i]) for i, emotion in enumerate(EMOTIONS)}
+    checkpoint = stats["checkpoint"]
+    values = {column: merged[emotion] for emotion, column in zip(EMOTIONS, _SUMMARY_COLUMNS)}
+    values["last_finalized_at"] = _utc_text(checkpoint["at"])
+    values["last_session_id"] = checkpoint["session"]
+    await ctx.data.apply("UserEmotionSummary", "applyDelta", [row["id"]], values=values, expect={"lock_version": row["lock_version"]})
+    return {"body": _text(_summary_dto(merged))}

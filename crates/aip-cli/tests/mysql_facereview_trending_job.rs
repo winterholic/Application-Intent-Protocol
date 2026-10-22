@@ -41,6 +41,8 @@ const SEED: &str = include_str!("../../../product/tests/fixtures/facereview-mysq
 const SEED_13D: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/slice13d-seed.sql");
 const MYPAGE_SESSIONS: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/slice14e-sessions.json");
 const MYPAGE_GOLDEN: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/slice14e-golden.json");
+const SUMMARY_SESSIONS: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/slice14f-sessions.json");
+const SUMMARY_GOLDEN: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/slice14f-golden.json");
 const EXTENSIONS: [(&str, &str); 11] = [
     ("slice13f_watch.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13f_watch.py")),
     ("slice13b_lists.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13b_lists.py")),
@@ -66,6 +68,9 @@ const SUBJECTS: [(&str, &str); 5] = [
     ("dave", "44444444-4444-4444-8444-444444444444"),
     ("erin", "55555555-5555-4555-8555-555555555555"),
 ];
+
+/// The five totals, the checkpoint, the session id, lock_version, "checkpoint is recent" and "updated_at was touched" of a summary row.
+type SummaryRow = (String, String, String, String, String, Option<String>, Option<String>, i64, i64, i64);
 
 struct Env {
     adopt_url: String,
@@ -394,7 +399,7 @@ async fn the_trending_job_saves_new_videos_with_their_initial_documents() {
             "database_url_env": "AIP_T_YT_RUNTIME_URL", "migrate_database_url_env": "AIP_T_YT_ADOPT_URL",
             "listen": "127.0.0.1:0", "wire": "decimal", "rate_limit": null,
             "auth": {"issuer": ISSUER, "audience": "aip-api", "jwks": {"kind": "file", "path": "jwks.json"}},
-            "workers": {"directory": "extensions", "language": "python",
+            "workers": {"directory": "extensions", "language": "python", "enable_writes": true,
                 "mongo": {"uri_env": "AIP_T_YT_MONGO_URL", "database": MONGO_DB, "max_pool_size": 4, "timeout_ms": 3000,
                     "write_collections": ["video_distribution", "video_timeline_emotion_count"], "ensure_indexes": true},
                 "integrations": [{"name": "youtube_videos", "url": format!("http://{}/youtube/v3/videos", youtube.address), "method": "GET",
@@ -661,6 +666,156 @@ async fn the_trending_job_saves_new_videos_with_their_initial_documents() {
     }
     // A guest has no my page, and a member's screens never show another member's sessions (bob's answers above hold only bob's).
     let guest = server.post("/extension", None, &json!({"extension": "User.myHighlight", "input": {}})).await;
+    assert_ne!(guest["ok"], true, "{guest}");
+
+    // ---- WBS 7.2.8: GET mypage/emotion/summary (the write extension User.myEmotionSummary) equals the original's get_emotion_summary
+    // on the recorded cases (reference/slice14f_oracle.py ran the original on this data and these starting rows): the answer and the
+    // row afterwards (totals, checkpoint, session id, lock_version).
+    watching.delete_many(mongodb::bson::doc! {}).await.unwrap();
+    let summary_sessions: Vec<Value> = serde_json::from_str(SUMMARY_SESSIONS).unwrap();
+    for session in &summary_sessions {
+        watching.insert_one(serde_json::from_value::<mongodb::bson::Document>(session.clone()).unwrap()).await.unwrap();
+    }
+    let summary_golden: Vec<Value> = serde_json::from_str(SUMMARY_GOLDEN).unwrap();
+    assert!(summary_golden.len() >= 15, "the recorded cases");
+    let mysql_time = |iso: &str| -> String {
+        let text = iso.replace('T', " ");
+        match text.split_once('.') {
+            Some((head, fraction)) => format!("{head}.{:0<3}", &fraction[..fraction.len().min(3)]),
+            None => format!("{text}.000"),
+        }
+    };
+    let user_of = |name: &str| SUBJECTS.iter().find(|(candidate, _)| *candidate == name).unwrap().1;
+    for (index, case) in summary_golden.iter().enumerate() {
+        let (name, subject) = (case["name"].as_str().unwrap(), case["subject"].as_str().unwrap());
+        let user = user_of(subject);
+        setup.query_drop(format!("DELETE FROM `{SOURCE}`.user_emotion_summary WHERE user_id = '{user}'")).await.unwrap();
+        if let Some(state) = case["state"].as_object() {
+            let totals: Vec<String> = state["seconds"].as_array().unwrap().iter().map(|n| n.to_string()).collect();
+            let at = state["at"].as_str().map_or("NULL".to_string(), |at| format!("'{}'", mysql_time(at)));
+            let session = state.get("session").and_then(Value::as_str).map_or("NULL".to_string(), |id| format!("'{id}'"));
+            setup
+                .query_drop(format!(
+                    "INSERT INTO `{SOURCE}`.user_emotion_summary (user_id, neutral_seconds, happy_seconds, surprise_seconds, sad_seconds, angry_seconds, \
+                     last_finalized_at, last_session_id, lock_version, created_at, updated_at) VALUES ('{user}', {}, {at}, {session}, {}, '2026-01-01 00:00:00', '2026-01-01 00:00:00')",
+                    totals.join(", "),
+                    state["version"]
+                ))
+                .await
+                .unwrap();
+        }
+        let answer = server
+            .post(
+                "/apply",
+                Some(&bearer(subject)),
+                &json!({"key": format!("summary-{index}"), "request": {"extension": "User.myEmotionSummary", "input": {}}}),
+            )
+            .await;
+        assert_eq!(answer["ok"], true, "{name}: {answer}");
+        let got: Value = serde_json::from_str(answer["output"]["body"].as_str().unwrap()).unwrap();
+        assert_eq!(got, case["expected"], "{name}");
+        let row: SummaryRow = setup
+            .query_first(format!(
+                "SELECT neutral_seconds, happy_seconds, surprise_seconds, sad_seconds, angry_seconds, CAST(last_finalized_at AS CHAR), last_session_id, \
+                 lock_version, ABS(TIMESTAMPDIFF(SECOND, last_finalized_at, UTC_TIMESTAMP())) < 120, updated_at <> '2026-01-01 00:00:00' \
+                 FROM `{SOURCE}`.user_emotion_summary WHERE user_id = '{user}'"
+            ))
+            .await
+            .unwrap()
+            .unwrap_or_else(|| panic!("{name}: the row exists"));
+        let want = &case["row"];
+        let seconds: Vec<i64> = [&row.0, &row.1, &row.2, &row.3, &row.4].iter().map(|n| n.parse().unwrap()).collect();
+        assert_eq!(json!(seconds), want["seconds"], "{name}: totals");
+        assert_eq!(row.6.as_deref().unwrap_or(""), want["session"].as_str().unwrap_or(""), "{name}: session id");
+        assert_eq!(json!(row.7), want["version"], "{name}: lock_version");
+        match want["at"].as_str() {
+            Some("recent") => assert_eq!(row.8, 1, "{name}: the checkpoint is recent"),
+            Some(at) => assert_eq!(row.5.as_deref(), Some(mysql_time(at).as_str()), "{name}: checkpoint"),
+            None => assert!(row.5.is_none(), "{name}: no checkpoint"),
+        }
+        assert_eq!(row.9 == 1, want["updated"] == "touched", "{name}: updated_at");
+    }
+    // Four requests at once from the same member with sessions waiting: the totals are added once. A request that lost the lock_version
+    // is refused with WIRE.CONFLICT (or WIRE.WORKER_BUSY beyond the local worker limit) and may be sent again; one that came after
+    // another finds nothing new.
+    let bob = user_of("bob");
+    // Enough sessions that the two calls the principal may run at once both read the row before either one writes.
+    let heavy: Vec<mongodb::bson::Document> = (0..3000_i64)
+        .map(|n| {
+            mongodb::bson::doc! {"user_id": bob, "video_id": "bbbbbbbb-0000-4000-8000-000000000002", "video_view_log_id": format!("heavy-{n:05}"),
+                "created_at": mongodb::bson::DateTime::from_millis(1_772_323_200_000), "finalized_at": mongodb::bson::DateTime::from_millis(1_772_323_200_000 + n * 1000),
+                "emotion_seconds": {"neutral": 1, "happy": 0, "surprise": 0, "sad": 0, "angry": 0}}
+        })
+        .collect();
+    watching.insert_many(heavy).await.unwrap();
+    for round in 0..8 {
+        setup.query_drop(format!("DELETE FROM `{SOURCE}`.user_emotion_summary WHERE user_id = '{bob}'")).await.unwrap();
+        setup
+            .query_drop(format!(
+                "INSERT INTO `{SOURCE}`.user_emotion_summary (user_id, neutral_seconds, happy_seconds, surprise_seconds, sad_seconds, angry_seconds, \
+                 last_finalized_at, last_session_id, lock_version, created_at, updated_at) VALUES ('{bob}', 0, 0, 0, 0, 0, '2026-02-28 10:00:00.000', '', 0, \
+                 '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+            ))
+            .await
+            .unwrap();
+        let request = |key: &str| json!({"key": key, "request": {"extension": "User.myEmotionSummary", "input": {}}});
+        let (bob_token, keys) = (bearer("bob"), ["c1", "c2", "c3", "c4"].map(|key| request(&format!("{key}-{round}"))));
+        let results = tokio::join!(
+            server.post("/apply", Some(&bob_token), &keys[0]),
+            server.post("/apply", Some(&bob_token), &keys[1]),
+            server.post("/apply", Some(&bob_token), &keys[2]),
+            server.post("/apply", Some(&bob_token), &keys[3])
+        );
+        let results = [results.0, results.1, results.2, results.3];
+        assert!(results.iter().any(|r| r["ok"] == true), "{results:?}");
+        for refused in results.iter().filter(|r| r["ok"] != true) {
+            assert!(["WIRE.CONFLICT", "WIRE.WORKER_BUSY"].contains(&refused["code"].as_str().unwrap_or("")), "{refused}");
+        }
+        let (total, version): (String, i64) = setup
+            .query_first(format!("SELECT neutral_seconds, lock_version FROM `{SOURCE}`.user_emotion_summary WHERE user_id = '{bob}'"))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!((total.as_str(), version), ("3100", 1), "the sessions are added once: {results:?}");
+    }
+    // The transition the extension calls states its own contract: a stale lock_version is refused and changes nothing, the current one
+    // applies and moves the version, and another member cannot touch the row. (The transition is public: a member can also write
+    // their own totals directly. Nothing else reads this table, so only their own summary screen is affected.)
+    let alice = user_of("alice");
+    setup.query_drop(format!("DELETE FROM `{SOURCE}`.user_emotion_summary WHERE user_id = '{alice}'")).await.unwrap();
+    setup
+        .query_drop(format!(
+            "INSERT INTO `{SOURCE}`.user_emotion_summary (user_id, neutral_seconds, happy_seconds, surprise_seconds, sad_seconds, angry_seconds, \
+             last_finalized_at, last_session_id, lock_version, created_at, updated_at) VALUES ('{alice}', 1, 2, 3, 4, 5, NULL, NULL, 5, '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+        ))
+        .await
+        .unwrap();
+    let direct = |key: &str, expect: i64| json!({"key": key, "request": {"apply": "UserEmotionSummary.applyDelta", "target": {"ids": [alice]}, "values": {"neutral_seconds": 50}, "expect": {"lock_version": expect}}});
+    let state_query = format!("SELECT neutral_seconds, lock_version FROM `{SOURCE}`.user_emotion_summary WHERE user_id = '{alice}'");
+    let alice_token = bearer("alice");
+    let stale = server.post("/apply", Some(&alice_token), &direct("stale", 4)).await;
+    assert_eq!(stale["code"], "WIRE.CONFLICT", "{stale}");
+    assert_eq!(
+        setup.query_first::<(String, i64), _>(state_query.as_str()).await.unwrap().unwrap(),
+        ("1".to_string(), 5),
+        "a stale lock_version changes nothing"
+    );
+    let current = server.post("/apply", Some(&alice_token), &direct("current", 5)).await;
+    assert_eq!(current["ok"], true, "{current}");
+    assert_eq!(
+        setup.query_first::<(String, i64), _>(state_query.as_str()).await.unwrap().unwrap(),
+        ("50".to_string(), 6),
+        "the current lock_version applies and moves the version"
+    );
+    let foreign = server.post("/apply", Some(&bearer("bob")), &direct("foreign", 6)).await;
+    assert_ne!(foreign["ok"], true, "{foreign}");
+    assert_eq!(
+        setup.query_first::<(String, i64), _>(state_query.as_str()).await.unwrap().unwrap(),
+        ("50".to_string(), 6),
+        "another member cannot change the row"
+    );
+    // A guest has no summary.
+    let guest = server.post("/apply", None, &json!({"key": "guest", "request": {"extension": "User.myEmotionSummary", "input": {}}})).await;
     assert_ne!(guest["ok"], true, "{guest}");
 
     mongo.database(MONGO_DB).drop().await.expect("drop the run-owned database");

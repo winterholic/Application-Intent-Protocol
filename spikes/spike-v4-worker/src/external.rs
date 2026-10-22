@@ -144,6 +144,19 @@ impl ExternalEffects {
             "redis" => "redis",
             _ => return Err(reject("WIRE.UNSUPPORTED", "알 수 없는 external capability")),
         };
+        if crate::is_external_read(kind, resource, input) {
+            // A read leaves no effect to journal or undo: the capability checks the grant and its own namespace on every call.
+            return match kind {
+                "mongo" => match &self.mongo {
+                    Some(mongo) => mongo.call(&self.principal, resource, input).await,
+                    None => Err(reject("WIRE.ADAPTER_UNSUPPORTED", "Mongo capability가 설정되지 않음")),
+                },
+                _ => match &self.redis {
+                    Some(redis) => redis.call(&self.principal, resource, input).await,
+                    None => Err(reject("WIRE.ADAPTER_UNSUPPORTED", "Redis capability가 설정되지 않음")),
+                },
+            };
+        }
         let command = input.get("command").and_then(Value::as_str).unwrap_or("?").to_string();
         let announced = input.get("compensate") == Some(&Value::Bool(true));
         let index = self.steps.len();
@@ -324,8 +337,11 @@ mod tests {
     }
 
     impl MongoCapability for FakeMongo {
-        fn call<'a>(&'a self, _: &'a CapabilityPrincipal, _: &'a str, _: &'a Value) -> CapabilityFuture<'a, Result<Value, Reject>> {
-            Box::pin(async { Err(reject("WIRE.UNSUPPORTED", "read")) })
+        fn call<'a>(&'a self, _: &'a CapabilityPrincipal, collection: &'a str, _: &'a Value) -> CapabilityFuture<'a, Result<Value, Reject>> {
+            Box::pin(async move {
+                self.0.events.lock().unwrap().push(format!("read {collection}"));
+                Ok(json!({"docs": []}))
+            })
         }
         fn write<'a>(
             &'a self,
@@ -368,8 +384,11 @@ mod tests {
     }
 
     impl RedisCapability for FakeRedis {
-        fn call<'a>(&'a self, _: &'a CapabilityPrincipal, _: &'a str, _: &'a Value) -> CapabilityFuture<'a, Result<Value, Reject>> {
-            Box::pin(async { Err(reject("WIRE.UNSUPPORTED", "read")) })
+        fn call<'a>(&'a self, _: &'a CapabilityPrincipal, key: &'a str, _: &'a Value) -> CapabilityFuture<'a, Result<Value, Reject>> {
+            Box::pin(async move {
+                self.0.events.lock().unwrap().push(format!("read {key}"));
+                Ok(json!({"value": null}))
+            })
         }
         fn write<'a>(&'a self, _: &'a CapabilityPrincipal, key: &'a str, input: &'a Value) -> CapabilityFuture<'a, Result<EffectOutcome, Reject>> {
             Box::pin(async move {
@@ -426,6 +445,21 @@ mod tests {
         assert_eq!(statuses, ["compensated", "completed", "compensated"]);
         assert_eq!(log["transaction_id"], "tx-1");
         assert_eq!(log["metadata"]["extension"], "Video.track");
+    }
+
+    #[tokio::test]
+    async fn a_read_runs_at_once_and_leaves_no_step_or_log_to_undo() {
+        let script = Arc::new(Script::default());
+        let mut effects = effects(&script);
+        effects.call("mongo", "user_watch_stats", &json!({"command": "emotion_seconds"})).await.unwrap();
+        effects.call("mongo", "youtube_watching_data", &json!({"command": "find"})).await.unwrap();
+        effects.call("redis", "k:1", &json!({"command": "get"})).await.unwrap();
+        // An unknown command is a write until proven otherwise: it is journaled as a step and refused by the capability.
+        let unknown = effects.call("mongo", "youtube_watching_data", &json!({"command": "boom"})).await.unwrap_err();
+        assert_eq!(unknown.code, "WIRE.ADAPTER_UNAVAILABLE");
+        assert_eq!(events(&script), ["read user_watch_stats", "read youtube_watching_data", "read k:1"]);
+        assert!(script.journal.lock().unwrap().is_empty(), "only a compensable write opens the saga log");
+        assert_eq!(effects.rollback().await, RollbackOutcome::Clean);
     }
 
     #[tokio::test]

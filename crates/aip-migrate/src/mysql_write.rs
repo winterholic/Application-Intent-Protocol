@@ -60,6 +60,59 @@ impl RelationalWorkerWrite for MysqlWorkerWrite {
             if !self.allowed.contains(transition) {
                 return Err(Reject { code: "WIRE.ACCESS_NOT_DECLARED", msg: "전이가 worker write grant에 없음".into() });
             }
+            if resource == "read" {
+                // `ctx.data.read`: the public read under the caller's row policies, run in this transaction so it sees the same snapshot
+                // the following patch is checked against. It writes nothing, so a refusal does not poison the transaction.
+                let plan = spike_v2_read::plan::plan_read_in(Dialect::MySql, &self.facts, request, &authoritative_caller, wire)?;
+                let tx = self
+                    .tx
+                    .as_mut()
+                    .and_then(|tx| tx.as_mut().ok())
+                    .ok_or_else(|| Reject { code: "WIRE.INTERNAL", msg: "write transaction 없음".into() })?;
+                let params: Vec<MyValue> =
+                    plan.params.iter().map(|value| value.as_ref().map_or(MyValue::NULL, |text| text.as_str().into())).collect();
+                let rows: Vec<Row> = tx.exec(plan.sql.as_str(), params).await.map_err(|error| classify("ctx.data.read", &error))?;
+                let mut bytes = 0usize;
+                let mut out = Vec::with_capacity(rows.len());
+                for row in rows {
+                    match row.get_opt::<Option<String>, _>(0).and_then(Result::ok).flatten() {
+                        Some(text) => {
+                            bytes += text.len();
+                            if bytes > spike_v2_read::plan::MAX_OUTPUT_BYTES {
+                                return Err(Reject { code: "WIRE.OUTPUT_TOO_LARGE", msg: "ctx.data.read 응답이 상한을 넘음".into() });
+                            }
+                            let value: Value =
+                                serde_json::from_str(&text).map_err(|_| Reject { code: "WIRE.INTERNAL", msg: "결과 JSON 해석 실패".into() })?;
+                            out.push(spike_v2_read::mysql_rows::normalize(value, &plan.output_type)?);
+                        }
+                        None => out.push(Value::Null),
+                    }
+                }
+                return Ok(json!({"rows": spike_v2_read::id_wire::encode_rows(out, &plan.output_type, wire)?}));
+            }
+            if resource == "create" {
+                // `ctx.data.create`: the request is a one-operation atomic bundle of an exposed create.
+                if request["atomic"].as_array().is_none_or(|ops| ops.len() != 1 || ops[0]["create"] != action) {
+                    return Err(Reject { code: "WIRE.BAD_VALUE", msg: "ctx.data.create 요청 형식 오류".into() });
+                }
+                let tx = self
+                    .tx
+                    .as_mut()
+                    .and_then(|tx| tx.as_mut().ok())
+                    .ok_or_else(|| Reject { code: "WIRE.INTERNAL", msg: "write transaction 없음".into() })?;
+                let mut session = Session {
+                    tx,
+                    facts: &self.facts,
+                    knobs: Knobs { audit_via: Some("extension"), audit_key: Some(self.key.clone()), fresh_now_after_lock: true, ..Knobs::default() },
+                    touched: std::mem::take(&mut self.touched),
+                };
+                let result = run_write(&mut session, request, &authoritative_caller, wire).await.map(|result| json!({"created": result["created"]}));
+                self.touched = session.touched;
+                if let Err(error) = &result {
+                    self.poisoned.get_or_insert_with(|| Reject { code: error.code, msg: error.msg.clone() });
+                }
+                return result;
+            }
             let declaration = &self.facts["resources"][resource]["exposeApply"][action];
             if declaration.is_null() {
                 return Err(Reject { code: "WIRE.ACCESS_NOT_DECLARED", msg: "공개되지 않은 전이".into() });

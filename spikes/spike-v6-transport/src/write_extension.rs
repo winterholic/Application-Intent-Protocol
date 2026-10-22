@@ -130,7 +130,7 @@ pub async fn apply_with_launch(
             .as_object()
             .into_iter()
             .flatten()
-            .flat_map(|(name, _)| super::write_tags(facts, name))
+            .flat_map(|(name, _)| super::grant_write_tags(facts, name))
             .collect();
         tags.sort();
         tags.dedup();

@@ -247,5 +247,37 @@ threshold fail the oracle.
 
 Differences and limits: soft-deleted videos are invisible (the original's moments and DNA also count them); the DNA is computed on every
 call (the original caches it in `user_emotion_dna` for 7 days); the DNA reads the genres of at most about 3000 distinct videos; an optional
-input such as `month` must be sent as null; `GET mypage/emotion/summary` (an incremental total kept in `user_emotion_summary` with
-optimistic locking) is not ported yet.
+input such as `month` must be sent as null; `GET mypage/emotion/summary` is Slice14-F below.
+
+## Slice14-F: the emotion summary (WBS 7.2.8)
+
+`slice14e_mypage.py` also ports `MypageService.get_emotion_summary` as the write extension `User.myEmotionSummary` (`POST /apply` with
+`{extension, input: {}}` and a fresh `key` per request). It reads the member's `UserEmotionSummary` row (`ctx.data.read`, own row only),
+asks the server command `emotion_seconds` of `user_watch_stats` for the totals of the sessions the checkpoint has not seen, and writes the
+new totals with the transition `UserEmotionSummary.applyDelta` (`patch` the five totals and the checkpoint, `expect lock_version`,
+`to lock_version = this.lock_version + 1`). A member without a row gets one first (`ctx.data.create`; the zero totals come from the column
+defaults of `db-defaults.sql`).
+
+| Original | AIP |
+|---|---|
+| `UserEmotionSummary(user_id=...)` on the first call | `ctx.data.create` of the exposed create (`allow id = actor`) |
+| no checkpoint: every session once, `most_emotion_timeline` per second (the last frame of a second wins), else `emotion_percentages` times the estimated watch seconds; checkpoint `now` and `''` | server command `emotion_seconds` without `after`, the same rules; the sums stay unrounded and the extension truncates the total like `int()` |
+| with a checkpoint: `finalized_at > t or (finalized_at = t and video_view_log_id > id)`, ordered by both, the stored `emotion_seconds`, else the estimate (the timelines are not read) | `emotion_seconds` with `after: {at, session}`, the same query and order |
+| `apply_delta(expected_version, ...)` updates `WHERE lock_version = expected`, three attempts | the patch with `expect: {lock_version}`; a lost race is `WIRE.CONFLICT` and nothing changes |
+| no new session: no write | no write, `lock_version` unchanged |
+
+`reference/slice14f_oracle.py` runs the original and the port from the same starting row and compares the answer and the row afterwards
+(totals, checkpoint, session id, `lock_version`): 19 cases (no row, a row without a checkpoint, ties on `finalized_at`, a checkpoint before,
+inside, after and at the end of the history, stored seconds, timelines, percentages, `timeline_len`, `frame_count`, text and out-of-range
+numbers, fractions of a second, 800 sessions, a member with no session, a repeated call, a late session added exactly once, concurrent
+calls, a guest). `slice14f-golden.json` and `slice14f-sessions.json` record them for the CI replay in `mysql_facereview_trending_job`.
+
+Differences and limits: (1) **The checkpoint column.** The original keeps `last_finalized_at` in a `DATETIME` without fractions, which
+rounds the checkpoint of a session finalized at `.4 s` down, so the next call counts that session again (measured on the original: 40, 50
+and 60 seconds on three calls with one new session). `db-defaults.sql` makes the column `datetime(3)`, as precise as MongoDB's
+`finalized_at`; the original keeps working on it and counts once. (2) A first call that races another first call fails
+(`WIRE.ALREADY_EXISTS` from the create) instead of reusing the row, and a call that loses the `lock_version` is `WIRE.CONFLICT` at once
+where the original tried three times: send the request again. (3) The transition is public (`expose apply`), so a member can write their
+own totals directly. Nothing else reads the table (checked in the original's code), so only their own summary screen is affected; a
+transition that only extensions may call would close it. (4) A session needs `finalized_at` and `video_view_log_id` for the later calls,
+or the call fails. (5) One call sums at most 20000 sessions and fails beyond that instead of answering with a partial total.

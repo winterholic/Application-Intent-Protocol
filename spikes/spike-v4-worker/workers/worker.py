@@ -27,19 +27,24 @@ class Data:
     async def aggregate(self, res, name, inp):
         return await self.ctx.call("aggregate", f"{res}.{name}", inp)
 
-    async def apply(self, res, name, ids, key=None):
+    async def apply(self, res, name, ids, key=None, values=None, expect=None):
         inp = {"ids": [str(i) for i in ids]}
         if key is not None:
             inp["key"] = key
+        # A patch transition (write extensions): the caller's values and the current values the row is expected to hold.
+        if values is not None:
+            inp["values"] = values
+        if expect is not None:
+            inp["expect"] = expect
         return await self.ctx.call("apply", f"{res}.{name}", inp)
 
-    # durable job 전용: 공개된 create(expose create)로 새 행 하나를 만들고 id를 돌려준다. key는 effect 장부에 남는다.
+    # durable job과 MySQL 쓰기 확장: 공개된 create(expose create)로 새 행 하나를 만들고 id를 돌려준다. key는 effect 장부에 남는다.
     async def create(self, res, values, key=None):
         out = await self.ctx.call("create", res, {"values": values, "key": key})
         created = out.get("created") or []
         return created[0].get("id") if created else None
 
-    # durable job 전용: 공개 read 요청을 job 주체의 정책으로 실행한다.
+    # durable job과 MySQL 쓰기 확장: 공개 read 요청을 호출자(job 주체)의 정책으로 실행한다.
     async def read(self, query):
         return await self.ctx.call("read", query.get("read") if isinstance(query, dict) else None, query)
 
