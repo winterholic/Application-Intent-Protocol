@@ -4,7 +4,9 @@
 
 7.2.6의 첫 조각으로 Socket.IO 호환 전송 경계(Engine.IO v4 WebSocket 전용, CONNECT `auth.token`, 패킷 상한, 서버 ping/pong, disconnect, `watch_frame` 필드 검증)를 `spikes/spike-v6-transport/src/socketio.rs`에 구현했다(결정 D-P-WATCH-SOCKET, 검증은 [제품 검증](../product/VERIFICATION.md)의 같은 날짜 절). 단위 24개, 실제 서버 통합 4개(PostgreSQL 17), 실제 `socket.io-client` 4.8.3 종단 1개가 로컬에서 통과했고 spike-v6 전체 시험은 EXIT=0이다. **유효한 프레임도 `WIRE.NOT_AVAILABLE`로 답한다. 분석·세션·view log·Mongo timeline이 없으므로 7.2.6의 실제 영상·웹캠·ML 흐름은 하나도 증명되지 않았다.** 다음 조각: 첫 프레임의 세션 초기화와 `VideoViewLog` 멱등 생성(쓰기 경로·principal 유도 `user_id`·프레임별 재검사), 그 뒤 모델 출처와 재현 가능한 ML 런타임(게이트: 모델 출처 권한과 TensorFlow/OpenCV 환경 미확인), Mongo timeline 저장, 원본 backend를 끈 실제 브라우저 trace. 이 서버의 MySQL 서비스 위 종단 실행과 실제 브라우저 접속은 미검증이다.
 
-7.2.8의 MySQL 종단 미검증은 로컬에서 갱신했다. `mysql_facereview_trending_job`을 이 Run의 격리 MySQL 8.4·MongoDB 7·Redis·PostgreSQL 컨테이너에서 실행해 `1 passed`(직접·atomic·중첩 우회 5가지의 `WIRE.NOT_EXPOSED`와 `myEmotionSummary` 정상 갱신 포함)였다. 앞 실행의 `SERVER_CONFIG` / `io other error`는 재현하지 못했고, Redis 미설정 가설은 변수만 뺀 통제 실행(같은 `1 passed`)으로 기각했다. 앞 실패의 원인은 확정하지 못했다(환경이 회수되어 검증 불가). Linux CI의 Verify(이 시험을 실제로 돌리는 workflow)는 `ab2f79f`분이 진행 중이었고 결과는 이 조각의 CI 확인 때 함께 적는다.
+7.2.8의 MySQL 종단 미검증은 로컬에서 갱신했다. `mysql_facereview_trending_job`을 이 Run의 격리 MySQL 8.4·MongoDB 7·Redis·PostgreSQL 컨테이너에서 실행해 `1 passed`(직접·atomic·중첩 우회 5가지의 `WIRE.NOT_EXPOSED`와 `myEmotionSummary` 정상 갱신 포함)였다. 앞 실행의 `SERVER_CONFIG` / `io other error`는 재현하지 못했고, Redis 미설정 가설은 변수만 뺀 통제 실행(같은 `1 passed`)으로 기각했다. 앞 실패의 원인은 확정하지 못했다(환경이 회수되어 검증 불가). Linux CI: 조각 커밋 `58e1fdb`의 8개 workflow가 모두 success이고 Verify(run 39788184086)의 로그에서 이 시험이 Linux runner에서 `1 passed`(46.35초)다. 같은 로그에서 새 `socket.io-client` 종단 시험도 `ok`다. 앞선 `40b4539`·`ab2f79f`의 Verify는 뒤 push로 취소돼 결과가 없다.
+
+7.2.10은 구현 없이 사전 조사만 했다([제품 검증](../product/VERIFICATION.md)의 「7.2.10 사전 조사」): 고정 UI의 서버 호출은 `src/api` 여섯 파일 30곳(고유 경로 25개)과 소켓 1곳에 모여 있고, 전부 AIP 쪽 대응이 있지만 화면 응답 모양 일치와 토글(like·bookmark) 변환은 확인 전이다. 다음은 UI 작업 위치 결정과 SDK 바인딩 산출 방법, 그리고 어댑터 첫 조각이다. 최종 gate(원본 backend를 끈 브라우저 E2E)는 7.2.6의 실제 ML 흐름 뒤다.
 
 ## 이전 재개 지점 (2026-10-22, applyDelta 권한 slice push 완료 · 7.2.6 transport 시작 전)
 
