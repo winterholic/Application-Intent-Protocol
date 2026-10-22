@@ -2,7 +2,7 @@
 
 ## 재개 지점 (2026-10-22, 7.2.9 구현 완료 뒤 기록)
 
-7.2.9의 남은 둘을 옮겼다. 시스템 상태는 읽기 확장 `User.systemStatus`(결정 D-P-SYSSTATUS, 원본과 10개 사례, 서버 지표는 파생 컬렉션 `server_status`로 Linux 전용이며 식은 psutil 값과 같음을 Linux 컨테이너로 확인), 시청 더미 데이터는 durable job `generateDummyData`(결정 D-P-DUMMY, 같은 시드의 원본과 20개 사례)다. 더미 데이터를 만들다가 기존 결함을 찾아 고쳤다: durable job이 Mongo의 개인 문서에 소유자를 UUID가 아닌 정수 핸들로 적었다(`mysql_jobs.rs`). 따라서 7.2.9의 잔여 4개(요청 생성, dashboard, 시스템 상태, 더미 데이터)는 모두 구현 조각을 마쳤고 각 절의 한계와 미검증 항목은 남아 있다. 남은 것: 실제 메일 provider live smoke 미실행, 더미 데이터의 비숫자 세션 경로 미실행, 생성 SDK의 단독 집계 바인딩과 화면 연결은 7.2.10, 대시보드 호출 횟수·Redis 캐시 없음 등 각 절의 알려진 한계. 이 조각의 커밋과 CI 결과는 아래 줄에 적는다. 직전 조각 CI: 49aea49 7종(Verify 39756710567 포함) completed/success(Deployment checks는 경로 조건으로 실행되지 않음).
+7.2.9의 남은 둘을 옮겼다. 시스템 상태는 읽기 확장 `User.systemStatus`(결정 D-P-SYSSTATUS, 원본과 10개 사례, 서버 지표는 파생 컬렉션 `server_status`로 Linux 전용이며 식은 psutil 값과 같음을 Linux 컨테이너로 확인), 시청 더미 데이터는 durable job `generateDummyData`(결정 D-P-DUMMY, 같은 시드의 원본과 20개 사례)다. 더미 데이터를 만들다가 기존 결함을 찾아 고쳤다: durable job이 Mongo의 개인 문서에 소유자를 UUID가 아닌 정수 핸들로 적었다(`mysql_jobs.rs`). 따라서 7.2.9의 잔여 4개(요청 생성, dashboard, 시스템 상태, 더미 데이터)는 모두 구현 조각을 마쳤고 각 절의 한계와 미검증 항목은 남아 있다. 남은 것: 실제 메일 provider live smoke 미실행, 더미 데이터의 비숫자 세션 경로 미실행, 생성 SDK의 단독 집계 바인딩과 화면 연결은 7.2.10, 대시보드 호출 횟수·Redis 캐시 없음 등 각 절의 알려진 한계. 이 조각은 9accfd7이고 동일 SHA CI 8종(Verify 39761260361 포함)이 모두 success다. 직전 조각 CI: 49aea49 7종(Verify 39756710567 포함) completed/success(Deployment checks는 경로 조건으로 실행되지 않음).
 
 ## 이전 재개 지점 (2026-10-22, 7.2.9 관리자 대시보드 뒤 기록)
 
