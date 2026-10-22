@@ -1144,3 +1144,25 @@ Sol high가 별도 문맥에서 운영 중 구 정책 실행, 폐기 토큰 재�
 검증 환경은 현재 macOS arm64, 로컬 PostgreSQL, 통제된 HTTPS 인증서 fixture와 메모리 생성 RSA 키다. 외부 실제 IdP 계정·TLS reverse proxy 배포·다른 OS·대형 테이블 무중단 변경은 미실행이다. actor resource 교체·임의 SQL 변환·자동 역방향 migration·구버전 client 공존은 지원하지 않는다. 최종 작성 형식·Id 표현·쓰기 조합·라이선스의 미결정을 승인으로 승격하지 않는다.
 
 실행 절차는 [OPERATIONS](OPERATIONS.md), 설계 관문은 [서비스](../crates/aip-service/README.md)·[인증](../crates/aip-auth/README.md)·[마이그레이션](../crates/aip-migrate/README.md)·[정의 한계](../spikes/spike-v1-fixture/PRODUCTION-LIMITS.md)·[정책 실행 한계](../spikes/spike-v2-read/PRODUCTION-RUNTIME.md)를 따른다.
+
+## 2026-10-23 WBS 7.2.10 인증 회원 SDK/API journey (실제 CI 서비스, 범위 slice)
+
+**기준과 범위.** Backend 기준은 pinned revision `7948b7e…`, UI는 pinned revision `2e7c021fa5abebd72278d841b8066a33d45cfbb3`이며 dirty 원본 UI/backend checkout은 수정하지 않았다. 고정 UI의 여섯 API 파일에 있던 30 callsite/25 unique route inventory와 `ui-overlay` adapter를 대조한 뒤 아래의 모델·방문자 정책과 무관한 최소 회원 경로를 실제 실행했다.
+
+| 경로/adapter 계약 | 실제로 수행한 일 | 판정 |
+|---|---|---|
+| `POST /auth/login`, `POST /auth/reissue` 1회 | dedicated fixture member 로그인, refresh cookie 회전, 새 access token 획득 | 성공 |
+| SDK `extension` → `Video.homeVideoAll` (`createReadApi().getAllVideo`) | 로그인 principal로 고정 fixture video 목록을 읽음 | 성공 |
+| SDK `read` + `bundle({atomic:[{create…}]})` + `apply` | 현재 `VideoBookmark` 확인, 본인 북마크 create 뒤 다시 toggle하여 `VideoBookmark.remove` | 성공, on/off 모두 단정 |
+| SDK `bundle({atomic:[{create…}]})` + `apply` | 본인 댓글 create, `Comment.edit`, `Comment.delete`; 마지막 read가 member row policy에 따라 soft-deleted row를 숨기는지 확인 | 성공, 삭제 뒤 0 rows 단정 |
+| `POST /auth/logout`, `POST /session` | refresh session 폐기 뒤 이전 access token 확인 | 성공, HTTP envelope `200`와 body `ok=false, code=WIRE.UNAUTHENTICATED` |
+
+**SDK·서비스·fixture.** Linux GitHub Verify run [39851918809](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39851918809), exact code SHA `1033269ec1389ddd7b750b6ad9f5e53bd100a53b`에서 `bash tools/verify.sh`와 `bash scripts/verify-mysql-worker-e2e.sh run-ci`가 모두 통과했다. 보조 workflow `Linux worker jobs` 39851918812, `Linux cgroup v2` 39851918750, `Object storage` 39851918710, `App packages` 39851918717, `External brokers` 39851918739도 같은 SHA에서 success다(총 6/6). 통합 script가 real `aip service serve`, sandboxed Python extension worker, MySQL 8.4를 실행했고, workflow가 run-owned MongoDB와 Redis native fixture도 시작했다. 이 회원 journey에는 기존 전용 fixture account와 그에 연결된 모델 없는 video 1개 및 Mongo `video_distribution` 문서 1개를 사용했다. Mongo의 감정 필드는 고정 fixture 값이지 모델 추론을 흉내 낸 결과가 아니다. 운영 계정·운영 데이터·외부 영상 수집은 쓰지 않았다.
+
+**실제 결과.** `facereview_accounts_log_in_refresh_and_log_out_without_the_originals_replay_defect`가 `1 passed; 0 failed`(22.41s)다. 그 stdout에는 다음이 출력됐다: `member SDK journey: login, one refresh, UI adapter video read, bookmark on/off, comment create/edit/delete, logout`. 전체 end-to-end script의 나머지 test도 통과했고 Verify workflow conclusion은 `success`다. 새 raw log는 `/Users/winterholic/.ttakkari/data/outbox/5b966616-0637-43fc-9a2c-938c348bc032/aip-verify-39851918809-raw.log`(13,859 lines, 2,170,057 bytes)다. 로그 검사 결과 JWT 형태 문자열 0, Authorization bearer 0, refresh cookie 0, fixture password 표식 0으로 민감 인증값 출력은 발견되지 않았다.
+
+**발견과 수정.** Adapter fake tests는 실제 SDK surface를 검증하지 못했다. real SDK journey가 `apply`로 create를 보내던 bookmark/like/comment adapter가 contract를 어긴 것을 드러내 `bundle()`의 기존 `{atomic:[{create, values}]}` envelope로 옮겼다. D-A26이 보장하는 단일 atomic write 실행과 같은 create field/`allow`/row policy를 유지하며, `facereview.aip`의 `VideoBookmark`·`Comment` owner 조건을 통과하는지 real member request로 확인했다. 삭제 댓글은 `.aip`의 `Comment rows read when ... is_deleted = false ... or isAdmin(actor)` 정책 때문에 member에게 읽히지 않는다. 그래서 시험은 이전 값 `is_deleted=true`를 읽는다고 가정하지 않고, 명세가 요구하는 `rows.length === 0`을 단정한다(관리자 예외 조건도 정의에 남아 있다).
+
+첫 성공하지 못한 동일-SHA 시도인 Verify 39848380032는 journey를 logout 뒤까지 실행했고, `/session` 본문에서 `WIRE.UNAUTHENTICATED`를 받았으나 시험이 이를 HTTP 401로 비교해 실패했다. 기존 `mysql_facereview_auth.rs`도 `/session`의 body `code`를 검사하며, AIP endpoint는 이 application error를 HTTP 200 envelope에 담는다. 수정 SHA `1033269…`의 journey는 status 200, `ok=false`, `code=WIRE.UNAUTHENTICATED`를 모두 단정하고 통과했다. 이는 기대를 느슨하게 하지 않고 실제 응답 envelope와 기존 권한 의미를 확인한 것이다. 이 첫 실패의 raw log는 `/Users/winterholic/.ttakkari/data/outbox/5b966616-0637-43fc-9a2c-938c348bc032/aip-verify-39848380032-raw.log`에 보존했다.
+
+**검증 경계와 재개.** TypeScript와 Vite client bundle은 이전 UI build slice에서 통과했고, preview browser에서는 SPA shell만 확인했다. 이번 실제 auth/member journey는 Linux CI에서 실행한 API/SDK 테스트이며 로그인한 UI browser journey는 실행하지 않았다. Browser/prerender는 미검증이며 25개 route 전체 화면 동등성도 확인하지 않았다. Mac nested Codex의 알려진 Python worker probe 차단(`sandbox-exec: sandbox_apply: Operation not permitted`)은 이전 환경 증거로만 남기고 이번에 다시 시도하거나 우회하지 않았다. ML model 권리·로드·추론, 방문자 policy, 익명 principal은 이번 slice 밖이고 판정하지 않았다. 공개 `VideoViewLog.create` 계약은 바꾸지 않았고 internal extension 경계도 풀지 않았다. WBS 7.2.10 전체나 ML/WBS 완료 표시는 하지 않는다.

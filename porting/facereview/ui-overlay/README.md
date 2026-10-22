@@ -4,23 +4,27 @@ The player of FaceReview is the user's repository `facereview-front-joowon`. Thi
 data access moves from the original REST API to AIP; it is meant to be copied over a checkout of the pinned revision
 `2e7c021fa5abebd72278d841b8066a33d45cfbb3`. Decision: `docs/DECISIONS.md` D-P-UI-ADAPTER. Evidence: `product/VERIFICATION.md`.
 
-**Status: slice 1 of the read side. The UI has not been built or run with this overlay, and no browser was used.**
+**Status: read, auth, and write data adapters are present.** The generated TypeScript SDK and these adapters completed a real member journey through the AIP service and dedicated Linux CI fixtures at code SHA `1033269ec1389ddd7b750b6ad9f5e53bd100a53b` (Verify run [39851918809](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39851918809)). This exercised login, one refresh, `Video.homeVideoAll`, bookmark on/off, comment create/edit/delete, logout, and stale-token rejection. The pinned UI TypeScript and Vite client build also passed in the earlier UI build slice. The full React UI was not logged in against this service in a browser; the prior preview only showed the SPA shell.
 
 | File | What it is | Tested |
 |---|---|---|
-| `src/api/readAdapter.ts` | The nine read functions of `src/api/youtube.ts` over an SDK client (`extension`, `writeExtension`, `apply`). Same names, arguments and results as the original; parses the JSON text the extensions return | `tests/readAdapter.test.ts` (fake client, the original's golden answer for the watch detail), run by `tools/verify.sh` |
-| `src/api/youtube.ts` | The overlay file itself: re-exports the adapter, and `toggleBookmark` fails with `PORT.NOT_PORTED` | no |
-| `src/api/aipClient.ts` | The one `@aip/sdk` client of the player, with the member's current access token | no (needs the UI tree, the generated binding and the SDK tarball) |
+| `src/api/readAdapter.ts` | Nine video read functions over the SDK client; parses the extension JSON into the existing UI shape | adapter unit tests plus real `getAllVideo` member journey against generated SDK and service |
+| `src/api/authAdapter.ts`, `src/api/auth.ts` | Existing `/auth/*` flows and one-refresh handling for protected SDK requests | adapter unit tests; real login, one reissue, logout, and revoked-token check |
+| `src/api/writeAdapter.ts` | Bookmark/like create/remove, comment create/edit/delete, and video request recommendation | adapter unit tests; real bookmark on/off and comment create/edit/delete; create uses SDK `bundle({atomic:[...]})` and transitions use `apply()` |
+| `src/api/youtube.ts`, `src/api/aipClient.ts` | Overlay exports and the player's configured SDK client | included in the pinned UI TypeScript/Vite build; server journey imports the read/write adapters directly |
+
+The exact CI command and route coverage are documented in [product verification](../../../product/VERIFICATION.md). The journey uses only the dedicated member/video fixture and does not run model inference.
 
 Generate the binding the client imports (`src/aip/facereview.ts`) from the definition, do not write it by hand:
 
 ```sh
-aip service gen --lang ts --out src/aip/facereview.ts product/tests/fixtures/facereview-mysql/facereview.aip
+aip service gen --lang ts --out src/aip/facereview.ts --sdk-import @aip/sdk product/tests/fixtures/facereview-mysql/facereview.aip
 ```
 
-## Not ported yet
+## Remaining UI journey scope
 
-- Guests: an extension call needs a signed session, so the home screen of a visitor is not served (open problem in D-P-UI-ADAPTER).
-- `toggleBookmark`, likes, comments, the video request form, login/signup/reissue/logout, profile and password screens.
+- Visitor landing behavior remains an open policy decision in D-P-UI-ADAPTER.
+- The full React login flow and signed-in screens have not been run against the AIP service in a browser. The server journey covers adapter/API calls, not mounted-page interactions.
+- The rest of the 25 UI API routes, including profile/password pages and API field-by-field screen parity, remain outside the minimum member journey.
 - The Socket.IO player (`src/socket`): waits for the model decision of WBS 7.2.6.
-- Build of the overlaid UI, `VITE_AIP_URL`/dev proxy, and the browser run that closes WBS 7.2.10.
+- Full static prerender, production `VITE_AIP_URL`/dev proxy setup, and the signed-in browser run that closes WBS 7.2.10.
