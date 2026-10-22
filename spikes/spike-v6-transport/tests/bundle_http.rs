@@ -153,8 +153,10 @@ async fn atomic_bundles_and_compose_run_over_http_with_the_apply_guarantees() {
     assert_eq!(dup["ok"], true, "{dup}");
     let dup_again = post(address, &token, "", &json!({"key": "b8", "request": {"atomic": [json!({"create": "Task", "values": {"project": "11", "author": "1", "title": "HIDDEN-TITLE", "points": 1}})]}})).await;
     assert_eq!(dup_again["code"], "WIRE.ALREADY_EXISTS", "{dup_again}");
+    // The random request id is hex text and can hold "900" by chance (it did, in CI): only what the server says about the collision counts.
+    let said = format!("{} {}", dup_again["code"], dup_again["msg"]);
     for token_text in ["900", "p20"] {
-        assert!(!dup_again.to_string().contains(token_text), "{dup_again}");
+        assert!(!said.contains(token_text), "{dup_again}");
     }
 
     // 8. size caps: too many operations

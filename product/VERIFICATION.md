@@ -160,6 +160,8 @@
 
 **확인한 것.** 생성 binding(`aip service gen --lang ts`)에 확장 설명자(`Video.homeCategory` 등)와 쓰기 확장 설명자가 있고 SDK `connect` 클라이언트에 `extension`·`writeExtension`·`apply`가 있다. 쓰기 확장 설명자에 클라이언트가 부를 수 있는 `User.startWatching`·`User.recordFrame`도 나온다(결정의 열린 문제 d).
 
+**CI.** 이 조각의 커밋 `bdb8f5abe06509cfecfecd6057e4dd9aa4940e04`는 Verify(run 39806502935)만 failure였고 나머지 7종은 success였다. 원인은 이 조각이 아니다(바뀐 파일에 Rust가 없다): `spikes/spike-v6-transport/tests/bundle_http.rs`의 "숨은 행의 값이 중복 오류에 담기지 않는다" 단정이 오류 본문 전체에서 문자열 `900`을 찾는데, 본문의 무작위 `requestId`(16진수, 그 실행은 `...bc0900d1d7`)에 `900`이 우연히 들어 있었다. 약 0.5%의 확률로 나는 시험의 결함이라 서버가 말하는 `code`와 `msg`만 검사하도록 고쳤다(수정 뒤 로컬 `1 passed`). 수정 커밋의 CI 결과는 아래 STATUS에 적는다.
+
 **열린 문제(결정 필요, 상세는 결정 기록).** (a) 비로그인 방문자는 확장 호출이 서명된 세션을 요구해서 홈 목록이 서비스되지 않는다. 이 문제는 7.2.3 때부터 알려진 코어 의존(extensions README 3번)이고 화면에서는 방문자의 랜딩 화면이 막히는 것으로 나타난다. (b) 좋아요·북마크 토글. (c) 인증·재발급 인터셉터. (d) 내부 전용 확장 표시가 없다. **미검증:** `aipClient.ts`(UI 인증 저장소·생성 binding·`@aip/sdk` 필요), 실제 서버에 대한 호출, UI 빌드와 브라우저, 각 응답이 화면 타입과 필드별로 같은지(원본 오라클과의 서버 쪽 일치만 있다).
 
 ## 2026-10-22 WBS 7.2.10 사전 조사: 원본 UI의 data access 표면 (조사만, 구현 없음)
