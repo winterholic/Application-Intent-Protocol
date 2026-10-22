@@ -1,6 +1,10 @@
 # 진행 현황과 쌓인 질문
 
-## 재개 지점 (2026-10-22, 7.2.7 완료 뒤 기록)
+## 재개 지점 (2026-10-22, 7.2.8 조각 A·B 뒤 기록)
+
+7.2.7은 done이다(아래 절). 7.2.8(마이페이지·이메일·비밀번호·탈퇴·감정 집계)은 관계형·인증 부분을 두 조각으로 끝냈고 doing이다. 조각 A(1951b9f): 로그인 때 약한 해시 재해시(검사한 해시일 때만 갱신), `User.completeTutorial`·`User.updateProfile`·`UserFavoriteGenre` create/remove(선호 장르 교체는 `atomic` 묶음), `/auth/me`는 본인 `User`+`UserFavoriteGenre` 읽기, 탈퇴는 기존 `User.withdraw`이고 다음 reissue가 모든 세션을 끝낸다. 플랫폼 수정: `repeat unchanged` 판정에서 시계(`now`)로 정하는 필드를 뺐다(MySQL·PostgreSQL 쓰기 경로). 조각 B(24ddd30): `credentials.mail`로 `/auth/email/verification`·`/auth/email/verify`·`/auth/password/verification`·`/auth/password`(Bearer 필요, 번호·토큰은 `aip_auth_challenges`에 digest, 시도 5회 제한, 비밀번호 변경은 다른 세션 폐기), 결정 D-P-CREDMAIL. 남은 7.2.8: 마이페이지 Mongo 읽기 6개(`videos/recent`·`emotion/summary`·`highlight`·`emotion/calendar`·`moments`·`emotion-dna`, 원본 `MypageService` 라인 250~760과 `_DNA_TYPES`). `emotion/summary`는 GET 안에서 `UserEmotionSummary`를 낙관적 잠금(`lock_version`)으로 갱신하는 증분 집계라서 읽기 확장만으로는 안 되고 `UserEmotionSummary` 전이(또는 쓰기 확장)가 필요하다. 원본 대조는 `reference/slice13e_oracle.py`·`slice13f_oracle.py` 방식(원본 `MypageService`를 같은 MySQL·MongoDB에서 직접 실행)을 쓴다. 그 다음 7.2.9의 남은 부분이다. CI: 73e9470은 7종 success(Verify 39703774966). 1951b9f·24ddd30의 CI는 push 직후라 확인 전이다.
+
+## 이전 재개 지점 (2026-10-22, 7.2.7 완료 뒤 기록)
 
 7.2.7(예약 업무)은 원본 Celery beat 3작업(`rebuild_recommendation_pool`, `fetch_youtube_trending_videos`, `fill_youtube_category_videos`)이 모두 durable job으로 옮겨져 완료다(조각 A·B·C, 근거는 [제품 검증](../product/VERIFICATION.md)의 7.2.7 세 절). 조각 C(카테고리 보충)는 원본 `execute()`와 36행·72문서·quota 1212가 같았고 실서버 시험이 통과했으며, 장르 사이 quota 검사를 빼는 변이가 시험을 깨뜨렸다. 같은 커밋이 CI Verify 39664738540의 실패(풀 job 시험이 예약 run의 정산을 기다리지 않고 개수를 센 경합)를 고쳤다. 한계: 서버 설정 `limits.job_calls`를 1000 이상으로 올려야 한다, 트렌딩·보충의 예약(`schedules`)은 서버 설정이며 이 두 job만의 예약 시험은 하지 않았다(풀 job이 같은 경로를 보였다), 실제 YouTube credential이 없어 live smoke는 미실행이다. 다음은 7.2.8(인증 잔여: 약한 해시 재해시, `/auth/me`·`/auth/tutorial`, 탈퇴 때 세션 폐기, 마이페이지·이메일·비밀번호 변경·감정 집계), 이어서 7.2.9의 남은 부분(요청 승인은 job `create`와 Mongo 쓰기 capability가 이미 있어 쓰기 확장 쪽 `create` 호출만 필요한지 확인, dashboard, 시스템 상태, 더미 데이터)이다. 시험 환경 준비는 아래 7.2.7 조각 A 단락과 같다.
 
