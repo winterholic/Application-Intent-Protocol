@@ -1,3 +1,13 @@
+import type {
+  EmotionSummaryResponse,
+  SearchVideoResponse,
+  VideoDataType,
+  VideoDetailType,
+  VideoDistributionDataType,
+  VideoRelatedType,
+  VideoWatchedType,
+} from 'types';
+
 // WBS 7.2.10 slice 1: the read side of the FaceReview player's data access, over the AIP SDK instead of the original REST API.
 //
 // The functions keep the names, arguments and results of the pinned UI's `src/api/youtube.ts` (revision 2e7c021), so no screen changes.
@@ -10,13 +20,18 @@
 
 /** What the adapter needs of the SDK client (`connect()` of `@aip/sdk` has all three). */
 export interface AipClient {
+  read(query: Record<string, unknown>): Promise<{ ok: true; rows: Record<string, unknown>[] }>;
   extension(name: string, input: Record<string, unknown>): Promise<Record<string, unknown>>;
   writeExtension(
     name: string,
     input: Record<string, unknown>,
     options?: { key?: string },
   ): Promise<{ ok: true; output: Record<string, unknown> } | { ok: false; code: string; msg?: string; retry?: string }>;
-  apply(request: Record<string, unknown>, options?: { key?: string }): Promise<{ ok: boolean; code?: string }>;
+  apply(request: Record<string, unknown>, options?: { key?: string }): Promise<{
+    ok: boolean;
+    code?: string;
+    created?: Array<{ resource: string; id: string | number | null }>;
+  }>;
 }
 
 export interface AdapterOptions {
@@ -51,13 +66,13 @@ export function createReadApi(client: AipClient, options: AdapterOptions = {}) {
 
   return {
     /** GET home/category. The original ignores `category_name` (it answers with the member's own category lists), and so does this. */
-    async getVideoList(_category?: string) {
+    async getVideoList(_category?: string): Promise<{ category_name: string; videos: VideoDataType[] }[]> {
       const output = await client.extension('Video.homeCategory', {});
-      return parseText<{ category_name: string; videos: unknown[] }[]>(output.categories, 'homeCategory.categories') || [];
+      return parseText<{ category_name: string; videos: VideoDataType[] }[]>(output.categories, 'homeCategory.categories') || [];
     },
 
     /** GET home/search. The UI sends no emotion filter, which the extension reads as an empty comma separated list. */
-    async searchVideos(props: { page: number; size: number; keyword_type: string; keyword: string }) {
+    async searchVideos(props: { page: number; size: number; keyword_type: string; keyword: string }): Promise<SearchVideoResponse> {
       const output = await client.extension('Video.homeSearch', {
         emotions: '',
         keyword: props.keyword,
@@ -65,19 +80,19 @@ export function createReadApi(client: AipClient, options: AdapterOptions = {}) {
         page: props.page,
         size: props.size,
       });
-      return unwrapPage<unknown>(output, 'homeSearch');
+      return unwrapPage<VideoDataType>(output, 'homeSearch');
     },
 
     /** GET home/video/all. */
-    async getAllVideo(props: { page: number; size: number; emotion: string }) {
+    async getAllVideo(props: { page: number; size: number; emotion: string }): Promise<VideoDataType[]> {
       const output = await client.extension('Video.homeVideoAll', { emotion: props.emotion, page: props.page, size: props.size });
-      return unwrapPage<unknown>(output, 'homeVideoAll').videos;
+      return unwrapPage<VideoDataType>(output, 'homeVideoAll').videos;
     },
 
     /** GET home/personalized. */
-    async getPersonalRecommendedVideo() {
+    async getPersonalRecommendedVideo(): Promise<VideoDataType[]> {
       const output = await client.extension('Video.homePersonalized', {});
-      return parseText<unknown[]>(output.videos, 'homePersonalized.videos');
+      return parseText<VideoDataType[]>(output.videos, 'homePersonalized.videos');
     },
 
     /**
@@ -85,9 +100,12 @@ export function createReadApi(client: AipClient, options: AdapterOptions = {}) {
      * only reads, so the increment is the transition `Video.view`, applied after the read. A failed increment is reported and does not
      * hide the video: the member still watches it (the original would have failed the whole request).
      */
-    async getVideoDetail(props: { video_id: string }) {
+    async getVideoDetail(props: { video_id: string }): Promise<VideoDetailType> {
       const output = await client.extension('Video.watchDetail', { video_id: props.video_id });
-      const detail = { ...output, timeline_data: parseText<unknown>(output.timeline_data, 'watchDetail.timeline_data') };
+      const detail = {
+        ...output,
+        timeline_data: parseText<VideoDistributionDataType>(output.timeline_data, 'watchDetail.timeline_data'),
+      } as VideoDetailType;
       try {
         const counted = await client.apply({ apply: 'Video.view', target: { ids: [props.video_id] } }, { key: newKey() });
         if (!counted.ok) warn('the view of the video was not counted', counted.code);
@@ -98,13 +116,13 @@ export function createReadApi(client: AipClient, options: AdapterOptions = {}) {
     },
 
     /** GET mypage/videos/recent. The original's defaults: emotion `all`, page 1, size 10. */
-    async getRecentVideo(props?: { page?: number; size?: number; emotion?: string }) {
+    async getRecentVideo(props?: { page?: number; size?: number; emotion?: string }): Promise<VideoWatchedType[]> {
       const output = await client.extension('User.myRecentVideos', {
         emotion: props?.emotion ?? 'all',
         page: props?.page ?? 1,
         size: props?.size ?? 10,
       });
-      const body = parseText<{ videos?: unknown[] }>(output.body, 'myRecentVideos.body');
+      const body = parseText<{ videos?: VideoWatchedType[] }>(output.body, 'myRecentVideos.body');
       return body.videos ?? [];
     },
 
@@ -112,22 +130,22 @@ export function createReadApi(client: AipClient, options: AdapterOptions = {}) {
      * GET mypage/emotion/summary. This one is a write extension: the original updates the member's running totals inside the GET. Every
      * call is its own write, so every call has its own key (a repeated key would replay the first answer).
      */
-    async getEmotionSummary() {
+    async getEmotionSummary(): Promise<EmotionSummaryResponse> {
       const result = await client.writeExtension('User.myEmotionSummary', {}, { key: newKey() });
       if (!result.ok) return fail(`emotion summary failed: ${result.code}`, result.code, result);
-      return parseText<unknown>(result.output.body, 'myEmotionSummary.body');
+      return parseText<EmotionSummaryResponse>(result.output.body, 'myEmotionSummary.body');
     },
 
     /** GET watch/recommended. The UI sends only the video; the original's defaults are page 1 and size 10. */
-    async getRelatedVideo(props: { video_id: string }) {
+    async getRelatedVideo(props: { video_id: string }): Promise<VideoRelatedType[]> {
       const output = await client.extension('Video.watchRecommended', { video_id: props.video_id, page: 1, size: 10 });
-      return unwrapPage<unknown>(output, 'watchRecommended').videos ?? [];
+      return unwrapPage<VideoRelatedType>(output, 'watchRecommended').videos ?? [];
     },
 
     /** GET home/bookmark. */
-    async getBookmarkVideos(props: { page: number; size: number; emotion: string }) {
+    async getBookmarkVideos(props: { page: number; size: number; emotion: string }): Promise<VideoDataType[]> {
       const output = await client.extension('Video.homeBookmark', { emotion: props.emotion, page: props.page, size: props.size });
-      return unwrapPage<unknown>(output, 'homeBookmark').videos;
+      return unwrapPage<VideoDataType>(output, 'homeBookmark').videos;
     },
   };
 }

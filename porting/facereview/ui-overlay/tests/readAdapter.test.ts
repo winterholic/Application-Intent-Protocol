@@ -8,6 +8,7 @@ type Call = { kind: 'extension' | 'writeExtension' | 'apply'; name?: string; inp
 function fakeClient(answers: Record<string, unknown>, applyResult: { ok: boolean; code?: string } | Error = { ok: true }) {
   const calls: Call[] = [];
   const client: AipClient = {
+    async read() { return { ok: true, rows: [] }; },
     async extension(name, input) {
       calls.push({ kind: 'extension', name, input });
       return answers[name] as Record<string, unknown>;
@@ -130,6 +131,7 @@ test('a text field that is missing or not JSON is a protocol error, never an emp
 
 test('errors of the client reach the screen unchanged', async () => {
   const client: AipClient = {
+    async read() { throw new Error('unused'); },
     async extension() {
       throw Object.assign(new Error('expired'), { code: 'WIRE.TOKEN_EXPIRED' });
     },

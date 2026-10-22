@@ -138,3 +138,10 @@
 | D-R4 | 기존 프레임워크를 얇게 감싸 AIP라 부르기, 의미 모델 없는 API 생성, 언어별 다른 의미 | 철학 §12.3 |
 | D-R5 | (옛 D-P8) 클라이언트는 선언된 intent만 호출하고 조합 요청은 일절 허용하지 않는다 | 창시자 원칙 "호출자가 원하는 데이터·동작을 표현"과 충돌. 무제한 요청도 아니므로 경계는 OI-C1에서 설계 |
 | D-R6 | ⚠️ 이전 기각 이력: 독자 .aip를 정본 작성 언어로 삼기 | 10-03 통합 지침 §5.3으로 기각을 재개방. 현재 형식 여부는 OI-L1/Open이며 과거 행을 독립 파일 금지 근거로 쓰지 않는다 |
+
+## 2026-10-23 WBS 7.2.10 공개 쓰기 경로 보완 판정
+
+- `VideoViewLog.create`는 D-P-WATCH-SESSION이 명시적으로 `active(actor) and user = actor`로 열어 둔 공개 create다. 따라서 호출자가 `/apply`에서 자기 행을 직접 만들 수 있는 것은 현재 선언된 인증·행 권한 계약의 우회가 아니다. 이것은 이미 기록된 한계이며, 본인 시청 기록과 주간 활동 집계에 본인을 넣을 수 있다. user/다른 회원의 행은 직접 만들 수 없다. 생성 SDK에서 호출만 숨기는 조치는 권한 수정이 아니다.
+- `User.startWatching`와 `User.recordFrame`은 쓰기 확장으로 선언돼 생성 SDK의 `writeExtension` 계약에 노출되고, HTTP `/apply`도 같은 쓰기 확장 실행 경로를 갖는다. 그래서 `startWatching`은 로그인한 행위자가 자신의 `VideoViewLog`와 Redis 세션을 직접 만들 수 있고, `recordFrame`은 자기 세션에서 server-staged Redis 점수만 소비할 수 있다. 이것은 D-P-WATCH-FRAMES가 말한 “서버 코드만 부름” 목표를 충족하지 못한다. 현재 정의에 cross-user row 접근이나 임의 점수 입력이 생긴 것은 아니지만, 공개 endpoint에서 호출 가능한 상태 자체가 의도한 호출자 경계보다 넓다. **이번 Mac live test는 별도 DB fixture를 준비했으나 `aip service serve`가 시작 전 `SERVER_CONFIG` / `io other error`로 끝나 endpoint 실행 결과는 미검증**이다. 위 실행 판정은 기존 `.aip` 선언·HTTP router·generated binding과 callsite를 대조한 코드 근거이며, live test 성공으로 표현하지 않는다.
+- 최소 수정 후보는 extension 선언의 내부 전용 표식이다: 표시된 확장은 public `/extension`·`/apply` 및 생성 SDK에서 제외하고, trusted transport/server callsite에서 기존 principal·access·transaction 검사를 보존하며 호출한다. 이는 AIP 문법/IR, 진단·정식 serializer, 서비스 runtime과 HTTP 계약, TS/Python generator·SDK를 함께 바꾸고, 공개 경로에 대한 과거 직접 호출은 `WIRE.NOT_EXPOSED`가 된다. 내부 표식이 생성되기 전에는 UI SDK에서 메서드만 숨겨 보안 조치로 세지 않는다. 새 언어·호환성 작업이므로 이번 UI adapter 조각에서는 server behavior를 바꾸지 않고, 후속 설계/구현 대상으로 남긴다.
+- UI는 이미 정해진 create/remove 의도를 따른다: 북마크는 본인 현재 row를 읽고 있으면 `VideoBookmark.remove`, 없으면 명시적 create; 좋아요 추가는 create, 취소는 현재 row의 remove; 댓글은 create/edit/delete; 영상 요청은 `VideoRequest.recommend`. 토글 상태를 서버에 맡기거나 공개 동작을 임의로 다시 정하지 않는다. 로그인 재발급은 `/auth/reissue`의 단회 refresh cookie를 그대로 사용하고 동시 401은 한 번의 재발급을 공유한다.

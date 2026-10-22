@@ -1,8 +1,10 @@
+정지 (2026-10-23 02:15 KST): 현재 Codex Run은 7.2.10의 인증·쓰기 어댑터 조각과 pinned UI overlay/typecheck/build를 끝냈다. 시작 기준 main/origin `a01649b74074190a152647f2b76cd0985f06b0fb`, clean; 원본 UI `2e7c021fa5abebd72278d841b8066a33d45cfbb3`는 dirty라 읽기 전용이었다. 상세 실행 결과·로그·미검증은 [제품 검증](../product/VERIFICATION.md)의 「2026-10-23 WBS 7.2.10 조각 2」를 본다. 소켓 공개 쓰기 확장의 실행 권한 판정은 문서화했으나 Mac live service는 worker readiness 단계에서 기동하지 못해 runtime 결과는 미검증이다. `model.h5` 사용 결정과 비로그인 방문자 정책은 그대로 미결정이며, 7.2.10·7.2.6의 나머지 범위를 막는 이유로 확대하지 않는다. 다음: 동시 원격 변경을 fetch로 확인하고 커밋/push 후 동일 SHA CI를 확인한다.
+
 정지 (2026-10-23 01:20 KST 갱신): 세션 257e4936이 WBS 7.2.6 조각 2·3, ML 게이트 조사, `/events/socket` 확장 협상 수정(커밋 7f0f702, 7c3ec33, CI 8종 success)과 7.2.10 조각 1 읽기 어댑터(아래 최상단 재개 지점)를 끝냈다. 작업 트리에 소유한 미커밋 변경은 없다. 7.2.6의 나머지(실추론·평균 감정·세션 확정·브라우저 E2E)는 사용자의 모델 사용 결정을, 7.2.10의 나머지는 방문자 접근·좋아요/북마크 토글 방침 결정을 기다린다. 결정 전에 이 두 항목의 같은 부분을 겹쳐 시작하지 마라.
 
-## 재개 지점 (2026-10-23, 7.2.10 조각 1 읽기 어댑터 뒤)
+## 재개 지점 (2026-10-23, 7.2.10 조각 2 뒤)
 
-고정 UI의 읽기 9개를 SDK 확장 호출로 바꾸는 어댑터를 `porting/facereview/ui-overlay/`에 만들었다(결정 D-P-UI-ADAPTER, 근거는 [제품 검증](../product/VERIFICATION.md)의 「7.2.10 조각 1」). 가짜 SDK 클라이언트로 `node --test` 12개가 통과하고 변이 3개를 잡았다. **UI 빌드·실제 SDK·서버·브라우저로는 실행하지 않았다.** 열린 문제 네 가지가 사용자 결정 또는 설계 관문을 기다린다: (a) 비로그인 방문자는 확장 호출이 서명된 세션을 요구해 홈 목록이 서비스되지 않는다, (b) 좋아요·북마크 토글의 의미(원본은 서버 토글, AIP는 명시적 create·remove), (c) 인증·재발급 인터셉터, (d) 클라이언트가 부를 수 있는 서버 전용 확장 `User.startWatching`·`User.recordFrame`이 생성 계약에 노출됨. CI: 조각 커밋 `bdb8f5a`의 Verify는 `bundle_http`가 오류 본문의 무작위 `requestId`(`...bc0900d1d7`)에서 `900`을 찾아 failure였고(약 0.5% 확률의 시험 결함, 이 조각과 무관) 시험을 고친 `27806e4`는 Verify 포함 6종 success다(경로 조건으로 안 도는 2종 제외). 다음 조각 후보: 방문자 접근 방침이 정해지면 그에 맞춘 읽기, 쓰기 어댑터(댓글·북마크·요청 폼), 로그인·토큰, UI 빌드와 덮어쓰기 스크립트.
+조각 1 읽기 어댑터 뒤, 이번 Run에서 인증·쓰기 어댑터와 pinned checkout용 overlay script를 추가했다. AIP `/auth/*` one-time refresh·동시 401 coalescing·실패 콜백, 댓글·좋아요·북마크·요청 추천의 기존 명시 create/remove/writeExtension 계약을 다룬다. 테스트 20개, 생성 SDK package, UI TypeScript 및 Vite build가 통과했고, configured Ttakkari browser에서 FaceReview SPA 셸을 봤다(서비스 데이터 응답은 연결하지 않음). MySQL watch live test는 run-owned MySQL/Mongo/Redis를 준비했지만 서비스 시작 시 `SERVER_CONFIG` (`worker runtime check` 등 준비 단계 중 하나, 하위 원인은 미확인)로 실패해 공개 HTTP 확장 실행/거절 판정은 미검증이다. 공개 경로와 계약의 판정·향후 최소 내부 전용 표식 선택지는 [DECISIONS](../docs/DECISIONS.md) 및 [제품 검증](../product/VERIFICATION.md)의 조각 2를 본다. 모델 출처와 방문자 접근 정책은 계속 미결정이다. 다음: 같은 SHA CI와 main push를 확인한 뒤 7.2.10의 나머지 화면/API 범위로 이동한다.
 
 ## 이전 재개 지점 (2026-10-23, 7.2.6 조각 3 프레임 타임라인 저장 · ML 게이트 조사 · `/events/socket` 확장 협상 수정 뒤)
 
