@@ -84,6 +84,9 @@ assert.equal(logout.status, 200, 'logout revokes the member session');
 const stale = await fetch(`${base}/session`, {
   method: 'POST', headers: {'content-type': 'application/json', authorization: `Bearer ${token}`}, body: '{}',
 });
-assert.equal(stale.status, 401, 'logout invalidates the access token');
+const staleBody = await stale.json();
+assert.equal(stale.status, 200, 'session failures use the AIP response envelope');
+assert.equal(staleBody.ok, false, 'logout invalidates the access token');
+assert.equal(staleBody.code, 'WIRE.UNAUTHENTICATED', 'logout invalidates the access token');
 
 console.log('member SDK journey: login, one refresh, UI adapter video read, bookmark on/off, comment create/edit/delete, logout');
