@@ -40,6 +40,9 @@ pub enum Command {
         sdk_import: String,
         #[arg(long, value_enum, default_value = "ts")]
         lang: BindingLanguage,
+        /// Generate the deployed read/apply contract without worker write-extension descriptors (TypeScript only).
+        #[arg(long)]
+        read_only: bool,
     },
     /// Read an external schema; write a deny-all definition draft and physical mapping.
     Introspect {
@@ -970,6 +973,24 @@ fn write_binding(file: &Path, out: &Path, content: &str) -> Result<(), Value> {
     result.map_err(|_| error("OUTPUT_IO", "생성 계약 교체 실패"))
 }
 
+fn generate_binding(facts: &Value, sdk_import: &str, wire: Wire, lang: BindingLanguage, read_only: bool) -> Result<(String, String), Value> {
+    let id_wire = wire.id_wire();
+    match (lang, read_only) {
+        (BindingLanguage::Ts, true) => Ok((
+            spike_v5_sdk::contract_module_with_extensions(facts, sdk_import, id_wire),
+            spike_v5_sdk::contract_fingerprint_with_extensions(facts, id_wire),
+        )),
+        (BindingLanguage::Ts, false) => Ok((
+            spike_v5_sdk::contract_module_with_all_extensions(facts, sdk_import, id_wire),
+            spike_v5_sdk::contract_fingerprint_with_all_extensions(facts, id_wire),
+        )),
+        (BindingLanguage::Python, true) => Err(error("BINDING_SCOPE", "--read-only는 TypeScript 생성에만 지원됨")),
+        (BindingLanguage::Python, false) => {
+            Ok((spike_v5_sdk::contract_module_python(facts, id_wire), spike_v5_sdk::contract_fingerprint_with_all_extensions(facts, id_wire)))
+        }
+    }
+}
+
 pub async fn run(command: Command) -> Result<Value, Value> {
     match command {
         Command::Check { file, dev_checks } => {
@@ -978,19 +999,14 @@ pub async fn run(command: Command) -> Result<Value, Value> {
                 json!({"ok":true,"executionDigest":spike_v1_fixture::digest(&checked.output.execution),"advisories":checked.advisories.iter().map(|a|json!({"code":a.code,"anchor":a.anchor,"message":a.msg})).collect::<Vec<_>>()}),
             )
         }
-        Command::Gen { file, wire, out, sdk_import, lang } => {
+        Command::Gen { file, wire, out, sdk_import, lang, read_only } => {
             let facts = load(&file, false)?.output.execution;
             if sdk_import.trim().is_empty() {
                 return Err(error("BAD_SDK_IMPORT", "SDK import 경로가 필요함"));
             }
-            let content = match lang {
-                BindingLanguage::Ts => spike_v5_sdk::contract_module_with_all_extensions(&facts, &sdk_import, wire.id_wire()),
-                BindingLanguage::Python => spike_v5_sdk::contract_module_python(&facts, wire.id_wire()),
-            };
+            let (content, fingerprint) = generate_binding(&facts, &sdk_import, wire, lang, read_only)?;
             write_binding(&file, &out, &content)?;
-            Ok(
-                json!({"ok":true,"fingerprint":spike_v5_sdk::contract_fingerprint_with_all_extensions(&facts,wire.id_wire()),"idWire":wire.id_wire().label()}),
-            )
+            Ok(json!({"ok":true,"fingerprint":fingerprint,"idWire":wire.id_wire().label()}))
         }
         Command::Introspect { config, source_schema, out, mapping_out } => {
             let c = configuration_for_introspection(&config)?;
@@ -2541,6 +2557,35 @@ mod audit_query_tests {
         {
             assert!(!looks_like_rfc3339(bad), "{bad}");
         }
+    }
+}
+
+#[cfg(test)]
+mod binding_generation_tests {
+    use super::*;
+
+    fn fixture_facts() -> Value {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../product/tests/fixtures/facereview-mysql/facereview.aip");
+        load(&path, false).expect("FaceReview fixture loads").output.execution
+    }
+
+    #[test]
+    fn read_only_ts_binding_uses_the_runtime_read_extension_fingerprint() {
+        let facts = fixture_facts();
+        let (module, fingerprint) = generate_binding(&facts, "@aip/sdk", Wire::Decimal, BindingLanguage::Ts, true).unwrap();
+        assert_eq!(fingerprint, spike_v5_sdk::contract_fingerprint_with_extensions(&facts, Wire::Decimal.id_wire()));
+        assert!(module.contains("ExtensionContract"));
+        assert!(!module.contains("WriteExtensionContract"));
+        assert!(!module.contains("writeExtensionDescriptors"));
+    }
+
+    #[test]
+    fn default_ts_binding_keeps_all_write_extensions() {
+        let facts = fixture_facts();
+        let (module, fingerprint) = generate_binding(&facts, "@aip/sdk", Wire::Decimal, BindingLanguage::Ts, false).unwrap();
+        assert_eq!(fingerprint, spike_v5_sdk::contract_fingerprint_with_all_extensions(&facts, Wire::Decimal.id_wire()));
+        assert!(module.contains("WriteExtensionContract"));
+        assert!(module.contains("writeExtensionDescriptors"));
     }
 }
 

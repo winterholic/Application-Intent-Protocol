@@ -42,7 +42,7 @@ export const getUserName = async (): Promise<{ status: number; data: UserRespons
     aipClient.read({
       read: 'UserFavoriteGenre',
       select: ['genre'],
-      filter: [{ field: 'user', op: 'eq', value: userId }],
+      // The resource's owner row policy already limits these rows to this member; user.eq is not an exposed filter.
       limit: 50,
     }),
   ]);
@@ -83,7 +83,7 @@ export const updateProfile = async (props: { name?: string; profile_image_id?: n
   if (props.favorite_genres !== undefined) {
     const current = await aipClient.read({
       read: 'UserFavoriteGenre', select: ['id', 'genre'],
-      filter: [{ field: 'user', op: 'eq', value: userId }], limit: 50,
+      limit: 50,
     });
     const desired = new Set(props.favorite_genres);
     for (const row of current.rows) {
