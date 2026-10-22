@@ -8,12 +8,12 @@ import { contract } from '../aip/facereview';
 import { useAuthStorage } from 'store/authStore';
 import type { AipClient } from './readAdapter';
 import { createAuthTransport } from './authAdapter';
-import { createWriteApi } from './writeAdapter';
+import { createWriteApi, type WriteClient } from './writeAdapter';
 
 // The AIP service's address. It is the AIP server, not a path of the original REST API.
 const BASE_URL: string = import.meta.env.VITE_AIP_URL ?? '/aip';
 
-type SdkClient = AipClient & { replaceSession(token: string): Promise<unknown> };
+type SdkClient = AipClient & WriteClient & { replaceSession(token: string): Promise<unknown> };
 let sdk: SdkClient | null = null;
 let sdkToken: string | null = null;
 export const authTransport = createAuthTransport({
@@ -41,11 +41,12 @@ async function client(): Promise<SdkClient> {
   return sdk;
 }
 
-export const aipClient: AipClient = {
+export const aipClient: AipClient & WriteClient = {
   read: async (query) => (await client()).read(query) as Promise<{ ok: true; rows: Record<string, unknown>[] }>,
   extension: async (name, input) => (await client()).extension(name, input),
   writeExtension: async (name, input, options) => (await client()).writeExtension(name, input, options),
   apply: async (request, options) => (await client()).apply(request, options),
+  bundle: async (request, options) => (await client()).bundle(request, options),
 };
 
 export const aipWrites = createWriteApi(aipClient, {

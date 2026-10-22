@@ -12,9 +12,14 @@ function fakeClient(initialRows: Record<string, unknown>[] = []) {
     },
     async apply(request, options) {
       calls.push({ kind: 'apply', value: request, key: options?.key });
-      if ('create' in request) rows = [{ id: 'new-id', video: 'v1' }];
       if ('apply' in request && request.apply === 'VideoBookmark.remove') rows = [];
-      return { ok: true, created: 'create' in request && request.create === 'Comment' ? [{ resource: 'Comment', id: 'new-id' }] : [] };
+      return { ok: true, created: [] };
+    },
+    async bundle(request, options) {
+      calls.push({ kind: 'bundle', value: request, key: options?.key });
+      const step = request.atomic?.[0];
+      if (step && 'create' in step) rows = [{ id: 'new-id', video: 'v1' }];
+      return { ok: true, created: step && 'create' in step && step.create === 'Comment' ? [{ resource: 'Comment', id: 'new-id' }] : [] };
     },
     async writeExtension(name, input, options) {
       calls.push({ kind: 'writeExtension', value: { name, input }, key: options?.key });
@@ -34,7 +39,7 @@ test('bookmark toggle translates current state into explicit create then remove'
     kind: 'read', value: { read: 'VideoBookmark', select: ['id'], filter: [{ field: 'video', op: 'eq', value: 'v1' }], limit: 1 },
   });
   assert.deepEqual(calls[1], {
-    kind: 'apply', key: 'write-1', value: { create: 'VideoBookmark', values: { video: 'v1', user: 'member-1' } },
+    kind: 'bundle', key: 'write-1', value: { atomic: [{ create: 'VideoBookmark', values: { video: 'v1', user: 'member-1' } }] },
   });
 
   calls.length = 0;
@@ -50,7 +55,7 @@ test('bookmark toggle translates current state into explicit create then remove'
 test('like add/remove use separate create and remove operations', async () => {
   const add = fakeClient();
   await createWriteApi(add.client, { userId: () => 'member-1', newKey: keyFactory() }).addLike({ video_id: 'v1' });
-  assert.deepEqual(add.calls[0], { kind: 'apply', key: 'write-1', value: { create: 'VideoLike', values: { video: 'v1', user: 'member-1' } } });
+  assert.deepEqual(add.calls[0], { kind: 'bundle', key: 'write-1', value: { atomic: [{ create: 'VideoLike', values: { video: 'v1', user: 'member-1' } }] } });
 
   const remove = fakeClient([{ id: 'like-1' }]);
   await createWriteApi(remove.client, { userId: () => 'member-1', newKey: keyFactory() }).cancelLike({ video_id: 'v1' });
@@ -73,7 +78,7 @@ test('comment creation, edit and delete keep owner and payload decisions in the 
   await api.modifyComment({ comment_id: 'comment-1', content: 'edited' });
   await api.deleteComment({ comment_id: 'comment-1' });
   assert.deepEqual(calls.map((call) => call.value), [
-    { create: 'Comment', values: { video: 'v1', user: 'member-1', content: 'hello' } },
+    { atomic: [{ create: 'Comment', values: { video: 'v1', user: 'member-1', content: 'hello' } }] },
     { apply: 'Comment.edit', target: { ids: ['comment-1'] }, values: { content: 'edited' } },
     { apply: 'Comment.delete', target: { ids: ['comment-1'] } },
   ]);

@@ -3,6 +3,9 @@ export interface WriteClient {
   apply(request: Record<string, unknown>, options?: { key?: string }): Promise<{
     ok: boolean; code?: string; created?: Array<{ resource: string; id: string | number | null }>;
   }>;
+  bundle(request: Record<string, unknown>, options?: { key?: string }): Promise<{
+    ok: boolean; code?: string; created?: Array<{ resource: string; id: string | number | null }>;
+  }>;
   writeExtension(name: string, input: Record<string, unknown>, options?: { key?: string }): Promise<{
     ok: boolean; code?: string; output?: Record<string, unknown>;
   }>;
@@ -29,6 +32,12 @@ export function createWriteApi(client: WriteClient, options: WriteOptions) {
     if (!result.ok) return failure(`AIP write failed: ${result.code ?? 'WIRE.EXTENSION_ERROR'}`, result.code ?? 'WIRE.EXTENSION_ERROR');
     return result;
   };
+  const create = async (resource: string, values: Record<string, unknown>) => {
+    // The public SDK exposes creates through bundle()'s atomic envelope; apply() accepts transitions only.
+    const result = await client.bundle({ atomic: [{ create: resource, values }] }, { key: newKey() });
+    if (!result.ok) return failure(`AIP write failed: ${result.code ?? 'WIRE.EXTENSION_ERROR'}`, result.code ?? 'WIRE.EXTENSION_ERROR');
+    return result;
+  };
   const rows = async (resource: 'VideoLike' | 'VideoBookmark', videoId: string) => {
     const result = await client.read({
       read: resource,
@@ -49,11 +58,11 @@ export function createWriteApi(client: WriteClient, options: WriteOptions) {
         await apply({ apply: 'VideoBookmark.remove', target: { ids: [id] } });
         return { is_bookmarked: false, message: '북마크를 해제했어요.' };
       }
-      await apply({ create: 'VideoBookmark', values: { video: props.video_id, user: member() } });
+      await create('VideoBookmark', { video: props.video_id, user: member() });
       return { is_bookmarked: true, message: '북마크에 추가했어요.' };
     },
     async addLike(props: { video_id: string }) {
-      await apply({ create: 'VideoLike', values: { video: props.video_id, user: member() } });
+      await create('VideoLike', { video: props.video_id, user: member() });
       return { ok: true };
     },
     async cancelLike(props: { video_id: string }) {
@@ -73,7 +82,7 @@ export function createWriteApi(client: WriteClient, options: WriteOptions) {
       return { result: 'requested', requested: result.output?.requested, message: '영상 등록 요청을 접수했습니다.' };
     },
     async sendNewComment(props: { content: string; video_id: string }) {
-      const result = await apply({ create: 'Comment', values: { video: props.video_id, user: member(), content: props.content } });
+      const result = await create('Comment', { video: props.video_id, user: member(), content: props.content });
       const created = result.created?.find((row) => row.resource === 'Comment');
       if (!created || created.id === null) return failure('comment create response has no id', 'CLIENT.PROTOCOL_ERROR');
       return { comment_id: String(created.id), message: '댓글이 등록되었습니다.' };
