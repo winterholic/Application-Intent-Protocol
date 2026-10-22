@@ -77,7 +77,7 @@ const deleted = await client.read({
   read: 'Comment', select: ['id', 'is_deleted'],
   filter: [{field: 'id', op: 'eq', value: comment.comment_id}], limit: 1,
 });
-assert.equal(deleted.rows[0]?.is_deleted, true);
+assert.equal(deleted.rows.length, 0, 'the member row policy hides a soft-deleted comment');
 
 const logout = await auth('/auth/logout', {}, cookie);
 assert.equal(logout.status, 200, 'logout revokes the member session');
