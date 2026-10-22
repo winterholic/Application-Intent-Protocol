@@ -109,6 +109,48 @@ resource User {
     rowOutput none
     release count
   }
+  // The my page emotion screens (WBS 7.2.8). The caller's own sessions are reduced on the server (`mongo.user_watch_stats`, decision
+  // D-P-USERSTATS) and the screens' rules run in the extension. Each answer is the original's JSON document as text.
+  extension read myRecentVideos {
+    input { emotion: ListEmotion; page: Int(1..100000); size: Int(1..50) }
+    output { body: Text }
+    access mongo.user_watch_stats
+    effect none
+    deadline 20s
+    implementation "slice14e_mypage.myRecentVideos"
+  }
+  extension read myHighlight {
+    input { }
+    output { body: Text }
+    access mongo.user_watch_stats
+    effect none
+    deadline 20s
+    implementation "slice14e_mypage.myHighlight"
+  }
+  extension read myEmotionCalendar {
+    input { year: Int(1970..9999)?; month: Int(1..12)? }
+    output { body: Text }
+    access mongo.user_watch_stats
+    effect none
+    deadline 20s
+    implementation "slice14e_mypage.myEmotionCalendar"
+  }
+  extension read myMoments {
+    input { emotion: ListEmotion; page: Int(1..100000); size: Int(1..50) }
+    output { body: Text }
+    access mongo.user_watch_stats
+    effect none
+    deadline 30s
+    implementation "slice14e_mypage.myMoments"
+  }
+  extension read myEmotionDna {
+    input { }
+    output { body: Text }
+    access mongo.user_watch_stats
+    effect none
+    deadline 30s
+    implementation "slice14e_mypage.myEmotionDna"
+  }
   expose aggregate totalCount
 }
 

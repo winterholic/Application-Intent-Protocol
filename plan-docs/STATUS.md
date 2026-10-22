@@ -1,5 +1,9 @@
 # 진행 현황과 쌓인 질문
 
+## 재개 지점 (2026-10-22, 7.2.8 조각 C 뒤 기록)
+
+마이페이지 감정 읽기 5개(최근 시청·하이라이트·캘린더·모먼트·DNA)를 서버 파생 읽기 명령 `user_watch_stats`와 읽기 확장으로 옮겼고 원본 `MypageService`와 66개 사례가 같았다(`reference/slice14e_oracle.py`, CI 재생은 `mysql_facereview_trending_job`). 7.2.8의 남은 것: `GET mypage/emotion/summary`(`user_emotion_summary` 낙관적 잠금 증분 집계, 쓰기 필요: `UserEmotionSummary` 전이와 새 파생 명령 `emotion_seconds`가 필요하다). 그 뒤 7.2.9 잔여(`home/video/recommend`, dashboard, 시스템 상태, 더미 데이터). 시험 환경은 항목 끝에 회수한다(MySQL 8.4 `--rm`, mongo:7 인증, redis:7.4 인증, `/private/tmp`의 venv). 로컬 검증은 `CARGO_INCREMENTAL=0`과 저장소 루트 `--target-dir target` 하나만 쓴다.
+
 ## 디스크 정리 기록 (2026-10-22)
 
 사용자 긴급 시정으로 AIP 빌드 산출물을 실제로 지웠다. 실측(`du`, `df -h /`의 Avail): 저장소 `projects/aip/aip` 52G에서 407M, `projects/aip` 전체 54G에서 3.1G, 루트 Avail 159Gi에서 235Gi. 지운 것은 모두 gitignored 빌드 산출물이거나 AIP 임시 파일이다: 저장소 `target/` 49G, `spikes/spike-v3-write/target` 1.5G, `spikes/spike-v6-transport/target` 0.77G, worktree `aip-mysql-ddl-fence-20261017/target` 18G와 `aip-mysql-driver-20261017/target` 7G(둘 다 git clean이고 origin과 같은 SHA, 소스는 보존), `/private/tmp`의 AIP 검증 로그·pgdata·minio 이미지·oracle venv·생성 .aip 등 약 0.5G, 그리고 이번 작업이 띄운 컨테이너 6개. 보존한 것: 추적 파일 전부, `product/dist`의 ignored 배포 증거, `~/.cargo` 공유 캐시, `/tmp/aip-gh-cache`·`aip-security-advisory-db`·`aip-update-npm-cache`, `~/development/target`(96M, 소유 불명), 다른 트랙(notting, flaskbb)의 `/tmp`와 컨테이너. 실행 중인 cargo·rustc 프로세스와 `lsof` 점유가 없는 것을 확인한 뒤 지웠다. 다음 작업은 `cargo build`부터 다시 한다(약 50G를 다시 쓰므로 항목이 끝날 때마다 `target/`과 임시 fixture를 회수한다: `target/debug/incremental`과 `target/debug/deps`의 오래된 테스트 바이너리가 대부분을 차지한다).

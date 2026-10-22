@@ -576,6 +576,350 @@ impl MongoDriverCapability {
     }
 }
 
+/// Virtual collection served by [`MongoDriverCapability::user_watch_stats`] (WBS 7.2.8). It reduces the caller's own
+/// `youtube_watching_data` sessions, whose per-frame timelines are too large to hand to an extension, to the figures the my page
+/// screens need. A grant to it never opens a raw session document, and every command reads only the verified caller's sessions.
+pub const USER_STATS_COLLECTION: &str = "user_watch_stats";
+
+const STATS_EMOTIONS: [&str; 5] = ["neutral", "happy", "surprise", "sad", "angry"];
+const STATS_MAX_DOCS: usize = 20_000;
+const STATS_MAX_ROWS: usize = 20_000;
+const COMPRESS_BUCKETS: usize = 40;
+const PEAK_THRESHOLD: f64 = 80.0;
+const WINDOW_FRAMES: usize = 60;
+
+/// Python `float(x)` of a stored number; anything else is not a score.
+fn bson_number(value: &mongodb::bson::Bson) -> Option<f64> {
+    match value {
+        mongodb::bson::Bson::Double(v) => Some(*v),
+        mongodb::bson::Bson::Int32(v) => Some(f64::from(*v)),
+        mongodb::bson::Bson::Int64(v) => Some(*v as f64),
+        _ => None,
+    }
+}
+
+/// The original `_extract_emotion_scores`: the object form (missing emotions are 0) or the old array form, in the order
+/// neutral, happy, surprise, sad, angry.
+fn extract_scores(scores: &mongodb::bson::Bson) -> Result<[f64; 5], Reject> {
+    let bad = || reject("WIRE.BAD_VALUE", "감정 점수가 숫자가 아님");
+    let mut result = [0.0_f64; 5];
+    match scores {
+        mongodb::bson::Bson::Document(map) => {
+            for (slot, emotion) in result.iter_mut().zip(STATS_EMOTIONS) {
+                if let Some(value) = map.get(emotion) {
+                    *slot = bson_number(value).ok_or_else(bad)?;
+                }
+            }
+        }
+        mongodb::bson::Bson::Array(list) => {
+            for (slot, value) in result.iter_mut().zip(list) {
+                *slot = bson_number(value).ok_or_else(bad)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(result)
+}
+
+/// `datetime.isoformat()` of a naive UTC datetime stored with millisecond precision.
+fn iso_of(millis: i64) -> String {
+    let days = millis.div_euclid(86_400_000);
+    let rest = millis.rem_euclid(86_400_000);
+    // Civil date from days since 1970-01-01 (Howard Hinnant's algorithm).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let year_of_era = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = year_of_era + i64::from(month <= 2);
+    let (hour, minute, second, ms) = (rest / 3_600_000, rest / 60_000 % 60, rest / 1000 % 60, rest % 1000);
+    let base = format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}");
+    if ms == 0 {
+        base
+    } else {
+        format!("{base}.{ms:03}000")
+    }
+}
+
+fn millis_of(doc: &mongodb::bson::Document, field: &str) -> Option<i64> {
+    doc.get_datetime(field).ok().map(|date| date.timestamp_millis())
+}
+
+/// Python `int(text)` for the keys of a timeline (whitespace and a sign are allowed, nothing else).
+fn python_int(text: &str) -> Option<i64> {
+    text.trim().parse::<i64>().ok()
+}
+
+/// Peak moments of one session: the strongest frame of each 60-frame window, kept when it reaches the threshold (the original
+/// `get_moments` loop). A session whose keys are not all integers yields none, as the original skips it.
+fn session_moments(timeline: &mongodb::bson::Document) -> Result<Vec<(i64, usize, f64)>, Reject> {
+    let mut frames: Vec<(i64, &mongodb::bson::Bson)> = Vec::with_capacity(timeline.len());
+    for (key, scores) in timeline {
+        match python_int(key) {
+            Some(offset) => frames.push((offset, scores)),
+            None => return Ok(Vec::new()),
+        }
+    }
+    frames.sort_by_key(|(offset, _)| *offset);
+    let mut found = Vec::new();
+    let mut best: Option<(f64, i64, usize)> = None;
+    let mut window_start = 0usize;
+    for (index, (offset, scores)) in frames.iter().enumerate() {
+        let values = extract_scores(scores)?;
+        let mut peak = 0usize;
+        for (slot, value) in values.iter().enumerate() {
+            if *value > values[peak] {
+                peak = slot;
+            }
+        }
+        let score = values[peak];
+        if index - window_start >= WINDOW_FRAMES {
+            if let Some((best_score, best_offset, best_emotion)) = best.take().filter(|(s, _, _)| *s >= PEAK_THRESHOLD) {
+                found.push((best_offset, best_emotion, best_score));
+            }
+            window_start = index;
+            best = None;
+        }
+        if score >= PEAK_THRESHOLD && best.is_none_or(|(held, _, _)| score > held) {
+            best = Some((score, *offset, peak));
+        }
+    }
+    if let Some((best_score, best_offset, best_emotion)) = best.filter(|(s, _, _)| *s >= PEAK_THRESHOLD) {
+        found.push((best_offset, best_emotion, best_score));
+    }
+    Ok(found)
+}
+
+impl MongoDriverCapability {
+    async fn user_watch_stats(&self, principal: &CapabilityPrincipal, input: &Value) -> Result<Value, Reject> {
+        let Some(user) = principal.private_user_id() else {
+            return Err(reject("WIRE.ACCESS_DENIED", "인증 principal이 필요함"));
+        };
+        let Some(command) = input.get("command").and_then(Value::as_str) else {
+            return Err(reject("WIRE.BAD_VALUE", "stats command 누락"));
+        };
+        let allowed: &[&str] = match command {
+            "sessions" => &["command", "emotion", "skip", "limit"],
+            "compress" => &["command", "items"],
+            "calendar" => &["command", "start", "end"],
+            "moments" => &["command", "limit"],
+            "dna" | "highlight" => &["command"],
+            _ => return Err(reject("WIRE.BAD_VALUE", "알 수 없는 stats command")),
+        };
+        if input.as_object().is_none_or(|m| m.keys().any(|k| !allowed.contains(&k.as_str()))) {
+            return Err(reject("WIRE.BAD_VALUE", "stats 입력 field가 허용되지 않음"));
+        }
+        let user = user.as_str().map(str::to_owned).ok_or_else(|| reject("WIRE.ACCESS_DENIED", "principal id 형식 오류"))?;
+        let coll = self.client.database(&self.database).collection::<mongodb::bson::Document>("youtube_watching_data");
+        let unavailable = || reject("WIRE.ADAPTER_UNAVAILABLE", "Mongo stats 읽기 실패");
+        let uint = |name: &str, max: u64, default: u64| -> Result<u64, Reject> {
+            match input.get(name) {
+                None => Ok(default),
+                Some(v) if v.as_u64().is_some_and(|n| n <= max) => Ok(v.as_u64().unwrap_or(default)),
+                _ => Err(reject("WIRE.BAD_VALUE", "stats 숫자 범위 오류")),
+            }
+        };
+        tokio::time::timeout(self.timeout, async {
+            use futures_util::StreamExt;
+            match command {
+                "sessions" => {
+                    let (skip, limit) = (uint("skip", 100_000, 0)?, uint("limit", 51, 11)?);
+                    let mut filter = mongodb::bson::doc! {"user_id": &user};
+                    match input.get("emotion") {
+                        None | Some(Value::Null) => {}
+                        Some(Value::String(emotion)) if STATS_EMOTIONS.contains(&emotion.as_str()) => {
+                            filter.insert("dominant_emotion", emotion.as_str());
+                        }
+                        _ => return Err(reject("WIRE.BAD_VALUE", "stats emotion 오류")),
+                    }
+                    let mut cursor = coll
+                        .find(filter)
+                        .projection(mongodb::bson::doc! {"video_id": 1, "dominant_emotion": 1, "emotion_percentages": 1, "created_at": 1})
+                        .sort(mongodb::bson::doc! {"created_at": -1})
+                        .skip(skip)
+                        .limit(limit as i64)
+                        .await
+                        .map_err(|_| unavailable())?;
+                    let mut rows = Vec::new();
+                    while let Some(doc) = cursor.next().await.transpose().map_err(|_| unavailable())? {
+                        let percentages: Value = doc
+                            .get_document("emotion_percentages")
+                            .ok()
+                            .and_then(|map| mongodb::bson::deserialize_from_document(map.clone()).ok())
+                            .unwrap_or(Value::Null);
+                        rows.push(json!({
+                            "session": doc.get_object_id("_id").map(|id| id.to_hex()).unwrap_or_default(),
+                            "video_id": doc.get_str("video_id").unwrap_or_default(),
+                            "dominant_emotion": doc.get_str("dominant_emotion").ok(),
+                            "emotion_percentages": percentages,
+                            "created_at": millis_of(&doc, "created_at").map(iso_of),
+                        }));
+                    }
+                    Ok(json!({"sessions": rows}))
+                }
+                "compress" => {
+                    let Some(items) = input.get("items").and_then(Value::as_array).filter(|items| items.len() <= 51) else {
+                        return Err(reject("WIRE.BAD_VALUE", "stats items 오류"));
+                    };
+                    let mut out = Vec::new();
+                    for item in items {
+                        let (Some(session), duration) = (item.get("session").and_then(Value::as_str), item.get("duration").and_then(Value::as_i64)) else {
+                            return Err(reject("WIRE.BAD_VALUE", "stats item 오류"));
+                        };
+                        let id = mongodb::bson::oid::ObjectId::parse_str(session).map_err(|_| reject("WIRE.BAD_VALUE", "stats session id 오류"))?;
+                        let doc = coll
+                            .find_one(mongodb::bson::doc! {"_id": id, "user_id": &user})
+                            .projection(mongodb::bson::doc! {"emotion_score_timeline": 1})
+                            .await
+                            .map_err(|_| unavailable())?;
+                        let timeline = doc.as_ref().and_then(|doc| doc.get_document("emotion_score_timeline").ok());
+                        let usable = duration.filter(|d| *d != 0);
+                        let (Some(timeline), Some(duration)) = (timeline.filter(|t| !t.is_empty()), usable) else {
+                            out.push(Value::Null);
+                            continue;
+                        };
+                        let bucket_size = duration as f64 * 100.0 / COMPRESS_BUCKETS as f64;
+                        let mut sums = vec![[0.0_f64; 5]; COMPRESS_BUCKETS];
+                        let mut counts = vec![0_u64; COMPRESS_BUCKETS];
+                        for (key, scores) in timeline {
+                            let Some(cs) = key.trim().parse::<f64>().ok().filter(|cs| cs.is_finite()) else { continue };
+                            let position = (cs / bucket_size).trunc() as i64;
+                            // Python indexes a list with a negative number from the end.
+                            let position = if position < 0 { position + COMPRESS_BUCKETS as i64 } else { position.min(COMPRESS_BUCKETS as i64 - 1) };
+                            let Some(index) = usize::try_from(position).ok().filter(|i| *i < COMPRESS_BUCKETS) else {
+                                return Err(reject("WIRE.BAD_VALUE", "timeline 키가 범위를 벗어남"));
+                            };
+                            let values = extract_scores(scores)?;
+                            for (sum, value) in sums[index].iter_mut().zip(values) {
+                                *sum += value;
+                            }
+                            counts[index] += 1;
+                        }
+                        out.push(json!({"sums": sums, "counts": counts}));
+                    }
+                    Ok(json!({"timelines": out}))
+                }
+                "calendar" => {
+                    let bound = |name: &str| -> Result<mongodb::bson::DateTime, Reject> {
+                        input
+                            .get(name)
+                            .and_then(Value::as_i64)
+                            .map(mongodb::bson::DateTime::from_millis)
+                            .ok_or_else(|| reject("WIRE.BAD_VALUE", "stats 기간 오류"))
+                    };
+                    let filter = mongodb::bson::doc! {"user_id": &user, "created_at": {"$gte": bound("start")?, "$lt": bound("end")?}};
+                    let mut cursor = coll
+                        .find(filter)
+                        .projection(mongodb::bson::doc! {"dominant_emotion": 1, "emotion_percentages": 1, "created_at": 1, "emotion_score_timeline": 1})
+                        .await
+                        .map_err(|_| unavailable())?;
+                    let mut rows = Vec::new();
+                    while let Some(doc) = cursor.next().await.transpose().map_err(|_| unavailable())? {
+                        if rows.len() >= STATS_MAX_ROWS {
+                            return Err(reject("WIRE.BAD_VALUE", "stats 행 상한 초과"));
+                        }
+                        let dominant = doc.get_str("dominant_emotion").unwrap_or("neutral").to_owned();
+                        let intensity =
+                            doc.get_document("emotion_percentages").ok().and_then(|map| map.get(&dominant)).and_then(bson_number).unwrap_or(0.0);
+                        let length = doc.get_document("emotion_score_timeline").map(|t| t.len()).unwrap_or(0);
+                        rows.push(json!({"created_at": millis_of(&doc, "created_at").map(iso_of), "dominant": dominant, "intensity": intensity, "timeline_len": length}));
+                    }
+                    Ok(json!({"rows": rows}))
+                }
+                "moments" => {
+                    let limit = uint("limit", 200, 200)?;
+                    let mut cursor = coll
+                        .find(mongodb::bson::doc! {"user_id": &user})
+                        .projection(mongodb::bson::doc! {"video_id": 1, "created_at": 1, "emotion_score_timeline": 1})
+                        .sort(mongodb::bson::doc! {"created_at": -1})
+                        .limit(limit as i64)
+                        .await
+                        .map_err(|_| unavailable())?;
+                    let mut sessions = Vec::new();
+                    let mut total = 0usize;
+                    while let Some(doc) = cursor.next().await.transpose().map_err(|_| unavailable())? {
+                        let moments = match doc.get_document("emotion_score_timeline") {
+                            Ok(timeline) => session_moments(timeline)?,
+                            Err(_) => Vec::new(),
+                        };
+                        total += moments.len();
+                        if total > STATS_MAX_ROWS {
+                            return Err(reject("WIRE.BAD_VALUE", "stats 모먼트 상한 초과"));
+                        }
+                        let list: Vec<Value> = moments.iter().map(|(offset, emotion, score)| json!({"offset": offset, "emotion": STATS_EMOTIONS[*emotion], "score": score})).collect();
+                        sessions.push(json!({"video_id": doc.get_str("video_id").unwrap_or_default(), "created_at": millis_of(&doc, "created_at").map(iso_of), "moments": list}));
+                    }
+                    Ok(json!({"sessions": sessions}))
+                }
+                "highlight" => {
+                    // The original's `get_highlight` reads the latest 500 sessions with only the video and the shares.
+                    let mut cursor = coll
+                        .find(mongodb::bson::doc! {"user_id": &user})
+                        .projection(mongodb::bson::doc! {"video_id": 1, "emotion_percentages": 1})
+                        .sort(mongodb::bson::doc! {"created_at": -1})
+                        .limit(500)
+                        .await
+                        .map_err(|_| unavailable())?;
+                    let mut rows = Vec::new();
+                    while let Some(doc) = cursor.next().await.transpose().map_err(|_| unavailable())? {
+                        let percentages: Value = doc
+                            .get_document("emotion_percentages")
+                            .ok()
+                            .and_then(|map| mongodb::bson::deserialize_from_document(map.clone()).ok())
+                            .unwrap_or(Value::Null);
+                        rows.push(json!({"video_id": doc.get_str("video_id").unwrap_or_default(), "emotion_percentages": percentages}));
+                    }
+                    Ok(json!({"sessions": rows}))
+                }
+                "dna" => {
+                    let mut cursor = coll
+                        .find(mongodb::bson::doc! {"user_id": &user})
+                        .projection(mongodb::bson::doc! {"video_id": 1, "created_at": 1, "completion_rate": 1, "emotion_percentages": 1})
+                        .await
+                        .map_err(|_| unavailable())?;
+                    let (mut count, mut night, mut completion) = (0u64, 0u64, 0.0_f64);
+                    let mut sums = [0.0_f64; 5];
+                    let mut videos: Vec<String> = Vec::new();
+                    let mut seen = HashSet::new();
+                    while let Some(doc) = cursor.next().await.transpose().map_err(|_| unavailable())? {
+                        count += 1;
+                        if count as usize > STATS_MAX_DOCS {
+                            return Err(reject("WIRE.BAD_VALUE", "stats 세션 상한 초과"));
+                        }
+                        if let Ok(percentages) = doc.get_document("emotion_percentages") {
+                            for (sum, emotion) in sums.iter_mut().zip(STATS_EMOTIONS) {
+                                if let Some(value) = percentages.get(emotion) {
+                                    *sum += bson_number(value).ok_or_else(|| reject("WIRE.BAD_VALUE", "감정 비율이 숫자가 아님"))?;
+                                }
+                            }
+                        }
+                        completion += doc.get("completion_rate").and_then(bson_number).unwrap_or(0.0);
+                        if let Some(millis) = millis_of(&doc, "created_at") {
+                            let hour = millis.rem_euclid(86_400_000) / 3_600_000;
+                            if hour >= 22 || hour <= 3 {
+                                night += 1;
+                            }
+                        }
+                        if let Ok(video) = doc.get_str("video_id") {
+                            if seen.insert(video.to_owned()) {
+                                videos.push(video.to_owned());
+                            }
+                        }
+                    }
+                    Ok(json!({"count": count, "night": night, "completion": completion, "sums": sums, "videos": videos}))
+                }
+                _ => Err(reject("WIRE.BAD_VALUE", "알 수 없는 stats command")),
+            }
+        })
+        .await
+        .map_err(|_| reject("WIRE.ADAPTER_UNAVAILABLE", "Mongo stats timeout"))?
+    }
+}
+
 impl MongoCapability for MongoDriverCapability {
     fn call<'a>(&'a self, principal: &'a CapabilityPrincipal, collection: &'a str, input: &'a Value) -> CapabilityFuture<'a, Result<Value, Reject>> {
         Box::pin(async move {
@@ -584,6 +928,9 @@ impl MongoCapability for MongoDriverCapability {
             }
             if collection == TIMELINE_COLLECTION {
                 return self.video_timeline(input).await;
+            }
+            if collection == USER_STATS_COLLECTION {
+                return self.user_watch_stats(principal, input).await;
             }
             if !self.allowed_collections.contains(collection) {
                 return Err(reject("WIRE.CAPABILITY_DENIED", "Mongo collection이 허용되지 않음"));

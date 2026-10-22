@@ -39,7 +39,9 @@ const SCHEMA: &str = include_str!("../../../product/tests/fixtures/facereview-my
 const DEFAULTS: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/db-defaults.sql");
 const SEED: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/seed.sql");
 const SEED_13D: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/slice13d-seed.sql");
-const EXTENSIONS: [(&str, &str); 10] = [
+const MYPAGE_SESSIONS: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/slice14e-sessions.json");
+const MYPAGE_GOLDEN: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/slice14e-golden.json");
+const EXTENSIONS: [(&str, &str); 11] = [
     ("slice13f_watch.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13f_watch.py")),
     ("slice13b_lists.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13b_lists.py")),
     ("slice13d_recommend.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13d_recommend.py")),
@@ -50,6 +52,7 @@ const EXTENSIONS: [(&str, &str); 10] = [
     ("youtube_common.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/youtube_common.py")),
     ("slice14c_category_fill.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice14c_category_fill.py")),
     ("slice14d_approve.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice14d_approve.py")),
+    ("slice14e_mypage.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice14e_mypage.py")),
 ];
 const META: &str = "aip_t_yt_meta";
 const SOURCE: &str = "aip_t_yt_src";
@@ -633,6 +636,32 @@ async fn the_trending_job_saves_new_videos_with_their_initial_documents() {
     .await;
     assert_ne!(direct["ok"], true, "{direct}");
     assert_eq!(status_of("ffffffff-0000-4000-8000-000000000003").await.as_deref(), Some("PENDING"));
+
+    // ---- WBS 7.2.8: the my page screens equal the original MypageService's answers on the same sessions (recorded by
+    // reference/slice14e_oracle.py, which ran the original on this data). The fixture's cached DNA row is removed: the port
+    // recomputes on every call, the original answers from a fresh cache.
+    let sessions: Vec<Value> = serde_json::from_str(MYPAGE_SESSIONS).unwrap();
+    let watching = database.collection::<mongodb::bson::Document>("youtube_watching_data");
+    for session in &sessions {
+        let document = serde_json::from_value::<mongodb::bson::Document>(session.clone()).unwrap();
+        watching.insert_one(document).await.unwrap();
+    }
+    setup.query_drop(format!("DELETE FROM `{SOURCE}`.user_emotion_dna")).await.unwrap();
+    let golden: Vec<Value> = serde_json::from_str(MYPAGE_GOLDEN).unwrap();
+    assert!(golden.len() >= 60, "the recorded cases");
+    for case in &golden {
+        let subject = case["subject"].as_str().unwrap();
+        let answer = server.post("/extension", Some(&bearer(subject)), &json!({"extension": case["extension"], "input": case["input"]})).await;
+        assert_eq!(answer["ok"], true, "{}: {answer}", case["name"]);
+        let mut got: Value = serde_json::from_str(answer["output"]["body"].as_str().unwrap()).unwrap();
+        if let Some(object) = got.as_object_mut() {
+            object.remove("generated_at");
+        }
+        assert_eq!(got, case["expected"], "{}", case["name"]);
+    }
+    // A guest has no my page, and a member's screens never show another member's sessions (bob's answers above hold only bob's).
+    let guest = server.post("/extension", None, &json!({"extension": "User.myHighlight", "input": {}})).await;
+    assert_ne!(guest["ok"], true, "{guest}");
 
     mongo.database(MONGO_DB).drop().await.expect("drop the run-owned database");
     for schema in [META, SOURCE] {

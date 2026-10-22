@@ -226,3 +226,26 @@ accepted without registering the video; the `reject` that was already there need
 length, 0 views, active), the two documents and the request status (`ACCEPTED`, no comment) are equal. Differences: the approval runs in the
 background (the administrator reads the result), a job has no saga (a failure between the create and the acceptance is repaired by the
 retry, not undone), and a request approved while a soft-deleted video holds the url fails like a duplicate.
+
+## Slice14-E: the my page emotion screens (WBS 7.2.8)
+
+`slice14e_mypage.py` ports `MypageService.get_recent_videos`, `get_highlight`, `get_emotion_calendar`, `get_moments` and `get_emotion_dna`
+(`new-facereview@7948b7e7`, `app/services/mypage_service.py`) as the read extensions `User.myRecentVideos`, `myHighlight`,
+`myEmotionCalendar`, `myMoments` and `myEmotionDna`. Each answers `{body: Text}`, the original's JSON document as text. They declare
+`access mongo.user_watch_stats`, a derived collection (decision D-P-USERSTATS, like `video_emotion_timeline`): the server reads only the
+verified caller's `youtube_watching_data` sessions and answers the commands `sessions` (latest sessions without timelines), `compress`
+(the 40 bucket sums of chosen sessions), `highlight` (latest 500 shares), `calendar` (rows of a period with the length of the timeline),
+`moments` (peak frames of the latest 200 sessions, one per 60 frame window) and `dna` (totals). No session document or per-frame value
+reaches the extension. The rules of the screens (rounding with Python `round`, grouping, the DNA types, traits and fun facts) are the
+original's code, copied.
+
+`reference/slice14e_oracle.py` runs the original service and the extensions on 15 generated sessions (dictionary and array timelines,
+130 frame sessions, an unparsable key, an empty timeline, sessions of a deleted video and of a missing video, midnight and
+millisecond edges): 66 cases (recent 18, highlight 3, calendar 21, moments 21, DNA 3) equal, and `slice14e-golden.json` plus
+`slice14e-sessions.json` record them for the CI replay in `mysql_facereview_trending_job`. Mutations of the window size and of the peak
+threshold fail the oracle.
+
+Differences and limits: soft-deleted videos are invisible (the original's moments and DNA also count them); the DNA is computed on every
+call (the original caches it in `user_emotion_dna` for 7 days); the DNA reads the genres of at most about 3000 distinct videos; an optional
+input such as `month` must be sent as null; `GET mypage/emotion/summary` (an incremental total kept in `user_emotion_summary` with
+optimistic locking) is not ported yet.

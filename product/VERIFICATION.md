@@ -1,5 +1,13 @@
 # 제품 통합 검증 (2026-10-17)
 
+## 2026-10-22 WBS 7.2.8 조각 C: 마이페이지 감정 읽기 5개 (구현 조각, 로컬 실DB·실서버·원본 서비스 대조 통과, 7.2.8은 진행 중)
+
+**범위.** 원본 `MypageService`의 `get_recent_videos`·`get_highlight`·`get_emotion_calendar`·`get_moments`·`get_emotion_dna`를 읽기 확장 `User.myRecentVideos`·`myHighlight`·`myEmotionCalendar`·`myMoments`·`myEmotionDna`로 옮겼다. 결정과 대안은 [DECISIONS](../docs/DECISIONS.md)의 D-P-USERSTATS다. Mongo capability에 파생 컬렉션 `user_watch_stats`를 더했다: 호출자 본인의 `youtube_watching_data`만 읽고 명령 6개(`sessions`·`compress`·`highlight`·`calendar`·`moments`·`dna`)가 큰 프레임 타임라인을 화면에 필요한 수치로 줄여 돌려준다. 화면 규칙(반올림·묶기·DNA 유형·특성·재미 문구)은 원본 코드를 복사한 확장이 맡는다. `GET mypage/emotion/summary`는 아직 옮기지 않았다.
+
+**원본과의 대조(`reference/slice14e_oracle.py`).** 같은 MySQL·MongoDB에서 원본 서비스와 실제 `aip service serve`를 나란히 돌렸다. 생성한 세션 15개(사전·배열 타임라인, 60프레임 창을 넘는 130프레임 세션, 해석 못 하는 키, 빈 타임라인, 삭제된·없는 영상의 세션, 자정·밀리초 경계, 80~85 구간의 단독 피크)에서 66개 사례가 모두 같았다(`the my page screens matched the original in 66 cases`): 최근 시청 18(감정 필터·쪽·크기), 하이라이트 3, 캘린더 21(연·월·빈 달), 모먼트 21, DNA 3(`generated_at` 제외), 게스트 거절. **변이 확인:** 모먼트 창 크기 60을 20으로 바꾸면 모먼트 11건이, 피크 임계값 80을 85로 바꾸면 4건이 실패했고 복원했다(처음 임계값 변이는 데이터에 단독 피크가 없어 못 잡아서 그 세션을 더했다). CI 재생: `mysql_facereview_trending_job`이 같은 세션(`slice14e-sessions.json`)을 넣고 기록된 66개 답(`slice14e-golden.json`)을 `/extension`으로 재생해 `1 passed`(약 20초).
+
+**알려진 차이와 한계.** (1) 삭제된 영상은 행 정책이 숨겨서 원본이 세던 모먼트·DNA 장르 수에서 빠진다. (2) DNA를 호출마다 계산한다(원본은 `user_emotion_dna`에 7일 캐시하고 새 시청 5건 미만이면 캐시를 돌려줌). 시험은 고정 데이터의 캐시 행을 지우고 비교했다. (3) DNA의 장르 수는 서로 다른 영상 약 3000개까지 읽는다(ctx 64회). 넘으면 틀린 값을 내지 않고 실패한다. (4) 선택 입력(`month`)은 null로 보내야 한다. (5) `emotion/summary`(`user_emotion_summary`를 낙관적 잠금으로 갱신하는 증분 집계)는 쓰기가 필요해 다음 조각이다. (6) 파이썬 `int()`가 받는 숫자 구분 밑줄 키는 해석하지 못한 키로 센다.
+
 ## 2026-10-22 WBS 7.2.9 요청 승인 (구현 조각, 로컬 실DB·실서버·원본 서비스 대조 통과, 7.2.9는 진행 중)
 
 **범위.** 원본 `AdminService.approve_video_request`(영상 생성, `video_distribution`·`video_timeline_emotion_count` 초기 문서, 요청 `ACCEPTED`를 한 union 트랜잭션에서)를 durable job `approveVideoRequest`로 옮겼다. 쓰기 확장은 전이만 부를 수 있어서 7.2.7의 job `create`·Mongo 쓰기를 쓰는 job으로 했다(관리자는 새 영상 id를 `/jobs/result`에서 읽는다). `VideoRequest`에 전이 `accept`(관리자, `PENDING`에서, 요청의 `youtube_url`을 가진 `Video`가 있을 때만)를 더해서 클라이언트가 영상 등록 없이 요청을 승인 상태로 만들 수 없다. 거절(`reject`)은 이미 있었다. `save_video`가 새 영상의 id를 돌려주도록 바꿨다(이미 있으면 None).

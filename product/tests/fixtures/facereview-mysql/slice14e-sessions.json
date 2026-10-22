@@ -1,0 +1,5858 @@
+[
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000001",
+  "video_view_log_id": "log-1111-0001-030905",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1770109507123"
+   }
+  },
+  "dominant_emotion": "happy",
+  "emotion_percentages": {
+   "neutral": 0.1,
+   "happy": 0.6,
+   "surprise": 0.1,
+   "sad": 0.1,
+   "angry": 0.1
+  },
+  "completion_rate": 0.9,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "50": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "100": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "150": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "200": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "250": {
+    "neutral": 25.0,
+    "happy": 28.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "300": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "350": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "400": {
+    "neutral": 31.0,
+    "happy": 90.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "450": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "500": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "550": {
+    "neutral": 22.0,
+    "happy": 25.0,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "600": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "650": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "700": {
+    "neutral": 28.0,
+    "happy": 31.0,
+    "surprise": 34.0,
+    "sad": 22.0,
+    "angry": 25.0
+   },
+   "750": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "800": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "850": {
+    "neutral": 34.0,
+    "happy": 85.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "900": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "950": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "1000": {
+    "neutral": 25.0,
+    "happy": 28.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "1050": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "1100": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "1150": {
+    "neutral": 31.0,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "1200": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "1250": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "1300": {
+    "neutral": 22.0,
+    "happy": 80.0,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "1350": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "1400": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "1450": {
+    "neutral": 28.0,
+    "happy": 31.0,
+    "surprise": 34.0,
+    "sad": 22.0,
+    "angry": 25.0
+   },
+   "1500": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "1550": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "1600": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "1650": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "1700": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "1750": {
+    "neutral": 25.0,
+    "happy": 91.25,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "1800": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "1850": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "1900": {
+    "neutral": 31.0,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "1950": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "2000": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "2050": {
+    "neutral": 22.0,
+    "happy": 25.0,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "2100": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "2150": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "2200": {
+    "neutral": 28.0,
+    "happy": 86.25,
+    "surprise": 34.0,
+    "sad": 22.0,
+    "angry": 25.0
+   },
+   "2250": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "2300": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "2350": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "2400": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "2450": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "2500": {
+    "neutral": 25.0,
+    "happy": 28.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "2550": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "2600": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "2650": {
+    "neutral": 31.0,
+    "happy": 81.25,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "2700": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "2750": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "2800": {
+    "neutral": 22.0,
+    "happy": 25.0,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "2850": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "2900": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "2950": {
+    "neutral": 28.0,
+    "happy": 31.0,
+    "surprise": 34.0,
+    "sad": 22.0,
+    "angry": 25.0
+   },
+   "3000": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "3050": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "3100": {
+    "neutral": 34.0,
+    "happy": 92.5,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "3150": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "3200": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "3250": {
+    "neutral": 25.0,
+    "happy": 28.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "3300": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "3350": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "3400": {
+    "neutral": 31.0,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "3450": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "3500": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "3550": {
+    "neutral": 22.0,
+    "happy": 87.5,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "3600": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "3650": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "3700": {
+    "neutral": 28.0,
+    "happy": 31.0,
+    "surprise": 34.0,
+    "sad": 22.0,
+    "angry": 25.0
+   },
+   "3750": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "3800": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "3850": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "3900": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "3950": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "4000": {
+    "neutral": 25.0,
+    "happy": 82.5,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "4050": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "4100": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "4150": {
+    "neutral": 31.0,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "4200": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "4250": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "4300": {
+    "neutral": 22.0,
+    "happy": 25.0,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "4350": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "4400": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "4450": {
+    "neutral": 28.0,
+    "happy": 93.75,
+    "surprise": 34.0,
+    "sad": 22.0,
+    "angry": 25.0
+   },
+   "4500": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "4550": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "4600": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "4650": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "4700": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "4750": {
+    "neutral": 25.0,
+    "happy": 28.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "4800": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "4850": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "4900": {
+    "neutral": 31.0,
+    "happy": 88.75,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "4950": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "5000": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "5050": {
+    "neutral": 22.0,
+    "happy": 25.0,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "5100": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "5150": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "5200": {
+    "neutral": 28.0,
+    "happy": 31.0,
+    "surprise": 34.0,
+    "sad": 22.0,
+    "angry": 25.0
+   },
+   "5250": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "5300": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "5350": {
+    "neutral": 34.0,
+    "happy": 83.75,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "5400": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "5450": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "5500": {
+    "neutral": 25.0,
+    "happy": 28.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "5550": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "5600": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "5650": {
+    "neutral": 31.0,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "5700": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "5750": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "5800": {
+    "neutral": 22.0,
+    "happy": 95.0,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "5850": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "5900": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "5950": {
+    "neutral": 28.0,
+    "happy": 31.0,
+    "surprise": 34.0,
+    "sad": 22.0,
+    "angry": 25.0
+   },
+   "6000": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "6050": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "6100": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "6150": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "6200": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "6250": {
+    "neutral": 25.0,
+    "happy": 90.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "6300": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "6350": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "6400": {
+    "neutral": 31.0,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "6450": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   }
+  },
+  "most_emotion_timeline": {},
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1770109807123"
+   }
+  }
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000002",
+  "video_view_log_id": "log-1111-0002-032240",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1770158400000"
+   }
+  },
+  "dominant_emotion": "sad",
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.1,
+   "surprise": 0.1,
+   "sad": 0.5,
+   "angry": 0.1
+  },
+  "completion_rate": 0.5,
+  "emotion_score_timeline": {
+   "0": [
+    20.0,
+    23.0,
+    26.0,
+    29.0,
+    32.0
+   ],
+   "100": [
+    27.0,
+    30.0,
+    33.0,
+    21.0,
+    24.0
+   ],
+   "200": [
+    34.0,
+    22.0,
+    25.0,
+    28.0,
+    31.0
+   ],
+   "300": [
+    26.0,
+    29.0,
+    32.0,
+    20.0,
+    23.0
+   ],
+   "400": [
+    33.0,
+    21.0,
+    24.0,
+    27.0,
+    30.0
+   ],
+   "500": [
+    25.0,
+    28.0,
+    31.0,
+    34.0,
+    22.0
+   ],
+   "600": [
+    32.0,
+    20.0,
+    23.0,
+    87.5,
+    29.0
+   ],
+   "700": [
+    24.0,
+    27.0,
+    30.0,
+    33.0,
+    21.0
+   ],
+   "800": [
+    31.0,
+    34.0,
+    22.0,
+    25.0,
+    28.0
+   ],
+   "900": [
+    23.0,
+    26.0,
+    29.0,
+    32.0,
+    20.0
+   ],
+   "1000": [
+    30.0,
+    33.0,
+    21.0,
+    24.0,
+    27.0
+   ],
+   "1100": [
+    22.0,
+    25.0,
+    28.0,
+    31.0,
+    34.0
+   ],
+   "1200": [
+    29.0,
+    32.0,
+    20.0,
+    23.0,
+    26.0
+   ],
+   "1300": [
+    21.0,
+    24.0,
+    27.0,
+    80.0,
+    33.0
+   ],
+   "1400": [
+    28.0,
+    31.0,
+    34.0,
+    22.0,
+    25.0
+   ],
+   "1500": [
+    20.0,
+    23.0,
+    26.0,
+    29.0,
+    32.0
+   ],
+   "1600": [
+    27.0,
+    30.0,
+    33.0,
+    21.0,
+    24.0
+   ],
+   "1700": [
+    34.0,
+    22.0,
+    25.0,
+    28.0,
+    31.0
+   ],
+   "1800": [
+    26.0,
+    29.0,
+    32.0,
+    20.0,
+    23.0
+   ],
+   "1900": [
+    33.0,
+    21.0,
+    24.0,
+    27.0,
+    30.0
+   ],
+   "2000": [
+    25.0,
+    28.0,
+    31.0,
+    88.75,
+    22.0
+   ],
+   "2100": [
+    32.0,
+    20.0,
+    23.0,
+    26.0,
+    29.0
+   ],
+   "2200": [
+    24.0,
+    27.0,
+    30.0,
+    33.0,
+    21.0
+   ],
+   "2300": [
+    31.0,
+    34.0,
+    22.0,
+    25.0,
+    28.0
+   ],
+   "2400": [
+    23.0,
+    26.0,
+    29.0,
+    32.0,
+    20.0
+   ],
+   "2500": [
+    30.0,
+    33.0,
+    21.0,
+    24.0,
+    27.0
+   ],
+   "2600": [
+    22.0,
+    25.0,
+    28.0,
+    31.0,
+    34.0
+   ],
+   "2700": [
+    29.0,
+    32.0,
+    20.0,
+    81.25,
+    26.0
+   ],
+   "2800": [
+    21.0,
+    24.0,
+    27.0,
+    30.0,
+    33.0
+   ],
+   "2900": [
+    28.0,
+    31.0,
+    34.0,
+    22.0,
+    25.0
+   ],
+   "3000": [
+    20.0,
+    23.0,
+    26.0,
+    29.0,
+    32.0
+   ],
+   "3100": [
+    27.0,
+    30.0,
+    33.0,
+    21.0,
+    24.0
+   ],
+   "3200": [
+    34.0,
+    22.0,
+    25.0,
+    28.0,
+    31.0
+   ],
+   "3300": [
+    26.0,
+    29.0,
+    32.0,
+    20.0,
+    23.0
+   ],
+   "3400": [
+    33.0,
+    21.0,
+    24.0,
+    90.0,
+    30.0
+   ],
+   "3500": [
+    25.0,
+    28.0,
+    31.0,
+    34.0,
+    22.0
+   ],
+   "3600": [
+    32.0,
+    20.0,
+    23.0,
+    26.0,
+    29.0
+   ],
+   "3700": [
+    24.0,
+    27.0,
+    30.0,
+    33.0,
+    21.0
+   ],
+   "3800": [
+    31.0,
+    34.0,
+    22.0,
+    25.0,
+    28.0
+   ],
+   "3900": [
+    23.0,
+    26.0,
+    29.0,
+    32.0,
+    20.0
+   ]
+  },
+  "most_emotion_timeline": {},
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1770158700000"
+   }
+  }
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000003",
+  "video_view_log_id": "log-1111-0003-172359",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1771372799999"
+   }
+  },
+  "dominant_emotion": "surprise",
+  "emotion_percentages": {
+   "neutral": 0.1,
+   "happy": 0.1,
+   "surprise": 0.6,
+   "sad": 0.1,
+   "angry": 0.1
+  },
+  "completion_rate": 0.7,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "200": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "400": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "600": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 83.75,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "800": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "1000": {
+    "neutral": 25.0,
+    "happy": 28.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "1200": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "1400": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 88.75,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "1600": {
+    "neutral": 31.0,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "1800": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "2000": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "2200": {
+    "neutral": 22.0,
+    "happy": 25.0,
+    "surprise": 93.75,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "2400": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "2600": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "2800": {
+    "neutral": 28.0,
+    "happy": 31.0,
+    "surprise": 34.0,
+    "sad": 22.0,
+    "angry": 25.0
+   },
+   "3000": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 82.5,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "3200": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "3400": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "3600": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "3800": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 87.5,
+    "sad": 27.0,
+    "angry": 30.0
+   }
+  },
+  "most_emotion_timeline": {},
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1771373099999"
+   }
+  }
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000008",
+  "video_view_log_id": "log-1111-0008-010000",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772323200000"
+   }
+  },
+  "dominant_emotion": "neutral",
+  "emotion_percentages": {
+   "neutral": 0.7,
+   "happy": 0.1,
+   "surprise": 0.05,
+   "sad": 0.1,
+   "angry": 0.05
+  },
+  "completion_rate": 1.0,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "50": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "100": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "150": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "200": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "250": {
+    "neutral": 25.0,
+    "happy": 28.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "300": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "350": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "400": {
+    "neutral": 31.0,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "450": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "500": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "550": {
+    "neutral": 22.0,
+    "happy": 25.0,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "600": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "650": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "700": {
+    "neutral": 28.0,
+    "happy": 31.0,
+    "surprise": 34.0,
+    "sad": 22.0,
+    "angry": 25.0
+   },
+   "750": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "800": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "850": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "900": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "950": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "1000": {
+    "neutral": 25.0,
+    "happy": 28.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "1050": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "1100": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "1150": {
+    "neutral": 31.0,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "1200": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "1250": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "1300": {
+    "neutral": 22.0,
+    "happy": 25.0,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "1350": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "1400": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "1450": {
+    "neutral": 28.0,
+    "happy": 31.0,
+    "surprise": 34.0,
+    "sad": 22.0,
+    "angry": 25.0
+   },
+   "1500": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "1550": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "1600": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "1650": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "1700": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "1750": {
+    "neutral": 25.0,
+    "happy": 28.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "1800": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "1850": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "1900": {
+    "neutral": 31.0,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "1950": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "2000": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "2050": {
+    "neutral": 22.0,
+    "happy": 25.0,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "2100": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "2150": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "2200": {
+    "neutral": 28.0,
+    "happy": 31.0,
+    "surprise": 34.0,
+    "sad": 22.0,
+    "angry": 25.0
+   },
+   "2250": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "2300": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "2350": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "2400": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "2450": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "2500": {
+    "neutral": 25.0,
+    "happy": 28.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "2550": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "2600": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "2650": {
+    "neutral": 31.0,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "2700": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "2750": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "2800": {
+    "neutral": 22.0,
+    "happy": 25.0,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "2850": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "2900": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "2950": {
+    "neutral": 28.0,
+    "happy": 31.0,
+    "surprise": 34.0,
+    "sad": 22.0,
+    "angry": 25.0
+   },
+   "3000": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "3050": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "3100": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "3150": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "3200": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "3250": {
+    "neutral": 25.0,
+    "happy": 28.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "3300": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "3350": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "3400": {
+    "neutral": 31.0,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "3450": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "3500": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "3550": {
+    "neutral": 22.0,
+    "happy": 25.0,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "3600": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "3650": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "3700": {
+    "neutral": 28.0,
+    "happy": 31.0,
+    "surprise": 34.0,
+    "sad": 22.0,
+    "angry": 25.0
+   },
+   "3750": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "3800": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "3850": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "3900": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "3950": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "4000": {
+    "neutral": 25.0,
+    "happy": 28.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "4050": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "4100": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "4150": {
+    "neutral": 31.0,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "4200": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "4250": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "4300": {
+    "neutral": 22.0,
+    "happy": 25.0,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "4350": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "4400": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "4450": {
+    "neutral": 28.0,
+    "happy": 31.0,
+    "surprise": 34.0,
+    "sad": 22.0,
+    "angry": 25.0
+   },
+   "4500": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "4550": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "4600": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "4650": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "4700": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   }
+  },
+  "most_emotion_timeline": {},
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772323500000"
+   }
+  }
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000009",
+  "video_view_log_id": "log-1111-0009-010330",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772335800500"
+   }
+  },
+  "dominant_emotion": "angry",
+  "emotion_percentages": {
+   "neutral": 0.1,
+   "happy": 0.1,
+   "surprise": 0.1,
+   "sad": 0.1,
+   "angry": 0.6
+  },
+  "completion_rate": 0.35,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "60": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "120": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "180": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "240": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "300": {
+    "neutral": 25.0,
+    "happy": 28.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 86.25
+   },
+   "360": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "420": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "480": {
+    "neutral": 31.0,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "540": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "600": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "660": {
+    "neutral": 22.0,
+    "happy": 25.0,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 93.75
+   },
+   "720": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "780": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "840": {
+    "neutral": 28.0,
+    "happy": 31.0,
+    "surprise": 34.0,
+    "sad": 22.0,
+    "angry": 25.0
+   },
+   "900": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "960": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "1020": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 85.0
+   },
+   "1080": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "1140": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "1200": {
+    "neutral": 25.0,
+    "happy": 28.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "1260": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "1320": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "1380": {
+    "neutral": 31.0,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 92.5
+   },
+   "1440": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "1500": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "1560": {
+    "neutral": 22.0,
+    "happy": 25.0,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "1620": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "1680": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "1740": {
+    "neutral": 28.0,
+    "happy": 31.0,
+    "surprise": 34.0,
+    "sad": 22.0,
+    "angry": 83.75
+   },
+   "1800": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "1860": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "1920": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "1980": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "2040": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "2100": {
+    "neutral": 25.0,
+    "happy": 28.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 91.25
+   },
+   "2160": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "2220": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "2280": {
+    "neutral": 31.0,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "2340": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "2400": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "2460": {
+    "neutral": 22.0,
+    "happy": 25.0,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 82.5
+   },
+   "2520": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "2580": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "2640": {
+    "neutral": 28.0,
+    "happy": 31.0,
+    "surprise": 34.0,
+    "sad": 22.0,
+    "angry": 25.0
+   },
+   "2700": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "2760": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "2820": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 90.0
+   },
+   "2880": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "2940": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "3000": {
+    "neutral": 25.0,
+    "happy": 28.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "3060": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "3120": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "3180": {
+    "neutral": 31.0,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 81.25
+   },
+   "3240": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "3300": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "3360": {
+    "neutral": 22.0,
+    "happy": 25.0,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "3420": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "3480": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "3540": {
+    "neutral": 28.0,
+    "happy": 31.0,
+    "surprise": 34.0,
+    "sad": 22.0,
+    "angry": 88.75
+   },
+   "3600": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "3660": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "3720": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "3780": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "3840": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   }
+  },
+  "most_emotion_timeline": {},
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772336100500"
+   }
+  }
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000010",
+  "video_view_log_id": "log-1111-0010-091200",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1773057600001"
+   }
+  },
+  "dominant_emotion": "happy",
+  "emotion_percentages": {
+   "neutral": 0.1,
+   "happy": 0.5,
+   "surprise": 0.2,
+   "sad": 0.1,
+   "angry": 0.1
+  },
+  "completion_rate": 0.6,
+  "emotion_score_timeline": {
+   "0": [
+    20.0,
+    23.0,
+    26.0,
+    29.0,
+    32.0
+   ],
+   "100": [
+    27.0,
+    30.0,
+    33.0,
+    21.0,
+    24.0
+   ],
+   "200": [
+    34.0,
+    82.5,
+    25.0,
+    28.0,
+    31.0
+   ],
+   "300": [
+    26.0,
+    29.0,
+    32.0,
+    20.0,
+    23.0
+   ],
+   "400": [
+    33.0,
+    21.0,
+    24.0,
+    27.0,
+    30.0
+   ],
+   "500": [
+    25.0,
+    86.25,
+    31.0,
+    34.0,
+    22.0
+   ],
+   "600": [
+    32.0,
+    20.0,
+    23.0,
+    26.0,
+    29.0
+   ],
+   "700": [
+    24.0,
+    27.0,
+    30.0,
+    33.0,
+    21.0
+   ],
+   "800": [
+    31.0,
+    90.0,
+    22.0,
+    25.0,
+    28.0
+   ],
+   "900": [
+    23.0,
+    26.0,
+    29.0,
+    32.0,
+    20.0
+   ]
+  },
+  "most_emotion_timeline": {},
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1773057900001"
+   }
+  }
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000014",
+  "video_view_log_id": "log-1111-0014-091230",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1773059400002"
+   }
+  },
+  "dominant_emotion": "happy",
+  "emotion_percentages": {
+   "neutral": 0.05,
+   "happy": 0.8,
+   "surprise": 0.05,
+   "sad": 0.05,
+   "angry": 0.05
+  },
+  "completion_rate": 0.95,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "25": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "50": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "75": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "100": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "125": {
+    "neutral": 25.0,
+    "happy": 28.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "150": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "175": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "200": {
+    "neutral": 31.0,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "225": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "250": {
+    "neutral": 30.0,
+    "happy": 92.5,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "275": {
+    "neutral": 22.0,
+    "happy": 25.0,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "300": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "325": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "350": {
+    "neutral": 28.0,
+    "happy": 31.0,
+    "surprise": 34.0,
+    "sad": 22.0,
+    "angry": 25.0
+   },
+   "375": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "400": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "425": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "450": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "475": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "500": {
+    "neutral": 25.0,
+    "happy": 28.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "525": {
+    "neutral": 32.0,
+    "happy": 90.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "550": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "575": {
+    "neutral": 31.0,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "600": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "625": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "650": {
+    "neutral": 22.0,
+    "happy": 25.0,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "675": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "700": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "725": {
+    "neutral": 28.0,
+    "happy": 31.0,
+    "surprise": 34.0,
+    "sad": 22.0,
+    "angry": 25.0
+   },
+   "750": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "775": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "800": {
+    "neutral": 34.0,
+    "happy": 87.5,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "825": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "850": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "875": {
+    "neutral": 25.0,
+    "happy": 28.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "900": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "925": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "950": {
+    "neutral": 31.0,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "975": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "1000": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "1025": {
+    "neutral": 22.0,
+    "happy": 25.0,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "1050": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "1075": {
+    "neutral": 21.0,
+    "happy": 85.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "1100": {
+    "neutral": 28.0,
+    "happy": 31.0,
+    "surprise": 34.0,
+    "sad": 22.0,
+    "angry": 25.0
+   },
+   "1125": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "1150": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "1175": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "1200": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "1225": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "1250": {
+    "neutral": 25.0,
+    "happy": 28.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "1275": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "1300": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "1325": {
+    "neutral": 31.0,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "1350": {
+    "neutral": 23.0,
+    "happy": 82.5,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "1375": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "1400": {
+    "neutral": 22.0,
+    "happy": 25.0,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "1425": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "1450": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "1475": {
+    "neutral": 28.0,
+    "happy": 31.0,
+    "surprise": 34.0,
+    "sad": 22.0,
+    "angry": 25.0
+   },
+   "1500": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "1525": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "1550": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "1575": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "1600": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "1625": {
+    "neutral": 25.0,
+    "happy": 80.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "1650": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "1675": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "1700": {
+    "neutral": 31.0,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "1725": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "1750": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "1775": {
+    "neutral": 22.0,
+    "happy": 25.0,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "1800": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "1825": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "1850": {
+    "neutral": 28.0,
+    "happy": 31.0,
+    "surprise": 34.0,
+    "sad": 22.0,
+    "angry": 25.0
+   },
+   "1875": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "1900": {
+    "neutral": 27.0,
+    "happy": 93.75,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "1925": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "1950": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "1975": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "2000": {
+    "neutral": 25.0,
+    "happy": 28.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "2025": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "2050": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "2075": {
+    "neutral": 31.0,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "2100": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "2125": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "2150": {
+    "neutral": 22.0,
+    "happy": 25.0,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "2175": {
+    "neutral": 29.0,
+    "happy": 91.25,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "2200": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "2225": {
+    "neutral": 28.0,
+    "happy": 31.0,
+    "surprise": 34.0,
+    "sad": 22.0,
+    "angry": 25.0
+   },
+   "2250": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "2275": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "2300": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "2325": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "2350": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "2375": {
+    "neutral": 25.0,
+    "happy": 28.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "2400": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "2425": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "2450": {
+    "neutral": 31.0,
+    "happy": 88.75,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "2475": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "2500": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "2525": {
+    "neutral": 22.0,
+    "happy": 25.0,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "2550": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "2575": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "2600": {
+    "neutral": 28.0,
+    "happy": 31.0,
+    "surprise": 34.0,
+    "sad": 22.0,
+    "angry": 25.0
+   },
+   "2625": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "2650": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "2675": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "2700": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "2725": {
+    "neutral": 33.0,
+    "happy": 86.25,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "2750": {
+    "neutral": 25.0,
+    "happy": 28.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "2775": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "2800": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "2825": {
+    "neutral": 31.0,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "2850": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "2875": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "2900": {
+    "neutral": 22.0,
+    "happy": 25.0,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "2925": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "2950": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "2975": {
+    "neutral": 28.0,
+    "happy": 31.0,
+    "surprise": 34.0,
+    "sad": 22.0,
+    "angry": 25.0
+   },
+   "3000": {
+    "neutral": 20.0,
+    "happy": 83.75,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "3025": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "3050": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "3075": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "3100": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "3125": {
+    "neutral": 25.0,
+    "happy": 28.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "3150": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "3175": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "3200": {
+    "neutral": 31.0,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "3225": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "3250": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "3275": {
+    "neutral": 22.0,
+    "happy": 81.25,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "3300": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "3325": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "3350": {
+    "neutral": 28.0,
+    "happy": 31.0,
+    "surprise": 34.0,
+    "sad": 22.0,
+    "angry": 25.0
+   },
+   "3375": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "3400": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "3425": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "3450": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "3475": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "3500": {
+    "neutral": 25.0,
+    "happy": 28.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "3525": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "3550": {
+    "neutral": 24.0,
+    "happy": 95.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "3575": {
+    "neutral": 31.0,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "3600": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "3625": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "3650": {
+    "neutral": 22.0,
+    "happy": 25.0,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "3675": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "3700": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "3725": {
+    "neutral": 28.0,
+    "happy": 31.0,
+    "surprise": 34.0,
+    "sad": 22.0,
+    "angry": 25.0
+   },
+   "3750": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "3775": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "3800": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "3825": {
+    "neutral": 26.0,
+    "happy": 92.5,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "3850": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "3875": {
+    "neutral": 25.0,
+    "happy": 28.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "3900": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "3925": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "3950": {
+    "neutral": 31.0,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "3975": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "4000": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "4025": {
+    "neutral": 22.0,
+    "happy": 25.0,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "4050": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "4075": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "4100": {
+    "neutral": 28.0,
+    "happy": 90.0,
+    "surprise": 34.0,
+    "sad": 22.0,
+    "angry": 25.0
+   },
+   "4125": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "4150": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "4175": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "4200": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "4225": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "4250": {
+    "neutral": 25.0,
+    "happy": 28.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "4275": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "4300": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "4325": {
+    "neutral": 31.0,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "4350": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "4375": {
+    "neutral": 30.0,
+    "happy": 87.5,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "4400": {
+    "neutral": 22.0,
+    "happy": 25.0,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "4425": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "4450": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "4475": {
+    "neutral": 28.0,
+    "happy": 31.0,
+    "surprise": 34.0,
+    "sad": 22.0,
+    "angry": 25.0
+   },
+   "4500": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "4525": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "4550": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "4575": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "4600": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "4625": {
+    "neutral": 25.0,
+    "happy": 28.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "4650": {
+    "neutral": 32.0,
+    "happy": 85.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "4675": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "4700": {
+    "neutral": 31.0,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "4725": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "4750": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "4775": {
+    "neutral": 22.0,
+    "happy": 25.0,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "4800": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "4825": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "4850": {
+    "neutral": 28.0,
+    "happy": 31.0,
+    "surprise": 34.0,
+    "sad": 22.0,
+    "angry": 25.0
+   },
+   "4875": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "4900": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "4925": {
+    "neutral": 34.0,
+    "happy": 82.5,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "4950": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "4975": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   }
+  },
+  "most_emotion_timeline": {},
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1773059700002"
+   }
+  }
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000015",
+  "video_view_log_id": "log-1111-0015-312359",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1775001599999"
+   }
+  },
+  "dominant_emotion": "sad",
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.1,
+   "surprise": 0.1,
+   "sad": 0.55,
+   "angry": 0.05
+  },
+  "completion_rate": 0.4,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "100": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "200": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "300": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "400": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "500": {
+    "neutral": 25.0,
+    "happy": 28.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "600": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "700": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "800": {
+    "neutral": 31.0,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "900": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "1000": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "1100": {
+    "neutral": 22.0,
+    "happy": 25.0,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "1200": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "1300": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "1400": {
+    "neutral": 28.0,
+    "happy": 31.0,
+    "surprise": 34.0,
+    "sad": 22.0,
+    "angry": 25.0
+   },
+   "1500": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "1600": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "1700": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "1800": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "1900": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "2000": {
+    "neutral": 25.0,
+    "happy": 28.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "2100": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "2200": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "2300": {
+    "neutral": 31.0,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "2400": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "2500": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "2600": {
+    "neutral": 22.0,
+    "happy": 25.0,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "2700": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "2800": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "2900": {
+    "neutral": 28.0,
+    "happy": 31.0,
+    "surprise": 34.0,
+    "sad": 22.0,
+    "angry": 25.0
+   }
+  },
+  "most_emotion_timeline": {},
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1775001899999"
+   }
+  }
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000006",
+  "video_view_log_id": "log-1111-0006-100800",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1773129600000"
+   }
+  },
+  "dominant_emotion": "neutral",
+  "emotion_percentages": {
+   "neutral": 0.5,
+   "happy": 0.2,
+   "surprise": 0.1,
+   "sad": 0.1,
+   "angry": 0.1
+  },
+  "completion_rate": 0.8,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "100": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "200": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "300": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "400": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "500": {
+    "neutral": 25.0,
+    "happy": 28.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "600": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "700": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "800": {
+    "neutral": 31.0,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "900": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "1000": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "1100": {
+    "neutral": 22.0,
+    "happy": 25.0,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "1200": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "1300": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "1400": {
+    "neutral": 28.0,
+    "happy": 31.0,
+    "surprise": 34.0,
+    "sad": 22.0,
+    "angry": 25.0
+   },
+   "1500": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "1600": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "1700": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "1800": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "1900": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "2000": {
+    "neutral": 25.0,
+    "happy": 28.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "2100": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "2200": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "2300": {
+    "neutral": 31.0,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "2400": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "2500": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "2600": {
+    "neutral": 22.0,
+    "happy": 25.0,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "2700": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "2800": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "2900": {
+    "neutral": 28.0,
+    "happy": 31.0,
+    "surprise": 34.0,
+    "sad": 22.0,
+    "angry": 25.0
+   }
+  },
+  "most_emotion_timeline": {},
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1773129900000"
+   }
+  }
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "video_view_log_id": "log-1111-ffff-110800",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1773216000000"
+   }
+  },
+  "dominant_emotion": "happy",
+  "emotion_percentages": {
+   "neutral": 0.1,
+   "happy": 0.7,
+   "surprise": 0.1,
+   "sad": 0.05,
+   "angry": 0.05
+  },
+  "completion_rate": 0.8,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "100": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "200": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "300": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "400": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "500": {
+    "neutral": 25.0,
+    "happy": 28.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "600": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "700": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "800": {
+    "neutral": 31.0,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "900": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "1000": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "1100": {
+    "neutral": 22.0,
+    "happy": 25.0,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "1200": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "1300": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "1400": {
+    "neutral": 28.0,
+    "happy": 31.0,
+    "surprise": 34.0,
+    "sad": 22.0,
+    "angry": 25.0
+   },
+   "1500": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "1600": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "1700": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "1800": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "1900": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "2000": {
+    "neutral": 25.0,
+    "happy": 28.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "2100": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "2200": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "2300": {
+    "neutral": 31.0,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "2400": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "2500": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "2600": {
+    "neutral": 22.0,
+    "happy": 25.0,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "2700": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "2800": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "2900": {
+    "neutral": 28.0,
+    "happy": 31.0,
+    "surprise": 34.0,
+    "sad": 22.0,
+    "angry": 25.0
+   }
+  },
+  "most_emotion_timeline": {},
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1773216300000"
+   }
+  }
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000016",
+  "video_view_log_id": "log-1111-0016-120800",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1773302400000"
+   }
+  },
+  "dominant_emotion": "neutral",
+  "emotion_percentages": {
+   "neutral": 0.4,
+   "happy": 0.3,
+   "surprise": 0.1,
+   "sad": 0.1,
+   "angry": 0.1
+  },
+  "completion_rate": 0.2,
+  "emotion_score_timeline": {},
+  "most_emotion_timeline": {},
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1773302700000"
+   }
+  }
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000017",
+  "video_view_log_id": "log-1111-0017-130800",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1773388800000"
+   }
+  },
+  "dominant_emotion": "happy",
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.5,
+   "surprise": 0.1,
+   "sad": 0.1,
+   "angry": 0.1
+  },
+  "completion_rate": 0.6,
+  "emotion_score_timeline": {
+   "abc": [
+    10,
+    20,
+    30,
+    40,
+    50
+   ],
+   "100": [
+    90,
+    1,
+    2,
+    3,
+    4
+   ]
+  },
+  "most_emotion_timeline": {},
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1773389100000"
+   }
+  }
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000018",
+  "video_view_log_id": "log-1111-0018-021515",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1775142915150"
+   }
+  },
+  "dominant_emotion": "surprise",
+  "emotion_percentages": {
+   "neutral": 0.1,
+   "happy": 0.1,
+   "surprise": 0.5,
+   "sad": 0.2,
+   "angry": 0.1
+  },
+  "completion_rate": 0.65,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "80": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "160": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "240": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "320": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 85.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "400": {
+    "neutral": 25.0,
+    "happy": 28.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "480": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "560": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "640": {
+    "neutral": 31.0,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "720": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 91.25,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "800": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "880": {
+    "neutral": 22.0,
+    "happy": 25.0,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "960": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "1040": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "1120": {
+    "neutral": 28.0,
+    "happy": 31.0,
+    "surprise": 81.25,
+    "sad": 22.0,
+    "angry": 25.0
+   },
+   "1200": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "1280": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "1360": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "1440": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "1520": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 87.5,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "1600": {
+    "neutral": 25.0,
+    "happy": 28.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "1680": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "1760": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "1840": {
+    "neutral": 31.0,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "1920": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 93.75,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "2000": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "2080": {
+    "neutral": 22.0,
+    "happy": 25.0,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "2160": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "2240": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "2320": {
+    "neutral": 28.0,
+    "happy": 31.0,
+    "surprise": 83.75,
+    "sad": 22.0,
+    "angry": 25.0
+   },
+   "2400": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "2480": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "2560": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "2640": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "2720": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 90.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "2800": {
+    "neutral": 25.0,
+    "happy": 28.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "2880": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "2960": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "3040": {
+    "neutral": 31.0,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "3120": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 80.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "3200": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "3280": {
+    "neutral": 22.0,
+    "happy": 25.0,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "3360": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "3440": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "3520": {
+    "neutral": 28.0,
+    "happy": 31.0,
+    "surprise": 86.25,
+    "sad": 22.0,
+    "angry": 25.0
+   }
+  },
+  "most_emotion_timeline": {},
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1775143215150"
+   }
+  }
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000001",
+  "video_view_log_id": "log-1111-0001-200101",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1776646861001"
+   }
+  },
+  "dominant_emotion": "neutral",
+  "emotion_percentages": {
+   "neutral": 0.45,
+   "happy": 0.25,
+   "surprise": 0.1,
+   "sad": 0.1,
+   "angry": 0.1
+  },
+  "completion_rate": 0.75,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "77": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "154": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "231": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "308": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "385": {
+    "neutral": 25.0,
+    "happy": 28.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "462": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "539": {
+    "neutral": 88.75,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "616": {
+    "neutral": 31.0,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "693": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "770": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "847": {
+    "neutral": 22.0,
+    "happy": 25.0,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "924": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "1001": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "1078": {
+    "neutral": 28.0,
+    "happy": 31.0,
+    "surprise": 34.0,
+    "sad": 22.0,
+    "angry": 25.0
+   },
+   "1155": {
+    "neutral": 82.5,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "1232": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "1309": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "1386": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "1463": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "1540": {
+    "neutral": 25.0,
+    "happy": 28.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "1617": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "1694": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "1771": {
+    "neutral": 92.5,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "1848": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "1925": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "2002": {
+    "neutral": 22.0,
+    "happy": 25.0,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "2079": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "2156": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "2233": {
+    "neutral": 28.0,
+    "happy": 31.0,
+    "surprise": 34.0,
+    "sad": 22.0,
+    "angry": 25.0
+   },
+   "2310": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "2387": {
+    "neutral": 86.25,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "2464": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   }
+  },
+  "most_emotion_timeline": {},
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1776647161001"
+   }
+  }
+ },
+ {
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000004",
+  "video_view_log_id": "log-1111-0004-251000",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1777111200000"
+   }
+  },
+  "dominant_emotion": "happy",
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.5,
+   "surprise": 0.1,
+   "sad": 0.1,
+   "angry": 0.1
+  },
+  "completion_rate": 0.55,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "100": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "200": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "300": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "400": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "500": {
+    "neutral": 10.0,
+    "happy": 82.5,
+    "surprise": 5.0,
+    "sad": 1.0,
+    "angry": 1.0
+   },
+   "600": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "700": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "800": {
+    "neutral": 31.0,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "900": {
+    "neutral": 23.0,
+    "happy": 26.0,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "1000": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "1100": {
+    "neutral": 22.0,
+    "happy": 25.0,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "1200": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "1300": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "1400": {
+    "neutral": 28.0,
+    "happy": 31.0,
+    "surprise": 34.0,
+    "sad": 22.0,
+    "angry": 25.0
+   },
+   "1500": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "1600": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "1700": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "1800": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "1900": {
+    "neutral": 33.0,
+    "happy": 21.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   }
+  },
+  "most_emotion_timeline": {},
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1777111500000"
+   }
+  }
+ },
+ {
+  "user_id": "22222222-2222-4222-8222-222222222222",
+  "video_id": "bbbbbbbb-0000-4000-8000-000000000002",
+  "video_view_log_id": "log-2222-0002-051000",
+  "created_at": {
+   "$date": {
+    "$numberLong": "1772704800000"
+   }
+  },
+  "dominant_emotion": "happy",
+  "emotion_percentages": {
+   "neutral": 0.2,
+   "happy": 0.6,
+   "surprise": 0.1,
+   "sad": 0.05,
+   "angry": 0.05
+  },
+  "completion_rate": 0.9,
+  "emotion_score_timeline": {
+   "0": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "100": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "200": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "300": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "400": {
+    "neutral": 33.0,
+    "happy": 85.0,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "500": {
+    "neutral": 25.0,
+    "happy": 28.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "600": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "700": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "800": {
+    "neutral": 31.0,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "900": {
+    "neutral": 23.0,
+    "happy": 91.25,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   },
+   "1000": {
+    "neutral": 30.0,
+    "happy": 33.0,
+    "surprise": 21.0,
+    "sad": 24.0,
+    "angry": 27.0
+   },
+   "1100": {
+    "neutral": 22.0,
+    "happy": 25.0,
+    "surprise": 28.0,
+    "sad": 31.0,
+    "angry": 34.0
+   },
+   "1200": {
+    "neutral": 29.0,
+    "happy": 32.0,
+    "surprise": 20.0,
+    "sad": 23.0,
+    "angry": 26.0
+   },
+   "1300": {
+    "neutral": 21.0,
+    "happy": 24.0,
+    "surprise": 27.0,
+    "sad": 30.0,
+    "angry": 33.0
+   },
+   "1400": {
+    "neutral": 28.0,
+    "happy": 81.25,
+    "surprise": 34.0,
+    "sad": 22.0,
+    "angry": 25.0
+   },
+   "1500": {
+    "neutral": 20.0,
+    "happy": 23.0,
+    "surprise": 26.0,
+    "sad": 29.0,
+    "angry": 32.0
+   },
+   "1600": {
+    "neutral": 27.0,
+    "happy": 30.0,
+    "surprise": 33.0,
+    "sad": 21.0,
+    "angry": 24.0
+   },
+   "1700": {
+    "neutral": 34.0,
+    "happy": 22.0,
+    "surprise": 25.0,
+    "sad": 28.0,
+    "angry": 31.0
+   },
+   "1800": {
+    "neutral": 26.0,
+    "happy": 29.0,
+    "surprise": 32.0,
+    "sad": 20.0,
+    "angry": 23.0
+   },
+   "1900": {
+    "neutral": 33.0,
+    "happy": 87.5,
+    "surprise": 24.0,
+    "sad": 27.0,
+    "angry": 30.0
+   },
+   "2000": {
+    "neutral": 25.0,
+    "happy": 28.0,
+    "surprise": 31.0,
+    "sad": 34.0,
+    "angry": 22.0
+   },
+   "2100": {
+    "neutral": 32.0,
+    "happy": 20.0,
+    "surprise": 23.0,
+    "sad": 26.0,
+    "angry": 29.0
+   },
+   "2200": {
+    "neutral": 24.0,
+    "happy": 27.0,
+    "surprise": 30.0,
+    "sad": 33.0,
+    "angry": 21.0
+   },
+   "2300": {
+    "neutral": 31.0,
+    "happy": 34.0,
+    "surprise": 22.0,
+    "sad": 25.0,
+    "angry": 28.0
+   },
+   "2400": {
+    "neutral": 23.0,
+    "happy": 93.75,
+    "surprise": 29.0,
+    "sad": 32.0,
+    "angry": 20.0
+   }
+  },
+  "most_emotion_timeline": {},
+  "finalized_at": {
+   "$date": {
+    "$numberLong": "1772705100000"
+   }
+  }
+ }
+]
