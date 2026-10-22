@@ -49,7 +49,7 @@
 | `unique` | `unique a, b` | 유일 제약 |
 | `check` | `check name when condition` | 쓰기 뒤 행이 만족해야 하는 조건 |
 | `invariant` | `invariant limitName per refField [deferred]` | limit을 참조 필드별로 적용한다(유일 인덱스로 집행) |
-| `extension` | `extension read\|write\|job name { input; output; access; effect; deadline; implementation; internal }` | 표준 밖 Node·Python 확장 호출. `internal`은 write 확장을 서버 전용으로 표시하며 trusted server invocation만 호출할 수 있다. 기본은 공개 호환이다. |
+| `extension` | `extension read\|write\|job name { input; output; access; effect; deadline; implementation; internal }` | 표준 밖 Node·Python 확장 호출 |
 | `docs` | `docs { summary "..."; visibility internal }` | 사람이 읽는 설명. 실행·권한에 쓰이지 않는다 |
 
 ### expose read
@@ -105,6 +105,7 @@
 | `effect` | `effect none \| db \| managed` | read는 none, write는 db |
 | `deadline` | `deadline 2s` | 실행 시간 한도 |
 | `implementation` | `implementation "module.function"` | 확장 모듈과 함수 이름 |
+| `internal` | `internal` | write 확장을 서버 전용으로 표시 |
 
 ### transition
 
