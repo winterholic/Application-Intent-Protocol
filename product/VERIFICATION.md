@@ -152,6 +152,16 @@
 
 원래 서버는 `Sec-WebSocket-Extensions` 헤더가 하나라도 있으면 핸드셰이크를 `WIRE.BAD_REQUEST`로 거절했다. 브라우저는 항상 `permessage-deflate`를 제안하므로(Chrome은 `permessage-deflate; client_max_window_bits`) 브라우저의 `/events/socket` 연결이 막힐 수 있다. RFC 6455 9.1절은 서버가 제안된 확장을 하나도 받지 않아도 된다고 한다. 시험 `a_browsers_extension_offer_is_declined_not_refused`(`browser_websocket.rs`)가 Chrome의 헤더 값으로 먼저 FAILED였다: `Http(Response { status: 200, ... "WIRE.BAD_REQUEST" ... "잘못된 WebSocket handshake" })`. 거절 조건을 지운 뒤 통과했고(`browser_websocket` 4 passed, `realtime` 3 passed, `socketio_transport` 5 passed) 101 응답에 `sec-websocket-extensions`가 없다. **실제 브라우저 실행은 하지 않았다**: 이 세션에는 브라우저 도구가 없고 지정된 사전 점검 없이 로컬 브라우저를 띄우지 않았다. 그래서 "브라우저가 막힌다"는 것은 헤더 값과 RFC로 뒷받침한 추정이고, 수정 뒤 브라우저가 연결된다는 것도 확인하지 못했다.
 
+## 2026-10-23 WBS 7.2.10 조각 1: UI 읽기 data access 어댑터 (구현 조각, 어댑터 단위 시험만, 7.2.10은 진행 중)
+
+**범위.** 결정 [D-P-UI-ADAPTER](../docs/DECISIONS.md). `porting/facereview/ui-overlay/`가 고정 UI(`2e7c021`)의 `src/api/youtube.ts`가 하는 읽기 9개(`getVideoList`, `searchVideos`, `getAllVideo`, `getPersonalRecommendedVideo`, `getVideoDetail`, `getRecentVideo`, `getEmotionSummary`, `getRelatedVideo`, `getBookmarkVideos`)를 같은 이름·인자·반환으로 SDK 확장 호출에 연결한다. 읽기 확장이 JSON 텍스트로 돌려주는 목록·객체를 파싱해 원본 응답 모양으로 돌려주고, 시청 상세는 읽은 뒤 `Video.view`를 적용해 원본의 조회수 증가를 대신하며, 감정 요약은 쓰기 확장이라 호출마다 새 key를 쓴다. **이 조각은 어댑터만 시험했다. UI를 빌드하거나 실제 SDK·서버·브라우저로 실행하지 않았다.**
+
+**실행한 검증.** `node --test porting/facereview/ui-overlay/tests/readAdapter.test.ts` → `tests 12 / pass 12 / fail 0`(가짜 SDK 클라이언트): 인자 매핑(검색의 빈 `emotions`, 원본 기본값 page 1·size 10, 최근 시청의 emotion `all`), 응답 파싱(`categories`·`videos`·`timeline_data`·`body`), 시청 상세가 원본 골든 사례(`slice13f-golden.json`의 `expected`)와 같은 필드에 타임라인만 파싱된 값, 읽은 뒤 한 번만 `Video.view`를 적용(실패해도 경고만), 요약 호출마다 다른 key와 거절 시 와이어 코드를 가진 오류, 텍스트가 없거나 JSON이 아니면 `CLIENT.PROTOCOL_ERROR`, 클라이언트 오류의 그대로 전달. 시험을 구현 뒤에 썼으므로 변이로 확인했다: 최근 시청의 기본 size 변경, 타임라인 파싱 제거, 검색의 `emotions` 변경 세 가지는 각각 시험 1개를 FAILED로 만들었다(변이 복원 뒤 12 pass). `tools/verify.sh`의 `node --test` 목록에 이 시험을 더했다.
+
+**확인한 것.** 생성 binding(`aip service gen --lang ts`)에 확장 설명자(`Video.homeCategory` 등)와 쓰기 확장 설명자가 있고 SDK `connect` 클라이언트에 `extension`·`writeExtension`·`apply`가 있다. 쓰기 확장 설명자에 클라이언트가 부를 수 있는 `User.startWatching`·`User.recordFrame`도 나온다(결정의 열린 문제 d).
+
+**열린 문제(결정 필요, 상세는 결정 기록).** (a) 비로그인 방문자는 확장 호출이 서명된 세션을 요구해서 홈 목록이 서비스되지 않는다. 이 문제는 7.2.3 때부터 알려진 코어 의존(extensions README 3번)이고 화면에서는 방문자의 랜딩 화면이 막히는 것으로 나타난다. (b) 좋아요·북마크 토글. (c) 인증·재발급 인터셉터. (d) 내부 전용 확장 표시가 없다. **미검증:** `aipClient.ts`(UI 인증 저장소·생성 binding·`@aip/sdk` 필요), 실제 서버에 대한 호출, UI 빌드와 브라우저, 각 응답이 화면 타입과 필드별로 같은지(원본 오라클과의 서버 쪽 일치만 있다).
+
 ## 2026-10-22 WBS 7.2.10 사전 조사: 원본 UI의 data access 표면 (조사만, 구현 없음)
 
 기준은 UI revision `2e7c021fa5abebd72278d841b8066a33d45cfbb3`(`projects/facereview/facereview-front-joowon`의 pinned commit, 작업 트리는 읽지 않았다)의 `src/api/{index,auth,mypage,request,watch,youtube}.ts`와 `src/socket/index.ts`다. 서버 호출은 이 여섯 파일과 소켓 한 곳에 모여 있고 axios 인스턴스(`baseURL: '/api'`, `withCredentials`, 401이면 `/v2/auth/reissue`로 한 번 재시도하는 인터셉터)를 공유한다. 서버 호출은 30곳(소켓 제외), 고유 경로는 25개다.
