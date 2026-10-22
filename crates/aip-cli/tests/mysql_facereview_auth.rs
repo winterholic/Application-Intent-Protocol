@@ -376,9 +376,12 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
     // never printed into the CI log.
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let binding = directory.path().join("facereview-generated.ts");
-    run(&env, &["gen", "--lang", "ts", "--out", binding.to_str().unwrap(), "--sdk-import", "@aip/sdk", file_arg], &config)
-        .await
-        .expect("generate the FaceReview TypeScript binding from the test definition");
+    let generated = StdCommand::new(env!("CARGO_BIN_EXE_aip"))
+        .args(["service", "gen", "--lang", "ts", "--out", binding.to_str().unwrap(), "--sdk-import", "@aip/sdk", file_arg])
+        .current_dir(&root)
+        .output()
+        .expect("start FaceReview TypeScript binding generation");
+    assert!(generated.status.success(), "TypeScript binding generation failed: {}", String::from_utf8_lossy(&generated.stderr));
     let sdk_dir = directory.path().join("sdk");
     let build = StdCommand::new("node")
         .arg(root.join("product/tools/build-sdk.mjs"))
