@@ -8,6 +8,7 @@ import re
 from pathlib import Path
 import subprocess
 import time
+import traceback
 from urllib.parse import urlsplit
 
 from playwright.sync_api import expect, sync_playwright
@@ -26,6 +27,7 @@ def main() -> int:
     args = parser.parse_args()
     email = os.environ["AIP_FACEREVIEW_JOURNEY_EMAIL"]
     password = os.environ["AIP_FACEREVIEW_JOURNEY_PASSWORD"]
+    expected_contract = os.environ["AIP_FACEREVIEW_EXPECTED_CONTRACT"]
     output = args.out.resolve()
     output.mkdir(parents=True, exist_ok=True)
 
@@ -69,7 +71,23 @@ def main() -> int:
                 def capture_response(response) -> None:
                     parsed = urlsplit(response.url)
                     if parsed.port == urlsplit(args.api).port:
-                        api_paths.append({"method": response.request.method, "path": parsed.path, "status": response.status})
+                        request_contract = response.request.headers.get("x-aip-contract")
+                        try:
+                            envelope = response.json()
+                        except Exception:
+                            envelope = {}
+                        row: dict[str, object] = {
+                            "method": response.request.method,
+                            "path": parsed.path,
+                            "status": response.status,
+                        }
+                        if parsed.path in {"/read", "/extension", "/apply"}:
+                            row["contract_matches_runtime"] = request_contract == expected_contract
+                        if isinstance(envelope, dict):
+                            for key in ("ok", "code"):
+                                if key in envelope and isinstance(envelope[key], (bool, str)):
+                                    row[key] = envelope[key]
+                        api_paths.append(row)
 
                 page.on("response", capture_response)
                 page.on("pageerror", lambda _error: page_errors.append("unhandled-page-error"))
@@ -154,6 +172,20 @@ def main() -> int:
         (output / f"{args.phase}-browser-result.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
         print(json.dumps({"phase": args.phase, "api_paths": sorted(observed_paths), "screenshots": screenshot_names}, ensure_ascii=False))
         return 0
+    except Exception:
+        # Preserve safe request metadata even on failure; never serialize response bodies or credentials.
+        report = {
+            "ui_revision": "2e7c021fa5abebd72278d841b8066a33d45cfbb3",
+            "phase": args.phase,
+            "api_requests": api_paths,
+            "screenshots": screenshot_names,
+            "credentials_recorded": False,
+            "browser_api_mocks": False,
+        }
+        (output / f"{args.phase}-browser-result.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+        safe_trace = traceback.format_exc().replace(email, "[fixture-email]").replace(password, "[fixture-password]")
+        print(safe_trace, file=os.sys.stderr, end="")
+        return 1
     finally:
         server.terminate()
         try:
