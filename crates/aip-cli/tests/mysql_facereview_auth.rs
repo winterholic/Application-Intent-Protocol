@@ -17,6 +17,7 @@ use serde_json::{Value, json};
 use std::{
     collections::HashMap,
     path::Path,
+    process::Command as StdCommand,
     process::Stdio,
     sync::{
         Arc, Mutex,
@@ -369,6 +370,61 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
     let (_child, listening) = start_server(&env, &file, &config).await.expect("serve starts with password login");
     let address = listening["address"].as_str().unwrap().to_string();
     let fingerprint = listening["fingerprint"].as_str().unwrap().to_string();
+
+    // Exercise the real generated TypeScript binding, installed SDK build, and the pinned UI adapters against
+    // this fixture's actual login service and MySQL tables. Credentials are test-only and are passed via env,
+    // never printed into the CI log.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let binding = directory.path().join("facereview-generated.ts");
+    run(&env, &["gen", "--lang", "ts", "--out", binding.to_str().unwrap(), "--sdk-import", "@aip/sdk", file_arg], &config)
+        .await
+        .expect("generate the FaceReview TypeScript binding from the test definition");
+    let sdk_dir = directory.path().join("sdk");
+    let build = StdCommand::new("node")
+        .arg(root.join("product/tools/build-sdk.mjs"))
+        .arg("--out")
+        .arg(&sdk_dir)
+        .current_dir(&root)
+        .output()
+        .expect("start the installed SDK build");
+    assert!(build.status.success(), "SDK build failed: {}", String::from_utf8_lossy(&build.stderr));
+    let consumer = directory.path().join("sdk-consumer");
+    std::fs::create_dir(&consumer).unwrap();
+    std::fs::write(consumer.join("package.json"), "{\"private\":true,\"type\":\"module\"}\n").unwrap();
+    let packed = StdCommand::new("npm")
+        .args(["pack", "--offline", "--ignore-scripts"])
+        .current_dir(&sdk_dir)
+        .output()
+        .expect("start the offline @aip/sdk pack");
+    assert!(packed.status.success(), "SDK pack failed: {}", String::from_utf8_lossy(&packed.stderr));
+    let install = StdCommand::new("npm")
+        .args(["install", "--offline", "--ignore-scripts", "--no-audit", "--no-fund"])
+        .arg(sdk_dir.join("aip-sdk-0.1.0.tgz"))
+        .current_dir(&consumer)
+        .output()
+        .expect("start the offline @aip/sdk install");
+    assert!(install.status.success(), "SDK install failed: {}", String::from_utf8_lossy(&install.stderr));
+    let journey = StdCommand::new("node")
+        .arg("--experimental-strip-types")
+        .arg(root.join("product/tests/facereview-member-sdk-journey.mjs"))
+        .arg(format!("http://{address}"))
+        .arg(&binding)
+        .arg(consumer.join("node_modules/@aip/sdk/product/sdk/index.js"))
+        .env("AIP_FACEREVIEW_JOURNEY_EMAIL", "legacy@example.com")
+        .env("AIP_FACEREVIEW_JOURNEY_PASSWORD", "password123")
+        .current_dir(&root)
+        .output()
+        .expect("start the generated SDK member journey");
+    assert!(
+        journey.status.success(),
+        "generated SDK member journey failed (status {:?})\nstdout: {}\nstderr: {}",
+        journey.status.code(),
+        String::from_utf8_lossy(&journey.stdout),
+        String::from_utf8_lossy(&journey.stderr)
+    );
+    print!("{}", String::from_utf8_lossy(&journey.stdout));
+    eprint!("{}", String::from_utf8_lossy(&journey.stderr));
+
     let read_users = |token: Option<String>| {
         let (address, fingerprint) = (address.clone(), fingerprint.clone());
         async move {

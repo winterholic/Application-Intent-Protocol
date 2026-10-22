@@ -171,6 +171,7 @@ if [[ "$mode" == run-ci ]]; then
   grep -Fxq "$auth_test: test" /tmp/aip-e2e-auth-list-"$tag".txt
   cargo test "${auth_args[@]}" -- --ignored --exact "$auth_test" --nocapture --test-threads=1 2>&1 | tee /tmp/aip-e2e-auth-run-"$tag".txt
   grep -Fq "test result: ok. 1 passed; 0 failed;" /tmp/aip-e2e-auth-run-"$tag".txt
+  grep -Fq "member SDK journey: login, one refresh, UI adapter video read, bookmark on/off, comment create/edit/delete, logout" /tmp/aip-e2e-auth-run-"$tag".txt
   # The FaceReview recommendation lists (WBS 7.2.3) read MongoDB through workers.mongo and compare with the original services' answers.
   # verify.yml starts the native-stores MongoDB fixture and exports AIP_TEST_MONGO_URL for it; the test refuses a non-loopback URL.
   if [[ -z "${AIP_TEST_MONGO_URL:-}" ]]; then
