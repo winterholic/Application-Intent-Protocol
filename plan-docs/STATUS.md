@@ -1,5 +1,11 @@
 진행 중: 이 작업 세션(auto 배정), 시작 시각 2026-10-22 21:58 KST, e29ddf1e 대기 지시와 동일 범위
 
+## 재개 지점 (2026-10-22, applyDelta 권한 slice push 완료 · 7.2.6 transport 시작 전)
+
+7.2.8 `UserEmotionSummary.applyDelta` 서버 전용 전이 slice는 `40b4539bd2a6495de5a2da6c00d0c0c5559aa2fa`로 main push했다. 직접 공개 apply, 직접 atomic, 허용된 변경 뒤 중첩 atomic은 `WIRE.NOT_EXPOSED`로 거절하는 계약 검증 2개, 실제 PostgreSQL write 통합 1개, worker 중복 첫 행 생성의 `WIRE.ALREADY_EXISTS`→`WIRE.CONFLICT` scripted 실행 1개가 통과했다. MySQL+Mongo 시험은 서비스 시작의 `SERVER_CONFIG` / 일반 io 오류에서 끝나 MySQL HTTP 경로와 실제 MySQL extension 갱신은 미검증이다. 오류 출력으로 worker runtime/readiness/listener 중 어느 하위 단계인지 특정할 수 없고 배포 backend 상태를 뜻하지 않는다. 동일 SHA CI는 Linux cgroup v2 success, 나머지 7 workflow가 마지막 조회 시 in_progress였다. 이전 marker 커밋 `fbe56656539de00d51ca786804c77b6d48b67433`는 Linux cgroup v2, Object storage, App packages, External brokers success; Verify cancelled (뒤 커밋 push로 취소)였다.
+
+이 Run이 띄운 MySQL/MariaDB/Mongo/PostgreSQL fixture는 종료했고 저장소 `target` 8.9 GiB는 `cargo clean`으로 제거했다. 현재 main은 origin/main과 일치하고 working tree clean이다. **다음 재개 지점:** `docs/DECISIONS.md`의 D-P-WATCH-TRANSPORT와 제품 검증 7.2.6 근거를 다시 읽고, Socket.IO-compatible protocol handshake/auth/payload bounds/disconnect 의미를 구현하기 전 테스트로 고정한 뒤 transport dependency/runtime entry point를 최소 slice로 구현한다. 현재 runtime에는 Axum WebSocket `/aip/subscribe`는 있지만 Socket.IO event/ack adapter는 검색상 없다. 실제 미디어·model provenance와 재현 가능한 TensorFlow/OpenCV 환경이 확인되기 전에는 frame inference나 browser ML E2E 완료로 세지 않는다.
+
 ## 재개 지점 (2026-10-22, 7.2.8 감정합계 권한 보완과 7.2.6 baseline 조사)
 
 7.2.8의 `UserEmotionSummary.applyDelta`를 `internal` 노출로 제한하는 변경과 회귀시험을 진행 중이다. 일반 공개 apply/atomic은 `WIRE.NOT_EXPOSED`, public compose는 `DEF.UNSUPPORTED`이며, write extension/job은 기존 `access` grant를 거쳐 동일 transaction/owner/expect 검사를 받는다(D-P-INTERNAL-APPLY). `spike-v1-fixture` 2개, PostgreSQL `spike-v3-write` 1개, scripted worker의 `ALREADY_EXISTS`→`CONFLICT` 1개 시험은 방금 각각 통과했다. MySQL+Mongo `mysql_facereview_trending_job`은 실제 shell test fixture에서 `aip service serve` 시작이 `SERVER_CONFIG`의 일반 io 오류로 실패해 MySQL HTTP 및 실 worker E2E는 미검증이다. 오류 메시지만으로 worker/runtime/readiness/listener 중 하위 원인은 특정할 수 없으며 배포 backend로 일반화하지 않는다. 최신 근거와 명령은 [제품 검증 7.2.8 후속](../product/VERIFICATION.md)에 적었다.
