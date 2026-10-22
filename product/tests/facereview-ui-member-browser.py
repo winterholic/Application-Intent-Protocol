@@ -4,6 +4,7 @@
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import time
@@ -82,42 +83,52 @@ def main() -> int:
                         route.continue_()
 
                 page.route("**/*", block_external_media)
-                page.goto("http://localhost:5173/auth/1", wait_until="domcontentloaded")
-                page.locator("#authEmail").fill(email)
-                page.get_by_role("button", name="다음", exact=True).click()
-                expect(page).to_have_url("**/auth/2")
-                page.locator("#authPassword").fill(password)
-                page.get_by_role("button", name="로그인", exact=True).click()
-                expect(page).to_have_url("**/main", timeout=30000)
-                video_card = page.locator(".video-item-container").filter(has_text=VIDEO_TITLE).first
-                expect(video_card).to_be_visible(timeout=30000)
-                screenshot = output / f"{args.phase}-member-video-list.png"
-                page.screenshot(path=str(screenshot), full_page=True)
-                screenshot_names.append(screenshot.name)
-                video_card.click()
-                expect(page).to_have_url(f"**/watch/{VIDEO_ID}")
-                expect(page.get_by_text(VIDEO_TITLE, exact=True).first).to_be_visible(timeout=30000)
+                try:
+                    page.goto("http://localhost:5173/auth/1", wait_until="domcontentloaded")
+                    page.locator("#authEmail").fill(email)
+                    page.get_by_role("button", name="다음", exact=True).click()
+                    expect(page).to_have_url(re.compile(r"/auth/2$"))
+                    page.locator("#authPassword").fill(password)
+                    page.get_by_role("button", name="로그인", exact=True).click()
+                    expect(page).to_have_url(re.compile(r"/main$"), timeout=30000)
+                    video_card = page.locator(".video-item-container").filter(has_text=VIDEO_TITLE).first
+                    expect(video_card).to_be_visible(timeout=30000)
+                    screenshot = output / f"{args.phase}-member-video-list.png"
+                    page.screenshot(path=str(screenshot), full_page=True)
+                    screenshot_names.append(screenshot.name)
+                    video_card.click()
+                    expect(page).to_have_url(re.compile(rf"/watch/{re.escape(VIDEO_ID)}$"))
+                    expect(page.get_by_text(VIDEO_TITLE, exact=True).first).to_be_visible(timeout=30000)
 
-                bookmark_add = page.get_by_role("button", name="즐겨찾기 추가", exact=True)
-                bookmark_remove = page.get_by_role("button", name="즐겨찾기 해제", exact=True)
-                if args.phase == "add":
-                    expect(bookmark_add).to_be_visible()
-                    bookmark_add.click()
-                    expect(bookmark_remove).to_have_attribute("aria-pressed", "true")
-                    page.reload(wait_until="domcontentloaded")
-                    expect(bookmark_remove).to_have_attribute("aria-pressed", "true", timeout=30000)
-                    label = "bookmarked"
-                else:
-                    expect(bookmark_remove).to_be_visible()
-                    bookmark_remove.click()
-                    expect(bookmark_add).to_have_attribute("aria-pressed", "false")
-                    page.reload(wait_until="domcontentloaded")
-                    expect(bookmark_add).to_have_attribute("aria-pressed", "false", timeout=30000)
-                    label = "bookmark-removed"
+                    bookmark_add = page.get_by_role("button", name="즐겨찾기 추가", exact=True)
+                    bookmark_remove = page.get_by_role("button", name="즐겨찾기 해제", exact=True)
+                    if args.phase == "add":
+                        expect(bookmark_add).to_be_visible()
+                        bookmark_add.click()
+                        expect(bookmark_remove).to_have_attribute("aria-pressed", "true")
+                        page.reload(wait_until="domcontentloaded")
+                        expect(bookmark_remove).to_have_attribute("aria-pressed", "true", timeout=30000)
+                        label = "bookmarked"
+                    else:
+                        expect(bookmark_remove).to_be_visible()
+                        bookmark_remove.click()
+                        expect(bookmark_add).to_have_attribute("aria-pressed", "false")
+                        page.reload(wait_until="domcontentloaded")
+                        expect(bookmark_add).to_have_attribute("aria-pressed", "false", timeout=30000)
+                        label = "bookmark-removed"
 
-                screenshot = output / f"{args.phase}-{label}.png"
-                page.screenshot(path=str(screenshot), full_page=True)
-                screenshot_names.append(screenshot.name)
+                    screenshot = output / f"{args.phase}-{label}.png"
+                    page.screenshot(path=str(screenshot), full_page=True)
+                    screenshot_names.append(screenshot.name)
+                except Exception:
+                    # Keep a safe view of the last UI state even when this phase fails.
+                    email_field = page.locator("#authEmail")
+                    if email_field.count():
+                        email_field.evaluate("element => { element.value = ''; }")
+                    screenshot = output / f"{args.phase}-failure.png"
+                    page.screenshot(path=str(screenshot), full_page=True)
+                    screenshot_names.append(screenshot.name)
+                    raise
             finally:
                 browser.close()
 
