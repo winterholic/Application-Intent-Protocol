@@ -2004,6 +2004,10 @@ impl<'a> Ctx<'a> {
     }
 
     fn extension(&mut self, x: &Extension) -> Option<Value> {
+        if x.internal && x.kind != "write" {
+            self.d("DEF.UNSUPPORTED", "internal은 write extension에만 허용됨", x.span);
+            return None;
+        }
         if x.kind == "write" {
             // 쓰기 확장: 서버 트랜잭션 안에서 공개 전이만 부른다. 효과는 DB 쓰기(db)로 명시한다.
             if x.effect != "db" {
@@ -2049,10 +2053,14 @@ impl<'a> Ctx<'a> {
                 }
                 acc.insert(format!("{rn}.{tn}"), json!("transition"));
             }
-            return Some(json!({
+            let mut contract = json!({
                 "kind": "write", "input": ij, "output": oj, "access": acc, "effect": x.effect,
                 "deadlineMs": x.deadline_ms, "implementation": x.implementation,
-            }));
+            });
+            if x.internal {
+                contract["internal"] = json!(true);
+            }
+            return Some(contract);
         }
         if x.kind != "read" {
             self.d("DEF.UNSUPPORTED", format!("extension 종류 `{}`는 spike 범위 밖", x.kind), x.span);

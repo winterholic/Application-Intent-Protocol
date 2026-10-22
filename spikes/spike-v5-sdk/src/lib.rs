@@ -450,7 +450,7 @@ fn extensions_of_kind<'a>(facts: &'a Value, kind: &str, effect: &str) -> Vec<(St
     let mut items = Vec::new();
     for (res, rf) in facts["resources"].as_object().into_iter().flatten() {
         for (name, ext) in rf["extensions"].as_object().into_iter().flatten() {
-            if ext["kind"] == kind && ext["effect"] == effect {
+            if ext["kind"] == kind && ext["effect"] == effect && ext["internal"] != true {
                 items.push((format!("{res}.{name}"), ext));
             }
         }

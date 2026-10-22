@@ -16,6 +16,77 @@ fn src(f: Form) -> &'static str {
     }
 }
 
+#[test]
+fn extension_internal_marker_is_part_of_normalized_execution_facts() {
+    let app = r#"
+resource User { fields { id: Id; name: Text } }
+actor User
+resource Session {
+  fields { id: Id; user: User }
+  rows read when user = actor
+  extension write startWatching {
+    input { id: Session.Id }
+    output { initialized: Bool }
+    access read.Session
+    effect db
+    deadline 1s
+    implementation "watch.start"
+    internal
+  }
+}
+
+"#;
+    let facts = load_str(app, Form::A).unwrap().execution;
+    assert_eq!(facts["resources"]["Session"]["extensions"]["startWatching"]["internal"], true);
+
+    let public_app = app.replace("    internal\n", "");
+    let public_facts = load_str(&public_app, Form::A).unwrap().execution;
+    assert_ne!(public_facts["resources"]["Session"]["extensions"]["startWatching"]["internal"], true);
+}
+
+#[test]
+fn internal_extension_is_supported_in_hmap_and_rejected_on_read_extensions() {
+    let hmap = r#"
+import { define } from "@aip/define"
+export const spec = define({
+  actor: "User",
+  resources: {
+    User: {
+      fields: { id: "Id" },
+      extensions: {
+        startWatching: {
+          kind: "write", input: { id: "User.Id" }, output: { initialized: "Bool" },
+          access: ["read.User"], effect: "db", deadline: "1s", implementation: "watch.start", internal: true,
+        },
+      },
+    },
+  },
+})
+"#;
+    let facts = load_str(hmap, Form::HTs).unwrap().execution;
+    assert_eq!(facts["resources"]["User"]["extensions"]["startWatching"]["internal"], true);
+
+    let read_extension = r#"
+resource User {
+  fields { id: Id }
+  extension read privateStatus {
+    input { }
+    output { ok: Bool }
+    access User.status
+    effect none
+    deadline 1s
+    implementation "user.status"
+    internal
+  }
+}
+"#;
+    let errors = match load_str(read_extension, Form::A) {
+        Ok(_) => panic!("internal read extensions must be rejected"),
+        Err(errors) => errors,
+    };
+    assert!(errors.iter().any(|error| error.code == "DEF.UNSUPPORTED"));
+}
+
 fn run(f: Form, s: &str) -> Result<(String, String), Vec<String>> {
     load_str(s, f).map(|o| (digest(&o.execution), digest(&o.metadata))).map_err(|ds| ds.iter().map(|d| format!("{d}")).collect())
 }

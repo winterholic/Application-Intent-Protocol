@@ -80,7 +80,7 @@ pub const BLOCK_KEYS: &[(&str, &[&str])] = &[
     ("budget", &["rows", "depth", "deadline", "cost", "offset", "cursor"]),
     ("traverse", &["select", "sort", "limit"]),
     ("aggregate", &["input", "source", "sourceAccess", "groupKey", "where", "callerFilter", "rowOutput", "release"]),
-    ("extension", &["input", "output", "access", "effect", "deadline", "implementation"]),
+    ("extension", &["input", "output", "access", "effect", "deadline", "implementation", "internal"]),
     ("transition", &["from", "to", "delete", "patch", "expect", "allow", "repeat"]),
     ("transition effect", &["create", "update", "delete", "notify"]),
     ("expose apply", &["target", "bulk", "sameScope", "internal"]),

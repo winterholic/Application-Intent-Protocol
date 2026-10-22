@@ -832,6 +832,7 @@ impl Parser {
             deadline_ms: None,
             implementation: String::new(),
             allow: None,
+            internal: false,
             span,
         };
         let mut xseen = BTreeSet::new();
@@ -864,6 +865,7 @@ impl Parser {
                 "effect" => x.effect = self.ident()?,
                 "deadline" => x.deadline_ms = Some(self.dur()?),
                 "implementation" => x.implementation = self.string()?,
+                "internal" => x.internal = true,
                 o => return Err(Diag::new("DEF.PARSE_UNKNOWN_KEY", format!("extension 안 알 수 없는 키 `{o}`"), sp)),
             }
         }

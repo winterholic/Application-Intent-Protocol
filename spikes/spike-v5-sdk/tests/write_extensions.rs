@@ -39,3 +39,24 @@ fn write_projection_covers_public_contract_and_preserves_existing_read_family() 
         assert_eq!(old, contract_ts_with_extensions(&facts, wire));
     }
 }
+
+#[test]
+fn internal_write_extensions_are_absent_from_ts_python_contracts_and_fingerprints() {
+    let facts = load_str(APP, Form::A).unwrap().execution;
+    let mut internal = facts.clone();
+    internal["resources"]["Event"]["extensions"]["run"] = json!({
+        "kind":"write","effect":"db","input":[["id","Id<Event>"]],
+        "output":[["id","Id<Event>"], ["count","Int"]],
+        "access":{"Event.mark":{}},"implementation":"event.run","deadlineMs":2000,"internal":true
+    });
+    let mut public = internal.clone();
+    public["resources"]["Event"]["extensions"].as_object_mut().unwrap().remove("run");
+
+    for wire in [IdWire::SafeNumber, IdWire::DecimalString] {
+        assert_eq!(contract_ts_with_all_extensions(&internal, wire), contract_ts_with_all_extensions(&public, wire));
+        assert_eq!(contract_fingerprint_with_all_extensions(&internal, wire), contract_fingerprint_with_all_extensions(&public, wire));
+        let python = contract_module_python(&internal, wire);
+        assert!(!python.contains("Event.run"));
+        assert_eq!(python, contract_module_python(&public, wire));
+    }
+}

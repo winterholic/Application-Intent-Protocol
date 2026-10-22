@@ -71,7 +71,7 @@ pub const NOTES: &[(&str, &str, &str, &str)] = &[
     (
         "resource",
         "extension",
-        "extension read|write|job name { input; output; access; effect; deadline; implementation }",
+        "extension read|write|job name { input; output; access; effect; deadline; implementation; internal }",
         "표준 밖 Node·Python 확장 호출",
     ),
     ("resource", "docs", "docs { summary \"...\"; visibility internal }", "사람이 읽는 설명. 실행·권한에 쓰이지 않는다"),
@@ -133,6 +133,7 @@ pub const NOTES: &[(&str, &str, &str, &str)] = &[
     ("extension", "access", "access R.transition  |  R.aggregate  |  mongo.collection  |  redis \"key:prefix:*\"", "확장이 쓸 수 있는 전이·집계·Mongo 컬렉션·Redis 키"),
     ("extension", "effect", "effect none | db | managed", "read는 none, write는 db"),
     ("extension", "deadline", "deadline 2s", "실행 시간 한도"),
+    ("extension", "internal", "internal", "write 확장을 서버 전용으로 표시"),
     ("extension", "implementation", "implementation \"module.function\"", "확장 모듈과 함수 이름"),
     ("transition", "from", "from condition", "전이를 시작할 수 있는 행의 조건"),
     ("transition", "to", "to f = v; g = g + 1", "바뀌는 값"),

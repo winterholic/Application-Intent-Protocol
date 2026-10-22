@@ -1429,6 +1429,11 @@ async fn serve_request(
         let Some(name) = request["extension"].as_str().filter(|_| exact) else {
             return reply(&mut w, &err("WIRE.BAD_REQUEST", "WRITE 요청은 key/request와 extension/input만 허용함")).await;
         };
+        if let Some((resource, extension)) = name.split_once('.') {
+            if facts["resources"][resource]["extensions"][extension]["internal"] == true {
+                return reply(&mut w, &err("WIRE.NOT_EXPOSED", "server-only WRITE 확장은 공개 호출할 수 없음")).await;
+            }
+        }
         if let Err(error) = spike_v4_worker::write::validate_write(&facts, name, &request["input"], wire) {
             return reply(&mut w, &err(error.code, &error.msg)).await;
         }
@@ -1447,6 +1452,11 @@ async fn serve_request(
         let Some(name) = body["extension"].as_str().filter(|_| valid_body) else {
             return reply(&mut w, &err("WIRE.BAD_REQUEST", "확장 본문은 extension/input만 허용함")).await;
         };
+        if let Some((resource, extension)) = name.split_once('.') {
+            if facts["resources"][resource]["extensions"][extension]["internal"] == true {
+                return reply(&mut w, &err("WIRE.NOT_EXPOSED", "server-only 확장은 공개 호출할 수 없음")).await;
+            }
+        }
         if let Err(e) = spike_v4_worker::validate_read(&facts, name, &body["input"], wire) {
             return reply(&mut w, &err(e.code, &e.msg)).await;
         }

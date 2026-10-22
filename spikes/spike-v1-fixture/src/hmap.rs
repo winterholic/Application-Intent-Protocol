@@ -480,7 +480,7 @@ fn transition_effect(value: &Lit, span: Span) -> R<Effect> {
 
 fn extension(name: &str, value: &Lit, span: Span, operation: bool) -> R<Extension> {
     let eo = obj(value, span, "extension")?;
-    let mut allowed = vec!["kind", "input", "output", "access", "effect", "deadline", "implementation"];
+    let mut allowed = vec!["kind", "input", "output", "access", "effect", "deadline", "implementation", "internal"];
     if operation {
         allowed.push("allow");
     }
@@ -495,6 +495,7 @@ fn extension(name: &str, value: &Lit, span: Span, operation: bool) -> R<Extensio
         deadline_ms: None,
         implementation: String::new(),
         allow: None,
+        internal: false,
         span,
     };
     if let Some((p, ps)) = get(eo, "input") {
@@ -520,6 +521,9 @@ fn extension(name: &str, value: &Lit, span: Span, operation: bool) -> R<Extensio
     }
     if let Some((value, at)) = get(eo, "allow") {
         ext.allow = Some(expr(value, at, "allow")?);
+    }
+    if let Some((value, at)) = get(eo, "internal") {
+        ext.internal = boolean(value, at, "internal")?;
     }
     Ok(ext)
 }

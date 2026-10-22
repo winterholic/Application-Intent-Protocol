@@ -169,3 +169,77 @@ async fn write_extensions_require_session_contract_and_opt_in_then_replay_atomic
     assert!(cleanup.is_ok(), "cleanup: {cleanup:?}");
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+#[tokio::test]
+async fn internal_write_extensions_are_not_http_callable_and_payload_flags_do_not_grant_trust() {
+    let mut facts: Value = load_str(SPEC, Form::A).unwrap().execution;
+    facts["resources"]["Event"]["extensions"]["run"]["internal"] = json!(true);
+    let fp = contract_fingerprint_with_all_extensions(&facts, IdWire::DecimalString);
+    let unique = format!("{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let path = std::env::temp_dir().join(format!("aip-write-internal-{unique}"));
+    fs::create_dir(&path).unwrap();
+    let owned = OwnedDir(path);
+    fs::write(owned.0.join("write.mjs"), "export async function run(){return {id:11,count:1};}\n").unwrap();
+    let server = listen_with_prototype_options(
+        facts,
+        IdWire::DecimalString,
+        "127.0.0.1:0".parse().unwrap(),
+        "host=127.0.0.1 port=1 dbname=postgres connect_timeout=1".into(),
+        Some(ReadExtensions { lang: WorkerLang::Node, dir: owned.0.clone() }),
+        ServerOptions::default(),
+        true,
+    )
+    .await
+    .unwrap();
+    let token = server.keys.issue(1, 60);
+
+    let direct_apply = post(
+        server.address,
+        "/apply",
+        Some(&token),
+        Some(&fp),
+        &json!({
+            "key":"internal-direct", "request":{"extension":"Event.run", "input":{"id":"11"}}
+        }),
+    )
+    .await;
+    assert_eq!(direct_apply["code"], "WIRE.NOT_EXPOSED", "{direct_apply}");
+
+    let public_extension = post(
+        server.address,
+        "/extension",
+        Some(&token),
+        Some(&fp),
+        &json!({
+            "extension":"Event.run", "input":{"id":"11"}
+        }),
+    )
+    .await;
+    assert_eq!(public_extension["code"], "WIRE.NOT_EXPOSED", "{public_extension}");
+
+    let caller_flag = post(
+        server.address,
+        "/apply",
+        Some(&token),
+        Some(&fp),
+        &json!({
+            "key":"caller-flag", "internal":true,
+            "request":{"extension":"Event.run", "input":{"id":"11"}}
+        }),
+    )
+    .await;
+    assert_eq!(caller_flag["code"], "WIRE.BAD_REQUEST", "{caller_flag}");
+
+    let extension_flag = post(
+        server.address,
+        "/extension",
+        Some(&token),
+        Some(&fp),
+        &json!({
+            "extension":"Event.run", "input":{"id":"11"}, "internal":true
+        }),
+    )
+    .await;
+    assert_eq!(extension_flag["code"], "WIRE.BAD_REQUEST", "{extension_flag}");
+    server.shutdown().await.unwrap();
+}

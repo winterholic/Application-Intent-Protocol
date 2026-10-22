@@ -225,6 +225,7 @@ pub struct Extension {
     pub deadline_ms: Option<u64>,
     pub implementation: String,
     pub allow: Option<Expr>,
+    pub internal: bool,
     pub span: Span,
 }
 
