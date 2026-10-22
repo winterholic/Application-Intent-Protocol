@@ -59,6 +59,7 @@ const LIST_EXTENSIONS: [(&str, &str); 16] = [
 ];
 const META: &str = "aip_t_auth_meta";
 const SOURCE: &str = "aip_t_auth_src";
+const MONGO_DB: &str = "aip_t_auth_fr";
 const ISSUER: &str = "https://login.facereview.example";
 const AUDIENCE: &str = "aip-api";
 const ORIGIN: &str = "http://localhost:5173";
@@ -68,6 +69,7 @@ const LEGACY: &str = "77777777-7777-4777-8777-777777777777";
 struct Env {
     adopt_url: String,
     runtime_url: String,
+    mongo_url: String,
 }
 
 fn cli(env: &Env, args: &[&str], config: &Path) -> Command {
@@ -78,7 +80,7 @@ fn cli(env: &Env, args: &[&str], config: &Path) -> Command {
     } else {
         command.args(args).arg("--config").arg(config);
     }
-    command.env("AIP_T_AUTH_ADOPT_URL", &env.adopt_url).env("AIP_T_AUTH_RUNTIME_URL", &env.runtime_url);
+    command.env("AIP_T_AUTH_ADOPT_URL", &env.adopt_url).env("AIP_T_AUTH_RUNTIME_URL", &env.runtime_url).env("AIP_T_AUTH_MONGO_URL", &env.mongo_url);
     command
 }
 
@@ -252,6 +254,10 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
     let admin_url = std::env::var("AIP_TEST_MYSQL_URL").expect("set AIP_TEST_MYSQL_URL to a run-owned MySQL 8.4 container");
     aip_test_support::validate_mysql_admin_url(&admin_url).unwrap_or_else(|reason| panic!("AIP_TEST_MYSQL_URL is unsafe: {reason}"));
     assert!(admin_url.starts_with("mysql://"), "this test targets MySQL 8.4");
+    let mongo_url = std::env::var("AIP_TEST_MONGO_URL").expect("set AIP_TEST_MONGO_URL to a run-owned MongoDB");
+    let parsed_mongo = url::Url::parse(&mongo_url).expect("Mongo URL");
+    assert_eq!(parsed_mongo.host_str(), Some("127.0.0.1"), "the MongoDB fixture must bind loopback only");
+    assert!(parsed_mongo.port().is_some_and(|port| port > 1024 && port != 27017), "the MongoDB fixture must use a dedicated high port");
     let directory = tempfile::tempdir().unwrap();
     let file = directory.path().join("facereview.aip");
     std::fs::write(&file, format!("{DEFINITION}\n{OPERATIONS}")).unwrap();
@@ -274,6 +280,20 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
     run_script(&mut setup, SEED).await;
     setup.query_drop("SET FOREIGN_KEY_CHECKS=1").await.unwrap();
     run_script(&mut setup, DEFAULTS).await;
+    // This journey uses one model-less video document: its emotion fields are fixture data, not ML output.
+    let mongo = mongodb::Client::with_uri_str(&mongo_url).await.expect("MongoDB fixture");
+    let database = mongo.database(MONGO_DB);
+    database.drop().await.expect("reset the test-owned MongoDB database");
+    database
+        .collection::<mongodb::bson::Document>("video_distribution")
+        .insert_one(mongodb::bson::doc! {
+            "video_id": "aaaaaaaa-0000-4000-8000-000000000001",
+            "dominant_emotion": "neutral",
+            "emotion_averages": {"neutral": 0.5, "happy": 0.2, "surprise": 0.1, "sad": 0.1, "angry": 0.1},
+            "created_at": mongodb::bson::DateTime::from_millis(1_760_000_000_000_i64),
+        })
+        .await
+        .expect("seed the dedicated model-less video fixture");
     // An account the original wrote: a real Werkzeug 3.0.2 scrypt hash of "password123" (the seed's hashes are placeholders).
     let vectors: Value = serde_json::from_str(WERKZEUG).unwrap();
     let (legacy_password, legacy_hash) = (vectors["cases"][0]["password"].as_str().unwrap(), vectors["cases"][0]["hash"].as_str().unwrap());
@@ -299,7 +319,11 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
             .unwrap();
     }
     let host = admin_url.split_once('@').unwrap().1.split('/').next().unwrap().to_string();
-    let env = Env { adopt_url: admin_url.clone(), runtime_url: format!("mysql://aip_t_auth_rt:runtime_test_only@{host}/{SOURCE}") };
+    let env = Env {
+        adopt_url: admin_url.clone(),
+        runtime_url: format!("mysql://aip_t_auth_rt:runtime_test_only@{host}/{SOURCE}"),
+        mongo_url: mongo_url.clone(),
+    };
 
     let mut mapping: Value = serde_json::from_str(MAPPING).unwrap();
     mapping["schema"] = json!(SOURCE);
@@ -325,7 +349,7 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
                 "database_url_env": "AIP_T_AUTH_RUNTIME_URL", "migrate_database_url_env": "AIP_T_AUTH_ADOPT_URL",
                 "listen": "127.0.0.1:0", "wire": "decimal", "rate_limit": null, "allowed_origins": [ORIGIN],
                 "auth": {"issuer": ISSUER, "audience": AUDIENCE, "jwks": {"kind": "file", "path": "jwks.json"}},
-                "workers": {"directory": "extensions", "language": "python", "integrations": [{"name": "youtube_videos", "url": "http://127.0.0.1:9/youtube/v3/videos", "method": "GET", "timeout_ms": 1000, "max_request_bytes": 1024, "max_response_bytes": 1024, "allow_loopback": true, "query_params": ["part"]}, {"name": "youtube_search", "url": "http://127.0.0.1:9/youtube/v3/search", "method": "GET", "timeout_ms": 1000, "max_request_bytes": 1024, "max_response_bytes": 1024, "allow_loopback": true, "query_params": ["part"]}, {"name": "mail_send", "url": mail_url, "method": "POST", "timeout_ms": 3000, "max_request_bytes": 4096, "max_response_bytes": 4096, "allow_loopback": true}]},
+                "workers": {"directory": "extensions", "language": "python", "mongo": {"uri_env": "AIP_T_AUTH_MONGO_URL", "database": MONGO_DB, "max_pool_size": 4, "timeout_ms": 3000}, "integrations": [{"name": "youtube_videos", "url": "http://127.0.0.1:9/youtube/v3/videos", "method": "GET", "timeout_ms": 1000, "max_request_bytes": 1024, "max_response_bytes": 1024, "allow_loopback": true, "query_params": ["part"]}, {"name": "youtube_search", "url": "http://127.0.0.1:9/youtube/v3/search", "method": "GET", "timeout_ms": 1000, "max_request_bytes": 1024, "max_response_bytes": 1024, "allow_loopback": true, "query_params": ["part"]}, {"name": "mail_send", "url": mail_url, "method": "POST", "timeout_ms": 3000, "max_request_bytes": 4096, "max_response_bytes": 4096, "allow_loopback": true}]},
                 "credentials": credentials,
             })
             .to_string(),
