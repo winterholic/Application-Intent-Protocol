@@ -336,7 +336,19 @@ order on a `random.Random(run id)`, so a run is reproducible and the original gi
 |---|---|---|
 | `POST admin/dummy-data?count=` | job `generateDummyData { user, count }` | answer through `/jobs/result` (`created_count`, `video_ids`); set `limits.job_calls` to 2000+ for 300 videos |
 | session document `YoutubeWatchingData` | `ctx.mongo.insert_one("youtube_watching_data")` | the server writes the job owner's UUID as `user_id` |
-| `VideoViewLog` row, `video.view_count += 1` | exposed create `VideoViewLog` (administrator, own id), transition `Video.view` | |
+| `VideoViewLog` row, `video.view_count += 1` | exposed create `VideoViewLog` (the caller's own row; slice 14-K opened it to every active member), transition `Video.view` | |
 | `_update_video_distribution` | derived `mongo.video_session_stats` (`distribution_sums`) and an upsert of `video_distribution` | newest 1000 sessions of all viewers, sums only |
 
 Differences: videos over 7200 seconds are skipped; a ctx call refused as `BAD_VALUE` ends the run; no saga.
+
+## Slice14-K: first frame of a watch session (WBS 7.2.6)
+
+`slice14k_watch.py` is the write extension `User.startWatching`. The Socket.IO transport calls it for a valid `watch_frame` with the user taken
+from the re-verified token (never the payload). Decision D-P-WATCH-SESSION, evidence in `product/VERIFICATION.md`; the Python unit test is
+`test_slice14k_watch.py` (`python3 -m unittest test_slice14k_watch`).
+
+| Original | AIP | Notes |
+|---|---|---|
+| `watching_cache.init_watching_data` on a cache miss | `ctx.redis.set_ex("facereview:watch:active:<sha256 of the view log id>")`, TTL `ceil(duration * 1.5)` or 10800 s | Redis instead of the process memory, so a reconnect continues the session |
+| `_create_video_view_log(video_view_log_id, user_id, video_id)` | exposed create `VideoViewLog` (own row), once; a reconnect reads the row and creates nothing | another member's id is `WIRE.ALREADY_EXISTS` |
+| emotion analysis, timeline, statistics | not connected | the frame answer is `WIRE.NOT_AVAILABLE`; no emotion is invented |

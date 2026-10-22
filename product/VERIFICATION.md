@@ -97,6 +97,26 @@
 
 **한계·미검증.** (1) 실제 브라우저(Chrome 등)로 붙는 시험은 하지 않았다. `permessage-deflate` 거절 문제는 Node `ws` 클라이언트가 아니라 브라우저가 항상 제안하는 값이라서 수용 경로를 서버 시험으로만 확인했다. (2) 기존 `/events/socket`이 확장 제안을 거절하는 동작은 이번에 고치지 않았고 실제 브라우저 영향은 미확인이다. (3) 토큰은 CONNECT에서 한 번만 검사하고 연결은 토큰 만료 시각까지 유지한다. 연결 중 principal을 비활성화해도 이 조각은 즉시 끊지 않는다. 프레임별 재검사는 쓰기 경로를 정하는 후속 조각에서 한다. (4) 연결 상한은 `realtime.max_connections`를 공유하고 기본 32다. 운영 값은 정하지 않았다. (5) MySQL 서비스(`aip service serve`)에 이 endpoint를 켜는 경로는 설정 구조만 만들었고 MySQL 서버 위의 종단 실행은 하지 않았다(PostgreSQL 기반 spike 서버에서만 실행). (6) CI: 이 조각의 커밋 `58e1fdb5c47a9f3aff11ab7368eedc0631462646`은 동일 SHA의 8개 workflow(Verify 39788184086 포함)가 모두 success다. Verify 로그에서 `tools/verify.sh`의 새 단계(`npm ci --ignore-scripts` 뒤 `--test socketio_transport -- --ignored`)가 `the_real_socketio_client_connects_emits_watch_frame_and_disconnects ... ok`로 Linux runner에서 실행된 것을 확인했다. (7) 모델 출처·ML 런타임·고정 미디어 문제는 그대로이며 가짜 감정값은 만들지 않았다.
 
+## 2026-10-22 WBS 7.2.6 조각 2: 첫 프레임의 세션·VideoViewLog 멱등 생성 (구현 조각, 로컬 통과, 7.2.6은 진행 중)
+
+**범위.** 결정 [D-P-WATCH-SESSION](../docs/DECISIONS.md). 유효한 `watch_frame`이 선언된 쓰기 확장 `User.startWatching`(`extensions/slice14k_watch.py`)을 불러 `VideoViewLog` 한 행과 Redis 시청 세션(`facereview:watch:active:<view log id sha256>`, TTL `duration × 1.5`초 또는 10800초)을 만든다. 소켓은 프레임마다 토큰을 다시 검증해 거기서 나온 사용자 id만 쓴다. 쓰기 확장 호출 코드는 `/extension` 쓰기 경로에서 `run_relational_write_extension`으로 빼 두 곳이 같은 코드를 쓴다(복사하지 않았다). **세션을 만든 프레임의 ack도 `WIRE.NOT_AVAILABLE`이다. 감정 분석과 Mongo timeline이 없어 감정값을 만들지 않는다.** 7.2.6의 실제 영상·웹캠·ML 흐름은 여전히 하나도 증명되지 않았다.
+
+**실행한 검증(로컬 macOS, 이 Run 소유의 격리 MySQL 8.4 `127.0.0.1:15461`, Redis `15464`, MongoDB `15463`, PostgreSQL 17 `15466`).**
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p aip-cli --features mysql --test mysql_facereview_watch --locked -- --ignored --nocapture --test-threads=1` (실제 `aip service serve`와 WebSocket) | 구현 중 실패를 차례로 드러냈다(Redis 쓰기의 `effect_key` 거절 `WIRE.BAD_VALUE`, 시험의 열 이름 `video_view_log_id`, Redis 키가 base64가 아닌 hex라는 불일치). 고친 뒤 `test result: ok. 1 passed` (11.8초) |
+| 같은 시험 안의 단정 | 첫 프레임이 view log 1행과 Redis 세션을 만든다(소유자는 페이로드의 거짓 `user_id`가 아니라 토큰의 Alice). 같은 연결의 중복 프레임은 행 1개로 유지된다. 연결 해제 뒤 재접속(새 sid)은 같은 행을 쓰고 Redis 세션을 다시 채운다. 다른 회원(Bob)의 같은 id는 `WIRE.ALREADY_EXISTS`이고 행은 1개다. 연결 중 `principal revoke`된 회원(Carol)의 다음 프레임은 `WIRE.UNAUTHENTICATED` 또는 `WIRE.TOKEN_EXPIRED`로 거절되고 연결이 끝나며 행이 생기지 않는다. 만료 2초짜리 토큰의 연결은 만료 시각에 `WIRE.TOKEN_EXPIRED` close로 끝난다 |
+| `cargo test -p aip-cli --features mysql --test <각각> --locked -- --ignored --test-threads=1` (trending_job·admin·reads·auth·recommend·pool_job·category_fill_job·external_effects) | 모두 `1 passed`. 정의에 새 확장이 생겨 시험 각각의 확장 목록에 `slice14k_watch.py`를 더해야 했다(안 더한 첫 실행은 `JOB_CONFIG`로 시작 실패). `VideoViewLog.create`의 `fields`에서 `updated_at`을 지웠을 때 더미 데이터 job이 깨질 것이어서 유지했다 |
+| `python3 -m unittest test_slice14k_watch` (extensions 디렉터리) | `Ran 2 tests ... OK` (재접속의 재사용·다른 회원 거절·세션 불일치, 모의 ctx) |
+| `cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --lib socketio` | 25 passed (프레임 핸들러 호출 여부, 토큰 만료로 인한 종료 추가) |
+| `cargo test … --test socketio_transport -- --test-threads=1 --include-ignored` | 5 passed (PostgreSQL 서버에서는 유효 프레임이 `WIRE.ADAPTER_UNSUPPORTED`이고 실제 `socket.io-client` 4.8.3 종단도 통과) |
+| `cargo fmt --all --check`, spike-v6와 aip-migrate·aip-service·aip-cli(`mysql`) `clippy --all-targets -D warnings` | 경고 없음 |
+
+**소스 대조.** 원본 `video_watching_socket.py`(고정 `7948b7e…`)의 첫 프레임 처리 순서(캐시가 없으면 `init_watching_data` → 시청 기록 생성)와 `WatchingDataCache`의 `duration × 1.5`초(없으면 10800초) TTL을 옮겼다. 원본의 두 결함은 복제하지 않았다: 인증 없이 페이로드 `user_id`를 믿는 것, 프로세스 메모리에만 있어 재시작·다른 프로세스에서 세션이 사라지는 것.
+
+**한계·미검증.** (1) 감정 분석·Mongo timeline·집계는 없다. (2) 회원이 `/apply`로 자기 이름의 view log(임의 id·시각)를 직접 만들 수 있다(결정의 알려진 한계). (3) 같은 연결의 프레임마다 DB 멱등 조회(저장 결과 재생)가 한 번 일어난다. 부하 시험은 하지 않았고 상한은 정하지 않았다. (4) 실제 브라우저·카메라 입력, 연결 수 상한 운영값, 프레임별 재인증의 비용은 미검증이다. (5) 변이 검사는 이 조각에서 하지 않았다(조각 1의 헤더 토큰 거절 변이만 있다). 폐기된 principal의 프레임 거절은 라이브 시험이 직접 보인다. (6) CI는 push 뒤에 조회한다.
+
 ## 2026-10-22 WBS 7.2.10 사전 조사: 원본 UI의 data access 표면 (조사만, 구현 없음)
 
 기준은 UI revision `2e7c021fa5abebd72278d841b8066a33d45cfbb3`(`projects/facereview/facereview-front-joowon`의 pinned commit, 작업 트리는 읽지 않았다)의 `src/api/{index,auth,mypage,request,watch,youtube}.ts`와 `src/socket/index.ts`다. 서버 호출은 이 여섯 파일과 소켓 한 곳에 모여 있고 axios 인스턴스(`baseURL: '/api'`, `withCredentials`, 401이면 `/v2/auth/reissue`로 한 번 재시도하는 인터셉터)를 공유한다. 서버 호출은 30곳(소켓 제외), 고유 경로는 25개다.

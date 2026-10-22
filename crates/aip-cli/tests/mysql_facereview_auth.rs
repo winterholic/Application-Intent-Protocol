@@ -38,7 +38,7 @@ const SEED: &str = include_str!("../../../product/tests/fixtures/facereview-mysq
 const WERKZEUG: &str = include_str!("../../../product/tests/fixtures/password-auth/werkzeug-3.0.2.json");
 const PASSWORD_AUTH_PY: &str = include_str!("../../../product/providers/password_auth.py");
 // The definition declares the home and watch list extensions, and `serve` refuses a worker directory that lacks any of them.
-const LIST_EXTENSIONS: [(&str, &str); 14] = [
+const LIST_EXTENSIONS: [(&str, &str); 15] = [
     ("slice13f_watch.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13f_watch.py")),
     ("slice13b_lists.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13b_lists.py")),
     ("slice13d_recommend.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13d_recommend.py")),
@@ -53,6 +53,7 @@ const LIST_EXTENSIONS: [(&str, &str); 14] = [
     ("slice14g_request.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice14g_request.py")),
     ("slice14h_dashboard.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice14h_dashboard.py")),
     ("slice14j_dummy.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice14j_dummy.py")),
+    ("slice14k_watch.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice14k_watch.py")),
 ];
 const META: &str = "aip_t_auth_meta";
 const SOURCE: &str = "aip_t_auth_src";

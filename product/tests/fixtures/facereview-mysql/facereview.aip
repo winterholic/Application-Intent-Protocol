@@ -162,6 +162,15 @@ resource User {
     deadline 20s
     implementation "slice14e_mypage.myEmotionSummary"
   }
+  // WBS 7.2.6 slice 2: the first authenticated watch frame creates one view log and a reconnectable watching session.
+  extension write startWatching {
+    input { id: VideoViewLog.Id; video: Video.Id; user: User.Id; duration: Int(0..1000000)? }
+    output { initialized: Bool }
+    access read.VideoViewLog, create.VideoViewLog, redis "facereview:watch:active:*"
+    effect db
+    deadline 10s
+    implementation "slice14k_watch.startWatching"
+  }
   // WBS 7.2.9 dashboard (AdminService.get_signup_trend / _get_weekly_active_users). Administrator only; the caller sends the period, so the
   // clock of the period is the caller's: signupCount counts members created in [from, to) (deactivated ones too, as the original does),
   // weeklyActive the members with a view log at or after `since`.
@@ -558,16 +567,17 @@ resource VideoViewLog {
     updated_at: Time default database
   }
   rows read when user = actor and active(actor)
-  // WBS 7.2.9: the view log row of the administrator's test data (AdminService.generate_dummy_data), with the past time the original gives it.
-  // Nothing else makes a view log through the contract; an administrator may write only rows of their own.
+  // WBS 7.2.6/7.2.9: a member creates only a row of their own (the first watch_frame goes through User.startWatching, which sends no time);
+  // the administrator's test data (AdminService.generate_dummy_data) sends the past times the original gives it. A member who calls this
+  // create directly can also send created_at/updated_at for their own row: the contract has no per-role field list.
   expose create {
-    fields video, user, created_at, updated_at
-    allow isAdmin(actor) and user = actor
+    fields id, video, user, created_at, updated_at
+    allow active(actor) and user = actor
   }
   expose read {
     select id, video, user, created_at
     refIds video, user
-    filter video.eq
+    filter id.eq, video.eq
     sort created_at, id
     budget { rows 100; depth 1; cost 1000; deadline 2s; offset 100000 }
   }

@@ -790,6 +790,206 @@ async fn serve_credentials<R: tokio::io::AsyncRead + Unpin>(
     reply_with_status(w, credential_auth::status_line(reply.status), &reply.body.to_string(), &extra).await;
 }
 
+/// Runs one declared write extension in a relational transaction as the verified principal and answers with the wire body.
+///
+/// The `/extension` write route and the first Socket.IO frame share this: the idempotent transaction start, the Mongo and Redis saga,
+/// the principal check right before the commit and the classification of an unknown commit are the same for both.
+#[allow(clippy::too_many_arguments)]
+async fn run_relational_write_extension(
+    runtime: &Arc<server::Runtime>,
+    backend: &Arc<dyn spike_v2_read::backend::RelationalBackend>,
+    facts: &Arc<Value>,
+    wire: IdWire,
+    session: Option<&auth::Session>,
+    token: &str,
+    deadline: tokio::time::Instant,
+    key: &str,
+    request: &Value,
+    contract_fingerprint: Option<&str>,
+) -> Value {
+    let err = |code: &str, msg: &str| json!({ "ok": false, "code": code, "msg": msg });
+    let Some(config) = runtime.extensions.as_ref() else {
+        return err("WIRE.ADAPTER_UNSUPPORTED", "worker write 설정이 없음");
+    };
+    let name = request["extension"].as_str().unwrap_or_default();
+    let now = match tokio::time::timeout(server::DB_PREFLIGHT_TIMEOUT, backend.now()).await {
+        Ok(Ok(now)) => now,
+        Ok(Err(code)) => return err(code, "worker write 사전 검사 실패"),
+        Err(_) => return err("WIRE.DB_UNAVAILABLE", "worker write 사전 검사 기한 초과"),
+    };
+    let caller = Caller { actor_id: session.map(|session| session.actor_id), now };
+    let start = match tokio::time::timeout_at(deadline, backend.begin_worker_write(facts, key, request, &caller, wire)).await {
+        Ok(Ok(start)) => start,
+        Ok(Err(error)) => return err(error.code, &error.msg),
+        Err(_) => return err("WIRE.DEADLINE_EXCEEDED", "worker write transaction 시작 기한 초과"),
+    };
+    let session_write = match start {
+        RelationalWorkerWriteStart::Replay(mut result) => {
+            if let Some(fingerprint) = contract_fingerprint {
+                result["contractFingerprint"] = json!(fingerprint);
+            }
+            return result;
+        }
+        RelationalWorkerWriteStart::New(session_write) => session_write,
+    };
+    let (resource, extension) = name.split_once('.').unwrap_or_default();
+    let grants: std::collections::HashSet<String> = facts["resources"][resource]["extensions"][extension]["access"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .map(|(grant, _)| grant.clone())
+        .filter(|grant| grant.starts_with("mongo.") || grant.starts_with("redis."))
+        .collect();
+    let actor_uuid = match spike_v4_worker::capability::resolve_actor_uuid(caller.actor_id, session.and_then(|s| s.actor_resource_id.as_deref())) {
+        Ok(actor_uuid) => actor_uuid,
+        Err(error) => return err(error.code, &error.msg),
+    };
+    let principal = spike_v4_worker::CapabilityPrincipal { actor_id: caller.actor_id, actor_uuid, grants };
+    let effects = spike_v4_worker::external::ExternalEffects::new(
+        runtime.infrastructure.mongo.clone(),
+        runtime.infrastructure.redis.clone(),
+        principal,
+        uuid::Uuid::new_v4().to_string(),
+        name,
+    );
+    let mut host = RelationalWriteActionHost { session: session_write, effects };
+    let mut worker =
+        match spike_v4_worker::Worker::try_start_configured(config.lang, config.dir.to_str().unwrap(), runtime.infrastructure.worker_launch.clone())
+            .await
+        {
+            Ok(worker) => worker,
+            Err(_) => return err("WIRE.WORKER_FAILED", "공식 worker 실행 실패"),
+        };
+    let output = tokio::time::timeout_at(
+        deadline,
+        spike_v4_worker::write::invoke_write_action(&mut host, &mut worker, facts, name, &request["input"], &caller, wire),
+    )
+    .await;
+    worker.stop().await;
+    let prepared = match output {
+        Ok(Ok(prepared)) => prepared,
+        Ok(Err(error)) => {
+            if let spike_v4_worker::external::RollbackOutcome::Failed { steps } = host.effects.rollback().await {
+                return compensation_failed(&steps);
+            }
+            return err(error.code, "공식 WRITE 확장 호출 거부");
+        }
+        Err(_) => {
+            if let spike_v4_worker::external::RollbackOutcome::Failed { steps } = host.effects.rollback().await {
+                return compensation_failed(&steps);
+            }
+            return err("WIRE.DEADLINE_EXCEEDED", "공식 WRITE 확장 기한 초과");
+        }
+    };
+    let mut tags = facts["resources"][resource]["extensions"][extension]["access"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(grant, _)| !grant.starts_with("mongo.") && !grant.starts_with("redis."))
+        .flat_map(|(grant, _)| grant_write_tags(facts, grant))
+        .collect::<Vec<_>>();
+    tags.sort();
+    tags.dedup();
+    let result = json!({"ok":true,"output":prepared.output,"tags":tags});
+    // Recheck the same server-verified principal before committing callback effects.
+    let current = match &runtime.authenticator {
+        Some(provider) => match tokio::time::timeout(server::DB_PREFLIGHT_TIMEOUT, provider.verify_session(token)).await {
+            Ok(result) => result,
+            Err(_) => Err(auth::AuthError::Unavailable),
+        },
+        None => Err(auth::AuthError::Unavailable),
+    };
+    let rejection = match current {
+        Ok(current) if Some(current.actor_id) == caller.actor_id => None,
+        Err(auth::AuthError::Expired) => Some(("WIRE.TOKEN_EXPIRED", "세션 만료")),
+        Err(auth::AuthError::Unavailable) => Some(("WIRE.DB_UNAVAILABLE", "principal 재검증 실패")),
+        _ => Some(("WIRE.UNAUTHENTICATED", "principal 재검증 실패")),
+    };
+    if let Some((code, message)) = rejection {
+        if let spike_v4_worker::external::RollbackOutcome::Failed { steps } = host.effects.rollback().await {
+            return compensation_failed(&steps);
+        }
+        return err(code, message);
+    }
+    let mut result = match host.session.commit(result.clone()).await {
+        Ok(committed) => {
+            host.effects.complete().await;
+            committed
+        }
+        Err(error) => {
+            // An unknown commit may have happened, so its effects stay; any other failure rolled the transaction back.
+            if error.code == "WIRE.COMMIT_UNKNOWN" {
+                host.effects.mark_unknown().await;
+            } else if let spike_v4_worker::external::RollbackOutcome::Failed { steps } = host.effects.rollback().await {
+                return compensation_failed(&steps);
+            }
+            return err(error.code, &error.msg);
+        }
+    };
+    runtime.infrastructure.data_changes.notify();
+    result["contractFingerprint"] = json!(contract_fingerprint.unwrap_or(""));
+    result
+}
+
+/// What a valid `watch_frame` does before the analysis exists (WBS 7.2.6 slice 2, D-P-WATCH-SESSION).
+///
+/// The token is verified again for every frame, the user id comes from that verified session and never from the payload, and the
+/// declared write extension `User.startWatching` makes the view log and the Redis session. The extension is idempotent for the
+/// same connection and view log id, and a reconnect (new Socket.IO sid) rebuilds only the cache. The frame bytes are not sent
+/// anywhere: the answer is `WIRE.NOT_AVAILABLE` until a model runtime is connected.
+async fn start_watch_session(
+    runtime: &Arc<server::Runtime>,
+    facts: &Arc<Value>,
+    wire: IdWire,
+    token: &str,
+    socket_sid: &str,
+    frame: socketio::WatchFrame,
+) -> Result<Value, &'static str> {
+    let busy = |code: &str| Ok(json!({"status":"error","code":code}));
+    let Some(provider) = runtime.authenticator.as_ref() else { return Err("WIRE.UNAUTHENTICATED") };
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    let session = match tokio::time::timeout_at(deadline, provider.verify_session(token)).await {
+        Ok(Ok(session)) if session.remaining_ms() > 0 && session.durable.is_some() => session,
+        Ok(Ok(_)) | Ok(Err(auth::AuthError::Expired)) => return Err("WIRE.TOKEN_EXPIRED"),
+        Ok(Err(auth::AuthError::Unavailable)) | Err(_) => return busy("WIRE.DB_UNAVAILABLE"),
+        Ok(Err(_)) => return Err("WIRE.UNAUTHENTICATED"),
+    };
+    let principal = admission::principal(Some(&session));
+    if let Some(admission) = runtime.admission.as_ref() {
+        let Some(pool) = runtime.db_pool.as_ref() else { return busy("WIRE.DB_UNAVAILABLE") };
+        match admission.check(pool, &principal, admission::Route::Realtime, deadline).await {
+            Ok(admission::Outcome::Allowed) => {}
+            Ok(admission::Outcome::Limited { .. }) => return busy("WIRE.RATE_LIMITED"),
+            Err(_) => return busy("WIRE.DB_UNAVAILABLE"),
+        }
+    }
+    // Only a relational deployment serves the session write: the PostgreSQL path of this transport has no declared extension for it.
+    let Some(backend) = runtime.infrastructure.relational.as_ref() else { return busy("WIRE.ADAPTER_UNSUPPORTED") };
+    let Some(user_id) = session.actor_resource_id.clone() else { return Err("WIRE.UNAUTHENTICATED") };
+    let Ok(_extension_slot) = runtime.extension_slots.try_acquire() else { return busy("WIRE.WORKER_BUSY") };
+    let Some(_principal_slot) = runtime.principal_slots.workers.try_acquire(&principal) else { return busy("WIRE.WORKER_BUSY") };
+    if frame.duration.fract() != 0.0 || frame.duration > 1_000_000.0 {
+        return Ok(json!({"status":"error","code":"WIRE.BAD_REQUEST","message":"Invalid field: duration"}));
+    }
+    use base64::Engine as _;
+    use sha2::Digest as _;
+    let key_material = format!("{socket_sid}:{}", frame.video_view_log_id);
+    let key = format!("watch-start:{}", base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(sha2::Sha256::digest(key_material.as_bytes())));
+    let request = json!({
+        "extension": "User.startWatching",
+        "input": {"id": frame.video_view_log_id, "video": frame.video_id, "user": user_id, "duration": frame.duration as i64}
+    });
+    let result = run_relational_write_extension(runtime, backend, facts, wire, Some(&session), token, deadline, &key, &request, None).await;
+    if result["ok"] == true {
+        return Ok(json!({"status":"error","code":"WIRE.NOT_AVAILABLE","message":"Frame analysis is not connected yet"}));
+    }
+    match result["code"].as_str().unwrap_or("WIRE.EXTENSION_ERROR") {
+        "WIRE.TOKEN_EXPIRED" => Err("WIRE.TOKEN_EXPIRED"),
+        "WIRE.UNAUTHENTICATED" => Err("WIRE.UNAUTHENTICATED"),
+        code => busy(code),
+    }
+}
+
 async fn serve_conn(
     mut sock: TcpStream,
     facts: Arc<Value>,
@@ -1399,10 +1599,22 @@ async fn serve_request(
         let io = tokio::io::join(rd, w.writer);
         if let Some(options) = runtime.infrastructure.socketio.clone().filter(|_| socketio) {
             let admit_runtime = runtime.clone();
-            let _ = socketio::serve(io, &options, move |token: &str| -> socketio::AdmitFuture {
-                let (token, runtime, slots) = (token.to_owned(), admit_runtime.clone(), browser_slots.clone());
-                Box::pin(async move { realtime::admit_browser_token(&runtime, slots.as_deref(), &token).await.map(std::time::Duration::from_millis) })
-            })
+            let frame_runtime = runtime.clone();
+            let frame_facts = facts.clone();
+            let _ = socketio::serve_with_handler(
+                io,
+                &options,
+                move |token: &str| -> socketio::AdmitFuture {
+                    let (token, runtime, slots) = (token.to_owned(), admit_runtime.clone(), browser_slots.clone());
+                    Box::pin(
+                        async move { realtime::admit_browser_token(&runtime, slots.as_deref(), &token).await.map(std::time::Duration::from_millis) },
+                    )
+                },
+                move |token, sid, frame| -> socketio::FrameFuture {
+                    let (token, sid, runtime, facts) = (token, sid, frame_runtime.clone(), frame_facts.clone());
+                    Box::pin(async move { start_watch_session(&runtime, &facts, wire, &token, &sid, frame).await })
+                },
+            )
             .await;
             return;
         }
@@ -1459,137 +1671,19 @@ async fn serve_request(
             return reply(&mut w, &result.to_string()).await;
         }
         if write_extension {
-            let Some(config) = runtime.extensions.as_ref() else {
-                return reply(&mut w, &err("WIRE.ADAPTER_UNSUPPORTED", "worker write 설정이 없음")).await;
-            };
-            let request = body["request"].clone();
-            let name = request["extension"].as_str().unwrap();
-            let now = match tokio::time::timeout(server::DB_PREFLIGHT_TIMEOUT, backend.now()).await {
-                Ok(Ok(now)) => now,
-                Ok(Err(code)) => return reply(&mut w, &err(code, "worker write 사전 검사 실패")).await,
-                Err(_) => return reply(&mut w, &err("WIRE.DB_UNAVAILABLE", "worker write 사전 검사 기한 초과")).await,
-            };
-            let caller = Caller { actor_id: session.as_ref().map(|session| session.actor_id), now };
-            let start =
-                match tokio::time::timeout_at(deadline, backend.begin_worker_write(&facts, body["key"].as_str().unwrap(), &request, &caller, wire))
-                    .await
-                {
-                    Ok(Ok(start)) => start,
-                    Ok(Err(error)) => return reply(&mut w, &err(error.code, &error.msg)).await,
-                    Err(_) => return reply(&mut w, &err("WIRE.DEADLINE_EXCEEDED", "worker write transaction 시작 기한 초과")).await,
-                };
-            let session_write = match start {
-                RelationalWorkerWriteStart::Replay(mut result) => {
-                    if let Some(fingerprint) = contract_fingerprint {
-                        result["contractFingerprint"] = json!(&*fingerprint);
-                    }
-                    return reply(&mut w, &result.to_string()).await;
-                }
-                RelationalWorkerWriteStart::New(session_write) => session_write,
-            };
-            let grants: std::collections::HashSet<String> = facts["resources"][name.split_once('.').map_or("", |(resource, _)| resource)]
-                ["extensions"][name.split_once('.').map_or("", |(_, extension)| extension)]["access"]
-                .as_object()
-                .into_iter()
-                .flatten()
-                .map(|(grant, _)| grant.clone())
-                .filter(|grant| grant.starts_with("mongo.") || grant.starts_with("redis."))
-                .collect();
-            let actor_uuid =
-                match spike_v4_worker::capability::resolve_actor_uuid(caller.actor_id, session.as_ref().and_then(|s| s.actor_resource_id.as_deref()))
-                {
-                    Ok(actor_uuid) => actor_uuid,
-                    Err(error) => return reply(&mut w, &err(error.code, &error.msg)).await,
-                };
-            let principal = spike_v4_worker::CapabilityPrincipal { actor_id: caller.actor_id, actor_uuid, grants };
-            let effects = spike_v4_worker::external::ExternalEffects::new(
-                runtime.infrastructure.mongo.clone(),
-                runtime.infrastructure.redis.clone(),
-                principal,
-                uuid::Uuid::new_v4().to_string(),
-                name,
-            );
-            let mut host = RelationalWriteActionHost { session: session_write, effects };
-            let mut worker = match spike_v4_worker::Worker::try_start_configured(
-                config.lang,
-                config.dir.to_str().unwrap(),
-                runtime.infrastructure.worker_launch.clone(),
-            )
-            .await
-            {
-                Ok(worker) => worker,
-                Err(_) => return reply(&mut w, &err("WIRE.WORKER_FAILED", "공식 worker 실행 실패")).await,
-            };
-            let output = tokio::time::timeout_at(
+            let result = run_relational_write_extension(
+                &runtime,
+                &backend,
+                &facts,
+                wire,
+                session.as_ref(),
+                token.as_deref().unwrap_or(""),
                 deadline,
-                spike_v4_worker::write::invoke_write_action(&mut host, &mut worker, &facts, name, &request["input"], &caller, wire),
+                body["key"].as_str().unwrap(),
+                &body["request"],
+                contract_fingerprint.as_deref(),
             )
             .await;
-            worker.stop().await;
-            let prepared = match output {
-                Ok(Ok(prepared)) => prepared,
-                Ok(Err(error)) => {
-                    if let spike_v4_worker::external::RollbackOutcome::Failed { steps } = host.effects.rollback().await {
-                        return reply(&mut w, &compensation_failed(&steps).to_string()).await;
-                    }
-                    return reply(&mut w, &err(error.code, "공식 WRITE 확장 호출 거부")).await;
-                }
-                Err(_) => {
-                    if let spike_v4_worker::external::RollbackOutcome::Failed { steps } = host.effects.rollback().await {
-                        return reply(&mut w, &compensation_failed(&steps).to_string()).await;
-                    }
-                    return reply(&mut w, &err("WIRE.DEADLINE_EXCEEDED", "공식 WRITE 확장 기한 초과")).await;
-                }
-            };
-            let (resource, extension) = name.split_once('.').unwrap();
-            let mut tags = facts["resources"][resource]["extensions"][extension]["access"]
-                .as_object()
-                .into_iter()
-                .flatten()
-                .filter(|(grant, _)| !grant.starts_with("mongo.") && !grant.starts_with("redis."))
-                .flat_map(|(grant, _)| grant_write_tags(&facts, grant))
-                .collect::<Vec<_>>();
-            tags.sort();
-            tags.dedup();
-            let result = json!({"ok":true,"output":prepared.output,"tags":tags});
-            // Recheck the same server-verified principal before committing callback effects.
-            let token = token.as_deref().unwrap_or("");
-            let current = match &runtime.authenticator {
-                Some(provider) => match tokio::time::timeout(server::DB_PREFLIGHT_TIMEOUT, provider.verify_session(token)).await {
-                    Ok(result) => result,
-                    Err(_) => Err(auth::AuthError::Unavailable),
-                },
-                None => Err(auth::AuthError::Unavailable),
-            };
-            let rejection = match current {
-                Ok(current) if Some(current.actor_id) == caller.actor_id => None,
-                Err(auth::AuthError::Expired) => Some(("WIRE.TOKEN_EXPIRED", "세션 만료")),
-                Err(auth::AuthError::Unavailable) => Some(("WIRE.DB_UNAVAILABLE", "principal 재검증 실패")),
-                _ => Some(("WIRE.UNAUTHENTICATED", "principal 재검증 실패")),
-            };
-            if let Some((code, message)) = rejection {
-                if let spike_v4_worker::external::RollbackOutcome::Failed { steps } = host.effects.rollback().await {
-                    return reply(&mut w, &compensation_failed(&steps).to_string()).await;
-                }
-                return reply(&mut w, &err(code, message)).await;
-            }
-            let mut result = match host.session.commit(result.clone()).await {
-                Ok(committed) => {
-                    host.effects.complete().await;
-                    committed
-                }
-                Err(error) => {
-                    // An unknown commit may have happened, so its effects stay; any other failure rolled the transaction back.
-                    if error.code == "WIRE.COMMIT_UNKNOWN" {
-                        host.effects.mark_unknown().await;
-                    } else if let spike_v4_worker::external::RollbackOutcome::Failed { steps } = host.effects.rollback().await {
-                        return reply(&mut w, &compensation_failed(&steps).to_string()).await;
-                    }
-                    return reply(&mut w, &err(error.code, &error.msg)).await;
-                }
-            };
-            runtime.infrastructure.data_changes.notify();
-            result["contractFingerprint"] = json!(contract_fingerprint.as_deref().unwrap_or(""));
             return reply(&mut w, &result.to_string()).await;
         }
         if path == "/extension" {

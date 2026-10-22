@@ -87,6 +87,7 @@ pub(crate) fn is_endpoint(target: &str) -> bool {
 }
 
 pub(crate) type AdmitFuture = std::pin::Pin<Box<dyn Future<Output = Result<Duration, &'static str>> + Send + 'static>>;
+pub(crate) type FrameFuture = std::pin::Pin<Box<dyn Future<Output = Result<Value, &'static str>> + Send + 'static>>;
 
 #[derive(Debug, PartialEq)]
 pub(crate) enum Packet {
@@ -239,10 +240,13 @@ async fn pending_until(at: Option<tokio::time::Instant>) {
 ///
 /// `authenticate` checks the `auth.token` of the CONNECT packet and answers how long the token still lives. It runs once:
 /// the connection ends when that time is over, and a disconnect does nothing but close the transport.
-pub(crate) async fn serve<S, A>(io: S, options: &SocketIoOptions, mut authenticate: A) -> Result<(), WsError>
+/// The callback receives only the CONNECT token, the server-minted Socket.IO sid, and a validated frame. It must revalidate
+/// the token before any write and derive owner ids from that verified session, never from the frame payload.
+pub(crate) async fn serve_with_handler<S, A, H>(io: S, options: &SocketIoOptions, mut authenticate: A, mut handle_frame: H) -> Result<(), WsError>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     A: FnMut(&str) -> AdmitFuture,
+    H: FnMut(String, String, WatchFrame) -> FrameFuture,
 {
     use tokio::time::Instant;
     let mut config = WebSocketConfig::default();
@@ -264,6 +268,8 @@ where
     let mut connect_by = Some(started + options.connect_timeout);
     let life_by = started + options.max_lifetime;
     let mut token_by: Option<Instant> = None;
+    let mut connected_token: Option<String> = None;
+    let mut socket_sid: Option<String> = None;
     let mut ping_at = Some(started + options.ping_interval);
     let mut pong_by: Option<Instant> = None;
     loop {
@@ -359,7 +365,10 @@ where
                 match verdict {
                     Ok(remaining) => {
                         token_by = Some(Instant::now() + remaining);
-                        send_text(&mut socket, format!("40{}", json!({"sid": session_id()}))).await?;
+                        let sid = session_id();
+                        connected_token = Some(token.to_owned());
+                        socket_sid = Some(sid.clone());
+                        send_text(&mut socket, format!("40{}", json!({"sid": sid}))).await?;
                     }
                     Err(code) => {
                         send_text(&mut socket, connect_error(code)).await?;
@@ -389,16 +398,30 @@ where
                 }
                 // Like a Socket.IO server: an event nobody asked an answer for is dropped, whatever its name.
                 let Some(ack) = ack else { continue };
+                let mut close_after_ack = None;
                 let body = if args[0] == "watch_frame" {
                     match parse_watch_frame(args.get(1)) {
-                        // Analysis and storage are later slices; this one never invents an emotion.
-                        Ok(_) => json!({"status":"error","code":"WIRE.NOT_AVAILABLE","message":"Frame analysis is not available yet"}),
+                        Ok(frame) => {
+                            match handle_frame(connected_token.clone().expect("connected token"), socket_sid.clone().expect("connected sid"), frame)
+                                .await
+                            {
+                                Ok(body) => body,
+                                Err(code) => {
+                                    close_after_ack = Some(code);
+                                    json!({"status":"error","code":code})
+                                }
+                            }
+                        }
                         Err(message) => json!({"status":"error","code":"WIRE.BAD_REQUEST","message":message}),
                     }
                 } else {
                     json!({"status":"error","code":"WIRE.BAD_REQUEST","message":"Unknown event"})
                 };
                 send_text(&mut socket, format!("43{ack}[{body}]")).await?;
+                if let Some(code) = close_after_ack {
+                    close(&mut socket, CloseCode::Policy, code).await;
+                    return Ok(());
+                }
             }
         }
     }
@@ -431,6 +454,7 @@ mod tests {
         server: tokio::task::JoinHandle<Result<(), tokio_tungstenite::tungstenite::Error>>,
         tokens: Arc<Mutex<Vec<String>>>,
         calls: Arc<AtomicUsize>,
+        frame_calls: Arc<AtomicUsize>,
     }
 
     /// `verdict` decides the answer for every token: `Ok(remaining)` or a wire code.
@@ -438,17 +462,29 @@ mod tests {
         let (client_io, server_io) = tokio::io::duplex(1 << 20);
         let tokens = Arc::new(Mutex::new(Vec::new()));
         let calls = Arc::new(AtomicUsize::new(0));
-        let (seen, count) = (tokens.clone(), calls.clone());
+        let frame_calls = Arc::new(AtomicUsize::new(0));
+        let (seen, count, handled) = (tokens.clone(), calls.clone(), frame_calls.clone());
         let server = tokio::spawn(async move {
-            serve(server_io, &options, move |token: &str| {
-                seen.lock().unwrap().push(token.to_owned());
-                count.fetch_add(1, Ordering::SeqCst);
-                Box::pin(async move { verdict })
-            })
+            serve_with_handler(
+                server_io,
+                &options,
+                move |token: &str| {
+                    seen.lock().unwrap().push(token.to_owned());
+                    count.fetch_add(1, Ordering::SeqCst);
+                    Box::pin(async move { verdict })
+                },
+                move |token, sid, frame| {
+                    handled.fetch_add(1, Ordering::SeqCst);
+                    Box::pin(async move {
+                        Ok(json!({"status":"error","code":"WIRE.NOT_AVAILABLE","token":token,"sid":sid,
+                            "video_view_log_id":frame.video_view_log_id,"video_id":frame.video_id}))
+                    })
+                },
+            )
             .await
         });
         let client = WebSocketStream::from_raw_socket(client_io, Role::Client, None).await;
-        Harness { client, server, tokens, calls }
+        Harness { client, server, tokens, calls, frame_calls }
     }
 
     async fn next_text(client: &mut Client) -> String {
@@ -757,8 +793,45 @@ mod tests {
         assert_eq!(body[0]["status"], "error");
         assert_eq!(body[0]["code"], "WIRE.NOT_AVAILABLE");
         assert!(body[0].get("response").is_none(), "no invented analysis result: {body}");
+        assert_eq!(body[0]["token"], "good");
+        assert_eq!(body[0]["video_view_log_id"], "11111111-1111-4111-8111-111111111111");
+        assert_eq!(harness.frame_calls.load(Ordering::SeqCst), 1, "validated frame reaches the frame handler");
         // The token was checked once, at CONNECT.
         assert_eq!(harness.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn the_frame_handler_is_not_called_for_invalid_frames_and_an_expired_token_stops_processing() {
+        let mut harness = connected(options()).await;
+        send(&mut harness.client, &format!("421{}", json!(["watch_frame", frame(json!({"frame_data": 3}))]))).await;
+        let bad = next_text(&mut harness.client).await;
+        assert!(bad.contains("WIRE.BAD_REQUEST"), "{bad}");
+        assert_eq!(harness.frame_calls.load(Ordering::SeqCst), 0);
+
+        send(&mut harness.client, &format!("422{}", json!(["watch_frame", frame(json!({}))]))).await;
+        let ok = next_text(&mut harness.client).await;
+        assert!(ok.contains("WIRE.NOT_AVAILABLE"), "{ok}");
+        assert_eq!(harness.frame_calls.load(Ordering::SeqCst), 1);
+
+        let (client_io, server_io) = tokio::io::duplex(1 << 20);
+        let mut client = WebSocketStream::from_raw_socket(client_io, Role::Client, None).await;
+        let server = tokio::spawn(async move {
+            serve_with_handler(
+                server_io,
+                &options(),
+                |_: &str| -> AdmitFuture { Box::pin(async { Ok(Duration::from_secs(60)) }) },
+                |_, _, _| -> FrameFuture { Box::pin(async { Err("WIRE.TOKEN_EXPIRED") }) },
+            )
+            .await
+        });
+        next_text(&mut client).await;
+        send(&mut client, r#"40{"token":"good-token"}"#).await;
+        next_text(&mut client).await;
+        send(&mut client, &format!("423{}", json!(["watch_frame", frame(json!({}))]))).await;
+        let expired = next_text(&mut client).await;
+        assert!(expired.contains("WIRE.TOKEN_EXPIRED"), "{expired}");
+        assert_eq!(next_close(&mut client).await.unwrap().reason.as_str(), "WIRE.TOKEN_EXPIRED");
+        server.await.unwrap().unwrap();
     }
 
     #[tokio::test]
@@ -864,7 +937,15 @@ mod tests {
     #[tokio::test]
     async fn a_verifier_that_never_answers_is_cut_off_by_the_connect_timeout() {
         let (client_io, server_io) = tokio::io::duplex(1 << 16);
-        let server = tokio::spawn(async move { serve(server_io, &options(), |_: &str| -> AdmitFuture { Box::pin(std::future::pending()) }).await });
+        let server = tokio::spawn(async move {
+            serve_with_handler(
+                server_io,
+                &options(),
+                |_: &str| -> AdmitFuture { Box::pin(std::future::pending()) },
+                |_, _, _| -> FrameFuture { Box::pin(std::future::pending()) },
+            )
+            .await
+        });
         let mut client = WebSocketStream::from_raw_socket(client_io, Role::Client, None).await;
         next_text(&mut client).await;
         send(&mut client, r#"40{"token":"x"}"#).await;

@@ -47,6 +47,8 @@ done
 # (4.8.3, pinned by package-lock.json). Lifecycle scripts stay off: only the library files are installed.
 npm ci --ignore-scripts --no-audit --no-fund --prefix spikes/spike-v6-transport/tests/socketio-client
 cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --locked --target-dir target --test socketio_transport -- --ignored
+# Pure-Python checks of the FaceReview extensions (the first-frame session setup of WBS 7.2.6 has no server in this step).
+python3 -m unittest discover -s product/tests/fixtures/facereview-mysql/extensions -p 'test_*.py'
 # The legacy prototype imports the shared generator and must export every binding type it emits.
 # Keep its CLI and committed lock file in the product gate so an SDK change cannot silently break it.
 cargo test --manifest-path prototype/Cargo.toml --test cli --locked --target-dir target

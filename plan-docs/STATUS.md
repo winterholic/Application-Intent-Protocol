@@ -1,6 +1,10 @@
 진행 중 (2026-10-22 23:25 KST 갱신): 세션 257e4936이 WBS 7.2.6 조각 2(첫 프레임 세션·`VideoViewLog` 멱등 생성)와 이어서 조각 3·ML 게이트 조사·`permessage-deflate` 확인을 한다. 작업 트리의 미커밋 변경(`crates/aip-cli/tests/mysql_facereview_watch.rs`, `docs/DECISIONS.md`의 D-P-WATCH-SESSION, `product/tests/fixtures/facereview-mysql/facereview.aip`, `spikes/spike-v6-transport/src/{lib,socketio}.rs`, `extensions/slice14k_watch.py`·`test_slice14k_watch.py`)은 이 세션 소유이니 다른 실행은 수정·커밋·되돌리기를 하지 마라(`git checkout`·`git stash`·`git clean` 금지). e29ddf1e의 새 턴은 7.2.6을 시작하지 말고 이 파일을 읽은 뒤 7.2.10 사전 조사나 문서 정합 점검처럼 겹치지 않는 일만 하거나 끝내라.
 
-## 재개 지점 (2026-10-22, 7.2.6 조각 1 Socket.IO 전송 경계 구현 뒤)
+## 재개 지점 (2026-10-23, 7.2.6 조각 2 첫 프레임 세션 구현 뒤)
+
+7.2.6 조각 2를 구현했다(결정 D-P-WATCH-SESSION, 검증은 [제품 검증](../product/VERIFICATION.md)의 「7.2.6 조각 2」). 유효한 첫 `watch_frame`이 쓰기 확장 `User.startWatching`으로 `VideoViewLog` 한 행과 Redis 시청 세션을 만들고, 사용자는 프레임마다 다시 검증한 토큰에서만 얻는다. 같은 연결의 중복 프레임·재접속·다른 회원의 같은 id·폐기된 principal·토큰 만료를 실제 MySQL 서비스와 Redis로 확인했다. 쓰기 확장 호출 코드는 `run_relational_write_extension`으로 모아 `/extension` 쓰기와 공유한다. **프레임 ack는 여전히 `WIRE.NOT_AVAILABLE`이고 분석·Mongo timeline이 없어 실제 영상·웹캠·ML 흐름은 증명되지 않았다.** 다음은 조각 3(Mongo timeline 저장: 저장 경로·순서·중복 처리부터, 감정값은 ML 자리로 비워 둠), ML 게이트 조사(`model.h5` 출처·허가 근거, TF/OpenCV 요건; 구현 없음), `/events/socket`의 `permessage-deflate` 거절이 실제 브라우저를 막는지 최소 재현이다. 7.2.10은 그 뒤다. 세션 257e4936이 이 일을 하고 있으며 e29ddf1e 같은 다른 실행은 7.2.6을 겹쳐 시작하지 않는다.
+
+## 이전 재개 지점 (2026-10-22, 7.2.6 조각 1 Socket.IO 전송 경계 구현 뒤)
 
 7.2.6의 첫 조각으로 Socket.IO 호환 전송 경계(Engine.IO v4 WebSocket 전용, CONNECT `auth.token`, 패킷 상한, 서버 ping/pong, disconnect, `watch_frame` 필드 검증)를 `spikes/spike-v6-transport/src/socketio.rs`에 구현했다(결정 D-P-WATCH-SOCKET, 검증은 [제품 검증](../product/VERIFICATION.md)의 같은 날짜 절). 단위 24개, 실제 서버 통합 4개(PostgreSQL 17), 실제 `socket.io-client` 4.8.3 종단 1개가 로컬에서 통과했고 spike-v6 전체 시험은 EXIT=0이다. **유효한 프레임도 `WIRE.NOT_AVAILABLE`로 답한다. 분석·세션·view log·Mongo timeline이 없으므로 7.2.6의 실제 영상·웹캠·ML 흐름은 하나도 증명되지 않았다.** 다음 조각: 첫 프레임의 세션 초기화와 `VideoViewLog` 멱등 생성(쓰기 경로·principal 유도 `user_id`·프레임별 재검사), 그 뒤 모델 출처와 재현 가능한 ML 런타임(게이트: 모델 출처 권한과 TensorFlow/OpenCV 환경 미확인), Mongo timeline 저장, 원본 backend를 끈 실제 브라우저 trace. 이 서버의 MySQL 서비스 위 종단 실행과 실제 브라우저 접속은 미검증이다.
 

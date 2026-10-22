@@ -189,7 +189,7 @@ async fn the_upgrade_accepts_only_a_browser_websocket_only_engine_io_v4_request(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn connect_authenticates_with_the_real_principal_check_and_a_frame_is_not_analysed_yet() {
+async fn connect_authenticates_with_the_real_principal_check_and_a_frame_needs_a_relational_deployment() {
     let _schema_lock = SCHEMA_LOCK.lock().await;
     let (server, _cleanup) = start_server(Some(options()), 1).await;
 
@@ -215,7 +215,7 @@ async fn connect_authenticates_with_the_real_principal_check_and_a_frame_is_not_
     socket.send(Message::Text(frame_event(1, json!({})).into())).await.unwrap();
     let reply = next_text(&mut socket).await;
     let body: serde_json::Value = serde_json::from_str(reply.strip_prefix("431").expect("ack 1")).unwrap();
-    assert_eq!((body[0]["status"].clone(), body[0]["code"].clone()), (json!("error"), json!("WIRE.NOT_AVAILABLE")));
+    assert_eq!((body[0]["status"].clone(), body[0]["code"].clone()), (json!("error"), json!("WIRE.ADAPTER_UNSUPPORTED")));
     assert!(body[0].get("response").is_none());
 
     socket.send(Message::Text(frame_event(2, json!({"video_id": ""})).into())).await.unwrap();
@@ -299,7 +299,7 @@ async fn the_real_socketio_client_connects_emits_watch_frame_and_disconnects() {
     println!("socket.io-client observed: {seen}");
     assert_eq!(seen["refused"], json!({"connected": false, "message": "WIRE.UNAUTHENTICATED", "data": {"code": "WIRE.UNAUTHENTICATED"}}));
     assert_eq!(seen["connected"]["id"].as_str().map(str::len), Some(20));
-    assert_eq!((seen["valid"]["status"].clone(), seen["valid"]["code"].clone()), (json!("error"), json!("WIRE.NOT_AVAILABLE")));
+    assert_eq!((seen["valid"]["status"].clone(), seen["valid"]["code"].clone()), (json!("error"), json!("WIRE.ADAPTER_UNSUPPORTED")));
     assert!(seen["valid"].get("response").is_none());
     assert_eq!(seen["missing"], json!({"status": "error", "code": "WIRE.BAD_REQUEST", "message": "Missing required fields"}));
     assert_eq!(seen["unknownEvent"]["message"], "Unknown event");

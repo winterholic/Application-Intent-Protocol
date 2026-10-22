@@ -11,9 +11,11 @@
 //! Run with `-- --ignored` after `scripts/mysql-live-fixture.sh up` with `AIP_TEST_MONGO_URL` pointing at a run-owned MongoDB.
 use aip_migrate::mysql_driver::{MysqlDriver, mysql_async::prelude::Queryable};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use futures_util::{SinkExt, StreamExt};
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use rsa::{RsaPrivateKey, pkcs1::EncodeRsaPrivateKey, traits::PublicKeyParts};
 use serde_json::{Value, json};
+use sha2::Digest as _;
 use std::{
     path::Path,
     process::Stdio,
@@ -23,6 +25,7 @@ use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     process::{Child, Command},
 };
+use tokio_tungstenite::{connect_async, tungstenite::client::IntoClientRequest};
 
 const DEFINITION: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/facereview.aip");
 const MAPPING: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/mapping.json");
@@ -35,7 +38,7 @@ const TIMELINE_SESSIONS: &str = include_str!("../../../product/tests/fixtures/fa
 const DISTRIBUTIONS: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/slice13d-video_distribution.json");
 const SESSIONS: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/slice13d-youtube_watching_data.json");
 const GOLDEN: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/slice13f-golden.json");
-const EXTENSIONS: [(&str, &str); 14] = [
+const EXTENSIONS: [(&str, &str); 15] = [
     ("slice13f_watch.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13f_watch.py")),
     ("slice13b_lists.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13b_lists.py")),
     ("slice13d_recommend.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13d_recommend.py")),
@@ -50,6 +53,7 @@ const EXTENSIONS: [(&str, &str); 14] = [
     ("slice14g_request.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice14g_request.py")),
     ("slice14h_dashboard.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice14h_dashboard.py")),
     ("slice14j_dummy.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice14j_dummy.py")),
+    ("slice14k_watch.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice14k_watch.py")),
 ];
 const META: &str = "aip_t_wch_meta";
 const SOURCE: &str = "aip_t_wch_src";
@@ -67,6 +71,7 @@ struct Env {
     adopt_url: String,
     runtime_url: String,
     mongo_url: String,
+    redis_url: String,
 }
 
 fn cli(env: &Env, args: &[&str], config: &Path) -> Command {
@@ -77,7 +82,11 @@ fn cli(env: &Env, args: &[&str], config: &Path) -> Command {
     } else {
         command.args(args).arg("--config").arg(config);
     }
-    command.env("AIP_T_WCH_ADOPT_URL", &env.adopt_url).env("AIP_T_WCH_RUNTIME_URL", &env.runtime_url).env("AIP_T_WCH_MONGO_URL", &env.mongo_url);
+    command
+        .env("AIP_T_WCH_ADOPT_URL", &env.adopt_url)
+        .env("AIP_T_WCH_RUNTIME_URL", &env.runtime_url)
+        .env("AIP_T_WCH_MONGO_URL", &env.mongo_url)
+        .env("AIP_T_WCH_REDIS_URL", &env.redis_url);
     command
 }
 
@@ -131,7 +140,47 @@ async fn post(address: &str, path: &str, token: Option<&str>, fingerprint: &str,
     serde_json::from_str(body).unwrap_or(Value::Null)
 }
 
+type Socket = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+async fn socket_connect(address: &str, token: &str) -> Socket {
+    let mut request = format!("ws://{address}/socket.io/?EIO=4&transport=websocket").into_client_request().unwrap();
+    request.headers_mut().insert("origin", "http://localhost".parse().unwrap());
+    let (mut socket, _) = connect_async(request).await.expect("Socket.IO WebSocket handshake");
+    let open = match socket.next().await.unwrap().unwrap() {
+        tokio_tungstenite::tungstenite::Message::Text(text) => text.to_string(),
+        other => panic!("Engine.IO open packet expected, got {other:?}"),
+    };
+    assert!(open.starts_with('0'), "{open}");
+    socket.send(tokio_tungstenite::tungstenite::Message::Text(format!("40{}", json!({"token":token})).into())).await.unwrap();
+    let connected = match socket.next().await.unwrap().unwrap() {
+        tokio_tungstenite::tungstenite::Message::Text(text) => text.to_string(),
+        other => panic!("Socket.IO CONNECT acknowledgement expected, got {other:?}"),
+    };
+    assert!(connected.starts_with("40{"), "{connected}");
+    socket
+}
+
+async fn socket_watch(socket: &mut Socket, ack: u64, frame: &Value) -> Value {
+    let event = format!("42{ack}{}", json!(["watch_frame", frame]));
+    socket.send(tokio_tungstenite::tungstenite::Message::Text(event.into())).await.unwrap();
+    let reply = match socket.next().await.unwrap().unwrap() {
+        tokio_tungstenite::tungstenite::Message::Text(text) => text.to_string(),
+        other => panic!("Socket.IO ACK expected, got {other:?}"),
+    };
+    let payload = reply.strip_prefix(&format!("43{ack}")).expect("ACK id matches");
+    serde_json::from_str::<Value>(payload).unwrap()[0].clone()
+}
+
+fn watch_frame(view_log_id: &str) -> Value {
+    json!({"video_view_log_id":view_log_id,"video_id":"eeeeeeee-0000-4000-8000-000000000001",
+        "youtube_running_time":0.5,"frame_data":"data:image/jpeg;base64,AAAA","duration":120,"user_id":"client-claims-bob"})
+}
+
 fn token(private: &RsaPrivateKey, subject: &str) -> String {
+    token_with_ttl(private, subject, 300)
+}
+
+fn token_with_ttl(private: &RsaPrivateKey, subject: &str, ttl: u64) -> String {
     let key = private.to_pkcs1_der().unwrap();
     let mut header = Header::new(Algorithm::RS256);
     header.typ = Some("at+jwt".into());
@@ -139,7 +188,7 @@ fn token(private: &RsaPrivateKey, subject: &str) -> String {
     let issued = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
     encode(
         &header,
-        &json!({"iss": ISSUER, "aud": "aip-api", "sub": subject, "iat": issued, "nbf": issued, "exp": issued + 300}),
+        &json!({"iss": ISSUER, "aud": "aip-api", "sub": subject, "iat": issued, "nbf": issued, "exp": issued + ttl}),
         &EncodingKey::from_rsa_der(key.as_bytes()),
     )
     .unwrap()
@@ -155,8 +204,12 @@ async fn run_script(conn: &mut aip_migrate::mysql_driver::mysql_async::Conn, scr
     }
 }
 
+async fn view_log_count(conn: &mut aip_migrate::mysql_driver::mysql_async::Conn, id: &str) -> i64 {
+    conn.query_first::<i64, _>(format!("SELECT COUNT(*) FROM `{SOURCE}`.`video_view_log` WHERE `video_view_log_id` = '{id}'")).await.unwrap().unwrap()
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "live: needs a dedicated MySQL 8.4 (scripts/mysql-live-fixture.sh), MongoDB (AIP_TEST_MONGO_URL) and a worker sandbox; run with -- --ignored"]
+#[ignore = "live: needs dedicated MySQL 8.4, MongoDB, Redis (AIP_TEST_REDIS_URL) and a worker sandbox; run with -- --ignored"]
 async fn facereview_watch_detail_matches_the_original_service_through_the_real_server() {
     let admin_url = std::env::var("AIP_TEST_MYSQL_URL").expect("set AIP_TEST_MYSQL_URL to a run-owned MySQL 8.4 container");
     aip_test_support::validate_mysql_admin_url(&admin_url).unwrap_or_else(|reason| panic!("AIP_TEST_MYSQL_URL is unsafe: {reason}"));
@@ -165,6 +218,10 @@ async fn facereview_watch_detail_matches_the_original_service_through_the_real_s
     let parsed = url::Url::parse(&mongo_url).expect("Mongo URL");
     assert_eq!(parsed.host_str(), Some("127.0.0.1"), "the MongoDB fixture must bind loopback only");
     assert!(parsed.port().is_some_and(|port| port > 1024 && port != 27017), "the MongoDB fixture must use a dedicated high port");
+    let redis_url = std::env::var("AIP_TEST_REDIS_URL").expect("set AIP_TEST_REDIS_URL to a run-owned Redis");
+    let parsed = url::Url::parse(&redis_url).expect("Redis URL");
+    assert_eq!(parsed.host_str(), Some("127.0.0.1"), "the Redis fixture must bind loopback only");
+    assert!(parsed.port().is_some_and(|port| port > 1024 && port != 6379), "the Redis fixture must use a dedicated high port");
 
     let directory = tempfile::tempdir().unwrap();
     let file = directory.path().join("facereview.aip");
@@ -202,6 +259,7 @@ async fn facereview_watch_detail_matches_the_original_service_through_the_real_s
         adopt_url: admin_url.clone(),
         runtime_url: format!("mysql://aip_t_wch_rt:runtime_test_only@{host}/{SOURCE}"),
         mongo_url: mongo_url.clone(),
+        redis_url: redis_url.clone(),
     };
 
     // MongoDB: the run-owned database is rebuilt from the same documents the original saw. Insertion order is the natural order.
@@ -241,7 +299,7 @@ async fn facereview_watch_detail_matches_the_original_service_through_the_real_s
     .unwrap();
     let config = directory.path().join("service.json");
     let write_config = |mongo: Value| {
-        let mut workers = json!({"directory": "extensions", "language": "python", "integrations": [{"name": "youtube_videos", "url": "http://127.0.0.1:9/youtube/v3/videos", "method": "GET", "timeout_ms": 1000, "max_request_bytes": 1024, "max_response_bytes": 1024, "allow_loopback": true, "query_params": ["part"]}, {"name": "youtube_search", "url": "http://127.0.0.1:9/youtube/v3/search", "method": "GET", "timeout_ms": 1000, "max_request_bytes": 1024, "max_response_bytes": 1024, "allow_loopback": true, "query_params": ["part"]}]});
+        let mut workers = json!({"directory": "extensions", "language": "python", "enable_writes": true, "integrations": [{"name": "youtube_videos", "url": "http://127.0.0.1:9/youtube/v3/videos", "method": "GET", "timeout_ms": 1000, "max_request_bytes": 1024, "max_response_bytes": 1024, "allow_loopback": true, "query_params": ["part"]}, {"name": "youtube_search", "url": "http://127.0.0.1:9/youtube/v3/search", "method": "GET", "timeout_ms": 1000, "max_request_bytes": 1024, "max_response_bytes": 1024, "allow_loopback": true, "query_params": ["part"]}], "redis": {"uri_env": "AIP_T_WCH_REDIS_URL", "prefixes": ["facereview:watch:active:"], "max_in_flight": 4, "timeout_ms": 3000}});
         if !mongo.is_null() {
             workers["mongo"] = mongo;
         }
@@ -250,8 +308,9 @@ async fn facereview_watch_detail_matches_the_original_service_through_the_real_s
             json!({
                 "schema": META, "external_mapping": "mapping.json", "database_adapter": "mysql",
                 "database_url_env": "AIP_T_WCH_RUNTIME_URL", "migrate_database_url_env": "AIP_T_WCH_ADOPT_URL",
-                "listen": "127.0.0.1:0", "wire": "decimal", "rate_limit": null,
+                "listen": "127.0.0.1:0", "wire": "decimal", "rate_limit": null, "allowed_origins": ["http://localhost"],
                 "auth": {"issuer": ISSUER, "audience": "aip-api", "jwks": {"kind": "file", "path": "jwks.json"}},
+                "socketio": {},
                 "workers": workers,
             })
             .to_string(),
@@ -318,5 +377,90 @@ async fn facereview_watch_detail_matches_the_original_service_through_the_real_s
     // A guest has no session: the extension route needs a signed caller (the original's login_optional guests are not served).
     let guest = ask("Video.watchDetail", None, &json!({"video_id": video})).await;
     assert_eq!(guest["code"], "WIRE.UNAUTHENTICATED", "{guest}");
+
+    // WBS 7.2.6 slice 2: the first authenticated frame enters the declared MySQL write extension and Redis session capability.
+    // The browser's claimed user_id is deliberately wrong; the row and cache must use Alice from the verified token.
+    let view_log_id = "66666666-6666-4666-8666-666666666666";
+    let digest_hex: String = sha2::Sha256::digest(view_log_id.as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect();
+    let redis_key = format!("facereview:watch:active:{digest_hex}");
+    let redis = redis::Client::open(redis_url.as_str()).expect("Redis fixture");
+    let mut redis_connection = redis.get_multiplexed_async_connection().await.expect("Redis connection");
+    let _: i64 = redis::cmd("DEL").arg(&redis_key).query_async(&mut redis_connection).await.unwrap();
+
+    let alice_token = tokens.iter().find(|(candidate, _)| *candidate == "alice").unwrap().1.clone();
+    let mut alice_socket = socket_connect(&address, &alice_token).await;
+    let first = socket_watch(&mut alice_socket, 1, &watch_frame(view_log_id)).await;
+    assert_eq!(first["code"], "WIRE.NOT_AVAILABLE", "session is written, but ML is not connected: {first}");
+    assert!(first.get("response").is_none(), "no fixed/mock emotion is returned: {first}");
+    let duplicate = socket_watch(&mut alice_socket, 2, &watch_frame(view_log_id)).await;
+    assert_eq!(duplicate["code"], "WIRE.NOT_AVAILABLE", "duplicate first frame is idempotent: {duplicate}");
+
+    assert_eq!(view_log_count(&mut setup, view_log_id).await, 1, "duplicate frame created one view log");
+    let owner: Option<String> =
+        setup.query_first(format!("SELECT `user_id` FROM `{SOURCE}`.`video_view_log` WHERE `video_view_log_id` = '{view_log_id}'")).await.unwrap();
+    assert_eq!(owner.as_deref(), Some(SUBJECTS[0].1), "server principal wins over payload user_id");
+    let cached: Option<String> = redis::cmd("GET").arg(&redis_key).query_async(&mut redis_connection).await.unwrap();
+    let cached: Value = serde_json::from_str(cached.as_deref().expect("Redis session cache")).unwrap();
+    assert_eq!(cached["user_id"], SUBJECTS[0].1);
+    assert_eq!(cached["video_id"], video);
+    assert_eq!(cached["duration"], 120);
+
+    // Reconnect has a new Socket.IO sid/idempotency key, reads the same owner-scoped row and rebuilds the Redis session.
+    alice_socket.send(tokio_tungstenite::tungstenite::Message::Text("41".into())).await.unwrap();
+    let _ = alice_socket.next().await;
+    let mut reconnect = socket_connect(&address, &alice_token).await;
+    assert_eq!(socket_watch(&mut reconnect, 3, &watch_frame(view_log_id)).await["code"], "WIRE.NOT_AVAILABLE");
+    assert_eq!(view_log_count(&mut setup, view_log_id).await, 1, "reconnect reuses the existing view log");
+
+    // A different authenticated actor cannot claim Alice's session id or learn her stored row.
+    let bob_token = tokens.iter().find(|(candidate, _)| *candidate == "bob").unwrap().1.clone();
+    let mut bob_socket = socket_connect(&address, &bob_token).await;
+    let separated = socket_watch(&mut bob_socket, 4, &watch_frame(view_log_id)).await;
+    assert_eq!(separated["code"], "WIRE.ALREADY_EXISTS", "another owner is refused opaquely: {separated}");
+    assert_eq!(view_log_count(&mut setup, view_log_id).await, 1);
+
+    // An operator's revoke reaches an open socket on its next frame: the token is verified again before any write, the frame is
+    // refused and the connection ends, and no view log or Redis session is made.
+    let carol_token = tokens.iter().find(|(candidate, _)| *candidate == "carol").unwrap().1.clone();
+    let revoked_log = "77777777-7777-4777-8777-777777777777";
+    let mut carol_socket = socket_connect(&address, &carol_token).await;
+    run(&env, &["principal", "revoke", "--subject", "carol"], &config).await.expect("revoke carol");
+    let refused = socket_watch(&mut carol_socket, 5, &watch_frame(revoked_log)).await;
+    assert_eq!(refused["status"], "error", "{refused}");
+    assert!(
+        ["WIRE.UNAUTHENTICATED", "WIRE.TOKEN_EXPIRED"].contains(&refused["code"].as_str().unwrap_or("")),
+        "a revoked principal's frame is refused: {refused}"
+    );
+    assert_eq!(view_log_count(&mut setup, revoked_log).await, 0, "a revoked principal wrote nothing");
+    let revoked_close = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            match carol_socket.next().await {
+                Some(Ok(tokio_tungstenite::tungstenite::Message::Close(frame))) => break frame,
+                Some(Ok(_)) => continue,
+                other => panic!("expected close after the refused frame, got {other:?}"),
+            }
+        }
+    })
+    .await
+    .expect("the refused frame ends the connection");
+    assert!(revoked_close.is_some());
+
+    // The same token is checked again on each frame, and the connection also closes at its expiry deadline.
+    let short_token = token_with_ttl(&private, "alice", 2);
+    let mut expiring = socket_connect(&address, &short_token).await;
+    tokio::time::sleep(Duration::from_millis(2400)).await;
+    let close = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            match expiring.next().await {
+                Some(Ok(tokio_tungstenite::tungstenite::Message::Close(frame))) => break frame,
+                Some(Ok(_)) => continue,
+                other => panic!("expected token expiry close, got {other:?}"),
+            }
+        }
+    })
+    .await
+    .expect("expiry closes the session");
+    assert_eq!(close.unwrap().reason.as_str(), "WIRE.TOKEN_EXPIRED");
+    assert_eq!(view_log_count(&mut setup, view_log_id).await, 1, "expired token did not write another view log");
     mongo.database(MONGO_DB).drop().await.expect("drop the run-owned database");
 }
