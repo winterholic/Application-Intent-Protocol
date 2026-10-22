@@ -7,6 +7,8 @@ actor User
 predicate isAdmin(a: User) = a.role in (ADMIN, SUPER_ADMIN) and a.is_deleted = false
 // A deactivated member (is_deleted) is no longer a valid caller; NULL counts as deactivated, as filter_by(is_deleted=False) does.
 predicate active(a: User) = a.is_deleted = false
+// The member has a view log row created at or after `since` (the original's COUNT(DISTINCT user_id) over the view logs of the period).
+predicate watchedSince(u: User, since: Time) = exists VideoViewLog where user = u and created_at >= since
 
 access activeUserOrGuest(a: User) = true
 // The original's admin_required, for counts and totals only an administrator may ask for.
@@ -160,6 +162,29 @@ resource User {
     deadline 20s
     implementation "slice14e_mypage.myEmotionSummary"
   }
+  // WBS 7.2.9 dashboard (AdminService.get_signup_trend / _get_weekly_active_users). Administrator only; the caller sends the period, so the
+  // clock of the period is the caller's: signupCount counts members created in [from, to) (deactivated ones too, as the original does),
+  // weeklyActive the members with a view log at or after `since`.
+  aggregate signupCount: Int {
+    input { from: Time; to: Time }
+    source User
+    sourceAccess adminOnly(actor)
+    where isAdmin(actor) and created_at >= input.from and created_at < input.to
+    callerFilter none
+    rowOutput none
+    release count
+  }
+  aggregate weeklyActive: Int {
+    input { since: Time }
+    source User
+    sourceAccess adminOnly(actor)
+    where isAdmin(actor) and watchedSince(this, input.since)
+    callerFilter none
+    rowOutput none
+    release count
+  }
+  expose aggregate signupCount
+  expose aggregate weeklyActive
   expose aggregate totalCount
 }
 
@@ -234,7 +259,30 @@ resource Video {
     rowOutput none
     release count
   }
+  // WBS 7.2.9 dashboard (_get_content_health, category_top5): the views of the visible videos of one genre. Administrator only.
+  aggregate categoryViews: Int {
+    input { category: Genre }
+    source Video
+    sourceAccess adminOnly(actor)
+    where isAdmin(actor) and is_deleted = false and category = input.category
+    callerFilter none
+    rowOutput none
+    release sum(view_count)
+  }
+  expose aggregate categoryViews
   expose aggregate totalCount
+  // WBS 7.2.9 dashboard (AdminService._get_content_health, the MongoDB part): the averages of the video distributions that have frames and
+  // the number of videos per dominant emotion, reduced by the server (`mongo.video_distribution_stats`). Administrator only for the same
+  // reason as VideoRequest.pipeline (the first step is the administrator-only User.totalCount). The views per genre are the aggregate
+  // categoryViews, one call per genre.
+  extension read contentHealth {
+    input { }
+    output { body: Text }
+    access User.totalCount, mongo.video_distribution_stats
+    effect none
+    deadline 20s
+    implementation "slice14h_dashboard.contentHealth"
+  }
 
   // Home and watch lists that need MongoDB (emotion distributions, watch sessions). Output lists are JSON text because extension
   // output accepts scalars only. Source: new-facereview@7948b7e7 HomeService / WatchService; see extensions/README.md.
@@ -452,7 +500,7 @@ resource VideoRequest {
   expose read {
     select id, user, youtube_url, youtube_full_url, status, admin_comment, created_at, updated_at
     refIds user
-    filter id.eq, user.eq, status.eq
+    filter id.eq, user.eq, status.eq, status.in, updated_at.gte
     sort created_at, id
     traverse user { select id, name }
     budget { rows 100; depth 2; cost 2000; deadline 2s; offset 100000 }
@@ -464,6 +512,27 @@ resource VideoRequest {
     callerFilter read
     rowOutput none
     release count
+  }
+  // WBS 7.2.9 dashboard (_get_video_request_pipeline, pending_count). Administrator only.
+  aggregate pendingCount: Int {
+    source VideoRequest
+    sourceAccess adminOnly(actor)
+    where isAdmin(actor) and status = PENDING
+    callerFilter none
+    rowOutput none
+    release count
+  }
+  expose aggregate pendingCount
+  // WBS 7.2.9 dashboard (AdminService._get_video_request_pipeline): the pending count and the average minutes the requests processed in the
+  // last 30 days took. The average needs the rows (no aggregate averages the gap of two columns), so an extension reads them; it may be
+  // called by an administrator only because its first step is the administrator-only pendingCount (a member's call ends there).
+  extension read pipeline {
+    input { }
+    output { body: Text }
+    access VideoRequest.pendingCount
+    effect none
+    deadline 20s
+    implementation "slice14h_dashboard.pipeline"
   }
   expose aggregate totalCount
 }

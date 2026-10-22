@@ -297,3 +297,19 @@ and `reference/slice14g_oracle.py` (golden `slice14g-golden.json`).
 Differences: the same id twice in one list is refused (the original creates two rows); more than 20 ids and an id over 50 characters are refused;
 an invalid list answers `WIRE.EXTENSION_ERROR`. Before `db-defaults.sql` adds the unique key, remove duplicate `youtube_url` rows
 (the query is in that file).
+
+## Slice14-H: administrator dashboard (WBS 7.2.9)
+
+`slice14h_dashboard.py` holds the two dashboard parts an aggregate cannot give (`new-facereview@7948b7e7`, `admin_service.py`
+`_get_video_request_pipeline` and `_get_content_health`); everything else is an administrator-only aggregate the client calls.
+Decision D-P-DASHBOARD, evidence in `product/VERIFICATION.md` and `reference/slice14h_oracle.py` (golden `slice14h-health.json`).
+
+| Original | AIP | Notes |
+|---|---|---|
+| `get_signup_trend(period)` | `User.signupCount(from, to)` per bucket | the client makes the buckets (7d/30d day, 3m week, 1y/3y month) and calls once per bucket |
+| `_get_weekly_active_users` | `User.weeklyActive(since)` | members with a view log at or after `since`; no Redis cache |
+| `_get_video_request_pipeline` | `VideoRequest.pendingCount` and extension `VideoRequest.pipeline` | the average reads the processed rows of the last 30 days (50 pages of 100) |
+| `_get_content_health`, Mongo | extension `Video.contentHealth` over `mongo.video_distribution_stats` | the server runs the original `$facet` pipeline |
+| `_get_content_health`, `category_top5` | `Video.categoryViews(category)` per genre | genres without a visible video are absent: check `Video.totalCount` with `category.eq` first |
+
+Both extensions call an administrator-only aggregate first, so anyone else ends with `WIRE.EXTENSION_ERROR` (a guest with `WIRE.UNAUTHENTICATED`).

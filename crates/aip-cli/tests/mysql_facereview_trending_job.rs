@@ -43,8 +43,9 @@ const MYPAGE_SESSIONS: &str = include_str!("../../../product/tests/fixtures/face
 const MYPAGE_GOLDEN: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/slice14e-golden.json");
 const SUMMARY_SESSIONS: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/slice14f-sessions.json");
 const SUMMARY_GOLDEN: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/slice14f-golden.json");
+const HEALTH_GOLDEN: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/slice14h-health.json");
 const REQUEST_GOLDEN: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/slice14g-golden.json");
-const EXTENSIONS: [(&str, &str); 12] = [
+const EXTENSIONS: [(&str, &str); 13] = [
     ("slice13f_watch.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13f_watch.py")),
     ("slice13b_lists.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13b_lists.py")),
     ("slice13d_recommend.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13d_recommend.py")),
@@ -57,6 +58,7 @@ const EXTENSIONS: [(&str, &str); 12] = [
     ("slice14d_approve.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice14d_approve.py")),
     ("slice14e_mypage.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice14e_mypage.py")),
     ("slice14g_request.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice14g_request.py")),
+    ("slice14h_dashboard.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice14h_dashboard.py")),
 ];
 const META: &str = "aip_t_yt_meta";
 const SOURCE: &str = "aip_t_yt_src";
@@ -205,6 +207,11 @@ async fn request_table(setup: &mut aip_migrate::mysql_driver::mysql_async::Conn)
 
 fn recommend_request(key: &str, user: &str, urls: &[String]) -> Value {
     json!({"key": key, "request": {"extension": "VideoRequest.recommend", "input": {"user": user, "youtube_url_list": json!(urls).to_string()}}})
+}
+
+/// The first column of the first row as text (NULL is None).
+async fn scalar(setup: &mut aip_migrate::mysql_driver::mysql_async::Conn, sql: String) -> Option<String> {
+    setup.query_first::<Option<String>, _>(sql).await.unwrap().flatten()
 }
 
 struct Server {
@@ -977,6 +984,229 @@ async fn the_trending_job_saves_new_videos_with_their_initial_documents() {
     }
     set_requests(&mut setup, &[]).await;
 
+    // ---- WBS 7.2.9: the administrator dashboard. The relational aggregates (User.signupCount, User.weeklyActive, VideoRequest.pendingCount,
+    // Video.categoryViews) are compared with the original's own SQL on rows spread around today; reference/slice14h_oracle.py ran the
+    // original AdminService on the same kind of rows (every period, every bucket) and the composed answers were equal. The content health
+    // of the distributions equals the original's pipeline on the recorded documents.
+    let admin_token = bearer("bob");
+    let member_token = bearer("alice");
+    // Members created at the edges of days: the first second, the last second, and a deactivated one on some.
+    let mut users = Vec::new();
+    for (n, back) in [0_i64, 1, 1, 2, 6, 7, 7, 8, 29, 30, 30, 89, 90, 91, 364, 365, 366, 1094, 1095, 1096].iter().enumerate() {
+        for (k, second) in [0_i64, 86399].iter().enumerate() {
+            if *back == 0 && *second != 0 {
+                continue;
+            }
+            let id = format!("dddddddd-0000-4000-8000-{:012}", n * 2 + k + 1);
+            users.push(format!(
+                "('{id}', 'dash{id}@example.com', 'x', 'dash', 'GENERAL', NULL, 0, 0, {}, TIMESTAMP(UTC_DATE()) - INTERVAL {back} DAY + INTERVAL {second} SECOND, \
+                 TIMESTAMP(UTC_DATE()) - INTERVAL {back} DAY + INTERVAL {second} SECOND)",
+                if (n + k) % 4 == 0 { 1 } else { 0 }
+            ));
+        }
+    }
+    setup
+        .query_drop(format!(
+            "INSERT INTO `{SOURCE}`.user (user_id, email, password, name, role, profile_image_id, is_tutorial_done, is_verify_email_done, is_deleted, created_at, updated_at) VALUES {}",
+            users.join(", ")
+        ))
+        .await
+        .unwrap();
+    let day = |back: i64| format!("DATE_FORMAT(UTC_DATE() - INTERVAL {back} DAY, '%Y-%m-%dT00:00:00Z')");
+    let signup = |from: String, to: String| json!({"aggregate": "User.signupCount", "input": {"from": from, "to": to}});
+    let mut checked = 0;
+    for (from_back, to_back) in [
+        (7, 6),
+        (6, 5),
+        (1, 0),
+        (0, -1),
+        (8, 7),
+        (30, 29),
+        (90, 89),
+        (91, 90),
+        (365, 364),
+        (366, 365),
+        (1095, 1094),
+        (1096, 1095),
+        (1096, -1),
+        (0, 1),
+    ] {
+        let (from, to) = (
+            scalar(&mut setup, format!("SELECT {}", day(from_back))).await.unwrap(),
+            scalar(&mut setup, format!("SELECT {}", day(to_back))).await.unwrap(),
+        );
+        let want: i64 = scalar(
+            &mut setup,
+            format!("SELECT COUNT(*) FROM `{SOURCE}`.user WHERE created_at >= '{}' AND created_at < '{}'", &from[..10], &to[..10]),
+        )
+        .await
+        .unwrap()
+        .parse()
+        .unwrap();
+        let answer = server.post("/read", Some(&admin_token), &json!({"query": signup(from.clone(), to.clone())})).await;
+        assert_eq!(answer["ok"], true, "{from}..{to}: {answer}");
+        assert_eq!(answer["rows"][0], want, "members created in [{from}, {to}) (deactivated ones too)");
+        checked += want;
+    }
+    assert!(checked > 10, "the ranges hold members");
+    // The end of the range is exclusive: a member created exactly at `to` is in the next range, not this one.
+    let edge_to = scalar(&mut setup, "SELECT DATE_FORMAT(UTC_DATE() - INTERVAL 1 DAY, '%Y-%m-%dT00:00:00Z')".to_string()).await.unwrap();
+    let edge_from = scalar(&mut setup, "SELECT DATE_FORMAT(UTC_DATE() - INTERVAL 2 DAY, '%Y-%m-%dT00:00:00Z')".to_string()).await.unwrap();
+    let day_before = server.post("/read", Some(&admin_token), &json!({"query": signup(edge_from, edge_to)})).await;
+    assert_eq!(
+        day_before["rows"][0], 2,
+        "the first and the last second of that day; the member at 00:00:00 of the next day is not counted: {day_before}"
+    );
+    // Weekly active members: a log row at or after `since` counts its member once; guests and older logs do not.
+    setup.query_drop(format!("DELETE FROM `{SOURCE}`.video_view_log")).await.unwrap();
+    let logs = [
+        ("dddddddd-0000-4000-8000-000000000001", "UTC_TIMESTAMP() - INTERVAL 1 HOUR"),
+        ("dddddddd-0000-4000-8000-000000000001", "UTC_TIMESTAMP() - INTERVAL 2 DAY"),
+        ("dddddddd-0000-4000-8000-000000000003", "UTC_TIMESTAMP() - INTERVAL 7 DAY + INTERVAL 5 MINUTE"),
+        ("dddddddd-0000-4000-8000-000000000005", "UTC_TIMESTAMP() - INTERVAL 7 DAY - INTERVAL 5 MINUTE"),
+        (user_of("alice"), "UTC_TIMESTAMP() - INTERVAL 3 DAY"),
+        (user_of("dave"), "UTC_TIMESTAMP() - INTERVAL 1 DAY"),
+        ("", "UTC_TIMESTAMP() - INTERVAL 2 HOUR"),
+    ];
+    for (n, (user, at)) in logs.iter().enumerate() {
+        let user = if user.is_empty() { "NULL".to_string() } else { format!("'{user}'") };
+        setup
+            .query_drop(format!(
+                "INSERT INTO `{SOURCE}`.video_view_log (video_view_log_id, video_id, user_id, guest_token, created_at, updated_at) VALUES ('eeeeeeee-0000-4000-8000-{:012}', \
+                 'aaaaaaaa-0000-4000-8000-000000000001', {user}, NULL, {at}, {at})",
+                n + 1
+            ))
+            .await
+            .unwrap();
+    }
+    let since = scalar(&mut setup, "SELECT DATE_FORMAT(UTC_TIMESTAMP() - INTERVAL 7 DAY, '%Y-%m-%dT%H:%i:%sZ')".to_string()).await.unwrap();
+    let want: i64 = scalar(
+        &mut setup,
+        format!(
+            "SELECT COUNT(DISTINCT user_id) FROM `{SOURCE}`.video_view_log WHERE created_at >= '{}' AND user_id IS NOT NULL",
+            since.replace('T', " ").trim_end_matches('Z')
+        ),
+    )
+    .await
+    .unwrap()
+    .parse()
+    .unwrap();
+    assert_eq!(want, 4, "the data holds four active members");
+    let weekly = server.post("/read", Some(&admin_token), &json!({"query": {"aggregate": "User.weeklyActive", "input": {"since": since}}})).await;
+    assert_eq!(weekly["rows"][0], want, "{weekly}");
+    // The pipeline: pending count and the average minutes of 238 requests processed in the last 30 days (two pages and a half).
+    setup.query_drop(format!("DELETE FROM `{SOURCE}`.video_request")).await.unwrap();
+    let mut requests = vec![
+        ("PENDING", "UTC_TIMESTAMP() - INTERVAL 3 DAY", "UTC_TIMESTAMP() - INTERVAL 3 DAY"),
+        ("PENDING", "UTC_TIMESTAMP() - INTERVAL 90 DAY", "UTC_TIMESTAMP() - INTERVAL 90 DAY"),
+        ("ACCEPTED", "UTC_TIMESTAMP() - INTERVAL 31 DAY - INTERVAL 10 MINUTE", "UTC_TIMESTAMP() - INTERVAL 30 DAY - INTERVAL 1 HOUR"),
+        ("REJECTED", "UTC_TIMESTAMP() - INTERVAL 45 DAY - INTERVAL 3 HOUR", "UTC_TIMESTAMP() - INTERVAL 40 DAY"),
+    ]
+    .into_iter()
+    .map(|(status, created, updated)| (status.to_string(), created.to_string(), updated.to_string()))
+    .collect::<Vec<_>>();
+    for k in 0..230_i64 {
+        requests.push((
+            if k % 3 == 0 { "REJECTED" } else { "ACCEPTED" }.to_string(),
+            format!("UTC_TIMESTAMP() - INTERVAL {} DAY - INTERVAL 1 HOUR - INTERVAL {} MINUTE - INTERVAL {} SECOND", k % 28, k * 2, k % 60),
+            format!("UTC_TIMESTAMP() - INTERVAL {} DAY - INTERVAL 1 HOUR", k % 28),
+        ));
+    }
+    for (n, (status, created, updated)) in requests.iter().enumerate() {
+        setup
+            .query_drop(format!(
+                "INSERT INTO `{SOURCE}`.video_request (video_request_id, user_id, youtube_url, youtube_full_url, status, admin_comment, created_at, updated_at) VALUES \
+                 ('ffffffff-0000-4000-8000-{:012}', '{}', 'dashreq{n:04}', 'https://www.youtube.com/watch?v=dashreq{n:04}', '{status}', NULL, {created}, {updated})",
+                n + 1,
+                user_of("alice")
+            ))
+            .await
+            .unwrap();
+    }
+    let pending = server.post("/read", Some(&admin_token), &json!({"query": {"aggregate": "VideoRequest.pendingCount", "input": {}}})).await;
+    assert_eq!(pending["rows"][0], 2, "{pending}");
+    // The original's SQL: AVG(TIMESTAMPDIFF(MINUTE, created_at, updated_at)) over the requests processed in the last 30 days, rounded to one place.
+    let average = scalar(
+        &mut setup,
+        format!(
+            "SELECT CAST(AVG(TIMESTAMPDIFF(MINUTE, created_at, updated_at)) AS CHAR) FROM `{SOURCE}`.video_request WHERE status IN ('ACCEPTED', 'REJECTED') \
+             AND updated_at >= UTC_TIMESTAMP() - INTERVAL 30 DAY"
+        ),
+    )
+    .await
+    .unwrap();
+    let want_average: f64 = format!("{:.1}", average.parse::<f64>().unwrap()).parse().unwrap();
+    let pipeline = server.post("/extension", Some(&admin_token), &json!({"extension": "VideoRequest.pipeline", "input": {}})).await;
+    assert_eq!(pipeline["ok"], true, "{pipeline}");
+    let pipeline: Value = serde_json::from_str(pipeline["output"]["body"].as_str().unwrap()).unwrap();
+    assert_eq!(pipeline, json!({"pending_count": 2, "avg_processing_minutes": want_average}), "average of the 230 + 1 processed requests");
+    // Nothing processed in the window: the average is null, not 0.
+    setup.query_drop(format!("UPDATE `{SOURCE}`.video_request SET status = 'PENDING'")).await.unwrap();
+    let empty = server.post("/extension", Some(&admin_token), &json!({"extension": "VideoRequest.pipeline", "input": {}})).await;
+    let empty: Value = serde_json::from_str(empty["output"]["body"].as_str().unwrap()).unwrap();
+    assert_eq!(empty["avg_processing_minutes"], Value::Null, "{empty}");
+    assert_eq!(empty["pending_count"], requests.len(), "{empty}");
+    // The views per genre: visible videos only, NULL flags count as visible rows of the original only when 0 (the original filters is_deleted == 0).
+    for (n, (genre, views, deleted)) in
+        [("vlog", 10, "0"), ("vlog", 5, "1"), ("vlog", 7, "NULL"), ("etc", 3, "1"), ("music", 4000000000_i64, "0"), ("music", 1, "0")]
+            .iter()
+            .enumerate()
+    {
+        setup
+            .query_drop(format!(
+                "INSERT INTO `{SOURCE}`.video (video_id, youtube_url, title, channel_name, category, duration, view_count, is_deleted, created_at, updated_at) VALUES \
+                 ('bbbbbbbb-2222-4000-8000-{:012}', 'dashvid{n:03}', 't', 'c', '{genre}', 10, {views}, {deleted}, UTC_TIMESTAMP(), UTC_TIMESTAMP())",
+                n + 1
+            ))
+            .await
+            .unwrap();
+    }
+    for genre in ["vlog", "etc", "music", "cook"] {
+        let want: i64 = scalar(
+            &mut setup,
+            format!("SELECT CAST(COALESCE(SUM(view_count), 0) AS CHAR) FROM `{SOURCE}`.video WHERE is_deleted = 0 AND category = '{genre}'"),
+        )
+        .await
+        .unwrap()
+        .parse()
+        .unwrap();
+        let answer =
+            server.post("/read", Some(&admin_token), &json!({"query": {"aggregate": "Video.categoryViews", "input": {"category": genre}}})).await;
+        assert_eq!(answer["ok"], true, "{genre}: {answer}");
+        assert_eq!(answer["rows"][0].as_i64().unwrap_or(0), want, "{genre}: {answer}");
+    }
+    // The content health of the distributions equals the original's pipeline on the recorded documents.
+    let health: Value = serde_json::from_str(HEALTH_GOLDEN).unwrap();
+    database.collection::<mongodb::bson::Document>("video_distribution").delete_many(mongodb::bson::doc! {}).await.unwrap();
+    for document in health["documents"].as_array().unwrap() {
+        database
+            .collection::<mongodb::bson::Document>("video_distribution")
+            .insert_one(serde_json::from_value::<mongodb::bson::Document>(document.clone()).unwrap())
+            .await
+            .unwrap();
+    }
+    let content = server.post("/extension", Some(&admin_token), &json!({"extension": "Video.contentHealth", "input": {}})).await;
+    assert_eq!(content["ok"], true, "{content}");
+    let content: Value = serde_json::from_str(content["output"]["body"].as_str().unwrap()).unwrap();
+    assert_eq!(content, health["expected"], "the averages and the dominant emotion counts");
+    // Only an administrator asks: a member and a guest are refused by every dashboard call.
+    for query in [
+        signup("2026-01-01T00:00:00Z".into(), "2026-01-02T00:00:00Z".into()),
+        json!({"aggregate": "User.weeklyActive", "input": {"since": "2026-01-01T00:00:00Z"}}),
+        json!({"aggregate": "VideoRequest.pendingCount", "input": {}}),
+        json!({"aggregate": "Video.categoryViews", "input": {"category": "vlog"}}),
+    ] {
+        for token in [Some(&member_token), None] {
+            let refused = server.post("/read", token.map(String::as_str), &json!({"query": query})).await;
+            assert_ne!(refused["ok"], true, "{query}: {refused}");
+        }
+    }
+    for extension in ["VideoRequest.pipeline", "Video.contentHealth"] {
+        for token in [Some(&member_token), None] {
+            let refused = server.post("/extension", token.map(String::as_str), &json!({"extension": extension, "input": {}})).await;
+            assert_ne!(refused["ok"], true, "{extension}: {refused}");
+        }
+    }
     mongo.database(MONGO_DB).drop().await.expect("drop the run-owned database");
     for schema in [META, SOURCE] {
         setup.query_drop(format!("DROP DATABASE `{schema}`")).await.unwrap();

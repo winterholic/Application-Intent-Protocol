@@ -1,0 +1,362 @@
+{
+ "documents": [
+  {
+   "video_id": "bbbbbbbb-1111-4000-8000-000000000000",
+   "total_frames": 0,
+   "average_completion_rate": 0.1234567,
+   "dominant_emotion": "",
+   "emotion_averages": {
+    "neutral": 0.0,
+    "happy": 0.1,
+    "surprise": 0.2,
+    "sad": 0.3,
+    "angry": 0.066667
+   }
+  },
+  {
+   "video_id": "bbbbbbbb-1111-4000-8000-000000000001",
+   "total_frames": 120,
+   "average_completion_rate": 0.505,
+   "dominant_emotion": "happy",
+   "emotion_averages": {
+    "neutral": 0.033333,
+    "happy": 0.133333,
+    "surprise": 0.233333,
+    "sad": 0.0,
+    "angry": 0.1
+   }
+  },
+  {
+   "video_id": "bbbbbbbb-1111-4000-8000-000000000002",
+   "total_frames": 4,
+   "average_completion_rate": 1.00740740742,
+   "dominant_emotion": "surprise",
+   "emotion_averages": {
+    "neutral": 0.066667,
+    "happy": 0.166667,
+    "surprise": 0.266667,
+    "sad": 0.033333,
+    "angry": 0.133333
+   }
+  },
+  {
+   "video_id": "bbbbbbbb-1111-4000-8000-000000000003",
+   "total_frames": 9000,
+   "average_completion_rate": 1.03,
+   "dominant_emotion": "sad",
+   "emotion_averages": {
+    "neutral": 0.1,
+    "happy": 0.2,
+    "surprise": 0.3,
+    "sad": 0.066667,
+    "angry": 0.166667
+   }
+  },
+  {
+   "video_id": "bbbbbbbb-1111-4000-8000-000000000004",
+   "total_frames": 0,
+   "average_completion_rate": 0.128394968,
+   "dominant_emotion": "angry",
+   "emotion_averages": {
+    "neutral": 0.133333,
+    "happy": 0.233333,
+    "surprise": 0.0,
+    "sad": 0.1,
+    "angry": 0.2
+   }
+  },
+  {
+   "video_id": "bbbbbbbb-1111-4000-8000-000000000005",
+   "total_frames": 120,
+   "average_completion_rate": 0.525,
+   "dominant_emotion": "neutral",
+   "emotion_averages": {
+    "neutral": 0.166667,
+    "happy": 0.266667,
+    "surprise": 0.033333,
+    "sad": 0.133333,
+    "angry": 0.233333
+   }
+  },
+  {
+   "video_id": "bbbbbbbb-1111-4000-8000-000000000006",
+   "total_frames": 4,
+   "average_completion_rate": 1.04691358026,
+   "dominant_emotion": "happy",
+   "emotion_averages": {
+    "neutral": 0.2,
+    "happy": 0.3,
+    "surprise": 0.066667,
+    "sad": 0.166667,
+    "angry": 0.266667
+   }
+  },
+  {
+   "video_id": "bbbbbbbb-1111-4000-8000-000000000007",
+   "total_frames": 9000,
+   "average_completion_rate": 1.07,
+   "dominant_emotion": "",
+   "emotion_averages": {
+    "neutral": 0.233333,
+    "happy": 0.0,
+    "surprise": 0.1,
+    "sad": 0.2,
+    "angry": 0.3
+   }
+  },
+  {
+   "video_id": "bbbbbbbb-1111-4000-8000-000000000008",
+   "total_frames": 0,
+   "average_completion_rate": 0.13333323600000002,
+   "dominant_emotion": "sad",
+   "emotion_averages": {
+    "neutral": 0.266667,
+    "happy": 0.033333,
+    "surprise": 0.133333,
+    "sad": 0.233333,
+    "angry": 0.0
+   }
+  },
+  {
+   "video_id": "bbbbbbbb-1111-4000-8000-000000000009",
+   "total_frames": 120,
+   "average_completion_rate": 0.545,
+   "dominant_emotion": "angry",
+   "emotion_averages": {
+    "neutral": 0.3,
+    "happy": 0.066667,
+    "surprise": 0.166667,
+    "sad": 0.266667,
+    "angry": 0.033333
+   }
+  },
+  {
+   "video_id": "bbbbbbbb-1111-4000-8000-000000000010",
+   "total_frames": 4,
+   "average_completion_rate": 1.0864197531,
+   "dominant_emotion": "neutral",
+   "emotion_averages": {
+    "neutral": 0.0,
+    "happy": 0.1,
+    "surprise": 0.2,
+    "sad": 0.3,
+    "angry": 0.066667
+   }
+  },
+  {
+   "video_id": "bbbbbbbb-1111-4000-8000-000000000011",
+   "total_frames": 9000,
+   "average_completion_rate": 1.11,
+   "dominant_emotion": "happy",
+   "emotion_averages": {
+    "neutral": 0.033333,
+    "happy": 0.133333,
+    "surprise": 0.233333,
+    "sad": 0.0,
+    "angry": 0.1
+   }
+  },
+  {
+   "video_id": "bbbbbbbb-1111-4000-8000-000000000012",
+   "total_frames": 0,
+   "average_completion_rate": 0.13827150400000002,
+   "dominant_emotion": "surprise",
+   "emotion_averages": {
+    "neutral": 0.066667,
+    "happy": 0.166667,
+    "surprise": 0.266667,
+    "sad": 0.033333,
+    "angry": 0.133333
+   }
+  },
+  {
+   "video_id": "bbbbbbbb-1111-4000-8000-000000000013",
+   "total_frames": 120,
+   "average_completion_rate": 0.565,
+   "dominant_emotion": "sad",
+   "emotion_averages": {
+    "neutral": 0.1,
+    "happy": 0.2,
+    "surprise": 0.3,
+    "sad": 0.066667,
+    "angry": 0.166667
+   }
+  },
+  {
+   "video_id": "bbbbbbbb-1111-4000-8000-000000000014",
+   "total_frames": 4,
+   "average_completion_rate": 1.12592592594,
+   "dominant_emotion": "",
+   "emotion_averages": {
+    "neutral": 0.133333,
+    "happy": 0.233333,
+    "surprise": 0.0,
+    "sad": 0.1,
+    "angry": 0.2
+   }
+  },
+  {
+   "video_id": "bbbbbbbb-1111-4000-8000-000000000015",
+   "total_frames": 9000,
+   "average_completion_rate": 1.15,
+   "dominant_emotion": "neutral",
+   "emotion_averages": {
+    "neutral": 0.166667,
+    "happy": 0.266667,
+    "surprise": 0.033333,
+    "sad": 0.133333,
+    "angry": 0.233333
+   }
+  },
+  {
+   "video_id": "bbbbbbbb-1111-4000-8000-000000000016",
+   "total_frames": 0,
+   "average_completion_rate": 0.14320977199999999,
+   "dominant_emotion": "happy",
+   "emotion_averages": {
+    "neutral": 0.2,
+    "happy": 0.3,
+    "surprise": 0.066667,
+    "sad": 0.166667,
+    "angry": 0.266667
+   }
+  },
+  {
+   "video_id": "bbbbbbbb-1111-4000-8000-000000000017",
+   "total_frames": 120,
+   "average_completion_rate": 0.585,
+   "dominant_emotion": "surprise",
+   "emotion_averages": {
+    "neutral": 0.233333,
+    "happy": 0.0,
+    "surprise": 0.1,
+    "sad": 0.2,
+    "angry": 0.3
+   }
+  },
+  {
+   "video_id": "bbbbbbbb-1111-4000-8000-000000000018",
+   "total_frames": 4,
+   "average_completion_rate": 1.16543209878,
+   "dominant_emotion": "sad",
+   "emotion_averages": {
+    "neutral": 0.266667,
+    "happy": 0.033333,
+    "surprise": 0.133333,
+    "sad": 0.233333,
+    "angry": 0.0
+   }
+  },
+  {
+   "video_id": "bbbbbbbb-1111-4000-8000-000000000019",
+   "total_frames": 9000,
+   "average_completion_rate": 1.19,
+   "dominant_emotion": "angry",
+   "emotion_averages": {
+    "neutral": 0.3,
+    "happy": 0.066667,
+    "surprise": 0.166667,
+    "sad": 0.266667,
+    "angry": 0.033333
+   }
+  },
+  {
+   "video_id": "bbbbbbbb-1111-4000-8000-000000000020",
+   "total_frames": 0,
+   "average_completion_rate": 0.14814804,
+   "dominant_emotion": "neutral",
+   "emotion_averages": {
+    "neutral": 0.0,
+    "happy": 0.1,
+    "surprise": 0.2,
+    "sad": 0.3,
+    "angry": 0.066667
+   }
+  },
+  {
+   "video_id": "bbbbbbbb-1111-4000-8000-000000000021",
+   "total_frames": 120,
+   "average_completion_rate": 0.605,
+   "dominant_emotion": "",
+   "emotion_averages": {
+    "neutral": 0.033333,
+    "happy": 0.133333,
+    "surprise": 0.233333,
+    "sad": 0.0,
+    "angry": 0.1
+   }
+  },
+  {
+   "video_id": "bbbbbbbb-1111-4000-8000-000000000022",
+   "total_frames": 4,
+   "average_completion_rate": 1.20493827162,
+   "dominant_emotion": "surprise",
+   "emotion_averages": {
+    "neutral": 0.066667,
+    "happy": 0.166667,
+    "surprise": 0.266667,
+    "sad": 0.033333,
+    "angry": 0.133333
+   }
+  },
+  {
+   "video_id": "bbbbbbbb-1111-4000-8000-000000000023",
+   "total_frames": 9000,
+   "average_completion_rate": 1.23,
+   "dominant_emotion": "sad",
+   "emotion_averages": {
+    "neutral": 0.1,
+    "happy": 0.2,
+    "surprise": 0.3,
+    "sad": 0.066667,
+    "angry": 0.166667
+   }
+  },
+  {
+   "video_id": "bbbbbbbb-1111-4000-8000-000000009999",
+   "total_frames": 50,
+   "dominant_emotion": "happy"
+  },
+  {
+   "video_id": "bbbbbbbb-1111-4000-8000-000000009998",
+   "total_frames": 50,
+   "average_completion_rate": "bad",
+   "emotion_averages": {
+    "happy": null
+   },
+   "dominant_emotion": "sad"
+  }
+ ],
+ "expected": {
+  "avg_completion_rate": 0.9304,
+  "emotion_distribution": {
+   "neutral": 0.1407,
+   "happy": 0.1481,
+   "surprise": 0.1741,
+   "sad": 0.1259,
+   "angry": 0.1519
+  },
+  "dominant_emotion_video_counts": [
+   {
+    "emotion": "sad",
+    "video_count": 5
+   },
+   {
+    "emotion": "happy",
+    "video_count": 4
+   },
+   {
+    "emotion": "neutral",
+    "video_count": 3
+   },
+   {
+    "emotion": "surprise",
+    "video_count": 3
+   },
+   {
+    "emotion": "angry",
+    "video_count": 2
+   }
+  ]
+ }
+}

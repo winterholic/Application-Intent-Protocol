@@ -1,5 +1,17 @@
 # 제품 통합 검증 (2026-10-17)
 
+## 2026-10-22 WBS 7.2.9 관리자 대시보드 (구현 조각, 로컬 실DB·실서버·원본 서비스 대조 통과, 7.2.9는 진행 중)
+
+**범위.** 원본 `AdminService.get_signup_trend`(기간 5개)와 `get_business_stats`(가입 추이, 주간 활동 회원, 요청 파이프라인, 콘텐츠 건강)를 옮겼다. 결정과 대안은 [DECISIONS](../docs/DECISIONS.md)의 D-P-DASHBOARD다. 새 언어 기능 없이 관리자 전용 단독 집계 4개(`User.signupCount`, `User.weeklyActive`, `VideoRequest.pendingCount`, `Video.categoryViews`)와 읽기 확장 2개(`VideoRequest.pipeline`, `Video.contentHealth`)를 더했고 플랫폼에는 Mongo 파생 컬렉션 `video_distribution_stats`(명령 `health`) 하나를 더했다. 읽기 확장은 `allow`가 없어서 첫 호출이 관리자 전용 집계이고, 비관리자는 거기서 `ACCESS_DENIED`로 끝난다(호출자는 `WIRE.EXTENSION_ERROR`).
+
+**원본과의 대조(`reference/slice14h_oracle.py`).** 같은 MySQL 8.4와 MongoDB에서 오늘(UTC)을 둘러싼 3년 치 행(각 기간 경계의 첫 초와 마지막 초, 탈퇴 회원, 7일 경계의 시청 기록과 게스트 기록, 30일 안팎에서 처리된 요청 238개, 삭제·NULL 영상, 평균이 없는 분포 문서)으로 원본 서비스와 실제 `aip service serve`를 차례로 돌렸다: `the dashboard matched the original in 25 cases`. 가입 추이 6개(7d, 30d, 3m, 1y, 3y, 알 수 없는 기간)는 버킷마다 `signupCount`를 한 번 부르는 호출자 쪽 조립이 원본 JSON과 같았다. 이 밖에 7일 가입 추이, 주간 활동 회원, 대기 수, 장르별 조회수와 순서, 파이프라인(대기 수와 평균 처리 분), 콘텐츠 건강이 같았고, 회원과 게스트는 집계 4개에서 `WIRE.ACCESS_DENIED`, 확장 2개에서 거절(회원은 `WIRE.EXTENSION_ERROR`, 게스트는 `WIRE.UNAUTHENTICATED`)이었다.
+
+**실서버 시험(`mysql_facereview_trending_job`의 새 단계, `1 passed`, 약 34초).** 오늘 기준 상대 시각 행으로 원본의 SQL과 비교한다(시각이 매번 달라 원본 대조 기록은 두지 않았다): 경계 14개 범위의 가입 수(끝 시각 제외, 탈퇴 회원 포함), 주간 활동 회원 4명(게스트·경계 밖 기록 제외, 한 회원이 두 번 봐도 한 번), 대기 수 2, 최근 30일 처리분 231건(100행씩 세 쪽)의 평균 처리 분(`AVG(TIMESTAMPDIFF(MINUTE ...))`를 원본처럼 한 자리로), 처리분이 없으면 평균 `null`, 장르별 조회수(삭제 영상 제외, 40억 조회수 합산), 기록한 분포 문서(`slice14h-health.json`)의 콘텐츠 건강, 회원·게스트 거절. 같은 정의를 쓰는 나머지 실DB 시험 7종도 통과했다.
+
+**변이 확인.** 오라클: 가입 범위의 끝을 포함하면 6개 기간이 실패, 분을 반올림하면 파이프라인이 실패, 쪽 넘김을 빼면 파이프라인이 실패, 주간 활동에서 시청 기록 조건을 빼면 실패했다. 실서버 시험: 같은 조건 제거(44명), 파이프라인에서 `REJECTED`를 빼면(평균 229.5 대 229.0), 가입 집계를 모두에게 열면 각각 실패했다. 살아남은 변이 하나: `categoryViews`의 `is_deleted = false` 조건을 빼도 결과가 같았다. 집계가 `Video`의 행 정책(삭제 영상 제외)을 이미 적용하기 때문이며 조건은 명시용으로 남겼다(정의 문서의 "원본 행 정책을 물려받지 않는다"와 다르게 관찰되었고 원인은 확인하지 않았다).
+
+**알려진 차이와 한계.** (1) 호출 횟수가 많다: 통계 화면 하나가 집계 수십 번(장르는 `Video.totalCount`로 존재 여부를 보고 `categoryViews`를 부르면 장르당 2번, 가입 추이 3y는 37번)이다. 확장이 집계에 호출자 입력을 넘기지 못하는 현재 규칙 때문이며, 그룹 집계나 distinct·평균 release는 새 언어 기능이라 결정 없이 만들지 않았다. (2) 기간과 기준 시각은 호출자가 정한다. 원본은 서버 시각이다. 가입 추이는 미래 시각 가입을 세지 않는다. (3) 원본의 Redis 캐시가 없다. (4) 파이프라인은 처리분을 최대 5000건(100행 50쪽)까지 읽고 넘으면 틀린 평균 대신 실패한다. 이 상한 초과는 시험하지 않았다. (5) 같은 수의 영상이 있는 지배 감정은 이름순이다(원본은 Mongo 순서). (6) `exists`가 `VideoViewLog`의 행 정책을 적용하지 않고 전 회원의 기록을 본 것은 시험으로 확인했지만(주간 활동 4명) 정의 문서의 설명과 맞는지는 확인하지 않았다. (7) 생성 SDK(`aip service gen`)에는 단독 집계의 타입 바인딩이 없다(`User.totalCount` 같은 기존 집계도 같다). 확장 2개의 설명자는 생성된다. 화면 호출은 7.2.10이다. (8) 시스템 상태와 더미 데이터는 아직 없다.
+
 ## 2026-10-22 WBS 7.2.9 영상 등록 요청 `home/video/recommend` (구현 조각, 로컬 실DB·실서버·원본 서비스 대조 통과, 7.2.9는 진행 중)
 
 **범위.** 원본 `HomeService.create_user_video_recommend`를 쓰기 확장 `VideoRequest.recommend`로 옮겼다. 결정과 대안은 [DECISIONS](../docs/DECISIONS.md)의 D-P-RECOMMEND다. 확장은 목록의 URL마다 기존 공개 create를 같은 트랜잭션에서 부르므로 소유자 검사, 필드 규칙, 유일 키가 create 자체의 것이다. `youtube_full_url`은 호출자가 쓰지 못하고(create의 `fields`에서 뺐다) DB 기본값이 계산하며, 전역 중복 거절은 `video_request.youtube_url` 유일 키(열은 대소문자를 구분하는 `utf8mb4_bin`)가 맡는다(`db-defaults.sql`). 플랫폼에 더한 것은 하나다: 거절된 create 뒤 확장이 같은 코드(`WIRE.ALREADY_EXISTS`)로, 또는 `WIRE.CONFLICT`로 끝나면 호출자가 그 코드를 받는다(`spikes/spike-v4-worker/src/write.rs`). 같은 규칙으로 감정 요약 확장의 첫 행 생성 경쟁이 `WIRE.CONFLICT`가 된다.

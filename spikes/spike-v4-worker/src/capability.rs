@@ -576,6 +576,77 @@ impl MongoDriverCapability {
     }
 }
 
+/// Virtual collection served by [`MongoDriverCapability::distribution_health`] (WBS 7.2.9, the content health of the administrator
+/// dashboard). It reduces every `video_distribution` document that has frames to the averages and the dominant emotion counts the
+/// dashboard shows, so a grant to it never opens a raw document. The command takes no argument; who may ask is decided by the extension
+/// that holds the grant (an administrator-only aggregate it must be able to call first).
+pub const HEALTH_COLLECTION: &str = "video_distribution_stats";
+
+/// Python `round(value, 4)`: the exact binary value rounded half to even, which is what formatting the exact expansion gives.
+fn py_round4(value: f64) -> f64 {
+    format!("{value:.4}").parse().unwrap_or(value)
+}
+
+impl MongoDriverCapability {
+    /// The original `AdminService._get_content_health` Mongo part: the same `$facet` pipeline run by the server (so Mongo's own
+    /// averaging is used), rounded like the original. Dominant emotions with equal counts are ordered by name (the original leaves the
+    /// order of equal counts to Mongo).
+    async fn distribution_health(&self, input: &Value) -> Result<Value, Reject> {
+        if input != &json!({"command": "health"}) {
+            return Err(reject("WIRE.BAD_VALUE", "health 입력이 허용되지 않음"));
+        }
+        use mongodb::bson::{doc, Bson};
+        let coll = self.client.database(&self.database).collection::<mongodb::bson::Document>("video_distribution");
+        let pipeline = vec![
+            doc! {"$match": {"total_frames": {"$gt": 0}}},
+            doc! {"$facet": {
+                "averages": [{"$group": {
+                    "_id": Bson::Null,
+                    "avg_completion_rate": {"$avg": "$average_completion_rate"},
+                    "avg_neutral": {"$avg": "$emotion_averages.neutral"},
+                    "avg_happy": {"$avg": "$emotion_averages.happy"},
+                    "avg_surprise": {"$avg": "$emotion_averages.surprise"},
+                    "avg_sad": {"$avg": "$emotion_averages.sad"},
+                    "avg_angry": {"$avg": "$emotion_averages.angry"},
+                }}],
+                "dominant_counts": [
+                    {"$group": {"_id": "$dominant_emotion", "count": {"$sum": 1}}},
+                    {"$sort": {"count": -1, "_id": 1}},
+                ],
+            }},
+        ];
+        let facet = tokio::time::timeout(self.timeout, async {
+            use futures_util::StreamExt;
+            let mut cursor = coll.aggregate(pipeline).await.map_err(|_| reject("WIRE.ADAPTER_UNAVAILABLE", "Mongo health 읽기 실패"))?;
+            cursor.next().await.transpose().map_err(|_| reject("WIRE.ADAPTER_UNAVAILABLE", "Mongo cursor 실패"))
+        })
+        .await
+        .map_err(|_| reject("WIRE.ADAPTER_UNAVAILABLE", "Mongo health timeout"))??
+        .unwrap_or_default();
+        let averages = facet.get_array("averages").ok().and_then(|rows| rows.first()).and_then(Bson::as_document).cloned().unwrap_or_default();
+        let average = |name: &str| py_round4(averages.get(name).and_then(bson_number).unwrap_or(0.0));
+        let mut dominant = Vec::new();
+        for row in facet.get_array("dominant_counts").map(|rows| rows.as_slice()).unwrap_or_default() {
+            let Some(row) = row.as_document() else { continue };
+            let count = match row.get("count") {
+                Some(Bson::Int32(n)) => i64::from(*n),
+                Some(Bson::Int64(n)) => *n,
+                _ => continue,
+            };
+            // The original skips a document whose dominant emotion is missing or empty.
+            if let Some(emotion) = row.get_str("_id").ok().filter(|emotion| !emotion.is_empty()) {
+                dominant.push(json!({"emotion": emotion, "video_count": count}));
+            }
+        }
+        Ok(json!({
+            "avg_completion_rate": average("avg_completion_rate"),
+            "emotion_distribution": {"neutral": average("avg_neutral"), "happy": average("avg_happy"), "surprise": average("avg_surprise"),
+                "sad": average("avg_sad"), "angry": average("avg_angry")},
+            "dominant": dominant,
+        }))
+    }
+}
+
 /// Virtual collection served by [`MongoDriverCapability::user_watch_stats`] (WBS 7.2.8). It reduces the caller's own
 /// `youtube_watching_data` sessions, whose per-frame timelines are too large to hand to an extension, to the figures the my page
 /// screens need. A grant to it never opens a raw session document, and every command reads only the verified caller's sessions.
@@ -1104,6 +1175,9 @@ impl MongoCapability for MongoDriverCapability {
             if collection == USER_STATS_COLLECTION {
                 return self.user_watch_stats(principal, input).await;
             }
+            if collection == HEALTH_COLLECTION {
+                return self.distribution_health(input).await;
+            }
             if !self.allowed_collections.contains(collection) {
                 return Err(reject("WIRE.CAPABILITY_DENIED", "Mongo collection이 허용되지 않음"));
             }
@@ -1436,6 +1510,25 @@ fn redis_failure(error: redis::RedisError) -> Reject {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn health_averages_round_like_python_round_to_four_places() {
+        // Reference values from Python 3.13 round(x, 4); 0.28125 is an exact tie (half to even), 0.12345 is just above its tie.
+        for (value, want) in [
+            (0.0, 0.0),
+            (0.12345, 0.1235),
+            (0.123451, 0.1235),
+            (0.99995, 1.0),
+            (0.00005, 0.0001),
+            (1.0, 1.0),
+            (0.33333333, 0.3333),
+            (0.00015, 0.0001),
+            (0.28125, 0.2812),
+            (2.00005, 2.0),
+        ] {
+            assert_eq!(py_round4(value), want, "{value}");
+        }
+    }
 
     fn timeline_key(key: &str, sessions: u64, sums: [f64; 5]) -> TimelineKey {
         TimelineKey { key: key.into(), sessions, sums }
