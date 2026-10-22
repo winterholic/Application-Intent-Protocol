@@ -1159,7 +1159,7 @@ impl<'a> Ctx<'a> {
                     self.run(v).map(|x| x.0).unwrap_or(Value::Null)
                 }
             };
-            ap.insert(ea.transition.clone(), json!({ "target": targets, "bulkMaxRows": ea.bulk, "sameScope": scope }));
+            ap.insert(ea.transition.clone(), json!({ "target": targets, "bulkMaxRows": ea.bulk, "sameScope": scope, "internal": ea.internal }));
         }
         o.insert("exposeApply".into(), Value::Object(ap));
 
@@ -1208,6 +1208,9 @@ impl<'a> Ctx<'a> {
                     }
                     if r.transitions.iter().any(|x| &x.name == t && (!x.patch.is_empty() || !x.expect.is_empty())) {
                         self.d("DEF.UNSUPPORTED", "compose의 전이 단계는 patch/expect 입력을 제공하지 않는다. 이 전이는 bundle.apply로 묶는다", *sp);
+                    }
+                    if r.expose_apply.iter().any(|x| &x.transition == t && x.internal) {
+                        self.d("DEF.UNSUPPORTED", "compose는 internal 전이를 부를 수 없다(compose는 공개 호출이다)", *sp);
                     }
                     trs.insert(t.clone());
                 }

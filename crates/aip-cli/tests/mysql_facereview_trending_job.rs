@@ -859,10 +859,11 @@ async fn the_trending_job_saves_new_videos_with_their_initial_documents() {
             setup.query_first(format!("SELECT lock_version FROM `{SOURCE}`.user_emotion_summary WHERE user_id = '{bob}'")).await.unwrap().unwrap();
         assert_eq!(after, version, "round {round}: the later call added nothing");
     }
-    // The transition the extension calls states its own contract: a stale lock_version is refused and changes nothing, the current one
-    // applies and moves the version, and another member cannot touch the row. (The transition is public: a member can also write
-    // their own totals directly. Nothing else reads this table, so only their own summary screen is affected.)
+    // The transition the extension calls is not a public call (decision D-P-INTERNAL, WBS 7.2.8): a member cannot write their totals or the
+    // checkpoint with a plain /apply, in an atomic bundle, or by creating the row with more fields than its id. The extension still moves the row
+    // through the same transition (its lock_version check, its owner check and its transaction are the transition's own).
     let alice = user_of("alice");
+    let alice_token = bearer("alice");
     setup.query_drop(format!("DELETE FROM `{SOURCE}`.user_emotion_summary WHERE user_id = '{alice}'")).await.unwrap();
     setup
         .query_drop(format!(
@@ -871,30 +872,155 @@ async fn the_trending_job_saves_new_videos_with_their_initial_documents() {
         ))
         .await
         .unwrap();
-    let direct = |key: &str, expect: i64| json!({"key": key, "request": {"apply": "UserEmotionSummary.applyDelta", "target": {"ids": [alice]}, "values": {"neutral_seconds": 50}, "expect": {"lock_version": expect}}});
-    let state_query = format!("SELECT neutral_seconds, lock_version FROM `{SOURCE}`.user_emotion_summary WHERE user_id = '{alice}'");
-    let alice_token = bearer("alice");
-    let stale = server.post("/apply", Some(&alice_token), &direct("stale", 4)).await;
-    assert_eq!(stale["code"], "WIRE.CONFLICT", "{stale}");
-    assert_eq!(
-        setup.query_first::<(String, i64), _>(state_query.as_str()).await.unwrap().unwrap(),
-        ("1".to_string(), 5),
-        "a stale lock_version changes nothing"
+    let row_query = |who: &str| {
+        format!(
+            "SELECT CONCAT_WS('|', neutral_seconds, happy_seconds, surprise_seconds, sad_seconds, angry_seconds, IFNULL(CAST(last_finalized_at AS CHAR), '-'), \
+             IFNULL(last_session_id, '-'), lock_version, updated_at) FROM `{SOURCE}`.user_emotion_summary WHERE user_id = '{who}'"
+        )
+    };
+    let untouched = scalar(&mut setup, row_query(alice)).await.unwrap();
+    assert_eq!(untouched, "1|2|3|4|5|-|-|5|2026-01-01 00:00:00");
+    let forged = json!({"neutral_seconds": 999999, "happy_seconds": 999999, "surprise_seconds": 999999, "sad_seconds": 999999, "angry_seconds": 999999,
+        "last_finalized_at": "2099-01-01T00:00:00Z", "last_session_id": "forged"});
+    let attempts = [
+        (
+            "direct, current lock_version",
+            json!({"apply": "UserEmotionSummary.applyDelta", "target": {"ids": [alice]}, "values": {"neutral_seconds": 50}, "expect": {"lock_version": 5}}),
+        ),
+        (
+            "direct, every total and the checkpoint",
+            json!({"apply": "UserEmotionSummary.applyDelta", "target": {"ids": [alice]}, "values": forged, "expect": {"lock_version": 5}}),
+        ),
+        ("direct, no expect", json!({"apply": "UserEmotionSummary.applyDelta", "target": {"ids": [alice]}, "values": forged})),
+        (
+            "atomic bundle",
+            json!({"atomic": [{"apply": "UserEmotionSummary.applyDelta", "target": {"ids": [alice]}, "values": forged, "expect": {"lock_version": 5}}]}),
+        ),
+        (
+            "atomic bundle behind an allowed step",
+            json!({"atomic": [{"apply": "User.completeTutorial", "target": {"ids": [alice]}},
+                {"apply": "UserEmotionSummary.applyDelta", "target": {"ids": [alice]}, "values": forged, "expect": {"lock_version": 5}}]}),
+        ),
+    ];
+    for (index, (name, request)) in attempts.iter().enumerate() {
+        let answer = server.post("/apply", Some(&alice_token), &json!({"key": format!("forge-{index}"), "request": request})).await;
+        assert_ne!(answer["ok"], true, "{name}: a member must not write the summary: {answer}");
+        assert_eq!(answer["code"], "WIRE.NOT_EXPOSED", "{name}: {answer}");
+        assert_eq!(scalar(&mut setup, row_query(alice)).await.unwrap(), untouched, "{name}: the row is as it was");
+    }
+    let other = server
+        .post("/apply", Some(&bearer("bob")), &json!({"key": "forge-other", "request": {"apply": "UserEmotionSummary.applyDelta", "target": {"ids": [alice]}, "values": forged, "expect": {"lock_version": 5}}}))
+        .await;
+    assert_ne!(other["ok"], true, "{other}");
+    assert_eq!(scalar(&mut setup, row_query(alice)).await.unwrap(), untouched, "another member cannot either");
+    // The public create takes the id and nothing else: no total, checkpoint or version can be sent with it, and it does not replace a row.
+    setup.query_drop(format!("DELETE FROM `{SOURCE}`.user_emotion_summary WHERE user_id = '{alice}'")).await.unwrap();
+    for (name, extra) in [
+        ("neutral_seconds", json!({"neutral_seconds": 999999})),
+        ("last_finalized_at", json!({"last_finalized_at": "2099-01-01T00:00:00Z"})),
+        ("last_session_id", json!({"last_session_id": "forged"})),
+        ("lock_version", json!({"lock_version": 99})),
+        ("created_at", json!({"created_at": "2000-01-01T00:00:00Z"})),
+    ] {
+        let mut values = json!({"id": alice});
+        values.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        let answer = server
+            .post(
+                "/apply",
+                Some(&alice_token),
+                &json!({"key": format!("forge-create-{name}"), "request": {"atomic": [{"create": "UserEmotionSummary", "values": values}]}}),
+            )
+            .await;
+        assert_ne!(answer["ok"], true, "create with {name}: {answer}");
+        assert!(scalar(&mut setup, row_query(alice)).await.is_none(), "create with {name}: no row exists");
+    }
+    let someone_else = server
+        .post(
+            "/apply",
+            Some(&alice_token),
+            &json!({"key": "forge-create-other", "request": {"atomic": [{"create": "UserEmotionSummary", "values": {"id": user_of("bob")}}]}}),
+        )
+        .await;
+    assert_ne!(someone_else["ok"], true, "a member creates only their own row: {someone_else}");
+    // What the contract does allow: the member's own empty row (zero totals from the database defaults, no checkpoint).
+    let own = server
+        .post(
+            "/apply",
+            Some(&alice_token),
+            &json!({"key": "forge-create-own", "request": {"atomic": [{"create": "UserEmotionSummary", "values": {"id": alice}}]}}),
+        )
+        .await;
+    assert_eq!(own["ok"], true, "{own}");
+    assert!(scalar(&mut setup, row_query(alice)).await.unwrap().starts_with("0|0|0|0|0|-|-|0|"), "an empty row");
+    // The extension is the one way to move the row, and it still does (alice's recorded sessions are added once).
+    let moved = server
+        .post("/apply", Some(&alice_token), &json!({"key": "forge-extension", "request": {"extension": "User.myEmotionSummary", "input": {}}}))
+        .await;
+    assert_eq!(moved["ok"], true, "{moved}");
+    let after = scalar(&mut setup, row_query(alice)).await.unwrap();
+    assert!(after.split('|').nth(7) == Some("1") && after != "0|0|0|0|0|-|-|0|", "the extension applied its delta through the transition: {after}");
+    let rerun = server
+        .post("/apply", Some(&alice_token), &json!({"key": "forge-extension-2", "request": {"extension": "User.myEmotionSummary", "input": {}}}))
+        .await;
+    assert_eq!(rerun["ok"], true, "{rerun}");
+    assert_eq!(scalar(&mut setup, row_query(alice)).await.unwrap().split('|').nth(7), Some("1"), "nothing new to add, the version stays");
+    // The checkpoint keeps the milliseconds of MongoDB (WBS 7.2.8, datetime(3)): sessions that finalize in the same millisecond are told apart by their
+    // id, a session one millisecond later is a later session, and the stored checkpoint is exactly what was read, so nothing is added twice or missed.
+    // (The original rounds the checkpoint to a second; the recorded cases compare the ordinary cases with it, these are what its column loses.)
+    let ms = |millis: i64| mongodb::bson::DateTime::from_millis(1_775_001_600_000 + millis); // 2026-04-01T00:00:00Z + millis
+    let tie_session = |id: &str, millis: i64| {
+        mongodb::bson::doc! {"user_id": alice, "video_id": "aaaaaaaa-0000-4000-8000-000000000001", "video_view_log_id": id, "created_at": ms(millis - 1000), "finalized_at": ms(millis),
+        "emotion_seconds": {"neutral": 1, "happy": 0, "surprise": 0, "sad": 0, "angry": 0}, "completion_rate": 1.0}
+    };
+    database
+        .collection::<mongodb::bson::Document>("youtube_watching_data")
+        .insert_many([tie_session("tie-a", 123), tie_session("tie-b", 123), tie_session("tie-c", 124)])
+        .await
+        .unwrap();
+    let summary_row = |checkpoint: &str, session: &str, totals: i64| {
+        format!(
+            "REPLACE INTO `{SOURCE}`.user_emotion_summary (user_id, neutral_seconds, happy_seconds, surprise_seconds, sad_seconds, angry_seconds, last_finalized_at, \
+             last_session_id, lock_version, created_at, updated_at) VALUES ('{alice}', {totals}, 0, 0, 0, 0, '{checkpoint}', '{session}', 3, '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+        )
+    };
+    let neutral_and_checkpoint = format!(
+        "SELECT CONCAT(neutral_seconds, '|', CAST(last_finalized_at AS CHAR), '|', last_session_id, '|', lock_version) FROM `{SOURCE}`.user_emotion_summary WHERE user_id = '{alice}'"
     );
-    let current = server.post("/apply", Some(&alice_token), &direct("current", 5)).await;
-    assert_eq!(current["ok"], true, "{current}");
-    assert_eq!(
-        setup.query_first::<(String, i64), _>(state_query.as_str()).await.unwrap().unwrap(),
-        ("50".to_string(), 6),
-        "the current lock_version applies and moves the version"
-    );
-    let foreign = server.post("/apply", Some(&bearer("bob")), &direct("foreign", 6)).await;
-    assert_ne!(foreign["ok"], true, "{foreign}");
-    assert_eq!(
-        setup.query_first::<(String, i64), _>(state_query.as_str()).await.unwrap().unwrap(),
-        ("50".to_string(), 6),
-        "another member cannot change the row"
-    );
+    let mut call = 0;
+    for (checkpoint, session, expected) in [
+        ("2026-04-01 00:00:00.123", "tie-a", "2|2026-04-01 00:00:00.124|tie-c|4"), // the tied session after it by id, and the one a millisecond later
+        ("2026-04-01 00:00:00.123", "tie-b", "1|2026-04-01 00:00:00.124|tie-c|4"), // only the later millisecond
+        ("2026-04-01 00:00:00.124", "tie-c", "0|2026-04-01 00:00:00.124|tie-c|3"), // nothing after the last one: the row is left alone
+        ("2026-04-01 00:00:00.122", "", "3|2026-04-01 00:00:00.124|tie-c|4"),      // everything from the millisecond before
+        ("2026-04-01 00:00:00.000", "", "3|2026-04-01 00:00:00.124|tie-c|4"),      // a checkpoint in the same second but before them
+    ] {
+        call += 1;
+        setup.query_drop(summary_row(checkpoint, session, 0)).await.unwrap();
+        let answer = server
+            .post("/apply", Some(&alice_token), &json!({"key": format!("ms-{call}"), "request": {"extension": "User.myEmotionSummary", "input": {}}}))
+            .await;
+        assert_eq!(answer["ok"], true, "{checkpoint} {session}: {answer}");
+        assert_eq!(scalar(&mut setup, neutral_and_checkpoint.clone()).await.as_deref(), Some(expected), "{checkpoint} {session}");
+        // The same call again finds nothing new, whatever the checkpoint is now.
+        let again = server
+            .post(
+                "/apply",
+                Some(&alice_token),
+                &json!({"key": format!("ms-{call}-again"), "request": {"extension": "User.myEmotionSummary", "input": {}}}),
+            )
+            .await;
+        assert_eq!(again["ok"], true, "{again}");
+        assert_eq!(
+            scalar(&mut setup, neutral_and_checkpoint.clone()).await.as_deref(),
+            Some(expected),
+            "{checkpoint} {session}: a second call adds nothing"
+        );
+    }
+    database
+        .collection::<mongodb::bson::Document>("youtube_watching_data")
+        .delete_many(mongodb::bson::doc! {"video_view_log_id": {"$in": ["tie-a", "tie-b", "tie-c"]}})
+        .await
+        .unwrap();
     // A guest has no summary.
     let guest = server.post("/apply", None, &json!({"key": "guest", "request": {"extension": "User.myEmotionSummary", "input": {}}})).await;
     assert_ne!(guest["ok"], true, "{guest}");

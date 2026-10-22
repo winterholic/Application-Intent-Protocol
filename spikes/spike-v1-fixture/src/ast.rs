@@ -209,6 +209,8 @@ pub struct ExposeApply {
     pub targets: Vec<(String, Span)>,
     pub bulk: Option<i64>,
     pub same_scope: Option<Expr>,
+    /// Only an extension or job that lists the transition in `access` may apply it; /apply and its bundles refuse it.
+    pub internal: bool,
     pub span: Span,
 }
 

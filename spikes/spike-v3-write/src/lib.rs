@@ -25,6 +25,9 @@ pub struct Knobs {
     /// 감사 행에 남길 쓰기 경로(`apply`, `extension`, `job`)와 요청 키. 감사 테이블이 설정된 때만 쓰인다.
     pub audit_via: Option<&'static str>,
     pub audit_key: Option<String>,
+    /// The write comes from an extension or a job that listed the transition in its `access`: only then an `expose apply ... internal`
+    /// transition may run. /apply and its atomic bundles leave this off.
+    pub internal: bool,
 }
 
 static AUDIT_TABLE: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
@@ -1254,6 +1257,15 @@ async fn begin<'a>(db: &'a mut Client, serializable: bool) -> Result<Transaction
     Ok(tx)
 }
 
+/// An `internal` transition is not a public call: the same refusal as a transition that is not exposed at all.
+pub fn refuse_internal(ex: &Value, knobs: &Knobs, request: &serde_json::Map<String, Value>) -> Result<(), Reject> {
+    if ex["internal"] == true && !knobs.internal {
+        let name = request.get("apply").and_then(Value::as_str).unwrap_or("");
+        return rej("WIRE.NOT_EXPOSED", format!("`{name}`는 공개된 쓰기 동작이 아님"));
+    }
+    Ok(())
+}
+
 pub fn exposed<'a>(facts: &'a Value, name: &str) -> Result<(&'a str, &'a str, &'a Value), Reject> {
     let (res, tr) = name.split_once('.').ok_or(bad("apply는 `Resource.transition`"))?;
     let ex = &facts["resources"][res]["exposeApply"][tr];
@@ -1316,6 +1328,7 @@ async fn apply_op(
 ) -> Result<Applied, Reject> {
     keys(o, &["apply", "target", "values", "expect"], "apply 요청")?;
     let (res, tr, ex) = exposed(facts, o.get("apply").and_then(Value::as_str).unwrap_or(""))?;
+    refuse_internal(ex, knobs, o)?;
     let input = apply_input(facts, res, tr, o, wire)?;
     let target = parse_target(facts, res, ex, o.get("target").unwrap_or(&Value::Null), wire)?;
     let j = judge(tx, facts, res, tr, &target, ex["bulkMaxRows"].as_i64().unwrap_or(1), &ex["sameScope"], caller, knobs).await?;

@@ -50,6 +50,26 @@
 
 **알려진 차이와 한계.** 자세한 내용은 [extensions/README](tests/fixtures/facereview-mysql/extensions/README.md)의 Slice14-F다. 요약: 전이 `applyDelta`가 공개라서 회원이 자기 합계를 직접 쓸 수 있다(본인 화면만 영향), 첫 호출끼리 경쟁하면 한쪽이 `WIRE.ALREADY_EXISTS`, 잠금 충돌은 3회 재시도 대신 호출자가 다시 보낸다, 세션 20000개 상한.
 
+## 2026-10-22 WBS 7.2.8 조각 D 후속: 감정 합계 전이 노출 차단
+
+**설계·범위.** [D-P-INTERNAL-APPLY](../docs/DECISIONS.md)는 기존 apply 엔진 위에 `internal` 노출 표식을 둔다. 공개 `/apply`와 atomic 경로는 이를 `WIRE.NOT_EXPOSED`로 거절하고 public compose는 정의 단계에서 막는다. Extension/job worker는 기존 `access` 검사를 거친 `apply_in` transaction에서만 허용한다. public generated binding에는 해당 동작을 넣지 않는다.
+
+**방금 실행한 검증.** `CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=target cargo test -p spike-v1-fixture --test internal_apply --locked` → 2 passed. `AIP_TEST_DATABASE_URL='host=127.0.0.1 port=34464 dbname=aip_test_run user=runner password=…' AIP_TEST_ADMIN_URL='host=127.0.0.1 port=34464 dbname=postgres user=runner password=…' CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=target cargo test --manifest-path spikes/spike-v3-write/Cargo.toml --test internal_transition --locked -- --nocapture --test-threads=1` → 1 passed: 실제 PostgreSQL에서 direct `/apply`, atomic 단독·허용 단계 뒤 internal 전이 거절, 같은 public 전이 허용, internal owner 거절·낡은 `expect`의 `WIRE.CONFLICT`·정상 갱신을 확인했다. 별도 `cargo test --manifest-path spikes/spike-v4-worker/Cargo.toml --lib duplicate_create_conflict_tests::duplicate_first_row_creation_is_returned_as_a_retryable_conflict --locked -- --nocapture` → 1 passed: scripted extension worker가 create에서 `WIRE.ALREADY_EXISTS`를 받고 `WIRE.CONFLICT`로 종료하는 실제 worker completion 루프를 실행했다.
+
+**미검증.** `crates/aip-cli/tests/mysql_facereview_trending_job.rs`의 MySQL+Mongo 실서버 시험은 변경 직후 실행했으나, `aip service serve` 기동 단계가 `SERVER_CONFIG` / `io other error` (worker runtime check, readiness store 설치, listener 중 정확한 하위 원인은 출력되지 않음)로 종료되어 `WIRE.NOT_EXPOSED`의 MySQL HTTP 경로와 해당 시험 내부 전체 감정 요약 재생은 실행하지 못했다. 실행 환경은 이 Run의 macOS shell에서 띄운 격리 fixture/test process이며 배포 backend 결과가 아니다. 실행 명령은 `AIP_FIXTURE_TAG=aipresume226`, MySQL `127.0.0.1:34461`, Mongo `127.0.0.1:34463`, `cargo test -p aip-cli --features mysql --test mysql_facereview_trending_job --locked -- --ignored --exact the_trending_job_saves_new_videos_with_their_initial_documents --nocapture --test-threads=1`이다. 에러는 서비스 시작 전 단계의 관측이며 원인 추정·운영 가용성 판정으로 확대하지 않는다. 첫 행 create 경쟁에서의 MySQL HTTP 응답별 ALREADY_EXISTS→CONFLICT도 아직 미검증이다.
+
+## 2026-10-22 WBS 7.2.6 원본·재현환경 사전 조사
+
+고정 backend는 `7948b7e721837fdb73c427cb54e12cad4ec2d5af`, UI는 `2e7c021fa5abebd72278d841b8066a33d45cfbb3`다. 두 local checkout은 변경이 있으므로 baseline 기준은 working tree가 아닌 pinned `HEAD`와 `facereview-inventory.json` SHA다. Pinned `watch_frame`은 authenticated Socket.IO 연결을 사용하지 않고 body의 `user_id`를 신뢰하며, 첫 프레임에서 cache·RDB view log를 만들고 모델 inference와 timeline update를 수행한다. disconnect는 log만 남기며 종료·재집계하지 않는다. UI는 0.5초마다 `socket.io-client` websocket transport로 frame을 보내고 초 단위 2 decimal running time으로 callback 응답을 읽는다.
+
+`common/ml/model.h5`와 저장소 루트 `model.h5`는 동일 SHA-256 `c10287ebb2781f10f23acffb122aef8e4ce7efc5e6ea6269522b1669a1aa00b0`, 각 378 MB이고 owner-only mode `0700`이며 Git ignored다. 저장소 manifest에는 포함되지 않아 재현 package로 보장되지 않고, 사용 권한의 provenance는 아직 확인되지 않았다. Pinned source는 TensorFlow 2.15.0·OpenCV 4.9.0.80·NumPy 1.26.3을 요구하지만 기존 `baseline-api.lock`은 이 ML 의존성을 포함하지 않으며 `/tmp/aip-facereview-baseline-venv`도 현재 없다. 그래서 baseline server+real inference 재현은 미실행이다.
+
+`projects/facereview` source checkout scan에서는 실제 frame/video 테스트 자료를 찾지 못했다(로고·페이지 screenshot만 확인). 이 범위 밖에 사용 허가된 media가 더 있는지는 미확인이다.
+
+진행 후보는 D-P-WATCH-TRANSPORT의 5개 세로 조각이다: (1) auth/transport/payload/disconnect, (2) idempotent first-frame session+view log, (3) pinned specialized ML runtime의 real inference, (4) Mongo timeline/aggregate persistence, (5) original backend를 끈 실제 브라우저 player/camera trace. 가짜 점수나 unit/socket test를 ML E2E로 세지 않는다. 모델 provenance와 재현 가능한 TF runtime은 게이트로 남는다. WBS 7.2.1.3의 MySQL event subscription 및 `events_days` cleanup도 별도 항목으로 계속 추적한다.
+
+현재 tree를 처음 읽었을 때 production/runtime 코드와 회귀시험은 이미 uncommitted로 존재했고, 그 변경의 선행 TDD RED 명령·출력은 이 Run에서 회수되지 않았다. 이번에 추가한 worker conflict test의 첫 실행은 테스트 harness 결함(호출 메시지 필드·facts input shape)을 잡았고, 올바른 fixture로 수정 뒤 1 passed다. 따라서 이전 변경의 TDD RED가 있었다고 주장하지 않는다.
+
 ## 2026-10-22 WBS 7.2.8 조각 C: 마이페이지 감정 읽기 5개 (구현 조각, 로컬 실DB·실서버·원본 서비스 대조 통과, 7.2.8은 진행 중)
 
 **범위.** 원본 `MypageService`의 `get_recent_videos`·`get_highlight`·`get_emotion_calendar`·`get_moments`·`get_emotion_dna`를 읽기 확장 `User.myRecentVideos`·`myHighlight`·`myEmotionCalendar`·`myMoments`·`myEmotionDna`로 옮겼다. 결정과 대안은 [DECISIONS](../docs/DECISIONS.md)의 D-P-USERSTATS다. Mongo capability에 파생 컬렉션 `user_watch_stats`를 더했다: 호출자 본인의 `youtube_watching_data`만 읽고 명령 6개(`sessions`·`compress`·`highlight`·`calendar`·`moments`·`dna`)가 큰 프레임 타임라인을 화면에 필요한 수치로 줄여 돌려준다. 화면 규칙(반올림·묶기·DNA 유형·특성·재미 문구)은 원본 코드를 복사한 확장이 맡는다. `GET mypage/emotion/summary`는 아직 옮기지 않았다.

@@ -242,7 +242,7 @@ fn resource(name: &str, l: &Lit, span: Span) -> R<Resource> {
     if let Some((x, xs)) = get(o, "exposeApply") {
         for (n, v, vs) in obj(x, xs, "exposeApply")? {
             let eo = obj(v, *vs, "exposeApply")?;
-            keys(eo, &["target", "bulkMaxRows", "sameScope"], "exposeApply")?;
+            keys(eo, &["target", "bulkMaxRows", "sameScope", "internal"], "exposeApply")?;
             r.expose_apply.push(ExposeApply {
                 transition: n.clone(),
                 targets: match get(eo, "target") {
@@ -251,6 +251,7 @@ fn resource(name: &str, l: &Lit, span: Span) -> R<Resource> {
                 },
                 bulk: get(eo, "bulkMaxRows").map(|(b, bs)| int(b, bs, "bulkMaxRows")).transpose()?,
                 same_scope: get(eo, "sameScope").map(|(v, vs)| expr(v, vs, "sameScope")).transpose()?,
+                internal: get(eo, "internal").map(|(v, vs)| boolean(v, vs, "internal")).transpose()?.unwrap_or(false),
                 span: *vs,
             });
         }

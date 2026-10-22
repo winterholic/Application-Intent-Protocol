@@ -344,7 +344,7 @@ async fn run_write_in(
     // ctx 쓰기가 한 번이라도 실패하면 확장이 오류를 잡고 성공을 돌려줘도 커밋하지 않는다(트랜잭션 오염 방지).
     let mut poisoned: Option<&'static str> = None;
     let mut calls = 0usize;
-    let knobs = Knobs { audit_via: Some("extension"), fresh_now_after_lock: true, ..Knobs::default() };
+    let knobs = Knobs { audit_via: Some("extension"), fresh_now_after_lock: true, internal: true, ..Knobs::default() };
     let result: Result<Value, Reject> = loop {
         let left = expires.saturating_duration_since(Instant::now());
         let line = match tokio::time::timeout(left, w.read_line()).await {
@@ -526,5 +526,80 @@ mod ctx_request_tests {
         assert_eq!(request, json!({"apply": "R.t", "values": {"a": 1}, "expect": {"lock_version": 3}, "target": {"ids": ["u"], "key": "k"}}));
         let plain = ctx_request(&json!({"name": "R.t", "input": {"ids": ["u"]}}), IdWire::Legacy).unwrap();
         assert_eq!(plain, json!({"apply": "R.t", "target": {"ids": ["u"]}}));
+    }
+}
+
+#[cfg(test)]
+mod duplicate_create_conflict_tests {
+    use super::{invoke_write_action, WriteActionHost, WriteWorker};
+    use crate::host::HostFuture;
+    use serde_json::{json, Value};
+    use spike_v2_read::id_wire::IdWire;
+    use spike_v2_read::plan::{Caller, Reject};
+    use std::{collections::VecDeque, time::Instant};
+
+    struct Peer {
+        lines: VecDeque<String>,
+    }
+
+    impl WriteWorker for Peer {
+        fn next_invoke_id(&mut self) -> u64 {
+            1
+        }
+
+        fn read_line<'a>(&'a mut self) -> HostFuture<'a, std::io::Result<Option<String>>> {
+            Box::pin(async move { Ok(self.lines.pop_front()) })
+        }
+
+        fn send_before<'a>(&'a mut self, message: &'a Value, _: Instant) -> HostFuture<'a, Result<(), Reject>> {
+            Box::pin(async move {
+                if message["type"] == "invoke" {
+                    let token = message["token"].as_str().unwrap();
+                    self.lines.push_back(
+                        json!({"type":"call", "call":1, "token":token,
+                        "op":"create", "name":"UserEmotionSummary", "input":{"values":{"id":"member-1"}}})
+                        .to_string(),
+                    );
+                    self.lines.push_back(json!({"type":"done", "invoke":1, "error":{"code":"WIRE.CONFLICT"}}).to_string());
+                }
+                Ok(())
+            })
+        }
+    }
+
+    struct DuplicateCreate;
+
+    impl WriteActionHost for DuplicateCreate {
+        fn apply<'a>(&'a mut self, grant: &'a str, request: &'a Value, _: &'a Caller, _: IdWire) -> HostFuture<'a, Result<Value, Reject>> {
+            Box::pin(async move {
+                assert_eq!(grant, "create.UserEmotionSummary");
+                assert_eq!(request, &json!({"atomic":[{"create":"UserEmotionSummary", "values":{"id":"member-1"}}]}));
+                Err(Reject { code: "WIRE.ALREADY_EXISTS", msg: "duplicate primary key".into() })
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn duplicate_first_row_creation_is_returned_as_a_retryable_conflict() {
+        let facts = json!({"resources":{"User":{"extensions":{"myEmotionSummary":{
+            "kind":"write", "input":[], "deadlineMs":5000, "implementation":"test",
+            "access":{"create.UserEmotionSummary":{}}
+        }}}}});
+        let caller = Caller { actor_id: Some(1), now: "2026-10-22T00:00:00Z".into() };
+        let result = invoke_write_action(
+            &mut DuplicateCreate,
+            &mut Peer { lines: VecDeque::new() },
+            &facts,
+            "User.myEmotionSummary",
+            &json!({}),
+            &caller,
+            IdWire::Legacy,
+        )
+        .await;
+        let error = match result {
+            Ok(_) => panic!("the row creation race must ask the caller to retry"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code, "WIRE.CONFLICT");
     }
 }

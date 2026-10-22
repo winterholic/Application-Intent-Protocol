@@ -121,7 +121,7 @@ pub fn contract_module_python(facts: &Value, wire: IdWire) -> String {
             writeln!(s, "\ndef read_{}(client: Client, query: dict) -> list[{res}Row]:\n    return client.read(query)\n", snake(res)).unwrap();
             all_read_results.push(format!("{res}ReadResult"));
         }
-        for (action, ex) in rf["exposeApply"].as_object().into_iter().flatten() {
+        for (action, ex) in rf["exposeApply"].as_object().into_iter().flatten().filter(|(_, ex)| ex["internal"] != true) {
             let prefix = format!("{res}{}", action.chars().next().unwrap().to_uppercase().collect::<String>() + &action[1..]);
             let targets = ex["target"].as_array().unwrap();
             let mut target_types = vec![];

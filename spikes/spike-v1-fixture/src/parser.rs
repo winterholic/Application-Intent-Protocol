@@ -386,7 +386,7 @@ impl Parser {
                     if self.is_kw("apply") {
                         self.next();
                         let transition = self.ident()?;
-                        let mut ea = ExposeApply { transition, targets: vec![], bulk: None, same_scope: None, span: sp };
+                        let mut ea = ExposeApply { transition, targets: vec![], bulk: None, same_scope: None, internal: false, span: sp };
                         let mut aseen = BTreeSet::new();
                         self.expect_sym("{")?;
                         loop {
@@ -404,6 +404,7 @@ impl Parser {
                                     ea.bulk = Some(self.int()?);
                                 }
                                 "sameScope" => ea.same_scope = Some(self.unary()?),
+                                "internal" => ea.internal = true,
                                 o => return Err(Diag::new("DEF.PARSE_UNKNOWN_KEY", format!("expose apply 안 알 수 없는 키 `{o}`"), ksp)),
                             }
                         }

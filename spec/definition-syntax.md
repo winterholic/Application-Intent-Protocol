@@ -134,6 +134,7 @@
 | `target` | `target id, where` | 전이를 적용할 행을 id로 또는 허용한 필터로 고른다 |
 | `bulk` | `bulk maxRows N` | 한 번에 바꿀 최대 행 수. 무제한 기본값이 없다 |
 | `sameScope` | `sameScope field` | 대상 행이 모두 같은 값(예: 같은 동아리)이어야 한다 |
+| `internal` | `internal` | 공개 /apply와 묶음은 거절하고 extension·job의 access에 적은 전이만 부를 수 있다 |
 
 ### expose create
 

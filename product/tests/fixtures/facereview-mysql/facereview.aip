@@ -662,7 +662,9 @@ resource UserEmotionSummary {
     expect lock_version
     to lock_version = this.lock_version + 1, updated_at = now
   }
-  expose apply applyDelta { target id; bulk maxRows 1 }
+  // Only User.myEmotionSummary moves the totals (it adds sessions the server summed from MongoDB): a member cannot call this transition from
+  // /apply, an atomic bundle or the SDK, whatever the id or the lock_version they send.
+  expose apply applyDelta { target id; bulk maxRows 1; internal }
   expose read {
     select id, neutral_seconds, happy_seconds, surprise_seconds, sad_seconds, angry_seconds,
       last_finalized_at, last_session_id, lock_version, created_at, updated_at

@@ -1,5 +1,13 @@
 진행 중: 이 작업 세션(auto 배정), 시작 시각 2026-10-22 21:58 KST, e29ddf1e 대기 지시와 동일 범위
 
+## 재개 지점 (2026-10-22, 7.2.8 감정합계 권한 보완과 7.2.6 baseline 조사)
+
+7.2.8의 `UserEmotionSummary.applyDelta`를 `internal` 노출로 제한하는 변경과 회귀시험을 진행 중이다. 일반 공개 apply/atomic은 `WIRE.NOT_EXPOSED`, public compose는 `DEF.UNSUPPORTED`이며, write extension/job은 기존 `access` grant를 거쳐 동일 transaction/owner/expect 검사를 받는다(D-P-INTERNAL-APPLY). `spike-v1-fixture` 2개, PostgreSQL `spike-v3-write` 1개, scripted worker의 `ALREADY_EXISTS`→`CONFLICT` 1개 시험은 방금 각각 통과했다. MySQL+Mongo `mysql_facereview_trending_job`은 실제 shell test fixture에서 `aip service serve` 시작이 `SERVER_CONFIG`의 일반 io 오류로 실패해 MySQL HTTP 및 실 worker E2E는 미검증이다. 오류 메시지만으로 worker/runtime/readiness/listener 중 하위 원인은 특정할 수 없으며 배포 backend로 일반화하지 않는다. 최신 근거와 명령은 [제품 검증 7.2.8 후속](../product/VERIFICATION.md)에 적었다.
+
+7.2.6 baseline은 backend pinned SHA `7948b7e721837fdb73c427cb54e12cad4ec2d5af`, UI `2e7c021fa5abebd72278d841b8066a33d45cfbb3`다. 두 원본 working tree가 dirty하므로 pinned `HEAD`를 기준으로 읽었다. `.h5` 모델은 378 MB·owner-only 0700·ignored이고 inventory에 없으며 permission provenance 미확인. pinned source가 요구하는 TensorFlow/OpenCV/NumPy는 baseline Python lock과 기존 venv에 없어 real inference 재현은 아직 안 됐다. 최소 transport 후보·5단계 계획 및 SSE/events_days 분리 추적은 D-P-WATCH-TRANSPORT와 제품 검증 7.2.6 조사 절에 기록했다. WBS 7.2.6은 doing 5%이며 다음은 고정 미디어/모델 provenance, reproducible ML runtime, 그리고 handshake/auth/payload/disconnect 첫 slice의 API 경계를 구현 전 테스트로 고정하는 것이다. 가짜 감정값, mock, 빈 입력 시험은 ML E2E로 세지 않는다.
+
+남은 조치: 변경·회귀·문서 조각을 정리해 커밋·push하고 동일 SHA CI를 조회한다. 다른 작업자의 변경물은 보존한다. 사용 중인 임시 DB/Mongo/Postgres fixture와 빌드 target은 각 gate 완료 후 소유 경로만 회수한다.
+
 # 진행 현황과 쌓인 질문
 
 ## 재개 지점 (2026-10-22, 7.2.9 구현 완료 뒤 기록)

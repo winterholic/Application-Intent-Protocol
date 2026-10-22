@@ -83,7 +83,7 @@ pub const BLOCK_KEYS: &[(&str, &[&str])] = &[
     ("extension", &["input", "output", "access", "effect", "deadline", "implementation"]),
     ("transition", &["from", "to", "delete", "patch", "expect", "allow", "repeat"]),
     ("transition effect", &["create", "update", "delete", "notify"]),
-    ("expose apply", &["target", "bulk", "sameScope"]),
+    ("expose apply", &["target", "bulk", "sameScope", "internal"]),
     ("expose create", &["allow", "fields"]),
     ("expose compose", &["bulk", "sameScope", "transitions", "selfRow", "create"]),
     ("docs", &["summary", "visibility"]),

@@ -1684,7 +1684,7 @@ resource Video {
  fields { id: Id; owner: Member; views: Int(0..100) default database }
  rows read when true
  transition increment { from views < 100; allow owner = actor; to views = views + 1 }
- expose apply increment { target id; bulk maxRows 1 }
+ expose apply increment { target id; bulk maxRows 1; internal }
  expose read { select id, views; sort id; budget { rows 20; depth 1; deadline 1s; cost 100 } }
 }
 operation job incrementJob {

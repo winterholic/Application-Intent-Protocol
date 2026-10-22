@@ -156,6 +156,7 @@ pub const NOTES: &[(&str, &str, &str, &str)] = &[
     ("expose apply", "target", "target id, where", "전이를 적용할 행을 id로 또는 허용한 필터로 고른다"),
     ("expose apply", "bulk", "bulk maxRows N", "한 번에 바꿀 최대 행 수. 무제한 기본값이 없다"),
     ("expose apply", "sameScope", "sameScope field", "대상 행이 모두 같은 값(예: 같은 동아리)이어야 한다"),
+    ("expose apply", "internal", "internal", "공개 /apply와 묶음은 거절하고 extension·job의 access에 적은 전이만 부를 수 있다"),
     ("expose create", "allow", "allow condition", "새 행이 만족해야 하는 조건"),
     ("expose create", "fields", "fields a, b", "호출자가 값을 줄 수 있는 필드"),
     ("expose compose", "bulk", "bulk maxRows N", "최대 대상 수"),

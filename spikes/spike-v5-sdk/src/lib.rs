@@ -10,7 +10,7 @@ pub fn contract_ts_with_apply(facts: &Value, wire: IdWire) -> String {
     let mut s = contract_ts_with_wire(facts, wire);
     s.push_str("\nexport const applyContractVersion = \"typed-apply-v14\";\nexport interface ApplyContract {\n");
     for (res, rf) in facts["resources"].as_object().unwrap() {
-        for (action, ex) in rf["exposeApply"].as_object().into_iter().flatten() {
+        for (action, ex) in rf["exposeApply"].as_object().into_iter().flatten().filter(|(_, ex)| ex["internal"] != true) {
             writeln!(s, "  \"{res}.{action}\": {{").unwrap();
             let input = if wire == IdWire::Legacy { "string".into() } else { format!("Id<\"{res}\">") };
             writeln!(s, "    idInput: {input};\n    idOutput: Id<\"{res}\">;").unwrap();
@@ -46,7 +46,7 @@ pub fn contract_ts_with_apply(facts: &Value, wire: IdWire) -> String {
     s.push_str("}\n");
     let mut inputs = serde_json::Map::new();
     for (res, rf) in facts["resources"].as_object().unwrap() {
-        for (action, _) in rf["exposeApply"].as_object().into_iter().flatten() {
+        for (action, _) in rf["exposeApply"].as_object().into_iter().flatten().filter(|(_, ex)| ex["internal"] != true) {
             let mut descriptor = serde_json::Map::new();
             for key in ["patch", "expect"] {
                 if let Some(names) = rf["transitions"][action][key].as_array() {

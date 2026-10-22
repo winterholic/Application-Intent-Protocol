@@ -103,7 +103,13 @@ impl RelationalWorkerWrite for MysqlWorkerWrite {
                 let mut session = Session {
                     tx,
                     facts: &self.facts,
-                    knobs: Knobs { audit_via: Some("extension"), audit_key: Some(self.key.clone()), fresh_now_after_lock: true, ..Knobs::default() },
+                    knobs: Knobs {
+                        audit_via: Some("extension"),
+                        audit_key: Some(self.key.clone()),
+                        fresh_now_after_lock: true,
+                        internal: true,
+                        ..Knobs::default()
+                    },
                     touched: std::mem::take(&mut self.touched),
                 };
                 let result = run_write(&mut session, request, &authoritative_caller, wire).await.map(|result| json!({"created": result["created"]}));
@@ -128,7 +134,13 @@ impl RelationalWorkerWrite for MysqlWorkerWrite {
             let mut session = Session {
                 tx,
                 facts: &self.facts,
-                knobs: Knobs { audit_via: Some("extension"), audit_key: Some(self.key.clone()), fresh_now_after_lock: true, ..Knobs::default() },
+                knobs: Knobs {
+                    audit_via: Some("extension"),
+                    audit_key: Some(self.key.clone()),
+                    fresh_now_after_lock: true,
+                    internal: true,
+                    ..Knobs::default()
+                },
                 touched: std::mem::take(&mut self.touched),
             };
             let result = run_write(&mut session, request, &authoritative_caller, wire)
@@ -156,7 +168,13 @@ impl RelationalWorkerWrite for MysqlWorkerWrite {
             let mut session = Session {
                 tx,
                 facts: &self.facts,
-                knobs: Knobs { audit_via: Some("extension"), audit_key: Some(self.key.clone()), fresh_now_after_lock: true, ..Knobs::default() },
+                knobs: Knobs {
+                    audit_via: Some("extension"),
+                    audit_key: Some(self.key.clone()),
+                    fresh_now_after_lock: true,
+                    internal: true,
+                    ..Knobs::default()
+                },
                 touched: std::mem::take(&mut self.touched),
             };
             session.run_checks(&self.caller).await?;
@@ -1161,6 +1179,7 @@ impl Session<'_> {
         let facts = self.facts;
         spike_v3_write::keys(o, &["apply", "target", "values", "expect"], "apply 요청")?;
         let (res, tr, ex) = spike_v3_write::exposed(facts, o.get("apply").and_then(Value::as_str).unwrap_or(""))?;
+        spike_v3_write::refuse_internal(ex, &self.knobs, o)?;
         let input = spike_v3_write::apply_input(facts, res, tr, o, wire)?;
         let target = spike_v3_write::parse_target(facts, res, ex, o.get("target").unwrap_or(&Value::Null), wire)?;
         let judged = self.judge(res, tr, &target, ex["bulkMaxRows"].as_i64().unwrap_or(1), &ex["sameScope"], caller).await?;
@@ -1409,7 +1428,8 @@ pub async fn apply_job_effect_in(
     wire: IdWire,
     audit_key: &str,
 ) -> Result<Value, Reject> {
-    let knobs = Knobs { audit_via: Some("job"), audit_key: Some(audit_key.to_string()), fresh_now_after_lock: true, ..Knobs::default() };
+    let knobs =
+        Knobs { audit_via: Some("job"), audit_key: Some(audit_key.to_string()), fresh_now_after_lock: true, internal: true, ..Knobs::default() };
     let mut session = Session { tx, facts, knobs, touched: BTreeMap::new() };
     let result = run_write(&mut session, request, caller, wire).await?;
     session.run_checks(caller).await?;
