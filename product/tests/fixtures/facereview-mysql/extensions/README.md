@@ -313,3 +313,29 @@ Decision D-P-DASHBOARD, evidence in `product/VERIFICATION.md` and `reference/sli
 | `_get_content_health`, `category_top5` | `Video.categoryViews(category)` per genre | genres without a visible video are absent: check `Video.totalCount` with `category.eq` first |
 
 Both extensions call an administrator-only aggregate first, so anyone else ends with `WIRE.EXTENSION_ERROR` (a guest with `WIRE.UNAUTHENTICATED`).
+
+## Slice14-I: system status (WBS 7.2.9)
+
+`User.systemStatus` in `slice14h_dashboard.py` ports `AdminService.get_system_status` (`new-facereview@7948b7e7`). Decision D-P-SYSSTATUS,
+evidence in `product/VERIFICATION.md` and `reference/slice14i_oracle.py`. Administrator only (its first step is `User.totalCount`).
+
+| Original | AIP | Notes |
+|---|---|---|
+| `psutil` CPU, memory, disk | `mongo.server_status` command `host` | Linux counters, psutil's formulas; `null` on other systems |
+| Redis `facereview:metrics:*` | `access redis "facereview:metrics:*"` | nothing in this port writes the keys: 0 until the deployment does; the server's own figures are `GET /metrics` |
+| MySQL, Redis, MongoDB `ok`/`error` | an admin aggregate call, a key check, `server_status` command `ping` | without a configured Redis the connection says `error`, as the original's `redis_client = None` |
+
+## Slice14-J: test data of the administrator (WBS 7.2.9)
+
+`slice14j_dummy.py` is the job `generateDummyData` (`AdminService.generate_dummy_data`). Decision D-P-DUMMY, evidence in
+`product/VERIFICATION.md` and `reference/slice14j_oracle.py`. The frame generator is the original's code with its random calls in the same
+order on a `random.Random(run id)`, so a run is reproducible and the original gives the same plan from the same seed.
+
+| Original | AIP | Notes |
+|---|---|---|
+| `POST admin/dummy-data?count=` | job `generateDummyData { user, count }` | answer through `/jobs/result` (`created_count`, `video_ids`); set `limits.job_calls` to 2000+ for 300 videos |
+| session document `YoutubeWatchingData` | `ctx.mongo.insert_one("youtube_watching_data")` | the server writes the job owner's UUID as `user_id` |
+| `VideoViewLog` row, `video.view_count += 1` | exposed create `VideoViewLog` (administrator, own id), transition `Video.view` | |
+| `_update_video_distribution` | derived `mongo.video_session_stats` (`distribution_sums`) and an upsert of `video_distribution` | newest 1000 sessions of all viewers, sums only |
+
+Differences: videos over 7200 seconds are skipped; a ctx call refused as `BAD_VALUE` ends the run; no saga.

@@ -123,6 +123,7 @@ impl Fixture {
             runtime: self.runtime.clone(),
             lease,
             grant: grant(1),
+            public_id: None,
             prefix: String::new(),
             depth: 0,
             budget: Arc::new(AtomicUsize::new(0)),

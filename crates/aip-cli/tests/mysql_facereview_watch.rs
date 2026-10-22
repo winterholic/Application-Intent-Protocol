@@ -35,7 +35,7 @@ const TIMELINE_SESSIONS: &str = include_str!("../../../product/tests/fixtures/fa
 const DISTRIBUTIONS: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/slice13d-video_distribution.json");
 const SESSIONS: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/slice13d-youtube_watching_data.json");
 const GOLDEN: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/slice13f-golden.json");
-const EXTENSIONS: [(&str, &str); 13] = [
+const EXTENSIONS: [(&str, &str); 14] = [
     ("slice13f_watch.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13f_watch.py")),
     ("slice13b_lists.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13b_lists.py")),
     ("slice13d_recommend.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13d_recommend.py")),
@@ -49,6 +49,7 @@ const EXTENSIONS: [(&str, &str); 13] = [
     ("slice14e_mypage.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice14e_mypage.py")),
     ("slice14g_request.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice14g_request.py")),
     ("slice14h_dashboard.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice14h_dashboard.py")),
+    ("slice14j_dummy.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice14j_dummy.py")),
 ];
 const META: &str = "aip_t_wch_meta";
 const SOURCE: &str = "aip_t_wch_src";

@@ -582,9 +582,13 @@ impl MongoDriverCapability {
 /// that holds the grant (an administrator-only aggregate it must be able to call first).
 pub const HEALTH_COLLECTION: &str = "video_distribution_stats";
 
-/// Python `round(value, 4)`: the exact binary value rounded half to even, which is what formatting the exact expansion gives.
+/// Python `round(value, digits)`: the exact binary value rounded half to even, which is what formatting the exact expansion gives.
+fn py_round(value: f64, digits: usize) -> f64 {
+    format!("{value:.digits$}").parse().unwrap_or(value)
+}
+
 fn py_round4(value: f64) -> f64 {
-    format!("{value:.4}").parse().unwrap_or(value)
+    py_round(value, 4)
 }
 
 impl MongoDriverCapability {
@@ -644,6 +648,156 @@ impl MongoDriverCapability {
                 "sad": average("avg_sad"), "angry": average("avg_angry")},
             "dominant": dominant,
         }))
+    }
+}
+
+/// Virtual collection served by [`MongoDriverCapability::server_status`] (WBS 7.2.9, the system status of the administrator dashboard).
+/// It answers an allowlist of server figures and nothing else: `host` the CPU, memory and disk usage of the machine this server runs
+/// on (Linux; `null` elsewhere), `ping` whether the MongoDB deployment answers. Who may ask is decided by the extension that holds the
+/// grant (an administrator-only aggregate it must be able to call first).
+pub const SERVER_COLLECTION: &str = "server_status";
+
+/// The busy and the total CPU time of the first line of `/proc/stat`, the way psutil counts them on Linux: the total leaves out the
+/// guest times (already inside user and nice), the busy time leaves out idle and iowait.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn cpu_busy_total(stat: &str) -> Option<(f64, f64)> {
+    let line = stat.lines().find(|line| line.starts_with("cpu "))?;
+    let mut ticks = [0.0_f64; 10];
+    for (slot, field) in ticks.iter_mut().zip(line.split_whitespace().skip(1)) {
+        *slot = field.parse().ok()?;
+    }
+    let total = ticks.iter().sum::<f64>() - ticks[8] - ticks[9];
+    Some((total - ticks[3] - ticks[4], total))
+}
+
+/// psutil `cpu_percent` between two samples: busy share of the elapsed CPU time, 0 to 100, one decimal.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn cpu_percent(before: (f64, f64), after: (f64, f64)) -> f64 {
+    let (busy, total) = (after.0 - before.0, after.1 - before.1);
+    if total <= 0.0 {
+        return 0.0;
+    }
+    py_round((busy / total * 100.0).clamp(0.0, 100.0), 1)
+}
+
+/// psutil `virtual_memory`: the used share `(total - available) / total` and the total in MiB, one decimal each.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn memory_figures(meminfo: &str) -> Option<(f64, f64)> {
+    let kilobytes = |name: &str| -> Option<f64> {
+        let line = meminfo.lines().find(|line| line.starts_with(name) && line[name.len()..].starts_with(':'))?;
+        line[name.len() + 1..].split_whitespace().next()?.parse::<f64>().ok()
+    };
+    let (total, available) = (kilobytes("MemTotal")? * 1024.0, kilobytes("MemAvailable")? * 1024.0);
+    if total <= 0.0 {
+        return None;
+    }
+    Some((py_round((total - available) / total * 100.0, 1), py_round(total / (1024.0 * 1024.0), 1)))
+}
+
+/// psutil `disk_usage(...).percent`: used over what a user can still reach plus what is used, one decimal.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn disk_percent(blocks: f64, free: f64, available: f64, fragment: f64) -> f64 {
+    let used = (blocks - free) * fragment;
+    let reachable = used + available * fragment;
+    if reachable <= 0.0 {
+        return 0.0;
+    }
+    py_round(used / reachable * 100.0, 1)
+}
+
+impl MongoDriverCapability {
+    async fn server_status(&self, input: &Value) -> Result<Value, Reject> {
+        match input.get("command").and_then(Value::as_str) {
+            Some("ping") if input.as_object().is_some_and(|m| m.len() == 1) => {
+                let db = self.client.database(&self.database);
+                tokio::time::timeout(self.timeout, db.run_command(mongodb::bson::doc! {"ping": 1}))
+                    .await
+                    .map_err(|_| reject("WIRE.ADAPTER_UNAVAILABLE", "Mongo ping timeout"))?
+                    .map_err(|_| reject("WIRE.ADAPTER_UNAVAILABLE", "Mongo ping 실패"))?;
+                Ok(json!({"ok": true}))
+            }
+            Some("host") if input.as_object().is_some_and(|m| m.len() == 1) => Ok(host_figures().await),
+            _ => Err(reject("WIRE.BAD_VALUE", "알 수 없는 server_status command")),
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+async fn host_figures() -> Value {
+    let before = tokio::fs::read_to_string("/proc/stat").await.ok().as_deref().and_then(cpu_busy_total);
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let after = tokio::fs::read_to_string("/proc/stat").await.ok().as_deref().and_then(cpu_busy_total);
+    let cpu = before.zip(after).map(|(before, after)| cpu_percent(before, after));
+    let memory = tokio::fs::read_to_string("/proc/meminfo").await.ok().as_deref().and_then(memory_figures);
+    // SAFETY: statvfs fills the zeroed struct for a NUL-terminated path; the result is only read when the call succeeds.
+    let disk = unsafe {
+        let mut stats: libc::statvfs = std::mem::zeroed();
+        (libc::statvfs(c"/".as_ptr(), &mut stats) == 0)
+            .then(|| disk_percent(stats.f_blocks as f64, stats.f_bfree as f64, stats.f_bavail as f64, stats.f_frsize as f64))
+    };
+    json!({"cpu_usage": cpu, "memory_usage": memory.map(|m| m.0), "memory_total_mb": memory.map(|m| m.1), "disk_usage": disk})
+}
+
+/// Only Linux has the counters this reads; elsewhere the figures are `null` rather than another system's numbers.
+#[cfg(not(target_os = "linux"))]
+async fn host_figures() -> Value {
+    json!({"cpu_usage": null, "memory_usage": null, "memory_total_mb": null, "disk_usage": null})
+}
+
+/// Virtual collection served by [`MongoDriverCapability::video_session_stats`] (WBS 7.2.9, the dummy data of the administrator). It adds up
+/// the sessions of every viewer of one video the way `WatchingDataService._update_video_distribution` reads them, so a job can recompute the
+/// video's distribution without the sessions themselves (private to their viewers) leaving: only the sums come back.
+pub const SESSION_STATS_COLLECTION: &str = "video_session_stats";
+/// The original reads the 1000 newest sessions of the video.
+const SESSION_STATS_LIMIT: i64 = 1000;
+
+impl MongoDriverCapability {
+    async fn video_session_stats(&self, input: &Value) -> Result<Value, Reject> {
+        let allowed = ["command", "video_id"];
+        if input.as_object().is_none_or(|m| m.keys().any(|k| !allowed.contains(&k.as_str()))) || input["command"] != "distribution_sums" {
+            return Err(reject("WIRE.BAD_VALUE", "distribution_sums 입력이 허용되지 않음"));
+        }
+        let Some(video_id) = input.get("video_id").and_then(Value::as_str).filter(|v| !v.is_empty() && v.len() <= 64) else {
+            return Err(reject("WIRE.BAD_VALUE", "distribution_sums video_id는 문자열이어야 함"));
+        };
+        let coll = self.client.database(&self.database).collection::<mongodb::bson::Document>("youtube_watching_data");
+        tokio::time::timeout(self.timeout, async {
+            use futures_util::StreamExt;
+            let mut cursor = coll
+                .find(mongodb::bson::doc! {"video_id": video_id})
+                .sort(mongodb::bson::doc! {"created_at": -1})
+                .limit(SESSION_STATS_LIMIT)
+                .projection(mongodb::bson::doc! {"emotion_percentages": 1, "completion_rate": 1, "emotion_score_timeline": 1, "_id": 0})
+                .await
+                .map_err(|_| reject("WIRE.ADAPTER_UNAVAILABLE", "Mongo session stats 읽기 실패"))?;
+            let (mut count, mut sums, mut completion, mut frames) = (0u64, [0.0_f64; 5], 0.0_f64, 0u64);
+            let bad = || reject("WIRE.BAD_VALUE", "세션의 감정 비율 또는 완주율이 숫자가 아님");
+            while let Some(doc) = cursor.next().await.transpose().map_err(|_| reject("WIRE.ADAPTER_UNAVAILABLE", "Mongo cursor 실패"))? {
+                count += 1;
+                // The original adds float(x) in this order; a missing value is the dataclass default 0.0 and a non-number fails the whole update.
+                let percentages = match doc.get("emotion_percentages") {
+                    None | Some(mongodb::bson::Bson::Null) => None,
+                    Some(mongodb::bson::Bson::Document(percentages)) => Some(percentages),
+                    Some(_) => return Err(bad()),
+                };
+                for (sum, emotion) in sums.iter_mut().zip(STATS_EMOTIONS) {
+                    if let Some(value) = percentages.and_then(|p| p.get(emotion)) {
+                        *sum += bson_number(value).ok_or_else(bad)?;
+                    }
+                }
+                completion += match doc.get("completion_rate") {
+                    None => 0.0,
+                    Some(value) => bson_number(value).ok_or_else(bad)?,
+                };
+                if let Ok(timeline) = doc.get_document("emotion_score_timeline") {
+                    frames += timeline.len() as u64;
+                }
+            }
+            Ok(json!({"count": count, "sums": {"neutral": sums[0], "happy": sums[1], "surprise": sums[2], "sad": sums[3], "angry": sums[4]},
+                "completion_sum": completion, "frames": frames}))
+        })
+        .await
+        .map_err(|_| reject("WIRE.ADAPTER_UNAVAILABLE", "Mongo session stats timeout"))?
     }
 }
 
@@ -1178,6 +1332,12 @@ impl MongoCapability for MongoDriverCapability {
             if collection == HEALTH_COLLECTION {
                 return self.distribution_health(input).await;
             }
+            if collection == SERVER_COLLECTION {
+                return self.server_status(input).await;
+            }
+            if collection == SESSION_STATS_COLLECTION {
+                return self.video_session_stats(input).await;
+            }
             if !self.allowed_collections.contains(collection) {
                 return Err(reject("WIRE.CAPABILITY_DENIED", "Mongo collection이 허용되지 않음"));
             }
@@ -1510,6 +1670,33 @@ fn redis_failure(error: redis::RedisError) -> Reject {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Reference values: a python:3.13 container (Linux, psutil 7.2.2) read /proc and asked psutil in the same instants.
+    #[test]
+    fn host_figures_equal_psutil_on_a_linux_capture() {
+        let before = cpu_busy_total("cpu  2265256 0 5558056 597084404 111996 0 580719 0 0 0\ncpu0 1 2 3\n").unwrap();
+        let after = cpu_busy_total("cpu  2265356 0 5558056 597085205 111996 0 580720 0 0 0\n").unwrap();
+        assert_eq!(cpu_percent(before, after), 11.2);
+        assert_eq!(cpu_percent(after, after), 0.0, "no elapsed time");
+        // Guest time sits inside user and is left out of the total: the same counters with 50 guest ticks in both samples.
+        assert_eq!(cpu_busy_total("cpu  100 0 100 800 0 0 0 0 50 0").unwrap(), (200.0, 1000.0));
+        let meminfo = "MemTotal:       16423016 kB\nMemFree:        11522368 kB\nMemAvailable:   13454768 kB\nBuffers:             152 kB\n";
+        assert_eq!(memory_figures(meminfo), Some((18.1, 16038.1)));
+        assert_eq!(memory_figures("MemTotal: 10 kB\n"), None, "no MemAvailable (kernels before 3.14)");
+        assert_eq!(disk_percent(64225280.0, 58782806.0, 58782806.0, 4096.0), 8.5);
+        assert_eq!(disk_percent(0.0, 0.0, 0.0, 4096.0), 0.0);
+    }
+
+    // On Linux the real counters answer: every figure is a number in range (the values themselves change every moment).
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn host_figures_read_this_linux_machine() {
+        let figures = host_figures().await;
+        for name in ["cpu_usage", "memory_usage", "disk_usage"] {
+            assert!(figures[name].as_f64().is_some_and(|v| (0.0..=100.0).contains(&v)), "{name}: {figures}");
+        }
+        assert!(figures["memory_total_mb"].as_f64().is_some_and(|v| v > 0.0), "{figures}");
+    }
 
     #[test]
     fn health_averages_round_like_python_round_to_four_places() {

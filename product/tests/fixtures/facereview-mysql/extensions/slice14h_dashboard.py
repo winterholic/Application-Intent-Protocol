@@ -5,6 +5,8 @@
 # genre are the aggregates User.signupCount, User.weeklyActive and Video.categoryViews, called by the client (see extensions/README.md,
 # Slice14-H).
 #
+# systemStatus is the same kind of administrator-only call (AdminService.get_system_status, see its comment below).
+#
 # Both extensions are administrator only: the aggregate they call first (VideoRequest.pendingCount, User.totalCount) is refused by the
 # server for anyone else, and that refusal ends the call.
 #
@@ -65,3 +67,52 @@ async def contentHealth(input, ctx):
         "avg_completion_rate": health["avg_completion_rate"],
         "emotion_distribution": health["emotion_distribution"],
         "dominant_emotion_video_counts": [{"emotion": row["emotion"], "video_count": row["video_count"]} for row in health["dominant"]]})}
+
+
+_REQUESTS_KEY = "facereview:metrics:requests:1h"
+_ERRORS_KEY = "facereview:metrics:errors:1h"
+_RESPONSE_TIMES_KEY = "facereview:metrics:response_times"
+
+
+async def systemStatus(input, ctx):
+    """AdminService.get_system_status. The host figures come from the server (`mongo.server_status`, Linux only, otherwise null); the request
+    figures from the Redis keys the original middleware wrote (nothing in this port writes them: they are 0 until the deployment does)."""
+    mysql = "ok"
+    try:
+        await ctx.data.aggregate("User", "totalCount", {})
+    except Exception as error:
+        if getattr(error, "code", None) == "WIRE.ACCESS_DENIED":
+            raise
+        mysql = "error"
+    try:
+        host = await ctx.call("mongo", "server_status", {"command": "host"})
+    except Exception:
+        host = {"cpu_usage": None, "memory_usage": None, "memory_total_mb": None, "disk_usage": None}
+    total_requests, avg_response_time_ms, error_rate = 0, 0.0, 0.0
+    try:
+        count = await ctx.redis.get(_REQUESTS_KEY)
+        total_requests = int(count) if count else 0
+        error_count = await ctx.redis.get(_ERRORS_KEY)
+        errors = int(error_count) if error_count else 0
+        error_rate = round(errors / total_requests * 100, 2) if total_requests > 0 else 0.0
+        times = await ctx.redis.lrange(_RESPONSE_TIMES_KEY, 0, -1)
+        if times:
+            avg_response_time_ms = round(sum(float(t) for t in times) / len(times), 2)
+    except Exception:
+        pass
+    redis = "ok"
+    try:
+        await ctx.redis.exists(_REQUESTS_KEY)
+    except Exception:
+        redis = "error"
+    mongodb = "ok"
+    try:
+        await ctx.call("mongo", "server_status", {"command": "ping"})
+    except Exception:
+        mongodb = "error"
+    return {"body": _text({
+        "server": {"cpu_usage": host["cpu_usage"], "memory_usage": host["memory_usage"], "memory_total_mb": host["memory_total_mb"],
+                   "disk_usage": host["disk_usage"]},
+        "api": {"total_requests_1h": total_requests, "avg_response_time_ms": avg_response_time_ms, "error_rate_1h": error_rate},
+        "connections": {"mysql": mysql, "redis": redis, "mongodb": mongodb},
+        "checked_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat()})}

@@ -365,7 +365,7 @@ def main():
     print("the trending, the category fill and the approval jobs matched the original")
 
 
-def deploy(work, admin_url, mongo_url, youtube_url, bin_path, enable_writes=False):
+def deploy(work, admin_url, mongo_url, youtube_url, bin_path, enable_writes=False, redis_url=None, write_collections=()):
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
     parsed = urllib.parse.urlparse(admin_url)
@@ -387,7 +387,9 @@ def deploy(work, admin_url, mongo_url, youtube_url, bin_path, enable_writes=Fals
         "limits": {"job_calls": 1000},
         "workers": {"directory": "extensions", "language": "python", **({"enable_writes": True} if enable_writes else {}),
                     "mongo": {"uri_env": "S13D_MONGO_URL", "database": base.MONGO_DB, "max_pool_size": 4, "timeout_ms": 3000,
-                              "write_collections": ["video_distribution", "video_timeline_emotion_count"], "ensure_indexes": True},
+                              "write_collections": ["video_distribution", "video_timeline_emotion_count", *write_collections], "ensure_indexes": True},
+                    **({"redis": {"uri_env": "S13D_REDIS_URL", "prefixes": ["facereview:reco:", "facereview:metrics:"], "max_in_flight": 4, "timeout_ms": 3000}}
+                       if redis_url else {}),
                     "integrations": [{"name": "youtube_videos", "url": youtube_url, "method": "GET", "timeout_ms": 3000,
                                       "max_request_bytes": 4096, "max_response_bytes": 1048576, "allow_loopback": True,
                                       "query_params": ["part", "chart", "regionCode", "maxResults", "pageToken", "id"],
@@ -397,6 +399,7 @@ def deploy(work, admin_url, mongo_url, youtube_url, bin_path, enable_writes=Fals
                                       "query_params": ["part", "q", "type", "regionCode", "relevanceLanguage", "maxResults", "order"],
                                       "secret_query_env": {"name": "key", "env": "S14B_API_KEY"}}]}}))
     env = dict(os.environ, S13D_ADOPT_URL=admin_url.rstrip("/") + f"/{base.SOURCE_DB}", S13D_MONGO_URL=mongo_url, S14B_API_KEY="oracle-key",
+               **({"S13D_REDIS_URL": redis_url} if redis_url else {}),
                S13D_RUNTIME_URL=f"mysql://{base.RUNTIME_USER}:{base.RUNTIME_PASSWORD}@{host}/{base.SOURCE_DB}")
     deployment = object.__new__(base.Deployment)
     deployment.work, deployment.bin, deployment.env, deployment.config = work, bin_path, env, config

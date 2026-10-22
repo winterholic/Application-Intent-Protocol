@@ -45,7 +45,7 @@ const SUMMARY_SESSIONS: &str = include_str!("../../../product/tests/fixtures/fac
 const SUMMARY_GOLDEN: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/slice14f-golden.json");
 const HEALTH_GOLDEN: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/slice14h-health.json");
 const REQUEST_GOLDEN: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/slice14g-golden.json");
-const EXTENSIONS: [(&str, &str); 13] = [
+const EXTENSIONS: [(&str, &str); 14] = [
     ("slice13f_watch.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13f_watch.py")),
     ("slice13b_lists.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13b_lists.py")),
     ("slice13d_recommend.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13d_recommend.py")),
@@ -59,6 +59,7 @@ const EXTENSIONS: [(&str, &str); 13] = [
     ("slice14e_mypage.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice14e_mypage.py")),
     ("slice14g_request.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice14g_request.py")),
     ("slice14h_dashboard.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice14h_dashboard.py")),
+    ("slice14j_dummy.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice14j_dummy.py")),
 ];
 const META: &str = "aip_t_yt_meta";
 const SOURCE: &str = "aip_t_yt_src";
@@ -1207,6 +1208,172 @@ async fn the_trending_job_saves_new_videos_with_their_initial_documents() {
             assert_ne!(refused["ok"], true, "{extension}: {refused}");
         }
     }
+
+    // ---- WBS 7.2.9: the system status (User.systemStatus). reference/slice14i_oracle.py compared it with the original's get_system_status
+    // on a real Redis and without one (this server has no Redis: the connection says so and the request figures are 0). The host figures
+    // are read from the machine's counters on Linux and are null elsewhere; the formulas equal psutil in a unit test.
+    let status = server.post("/extension", Some(&admin_token), &json!({"extension": "User.systemStatus", "input": {}})).await;
+    assert_eq!(status["ok"], true, "{status}");
+    let status: Value = serde_json::from_str(status["output"]["body"].as_str().unwrap()).unwrap();
+    assert_eq!(status["connections"], json!({"mysql": "ok", "redis": "error", "mongodb": "ok"}), "{status}");
+    assert_eq!(status["api"], json!({"total_requests_1h": 0, "avg_response_time_ms": 0.0, "error_rate_1h": 0.0}), "{status}");
+    for name in ["cpu_usage", "memory_usage", "disk_usage"] {
+        if cfg!(target_os = "linux") {
+            assert!(status["server"][name].as_f64().is_some_and(|v| (0.0..=100.0).contains(&v)), "{name}: {status}");
+        } else {
+            assert_eq!(status["server"][name], Value::Null, "{name} is Linux only: {status}");
+        }
+    }
+    assert!(status["checked_at"].as_str().is_some_and(|text| text.len() >= 19), "{status}");
+    for token in [Some(&member_token), None] {
+        let refused = server.post("/extension", token.map(String::as_str), &json!({"extension": "User.systemStatus", "input": {}})).await;
+        assert_ne!(refused["ok"], true, "{refused}");
+    }
+
+    // ---- WBS 7.2.9: the administrator's test data (the job generateDummyData). reference/slice14j_oracle.py ran the original and the job from
+    // one seed and every document, row and distribution was equal; here the effects are checked on their own terms: the sessions belong to the
+    // administrator's UUID, each view log row has its session's id, every video gains one view, and every distribution is the original's
+    // formula applied to the sessions of the video.
+    let admin = user_of("bob");
+    database.collection::<mongodb::bson::Document>("youtube_watching_data").delete_many(mongodb::bson::doc! {}).await.unwrap();
+    // The dashboard check above left a video with 4 billion views: one more view would leave the range of the field and the host ends a job whose
+    // ctx call is refused with BAD_VALUE, so that video cannot be part of the test data run.
+    setup.query_drop(format!("DELETE FROM `{SOURCE}`.video WHERE video_id LIKE 'bbbbbbbb-2222-%'")).await.unwrap();
+    // The job writes sessions, so it needs the write grant on youtube_watching_data (which also makes the server create the original's indexes
+    // on it) and, for 300 videos at five calls each, a higher call limit: a second server with that configuration replaces the first, so that
+    // no run is claimed by a server that cannot do it.
+    drop(server);
+    let mut second_config: Value = serde_json::from_str(&std::fs::read_to_string(&config).unwrap()).unwrap();
+    second_config["limits"] = json!({"job_calls": 2000});
+    second_config["workers"]["mongo"]["write_collections"] = json!(["video_distribution", "video_timeline_emotion_count", "youtube_watching_data"]);
+    let second_path = directory.path().join("service-dummy.json");
+    std::fs::write(&second_path, second_config.to_string()).unwrap();
+    let server = start_job_server(&env, &file, &second_path).await;
+    setup.query_drop(format!("DELETE FROM `{SOURCE}`.video_view_log")).await.unwrap();
+    // A video over two hours is chosen like any other and skipped (its session would not fit one call); a deleted one and one without a length never are.
+    for (n, (duration, deleted)) in [(7201_i64, 0), (60, 1), (0, 0)].iter().enumerate() {
+        setup
+            .query_drop(format!(
+                "INSERT INTO `{SOURCE}`.video (video_id, youtube_url, title, channel_name, category, duration, view_count, is_deleted, created_at, updated_at) VALUES \
+                 ('bbbbbbbb-3333-4000-8000-{:012}', 'dummyvid{n:03}', 't', 'c', 'vlog', {duration}, 5, {deleted}, UTC_TIMESTAMP(), UTC_TIMESTAMP())",
+                n + 1
+            ))
+            .await
+            .unwrap();
+    }
+    let views_before: std::collections::BTreeMap<String, i64> =
+        setup.query(format!("SELECT video_id, view_count FROM `{SOURCE}`.video")).await.unwrap().into_iter().collect();
+    let eligible: Vec<String> = setup
+        .query(format!("SELECT video_id FROM `{SOURCE}`.video WHERE is_deleted = 0 AND duration > 0 AND duration <= 7200 ORDER BY video_id"))
+        .await
+        .unwrap();
+    let dummy = |token: String, key: &'static str, user: String, count: i64| {
+        let (address, fingerprint) = (server.address.clone(), server.fingerprint.clone());
+        async move {
+            post(
+                &address,
+                "/jobs/enqueue",
+                Some(&token),
+                &fingerprint,
+                &json!({"operation": "generateDummyData", "key": key, "delayMs": 0, "input": {"user": user, "count": count}}),
+            )
+            .await
+        }
+    };
+    assert_ne!(dummy(member_token.clone(), "dummy-member", user_of("alice").to_string(), 10).await["ok"], true, "a member cannot start it");
+    assert_ne!(dummy(admin_token.clone(), "dummy-other", user_of("alice").to_string(), 10).await["ok"], true, "not for another member's id");
+    for bad in [9, 301] {
+        assert_ne!(
+            dummy(admin_token.clone(), if bad == 9 { "dummy-9" } else { "dummy-301" }, admin.to_string(), bad).await["ok"],
+            true,
+            "count {bad}"
+        );
+    }
+    let accepted = dummy(admin_token.clone(), "dummy-1", admin.to_string(), 300).await;
+    assert_eq!(accepted["ok"], true, "{accepted}");
+    let run_id = accepted["run"]["id"].as_str().unwrap().to_string();
+    let run = server.run_until(&admin_token, &run_id, finished).await;
+    assert_eq!(run["state"], "SUCCEEDED", "{run}");
+    let result = server.post("/jobs/result", Some(&admin_token), &json!({"id": run_id})).await;
+    let chosen: Vec<String> = serde_json::from_str(result["output"]["video_ids"].as_str().unwrap()).unwrap();
+    assert_eq!(result["output"]["created_count"], chosen.len(), "{result}");
+    let mut sorted = chosen.clone();
+    sorted.sort();
+    assert_eq!(sorted, eligible, "300 wanted: every video that is visible, has a length and fits one call, and none of the three others");
+    // The sessions belong to the administrator's UUID, one for each video, each with its view log row.
+    let sessions_collection = database.collection::<mongodb::bson::Document>("youtube_watching_data");
+    let mut cursor = sessions_collection.find(mongodb::bson::doc! {"user_id": admin}).await.unwrap();
+    let mut sessions = Vec::new();
+    while cursor.advance().await.unwrap() {
+        sessions.push(cursor.deserialize_current().unwrap());
+    }
+    assert_eq!(sessions.len(), chosen.len(), "a session each, owned by the administrator's UUID");
+    assert_eq!(sessions_collection.count_documents(mongodb::bson::doc! {"user_id": {"$ne": admin}}).await.unwrap(), 0, "nobody else's");
+    let logs: Vec<(String, String)> =
+        setup.query(format!("SELECT video_view_log_id, video_id FROM `{SOURCE}`.video_view_log WHERE user_id = '{admin}'")).await.unwrap();
+    assert_eq!(logs.len(), chosen.len());
+    for session in &sessions {
+        let (log_id, video_id) = (session.get_str("video_view_log_id").unwrap(), session.get_str("video_id").unwrap());
+        assert!(logs.contains(&(log_id.to_string(), video_id.to_string())), "the view log row has the session's id: {log_id}");
+        let duration: i64 = scalar(&mut setup, format!("SELECT CAST(duration AS CHAR) FROM `{SOURCE}`.video WHERE video_id = '{video_id}'"))
+            .await
+            .unwrap()
+            .parse()
+            .unwrap();
+        let scores = session.get_document("emotion_score_timeline").unwrap();
+        assert_eq!(scores.len() as i64, duration * 2, "two frames a second");
+        assert!(scores.keys().all(|key| key.parse::<i64>().is_ok_and(|n| n % 50 == 0 && n < duration * 100)), "centisecond keys 0, 50, ...");
+        assert_eq!(session.get_document("most_emotion_timeline").unwrap().len(), scores.len());
+        assert_eq!(session.get_f64("completion_rate").unwrap(), 1.0);
+        assert!(
+            session.get("finalized_at").is_some_and(|value| value == &mongodb::bson::Bson::Null),
+            "not finalized: the emotion summary never counts it"
+        );
+        let percentages = session.get_document("emotion_percentages").unwrap();
+        let sum: f64 = ["neutral", "happy", "surprise", "sad", "angry"].iter().map(|name| percentages.get_f64(name).unwrap()).sum();
+        assert!((sum - 1.0).abs() < 0.006, "the shares add up to 1: {sum}");
+        let top = ["neutral", "happy", "surprise", "sad", "angry"].iter().fold(("", -1.0), |best, name| {
+            let share = percentages.get_f64(name).unwrap();
+            if share > best.1 { (name, share) } else { best }
+        });
+        assert_eq!(session.get_str("dominant_emotion").unwrap(), top.0, "the dominant emotion is the largest share");
+        let created = scalar(&mut setup, format!("SELECT CAST(TIMESTAMPDIFF(HOUR, created_at, UTC_TIMESTAMP()) AS CHAR) FROM `{SOURCE}`.video_view_log WHERE video_view_log_id = '{log_id}'")).await.unwrap();
+        assert!((0..=91 * 24).contains(&created.parse::<i64>().unwrap()), "a time up to 90 days back: {created} hours");
+    }
+    // Every chosen video has one more view; no other changed.
+    let views_after: std::collections::BTreeMap<String, i64> =
+        setup.query(format!("SELECT video_id, view_count FROM `{SOURCE}`.video")).await.unwrap().into_iter().collect();
+    for (video, before) in &views_before {
+        assert_eq!(views_after[video], before + i64::from(chosen.contains(video)), "{video}");
+    }
+    // The distribution of a video is the original's formula over its sessions (all of them are the administrator's here).
+    let round3 = |value: f64| format!("{value:.3}").parse::<f64>().unwrap();
+    let distributions = database.collection::<mongodb::bson::Document>("video_distribution");
+    for video in &chosen {
+        let mine: Vec<&mongodb::bson::Document> = sessions.iter().filter(|session| session.get_str("video_id").unwrap() == video).collect();
+        assert_eq!(mine.len(), 1);
+        let distribution = distributions.find_one(mongodb::bson::doc! {"video_id": video}).await.unwrap().expect("the video has a distribution");
+        let shares = mine[0].get_document("emotion_percentages").unwrap();
+        let averages = distribution.get_document("emotion_averages").unwrap();
+        for name in ["neutral", "happy", "surprise", "sad", "angry"] {
+            assert_eq!(averages.get_f64(name).unwrap(), round3(shares.get_f64(name).unwrap()), "{video} {name}");
+        }
+        let scores = distribution.get_document("recommendation_scores").unwrap();
+        for (name, factor) in [("neutral", 2.0), ("happy", 3.0), ("surprise", 4.0), ("sad", 3.0), ("angry", 3.0)] {
+            assert_eq!(scores.get_f64(name).unwrap(), round3(averages.get_f64(name).unwrap() * factor), "{video} {name} score");
+        }
+        assert_eq!(distribution.get_f64("average_completion_rate").unwrap(), 1.0);
+        let frames = mine[0].get_document("emotion_score_timeline").unwrap().len();
+        assert_eq!(
+            distribution.get("dominant_emotion").is_some_and(|value| value != &mongodb::bson::Bson::Null),
+            frames >= 30,
+            "{video}: only from 30 frames"
+        );
+    }
+    // The same key is the same run: nothing is generated twice.
+    let again = dummy(admin_token.clone(), "dummy-1", admin.to_string(), 300).await;
+    assert_eq!(again["run"]["id"], run_id.as_str());
+    assert_eq!(sessions_collection.count_documents(mongodb::bson::doc! {}).await.unwrap() as usize, chosen.len());
     mongo.database(MONGO_DB).drop().await.expect("drop the run-owned database");
     for schema in [META, SOURCE] {
         setup.query_drop(format!("DROP DATABASE `{schema}`")).await.unwrap();

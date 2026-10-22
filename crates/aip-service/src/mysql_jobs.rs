@@ -1028,13 +1028,29 @@ impl RelationalJobs for MysqlJobs {
 }
 
 impl MysqlJobs {
-    async fn admission(&self, lease: &aip_execution::Lease, grant: &DurablePrincipal) -> Result<Caller> {
+    async fn admission(&self, lease: &aip_execution::Lease, grant: &DurablePrincipal) -> Result<(Caller, Option<String>)> {
         let mut fenced = self.begin(grant).await?;
         let tx = fenced.as_mut().map_err(db)?;
         self.locked_lease(tx, lease).await?;
         let caller = self.authorize(tx, &lease.operation, &lease.input, lease.actor).await?;
+        let public_id = self.actor_public_id(tx, lease.actor).await?;
         Self::commit(fenced).await?;
-        Ok(caller)
+        Ok((caller, public_id))
+    }
+
+    /// The UUID the actor resource stores for the job owner's internal id (None when the actor is keyed by an integer or is the managed
+    /// principal): private MongoDB documents belong to that UUID, as they do for a caller of a read or write extension.
+    async fn actor_public_id(&self, tx: &mut Transaction<'static>, actor: i64) -> Result<Option<String>> {
+        if self.facts["actorMode"] == "principal" {
+            return Ok(None);
+        }
+        let name = self.facts["actor"].as_str().ok_or("WIRE.BAD_CONFIGURATION")?;
+        if spike_v2_read::id_wire::id_kind(&self.facts, name) != "uuid" {
+            return Ok(None);
+        }
+        let found: Option<String> =
+            tx.exec_first(format!("SELECT i.resource_id FROM {} i WHERE i.id=?", self.table("aip_actor_identities")), (actor,)).await.map_err(db)?;
+        Ok(Some(found.ok_or("WIRE.UNAUTHENTICATED")?))
     }
 
     async fn beat(&self, lease: &aip_execution::Lease, grant: &DurablePrincipal) -> Result<()> {
@@ -1054,7 +1070,7 @@ impl MysqlJobs {
         let mut after = None;
         let result = async {
             let grant = grant.map_err(|_| "WIRE.UNAUTHENTICATED")?;
-            let caller = self.admission(&lease, &grant).await?;
+            let (caller, public_id) = self.admission(&lease, &grant).await?;
             let dir = self.workers.dir.to_str().ok_or("WIRE.BAD_CONFIGURATION")?;
             let mut worker =
                 spike_v4_worker::Worker::try_start_configured(self.workers.lang, dir, self.launch.clone()).await.map_err(|_| "WIRE.WORKER_FAILED")?;
@@ -1062,6 +1078,7 @@ impl MysqlJobs {
                 runtime: self.clone(),
                 lease: lease.clone(),
                 grant: grant.clone(),
+                public_id,
                 prefix: String::new(),
                 depth: 0,
                 budget: Arc::new(AtomicUsize::new(0)),
@@ -1259,6 +1276,8 @@ struct JobHost {
     runtime: Arc<MysqlJobs>,
     lease: aip_execution::Lease,
     grant: DurablePrincipal,
+    /// The job owner's id as the actor resource stores it (a UUID), which owns the private MongoDB documents; None for an integer actor.
+    public_id: Option<String>,
     prefix: String,
     depth: usize,
     budget: Arc<AtomicUsize>,
@@ -1281,12 +1300,13 @@ fn replay_error(code: &str) -> &'static str {
 }
 impl JobHost {
     /// The identity and exact Mongo and Redis grants the job declared; the capability checks them again on every call.
-    fn external_principal(&self, caller: &Caller) -> spike_v4_worker::CapabilityPrincipal {
-        spike_v4_worker::CapabilityPrincipal {
+    fn external_principal(&self, caller: &Caller) -> Result<spike_v4_worker::CapabilityPrincipal> {
+        let actor_uuid = spike_v4_worker::capability::resolve_actor_uuid(caller.actor_id, self.public_id.as_deref()).map_err(|error| error.code)?;
+        Ok(spike_v4_worker::CapabilityPrincipal {
             actor_id: caller.actor_id,
-            actor_uuid: None,
+            actor_uuid,
             grants: self.capabilities.iter().filter(|grant| grant.starts_with("mongo.") || grant.starts_with("redis.")).cloned().collect(),
-        }
+        })
     }
 
     async fn external_call(
@@ -1352,7 +1372,7 @@ impl JobHost {
         let external = matches!(op, "redis" | "mongo");
         if external && !spike_v4_worker::is_external_write(op, input) {
             // A read has no effect journal: the capability checks the grant and its own namespace on every call.
-            let principal = self.external_principal(&caller);
+            let principal = self.external_principal(&caller)?;
             MysqlJobs::commit(fenced).await?;
             return self.external_call(op, name, &principal, input, false).await;
         }
@@ -1491,7 +1511,7 @@ impl JobHost {
             return Ok(output);
         }
         if external {
-            let principal = self.external_principal(&caller);
+            let principal = self.external_principal(&caller)?;
             let mut command = input.clone();
             if let Some(object) = command.as_object_mut() {
                 object.remove("key");
@@ -1618,6 +1638,7 @@ impl JobHost {
                 runtime: rt.clone(),
                 lease: self.lease.clone(),
                 grant: self.grant.clone(),
+                public_id: self.public_id.clone(),
                 prefix: format!("{path}/"),
                 depth: self.depth + 1,
                 budget: self.budget.clone(),
@@ -1816,6 +1837,7 @@ operation job incrementJob {
             runtime: runtime.clone(),
             lease: lease.clone(),
             grant: grant(1),
+            public_id: None,
             prefix: String::new(),
             depth: 0,
             budget: Arc::new(AtomicUsize::new(0)),
@@ -2320,6 +2342,7 @@ operation job notifyJob {
             runtime: runtime.clone(),
             lease: lease.clone(),
             grant: grant(1),
+            public_id: None,
             prefix: String::new(),
             depth: 0,
             budget: Arc::new(AtomicUsize::new(0)),
@@ -2563,6 +2586,7 @@ operation job cacheJob {
             runtime: runtime.clone(),
             lease: lease.clone(),
             grant: grant(1),
+            public_id: None,
             prefix: String::new(),
             depth: 0,
             budget: Arc::new(AtomicUsize::new(0)),
@@ -2572,6 +2596,7 @@ operation job cacheJob {
             runtime: bare,
             lease: lease.clone(),
             grant: grant(1),
+            public_id: None,
             prefix: String::new(),
             depth: 0,
             budget: Arc::new(AtomicUsize::new(0)),

@@ -1,6 +1,10 @@
 # 진행 현황과 쌓인 질문
 
-## 재개 지점 (2026-10-22, 7.2.9 관리자 대시보드 뒤 기록)
+## 재개 지점 (2026-10-22, 7.2.9 구현 완료 뒤 기록)
+
+7.2.9의 남은 둘을 옮겼다. 시스템 상태는 읽기 확장 `User.systemStatus`(결정 D-P-SYSSTATUS, 원본과 10개 사례, 서버 지표는 파생 컬렉션 `server_status`로 Linux 전용이며 식은 psutil 값과 같음을 Linux 컨테이너로 확인), 시청 더미 데이터는 durable job `generateDummyData`(결정 D-P-DUMMY, 같은 시드의 원본과 20개 사례)다. 더미 데이터를 만들다가 기존 결함을 찾아 고쳤다: durable job이 Mongo의 개인 문서에 소유자를 UUID가 아닌 정수 핸들로 적었다(`mysql_jobs.rs`). 따라서 7.2.9의 잔여 4개(요청 생성, dashboard, 시스템 상태, 더미 데이터)는 모두 구현 조각을 마쳤고 각 절의 한계와 미검증 항목은 남아 있다. 남은 것: 실제 메일 provider live smoke 미실행, 더미 데이터의 비숫자 세션 경로 미실행, 생성 SDK의 단독 집계 바인딩과 화면 연결은 7.2.10, 대시보드 호출 횟수·Redis 캐시 없음 등 각 절의 알려진 한계. 이 조각의 커밋과 CI 결과는 아래 줄에 적는다. 직전 조각 CI: 49aea49 7종(Verify 39756710567 포함) completed/success(Deployment checks는 경로 조건으로 실행되지 않음).
+
+## 이전 재개 지점 (2026-10-22, 7.2.9 관리자 대시보드 뒤 기록)
 
 7.2.9의 관리자 대시보드를 새 언어 기능 없이 옮겼다(결정 D-P-DASHBOARD). 관리자 전용 단독 집계 4개(`User.signupCount`, `User.weeklyActive`, `VideoRequest.pendingCount`, `Video.categoryViews`)와 읽기 확장 2개(`VideoRequest.pipeline`, `Video.contentHealth`)이고, 플랫폼에는 Mongo 파생 컬렉션 `video_distribution_stats` 하나를 더했다. 원본 `AdminService`와 25개 사례가 같았다(`reference/slice14h_oracle.py`, 기간 6개의 모든 버킷 포함). CI 재생(`mysql_facereview_trending_job`)은 시각이 매번 달라 원본 SQL과 비교한다. 한계: 호출 횟수가 많고(가입 추이 3y는 37번) 기간·기준 시각을 호출자가 정하며 Redis 캐시가 없다. 확장에 호출자 입력을 여는 일, distinct·평균 release, 시각 버킷 그룹 집계는 새 언어 기능이라 결정 없이 만들지 않았다. 남은 7.2.9: 시스템 상태(`get_system_status`, psutil 호스트 지표와 Redis 요청 지표)와 더미 데이터(`generate_dummy_data`, 관리자가 한 회원의 세션 문서를 Mongo에 만드는 기능). 이 조각의 커밋과 CI 결과는 아래 줄에 적는다. 시험 환경 재생성은 이전 재개 지점 단락의 방법과 같다(이번에는 컨테이너 이름 `aip-p729-*`, `scripts/mysql-live-fixture.sh`는 `AIP_FIXTURE_TAG=p729`).
 

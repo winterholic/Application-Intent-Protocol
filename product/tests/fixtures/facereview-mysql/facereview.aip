@@ -185,6 +185,17 @@ resource User {
   }
   expose aggregate signupCount
   expose aggregate weeklyActive
+  // WBS 7.2.9 system status (AdminService.get_system_status). Administrator only (the first step is the administrator-only totalCount). It answers
+  // the allowlisted figures of `mongo.server_status` (CPU, memory and disk usage of the server's machine; MongoDB ping), the request figures the
+  // deployment keeps under the Redis prefix facereview:metrics: and whether MySQL, Redis and MongoDB answer.
+  extension read systemStatus {
+    input { }
+    output { body: Text }
+    access User.totalCount, mongo.server_status, redis "facereview:metrics:*"
+    effect none
+    deadline 20s
+    implementation "slice14h_dashboard.systemStatus"
+  }
   expose aggregate totalCount
 }
 
@@ -547,6 +558,12 @@ resource VideoViewLog {
     updated_at: Time default database
   }
   rows read when user = actor and active(actor)
+  // WBS 7.2.9: the view log row of the administrator's test data (AdminService.generate_dummy_data), with the past time the original gives it.
+  // Nothing else makes a view log through the contract; an administrator may write only rows of their own.
+  expose create {
+    fields video, user, created_at, updated_at
+    allow isAdmin(actor) and user = actor
+  }
   expose read {
     select id, video, user, created_at
     refIds video, user
@@ -703,4 +720,17 @@ operation job approveVideoRequest {
   effect managed
   deadline 60s
   implementation "slice14d_approve.approveVideoRequest"
+}
+
+// WBS 7.2.9: the original's AdminService.generate_dummy_data (POST admin/dummy-data, count 10 to 300). An administrator makes finished viewing
+// sessions of their own for `count` random visible videos: the session document, the view log row, one more view and the video's distribution
+// recomputed. `user` is the administrator's own id (the job refuses another). The service must set limits.job_calls to 2000 or more for 300 videos.
+operation job generateDummyData {
+  input { user: User.Id; count: Int(10..300) }
+  output { created_count: Int(0..300); video_ids: Text }
+  allow isAdmin(actor) and input.user = actor.id
+  access read.Video, create.VideoViewLog, Video.view, mongo.youtube_watching_data, mongo.video_distribution, mongo.video_session_stats
+  effect managed
+  deadline 900s
+  implementation "slice14j_dummy.generateDummyData"
 }

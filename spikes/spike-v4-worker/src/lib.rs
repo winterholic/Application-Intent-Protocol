@@ -207,6 +207,8 @@ pub fn is_external_read(op: &str, resource: &str, input: &Value) -> bool {
             resource == capability::TIMELINE_COLLECTION
                 || resource == capability::USER_STATS_COLLECTION
                 || resource == capability::HEALTH_COLLECTION
+                || resource == capability::SERVER_COLLECTION
+                || resource == capability::SESSION_STATS_COLLECTION
                 || ["find", "find_one", "count_documents"].contains(&command)
         }
         _ => false,
