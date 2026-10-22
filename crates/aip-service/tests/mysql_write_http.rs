@@ -445,6 +445,63 @@ async fn worker_action_validator_decides_commit_without_database() {
     }
 }
 
+/// A host whose creates are refused by a unique constraint: `ctx.data.create` answers WIRE.ALREADY_EXISTS.
+struct DuplicateHost;
+
+impl WriteActionHost for DuplicateHost {
+    fn apply<'a>(
+        &'a mut self,
+        _transition: &'a str,
+        _request: &'a Value,
+        _caller: &'a Caller,
+        _wire: IdWire,
+    ) -> HostFuture<'a, Result<Value, Reject>> {
+        Box::pin(async { Err(Reject { code: "WIRE.ALREADY_EXISTS", msg: "unique".into() }) })
+    }
+}
+
+/// One refused `ctx.data.create`, then the extension ends with `error_code` (or with a value when it is `None`).
+fn play_refused_create(error_code: Option<&'static str>) -> ScriptedPeer {
+    let mut step = 0usize;
+    ScriptedPeer::new(move |sent: &[Value]| {
+        step += 1;
+        let (token, invoke) = (sent[0]["token"].clone(), sent[0]["invoke"].clone());
+        match step {
+            1 => Some(json!({"type":"call","call":1,"token":token,"op":"create","name":"Video","input":{"values":{}}}).to_string()),
+            2 => Some(
+                match error_code {
+                    Some(code) => json!({"type":"done","invoke":invoke,"error":{"code":code,"message":code}}),
+                    None => json!({"type":"done","invoke":invoke,"output":{"count":1}}),
+                }
+                .to_string(),
+            ),
+            _ => None,
+        }
+    })
+}
+
+/// A create the unique constraint refused ends the call with WIRE.ALREADY_EXISTS when the extension passes it on, and with WIRE.CONFLICT when
+/// the extension asks the caller to send it again; anything else (a failing extension, a success after the refusal) stays an extension error.
+#[tokio::test]
+async fn a_refused_create_reaches_the_caller_only_as_the_extension_passes_it_on() {
+    let mut facts: Value = load_str(WORKER_ACTION, Form::A).unwrap_or_else(|e| panic!("{e:?}")).execution;
+    facts["resources"]["Video"]["extensions"]["view"]["access"]["create.Video"] = json!(true);
+    let caller = Caller { actor_id: Some(1), now: "2026-10-18T00:00:00Z".into() };
+    let input = json!({"id":"10"});
+    for (ends_with, want) in [
+        (Some("WIRE.ALREADY_EXISTS"), "WIRE.ALREADY_EXISTS"),
+        (Some("WIRE.CONFLICT"), "WIRE.CONFLICT"),
+        (Some("WIRE.BAD_VALUE"), "WIRE.EXTENSION_ERROR"),
+        (Some("WIRE.RETRY_LATER"), "WIRE.EXTENSION_ERROR"),
+        (None, "WIRE.EXTENSION_ERROR"),
+    ] {
+        let mut peer = play_refused_create(ends_with);
+        let outcome = invoke_write_action(&mut DuplicateHost, &mut peer, &facts, "Video.view", &input, &caller, IdWire::DecimalString).await;
+        let Err(error) = outcome else { panic!("{ends_with:?}: a refused create never commits") };
+        assert_eq!(error.code, want, "{ends_with:?}");
+    }
+}
+
 /// The real fenced session behind the real entry point: validated output commits the same
 /// transaction, a poisoned or invalid run rolls everything back on drop.
 struct CouplingHost {

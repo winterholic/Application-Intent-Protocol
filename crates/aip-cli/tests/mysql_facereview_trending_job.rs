@@ -43,7 +43,8 @@ const MYPAGE_SESSIONS: &str = include_str!("../../../product/tests/fixtures/face
 const MYPAGE_GOLDEN: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/slice14e-golden.json");
 const SUMMARY_SESSIONS: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/slice14f-sessions.json");
 const SUMMARY_GOLDEN: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/slice14f-golden.json");
-const EXTENSIONS: [(&str, &str); 11] = [
+const REQUEST_GOLDEN: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/slice14g-golden.json");
+const EXTENSIONS: [(&str, &str); 12] = [
     ("slice13f_watch.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13f_watch.py")),
     ("slice13b_lists.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13b_lists.py")),
     ("slice13d_recommend.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13d_recommend.py")),
@@ -55,6 +56,7 @@ const EXTENSIONS: [(&str, &str); 11] = [
     ("slice14c_category_fill.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice14c_category_fill.py")),
     ("slice14d_approve.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice14d_approve.py")),
     ("slice14e_mypage.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice14e_mypage.py")),
+    ("slice14g_request.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice14g_request.py")),
 ];
 const META: &str = "aip_t_yt_meta";
 const SOURCE: &str = "aip_t_yt_src";
@@ -168,6 +170,41 @@ async fn run_script(conn: &mut aip_migrate::mysql_driver::mysql_async::Conn, scr
         }
         conn.query_drop(&statement).await.unwrap_or_else(|e| panic!("{statement}: {e}"));
     }
+}
+
+/// The video_request table holds exactly these (user, youtube_url, status) rows (ids are made up; the clocks are in the past).
+async fn set_requests(setup: &mut aip_migrate::mysql_driver::mysql_async::Conn, rows: &[Value]) {
+    setup.query_drop(format!("DELETE FROM `{SOURCE}`.video_request")).await.unwrap();
+    for (n, row) in rows.iter().enumerate() {
+        let (user, url, status) = (row[0].as_str().unwrap(), row[1].as_str().unwrap(), row[2].as_str().unwrap());
+        setup
+            .query_drop(format!(
+                "INSERT INTO `{SOURCE}`.video_request (video_request_id, user_id, youtube_url, youtube_full_url, status, admin_comment, created_at, updated_at) \
+                 VALUES ('00000000-0000-4000-8000-{n:012}', '{user}', '{url}', 'https://www.youtube.com/watch?v={url}', '{status}', NULL, '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+            ))
+            .await
+            .unwrap();
+    }
+}
+
+/// The table as the oracle (reference/slice14g_oracle.py) records it: no ids, a row made by the call is marked "new".
+async fn request_table(setup: &mut aip_migrate::mysql_driver::mysql_async::Conn) -> Value {
+    let rows: Vec<(String, String, String, String, Option<String>, i64)> = setup
+        .query(format!(
+            "SELECT user_id, CAST(youtube_url AS CHAR CHARACTER SET utf8mb4), youtube_full_url, status, admin_comment, created_at = updated_at AND \
+             ABS(TIMESTAMPDIFF(SECOND, created_at, UTC_TIMESTAMP())) < 120 FROM `{SOURCE}`.video_request ORDER BY youtube_url, user_id"
+        ))
+        .await
+        .unwrap();
+    Value::Array(
+        rows.into_iter()
+            .map(|(user, url, full, status, comment, fresh)| json!([user, url, full, status, comment, if fresh == 1 { "new" } else { "old" }]))
+            .collect(),
+    )
+}
+
+fn recommend_request(key: &str, user: &str, urls: &[String]) -> Value {
+    json!({"key": key, "request": {"extension": "VideoRequest.recommend", "input": {"user": user, "youtube_url_list": json!(urls).to_string()}}})
 }
 
 struct Server {
@@ -778,6 +815,42 @@ async fn the_trending_job_saves_new_videos_with_their_initial_documents() {
             .unwrap();
         assert_eq!((total.as_str(), version), ("3100", 1), "the sessions are added once: {results:?}");
     }
+    // First calls at the same moment (the member has no summary row yet): the primary key lets one call create the row, the others are
+    // cancelled whole and told WIRE.CONFLICT, so the sessions are summed once.
+    let bob = user_of("bob");
+    for round in 0..6 {
+        setup.query_drop(format!("DELETE FROM `{SOURCE}`.user_emotion_summary WHERE user_id = '{bob}'")).await.unwrap();
+        let request = |key: &str| json!({"key": key, "request": {"extension": "User.myEmotionSummary", "input": {}}});
+        let (bob_token, keys) = (bearer("bob"), ["f1", "f2", "f3", "f4"].map(|key| request(&format!("{key}-{round}"))));
+        let results = tokio::join!(
+            server.post("/apply", Some(&bob_token), &keys[0]),
+            server.post("/apply", Some(&bob_token), &keys[1]),
+            server.post("/apply", Some(&bob_token), &keys[2]),
+            server.post("/apply", Some(&bob_token), &keys[3])
+        );
+        let results = [results.0, results.1, results.2, results.3];
+        let winners: Vec<&Value> = results.iter().filter(|r| r["ok"] == true).collect();
+        assert!(!winners.is_empty(), "{results:?}");
+        for refused in results.iter().filter(|r| r["ok"] != true) {
+            assert!(["WIRE.CONFLICT", "WIRE.WORKER_BUSY"].contains(&refused["code"].as_str().unwrap_or("")), "{refused}");
+        }
+        let (rows, version): (i64, i64) = setup
+            .query_first(format!("SELECT COUNT(*), MAX(lock_version) FROM `{SOURCE}`.user_emotion_summary WHERE user_id = '{bob}'"))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(rows, 1, "round {round}: one row: {results:?}");
+        // A call that came after another finds nothing new, so the row moved once for each answered call that had something to add.
+        let later = server.post("/apply", Some(&bob_token), &request(&format!("f5-{round}"))).await;
+        assert_eq!(later["ok"], true, "{later}");
+        assert!(
+            winners.iter().all(|w| w["output"] == later["output"]),
+            "round {round}: every answered call and the later one agree: {results:?} {later}"
+        );
+        let after: i64 =
+            setup.query_first(format!("SELECT lock_version FROM `{SOURCE}`.user_emotion_summary WHERE user_id = '{bob}'")).await.unwrap().unwrap();
+        assert_eq!(after, version, "round {round}: the later call added nothing");
+    }
     // The transition the extension calls states its own contract: a stale lock_version is refused and changes nothing, the current one
     // applies and moves the version, and another member cannot touch the row. (The transition is public: a member can also write
     // their own totals directly. Nothing else reads this table, so only their own summary screen is affected.)
@@ -817,6 +890,92 @@ async fn the_trending_job_saves_new_videos_with_their_initial_documents() {
     // A guest has no summary.
     let guest = server.post("/apply", None, &json!({"key": "guest", "request": {"extension": "User.myEmotionSummary", "input": {}}})).await;
     assert_ne!(guest["ok"], true, "{guest}");
+
+    // ---- WBS 7.2.9: POST home/video/recommend (the write extension VideoRequest.recommend) equals the original's
+    // create_user_video_recommend on the recorded cases (reference/slice14g_oracle.py ran the original on these starting tables): created or
+    // refused as a duplicate, and the table afterwards.
+    let request_golden: Vec<Value> = serde_json::from_str(REQUEST_GOLDEN).unwrap();
+    assert!(request_golden.len() >= 14, "the recorded cases");
+    for (index, case) in request_golden.iter().enumerate() {
+        let (name, subject) = (case["name"].as_str().unwrap(), case["subject"].as_str().unwrap());
+        let urls: Vec<String> = case["urls"].as_array().unwrap().iter().map(|url| url.as_str().unwrap().to_string()).collect();
+        set_requests(&mut setup, case["before"].as_array().unwrap()).await;
+        let answer = server.post("/apply", Some(&bearer(subject)), &recommend_request(&format!("recommend-{index}"), user_of(subject), &urls)).await;
+        assert_eq!(answer["ok"] == true, case["expected"]["created"].as_bool().unwrap(), "{name}: {answer}");
+        if answer["ok"] != true {
+            assert_eq!(answer["code"], "WIRE.ALREADY_EXISTS", "{name}: a duplicate says so: {answer}");
+        } else {
+            assert_eq!(answer["output"]["requested"], urls.len(), "{name}: {answer}");
+        }
+        assert_eq!(request_table(&mut setup).await, case["expected"]["table"], "{name}");
+    }
+    // The port's own guards: a list that is empty, not JSON, not a list of texts, over 20, or whose id is longer than the column creates nothing.
+    let long = "y".repeat(51);
+    let too_many = json!((0..21).map(|n| format!("many{n:06}")).collect::<Vec<_>>()).to_string();
+    for (name, payload) in [
+        ("empty list", "[]".to_string()),
+        ("not JSON", "abc".to_string()),
+        ("an object", "{}".to_string()),
+        ("a number", "[1]".to_string()),
+        ("an empty id", "[\"\"]".to_string()),
+        ("21 ids", too_many),
+        ("an id over the column length", json!([long]).to_string()),
+    ] {
+        set_requests(&mut setup, &[]).await;
+        let body = json!({"key": format!("guard-{name}"), "request": {"extension": "VideoRequest.recommend", "input": {"user": user_of("alice"), "youtube_url_list": payload}}});
+        let answer = server.post("/apply", Some(&bearer("alice")), &body).await;
+        assert_ne!(answer["ok"], true, "{name}: {answer}");
+        assert_eq!(request_table(&mut setup).await, json!([]), "{name}: nothing is created");
+    }
+    // Owner and caller: another member's id, a deactivated member and a guest create nothing.
+    let one = ["owner000001".to_string()];
+    let foreign = server.post("/apply", Some(&bearer("alice")), &recommend_request("owner", user_of("bob"), &one)).await;
+    assert_ne!(foreign["ok"], true, "a member cannot request for another member: {foreign}");
+    setup.query_drop(format!("UPDATE `{SOURCE}`.user SET is_deleted = 1 WHERE user_id = '{}'", user_of("erin"))).await.unwrap();
+    let inactive = server.post("/apply", Some(&bearer("erin")), &recommend_request("inactive", user_of("erin"), &one)).await;
+    setup.query_drop(format!("UPDATE `{SOURCE}`.user SET is_deleted = 0 WHERE user_id = '{}'", user_of("erin"))).await.unwrap();
+    assert_ne!(inactive["ok"], true, "a deactivated member cannot request: {inactive}");
+    let guest = server.post("/apply", None, &recommend_request("guest-request", user_of("alice"), &one)).await;
+    assert_ne!(guest["ok"], true, "{guest}");
+    assert_eq!(request_table(&mut setup).await, json!([]), "refused callers create nothing");
+    // The same key twice replays the first answer and creates nothing more.
+    let pair = ["retry000001".to_string(), "retry000002".to_string()];
+    let first = server.post("/apply", Some(&bearer("alice")), &recommend_request("retry", user_of("alice"), &pair)).await;
+    let second = server.post("/apply", Some(&bearer("alice")), &recommend_request("retry", user_of("alice"), &pair)).await;
+    assert_eq!((first["ok"].clone(), second["ok"].clone()), (json!(true), json!(true)), "{first} {second}");
+    assert_eq!(first["output"], second["output"]);
+    assert_eq!(request_table(&mut setup).await.as_array().unwrap().len(), 2, "a retry creates nothing more");
+    // A new key for the same ids is a new request and is refused as a duplicate.
+    let again = server.post("/apply", Some(&bearer("alice")), &recommend_request("retry-new-key", user_of("alice"), &pair)).await;
+    assert_eq!(again["code"], "WIRE.ALREADY_EXISTS", "{again}");
+    // Two members ask for overlapping lists at the same moment: one list is created whole, the other leaves nothing, and every id has one request.
+    for round in 0..10 {
+        set_requests(&mut setup, &[]).await;
+        let lists = [
+            vec![format!("r{round}-a"), format!("r{round}-b"), format!("r{round}-shared")],
+            vec![format!("r{round}-shared"), format!("r{round}-c"), format!("r{round}-d")],
+        ];
+        let (alice_token, bob_token) = (bearer("alice"), bearer("bob"));
+        let (alice_id, bob_id) = (user_of("alice"), user_of("bob"));
+        let (request_a, request_b) =
+            (recommend_request(&format!("race-a-{round}"), alice_id, &lists[0]), recommend_request(&format!("race-b-{round}"), bob_id, &lists[1]));
+        let (a, b) = tokio::join!(server.post("/apply", Some(&alice_token), &request_a), server.post("/apply", Some(&bob_token), &request_b));
+        let created: Vec<usize> = [&a, &b].iter().enumerate().filter(|(_, answer)| answer["ok"] == true).map(|(i, _)| i).collect();
+        assert_eq!(created.len(), 1, "exactly one list wins: {a} {b}");
+        let loser = [&a, &b][1 - created[0]];
+        assert!(["WIRE.ALREADY_EXISTS", "WIRE.CONFLICT", "WIRE.WORKER_BUSY"].contains(&loser["code"].as_str().unwrap_or("")), "{loser}");
+        let table = request_table(&mut setup).await;
+        let mut want: Vec<&String> = lists[created[0]].iter().collect();
+        want.sort();
+        let got: Vec<&str> = table.as_array().unwrap().iter().map(|row| row[1].as_str().unwrap()).collect();
+        assert_eq!(got, want, "round {round}: only the winner's ids exist, once each");
+        // Sending the loser's list again (what a CONFLICT asks for) finds the duplicate and still creates nothing.
+        let (loser_token, loser_id, loser_list) = if created[0] == 0 { (&bob_token, bob_id, &lists[1]) } else { (&alice_token, alice_id, &lists[0]) };
+        let resent = server.post("/apply", Some(loser_token), &recommend_request(&format!("race-again-{round}"), loser_id, loser_list)).await;
+        assert_eq!(resent["code"], "WIRE.ALREADY_EXISTS", "{resent}");
+        assert_eq!(request_table(&mut setup).await, table, "round {round}: the resent list creates nothing");
+    }
+    set_requests(&mut setup, &[]).await;
 
     mongo.database(MONGO_DB).drop().await.expect("drop the run-owned database");
     for schema in [META, SOURCE] {

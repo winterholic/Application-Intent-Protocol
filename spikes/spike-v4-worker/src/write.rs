@@ -223,6 +223,18 @@ pub async fn invoke_write_action(
                 if poisoned == Some("WIRE.CONFLICT") && message["error"]["code"] == "WIRE.CONFLICT" {
                     break rej("WIRE.CONFLICT", "확장이 읽은 뒤 행이 바뀜(expect 불일치): 다시 보내면 됨");
                 }
+                // A create the unique constraint refused: the extension ends with the same code (nothing was committed) so the caller can
+                // tell "already there" from a failing extension. An extension may also end with CONFLICT after it (a first call that lost
+                // the race to create a row), since the caller sends that one again.
+                if poisoned == Some("WIRE.ALREADY_EXISTS") {
+                    match message["error"]["code"].as_str() {
+                        Some("WIRE.ALREADY_EXISTS") => {
+                            break rej("WIRE.ALREADY_EXISTS", "이미 있는 행이라 만들 수 없음(유일 제약): 쓴 것은 모두 취소됨");
+                        }
+                        Some("WIRE.CONFLICT") => break rej("WIRE.CONFLICT", "같은 행을 동시에 만든 호출이 먼저 끝남: 다시 보내면 됨"),
+                        _ => {}
+                    }
+                }
                 if let Some(code) = poisoned {
                     break rej("WIRE.EXTENSION_ERROR", format!("ctx 실패 뒤 성공 반환: {code}"));
                 }

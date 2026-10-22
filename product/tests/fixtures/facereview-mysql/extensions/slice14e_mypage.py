@@ -334,7 +334,14 @@ async def myEmotionSummary(input, ctx):
     stats = await _stats(ctx, command="emotion_seconds", **({"after": after} if after else {}))
     if row is None:
         # The first call creates the member's row with zero totals (the original's `UserEmotionSummary(user_id=...)`).
-        await ctx.data.create("UserEmotionSummary", {"id": stats["user"]})
+        try:
+            await ctx.data.create("UserEmotionSummary", {"id": stats["user"]})
+        except Exception as error:
+            # Another call of the same member created the row first (the primary key refused this one): the server cancels this call's
+            # writes and the caller sends the request again, like a lock_version conflict.
+            if getattr(error, "code", None) == "WIRE.ALREADY_EXISTS":
+                raise type(error)("WIRE.CONFLICT")
+            raise
         row = {"id": stats["user"], "lock_version": 0, **{column: 0 for column in _SUMMARY_COLUMNS}}
     base = {emotion: int(row[column]) for emotion, column in zip(EMOTIONS, _SUMMARY_COLUMNS)}
     if after is not None and stats["checkpoint"] is None:

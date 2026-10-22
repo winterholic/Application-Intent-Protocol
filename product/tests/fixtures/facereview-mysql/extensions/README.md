@@ -102,9 +102,7 @@ padding source has one outcome), and the pool is smaller than 150 (no exploratio
 ### Not ported in WBS 7.2.3 (handed to the named items)
 
 - `GET watch/video` (detail): ported by WBS 7.2.5, see "Slice13-F" below.
-- `POST home/video/recommend` (7.2.9): `VideoRequest.create` exists, but the original derives `youtube_full_url` on the server, rejects
-  a URL that any member requested before (the caller cannot read other members' requests) and stores the batch in one transaction.
-  The derived value and the global duplicate check need a computed default and a unique index on `video_request.youtube_url`.
+- `POST home/video/recommend` (7.2.9): ported, see "Slice14-G" below.
 
 ## Slice13-F: watch detail (WBS 7.2.5)
 
@@ -281,3 +279,21 @@ where the original tried three times: send the request again. (3) The transition
 own totals directly. Nothing else reads the table (checked in the original's code), so only their own summary screen is affected; a
 transition that only extensions may call would close it. (4) A session needs `finalized_at` and `video_view_log_id` for the later calls,
 or the call fails. (5) One call sums at most 20000 sessions and fails beyond that instead of answering with a partial total.
+
+## Slice14-G: video request batch (WBS 7.2.9)
+
+`slice14g_request.py` ports `POST home/video/recommend` (`new-facereview@7948b7e7`, `home_service.py` `create_user_video_recommend`) as the
+write extension `VideoRequest.recommend`. It creates one `VideoRequest` per URL through the exposed create (access `create.VideoRequest`)
+in one transaction; the full YouTube URL is the database default of `youtube_full_url` and the unique `youtube_url` (binary collation)
+refuses a URL anyone requested before, also for two requests at the same moment. Decision D-P-RECOMMEND, evidence in `product/VERIFICATION.md`
+and `reference/slice14g_oracle.py` (golden `slice14g-golden.json`).
+
+| Original | AIP | Notes |
+|---|---|---|
+| `POST home/video/recommend` | `VideoRequest.recommend` | input `user` (the caller's own id) and `youtube_url_list` (JSON array text, 1 to 20 ids); output `requested` |
+| `existing_urls.intersection(...)` then `bulk_save_objects` | one exposed create per id, unique `youtube_url` | any refused id cancels the whole list; the duplicate answers `WIRE.ALREADY_EXISTS` (the original: 409 V004) |
+| `youtube_full_url=f"https://www.youtube.com/watch?v={url}"` | database default (`db-defaults.sql`) | the caller cannot write it |
+
+Differences: the same id twice in one list is refused (the original creates two rows); more than 20 ids and an id over 50 characters are refused;
+an invalid list answers `WIRE.EXTENSION_ERROR`. Before `db-defaults.sql` adds the unique key, remove duplicate `youtube_url` rows
+(the query is in that file).

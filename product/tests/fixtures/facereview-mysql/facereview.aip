@@ -410,7 +410,7 @@ resource VideoRequest {
     id: Uuid
     user: User
     youtube_url: Text(1..50)
-    youtube_full_url: Text(1..255)
+    youtube_full_url: Text(1..255) default database
     status: RequestStatus default database
     admin_comment: Text(1..255)?
     created_at: Time default database
@@ -432,9 +432,22 @@ resource VideoRequest {
   }
   expose apply reject { target id; bulk maxRows 1 }
   expose apply accept { target id; bulk maxRows 1 }
+  // POST home/video/recommend (WBS 7.2.9). The caller never writes youtube_full_url: the database computes it from youtube_url (db-defaults.sql)
+  // and the unique youtube_url answers WIRE.ALREADY_EXISTS for a video any member requested before, in any status, as the original's global
+  // duplicate check does, but also for two requests that arrive at the same time.
   expose create {
-    fields user, youtube_url, youtube_full_url
+    fields user, youtube_url
     allow user = actor and active(actor)
+  }
+  // The batch of the original's HomeService.create_user_video_recommend: every URL of the list is created by the exposed create above in one
+  // transaction, so the owner, the fields, the policy and the unique key are the create's own and a duplicate cancels the whole list.
+  extension write recommend {
+    input { user: User.Id; youtube_url_list: Text(2..1500) }
+    output { requested: Int(1..20) }
+    access create.VideoRequest
+    effect db
+    deadline 20s
+    implementation "slice14g_request.recommend"
   }
   expose read {
     select id, user, youtube_url, youtube_full_url, status, admin_comment, created_at, updated_at

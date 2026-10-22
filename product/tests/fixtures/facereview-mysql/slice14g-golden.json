@@ -1,0 +1,565 @@
+[
+ {
+  "name": "one new id",
+  "subject": "alice",
+  "before": [],
+  "urls": [
+   "abc12345678"
+  ],
+  "expected": {
+   "created": true,
+   "table": [
+    [
+     "11111111-1111-4111-8111-111111111111",
+     "abc12345678",
+     "https://www.youtube.com/watch?v=abc12345678",
+     "PENDING",
+     null,
+     "new"
+    ]
+   ]
+  }
+ },
+ {
+  "name": "three new ids keep the list order out of the table",
+  "subject": "alice",
+  "before": [],
+  "urls": [
+   "zzz",
+   "aaa",
+   "mmm"
+  ],
+  "expected": {
+   "created": true,
+   "table": [
+    [
+     "11111111-1111-4111-8111-111111111111",
+     "aaa",
+     "https://www.youtube.com/watch?v=aaa",
+     "PENDING",
+     null,
+     "new"
+    ],
+    [
+     "11111111-1111-4111-8111-111111111111",
+     "mmm",
+     "https://www.youtube.com/watch?v=mmm",
+     "PENDING",
+     null,
+     "new"
+    ],
+    [
+     "11111111-1111-4111-8111-111111111111",
+     "zzz",
+     "https://www.youtube.com/watch?v=zzz",
+     "PENDING",
+     null,
+     "new"
+    ]
+   ]
+  }
+ },
+ {
+  "name": "an id the member requested before is refused",
+  "subject": "alice",
+  "before": [
+   [
+    "11111111-1111-4111-8111-111111111111",
+    "dupe0000001",
+    "PENDING"
+   ]
+  ],
+  "urls": [
+   "dupe0000001"
+  ],
+  "expected": {
+   "created": false,
+   "table": [
+    [
+     "11111111-1111-4111-8111-111111111111",
+     "dupe0000001",
+     "https://www.youtube.com/watch?v=dupe0000001",
+     "PENDING",
+     null,
+     "old"
+    ]
+   ]
+  }
+ },
+ {
+  "name": "an id another member requested before is refused",
+  "subject": "alice",
+  "before": [
+   [
+    "22222222-2222-4222-8222-222222222222",
+    "dupe0000002",
+    "PENDING"
+   ]
+  ],
+  "urls": [
+   "dupe0000002"
+  ],
+  "expected": {
+   "created": false,
+   "table": [
+    [
+     "22222222-2222-4222-8222-222222222222",
+     "dupe0000002",
+     "https://www.youtube.com/watch?v=dupe0000002",
+     "PENDING",
+     null,
+     "old"
+    ]
+   ]
+  }
+ },
+ {
+  "name": "an id whose request was accepted is refused",
+  "subject": "alice",
+  "before": [
+   [
+    "22222222-2222-4222-8222-222222222222",
+    "dupe0000003",
+    "ACCEPTED"
+   ]
+  ],
+  "urls": [
+   "dupe0000003"
+  ],
+  "expected": {
+   "created": false,
+   "table": [
+    [
+     "22222222-2222-4222-8222-222222222222",
+     "dupe0000003",
+     "https://www.youtube.com/watch?v=dupe0000003",
+     "ACCEPTED",
+     null,
+     "old"
+    ]
+   ]
+  }
+ },
+ {
+  "name": "an id whose request was rejected is refused",
+  "subject": "alice",
+  "before": [
+   [
+    "33333333-3333-4333-8333-333333333333",
+    "dupe0000004",
+    "REJECTED"
+   ]
+  ],
+  "urls": [
+   "dupe0000004"
+  ],
+  "expected": {
+   "created": false,
+   "table": [
+    [
+     "33333333-3333-4333-8333-333333333333",
+     "dupe0000004",
+     "https://www.youtube.com/watch?v=dupe0000004",
+     "REJECTED",
+     null,
+     "old"
+    ]
+   ]
+  }
+ },
+ {
+  "name": "new ids before a duplicate are not kept",
+  "subject": "alice",
+  "before": [
+   [
+    "22222222-2222-4222-8222-222222222222",
+    "taken000001",
+    "PENDING"
+   ]
+  ],
+  "urls": [
+   "fresh000001",
+   "fresh000002",
+   "taken000001"
+  ],
+  "expected": {
+   "created": false,
+   "table": [
+    [
+     "22222222-2222-4222-8222-222222222222",
+     "taken000001",
+     "https://www.youtube.com/watch?v=taken000001",
+     "PENDING",
+     null,
+     "old"
+    ]
+   ]
+  }
+ },
+ {
+  "name": "a duplicate before new ids refuses them too",
+  "subject": "alice",
+  "before": [
+   [
+    "22222222-2222-4222-8222-222222222222",
+    "taken000002",
+    "PENDING"
+   ]
+  ],
+  "urls": [
+   "taken000002",
+   "fresh000003"
+  ],
+  "expected": {
+   "created": false,
+   "table": [
+    [
+     "22222222-2222-4222-8222-222222222222",
+     "taken000002",
+     "https://www.youtube.com/watch?v=taken000002",
+     "PENDING",
+     null,
+     "old"
+    ]
+   ]
+  }
+ },
+ {
+  "name": "unrelated requests are left alone",
+  "subject": "bob",
+  "before": [
+   [
+    "11111111-1111-4111-8111-111111111111",
+    "other000001",
+    "PENDING"
+   ],
+   [
+    "33333333-3333-4333-8333-333333333333",
+    "other000002",
+    "REJECTED"
+   ]
+  ],
+  "urls": [
+   "mine0000001"
+  ],
+  "expected": {
+   "created": true,
+   "table": [
+    [
+     "22222222-2222-4222-8222-222222222222",
+     "mine0000001",
+     "https://www.youtube.com/watch?v=mine0000001",
+     "PENDING",
+     null,
+     "new"
+    ],
+    [
+     "11111111-1111-4111-8111-111111111111",
+     "other000001",
+     "https://www.youtube.com/watch?v=other000001",
+     "PENDING",
+     null,
+     "old"
+    ],
+    [
+     "33333333-3333-4333-8333-333333333333",
+     "other000002",
+     "https://www.youtube.com/watch?v=other000002",
+     "REJECTED",
+     null,
+     "old"
+    ]
+   ]
+  }
+ },
+ {
+  "name": "an id of an existing video that nobody requested is accepted",
+  "subject": "alice",
+  "before": [],
+  "urls": [
+   "vid00000001"
+  ],
+  "expected": {
+   "created": true,
+   "table": [
+    [
+     "11111111-1111-4111-8111-111111111111",
+     "vid00000001",
+     "https://www.youtube.com/watch?v=vid00000001",
+     "PENDING",
+     null,
+     "new"
+    ]
+   ]
+  }
+ },
+ {
+  "name": "a text with spaces and symbols is kept verbatim",
+  "subject": "alice",
+  "before": [],
+  "urls": [
+   "a b&c=d?e#f"
+  ],
+  "expected": {
+   "created": true,
+   "table": [
+    [
+     "11111111-1111-4111-8111-111111111111",
+     "a b&c=d?e#f",
+     "https://www.youtube.com/watch?v=a b&c=d?e#f",
+     "PENDING",
+     null,
+     "new"
+    ]
+   ]
+  }
+ },
+ {
+  "name": "an id of the column length (50)",
+  "subject": "carol",
+  "before": [],
+  "urls": [
+   "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  ],
+  "expected": {
+   "created": true,
+   "table": [
+    [
+     "33333333-3333-4333-8333-333333333333",
+     "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+     "https://www.youtube.com/watch?v=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+     "PENDING",
+     null,
+     "new"
+    ]
+   ]
+  }
+ },
+ {
+  "name": "an id differing only by case is another id",
+  "subject": "alice",
+  "before": [
+   [
+    "22222222-2222-4222-8222-222222222222",
+    "CaseId00001",
+    "PENDING"
+   ]
+  ],
+  "urls": [
+   "caseid00001"
+  ],
+  "expected": {
+   "created": true,
+   "table": [
+    [
+     "22222222-2222-4222-8222-222222222222",
+     "CaseId00001",
+     "https://www.youtube.com/watch?v=CaseId00001",
+     "PENDING",
+     null,
+     "old"
+    ],
+    [
+     "11111111-1111-4111-8111-111111111111",
+     "caseid00001",
+     "https://www.youtube.com/watch?v=caseid00001",
+     "PENDING",
+     null,
+     "new"
+    ]
+   ]
+  }
+ },
+ {
+  "name": "twenty ids",
+  "subject": "bob",
+  "before": [],
+  "urls": [
+   "batch000000",
+   "batch000001",
+   "batch000002",
+   "batch000003",
+   "batch000004",
+   "batch000005",
+   "batch000006",
+   "batch000007",
+   "batch000008",
+   "batch000009",
+   "batch000010",
+   "batch000011",
+   "batch000012",
+   "batch000013",
+   "batch000014",
+   "batch000015",
+   "batch000016",
+   "batch000017",
+   "batch000018",
+   "batch000019"
+  ],
+  "expected": {
+   "created": true,
+   "table": [
+    [
+     "22222222-2222-4222-8222-222222222222",
+     "batch000000",
+     "https://www.youtube.com/watch?v=batch000000",
+     "PENDING",
+     null,
+     "new"
+    ],
+    [
+     "22222222-2222-4222-8222-222222222222",
+     "batch000001",
+     "https://www.youtube.com/watch?v=batch000001",
+     "PENDING",
+     null,
+     "new"
+    ],
+    [
+     "22222222-2222-4222-8222-222222222222",
+     "batch000002",
+     "https://www.youtube.com/watch?v=batch000002",
+     "PENDING",
+     null,
+     "new"
+    ],
+    [
+     "22222222-2222-4222-8222-222222222222",
+     "batch000003",
+     "https://www.youtube.com/watch?v=batch000003",
+     "PENDING",
+     null,
+     "new"
+    ],
+    [
+     "22222222-2222-4222-8222-222222222222",
+     "batch000004",
+     "https://www.youtube.com/watch?v=batch000004",
+     "PENDING",
+     null,
+     "new"
+    ],
+    [
+     "22222222-2222-4222-8222-222222222222",
+     "batch000005",
+     "https://www.youtube.com/watch?v=batch000005",
+     "PENDING",
+     null,
+     "new"
+    ],
+    [
+     "22222222-2222-4222-8222-222222222222",
+     "batch000006",
+     "https://www.youtube.com/watch?v=batch000006",
+     "PENDING",
+     null,
+     "new"
+    ],
+    [
+     "22222222-2222-4222-8222-222222222222",
+     "batch000007",
+     "https://www.youtube.com/watch?v=batch000007",
+     "PENDING",
+     null,
+     "new"
+    ],
+    [
+     "22222222-2222-4222-8222-222222222222",
+     "batch000008",
+     "https://www.youtube.com/watch?v=batch000008",
+     "PENDING",
+     null,
+     "new"
+    ],
+    [
+     "22222222-2222-4222-8222-222222222222",
+     "batch000009",
+     "https://www.youtube.com/watch?v=batch000009",
+     "PENDING",
+     null,
+     "new"
+    ],
+    [
+     "22222222-2222-4222-8222-222222222222",
+     "batch000010",
+     "https://www.youtube.com/watch?v=batch000010",
+     "PENDING",
+     null,
+     "new"
+    ],
+    [
+     "22222222-2222-4222-8222-222222222222",
+     "batch000011",
+     "https://www.youtube.com/watch?v=batch000011",
+     "PENDING",
+     null,
+     "new"
+    ],
+    [
+     "22222222-2222-4222-8222-222222222222",
+     "batch000012",
+     "https://www.youtube.com/watch?v=batch000012",
+     "PENDING",
+     null,
+     "new"
+    ],
+    [
+     "22222222-2222-4222-8222-222222222222",
+     "batch000013",
+     "https://www.youtube.com/watch?v=batch000013",
+     "PENDING",
+     null,
+     "new"
+    ],
+    [
+     "22222222-2222-4222-8222-222222222222",
+     "batch000014",
+     "https://www.youtube.com/watch?v=batch000014",
+     "PENDING",
+     null,
+     "new"
+    ],
+    [
+     "22222222-2222-4222-8222-222222222222",
+     "batch000015",
+     "https://www.youtube.com/watch?v=batch000015",
+     "PENDING",
+     null,
+     "new"
+    ],
+    [
+     "22222222-2222-4222-8222-222222222222",
+     "batch000016",
+     "https://www.youtube.com/watch?v=batch000016",
+     "PENDING",
+     null,
+     "new"
+    ],
+    [
+     "22222222-2222-4222-8222-222222222222",
+     "batch000017",
+     "https://www.youtube.com/watch?v=batch000017",
+     "PENDING",
+     null,
+     "new"
+    ],
+    [
+     "22222222-2222-4222-8222-222222222222",
+     "batch000018",
+     "https://www.youtube.com/watch?v=batch000018",
+     "PENDING",
+     null,
+     "new"
+    ],
+    [
+     "22222222-2222-4222-8222-222222222222",
+     "batch000019",
+     "https://www.youtube.com/watch?v=batch000019",
+     "PENDING",
+     null,
+     "new"
+    ]
+   ]
+  }
+ }
+]

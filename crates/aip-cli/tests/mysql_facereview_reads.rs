@@ -852,16 +852,23 @@ async fn facereview_schema_is_adopted_without_business_ddl_and_read_with_origina
         .await
         .unwrap();
     assert_eq!(bob_bookmark_count, Some(1), "refused removals preserve the other user's bookmark");
-    let request = create(
-        Some(alice.clone()),
-        "fr-r1",
-        "VideoRequest",
-        json!({"user": ALICE, "youtube_url": "newreq00001", "youtube_full_url": "https://www.youtube.com/watch?v=newreq00001"}),
-    )
-    .await;
+    let request = create(Some(alice.clone()), "fr-r1", "VideoRequest", json!({"user": ALICE, "youtube_url": "newreq00001"})).await;
     assert_eq!(request["ok"], true, "{request}");
     let status: Option<String> = setup.query_first("SELECT status FROM video_request WHERE youtube_url = 'newreq00001'").await.unwrap();
     assert_eq!(status.as_deref(), Some("PENDING"), "DB default");
+    let full: Option<String> = setup.query_first("SELECT youtube_full_url FROM video_request WHERE youtube_url = 'newreq00001'").await.unwrap();
+    assert_eq!(full.as_deref(), Some("https://www.youtube.com/watch?v=newreq00001"), "the database computes the full URL");
+    // The caller cannot write the full URL, and a second request for the same video id is refused whoever sent it (unique youtube_url).
+    let forged = create(
+        Some(alice.clone()),
+        "fr-r2",
+        "VideoRequest",
+        json!({"user": ALICE, "youtube_url": "newreq00002", "youtube_full_url": "https://evil.example/x"}),
+    )
+    .await;
+    assert_ne!(forged["ok"], true, "youtube_full_url is not a field of the create: {forged}");
+    let again = create(Some(bob.clone()), "fr-r3", "VideoRequest", json!({"user": BOB, "youtube_url": "newreq00001"})).await;
+    assert_eq!(again["code"], "WIRE.ALREADY_EXISTS", "{again}");
 
     // Roles of the original admin_required / super_admin_required, judged from the caller's own row.
     let everyone = read(Some(&bob), json!({"read": "User", "select": ["id"]})).await;

@@ -26,3 +26,13 @@ ALTER TABLE user_emotion_summary ALTER COLUMN neutral_seconds SET DEFAULT 0, ALT
 -- stored checkpoint, so a session finalized at .4 s was counted again by the next call (and one at .6 s could be skipped). The original
 -- app keeps working: its datetimes carry microseconds, which the column rounds to milliseconds.
 ALTER TABLE user_emotion_summary MODIFY last_finalized_at datetime(3) NULL;
+-- WBS 7.2.9 POST home/video/recommend: the caller sends only youtube_url. The full URL is computed by the database (the original app still
+-- writes the same text itself, so it keeps working), and one request per video id is enforced by a unique key, which the original checks
+-- in Python only (two requests at the same moment can both pass that check). Before adding the key, look for ids the original let in twice:
+--   SELECT youtube_url, COUNT(*) FROM video_request GROUP BY youtube_url HAVING COUNT(*) > 1;
+-- and keep one row of each (the key cannot be added while a duplicate exists). A YouTube id is case sensitive, so the column takes a binary
+-- collation first: under the table's case-insensitive one the key would refuse an id that differs from an earlier one only by case, which
+-- the original (comparing the texts in Python) accepts as another video. Comparing with video.youtube_url stays valid (the binary side wins).
+ALTER TABLE video_request MODIFY youtube_url varchar(50) COLLATE utf8mb4_bin NOT NULL COMMENT '유튜브 영상 ID (예: dQw4w9WgXcQ)';
+ALTER TABLE video_request ALTER COLUMN youtube_full_url SET DEFAULT (CONCAT('https://www.youtube.com/watch?v=', youtube_url));
+ALTER TABLE video_request ADD UNIQUE KEY uk_video_request_youtube_url (youtube_url);
