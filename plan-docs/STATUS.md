@@ -1,4 +1,16 @@
-# 최신 재개 지점 (2026-10-23, WBS 7.2.9/7.2.10 관리자 콘솔 SDK 전환, 코드 SHA `e4f2efe` Verify green)
+# 최신 재개 지점 (2026-10-23, WBS 7.2.9/7.2.10 관리자 권한·상태 검증 후속, 코드 SHA `1e528aa` Verify failed)
+
+코드 SHA `1e528aa4a2c47ca02a453c1c4f1f7c0075e5380f`는 origin/main과 일치하고 작업 트리가 clean이다. Verify `39939106930`은 public Actions 요약에서 실패, core job exit code 101로 확인했다. 같은 SHA에서 step 10~12는 success였고 step 13은 당시 진행 중이었다. 이후 API는 rate limit 403, public job 로그는 로그인 필요라 정확한 실패 step·원문·브라우저 artifact 내용은 미확인이다. 실패 원인을 권한 assertion이나 flaky로 분류하지 않았고 새 코드 push/재실행도 하지 않았다.
+
+정책 대조는 고정 원본 `new-facereview-admin-front` `ab0386c878a5ba5c7c079a262b987c10d211d22d`의 API exports/calls와 현재 AIP 선언을 따라갔다. 원본 정의는 SUPER_ADMIN의 GENERAL→ADMIN 및 ADMIN→GENERAL을 제공하고 ADMIN은 GENERAL만 비활성화하며 ADMIN/SUPER_ADMIN 대상은 허용하지 않는다. 기존 AIP 선언도 같은 정책이다. 삭제 영상 재삭제와 이미 종료된 요청 재결정은 원본이 거절하는 경계로 분류했고, 새 slice는 전용 fixture·실서버·브라우저·DB 상태 단언으로 닫으려 했으나 local service startup이 generic `SERVER_CONFIG`로 실패했고 CI도 최종 실패해 이 동작들의 live/browser/DB 증거는 아직 없다. 정책을 임의 변경하지 않았다. 상세는 [제품 검증 후속](../product/VERIFICATION.md#2026-10-23-관리자-권한경계-null-metrics-및-원본-api-분모-정정-코드-sha-1e528aa)을 참조한다.
+
+원본 API inventory를 다시 셌다: 관리자 feature API는 13개(읽기 7, 쓰기 6), shared auth API는 4개이며 `/auth/me`는 이 shared auth 쪽이다. 따라서 관리자 읽기 분모는 7이고 `/auth/me`를 8번째로 합산한 예전 해석은 정정한다. 5개 feature 화면·13개 관리자 API·사용자 25개 고유 경로는 별도 분모다. Linux 원본 contract가 host metrics를 null로 낼 수 있어 대시보드 overlay는 수치를 만들지 않고 부분 상태를 표시하도록 추가했으나, 이번 새 branch의 browser CI 실행 결과는 미확인이다. 관리자 token reissue와 7d 외 기간도 미검증이다.
+
+실행 근거: `node --test porting/facereview/ui-overlay/tests/adminDashboardStatus.test.ts porting/facereview/ui-overlay/tests/adminAdapter.test.ts porting/facereview/ui-overlay/tests/adminReadAdapter.test.ts` 24/24; browser evidence unittest 25 OK; SDK aggregate/jobs 회귀 21/21; Rust 실서비스 통합 시험은 `--no-run` compile 성공. local ignored live test 실행은 서버가 `SERVER_CONFIG`로 기동 실패해 정책 probe 전 중단됐다. macOS browser preflight blocked라 local browser 미실행. run-owned Docker fixtures는 제거했고 `docker ps -a --filter label=aip.admin-ui.run=20261023-admin-auth`는 비어 있었다. `/private/tmp/aip-adminui-20261023-*` 및 `/private/tmp/aip-sdk-0.1.0.tgz`는 삭제 시 safety guard가 거부했고 그대로 남아 있다(다른 방식으로 재시도하지 않음). `aip-p730-*`, 다른 작업의 5173은 불변. 다음 재개점은 CI failure 원문을 접근 가능한 경로로 확보하는 것, local fixture의 `SERVER_CONFIG` 실패 원인 규명, permission fixture/browser/DB assertion 결과 수집이다. profile after-save 빈 화면 원인은 별도 미확정으로 남긴다. WBS 진행률은 7.2.9 doing/90%, 7.2.10 doing/25% 그대로다. model 권리와 visitor policy는 계속 보류한다.
+
+---
+
+# 이전 최신 재개 지점 (2026-10-23, WBS 7.2.9/7.2.10 관리자 콘솔 SDK 전환, 코드 SHA `e4f2efe` Verify green)
 
 코드 SHA `e4f2efe97a7f712c3c8438abfdb8f5eb4e43a4d3`(origin/main 일치)의 Verify `39932769334`는 `success`(step 10~14 success)다. 고정 관리자 원본 `new-facereview-admin-front` `ab0386c`의 data access를 생성 TS SDK와 서버 정책으로 전환했다. 이전 "checkout 없음" 보고는 사실이 아니었고 로컬 `~/development/projects/facereview/new-facereview-admin-front`가 고정 commit과 같다(원본은 수정하지 않고 임시 clone에 overlay 적용).
 

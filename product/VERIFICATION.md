@@ -1455,3 +1455,38 @@ CI: Verify `39922363131` attempt 1은 step 12의 `mysql_worker_write_e2e.rs:433`
 **이전 dirty clone 보존 patch.** Run `a14a5dd2-8b40-4471-9bca-967ab33d9ee0`의 `aip-ui-dirty-clone-preservation/`는 읽지 못했다. `ls`가 ttakkari 가드에 거부됐고(우회하지 않음), `list_artifacts`(agent 영역, 이름 검색)는 빈 목록이었다. 미확인이다. 이번 Run은 사용자 소유 자료나 dirty 사본을 삭제하지 않았다.
 
 **CI 결과 (같은 SHA, 이 절의 로컬 결과와 구분).** 코드 SHA `e4f2efe97a7f712c3c8438abfdb8f5eb4e43a4d3`(origin/main 일치)의 Verify `39932769334`는 `completed success`다. step 10(core: 새 overlay 시험 6개 파일과 `aggregate.test.ts`를 `tools/verify.sh`에 넣은 상태), 11(member UI 준비), 12(고정 admin UI 클론, overlay 적용, `npm ci`, SDK tarball 설치, `tsc -b`, `vite build`), 13(실제 HTTP, worker, MySQL, 브라우저 여정, 새 `mysql_facereview_admin_ui` 포함), 14 모두 `success`. 이 push 전에 추가 코드 push는 없었다(취소 반복 없음). artifact `facereview-ui-browser-39932769334-1`의 `admin-browser-result.json`: `journey_stage=logout`, `failure_type` 없음, 페이지 오류 0, API 요청 82개 모두 `ok:true`, 계약 지문 일치, 원본 REST 호출 0건. **`dashboard: rendered`** (Linux): `admin-dashboard.png`에 연결 칩 MySQL, Redis, MongoDB `정상`, CPU 53%·메모리 21%·디스크 59%, 신규 가입 추이, 장르별 조회수(animal, cook)가 보인다. 로컬 macOS에서 못 본 대시보드 렌더는 이 CI가 닫았다. 같은 run의 member add/remove/profile 여정 증거는 이번 변경 대상이 아니며, profile after-save 화면의 헤더만 보이는 증거 갭(`after_save_visible_text_length=133`)은 별도 추적 대상으로 그대로 남아 있다(원인 단정 없음). 로컬(macOS Seatbelt)과 CI(Linux Bubblewrap)는 별개 실행이다. 원시 증거는 이번 Run outbox의 `admin-browser-evidence-local/`(로컬)과 `ci-39932769334-artifact/`(CI)에 있고 GitHub artifact는 삭제하지 않았다.
+
+## 2026-10-23 관리자 권한경계, null metrics 및 원본 API 분모 정정 (코드 SHA `1e528aa4a2c47ca02a453c1c4f1f7c0075e5380f`)
+
+이 후속은 위 `e4f2efe` Verify green의 기존 범위를 유지하면서 다음 admin slice를 추가했다. **최종 SHA의 Verify는 green이 아니다.** `39939106930` public Actions 요약은 Failure, core job annotation은 `Process completed with exit code 101`이다. `gh run watch`의 check-log 요청은 `403 Forbidden (checks:read 누락)`, 다음 `gh run view`는 API rate limit 403이었다. public UI에서 job 로그는 로그인 필요였고 artifact row에서 파일 내용을 열지 못했다. step 10–12 success, step 13은 직전 관측 때 in progress였지만 이후 실패한 정확한 step과 실패 assertion은 확인하지 못했다. artifact `facereview-ui-browser-39939106930-1` (560 KB, digest `sha256:7f09e2bdc026ce4b8848799b9336de5558c1b1de2a8bda609b03ad0fa7fa72ff`)의 내용, 이번 run의 browser request/page 결과도 미확인이다. exit 101을 특정 테스트의 실패 원인으로 해석하지 않는다.
+
+### 원본 분모 전수 대조
+
+고정 관리자 원본 `src/api/admin.ts`의 exports와 실제 화면 호출처를 SDK binding 및 overlay 사용처와 대조했다. 관리자 feature API는 **13개: 읽기 7 + 쓰기 6**이다. 읽기는 사용자·요청·영상·댓글 목록 4개와 system status·business stats·signup trend 3개다. 쓰기는 관리자 기존 5개와 승인 1개다. `/auth/me`는 `src/api/auth.ts`의 shared auth 4개 중 하나이고 login 화면의 사용자 확인에 쓰이므로 관리자 feature read에 더하지 않는다. 따라서 이전 기록의 “읽기 8개”와 이를 `/auth/me`로 맞춘 해석은 잘못된 분모였으며, 실제 admin read 분모는 7이다. 이 정정은 별도 shared auth endpoint를 없애거나 새 API를 만들지 않는다. 관리자 화면은 dashboard/users/videos/video-requests/comments **5개**(index redirect와 fallback은 별도 feature screen으로 세지 않음)다. 이 분모는 사용자 UI의 25개 unique route와 별도로 유지한다.
+
+### 정책·상태 대조와 새 증거의 한계
+
+핀 원본의 role/deactivate 동작과 기존 AIP 선언을 비교했다. SUPER_ADMIN은 활성 대상의 GENERAL↔ADMIN 지정을 할 수 있고, ADMIN은 GENERAL만 비활성화할 수 있으며 ADMIN/SUPER_ADMIN을 비활성화할 수 없다. 역할 변경은 SUPER_ADMIN 전용이다. 기존 정의가 이와 일치해 정책을 바꾸지 않았다. 추가된 fixture/HTTP/browser 코드는 SUPER_ADMIN의 GENERAL→ADMIN, ADMIN의 GENERAL 비활성화 및 ADMIN·SUPER_ADMIN 보호, ADMIN 직접 SDK 위조 대상/role 호출, 종료 요청 재거절 경계를 검증하도록 작성됐다. 그러나 이 Run의 ignored live test는 서버 시작 단계에서 generic `SERVER_CONFIG`로 중단됐고 policy probes와 DB assertions까지 도달하지 못했다. macOS Chromium preflight는 blocked였으며 local browser는 실행하지 않았다. 최종 CI도 실패했지만 로그와 artifact 본문이 접근되지 않아 이 추가 browser/DB 검증이 수행·통과됐는지 확인되지 않았다. 그러므로 이 slice의 허용·거부 assertion은 **구현된 검증 코드**이지, 통과한 실서비스/browser 증거가 아니다.
+
+원본 경계 대조상 삭제된 영상을 다시 삭제하거나 PENDING이 아닌 종료 요청을 승인/거절할 때 원본은 변경을 거부한다. AIP 선언은 이미 종료된 요청에 대해 `from status = PENDING`을 요구한다. 새 코드에는 이미 REJECTED 요청 재거절이 `WIRE.EFFECT_TARGET_MISSING`이고 DB/화면 상태가 유지되는지 확인하는 probe가 있으나 live/browser 결과는 위와 같은 이유로 미확인이다. 원본 오류 envelope와 UI 문구의 완전한 동등성도 미검증이다.
+
+### nullable host metrics와 부분 화면
+
+`product/tests/fixtures/facereview-mysql/extensions/slice14h_dashboard.py`의 원본 경계에 따라 host metrics는 Linux 전용 provider가 값을 내지 못하면 `null`일 수 있다. 이는 정상 optional 입력이며 숫자 0의 의미가 아니다. 추가된 `dashboardStatus.ts`는 null metrics에서 임의 수치를 만들지 않고 “호스트 지표를 사용할 수 없습니다.” 부분 상태를 보여준다. 해당 helper 단위 시험은 통과했다. 기존 `e4f2efe`의 Linux browser는 metrics가 있는 경우의 대시보드 렌더만 확인했으므로 null branch의 mounted browser render는 미검증이다. 권한 slice를 막는 항목은 아니다. `/my/edit` 저장 뒤 빈 본문 screenshot은 원인과 API 계약이 별도 미확정이며 이번 admin 변경으로 해결됐다고 보지 않는다.
+
+### 실행한 검사와 최종 상태
+
+| 명령/검사 | 관측 결과 |
+|---|---|
+| `node --test porting/facereview/ui-overlay/tests/adminDashboardStatus.test.ts porting/facereview/ui-overlay/tests/adminAdapter.test.ts porting/facereview/ui-overlay/tests/adminReadAdapter.test.ts` | 24/24 통과 |
+| `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest product.tests.test_facereview_ui_browser_evidence` | 25 tests OK |
+| `node --test spikes/spike-v6-transport/client/aggregate.test.ts spikes/spike-v6-transport/client/jobs.test.ts` | 21/21 통과(aggregate filter omission, UUID job scalar 포함) |
+| `cargo fmt --all --check && git diff --check` | exit 0 |
+| `cargo test -p aip-cli --features mysql --test mysql_facereview_admin_ui --no-run --locked` (합성 PostgreSQL build guard DSN, 별도 target) | compile 성공, test executable 생성 |
+| ignored 실서비스 test `cargo test ... mysql_facereview_admin_ui -- --ignored --exact ...` | 실패: 서버 준비 단계에서 `SERVER_CONFIG`; policy probe 이전. 일반화 가능한 원인은 출력되지 않아 미확정 |
+| macOS browser preflight | blocked (Chromium mach-register/mach-lookup); browser 미실행 |
+| Verify `39939106930`, SHA `1e528aa…` | Failure, core exit 101; 원문 실패 step/assertion과 artifact 내부는 미확인 |
+
+코드 commit/push는 `1e528aa4a2c47ca02a453c1c4f1f7c0075e5380f` 한 번이다. Verify 종료를 확인한 뒤에는 추가 코드 push를 하지 않았다. 이번에 바뀐 WBS source-of-truth와 coverage/다음 재개점은 이 문서, [상태 기록](../plan-docs/STATUS.md), [porting 정본](../plan-docs/porting/README.md), [overlay 안내](../porting/facereview/ui-overlay/README.md)에 이어 기록한다. PMS 7.2.9 `doing/90%`, 7.2.10 `doing/25%` 유지. 기간 7d 외, token reissue, 전체 사용자 25 route browser journey, profile after-save 결과 화면, model 권리 및 visitor policy는 미검증/보류로 남는다.
+
+자원: 이 Run 소유 fixture container 세 개는 제거했고 label 조회 결과 잔존 없음. `aip-p730-*`와 다른 프로젝트 5173은 건드리지 않았다. 이 Run의 `/private/tmp/aip-adminui-20261023-{target,ui,sdk,npm-cache,definition.aip}` 및 `/private/tmp/aip-sdk-0.1.0.tgz`는 safety guard가 `rm -rf` 제거를 거부해 남아 있다. 다른 삭제 수단으로 재시도하지 않았으며 repo target은 없고 repo 크기는 약 1.6G다. 이전 Run의 `a14a5dd2` guard 거부 자료도 미확인 상태를 유지한다.

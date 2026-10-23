@@ -17,6 +17,14 @@
 원본 작업 트리는 수정하지 않는다. 운영이 지금 이 SHA라는 주장은 하지 않으며 **실험 baseline**으로 고정한다.
 각 파일의 SHA-256과 dependency lock hash는 [inventory JSON](facereview-inventory.json)의 repositories에 있다.
 
+### 2026-10-23 관리자 overlay coverage 정정 및 후속
+
+고정 admin UI `new-facereview-admin-front` `ab0386c878a5ba5c7c079a262b987c10d211d22d`의 `src/api/admin.ts` exports/calls, `src/api/auth.ts`, 화면 call sites, overlay SDK operations를 대조했다. 관리자 feature API는 13개(읽기 7, 쓰기 6)이고 `/auth/me`는 login에서 쓰는 shared auth 4개 중 하나다. 이전 계획의 “읽기 8개”는 `/auth/me`를 별도 admin read로 합산한 오해이므로 7 reads로 정정한다. 관리자 feature screen은 dashboard/users/videos/video-requests/comments 5개다. fallback/index, shared auth와 사용자 25개 unique route는 이 분모와 합치지 않는다.
+
+원본 권한 계약과 AIP 선언은 일치한다: SUPER_ADMIN은 활성 사용자의 GENERAL↔ADMIN 전환을 할 수 있고 역할 변경은 SUPER_ADMIN 전용이다. ADMIN은 GENERAL만 비활성화할 수 있으며 ADMIN/SUPER_ADMIN 대상은 거부한다. 정책 변경은 하지 않았다. 삭제된 영상 재삭제 및 이미 종료된 요청의 승인/거절도 원본 거부 경계로 대조했다. 새 fixture/실서버/browser/DB assertion은 작성했지만 통과 근거는 아직 없다: local service startup이 generic `SERVER_CONFIG`에서 멈췄고 최종 Verify `39939106930`은 core exit 101로 실패했다. 정확한 실패 단계·artifact 본문은 접근되지 않았다. 자세한 명령, 로컬 단위 결과와 재개점은 [제품 검증](../../product/VERIFICATION.md#2026-10-23-관리자-권한경계-null-metrics-및-원본-api-분모-정정-코드-sha-1e528aa), [상태 기록](../STATUS.md)을 따른다.
+
+원본의 Linux host metrics capability는 값이 없으면 null을 반환할 수 있다. overlay는 이를 정상 optional 입력으로 처리해 가짜 0 대신 부분 상태를 표시한다. helper 단위 시험은 통과했지만 null branch의 mounted browser 검증은 미확인이다. admin token reissue, 7d 외 기간, 사용자 UI 전체 browser 경로와 profile after-save 빈 화면도 별도 잔여로 유지한다. 7.2.9 doing/90%, 7.2.10 doing/25%이며 DoD 전체 완료로 표시하지 않는다.
+
 `facereview-front`는 이전 사용자 프런트(README·Docker 배포 workflow), `-ref`는 `-joowon`과 같은 upstream의 참조 사본이다.
 두 저장소를 별도의 현재 제품으로 더해 분모를 늘리지 않는다. `origin-codes/`는 레거시 구현이므로 실행 제품이 아니다.
 Swagger/Redoc/OpenAPI와 Flask static은 프레임워크 생성 경로이며 업무 포팅 분모에서 제외하고 runtime route 비교에는 별도 표시한다.
