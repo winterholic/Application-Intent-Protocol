@@ -1384,7 +1384,7 @@ run artifact `12482507650`(191,611 bytes)의 profile/add safe JSON과 screenshot
 
 ## 2026-10-23 Verify 39910753805 결과와 수정 반복 상한
 
-Verify `39910753805`(SHA `bd3ef4abc6bdc678f939134e78fd4bea08e94f80`)는 세 번째 10분 대기 구간에 완료됐고 `failure`다. step 12 `Verify real HTTP to Node and Python workers to MySQL`의 `facereview_accounts_log_in_refresh_and_log_out_without_the_originals_replay_defect`가 `crates/aip-cli/tests/mysql_facereview_auth.rs:611`에서 browser script의 nonzero exit 때문에 실패했다. `gh run view 39910753805 --log-failed`는 gh log-cache 경로 쓰기 권한 오류가 이미 확인돼 재시도하지 않았다. 대신 `gh api repos/winterholic/Application-Intent-Protocol/actions/runs/39910753805/logs`의 raw step 12를 읽었다.
+Verify `39910753805`(SHA `bd3ef4abc6bdc678f939134e78fd4bea08e94f80`)는 세 번째 대기 시도 중 완료됐고 `failure`다. step 12 `Verify real HTTP to Node and Python workers to MySQL`의 `facereview_accounts_log_in_refresh_and_log_out_without_the_originals_replay_defect`가 `crates/aip-cli/tests/mysql_facereview_auth.rs:611`에서 browser script의 nonzero exit 때문에 실패했다. `gh run view 39910753805 --log-failed`는 gh log-cache 경로 쓰기 권한 오류가 이미 확인돼 재시도하지 않았다. 대신 `gh api repos/winterholic/Application-Intent-Protocol/actions/runs/39910753805/logs`의 raw step 12를 읽었다.
 
 이 run은 앞선 `/read` gate에서 boolean `ok`가 없던 문제를 안전하게 분류하기 위한 두 번째 수정 후 실행됐다. add-bookmark 단계의 `VideoBookmark` POST `/read`는 HTTP 200, runtime contract fingerprint 일치, 허용된 query shape를 가졌지만 `response.json()`이 실패해 browser script는 `response_shape: {"json_kind":"invalid_json"}`을 남겼다. raw server log에는 route `read`, status 200만 있고 관련 `WIRE.*` code가 없다. 응답 본문과 비공개 값을 evidence로 보존하지 않도록 설계했으므로 실제 body와 서버 측 생성 경로는 확인되지 않았다. 이 때문에 valid API success나 구체적 서버 root cause를 주장할 수 없다.
 
