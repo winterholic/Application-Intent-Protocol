@@ -79,25 +79,38 @@ def fixture_thumbnail_redirect_url(
 
 
 def youtube_iframe_api_stub(url: str, resource_type: str) -> str | None:
-    """Return a no-op player API only for YouTube's loader script; never fetch or play media."""
+    """Return a inert loader response only for YouTube's API script; never fetch or play media."""
     parsed = urlsplit(url)
     if resource_type != "script" or parsed.hostname not in {"youtube.com", "www.youtube.com"} or parsed.path != "/iframe_api":
         return None
-    return """(() => {
-      const noop = () => {};
-      const PlayerState = {UNSTARTED: -1, ENDED: 0, PLAYING: 1, PAUSED: 2, BUFFERING: 3, CUED: 5};
-      function Player(_target, options) {
-        Object.assign(this, {
-          playVideo: noop, pauseVideo: noop, stopVideo: noop, seekTo: noop,
-          mute: noop, unMute: noop, setVolume: noop, getVolume: () => 0,
-          getCurrentTime: () => 0, getDuration: () => 0,
-          getPlayerState: () => PlayerState.UNSTARTED, destroy: noop,
-        });
-        queueMicrotask(() => options?.events?.onReady?.({target: this}));
-      }
-      window.YT = {Player, PlayerState};
-      window.onYouTubeIframeAPIReady?.();
-    })();"""
+    return "/* Player playback is outside this browser journey; keep the provider API unavailable. */"
+
+
+def response_envelope_evidence(payload: Any) -> dict[str, object]:
+    """Summarize only top-level response shape; never retain response values or unknown key names."""
+    if isinstance(payload, dict):
+        known_keys = sorted(key for key in payload if key in {"ok", "code", "msg", "rows", "deps", "maxAgeMs"})
+        if "ok" not in payload:
+            ok_type = "missing"
+        else:
+            ok = payload["ok"]
+            ok_type = "bool" if isinstance(ok, bool) else type(ok).__name__
+        summary: dict[str, object] = {
+            "json_kind": "object",
+            "known_keys": known_keys,
+            "unknown_key_count": len(payload) - len(known_keys),
+            "ok_type": ok_type,
+        }
+        rows = payload.get("rows")
+        if isinstance(rows, list):
+            summary["rows_length"] = len(rows)
+        code = safe_wire_code(payload.get("code"))
+        if code is not None:
+            summary["code"] = code
+        return summary
+    if isinstance(payload, list):
+        return {"json_kind": "array", "array_length": len(payload)}
+    return {"json_kind": "null" if payload is None else type(payload).__name__}
 
 
 def read_request_evidence(body: Any) -> dict[str, object]:

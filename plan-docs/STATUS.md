@@ -1,14 +1,14 @@
-# 최신 재개 지점 (2026-10-23 05:50 UTC, Verify 실패 원인 수정 로컬 검증)
+# 최신 재개 지점 (2026-10-23 06:20 UTC, Verify 39907973571 실패 조사 뒤 2차 수정 준비)
 
-Verify `39905029803`(SHA `654eb4c3d9f6e5cdbd935863d84509247d59ed72`)는 세 번째 10분 대기 구간에서 완료됐고 `failure`다. step 12(`Verify real HTTP to Node and Python workers to MySQL`)에서 profile browser journey는 실제 브라우저를 끝까지 실행했다. profile JSON의 `journey_stage=profile_fields_confirmed`, 표시 이름 `AIP 프로필 표본회원`, 선택 장르 `eating,horror`, 저장 이름 `AIP 프로필 수정회원`, 저장 장르 `animal,eating`, `write_bundle_ok=true`를 확인했다. 같은 시험의 뒤이은 MySQL 행 assertion도 통과한 다음 기존 add-bookmark browser journey로 이동했다. profile before/after screenshot도 열어 확인했다.
+Verify `39907973571`(SHA `cce3987b2197463f1eb1bbf7861e17d3a6aa3c20`)는 세 번째 10분 대기 구간에 완료됐고 `failure`다. step 12에서 `mysql_facereview_auth.rs:611`이 browser script의 후속 검증 실패로 panic했다. 원문은 `gh api repos/winterholic/Application-Intent-Protocol/actions/runs/39907973571/logs`에서 받았다. 직전 `gh run view --log-failed`는 gh log-cache 쓰기 권한 오류가 이미 확인되어 반복하지 않았다.
 
-실패는 profile이 아니라 기존 회원 bookmark journey의 reload 뒤였다: `journey_stage=bookmark_reloaded`, route class `watch_fixture`, watch content visible, page errors 0. safe artifact에는 `즐겨찾기 해제` `aria-pressed=true`가 DOM allowlist에 있었지만, 외부 YouTube script 두 건(`net::ERR_FAILED`) 뒤 player error dialog가 accessible role locator를 가렸다. 이 dialog의 확인 CTA는 `/`로 이동한다는 이전 근거가 있어 버튼 클릭이나 selector 완화로 넘기지 않는다. 이는 실제 bookmark 값 실패의 증거가 아니며 add/reload 뒤 SQL assertion은 미검증이다.
+profile 브라우저 JSON과 MySQL 저장 행 assertion은 다시 통과했다: 표본 이름·장르를 읽고 수정 뒤 이름 `AIP 프로필 수정회원`, 장르 `animal,eating`, `write_bundle_ok=true`다. before screenshot은 화면을 보여 주지만 after screenshot은 상단 로고만 보이고 본문은 비어 있어 최종 화면 screenshot 증거로 보지 않는다. 브라우저 bookmark는 `journey_stage=completed`까지 갔고 `add-bookmarked.png`에는 `저장됨`이 보인다. 이때 로컬 player API fixture 호출은 2회, 외부 media 실패 0, page error는 `Error` 2건이다.
 
-`gh run view 39905029803 --log-failed`는 이 Codex Mac nested worker 실행에서 gh의 log-cache 생성(`~/.cache/gh/run-log-39905029803-1792732710.zip`)이 `operation not permitted`로 막혔다. 원문은 `gh api repos/winterholic/Application-Intent-Protocol/actions/runs/39905029803/logs`로 받아 step 12를 확인했다. profile/add JSON과 screenshot 확인 뒤 run artifact `12480314914`를 삭제했고 재조회한 artifact 수는 0이다.
+실패는 browser script 종료 직전의 strict `/read` gate다. `VideoBookmark` 읽기 HTTP 200, contract fingerprint 일치, 쿼리 shape 허용을 확인했지만 safe JSON에 boolean `ok`가 없어 `failed_read_requests()`가 실패로 분류했다. raw server log에는 해당 요청을 설명하는 `WIRE.*` code가 없었다. 이 run은 response body shape를 artifact에 안전하게 기록하지 않아 성공 envelope인지 다른 JSON인지 확정할 수 없다. 이를 `/read` API 성공으로 단정하거나 gate를 완화하지 않는다.
 
-수정은 UI/API 계약이나 실제 외부 연결을 풀지 않는다. 브라우저 fixture가 `youtube.com/iframe_api` script 요청에만 로컬 no-op player API를 돌려주고 실제 YouTube·영상 provider 자원은 계속 차단한다. 따라서 bookmark UI를 검증할 수 있지만 영상 재생이나 ML 추론 증거로 세지 않는다. 새 helper의 URL/resource allowlist 회귀와 Python evidence 시험은 통과했다. 다음은 수정과 검증 내용을 한 번 push해 새 Verify를 끝까지 기다리고, green일 때만 관리자 UI slice를 시작하는 것이다.
+artifact `12482507650`(191,611 bytes)의 profile/add JSON 및 screenshot을 확인한 뒤 삭제했고 artifact 재조회는 0개다. 이 두 번째 수정은 (1) 응답 원문·값을 저장하지 않고 top-level JSON kind, allowlisted key 이름, unknown key 수, `ok` type, `rows` 길이와 allowlisted wire code만 evidence에 남기고, (2) `youtube.com/iframe_api`에만 callback 없는 inert loader 응답을 주어 player script 오류를 피한다. 실제 provider 요청은 계속 차단한다. 이 재개점에서 보정 효과는 미검증이다.
 
-로컬 확인: `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest product.tests.test_facereview_ui_browser_evidence` 16/16, Python `py_compile` 성공, `git diff --check` 성공. PostgreSQL 시험 DB는 이번 Run에서 시작하지 않았다. 저장소는 1.6G, `target/` 없음. `aip-p730-*` 및 `aip-fixture-*-p730` 컨테이너는 다른 작업 소유여서 건드리지 않았다.
+로컬 확인: `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest product.tests.test_facereview_ui_browser_evidence` 17/17, Python `py_compile`, `git diff --check` 성공. 이번에 DB·컨테이너·cargo target을 시작하지 않았다. 저장소는 1.6G, `target/` 없음. p730 컨테이너는 다른 작업 소유여서 유지한다. 다음은 이 변경을 두 번째 수정으로 commit/push하고 Verify가 끝날 때까지 기다리는 것이다. green 전에는 관리자 UI slice를 시작하지 않는다. 이 두 번째 수정 뒤에도 실패하면 반복 상한에 따라 원인과 미확정 범위를 보고한다.
 
 ---
 

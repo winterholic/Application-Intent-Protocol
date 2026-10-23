@@ -1373,3 +1373,11 @@ Verify `39905029803`(SHA `654eb4c3d9f6e5cdbd935863d84509247d59ed72`)는 step 12 
 `gh run view 39905029803 --log-failed`는 Codex Mac nested worker 실행에서 log-cache 쓰기(`/Users/winterholic/.cache/gh/run-log-39905029803-1792732710.zip`)가 `operation not permitted`로 막혔다. `gh api .../actions/runs/39905029803/logs`로 내려받은 원문 step 12를 대신 검사했다. 실행 artifact `12480314914`(206,614 bytes)는 profile/add safe JSON과 screenshots를 확인한 뒤 삭제했고, artifact 목록 재조회는 0개였다.
 
 profile success는 계정 화면 write 한 조각만 다룬다. 25개 사용자 경로 전체, 관리자 UI, browser bookmark on/off와 SQL 0→1→0, 전체 prerender는 미완료다. model.h5 추론과 visitor policy는 계속 보류한다.
+
+## 2026-10-23 Verify 39907973571 결과와 `/read` 응답 형태 진단
+
+Verify `39907973571`(SHA `cce3987b2197463f1eb1bbf7861e17d3a6aa3c20`)는 step 12에서 실패했다. profile browser journey 및 MySQL profile 행 assertion은 다시 통과했다. before screenshot은 profile edit 화면을 보였지만 after screenshot은 로고만 있고 본문이 비어 있어 결과 화면 증거로 인정하지 않는다. 후속 bookmark browser journey는 `journey_stage=completed`였고 `add-bookmarked.png`에서 `저장됨` UI를 확인했다. 다만 후속 strict `/read` gate가 실패했으므로 Rust caller의 뒤이은 bookmark SQL assertion은 실행되지 않았다.
+
+실패 원문은 `gh api repos/winterholic/Application-Intent-Protocol/actions/runs/39907973571/logs`로 조회했다. `mysql_facereview_auth.rs:611`은 browser script의 `failed_read_requests()` 실패를 받아 panic했다. safe evidence에 든 `VideoBookmark` POST `/read`는 HTTP 200, contract fingerprint 일치, query shape 허용이며 boolean `ok`가 없었다. raw server log에는 설명할 `WIRE.*` code가 없었다. 이 artifact에는 response body shape가 없으므로 API 결과가 왜 boolean `ok`를 포함하지 않았는지는 미확정이다. 이전 `gh run view 39907973571 --log-failed`는 gh cache 경로에 zip을 쓰다 `operation not permitted`가 났으므로 같은 명령을 반복하지 않고 API logs endpoint를 사용했다.
+
+run artifact `12482507650`(191,611 bytes)의 profile/add safe JSON과 screenshot을 확인한 뒤 삭제했고, artifact 재조회는 0개다. 다음 진단 수정은 response 원문/값을 저장하지 않고 object/list/null 형태, allowlist 내 key 이름, 미지 key 수, `ok` 자료형, `rows` 길이, allowlist된 wire code만 기록한다. 동시에 YouTube iframe API script에는 `YT` 객체나 callback을 만들지 않는 inert JavaScript를 반환해 외부 provider 요청을 유지 차단한다. 이는 실제 media playback 검증이 아니다. 이번 변경 결과는 후속 Verify 완료 전까지 미검증이다.

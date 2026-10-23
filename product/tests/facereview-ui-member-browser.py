@@ -26,6 +26,7 @@ from product.tests.facereview_ui_browser_evidence import (
     failed_read_requests,
     fixture_thumbnail_redirect_url,
     youtube_iframe_api_stub,
+    response_envelope_evidence,
     read_request_evidence,
     safe_browser_caller_frames,
     safe_browser_failure_type,
@@ -208,8 +209,10 @@ def main() -> int:
                         request_contract = response.request.headers.get("x-aip-contract")
                         try:
                             envelope = response.json()
+                            response_shape = response_envelope_evidence(envelope)
                         except Exception:
                             envelope = {}
+                            response_shape = {"json_kind": "invalid_json"}
                         row: dict[str, object] = {
                             "method": response.request.method,
                             "path": parsed.path,
@@ -225,6 +228,7 @@ def main() -> int:
                             if code is not None:
                                 row["code"] = code
                         if parsed.path == "/read":
+                            row["response_shape"] = response_shape
                             try:
                                 read_evidence = read_request_evidence(response.request.post_data_json)
                             except Exception:
@@ -246,6 +250,7 @@ def main() -> int:
                                 read_result["ok"] = row["ok"]
                             if isinstance(row.get("code"), str):
                                 read_result["code"] = row["code"]
+                            read_result["response_shape"] = response_shape
                             read_requests.append(read_result)
                         if parsed.path == "/extension":
                             try:

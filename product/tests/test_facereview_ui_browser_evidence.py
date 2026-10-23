@@ -14,6 +14,7 @@ from product.tests.facereview_ui_browser_evidence import (
     safe_bookmark_control_evidence,
     safe_wire_code,
     youtube_iframe_api_stub,
+    response_envelope_evidence,
 )
 
 
@@ -22,9 +23,18 @@ VIDEO_ID = "aaaaaaaa-0000-4000-8000-000000000001"
 
 class BrowserEvidenceTests(unittest.TestCase):
     def test_youtube_player_fixture_matches_only_the_provider_api_script(self):
-        self.assertIsNotNone(youtube_iframe_api_stub("https://www.youtube.com/iframe_api", "script"))
+        stub = youtube_iframe_api_stub("https://www.youtube.com/iframe_api", "script")
+        self.assertIsNotNone(stub)
+        self.assertNotIn("window.YT", stub)
         self.assertIsNone(youtube_iframe_api_stub("https://www.youtube.com/watch?v=abc", "document"))
         self.assertIsNone(youtube_iframe_api_stub("https://example.com/iframe_api", "script"))
+
+    def test_response_shape_keeps_only_safe_envelope_metadata(self):
+        self.assertEqual(
+            response_envelope_evidence({"rows": [{"secret": "omit"}], "private": "omit"}),
+            {"json_kind": "object", "known_keys": ["rows"], "unknown_key_count": 1, "ok_type": "missing", "rows_length": 1},
+        )
+        self.assertEqual(response_envelope_evidence({"ok": "missing"})["ok_type"], "str")
 
     def test_read_evidence_unwraps_sdk_envelope_and_identifies_known_rejected_query_key(self):
         summary = read_request_evidence({
