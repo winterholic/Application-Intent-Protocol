@@ -1,4 +1,12 @@
-# 최신 재개 지점 (2026-10-23 04:56 UTC, Verify 39902365530 대기 · 관리자 쓰기 adapter 조각)
+# 최신 재개 지점 (2026-10-23 05:25 UTC, profile browser import 수정 push 뒤 Verify 대기)
+
+Verify `39902365530`(SHA `93890fa`)은 `failure`다(25m23s). 실패 step은 12(`Verify real HTTP to Node and Python workers to MySQL`)이고 raw log에서 `facereview-ui-profile-browser.py` line 20의 `ModuleNotFoundError: No module named 'product'`로 확인했다. member 스크립트에는 있는 `sys.path.insert(0, <repo root>)`가 profile 스크립트에는 없었다. 이 스크립트는 지금까지 어떤 run에서도 끝까지 실행된 적이 없다(앞선 run은 모두 cancelled). 같은 step의 `http_apply_runs_real_node_and_python_workers` 1건은 통과했고 password login 시험은 member SDK journey 로그까지 지난 뒤 profile 브라우저 호출에서 panic했다. step 11(pinned React 준비)은 success, 같은 SHA의 보조 workflow 5개는 success다. artifact `facereview-ui-browser-39902365530-1`은 695 byte의 `contract-evidence.json` 하나뿐이라 screenshot이 없어 삭제하지 않았다(만료에 맡김). 이 run은 `mysql_facereview_watch` 빈 timeline 단정을 확인하지 못했다(log에서 watch 시험 실행 흔적 0건, 어느 step이 돌리는지는 확인 필요).
+
+수정은 profile 스크립트에 `sys.path.insert`를 member 스크립트와 같은 방식으로 추가한 것이다. 로컬에서는 같은 경로로 `product.tests.facereview_ui_browser_evidence` import만 확인했고(`import ok`) playwright가 없어 브라우저 실행은 못 했다. 수정 뒤에도 profile 화면 단정 자체의 첫 실행이라 다른 실패가 나올 수 있다. 이 수정과 로컬 커밋 `a4af05f`(관리자 쓰기 adapter)를 한 번에 push한다. 새 Verify가 끝나기 전에는 추가 push를 하지 않는다.
+
+---
+
+# 이전 재개 지점 (2026-10-23 04:56 UTC, Verify 39902365530 대기 · 관리자 쓰기 adapter 조각)
 
 Verify `39901115868`(SHA `6b1a8d4`)은 `cancelled`로 확정했다. step 10이 04:50:37 UTC에 취소되고 browser step 11–12는 skipped였다. 원인은 `verify.yml`의 `cancel-in-progress: true`이고 다음 push `93890fa`가 같은 ref의 새 run을 시작했다(추론, 취소 actor 미조회). 따라서 profile/reset/withdraw의 browser 증거와 회수할 screenshot은 없다. 현재 `39902365530`(SHA `93890fa`)은 04:55 UTC 조회 때 `in_progress`(결과 없음)였다. **이 run이 끝나기 전에는 새 SHA를 push하지 않는다.** 연속 push가 매번 Verify를 browser step 전에 취소했다. 끝난 뒤에는 `mysql_facereview_watch`의 빈 timeline 단정과 profile browser 결과를 한 번 읽고, 실패면 raw step output으로 원인을 조사한다. 2시간 polling은 하지 않는다.
 

@@ -10,13 +10,14 @@ import re
 import signal
 import ssl
 import subprocess
+import sys
 import tempfile
 import threading
 import time
 from urllib.parse import urlsplit
 
 from playwright.sync_api import expect, sync_playwright
-
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from product.tests.facereview_ui_browser_evidence import (
     read_request_evidence,
     safe_browser_failure_type,
