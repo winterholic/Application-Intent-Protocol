@@ -40,6 +40,30 @@ export interface AdapterOptions {
   warn?: (message: string, detail?: unknown) => void;
 }
 
+type SafeListEvidence = {
+  extension: string;
+  adapter_list_length: number;
+  contains_fixture_video: boolean;
+};
+
+type SafeListEvidenceGlobals = typeof globalThis & {
+  __AIP_SAFE_LIST_FIXTURE_ID__?: string;
+  __AIP_SAFE_LIST_EVIDENCE__?: (event: SafeListEvidence) => void;
+};
+
+function reportSafeListEvidence(extension: string, videos: VideoDataType[]): void {
+  const globals = globalThis as SafeListEvidenceGlobals;
+  const fixtureId = globals.__AIP_SAFE_LIST_FIXTURE_ID__;
+  const report = globals.__AIP_SAFE_LIST_EVIDENCE__;
+  if (typeof fixtureId !== 'string' || typeof report !== 'function') return;
+  report({
+    extension,
+    adapter_list_length: videos.length,
+    contains_fixture_video: videos.some((video) => video.video_id === fixtureId),
+  });
+}
+
+
 const fail = (message: string, code: string, detail?: unknown): never => {
   throw Object.assign(new Error(message), { code, detail });
 };
@@ -68,7 +92,9 @@ export function createReadApi(client: AipClient, options: AdapterOptions = {}) {
     /** GET home/category. The original ignores `category_name` (it answers with the member's own category lists), and so does this. */
     async getVideoList(_category?: string): Promise<{ category_name: string; videos: VideoDataType[] }[]> {
       const output = await client.extension('Video.homeCategory', {});
-      return parseText<{ category_name: string; videos: VideoDataType[] }[]>(output.categories, 'homeCategory.categories') || [];
+      const categories = parseText<{ category_name: string; videos: VideoDataType[] }[]>(output.categories, 'homeCategory.categories') || [];
+      reportSafeListEvidence('Video.homeCategory', categories.flatMap((category) => category.videos));
+      return categories;
     },
 
     /** GET home/search. The UI sends no emotion filter, which the extension reads as an empty comma separated list. */
@@ -86,13 +112,17 @@ export function createReadApi(client: AipClient, options: AdapterOptions = {}) {
     /** GET home/video/all. */
     async getAllVideo(props: { page: number; size: number; emotion: string }): Promise<VideoDataType[]> {
       const output = await client.extension('Video.homeVideoAll', { emotion: props.emotion, page: props.page, size: props.size });
-      return unwrapPage<VideoDataType>(output, 'homeVideoAll').videos;
+      const videos = unwrapPage<VideoDataType>(output, 'homeVideoAll').videos;
+      reportSafeListEvidence('Video.homeVideoAll', videos);
+      return videos;
     },
 
     /** GET home/personalized. */
     async getPersonalRecommendedVideo(): Promise<VideoDataType[]> {
       const output = await client.extension('Video.homePersonalized', {});
-      return parseText<VideoDataType[]>(output.videos, 'homePersonalized.videos');
+      const videos = parseText<VideoDataType[]>(output.videos, 'homePersonalized.videos');
+      reportSafeListEvidence('Video.homePersonalized', videos);
+      return videos;
     },
 
     /**

@@ -7,11 +7,14 @@ import os
 import re
 from pathlib import Path
 import subprocess
+import sys
 import time
 import traceback
 from urllib.parse import urlsplit
 
 from playwright.sync_api import expect, sync_playwright
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from product.tests.facereview_ui_browser_evidence import extension_request_evidence, extension_response_evidence
 
 
 VIDEO_ID = "aaaaaaaa-0000-4000-8000-000000000001"
@@ -48,7 +51,11 @@ def main() -> int:
         stderr=subprocess.DEVNULL,
     )
     api_paths: list[dict[str, object]] = []
+    adapter_list_evidence: list[dict[str, object]] = []
     page_errors: list[str] = []
+    console_error_count = 0
+    blocked_external_image_count = 0
+    rendered_state: dict[str, int] = {}
     screenshot_names: list[str] = []
     try:
         ready = False
@@ -72,6 +79,11 @@ def main() -> int:
             try:
                 page = browser.new_page(viewport={"width": 1280, "height": 900})
                 page.set_default_timeout(15000)
+                page.add_init_script(
+                    "window.__AIP_SAFE_LIST_FIXTURE_ID__ = " + json.dumps(VIDEO_ID) + ";"
+                    "window.__AIP_SAFE_LIST_EVIDENCE__ = (event) => "
+                    "console.info('AIP_SAFE_LIST_EVIDENCE:' + JSON.stringify(event));"
+                )
 
                 def capture_response(response) -> None:
                     parsed = urlsplit(response.url)
@@ -93,15 +105,52 @@ def main() -> int:
                             for key in ("ok", "code"):
                                 if key in envelope and isinstance(envelope[key], (bool, str)):
                                     row[key] = envelope[key]
+                        if parsed.path == "/extension":
+                            try:
+                                extension_request = extension_request_evidence(response.request.post_data_json)
+                            except Exception:
+                                extension_request = {}
+                            if extension_request:
+                                row["extension_request"] = extension_request
+                                row.update(extension_response_evidence(
+                                    str(extension_request["extension"]), envelope, VIDEO_ID
+                                ))
                         api_paths.append(row)
 
                 page.on("response", capture_response)
-                page.on("pageerror", lambda _error: page_errors.append("unhandled-page-error"))
+                page.on("pageerror", lambda error: page_errors.append(type(error).__name__))
+
+                def capture_console_error(message) -> None:
+                    nonlocal console_error_count
+                    text = message.text
+                    prefix = "AIP_SAFE_LIST_EVIDENCE:"
+                    if text.startswith(prefix):
+                        try:
+                            event = json.loads(text[len(prefix):])
+                        except (TypeError, ValueError):
+                            return
+                        allowed_extensions = {"Video.homeVideoAll", "Video.homeCategory", "Video.homePersonalized"}
+                        if (isinstance(event, dict)
+                                and event.get("extension") in allowed_extensions
+                                and isinstance(event.get("adapter_list_length"), int)
+                                and isinstance(event.get("contains_fixture_video"), bool)):
+                            adapter_list_evidence.append({
+                                "extension": event["extension"],
+                                "adapter_list_length": event["adapter_list_length"],
+                                "contains_fixture_video": event["contains_fixture_video"],
+                            })
+                    elif message.type == "error":
+                        console_error_count += 1
+
+                page.on("console", capture_console_error)
 
                 # The fixture's YouTube ID is not fetched or played; AIP API traffic remains untouched.
                 def block_external_media(route) -> None:
+                    nonlocal blocked_external_image_count
                     host = urlsplit(route.request.url).hostname or ""
                     if host.endswith(("youtube.com", "youtube-nocookie.com", "ytimg.com", "googlevideo.com")):
+                        if route.request.resource_type == "image":
+                            blocked_external_image_count += 1
                         route.abort()
                     else:
                         route.continue_()
@@ -115,6 +164,25 @@ def main() -> int:
                     page.locator("#authPassword").fill(password)
                     page.get_by_role("button", name="로그인", exact=True).click()
                     expect(page).to_have_url(re.compile(r"/main$"), timeout=30000)
+                    page.wait_for_load_state("networkidle", timeout=10000)
+
+                    def capture_render_state() -> None:
+                        nonlocal rendered_state
+                        rendered_state = page.evaluate("""(fixtureTitle) => {
+                          const cards = [...document.querySelectorAll('.video-item-container')];
+                          const countIn = (selector) => document.querySelectorAll(`${selector} .video-item-container`).length;
+                          return {
+                            rendered_card_count: cards.length,
+                            fixture_card_count: cards.filter((card) =>
+                              [...card.querySelectorAll('.video-title')].some((title) => title.textContent?.trim() === fixtureTitle)
+                            ).length,
+                            personalized_card_count: countIn('.personal-recommend-contents-container'),
+                            genre_card_count: countIn('.genre-contents-container'),
+                            popular_card_count: countIn('.hot-contents-container'),
+                          };
+                        }""", VIDEO_TITLE)
+
+                    capture_render_state()
                     video_card = page.locator(".video-item-container").filter(has_text=VIDEO_TITLE).first
                     expect(video_card).to_be_visible(timeout=30000)
                     screenshot = output / f"{args.phase}-member-video-list.png"
@@ -146,6 +214,22 @@ def main() -> int:
                     screenshot_names.append(screenshot.name)
                 except Exception:
                     # Keep a safe view of the last UI state even when this phase fails.
+                    try:
+                        rendered_state = page.evaluate("""(fixtureTitle) => {
+                          const cards = [...document.querySelectorAll('.video-item-container')];
+                          const countIn = (selector) => document.querySelectorAll(`${selector} .video-item-container`).length;
+                          return {
+                            rendered_card_count: cards.length,
+                            fixture_card_count: cards.filter((card) =>
+                              [...card.querySelectorAll('.video-title')].some((title) => title.textContent?.trim() === fixtureTitle)
+                            ).length,
+                            personalized_card_count: countIn('.personal-recommend-contents-container'),
+                            genre_card_count: countIn('.genre-contents-container'),
+                            popular_card_count: countIn('.hot-contents-container'),
+                          };
+                        }""", VIDEO_TITLE)
+                    except Exception:
+                        rendered_state = {}
                     email_field = page.locator("#authEmail")
                     if email_field.count():
                         email_field.evaluate("element => { element.value = ''; }")
@@ -174,6 +258,12 @@ def main() -> int:
             "server_listening_fingerprint": expected_contract,
             "ui_binding_fingerprint": binding_contract,
             "api_requests": api_paths,
+            "adapter_list_evidence": adapter_list_evidence,
+            "rendered_state": rendered_state,
+            "page_error_count": len(page_errors),
+            "page_error_types": page_errors,
+            "console_error_count": console_error_count,
+            "blocked_external_image_count": blocked_external_image_count,
             "screenshots": screenshot_names,
             "external_video_provider": "blocked; not fetched or played",
             "credentials_recorded": False,
@@ -190,6 +280,13 @@ def main() -> int:
             "server_listening_fingerprint": expected_contract,
             "ui_binding_fingerprint": binding_contract,
             "api_requests": api_paths,
+            "adapter_list_evidence": adapter_list_evidence,
+            "rendered_state": rendered_state,
+            "fixture_video": {"id": VIDEO_ID},
+            "page_error_count": len(page_errors),
+            "page_error_types": page_errors,
+            "console_error_count": console_error_count,
+            "blocked_external_image_count": blocked_external_image_count,
             "screenshots": screenshot_names,
             "credentials_recorded": False,
             "browser_api_mocks": False,

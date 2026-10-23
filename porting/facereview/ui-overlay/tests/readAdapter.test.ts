@@ -41,6 +41,29 @@ test('home category: the extension takes no input and its JSON text becomes the 
   assert.deepEqual(calls, [{ kind: 'extension', name: 'Video.homeCategory', input: {} }], 'category_name is not sent: the original ignores it');
 });
 
+test('home video adapter emits only allowlisted fixture-list evidence when opted in', async () => {
+  const fixtureId = 'aaaaaaaa-0000-4000-8000-000000000001';
+  const events: unknown[] = [];
+  const globals = globalThis as typeof globalThis & {
+    __AIP_SAFE_LIST_FIXTURE_ID__?: string;
+    __AIP_SAFE_LIST_EVIDENCE__?: (event: unknown) => void;
+  };
+  globals.__AIP_SAFE_LIST_FIXTURE_ID__ = fixtureId;
+  globals.__AIP_SAFE_LIST_EVIDENCE__ = (event) => events.push(event);
+  try {
+    const { client } = fakeClient({ 'Video.homeVideoAll': {
+      videos: JSON.stringify([{ ...video(fixtureId), title: 'must-not-be-recorded' }]),
+      total: 1, page: 1, size: 20, has_next: false,
+    } });
+    await createReadApi(client).getAllVideo({ page: 1, size: 20, emotion: 'all' });
+  } finally {
+    delete globals.__AIP_SAFE_LIST_FIXTURE_ID__;
+    delete globals.__AIP_SAFE_LIST_EVIDENCE__;
+  }
+  assert.deepEqual(events, [{ extension: 'Video.homeVideoAll', adapter_list_length: 1, contains_fixture_video: true }]);
+  assert.equal(JSON.stringify(events).includes('must-not-be-recorded'), false);
+});
+
 test('search: the UI sends no emotions, the page keeps total/page/size/has_next and the videos are parsed', async () => {
   const output = { videos: JSON.stringify([video('a'), video('b')]), total: 7, page: 2, size: 2, has_next: true };
   const { client, calls } = fakeClient({ 'Video.homeSearch': output });
