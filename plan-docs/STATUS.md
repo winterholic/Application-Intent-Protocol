@@ -1,4 +1,12 @@
-# 최신 재개 지점 (2026-10-24, reissue 종료 경계 확인·focused 계약 분리)
+# 최신 재개 지점 (2026-10-24 04:15 KST, 회원 UI/DB 성공 확인·일반 E2E 범위 복구)
+
+코드 `d29c014146fa557acf6983208e0aa6f988af4e98`의 자동 Verify `40003138384` attempt 1은 completed/success다. 직접 다운로드한 artifact `12524337062`에서 profile browser/DB success, 필수 영역 4개 visually_ready=true, member reissue browser/DB success, 만료 거절 2회→reissue 1회→USED refresh row +1, 실제 `send`/`fetchWithRefresh`/`postWithToken` frames를 확인했다. 북마크 추가·해제도 completed, page error 0이다. 해제 여정 종료 시 `/extension` 2건 unfinished는 별도 남으며 모든 요청 종료를 주장하지 않는다. 과거 CI 실패의 구체 원인은 소급 확정하지 않는다.
+
+다만 workflow 대조에서 `d29c014`가 일반 push/PR에도 무조건 `run-ci-member`를 호출한 회귀를 발견했다. broad gate는 통과했지만 recommendation/watch/effects/jobs/admin의 전체 MySQL E2E까지 통과한 실행으로 확대하지 않는다. 일반 실행은 `run-ci`, 명시적 `member_ui_diagnostic=true`만 `run-ci-member`를 선택하도록 복구했다. 실제 workflow shell의 빈 입력/false/true를 실행하는 회귀 시험이 수정 전 2개 실패, 수정 후 전체 evidence unittest 39개 및 YAML syntax/diff check 통과다. 복구 코드의 전체 CI는 다음 push에서 확인한다. PMS 90%/25%, 사용자 25 route 미완, model.h5·visitor 보류는 유지한다. 상세는 product/VERIFICATION.md 마지막 절이다.
+
+---
+
+# 이전 재개 지점 (2026-10-24, reissue 종료 경계 확인·focused 계약 분리)
 
 Verify `39988060660` attempt1, SHA `17d00728820c5852b566c4cf8991779b28e7cf36`는 step10 broad gate success, step14 HTTP/worker/MySQL/browser failure, artifact preservation success다. Safe artifact를 직접 내려받아 검사했다. `member-reissue-browser-result.json`은 `journey_stage=completed`, expiry refusal 2건, `/auth/reissue` 1건, retry 2건, page error 0; 별도 `reissue-db-result.json`은 `database_status=success`, USED refresh row +1, rotation observed=true다. 다만 DB 결과의 `browser_status=failure`라 프로세스 성공으로 합산하지 않는다. 같은 run의 별도 bookmark `add-browser-result.json`은 `bookmark_settle` AssertionError, lifecycle rows 0이다.
 
@@ -8,7 +16,7 @@ Focused Verify `39994997512` attempt1, 같은 SHA는 API job/step 결과상 step
 
 이 수정은 `run-ci-member`로 MySQL worker-write와 member auth/UI 검증만 돌리고 종료하게 분리한다. 기존 `run-ci` full suite와 Mongo/Redis fixtures 및 일반 workflow gate는 유지한다. Safe locator directory는 workflow 시작 직후 만들고, 실패 시 stage·체크아웃 shell의 literal command·exit status만 남긴다. stdout/stderr, 환경값, token, cookie, DB URL은 쓰지 않는다. 주요 build/UI preparation/test 경계마다 stage를 갱신한다. 이전 focused 실패 artifact는 없으므로 첫 원인 command는 이 변경 전에는 확인 불가로 남긴다.
 
-Local evidence: browser evidence unittest 38/38, profile script AST parse, Ruby YAML syntax parse, `bash -n` on safe locator/E2E/broad verification scripts, `git diff --check` all pass. Browser/DB E2E and macOS browser were not run. Current patch has not yet been pushed; automatic Verify ID/SHA are pending. WBS 7.2.9 `doing/90%`, 7.2.10 `doing/25%`; route 25 incomplete, model.h5/visitor deferred. Engine auto/general unchanged. Current tool catalog has no `account_usage` or routing-receipt lookup; the provided 03:16 KST usage snapshot is not independently refreshed here.
+Local evidence at that worker run: browser evidence unittest 38/38, profile script AST parse, Ruby YAML syntax parse, `bash -n` on safe locator/E2E/broad verification scripts, `git diff --check` all pass. Browser/DB E2E and macOS browser were not run locally. Subsequently pushed as `d29c014`; Verify `40003138384` and its limited E2E scope are recorded above. WBS 7.2.9 `doing/90%`, 7.2.10 `doing/25%`; route 25 incomplete, model.h5/visitor deferred. Engine auto/general unchanged. Current tool catalog has no `account_usage` or routing-receipt lookup; the provided 03:16 KST usage snapshot is not independently refreshed here.
 
 ---
 

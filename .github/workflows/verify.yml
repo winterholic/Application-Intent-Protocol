@@ -186,7 +186,12 @@ jobs:
           AIP_FACEREVIEW_BROWSER_OUTPUT: ${{ runner.temp }}/aip-facereview-browser
           AIP_E2E_FAILURE_FILE: ${{ runner.temp }}/aip-facereview-browser/verify-failure.txt
         shell: bash
-        run: bash scripts/verify-mysql-worker-e2e.sh run-ci-member
+        run: |
+          if [[ "${{ inputs.member_ui_diagnostic }}" == "true" ]]; then
+            bash scripts/verify-mysql-worker-e2e.sh run-ci-member
+          else
+            bash scripts/verify-mysql-worker-e2e.sh run-ci
+          fi
       - name: Preserve FaceReview browser screenshots and safe network evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

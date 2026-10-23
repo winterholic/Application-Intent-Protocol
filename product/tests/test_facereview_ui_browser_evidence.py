@@ -39,6 +39,22 @@ VIDEO_ID = "aaaaaaaa-0000-4000-8000-000000000001"
 
 
 class BrowserEvidenceTests(unittest.TestCase):
+    def test_workflow_uses_full_e2e_unless_member_diagnostic_is_explicit(self):
+        workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/verify.yml").read_text()
+        step = workflow.split("      - name: Verify real HTTP to Node and Python workers to MySQL\n", 1)[1].split("      - name:", 1)[0]
+        run = step.split("        run:", 1)[1].strip("\n")
+        if run.strip().startswith("|"):
+            command = "\n".join(line.removeprefix("          ") for line in run.splitlines()[1:])
+        else:
+            command = run.strip()
+        for value, expected in [("", "run-ci"), ("false", "run-ci"), ("true", "run-ci-member")]:
+            with self.subTest(member_ui_diagnostic=value):
+                # Execute the workflow's actual shell branch without starting its database fixtures.
+                shell = 'bash() { printf "%s\\n" "$2"; };\n' + command.replace("${{ inputs.member_ui_diagnostic }}", value)
+                result = subprocess.run(["bash", "-eu", "-c", shell], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.strip(), expected)
+
     def test_playwright_exit_failure_reverses_success_return_negative_control(self):
         class DriverScope:
             def __enter__(self):

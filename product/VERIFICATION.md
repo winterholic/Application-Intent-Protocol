@@ -1622,3 +1622,16 @@ Focused Verify `39994997512`, 동일 SHA attempt1은 API job steps 11–13(build
 **초기부터 남는 실패 locator.** workflow 시작 시 browser artifact directory와 `verify-failure.txt`를 먼저 만든다. workflow/script의 주요 stage에서 stage label을 갱신하고, 실패 시 checkout shell의 literal `BASH_COMMAND` 및 exit status를 최대 500자로 기록한다. 명령 출력·환경값·token·cookie·DB URL은 저장하지 않는다. 이후 artifact upload는 이 locator와 browser outputs를 함께 보존한다. 이는 테스트 전에 실패한 setup도 stage로 구분하고, 무파일 업로드를 피한다.
 
 **검증.** TDD RED에서 lifecycle scope test와 locator negative test 각각 실패 확인 후 수정했다. 최종 `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest product.tests.test_facereview_ui_browser_evidence`는 38 tests OK; browser script AST parse, Ruby YAML syntax parse, `bash -n scripts/verify-safe-locator.sh scripts/verify-mysql-worker-e2e.sh tools/verify.sh`, `git diff --check`도 통과했다. CI/browser/MySQL은 이번 Run에서 실행하지 않았다. 새 코드 push 및 자동 Verify 결과는 follow-up으로 추가한다.
+
+
+### 2026-10-24 Verify 40003138384 회원 증거 확인과 일반 E2E 분기 복구
+
+`gh run view 40003138384 --json headSha,status,conclusion,attempt,jobs`를 직접 조회했다: 코드 `d29c014146fa557acf6983208e0aa6f988af4e98`, attempt 1, completed/success. Artifact API `12524337062` (`facereview-ui-browser-40003138384-1`)를 현재 기획 Run outbox에 다운로드해 JSON을 검사했다. Profile browser/DB status 모두 success, 저장 이름·장르 2개·다른 회원 marker 보존 true, after-animation 필수 영역 4개 visually_ready=true다. Member reissue browser/DB status 모두 success, USED refresh row +1, expired refusals 2, reissue 1, fetch hook 설치 true/관측 17개, allowlisted frames `send`/`fetchWithRefresh`/`postWithToken`를 확인했다. 이전 browser JSON completed 대 프로세스 failure 불일치는 이번 실행에서 재현되지 않았다. 이 사실은 과거 CI에서 종료 예외가 발생했다는 소급 증명이 아니다.
+
+북마크 add/remove는 모두 completed, page error 0, failure_type=null이다. Add lifecycle은 요청/응답/finished 23개, 실패 0, unfinished 0이다. Remove는 요청 22개/finished 20개이며 종료 시 `/extension` 2건 unfinished가 있어 모든 요청 종료를 주장하지 않는다. Generic `verify-failure.txt`의 command/exit_status=pending은 실패 관측값이 아니며 실제 GitHub job 결과와 각 browser/DB JSON을 기준으로 판정한다.
+
+**일반 실행 범위 회귀를 발견했다.** Workflow의 실제 run은 dispatch input과 무관하게 `run-ci-member`였다. 따라서 이 자동 Verify의 broad gate 및 member UI/DB 성공은 실제이지만 recommendation/watch/external effects/jobs/admin full MySQL E2E 성공으로 확대하지 않는다. 기존 shell full `run-ci`가 남아 있어도 workflow가 호출하지 않으면 일반 gate가 유지된 것이 아니다. 입력 없는 push/PR 및 false 수동 실행은 `run-ci`, true 진단만 `run-ci-member`를 선택하도록 최소 복구했다. 원인 대조 기준은 `.github/workflows/verify.yml`의 실행 경로다.
+
+회귀 시험은 실제 workflow shell을 읽어 Bash로 빈 입력/false/true 세 경우의 선택 명령을 실행한다(실DB fixture 실행은 대체). 수정 전 빈 입력·false가 `run-ci-member`를 골라 FAIL 2건, 수정 후 evidence unittest 39 tests OK. Ruby YAML syntax parse 및 git diff check도 통과했다. Full suite를 복구한 코드 SHA의 CI는 다음 push에서 확인하며, 일반 CI 종료 전에 focused dispatch나 추가 push를 하지 않는다. UI 진단 전용 모드 자체의 새 실행은 이번 회원 성공 증거에 필요하지 않아 중복 dispatch하지 않았다.
+
+WBS7.2.9 doing/90%,7.2.10 doing/25%,사용자25route 미완료,model.h5권리 및 visitor정책 보류는 유지한다. GH raw log cache 거부 경로는 접근하지 않았다.
