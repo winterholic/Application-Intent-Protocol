@@ -1,3 +1,15 @@
+# 최신 재개 지점 (2026-10-23, WBS 7.2.9/7.2.10 관리자 콘솔 SDK 전환, 코드 SHA `e4f2efe` Verify green)
+
+코드 SHA `e4f2efe97a7f712c3c8438abfdb8f5eb4e43a4d3`(origin/main 일치)의 Verify `39932769334`는 `success`(step 10~14 success)다. 고정 관리자 원본 `new-facereview-admin-front` `ab0386c`의 data access를 생성 TS SDK와 서버 정책으로 전환했다. 이전 "checkout 없음" 보고는 사실이 아니었고 로컬 `~/development/projects/facereview/new-facereview-admin-front`가 고정 commit과 같다(원본은 수정하지 않고 임시 clone에 overlay 적용).
+
+구현: 읽기 7개와 `/auth/me`(`adminReadAdapter.ts`), 승인 durable job adapter(`adminAdapter.ts`), 기존 쓰기 5개 유지, 적용 스크립트 `porting/facereview/apply-admin-ui-overlay.sh`, 실서비스 시험 `mysql_facereview_admin_ui.rs`, 별도 브라우저 여정 `facereview-ui-admin-browser.py`, `verify.yml`의 관리자 UI 준비·build 단계. SDK 결함 2건을 실제 콘솔로 발견해 SDK에서 고쳤다: 독립 `aggregate()` 호출 부재(와 `filter: []` 거절), job 입출력의 `Uuid` 스칼라 미지원. 상세와 원본 대조표는 [제품 검증](../product/VERIFICATION.md) 끝의 관리자 콘솔 절이다.
+
+검증: 로컬 macOS에서 서버 정책(일반 회원, 비인증은 정확한 code로 거절, 관리자는 대조군 통과), 고정 admin UI `tsc -b`/build, 브라우저 여정(쓰기 5개, 승인 job, DB·Mongo 단언). CI Linux에서 같은 여정과 대시보드 렌더(`rendered`, 오류 0, 요청 82개 모두 ok)까지 통과. 미검증: 기간 선택 7d 외, 토큰 reissue, `ADMIN 지정` 방향, ADMIN 계정의 GENERAL 한정 비활성화 브라우저 시험, 삭제된 영상 재삭제 같은 원본 오류 경계, 성공 메시지 문구의 원본 대조. profile after-save 화면 갭은 이번 일과 별도로 열려 있다. 이전 dirty clone 보존 patch(Run `a14a5dd2…`의 `aip-ui-dirty-clone-preservation/`)는 가드 거부와 빈 artifact 목록으로 확인하지 못했다(미확인).
+
+정리: repo `target` 3.0G를 `cargo clean`으로 회수(4.6G에서 1.6G), 이 Run의 컨테이너 3개와 `/tmp/aip-admin-run`(overlay 적용 clone은 저장소 파일과 `cmp`로 동일함을 확인한 뒤)을 삭제했다. 소유가 불명한 `aip-p730-*`, `aip-fixture-*-p730` 컨테이너와 다른 `/private/tmp/aip-*` 항목, 5173(다른 프로젝트 dev server)은 건드리지 않았다. 다음 순서: 7.2.10의 남은 사용자 화면과 위 미검증 항목, 7.2.6의 model.h5·visitor 정책은 계속 보류.
+
+---
+
 # 최신 재개 지점 (2026-10-23 09:05 UTC, browser journey 수정 SHA `d6718c4` Verify green)
 
 코드 SHA `d6718c40a09952939ad90336c2c4595fefc063bb`(origin/main 일치)의 Verify `39922363131`은 attempt 2에서 `success`다. 직전 조사의 최소 수정안을 member와 profile에 한 커밋으로 적용했다. member: 클릭 전에 `.video-information-container .title`에 fixture 제목이 보일 때까지 기다리고, 클릭 뒤 북마크 `/read`와 `/apply`가 `requestfinished`(본문 수집 포함)에 이를 때까지 기다린 다음 reload하고 `aria-pressed`를 단정한다. profile: 본문을 `requestfinished`에서 읽고, 저장 `/apply`의 본문 수집을 기다린 뒤 목적지 페이지의 읽기와 `networkidle`까지 기다려 screenshot을 찍고 화면 텍스트 길이를 기록한다. 단정 완화, mock, 숨은 버튼 조작, 제품 코드 변경은 없다.
