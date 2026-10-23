@@ -507,6 +507,19 @@ def profile_render_evidence(snapshot: Any) -> dict[str, object]:
     }
 
 
+def profile_content_animation_incomplete(evidence: Any) -> bool:
+    """Gate the screenshot on the profile's own fade animation, not unrelated page motion."""
+    animations = evidence.get("animations") if isinstance(evidence, dict) else None
+    if not isinstance(animations, list):
+        return False
+    return any(
+        isinstance(animation, dict)
+        and animation.get("name") == "fadeInUp"
+        and animation.get("play_state") in {"running", "paused"}
+        for animation in animations
+    )
+
+
 def safe_bookmark_control_evidence(value: Any) -> list[dict[str, str]]:
     if not isinstance(value, list):
         return []

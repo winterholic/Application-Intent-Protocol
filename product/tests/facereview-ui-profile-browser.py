@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from product.tests.facereview_ui_browser_evidence import (
     auth_transport_trace_evidence,
     body_failure_reason,
+    profile_content_animation_incomplete,
     profile_render_evidence,
     read_request_evidence,
     safe_browser_failure_type,
@@ -336,7 +337,6 @@ def main() -> int:
                 stage = "member_token_expired"
                 page.get_by_role("button", name="마이페이지로 이동", exact=True).click()
                 expect(page).to_have_url(re.compile(r"/my$"), timeout=15000)
-                expect(page.get_by_role("heading", name=f"{PROFILE_NAME}님", exact=True)).to_be_visible()
                 wait_for_api_bodies()
                 page.wait_for_load_state("networkidle", timeout=15000)
                 wait_for_api_bodies()
@@ -356,6 +356,8 @@ def main() -> int:
                 if not retried or any(row.get("status") != 200 or row.get("ok") is not True for row in retried):
                     failure_assertion = "member_reads_recover_after_reissue"
                     raise AssertionError("member reads did not recover after reissue")
+                failure_assertion = "member_profile_heading_visible_after_reissue"
+                expect(page.get_by_role("heading", name=f"{UPDATED_PROFILE_NAME}님", exact=True)).to_be_visible()
                 renewed_token_digest = access_token_digest()
                 if renewed_token_digest is None or renewed_token_digest == login_token_digest:
                     failure_assertion = "member_auth_storage_replaces_expired_token"
@@ -459,14 +461,18 @@ def main() -> int:
             finish_profile_animations()
             after_animation = profile_render_snapshot()
             profile_fields["after_save_after_animation"] = after_animation
+            page.screenshot(path=str(output / "profile-after-save.png"), full_page=True)
             if after_animation.get("route") != "my" or after_animation.get("api_bodies_settled") is not True:
+                failure_assertion = "profile_after_save_route_and_api_bodies_settled"
                 raise AssertionError("profile screenshot did not follow the /my route and completed API response bodies")
             required_nodes = {"my-page-container", "my-page-user-container", "my-page-watched-contents-container", "my-page-emotion-container"}
             visible_nodes = {node.get("node") for node in after_animation.get("nodes", []) if node.get("visually_ready") is True}
             if not required_nodes.issubset(visible_nodes):
+                failure_assertion = "profile_sections_visually_ready_after_animation"
                 raise AssertionError("profile sections were not visually ready after their observed animations completed")
-            if any(animation.get("play_state") == "running" for animation in after_animation.get("animations", [])):
-                raise AssertionError("a profile animation remained active at the final screenshot")
+            if profile_content_animation_incomplete(after_animation):
+                failure_assertion = "profile_content_animation_finished_before_screenshot"
+                raise AssertionError("profile content animation remained active at the final screenshot")
             profile_fields["saved_name"] = UPDATED_PROFILE_NAME
             profile_fields["saved_genres"] = sorted(UPDATED_PROFILE_GENRES)
             profile_fields["write_bundle_ok"] = True
@@ -474,7 +480,6 @@ def main() -> int:
                 {"path": row.get("path"), "status": row.get("status"), "ok": row.get("ok"), "code": row.get("code")}
                 for row in save_api_requests
             ]
-            page.screenshot(path=str(output / "profile-after-save.png"), full_page=True)
             context.close()
             browser.close()
             browser = None

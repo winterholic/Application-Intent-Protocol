@@ -31,6 +31,8 @@
 
 **후속 진단 변경(새 SHA CI 대기).** attempt2 artifact만으로는 `Content-Type`, Authorization header 존재 여부, auth/SDK 함수 경로, assertion 위치 및 response-body/networkidle 타임라인을 알 수 없어 원인은 미확정이다. 다음 browser trace는 민감 값 없이 위 필드와 `failure_type/assertion/failure_line`만 남기며, 알려지지 않은 path는 축약하고 독립 negative control로 실패 조건도 확인한다. 일반 TTL profile save/render/DB journey를 별도 실행해 reissue 실패가 profile 진단을 막지 않게 했다. 실제 browser·DB 측정은 변경 SHA CI가 끝나야 하며, 상세 실행 명령·제한은 [제품 검증](../../product/VERIFICATION.md#2026-10-23-attempt-2-failure-branch-계측-및-독립-profile-여정)을 참조한다. 전체 사용자 25 route 및 기존 WBS 상태는 그대로다.
 
+**측정 결과와 재개점 (2026-10-24).** Verify `39973060321` attempt 1에서 profile DB 저장은 성공했지만 browser는 `fadeInUp` running/opacity 0–0.21인 시점에 캡처했고 screenshot도 어둡게 비었다. API body 완료 후 networkidle보다 앞선 시각이며, animation 완료 뒤 필수 영역 4개는 모두 opacity 1/visible이었다. 따라서 capture-before-fade-complete가 빈 화면의 직접 원인으로 강하게 측정됐다. 마지막 screenshot을 남기지 못한 이유는 무관한 1.4s page animation까지 실패 처리한 overbroad gate다. Reissue journey는 profile이 수정한 같은 DB member의 원래 이름을 기대하여 line339에서 API trace 전 중단됐으므로 auth 원인은 아직 측정되지 않았다. 다음 SHA는 screenshot을 gate 전에 보존하고 profile fade만 검사하며, 저장 이름으로 heading을 확인한 뒤 API body/networkidle trace를 검사한다. 전체 증거는 [제품 검증](../../product/VERIFICATION.md#2026-10-24-실제-렌더-측정과-reissue-여정-선행조건-수정)에 있다.
+
 `facereview-front`는 이전 사용자 프런트(README·Docker 배포 workflow), `-ref`는 `-joowon`과 같은 upstream의 참조 사본이다.
 두 저장소를 별도의 현재 제품으로 더해 분모를 늘리지 않는다. `origin-codes/`는 레거시 구현이므로 실행 제품이 아니다.
 Swagger/Redoc/OpenAPI와 Flask static은 프레임워크 생성 경로이며 업무 포팅 분모에서 제외하고 runtime route 비교에는 별도 표시한다.

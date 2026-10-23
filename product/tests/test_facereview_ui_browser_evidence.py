@@ -23,6 +23,7 @@ from product.tests.facereview_ui_browser_evidence import (
     body_capture_evidence,
     body_failure_reason,
     profile_render_evidence,
+    profile_content_animation_incomplete,
     app_bookmark_read_observation,
     compare_bookmark_read_capture,
     timeline_phase,
@@ -33,6 +34,15 @@ VIDEO_ID = "aaaaaaaa-0000-4000-8000-000000000001"
 
 
 class BrowserEvidenceTests(unittest.TestCase):
+    def test_profile_animation_gate_ignores_unrelated_page_motion(self):
+        evidence = {"animations": [
+            {"name": "other", "play_state": "running"},
+            {"name": "fadeInUp", "play_state": "finished"},
+        ]}
+        self.assertFalse(profile_content_animation_incomplete(evidence))
+        evidence["animations"].append({"name": "fadeInUp", "play_state": "running"})
+        self.assertTrue(profile_content_animation_incomplete(evidence))
+
     def test_auth_trace_ruler_recognizes_the_live_reissue_branch_inputs(self):
         summary = auth_transport_trace_evidence([{
             "method": "POST", "path": "/apply", "status": 200,
