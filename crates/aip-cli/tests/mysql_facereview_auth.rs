@@ -223,14 +223,29 @@ fn run_facereview_ui_profile_browser_journey(address: &str, fingerprint: &str, r
     let python = std::env::var("AIP_FACEREVIEW_PYTHON").unwrap_or_else(|_| "python3".to_owned());
     StdCommand::new(python)
         .arg(root.join("product/tests/facereview-ui-profile-browser.py"))
-        .args(["--ui", &ui_root, "--api", &format!("http://{address}"), "--out", &format!("{output}/profile")])
+        .args(["--ui", &ui_root, "--api", &format!("http://{address}"), "--out", &format!("{output}/profile"), "--journey", "profile"])
+        .env("AIP_FACEREVIEW_JOURNEY_EMAIL", "legacy@example.com")
+        .env("AIP_FACEREVIEW_JOURNEY_PASSWORD", "password123")
+        .env("AIP_FACEREVIEW_EXPECTED_CONTRACT", fingerprint)
+        .current_dir(root)
+        .output()
+        .expect("start the real React profile browser journey")
+}
+
+fn run_facereview_ui_member_reissue_browser_journey(address: &str, fingerprint: &str, root: &Path) -> std::process::Output {
+    let ui_root = std::env::var("AIP_FACEREVIEW_UI_DIR").expect("CI must provide the pinned FaceReview UI checkout");
+    let output = std::env::var("AIP_FACEREVIEW_BROWSER_OUTPUT").expect("CI must provide a run-owned browser artifact directory");
+    let python = std::env::var("AIP_FACEREVIEW_PYTHON").unwrap_or_else(|_| "python3".to_owned());
+    StdCommand::new(python)
+        .arg(root.join("product/tests/facereview-ui-profile-browser.py"))
+        .args(["--ui", &ui_root, "--api", &format!("http://{address}"), "--out", &format!("{output}/member-reissue"), "--journey", "reissue"])
         .env("AIP_FACEREVIEW_JOURNEY_EMAIL", "legacy@example.com")
         .env("AIP_FACEREVIEW_JOURNEY_PASSWORD", "password123")
         .env("AIP_FACEREVIEW_EXPECTED_CONTRACT", fingerprint)
         .env("AIP_FACEREVIEW_ACCESS_TTL_SECS", "20")
         .current_dir(root)
         .output()
-        .expect("start the real React profile browser journey")
+        .expect("start the real member token-reissue browser journey")
 }
 
 /// A stand-in mail provider: it records every JSON body it is sent and answers 200, or 500 while `fail` is set.
@@ -593,9 +608,42 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
             generated_fingerprint,
             fingerprint,
         );
-        // A separate short-TTL service shares this test-owned MySQL fixture. The ordinary
-        // auth tests keep their 300-second token window; only this member UI journey waits
-        // for an actually expired token before opening /my through the visible button.
+        let browser_output = std::env::var("AIP_FACEREVIEW_BROWSER_OUTPUT").expect("browser output directory");
+        let mut journey_failures = Vec::new();
+        let profile = run_facereview_ui_profile_browser_journey(&address, &fingerprint, &browser_root);
+        print!("{}", String::from_utf8_lossy(&profile.stdout));
+        let saved_name: Option<String> = setup.exec_first("SELECT name FROM user WHERE user_id = ?", (LEGACY,)).await.unwrap();
+        let saved_genres: Vec<String> =
+            setup.exec("SELECT genre FROM user_favorite_genre WHERE user_id = ? ORDER BY CAST(genre AS CHAR)", (LEGACY,)).await.unwrap();
+        let other_member_marker: Option<String> =
+            setup.exec_first("SELECT genre FROM user_favorite_genre WHERE user_id = ? AND genre = 'vlog' LIMIT 1", (CAROL,)).await.unwrap();
+        let profile_browser_ok = profile.status.success();
+        let profile_db_ok = saved_name.as_deref() == Some("AIP 프로필 수정회원")
+            && saved_genres == ["animal", "eating"]
+            && other_member_marker.as_deref() == Some("vlog");
+        let profile_db_result = json!({
+            "journey": "profile_after_save",
+            "browser_status": if profile_browser_ok { "success" } else { "failure" },
+            "database_status": if profile_db_ok { "success" } else { "failure" },
+            "saved_name_matches": saved_name.as_deref() == Some("AIP 프로필 수정회원"),
+            "saved_genre_count": saved_genres.len(),
+            "saved_genres_match": saved_genres == ["animal", "eating"],
+            "other_member_marker_preserved": other_member_marker.as_deref() == Some("vlog"),
+        });
+        let profile_dir = Path::new(&browser_output).join("profile");
+        std::fs::create_dir_all(&profile_dir).unwrap();
+        std::fs::write(profile_dir.join("profile-db-result.json"), format!("{}\n", serde_json::to_string_pretty(&profile_db_result).unwrap()))
+            .unwrap();
+        println!("profile browser/DB: {}", profile_db_result);
+        if !profile_browser_ok {
+            journey_failures.push("profile browser journey failed".to_owned());
+        }
+        if !profile_db_ok {
+            journey_failures.push("profile database persistence or member isolation failed".to_owned());
+        }
+
+        // The short-TTL service is a separate natural UI journey. Profile rendering and
+        // persistence above always use the ordinary 300-second service and cannot be gated by reissue.
         let short_lived_config = directory.path().join("service-short-lived.json");
         let mut short_lived_service: Value = serde_json::from_slice(&std::fs::read(&config).unwrap()).unwrap();
         short_lived_service["credentials"]["access_ttl_secs"] = json!(20);
@@ -605,20 +653,48 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
         let short_lived_address = short_lived_listening["address"].as_str().unwrap().to_owned();
         let short_lived_fingerprint = short_lived_listening["fingerprint"].as_str().unwrap().to_owned();
         assert_eq!(short_lived_fingerprint, fingerprint, "short-TTL service uses the same pinned UI contract");
-        let profile = run_facereview_ui_profile_browser_journey(&short_lived_address, &fingerprint, &browser_root);
-        assert!(
-            profile.status.success(),
-            "React profile browser journey failed (status {:?})\nstdout: {}\nstderr: {}",
-            profile.status.code(),
-            String::from_utf8_lossy(&profile.stdout),
-            String::from_utf8_lossy(&profile.stderr)
-        );
-        print!("{}", String::from_utf8_lossy(&profile.stdout));
-        let saved_name: Option<String> = setup.exec_first("SELECT name FROM user WHERE user_id = ?", (LEGACY,)).await.unwrap();
-        assert_eq!(saved_name.as_deref(), Some("AIP 프로필 수정회원"), "the profile screen's SDK bundle persists its name change");
-        let saved_genres: Vec<String> =
-            setup.exec("SELECT genre FROM user_favorite_genre WHERE user_id = ? ORDER BY CAST(genre AS CHAR)", (LEGACY,)).await.unwrap();
-        assert_eq!(saved_genres, ["animal", "eating"], "the profile screen atomically replaces only this member's favorite genres");
+        let used_refresh_before: i64 = cell(
+            &mut setup,
+            &format!(
+                "SELECT CAST(COUNT(*) AS CHAR) FROM {META}.aip_auth_refresh_tokens t JOIN {META}.aip_auth_sessions s ON s.family = t.family WHERE s.subject = '{LEGACY}' AND t.state = 'USED'"
+            ),
+        )
+        .await
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0);
+        let reissue = run_facereview_ui_member_reissue_browser_journey(&short_lived_address, &fingerprint, &browser_root);
+        print!("{}", String::from_utf8_lossy(&reissue.stdout));
+        let used_refresh_after: i64 = cell(
+            &mut setup,
+            &format!(
+                "SELECT CAST(COUNT(*) AS CHAR) FROM {META}.aip_auth_refresh_tokens t JOIN {META}.aip_auth_sessions s ON s.family = t.family WHERE s.subject = '{LEGACY}' AND t.state = 'USED'"
+            ),
+        )
+        .await
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0);
+        let used_refresh_added = used_refresh_after - used_refresh_before;
+        let reissue_browser_ok = reissue.status.success();
+        let reissue_db_ok = used_refresh_added == 1;
+        let reissue_db_result = json!({
+            "journey": "member_token_reissue",
+            "browser_status": if reissue_browser_ok { "success" } else { "failure" },
+            "database_status": if reissue_db_ok { "success" } else { "failure" },
+            "used_refresh_rows_added": used_refresh_added,
+            "rotation_observed": reissue_db_ok,
+        });
+        let reissue_dir = Path::new(&browser_output).join("member-reissue");
+        std::fs::create_dir_all(&reissue_dir).unwrap();
+        std::fs::write(reissue_dir.join("reissue-db-result.json"), format!("{}\n", serde_json::to_string_pretty(&reissue_db_result).unwrap()))
+            .unwrap();
+        println!("member reissue browser/DB: {}", reissue_db_result);
+        if !reissue_browser_ok {
+            journey_failures.push("member reissue browser journey failed".to_owned());
+        }
+        if !reissue_db_ok {
+            journey_failures.push("member refresh-token database rotation was not observed".to_owned());
+        }
+
         assert_eq!(cell(&mut setup, "SELECT CAST(COUNT(*) AS CHAR) FROM video_bookmark WHERE user_id='77777777-7777-4777-8777-777777777777' AND video_id='aaaaaaaa-0000-4000-8000-000000000001'").await.as_deref(), Some("0"), "fixture member starts without a bookmark");
         let add = run_facereview_ui_browser_journey(&address, &fingerprint, "add", &browser_root);
         assert!(
@@ -642,6 +718,7 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
         print!("{}", String::from_utf8_lossy(&remove.stdout));
         assert_eq!(cell(&mut setup, "SELECT CAST(COUNT(*) AS CHAR) FROM video_bookmark WHERE user_id='77777777-7777-4777-8777-777777777777' AND video_id='aaaaaaaa-0000-4000-8000-000000000001'").await.as_deref(), Some("0"), "browser bookmark remove deletes the member row in MySQL");
         println!("React browser journey: login, member video list, bookmark on/reload (MySQL rows=1), off/reload (MySQL rows=0)");
+        assert!(journey_failures.is_empty(), "independent member journeys failed: {}", journey_failures.join("; "));
     } else {
         eprintln!("React browser journey skipped: AIP_FACEREVIEW_UI_DIR is unset; SDK/API journey is separate");
     }

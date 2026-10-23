@@ -13,12 +13,14 @@ import subprocess
 import sys
 import tempfile
 import threading
+import traceback
 import time
 from urllib.parse import urlsplit
 
 from playwright.sync_api import expect, sync_playwright
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from product.tests.facereview_ui_browser_evidence import (
+    auth_transport_trace_evidence,
     body_failure_reason,
     profile_render_evidence,
     read_request_evidence,
@@ -41,11 +43,12 @@ def main() -> int:
     parser.add_argument("--ui", type=Path, required=True)
     parser.add_argument("--api", required=True)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--journey", choices=("profile", "reissue"), required=True)
     args = parser.parse_args()
     email = os.environ["AIP_FACEREVIEW_JOURNEY_EMAIL"]
     password = os.environ["AIP_FACEREVIEW_JOURNEY_PASSWORD"]
     expected_contract = os.environ["AIP_FACEREVIEW_EXPECTED_CONTRACT"]
-    access_ttl_secs = int(os.environ["AIP_FACEREVIEW_ACCESS_TTL_SECS"])
+    access_ttl_secs = int(os.environ.get("AIP_FACEREVIEW_ACCESS_TTL_SECS", "0"))
     # CI keeps the default; a local run may move off a port that another dev server already holds.
     ui_port = os.environ.get("AIP_FACEREVIEW_UI_PORT", "5173")
     output = args.out.resolve()
@@ -65,12 +68,17 @@ def main() -> int:
     )
     requests: list[dict[str, object]] = []
     pending_bodies: dict[object, tuple[object, dict[str, object]]] = {}
+    request_started: dict[object, float] = {}
     page_errors: list[str] = []
     stage = "startup"
     profile_fields: dict[str, object] = {}
     member_reissue_fields: dict[str, object] = {}
     failure_type = None
+    failure_assertion = "unclassified"
     browser = None
+    page = None
+    auth_trace: dict[str, object] = {"requests": [], "expired_refusal_count": 0, "reauth_branch_inputs_observed": 0, "reissue_request_count": 0}
+    artifact_name = "profile-browser-result.json" if args.journey == "profile" else "member-reissue-browser-result.json"
     try:
         ready = False
         for _ in range(60):
@@ -94,12 +102,47 @@ def main() -> int:
             page = context.new_page()
             page.set_default_timeout(15000)
             page.on("pageerror", lambda error: page_errors.append(type(error).__name__))
+            page.add_init_script("""() => {
+              const trace = [];
+              window.__aipFetchTrace = trace;
+              const nativeFetch = window.fetch.bind(window);
+              window.fetch = async (input, init) => {
+                const rawUrl = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+                const parsed = new URL(rawUrl, location.href);
+                const method = init?.method ?? (input instanceof Request ? input.method : 'GET');
+                const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+                const frames = String(new Error().stack ?? '').split('\\n').slice(2).map((line) => {
+                  const match = line.match(/\\bat (?:async )?(?:.*\\.)?([A-Za-z_$][\\w$]*) \\(/);
+                  return match?.[1] ?? null;
+                }).filter(Boolean).slice(0, 12);
+                const response = await nativeFetch(input, init);
+                trace.push({method, path: parsed.pathname, status: response.status,
+                  authorization_header_present: headers.has('authorization'),
+                  content_type: response.headers.get('content-type'), fetch_frames: frames});
+                return response;
+              };
+            }""")
+
+            def capture_request(request) -> None:
+                parsed = urlsplit(request.url)
+                if parsed.port == urlsplit(args.api).port:
+                    request_started[request] = time.monotonic() * 1000
 
             def capture_response(response) -> None:
                 parsed = urlsplit(response.url)
                 if parsed.port != urlsplit(args.api).port:
                     return
-                row: dict[str, object] = {"method": response.request.method, "path": parsed.path, "status": response.status}
+                request_headers = response.request.headers
+                now = time.monotonic() * 1000
+                row: dict[str, object] = {
+                    "method": response.request.method,
+                    "path": parsed.path,
+                    "status": response.status,
+                    "authorization_header_present": "authorization" in request_headers,
+                    "content_type": response.headers.get("content-type"),
+                    "request_started_ms": request_started.get(response.request),
+                    "response_headers_ms": now,
+                }
                 if parsed.path in {"/read", "/apply", "/extension"}:
                     row["contract_matches_runtime"] = response.request.headers.get("x-aip-contract") == expected_contract
                     row["x_aip_contract"] = response.request.headers.get("x-aip-contract")
@@ -118,6 +161,9 @@ def main() -> int:
                 if entry is None:
                     return
                 response, row = entry
+                finished_ms = time.monotonic() * 1000
+                row["response_body_complete_ms"] = finished_ms
+                row["request_finished_ms"] = finished_ms
                 try:
                     envelope = json.loads(response.body().decode("utf-8"))
                     row["body_captured"] = True
@@ -148,6 +194,25 @@ def main() -> int:
                     page.wait_for_timeout(50)
                 if pending_bodies:
                     raise AssertionError("API response bodies did not finish before the screenshot")
+
+            def mark_network_idle_since(mark: int) -> float:
+                completed_ms = time.monotonic() * 1000
+                for row in requests[mark:]:
+                    row["network_idle_completed_ms"] = completed_ms
+                return completed_ms
+
+            def auth_trace_evidence() -> dict[str, object]:
+                fetch_rows = page.evaluate("() => window.__aipFetchTrace ?? []")
+                unused = list(fetch_rows) if isinstance(fetch_rows, list) else []
+                merged = []
+                for request in requests:
+                    match_index = next((index for index, row in enumerate(unused)
+                                        if row.get("path") == request.get("path")
+                                        and row.get("method") == request.get("method")
+                                        and row.get("status") == request.get("status")), None)
+                    fetch = unused.pop(match_index) if match_index is not None else {}
+                    merged.append({**fetch, **request, "fetch_frames": fetch.get("fetch_frames", [])})
+                return auth_transport_trace_evidence(merged)
 
             def profile_render_snapshot() -> dict[str, object]:
                 raw = page.evaluate("""(apiBodiesSettled) => {
@@ -242,6 +307,7 @@ def main() -> int:
                   return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, '0')).join('');
                 }""")
 
+            page.on("request", capture_request)
             page.on("response", capture_response)
             page.on("requestfinished", capture_body)
             stage = "login"
@@ -256,51 +322,85 @@ def main() -> int:
             page.wait_for_load_state("networkidle", timeout=15000)
             login_token_digest = access_token_digest()
             if login_token_digest is None:
+                failure_assertion = "member_login_access_token_stored"
                 raise AssertionError("the visible member login did not store its access token")
             if any(row.get("path") == "/auth/reissue" for row in requests):
+                failure_assertion = "no_reissue_before_expiry"
                 raise AssertionError("the member token reissued before the expiry journey began")
-            login_at = time.monotonic()
-            remaining = access_ttl_secs + 1.5 - (time.monotonic() - login_at)
-            if remaining > 0:
-                page.wait_for_timeout(int(remaining * 1000))
-            expiry_request_mark = len(requests)
-            stage = "member_token_expired"
+            if args.journey == "reissue":
+                login_at = time.monotonic()
+                remaining = access_ttl_secs + 1.5 - (time.monotonic() - login_at)
+                if remaining > 0:
+                    page.wait_for_timeout(int(remaining * 1000))
+                expiry_request_mark = len(requests)
+                stage = "member_token_expired"
+                page.get_by_role("button", name="마이페이지로 이동", exact=True).click()
+                expect(page).to_have_url(re.compile(r"/my$"), timeout=15000)
+                expect(page.get_by_role("heading", name=f"{PROFILE_NAME}님", exact=True)).to_be_visible()
+                wait_for_api_bodies()
+                page.wait_for_load_state("networkidle", timeout=15000)
+                wait_for_api_bodies()
+                network_idle_ms = mark_network_idle_since(expiry_request_mark)
+                auth_trace = auth_trace_evidence()
+                expiry_requests = requests[expiry_request_mark:]
+                refused = [row for row in expiry_requests if row.get("code") == "WIRE.TOKEN_EXPIRED"]
+                reissues = [row for row in expiry_requests if row.get("path") == "/auth/reissue"]
+                reissue_index = expiry_requests.index(reissues[0]) if reissues else -1
+                retried = [row for row in expiry_requests[reissue_index + 1:] if row.get("path") in {"/read", "/extension"}] if reissues else []
+                if not refused:
+                    failure_assertion = "member_navigation_exercises_expired_access_token"
+                    raise AssertionError("member navigation did not exercise an expired access token")
+                if len(reissues) != 1 or reissues[0].get("status") != 200:
+                    failure_assertion = "member_concurrent_expiry_shares_one_successful_reissue"
+                    raise AssertionError("member concurrent expired reads did not share exactly one successful reissue")
+                if not retried or any(row.get("status") != 200 or row.get("ok") is not True for row in retried):
+                    failure_assertion = "member_reads_recover_after_reissue"
+                    raise AssertionError("member reads did not recover after reissue")
+                renewed_token_digest = access_token_digest()
+                if renewed_token_digest is None or renewed_token_digest == login_token_digest:
+                    failure_assertion = "member_auth_storage_replaces_expired_token"
+                    raise AssertionError("member auth storage did not replace the expired access token")
+                stage = "member_reissued_profile_visible"
+                finish_profile_animations()
+                member_render = profile_render_snapshot()
+                required_member_nodes = {"my-page-container", "my-page-user-container", "my-page-watched-contents-container", "my-page-emotion-container"}
+                member_visible_nodes = {node.get("node") for node in member_render.get("nodes", []) if node.get("visually_ready") is True}
+                if member_render.get("route") != "my" or not required_member_nodes.issubset(member_visible_nodes):
+                    failure_assertion = "member_profile_visible_after_reissue"
+                    raise AssertionError("member profile did not visibly recover after token reissue")
+                page.screenshot(path=str(output / "member-after-token-reissue.png"), full_page=True)
+                member_reissue_fields = {
+                    "expired_refusals": len(refused),
+                    "reissue_requests": len(reissues),
+                    "successful_retries": len(retried),
+                    "new_access_token_stored": True,
+                    "network_idle_completed_ms": network_idle_ms,
+                    "render": member_render,
+                }
+                report = {
+                    "ui_revision": "2e7c021fa5abebd72278d841b8066a33d45cfbb3",
+                    "phase": "member_reissue",
+                    "member_reissue": member_reissue_fields,
+                    "auth_transport_trace": auth_trace,
+                    "api_requests": requests,
+                    "journey_stage": "completed",
+                    "page_error_count": len(page_errors),
+                    "page_error_types": page_errors,
+                    "credentials_recorded": False,
+                    "browser_api_mocks": False,
+                }
+                (output / artifact_name).write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+                print(json.dumps({"phase": "member_reissue", "journey_stage": "completed", "auth_transport_trace": auth_trace}, ensure_ascii=False))
+                return 0
+            stage = "member_profile"
+            profile_request_mark = len(requests)
             page.get_by_role("button", name="마이페이지로 이동", exact=True).click()
             expect(page).to_have_url(re.compile(r"/my$"), timeout=15000)
             expect(page.get_by_role("heading", name=f"{PROFILE_NAME}님", exact=True)).to_be_visible()
             wait_for_api_bodies()
             page.wait_for_load_state("networkidle", timeout=15000)
             wait_for_api_bodies()
-            expiry_requests = requests[expiry_request_mark:]
-            refused = [row for row in expiry_requests if row.get("code") == "WIRE.TOKEN_EXPIRED"]
-            reissues = [row for row in expiry_requests if row.get("path") == "/auth/reissue"]
-            reissue_index = expiry_requests.index(reissues[0]) if reissues else -1
-            retried = [row for row in expiry_requests[reissue_index + 1:] if row.get("path") in {"/read", "/extension"}] if reissues else []
-            if not refused:
-                raise AssertionError("member navigation did not exercise an expired access token")
-            if len(reissues) != 1 or reissues[0].get("status") != 200:
-                raise AssertionError("member concurrent expired reads did not share exactly one successful reissue")
-            if not retried or any(row.get("status") != 200 or row.get("ok") is not True for row in retried):
-                raise AssertionError("member reads did not recover after reissue")
-            renewed_token_digest = access_token_digest()
-            if renewed_token_digest is None or renewed_token_digest == login_token_digest:
-                raise AssertionError("member auth storage did not replace the expired access token")
-            stage = "member_reissued_profile_visible"
-            finish_profile_animations()
-            member_render = profile_render_snapshot()
-            required_member_nodes = {"my-page-container", "my-page-user-container", "my-page-watched-contents-container", "my-page-emotion-container"}
-            member_visible_nodes = {node.get("node") for node in member_render.get("nodes", []) if node.get("visually_ready") is True}
-            if member_render.get("route") != "my" or not required_member_nodes.issubset(member_visible_nodes):
-                raise AssertionError("member profile did not visibly recover after token reissue")
-            page.screenshot(path=str(output / "member-after-token-reissue.png"), full_page=True)
-            member_reissue_fields = {
-                "expired_refusals": len(refused),
-                "reissue_requests": len(reissues),
-                "successful_retries": len(retried),
-                "new_access_token_stored": True,
-                "render": member_render,
-            }
-            stage = "member_profile"
+            mark_network_idle_since(profile_request_mark)
             page.locator(".my-page-name-wrapper").get_by_role("button", name="다음", exact=True).click()
             expect(page).to_have_url(re.compile(r"/edit$"), timeout=15000)
             expect(page.get_by_label("닉네임", exact=True)).to_have_value(PROFILE_NAME)
@@ -348,6 +448,7 @@ def main() -> int:
             wait_for_api_bodies()
             page.wait_for_load_state("networkidle", timeout=15000)
             wait_for_api_bodies()
+            mark_network_idle_since(save_request_mark)
             expect(page.get_by_role("heading", name=f"{UPDATED_PROFILE_NAME}님", exact=True)).to_be_visible()
             save_api_requests = requests[save_request_mark:]
             page_data_requests = [row for row in save_api_requests if row.get("path") in {"/read", "/extension"}]
@@ -403,7 +504,7 @@ def main() -> int:
             raise RuntimeError("browser reported an unhandled React page error")
         report = {
             "ui_revision": "2e7c021fa5abebd72278d841b8066a33d45cfbb3",
-            "phase": "profile",
+            "phase": "profile_after_save",
             "fixture": {"name": PROFILE_NAME, "favorite_genres": sorted(PROFILE_GENRES), "other_member_marker": "vlog"},
             "profile_ui": profile_fields,
             "api_requests": requests,
@@ -418,21 +519,32 @@ def main() -> int:
         return 0
     except Exception as error:
         failure_type = safe_browser_failure_type(error)
+        failure_line = next((frame.lineno for frame in reversed(traceback.extract_tb(error.__traceback__))
+                             if Path(frame.filename).resolve() == Path(__file__).resolve()), None)
+        if args.journey == "reissue" and page is not None:
+            try:
+                auth_trace = auth_trace_evidence()
+            except Exception:
+                pass
         report = {
             "ui_revision": "2e7c021fa5abebd72278d841b8066a33d45cfbb3",
-            "phase": "profile",
-            "fixture": {"name": PROFILE_NAME, "favorite_genres": sorted(PROFILE_GENRES), "other_member_marker": "vlog"},
+            "phase": "profile_after_save" if args.journey == "profile" else "member_reissue",
+            "fixture": {"name": PROFILE_NAME, "favorite_genres": sorted(PROFILE_GENRES), "other_member_marker": "vlog"} if args.journey == "profile" else {},
             "profile_ui": profile_fields,
+            "member_reissue": member_reissue_fields,
+            "auth_transport_trace": auth_trace if args.journey == "reissue" else None,
             "api_requests": requests,
             "journey_stage": stage,
             "failure_type": failure_type,
+            "assertion": failure_assertion,
+            "failure_line": failure_line,
             "page_error_count": len(page_errors),
             "page_error_types": page_errors,
             "credentials_recorded": False,
             "browser_api_mocks": False,
         }
-        (output / "profile-browser-result.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
-        print(json.dumps({"phase": "profile", "journey_stage": stage, "failure_type": failure_type}, ensure_ascii=False))
+        (output / artifact_name).write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+        print(json.dumps({"phase": report["phase"], "journey_stage": stage, "failure_type": failure_type, "assertion": failure_assertion, "failure_line": failure_line}, ensure_ascii=False))
         return 1
     finally:
         if browser is not None:

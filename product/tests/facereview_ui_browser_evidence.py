@@ -122,6 +122,8 @@ SAFE_MEDIA_TYPES = {"application/json", "text/html", "text/plain"}
 SAFE_APP_ERROR_CLASSES = {"TypeError", "AbortError", "SyntaxError", "NetworkError", "DOMException"}
 SAFE_APP_PHASES = {"received", "fetch_rejected", "clone_read_failed"}
 SAFE_APP_PARSES = {"object", "array", "json_decode_error", "other"}
+SAFE_AUTH_FETCH_FRAMES = {"fetchWithRefresh", "connectTypedExtensions", "typedClient", "postWithToken", "send", "fetch"}
+SAFE_AUTH_PATHS = {"/auth/check-email", "/auth/login", "/auth/reissue", "/session", "/read", "/apply", "/extension"}
 
 
 def body_failure_reason(error: Any) -> str:
@@ -144,6 +146,62 @@ def _media_type(content_type: Any) -> str:
         return "missing"
     media = content_type.split(";", 1)[0].strip().lower()
     return media if media in SAFE_MEDIA_TYPES else "other"
+
+
+def auth_transport_trace_evidence(observations: Any) -> dict[str, object]:
+    """Keep only auth-branch inputs and a bounded call path; never retain headers or token values."""
+    if not isinstance(observations, list):
+        observations = []
+    rows: list[dict[str, object]] = []
+    for item in observations:
+        if not isinstance(item, dict):
+            continue
+        path = item.get("path")
+        if not isinstance(path, str) or not path.startswith("/") or "?" in path:
+            continue
+        safe_path = path if path in SAFE_AUTH_PATHS else "other"
+        code = safe_wire_code(item.get("code"))
+        content_type = _media_type(item.get("content_type"))
+        frames = item.get("fetch_frames")
+        safe_frames = [frame for frame in frames if frame in SAFE_AUTH_FETCH_FRAMES] if isinstance(frames, list) else []
+        rows.append({
+            "method": item.get("method") if item.get("method") in {"GET", "POST", "PUT", "PATCH", "DELETE"} else "other",
+            "path": safe_path,
+            "status": item.get("status") if isinstance(item.get("status"), int) and 0 <= item["status"] <= 599 else None,
+            "authorization_header_present": item.get("authorization_header_present") is True,
+            "content_type": content_type,
+            "body_captured": item.get("body_captured") is True,
+            "envelope_ok": item.get("ok") if isinstance(item.get("ok"), bool) else None,
+            "envelope_shape": "error" if item.get("ok") is False and code is not None else "success" if item.get("ok") is True else "other",
+            "code": code,
+            "fetch_frames": safe_frames,
+            "request_started_ms": item.get("request_started_ms") if isinstance(item.get("request_started_ms"), (int, float)) else None,
+            "response_headers_ms": item.get("response_headers_ms") if isinstance(item.get("response_headers_ms"), (int, float)) else None,
+            "response_body_complete_ms": item.get("response_body_complete_ms") if isinstance(item.get("response_body_complete_ms"), (int, float)) else None,
+            "request_finished_ms": item.get("request_finished_ms") if isinstance(item.get("request_finished_ms"), (int, float)) else None,
+            "network_idle_completed_ms": item.get("network_idle_completed_ms") if isinstance(item.get("network_idle_completed_ms"), (int, float)) else None,
+            "body_completed_before_network_idle": (
+                item.get("request_finished_ms") <= item.get("network_idle_completed_ms")
+                if isinstance(item.get("request_finished_ms"), (int, float))
+                and isinstance(item.get("network_idle_completed_ms"), (int, float)) else None
+            ),
+        })
+    expired = [row for row in rows if row["code"] == "WIRE.TOKEN_EXPIRED"]
+    branch_inputs = [
+        row for row in expired
+        if row["authorization_header_present"] is True
+        and row["content_type"] == "application/json"
+        and row["envelope_ok"] is False
+        and "fetchWithRefresh" in row["fetch_frames"]
+        and row["body_captured"] is True
+        and row["body_completed_before_network_idle"] is True
+    ]
+    return {
+        "requests": rows,
+        "expired_refusal_count": len(expired),
+        "reauth_branch_inputs_observed": len(branch_inputs),
+        "reissue_request_count": sum(1 for row in rows if row["path"] == "/auth/reissue"),
+    }
 
 
 def _first_byte_class(raw: bytes) -> str:

@@ -19,6 +19,7 @@ from product.tests.facereview_ui_browser_evidence import (
     safe_wire_code,
     youtube_iframe_api_stub,
     response_envelope_evidence,
+    auth_transport_trace_evidence,
     body_capture_evidence,
     body_failure_reason,
     profile_render_evidence,
@@ -32,6 +33,50 @@ VIDEO_ID = "aaaaaaaa-0000-4000-8000-000000000001"
 
 
 class BrowserEvidenceTests(unittest.TestCase):
+    def test_auth_trace_ruler_recognizes_the_live_reissue_branch_inputs(self):
+        summary = auth_transport_trace_evidence([{
+            "method": "POST", "path": "/apply", "status": 200,
+            "authorization_header_present": True, "content_type": "application/json; charset=utf-8",
+            "body_captured": True, "ok": False, "code": "WIRE.TOKEN_EXPIRED",
+            "fetch_frames": ["fetchWithRefresh", "connectTypedExtensions", "typedClient", "postWithToken"],
+            "request_started_ms": 10, "response_headers_ms": 12,
+            "response_body_complete_ms": 13, "request_finished_ms": 13, "network_idle_completed_ms": 15,
+            "authorization": "Bearer must-not-escape", "body": "must-not-escape",
+        }])
+        self.assertEqual(summary["reauth_branch_inputs_observed"], 1)
+        self.assertEqual(summary["expired_refusal_count"], 1)
+        self.assertEqual(summary["requests"][0]["content_type"], "application/json")
+        self.assertEqual(summary["requests"][0]["envelope_shape"], "error")
+        self.assertTrue(summary["requests"][0]["body_completed_before_network_idle"])
+        self.assertNotIn("must-not-escape", json.dumps(summary))
+
+    def test_auth_trace_ruler_rejects_negative_controls_for_auth_header_media_type_and_sdk_path(self):
+        base = {
+            "method": "POST", "path": "/apply", "status": 200,
+            "authorization_header_present": True, "content_type": "application/json",
+            "body_captured": True, "ok": False, "code": "WIRE.TOKEN_EXPIRED",
+            "fetch_frames": ["fetchWithRefresh", "connectTypedExtensions", "typedClient", "postWithToken"],
+        }
+        for mutation in (
+            {"authorization_header_present": False},
+            {"content_type": "text/html"},
+            {"fetch_frames": ["connectTypedExtensions", "typedClient", "postWithToken"]},
+            {"body_captured": False},
+            {"request_finished_ms": 16, "network_idle_completed_ms": 15},
+        ):
+            with self.subTest(mutation=mutation):
+                summary = auth_transport_trace_evidence([{**base, **mutation}])
+                self.assertEqual(summary["expired_refusal_count"], 1)
+                self.assertEqual(summary["reauth_branch_inputs_observed"], 0)
+
+    def test_auth_trace_ruler_redacts_unrecognized_paths(self):
+        summary = auth_transport_trace_evidence([{
+            "method": "GET", "path": "/users/private-member-id", "status": 200,
+            "authorization_header_present": True, "content_type": "application/json",
+        }])
+        self.assertEqual(summary["requests"][0]["path"], "other")
+        self.assertNotIn("private-member-id", json.dumps(summary))
+
     def test_profile_render_evidence_distinguishes_active_opacity_animation_from_hidden_content(self):
         evidence = profile_render_evidence({
             "path": "/my",

@@ -1,4 +1,42 @@
-# 최신 재개 지점 (2026-10-23, WBS 7.2.9/7.2.10 관리자 ADMIN 해제·기간·token reissue, 코드 SHA `b5cd719` Verify green)
+# 최신 재개 지점 (2026-10-23, 실패 분기 계측 및 profile/reissue 독립 실행 준비; CI 재검증 대기)
+
+기준 `066187ad9d607b29e0770e1fadd07f12581c6644`의 Verify `39963850568` attempt 2를 안전 artifact까지 직접 확인했다. 새 변경은 실패를 더 이상 요약 문자열로만 남기지 않도록 `failure_type/assertion/failure_line`, 응답 Content-Type·안전 envelope 정보, Authorization 존재 여부(boolean), 허용된 SDK/auth 함수 경로, 응답 body 종료와 `networkidle` 순서를 관측한다. 경로는 알려진 API endpoint만 기록하고 나머지는 `other`로 축약한다. 진단 함수의 negative control에서 Authorization 없음, JSON 아닌 응답, auth SDK 경로 없음, body 미수집, `networkidle` 이후 body 완료, 동적 path를 각각 배제/정제하는지 확인한다. token/header/body 원문은 쓰지 않는다.
+
+profile 저장 여정은 일반 300초 TTL 서비스에서 독립 실행하고, member 만료/reissue는 별도 20초 TTL 서비스에서 실행하도록 테스트를 분리했다. 둘은 각자 browser 결과와 DB 결과를 기록하므로 reissue 실패가 profile 저장·렌더 관측을 막지 않는다. 다만 위 attempt2에서 실측된 값은 기존 artifact의 `/apply`·`/extension` HTTP 200 `WIRE.TOKEN_EXPIRED`, `/auth/reissue` 0건, `failure_type=AssertionError`, `profile_ui={}`뿐이다. 응답 Content-Type·Authorization 존재 여부·실제 transport 분기·타임라인 및 assertion 위치는 그 artifact에 없어 원인은 여전히 **미확정**이고, networkidle 경쟁조건도 새 계측 결과 전에는 판단하지 않는다. 이전 시도의 profile `fadeInUp` 코드는 가설 근거이지 원인 측정이 아니다.
+
+로컬 검사: `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest product.tests.test_facereview_ui_browser_evidence` → 31 tests OK; `node --test porting/facereview/ui-overlay/tests/authAdapter.test.ts porting/facereview/ui-overlay/tests/mypageAdapter.test.ts` → 12/12 pass; profile browser Python AST parse OK; `cargo fmt --all --check && git diff --check` → exit 0. 영향 Rust test의 최초 `--no-run`은 `AIP_TEST_DATABASE_URL is required`로 test-support build guard에서 중단. 명시적 test DSN으로 다시 실행한 `env -u PGHOST ... cargo test -p aip-cli --features mysql --test mysql_facereview_auth --no-run --locked`는 compile success, live DB/browser 실행은 아니다. configured browser에는 `about:blank`만 있어 로컬 UI T0는 미실행이고, 실제 profile/reissue·DB 결과는 변경 SHA의 CI 산출 전까지 미검증이다. 기존 step10 failure log의 GH cache 권한 거부 경로는 재시도하지 않았다.
+
+다음 재개점은 이 계측/분리 변경의 단일 새 SHA Verify를 끝까지 기다려 safe artifact와 별도 browser/DB 결과를 읽는 것이다. 실제 trace가 없으므로 현재는 adapter 결함·SDK 전달 결함·Content-Type 불일치·networkidle race 어느 것도 원인으로 확정하지 않는다. WBS 7.2.9 `doing/90%`, 7.2.10 `doing/25%`; 사용자 25 route 미완료, model.h5/visitor 보류는 유지한다.
+
+---
+
+# 직전 재개 지점 (2026-10-23, Verify step10 재실행 통과·member browser reissue 실패; profile 미실행)
+
+같은 SHA `066187ad9d607b29e0770e1fadd07f12581c6644`의 Verify `39963850568` attempt 2는 `completed/failure`다. 앞선 step10 전체 compiler/runtime/product/worker/transport/SDK 검증은 19분 실행 후 success, pinned member UI 및 admin 준비 step11–12도 success였다. step13의 실제 HTTP/worker/MySQL/browser journey에서 실패했고 artifact 보존과 run-owned native fixture cleanup step14–16은 success다. CI run은 fixture 정리를 마쳤다.
+
+attempt2 browser artifact `profile-browser-result.json`은 로그인·session·User/Profile genre reads와 확장 요청에서 HTTP 200을 기록했고, TTL 이후 화면 경로에서 `/apply`와 `/extension`이 HTTP 200 `WIRE.TOKEN_EXPIRED`로 거절된 것을 기록한다. 해당 expiry 구간에 `/auth/reissue` 요청은 0건, `journey_stage=member_token_expired`, `failure_type=AssertionError`, page error 0, `profile_ui={}`다. 코드 실행 순서상 거절은 발견됐으나 reissue 1회 조건에서 멈춘 것으로 판단된다(artifact에는 예외 문구가 없어 이 branch attribution은 추론). profile 저장·computed style·animation 계측은 이 journey가 먼저 중단되어 전혀 실행되지 않았고 DB post-save assertion 및 screenshot도 없다. reissue를 호출하지 않은 adapter 판단의 더 구체적 이유는 artifact에 응답 header가 없어 미확인이다. 고정 원본의 fadeInUp opacity 코드는 관측 사실일 뿐 공백 원인 가설은 계속 미확정이다.
+
+attempt1 step10 실패 원문은 `gh run view ... --log-failed` 시 Codex nested command sandbox가 거부한 동일한 GH CLI cache path 때문에 미확인으로 남는다. 해당 경로를 다른 방식으로 재시도하지 않았다. safe artifact 내려받기 `gh run download 39963850568 --name facereview-ui-browser-39963850568-2 --dir <이 Run outbox>/aip-run-39963850568-attempt-2-browser`는 성공했다. step10 원인을 attempt1의 exit 101이나 Ubuntu 공지로 단정하지 않는다.
+
+로컬에서는 browser evidence unittest 28개, authAdapter/mypageAdapter Node test 12개, profile script AST parse, 영향받은 Rust `aip-cli` MySQL auth clippy를 통과했다. step10의 broad Node/Python/DB 관련 subset을 Codex nested sandbox에서 실행할 때는 PGHOST preflight, uv cache 쓰기 거부 및 로컬 5433 connection refused가 각각 선행 제약으로 나타났다. 이들은 CI step10의 원인 증거가 아니다. 이 Run이 만든 isolated Cargo target 1.3 GiB는 제거했다. Codex engine usage/실제 routing receipt를 조회할 tool은 현재 실행에서 제공되지 않았다.
+
+WBS 7.2.9 `doing/90%`, 7.2.10 `doing/25%`와 분모(관리자 feature API 13: 읽기 7/쓰기 6, shared auth 4, 화면 5, 사용자 고유 route 25)는 변경하지 않는다. model.h5 권리·visitor 정책은 계속 보류, 사용자 route 25 전수는 미완료다.
+
+---
+
+# 직전 재개 지점 (2026-10-23, member profile 렌더 진단·만료 reissue 여정 준비, Verify failed / UI·DB 미검증)
+
+코드 SHA `066187ad9d607b29e0770e1fadd07f12581c6644`의 Verify `39963850568` attempt 1은 `completed/failure`다. step 10 `Verify compiler, runtime, product, worker, transport and SDK`가 실패했고 11~13은 skip되어 실제 pinned member UI·전용 DB·브라우저 여정은 실행되지 않았다. 실패 job의 원문은 Codex nested command sandbox에서 `gh run view 39963850568 --log-failed`가 `/Users/winterholic/.cache/gh/run-log-39963850568-1792763124.zip: operation not permitted`로 캐시 생성 단계에서 거부되어 미확인이다. 이는 해당 Codex 명령 실행의 캐시 권한 범위만 말하며 CI 실패 원인을 판정하지 않는다. 같은 로그 경로는 재시도하지 않았다.
+
+이번 커밋은 profile save 전후의 computed style/ancestor opacity, animation·transition·Web Animations API, route·visibility·API 완료를 안전하게 기록하고 실제 profile animation `finished`를 기다리는 진단을 추가했다. 별도 20초 TTL 서비스에 같은 test-owned MySQL 계약으로 만료→원본 버튼 클릭→`WIRE.TOKEN_EXPIRED`→reissue 1회→화면 복귀를 검증하도록 browser journey를 추가했다. **둘 다 CI step 13이 skip되어 미실행**이다. 고정 원본 `mypage.scss`/`_motion.scss`에 profile `fadeInUp` opacity 0→1 animation이 있다는 것은 관측된 코드 사실이고, 이것이 빈 화면의 원인이라는 설명은 아직 추론뿐이다. 기존 DB 이름/장르 성공과 DOM text length 133 헤더 전용 screenshot은 유지하되 원인 판정으로 승격하지 않는다. 필요한 최소 제품 수정은 아직 하지 않았다.
+
+로컬 확인: `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest product.tests.test_facereview_ui_browser_evidence` → 28 tests OK; `node --test porting/facereview/ui-overlay/tests/authAdapter.test.ts` → 10/10 pass; `python3 -c 'import ast; ast.parse(...)'` profile browser script parse OK; `cargo fmt --all --check && git diff --check` → exit 0; Rust MySQL auth test `--no-run --locked` → compile success (DB/browser 실행 아님). 원본 체크아웃은 읽기만 했다. 결과·관측 경계는 [제품 검증](../product/VERIFICATION.md#2026-10-23-member-profile-렌더-및-token-reissue-브라우저-진단-코드-sha-066187ad9d607b29e0770e1fadd07f12581c6644)에 있다.
+
+Verify 재개 전 해결할 항목: step 10 실패 원문을 허용된 실행 경로로 확인하고 원인을 고친 뒤, **같은 SHA의 CI 종료 후** 실제 UI/DB/browser step을 수행한다. 중간 대기나 403이 발생하면 기획에서 schedule_action하도록 reset을 보고한다. WBS 7.2.9 `doing/90%`, 7.2.10 `doing/25%` 및 분모(관리자 feature API 13: 읽기 7/쓰기 6, shared auth 4, 화면 5, 사용자 고유 route 25)는 유지한다. model.h5 권리와 visitor 정책 보류. 사용자 25 route 전수는 미완료다.
+
+---
+
+# 이전 재개 지점 (2026-10-23, WBS 7.2.9/7.2.10 관리자 ADMIN 해제·기간·token reissue, 코드 SHA `b5cd719` Verify green)
 
 코드 SHA `b5cd719d76e6af9d94f889c4899ab3ddea260e16`의 Verify `39957123455`는 attempt 1에서 `success`다(같은 SHA의 나머지 6개 workflow도 success). 이전 미검증 3개를 원본 `ab0386c`의 UI(`ADMIN 해제` 버튼, 5개 기간 버튼, 401→`/v2/auth/reissue` 인터셉터)에 맞춰 실제 UI·실서버·전용 DB·브라우저로 닫았다. (1) SUPER_ADMIN의 ADMIN→GENERAL: DB `ADMIN|0`에서 시작해 종료 `GENERAL|0`, 일반 ADMIN에게는 역할 버튼 없음. (2) 대시보드 기간 30일·3달·1년·3년·7일: 고정 가입일 시드로 버킷 합 3/4/5/6/2와 차트 점 수를 단정. (3) token reissue: 서버가 만료를 HTTP 401이 아닌 `200 + WIRE.TOKEN_EXPIRED`로 답해 공유 `authAdapter.ts`가 reissue를 한 번도 하지 않는 **실제 결함**을 브라우저로 재현(수정 전 `TOKEN_EXPIRED` 2건, reissue 0건, 로딩 화면 정지)하고 시험 선행(5 fail)으로 고쳤다. 수정 뒤 TTL 20초 서비스에서 만료 2회 모두 거절 1, reissue 정확히 1, 이후 요청 ok, 새 token 저장을 CI Linux가 확인했다. 상세와 한계는 [제품 검증](../product/VERIFICATION.md#후속-admingeneral-7d-외-기간-토큰-reissue-코드-sha-b5cd719d76e6af9d94f889c4899ab3ddea260e16).
 
