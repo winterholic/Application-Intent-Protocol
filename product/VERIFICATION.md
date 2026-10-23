@@ -1381,3 +1381,13 @@ Verify `39907973571`(SHA `cce3987b2197463f1eb1bbf7861e17d3a6aa3c20`)는 step 12�
 실패 원문은 `gh api repos/winterholic/Application-Intent-Protocol/actions/runs/39907973571/logs`로 조회했다. `mysql_facereview_auth.rs:611`은 browser script의 `failed_read_requests()` 실패를 받아 panic했다. safe evidence에 든 `VideoBookmark` POST `/read`는 HTTP 200, contract fingerprint 일치, query shape 허용이며 boolean `ok`가 없었다. raw server log에는 설명할 `WIRE.*` code가 없었다. 이 artifact에는 response body shape가 없으므로 API 결과가 왜 boolean `ok`를 포함하지 않았는지는 미확정이다. 이전 `gh run view 39907973571 --log-failed`는 gh cache 경로에 zip을 쓰다 `operation not permitted`가 났으므로 같은 명령을 반복하지 않고 API logs endpoint를 사용했다.
 
 run artifact `12482507650`(191,611 bytes)의 profile/add safe JSON과 screenshot을 확인한 뒤 삭제했고, artifact 재조회는 0개다. 다음 진단 수정은 response 원문/값을 저장하지 않고 object/list/null 형태, allowlist 내 key 이름, 미지 key 수, `ok` 자료형, `rows` 길이, allowlist된 wire code만 기록한다. 동시에 YouTube iframe API script에는 `YT` 객체나 callback을 만들지 않는 inert JavaScript를 반환해 외부 provider 요청을 유지 차단한다. 이는 실제 media playback 검증이 아니다. 이번 변경 결과는 후속 Verify 완료 전까지 미검증이다.
+
+## 2026-10-23 Verify 39910753805 결과와 수정 반복 상한
+
+Verify `39910753805`(SHA `bd3ef4abc6bdc678f939134e78fd4bea08e94f80`)는 세 번째 10분 대기 구간에 완료됐고 `failure`다. step 12 `Verify real HTTP to Node and Python workers to MySQL`의 `facereview_accounts_log_in_refresh_and_log_out_without_the_originals_replay_defect`가 `crates/aip-cli/tests/mysql_facereview_auth.rs:611`에서 browser script의 nonzero exit 때문에 실패했다. `gh run view 39910753805 --log-failed`는 gh log-cache 경로 쓰기 권한 오류가 이미 확인돼 재시도하지 않았다. 대신 `gh api repos/winterholic/Application-Intent-Protocol/actions/runs/39910753805/logs`의 raw step 12를 읽었다.
+
+이 run은 앞선 `/read` gate에서 boolean `ok`가 없던 문제를 안전하게 분류하기 위한 두 번째 수정 후 실행됐다. add-bookmark 단계의 `VideoBookmark` POST `/read`는 HTTP 200, runtime contract fingerprint 일치, 허용된 query shape를 가졌지만 `response.json()`이 실패해 browser script는 `response_shape: {"json_kind":"invalid_json"}`을 남겼다. raw server log에는 route `read`, status 200만 있고 관련 `WIRE.*` code가 없다. 응답 본문과 비공개 값을 evidence로 보존하지 않도록 설계했으므로 실제 body와 서버 측 생성 경로는 확인되지 않았다. 이 때문에 valid API success나 구체적 서버 root cause를 주장할 수 없다.
+
+artifact `12483616670`(191,662 bytes)의 add/profile JSON과 screenshot을 확인한 뒤 삭제했고 artifact 재조회는 `total_count=0`이다. Add JSON은 `journey_stage=completed`, page error 0이며 screenshot에 `저장됨`이 보인다. 그러나 failed read gate 뒤 Rust caller의 MySQL bookmark count assertion은 실행되지 않았다. Profile fields와 저장 row assertion은 통과했다. profile after screenshot은 상단 logo만 보여 최종 화면 evidence로 세지 않는다.
+
+두 번째 수정 시도가 실패했으므로 지시된 수정 반복 상한에 도달했다. 추가 코드 수정은 하지 않고, Verify green이 선행 조건인 관리자 UI slice도 시작하지 않는다. 이후에는 이 safe evidence가 지목한 response 생성 경로를 원인 추정 없이 조사하고, 새로운 push가 필요하면 현재 run이 종료된 상태임을 확인한 뒤 진행한다. model.h5 inference와 visitor policy는 계속 보류한다.
