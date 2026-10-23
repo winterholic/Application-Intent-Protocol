@@ -2,6 +2,9 @@ import json
 import ast
 from pathlib import Path
 import unittest
+from pathlib import Path
+import subprocess
+import tempfile
 
 from product.tests.facereview_ui_browser_evidence import (
     admin_request_evidence,
@@ -36,6 +39,93 @@ VIDEO_ID = "aaaaaaaa-0000-4000-8000-000000000001"
 
 
 class BrowserEvidenceTests(unittest.TestCase):
+    def test_playwright_exit_failure_reverses_success_return_negative_control(self):
+        class DriverScope:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                raise RuntimeError("driver shutdown failed")
+
+        report_written = []
+        with self.assertRaisesRegex(RuntimeError, "driver shutdown failed"):
+            with DriverScope():
+                report_written.append("journey_stage=completed")
+                return_code = 0
+        self.assertEqual(report_written, ["journey_stage=completed"])
+        self.assertEqual(return_code, 0)
+
+    def test_reissue_browser_is_closed_inside_playwright_lifecycle(self):
+        source = (Path(__file__).resolve().parent / "facereview-ui-profile-browser.py").read_text()
+        reissue_report = source.index('"journey_stage": "completed"', source.index('"phase": "member_reissue"'))
+        reissue_return = source.index("return 0", reissue_report)
+        close_scope = source.rfind("context.close()", 0, reissue_return)
+        close_browser = source.index("browser.close()", close_scope)
+        clear_browser = source.index("browser = None", close_browser)
+        finally_browser_close = source.index("if browser is not None:", source.index("finally:"))
+        self.assertNotEqual(close_scope, -1)
+        self.assertLess(close_scope, close_browser)
+        self.assertLess(close_browser, clear_browser)
+        self.assertLess(clear_browser, reissue_return)
+        self.assertGreater(finally_browser_close, reissue_return)
+
+    def test_safe_failure_locator_records_stage_literal_command_and_exit_only(self):
+        repo = Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory() as tmp:
+            locator = Path(tmp) / "safe.txt"
+            script = (
+                f"export AIP_VERIFY_FAILURE_FILE='{locator}'; "
+                f"source '{repo / 'scripts/verify-safe-locator.sh'}'; "
+                "aip_verify_stage 'rust test loop'; false"
+            )
+            result = subprocess.run(["bash", "-Eeuo", "pipefail", "-c", script], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1)
+            content = locator.read_text()
+            self.assertIn("stage=rust test loop", content)
+            self.assertIn("command=false", content)
+            self.assertIn("exit_status=1", content)
+            self.assertNotIn("stdout", content)
+            self.assertNotIn("stderr", content)
+
+    def test_safe_failure_locator_records_guarded_preflight_exit(self):
+        repo = Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory() as tmp:
+            locator = Path(tmp) / "guarded.txt"
+            script = (
+                f"export AIP_VERIFY_FAILURE_FILE='{locator}'; "
+                f"source '{repo / 'scripts/verify-safe-locator.sh'}'; "
+                "aip_verify_stage 'namespace preflight'; "
+                "if ! false; then aip_verify_fail 3 'bwrap --unshare-all --ro-bind / / --proc /proc --dev /dev true'; fi"
+            )
+            result = subprocess.run(["bash", "-Eeuo", "pipefail", "-c", script], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 3)
+            content = locator.read_text()
+            self.assertIn("stage=namespace preflight", content)
+            self.assertIn("command=bwrap --unshare-all --ro-bind / / --proc /proc --dev /dev true", content)
+            self.assertIn("exit_status=3", content)
+
+    def test_focused_member_contract_stops_before_external_store_suites(self):
+        repo = Path(__file__).resolve().parents[2]
+        workflow = (repo / ".github/workflows/verify.yml").read_text()
+        script = (repo / "scripts/verify-mysql-worker-e2e.sh").read_text()
+        self.assertIn("scripts/verify-mysql-worker-e2e.sh run-ci-member", workflow)
+        self.assertIn("run | run-ci | run-ci-member | down", script)
+        self.assertLess(script.index('AIP_VERIFY_FAILURE_FILE="$AIP_E2E_FAILURE_FILE"'),
+                        script.index('source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/verify-safe-locator.sh"'))
+        member_auth_run = script.index('aip_verify_stage "FaceReview member authentication E2E test"')
+        member_auth_check = script.index('member SDK journey:', member_auth_run)
+        member_stop = script.index('if [[ "$mode" == run-ci-member ]]', member_auth_check)
+        member_exit = script.index("exit 0", member_stop)
+        recommendation_gate = script.index('needs AIP_TEST_MONGO_URL', member_exit)
+        effects_gate = script.index('needs AIP_TEST_REDIS_URL', recommendation_gate)
+        self.assertLess(member_auth_check, member_exit)
+        self.assertLess(member_exit, recommendation_gate)
+        self.assertLess(recommendation_gate, effects_gate)
+        self.assertGreaterEqual(script.count('if [[ "$mode" == run-ci || "$mode" == run-ci-member ]]; then'), 2)
+        self.assertIn('scripts/verify-mysql-worker-e2e.sh run-ci', script)
+        self.assertIn('mysql_facereview_recommend', script)
+        self.assertIn('mysql_external_effects', script)
+
     def test_profile_browser_trace_init_script_executes_instead_of_only_declaring_arrow(self):
         source = Path(__file__).with_name("facereview-ui-profile-browser.py").read_text()
         tree = ast.parse(source)

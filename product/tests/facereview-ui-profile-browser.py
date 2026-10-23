@@ -442,6 +442,9 @@ def main() -> int:
                 }
                 (output / artifact_name).write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
                 print(json.dumps({"phase": "member_reissue", "journey_stage": "completed", "auth_transport_trace": auth_trace}, ensure_ascii=False))
+                context.close()
+                browser.close()
+                browser = None
                 return 0
             stage = "member_profile"
             profile_request_mark = len(requests)

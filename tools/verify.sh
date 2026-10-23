@@ -1,23 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# CI can request one redacted-by-construction failure locator for this serial gate.
-# BASH_COMMAND is the checked-in shell source line (variable references stay literal);
-# no command output, environment values, request bodies, or credentials are captured.
-if [[ -n "${AIP_VERIFY_FAILURE_FILE:-}" ]]; then
-  aip_verify_failure_locator() {
-    local status="$1"
-    local command="$2"
-    command="${command//$'\n'/ }"
-    umask 077
-    {
-      printf 'exit_status=%s\n' "$status"
-      printf 'command=%s\n' "${command:0:500}"
-    } > "$AIP_VERIFY_FAILURE_FILE"
-    exit "$status"
-  }
-  trap 'aip_verify_failure_locator "$?" "$BASH_COMMAND"' ERR
-fi
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts/verify-safe-locator.sh"
 
 cd "$(dirname "$0")/.."
 
@@ -49,6 +33,7 @@ cargo clippy -p aip-cli --features poc-runtime --all-targets --locked -- -D warn
 cargo clippy -p aip-migrate -p aip-service -p aip-cli --features mysql,aip-cli/mysql --all-targets --locked -- -D warnings
 # The excluded engine crates were not linted before; a clippy regression in one (spike-v6 server.rs) reached main unnoticed.
 for engine in spike-v1-fixture spike-v2-read spike-v3-write spike-v4-worker spike-v5-sdk spike-v6-transport; do
+  aip_verify_stage "rust engine clippy: $engine"
   cargo clippy --manifest-path "spikes/$engine/Cargo.toml" --all-targets --locked --target-dir target -- -D warnings
 done
 cargo test --workspace --locked
@@ -59,6 +44,7 @@ cargo test -p aip-cli --features poc-runtime --locked
 # These product engines are path dependencies excluded from the root workspace.
 # v4 (worker) and v6 (transport) are included because their regressions (S-24) were otherwise caught only by CI.
 for engine in spike-v1-fixture spike-v2-read spike-v3-write spike-v4-worker spike-v5-sdk spike-v6-transport; do
+  aip_verify_stage "rust engine tests: $engine"
   cargo test --manifest-path "spikes/$engine/Cargo.toml" --locked --target-dir target
 done
 # The Socket.IO-compatible transport (WBS 7.2.6) is also run with the real socket.io-client the FaceReview player locks

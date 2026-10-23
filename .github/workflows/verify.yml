@@ -51,11 +51,24 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
+      - name: Initialize safe verification locator
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$RUNNER_TEMP/aip-facereview-browser"
+          export AIP_VERIFY_FAILURE_FILE="$RUNNER_TEMP/aip-facereview-browser/verify-failure.txt"
+          echo "AIP_VERIFY_FAILURE_FILE=$AIP_VERIFY_FAILURE_FILE" >> "$GITHUB_ENV"
+          source scripts/verify-safe-locator.sh
+          aip_verify_stage "setup Node 26"
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '26'
       - name: Install verification tools
+        shell: bash
         run: |
+          set -Eeuo pipefail
+          source scripts/verify-safe-locator.sh
+          aip_verify_stage "install verification tools"
           sudo apt-get update
           sudo apt-get install -y postgresql-client bubblewrap apparmor python3-venv
           rustup update stable
@@ -69,7 +82,9 @@ jobs:
       - name: Configure CI Bubblewrap user namespace policy
         shell: bash
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
+          source scripts/verify-safe-locator.sh
+          aip_verify_stage "configure CI Bubblewrap user namespace policy"
           if [[ -r /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]] && [[ $(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns) == 1 ]]; then
             # A separate attachment avoids overriding distribution or third-party bwrap profiles.
             sandbox_bin="$RUNNER_TEMP/aip-ci-bwrap"
@@ -98,16 +113,27 @@ jobs:
       - name: Verify compiler, runtime, product, worker, transport and SDK
         if: ${{ !inputs.member_ui_diagnostic }}
         env:
-          AIP_VERIFY_FAILURE_FILE: ${{ runner.temp }}/aip-facereview-browser/core-verify-failure.txt
+          AIP_VERIFY_FAILURE_FILE: ${{ runner.temp }}/aip-facereview-browser/verify-failure.txt
+        shell: bash
         run: |
-          mkdir -p "$RUNNER_TEMP/aip-facereview-browser"
+          set -Eeuo pipefail
+          source scripts/verify-safe-locator.sh
+          aip_verify_stage "broad compiler, runtime, product, worker, transport and SDK gate"
           bash tools/verify.sh
       - name: Build AIP CLI for the focused UI diagnostic
         if: ${{ inputs.member_ui_diagnostic }}
-        run: cargo build -p aip-cli --locked
-      - name: Prepare the pinned FaceReview React browser journey
+        shell: bash
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
+          source scripts/verify-safe-locator.sh
+          aip_verify_stage "focused AIP CLI build"
+          cargo build -p aip-cli --locked
+      - name: Prepare the pinned FaceReview React browser journey
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          source scripts/verify-safe-locator.sh
+          aip_verify_stage "prepare pinned FaceReview React browser journey"
           ui="$RUNNER_TEMP/aip-facereview-ui"
           sdk="$RUNNER_TEMP/aip-facereview-sdk"
           definition="$RUNNER_TEMP/aip-facereview-member.aip"
@@ -130,7 +156,11 @@ jobs:
           "$RUNNER_TEMP/aip-browser/bin/pip" install --no-cache-dir playwright==1.64.0
           "$RUNNER_TEMP/aip-browser/bin/python" -m playwright install --with-deps chromium
       - name: Prepare the pinned FaceReview admin console browser journey
+        shell: bash
         run: |
+          set -Eeuo pipefail
+          source scripts/verify-safe-locator.sh
+          aip_verify_stage "prepare pinned FaceReview admin console browser journey"
           set -euo pipefail
           admin="$RUNNER_TEMP/aip-facereview-admin-ui"
           pinned=ab0386c878a5ba5c7c079a262b987c10d211d22d
@@ -154,7 +184,9 @@ jobs:
           AIP_FACEREVIEW_ADMIN_UI_DIR: ${{ runner.temp }}/aip-facereview-admin-ui
           AIP_FACEREVIEW_PYTHON: ${{ runner.temp }}/aip-browser/bin/python
           AIP_FACEREVIEW_BROWSER_OUTPUT: ${{ runner.temp }}/aip-facereview-browser
-        run: bash scripts/verify-mysql-worker-e2e.sh run-ci
+          AIP_E2E_FAILURE_FILE: ${{ runner.temp }}/aip-facereview-browser/verify-failure.txt
+        shell: bash
+        run: bash scripts/verify-mysql-worker-e2e.sh run-ci-member
       - name: Preserve FaceReview browser screenshots and safe network evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

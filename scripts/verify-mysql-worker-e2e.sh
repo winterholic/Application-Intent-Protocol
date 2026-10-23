@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Sprint 13-A end to end: real HTTP /apply -> real Node/Python worker subprocess -> one MySQL 8.4 transaction.
 #
-#   AIP_E2E_TAG=<unique> AIP_E2E_MYSQL_PORT=<port> scripts/verify-mysql-worker-e2e.sh run-ci   # GitHub Ubuntu runner
+#   AIP_E2E_TAG=<unique> AIP_E2E_MYSQL_PORT=<port> scripts/verify-mysql-worker-e2e.sh run-ci   # GitHub Ubuntu full suite
+#   AIP_E2E_TAG=<unique> AIP_E2E_MYSQL_PORT=<port> scripts/verify-mysql-worker-e2e.sh run-ci-member # member UI diagnostic only
 #   AIP_E2E_TAG=<unique> AIP_E2E_MYSQL_PORT=<port> scripts/verify-mysql-worker-e2e.sh run      # Linux builder container
 #   AIP_E2E_TAG=<unique> AIP_E2E_MYSQL_PORT=<port> scripts/verify-mysql-worker-e2e.sh down     # remove this tag's objects
 #
@@ -27,24 +28,36 @@
 # AIP_E2E_KEEP=1 to keep this run's objects.
 set -euo pipefail
 
+if [[ -n "${AIP_E2E_FAILURE_FILE:-}" ]]; then
+  AIP_VERIFY_FAILURE_FILE="$AIP_E2E_FAILURE_FILE"
+fi
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/verify-safe-locator.sh"
+if [[ -n "${AIP_E2E_FAILURE_FILE:-}" ]]; then
+  aip_verify_locator_write "run-ci input validation" "not_started" "pending"
+  aip_verify_stage "run-ci input validation"
+fi
+
 mode="${1:-run}"
 case "$mode" in
-  run | run-ci | down) ;;
-  *) echo "usage: $0 [run|run-ci|down]" >&2; exit 2 ;;
+  run | run-ci | run-ci-member | down) ;;
+  *) echo "usage: $0 [run|run-ci|run-ci-member|down]" >&2; aip_verify_stage "mode validation"; aip_verify_fail 2 'case mode validation' ;;
 esac
 
 if [[ -z "${AIP_E2E_TAG:-}" || -z "${AIP_E2E_MYSQL_PORT:-}" ]]; then
   echo "ERROR: set AIP_E2E_TAG (unique run-owned tag) and AIP_E2E_MYSQL_PORT (dedicated loopback port above 1024)" >&2
-  exit 2
+  aip_verify_stage "required E2E inputs"
+  aip_verify_fail 2 'AIP_E2E_TAG and AIP_E2E_MYSQL_PORT required'
 fi
 if [[ ! "$AIP_E2E_TAG" =~ ^[a-z0-9][a-z0-9-]{2,39}$ ]]; then
   echo "ERROR: AIP_E2E_TAG must match ^[a-z0-9][a-z0-9-]{2,39}\$ (lowercase letters, digits, '-'; 3-40 characters)" >&2
-  exit 2
+  aip_verify_stage "E2E tag validation"
+  aip_verify_fail 2 'AIP_E2E_TAG format validation'
 fi
 if [[ ! "$AIP_E2E_MYSQL_PORT" =~ ^[1-9][0-9]{0,4}$ ]] || (( AIP_E2E_MYSQL_PORT <= 1024 || AIP_E2E_MYSQL_PORT > 65535 )) \
   || (( AIP_E2E_MYSQL_PORT == 3306 || AIP_E2E_MYSQL_PORT == 5432 || AIP_E2E_MYSQL_PORT == 5433 )); then
   echo "ERROR: AIP_E2E_MYSQL_PORT must be a number in 1025-65535 other than 3306, 5432 and 5433" >&2
-  exit 2
+  aip_verify_stage "MySQL port validation"
+  aip_verify_fail 2 'AIP_E2E_MYSQL_PORT range and reserved-port validation'
 fi
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -102,13 +115,14 @@ fi
 for i in "${!names[@]}"; do
   if exists "${kinds[$i]}" "${names[$i]}"; then
     echo "ERROR: ${kinds[$i]} ${names[$i]} already exists and was not created by this run; pick another AIP_E2E_TAG (nothing was removed)" >&2
-    exit 2
+    aip_verify_stage "run-owned fixture name collision check"
+    aip_verify_fail 2 'Docker fixture name collision validation'
   fi
 done
-if [[ "$mode" == run-ci ]]; then
-  [[ "$(uname -s)" == Linux ]] || { echo "ERROR: run-ci needs the Linux runner that already provides Bubblewrap" >&2; exit 2; }
+if [[ "$mode" == run-ci || "$mode" == run-ci-member ]]; then
+  [[ "$(uname -s)" == Linux ]] || { echo "ERROR: run-ci needs the Linux runner that already provides Bubblewrap" >&2; aip_verify_stage "run-ci operating-system preflight"; aip_verify_fail 2 'uname -s == Linux'; }
   for tool in cargo bwrap node python3 docker; do
-    command -v "$tool" >/dev/null || { echo "ERROR: run-ci needs '$tool' on PATH (see the verify.yml runner preparation)" >&2; exit 2; }
+    command -v "$tool" >/dev/null || { echo "ERROR: run-ci needs '$tool' on PATH (see the verify.yml runner preparation)" >&2; aip_verify_stage "run-ci tool preflight: $tool"; aip_verify_fail 2 'command -v "$tool"'; }
   done
 fi
 
@@ -126,7 +140,7 @@ wait_for_mysql() { # <container port as seen by mysqladmin inside the container>
     fi
     sleep 2
   done
-  [[ -n "$ready" ]] || { echo "ERROR: $mysql_name did not become ready" >&2; exit 1; }
+  [[ -n "$ready" ]] || { echo "ERROR: $mysql_name did not become ready" >&2; aip_verify_stage "MySQL fixture readiness"; aip_verify_fail 1 'MySQL readiness poll'; }
 }
 
 # Proves to the test that this MySQL was started by this run: a random marker, written into the container this script
@@ -137,18 +151,20 @@ write_owner_marker() { # <container port>
     -e "CREATE TABLE aip_e2e_owner (marker VARCHAR(128) NOT NULL PRIMARY KEY); INSERT INTO aip_e2e_owner (marker) VALUES ('$fixture_marker')"
 }
 
-if [[ "$mode" == run-ci ]]; then
+if [[ "$mode" == run-ci || "$mode" == run-ci-member ]]; then
+  aip_verify_stage "start run-owned MySQL fixture"
   echo "=== Starting run-owned MySQL 8.4 ($mysql_name, 127.0.0.1:$AIP_E2E_MYSQL_PORT) ==="
   docker run -d --name "$mysql_name" "${labels[@]}" -e MYSQL_ROOT_PASSWORD="$password" -e MYSQL_DATABASE="$database" \
     -p "127.0.0.1:$AIP_E2E_MYSQL_PORT:3306" --tmpfs /var/lib/mysql mysql:8.4 >/dev/null
   wait_for_mysql 3306
   write_owner_marker 3306
 
+  aip_verify_stage "Bubblewrap namespace preflight"
   echo "=== Preflight: does the runner's Bubblewrap ($(command -v bwrap)) create namespaces? ==="
   if ! bwrap --unshare-all --ro-bind / / --proc /proc --dev /dev true; then
     echo "BLOCKED: Bubblewrap cannot create namespaces on this host. No worker ran and nothing was changed. The runner needs the" >&2
     echo "'Configure CI Bubblewrap user namespace policy' step of .github/workflows/verify.yml before this mode." >&2
-    exit 3
+    aip_verify_fail 3 'bwrap --unshare-all --ro-bind / / --proc /proc --dev /dev true'
   fi
 
   # The test never connects to PostgreSQL; the build guard of aip-test-support only needs syntactically safe DSNs.
@@ -157,9 +173,11 @@ if [[ "$mode" == run-ci ]]; then
   export AIP_TEST_MYSQL_URL="mysql://root:$password@127.0.0.1:$AIP_E2E_MYSQL_PORT/$database"
   export AIP_E2E_FIXTURE_MARKER="$fixture_marker"
   cd "$repo"
+  aip_verify_stage "mysql worker write E2E test discovery"
   echo "=== Verifying the target test exists ==="
   cargo test "${cargo_args[@]}" -- --list --ignored 2>&1 | tee /tmp/aip-e2e-list-"$tag".txt | tail -3
   grep -Fxq "$test_name: test" /tmp/aip-e2e-list-"$tag".txt
+  aip_verify_stage "mysql worker write E2E test"
   echo "=== Running the end-to-end test (real aip binary, real workers, real MySQL) ==="
   cargo test "${cargo_args[@]}" -- --ignored --exact "$test_name" --nocapture --test-threads=1 2>&1 | tee /tmp/aip-e2e-run-"$tag".txt
   grep -Fq "test result: ok. 1 passed; 0 failed;" /tmp/aip-e2e-run-"$tag".txt
@@ -167,75 +185,96 @@ if [[ "$mode" == run-ci ]]; then
   echo "=== Running the password login end-to-end test (real aip binary, Python extension in the sandbox, real MySQL) ==="
   auth_args=(--locked -p aip-cli --features mysql --test mysql_facereview_auth)
   auth_test="facereview_accounts_log_in_refresh_and_log_out_without_the_originals_replay_defect"
+  aip_verify_stage "FaceReview member authentication E2E test discovery"
   cargo test "${auth_args[@]}" -- --list --ignored 2>&1 | tee /tmp/aip-e2e-auth-list-"$tag".txt | tail -3
   grep -Fxq "$auth_test: test" /tmp/aip-e2e-auth-list-"$tag".txt
+  aip_verify_stage "FaceReview member authentication E2E test"
   cargo test "${auth_args[@]}" -- --ignored --exact "$auth_test" --nocapture --test-threads=1 2>&1 | tee /tmp/aip-e2e-auth-run-"$tag".txt
   grep -Fq "test result: ok. 1 passed; 0 failed;" /tmp/aip-e2e-auth-run-"$tag".txt
   grep -Fq "member SDK journey: login, one refresh, UI adapter video read, bookmark on/off, comment create/edit/delete, logout" /tmp/aip-e2e-auth-run-"$tag".txt
+  if [[ "$mode" == run-ci-member ]]; then
+    exit 0
+  fi
   # The FaceReview recommendation lists (WBS 7.2.3) read MongoDB through workers.mongo and compare with the original services' answers.
   # verify.yml starts the native-stores MongoDB fixture and exports AIP_TEST_MONGO_URL for it; the test refuses a non-loopback URL.
   if [[ -z "${AIP_TEST_MONGO_URL:-}" ]]; then
     echo "ERROR: run-ci needs AIP_TEST_MONGO_URL for the recommendation end-to-end test (see the native fixtures step of verify.yml)" >&2
-    exit 2
+    aip_verify_stage "MongoDB fixture prerequisite for recommendation suite"
+    aip_verify_fail 2 'AIP_TEST_MONGO_URL required'
   fi
   echo "=== Running the recommendation end-to-end test (real aip binary, Python extension in the sandbox, real MySQL and MongoDB) ==="
   recommend_args=(--locked -p aip-cli --features mysql --test mysql_facereview_recommend)
   recommend_test="facereview_recommendations_match_the_original_services_through_the_real_server"
+  aip_verify_stage "FaceReview recommendation E2E test discovery"
   cargo test "${recommend_args[@]}" -- --list --ignored 2>&1 | tee /tmp/aip-e2e-recommend-list-"$tag".txt | tail -3
   grep -Fxq "$recommend_test: test" /tmp/aip-e2e-recommend-list-"$tag".txt
+  aip_verify_stage "FaceReview recommendation E2E test"
   cargo test "${recommend_args[@]}" -- --ignored --exact "$recommend_test" --nocapture --test-threads=1 2>&1 | tee /tmp/aip-e2e-recommend-run-"$tag".txt
   grep -Fq "test result: ok. 1 passed; 0 failed;" /tmp/aip-e2e-recommend-run-"$tag".txt
   # The watch detail (WBS 7.2.5) adds the server-side all-viewer timeline aggregate and the `view` increment on the same fixtures.
   echo "=== Running the watch detail end-to-end test (real aip binary, Python extension in the sandbox, real MySQL and MongoDB) ==="
   watch_args=(--locked -p aip-cli --features mysql --test mysql_facereview_watch)
   watch_test="facereview_watch_detail_matches_the_original_service_through_the_real_server"
+  aip_verify_stage "FaceReview watch E2E test discovery"
   cargo test "${watch_args[@]}" -- --list --ignored 2>&1 | tee /tmp/aip-e2e-watch-list-"$tag".txt | tail -3
   grep -Fxq "$watch_test: test" /tmp/aip-e2e-watch-list-"$tag".txt
+  aip_verify_stage "FaceReview watch E2E test"
   cargo test "${watch_args[@]}" -- --ignored --exact "$watch_test" --nocapture --test-threads=1 2>&1 | tee /tmp/aip-e2e-watch-run-"$tag".txt
   grep -Fq "test result: ok. 1 passed; 0 failed;" /tmp/aip-e2e-watch-run-"$tag".txt
   # The saga of a write extension (WBS 7.2.5): MongoDB and Redis effects next to the MySQL commit, compensation and unknown commit.
   # verify.yml exports AIP_TEST_REDIS_URL for the native-stores Redis fixture next to AIP_TEST_MONGO_URL.
   if [[ -z "${AIP_TEST_REDIS_URL:-}" ]]; then
     echo "ERROR: run-ci needs AIP_TEST_REDIS_URL for the external effects end-to-end test (see the native fixtures step of verify.yml)" >&2
-    exit 2
+    aip_verify_stage "Redis fixture prerequisite for external effects suite"
+    aip_verify_fail 2 'AIP_TEST_REDIS_URL required'
   fi
   echo "=== Running the external effects end-to-end test (real aip binary, Python extension, MySQL, MongoDB, Redis) ==="
   effects_args=(--locked -p aip-cli --features mysql --test mysql_external_effects)
   effects_test="write_extension_effects_commit_or_compensate_with_the_relational_transaction"
+  aip_verify_stage "external effects E2E test discovery"
   cargo test "${effects_args[@]}" -- --list --ignored 2>&1 | tee /tmp/aip-e2e-effects-list-"$tag".txt | tail -3
   grep -Fxq "$effects_test: test" /tmp/aip-e2e-effects-list-"$tag".txt
+  aip_verify_stage "external effects E2E test"
   cargo test "${effects_args[@]}" -- --ignored --exact "$effects_test" --nocapture --test-threads=1 2>&1 | tee /tmp/aip-e2e-effects-run-"$tag".txt
   grep -Fq "test result: ok. 1 passed; 0 failed;" /tmp/aip-e2e-effects-run-"$tag".txt
   # The scheduled recommendation pool refresh (WBS 7.2.7): a durable job writes the Redis cache the recommendation lists read.
   echo "=== Running the recommendation pool job end-to-end test (real aip binary, Python extension, MySQL, MongoDB, Redis, schedule) ==="
   pool_args=(--locked -p aip-cli --features mysql --test mysql_facereview_pool_job)
   pool_test="the_scheduled_pool_job_fills_the_cache_the_recommendation_lists_read"
+  aip_verify_stage "recommendation pool job E2E test discovery"
   cargo test "${pool_args[@]}" -- --list --ignored 2>&1 | tee /tmp/aip-e2e-pool-list-"$tag".txt | tail -3
   grep -Fxq "$pool_test: test" /tmp/aip-e2e-pool-list-"$tag".txt
+  aip_verify_stage "recommendation pool job E2E test"
   cargo test "${pool_args[@]}" -- --ignored --exact "$pool_test" --nocapture --test-threads=1 2>&1 | tee /tmp/aip-e2e-pool-run-"$tag".txt
   grep -Fq "test result: ok. 1 passed; 0 failed;" /tmp/aip-e2e-pool-run-"$tag".txt
   # The trending video collection (WBS 7.2.7): a query-string integration, job-created rows and initial MongoDB documents.
   echo "=== Running the trending video job end-to-end test (real aip binary, Python extension, MySQL, MongoDB, stand-in YouTube) ==="
   trend_args=(--locked -p aip-cli --features mysql --test mysql_facereview_trending_job)
   trend_test="the_trending_job_saves_new_videos_with_their_initial_documents"
+  aip_verify_stage "trending video job E2E test discovery"
   cargo test "${trend_args[@]}" -- --list --ignored 2>&1 | tee /tmp/aip-e2e-trend-list-"$tag".txt | tail -3
   grep -Fxq "$trend_test: test" /tmp/aip-e2e-trend-list-"$tag".txt
+  aip_verify_stage "trending video job E2E test"
   cargo test "${trend_args[@]}" -- --ignored --exact "$trend_test" --nocapture --test-threads=1 2>&1 | tee /tmp/aip-e2e-trend-run-"$tag".txt
   grep -Fq "test result: ok. 1 passed; 0 failed;" /tmp/aip-e2e-trend-run-"$tag".txt
   # The category fill (WBS 7.2.7): search queries per thinnest genre within the original's quota, saved under the searched genre.
   echo "=== Running the category fill job end-to-end test (real aip binary, Python extension, MySQL, MongoDB, stand-in YouTube) ==="
   fill_args=(--locked -p aip-cli --features mysql --test mysql_facereview_category_fill_job)
   fill_test="the_category_fill_job_searches_the_thinnest_genres_within_the_original_budget"
+  aip_verify_stage "category fill job E2E test discovery"
   cargo test "${fill_args[@]}" -- --list --ignored 2>&1 | tee /tmp/aip-e2e-fill-list-"$tag".txt | tail -3
   grep -Fxq "$fill_test: test" /tmp/aip-e2e-fill-list-"$tag".txt
+  aip_verify_stage "category fill job E2E test"
   cargo test "${fill_args[@]}" -- --ignored --exact "$fill_test" --nocapture --test-threads=1 2>&1 | tee /tmp/aip-e2e-fill-run-"$tag".txt
   grep -Fq "test result: ok. 1 passed; 0 failed;" /tmp/aip-e2e-fill-run-"$tag".txt
   # The administrator lists (WBS 7.2.9) compare the real server's reads and totals with the original AdminService's recorded answers.
   echo "=== Running the administrator list end-to-end test (real aip binary, real MySQL) ==="
   admin_args=(--locked -p aip-cli --features mysql --test mysql_facereview_admin)
   admin_test="facereview_administrator_lists_match_the_original_admin_service_through_the_real_server"
+  aip_verify_stage "administrator lists E2E test discovery"
   cargo test "${admin_args[@]}" -- --list --ignored 2>&1 | tee /tmp/aip-e2e-admin-list-"$tag".txt | tail -3
   grep -Fxq "$admin_test: test" /tmp/aip-e2e-admin-list-"$tag".txt
+  aip_verify_stage "administrator lists E2E test"
   cargo test "${admin_args[@]}" -- --ignored --exact "$admin_test" --nocapture --test-threads=1 2>&1 | tee /tmp/aip-e2e-admin-run-"$tag".txt
   grep -Fq "test result: ok. 1 passed; 0 failed;" /tmp/aip-e2e-admin-run-"$tag".txt
   # The administrator console (WBS 7.2.9 / 7.2.10): the server's own refusals for a member and a guest, then, when verify.yml supplies the
@@ -243,8 +282,10 @@ if [[ "$mode" == run-ci ]]; then
   echo "=== Running the administrator console end-to-end test (real aip binary, write workers, real MySQL and MongoDB) ==="
   adminui_args=(--locked -p aip-cli --features mysql --test mysql_facereview_admin_ui)
   adminui_test="facereview_admin_console_runs_through_the_generated_sdk_and_the_servers_own_policy"
+  aip_verify_stage "administrator console E2E test discovery"
   cargo test "${adminui_args[@]}" -- --list --ignored 2>&1 | tee /tmp/aip-e2e-adminui-list-"$tag".txt | tail -3
   grep -Fxq "$adminui_test: test" /tmp/aip-e2e-adminui-list-"$tag".txt
+  aip_verify_stage "administrator console E2E test"
   cargo test "${adminui_args[@]}" -- --ignored --exact "$adminui_test" --nocapture --test-threads=1 2>&1 | tee /tmp/aip-e2e-adminui-run-"$tag".txt
   grep -Fq "test result: ok. 1 passed; 0 failed;" /tmp/aip-e2e-adminui-run-"$tag".txt
   grep -Fq "policy: member refused 6 administrator aggregates, 3 administrator extensions and the approval job" /tmp/aip-e2e-adminui-run-"$tag".txt
