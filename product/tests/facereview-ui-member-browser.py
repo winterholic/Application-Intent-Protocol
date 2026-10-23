@@ -246,6 +246,22 @@ def main() -> int:
             if "t_finished_ms" not in item and "t_failed_ms" not in item
         ]
 
+    def wait_for_bookmark_mutation(page, baseline: int) -> None:
+        """Hold until the bookmark read and the write that follow a click have both finished.
+
+        The pinned UI flips `aria-pressed` optimistically, so the flip is not completion; a reload
+        before these requests end aborts them and the server may never see the write.
+        """
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            started = [item for item in lifecycle.values() if item["corr"] > baseline]
+            has_read = any(item["read_resource"] == "VideoBookmark" for item in started)
+            has_write = any(item["path"] == "/apply" for item in started)
+            if has_read and has_write and not unfinished_requests() and not pending_bodies:
+                return
+            page.wait_for_timeout(50)
+        raise AssertionError("bookmark /read and /apply did not reach requestfinished before reload")
+
     def lifecycle_summary() -> dict[str, object]:
         return {
             "requests": len(lifecycle),
@@ -637,15 +653,23 @@ def main() -> int:
                     expect(safety_notice).to_be_visible(timeout=15000)
                     page.get_by_role("button", name="확인", exact=True).click()
                     expect(safety_notice).to_be_hidden(timeout=15000)
+                    # The pinned UI resolves videoDetail only after Video.view is applied; a click before that
+                    # cancels the query and finds no cached data to flip, so wait for its title to render.
+                    expect(page.locator(".video-information-container .title")).to_have_text(VIDEO_TITLE, timeout=30000)
                     journey_stage = "bookmark_action"
 
-                    bookmark_add = page.get_by_role("button", name="즐겨찾기 추가", exact=True)
+                    bookmark_add =page.get_by_role("button", name="즐겨찾기 추가", exact=True)
                     bookmark_remove = page.get_by_role("button", name="즐겨찾기 해제", exact=True)
                     if args.phase == "add":
                         expect(bookmark_add).to_be_visible()
+                        request_baseline = len(lifecycle)
                         mark("bookmark_click")
                         bookmark_add.click()
                         mark("bookmark_click_returned")
+                        journey_stage = "bookmark_settle"
+                        wait_for_bookmark_mutation(page, request_baseline)
+                        mark("bookmark_requests_settled")
+                        journey_stage = "bookmark_action"
                         expect(bookmark_remove).to_have_attribute("aria-pressed", "true")
                         journey_stage = "bookmark_reload"
                         mark("reload_start")
@@ -657,9 +681,14 @@ def main() -> int:
                         label = "bookmarked"
                     else:
                         expect(bookmark_remove).to_be_visible()
+                        request_baseline = len(lifecycle)
                         mark("bookmark_click")
                         bookmark_remove.click()
                         mark("bookmark_click_returned")
+                        journey_stage = "bookmark_settle"
+                        wait_for_bookmark_mutation(page, request_baseline)
+                        mark("bookmark_requests_settled")
+                        journey_stage = "bookmark_action"
                         expect(bookmark_add).to_have_attribute("aria-pressed", "false")
                         journey_stage = "bookmark_reload"
                         mark("reload_start")

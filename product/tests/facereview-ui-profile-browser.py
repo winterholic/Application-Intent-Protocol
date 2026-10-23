@@ -19,6 +19,7 @@ from urllib.parse import urlsplit
 from playwright.sync_api import expect, sync_playwright
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from product.tests.facereview_ui_browser_evidence import (
+    body_failure_reason,
     read_request_evidence,
     safe_browser_failure_type,
     safe_wire_code,
@@ -43,6 +44,8 @@ def main() -> int:
     email = os.environ["AIP_FACEREVIEW_JOURNEY_EMAIL"]
     password = os.environ["AIP_FACEREVIEW_JOURNEY_PASSWORD"]
     expected_contract = os.environ["AIP_FACEREVIEW_EXPECTED_CONTRACT"]
+    # CI keeps the default; a local run may move off a port that another dev server already holds.
+    ui_port = os.environ.get("AIP_FACEREVIEW_UI_PORT", "5173")
     output = args.out.resolve()
     output.mkdir(parents=True, exist_ok=True)
 
@@ -51,7 +54,7 @@ def main() -> int:
     server_env.pop("AIP_FACEREVIEW_JOURNEY_EMAIL", None)
     server_env.pop("AIP_FACEREVIEW_JOURNEY_PASSWORD", None)
     server = subprocess.Popen(
-        ["node", ".yarn/releases/yarn-4.12.0.cjs", "dev", "--host", "0.0.0.0", "--port", "5173", "--strictPort"],
+        ["node", ".yarn/releases/yarn-4.12.0.cjs", "dev", "--host", "0.0.0.0", "--port", ui_port, "--strictPort"],
         cwd=args.ui,
         env=server_env,
         start_new_session=True,
@@ -59,6 +62,7 @@ def main() -> int:
         stderr=subprocess.DEVNULL,
     )
     requests: list[dict[str, object]] = []
+    pending_bodies: dict[object, tuple[object, dict[str, object]]] = {}
     page_errors: list[str] = []
     stage = "startup"
     profile_fields: dict[str, object] = {}
@@ -72,7 +76,7 @@ def main() -> int:
             try:
                 import urllib.request
 
-                with urllib.request.urlopen("http://127.0.0.1:5173/auth/1", timeout=1) as response:
+                with urllib.request.urlopen(f"http://127.0.0.1:{ui_port}/auth/1", timeout=1) as response:
                     if response.status == 200:
                         ready = True
                         break
@@ -96,17 +100,36 @@ def main() -> int:
                 if parsed.path in {"/read", "/apply", "/extension"}:
                     row["contract_matches_runtime"] = response.request.headers.get("x-aip-contract") == expected_contract
                     row["x_aip_contract"] = response.request.headers.get("x-aip-contract")
+                if parsed.path == "/read":
+                    try:
+                        row["read_request"] = read_request_evidence(response.request.post_data_json)
+                    except Exception:
+                        row["read_request"] = {"read_resource": "unrecognized"}
+                requests.append(row)
+                pending_bodies[response.request] = (response, row)
+
+            def capture_body(request) -> None:
+                # `requestfinished` fires after the body is complete; the response event precedes it and
+                # a read there can lose the body to navigation. A body never read leaves no `ok`.
+                entry = pending_bodies.pop(request, None)
+                if entry is None:
+                    return
+                response, row = entry
                 try:
-                    envelope = response.json()
-                except Exception:
+                    envelope = json.loads(response.body().decode("utf-8"))
+                    row["body_captured"] = True
+                except Exception as error:
                     envelope = {}
+                    row["body_captured"] = False
+                    # JSONDecodeError and UnicodeDecodeError are ValueErrors; everything else is Playwright's.
+                    row["body_failure_reason"] = "json_decode_error" if isinstance(error, ValueError) else body_failure_reason(error)
                 if isinstance(envelope, dict):
                     if isinstance(envelope.get("ok"), bool):
                         row["ok"] = envelope["ok"]
                     code = safe_wire_code(envelope.get("code"))
                     if code is not None:
                         row["code"] = code
-                    if parsed.path == "/read" and isinstance(envelope.get("rows"), list):
+                    if row["path"] == "/read" and isinstance(envelope.get("rows"), list):
                         genres = {
                             item.get("genre") for item in envelope["rows"]
                             if isinstance(item, dict)
@@ -115,16 +138,18 @@ def main() -> int:
                         }
                         if genres:
                             row["genre_values"] = sorted(genres)
-                if parsed.path == "/read":
-                    try:
-                        row["read_request"] = read_request_evidence(response.request.post_data_json)
-                    except Exception:
-                        row["read_request"] = {"read_resource": "unrecognized"}
-                requests.append(row)
+
+            def wait_for_api_bodies() -> None:
+                deadline = time.monotonic() + 15
+                while pending_bodies and time.monotonic() < deadline:
+                    page.wait_for_timeout(50)
+                if pending_bodies:
+                    raise AssertionError("API response bodies did not finish before the screenshot")
 
             page.on("response", capture_response)
+            page.on("requestfinished", capture_body)
             stage = "login"
-            page.goto("http://localhost:5173/auth/1", wait_until="domcontentloaded")
+            page.goto(f"http://localhost:{ui_port}/auth/1", wait_until="domcontentloaded")
             page.locator("#authEmail").fill(email)
             page.get_by_role("button", name="다음", exact=True).click()
             expect(page).to_have_url(re.compile(r"/auth/2$"))
@@ -163,8 +188,10 @@ def main() -> int:
             ) as profile_write_response:
                 page.get_by_role("button", name="수정", exact=True).click()
             write_response = profile_write_response.value
+            # Wait for the write's body to be collected on requestfinished before judging it.
+            wait_for_api_bodies()
             try:
-                write_envelope = write_response.json()
+                write_envelope = json.loads(write_response.body().decode("utf-8"))
             except Exception:
                 write_envelope = {}
             if write_response.status != 200 or not isinstance(write_envelope, dict) or write_envelope.get("ok") is not True:
@@ -173,6 +200,13 @@ def main() -> int:
                 raise RuntimeError("React profile update did not use the server's AIP contract fingerprint")
             expect(page).to_have_url(re.compile(r"/my$"), timeout=15000)
             expect(page.get_by_role("heading", name=f"{UPDATED_PROFILE_NAME}님", exact=True)).to_be_visible()
+            # The destination page issues its own reads; let them finish and render before the screenshot,
+            # otherwise it captures only the header while the body is still loading.
+            wait_for_api_bodies()
+            page.wait_for_load_state("networkidle", timeout=15000)
+            wait_for_api_bodies()
+            expect(page.get_by_role("heading", name=f"{UPDATED_PROFILE_NAME}님", exact=True)).to_be_visible()
+            profile_fields["after_save_visible_text_length"] = page.evaluate("document.body.innerText.length")
             profile_fields["saved_name"] = UPDATED_PROFILE_NAME
             profile_fields["saved_genres"] = sorted(UPDATED_PROFILE_GENRES)
             profile_fields["write_bundle_ok"] = True
@@ -181,6 +215,9 @@ def main() -> int:
             browser.close()
             browser = None
 
+        uncollected = [row for row in requests if row.get("body_captured") is not True]
+        if uncollected:
+            raise RuntimeError("React profile API body was not collected (measurement gap): " + json.dumps(uncollected, ensure_ascii=False))
         reads = [row for row in requests if row.get("path") == "/read"]
         by_resource = {row.get("read_request", {}).get("read_resource"): row for row in reads}
         for resource in ("User", "UserFavoriteGenre"):
