@@ -1,3 +1,4 @@
+import json
 import unittest
 
 from product.tests.facereview_ui_browser_evidence import (
@@ -15,6 +16,11 @@ from product.tests.facereview_ui_browser_evidence import (
     safe_wire_code,
     youtube_iframe_api_stub,
     response_envelope_evidence,
+    body_capture_evidence,
+    body_failure_reason,
+    app_bookmark_read_observation,
+    compare_bookmark_read_capture,
+    timeline_phase,
 )
 
 
@@ -211,6 +217,95 @@ class BrowserEvidenceTests(unittest.TestCase):
             extension_response_evidence("Video.homeCategory", payload, VIDEO_ID),
             {"response_list_length": 1, "category_count": 1, "contains_fixture_video": True},
         )
+
+    def test_body_failure_reason_separates_playwright_transport_failures_without_keeping_messages(self):
+        class TargetClosedError(Exception):
+            pass
+
+        class Error(Exception):
+            pass
+
+        class TimeoutError(Exception):  # noqa: A001 - mirrors the Playwright class name.
+            pass
+
+        self.assertEqual(body_failure_reason(TargetClosedError("Target page, context or browser has been closed")), "target_closed")
+        self.assertEqual(
+            body_failure_reason(Error("Response.json: Protocol error (Network.getResponseBody): No resource with given identifier")),
+            "resource_evicted",
+        )
+        self.assertEqual(body_failure_reason(Error("Protocol error (Network.getResponseBody): No data found for resource")), "resource_evicted")
+        self.assertEqual(body_failure_reason(Error("net::ERR_ABORTED secret-token-123")), "playwright_error")
+        self.assertEqual(body_failure_reason(TimeoutError("slow")), "timeout")
+        self.assertEqual(body_failure_reason(ValueError("anything")), "unrecognized")
+
+    def test_body_capture_distinguishes_unavailable_from_decode_error_and_valid_json(self):
+        unavailable = body_capture_evidence(None, "application/json", "resource_evicted")
+        self.assertEqual(unavailable["body_captured"], False)
+        self.assertEqual(unavailable["failure_reason"], "resource_evicted")
+        self.assertEqual(unavailable["response_shape"], {"json_kind": "body_unavailable", "reason": "resource_evicted"})
+        self.assertNotIn("byte_length", unavailable)
+
+        valid = body_capture_evidence(b'{"ok":true,"rows":[{"secret":"omit"}]}', "application/json; charset=utf-8", None)
+        self.assertEqual(valid["body_captured"], True)
+        self.assertEqual(valid["content_type"], "application/json")
+        self.assertEqual(valid["byte_length"], 38)
+        self.assertEqual(len(valid["sha256_16"]), 16)
+        self.assertEqual(valid["response_shape"]["json_kind"], "object")
+        self.assertEqual(valid["response_shape"]["rows_length"], 1)
+        self.assertNotIn("omit", json.dumps(valid))
+
+        html = body_capture_evidence(b"<html>private</html>", "text/html", None)
+        self.assertEqual(html["body_captured"], True)
+        self.assertEqual(html["response_shape"], {"json_kind": "json_decode_error", "decode_error_class": "JSONDecodeError", "first_byte_class": "html"})
+        self.assertEqual(html["content_type"], "text/html")
+        self.assertNotIn("private", json.dumps(html))
+
+        empty = body_capture_evidence(b"", "application/json", None)
+        self.assertEqual(empty["response_shape"]["first_byte_class"], "empty")
+        self.assertEqual(empty["byte_length"], 0)
+        self.assertEqual(body_capture_evidence(b"\xff\xfe", None, None)["response_shape"]["decode_error_class"], "UnicodeDecodeError")
+        self.assertEqual(body_capture_evidence(b"{}", "application/vnd.private", None)["content_type"], "other")
+        self.assertEqual(body_capture_evidence(b"{}", None, None)["content_type"], "missing")
+
+    def test_app_observation_keeps_only_allowlisted_fields(self):
+        event = {
+            "seq": 1, "phase": "received", "started_ms": 10, "ended_ms": 70, "status": 200,
+            "content_type": "application/json", "byte_length": 60, "sha256_16": "0123456789abcdef",
+            "parse": "object", "ok": True, "rows_length": 0, "token": "must-not-escape", "cookie": "x",
+        }
+        kept = app_bookmark_read_observation(event)
+        self.assertEqual(kept["seq"], 1)
+        self.assertEqual(kept["parse"], "object")
+        self.assertNotIn("token", kept)
+        self.assertNotIn("cookie", kept)
+        self.assertIsNone(app_bookmark_read_observation({"seq": "1"}))
+        self.assertIsNone(app_bookmark_read_observation("not an event"))
+        rejected = app_bookmark_read_observation({"seq": 2, "phase": "fetch_rejected", "error_class": "SecretError", "ended_ms": 5})
+        self.assertEqual(rejected["error_class"], "unrecognized")
+
+    def test_compare_requires_matching_bytes_and_never_counts_missing_capture_as_match(self):
+        app = {"seq": 1, "phase": "received", "status": 200, "byte_length": 60, "sha256_16": "aaaaaaaaaaaaaaaa", "parse": "object"}
+        captured = {"body_captured": True, "byte_length": 60, "sha256_16": "aaaaaaaaaaaaaaaa"}
+        self.assertEqual(compare_bookmark_read_capture(captured, app), "match")
+        self.assertEqual(compare_bookmark_read_capture({**captured, "sha256_16": "bbbbbbbbbbbbbbbb"}, app), "mismatch")
+        self.assertEqual(
+            compare_bookmark_read_capture({"body_captured": False, "failure_reason": "target_closed"}, app),
+            "playwright_body_unavailable",
+        )
+        self.assertEqual(compare_bookmark_read_capture(captured, None), "app_observation_missing")
+        self.assertEqual(
+            compare_bookmark_read_capture(captured, {"seq": 1, "phase": "fetch_rejected"}),
+            "app_observation_incomplete",
+        )
+
+    def test_timeline_phase_places_an_event_relative_to_reload_and_close(self):
+        marks = {"reload_start": 100, "reload_return": 180, "browser_close_start": 400}
+        self.assertEqual(timeline_phase(50, marks), "before_reload")
+        self.assertEqual(timeline_phase(150, marks), "during_reload")
+        self.assertEqual(timeline_phase(200, marks), "after_reload")
+        self.assertEqual(timeline_phase(500, marks), "after_close_start")
+        self.assertEqual(timeline_phase(50, {}), "before_any_mark")
+        self.assertEqual(timeline_phase(None, marks), "not_observed")
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 """Small allowlist-only summaries for the live FaceReview browser journey."""
 
+import hashlib
 import json
 from typing import Any
 from urllib.parse import urlsplit
@@ -111,6 +112,133 @@ def response_envelope_evidence(payload: Any) -> dict[str, object]:
     if isinstance(payload, list):
         return {"json_kind": "array", "array_length": len(payload)}
     return {"json_kind": "null" if payload is None else type(payload).__name__}
+
+
+SAFE_MEDIA_TYPES = {"application/json", "text/html", "text/plain"}
+SAFE_APP_ERROR_CLASSES = {"TypeError", "AbortError", "SyntaxError", "NetworkError", "DOMException"}
+SAFE_APP_PHASES = {"received", "fetch_rejected", "clone_read_failed"}
+SAFE_APP_PARSES = {"object", "array", "json_decode_error", "other"}
+
+
+def body_failure_reason(error: Any) -> str:
+    """Map a Playwright body-read failure to a reason code; the exception text is never retained."""
+    name = type(error).__name__
+    message = str(error)
+    if name == "TargetClosedError" or "has been closed" in message:
+        return "target_closed"
+    if name == "TimeoutError":
+        return "timeout"
+    if name == "Error":
+        if "No resource with given identifier" in message or "No data found for resource" in message:
+            return "resource_evicted"
+        return "playwright_error"
+    return "unrecognized"
+
+
+def _media_type(content_type: Any) -> str:
+    if not isinstance(content_type, str) or not content_type.strip():
+        return "missing"
+    media = content_type.split(";", 1)[0].strip().lower()
+    return media if media in SAFE_MEDIA_TYPES else "other"
+
+
+def _first_byte_class(raw: bytes) -> str:
+    head = raw.lstrip()[:1]
+    if not raw:
+        return "empty"
+    if head == b"{":
+        return "json_object"
+    if head == b"[":
+        return "json_array"
+    if head == b"<":
+        return "html"
+    return "other"
+
+
+def body_capture_evidence(raw: bytes | None, content_type: Any, failure_reason: str | None) -> dict[str, object]:
+    """Separate a body Playwright could not read from a body that was read but is not JSON.
+
+    The body is parsed in memory only; what survives is length, a truncated hash and the allowlisted shape.
+    """
+    media = _media_type(content_type)
+    if raw is None:
+        reason = failure_reason or "unrecognized"
+        return {
+            "body_captured": False,
+            "content_type": media,
+            "failure_reason": reason,
+            "response_shape": {"json_kind": "body_unavailable", "reason": reason},
+        }
+    evidence: dict[str, object] = {
+        "body_captured": True,
+        "content_type": media,
+        "byte_length": len(raw),
+        "sha256_16": hashlib.sha256(raw).hexdigest()[:16],
+    }
+    try:
+        shape = response_envelope_evidence(json.loads(raw.decode("utf-8")))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        shape = {
+            "json_kind": "json_decode_error",
+            "decode_error_class": type(error).__name__,
+            "first_byte_class": _first_byte_class(raw),
+        }
+    evidence["response_shape"] = shape
+    return evidence
+
+
+def app_bookmark_read_observation(event: Any) -> dict[str, object] | None:
+    """Keep the allowlisted fields of what the React app itself received for the bookmark /read."""
+    if not isinstance(event, dict) or not isinstance(event.get("seq"), int) or isinstance(event.get("seq"), bool):
+        return None
+    phase = event.get("phase")
+    kept: dict[str, object] = {"seq": event["seq"], "phase": phase if phase in SAFE_APP_PHASES else "unrecognized"}
+    for key in ("started_ms", "response_ms", "ended_ms", "status", "byte_length", "rows_length"):
+        value = event.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            kept[key] = value
+    if isinstance(event.get("ok"), bool):
+        kept["ok"] = event["ok"]
+    if "content_type" in event:
+        kept["content_type"] = _media_type(event.get("content_type"))
+    digest = event.get("sha256_16")
+    if isinstance(digest, str) and len(digest) == 16 and all(char in "0123456789abcdef" for char in digest):
+        kept["sha256_16"] = digest
+    parse = event.get("parse")
+    if parse is not None:
+        kept["parse"] = parse if parse in SAFE_APP_PARSES else "unrecognized"
+    if "error_class" in event:
+        error_class = event.get("error_class")
+        kept["error_class"] = error_class if error_class in SAFE_APP_ERROR_CLASSES else "unrecognized"
+    return kept
+
+
+def compare_bookmark_read_capture(captured: dict[str, object], app: dict[str, object] | None) -> str:
+    """Compare Playwright's body capture with the app's own receipt; only equal bytes count as a match."""
+    if app is None:
+        return "app_observation_missing"
+    if app.get("phase") != "received" or "sha256_16" not in app:
+        return "app_observation_incomplete"
+    if captured.get("body_captured") is not True:
+        return "playwright_body_unavailable"
+    same = captured.get("sha256_16") == app.get("sha256_16") and captured.get("byte_length") == app.get("byte_length")
+    return "match" if same else "mismatch"
+
+
+def timeline_phase(at_ms: Any, marks: dict[str, int]) -> str:
+    """Place a timestamp relative to the recorded reload and browser-close marks."""
+    if not isinstance(at_ms, int) or isinstance(at_ms, bool):
+        return "not_observed"
+    close_start = marks.get("browser_close_start")
+    if close_start is not None and at_ms >= close_start:
+        return "after_close_start"
+    reload_start = marks.get("reload_start")
+    if reload_start is None or at_ms < reload_start:
+        return "before_reload" if reload_start is not None else "before_any_mark"
+    reload_return = marks.get("reload_return")
+    if reload_return is None or at_ms <= reload_return:
+        return "during_reload"
+    return "after_reload"
 
 
 def read_request_evidence(body: Any) -> dict[str, object]:

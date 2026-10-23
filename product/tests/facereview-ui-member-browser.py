@@ -20,6 +20,12 @@ from urllib.parse import urlsplit
 from playwright.sync_api import expect, sync_playwright
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from product.tests.facereview_ui_browser_evidence import (
+    app_bookmark_read_observation,
+    body_capture_evidence,
+    body_failure_reason,
+    SAFE_NETWORK_FAILURES,
+    compare_bookmark_read_capture,
+    timeline_phase,
     extension_request_evidence,
     extension_response_evidence,
     external_media_failure_evidence,
@@ -89,6 +95,57 @@ def start_fixture_thumbnail_server() -> tuple[
     return server, thread, cert_dir, url
 
 
+# Observes what the React app itself receives for the fixture bookmark /read. It passes the original
+# fetch result through untouched and emits only length, hash and allowlisted shape on the console.
+APP_BOOKMARK_READ_OBSERVER = """
+(() => {
+  const originalFetch = window.fetch;
+  let seq = 0;
+  const emit = (event) => { try { console.info('AIP_SAFE_BOOKMARK_READ:' + JSON.stringify(event)); } catch (_) {} };
+  const hex = (buffer) => [...new Uint8Array(buffer)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+  const isBookmarkRead = (input, init) => {
+    try {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (new URL(url, location.href).pathname !== '/read') return false;
+      const body = init && typeof init.body === 'string' ? init.body : null;
+      return body !== null && JSON.parse(body)?.query?.read === 'VideoBookmark';
+    } catch (_) { return false; }
+  };
+  window.fetch = function (input, init) {
+    if (!isBookmarkRead(input, init)) return originalFetch.apply(this, arguments);
+    const id = ++seq;
+    const startedMs = Date.now();
+    return originalFetch.apply(this, arguments).then((response) => {
+      const responseMs = Date.now();
+      response.clone().arrayBuffer().then(async (buffer) => {
+        let parse = 'other';
+        let ok;
+        let rowsLength;
+        try {
+          const payload = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(buffer));
+          parse = Array.isArray(payload) ? 'array' : payload && typeof payload === 'object' ? 'object' : 'other';
+          if (parse === 'object') {
+            if (typeof payload.ok === 'boolean') ok = payload.ok;
+            if (Array.isArray(payload.rows)) rowsLength = payload.rows.length;
+          }
+        } catch (_) { parse = 'json_decode_error'; }
+        let digest;
+        try { digest = hex(await crypto.subtle.digest('SHA-256', buffer)).slice(0, 16); } catch (_) {}
+        emit({ seq: id, phase: 'received', started_ms: startedMs, response_ms: responseMs, ended_ms: Date.now(),
+          status: response.status, content_type: response.headers.get('content-type'), byte_length: buffer.byteLength,
+          sha256_16: digest, parse, ok, rows_length: rowsLength });
+      }, (error) => emit({ seq: id, phase: 'clone_read_failed', started_ms: startedMs, response_ms: responseMs,
+        ended_ms: Date.now(), error_class: error && error.name }));
+      return response;
+    }, (error) => {
+      emit({ seq: id, phase: 'fetch_rejected', started_ms: startedMs, ended_ms: Date.now(), error_class: error && error.name });
+      throw error;
+    });
+  };
+})();
+"""
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--ui", type=Path, required=True)
@@ -99,6 +156,8 @@ def main() -> int:
     email = os.environ["AIP_FACEREVIEW_JOURNEY_EMAIL"]
     password = os.environ["AIP_FACEREVIEW_JOURNEY_PASSWORD"]
     expected_contract = os.environ["AIP_FACEREVIEW_EXPECTED_CONTRACT"]
+    # CI keeps the default; a local run may move off a port that another dev server already holds.
+    ui_port = os.environ.get("AIP_FACEREVIEW_UI_PORT", "5173")
     binding_source = (args.ui / "src/aip/facereview.ts").read_text(encoding="utf-8")
     binding_match = re.search(r'export const contractFingerprint = "([a-f0-9]{64})";', binding_source)
     if binding_match is None:
@@ -112,12 +171,31 @@ def main() -> int:
     server_env.pop("AIP_FACEREVIEW_JOURNEY_EMAIL", None)
     server_env.pop("AIP_FACEREVIEW_JOURNEY_PASSWORD", None)
     server = subprocess.Popen(
-        ["node", ".yarn/releases/yarn-4.12.0.cjs", "dev", "--host", "0.0.0.0", "--port", "5173", "--strictPort"],
+        ["node", ".yarn/releases/yarn-4.12.0.cjs", "dev", "--host", "0.0.0.0", "--port", ui_port, "--strictPort"],
         cwd=args.ui,
         env=server_env,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+    clock_start = time.monotonic()
+    epoch_start_ms = round(time.time() * 1000)
+
+    def now_ms() -> int:
+        return round((time.monotonic() - clock_start) * 1000)
+
+    timeline: list[dict[str, object]] = []
+    marks: dict[str, int] = {}
+
+    def mark(event: str) -> None:
+        ms = now_ms()
+        marks.setdefault(event, ms)
+        timeline.append({"event": event, "ms": ms})
+
+    lifecycle: dict[object, dict[str, object]] = {}
+    pending_bodies: dict[object, dict[str, object]] = {}
+    api_request_failures: list[dict[str, object]] = []
+    app_unpaired_count = 0
+    app_bookmark_observations: list[dict[str, object]] = []
     api_paths: list[dict[str, object]] = []
     read_requests: list[dict[str, object]] = []
     read_callers_by_body: dict[bytes, list[dict[str, object]]] = {}
@@ -142,6 +220,219 @@ def main() -> int:
     thumbnail_thread = None
     thumbnail_cert_dir = None
     thumbnail_url = ""
+    api_port = urlsplit(args.api).port
+
+    def track_api_request(request) -> None:
+        if urlsplit(request.url).port != api_port:
+            return
+        path = urlsplit(request.url).path
+        read_resource = None
+        if path == "/read":
+            try:
+                read_resource = read_request_evidence(request.post_data_json).get("read_resource")
+            except Exception:
+                read_resource = "unrecognized"
+        lifecycle[request] = {
+            "corr": len(lifecycle) + 1,
+            "method": request.method,
+            "path": path,
+            "read_resource": read_resource,
+            "t_request_ms": now_ms(),
+        }
+
+    def unfinished_requests() -> list[dict[str, object]]:
+        return [
+            item for item in lifecycle.values()
+            if "t_finished_ms" not in item and "t_failed_ms" not in item
+        ]
+
+    def lifecycle_summary() -> dict[str, object]:
+        return {
+            "requests": len(lifecycle),
+            "responses": sum(1 for item in lifecycle.values() if "t_response_ms" in item),
+            "finished": sum(1 for item in lifecycle.values() if "t_finished_ms" in item),
+            "failed": sum(1 for item in lifecycle.values() if "t_failed_ms" in item),
+            "rows": len(api_paths),
+            "unfinished": [
+                {
+                    "corr": item["corr"],
+                    "path": item["path"],
+                    "read_resource": item["read_resource"],
+                    "t_request_ms": item["t_request_ms"],
+                }
+                for item in unfinished_requests()
+            ][:10],
+        }
+
+    def apply_body_evidence(entry: dict[str, object], evidence: dict[str, object], raw: bytes | None) -> None:
+        # Body-derived fields are filled only once the body outcome is known; a body that was
+        # never read leaves no `ok`, so it can never count as a successful response.
+        row = entry["row"]
+        envelope: object = {}
+        if raw is not None:
+            try:
+                envelope = json.loads(raw.decode("utf-8"))
+            except (UnicodeDecodeError, ValueError):
+                envelope = {}
+        row["body_captured"] = evidence["body_captured"]
+        if evidence["body_captured"] is not True:
+            row["body_failure_reason"] = evidence["failure_reason"]
+        if isinstance(envelope, dict):
+            if isinstance(envelope.get("ok"), bool):
+                row["ok"] = envelope["ok"]
+            code = safe_wire_code(envelope.get("code"))
+            if code is not None:
+                row["code"] = code
+        if row["path"] == "/read":
+            row["response_shape"] = evidence["response_shape"]
+            read_result = entry["read_result"]
+            if isinstance(row.get("ok"), bool):
+                read_result["ok"] = row["ok"]
+            if isinstance(row.get("code"), str):
+                read_result["code"] = row["code"]
+            read_result["response_shape"] = evidence["response_shape"]
+        extension_request = entry["extension_request"]
+        if extension_request:
+            row.update(extension_response_evidence(str(extension_request["extension"]), envelope, VIDEO_ID))
+        if entry["bookmark_read"]:
+            row["bookmark_read_observation"] = {
+                "corr": row["corr"],
+                "content_type": evidence["content_type"],
+                "body_capture": {key: value for key, value in evidence.items() if key != "response_shape"},
+            }
+
+    def capture_response(response) -> None:
+        parsed = urlsplit(response.url)
+        if parsed.port != api_port:
+            return
+        life = lifecycle.get(response.request, {})
+        life["t_response_ms"] = now_ms()
+        request_contract = response.request.headers.get("x-aip-contract")
+        row: dict[str, object] = {
+            "corr": life.get("corr"),
+            "method": response.request.method,
+            "path": parsed.path,
+            "status": response.status,
+        }
+        if parsed.path in {"/read", "/extension", "/apply"}:
+            row["contract_matches_runtime"] = request_contract == expected_contract
+            row["x_aip_contract"] = request_contract
+        read_result: dict[str, object] | None = None
+        bookmark_read = False
+        if parsed.path == "/read":
+            try:
+                read_evidence = read_request_evidence(response.request.post_data_json)
+            except Exception:
+                read_evidence = {"read_resource": "unrecognized"}
+            bookmark_read = read_evidence.get("read_resource") == "VideoBookmark"
+            row["read_request"] = read_evidence
+            post_data = response.request.post_data
+            if isinstance(post_data, str):
+                digest = hashlib.sha256(post_data.encode("utf-8")).digest()
+                queued = read_callers_by_body.get(digest, [])
+                if queued:
+                    row["caller_frames"] = queued.pop(0)
+                    if not queued:
+                        del read_callers_by_body[digest]
+            else:
+                row["caller_frames"] = []
+            read_result = dict(read_evidence)
+            read_result["status"] = response.status
+            read_requests.append(read_result)
+        extension_request: dict[str, object] = {}
+        if parsed.path == "/extension":
+            try:
+                extension_request = extension_request_evidence(response.request.post_data_json)
+            except Exception:
+                extension_request = {}
+            if extension_request:
+                row["extension_request"] = extension_request
+        api_paths.append(row)
+        pending_bodies[response.request] = {
+            "response": response,
+            "row": row,
+            "read_result": read_result,
+            "extension_request": extension_request,
+            "bookmark_read": bookmark_read,
+        }
+
+    def capture_body(request) -> None:
+        # `requestfinished` fires after the body is complete, so reading it here does not
+        # depend on the response event that precedes the body.
+        life = lifecycle.get(request)
+        if life is not None:
+            life["t_finished_ms"] = now_ms()
+        entry = pending_bodies.pop(request, None)
+        if entry is None:
+            return
+        response = entry["response"]
+        raw: bytes | None = None
+        reason: str | None = None
+        if life is not None:
+            life["t_body_attempt_ms"] = now_ms()
+        try:
+            raw = response.body()
+        except Exception as error:
+            reason = body_failure_reason(error)
+        if life is not None:
+            life["t_body_done_ms"] = now_ms()
+        apply_body_evidence(
+            entry, body_capture_evidence(raw, response.headers.get("content-type"), reason), raw
+        )
+
+    def capture_request_failure(request) -> None:
+        life = lifecycle.get(request)
+        if life is None:
+            return
+        failure = request.failure
+        reason = failure if isinstance(failure, str) and failure in SAFE_NETWORK_FAILURES else "other"
+        life["t_failed_ms"] = now_ms()
+        life["failure"] = reason
+        entry = pending_bodies.pop(request, None)
+        if entry is not None:
+            apply_body_evidence(
+                entry, body_capture_evidence(None, None, "request_failed_after_response"), None
+            )
+            return
+        # No response ever arrived: keep it visible instead of silently dropping it.
+        try:
+            failed_resource = read_request_evidence(request.post_data_json).get("read_resource")
+        except Exception:
+            failed_resource = "unrecognized"
+        api_request_failures.append({
+            "corr": life["corr"],
+            "path": life["path"],
+            "failure": reason,
+            "read_resource": failed_resource if life["path"] == "/read" else None,
+            "t_request_ms": life["t_request_ms"],
+            "t_failed_ms": life["t_failed_ms"],
+        })
+
+    def finalize_lifecycle() -> None:
+        nonlocal app_unpaired_count
+        for request, entry in list(pending_bodies.items()):
+            apply_body_evidence(
+                entry, body_capture_evidence(None, None, "not_finished_before_report"), None
+            )
+            del pending_bodies[request]
+        bookmark_rows = sorted(
+            (row for row in api_paths if "bookmark_read_observation" in row), key=lambda row: row["corr"]
+        )
+        app_observations = sorted(app_bookmark_observations, key=lambda event: event["seq"])
+        for index, row in enumerate(bookmark_rows):
+            observation = row["bookmark_read_observation"]
+            life = next((item for item in lifecycle.values() if item["corr"] == row["corr"]), {})
+            for key in ("t_request_ms", "t_response_ms", "t_finished_ms", "t_body_attempt_ms", "t_body_done_ms"):
+                observation[key] = life.get(key)
+            observation["body_attempt_phase"] = timeline_phase(life.get("t_body_attempt_ms"), marks)
+            observation["response_handler_phase"] = timeline_phase(life.get("t_response_ms"), marks)
+            app = app_observations[index] if index < len(app_observations) else None
+            observation["app_observation"] = app
+            observation["app_comparison"] = compare_bookmark_read_capture(observation["body_capture"], app)
+        # The one-to-one pairing is by request order; extra app events mean the pairing is unreliable.
+        app_unpaired_count = max(0, len(app_observations) - len(bookmark_rows))
+
+
     try:
         thumbnail_server, thumbnail_thread, thumbnail_cert_dir, thumbnail_url = start_fixture_thumbnail_server()
         ready = False
@@ -151,7 +442,7 @@ def main() -> int:
             try:
                 import urllib.request
 
-                with urllib.request.urlopen("http://127.0.0.1:5173/auth/1", timeout=1) as response:
+                with urllib.request.urlopen(f"http://127.0.0.1:{ui_port}/auth/1", timeout=1) as response:
                     if response.status == 200:
                         ready = True
                         break
@@ -175,6 +466,8 @@ def main() -> int:
                     "window.__AIP_SAFE_LIST_EVIDENCE__ = (event) => "
                     "console.info('AIP_SAFE_LIST_EVIDENCE:' + JSON.stringify(event));"
                 )
+
+                page.add_init_script(APP_BOOKMARK_READ_OBSERVER)
 
                 cdp = context.new_cdp_session(page)
                 cdp.send("Network.enable")
@@ -203,68 +496,21 @@ def main() -> int:
                         digest = hashlib.sha256(post_data.encode("utf-8")).digest()
                         read_callers_by_body.setdefault(digest, []).append(safe_frames)
 
-                def capture_response(response) -> None:
-                    parsed = urlsplit(response.url)
-                    if parsed.port == urlsplit(args.api).port:
-                        request_contract = response.request.headers.get("x-aip-contract")
-                        try:
-                            envelope = response.json()
-                            response_shape = response_envelope_evidence(envelope)
-                        except Exception:
-                            envelope = {}
-                            response_shape = {"json_kind": "invalid_json"}
-                        row: dict[str, object] = {
-                            "method": response.request.method,
-                            "path": parsed.path,
-                            "status": response.status,
-                        }
-                        if parsed.path in {"/read", "/extension", "/apply"}:
-                            row["contract_matches_runtime"] = request_contract == expected_contract
-                            row["x_aip_contract"] = request_contract
-                        if isinstance(envelope, dict):
-                            if isinstance(envelope.get("ok"), bool):
-                                row["ok"] = envelope["ok"]
-                            code = safe_wire_code(envelope.get("code"))
-                            if code is not None:
-                                row["code"] = code
-                        if parsed.path == "/read":
-                            row["response_shape"] = response_shape
-                            try:
-                                read_evidence = read_request_evidence(response.request.post_data_json)
-                            except Exception:
-                                read_evidence = {"read_resource": "unrecognized"}
-                            row["read_request"] = read_evidence
-                            post_data = response.request.post_data
-                            if isinstance(post_data, str):
-                                digest = hashlib.sha256(post_data.encode("utf-8")).digest()
-                                queued = read_callers_by_body.get(digest, [])
-                                if queued:
-                                    row["caller_frames"] = queued.pop(0)
-                                    if not queued:
-                                        del read_callers_by_body[digest]
-                            else:
-                                row["caller_frames"] = []
-                            read_result = dict(read_evidence)
-                            read_result["status"] = response.status
-                            if isinstance(row.get("ok"), bool):
-                                read_result["ok"] = row["ok"]
-                            if isinstance(row.get("code"), str):
-                                read_result["code"] = row["code"]
-                            read_result["response_shape"] = response_shape
-                            read_requests.append(read_result)
-                        if parsed.path == "/extension":
-                            try:
-                                extension_request = extension_request_evidence(response.request.post_data_json)
-                            except Exception:
-                                extension_request = {}
-                            if extension_request:
-                                row["extension_request"] = extension_request
-                                row.update(extension_response_evidence(
-                                    str(extension_request["extension"]), envelope, VIDEO_ID
-                                ))
-                        api_paths.append(row)
-
+                mark("journey_start")
+                page.on("framenavigated", lambda frame: (
+                    timeline.append({
+                        "event": "main_frame_navigated",
+                        "ms": now_ms(),
+                        "route_class": safe_browser_route_class(frame.url, VIDEO_ID),
+                    })
+                    if frame.parent_frame is None and len(timeline) < 200
+                    else None
+                ))
+                page.on("close", lambda _page: mark("page_closed"))
+                page.on("requestfailed", capture_request_failure)
+                page.on("request", track_api_request)
                 page.on("response", capture_response)
+                page.on("requestfinished", capture_body)
                 cdp.on("Network.requestWillBeSent", capture_network_initiator)
                 page.on("requestfailed", lambda request: (
                     external_media_failures.append(evidence)
@@ -285,7 +531,21 @@ def main() -> int:
                     nonlocal console_error_count
                     text = message.text
                     prefix = "AIP_SAFE_LIST_EVIDENCE:"
-                    if text.startswith(prefix):
+                    bookmark_prefix = "AIP_SAFE_BOOKMARK_READ:"
+                    if text.startswith(bookmark_prefix):
+                        try:
+                            raw_event = json.loads(text[len(bookmark_prefix):])
+                        except (TypeError, ValueError):
+                            return
+                        if isinstance(raw_event, dict):
+                            # The page clock is epoch time; rebase it onto this script's monotonic timeline.
+                            for key in ("started_ms", "response_ms", "ended_ms"):
+                                if isinstance(raw_event.get(key), int):
+                                    raw_event[key] -= epoch_start_ms
+                        observation = app_bookmark_read_observation(raw_event)
+                        if observation is not None and len(app_bookmark_observations) < 20:
+                            app_bookmark_observations.append(observation)
+                    elif text.startswith(prefix):
                         try:
                             event = json.loads(text[len(prefix):])
                         except (TypeError, ValueError):
@@ -337,7 +597,7 @@ def main() -> int:
                 page.route("**/*", block_external_media)
                 try:
                     journey_stage = "login"
-                    page.goto("http://localhost:5173/auth/1", wait_until="domcontentloaded")
+                    page.goto(f"http://localhost:{ui_port}/auth/1", wait_until="domcontentloaded")
                     page.locator("#authEmail").fill(email)
                     page.get_by_role("button", name="다음", exact=True).click()
                     expect(page).to_have_url(re.compile(r"/auth/2$"))
@@ -383,20 +643,28 @@ def main() -> int:
                     bookmark_remove = page.get_by_role("button", name="즐겨찾기 해제", exact=True)
                     if args.phase == "add":
                         expect(bookmark_add).to_be_visible()
+                        mark("bookmark_click")
                         bookmark_add.click()
+                        mark("bookmark_click_returned")
                         expect(bookmark_remove).to_have_attribute("aria-pressed", "true")
                         journey_stage = "bookmark_reload"
+                        mark("reload_start")
                         page.reload(wait_until="domcontentloaded")
+                        mark("reload_return")
                         journey_stage = "bookmark_reloaded"
                         expect(bookmark_remove).to_have_attribute("aria-pressed", "true", timeout=30000)
                         journey_stage = "bookmark_state_confirmed"
                         label = "bookmarked"
                     else:
                         expect(bookmark_remove).to_be_visible()
+                        mark("bookmark_click")
                         bookmark_remove.click()
+                        mark("bookmark_click_returned")
                         expect(bookmark_add).to_have_attribute("aria-pressed", "false")
                         journey_stage = "bookmark_reload"
+                        mark("reload_start")
                         page.reload(wait_until="domcontentloaded")
+                        mark("reload_return")
                         journey_stage = "bookmark_reloaded"
                         expect(bookmark_add).to_have_attribute("aria-pressed", "false", timeout=30000)
                         journey_stage = "bookmark_state_confirmed"
@@ -452,8 +720,11 @@ def main() -> int:
                     screenshot_names.append(screenshot.name)
                     raise
             finally:
+                mark("browser_close_start")
                 browser.close()
+                mark("browser_close_done")
 
+        finalize_lifecycle()
         observed_paths = {row["path"] for row in api_paths}
         required_paths = {"/auth/check-email", "/auth/login", "/extension", "/apply"}
         if not required_paths.issubset(observed_paths):
@@ -463,8 +734,25 @@ def main() -> int:
         if any(row["path"] in required_paths and row["status"] != 200 for row in api_paths):
             raise RuntimeError("an expected AIP API request did not return HTTP 200")
         failed_reads = failed_read_requests(api_paths)
+        # A read whose body Playwright could not collect says nothing about the server; report it as a
+        # measurement gap rather than an error envelope, and never as success.
+        uncollected_reads = [row for row in failed_reads if row.get("body_captured") is not True]
+        if uncollected_reads:
+            raise RuntimeError("React /read body was not collected (measurement gap): " + json.dumps(uncollected_reads, ensure_ascii=False))
         if failed_reads:
             raise RuntimeError("React /read returned an error envelope: " + json.dumps(failed_reads, ensure_ascii=False))
+        # A request with no terminal event (a navigation abort leaves none) is not a success either.
+        failed_bookmark_reads = [
+            failure for failure in api_request_failures if failure.get("read_resource") == "VideoBookmark"
+        ]
+        unfinished_bookmark_reads = [
+            item["corr"] for item in unfinished_requests() if item["read_resource"] == "VideoBookmark"
+        ]
+        if failed_bookmark_reads or unfinished_bookmark_reads:
+            raise RuntimeError(
+                "React bookmark /read never reached a terminal request event: "
+                + json.dumps({"failed": failed_bookmark_reads, "unfinished_corr": unfinished_bookmark_reads})
+            )
         if page_errors:
             raise RuntimeError("browser reported an unhandled React page error")
         if fixture_thumbnail_redirect_count < 1 or 200 not in fixture_thumbnail_response_statuses:
@@ -479,6 +767,11 @@ def main() -> int:
             "server_listening_fingerprint": expected_contract,
             "ui_binding_fingerprint": binding_contract,
             "api_requests": api_paths,
+            "timeline": timeline,
+            "api_lifecycle": lifecycle_summary(),
+            "api_request_failures": api_request_failures,
+            "app_bookmark_read_observations": app_bookmark_observations,
+            "app_bookmark_read_unpaired_count": app_unpaired_count,
             "read_requests": read_requests,
             "adapter_list_evidence": adapter_list_evidence,
             "rendered_state": rendered_state,
@@ -507,12 +800,21 @@ def main() -> int:
         return 0
     except Exception:
         # Preserve safe request metadata even on failure; never serialize response bodies or credentials.
+        try:
+            finalize_lifecycle()
+        except Exception:
+            pass
         report = {
             "ui_revision": "2e7c021fa5abebd72278d841b8066a33d45cfbb3",
             "phase": args.phase,
             "server_listening_fingerprint": expected_contract,
             "ui_binding_fingerprint": binding_contract,
             "api_requests": api_paths,
+            "timeline": timeline,
+            "api_lifecycle": lifecycle_summary(),
+            "api_request_failures": api_request_failures,
+            "app_bookmark_read_observations": app_bookmark_observations,
+            "app_bookmark_read_unpaired_count": app_unpaired_count,
             "read_requests": read_requests,
             "adapter_list_evidence": adapter_list_evidence,
             "rendered_state": rendered_state,
