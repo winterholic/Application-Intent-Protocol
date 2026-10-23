@@ -28,6 +28,7 @@ from playwright.sync_api import expect, sync_playwright
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from product.tests.facereview_ui_browser_evidence import (  # noqa: E402
     admin_request_evidence,
+    aggregate_count,
     body_failure_reason,
     safe_page_error_name,
     safe_browser_failure_type,
@@ -35,9 +36,15 @@ from product.tests.facereview_ui_browser_evidence import (  # noqa: E402
 )
 
 UI_REVISION = "ab0386c878a5ba5c7c079a262b987c10d211d22d"
+# The console's signup-trend periods with the sum of the buckets each must show. The ages of the seeded accounts live in
+# crates/aip-cli/tests/mysql_facereview_admin_ui.rs (today, 3 days, 15 days, 60 days, 200 days, 800 days ago), so the sums grow by one per period.
+# 7d is last: the dashboard's own first load asks for it twice at once (the SDK shares one in-flight request per identical query), so only a
+# click made on a quiet page shows every bucket of that window as a request of its own.
+SIGNUP_PERIODS = [("최근 30일", 3), ("최근 3달", 4), ("최근 1년", 5), ("최근 3년", 6), ("최근 7일", 2)]
 APPROVED_URL = "reqvideo001"
 REJECTED_URL = "reqvideo002"
 MEMBER_ID = "77777777-7777-4777-8777-777777777777"
+ALICE_EMAIL = "a@example.com"
 ADMIN_ID = "55555555-5555-4555-8555-555555555555"
 SUPER_ADMIN_ID = "33333333-3333-4333-8333-333333333333"
 APPROVED_TITLE = "승인 표본 영상"
@@ -90,6 +97,8 @@ def main() -> int:
     requests: list[dict[str, object]] = []
     rest_fallback: list[str] = []
     pending_bodies: dict[object, tuple[object, dict[str, object]]] = {}
+    # A signup count is a number of seeded accounts, never a credential; it stays out of the report and is only compared in this script.
+    signup_counts: dict[int, int | None] = {}
     page_errors: list[dict[str, str]] = []
     state: dict[str, object] = {"stage": "startup", "host_metrics_null": None}
     checks: dict[str, object] = {}
@@ -158,6 +167,8 @@ def main() -> int:
                     code = safe_wire_code(envelope.get("code"))
                     if code is not None:
                         row["code"] = code
+                    if row.get("aggregate") == "User.signupCount":
+                        signup_counts[id(row)] = aggregate_count(envelope)
                     if row.get("extension") == "User.systemStatus" and isinstance(envelope.get("output"), dict):
                         try:
                             host = json.loads(envelope["output"]["body"])["server"]
@@ -259,6 +270,39 @@ def main() -> int:
                     for period in ("7d",):
                         checks[f"signup_trend_{period}"] = any(row.get("aggregate") == "User.signupCount" for row in requests)
 
+                # The dashboard's other four periods (the original offers 7d, 30d, 3m, 1y, 3y). Each click asks the server for that window's
+                # buckets; the chart draws one point per bucket and the buckets' counts add up to the seeded accounts inside the window.
+                stage("signup_trend_periods")
+                period_sums: dict[str, int] = {}
+                for label, expected_sum in SIGNUP_PERIODS:
+                    mark = len(requests)
+                    button = page.get_by_role("button", name=label, exact=True)
+                    button.click()
+                    expect(button).to_have_class(re.compile(r"\bactive\b"))
+                    # The chart asks for its buckets in batches, so the network is idle between batches; the chart's own loading line is
+                    # what says the whole window has been answered.
+                    deadline = time.monotonic() + 60
+                    while time.monotonic() < deadline:
+                        started = any(row.get("aggregate") == "User.signupCount" for row in requests[mark:])
+                        if started and page.locator(".chart-panel__loading").count() == 0 and not pending_bodies:
+                            break
+                        page.wait_for_timeout(100)
+                    else:
+                        raise RuntimeError(f"{label}: the signup trend did not finish loading")
+                    settled_idle()
+                    page.wait_for_timeout(1500)
+                    settled_idle()
+                    asked = [row for row in requests[mark:] if row.get("aggregate") == "User.signupCount"]
+                    counts = [signup_counts.get(id(row)) for row in asked]
+                    if not asked or any(count is None for count in counts):
+                        raise RuntimeError(f"{label}: the trend buckets were not all answered with a count (asked {len(asked)}, answered {sum(count is not None for count in counts)})")
+                    period_sums[label] = sum(counts)
+                    if period_sums[label] != expected_sum:
+                        raise RuntimeError(f"{label}: the buckets add up to {period_sums[label]} accounts over {len(asked)} buckets {counts}, not the {expected_sum} seeded in the window")
+                    expect(page.locator(".chart-panel svg circle")).to_have_count(len(asked))
+                    page.screenshot(path=str(output / f"admin-dashboard-signup-{label}.png".replace(" ", "-")), full_page=True)
+                checks["signup_trend_period_sums"] = period_sums
+
                 # 4. Users: the list, its total and a keyword search.
                 stage("users")
                 # Both dashboard outcomes (full host figures, or the partial state without them) leave the console on its dashboard.
@@ -286,6 +330,19 @@ def main() -> int:
                 expect(promoted_member.get_by_text("ADMIN", exact=True)).to_be_visible()
                 settled_idle()
                 checks["super_admin_promoted_general_to_admin"] = True
+
+                # The same SUPER_ADMIN returns a seeded ADMIN to GENERAL with the original's "ADMIN 해제" button.
+                stage("users_demote")
+                demoted_admin = page.locator("tr", has_text=ALICE_EMAIL)
+                expect(demoted_admin.get_by_text("ADMIN", exact=True)).to_be_visible()
+                with page.expect_response(lambda response: urlsplit(response.url).path == "/apply") as demotion:
+                    demoted_admin.get_by_role("button", name="ADMIN 해제", exact=True).click()
+                if demotion.value.status != 200:
+                    raise RuntimeError("the ADMIN 해제 request was not accepted")
+                expect(demoted_admin.get_by_text("GENERAL", exact=True)).to_be_visible()
+                expect(demoted_admin.get_by_role("button", name="ADMIN 지정", exact=True)).to_be_visible()
+                settled_idle()
+                checks["super_admin_demoted_admin_to_general"] = True
 
                 # 5. Requests: approve one (a durable job), reject another, and read both states back through the status filter.
                 stage("requests_approve")
@@ -440,6 +497,9 @@ def main() -> int:
                 stage("admin_general_deactivation")
                 page.get_by_role("link", name="회원 관리").click()
                 expect(page.get_by_role("heading", name="회원 관리")).to_be_visible()
+                # The original shows the role buttons to a SUPER_ADMIN only.
+                expect(page.get_by_role("button", name=re.compile(r"^ADMIN (지정|해제)$"))).to_have_count(0)
+                checks["admin_sees_no_role_buttons"] = True
                 general_row = page.locator("tr", has_text="d@example.com")
                 general_row.get_by_role("button", name="비활성화", exact=True).click()
                 page.locator(".confirm-modal__panel").get_by_role("button", name="비활성화", exact=True).click()

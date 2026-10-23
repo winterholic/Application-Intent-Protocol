@@ -3,6 +3,7 @@ import unittest
 
 from product.tests.facereview_ui_browser_evidence import (
     admin_request_evidence,
+    aggregate_count,
     safe_page_error_name,
     extension_request_evidence,
     extension_response_evidence,
@@ -340,6 +341,14 @@ class BrowserEvidenceTests(unittest.TestCase):
         self.assertEqual(safe_page_error_name(Wrapped("cannot read properties of null")), "TypeError")
         self.assertEqual(safe_page_error_name(Odd("x")), "unrecognized")
         self.assertEqual(safe_page_error_name(ValueError("no name attribute")), "unrecognized")
+
+    def test_aggregate_count_reads_only_one_non_negative_integer_row(self):
+        self.assertEqual(aggregate_count({"ok": True, "rows": [3]}), 3)
+        self.assertEqual(aggregate_count({"ok": True, "rows": [0]}), 0)
+        for refused in ({"ok": False, "code": "WIRE.FORBIDDEN"}, {"ok": True, "rows": []}, {"ok": True, "rows": [1, 2]},
+                        {"ok": True, "rows": [True]}, {"ok": True, "rows": [-1]}, {"ok": True, "rows": [1.5]},
+                        {"ok": True, "rows": ["3"]}, {"ok": True, "rows": [None]}, {"ok": True}, [], None):
+            self.assertIsNone(aggregate_count(refused), refused)
 
 
 if __name__ == "__main__":

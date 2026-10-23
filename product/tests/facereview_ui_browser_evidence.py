@@ -540,6 +540,17 @@ def admin_request_evidence(path: str, body: Any) -> dict[str, str]:
     return {}
 
 
+def aggregate_count(envelope: Any) -> int | None:
+    """The one scalar of a successful aggregate answer, or None. Only a plain non-negative integer is a count; anything else is evidence of nothing."""
+    if not isinstance(envelope, dict) or envelope.get("ok") is not True:
+        return None
+    rows = envelope.get("rows")
+    if not isinstance(rows, list) or len(rows) != 1:
+        return None
+    value = rows[0]
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
 def safe_page_error_name(error: Any) -> str:
     """Playwright wraps a page error in its own class; the JavaScript name is `error.name`. Only a few well-known names are kept."""
     name = getattr(error, "name", type(error).__name__)

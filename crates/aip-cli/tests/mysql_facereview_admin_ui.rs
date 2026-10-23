@@ -54,6 +54,7 @@ const SOURCE: &str = "aip_t_aui_src";
 const MONGO_DB: &str = "aip_t_aui_fr";
 const ISSUER: &str = "https://login.facereview.example";
 const AUDIENCE: &str = "aip-api";
+const ALICE: &str = "11111111-1111-4111-8111-111111111111";
 const CAROL: &str = "33333333-3333-4333-8333-333333333333";
 const BOB: &str = "22222222-2222-4222-8222-222222222222";
 const DAVE: &str = "44444444-4444-4444-8444-444444444444";
@@ -62,6 +63,8 @@ const MEMBER: &str = "77777777-7777-4777-8777-777777777777";
 const APPROVED_REQUEST: &str = "ffffffff-0000-4000-8000-000000000001";
 const REJECTED_REQUEST: &str = "ffffffff-0000-4000-8000-000000000002";
 const USER_COUNT: u64 = 6;
+// Short enough to let a login expire during the journey, long enough that the login and dashboard load finish inside it.
+const REISSUE_ACCESS_TTL_SECS: u32 = 20;
 
 fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
@@ -252,6 +255,24 @@ async fn facereview_admin_console_runs_through_the_generated_sdk_and_the_servers
         )
         .await
         .unwrap();
+    // The dashboard's signup trend is read per period, so the seeded accounts get fixed ages relative to now (the journey asserts the sum of
+    // each period: 7d 2, 30d 3, 3m 4, 1y 5, 3y 6; the member inserted above is today). Alice starts as an ADMIN: the console's "ADMIN 해제"
+    // is the SUPER_ADMIN's ADMIN to GENERAL change, and the database shows both ends of it.
+    for (user, days) in [(ALICE, 3), (BOB, 15), (CAROL, 60), (DAVE, 200), (ERIN, 800)] {
+        setup
+            .exec_drop(
+                "UPDATE user SET created_at = NOW() - INTERVAL ? DAY, updated_at = NOW() - INTERVAL ? DAY WHERE user_id = ?",
+                (days, days, user),
+            )
+            .await
+            .unwrap();
+    }
+    setup.exec_drop("UPDATE user SET role = 'ADMIN' WHERE user_id = ?", (ALICE,)).await.unwrap();
+    assert_eq!(
+        cell(&mut setup, &format!("SELECT CONCAT_WS('|', role, is_deleted) FROM `{SOURCE}`.user WHERE user_id='{ALICE}'")).await.as_deref(),
+        Some("ADMIN|0"),
+        "the seeded ADMIN the console demotes starts as an active ADMIN"
+    );
     // The seed has one PENDING request; a second one is what the console rejects.
     setup
         .exec_drop(
@@ -313,18 +334,14 @@ async fn facereview_admin_console_runs_through_the_generated_sdk_and_the_servers
         "signing_key_file": "signing.pem", "kid": "login-1", "access_ttl_secs": 300,
     });
     let config = directory.path().join("service.json");
-    std::fs::write(
-        &config,
-        json!({
-            "schema": META, "external_mapping": "mapping.json", "database_adapter": "mysql",
-            "database_url_env": "AIP_T_AUI_RUNTIME_URL", "migrate_database_url_env": "AIP_T_AUI_ADOPT_URL",
-            "listen": "127.0.0.1:0", "wire": "decimal", "rate_limit": null, "allowed_origins": [origin],
-            "auth": {"issuer": ISSUER, "audience": AUDIENCE, "jwks": {"kind": "file", "path": "jwks.json"}},
-            "workers": workers, "credentials": credentials,
-        })
-        .to_string(),
-    )
-    .unwrap();
+    let service_config = json!({
+        "schema": META, "external_mapping": "mapping.json", "database_adapter": "mysql",
+        "database_url_env": "AIP_T_AUI_RUNTIME_URL", "migrate_database_url_env": "AIP_T_AUI_ADOPT_URL",
+        "listen": "127.0.0.1:0", "wire": "decimal", "rate_limit": null, "allowed_origins": [origin],
+        "auth": {"issuer": ISSUER, "audience": AUDIENCE, "jwks": {"kind": "file", "path": "jwks.json"}},
+        "workers": workers, "credentials": credentials,
+    });
+    std::fs::write(&config, service_config.to_string()).unwrap();
     let file_arg = file.to_str().unwrap();
     let plan = run(&env, &["adopt-external", file_arg], &config).await.expect("plan");
     let digest = plan["digest"].as_str().unwrap().to_string();
@@ -568,6 +585,11 @@ async fn facereview_admin_console_runs_through_the_generated_sdk_and_the_servers
     );
     assert_eq!(cell(&mut setup, &format!("SELECT role FROM `{SOURCE}`.user WHERE user_id='{MEMBER}'")).await.as_deref(), Some("ADMIN"));
     assert_eq!(
+        cell(&mut setup, &format!("SELECT CONCAT_WS('|', role, is_deleted) FROM `{SOURCE}`.user WHERE user_id='{ALICE}'")).await.as_deref(),
+        Some("GENERAL|0"),
+        "the SUPER_ADMIN's ADMIN 해제 returned the ADMIN to GENERAL and nothing else about the row"
+    );
+    assert_eq!(
         cell(&mut setup, &format!("SELECT is_deleted FROM `{SOURCE}`.video WHERE video_id='aaaaaaaa-0000-4000-8000-000000000002'")).await.as_deref(),
         Some("1"),
         "the console video delete is the original's soft delete"
@@ -583,6 +605,37 @@ async fn facereview_admin_console_runs_through_the_generated_sdk_and_the_servers
         cell(&mut setup, &format!("SELECT COUNT(*) FROM `{SOURCE}`.comment")).await.as_deref(),
         Some("5"),
         "no comment row was physically deleted"
+    );
+    // --- token reissue: the same service with a short access TTL, so the access token of a real login expires while the console is open. ---
+    let reissue_config = directory.path().join("service-reissue.json");
+    let mut short_lived = service_config.clone();
+    short_lived["credentials"]["access_ttl_secs"] = json!(REISSUE_ACCESS_TTL_SECS);
+    std::fs::write(&reissue_config, short_lived.to_string()).unwrap();
+    let (_short_lived_server, short_lived_listening) =
+        start_server(&env, &file, &reissue_config).await.expect("serve starts again with a short access TTL");
+    let short_lived_address = short_lived_listening["address"].as_str().unwrap().to_owned();
+    assert_eq!(short_lived_listening["fingerprint"].as_str().unwrap(), fingerprint, "the short-lived service serves the same contract");
+    let reissue_journey = StdCommand::new(std::env::var("AIP_FACEREVIEW_PYTHON").unwrap_or_else(|_| "python3".to_owned()))
+        .arg(root.join("product/tests/facereview-ui-admin-reissue-browser.py"))
+        .args(["--ui", ui_root.to_str().unwrap(), "--api", &format!("http://{short_lived_address}"), "--out", &output])
+        .env("AIP_FACEREVIEW_ADMIN_EMAIL", "c@example.com")
+        .env("AIP_FACEREVIEW_ADMIN_PASSWORD", admin_password)
+        .env("AIP_FACEREVIEW_ACCESS_TTL_SECS", REISSUE_ACCESS_TTL_SECS.to_string())
+        .env("AIP_FACEREVIEW_UI_PORT", &ui_port)
+        .output()
+        .expect("start the real React admin reissue journey");
+    assert!(
+        reissue_journey.status.success(),
+        "React admin reissue journey failed (status {:?})\nstdout: {}\nstderr: {}",
+        reissue_journey.status.code(),
+        String::from_utf8_lossy(&reissue_journey.stdout),
+        String::from_utf8_lossy(&reissue_journey.stderr)
+    );
+    print!("{}", String::from_utf8_lossy(&reissue_journey.stdout));
+    assert_eq!(
+        cell(&mut setup, &format!("SELECT CONCAT_WS('|', role, is_deleted) FROM `{SOURCE}`.user WHERE user_id='{CAROL}'")).await.as_deref(),
+        Some("SUPER_ADMIN|0"),
+        "reissuing the SUPER_ADMIN's access token left the account as it was"
     );
     println!(
         "React admin console journey: SUPER_ADMIN login, dashboard, users/requests/videos/comments lists, the five console writes and the approval job (MySQL video + 2 Mongo documents), non-admin login refused"
