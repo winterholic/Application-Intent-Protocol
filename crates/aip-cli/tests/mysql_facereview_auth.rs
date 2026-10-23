@@ -14,6 +14,7 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use rsa::{RsaPrivateKey, pkcs1::EncodeRsaPrivateKey, traits::PublicKeyParts};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     path::Path,
@@ -38,6 +39,14 @@ const DEFAULTS: &str = include_str!("../../../product/tests/fixtures/facereview-
 const SEED: &str = include_str!("../../../product/tests/fixtures/facereview-mysql/seed.sql");
 const WERKZEUG: &str = include_str!("../../../product/tests/fixtures/password-auth/werkzeug-3.0.2.json");
 const PASSWORD_AUTH_PY: &str = include_str!("../../../product/providers/password_auth.py");
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+fn binding_fingerprint(source: &str) -> Option<&str> {
+    source.split_once("export const contractFingerprint = \"")?.1.split_once('\"').map(|(fingerprint, _)| fingerprint)
+}
 // The definition declares the home and watch list extensions, and `serve` refuses a worker directory that lacks any of them.
 const LIST_EXTENSIONS: [(&str, &str); 16] = [
     ("slice13f_watch.py", include_str!("../../../product/tests/fixtures/facereview-mysql/extensions/slice13f_watch.py")),
@@ -273,8 +282,35 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
     assert_eq!(parsed_mongo.host_str(), Some("127.0.0.1"), "the MongoDB fixture must bind loopback only");
     assert!(parsed_mongo.port().is_some_and(|port| port > 1024 && port != 27017), "the MongoDB fixture must use a dedicated high port");
     let directory = tempfile::tempdir().unwrap();
-    let file = directory.path().join("facereview.aip");
-    std::fs::write(&file, format!("{DEFINITION}\n{OPERATIONS}")).unwrap();
+    let expected_definition = format!("{DEFINITION}\n{OPERATIONS}").into_bytes();
+    let file = if let Ok(path) = std::env::var("AIP_FACEREVIEW_DEFINITION_FILE") {
+        let path = Path::new(&path);
+        let supplied = std::fs::read(path).expect("read the exact definition used to generate the pinned UI binding");
+        let expected_sha = sha256_hex(&expected_definition);
+        let supplied_sha = sha256_hex(&supplied);
+        if let Ok(promised_sha) = std::env::var("AIP_FACEREVIEW_DEFINITION_SHA256") {
+            assert_eq!(
+                supplied_sha,
+                promised_sha,
+                "UI generation definition changed after overlay generation: file={} expected_sha256={} actual_sha256={}",
+                path.display(),
+                promised_sha,
+                supplied_sha
+            );
+        }
+        assert!(
+            supplied == expected_definition,
+            "server and UI generation definitions differ: file={} sha256={} server_composed_sha256={}",
+            path.display(),
+            supplied_sha,
+            expected_sha
+        );
+        path.to_path_buf()
+    } else {
+        let path = directory.path().join("facereview.aip");
+        std::fs::write(&path, &expected_definition).unwrap();
+        path
+    };
     let extensions = directory.path().join("extensions");
     std::fs::create_dir(&extensions).unwrap();
     std::fs::write(extensions.join("password_auth.py"), PASSWORD_AUTH_PY).unwrap();
@@ -420,6 +456,21 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
         .output()
         .expect("start FaceReview TypeScript binding generation");
     assert!(generated.status.success(), "TypeScript binding generation failed: {}", String::from_utf8_lossy(&generated.stderr));
+    let generated_binding = std::fs::read(&binding).expect("read generated FaceReview binding");
+    let generated_fingerprint = binding_fingerprint(std::str::from_utf8(&generated_binding).expect("generated binding is UTF-8"))
+        .expect("generated binding contains its contract fingerprint")
+        .to_owned();
+    assert_eq!(
+        generated_fingerprint,
+        fingerprint,
+        "server definition and SDK binding differ: definition={} sha256={} binding={} sha256={} binding_fingerprint={} listening_fingerprint={}",
+        file.display(),
+        sha256_hex(&std::fs::read(&file).unwrap()),
+        binding.display(),
+        sha256_hex(&generated_binding),
+        generated_fingerprint,
+        fingerprint,
+    );
     let sdk_dir = directory.path().join("sdk");
     let build = StdCommand::new("node")
         .arg(root.join("product/tools/build-sdk.mjs"))
@@ -470,6 +521,44 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
     // The UI test uses the same live AIP service and fixture DB as the SDK journey above.
     if std::env::var_os("AIP_FACEREVIEW_UI_DIR").is_some() {
         let browser_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let ui_root_value = std::env::var("AIP_FACEREVIEW_UI_DIR").unwrap();
+        let ui_root = Path::new(&ui_root_value);
+        let ui_binding_path = ui_root.join("src/aip/facereview.ts");
+        let ui_binding = std::fs::read(&ui_binding_path).expect("read binding consumed by pinned React UI");
+        let ui_fingerprint = binding_fingerprint(std::str::from_utf8(&ui_binding).expect("UI binding is UTF-8"))
+            .expect("pinned UI binding contains its contract fingerprint");
+        let browser_output = std::env::var("AIP_FACEREVIEW_BROWSER_OUTPUT").expect("browser output directory");
+        let definition_sha = sha256_hex(&std::fs::read(&file).unwrap());
+        let ui_binding_sha = sha256_hex(&ui_binding);
+        let generated_binding_sha = sha256_hex(&generated_binding);
+        let evidence = json!({
+            "relational_fixture_sha256": sha256_hex(DEFINITION.as_bytes()),
+            "auth_operations_fixture_sha256": sha256_hex(OPERATIONS.as_bytes()),
+            "server_definition": {"path": file.display().to_string(), "sha256": definition_sha},
+            "ui_generation_definition": {"path": std::env::var("AIP_FACEREVIEW_DEFINITION_FILE").unwrap_or_else(|_| file.display().to_string()), "sha256": definition_sha, "workflow_declared_sha256": std::env::var("AIP_FACEREVIEW_DEFINITION_SHA256").unwrap_or_else(|_| "not_set".to_owned())},
+            "server_listening_fingerprint": fingerprint,
+            "generated_binding": {"path": binding.display().to_string(), "sha256": generated_binding_sha, "fingerprint": generated_fingerprint},
+            "ui_binding": {"path": ui_binding_path.display().to_string(), "sha256": ui_binding_sha, "fingerprint": ui_fingerprint},
+            "browser_header_capture": "each phase result records the actual x-aip-contract header value",
+            "credentials_recorded": false
+        });
+        std::fs::create_dir_all(&browser_output).unwrap();
+        std::fs::write(Path::new(&browser_output).join("contract-evidence.json"), format!("{}\n", serde_json::to_string_pretty(&evidence).unwrap()))
+            .unwrap();
+        assert_eq!(
+            ui_fingerprint,
+            fingerprint,
+            "browser must not start with a contract mismatch: UI binding={} sha256={} fingerprint={}, server definition={} sha256={} generated binding={} sha256={} fingerprint={} listening_fingerprint={}",
+            ui_binding_path.display(),
+            ui_binding_sha,
+            ui_fingerprint,
+            file.display(),
+            definition_sha,
+            binding.display(),
+            generated_binding_sha,
+            generated_fingerprint,
+            fingerprint,
+        );
         assert_eq!(cell(&mut setup, "SELECT CAST(COUNT(*) AS CHAR) FROM video_bookmark WHERE user_id='77777777-7777-4777-8777-777777777777' AND video_id='aaaaaaaa-0000-4000-8000-000000000001'").await.as_deref(), Some("0"), "fixture member starts without a bookmark");
         let add = run_facereview_ui_browser_journey(&address, &fingerprint, "add", &browser_root);
         assert!(

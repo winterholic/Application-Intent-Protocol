@@ -93,7 +93,13 @@ jobs:
           set -euo pipefail
           ui="$RUNNER_TEMP/aip-facereview-ui"
           sdk="$RUNNER_TEMP/aip-facereview-sdk"
+          definition="$RUNNER_TEMP/aip-facereview-member.aip"
           mkdir -p "$RUNNER_TEMP/aip-facereview-browser"
+          cat product/tests/fixtures/facereview-mysql/facereview.aip > "$definition"
+          printf '\n' >> "$definition"
+          cat product/tests/fixtures/facereview-auth/operations.aip >> "$definition"
+          echo "AIP_FACEREVIEW_DEFINITION_FILE=$definition" >> "$GITHUB_ENV"
+          echo "AIP_FACEREVIEW_DEFINITION_SHA256=$(sha256sum "$definition" | cut -d ' ' -f 1)" >> "$GITHUB_ENV"
           git clone --quiet --filter=blob:none --no-checkout --depth=1 \
             https://github.com/joowon-jang/facereview-front.git "$ui"
           git -C "$ui" fetch --quiet --depth=1 origin 2e7c021fa5abebd72278d841b8066a33d45cfbb3
@@ -101,7 +107,7 @@ jobs:
           test "$(git -C "$ui" rev-parse HEAD)" = "2e7c021fa5abebd72278d841b8066a33d45cfbb3"
           node product/tools/build-sdk.mjs --out "$sdk"
           npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP" "$sdk"
-          AIP_CLI_BIN="$GITHUB_WORKSPACE/target/debug/aip" porting/facereview/apply-ui-overlay.sh "$ui"
+          AIP_CLI_BIN="$GITHUB_WORKSPACE/target/debug/aip" porting/facereview/apply-ui-overlay.sh "$ui" "$definition"
           (cd "$ui" && node .yarn/releases/yarn-4.12.0.cjs add "@aip/sdk@file:$RUNNER_TEMP/aip-sdk-0.1.0.tgz")
           python3 -m venv "$RUNNER_TEMP/aip-browser"
           "$RUNNER_TEMP/aip-browser/bin/pip" install --no-cache-dir playwright==1.64.0

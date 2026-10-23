@@ -28,6 +28,11 @@ def main() -> int:
     email = os.environ["AIP_FACEREVIEW_JOURNEY_EMAIL"]
     password = os.environ["AIP_FACEREVIEW_JOURNEY_PASSWORD"]
     expected_contract = os.environ["AIP_FACEREVIEW_EXPECTED_CONTRACT"]
+    binding_source = (args.ui / "src/aip/facereview.ts").read_text(encoding="utf-8")
+    binding_match = re.search(r'export const contractFingerprint = "([a-f0-9]{64})";', binding_source)
+    if binding_match is None:
+        raise RuntimeError("generated UI binding has no readable contract fingerprint")
+    binding_contract = binding_match.group(1)
     output = args.out.resolve()
     output.mkdir(parents=True, exist_ok=True)
 
@@ -83,6 +88,7 @@ def main() -> int:
                         }
                         if parsed.path in {"/read", "/extension", "/apply"}:
                             row["contract_matches_runtime"] = request_contract == expected_contract
+                            row["x_aip_contract"] = request_contract
                         if isinstance(envelope, dict):
                             for key in ("ok", "code"):
                                 if key in envelope and isinstance(envelope[key], (bool, str)):
@@ -154,6 +160,8 @@ def main() -> int:
         required_paths = {"/auth/check-email", "/auth/login", "/extension", "/apply"}
         if not required_paths.issubset(observed_paths):
             raise RuntimeError("browser did not issue the expected real AIP API requests")
+        if any(row.get("x_aip_contract") != binding_contract for row in api_paths if row["path"] in {"/read", "/extension", "/apply"}):
+            raise RuntimeError("the real browser request contract header differs from the generated UI binding")
         if any(row["path"] in required_paths and row["status"] != 200 for row in api_paths):
             raise RuntimeError("an expected AIP API request did not return HTTP 200")
         if page_errors:
@@ -163,6 +171,8 @@ def main() -> int:
             "ui_revision": "2e7c021fa5abebd72278d841b8066a33d45cfbb3",
             "phase": args.phase,
             "fixture_video": {"id": VIDEO_ID, "title": VIDEO_TITLE},
+            "server_listening_fingerprint": expected_contract,
+            "ui_binding_fingerprint": binding_contract,
             "api_requests": api_paths,
             "screenshots": screenshot_names,
             "external_video_provider": "blocked; not fetched or played",
@@ -177,6 +187,8 @@ def main() -> int:
         report = {
             "ui_revision": "2e7c021fa5abebd72278d841b8066a33d45cfbb3",
             "phase": args.phase,
+            "server_listening_fingerprint": expected_contract,
+            "ui_binding_fingerprint": binding_contract,
             "api_requests": api_paths,
             "screenshots": screenshot_names,
             "credentials_recorded": False,

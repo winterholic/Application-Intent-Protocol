@@ -1,4 +1,10 @@
-## 현재 재개 지점 (2026-10-23, 7.2.10 인증 회원 SDK/API 최소 journey)
+## 현재 재개 지점 (2026-10-23, 7.2.10 React browser member journey)
+
+실제 React 브라우저 여정은 Verify `39872659856`에서 로그인·`/session` 뒤 `/read` 2건이 HTTP 200 `WIRE.CONTRACT_MISMATCH`로 실패했다. `--read-only` 제거는 실패한 수정이므로 반복하지 않는다. producer 대조에서 서버 정의는 `facereview.aip`와 `facereview-auth/operations.aip`를 합친 파일이고, 기존 overlay는 relational fixture만 생성 입력으로 쓰는 차이를 확인했다. 로컬 CLI 비교에서 두 입력은 각각 SHA256 `7872ee9eafc7f2e88b0e0dbc6861917c797b351a4fbb3f9f6a4bbc34074a4900` / fingerprint `2c24f6f10a0cd60820c9911046f031e23da94df2c90ce8a7361df30d376aab56`, 합성 입력은 SHA256 `b03f938989a5407ac39d113dbbcd771e87c88f90884991d55530fadc14f7db5f` / fingerprint `cab5e5ff77cd04117f176035d913843907904d9ced810d1c53764b76c5536ce2`다. 이는 mismatch의 유력한 producer 원인이지만 실제 CI가 사용한 UI binding/header 값과의 대조는 아직 안 됐다.
+
+최소 수정은 Verify가 합성 definition 파일 하나를 overlay와 실제 서비스 시험에 공유하고, 시험이 source SHA·생성 binding fingerprint·server listening fingerprint·브라우저의 실제 `x-aip-contract`를 비교·보존하도록 하는 것이다. 브라우저 시작 전 파일/SHA 불일치는 fail-fast한다. 변경 SHA의 Linux Verify/browser/DB 확인은 대기 중이며 성공 전에는 journey 완료로 세지 않는다. 원본 pinned UI `2e7c021fa5abebd72278d841b8066a33d45cfbb3`의 dirty checkout은 그대로 둔다. 상세와 실행 전후 경계는 [제품 검증](../product/VERIFICATION.md)의 「2026-10-23 WBS 7.2.10 React browser member journey」를 본다.
+
+### 이전 재개 지점 (2026-10-23, 인증 회원 SDK/API 최소 journey)
 
 WBS 7.2.10의 모델·방문자 정책과 독립된 인증 회원 journey 조각은 코드 SHA `1033269ec1389ddd7b750b6ad9f5e53bd100a53b`에서 Linux CI Verify `39851918809`와 같은 SHA의 5개 보조 workflow까지 모두 success다. 실제 생성 TypeScript contract와 설치한 `@aip/sdk`를 실제 AIP 서비스에 연결해 전용 fixture 회원 login → refresh 1회 → UI 읽기 어댑터 영상 목록 → 북마크 생성/해제 → 댓글 생성/수정/삭제 → logout 뒤 stale bearer의 `WIRE.UNAUTHENTICATED`를 확인했다. 이 journey는 25개 UI API 경로 중 인증·회원 읽기·쓰기의 최소 경로를 덮는다. CI 상세는 [제품 검증](../product/VERIFICATION.md)의 「2026-10-23 WBS 7.2.10 인증 회원 SDK/API journey」에 기록했다. 화면에서 실제 로그인한 브라우저 journey, 전체 25개 경로 동등성, 전체 prerender는 미검증이다. ML inference/model 권리와 방문자 접근 정책은 이번 범위에서 다루지 않았으며 7.2.10 전체 완료로 세지 않는다. 다음은 나머지 인증 회원 화면/API 경로의 범위를 기존 결정과 대조해 한 조각씩 좁힌다.
 

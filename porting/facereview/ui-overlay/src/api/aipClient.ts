@@ -2,7 +2,7 @@
 // generated binding of `facereview.aip` and the `@aip/sdk` tarball. The pure adapter (`readAdapter.ts`) is what the tests cover.
 //
 // The generated binding is produced from the definition, never written by hand:
-//   aip service gen --lang ts --out src/aip/facereview.ts product/tests/fixtures/facereview-mysql/facereview.aip
+//   aip service gen --lang ts --out src/aip/facereview.ts <the exact definition used by the AIP service>
 import { connect } from '@aip/sdk';
 import { contract } from '../aip/facereview';
 import { useAuthStorage } from 'store/authStore';

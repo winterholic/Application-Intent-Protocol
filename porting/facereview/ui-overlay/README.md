@@ -4,7 +4,7 @@ The player of FaceReview is the user's repository `facereview-front-joowon`. Thi
 data access moves from the original REST API to AIP; it is meant to be copied over a checkout of the pinned revision
 `2e7c021fa5abebd72278d841b8066a33d45cfbb3`. Decision: `docs/DECISIONS.md` D-P-UI-ADAPTER. Evidence: `product/VERIFICATION.md`.
 
-**Status: read, auth, and write data adapters are present.** The generated TypeScript SDK and these adapters completed a real member journey through the AIP service and dedicated Linux CI fixtures at code SHA `1033269ec1389ddd7b750b6ad9f5e53bd100a53b` (Verify run [39851918809](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39851918809)). This exercised login, one refresh, `Video.homeVideoAll`, bookmark on/off, comment create/edit/delete, logout, and stale-token rejection. The pinned UI TypeScript and Vite client build also passed in the earlier UI build slice. The full React UI was not logged in against this service in a browser; the prior preview only showed the SPA shell.
+**Status: read, auth, and write data adapters are present.** The generated TypeScript SDK and these adapters completed a real member API journey through the AIP service and dedicated Linux CI fixtures at code SHA `1033269ec1389ddd7b750b6ad9f5e53bd100a53b` (Verify run [39851918809](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39851918809)). A React browser journey is in progress: the previous run rejected its generated binding with `WIRE.CONTRACT_MISMATCH`; CI now supplies the same combined definition to UI generation and the real service test, with a pre-browser fingerprint check. Do not count the browser journey complete until its Linux Verify and MySQL bookmark assertions pass.
 
 | File | What it is | Tested |
 |---|---|---|
@@ -18,8 +18,10 @@ The exact CI command and route coverage are documented in [product verification]
 Generate the binding the client imports (`src/aip/facereview.ts`) from the definition, do not write it by hand:
 
 ```sh
-aip service gen --lang ts --out src/aip/facereview.ts --sdk-import @aip/sdk product/tests/fixtures/facereview-mysql/facereview.aip
+aip service gen --lang ts --out src/aip/facereview.ts --sdk-import @aip/sdk <the exact definition used by the AIP service>
 ```
+
+`porting/facereview/apply-ui-overlay.sh <clean-pinned-ui> [definition.aip]` accepts that definition as its second argument. The Linux browser workflow passes one combined file containing the relational and authentication operation fixtures to both the overlay generator and the service test.
 
 ## Remaining UI journey scope
 
