@@ -1,3 +1,11 @@
+## 최신 재개 지점 (2026-10-23, WBS 7.2.10 브라우저 오류 조사)
+
+오류 조사 결과를 [제품 검증 기록](../product/VERIFICATION.md)의 「후속: `/read Comment` envelope와 console 오류 진단」 및 Verify `39896024733` 기록에 정리했다. `WIRE.UNKNOWN_KEY`는 pinned FaceReview UI watch의 `getVideoComments`가 Comment 계약에 없는 root `traverse`, sort `direction`, 공개되지 않은 User `profile_image_id`를 요청한 문제였다. query builder를 nested `select` (`user.id`, `user.name`)와 `dir`로 고친 뒤 실제 React `/read Comment` 두 건은 HTTP 200 `ok=true`, rejected query key 0으로 확인됐다. Contract fingerprint mismatch나 auth refresh 오류는 아니며, 영향 범위는 watch 댓글 조회다. fixture에 Comment 행이 없어 누락 댓글의 실제 렌더 영향은 입증하지 않았다.
+
+같은 실행의 console 오류는 `youtube` host class의 외부 `script` 요청 `net::ERR_FAILED`와 일치하며 page error는 0이다. 외부 미디어가 차단된 browser 환경에서 영상 재생이 제한되고, Verify `39896024733` screenshot에서는 오류 modal이 접근성 role locator를 가린 상태가 관측됐다. modal이 해당 assertion 실패에 기여했다는 것은 그 실행의 UI/network 증거에 한정한다. 앞선 Verify `39885042974`에서는 React bookmark on/reload·off/reload 및 SQL assertion이 통과했다. console 분류는 AIP Comment 오류와 별개다.
+
+현재 main은 `da2fe7c112c7f6c996ef349a6f005cb98a01731e`이며 기존 398850 journey와 `/read` 수정·진단 상태를 포함한다. 이 조사 범위는 닫혔다. 다음 미완료 방향은 인증 회원의 나머지 화면/API 경로를 기존 포팅 기준과 대조해 한 조각씩 진행하는 것이며, 25개 전체 경로·prerender·ML/model 권리·방문자 정책 완료를 뜻하지 않는다. 과거 시점의 재개 기록은 아래에 보존한다.
+
 ## 후속 결과 (2026-10-23, Verify `39885042974`, `b504f62161fb9e3065ac9da9972ebe9928e0c315`)
 
 아래 이전 재개 기록 뒤에 root cause 계측·최소 테스트 수정 후속 결과를 추가한다. Verify와 같은 SHA의 보조 workflow 6종은 모두 success다. 실 React는 pinned UI `2e7c021fa5abebd72278d841b8066a33d45cfbb3`로 로그인했고, 회원 목록에서 fixture 카드 2개를 렌더했으며 고정 영상 ID `aaaaaaaa-0000-4000-8000-000000000001` 카드를 선택했다. 기존 빈 화면의 root cause는 pinned UI `useAvailableVideos`의 썸네일 `Image()` 로드 필터와 CI의 외부 YouTube 이미지 차단 조합이었다. API 응답/adapter에는 fixture가 있었고 JS page error는 0이었다. 제품 fallback/selector 완화 없이, 브라우저 하네스가 그 fixture 썸네일 한 URL만 loopback HTTPS fixture 이미지로 연결하도록 했다(외부 미디어는 계속 차단, AIP API는 실서버).
