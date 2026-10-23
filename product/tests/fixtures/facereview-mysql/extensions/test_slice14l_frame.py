@@ -88,11 +88,19 @@ class RecordFrameTests(unittest.TestCase):
 
         asyncio.run(run())
 
-    def test_without_staged_scores_nothing_is_written(self):
+    def test_without_staged_scores_creates_one_empty_timeline_document(self):
         async def run():
             ctx = Context("alice")
             self.assertEqual(await frame.recordFrame({"id": VIEW_LOG, "centi": 5}, ctx), {"recorded": False})
-            self.assertEqual(ctx.mongo.updates, [])
+            self.assertEqual(len(ctx.mongo.updates), 1)
+            collection, filt, update, upsert, compensate, key = ctx.mongo.updates[0]
+            self.assertEqual((collection, filt, upsert), ("youtube_watching_data", {"video_view_log_id": VIEW_LOG}, True))
+            self.assertEqual(update["$setOnInsert"]["emotion_score_timeline"], {})
+            self.assertEqual(update["$setOnInsert"]["most_emotion_timeline"], {})
+            self.assertNotIn("$set", update, "no model score means no emotion timeline values")
+
+            self.assertEqual(await frame.recordFrame({"id": VIEW_LOG, "centi": 5}, ctx), {"recorded": False})
+            self.assertEqual(len(ctx.mongo.updates), 2, "retries upsert the same session document")
 
         asyncio.run(run())
 

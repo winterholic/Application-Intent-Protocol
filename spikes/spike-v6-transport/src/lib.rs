@@ -931,12 +931,13 @@ async fn run_relational_write_extension(
     result
 }
 
-/// What a valid `watch_frame` does before the analysis exists (WBS 7.2.6 slice 2, D-P-WATCH-SESSION).
+/// What a valid `watch_frame` does before model inference exists (WBS 7.2.6 slices 2 and 4).
 ///
 /// The token is verified again for every frame, the user id comes from that verified session and never from the payload, and the
 /// declared write extension `User.startWatching` makes the view log and the Redis session. The extension is idempotent for the
 /// same connection and view log id, and a reconnect (new Socket.IO sid) rebuilds only the cache. The frame bytes are not sent
-/// anywhere: the answer is `WIRE.NOT_AVAILABLE` until a model runtime is connected.
+/// anywhere. A server-only frame extension idempotently creates the Mongo session timeline with empty emotion maps when no model
+/// scores have been staged. The answer remains `WIRE.NOT_AVAILABLE` because no model runtime is connected.
 async fn start_watch_session(
     runtime: &Arc<server::Runtime>,
     facts: &Arc<Value>,
@@ -981,7 +982,29 @@ async fn start_watch_session(
     });
     let result = run_relational_write_extension(runtime, backend, facts, wire, Some(&session), token, deadline, &key, &request, None).await;
     if result["ok"] == true {
-        return Ok(json!({"status":"error","code":"WIRE.NOT_AVAILABLE","message":"Frame analysis is not connected yet"}));
+        let centi = (frame.youtube_running_time * 100.0).round() as i64;
+        let timeline_key_material = format!("{socket_sid}:{}:{centi}", frame.video_view_log_id);
+        let timeline_key = format!(
+            "watch-frame:{}",
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(sha2::Sha256::digest(timeline_key_material.as_bytes()))
+        );
+        let timeline_request = json!({
+            "extension": "User.recordFrame",
+            "input": {"id": frame.video_view_log_id, "centi": centi}
+        });
+        let timeline =
+            run_relational_write_extension(runtime, backend, facts, wire, Some(&session), token, deadline, &timeline_key, &timeline_request, None)
+                .await;
+        if timeline["ok"] != true {
+            return match timeline["code"].as_str().unwrap_or("WIRE.EXTENSION_ERROR") {
+                "WIRE.TOKEN_EXPIRED" => Err("WIRE.TOKEN_EXPIRED"),
+                "WIRE.UNAUTHENTICATED" => Err("WIRE.UNAUTHENTICATED"),
+                code => busy(code),
+            };
+        }
+        return Ok(
+            json!({"status":"error","code":"WIRE.NOT_AVAILABLE","message":"Session and empty timeline are stored; model inference is not connected"}),
+        );
     }
     match result["code"].as_str().unwrap_or("WIRE.EXTENSION_ERROR") {
         "WIRE.TOKEN_EXPIRED" => Err("WIRE.TOKEN_EXPIRED"),

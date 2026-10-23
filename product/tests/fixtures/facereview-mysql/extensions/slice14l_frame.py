@@ -71,32 +71,37 @@ async def recordFrame(input, ctx):
     duration = videos[0]["duration"] if videos else 0
 
     staged = await ctx.redis.getdel(_staged_key(view_log_id, centi), compensate=True)
-    if staged is None:
-        return {"recorded": False}
-    scores = _scores(staged)
-    most_emotion = max(TIE_ORDER, key=lambda name: scores[name])
     time_key = str(centi)
     now = _date(datetime.now(timezone.utc).replace(tzinfo=None))
+    update = {
+        "$setOnInsert": {
+            "video_id": video_id,
+            "video_view_log_id": view_log_id,
+            "duration": duration,
+            "created_at": now,
+            "completion_rate": 0.0,
+            "dominant_emotion": "neutral",
+            "emotion_percentages": {name: 0.0 for name in SCORE_ORDER},
+            "most_emotion_timeline": {},
+            "emotion_score_timeline": {},
+            "client_info": {"ip_address": None, "user_agent": None, "device": {"os": None, "browser": None, "is_mobile": False}},
+        }
+    }
+    if staged is None:
+        await ctx.mongo.update_one("youtube_watching_data", {"video_view_log_id": view_log_id}, update, upsert=True)
+        return {"recorded": False}
+
+    scores = _scores(staged)
+    most_emotion = max(TIE_ORDER, key=lambda name: scores[name])
+    update["$set"] = {
+        f"most_emotion_timeline.{time_key}": most_emotion,
+        f"emotion_score_timeline.{time_key}": [scores[name] for name in SCORE_ORDER],
+        "updated_at": now,
+    }
     await ctx.mongo.update_one(
         "youtube_watching_data",
         {"video_view_log_id": view_log_id},
-        {
-            "$set": {
-                f"most_emotion_timeline.{time_key}": most_emotion,
-                f"emotion_score_timeline.{time_key}": [scores[name] for name in SCORE_ORDER],
-                "updated_at": now,
-            },
-            "$setOnInsert": {
-                "video_id": video_id,
-                "video_view_log_id": view_log_id,
-                "duration": duration,
-                "created_at": now,
-                "completion_rate": 0.0,
-                "dominant_emotion": "neutral",
-                "emotion_percentages": {name: 0.0 for name in SCORE_ORDER},
-                "client_info": {"ip_address": None, "user_agent": None, "device": {"os": None, "browser": None, "is_mobile": False}},
-            },
-        },
+        update,
         upsert=True,
     )
     return {"recorded": True}

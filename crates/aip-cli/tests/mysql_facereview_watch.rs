@@ -465,8 +465,15 @@ async fn facereview_watch_detail_matches_the_original_service_through_the_real_s
     .expect("the refused frame ends the connection");
     assert!(revoked_close.is_some());
 
-    // recordFrame is server-only and has no connected socket caller until analysis stages scores.
+    // The Socket.IO caller initializes one owner-scoped Mongo timeline; without a connected model both emotion maps remain empty.
     let sessions = mongo.database(MONGO_DB).collection::<mongodb::bson::Document>("youtube_watching_data");
+    let empty_timeline =
+        sessions.find_one(mongodb::bson::doc! {"video_view_log_id": view_log_id}).await.unwrap().expect("first frame initializes the Mongo timeline");
+    assert_eq!(empty_timeline.get_document("emotion_score_timeline").unwrap().len(), 0);
+    assert_eq!(empty_timeline.get_document("most_emotion_timeline").unwrap().len(), 0);
+    assert_eq!(empty_timeline.get_str("video_id").unwrap(), video);
+    assert_eq!(empty_timeline.get_str("user_id").unwrap(), SUBJECTS[0].1);
+    assert_eq!(sessions.count_documents(mongodb::bson::doc! {"video_view_log_id": view_log_id}).await.unwrap(), 1);
     let stage = |centi: u64| format!("facereview:watch:frame:{digest_hex}:{centi}");
     let record = |subject: &'static str, key: String, input: Value| {
         let bearer = tokens.iter().find(|(candidate, _)| *candidate == subject).unwrap().1.clone();
@@ -486,7 +493,8 @@ async fn facereview_watch_detail_matches_the_original_service_through_the_real_s
     stage_scores(150, json!({"neutral": 10.5, "happy": 60.25, "surprise": 5.0, "sad": 4.25, "angry": 20.0})).await;
     let blocked = record("alice", "frame-public-probe".into(), json!({"id": view_log_id, "centi": 150})).await;
     assert_eq!(blocked["code"], "WIRE.NOT_EXPOSED", "public HTTP cannot invoke recordFrame: {blocked}");
-    assert!(sessions.find_one(mongodb::bson::doc! {"video_view_log_id": view_log_id}).await.unwrap().is_none());
+    let timeline_after_refused_public_call = sessions.find_one(mongodb::bson::doc! {"video_view_log_id": view_log_id}).await.unwrap().unwrap();
+    assert_eq!(timeline_after_refused_public_call.get_document("emotion_score_timeline").unwrap().len(), 0);
     let staged: Option<String> = redis::cmd("GET").arg(stage(150)).query_async(&mut redis_connection).await.unwrap();
     assert!(staged.is_some(), "a refused public request does not consume server-staged scores");
 
