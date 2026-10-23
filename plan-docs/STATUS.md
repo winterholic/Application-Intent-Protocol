@@ -1,4 +1,20 @@
-# 최신 재개 지점 (2026-10-23 06:44 UTC, 두 번째 수정 Verify 39910753805 실패)
+# 최신 재개 지점 (2026-10-23, FaceReview browser `/read` 측정기 조사, 계측 SHA `5a42b20`)
+
+이전 `invalid_json`은 서버 non-JSON의 증거가 아니었다. `facereview-ui-member-browser.py`는 `response` 이벤트 안에서 `response.json()`을 호출하고 모든 Exception을 `invalid_json`으로 기록했다. 합성 서버와 같은 Playwright 1.64/Chromium 1248에서 reload나 close와 겹친 응답이 `Network.getResponseBody: No resource with given identifier`(resource_evicted), `TargetClosedError`, 요청이 종료 이벤트 없이 사라지는 경우로 실패했고 모두 같은 라벨이 됐다. 진짜 HTML 본문은 별도 분류(`json_decode_error`)로 재현했다.
+
+계측 SHA `5a42b204eaac4a58bd89778d0ba12aa99a1488dd`는 본문을 `requestfinished`에서 읽고, JSONDecodeError와 body 취득 실패를 reason code로 나누며, 요청 lifecycle·reload/close timeline·앱 쪽 fetch 수신(길이, sha256 16자, 허용 shape)을 기록한다. Verify `39915678255`는 attempt 1이 step 10의 Rust 동시성 시험 `spike-v3-write/tests/absence_serializable.rs:78`(기대 `FORBIDDEN`, 실제 `CONFLICT`; 재시도 소진으로 추정)에서 실패했다. 이 시험은 직전 SHA 4개 run에서 통과했고 이번 변경은 Python 시험 파일뿐이다. 같은 SHA로 실패 job만 재실행(attempt 2)했고 step 10·11은 통과, step 12에서 실패했다.
+
+attempt 2의 새 증거: 요청 15개 모두 종료, 본문 전부 취득, VideoBookmark `/read` 2건은 JSON object이며 앱 수신과 길이·해시가 `match`다. `invalid_json`은 재현되지 않았다. 실패는 add 단계 `bookmark_action`의 `aria-pressed=true` 단정이다. 서버는 북마크 생성 `/apply`까지 200으로 처리했지만 UI는 `저장`(미눌림)이고 제목과 조회수 영역이 비어 있다. 핀된 UI 코드상 `getVideoDetail`은 `Video.watchDetail` 뒤 `Video.view` apply가 끝나야 resolve되고, `bookmarkMutation.onMutate`는 `cancelQueries`로 진행 중인 videoDetail을 버리며 낙관적 갱신은 기존 데이터가 있을 때만 일어난다. 클릭이 videoDetail 완료 전에 오면 낙관적 flip이 없고 조회도 버려진다(코드 읽기와 화면에 근거한 추론, 클릭-조회 타이밍의 직접 로그는 없음).
+
+원인 판단: (1) 측정기가 body 실패를 서버 오류처럼 기록했고 sync handler가 다음 Playwright 호출 때에야 실행돼 row가 늦거나 사라졌다(확인). (2) 테스트 흐름이 낙관적 `aria-pressed` flip을 완료 신호로 쓰고 곧바로 reload한다. 그래서 `39910753805`처럼 진행 중인 read/apply가 reload에 끊기는 경우와, 이번처럼 클릭이 videoDetail 로딩보다 앞서 flip이 없는 경우가 클릭 타이밍에 따라 갈린다(추론, `39910753805`의 body 실패 사유는 당시 계측이 없어 미확정). 서버가 non-JSON을 반환했다는 증거는 없다.
+
+최소 수정안(미적용, 이번 단계는 관측 보강에 한정): 클릭 전에 `.video-information-container .title`에 fixture 제목이 보일 때까지 기다린다(`Video.view` 완료 뒤). 클릭 뒤에는 reload 전에 북마크 `/read`와 `/apply`의 종료 이벤트(lifecycle 기준)를 기다리고, 그 뒤에만 reload와 `aria-pressed` 단정을 한다. 단정 완화, API mock, 숨은 버튼 조작은 쓰지 않는다. profile 스크립트도 같은 패턴(`response.json()`을 handler 안에서 호출, 이동 직후 screenshot)이며 after 화면이 두 run 연속 비어 있어 같은 수정 대상이다. MySQL 이름·장르 assertion은 통과했지만 after 화면은 증거로 세지 않는다.
+
+로컬 검증: `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest product.tests.test_facereview_ui_browser_evidence` 22/22. 가짜 UI/API로 `main()` 전체를 실제 Chromium에서 실행해 add·remove 정상(app 수신 `match`), 서버 HTML 응답(`json_decode_error`), reload 겹침(200 row + `not_finished_before_report` + 앱 수신 없음)을 구분함을 확인했다. 재현 도구는 outbox `aip-measurement-repro/`, CI 원시 증거는 `ci-39915678255-attempt1/`·`attempt2/`에 있다. GitHub artifact `12486124697`은 원시 증거라 삭제하지 않았다. 관리자 UI slice, model.h5, visitor policy는 계속 보류한다. 다음 재개점은 위 최소 수정안을 한 번에 적용하고 로컬 가짜 스택으로 검증한 뒤, 한 번 push하고 Verify 완료까지 기다리는 것이다.
+
+---
+
+# 이전 재개 지점 (2026-10-23 06:44 UTC, 두 번째 수정 Verify 39910753805 실패)
 
 Verify `39910753805`(SHA `bd3ef4abc6bdc678f939134e78fd4bea08e94f80`)는 세 번째 대기 시도 중 `failure`로 끝났다. step 12(`Verify real HTTP to Node and Python workers to MySQL`)에서 `mysql_facereview_auth.rs:611`이 React add-bookmark browser script의 실패를 받아 panic했다. 명령 `gh run view 39910753805 --log-failed`는 앞선 실행에서 Codex Mac nested worker의 gh log cache 쓰기가 `operation not permitted`였으므로 반복하지 않았고, `gh api repos/winterholic/Application-Intent-Protocol/actions/runs/39910753805/logs` 원문을 조사했다.
 
