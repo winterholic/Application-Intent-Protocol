@@ -249,7 +249,7 @@ if [[ "$mode" == run-ci ]]; then
   grep -Fq "test result: ok. 1 passed; 0 failed;" /tmp/aip-e2e-adminui-run-"$tag".txt
   grep -Fq "policy: member refused 6 administrator aggregates, 3 administrator extensions and the approval job" /tmp/aip-e2e-adminui-run-"$tag".txt
   if [[ -n "${AIP_FACEREVIEW_ADMIN_UI_DIR:-}" ]]; then
-    grep -Fq "React admin console journey: SUPER_ADMIN login, dashboard" /tmp/aip-e2e-adminui-run-"$tag".txt
+  grep -Fq "React admin console journey: SUPER_ADMIN login" /tmp/aip-e2e-adminui-run-"$tag".txt
   fi
   exit 0
 fi

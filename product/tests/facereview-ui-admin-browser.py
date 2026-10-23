@@ -36,6 +36,9 @@ from product.tests.facereview_ui_browser_evidence import (  # noqa: E402
 UI_REVISION = "ab0386c878a5ba5c7c079a262b987c10d211d22d"
 APPROVED_URL = "reqvideo001"
 REJECTED_URL = "reqvideo002"
+MEMBER_ID = "77777777-7777-4777-8777-777777777777"
+ADMIN_ID = "55555555-5555-4555-8555-555555555555"
+SUPER_ADMIN_ID = "33333333-3333-4333-8333-333333333333"
 APPROVED_TITLE = "승인 표본 영상"
 APPROVED_CHANNEL = "표본 채널"
 APPROVED_DURATION = "321"
@@ -56,6 +59,8 @@ def main() -> int:
     admin_password = os.environ["AIP_FACEREVIEW_ADMIN_PASSWORD"]
     member_email = os.environ["AIP_FACEREVIEW_MEMBER_EMAIL"]
     member_password = os.environ["AIP_FACEREVIEW_MEMBER_PASSWORD"]
+    secondary_admin_email = os.environ["AIP_FACEREVIEW_SECONDARY_ADMIN_EMAIL"]
+    secondary_admin_password = os.environ["AIP_FACEREVIEW_SECONDARY_ADMIN_PASSWORD"]
     expected_contract = os.environ["AIP_FACEREVIEW_EXPECTED_CONTRACT"]
     redis_configured = os.environ.get("AIP_FACEREVIEW_REDIS_CONFIGURED") == "1"
     ui_port = os.environ.get("AIP_FACEREVIEW_UI_PORT", "5173")
@@ -233,10 +238,13 @@ def main() -> int:
 
             stage("dashboard")
             if state["host_metrics_null"] is True:
-                # Off Linux the service reports no host figures (documented, null). The pinned console calls toFixed on them, so its
-                # dashboard cannot render on such a host. This is a host limit, not a pass: CI (Linux) requires the dashboard.
-                checks["dashboard"] = "not_rendered_host_metrics_null_off_linux"
-                page.goto(f"{base}/users", wait_until="domcontentloaded")
+                expect(page.get_by_role("heading", name="대시보드", exact=True)).to_be_visible()
+                expect(page.get_by_text("호스트 지표를 사용할 수 없습니다.")).to_be_visible()
+                expect(page.get_by_text("주간 활성 시청자")).to_be_visible()
+                expect(page.locator(".overview-strip__connection").get_by_text("정상")).to_have_count(3)
+                settled_idle()
+                page.screenshot(path=str(output / "admin-dashboard-host-metrics-unavailable.png"), full_page=True)
+                checks["dashboard"] = "rendered_partial_host_metrics_unavailable"
             else:
                 expect(page.get_by_role("heading", name="대시보드", exact=True)).to_be_visible()
                 expect(page.get_by_text("주간 활성 시청자")).to_be_visible()
@@ -267,21 +275,14 @@ def main() -> int:
             page.screenshot(path=str(output / "admin-users.png"), full_page=True)
             checks["users_total"] = 6
 
-            # The two user writes: SUPER_ADMIN takes the ADMIN role away from one member and deactivates another.
+            # SUPER_ADMIN can promote a GENERAL member to ADMIN through the actual console SDK.
             stage("users_write")
-            admin_member = page.locator("tr", has_text="e@example.com")
-            admin_member.get_by_role("button", name="ADMIN 해제", exact=True).click()
+            promoted_member = page.locator("tr", has_text="legacy@example.com")
+            promoted_member.get_by_role("button", name="ADMIN 지정", exact=True).click()
             expect(page.get_by_text("권한을 변경했습니다.")).to_be_visible()
-            expect(admin_member.get_by_text("GENERAL", exact=True)).to_be_visible()
+            expect(promoted_member.get_by_text("ADMIN", exact=True)).to_be_visible()
             settled_idle()
-            deactivated = page.locator("tr", has_text="d@example.com")
-            deactivated.get_by_role("button", name="비활성화", exact=True).click()
-            page.locator(".confirm-modal__panel").get_by_role("button", name="비활성화", exact=True).click()
-            expect(page.get_by_text("회원을 비활성화했습니다.")).to_be_visible()
-            expect(deactivated.get_by_text("탈퇴", exact=True)).to_be_visible()
-            settled_idle()
-            page.screenshot(path=str(output / "admin-users-after-writes.png"), full_page=True)
-            checks["user_role_change_and_deactivate"] = True
+            checks["super_admin_promoted_general_to_admin"] = True
 
             # 5. Requests: approve one (a durable job), reject another, and read both states back through the status filter.
             stage("requests_approve")
@@ -324,6 +325,23 @@ def main() -> int:
             settled_idle()
             page.screenshot(path=str(output / "admin-requests-rejected.png"), full_page=True)
             checks["rejection_row_rejected_with_reason"] = True
+
+            # The original exposes no action once a request has left PENDING. A direct generated-SDK transition must keep that server
+            # boundary even if a caller fabricates the old action; the envelope and row state both remain unsuccessful/unchanged.
+            stage("closed_request_refusal")
+            stale_request = page.evaluate("""async (requestId) => {
+              const { adminWrites } = await import('/src/api/aipClient.ts');
+              try {
+                await adminWrites.rejectVideoRequest(requestId, 'stale repeat');
+                return { code: 'UNEXPECTED_SUCCESS' };
+              } catch (error) {
+                return { code: typeof error?.code === 'string' ? error.code : 'UNKNOWN' };
+              }
+            }""", "ffffffff-0000-4000-8000-000000000002")
+            checks["closed_request_refusal_code"] = stale_request["code"]
+            if stale_request["code"] != "WIRE.EFFECT_TARGET_MISSING":
+                raise RuntimeError("a non-PENDING request did not preserve the declared server transition boundary")
+            expect(page.locator("tr", has_text=REJECTED_URL).get_by_text(REJECT_REASON)).to_be_visible()
 
             # 6. Videos: the approved video is now listed; the soft-deleted and the NULL-flag seed videos are not.
             stage("videos")
@@ -372,6 +390,53 @@ def main() -> int:
             if stored_auth()["is_sign_in"]:
                 raise RuntimeError("the console kept the session after logout")
             checks["logout_cleared_session"] = True
+
+            # A regular ADMIN may deactivate a GENERAL member. Direct generated-SDK calls with forged targets/roles must still be
+            # rejected by the server; the visible list keeps the protected rows unchanged.
+            stage("admin_login")
+            field(page, "이메일").fill(secondary_admin_email)
+            field(page, "비밀번호").fill(secondary_admin_password)
+            page.get_by_role("button", name="로그인", exact=True).click()
+            expect(page).to_have_url(re.compile(r"/$"), timeout=30000)
+            settled_idle()
+            secondary_state = stored_auth()
+            if not secondary_state["is_sign_in"] or secondary_state["role"] != "ADMIN":
+                raise RuntimeError("the second administrator session was not stored as ADMIN")
+            checks["admin_login_role"] = secondary_state["role"]
+            stage("admin_general_deactivation")
+            page.get_by_role("link", name="회원 관리").click()
+            expect(page.get_by_role("heading", name="회원 관리")).to_be_visible()
+            general_row = page.locator("tr", has_text="d@example.com")
+            general_row.get_by_role("button", name="비활성화", exact=True).click()
+            page.locator(".confirm-modal__panel").get_by_role("button", name="비활성화", exact=True).click()
+            expect(page.get_by_text("회원을 비활성화했습니다.")).to_be_visible()
+            expect(general_row.get_by_text("탈퇴", exact=True)).to_be_visible()
+            settled_idle()
+            checks["admin_deactivated_general"] = True
+
+            stage("admin_permission_denials")
+            denied = page.evaluate("""async ({ adminId, superAdminId }) => {
+              const { adminWrites } = await import('/src/api/aipClient.ts');
+              const attempts = [
+                ['admin_target_admin', () => adminWrites.deactivateUser(adminId)],
+                ['admin_target_super_admin', () => adminWrites.deactivateUser(superAdminId)],
+                ['admin_forges_super_admin_role', () => adminWrites.changeUserRole(adminId, 'SUPER_ADMIN')],
+                ['admin_targets_super_admin_role', () => adminWrites.changeUserRole(superAdminId, 'GENERAL')],
+              ];
+              const result = {};
+              for (const [name, call] of attempts) {
+                try { await call(); result[name] = 'UNEXPECTED_SUCCESS'; }
+                catch (error) { result[name] = typeof error?.code === 'string' ? error.code : 'UNKNOWN'; }
+              }
+              return result;
+            }""", {"adminId": ADMIN_ID, "superAdminId": SUPER_ADMIN_ID})
+            checks["admin_permission_denials"] = denied
+            if any(code != "WIRE.FORBIDDEN" for code in denied.values()):
+                raise RuntimeError("an ADMIN changed role or deactivated a protected role through the generated SDK")
+            expect(page.locator("tr", has_text="e@example.com").get_by_text("ADMIN", exact=True)).to_be_visible()
+            expect(page.locator("tr", has_text="c@example.com").get_by_text("SUPER_ADMIN", exact=True)).to_be_visible()
+            page.screenshot(path=str(output / "admin-admin-permission-denials.png"), full_page=True)
+            settled_idle()
             context.close()
             browser.close()
             browser = None
@@ -384,7 +449,12 @@ def main() -> int:
         unknown = [row for row in requests if row["path"] not in AIP_PATHS]
         if unknown:
             raise RuntimeError("the console called an unexpected AIP path: " + json.dumps(sorted({str(row["path"]) for row in unknown})))
-        failed = [row for row in requests if row["path"] in {"/read", "/apply", "/extension", "/jobs/enqueue", "/jobs/status", "/jobs/result"} and row.get("ok") is not True]
+        expected_refusals = {
+            ("closed_request_refusal", "WIRE.EFFECT_TARGET_MISSING"),
+            ("admin_permission_denials", "WIRE.FORBIDDEN"),
+        }
+        failed = [row for row in requests if row["path"] in {"/read", "/apply", "/extension", "/jobs/enqueue", "/jobs/status", "/jobs/result"}
+                  and row.get("ok") is not True and (row["stage"], row.get("code")) not in expected_refusals]
         if failed:
             raise RuntimeError("an admin SDK request did not succeed: " + json.dumps(failed, ensure_ascii=False))
         mismatched = [row for row in requests if row.get("contract_matches_runtime") is False]
@@ -404,12 +474,10 @@ def main() -> int:
         for transition in ("VideoRequest.reject", "User.changeRole", "User.deactivate", "Video.remove", "Comment.remove"):
             if transition not in applied:
                 raise RuntimeError(f"the console never applied the declared transition {transition}")
-        if checks.get("dashboard") == "rendered" and page_errors:
+        if checks.get("dashboard") in {"rendered", "rendered_partial_host_metrics_unavailable"} and page_errors:
             raise RuntimeError("browser reported an unhandled React page error")
-        if checks.get("dashboard") != "rendered":
-            tolerated = [error for error in page_errors if error["stage"] in {"admin_login", "dashboard"} and error["type"] == "TypeError"]
-            if len(tolerated) != len(page_errors):
-                raise RuntimeError("browser reported an unhandled React page error outside the known off-Linux dashboard failure")
+        if checks.get("dashboard") not in {"rendered", "rendered_partial_host_metrics_unavailable"}:
+            raise RuntimeError("the admin dashboard did not render")
         report = {
             "ui_revision": UI_REVISION,
             "phase": "admin",

@@ -56,6 +56,7 @@ cargo test --manifest-path prototype/Cargo.toml --test cli --locked --target-dir
 cargo build -p aip-cli --locked
 node --test \
   porting/facereview/ui-overlay/tests/adminAdapter.test.ts \
+  porting/facereview/ui-overlay/tests/adminDashboardStatus.test.ts \
   porting/facereview/ui-overlay/tests/adminReadAdapter.test.ts \
   porting/facereview/ui-overlay/tests/authAdapter.test.ts \
   porting/facereview/ui-overlay/tests/mypageAdapter.test.ts \

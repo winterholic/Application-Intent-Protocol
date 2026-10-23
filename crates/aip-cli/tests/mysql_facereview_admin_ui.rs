@@ -55,6 +55,7 @@ const MONGO_DB: &str = "aip_t_aui_fr";
 const ISSUER: &str = "https://login.facereview.example";
 const AUDIENCE: &str = "aip-api";
 const CAROL: &str = "33333333-3333-4333-8333-333333333333";
+const BOB: &str = "22222222-2222-4222-8222-222222222222";
 const DAVE: &str = "44444444-4444-4444-8444-444444444444";
 const ERIN: &str = "55555555-5555-4555-8555-555555555555";
 const MEMBER: &str = "77777777-7777-4777-8777-777777777777";
@@ -240,7 +241,9 @@ async fn facereview_admin_console_runs_through_the_generated_sdk_and_the_servers
     let vectors: Value = serde_json::from_str(WERKZEUG).unwrap();
     let (member_password, member_hash) = (vectors["cases"][0]["password"].as_str().unwrap(), vectors["cases"][0]["hash"].as_str().unwrap());
     let (admin_password, admin_hash) = (vectors["cases"][3]["password"].as_str().unwrap(), vectors["cases"][3]["hash"].as_str().unwrap());
-    setup.exec_drop("UPDATE user SET password = ? WHERE user_id = ?", (admin_hash, CAROL)).await.unwrap();
+    for user_id in [CAROL, BOB] {
+        setup.exec_drop("UPDATE user SET password = ? WHERE user_id = ?", (admin_hash, user_id)).await.unwrap();
+    }
     setup
         .exec_drop(
             "INSERT INTO user (user_id, email, password, name, role, is_tutorial_done, is_verify_email_done, is_deleted, created_at, updated_at) \
@@ -333,6 +336,7 @@ async fn facereview_admin_console_runs_through_the_generated_sdk_and_the_servers
 
     // --- the server's own policy, before any browser: the console's role check is a convenience, not the boundary. ---
     let admin_token = login(&address, &origin, "c@example.com", admin_password).await;
+    let regular_admin_token = login(&address, &origin, "b@example.com", admin_password).await;
     let member_token = login(&address, &origin, "legacy@example.com", member_password).await;
     // Every administrator aggregate with a valid request of its own. The administrator is the control: a probe that the server answers for
     // the administrator is well formed, so the member's and the guest's refusal below is the policy and not a malformed request.
@@ -403,6 +407,56 @@ async fn facereview_admin_console_runs_through_the_generated_sdk_and_the_servers
         "a refused approval made no video"
     );
 
+    // SUPER_ADMIN may assign ADMIN. Restore the fixture row before the browser journey so it can prove the same direction from the UI.
+    let superadmin_promote = post(
+        &address,
+        "/apply",
+        Some(&admin_token),
+        &fingerprint,
+        &json!({"key": "superadmin-promote-general", "request": {"apply": "User.changeRole", "target": {"ids": [MEMBER]}, "values": {"role": "ADMIN"}}}),
+    )
+    .await;
+    assert_eq!(superadmin_promote["ok"], true, "SUPER_ADMIN may assign ADMIN: {superadmin_promote}");
+    assert_eq!(cell(&mut setup, &format!("SELECT role FROM `{SOURCE}`.user WHERE user_id='{MEMBER}'")).await.as_deref(), Some("ADMIN"));
+    setup.exec_drop(format!("UPDATE `{SOURCE}`.user SET role='GENERAL' WHERE user_id='{MEMBER}'"), ()).await.unwrap();
+
+    // ADMIN may deactivate GENERAL. A later browser step checks this through the actual console action.
+    let regular_deactivate = post(
+        &address,
+        "/apply",
+        Some(&regular_admin_token),
+        &fingerprint,
+        &json!({"key": "admin-deactivate-general", "request": {"apply": "User.deactivate", "target": {"ids": [MEMBER]}}}),
+    )
+    .await;
+    assert_eq!(regular_deactivate["ok"], true, "ADMIN may deactivate GENERAL: {regular_deactivate}");
+    assert_eq!(cell(&mut setup, &format!("SELECT is_deleted FROM `{SOURCE}`.user WHERE user_id='{MEMBER}'")).await.as_deref(), Some("1"));
+    setup.exec_drop(format!("UPDATE `{SOURCE}`.user SET is_deleted=0 WHERE user_id='{MEMBER}'"), ()).await.unwrap();
+
+    // Forged target ids and role values reach the real AIP write policy and cannot elevate or deactivate protected roles.
+    for (label, request) in [
+        ("admin-targets-admin", json!({"apply": "User.deactivate", "target": {"ids": [ERIN]}})),
+        ("admin-targets-superadmin", json!({"apply": "User.deactivate", "target": {"ids": [CAROL]}})),
+        ("admin-forges-role", json!({"apply": "User.changeRole", "target": {"ids": [ERIN]}, "values": {"role": "SUPER_ADMIN"}})),
+        ("admin-targets-role", json!({"apply": "User.changeRole", "target": {"ids": [CAROL]}, "values": {"role": "GENERAL"}})),
+    ] {
+        let reply = post(&address, "/apply", Some(&regular_admin_token), &fingerprint, &json!({"key": label, "request": request})).await;
+        assert_eq!(reply["code"], "WIRE.FORBIDDEN", "ADMIN forged {label} must be refused: {reply}");
+    }
+    assert_eq!(
+        cell(&mut setup, &format!("SELECT CONCAT_WS('|', role, is_deleted) FROM `{SOURCE}`.user WHERE user_id='{BOB}'")).await.as_deref(),
+        Some("ADMIN|0")
+    );
+    assert_eq!(
+        cell(&mut setup, &format!("SELECT CONCAT_WS('|', role, is_deleted) FROM `{SOURCE}`.user WHERE user_id='{ERIN}'")).await.as_deref(),
+        Some("ADMIN|0")
+    );
+    assert_eq!(
+        cell(&mut setup, &format!("SELECT CONCAT_WS('|', role, is_deleted) FROM `{SOURCE}`.user WHERE user_id='{CAROL}'")).await.as_deref(),
+        Some("SUPER_ADMIN|0")
+    );
+    println!("policy: SUPER_ADMIN assigns ADMIN; ADMIN deactivates GENERAL; forged protected targets and role refused with WIRE.FORBIDDEN");
+
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let Some(ui_root_value) = std::env::var_os("AIP_FACEREVIEW_ADMIN_UI_DIR") else {
         eprintln!("React admin browser journey skipped: AIP_FACEREVIEW_ADMIN_UI_DIR is unset; the SDK/API policy checks above are separate");
@@ -424,6 +478,8 @@ async fn facereview_admin_console_runs_through_the_generated_sdk_and_the_servers
         .env("AIP_FACEREVIEW_ADMIN_PASSWORD", admin_password)
         .env("AIP_FACEREVIEW_MEMBER_EMAIL", "legacy@example.com")
         .env("AIP_FACEREVIEW_MEMBER_PASSWORD", member_password)
+        .env("AIP_FACEREVIEW_SECONDARY_ADMIN_EMAIL", "b@example.com")
+        .env("AIP_FACEREVIEW_SECONDARY_ADMIN_PASSWORD", admin_password)
         .env("AIP_FACEREVIEW_EXPECTED_CONTRACT", &fingerprint)
         .env("AIP_FACEREVIEW_UI_PORT", &ui_port)
         .env("AIP_FACEREVIEW_REDIS_CONFIGURED", if redis_url.is_some() { "1" } else { "0" })
@@ -472,13 +528,19 @@ async fn facereview_admin_console_runs_through_the_generated_sdk_and_the_servers
         "the console rejection stored the administrator's reason"
     );
     assert_eq!(cell(&mut setup, &format!("SELECT COUNT(*) FROM `{SOURCE}`.video WHERE youtube_url='reqvideo002'")).await.as_deref(), Some("0"));
-    assert_eq!(cell(&mut setup, &format!("SELECT role FROM `{SOURCE}`.user WHERE user_id='{MEMBER}'")).await.as_deref(), Some("GENERAL"));
-    // The four other console writes, each against the original AdminService's rows: only the fields the original changes are changed.
+    assert_eq!(cell(&mut setup, &format!("SELECT role FROM `{SOURCE}`.user WHERE user_id='{MEMBER}'")).await.as_deref(), Some("ADMIN"));
+    // Role assignment and ADMIN's allowed deactivation are independently read back after real browser SDK calls.
     assert_eq!(
-        cell(&mut setup, &format!("SELECT CONCAT_WS('|', role, is_deleted) FROM `{SOURCE}`.user WHERE user_id='{ERIN}'")).await.as_deref(),
-        Some("GENERAL|0"),
-        "ADMIN 해제 changed the role and nothing else"
+        cell(&mut setup, &format!("SELECT CONCAT_WS('|', role, is_deleted) FROM `{SOURCE}`.user WHERE user_id='{CAROL}'")).await.as_deref(),
+        Some("SUPER_ADMIN|0"),
+        "the SUPER_ADMIN target was unchanged by forged requests"
     );
+    assert_eq!(
+        cell(&mut setup, &format!("SELECT CONCAT_WS('|', role, is_deleted) FROM `{SOURCE}`.user WHERE user_id='{BOB}'")).await.as_deref(),
+        Some("ADMIN|0"),
+        "the ADMIN actor could not promote their own role"
+    );
+    // The four other console writes, each against the original AdminService's rows: only the fields the original changes are changed.
     assert_eq!(
         cell(&mut setup, &format!("SELECT CONCAT_WS('|', role, is_deleted) FROM `{SOURCE}`.user WHERE user_id='{DAVE}'")).await.as_deref(),
         Some("GENERAL|1"),
@@ -495,6 +557,11 @@ async fn facereview_admin_console_runs_through_the_generated_sdk_and_the_servers
         cell(&mut setup, &format!("SELECT COUNT(*) FROM `{SOURCE}`.comment WHERE user_id='{DAVE}' AND is_deleted=0")).await.as_deref(),
         Some("0")
     );
+    assert_eq!(
+        cell(&mut setup, &format!("SELECT CONCAT_WS('|', role, is_deleted) FROM `{SOURCE}`.user WHERE user_id='{MEMBER}'")).await.as_deref(),
+        Some("ADMIN|0")
+    );
+    assert_eq!(cell(&mut setup, &format!("SELECT role FROM `{SOURCE}`.user WHERE user_id='{MEMBER}'")).await.as_deref(), Some("ADMIN"));
     assert_eq!(
         cell(&mut setup, &format!("SELECT is_deleted FROM `{SOURCE}`.video WHERE video_id='aaaaaaaa-0000-4000-8000-000000000002'")).await.as_deref(),
         Some("1"),

@@ -33,6 +33,12 @@ mkdir -p "$ui_root/src/api"
 for file in adminAdapter.ts adminReadAdapter.ts authAdapter.ts index.ts; do
   cp "$shared/$file" "$ui_root/src/api/$file"
 done
+# The pinned dashboard assumes host metrics are always numeric. The AIP server contract returns null when Linux-only host probes are
+# unavailable, so the overlay renders that fact while keeping API and datastore health visible.
+mkdir -p "$ui_root/src/pages/dashboard" "$ui_root/src/types"
+cp "$repo_root/porting/facereview/ui-overlay/admin/src/pages/dashboard/DashboardPage.tsx" "$ui_root/src/pages/dashboard/DashboardPage.tsx"
+cp "$repo_root/porting/facereview/ui-overlay/admin/src/types/index.ts" "$ui_root/src/types/index.ts"
+cp "$repo_root/porting/facereview/ui-overlay/admin/src/dashboardStatus.ts" "$ui_root/src/dashboardStatus.ts"
 # Files that replace the axios modules of the admin UI and import its auth store.
 for file in aipClient.ts admin.ts auth.ts HeaderToken.ts; do
   cp "$glue/$file" "$ui_root/src/api/$file"
