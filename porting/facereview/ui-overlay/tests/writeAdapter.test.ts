@@ -83,3 +83,25 @@ test('comment creation, edit and delete keep owner and payload decisions in the 
     { apply: 'Comment.delete', target: { ids: ['comment-1'] } },
   ]);
 });
+
+test('profile update bundles the member row patch and favorite genre replacement atomically', async () => {
+  const { client, calls } = fakeClient([
+    { id: 'genre-1', genre: 'drama' },
+    { id: 'genre-2', genre: 'eating' },
+  ]);
+  const api = createWriteApi(client, { userId: () => 'member-1', newKey: keyFactory() });
+
+  assert.equal(typeof api.updateProfile, 'function');
+  await api.updateProfile({ name: '새 이름', profile_image_id: 12, favorite_genres: ['eating', 'horror'] });
+
+  assert.deepEqual(calls, [
+    { kind: 'read', value: { read: 'UserFavoriteGenre', select: ['id', 'genre'], limit: 50 } },
+    {
+      kind: 'bundle', key: 'write-1', value: { atomic: [
+        { apply: 'User.updateProfile', target: { ids: ['member-1'] }, values: { name: '새 이름', profile_image_id: 12 } },
+        { apply: 'UserFavoriteGenre.remove', target: { ids: ['genre-1'] } },
+        { create: 'UserFavoriteGenre', values: { user: 'member-1', genre: 'horror' } },
+      ] },
+    },
+  ]);
+});

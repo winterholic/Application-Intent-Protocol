@@ -1,4 +1,4 @@
-import { aipClient, authTransport } from './aipClient';
+import { aipClient, aipWrites, authTransport } from './aipClient';
 import { useAuthStorage } from 'store/authStore';
 import type { EmailCheckResponse, UserResponse } from 'types';
 
@@ -72,32 +72,6 @@ export const completeTutorial = async () => {
 };
 
 export const updateProfile = async (props: { name?: string; profile_image_id?: number; favorite_genres?: string[] }) => {
-  const userId = currentUserId();
-  const changes: Record<string, unknown> = {};
-  if (props.name !== undefined) changes.name = props.name;
-  if (props.profile_image_id !== undefined) changes.profile_image_id = props.profile_image_id;
-  const operations: Record<string, unknown>[] = [];
-  if (Object.keys(changes).length > 0) {
-    operations.push({ apply: 'User.updateProfile', target: { ids: [userId] }, values: changes });
-  }
-  if (props.favorite_genres !== undefined) {
-    const current = await aipClient.read({
-      read: 'UserFavoriteGenre', select: ['id', 'genre'],
-      limit: 50,
-    });
-    const desired = new Set(props.favorite_genres);
-    for (const row of current.rows) {
-      if (typeof row.genre === 'string' && !desired.has(row.genre)) {
-        operations.push({ apply: 'UserFavoriteGenre.remove', target: { ids: [row.id] } });
-      }
-    }
-    const existing = new Set(current.rows.map((row) => row.genre));
-    for (const genre of desired) {
-      if (!existing.has(genre)) operations.push({ create: 'UserFavoriteGenre', values: { user: userId, genre } });
-    }
-  }
-  if (operations.length === 0) return { status: 200, data: { ok: true } };
-  const result = await aipClient.apply({ atomic: operations });
-  if (!result.ok) throw Object.assign(new Error(`profile update failed: ${result.code}`), { code: result.code });
+  const result = await aipWrites.updateProfile(props);
   return { status: 200, data: result };
 };

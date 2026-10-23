@@ -25,6 +25,12 @@ from product.tests.facereview_ui_browser_evidence import (
 
 PROFILE_NAME = "AIP 프로필 표본회원"
 PROFILE_GENRES = {"eating", "horror"}
+UPDATED_PROFILE_NAME = "AIP 프로필 수정회원"
+UPDATED_PROFILE_GENRES = {"animal", "eating"}
+SAFE_GENRES = {
+    "drama", "eating", "travel", "cook", "show", "information", "game", "sports",
+    "music", "animal", "beauty", "comedy", "horror", "exercise", "vlog", "etc",
+}
 
 
 def main() -> int:
@@ -99,6 +105,15 @@ def main() -> int:
                     code = safe_wire_code(envelope.get("code"))
                     if code is not None:
                         row["code"] = code
+                    if parsed.path == "/read" and isinstance(envelope.get("rows"), list):
+                        genres = {
+                            item.get("genre") for item in envelope["rows"]
+                            if isinstance(item, dict)
+                            and isinstance(item.get("genre"), str)
+                            and item.get("genre") in SAFE_GENRES
+                        }
+                        if genres:
+                            row["genre_values"] = sorted(genres)
                 if parsed.path == "/read":
                     try:
                         row["read_request"] = read_request_evidence(response.request.post_data_json)
@@ -134,7 +149,33 @@ def main() -> int:
                 "selected_genres": sorted(PROFILE_GENRES),
                 "selected_genre_count": selected_count,
             }
-            page.screenshot(path=str(output / "profile-screen.png"), full_page=True)
+            page.screenshot(path=str(output / "profile-before-save.png"), full_page=True)
+
+            # Exercise the original edit form through the overlay's generated SDK client.
+            page.get_by_label("닉네임", exact=True).fill(UPDATED_PROFILE_NAME)
+            page.get_by_role("button", name=re.compile("공포")).click()
+            page.get_by_role("button", name=re.compile("동물")).click()
+            expect(page.get_by_role("button", name=re.compile("공포"))).to_have_attribute("aria-pressed", "false")
+            expect(page.get_by_role("button", name=re.compile("동물"))).to_have_attribute("aria-pressed", "true")
+            with page.expect_response(
+                lambda response: urlsplit(response.url).path == "/apply" and response.request.method == "POST"
+            ) as profile_write_response:
+                page.get_by_role("button", name="수정", exact=True).click()
+            write_response = profile_write_response.value
+            try:
+                write_envelope = write_response.json()
+            except Exception:
+                write_envelope = {}
+            if write_response.status != 200 or not isinstance(write_envelope, dict) or write_envelope.get("ok") is not True:
+                raise RuntimeError("React profile update bundle did not succeed against the matching AIP contract")
+            if write_response.request.headers.get("x-aip-contract") != expected_contract:
+                raise RuntimeError("React profile update did not use the server's AIP contract fingerprint")
+            expect(page).to_have_url(re.compile(r"/my$"), timeout=15000)
+            expect(page.get_by_role("heading", name=f"{UPDATED_PROFILE_NAME}님", exact=True)).to_be_visible()
+            profile_fields["saved_name"] = UPDATED_PROFILE_NAME
+            profile_fields["saved_genres"] = sorted(UPDATED_PROFILE_GENRES)
+            profile_fields["write_bundle_ok"] = True
+            page.screenshot(path=str(output / "profile-after-save.png"), full_page=True)
             context.close()
             browser.close()
             browser = None
@@ -153,16 +194,16 @@ def main() -> int:
             raise RuntimeError("React profile UserFavoriteGenre read did not request genre")
         user_filters = by_resource["User"]["read_request"].get("filter_fields", [])
         genre_filters = by_resource["UserFavoriteGenre"]["read_request"].get("filter_fields", [])
-        if user_filters != [{"field": "id", "op": "eq", "value_type": "str"}] or genre_filters != [
-            {"field": "user", "op": "eq", "value_type": "str"}
-        ]:
-            raise RuntimeError("React profile reads were not scoped to the signed-in member")
+        if user_filters != [{"field": "id", "op": "eq", "value_type": "str"}] or genre_filters:
+            raise RuntimeError("React profile reads used an unexpected client filter")
+        if by_resource["UserFavoriteGenre"].get("genre_values") != sorted(PROFILE_GENRES):
+            raise RuntimeError("React profile genre read was not constrained to the signed-in member's rows")
         if page_errors:
             raise RuntimeError("browser reported an unhandled React page error")
         report = {
             "ui_revision": "2e7c021fa5abebd72278d841b8066a33d45cfbb3",
             "phase": "profile",
-            "fixture": {"name": PROFILE_NAME, "favorite_genres": sorted(PROFILE_GENRES)},
+            "fixture": {"name": PROFILE_NAME, "favorite_genres": sorted(PROFILE_GENRES), "other_member_marker": "vlog"},
             "profile_ui": profile_fields,
             "api_requests": requests,
             "journey_stage": stage,
@@ -179,7 +220,7 @@ def main() -> int:
         report = {
             "ui_revision": "2e7c021fa5abebd72278d841b8066a33d45cfbb3",
             "phase": "profile",
-            "fixture": {"name": PROFILE_NAME, "favorite_genres": sorted(PROFILE_GENRES)},
+            "fixture": {"name": PROFILE_NAME, "favorite_genres": sorted(PROFILE_GENRES), "other_member_marker": "vlog"},
             "profile_ui": profile_fields,
             "api_requests": requests,
             "journey_stage": stage,

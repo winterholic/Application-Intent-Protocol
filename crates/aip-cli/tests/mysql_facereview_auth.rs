@@ -380,6 +380,15 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
         )
         .await
         .unwrap();
+    // A different member's marker proves the profile browser read is constrained by the server's actor row policy.
+    setup
+        .exec_drop(
+            "INSERT IGNORE INTO user_favorite_genre (user_favorite_genre_id, user_id, genre, created_at, updated_at) \
+             VALUES ('99999999-9999-4999-8999-999999999901', ?, 'vlog', NOW(), NOW())",
+            (CAROL,),
+        )
+        .await
+        .unwrap();
     // Carol is the seed's SUPER_ADMIN; give her a real hash so she can log in for the escalation checks.
     setup.exec_drop("UPDATE user SET password = ? WHERE user_id = ?", (vectors["cases"][3]["hash"].as_str().unwrap(), CAROL)).await.unwrap();
     let carol_password = vectors["cases"][3]["password"].as_str().unwrap().to_owned();
@@ -592,6 +601,11 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
             String::from_utf8_lossy(&profile.stderr)
         );
         print!("{}", String::from_utf8_lossy(&profile.stdout));
+        let saved_name: Option<String> = setup.exec_first("SELECT name FROM user WHERE user_id = ?", (LEGACY,)).await.unwrap();
+        assert_eq!(saved_name.as_deref(), Some("AIP 프로필 수정회원"), "the profile screen's SDK bundle persists its name change");
+        let saved_genres: Vec<String> =
+            setup.exec("SELECT genre FROM user_favorite_genre WHERE user_id = ? ORDER BY CAST(genre AS CHAR)", (LEGACY,)).await.unwrap();
+        assert_eq!(saved_genres, ["animal", "eating"], "the profile screen atomically replaces only this member's favorite genres");
         assert_eq!(cell(&mut setup, "SELECT CAST(COUNT(*) AS CHAR) FROM video_bookmark WHERE user_id='77777777-7777-4777-8777-777777777777' AND video_id='aaaaaaaa-0000-4000-8000-000000000001'").await.as_deref(), Some("0"), "fixture member starts without a bookmark");
         let add = run_facereview_ui_browser_journey(&address, &fingerprint, "add", &browser_root);
         assert!(
