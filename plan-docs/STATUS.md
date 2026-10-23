@@ -22,6 +22,8 @@ add/reload에서 UI bookmark 상태가 `aria-pressed=true`, off/reload에서 `fa
 
 **후속 수정 SHA `4f5e6b039f503fecf93a6af364d13b4a7ada49b6`, Verify `39891300600`.** 실제 React `Comment` `/read`는 HTTP 200 `ok=true`, rejected query key 0으로 바뀌었고 nested User selection에 허용된 `id,name`이 갔다. 로그인·session, bookmark `/apply` 2건, `VideoBookmark` 읽기가 모두 성공했다. safe screenshot에는 main 화면의 fixture 카드와 watch 화면 댓글 2개가 보인다. query defect 수정은 runtime에서 통과했으나 browser step12는 add phase 종료 전에 failure로 끝나고 DB on/off 최종 journey는 아직 미확정이다. 실패 artifact에는 그때의 단계/예외 종류가 없었다.
 
+**진단 artifact 결과 SHA `eddb7ed51c279a2c8da6cd4e5b24d941d853766b`, Verify `39893336376`.** 이 run은 `journey_stage=bookmark_reload`, `failure_type=AssertionError`로 끝났다. `즐겨찾기 추가`와 `즐겨찾기 해제` 역할 버튼은 둘 다 0개였고 page error는 0이다. AIP `/read Comment` 두 번 모두 `ok=true`, nested allowlisted user fields `id,name`; add `/apply` 두 번도 `ok=true`였다. 중단점은 reload 전/후를 구분하지 못하고 route/button state가 없어 아직 root cause 확정이 아니다. assertion을 약하게 하거나 browser route를 건너뛰지 않고 다음 safe artifact에 `bookmark_reloaded`와 route class/aria controls를 보강한다.
+
 기존 console `network_resource_error` 2건의 원인은 이제 관측됐다: 두 request-failed event 모두 외부 `youtube` host class의 `script`, `net::ERR_FAILED`이며 harness의 의도적 외부 YouTube 차단과 일치한다. 이는 재생 불가 제한을 알리는 console 출력이고 React pageerror는 0이다. 정확한 클릭/재로드 중단 단계를 safe artifact에 추가하는 계측 변경을 적용해 최종 여정을 한 번 더 검증한다. 증거: 이번 Run outbox `ci-39891300600/facereview-ui-browser-39891300600-1/add/`.
 
 ### 이전 재개 지점 (2026-10-23, 인증 회원 SDK/API 최소 journey)

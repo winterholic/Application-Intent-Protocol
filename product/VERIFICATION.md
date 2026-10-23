@@ -1214,3 +1214,11 @@ query builder 회귀검사는 14개 통과, browser safe-evidence 단위검사�
 console error는 add phase 2건, 각각 allowlisted failed request `host_class=youtube`, `resource_type=script`, `failure_code=net::ERR_FAILED`와 개수·분류가 일치한다. 이는 외부 media 차단 규칙으로 발생한 것이며, raw URL/text는 저장하지 않았다. `page_error_count=0`, API mock false, credential recording false, fixture 썸네일 redirect 1회 HTTP 200이다. 외부 영상은 차단 상태라 실제 재생은 범위 밖이다.
 
 추가로 nested relation allowlist와 예외 class 기반 안전 artifact 검사를 넣었으며 Python evidence 검사 13개, UI adapter 검사 14개가 통과했다. 이 후속도 WBS 7.2.10 전체나 ML/model·visitor-policy 완료를 뜻하지 않는다.
+
+### Reload 후 bookmark selector 진단: Verify `39893336376` (`eddb7ed`)
+
+이 SHA의 전체 Verify는 failure이며 단계 10/11 success, 단계 12 failure, artifact 보존 성공이다. 새 safe `add-browser-result.json`에서 실패는 `journey_stage=bookmark_reload`, `failure_type=AssertionError`; `즐겨찾기 추가`/`즐겨찾기 해제` role locator 모두 absent로 기록됐다. 이 stage가 reload 호출 전후를 합쳐 놓아 현재 URL route와 실 DOM `aria-pressed` controls는 미확인이다. 따라서 이 JSON만으로 browser assertion의 정확한 원인을 확정할 수 없다.
+
+그 외 로그인·session, list extension 3종, `Comment` read(두 번), `VideoBookmark` read, 두 `/apply`는 모두 HTTP 200 envelope `ok=true`; comment nested relation `user:{id,name}`의 unknown select count는 0이다. Add phase에서 실제 UI apply 이후 reload 지점까지는 도달했으나 bookmark toggle이 `bundle`을 쓰므로 이 `/apply`들은 SQL 북마크 쓰기 증거로 보지 않는다. `mysql_facereview_auth.rs`의 0→1→0 assertion 전체가 성공했는지도 run 실패 때문에 입증되지 않았다. DB 결과를 성공으로 쓰지 않는다.
+
+이에 따라 다음 artifact는 `bookmark_reload`를 `bookmark_reloaded`/`bookmark_state_confirmed`로 분리하고, URL은 fixture route class로만, `[aria-pressed]`는 허용된 bookmark label과 true/false만 기록한다. session/login value와 arbitrary DOM/text는 저장하지 않는다. 같은 SHA의 console 2건은 차단된 YouTube `script`의 `net::ERR_FAILED`; 이는 의도적 외부 media 정책이고 page errors는 0이었다.

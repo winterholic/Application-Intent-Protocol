@@ -21,6 +21,7 @@ READ_FIELDS = {
 }
 READ_RELATIONS = {"Comment": {"user": {"id", "name"}}}
 SAFE_FAILURE_TYPES = {"AssertionError", "Error", "TimeoutError", "TargetClosedError", "RuntimeError"}
+SAFE_BOOKMARK_LABELS = {"즐겨찾기 추가", "즐겨찾기 해제"}
 READ_QUERY_KEYS = {"read", "select", "filter", "sort", "limit", "offset", "after"}
 READ_QUERY_DIAGNOSTIC_KEYS = READ_QUERY_KEYS | {"traverse"}
 READ_ENVELOPE_KEYS = {"query", "contractFingerprint"}
@@ -171,6 +172,37 @@ def safe_wire_code(value: Any) -> str | None:
 def safe_browser_failure_type(value: Any) -> str:
     name = type(value).__name__
     return name if name in SAFE_FAILURE_TYPES else "unrecognized"
+
+
+def safe_browser_route_class(url: Any, fixture_video_id: str) -> str:
+    if not isinstance(url, str):
+        return "unrecognized"
+    path = urlsplit(url).path
+    if path == "/main":
+        return "main"
+    if path in {"/auth/1", "/auth/2"}:
+        return "auth"
+    if path == f"/watch/{fixture_video_id}":
+        return "watch_fixture"
+    if path.startswith("/watch/"):
+        return "watch_other"
+    return "other"
+
+
+def safe_bookmark_control_evidence(value: Any) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    result: list[dict[str, str]] = []
+    for item in value[:10]:
+        if not isinstance(item, dict):
+            continue
+        label = item.get("label")
+        pressed = item.get("pressed")
+        result.append({
+            "label": label if isinstance(label, str) and label in SAFE_BOOKMARK_LABELS else "unrecognized",
+            "pressed": pressed if isinstance(pressed, str) and pressed in {"true", "false"} else "unrecognized",
+        })
+    return result
 
 
 def failed_read_requests(api_requests: list[dict[str, object]]) -> list[dict[str, object]]:

@@ -10,6 +10,8 @@ from product.tests.facereview_ui_browser_evidence import (
     read_request_evidence,
     safe_browser_caller_frames,
     safe_browser_failure_type,
+    safe_browser_route_class,
+    safe_bookmark_control_evidence,
     safe_wire_code,
 )
 
@@ -49,6 +51,17 @@ class BrowserEvidenceTests(unittest.TestCase):
         error = TimeoutError("must not be retained: member@example.invalid")
         self.assertEqual(safe_browser_failure_type(error), "TimeoutError")
         self.assertNotIn("member@example.invalid", safe_browser_failure_type(error))
+
+    def test_browser_failure_state_keeps_only_route_and_allowlisted_bookmark_controls(self):
+        self.assertEqual(safe_browser_route_class("http://localhost:5173/watch/" + VIDEO_ID + "?token=secret", VIDEO_ID), "watch_fixture")
+        self.assertEqual(safe_browser_route_class("http://localhost:5173/account/private", VIDEO_ID), "other")
+        self.assertEqual(safe_bookmark_control_evidence([
+            {"label": "즐겨찾기 해제", "pressed": "true"},
+            {"label": "private-value", "pressed": "other"},
+        ]), [
+            {"label": "즐겨찾기 해제", "pressed": "true"},
+            {"label": "unrecognized", "pressed": "unrecognized"},
+        ])
 
     def test_http_200_read_error_is_not_classified_as_success(self):
         rows = [

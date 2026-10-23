@@ -28,6 +28,8 @@ from product.tests.facereview_ui_browser_evidence import (
     read_request_evidence,
     safe_browser_caller_frames,
     safe_browser_failure_type,
+    safe_browser_route_class,
+    safe_bookmark_control_evidence,
     safe_wire_code,
     console_error_evidence,
 )
@@ -129,6 +131,9 @@ def main() -> int:
     journey_stage = "startup"
     failure_type: str | None = None
     bookmark_ui_state: dict[str, object] = {}
+    failure_route_class = "unrecognized"
+    failure_bookmark_controls: list[dict[str, str]] = []
+    failure_watch_content_visible = False
     screenshot_names: list[str] = []
     thumbnail_server = None
     thumbnail_thread = None
@@ -370,7 +375,9 @@ def main() -> int:
                         expect(bookmark_remove).to_have_attribute("aria-pressed", "true")
                         journey_stage = "bookmark_reload"
                         page.reload(wait_until="domcontentloaded")
+                        journey_stage = "bookmark_reloaded"
                         expect(bookmark_remove).to_have_attribute("aria-pressed", "true", timeout=30000)
+                        journey_stage = "bookmark_state_confirmed"
                         label = "bookmarked"
                     else:
                         expect(bookmark_remove).to_be_visible()
@@ -378,7 +385,9 @@ def main() -> int:
                         expect(bookmark_add).to_have_attribute("aria-pressed", "false")
                         journey_stage = "bookmark_reload"
                         page.reload(wait_until="domcontentloaded")
+                        journey_stage = "bookmark_reloaded"
                         expect(bookmark_add).to_have_attribute("aria-pressed", "false", timeout=30000)
+                        journey_stage = "bookmark_state_confirmed"
                         label = "bookmark-removed"
 
                     screenshot = output / f"{args.phase}-{label}.png"
@@ -387,6 +396,7 @@ def main() -> int:
                     journey_stage = "completed"
                 except Exception as error:
                     failure_type = safe_browser_failure_type(error)
+                    failure_route_class = safe_browser_route_class(page.url, VIDEO_ID)
                     # Keep a safe view of the last UI state even when this phase fails.
                     try:
                         rendered_state = page.evaluate("""(fixtureTitle) => {
@@ -405,6 +415,13 @@ def main() -> int:
                     except Exception:
                         rendered_state = {}
                     try:
+                        control_values = page.locator("button[aria-pressed]").evaluate_all(
+                            "elements => elements.slice(0, 10).map(element => ({"
+                            "label: element.getAttribute('aria-label'), pressed: element.getAttribute('aria-pressed')"
+                            "}))"
+                        )
+                        failure_bookmark_controls = safe_bookmark_control_evidence(control_values)
+                        failure_watch_content_visible = page.locator(".video-information-container").count() > 0
                         bookmark_add = page.get_by_role("button", name="즐겨찾기 추가", exact=True)
                         bookmark_remove = page.get_by_role("button", name="즐겨찾기 해제", exact=True)
                         bookmark_ui_state = {
@@ -454,6 +471,9 @@ def main() -> int:
             "journey_stage": journey_stage,
             "failure_type": failure_type,
             "bookmark_ui_state": bookmark_ui_state,
+            "failure_route_class": failure_route_class,
+            "failure_bookmark_controls": failure_bookmark_controls,
+            "failure_watch_content_visible": failure_watch_content_visible,
             "page_error_count": len(page_errors),
             "page_error_types": page_errors,
             "console_error_count": console_error_count,
@@ -484,6 +504,9 @@ def main() -> int:
             "journey_stage": journey_stage,
             "failure_type": failure_type,
             "bookmark_ui_state": bookmark_ui_state,
+            "failure_route_class": failure_route_class,
+            "failure_bookmark_controls": failure_bookmark_controls,
+            "failure_watch_content_visible": failure_watch_content_visible,
             "fixture_video": {"id": VIDEO_ID},
             "page_error_count": len(page_errors),
             "page_error_types": page_errors,
