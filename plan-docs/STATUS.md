@@ -1,4 +1,14 @@
-## 최신 재개 지점 (2026-10-23, WBS 7.2.10 회원 프로필 브라우저 검증 대기)
+# 최신 재개 지점 (2026-10-23 04:30 UTC, WBS 7.2.10 프로필 쓰기 CI 진행 중)
+
+회원 프로필 쓰기 조각을 코드 SHA `d29f1d372505e26fa8bec60062f0e6c036a771a3`로 main에 push했다. `porting/facereview/ui-overlay/src/api/writeAdapter.ts`에서 서명된 회원의 User patch와 본인 UserFavoriteGenre remove/create를 생성 SDK `bundle()` 하나로 묶고 `/my/edit`의 `updateProfile`에 연결했다. 과거 브라우저 코드가 정의에 없는 `user.eq`를 요청하던 기대를 제거하고, 다른 회원의 고정 genre 행을 심어 서버의 `rows read when user = actor` 경계를 확인하도록 fixture를 바꿨다. `product/VERIFICATION.md`에는 사용자 25 고유 경로와 관리자 5 화면/13 API 목록을 분리하고 API·SDK와 브라우저 근거를 나눠 기록했다. 이메일/비밀번호/탈퇴 5개 UI 경로는 backend만 있으며 overlay는 없다. 7.2.8/7.2.9 잔여 근거도 PMS description에 보완했으며 상태/진행률은 각각 doing/90%, doing/90%, 7.2.10 doing/25% 그대로다.
+
+로컬 검사: `node --test porting/facereview/ui-overlay/tests/writeAdapter.test.ts` 5/5; `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest product.tests.test_facereview_ui_browser_evidence` 15/15; profile browser script AST, `cargo fmt --all -- --check`, `git diff --check` 통과. 이 환경에서 MySQL/browser 통합은 실행하지 않았다. GitHub Verify `39900453676`는 code SHA `d29f1d372505e26fa8bec60062f0e6c036a771a3`에서 2026-10-23 04:30:40 UTC 조회 시 `in_progress`: core step 10 진행, UI prep 11·HTTP/worker/MySQL 12·artifact 13은 pending이었다. 이전 profile-read Verify `39899325826`은 SHA `dd59658274e93c65bd32c9f30ff0506c35aab982`에서 04:28:10 UTC cancelled; 단계 10은 cancelled, browser 11·12는 skipped였다. 따라서 이전 실행은 profile UI를 검증하지 않았고 신규 Verify 결과도 아직 없다. 보조 workflow는 새 SHA에서 당시 진행 중이었다.
+
+코드 push 직전 fetch 및 소유 확인을 했고, 코드 커밋 `d29f1d372505e26fa8bec60062f0e6c036a771a3`은 main/origin에 일치한다. 현재 필요한 다음 작업은 새 Verify 상태/브라우저 결과를 한 차례 확인해 profile write slice를 닫거나 실패 근거를 조사하는 것이다. 2시간 polling은 하지 않는다. 완료 뒤 남은 UI 경로 가운데 독립적인 다음 기능을 고른다. 7.2.6의 ML 권리·visitor 정책을 임의 결정하지 않는다. 이번 slice는 Rust build를 실행하지 않아 target 증가나 cargo clean은 없었다. 기존 dirty pinned clone patch 및 사용 중인 5173은 손대지 않았다.
+
+---
+
+## 이전 재개 지점 기록 (2026-10-23 04:16 UTC snapshot, WBS 7.2.10 회원 프로필 브라우저 검증 대기)
 
 프로필 slice의 CI가 진행 중이다. 검증 코드 SHA `dd59658274e93c65bd32c9f30ff0506c35aab982`를 main에 push했다. Verify run `39899325826`은 첫 조회 때 `pending`, 2026-10-23 04:16 UTC 재조회 때 `in_progress`였다. 기본 SHA `9cc43c5`의 Verify `39898679390` 및 보조 workflow 6개도 이번 slice 시작 시 이미 진행 중이었으나, 그들은 프로필 변경 전 SHA라 이번 assertion을 검증하지 않는다.
 

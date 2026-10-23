@@ -1238,3 +1238,67 @@ Code SHA `dd59658274e93c65bd32c9f30ff0506c35aab982` adds a separate real-browser
 The phase records only allowlisted `/read` shape, status/envelope, contract-header match, and the fixed fixture values. It requires `User` to select the profile fields used by the original screen and filter by the authenticated user id, and `UserFavoriteGenre` to select `genre` and filter by that user. It uses the generated TypeScript SDK against the actual AIP service and the same dedicated MySQL fixture; browser API mocks are false. Credentials and response bodies are not retained. A screenshot and safe JSON result are uploaded under the run-owned `profile/` artifact directory.
 
 Linux Verify run [39899325826](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39899325826) was `pending` at its first query and `in_progress` at 2026-10-23 04:16 UTC. Therefore the profile screen and actual browser `/read` responses are **not yet verified**. The earlier SDK/API integration journey and separate bookmark runs remain as previously recorded and are not evidence for this new profile slice. The next action is to inspect this run's conclusion and, if complete, its safe browser artifact and raw step output. The profile scope remains open; no broader 7.2.10 completion is implied.
+
+## 2026-10-23 WBS 7.2.10 profile write overlay and route coverage (code SHA `d29f1d372505e26fa8bec60062f0e6c036a771a3`, Verify pending)
+
+**Implemented slice.** The pinned `/my/edit` already calls `updateProfile`, and the AIP definition already exposes `User.updateProfile`, `UserFavoriteGenre.remove`, and member-owned `UserFavoriteGenre.create`. The overlay now routes this call through `createWriteApi().updateProfile`: it reads only the signed-in member's genre rows, builds one atomic SDK `bundle()` containing the `User` patch and favorite-genre removes/creates, and uses one idempotency key. This preserves the existing server ownership checks and does not add profile validation rules. The browser fixture now edits the displayed name and replaces `horror` with `animal`, checks the `/apply` success and contract fingerprint, and the MySQL integration asserts the saved name and exact genre rows. A second member's fixed `vlog` row is seeded so the profile `/read UserFavoriteGenre` result verifies the server-side `rows read when user = actor` policy; the endpoint does not expose a caller `user` filter.
+
+**Local checks.** Before implementation, the new adapter test failed because `updateProfile` was absent (`actual: undefined`, expected function). After implementation, `node --test porting/facereview/ui-overlay/tests/writeAdapter.test.ts` passed 5/5; `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest product.tests.test_facereview_ui_browser_evidence` passed 15/15; the profile browser script AST check, `cargo fmt --all -- --check`, and `git diff --check` passed. These checks do not establish live service or browser success. No local MySQL/browser integration was run.
+
+The code SHA `d29f1d372505e26fa8bec60062f0e6c036a771a3` was pushed to `main`. Verify run `39900453676` was `in_progress` at 2026-10-23 04:30:40 UTC: core step 10 was running and pinned UI preparation, real HTTP/worker/MySQL, and safe browser artifact steps 11–13 were pending. The earlier Verify `39899325826` was cancelled at 04:28:10 UTC on the older SHA `dd59658274e93c65bd32c9f30ff0506c35aab982`; step 10 was cancelled and browser steps 11–12 skipped. It did not verify the profile screen. The newer run is the first CI evidence for the added browser write and MySQL assertions; its result is still pending.
+
+### User UI route inventory — 25 unique paths
+
+The pinned user UI has 30 HTTP call sites across six API modules, which collapse to 25 unique paths when methods sharing a path are grouped. The Socket.IO player is separate. “API/SDK” below means the server adapter, direct service test, or SDK journey; it does not mean every original REST request is reproduced as an AIP HTTP route. Browser proof is listed separately.
+
+| User path (methods) | API/SDK evidence | Browser evidence at this snapshot |
+|---|---|---|
+| `/v2/auth/check-email` (POST) | AIP auth overlay and live auth service tests; not in the member SDK journey | Not run |
+| `/v2/auth/login` (POST) | Live generated SDK journey, Verify `39851918809` | Login screen reached in `39885042974`; profile fixture login is in old pending run `39899325826` |
+| `/v2/auth/signup` (POST) | Live auth service tests in the 7.2.8 auth slice | Not run |
+| `/v2/auth/tutorial` (PATCH) | AIP `User.completeTutorial` service test; overlay function present | Not run |
+| `/v2/auth/me` (GET) | Generated SDK member journey and `User`/`UserFavoriteGenre` reads | Profile screen read in `39899325826` has no completed result; new run `39900453676` will exercise it with the write |
+| `/v2/mypage/profile` (PATCH) | AIP transition service test; new overlay uses one atomic generated-SDK `bundle()` | Earlier run only read the profile screen. New actual form write + MySQL persistence is pending in Verify `39900453676` |
+| `/v2/auth/reissue` (POST) | One real refresh and retry in generated SDK journey `39851918809` | No browser refresh/expiry case |
+| `/v2/auth/logout` (POST) | Generated SDK journey verifies logout and stale bearer rejection, `39851918809` | No browser logout assertion |
+| `/v2/mypage/email/verification` (POST) | Backend mail challenge and stand-in provider tests, 7.2.8 slice B | UI adapter/browser route not implemented |
+| `/v2/mypage/email/verify` (POST) | Backend verification-code tests, 7.2.8 slice B | UI adapter/browser route not implemented |
+| `/v2/mypage/password/verification` (POST) | Backend password-reset challenge tests, 7.2.8 slice B | UI adapter/browser route not implemented |
+| `/v2/mypage/password` (PATCH) | Backend password reset, hashing, and session revocation tests, 7.2.8 slice B | UI adapter/browser route not implemented |
+| `/v2/mypage/withdraw` (DELETE) | Backend withdrawal and post-withdraw session tests, 7.2.8 slice A | UI adapter/browser route not implemented |
+| `/v2/home/video/recommend` (POST) | `VideoRequest.recommend` live service/oracle checks; overlay write adapter present | Form submission not browser-tested |
+| `/v2/watch/comments` (GET, POST, PATCH, DELETE) | Comment reads/writes in service and generated SDK journey `39851918809` | Read response succeeded in browser evidence; UI write journey not run. `39896024733` overall browser step failed later at bookmark control |
+| `/v2/watch/like` (POST) | AIP service tests and overlay unit tests for add/cancel | Not run in browser |
+| `/v2/home/category` (GET) | Live AIP extension and generated SDK checks | Actual React list response in `39885042974` |
+| `/v2/home/search` (GET) | Live AIP extension and adapter tests | Not run in browser |
+| `/v2/home/video/all` (GET) | Live AIP extension and generated SDK journey | Actual React list response and fixture card in `39885042974` |
+| `/v2/home/personalized` (GET) | Live AIP extension and generated SDK checks | Actual React list response in `39885042974` |
+| `/v2/watch/video` (GET) | Live AIP extension/service tests | Watch fixture route was reached; external YouTube script was blocked and the UI showed its media error modal in `39896024733` |
+| `/v2/mypage/videos/recent` (GET) | Service/oracle comparison for the mypage read extension | Not run in browser |
+| `/v2/mypage/emotion/summary` (GET) | Service/oracle and write-extension tests for `User.myEmotionSummary` | Not run in browser |
+| `/v2/watch/recommended` (GET) | Live AIP extension/service tests | Not run in browser |
+| `/v2/home/bookmark` (GET, POST) | Generated SDK journey and AIP/MySQL tests | `39885042974` passed UI add/reload and remove/reload with DB 0→1→0; later `39896024733` failed its accessibility assertion under the media modal, so the later failure remains distinct |
+
+Five paths—email verification, email verify, password verification, password change, and withdrawal—have backend implementations but no overlay in the pinned user UI yet. The profile write is now implemented in source, but its real browser/API/DB verification is pending; no full 25-path browser coverage is claimed.
+
+### Administrator UI and API inventory — separate from the 25 user paths
+
+The admin UI source has five screens (`users`, `videos`, `video-requests`, `comments`, plus the index route) and a fallback route. The admin API inventory has 13 feature paths; its four `/v2/auth/*` routes are shared auth paths and are not counted as additional user paths.
+
+| Admin API path | API/backend evidence | Admin browser/overlay |
+|---|---|---|
+| `/v2/admin/users` (GET) | AdminService oracle and live MySQL checks; list slice matched 62/62 cases | Not ported or browser-tested |
+| `/v2/admin/users/{user_id}/deactivate` (PATCH) | Role/ownership and soft-delete service tests | Not ported or browser-tested |
+| `/v2/admin/users/{user_id}/role` (PATCH) | SUPER_ADMIN role-change service tests | Not ported or browser-tested |
+| `/v2/admin/video-requests` (GET) | AdminService oracle and live MySQL checks | Not ported or browser-tested |
+| `/v2/admin/video-requests/{request_id}/approve` (POST) | Durable job, MySQL, Mongo initialization and oracle checks | Not ported or browser-tested |
+| `/v2/admin/video-requests/{request_id}/reject` (POST) | AIP transition and live service checks | Not ported or browser-tested |
+| `/v2/admin/videos` (GET) | AdminService oracle and live MySQL checks | Not ported or browser-tested |
+| `/v2/admin/videos/{video_id}` (DELETE) | Soft-delete transition and service tests | Not ported or browser-tested |
+| `/v2/admin/comments` (GET) | AdminService oracle and live MySQL checks | Not ported or browser-tested |
+| `/v2/admin/comments/{comment_id}` (DELETE) | Comment soft-delete transition and service tests | Not ported or browser-tested |
+| `/v2/admin/system/status` (GET) | Redis status oracle and Linux host-metric checks; macOS CPU/memory/disk parity was not measured | Not ported or browser-tested |
+| `/v2/admin/dashboard/business-stats` (GET) | Dashboard oracle matched 25 cases; live SQL/Mongo checks | Not ported or browser-tested |
+| `/v2/admin/dashboard/signup-trend` (GET) | Dashboard oracle includes six period cases; live SQL checks | Not ported or browser-tested |
+
+Admin backend work is therefore separate from the unported admin React screens. The admin API/service cases are not evidence of admin SDK wiring, route-state behavior, screenshots, or zero REST fallback.
