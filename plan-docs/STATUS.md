@@ -1,3 +1,13 @@
+# 최신 재개 지점 (2026-10-23 04:34 UTC, WBS 7.2.10 비밀번호 재설정 UI overlay CI 대기)
+
+프로필 write CI를 기다리는 동안 독립된 비밀번호 재설정 화면의 API glue를 구현했다. 기존 pinned `PasswordChangePage`는 메일 요청 → 인증코드 교환 → reset token을 이용한 비밀번호 변경을 호출한다. `mypageAdapter.ts`가 AIP `/auth/email/verification`, `/auth/password/verification`, `/auth/password`로 이를 보내며 기존 인증 전송기(`authTransport.fetch`)의 Bearer·401 refresh를 사용한다. `verifyEmailCode`도 대응 route에 연결했다. 탈퇴는 이 slice에서 구현하지 않았으며 overlay에서는 `PORT.NOT_PORTED`로 안전하게 막았다. overlay 적용 스크립트가 새 `mypage.ts`와 adapter를 복사한다.
+
+TDD 후 새 adapter 테스트를 포함한 전체 `node --test porting/facereview/ui-overlay/tests/*.test.ts` 25/25, Python browser-evidence unittest 15/15, `cargo fmt --all -- --check`, `git diff --check` 통과. 실제 pinned UI 빌드·browser·MySQL/password end-to-end는 로컬 실행하지 않았다. Code SHA `30dd4e9eb016319d162d4f27bd8e2ca38164d351`를 main에 push했다. Verify `39900970945`는 04:33:40 UTC에 `pending`이고 companion workflows도 queued/pending이다. Profile code SHA의 이전 Verify `39900453676`은 직전 조회에서 계속 `in_progress`(step 10), browser steps 11–13 pending이었다. 이후 push로 취소됐는지는 아직 확인하지 않았으며 결과를 완료 근거로 사용하지 않는다. 두 실행 SHA를 섞지 않는다.
+
+PMS 7.2.10 description과 product/VERIFICATION route table을 다음 업데이트로 동기화한다. 상태/진행률은 계속 doing/25%. 이후 신규 Verify `39900970945` 결과를 한번 확인해 profile 및 비밀번호 browser/SDK integration evidence를 판독한다. 기다리는 동안 독립 작업을 이어가고 2시간 polling은 하지 않는다.
+
+---
+
 # 최신 재개 지점 (2026-10-23 04:30 UTC, WBS 7.2.10 프로필 쓰기 CI 진행 중)
 
 회원 프로필 쓰기 조각을 코드 SHA `d29f1d372505e26fa8bec60062f0e6c036a771a3`로 main에 push했다. `porting/facereview/ui-overlay/src/api/writeAdapter.ts`에서 서명된 회원의 User patch와 본인 UserFavoriteGenre remove/create를 생성 SDK `bundle()` 하나로 묶고 `/my/edit`의 `updateProfile`에 연결했다. 과거 브라우저 코드가 정의에 없는 `user.eq`를 요청하던 기대를 제거하고, 다른 회원의 고정 genre 행을 심어 서버의 `rows read when user = actor` 경계를 확인하도록 fixture를 바꿨다. `product/VERIFICATION.md`에는 사용자 25 고유 경로와 관리자 5 화면/13 API 목록을 분리하고 API·SDK와 브라우저 근거를 나눠 기록했다. 이메일/비밀번호/탈퇴 5개 UI 경로는 backend만 있으며 overlay는 없다. 7.2.8/7.2.9 잔여 근거도 PMS description에 보완했으며 상태/진행률은 각각 doing/90%, doing/90%, 7.2.10 doing/25% 그대로다.

@@ -1247,6 +1247,14 @@ Linux Verify run [39899325826](https://github.com/winterholic/Application-Intent
 
 The code SHA `d29f1d372505e26fa8bec60062f0e6c036a771a3` was pushed to `main`. Verify run `39900453676` was `in_progress` at 2026-10-23 04:30:40 UTC: core step 10 was running and pinned UI preparation, real HTTP/worker/MySQL, and safe browser artifact steps 11–13 were pending. The earlier Verify `39899325826` was cancelled at 04:28:10 UTC on the older SHA `dd59658274e93c65bd32c9f30ff0506c35aab982`; step 10 was cancelled and browser steps 11–12 skipped. It did not verify the profile screen. The newer run is the first CI evidence for the added browser write and MySQL assertions; its result is still pending.
 
+## 2026-10-23 WBS 7.2.10 profile + password reset UI overlay (code SHA `30dd4e9eb016319d162d4f27bd8e2ca38164d351`, Verify pending)
+
+The next independent member slice connects the pinned `PasswordChangePage` request chain: request a mail challenge, exchange the entered code for a reset token, then set the new password. New `mypageAdapter.ts` calls AIP `/auth/email/verification`, `/auth/password/verification`, and `/auth/password` through the existing `authTransport.fetch`, so Bearer authorization and 401 refresh are shared with the generated SDK client. `/auth/email/verify` is also exposed for the separate email-verification path. `apply-ui-overlay.sh` now copies `mypage.ts` and `mypageAdapter.ts`. Withdrawal remains deliberately unported and the overlay returns `PORT.NOT_PORTED`; no destructive transition is wired in this slice.
+
+`node --test porting/facereview/ui-overlay/tests/*.test.ts` passed 25/25, including exact methods/paths, Authorization header, JSON payloads, reset-token forwarding, and error propagation. Browser-evidence unittest passed 15/15; `cargo fmt --all -- --check` and `git diff --check` passed. A local pinned UI build, browser flow, and live password-change integration were not run.
+
+Verify run `39900970945` at code SHA `30dd4e9eb016319d162d4f27bd8e2ca38164d351` was pending at 2026-10-23 04:33:40 UTC. The preceding profile-write Verify `39900453676` at `d29f1d372505e26fa8bec60062f0e6c036a771a3` still appeared in progress on the last query (core step 10; browser steps 11–13 pending). Neither CI result is yet available for the corresponding feature slice. The route inventory below is updated to reflect source overlay implementation separately from browser proof.
+
 ### User UI route inventory — 25 unique paths
 
 The pinned user UI has 30 HTTP call sites across six API modules, which collapse to 25 unique paths when methods sharing a path are grouped. The Socket.IO player is separate. “API/SDK” below means the server adapter, direct service test, or SDK journey; it does not mean every original REST request is reproduced as an AIP HTTP route. Browser proof is listed separately.
@@ -1261,10 +1269,10 @@ The pinned user UI has 30 HTTP call sites across six API modules, which collapse
 | `/v2/mypage/profile` (PATCH) | AIP transition service test; new overlay uses one atomic generated-SDK `bundle()` | Earlier run only read the profile screen. New actual form write + MySQL persistence is pending in Verify `39900453676` |
 | `/v2/auth/reissue` (POST) | One real refresh and retry in generated SDK journey `39851918809` | No browser refresh/expiry case |
 | `/v2/auth/logout` (POST) | Generated SDK journey verifies logout and stale bearer rejection, `39851918809` | No browser logout assertion |
-| `/v2/mypage/email/verification` (POST) | Backend mail challenge and stand-in provider tests, 7.2.8 slice B | UI adapter/browser route not implemented |
-| `/v2/mypage/email/verify` (POST) | Backend verification-code tests, 7.2.8 slice B | UI adapter/browser route not implemented |
-| `/v2/mypage/password/verification` (POST) | Backend password-reset challenge tests, 7.2.8 slice B | UI adapter/browser route not implemented |
-| `/v2/mypage/password` (PATCH) | Backend password reset, hashing, and session revocation tests, 7.2.8 slice B | UI adapter/browser route not implemented |
+| `/v2/mypage/email/verification` (POST) | Backend mail challenge and stand-in provider tests, 7.2.8 slice B | Source overlay routes to authenticated AIP path; browser flow pending Verify `39900970945` |
+| `/v2/mypage/email/verify` (POST) | Backend verification-code tests, 7.2.8 slice B | Source overlay exposes authenticated AIP path; browser journey not run |
+| `/v2/mypage/password/verification` (POST) | Backend password-reset challenge tests, 7.2.8 slice B | Source overlay routes to authenticated AIP path; browser flow pending Verify `39900970945` |
+| `/v2/mypage/password` (PATCH) | Backend password reset, hashing, and session revocation tests, 7.2.8 slice B | Source overlay routes to authenticated AIP path; browser flow pending Verify `39900970945` |
 | `/v2/mypage/withdraw` (DELETE) | Backend withdrawal and post-withdraw session tests, 7.2.8 slice A | UI adapter/browser route not implemented |
 | `/v2/home/video/recommend` (POST) | `VideoRequest.recommend` live service/oracle checks; overlay write adapter present | Form submission not browser-tested |
 | `/v2/watch/comments` (GET, POST, PATCH, DELETE) | Comment reads/writes in service and generated SDK journey `39851918809` | Read response succeeded in browser evidence; UI write journey not run. `39896024733` overall browser step failed later at bookmark control |
@@ -1279,7 +1287,7 @@ The pinned user UI has 30 HTTP call sites across six API modules, which collapse
 | `/v2/watch/recommended` (GET) | Live AIP extension/service tests | Not run in browser |
 | `/v2/home/bookmark` (GET, POST) | Generated SDK journey and AIP/MySQL tests | `39885042974` passed UI add/reload and remove/reload with DB 0→1→0; later `39896024733` failed its accessibility assertion under the media modal, so the later failure remains distinct |
 
-Five paths—email verification, email verify, password verification, password change, and withdrawal—have backend implementations but no overlay in the pinned user UI yet. The profile write is now implemented in source, but its real browser/API/DB verification is pending; no full 25-path browser coverage is claimed.
+Withdrawal is the remaining backend-implemented member path in this set with no overlay; it remains explicitly blocked as `PORT.NOT_PORTED`. Email/password reset calls now have source overlay adapters, but the browser journey is still unverified. Profile write is implemented in source and its real browser/API/DB verification is pending. No full 25-path browser coverage is claimed.
 
 ### Administrator UI and API inventory — separate from the 25 user paths
 
