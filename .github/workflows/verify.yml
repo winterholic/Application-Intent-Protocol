@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      member_ui_diagnostic:
+        description: Run the pinned FaceReview UI/DB journeys without the broad Rust gate
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -80,18 +86,25 @@ jobs:
             echo "$sandbox_bin" >> "$GITHUB_PATH"
           fi
       - name: Verify Linux worker isolation boundaries
+        if: ${{ !inputs.member_ui_diagnostic }}
         run: AIP_TEST_BWRAP=1 cargo test --manifest-path spikes/spike-v4-worker/Cargo.toml --lib isolation::tests --locked --target-dir target
       - name: Verify worker teardown leaves no descendant processes
+        if: ${{ !inputs.member_ui_diagnostic }}
         run: AIP_TEST_BWRAP=1 cargo test --manifest-path spikes/spike-v4-worker/Cargo.toml --lib cleanup_tests --locked --target-dir target
       - name: Start native driver fixtures
+        if: ${{ !inputs.member_ui_diagnostic }}
         id: native-fixtures
         run: docker compose --project-name aip-ci-native -f spikes/spike-v4-worker/tests/fixtures/native-stores/compose.yaml up --wait --wait-timeout 120 mongo mongo-uuid redis
       - name: Verify compiler, runtime, product, worker, transport and SDK
+        if: ${{ !inputs.member_ui_diagnostic }}
         env:
           AIP_VERIFY_FAILURE_FILE: ${{ runner.temp }}/aip-facereview-browser/core-verify-failure.txt
         run: |
           mkdir -p "$RUNNER_TEMP/aip-facereview-browser"
           bash tools/verify.sh
+      - name: Build AIP CLI for the focused UI diagnostic
+        if: ${{ inputs.member_ui_diagnostic }}
+        run: cargo build -p aip-cli --locked
       - name: Prepare the pinned FaceReview React browser journey
         run: |
           set -euo pipefail

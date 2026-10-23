@@ -1,4 +1,12 @@
-# 최신 재개 지점 (2026-10-24, profile fade 원인 확정·reissue natural write로 재현 보강)
+# 최신 재개 지점 (2026-10-24, member token reissue 재현 성공·stack CI gate 차단)
+
+Member natural edit-save 여정은 Verify `39982476627`에서 TTL 만료 `/apply`·`/extension` 거절 2회 → `/auth/reissue` 성공 1회 → MySQL USED refresh row +1 및 UI 복귀로 측정됐다. 같은 run의 trace hook는 선언만 되고 호출되지 않아 SDK/auth JS stack은 미측정이었다. IIFE를 실행하도록 고친 SHA `b6719ad1520dfb4119566fc01d0fc6c96718ad9a`의 Verify `39985750203` attempt1은 step10 실패, step11–13 skip, step14–16 artifact·fixture cleanup 성공이다. 보존 artifact locator는 `exit_status=101`, checked-in command `cargo test --manifest-path "spikes/$engine/Cargo.toml" --locked --target-dir target`만 포함한다. 어느 crate/테스트의 오류인지 출력은 남지 않아 이 실패 원인은 미확정이며, browser/DB journey도 이번 run에서는 미실행이다. 같은 SHA의 다른 다섯 workflow는 success.
+
+따라서 member auth 정책/adapter 결함이라는 결론은 현재 증거가 지지하지 않는다. 자연 write의 실제 transport/DB 흐름은 성공했으나 과거 399638 attempt2의 구체 입력·분기 차이는 소급 증명 불가다. 이 Run은 workflow_dispatch 전용 `member_ui_diagnostic`을 추가해 broad Rust gate 없이 같은 pinned UI/worker/MySQL 절차와 artifact·cleanup을 실행하도록 했으며, 일반 push/PR 경로는 유지한다. 다음 재개점은 새 SHA의 자동 Verify 종료 후 의도적으로 dispatch한 focused run artifact에서 IIFE hook 실행 여부, allowlist function frames, profile/reissue browser·DB의 독립 상태를 확인하는 것이다. 그 전까지 원인 분기는 미확정으로 표기한다. 최신 실행도 로컬 UI 미실행이며 GH raw run-log cache 거부 경로는 재시도하지 않았다.
+
+로컬 검사 직후 기록, commit/SHA/dispatch run ID는 아래 후속 절에 추가한다. WBS 7.2.9 `doing/90%`, 7.2.10 `doing/25%`; 사용자 25 route 미완, model.h5/visitor 보류는 유지한다. Engine auto/general을 바꾸지 않았다. 이번 실행에서 실제 `account_usage`와 routing receipt 도구를 사용할 수 없어 개인 scope usage/receipt는 미검증이다.
+
+---
 
 첫 진단 commit `91ca346314e1ac7bd42493acbb06f5fae10eda19`의 Verify `39973060321` attempt 1을 artifact까지 확인했다. step10 compiler/runtime/product/worker/transport/SDK와 pinned UI 준비 step11–12는 success, step13 browser/worker/MySQL는 failure, artifact 저장·fixture cleanup step14–16은 success다. profile journey는 `/my`, API body settled=true에서 저장 후 즉시 캡처한 화면의 body text length 133을 남겼다. 그 캡처 순간 profile 영역 opacity/effective opacity는 0–0.21, `fadeInUp` running이고 이후 animation 종료 측정에서 필수 영역 4개는 모두 opacity 1·visually_ready=true다. 실제 before-animation screenshot도 어둡게 비어 있다. 이는 screenshot이 500ms fade animation 중에 찍히는 것이 빈 화면의 직접 원인이라는 강한 측정 증거다. 최종 after-animation screenshot은 넓은 페이지의 무관한 1.4초 animation을 금지한 잘못된 assertion(line 469) 전에 생성되지 않아 CI로 한 번 더 확인한다.
 
