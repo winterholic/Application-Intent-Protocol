@@ -68,3 +68,6 @@ Verify `39982476627` attempt1 measured the real member edit-save path after TTL:
 
 
 **2026-10-24 05:10 KST 후속:** Full-path Verify `40010266672`, SHA `50a012c`, completed/success. `run-ci` workflow 분기, 마지막 관리자 E2E locator, 관리자·회원 browser JSON을 직접 대조했다. Profile/reissue browser·DB success 및 admin permission/reissue checks가 확인됐다. 개별 cargo stdout은 미열람; remove extension2 unfinished는 남는다. 다음 회원 로그아웃은 원본 MyPage 버튼→실제 logout 성공 body→client clear→DB session revocation +1을 검사하도록 추가했고 새 CI 전까지 미검증이다. 전체25route/WBS90·25/model.h5·visitor 보류 유지. 상세는 product verification 최신 절.
+
+
+**2026-10-24 06:10 KST 후속:** `a87748d` 일반 Verify `40017780097` attempt1 success. 직접 받은 safe artifact에서 원본 MyPage logout 1회 수락·client auth clear·DB session revocation +1, browser/DB success를 확인했다. 25 unique user API paths 표의 logout 행을 갱신했다. 다음 원본 영상 좋아요 add/remove는 성공 mutation body→reload pressed state→DB member row0→1→0/타회원보존을 검사하도록 추가했으며 새 CI 전까지 미검증이다. Profile/reissue 등 기존 검사는 유지한다. WBS90/25·사용자25경로 전수 미완·model.h5/visitor보류 유지. 상세는 product verification 최신 절.

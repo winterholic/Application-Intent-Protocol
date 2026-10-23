@@ -41,6 +41,8 @@ from product.tests.facereview_ui_browser_evidence import (
     safe_wire_code,
     console_error_evidence,
     member_logout_evidence,
+    member_like_action,
+    member_like_evidence,
 )
 
 
@@ -218,6 +220,7 @@ def main() -> int:
     failure_watch_content_visible = False
     screenshot_names: list[str] = []
     logout_evidence: dict[str, object] = {}
+    like_evidence: dict[str, object] = {}
     bookmark_api_row_count: int | None = None
     thumbnail_server = None
     thumbnail_thread = None
@@ -333,6 +336,10 @@ def main() -> int:
             "path": parsed.path,
             "status": response.status,
         }
+        if parsed.path == "/apply":
+            action = member_like_action(response.request.post_data_json)
+            if action is not None:
+                row["like_action"] = action
         if parsed.path in {"/read", "/extension", "/apply"}:
             row["contract_matches_runtime"] = request_contract == expected_contract
             row["x_aip_contract"] = request_contract
@@ -705,6 +712,34 @@ def main() -> int:
                     screenshot = output / f"{args.phase}-{label}.png"
                     page.screenshot(path=str(screenshot), full_page=True)
                     screenshot_names.append(screenshot.name)
+                    # The original like control flips optimistically. Require its exact SDK
+                    # mutation's completed body, then a reload that preserves the new state.
+                    journey_stage = "member_like"
+                    like_rows_start = len(api_paths)
+                    initial_like = page.get_by_role("button", name="좋아요" if args.phase == "add" else "좋아요 취소", exact=True)
+                    expect(initial_like).to_have_attribute("aria-pressed", "false" if args.phase == "add" else "true")
+                    with page.expect_response(
+                        lambda response: urlsplit(response.url).port == api_port
+                        and urlsplit(response.url).path == "/apply"
+                        and member_like_action(response.request.post_data_json) == args.phase
+                    ) as like_reply:
+                        initial_like.click()
+                    like_reply.value.finished()
+                    deadline = time.monotonic() + 15
+                    while not any(row.get("like_action") == args.phase and row.get("body_captured") is True for row in api_paths[like_rows_start:]):
+                        if time.monotonic() >= deadline:
+                            raise AssertionError("like mutation body was not collected before reload")
+                        page.wait_for_timeout(50)
+                    like_rows = list(api_paths[like_rows_start:])
+                    page.reload(wait_until="domcontentloaded")
+                    expect(page.locator(".video-information-container .title")).to_have_text(VIDEO_TITLE, timeout=30000)
+                    persisted_like = page.get_by_role("button", name="좋아요 취소" if args.phase == "add" else "좋아요", exact=True)
+                    expect(persisted_like).to_have_attribute("aria-pressed", "true" if args.phase == "add" else "false")
+                    like_evidence = member_like_evidence(like_rows, args.phase, persisted_like.get_attribute("aria-pressed") == "true")
+                    assert like_evidence["verified"], "like server acceptance and reloaded UI must both be observed"
+                    screenshot = output / f"{args.phase}-like-reloaded.png"
+                    page.screenshot(path=str(screenshot), full_page=True)
+                    screenshot_names.append(screenshot.name)
                     if args.phase == "remove":
                         # Keep existing bookmark validation scoped to its own journey. The
                         # original logout redirects to /main; visitor policy remains deferred.
@@ -834,6 +869,7 @@ def main() -> int:
             "rendered_state": rendered_state,
             "journey_stage": journey_stage,
             "member_logout": logout_evidence,
+            "member_like": like_evidence,
             "failure_type": failure_type,
             "bookmark_ui_state": bookmark_ui_state,
             "failure_route_class": failure_route_class,
@@ -878,6 +914,7 @@ def main() -> int:
             "rendered_state": rendered_state,
             "journey_stage": journey_stage,
             "member_logout": logout_evidence,
+            "member_like": like_evidence,
             "failure_type": failure_type,
             "bookmark_ui_state": bookmark_ui_state,
             "failure_route_class": failure_route_class,

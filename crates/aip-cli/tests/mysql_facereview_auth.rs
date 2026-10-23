@@ -696,7 +696,24 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
         }
 
         assert_eq!(cell(&mut setup, "SELECT CAST(COUNT(*) AS CHAR) FROM video_bookmark WHERE user_id='77777777-7777-4777-8777-777777777777' AND video_id='aaaaaaaa-0000-4000-8000-000000000001'").await.as_deref(), Some("0"), "fixture member starts without a bookmark");
+        let like_query = "SELECT CAST(COUNT(*) AS CHAR) FROM video_like WHERE user_id='77777777-7777-4777-8777-777777777777' AND video_id='aaaaaaaa-0000-4000-8000-000000000001'";
+        let other_likes_query = "SELECT CAST(COUNT(*) AS CHAR) FROM video_like WHERE user_id <> '77777777-7777-4777-8777-777777777777'";
+        assert_eq!(cell(&mut setup, like_query).await.as_deref(), Some("0"), "fixture member starts without a video like");
+        let other_likes_before = cell(&mut setup, other_likes_query).await.expect("read other members' like count");
         let add = run_facereview_ui_browser_journey(&address, &fingerprint, "add", &browser_root);
+        let likes_after_add = cell(&mut setup, like_query).await;
+        let other_likes_after_add = cell(&mut setup, other_likes_query).await;
+        let like_add_ok = likes_after_add.as_deref() == Some("1") && other_likes_after_add.as_deref() == Some(other_likes_before.as_str());
+        std::fs::write(
+            Path::new(&browser_output).join("add/like-db-result.json"),
+            serde_json::to_vec_pretty(&json!({
+                "journey": "member_like_add", "browser_status": if add.status.success() { "success" } else { "failure" },
+                "database_status": if like_add_ok { "success" } else { "failure" },
+                "member_like_rows": likes_after_add, "other_members_preserved": other_likes_after_add.as_deref() == Some(other_likes_before.as_str())
+            }))
+            .unwrap(),
+        )
+        .unwrap();
         assert!(
             add.status.success(),
             "React add-bookmark browser journey failed (status {:?})\nstdout: {}\nstderr: {}",
@@ -705,6 +722,7 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
             String::from_utf8_lossy(&add.stderr)
         );
         print!("{}", String::from_utf8_lossy(&add.stdout));
+        assert!(like_add_ok, "like add persists exactly one member row and preserves other members' likes");
         assert_eq!(cell(&mut setup, "SELECT CAST(COUNT(*) AS CHAR) FROM video_bookmark WHERE user_id='77777777-7777-4777-8777-777777777777' AND video_id='aaaaaaaa-0000-4000-8000-000000000001'").await.as_deref(), Some("1"), "browser bookmark add persists one row in MySQL");
 
         let revoked_before: i64 =
@@ -714,6 +732,14 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
                 .parse()
                 .expect("revoked session count is numeric");
         let remove = run_facereview_ui_browser_journey(&address, &fingerprint, "remove", &browser_root);
+        let likes_after_remove = cell(&mut setup, like_query).await;
+        let other_likes_after_remove = cell(&mut setup, other_likes_query).await;
+        let like_remove_ok = likes_after_remove.as_deref() == Some("0") && other_likes_after_remove.as_deref() == Some(other_likes_before.as_str());
+        std::fs::write(Path::new(&browser_output).join("remove/like-db-result.json"), serde_json::to_vec_pretty(&json!({
+            "journey": "member_like_remove", "browser_status": if remove.status.success() { "success" } else { "failure" },
+            "database_status": if like_remove_ok { "success" } else { "failure" },
+            "member_like_rows": likes_after_remove, "other_members_preserved": other_likes_after_remove.as_deref() == Some(other_likes_before.as_str())
+        })).unwrap()).unwrap();
         let revoked_after: i64 =
             cell(&mut setup, &format!("SELECT COUNT(*) FROM `{META}`.aip_auth_sessions WHERE subject = '{LEGACY}' AND revoked_at IS NOT NULL"))
                 .await
@@ -740,6 +766,7 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
             String::from_utf8_lossy(&remove.stderr)
         );
         print!("{}", String::from_utf8_lossy(&remove.stdout));
+        assert!(like_remove_ok, "like remove deletes the member row and preserves other members' likes");
         assert_eq!(revoked_after - revoked_before, 1, "the real member logout revokes its newly created session in MySQL");
         assert_eq!(cell(&mut setup, "SELECT CAST(COUNT(*) AS CHAR) FROM video_bookmark WHERE user_id='77777777-7777-4777-8777-777777777777' AND video_id='aaaaaaaa-0000-4000-8000-000000000001'").await.as_deref(), Some("0"), "browser bookmark remove deletes the member row in MySQL");
         println!("React browser journey: login, member video list, bookmark on/reload (MySQL rows=1), off/reload (MySQL rows=0)");

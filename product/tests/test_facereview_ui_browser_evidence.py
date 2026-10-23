@@ -39,6 +39,23 @@ VIDEO_ID = "aaaaaaaa-0000-4000-8000-000000000001"
 
 
 class BrowserEvidenceTests(unittest.TestCase):
+    def test_like_evidence_requires_exact_mutation_body_and_reloaded_state(self):
+        from product.tests.facereview_ui_browser_evidence import member_like_action, member_like_evidence
+
+        self.assertEqual(member_like_action({"request": {"atomic": [{"create": "VideoLike", "values": {"user": "private"}}]}}), "add")
+        self.assertEqual(member_like_action({"request": {"apply": "VideoLike.remove", "target": {"ids": ["private"]}}}), "remove")
+        for payload in [None, {}, {"request": {"apply": "VideoBookmark.remove"}}, {"request": {"atomic": []}},
+                        {"request": {"atomic": [{"create": "VideoLike"}, {"create": "Comment"}]}}]:
+            self.assertIsNone(member_like_action(payload))
+        row = {"path": "/apply", "like_action": "add", "status": 200, "body_captured": True, "ok": True}
+        self.assertTrue(member_like_evidence([row], "add", True)["verified"])
+        self.assertTrue(member_like_evidence([{**row, "like_action": "remove"}], "remove", False)["verified"])
+        for rows in [[], [row, row], [{**row, "ok": False}], [{**row, "body_captured": False}],
+                     [{**row, "status": 500}], [{**row, "like_action": "remove"}]]:
+            self.assertFalse(member_like_evidence(rows, "add", True)["verified"])
+        self.assertFalse(member_like_evidence([row], "add", False)["verified"])
+        self.assertFalse(member_like_evidence([row], "unknown", True)["verified"])
+
     def test_logout_requires_successful_body_and_cleared_client_state(self):
         from product.tests.facereview_ui_browser_evidence import member_logout_evidence
 

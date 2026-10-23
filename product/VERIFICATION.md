@@ -1296,7 +1296,7 @@ The pinned user UI has 30 HTTP call sites across six API modules, which collapse
 | `/v2/auth/me` (GET) | Generated SDK member journey and `User`/`UserFavoriteGenre` reads | Verify `40010266672`: signed-in profile read rendered, browser/DB success |
 | `/v2/mypage/profile` (PATCH) | AIP transition service test; new overlay uses one atomic generated-SDK `bundle()` | Verify `40010266672`: original form save, final visible render and MySQL persistence success |
 | `/v2/auth/reissue` (POST) | One real refresh and retry in generated SDK journey `39851918809` | Verify `40010266672`: actual TTL edit-save, expired2/reissue1/retry2, browser/DB success |
-| `/v2/auth/logout` (POST) | Generated SDK journey verifies logout and stale bearer rejection, `39851918809` | Original MyPage logout button + separate DB revocation assertion added after `40010266672`; new CI pending |
+| `/v2/auth/logout` (POST) | Generated SDK journey verifies logout and stale bearer rejection, `39851918809` | Verify `40017780097`: original MyPage logout button, one accepted logout response, cleared client auth, browser/DB success and revoked session +1 |
 | `/v2/mypage/email/verification` (POST) | Backend mail challenge and stand-in provider tests, 7.2.8 slice B | Source overlay routes to authenticated AIP path; screen journey not run |
 | `/v2/mypage/email/verify` (POST) | Backend verification-code tests, 7.2.8 slice B | Source overlay exposes authenticated AIP path; screen journey not run |
 | `/v2/mypage/password/verification` (POST) | Backend password-reset challenge tests, 7.2.8 slice B | Source overlay routes to authenticated AIP path; screen journey not run |
@@ -1304,7 +1304,7 @@ The pinned user UI has 30 HTTP call sites across six API modules, which collapse
 | `/v2/mypage/withdraw` (DELETE) | Backend withdrawal and post-withdraw session tests, 7.2.8 slice A | Confirmed `/edit` action is wired to generated SDK `User.withdraw` at `6b1a8d4`; browser integration is outside the current CI journey |
 | `/v2/home/video/recommend` (POST) | `VideoRequest.recommend` live service/oracle checks; overlay write adapter present | Form submission not browser-tested |
 | `/v2/watch/comments` (GET, POST, PATCH, DELETE) | Comment reads/writes in service and generated SDK journey `39851918809` | Read response succeeded in browser evidence; UI write journey not run. `39896024733` overall browser step failed later at bookmark control |
-| `/v2/watch/like` (POST) | AIP service tests and overlay unit tests for add/cancel | Not run in browser |
+| `/v2/watch/like` (POST) | AIP service tests and overlay unit tests for add/cancel | Original add/cancel buttons, accepted mutation, reload and MySQL 0→1→0 checks added after `40017780097`; next CI pending |
 | `/v2/home/category` (GET) | Live AIP extension and generated SDK checks | Actual React list response in `39885042974` |
 | `/v2/home/search` (GET) | Live AIP extension and adapter tests | Not run in browser |
 | `/v2/home/video/all` (GET) | Live AIP extension and generated SDK journey | Actual React list response and fixture card in `39885042974` |
@@ -1646,3 +1646,12 @@ WBS7.2.9 doing/90%,7.2.10 doing/25%,사용자25route 미완료,model.h5권리 �
 **다음 미검증 slice: 회원 로그아웃.** 기존 remove-bookmark 뒤 원본 헤더 `마이페이지로 이동`→원본 `로그아웃` 버튼을 누른다. `/auth/logout` 정확히1개, HTTP200+성공 body 수집, local auth의 signed-out/access-token-cleared/user-id-cleared boolean을 동시에 요구한다. 토큰·저장소 원문은 기록하지 않는다. MySQL의 해당 fixture 계정 revoked session row가1 증가하는지도 별도 `remove/logout-db-result.json`에 기록한다. 기존 bookmark assertions는 그 시점까지의 수집본에 적용해 logout 뒤 guest API와 섞지 않으며, 전체 lifecycle은 계속 보존한다. visitor landing의 허용 동작을 새로 정하지 않는다. 실제 browser/DB는 이 변경의 CI 전까지 미검증이다.
 
 Evidence 판정기 negative control은 response 누락/중복·HTTP오류·wire오류·body미수집·인증 상태 잔류를 모두 거절한다. helper 부재로 실패를 확인한 뒤 추가했고 evidence unittest40 OK, member script AST OK, fmt/diff OK. Rust MySQL auth test는 PGHOST preflight 중단을 관측한 뒤 프로젝트 계약대로 PG*를 unset하고 explicit test DSN으로 `--no-run --locked --offline` 컴파일 exit0(6.11s)만 확인했다. local live/browser/DB는 미실행이다. WBS90/25와25route 분모,model.h5/visitor 보류 유지. 과거 실패 원인 소급 입증 없음.
+
+
+### 2026-10-24 Verify 40017780097 로그아웃 성공과 좋아요 후속
+
+`gh run view 40017780097 --json headSha,status,conclusion,attempt,jobs` 직접 조회: SHA `a87748d469e4f58fc07fd7396ed0821e812ba060`, attempt1 completed/success. Safe artifact `12530975676`을 현재 기획 outbox로 다운로드했다. `remove/remove-browser-result.json`: completed, page_error_count=0, member_logout.verified=true; logout_response_count=1, server_accepted/signed_out/access_token_cleared/user_id_cleared 모두 true. `remove/logout-db-result.json`: browser_status=success, database_status=success, revoked_session_rows_added=1. Profile 및 member reissue도 각각 browser/DB success. 마지막 locator는 administrator console E2E test이며, pending command/exit는 실패 결과가 아니다. Guest landing 정책이나 사용자 API25개 전수 완료를 뜻하지 않는다. 해당25경로 표의 logout 행만 새 증거로 갱신했다.
+
+다음 작고 독립적인 미검증 동작은 `/v2/watch/like`의 원본 버튼이다. 원본 LikeButton은 비활성 `좋아요`, 활성 `좋아요 취소`와 aria-pressed를 제공하고 WatchPage는 낙관적으로 flip한다. 그래서 add/remove 각 bookmark phase 뒤 정확한 VideoLike create/remove `/apply` 성공 body가 끝난 것을 확인하고 reload한 뒤 반영된 버튼을 단정한다. Payload는 값을 저장하지 않고 정확한 SDK action만 allowlist로 분류한다. Rust caller는 두 phase 전후 MySQL video_like의 해당 계정·영상 행0→1→0, 다른 회원 like count 보존을 별도 `add/like-db-result.json`, `remove/like-db-result.json`으로 남기고 단정한다. 이전 logout 및 bookmark gate는 유지한다.
+
+Helper 부재 RED 확인 후 allowlist와 evidence 검사를 구현했다. 정상 add/remove만 통과하고 미수집 body/실패HTTP/wire error/중복/다른resource/잘못된reload상태는 거절한다. Evidence unittest41 OK, browser AST parse, cargo fmt 및 git diff check 통과. 프로젝트 계약대로 PG*를 unset하고 명시적 test DSN을 둔 Rust MySQL auth test `--no-run --locked --offline` compile은 exit0(5.75s)이며 live DB가 아니다. 실제 like browser/DB 성공은 이번 변경의 CI가 종료된 뒤 판정한다. WBS90/25/사용자25경로 미완/model.h5권리·visitor 보류 유지, 기존 원본 checkout은 읽기만 했다. 과거399638/399880 실패 원인은 소급 판정하지 않는다.

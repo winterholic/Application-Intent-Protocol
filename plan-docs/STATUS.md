@@ -1,4 +1,12 @@
-# 최신 재개 지점 (2026-10-24 05:10 KST, 전체 E2E 복구 확인·회원 로그아웃 여정 추가)
+# 최신 재개 지점 (2026-10-24 06:10 KST, 로그아웃 UI/DB 검증 성공·좋아요 여정 준비)
+
+코드 `a87748d469e4f58fc07fd7396ed0821e812ba060`의 일반 Verify `40017780097` attempt1은 completed/success다. 직접 받은 artifact `12530975676`에서 remove browser의 member_logout.verified=true, logout 응답1/서버수락/인증상태 초기화 true, `remove/logout-db-result.json` browser_status/database_status=success 및 revoked_session_rows_added=1을 확인했다. Profile/reissue browser·DB도 success, locator는 마지막 관리자 E2E stage다. visitor landing 정책은 판정하지 않는다. 사용자 API 경로 25개 표의 logout 행을 이 근거로 갱신했다.
+
+다음 좋아요 add/remove는 원본 버튼과 SDK VideoLike 생성/삭제 성공 body, 새로고침 후 aria-pressed, MySQL member row 0→1→0 및 다른 회원 like count 보존을 검사하도록 추가했다. 아직 새 CI 전이므로 브라우저/DB 성공으로 세지 않는다. 댓글 쓰기·검색·계정 여정 등 잔여는 별도 미검증이다. WBS90/25·25경로 전수 미완·model.h5/visitor 보류 유지. 로컬 evidence unittest41/AST/fmt/diff는 통과했고 Rust MySQL auth test의 offline --no-run compile도 5.75s exit0이다(실DB 실행 아님).
+
+---
+
+# 이전 재개 지점 (2026-10-24 05:10 KST, 전체 E2E 복구 확인·회원 로그아웃 여정 추가)
 
 코드 `50a012c9e844cfef3e5560838a61fc8bdd0add59`의 자동 Verify `40010266672` attempt1은 completed/success(19:41:55 UTC 종료)다. API에서 broad step11, full HTTP/worker/MySQL step15, artifact step16 및 fixture cleanup step18 success를 직접 확인했다. 이 push의 workflow는 `run-ci`를 선택한다. safe artifact `12526429724`의 locator stage는 마지막 `administrator console E2E test`다. 고정 script의 `set -euo pipefail`과 각 suite의 test-discovery/1-pass grep을 대조했으며 recommendation/watch/external effects/pool·trending·category jobs/admin lists/admin console까지 이어지는 일반 경로가 복구됐다. 개별 cargo stdout은 미열람이며 raw GH log cache 경로는 사용하지 않았다.
 

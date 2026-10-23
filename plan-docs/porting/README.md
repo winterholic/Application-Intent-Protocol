@@ -130,3 +130,6 @@ API/저장 oracle→자체 컨테이너 정리→증거 hash/exit/범위 검사�
 ### 2026-10-24 전체 E2E 복구 후속
 
 일반 Verify `40010266672`(`50a012c`, attempt1) completed/success를 직접 조회했다. 실제 push 분기는 full `run-ci`이고 artifact locator는 마지막 administrator console E2E stage를 기록한다. Admin·member safe JSON과 별도 profile/reissue DB status를 직접 확인했으며 일반 full suite의 단계/필수 grep과 success 결과를 대조했다(개별 cargo stdout 미열람). 다음 잔여 회원 로그아웃의 원본 UI/응답/client clear/DB revocation 검증을 추가했으나 새 CI 전까지 미검증이다. 기존25route 분모와 WBS90/25·model.h5·visitor 보류 유지. [제품 검증](../../product/VERIFICATION.md#2026-10-24-verify-40010266672-전체-경로-확인과-회원-로그아웃-후속), [최신 상태](../STATUS.md) 참조.
+
+
+**2026-10-24 06:10 KST 후속:** `a87748d` 일반 Verify `40017780097` attempt1 success. 직접 받은 safe artifact에서 원본 MyPage logout 1회 수락·client auth clear·DB session revocation +1, browser/DB success를 확인했다. 25 unique user API paths 표의 logout 행을 갱신했다. 다음 원본 영상 좋아요 add/remove는 성공 mutation body→reload pressed state→DB member row0→1→0/타회원보존을 검사하도록 추가했으며 새 CI 전까지 미검증이다. Profile/reissue 등 기존 검사는 유지한다. WBS90/25·사용자25경로 전수 미완·model.h5/visitor보류 유지. 상세는 product verification 최신 절.

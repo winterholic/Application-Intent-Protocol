@@ -62,6 +62,29 @@ SAFE_NETWORK_FAILURES = {
 FILTER_OPS = {"eq", "ne", "lt", "lte", "gt", "gte", "in", "contains", "like"}
 
 
+def member_like_action(payload: object) -> str | None:
+    """Classify only the SDK's exact like operation; never retain its IDs or values."""
+    request = payload.get("request") if isinstance(payload, dict) else None
+    if not isinstance(request, dict):
+        return None
+    if request.get("apply") == "VideoLike.remove":
+        return "remove"
+    atomic = request.get("atomic")
+    if isinstance(atomic, list) and len(atomic) == 1 and isinstance(atomic[0], dict) and atomic[0].get("create") == "VideoLike":
+        return "add"
+    return None
+
+
+def member_like_evidence(requests: list[dict[str, object]], action: str, reloaded_active: bool) -> dict[str, object]:
+    replies = [row for row in requests if row.get("path") == "/apply" and row.get("like_action") == action]
+    accepted = (len(replies) == 1 and replies[0].get("status") == 200
+                and replies[0].get("body_captured") is True and replies[0].get("ok") is True)
+    persisted_ui = action in {"add", "remove"} and reloaded_active is (action == "add")
+    return {"action": action if action in {"add", "remove"} else "unrecognized",
+            "mutation_response_count": len(replies), "server_accepted": accepted,
+            "reloaded_active": reloaded_active, "verified": accepted and persisted_ui}
+
+
 def member_logout_evidence(requests: list[dict[str, object]], state: dict[str, object]) -> dict[str, object]:
     """A local clear alone cannot prove that the server accepted logout."""
     replies = [row for row in requests if row.get("path") == "/auth/logout"]
