@@ -11,6 +11,15 @@ LIST_EXTENSIONS = {
     "Video.homePersonalized",
 }
 EMOTIONS = {"all", "happy", "sad", "neutral", "surprise", "angry"}
+READ_FIELDS = {
+    "Video": {"id", "youtube_url", "title", "channel_name", "category", "duration", "view_count", "is_deleted"},
+    "VideoBookmark": {"id", "video", "user", "created_at"},
+    "VideoLike": {"id", "video", "user", "created_at"},
+    "Comment": {"id", "video", "user", "content", "is_deleted", "created_at"},
+    "User": {"id", "email", "name", "role", "is_deleted", "created_at"},
+}
+READ_QUERY_KEYS = {"read", "select", "filter", "sort", "limit", "offset", "after"}
+FILTER_OPS = {"eq", "ne", "lt", "lte", "gt", "gte", "in", "contains", "like"}
 
 
 def fixture_thumbnail_redirect_url(
@@ -32,6 +41,52 @@ def fixture_thumbnail_redirect_url(
     ):
         return local_thumbnail_url
     return None
+
+
+def read_request_evidence(body: Any) -> dict[str, object]:
+    """Summarize an allowlisted read query's structure without recording filter values."""
+    if not isinstance(body, dict):
+        return {"read_resource": "unrecognized", "recognized_query_keys": [], "unknown_query_key_count": 0}
+
+    resource = body.get("read")
+    fields = READ_FIELDS.get(resource) if isinstance(resource, str) else None
+    summary: dict[str, object] = {
+        "read_resource": resource if fields is not None else "unrecognized",
+        "recognized_query_keys": sorted(key for key in body if key in READ_QUERY_KEYS),
+        "unknown_query_key_count": sum(key not in READ_QUERY_KEYS for key in body),
+    }
+    select = body.get("select")
+    if isinstance(select, list):
+        safe_fields = [field for field in select if isinstance(field, str) and fields and field in fields]
+        summary["select_fields"] = safe_fields
+        summary["unknown_select_field_count"] = len(select) - len(safe_fields)
+
+    filters = body.get("filter")
+    if isinstance(filters, list):
+        safe_filters: list[dict[str, str]] = []
+        unknown_filter_key_count = 0
+        for item in filters:
+            if not isinstance(item, dict):
+                unknown_filter_key_count += 1
+                continue
+            unknown_filter_key_count += sum(key not in {"field", "op", "value"} for key in item)
+            field = item.get("field")
+            op = item.get("op")
+            if isinstance(field, str) and fields and field in fields:
+                safe_filters.append({
+                    "field": field,
+                    "op": op if isinstance(op, str) and op in FILTER_OPS else "unrecognized",
+                    "value_type": type(item.get("value")).__name__,
+                })
+            else:
+                unknown_filter_key_count += 1
+        summary["filter_fields"] = safe_filters
+        summary["unknown_filter_key_count"] = unknown_filter_key_count
+
+    limit = body.get("limit")
+    if isinstance(limit, int) and not isinstance(limit, bool) and 0 <= limit <= 100000:
+        summary["limit"] = limit
+    return summary
 
 
 def extension_request_evidence(body: Any) -> dict[str, object]:

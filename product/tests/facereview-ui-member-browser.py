@@ -22,6 +22,7 @@ from product.tests.facereview_ui_browser_evidence import (
     extension_request_evidence,
     extension_response_evidence,
     fixture_thumbnail_redirect_url,
+    read_request_evidence,
 )
 
 
@@ -107,6 +108,7 @@ def main() -> int:
         stderr=subprocess.DEVNULL,
     )
     api_paths: list[dict[str, object]] = []
+    read_requests: list[dict[str, object]] = []
     adapter_list_evidence: list[dict[str, object]] = []
     page_errors: list[str] = []
     console_error_count = 0
@@ -173,6 +175,19 @@ def main() -> int:
                             for key in ("ok", "code"):
                                 if key in envelope and isinstance(envelope[key], (bool, str)):
                                     row[key] = envelope[key]
+                        if parsed.path == "/read":
+                            try:
+                                read_evidence = read_request_evidence(response.request.post_data_json)
+                            except Exception:
+                                read_evidence = {"read_resource": "unrecognized"}
+                            row["read_request"] = read_evidence
+                            read_result = dict(read_evidence)
+                            read_result["status"] = response.status
+                            if isinstance(row.get("ok"), bool):
+                                read_result["ok"] = row["ok"]
+                            if isinstance(row.get("code"), str):
+                                read_result["code"] = row["code"]
+                            read_requests.append(read_result)
                         if parsed.path == "/extension":
                             try:
                                 extension_request = extension_request_evidence(response.request.post_data_json)
@@ -267,15 +282,19 @@ def main() -> int:
                           };
                         }""", VIDEO_TITLE)
 
-                    capture_render_state()
                     video_card = page.locator(".video-item-container").filter(has_text=VIDEO_TITLE).first
                     expect(video_card).to_be_visible(timeout=30000)
+                    capture_render_state()
                     screenshot = output / f"{args.phase}-member-video-list.png"
                     page.screenshot(path=str(screenshot), full_page=True)
                     screenshot_names.append(screenshot.name)
                     video_card.click()
                     expect(page).to_have_url(re.compile(rf"/watch/{re.escape(VIDEO_ID)}$"))
                     expect(page.get_by_text(VIDEO_TITLE, exact=True).first).to_be_visible(timeout=30000)
+                    safety_notice = page.get_by_role("heading", name="안심하세요!", exact=True)
+                    expect(safety_notice).to_be_visible(timeout=15000)
+                    page.get_by_role("button", name="확인", exact=True).click()
+                    expect(safety_notice).to_be_hidden(timeout=15000)
 
                     bookmark_add = page.get_by_role("button", name="즐겨찾기 추가", exact=True)
                     bookmark_remove = page.get_by_role("button", name="즐겨찾기 해제", exact=True)
@@ -345,6 +364,7 @@ def main() -> int:
             "server_listening_fingerprint": expected_contract,
             "ui_binding_fingerprint": binding_contract,
             "api_requests": api_paths,
+            "read_requests": read_requests,
             "adapter_list_evidence": adapter_list_evidence,
             "rendered_state": rendered_state,
             "page_error_count": len(page_errors),
@@ -369,6 +389,7 @@ def main() -> int:
             "server_listening_fingerprint": expected_contract,
             "ui_binding_fingerprint": binding_contract,
             "api_requests": api_paths,
+            "read_requests": read_requests,
             "adapter_list_evidence": adapter_list_evidence,
             "rendered_state": rendered_state,
             "fixture_video": {"id": VIDEO_ID},

@@ -4,6 +4,7 @@ from product.tests.facereview_ui_browser_evidence import (
     extension_request_evidence,
     extension_response_evidence,
     fixture_thumbnail_redirect_url,
+    read_request_evidence,
 )
 
 
@@ -11,6 +12,22 @@ VIDEO_ID = "aaaaaaaa-0000-4000-8000-000000000001"
 
 
 class BrowserEvidenceTests(unittest.TestCase):
+    def test_read_evidence_keeps_query_shape_and_omits_filter_values(self):
+        summary = read_request_evidence({
+            "read": "VideoBookmark",
+            "select": ["id"],
+            "filter": [{"field": "video", "op": "eq", "value": "fixture-id-must-not-escape"}],
+            "limit": 1,
+            "token": "secret-must-not-escape",
+        })
+        self.assertEqual(summary["read_resource"], "VideoBookmark")
+        self.assertEqual(summary["recognized_query_keys"], ["filter", "limit", "read", "select"])
+        self.assertEqual(summary["unknown_query_key_count"], 1)
+        self.assertEqual(summary["select_fields"], ["id"])
+        self.assertEqual(summary["filter_fields"], [{"field": "video", "op": "eq", "value_type": "str"}])
+        self.assertNotIn("fixture-id-must-not-escape", repr(summary))
+        self.assertNotIn("secret-must-not-escape", repr(summary))
+
     def test_only_the_fixture_thumbnail_image_can_be_redirected_to_local_fixture(self):
         local_thumbnail = "https://127.0.0.1:49152/fixture-thumbnail.svg"
         self.assertEqual(
