@@ -105,3 +105,14 @@ test('profile update bundles the member row patch and favorite genre replacement
     },
   ]);
 });
+
+test('withdrawal applies the server-owned transition to the signed-in member only', async () => {
+  const { client, calls } = fakeClient();
+  const api = createWriteApi(client, { userId: () => 'member-1', newKey: keyFactory() });
+
+  await api.withdraw();
+
+  assert.deepEqual(calls, [{ kind: 'apply', key: 'write-1', value: { apply: 'User.withdraw', target: { ids: ['member-1'] } } }]);
+  const anonymous = createWriteApi(client, { userId: () => '', newKey: keyFactory() });
+  await assert.rejects(anonymous.withdraw(), (error: { code?: string }) => error.code === 'WIRE.UNAUTHENTICATED');
+});

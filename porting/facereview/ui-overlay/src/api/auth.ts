@@ -75,3 +75,8 @@ export const updateProfile = async (props: { name?: string; profile_image_id?: n
   const result = await aipWrites.updateProfile(props);
   return { status: 200, data: result };
 };
+
+export const withdraw = async () => {
+  const result = await aipWrites.withdraw();
+  return { status: 200, data: result };
+};

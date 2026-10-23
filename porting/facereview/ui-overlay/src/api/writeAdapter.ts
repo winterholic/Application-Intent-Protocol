@@ -49,6 +49,11 @@ export function createWriteApi(client: WriteClient, options: WriteOptions) {
   };
 
   return {
+    /** Let the server execute the declared member withdrawal lifecycle and session revocation. */
+    async withdraw() {
+      const userId = member();
+      return apply({ apply: 'User.withdraw', target: { ids: [userId] } });
+    },
     /** Keep the profile row patch and favorite-genre replacement in one atomic SDK bundle. */
     async updateProfile(props: { name?: string; profile_image_id?: number; favorite_genres?: string[] }) {
       const userId = member();
