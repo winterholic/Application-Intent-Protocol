@@ -16,7 +16,10 @@ READ_FIELDS = {
     "VideoBookmark": {"id", "video", "user", "created_at"},
     "VideoLike": {"id", "video", "user", "created_at"},
     "Comment": {"id", "video", "user", "content", "is_modified", "is_deleted", "created_at", "updated_at"},
-    "User": {"id", "email", "name", "role", "is_deleted", "created_at"},
+    "User": {
+        "id", "email", "name", "role", "profile_image_id", "is_tutorial_done",
+        "is_verify_email_done", "is_deleted", "created_at",
+    },
     "UserFavoriteGenre": {"id", "user", "genre", "created_at", "updated_at"},
 }
 READ_RELATIONS = {"Comment": {"user": {"id", "name"}}}

@@ -217,6 +217,21 @@ fn run_facereview_ui_browser_journey(address: &str, fingerprint: &str, phase: &s
         .expect("start the real React browser journey")
 }
 
+fn run_facereview_ui_profile_browser_journey(address: &str, fingerprint: &str, root: &Path) -> std::process::Output {
+    let ui_root = std::env::var("AIP_FACEREVIEW_UI_DIR").expect("CI must provide the pinned FaceReview UI checkout");
+    let output = std::env::var("AIP_FACEREVIEW_BROWSER_OUTPUT").expect("CI must provide a run-owned browser artifact directory");
+    let python = std::env::var("AIP_FACEREVIEW_PYTHON").unwrap_or_else(|_| "python3".to_owned());
+    StdCommand::new(python)
+        .arg(root.join("product/tests/facereview-ui-profile-browser.py"))
+        .args(["--ui", &ui_root, "--api", &format!("http://{address}"), "--out", &format!("{output}/profile")])
+        .env("AIP_FACEREVIEW_JOURNEY_EMAIL", "legacy@example.com")
+        .env("AIP_FACEREVIEW_JOURNEY_PASSWORD", "password123")
+        .env("AIP_FACEREVIEW_EXPECTED_CONTRACT", fingerprint)
+        .current_dir(root)
+        .output()
+        .expect("start the real React profile browser journey")
+}
+
 /// A stand-in mail provider: it records every JSON body it is sent and answers 200, or 500 while `fail` is set.
 struct Mailer {
     port: u16,
@@ -351,8 +366,17 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
     setup
         .exec_drop(
             "INSERT INTO user (user_id, email, password, name, role, is_tutorial_done, is_verify_email_done, is_deleted, created_at, updated_at) \
-             VALUES (?, 'legacy@example.com', ?, '레거시', 'GENERAL', 1, 1, 0, NOW(), NOW())",
+             VALUES (?, 'legacy@example.com', ?, 'AIP 프로필 표본회원', 'GENERAL', 1, 1, 0, NOW(), NOW())",
             (LEGACY, legacy_hash),
+        )
+        .await
+        .unwrap();
+    setup
+        .exec_drop(
+            "INSERT INTO user_favorite_genre (user_favorite_genre_id, user_id, genre, created_at, updated_at) VALUES \
+         ('88888888-8888-4888-8888-888888888801', ?, 'eating', NOW(), NOW()), \
+         ('88888888-8888-4888-8888-888888888802', ?, 'horror', NOW(), NOW())",
+            (LEGACY, LEGACY),
         )
         .await
         .unwrap();
@@ -559,6 +583,15 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
             generated_fingerprint,
             fingerprint,
         );
+        let profile = run_facereview_ui_profile_browser_journey(&address, &fingerprint, &browser_root);
+        assert!(
+            profile.status.success(),
+            "React profile browser journey failed (status {:?})\nstdout: {}\nstderr: {}",
+            profile.status.code(),
+            String::from_utf8_lossy(&profile.stdout),
+            String::from_utf8_lossy(&profile.stderr)
+        );
+        print!("{}", String::from_utf8_lossy(&profile.stdout));
         assert_eq!(cell(&mut setup, "SELECT CAST(COUNT(*) AS CHAR) FROM video_bookmark WHERE user_id='77777777-7777-4777-8777-777777777777' AND video_id='aaaaaaaa-0000-4000-8000-000000000001'").await.as_deref(), Some("0"), "fixture member starts without a bookmark");
         let add = run_facereview_ui_browser_journey(&address, &fingerprint, "add", &browser_root);
         assert!(

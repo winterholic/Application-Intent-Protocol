@@ -47,6 +47,17 @@ class BrowserEvidenceTests(unittest.TestCase):
         self.assertEqual(summary["select_relations"], [{"relation": "user", "fields": ["id", "name"]}])
         self.assertEqual(summary["unknown_select_field_count"], 1)
 
+    def test_read_evidence_allows_the_fields_used_by_the_pinned_member_profile(self):
+        summary = read_request_evidence({"query": {
+            "read": "User",
+            "select": ["id", "email", "name", "role", "profile_image_id", "is_tutorial_done", "is_verify_email_done", "created_at"],
+            "limit": 1,
+        }})
+        self.assertEqual(summary["select_fields"], [
+            "id", "email", "name", "role", "profile_image_id", "is_tutorial_done", "is_verify_email_done", "created_at",
+        ])
+        self.assertEqual(summary["unknown_select_field_count"], 0)
+
     def test_browser_failure_type_is_class_only(self):
         error = TimeoutError("must not be retained: member@example.invalid")
         self.assertEqual(safe_browser_failure_type(error), "TimeoutError")
