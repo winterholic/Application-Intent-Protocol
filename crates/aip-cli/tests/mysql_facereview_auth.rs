@@ -203,7 +203,7 @@ async fn cell(conn: &mut aip_migrate::mysql_driver::mysql_async::Conn, sql: &str
     conn.query_first::<Option<String>, _>(sql).await.unwrap().flatten()
 }
 
-fn run_facereview_ui_browser_journey(address: &str, fingerprint: &str, phase: &str, root: &Path) -> std::process::Output {
+fn run_facereview_ui_browser_journey(address: &str, fingerprint: &str, phase: &str, root: &Path, comment_id: Option<&str>) -> std::process::Output {
     let ui_root = std::env::var("AIP_FACEREVIEW_UI_DIR").expect("CI must provide the pinned FaceReview UI checkout");
     let output = std::env::var("AIP_FACEREVIEW_BROWSER_OUTPUT").expect("CI must provide a run-owned browser artifact directory");
     let python = std::env::var("AIP_FACEREVIEW_PYTHON").unwrap_or_else(|_| "python3".to_owned());
@@ -213,6 +213,7 @@ fn run_facereview_ui_browser_journey(address: &str, fingerprint: &str, phase: &s
         .env("AIP_FACEREVIEW_JOURNEY_EMAIL", "legacy@example.com")
         .env("AIP_FACEREVIEW_JOURNEY_PASSWORD", "password123")
         .env("AIP_FACEREVIEW_EXPECTED_CONTRACT", fingerprint)
+        .env("AIP_FACEREVIEW_COMMENT_ID", comment_id.unwrap_or(""))
         .output()
         .expect("start the real React browser journey")
 }
@@ -700,7 +701,7 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
         let other_likes_query = "SELECT CAST(COUNT(*) AS CHAR) FROM video_like WHERE user_id <> '77777777-7777-4777-8777-777777777777'";
         assert_eq!(cell(&mut setup, like_query).await.as_deref(), Some("0"), "fixture member starts without a video like");
         let other_likes_before = cell(&mut setup, other_likes_query).await.expect("read other members' like count");
-        let add = run_facereview_ui_browser_journey(&address, &fingerprint, "add", &browser_root);
+        let add = run_facereview_ui_browser_journey(&address, &fingerprint, "add", &browser_root, None);
         let likes_after_add = cell(&mut setup, like_query).await;
         let other_likes_after_add = cell(&mut setup, other_likes_query).await;
         let like_add_ok = likes_after_add.as_deref() == Some("1") && other_likes_after_add.as_deref() == Some(other_likes_before.as_str());
@@ -731,7 +732,7 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
                 .expect("read revoked sessions before the member logout journey")
                 .parse()
                 .expect("revoked session count is numeric");
-        let remove = run_facereview_ui_browser_journey(&address, &fingerprint, "remove", &browser_root);
+        let remove = run_facereview_ui_browser_journey(&address, &fingerprint, "remove", &browser_root, None);
         let likes_after_remove = cell(&mut setup, like_query).await;
         let other_likes_after_remove = cell(&mut setup, other_likes_query).await;
         let like_remove_ok = likes_after_remove.as_deref() == Some("0") && other_likes_after_remove.as_deref() == Some(other_likes_before.as_str());
@@ -770,6 +771,64 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
         assert_eq!(revoked_after - revoked_before, 1, "the real member logout revokes its newly created session in MySQL");
         assert_eq!(cell(&mut setup, "SELECT CAST(COUNT(*) AS CHAR) FROM video_bookmark WHERE user_id='77777777-7777-4777-8777-777777777777' AND video_id='aaaaaaaa-0000-4000-8000-000000000001'").await.as_deref(), Some("0"), "browser bookmark remove deletes the member row in MySQL");
         println!("React browser journey: login, member video list, bookmark on/reload (MySQL rows=1), off/reload (MySQL rows=0)");
+
+        // Each original comment UI action runs in a fresh browser, with a DB checkpoint
+        // before the next action. Compare every unrelated row, including other members'
+        // content/flags/timestamps; a matching count alone would miss an overwritten row.
+        type CommentRow = (String, String, String, String, Option<String>, Option<String>, String, String);
+        let comments_sql = "SELECT comment_id, video_id, user_id, content, CAST(is_modified AS CHAR), CAST(is_deleted AS CHAR), CAST(created_at AS CHAR), CAST(updated_at AS CHAR) FROM comment ORDER BY comment_id";
+        let comments_before: Vec<CommentRow> = setup.query(comments_sql).await.unwrap();
+        let created_content = "AIP 원본 UI 댓글 등록 표본";
+        let edited_content = "AIP 원본 UI 댓글 수정 표본";
+        assert!(comments_before.iter().all(|row| row.3 != created_content && row.3 != edited_content), "comment journey markers start absent");
+        let mut comment_id: Option<String> = None;
+        let mut comment_created_at: Option<String> = None;
+        for action in ["create", "edit", "delete"] {
+            let phase = format!("comment-{action}");
+            let result = run_facereview_ui_browser_journey(&address, &fingerprint, &phase, &browser_root, comment_id.as_deref());
+            let after: Vec<CommentRow> = setup.query(comments_sql).await.unwrap();
+            if action == "create" {
+                let created: Vec<_> = after.iter().filter(|row| row.2 == LEGACY && row.3 == created_content).collect();
+                if created.len() == 1 {
+                    comment_id = Some(created[0].0.clone());
+                    comment_created_at = Some(created[0].6.clone());
+                }
+            }
+            let target = after.iter().find(|row| Some(row.0.as_str()) == comment_id.as_deref());
+            let unrelated: Vec<_> = after.iter().filter(|row| Some(row.0.as_str()) != comment_id.as_deref()).cloned().collect();
+            let others_preserved = unrelated == comments_before;
+            let expected_content = if action == "create" { created_content } else { edited_content };
+            let target_matches = target.is_some_and(|row| {
+                row.1 == "aaaaaaaa-0000-4000-8000-000000000001"
+                    && row.2 == LEGACY
+                    && row.3 == expected_content
+                    && row.4.as_deref() == Some(if action == "create" { "0" } else { "1" })
+                    && row.5.as_deref() == Some(if action == "delete" { "1" } else { "0" })
+                    && Some(row.6.as_str()) == comment_created_at.as_deref()
+            });
+            let db_ok = target_matches && others_preserved && after.len() == comments_before.len() + 1;
+            let db_result = json!({
+                "journey": phase, "browser_status": if result.status.success() { "success" } else { "failure" },
+                "database_status": if db_ok { "success" } else { "failure" },
+                "target_row_present": target.is_some(), "same_comment_identity": target.is_some() && comment_id.is_some(),
+                "target_content_and_flags_match": target_matches, "unrelated_rows_preserved": others_preserved,
+                "total_rows_added": after.len() as i64 - comments_before.len() as i64,
+                "is_modified": target.and_then(|row| row.4.as_deref()), "is_deleted": target.and_then(|row| row.5.as_deref())
+            });
+            let phase_dir = Path::new(&browser_output).join(&phase);
+            std::fs::create_dir_all(&phase_dir).unwrap();
+            std::fs::write(phase_dir.join("comment-db-result.json"), serde_json::to_vec_pretty(&db_result).unwrap()).unwrap();
+            println!("comment browser/DB: {db_result}");
+            print!("{}", String::from_utf8_lossy(&result.stdout));
+            assert!(
+                result.status.success(),
+                "{phase} original UI journey failed (status {:?})\nstdout: {}\nstderr: {}",
+                result.status.code(),
+                String::from_utf8_lossy(&result.stdout),
+                String::from_utf8_lossy(&result.stderr)
+            );
+            assert!(db_ok, "{phase} preserves the comment identity, expected content/flags and all unrelated rows");
+        }
         assert!(journey_failures.is_empty(), "independent member journeys failed: {}", journey_failures.join("; "));
     } else {
         eprintln!("React browser journey skipped: AIP_FACEREVIEW_UI_DIR is unset; SDK/API journey is separate");

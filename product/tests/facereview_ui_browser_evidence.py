@@ -62,6 +62,47 @@ SAFE_NETWORK_FAILURES = {
 FILTER_OPS = {"eq", "ne", "lt", "lte", "gt", "gte", "in", "contains", "like"}
 
 
+def member_comment_action(payload: object) -> str | None:
+    """Recognize one member comment write without retaining IDs or content."""
+    request = payload.get("request") if isinstance(payload, dict) else None
+    if not isinstance(request, dict):
+        return None
+    atomic = request.get("atomic")
+    if set(request) == {"atomic"} and isinstance(atomic, list) and len(atomic) == 1:
+        op = atomic[0]
+        if isinstance(op, dict) and set(op) == {"create", "values"} and op.get("create") == "Comment":
+            values = op["values"]
+            if isinstance(values, dict) and set(values) == {"video", "user", "content"} and all(isinstance(value, str) and value for value in values.values()):
+                return "create"
+        return None
+    action = {"Comment.edit": "edit", "Comment.delete": "delete"}.get(request.get("apply")) if isinstance(request.get("apply"), str) else None
+    target = request.get("target")
+    if not action or not isinstance(target, dict) or set(target) != {"ids"}:
+        return None
+    ids = target["ids"]
+    if not isinstance(ids, list) or len(ids) != 1 or not isinstance(ids[0], str) or not ids[0]:
+        return None
+    if action == "delete" and set(request) == {"apply", "target"}:
+        return action
+    values = request.get("values")
+    if action == "edit" and set(request) == {"apply", "target", "values"} and isinstance(values, dict) and set(values) == {"content"} and isinstance(values["content"], str) and values["content"]:
+        return action
+    return None
+
+
+def member_comment_evidence(requests: list[dict[str, object]], action: str, reloaded_render_matches: bool) -> dict[str, object]:
+    comment_replies = [row for row in requests if row.get("path") == "/apply" and row.get("comment_action") in {"create", "edit", "delete"}]
+    replies = [row for row in comment_replies if row.get("comment_action") == action]
+    accepted = (action in {"create", "edit", "delete"} and len(comment_replies) == 1 and len(replies) == 1
+                and replies[0].get("status") == 200 and replies[0].get("body_captured") is True
+                and replies[0].get("ok") is True and replies[0].get("comment_target_matches") is True
+                and replies[0].get("comment_content_matches") is True)
+    return {"action": action if action in {"create", "edit", "delete"} else "unrecognized",
+            "mutation_response_count": len(replies), "server_accepted": accepted,
+            "reloaded_render_matches": reloaded_render_matches is True,
+            "verified": accepted and reloaded_render_matches is True}
+
+
 def member_like_action(payload: object) -> str | None:
     """Classify only the SDK's exact like operation; never retain its IDs or values."""
     request = payload.get("request") if isinstance(payload, dict) else None

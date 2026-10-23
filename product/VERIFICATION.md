@@ -1303,7 +1303,7 @@ The pinned user UI has 30 HTTP call sites across six API modules, which collapse
 | `/v2/mypage/password` (PATCH) | Backend password reset, hashing, and session revocation tests, 7.2.8 slice B | Source overlay routes to authenticated AIP path; screen journey not run |
 | `/v2/mypage/withdraw` (DELETE) | Backend withdrawal and post-withdraw session tests, 7.2.8 slice A | Confirmed `/edit` action is wired to generated SDK `User.withdraw` at `6b1a8d4`; browser integration is outside the current CI journey |
 | `/v2/home/video/recommend` (POST) | `VideoRequest.recommend` live service/oracle checks; overlay write adapter present | Form submission not browser-tested |
-| `/v2/watch/comments` (GET, POST, PATCH, DELETE) | Comment reads/writes in service and generated SDK journey `39851918809` | Read response succeeded in browser evidence; UI write journey not run. `39896024733` overall browser step failed later at bookmark control |
+| `/v2/watch/comments` (GET, POST, PATCH, DELETE) | Comment reads/writes in service and generated SDK journey `39851918809` | Read response succeeded in browser evidence. Original create/edit/delete browser phases and per-step MySQL snapshots added 2026-10-24; new CI result pending. Earlier `39896024733` failed later at bookmark control |
 | `/v2/watch/like` (POST) | AIP service tests and overlay unit tests for add/cancel | Verify `40025235103`: original add/cancel clicks, one accepted mutation each, reload active true/false, browser/DB success, MySQL 0→1→0 and other members preserved |
 | `/v2/home/category` (GET) | Live AIP extension and generated SDK checks | Actual React list response in `39885042974` |
 | `/v2/home/search` (GET) | Live AIP extension and adapter tests | Not run in browser |
@@ -1666,3 +1666,12 @@ Add/remove browser JSON은 각각 completed, page_error_count0, failure_type=nul
 이번 lifecycle은 add33/remove37 requests/responses/finished가 각각 같고 failed0,unfinished=[]다. 이전 run의 unfinished2를 이번 실행으로 소급 고치지 않는다. Logout verified=true, 별도 logout browser/DB success와 revoked session+1; profile/reissue 두 DB 결과도 browser/DB success, USED refresh+1을 확인했다. 해당 사용자25 unique API경로 표의 like 행만 새 증거로 갱신했고 전수완료로 세지 않는다.
 
 다음 미검증은 원본 댓글 UI create/edit/delete, 이후 검색 및 계정 여정이다. 이번 실행에서는 새 코드 구현이나 이전41개 로컬 시험 재실행을 하지 않았다. 문서 diff check만 수행한다. 다음 단계는 새 컨텍스트에서 원본 UI·SDK payload·DB soft-delete 계약을 먼저 대조한다. WBS90/25/model.h5권리·visitor 보류 및 과거399638/399880 원인미확정 유지.
+
+
+### 2026-10-24 원본 댓글 create/edit/delete UI·DB 여정 추가 (CI 대기)
+
+원본 read-only checkout의 고정 SHA `2e7c021fa5abebd72278d841b8066a33d45cfbb3`, CommentSection/CommentItem/SomeIcon, writeAdapter의 bundle/create 및 Comment.edit/Comment.delete, Comment 정의의 소유자·활성상태·soft-delete 계약과 db-defaults를 대조했다. 앱 정책/원본UI/운영설정은 바꾸지 않았다. `facereview-ui-member-browser.py`에 comment-create/edit/delete 세 phase를 추가했다. 각 phase는 원본 로그인→fixture 카드→watch→안내 확인 경로를 거치고 원본 댓글 등록/더보기·수정/저장/삭제 확인 UI만 사용한다. create/edit의 내용·회원/영상 또는 edit/delete target ID를 boolean으로 대조하며 raw 댓글 내용·token은 계측 JSON에 기록하지 않는다. 정확한 단일 SDK mutation의 HTTP200/ok=true와 body 완료, reload 후 렌더·수정됨 표시 또는 비노출을 함께 요구한다. 기존 bookmark/like/logout 분기의 AST 26 statements는 동일하다.
+
+Rust caller는 각 동작 직후 별도 `comment-*/comment-db-result.json`을 쓴다. Browser process status와 DB status는 분리한다. create에서 DB가 생성한 ID를 얻어 다음 두 phase의 예상 target으로 전달하고 같은 행의 영상·회원·내용·is_modified 0→1→1/is_deleted 0→0→1을 확인한다. delete 후에도 row가 남고 전체행은 initial+1이며 생성시각도 보존된다. 모든 무관한 댓글 행을 ID/영상/회원/내용/수정·삭제 플래그/생성·수정시각 전체 tuple로 비교한다(타회원 count만 비교하지 않음). 추가한 댓글이 보이는지뿐 아니라 기존 첫 댓글/두번째 댓글의 렌더도 요구한다.
+
+로컬 실행: helper stubs에서 정상 판정 2개 FAIL→구현 후 evidence unittest43 OK. 다른 댓글 action이 같은 window에 섞이는 negative-control도 FAIL→거절 구현 후43 OK. `node --test porting/facereview/ui-overlay/tests/writeAdapter.test.ts` 6 pass; browser AST parse, cargo fmt --all --check, git diff --check 통과. Rust compile은 PG* unset, explicit loopback55432/aip_test_run DSN으로 `cargo test -p aip-cli --features mysql --test mysql_facereview_auth --no-run --locked --offline`, exit0/4.36s다. 처음 설정한 기본5432는 project guard에서 거절됐으며 기본 포트로 DB에 연결하지 않았다. 로컬 browser/live DB는 미실행; Linux 일반 Verify의 새 artifact 전까지 댓글UI 성공으로 세지 않는다. 최초실패 시 safe artifact/annotations만 조사하며 거부된 raw log cache 경로를 우회하지 않는다. WBS90/25,25경로 전수미완,model.h5/visitor 보류 유지. 성공 판정 후 search/계정 잔여를 이어간다.

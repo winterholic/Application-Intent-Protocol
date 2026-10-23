@@ -43,12 +43,17 @@ from product.tests.facereview_ui_browser_evidence import (
     member_logout_evidence,
     member_like_action,
     member_like_evidence,
+    member_comment_action,
+    member_comment_evidence,
 )
 
 
 VIDEO_ID = "aaaaaaaa-0000-4000-8000-000000000001"
 VIDEO_TITLE = "고양이 영상"
 VIDEO_YOUTUBE_ID = "dQw4w9WgXcQ"
+COMMENT_CREATED = "AIP 원본 UI 댓글 등록 표본"
+COMMENT_EDITED = "AIP 원본 UI 댓글 수정 표본"
+MEMBER_ID = "77777777-7777-4777-8777-777777777777"
 
 
 class FixtureThumbnailHandler(BaseHTTPRequestHandler):
@@ -153,12 +158,13 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--ui", type=Path, required=True)
     parser.add_argument("--api", required=True)
-    parser.add_argument("--phase", choices=("add", "remove"), required=True)
+    parser.add_argument("--phase", choices=("add", "remove", "comment-create", "comment-edit", "comment-delete"), required=True)
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
     email = os.environ["AIP_FACEREVIEW_JOURNEY_EMAIL"]
     password = os.environ["AIP_FACEREVIEW_JOURNEY_PASSWORD"]
     expected_contract = os.environ["AIP_FACEREVIEW_EXPECTED_CONTRACT"]
+    comment_id = os.environ.get("AIP_FACEREVIEW_COMMENT_ID", "")
     # CI keeps the default; a local run may move off a port that another dev server already holds.
     ui_port = os.environ.get("AIP_FACEREVIEW_UI_PORT", "5173")
     binding_source = (args.ui / "src/aip/facereview.ts").read_text(encoding="utf-8")
@@ -221,6 +227,7 @@ def main() -> int:
     screenshot_names: list[str] = []
     logout_evidence: dict[str, object] = {}
     like_evidence: dict[str, object] = {}
+    comment_evidence: dict[str, object] = {}
     bookmark_api_row_count: int | None = None
     thumbnail_server = None
     thumbnail_thread = None
@@ -340,6 +347,18 @@ def main() -> int:
             action = member_like_action(response.request.post_data_json)
             if action is not None:
                 row["like_action"] = action
+            payload = response.request.post_data_json
+            comment_action = member_comment_action(payload)
+            if comment_action is not None:
+                request = payload["request"]
+                row["comment_action"] = comment_action
+                if comment_action == "create":
+                    values = request["atomic"][0]["values"]
+                    row["comment_target_matches"] = values["video"] == VIDEO_ID and values["user"] == MEMBER_ID
+                    row["comment_content_matches"] = values["content"] == COMMENT_CREATED
+                else:
+                    row["comment_target_matches"] = bool(comment_id) and request["target"]["ids"] == [comment_id]
+                    row["comment_content_matches"] = comment_action == "delete" or request["values"]["content"] == COMMENT_EDITED
         if parsed.path in {"/read", "/extension", "/apply"}:
             row["contract_matches_runtime"] = request_contract == expected_contract
             row["x_aip_contract"] = request_contract
@@ -666,104 +685,171 @@ def main() -> int:
                     # The pinned UI resolves videoDetail only after Video.view is applied; a click before that
                     # cancels the query and finds no cached data to flip, so wait for its title to render.
                     expect(page.locator(".video-information-container .title")).to_have_text(VIDEO_TITLE, timeout=30000)
-                    journey_stage = "bookmark_action"
-
-                    bookmark_add =page.get_by_role("button", name="즐겨찾기 추가", exact=True)
-                    bookmark_remove = page.get_by_role("button", name="즐겨찾기 해제", exact=True)
-                    if args.phase == "add":
-                        expect(bookmark_add).to_be_visible()
-                        request_baseline = len(lifecycle)
-                        mark("bookmark_click")
-                        bookmark_add.click()
-                        mark("bookmark_click_returned")
-                        journey_stage = "bookmark_settle"
-                        wait_for_bookmark_mutation(page, request_baseline)
-                        mark("bookmark_requests_settled")
-                        journey_stage = "bookmark_action"
-                        expect(bookmark_remove).to_have_attribute("aria-pressed", "true")
-                        journey_stage = "bookmark_reload"
-                        mark("reload_start")
-                        page.reload(wait_until="domcontentloaded")
-                        mark("reload_return")
-                        journey_stage = "bookmark_reloaded"
-                        expect(bookmark_remove).to_have_attribute("aria-pressed", "true", timeout=30000)
-                        journey_stage = "bookmark_state_confirmed"
-                        label = "bookmarked"
-                    else:
-                        expect(bookmark_remove).to_be_visible()
-                        request_baseline = len(lifecycle)
-                        mark("bookmark_click")
-                        bookmark_remove.click()
-                        mark("bookmark_click_returned")
-                        journey_stage = "bookmark_settle"
-                        wait_for_bookmark_mutation(page, request_baseline)
-                        mark("bookmark_requests_settled")
-                        journey_stage = "bookmark_action"
-                        expect(bookmark_add).to_have_attribute("aria-pressed", "false")
-                        journey_stage = "bookmark_reload"
-                        mark("reload_start")
-                        page.reload(wait_until="domcontentloaded")
-                        mark("reload_return")
-                        journey_stage = "bookmark_reloaded"
-                        expect(bookmark_add).to_have_attribute("aria-pressed", "false", timeout=30000)
-                        journey_stage = "bookmark_state_confirmed"
-                        label = "bookmark-removed"
-
-                    screenshot = output / f"{args.phase}-{label}.png"
-                    page.screenshot(path=str(screenshot), full_page=True)
-                    screenshot_names.append(screenshot.name)
-                    # The original like control flips optimistically. Require its exact SDK
-                    # mutation's completed body, then a reload that preserves the new state.
-                    journey_stage = "member_like"
-                    like_rows_start = len(api_paths)
-                    initial_like = page.get_by_role("button", name="좋아요" if args.phase == "add" else "좋아요 취소", exact=True)
-                    expect(initial_like).to_have_attribute("aria-pressed", "false" if args.phase == "add" else "true")
-                    with page.expect_response(
-                        lambda response: urlsplit(response.url).port == api_port
-                        and urlsplit(response.url).path == "/apply"
-                        and member_like_action(response.request.post_data_json) == args.phase
-                    ) as like_reply:
-                        initial_like.click()
-                    like_reply.value.finished()
-                    deadline = time.monotonic() + 15
-                    while not any(row.get("like_action") == args.phase and row.get("body_captured") is True for row in api_paths[like_rows_start:]):
-                        if time.monotonic() >= deadline:
-                            raise AssertionError("like mutation body was not collected before reload")
-                        page.wait_for_timeout(50)
-                    like_rows = list(api_paths[like_rows_start:])
-                    page.reload(wait_until="domcontentloaded")
-                    expect(page.locator(".video-information-container .title")).to_have_text(VIDEO_TITLE, timeout=30000)
-                    persisted_like = page.get_by_role("button", name="좋아요 취소" if args.phase == "add" else "좋아요", exact=True)
-                    expect(persisted_like).to_have_attribute("aria-pressed", "true" if args.phase == "add" else "false")
-                    like_evidence = member_like_evidence(like_rows, args.phase, persisted_like.get_attribute("aria-pressed") == "true")
-                    assert like_evidence["verified"], "like server acceptance and reloaded UI must both be observed"
-                    screenshot = output / f"{args.phase}-like-reloaded.png"
-                    page.screenshot(path=str(screenshot), full_page=True)
-                    screenshot_names.append(screenshot.name)
-                    if args.phase == "remove":
-                        # Keep existing bookmark validation scoped to its own journey. The
-                        # original logout redirects to /main; visitor policy remains deferred.
-                        bookmark_api_row_count = len(api_paths)
-                        journey_stage = "member_logout"
-                        page.get_by_role("button", name="마이페이지로 이동", exact=True).click()
-                        expect(page).to_have_url(re.compile(r"/my$"))
+                    if args.phase.startswith("comment-"):
+                        action = args.phase.removeprefix("comment-")
+                        journey_stage = f"member_comment_{action}"
+                        expect(page.get_by_text("첫 댓글", exact=True)).to_be_visible(timeout=30000)
+                        expect(page.get_by_text("두번째 댓글", exact=True)).to_be_visible()
+                        source_text = COMMENT_CREATED if action == "edit" else COMMENT_EDITED
+                        comment_rows_start = len(api_paths)
+                        if action == "create":
+                            expect(page.get_by_text(COMMENT_CREATED, exact=True)).to_have_count(0)
+                            page.get_by_role("textbox", name="댓글 입력", exact=True).fill(COMMENT_CREATED)
+                        else:
+                            assert comment_id, "edit/delete require the ID of the previously created DB row"
+                            item = page.locator(".comment-item-container").filter(has=page.get_by_text(source_text, exact=True))
+                            expect(item).to_have_count(1)
+                            item.hover()
+                            item.get_by_role("button", name="더보기", exact=True).click()
+                            item.get_by_role("button", name="수정" if action == "edit" else "삭제", exact=True).click()
+                            if action == "edit":
+                                page.get_by_role("textbox", name="댓글 수정", exact=True).fill(COMMENT_EDITED)
+                            else:
+                                expect(page.get_by_role("dialog", name="댓글 삭제 확인", exact=True)).to_be_visible()
                         with page.expect_response(
                             lambda response: urlsplit(response.url).port == api_port
-                            and urlsplit(response.url).path == "/auth/logout"
-                        ) as logout_reply:
-                            page.get_by_role("button", name="로그아웃", exact=True).click()
-                        logout_reply.value.finished()
-                        page.wait_for_function("""() => {
+                            and urlsplit(response.url).path == "/apply"
+                            and member_comment_action(response.request.post_data_json) == action
+                        ) as comment_reply:
+                            if action == "create":
+                                page.get_by_role("button", name="댓글 등록", exact=True).click()
+                            elif action == "edit":
+                                page.get_by_role("button", name="저장", exact=True).click()
+                            else:
+                                page.get_by_role("dialog", name="댓글 삭제 확인", exact=True).get_by_role("button", name="확인", exact=True).click()
+                        comment_reply.value.finished()
+                        deadline = time.monotonic() + 15
+                        while not any(row.get("comment_action") == action and row.get("body_captured") is True for row in api_paths[comment_rows_start:]):
+                            if time.monotonic() >= deadline:
+                                raise AssertionError("comment mutation body was not collected before reload")
+                            page.wait_for_timeout(50)
+                        comment_rows = list(api_paths[comment_rows_start:])
+                        if action == "delete":
+                            expect(page.get_by_role("dialog", name="댓글 삭제 확인", exact=True)).to_be_hidden()
+                            expect(page.get_by_text(COMMENT_EDITED, exact=True)).to_have_count(0)
+                        else:
+                            expect(page.get_by_text(COMMENT_CREATED if action == "create" else COMMENT_EDITED, exact=True)).to_be_visible()
+                        page.wait_for_load_state("networkidle", timeout=10000)
+                        page.reload(wait_until="domcontentloaded")
+                        expect(page.get_by_text("첫 댓글", exact=True)).to_be_visible(timeout=30000)
+                        expect(page.get_by_text("두번째 댓글", exact=True)).to_be_visible()
+                        if action == "delete":
+                            expect(page.get_by_text(COMMENT_CREATED, exact=True)).to_have_count(0)
+                            expect(page.get_by_text(COMMENT_EDITED, exact=True)).to_have_count(0)
+                        else:
+                            text = COMMENT_CREATED if action == "create" else COMMENT_EDITED
+                            reloaded_item = page.locator(".comment-item-container").filter(has=page.get_by_text(text, exact=True))
+                            expect(reloaded_item).to_have_count(1)
+                            expect(reloaded_item).to_be_visible()
+                            if action == "edit":
+                                expect(page.get_by_text(COMMENT_CREATED, exact=True)).to_have_count(0)
+                                expect(reloaded_item.locator(".comment-time-text")).to_contain_text("(수정됨)")
+                        page.wait_for_load_state("networkidle", timeout=10000)
+                        comment_evidence = member_comment_evidence(comment_rows, action, True)
+                        assert comment_evidence["verified"], "comment mutation acceptance, exact fixture payload and reloaded UI must match"
+                        page.locator(".comment-container").scroll_into_view_if_needed()
+                        screenshot = output / f"{args.phase}-reloaded.png"
+                        page.screenshot(path=str(screenshot), full_page=True)
+                        screenshot_names.append(screenshot.name)
+                    else:
+                        journey_stage = "bookmark_action"
+
+                        bookmark_add =page.get_by_role("button", name="즐겨찾기 추가", exact=True)
+                        bookmark_remove = page.get_by_role("button", name="즐겨찾기 해제", exact=True)
+                        if args.phase == "add":
+                            expect(bookmark_add).to_be_visible()
+                            request_baseline = len(lifecycle)
+                            mark("bookmark_click")
+                            bookmark_add.click()
+                            mark("bookmark_click_returned")
+                            journey_stage = "bookmark_settle"
+                            wait_for_bookmark_mutation(page, request_baseline)
+                            mark("bookmark_requests_settled")
+                            journey_stage = "bookmark_action"
+                            expect(bookmark_remove).to_have_attribute("aria-pressed", "true")
+                            journey_stage = "bookmark_reload"
+                            mark("reload_start")
+                            page.reload(wait_until="domcontentloaded")
+                            mark("reload_return")
+                            journey_stage = "bookmark_reloaded"
+                            expect(bookmark_remove).to_have_attribute("aria-pressed", "true", timeout=30000)
+                            journey_stage = "bookmark_state_confirmed"
+                            label = "bookmarked"
+                        else:
+                            expect(bookmark_remove).to_be_visible()
+                            request_baseline = len(lifecycle)
+                            mark("bookmark_click")
+                            bookmark_remove.click()
+                            mark("bookmark_click_returned")
+                            journey_stage = "bookmark_settle"
+                            wait_for_bookmark_mutation(page, request_baseline)
+                            mark("bookmark_requests_settled")
+                            journey_stage = "bookmark_action"
+                            expect(bookmark_add).to_have_attribute("aria-pressed", "false")
+                            journey_stage = "bookmark_reload"
+                            mark("reload_start")
+                            page.reload(wait_until="domcontentloaded")
+                            mark("reload_return")
+                            journey_stage = "bookmark_reloaded"
+                            expect(bookmark_add).to_have_attribute("aria-pressed", "false", timeout=30000)
+                            journey_stage = "bookmark_state_confirmed"
+                            label = "bookmark-removed"
+
+                        screenshot = output / f"{args.phase}-{label}.png"
+                        page.screenshot(path=str(screenshot), full_page=True)
+                        screenshot_names.append(screenshot.name)
+                        # The original like control flips optimistically. Require its exact SDK
+                        # mutation's completed body, then a reload that preserves the new state.
+                        journey_stage = "member_like"
+                        like_rows_start = len(api_paths)
+                        initial_like = page.get_by_role("button", name="좋아요" if args.phase == "add" else "좋아요 취소", exact=True)
+                        expect(initial_like).to_have_attribute("aria-pressed", "false" if args.phase == "add" else "true")
+                        with page.expect_response(
+                            lambda response: urlsplit(response.url).port == api_port
+                            and urlsplit(response.url).path == "/apply"
+                            and member_like_action(response.request.post_data_json) == args.phase
+                        ) as like_reply:
+                            initial_like.click()
+                        like_reply.value.finished()
+                        deadline = time.monotonic() + 15
+                        while not any(row.get("like_action") == args.phase and row.get("body_captured") is True for row in api_paths[like_rows_start:]):
+                            if time.monotonic() >= deadline:
+                                raise AssertionError("like mutation body was not collected before reload")
+                            page.wait_for_timeout(50)
+                        like_rows = list(api_paths[like_rows_start:])
+                        page.reload(wait_until="domcontentloaded")
+                        expect(page.locator(".video-information-container .title")).to_have_text(VIDEO_TITLE, timeout=30000)
+                        persisted_like = page.get_by_role("button", name="좋아요 취소" if args.phase == "add" else "좋아요", exact=True)
+                        expect(persisted_like).to_have_attribute("aria-pressed", "true" if args.phase == "add" else "false")
+                        like_evidence = member_like_evidence(like_rows, args.phase, persisted_like.get_attribute("aria-pressed") == "true")
+                        assert like_evidence["verified"], "like server acceptance and reloaded UI must both be observed"
+                        screenshot = output / f"{args.phase}-like-reloaded.png"
+                        page.screenshot(path=str(screenshot), full_page=True)
+                        screenshot_names.append(screenshot.name)
+                        if args.phase == "remove":
+                            # Keep existing bookmark validation scoped to its own journey. The
+                            # original logout redirects to /main; visitor policy remains deferred.
+                            bookmark_api_row_count = len(api_paths)
+                            journey_stage = "member_logout"
+                            page.get_by_role("button", name="마이페이지로 이동", exact=True).click()
+                            expect(page).to_have_url(re.compile(r"/my$"))
+                            with page.expect_response(
+                                lambda response: urlsplit(response.url).port == api_port
+                                and urlsplit(response.url).path == "/auth/logout"
+                            ) as logout_reply:
+                                page.get_by_role("button", name="로그아웃", exact=True).click()
+                            logout_reply.value.finished()
+                            page.wait_for_function("""() => {
                           const state = JSON.parse(localStorage.getItem('auth-storage') || 'null')?.state;
                           return state?.is_sign_in === false && state?.access_token === '' && state?.user_id === '';
                         }""")
-                        cleared_state = page.evaluate("""() => {
+                            cleared_state = page.evaluate("""() => {
                           const state = JSON.parse(localStorage.getItem('auth-storage') || 'null')?.state;
                           return { signed_out: state?.is_sign_in === false,
                             access_token_cleared: state?.access_token === '', user_id_cleared: state?.user_id === '' };
                         }""")
-                        logout_evidence = member_logout_evidence(api_paths, cleared_state)
-                        assert logout_evidence["verified"], "server logout and client clear must both be observed"
+                            logout_evidence = member_logout_evidence(api_paths, cleared_state)
+                            assert logout_evidence["verified"], "server logout and client clear must both be observed"
                     journey_stage = "completed"
                 except Exception as error:
                     failure_type = safe_browser_failure_type(error)
@@ -870,6 +956,7 @@ def main() -> int:
             "journey_stage": journey_stage,
             "member_logout": logout_evidence,
             "member_like": like_evidence,
+            "member_comment": comment_evidence,
             "failure_type": failure_type,
             "bookmark_ui_state": bookmark_ui_state,
             "failure_route_class": failure_route_class,
@@ -915,6 +1002,7 @@ def main() -> int:
             "journey_stage": journey_stage,
             "member_logout": logout_evidence,
             "member_like": like_evidence,
+            "member_comment": comment_evidence,
             "failure_type": failure_type,
             "bookmark_ui_state": bookmark_ui_state,
             "failure_route_class": failure_route_class,

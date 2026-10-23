@@ -74,3 +74,6 @@ Verify `39982476627` attempt1 measured the real member edit-save path after TTL:
 
 
 **2026-10-24 07:05 KST 좋아요 후속:** `1e7fda7` 일반 Verify `40025235103` attempt1 success. 직접 받은 artifact `12534242371`에서 원본 좋아요/취소 각1회 mutation 수락, reload active true/false, browser·DB success, 회원 row0→1→0 및 타회원 count 보존을 확인했다. 이번 add33/remove37 lifecycle은 failed0/unfinished0이며 logout/profile/reissue도 성공 상태다. 사용자 API25경로 표의 like 행 갱신. 다음 댓글 UI 쓰기·수정·삭제는 미검증이며 새 컨텍스트로 이어간다. WBS90/25·25경로 전수 미완·model.h5/visitor보류 유지. 상세는 product verification 최신 절과 STATUS 참조.
+
+
+**2026-10-24 07:17 KST 댓글 검증 추가 (CI pending):** 원본 사용자 UI의 댓글 등록→수정→삭제 확인을 3개 fresh-browser phase로 추가했다. 단일 Comment create/edit/delete SDK action·정확한 fixture payload·완료된 성공 body·reload 렌더/수정됨 표시/삭제 비노출을 검사한다. MySQL은 단계마다 같은 ID·내용·플래그·soft-delete 행보존 및 모든 무관한 댓글 행의 전체 snapshot 보존을 별도로 기록한다. Local evidence unittest43/adapter6 및 Rust no-run compile은 통과했으나 새 browser/DB 결과 전까지 성공으로 세지 않는다. 원본 UI와 정책은 불변. 전체25경로/WBS90·25/model.h5/visitor 보류 유지. 상세는 STATUS 최신 절과 product/VERIFICATION.md의 댓글 여정 절.

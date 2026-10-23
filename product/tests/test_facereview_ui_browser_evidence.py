@@ -39,6 +39,39 @@ VIDEO_ID = "aaaaaaaa-0000-4000-8000-000000000001"
 
 
 class BrowserEvidenceTests(unittest.TestCase):
+    def test_comment_action_accepts_only_single_member_mutations(self):
+        from product.tests.facereview_ui_browser_evidence import member_comment_action
+
+        create = {"atomic": [{"create": "Comment", "values": {"video": VIDEO_ID, "user": "member", "content": "fixture"}}]}
+        edit = {"apply": "Comment.edit", "target": {"ids": ["comment"]}, "values": {"content": "edited"}}
+        delete = {"apply": "Comment.delete", "target": {"ids": ["comment"]}}
+        for action, request in [("create", create), ("edit", edit), ("delete", delete)]:
+            self.assertEqual(member_comment_action({"request": request}), action)
+        for request in [None, {}, {"apply": "Comment.remove"}, {**edit, "target": {"ids": []}},
+                        {**edit, "target": {"ids": ["one", "two"]}}, {**edit, "values": {"content": "x", "user": "other"}},
+                        {**delete, "values": {"is_deleted": True}}, {"atomic": create["atomic"] * 2},
+                        {"atomic": [{"create": "Comment", "values": {"content": "x"}}]},
+                        {"atomic": [{"create": "VideoLike", "values": create["atomic"][0]["values"]}]}]:
+            with self.subTest(request=request):
+                self.assertIsNone(member_comment_action({"request": request}))
+
+    def test_comment_evidence_requires_body_target_and_reload_render(self):
+        from product.tests.facereview_ui_browser_evidence import member_comment_evidence
+
+        for action in ("create", "edit", "delete"):
+            row = {"path": "/apply", "comment_action": action, "status": 200, "body_captured": True,
+                   "ok": True, "comment_target_matches": True, "comment_content_matches": True}
+            self.assertTrue(member_comment_evidence([row], action, True)["verified"])
+            for rows in [[], [row, row], [{**row, "status": 500}], [{**row, "ok": False}],
+                         [{**row, "body_captured": False}], [{**row, "comment_target_matches": False}],
+                         [{**row, "comment_content_matches": False}], [{**row, "path": "/read"}]]:
+                with self.subTest(action=action, rows=rows):
+                    self.assertFalse(member_comment_evidence(rows, action, True)["verified"])
+            self.assertFalse(member_comment_evidence([row], action, False)["verified"])
+            other = {**row, "comment_action": "delete" if action != "delete" else "edit"}
+            self.assertFalse(member_comment_evidence([row, other], action, True)["verified"])
+        self.assertFalse(member_comment_evidence([], "remove", True)["verified"])
+
     def test_like_evidence_requires_exact_mutation_body_and_reloaded_state(self):
         from product.tests.facereview_ui_browser_evidence import member_like_action, member_like_evidence
 

@@ -1,4 +1,16 @@
-# 최신 재개 지점 (2026-10-24 07:05 KST, 좋아요 add/remove UI·DB 검증 성공)
+# 최신 재개 지점 (2026-10-24 07:17 KST, 댓글 UI 3단계 검증 추가·CI 판정 대기)
+
+원본 사용자 UI 고정 SHA `2e7c021fa5abebd72278d841b8066a33d45cfbb3`의 CommentSection/CommentItem, SDK write adapter, Comment 정의 및 DB defaults를 대조했다. 원본 checkout과 앱 정책은 변경하지 않았다. 원본 등록 버튼→수정 메뉴/저장→삭제 메뉴/확인창을 각각 fresh browser phase로 실행하며, 정확한 SDK 단일 mutation·fixture 대상/내용·완료된 성공 body와 reload 후 렌더를 함께 요구한다. 수정됨 표시와 삭제 후 비노출도 검사한다.
+
+Rust caller는 create/edit/delete 각 phase 직후 같은 comment ID, 회원/영상/내용, is_modified 0→1→1, is_deleted 0→0→1, 총 행 +1 유지(soft delete), 생성시각 보존을 검사한다. 무관한 모든 댓글 행의 ID·내용·플래그·시각 전체 snapshot을 비교해 타회원 보존을 별도로 판정한다. 단계별 browser JSON/PNG와 comment-db-result.json을 남긴다. 기존 bookmark/like/logout 분기의 AST는 동일하다.
+
+로컬 검증: 새 판정기 RED 2 failures→GREEN, 중복된 다른 댓글 mutation negative-control도 RED→GREEN; evidence unittest43 OK, writeAdapter node test6 pass, browser AST/fmt/diff OK. Rust MySQL auth `--no-run --locked --offline` compile exit0(4.36s)이며 실DB 실행이 아니다. 최초 compile은 지정한 기본 포트5432를 프로젝트 guard가 거절했고, PG* unset 및 전용55432/test DB 계약으로 바로잡았다. 로컬 브라우저는 실행하지 않았고 실제 댓글 browser/DB 성공은 새 Linux 일반 Verify의 safe artifact로 판정한다.
+
+진행 중 동일 ref CI에 push/dispatch/cancel 금지; workflow timeout45분 뒤 재개 예약으로 확인하며 장시간 대기하지 않는다. 성공이면 사용자25경로 comments행을 근거로 갱신하고 다음 search/계정 여정으로 진행한다. 현재 댓글UI는 미검증, WBS90/25·25경로 전수미완·model.h5권리/visitor보류 및 과거399638/399880 원인미확정 유지.
+
+---
+
+# 이전 재개 지점 (2026-10-24 07:05 KST, 좋아요 add/remove UI·DB 검증 성공)
 
 코드 `1e7fda7dca0c4971e11d8324d4aee4c0502500c3`의 일반 Verify `40025235103` attempt1은 completed/success다. 직접 다운로드한 safe artifact `12534242371`에서 add/remove 모두 completed/page_error_count0/member_like.verified=true, mutation_response_count1/server_accepted=true, reload active true/false를 확인했다. 별도 like DB JSON의 browser/database status는 모두 success, 해당 회원 row는 add1/remove0이고 타회원 like count도 보존됐다. Rust caller의 초기0 assertion과 연결해 0→1→0을 확인한다. PNG에서도 활성/비활성 버튼·합계2→1을 직접 확인했다. 이번 lifecycle은 add33/remove37 requests·responses·finished 동일, failed0/unfinished0이다(이전 실행의 extension2 unfinished와 구분).
 
