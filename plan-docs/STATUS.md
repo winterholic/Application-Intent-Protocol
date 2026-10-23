@@ -1,4 +1,14 @@
-# 최신 재개 지점 (2026-10-23, WBS 7.2.9/7.2.10 관리자 권한·상태 검증 후속, 코드 SHA `1e528aa` Verify failed)
+# 최신 재개 지점 (2026-10-23, WBS 7.2.9/7.2.10 관리자 에러 경계 live 검증, 코드 SHA `0acf327` Verify green)
+
+코드 SHA `0acf32756a0e0cca38be9a83668022a686cadb52`의 Verify `39947955420`은 attempt 1에서 `success`다(같은 SHA의 나머지 6개 workflow도 success). 직전 `1e528aa`의 Verify `39939106930` 실패는 원문 확보로 확정했다: step 13 브라우저 여정의 `closed_request_refusal`에서 시험이 `WIRE.EFFECT_TARGET_MISSING`을 기대했으나 서버는 `WIRE.INVALID_STATE`를 반환했다(artifact와 서버 로그 일치). 시험 기대값 오류였고 정책·권한·flaky가 아니다. 기대값 정렬과 직전 Run들의 보존된 작업 트리 변경(세션 SDK client, job 캐시 무효화, null metrics 타입)을 한 커밋 `0acf327`로 push했다.
+
+증거: 로컬(Claude 엔진 Mac, run-owned 컨테이너)에서 live 서버·DB 시험 5.34s 통과, 브라우저 포함 19.83s 통과(null metrics mounted render 확인), CI Linux에서 같은 여정과 ADMIN의 ADMIN/SUPER_ADMIN 대상 FORBIDDEN 4건, 종료 요청·삭제 영상 재결정 거부 3종이 통과했다. 이전 `SERVER_CONFIG`는 Codex nested sandbox 범위의 한계로 분리했고 이 환경에서는 재현되지 않았다. 상세는 [제품 검증](../product/VERIFICATION.md#2026-10-23-관리자-에러-경계-live-검증-코드-sha-0acf32756a0e0cca38be9a83668022a686cadb52).
+
+미검증·보류: ADMIN→GENERAL 방향, 기간 7d 외, 토큰 reissue, 원본 오류 문구 동등성, 사용자 25 route 전체, profile after-save 빈 화면(별도 미해결), model.h5·visitor 정책. PMS 7.2.9 `doing/90%`, 7.2.10 `doing/25%` 유지. 관리자 feature API 13개(읽기 7/쓰기 6), shared auth 4개, feature 화면 5개, 사용자 고유 경로 25개는 서로 별도 분모다.
+
+---
+
+# 이전 재개 지점 (2026-10-23, WBS 7.2.9/7.2.10 관리자 권한·상태 검증 후속, 코드 SHA `1e528aa` Verify failed; 위 `0acf327`로 원인 확정·해소)
 
 코드 SHA `1e528aa4a2c47ca02a453c1c4f1f7c0075e5380f`는 origin/main과 일치하고 작업 트리가 clean이다. Verify `39939106930`은 public Actions 요약에서 실패, core job exit code 101로 확인했다. 같은 SHA에서 step 10~12는 success였고 step 13은 당시 진행 중이었다. 이후 API는 rate limit 403, public job 로그는 로그인 필요라 정확한 실패 step·원문·브라우저 artifact 내용은 미확인이다. 실패 원인을 권한 assertion이나 flaky로 분류하지 않았고 새 코드 push/재실행도 하지 않았다.
 
