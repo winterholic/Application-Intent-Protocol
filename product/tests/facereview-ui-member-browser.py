@@ -2,6 +2,7 @@
 """Exercise the pinned FaceReview React screens against a live AIP service."""
 
 import argparse
+import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
@@ -21,8 +22,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from product.tests.facereview_ui_browser_evidence import (
     extension_request_evidence,
     extension_response_evidence,
+    failed_read_requests,
     fixture_thumbnail_redirect_url,
     read_request_evidence,
+    safe_browser_caller_frames,
+    safe_wire_code,
+    console_error_evidence,
 )
 
 
@@ -109,9 +114,11 @@ def main() -> int:
     )
     api_paths: list[dict[str, object]] = []
     read_requests: list[dict[str, object]] = []
+    read_callers_by_body: dict[bytes, list[dict[str, object]]] = {}
     adapter_list_evidence: list[dict[str, object]] = []
     page_errors: list[str] = []
     console_error_count = 0
+    console_errors: list[dict[str, object]] = []
     blocked_external_image_count = 0
     fixture_thumbnail_redirect_count = 0
     fixture_thumbnail_response_statuses: list[int] = []
@@ -155,6 +162,33 @@ def main() -> int:
                     "console.info('AIP_SAFE_LIST_EVIDENCE:' + JSON.stringify(event));"
                 )
 
+                cdp = context.new_cdp_session(page)
+                cdp.send("Network.enable")
+
+                def capture_network_initiator(event: dict[str, object]) -> None:
+                    request = event.get("request")
+                    if not isinstance(request, dict) or request.get("method") != "POST":
+                        return
+                    request_url = request.get("url")
+                    if not isinstance(request_url, str):
+                        return
+                    parsed_request_url = urlsplit(request_url)
+                    if parsed_request_url.port != urlsplit(args.api).port or parsed_request_url.path != "/read":
+                        return
+                    post_data = request.get("postData")
+                    initiator = event.get("initiator")
+                    stack = initiator.get("stack") if isinstance(initiator, dict) else None
+                    frames: list[dict[str, object]] = []
+                    while isinstance(stack, dict) and len(frames) < 12:
+                        call_frames = stack.get("callFrames")
+                        if isinstance(call_frames, list):
+                            frames.extend(frame for frame in call_frames if isinstance(frame, dict))
+                        stack = stack.get("parent")
+                    safe_frames = safe_browser_caller_frames(frames)
+                    if isinstance(post_data, str):
+                        digest = hashlib.sha256(post_data.encode("utf-8")).digest()
+                        read_callers_by_body.setdefault(digest, []).append(safe_frames)
+
                 def capture_response(response) -> None:
                     parsed = urlsplit(response.url)
                     if parsed.port == urlsplit(args.api).port:
@@ -172,15 +206,27 @@ def main() -> int:
                             row["contract_matches_runtime"] = request_contract == expected_contract
                             row["x_aip_contract"] = request_contract
                         if isinstance(envelope, dict):
-                            for key in ("ok", "code"):
-                                if key in envelope and isinstance(envelope[key], (bool, str)):
-                                    row[key] = envelope[key]
+                            if isinstance(envelope.get("ok"), bool):
+                                row["ok"] = envelope["ok"]
+                            code = safe_wire_code(envelope.get("code"))
+                            if code is not None:
+                                row["code"] = code
                         if parsed.path == "/read":
                             try:
                                 read_evidence = read_request_evidence(response.request.post_data_json)
                             except Exception:
                                 read_evidence = {"read_resource": "unrecognized"}
                             row["read_request"] = read_evidence
+                            post_data = response.request.post_data
+                            if isinstance(post_data, str):
+                                digest = hashlib.sha256(post_data.encode("utf-8")).digest()
+                                queued = read_callers_by_body.get(digest, [])
+                                if queued:
+                                    row["caller_frames"] = queued.pop(0)
+                                    if not queued:
+                                        del read_callers_by_body[digest]
+                            else:
+                                row["caller_frames"] = []
                             read_result = dict(read_evidence)
                             read_result["status"] = response.status
                             if isinstance(row.get("ok"), bool):
@@ -201,6 +247,7 @@ def main() -> int:
                         api_paths.append(row)
 
                 page.on("response", capture_response)
+                cdp.on("Network.requestWillBeSent", capture_network_initiator)
                 page.on(
                     "response",
                     lambda response: fixture_thumbnail_response_statuses.append(response.status)
@@ -230,6 +277,8 @@ def main() -> int:
                             })
                     elif message.type == "error":
                         console_error_count += 1
+                        if len(console_errors) < 12:
+                            console_errors.append(console_error_evidence(message.type, message.text, message.location))
 
                 page.on("console", capture_console_error)
 
@@ -352,6 +401,9 @@ def main() -> int:
             raise RuntimeError("the real browser request contract header differs from the generated UI binding")
         if any(row["path"] in required_paths and row["status"] != 200 for row in api_paths):
             raise RuntimeError("an expected AIP API request did not return HTTP 200")
+        failed_reads = failed_read_requests(api_paths)
+        if failed_reads:
+            raise RuntimeError("React /read returned an error envelope: " + json.dumps(failed_reads, ensure_ascii=False))
         if page_errors:
             raise RuntimeError("browser reported an unhandled React page error")
         if fixture_thumbnail_redirect_count < 1 or 200 not in fixture_thumbnail_response_statuses:
@@ -370,6 +422,7 @@ def main() -> int:
             "page_error_count": len(page_errors),
             "page_error_types": page_errors,
             "console_error_count": console_error_count,
+            "console_errors": console_errors,
             "blocked_external_image_count": blocked_external_image_count,
             "fixture_thumbnail_redirect_count": fixture_thumbnail_redirect_count,
             "fixture_thumbnail_response_statuses": fixture_thumbnail_response_statuses,
@@ -396,6 +449,7 @@ def main() -> int:
             "page_error_count": len(page_errors),
             "page_error_types": page_errors,
             "console_error_count": console_error_count,
+            "console_errors": console_errors,
             "blocked_external_image_count": blocked_external_image_count,
             "fixture_thumbnail_redirect_count": fixture_thumbnail_redirect_count,
             "fixture_thumbnail_response_statuses": fixture_thumbnail_response_statuses,

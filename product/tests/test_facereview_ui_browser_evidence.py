@@ -4,7 +4,11 @@ from product.tests.facereview_ui_browser_evidence import (
     extension_request_evidence,
     extension_response_evidence,
     fixture_thumbnail_redirect_url,
+    failed_read_requests,
+    console_error_evidence,
     read_request_evidence,
+    safe_browser_caller_frames,
+    safe_wire_code,
 )
 
 
@@ -12,6 +16,58 @@ VIDEO_ID = "aaaaaaaa-0000-4000-8000-000000000001"
 
 
 class BrowserEvidenceTests(unittest.TestCase):
+    def test_read_evidence_unwraps_sdk_envelope_and_identifies_known_rejected_query_key(self):
+        summary = read_request_evidence({
+            "query": {
+                "read": "Comment",
+                "select": ["id", "content", "is_modified", "created_at"],
+                "filter": [{"field": "video", "op": "eq", "value": "fixture-id-must-not-escape"}],
+                "limit": 100,
+                "traverse": {"user": {"select": ["id", "name"]}},
+            },
+        })
+        self.assertEqual(summary["request_envelope_keys"], ["query"])
+        self.assertEqual(summary["operation"], "read")
+        self.assertEqual(summary["read_resource"], "Comment")
+        self.assertEqual(summary["rejected_query_keys"], ["traverse"])
+        self.assertEqual(summary["unknown_query_key_count"], 1)
+        self.assertEqual(summary["select_fields"], ["id", "content", "is_modified", "created_at"])
+        self.assertNotIn("fixture-id-must-not-escape", repr(summary))
+
+    def test_http_200_read_error_is_not_classified_as_success(self):
+        rows = [
+            {"path": "/read", "status": 200, "ok": False, "code": "WIRE.UNKNOWN_KEY"},
+            {"path": "/read", "status": 200, "ok": True},
+            {"path": "/auth/reissue", "status": 200, "ok": False, "code": "WIRE.TOKEN_EXPIRED"},
+        ]
+        self.assertEqual(failed_read_requests(rows), [rows[0]])
+        self.assertEqual(safe_wire_code("WIRE.UNKNOWN_KEY"), "WIRE.UNKNOWN_KEY")
+        self.assertIsNone(safe_wire_code("private text"))
+
+    def test_console_summary_keeps_only_classification_and_local_caller(self):
+        summary = console_error_evidence(
+            "error",
+            "request failed WIRE.UNKNOWN_KEY for secret-member-value",
+            {"url": "http://localhost:5173/src/api/watch.ts?t=secret", "lineNumber": 17, "columnNumber": 4},
+        )
+        self.assertEqual(summary, {
+            "console_message_type": "error",
+            "classification": "wire_response_error",
+            "source": "/src/api/watch.ts:17:4",
+            "wire_code": "WIRE.UNKNOWN_KEY",
+        })
+        self.assertNotIn("secret-member-value", repr(summary))
+        self.assertEqual(
+            console_error_evidence("error", "failed", {"url": "https://outside.example/user/private"})["source"],
+            "unmapped",
+        )
+
+    def test_caller_trace_keeps_only_local_src_paths(self):
+        self.assertEqual(safe_browser_caller_frames([
+            {"url": "http://localhost:5173/src/api/watch.ts?t=secret", "lineNumber": 17, "columnNumber": 4},
+            {"url": "https://outside.example/member/private.ts", "lineNumber": 1, "columnNumber": 1},
+        ]), [{"path": "/src/api/watch.ts", "line": 17, "column": 4}])
+
     def test_read_evidence_keeps_query_shape_and_omits_filter_values(self):
         summary = read_request_evidence({
             "read": "VideoBookmark",

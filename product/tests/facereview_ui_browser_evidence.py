@@ -15,10 +15,28 @@ READ_FIELDS = {
     "Video": {"id", "youtube_url", "title", "channel_name", "category", "duration", "view_count", "is_deleted"},
     "VideoBookmark": {"id", "video", "user", "created_at"},
     "VideoLike": {"id", "video", "user", "created_at"},
-    "Comment": {"id", "video", "user", "content", "is_deleted", "created_at"},
+    "Comment": {"id", "video", "user", "content", "is_modified", "is_deleted", "created_at", "updated_at"},
     "User": {"id", "email", "name", "role", "is_deleted", "created_at"},
+    "UserFavoriteGenre": {"id", "user", "genre", "created_at", "updated_at"},
 }
 READ_QUERY_KEYS = {"read", "select", "filter", "sort", "limit", "offset", "after"}
+READ_QUERY_DIAGNOSTIC_KEYS = READ_QUERY_KEYS | {"traverse"}
+READ_ENVELOPE_KEYS = {"query", "contractFingerprint"}
+SAFE_WIRE_CODES = {
+    "WIRE.UNKNOWN_KEY",
+    "WIRE.CONTRACT_MISMATCH",
+    "WIRE.UNAUTHENTICATED",
+    "WIRE.TOKEN_EXPIRED",
+    "WIRE.BAD_VALUE",
+    "WIRE.NOT_EXPOSED",
+    "WIRE.ACCESS_DENIED",
+    "WIRE.FORBIDDEN",
+    "WIRE.FIELD_NOT_EXPOSED",
+    "WIRE.UNKNOWN_FIELD",
+    "WIRE.READ_ONLY",
+    "WIRE.INVALID_QUERY",
+    "WIRE.OUTPUT_INVALID",
+}
 FILTER_OPS = {"eq", "ne", "lt", "lte", "gt", "gte", "in", "contains", "like"}
 
 
@@ -46,22 +64,48 @@ def fixture_thumbnail_redirect_url(
 def read_request_evidence(body: Any) -> dict[str, object]:
     """Summarize an allowlisted read query's structure without recording filter values."""
     if not isinstance(body, dict):
-        return {"read_resource": "unrecognized", "recognized_query_keys": [], "unknown_query_key_count": 0}
+        return {
+            "operation": "unrecognized",
+            "read_resource": "unrecognized",
+            "request_envelope_keys": [],
+            "unknown_envelope_key_count": 0,
+            "recognized_query_keys": [],
+            "rejected_query_keys": [],
+            "unknown_query_key_count": 0,
+        }
 
-    resource = body.get("read")
+    wrapped_query = body.get("query")
+    if isinstance(wrapped_query, dict):
+        query = wrapped_query
+        envelope_keys = sorted(key for key in body if key in READ_ENVELOPE_KEYS)
+        unknown_envelope_key_count = sum(key not in READ_ENVELOPE_KEYS for key in body)
+    else:
+        query = body
+        envelope_keys = []
+        unknown_envelope_key_count = 0
+
+    resource = query.get("read")
     fields = READ_FIELDS.get(resource) if isinstance(resource, str) else None
+    operation = "read" if fields is not None else "unrecognized"
+    rejected_query_keys = sorted(
+        key for key in query if key in READ_QUERY_DIAGNOSTIC_KEYS and key not in READ_QUERY_KEYS
+    )
     summary: dict[str, object] = {
+        "operation": operation,
         "read_resource": resource if fields is not None else "unrecognized",
-        "recognized_query_keys": sorted(key for key in body if key in READ_QUERY_KEYS),
-        "unknown_query_key_count": sum(key not in READ_QUERY_KEYS for key in body),
+        "request_envelope_keys": envelope_keys,
+        "unknown_envelope_key_count": unknown_envelope_key_count,
+        "recognized_query_keys": sorted(key for key in query if key in READ_QUERY_KEYS),
+        "rejected_query_keys": rejected_query_keys,
+        "unknown_query_key_count": sum(key not in READ_QUERY_KEYS for key in query),
     }
-    select = body.get("select")
+    select = query.get("select")
     if isinstance(select, list):
         safe_fields = [field for field in select if isinstance(field, str) and fields and field in fields]
         summary["select_fields"] = safe_fields
         summary["unknown_select_field_count"] = len(select) - len(safe_fields)
 
-    filters = body.get("filter")
+    filters = query.get("filter")
     if isinstance(filters, list):
         safe_filters: list[dict[str, str]] = []
         unknown_filter_key_count = 0
@@ -83,10 +127,78 @@ def read_request_evidence(body: Any) -> dict[str, object]:
         summary["filter_fields"] = safe_filters
         summary["unknown_filter_key_count"] = unknown_filter_key_count
 
-    limit = body.get("limit")
+    limit = query.get("limit")
     if isinstance(limit, int) and not isinstance(limit, bool) and 0 <= limit <= 100000:
         summary["limit"] = limit
     return summary
+
+
+def safe_wire_code(value: Any) -> str | None:
+    return value if isinstance(value, str) and value in SAFE_WIRE_CODES else None
+
+
+def failed_read_requests(api_requests: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Select already-sanitized non-successful read rows; HTTP status alone is not success."""
+    return [row for row in api_requests if row.get("path") == "/read" and row.get("ok") is not True]
+
+
+def safe_browser_caller_frames(frames: Any) -> list[dict[str, object]]:
+    """Keep only bounded source locations from the pinned local React dev server."""
+    if not isinstance(frames, list):
+        return []
+    result: list[dict[str, object]] = []
+    for frame in frames:
+        if not isinstance(frame, dict) or not isinstance(frame.get("url"), str):
+            continue
+        parsed = urlsplit(frame["url"])
+        path = parsed.path
+        line = frame.get("lineNumber")
+        column = frame.get("columnNumber")
+        if (parsed.hostname not in {"localhost", "127.0.0.1"} or parsed.port != 5173
+                or not path.startswith("/src/") or not isinstance(line, int) or line < 0
+                or not isinstance(column, int) or column < 0):
+            continue
+        result.append({"path": path[:240], "line": min(line, 100000), "column": min(column, 100000)})
+        if len(result) >= 4:
+            break
+    return result
+
+
+def console_error_evidence(message_type: Any, message_text: Any, location: Any) -> dict[str, object]:
+    """Classify a console error without storing its raw text or arbitrary source URL."""
+    safe_type = message_type if message_type in {"error", "warning", "log", "debug", "info"} else "unrecognized"
+    text = message_text if isinstance(message_text, str) else ""
+    wire_code = next((code for code in SAFE_WIRE_CODES if code in text), None)
+    if wire_code is not None:
+        classification = "wire_response_error"
+    elif "Failed to load resource" in text or "net::ERR_" in text:
+        classification = "network_resource_error"
+    elif "ResizeObserver loop" in text:
+        classification = "resize_observer_error"
+    else:
+        classification = "opaque_console_error"
+
+    source = "unmapped"
+    if isinstance(location, dict) and isinstance(location.get("url"), str):
+        parsed = urlsplit(location["url"])
+        path = parsed.path
+        line = location.get("lineNumber")
+        column = location.get("columnNumber")
+        if parsed.hostname in {"localhost", "127.0.0.1"} and parsed.port == 5173 and path.startswith("/src/"):
+            source = path[:240]
+            if isinstance(line, int) and 0 < line <= 100000:
+                source += f":{line}"
+                if isinstance(column, int) and 0 <= column <= 100000:
+                    source += f":{column}"
+
+    result: dict[str, object] = {
+        "console_message_type": safe_type,
+        "classification": classification,
+        "source": source,
+    }
+    if wire_code is not None:
+        result["wire_code"] = wire_code
+    return result
 
 
 def extension_request_evidence(body: Any) -> dict[str, object]:
