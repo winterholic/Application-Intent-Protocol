@@ -20,6 +20,10 @@ add/reload에서 UI bookmark 상태가 `aria-pressed=true`, off/reload에서 `fa
 
 같은 artifact의 console error는 `error/network_resource_error`, source `unmapped` 1건이고 page error는 0이다. 원인은 이 run만으로 확정되지 않았다. 후속 browser instrument는 URL·token 없이 허용된 외부 미디어 host class, resource type, Chromium error code만 남긴다. 최종 수정 SHA의 관련 CI 확인을 기다린다. 진단 artifact: 이번 Run outbox `ci-39888567142/facereview-ui-browser-39888567142-1/add/`.
 
+**후속 수정 SHA `4f5e6b039f503fecf93a6af364d13b4a7ada49b6`, Verify `39891300600`.** 실제 React `Comment` `/read`는 HTTP 200 `ok=true`, rejected query key 0으로 바뀌었고 nested User selection에 허용된 `id,name`이 갔다. 로그인·session, bookmark `/apply` 2건, `VideoBookmark` 읽기가 모두 성공했다. safe screenshot에는 main 화면의 fixture 카드와 watch 화면 댓글 2개가 보인다. query defect 수정은 runtime에서 통과했으나 browser step12는 add phase 종료 전에 failure로 끝나고 DB on/off 최종 journey는 아직 미확정이다. 실패 artifact에는 그때의 단계/예외 종류가 없었다.
+
+기존 console `network_resource_error` 2건의 원인은 이제 관측됐다: 두 request-failed event 모두 외부 `youtube` host class의 `script`, `net::ERR_FAILED`이며 harness의 의도적 외부 YouTube 차단과 일치한다. 이는 재생 불가 제한을 알리는 console 출력이고 React pageerror는 0이다. 정확한 클릭/재로드 중단 단계를 safe artifact에 추가하는 계측 변경을 적용해 최종 여정을 한 번 더 검증한다. 증거: 이번 Run outbox `ci-39891300600/facereview-ui-browser-39891300600-1/add/`.
+
 ### 이전 재개 지점 (2026-10-23, 인증 회원 SDK/API 최소 journey)
 
 WBS 7.2.10의 모델·방문자 정책과 독립된 인증 회원 journey 조각은 코드 SHA `1033269ec1389ddd7b750b6ad9f5e53bd100a53b`에서 Linux CI Verify `39851918809`와 같은 SHA의 5개 보조 workflow까지 모두 success다. 실제 생성 TypeScript contract와 설치한 `@aip/sdk`를 실제 AIP 서비스에 연결해 전용 fixture 회원 login → refresh 1회 → UI 읽기 어댑터 영상 목록 → 북마크 생성/해제 → 댓글 생성/수정/삭제 → logout 뒤 stale bearer의 `WIRE.UNAUTHENTICATED`를 확인했다. 이 journey는 25개 UI API 경로 중 인증·회원 읽기·쓰기의 최소 경로를 덮는다. CI 상세는 [제품 검증](../product/VERIFICATION.md)의 「2026-10-23 WBS 7.2.10 인증 회원 SDK/API journey」에 기록했다. 화면에서 실제 로그인한 브라우저 journey, 전체 25개 경로 동등성, 전체 prerender는 미검증이다. ML inference/model 권리와 방문자 접근 정책은 이번 범위에서 다루지 않았으며 7.2.10 전체 완료로 세지 않는다. 다음은 나머지 인증 회원 화면/API 경로의 범위를 기존 결정과 대조해 한 조각씩 좁힌다.

@@ -19,6 +19,8 @@ READ_FIELDS = {
     "User": {"id", "email", "name", "role", "is_deleted", "created_at"},
     "UserFavoriteGenre": {"id", "user", "genre", "created_at", "updated_at"},
 }
+READ_RELATIONS = {"Comment": {"user": {"id", "name"}}}
+SAFE_FAILURE_TYPES = {"AssertionError", "Error", "TimeoutError", "TargetClosedError", "RuntimeError"}
 READ_QUERY_KEYS = {"read", "select", "filter", "sort", "limit", "offset", "after"}
 READ_QUERY_DIAGNOSTIC_KEYS = READ_QUERY_KEYS | {"traverse"}
 READ_ENVELOPE_KEYS = {"query", "contractFingerprint"}
@@ -112,7 +114,27 @@ def read_request_evidence(body: Any) -> dict[str, object]:
     if isinstance(select, list):
         safe_fields = [field for field in select if isinstance(field, str) and fields and field in fields]
         summary["select_fields"] = safe_fields
-        summary["unknown_select_field_count"] = len(select) - len(safe_fields)
+        relation_summaries: list[dict[str, object]] = []
+        unknown_select_field_count = sum(
+            1 for field in select if isinstance(field, str) and (not fields or field not in fields)
+        )
+        unknown_select_field_count += sum(1 for field in select if not isinstance(field, (str, dict)))
+        relations = READ_RELATIONS.get(resource, {})
+        for item in select:
+            if not isinstance(item, dict):
+                continue
+            relation, nested = next(iter(item.items()), (None, None))
+            relation_fields = relations.get(relation) if isinstance(relation, str) else None
+            nested_fields = nested.get("select") if isinstance(nested, dict) else None
+            if relation_fields is None or not isinstance(nested_fields, list):
+                unknown_select_field_count += 1
+                continue
+            safe_nested = [field for field in nested_fields if isinstance(field, str) and field in relation_fields]
+            unknown_select_field_count += len(nested_fields) - len(safe_nested)
+            relation_summaries.append({"relation": relation, "fields": safe_nested})
+        if relation_summaries:
+            summary["select_relations"] = relation_summaries
+        summary["unknown_select_field_count"] = unknown_select_field_count
 
     filters = query.get("filter")
     if isinstance(filters, list):
@@ -144,6 +166,11 @@ def read_request_evidence(body: Any) -> dict[str, object]:
 
 def safe_wire_code(value: Any) -> str | None:
     return value if isinstance(value, str) and value in SAFE_WIRE_CODES else None
+
+
+def safe_browser_failure_type(value: Any) -> str:
+    name = type(value).__name__
+    return name if name in SAFE_FAILURE_TYPES else "unrecognized"
 
 
 def failed_read_requests(api_requests: list[dict[str, object]]) -> list[dict[str, object]]:

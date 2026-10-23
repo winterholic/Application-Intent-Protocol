@@ -27,6 +27,7 @@ from product.tests.facereview_ui_browser_evidence import (
     fixture_thumbnail_redirect_url,
     read_request_evidence,
     safe_browser_caller_frames,
+    safe_browser_failure_type,
     safe_wire_code,
     console_error_evidence,
 )
@@ -125,6 +126,9 @@ def main() -> int:
     fixture_thumbnail_redirect_count = 0
     fixture_thumbnail_response_statuses: list[int] = []
     rendered_state: dict[str, int] = {}
+    journey_stage = "startup"
+    failure_type: str | None = None
+    bookmark_ui_state: dict[str, object] = {}
     screenshot_names: list[str] = []
     thumbnail_server = None
     thumbnail_thread = None
@@ -315,6 +319,7 @@ def main() -> int:
 
                 page.route("**/*", block_external_media)
                 try:
+                    journey_stage = "login"
                     page.goto("http://localhost:5173/auth/1", wait_until="domcontentloaded")
                     page.locator("#authEmail").fill(email)
                     page.get_by_role("button", name="다음", exact=True).click()
@@ -323,6 +328,7 @@ def main() -> int:
                     page.get_by_role("button", name="로그인", exact=True).click()
                     expect(page).to_have_url(re.compile(r"/main$"), timeout=30000)
                     page.wait_for_load_state("networkidle", timeout=10000)
+                    journey_stage = "home_list"
 
                     def capture_render_state() -> None:
                         nonlocal rendered_state
@@ -349,10 +355,12 @@ def main() -> int:
                     video_card.click()
                     expect(page).to_have_url(re.compile(rf"/watch/{re.escape(VIDEO_ID)}$"))
                     expect(page.get_by_text(VIDEO_TITLE, exact=True).first).to_be_visible(timeout=30000)
+                    journey_stage = "video_selected"
                     safety_notice = page.get_by_role("heading", name="안심하세요!", exact=True)
                     expect(safety_notice).to_be_visible(timeout=15000)
                     page.get_by_role("button", name="확인", exact=True).click()
                     expect(safety_notice).to_be_hidden(timeout=15000)
+                    journey_stage = "bookmark_action"
 
                     bookmark_add = page.get_by_role("button", name="즐겨찾기 추가", exact=True)
                     bookmark_remove = page.get_by_role("button", name="즐겨찾기 해제", exact=True)
@@ -360,6 +368,7 @@ def main() -> int:
                         expect(bookmark_add).to_be_visible()
                         bookmark_add.click()
                         expect(bookmark_remove).to_have_attribute("aria-pressed", "true")
+                        journey_stage = "bookmark_reload"
                         page.reload(wait_until="domcontentloaded")
                         expect(bookmark_remove).to_have_attribute("aria-pressed", "true", timeout=30000)
                         label = "bookmarked"
@@ -367,6 +376,7 @@ def main() -> int:
                         expect(bookmark_remove).to_be_visible()
                         bookmark_remove.click()
                         expect(bookmark_add).to_have_attribute("aria-pressed", "false")
+                        journey_stage = "bookmark_reload"
                         page.reload(wait_until="domcontentloaded")
                         expect(bookmark_add).to_have_attribute("aria-pressed", "false", timeout=30000)
                         label = "bookmark-removed"
@@ -374,7 +384,9 @@ def main() -> int:
                     screenshot = output / f"{args.phase}-{label}.png"
                     page.screenshot(path=str(screenshot), full_page=True)
                     screenshot_names.append(screenshot.name)
-                except Exception:
+                    journey_stage = "completed"
+                except Exception as error:
+                    failure_type = safe_browser_failure_type(error)
                     # Keep a safe view of the last UI state even when this phase fails.
                     try:
                         rendered_state = page.evaluate("""(fixtureTitle) => {
@@ -392,6 +404,17 @@ def main() -> int:
                         }""", VIDEO_TITLE)
                     except Exception:
                         rendered_state = {}
+                    try:
+                        bookmark_add = page.get_by_role("button", name="즐겨찾기 추가", exact=True)
+                        bookmark_remove = page.get_by_role("button", name="즐겨찾기 해제", exact=True)
+                        bookmark_ui_state = {
+                            "add_visible": bookmark_add.is_visible() if bookmark_add.count() else False,
+                            "add_aria_pressed": bookmark_add.get_attribute("aria-pressed") if bookmark_add.count() else None,
+                            "remove_visible": bookmark_remove.is_visible() if bookmark_remove.count() else False,
+                            "remove_aria_pressed": bookmark_remove.get_attribute("aria-pressed") if bookmark_remove.count() else None,
+                        }
+                    except Exception:
+                        bookmark_ui_state = {"state": "unavailable"}
                     email_field = page.locator("#authEmail")
                     if email_field.count():
                         email_field.evaluate("element => { element.value = ''; }")
@@ -428,6 +451,9 @@ def main() -> int:
             "read_requests": read_requests,
             "adapter_list_evidence": adapter_list_evidence,
             "rendered_state": rendered_state,
+            "journey_stage": journey_stage,
+            "failure_type": failure_type,
+            "bookmark_ui_state": bookmark_ui_state,
             "page_error_count": len(page_errors),
             "page_error_types": page_errors,
             "console_error_count": console_error_count,
@@ -455,6 +481,9 @@ def main() -> int:
             "read_requests": read_requests,
             "adapter_list_evidence": adapter_list_evidence,
             "rendered_state": rendered_state,
+            "journey_stage": journey_stage,
+            "failure_type": failure_type,
+            "bookmark_ui_state": bookmark_ui_state,
             "fixture_video": {"id": VIDEO_ID},
             "page_error_count": len(page_errors),
             "page_error_types": page_errors,

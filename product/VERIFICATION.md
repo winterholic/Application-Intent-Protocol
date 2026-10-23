@@ -1204,3 +1204,13 @@ safe evidence bundle은 이번 Run outbox `ci-39885042974/` (`contract-evidence.
 같은 artifact에는 `console_message_type=error`, `classification=network_resource_error`, `source=unmapped` 1건, unhandled page error 0건이 있다. raw console text는 보존하지 않았다. 진단 SHA의 safe evidence는 이번 Run outbox `ci-39888567142/facereview-ui-browser-39888567142-1/add/{add-browser-result.json,add-failure.png}`이다. 후속 CI는 network-failed 이벤트에서 allowlisted 외부 host class/resource type/error code만 기록해 이 console 오류가 의도적 외부 미디어 차단과 일치하는지 구분한다.
 
 query builder 회귀검사는 14개 통과, browser safe-evidence 단위검사는 11개 통과했다. 이 기록 시점에서 최종 수정 SHA의 Linux Verify는 아직 실행 전이다. 전체 7.2.10, 25개 경로, prerender, ML/방문자 정책 완료로 확대하지 않는다.
+
+### 후속 수정 검증: Verify `39891300600` (`4f5e6b0`)
+
+동일 수정 SHA Verify는 전체 `failure`이며 단계 10 product/runtime와 단계 11 pinned UI 준비는 success, 단계 12 실제 HTTP/worker/MySQL/browser는 failure, safe artifact upload 단계 13 success였다. safe artifact `ci-39891300600/facereview-ui-browser-39891300600-1/add/`에서 login, `/session`, API fingerprint `cab5…6ce2`, video list extension 3종 응답/adapter에 fixture 포함, `Comment` HTTP 200 `ok=true`, bookmark `/apply` 2건 `ok=true`, `VideoBookmark` read 성공을 확인했다. `Comment` query에는 rejected root key가 없으며 recognized query keys는 `filter,limit,read,select,sort`다. sanitizer의 당시 중첩 select 계측이 nested `user` object를 unknown select 1개로 세었지만 서버 응답은 `ok=true`; 이후 safe JSON은 relation `user`의 allowlisted `id,name`을 별도 기록하도록 보완한다.
+
+`add-member-video-list.png`에는 고양이 fixture 카드가 렌더되고 `add-failure.png`에는 watch route와 댓글이 보인다. 추가/새로고침의 UI bookmark 최종 상태, 두 번째 off phase, SQL count assertion 완료 여부는 safe JSON에 없고 Verify step12가 실패했으므로 아직 성공 판정할 수 없다. 실제 중단 시점과 버튼 상태를 안전하게 확인하기 위해 다음 artifact에는 allowlisted `journey_stage`, 예외 class, bookmark button visibility/aria-pressed만 기록하도록 계측한다. SQL 0→1→0은 이 CI 단계의 결과를 확인하기 전 판정하지 않는다.
+
+console error는 add phase 2건, 각각 allowlisted failed request `host_class=youtube`, `resource_type=script`, `failure_code=net::ERR_FAILED`와 개수·분류가 일치한다. 이는 외부 media 차단 규칙으로 발생한 것이며, raw URL/text는 저장하지 않았다. `page_error_count=0`, API mock false, credential recording false, fixture 썸네일 redirect 1회 HTTP 200이다. 외부 영상은 차단 상태라 실제 재생은 범위 밖이다.
+
+추가로 nested relation allowlist와 예외 class 기반 안전 artifact 검사를 넣었으며 Python evidence 검사 13개, UI adapter 검사 14개가 통과했다. 이 후속도 WBS 7.2.10 전체나 ML/model·visitor-policy 완료를 뜻하지 않는다.

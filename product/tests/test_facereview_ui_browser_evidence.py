@@ -9,6 +9,7 @@ from product.tests.facereview_ui_browser_evidence import (
     console_error_evidence,
     read_request_evidence,
     safe_browser_caller_frames,
+    safe_browser_failure_type,
     safe_wire_code,
 )
 
@@ -34,6 +35,20 @@ class BrowserEvidenceTests(unittest.TestCase):
         self.assertEqual(summary["unknown_query_key_count"], 1)
         self.assertEqual(summary["select_fields"], ["id", "content", "is_modified", "created_at"])
         self.assertNotIn("fixture-id-must-not-escape", repr(summary))
+
+    def test_read_evidence_summarizes_only_allowlisted_nested_relation_fields(self):
+        summary = read_request_evidence({"query": {
+            "read": "Comment",
+            "select": ["id", "content", {"user": {"select": ["id", "name", "private"]}}],
+        }})
+        self.assertEqual(summary["select_fields"], ["id", "content"])
+        self.assertEqual(summary["select_relations"], [{"relation": "user", "fields": ["id", "name"]}])
+        self.assertEqual(summary["unknown_select_field_count"], 1)
+
+    def test_browser_failure_type_is_class_only(self):
+        error = TimeoutError("must not be retained: member@example.invalid")
+        self.assertEqual(safe_browser_failure_type(error), "TimeoutError")
+        self.assertNotIn("member@example.invalid", safe_browser_failure_type(error))
 
     def test_http_200_read_error_is_not_classified_as_success(self):
         rows = [
