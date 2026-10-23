@@ -1,10 +1,10 @@
-# 최신 재개 지점 (2026-10-23 04:35 UTC, WBS 7.2.10 회원 계정 화면 overlay CI 대기)
+# 최신 재개 지점 (2026-10-23 04:36 UTC, WBS 7.2.10 회원 계정 화면 overlay CI 진행 중)
 
 프로필 쓰기 뒤 독립된 PasswordChangePage의 mail challenge→code→reset token→비밀번호 변경 API 3단계를 인증된 AIP adapter로 연결했다. `/auth/email/verification`, `/auth/password/verification`, `/auth/password`, `/auth/email/verify`를 기존 `authTransport.fetch`의 Bearer·401 refresh 경로에 연결하고 overlay 적용 스크립트가 `mypage.ts`·`mypageAdapter.ts`를 복사하도록 했다. 이어 pinned `/edit`의 기존 별도 확인 탈퇴 버튼을 생성 SDK `User.withdraw` transition에 연결해 signed-in member id만 서버에 전달한다. `useLogout`은 transition 뒤 API가 실패해도 local auth를 지우고 이동한다.
 
-탈퇴 TDD 전 테스트는 `api.withdraw is not a function`으로 실패했다. 수정 후 전체 `node --test porting/facereview/ui-overlay/tests/*.test.ts` 26/26; `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest product.tests.test_facereview_ui_browser_evidence` 15/15; `cargo fmt --all -- --check`, `git diff --check` 통과. Local pinned UI build/browser/password DB flow는 실행하지 않았다. Code SHA `6b1a8d4f70688caa9a61ed32bba6095c86fae7f9`는 main에 push했다. Verify `39901115868`은 이 SHA에서 04:35:17 UTC 생성 당시 pending; 이전 SHA Verify `39900453676`(d29f1d3)와 `39900970945`(30dd4e9)는 별도 실행으로 각각 마지막 조회 때 in_progress였다. 새 run의 브라우저·MySQL 증거를 읽기 전에는 기능 screen journey를 통과했다고 하지 않는다.
+탈퇴 TDD 전 테스트는 `api.withdraw is not a function`으로 실패했다. 수정 후 전체 `node --test porting/facereview/ui-overlay/tests/*.test.ts` 26/26; `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest product.tests.test_facereview_ui_browser_evidence` 15/15; `cargo fmt --all -- --check`, `git diff --check` 통과. Local pinned UI build/browser/password DB flow는 실행하지 않았다. Code SHA `6b1a8d4f70688caa9a61ed32bba6095c86fae7f9`는 main에 push했다. 최신 Verify `39901115868`은 04:36:37 UTC 조회 때 `in_progress`, container initialization step 2였다. 이전 profile SHA run `39900453676`은 04:34:56에 core step 10에서 취소되고 browser steps 11–12는 skipped; password SHA run `39900970945`는 04:36:33에 isolation step 7에서 취소되고 이후 browser steps는 skipped였다. 둘 다 브라우저 증거가 아니며 현재 Verify의 브라우저 journey도 profile 중심이라 password/withdraw 화면 journey는 별도 미실행으로 남는다.
 
-PMS 7.2.10 description, `product/VERIFICATION.md` coverage 및 overlay README를 3개 SHA별 근거와 잔여 범위로 갱신했다. progress는 doing/25% 그대로다. 저장소의 최종 docs-only 변경 후 SHA는 아래 이력을 더해 기록한다. 다음은 Verify `39901115868` 및 이전 실행 상태를 한 차례 확인하고 결과 artifact를 판독한다. 남은 WBS 중 독립 작업은 CI 대기와 병행한다. 2시간 polling은 하지 않는다.
+PMS 7.2.10 description, `product/VERIFICATION.md` coverage 및 overlay README를 3개 SHA별 근거와 잔여 범위로 갱신했다. progress는 doing/25% 그대로다. 최종 docs-only push 뒤 main/origin SHA는 `6863eac5fac292c8dd664fa8e6e4793bf53f1b5e`다. 다음은 Verify `39901115868`의 완료 상태와 artifact를 한 차례 확인한다. 추가 계정/화면 여정도 필요한 CI fixture가 준비되기 전까지 실행 완료로 세지 않는다. 2시간 polling은 하지 않는다.
 
 ---
 
