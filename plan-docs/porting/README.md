@@ -33,6 +33,8 @@
 
 **측정 결과와 재개점 (2026-10-24).** Verify `39973060321` attempt 1에서 profile DB 저장은 성공했지만 browser는 `fadeInUp` running/opacity 0–0.21인 시점에 캡처했고 screenshot도 어둡게 비었다. API body 완료 후 networkidle보다 앞선 시각이며, animation 완료 뒤 필수 영역 4개는 모두 opacity 1/visible이었다. 따라서 capture-before-fade-complete가 빈 화면의 직접 원인으로 강하게 측정됐다. 마지막 screenshot을 남기지 못한 이유는 무관한 1.4s page animation까지 실패 처리한 overbroad gate다. Reissue journey는 profile이 수정한 같은 DB member의 원래 이름을 기대하여 line339에서 API trace 전 중단됐으므로 auth 원인은 아직 측정되지 않았다. 다음 SHA는 screenshot을 gate 전에 보존하고 profile fade만 검사하며, 저장 이름으로 heading을 확인한 뒤 API body/networkidle trace를 검사한다. 전체 증거는 [제품 검증](../../product/VERIFICATION.md#2026-10-24-실제-렌더-측정과-reissue-여정-선행조건-수정)에 있다.
 
+수정 SHA `6754227`은 같은 product gate step10에서 다시 실패해 UI 단계에 도달하지 못했다. 이 CI는 artifact directory를 만들지 않은 상태에서 step10이 먼저 실패해 GitHub에 valid artifact가 없었고, 알려진 cache-denied raw log 경로는 접근하지 않았다. 다음 run은 step10 failure의 source command/exit status만 보존할 locator를 step14 browser artifact directory에 함께 기록한다. 이 새로운 안전 산출물의 근거가 나오기 전까지 step10 원인은 미확정이다.
+
 `facereview-front`는 이전 사용자 프런트(README·Docker 배포 workflow), `-ref`는 `-joowon`과 같은 upstream의 참조 사본이다.
 두 저장소를 별도의 현재 제품으로 더해 분모를 늘리지 않는다. `origin-codes/`는 레거시 구현이므로 실행 제품이 아니다.
 Swagger/Redoc/OpenAPI와 Flask static은 프레임워크 생성 경로이며 업무 포팅 분모에서 제외하고 runtime route 비교에는 별도 표시한다.

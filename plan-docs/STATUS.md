@@ -8,7 +8,9 @@ profile gating은 관련 `fadeInUp` animation 완료와 실제 4개 영역 visib
 
 새 수정의 로컬 검사: browser evidence unittest 32/32, authAdapter/mypageAdapter Node tests 12/12, profile script AST parse, `cargo fmt --all --check`, `git diff --check` 모두 통과했다. Rust test compile은 직전 SHA에서 explicit local test DSN의 `--no-run --locked` 성공으로 확인했으며 live DB/browser는 아님. configured browser에는 `about:blank`뿐이라 local UI는 미실행이다. Verify `39973060321` attempt1 원인 산출물은 이 Run outbox `aip-run-39973060321-attempt-1/facereview-ui-browser-39973060321-1/`에 있다. attempt1 log cache 거부 경로는 여전히 재시도하지 않았다.
 
-다음 재개점은 reissue 이름/측정 순서와 profile 최종 캡처 gate 변경의 단일 새 SHA Verify 결과다. reissue 제품 auth 결함은 아직 미검증이므로 authAdapter/SDK를 수정하지 않는다. WBS 7.2.9 `doing/90%`, 7.2.10 `doing/25%`; 사용자 25 route 미완료, model.h5/visitor 보류는 유지한다.
+후속 SHA `6754227635153aaaf8b6eb58dc4fd6b661440785`의 Verify `39977109763` attempt1은 step10에서 실패해 step11–13이 skip됐다. artifact upload step14은 success로 실행됐지만 `gh run download 39977109763` 결과 `no valid artifacts found to download`였고 cleanup step16 success다. 기존 GitHub CLI cache 거부를 다른 도구/path로 우회하지 않았다. 따라서 이 run은 browser/profile/reissue 증거를 제공하지 않는다. 다음 변경은 `tools/verify.sh`의 실패 시 안전 locator artifact를 새로 쓰게 해 serial gate의 실패 command와 exit status만 보존한다(checked-in command line만, output/env/token/body 제외). 향후 run은 CI-owned artifact 경로를 미리 만들고 step14에서 함께 보존한다. 새 변경 목적은 step10 실패 command 특정과 다음 browser run에서 계속 진행할 기반 확보다.
+
+다음 재개점은 실패 locator를 포함한 새 SHA Verify다. 그 step10도 실패하면 locator의 정확한 명령을 기준으로 root cause를 조사한다. reissue 제품 auth 결함은 아직 미검증이므로 authAdapter/SDK를 수정하지 않는다. WBS 7.2.9 `doing/90%`, 7.2.10 `doing/25%`; 사용자 25 route 미완료, model.h5/visitor 보류는 유지한다.
 
 ---
 

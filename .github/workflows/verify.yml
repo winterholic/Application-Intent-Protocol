@@ -87,7 +87,11 @@ jobs:
         id: native-fixtures
         run: docker compose --project-name aip-ci-native -f spikes/spike-v4-worker/tests/fixtures/native-stores/compose.yaml up --wait --wait-timeout 120 mongo mongo-uuid redis
       - name: Verify compiler, runtime, product, worker, transport and SDK
-        run: bash tools/verify.sh
+        env:
+          AIP_VERIFY_FAILURE_FILE: ${{ runner.temp }}/aip-facereview-browser/core-verify-failure.txt
+        run: |
+          mkdir -p "$RUNNER_TEMP/aip-facereview-browser"
+          bash tools/verify.sh
       - name: Prepare the pinned FaceReview React browser journey
         run: |
           set -euo pipefail

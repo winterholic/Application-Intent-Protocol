@@ -1,6 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# CI can request one redacted-by-construction failure locator for this serial gate.
+# BASH_COMMAND is the checked-in shell source line (variable references stay literal);
+# no command output, environment values, request bodies, or credentials are captured.
+if [[ -n "${AIP_VERIFY_FAILURE_FILE:-}" ]]; then
+  aip_verify_failure_locator() {
+    local status="$1"
+    local command="$2"
+    command="${command//$'\n'/ }"
+    umask 077
+    {
+      printf 'exit_status=%s\n' "$status"
+      printf 'command=%s\n' "${command:0:500}"
+    } > "$AIP_VERIFY_FAILURE_FILE"
+    exit "$status"
+  }
+  trap 'aip_verify_failure_locator "$?" "$BASH_COMMAND"' ERR
+fi
+
 cd "$(dirname "$0")/.."
 
 for program in cargo node npm psql python3; do
