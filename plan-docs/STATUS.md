@@ -1,4 +1,14 @@
-# 최신 재개 지점 (2026-10-24 06:10 KST, 로그아웃 UI/DB 검증 성공·좋아요 여정 준비)
+# 최신 재개 지점 (2026-10-24 07:05 KST, 좋아요 add/remove UI·DB 검증 성공)
+
+코드 `1e7fda7dca0c4971e11d8324d4aee4c0502500c3`의 일반 Verify `40025235103` attempt1은 completed/success다. 직접 다운로드한 safe artifact `12534242371`에서 add/remove 모두 completed/page_error_count0/member_like.verified=true, mutation_response_count1/server_accepted=true, reload active true/false를 확인했다. 별도 like DB JSON의 browser/database status는 모두 success, 해당 회원 row는 add1/remove0이고 타회원 like count도 보존됐다. Rust caller의 초기0 assertion과 연결해 0→1→0을 확인한다. PNG에서도 활성/비활성 버튼·합계2→1을 직접 확인했다. 이번 lifecycle은 add33/remove37 requests·responses·finished 동일, failed0/unfinished0이다(이전 실행의 extension2 unfinished와 구분).
+
+Profile/reissue browser·DB success와 USED refresh+1, logout browser·DB success 및 revoked session+1을 직접 다시 확인했다. Broad11·full E2E15·artifact16·cleanup18 success이며 locator는 마지막 관리자 E2E stage다. 사용자 API25경로 표의 like 행을 갱신했다. 과거 CI 원인을 소급 확정하지 않으며 WBS90/25,25경로 전수 미완,model.h5권리·visitor 보류는 유지한다.
+
+다음은 원본 댓글 쓰기/수정/삭제의 UI→SDK→DB 검증이다. 현재 미커밋 제품 코드·활성 CI는 없고, 이 결과의 문서만 [skip ci]로 기록한다. 이번 단계는 조회/기록만 수행했으며 이전 41개 로컬 시험을 재실행했다고 주장하지 않는다. 컨텍스트 사용61%와 단계 전환을 고려해 기존 STATUS/VERIFICATION을 정본으로 두고 새 컨텍스트로 이어간다. 댓글 다음 잔여는 검색·계정 여정이며 단순 API 성공을 화면 검증으로 확대하지 않는다.
+
+---
+
+# 이전 재개 지점 (2026-10-24 06:10 KST, 로그아웃 UI/DB 검증 성공·좋아요 여정 준비)
 
 코드 `a87748d469e4f58fc07fd7396ed0821e812ba060`의 일반 Verify `40017780097` attempt1은 completed/success다. 직접 받은 artifact `12530975676`에서 remove browser의 member_logout.verified=true, logout 응답1/서버수락/인증상태 초기화 true, `remove/logout-db-result.json` browser_status/database_status=success 및 revoked_session_rows_added=1을 확인했다. Profile/reissue browser·DB도 success, locator는 마지막 관리자 E2E stage다. visitor landing 정책은 판정하지 않는다. 사용자 API 경로 25개 표의 logout 행을 이 근거로 갱신했다.
 

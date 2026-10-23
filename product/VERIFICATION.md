@@ -1304,7 +1304,7 @@ The pinned user UI has 30 HTTP call sites across six API modules, which collapse
 | `/v2/mypage/withdraw` (DELETE) | Backend withdrawal and post-withdraw session tests, 7.2.8 slice A | Confirmed `/edit` action is wired to generated SDK `User.withdraw` at `6b1a8d4`; browser integration is outside the current CI journey |
 | `/v2/home/video/recommend` (POST) | `VideoRequest.recommend` live service/oracle checks; overlay write adapter present | Form submission not browser-tested |
 | `/v2/watch/comments` (GET, POST, PATCH, DELETE) | Comment reads/writes in service and generated SDK journey `39851918809` | Read response succeeded in browser evidence; UI write journey not run. `39896024733` overall browser step failed later at bookmark control |
-| `/v2/watch/like` (POST) | AIP service tests and overlay unit tests for add/cancel | Original add/cancel buttons, accepted mutation, reload and MySQL 0→1→0 checks added after `40017780097`; next CI pending |
+| `/v2/watch/like` (POST) | AIP service tests and overlay unit tests for add/cancel | Verify `40025235103`: original add/cancel clicks, one accepted mutation each, reload active true/false, browser/DB success, MySQL 0→1→0 and other members preserved |
 | `/v2/home/category` (GET) | Live AIP extension and generated SDK checks | Actual React list response in `39885042974` |
 | `/v2/home/search` (GET) | Live AIP extension and adapter tests | Not run in browser |
 | `/v2/home/video/all` (GET) | Live AIP extension and generated SDK journey | Actual React list response and fixture card in `39885042974` |
@@ -1655,3 +1655,14 @@ Evidence 판정기 negative control은 response 누락/중복·HTTP오류·wire�
 다음 작고 독립적인 미검증 동작은 `/v2/watch/like`의 원본 버튼이다. 원본 LikeButton은 비활성 `좋아요`, 활성 `좋아요 취소`와 aria-pressed를 제공하고 WatchPage는 낙관적으로 flip한다. 그래서 add/remove 각 bookmark phase 뒤 정확한 VideoLike create/remove `/apply` 성공 body가 끝난 것을 확인하고 reload한 뒤 반영된 버튼을 단정한다. Payload는 값을 저장하지 않고 정확한 SDK action만 allowlist로 분류한다. Rust caller는 두 phase 전후 MySQL video_like의 해당 계정·영상 행0→1→0, 다른 회원 like count 보존을 별도 `add/like-db-result.json`, `remove/like-db-result.json`으로 남기고 단정한다. 이전 logout 및 bookmark gate는 유지한다.
 
 Helper 부재 RED 확인 후 allowlist와 evidence 검사를 구현했다. 정상 add/remove만 통과하고 미수집 body/실패HTTP/wire error/중복/다른resource/잘못된reload상태는 거절한다. Evidence unittest41 OK, browser AST parse, cargo fmt 및 git diff check 통과. 프로젝트 계약대로 PG*를 unset하고 명시적 test DSN을 둔 Rust MySQL auth test `--no-run --locked --offline` compile은 exit0(5.75s)이며 live DB가 아니다. 실제 like browser/DB 성공은 이번 변경의 CI가 종료된 뒤 판정한다. WBS90/25/사용자25경로 미완/model.h5권리·visitor 보류 유지, 기존 원본 checkout은 읽기만 했다. 과거399638/399880 실패 원인은 소급 판정하지 않는다.
+
+
+### 2026-10-24 Verify 40025235103 좋아요 UI·DB 성공
+
+`gh run view 40025235103 --json headSha,status,conclusion,attempt,jobs` 직접 조회: SHA `1e7fda7dca0c4971e11d8324d4aee4c0502500c3`, attempt1, completed/success. Broad step11/full HTTP-worker-MySQL step15/artifact16/fixture cleanup18 success, core 종료21:55:39 UTC. Safe artifact `12534242371`를 현재 outbox `verify-40025235103/`로 다운로드해 직접 검사했다. Locator는 마지막 administrator console E2E stage이며 pending command/exit는 실패가 아니다. 개별 cargo stdout과 raw GH log cache는 읽지 않았다.
+
+Add/remove browser JSON은 각각 completed, page_error_count0, failure_type=null, member_like.verified=true, server_accepted=true, mutation_response_count1이다. Reload 후 active는 add=true/remove=false다. `add/like-db-result.json`, `remove/like-db-result.json` 모두 browser_status/database_status=success, member_like_rows는 각각1/0, other_members_preserved=true. 고정 Rust caller의 initial0 assertion 및 workflow step15 success를 함께 대조해0→1→0을 확인한다. PNG에서 하트 활성/비활성과 표시 합계2→1을 직접 확인했다. Player 재생/카메라 ML은 이 검증의 범위가 아니며 screenshot의 카메라 불가 상태는 그대로다.
+
+이번 lifecycle은 add33/remove37 requests/responses/finished가 각각 같고 failed0,unfinished=[]다. 이전 run의 unfinished2를 이번 실행으로 소급 고치지 않는다. Logout verified=true, 별도 logout browser/DB success와 revoked session+1; profile/reissue 두 DB 결과도 browser/DB success, USED refresh+1을 확인했다. 해당 사용자25 unique API경로 표의 like 행만 새 증거로 갱신했고 전수완료로 세지 않는다.
+
+다음 미검증은 원본 댓글 UI create/edit/delete, 이후 검색 및 계정 여정이다. 이번 실행에서는 새 코드 구현이나 이전41개 로컬 시험 재실행을 하지 않았다. 문서 diff check만 수행한다. 다음 단계는 새 컨텍스트에서 원본 UI·SDK payload·DB soft-delete 계약을 먼저 대조한다. WBS90/25/model.h5권리·visitor 보류 및 과거399638/399880 원인미확정 유지.

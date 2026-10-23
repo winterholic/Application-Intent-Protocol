@@ -71,3 +71,6 @@ Verify `39982476627` attempt1 measured the real member edit-save path after TTL:
 
 
 **2026-10-24 06:10 KST 후속:** `a87748d` 일반 Verify `40017780097` attempt1 success. 직접 받은 safe artifact에서 원본 MyPage logout 1회 수락·client auth clear·DB session revocation +1, browser/DB success를 확인했다. 25 unique user API paths 표의 logout 행을 갱신했다. 다음 원본 영상 좋아요 add/remove는 성공 mutation body→reload pressed state→DB member row0→1→0/타회원보존을 검사하도록 추가했으며 새 CI 전까지 미검증이다. Profile/reissue 등 기존 검사는 유지한다. WBS90/25·사용자25경로 전수 미완·model.h5/visitor보류 유지. 상세는 product verification 최신 절.
+
+
+**2026-10-24 07:05 KST 좋아요 후속:** `1e7fda7` 일반 Verify `40025235103` attempt1 success. 직접 받은 artifact `12534242371`에서 원본 좋아요/취소 각1회 mutation 수락, reload active true/false, browser·DB success, 회원 row0→1→0 및 타회원 count 보존을 확인했다. 이번 add33/remove37 lifecycle은 failed0/unfinished0이며 logout/profile/reissue도 성공 상태다. 사용자 API25경로 표의 like 행 갱신. 다음 댓글 UI 쓰기·수정·삭제는 미검증이며 새 컨텍스트로 이어간다. WBS90/25·25경로 전수 미완·model.h5/visitor보류 유지. 상세는 product verification 최신 절과 STATUS 참조.
