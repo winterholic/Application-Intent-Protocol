@@ -39,6 +39,21 @@ VIDEO_ID = "aaaaaaaa-0000-4000-8000-000000000001"
 
 
 class BrowserEvidenceTests(unittest.TestCase):
+    def test_logout_requires_successful_body_and_cleared_client_state(self):
+        from product.tests.facereview_ui_browser_evidence import member_logout_evidence
+
+        row = {"path": "/auth/logout", "status": 200, "body_captured": True, "ok": True}
+        cleared = {"signed_out": True, "access_token_cleared": True, "user_id_cleared": True}
+        self.assertTrue(member_logout_evidence([row], cleared)["verified"])
+        for broken in [[], [{**row, "status": 401}], [{**row, "ok": False}], [{**row, "ok": 1}],
+                       [{**row, "body_captured": False}], [row, row]]:
+            with self.subTest(requests=broken):
+                self.assertFalse(member_logout_evidence(broken, cleared)["verified"])
+        for key in cleared:
+            with self.subTest(stale_state=key):
+                self.assertFalse(member_logout_evidence([row], {**cleared, key: False})["verified"])
+        self.assertFalse(member_logout_evidence([row], {})["verified"])
+
     def test_workflow_uses_full_e2e_unless_member_diagnostic_is_explicit(self):
         workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/verify.yml").read_text()
         step = workflow.split("      - name: Verify real HTTP to Node and Python workers to MySQL\n", 1)[1].split("      - name:", 1)[0]

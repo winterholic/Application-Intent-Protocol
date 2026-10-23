@@ -40,6 +40,7 @@ from product.tests.facereview_ui_browser_evidence import (
     safe_bookmark_control_evidence,
     safe_wire_code,
     console_error_evidence,
+    member_logout_evidence,
 )
 
 
@@ -216,6 +217,8 @@ def main() -> int:
     failure_bookmark_controls: list[dict[str, str]] = []
     failure_watch_content_visible = False
     screenshot_names: list[str] = []
+    logout_evidence: dict[str, object] = {}
+    bookmark_api_row_count: int | None = None
     thumbnail_server = None
     thumbnail_thread = None
     thumbnail_cert_dir = None
@@ -702,6 +705,30 @@ def main() -> int:
                     screenshot = output / f"{args.phase}-{label}.png"
                     page.screenshot(path=str(screenshot), full_page=True)
                     screenshot_names.append(screenshot.name)
+                    if args.phase == "remove":
+                        # Keep existing bookmark validation scoped to its own journey. The
+                        # original logout redirects to /main; visitor policy remains deferred.
+                        bookmark_api_row_count = len(api_paths)
+                        journey_stage = "member_logout"
+                        page.get_by_role("button", name="마이페이지로 이동", exact=True).click()
+                        expect(page).to_have_url(re.compile(r"/my$"))
+                        with page.expect_response(
+                            lambda response: urlsplit(response.url).port == api_port
+                            and urlsplit(response.url).path == "/auth/logout"
+                        ) as logout_reply:
+                            page.get_by_role("button", name="로그아웃", exact=True).click()
+                        logout_reply.value.finished()
+                        page.wait_for_function("""() => {
+                          const state = JSON.parse(localStorage.getItem('auth-storage') || 'null')?.state;
+                          return state?.is_sign_in === false && state?.access_token === '' && state?.user_id === '';
+                        }""")
+                        cleared_state = page.evaluate("""() => {
+                          const state = JSON.parse(localStorage.getItem('auth-storage') || 'null')?.state;
+                          return { signed_out: state?.is_sign_in === false,
+                            access_token_cleared: state?.access_token === '', user_id_cleared: state?.user_id === '' };
+                        }""")
+                        logout_evidence = member_logout_evidence(api_paths, cleared_state)
+                        assert logout_evidence["verified"], "server logout and client clear must both be observed"
                     journey_stage = "completed"
                 except Exception as error:
                     failure_type = safe_browser_failure_type(error)
@@ -754,15 +781,16 @@ def main() -> int:
                 mark("browser_close_done")
 
         finalize_lifecycle()
-        observed_paths = {row["path"] for row in api_paths}
+        bookmark_api_paths = api_paths[:bookmark_api_row_count] if bookmark_api_row_count is not None else api_paths
+        observed_paths = {row["path"] for row in bookmark_api_paths}
         required_paths = {"/auth/check-email", "/auth/login", "/extension", "/apply"}
         if not required_paths.issubset(observed_paths):
             raise RuntimeError("browser did not issue the expected real AIP API requests")
         if any(row.get("x_aip_contract") != binding_contract for row in api_paths if row["path"] in {"/read", "/extension", "/apply"}):
             raise RuntimeError("the real browser request contract header differs from the generated UI binding")
-        if any(row["path"] in required_paths and row["status"] != 200 for row in api_paths):
+        if any(row["path"] in required_paths and row["status"] != 200 for row in bookmark_api_paths):
             raise RuntimeError("an expected AIP API request did not return HTTP 200")
-        failed_reads = failed_read_requests(api_paths)
+        failed_reads = failed_read_requests(bookmark_api_paths)
         # A read whose body Playwright could not collect says nothing about the server; report it as a
         # measurement gap rather than an error envelope, and never as success.
         uncollected_reads = [row for row in failed_reads if row.get("body_captured") is not True]
@@ -805,6 +833,7 @@ def main() -> int:
             "adapter_list_evidence": adapter_list_evidence,
             "rendered_state": rendered_state,
             "journey_stage": journey_stage,
+            "member_logout": logout_evidence,
             "failure_type": failure_type,
             "bookmark_ui_state": bookmark_ui_state,
             "failure_route_class": failure_route_class,
@@ -848,6 +877,7 @@ def main() -> int:
             "adapter_list_evidence": adapter_list_evidence,
             "rendered_state": rendered_state,
             "journey_stage": journey_stage,
+            "member_logout": logout_evidence,
             "failure_type": failure_type,
             "bookmark_ui_state": bookmark_ui_state,
             "failure_route_class": failure_route_class,

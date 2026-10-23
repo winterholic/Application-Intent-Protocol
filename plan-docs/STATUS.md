@@ -1,8 +1,18 @@
-# 최신 재개 지점 (2026-10-24 04:15 KST, 회원 UI/DB 성공 확인·일반 E2E 범위 복구)
+# 최신 재개 지점 (2026-10-24 05:10 KST, 전체 E2E 복구 확인·회원 로그아웃 여정 추가)
+
+코드 `50a012c9e844cfef3e5560838a61fc8bdd0add59`의 자동 Verify `40010266672` attempt1은 completed/success(19:41:55 UTC 종료)다. API에서 broad step11, full HTTP/worker/MySQL step15, artifact step16 및 fixture cleanup step18 success를 직접 확인했다. 이 push의 workflow는 `run-ci`를 선택한다. safe artifact `12526429724`의 locator stage는 마지막 `administrator console E2E test`다. 고정 script의 `set -euo pipefail`과 각 suite의 test-discovery/1-pass grep을 대조했으며 recommendation/watch/external effects/pool·trending·category jobs/admin lists/admin console까지 이어지는 일반 경로가 복구됐다. 개별 cargo stdout은 미열람이며 raw GH log cache 경로는 사용하지 않았다.
+
+직접 받은 JSON에서 profile/member reissue browser·DB success, USED refresh +1, 만료 2→reissue 1→retry 2를 확인했다. Admin JSON은 dashboard·기간5개·역할/비활성화·승인/거절·영상/댓글 삭제·4개 권한거절을 기록하고, 별도 admin reissue는 2회 모두 재발급 1회/새 token 저장을 기록한다. 북마크 add/remove completed·page error0이며 remove의 `/extension` 2개 unfinished는 여전히 한계다. `verify-failure.txt`의 pending 값은 실패 증거가 아니다. 과거399880 scope종료예외/399638attempt2 원인은 소급 단정하지 않는다.
+
+다음 잔여인 회원 로그아웃을 원본 버튼(헤더 마이페이지→로그아웃)으로 수행하는 E2E를 추가했다. 실제 성공 body와 인증 상태 초기화 boolean, 별도 MySQL revoked session +1을 요구한다. guest landing 정책/화면은 판정하지 않는다. 새 검증은 아직 CI 미실행이며 성공으로 세지 않는다. 로컬 evidence unittest40 OK, AST/fmt/diff OK, MySQL auth test `--no-run --locked --offline` 컴파일 성공(실DB 실행 아님). 최초 compile은 PGHOST 프로젝트 preflight에서 중단됐고 요구대로 PG*를 unset한 재실행은 exit0이다. 이번 변경을 push한 뒤 자동 Verify의 logout JSON과 DB 결과를 확인하고, 사용자25route의 comment/like/search 및 계정 여정 잔여로 이어간다. WBS90/25·model.h5권리·visitor 보류 유지.
+
+---
+
+# 이전 재개 지점 (2026-10-24 04:15 KST, 회원 UI/DB 성공 확인·일반 E2E 범위 복구)
 
 코드 `d29c014146fa557acf6983208e0aa6f988af4e98`의 자동 Verify `40003138384` attempt 1은 completed/success다. 직접 다운로드한 artifact `12524337062`에서 profile browser/DB success, 필수 영역 4개 visually_ready=true, member reissue browser/DB success, 만료 거절 2회→reissue 1회→USED refresh row +1, 실제 `send`/`fetchWithRefresh`/`postWithToken` frames를 확인했다. 북마크 추가·해제도 completed, page error 0이다. 해제 여정 종료 시 `/extension` 2건 unfinished는 별도 남으며 모든 요청 종료를 주장하지 않는다. 과거 CI 실패의 구체 원인은 소급 확정하지 않는다.
 
-다만 workflow 대조에서 `d29c014`가 일반 push/PR에도 무조건 `run-ci-member`를 호출한 회귀를 발견했다. broad gate는 통과했지만 recommendation/watch/effects/jobs/admin의 전체 MySQL E2E까지 통과한 실행으로 확대하지 않는다. 일반 실행은 `run-ci`, 명시적 `member_ui_diagnostic=true`만 `run-ci-member`를 선택하도록 복구했다. 실제 workflow shell의 빈 입력/false/true를 실행하는 회귀 시험이 수정 전 2개 실패, 수정 후 전체 evidence unittest 39개 및 YAML syntax/diff check 통과다. 복구 코드의 전체 CI는 다음 push에서 확인한다. PMS 90%/25%, 사용자 25 route 미완, model.h5·visitor 보류는 유지한다. 상세는 product/VERIFICATION.md 마지막 절이다.
+다만 workflow 대조에서 `d29c014`가 일반 push/PR에도 무조건 `run-ci-member`를 호출한 회귀를 발견했다. broad gate는 통과했지만 recommendation/watch/effects/jobs/admin의 전체 MySQL E2E까지 통과한 실행으로 확대하지 않는다. 일반 실행은 `run-ci`, 명시적 `member_ui_diagnostic=true`만 `run-ci-member`를 선택하도록 복구했다. 실제 workflow shell의 빈 입력/false/true를 실행하는 회귀 시험이 수정 전 2개 실패, 수정 후 전체 evidence unittest 39개 및 YAML syntax/diff check 통과다. 복구 코드 `50a012c`의 전체 CI Verify `40010266672`는 success로 종료됐다(아래 최신 확인 참조). PMS 90%/25%, 사용자 25 route 미완, model.h5·visitor 보류는 유지한다. 상세는 product/VERIFICATION.md 마지막 절이다.
 
 ---
 

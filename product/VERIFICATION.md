@@ -1293,10 +1293,10 @@ The pinned user UI has 30 HTTP call sites across six API modules, which collapse
 | `/v2/auth/login` (POST) | Live generated SDK journey, Verify `39851918809` | Login screen reached in `39885042974`; profile fixture login is in old pending run `39899325826` |
 | `/v2/auth/signup` (POST) | Live auth service tests in the 7.2.8 auth slice | Not run |
 | `/v2/auth/tutorial` (PATCH) | AIP `User.completeTutorial` service test; overlay function present | Not run |
-| `/v2/auth/me` (GET) | Generated SDK member journey and `User`/`UserFavoriteGenre` reads | Prior profile-read run `39899325826` was cancelled before browser steps; current profile journey is in Verify `39901115868` |
-| `/v2/mypage/profile` (PATCH) | AIP transition service test; new overlay uses one atomic generated-SDK `bundle()` | Actual form write + MySQL persistence awaits Verify `39901115868`; prior profile run `39900453676` was cancelled before browser steps |
-| `/v2/auth/reissue` (POST) | One real refresh and retry in generated SDK journey `39851918809` | No browser refresh/expiry case |
-| `/v2/auth/logout` (POST) | Generated SDK journey verifies logout and stale bearer rejection, `39851918809` | No browser logout assertion |
+| `/v2/auth/me` (GET) | Generated SDK member journey and `User`/`UserFavoriteGenre` reads | Verify `40010266672`: signed-in profile read rendered, browser/DB success |
+| `/v2/mypage/profile` (PATCH) | AIP transition service test; new overlay uses one atomic generated-SDK `bundle()` | Verify `40010266672`: original form save, final visible render and MySQL persistence success |
+| `/v2/auth/reissue` (POST) | One real refresh and retry in generated SDK journey `39851918809` | Verify `40010266672`: actual TTL edit-save, expired2/reissue1/retry2, browser/DB success |
+| `/v2/auth/logout` (POST) | Generated SDK journey verifies logout and stale bearer rejection, `39851918809` | Original MyPage logout button + separate DB revocation assertion added after `40010266672`; new CI pending |
 | `/v2/mypage/email/verification` (POST) | Backend mail challenge and stand-in provider tests, 7.2.8 slice B | Source overlay routes to authenticated AIP path; screen journey not run |
 | `/v2/mypage/email/verify` (POST) | Backend verification-code tests, 7.2.8 slice B | Source overlay exposes authenticated AIP path; screen journey not run |
 | `/v2/mypage/password/verification` (POST) | Backend password-reset challenge tests, 7.2.8 slice B | Source overlay routes to authenticated AIP path; screen journey not run |
@@ -1315,7 +1315,7 @@ The pinned user UI has 30 HTTP call sites across six API modules, which collapse
 | `/v2/watch/recommended` (GET) | Live AIP extension/service tests | Not run in browser |
 | `/v2/home/bookmark` (GET, POST) | Generated SDK journey and AIP/MySQL tests | `39885042974` passed UI add/reload and remove/reload with DB 0→1→0; later `39896024733` failed its accessibility assertion under the media modal, so the later failure remains distinct |
 
-All five account paths in this subset now have source overlay bindings: email challenge/verification, password reset, and confirmed withdrawal. The profile and password browser journeys remain unverified; withdrawal has existing server-side MySQL coverage but the new screen binding awaits browser integration. No full 25-path browser coverage is claimed.
+All five account paths in this subset now have source overlay bindings: email challenge/verification, password reset, and confirmed withdrawal. The profile save/render is verified in `40010266672`; password browser journeys remain unverified; withdrawal has existing server-side MySQL coverage but the new screen binding awaits browser integration. No full 25-path browser coverage is claimed.
 
 ### Administrator UI and API inventory — separate from the 25 user paths
 
@@ -1632,6 +1632,17 @@ Focused Verify `39994997512`, 동일 SHA attempt1은 API job steps 11–13(build
 
 **일반 실행 범위 회귀를 발견했다.** Workflow의 실제 run은 dispatch input과 무관하게 `run-ci-member`였다. 따라서 이 자동 Verify의 broad gate 및 member UI/DB 성공은 실제이지만 recommendation/watch/external effects/jobs/admin full MySQL E2E 성공으로 확대하지 않는다. 기존 shell full `run-ci`가 남아 있어도 workflow가 호출하지 않으면 일반 gate가 유지된 것이 아니다. 입력 없는 push/PR 및 false 수동 실행은 `run-ci`, true 진단만 `run-ci-member`를 선택하도록 최소 복구했다. 원인 대조 기준은 `.github/workflows/verify.yml`의 실행 경로다.
 
-회귀 시험은 실제 workflow shell을 읽어 Bash로 빈 입력/false/true 세 경우의 선택 명령을 실행한다(실DB fixture 실행은 대체). 수정 전 빈 입력·false가 `run-ci-member`를 골라 FAIL 2건, 수정 후 evidence unittest 39 tests OK. Ruby YAML syntax parse 및 git diff check도 통과했다. Full suite를 복구한 코드 SHA의 CI는 다음 push에서 확인하며, 일반 CI 종료 전에 focused dispatch나 추가 push를 하지 않는다. UI 진단 전용 모드 자체의 새 실행은 이번 회원 성공 증거에 필요하지 않아 중복 dispatch하지 않았다.
+회귀 시험은 실제 workflow shell을 읽어 Bash로 빈 입력/false/true 세 경우의 선택 명령을 실행한다(실DB fixture 실행은 대체). 수정 전 빈 입력·false가 `run-ci-member`를 골라 FAIL 2건, 수정 후 evidence unittest 39 tests OK. Ruby YAML syntax parse 및 git diff check도 통과했다. Full suite 복구 SHA `50a012c`의 CI는 후속 Verify `40010266672`에서 success로 확인했으며(아래), 일반 CI 종료 전에 focused dispatch나 추가 push를 하지 않는다. UI 진단 전용 모드 자체의 새 실행은 이번 회원 성공 증거에 필요하지 않아 중복 dispatch하지 않았다.
 
 WBS7.2.9 doing/90%,7.2.10 doing/25%,사용자25route 미완료,model.h5권리 및 visitor정책 보류는 유지한다. GH raw log cache 거부 경로는 접근하지 않았다.
+
+
+### 2026-10-24 Verify 40010266672 전체 경로 확인과 회원 로그아웃 후속
+
+**현재 실행 근거.** `gh run view 40010266672 --json headSha,status,conclusion,attempt,jobs`: SHA `50a012c9e844cfef3e5560838a61fc8bdd0add59`, attempt1, completed/success, core 19:41:55 UTC 종료. broad step11, real HTTP/Node/Python/MySQL step15, artifact16, fixture cleanup18 success. push 입력은 비어 있으므로 체크아웃 workflow의 실제 분기는 `run-ci`다. 직접 받은 safe artifact `12526429724` locator는 `stage=administrator console E2E test`, command/exit=pending이다. 이는 실패가 아니라 마지막 stage marker다. 마지막 관리자 stage까지 실행됐으며 step15 success이고, 고정 full script는 `set -euo pipefail` 아래 suite별 발견·정확한 test 이름·`1 passed; 0 failed` 및 admin-console 출력까지 필수 grep한다. 따라서 worker-write/member/recommend/watch/external effects/pool·trending·category jobs/admin lists/admin console의 일반 경로를 복구한 실행으로 판단한다. 개별 cargo stdout은 미열람으로 남기며 raw GH log cache 경로는 접근하지 않았다.
+
+**직접 검사한 browser/DB JSON.** profile 두 status success, 이름·장르·다른 회원 marker true. reissue 두 status success, USED refresh +1, expired2/reissue1/retry2/new token stored true 및 SDK/auth frames. Admin checks는 5기간 합3/4/5/6/2, GENERAL↔ADMIN, 비활성화, approval job/거절, 영상·댓글 삭제, 권한거절4개를 기록한다. admin reissue 두 라운드는 각각 refusal1/reissue1/후속성공3/new token true다. bookmark add/remove는 completed/page error0이다. remove 종료 시 extension2 unfinished가 있어 모든 request 종료나 전수 UI 완료는 주장하지 않는다. profile PNG도 직접 열어 저장 이름·실제 영역 렌더를 확인했다. 원본 artifact는 이 Run outbox `verify-40010266672/`에 있다.
+
+**다음 미검증 slice: 회원 로그아웃.** 기존 remove-bookmark 뒤 원본 헤더 `마이페이지로 이동`→원본 `로그아웃` 버튼을 누른다. `/auth/logout` 정확히1개, HTTP200+성공 body 수집, local auth의 signed-out/access-token-cleared/user-id-cleared boolean을 동시에 요구한다. 토큰·저장소 원문은 기록하지 않는다. MySQL의 해당 fixture 계정 revoked session row가1 증가하는지도 별도 `remove/logout-db-result.json`에 기록한다. 기존 bookmark assertions는 그 시점까지의 수집본에 적용해 logout 뒤 guest API와 섞지 않으며, 전체 lifecycle은 계속 보존한다. visitor landing의 허용 동작을 새로 정하지 않는다. 실제 browser/DB는 이 변경의 CI 전까지 미검증이다.
+
+Evidence 판정기 negative control은 response 누락/중복·HTTP오류·wire오류·body미수집·인증 상태 잔류를 모두 거절한다. helper 부재로 실패를 확인한 뒤 추가했고 evidence unittest40 OK, member script AST OK, fmt/diff OK. Rust MySQL auth test는 PGHOST preflight 중단을 관측한 뒤 프로젝트 계약대로 PG*를 unset하고 explicit test DSN으로 `--no-run --locked --offline` 컴파일 exit0(6.11s)만 확인했다. local live/browser/DB는 미실행이다. WBS90/25와25route 분모,model.h5/visitor 보류 유지. 과거 실패 원인 소급 입증 없음.

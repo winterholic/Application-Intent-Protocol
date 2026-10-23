@@ -707,7 +707,31 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
         print!("{}", String::from_utf8_lossy(&add.stdout));
         assert_eq!(cell(&mut setup, "SELECT CAST(COUNT(*) AS CHAR) FROM video_bookmark WHERE user_id='77777777-7777-4777-8777-777777777777' AND video_id='aaaaaaaa-0000-4000-8000-000000000001'").await.as_deref(), Some("1"), "browser bookmark add persists one row in MySQL");
 
+        let revoked_before: i64 =
+            cell(&mut setup, &format!("SELECT COUNT(*) FROM `{META}`.aip_auth_sessions WHERE subject = '{LEGACY}' AND revoked_at IS NOT NULL"))
+                .await
+                .expect("read revoked sessions before the member logout journey")
+                .parse()
+                .expect("revoked session count is numeric");
         let remove = run_facereview_ui_browser_journey(&address, &fingerprint, "remove", &browser_root);
+        let revoked_after: i64 =
+            cell(&mut setup, &format!("SELECT COUNT(*) FROM `{META}`.aip_auth_sessions WHERE subject = '{LEGACY}' AND revoked_at IS NOT NULL"))
+                .await
+                .expect("read revoked sessions after the member logout journey")
+                .parse()
+                .expect("revoked session count is numeric");
+        let logout_db = json!({
+            "journey": "member_logout",
+            "browser_status": if remove.status.success() { "success" } else { "failure" },
+            "database_status": if revoked_after - revoked_before == 1 { "success" } else { "failure" },
+            "revoked_session_rows_added": revoked_after - revoked_before,
+        });
+        std::fs::write(
+            Path::new(&browser_output).join("remove/logout-db-result.json"),
+            format!("{}\n", serde_json::to_string_pretty(&logout_db).unwrap()),
+        )
+        .unwrap();
+        println!("member logout browser/DB: {}", logout_db);
         assert!(
             remove.status.success(),
             "React remove-bookmark browser journey failed (status {:?})\nstdout: {}\nstderr: {}",
@@ -716,6 +740,7 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
             String::from_utf8_lossy(&remove.stderr)
         );
         print!("{}", String::from_utf8_lossy(&remove.stdout));
+        assert_eq!(revoked_after - revoked_before, 1, "the real member logout revokes its newly created session in MySQL");
         assert_eq!(cell(&mut setup, "SELECT CAST(COUNT(*) AS CHAR) FROM video_bookmark WHERE user_id='77777777-7777-4777-8777-777777777777' AND video_id='aaaaaaaa-0000-4000-8000-000000000001'").await.as_deref(), Some("0"), "browser bookmark remove deletes the member row in MySQL");
         println!("React browser journey: login, member video list, bookmark on/reload (MySQL rows=1), off/reload (MySQL rows=0)");
         assert!(journey_failures.is_empty(), "independent member journeys failed: {}", journey_failures.join("; "));

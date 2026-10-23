@@ -125,3 +125,8 @@ API/저장 oracle→자체 컨테이너 정리→증거 hash/exit/범위 검사�
 
 
 **2026-10-24 04:15 KST 후속:** `d29c014` Verify `40003138384` attempt1은 success이고 직접 받은 artifact에서 profile/member reissue browser·DB 모두 success, token rotation +1, SDK/auth stack, bookmark add/remove completed를 확인했다. 다만 일반 workflow까지 `run-ci-member`로 좁아져 전체 MySQL E2E 일부가 빠진 회귀를 발견했다. 일반 입력 없음/false는 `run-ci`, 명시적 진단 true만 `run-ci-member`로 복구하고 실제 workflow shell 3경우 회귀 시험(수정 전 FAIL2, 수정 후 전체 unittest39 OK)을 추가했다. 복구 후 full CI는 다음 push에서 확인한다. 앞선 success를 admin 등 전체 E2E 통과로 확대하지 않는다. 상세는 product/VERIFICATION.md의 `Verify 40003138384 회원 증거 확인과 일반 E2E 분기 복구` 절. PMS90/25와 사용자25route 미완·model.h5/visitor 보류 유지.
+
+
+### 2026-10-24 전체 E2E 복구 후속
+
+일반 Verify `40010266672`(`50a012c`, attempt1) completed/success를 직접 조회했다. 실제 push 분기는 full `run-ci`이고 artifact locator는 마지막 administrator console E2E stage를 기록한다. Admin·member safe JSON과 별도 profile/reissue DB status를 직접 확인했으며 일반 full suite의 단계/필수 grep과 success 결과를 대조했다(개별 cargo stdout 미열람). 다음 잔여 회원 로그아웃의 원본 UI/응답/client clear/DB revocation 검증을 추가했으나 새 CI 전까지 미검증이다. 기존25route 분모와 WBS90/25·model.h5·visitor 보류 유지. [제품 검증](../../product/VERIFICATION.md#2026-10-24-verify-40010266672-전체-경로-확인과-회원-로그아웃-후속), [최신 상태](../STATUS.md) 참조.

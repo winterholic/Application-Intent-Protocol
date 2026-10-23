@@ -62,6 +62,20 @@ SAFE_NETWORK_FAILURES = {
 FILTER_OPS = {"eq", "ne", "lt", "lte", "gt", "gte", "in", "contains", "like"}
 
 
+def member_logout_evidence(requests: list[dict[str, object]], state: dict[str, object]) -> dict[str, object]:
+    """A local clear alone cannot prove that the server accepted logout."""
+    replies = [row for row in requests if row.get("path") == "/auth/logout"]
+    accepted = (
+        len(replies) == 1
+        and replies[0].get("status") == 200
+        and replies[0].get("body_captured") is True
+        and replies[0].get("ok") is True
+    )
+    cleared = {key: state.get(key) is True for key in ("signed_out", "access_token_cleared", "user_id_cleared")}
+    return {"logout_response_count": len(replies), "server_accepted": accepted,
+            **cleared, "verified": accepted and all(cleared.values())}
+
+
 def fixture_thumbnail_redirect_url(
     url: str, resource_type: str, fixture_youtube_id: str, local_thumbnail_url: str
 ) -> str | None:
