@@ -21,6 +21,7 @@ from product.tests.facereview_ui_browser_evidence import (
     response_envelope_evidence,
     body_capture_evidence,
     body_failure_reason,
+    profile_render_evidence,
     app_bookmark_read_observation,
     compare_bookmark_read_capture,
     timeline_phase,
@@ -31,6 +32,63 @@ VIDEO_ID = "aaaaaaaa-0000-4000-8000-000000000001"
 
 
 class BrowserEvidenceTests(unittest.TestCase):
+    def test_profile_render_evidence_distinguishes_active_opacity_animation_from_hidden_content(self):
+        evidence = profile_render_evidence({
+            "path": "/my",
+            "api_bodies_settled": True,
+            "body_text_length": 133,
+            "viewport": {"width": 1280, "height": 900},
+            "nodes": {
+                "my-page-container": {
+                    "display": "flex", "visibility": "visible", "opacity": 0.02,
+                    "effective_opacity": 0.02, "transform": "applied", "animation_name": "fadeInUp",
+                    "animation_duration_ms": 500, "animation_delay_ms": 0, "animation_fill_mode": "both",
+                    "animation_play_state": "running", "transition_properties": ["none"],
+                    "transition_duration_ms": 0, "rect": {"width": 1200.5, "height": 700},
+                },
+                "my-page-user-container": {
+                    "display": "flex", "visibility": "visible", "opacity": 1,
+                    "effective_opacity": 0.02, "rect": {"width": 1000, "height": 90},
+                },
+            },
+            "animations": [{
+                "name": "fadeInUp", "play_state": "running", "current_ms": 10,
+                "duration_ms": 500, "delay_ms": 50, "properties": ["opacity", "transform"],
+            }],
+        })
+        self.assertEqual(evidence["route"], "my")
+        self.assertTrue(evidence["api_bodies_settled"])
+        self.assertFalse(evidence["nodes"][0]["visually_ready"])
+        self.assertFalse(evidence["nodes"][1]["visually_ready"])
+        self.assertEqual(evidence["nodes"][0]["rect"]["width"], 1201)
+        self.assertEqual(evidence["nodes"][0]["animation_name"], "fadeInUp")
+        self.assertEqual(evidence["nodes"][0]["animation_fill_mode"], "both")
+        self.assertEqual(evidence["nodes"][0]["transform"], "applied")
+        self.assertEqual(evidence["animations"][0]["name"], "fadeInUp")
+        self.assertNotIn("body_text", evidence)
+
+    def test_profile_render_evidence_keeps_only_allowlisted_css_and_route_metadata(self):
+        evidence = profile_render_evidence({
+            "path": "/my?access_token=must-not-escape",
+            "api_bodies_settled": True,
+            "body_text_length": 100000,
+            "viewport": {"width": 1280, "height": 900},
+            "nodes": {"my-page-container": {
+                "display": "flex", "visibility": "visible", "opacity": 1,
+                "effective_opacity": 1, "rect": {"width": 1200, "height": 700},
+                "private_text": "must not escape",
+            }},
+            "animations": [{"name": "secret-animation", "play_state": "running",
+                            "current_ms": 10, "duration_ms": 500, "properties": ["opacity"]}],
+            "token": "must-not-escape",
+        })
+        self.assertEqual(evidence["route"], "my")
+        self.assertTrue(evidence["nodes"][0]["visually_ready"])
+        self.assertEqual(evidence["body_text_length"], 10000)
+        self.assertEqual(evidence["animations"][0]["name"], "other")
+        self.assertNotIn("must-not-escape", json.dumps(evidence))
+        self.assertNotIn("private_text", json.dumps(evidence))
+
     def test_youtube_player_fixture_matches_only_the_provider_api_script(self):
         stub = youtube_iframe_api_stub("https://www.youtube.com/iframe_api", "script")
         self.assertIsNotNone(stub)

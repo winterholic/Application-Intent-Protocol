@@ -227,6 +227,7 @@ fn run_facereview_ui_profile_browser_journey(address: &str, fingerprint: &str, r
         .env("AIP_FACEREVIEW_JOURNEY_EMAIL", "legacy@example.com")
         .env("AIP_FACEREVIEW_JOURNEY_PASSWORD", "password123")
         .env("AIP_FACEREVIEW_EXPECTED_CONTRACT", fingerprint)
+        .env("AIP_FACEREVIEW_ACCESS_TTL_SECS", "20")
         .current_dir(root)
         .output()
         .expect("start the real React profile browser journey")
@@ -592,7 +593,19 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
             generated_fingerprint,
             fingerprint,
         );
-        let profile = run_facereview_ui_profile_browser_journey(&address, &fingerprint, &browser_root);
+        // A separate short-TTL service shares this test-owned MySQL fixture. The ordinary
+        // auth tests keep their 300-second token window; only this member UI journey waits
+        // for an actually expired token before opening /my through the visible button.
+        let short_lived_config = directory.path().join("service-short-lived.json");
+        let mut short_lived_service: Value = serde_json::from_slice(&std::fs::read(&config).unwrap()).unwrap();
+        short_lived_service["credentials"]["access_ttl_secs"] = json!(20);
+        std::fs::write(&short_lived_config, short_lived_service.to_string()).unwrap();
+        let (_short_lived_child, short_lived_listening) =
+            start_server(&env, &file, &short_lived_config).await.expect("start the short-TTL member verification service");
+        let short_lived_address = short_lived_listening["address"].as_str().unwrap().to_owned();
+        let short_lived_fingerprint = short_lived_listening["fingerprint"].as_str().unwrap().to_owned();
+        assert_eq!(short_lived_fingerprint, fingerprint, "short-TTL service uses the same pinned UI contract");
+        let profile = run_facereview_ui_profile_browser_journey(&short_lived_address, &fingerprint, &browser_root);
         assert!(
             profile.status.success(),
             "React profile browser journey failed (status {:?})\nstdout: {}\nstderr: {}",

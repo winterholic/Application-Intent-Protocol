@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import math
 import re
 from typing import Any
 from urllib.parse import urlsplit
@@ -358,6 +359,94 @@ def safe_browser_route_class(url: Any, fixture_video_id: str) -> str:
     if path.startswith("/watch/"):
         return "watch_other"
     return "other"
+
+
+def profile_render_evidence(snapshot: Any) -> dict[str, object]:
+    """Keep only route, layout and animation measurements needed to diagnose the profile screenshot."""
+    if not isinstance(snapshot, dict):
+        return {}
+    route = snapshot.get("path")
+    route_class = route.split("?", 1)[0].removesuffix("/") if isinstance(route, str) else ""
+    route_class = route_class.removeprefix("/")
+    if route_class not in {"my", "edit", "main", "auth/1", "auth/2"}:
+        route_class = "other"
+
+    def dimension(value: Any) -> int | None:
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value):
+            return None
+        return min(10000, max(0, math.floor(value + 0.5)))
+
+    def opacity(value: Any) -> float | None:
+        return round(value, 4) if isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= 1 else None
+
+    nodes: list[dict[str, object]] = []
+    raw_nodes = snapshot.get("nodes")
+    if isinstance(raw_nodes, dict):
+        for name in ("my-page-container", "my-page-user-container", "my-page-watched-contents-container", "my-page-emotion-container"):
+            raw = raw_nodes.get(name)
+            if not isinstance(raw, dict):
+                continue
+            display = raw.get("display")
+            visibility = raw.get("visibility")
+            own_opacity = opacity(raw.get("opacity"))
+            effective_opacity = opacity(raw.get("effective_opacity"))
+            animation_name = raw.get("animation_name")
+            animation_fill_mode = raw.get("animation_fill_mode")
+            animation_play_state = raw.get("animation_play_state")
+            transition_properties = raw.get("transition_properties")
+            rect = raw.get("rect") if isinstance(raw.get("rect"), dict) else {}
+            width = dimension(rect.get("width"))
+            height = dimension(rect.get("height"))
+            nodes.append({
+                "node": name,
+                "display": display if display in {"block", "flex", "grid", "inline", "inline-flex", "inline-block", "none"} else "other",
+                "visibility": visibility if visibility in {"visible", "hidden", "collapse"} else "other",
+                "opacity": own_opacity,
+                "effective_opacity": effective_opacity,
+                "transform": raw.get("transform") if raw.get("transform") in {"none", "applied"} else "other",
+                "animation_name": animation_name if animation_name in {"none", "fadeInUp", "spin", "pulse"} else "other",
+                "animation_duration_ms": dimension(raw.get("animation_duration_ms")),
+                "animation_delay_ms": dimension(raw.get("animation_delay_ms")),
+                "animation_fill_mode": animation_fill_mode if animation_fill_mode in {"none", "forwards", "backwards", "both"} else "other",
+                "animation_play_state": animation_play_state if animation_play_state in {"idle", "running", "paused", "finished"} else "other",
+                "transition_properties": sorted({item for item in transition_properties if item in {"opacity", "transform", "visibility"}}) if isinstance(transition_properties, list) else [],
+                "transition_duration_ms": dimension(raw.get("transition_duration_ms")),
+                "rect": {"width": width, "height": height},
+                "visually_ready": (
+                    display != "none" and visibility == "visible" and effective_opacity is not None
+                    and effective_opacity >= 0.99 and width is not None and width > 0
+                    and height is not None and height > 0
+                ),
+            })
+
+    animations: list[dict[str, object]] = []
+    raw_animations = snapshot.get("animations")
+    if isinstance(raw_animations, list):
+        for raw in raw_animations[:20]:
+            if not isinstance(raw, dict):
+                continue
+            name = raw.get("name")
+            play_state = raw.get("play_state")
+            properties = raw.get("properties")
+            animations.append({
+                "name": name if name in {"fadeInUp", "spin", "pulse"} else "other",
+                "play_state": play_state if play_state in {"idle", "running", "paused", "finished"} else "other",
+                "current_ms": dimension(raw.get("current_ms")),
+                "duration_ms": dimension(raw.get("duration_ms")),
+                "delay_ms": dimension(raw.get("delay_ms")),
+                "properties": sorted({item for item in properties if item in {"opacity", "transform", "visibility"}}) if isinstance(properties, list) else [],
+            })
+
+    viewport = snapshot.get("viewport") if isinstance(snapshot.get("viewport"), dict) else {}
+    body_text_length = dimension(snapshot.get("body_text_length"))
+    return {
+        "route": route_class,
+        "api_bodies_settled": snapshot.get("api_bodies_settled") is True,
+        "body_text_length": body_text_length,
+        "viewport": {"width": dimension(viewport.get("width")), "height": dimension(viewport.get("height"))},
+        "nodes": nodes,
+        "animations": animations,
+    }
 
 
 def safe_bookmark_control_evidence(value: Any) -> list[dict[str, str]]:

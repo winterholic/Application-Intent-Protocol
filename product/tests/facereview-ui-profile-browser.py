@@ -20,6 +20,7 @@ from playwright.sync_api import expect, sync_playwright
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from product.tests.facereview_ui_browser_evidence import (
     body_failure_reason,
+    profile_render_evidence,
     read_request_evidence,
     safe_browser_failure_type,
     safe_wire_code,
@@ -44,6 +45,7 @@ def main() -> int:
     email = os.environ["AIP_FACEREVIEW_JOURNEY_EMAIL"]
     password = os.environ["AIP_FACEREVIEW_JOURNEY_PASSWORD"]
     expected_contract = os.environ["AIP_FACEREVIEW_EXPECTED_CONTRACT"]
+    access_ttl_secs = int(os.environ["AIP_FACEREVIEW_ACCESS_TTL_SECS"])
     # CI keeps the default; a local run may move off a port that another dev server already holds.
     ui_port = os.environ.get("AIP_FACEREVIEW_UI_PORT", "5173")
     output = args.out.resolve()
@@ -66,6 +68,7 @@ def main() -> int:
     page_errors: list[str] = []
     stage = "startup"
     profile_fields: dict[str, object] = {}
+    member_reissue_fields: dict[str, object] = {}
     failure_type = None
     browser = None
     try:
@@ -146,6 +149,99 @@ def main() -> int:
                 if pending_bodies:
                     raise AssertionError("API response bodies did not finish before the screenshot")
 
+            def profile_render_snapshot() -> dict[str, object]:
+                raw = page.evaluate("""(apiBodiesSettled) => {
+                  const names = [
+                    'my-page-container', 'my-page-user-container',
+                    'my-page-watched-contents-container', 'my-page-emotion-container',
+                  ];
+                  const nodes = {};
+                  for (const name of names) {
+                    const element = document.querySelector('.' + name);
+                    if (!element) continue;
+                    const style = getComputedStyle(element);
+                    const cssMilliseconds = (value) => {
+                      const first = value.split(',')[0].trim();
+                      const amount = Number.parseFloat(first);
+                      if (!Number.isFinite(amount)) return null;
+                      return first.endsWith('ms') ? amount : amount * 1000;
+                    };
+                    let effectiveOpacity = 1;
+                    let visible = true;
+                    for (let current = element; current && current !== document.documentElement; current = current.parentElement) {
+                      const currentStyle = getComputedStyle(current);
+                      effectiveOpacity *= Number(currentStyle.opacity);
+                      if (currentStyle.display === 'none' || currentStyle.visibility !== 'visible') visible = false;
+                    }
+                    const rect = element.getBoundingClientRect();
+                    nodes[name] = {
+                      display: style.display,
+                      visibility: visible ? style.visibility : 'hidden',
+                      opacity: Number(style.opacity),
+                      effective_opacity: effectiveOpacity,
+                      transform: style.transform === 'none' ? 'none' : 'applied',
+                      animation_name: style.animationName.split(',')[0].trim(),
+                      animation_duration_ms: cssMilliseconds(style.animationDuration),
+                      animation_delay_ms: cssMilliseconds(style.animationDelay),
+                      animation_fill_mode: style.animationFillMode.split(',')[0].trim(),
+                      animation_play_state: style.animationPlayState.split(',')[0].trim(),
+                      transition_properties: style.transitionProperty.split(',').map((value) => value.trim()),
+                      transition_duration_ms: cssMilliseconds(style.transitionDuration),
+                      rect: {width: rect.width, height: rect.height},
+                    };
+                  }
+                  const root = document.querySelector('.my-page-container');
+                  const animations = root ? root.getAnimations({subtree: true}).map((animation) => {
+                    const timing = animation.effect?.getComputedTiming();
+                    const properties = new Set();
+                    for (const frame of animation.effect?.getKeyframes?.() ?? []) {
+                      for (const property of Object.keys(frame)) {
+                        if (property === 'opacity' || property === 'transform' || property === 'visibility') properties.add(property);
+                      }
+                    }
+                    return {
+                      name: animation.animationName ?? animation.transitionProperty ?? 'other',
+                      play_state: animation.playState,
+                      current_ms: animation.currentTime !== null && Number.isFinite(Number(animation.currentTime)) ? Number(animation.currentTime) : null,
+                      duration_ms: Number.isFinite(Number(timing?.duration)) ? Number(timing.duration) : null,
+                      delay_ms: Number.isFinite(Number(timing?.delay)) ? Number(timing.delay) : null,
+                      properties: [...properties],
+                    };
+                  }) : [];
+                  return {
+                    path: location.pathname,
+                    api_bodies_settled: apiBodiesSettled,
+                    body_text_length: document.body.innerText.length,
+                    viewport: {width: innerWidth, height: innerHeight},
+                    nodes,
+                    animations,
+                  };
+                }""", not pending_bodies)
+                return profile_render_evidence(raw)
+
+            def finish_profile_animations() -> None:
+                # Wait for observed finite profile animations, not an arbitrary screenshot delay.
+                page.evaluate("""async () => {
+                  const root = document.querySelector('.my-page-container');
+                  if (!root) throw new Error('profile root is missing');
+                  const finiteAnimations = root.getAnimations({subtree: true}).filter((animation) => {
+                    const timing = animation.effect?.getComputedTiming();
+                    return animation.playState !== 'finished' && Number.isFinite(Number(timing?.duration))
+                      && Number.isFinite(Number(timing?.iterations));
+                  });
+                  await Promise.all(finiteAnimations.map((animation) => animation.finished.catch(() => undefined)));
+                }""")
+
+            def access_token_digest() -> str | None:
+                # The token stays in the page; only a digest is returned to prove rotation.
+                return page.evaluate("""async () => {
+                  const raw = localStorage.getItem('auth-storage');
+                  const token = raw ? JSON.parse(raw)?.state?.access_token : null;
+                  if (typeof token !== 'string' || !token) return null;
+                  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
+                  return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, '0')).join('');
+                }""")
+
             page.on("response", capture_response)
             page.on("requestfinished", capture_body)
             stage = "login"
@@ -156,9 +252,54 @@ def main() -> int:
             page.locator("#authPassword").fill(password)
             page.get_by_role("button", name="로그인", exact=True).click()
             expect(page).to_have_url(re.compile(r"/main$"), timeout=30000)
+            wait_for_api_bodies()
+            page.wait_for_load_state("networkidle", timeout=15000)
+            login_token_digest = access_token_digest()
+            if login_token_digest is None:
+                raise AssertionError("the visible member login did not store its access token")
+            if any(row.get("path") == "/auth/reissue" for row in requests):
+                raise AssertionError("the member token reissued before the expiry journey began")
+            login_at = time.monotonic()
+            remaining = access_ttl_secs + 1.5 - (time.monotonic() - login_at)
+            if remaining > 0:
+                page.wait_for_timeout(int(remaining * 1000))
+            expiry_request_mark = len(requests)
+            stage = "member_token_expired"
             page.get_by_role("button", name="마이페이지로 이동", exact=True).click()
             expect(page).to_have_url(re.compile(r"/my$"), timeout=15000)
             expect(page.get_by_role("heading", name=f"{PROFILE_NAME}님", exact=True)).to_be_visible()
+            wait_for_api_bodies()
+            page.wait_for_load_state("networkidle", timeout=15000)
+            wait_for_api_bodies()
+            expiry_requests = requests[expiry_request_mark:]
+            refused = [row for row in expiry_requests if row.get("code") == "WIRE.TOKEN_EXPIRED"]
+            reissues = [row for row in expiry_requests if row.get("path") == "/auth/reissue"]
+            reissue_index = expiry_requests.index(reissues[0]) if reissues else -1
+            retried = [row for row in expiry_requests[reissue_index + 1:] if row.get("path") in {"/read", "/extension"}] if reissues else []
+            if not refused:
+                raise AssertionError("member navigation did not exercise an expired access token")
+            if len(reissues) != 1 or reissues[0].get("status") != 200:
+                raise AssertionError("member concurrent expired reads did not share exactly one successful reissue")
+            if not retried or any(row.get("status") != 200 or row.get("ok") is not True for row in retried):
+                raise AssertionError("member reads did not recover after reissue")
+            renewed_token_digest = access_token_digest()
+            if renewed_token_digest is None or renewed_token_digest == login_token_digest:
+                raise AssertionError("member auth storage did not replace the expired access token")
+            stage = "member_reissued_profile_visible"
+            finish_profile_animations()
+            member_render = profile_render_snapshot()
+            required_member_nodes = {"my-page-container", "my-page-user-container", "my-page-watched-contents-container", "my-page-emotion-container"}
+            member_visible_nodes = {node.get("node") for node in member_render.get("nodes", []) if node.get("visually_ready") is True}
+            if member_render.get("route") != "my" or not required_member_nodes.issubset(member_visible_nodes):
+                raise AssertionError("member profile did not visibly recover after token reissue")
+            page.screenshot(path=str(output / "member-after-token-reissue.png"), full_page=True)
+            member_reissue_fields = {
+                "expired_refusals": len(refused),
+                "reissue_requests": len(reissues),
+                "successful_retries": len(retried),
+                "new_access_token_stored": True,
+                "render": member_render,
+            }
             stage = "member_profile"
             page.locator(".my-page-name-wrapper").get_by_role("button", name="다음", exact=True).click()
             expect(page).to_have_url(re.compile(r"/edit$"), timeout=15000)
@@ -174,6 +315,7 @@ def main() -> int:
                 "displayed_name": PROFILE_NAME,
                 "selected_genres": sorted(PROFILE_GENRES),
                 "selected_genre_count": selected_count,
+                "member_token_reissue": member_reissue_fields,
             }
             page.screenshot(path=str(output / "profile-before-save.png"), full_page=True)
 
@@ -183,6 +325,7 @@ def main() -> int:
             page.get_by_role("button", name=re.compile("동물")).click()
             expect(page.get_by_role("button", name=re.compile("공포"))).to_have_attribute("aria-pressed", "false")
             expect(page.get_by_role("button", name=re.compile("동물"))).to_have_attribute("aria-pressed", "true")
+            save_request_mark = len(requests)
             with page.expect_response(
                 lambda response: urlsplit(response.url).path == "/apply" and response.request.method == "POST"
             ) as profile_write_response:
@@ -206,10 +349,30 @@ def main() -> int:
             page.wait_for_load_state("networkidle", timeout=15000)
             wait_for_api_bodies()
             expect(page.get_by_role("heading", name=f"{UPDATED_PROFILE_NAME}님", exact=True)).to_be_visible()
-            profile_fields["after_save_visible_text_length"] = page.evaluate("document.body.innerText.length")
+            save_api_requests = requests[save_request_mark:]
+            page_data_requests = [row for row in save_api_requests if row.get("path") in {"/read", "/extension"}]
+            if not page_data_requests or any(row.get("status") != 200 or row.get("ok") is not True for row in page_data_requests):
+                raise AssertionError("profile destination page had an incomplete or refused API response")
+            profile_fields["after_save_before_animation"] = profile_render_snapshot()
+            page.screenshot(path=str(output / "profile-after-save-before-animation.png"), full_page=True)
+            finish_profile_animations()
+            after_animation = profile_render_snapshot()
+            profile_fields["after_save_after_animation"] = after_animation
+            if after_animation.get("route") != "my" or after_animation.get("api_bodies_settled") is not True:
+                raise AssertionError("profile screenshot did not follow the /my route and completed API response bodies")
+            required_nodes = {"my-page-container", "my-page-user-container", "my-page-watched-contents-container", "my-page-emotion-container"}
+            visible_nodes = {node.get("node") for node in after_animation.get("nodes", []) if node.get("visually_ready") is True}
+            if not required_nodes.issubset(visible_nodes):
+                raise AssertionError("profile sections were not visually ready after their observed animations completed")
+            if any(animation.get("play_state") == "running" for animation in after_animation.get("animations", [])):
+                raise AssertionError("a profile animation remained active at the final screenshot")
             profile_fields["saved_name"] = UPDATED_PROFILE_NAME
             profile_fields["saved_genres"] = sorted(UPDATED_PROFILE_GENRES)
             profile_fields["write_bundle_ok"] = True
+            profile_fields["after_save_api_responses"] = [
+                {"path": row.get("path"), "status": row.get("status"), "ok": row.get("ok"), "code": row.get("code")}
+                for row in save_api_requests
+            ]
             page.screenshot(path=str(output / "profile-after-save.png"), full_page=True)
             context.close()
             browser.close()
