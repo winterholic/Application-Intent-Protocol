@@ -1324,17 +1324,38 @@ The admin UI source has five screens (`users`, `videos`, `video-requests`, `comm
 | Admin API path | API/backend evidence | Admin browser/overlay |
 |---|---|---|
 | `/v2/admin/users` (GET) | AdminService oracle and live MySQL checks; list slice matched 62/62 cases | Not ported or browser-tested |
-| `/v2/admin/users/{user_id}/deactivate` (PATCH) | Role/ownership and soft-delete service tests | Not ported or browser-tested |
-| `/v2/admin/users/{user_id}/role` (PATCH) | SUPER_ADMIN role-change service tests | Not ported or browser-tested |
+| `/v2/admin/users/{user_id}/deactivate` (PATCH) | Role/ownership and soft-delete service tests | Source adapter `User.deactivate` (unit-tested only); not applied to the admin UI or browser-tested |
+| `/v2/admin/users/{user_id}/role` (PATCH) | SUPER_ADMIN role-change service tests | Source adapter `User.changeRole` (unit-tested only); not applied to the admin UI or browser-tested |
 | `/v2/admin/video-requests` (GET) | AdminService oracle and live MySQL checks | Not ported or browser-tested |
 | `/v2/admin/video-requests/{request_id}/approve` (POST) | Durable job, MySQL, Mongo initialization and oracle checks | Not ported or browser-tested |
-| `/v2/admin/video-requests/{request_id}/reject` (POST) | AIP transition and live service checks | Not ported or browser-tested |
+| `/v2/admin/video-requests/{request_id}/reject` (POST) | AIP transition and live service checks | Source adapter `VideoRequest.reject` (unit-tested only); not applied to the admin UI or browser-tested |
 | `/v2/admin/videos` (GET) | AdminService oracle and live MySQL checks | Not ported or browser-tested |
-| `/v2/admin/videos/{video_id}` (DELETE) | Soft-delete transition and service tests | Not ported or browser-tested |
+| `/v2/admin/videos/{video_id}` (DELETE) | Soft-delete transition and service tests | Source adapter `Video.remove` (unit-tested only); not applied to the admin UI or browser-tested |
 | `/v2/admin/comments` (GET) | AdminService oracle and live MySQL checks | Not ported or browser-tested |
-| `/v2/admin/comments/{comment_id}` (DELETE) | Comment soft-delete transition and service tests | Not ported or browser-tested |
+| `/v2/admin/comments/{comment_id}` (DELETE) | Comment soft-delete transition and service tests | Source adapter `Comment.remove` (unit-tested only); not applied to the admin UI or browser-tested |
 | `/v2/admin/system/status` (GET) | Redis status oracle and Linux host-metric checks; macOS CPU/memory/disk parity was not measured | Not ported or browser-tested |
 | `/v2/admin/dashboard/business-stats` (GET) | Dashboard oracle matched 25 cases; live SQL/Mongo checks | Not ported or browser-tested |
 | `/v2/admin/dashboard/signup-trend` (GET) | Dashboard oracle includes six period cases; live SQL checks | Not ported or browser-tested |
 
 Admin backend work is therefore separate from the unported admin React screens. The admin API/service cases are not evidence of admin SDK wiring, route-state behavior, screenshots, or zero REST fallback.
+
+
+## 2026-10-23 Verify 상태 정정, 로컬 PostgreSQL 실패 원인, 관리자 쓰기 adapter 조각
+
+**Verify `39901115868` (SHA `6b1a8d4f70688caa9a61ed32bba6095c86fae7f9`) 판정: cancelled, 증거 없음.** 2026-10-23 04:50:45 UTC에 완료된 job은 `core`이고, step 10(`Verify compiler, runtime, product, worker, transport and SDK`)이 04:50:37에 cancelled, step 11(pinned React 준비)과 12(HTTP/worker/MySQL/browser)는 skipped였다. 원인은 `verify.yml`의 `concurrency: group: verify-${{ github.ref }}`, `cancel-in-progress: true`이다. 다음 push인 `93890fa`가 04:50에 같은 ref로 새 Verify를 시작하면서 이 run을 취소했다(취소 시점이 새 run `39902365530`의 시작 04:50:49와 맞는다는 점에서 추론; 취소 이벤트의 actor는 조회하지 않았다). step 13의 artifact upload는 success로 표시되지만 browser step이 실행되지 않았으므로 회수할 screenshot은 없다고 본다(artifact 목록은 조회하지 않았다: 확인 필요). 따라서 profile write, password reset, 확인 탈퇴 binding의 browser 증거는 여전히 없다. 같은 이유로 `d29f1d3`·`30dd4e9` run도 취소됐다. **연속 push는 어떤 Verify도 browser step까지 가지 못하게 한다.** 브라우저 증거가 필요한 SHA는 Verify가 끝날 때까지 다음 push를 보류해야 한다.
+
+**Verify `39902365530` (SHA `93890fa011c3a69e03d30e2a665ceb99c49d12e4`).** 2026-10-23 04:50:49 UTC 시작, 04:52 UTC 조회 때 `in_progress`, step 2(`Initialize containers`)였다. 04:55 UTC 재조회에서도 `in_progress`. 결과는 아직 없다.
+
+**로컬 Rust 전체 lib 검사의 PostgreSQL 21건 실패는 시험 DB를 띄우지 않은 탓이다.** 이전 Run의 일회성 DSN `127.0.0.1:54321`에는 listener가 없었다(`lsof -nP -iTCP:54321 -iTCP:5433 -sTCP:LISTEN` 결과 없음). 이번 Run이 소유한 `postgres:17` 컨테이너(`aip-wbs-run-pg`, `POSTGRES_USER=runner`, `POSTGRES_DB=aip_test_ci`, trust 인증, `127.0.0.1:54321`)를 띄우고 같은 DSN으로 실행했다.
+
+| 명령 | 결과 |
+|---|---|
+| `env -u PGHOST -u PGPORT … AIP_TEST_DATABASE_URL='host=127.0.0.1 port=54321 dbname=aip_test_ci user=runner' AIP_TEST_ADMIN_URL='host=127.0.0.1 port=54321 dbname=postgres user=runner' cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --lib --locked --offline` (첫 실행, 컨테이너 시작 직후) | `95 passed; 3 failed`. 실패는 `admission::tests::browser_websocket_is_limited_after_its_auth_frame`, `pool::tests::canceled_query_lease_is_discarded`, `pool::tests::concurrent_checkouts_use_distinct_bounded_connections`이고 모두 `Err(Timeout)` |
+| 같은 3개를 `--test-threads=1`로 재실행 | `3 passed; 0 failed` |
+| 같은 전체 lib 재실행 | `98 passed; 0 failed` |
+
+`Connection refused` 21건이 사라졌으므로 원인은 DB 부재였다. 첫 실행의 Timeout 3건은 같은 코드를 다시 돌리면 통과하는 일시 실패다. 컨테이너 초기화 직후의 첫 연결 지연과 병렬 실행의 경합이라는 설명은 추론이며 계측하지 않았다. 이 PostgreSQL 단위 시험은 MySQL/Mongo/Redis 종단(`mysql_facereview_watch`)을 대체하지 않는다. 컨테이너는 `docker rm -f aip-wbs-run-pg`로, 이 Run이 만든 `spikes/spike-v6-transport/target`(1.3G)은 `cargo clean`으로 회수했다. 이름이 `aip-p730-*`, `aip-fixture-*-p730`인 기존 컨테이너는 소유가 불명확해 건드리지 않았다.
+
+**관리자 쓰기 adapter 조각(원본 `new-facereview-admin-front` pinned `ab0386c878a5ba5c7c079a262b987c10d211d22d`).** `porting/facereview/ui-overlay/src/api/adminAdapter.ts`는 관리자 화면의 쓰기 5개를 선언된 AIP transition에 연결한다: `deactivateUser`→`User.deactivate`, `changeUserRole`→`User.changeRole`(`role`만 patch), `deleteVideo`→`Video.remove`, `deleteComment`→`Comment.remove`, `rejectVideoRequest`→`VideoRequest.reject`(`admin_comment`만 patch). 모든 호출은 `apply()`와 호출별 idempotency key를 쓰고, 성공은 원본 axios 응답 모양 `{ data: { message }, status: 200 }`으로 돌려준다. 서버 거절은 서버 code를 가진 오류로 전달된다. 권한 판정(`isAdmin(actor)`, SUPER_ADMIN 전용 역할 변경, ADMIN은 GENERAL만 비활성화)은 정의가 맡고 adapter는 확인하지 않는다. 알 수 없는 role, 빈 대상 id, 빈 거절 사유는 요청 전에 `CLIENT.BAD_ARGUMENT`로 거절한다. 성공 메시지 문구는 원본 서버의 문자열을 대조하지 않은 UI용 문구다.
+
+TDD: 구현 전 `node --test porting/facereview/ui-overlay/tests/adminAdapter.test.ts`는 `ERR_MODULE_NOT_FOUND`(adminAdapter.ts)로 실패했고, 구현 뒤 `tests 4 / pass 4 / fail 0`이다. 범위 한계: 이 adapter를 admin UI checkout에 복사하는 스크립트와 `api/admin.ts` 치환, 읽기 8개(목록 4, 대시보드 2, 시스템 상태 1)·영상 요청 승인(durable job) adapter는 없다. admin UI의 build, 화면, 브라우저는 실행하지 않았다.

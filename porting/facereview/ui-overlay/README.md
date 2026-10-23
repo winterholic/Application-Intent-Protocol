@@ -11,6 +11,7 @@ data access moves from the original REST API to AIP; it is meant to be copied ov
 | `src/api/readAdapter.ts` | Nine video read functions over the SDK client; parses the extension JSON into the existing UI shape | adapter unit tests plus real `getAllVideo` member journey against generated SDK and service |
 | `src/api/authAdapter.ts`, `src/api/auth.ts` | Existing `/auth/*` flows and one-refresh handling for protected SDK requests | adapter unit tests; real login, one reissue, logout, and revoked-token check |
 | `src/api/writeAdapter.ts` | Bookmark/like create/remove, comment create/edit/delete, and video request recommendation | adapter unit tests; real bookmark on/off and comment create/edit/delete; create uses SDK `bundle({atomic:[...]})` and transitions use `apply()` |
+| `src/api/adminAdapter.ts` | Admin console (`new-facereview-admin-front`, not the member UI) writes: deactivate user, change role, delete video, delete comment, reject request, over declared transitions | adapter unit tests only; not yet applied to an admin UI checkout, no admin build or browser run; reads and request approval (durable job) are not covered |
 | `src/api/youtube.ts`, `src/api/aipClient.ts` | Overlay exports and the player's configured SDK client | included in the pinned UI TypeScript/Vite build; server journey imports the read/write adapters directly |
 
 The exact CI command and route coverage are documented in [product verification](../../../product/VERIFICATION.md). The journey uses only the dedicated member/video fixture and does not run model inference.

@@ -1,4 +1,12 @@
-# 최신 재개 지점 (2026-10-23 04:36 UTC, WBS 7.2.10 회원 계정 화면 overlay CI 진행 중)
+# 최신 재개 지점 (2026-10-23 04:56 UTC, Verify 39902365530 대기 · 관리자 쓰기 adapter 조각)
+
+Verify `39901115868`(SHA `6b1a8d4`)은 `cancelled`로 확정했다. step 10이 04:50:37 UTC에 취소되고 browser step 11–12는 skipped였다. 원인은 `verify.yml`의 `cancel-in-progress: true`이고 다음 push `93890fa`가 같은 ref의 새 run을 시작했다(추론, 취소 actor 미조회). 따라서 profile/reset/withdraw의 browser 증거와 회수할 screenshot은 없다. 현재 `39902365530`(SHA `93890fa`)은 04:55 UTC 조회 때 `in_progress`(결과 없음)였다. **이 run이 끝나기 전에는 새 SHA를 push하지 않는다.** 연속 push가 매번 Verify를 browser step 전에 취소했다. 끝난 뒤에는 `mysql_facereview_watch`의 빈 timeline 단정과 profile browser 결과를 한 번 읽고, 실패면 raw step output으로 원인을 조사한다. 2시간 polling은 하지 않는다.
+
+로컬 Rust 전체 lib의 PG 21건 실패는 시험 DB 부재(`127.0.0.1:54321` listener 없음)였다. run 소유 `postgres:17`을 띄운 뒤 `98 passed; 0 failed`다(첫 실행의 Timeout 3건은 재실행에서 통과, 원인은 추론). 컨테이너와 이 Run의 cargo target 1.3G는 회수했다. 새 slice는 `porting/facereview/ui-overlay/src/api/adminAdapter.ts`다. 관리자 쓰기 5개를 선언된 transition에 연결하고 단위 시험 4/4를 통과했다. admin UI checkout 적용 스크립트, 읽기 8개, 승인 job adapter, admin build/browser는 미구현·미실행이다. 상세는 [제품 검증](../product/VERIFICATION.md) 끝의 「Verify 상태 정정…」이다. model.h5 추론과 visitor policy는 계속 보류한다.
+
+---
+
+# 이전 재개 지점 (2026-10-23 04:36 UTC, WBS 7.2.10 회원 계정 화면 overlay CI 진행 중)
 
 프로필 쓰기 뒤 독립된 PasswordChangePage의 mail challenge→code→reset token→비밀번호 변경 API 3단계를 인증된 AIP adapter로 연결했다. `/auth/email/verification`, `/auth/password/verification`, `/auth/password`, `/auth/email/verify`를 기존 `authTransport.fetch`의 Bearer·401 refresh 경로에 연결하고 overlay 적용 스크립트가 `mypage.ts`·`mypageAdapter.ts`를 복사하도록 했다. 이어 pinned `/edit`의 기존 별도 확인 탈퇴 버튼을 생성 SDK `User.withdraw` transition에 연결해 signed-in member id만 서버에 전달한다. `useLogout`은 transition 뒤 API가 실패해도 local auth를 지우고 이동한다.
 
