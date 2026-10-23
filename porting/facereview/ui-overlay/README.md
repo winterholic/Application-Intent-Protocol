@@ -27,7 +27,7 @@ aip service gen --lang ts --out src/aip/facereview.ts --sdk-import @aip/sdk <the
 
 - Visitor landing behavior remains an open policy decision in D-P-UI-ADAPTER.
 - Only the member home/list/watch bookmark slice has been run in the pinned React browser against AIP. The server journey covers additional adapter/API calls, not mounted-page interactions for every signed-in screen.
-- A pinned React `/my` → `/edit` profile read phase using `getUserName`, `User`, and `UserFavoriteGenre` is queued in Verify `39899325826` (code SHA `dd59658274e93c65bd32c9f30ff0506c35aab982`). It is pending and does not yet close the profile screen journey.
+- A pinned React `/my` → `/edit` profile read phase using `getUserName`, `User`, and `UserFavoriteGenre` is running in Verify `39899325826` (code SHA `dd59658274e93c65bd32c9f30ff0506c35aab982`). The result is not available yet and does not close the profile screen journey.
 - The rest of the 25 UI API routes, including password pages and API field-by-field parity beyond this profile read, remain outside the minimum member journey.
 - The Socket.IO player (`src/socket`): waits for the model decision of WBS 7.2.6.
 - Full static prerender, production `VITE_AIP_URL`/dev proxy setup, and the signed-in browser run that closes WBS 7.2.10.

@@ -1,12 +1,12 @@
 ## 최신 재개 지점 (2026-10-23, WBS 7.2.10 회원 프로필 브라우저 검증 대기)
 
-프로필 slice의 CI가 진행 중이다. 검증 코드 SHA `dd59658274e93c65bd32c9f30ff0506c35aab982`를 main에 push했으며, Verify run `39899325826`은 마지막 확인 시 `pending`이었다. 기본 SHA `9cc43c5`의 Verify `39898679390` 및 보조 workflow 6개도 이번 slice 시작 시 이미 진행 중이었으나, 그들은 프로필 변경 전 SHA라 이번 assertion을 검증하지 않는다.
+프로필 slice의 CI가 진행 중이다. 검증 코드 SHA `dd59658274e93c65bd32c9f30ff0506c35aab982`를 main에 push했다. Verify run `39899325826`은 첫 조회 때 `pending`, 2026-10-23 04:16 UTC 재조회 때 `in_progress`였다. 기본 SHA `9cc43c5`의 Verify `39898679390` 및 보조 workflow 6개도 이번 slice 시작 시 이미 진행 중이었으나, 그들은 프로필 변경 전 SHA라 이번 assertion을 검증하지 않는다.
 
 새 pinned React profile phase는 CI의 실제 AIP 서비스·전용 MySQL fixture와 생성 SDK를 사용해 로그인 후 `/my` → `/edit` 접근, 화면 닉네임 `AIP 프로필 표본회원`, 선택 장르 `eating`/`horror`(화면 라벨 먹방/공포)를 검사한다. `User` 및 `UserFavoriteGenre`의 실제 `/read` envelope·contract fingerprint·필드 선택과 회원별 filter도 확인하며 credential/body 값은 evidence에 남기지 않는다. 로컬 검사는 `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest product.tests.test_facereview_ui_browser_evidence` 15개 통과, `cargo fmt --all -- --check`, 두 Python 파일 AST 구문 검사, `git diff --check` 통과다. 로컬 browser/server 통합은 실행하지 않았다. Verify 결과와 raw artifact를 받은 뒤에만 이 slice를 완료 처리한다.
 
 정리: `cargo clean`은 35,516 files / 6.9 GiB 제거, 저장소 크기 9.1G → 3.1G, `target/` 부재를 확인했다. 더티 pinned UI clone 3개(244M/244M/246M)의 각 source diff는 outbox `aip-ui-dirty-clone-preservation/`의 별도 patch로 보존했다. `lsof +D` 세 경로 모두 열린 파일 0건이었으나, 해당 디렉터리 회수의 `rm -rf`는 실행 가드가 거부했다. 사용자가 금지한 다른 삭제 방식으로 우회하지 않았으므로 세 checkout은 아직 `/private/tmp`에 남아 있다. Codex process-list probe에서 `ps`가 `Operation not permitted`로 막혔지만 허용된 read-only `lsof`로 TCP 5173 listener PID 46256의 cwd는 `/Users/winterholic/development/projects/winterholic-ttakkari/front`임을 확인했다. 타 프로젝트 프로세스라 건드리지 않았다. 이 slice에서 local server/browser/fixture를 띄우지 않았다.
 
-CI 재개 지점: Verify `39899325826` 상태를 한 번 확인한다. 완료면 profile-browser-result JSON·screenshot·단계 로그를 읽고 assertion 결과를 기록한다. 실패면 safe artifact와 raw step output으로 원본 화면/definition/SDK/adapter/render 경로를 대조한 뒤 좁게 수정한다. pending이면 run ID와 다음 확인점을 유지하고 2시간 폴링하지 않는다. 다음 미완료 WBS 범위는 이 profile slice를 닫은 뒤에 정한다.
+CI 재개 지점: Verify `39899325826`이 `in_progress`이므로 현재 Run에서 더 기다리지 않는다. 재개 시 상태와 job 진행 증거를 한 번 확인한다. 완료면 profile-browser-result JSON·screenshot·단계 로그를 읽고 assertion 결과를 기록한다. 실패면 safe artifact와 raw step output으로 원본 화면/definition/SDK/adapter/render 경로를 대조한 뒤 좁게 수정한다. 계속 실행 중이면 run ID와 다음 확인점을 유지하고 2시간 폴링하지 않는다. 다음 미완료 WBS 범위는 이 profile slice를 닫은 뒤에 정한다.
 
 ## 이전 재개 지점 (2026-10-23, WBS 7.2.10 브라우저 오류 조사)
 
