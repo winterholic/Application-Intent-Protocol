@@ -4,6 +4,8 @@ Verify `39902365530`(SHA `93890fa`)은 `failure`다(25m23s). 실패 step은 12(`
 
 수정은 profile 스크립트에 `sys.path.insert`를 member 스크립트와 같은 방식으로 추가한 것이다. 로컬에서는 같은 경로로 `product.tests.facereview_ui_browser_evidence` import만 확인했고(`import ok`) playwright가 없어 브라우저 실행은 못 했다. 수정 뒤에도 profile 화면 단정 자체의 첫 실행이라 다른 실패가 나올 수 있다. 이 수정과 로컬 커밋 `a4af05f`(관리자 쓰기 adapter)를 한 번에 push한다. 새 Verify가 끝나기 전에는 추가 push를 하지 않는다.
 
+push SHA `654eb4c3d9f6e5cdbd935863d84509247d59ed72`(a4af05f 포함), Verify run `39905029803`은 05:25 UTC 조회 때 `in_progress`다(보조 workflow도 진행 중). 재개 시 `gh run view 39905029803`으로 한 번 확인한다. 성공이면 profile browser JSON·screenshot을 읽고 기록한 뒤 screenshot 포함 artifact를 삭제한다. 실패면 `--log-failed`의 raw step output으로 원인을 고친다. 로컬 PG 21건 실패는 시험 DB 부재였음이 이미 확정(아래 이전 기록)이며 이 Run은 DB를 띄우지 않았다. `aip-p730-*` 컨테이너 4개는 다른 작업 소유라 건드리지 않았다. 저장소 1.6G, `target/` 없음.
+
 ---
 
 # 이전 재개 지점 (2026-10-23 04:56 UTC, Verify 39902365530 대기 · 관리자 쓰기 adapter 조각)
