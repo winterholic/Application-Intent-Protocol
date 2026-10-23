@@ -1,19 +1,10 @@
 import type { CommentType } from 'types';
 import { aipClient, aipWrites } from './aipClient';
+import { commentReadQuery } from './readQueries';
 
 export const getVideoComments = async (props: { video_id: string }): Promise<CommentType[]> => {
   const userId = useCurrentUserId();
-  const result = await aipClient.read({
-    read: 'Comment',
-    select: ['id', 'content', 'is_modified', 'created_at', 'user'],
-    filter: [
-      { field: 'video', op: 'eq', value: props.video_id },
-      { field: 'is_deleted', op: 'eq', value: false },
-    ],
-    sort: [{ field: 'created_at', direction: 'asc' }, { field: 'id', direction: 'asc' }],
-    limit: 100,
-    traverse: { user: { select: ['id', 'name', 'profile_image_id'] } },
-  });
+  const result = await aipClient.read(commentReadQuery(props.video_id));
   return result.rows.map((row) => {
     const user = row.user && typeof row.user === 'object' ? row.user as Record<string, unknown> : {};
     return {

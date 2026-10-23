@@ -3,6 +3,7 @@ import unittest
 from product.tests.facereview_ui_browser_evidence import (
     extension_request_evidence,
     extension_response_evidence,
+    external_media_failure_evidence,
     fixture_thumbnail_redirect_url,
     failed_read_requests,
     console_error_evidence,
@@ -61,6 +62,15 @@ class BrowserEvidenceTests(unittest.TestCase):
             console_error_evidence("error", "failed", {"url": "https://outside.example/user/private"})["source"],
             "unmapped",
         )
+
+    def test_external_media_failure_records_only_host_class_resource_type_and_allowlisted_code(self):
+        self.assertEqual(
+            external_media_failure_evidence(
+                "https://r7---sn.googlevideo.com/videoplayback?token=secret", "media", "net::ERR_ABORTED"
+            ),
+            {"host_class": "googlevideo", "resource_type": "media", "failure_code": "net::ERR_ABORTED"},
+        )
+        self.assertIsNone(external_media_failure_evidence("https://googlevideo.com.evil.test/x", "media", "secret"))
 
     def test_caller_trace_keeps_only_local_src_paths(self):
         self.assertEqual(safe_browser_caller_frames([

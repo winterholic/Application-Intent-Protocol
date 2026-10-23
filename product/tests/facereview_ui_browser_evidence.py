@@ -37,6 +37,15 @@ SAFE_WIRE_CODES = {
     "WIRE.INVALID_QUERY",
     "WIRE.OUTPUT_INVALID",
 }
+SAFE_NETWORK_FAILURES = {
+    "net::ERR_ABORTED",
+    "net::ERR_BLOCKED_BY_CLIENT",
+    "net::ERR_CONNECTION_CLOSED",
+    "net::ERR_CONNECTION_REFUSED",
+    "net::ERR_FAILED",
+    "net::ERR_NAME_NOT_RESOLVED",
+    "net::ERR_TIMED_OUT",
+}
 FILTER_OPS = {"eq", "ne", "lt", "lte", "gt", "gte", "in", "contains", "like"}
 
 
@@ -199,6 +208,22 @@ def console_error_evidence(message_type: Any, message_text: Any, location: Any) 
     if wire_code is not None:
         result["wire_code"] = wire_code
     return result
+
+
+def external_media_failure_evidence(url: Any, resource_type: Any, failure: Any) -> dict[str, str] | None:
+    """Classify an intentionally blocked media request without retaining its URL or ID."""
+    if not isinstance(url, str) or resource_type not in {"image", "media", "script", "other"}:
+        return None
+    host = (urlsplit(url).hostname or "").lower()
+    host_class = next((name for suffixes, name in (
+        (("youtube.com", "youtube-nocookie.com"), "youtube"),
+        (("ytimg.com",), "ytimg"),
+        (("googlevideo.com",), "googlevideo"),
+    ) if any(host == suffix or host.endswith("." + suffix) for suffix in suffixes)), None)
+    if host_class is None:
+        return None
+    failure_code = failure if isinstance(failure, str) and failure in SAFE_NETWORK_FAILURES else "unrecognized"
+    return {"host_class": host_class, "resource_type": resource_type, "failure_code": failure_code}
 
 
 def extension_request_evidence(body: Any) -> dict[str, object]:

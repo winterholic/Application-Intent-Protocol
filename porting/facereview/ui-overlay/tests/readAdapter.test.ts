@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { createReadApi, parseText, type AipClient } from '../src/api/readAdapter.ts';
+import { commentReadQuery } from '../src/api/readQueries.ts';
 
 type Call = { kind: 'extension' | 'writeExtension' | 'apply'; name?: string; input: unknown; key?: string };
 
@@ -87,6 +88,21 @@ test('video/all and bookmark lists return the videos array of their page', async
 test('personalized list', async () => {
   const { client } = fakeClient({ 'Video.homePersonalized': { videos: JSON.stringify([video('p')]) } });
   assert.deepEqual(await createReadApi(client).getPersonalRecommendedVideo(), [video('p')]);
+});
+
+test('comment read matches the public Comment query and nested User selection contract', () => {
+  const query = commentReadQuery('fixture-video-id');
+  assert.deepEqual(query, {
+    read: 'Comment',
+    select: ['id', 'content', 'is_modified', 'created_at', { user: { select: ['id', 'name'] } }],
+    filter: [
+      { field: 'video', op: 'eq', value: 'fixture-video-id' },
+      { field: 'is_deleted', op: 'eq', value: false },
+    ],
+    sort: [{ field: 'created_at', dir: 'asc' }, { field: 'id', dir: 'asc' }],
+    limit: 100,
+  });
+  assert.equal('traverse' in query, false);
 });
 
 test('watch detail equals the original answer of the golden case, with the timeline parsed, and then counts the view once', async () => {

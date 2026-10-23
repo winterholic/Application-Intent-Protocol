@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from product.tests.facereview_ui_browser_evidence import (
     extension_request_evidence,
     extension_response_evidence,
+    external_media_failure_evidence,
     failed_read_requests,
     fixture_thumbnail_redirect_url,
     read_request_evidence,
@@ -119,6 +120,7 @@ def main() -> int:
     page_errors: list[str] = []
     console_error_count = 0
     console_errors: list[dict[str, object]] = []
+    external_media_failures: list[dict[str, str]] = []
     blocked_external_image_count = 0
     fixture_thumbnail_redirect_count = 0
     fixture_thumbnail_response_statuses: list[int] = []
@@ -248,6 +250,13 @@ def main() -> int:
 
                 page.on("response", capture_response)
                 cdp.on("Network.requestWillBeSent", capture_network_initiator)
+                page.on("requestfailed", lambda request: (
+                    external_media_failures.append(evidence)
+                    if (evidence := external_media_failure_evidence(
+                        request.url, request.resource_type, request.failure
+                    )) is not None and len(external_media_failures) < 20
+                    else None
+                ))
                 page.on(
                     "response",
                     lambda response: fixture_thumbnail_response_statuses.append(response.status)
@@ -423,6 +432,7 @@ def main() -> int:
             "page_error_types": page_errors,
             "console_error_count": console_error_count,
             "console_errors": console_errors,
+            "external_media_failures": external_media_failures,
             "blocked_external_image_count": blocked_external_image_count,
             "fixture_thumbnail_redirect_count": fixture_thumbnail_redirect_count,
             "fixture_thumbnail_response_statuses": fixture_thumbnail_response_statuses,
@@ -450,6 +460,7 @@ def main() -> int:
             "page_error_types": page_errors,
             "console_error_count": console_error_count,
             "console_errors": console_errors,
+            "external_media_failures": external_media_failures,
             "blocked_external_image_count": blocked_external_image_count,
             "fixture_thumbnail_redirect_count": fixture_thumbnail_redirect_count,
             "fixture_thumbnail_response_statuses": fixture_thumbnail_response_statuses,

@@ -25,7 +25,7 @@ if [[ -n "$(git -C "$ui_root" status --porcelain)" ]]; then
 fi
 
 overlay="$repo_root/porting/facereview/ui-overlay/src/api"
-for file in aipClient.ts auth.ts authAdapter.ts index.ts readAdapter.ts request.ts watch.ts writeAdapter.ts youtube.ts; do
+for file in aipClient.ts auth.ts authAdapter.ts index.ts readAdapter.ts readQueries.ts request.ts watch.ts writeAdapter.ts youtube.ts; do
   mkdir -p "$ui_root/src/api"
   cp "$overlay/$file" "$ui_root/src/api/$file"
 done
