@@ -120,3 +120,5 @@ API/저장 oracle→자체 컨테이너 정리→증거 hash/exit/범위 검사�
 부분 결과·실패 exit·잘못된 scope·oracle/lock 불일치·누락/변조 파일은 성공으로 보고하지 않는다.
 사용자 요청대로 작고 선행 효과가 있는 과제를 순서대로 처리하며 원본·화면·ML·인프라의 완료 조건을 줄이지 않는다.
 남은 browser/runtime oracle와 전체 CI는 하위 WBS에 예정으로 유지한다.
+
+후속 SHA `27db2af`의 실제 UI save는 TTL 뒤 `WIRE.TOKEN_EXPIRED` refusal 2회 → `/auth/reissue` 200 1회 → USED refresh DB row +1 → token rotation/recovery/browser visible success로 끝났다. 이 경로는 동작하지만 injected JS hook가 함수만 선언하고 실행하지 않아 SDK stack은 아직 미측정; IIFE invocation test를 추가한 뒤 function frames를 확인한다. 전체 CI는 뒤따른 기존 add bookmark step의 별도 `bookmark_settle` failure로 끝났다. target auth journey browser/DB는 success. 상세 source/result는 [제품 검증](../../product/VERIFICATION.md#2026-10-24-member-ui-만료-저장에서-auth-reissue-실측)에 있다.

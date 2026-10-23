@@ -103,7 +103,7 @@ def main() -> int:
             page = context.new_page()
             page.set_default_timeout(15000)
             page.on("pageerror", lambda error: page_errors.append(type(error).__name__))
-            page.add_init_script("""() => {
+            page.add_init_script("""(() => {
               const trace = [];
               window.__aipFetchTrace = trace;
               window.__aipFetchHookInstalled = true;
@@ -150,7 +150,7 @@ def main() -> int:
                   status: this.status, content_type: this.getResponseHeader('content-type')}), {once: true});
                 return send.apply(this, args);
               };
-            }""")
+            })();""")
 
             def capture_request(request) -> None:
                 parsed = urlsplit(request.url)

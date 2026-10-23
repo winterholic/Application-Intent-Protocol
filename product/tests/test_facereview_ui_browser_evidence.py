@@ -1,4 +1,6 @@
 import json
+import ast
+from pathlib import Path
 import unittest
 
 from product.tests.facereview_ui_browser_evidence import (
@@ -34,6 +36,23 @@ VIDEO_ID = "aaaaaaaa-0000-4000-8000-000000000001"
 
 
 class BrowserEvidenceTests(unittest.TestCase):
+    def test_profile_browser_trace_init_script_executes_instead_of_only_declaring_arrow(self):
+        source = Path(__file__).with_name("facereview-ui-profile-browser.py").read_text()
+        tree = ast.parse(source)
+        scripts = [
+            node.args[0].value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "add_init_script"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+        ]
+        self.assertEqual(len(scripts), 1)
+        self.assertTrue(scripts[0].lstrip().startswith("(() => {"))
+        self.assertTrue(scripts[0].rstrip().endswith("})();"))
+
     def test_profile_animation_gate_ignores_unrelated_page_motion(self):
         evidence = {"animations": [
             {"name": "other", "play_state": "running"},
