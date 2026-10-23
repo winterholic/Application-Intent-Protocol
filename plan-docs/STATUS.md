@@ -4,7 +4,7 @@
 
 같은 실행의 console 오류는 `youtube` host class의 외부 `script` 요청 `net::ERR_FAILED`와 일치하며 page error는 0이다. 외부 미디어가 차단된 browser 환경에서 영상 재생이 제한되고, Verify `39896024733` screenshot에서는 오류 modal이 접근성 role locator를 가린 상태가 관측됐다. modal이 해당 assertion 실패에 기여했다는 것은 그 실행의 UI/network 증거에 한정한다. 앞선 Verify `39885042974`에서는 React bookmark on/reload·off/reload 및 SQL assertion이 통과했다. console 분류는 AIP Comment 오류와 별개다.
 
-이 오류 조사와 `/read` query 수정은 2026-10-23 기록 당시 main `da2fe7c112c7f6c996ef349a6f005cb98a01731e`를 기준으로 했다. 이번 STATUS 보완은 docs-only다. 이 조사 범위는 닫혔다. 다음 미완료 방향은 인증 회원의 나머지 화면/API 경로를 기존 포팅 기준과 대조해 한 조각씩 진행하는 것이며, 25개 전체 경로·prerender·ML/model 권리·방문자 정책 완료를 뜻하지 않는다. 과거 시점의 재개 기록은 아래에 보존한다.
+이 오류 조사와 `/read` query 수정은 2026-10-23 기록 당시 main `da2fe7c112c7f6c996ef349a6f005cb98a01731e`를 기준으로 했다. 이번 STATUS 보완은 docs-only다. 이 조사 범위는 닫혔다. 다음 작은 검증 조각은 전용 회원으로 pinned UI의 프로필 화면을 거쳐 `getUserName`이 읽는 `User`와 `UserFavoriteGenre` 필드를 원본 화면과 대조하는 것이다. API/프로필 전이의 실DB 시험은 이미 있지만 화면 경로는 minimum browser journey에 포함되지 않았다. 이 경로를 추가 검증해도 나머지 비밀번호·가입·방문자 동작, 25개 전체 경로, prerender, ML/model 권리, 방문자 정책 완료를 뜻하지 않는다. 과거 시점의 재개 기록은 아래에 보존한다.
 
 ## 후속 결과 (2026-10-23, Verify `39885042974`, `b504f62161fb9e3065ac9da9972ebe9928e0c315`)
 

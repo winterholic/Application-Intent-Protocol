@@ -4,7 +4,7 @@ The player of FaceReview is the user's repository `facereview-front-joowon`. Thi
 data access moves from the original REST API to AIP; it is meant to be copied over a checkout of the pinned revision
 `2e7c021fa5abebd72278d841b8066a33d45cfbb3`. Decision: `docs/DECISIONS.md` D-P-UI-ADAPTER. Evidence: `product/VERIFICATION.md`.
 
-**Status: read, auth, and write data adapters are present.** The generated TypeScript SDK and these adapters completed a real member API journey through the AIP service and dedicated Linux CI fixtures at code SHA `1033269ec1389ddd7b750b6ad9f5e53bd100a53b` (Verify run [39851918809](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39851918809)). A React browser journey is in progress: the previous run rejected its generated binding with `WIRE.CONTRACT_MISMATCH`; CI now supplies the same combined definition to UI generation and the real service test, with a pre-browser fingerprint check. Do not count the browser journey complete until its Linux Verify and MySQL bookmark assertions pass.
+**Status: read, auth, and write data adapters are present.** The generated TypeScript SDK and these adapters completed a real member API journey through the AIP service and dedicated Linux CI fixtures at code SHA `1033269ec1389ddd7b750b6ad9f5e53bd100a53b` (Verify run [39851918809](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39851918809)). A pinned React login → fixture video → bookmark on/reload and off/reload browser journey passed with its MySQL assertions at SHA `b504f62161fb9e3065ac9da9972ebe9928e0c315` (Verify run [39885042974](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39885042974)); the earlier `WIRE.CONTRACT_MISMATCH` did not recur. A later diagnostic run verified the real `Comment.read` requests after correcting the query (`WIRE.UNKNOWN_KEY` cleared), but its full Verify failed at the bookmark accessibility assertion while an external YouTube media error modal covered the control (run [39896024733](https://github.com/winterholic/Application-Intent-Protocol/actions/runs/39896024733)). Keep that failure-state evidence distinct from the successful earlier bookmark journey. See [product verification](../../../product/VERIFICATION.md) for scope and evidence.
 
 | File | What it is | Tested |
 |---|---|---|
@@ -26,7 +26,7 @@ aip service gen --lang ts --out src/aip/facereview.ts --sdk-import @aip/sdk <the
 ## Remaining UI journey scope
 
 - Visitor landing behavior remains an open policy decision in D-P-UI-ADAPTER.
-- The full React login flow and signed-in screens have not been run against the AIP service in a browser. The server journey covers adapter/API calls, not mounted-page interactions.
+- Only the member home/list/watch bookmark slice has been run in the pinned React browser against AIP. The server journey covers additional adapter/API calls, not mounted-page interactions for every signed-in screen.
 - The rest of the 25 UI API routes, including profile/password pages and API field-by-field screen parity, remain outside the minimum member journey.
 - The Socket.IO player (`src/socket`): waits for the model decision of WBS 7.2.6.
 - Full static prerender, production `VITE_AIP_URL`/dev proxy setup, and the signed-in browser run that closes WBS 7.2.10.
