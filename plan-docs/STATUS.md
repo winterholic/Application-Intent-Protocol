@@ -1,4 +1,18 @@
-# 최신 재개 지점 (2026-10-23, FaceReview browser `/read` 측정기 조사, 계측 SHA `5a42b20`)
+# 최신 재개 지점 (2026-10-23 09:05 UTC, browser journey 수정 SHA `d6718c4` Verify green)
+
+코드 SHA `d6718c40a09952939ad90336c2c4595fefc063bb`(origin/main 일치)의 Verify `39922363131`은 attempt 2에서 `success`다. 직전 조사의 최소 수정안을 member와 profile에 한 커밋으로 적용했다. member: 클릭 전에 `.video-information-container .title`에 fixture 제목이 보일 때까지 기다리고, 클릭 뒤 북마크 `/read`와 `/apply`가 `requestfinished`(본문 수집 포함)에 이를 때까지 기다린 다음 reload하고 `aria-pressed`를 단정한다. profile: 본문을 `requestfinished`에서 읽고, 저장 `/apply`의 본문 수집을 기다린 뒤 목적지 페이지의 읽기와 `networkidle`까지 기다려 screenshot을 찍고 화면 텍스트 길이를 기록한다. 단정 완화, mock, 숨은 버튼 조작, 제품 코드 변경은 없다.
+
+로컬 검증: `python3 -m unittest product.tests.test_facereview_ui_browser_evidence` 22/22. 가짜 UI/API(실제 Chromium, Playwright 1.64)에서 수정 전 스크립트는 `Video.view`가 느리면 `bookmark_action`에서 미눌림으로 실패(CI attempt 2 재현), 낙관적 flip 뒤 느린 `/read`는 reload에 끊겨 `bookmark_reloaded`에서 실패했고 수정본은 둘 다 통과했다. 수정본은 add/remove/profile을 한 가짜 API에서 연속 통과했다.
+
+CI: attempt 1은 step 12의 앞선 시험 `crates/aip-cli/tests/mysql_worker_write_e2e.rs:433`(`http_apply_runs_real_node_and_python_workers_in_one_mysql_transaction`)이 `retryJob`의 응답 `WIRE.DB_UNAVAILABLE`(`retry: later`)로 실패해 브라우저 시험이 실행되지 못했다. 같은 SHA로 실패 job만 재실행(attempt 2)하자 step 10~13이 통과했다. attempt 2 브라우저 증거: add/remove 모두 `journey_stage=completed`, 북마크 `/read`는 앱 수신과 `match`, settle이 reload 시작 전(`bookmark_requests_settled` < `reload_start`), `add-bookmarked.png`에 제목, `저장됨`, 조회수 11이 보인다. profile의 MySQL 이름·장르 assertion은 통과했고 모든 body가 수집됐다. 다만 `profile-after-save.png`는 `after_save_visible_text_length=133`인데도 화면은 헤더만 보이는 빈 본문이다. DOM에는 텍스트가 있으므로 이전 가설(로딩 중 캡처)은 틀렸고, 렌더링 지연(예: 투명도 전환 애니메이션)은 미확인 후보다. 이 after 화면은 계속 증거로 세지 않는다. 다음 조치 후보는 heading의 computed opacity와 viewport screenshot 시점을 기록하는 관측 보강이다. remove의 `unfinished` 1건은 reload 뒤 새 페이지의 `/extension`이 종료 시점에 진행 중이던 것으로 bookmark 요청이 아니다.
+
+간헐 실패 후보(분석만, 수정 안 함): (1) Verify `39915678255` attempt 1, `spikes/spike-v3-write/tests/absence_serializable.rs:78`, 기대 `["OK","WIRE.FORBIDDEN"]`에 `["OK","WIRE.CONFLICT"]`가 나옴(재시도 소진 추정, 같은 SHA 재실행에서 통과). (2) Verify `39922363131` attempt 1, `mysql_worker_write_e2e.rs:433`, `WIRE.DB_UNAVAILABLE retry later`(일시 DB 불가용 추정, 재실행에서 통과). 둘 다 이번 변경(Python 시험 파일)과 무관하고 각 attempt 1 원문은 outbox `ci-39915678255-attempt1/`, `ci-39922363131-attempt1/`에 보존했다. 재발하면 해당 run의 원문을 보존하고 원인 분석만 한다.
+
+GitHub artifact `12486124697`, `12490352539`는 원시 증거라 삭제하지 않았다. `/private/tmp`의 이전 ZIP·압축 해제 폴더·UI clone은 삭제했고, 소유가 불명한 `aip-p730-*` 컨테이너와 캐시 디렉터리는 건드리지 않았다. 관리자 UI slice(적용 스크립트, 읽기 8개, 승인 job adapter)는 Verify green 조건을 충족했으나 시작하지 않았다. 관리자 UI는 별도 저장소 `new-facereview-admin-front`(고정 ab0386c)이고 이 환경에 checkout이 없어, 읽기 8개의 화면 쪽 응답 모양을 확인하려면 먼저 그 저장소를 고정 revision으로 가져와야 한다(미확인: 접근 권한). 다음 재개점은 그 checkout 위치 확인과 `adminAdapter.ts`의 읽기 8개·승인 job 어댑터 단위 시험이다. 이후 push는 한 번에 묶고 Verify 완료까지 기다린다. model.h5와 visitor policy는 계속 보류한다.
+
+---
+
+# 이전 재개 지점 (2026-10-23, FaceReview browser `/read` 측정기 조사, 계측 SHA `5a42b20`)
 
 이전 `invalid_json`은 서버 non-JSON의 증거가 아니었다. `facereview-ui-member-browser.py`는 `response` 이벤트 안에서 `response.json()`을 호출하고 모든 Exception을 `invalid_json`으로 기록했다. 합성 서버와 같은 Playwright 1.64/Chromium 1248에서 reload나 close와 겹친 응답이 `Network.getResponseBody: No resource with given identifier`(resource_evicted), `TargetClosedError`, 요청이 종료 이벤트 없이 사라지는 경우로 실패했고 모두 같은 라벨이 됐다. 진짜 HTML 본문은 별도 분류(`json_decode_error`)로 재현했다.
 

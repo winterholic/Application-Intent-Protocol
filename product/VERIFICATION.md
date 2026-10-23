@@ -1405,3 +1405,11 @@ CI: Verify `39915678255` attempt 1은 step 10의 `spike-v3-write/tests/absence_s
 profile: `profile-browser-result.json`의 MySQL 이름·장르 assertion은 통과(`saved_name`, `saved_genres`, `write_bundle_ok`)지만 `profile-after-save.png`는 헤더만 있는 빈 본문이다. 두 run 연속이라 화면 결과 증거가 아니며, 이동 직후 screenshot과 handler 안 `response.json()`이라는 같은 패턴이 원인 후보다(미확인).
 
 최소 수정안(미적용): (1) 클릭 전 `.video-information-container .title`에 fixture 제목이 보일 때까지 대기. (2) 클릭 후 reload 전에 북마크 `/read`와 생성/해제 `/apply`가 종료 이벤트에 도달할 때까지 대기. (3) 그 뒤 reload와 `aria-pressed` 단정. 단정 완화, API mock, 숨은 버튼 조작은 쓰지 않는다. 제품 코드 변경은 필요하지 않다. 원시 증거: artifact `12486124697`(삭제하지 않음), outbox `ci-39915678255-attempt1/`·`attempt2/`, 재현 도구 `aip-measurement-repro/`.
+
+## 2026-10-23 browser journey 수정과 Verify 39922363131 (SHA `d6718c4`)
+
+수정(member·profile 한 커밋): member는 클릭 전 `.video-information-container .title`의 fixture 제목을 기다리고, 클릭 뒤 북마크 `/read`와 `/apply`가 `requestfinished`(본문 수집 포함)에 이를 때까지 기다린 다음 reload와 `aria-pressed` 단정을 한다. profile은 본문을 `requestfinished`에서 읽고 저장 `/apply` 본문과 목적지 페이지의 읽기, `networkidle`을 기다려 screenshot을 찍으며 `after_save_visible_text_length`를 기록한다. 본문을 못 읽은 행은 성공으로 세지 않고 "measurement gap"으로 실패한다. 제품 코드, 단정 완화, mock, 숨은 버튼 조작은 없다.
+
+로컬: 단위 22/22. 가짜 UI/API에서 수정 전 스크립트는 느린 `Video.view`에서 `bookmark_action` 미눌림, 낙관적 flip 뒤 느린 `/read`에서 `bookmark_reloaded` 실패(unfinished 북마크 `/read`)였고 수정본은 add/remove/profile 모두 통과했다. 가짜 UI의 `Video.view` 뒤 제목 렌더, 클릭 전 데이터가 없을 때 낙관적 flip 없음은 핀된 UI 코드 읽기에 근거한 모사다.
+
+CI: Verify `39922363131` attempt 1은 step 12의 `mysql_worker_write_e2e.rs:433`에서 `retryJob`이 `WIRE.DB_UNAVAILABLE`(retry later)를 받아 실패했고 브라우저 시험은 실행되지 않았다. 같은 SHA의 실패 job 재실행(attempt 2)에서 `success`. 증거: add/remove `journey_stage=completed`, 북마크 `/read` 앱 수신과 `match`, `bookmark_requests_settled`가 `reload_start`보다 앞, add 화면에 제목·`저장됨`·조회수 11, profile 이름·장르 assertion 통과와 body 전부 수집. profile after 화면은 DOM 텍스트 133자인데도 헤더만 보이는 빈 화면이라 증거로 세지 않는다(렌더링 지연은 미확인 후보). 간헐 실패 후보 두 건(`absence_serializable.rs:78`, `mysql_worker_write_e2e.rs:433`)은 STATUS에 별도 기록했다.
