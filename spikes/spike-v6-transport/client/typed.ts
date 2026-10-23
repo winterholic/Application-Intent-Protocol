@@ -60,6 +60,15 @@ function typedClient<C extends ContractShape<C>>(base: string, token: string | n
   return {
     ...client,
     cache: { size: client.cache.size },
+    /** One administrator-style aggregate the contract exposes (`expose aggregate`): a total or a count with its own input and filter. */
+    async aggregate(request: { readonly aggregate: string; readonly input?: Readonly<Record<string, unknown>>; readonly filter?: readonly unknown[] }): Promise<number | null> {
+      if (!request || typeof request.aggregate !== "string" || !/^[A-Z][A-Za-z0-9]*\.[a-z][A-Za-z0-9]*$/.test(request.aggregate)) {
+        throw Object.assign(new Error("aggregate 이름은 Resource.name 형식이어야 함"), { code: "WIRE.BAD_VALUE" });
+      }
+      // An aggregate that takes no caller filter refuses the key itself, even an empty list, so it is sent only when the caller gives one.
+      const reply = await client.read({ aggregate: request.aggregate, input: request.input ?? {}, ...(request.filter === undefined ? {} : { filter: request.filter }) }) as { rows: unknown[] };
+      return reply.rows[0] as number | null;
+    },
     read<R extends Root<C>, const S extends readonly SelectItem<C, R>[]>(query: {
       readonly read: R;
       readonly select: S & CheckSel<S>;
@@ -161,6 +170,11 @@ type ReadDescription = {
 function validateReadRows(query: unknown, rows: unknown[], descriptors: Readonly<Record<string, ReadDescription>>, wire: IdWireKind) {
   function reject(): never { throw Object.assign(new Error("읽기 값이 생성 계약과 다름"), {code: "CLIENT.PROTOCOL_ERROR"}); }
   if (!query || typeof query !== "object" || Array.isArray(query)) reject();
+  // A standalone aggregate (`expose aggregate`) answers one scalar row; the server decides who may ask and for which input.
+  if (typeof (query as {aggregate?: unknown}).aggregate === "string") {
+    if (rows.length !== 1 || (rows[0] !== null && (typeof rows[0] !== "number" || !Number.isFinite(rows[0])))) reject();
+    return;
+  }
   const request = query as {read: string; select: unknown[]; limit?: number};
   const resource = Object.hasOwn(descriptors, request.read) ? descriptors[request.read] : undefined;
   if (!resource?.root || !Array.isArray(request.select) || request.select.length === 0 ||

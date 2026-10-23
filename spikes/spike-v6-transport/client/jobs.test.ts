@@ -234,3 +234,38 @@ test("failed job receipts preserve uncertain effect diagnostics", async () => {
   const client = createJobsClient(async () => ok({ run: { id: jobId, operation: "summarize", state: "FAILED", attempt: 1, error: "WIRE.CANCELLATION_UNCONFIRMED" } }), binding);
   assert.deepEqual(await client.status(jobId), { id: jobId, status: "FAILED", error: "WIRE.CANCELLATION_UNCONFIRMED" });
 });
+
+test("an operation whose input and output hold Uuid ids (a durable job keyed by a UUID row) validates and enqueues", async () => {
+  type UuidOperations = { approve: { input: { request: string }; output: { video_id: string } } };
+  const uuidBinding = {
+    fingerprint,
+    idWire: "decimal-string-v13" as const,
+    operations: {
+      approve: {
+        input: { request: { type: "Uuid", nullable: false } },
+        output: { video_id: { type: "Uuid", nullable: false } },
+        lifetime: "durable" as const,
+        effect: "managed" as const,
+        deadlineMs: 60_000,
+        dependencies: { worker: ["database"], authorization: ["database"] },
+      },
+    } satisfies OperationDescriptors<UuidOperations>,
+  };
+  const request = "ffffffff-0000-4000-8000-000000000001";
+  const video = "aaaaaaaa-0000-4000-8000-000000000009";
+  const calls: unknown[][] = [];
+  const client = createJobsClient(async (route, body) => {
+    calls.push([route, body]);
+    return route === "/jobs/result"
+      ? ok({ id: jobId, operation: "approve", output: { video_id: video } })
+      : ok({ run: { id: jobId, operation: "approve", state: "QUEUED", attempt: 0 } });
+  }, uuidBinding);
+  const job = await client.enqueue("approve", { request }, { key: "uuid-1" });
+  assert.equal(job.status, "QUEUED");
+  assert.deepEqual(calls[0], ["/jobs/enqueue", { operation: "approve", input: { request }, key: "uuid-1", delayMs: 0 }]);
+  assert.deepEqual(await client.result(jobId, "approve"), { video_id: video });
+  // A Uuid field is still checked: a decimal id or free text is not one.
+  await assert.rejects(client.enqueue("approve", { request: "123" }, { key: "uuid-2" }), (error: any) => error.code === "WIRE.BAD_VALUE");
+  await assert.rejects(client.enqueue("approve", { request: "FFFFFFFF-0000-4000-8000-000000000001" }, { key: "uuid-3" }), (error: any) => error.code === "WIRE.BAD_VALUE");
+  assert.equal(calls.length, 2, "the two invalid inputs never reached the transport");
+});

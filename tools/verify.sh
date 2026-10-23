@@ -55,7 +55,13 @@ cargo test --manifest-path prototype/Cargo.toml --test cli --locked --target-dir
 # The update smoke executes the product CLI; rebuild before its installed-SDK test.
 cargo build -p aip-cli --locked
 node --test \
+  porting/facereview/ui-overlay/tests/adminAdapter.test.ts \
+  porting/facereview/ui-overlay/tests/adminReadAdapter.test.ts \
+  porting/facereview/ui-overlay/tests/authAdapter.test.ts \
+  porting/facereview/ui-overlay/tests/mypageAdapter.test.ts \
   porting/facereview/ui-overlay/tests/readAdapter.test.ts \
+  porting/facereview/ui-overlay/tests/writeAdapter.test.ts \
+  spikes/spike-v6-transport/client/aggregate.test.ts \
   spikes/spike-v5-sdk/sdk/cache.test.ts \
   spikes/spike-v5-sdk/sdk/lifetime.test.ts \
   spikes/spike-v6-transport/client/recovery.test.ts \

@@ -2,6 +2,8 @@ import json
 import unittest
 
 from product.tests.facereview_ui_browser_evidence import (
+    admin_request_evidence,
+    safe_page_error_name,
     extension_request_evidence,
     extension_response_evidence,
     external_media_failure_evidence,
@@ -306,6 +308,34 @@ class BrowserEvidenceTests(unittest.TestCase):
         self.assertEqual(timeline_phase(500, marks), "after_close_start")
         self.assertEqual(timeline_phase(50, {}), "before_any_mark")
         self.assertEqual(timeline_phase(None, marks), "not_observed")
+
+    def test_admin_request_evidence_keeps_only_schema_names(self):
+        self.assertEqual(admin_request_evidence("/read", {"query": {"aggregate": "User.totalCount", "input": {}, "filter": [{"field": "name", "op": "like", "value": "secret"}]}}), {"aggregate": "User.totalCount"})
+        self.assertEqual(admin_request_evidence("/read", {"query": {"read": "VideoRequest", "select": ["id"], "filter": [{"field": "id", "op": "eq", "value": "v"}]}}), {"read": "VideoRequest"})
+        self.assertEqual(admin_request_evidence("/extension", {"extension": "User.systemStatus", "input": {}}), {"extension": "User.systemStatus"})
+        self.assertEqual(admin_request_evidence("/jobs/enqueue", {"operation": "approveVideoRequest", "key": "k", "input": {"youtube_title": "private title"}}), {"operation": "approveVideoRequest"})
+        # The SDK wraps a write as {key, request}; the transition name is the only thing kept.
+        self.assertEqual(admin_request_evidence("/apply", {"key": "k", "request": {"apply": "VideoRequest.reject", "values": {"admin_comment": "private reason"}}}), {"apply": "VideoRequest.reject"})
+        self.assertEqual(admin_request_evidence("/apply", {"key": "k", "request": {"atomic": [{"create": "X"}]}}), {"apply": "atomic"})
+        self.assertEqual(admin_request_evidence("/apply", {"key": "k", "request": {"create": "VideoLike", "values": {}}}), {"apply": "create"})
+
+    def test_admin_request_evidence_marks_unrecognized_names_and_ignores_other_paths(self):
+        self.assertEqual(admin_request_evidence("/read", {"query": {"read": "User; DROP TABLE user"}}), {"read": "unrecognized"})
+        self.assertEqual(admin_request_evidence("/extension", {"extension": 7}), {"extension": "unrecognized"})
+        self.assertEqual(admin_request_evidence("/auth/login", {"email": "a@example.com", "password": "never recorded"}), {})
+        self.assertEqual(admin_request_evidence("/read", None), {})
+        self.assertEqual(admin_request_evidence("/read", {"query": "not an object"}), {})
+
+    def test_safe_page_error_name_uses_the_javascript_name_not_the_wrapper_class(self):
+        class Wrapped(Exception):
+            name = "TypeError"
+
+        class Odd(Exception):
+            name = "Custom message with a secret"
+
+        self.assertEqual(safe_page_error_name(Wrapped("cannot read properties of null")), "TypeError")
+        self.assertEqual(safe_page_error_name(Odd("x")), "unrecognized")
+        self.assertEqual(safe_page_error_name(ValueError("no name attribute")), "unrecognized")
 
 
 if __name__ == "__main__":

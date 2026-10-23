@@ -112,11 +112,29 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/aip-browser"
           "$RUNNER_TEMP/aip-browser/bin/pip" install --no-cache-dir playwright==1.64.0
           "$RUNNER_TEMP/aip-browser/bin/python" -m playwright install --with-deps chromium
+      - name: Prepare the pinned FaceReview admin console browser journey
+        run: |
+          set -euo pipefail
+          admin="$RUNNER_TEMP/aip-facereview-admin-ui"
+          pinned=ab0386c878a5ba5c7c079a262b987c10d211d22d
+          git clone --quiet --filter=blob:none --no-checkout --depth=1 \
+            https://github.com/winterholic/new-facereview-admin-front.git "$admin"
+          git -C "$admin" fetch --quiet --depth=1 origin "$pinned"
+          git -C "$admin" checkout --quiet --detach "$pinned"
+          test "$(git -C "$admin" rev-parse HEAD)" = "$pinned"
+          AIP_CLI_BIN="$GITHUB_WORKSPACE/target/debug/aip" porting/facereview/apply-admin-ui-overlay.sh "$admin" "$AIP_FACEREVIEW_DEFINITION_FILE"
+          cd "$admin"
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm install --ignore-scripts --no-audit --no-fund "$RUNNER_TEMP/aip-sdk-0.1.0.tgz"
+          # The pinned admin UI's own build (tsc -b && vite build) against the generated binding and the installed SDK.
+          npx tsc -b
+          VITE_AIP_URL=http://127.0.0.1:1 npx vite build
       - name: Verify real HTTP to Node and Python workers to MySQL
         env:
           AIP_E2E_TAG: ci-${{ github.run_id }}-${{ github.run_attempt }}
           AIP_E2E_MYSQL_PORT: '55441'
           AIP_FACEREVIEW_UI_DIR: ${{ runner.temp }}/aip-facereview-ui
+          AIP_FACEREVIEW_ADMIN_UI_DIR: ${{ runner.temp }}/aip-facereview-admin-ui
           AIP_FACEREVIEW_PYTHON: ${{ runner.temp }}/aip-browser/bin/python
           AIP_FACEREVIEW_BROWSER_OUTPUT: ${{ runner.temp }}/aip-facereview-browser
         run: bash scripts/verify-mysql-worker-e2e.sh run-ci

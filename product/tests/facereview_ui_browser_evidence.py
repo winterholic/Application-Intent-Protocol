@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import re
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -509,3 +510,35 @@ def extension_response_evidence(extension: str, payload: Any, fixture_video_id: 
         "response_list_length": len(videos) if videos is not None else None,
         "contains_fixture_video": _contains_video(videos or [], fixture_video_id),
     }
+
+
+_SAFE_SCHEMA_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_.]{0,63}$")
+_SAFE_PAGE_ERROR_NAMES = {"Error", "TypeError", "ReferenceError", "RangeError", "SyntaxError"}
+
+
+def _schema_name(value: Any) -> str:
+    return value if isinstance(value, str) and _SAFE_SCHEMA_NAME.match(value) else "unrecognized"
+
+
+def admin_request_evidence(path: str, body: Any) -> dict[str, str]:
+    """Names only for the admin console: the resource, aggregate, extension, operation or transition a request names. Never a value."""
+    if not isinstance(body, dict):
+        return {}
+    if path == "/read" and isinstance(body.get("query"), dict):
+        query = body["query"]
+        return {"aggregate": _schema_name(query.get("aggregate"))} if "aggregate" in query else {"read": _schema_name(query.get("read"))}
+    if path == "/extension":
+        return {"extension": _schema_name(body.get("extension"))}
+    if path == "/jobs/enqueue":
+        return {"operation": _schema_name(body.get("operation"))}
+    if path == "/apply":
+        # The SDK wraps a write as {key, request}.
+        applied = body.get("request") if isinstance(body.get("request"), dict) else body
+        return {"apply": _schema_name(applied.get("apply") or ("atomic" if "atomic" in applied else "create"))}
+    return {}
+
+
+def safe_page_error_name(error: Any) -> str:
+    """Playwright wraps a page error in its own class; the JavaScript name is `error.name`. Only a few well-known names are kept."""
+    name = getattr(error, "name", type(error).__name__)
+    return name if name in _SAFE_PAGE_ERROR_NAMES else "unrecognized"

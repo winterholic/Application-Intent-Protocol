@@ -238,6 +238,19 @@ if [[ "$mode" == run-ci ]]; then
   grep -Fxq "$admin_test: test" /tmp/aip-e2e-admin-list-"$tag".txt
   cargo test "${admin_args[@]}" -- --ignored --exact "$admin_test" --nocapture --test-threads=1 2>&1 | tee /tmp/aip-e2e-admin-run-"$tag".txt
   grep -Fq "test result: ok. 1 passed; 0 failed;" /tmp/aip-e2e-admin-run-"$tag".txt
+  # The administrator console (WBS 7.2.9 / 7.2.10): the server's own refusals for a member and a guest, then, when verify.yml supplies the
+  # pinned admin UI (AIP_FACEREVIEW_ADMIN_UI_DIR) and Playwright, the real React console against the real service, MySQL and MongoDB.
+  echo "=== Running the administrator console end-to-end test (real aip binary, write workers, real MySQL and MongoDB) ==="
+  adminui_args=(--locked -p aip-cli --features mysql --test mysql_facereview_admin_ui)
+  adminui_test="facereview_admin_console_runs_through_the_generated_sdk_and_the_servers_own_policy"
+  cargo test "${adminui_args[@]}" -- --list --ignored 2>&1 | tee /tmp/aip-e2e-adminui-list-"$tag".txt | tail -3
+  grep -Fxq "$adminui_test: test" /tmp/aip-e2e-adminui-list-"$tag".txt
+  cargo test "${adminui_args[@]}" -- --ignored --exact "$adminui_test" --nocapture --test-threads=1 2>&1 | tee /tmp/aip-e2e-adminui-run-"$tag".txt
+  grep -Fq "test result: ok. 1 passed; 0 failed;" /tmp/aip-e2e-adminui-run-"$tag".txt
+  grep -Fq "policy: member refused 6 administrator aggregates, 3 administrator extensions and the approval job" /tmp/aip-e2e-adminui-run-"$tag".txt
+  if [[ -n "${AIP_FACEREVIEW_ADMIN_UI_DIR:-}" ]]; then
+    grep -Fq "React admin console journey: SUPER_ADMIN login, dashboard" /tmp/aip-e2e-adminui-run-"$tag".txt
+  fi
   exit 0
 fi
 

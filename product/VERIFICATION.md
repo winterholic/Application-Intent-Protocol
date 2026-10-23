@@ -1413,3 +1413,43 @@ profile: `profile-browser-result.json`의 MySQL 이름·장르 assertion은 통�
 로컬: 단위 22/22. 가짜 UI/API에서 수정 전 스크립트는 느린 `Video.view`에서 `bookmark_action` 미눌림, 낙관적 flip 뒤 느린 `/read`에서 `bookmark_reloaded` 실패(unfinished 북마크 `/read`)였고 수정본은 add/remove/profile 모두 통과했다. 가짜 UI의 `Video.view` 뒤 제목 렌더, 클릭 전 데이터가 없을 때 낙관적 flip 없음은 핀된 UI 코드 읽기에 근거한 모사다.
 
 CI: Verify `39922363131` attempt 1은 step 12의 `mysql_worker_write_e2e.rs:433`에서 `retryJob`이 `WIRE.DB_UNAVAILABLE`(retry later)를 받아 실패했고 브라우저 시험은 실행되지 않았다. 같은 SHA의 실패 job 재실행(attempt 2)에서 `success`. 증거: add/remove `journey_stage=completed`, 북마크 `/read` 앱 수신과 `match`, `bookmark_requests_settled`가 `reload_start`보다 앞, add 화면에 제목·`저장됨`·조회수 11, profile 이름·장르 assertion 통과와 body 전부 수집. profile after 화면은 DOM 텍스트 133자인데도 헤더만 보이는 빈 화면이라 증거로 세지 않는다(렌더링 지연은 미확인 후보). 간헐 실패 후보 두 건(`absence_serializable.rs:78`, `mysql_worker_write_e2e.rs:433`)은 STATUS에 별도 기록했다.
+
+## 2026-10-23 WBS 7.2.9 / 7.2.10 관리자 콘솔 실제 SDK 전환 (원본 `new-facereview-admin-front` 고정 `ab0386c878a5ba5c7c079a262b987c10d211d22d`)
+
+**원본 위치.** 이전 보고의 "checkout 없음"은 사실이 아니었다. 로컬 `~/development/projects/facereview/new-facereview-admin-front`가 있고 HEAD가 고정 commit과 같다(작업 트리의 변경은 scss/svg 6개이며 `git diff --ignore-cr-at-eol --stat`로 줄바꿈 차이임을 확인). 원본 checkout은 고치지 않았고, `git clone --local --no-checkout`으로 만든 임시 clone에서 고정 commit을 체크아웃해 overlay를 적용했다. remote `https://github.com/winterholic/new-facereview-admin-front.git`는 public이며 `git ls-remote`가 같은 commit을 돌려준다(CI 준비 단계가 이 URL을 쓴다).
+
+**구현.** (1) `ui-overlay/src/api/adminReadAdapter.ts`: 읽기 7개(회원·영상 요청·영상·댓글 목록, 시스템 상태, 비즈니스 지표, 가입 추이)와 `/auth/me`를 원본 응답 모양으로 조립한다. 조립 규칙은 `reference/slice13e_oracle.py`·`slice14h_oracle.py`가 원본 `AdminService`와 대조한 것(목록 62건, 대시보드 25건 일치)을 옮겼다. 이전 문서의 "읽기 8개"는 목록 4, 대시보드 2, 시스템 상태 1로 7개를 적고 있어 8번째를 `/auth/me`로 해석했다(해석, 확인 필요). (2) `adminAdapter.ts`의 `createAdminApprovalApi`: 승인은 durable job `approveVideoRequest`를 enqueue하고 `SUCCEEDED`까지 기다린 뒤 결과의 `video_id`를 돌려준다. `FAILED`, `CANCELLED`, 시간 초과는 오류이며 성공으로 보고하지 않는다. 이 job은 외부 YouTube 호출이 없다(정의의 `access`에 `http.*` 없음). (3) `ui-overlay/admin/src/api/{aipClient,admin,auth,HeaderToken}.ts`와 `porting/facereview/apply-admin-ui-overlay.sh`. 기존 쓰기 5개 adapter는 그대로 두고 `writeAdapter` 타입 의존만 자체 인터페이스로 바꿨다.
+
+**SDK 결함 2건(실제 콘솔을 돌린 뒤에야 드러남, 가짜 client 시험은 통과하던 것).** ① 생성 TS SDK에 독립 aggregate(`expose aggregate`: 총계, 가입 수, 주간 활성, 장르 조회수) 호출이 없었고 `typed.ts`의 읽기 검증이 `read`와 `select`가 없는 질의를 거절했다. `aggregate()`를 추가했다. 첫 구현은 `filter: []`를 항상 보내 `callerFilter none` 집계가 `WIRE.FILTER_NOT_ALLOWED`로 거절됐고, 실제 브라우저 실행에서 발견해 호출자가 줄 때만 보내도록 고쳤다. ② `jobs.ts`의 스칼라 검증이 `Uuid`를 몰라 UUID 키 job(`approveVideoRequest`의 `request`, `video_id`)을 enqueue할 수 없었다(`WIRE.BAD_VALUE`, 서버 전송 전). `typed.ts`와 같은 규칙을 넣었다. 각각 수정 전 실패(`client.aggregate is not a function`, jobs 시험 1건 실패)를 확인한 뒤 고쳤다.
+
+**쓰기 5개와 승인의 원본 대조(필드, 권한, 상태).**
+
+| 동작 | 원본(`AdminService`, `admin.py`) | AIP 선언 | 브라우저+DB 확인 |
+|---|---|---|---|
+| 회원 비활성화 | `admin_required`; SUPER_ADMIN은 누구나, ADMIN은 GENERAL만; `is_deleted=1`과 그 회원의 모든 댓글 `is_deleted=1` | `User.deactivate`: 같은 허용 조건, 댓글 `update many` (maxRows 1000) | 데이브: `GENERAL`/삭제 1, 그의 댓글 삭제 1, 미삭제 댓글 0 |
+| 권한 변경 | `super_admin_required`; 대상 `is_deleted=0`; `role` 대입 | `User.changeRole`: SUPER_ADMIN만, `from is_deleted=false`, `role`만 patch | 에린 `ADMIN 해제` 후 `GENERAL`/삭제 0 (ADMIN 지정 방향은 브라우저에서 미실행) |
+| 영상 삭제 | `admin_required`; `is_deleted=1` | `Video.remove`: `isAdmin`, soft delete | 영상 행 `is_deleted=1`, 목록 3건에서 2건 |
+| 댓글 삭제 | `admin_required`; `is_deleted=1` | `Comment.remove`: `isAdmin`, soft delete | 댓글 `is_deleted=1`, 행은 남고 총 5건 유지 |
+| 요청 거절 | `admin_required`; PENDING만; `REJECTED`와 `admin_comment` | `VideoRequest.reject`: `isAdmin`, `from status = PENDING`, `admin_comment` patch | `REJECTED`와 `중복 영상입니다` |
+| 요청 승인 | 한 트랜잭션에서 영상 생성, Mongo 초기 문서 2개, 요청 `ACCEPTED` | durable job: `Video` create, Mongo upsert 2개, `VideoRequest.accept` | job `SUCCEEDED`, 요청 `ACCEPTED`, 영상 `승인 표본 영상`/`표본 채널`/321/vlog/조회 0/활성, Mongo 문서 각 1개 |
+
+차이: 원본 오류는 한국어 메시지, AIP는 `WIRE.*` code이며 콘솔은 둘 다 일반 토스트로만 보여 준다. 성공 메시지 문구는 원본 서버 문자열과 대조하지 않았다. 삭제된 영상을 다시 삭제하는 경우처럼 원본이 `VIDEO_NOT_FOUND`로 답하는 경계는 이번 브라우저 여정에 없다.
+
+**새 실서비스 시험 `crates/aip-cli/tests/mysql_facereview_admin_ui.rs`.** 비밀번호 로그인 배포에 쓰기 worker와 Mongo 쓰기 컬렉션을 켠 서비스, 실제 MySQL 8.4, Mongo, Redis. 브라우저 전에 서버 정책을 정확한 code로 확인한다. 관리자는 6개 집계와 3개 확장에 모두 답을 받는다(대조군). 일반 회원과 비인증 호출자는 6개 집계에서 `WIRE.ACCESS_DENIED`, 확장에서 각각 `WIRE.EXTENSION_ERROR`, `WIRE.UNAUTHENTICATED`, 승인 job에서 `WIRE.ACCESS_DENIED`, `WIRE.UNAUTHENTICATED`를 받고, 일반 회원의 자기 역할 상승은 `WIRE.FORBIDDEN`이다. 첫 탐침은 요청 형식이 틀려 엉뚱한 code로 거절돼 의미가 없었고, 대조군을 넣어 고쳤다. 브라우저 여정은 `product/tests/facereview-ui-admin-browser.py`(기존 member, profile 여정과 별도 스크립트, 별도 증거 파일)다.
+
+**로컬 실행 결과(macOS, 이 Mac의 run 소유 컨테이너 MySQL 8.4, mongo:7, redis:7, 고정 commit에 overlay를 적용한 임시 clone, Vite 5183).**
+
+| 명령 | 결과 |
+|---|---|
+| `node --test porting/facereview/ui-overlay/tests/*.test.ts` | adminReadAdapter 12/12, adminAdapter 9/9, 전체 47/47 |
+| `node --test` 관련 20개 파일(overlay 6개, SDK client 14개 등) | `tests 147 / pass 147 / fail 0` |
+| `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest product.tests.test_facereview_ui_browser_evidence` | 25 tests OK(새 헬퍼 3개 포함) |
+| 고정 admin UI: `apply-admin-ui-overlay.sh`, SDK tarball 설치, `npx tsc -b`, `vite build` | `tsc-exit=0`, build 성공, 번들에 `/v2/` 문자열 0건 (적용 전 원본 단독 build도 성공했다) |
+| `cargo test -p aip-cli --features mysql --test mysql_facereview_admin_ui -- --ignored` | 서버 정책만: `1 passed`; 브라우저 포함 전체: `test result: ok. 1 passed`, 약 20초 |
+| `cargo clippy -p aip-migrate -p aip-service -p aip-cli --features mysql,aip-cli/mysql --all-targets --locked -- -D warnings`, `cargo fmt --all --check` | 통과 |
+
+브라우저 여정이 확인한 것: 비인증 방문은 `/login`으로 이동하고 관리자 요청이 없다. 일반 회원은 로그인에는 성공하지만 콘솔이 `관리자 권한이 없습니다.`로 거절하고 세션을 남기지 않으며 집계, 확장, job 요청이 0건이다. SUPER_ADMIN 로그인 후 회원 목록(전체 6건, 키워드 검색 1건), 쓰기 5개와 승인 job, 영상 3건에서 2건, 댓글 5건, 로그아웃 후 세션 제거. 모든 SDK 요청이 `ok:true`이고 계약 지문이 서버와 같으며 원본 REST 호출은 0건이다. 위 DB와 Mongo 단언 통과.
+
+**화면 coverage와 미검증.** 5개 화면 중 4개(회원, 영상, 영상 요청, 댓글)와 로그인을 로컬 브라우저에서 확인했다. **대시보드는 화면으로 확인하지 못했다.** 이 macOS에서 `User.systemStatus`가 호스트 수치를 null로 주고(서버 문서화된 Linux 전용), 고정 콘솔의 대시보드는 `cpu_usage.toFixed`를 호출하므로 로그인 직후 React 오류(`TypeError`)가 난다(원인은 코드 읽기와 null 관측에서 추정, 오류 메시지는 확인 못함). 같은 실행에서 대시보드의 SDK 요청(`signupCount` 7회, `weeklyActive`, 장르별 `totalCount`와 `categoryViews`, `contentHealth`, `pipeline`, `systemStatus`)은 모두 `ok:true`였으므로 API 연결은 확인했지만 렌더는 Linux CI 시험(대시보드 제목, KPI, CPU 줄, 연결 칩 `정상` 3개)에 맡긴다. 기간 선택(7d 외), 토큰 만료 reissue, `ADMIN 지정` 방향, ADMIN 계정이 GENERAL만 비활성화하는 경계의 브라우저 시험은 없다(서버 정책 시험은 기존 `mysql_facereview_auth`에 있음). 이 로컬 결과는 macOS Seatbelt worker 기준이며 Linux Bubblewrap CI 결과가 아니다. CI 결과는 이 SHA의 Verify 확정 후 별도로 기록한다. 사용자 UI 25 고유 경로와 관리자 API 13 경로의 분모는 합치지 않았다.
+
+**이전 dirty clone 보존 patch.** Run `a14a5dd2-8b40-4471-9bca-967ab33d9ee0`의 `aip-ui-dirty-clone-preservation/`는 읽지 못했다. `ls`가 ttakkari 가드에 거부됐고(우회하지 않음), `list_artifacts`(agent 영역, 이름 검색)는 빈 목록이었다. 미확인이다. 이번 Run은 사용자 소유 자료나 dirty 사본을 삭제하지 않았다.

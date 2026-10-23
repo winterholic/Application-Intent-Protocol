@@ -99,6 +99,8 @@ function validScalar(value: unknown, descriptor: ScalarDescriptor, wire: IdWireK
   switch (descriptor.type) {
     case "Id": case "Ref":
       return wire === "legacy" ? typeof value === "string" && /^[0-9]+$/.test(value) : validResultId(value, wire);
+    // The same lower-case UUID text the extension scalars accept (typed.ts); a job keyed by a UUID row needs it for input and output.
+    case "Uuid": return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value);
     case "Bool": return typeof value === "boolean";
     case "Int": return typeof value === "number" && Number.isSafeInteger(value);
     case "Text": case "Url": return typeof value === "string" && !value.includes("\0");
