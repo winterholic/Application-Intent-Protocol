@@ -1,12 +1,43 @@
 import unittest
 
-from product.tests.facereview_ui_browser_evidence import extension_request_evidence, extension_response_evidence
+from product.tests.facereview_ui_browser_evidence import (
+    extension_request_evidence,
+    extension_response_evidence,
+    fixture_thumbnail_redirect_url,
+)
 
 
 VIDEO_ID = "aaaaaaaa-0000-4000-8000-000000000001"
 
 
 class BrowserEvidenceTests(unittest.TestCase):
+    def test_only_the_fixture_thumbnail_image_can_be_redirected_to_local_fixture(self):
+        local_thumbnail = "https://127.0.0.1:49152/fixture-thumbnail.svg"
+        self.assertEqual(
+            fixture_thumbnail_redirect_url(
+                f"https://img.youtube.com/vi/dQw4w9WgXcQ/mqdefault.jpg",
+                "image",
+                "dQw4w9WgXcQ",
+                local_thumbnail,
+            ),
+            local_thumbnail,
+        )
+
+    def test_fixture_thumbnail_rule_rejects_other_urls_and_resource_types(self):
+        local_thumbnail = "https://127.0.0.1:49152/fixture-thumbnail.svg"
+        cases = (
+            ("https://img.youtube.com/vi/anotherVideo/mqdefault.jpg", "image"),
+            ("https://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg", "image"),
+            ("https://img.youtube.com/vi/dQw4w9WgXcQ/hqdefault.jpg", "image"),
+            ("https://img.youtube.com/vi/dQw4w9WgXcQ/mqdefault.jpg", "media"),
+            ("https://img.youtube.com.evil.example/vi/dQw4w9WgXcQ/mqdefault.jpg", "image"),
+        )
+        for url, resource_type in cases:
+            with self.subTest(url=url, resource_type=resource_type):
+                self.assertIsNone(
+                    fixture_thumbnail_redirect_url(url, resource_type, "dQw4w9WgXcQ", local_thumbnail)
+                )
+
     def test_request_evidence_keeps_only_allowlisted_extension_name_page_and_emotion(self):
         request = {
             "extension": "Video.homeVideoAll",

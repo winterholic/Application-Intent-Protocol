@@ -2,6 +2,7 @@
 
 import json
 from typing import Any
+from urllib.parse import urlsplit
 
 
 LIST_EXTENSIONS = {
@@ -10,6 +11,27 @@ LIST_EXTENSIONS = {
     "Video.homePersonalized",
 }
 EMOTIONS = {"all", "happy", "sad", "neutral", "surprise", "angry"}
+
+
+def fixture_thumbnail_redirect_url(
+    url: str, resource_type: str, fixture_youtube_id: str, local_thumbnail_url: str
+) -> str | None:
+    """Route only the fixture's availability-check image to its local static image."""
+    request = urlsplit(url)
+    local = urlsplit(local_thumbnail_url)
+    if (
+        resource_type == "image"
+        and request.scheme == "https"
+        and request.hostname == "img.youtube.com"
+        and request.path == f"/vi/{fixture_youtube_id}/mqdefault.jpg"
+        and not request.query
+        and local.scheme == "https"
+        and local.hostname == "127.0.0.1"
+        and local.port is not None
+        and local.path == "/fixture-thumbnail.svg"
+    ):
+        return local_thumbnail_url
+    return None
 
 
 def extension_request_evidence(body: Any) -> dict[str, object]:
