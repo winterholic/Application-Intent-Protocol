@@ -43,6 +43,8 @@ SAFE_WIRE_CODES = {
     "WIRE.INVALID_QUERY",
     "WIRE.OUTPUT_INVALID",
 }
+
+
 SAFE_NETWORK_FAILURES = {
     "net::ERR_ABORTED",
     "net::ERR_BLOCKED_BY_CLIENT",
@@ -74,6 +76,28 @@ def fixture_thumbnail_redirect_url(
     ):
         return local_thumbnail_url
     return None
+
+
+def youtube_iframe_api_stub(url: str, resource_type: str) -> str | None:
+    """Return a no-op player API only for YouTube's loader script; never fetch or play media."""
+    parsed = urlsplit(url)
+    if resource_type != "script" or parsed.hostname not in {"youtube.com", "www.youtube.com"} or parsed.path != "/iframe_api":
+        return None
+    return """(() => {
+      const noop = () => {};
+      const PlayerState = {UNSTARTED: -1, ENDED: 0, PLAYING: 1, PAUSED: 2, BUFFERING: 3, CUED: 5};
+      function Player(_target, options) {
+        Object.assign(this, {
+          playVideo: noop, pauseVideo: noop, stopVideo: noop, seekTo: noop,
+          mute: noop, unMute: noop, setVolume: noop, getVolume: () => 0,
+          getCurrentTime: () => 0, getDuration: () => 0,
+          getPlayerState: () => PlayerState.UNSTARTED, destroy: noop,
+        });
+        queueMicrotask(() => options?.events?.onReady?.({target: this}));
+      }
+      window.YT = {Player, PlayerState};
+      window.onYouTubeIframeAPIReady?.();
+    })();"""
 
 
 def read_request_evidence(body: Any) -> dict[str, object]:

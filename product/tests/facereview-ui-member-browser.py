@@ -25,6 +25,7 @@ from product.tests.facereview_ui_browser_evidence import (
     external_media_failure_evidence,
     failed_read_requests,
     fixture_thumbnail_redirect_url,
+    youtube_iframe_api_stub,
     read_request_evidence,
     safe_browser_caller_frames,
     safe_browser_failure_type,
@@ -125,6 +126,7 @@ def main() -> int:
     console_errors: list[dict[str, object]] = []
     external_media_failures: list[dict[str, str]] = []
     blocked_external_image_count = 0
+    youtube_player_api_fixture_count = 0
     fixture_thumbnail_redirect_count = 0
     fixture_thumbnail_response_statuses: list[int] = []
     rendered_state: dict[str, int] = {}
@@ -301,9 +303,9 @@ def main() -> int:
                 page.on("console", capture_console_error)
 
                 # The fixture's YouTube ID is not fetched or played. Its availability
-                # thumbnail request is continued to a local static fixture image.
+                # thumbnail uses a local static image; only the iframe API loader gets a no-op local response.
                 def block_external_media(route) -> None:
-                    nonlocal blocked_external_image_count, fixture_thumbnail_redirect_count
+                    nonlocal blocked_external_image_count, fixture_thumbnail_redirect_count, youtube_player_api_fixture_count
                     local_thumbnail = fixture_thumbnail_redirect_url(
                         route.request.url,
                         route.request.resource_type,
@@ -313,6 +315,11 @@ def main() -> int:
                     if local_thumbnail is not None:
                         fixture_thumbnail_redirect_count += 1
                         route.continue_(url=local_thumbnail)
+                        return
+                    player_api = youtube_iframe_api_stub(route.request.url, route.request.resource_type)
+                    if player_api is not None:
+                        youtube_player_api_fixture_count += 1
+                        route.fulfill(status=200, content_type="application/javascript", body=player_api)
                         return
                     host = urlsplit(route.request.url).hostname or ""
                     if host.endswith(("youtube.com", "youtube-nocookie.com", "ytimg.com", "googlevideo.com")):
@@ -457,6 +464,8 @@ def main() -> int:
             raise RuntimeError("browser reported an unhandled React page error")
         if fixture_thumbnail_redirect_count < 1 or 200 not in fixture_thumbnail_response_statuses:
             raise RuntimeError("the local fixture thumbnail did not load successfully")
+        if youtube_player_api_fixture_count < 1:
+            raise RuntimeError("the local no-op player API fixture was not used")
 
         report = {
             "ui_revision": "2e7c021fa5abebd72278d841b8066a33d45cfbb3",
@@ -480,10 +489,11 @@ def main() -> int:
             "console_errors": console_errors,
             "external_media_failures": external_media_failures,
             "blocked_external_image_count": blocked_external_image_count,
+            "youtube_player_api_fixture_count": youtube_player_api_fixture_count,
             "fixture_thumbnail_redirect_count": fixture_thumbnail_redirect_count,
             "fixture_thumbnail_response_statuses": fixture_thumbnail_response_statuses,
             "screenshots": screenshot_names,
-            "external_video_provider": "blocked; not fetched or played",
+            "external_video_provider": "blocked; local no-op iframe API fixture; not fetched or played",
             "credentials_recorded": False,
             "browser_api_mocks": False,
         }
@@ -514,6 +524,7 @@ def main() -> int:
             "console_errors": console_errors,
             "external_media_failures": external_media_failures,
             "blocked_external_image_count": blocked_external_image_count,
+            "youtube_player_api_fixture_count": youtube_player_api_fixture_count,
             "fixture_thumbnail_redirect_count": fixture_thumbnail_redirect_count,
             "fixture_thumbnail_response_statuses": fixture_thumbnail_response_statuses,
             "screenshots": screenshot_names,
