@@ -1,4 +1,12 @@
-# 최신 재개 지점 (2026-10-23, WBS 7.2.9/7.2.10 관리자 에러 경계 live 검증, 코드 SHA `0acf327` Verify green)
+# 최신 재개 지점 (2026-10-23, WBS 7.2.9/7.2.10 관리자 ADMIN 해제·기간·token reissue, 코드 SHA `b5cd719` Verify green)
+
+코드 SHA `b5cd719d76e6af9d94f889c4899ab3ddea260e16`의 Verify `39957123455`는 attempt 1에서 `success`다(같은 SHA의 나머지 6개 workflow도 success). 이전 미검증 3개를 원본 `ab0386c`의 UI(`ADMIN 해제` 버튼, 5개 기간 버튼, 401→`/v2/auth/reissue` 인터셉터)에 맞춰 실제 UI·실서버·전용 DB·브라우저로 닫았다. (1) SUPER_ADMIN의 ADMIN→GENERAL: DB `ADMIN|0`에서 시작해 종료 `GENERAL|0`, 일반 ADMIN에게는 역할 버튼 없음. (2) 대시보드 기간 30일·3달·1년·3년·7일: 고정 가입일 시드로 버킷 합 3/4/5/6/2와 차트 점 수를 단정. (3) token reissue: 서버가 만료를 HTTP 401이 아닌 `200 + WIRE.TOKEN_EXPIRED`로 답해 공유 `authAdapter.ts`가 reissue를 한 번도 하지 않는 **실제 결함**을 브라우저로 재현(수정 전 `TOKEN_EXPIRED` 2건, reissue 0건, 로딩 화면 정지)하고 시험 선행(5 fail)으로 고쳤다. 수정 뒤 TTL 20초 서비스에서 만료 2회 모두 거절 1, reissue 정확히 1, 이후 요청 ok, 새 token 저장을 CI Linux가 확인했다. 상세와 한계는 [제품 검증](../product/VERIFICATION.md#후속-admingeneral-7d-외-기간-토큰-reissue-코드-sha-b5cd719d76e6af9d94f889c4899ab3ddea260e16).
+
+아직 미검증: 거절된 reissue(refresh token 만료) 뒤 로그인 이동의 브라우저 여정(단위 시험까지만), member 화면의 만료 reissue 재현, 원본 오류 문구 동등성, 사용자 25 route 전체, profile after-save 빈 화면(별도 미해결), model.h5·visitor 정책(보류). PMS 7.2.9 `doing/90%`, 7.2.10 `doing/25%` 유지. 분모는 관리자 feature API 13개(읽기 7/쓰기 6), shared auth 4개, 화면 5개, 사용자 고유 경로 25개로 별도다.
+
+---
+
+# 이전 재개 지점 (2026-10-23, 관리자 에러 경계 live 검증, 코드 SHA `0acf327` Verify green)
 
 코드 SHA `0acf32756a0e0cca38be9a83668022a686cadb52`의 Verify `39947955420`은 attempt 1에서 `success`다(같은 SHA의 나머지 6개 workflow도 success). 직전 `1e528aa`의 Verify `39939106930` 실패는 원문 확보로 확정했다: step 13 브라우저 여정의 `closed_request_refusal`에서 시험이 `WIRE.EFFECT_TARGET_MISSING`을 기대했으나 서버는 `WIRE.INVALID_STATE`를 반환했다(artifact와 서버 로그 일치). 시험 기대값 오류였고 정책·권한·flaky가 아니다. 기대값 정렬과 직전 Run들의 보존된 작업 트리 변경(세션 SDK client, job 캐시 무효화, null metrics 타입)을 한 커밋 `0acf327`로 push했다.
 
