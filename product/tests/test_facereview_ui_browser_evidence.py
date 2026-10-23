@@ -39,6 +39,44 @@ VIDEO_ID = "aaaaaaaa-0000-4000-8000-000000000001"
 
 
 class BrowserEvidenceTests(unittest.TestCase):
+    def test_search_request_requires_exact_fixture_input_without_recording_keyword(self):
+        from product.tests.facereview_ui_browser_evidence import member_search_request_matches
+
+        payload = {"extension": "Video.homeSearch", "input": {
+            "emotions": "", "keyword": "private-fixture", "keyword_type": "title", "page": 1, "size": 20}}
+        self.assertIs(member_search_request_matches(payload, "private-fixture"), True)
+        for broken in [None, {}, {**payload, "extension": "Video.homeVideoAll"},
+                       *[{**payload, "input": {**payload["input"], key: value}} for key, value in
+                         [("keyword", "other"), ("keyword_type", "channel"), ("emotions", "happy"),
+                          ("page", 2), ("page", True), ("size", 1), ("unknown", "secret")]]]:
+            self.assertIs(member_search_request_matches(broken, "private-fixture"), False)
+
+    def test_search_gate_requires_one_completed_response_and_exact_visible_result(self):
+        from product.tests.facereview_ui_browser_evidence import member_search_evidence
+
+        row = {"path": "/extension", "search_input_matches": True, "status": 200,
+               "body_captured": True, "ok": True, "contract_matches_runtime": True,
+               "extension_request": {"extension": "Video.homeSearch"},
+               "response_list_length": 1, "contains_fixture_video": True}
+        self.assertTrue(member_search_evidence([row], False, True)["verified"])
+        empty = {**row, "response_list_length": 0, "contains_fixture_video": False}
+        self.assertTrue(member_search_evidence([empty], True, True)["verified"])
+        for changed in [{"body_captured": False}, {"ok": False}, {"status": 500},
+                        {"search_input_matches": False}, {"contract_matches_runtime": False},
+                        {"response_list_length": None}, {"response_list_length": True},
+                        {"contains_fixture_video": False}, {"response_list_length": 2}]:
+            self.assertFalse(member_search_evidence([{**row, **changed}], False, True)["verified"])
+        for rows in [[], [row, row], [empty], [{**row, "extension_request": {"extension": "Video.homeVideoAll"}}]]:
+            self.assertFalse(member_search_evidence(rows, False, True)["verified"])
+        self.assertFalse(member_search_evidence([row], False, False)["verified"])
+        self.assertFalse(member_search_evidence([row], True, True)["verified"])
+
+    def test_search_list_summary_omits_raw_query_and_titles(self):
+        request = {"extension": "Video.homeSearch", "input": {"keyword": "secret", "page": 1}}
+        self.assertEqual(extension_request_evidence(request), {"extension": "Video.homeSearch", "page": 1})
+        self.assertEqual(extension_response_evidence("Video.homeSearch", {"output": {"videos": "[]"}}, VIDEO_ID),
+                         {"response_list_length": 0, "contains_fixture_video": False})
+
     def test_comment_action_accepts_only_single_member_mutations(self):
         from product.tests.facereview_ui_browser_evidence import member_comment_action
 

@@ -1,4 +1,18 @@
-# 최신 재개 지점 (2026-10-24 07:17 KST, 댓글 UI 3단계 검증 추가·CI 판정 대기)
+# 최신 재개 지점 (2026-10-24 08:10 KST, 댓글 UI·DB 성공 확인·검색 검증 추가)
+
+일반 Verify `40032647647` attempt1, 코드 `5741949eac1f13cd7e027a71b513b4a5b3922708`은 completed/success(2026-10-23 22:40:56 UTC 종료)다. `gh run view --json headSha,status,conclusion,attempt,jobs`로 broad step11·full HTTP/worker/MySQL step15·artifact16·cleanup18 success를 확인했다. Safe artifact `12537050658`을 현재 Run outbox에 다시 다운로드했고 comment-create/edit/delete JSON·reload PNG를 직접 검사했다. 세 단계 모두 completed/page_error_count0/member_comment.verified=true, 단일 mutation1/HTTP200/ok=true/body_captured=true, fixture target/content boolean과 contract 일치다. 각23 requests/responses/finished, failed0/unfinished0이다. PNG는 생성 댓글→수정 내용과 (수정됨)→삭제 후 기존 두 댓글만 표시한다.
+
+각 `comment-db-result.json`의 browser/database success, same_comment_identity·target_content_and_flags_match·target_row_present·unrelated_rows_preserved=true, total_rows_added=1을 확인했다. 같은 ID의 is_modified0→1→1/is_deleted0→0→1이며 생성시각과 soft-delete 행보존·무관한 행 전체 snapshot 비교는 실행 SHA Rust caller와 대조했다. 25경로 표의 comments browser 행을 성공 근거로 갱신했다. 타회원 전체 행 보존은 댓글 범위이고 like는 기존 count 보존 범위다.
+
+기존 회귀도 직접 검사했다: profile/reissue browser·DB success, USED refresh+1, add/remove like verified와 rows1/0·타회원 count 보존, bookmark completed/원본 reload PNG, logout verified·revoked+1. Add33/remove37 lifecycle failed0/unfinished0. Admin JSON은 dashboard/기간5/역할변경/승인·거절/삭제/권한거절4개를 기록하고 별도 reissue는 두 번 모두 reissue1·새 token 저장이다. Locator는 마지막 administrator console E2E stage이며 command/exit=pending은 실패가 아니다. 개별 cargo stdout은 미열람이다.
+
+다음 검색 phase는 원본 Header 검색 버튼/입력/Enter→원본 SearchResultsSection을 사용한다. fixture 제목 검색1건·고유 absent query0건을 각각 제출/새로고침해 총4개 상태를 검사한다. 정확한 `Video.homeSearch` input(page1,size20,title,emotions empty)을 boolean으로 분류하고 단일 완료 body/contract/목록 길이·fixture 포함/렌더를 요구한다. raw 검색어를 네트워크 JSON에 저장하지 않는다. 검색에는 player 진입·업무 mutation이 없으며 종료되지 않은 API도 실패 처리한다. Rust는 로그인 세션 metadata와 별개로 11개 업무 테이블 모든 행·열의 검색 전후 snapshot 동일성을 검사한다. 원본 UI/policy/overlay 제품코드는 불변이다.
+
+로컬: 새 helper stub에서 의도한 FAIL3→GREEN46, 기존 watch/comment/bookmark/like/logout branch AST 동일, readAdapter14 pass, browser AST·fmt·diff OK, PG* unset와 전용55432/aip_test_run DSN의 Rust auth `--no-run --locked --offline` compile6.27s exit0(실DB 아님). 실제 검색 browser/DB는 새 CI 전 미검증. 성공 후 계정잔여(check-email/signup/tutorial/email/password/confirmed withdrawal)의 원본 화면·기존 source overlay·메일 sink·DB/session 부수효과를 대조해 bounded 여정으로 이어간다. WBS90/25·25경로 전수미완·model.h5권리/visitor보류와 과거399638/399880 원인미확정 유지.
+
+---
+
+# 이전 재개 지점 (2026-10-24 07:17 KST, 댓글 UI 3단계 검증 추가·CI 판정 대기)
 
 원본 사용자 UI 고정 SHA `2e7c021fa5abebd72278d841b8066a33d45cfbb3`의 CommentSection/CommentItem, SDK write adapter, Comment 정의 및 DB defaults를 대조했다. 원본 checkout과 앱 정책은 변경하지 않았다. 원본 등록 버튼→수정 메뉴/저장→삭제 메뉴/확인창을 각각 fresh browser phase로 실행하며, 정확한 SDK 단일 mutation·fixture 대상/내용·완료된 성공 body와 reload 후 렌더를 함께 요구한다. 수정됨 표시와 삭제 후 비노출도 검사한다.
 

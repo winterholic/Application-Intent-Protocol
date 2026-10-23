@@ -203,6 +203,28 @@ async fn cell(conn: &mut aip_migrate::mysql_driver::mysql_async::Conn, sql: &str
     conn.query_first::<Option<String>, _>(sql).await.unwrap().flatten()
 }
 
+async fn business_snapshot(conn: &mut aip_migrate::mysql_driver::mysql_async::Conn) -> Vec<Vec<String>> {
+    // Keep values only in memory. Evidence records equality, never personal row contents.
+    let mut tables = Vec::new();
+    for table in [
+        "comment",
+        "user",
+        "user_emotion_dna",
+        "user_emotion_summary",
+        "user_favorite_genre",
+        "user_point_history",
+        "video",
+        "video_bookmark",
+        "video_like",
+        "video_request",
+        "video_view_log",
+    ] {
+        let rows: Vec<aip_migrate::mysql_driver::mysql_async::Row> = conn.query(format!("SELECT * FROM `{table}` ORDER BY 1")).await.unwrap();
+        tables.push(rows.into_iter().map(|row| format!("{:?}", row.unwrap())).collect());
+    }
+    tables
+}
+
 fn run_facereview_ui_browser_journey(address: &str, fingerprint: &str, phase: &str, root: &Path, comment_id: Option<&str>) -> std::process::Output {
     let ui_root = std::env::var("AIP_FACEREVIEW_UI_DIR").expect("CI must provide the pinned FaceReview UI checkout");
     let output = std::env::var("AIP_FACEREVIEW_BROWSER_OUTPUT").expect("CI must provide a run-owned browser artifact directory");
@@ -829,6 +851,33 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
             );
             assert!(db_ok, "{phase} preserves the comment identity, expected content/flags and all unrelated rows");
         }
+        // Search is a read-only original header journey; login/session tables are intentionally
+        // separate from the eleven business tables compared here, including every row/column.
+        let search_before = business_snapshot(&mut setup).await;
+        let search = run_facereview_ui_browser_journey(&address, &fingerprint, "search", &browser_root, None);
+        let search_after = business_snapshot(&mut setup).await;
+        let search_db_ok = search_before == search_after;
+        let search_dir = Path::new(&browser_output).join("search");
+        std::fs::create_dir_all(&search_dir).unwrap();
+        std::fs::write(
+            search_dir.join("search-db-result.json"),
+            serde_json::to_vec_pretty(&json!({
+                "journey": "member_search", "browser_status": if search.status.success() { "success" } else { "failure" },
+                "database_status": if search_db_ok { "success" } else { "failure" },
+                "business_table_count": search_before.len(), "all_business_rows_preserved": search_db_ok
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        print!("{}", String::from_utf8_lossy(&search.stdout));
+        assert!(
+            search.status.success(),
+            "original search UI failed (status {:?})\nstdout: {}\nstderr: {}",
+            search.status.code(),
+            String::from_utf8_lossy(&search.stdout),
+            String::from_utf8_lossy(&search.stderr)
+        );
+        assert!(search_db_ok, "search preserves every business row and column");
         assert!(journey_failures.is_empty(), "independent member journeys failed: {}", journey_failures.join("; "));
     } else {
         eprintln!("React browser journey skipped: AIP_FACEREVIEW_UI_DIR is unset; SDK/API journey is separate");

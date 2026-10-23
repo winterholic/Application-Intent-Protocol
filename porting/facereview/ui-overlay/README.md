@@ -77,3 +77,6 @@ Verify `39982476627` attempt1 measured the real member edit-save path after TTL:
 
 
 **2026-10-24 07:17 KST 댓글 검증 추가 (CI pending):** 원본 사용자 UI의 댓글 등록→수정→삭제 확인을 3개 fresh-browser phase로 추가했다. 단일 Comment create/edit/delete SDK action·정확한 fixture payload·완료된 성공 body·reload 렌더/수정됨 표시/삭제 비노출을 검사한다. MySQL은 단계마다 같은 ID·내용·플래그·soft-delete 행보존 및 모든 무관한 댓글 행의 전체 snapshot 보존을 별도로 기록한다. Local evidence unittest43/adapter6 및 Rust no-run compile은 통과했으나 새 browser/DB 결과 전까지 성공으로 세지 않는다. 원본 UI와 정책은 불변. 전체25경로/WBS90·25/model.h5/visitor 보류 유지. 상세는 STATUS 최신 절과 product/VERIFICATION.md의 댓글 여정 절.
+
+
+**2026-10-24 08:10 KST 댓글 성공·검색 후속:** `5741949` 일반 Verify `40032647647` attempt1 completed/success. Safe artifact `12537050658`의 댓글 create/edit/delete browser JSON·reload PNG와 DB JSON을 직접 검사해 단일 성공 mutation·정확 fixture payload·reload 렌더·같은ID/soft-delete/무관한 댓글 전체행 보존을 확인했다. 수정플래그0→1→1, 삭제0→0→1, 각23 API finished/failed0/unfinished0. 기존 profile/reissue/like/bookmark/logout 및 관리자 증거도 범위대로 재확인했다. 다음 검색은 원본 Header로 결과1건/0건과 각 reload를 검사하며 정확 SDKinput/body/렌더 및 11개 업무테이블 전체 snapshot 불변을 요구하도록 추가했다. Local evidence unittest46/readAdapter14/기존 분기 AST동일/fmt/diff 및 Rust auth no-run compile6.27s exit0; 실제 검색 browser/DB는 새 CI 전 미검증. 상세는 STATUS·product/VERIFICATION 최신 절. WBS90/25·25경로 전수미완·model.h5/visitor보류 유지.

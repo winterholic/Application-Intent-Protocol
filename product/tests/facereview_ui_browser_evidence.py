@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 
 
 LIST_EXTENSIONS = {
+    "Video.homeSearch",
     "Video.homeVideoAll",
     "Video.homeCategory",
     "Video.homePersonalized",
@@ -692,6 +693,29 @@ def external_media_failure_evidence(url: Any, resource_type: Any, failure: Any) 
         return None
     failure_code = failure if isinstance(failure, str) and failure in SAFE_NETWORK_FAILURES else "unrecognized"
     return {"host_class": host_class, "resource_type": resource_type, "failure_code": failure_code}
+
+
+def member_search_request_matches(payload: object, keyword: str) -> bool:
+    if not isinstance(payload, dict) or payload.get("extension") != "Video.homeSearch":
+        return False
+    inputs = payload.get("input")
+    return (isinstance(inputs, dict)
+            and type(inputs.get("page")) is int and type(inputs.get("size")) is int
+            and inputs == {"emotions": "", "keyword": keyword, "keyword_type": "title", "page": 1, "size": 20})
+
+
+def member_search_evidence(requests: list[dict[str, object]], empty: bool, rendered: bool) -> dict[str, object]:
+    rows = [row for row in requests if row.get("path") == "/extension"
+            and row.get("extension_request", {}).get("extension") == "Video.homeSearch"]
+    accepted = (len(rows) == 1 and rows[0].get("status") == 200
+                and all(rows[0].get(key) is True for key in
+                        ("body_captured", "ok", "search_input_matches", "contract_matches_runtime")))
+    matches = (len(rows) == 1 and type(rows[0].get("response_list_length")) is int
+               and rows[0]["response_list_length"] == (0 if empty else 1)
+               and rows[0].get("contains_fixture_video") is (not empty))
+    return {"search_response_count": len(rows), "server_accepted": bool(accepted),
+            "response_matches_fixture": matches, "render_matches": rendered,
+            "verified": bool(accepted and matches and rendered is True)}
 
 
 def extension_request_evidence(body: Any) -> dict[str, object]:
