@@ -1222,3 +1222,11 @@ console error는 add phase 2건, 각각 allowlisted failed request `host_class=y
 그 외 로그인·session, list extension 3종, `Comment` read(두 번), `VideoBookmark` read, 두 `/apply`는 모두 HTTP 200 envelope `ok=true`; comment nested relation `user:{id,name}`의 unknown select count는 0이다. Add phase에서 실제 UI apply 이후 reload 지점까지는 도달했으나 bookmark toggle이 `bundle`을 쓰므로 이 `/apply`들은 SQL 북마크 쓰기 증거로 보지 않는다. `mysql_facereview_auth.rs`의 0→1→0 assertion 전체가 성공했는지도 run 실패 때문에 입증되지 않았다. DB 결과를 성공으로 쓰지 않는다.
 
 이에 따라 다음 artifact는 `bookmark_reload`를 `bookmark_reloaded`/`bookmark_state_confirmed`로 분리하고, URL은 fixture route class로만, `[aria-pressed]`는 허용된 bookmark label과 true/false만 기록한다. session/login value와 arbitrary DOM/text는 저장하지 않는다. 같은 SHA의 console 2건은 차단된 YouTube `script`의 `net::ERR_FAILED`; 이는 의도적 외부 media 정책이고 page errors는 0이었다.
+
+### 최종 browser failure-state 확인: Verify `39896024733` (`8d1a257`)
+
+최종 변경 SHA Verify는 full `failure`; step 10 product/runtime과 11 pinned UI 준비 success, step 12 browser/worker/MySQL failure, step 13 safe evidence upload success였다. artifact `ci-39896024733/facereview-ui-browser-39896024733-1/add/`에는 login/session, fixture 목록 3 extension, actual card selection, watch bookmark on action 뒤 reload 및 응답들이 기록됐다. `Comment` read 2건은 `ok=true`, `rejected_query_keys=[]`, nested `user` field `id,name`과 `unknown_select_field_count=0`이다. Response/browser fingerprint는 `cab5…6ce2` 일치. 기존 `WIRE.UNKNOWN_KEY`는 해결됐다.
+
+Reload 뒤 `journey_stage=bookmark_reloaded`, `failure_type=AssertionError`, route class `watch_fixture`, watch content visible. Role locator는 실패했지만 DOM allowlist 결과에서 `즐겨찾기 해제` `aria-pressed=true` 버튼이 있었고, `add` phase의 `add-failure.png`에는 플레이어 오류 modal이 가려져 있다. external failed requests는 `youtube` host class + `script` + `net::ERR_FAILED` 2건이며 console classification 2건과 일치, page errors 0이다. 따라서 현재 가장 근거가 있는 root cause는 테스트가 가리키는 북마크 상태 값이 아니라, 외부 video 차단으로 화면이 오류 modal을 띄워 accessible control을 덮는 것이며 이 인과는 network event와 screenshot에 근거한 판단이다.
+
+이 modal의 pinned UI 확인 CTA는 `/`로 이동한다. role selector를 느슨하게 하거나 hidden DOM을 직접 조작하는 것은 허용된 검증이 아니므로 하지 않았다. `remove/reload` phase와 SQL 0→1→0 assertion은 실행 성공을 확인할 수 없어 미검증이다. fixture 외부 video를 풀지 않고 이 경로를 통과했다고 주장하지 않는다. 결과는 browser UI/DB journey 미완료로 남긴다. console 오류 분류 자체는 의도적 외부 provider 차단으로 확인됐다. 전체 7.2.10/25 paths/prerender/ML/model/visitor policy 완료는 아니다.
