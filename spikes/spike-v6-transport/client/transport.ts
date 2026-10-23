@@ -1,4 +1,5 @@
 const MANAGED_PATHS = new Set(["/rag/search", "/rag/answer", "/rag/index", "/rag/delete", "/jobs/enqueue", "/jobs/status", "/jobs/cancel", "/jobs/result", "/events/read", "/files/put", "/files/get", "/files/delete", "/objects/sign", "/objects/confirm", "/objects/multipart/start", "/objects/multipart/part", "/objects/multipart/complete", "/objects/multipart/abort", "/messages/enqueue", "/messages/claim", "/messages/ack", "/messages/nack", "/messages/dead", "/messages/redrive"]);
+const TERMINAL_JOB_STATES = new Set(["SUCCEEDED", "FAILED", "CANCELLED"]);
 // V6 클라이언트(실험). 전송 + V5 캐시.
 // 쓰기 응답을 확정하지 못하면(통신 실패, COMMIT_UNKNOWN·INTERNAL) 같은 키·같은 본문으로 다시 보낸다.
 // 서버는 키 단위로 직렬화하므로 커밋됐으면 저장 결과, 진행 중이면 끝난 뒤 결과, 롤백됐으면 새 실행을 돌려준다.
@@ -317,6 +318,12 @@ export function connect(base: string, initialToken: string | null, fetchImpl: ty
     if (expectedFingerprint === undefined || response.contractFingerprint !== expectedFingerprint) {
       cache.invalidate();
       throw failure("WIRE.CONTRACT_MISMATCH", "생성 관리 계약과 서버 계약이 다름", response);
+    }
+    // A durable job writes on the server, where this client cannot know which resource tags changed, so its own writes' tag invalidation
+    // does not see them. A job that reached a terminal state (or whose result is read) may have written; a failed one may have written
+    // before it failed. Drop the cached reads, as an unknown write outcome would. A job still running leaves the cache alone.
+    if (path === "/jobs/result" || ((path === "/jobs/status" || path === "/jobs/cancel") && TERMINAL_JOB_STATES.has(String(response.run?.state ?? response.run?.status)))) {
+      cache.invalidate();
     }
     return response;
   }

@@ -207,6 +207,14 @@ test('system status is the extension document and a malformed document is a prot
   await assert.rejects(createAdminReadApi(broken.client).getSystemStatus(), { code: 'CLIENT.PROTOCOL_ERROR' });
 });
 
+test('system status keeps null host figures as null: a host without Linux counters is not a measured zero', async () => {
+  const status = { server: { cpu_usage: null, memory_usage: null, memory_total_mb: null, disk_usage: null }, api: { total_requests_1h: 0, avg_response_time_ms: 0, error_rate_1h: 0 }, connections: { mysql: 'ok', redis: 'error', mongodb: 'ok' }, checked_at: '2026-10-23T00:00:00' };
+  const { client } = fakeClient({ extension: () => ({ body: JSON.stringify(status) }) });
+  const reply = await createAdminReadApi(client).getSystemStatus();
+  assert.deepEqual(reply.data.server, { cpu_usage: null, memory_usage: null, memory_total_mb: null, disk_usage: null });
+  assert.equal(reply.data.connections.redis, 'error');
+});
+
 test('me keeps SUPER_ADMIN and the signed-in member own favorites, and refuses an unreadable account', async () => {
   const { client, reads } = fakeClient({
     read: (query) => query.read === 'User'

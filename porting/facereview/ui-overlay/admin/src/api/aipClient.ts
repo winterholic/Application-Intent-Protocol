@@ -10,13 +10,12 @@ import { useAuthStore } from 'store/authStore';
 import { createAuthTransport } from './authAdapter';
 import { createAdminApprovalApi, createAdminWriteApi, type AdminApplyClient, type AdminJobClient } from './adminAdapter';
 import { createAdminReadApi, type AdminReadClient } from './adminReadAdapter';
+import { createSessionClientProvider } from './sessionClient';
 
 // The AIP service's address. It is the AIP server, not a path of the original REST API.
 const BASE_URL: string = import.meta.env.VITE_AIP_URL ?? '/aip';
 
 type SdkClient = AdminReadClient & AdminApplyClient & { jobs: AdminJobClient; replaceSession(token: string): Promise<unknown> };
-let sdk: SdkClient | null = null;
-let sdkToken: string | null = null;
 
 export const authTransport = createAuthTransport({
   baseUrl: BASE_URL,
@@ -27,18 +26,12 @@ export const authTransport = createAuthTransport({
   onUnauthorized: () => window.dispatchEvent(new Event('auth:unauthorized')),
 });
 
-/** The client for the administrator's current access token. A new token replaces the SDK session before another operation is sent. */
-async function client(): Promise<SdkClient> {
-  const token = useAuthStore.getState().access_token;
-  if (!token) throw Object.assign(new Error('a signed-in administrator is required'), { code: 'WIRE.UNAUTHENTICATED' });
-  if (sdk === null) {
-    sdk = connect(BASE_URL, token, contract, authTransport.fetch) as unknown as SdkClient;
-  } else if (sdkToken !== token) {
-    await sdk.replaceSession(token);
-  }
-  sdkToken = token;
-  return sdk;
-}
+/** One SDK client per signed-in administrator: a refreshed token keeps it, another administrator signing in gets a new one. */
+const sessions = createSessionClientProvider<SdkClient>({
+  getToken: () => useAuthStore.getState().access_token,
+  connectWith: (token) => connect(BASE_URL, token, contract, authTransport.fetch) as unknown as SdkClient,
+});
+const client = sessions.client;
 
 const aipClient: AdminReadClient & AdminApplyClient = {
   read: async (query) => (await client()).read(query),

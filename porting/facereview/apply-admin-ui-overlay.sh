@@ -30,7 +30,7 @@ shared="$repo_root/porting/facereview/ui-overlay/src/api"
 glue="$repo_root/porting/facereview/ui-overlay/admin/src/api"
 mkdir -p "$ui_root/src/api"
 # Pure adapters and the transport shared with the member overlay; they import nothing from a UI tree.
-for file in adminAdapter.ts adminReadAdapter.ts authAdapter.ts index.ts; do
+for file in adminAdapter.ts adminReadAdapter.ts authAdapter.ts index.ts sessionClient.ts; do
   cp "$shared/$file" "$ui_root/src/api/$file"
 done
 # The pinned dashboard assumes host metrics are always numeric. The AIP server contract returns null when Linux-only host probes are

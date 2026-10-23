@@ -29,7 +29,8 @@ export interface AdminComment {
 }
 export type Page<K extends string, T> = { [P in K]: T[] } & { total: number; page: number; size: number; has_next: boolean };
 export interface SystemStatus {
-  server: { cpu_usage: number; memory_usage: number; memory_total_mb: number; disk_usage: number };
+  // Host figures are null on a service host that is not Linux (decision D-P-SYSSTATUS); the adapter never turns that into a zero.
+  server: { cpu_usage: number | null; memory_usage: number | null; memory_total_mb: number | null; disk_usage: number | null };
   api: { total_requests_1h: number; avg_response_time_ms: number; error_rate_1h: number };
   connections: { mysql: 'ok' | 'error'; redis: 'ok' | 'error'; mongodb: 'ok' | 'error' };
   checked_at: string;

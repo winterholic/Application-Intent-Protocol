@@ -107,6 +107,10 @@ class BrowserEvidenceTests(unittest.TestCase):
         self.assertEqual(failed_read_requests(rows), [rows[0]])
         self.assertEqual(safe_wire_code("WIRE.UNKNOWN_KEY"), "WIRE.UNKNOWN_KEY")
         self.assertIsNone(safe_wire_code("private text"))
+        # Refusals the admin journey must tell apart: a from-state mismatch is not a maxRows overflow.
+        self.assertEqual(safe_wire_code("WIRE.INVALID_STATE"), "WIRE.INVALID_STATE")
+        self.assertEqual(safe_wire_code("WIRE.FORBIDDEN"), "WIRE.FORBIDDEN")
+        self.assertEqual(safe_wire_code("WIRE.MISSING_TARGET"), "WIRE.MISSING_TARGET")
 
     def test_console_summary_keeps_only_classification_and_local_caller(self):
         summary = console_error_evidence(

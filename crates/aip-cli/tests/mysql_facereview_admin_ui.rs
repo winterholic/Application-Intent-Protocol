@@ -540,6 +540,11 @@ async fn facereview_admin_console_runs_through_the_generated_sdk_and_the_servers
         Some("ADMIN|0"),
         "the ADMIN actor could not promote their own role"
     );
+    assert_eq!(
+        cell(&mut setup, &format!("SELECT CONCAT_WS('|', role, is_deleted) FROM `{SOURCE}`.user WHERE user_id='{ERIN}'")).await.as_deref(),
+        Some("ADMIN|0"),
+        "the ADMIN target of the forged deactivation and role requests is unchanged after the browser's direct SDK attempts"
+    );
     // The four other console writes, each against the original AdminService's rows: only the fields the original changes are changed.
     assert_eq!(
         cell(&mut setup, &format!("SELECT CONCAT_WS('|', role, is_deleted) FROM `{SOURCE}`.user WHERE user_id='{DAVE}'")).await.as_deref(),

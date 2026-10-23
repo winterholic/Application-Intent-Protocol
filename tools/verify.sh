@@ -61,8 +61,10 @@ node --test \
   porting/facereview/ui-overlay/tests/authAdapter.test.ts \
   porting/facereview/ui-overlay/tests/mypageAdapter.test.ts \
   porting/facereview/ui-overlay/tests/readAdapter.test.ts \
+  porting/facereview/ui-overlay/tests/sessionClient.test.ts \
   porting/facereview/ui-overlay/tests/writeAdapter.test.ts \
   spikes/spike-v6-transport/client/aggregate.test.ts \
+  spikes/spike-v6-transport/client/job-cache.test.ts \
   spikes/spike-v5-sdk/sdk/cache.test.ts \
   spikes/spike-v5-sdk/sdk/lifetime.test.ts \
   spikes/spike-v6-transport/client/recovery.test.ts \
