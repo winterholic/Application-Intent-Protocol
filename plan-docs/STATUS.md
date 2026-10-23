@@ -1,10 +1,10 @@
-# 최신 재개 지점 (2026-10-23 04:34 UTC, WBS 7.2.10 비밀번호 재설정 UI overlay CI 대기)
+# 최신 재개 지점 (2026-10-23 04:35 UTC, WBS 7.2.10 회원 계정 화면 overlay CI 대기)
 
-프로필 write CI를 기다리는 동안 독립된 비밀번호 재설정 화면의 API glue를 구현했다. 기존 pinned `PasswordChangePage`는 메일 요청 → 인증코드 교환 → reset token을 이용한 비밀번호 변경을 호출한다. `mypageAdapter.ts`가 AIP `/auth/email/verification`, `/auth/password/verification`, `/auth/password`로 이를 보내며 기존 인증 전송기(`authTransport.fetch`)의 Bearer·401 refresh를 사용한다. `verifyEmailCode`도 대응 route에 연결했다. 탈퇴는 이 slice에서 구현하지 않았으며 overlay에서는 `PORT.NOT_PORTED`로 안전하게 막았다. overlay 적용 스크립트가 새 `mypage.ts`와 adapter를 복사한다.
+프로필 쓰기 뒤 독립된 PasswordChangePage의 mail challenge→code→reset token→비밀번호 변경 API 3단계를 인증된 AIP adapter로 연결했다. `/auth/email/verification`, `/auth/password/verification`, `/auth/password`, `/auth/email/verify`를 기존 `authTransport.fetch`의 Bearer·401 refresh 경로에 연결하고 overlay 적용 스크립트가 `mypage.ts`·`mypageAdapter.ts`를 복사하도록 했다. 이어 pinned `/edit`의 기존 별도 확인 탈퇴 버튼을 생성 SDK `User.withdraw` transition에 연결해 signed-in member id만 서버에 전달한다. `useLogout`은 transition 뒤 API가 실패해도 local auth를 지우고 이동한다.
 
-TDD 후 새 adapter 테스트를 포함한 전체 `node --test porting/facereview/ui-overlay/tests/*.test.ts` 25/25, Python browser-evidence unittest 15/15, `cargo fmt --all -- --check`, `git diff --check` 통과. 실제 pinned UI 빌드·browser·MySQL/password end-to-end는 로컬 실행하지 않았다. Code SHA `30dd4e9eb016319d162d4f27bd8e2ca38164d351`를 main에 push했다. Verify `39900970945`는 04:33:40 UTC에 `pending`이고 companion workflows도 queued/pending이다. Profile code SHA의 이전 Verify `39900453676`은 직전 조회에서 계속 `in_progress`(step 10), browser steps 11–13 pending이었다. 이후 push로 취소됐는지는 아직 확인하지 않았으며 결과를 완료 근거로 사용하지 않는다. 두 실행 SHA를 섞지 않는다.
+탈퇴 TDD 전 테스트는 `api.withdraw is not a function`으로 실패했다. 수정 후 전체 `node --test porting/facereview/ui-overlay/tests/*.test.ts` 26/26; `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest product.tests.test_facereview_ui_browser_evidence` 15/15; `cargo fmt --all -- --check`, `git diff --check` 통과. Local pinned UI build/browser/password DB flow는 실행하지 않았다. Code SHA `6b1a8d4f70688caa9a61ed32bba6095c86fae7f9`는 main에 push했다. Verify `39901115868`은 이 SHA에서 04:35:17 UTC 생성 당시 pending; 이전 SHA Verify `39900453676`(d29f1d3)와 `39900970945`(30dd4e9)는 별도 실행으로 각각 마지막 조회 때 in_progress였다. 새 run의 브라우저·MySQL 증거를 읽기 전에는 기능 screen journey를 통과했다고 하지 않는다.
 
-PMS 7.2.10 description과 product/VERIFICATION route table을 다음 업데이트로 동기화한다. 상태/진행률은 계속 doing/25%. 이후 신규 Verify `39900970945` 결과를 한번 확인해 profile 및 비밀번호 browser/SDK integration evidence를 판독한다. 기다리는 동안 독립 작업을 이어가고 2시간 polling은 하지 않는다.
+PMS 7.2.10 description, `product/VERIFICATION.md` coverage 및 overlay README를 3개 SHA별 근거와 잔여 범위로 갱신했다. progress는 doing/25% 그대로다. 저장소의 최종 docs-only 변경 후 SHA는 아래 이력을 더해 기록한다. 다음은 Verify `39901115868` 및 이전 실행 상태를 한 차례 확인하고 결과 artifact를 판독한다. 남은 WBS 중 독립 작업은 CI 대기와 병행한다. 2시간 polling은 하지 않는다.
 
 ---
 
