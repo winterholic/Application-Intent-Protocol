@@ -106,6 +106,7 @@ def main() -> int:
             page.add_init_script("""() => {
               const trace = [];
               window.__aipFetchTrace = trace;
+              window.__aipFetchHookInstalled = true;
               const nativeFetch = window.fetch.bind(window);
               window.fetch = async (input, init) => {
                 const rawUrl = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
@@ -121,6 +122,33 @@ def main() -> int:
                   authorization_header_present: headers.has('authorization'),
                   content_type: response.headers.get('content-type'), fetch_frames: frames});
                 return response;
+              };
+              const xhrTrace = [];
+              window.__aipXhrTrace = xhrTrace;
+              const open = XMLHttpRequest.prototype.open;
+              const setRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
+              const send = XMLHttpRequest.prototype.send;
+              XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+                const parsed = new URL(url, location.href);
+                this.__aipTrace = {method: String(method).toUpperCase(), path: parsed.pathname,
+                  authorization_header_present: false,
+                  fetch_frames: String(new Error().stack ?? '').split('\\n').slice(2).map((line) => {
+                    const match = line.match(/\\bat (?:async )?(?:.*\\.)?([A-Za-z_$][\\w$]*) \\(/);
+                    return match?.[1] ?? null;
+                  }).filter(Boolean).slice(0, 12)};
+                return open.call(this, method, url, ...rest);
+              };
+              XMLHttpRequest.prototype.setRequestHeader = function(name, value) {
+                if (String(name).toLowerCase() === 'authorization' && this.__aipTrace) {
+                  this.__aipTrace.authorization_header_present = true;
+                }
+                return setRequestHeader.call(this, name, value);
+              };
+              XMLHttpRequest.prototype.send = function(...args) {
+                const traceRow = this.__aipTrace;
+                if (traceRow) this.addEventListener('loadend', () => xhrTrace.push({...traceRow,
+                  status: this.status, content_type: this.getResponseHeader('content-type')}), {once: true});
+                return send.apply(this, args);
               };
             }""")
 
@@ -204,7 +232,11 @@ def main() -> int:
 
             def auth_trace_evidence() -> dict[str, object]:
                 fetch_rows = page.evaluate("() => window.__aipFetchTrace ?? []")
+                xhr_rows = page.evaluate("() => window.__aipXhrTrace ?? []")
+                fetch_hook_installed = page.evaluate("() => window.__aipFetchHookInstalled === true")
                 unused = list(fetch_rows) if isinstance(fetch_rows, list) else []
+                if isinstance(xhr_rows, list):
+                    unused.extend(xhr_rows)
                 merged = []
                 for request in requests:
                     match_index = next((index for index, row in enumerate(unused)
@@ -213,7 +245,11 @@ def main() -> int:
                                         and row.get("status") == request.get("status")), None)
                     fetch = unused.pop(match_index) if match_index is not None else {}
                     merged.append({**fetch, **request, "fetch_frames": fetch.get("fetch_frames", [])})
-                return auth_transport_trace_evidence(merged)
+                evidence = auth_transport_trace_evidence(merged)
+                evidence["fetch_hook_installed"] = fetch_hook_installed
+                evidence["fetch_observation_count"] = len(fetch_rows) if isinstance(fetch_rows, list) else 0
+                evidence["xhr_observation_count"] = len(xhr_rows) if isinstance(xhr_rows, list) else 0
+                return evidence
 
             def profile_render_snapshot() -> dict[str, object]:
                 raw = page.evaluate("""(apiBodiesSettled) => {
@@ -336,6 +372,19 @@ def main() -> int:
                 expiry_request_mark = len(requests)
                 stage = "member_token_expired"
                 page.get_by_role("button", name="마이페이지로 이동", exact=True).click()
+                failure_assertion = "member_profile_opens_after_expiry"
+                expect(page).to_have_url(re.compile(r"/my$"), timeout=15000)
+                failure_assertion = "member_profile_heading_visible_before_edit"
+                expect(page.get_by_role("heading", name=f"{UPDATED_PROFILE_NAME}님", exact=True)).to_be_visible()
+                failure_assertion = "member_edit_page_opens_after_expiry"
+                page.locator(".my-page-name-wrapper").get_by_role("button", name="다음", exact=True).click()
+                expect(page).to_have_url(re.compile(r"/edit$"), timeout=15000)
+                failure_assertion = "member_edit_form_keeps_saved_name"
+                expect(page.get_by_label("닉네임", exact=True)).to_have_value(UPDATED_PROFILE_NAME)
+                # Saving the current values is a real member UI action that must traverse /apply
+                # after TTL expiry; it makes the reissue branch observable without changing fixture data.
+                page.get_by_role("button", name="수정", exact=True).click()
+                failure_assertion = "member_profile_returns_after_expired_save"
                 expect(page).to_have_url(re.compile(r"/my$"), timeout=15000)
                 wait_for_api_bodies()
                 page.wait_for_load_state("networkidle", timeout=15000)

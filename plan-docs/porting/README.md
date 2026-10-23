@@ -35,6 +35,8 @@
 
 수정 SHA `6754227`은 같은 product gate step10에서 다시 실패해 UI 단계에 도달하지 못했다. 이 CI는 artifact directory를 만들지 않은 상태에서 step10이 먼저 실패해 GitHub에 valid artifact가 없었고, 알려진 cache-denied raw log 경로는 접근하지 않았다. 다음 run은 step10 failure의 source command/exit status만 보존할 locator를 step14 browser artifact directory에 함께 기록한다. 이 새로운 안전 산출물의 근거가 나오기 전까지 step10 원인은 미확정이다.
 
+실패 locator를 포함한 SHA `c64dd28` Verify `39979329689`은 step10–12 success, step13 browser/MySQL failure, artifact/fixture cleanup success로 끝났다. Profile 브라우저와 DB는 모두 통과했고, screenshot 전 opacity 0–0.056/fade running, after screenshot opacity 1/ready로 빈 캡처의 fade timing 원인을 측정 확정했다. Reissue는 만료 이후 API request가 발생하지 않아 adapter branch로 진입하지 못했다. 다음 SHA는 기존 UI `수정` action으로 TTL 뒤 `/apply`를 보내고 auth transport trace를 확보한다. 이전 latest attempt 설명은 [제품 검증](../../product/VERIFICATION.md#2026-10-24-profile-원인-확인-및-member-expiry-요청-확보)을 본다.
+
 `facereview-front`는 이전 사용자 프런트(README·Docker 배포 workflow), `-ref`는 `-joowon`과 같은 upstream의 참조 사본이다.
 두 저장소를 별도의 현재 제품으로 더해 분모를 늘리지 않는다. `origin-codes/`는 레거시 구현이므로 실행 제품이 아니다.
 Swagger/Redoc/OpenAPI와 Flask static은 프레임워크 생성 경로이며 업무 포팅 분모에서 제외하고 runtime route 비교에는 별도 표시한다.

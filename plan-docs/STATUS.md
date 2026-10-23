@@ -1,4 +1,4 @@
-# 최신 재개 지점 (2026-10-24, profile fade timing 실측·reissue 계측 선행조건 수정; Verify 재실행 대기)
+# 최신 재개 지점 (2026-10-24, profile fade 원인 확정·reissue natural write로 재현 보강)
 
 첫 진단 commit `91ca346314e1ac7bd42493acbb06f5fae10eda19`의 Verify `39973060321` attempt 1을 artifact까지 확인했다. step10 compiler/runtime/product/worker/transport/SDK와 pinned UI 준비 step11–12는 success, step13 browser/worker/MySQL는 failure, artifact 저장·fixture cleanup step14–16은 success다. profile journey는 `/my`, API body settled=true에서 저장 후 즉시 캡처한 화면의 body text length 133을 남겼다. 그 캡처 순간 profile 영역 opacity/effective opacity는 0–0.21, `fadeInUp` running이고 이후 animation 종료 측정에서 필수 영역 4개는 모두 opacity 1·visually_ready=true다. 실제 before-animation screenshot도 어둡게 비어 있다. 이는 screenshot이 500ms fade animation 중에 찍히는 것이 빈 화면의 직접 원인이라는 강한 측정 증거다. 최종 after-animation screenshot은 넓은 페이지의 무관한 1.4초 animation을 금지한 잘못된 assertion(line 469) 전에 생성되지 않아 CI로 한 번 더 확인한다.
 
@@ -8,9 +8,9 @@ profile gating은 관련 `fadeInUp` animation 완료와 실제 4개 영역 visib
 
 새 수정의 로컬 검사: browser evidence unittest 32/32, authAdapter/mypageAdapter Node tests 12/12, profile script AST parse, `cargo fmt --all --check`, `git diff --check` 모두 통과했다. Rust test compile은 직전 SHA에서 explicit local test DSN의 `--no-run --locked` 성공으로 확인했으며 live DB/browser는 아님. configured browser에는 `about:blank`뿐이라 local UI는 미실행이다. Verify `39973060321` attempt1 원인 산출물은 이 Run outbox `aip-run-39973060321-attempt-1/facereview-ui-browser-39973060321-1/`에 있다. attempt1 log cache 거부 경로는 여전히 재시도하지 않았다.
 
-후속 SHA `6754227635153aaaf8b6eb58dc4fd6b661440785`의 Verify `39977109763` attempt1은 step10에서 실패해 step11–13이 skip됐다. artifact upload step14은 success로 실행됐지만 `gh run download 39977109763` 결과 `no valid artifacts found to download`였고 cleanup step16 success다. 기존 GitHub CLI cache 거부를 다른 도구/path로 우회하지 않았다. 따라서 이 run은 browser/profile/reissue 증거를 제공하지 않는다. 다음 변경은 `tools/verify.sh`의 실패 시 안전 locator artifact를 새로 쓰게 해 serial gate의 실패 command와 exit status만 보존한다(checked-in command line만, output/env/token/body 제외). 향후 run은 CI-owned artifact 경로를 미리 만들고 step14에서 함께 보존한다. 새 변경 목적은 step10 실패 command 특정과 다음 browser run에서 계속 진행할 기반 확보다.
+Verify `39979329689` attempt1의 `c64dd28988d516bfa5d4ea38e68a486b194b4754`는 새 실패 locator 보강 뒤 step10 success, step11–12 success, step13 failure로 끝났고 step14 artifact/step16 cleanup success다. profile-browser와 profile-DB 결과는 각각 success이며 actual before/after screenshot에서 fade animation 중 어두운 화면과 종료 후 완전히 보이는 화면 차이가 재현됐다. 원인은 `/my` API body가 끝난 뒤에도 profile의 `fadeInUp`이 진행 중인 순간 screenshot을 찍은 timing으로 측정 확정한다. reissue journey는 만료 후 profile `/my` 탐색에서 만료 refusal 요청이 없고 `/auth/reissue`도 0이었다. `api_requests`에는 로그인/초기 route의 정상 응답만 있어 adapter 분기 원인은 아직 측정되지 않았다. 이는 /my 조회가 cache-hit로 빠졌다는 추론과 일치하지만 아직 증명 전이다. 다음 변경은 동일 member에서 실제 수정 화면의 기존 값을 저장해 TTL 후 `/apply`를 반드시 수행하고 reissue 결과를 측정한다. fetch/XHR hook 설치 및 관측 count도 기록한다.
 
-다음 재개점은 실패 locator를 포함한 새 SHA Verify다. 그 step10도 실패하면 locator의 정확한 명령을 기준으로 root cause를 조사한다. reissue 제품 auth 결함은 아직 미검증이므로 authAdapter/SDK를 수정하지 않는다. WBS 7.2.9 `doing/90%`, 7.2.10 `doing/25%`; 사용자 25 route 미완료, model.h5/visitor 보류는 유지한다.
+다음 재개점은 measured natural `/apply` after TTL로 member reissue를 검증할 새 SHA Verify다. authAdapter/SDK는 만료 요청 및 분기 trace 전까지 수정하지 않는다. `c64dd28` run의 step10 success로 locator는 아직 artifact에 생성되지 않았으나 trap/wiring은 local control로 확인됐다. WBS 7.2.9 `doing/90%`, 7.2.10 `doing/25%`; 사용자 25 route 미완료, model.h5/visitor 보류는 유지한다.
 
 ---
 
