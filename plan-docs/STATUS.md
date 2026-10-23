@@ -92,6 +92,16 @@ WBS 7.2.10의 모델·방문자 정책과 독립된 인증 회원 journey 조각
 
 **`/events/socket`.** Chrome이 보내는 `permessage-deflate` 제안을 서버가 `WIRE.BAD_REQUEST`로 거절하던 것을 시험으로 재현하고(먼저 FAILED) 확장 거절 조건을 지웠다(RFC 6455 9.1절, 서버는 제안을 받지 않아도 된다). 실제 브라우저는 이 세션에 도구가 없어 실행하지 않았다. 다음은 사용자의 모델 결정을 기다리는 ML 조각을 제외하면 모델 없이 할 수 있는 일(점수를 쓰는 서버 코드의 자리, 평균 감정의 출처 결정, 세션 확정·집계 설계)과 7.2.10이다.
 
+## 2026-10-23 재개: WBS 7.2.6 조각 4 (Mongo 빈 timeline 초기화)
+
+확인한 기존 Verify `39901115868`은 SHA `6b1a8d4f70688caa9a61ed32bba6095c86fae7f9`, 2026-10-23 04:47 UTC 조회 시 `in_progress`였다(step 10 진행, profile browser·HTTP/worker/MySQL·artifact 단계 pending). run id와 상태를 제품 검증 기록에 남긴다. 완료되지 않아 profile/reset/withdraw 결과를 판정하거나 artifact를 회수하지 않았다.
+
+`watch_frame`은 기존 `startWatching` 호출을 유지해 `VideoViewLog`·Redis 시청 세션 생성의 멱등성을 보존하고, 이어 서버 전용 `User.recordFrame`을 호출하도록 연결했다. staged 모델 점수가 없을 때도 Mongo `youtube_watching_data`에 `video_view_log_id`당 문서 하나를 upsert한다. `emotion_score_timeline`과 `most_emotion_timeline`은 빈 객체이며 점수·추론은 만들지 않는다. 점수가 staged 된 경우의 기존 `$set` 쓰기는 유지한다. 소켓 응답은 `WIRE.NOT_AVAILABLE`이고 모델 연결 부재를 설명한다. 단위 시험은 first-frame/reconnect의 view log 1행 및 중복 timeline 문서 1개를 확인하도록 확장했다.
+
+검증: `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest test_slice14l_frame` 6/6 통과; `cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --lib socketio::tests:: --locked` 25/25 통과; `cargo fmt --all` 및 뒤이은 `cargo fmt --all -- --check` 통과. 전체 `cargo test ... --lib`에서는 transport 관련 77개가 통과했으나 PG 연결이 필요한 다른 21개가 이 Run의 임시 DSN(`127.0.0.1:54321`)에서 `Connection refused`로 실패했다. 새 실제 MySQL/Mongo Socket.IO 회귀 단정은 로컬에서 실행하지 않았고 새 SHA의 Verify가 확인할 부분이다.
+
+다음 재개점: 새 SHA의 Verify에서 `mysql_facereview_watch`가 첫 프레임·중복 프레임·재접속 후 view log 1개와 owner-scoped Mongo 빈 timeline 1개를 확인하는지 본다. 이어 기존 `39901115868`의 완료/취소 상태와 산출물 삭제 여부를 갱신한다. 모델 권한·재현 환경, 실제 브라우저 미디어 입력, visitor policy, ML 추론은 여전히 미결이며 여기서 확정하지 않는다.
+
 ## 이전 재개 지점 (2026-10-23, 7.2.6 조각 2 첫 프레임 세션 구현 뒤)
 
 7.2.6 조각 2를 구현했다(결정 D-P-WATCH-SESSION, 검증은 [제품 검증](../product/VERIFICATION.md)의 「7.2.6 조각 2」). 유효한 첫 `watch_frame`이 쓰기 확장 `User.startWatching`으로 `VideoViewLog` 한 행과 Redis 시청 세션을 만들고, 사용자는 프레임마다 다시 검증한 토큰에서만 얻는다. 같은 연결의 중복 프레임·재접속·다른 회원의 같은 id·폐기된 principal·토큰 만료를 실제 MySQL 서비스와 Redis로 확인했다. 쓰기 확장 호출 코드는 `run_relational_write_extension`으로 모아 `/extension` 쓰기와 공유한다. **프레임 ack는 여전히 `WIRE.NOT_AVAILABLE`이고 분석·Mongo timeline이 없어 실제 영상·웹캠·ML 흐름은 증명되지 않았다.** 다음은 조각 3(Mongo timeline 저장: 저장 경로·순서·중복 처리부터, 감정값은 ML 자리로 비워 둠), ML 게이트 조사(`model.h5` 출처·허가 근거, TF/OpenCV 요건; 구현 없음), `/events/socket`의 `permessage-deflate` 거절이 실제 브라우저를 막는지 최소 재현이다. 7.2.10은 그 뒤다. 세션 257e4936이 이 일을 하고 있으며 e29ddf1e 같은 다른 실행은 7.2.6을 겹쳐 시작하지 않는다.

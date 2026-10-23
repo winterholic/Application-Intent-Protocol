@@ -134,6 +134,28 @@
 
 **알려진 한계·미검증.** (1) 점수를 쓰는 서버 코드, 평균 감정(`average_emotion`)의 출처, 세션 확정과 `frame_count`·`emotion_sum`·`emotion_percentages`·`dominant_emotion`·`completion_rate` 계산, `video_distribution` 갱신은 없다. 원본 소켓 흐름은 세션을 확정하지 않는다(고정 소스에서 `finalize`의 호출처를 찾지 못했다). (2) 프레임마다 쓰기 확장 한 번(워커 기동 포함)의 비용은 측정하지 않았다. (3) 보상은 점수 키만 되돌리고 Mongo 쓰기는 멱등이라 되돌리지 않는다(큰 문서의 pre-image를 읽지 않기 위함). (4) CI: 이 조각의 커밋 `7c3ec334bd8585612de4b93e00dce4787d0bae7b`는 동일 SHA의 8개 workflow가 모두 success다. Verify(run 39802081466, job 22분)의 로그에서 `a_browsers_extension_offer_is_declined_not_refused ... ok`, 실제 `socket.io-client` 종단 `... ok`, Python 단위 시험(`Ran 8 tests`), Linux runner의 `mysql_facereview_watch` 실행(`recordFrame` 단정 포함)을 확인했다. 앞선 `7f0f702`의 Verify가 30분 상한에 걸려 cancelled였던 것은 이 실행으로 해소됐다(같은 시험이 22분에 끝났다).
 
+## 2026-10-23 WBS 7.2.6 조각 4: 첫 프레임 Mongo timeline 초기화 (모델 미연결)
+
+**범위.** 조각 2의 `User.startWatching` 호출은 그대로 유지한다. 따라서 매 프레임 재검증한 토큰에서 파생된 회원만 `VideoViewLog` 1행과 Redis 세션을 만들고, 같은 연결의 반복 프레임·새 연결 재접속도 같은 id의 행을 재사용한다. 이어 `User.recordFrame`을 서버의 `watch_frame` 경로에 연결했다. staged 점수가 없을 때에도 `youtube_watching_data`의 `video_view_log_id` 고유 키로 upsert해 Mongo 세션 문서를 초기화하며 `emotion_score_timeline`과 `most_emotion_timeline`은 빈 객체로 둔다. 같은 세션·시각의 반복 호출은 같은 문서에서 멱등 처리된다. 점수가 있는 경우 기존 server-only `getdel` 경로와 `$set`은 유지한다. 브라우저는 점수 입력을 보내지 못하고 actor id는 token에서 강제된다.
+
+**보류 범위.** 이 변경은 `model.h5`를 열거나 inference를 실행하지 않는다. 빈 감정 맵을 영상 결과로 표시하지 않도록 ack는 `WIRE.NOT_AVAILABLE`을 유지하며 응답에 모델 연결 부재를 명시한다. visitor policy는 정의·선택하지 않았다. 세션 종료/finalization, `frame_count`, `emotion_sum`, 평균·분포 갱신, 실제 브라우저 미디어 재생·카메라 흐름은 구현·검증하지 않았다.
+
+**검증.** 새 empty-timeline 단위 단정은 먼저 기존 코드에서 예상대로 실패했다(`len(ctx.mongo.updates)`: 0, expected 1). 구현 뒤 아래가 통과했다.
+
+| 명령 | 결과 |
+|---|---|
+| `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest test_slice14l_frame` (확장 디렉터리) | `Ran 6 tests ... OK`; 점수 없음의 빈 timeline 초기화·재호출, staged 점수 경로·소유 거절·입력 검증 포함 |
+| `env -u PGHOST -u PGPORT AIP_TEST_DATABASE_URL='host=127.0.0.1 port=54321 dbname=aip_test_ci user=runner' AIP_TEST_ADMIN_URL='host=127.0.0.1 port=54321 dbname=postgres user=runner' cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --lib socketio::tests:: --locked` | `25 passed; 0 failed` (Socket.IO 단위 25개) |
+| `cargo fmt --all -- --check` | 통과 |
+| `cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --lib --locked` (전체 lib) | `77 passed; 21 failed`; 실패 21개는 PostgreSQL을 요구하는 테스트가 임시 DSN의 `127.0.0.1:54321`에 연결하며 `Connection refused`. 이 로컬 전체 suite 결과는 통과로 계산하지 않는다 |
+| `cargo test -p aip-cli --features mysql --test mysql_facereview_watch --locked -- --ignored --nocapture --test-threads=1` | 코드에 회귀 단정을 추가했으나 로컬 실행은 미실시. 실제 MySQL/Mongo/Redis 종단 검증은 push 뒤 Verify에서 확인 예정 |
+
+실제 종단 단정은 새 Verify에서 첫 프레임·중복 프레임·재접속 뒤 `VideoViewLog` 1행과 owner-scoped Mongo timeline 문서 1개, 두 감정 맵이 비어 있는지 확인하도록 추가했다. Mongo fixture 미실행 상태이므로 이 결과는 아직 미검증이다.
+
+**이전 회원 검증 run.** Verify `39901115868`, SHA `6b1a8d4f70688caa9a61ed32bba6095c86fae7f9`은 2026-10-23 04:47 UTC에 `in_progress`였다. core step 10이 실행 중이고 pinned React profile browser·HTTP/worker/MySQL·artifact 처리 step은 pending이었다. 따라서 profile/reset/withdraw의 최종 결과는 아직 판정되지 않았고 artifact 생성·삭제도 하지 않았다. 이 run의 별도 검증 범위는 새 SHA의 증거로 쓰지 않는다.
+
+다음 재개점은 새 SHA의 Verify에서 `mysql_facereview_watch`를 확인한 뒤, `39901115868`이 끝나면 기록된 안전 절차대로 raw logs/safe evidence만 확인하고 screenshot 포함 artifact를 삭제하는 것이다. profile browser, withdrawal cancel 미호출, artifact 삭제는 실행 전까지 미검증으로 남긴다.
+
 ## 2026-10-23 WBS 7.2.6 ML 게이트 조사: `model.h5`의 출처·허가와 재현 환경 (조사만, 구현 없음)
 
 **읽은 곳**: 고정 backend `7948b7e…`의 저장소(`projects/facereview/new-facereview`, 작업 트리에 변경이 있어 파일 내용은 HEAD와 같은지 따로 확인하지 않았다), 그 git 이력, UI `2e7c021…`. 모델 파일은 읽기 전용으로 헤더와 메타데이터만 보았고 복사하지 않았다(임시 가상환경에서 `h5py`로 구조만 읽고 지웠다).
