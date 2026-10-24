@@ -1704,5 +1704,80 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
         print!("{}", String::from_utf8_lossy(&result.stdout));
         assert!(result.status.success(), "password browser failed; inspect safe password artifacts (status {:?})", result.status.code());
         assert!(db_ok, "password DB/session isolation or mail/challenge lifecycle failed; see boolean evidence");
+
+        // Continue with the same run-owned account, whose email flag is still 0.
+        // A fresh browser uses the password just verified above; no signup/tutorial coverage is implied.
+        let email_business_before = business_snapshot_except_user(&mut setup, Some(PASSWORD_MEMBER)).await;
+        let target_stable_sql = format!(
+            "SELECT user_id, email, password, name, role, profile_image_id, is_tutorial_done, is_deleted, created_at FROM user WHERE user_id = '{PASSWORD_MEMBER}'"
+        );
+        let target_before: Vec<aip_migrate::mysql_driver::mysql_async::Row> = setup.query(&target_stable_sql).await.unwrap();
+        let target_before: Vec<String> = target_before.into_iter().map(|row| format!("{:?}", row.unwrap())).collect();
+        let email_sessions_before: Vec<aip_migrate::mysql_driver::mysql_async::Row> = setup.query(&other_sessions_sql).await.unwrap();
+        let email_sessions_before: Vec<String> = email_sessions_before.into_iter().map(|row| format!("{:?}", row.unwrap())).collect();
+        let email_mails_before = mailer.sent.lock().unwrap().len();
+        let email_output = output.parent().unwrap().join("email");
+        std::fs::create_dir_all(&email_output).unwrap();
+        let email_result = StdCommand::new(std::env::var("AIP_FACEREVIEW_PYTHON").unwrap_or_else(|_| "python3".to_owned()))
+            .arg(browser_root.join("product/tests/facereview-ui-email-browser.py"))
+            .args(["--ui", &ui_root, "--api", &format!("http://{address}"), "--out", email_output.to_str().unwrap()])
+            .env("AIP_FACEREVIEW_JOURNEY_EMAIL", PASSWORD_EMAIL)
+            .env("AIP_FACEREVIEW_JOURNEY_PASSWORD", NEW_PASSWORD)
+            .env("AIP_FACEREVIEW_EXPECTED_CONTRACT", &fingerprint)
+            .env("AIP_FACEREVIEW_TEST_INBOX", format!("http://127.0.0.1:{}{}", mailer.port, mailer.inbox_path))
+            .output()
+            .expect("run original MyPage email verification journey");
+        let email_business_after = business_snapshot_except_user(&mut setup, Some(PASSWORD_MEMBER)).await;
+        let target_after: Vec<aip_migrate::mysql_driver::mysql_async::Row> = setup.query(&target_stable_sql).await.unwrap();
+        let target_after: Vec<String> = target_after.into_iter().map(|row| format!("{:?}", row.unwrap())).collect();
+        let email_sessions_after: Vec<aip_migrate::mysql_driver::mysql_async::Row> = setup.query(&other_sessions_sql).await.unwrap();
+        let email_sessions_after: Vec<String> = email_sessions_after.into_iter().map(|row| format!("{:?}", row.unwrap())).collect();
+        let email_flags = cell(
+            &mut setup,
+            &format!(
+                "SELECT CONCAT(role, ':', is_deleted, ':', is_tutorial_done, ':', is_verify_email_done) FROM user WHERE user_id = '{PASSWORD_MEMBER}'"
+            ),
+        )
+        .await;
+        let email_challenges =
+            cell(&mut setup, &format!("SELECT COUNT(*) FROM `{META}`.aip_auth_challenges WHERE subject = '{PASSWORD_MEMBER}'")).await;
+        let email_active =
+            cell(&mut setup, &format!("SELECT COUNT(*) FROM `{META}`.aip_auth_sessions WHERE subject = '{PASSWORD_MEMBER}' AND revoked_at IS NULL"))
+                .await;
+        let email_revoked = cell(
+            &mut setup,
+            &format!("SELECT COUNT(*) FROM `{META}`.aip_auth_sessions WHERE subject = '{PASSWORD_MEMBER}' AND revoked_at IS NOT NULL"),
+        )
+        .await;
+        let (email_mail_count, email_mail_matches) = {
+            let sent = mailer.sent.lock().unwrap();
+            let added = &sent[email_mails_before..];
+            (added.len(), added.len() == 1 && added[0]["to"] == PASSWORD_EMAIL && added[0]["template"] == "email-verification")
+        };
+        let email_db_ok = email_flags.as_deref() == Some("GENERAL:0:1:1")
+            && email_challenges.as_deref() == Some("0")
+            && email_active.as_deref() == Some("2")
+            && email_revoked.as_deref() == Some("2")
+            && target_before.len() == 1
+            && target_before == target_after
+            && email_mail_matches
+            && email_business_before == email_business_after
+            && email_sessions_before == email_sessions_after;
+        let email_db_result = json!({"journey": "member_email", "browser_status": if email_result.status.success() { "success" } else { "failure" },
+            "database_status": if email_db_ok { "success" } else { "failure" }, "email_verified_and_other_flags_preserved": email_flags.as_deref() == Some("GENERAL:0:1:1"),
+            "target_other_columns_preserved": target_before.len() == 1 && target_before == target_after,
+            "remaining_challenges": email_challenges, "active_session_rows": email_active, "revoked_session_rows": email_revoked,
+            "mail_delivery_count": email_mail_count, "mail_recipient_and_template_match": email_mail_matches,
+            "business_table_count": email_business_before.len(), "unrelated_business_rows_preserved": email_business_before == email_business_after,
+            "other_account_sessions_preserved": email_sessions_before == email_sessions_after});
+        std::fs::write(email_output.join("email-db-result.json"), serde_json::to_vec_pretty(&email_db_result).unwrap()).unwrap();
+        println!("email verification browser/DB: {email_db_result}");
+        print!("{}", String::from_utf8_lossy(&email_result.stdout));
+        assert!(
+            email_result.status.success(),
+            "email verification browser failed; inspect safe email artifacts (status {:?})",
+            email_result.status.code()
+        );
+        assert!(email_db_ok, "email verification DB/session isolation or mail/challenge lifecycle failed; see boolean evidence");
     }
 }

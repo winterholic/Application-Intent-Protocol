@@ -63,6 +63,16 @@ SAFE_NETWORK_FAILURES = {
 FILTER_OPS = {"eq", "ne", "lt", "lte", "gt", "gte", "in", "contains", "like"}
 
 
+def member_email_evidence(requests: list[dict[str, object]], ui: dict[str, object]) -> dict[str, object]:
+    gates = {}
+    for path in ("/auth/email/verification", "/auth/email/verify"):
+        rows = [row for row in requests if row.get("path") == path]
+        gates[path] = (len(rows) == 1 and rows[0].get("method") == "POST" and rows[0].get("status") == 200
+                       and all(rows[0].get(key) is True for key in ("ok", "body_captured", "payload_matches", "authorization_present")))
+    gates["ui"] = all(ui.get(key) is True for key in ("unverified_banner", "code_modal", "verified_badge", "banner_removed", "reloaded_verified"))
+    return {"gates": gates, "verified": all(gates.values())}
+
+
 def member_password_evidence(requests: list[dict[str, object]], ui: dict[str, object]) -> dict[str, object]:
     gates = {}
     for path, method in [("/auth/email/verification", "POST"), ("/auth/password/verification", "POST"),

@@ -39,6 +39,23 @@ VIDEO_ID = "aaaaaaaa-0000-4000-8000-000000000001"
 
 
 class BrowserEvidenceTests(unittest.TestCase):
+    def test_email_verification_requires_single_completed_bodies_and_persistent_ui(self):
+        from product.tests.facereview_ui_browser_evidence import member_email_evidence
+        rows = [{"path": path, "method": "POST", "status": 200, "ok": True,
+                 "body_captured": True, "payload_matches": True, "authorization_present": True}
+                for path in ("/auth/email/verification", "/auth/email/verify")]
+        ui = {key: True for key in ("unverified_banner", "code_modal", "verified_badge", "banner_removed", "reloaded_verified")}
+        self.assertTrue(member_email_evidence(rows, ui)["verified"])
+        for i in range(len(rows)):
+            for key, value in [("method", "PATCH"), ("status", 400), ("ok", False),
+                               ("body_captured", False), ("payload_matches", False), ("authorization_present", False)]:
+                changed = [dict(row) for row in rows]; changed[i][key] = value
+                self.assertFalse(member_email_evidence(changed, ui)["verified"], (i, key))
+            self.assertFalse(member_email_evidence(rows[:i] + rows[i+1:], ui)["verified"])
+            self.assertFalse(member_email_evidence(rows + [rows[i]], ui)["verified"])
+        for key in ui:
+            self.assertFalse(member_email_evidence(rows, {**ui, key: False})["verified"])
+
     def test_password_journey_requires_exact_completed_auth_bodies_and_ui(self):
         from product.tests.facereview_ui_browser_evidence import member_password_evidence
         rows = [{"path": path, "method": method, "status": 200, "ok": True, "body_captured": True,

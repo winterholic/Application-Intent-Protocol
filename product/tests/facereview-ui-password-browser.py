@@ -92,6 +92,10 @@ def main() -> int:
         elif path == "/auth/logout":
             row["payload_matches"] = payload == {}
             row["refresh_cookie_present"] = "refresh_token=" in request.all_headers().get("cookie", "")
+        if path == "/apply" and isinstance(payload, dict):
+            request_payload = payload.get("request")
+            if isinstance(request_payload, dict) and request_payload.get("extension") == "User.myEmotionSummary":
+                row["write_extension"] = "User.myEmotionSummary"
         rows.append(row)
         pending[request] = (response, row)
 

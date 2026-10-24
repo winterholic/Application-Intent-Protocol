@@ -1,4 +1,20 @@
-# 최신 재개 지점 (2026-10-24 10:00 KST, 비밀번호 CI broad gate 실패·로컬 lint 수정 및 최초실패 계측 보강)
+# 최신 재개 지점 (2026-10-24, 비밀번호 UI·DB 성공·MyPage 이메일 인증 검증 추가)
+
+일반 Verify `40062036395` attempt1, SHA `08314567afc200377ae2d366209284f359827119`은 completed/success(core종료 2026-10-24 04:45:09UTC)다. Broad11·UI준비13/14·실HTTP/worker/MySQL15·artifact16·cleanup18 모두 success. Safe artifact `12548545988`를 현재 Run outbox `verify-40062036395`에 다운로드했고 password JSON2개·PNG4개를 직접 검사했다. `member_password` 전체6gate/verified 및 UI6boolean true, `/auth/password` POST1건·정확payload·완료된성공body, logout body/refreshcookie/clientclear, old/new login 성공과 새비밀번호 재login/reload를 확인했다. API27건 모두 finished/failed0/unfinished0·pageerror0. `/session`은 전체3회(최초login1/새login1/reload1)이며 재로그인 경합에서 보이던 중복2회가 없다. 첫 PNG는 fade 도중 어둡지만 코드 후 폼·로그아웃·최종profile PNG를 확인했고 비밀번호 입력·code·reset_token은 저장하지 않았다.
+
+Password DB는 browser/database success 및 모든 boolean true다. Hash변경/scrypt, oldpassword거절, 타기기폐기, revoked2·active1/challenge0, mail1회·수신계정/template, flags GENERAL:0:1:0 보존 및 target user만 제외한11개업무테이블 fullsnapshot·다른계정session fullsnapshot 보존을 실행SHA caller와 대조했다. 사용자25경로 표는 비밀번호 여정의 send-code/code-exchange/password 세 행만 갱신했다. 이메일 verify/signup/tutorial/withdraw 화면 성공을 이 결과로 주장하지 않는다.
+
+기존회귀 JSON도 직접검사했다. Profile/reissue browser·DB success/USEDrefresh+1 및 expired2→reissue1→retry2, like add/remove·DB1→0/타회원count보존·logout revoked+1, 댓글3phase·동일ID/softdelete/무관행보존, search4gate/11테이블보존이 유지됐다. Add33/remove37/comment각23/search22 lifecycle은 failed0/unfinished0이다. Admin 기존 dashboard/기간5·role/승인/거절/삭제/permission4 및 reissue2회를 JSON 범위대로 확인했다. Locator의 마지막 admin stage/command·exit pending은 실패가 아니고 개별cargo stdout은 미열람이다.
+
+비밀번호 JSON의 `/apply` HTTP200/okfalse는3건이며 전부 `WIRE.NOT_FOUND`다. MyPage→getEmotionSummary→SDK writeExtension(User.myEmotionSummary)→/apply라는 source 경로와 일치하지만 현재 artifact에는 호출명이 없어 동일 호출이라고 확정하지 않는다. 다음 password/email JSON에 허용된 해당 호출명만 기록한다. 감정그래프 skeleton이나 이 오류를 성공으로 포함하지 않으며 별도 원인조사 잔여다.
+
+다음 bounded 증분은 원본 MyPage 미인증banner→이메일인증모달→메일code입력→badge/banner제거→reload유지다. 방금 비밀번호를 바꾼 동일 disposable계정의 fresh browser를 쓰며 기존 run-owned in-memory메일sink를 재사용한다. DB는 인증flag0→1/GENERAL:0:1:1, target user의 인증flag·updated_at 외 모든열보존, challenge0/mail1회, active2/revoked2, 무관한11개업무테이블·타계정session fullsnapshot 불변을 별도 JSON으로 판정한다. 원본UI/제품정책 불변. Email UI·DB는 새 CI 전까지 미검증이며 signup/tutorial완료·skip/confirmedwithdraw는 다음 잔여다.
+
+로컬: 새 email 판정기 stub의 AssertionError RED→GREEN, 전체evidence unittest50 OK/overlay node64 pass, AST/fmt/diff OK, MySQL migrate/service/CLI all-targetclippy6.50s exit0 및 Rust auth --no-run --locked --offline compile6.29s exit0. 로컬liveDB/browser는 미실행이다. WBS90/25·25경로전수미완·model.h5권리/visitor보류 유지. 같은ref Verify진행중 push/dispatch/cancel·장시간대기금지 및45분timeout+3분후속예약을 유지한다.
+
+---
+
+# 이전 재개 지점 (2026-10-24 10:00 KST, 비밀번호 CI broad gate 실패·로컬 lint 수정 및 최초실패 계측 보강)
 
 일반 Verify `40043525384` attempt1, SHA `3678af624974325fb1ac082104426f869f06b20d`은 completed/failure(00:14:06UTC 종료)다. 최초 실패는 step11 broad compiler/runtime/product/worker/transport/SDK이고 React 준비13·admin준비14·실제HTTP/DB/browser15는 skipped다. Safe artifact `12539998150`에는 verify-failure.txt만 있고 stage=broad gate/command=bash tools/verify.sh/exit101이다. Annotations도 exit101 외 첫 Rust 오류를 특정하지 않는다. 비밀번호 browser/DB는 도달하지 않았으므로 관련25경로행은 pending을 유지한다. 거부된 raw GH log cache 경로를 우회하지 않았다.
 
