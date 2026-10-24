@@ -1,4 +1,16 @@
-# 최신 재개 지점 (2026-10-24, 첫계정 가입 DB 성공·튜토리얼 reload 판정 수정)
+# 최신 재개 지점 (2026-10-24 17:46 KST, Verify40076012954 비밀번호 body 수집 gate 실패)
+
+일반 Verify `40076012954`, SHA `751ad8d13483c951fbfb026ea12e8a4c0eec015d`, attempt1은 completed/failure(core종료 08:22:04UTC)다. Broad11·원본UI준비13/14는 success, 첫 실패는 실HTTP/worker/MySQL step15다. Safe artifact `12554215645` (`facereview-ui-browser-40076012954-1`)를 현재 Run outbox `/Users/winterholic/.ttakkari/data/outbox/f5290b4f-874f-49e9-8f1a-133da3f9fd35/verify-40076012954`에 다운로드했다. Locator는 stage=FaceReview member authentication E2E test, command=tee /tmp/aip-e2e-auth-run-"$tag".txt, exit101이다.
+
+`password/password-browser-result.json`은 journey_stage=login_new/failure_line232/failure_path=/my/failure_type=unrecognized다. 원본 password UI6boolean·member_password6gate/verified는 true지만 최종 all-body assertion에서 실패했다. API28건 모두 HTTP200·finished28/failed0/unfinished0/pageerror0이며, 응답목록 21번째 `/apply` POST `User.myEmotionSummary` 한 건만 body_captured=false다. 나머지 같은 호출 3건은 body_captured=true/ok=false/WIRE.NOT_FOUND다. PNG5개를 직접 검사해 새password 폼·signed-out·재login/reload된 본인 profile을 확인했다(첫 PNG는 fade중, 감정그래프는 skeleton). Password DB는 database_status=success/모든boolean true/active1 revoked2/challenge0/mail1/11업무테이블·타계정session보존, browser_status=failure다. 따라서 전체 password browser 성공으로 세지 않는다.
+
+동일 SHA의 수집 함수는 pending.pop·finished.add 이후 `json.loads(response.body())` 예외를 삼킨다. 실제 함수 AST를 브라우저 없이 실행한 synthetic probe에서 body읽기 예외와 invalid JSON이 모두 finished1/body_captured=false/pending0을 남겼고 valid WIRE.NOT_FOUND JSON은 body_captured=true였다. 이는 finished와 body수집의 차이를 입증하며, CI의 실제 예외 종류나 navigation 관련 원인은 미확인이다. `safe_browser_failure_type`에 예외 객체 대신 문자열을 넘겨 unrecognized가 되는 코드도 확인했으나 불변 지시에 따라 고치지 않았다.
+
+Profile/reissue·like/logout·comment3phase/search의 browser/DB JSON은 기존 성공 범위를 재확인했다. Add33/remove37/comment각23/search22는 failed0/unfinished0/pageerror0다. 이번 artifact에는 email/account-complete/account-skip/admin이 없고 Rust caller는 password browser assertion에서 후단을 중단한다. 따라서 751ad8d의 tutorial live-store 수정은 새 UI·DB에서 검증되지 않았다. CheckEmail/signup/tutorial 25경로행은 byte동일하게 유지하고 confirmedwithdraw도 진행하지 않았다. 제품overlay/Rust/password·email·member·account scripts/원본UI/정책은 변경하지 않았다. 재실행·dispatch·cancel·후속예약 없이 실패 근거만 기록한다. 재현: 현재 outbox의 `python3 inspect-verify-40076012954.py` → CI 실패행/DB/미도달 phase와 synthetic probe 출력. WBS90/25·25경로전수미완·model.h5권리/visitor보류 및 User.myEmotionSummary/graph 별도잔여 유지.
+
+---
+
+# 이전 재개 지점 (2026-10-24, 첫계정 가입 DB 성공·튜토리얼 reload 판정 수정)
 
 일반 Verify `40072496940`, SHA `ef828ac7a1dbb9b442fe4a97c1faef4e19f09031`, attempt1은 completed/failure(core종료 2026-10-24 07:22:58UTC)다. Broad11·UI준비13/14는 success, 최초 실패는 실HTTP/worker/MySQL step15다. Safe artifact `12552860245`를 현재Run outbox `/Users/winterholic/.ttakkari/data/outbox/a461ad09-aff0-4da4-b4f5-d65e56ee8ac4/verify-40072496940`에 다운로드했다. Locator는 stage=FaceReview member authentication E2E test, command=tee /tmp/aip-e2e-auth-run-"$tag".txt, exit101이다. Raw GH log/cache는 접근하지 않았다.
 

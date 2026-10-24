@@ -1,5 +1,7 @@
 # AIP (Application Intent Protocol)
 
+> 2026-10-24 최신 UI 검증: Verify40076012954/751ad8d은 password 회귀의 전체body gate(line232)에서 실패했다. UI·인증gate/DB는 true지만 User.myEmotionSummary 응답1건 body수집 미완이다. 가입·튜토리얼·이메일·admin 미도달, 관련25행 유지. 제품·기존스크립트 변경/재실행 없이 근거를 기록했다. [최신 판정](plan-docs/STATUS.md)과 [검증 상세](product/VERIFICATION.md#2026-10-24-verify40076012954-비밀번호-회귀-body-수집-gate-실패) 참조.
+
 프론트엔드가 필요한 데이터와 동작을 정형화해 표현하면 서버가 정책과 계약에 따라 실행하는 프레임워크. 애플리케이션별 백엔드 반복 구현과 프론트·백엔드 계약의 이중 유지보수를 최소화한다.
 
 > Describe your application once.
