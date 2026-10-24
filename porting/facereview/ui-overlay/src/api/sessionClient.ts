@@ -17,6 +17,8 @@ export function createSessionClientProvider<C extends SessionSdk>(options: {
   let current: C | null = null;
   let currentToken: string | null = null;
   let currentSubject: string | null = null;
+  // Parallel callers share one replacement: each extra replaceSession would bump the SDK generation and discard their reads.
+  let ready: Promise<void> = Promise.resolve();
 
   return {
     async client(): Promise<C> {
@@ -30,12 +32,22 @@ export function createSessionClientProvider<C extends SessionSdk>(options: {
       }
       if (current === null || currentSubject !== subject) {
         current = options.connectWith(token);
+        ready = Promise.resolve();
       } else if (currentToken !== token) {
-        await current.replaceSession(token);
+        ready = current.replaceSession(token).then(
+          () => {},
+          (error: unknown) => {
+            // A failed replacement is retried by the next call instead of being remembered as done.
+            if (currentToken === token) currentToken = null;
+            throw error;
+          },
+        );
       }
       currentToken = token;
       currentSubject = subject;
-      return current;
+      const client = current;
+      await ready;
+      return client;
     },
   };
 }

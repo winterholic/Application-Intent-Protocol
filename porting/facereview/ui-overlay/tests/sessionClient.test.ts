@@ -35,6 +35,46 @@ test('a refreshed token of the same user is carried over with replaceSession on 
   assert.equal(created.length, 1);
 });
 
+test('parallel reads after the same user signs in again replace the session once', async () => {
+  // Each extra replaceSession bumps the SDK generation and discards reads already in flight (ScopeChanged).
+  const replaced: string[] = [];
+  let current = tokenFor('member-1', '1');
+  const provider = createSessionClientProvider({
+    getToken: () => current,
+    connectWith: () => ({
+      async replaceSession(next: string) {
+        await new Promise((resolve) => setImmediate(resolve));
+        replaced.push(next);
+      },
+    }),
+  });
+  const first = await provider.client();
+  current = tokenFor('member-1', '2');
+  const [a, b] = await Promise.all([provider.client(), provider.client()]);
+  assert.equal(a, first);
+  assert.equal(b, first);
+  assert.deepEqual(replaced, [current]);
+});
+
+test('a failed replacement is attempted again by the next call', async () => {
+  let attempts = 0;
+  let current = tokenFor('member-1', '1');
+  const provider = createSessionClientProvider({
+    getToken: () => current,
+    connectWith: () => ({
+      async replaceSession() {
+        attempts++;
+        if (attempts === 1) throw Object.assign(new Error('offline'), { code: 'CLIENT.NETWORK' });
+      },
+    }),
+  });
+  const first = await provider.client();
+  current = tokenFor('member-1', '2');
+  await assert.rejects(provider.client(), { code: 'CLIENT.NETWORK' });
+  assert.equal(await provider.client(), first);
+  assert.equal(attempts, 2);
+});
+
 test('another user signing in after a logout gets a new client; the old session is never handed to them', async () => {
   const { provider, created, signIn } = harness(tokenFor('admin-1'));
   const first = await provider.client();

@@ -61,6 +61,7 @@ def main() -> int:
     evidence = {}
     failure_type = None
     failure_line = None
+    failure_path = None
     page = None
     status = 1
     api_port = urlsplit(args.api).port
@@ -194,7 +195,12 @@ def main() -> int:
                 stage = "change_password"
                 page.get_by_label("새 비밀번호 입력", exact=True).fill(new_password)
                 page.get_by_label("새 비밀번호 확인", exact=True).fill(new_password)
-                page.get_by_role("button", name="비밀번호 변경", exact=True).click()
+                # The original logs out right after the change; wait for that body as the member logout journey does.
+                with page.expect_response(lambda response: urlsplit(response.url).port == api_port
+                                          and urlsplit(response.url).path == "/auth/logout", timeout=30000) as logout_reply:
+                    page.get_by_role("button", name="비밀번호 변경", exact=True).click()
+                logout_reply.value.finished()
+                capture_body(logout_reply.value.request)
                 expect(page).to_have_url(re.compile(r"/auth/1$"), timeout=30000)
                 page.wait_for_function("""() => {
                   const s = JSON.parse(localStorage.getItem('auth-storage') || 'null')?.state;
@@ -224,6 +230,7 @@ def main() -> int:
                 failure_type = safe_browser_failure_type(type(error).__name__)
                 failure_line = next((frame.lineno for frame in reversed(traceback.extract_tb(error.__traceback__)) if Path(frame.filename).resolve() == Path(__file__).resolve()), None)
                 if page is not None:
+                    failure_path = urlsplit(page.url).path
                     try:
                         page.locator("input").evaluate_all("els => els.forEach(e => { e.value = ''; })")
                         page.screenshot(path=str(output / "password-failure.png"), full_page=True)
@@ -245,7 +252,7 @@ def main() -> int:
                 os.killpg(server.pid, signal.SIGKILL)
                 server.wait(timeout=5)
         report = {"ui_revision": "2e7c021fa5abebd72278d841b8066a33d45cfbb3", "journey_stage": stage,
-                  "member_password": evidence, "ui": ui, "api_requests": rows, "failure_type": failure_type, "failure_line": failure_line,
+                  "member_password": evidence, "ui": ui, "api_requests": rows, "failure_type": failure_type, "failure_line": failure_line, "failure_path": failure_path,
                   "page_error_count": len(errors), "api_lifecycle": {"requests": len(started), "finished": len(finished),
                   "failed": len(failures), "unfinished": len(started - finished)}, "screenshots": screenshots,
                   "credentials_recorded": False, "browser_api_mocks": False}
