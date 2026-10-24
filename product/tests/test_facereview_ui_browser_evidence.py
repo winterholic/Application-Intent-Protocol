@@ -44,7 +44,7 @@ class BrowserEvidenceTests(unittest.TestCase):
         rows = [{"path": path, "method": method, "status": 200, "ok": True, "body_captured": True,
                  "payload_matches": True, "authorization_present": True}
                 for path, method in [("/auth/email/verification", "POST"), ("/auth/password/verification", "POST"),
-                                     ("/auth/password", "PATCH"), ("/auth/logout", "POST")]]
+                                     ("/auth/password", "POST"), ("/auth/logout", "POST")]]
         rows[1]["reset_token_received"] = True
         rows[3].update(authorization_present=False, refresh_cookie_present=True)
         rows += [{"path": "/auth/login", "method": "POST", "status": 200, "ok": True, "body_captured": True,
@@ -57,6 +57,9 @@ class BrowserEvidenceTests(unittest.TestCase):
                 self.assertFalse(member_password_evidence(changed, ui)["verified"], (i, key))
             self.assertFalse(member_password_evidence(rows[:i] + rows[i+1:], ui)["verified"])
         self.assertFalse(member_password_evidence(rows + [rows[0]], ui)["verified"])
+        # The original backend's PATCH is not the AIP route; a browser preflight refuses it.
+        original_method = [dict(row) for row in rows]; original_method[2]["method"] = "PATCH"
+        self.assertFalse(member_password_evidence(original_method, ui)["verified"])
         no_cookie = [dict(row) for row in rows]; no_cookie[3]["refresh_cookie_present"] = False
         self.assertFalse(member_password_evidence(no_cookie, ui)["verified"])
         no_bearer = [dict(row) for row in rows]; no_bearer[1]["authorization_present"] = False

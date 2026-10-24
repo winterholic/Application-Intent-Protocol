@@ -36,7 +36,7 @@ test('password change page uses authenticated AIP mail challenge, code exchange 
   assert.deepEqual(requests, [
     { url: 'https://aip.test/auth/email/verification', method: 'POST', authorization: 'Bearer test-member-token', body: '{}' },
     { url: 'https://aip.test/auth/password/verification', method: 'POST', authorization: 'Bearer test-member-token', body: '{"code":"123456"}' },
-    { url: 'https://aip.test/auth/password', method: 'PATCH', authorization: 'Bearer test-member-token', body: '{"reset_token":"safe-test-token","new_password":"example-only-password"}' },
+    { url: 'https://aip.test/auth/password', method: 'POST', authorization: 'Bearer test-member-token', body: '{"reset_token":"safe-test-token","new_password":"example-only-password"}' },
   ]);
 });
 

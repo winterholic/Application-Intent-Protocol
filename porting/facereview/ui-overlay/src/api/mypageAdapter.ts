@@ -13,9 +13,10 @@ function responseError(response: Response): Promise<AuthError> {
 
 export function createMypageApi(options: { baseUrl: string; fetchImpl: typeof fetch }) {
   const base = options.baseUrl.replace(/\/$/, '');
-  const request = async <T>(path: string, method: 'POST' | 'PATCH', payload: Record<string, unknown> = {}) => {
+  // The original backend used PATCH /password; AIP serves every /auth/* route as POST, so the browser preflight only admits POST.
+  const request = async <T>(path: string, payload: Record<string, unknown> = {}) => {
     const response = await options.fetchImpl(`${base}${path}`, {
-      method,
+      method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
@@ -24,9 +25,9 @@ export function createMypageApi(options: { baseUrl: string; fetchImpl: typeof fe
   };
 
   return {
-    sendEmailVerification: () => request('/auth/email/verification', 'POST'),
-    verifyEmailCode: (props: { code: string }) => request('/auth/email/verify', 'POST', props),
-    verifyPasswordCode: (props: { code: string }) => request<{ reset_token: string; message?: string }>('/auth/password/verification', 'POST', props),
-    changePassword: (props: { reset_token: string; new_password: string }) => request('/auth/password', 'PATCH', props),
+    sendEmailVerification: () => request('/auth/email/verification'),
+    verifyEmailCode: (props: { code: string }) => request('/auth/email/verify', props),
+    verifyPasswordCode: (props: { code: string }) => request<{ reset_token: string; message?: string }>('/auth/password/verification', props),
+    changePassword: (props: { reset_token: string; new_password: string }) => request('/auth/password', props),
   };
 }
