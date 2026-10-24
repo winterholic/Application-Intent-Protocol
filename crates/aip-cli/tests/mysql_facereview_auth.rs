@@ -223,10 +223,9 @@ async fn business_snapshot_except_user(conn: &mut aip_migrate::mysql_driver::mys
         "video_request",
         "video_view_log",
     ] {
-        let rows: Vec<aip_migrate::mysql_driver::mysql_async::Row> = if table == "user" && exclude_user.is_some() {
-            conn.exec("SELECT * FROM `user` WHERE user_id <> ? ORDER BY 1", (exclude_user.unwrap(),)).await.unwrap()
-        } else {
-            conn.query(format!("SELECT * FROM `{table}` ORDER BY 1")).await.unwrap()
+        let rows: Vec<aip_migrate::mysql_driver::mysql_async::Row> = match (table, exclude_user) {
+            ("user", Some(user)) => conn.exec("SELECT * FROM `user` WHERE user_id <> ? ORDER BY 1", (user,)).await.unwrap(),
+            _ => conn.query(format!("SELECT * FROM `{table}` ORDER BY 1")).await.unwrap(),
         };
         tables.push(rows.into_iter().map(|row| format!("{:?}", row.unwrap())).collect());
     }

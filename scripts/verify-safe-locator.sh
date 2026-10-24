@@ -5,6 +5,12 @@ aip_verify_locator_write() {
   local stage="${1:-${AIP_VERIFY_STAGE:-not_started}}"
   local command="${2:-not_started}"
   local status="${3:-pending}"
+  # A sourced child records the failing checked-in command before its parent
+  # observes `bash child.sh` failing. Keep that first failure across shell levels.
+  # Stage/start markers explicitly reset the record to pending for the next gate.
+  if [[ "$status" != pending && -f "$AIP_VERIFY_FAILURE_FILE" ]] && grep -Eq '^exit_status=[1-9][0-9]*$' "$AIP_VERIFY_FAILURE_FILE"; then
+    return 0
+  fi
   command="${command//$'\n'/ }"
   umask 077
   {

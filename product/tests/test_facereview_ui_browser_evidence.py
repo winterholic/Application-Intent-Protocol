@@ -249,6 +249,36 @@ class BrowserEvidenceTests(unittest.TestCase):
             self.assertIn("command=bwrap --unshare-all --ro-bind / / --proc /proc --dev /dev true", content)
             self.assertIn("exit_status=3", content)
 
+    def test_safe_failure_locator_preserves_nested_first_failure(self):
+        repo = Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory() as tmp:
+            locator = Path(tmp) / "nested.txt"
+            child = Path(tmp) / "child.sh"
+            child.write_text(
+                f"set -Eeuo pipefail\nsource '{repo / 'scripts/verify-safe-locator.sh'}'\n"
+                "aip_verify_stage 'inner mysql clippy'\nfalse\n"
+            )
+            script = (f"export AIP_VERIFY_FAILURE_FILE='{locator}'; "
+                      f"source '{repo / 'scripts/verify-safe-locator.sh'}'; "
+                      f"aip_verify_stage 'outer workflow'; bash '{child}'")
+            result = subprocess.run(["bash", "-Eeuo", "pipefail", "-c", script], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1)
+            content = locator.read_text()
+            self.assertIn("stage=inner mysql clippy\ncommand=false\nexit_status=1\n", content)
+            self.assertNotIn("outer workflow", content)
+
+    def test_safe_failure_locator_new_stage_resets_previous_failure(self):
+        repo = Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory() as tmp:
+            locator = Path(tmp) / "new-stage.txt"
+            script = (f"export AIP_VERIFY_FAILURE_FILE='{locator}'; "
+                      f"source '{repo / 'scripts/verify-safe-locator.sh'}'; "
+                      "aip_verify_locator_write 'old gate' 'old command' 7; "
+                      "aip_verify_stage 'new gate'; false")
+            result = subprocess.run(["bash", "-Eeuo", "pipefail", "-c", script], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1)
+            self.assertEqual(locator.read_text(), "stage=new gate\ncommand=false\nexit_status=1\n")
+
     def test_focused_member_contract_stops_before_external_store_suites(self):
         repo = Path(__file__).resolve().parents[2]
         workflow = (repo / ".github/workflows/verify.yml").read_text()

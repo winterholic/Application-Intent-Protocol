@@ -1,4 +1,16 @@
-# 최신 재개 지점 (2026-10-24 09:10 KST, 검색 UI·DB 성공·비밀번호 원본 UI 검증 추가)
+# 최신 재개 지점 (2026-10-24 10:00 KST, 비밀번호 CI broad gate 실패·로컬 lint 수정 및 최초실패 계측 보강)
+
+일반 Verify `40043525384` attempt1, SHA `3678af624974325fb1ac082104426f869f06b20d`은 completed/failure(00:14:06UTC 종료)다. 최초 실패는 step11 broad compiler/runtime/product/worker/transport/SDK이고 React 준비13·admin준비14·실제HTTP/DB/browser15는 skipped다. Safe artifact `12539998150`에는 verify-failure.txt만 있고 stage=broad gate/command=bash tools/verify.sh/exit101이다. Annotations도 exit101 외 첫 Rust 오류를 특정하지 않는다. 비밀번호 browser/DB는 도달하지 않았으므로 관련25경로행은 pending을 유지한다. 거부된 raw GH log cache 경로를 우회하지 않았다.
+
+로컬에서 변경된 MySQL auth test의 clippy를 좁혀 실행해 exclude_user.is_some() 뒤 unwrap()이 clippy::unnecessary_unwrap/-D warnings로 exit101 되는 결함을 직접 재현했다. match (table, exclude_user)로 바꿔 같은 SQL·parameters·snapshot 의미를 유지했다. 이후 CI와 같은 MySQL migrate/service/CLI all-target clippy는 explicit loopback55432/test DSN·PG*unset·--locked --offline에서 exit0/3.38s다. 원격 CI의 첫 Rust 오류 원문이 없으므로 이 결함을 과거 CI의 직접 원인으로 확정하지 않고 유력한 코드 기반 설명으로 둔다.
+
+추가 계측 결함도 독립 재현했다. nested shell의 실제 inner failure locator를 부모 bash command/outer stage가 덮어쓰는 회귀 시험이 FAIL이었다. pending stage/start marker는 새 gate를 시작하게 두고, 이미 numeric failure가 기록된 경우 부모의 후속 non-pending write가 덮지 않게 했다. 자식 첫실패 보존과 다음stage reset을 검사했고 전체 evidence unittest49 OK다. tools/verify.sh의 DBguard/readiness/fmt/workspace/auth-service/PoC/MySQL clippy 앞에 단계 marker를 추가했다. 검사 명령·순서·범위·제품코드는 바꾸지 않았다. shell syntax/fmt/diff OK; 로컬 liveDB/browser는 미실행이다.
+
+새 일반 CI로 비밀번호 원본 UI·DB 증거를 확보한다. 동일ref 진행중 push/dispatch/cancel·장시간대기·맹목retry 금지,45분timeout+3분 후속예약을 유지한다. 성공 뒤에만 해당25경로행 갱신 및 이메일검증/signup/tutorial/confirmedwithdraw 잔여로 진행한다. 컨텍스트54%의 연속성을 사용해 이번 조사·작은수정을 마친 뒤, 상태·변경·검증을 인계에 저장하고 새컨텍스트로 결과확인을 이어간다. WBS90/25·25경로전수미완·model.h5/visitor보류 유지.
+
+---
+
+# 이전 재개 지점 (2026-10-24 09:10 KST, 검색 UI·DB 성공·비밀번호 원본 UI 검증 추가)
 
 일반 Verify `40038229142` attempt1, 코드 `f436a06173d2207020f5e334d8caa5f3bc40e3f4`은 completed/success(2026-10-23 23:45:33 UTC 종료)다. Safe artifact `12539367749`를 이번 Run outbox에 다운로드해 검색 found/empty × submit/reload JSON·PNG4개를 직접 검사했다. 전체와 4 gate 모두 verified=true, 각 단일 Video.homeSearch 응답 HTTP200/ok/body 완료·정확input boolean·contract 일치, found length1/fixture=true 및 empty0/false다. 검색 lifecycle22건 모두 finished/failed0/unfinished0, page_error0. 별도 search-db JSON은 browser/database success, business_table_count11/all_business_rows_preserved=true. 실행 SHA의 fullsnapshot caller와 대조하고 25경로 search행을 갱신했다.
 

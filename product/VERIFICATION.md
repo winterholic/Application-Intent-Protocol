@@ -1703,3 +1703,14 @@ Verify `40038229142`, SHA `f436a06173d2207020f5e334d8caa5f3bc40e3f4`, attempt1 c
 Rust caller는 기존 mail API시험이 끝난 뒤 fixture 전용계정과 다른기기 session을 준비한다. UI 성공과 DB 성공은 별도 password JSON으로 남긴다. Hash변경/scrypt형식·oldpassword거절/다른기기 bearer거절, password 변경·logout으로 revoked2/새login active1/challenge0, mail1회·해당수신자, 계정flags GENERAL:0:1:0 보존 및 target user만 제외한11개 업무테이블 fullsnapshot·다른계정session fullsnapshot 불변을 검사한다. Signup/tutorial/email verify/withdraw 화면 성공으로 확대하지 않는다.
 
 Local evidence: helper stub FAIL1→전체unittest47 OK; 실제logout cookie 계약을 넣은 RED→GREEN도 확인. mypageAdapter node2pass, `mailbox_capability_reads_only_the_password_fixture_in_memory` 실loopback HTTP1pass/0.01s(다른recipient·잘못된capability는code비노출). Rust auth no-run offlinecompile2.50s exit0; 처음의 Vec 타입추론 E0282는 Vec<Value> 명시로 수정했다. PG* unset/전용55432/aip_test_run 계약 준수. 두 browser AST·기존member/search script byte동일·fmt/diff OK. 로컬 liveDB/browser는 미실행; 새 Linux 일반 Verify의 password artifact 전까지 계정UI는 미검증으로 둔다. 원본UI/overlay제품정책/원본5173·aip-p730·guard자료 불변. WBS90/25·사용자25경로전수미완·model.h5권리/visitor보류 유지.
+
+
+### 2026-10-24 10:00 KST Verify40043525384 broad gate 실패와 clippy·nested locator 수정
+
+일반 Verify `40043525384` attempt1, SHA `3678af624974325fb1ac082104426f869f06b20d`은 completed/failure(00:14:06UTC 종료)다. 최초 실패는 step11 broad compiler/runtime/product/worker/transport/SDK이고 React 준비13·admin준비14·실제HTTP/DB/browser15는 skipped다. Safe artifact `12539998150`에는 verify-failure.txt만 있고 stage=broad gate/command=bash tools/verify.sh/exit101이다. Annotations도 exit101 외 첫 Rust 오류를 특정하지 않는다. 비밀번호 browser/DB는 도달하지 않았으므로 관련25경로행은 pending을 유지한다. 거부된 raw GH log cache 경로를 우회하지 않았다.
+
+로컬에서 변경된 MySQL auth test의 clippy를 좁혀 실행해 exclude_user.is_some() 뒤 unwrap()이 clippy::unnecessary_unwrap/-D warnings로 exit101 되는 결함을 직접 재현했다. match (table, exclude_user)로 바꿔 같은 SQL·parameters·snapshot 의미를 유지했다. 이후 CI와 같은 MySQL migrate/service/CLI all-target clippy는 explicit loopback55432/test DSN·PG*unset·--locked --offline에서 exit0/3.38s다. 원격 CI의 첫 Rust 오류 원문이 없으므로 이 결함을 과거 CI의 직접 원인으로 확정하지 않고 유력한 코드 기반 설명으로 둔다.
+
+추가 계측 결함도 독립 재현했다. nested shell의 실제 inner failure locator를 부모 bash command/outer stage가 덮어쓰는 회귀 시험이 FAIL이었다. pending stage/start marker는 새 gate를 시작하게 두고, 이미 numeric failure가 기록된 경우 부모의 후속 non-pending write가 덮지 않게 했다. 자식 첫실패 보존과 다음stage reset을 검사했고 전체 evidence unittest49 OK다. tools/verify.sh의 DBguard/readiness/fmt/workspace/auth-service/PoC/MySQL clippy 앞에 단계 marker를 추가했다. 검사 명령·순서·범위·제품코드는 바꾸지 않았다. shell syntax/fmt/diff OK; 로컬 liveDB/browser는 미실행이다.
+
+새 일반 CI로 비밀번호 원본 UI·DB 증거를 확보한다. 동일ref 진행중 push/dispatch/cancel·장시간대기·맹목retry 금지,45분timeout+3분 후속예약을 유지한다. 성공 뒤에만 해당25경로행 갱신 및 이메일검증/signup/tutorial/confirmedwithdraw 잔여로 진행한다. 컨텍스트54%의 연속성을 사용해 이번 조사·작은수정을 마친 뒤, 상태·변경·검증을 인계에 저장하고 새컨텍스트로 결과확인을 이어간다. WBS90/25·25경로전수미완·model.h5/visitor보류 유지.

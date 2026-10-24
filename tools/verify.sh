@@ -22,14 +22,21 @@ fi
 
 # Compile-time DB guard validates the explicit DSNs and matching non-default PGPORT
 # before psql or any database-backed test can connect.
+aip_verify_stage "explicit database guard tests"
 cargo test -p aip-test-support --features strict-db --locked
+aip_verify_stage "dedicated PostgreSQL fixture readiness"
 psql -X -q "$AIP_TEST_DATABASE_URL" -Atc 'SELECT 1'
+aip_verify_stage "Rust formatting"
 cargo fmt --all --check
+aip_verify_stage "workspace library and binary clippy"
 cargo clippy --workspace --lib --bins --locked -- -D warnings
+aip_verify_stage "auth migrate service all-target clippy"
 cargo clippy -p aip-auth -p aip-migrate -p aip-service --all-targets --locked -- -D warnings
 # The PoC runtime is an optional aip-cli package; its end-to-end tests only build with the feature.
+aip_verify_stage "PoC runtime all-target clippy"
 cargo clippy -p aip-cli --features poc-runtime --all-targets --locked -- -D warnings
 # The MySQL adapter is an optional package too: its code and live tests (ignored without a container) must stay lint-clean and compile.
+aip_verify_stage "MySQL migrate service CLI all-target clippy"
 cargo clippy -p aip-migrate -p aip-service -p aip-cli --features mysql,aip-cli/mysql --all-targets --locked -- -D warnings
 # The excluded engine crates were not linted before; a clippy regression in one (spike-v6 server.rs) reached main unnoticed.
 for engine in spike-v1-fixture spike-v2-read spike-v3-write spike-v4-worker spike-v5-sdk spike-v6-transport; do
