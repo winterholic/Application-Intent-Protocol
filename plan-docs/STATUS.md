@@ -1,4 +1,18 @@
-# 최신 재개 지점 (2026-10-24, 이메일 인증 UI·DB 성공·가입/튜토리얼 검증 추가)
+# 최신 재개 지점 (2026-10-24, 가입 UI 성공·가입 DB 판정 실패 조사)
+
+일반 Verify `40068996762`, SHA `68cdf255d738c7f7a977c9ae9bdbf8979cb4f8b9`, attempt1은 completed/failure(core종료 2026-10-24 06:27:30UTC)다. Broad11·UI준비13/14는 success, 최초 실패는 실HTTP/worker/MySQL step15다. Safe artifact `12551196219`를 현재Run outbox `verify-40068996762`에 다운로드했다. Locator는 stage=FaceReview member authentication E2E test, command=tee /tmp/aip-e2e-auth-run-"$tag".txt, exit101이다. raw GH log cache는 접근하지 않았다.
+
+`account-complete/signup-browser-result.json`과 PNG2개를 직접 검사했다. 원본AuthPage 신규email→비밀번호확인→이름/먹방·동물선택→가입후빈로그인폼복귀→기존email분기는 completed/member_signup 전gate·verified=true다. Check-email은 POST200 신규false/기존true 각1건, signup은 POST201 1건이며 정확payload·완료성공body/3finished/failed0/unfinished0/pageerror0다. 그러나 signup DB는 failure: UUID/scrypt/name·초기flags/active1 revoked0/타계정session보존은 true지만 selected_genres_match와 unrelated_business_rows_preserved가 false다. Account-complete tutorial 파일과 account-skip 폴더는 없으며, 후단 admin도 실행되지 않았다. 성공 조건이 충족되지 않았으므로 checkEmail/signup/tutorial 25경로행은 갱신하지 않았다.
+
+코드 기반 원인 두 가지를 좁혔다. (1) 장르열은 MySQL ENUM으로 eating이 animal보다 먼저 선언된다. ORDER BY genre는 선언순 정렬인데 판정기는 animal,eating을 요구했다. 기존 profile 검증과 같이 ORDER BY CAST(genre AS CHAR)로 바꿨다. (2) signup 전 snapshot은 query(text), 후에는 user/genre만 exec(binary)라 raw Value Debug 비교가 타입표현 차이를 잡는다. 로컬의 설치된 mysql_common0.37.3 실제 RowDeserializer를 오프라인 실행해 동일 SQL정수1이 text=[Bytes("1")], binary=[Int(1)]인 것을 재현했다. Helper의 무필터 조회도 exec로 통일했다. 모든행·모든열·순서 및 제외대상은 그대로며, 보존조건을 줄이지 않았다. 이 원인을 CI 실패의 최종 원인으로 확정하려면 새 CI DB결과가 필요하다. 당시 실제 DB가 보존됐다고 소급 주장하지 않는다.
+
+앞단 password(28finished)/email(20finished)는 전gate·DBboolean true, profile/reissue/like/logout/comment3phase/search도 각 JSON 범위 성공을 재확인했다. Add33/remove37/comment각23/search22는 failed0/unfinished0/pageerror0이다. Password/email의 User.myEmotionSummary/WIRE.NOT_FOUND는 별도 잔여이며 graph skeleton을 성공으로 세지 않는다. 후단admin은 이번 artifact에 없으므로 미검증이다.
+
+로컬검증: evidence unittest52 OK, cargo fmt/diff OK. PG*unset·explicitloopback55432/aip_test_run DSN에서 MySQL migrate/service/CLI all-target clippy -Dwarnings5.92s exit0, auth test no-run --locked --offline compile6.59s exit0. 컴파일은 실제 DB검증이 아니다. 기존 password/email/member/account browser scripts와 원본UI·overlay 제품코드·정책은 불변이다. Clone/DB/container/localbrowser 신규생성 없음. 새 일반 Verify 결과를 기다린다. 성공시 두 account phase의 JSON/PNG 전체와 기존회귀를 직접검사한뒤 관련25행만 갱신→EditPage confirmedwithdraw로 이어간다. WBS90/25·25경로전수미완·model.h5권리/visitor보류 유지.
+
+---
+
+# 이전 재개 지점 (2026-10-24, 이메일 인증 UI·DB 성공·가입/튜토리얼 검증 추가)
 
 일반 Verify `40065518651`, SHA `22089a4e0def6cd9461420bf72c3a7990a8c46cf`, attempt1은 completed/success(core종료 2026-10-24 05:48:35UTC)다. Broad11·원본UI준비13/14·실HTTP/worker/MySQL15·safeartifact16·cleanup18이 success다. Artifact `12549937284`를 현재Run outbox `verify-40065518651`로 다운로드해 email JSON2개·PNG4개를 직접 검사했다. MyPage 미인증banner→코드modal→인증badge/banner제거→reload유지의 UI5boolean, member_email3gate·verified 모두 true다. 두 인증경로는 POST각1건/HTTP200/ok/body_captured/payload_matches/authorization_present true. API20건 모두finished/failed0/unfinished0/pageerror0. Code/password/token 원문은 산출물에 기록하지 않는다.
 

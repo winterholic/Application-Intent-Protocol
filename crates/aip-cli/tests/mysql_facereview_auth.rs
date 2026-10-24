@@ -236,7 +236,9 @@ async fn business_snapshot_excluding(
             ("user_favorite_genre", Some(user), true) => {
                 conn.exec("SELECT * FROM user_favorite_genre WHERE user_id <> ? ORDER BY 1", (user,)).await.unwrap()
             }
-            _ => conn.query(format!("SELECT * FROM `{table}` ORDER BY 1")).await.unwrap(),
+            // Use the binary protocol on both sides: text query() represents numbers/dates as Bytes,
+            // while exec() decodes typed Values, so their Debug snapshots differ without any DB write.
+            _ => conn.exec(format!("SELECT * FROM `{table}` ORDER BY 1"), ()).await.unwrap(),
         };
         tables.push(rows.into_iter().map(|row| format!("{:?}", row.unwrap())).collect());
     }
@@ -1826,7 +1828,8 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
             .await;
             let signup_hash = cell(&mut setup, &format!("SELECT password {user_sql}")).await.unwrap_or_default();
             let password_hashed = signup_hash.starts_with("scrypt:32768:8:1$") && !signup_hash.contains(ACCOUNT_PASSWORD);
-            let genres_sql = format!("SELECT GROUP_CONCAT(genre ORDER BY genre) FROM user_favorite_genre WHERE user_id = '{user}'");
+            // ENUM order is its declaration order (eating before animal), not lexical order.
+            let genres_sql = format!("SELECT GROUP_CONCAT(genre ORDER BY CAST(genre AS CHAR)) FROM user_favorite_genre WHERE user_id = '{user}'");
             let signup_genres = cell(&mut setup, &genres_sql).await;
             let genre_count = cell(&mut setup, &format!("SELECT COUNT(*) FROM user_favorite_genre WHERE user_id = '{user}'")).await;
             let signup_business_after = business_snapshot_excluding(&mut setup, Some(&user), true).await;

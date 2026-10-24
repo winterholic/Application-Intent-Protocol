@@ -112,3 +112,5 @@ MIT. [LICENSE](LICENSE)를 따른다(D-A27).
 `aip contract <program.aipoc>`는 JSON 한 줄을 출력한다. 사람이 읽을 때는 `--pretty`를 붙인다. 공통 오류 정의는 최상위 `errors` 배열에 있고 각 query·command·subscription의 `errors` 배열은 해당 정의의 인덱스를 참조한다. 이 명령은 PoC 언어의 계약 출력이며 제품 언어의 생성 binding은 `aip service gen`을 사용한다.
 
 2026-10-14: [UUID Id·기존 운영 PostgreSQL 채택](plan-docs/uuid-adoption/DESIGN.md)을 추가했다. 숫자 Id/owned schema 기본을 유지하며 `service introspect`·`adopt-external`이 별도 AIP schema의 매핑 view·구조 검증으로 기존 테이블을 사용한다. [외부 인프라 연결 목록](plan-docs/uuid-adoption/INFRASTRUCTURE-CONNECTIONS.md)과 검증 제한을 함께 확인한다.
+
+**2026-10-24 가입 후속 실패 조사:** Verify40068996762/68cdf25는 step15 failure다. 첫계정 signup 화면·정확POST201/신규·기존checkEmail/3finished·오류0 및 PNG2개는 확인했으나 DB의 장르일치·무관행보존이 false여서 tutorial/skip/admin에 도달하지 못했다. ENUM문자정렬 및 snapshot text/binary 프로토콜 불일치를 고쳤다. 실제 RowDeserializer로 같은1의 Bytes/Int 차이를 로컬재현했고 clippy5.92s/no-runcompile6.59s/evidence unittest52/fmt/diff는 통과했다. 실제DB 재검증 전이며 관련25경로행은 유지한다. 앞단 password/email/profile/reissue/like/comment/search JSON만 성공재확인, admin은 이번실행 미검증. 원본UI·정책·browser script 불변. 상세는 STATUS·VERIFICATION 최신절.
