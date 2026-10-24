@@ -27,3 +27,9 @@ test/.generated/
 /prototype/dist/*/*
 !/prototype/dist/*/README.md
 !/prototype/dist/*/manifest.json
+
+# Private workstation harness (instructions, checks, ledgers; never publish)
+/.aip-harness/
+/AGENTS.md
+/CLAUDE.md
+/GEMINI.md
