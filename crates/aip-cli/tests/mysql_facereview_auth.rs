@@ -1619,7 +1619,7 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
     assert_eq!(mailer.sent.lock().unwrap().len(), 5, "one mail per code request, the refused one included, and none for the refused calls");
 
     if std::env::var_os("AIP_FACEREVIEW_UI_DIR").is_some() {
-        const PASSWORD_MEMBER: &str = "88888888-8888-4888-8888-888888888888";
+        const PASSWORD_MEMBER: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
         const PASSWORD_EMAIL: &str = "password-ui@example.com";
         const NEW_PASSWORD: &str = "AIP-password-ui-new-27";
         // This account belongs to this disposable fixture only. Signup/tutorial/email
