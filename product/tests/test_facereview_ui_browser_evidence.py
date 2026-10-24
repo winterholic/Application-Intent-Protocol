@@ -39,6 +39,32 @@ VIDEO_ID = "aaaaaaaa-0000-4000-8000-000000000001"
 
 
 class BrowserEvidenceTests(unittest.TestCase):
+    def test_password_journey_requires_exact_completed_auth_bodies_and_ui(self):
+        from product.tests.facereview_ui_browser_evidence import member_password_evidence
+        rows = [{"path": path, "method": method, "status": 200, "ok": True, "body_captured": True,
+                 "payload_matches": True, "authorization_present": True}
+                for path, method in [("/auth/email/verification", "POST"), ("/auth/password/verification", "POST"),
+                                     ("/auth/password", "PATCH"), ("/auth/logout", "POST")]]
+        rows[1]["reset_token_received"] = True
+        rows[3].update(authorization_present=False, refresh_cookie_present=True)
+        rows += [{"path": "/auth/login", "method": "POST", "status": 200, "ok": True, "body_captured": True,
+                  "payload_matches": True, "password_kind": kind} for kind in ("old", "new")]
+        ui = {key: True for key in ("password_page", "code_form", "new_password_form", "signed_out", "new_login", "reloaded_profile")}
+        self.assertTrue(member_password_evidence(rows, ui)["verified"])
+        for i in range(len(rows)):
+            for key, value in [("body_captured", False), ("ok", False), ("payload_matches", False), ("status", 400), ("method", "GET")]:
+                changed = [dict(row) for row in rows]; changed[i][key] = value
+                self.assertFalse(member_password_evidence(changed, ui)["verified"], (i, key))
+            self.assertFalse(member_password_evidence(rows[:i] + rows[i+1:], ui)["verified"])
+        self.assertFalse(member_password_evidence(rows + [rows[0]], ui)["verified"])
+        no_cookie = [dict(row) for row in rows]; no_cookie[3]["refresh_cookie_present"] = False
+        self.assertFalse(member_password_evidence(no_cookie, ui)["verified"])
+        no_bearer = [dict(row) for row in rows]; no_bearer[1]["authorization_present"] = False
+        self.assertFalse(member_password_evidence(no_bearer, ui)["verified"])
+        self.assertFalse(member_password_evidence([{**row, "reset_token_received": False} for row in rows], ui)["verified"])
+        for key in ui:
+            self.assertFalse(member_password_evidence(rows, {**ui, key: False})["verified"])
+
     def test_search_request_requires_exact_fixture_input_without_recording_keyword(self):
         from product.tests.facereview_ui_browser_evidence import member_search_request_matches
 

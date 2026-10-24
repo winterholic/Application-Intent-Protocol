@@ -63,6 +63,23 @@ SAFE_NETWORK_FAILURES = {
 FILTER_OPS = {"eq", "ne", "lt", "lte", "gt", "gte", "in", "contains", "like"}
 
 
+def member_password_evidence(requests: list[dict[str, object]], ui: dict[str, object]) -> dict[str, object]:
+    gates = {}
+    for path, method in [("/auth/email/verification", "POST"), ("/auth/password/verification", "POST"),
+                         ("/auth/password", "PATCH"), ("/auth/logout", "POST")]:
+        rows = [row for row in requests if row.get("path") == path]
+        gates[path] = (len(rows) == 1 and rows[0].get("method") == method and rows[0].get("status") == 200
+                       and all(rows[0].get(key) is True for key in ("ok", "body_captured", "payload_matches"))
+                       and rows[0].get("refresh_cookie_present" if path == "/auth/logout" else "authorization_present") is True
+                       and (path != "/auth/password/verification" or rows[0].get("reset_token_received") is True))
+    logins = [row for row in requests if row.get("path") == "/auth/login"]
+    gates["login_old_and_new"] = (len(logins) == 2 and [row.get("password_kind") for row in logins] == ["old", "new"]
+                                  and all(row.get("status") == 200 and row.get("method") == "POST"
+                                          and all(row.get(key) is True for key in ("ok", "body_captured", "payload_matches")) for row in logins))
+    gates["ui"] = all(ui.get(key) is True for key in ("password_page", "code_form", "new_password_form", "signed_out", "new_login", "reloaded_profile"))
+    return {"gates": gates, "verified": all(gates.values())}
+
+
 def member_comment_action(payload: object) -> str | None:
     """Recognize one member comment write without retaining IDs or content."""
     request = payload.get("request") if isinstance(payload, dict) else None

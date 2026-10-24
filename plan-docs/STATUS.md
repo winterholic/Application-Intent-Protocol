@@ -1,4 +1,18 @@
-# 최신 재개 지점 (2026-10-24 08:10 KST, 댓글 UI·DB 성공 확인·검색 검증 추가)
+# 최신 재개 지점 (2026-10-24 09:10 KST, 검색 UI·DB 성공·비밀번호 원본 UI 검증 추가)
+
+일반 Verify `40038229142` attempt1, 코드 `f436a06173d2207020f5e334d8caa5f3bc40e3f4`은 completed/success(2026-10-23 23:45:33 UTC 종료)다. Safe artifact `12539367749`를 이번 Run outbox에 다운로드해 검색 found/empty × submit/reload JSON·PNG4개를 직접 검사했다. 전체와 4 gate 모두 verified=true, 각 단일 Video.homeSearch 응답 HTTP200/ok/body 완료·정확input boolean·contract 일치, found length1/fixture=true 및 empty0/false다. 검색 lifecycle22건 모두 finished/failed0/unfinished0, page_error0. 별도 search-db JSON은 browser/database success, business_table_count11/all_business_rows_preserved=true. 실행 SHA의 fullsnapshot caller와 대조하고 25경로 search행을 갱신했다.
+
+댓글3phase는 각23finished/verified 및 DB modified0→1→1/deleted0→0→1/동일ID·행+1·무관한댓글 전체보존을 재확인했다. Profile/reissue browser·DB success와 USED+1, like1→0 및 타회원count보존, logout revoked+1, 관리자 기존 checks와 2회 reissue도 범위대로 재확인했다. Broad11/full15/artifact16/cleanup18 success와 마지막 administrator console E2E locator를 확인했으며 개별 cargo stdout은 미열람이다.
+
+다음 계정 여정 중 PasswordChangePage를 별도 browser script로 추가했다. disposable 전용계정의 원본 로그인→MyPage 비밀번호 변경→인증코드 발송→code입력→새비밀번호→원본 자동logout→새비밀번호 재login→reload profile을 검사한다. 기존 mailer sink의 run-owned loopback capability로 해당 fixture code만 메모리에서 전달하고 code/reset_token/password/hash 원문은 산출물에 기록하지 않는다. DB는 hash변경/old password 거절, 다른기기 세션 폐기와 logout 포함 revoked2/새login active1, challenge소진, mail1회·수신계정, target flags 및 무관한11개업무테이블 모든행/다른계정session 보존을 별도로 판정한다. 새 CI 전까지 실제 password browser/DB는 미검증이다.
+
+로컬: 판정기 stub RED→GREEN47(정상 body/정확payload/단일요청/인증/실제 cookie logout/렌더 부정대조), mypageAdapter2 pass, in-memory mailer capability/타수신자격리 실HTTP시험1 pass(0.01s), browser AST·기존member/search script byte동일·fmt/diff OK. Rust auth no-run compile2.50s exit0; 첫 compile은 새 mailer Vec 타입추론 E0282여서 Vec<Value> 명시 후 통과했다. Live DB/브라우저는 로컬 미실행. 프로젝트정책·원본UI/checkout은 불변이다.
+
+원본 호출처 대조: MyPage 미인증 배너/코드모달→email verification/verify, AuthPage→check-email/signup 및 login, TutorialPage 완료/skip→completeTutorial, EditPage 확인모달→withdraw가 실제 연결된다. 이 source 확인을 browser coverage로 세지 않는다. 비밀번호 성공 후 별도 이메일검증/signup/tutorial/confirmed withdrawal 잔여를 이어간다. 동일ref CI 진행중 push/dispatch/cancel·장시간 대기 금지;45분 timeout+여유3분으로 후속예약한다. WBS90/25·25경로전수미완·model.h5권리/visitor보류 유지.
+
+---
+
+# 이전 재개 지점 (2026-10-24 08:10 KST, 댓글 UI·DB 성공 확인·검색 검증 추가)
 
 일반 Verify `40032647647` attempt1, 코드 `5741949eac1f13cd7e027a71b513b4a5b3922708`은 completed/success(2026-10-23 22:40:56 UTC 종료)다. `gh run view --json headSha,status,conclusion,attempt,jobs`로 broad step11·full HTTP/worker/MySQL step15·artifact16·cleanup18 success를 확인했다. Safe artifact `12537050658`을 현재 Run outbox에 다시 다운로드했고 comment-create/edit/delete JSON·reload PNG를 직접 검사했다. 세 단계 모두 completed/page_error_count0/member_comment.verified=true, 단일 mutation1/HTTP200/ok=true/body_captured=true, fixture target/content boolean과 contract 일치다. 각23 requests/responses/finished, failed0/unfinished0이다. PNG는 생성 댓글→수정 내용과 (수정됨)→삭제 후 기존 두 댓글만 표시한다.
 

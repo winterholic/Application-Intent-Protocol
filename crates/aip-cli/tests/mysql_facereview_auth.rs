@@ -204,6 +204,10 @@ async fn cell(conn: &mut aip_migrate::mysql_driver::mysql_async::Conn, sql: &str
 }
 
 async fn business_snapshot(conn: &mut aip_migrate::mysql_driver::mysql_async::Conn) -> Vec<Vec<String>> {
+    business_snapshot_except_user(conn, None).await
+}
+
+async fn business_snapshot_except_user(conn: &mut aip_migrate::mysql_driver::mysql_async::Conn, exclude_user: Option<&str>) -> Vec<Vec<String>> {
     // Keep values only in memory. Evidence records equality, never personal row contents.
     let mut tables = Vec::new();
     for table in [
@@ -219,7 +223,11 @@ async fn business_snapshot(conn: &mut aip_migrate::mysql_driver::mysql_async::Co
         "video_request",
         "video_view_log",
     ] {
-        let rows: Vec<aip_migrate::mysql_driver::mysql_async::Row> = conn.query(format!("SELECT * FROM `{table}` ORDER BY 1")).await.unwrap();
+        let rows: Vec<aip_migrate::mysql_driver::mysql_async::Row> = if table == "user" && exclude_user.is_some() {
+            conn.exec("SELECT * FROM `user` WHERE user_id <> ? ORDER BY 1", (exclude_user.unwrap(),)).await.unwrap()
+        } else {
+            conn.query(format!("SELECT * FROM `{table}` ORDER BY 1")).await.unwrap()
+        };
         tables.push(rows.into_iter().map(|row| format!("{:?}", row.unwrap())).collect());
     }
     tables
@@ -276,17 +284,23 @@ struct Mailer {
     port: u16,
     sent: Arc<Mutex<Vec<Value>>>,
     fail: Arc<AtomicBool>,
+    inbox_path: String,
 }
 
 async fn start_mailer() -> Mailer {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
-    let (sent, fail) = (Arc::new(Mutex::new(Vec::new())), Arc::new(AtomicBool::new(false)));
+    let (sent, fail) = (Arc::new(Mutex::new(Vec::<Value>::new())), Arc::new(AtomicBool::new(false)));
     let (log, failing) = (sent.clone(), fail.clone());
+    // A test-only capability endpoint, on the ephemeral loopback sink, for the
+    // Python browser driver to receive this fixture's code without disk/stdout.
+    let inbox_path = format!("/test-inbox/{:032x}", rand::random::<u128>());
+    let inbox_route = inbox_path.clone();
     tokio::spawn(async move {
         loop {
             let Ok((mut socket, _)) = listener.accept().await else { return };
             let (log, failing) = (log.clone(), failing.clone());
+            let inbox_route = inbox_route.clone();
             tokio::spawn(async move {
                 let mut raw = Vec::new();
                 let mut buffer = [0u8; 4096];
@@ -298,6 +312,24 @@ async fn start_mailer() -> Mailer {
                     raw.extend_from_slice(&buffer[..read]);
                     let text = String::from_utf8_lossy(&raw).to_string();
                     let Some((head, body)) = text.split_once("\r\n\r\n") else { continue };
+                    if head.lines().next() == Some(format!("GET {inbox_route} HTTP/1.1").as_str()) {
+                        let mail = log.lock().unwrap().iter().rev().find(|mail| mail["to"] == "password-ui@example.com").cloned();
+                        let payload = mail.as_ref().and_then(|mail| mail["code"].as_str()).map(|code| json!({"code": code}).to_string());
+                        let (status, payload) = match payload {
+                            Some(payload) => ("200 OK", payload),
+                            None => ("404 Not Found", "{}".to_owned()),
+                        };
+                        let _ = socket
+                            .write_all(
+                                format!(
+                                    "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{payload}",
+                                    payload.len()
+                                )
+                                .as_bytes(),
+                            )
+                            .await;
+                        return;
+                    }
                     let length = head
                         .lines()
                         .find_map(|line| {
@@ -322,7 +354,24 @@ async fn start_mailer() -> Mailer {
             });
         }
     });
-    Mailer { port, sent, fail }
+    Mailer { port, sent, fail, inbox_path }
+}
+
+#[tokio::test]
+async fn mailbox_capability_reads_only_the_password_fixture_in_memory() {
+    let mailer = start_mailer().await;
+    let address = format!("127.0.0.1:{}", mailer.port);
+    let empty = http(&address, "GET", &mailer.inbox_path, &[], None).await;
+    assert_eq!(empty.status, 404);
+    let code = format!("{:06}", rand::random::<u32>() % 1_000_000);
+    mailer.sent.lock().unwrap().push(json!({"to": "another-fixture@example.com", "code": code}));
+    assert_eq!(http(&address, "GET", &mailer.inbox_path, &[], None).await.status, 404, "other recipients are never exposed");
+    mailer.sent.lock().unwrap().push(json!({"to": "password-ui@example.com", "code": code}));
+    let reply = http(&address, "GET", &mailer.inbox_path, &[], None).await;
+    assert_eq!(reply.status, 200);
+    assert!(reply.body["code"].as_str() == Some(code.as_str()), "the capability reads only this run's fixture code");
+    let wrong = http(&address, "GET", "/test-inbox/incorrect-capability", &[], None).await;
+    assert!(wrong.body.get("code").is_none(), "an incorrect capability exposes no code");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -1569,4 +1618,92 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
     );
     assert_eq!(cell(&mut setup, &count_challenges).await.as_deref(), Some("0"));
     assert_eq!(mailer.sent.lock().unwrap().len(), 5, "one mail per code request, the refused one included, and none for the refused calls");
+
+    if std::env::var_os("AIP_FACEREVIEW_UI_DIR").is_some() {
+        const PASSWORD_MEMBER: &str = "88888888-8888-4888-8888-888888888888";
+        const PASSWORD_EMAIL: &str = "password-ui@example.com";
+        const NEW_PASSWORD: &str = "AIP-password-ui-new-27";
+        // This account belongs to this disposable fixture only. Signup/tutorial/email
+        // verification are separate screen journeys and are not claimed by this seed.
+        setup.exec_drop(
+            "INSERT INTO user (user_id, email, password, name, role, is_tutorial_done, is_verify_email_done, is_deleted, created_at, updated_at) VALUES (?, ?, ?, 'AIP 비밀번호 표본회원', 'GENERAL', 1, 0, 0, NOW(), NOW())",
+            (PASSWORD_MEMBER, PASSWORD_EMAIL, legacy_hash),
+        ).await.unwrap();
+        let other_login = auth(&address, "/auth/login", &json!({"email": PASSWORD_EMAIL, "password": "password123"}), None).await;
+        assert_eq!(other_login.status, 200, "prepare the disposable account's other-device session");
+        let other_access = access(&other_login);
+        let before_hash = cell(&mut setup, &format!("SELECT password FROM user WHERE user_id = '{PASSWORD_MEMBER}'")).await.unwrap();
+        let business_before = business_snapshot_except_user(&mut setup, Some(PASSWORD_MEMBER)).await;
+        let other_sessions_sql = format!("SELECT * FROM `{META}`.aip_auth_sessions WHERE subject <> '{PASSWORD_MEMBER}' ORDER BY 1");
+        let other_sessions_before: Vec<aip_migrate::mysql_driver::mysql_async::Row> = setup.query(&other_sessions_sql).await.unwrap();
+        let other_sessions_before: Vec<String> = other_sessions_before.into_iter().map(|row| format!("{:?}", row.unwrap())).collect();
+        let mails_before = mailer.sent.lock().unwrap().len();
+        let browser_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let ui_root = std::env::var("AIP_FACEREVIEW_UI_DIR").unwrap();
+        let output = Path::new(&std::env::var("AIP_FACEREVIEW_BROWSER_OUTPUT").unwrap()).join("password");
+        std::fs::create_dir_all(&output).unwrap();
+        let python = std::env::var("AIP_FACEREVIEW_PYTHON").unwrap_or_else(|_| "python3".to_owned());
+        let result = StdCommand::new(python)
+            .arg(browser_root.join("product/tests/facereview-ui-password-browser.py"))
+            .args(["--ui", &ui_root, "--api", &format!("http://{address}"), "--out", output.to_str().unwrap()])
+            .env("AIP_FACEREVIEW_JOURNEY_EMAIL", PASSWORD_EMAIL)
+            .env("AIP_FACEREVIEW_JOURNEY_PASSWORD", "password123")
+            .env("AIP_FACEREVIEW_NEW_PASSWORD", NEW_PASSWORD)
+            .env("AIP_FACEREVIEW_EXPECTED_CONTRACT", &fingerprint)
+            .env("AIP_FACEREVIEW_TEST_INBOX", format!("http://127.0.0.1:{}{}", mailer.port, mailer.inbox_path))
+            .output()
+            .expect("run original password UI journey");
+        let after_hash = cell(&mut setup, &format!("SELECT password FROM user WHERE user_id = '{PASSWORD_MEMBER}'")).await.unwrap();
+        let business_after = business_snapshot_except_user(&mut setup, Some(PASSWORD_MEMBER)).await;
+        let other_sessions_after: Vec<aip_migrate::mysql_driver::mysql_async::Row> = setup.query(&other_sessions_sql).await.unwrap();
+        let other_sessions_after: Vec<String> = other_sessions_after.into_iter().map(|row| format!("{:?}", row.unwrap())).collect();
+        let (mail_count, mail_recipient_matches) = {
+            let sent = mailer.sent.lock().unwrap();
+            let added = &sent[mails_before..];
+            (added.len(), added.len() == 1 && added[0]["to"] == PASSWORD_EMAIL && added[0]["template"] == "email-verification")
+        };
+        let revoked = cell(
+            &mut setup,
+            &format!("SELECT COUNT(*) FROM `{META}`.aip_auth_sessions WHERE subject = '{PASSWORD_MEMBER}' AND revoked_at IS NOT NULL"),
+        )
+        .await;
+        let active =
+            cell(&mut setup, &format!("SELECT COUNT(*) FROM `{META}`.aip_auth_sessions WHERE subject = '{PASSWORD_MEMBER}' AND revoked_at IS NULL"))
+                .await;
+        let challenges = cell(&mut setup, &format!("SELECT COUNT(*) FROM `{META}`.aip_auth_challenges WHERE subject = '{PASSWORD_MEMBER}'")).await;
+        let old_password_rejected =
+            auth(&address, "/auth/login", &json!({"email": PASSWORD_EMAIL, "password": "password123"}), None).await.status == 401;
+        let other_device_revoked = post(&address, "/session", Some(&other_access), "", &json!({})).await["code"] == "WIRE.UNAUTHENTICATED";
+        let account_flags = cell(
+            &mut setup,
+            &format!(
+                "SELECT CONCAT(role, ':', is_deleted, ':', is_tutorial_done, ':', is_verify_email_done) FROM user WHERE user_id = '{PASSWORD_MEMBER}'"
+            ),
+        )
+        .await;
+        let hash_changed = after_hash != before_hash && after_hash.starts_with("scrypt:32768:8:1$") && !after_hash.contains(NEW_PASSWORD);
+        let db_ok = hash_changed
+            && old_password_rejected
+            && other_device_revoked
+            && revoked.as_deref() == Some("2")
+            && active.as_deref() == Some("1")
+            && challenges.as_deref() == Some("0")
+            && account_flags.as_deref() == Some("GENERAL:0:1:0")
+            && mail_recipient_matches
+            && business_before == business_after
+            && other_sessions_before == other_sessions_after;
+        let db_result = json!({"journey": "member_password", "browser_status": if result.status.success() { "success" } else { "failure" },
+            "database_status": if db_ok { "success" } else { "failure" }, "password_hash_changed": hash_changed,
+            "old_password_rejected": old_password_rejected, "other_device_session_revoked": other_device_revoked,
+            "revoked_session_rows": revoked, "active_session_rows": active, "remaining_challenges": challenges,
+            "account_flags_preserved": account_flags.as_deref() == Some("GENERAL:0:1:0"),
+            "mail_delivery_count": mail_count, "mail_recipient_and_template_match": mail_recipient_matches,
+            "business_table_count": business_before.len(), "unrelated_business_rows_preserved": business_before == business_after,
+            "other_account_sessions_preserved": other_sessions_before == other_sessions_after});
+        std::fs::write(output.join("password-db-result.json"), serde_json::to_vec_pretty(&db_result).unwrap()).unwrap();
+        println!("password browser/DB: {db_result}");
+        print!("{}", String::from_utf8_lossy(&result.stdout));
+        assert!(result.status.success(), "password browser failed; inspect safe password artifacts (status {:?})", result.status.code());
+        assert!(db_ok, "password DB/session isolation or mail/challenge lifecycle failed; see boolean evidence");
+    }
 }
