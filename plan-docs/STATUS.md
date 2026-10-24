@@ -1,4 +1,20 @@
-# 최신 재개 지점 (2026-10-24, 가입 UI 성공·가입 DB 판정 실패 조사)
+# 최신 재개 지점 (2026-10-24, 첫계정 가입 DB 성공·튜토리얼 reload 판정 수정)
+
+일반 Verify `40072496940`, SHA `ef828ac7a1dbb9b442fe4a97c1faef4e19f09031`, attempt1은 completed/failure(core종료 2026-10-24 07:22:58UTC)다. Broad11·UI준비13/14는 success, 최초 실패는 실HTTP/worker/MySQL step15다. Safe artifact `12552860245`를 현재Run outbox `/Users/winterholic/.ttakkari/data/outbox/a461ad09-aff0-4da4-b4f5-d65e56ee8ac4/verify-40072496940`에 다운로드했다. Locator는 stage=FaceReview member authentication E2E test, command=tee /tmp/aip-e2e-auth-run-"$tag".txt, exit101이다. Raw GH log/cache는 접근하지 않았다.
+
+첫 account-complete의 signup JSON2개·PNG2개를 직접 검사했다. 신규false→기존true checkEmail 각1회·signup POST201 1회/정확payload·성공body/전gate·verified 및3finished/failed0/unfinished0/pageerror0다. DB도 browser/database success, 전boolean true: 서버UUID/scrypt/name·GENERAL:0:0:0/animal,eating 정확2장르/active1 revoked0/신규user·genre 외11업무테이블·타계정session 보존이다. 직전 false였던 selected_genres_match·unrelated_business_rows_preserved가 이번에는 true다. ENUM문자정렬·snapshot exec통일 이후 첫계정에서 재발하지 않았으나 과거 실행의 실제 행보존을 소급 보증하지 않는다.
+
+Tutorial complete는 initial/second/final-step PNG3개와 account-failure PNG를 직접 검사했다. Step1/2/3·단일 User.completeTutorial/정확본인target·성공body/auth/contract·main 복귀는 관측됐고 DB도 전boolean true(GENERAL:0:1:0/target tutorial·updated_at 외열·장르포함11테이블·타계정session 보존/active2 revoked0)다. 그러나 browser는 reload_main, line214, failure_path=/main에서 실패했다. member_tutorial evidence는 비었고 lifecycle17requests/14finished/failed0/unfinished3/pageerror0다. account-skip과 후단admin은 없으며 complete의 최종 reload PNG도 없으므로 전체 가입/튜토리얼 성공이나25경로 완료로 세지 않는다.
+
+판정기 결함을 좁혔다. 고정 UI 2e7c021의 authStore.partialize는 user_tutorial을 localStorage에 저장하지 않는다. App은 reload 뒤 getUserName→setUserInfo로 메모리 Zustand store만 갱신한다. 기존 wait_for_function은 localStorage.user_tutorial===1을 요구했다. 이 실제 predicate를 Node에서 실행해 persisted tutorial이 없고 메모리 tutorial1인 정상상태도 false인 RED를 재현했다. 검사를 원본 App이 재조회한 live store의 signed-in·정확target·tutorial1로 변경했다(상태쓰기·추가login·API mock 없음). 잘못된target/미완료/sign-out은 계속 false다. CI의 오류클래스는 safe JSON에 unrecognized라 특정하지 않는다. PNG3개가 fade중 어두워 tutorial 영역의 유한애니메이션 종료후 캡처하도록 보완했다. 원본UI/overlay제품코드·DB보존조건·단일mutation·lifecycle 기준은 불변이다.
+
+앞단 password28/email20·profile/reissue/like/logout/comment3phase/search JSON은 기존 성공 범위대로 재확인했다. Password/email 전gate·DBboolean true, add33/remove37/comment각23/search22는 failed0/unfinished0/pageerror0다. User.myEmotionSummary/WIRE.NOT_FOUND·감정그래프 skeleton은 별도잔여이며 admin은 이번실행 미검증이다.
+
+로컬: reload predicate 회귀 AssertionError RED→GREEN, 전체 evidence unittest53 OK, Python AST·embedded JS syntax·git diff --check 통과. Rust/overlay제품코드는 이번에 변경하지 않았다. 실DB·새 browser 검증은 다음 일반 Verify 전 미실행이며 webapp-testing 기준으로 기존 Linux CI만 사용한다. Clone/localDB/container/localbrowser/subagent 신규생성 없음. 관련25경로행은 유지하고, 두 account phase의 전JSON/PNG·회귀 성공 뒤에만 갱신→EditPage confirmedwithdraw로 이어간다. WBS90/25·25경로전수미완·model.h5권리/visitor보류 유지.
+
+---
+
+# 이전 재개 지점 (2026-10-24, 가입 UI 성공·가입 DB 판정 실패 조사)
 
 일반 Verify `40068996762`, SHA `68cdf255d738c7f7a977c9ae9bdbf8979cb4f8b9`, attempt1은 completed/failure(core종료 2026-10-24 06:27:30UTC)다. Broad11·UI준비13/14는 success, 최초 실패는 실HTTP/worker/MySQL step15다. Safe artifact `12551196219`를 현재Run outbox `verify-40068996762`에 다운로드했다. Locator는 stage=FaceReview member authentication E2E test, command=tee /tmp/aip-e2e-auth-run-"$tag".txt, exit101이다. raw GH log cache는 접근하지 않았다.
 

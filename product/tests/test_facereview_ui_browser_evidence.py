@@ -39,6 +39,34 @@ VIDEO_ID = "aaaaaaaa-0000-4000-8000-000000000001"
 
 
 class BrowserEvidenceTests(unittest.TestCase):
+    def test_tutorial_reload_checks_requeried_runtime_state_without_persisted_tutorial(self):
+        # Execute the actual page predicate. The pinned store persists sign-in/id,
+        # but App refreshes user_tutorial only in the live Zustand store on mount.
+        tree = ast.parse(Path(__file__).with_name('facereview-ui-account-browser.py').read_text())
+        predicates = [node.args[0].value for node in ast.walk(tree)
+                      if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                      and node.func.attr == 'wait_for_function' and node.args
+                      and isinstance(node.args[0], ast.Constant)
+                      and 'user_tutorial' in str(node.args[0].value)]
+        self.assertEqual(len(predicates), 1)
+        predicate = predicates[0].replace("import('/src/store/authStore.ts')",
+                                          "Promise.resolve({useAuthStorage: {getState: () => state}})")
+        script = """
+          const predicate = PREDICATE;
+          const localStorage = {getItem: () => JSON.stringify({state: {
+            is_sign_in: true, user_id: 'target'
+          }})};
+          let state = {is_sign_in: true, user_id: 'target', user_tutorial: 1};
+          const check = () => eval('(' + predicate + ')')("target");
+          const results = [await check()];
+          state.user_tutorial = 0; results.push(await check());
+          state.user_tutorial = 1; state.user_id = 'other'; results.push(await check());
+          state.user_id = 'target'; state.is_sign_in = false; results.push(await check());
+          console.log(JSON.stringify(results));
+        """.replace('PREDICATE', json.dumps(predicate))
+        result = subprocess.run(['node', '--input-type=module', '-e', script], capture_output=True, text=True, check=True)
+        self.assertEqual(json.loads(result.stdout), [True, False, False, False])
+
     def test_signup_requires_free_then_existing_check_and_exact_completed_signup(self):
         from product.tests.facereview_ui_browser_evidence import member_signup_evidence
         checks = [{"path": "/auth/check-email", "method": "POST", "status": 200, "ok": True,

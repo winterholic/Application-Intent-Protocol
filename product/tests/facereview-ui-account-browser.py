@@ -132,6 +132,18 @@ def main() -> int:
                 page.on("requestfailed", lambda request: failures.append({"path": urlsplit(request.url).path}) if urlsplit(request.url).port == api_port else None)
 
                 def shot(name):
+                    # The original tutorial enters with a finite opacity animation.
+                    # Wait for its rendered frame before keeping visual evidence.
+                    if name.startswith("tutorial-"):
+                        page.evaluate("""async () => {
+                          const root = document.querySelector('.tutorial-content');
+                          if (!root) return;
+                          const animations = root.getAnimations({subtree: true}).filter(a => {
+                            const t = a.effect?.getComputedTiming();
+                            return Number.isFinite(Number(t?.duration)) && Number.isFinite(Number(t?.iterations));
+                          });
+                          await Promise.all(animations.map(a => a.finished));
+                        }""")
                     page.screenshot(path=str(output / name), full_page=True)
                     screenshots.append(name)
 
@@ -211,10 +223,13 @@ def main() -> int:
                     stage = "reload_main"
                     page.reload(wait_until="domcontentloaded")
                     expect(page.get_by_role("button", name="마이페이지로 이동", exact=True)).to_be_visible()
-                    page.wait_for_function("""() => {
-                      const s = JSON.parse(localStorage.getItem('auth-storage') || 'null')?.state;
-                      return s?.is_sign_in === true && s?.user_tutorial === 1;
-                    }""")
+                    # App mounts getUserName() after reload and refreshes this store.
+                    # The pinned partialize intentionally omits user_tutorial from localStorage.
+                    page.wait_for_function("""async (target) => {
+                      const { useAuthStorage } = await import('/src/store/authStore.ts');
+                      const s = useAuthStorage.getState();
+                      return s.is_sign_in === true && s.user_id === target && s.user_tutorial === 1;
+                    }""", arg=user_id)
                     expect(page).to_have_url(re.compile(r"/main$"))
                     page.wait_for_load_state("networkidle")
                     ui["reloaded_tutorial_done"] = True
