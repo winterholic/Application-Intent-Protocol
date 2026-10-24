@@ -39,6 +39,41 @@ VIDEO_ID = "aaaaaaaa-0000-4000-8000-000000000001"
 
 
 class BrowserEvidenceTests(unittest.TestCase):
+    def test_signup_requires_free_then_existing_check_and_exact_completed_signup(self):
+        from product.tests.facereview_ui_browser_evidence import member_signup_evidence
+        checks = [{"path": "/auth/check-email", "method": "POST", "status": 200, "ok": True,
+                   "body_captured": True, "payload_matches": True, "is_duplicate": duplicate}
+                  for duplicate in (False, True)]
+        signup = {"path": "/auth/signup", "method": "POST", "status": 201, "ok": True,
+                  "body_captured": True, "payload_matches": True}
+        rows = [checks[0], signup, checks[1]]
+        ui = {key: True for key in ("new_email_branch", "categories_selected", "returned_to_login", "existing_email_branch")}
+        self.assertTrue(member_signup_evidence(rows, ui)["verified"])
+        for i in range(len(rows)):
+            for key, value in [("method", "GET"), ("status", 422), ("ok", False), ("body_captured", False), ("payload_matches", False)]:
+                bad = [dict(r) for r in rows];bad[i][key] = value
+                self.assertFalse(member_signup_evidence(bad, ui)["verified"], (i, key))
+            self.assertFalse(member_signup_evidence(rows[:i]+rows[i+1:], ui)["verified"])
+            self.assertFalse(member_signup_evidence(rows+[rows[i]], ui)["verified"])
+        self.assertFalse(member_signup_evidence([checks[1], signup, checks[0]], ui)["verified"])
+        for key in ui:self.assertFalse(member_signup_evidence(rows, {**ui,key:False})["verified"])
+
+    def test_tutorial_requires_exact_target_one_success_and_both_route_and_reload(self):
+        from product.tests.facereview_ui_browser_evidence import member_tutorial_evidence
+        row = {"path": "/apply", "tutorial_action": True, "method": "POST", "status": 200, "ok": True,
+               "body_captured": True, "payload_matches": True, "authorization_present": True, "contract_matches_runtime": True}
+        ui = {key:True for key in ("initial_step", "action_clicked", "main_visible", "reloaded_tutorial_done")}
+        self.assertTrue(member_tutorial_evidence([row], ui, "skip")["verified"])
+        self.assertFalse(member_tutorial_evidence([row], ui, "complete")["verified"])
+        self.assertTrue(member_tutorial_evidence([row], {**ui,"all_steps":True}, "complete")["verified"])
+        self.assertFalse(member_tutorial_evidence([row], ui, "other")["verified"])
+        for key,value in [("method","PATCH"),("status",400),("ok",False),("body_captured",False),
+                          ("payload_matches",False),("authorization_present",False),("contract_matches_runtime",False)]:
+            self.assertFalse(member_tutorial_evidence([{**row,key:value}], ui, "skip")["verified"],key)
+        self.assertFalse(member_tutorial_evidence([],ui,"skip")["verified"])
+        self.assertFalse(member_tutorial_evidence([row,row],ui,"skip")["verified"])
+        for key in ui:self.assertFalse(member_tutorial_evidence([row],{**ui,key:False},"skip")["verified"])
+
     def test_email_verification_requires_single_completed_bodies_and_persistent_ui(self):
         from product.tests.facereview_ui_browser_evidence import member_email_evidence
         rows = [{"path": path, "method": "POST", "status": 200, "ok": True,

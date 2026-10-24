@@ -208,6 +208,14 @@ async fn business_snapshot(conn: &mut aip_migrate::mysql_driver::mysql_async::Co
 }
 
 async fn business_snapshot_except_user(conn: &mut aip_migrate::mysql_driver::mysql_async::Conn, exclude_user: Option<&str>) -> Vec<Vec<String>> {
+    business_snapshot_excluding(conn, exclude_user, false).await
+}
+
+async fn business_snapshot_excluding(
+    conn: &mut aip_migrate::mysql_driver::mysql_async::Conn,
+    exclude_user: Option<&str>,
+    exclude_genres: bool,
+) -> Vec<Vec<String>> {
     // Keep values only in memory. Evidence records equality, never personal row contents.
     let mut tables = Vec::new();
     for table in [
@@ -223,8 +231,11 @@ async fn business_snapshot_except_user(conn: &mut aip_migrate::mysql_driver::mys
         "video_request",
         "video_view_log",
     ] {
-        let rows: Vec<aip_migrate::mysql_driver::mysql_async::Row> = match (table, exclude_user) {
-            ("user", Some(user)) => conn.exec("SELECT * FROM `user` WHERE user_id <> ? ORDER BY 1", (user,)).await.unwrap(),
+        let rows: Vec<aip_migrate::mysql_driver::mysql_async::Row> = match (table, exclude_user, exclude_genres) {
+            ("user", Some(user), _) => conn.exec("SELECT * FROM `user` WHERE user_id <> ? ORDER BY 1", (user,)).await.unwrap(),
+            ("user_favorite_genre", Some(user), true) => {
+                conn.exec("SELECT * FROM user_favorite_genre WHERE user_id <> ? ORDER BY 1", (user,)).await.unwrap()
+            }
             _ => conn.query(format!("SELECT * FROM `{table}` ORDER BY 1")).await.unwrap(),
         };
         tables.push(rows.into_iter().map(|row| format!("{:?}", row.unwrap())).collect());
@@ -1779,5 +1790,122 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
             email_result.status.code()
         );
         assert!(email_db_ok, "email verification DB/session isolation or mail/challenge lifecycle failed; see boolean evidence");
+
+        // Signup and both tutorial actions have their own new accounts, created by the original UI (never pre-seeded).
+        for (action, account_email, account_name) in
+            [("complete", "signup-complete-ui@example.com", "AIP가입완료"), ("skip", "signup-skip-ui@example.com", "AIP가입스킵")]
+        {
+            const ACCOUNT_PASSWORD: &str = "AIP-account-ui-pass-38";
+            assert_eq!(cell(&mut setup, &format!("SELECT COUNT(*) FROM user WHERE email = '{account_email}'")).await.as_deref(), Some("0"));
+            let signup_business_before = business_snapshot(&mut setup).await;
+            let all_sessions_sql = format!("SELECT * FROM `{META}`.aip_auth_sessions ORDER BY 1");
+            let sessions_before: Vec<aip_migrate::mysql_driver::mysql_async::Row> = setup.query(&all_sessions_sql).await.unwrap();
+            let sessions_before: Vec<String> = sessions_before.into_iter().map(|row| format!("{:?}", row.unwrap())).collect();
+            let account_output = output.parent().unwrap().join(format!("account-{action}"));
+            std::fs::create_dir_all(&account_output).unwrap();
+            let run_browser = |phase: &str, user: &str| {
+                StdCommand::new(std::env::var("AIP_FACEREVIEW_PYTHON").unwrap_or_else(|_| "python3".to_owned()))
+                    .arg(browser_root.join("product/tests/facereview-ui-account-browser.py"))
+                    .args(["--ui", &ui_root, "--api", &format!("http://{address}"), "--out", account_output.to_str().unwrap(), "--phase", phase])
+                    .env("AIP_FACEREVIEW_JOURNEY_EMAIL", account_email)
+                    .env("AIP_FACEREVIEW_JOURNEY_PASSWORD", ACCOUNT_PASSWORD)
+                    .env("AIP_FACEREVIEW_JOURNEY_NAME", account_name)
+                    .env("AIP_FACEREVIEW_JOURNEY_USER_ID", user)
+                    .env("AIP_FACEREVIEW_EXPECTED_CONTRACT", &fingerprint)
+                    .output()
+                    .expect("run original signup/tutorial UI journey")
+            };
+            let signup_result = run_browser("signup", "");
+            let user = cell(&mut setup, &format!("SELECT user_id FROM user WHERE email = '{account_email}'")).await.unwrap_or_default();
+            let valid_id = uuid::Uuid::parse_str(&user).is_ok();
+            let user_sql = format!("FROM user WHERE user_id = '{user}'");
+            let signup_flags = cell(
+                &mut setup,
+                &format!("SELECT CONCAT(name, ':', role, ':', is_deleted, ':', is_tutorial_done, ':', is_verify_email_done) {user_sql}"),
+            )
+            .await;
+            let signup_hash = cell(&mut setup, &format!("SELECT password {user_sql}")).await.unwrap_or_default();
+            let password_hashed = signup_hash.starts_with("scrypt:32768:8:1$") && !signup_hash.contains(ACCOUNT_PASSWORD);
+            let genres_sql = format!("SELECT GROUP_CONCAT(genre ORDER BY genre) FROM user_favorite_genre WHERE user_id = '{user}'");
+            let signup_genres = cell(&mut setup, &genres_sql).await;
+            let genre_count = cell(&mut setup, &format!("SELECT COUNT(*) FROM user_favorite_genre WHERE user_id = '{user}'")).await;
+            let signup_business_after = business_snapshot_excluding(&mut setup, Some(&user), true).await;
+            let account_sessions_sql = format!("SELECT * FROM `{META}`.aip_auth_sessions WHERE subject <> '{user}' ORDER BY 1");
+            let sessions_after: Vec<aip_migrate::mysql_driver::mysql_async::Row> = setup.query(&account_sessions_sql).await.unwrap();
+            let sessions_after: Vec<String> = sessions_after.into_iter().map(|row| format!("{:?}", row.unwrap())).collect();
+            let active_sql = format!("SELECT COUNT(*) FROM `{META}`.aip_auth_sessions WHERE subject = '{user}' AND revoked_at IS NULL");
+            let revoked_sql = format!("SELECT COUNT(*) FROM `{META}`.aip_auth_sessions WHERE subject = '{user}' AND revoked_at IS NOT NULL");
+            let signup_active = cell(&mut setup, &active_sql).await;
+            let signup_revoked = cell(&mut setup, &revoked_sql).await;
+            let signup_expected = format!("{account_name}:GENERAL:0:0:0");
+            let signup_db_ok = valid_id
+                && password_hashed
+                && signup_flags.as_deref() == Some(signup_expected.as_str())
+                && signup_genres.as_deref() == Some("animal,eating")
+                && genre_count.as_deref() == Some("2")
+                && signup_active.as_deref() == Some("1")
+                && signup_revoked.as_deref() == Some("0")
+                && signup_business_before == signup_business_after
+                && sessions_before == sessions_after;
+            let signup_db = json!({"journey": "member_signup", "browser_status": if signup_result.status.success() {"success"} else {"failure"},
+                "database_status": if signup_db_ok {"success"} else {"failure"}, "server_generated_uuid": valid_id, "password_hashed": password_hashed,
+                "name_and_initial_flags_match": signup_flags.as_deref() == Some(signup_expected.as_str()),
+                "selected_genres_match": signup_genres.as_deref() == Some("animal,eating") && genre_count.as_deref() == Some("2"),
+                "active_session_rows": signup_active, "revoked_session_rows": signup_revoked,
+                "business_table_count": signup_business_before.len(), "unrelated_business_rows_preserved": signup_business_before == signup_business_after,
+                "other_account_sessions_preserved": sessions_before == sessions_after});
+            std::fs::write(account_output.join("signup-db-result.json"), serde_json::to_vec_pretty(&signup_db).unwrap()).unwrap();
+            println!("signup browser/DB: {signup_db}");
+            print!("{}", String::from_utf8_lossy(&signup_result.stdout));
+            assert!(
+                signup_result.status.success(),
+                "signup browser failed; inspect account-{action} safe artifacts (status {:?})",
+                signup_result.status.code()
+            );
+            assert!(signup_db_ok, "signup defaults/genres/hash/isolation failed; see boolean evidence");
+
+            let tutorial_business_before = business_snapshot_except_user(&mut setup, Some(&user)).await;
+            let stable_sql =
+                format!("SELECT user_id, email, password, name, role, profile_image_id, is_verify_email_done, is_deleted, created_at {user_sql}");
+            let stable_before: Vec<aip_migrate::mysql_driver::mysql_async::Row> = setup.query(&stable_sql).await.unwrap();
+            let stable_before: Vec<String> = stable_before.into_iter().map(|row| format!("{:?}", row.unwrap())).collect();
+            let tutorial_result = run_browser(action, &user);
+            let tutorial_business_after = business_snapshot_except_user(&mut setup, Some(&user)).await;
+            let stable_after: Vec<aip_migrate::mysql_driver::mysql_async::Row> = setup.query(&stable_sql).await.unwrap();
+            let stable_after: Vec<String> = stable_after.into_iter().map(|row| format!("{:?}", row.unwrap())).collect();
+            let tutorial_flags = cell(
+                &mut setup,
+                &format!("SELECT CONCAT(name, ':', role, ':', is_deleted, ':', is_tutorial_done, ':', is_verify_email_done) {user_sql}"),
+            )
+            .await;
+            let tutorial_expected = format!("{account_name}:GENERAL:0:1:0");
+            let tutorial_active = cell(&mut setup, &active_sql).await;
+            let tutorial_revoked = cell(&mut setup, &revoked_sql).await;
+            let tutorial_sessions: Vec<aip_migrate::mysql_driver::mysql_async::Row> = setup.query(&account_sessions_sql).await.unwrap();
+            let tutorial_sessions: Vec<String> = tutorial_sessions.into_iter().map(|row| format!("{:?}", row.unwrap())).collect();
+            let tutorial_db_ok = tutorial_flags.as_deref() == Some(tutorial_expected.as_str())
+                && stable_before.len() == 1
+                && stable_before == stable_after
+                && tutorial_active.as_deref() == Some("2")
+                && tutorial_revoked.as_deref() == Some("0")
+                && tutorial_business_before == tutorial_business_after
+                && sessions_after == tutorial_sessions;
+            let tutorial_db = json!({"journey": "member_tutorial", "action": action,
+                "browser_status": if tutorial_result.status.success() {"success"} else {"failure"}, "database_status": if tutorial_db_ok {"success"} else {"failure"},
+                "tutorial_done_and_other_flags_preserved": tutorial_flags.as_deref() == Some(tutorial_expected.as_str()),
+                "target_other_columns_preserved": stable_before.len() == 1 && stable_before == stable_after,
+                "active_session_rows": tutorial_active, "revoked_session_rows": tutorial_revoked,
+                "business_table_count": tutorial_business_before.len(), "unrelated_business_rows_preserved": tutorial_business_before == tutorial_business_after,
+                "other_account_sessions_preserved": sessions_after == tutorial_sessions});
+            std::fs::write(account_output.join("tutorial-db-result.json"), serde_json::to_vec_pretty(&tutorial_db).unwrap()).unwrap();
+            println!("tutorial browser/DB: {tutorial_db}");
+            print!("{}", String::from_utf8_lossy(&tutorial_result.stdout));
+            assert!(
+                tutorial_result.status.success(),
+                "tutorial browser failed; inspect account-{action} safe artifacts (status {:?})",
+                tutorial_result.status.code()
+            );
+            assert!(tutorial_db_ok, "tutorial defaults/columns/genres/session isolation failed; see boolean evidence");
+        }
     }
 }

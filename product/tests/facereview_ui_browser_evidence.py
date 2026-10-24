@@ -63,6 +63,32 @@ SAFE_NETWORK_FAILURES = {
 FILTER_OPS = {"eq", "ne", "lt", "lte", "gt", "gte", "in", "contains", "like"}
 
 
+def member_signup_evidence(requests: list[dict[str, object]], ui: dict[str, object]) -> dict[str, object]:
+    checks = [r for r in requests if r.get("path") == "/auth/check-email"]
+    signup = [r for r in requests if r.get("path") == "/auth/signup"]
+    def accepted(row, status):
+        return (row.get("method") == "POST" and row.get("status") == status
+                and all(row.get(k) is True for k in ("ok", "body_captured", "payload_matches")))
+    gates = {
+        "check_email": (len(checks) == 2 and checks[0].get("is_duplicate") is False and checks[1].get("is_duplicate") is True
+                        and all(accepted(r, 200) for r in checks)),
+        "signup": len(signup) == 1 and accepted(signup[0], 201),
+        "ui": all(ui.get(k) is True for k in ("new_email_branch", "categories_selected", "returned_to_login", "existing_email_branch")),
+    }
+    return {"gates": gates, "verified": all(gates.values())}
+
+
+def member_tutorial_evidence(requests: list[dict[str, object]], ui: dict[str, object], action: str) -> dict[str, object]:
+    rows = [r for r in requests if r.get("path") == "/apply" and r.get("tutorial_action") is True]
+    gates = {
+        "mutation": (len(rows) == 1 and rows[0].get("method") == "POST" and rows[0].get("status") == 200
+                     and all(rows[0].get(k) is True for k in ("ok", "body_captured", "payload_matches", "authorization_present", "contract_matches_runtime"))),
+        "ui": (action in {"complete", "skip"} and all(ui.get(k) is True for k in ("initial_step", "action_clicked", "main_visible", "reloaded_tutorial_done"))
+               and (action != "complete" or ui.get("all_steps") is True)),
+    }
+    return {"action": action if action in {"complete", "skip"} else "unrecognized", "gates": gates, "verified": all(gates.values())}
+
+
 def member_email_evidence(requests: list[dict[str, object]], ui: dict[str, object]) -> dict[str, object]:
     gates = {}
     for path in ("/auth/email/verification", "/auth/email/verify"):

@@ -1297,8 +1297,8 @@ The pinned user UI has 30 HTTP call sites across six API modules, which collapse
 | `/v2/mypage/profile` (PATCH) | AIP transition service test; new overlay uses one atomic generated-SDK `bundle()` | Verify `40010266672`: original form save, final visible render and MySQL persistence success |
 | `/v2/auth/reissue` (POST) | One real refresh and retry in generated SDK journey `39851918809` | Verify `40010266672`: actual TTL edit-save, expired2/reissue1/retry2, browser/DB success |
 | `/v2/auth/logout` (POST) | Generated SDK journey verifies logout and stale bearer rejection, `39851918809` | Verify `40017780097`: original MyPage logout button, one accepted logout response, cleared client auth, browser/DB success and revoked session +1 |
-| `/v2/mypage/email/verification` (POST) | Backend mail challenge and stand-in provider tests, 7.2.8 slice B | Verify `40062036395` (`0831456`): original PasswordChangePage send-code, one exact accepted POST body and one mail; separate MyPage verification modal remains pending |
-| `/v2/mypage/email/verify` (POST) | Backend verification-code tests, 7.2.8 slice B | Source overlay exposes authenticated AIP path; screen journey not run |
+| `/v2/mypage/email/verification` (POST) | Backend mail challenge and stand-in provider tests, 7.2.8 slice B | Verify `40065518651` (`22089a4`): original MyPage verification banner/modal, one exact authenticated accepted POST per auth gate, badge/banner removal and reload persistence; browser/DB success, challenge0/mail1/flags GENERAL:0:1:1, unrelated 11 tables and other sessions preserved |
+| `/v2/mypage/email/verify` (POST) | Backend verification-code tests, 7.2.8 slice B | Verify `40065518651` (`22089a4`): original MyPage code modal submit, one exact authenticated successful POST, badge visible/banner removed and reload verified; browser/DB success, target other columns and other account sessions preserved |
 | `/v2/mypage/password/verification` (POST) | Backend password-reset challenge tests, 7.2.8 slice B | Verify `40062036395` (`0831456`): original password code exchange/reset, one exact accepted POST per gate; automatic logout body/cookie/client clear and new-password login/reload verified; browser/DB success, hash changed/old password refused/other device revoked/2 revoked·1 active/challenge0/11 tables preserved |
 | `/v2/mypage/password` (PATCH) | Backend password reset, hashing, and session revocation tests, 7.2.8 slice B | Verify `40062036395` (`0831456`): original password code exchange/reset, one exact accepted POST per gate; automatic logout body/cookie/client clear and new-password login/reload verified; browser/DB success, hash changed/old password refused/other device revoked/2 revoked·1 active/challenge0/11 tables preserved |
 | `/v2/mypage/withdraw` (DELETE) | Backend withdrawal and post-withdraw session tests, 7.2.8 slice A | Confirmed `/edit` action is wired to generated SDK `User.withdraw` at `6b1a8d4`; browser integration is outside the current CI journey |
@@ -1315,7 +1315,7 @@ The pinned user UI has 30 HTTP call sites across six API modules, which collapse
 | `/v2/watch/recommended` (GET) | Live AIP extension/service tests | Not run in browser |
 | `/v2/home/bookmark` (GET, POST) | Generated SDK journey and AIP/MySQL tests | `39885042974` passed UI add/reload and remove/reload with DB 0→1→0; later `39896024733` failed its accessibility assertion under the media modal, so the later failure remains distinct |
 
-All five account paths in this subset now have source overlay bindings: email challenge/verification, password reset, and confirmed withdrawal. The profile save/render is verified in `40010266672`; password browser journeys remain unverified; withdrawal has existing server-side MySQL coverage but the new screen binding awaits browser integration. No full 25-path browser coverage is claimed.
+All five account paths in this subset now have source overlay bindings: email challenge/verification, password reset, and confirmed withdrawal. The profile save/render is verified in `40010266672`, password in `40062036395`, and MyPage email verification in `40065518651`; withdrawal has existing server-side MySQL coverage but the new screen binding awaits browser integration. No full 25-path browser coverage is claimed.
 
 ### Administrator UI and API inventory — separate from the 25 user paths
 
@@ -1729,3 +1729,20 @@ Password DB는 browser/database success 및 모든 boolean true다. Hash변경/s
 다음 bounded 증분은 원본 MyPage 미인증banner→이메일인증모달→메일code입력→badge/banner제거→reload유지다. 방금 비밀번호를 바꾼 동일 disposable계정의 fresh browser를 쓰며 기존 run-owned in-memory메일sink를 재사용한다. DB는 인증flag0→1/GENERAL:0:1:1, target user의 인증flag·updated_at 외 모든열보존, challenge0/mail1회, active2/revoked2, 무관한11개업무테이블·타계정session fullsnapshot 불변을 별도 JSON으로 판정한다. 원본UI/제품정책 불변. Email UI·DB는 새 CI 전까지 미검증이며 signup/tutorial완료·skip/confirmedwithdraw는 다음 잔여다.
 
 로컬: 새 email 판정기 stub의 AssertionError RED→GREEN, 전체evidence unittest50 OK/overlay node64 pass, AST/fmt/diff OK, MySQL migrate/service/CLI all-targetclippy6.50s exit0 및 Rust auth --no-run --locked --offline compile6.29s exit0. 로컬liveDB/browser는 미실행이다. WBS90/25·25경로전수미완·model.h5권리/visitor보류 유지. 같은ref Verify진행중 push/dispatch/cancel·장시간대기금지 및45분timeout+3분후속예약을 유지한다.
+
+
+### 2026-10-24 Verify40065518651 이메일 인증 UI·DB 성공 및 가입/튜토리얼 증분
+
+일반 Verify `40065518651`, SHA `22089a4e0def6cd9461420bf72c3a7990a8c46cf`, attempt1은 completed/success(core종료 2026-10-24 05:48:35UTC)다. Broad11·원본UI준비13/14·실HTTP/worker/MySQL15·safeartifact16·cleanup18이 success다. Artifact `12549937284`를 현재Run outbox `verify-40065518651`로 다운로드해 email JSON2개·PNG4개를 직접 검사했다. MyPage 미인증banner→코드modal→인증badge/banner제거→reload유지의 UI5boolean, member_email3gate·verified 모두 true다. 두 인증경로는 POST각1건/HTTP200/ok/body_captured/payload_matches/authorization_present true. API20건 모두finished/failed0/unfinished0/pageerror0. Code/password/token 원문은 산출물에 기록하지 않는다.
+
+Email DB의 browser/database success 및 모든boolean true를 확인했다. Flags GENERAL:0:1:1, target인증flag·updated_at외모든열보존, challenge0/mail1회·수신계정/template, active2/revoked2, target user제외11업무테이블과타계정session fullsnapshot보존을 실행SHA caller와대조했다. 25경로표의 email verification/verify 두행을 성공근거로갱신했다. 가입·튜토리얼·탈퇴 성공으로 확대하지 않는다.
+
+Password는 전gate·DBbooleantrue/28finished/failed0/unfinished0/pageerror0이다. 기존profile/reissue(DBsuccess,USEDrefresh+1,expired2→reissue1→retry2), like1→0/타회원보존/logoutrevoked+1, 댓글3phase동일ID·softdelete·무관행보존, search4gate·11테이블보존과 admin기존checks/기간5/permission4/reissue2회도 JSON범위대로재확인했다. Add33/remove37/댓글각23/search22 lifecycle도완료됐다. 마지막locator는admin stage/command·exit pending이며실패가아니다. 개별cargo stdout은미열람이다.
+
+이번계측에서 password의4건/email의3건 `/apply` HTTP200·okfalse가 전부 write_extension=`User.myEmotionSummary`/error_code=`WIRE.NOT_FOUND`로 확인돼 호출대상은 확정됐다. 실패근본원인은 아직미검증이며 이메일인증과별도잔여로둔다. PNG의감정그래프 skeleton·일시적인0표시를 감정통계검증성공으로 세지않는다. 과거실행의호출대상을소급확정하지않는다.
+
+다음 bounded증분은 원본AuthPage signup/checkEmail과 TutorialPage 완료·건너뛰기다. 서로다른2개disposable계정을 실제원본가입UI로만만들고(preseed없음), 각signup직후DB를검사한후fresh browser에서login→tutorial을실행한다. Check-email은 신규false→가입후existingtrue 분기/정확body를검사하고 signup은POST201각1건·정확name/genre/password boolean, 로그인폼복귀와genre선택PNG를남긴다. DB는server생성UUID·scrypt·GENERAL:0:0:0·장르animal/eating정확2행·active1/revoked0 및신규user/genre행외11테이블·타계정session보존을요구한다.
+
+Tutorial은complete경로의step1/2/3와완료버튼 또는별도계정의skip버튼→단일User.completeTutorial/정확본인target·성공body·인증/contract→main/reload후실제profile재조회로user_tutorial1을요구한다. DB는GENERAL:0:1:0/target tutorialflag·updated_at외모든열·genre/타계정보존·active2/revoked0을별도JSON으로기록한다. 원본UI/정책불변. 새account UI·DB는CI전미검증이고 EditPage confirmedwithdraw는다음잔여다.
+
+로컬실행: signup/tutorial판정기stub AssertionError RED2→GREEN, 전체evidence unittest52OK·adapter node64pass·AST/fmt/diffOK. Rustauth no-run --locked --offline compile3.81s exit0, MySQL migrate/service/CLI all-targetclippy -Dwarnings2.80s exit0. PG*unset/전용55432/testDSN 계약준수; 로컬liveDB/browser미실행. 기존password/email/member제품코드·판정범위는불변이고snapshot helper의새genre제외옵션은signup비교에만적용한다. WBS90/25·25경로전수미완·model.h5권리/visitor보류유지. 동일refVerify진행중push/dispatch/cancel·장시간대기금지,45분timeout+3분후속예약유지.
