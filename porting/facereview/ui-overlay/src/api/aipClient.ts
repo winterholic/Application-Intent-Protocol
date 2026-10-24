@@ -16,6 +16,9 @@ const BASE_URL: string = import.meta.env.VITE_AIP_URL ?? '/aip';
 type SdkClient = AipClient & WriteClient & { replaceSession(token: string): Promise<unknown> };
 let sdk: SdkClient | null = null;
 let sdkToken: string | null = null;
+// Parallel callers share one replacement, as sessionClient.ts does for the console: each extra replaceSession bumps the SDK
+// generation and discards reads already in flight, so the original sign-in's two parallel reads failed after a re-login.
+let sdkReady: Promise<void> = Promise.resolve();
 export const authTransport = createAuthTransport({
   baseUrl: BASE_URL,
   state: {
@@ -35,10 +38,19 @@ async function client(): Promise<SdkClient> {
   if (sdk === null) {
     sdk = connect(BASE_URL, token, contract, authTransport.fetch) as unknown as SdkClient;
   } else if (sdkToken !== token) {
-    await sdk.replaceSession(token);
+    sdkReady = sdk.replaceSession(token).then(
+      () => {},
+      (error: unknown) => {
+        // A failed replacement is retried by the next call instead of being remembered as done.
+        if (sdkToken === token) sdkToken = null;
+        throw error;
+      },
+    );
   }
   sdkToken = token;
-  return sdk;
+  const current = sdk;
+  await sdkReady;
+  return current;
 }
 
 export const aipClient: AipClient & WriteClient = {

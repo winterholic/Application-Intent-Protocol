@@ -108,6 +108,10 @@ def main() -> int:
         row["body_captured"] = True
         if isinstance(body, dict):
             row["ok"] = body.get("ok") is True
+            code = body.get("code")
+            # Only an enumerated wire code (no message or detail) explains a refused SDK call.
+            if not row["ok"] and isinstance(code, str) and re.fullmatch(r"[A-Z][A-Z0-9_]*(\.[A-Z][A-Z0-9_]*)+", code):
+                row["error_code"] = code
             if row["path"] == "/auth/password/verification":
                 token = body.get("reset_token")
                 if isinstance(token, str) and len(token) == 64 and all(c in "0123456789abcdef" for c in token):
