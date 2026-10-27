@@ -1,4 +1,12 @@
-# 최신 재개 지점 (2026-10-27, EditPage 확정탈퇴 여정 구현·로컬검증·main push·CI 확인 대기)
+# 최신 재개 지점 (2026-10-27, 스냅샷 scope 음성회귀 고정·tutorial 부재검증·main push·CI 확인 대기)
+
+48926c5 독립리뷰 지적(무조건 summary 제외 arm)을 닫았다. 확인 결과 arm 자체는 명시적 `exclude_summary` 게이트로 이미 전환되어 있었고(48926c5 diff에 무조건 arm 존재·현 트리 4-tuple 게이트, 전 호출처 대조: password/email만 true·signup/tutorial/search false·withdraw 별도 헬퍼), 빠져 있던 것은 게이트를 고정하는 회귀였다. `business_snapshot_excluding`의 테이블별 scope 결정을 순수 `snapshot_statement`로 추출(SQL 바이트 동일)하고 DB 없이 도는 `snapshot_scope_keeps_unintended_summary_inserts_visible` 음성회귀로 고정했다. 48926c5 형태로 임시 되돌린 RED에서 signup/tutorial 전체조회 단언이 실패함을 시연한 뒤 복원 GREEN. tutorial 판정에 signup과 같은 `summary_row_absent_for_member` 0-count 긍정검증을 추가했다(/my 미방문 여정이므로 부재가 정상). 무관행보존 조건은 전 여정 그대로다. 제품·gate 변경 없음.
+
+로컬: 신규 Rust scope 테스트 RED(되돌림)→GREEN(복원) 직접 실행, `cargo fmt --check` OK, auth `--no-run --locked --offline` OK, `cargo clippy -p aip-cli --features mysql --all-targets -- -Dwarnings` exit0, `git diff --check` OK. Python evidence 63종+write-deployment 감사는 상위 별도 실행 결과 유효하므로 재사용하고 변경분(Rust)만 새로 확인했다. Cargo는 PG* unset+형식검증용 dummy DSN(미접속). 빌드 캐시 target/ 검증 후 제거·회수. 로컬 liveDB/browser 미실행. 로컬 main에 커밋, push는 known blocker로 재시도 없이 유지·원격 fa9afef. 쓰기 권한 세션이 `git push origin HEAD:main` 후 원격 SHA 대조부터 이어간다. CI 결과·withdraw 첫 artifact·tutorial 부재 count·account 2phase·admin 후단은 미검증이다. 관련25경로행 유지. WBS90/25·25경로전수미완·model.h5권리/visitor보류 유지. PMS·WBS6·Infisical/FlaskBB는 상위 계속(MCP 미접근·미검증).
+
+---
+
+# 이전 재개 지점 (2026-10-27, EditPage 확정탈퇴 여정 구현·로컬검증·main push·CI 확인 대기)
 
 confirmedwithdraw 한 묶음을 현재 main에서 실제 구현했다(테스트·여정 코드만, 제품·gate 완화 없음). 원본 계약 대조: EditPage 탈퇴하기→alertdialog(정말 탈퇴하시겠어요?)→확인→DELETE /v2/mypage/withdraw→toast(탈퇴가 완료되었어요)→logout→/main(joowon 2e7c021), 백엔드는 본인 전이·5개 테이블 물리삭제·댓글 soft-delete·is_deleted=1(new-facereview 7948b7e), AIP `User.withdraw` 선언·overlay writeAdapter withdraw()가 동일 효과를 선언·호출한다. 새 `facereview-ui-withdraw-browser.py`는 disposable 회원 1명으로 login→/my→/edit→modal→confirm→toast→logout→/main signed-out을 수행하고 단일 self-target /apply·logout·UI 4boolean을 수집한다. 새 `member_withdraw_evidence` gate(login/withdraw/logout/ui, summary 호출은 gate 제외·사유 명시)와 단위테스트, Rust caller(전용 회원+관계행 8종 시드·타기기 세션·스크립트 실행·DB 판정), `business_snapshot_except_member`(전이 영향 8테이블 회원행 제외·bookmark/dna 생존은 전수 동등으로 증명)를 추가했다. DB 판정은 삭제 5종 0·댓글 1건 flip·bookmark/dna/안정컬럼 보존·summary 1행·0합계·lock1·checkpoint·reissue 401·active 0·타기기 세션 사망·login 401·메일 무변화·무관행/타세션 보존이다.
 

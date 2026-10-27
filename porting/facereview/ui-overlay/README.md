@@ -1,6 +1,6 @@
 # FaceReview UI overlay (WBS 7.2.10)
 
-> Latest measured follow-up (2026-10-27): the EditPage confirmed-withdraw browser journey is implemented (original UI/backend/AIP declaration/overlay compared; DB verdict covers 5 deletes, comment flip, session end, unrelated-row preservation). Test/journey code only, no product or gate change. Committed locally but the push is blocked by 403 (remote stays fa9afef); a session with write access must push before a fresh Verify runs. See [current status](../../../plan-docs/STATUS.md) and [evidence](../../../product/VERIFICATION.md#2026-10-27-editpage-confirmed-withdraw-browser-journey).
+> Latest measured follow-up (2026-10-27): the snapshot-scope finding from the 48926c5 review is closed with an explicit exclude_summary gate plus a no-DB negative regression, and the tutorial verdict gains the signup-style summary-absence check. Unrelated-row preservation unchanged; no product or gate change. Committed locally but the push stays blocked (remote fa9afef, no retry); a session with write access must push before a fresh Verify runs. See [current status](../../../plan-docs/STATUS.md) and [evidence](../../../product/VERIFICATION.md#2026-10-27-snapshot-scope-negative-regression).
 
 The player of FaceReview is the user's repository `facereview-front-joowon`. This directory holds only the files that change when its
 data access moves from the original REST API to AIP; it is meant to be copied over a checkout of the pinned revision

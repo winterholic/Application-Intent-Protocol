@@ -222,6 +222,20 @@ async fn business_snapshot_except_user_with_summary(
     business_snapshot_excluding(conn, exclude_user, false, true).await
 }
 
+/// One snapshot query: the statement plus whether it takes the excluded member id.
+/// Pure so the scope rule is pinned by `snapshot_scope_keeps_unintended_summary_inserts_visible`
+/// without a database: only journeys that intentionally serve the summary write extension
+/// (password/email, via exclude_summary) may hide the target member's summary row. Every other
+/// journey sees the whole summary table, so an unintended insert is a snapshot mismatch.
+fn snapshot_statement(table: &str, has_excluded_user: bool, exclude_genres: bool, exclude_summary: bool) -> (String, bool) {
+    match (table, has_excluded_user, exclude_genres, exclude_summary) {
+        ("user", true, _, _) => ("SELECT * FROM `user` WHERE user_id <> ? ORDER BY 1".to_owned(), true),
+        ("user_favorite_genre", true, true, _) => ("SELECT * FROM user_favorite_genre WHERE user_id <> ? ORDER BY 1".to_owned(), true),
+        ("user_emotion_summary", true, _, true) => ("SELECT * FROM user_emotion_summary WHERE user_id <> ? ORDER BY 1".to_owned(), true),
+        _ => (format!("SELECT * FROM `{table}` ORDER BY 1"), false),
+    }
+}
+
 async fn business_snapshot_excluding(
     conn: &mut aip_migrate::mysql_driver::mysql_async::Conn,
     exclude_user: Option<&str>,
@@ -243,24 +257,45 @@ async fn business_snapshot_excluding(
         "video_request",
         "video_view_log",
     ] {
-        let rows: Vec<aip_migrate::mysql_driver::mysql_async::Row> = match (table, exclude_user, exclude_genres, exclude_summary) {
-            ("user", Some(user), _, _) => conn.exec("SELECT * FROM `user` WHERE user_id <> ? ORDER BY 1", (user,)).await.unwrap(),
-            ("user_favorite_genre", Some(user), true, _) => {
-                conn.exec("SELECT * FROM user_favorite_genre WHERE user_id <> ? ORDER BY 1", (user,)).await.unwrap()
-            }
-            // The journey member's own summary row is the write extension's direct effect, verified
-            // separately; unrelated members' rows stay in the snapshot on both sides. Only journeys
-            // that intentionally serve the extension (password/email) set exclude_summary.
-            ("user_emotion_summary", Some(user), _, true) => {
-                conn.exec("SELECT * FROM user_emotion_summary WHERE user_id <> ? ORDER BY 1", (user,)).await.unwrap()
-            }
-            // Use the binary protocol on both sides: text query() represents numbers/dates as Bytes,
-            // while exec() decodes typed Values, so their Debug snapshots differ without any DB write.
-            _ => conn.exec(format!("SELECT * FROM `{table}` ORDER BY 1"), ()).await.unwrap(),
+        // Use the binary protocol on both sides: text query() represents numbers/dates as Bytes,
+        // while exec() decodes typed Values, so their Debug snapshots differ without any DB write.
+        let (statement, takes_member) = snapshot_statement(table, exclude_user.is_some(), exclude_genres, exclude_summary);
+        let rows: Vec<aip_migrate::mysql_driver::mysql_async::Row> = match (takes_member, exclude_user) {
+            (true, Some(user)) => conn.exec(statement, (user,)).await.unwrap(),
+            _ => conn.exec(statement, ()).await.unwrap(),
         };
         tables.push(rows.into_iter().map(|row| format!("{:?}", row.unwrap())).collect());
     }
     tables
+}
+
+#[test]
+fn snapshot_scope_keeps_unintended_summary_inserts_visible() {
+    // Signup excludes only the new user row and the new genre rows: the summary table stays
+    // whole, so an unintended insert for the new member breaks the snapshot instead of hiding.
+    let (signup_summary, signup_scoped) = snapshot_statement("user_emotion_summary", true, true, false);
+    assert!(!signup_scoped, "signup must see the whole summary table: {signup_summary}");
+    assert_eq!(signup_summary, "SELECT * FROM `user_emotion_summary` ORDER BY 1");
+    // Tutorial excludes only the member user row: same whole-table rule for the summary.
+    let (tutorial_summary, tutorial_scoped) = snapshot_statement("user_emotion_summary", true, false, false);
+    assert!(!tutorial_scoped, "tutorial must see the whole summary table: {tutorial_summary}");
+    // Password/email intentionally serve the summary write extension and assert its row/lock/
+    // checkpoint separately, so only they pass exclude_summary.
+    let (served_summary, served_scoped) = snapshot_statement("user_emotion_summary", true, false, true);
+    assert!(served_scoped, "serving journeys exclude the asserted member row");
+    assert!(served_summary.contains("WHERE user_id <> ?"), "{served_summary}");
+    // The user/genre arms are unchanged by the summary rule.
+    assert!(snapshot_statement("user", true, false, false).1);
+    assert!(!snapshot_statement("user", false, false, false).1);
+    assert!(snapshot_statement("user_favorite_genre", true, true, false).1);
+    assert!(!snapshot_statement("user_favorite_genre", true, false, false).1);
+    // Every other table is always whole, whatever the flags.
+    for table in ["comment", "user_emotion_dna", "user_point_history", "video", "video_bookmark", "video_like", "video_request", "video_view_log"] {
+        for flags in [(false, false, false), (true, false, false), (true, true, false), (true, false, true), (true, true, true)] {
+            let (statement, scoped) = snapshot_statement(table, flags.0, flags.1, flags.2);
+            assert!(!scoped, "{table} {flags:?} must stay whole: {statement}");
+        }
+    }
 }
 
 // Withdrawal deletes the journey member's rows in five tables, flips the member's comments,
@@ -2163,6 +2198,10 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
             let tutorial_expected = format!("{account_name}:GENERAL:0:1:0");
             let tutorial_active = cell(&mut setup, &active_sql).await;
             let tutorial_revoked = cell(&mut setup, &revoked_sql).await;
+            // The tutorial journey never opens /my, so no summary row may appear for the member.
+            // The snapshots above already cover the whole summary table (exclude_summary=false);
+            // this count names that failure directly, like the signup journey does.
+            let tutorial_summary_absent = cell(&mut setup, &format!("SELECT COUNT(*) FROM user_emotion_summary WHERE user_id = '{user}'")).await;
             let tutorial_sessions: Vec<aip_migrate::mysql_driver::mysql_async::Row> = setup.query(&account_sessions_sql).await.unwrap();
             let tutorial_sessions: Vec<String> = tutorial_sessions.into_iter().map(|row| format!("{:?}", row.unwrap())).collect();
             let tutorial_db_ok = tutorial_flags.as_deref() == Some(tutorial_expected.as_str())
@@ -2170,6 +2209,7 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
                 && stable_before == stable_after
                 && tutorial_active.as_deref() == Some("2")
                 && tutorial_revoked.as_deref() == Some("0")
+                && tutorial_summary_absent.as_deref() == Some("0")
                 && tutorial_business_before == tutorial_business_after
                 && sessions_after == tutorial_sessions;
             let tutorial_db = json!({"journey": "member_tutorial", "action": action,
@@ -2177,6 +2217,7 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
                 "tutorial_done_and_other_flags_preserved": tutorial_flags.as_deref() == Some(tutorial_expected.as_str()),
                 "target_other_columns_preserved": stable_before.len() == 1 && stable_before == stable_after,
                 "active_session_rows": tutorial_active, "revoked_session_rows": tutorial_revoked,
+                "summary_row_absent_for_member": tutorial_summary_absent.as_deref() == Some("0"),
                 "business_table_count": tutorial_business_before.len(), "unrelated_business_rows_preserved": tutorial_business_before == tutorial_business_after,
                 "other_account_sessions_preserved": sessions_after == tutorial_sessions});
             std::fs::write(account_output.join("tutorial-db-result.json"), serde_json::to_vec_pretty(&tutorial_db).unwrap()).unwrap();
