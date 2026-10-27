@@ -1,4 +1,12 @@
-# 최신 재개 지점 (2026-10-28, DB 암호화 경계·공통 저널 방문자 구현)
+# 최신 재개 지점 (2026-10-28, 봉인 writer 연결·정적 검증)
+
+native writer(create_row/update)가 인가·평문 scalar 검증·행 ID/scope 확정 뒤 `Knobs.seal` 경계로 DB `seal_in`을 사용하도록 연결했다. `aip-execution::write_sealer::StoreSealer`가 별도 budget 연결 예약과 트랜잭션 내 봉인을 수행하고, 다중 행 갱신은 행별 CASE로 프레임을 나눈다. expect/`to`/effect의 암호화 대입, 행간 값 복사 봉인, 명시적 id·scope 리터럴 누락, lookup:eq·owner는 실패로 닫는다. sealer 없이는 기존 prototype(`v2:` 통과)이 유지되고 listener/migrate/adopt gate와 Proposed 상태는 그대로다. 같은 트랜잭션의 두 번째 예산 예약이 멈추지 않도록 DEK 잠금을 KEY SHARE/NO KEY UPDATE로 낮추고 회귀를 추가했다.
+
+검증은 정적 범위다. `cargo check`·`clippy --all-targets -- -D warnings`·`fmt --check`, 쓰기·실행 `--no-run` 링크, spike-v1 `encrypted_types` 10개·wire_codes 9개 통과. 새 `encrypted_sealed` 통합 테스트와 `encryption_cells` 신규 회귀는 작성했으나 이 명령 샌드박스에서 실DB 실행이 차단됐다(docker 거부·loopback TCP 거부·initdb 사용자 조회 거부, 우회 없음). DB 접속 가능 세션이 두 테스트부터 실행한다. Git push는 기존 keyring 차단으로 미실행이며 같은 전환을 재시도하지 않는다.
+
+---
+
+# 이전 재개 지점 (2026-10-28, DB 암호화 경계·공통 저널 방문자 구현)
 
 `f37b23b`에서 이어 `DekStore`의 DB 키 조회/암복호화·독립 commit 사용량 예약·epoch/key 승격을 구현했다. `encrypted_journal`의 공통 방문자를 `/apply`·`/status`·확장 요청 및 durable 효과 지문에 연결했다. `where` 배열 누락, compose 리소스/상수 문맥 누락, 실패 시 평문 fallback, 구 지문 키 부재를 mismatch로 축약하는 경로를 고쳤다. 제품 resource writer/read는 아직 이 DB 암호화 API를 사용하지 않으며 listener/migrate/adopt readiness gate와 Proposed 상태는 유지한다. 전체 포팅/1.0 완료가 아니다.
 

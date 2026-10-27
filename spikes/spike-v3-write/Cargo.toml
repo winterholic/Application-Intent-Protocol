@@ -5,10 +5,11 @@ edition = "2021"
 publish = false
 license = "MIT"
 
-# V3 표준 쓰기 실험. V1 facts + V2 정책 SQL 생성기를 재사용한다. 본 crates/에 의존하지 않는다.
+# V3 표준 쓰기 실험. V1 facts + V2 정책 SQL 생성기를 재사용한다. 셀 봉인 경계는 aip-execution이 소유한다.
 [workspace]
 
 [dependencies]
+aip-execution = { path = "../../crates/aip-execution" }
 spike-v1-fixture = { path = "../spike-v1-fixture" }
 spike-v2-read = { path = "../spike-v2-read" }
 serde_json = "1.0.151"
@@ -16,6 +17,7 @@ tokio = { version = "1.53.1", features = ["rt", "rt-multi-thread", "macros", "ti
 tokio-postgres = "0.7.18"
 
 [dev-dependencies]
+aip-crypto = { path = "../../crates/aip-crypto" }
 aip-test-support = { path = "../../crates/aip-test-support", features = ["strict-db"] }
 aip-test-fault-proxy = { path = "../../crates/aip-test-fault-proxy" }
 

@@ -6,6 +6,11 @@ use spike_v2_read::sqlgen::{self, column, table, Ctx, Env};
 use std::time::Duration;
 use tokio_postgres::{types::ToSql, Client, Transaction};
 
+mod sealed;
+
+pub use aip_execution::write_sealer::{SealCell, SealError, WriteCellSealer};
+pub use sealed::SEALED_CELLS_MAX;
+
 #[derive(Debug, PartialEq)]
 pub struct Applied {
     pub changed: Vec<EntityId>,
@@ -28,6 +33,10 @@ pub struct Knobs {
     /// The write comes from an extension or a job that listed the transition in its `access`: only then an `expose apply ... internal`
     /// transition may run. /apply and its atomic bundles leave this off.
     pub internal: bool,
+    /// Product cell-sealing boundary. When set, validated plaintext for encrypted fields is
+    /// sealed in the resource transaction after authorization; `None` keeps the prototype
+    /// behavior (`v2:` frames pass through, product listeners stay fenced).
+    pub seal: Option<std::sync::Arc<dyn WriteCellSealer>>,
 }
 
 static AUDIT_TABLE: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
@@ -499,6 +508,9 @@ async fn update(
     if change.is_empty() {
         return Ok(());
     }
+    if knobs.seal.is_some() {
+        sealed::reject_sealed_assignments(facts, res, tr, input)?;
+    }
     let t = &facts["resources"][res]["transitions"][tr];
     let mut cx = Ctx::new(facts, caller.actor_id, &caller.now);
     let env = Env { this: Some(("t".into(), res.to_string())), ..Default::default() };
@@ -510,6 +522,12 @@ async fn update(
             from = format!("({from}) AND (t.{col} IS NOT DISTINCT FROM {value})");
         }
     }
+    // Plaintext was validated before the transaction and rows were authorized by the judge;
+    // seal encrypted cells now so the same statement stores frames instead of plaintext.
+    let sealed_update = match &knobs.seal {
+        Some(sealer) => sealed::sealed_plan_for_update(tx, facts, res, change, input, sealer.as_ref()).await?,
+        None => None,
+    };
     let mut sets = vec![];
     for (f, v) in t["to"].as_object().unwrap() {
         let col = column(facts, res, f).unwrap();
@@ -525,7 +543,11 @@ async fn update(
     if let Some(input) = input {
         for (field, src) in &input.values {
             let col = column(facts, res, field).unwrap();
-            sets.push(format!("{col} = {}", input_sql(&mut cx, res, field, src)?));
+            if let Some(case) = sealed::sealed_set_expr(&mut cx, facts, res, change, &sealed_update, field) {
+                sets.push(format!("{col} = {case}"));
+            } else {
+                sets.push(format!("{col} = {}", input_sql(&mut cx, res, field, src)?));
+            }
         }
     }
     // 증감한 Int 필드의 선언 범위. DDL CHECK가 없으므로 같은 트랜잭션에서 UPDATE 결과로 확인한다.
@@ -764,6 +786,9 @@ async fn effects(
         let mut cx = Ctx::new(facts, caller.actor_id, &caller.now);
         let env = Env { this: Some(("t".into(), res.to_string())), ..Default::default() };
         if let Some(target) = e["update"].as_str() {
+            if knobs.seal.is_some() {
+                sealed::reject_sealed_effect(facts, target, e["values"].as_object().unwrap())?;
+            }
             // 대상 행마다 조건에 맞는 다른 행을 정확히 하나 바꾼다. 못 찾거나 여럿이면 전체 취소.
             let mut conds = vec![];
             for (f, v) in e["match"].as_object().unwrap() {
@@ -916,6 +941,9 @@ async fn effects(
             continue;
         }
         let sql = if let Some(target) = e["create"].as_str() {
+            if knobs.seal.is_some() {
+                sealed::reject_sealed_effect(facts, target, e["values"].as_object().unwrap())?;
+            }
             let (mut cols, mut vals) = (vec![], vec![]);
             for (f, v) in e["values"].as_object().unwrap() {
                 cols.push(column(facts, target, f).unwrap());
@@ -1011,10 +1039,21 @@ async fn create_row(
     let ec = &facts["resources"][target]["exposeCreate"];
     let mut cx = Ctx::new(facts, caller.actor_id, &caller.now);
     cx.lock_reads = !knobs.skip_policy_lock;
+    // References were checked readable and values were validated before this insert; seal
+    // encrypted cells now so the candidate row carries frames instead of plaintext.
+    let sealed_create = match &knobs.seal {
+        Some(sealer) => sealed::sealed_plan_for_create(tx, facts, target, values, sealer.as_ref()).await?,
+        None => None,
+    };
     let (mut cols, mut exprs) = (vec![], vec![]);
     let mut from = String::new();
     for (f, src) in values {
         let col = column(facts, target, f).unwrap();
+        if let Some(frame) = sealed_create.as_ref().and_then(|plan| plan.frames.get(f)) {
+            exprs.push(format!("{} AS {col}", cx.params.bind(Some(frame.clone()), "text")));
+            cols.push(col);
+            continue;
+        }
         let e = match src {
             Src::Lit(v, cast) => cx.params.bind(Some(v.clone()), cast),
             Src::Null => format!("(NULL::{}).{col}", table(target)),

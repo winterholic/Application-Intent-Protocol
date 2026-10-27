@@ -1,6 +1,17 @@
 # 제품 통합 검증 (2026-10-17)
 
 
+## 2026-10-28 봉인 writer 연결 (구현, 실DB 미검증·출시 미완)
+
+`spike-v3-write`의 create/update가 `aip-execution::write_sealer` 경계로 봉인하도록 연결했다. 검증된 평문만 인가·ID/scope 확정 뒤 같은 트랜잭션에서 `seal_in`하며, 예산 예약은 별도 budget 연결에서 먼저 commit한다. 다중 행은 행별 CASE, 생성은 명시적 id·scope 리터럴을 요구한다. expect/`to`/effect 대입·행간 복사·lookup:eq·owner 봉인은 거부한다. sealer가 없으면 기존 `v2:` 통과가 유지된다.
+
+- `cargo check`·`cargo clippy --all-targets -- -D warnings`(aip-execution, spike-v3-write), 양쪽 `cargo fmt --check`, 양쪽 `cargo test --no-run` 링크: 통과. PG* unset·형식검증용 dummy DSN(미접속).
+- `spike-v1-fixture --test encrypted_types` 10개·`spike-v6-transport --test wire_codes` 9개: 통과. 새 코드의 WIRE.* 사용이 레지스트리에 등록됨을 확인했고 golden 변경은 없다.
+- 새 `spikes/spike-v3-write/tests/encrypted_sealed.rs` 1개와 `encryption_cells` 신규 회귀 1개는 작성만 했고 실행하지 않았다. 이 명령 샌드박스에서 docker 소켓 거부·loopback TCP 거부(`pg_isready` 시도 없음)·`initdb` 사용자 조회 실패로 실DB를 띄울 수 없으며 샌드박스 우회는 하지 않았다. 해당 실패를 다른 환경 전체의 실패로 일반화하지 않는다.
+- DEK 잠금 변경(`FOR SHARE`→`FOR KEY SHARE`, `FOR UPDATE`→`FOR NO KEY UPDATE`)도 같은 이유로 실DB 미검증이다.
+
+남음: `encrypted_sealed`·신규 셀 회귀의 실DB 실행, read/traverse `open_cell`·migration/adopt·durable rekey 연결, lookup:eq blind index·owner scope, Infisical 전환·전체 포팅/1.0 gate. 설계는 Proposed 유지, 이번 증분으로 WBS 8.18.3~6을 완료로 바꾸지 않는다. 원격 push/CI는 기존 keyring 차단으로 미실행이다.
+
 ## 2026-10-28 암호화 DB 경계·저널 공통 처리 (증분, 제품 활성화/출시 미완)
 
 전용 PostgreSQL 17 컨테이너 `aip-encryption-582e8c36`, loopback 32876, DB `aip_test_encryption`에서 실행했다. 기존 checkout/target을 재사용했으며 사용자/운영 DB에 접속하지 않았다.

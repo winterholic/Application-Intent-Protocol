@@ -21,6 +21,8 @@
 
 2026-10-28 구현 증분: `DekStore`에 별도 연결에서 먼저 commit하는 `reserve_for_write`(키당 2^20회, 배치 최대 500셀), 업무 transaction의 `seal_in`, 전체 DEK identity로 조회하는 `open_cell`, 이전 키를 READABLE로 보존하며 epoch를 올리는 `promote_in`을 추가했다. rollback·동시 상한·구 epoch·KEK rewrap·RETIRED 읽기 거부를 전용 PostgreSQL 17의 `encryption_cells` 7개로 검사했다. 이 API는 호출자에게 행/필드 인가·scalar 검증을 요구하며 아직 제품 resource writer/read 호출자가 사용하지 않는다. 회전 실행기·전수 adopt·최종 RETIRED 판정도 미완이다. 설계 상태와 실행 readiness gate는 유지한다.
 
+2026-10-28 봉인 writer 증분: native create/update가 인가·scalar 검증·ID/scope 확정 뒤 같은 트랜잭션에서 `seal_in`하도록 `WriteCellSealer` 경계(`StoreSealer`)를 연결했다. 다중 행은 행별 CASE로 나누고 생성은 명시적 id를 요구한다. expect/`to`/effect 대입·lookup:eq·owner는 거부하며, sealer 없이는 기존 `v2:` 통과가 유지된다. 같은 트랜잭션의 두 번째 예산 예약이 멈추지 않도록 DEK 잠금을 KEY SHARE/NO KEY UPDATE로 낮췄다. 정적 검증만 마쳤고 실DB 실행은 샌드박스 차단으로 대기한다. read·adopt·rekey 미연결이므로 gate와 Proposed 상태는 유지한다.
+
 `aip-execution::encrypted_journal`은 create/apply/atomic/compose의 values·expect·target(s).where 및 compose `{const}`를 같은 방문자로 처리한다. `/apply`·`/status`·확장 멱등 저장/재생과 durable 효과 marker에 연결했다. 지문 오류의 평문 fallback, 구 지문 키 부재를 mismatch로 취급하는 처리, 저장된 marker와 caller 입력의 문자열 같음만으로 replay하던 처리를 제거했다. 이 증분도 8경로 전체·worker 실제 실행·암호화 제품 통합 완료를 뜻하지 않는다.
 
 이하 표·포맷·상태 기계는 **Proposed 목표 계약**이다. 라이브러리·정적 진단·DEK metadata 기반을 단계적으로 구현하며 제품 실행 증거는 §7의 각 게이트에서 별도로 수집한다.

@@ -3068,6 +3068,7 @@ dependencies = [
 name = "spike-v3-write"
 version = "0.0.0"
 dependencies = [
+ "aip-execution",
  "serde_json",
  "spike-v1-fixture",
  "spike-v2-read",
