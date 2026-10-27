@@ -1,5 +1,5 @@
 use aip_crypto::cell::{self, Context as CellContext, DataKey};
-use aip_crypto::fingerprint::{BlindIndexContext, Context as FpContext, Keys as FpKeys};
+use aip_crypto::fingerprint::{BlindIndexContext, Keys as FpKeys};
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 use std::sync::{Arc, OnceLock, RwLock};
@@ -48,187 +48,127 @@ pub fn default_test_crypto() -> Arc<RuntimeCrypto> {
     Arc::new(RuntimeCrypto { fp_keys, data_keys })
 }
 
-/// Recursively replaces encrypted field values in request payload with idem_v2 HMAC fingerprints.
-pub fn mask_request_for_idempotency(facts: &Value, req: &Value, crypto: &RuntimeCrypto, schema: &str, principal: &str, request_key: &str) -> Value {
-    let mut masked = req.clone();
-    let Some(obj) = masked.as_object_mut() else { return masked };
-    let compose_res = obj.get("compose").and_then(Value::as_str).map(str::to_string);
-    let apply_name = obj.get("apply").and_then(Value::as_str).map(str::to_string);
-    let create_target = obj.get("create").and_then(Value::as_str).map(str::to_string);
-    let is_atomic = obj.get("atomic").is_some();
-
-    if let Some(res) = compose_res {
-        if let Some(steps) = obj.get_mut("steps").and_then(Value::as_array_mut) {
-            for step in steps {
-                if let Some(st) = step.as_object_mut() {
-                    let st_create = st.get("create").and_then(Value::as_str).map(str::to_string);
-                    let st_transition = st.get("transition").and_then(Value::as_str).map(str::to_string);
-                    if let Some(target) = st_create {
-                        if let Some(vals) = st.get_mut("values").and_then(Value::as_object_mut) {
-                            mask_object_fields(facts, &target, vals, crypto, schema, principal, request_key);
-                        }
-                    } else if st_transition.is_some() {
-                        if let Some(vals) = st.get_mut("values").and_then(Value::as_object_mut) {
-                            mask_object_fields(facts, &res, vals, crypto, schema, principal, request_key);
-                        }
-                        if let Some(exp) = st.get_mut("expect").and_then(Value::as_object_mut) {
-                            mask_object_fields(facts, &res, exp, crypto, schema, principal, request_key);
-                        }
-                        if let Some(tg) = st.get_mut("target").and_then(Value::as_object_mut) {
-                            if let Some(wh) = tg.get_mut("where").and_then(Value::as_object_mut) {
-                                mask_object_fields(facts, &res, wh, crypto, schema, principal, request_key);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    } else if is_atomic {
-        if let Some(atomic) = obj.get_mut("atomic").and_then(Value::as_array_mut) {
-            for op in atomic {
-                if let Some(op_obj) = op.as_object_mut() {
-                    let op_create = op_obj.get("create").and_then(Value::as_str).map(str::to_string);
-                    let op_apply = op_obj.get("apply").and_then(Value::as_str).map(str::to_string);
-                    if let Some(target) = op_create {
-                        if let Some(vals) = op_obj.get_mut("values").and_then(Value::as_object_mut) {
-                            mask_object_fields(facts, &target, vals, crypto, schema, principal, request_key);
-                        }
-                    } else if let Some(apply_name) = op_apply {
-                        if let Some((res, _)) = apply_name.split_once('.') {
-                            let res_owned = res.to_string();
-                            if let Some(vals) = op_obj.get_mut("values").and_then(Value::as_object_mut) {
-                                mask_object_fields(facts, &res_owned, vals, crypto, schema, principal, request_key);
-                            }
-                            if let Some(exp) = op_obj.get_mut("expect").and_then(Value::as_object_mut) {
-                                mask_object_fields(facts, &res_owned, exp, crypto, schema, principal, request_key);
-                            }
-                            if let Some(tg) = op_obj.get_mut("target").and_then(Value::as_object_mut) {
-                                if let Some(wh) = tg.get_mut("where").and_then(Value::as_object_mut) {
-                                    mask_object_fields(facts, &res_owned, wh, crypto, schema, principal, request_key);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    } else if let Some(apply_name) = apply_name {
-        if let Some((res, _)) = apply_name.split_once('.') {
-            let res_owned = res.to_string();
-            if let Some(vals) = obj.get_mut("values").and_then(Value::as_object_mut) {
-                mask_object_fields(facts, &res_owned, vals, crypto, schema, principal, request_key);
-            }
-            if let Some(exp) = obj.get_mut("expect").and_then(Value::as_object_mut) {
-                mask_object_fields(facts, &res_owned, exp, crypto, schema, principal, request_key);
-            }
-            if let Some(tg) = obj.get_mut("target").and_then(Value::as_object_mut) {
-                if let Some(wh) = tg.get_mut("where").and_then(Value::as_object_mut) {
-                    mask_object_fields(facts, &res_owned, wh, crypto, schema, principal, request_key);
-                }
-            }
-        }
-    } else if let Some(target) = create_target {
-        if let Some(vals) = obj.get_mut("values").and_then(Value::as_object_mut) {
-            mask_object_fields(facts, &target, vals, crypto, schema, principal, request_key);
-        }
-    }
-    masked
-}
-
-fn mask_object_fields(
+/// Shared visitor for create/apply/atomic/compose values, expectations and target filters.
+pub fn mask_request_for_idempotency(
     facts: &Value,
-    res: &str,
-    vals: &mut Map<String, Value>,
+    req: &Value,
     crypto: &RuntimeCrypto,
     schema: &str,
     principal: &str,
     request_key: &str,
-) {
-    let Some(resource_fields) = facts["resources"][res]["fields"].as_object() else { return };
-    for (f, val) in vals.iter_mut() {
-        if resource_fields.get(f).and_then(|fd| fd.get("encrypted")).is_some() && !val.is_null() {
-            let bytes = match &*val {
-                Value::String(s) => s.as_bytes().to_vec(),
-                other => other.to_string().into_bytes(),
-            };
-            let ctx = FpContext { schema, principal, request_key, resource: res, field: f };
-            if let Ok(marker) = crypto.fp_keys.idem(&ctx, &bytes) {
-                *val = json!({ "$aip_enc_fp": marker });
-            }
-        }
-    }
+) -> Result<Value, Reject> {
+    aip_execution::encrypted_journal::protect(
+        facts,
+        req,
+        &crypto.fp_keys,
+        &aip_execution::encrypted_journal::Context { schema, principal, request_key },
+    )
+    .map_err(journal_error)
 }
 
-/// Verifies that incoming plaintext request matches a stored idempotency request that contains $aip_enc_fp markers.
 pub fn verify_idempotency_request(
     facts: &Value,
-    stored_req: &Value,
-    incoming_req: &Value,
-    crypto: &RuntimeCrypto,
-    schema: &str,
-    principal: &str,
-    request_key: &str,
-) -> bool {
-    verify_json_match(facts, stored_req, incoming_req, crypto, schema, principal, request_key, None)
-}
-
-#[allow(clippy::too_many_arguments, clippy::only_used_in_recursion)]
-fn verify_json_match(
-    _facts: &Value,
     stored: &Value,
     incoming: &Value,
     crypto: &RuntimeCrypto,
     schema: &str,
     principal: &str,
     request_key: &str,
-    current_res_and_field: Option<(&str, &str)>,
-) -> bool {
-    if let Value::Object(s_map) = stored {
-        if let Some(fp_val) = s_map.get("$aip_enc_fp").and_then(Value::as_str) {
-            let Some((res, field)) = current_res_and_field else { return false };
-            let bytes = match incoming {
-                Value::String(s) => s.as_bytes().to_vec(),
-                other => other.to_string().into_bytes(),
-            };
-            let ctx = FpContext { schema, principal, request_key, resource: res, field };
-            return crypto.fp_keys.verify_idem(&ctx, &bytes, fp_val).unwrap_or(false);
+) -> Result<bool, Reject> {
+    aip_execution::encrypted_journal::verify(
+        facts,
+        stored,
+        incoming,
+        &crypto.fp_keys,
+        &aip_execution::encrypted_journal::Context { schema, principal, request_key },
+    )
+    .map_err(journal_error)
+}
+
+fn journal_error(error: aip_execution::encrypted_journal::Error) -> Reject {
+    use aip_execution::encrypted_journal::Error;
+    match error {
+        Error::Unavailable => rej("WIRE.ENCRYPTION_UNAVAILABLE", "멱등 지문 키를 사용할 수 없음"),
+        Error::Corrupted => rej("WIRE.ENCRYPTION_CORRUPTED", "저장된 멱등 지문 형식 오류"),
+        Error::InvalidInput => rej("WIRE.BAD_REQUEST", "멱등 요청 형식·크기 오류"),
+    }
+}
+
+fn needs_crypto(facts: &Value) -> bool {
+    facts["resources"]
+        .as_object()
+        .into_iter()
+        .flat_map(|r| r.values())
+        .any(|r| r["fields"].as_object().is_some_and(|fields| fields.values().any(|f| f.get("encrypted").is_some())))
+}
+
+/// Applied by /apply, /status and extension replay; never trust caller-supplied stored markers
+/// through raw equality, and distinguish missing fingerprint keys from changed requests.
+pub fn stored_request_matches(
+    facts: &Value,
+    stored: &str,
+    incoming: &Value,
+    schema: &str,
+    principal: &str,
+    request_key: &str,
+) -> Result<bool, Reject> {
+    if let Some(crypto) = get_runtime_crypto() {
+        let stored = serde_json::from_str(stored).map_err(|_| rej("WIRE.ENCRYPTION_CORRUPTED", "저장된 멱등 요청 형식 오류"))?;
+        verify_idempotency_request(facts, &stored, incoming, &crypto, schema, principal, request_key)
+    } else if needs_crypto(facts) {
+        Err(rej("WIRE.ENCRYPTION_UNAVAILABLE", "멱등 지문 키를 사용할 수 없음"))
+    } else {
+        let canonical = incoming.to_string();
+        Ok(stored == canonical)
+    }
+}
+
+pub fn journal_request(facts: &Value, incoming: &Value, schema: &str, principal: &str, request_key: &str) -> Result<String, Reject> {
+    if let Some(crypto) = get_runtime_crypto() {
+        mask_request_for_idempotency(facts, incoming, &crypto, schema, principal, request_key).map(|v| v.to_string())
+    } else if needs_crypto(facts) {
+        Err(rej("WIRE.ENCRYPTION_UNAVAILABLE", "멱등 지문 키를 사용할 수 없음"))
+    } else {
+        Ok(incoming.to_string())
+    }
+}
+
+/// Durable effects use the same retained-key fingerprint contract as ordinary write replay.
+/// Callers keep this snapshot for the entire effect, so a process-local key change cannot make
+/// request generation and stored-key verification observe two different rings mid-request.
+pub struct EffectJournal {
+    crypto: Option<Arc<RuntimeCrypto>>,
+}
+impl EffectJournal {
+    pub fn new(facts: &Value) -> Result<Self, Reject> {
+        let crypto = get_runtime_crypto();
+        if crypto.is_none() && needs_crypto(facts) {
+            return Err(rej("WIRE.ENCRYPTION_UNAVAILABLE", "효과 지문 키를 사용할 수 없음"));
+        }
+        Ok(Self { crypto })
+    }
+    pub fn marker(
+        &self,
+        effect: &aip_execution::encrypted_journal::Effect<'_>,
+        context: &aip_execution::encrypted_journal::Context<'_>,
+    ) -> Result<String, Reject> {
+        if let Some(crypto) = &self.crypto {
+            aip_execution::encrypted_journal::effect_marker(effect, &crypto.fp_keys, context).map_err(journal_error)
+        } else {
+            Ok(spike_v1_fixture::digest(&json!([effect.kind, effect.name, effect.input, effect.implementation])))
         }
     }
-    match (stored, incoming) {
-        (Value::Object(s_map), Value::Object(i_map)) => {
-            if s_map.len() != i_map.len() {
-                return false;
-            }
-            for (k, s_val) in s_map {
-                let Some(i_val) = i_map.get(k) else { return false };
-                let next_context = match current_res_and_field {
-                    Some((res, _)) => Some((res, k.as_str())),
-                    None => {
-                        if let Some(apply_name) = s_map.get("apply").and_then(Value::as_str) {
-                            apply_name.split_once('.').map(|(r, _)| (r, k.as_str()))
-                        } else {
-                            s_map.get("create").and_then(Value::as_str).map(|create_name| (create_name, k.as_str()))
-                        }
-                    }
-                };
-                if !verify_json_match(_facts, s_val, i_val, crypto, schema, principal, request_key, next_context) {
-                    return false;
-                }
-            }
-            true
+    pub fn matches(
+        &self,
+        effect: &aip_execution::encrypted_journal::Effect<'_>,
+        context: &aip_execution::encrypted_journal::Context<'_>,
+        stored: &str,
+    ) -> Result<bool, Reject> {
+        if let Some(crypto) = &self.crypto {
+            aip_execution::encrypted_journal::verify_effect(effect, stored, &crypto.fp_keys, context).map_err(journal_error)
+        } else {
+            Ok(self.marker(effect, context)? == stored)
         }
-        (Value::Array(s_arr), Value::Array(i_arr)) => {
-            if s_arr.len() != i_arr.len() {
-                return false;
-            }
-            for (s_item, i_item) in s_arr.iter().zip(i_arr) {
-                if !verify_json_match(_facts, s_item, i_item, crypto, schema, principal, request_key, current_res_and_field) {
-                    return false;
-                }
-            }
-            true
-        }
-        (s, i) => s == i,
     }
 }
 

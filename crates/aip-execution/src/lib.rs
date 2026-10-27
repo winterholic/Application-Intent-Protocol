@@ -35,4 +35,5 @@ pub fn infrastructure_schema(deployment_schema: &str) -> Result<String, &'static
     Ok(format!("aip_infra_{}", &hash[..52]))
 }
 
+pub mod encrypted_journal;
 pub mod encryption;

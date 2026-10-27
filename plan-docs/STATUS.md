@@ -1,4 +1,12 @@
-# 최신 재개 지점 (2026-10-28, 1.0 작업 재개·공통 실행부 로컬 구현·검증)
+# 최신 재개 지점 (2026-10-28, DB 암호화 경계·공통 저널 방문자 구현)
+
+`f37b23b`에서 이어 `DekStore`의 DB 키 조회/암복호화·독립 commit 사용량 예약·epoch/key 승격을 구현했다. `encrypted_journal`의 공통 방문자를 `/apply`·`/status`·확장 요청 및 durable 효과 지문에 연결했다. `where` 배열 누락, compose 리소스/상수 문맥 누락, 실패 시 평문 fallback, 구 지문 키 부재를 mismatch로 축약하는 경로를 고쳤다. 제품 resource writer/read는 아직 이 DB 암호화 API를 사용하지 않으며 listener/migrate/adopt readiness gate와 Proposed 상태는 유지한다. 전체 포팅/1.0 완료가 아니다.
+
+검증·환경 범위는 [제품 검증](../product/VERIFICATION.md)의 2026-10-28 암호화 증분을 따른다. 다음은 native writer가 인가·평문 scalar 검증·행 ID/scope 확정 뒤 DB `seal_in`을 사용하도록 연결하고, read/traverse와 migration/adopt의 인증 검증 및 durable rekey를 같은 경계로 연결하는 일이다. 고정 키 map·row/scope 기본값 0·요청을 미리 암호화한 뒤 평문 validator로 넘기는 기존 내부 경로를 제품 구현으로 재사용하지 않는다. Git push는 기존 Codex/macOS keyring exit 161 차단으로 미실행이며, 해결된 환경 근거 없이 같은 전환을 재시도하지 않는다.
+
+---
+
+# 이전 재개 지점 (2026-10-28, 1.0 작업 재개·공통 실행부 로컬 구현·검증)
 
 기존 6개 로컬 커밋(85d4fcf~463b526)과 미커밋 live snapshot-negative 변경을 보존했다. 기존 사용자 지시대로 전체 소스/inventory·공통 갭을 기준으로 작업하며, 단일 여정 성공을 다른 독립 작업의 관문으로 삼지 않는다. 필수 WBS 범위와 model.h5 권리/visitor 미검증 상태는 유지한다.
 

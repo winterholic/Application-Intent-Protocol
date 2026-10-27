@@ -248,7 +248,6 @@ async fn handle_apply(db: &mut Client, facts: &Value, body: &Value, caller: &Cal
         return json!({ "ok": false, "code": "WIRE.BAD_REQUEST", "msg": "key 필요" });
     };
     let req = &body["request"];
-    let req_text = req.to_string();
     let principal = principal_key(caller.actor_id, wire);
     // 다른 행을 읽는 정책에 의존하는 전이는 SERIALIZABLE로 실행하고, 직렬화 실패는 같은 요청을 서버가 다시 실행한다(O-26).
     let serializable = spike_v3_write::write_needs_serializable(facts, req);
@@ -257,7 +256,7 @@ async fn handle_apply(db: &mut Client, facts: &Value, body: &Value, caller: &Cal
     let operation = async {
         let mut attempt = 0;
         loop {
-            let result = apply_attempt(db, facts, key, req, &req_text, &principal, caller, wire, serializable, &commit_sent, started).await;
+            let result = apply_attempt(db, facts, key, req, &principal, caller, wire, serializable, &commit_sent, started).await;
             let retry = serializable
                 && result["code"] == "WIRE.CONFLICT"
                 && result["msg"].as_str().is_some_and(|msg| spike_v3_write::is_retryable(&Reject { code: "WIRE.CONFLICT", msg: msg.to_string() }))
@@ -283,7 +282,6 @@ async fn apply_attempt(
     facts: &Value,
     key: &str,
     req: &Value,
-    req_text: &str,
     principal: &str,
     caller: &Caller,
     wire: IdWire,
@@ -315,16 +313,9 @@ async fn apply_attempt(
         tx.query_opt(format!("SELECT request, result::text FROM {s}.aip_idem WHERE principal = $1 AND key = $2").as_str(), &[&principal, &key]).await
     {
         let (stored_req, result): (String, String) = (row.get(0), row.get(1));
-        let matches = if stored_req == req_text {
-            true
-        } else if let Some(crypto) = encryption::get_runtime_crypto() {
-            if let (Ok(s_val), Ok(i_val)) = (serde_json::from_str::<Value>(&stored_req), serde_json::from_str::<Value>(req_text)) {
-                encryption::verify_idempotency_request(facts, &s_val, &i_val, &crypto, s, principal, key)
-            } else {
-                false
-            }
-        } else {
-            false
+        let matches = match encryption::stored_request_matches(facts, &stored_req, req, s, principal, key) {
+            Ok(matches) => matches,
+            Err(e) => return err(Reject { code: e.code, msg: e.msg }),
         };
         if !matches {
             return json!({ "ok": false, "code": "WIRE.IDEMPOTENCY_MISMATCH", "msg": "같은 키에 다른 요청" });
@@ -354,10 +345,9 @@ async fn apply_attempt(
     if let Err(e) = checks_in(&tx, facts, caller, &knobs).await {
         return err(spike_v3_write::before_commit_rejection(&tx, e));
     }
-    let req_to_store = if let Some(crypto) = encryption::get_runtime_crypto() {
-        encryption::mask_request_for_idempotency(facts, req, &crypto, s, principal, key).to_string()
-    } else {
-        req_text.to_string()
+    let req_to_store = match encryption::journal_request(facts, req, s, principal, key) {
+        Ok(request) => request,
+        Err(e) => return err(Reject { code: e.code, msg: e.msg }),
     };
     if let Err(error) = tx
         .execute(
@@ -443,23 +433,14 @@ pub async fn handle(db: &mut Client, facts: &Value, path: &str, body: &Value, ca
             let Some(key) = body["key"].as_str().filter(|k| valid_key(k)) else {
                 return json!({ "ok": false, "code": "WIRE.BAD_REQUEST", "msg": "key 필요" });
             };
-            let request_text = body["request"].to_string();
             let q = format!("SELECT request, result::text FROM {}.aip_idem WHERE principal = $1 AND key = $2", sqlgen::schema());
             match tokio::time::timeout(server::DB_PREFLIGHT_TIMEOUT, db.query_opt(q.as_str(), &[&principal, &key])).await {
                 // 키만으로 결과를 주지 않는다. 같은 요청인지 확인한다(r7 R7-01).
                 Ok(Ok(Some(r))) => {
                     let stored_req: String = r.get(0);
-                    let matches = if stored_req == request_text {
-                        true
-                    } else if let Some(crypto) = encryption::get_runtime_crypto() {
-                        let s = sqlgen::schema();
-                        if let (Ok(s_val), Ok(i_val)) = (serde_json::from_str::<Value>(&stored_req), serde_json::from_str::<Value>(&request_text)) {
-                            encryption::verify_idempotency_request(facts, &s_val, &i_val, &crypto, s, &principal, key)
-                        } else {
-                            false
-                        }
-                    } else {
-                        false
+                    let matches = match encryption::stored_request_matches(facts, &stored_req, &body["request"], sqlgen::schema(), &principal, key) {
+                        Ok(matches) => matches,
+                        Err(e) => return err(Reject { code: e.code, msg: e.msg }),
                     };
                     if !matches {
                         json!({ "ok": false, "code": "WIRE.IDEMPOTENCY_MISMATCH", "msg": "같은 키에 다른 요청" })

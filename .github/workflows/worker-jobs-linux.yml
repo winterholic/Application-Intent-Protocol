@@ -90,7 +90,7 @@ jobs:
         run: |
           cargo test --manifest-path spikes/spike-v1-fixture/Cargo.toml --locked --target-dir target --test encrypted_types --test diagnostics
           cargo test -p aip-migrate --locked --test encryption_gate --test encryption_activation_gate
-          cargo test -p aip-execution --locked --test encryption_deks --test encryption_fence
+          cargo test -p aip-execution --locked --no-fail-fast --test encryption_deks --test encryption_fence --test encryption_cells --test encryption_journal
       - name: Explain the seeded FlaskBB count query with and without JIT
         run: cargo test -p aip-migrate --locked --test flaskbb_read_plan -- --nocapture
       - name: Upgrade an actual pre-trace durable job schema with the product CLI
@@ -104,7 +104,7 @@ jobs:
       - name: Prove Linux worker sandbox boundaries with Bubblewrap
         run: AIP_TEST_BWRAP=1 cargo test --manifest-path spikes/spike-v4-worker/Cargo.toml --lib isolation::tests --locked --target-dir target
       - name: Run durable worker, retry, schedule, webhook and outbox jobs
-        run: cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --locked --target-dir target --test job_retry --test job_breaker --test triggers --test outbox --test otlp --test encryption_gate --test bundle_http
+        run: cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --locked --target-dir target --no-fail-fast --test job_retry --test job_breaker --test triggers --test outbox --test otlp --test encryption_gate --test encryption_e2e --test bundle_http
       - name: Run installed product SDK smoke with Node and Python workers
         run: node --test product/tests/service-smoke.test.mjs
       - name: Verify isolated FlaskBB mail delivery and connect-stage recovery

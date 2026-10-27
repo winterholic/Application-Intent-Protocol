@@ -1322,8 +1322,12 @@ impl Host {
             spike_v1_fixture::digest(&json!(key))
         };
         let effect_key = format!("{}{op}.{name}:{suffix}", self.prefix);
-        let digest = spike_v1_fixture::digest(&json!([op, name, input, self.lease.implementation]));
         let s = schema(&self.rt)?.to_string();
+        let journal = crate::encryption::EffectJournal::new(&self.facts).map_err(|e| e.code)?;
+        let effect = aip_execution::encrypted_journal::Effect { kind: op, name, input, implementation: &self.lease.implementation };
+        let journal_key = format!("{}:{effect_key}", self.lease.run_id);
+        let journal_context = aip_execution::encrypted_journal::Context { schema: &s, principal: &self.lease.owner, request_key: &journal_key };
+        let digest = journal.marker(&effect, &journal_context).map_err(|e| e.code)?;
         let mut db = connect(&self.rt).await?;
         let tx = db.transaction().await.map_err(db_error)?;
         guard(&tx, &self.rt, &self.grant).await?;
@@ -1364,7 +1368,7 @@ impl Host {
             .await
             .map_err(db_error)?
         {
-            if row.get::<_, String>(0) != digest {
+            if !journal.matches(&effect, &journal_context, &row.get::<_, String>(0)).map_err(|e| e.code)? {
                 return Err("WIRE.IDEMPOTENCY_MISMATCH");
             }
             if row.get::<_, String>(1) == "SUCCEEDED" {

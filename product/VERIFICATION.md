@@ -1,5 +1,19 @@
 # 제품 통합 검증 (2026-10-17)
 
+
+## 2026-10-28 암호화 DB 경계·저널 공통 처리 (증분, 제품 활성화/출시 미완)
+
+전용 PostgreSQL 17 컨테이너 `aip-encryption-582e8c36`, loopback 32876, DB `aip_test_encryption`에서 실행했다. 기존 checkout/target을 재사용했으며 사용자/운영 DB에 접속하지 않았다.
+
+- `cargo test -p aip-execution --locked --offline --no-fail-fast --test encryption_cells --test encryption_journal`: cell 7개·journal 6개. 독립 commit 예산이 rollback 뒤 유지됨, 12개 동시 예약이 남은 3회만 성공함, 실제 cell writer가 승격을 commit까지 막음, stale writer/RETIRED 읽기/다른 AAD 거부, KEK-only rewrap, 요청 경로별 평문 sentinel 부재, scalar 타입 구분, compose `{const}`/`{item}`, retained fingerprint 키 재생·유실을 대조한다. compose는 실제 `{const}` 형식에서 2 failed를 관측한 뒤 방문자를 고쳐 6 passed다.
+- 같은 환경의 기존 `encryption_deks` 7개·`encryption_fence` 2개는 9 passed. 새 코드와 충돌이 없음을 확인했고 소스 변경이 없어서 재실행하지 않았다.
+- `cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --target-dir target --locked --offline --no-fail-fast --test encryption_e2e --test encryption_gate`: 내부 handle/fixture 키 map 1개·listener 차단 3개. `/apply`·`/status` marker 위조 및 retained fp 키 유실 거부와 durable 효과 marker 어댑터의 회전도 포함한다. 실제 Host worker 실행을 검증한 것으로 세지 않는다.
+- execution 및 transport의 `cargo clippy ... --all-targets -- -D warnings`, 두 workspace fmt와 diff 검사로 변경 범위를 확인한다.
+
+추가 실제 worker 검사는 **Codex/macOS 명령 샌드박스**의 `durable_commit_classification` 4개와 `write_session_outcome` 1개가 worker runtime probe 준비 단계에서 `exit status: 71; sandbox-exec: sandbox_apply: Operation not permitted`로 실패했다. 제품 assertion 도달 전 환경 차단이며 해당 실패를 다른 엔진/호스트 전체의 실패로 일반화하지 않는다. 동일 probe를 재시도하거나 sandbox를 우회하지 않았다. 함께 요청했던 `write_extension_commit_classification`은 앞 target 실패로 미실행이며 재시도하지 않았다. 독립 암호화 suites는 별도 `--no-fail-fast` 실행으로 관측했다.
+
+남음: native resource writer/read·인가/traverse·배포 키 공급 연결, migration/adopt 전수 AEAD 인증·동시 활성화·복원, durable lease/multi-pass rekey와 blind-index unique 회전, Infisical 실제 값 전환 및 전체 앱 포팅/1.0 최종 gate. `docs/design/13-field-encryption.md`는 Proposed다. 이번 증분으로 WBS 8.18.3~6을 완료로 바꾸지 않는다. 원격 push/CI는 기존 keyring 차단으로 미실행이다.
+
 ## 2026-10-22 WBS 7.2.9 시스템 상태와 시청 더미 데이터 (구현 조각, 로컬 실DB·실서버·원본 서비스 대조 통과, 7.2.9 잔여 4개 구현 조각 모두 완료, 미검증과 한계는 아래)
 
 **시스템 상태(`User.systemStatus`, 결정 D-P-SYSSTATUS).** `reference/slice14i_oracle.py`가 같은 MySQL·MongoDB와 실제 Redis 위에서 원본 `get_system_status()`와 서버를 차례로 돌려 요청 수치(`total_requests_1h`, `avg_response_time_ms`, `error_rate_1h`)와 연결 상태를 비교했다: `the system status matched the original in 10 cases`. Redis가 있을 때(요청 200·오류 7·응답 시간 3개), 카운터가 비었을 때, 오류 카운터가 깨졌을 때(읽던 곳에서 멈추고 앞의 값을 유지), Redis가 아예 없을 때(`redis: error`, 수치 0), 회원·게스트 거절이 같았다. 서버 지표(CPU·메모리·디스크)는 실행 기계가 macOS라 원본 값과 비교하지 못했고(서버는 `null`) 이름 모양만 비교했다. Linux 계산은 두 가지로 확인했다: python 컨테이너(psutil 7.2.2)에서 `/proc/stat`·`/proc/meminfo`와 psutil 값을 같은 순간에 읽은 기록으로 식이 같음(`host_figures_equal_psutil_on_a_linux_capture`: CPU 11.2, 메모리 18.1과 16038.1 MiB, 디스크 8.5), 같은 코드를 Linux 컨테이너에서 컴파일해 실제 읽기를 실행(`host_figures_read_this_linux_machine`, 값이 0~100 범위). 실서버 시험은 Linux에서 같은 값이 0~100 범위인지 확인하도록 썼지만 이 기계(macOS)에서는 실행되지 않았다(CI 결과로 확인, 미실행). 변이: 관리자 확인을 빼면 회원 호출이 `mysql: error`가 든 상태를 받아 실서버 시험이 실패했다.

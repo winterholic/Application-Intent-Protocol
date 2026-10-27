@@ -1,10 +1,12 @@
-//! Envelope-key metadata for the PostgreSQL product path. This does not enable encrypted resources.
+//! Envelope keys and a transactional cell boundary for the PostgreSQL product path.
 //!
 //! DDL is an explicit provisioning operation. First creation and KEK-only rewrap are serialized by
-//! the scope row in the caller's transaction. Resource writers, invocation budgets and durable rekey
-//! must be connected before the service's encryption execution gate can be removed.
+//! the scope row in the caller's transaction. Cell usage is reserved on a separate connection and
+//! committed before sealing, so resource rollback cannot replenish the random-nonce budget.
+//! Resource policy, journal visitors and durable rekey must still be connected before activation.
+use aip_crypto::cell::{self, Context as CellContext, DataKey};
 use aip_crypto::provider::{KekProvider, WrapContext, WrappedDek};
-use tokio_postgres::{GenericClient, Row, Transaction};
+use tokio_postgres::{Client, GenericClient, Row, Transaction};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
@@ -15,6 +17,41 @@ pub enum Error {
     Corrupted,
     Crypto,
     Database,
+    UsageExhausted,
+    StaleWriter,
+}
+
+/// Operational per-DEK ceiling on random-nonce cell seals (including failed/rolled-back attempts).
+/// This is a limit on calls, not a claim of nonce uniqueness or a cryptographic security proof.
+pub const MAX_DEK_SEALS: u64 = 1 << 20;
+const MAX_RESERVATION: u32 = 500;
+
+/// Validated AAD location. Callers must authorize the row/field and validate its scalar before use.
+#[derive(Debug)]
+pub struct CellLocation {
+    resource: String,
+    field: String,
+    row_id: String,
+}
+impl CellLocation {
+    pub fn new(resource: &str, field: &str, row_id: &str) -> Result<Self, Error> {
+        if !valid_resource(resource) || !valid_resource(field) || !canonical_id(row_id) {
+            return Err(Error::InvalidInput);
+        }
+        Ok(Self { resource: resource.into(), field: field.into(), row_id: row_id.into() })
+    }
+}
+
+/// Non-cloneable budget committed independently of any resource transaction. Dropping or cancelling
+/// it intentionally wastes unused reservations. It contains neither raw keys nor resource values.
+#[derive(Debug)]
+pub struct SealReservation {
+    deployment: String,
+    scope: Scope,
+    epoch: u64,
+    dek_id: Uuid,
+    version: u32,
+    remaining: u32,
 }
 impl From<tokio_postgres::Error> for Error {
     fn from(_: tokio_postgres::Error) -> Self {
@@ -147,6 +184,9 @@ impl DekStore {
                UNIQUE(scope_kind,scope_id,version));
              CREATE UNIQUE INDEX IF NOT EXISTS aip_encryption_one_active ON {s}.aip_encryption_deks(scope_kind,scope_id) WHERE state='ACTIVE';"
         )
+        + &format!(
+            "ALTER TABLE {s}.aip_encryption_deks ADD COLUMN IF NOT EXISTS seal_count bigint NOT NULL DEFAULT 0 CHECK(seal_count BETWEEN 0 AND {MAX_DEK_SEALS});"
+        )
     }
     async fn lock_scope(&self, tx: &Transaction<'_>, scope: &Scope) -> Result<(), Error> {
         tx.query_one(
@@ -230,6 +270,175 @@ impl DekStore {
         }
         let row=tx.query_opt(&format!("SELECT dek_id,version,kek_id,wrapped_dek FROM {}.aip_encryption_deks WHERE scope_kind=$1 AND scope_id=$2 AND state='ACTIVE' FOR SHARE",self.infra),&[&scope.kind,&scope.id]).await?.ok_or(Error::NotFound)?;
         Ok(WriteDek { epoch: epoch as u64, dek: Dek::from_row(row)? })
+    }
+
+    /// Reserve at most 500 cell seals on a dedicated, otherwise-idle connection. Invoke this
+    /// BEFORE starting/locking the resource transaction; never use the resource connection here.
+    /// No raw key or frame is returned before the budget transaction commits. Cancellation after
+    /// an uncertain commit wastes budget, rather than allowing an uncounted encryption attempt.
+    pub async fn reserve_for_write(&self, budget: &mut Client, scope: &Scope, cells: u32) -> Result<SealReservation, Error> {
+        if cells == 0 || cells > MAX_RESERVATION {
+            return Err(Error::InvalidInput);
+        }
+        let tx = budget.transaction().await?;
+        let row = tx
+            .query_opt(
+                &format!("SELECT write_epoch FROM {}.aip_encryption_scopes WHERE scope_kind=$1 AND scope_id=$2 FOR SHARE", self.infra),
+                &[&scope.kind, &scope.id],
+            )
+            .await?
+            .ok_or(Error::NotFound)?;
+        let epoch: i64 = row.try_get("write_epoch")?;
+        if epoch <= 0 {
+            return Err(Error::Corrupted);
+        }
+        // Lock ACTIVE exclusively here, without first sharing its row: concurrent reservations
+        // must not deadlock while upgrading two shared locks into UPDATE locks.
+        let row = tx.query_opt(
+            &format!("SELECT dek_id,version,kek_id,wrapped_dek,seal_count FROM {}.aip_encryption_deks WHERE scope_kind=$1 AND scope_id=$2 AND state='ACTIVE' FOR UPDATE",self.infra),
+            &[&scope.kind, &scope.id],
+        ).await?.ok_or(Error::NotFound)?;
+        let used: i64 = row.try_get("seal_count")?;
+        if used < 0 || used as u64 > MAX_DEK_SEALS {
+            return Err(Error::Corrupted);
+        }
+        if cells as u64 > MAX_DEK_SEALS - used as u64 {
+            return Err(Error::UsageExhausted);
+        }
+        let dek = Dek::from_row(row)?;
+        tx.execute(&format!("UPDATE {}.aip_encryption_deks SET seal_count=seal_count+$2 WHERE dek_id=$1", self.infra), &[&dek.id, &(cells as i64)])
+            .await?;
+        tx.commit().await?;
+        Ok(SealReservation {
+            deployment: self.deployment.clone(),
+            scope: scope.clone(),
+            epoch: epoch as u64,
+            dek_id: dek.id,
+            version: dek.version,
+            remaining: cells,
+        })
+    }
+
+    /// Seal after policy/scalar validation and row-ID allocation, in the SAME transaction as the
+    /// resource write. Locks the current DB epoch/key through commit; a cached old reservation is
+    /// rejected after promotion. Rewrap is transparent because current wrapped metadata is loaded.
+    /// A reservation is consumed before any provider/AEAD await, even if this future is cancelled.
+    pub async fn seal_in(
+        &self,
+        tx: &Transaction<'_>,
+        reservation: &mut SealReservation,
+        location: &CellLocation,
+        plaintext: &[u8],
+        provider: &dyn KekProvider,
+    ) -> Result<String, Error> {
+        if reservation.deployment != self.deployment || plaintext.len() > cell::MAX_CELL_BYTES {
+            return Err(Error::InvalidInput);
+        }
+        if reservation.remaining == 0 {
+            return Err(Error::UsageExhausted);
+        }
+        reservation.remaining -= 1;
+        let current = self.active_for_write_in(tx, &reservation.scope).await?;
+        if current.epoch != reservation.epoch || current.dek.id != reservation.dek_id || current.dek.version != reservation.version {
+            return Err(Error::StaleWriter);
+        }
+        let key = self.unwrap_key(&reservation.scope, &current.dek, provider).await?;
+        key.seal(&self.cell_context(&reservation.scope, location), plaintext).map_err(|_| Error::Crypto)
+    }
+
+    /// Open only an already-authorized, non-null cell. No plaintext/v1 fallback and no scope-only
+    /// key cache. The full frame identity is looked up inside this deployment/scope. RETIRED keys
+    /// cannot be read through this boundary, even if a KEK provider still has their material.
+    pub async fn open_cell(
+        &self,
+        client: &impl GenericClient,
+        scope: &Scope,
+        location: &CellLocation,
+        frame: &str,
+        provider: &dyn KekProvider,
+    ) -> Result<Zeroizing<Vec<u8>>, Error> {
+        let header = cell::parse_header(frame).map_err(|_| Error::Corrupted)?;
+        let (id, version) = checked_identity(header.dek_id, header.version).map_err(|_| Error::Corrupted)?;
+        let row = client.query_opt(
+            &format!("SELECT dek_id,version,kek_id,wrapped_dek FROM {}.aip_encryption_deks WHERE scope_kind=$1 AND scope_id=$2 AND dek_id=$3 AND version=$4 AND state IN ('ACTIVE','READABLE')",self.infra),
+            &[&scope.kind, &scope.id, &id, &version],
+        ).await?.ok_or(Error::NotFound)?;
+        let dek = Dek::from_row(row)?;
+        let key = self.unwrap_key(scope, &dek, provider).await?;
+        key.open(&self.cell_context(scope, location), frame).map_err(|_| Error::Corrupted)
+    }
+
+    /// Start a new data-key generation, leaving the previous key READABLE for durable rekey.
+    /// Takes an exclusive scope fence, waiting for all current writers, then increments epoch
+    /// and version atomically with the ACTIVE switch. This does not retire keys or claim rekey
+    /// completion. The caller must commit before handing the new identity to another transaction.
+    pub async fn promote_in(&self, tx: &Transaction<'_>, scope: &Scope, expected_epoch: u64, provider: &dyn KekProvider) -> Result<WriteDek, Error> {
+        if expected_epoch == 0 || expected_epoch >= i64::MAX as u64 {
+            return Err(Error::InvalidInput);
+        }
+        let row = tx
+            .query_opt(
+                &format!("SELECT write_epoch FROM {}.aip_encryption_scopes WHERE scope_kind=$1 AND scope_id=$2 FOR UPDATE", self.infra),
+                &[&scope.kind, &scope.id],
+            )
+            .await?
+            .ok_or(Error::NotFound)?;
+        let epoch: i64 = row.try_get("write_epoch")?;
+        if epoch <= 0 {
+            return Err(Error::Corrupted);
+        }
+        if epoch as u64 != expected_epoch {
+            return Err(Error::StaleWriter);
+        }
+        let before = self.active_for_write_in(tx, scope).await?;
+        let version = before.dek.version.checked_add(1).filter(|v| *v <= i32::MAX as u32).ok_or(Error::Corrupted)?;
+        let id = Uuid::new_v4();
+        let id_text = id.to_string();
+        let mut raw = Zeroizing::new([0_u8; 32]);
+        getrandom::fill(raw.as_mut()).map_err(|_| Error::Crypto)?;
+        let context = WrapContext { schema: &self.deployment, scope_kind: scope.kind(), scope_id: scope.id(), dek_id: &id_text, version };
+        let wrapped = tokio::time::timeout(std::time::Duration::from_secs(5), provider.wrap(&context, &raw))
+            .await
+            .map_err(|_| Error::Crypto)?
+            .map_err(|_| Error::Crypto)?;
+        if !valid_wrapped(&wrapped) {
+            return Err(Error::Crypto);
+        }
+        tx.execute(&format!("UPDATE {}.aip_encryption_deks SET state='READABLE' WHERE dek_id=$1", self.infra), &[&before.dek.id]).await?;
+        tx.execute(
+            &format!(
+                "INSERT INTO {}.aip_encryption_deks(dek_id,scope_kind,scope_id,version,state,kek_id,wrapped_dek) VALUES($1,$2,$3,$4,'ACTIVE',$5,$6)",
+                self.infra
+            ),
+            &[&id, &scope.kind, &scope.id, &(version as i32), &wrapped.kek_id, &wrapped.sealed],
+        )
+        .await?;
+        tx.execute(
+            &format!("UPDATE {}.aip_encryption_scopes SET write_epoch=write_epoch+1 WHERE scope_kind=$1 AND scope_id=$2", self.infra),
+            &[&scope.kind, &scope.id],
+        )
+        .await?;
+        Ok(WriteDek { epoch: expected_epoch + 1, dek: Dek { id, id_text, version, wrapped } })
+    }
+
+    fn cell_context<'a>(&'a self, scope: &'a Scope, location: &'a CellLocation) -> CellContext<'a> {
+        CellContext {
+            schema: &self.deployment,
+            resource: &location.resource,
+            field: &location.field,
+            row_id: &location.row_id,
+            scope_kind: scope.kind(),
+            scope_id: scope.id(),
+        }
+    }
+    async fn unwrap_key(&self, scope: &Scope, dek: &Dek, provider: &dyn KekProvider) -> Result<DataKey, Error> {
+        let context =
+            WrapContext { schema: &self.deployment, scope_kind: scope.kind(), scope_id: scope.id(), dek_id: dek.id(), version: dek.version };
+        let raw = tokio::time::timeout(std::time::Duration::from_secs(5), provider.unwrap(&context, &dek.wrapped))
+            .await
+            .map_err(|_| Error::Crypto)?
+            .map_err(|_| Error::Crypto)?;
+        DataKey::new(dek.id(), dek.version, *raw).map_err(|_| Error::Crypto)
     }
     /// Looks up the full immutable identity within its scope. This neither loads plaintext key
     /// material nor certifies that an old key is allowed for a new resource write.

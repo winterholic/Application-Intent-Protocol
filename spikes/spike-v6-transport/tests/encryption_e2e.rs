@@ -244,6 +244,40 @@ async fn encryption_read_write_zero_plaintext_and_idempotency_rotation() {
     assert_eq!(status_mismatch_res["ok"], false);
     assert_eq!(status_mismatch_res["code"], "WIRE.IDEMPOTENCY_MISMATCH");
 
+    // Exercise the same effect marker adapter that durable Host writes to aip_effects.
+    use aip_execution::encrypted_journal::{Context as JournalContext, Effect};
+    let effect = Effect { kind: "create", name: "SecretItem", input: &create_body["request"], implementation: "fixture-bundle" };
+    let context = JournalContext { schema: &schema, principal: "actor:1", request_key: "fixture-run:effect-1" };
+    encryption::set_runtime_crypto(Some(crypto));
+    let effect_marker = encryption::EffectJournal::new(&facts).unwrap().marker(&effect, &context).unwrap();
+    encryption::set_runtime_crypto(Some(rotated_crypto.clone()));
+    assert!(encryption::EffectJournal::new(&facts).unwrap().matches(&effect, &context, &effect_marker).unwrap());
+    assert!(!encryption::EffectJournal::new(&facts)
+        .unwrap()
+        .matches(&Effect { implementation: "different-bundle", ..effect }, &context, &effect_marker)
+        .unwrap());
+
+    // Missing retained fingerprint material is an availability failure on both replay routes.
+    // A caller cannot replay the stored marker object itself via raw string equality.
+    let forged = json!({"key":idem_key,"request":serde_json::from_str::<serde_json::Value>(&stored_request).unwrap()});
+    for route in ["/apply", "/status"] {
+        let result = spike_v6_transport::handle(&mut db, &facts, route, &forged, &caller, wire).await;
+        assert_eq!(result["code"], "WIRE.BAD_REQUEST");
+    }
+    encryption::set_runtime_crypto(Some(Arc::new(RuntimeCrypto {
+        fp_keys: FpKeys::new("fp2", vec![("fp2", [0x22; 32])]).unwrap(),
+        data_keys: BTreeMap::new(),
+    })));
+    for route in ["/apply", "/status"] {
+        let result = spike_v6_transport::handle(&mut db, &facts, route, &create_body, &caller, wire).await;
+        assert_eq!(result["code"], "WIRE.ENCRYPTION_UNAVAILABLE");
+    }
+    assert_eq!(
+        encryption::EffectJournal::new(&facts).unwrap().matches(&effect, &context, &effect_marker).unwrap_err().code,
+        "WIRE.ENCRYPTION_UNAVAILABLE"
+    );
+    encryption::set_runtime_crypto(Some(rotated_crypto));
+
     // 7. TAMPERED CIPHERTEXT DETECTION (WIRE.ENCRYPTION_CORRUPTED)
     // Directly tamper ciphertext in DB with valid header but invalid AEAD payload
     db.batch_execute(&format!(

@@ -54,7 +54,6 @@ pub async fn apply_with_launch(
     };
     let expires = Instant::now() + deadline;
     let principal = super::principal_key(caller.actor_id, wire);
-    let request_text = request.to_string();
     let schema = spike_v2_read::sqlgen::schema();
     let mut commit_sent = false;
     let operation = async {
@@ -77,16 +76,9 @@ pub async fn apply_with_launch(
         match tx.query_opt(&format!("SELECT request,result::text FROM {schema}.aip_idem WHERE principal=$1 AND key=$2"), &[&principal, &key]).await {
             Ok(Some(row)) => {
                 let stored: String = row.get(0);
-                let matches = if stored == request_text {
-                    true
-                } else if let Some(crypto) = crate::encryption::get_runtime_crypto() {
-                    if let (Ok(s_val), Ok(i_val)) = (serde_json::from_str::<Value>(&stored), serde_json::from_str::<Value>(&request_text)) {
-                        crate::encryption::verify_idempotency_request(facts, &s_val, &i_val, &crypto, schema, &principal, key)
-                    } else {
-                        false
-                    }
-                } else {
-                    false
+                let matches = match crate::encryption::stored_request_matches(facts, &stored, request, schema, &principal, key) {
+                    Ok(matches) => matches,
+                    Err(e) => return failure(e.code),
                 };
                 if !matches {
                     return failure("WIRE.IDEMPOTENCY_MISMATCH");
@@ -139,10 +131,9 @@ pub async fn apply_with_launch(
         if left < Duration::from_millis(300) {
             return failure("WIRE.DEADLINE_EXCEEDED");
         }
-        let req_to_store = if let Some(crypto) = crate::encryption::get_runtime_crypto() {
-            crate::encryption::mask_request_for_idempotency(facts, request, &crypto, schema, &principal, key).to_string()
-        } else {
-            request_text
+        let req_to_store = match crate::encryption::journal_request(facts, request, schema, &principal, key) {
+            Ok(request) => request,
+            Err(e) => return failure(e.code),
         };
         let insert = tokio::time::timeout(
             left,
