@@ -1,6 +1,6 @@
 # AIP (Application Intent Protocol)
 
-> 2026-10-27 쓰기배포 회귀가드: enable_writes 누락 근본원인을 테스트로 고정했다. 8개 mysql 배포·7개 browser 여정 전수 대조로 쓰기확장 호출 5곳의 플래그 설정을 확정하고(읽기/job 전용 3곳은 불필요), 신규 감사 테스트 8종이 향후 누락을 실패로 잡는다. 제품·gate 변경 없음. 로컬 main 커밋 완료, push는 403으로 차단(원격 fa9afef 유지). 쓰기 권한 세션이 push 후 일반 Verify를 확인한다. [최신 판정](plan-docs/STATUS.md)과 [검증 상세](product/VERIFICATION.md#2026-10-27-write-deployment-enable_writes-regression-guard) 참조.
+> 2026-10-27 확정탈퇴 여정: EditPage 확인모달 탈퇴 browser 여정을 구현했다(원본 UI·백엔드·AIP 선언·overlay 대조, 삭제 5종·댓글 flip·세션 종료·무관행 보존 DB 판정). 테스트·여정 코드만, 제품·gate 변경 없음. 로컬 main 커밋 완료, push는 403으로 차단(원격 fa9afef 유지). 쓰기 권한 세션이 push 후 일반 Verify를 확인한다. [최신 판정](plan-docs/STATUS.md)과 [검증 상세](product/VERIFICATION.md#2026-10-27-editpage-confirmed-withdraw-browser-journey) 참조.
 
 프론트엔드가 필요한 데이터와 동작을 정형화해 표현하면 서버가 정책과 계약에 따라 실행하는 프레임워크. 애플리케이션별 백엔드 반복 구현과 프론트·백엔드 계약의 이중 유지보수를 최소화한다.
 

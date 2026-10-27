@@ -160,6 +160,37 @@ class BrowserEvidenceTests(unittest.TestCase):
         for key in ui:
             self.assertFalse(member_password_evidence(served, {**ui, key: False})["verified"])
 
+    def test_withdraw_journey_requires_single_login_action_logout_and_confirmed_ui(self):
+        from product.tests.facereview_ui_browser_evidence import member_withdraw_evidence
+        rows = [{"path": "/auth/login", "method": "POST", "status": 200, "ok": True, "body_captured": True, "payload_matches": True},
+                {"path": "/apply", "method": "POST", "status": 200, "ok": True, "body_captured": True, "payload_matches": True,
+                 "withdraw_action": True, "authorization_present": True, "contract_matches_runtime": True},
+                {"path": "/auth/logout", "method": "POST", "status": 200, "ok": True, "body_captured": True, "payload_matches": True,
+                 "refresh_cookie_present": True}]
+        ui = {key: True for key in ("edit_page", "withdraw_modal", "withdraw_confirmed", "signed_out")}
+        self.assertTrue(member_withdraw_evidence(rows, ui)["verified"])
+        untagged = rows + [{"path": "/apply", "method": "POST", "status": 200, "ok": True, "body_captured": True,
+                            "write_extension": "User.myEmotionSummary"}]
+        self.assertTrue(member_withdraw_evidence(untagged, ui)["verified"])
+        for i in range(len(rows)):
+            for key, value in [("body_captured", False), ("ok", False), ("payload_matches", False), ("status", 400), ("method", "GET")]:
+                changed = [dict(row) for row in rows]; changed[i][key] = value
+                self.assertFalse(member_withdraw_evidence(changed, ui)["verified"], (i, key))
+            self.assertFalse(member_withdraw_evidence(rows[:i] + rows[i+1:], ui)["verified"])
+        self.assertFalse(member_withdraw_evidence(rows + [rows[1]], ui)["verified"])
+        mistagged = [dict(row) for row in rows]; mistagged[1]["withdraw_action"] = False
+        self.assertFalse(member_withdraw_evidence(mistagged, ui)["verified"])
+        mistargeted = [dict(row) for row in rows]; mistargeted[1]["payload_matches"] = False
+        self.assertFalse(member_withdraw_evidence(mistargeted, ui)["verified"])
+        no_auth_header = [dict(row) for row in rows]; no_auth_header[1]["authorization_present"] = False
+        self.assertFalse(member_withdraw_evidence(no_auth_header, ui)["verified"])
+        no_contract = [dict(row) for row in rows]; no_contract[1]["contract_matches_runtime"] = False
+        self.assertFalse(member_withdraw_evidence(no_contract, ui)["verified"])
+        no_cookie = [dict(row) for row in rows]; no_cookie[2]["refresh_cookie_present"] = False
+        self.assertFalse(member_withdraw_evidence(no_cookie, ui)["verified"])
+        for key in ui:
+            self.assertFalse(member_withdraw_evidence(rows, {**ui, key: False})["verified"])
+
     def test_emotion_summary_gate_counts_only_tagged_served_calls(self):
         from product.tests.facereview_ui_browser_evidence import emotion_summary_served
         tagged = {"path": "/apply", "method": "POST", "status": 200, "body_captured": True,

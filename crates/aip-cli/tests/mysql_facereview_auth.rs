@@ -208,13 +208,25 @@ async fn business_snapshot(conn: &mut aip_migrate::mysql_driver::mysql_async::Co
 }
 
 async fn business_snapshot_except_user(conn: &mut aip_migrate::mysql_driver::mysql_async::Conn, exclude_user: Option<&str>) -> Vec<Vec<String>> {
-    business_snapshot_excluding(conn, exclude_user, false).await
+    business_snapshot_excluding(conn, exclude_user, false, false).await
+}
+
+// Only the password/email journeys intentionally serve the summary write extension, and their
+// summary effect is asserted separately (row/lock/checkpoint positives, email stability). Every
+// other journey (signup, tutorial, search) must see the full summary table on both sides so an
+// unexpected insert is a snapshot mismatch, not a hidden row.
+async fn business_snapshot_except_user_with_summary(
+    conn: &mut aip_migrate::mysql_driver::mysql_async::Conn,
+    exclude_user: Option<&str>,
+) -> Vec<Vec<String>> {
+    business_snapshot_excluding(conn, exclude_user, false, true).await
 }
 
 async fn business_snapshot_excluding(
     conn: &mut aip_migrate::mysql_driver::mysql_async::Conn,
     exclude_user: Option<&str>,
     exclude_genres: bool,
+    exclude_summary: bool,
 ) -> Vec<Vec<String>> {
     // Keep values only in memory. Evidence records equality, never personal row contents.
     let mut tables = Vec::new();
@@ -231,18 +243,55 @@ async fn business_snapshot_excluding(
         "video_request",
         "video_view_log",
     ] {
-        let rows: Vec<aip_migrate::mysql_driver::mysql_async::Row> = match (table, exclude_user, exclude_genres) {
-            ("user", Some(user), _) => conn.exec("SELECT * FROM `user` WHERE user_id <> ? ORDER BY 1", (user,)).await.unwrap(),
-            ("user_favorite_genre", Some(user), true) => {
+        let rows: Vec<aip_migrate::mysql_driver::mysql_async::Row> = match (table, exclude_user, exclude_genres, exclude_summary) {
+            ("user", Some(user), _, _) => conn.exec("SELECT * FROM `user` WHERE user_id <> ? ORDER BY 1", (user,)).await.unwrap(),
+            ("user_favorite_genre", Some(user), true, _) => {
                 conn.exec("SELECT * FROM user_favorite_genre WHERE user_id <> ? ORDER BY 1", (user,)).await.unwrap()
             }
             // The journey member's own summary row is the write extension's direct effect, verified
-            // separately; unrelated members' rows stay in the snapshot on both sides.
-            ("user_emotion_summary", Some(user), _) => {
+            // separately; unrelated members' rows stay in the snapshot on both sides. Only journeys
+            // that intentionally serve the extension (password/email) set exclude_summary.
+            ("user_emotion_summary", Some(user), _, true) => {
                 conn.exec("SELECT * FROM user_emotion_summary WHERE user_id <> ? ORDER BY 1", (user,)).await.unwrap()
             }
             // Use the binary protocol on both sides: text query() represents numbers/dates as Bytes,
             // while exec() decodes typed Values, so their Debug snapshots differ without any DB write.
+            _ => conn.exec(format!("SELECT * FROM `{table}` ORDER BY 1"), ()).await.unwrap(),
+        };
+        tables.push(rows.into_iter().map(|row| format!("{:?}", row.unwrap())).collect());
+    }
+    tables
+}
+
+// Withdrawal deletes the journey member's rows in five tables, flips the member's comments,
+// and flips the member row, so those member rows are excluded and asserted separately. Every
+// other row (including the member's surviving bookmark and emotion-dna rows) stays in the
+// snapshot on both sides. The member's summary row is the /my visit's write effect, asserted
+// separately like the password/email journeys.
+async fn business_snapshot_except_member(conn: &mut aip_migrate::mysql_driver::mysql_async::Conn, member: &str) -> Vec<Vec<String>> {
+    let mut tables = Vec::new();
+    for table in [
+        "comment",
+        "user",
+        "user_emotion_dna",
+        "user_emotion_summary",
+        "user_favorite_genre",
+        "user_point_history",
+        "video",
+        "video_bookmark",
+        "video_like",
+        "video_request",
+        "video_view_log",
+    ] {
+        let rows: Vec<aip_migrate::mysql_driver::mysql_async::Row> = match table {
+            "comment"
+            | "user"
+            | "user_emotion_summary"
+            | "user_favorite_genre"
+            | "user_point_history"
+            | "video_like"
+            | "video_request"
+            | "video_view_log" => conn.exec(format!("SELECT * FROM `{table}` WHERE user_id <> ? ORDER BY 1"), (member,)).await.unwrap(),
             _ => conn.exec(format!("SELECT * FROM `{table}` ORDER BY 1"), ()).await.unwrap(),
         };
         tables.push(rows.into_iter().map(|row| format!("{:?}", row.unwrap())).collect());
@@ -1653,7 +1702,7 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
         assert_eq!(other_login.status, 200, "prepare the disposable account's other-device session");
         let other_access = access(&other_login);
         let before_hash = cell(&mut setup, &format!("SELECT password FROM user WHERE user_id = '{PASSWORD_MEMBER}'")).await.unwrap();
-        let business_before = business_snapshot_except_user(&mut setup, Some(PASSWORD_MEMBER)).await;
+        let business_before = business_snapshot_except_user_with_summary(&mut setup, Some(PASSWORD_MEMBER)).await;
         let other_sessions_sql = format!("SELECT * FROM `{META}`.aip_auth_sessions WHERE subject <> '{PASSWORD_MEMBER}' ORDER BY 1");
         let other_sessions_before: Vec<aip_migrate::mysql_driver::mysql_async::Row> = setup.query(&other_sessions_sql).await.unwrap();
         let other_sessions_before: Vec<String> = other_sessions_before.into_iter().map(|row| format!("{:?}", row.unwrap())).collect();
@@ -1674,7 +1723,7 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
             .output()
             .expect("run original password UI journey");
         let after_hash = cell(&mut setup, &format!("SELECT password FROM user WHERE user_id = '{PASSWORD_MEMBER}'")).await.unwrap();
-        let business_after = business_snapshot_except_user(&mut setup, Some(PASSWORD_MEMBER)).await;
+        let business_after = business_snapshot_except_user_with_summary(&mut setup, Some(PASSWORD_MEMBER)).await;
         let other_sessions_after: Vec<aip_migrate::mysql_driver::mysql_async::Row> = setup.query(&other_sessions_sql).await.unwrap();
         let other_sessions_after: Vec<String> = other_sessions_after.into_iter().map(|row| format!("{:?}", row.unwrap())).collect();
         let (mail_count, mail_recipient_matches) = {
@@ -1750,7 +1799,7 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
 
         // Continue with the same run-owned account, whose email flag is still 0.
         // A fresh browser uses the password just verified above; no signup/tutorial coverage is implied.
-        let email_business_before = business_snapshot_except_user(&mut setup, Some(PASSWORD_MEMBER)).await;
+        let email_business_before = business_snapshot_except_user_with_summary(&mut setup, Some(PASSWORD_MEMBER)).await;
         let target_stable_sql = format!(
             "SELECT user_id, email, password, name, role, profile_image_id, is_tutorial_done, is_deleted, created_at FROM user WHERE user_id = '{PASSWORD_MEMBER}'"
         );
@@ -1770,7 +1819,7 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
             .env("AIP_FACEREVIEW_TEST_INBOX", format!("http://127.0.0.1:{}{}", mailer.port, mailer.inbox_path))
             .output()
             .expect("run original MyPage email verification journey");
-        let email_business_after = business_snapshot_except_user(&mut setup, Some(PASSWORD_MEMBER)).await;
+        let email_business_after = business_snapshot_except_user_with_summary(&mut setup, Some(PASSWORD_MEMBER)).await;
         let target_after: Vec<aip_migrate::mysql_driver::mysql_async::Row> = setup.query(&target_stable_sql).await.unwrap();
         let target_after: Vec<String> = target_after.into_iter().map(|row| format!("{:?}", row.unwrap())).collect();
         let email_sessions_after: Vec<aip_migrate::mysql_driver::mysql_async::Row> = setup.query(&other_sessions_sql).await.unwrap();
@@ -1834,6 +1883,189 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
         );
         assert!(email_db_ok, "email verification DB/session isolation or mail/challenge lifecycle failed; see boolean evidence");
 
+        // EditPage confirmed withdrawal: its own disposable member with one row per
+        // transition-touched table. The UI journey (login -> /my -> /edit -> modal ->
+        // confirm -> toast -> logout -> /main) is the only writer under test here.
+        const WITHDRAW_MEMBER: &str = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+        const WITHDRAW_EMAIL: &str = "withdraw-ui@example.com";
+        setup.exec_drop(
+            "INSERT INTO user (user_id, email, password, name, role, is_tutorial_done, is_verify_email_done, is_deleted, created_at, updated_at) VALUES (?, ?, ?, 'AIP 탈퇴 표본회원', 'GENERAL', 1, 1, 0, NOW(), NOW())",
+            (WITHDRAW_MEMBER, WITHDRAW_EMAIL, legacy_hash),
+        ).await.unwrap();
+        setup
+            .exec_drop(
+                "INSERT INTO comment (comment_id, video_id, user_id, content, is_modified, is_deleted, created_at, updated_at) VALUES \
+             ('cccccccc-bbbb-4bbb-8bbb-bbbbbbbbbbb1', 'aaaaaaaa-0000-4000-8000-000000000001', ?, '탈퇴 여정 댓글', 0, 0, NOW(), NOW())",
+                (WITHDRAW_MEMBER,),
+            )
+            .await
+            .unwrap();
+        setup
+            .exec_drop(
+                "INSERT INTO video_like (video_like_id, video_id, user_id, created_at) VALUES \
+             ('dddddddd-bbbb-4bbb-8bbb-bbbbbbbbbbb1', 'aaaaaaaa-0000-4000-8000-000000000002', ?, NOW())",
+                (WITHDRAW_MEMBER,),
+            )
+            .await
+            .unwrap();
+        setup
+            .exec_drop(
+                "INSERT INTO video_bookmark (video_bookmark_id, video_id, user_id, created_at) VALUES \
+             ('eeeeeeee-bbbb-4bbb-8bbb-bbbbbbbbbbb1', 'aaaaaaaa-0000-4000-8000-000000000002', ?, NOW())",
+                (WITHDRAW_MEMBER,),
+            )
+            .await
+            .unwrap();
+        setup
+            .exec_drop(
+                "INSERT INTO video_view_log (video_view_log_id, video_id, user_id, guest_token, created_at, updated_at) VALUES \
+             ('99999999-bbbb-4bbb-8bbb-bbbbbbbbbbb1', 'aaaaaaaa-0000-4000-8000-000000000001', ?, NULL, NOW(), NOW())",
+                (WITHDRAW_MEMBER,),
+            )
+            .await
+            .unwrap();
+        setup.exec_drop(
+            "INSERT INTO video_request (video_request_id, user_id, youtube_url, youtube_full_url, status, admin_comment, created_at, updated_at) VALUES \
+             ('ffffffff-bbbb-4bbb-8bbb-bbbbbbbbbbb1', ?, 'withdrawreq01', 'https://www.youtube.com/watch?v=withdrawreq01', 'PENDING', NULL, NOW(), NOW())",
+            (WITHDRAW_MEMBER,),
+        ).await.unwrap();
+        setup
+            .exec_drop(
+                "INSERT INTO user_favorite_genre (user_favorite_genre_id, user_id, genre, created_at, updated_at) VALUES \
+             ('88888888-bbbb-4bbb-8bbb-bbbbbbbbbbb1', ?, 'animal', NOW(), NOW()), \
+             ('88888888-bbbb-4bbb-8bbb-bbbbbbbbbbb2', ?, 'eating', NOW(), NOW())",
+                (WITHDRAW_MEMBER, WITHDRAW_MEMBER),
+            )
+            .await
+            .unwrap();
+        setup.exec_drop(
+            "INSERT INTO user_point_history (user_point_history_id, user_id, video_id, amount, watch_time, description, created_at, updated_at) VALUES \
+             ('77777777-bbbb-4bbb-8bbb-bbbbbbbbbbb1', ?, 'aaaaaaaa-0000-4000-8000-000000000001', 10, 200, '시청', NOW(), NOW())",
+            (WITHDRAW_MEMBER,),
+        ).await.unwrap();
+        setup
+            .exec_drop(
+                "INSERT INTO user_emotion_dna (user_id, dna_type, dna_data, based_on_videos, generated_at, expires_at) VALUES \
+             (?, 'JOYFUL_EXPLORER', '{\"traits\":[]}', 1, NOW(), DATE_ADD(NOW(), INTERVAL 7 DAY))",
+                (WITHDRAW_MEMBER,),
+            )
+            .await
+            .unwrap();
+        let withdraw_other = auth(&address, "/auth/login", &json!({"email": WITHDRAW_EMAIL, "password": "password123"}), None).await;
+        assert_eq!(withdraw_other.status, 200, "prepare the disposable account's other-device session");
+        let withdraw_other_access = access(&withdraw_other);
+        let withdraw_other_cookie = refresh_value(&set_cookie(&withdraw_other));
+        let withdraw_stable_before = cell(&mut setup, &format!("SELECT CONCAT(email, '|', name, '|', role, '|', is_tutorial_done, '|', is_verify_email_done) FROM user WHERE user_id = '{WITHDRAW_MEMBER}'")).await;
+        let withdraw_bookmark_before =
+            cell(&mut setup, &format!("SELECT CONCAT(video_bookmark_id, '|', video_id) FROM video_bookmark WHERE user_id = '{WITHDRAW_MEMBER}'"))
+                .await;
+        let withdraw_dna_before =
+            cell(&mut setup, &format!("SELECT CONCAT(dna_type, '|', based_on_videos) FROM user_emotion_dna WHERE user_id = '{WITHDRAW_MEMBER}'"))
+                .await;
+        let withdraw_business_before = business_snapshot_except_member(&mut setup, WITHDRAW_MEMBER).await;
+        let withdraw_sessions_sql = format!("SELECT * FROM `{META}`.aip_auth_sessions WHERE subject <> '{WITHDRAW_MEMBER}' ORDER BY 1");
+        let withdraw_sessions_before: Vec<aip_migrate::mysql_driver::mysql_async::Row> = setup.query(&withdraw_sessions_sql).await.unwrap();
+        let withdraw_sessions_before: Vec<String> = withdraw_sessions_before.into_iter().map(|row| format!("{:?}", row.unwrap())).collect();
+        let withdraw_mails_before = mailer.sent.lock().unwrap().len();
+        let withdraw_output = output.parent().unwrap().join("withdraw");
+        std::fs::create_dir_all(&withdraw_output).unwrap();
+        let withdraw_result = StdCommand::new(std::env::var("AIP_FACEREVIEW_PYTHON").unwrap_or_else(|_| "python3".to_owned()))
+            .arg(browser_root.join("product/tests/facereview-ui-withdraw-browser.py"))
+            .args(["--ui", &ui_root, "--api", &format!("http://{address}"), "--out", withdraw_output.to_str().unwrap()])
+            .env("AIP_FACEREVIEW_JOURNEY_EMAIL", WITHDRAW_EMAIL)
+            .env("AIP_FACEREVIEW_JOURNEY_PASSWORD", "password123")
+            .env("AIP_FACEREVIEW_JOURNEY_USER_ID", WITHDRAW_MEMBER)
+            .env("AIP_FACEREVIEW_EXPECTED_CONTRACT", &fingerprint)
+            .output()
+            .expect("run original withdraw UI journey");
+        let withdraw_business_after = business_snapshot_except_member(&mut setup, WITHDRAW_MEMBER).await;
+        let withdraw_sessions_after: Vec<aip_migrate::mysql_driver::mysql_async::Row> = setup.query(&withdraw_sessions_sql).await.unwrap();
+        let withdraw_sessions_after: Vec<String> = withdraw_sessions_after.into_iter().map(|row| format!("{:?}", row.unwrap())).collect();
+        let withdraw_deleted = cell(&mut setup, &format!("SELECT is_deleted FROM user WHERE user_id = '{WITHDRAW_MEMBER}'")).await;
+        let withdraw_stable_after = cell(&mut setup, &format!("SELECT CONCAT(email, '|', name, '|', role, '|', is_tutorial_done, '|', is_verify_email_done) FROM user WHERE user_id = '{WITHDRAW_MEMBER}'")).await;
+        let withdraw_genres = cell(&mut setup, &format!("SELECT COUNT(*) FROM user_favorite_genre WHERE user_id = '{WITHDRAW_MEMBER}'")).await;
+        let withdraw_likes = cell(&mut setup, &format!("SELECT COUNT(*) FROM video_like WHERE user_id = '{WITHDRAW_MEMBER}'")).await;
+        let withdraw_viewlogs = cell(&mut setup, &format!("SELECT COUNT(*) FROM video_view_log WHERE user_id = '{WITHDRAW_MEMBER}'")).await;
+        let withdraw_requests = cell(&mut setup, &format!("SELECT COUNT(*) FROM video_request WHERE user_id = '{WITHDRAW_MEMBER}'")).await;
+        let withdraw_points = cell(&mut setup, &format!("SELECT COUNT(*) FROM user_point_history WHERE user_id = '{WITHDRAW_MEMBER}'")).await;
+        let withdraw_comments = cell(&mut setup, &format!("SELECT COUNT(*) FROM comment WHERE user_id = '{WITHDRAW_MEMBER}'")).await;
+        let withdraw_comments_flipped =
+            cell(&mut setup, &format!("SELECT COUNT(*) FROM comment WHERE user_id = '{WITHDRAW_MEMBER}' AND is_deleted = 1")).await;
+        let withdraw_bookmark_after =
+            cell(&mut setup, &format!("SELECT CONCAT(video_bookmark_id, '|', video_id) FROM video_bookmark WHERE user_id = '{WITHDRAW_MEMBER}'"))
+                .await;
+        let withdraw_dna_after =
+            cell(&mut setup, &format!("SELECT CONCAT(dna_type, '|', based_on_videos) FROM user_emotion_dna WHERE user_id = '{WITHDRAW_MEMBER}'"))
+                .await;
+        let withdraw_summary_rows = cell(&mut setup, &format!("SELECT COUNT(*) FROM user_emotion_summary WHERE user_id = '{WITHDRAW_MEMBER}'")).await;
+        let withdraw_summary_zeros = cell(
+            &mut setup,
+            &format!(
+                "SELECT COUNT(*) FROM user_emotion_summary WHERE user_id = '{WITHDRAW_MEMBER}' AND neutral_seconds = 0 AND happy_seconds = 0 AND surprise_seconds = 0 AND sad_seconds = 0 AND angry_seconds = 0"
+            ),
+        )
+        .await;
+        let withdraw_summary_lock =
+            cell(&mut setup, &format!("SELECT lock_version FROM user_emotion_summary WHERE user_id = '{WITHDRAW_MEMBER}'")).await;
+        let withdraw_summary_checkpoint = cell(
+            &mut setup,
+            &format!("SELECT COUNT(*) FROM user_emotion_summary WHERE user_id = '{WITHDRAW_MEMBER}' AND last_finalized_at IS NOT NULL AND last_session_id = ''"),
+        )
+        .await;
+        let withdraw_reissue = auth(&address, "/auth/reissue", &json!({}), Some(&withdraw_other_cookie)).await;
+        let withdraw_active =
+            cell(&mut setup, &format!("SELECT COUNT(*) FROM `{META}`.aip_auth_sessions WHERE subject = '{WITHDRAW_MEMBER}' AND revoked_at IS NULL"))
+                .await;
+        let withdraw_other_dead = post(&address, "/session", Some(&withdraw_other_access), "", &json!({})).await["code"] == "WIRE.UNAUTHENTICATED";
+        let withdraw_login_dead =
+            auth(&address, "/auth/login", &json!({"email": WITHDRAW_EMAIL, "password": "password123"}), None).await.status == 401;
+        let withdraw_mails_after = mailer.sent.lock().unwrap().len();
+        let withdraw_db_ok = withdraw_deleted.as_deref() == Some("1")
+            && withdraw_stable_before == withdraw_stable_after
+            && withdraw_genres.as_deref() == Some("0")
+            && withdraw_likes.as_deref() == Some("0")
+            && withdraw_viewlogs.as_deref() == Some("0")
+            && withdraw_requests.as_deref() == Some("0")
+            && withdraw_points.as_deref() == Some("0")
+            && withdraw_comments.as_deref() == Some("1")
+            && withdraw_comments_flipped.as_deref() == Some("1")
+            && withdraw_bookmark_before == withdraw_bookmark_after
+            && withdraw_dna_before == withdraw_dna_after
+            && withdraw_summary_rows.as_deref() == Some("1")
+            && withdraw_summary_zeros.as_deref() == Some("1")
+            && withdraw_summary_lock.as_deref() == Some("1")
+            && withdraw_summary_checkpoint.as_deref() == Some("1")
+            && withdraw_reissue.status == 401
+            && withdraw_active.as_deref() == Some("0")
+            && withdraw_other_dead
+            && withdraw_login_dead
+            && withdraw_mails_before == withdraw_mails_after
+            && withdraw_business_before == withdraw_business_after
+            && withdraw_sessions_before == withdraw_sessions_after;
+        let withdraw_db_result = json!({"journey": "member_withdraw", "browser_status": if withdraw_result.status.success() { "success" } else { "failure" },
+            "database_status": if withdraw_db_ok { "success" } else { "failure" }, "account_soft_deleted": withdraw_deleted,
+            "stable_columns_preserved": withdraw_stable_before == withdraw_stable_after, "genres_deleted": withdraw_genres,
+            "likes_deleted": withdraw_likes, "view_logs_deleted": withdraw_viewlogs, "requests_deleted": withdraw_requests,
+            "point_rows_deleted": withdraw_points, "comment_rows": withdraw_comments, "comments_soft_deleted": withdraw_comments_flipped,
+            "bookmark_row_preserved": withdraw_bookmark_before == withdraw_bookmark_after,
+            "emotion_dna_preserved": withdraw_dna_before == withdraw_dna_after,
+            "emotion_summary_rows": withdraw_summary_rows, "emotion_summary_zero_totals": withdraw_summary_zeros.as_deref() == Some("1"),
+            "emotion_summary_lock_version": withdraw_summary_lock, "emotion_summary_checkpoint_set": withdraw_summary_checkpoint.as_deref() == Some("1"),
+            "other_device_reissue_status": withdraw_reissue.status, "active_session_rows": withdraw_active,
+            "other_device_session_dead": withdraw_other_dead, "login_rejected": withdraw_login_dead,
+            "mail_count_unchanged": withdraw_mails_before == withdraw_mails_after,
+            "business_table_count": withdraw_business_before.len(), "unrelated_business_rows_preserved": withdraw_business_before == withdraw_business_after,
+            "other_account_sessions_preserved": withdraw_sessions_before == withdraw_sessions_after});
+        std::fs::write(withdraw_output.join("withdraw-db-result.json"), serde_json::to_vec_pretty(&withdraw_db_result).unwrap()).unwrap();
+        println!("withdraw browser/DB: {withdraw_db_result}");
+        print!("{}", String::from_utf8_lossy(&withdraw_result.stdout));
+        assert!(
+            withdraw_result.status.success(),
+            "withdraw browser failed; inspect safe withdraw artifacts (status {:?})",
+            withdraw_result.status.code()
+        );
+        assert!(withdraw_db_ok, "withdraw DB/session isolation or lifecycle failed; see boolean evidence");
+
         // Signup and both tutorial actions have their own new accounts, created by the original UI (never pre-seeded).
         for (action, account_email, account_name) in
             [("complete", "signup-complete-ui@example.com", "AIP가입완료"), ("skip", "signup-skip-ui@example.com", "AIP가입스킵")]
@@ -1873,7 +2105,7 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
             let genres_sql = format!("SELECT GROUP_CONCAT(genre ORDER BY CAST(genre AS CHAR)) FROM user_favorite_genre WHERE user_id = '{user}'");
             let signup_genres = cell(&mut setup, &genres_sql).await;
             let genre_count = cell(&mut setup, &format!("SELECT COUNT(*) FROM user_favorite_genre WHERE user_id = '{user}'")).await;
-            let signup_business_after = business_snapshot_excluding(&mut setup, Some(&user), true).await;
+            let signup_business_after = business_snapshot_excluding(&mut setup, Some(&user), true, false).await;
             let account_sessions_sql = format!("SELECT * FROM `{META}`.aip_auth_sessions WHERE subject <> '{user}' ORDER BY 1");
             let sessions_after: Vec<aip_migrate::mysql_driver::mysql_async::Row> = setup.query(&account_sessions_sql).await.unwrap();
             let sessions_after: Vec<String> = sessions_after.into_iter().map(|row| format!("{:?}", row.unwrap())).collect();
@@ -1881,6 +2113,10 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
             let revoked_sql = format!("SELECT COUNT(*) FROM `{META}`.aip_auth_sessions WHERE subject = '{user}' AND revoked_at IS NOT NULL");
             let signup_active = cell(&mut setup, &active_sql).await;
             let signup_revoked = cell(&mut setup, &revoked_sql).await;
+            // Signup must not create an emotion-summary row: the row is created by the first GET
+            // mypage/emotion/summary. The after-snapshot now covers the new member's summary rows
+            // (exclude_summary=false above), and this count names that failure directly.
+            let signup_summary_absent = cell(&mut setup, &format!("SELECT COUNT(*) FROM user_emotion_summary WHERE user_id = '{user}'")).await;
             let signup_expected = format!("{account_name}:GENERAL:0:0:0");
             let signup_db_ok = valid_id
                 && password_hashed
@@ -1889,6 +2125,7 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
                 && genre_count.as_deref() == Some("2")
                 && signup_active.as_deref() == Some("1")
                 && signup_revoked.as_deref() == Some("0")
+                && signup_summary_absent.as_deref() == Some("0")
                 && signup_business_before == signup_business_after
                 && sessions_before == sessions_after;
             let signup_db = json!({"journey": "member_signup", "browser_status": if signup_result.status.success() {"success"} else {"failure"},
@@ -1896,6 +2133,7 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
                 "name_and_initial_flags_match": signup_flags.as_deref() == Some(signup_expected.as_str()),
                 "selected_genres_match": signup_genres.as_deref() == Some("animal,eating") && genre_count.as_deref() == Some("2"),
                 "active_session_rows": signup_active, "revoked_session_rows": signup_revoked,
+                "summary_row_absent_for_new_member": signup_summary_absent.as_deref() == Some("0"),
                 "business_table_count": signup_business_before.len(), "unrelated_business_rows_preserved": signup_business_before == signup_business_after,
                 "other_account_sessions_preserved": sessions_before == sessions_after});
             std::fs::write(account_output.join("signup-db-result.json"), serde_json::to_vec_pretty(&signup_db).unwrap()).unwrap();

@@ -123,6 +123,27 @@ def member_password_evidence(requests: list[dict[str, object]], ui: dict[str, ob
     return {"gates": gates, "verified": all(gates.values())}
 
 
+def member_withdraw_evidence(requests: list[dict[str, object]], ui: dict[str, object]) -> dict[str, object]:
+    """One login, one self-targeted User.withdraw /apply, one logout, and the confirmed modal UI.
+
+    MyPage emotion-summary calls (if any) ride along untagged by the gates: the deployment's
+    write path is already covered by the password/email emotion_summary_served gates.
+    """
+    gates = {}
+    logins = [row for row in requests if row.get("path") == "/auth/login"]
+    gates["login"] = (len(logins) == 1 and logins[0].get("method") == "POST" and logins[0].get("status") == 200
+                      and all(logins[0].get(key) is True for key in ("ok", "body_captured", "payload_matches")))
+    actions = [row for row in requests if row.get("path") == "/apply" and row.get("withdraw_action") is True]
+    gates["withdraw"] = (len(actions) == 1 and actions[0].get("method") == "POST" and actions[0].get("status") == 200
+                         and all(actions[0].get(key) is True for key in ("ok", "body_captured", "payload_matches", "authorization_present",
+                                                                        "contract_matches_runtime")))
+    logouts = [row for row in requests if row.get("path") == "/auth/logout"]
+    gates["logout"] = (len(logouts) == 1 and logouts[0].get("method") == "POST" and logouts[0].get("status") == 200
+                       and all(logouts[0].get(key) is True for key in ("ok", "body_captured", "payload_matches", "refresh_cookie_present")))
+    gates["ui"] = all(ui.get(key) is True for key in ("edit_page", "withdraw_modal", "withdraw_confirmed", "signed_out"))
+    return {"gates": gates, "verified": all(gates.values())}
+
+
 def member_comment_action(payload: object) -> str | None:
     """Recognize one member comment write without retaining IDs or content."""
     request = payload.get("request") if isinstance(payload, dict) else None

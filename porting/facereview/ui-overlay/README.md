@@ -1,6 +1,6 @@
 # FaceReview UI overlay (WBS 7.2.10)
 
-> Latest measured follow-up (2026-10-27): the enable_writes omission root cause is now locked in as a test. All 8 mysql deployments and 7 browser journeys were audited by call site: the 5 serving write-extension calls all set the flag (the 3 read/job-only ones need none), and 8 new audit tests fail any future omission. No product or gate change. Committed locally but the push is blocked by 403 (remote stays fa9afef); a session with write access must push before a fresh Verify runs. See [current status](../../../plan-docs/STATUS.md) and [evidence](../../../product/VERIFICATION.md#2026-10-27-write-deployment-enable_writes-regression-guard).
+> Latest measured follow-up (2026-10-27): the EditPage confirmed-withdraw browser journey is implemented (original UI/backend/AIP declaration/overlay compared; DB verdict covers 5 deletes, comment flip, session end, unrelated-row preservation). Test/journey code only, no product or gate change. Committed locally but the push is blocked by 403 (remote stays fa9afef); a session with write access must push before a fresh Verify runs. See [current status](../../../plan-docs/STATUS.md) and [evidence](../../../product/VERIFICATION.md#2026-10-27-editpage-confirmed-withdraw-browser-journey).
 
 The player of FaceReview is the user's repository `facereview-front-joowon`. This directory holds only the files that change when its
 data access moves from the original REST API to AIP; it is meant to be copied over a checkout of the pinned revision

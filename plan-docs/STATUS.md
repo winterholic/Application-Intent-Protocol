@@ -1,4 +1,12 @@
-# 최신 재개 지점 (2026-10-27, 쓰기배포 enable_writes 회귀가드·로컬검증·main push·CI 확인 대기)
+# 최신 재개 지점 (2026-10-27, EditPage 확정탈퇴 여정 구현·로컬검증·main push·CI 확인 대기)
+
+confirmedwithdraw 한 묶음을 현재 main에서 실제 구현했다(테스트·여정 코드만, 제품·gate 완화 없음). 원본 계약 대조: EditPage 탈퇴하기→alertdialog(정말 탈퇴하시겠어요?)→확인→DELETE /v2/mypage/withdraw→toast(탈퇴가 완료되었어요)→logout→/main(joowon 2e7c021), 백엔드는 본인 전이·5개 테이블 물리삭제·댓글 soft-delete·is_deleted=1(new-facereview 7948b7e), AIP `User.withdraw` 선언·overlay writeAdapter withdraw()가 동일 효과를 선언·호출한다. 새 `facereview-ui-withdraw-browser.py`는 disposable 회원 1명으로 login→/my→/edit→modal→confirm→toast→logout→/main signed-out을 수행하고 단일 self-target /apply·logout·UI 4boolean을 수집한다. 새 `member_withdraw_evidence` gate(login/withdraw/logout/ui, summary 호출은 gate 제외·사유 명시)와 단위테스트, Rust caller(전용 회원+관계행 8종 시드·타기기 세션·스크립트 실행·DB 판정), `business_snapshot_except_member`(전이 영향 8테이블 회원행 제외·bookmark/dna 생존은 전수 동등으로 증명)를 추가했다. DB 판정은 삭제 5종 0·댓글 1건 flip·bookmark/dna/안정컬럼 보존·summary 1행·0합계·lock1·checkpoint·reissue 401·active 0·타기기 세션 사망·login 401·메일 무변화·무관행/타세션 보존이다.
+
+로컬: evidence unittest 63 OK(CI 플래그, 기존62+신규1), 배선 probe OK, py_compile 4종 OK, `cargo fmt --check` OK, auth `--no-run --locked --offline` 26.76s OK, `cargo clippy -p aip-cli --features mysql --all-targets -- -Dwarnings` exit0, `git diff --check` OK. Cargo는 PG* unset+형식검증용 dummy DSN(미접속). 빌드 캐시 target/ 검증 후 제거·회수. 로컬 liveDB/browser 미실행. 로컬 main에 커밋, push는 이 환경 차단 유지(상위 확정: Codex default daeseon-dev 403·winterholic 키체인 전환 실패·scoped helper 미제공·연결 앱 push 불가, 동일 denial 재시도 금지)·원격 fa9afef 유지. 쓰기 권한 세션이 `git push origin HEAD:main` 후 원격 SHA 대조부터 이어간다. 적층 커밋 CI 결과·withdraw 첫 artifact의 toast/modal/PNG·summary 행· tutorial live-store·account 2phase·admin 후단은 미검증이다. 관련25경로행 유지(성공 artifact 직접검사 후 withdraw 행만 갱신). WBS90/25·25경로전수미완·model.h5권리/visitor보류 유지. PMS 집계·WBS6 scope·Infisical/FlaskBB 대조는 상위 세션 계속(MCP 미접근·미검증). 참고: 이 Muse 경로의 파일 쓰기는 `bearer =` 토큰을 마스킹하므로 식별자에 bearer 사용 금지(우회 아님·명명 회피).
+
+---
+
+# 이전 재개 지점 (2026-10-27, 쓰기배포 enable_writes 회귀가드·로컬검증·main push·CI 확인 대기)
 
 48926c5의 근본원인을 교훈이 아니라 테스트로 고정했다. 8개 mysql_* 확장 배포와 7개 browser 여정을 호출처 기준으로 전수 대조했다: 쓰기확장 /apply 호출(인라인 `"request": {"extension"}` 또는 `row["write_extension"]` 태그 여정)은 auth(password/email 경유)·trending_job·watch·external_effects·worker_write_e2e 5곳에만 있고 5곳 모두 `enable_writes: true`다. 플래그 없는 3곳(recommend·pool_job·category_fill_job)은 읽기 `/extension`·job 전용이라 추가하지 않았다. 일반 전이 /apply와 읽기 goldens는 규칙의 명시적 negative다. worker_write_e2e는 `apply` 헬퍼 안에 요청을 만들어 마커가 못 보므로 파일명으로 pin하고 한계를 문서화했다.
 
