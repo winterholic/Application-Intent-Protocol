@@ -1,4 +1,14 @@
-# 최신 재개 지점 (2026-10-27, password/email/account body 실패원인 배선·main push·CI 확인 대기)
+# 최신 재개 지점 (2026-10-27, auth E2E enable_writes·감정요약 긍정검증·main push·CI 확인 대기)
+
+User.myEmotionSummary WIRE.NOT_FOUND의 공통 원인을 코드로 확정했다. `/apply` 쓰기 확장은 `workers.enable_writes` 없으면 명시적 설정 gate(`spike-v6-transport/src/lib.rs:1438-1440`)에서 HTTP200·ok:false·WIRE.NOT_FOUND로 거부된다. 회원 auth E2E(`mysql_facereview_auth.rs`)만 이 설정을 빠뜨렸고 trending/admin/watch/external_effects 배포는 전부 `enable_writes:true`다. 같은 정의·같은 확장이 trending CI에서 성공하므로 제품 결함이 아니라 이 배포의 설정 누락이다. `enable_writes:true` 1줄로 password 4건·email 3건의 호출이 실제 실행되며, fingerprint는 jobs가 이미 all-extensions로 찍어 변경 없고(`mysql_service.rs:528-534`), `validate_with_writes`가 요구하는 4개 쓰기 모듈(slice14e/14k/14l/14g)도 worker dir에 전부 있다.
+
+실행 부작용을 좁혔다. 확장은 첫 호출에 회원 행을 만들고 1회만 commit(lock 0→1)하며, fixture에 시청 세션이 없어 이후 호출은 rewrite 없이 base를 반환한다. 11테이블 스냅샷에 `user_emotion_summary`가 포함되므로 여정 회원의 행만 제외하는 arm을 추가했고(타회원 행은 양쪽 유지), 제외분을 긍정검증으로 메웠다. password DB: 회원 행 1건·5종 합계 전부 0·lock_version 1·checkpoint 시각 NOT NULL+빈 세션 표시. email DB: 동일 행 그대로 1건 유지(중복·rewrite 없음). profile/reissue/like/comment/search/logout/account는 스냅샷 비교가 깨지지 않음을 호출처별로 대조했다(MyPage 방문은 profile/logout뿐이며 checkpoint 이후 무쓰기, search·signup 스냅샷은 사전 존재 행만 포함). browser evidence에는 `emotion_summary_served` gate(태그된 호출 중 1건 이상 ok)를 password/email 판정에 추가했다. 원본 대조 근거: 세션 없음→0 합계는 원본 `get_emotion_summary`와 동일한 기대값이며(trending 19사례 동등성), 가짜 0이 아니다.
+
+로컬: evidence unittest 54 OK(CI 플래그 포함, 신규 gate 테스트 1종), `py_compile` 5종 OK, `cargo fmt --check` OK, `cargo test -p aip-cli --features mysql --test mysql_facereview_auth --no-run --locked --offline` 19.74s OK, `cargo clippy -p aip-cli --features mysql --all-targets -- -Dwarnings` 43.68s exit0, `git diff --check` OK. 빌드 캐시 target/ 3.1G는 검증 후 제거·회수했다. 로컬 liveDB/browser 미실행. 로컬 main에 커밋했으나 push가 다시 `403 denied to daeseon-dev`로 차단됐다(원격 main은 fa9afef 유지, 이 환경에서 재시도 금지). 쓰기 권한 세션이 `git push origin HEAD:main` 후 원격 SHA 대조부터 이어간다. 새 CI artifact의 myEmotionSummary ok/body·감정그래프 PNG·body_failure_reason 값·tutorial live-store·account 2phase·confirmedwithdraw·admin 후단은 미검증이다. 관련25경로행 유지. WBS90/25·25경로전수미완·model.h5권리/visitor보류 유지.
+
+---
+
+# 이전 재개 지점 (2026-10-27, password/email/account body 실패원인 배선·main push·CI 확인 대기)
 
 Verify40076012954(751ad8d)의 password 전체body gate 실패(line232)는 수집기가 `json.loads(response.body())` 예외를 버려 원인 불명이었다. 같은 삼킴이 password/email/account 3개 스크립트에 공통으로 있고 profile/admin/admin-reissue/member는 이미 `body_failure_reason`을 기록함을 확인했다. 3개 스크립트의 except에만 profile 패턴(`json_decode_error` vs `body_failure_reason(error)`)을 배선했고, 전체body gate·판정 범위·원본UI/overlay 제품코드·DB보존조건은 변경하지 않았다. 새 CI artifact의 해당 행에 `body_failure_reason`이 남아야 실제 예외 종류(target_closed/timeout/resource_evicted/playwright_error/json_decode_error)를 확정할 수 있다.
 

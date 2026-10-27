@@ -108,16 +108,22 @@ class BrowserEvidenceTests(unittest.TestCase):
                  "body_captured": True, "payload_matches": True, "authorization_present": True}
                 for path in ("/auth/email/verification", "/auth/email/verify")]
         ui = {key: True for key in ("unverified_banner", "code_modal", "verified_badge", "banner_removed", "reloaded_verified")}
-        self.assertTrue(member_email_evidence(rows, ui)["verified"])
+        summary = {"path": "/apply", "method": "POST", "status": 200, "ok": True, "body_captured": True,
+                   "write_extension": "User.myEmotionSummary"}
+        served = rows + [summary]
+        self.assertTrue(member_email_evidence(served, ui)["verified"])
+        self.assertFalse(member_email_evidence(rows, ui)["verified"])
+        refused = [dict(summary, ok=False, error_code="WIRE.NOT_FOUND")]
+        self.assertFalse(member_email_evidence(rows + refused, ui)["verified"])
         for i in range(len(rows)):
             for key, value in [("method", "PATCH"), ("status", 400), ("ok", False),
                                ("body_captured", False), ("payload_matches", False), ("authorization_present", False)]:
-                changed = [dict(row) for row in rows]; changed[i][key] = value
+                changed = [dict(row) for row in served]; changed[i][key] = value
                 self.assertFalse(member_email_evidence(changed, ui)["verified"], (i, key))
-            self.assertFalse(member_email_evidence(rows[:i] + rows[i+1:], ui)["verified"])
-            self.assertFalse(member_email_evidence(rows + [rows[i]], ui)["verified"])
+            self.assertFalse(member_email_evidence(served[:i] + served[i+1:], ui)["verified"])
+            self.assertFalse(member_email_evidence(served + [served[i]], ui)["verified"])
         for key in ui:
-            self.assertFalse(member_email_evidence(rows, {**ui, key: False})["verified"])
+            self.assertFalse(member_email_evidence(served, {**ui, key: False})["verified"])
 
     def test_password_journey_requires_exact_completed_auth_bodies_and_ui(self):
         from product.tests.facereview_ui_browser_evidence import member_password_evidence
@@ -130,23 +136,40 @@ class BrowserEvidenceTests(unittest.TestCase):
         rows += [{"path": "/auth/login", "method": "POST", "status": 200, "ok": True, "body_captured": True,
                   "payload_matches": True, "password_kind": kind} for kind in ("old", "new")]
         ui = {key: True for key in ("password_page", "code_form", "new_password_form", "signed_out", "new_login", "reloaded_profile")}
-        self.assertTrue(member_password_evidence(rows, ui)["verified"])
+        summary = {"path": "/apply", "method": "POST", "status": 200, "ok": True, "body_captured": True,
+                   "write_extension": "User.myEmotionSummary"}
+        served = rows + [summary]
+        self.assertTrue(member_password_evidence(served, ui)["verified"])
+        self.assertFalse(member_password_evidence(rows, ui)["verified"])
+        refused = [dict(summary, ok=False, error_code="WIRE.NOT_FOUND")]
+        self.assertFalse(member_password_evidence(rows + refused, ui)["verified"])
         for i in range(len(rows)):
             for key, value in [("body_captured", False), ("ok", False), ("payload_matches", False), ("status", 400), ("method", "GET")]:
-                changed = [dict(row) for row in rows]; changed[i][key] = value
+                changed = [dict(row) for row in served]; changed[i][key] = value
                 self.assertFalse(member_password_evidence(changed, ui)["verified"], (i, key))
-            self.assertFalse(member_password_evidence(rows[:i] + rows[i+1:], ui)["verified"])
-        self.assertFalse(member_password_evidence(rows + [rows[0]], ui)["verified"])
+            self.assertFalse(member_password_evidence(served[:i] + served[i+1:], ui)["verified"])
+        self.assertFalse(member_password_evidence(served + [served[0]], ui)["verified"])
         # The original backend's PATCH is not the AIP route; a browser preflight refuses it.
-        original_method = [dict(row) for row in rows]; original_method[2]["method"] = "PATCH"
+        original_method = [dict(row) for row in served]; original_method[2]["method"] = "PATCH"
         self.assertFalse(member_password_evidence(original_method, ui)["verified"])
-        no_cookie = [dict(row) for row in rows]; no_cookie[3]["refresh_cookie_present"] = False
+        no_cookie = [dict(row) for row in served]; no_cookie[3]["refresh_cookie_present"] = False
         self.assertFalse(member_password_evidence(no_cookie, ui)["verified"])
-        no_bearer = [dict(row) for row in rows]; no_bearer[1]["authorization_present"] = False
+        no_bearer = [dict(row) for row in served]; no_bearer[1]["authorization_present"] = False
         self.assertFalse(member_password_evidence(no_bearer, ui)["verified"])
-        self.assertFalse(member_password_evidence([{**row, "reset_token_received": False} for row in rows], ui)["verified"])
+        self.assertFalse(member_password_evidence([{**row, "reset_token_received": False} for row in served], ui)["verified"])
         for key in ui:
-            self.assertFalse(member_password_evidence(rows, {**ui, key: False})["verified"])
+            self.assertFalse(member_password_evidence(served, {**ui, key: False})["verified"])
+
+    def test_emotion_summary_gate_counts_only_tagged_served_calls(self):
+        from product.tests.facereview_ui_browser_evidence import emotion_summary_served
+        tagged = {"path": "/apply", "method": "POST", "status": 200, "body_captured": True,
+                  "write_extension": "User.myEmotionSummary"}
+        self.assertTrue(emotion_summary_served([dict(tagged, ok=True)]))
+        self.assertTrue(emotion_summary_served([dict(tagged, ok=False, error_code="WIRE.CONFLICT"), dict(tagged, ok=True)]))
+        self.assertFalse(emotion_summary_served([]))
+        self.assertFalse(emotion_summary_served([dict(tagged, ok=False, error_code="WIRE.NOT_FOUND")]))
+        self.assertFalse(emotion_summary_served([dict(tagged, ok=True, write_extension="User.other")]))
+        self.assertFalse(emotion_summary_served([{"path": "/apply", "ok": True}]))
 
     def test_search_request_requires_exact_fixture_input_without_recording_keyword(self):
         from product.tests.facereview_ui_browser_evidence import member_search_request_matches

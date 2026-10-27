@@ -89,6 +89,11 @@ def member_tutorial_evidence(requests: list[dict[str, object]], ui: dict[str, ob
     return {"action": action if action in {"complete", "skip"} else "unrecognized", "gates": gates, "verified": all(gates.values())}
 
 
+def emotion_summary_served(requests: list[dict[str, object]]) -> bool:
+    """At least one MyPage emotion-summary write must be served (ok), never only refused."""
+    return any(row.get("ok") is True for row in requests if row.get("write_extension") == "User.myEmotionSummary")
+
+
 def member_email_evidence(requests: list[dict[str, object]], ui: dict[str, object]) -> dict[str, object]:
     gates = {}
     for path in ("/auth/email/verification", "/auth/email/verify"):
@@ -96,6 +101,7 @@ def member_email_evidence(requests: list[dict[str, object]], ui: dict[str, objec
         gates[path] = (len(rows) == 1 and rows[0].get("method") == "POST" and rows[0].get("status") == 200
                        and all(rows[0].get(key) is True for key in ("ok", "body_captured", "payload_matches", "authorization_present")))
     gates["ui"] = all(ui.get(key) is True for key in ("unverified_banner", "code_modal", "verified_badge", "banner_removed", "reloaded_verified"))
+    gates["emotion_summary_served"] = emotion_summary_served(requests)
     return {"gates": gates, "verified": all(gates.values())}
 
 
@@ -113,6 +119,7 @@ def member_password_evidence(requests: list[dict[str, object]], ui: dict[str, ob
                                   and all(row.get("status") == 200 and row.get("method") == "POST"
                                           and all(row.get(key) is True for key in ("ok", "body_captured", "payload_matches")) for row in logins))
     gates["ui"] = all(ui.get(key) is True for key in ("password_page", "code_form", "new_password_form", "signed_out", "new_login", "reloaded_profile"))
+    gates["emotion_summary_served"] = emotion_summary_served(requests)
     return {"gates": gates, "verified": all(gates.values())}
 
 

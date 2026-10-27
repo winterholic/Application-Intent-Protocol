@@ -236,6 +236,11 @@ async fn business_snapshot_excluding(
             ("user_favorite_genre", Some(user), true) => {
                 conn.exec("SELECT * FROM user_favorite_genre WHERE user_id <> ? ORDER BY 1", (user,)).await.unwrap()
             }
+            // The journey member's own summary row is the write extension's direct effect, verified
+            // separately; unrelated members' rows stay in the snapshot on both sides.
+            ("user_emotion_summary", Some(user), _) => {
+                conn.exec("SELECT * FROM user_emotion_summary WHERE user_id <> ? ORDER BY 1", (user,)).await.unwrap()
+            }
             // Use the binary protocol on both sides: text query() represents numbers/dates as Bytes,
             // while exec() decodes typed Values, so their Debug snapshots differ without any DB write.
             _ => conn.exec(format!("SELECT * FROM `{table}` ORDER BY 1"), ()).await.unwrap(),
@@ -523,6 +528,9 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
     .unwrap();
     let mailer = start_mailer().await;
     let mail_url = format!("http://127.0.0.1:{}/send", mailer.port);
+    // Worker writes serve the MyPage emotion-summary write extension; without them every
+    // User.myEmotionSummary call is refused as WIRE.NOT_FOUND by the explicit-config gate.
+    // The served fingerprint is unchanged: jobs already fingerprint with all extensions.
     let config = directory.path().join("service.json");
     let write_config = |credentials: Value| {
         std::fs::write(
@@ -532,7 +540,7 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
                 "database_url_env": "AIP_T_AUTH_RUNTIME_URL", "migrate_database_url_env": "AIP_T_AUTH_ADOPT_URL",
                 "listen": "127.0.0.1:0", "wire": "decimal", "rate_limit": null, "allowed_origins": [ORIGIN],
                 "auth": {"issuer": ISSUER, "audience": AUDIENCE, "jwks": {"kind": "file", "path": "jwks.json"}},
-                "workers": {"directory": "extensions", "language": "python", "mongo": {"uri_env": "AIP_T_AUTH_MONGO_URL", "database": MONGO_DB, "max_pool_size": 4, "timeout_ms": 3000}, "integrations": [{"name": "youtube_videos", "url": "http://127.0.0.1:9/youtube/v3/videos", "method": "GET", "timeout_ms": 1000, "max_request_bytes": 1024, "max_response_bytes": 1024, "allow_loopback": true, "query_params": ["part"]}, {"name": "youtube_search", "url": "http://127.0.0.1:9/youtube/v3/search", "method": "GET", "timeout_ms": 1000, "max_request_bytes": 1024, "max_response_bytes": 1024, "allow_loopback": true, "query_params": ["part"]}, {"name": "mail_send", "url": mail_url, "method": "POST", "timeout_ms": 3000, "max_request_bytes": 4096, "max_response_bytes": 4096, "allow_loopback": true}]},
+                "workers": {"directory": "extensions", "language": "python", "enable_writes": true, "mongo": {"uri_env": "AIP_T_AUTH_MONGO_URL", "database": MONGO_DB, "max_pool_size": 4, "timeout_ms": 3000}, "integrations": [{"name": "youtube_videos", "url": "http://127.0.0.1:9/youtube/v3/videos", "method": "GET", "timeout_ms": 1000, "max_request_bytes": 1024, "max_response_bytes": 1024, "allow_loopback": true, "query_params": ["part"]}, {"name": "youtube_search", "url": "http://127.0.0.1:9/youtube/v3/search", "method": "GET", "timeout_ms": 1000, "max_request_bytes": 1024, "max_response_bytes": 1024, "allow_loopback": true, "query_params": ["part"]}, {"name": "mail_send", "url": mail_url, "method": "POST", "timeout_ms": 3000, "max_request_bytes": 4096, "max_response_bytes": 4096, "allow_loopback": true}]},
                 "credentials": credentials,
             })
             .to_string(),
@@ -1693,6 +1701,22 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
             ),
         )
         .await;
+        // The fixture seeds no watch sessions, so the original's summary for this member is zero
+        // totals; the first served call creates the row and commits it once (lock_version 0 -> 1).
+        let summary_rows = cell(&mut setup, &format!("SELECT COUNT(*) FROM user_emotion_summary WHERE user_id = '{PASSWORD_MEMBER}'")).await;
+        let summary_zeros = cell(
+            &mut setup,
+            &format!(
+                "SELECT COUNT(*) FROM user_emotion_summary WHERE user_id = '{PASSWORD_MEMBER}' AND neutral_seconds = 0 AND happy_seconds = 0 AND surprise_seconds = 0 AND sad_seconds = 0 AND angry_seconds = 0"
+            ),
+        )
+        .await;
+        let summary_lock = cell(&mut setup, &format!("SELECT lock_version FROM user_emotion_summary WHERE user_id = '{PASSWORD_MEMBER}'")).await;
+        let summary_checkpoint = cell(
+            &mut setup,
+            &format!("SELECT COUNT(*) FROM user_emotion_summary WHERE user_id = '{PASSWORD_MEMBER}' AND last_finalized_at IS NOT NULL AND last_session_id = ''"),
+        )
+        .await;
         let hash_changed = after_hash != before_hash && after_hash.starts_with("scrypt:32768:8:1$") && !after_hash.contains(NEW_PASSWORD);
         let db_ok = hash_changed
             && old_password_rejected
@@ -1702,6 +1726,10 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
             && challenges.as_deref() == Some("0")
             && account_flags.as_deref() == Some("GENERAL:0:1:0")
             && mail_recipient_matches
+            && summary_rows.as_deref() == Some("1")
+            && summary_zeros.as_deref() == Some("1")
+            && summary_lock.as_deref() == Some("1")
+            && summary_checkpoint.as_deref() == Some("1")
             && business_before == business_after
             && other_sessions_before == other_sessions_after;
         let db_result = json!({"journey": "member_password", "browser_status": if result.status.success() { "success" } else { "failure" },
@@ -1710,6 +1738,8 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
             "revoked_session_rows": revoked, "active_session_rows": active, "remaining_challenges": challenges,
             "account_flags_preserved": account_flags.as_deref() == Some("GENERAL:0:1:0"),
             "mail_delivery_count": mail_count, "mail_recipient_and_template_match": mail_recipient_matches,
+            "emotion_summary_rows": summary_rows, "emotion_summary_zero_totals": summary_zeros.as_deref() == Some("1"),
+            "emotion_summary_lock_version": summary_lock, "emotion_summary_checkpoint_set": summary_checkpoint.as_deref() == Some("1"),
             "business_table_count": business_before.len(), "unrelated_business_rows_preserved": business_before == business_after,
             "other_account_sessions_preserved": other_sessions_before == other_sessions_after});
         std::fs::write(output.join("password-db-result.json"), serde_json::to_vec_pretty(&db_result).unwrap()).unwrap();
@@ -1767,6 +1797,15 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
             let added = &sent[email_mails_before..];
             (added.len(), added.len() == 1 && added[0]["to"] == PASSWORD_EMAIL && added[0]["template"] == "email-verification")
         };
+        // The email journey re-reads the summary the password journey committed: still one zero
+        // row, no duplicate, no rewrite without new sessions.
+        let email_summary_stable = cell(
+            &mut setup,
+            &format!(
+                "SELECT COUNT(*) FROM user_emotion_summary WHERE user_id = '{PASSWORD_MEMBER}' AND neutral_seconds = 0 AND happy_seconds = 0 AND surprise_seconds = 0 AND sad_seconds = 0 AND angry_seconds = 0 AND lock_version = 1 AND last_finalized_at IS NOT NULL"
+            ),
+        )
+        .await;
         let email_db_ok = email_flags.as_deref() == Some("GENERAL:0:1:1")
             && email_challenges.as_deref() == Some("0")
             && email_active.as_deref() == Some("2")
@@ -1774,6 +1813,7 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
             && target_before.len() == 1
             && target_before == target_after
             && email_mail_matches
+            && email_summary_stable.as_deref() == Some("1")
             && email_business_before == email_business_after
             && email_sessions_before == email_sessions_after;
         let email_db_result = json!({"journey": "member_email", "browser_status": if email_result.status.success() { "success" } else { "failure" },
@@ -1781,6 +1821,7 @@ async fn facereview_accounts_log_in_refresh_and_log_out_without_the_originals_re
             "target_other_columns_preserved": target_before.len() == 1 && target_before == target_after,
             "remaining_challenges": email_challenges, "active_session_rows": email_active, "revoked_session_rows": email_revoked,
             "mail_delivery_count": email_mail_count, "mail_recipient_and_template_match": email_mail_matches,
+            "emotion_summary_row_stable": email_summary_stable.as_deref() == Some("1"),
             "business_table_count": email_business_before.len(), "unrelated_business_rows_preserved": email_business_before == email_business_after,
             "other_account_sessions_preserved": email_sessions_before == email_sessions_after});
         std::fs::write(email_output.join("email-db-result.json"), serde_json::to_vec_pretty(&email_db_result).unwrap()).unwrap();
