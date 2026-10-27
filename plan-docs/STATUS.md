@@ -2,7 +2,7 @@
 
 Verify40076012954(751ad8d)의 password 전체body gate 실패(line232)는 수집기가 `json.loads(response.body())` 예외를 버려 원인 불명이었다. 같은 삼킴이 password/email/account 3개 스크립트에 공통으로 있고 profile/admin/admin-reissue/member는 이미 `body_failure_reason`을 기록함을 확인했다. 3개 스크립트의 except에만 profile 패턴(`json_decode_error` vs `body_failure_reason(error)`)을 배선했고, 전체body gate·판정 범위·원본UI/overlay 제품코드·DB보존조건은 변경하지 않았다. 새 CI artifact의 해당 행에 `body_failure_reason`이 남아야 실제 예외 종류(target_closed/timeout/resource_evicted/playwright_error/json_decode_error)를 확정할 수 있다.
 
-로컬: 3종 `py_compile` OK, 배선 probe(3종 wiring+gate strict, profile 참조 일치) OK, evidence unittest 53 OK(CI 플래그 `-W error::ResourceWarning` 포함), `git diff --check` OK, 변경 3파일만. Rust/overlay/어댑터 변경 없음. main에 push해 일반 Verify가 자동 실행된다. CI 결과·다음 artifact의 failure_reason 값·tutorial live-store 검증·account 2phase·confirmedwithdraw·admin 후단은 push 시점 미검증이다. 이 세션은 gh 미로그인이라 CI 관찰·artifact 수집을 못하므로, gh 가능 세션이 새 Verify run의 password JSON부터 직접 검사한다. WBS90/25·25경로전수미완·model.h5권리/visitor보류·myEmotionSummary/graph 별도잔여 유지.
+로컬: 3종 `py_compile` OK, 배선 probe(3종 wiring+gate strict, profile 참조 일치) OK, evidence unittest 53 OK(CI 플래그 `-W error::ResourceWarning` 포함), `git diff --check` OK, 변경 3파일만. Rust/overlay/어댑터 변경 없음. 로컬 main에 커밋 `85d4fcf` 완료했으나 push가 `403 Permission to winterholic/Application-Intent-Protocol.git denied to daeseon-dev`로 차단됐다(원격 main은 fa9afef 유지, 읽기 fetch/ls-remote는 정상). 쓰기 권한 세션이 `git push origin HEAD:main` 후 원격 SHA 대조부터 이어간다. CI 결과·다음 artifact의 failure_reason 값·tutorial live-store 검증·account 2phase·confirmedwithdraw·admin 후단은 미검증이다. WBS90/25·25경로전수미완·model.h5권리/visitor보류·myEmotionSummary/graph 별도잔여 유지.
 
 ---
 

@@ -1,6 +1,6 @@
 # AIP (Application Intent Protocol)
 
-> 2026-10-27 계측 보강: password/email/account 수집기가 body 읽기 실패 원인을 버리던 공통 결함을 profile/admin과 같은 body_failure_reason 기록으로 묶음 수정했다. 전체body gate는 그대로다. main push로 일반 Verify가 실행되며, 다음 artifact의 failure_reason과 tutorial/account/withdraw/admin 후단은 CI 확인 전 미검증이다. [최신 판정](plan-docs/STATUS.md)과 [검증 상세](product/VERIFICATION.md#2026-10-27-password-email-account-body-failure-reason-wiring) 참조.
+> 2026-10-27 계측 보강: password/email/account 수집기가 body 읽기 실패 원인을 버리던 공통 결함을 profile/admin과 같은 body_failure_reason 기록으로 묶음 수정했다. 전체body gate는 그대로다. 로컬 main 커밋 85d4fcf 완료, push는 403으로 차단(원격 fa9afef 유지). 쓰기 권한 세션이 push 후 일반 Verify를 확인한다. [최신 판정](plan-docs/STATUS.md)과 [검증 상세](product/VERIFICATION.md#2026-10-27-password-email-account-body-failure-reason-wiring) 참조.
 
 프론트엔드가 필요한 데이터와 동작을 정형화해 표현하면 서버가 정책과 계약에 따라 실행하는 프레임워크. 애플리케이션별 백엔드 반복 구현과 프론트·백엔드 계약의 이중 유지보수를 최소화한다.
 

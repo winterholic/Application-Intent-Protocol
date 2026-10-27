@@ -1,6 +1,6 @@
 # FaceReview UI overlay (WBS 7.2.10)
 
-> Latest measured follow-up (2026-10-27): the password/email/account collectors shared one defect of discarding body-read failures, which left Verify40076012954 unexplained. All three now record body_failure_reason like the profile/admin scripts; the all-body gate is unchanged. Pushed to main so a fresh Verify runs; the next artifact's reason value and the tutorial/account/withdraw/admin journeys stay unverified until that CI is inspected. See [current status](../../../plan-docs/STATUS.md) and [evidence](../../../product/VERIFICATION.md#2026-10-27-password-email-account-body-failure-reason-wiring).
+> Latest measured follow-up (2026-10-27): the password/email/account collectors shared one defect of discarding body-read failures, which left Verify40076012954 unexplained. All three now record body_failure_reason like the profile/admin scripts; the all-body gate is unchanged. Committed locally as 85d4fcf but the push is blocked by 403 (remote stays fa9afef); a session with write access must push before a fresh Verify runs. See [current status](../../../plan-docs/STATUS.md) and [evidence](../../../product/VERIFICATION.md#2026-10-27-password-email-account-body-failure-reason-wiring).
 
 The player of FaceReview is the user's repository `facereview-front-joowon`. This directory holds only the files that change when its
 data access moves from the original REST API to AIP; it is meant to be copied over a checkout of the pinned revision
