@@ -10,7 +10,7 @@
 - `cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --target-dir target --locked --offline --no-fail-fast --test encryption_e2e --test encryption_gate`: 내부 handle/fixture 키 map 1개·listener 차단 3개. `/apply`·`/status` marker 위조 및 retained fp 키 유실 거부와 durable 효과 marker 어댑터의 회전도 포함한다. 실제 Host worker 실행을 검증한 것으로 세지 않는다.
 - execution 및 transport의 `cargo clippy ... --all-targets -- -D warnings`, 두 workspace fmt와 diff 검사로 변경 범위를 확인한다.
 
-추가 실제 worker 검사는 **Codex/macOS 명령 샌드박스**의 `durable_commit_classification` 4개와 `write_session_outcome` 1개가 worker runtime probe 준비 단계에서 `exit status: 71; sandbox-exec: sandbox_apply: Operation not permitted`로 실패했다. 제품 assertion 도달 전 환경 차단이며 해당 실패를 다른 엔진/호스트 전체의 실패로 일반화하지 않는다. 동일 probe를 재시도하거나 sandbox를 우회하지 않았다. 함께 요청했던 `write_extension_commit_classification`은 앞 target 실패로 미실행이며 재시도하지 않았다. 독립 암호화 suites는 별도 `--no-fail-fast` 실행으로 관측했다.
+추가 실제 worker 검사는 **Codex/macOS 명령 샌드박스**의 `durable_commit_classification` 4개와 `write_session_outcome` 1개가 worker runtime probe 준비 단계에서 `exit status: 71; sandbox-exec: sandbox_apply: Operation not permitted`로 실패했다. 제품 assertion 도달 전 환경 차단이며 해당 실패를 다른 엔진/호스트 전체의 실패로 일반화하지 않는다. 두 target이 같은 환경 차단을 관측했고 이후 추가 worker probe를 중단했다. sandbox 우회는 하지 않았다. 함께 요청했던 `write_extension_commit_classification`은 앞 target 실패로 미실행이며 재시도하지 않았다. 독립 암호화 suites는 별도 `--no-fail-fast` 실행으로 관측했다.
 
 남음: native resource writer/read·인가/traverse·배포 키 공급 연결, migration/adopt 전수 AEAD 인증·동시 활성화·복원, durable lease/multi-pass rekey와 blind-index unique 회전, Infisical 실제 값 전환 및 전체 앱 포팅/1.0 최종 gate. `docs/design/13-field-encryption.md`는 Proposed다. 이번 증분으로 WBS 8.18.3~6을 완료로 바꾸지 않는다. 원격 push/CI는 기존 keyring 차단으로 미실행이다.
 
