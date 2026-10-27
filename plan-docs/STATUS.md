@@ -1,4 +1,14 @@
-# 최신 재개 지점 (2026-10-27, auth E2E enable_writes·감정요약 긍정검증·main push·CI 확인 대기)
+# 최신 재개 지점 (2026-10-27, 쓰기배포 enable_writes 회귀가드·로컬검증·main push·CI 확인 대기)
+
+48926c5의 근본원인을 교훈이 아니라 테스트로 고정했다. 8개 mysql_* 확장 배포와 7개 browser 여정을 호출처 기준으로 전수 대조했다: 쓰기확장 /apply 호출(인라인 `"request": {"extension"}` 또는 `row["write_extension"]` 태그 여정)은 auth(password/email 경유)·trending_job·watch·external_effects·worker_write_e2e 5곳에만 있고 5곳 모두 `enable_writes: true`다. 플래그 없는 3곳(recommend·pool_job·category_fill_job)은 읽기 `/extension`·job 전용이라 추가하지 않았다. 일반 전이 /apply와 읽기 goldens는 규칙의 명시적 negative다. worker_write_e2e는 `apply` 헬퍼 안에 요청을 만들어 마커가 못 보므로 파일명으로 pin하고 한계를 문서화했다.
+
+새 `product/tests/test_facereview_write_deployments.py` 8종(규칙 6+전수감사 1+실제 auth에서 플래그 제거 시뮬레이션 1). 제품·gate·배포 코드 변경 없음.
+
+로컬: evidence unittest 62 OK(CI 플래그, 기존54+신규8), py_compile 6종 OK, `cargo fmt --check` OK, auth `--no-run --locked --offline` 28.74s OK, `cargo clippy -p aip-cli --features mysql --all-targets -- -Dwarnings` 35.73s exit0, `git diff --check` OK. Cargo는 PG* unset+형식검증용 dummy DSN(빌드스크립트는 형식만 검사·미접속). 빌드 캐시 target/ 3.0G 검증 후 제거·회수. 로컬 liveDB/browser 미실행. 로컬 main에 커밋, push는 이 환경 차단 유지(`gh auth status` 미로그인·키체인 계정은 직전 403 daeseon-dev, 동일 denial 재시도 금지)·원격 fa9afef 유지. 쓰기 권한 세션이 `git push origin HEAD:main` 후 원격 SHA 대조부터 이어간다. 적층된 로컬 커밋들의 CI 결과·새 artifact myEmotionSummary ok/body·감정그래프 PNG·body_failure_reason 값·tutorial live-store·account 2phase·confirmedwithdraw·admin 후단은 미검증이다. 관련25경로행 유지. WBS90/25·25경로전수미완·model.h5권리/visitor보류 유지. PMS 집계 불일치(total101 vs list_tasks 132)·WBS6 보존 5건 scope·Infisical/FlaskBB 대조는 상위 세션이 PMS description으로 확정한다(MCP 미접근·미검증).
+
+---
+
+# 이전 재개 지점 (2026-10-27, auth E2E enable_writes·감정요약 긍정검증·main push·CI 확인 대기)
 
 User.myEmotionSummary WIRE.NOT_FOUND의 공통 원인을 코드로 확정했다. `/apply` 쓰기 확장은 `workers.enable_writes` 없으면 명시적 설정 gate(`spike-v6-transport/src/lib.rs:1438-1440`)에서 HTTP200·ok:false·WIRE.NOT_FOUND로 거부된다. 회원 auth E2E(`mysql_facereview_auth.rs`)만 이 설정을 빠뜨렸고 trending/admin/watch/external_effects 배포는 전부 `enable_writes:true`다. 같은 정의·같은 확장이 trending CI에서 성공하므로 제품 결함이 아니라 이 배포의 설정 누락이다. `enable_writes:true` 1줄로 password 4건·email 3건의 호출이 실제 실행되며, fingerprint는 jobs가 이미 all-extensions로 찍어 변경 없고(`mysql_service.rs:528-534`), `validate_with_writes`가 요구하는 4개 쓰기 모듈(slice14e/14k/14l/14g)도 worker dir에 전부 있다.
 

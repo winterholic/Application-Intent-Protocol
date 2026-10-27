@@ -1,6 +1,6 @@
 # AIP (Application Intent Protocol)
 
-> 2026-10-27 감정요약 실행 복구: User.myEmotionSummary WIRE.NOT_FOUND는 auth E2E 배포만 workers.enable_writes를 빠뜨린 설정 누락이었다(제품 결함 아님). 플래그 1줄로 실행 복구하고, 여정 회원 요약행 제외+긍정검증(1행·0합계·lock1·checkpoint)과 browser emotion_summary_served gate를 묶었다. gate 완화 없음. 로컬 main 커밋 완료, push는 403으로 차단(원격 fa9afef 유지). 쓰기 권한 세션이 push 후 일반 Verify를 확인한다. [최신 판정](plan-docs/STATUS.md)과 [검증 상세](product/VERIFICATION.md#2026-10-27-auth-e2e-enable_writes-and-emotion-summary-positive-verification) 참조.
+> 2026-10-27 쓰기배포 회귀가드: enable_writes 누락 근본원인을 테스트로 고정했다. 8개 mysql 배포·7개 browser 여정 전수 대조로 쓰기확장 호출 5곳의 플래그 설정을 확정하고(읽기/job 전용 3곳은 불필요), 신규 감사 테스트 8종이 향후 누락을 실패로 잡는다. 제품·gate 변경 없음. 로컬 main 커밋 완료, push는 403으로 차단(원격 fa9afef 유지). 쓰기 권한 세션이 push 후 일반 Verify를 확인한다. [최신 판정](plan-docs/STATUS.md)과 [검증 상세](product/VERIFICATION.md#2026-10-27-write-deployment-enable_writes-regression-guard) 참조.
 
 프론트엔드가 필요한 데이터와 동작을 정형화해 표현하면 서버가 정책과 계약에 따라 실행하는 프레임워크. 애플리케이션별 백엔드 반복 구현과 프론트·백엔드 계약의 이중 유지보수를 최소화한다.
 
