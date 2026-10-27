@@ -1,6 +1,16 @@
 # 제품 통합 검증 (2026-10-17)
 
 
+## 2026-10-28 검증 이관 연결 (구현, 실DB 이관 미검증·출시 미완)
+
+`adopt::apply_verified`가 계획 승인 일치 뒤·변경 전 같은 트랜잭션에서 모든 암호화 열의 전수 AEAD 검증을 수행한다. 키셋 페이지(1000행) 순회로 셀을 열어 버리고 열·셀 개수만 결과에 싣는다. 위조 셀은 마커 제거 전 이관 전체를 실패로 닫고, owner scope 열은 거부한다. 기본 `creation`·이관·초기화·마이그레이션 게이트는 그대로 닫혀 있다.
+
+- `cargo check`·`clippy --all-targets -- -D warnings`·`fmt --check`(aip-migrate, aip-execution), `adopt_cells` `--no-run` 링크: 통과. PG* unset·형식검증용 dummy DSN(미접속).
+- DB 없이 실행: `adopt_cells fenced_creation` 1개·`encryption_gate` 4개·`encryption_activation_gate` 1개 통과. 기본 게이트 유지와 owner 거부를 확인했다.
+- 새 `adopt_cells` 실DB 이관 2종(정상 전수·위조 거부)은 같은 명령 샌드박스 차단으로 미실행이며 다른 환경 전체의 실패로 일반화하지 않는다.
+
+남음: 밀린 실DB 5종(`encrypted_sealed`·`encrypted_opened`·신규 셀 회귀·이관 2종) 실행, durable rekey·초기화/마이그레이션 암호화 경로·lookup blind index·owner scope 연결, Infisical 전환·전체 포팅/1.0 gate. 설계는 Proposed 유지, 이번 증분으로 WBS 8.18.3~6을 완료로 바꾸지 않는다. 원격 push/CI는 기존 keyring 차단으로 미실행이다.
+
 ## 2026-10-28 읽기 복호화 연결 (구현, 실DB 미검증·출시 미완)
 
 인가 SQL 실행 뒤 `spike-v2-read`의 `execute_opened`가 root·1:1·1:N 각 층의 프레임을 `aip-execution::read_opener` 경계로 `open_cell`한다. 정책 소거 셀은 NULL로 남아 열지 않고 숨은 키는 응답에서 지운다. 혼합 scope 참조·owner·위조 셀은 읽기를 실패로 닫는다. opener 없이는 기존 출력(프레임+숨은 키)이 유지된다.

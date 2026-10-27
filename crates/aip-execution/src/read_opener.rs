@@ -3,9 +3,9 @@
 //! The reader runs its authorization SQL first and calls [`ReadCellOpener`] with the stored
 //! frames; [`StoreOpener`] resolves each full frame identity inside its deployment/scope and
 //! opens it. There is no plaintext fallback: a non-frame or tampered value fails the read.
-use crate::encryption::{CellLocation, DekStore, Error as StoreError, resolve_scope};
+use crate::encryption::{CellLocation, DekStore, Error as StoreError, Scope, resolve_scope};
 use aip_crypto::provider::KekProvider;
-use tokio_postgres::Client;
+use tokio_postgres::{Client, GenericClient, Transaction};
 
 /// One stored frame with its resolved scope and AAD location.
 pub struct OpenCell {
@@ -29,6 +29,13 @@ pub trait ReadCellOpener: Send + Sync {
     fn open_cells<'c>(
         &'c self,
         db: &'c Client,
+        cells: Vec<OpenCell>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<String>, OpenError>> + Send + 'c>>;
+    /// Same as [`ReadCellOpener::open_cells`] inside the caller's transaction, for
+    /// migration-time verification that must see the locked rows.
+    fn open_cells_in_tx<'c>(
+        &'c self,
+        db: &'c Transaction<'c>,
         cells: Vec<OpenCell>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<String>, OpenError>> + Send + 'c>>;
 }
@@ -63,20 +70,47 @@ impl ReadCellOpener for StoreOpener {
         cells: Vec<OpenCell>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<String>, OpenError>> + Send + 'c>> {
         Box::pin(async move {
-            let mut prepared = Vec::with_capacity(cells.len());
-            for cell in &cells {
-                let scope = resolve_scope(&cell.scope_kind, &cell.scope_id).map_err(|e| Self::map(e, "scope 확인"))?;
-                let location = CellLocation::new(&cell.resource, &cell.field, &cell.row_id).map_err(|e| Self::map(e, "셀 위치 확인"))?;
-                prepared.push((scope, location));
-            }
-            let mut out = Vec::with_capacity(cells.len());
-            for (index, cell) in cells.iter().enumerate() {
-                let (scope, location) = &prepared[index];
-                let bytes =
-                    self.store.open_cell(db, scope, location, &cell.frame, self.provider.as_ref()).await.map_err(|e| Self::map(e, "셀 열기"))?;
-                out.push(String::from_utf8(bytes.to_vec()).map_err(|_| Self::map(StoreError::Corrupted, "셀 열기"))?);
-            }
-            Ok(out)
+            let prepared = Self::prepare(&cells)?;
+            Self::open_prepared(&self.store, self.provider.as_ref(), db, &cells, &prepared).await
         })
+    }
+
+    fn open_cells_in_tx<'c>(
+        &'c self,
+        db: &'c Transaction<'c>,
+        cells: Vec<OpenCell>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<String>, OpenError>> + Send + 'c>> {
+        Box::pin(async move {
+            let prepared = Self::prepare(&cells)?;
+            Self::open_prepared(&self.store, self.provider.as_ref(), db, &cells, &prepared).await
+        })
+    }
+}
+
+impl StoreOpener {
+    fn prepare(cells: &[OpenCell]) -> Result<Vec<(Scope, CellLocation)>, OpenError> {
+        let mut prepared = Vec::with_capacity(cells.len());
+        for cell in cells {
+            let scope = resolve_scope(&cell.scope_kind, &cell.scope_id).map_err(|e| Self::map(e, "scope 확인"))?;
+            let location = CellLocation::new(&cell.resource, &cell.field, &cell.row_id).map_err(|e| Self::map(e, "셀 위치 확인"))?;
+            prepared.push((scope, location));
+        }
+        Ok(prepared)
+    }
+
+    async fn open_prepared(
+        store: &DekStore,
+        provider: &dyn KekProvider,
+        db: &impl GenericClient,
+        cells: &[OpenCell],
+        prepared: &[(Scope, CellLocation)],
+    ) -> Result<Vec<String>, OpenError> {
+        let mut out = Vec::with_capacity(cells.len());
+        for (index, cell) in cells.iter().enumerate() {
+            let (scope, location) = &prepared[index];
+            let bytes = store.open_cell(db, scope, location, &cell.frame, provider).await.map_err(|e| Self::map(e, "셀 열기"))?;
+            out.push(String::from_utf8(bytes.to_vec()).map_err(|_| Self::map(StoreError::Corrupted, "셀 열기"))?);
+        }
+        Ok(out)
     }
 }

@@ -23,6 +23,7 @@ pub mod mysql_messages;
 pub mod mysql_outbox;
 #[cfg(feature = "mysql")]
 pub mod mysql_write;
+pub mod verify;
 use serde_json::{Value, json};
 use spike_v1_fixture::digest;
 use spike_v2_read::{id_wire::IdWire, sqlgen};
@@ -74,10 +75,22 @@ fn decimal_type(ty: &str) -> Option<(u8, u8)> {
 }
 
 fn validate_facts(facts: &Value) -> Result<(), Value> {
-    // Header inspection and DDL generation do not authenticate existing cells or make a runtime
-    // safe to deploy. Keep initialization, adoption and migrations closed for encrypted facts.
-    spike_v1_fixture::sema::require_supported_runtime(facts)
-        .map_err(|_| err("BAD_FACTS", "암호화 배포는 키·AEAD 전수 검증·저장 경계가 준비될 때까지 지원하지 않음"))?;
+    validate_inner(facts, true)
+}
+
+/// Structural checks without the encryption runtime gate. Only the verified-adopt path may
+/// use this, and only together with a full AEAD cell verification before any mutation.
+fn validate_structure(facts: &Value) -> Result<(), Value> {
+    validate_inner(facts, false)
+}
+
+fn validate_inner(facts: &Value, fenced: bool) -> Result<(), Value> {
+    if fenced {
+        // Header inspection and DDL generation do not authenticate existing cells or make a runtime
+        // safe to deploy. Keep initialization, adoption and migrations closed for encrypted facts.
+        spike_v1_fixture::sema::require_supported_runtime(facts)
+            .map_err(|_| err("BAD_FACTS", "암호화 배포는 키·AEAD 전수 검증·저장 경계가 준비될 때까지 지원하지 않음"))?;
+    }
     let resources = facts["resources"].as_object().ok_or_else(|| err("BAD_FACTS", "resources 객체 누락"))?;
     let enums = facts["enums"].as_object().ok_or_else(|| err("BAD_FACTS", "enums 객체 누락"))?;
     let mut tables = BTreeSet::new();
@@ -237,8 +250,18 @@ pub fn configure_schema(schema: &str) -> Result<(), Value> {
 }
 
 pub fn creation(schema: &str, facts: &Value) -> Result<(Vec<String>, String), Value> {
+    creation_inner(schema, facts, true)
+}
+
+/// DDL preview for the verified-adopt path. Encrypted facts are structurally validated but
+/// the runtime gate is lifted; the caller must verify every cell before mutating anything.
+pub fn creation_for_verified_adopt(schema: &str, facts: &Value) -> Result<(Vec<String>, String), Value> {
+    creation_inner(schema, facts, false)
+}
+
+fn creation_inner(schema: &str, facts: &Value, fenced: bool) -> Result<(Vec<String>, String), Value> {
     configure_schema(schema)?;
-    validate_facts(facts)?;
+    validate_inner(facts, fenced)?;
     if facts["externalStorage"].is_null()
         && facts["resources"]
             .as_object()
@@ -324,11 +347,15 @@ fn normalized_catalog(mut value: Value, from: &str, to: &str) -> Value {
 }
 
 async fn verify_target(db: &impl GenericClient, schema: &str, facts: &Value) -> Result<(), Value> {
+    verify_target_inner(db, schema, facts, true).await
+}
+
+async fn verify_target_inner(db: &impl GenericClient, schema: &str, facts: &Value, fenced: bool) -> Result<(), Value> {
     let shadow = format!("aip_migration_shadow_{}_{}", std::process::id(), NEXT_SHADOW.fetch_add(1, Ordering::Relaxed));
     if serde_json::to_string(facts).map_err(|_| err("TARGET_CHECK", "정의 직렬화 실패"))?.contains(&shadow) {
         return Err(err("TARGET_CHECK", "임시 schema 이름이 정의와 겹침"));
     }
-    let (ddl, _) = creation(&shadow, facts)?;
+    let (ddl, _) = creation_inner(&shadow, facts, fenced)?;
     for sql in &ddl {
         db.batch_execute(sql).await.map_err(|_| err("TARGET_CHECK", "목표 구조 생성 실패"))?;
     }

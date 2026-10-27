@@ -1,4 +1,12 @@
-# 최신 재개 지점 (2026-10-28, 읽기 복호화 연결·정적 검증)
+# 최신 재개 지점 (2026-10-28, 검증 이관 연결·게이트 실행)
+
+`adopt::apply_verified`가 승인 일치 뒤·변경 전 같은 트랜잭션에서 암호화 전 열의 전수 AEAD 검증을 수행하도록 연결했다. 키셋 페이지 순회로 평문은 버리고 열·셀 개수만 결과에 싣는다. 위조 셀은 마커 제거 전 실패로 닫고, owner는 거부한다. 기본 creation·이관·초기화·마이그레이션 게이트는 그대로다. `ReadCellOpener`에 트랜잭션 내 열기를 추가했다.
+
+검증: `cargo check`·`clippy -D warnings`·`fmt --check`, `adopt_cells` 링크, 게이트 단위 `adopt_cells` 1개·`encryption_gate` 4개·`activation_gate` 1개 실행 통과. 실DB 이관 2종은 이 명령 샌드박스 차단으로 미실행(우회 없음). DB 접속 가능 세션이 밀린 실DB 5종부터 실행한다. Git push는 기존 keyring 차단으로 미실행이며 같은 전환을 재시도하지 않는다.
+
+---
+
+# 이전 재개 지점 (2026-10-28, 읽기 복호화 연결·정적 검증)
 
 인가 SQL 실행 뒤 root·1:1·1:N 각 층의 프레임을 여는 `execute_opened`와 `aip-execution::read_opener::StoreOpener`를 연결했다. 정책 소거 셀은 NULL로 남아 열지 않고 숨은 키는 응답에서 지운다. 혼합 scope·owner·위조 셀은 읽기를 실패로 닫으며, opener 없이는 기존 출력이 유지된다. gate·Proposed 상태 유지.
 
