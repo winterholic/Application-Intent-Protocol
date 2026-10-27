@@ -1,6 +1,6 @@
 # FaceReview UI overlay (WBS 7.2.10)
 
-> Latest measured follow-up (2026-10-27): the snapshot-scope finding from the 48926c5 review is closed with an explicit exclude_summary gate plus a no-DB negative regression, and the tutorial verdict gains the signup-style summary-absence check. Unrelated-row preservation unchanged; no product or gate change. Committed locally but the push stays blocked (remote fa9afef, no retry); a session with write access must push before a fresh Verify runs. See [current status](../../../plan-docs/STATUS.md) and [evidence](../../../product/VERIFICATION.md#2026-10-27-snapshot-scope-negative-regression).
+> Current follow-up (2026-10-28): prior local commits and the uncommitted live scope-negative test are preserved. Independent E2E suites now collect failures before returning nonzero; local subprocess regressions passed. Push, live parity and release remain unverified; see [current status](../../../plan-docs/STATUS.md).
 
 The player of FaceReview is the user's repository `facereview-front-joowon`. This directory holds only the files that change when its
 data access moves from the original REST API to AIP; it is meant to be copied over a checkout of the pinned revision

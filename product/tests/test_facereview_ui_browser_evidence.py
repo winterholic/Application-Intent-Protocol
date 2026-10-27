@@ -424,19 +424,11 @@ class BrowserEvidenceTests(unittest.TestCase):
         self.assertIn("run | run-ci | run-ci-member | down", script)
         self.assertLess(script.index('AIP_VERIFY_FAILURE_FILE="$AIP_E2E_FAILURE_FILE"'),
                         script.index('source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/verify-safe-locator.sh"'))
-        member_auth_run = script.index('aip_verify_stage "FaceReview member authentication E2E test"')
-        member_auth_check = script.index('member SDK journey:', member_auth_run)
-        member_stop = script.index('if [[ "$mode" == run-ci-member ]]', member_auth_check)
-        member_exit = script.index("exit 0", member_stop)
-        recommendation_gate = script.index('needs AIP_TEST_MONGO_URL', member_exit)
-        effects_gate = script.index('needs AIP_TEST_REDIS_URL', recommendation_gate)
-        self.assertLess(member_auth_check, member_exit)
-        self.assertLess(member_exit, recommendation_gate)
-        self.assertLess(recommendation_gate, effects_gate)
+        # Scope/failure behavior is executed by test_facereview_e2e_suites; here
+        # retain only the shell/workflow wiring contract after extracting it.
+        self.assertIn('python3 "$repo/scripts/facereview-e2e-suites.py" "$mode"', script)
         self.assertGreaterEqual(script.count('if [[ "$mode" == run-ci || "$mode" == run-ci-member ]]; then'), 2)
         self.assertIn('scripts/verify-mysql-worker-e2e.sh run-ci', script)
-        self.assertIn('mysql_facereview_recommend', script)
-        self.assertIn('mysql_external_effects', script)
 
     def test_profile_browser_trace_init_script_executes_instead_of_only_declaring_arrow(self):
         source = Path(__file__).with_name("facereview-ui-profile-browser.py").read_text()

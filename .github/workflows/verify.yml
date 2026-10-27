@@ -107,9 +107,16 @@ jobs:
         if: ${{ !inputs.member_ui_diagnostic }}
         run: AIP_TEST_BWRAP=1 cargo test --manifest-path spikes/spike-v4-worker/Cargo.toml --lib cleanup_tests --locked --target-dir target
       - name: Start native driver fixtures
-        if: ${{ !inputs.member_ui_diagnostic }}
         id: native-fixtures
-        run: docker compose --project-name aip-ci-native -f spikes/spike-v4-worker/tests/fixtures/native-stores/compose.yaml up --wait --wait-timeout 120 mongo mongo-uuid redis
+        shell: bash
+        run: |
+          # The member suite also reads MongoDB. Its diagnostic skips the broad
+          # gate, but must still receive its real fixture.
+          stores=(mongo)
+          if [[ "${{ inputs.member_ui_diagnostic }}" != "true" ]]; then
+            stores+=(mongo-uuid redis)
+          fi
+          docker compose --project-name aip-ci-native -f spikes/spike-v4-worker/tests/fixtures/native-stores/compose.yaml up --wait --wait-timeout 120 "${stores[@]}"
       - name: Verify compiler, runtime, product, worker, transport and SDK
         if: ${{ !inputs.member_ui_diagnostic }}
         env:

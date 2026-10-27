@@ -298,6 +298,63 @@ fn snapshot_scope_keeps_unintended_summary_inserts_visible() {
     }
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "live: needs a dedicated MySQL 8.4 container (scripts/mysql-live-fixture.sh); run with -- --ignored"]
+async fn snapshot_scope_rejects_an_unintended_summary_insert() {
+    let admin_url = std::env::var("AIP_TEST_MYSQL_URL").expect("set AIP_TEST_MYSQL_URL to a run-owned MySQL 8.4 container");
+    aip_test_support::validate_mysql_admin_url(&admin_url).unwrap_or_else(|reason| panic!("AIP_TEST_MYSQL_URL is unsafe: {reason}"));
+    assert!(admin_url.starts_with("mysql://"), "this test targets MySQL 8.4");
+    // A database of its own: this test drops and recreates it, so it must never share the
+    // member-auth databases with the other live tests.
+    const SCOPE_DB: &str = "aip_t_scope_neg";
+    const SCOPE_USER: &str = "99999999-9999-4999-8999-999999999999";
+    let admin = MysqlDriver::connect(&admin_url).await.expect("admin connection");
+    let mut setup = admin.pool().get_conn().await.unwrap();
+    setup.query_drop(format!("DROP DATABASE IF EXISTS `{SCOPE_DB}`")).await.unwrap();
+    setup.query_drop(format!("CREATE DATABASE `{SCOPE_DB}` DEFAULT CHARSET utf8mb4 COLLATE utf8mb4_0900_ai_ci")).await.unwrap();
+    setup.query_drop(format!("USE `{SCOPE_DB}`")).await.unwrap();
+    setup.query_drop("SET FOREIGN_KEY_CHECKS=0").await.unwrap();
+    run_script(&mut setup, SCHEMA).await;
+    setup.query_drop("SET FOREIGN_KEY_CHECKS=1").await.unwrap();
+    setup
+        .exec_drop(
+            "INSERT INTO user (user_id, email, password, name, role, is_tutorial_done, is_verify_email_done, is_deleted, created_at, updated_at) \
+             VALUES (?, 'scope-neg@example.com', 'pbkdf2:hash-scope', '범위음성', 'GENERAL', 0, 0, 0, NOW(), NOW())",
+            (SCOPE_USER,),
+        )
+        .await
+        .unwrap();
+    // Signup shape: only the new user row and the new genre rows are excluded.
+    let before = business_snapshot_excluding(&mut setup, Some(SCOPE_USER), true, false).await;
+    // Serving shape (password/email): the asserted member row is intentionally hidden.
+    let served_before = business_snapshot_excluding(&mut setup, Some(SCOPE_USER), true, true).await;
+    // The unintended insert the 48926c5 arm hid: a summary row for the signup user.
+    setup
+        .exec_drop(
+            "INSERT INTO user_emotion_summary (user_id, neutral_seconds, happy_seconds, surprise_seconds, sad_seconds, angry_seconds, last_finalized_at, last_session_id, lock_version, created_at, updated_at) \
+             VALUES (?, 0, 0, 0, 0, 0, NOW(), '', 1, NOW(), NOW())",
+            (SCOPE_USER,),
+        )
+        .await
+        .unwrap();
+    let after = business_snapshot_excluding(&mut setup, Some(SCOPE_USER), true, false).await;
+    let served_after = business_snapshot_excluding(&mut setup, Some(SCOPE_USER), true, true).await;
+    // The preservation check must fail, and only on the summary table (index 3 of the helper's
+    // table list). On the 48926c5 arm both snapshots were equal and this test fails.
+    assert_ne!(before, after, "an unintended summary insert must break signup-shape preservation");
+    assert_eq!(before.len(), 11);
+    for (index, (left, right)) in before.iter().zip(after.iter()).enumerate() {
+        if index == 3 {
+            assert_eq!(left.len() + 1, right.len(), "exactly the inserted row differs");
+            assert_ne!(left, right);
+        } else {
+            assert_eq!(left, right, "table {index} must stay equal");
+        }
+    }
+    // Control: the serving shape hides the asserted row on both sides by design.
+    assert_eq!(served_before, served_after, "serving journeys exclude their asserted row");
+}
+
 // Withdrawal deletes the journey member's rows in five tables, flips the member's comments,
 // and flips the member row, so those member rows are excluded and asserted separately. Every
 // other row (including the member's surviving bookmark and emotion-dna rows) stays in the

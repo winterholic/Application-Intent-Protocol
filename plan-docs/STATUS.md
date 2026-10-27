@@ -1,4 +1,14 @@
-# 최신 재개 지점 (2026-10-27, 스냅샷 scope 음성회귀 고정·tutorial 부재검증·main push·CI 확인 대기)
+# 최신 재개 지점 (2026-10-28, 1.0 작업 재개·공통 실행부 로컬 구현·검증)
+
+기존 6개 로컬 커밋(85d4fcf~463b526)과 미커밋 live snapshot-negative 변경을 보존했다. 기존 사용자 지시대로 전체 소스/inventory·공통 갭을 기준으로 작업하며, 단일 여정 성공을 다른 독립 작업의 관문으로 삼지 않는다. 필수 WBS 범위와 model.h5 권리/visitor 미검증 상태는 유지한다.
+
+현재 명령 환경(Codex/macOS)의 `gh auth switch --hostname github.com --user winterholic`은 `failed to move active token in keyring: exit status 161`로 실패했다. 비밀 저장소 우회·동일 전환 재시도 없이 push 미실행으로 남기고 로컬 구현은 계속한다. 다른 환경의 Git 기능 전체가 불가능하다는 판정이 아니다.
+
+live snapshot-negative 검사는 이번 Run 소유 MySQL 8.4(loopback 35493, tmpfs)에서 실제 1 passed/0 failed로 실행했고 컨테이너 제거까지 확인했다. 이전 미커밋 문안의 “커밋·target 제거·정확 바이트 측정 완료”는 당시 코드/장부로 확인되지 않아 철회한다. 이번 실행의 Python runner/evidence/write-deployment 71개, Rust test 컴파일, 비DB scope 1개, fmt·shell syntax·diff 검사는 통과했다. 독립 E2E 11개 묶음의 실패를 수집한 뒤 최종 nonzero로 반환하는 runner를 연결했고 진단 모드 MongoDB fixture 누락도 수정했다. 전체 live 앱/UI 11개 실행은 미검증이며 공통 암호화·Infisical·FlaskBB와 최종 릴리스 범위는 계속 미완료다. 빌드는 기존 target을 재사용한다.
+
+---
+
+# 이전 재개 지점 (2026-10-27, 스냅샷 scope 음성회귀 고정·tutorial 부재검증·main push·CI 확인 대기)
 
 48926c5 독립리뷰 지적(무조건 summary 제외 arm)을 닫았다. 확인 결과 arm 자체는 명시적 `exclude_summary` 게이트로 이미 전환되어 있었고(48926c5 diff에 무조건 arm 존재·현 트리 4-tuple 게이트, 전 호출처 대조: password/email만 true·signup/tutorial/search false·withdraw 별도 헬퍼), 빠져 있던 것은 게이트를 고정하는 회귀였다. `business_snapshot_excluding`의 테이블별 scope 결정을 순수 `snapshot_statement`로 추출(SQL 바이트 동일)하고 DB 없이 도는 `snapshot_scope_keeps_unintended_summary_inserts_visible` 음성회귀로 고정했다. 48926c5 형태로 임시 되돌린 RED에서 signup/tutorial 전체조회 단언이 실패함을 시연한 뒤 복원 GREEN. tutorial 판정에 signup과 같은 `summary_row_absent_for_member` 0-count 긍정검증을 추가했다(/my 미방문 여정이므로 부재가 정상). 무관행보존 조건은 전 여정 그대로다. 제품·gate 변경 없음.
 
