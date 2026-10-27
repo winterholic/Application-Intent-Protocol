@@ -1,6 +1,15 @@
 # 제품 통합 검증 (2026-10-17)
 
 
+## 2026-10-28 읽기 복호화 연결 (구현, 실DB 미검증·출시 미완)
+
+인가 SQL 실행 뒤 `spike-v2-read`의 `execute_opened`가 root·1:1·1:N 각 층의 프레임을 `aip-execution::read_opener` 경계로 `open_cell`한다. 정책 소거 셀은 NULL로 남아 열지 않고 숨은 키는 응답에서 지운다. 혼합 scope 참조·owner·위조 셀은 읽기를 실패로 닫는다. opener 없이는 기존 출력(프레임+숨은 키)이 유지된다.
+
+- `cargo check`·`clippy --all-targets -- -D warnings`·`fmt --check`(aip-execution, spike-v2-read, spike-v3-write), `encrypted_opened` `--no-run` 링크, `wire_codes` 9개: 통과. PG* unset·형식검증용 dummy DSN(미접속).
+- 새 `spikes/spike-v3-write/tests/encrypted_opened.rs` 1개는 작성만 했고 실행하지 않았다. 전기 턴과 같은 명령 샌드박스 차단(docker·loopback TCP·`initdb` 사용자 조회 거부, 우회 없음)으로 실DB를 띄울 수 없으며 다른 환경 전체의 실패로 일반화하지 않는다.
+
+남음: `encrypted_sealed`·`encrypted_opened`·신규 셀 회귀의 실DB 실행, migration/adopt·durable rekey 연결, lookup:eq blind index·owner scope, Infisical 전환·전체 포팅/1.0 gate. 설계는 Proposed 유지, 이번 증분으로 WBS 8.18.3~6을 완료로 바꾸지 않는다. 원격 push/CI는 기존 keyring 차단으로 미실행이다.
+
 ## 2026-10-28 봉인 writer 연결 (구현, 실DB 미검증·출시 미완)
 
 `spike-v3-write`의 create/update가 `aip-execution::write_sealer` 경계로 봉인하도록 연결했다. 검증된 평문만 인가·ID/scope 확정 뒤 같은 트랜잭션에서 `seal_in`하며, 예산 예약은 별도 budget 연결에서 먼저 commit한다. 다중 행은 행별 CASE, 생성은 명시적 id·scope 리터럴을 요구한다. expect/`to`/effect 대입·행간 복사·lookup:eq·owner 봉인은 거부한다. sealer가 없으면 기존 `v2:` 통과가 유지된다.

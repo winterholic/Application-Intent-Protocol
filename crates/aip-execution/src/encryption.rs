@@ -88,6 +88,23 @@ impl Scope {
     }
 }
 
+/// Parses a writer/resolver-produced scope pair back into a validated [`Scope`].
+/// Shared by the seal and open boundaries so neither invents its own spelling.
+pub(crate) fn resolve_scope(kind: &str, id: &str) -> Result<Scope, Error> {
+    if kind == "service" {
+        if id == "global" {
+            return Ok(Scope::service());
+        }
+        return Err(Error::InvalidInput);
+    }
+    let (kind, resource) = kind.split_once(':').ok_or(Error::InvalidInput)?;
+    match kind {
+        "ref" => Scope::reference(resource, id),
+        "owner" => Scope::owner(resource, id),
+        _ => Err(Error::InvalidInput),
+    }
+}
+
 /// Wrapped material only. Debug and errors intentionally omit the provider's payload.
 #[derive(Clone)]
 pub struct Dek {

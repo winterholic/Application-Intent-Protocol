@@ -1,4 +1,12 @@
-# 최신 재개 지점 (2026-10-28, 봉인 writer 연결·정적 검증)
+# 최신 재개 지점 (2026-10-28, 읽기 복호화 연결·정적 검증)
+
+인가 SQL 실행 뒤 root·1:1·1:N 각 층의 프레임을 여는 `execute_opened`와 `aip-execution::read_opener::StoreOpener`를 연결했다. 정책 소거 셀은 NULL로 남아 열지 않고 숨은 키는 응답에서 지운다. 혼합 scope·owner·위조 셀은 읽기를 실패로 닫으며, opener 없이는 기존 출력이 유지된다. gate·Proposed 상태 유지.
+
+검증은 정적 범위다. `cargo check`·`clippy --all-targets -- -D warnings`·`fmt --check`(실행·읽기·쓰기), `encrypted_opened` 링크, wire_codes 9개 통과. 새 `encrypted_opened` 왕복 테스트는 작성했으나 이 명령 샌드박스에서 실DB 실행이 차단됐다(전기 턴과 동일, 우회 없음). DB 접속 가능 세션이 `encrypted_sealed`·`encrypted_opened`·신규 셀 회귀부터 실행한다. Git push는 기존 keyring 차단으로 미실행이며 같은 전환을 재시도하지 않는다.
+
+---
+
+# 이전 재개 지점 (2026-10-28, 봉인 writer 연결·정적 검증)
 
 native writer(create_row/update)가 인가·평문 scalar 검증·행 ID/scope 확정 뒤 `Knobs.seal` 경계로 DB `seal_in`을 사용하도록 연결했다. `aip-execution::write_sealer::StoreSealer`가 별도 budget 연결 예약과 트랜잭션 내 봉인을 수행하고, 다중 행 갱신은 행별 CASE로 프레임을 나눈다. expect/`to`/effect의 암호화 대입, 행간 값 복사 봉인, 명시적 id·scope 리터럴 누락, lookup:eq·owner는 실패로 닫는다. sealer 없이는 기존 prototype(`v2:` 통과)이 유지되고 listener/migrate/adopt gate와 Proposed 상태는 그대로다. 같은 트랜잭션의 두 번째 예산 예약이 멈추지 않도록 DEK 잠금을 KEY SHARE/NO KEY UPDATE로 낮추고 회귀를 추가했다.
 

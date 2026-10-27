@@ -23,6 +23,8 @@
 
 2026-10-28 봉인 writer 증분: native create/update가 인가·scalar 검증·ID/scope 확정 뒤 같은 트랜잭션에서 `seal_in`하도록 `WriteCellSealer` 경계(`StoreSealer`)를 연결했다. 다중 행은 행별 CASE로 나누고 생성은 명시적 id를 요구한다. expect/`to`/effect 대입·lookup:eq·owner는 거부하며, sealer 없이는 기존 `v2:` 통과가 유지된다. 같은 트랜잭션의 두 번째 예산 예약이 멈추지 않도록 DEK 잠금을 KEY SHARE/NO KEY UPDATE로 낮췄다. 정적 검증만 마쳤고 실DB 실행은 샌드박스 차단으로 대기한다. read·adopt·rekey 미연결이므로 gate와 Proposed 상태는 유지한다.
 
+2026-10-28 읽기 복호화 증분: 인가 SQL 실행 뒤 `execute_opened`가 root·1:1·1:N 각 층의 프레임을 `ReadCellOpener` 경계(`StoreOpener`)로 `open_cell`한다. 정책 소거 셀은 NULL로 남아 열지 않고, 숨은 `__aip_id`/`__aip_scope`는 응답에서 지운다. 혼합 scope 참조·owner·위조 셀은 읽기를 실패로 닫는다. opener 없이는 기존 출력이 유지된다. 정적 검증만 마쳤고 실DB 실행은 샌드박스 차단으로 대기한다. adopt·rekey 미연결이므로 gate와 Proposed 상태는 유지한다.
+
 `aip-execution::encrypted_journal`은 create/apply/atomic/compose의 values·expect·target(s).where 및 compose `{const}`를 같은 방문자로 처리한다. `/apply`·`/status`·확장 멱등 저장/재생과 durable 효과 marker에 연결했다. 지문 오류의 평문 fallback, 구 지문 키 부재를 mismatch로 취급하는 처리, 저장된 marker와 caller 입력의 문자열 같음만으로 replay하던 처리를 제거했다. 이 증분도 8경로 전체·worker 실제 실행·암호화 제품 통합 완료를 뜻하지 않는다.
 
 이하 표·포맷·상태 기계는 **Proposed 목표 계약**이다. 라이브러리·정적 진단·DEK metadata 기반을 단계적으로 구현하며 제품 실행 증거는 §7의 각 게이트에서 별도로 수집한다.

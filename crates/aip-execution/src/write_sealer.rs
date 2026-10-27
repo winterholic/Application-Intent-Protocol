@@ -4,7 +4,7 @@
 //! [`WriteCellSealer`]; [`StoreSealer`] validates the resolved request again, reserves nonce
 //! budget on its own connection, and seals each cell inside the resource transaction.
 //! Failures carry wire-stable codes without key, plaintext, or ciphertext detail.
-use crate::encryption::{CellLocation, DekStore, Error as StoreError, Scope, SealReservation};
+use crate::encryption::{CellLocation, DekStore, Error as StoreError, SealReservation, resolve_scope};
 use aip_crypto::cell::MAX_CELL_BYTES;
 use aip_crypto::provider::KekProvider;
 use std::collections::BTreeMap;
@@ -50,21 +50,6 @@ impl StoreSealer {
         Self { store, provider: Box::new(provider), budget: Mutex::new(budget) }
     }
 
-    fn scope(kind: &str, id: &str) -> Result<Scope, StoreError> {
-        if kind == "service" {
-            if id == "global" {
-                return Ok(Scope::service());
-            }
-            return Err(StoreError::InvalidInput);
-        }
-        let (kind, resource) = kind.split_once(':').ok_or(StoreError::InvalidInput)?;
-        match kind {
-            "ref" => Scope::reference(resource, id),
-            "owner" => Scope::owner(resource, id),
-            _ => Err(StoreError::InvalidInput),
-        }
-    }
-
     fn map(error: StoreError, what: &'static str) -> SealError {
         let (code, msg) = match error {
             StoreError::Crypto | StoreError::Corrupted => ("WIRE.ENCRYPTION_CORRUPTED", format!("{what}: 셀 무결성 확인 실패")),
@@ -96,7 +81,7 @@ impl WriteCellSealer for StoreSealer {
                         code: "WIRE.BAD_VALUE", msg: format!("`{}.{}` 셀이 크기 상한을 넘음", cell.resource, cell.field)
                     });
                 }
-                let scope = Self::scope(&cell.scope_kind, &cell.scope_id).map_err(|e| Self::map(e, "scope 확인"))?;
+                let scope = resolve_scope(&cell.scope_kind, &cell.scope_id).map_err(|e| Self::map(e, "scope 확인"))?;
                 let location = CellLocation::new(&cell.resource, &cell.field, &cell.row_id).map_err(|e| Self::map(e, "셀 위치 확인"))?;
                 prepared.push((scope, location));
             }

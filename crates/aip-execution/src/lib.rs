@@ -37,4 +37,5 @@ pub fn infrastructure_schema(deployment_schema: &str) -> Result<String, &'static
 
 pub mod encrypted_journal;
 pub mod encryption;
+pub mod read_opener;
 pub mod write_sealer;
