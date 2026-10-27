@@ -1,6 +1,6 @@
 # FaceReview UI overlay (WBS 7.2.10)
 
-> Latest measured follow-up (2026-10-24): Verify40076012954/751ad8d failed the password journey's final all-body assertion at line232. Its password UI/auth gates and DB checks passed, but one User.myEmotionSummary response was not captured. Email/signup/tutorial/admin were not reached; the 25-route table, overlay and existing scripts are unchanged. No retry was started. See [current status](../../../plan-docs/STATUS.md) and [evidence](../../../product/VERIFICATION.md#2026-10-24-verify40076012954-비밀번호-회귀-body-수집-gate-실패).
+> Latest measured follow-up (2026-10-27): the password/email/account collectors shared one defect of discarding body-read failures, which left Verify40076012954 unexplained. All three now record body_failure_reason like the profile/admin scripts; the all-body gate is unchanged. Pushed to main so a fresh Verify runs; the next artifact's reason value and the tutorial/account/withdraw/admin journeys stay unverified until that CI is inspected. See [current status](../../../plan-docs/STATUS.md) and [evidence](../../../product/VERIFICATION.md#2026-10-27-password-email-account-body-failure-reason-wiring).
 
 The player of FaceReview is the user's repository `facereview-front-joowon`. This directory holds only the files that change when its
 data access moves from the original REST API to AIP; it is meant to be copied over a checkout of the pinned revision

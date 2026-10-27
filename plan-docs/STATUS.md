@@ -1,4 +1,12 @@
-# 최신 재개 지점 (2026-10-24 17:46 KST, Verify40076012954 비밀번호 body 수집 gate 실패)
+# 최신 재개 지점 (2026-10-27, password/email/account body 실패원인 배선·main push·CI 확인 대기)
+
+Verify40076012954(751ad8d)의 password 전체body gate 실패(line232)는 수집기가 `json.loads(response.body())` 예외를 버려 원인 불명이었다. 같은 삼킴이 password/email/account 3개 스크립트에 공통으로 있고 profile/admin/admin-reissue/member는 이미 `body_failure_reason`을 기록함을 확인했다. 3개 스크립트의 except에만 profile 패턴(`json_decode_error` vs `body_failure_reason(error)`)을 배선했고, 전체body gate·판정 범위·원본UI/overlay 제품코드·DB보존조건은 변경하지 않았다. 새 CI artifact의 해당 행에 `body_failure_reason`이 남아야 실제 예외 종류(target_closed/timeout/resource_evicted/playwright_error/json_decode_error)를 확정할 수 있다.
+
+로컬: 3종 `py_compile` OK, 배선 probe(3종 wiring+gate strict, profile 참조 일치) OK, evidence unittest 53 OK(CI 플래그 `-W error::ResourceWarning` 포함), `git diff --check` OK, 변경 3파일만. Rust/overlay/어댑터 변경 없음. main에 push해 일반 Verify가 자동 실행된다. CI 결과·다음 artifact의 failure_reason 값·tutorial live-store 검증·account 2phase·confirmedwithdraw·admin 후단은 push 시점 미검증이다. 이 세션은 gh 미로그인이라 CI 관찰·artifact 수집을 못하므로, gh 가능 세션이 새 Verify run의 password JSON부터 직접 검사한다. WBS90/25·25경로전수미완·model.h5권리/visitor보류·myEmotionSummary/graph 별도잔여 유지.
+
+---
+
+# 이전 재개 지점 (2026-10-24 17:46 KST, Verify40076012954 비밀번호 body 수집 gate 실패)
 
 일반 Verify `40076012954`, SHA `751ad8d13483c951fbfb026ea12e8a4c0eec015d`, attempt1은 completed/failure(core종료 08:22:04UTC)다. Broad11·원본UI준비13/14는 success, 첫 실패는 실HTTP/worker/MySQL step15다. Safe artifact `12554215645` (`facereview-ui-browser-40076012954-1`)를 현재 Run outbox `/Users/winterholic/.ttakkari/data/outbox/f5290b4f-874f-49e9-8f1a-133da3f9fd35/verify-40076012954`에 다운로드했다. Locator는 stage=FaceReview member authentication E2E test, command=tee /tmp/aip-e2e-auth-run-"$tag".txt, exit101이다.
 

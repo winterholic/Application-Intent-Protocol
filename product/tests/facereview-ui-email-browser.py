@@ -20,7 +20,11 @@ from urllib.request import urlopen
 from playwright.sync_api import expect, sync_playwright
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from product.tests.facereview_ui_browser_evidence import member_email_evidence, safe_browser_failure_type
+from product.tests.facereview_ui_browser_evidence import (
+    body_failure_reason,
+    member_email_evidence,
+    safe_browser_failure_type,
+)
 
 
 def main() -> int:
@@ -99,7 +103,9 @@ def main() -> int:
         finished.add(request)
         try:
             body = json.loads(response.body())
-        except Exception:
+        except Exception as error:
+            # JSONDecodeError is a ValueError; everything else is Playwright's. The gate still fails.
+            row["body_failure_reason"] = "json_decode_error" if isinstance(error, ValueError) else body_failure_reason(error)
             return
         row["body_captured"] = True
         if isinstance(body, dict):
