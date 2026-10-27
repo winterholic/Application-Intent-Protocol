@@ -268,12 +268,14 @@ impl DekStore {
         if epoch <= 0 {
             return Err(Error::Corrupted);
         }
-        let row=tx.query_opt(&format!("SELECT dek_id,version,kek_id,wrapped_dek FROM {}.aip_encryption_deks WHERE scope_kind=$1 AND scope_id=$2 AND state='ACTIVE' FOR SHARE",self.infra),&[&scope.kind,&scope.id]).await?.ok_or(Error::NotFound)?;
+        let row=tx.query_opt(&format!("SELECT dek_id,version,kek_id,wrapped_dek FROM {}.aip_encryption_deks WHERE scope_kind=$1 AND scope_id=$2 AND state='ACTIVE' FOR KEY SHARE",self.infra),&[&scope.kind,&scope.id]).await?.ok_or(Error::NotFound)?;
         Ok(WriteDek { epoch: epoch as u64, dek: Dek::from_row(row)? })
     }
 
     /// Reserve at most 500 cell seals on a dedicated, otherwise-idle connection. Invoke this
-    /// BEFORE starting/locking the resource transaction; never use the resource connection here.
+    /// on an independent connection; never use the resource connection here. Scope fencing
+    /// prevents promotion while cell writers are live, but their key-share lock permits
+    /// non-key counter reservations for another field/row of the same transaction.
     /// No raw key or frame is returned before the budget transaction commits. Cancellation after
     /// an uncertain commit wastes budget, rather than allowing an uncounted encryption attempt.
     pub async fn reserve_for_write(&self, budget: &mut Client, scope: &Scope, cells: u32) -> Result<SealReservation, Error> {
@@ -292,10 +294,11 @@ impl DekStore {
         if epoch <= 0 {
             return Err(Error::Corrupted);
         }
-        // Lock ACTIVE exclusively here, without first sharing its row: concurrent reservations
-        // must not deadlock while upgrading two shared locks into UPDATE locks.
+        // Serialize counter reservations without a key-changing lock. Cell writers hold KEY SHARE
+        // on this row, so another field in their transaction can reserve its own budget.
+        // The scope SHARE lock above still conflicts with promotion's exclusive scope lock.
         let row = tx.query_opt(
-            &format!("SELECT dek_id,version,kek_id,wrapped_dek,seal_count FROM {}.aip_encryption_deks WHERE scope_kind=$1 AND scope_id=$2 AND state='ACTIVE' FOR UPDATE",self.infra),
+            &format!("SELECT dek_id,version,kek_id,wrapped_dek,seal_count FROM {}.aip_encryption_deks WHERE scope_kind=$1 AND scope_id=$2 AND state='ACTIVE' FOR NO KEY UPDATE",self.infra),
             &[&scope.kind, &scope.id],
         ).await?.ok_or(Error::NotFound)?;
         let used: i64 = row.try_get("seal_count")?;

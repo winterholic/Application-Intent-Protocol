@@ -263,3 +263,28 @@ async fn real_cell_writer_blocks_promotion_until_the_business_commit() {
     cleanup(&db, &store).await;
     result.unwrap();
 }
+
+#[tokio::test]
+async fn another_cell_can_reserve_budget_while_the_same_business_transaction_is_live() {
+    let (db, store) = fixture().await;
+    let owned = store.clone();
+    let result = tokio::spawn(async move {
+        let scope = Scope::service();
+        let kek = provider("old", 7);
+        let mut budget = connect().await;
+        let mut writer = connect().await;
+        let mut first = owned.reserve_for_write(&mut budget, &scope, 1).await.unwrap();
+        let tx = writer.transaction().await.unwrap();
+        owned.seal_in(&tx, &mut first, &location("1"), SENTINEL, &kek).await.unwrap();
+        let mut second = tokio::time::timeout(std::time::Duration::from_millis(500), owned.reserve_for_write(&mut budget, &scope, 1))
+            .await
+            .expect("another field's budget must not wait behind its own transaction")
+            .unwrap();
+        owned.seal_in(&tx, &mut second, &location("2"), SENTINEL, &kek).await.unwrap();
+        tx.commit().await.unwrap();
+        assert_eq!(count(&budget, &owned).await, 2);
+    })
+    .await;
+    cleanup(&db, &store).await;
+    result.unwrap();
+}
