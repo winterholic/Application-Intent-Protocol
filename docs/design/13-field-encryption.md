@@ -27,6 +27,8 @@
 
 2026-10-28 검증 이관 증분: `adopt::apply_verified`가 계획 승인 일치 뒤·변경 전 같은 트랜잭션에서 모든 암호화 열의 전수 AEAD 검증을 수행한다. 키셋 페이지 순회로 평문은 버리고 개수만 남기며, 위조 셀은 마커를 건드리기 전 이관 전체를 실패로 닫는다. owner scope는 거부하고, 기본 `creation`·이관·초기화·마이그레이션 게이트는 그대로 닫혀 있다. 게이트 단위 검사는 실행했고 실DB 이관 검사는 샌드박스 차단으로 대기한다. rekey 미연결이므로 Proposed 상태는 유지한다.
 
+2026-10-29 Durable Rekey 증분: `crates/aip-execution::rekey`에 `RekeyContext`, `rekey_target_column`, `rekey_scope` 및 `RekeyLease`를 구현했다. `READABLE` 구 키 세대를 keyset pagination(`LIMIT 100`)으로 순회하며 원자적 CAS(`WHERE col = <old_frame>`)로 `ACTIVE` 키 세대로 재암호화한다. 레이스 행 재스캔(multi-pass)과 잔여 구 셀 전수 검증(`final 0`)을 거쳐 `DekStore::retire_dek_in`으로 안전하게 `RETIRED` 상태로 전이한다. infrastructure 스키마의 `aip_rekey_leases` 테이블과 epoch 검증으로 동시 rekey 작업자 및 stale writer를 차단한다. 단위 테스트 3건 통과. Proposed 상태와 배포 게이트는 유지한다.
+
 `aip-execution::encrypted_journal`은 create/apply/atomic/compose의 values·expect·target(s).where 및 compose `{const}`를 같은 방문자로 처리한다. `/apply`·`/status`·확장 멱등 저장/재생과 durable 효과 marker에 연결했다. 지문 오류의 평문 fallback, 구 지문 키 부재를 mismatch로 취급하는 처리, 저장된 marker와 caller 입력의 문자열 같음만으로 replay하던 처리를 제거했다. 이 증분도 8경로 전체·worker 실제 실행·암호화 제품 통합 완료를 뜻하지 않는다.
 
 이하 표·포맷·상태 기계는 **Proposed 목표 계약**이다. 라이브러리·정적 진단·DEK metadata 기반을 단계적으로 구현하며 제품 실행 증거는 §7의 각 게이트에서 별도로 수집한다.

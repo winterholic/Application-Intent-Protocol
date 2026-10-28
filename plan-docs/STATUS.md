@@ -1,4 +1,12 @@
-# 최신 재개 지점 (2026-10-28, 검증 이관 연결·게이트 실행)
+# 최신 재개 지점 (2026-10-29, Durable Rekey 구현 및 검증)
+
+`crates/aip-execution::rekey`에 `RekeyContext`, `rekey_target_column`, `rekey_scope` 및 `RekeyLease`를 구현했다. `READABLE` 구 키 세대를 keyset pagination(`LIMIT 100`)으로 순회하며 원자적 CAS(`WHERE col = <old_frame>`)로 `ACTIVE` 키 세대로 재암호화한다. 레이스 행 재스캔(multi-pass)과 잔여 구 셀 전수 검증(`final 0`)을 거쳐 `DekStore::retire_dek_in`으로 안전하게 `RETIRED` 상태로 전이한다. infrastructure 스키마의 `aip_rekey_leases` 테이블과 epoch 검증으로 동시 rekey 작업자 및 stale writer를 차단한다.
+
+검증: `cargo clippy -p aip-execution --all-targets -- -D warnings`, `cargo fmt --all --check`, 단위 테스트 `encryption_rekey` 3건 통과. 실DB 5종(봉인, 읽기, 셀 회귀, adopt 2종) 및 실DB rekey는 샌드박스 차단으로 미실행(우회 없음). Git push는 헤드리스 인증 프롬프트 차단으로 미실행(호스트 인증 환경 필요).
+
+---
+
+# 이전 재개 지점 (2026-10-28, 검증 이관 연결·게이트 실행)
 
 `adopt::apply_verified`가 승인 일치 뒤·변경 전 같은 트랜잭션에서 암호화 전 열의 전수 AEAD 검증을 수행하도록 연결했다. 키셋 페이지 순회로 평문은 버리고 열·셀 개수만 결과에 싣는다. 위조 셀은 마커 제거 전 실패로 닫고, owner는 거부한다. 기본 creation·이관·초기화·마이그레이션 게이트는 그대로다. `ReadCellOpener`에 트랜잭션 내 열기를 추가했다.
 

@@ -122,6 +122,9 @@ impl Dek {
     pub fn id(&self) -> &str {
         &self.id_text
     }
+    pub fn uuid(&self) -> Uuid {
+        self.id
+    }
     pub fn version(&self) -> u32 {
         self.version
     }
@@ -203,6 +206,13 @@ impl DekStore {
         )
         + &format!(
             "ALTER TABLE {s}.aip_encryption_deks ADD COLUMN IF NOT EXISTS seal_count bigint NOT NULL DEFAULT 0 CHECK(seal_count BETWEEN 0 AND {MAX_DEK_SEALS});"
+        )
+        + &format!(
+            "CREATE TABLE IF NOT EXISTS {s}.aip_rekey_leases (
+               target_key text PRIMARY KEY,
+               holder text NOT NULL,
+               epoch bigint NOT NULL CHECK (epoch > 0),
+               leased_until timestamptz NOT NULL);"
         )
     }
     async fn lock_scope(&self, tx: &Transaction<'_>, scope: &Scope) -> Result<(), Error> {
@@ -497,6 +507,58 @@ impl DekStore {
         }
         tx.execute(&format!("UPDATE {}.aip_encryption_deks SET kek_id=$4,wrapped_dek=$5,rewrapped_at=clock_timestamp() WHERE scope_kind=$1 AND scope_id=$2 AND dek_id=$3", self.infra), &[&scope.kind, &scope.id, &before.id, &wrapped.kek_id, &wrapped.sealed]).await?;
         Ok(Dek { wrapped, ..before })
+    }
+    /// Lists all READABLE DEK generations for the scope, ordered by version.
+    /// Used by durable rekey to discover keys that need backfill before retirement.
+    pub async fn list_readable_in(&self, tx: &Transaction<'_>, scope: &Scope) -> Result<Vec<Dek>, Error> {
+        let rows = tx
+            .query(
+                &format!(
+                    "SELECT dek_id,version,kek_id,wrapped_dek FROM {}.aip_encryption_deks WHERE scope_kind=$1 AND scope_id=$2 AND state='READABLE' ORDER BY version ASC",
+                    self.infra
+                ),
+                &[&scope.kind, &scope.id],
+            )
+            .await?;
+        let mut deks = Vec::with_capacity(rows.len());
+        for row in rows {
+            deks.push(Dek::from_row(row)?);
+        }
+        Ok(deks)
+    }
+    /// Transitions a READABLE DEK generation to RETIRED in the caller's transaction.
+    /// Fails closed if the key is not in READABLE state, or if the scope's write_epoch has changed
+    /// from expected_epoch (preventing stale workers from retiring keys across promotions).
+    pub async fn retire_dek_in(&self, tx: &Transaction<'_>, scope: &Scope, dek_id: &str, version: u32, expected_epoch: u64) -> Result<(), Error> {
+        self.lock_scope(tx, scope).await?;
+        let (id, version_i32) = checked_identity(dek_id, version)?;
+        let row = tx
+            .query_opt(
+                &format!("SELECT write_epoch FROM {}.aip_encryption_scopes WHERE scope_kind=$1 AND scope_id=$2 FOR UPDATE", self.infra),
+                &[&scope.kind, &scope.id],
+            )
+            .await?
+            .ok_or(Error::NotFound)?;
+        let epoch: i64 = row.try_get("write_epoch")?;
+        if epoch <= 0 {
+            return Err(Error::Corrupted);
+        }
+        if epoch as u64 != expected_epoch {
+            return Err(Error::StaleWriter);
+        }
+        let updated = tx
+            .execute(
+                &format!(
+                    "UPDATE {}.aip_encryption_deks SET state='RETIRED' WHERE scope_kind=$1 AND scope_id=$2 AND dek_id=$3 AND version=$4 AND state='READABLE'",
+                    self.infra
+                ),
+                &[&scope.kind, &scope.id, &id, &version_i32],
+            )
+            .await?;
+        if updated != 1 {
+            return Err(Error::NotFound);
+        }
+        Ok(())
     }
 }
 fn checked_identity(id: &str, version: u32) -> Result<(Uuid, i32), Error> {
