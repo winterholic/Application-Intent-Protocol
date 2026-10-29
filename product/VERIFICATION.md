@@ -1,5 +1,11 @@
 # 제품 통합 검증 (2026-10-17)
 
+## 2026-10-30 G-6 conditional update V1 slice (runtime parity 아님)
+
+`spike-v1-fixture`의 update-effect optional `when` 조건을 parser/AST/H mapping/sema facts로 전달하고 Bool을 검사한다. RED: `latest_effect_values::update_effect_when_serializes_the_transition_prestate_condition`에서 유효 `when` DSL이 parser의 `DEF.PARSE_EXPECTED`로 거부됨. GREEN: `cargo test --manifest-path spikes/spike-v1-fixture/Cargo.toml --target-dir target --locked --offline --test latest_effect_values` → 5 passed; condition이 A/TS/Python/H 네 형식에서 동일 facts이며 non-Bool는 거부된다. 같은 파일에서 기존 malformed raw-string fixture와 H definition-only `exposeApply` 차이를 수정했다.
+
+`cargo test --manifest-path spikes/spike-v2-read/Cargo.toml --target-dir target --locked --offline --test latest_effect_value`는 lockfile `ctutils 0.4.4`가 기존 offline index에 없어 execution 전에 종료했다(후보 0.4.3/0.4.2); V2 SQL은 미검증이다. V3 no-op/true-update/missing-target 동작, PostgreSQL, pre/post snapshot·actor/fence/transaction/read-set·projection은 미실행이며 이번 사실을 그 계약의 통과로 세지 않는다. G-6 전체/제품 포팅 완료 근거 아님.
+
 ## 2026-10-30 G-6 설계·원본 알고리즘 oracle (엔진/DB parity 아님)
 
 baseline `094c5e044f7214b735cbf0e8d1bdb5c0616df5b8`에서 공개 UUID + 내부 PostOrder Id 방식을 선택했다. 원 source ID import 근거가 없는 UUID-only는 보존하고 영향 전이를 fail-closed하며, 조건부 before/after effect·선택 row/projection 계약이 아직 필요하다. 전체 설계·정확한 파일·최소 회귀 행렬은 [FlaskBB G-6](../porting/flaskbb/PRODUCT-GAPS.md#g-6-후속-결정--공개-uuid--내부-postorder-2026-10-30)에 있다.

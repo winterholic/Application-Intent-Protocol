@@ -1499,7 +1499,7 @@ impl<'a> Ctx<'a> {
                 let _ = r;
                 Some(json!({ "create": resource, "values": vals }))
             }
-            Effect::Update { resource, max_rows, matches, values, span } => {
+            Effect::Update { resource, max_rows, when, matches, values, span } => {
                 if !self.res.contains_key(resource.as_str()) {
                     self.d("DEF.UNKNOWN_SYMBOL", format!("갱신 대상 `{resource}` 없음"), *span);
                     return None;
@@ -1529,12 +1529,16 @@ impl<'a> Ctx<'a> {
                     out
                 };
                 let m = typed(matches, "조건", sc, self);
+                let when = when.as_ref().and_then(|condition| self.run(self.bool_of(condition, sc)));
                 let value_scope = Scope { allow_latest: true, latest_target: Some(resource.clone()), ..sc.clone() };
                 let v = typed(values, "값", &value_scope, self);
                 if m.is_empty() || v.is_empty() {
                     self.d("DEF.MISSING_ITEM", "update 효과에는 찾을 조건과 바꿀 값이 필요", *span);
                 }
                 let mut effect = json!({ "update": resource, "match": m, "values": v });
+                if let Some(when) = when {
+                    effect["when"] = when;
+                }
                 if let Some(max) = max_rows {
                     if !(1..=1000).contains(max) {
                         self.d("DEF.BAD_BUDGET", "many update maxRows는 1..1000", *span);
@@ -2494,7 +2498,10 @@ fn validate_policy_expansion(spec: &Spec) -> Vec<Diag> {
             for effect in &transition.effects {
                 match effect {
                     Effect::Create { values, span, .. } => roots.extend(values.iter().map(|(_, expr)| (expr, *span))),
-                    Effect::Update { matches, values, span, .. } => {
+                    Effect::Update { when, matches, values, span, .. } => {
+                        if let Some(condition) = when {
+                            roots.push((condition, *span));
+                        }
                         roots.extend(matches.iter().chain(values).map(|(_, expr)| (expr, *span)));
                     }
                     Effect::Delete { matches, span, .. } => {

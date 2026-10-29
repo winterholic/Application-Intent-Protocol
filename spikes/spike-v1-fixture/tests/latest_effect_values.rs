@@ -38,8 +38,7 @@ fn h_definition() -> Value {
                             "created": "latest Item candidate where candidate.order = this.id and candidate.active = true order by candidate.created select candidate.created otherwise this.created"
                         }
                     }]
-                }},
-                "exposeApply": {"refresh": {"target": ["id"], "bulkMaxRows": 1}}
+                }}
             },
             "Summary": {"fields": {"id": "Id", "order": "Order", "item": "Item?", "label": "Text?", "created": "Time?"}},
             "Item": {"fields": {"id": "Id", "order": "Order", "active": "Bool", "label": "Text", "created": "Time?"}}
@@ -59,6 +58,35 @@ fn python_literal(value: &Value) -> String {
     }
 }
 
+fn first_difference(left: &Value, right: &Value, path: &str) -> Option<String> {
+    if left == right {
+        return None;
+    }
+    match (left, right) {
+        (Value::Object(left), Value::Object(right)) => {
+            for key in left.keys().chain(right.keys()) {
+                let Some(a) = left.get(key) else {
+                    return Some(format!("{path}.{key}: absent on left, right={}", right[key]));
+                };
+                let Some(b) = right.get(key) else {
+                    return Some(format!("{path}.{key}: left={a}, absent on right"));
+                };
+                if let Some(diff) = first_difference(a, b, &format!("{path}.{key}")) {
+                    return Some(diff);
+                }
+            }
+            None
+        }
+        (Value::Array(left), Value::Array(right)) => {
+            if left.len() != right.len() {
+                return Some(format!("{path}: array lengths {} != {}", left.len(), right.len()));
+            }
+            left.iter().zip(right).enumerate().find_map(|(i, (a, b))| first_difference(a, b, &format!("{path}[{i}]")))
+        }
+        _ => Some(format!("{path}: left={left}, right={right}")),
+    }
+}
+
 #[test]
 fn latest_server_selected_values_are_typed_and_serialized_in_effects() {
     let facts = load_str(SOURCE, Form::A).unwrap_or_else(|errors| panic!("{errors:?}")).execution;
@@ -73,6 +101,30 @@ fn latest_server_selected_values_are_typed_and_serialized_in_effects() {
     assert_eq!(item["select"]["path"]["segs"], json!([]));
     assert_eq!(values["created"]["latest"]["otherwise"]["path"]["root"], "this");
     assert_eq!(values["created"]["ty"], "Time?");
+}
+
+#[test]
+fn update_effect_when_serializes_the_transition_prestate_condition() {
+    let source = SOURCE
+        .replace("update Summary where order = this.id", "update Summary when this.refreshed = false and this.owner = actor where order = this.id");
+    let expected = load_str(&source, Form::A).unwrap_or_else(|errors| panic!("A: {errors:?}")).execution;
+    let mut definition = h_definition();
+    definition["resources"]["Order"]["transitions"]["refresh"]["effects"][0]["when"] = json!("this.refreshed = false and this.owner = actor");
+    for (form, encoded) in [
+        (Form::ETs, format!("import {{ aip }} from '@aip/define';\nexport default aip`{source}`;")),
+        (Form::EPy, format!("from aip.define import aip\nSPEC = aip('''{source}''')")),
+        (Form::HTs, format!("import {{ define }} from '@aip/define';\nexport const spec = define({definition});")),
+        (Form::HPy, format!("from aip.define import define\nSPEC = define({})", python_literal(&definition))),
+    ] {
+        let facts = load_str(&encoded, form).unwrap_or_else(|errors| panic!("{form:?}: {errors:?}")).execution;
+        assert_eq!(first_difference(&facts, &expected, "$"), None, "{form:?}");
+    }
+    let effect = &expected["resources"]["Order"]["transitions"]["refresh"]["effects"][0];
+    assert_eq!(effect["when"]["and"].as_array().map(Vec::len), Some(2));
+
+    let non_boolean = source.replace("when this.refreshed = false", "when this.created");
+    let errors = load_str(&non_boolean, Form::A).err().expect("non-boolean effect condition rejected");
+    assert!(errors.iter().any(|error| error.code == "DEF.TYPE_MISMATCH"), "{errors:?}");
 }
 
 #[test]
@@ -107,6 +159,11 @@ resource Order {
     }
   }
 }
+resource Item { fields { id: Id; order: Order; active: Bool } }
+"#;
+    let errors = load_str(source, Form::A).err().expect("same-resource source rejected");
+    assert!(errors.iter().any(|error| error.code == "DEF.UNSUPPORTED_EFFECT"), "{errors:?}");
+}
 
 #[test]
 fn latest_effect_facts_match_in_all_five_definition_forms() {
@@ -119,11 +176,6 @@ fn latest_effect_facts_match_in_all_five_definition_forms() {
         (Form::HPy, format!("from aip.define import define\nSPEC = define({})", python_literal(&definition))),
     ] {
         let actual = load_str(&source, form).unwrap_or_else(|errors| panic!("{form:?}: {errors:?}")).execution;
-        assert_eq!(actual, expected, "{form:?}");
+        assert_eq!(first_difference(&actual, &expected, "$"), None, "{form:?}");
     }
-}
-resource Item { fields { id: Id; order: Order; active: Bool } }
-"#;
-    let errors = load_str(source, Form::A).err().expect("same-resource source rejected");
-    assert!(errors.iter().any(|error| error.code == "DEF.UNSUPPORTED_EFFECT"), "{errors:?}");
 }

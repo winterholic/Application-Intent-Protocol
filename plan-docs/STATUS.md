@@ -1,3 +1,11 @@
+# 최신 재개 지점 (2026-10-30, G-6 조건부 effect V1 계약 증분)
+
+시작 SHA `7a9a0acba7eda09fb6dc6c86422d77d30ced771d`에서 G-6 첫 코어 슬라이스를 진행했다. `spike-v1-fixture`에 update-effect의 optional `when` 조건을 추가해 parser→AST→H mapping→sema facts로 전달하고 Bool 타입을 검사한다. TDD: 유효 DSL의 `when`에서 기존 parser가 `DEF.PARSE_EXPECTED`를 내는 RED 뒤 최소 구현, 코드·TS/Python·H 정의의 동일 facts 및 non-Bool 거부까지 V1 target 5/5 GREEN. 기존 target 재사용.
+
+기존 V1 latest 테스트의 malformed raw-string 경계와 H definition의 불일치 `exposeApply`도 실행 중 확인해 테스트 입력만 바로잡았다. V2 SQL 명령은 실행 전 offline resolver에서 locked `ctutils 0.4.4`를 찾지 못해 중단(로컬 index candidates 0.4.3/0.4.2); 이는 컴파일·행동 실패가 아니며 cache를 새로 채우지 않았다. 따라서 V2/V3 런타임 no-op, before/after snapshot, exact target missing 계약은 미구현·미검증이다. 이번 V1 계약은 공개/제품 계약 승인이나 실제 effect 동작을 뜻하지 않는다.
+
+공유 target은 시작 `10,053,255,168` bytes에서 종료 `10,183,757,824` bytes로 측정됐고 `130,502,656` bytes 증가했다. 기존 target을 보존했다. 새 target/cache/DB/container/browser/worker 0, 회수 0 bytes. G-6와 전체 AIP/FaceReview/Infisical 포팅, encryption runtime/adoption/retirement, 공식 SDK, exact-SHA CI, upgrade/rollback, 1.0은 미완. 기존 GitHub push 인증 거부를 재시도하지 않아 원격 SHA는 이번 실행에서 확인하지 않았다. 다음 구현은 V2 SQL test의 dependency 제공 가능 경로를 확인한 뒤 V2/V3 conditional false no-op의 behavior RED→GREEN이며, false condition이 main transition을 거부하지 않고 true condition은 exact target을 갱신하며 true+missing target은 기존 error를 유지해야 한다.
+
 # 최신 재개 지점 (2026-10-30, G-6 순서 보존 결정·source oracle)
 
 `094c5e044f7214b735cbf0e8d1bdb5c0616df5b8` clean main에서 재개했다. 공개 UUID를 유지하고 내부 `PostOrder.id: Id`에 source Post integer ID를 보존하는 방식을 선택했다. 기존 identity/create effect를 재사용하며, numeric PK+UUID wire 변환 및 owned Int sequence annotation보다 변경 범위가 작다. 실제 mapping이 없는 UUID-only 행은 보존하고 순서 의존 전이를 fail-closed한다. 과거 ID를 UUID/date/임의 backfill로 만들지 않는다. 원본과 다른 trigger·viewer hidden query·Topic author projection·first-post 위임·before/after 포인터·second_last_post 미정 순서를 기존 [FlaskBB G-6 구현 계약](../porting/flaskbb/PRODUCT-GAPS.md#g-6-후속-결정--공개-uuid--내부-postorder-2026-10-30)에 연결했다. 아래의 “결정하지 않았다”는 이전 조사 시점 기록이다.

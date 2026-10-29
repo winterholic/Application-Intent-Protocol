@@ -167,6 +167,8 @@ pub enum Effect {
     Update {
         resource: String,
         max_rows: Option<i64>,
+        /// Optional condition evaluated against the transition's pre-state.
+        when: Option<Expr>,
         matches: Vec<(String, Expr)>,
         values: Vec<(String, Expr)>,
         span: Span,

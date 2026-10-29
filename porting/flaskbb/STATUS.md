@@ -1,5 +1,11 @@
 # FlaskBB 전체 포팅 상태
 
+## 2026-10-30 G-6 첫 코어 슬라이스 — V1 conditional update facts, runtime open
+
+시작 SHA `7a9a0acba7eda09fb6dc6c86422d77d30ced771d`. `spike-v1-fixture` update effect에 `when` 조건의 parser/AST/H mapping/sema Bool 검증을 추가했다. TDD RED는 유효 입력의 `when`을 거부하는 parser 진단, GREEN은 V1 latest 타깃 5/5와 A/TS/Python/H four-form 동일 facts·non-Bool 거부다. 기존 타깃 테스트의 raw-string 경계와 H 정의 전용 `exposeApply` 불일치를 함께 고쳤다.
+
+V2 SQL 타깃은 offline dependency resolution(`ctutils 0.4.4` 부재; cached index가 `0.4.3/0.4.2`만 제시)에서 실행 전 중단했다. V2/V3 runtime, PG, snapshot before/after, same-transaction effect/read-set, `WIRE.EFFECT_TARGET_MISSING` 대조는 미실행이다. 이 DSL spelling은 spike 단계이며 product/API 승인이나 parity 완료가 아니다. 다음은 V2/V3 runtime behavior RED→GREEN이다. G-6·7.5.2·전체 포팅은 계속 진행 중이다.
+
 ## 2026-10-30 G-6 후속 — UUID 보존 PostOrder 선택, 구현·실DB는 open
 
 순서는 내부 `PostOrder.id: Id`로 보존하고 공개 Post/Topic UUID는 유지한다. existing Id/create/adopt/default 제약을 비교한 선택이며 일반 구현을 시작할 수 있는 schema/create/import·legacy fail-closed·migration/rollback·동시성 계약을 [PRODUCT-GAPS의 G-6 후속 결정](PRODUCT-GAPS.md#g-6-후속-결정--공개-uuid--내부-postorder-2026-10-30)에 기록했다. 아래 “결정하지 않았다”는 앞선 조사 기록이다. 기존 effect는 무조건 재계산·후보 필터·Topic author projection·unhide의 last_updated 등도 원본과 달라 정렬 교체만으로 닫을 수 없다. `HideableQuery`의 viewer별 root 필터와 원본 second_last_post의 명시 순서 부재를 구분했다.

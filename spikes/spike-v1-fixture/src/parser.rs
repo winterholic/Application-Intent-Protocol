@@ -571,6 +571,12 @@ impl Parser {
                                 } else {
                                     None
                                 };
+                                let when = if self.is_kw("when") {
+                                    self.next();
+                                    Some(self.expr()?)
+                                } else {
+                                    None
+                                };
                                 self.expect_kw("where")?;
                                 let mut matches = vec![];
                                 loop {
@@ -593,7 +599,7 @@ impl Parser {
                                     self.expect_sym("=")?;
                                     values.push((f, self.unary()?));
                                 }
-                                effects.push(Effect::Update { resource, max_rows, matches, values, span: ksp });
+                                effects.push(Effect::Update { resource, max_rows, when, matches, values, span: ksp });
                             }
                             "notify" => {
                                 let to = self.unary()?;
