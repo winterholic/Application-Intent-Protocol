@@ -87,6 +87,8 @@ jobs:
         id: build_cli
         run: cargo build -p aip-cli --locked
       - name: Validate encryption definitions and closed storage boundaries
+        env:
+          AIP_REKEY_DIAGNOSTICS: "1"
         run: |
           cargo test --manifest-path spikes/spike-v1-fixture/Cargo.toml --locked --target-dir target --test encrypted_types --test diagnostics
           cargo test -p aip-migrate --locked --test encryption_gate --test encryption_activation_gate

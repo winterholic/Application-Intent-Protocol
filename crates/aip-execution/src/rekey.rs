@@ -109,6 +109,22 @@ fn quote_ident(value: &str) -> String {
     format!("\"{}\"", value.replace('"', "\"\""))
 }
 
+fn rekey_database_error(stage: &'static str, error: tokio_postgres::Error) -> StoreError {
+    if std::env::var_os("AIP_REKEY_DIAGNOSTICS").is_some() {
+        let sqlstate = error.code().map(|code| code.code());
+        let constraint = error.as_db_error().and_then(|detail| detail.constraint());
+        eprintln!("AIP_REKEY_DATABASE_FAILURE stage={stage} sqlstate={sqlstate:?} constraint={constraint:?}");
+    }
+    StoreError::from(error)
+}
+
+fn rekey_store_error(stage: &'static str, error: StoreError) -> StoreError {
+    if matches!(error, StoreError::Database) && std::env::var_os("AIP_REKEY_DIAGNOSTICS").is_some() {
+        eprintln!("AIP_REKEY_DATABASE_FAILURE stage={stage} cause=database_error_details_unavailable");
+    }
+    error
+}
+
 impl RekeyLease {
     /// Acquires a lease and resumes its durable cursor when the key generations still match.
     /// Returns `None` when another unexpired worker owns the target.
@@ -156,7 +172,8 @@ impl RekeyLease {
                     &(identity.active_version as i32),
                 ],
             )
-            .await?;
+            .await
+            .map_err(|error| rekey_database_error("lease_acquire", error))?;
         row.map(|row| {
             let phase: String = row.try_get("phase")?;
             let pass_no: i32 = row.try_get("pass_no")?;
@@ -203,7 +220,8 @@ impl RekeyLease {
                     &(identity.active_version as i32),
                 ],
             )
-            .await?;
+            .await
+            .map_err(|error| rekey_database_error("lease_renew", error))?;
         Ok(changed == 1)
     }
 
@@ -229,7 +247,8 @@ impl RekeyLease {
                     &(identity.active_version as i32),
                 ],
             )
-            .await?;
+            .await
+            .map_err(|error| rekey_database_error("lease_release", error))?;
         if changed != 1 {
             return Err(StoreError::StaleWriter);
         }
@@ -275,7 +294,8 @@ impl RekeyLease {
                     &(identity.active_version as i32),
                 ],
             )
-            .await?;
+            .await
+            .map_err(|error| rekey_database_error("lease_checkpoint", error))?;
         if changed != 1 {
             return Err(StoreError::StaleWriter);
         }
@@ -303,7 +323,8 @@ impl RekeyLease {
                     &(identity.active_version as i32),
                 ],
             )
-            .await?;
+            .await
+            .map_err(|error| rekey_database_error("lease_yield", error))?;
         if changed != 1 {
             return Err(StoreError::StaleWriter);
         }
@@ -347,7 +368,10 @@ pub async fn rekey_target_column(
         let select_sql = format!(
             "SELECT {id_column}::text, {column} FROM {table} WHERE {column} IS NOT NULL AND {id_column}::text > $1 ORDER BY {id_column}::text ASC LIMIT $2"
         );
-        let rows = db.query(&select_sql, &[&checkpoint.cursor_id, &(REKEY_BATCH_SIZE as i64)]).await?;
+        let rows = db
+            .query(&select_sql, &[&checkpoint.cursor_id, &(REKEY_BATCH_SIZE as i64)])
+            .await
+            .map_err(|error| rekey_database_error("target_page_query", error))?;
         if !rows.is_empty() {
             for row in &rows {
                 let id: String = row.try_get(0)?;
@@ -393,7 +417,12 @@ pub async fn rekey_target_column(
                         continue;
                     }
                 };
-                let plaintext = match ctx.store.open_cell(db, &target.scope, &location, &frame, ctx.provider).await {
+                let plaintext = match ctx
+                    .store
+                    .open_cell(db, &target.scope, &location, &frame, ctx.provider)
+                    .await
+                    .map_err(|error| rekey_store_error("open_old_cell", error))
+                {
                     Ok(plaintext) => plaintext,
                     Err(_) => {
                         report.failed_ids.push(id);
@@ -402,13 +431,21 @@ pub async fn rekey_target_column(
                         continue;
                     }
                 };
-                let mut reservation = ctx.store.reserve_for_write(budget, &target.scope, 1).await?;
-                let tx = db.transaction().await?;
-                let sealed_frame = ctx.store.seal_in(&tx, &mut reservation, &location, &plaintext, ctx.provider).await?;
+                let mut reservation =
+                    ctx.store.reserve_for_write(budget, &target.scope, 1).await.map_err(|error| rekey_store_error("reserve_new_cell", error))?;
+                let tx = db.transaction().await.map_err(|error| rekey_database_error("begin_rekey_transaction", error))?;
+                let sealed_frame = ctx
+                    .store
+                    .seal_in(&tx, &mut reservation, &location, &plaintext, ctx.provider)
+                    .await
+                    .map_err(|error| rekey_store_error("seal_new_cell", error))?;
                 let update_sql = format!("UPDATE {table} SET {column}=$1 WHERE {id_column}::text=$2 AND {column}=$3");
-                let updated = tx.execute(&update_sql, &[&sealed_frame, &id, &frame]).await?;
+                let updated = tx
+                    .execute(&update_sql, &[&sealed_frame, &id, &frame])
+                    .await
+                    .map_err(|error| rekey_database_error("compare_and_swap_cell", error))?;
                 RekeyLease::checkpoint(&tx, &identity, &checkpoint, DEFAULT_LEASE_TTL_SECS).await?;
-                tx.commit().await?;
+                tx.commit().await.map_err(|error| rekey_database_error("commit_rekey_transaction", error))?;
                 if updated == 1 {
                     report.rekeyed += 1;
                 } else {

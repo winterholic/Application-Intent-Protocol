@@ -1,10 +1,10 @@
-# 최신 재개 지점 (2026-10-30, durable rekey 재시작 커서 보강)
+# 최신 재개 지점 (2026-10-30, durable rekey 재시작 커서 진단)
 
-로컬 `main` SHA `26de75059c048690abb7d78101d8cbf94dfc4fc3`에서 lease의 phase/pass/cursor, old·active DEK id/version, 남은 old 셀, 실패 수를 DB에 저장한다. 세대가 바뀌면 커서를 초기화한다. 각 행 CAS와 커서 저장은 같은 transaction이고, lease 갱신·해제·양보는 holder/epoch/두 키 세대가 일치하는 경우로 fence했다. 재시작 후 cursor 1부터 이어가는 Postgres 통합 테스트를 추가했고 `worker-jobs-linux`의 Postgres 17 job에 연결했다.
+`main` SHA `7697da0926c88a822b49696da9aabb8c83a61d87`은 origin과 일치한다. Durable lease의 phase/pass/cursor, old·active DEK id/version, 남은 old 셀, 실패 수 저장과 세대 fencing, CAS+checkpoint transaction을 추가했다. worker workflow는 앞선 단계가 실패해도 독립 포팅/worker 검증을 계속 수행한다. remote Postgres 17 restart test는 여전히 실패한다: checkpoint `sweep/1/cursor=1/failed=0`, 1행은 active DEK v2, 2행은 old DEK v1, connection은 열려 있었다. 따라서 실패는 cursor 획득 전이 아니라 2행 처리 중이나 그 다음 DB write 경계다. 원격 gate 증거 및 정확 로그는 [제품 검증](../product/VERIFICATION.md)에 기록한다.
 
-로컬 증거: 위 검사와 workspace check 통과. 후속 원격 SHA `e0ac76d` worker job `40913120811`에서 rekey DB test는 `encryption_rekey.rs:166`의 `StoreError::Database`로 실패했고 step 19는 별도 `spike-v4-worker/Cargo.lock` stale 오류로 실패했다. 세 비DB rekey 테스트는 통과했다. 최신 수정은 DB 실패 뒤 lease checkpoint·cell DEK header 진단, lockfile의 누락 `aip-execution` edge, 앞선 실패 뒤에도 독립 FlaskBB/Infisical/worker 검사를 계속하는 workflow 조건이다. 실패 원인은 DB 진단 재실행 전까지 미확정이다. 현재 이 수정은 로컬 only; design 13 Proposed/runtime gate 유지.
+후속 로컬 변경(미커밋)은 해당 DB 경계별 SQLSTATE/constraint 또는 store-operation stage를 `AIP_REKEY_DIAGNOSTICS`가 설정된 worker 검사에서만 기록해 다음 CI에서 실패 지점을 특정한다. diagnostic commit 후 DB restart gate를 다시 읽는다. 로컬 fmt, `cargo test ... --no-run`, `clippy -D warnings`, workspace `cargo check`, workflow YAML, harness check, diff check는 통과했다. 로컬 DB test는 실행하지 않았다. Design 13은 Proposed이며 암호화 runtime activation, 전체 포팅/1.0 완료가 아니다.
 
-원격 `main`은 `e0ac76d04943fbbb1e2f6b76e18d58576a8efc44`이며 `ls-remote`로 일치 확인했다. `40913120811`은 encryption step 실패 뒤 기존 조건 때문에 FlaskBB/Infisical 단계가 skip됐다. 그 워크플로 결합도 독립 검사를 계속 실행하도록 고친다. 최신 SHA의 `Verify` run은 `40913120818` pending이다. rekey DB 통과는 아직 미검증이다.
+최신 `7697da0` worker job `40914540577`는 실패했다. 재키 게이트 실패 외에 FlaskBB count/JIT, 실제 pre-trace schema upgrade, Linux sandbox, durable jobs/outbox, Node/Python SDK smoke, FlaskBB Mailpit/fixture/topic/UI, Infisical PostgreSQL, Node/Python trusted ctx deadline, FlaskBB core/CLI/search는 모두 통과했다. Verify 및 다른 workflow의 결과는 각각 별도 확인하며 이 worker gate 통과로 승격하지 않는다.
 
 ---
 
