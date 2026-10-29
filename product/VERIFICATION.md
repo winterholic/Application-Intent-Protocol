@@ -1,5 +1,11 @@
 # 제품 통합 검증 (2026-10-17)
 
+## 2026-10-30 rekey 원격 통과 및 verified adopt gate 회귀
+
+- SHA `b61e31a4ed185480ab95f399a13cedae6aaceb3f` Linux worker `40918278091`는 success다. 원격 job log에서 `rekey_resumes_from_the_persisted_cursor_after_worker_restart ... ok`, `4 passed; 0 failed`를 확인했다. Infisical PostgreSQL, ctx deadline, FlaskBB core/CLI/search, worker, SDK, Mailpit, object storage, broker, cgroup, app packages의 독립 gate도 이 SHA에서 success다.
+- 같은 SHA의 core Verify `40918278041`은 compiler/runtime/product/worker/transport/SDK step 11에서 실패했다. 원격 로그의 첫 test failure는 `verified_adopt_opens_every_cell_before_removing_the_marker` (`crates/aip-migrate/tests/adopt_cells.rs:127`)이며 `BAD_FACTS` / “encrypted deployment … unsupported”를 반환했다. 기존 `adopt::apply_selected`는 verified path에서 `verify_encrypted_cells`를 수행한 뒤, digest 계산 시 무조건 기본 `creation(schema, facts)`를 불러 닫힌 runtime gate에 걸렸다.
+- Follow-up 로컬 수정은 digest도 `creation_inner(schema, facts, !verified)`로 계산해 verified 경로에만 이미 존재하는 verification exception을 적용한다. 기존 live Postgres integration test가 실패를 재현했다. 수정은 아직 compile/live DB 검증 및 원격 CI 전이다. 암호화 runtime activation과 design 13 gate는 닫힌 상태로 유지한다.
+
 ## 2026-10-30 rekey 재시작 커서 저장 (코드 구현, 실DB gate 대기)
 
 이전 `aip_rekey_leases`는 worker lease만 저장해 프로세스 재시작 뒤 cursor/pass를 복구하지 못했다. SHA `26de75059c048690abb7d78101d8cbf94dfc4fc3`에서 phase/pass/cursor, old·active DEK 세대, 남은 셀과 실패 수를 보존하고, 행 CAS와 checkpoint를 같은 transaction으로 묶었다. stale lease는 holder·epoch·키 세대를 모두 맞춰 fence한다. `rekey_resumes_from_the_persisted_cursor_after_worker_restart`는 legacy 4-column schema에 additive migration을 적용하고 만료 worker의 cursor 뒤부터 이어가는 live Postgres 통합 테스트다. fixture의 KEK 회전 오류는 `b4ccf764f05ed248b443217157199c2f8135ceed`에서 고쳤다.

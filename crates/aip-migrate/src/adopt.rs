@@ -161,7 +161,7 @@ async fn apply_selected(
         tx.batch_execute(metadata).await.map_err(|_|err("MIGRATION_FAILED","제품 metadata 생성 실패; 이관 트랜잭션 취소"))?;
         tx.batch_execute(&format!("DROP TABLE {schema}.aip_proto_meta")).await.map_err(|_|err("MIGRATION_FAILED","prototype marker 이관 실패"))?;
         verify_target_inner(&tx,schema,facts,!verified).await?;
-        let structure_digest=structure(&tx,schema).await?;let facts_digest=digest(facts);let (_,ddl_digest)=creation(schema,facts)?;
+        let structure_digest=structure(&tx,schema).await?;let facts_digest=digest(facts);let (_,ddl_digest)=creation_inner(schema,facts,!verified)?;
         tx.execute(&format!("INSERT INTO {schema}.{META} VALUES(true,$1,$2,$3,$4,$5,$6)"),&[facts,&facts_digest,&ddl_digest,&structure_digest,&VERSION,&wire]).await.map_err(|_|err("MIGRATION_FAILED","제품 marker 저장 실패"))?;
         let old=report["plan"]["oldDdlDigest"].as_str().ok_or_else(||err("MIGRATION_FAILED","이전 marker 지문 없음"))?;let steps=report["plan"]["steps"].clone();
         tx.execute(&format!("INSERT INTO {schema}.{JOURNAL}(plan_digest,old_digest,new_digest,steps,approval) VALUES($1,$2,$3,$4,$5)"),&[&acknowledgement,&old,&facts_digest,&steps,&acknowledgement]).await.map_err(|_|err("MIGRATION_FAILED","이관 journal 저장 실패"))?;

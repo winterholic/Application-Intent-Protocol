@@ -1,10 +1,10 @@
-# 최신 재개 지점 (2026-10-30, durable rekey 재시작 커서 진단)
+# 최신 재개 지점 (2026-10-30, rekey 성공·verified adopt gate 회귀 수정)
 
-`main` SHA `7697da0926c88a822b49696da9aabb8c83a61d87`은 origin과 일치했다. Durable lease의 phase/pass/cursor, old·active DEK id/version, 남은 old 셀, 실패 수 저장과 세대 fencing, CAS+checkpoint transaction을 추가했다. worker workflow는 앞선 단계가 실패해도 독립 포팅/worker 검증을 계속 수행한다. remote Postgres 17 restart test는 checkpoint `sweep/1/cursor=1/failed=0`, 1행 active DEK v2, 2행 old DEK v1에서 실패했다. 실패는 `lease_acquire`; SQLSTATE가 없어 PostgreSQL server-side error가 아니라 client/transport/query setup 범주다. 세부 client error는 다음 diagnostic run에 기록한다.
+`main` SHA `b61e31a4ed185480ab95f399a13cedae6aaceb3f`는 origin과 일치한다. Durable lease의 phase/pass/cursor, old·active DEK, restart fencing과 CAS/checkpoint transaction이 구현되어 있고, SQLSTATE 없이 실패하던 UUID bind는 `Uuid` 타입으로 바꿨다. 원격 worker job `40918278091`은 전체 success이며 `rekey_resumes_from_the_persisted_cursor_after_worker_restart ... ok`, `4 passed; 0 failed`가 로그로 확인됐다. Infisical PostgreSQL, FlaskBB core/CLI/search, SDK smoke, deadline, worker jobs/outbox와 나머지 worker gates도 해당 run에서 통과했다. Object storage, broker, cgroup, app packages workflow도 success다.
 
-`lease_acquire`의 SQLSTATE 없는 오류와 코드의 `&str` DEK id를 `$n::uuid`에 바인딩하는 부분을 대조해 tokio-postgres `ToSql` UUID type mismatch가 원인일 가능성이 높다고 판단했다(코드 기반 추론, 아직 SQLSTATE 없는 상세 오류로 독립 확정되지 않음). 미커밋 수정은 lease identity에서 UUID를 parse해 UUID 타입으로 바인딩한다. `AIP_REKEY_DIAGNOSTICS`의 client error 상세는 다음 원격 worker에서 이 추론을 확인하기 위해 유지했다. 로컬은 fmt/workspace/clippy 및 integration binary compile 직후 shared target이 장부의 10GB 예상 peak보다 48MB 커져, 이 변경 후 추가 빌드는 하지 않는다. DB test는 미실행. Design 13은 Proposed이며 암호화 runtime activation, 전체 포팅/1.0 완료가 아니다.
+별도 core Verify `40918278041`은 step 11에서 실패했다. `verified_adopt_opens_every_cell_before_removing_the_marker`가 `BAD_FACTS`로 중단했고, 원인은 apply 경로가 verified AEAD 검증 뒤에도 기본 `creation()` 암호화 runtime gate를 재호출한 것이다(`adopt.rs`의 `creation(schema,facts)`). 미커밋 수정은 실제 verified 상태에 따라 `creation_inner(schema,facts,!verified)`를 사용한다. 기존 live Postgres 통합 테스트가 이 회귀를 RED로 확인했으며, fix는 후속 원격 CI에서 검증한다. 로컬 DB 통합 테스트/재컴파일은 실행하지 않는다.
 
-`7697da0` worker job `40914540577`는 재키 게이트 실패 외에 FlaskBB count/JIT, 실제 pre-trace schema upgrade, Linux sandbox, durable jobs/outbox, Node/Python SDK smoke, FlaskBB Mailpit/fixture/topic/UI, Infisical PostgreSQL, Node/Python trusted ctx deadline, FlaskBB core/CLI/search가 모두 통과했다. 최신 `18cc48e`도 worker independent gates를 재실행 중이다. Verify 및 다른 workflow 결과는 각각 별도 확인하며 이 worker gate 통과로 승격하지 않는다.
+shared Cargo target은 harness의 기록된 10GB 예상 peak보다 약 48MB 초과한 채 유지되며, 사용자 지침에 따라 추가 빌드나 공유 target 정리는 하지 않는다. `plan-docs/porting/flaskbb/PRODUCT-GAPS.md`는 저장소에 존재하지 않아 FlaskBB는 `porting/README.md`, 실행 증거와 verification 기록으로 대조한다. Design 13은 Proposed이며 runtime encryption activation, 전체 포팅/1.0 완료가 아니다.
 
 ---
 
