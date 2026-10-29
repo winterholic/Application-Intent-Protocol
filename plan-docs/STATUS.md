@@ -2,9 +2,9 @@
 
 로컬 `main` SHA `26de75059c048690abb7d78101d8cbf94dfc4fc3`에서 lease의 phase/pass/cursor, old·active DEK id/version, 남은 old 셀, 실패 수를 DB에 저장한다. 세대가 바뀌면 커서를 초기화한다. 각 행 CAS와 커서 저장은 같은 transaction이고, lease 갱신·해제·양보는 holder/epoch/두 키 세대가 일치하는 경우로 fence했다. 재시작 후 cursor 1부터 이어가는 Postgres 통합 테스트를 추가했고 `worker-jobs-linux`의 Postgres 17 job에 연결했다.
 
-로컬 증거: `cargo fmt --all -- --check`, 비DB `encryption_rekey` 3건, `--no-run`, `clippy -p aip-execution --all-targets --locked --offline -- -D warnings`, `cargo check --workspace --locked --offline`, `git diff --check` 통과. 후속 SHA `b4ccf76`에서 회전 중 양 KEK 보유가 필요한 fixture를 보완하고, 다음 test-only change에서 legacy 4-column lease schema upgrade/defaults도 live test에 넣었다. 재시작/upgrade DB 테스트는 빌드만 했고 로컬에서 실행하지 않았다. design 13 Proposed/runtime gate 유지.
+로컬 증거: 위 검사와 workspace check 통과. 후속 원격 SHA `e0ac76d` worker job `40913120811`에서 rekey DB test는 `encryption_rekey.rs:166`의 `StoreError::Database`로 실패했고 step 19는 별도 `spike-v4-worker/Cargo.lock` stale 오류로 실패했다. 세 비DB rekey 테스트는 통과했다. 최신 수정은 DB 실패 뒤 lease checkpoint·cell DEK header 진단, lockfile의 누락 `aip-execution` edge, 앞선 실패 뒤에도 독립 FlaskBB/Infisical/worker 검사를 계속하는 workflow 조건이다. 실패 원인은 DB 진단 재실행 전까지 미확정이다. 현재 이 수정은 로컬 only; design 13 Proposed/runtime gate 유지.
 
-`f37b23bafd959f12e2e484e4de4c072f37e0ccd7` FaceReview 묶음은 origin/main에 반영됐다. 해당 SHA의 7개 check는 success였고 Verify core는 20분 넘게 broad 단계에서 in progress였다. 현재 rekey 묶음은 로컬 검증을 마쳐 정상 fast-forward push로 통합하고, cancel-in-progress 정책에 따라 최신 SHA의 전체 Verify와 Postgres rekey job을 다시 실행한다. 그 결과 전까지 원격 rekey DB 검증은 미완이다.
+원격 `main`은 `e0ac76d04943fbbb1e2f6b76e18d58576a8efc44`이며 `ls-remote`로 일치 확인했다. `40913120811`은 encryption step 실패 뒤 기존 조건 때문에 FlaskBB/Infisical 단계가 skip됐다. 그 워크플로 결합도 독립 검사를 계속 실행하도록 고친다. 최신 SHA의 `Verify` run은 `40913120818` pending이다. rekey DB 통과는 아직 미검증이다.
 
 ---
 

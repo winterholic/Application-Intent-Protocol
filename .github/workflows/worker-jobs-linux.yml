@@ -92,8 +92,10 @@ jobs:
           cargo test -p aip-migrate --locked --test encryption_gate --test encryption_activation_gate
           cargo test -p aip-execution --locked --no-fail-fast --test encryption_deks --test encryption_fence --test encryption_cells --test encryption_journal --test encryption_rekey
       - name: Explain the seeded FlaskBB count query with and without JIT
+        if: ${{ !cancelled() }}
         run: cargo test -p aip-migrate --locked --test flaskbb_read_plan -- --nocapture
       - name: Upgrade an actual pre-trace durable job schema with the product CLI
+        if: ${{ !cancelled() && steps.build_cli.outcome == 'success' }}
         env:
           AIP_TRACE_UPGRADE_DATABASE_URL: ${{ env.AIP_TEST_DATABASE_URL }}
           AIP_SERVICE_CLI: ${{ github.workspace }}/target/debug/aip
@@ -102,21 +104,27 @@ jobs:
           trace_id_upgrade_tests::explicit_parent_job_schema_upgrade_adds_trace_id_and_rejects_drift
           -- --ignored --exact
       - name: Prove Linux worker sandbox boundaries with Bubblewrap
+        if: ${{ !cancelled() }}
         run: AIP_TEST_BWRAP=1 cargo test --manifest-path spikes/spike-v4-worker/Cargo.toml --lib isolation::tests --locked --target-dir target
       - name: Run durable worker, retry, schedule, webhook and outbox jobs
+        if: ${{ !cancelled() }}
         run: cargo test --manifest-path spikes/spike-v6-transport/Cargo.toml --locked --target-dir target --no-fail-fast --test job_retry --test job_breaker --test triggers --test outbox --test otlp --test encryption_gate --test encryption_e2e --test bundle_http
       - name: Run installed product SDK smoke with Node and Python workers
+        if: ${{ !cancelled() && steps.build_cli.outcome == 'success' }}
         run: node --test product/tests/service-smoke.test.mjs
       - name: Verify isolated FlaskBB mail delivery and connect-stage recovery
+        if: ${{ !cancelled() }}
         run: |
           curl --fail --silent --show-error --retry 10 --retry-connrefused --retry-delay 1 --max-time 5 "$AIP_FLASKBB_TEST_MAILPIT_URL/api/v1/info" >/dev/null
           node --test porting/flaskbb/tests/mail-fixture.test.mjs
           node --test porting/flaskbb/tests/mail-jobs.test.mjs
       - name: Verify FlaskBB fixture guard and mailbox uniqueness
+        if: ${{ !cancelled() }}
         run: |
           node --test porting/flaskbb/tests/fixture-env.test.mjs porting/flaskbb/tests/conversations-security.test.mjs porting/flaskbb/tests/conversation-draft.test.mjs
           cargo test -p aip-migrate --locked --test foreign_shared_uniqueness
       - name: Verify FlaskBB topic ordering and UI requests
+        if: ${{ !cancelled() }}
         run: |
           python3 -m venv "$RUNNER_TEMP/flaskbb-ui"
           "$RUNNER_TEMP/flaskbb-ui/bin/pip" install --no-cache-dir -r porting/flaskbb/ui/requirements.txt
@@ -124,6 +132,7 @@ jobs:
           node --test porting/flaskbb/tests/sticky-order.test.mjs
           node --test porting/flaskbb/tests/last-post-recompute.test.mjs
       - name: Verify Infisical port (secret uniqueness, physical delete, roles) on PostgreSQL
+        if: ${{ !cancelled() }}
         env:
           AIP_TEST_DATABASE_URL: postgresql://runner@127.0.0.1:5433/aip_test_ci
           INFISICAL_PYTHON: ${{ runner.temp }}/infisical-venv/bin/python
@@ -137,6 +146,7 @@ jobs:
         if: ${{ !cancelled() && steps.build_cli.outcome == 'success' }}
         run: cargo test --manifest-path spikes/spike-v4-worker/Cargo.toml --locked --target-dir target --test ctx_deadline --test v4_1
       - name: Revalidate FlaskBB core, CLI and search consistency on main
+        if: ${{ !cancelled() }}
         env:
           AIP_FLASKBB_TEST_PYTHON: ${{ runner.temp }}/flaskbb-ui/bin/python
         run: >-

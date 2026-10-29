@@ -163,7 +163,36 @@ async fn rekey_resumes_from_the_persisted_cursor_after_worker_restart() {
     .unwrap();
 
     let context = RekeyContext { store: &store, old_dek: &old_dek, active_dek: &active_dek, holder_id: "restart-worker", provider: &new_provider };
-    let report = rekey_target_column(&mut db, &mut budget, &context, &target).await.unwrap();
+    let report = match rekey_target_column(&mut db, &mut budget, &context, &target).await {
+        Ok(report) => report,
+        Err(error) => {
+            let checkpoint = db
+                .query_opt(
+                    &format!(
+                        "SELECT phase,pass_no,cursor_id,failed_count FROM {}.aip_rekey_leases WHERE target_key=$1",
+                        store.infrastructure_schema()
+                    ),
+                    &[&target.target_key()],
+                )
+                .await
+                .ok()
+                .flatten()
+                .map(|row| (row.get::<_, String>(0), row.get::<_, i32>(1), row.get::<_, String>(2), row.get::<_, i64>(3)));
+            let headers = db.query("SELECT id,value FROM cells ORDER BY id", &[]).await.ok().map(|rows| {
+                rows.iter()
+                    .map(|row| {
+                        let id: i64 = row.get(0);
+                        let frame: String = row.get(1);
+                        (id, aip_crypto::cell::parse_header(&frame).map(|h| (h.dek_id.to_owned(), h.version)))
+                    })
+                    .collect::<Vec<_>>()
+            });
+            panic!(
+                "rekey_target_column returned {error:?}; connection_closed={}; checkpoint={checkpoint:?}; cell_headers={headers:?}",
+                db.is_closed()
+            );
+        }
+    };
     assert_eq!(report.rekeyed, 1);
     assert_eq!(report.already_current, 0, "restart must resume after row 1 instead of revisiting it");
     assert_eq!(report.remaining_old, 0);

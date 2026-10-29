@@ -9,6 +9,8 @@
 - 최초 fixture가 active 새 KEK만 제공해 구 DEK unwrap을 막는 설정 오류를 소스 검토 중 찾았다. `b4ccf764f05ed248b443217157199c2f8135ceed`에서 두 KEK를 모두 보유하고 새 키를 active로 고쳤다. 수정 뒤 DB live test는 여전히 미실행이다.
 - `design/13-field-encryption.md` Proposed 및 product runtime gate는 닫힌 채 유지한다. 이 검증은 저장 primitive의 재개 경로만 다루며 제품 writer/read 연결·1.0 gate 통과를 뜻하지 않는다.
 - 직전 FaceReview SHA `f37b23bafd959f12e2e484e4de4c072f37e0ccd7`는 push되어 7개 check success였고 Verify core는 broad 단계에서 in progress였다. 이 커밋에 이어 rekey 변경을 fast-forward push해 최신 SHA의 Verify 및 Postgres worker test를 실행한다. 새 CI 전까지 remote rekey DB 결과는 unverified다.
+- `e0ac76d04943fbbb1e2f6b76e18d58576a8efc44`의 Linux worker job `40913120811`에서 3개 non-DB rekey test는 통과했으나 live restart/legacy-schema test는 `rekey_target_column`의 `StoreError::Database`로 실패했다. 원인은 아직 특정되지 않았다. 뒤따른 independent `spike-v4-worker` test step도 `--locked`가 잠금파일을 갱신할 수 없어 실패했다; `cargo check --manifest-path spikes/spike-v4-worker/Cargo.toml --locked --offline`로 누락된 `spike-v3-write -> aip-execution` lock edge를 재현했고 local lockfile을 갱신했다.
+- 다음 실행에서 checkpoint/cell header 진단을 출력하며, workflow도 앞선 실패 뒤 independent FlaskBB·Infisical·worker gates를 계속 실행하도록 조정한다. 새 SHA 원격 DB 결과 전까지 rekey 동작과 remaining port checks는 unverified다.
 
 
 ## 2026-10-28 검증 이관 연결 (구현, 실DB 이관 미검증·출시 미완)
