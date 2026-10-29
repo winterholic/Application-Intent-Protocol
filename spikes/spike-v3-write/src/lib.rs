@@ -508,9 +508,6 @@ async fn update(
     if change.is_empty() {
         return Ok(());
     }
-    if knobs.seal.is_some() {
-        sealed::reject_sealed_assignments(facts, res, tr, input)?;
-    }
     let t = &facts["resources"][res]["transitions"][tr];
     let mut cx = Ctx::new(facts, caller.actor_id, &caller.now);
     let env = Env { this: Some(("t".into(), res.to_string())), ..Default::default() };
@@ -1369,6 +1366,12 @@ async fn apply_op(
     let (res, tr, ex) = exposed(facts, o.get("apply").and_then(Value::as_str).unwrap_or(""))?;
     refuse_internal(ex, knobs, o)?;
     let input = apply_input(facts, res, tr, o, wire)?;
+    if knobs.seal.is_some() {
+        // Validate the sealed-write contract before judge_query renders transition.to.
+        // Hand-built facts can put an encrypted field there with a malformed literal;
+        // evaluating that literal first would turn the intended refusal into WIRE.INTERNAL.
+        sealed::reject_sealed_assignments(facts, res, tr, Some(&input))?;
+    }
     let target = parse_target(facts, res, ex, o.get("target").unwrap_or(&Value::Null), wire)?;
     let j = judge(tx, facts, res, tr, &target, ex["bulkMaxRows"].as_i64().unwrap_or(1), &ex["sameScope"], caller, knobs).await?;
     let decided = Caller { actor_id: caller.actor_id, now: j.now.clone() };
@@ -1735,6 +1738,13 @@ async fn compose_exec(
     let ids: &Vec<EntityId> = ids;
     let (res, bulk) = (*res, *bulk);
     let cp: &Value = cp;
+    if knobs.seal.is_some() {
+        for step in &plan.steps {
+            if let Step::Tr(transition, _) = step {
+                sealed::reject_sealed_assignments(facts, res, transition, None)?;
+            }
+        }
+    }
     // 모든 대상을 먼저 잠그고 가시성을 확인한다. 같은 범위 검사는 단계별 권한 판정 뒤에 한다(R3-01).
     let scopes: Vec<Option<String>>;
     {
