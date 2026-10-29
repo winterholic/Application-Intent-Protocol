@@ -2,7 +2,7 @@
 
 로컬 `main` SHA `26de75059c048690abb7d78101d8cbf94dfc4fc3`에서 lease의 phase/pass/cursor, old·active DEK id/version, 남은 old 셀, 실패 수를 DB에 저장한다. 세대가 바뀌면 커서를 초기화한다. 각 행 CAS와 커서 저장은 같은 transaction이고, lease 갱신·해제·양보는 holder/epoch/두 키 세대가 일치하는 경우로 fence했다. 재시작 후 cursor 1부터 이어가는 Postgres 통합 테스트를 추가했고 `worker-jobs-linux`의 Postgres 17 job에 연결했다.
 
-로컬 증거: `cargo fmt --all -- --check`, 비DB `encryption_rekey` 3건, `--no-run`, `clippy -p aip-execution --all-targets --locked --offline -- -D warnings`, `cargo check --workspace --locked --offline`, `git diff --check` 통과. 재시작 DB 테스트는 파일만 빌드하고 로컬에서 실행하지 않았다. design 13 Proposed/runtime gate 유지.
+로컬 증거: `cargo fmt --all -- --check`, 비DB `encryption_rekey` 3건, `--no-run`, `clippy -p aip-execution --all-targets --locked --offline -- -D warnings`, `cargo check --workspace --locked --offline`, `git diff --check` 통과. 후속 SHA `b4ccf764f05ed248b443217157199c2f8135ceed`에서 회전 중 양 KEK 보유가 필요한 fixture를 보완했다. 재시작 DB 테스트는 파일만 빌드하고 로컬에서 실행하지 않았다. design 13 Proposed/runtime gate 유지.
 
 `f37b23bafd959f12e2e484e4de4c072f37e0ccd7` FaceReview 묶음은 origin/main에 반영됐다. 7개 check success, Verify core는 기록 시점에 in progress였다. rekey 커밋은 아직 origin에 push하지 않았다. 다음 main push는 해당 Verify가 끝난 뒤 진행해 유용한 실행을 취소하지 않는다.
 
