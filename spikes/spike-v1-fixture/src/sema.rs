@@ -147,6 +147,9 @@ struct Ctx<'a> {
 struct Scope {
     this: Option<String>,
     in_exists: bool,
+    allow_latest: bool,
+    in_latest: bool,
+    latest_target: Option<String>,
     vars: Vec<(String, TT)>,
     input: Vec<(String, TT)>,
 }
@@ -622,6 +625,93 @@ impl<'a> Ctx<'a> {
                 // 정책 안 하위 조회는 서버 정의로서 대상 resource의 행 정책 없이 평가된다(spike 규칙, 명시 사실로 남김).
                 Ok((json!({ "exists": r, "where": cv, "evaluatedAs": "serverPolicy" }), b))
             }
+            Expr::Latest { resource, alias, where_, order_by, select, otherwise, span } => {
+                if !sc.allow_latest {
+                    return Err(Diag::new("DEF.UNSUPPORTED_EFFECT", "`latest`는 서버 전이 효과 값에서만 쓸 수 있음", *span));
+                }
+                if sc.in_latest {
+                    return Err(Diag::new("DEF.UNSUPPORTED_EFFECT", "중첩 `latest` 선택은 지원하지 않음", *span));
+                }
+                let source =
+                    self.res.get(resource.as_str()).ok_or_else(|| Diag::new("DEF.UNKNOWN_SYMBOL", format!("resource `{resource}` 없음"), *span))?;
+                if sc.latest_target.as_deref() == Some(resource.as_str()) {
+                    return Err(Diag::new(
+                        "DEF.UNSUPPORTED_EFFECT",
+                        "`latest` 조회 resource는 같은 update 효과의 갱신 대상일 수 없음(MySQL 이식성)",
+                        *span,
+                    ));
+                }
+                if alias == "this"
+                    || alias == "actor"
+                    || alias == "input"
+                    || sc.vars.iter().any(|(name, _)| name == alias)
+                    || sc.this.as_ref().is_some_and(|current| self.field_tt(current, alias).is_some())
+                {
+                    return Err(Diag::new("DEF.DUPLICATE", format!("`latest` 별칭 `{alias}`가 현재 이름과 충돌함"), *span));
+                }
+                let mut inner = sc.clone();
+                inner.in_latest = true;
+                inner.vars.push((alias.clone(), TT::new(Ty::Ref(resource.clone()))));
+                let mut masked = Vec::new();
+                for expression in [where_.as_ref(), order_by.as_ref(), select.as_ref()] {
+                    self.latest_hidden_reads(expression, alias, resource, &mut masked);
+                }
+                masked.sort();
+                masked.dedup();
+                if let Some(field) = masked.first() {
+                    return Err(Diag::new(
+                        "DEF.POLICY_FIELD_NOT_USABLE_IN_TRANSITION",
+                        format!("`latest`가 field read 정책이 있는 `{field}`를 읽을 수 없음"),
+                        *span,
+                    ));
+                }
+                let condition = self.bool_of(where_, &inner)?;
+                let (order, order_ty) = self.ex(order_by, &inner)?;
+                if !matches!(order_ty.ty, Ty::Int | Ty::Time | Ty::Date | Ty::Decimal(_, _) | Ty::Ref(_)) {
+                    return Err(Diag::new("DEF.TYPE_MISMATCH", "`latest order by`는 정렬 가능한 필드 경로여야 함", span_of(order_by)));
+                }
+                let (selected, selected_ty) = self.ex(select, &inner)?;
+                let Expr::Path(path, _) = select.as_ref() else {
+                    return Err(Diag::new("DEF.PARSE_EXPECTED", "`latest select`는 resource 필드 경로여야 함", span_of(select)));
+                };
+                if path.first().map(String::as_str) != Some(alias.as_str()) {
+                    return Err(Diag::new("DEF.UNKNOWN_FIELD", "`latest select`는 선언한 행 별칭으로 시작해야 함", span_of(select)));
+                }
+                let Expr::Path(order_path, _) = order_by.as_ref() else {
+                    return Err(Diag::new("DEF.PARSE_EXPECTED", "`latest order by`는 resource 필드 경로여야 함", span_of(order_by)));
+                };
+                if order_path.first().map(String::as_str) != Some(alias.as_str()) {
+                    return Err(Diag::new("DEF.UNKNOWN_FIELD", "`latest order by`는 선언한 행 별칭으로 시작해야 함", span_of(order_by)));
+                }
+                let (otherwise_value, nullable) = if let Some(otherwise) = otherwise {
+                    let fallback_scope = Scope { in_latest: true, ..sc.clone() };
+                    let (fallback, fallback_ty) = self.ex(otherwise, &fallback_scope)?;
+                    if !same_target(&fallback_ty.ty, &selected_ty.ty) {
+                        return Err(Diag::new(
+                            "DEF.TYPE_MISMATCH",
+                            format!("`latest otherwise` `{}`는 선택식 `{}`와 타입이 다름", fallback_ty.show(), selected_ty.show()),
+                            span_of(otherwise),
+                        ));
+                    }
+                    (Some(fallback), fallback_ty.nullable)
+                } else {
+                    (None, true)
+                };
+                let _ = source;
+                let nullable = TT { ty: selected_ty.ty.clone(), nullable };
+                Ok((
+                    json!({ "latest": {
+                    "resource": resource,
+                    "alias": alias,
+                    "where": condition,
+                    "orderBy": order,
+                    "select": selected,
+                    "otherwise": otherwise_value,
+                    "tieBreak": "idDesc"
+                }, "ty": nullable.show() }),
+                    nullable,
+                ))
+            }
         }
     }
 
@@ -675,6 +765,47 @@ impl<'a> Ctx<'a> {
                 format!("{what}가 field read 정책이 있는 `{h}`를 읽을 수 없음(결과로 가려진 값이 추론됨). 가려지지 않은 필드로 조건을 쓴다"),
                 sp,
             );
+        }
+    }
+
+    fn latest_hidden_reads(&self, root: &Expr, alias: &str, source: &str, out: &mut Vec<String>) {
+        let mut stack = vec![root];
+        while let Some(expr) = stack.pop() {
+            match expr {
+                Expr::Path(path, _) if path.first().map(String::as_str) == Some(alias) => {
+                    let mut at = source.to_string();
+                    for field in path.iter().skip(1) {
+                        let Some(resource) = self.res.get(at.as_str()) else { break };
+                        if resource.field_read.iter().any(|(name, _, _)| name == field) {
+                            out.push(format!("{at}.{field}"));
+                            break;
+                        }
+                        match self.field_tt(&at, field).map(|ty| ty.ty) {
+                            Some(Ty::Ref(next)) => at = next,
+                            _ => break,
+                        }
+                    }
+                }
+                Expr::Or(values) | Expr::And(values) | Expr::Call(_, values, _) => stack.extend(values),
+                Expr::Not(value) | Expr::Exists(_, value, _) => stack.push(value),
+                Expr::Cmp(_, left, right) | Expr::Arith(_, left, right, _) => {
+                    stack.push(left);
+                    stack.push(right);
+                }
+                Expr::In(left, values) => {
+                    stack.push(left);
+                    stack.extend(values);
+                }
+                Expr::Latest { where_, order_by, select, otherwise, .. } => {
+                    stack.push(where_);
+                    stack.push(order_by);
+                    stack.push(select);
+                    if let Some(otherwise) = otherwise {
+                        stack.push(otherwise);
+                    }
+                }
+                _ => {}
+            }
         }
     }
 
@@ -1373,7 +1504,7 @@ impl<'a> Ctx<'a> {
                     self.d("DEF.UNKNOWN_SYMBOL", format!("갱신 대상 `{resource}` 없음"), *span);
                     return None;
                 }
-                let typed = |pairs: &Vec<(String, Expr)>, what: &str, cx: &mut Self| -> Map<String, Value> {
+                let typed = |pairs: &Vec<(String, Expr)>, what: &str, value_scope: &Scope, cx: &mut Self| -> Map<String, Value> {
                     let mut out = Map::new();
                     for (f, v) in pairs {
                         if out.contains_key(f) {
@@ -1384,7 +1515,7 @@ impl<'a> Ctx<'a> {
                             cx.d("DEF.UNKNOWN_FIELD", format!("`{resource}`에 필드 `{f}` 없음"), *span);
                             continue;
                         };
-                        let res = cx.expect(v, sc, Some(&ft)).and_then(|(val, vt)| {
+                        let res = cx.expect(v, value_scope, Some(&ft)).and_then(|(val, vt)| {
                             if same_target(&vt.ty, &ft.ty) && (!vt.nullable || ft.nullable) {
                                 Ok(val)
                             } else {
@@ -1397,8 +1528,9 @@ impl<'a> Ctx<'a> {
                     }
                     out
                 };
-                let m = typed(matches, "조건", self);
-                let v = typed(values, "값", self);
+                let m = typed(matches, "조건", sc, self);
+                let value_scope = Scope { allow_latest: true, latest_target: Some(resource.clone()), ..sc.clone() };
+                let v = typed(values, "값", &value_scope, self);
                 if m.is_empty() || v.is_empty() {
                     self.d("DEF.MISSING_ITEM", "update 효과에는 찾을 조건과 바꿀 값이 필요", *span);
                 }
@@ -2171,7 +2303,10 @@ fn expression_metrics(root: &Expr) -> ExprMetrics<'_> {
     let mut stack = vec![(root, 0usize)];
     while let Some((expr, parent_depth)) = stack.pop() {
         nodes = nodes.saturating_add(1);
-        let nested = matches!(expr, Expr::Or(_) | Expr::And(_) | Expr::Not(_) | Expr::Cmp(_, _, _) | Expr::In(_, _) | Expr::Exists(_, _, _));
+        let nested = matches!(
+            expr,
+            Expr::Or(_) | Expr::And(_) | Expr::Not(_) | Expr::Cmp(_, _, _) | Expr::In(_, _) | Expr::Exists(_, _, _) | Expr::Latest { .. }
+        );
         let this_depth = parent_depth + usize::from(nested);
         depth = depth.max(this_depth);
         match expr {
@@ -2190,6 +2325,14 @@ fn expression_metrics(root: &Expr) -> ExprMetrics<'_> {
                 stack.extend(args.iter().map(|arg| (arg, parent_depth)));
             }
             Expr::Exists(_, condition, _) => stack.push((condition, this_depth)),
+            Expr::Latest { where_, order_by, select, otherwise, .. } => {
+                stack.push((where_, this_depth));
+                stack.push((order_by, this_depth));
+                stack.push((select, this_depth));
+                if let Some(otherwise) = otherwise {
+                    stack.push((otherwise, this_depth));
+                }
+            }
             Expr::Path(parts, _) => {
                 let segments = parts.len().saturating_sub(1);
                 max_path_segments = max_path_segments.max(segments);
@@ -2405,6 +2548,7 @@ fn validate_policy_expansion(spec: &Spec) -> Vec<Diag> {
 fn span_of(e: &Expr) -> Span {
     match e {
         Expr::Path(_, s) | Expr::Call(_, _, s) | Expr::Exists(_, _, s) | Expr::Arith(_, _, _, s) => *s,
+        Expr::Latest { span, .. } => *span,
         Expr::Or(v) | Expr::And(v) => v.first().map(span_of).unwrap_or_default(),
         Expr::Not(x) => span_of(x),
         Expr::Cmp(_, l, _) | Expr::In(l, _) => span_of(l),

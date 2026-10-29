@@ -1,5 +1,11 @@
 # 제품 통합 검증 (2026-10-17)
 
+## 2026-10-30 a397 exact-SHA Verify 결과
+
+- Verify `40939029950`, SHA `a397d771472b1fcfe25caf242495c566ba71da30`: workflow failure. 컴파일·런타임·제품·워커·전송·SDK 단계 11은 success. FaceReview 단계 15의 Node/Python HTTP→MySQL 실행에서 `mysql_facereview_auth` 중 `member_withdraw / confirm_withdraw` 브라우저 프로세스가 exit 1로 끝났다. 이 여정의 DB 검사는 success: 계정 soft-delete, 활성 세션 0, 다른 기기 재발급 거부, 타 계정 세션과 업무 행 보존, 메일 발송 없음. 다른 FaceReview/browser journeys 10개는 성공했고 1개가 실패했다. 실패 브라우저의 구체 오류는 보존 로그에서 확인되지 않았다.
+- 같은 SHA의 Object storage, App packages, Linux cgroup v2, Deployment checks, Database contracts, Dependencies, External brokers, Linux worker jobs는 모두 success다.
+- worktree의 FlaskBB G-6 `latest` 변경은 a397 이후라 위 어떤 결과로도 검증되지 않았다. 포트 Post UUID와 upstream integer ID 순서 차이는 아직 해결되지 않았다. 전체 AIP·FlaskBB parity, SDK 확장, runtime encryption, upgrade/rollback 또는 1.0 완료를 뜻하지 않는다.
+
 ## 2026-10-30 dependency audit 후속 (CI 필요)
 
 - `b97833fe5723149e9bd8e4113e738c44e8bea917` Dependencies run `40937246138`은 advisory 3건으로 실패했다: root `crypto-bigint 0.5.5` (RUSTSEC-2026-0387), `ctutils 0.4.2` (RUSTSEC-2026-0385), `tokio 1.53.1` (RUSTSEC-2026-0386). `ctutils`는 constant-time mask generation, `tokio`는 안전하지 않은 `AsyncFd` 생성자, `crypto-bigint`은 constant-time 연산 관련 공지다.

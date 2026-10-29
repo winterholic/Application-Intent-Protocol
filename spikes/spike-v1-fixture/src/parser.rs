@@ -1052,6 +1052,34 @@ impl Parser {
                 self.note_expression_node()?;
                 Ok(Expr::Exists(r, Box::new(condition), sp))
             }
+            Tok::Ident(s) if s == "latest" => {
+                self.next();
+                let resource = self.ident()?;
+                let alias = self.ident()?;
+                self.expect_kw("where")?;
+                let where_ = self.expr()?;
+                self.expect_kw("order")?;
+                self.expect_kw("by")?;
+                let order_by = self.unary()?;
+                self.expect_kw("select")?;
+                let select = self.unary()?;
+                let otherwise = if self.is_kw("otherwise") {
+                    self.next();
+                    Some(Box::new(self.unary()?))
+                } else {
+                    None
+                };
+                self.note_expression_node()?;
+                Ok(Expr::Latest {
+                    resource,
+                    alias,
+                    where_: Box::new(where_),
+                    order_by: Box::new(order_by),
+                    select: Box::new(select),
+                    otherwise,
+                    span: sp,
+                })
+            }
             Tok::Ident(s) => {
                 self.next();
                 if self.is_sym("(") {
@@ -1085,6 +1113,16 @@ fn ast_depth(root: &Expr) -> usize {
                 let child_depth = depth + 1;
                 max_depth = max_depth.max(child_depth);
                 pending.push((child, child_depth));
+            }
+            Expr::Latest { where_, order_by, select, otherwise, .. } => {
+                let child_depth = depth + 1;
+                max_depth = max_depth.max(child_depth);
+                pending.push((where_, child_depth));
+                pending.push((order_by, child_depth));
+                pending.push((select, child_depth));
+                if let Some(otherwise) = otherwise {
+                    pending.push((otherwise, child_depth));
+                }
             }
             Expr::Cmp(_, left, right) | Expr::Arith(_, left, right, _) => {
                 let child_depth = depth + 1;
