@@ -1,5 +1,11 @@
 # FlaskBB 전체 포팅 상태
 
+## 2026-10-30 G-6 source sort semantics 확인 — 구현·실행 미검증으로 open 유지
+
+원본 `upstream/flaskbb/forum/models.py`의 세 재계산 경로를 직접 대조했다. `Post._deal_with_last_post` 후보는 `Post.id.desc()`로 고르고, `Topic._remove_topic_from_forum` 후보 Topic은 `Topic.last_post_id.desc()`로 고른다. 반면 `Forum.update_last_post`는 `Post.date_created.desc()`만 지정해 timestamp 동률 순서는 정하지 않는다. 포팅은 Post/Topic UUID에 `date_created desc, id desc`를 쓰므로 원 순서와 동등하지 않다. 동시각에서 Post 정수 ID 순서와 UUID lexical 순서가 역전되는 경우, 또는 Post ID 증가순과 date_created가 역전되는 경우의 반례가 있다. Topic `last_post_id`와 Post `date_created`도 독립 값이다.
+
+따라서 generic `latest` selector를 원 동작 보존이라고 승인할 수 없다. 원 ID 순서를 보존할 별도 매핑/sequence나 transition별 effect 계약이 필요할 수 있으나 스키마·공개 ID 모델을 이번 단계에서 정하지 않았다. local commit `53bea548`의 G-6 코드는 여전히 Rust compile·Postgres 실행 전이며 `a397d77` CI에는 없었다. 구체적인 gap·후속 기준은 [PRODUCT-GAPS](PRODUCT-GAPS.md)의 G-6를 본다.
+
 ## 2026-10-20 F13 CLI 매핑: `users delete` 고정·`upgrade` 절반 매핑, 갭 G-14·G-15 기록
 
 원본 확인(파일·행 직접): `flaskbb users delete`는 `cli/users.py:67-89`에서 username 프롬프트(73-77), 정확 일치 조회(79), 없으면 오류(80-82), `--force` 없으면 확인(84-86), `user.delete()`(88)이며 그 본체는 `user/models.py:465-468`의 `db.session.delete`+commit이다. 권한 검사는 없다. `flaskbb upgrade`는 `cli/main.py:232-263`에서 `--all`이면 `alembic.upgrade()`(244), `--fixture`나 `--all`이면 `flaskbb.fixtures.<이름>`을 읽어(248-254) `update_settings_from_fixture`(257-259, 본체 `utils/populate.py:87-145`)로 없는 그룹·설정을 추가하고 `--force`일 때만 덮어쓴다.
