@@ -1,5 +1,11 @@
 # 제품 통합 검증 (2026-10-17)
 
+## 2026-10-30 G-6 설계·원본 알고리즘 oracle (엔진/DB parity 아님)
+
+baseline `094c5e044f7214b735cbf0e8d1bdb5c0616df5b8`에서 공개 UUID + 내부 PostOrder Id 방식을 선택했다. 원 source ID import 근거가 없는 UUID-only는 보존하고 영향 전이를 fail-closed하며, 조건부 before/after effect·선택 row/projection 계약이 아직 필요하다. 전체 설계·정확한 파일·최소 회귀 행렬은 [FlaskBB G-6](../porting/flaskbb/PRODUCT-GAPS.md#g-6-후속-결정--공개-uuid--내부-postorder-2026-10-30)에 있다.
+
+`PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s porting/flaskbb/tests -p test_last_post_source_oracle.py -v` → 8 tests / OK. vendor source AST의 4개 method를 SQLite query adapter로 실행했고 두 in-memory mutant(date-for-id, Post-author-for-Topic-author)를 해당 시험이 검출했다. SQLAlchemy flush/relationship, 실제 PostgreSQL NULL 정렬, AIP create/effect/동시성/이관·Rust compile·새 SHA CI는 미검증이다. `53bea548`이 a397 CI에 포함되지 않았다는 경계와 아래 withdraw 원인 미확정은 그대로다. G-6 및 전체 제품 완료 근거로 합산하지 않는다.
+
 ## 2026-10-30 a397 exact-SHA Verify 결과
 
 - Verify `40939029950`, SHA `a397d771472b1fcfe25caf242495c566ba71da30`: workflow failure. Linux runner job `123677849372`, step 15 `Verify real HTTP to Node and Python workers to MySQL`가 failure이고 step 11 compiler/runtime/product/worker/transport/SDK는 success다. `mysql_facereview_auth`에서 `member_withdraw / confirm_withdraw` browser process가 status 1로 끝났다. Harness는 `crates/aip-cli/tests/mysql_facereview_auth.rs:2154`의 `assert!(withdraw_result.status.success())`에서 panic했다. Browser/DB safe summary는 DB success, browser failure를 기록한다. 계정 soft-delete, 활성 session 0, 타 기기 재발급 401, 타 계정 세션과 업무 행 보존, 메일 미발송 등 DB 후조건은 확인됐다. 다른 FaceReview journeys 10개 통과, 1개 실패다.

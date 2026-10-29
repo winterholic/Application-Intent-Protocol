@@ -1,5 +1,11 @@
 # FlaskBB 전체 포팅 상태
 
+## 2026-10-30 G-6 후속 — UUID 보존 PostOrder 선택, 구현·실DB는 open
+
+순서는 내부 `PostOrder.id: Id`로 보존하고 공개 Post/Topic UUID는 유지한다. existing Id/create/adopt/default 제약을 비교한 선택이며 일반 구현을 시작할 수 있는 schema/create/import·legacy fail-closed·migration/rollback·동시성 계약을 [PRODUCT-GAPS의 G-6 후속 결정](PRODUCT-GAPS.md#g-6-후속-결정--공개-uuid--내부-postorder-2026-10-30)에 기록했다. 아래 “결정하지 않았다”는 앞선 조사 기록이다. 기존 effect는 무조건 재계산·후보 필터·Topic author projection·unhide의 last_updated 등도 원본과 달라 정렬 교체만으로 닫을 수 없다. `HideableQuery`의 viewer별 root 필터와 원본 second_last_post의 명시 순서 부재를 구분했다.
+
+원본 AST method 실행 oracle 8/8, date-for-id 및 post-for-topic-author mutant 2건 검출. stdlib/SQLite adapter 범위이며 actual ORM/PG/AIP는 미실행이다. 다음은 conditional pre-state effect/한 후보의 projection 원자 복사 RED 시험부터다. 이번 단계에 Rust 구현/schema apply는 추가하지 않았고 G-6 open·전체 미완을 유지한다.
+
 ## 2026-10-30 G-6 source sort semantics 확인 — 구현·실행 미검증으로 open 유지
 
 원본 `upstream/flaskbb/forum/models.py`의 세 재계산 경로를 직접 대조했다. `Post._deal_with_last_post` 후보는 `Post.id.desc()`로 고르고, `Topic._remove_topic_from_forum` 후보 Topic은 `Topic.last_post_id.desc()`로 고른다. 반면 `Forum.update_last_post`는 `Post.date_created.desc()`만 지정해 timestamp 동률 순서는 정하지 않는다. 포팅은 Post/Topic UUID에 `date_created desc, id desc`를 쓰므로 원 순서와 동등하지 않다. 동시각에서 Post 정수 ID 순서와 UUID lexical 순서가 역전되는 경우, 또는 Post ID 증가순과 date_created가 역전되는 경우의 반례가 있다. Topic `last_post_id`와 Post `date_created`도 독립 값이다.

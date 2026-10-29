@@ -1,4 +1,14 @@
-# 최신 재개 지점 (2026-10-30, G-6 의미 차이 확인·withdraw CI 실패 단계 조사)
+# 최신 재개 지점 (2026-10-30, G-6 순서 보존 결정·source oracle)
+
+`094c5e044f7214b735cbf0e8d1bdb5c0616df5b8` clean main에서 재개했다. 공개 UUID를 유지하고 내부 `PostOrder.id: Id`에 source Post integer ID를 보존하는 방식을 선택했다. 기존 identity/create effect를 재사용하며, numeric PK+UUID wire 변환 및 owned Int sequence annotation보다 변경 범위가 작다. 실제 mapping이 없는 UUID-only 행은 보존하고 순서 의존 전이를 fail-closed한다. 과거 ID를 UUID/date/임의 backfill로 만들지 않는다. 원본과 다른 trigger·viewer hidden query·Topic author projection·first-post 위임·before/after 포인터·second_last_post 미정 순서를 기존 [FlaskBB G-6 구현 계약](../porting/flaskbb/PRODUCT-GAPS.md#g-6-후속-결정--공개-uuid--내부-postorder-2026-10-30)에 연결했다. 아래의 “결정하지 않았다”는 이전 조사 시점 기록이다.
+
+이번 증분은 설계+stdlib source oracle다. `test_last_post_source_oracle.py` 8/8 및 in-memory mutation 2건 검출. 이 결과는 원본 4개 method의 명시 분기/쿼리 조건을 작은 SQLite adapter로 실행한 범위이며 SQLAlchemy/PG/AIP 효과 PASS가 아니다. 다음 구현 첫 단계는 V1/V2/V3 conditional effect/pre-state/row binding RED 시험, 그 뒤 PostOrder 생성·migration·정확한 포팅 연결이다. 큰 미검증 Rust 변경이나 schema apply는 추가하지 않았다. 기존 `53bea548` compile·실PG·exact-SHA CI는 계속 미검증이며 G-6/전체 포팅/1.0 미완이다.
+
+shared target `10,053,255,168` bytes는 보존(10GB 예산 초과); 추가 build/target 정리/clone/DB/container/worker 0, 회수 0 bytes. 기존 push 인증 실패·connector 승인 거부는 재시도/우회하지 않았다. 원격 게시·새 SHA CI는 미실행이다.
+
+---
+
+# 이전 재개 지점 (2026-10-30, G-6 의미 차이 확인·withdraw CI 실패 단계 조사)
 
 이번 후속 시작 시 `main`은 G-6 구현 커밋 `53bea5480d56932e6d581ec9dec94225ae34f3d7`였고 `origin/main`은 `a397d771472b1fcfe25caf242495c566ba71da30`였다. 로컬은 시작 시 1커밋 앞섰으며 G-6 구현은 원격 CI에 포함되지 않았다. 같은 원격 push 재시도와 GitHub write connector 우회는 금지된 기존 차단을 유지한다. `a397d77` Verify `40939029950`의 컴파일·런타임·제품·워커·전송·SDK 단계(11)는 success, 실제 HTTP→worker→MySQL 단계(15)는 failure이며, 나머지 독립 workflow 8개는 success다.
 
