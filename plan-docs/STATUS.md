@@ -4,7 +4,7 @@
 
 기존 V1 latest 테스트의 malformed raw-string 경계와 H definition의 불일치 `exposeApply`도 실행 중 확인해 테스트 입력만 바로잡았다. V2 SQL 명령은 실행 전 offline resolver에서 locked `ctutils 0.4.4`를 찾지 못해 중단(로컬 index candidates 0.4.3/0.4.2); 이는 컴파일·행동 실패가 아니며 cache를 새로 채우지 않았다. 따라서 V2/V3 런타임 no-op, before/after snapshot, exact target missing 계약은 미구현·미검증이다. 이번 V1 계약은 공개/제품 계약 승인이나 실제 effect 동작을 뜻하지 않는다.
 
-공유 target은 시작 `10,053,255,168` bytes에서 종료 `10,183,757,824` bytes로 측정됐고 `130,502,656` bytes 증가했다. 기존 target을 보존했다. 새 target/cache/DB/container/browser/worker 0, 회수 0 bytes. G-6와 전체 AIP/FaceReview/Infisical 포팅, encryption runtime/adoption/retirement, 공식 SDK, exact-SHA CI, upgrade/rollback, 1.0은 미완. 기존 GitHub push 인증 거부를 재시도하지 않아 원격 SHA는 이번 실행에서 확인하지 않았다. 다음 구현은 V2 SQL test의 dependency 제공 가능 경로를 확인한 뒤 V2/V3 conditional false no-op의 behavior RED→GREEN이며, false condition이 main transition을 거부하지 않고 true condition은 exact target을 갱신하며 true+missing target은 기존 error를 유지해야 한다.
+공유 target은 시작 `10,053,255,168` bytes에서 종료 `10,183,757,824` bytes로 측정됐고 `130,502,656` bytes 증가했다. 기존 target을 보존했다. 새 target/cache/DB/container/browser/worker 0, 회수 0 bytes. read-only `python3 .aip-harness/check.py --finish ...`에서 origin main `a397d771472b1fcfe25caf242495c566ba71da30`을 확인했다. local HEAD `c325266d4f64d4291a2210883ebdbd34db56c25b`와 달라 finish exit 1이며, V2 타깃도 실행 전 dependency 부재로 미통과다. 기존 GitHub push 인증 거부는 재시도하지 않았다. G-6와 전체 AIP/FaceReview/Infisical 포팅, encryption runtime/adoption/retirement, 공식 SDK, exact-SHA CI, upgrade/rollback, 1.0은 미완. 다음 구현은 V2 SQL test의 dependency 제공 가능 경로를 확인한 뒤 V2/V3 conditional false no-op의 behavior RED→GREEN이며, false condition이 main transition을 거부하지 않고 true condition은 exact target을 갱신하며 true+missing target은 기존 error를 유지해야 한다.
 
 # 최신 재개 지점 (2026-10-30, G-6 순서 보존 결정·source oracle)
 
