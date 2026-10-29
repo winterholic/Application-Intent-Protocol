@@ -45,7 +45,9 @@ impl RekeyTarget {
     }
 
     pub fn target_key(&self) -> String {
-        format!("{}:{}:{}:{}", self.scope.kind(), self.scope.id(), self.table, self.column)
+        let parts = [self.scope.kind(), self.scope.id(), &self.table, &self.column, &self.id_column, &self.resource, &self.field];
+        let identity = parts.iter().map(|part| format!("{}:{part}", part.len())).collect::<Vec<_>>().join(":");
+        format!("rekey-target-v2:{identity}")
     }
 }
 

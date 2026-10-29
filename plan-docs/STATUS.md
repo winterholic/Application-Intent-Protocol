@@ -1,12 +1,14 @@
-# 최신 재개 지점 (2026-10-30, rekey/adopt 통과·encrypted-opened fixture 보완)
+# 최신 재개 지점 (2026-10-30, prototype lock 및 rekey identity 후속 검증)
 
-`main` SHA `b4552390c34cceff3f90d52e718263582750acec`는 origin과 일치한다. Durable lease의 phase/pass/cursor, old·active DEK, restart fencing과 CAS/checkpoint transaction이 구현됐고, UUID SQL binding 문제는 `Uuid` 타입으로 바꿔 원격 검증을 통과했다: worker job `40918278091` 전체 success, `rekey_resumes_from_the_persisted_cursor_after_worker_restart ... ok`, `4 passed; 0 failed`. FlaskBB, Infisical PostgreSQL, SDK smoke, deadlines, storage/broker/cgroup, app packages와 DB contracts도 각 독립 workflow에서 success였다.
+`main` SHA `223d042ba12e4da01c697a02f3e49445af73c842`이며 원격과 일치한다. `45040e8`에서 봉인된 필드의 transition literal 검사를 `judge_query`보다 앞당겼고, 원격 `encrypted_opened`와 `encrypted_sealed`는 각각 1/1 통과했다. 그 뒤 전체 Verify는 테스트 전용 Mongo index 2초 timeout으로 실패했다. fixture budget만 10초로 바꾼 `223d042`에서는 `native_capabilities` 6/6이 통과했으며, 이어 실패한 `tools/verify.sh:65`는 stale `prototype/Cargo.lock`의 `--locked` drift였다. `spike-v3-write`의 신규 `aip-execution` path dependency를 반영하도록 lock을 한 항목 갱신했고 `cargo metadata --manifest-path prototype/Cargo.toml --format-version 1 --locked --offline`는 통과했다. 이 lock 갱신 후의 `prototype --test cli`와 전체 Verify는 아직 실행되지 않았다. 같은 SHA의 나머지 다섯 독립 workflow는 success다. `223d042` 전체 Verify는 success가 아니다.
+
+현재 worktree에는 prototype lock 보완 및 rekey target checkpoint identity 수정과 회귀 테스트가 미커밋 상태다. `RekeyTarget::target_key`는 이제 scope, table, encrypted column, id column, resource, field를 versioned length-prefixed identity에 묶는다. 로컬 test-first RED→GREEN 1/1 및 lock의 `--locked --offline` metadata 검증은 통과했으나, 정확한 새 SHA에서의 전체 Verify, `prototype --test cli`, DB persisted-cursor restart 검증은 남았다. 223d042 원격 worker workflow의 기존 persisted-cursor restart test는 4/4 통과했지만 새 identity 변경을 검증한 것은 아니다. 제품 암호화 활성화, target inventory 완전성, FaceReview/Infisical/FlaskBB 전체 parity, 공식 SDK 확장, upgrade/rollback 및 1.0은 계속 미완이다. Design 13 상태는 Proposed다.
+
+## 이전 재개점 기록 (2026-10-30)
 
 `b61e31a` core Verify의 `adopt_cells`가 기본 creation gate 두 곳에서 실패했다. Digest 계산과 idempotent 재조회 둘 다 verified mode-aware helper로 고쳐 `f60f0d6`에서 재검증했고, 원격 log에서 `adopt_cells` 3/3 통과를 확인했다. 이어진 `encrypted_opened` test는 `Vault` create 입력에 `id`를 전달하면서 SOURCE의 expose contract에 `id`를 빼둔 테스트 fixture 불일치로 실패했다. 암호화된 prototype resource의 내부 id 허용과 달리 일반 Vault의 id는 공개 create 필드여야 한다. Fixture를 `fields id, secret`으로 고친 변경을 follow-up 원격 CI에서 검증한다.
 
-shared Cargo target은 harness 기록의 10GB 예상 peak보다 약 48MB 높다. 사용자 지침에 따라 추가 build/target 정리는 하지 않았다. `plan-docs/porting/flaskbb/PRODUCT-GAPS.md`는 저장소에 없다. Design 13은 Proposed이며 runtime encryption activation, 전체 포팅/1.0 완료가 아니다.
-
-shared Cargo target은 harness의 기록된 10GB 예상 peak보다 약 48MB 초과한 채 유지되며, 사용자 지침에 따라 추가 빌드나 공유 target 정리는 하지 않는다. `plan-docs/porting/flaskbb/PRODUCT-GAPS.md`는 저장소에 존재하지 않아 FlaskBB는 `porting/README.md`, 실행 증거와 verification 기록으로 대조한다. Design 13은 Proposed이며 runtime encryption activation, 전체 포팅/1.0 완료가 아니다.
+shared Cargo target은 최신 harness 측정 `10,053,255,168` bytes로 기록된 `10,000,000,000` bytes peak보다 `53,255,168` bytes 초과했다. 기존 target을 재사용한 편집/테스트의 뒤 측정이며, 사용자 지침에 따라 추가 build나 target 정리를 하지 않는다. `plan-docs/porting/flaskbb/PRODUCT-GAPS.md`는 저장소에 없다. Design 13은 Proposed이며 runtime encryption activation, 전체 포팅/1.0 완료가 아니다.
 
 ---
 

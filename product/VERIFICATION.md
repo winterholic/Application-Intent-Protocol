@@ -1,5 +1,13 @@
 # 제품 통합 검증 (2026-10-17)
 
+## 2026-10-30 sealed transition guard와 Mongo fixture timeout 후속
+
+- SHA `45040e88f9f098ce22598d961d5f11523c23be31`의 Verify `40931362469`에서는 기존 암호화 회귀 `encrypted_opened`와 `encrypted_sealed`가 각각 `1 passed; 0 failed`였다. 이후 `spike-v4-worker/tests/native_capabilities.rs::mongo_writes_are_bounded_private_and_undoable`가 `Mongo index timeout`으로 실패했다. 호출부는 테스트용 Mongo 드라이버에 2초 timeout을 지정하고, `ensure_write_indexes`가 여러 collection별 `create_indexes` 호출에 같은 제한을 적용한다. Mongo fixture는 약 10분 전에 ready였고 Mongo server log에는 slice725 인덱스 오류가 보이지 않았다. runner saturation은 직접 측정하지 않아 추론으로 남긴다. 같은 native capability test는 Verify `40065518651`에서 통과한 이력이 있다.
+- `223d042ba12e4da01c697a02f3e49445af73c842`에서 테스트 helper 제한만 2초에서 10초로 넓혔다. production adapter 설정/제한은 바꾸지 않았다. 원격 Verify `40933940170`의 `native_capabilities`는 Mongo를 포함해 `6 passed; 0 failed`였다. 이후 `tools/verify.sh:65`가 `prototype/Cargo.lock` stale graph로 실패했다: `--locked` 때문에 lock 갱신을 막았다는 Cargo 오류다. 이 SHA에서 `Linux cgroup v2`, `Object storage`, `Linux worker jobs`, `App packages`, `External brokers` 다섯 workflow는 success다.
+- 로컬에서는 `spike-v3-write`의 신규 `aip-execution` path dependency를 반영해 prototype lock에 한 항목을 추가했고 `cargo metadata --manifest-path prototype/Cargo.toml --format-version 1 --locked --offline`를 통과시켰다. `prototype --test cli` 및 새 lock의 원격 exact-SHA Verify는 아직 실행 전이다. rekey identity 변경은 로컬 RED→GREEN 1/1이며 test-first 검사다. 원격 Linux worker의 기존 persisted-cursor restart test는 223d042에서 4/4 통과했으나 새 checkpoint key를 검증하지 않았다.
+- 로컬 확인: `cargo fmt --all -- --check`, `git diff --check`, `python3 .aip-harness/check.py`, `prototype` locked metadata, rekey pure unit test 통과. Mongo-backed test는 local에서 실행하지 않았다.
+- 남음: 새 lock/rekey identity exact-SHA 전체 CI, encrypted field의 제품 listener/runtime 연결 및 WBS 8.18.3~8.18.6, FaceReview/Infisical/FlaskBB 전체 parity, 공식 SDK 확장, upgrade/rollback/1.0 gate. Design 13은 Proposed이고 이번 증분은 전체 완료를 뜻하지 않는다.
+
 ## 2026-10-30 rekey 원격 통과 및 verified adopt gate 회귀
 
 - SHA `b61e31a4ed185480ab95f399a13cedae6aaceb3f` Linux worker `40918278091`는 success다. 원격 job log에서 `rekey_resumes_from_the_persisted_cursor_after_worker_restart ... ok`, `4 passed; 0 failed`를 확인했다. Infisical PostgreSQL, ctx deadline, FlaskBB core/CLI/search, worker, SDK, Mailpit, object storage, broker, cgroup, app packages의 독립 gate도 이 SHA에서 success다.

@@ -32,11 +32,19 @@ fn rekey_target_metadata_and_key_formation() {
     assert_eq!(target.id_column, "id");
     assert_eq!(target.resource, "User");
     assert_eq!(target.field, "email");
-    assert_eq!(target.target_key(), "service:global:users:email_cipher");
+    assert_eq!(target.target_key(), "rekey-target-v2:7:service:6:global:5:users:12:email_cipher:2:id:4:User:5:email");
+
+    for changed in [
+        RekeyTarget::new("users", "email_cipher", "user_id", "User", "email", Scope::service()),
+        RekeyTarget::new("users", "email_cipher", "id", "Account", "email", Scope::service()),
+        RekeyTarget::new("users", "email_cipher", "id", "User", "address", Scope::service()),
+    ] {
+        assert_ne!(target.target_key(), changed.target_key(), "persisted cursor identity must bind the full row/cell mapping");
+    }
 
     let ref_scope = Scope::reference("Organization", "12345").unwrap();
     let ref_target = RekeyTarget::new("secrets", "api_key", "secret_id", "Secret", "apiKey", ref_scope);
-    assert_eq!(ref_target.target_key(), "ref:Organization:12345:secrets:api_key");
+    assert_eq!(ref_target.target_key(), "rekey-target-v2:16:ref:Organization:5:12345:7:secrets:7:api_key:9:secret_id:6:Secret:6:apiKey");
 }
 
 #[test]
