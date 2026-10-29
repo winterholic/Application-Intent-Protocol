@@ -1,6 +1,27 @@
 //! Tests for the durable rekey execution boundary and lease contracts.
-use aip_execution::encryption::{DekStore, Scope};
-use aip_execution::rekey::{RekeyReport, RekeyTarget, RekeyTargetReport};
+use aip_crypto::provider::LocalProvider;
+use aip_execution::{
+    encryption::{CellLocation, DekStore, Scope},
+    rekey::{RekeyContext, RekeyReport, RekeyTarget, RekeyTargetReport, rekey_target_column},
+};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
+use std::sync::atomic::{AtomicU64, Ordering};
+use tokio_postgres::{Client, NoTls};
+
+const DB: &str = aip_test_support::test_database_url!();
+static NEXT: AtomicU64 = AtomicU64::new(0);
+
+async fn connect() -> Client {
+    let (db, driver) = tokio_postgres::connect(DB, NoTls).await.unwrap();
+    tokio::spawn(async move {
+        let _ = driver.await;
+    });
+    db
+}
+
+fn provider(id: &str, byte: u8) -> LocalProvider {
+    LocalProvider::from_spec(&format!("{id}:{}", STANDARD.encode([byte; 32])), id).unwrap()
+}
 
 #[test]
 fn rekey_target_metadata_and_key_formation() {
@@ -28,6 +49,7 @@ fn rekey_reports_default_to_empty_and_unretired() {
         already_current: 0,
         raced: 0,
         failed_ids: vec![],
+        failed_count: 0,
         remaining_old: 0,
     };
     let report = RekeyReport {
@@ -50,4 +72,84 @@ fn dek_store_ddl_contains_rekey_leases_table() {
     assert!(ddl.contains("aip_rekey_leases"), "DDL must declare aip_rekey_leases table for worker serialization");
     assert!(ddl.contains("target_key text PRIMARY KEY"), "aip_rekey_leases must key on target_key");
     assert!(ddl.contains("leased_until timestamptz NOT NULL"), "aip_rekey_leases must contain leased_until timestamp");
+    assert!(ddl.contains("cursor_id text NOT NULL"), "rekey progress must persist the keyset cursor for crash recovery");
+    assert!(ddl.contains("pass_no integer NOT NULL"), "rekey progress must persist the rescan pass number");
+    assert!(ddl.contains("phase text NOT NULL"), "rekey progress must persist whether it is sweeping or verifying");
+    assert!(ddl.contains("old_dek_id uuid NOT NULL"), "rekey cursor must be bound to the old DEK generation");
+    assert!(ddl.contains("active_dek_id uuid NOT NULL"), "rekey cursor must be bound to the active DEK generation");
+    assert!(ddl.contains("failed_count bigint NOT NULL"), "rekey failures must survive a worker restart and block retirement");
+}
+
+#[tokio::test]
+async fn rekey_resumes_from_the_persisted_cursor_after_worker_restart() {
+    let mut db = connect().await;
+    let store = DekStore::new(&format!("aip_rekey_{}_{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed))).unwrap();
+    db.batch_execute(&store.ddl()).await.unwrap();
+    db.batch_execute(&format!(
+        "CREATE SCHEMA {}; CREATE TABLE {}.cells(id bigint PRIMARY KEY, value text NOT NULL); SET search_path TO {},public",
+        store.deployment_schema(),
+        store.deployment_schema(),
+        store.deployment_schema()
+    ))
+    .await
+    .unwrap();
+
+    let scope = Scope::service();
+    let old_provider = provider("rekey-old", 7);
+    let new_provider = provider("rekey-new", 8);
+    let init = db.transaction().await.unwrap();
+    let old_dek = store.ensure_active_in(&init, &scope, &old_provider).await.unwrap();
+    init.commit().await.unwrap();
+
+    let mut budget = connect().await;
+    let mut reservation = store.reserve_for_write(&mut budget, &scope, 2).await.unwrap();
+    let tx = db.transaction().await.unwrap();
+    for id in ["1", "2"] {
+        let location = CellLocation::new("Secret", "value", id).unwrap();
+        let frame = store.seal_in(&tx, &mut reservation, &location, format!("old-secret-{id}").as_bytes(), &old_provider).await.unwrap();
+        tx.execute("INSERT INTO cells(id,value) VALUES($1,$2)", &[&id.parse::<i64>().unwrap(), &frame]).await.unwrap();
+    }
+    tx.commit().await.unwrap();
+
+    let tx = db.transaction().await.unwrap();
+    let old_epoch = store.active_for_write_in(&tx, &scope).await.unwrap().epoch();
+    let active_dek = store.promote_in(&tx, &scope, old_epoch, &new_provider).await.unwrap();
+    tx.commit().await.unwrap();
+
+    let mut reservation = store.reserve_for_write(&mut budget, &scope, 1).await.unwrap();
+    let tx = db.transaction().await.unwrap();
+    let first_location = CellLocation::new("Secret", "value", "1").unwrap();
+    let first_frame = store.seal_in(&tx, &mut reservation, &first_location, b"new-secret-1", &new_provider).await.unwrap();
+    tx.execute("UPDATE cells SET value=$1 WHERE id=1", &[&first_frame]).await.unwrap();
+    tx.commit().await.unwrap();
+
+    let target = RekeyTarget::new("cells", "value", "id", "Secret", "value", scope.clone());
+    db.execute(
+        &format!(
+            "INSERT INTO {}.aip_rekey_leases(target_key,holder,epoch,leased_until,phase,pass_no,cursor_id,old_dek_id,old_version,active_dek_id,active_version,remaining_old,failed_count)
+             VALUES($1,'crashed-worker',$2,clock_timestamp()-interval '1 second','sweep',1,'1',$3,1,$4,2,0,0)",
+            store.infrastructure_schema()
+        ),
+        &[&target.target_key(), &(active_dek.epoch() as i64), &old_dek.uuid(), &active_dek.dek().uuid()],
+    )
+    .await
+    .unwrap();
+
+    let context = RekeyContext { store: &store, old_dek: &old_dek, active_dek: &active_dek, holder_id: "restart-worker", provider: &new_provider };
+    let report = rekey_target_column(&mut db, &mut budget, &context, &target).await.unwrap();
+    assert_eq!(report.rekeyed, 1);
+    assert_eq!(report.already_current, 0, "restart must resume after row 1 instead of revisiting it");
+    assert_eq!(report.remaining_old, 0);
+    let rows = db.query("SELECT id,value FROM cells ORDER BY id", &[]).await.unwrap();
+    for (row, id) in rows.iter().zip(["1", "2"]) {
+        let stored: String = row.get(1);
+        let location = CellLocation::new("Secret", "value", id).unwrap();
+        assert_eq!(
+            store.open_cell(&db, &scope, &location, &stored, &new_provider).await.unwrap().as_slice(),
+            format!("{}-secret-{id}", if id == "1" { "new" } else { "old" }).as_bytes()
+        );
+    }
+
+    db.batch_execute(&format!("DROP SCHEMA {} CASCADE", store.deployment_schema())).await.unwrap();
+    db.batch_execute(&format!("DROP SCHEMA {} CASCADE", store.infrastructure_schema())).await.unwrap();
 }

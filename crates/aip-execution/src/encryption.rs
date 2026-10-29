@@ -212,7 +212,29 @@ impl DekStore {
                target_key text PRIMARY KEY,
                holder text NOT NULL,
                epoch bigint NOT NULL CHECK (epoch > 0),
-               leased_until timestamptz NOT NULL);"
+               leased_until timestamptz NOT NULL,
+               phase text NOT NULL DEFAULT 'sweep' CHECK (phase IN ('sweep','verify')),
+               pass_no integer NOT NULL DEFAULT 1 CHECK (pass_no BETWEEN 1 AND 3),
+               cursor_id text NOT NULL DEFAULT '',
+               old_dek_id uuid NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
+               old_version integer NOT NULL DEFAULT 0 CHECK (old_version >= 0),
+               active_dek_id uuid NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
+               active_version integer NOT NULL DEFAULT 0 CHECK (active_version >= 0),
+               remaining_old bigint NOT NULL DEFAULT 0 CHECK (remaining_old >= 0),
+               failed_count bigint NOT NULL DEFAULT 0 CHECK (failed_count >= 0));"
+        )
+        + &format!(
+            "ALTER TABLE {s}.aip_rekey_leases
+               ADD COLUMN IF NOT EXISTS phase text NOT NULL DEFAULT 'sweep' CHECK (phase IN ('sweep','verify'));
+             ALTER TABLE {s}.aip_rekey_leases
+               ADD COLUMN IF NOT EXISTS pass_no integer NOT NULL DEFAULT 1 CHECK (pass_no BETWEEN 1 AND 3);
+             ALTER TABLE {s}.aip_rekey_leases ADD COLUMN IF NOT EXISTS cursor_id text NOT NULL DEFAULT '';
+             ALTER TABLE {s}.aip_rekey_leases ADD COLUMN IF NOT EXISTS old_dek_id uuid NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000';
+             ALTER TABLE {s}.aip_rekey_leases ADD COLUMN IF NOT EXISTS old_version integer NOT NULL DEFAULT 0 CHECK (old_version >= 0);
+             ALTER TABLE {s}.aip_rekey_leases ADD COLUMN IF NOT EXISTS active_dek_id uuid NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000';
+             ALTER TABLE {s}.aip_rekey_leases ADD COLUMN IF NOT EXISTS active_version integer NOT NULL DEFAULT 0 CHECK (active_version >= 0);
+             ALTER TABLE {s}.aip_rekey_leases ADD COLUMN IF NOT EXISTS remaining_old bigint NOT NULL DEFAULT 0 CHECK (remaining_old >= 0);
+             ALTER TABLE {s}.aip_rekey_leases ADD COLUMN IF NOT EXISTS failed_count bigint NOT NULL DEFAULT 0 CHECK (failed_count >= 0);"
         )
     }
     async fn lock_scope(&self, tx: &Transaction<'_>, scope: &Scope) -> Result<(), Error> {

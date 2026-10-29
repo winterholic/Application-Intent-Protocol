@@ -58,6 +58,7 @@ pub struct RekeyTargetReport {
     pub already_current: u64,
     pub raced: u64,
     pub failed_ids: Vec<String>,
+    pub failed_count: u64,
     pub remaining_old: u64,
 }
 
@@ -84,35 +85,228 @@ pub struct RekeyContext<'a> {
 /// Manages durable leases in the infrastructure schema to serialize rekey workers.
 pub struct RekeyLease;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RekeyCheckpoint {
+    phase: String,
+    pass_no: u32,
+    cursor_id: String,
+    remaining_old: u64,
+    failed_count: u64,
+}
+
+struct LeaseIdentity<'a> {
+    infra_schema: &'a str,
+    target_key: &'a str,
+    holder: &'a str,
+    epoch: u64,
+    old_dek_id: &'a str,
+    old_version: u32,
+    active_dek_id: &'a str,
+    active_version: u32,
+}
+
+fn quote_ident(value: &str) -> String {
+    format!("\"{}\"", value.replace('"', "\"\""))
+}
+
 impl RekeyLease {
-    /// Attempts to acquire or renew a lease for `target_key`.
-    /// Returns `true` if the lease was granted, `false` if held by another active worker.
-    pub async fn acquire(
-        client: &impl GenericClient,
-        infra_schema: &str,
-        target_key: &str,
-        holder: &str,
-        epoch: u64,
-        ttl_secs: u64,
-    ) -> Result<bool, StoreError> {
+    /// Acquires a lease and resumes its durable cursor when the key generations still match.
+    /// Returns `None` when another unexpired worker owns the target.
+    async fn acquire(client: &impl GenericClient, identity: &LeaseIdentity<'_>, ttl_secs: u64) -> Result<Option<RekeyCheckpoint>, StoreError> {
         let ttl_i64 = ttl_secs.min(3600) as i64;
-        let epoch_i64 = epoch as i64;
+        let epoch_i64 = identity.epoch as i64;
         let statement = format!(
-            "INSERT INTO {infra_schema}.aip_rekey_leases (target_key, holder, epoch, leased_until)
-             VALUES ($1, $2, $3, clock_timestamp() + ($4 || ' seconds')::interval)
+            "INSERT INTO {}.aip_rekey_leases
+               (target_key, holder, epoch, leased_until, phase, pass_no, cursor_id, old_dek_id, old_version, active_dek_id, active_version, remaining_old, failed_count)
+             VALUES ($1, $2, $3, clock_timestamp() + ($4 || ' seconds')::interval, 'sweep', 1, '', $5::uuid, $6, $7::uuid, $8, 0, 0)
              ON CONFLICT (target_key) DO UPDATE
              SET holder = EXCLUDED.holder, epoch = EXCLUDED.epoch, leased_until = EXCLUDED.leased_until
+                , phase = CASE WHEN aip_rekey_leases.old_dek_id = $5::uuid AND aip_rekey_leases.old_version = $6
+                                    AND aip_rekey_leases.active_dek_id = $7::uuid AND aip_rekey_leases.active_version = $8
+                               THEN aip_rekey_leases.phase ELSE 'sweep' END
+                , pass_no = CASE WHEN aip_rekey_leases.old_dek_id = $5::uuid AND aip_rekey_leases.old_version = $6
+                                      AND aip_rekey_leases.active_dek_id = $7::uuid AND aip_rekey_leases.active_version = $8
+                                 THEN aip_rekey_leases.pass_no ELSE 1 END
+                , cursor_id = CASE WHEN aip_rekey_leases.old_dek_id = $5::uuid AND aip_rekey_leases.old_version = $6
+                                        AND aip_rekey_leases.active_dek_id = $7::uuid AND aip_rekey_leases.active_version = $8
+                                   THEN aip_rekey_leases.cursor_id ELSE '' END
+                , remaining_old = CASE WHEN aip_rekey_leases.old_dek_id = $5::uuid AND aip_rekey_leases.old_version = $6
+                                            AND aip_rekey_leases.active_dek_id = $7::uuid AND aip_rekey_leases.active_version = $8
+                                       THEN aip_rekey_leases.remaining_old ELSE 0 END
+                , failed_count = CASE WHEN aip_rekey_leases.old_dek_id = $5::uuid AND aip_rekey_leases.old_version = $6
+                                           AND aip_rekey_leases.active_dek_id = $7::uuid AND aip_rekey_leases.active_version = $8
+                                      THEN aip_rekey_leases.failed_count ELSE 0 END
+                , old_dek_id = $5::uuid, old_version = $6, active_dek_id = $7::uuid, active_version = $8
              WHERE aip_rekey_leases.leased_until < clock_timestamp()
-                OR (aip_rekey_leases.holder = EXCLUDED.holder AND aip_rekey_leases.epoch = EXCLUDED.epoch)"
+                OR (aip_rekey_leases.holder = EXCLUDED.holder AND aip_rekey_leases.epoch = EXCLUDED.epoch)
+             RETURNING phase, pass_no, cursor_id, remaining_old, failed_count",
+            identity.infra_schema
         );
-        let rows = client.execute(&statement, &[&target_key, &holder, &epoch_i64, &ttl_i64.to_string()]).await?;
-        Ok(rows > 0)
+        let row = client
+            .query_opt(
+                &statement,
+                &[
+                    &identity.target_key,
+                    &identity.holder,
+                    &epoch_i64,
+                    &ttl_i64.to_string(),
+                    &identity.old_dek_id,
+                    &(identity.old_version as i32),
+                    &identity.active_dek_id,
+                    &(identity.active_version as i32),
+                ],
+            )
+            .await?;
+        row.map(|row| {
+            let phase: String = row.try_get("phase")?;
+            let pass_no: i32 = row.try_get("pass_no")?;
+            let remaining_old: i64 = row.try_get("remaining_old")?;
+            let failed_count: i64 = row.try_get("failed_count")?;
+            if !matches!(phase.as_str(), "sweep" | "verify")
+                || !(1..=MAX_REKEY_PASSES as i32).contains(&pass_no)
+                || remaining_old < 0
+                || failed_count < 0
+            {
+                return Err(StoreError::Corrupted);
+            }
+            Ok(RekeyCheckpoint {
+                phase,
+                pass_no: pass_no as u32,
+                cursor_id: row.try_get("cursor_id")?,
+                remaining_old: remaining_old as u64,
+                failed_count: failed_count as u64,
+            })
+        })
+        .transpose()
     }
 
-    /// Releases a held lease.
-    pub async fn release(client: &impl GenericClient, infra_schema: &str, target_key: &str, holder: &str) -> Result<(), StoreError> {
-        let statement = format!("DELETE FROM {infra_schema}.aip_rekey_leases WHERE target_key = $1 AND holder = $2");
-        client.execute(&statement, &[&target_key, &holder]).await?;
+    async fn renew(client: &impl GenericClient, identity: &LeaseIdentity<'_>, ttl_secs: u64) -> Result<bool, StoreError> {
+        let ttl_i64 = ttl_secs.min(3600) as i64;
+        let epoch_i64 = identity.epoch as i64;
+        let sql = format!(
+            "UPDATE {}.aip_rekey_leases SET leased_until=clock_timestamp() + ($1 || ' seconds')::interval
+             WHERE target_key=$2 AND holder=$3 AND epoch=$4 AND old_dek_id=$5::uuid AND old_version=$6
+               AND active_dek_id=$7::uuid AND active_version=$8 AND leased_until > clock_timestamp()",
+            identity.infra_schema
+        );
+        let changed = client
+            .execute(
+                &sql,
+                &[
+                    &ttl_i64.to_string(),
+                    &identity.target_key,
+                    &identity.holder,
+                    &epoch_i64,
+                    &identity.old_dek_id,
+                    &(identity.old_version as i32),
+                    &identity.active_dek_id,
+                    &(identity.active_version as i32),
+                ],
+            )
+            .await?;
+        Ok(changed == 1)
+    }
+
+    /// Releases only the exact lease generation owned by this worker.
+    async fn release(client: &impl GenericClient, identity: &LeaseIdentity<'_>) -> Result<(), StoreError> {
+        let epoch_i64 = identity.epoch as i64;
+        let statement = format!(
+            "DELETE FROM {}.aip_rekey_leases
+             WHERE target_key=$1 AND holder=$2 AND epoch=$3 AND old_dek_id=$4::uuid AND old_version=$6
+               AND active_dek_id=$5::uuid AND active_version=$7 AND leased_until > clock_timestamp()",
+            identity.infra_schema
+        );
+        let changed = client
+            .execute(
+                &statement,
+                &[
+                    &identity.target_key,
+                    &identity.holder,
+                    &epoch_i64,
+                    &identity.old_dek_id,
+                    &identity.active_dek_id,
+                    &(identity.old_version as i32),
+                    &(identity.active_version as i32),
+                ],
+            )
+            .await?;
+        if changed != 1 {
+            return Err(StoreError::StaleWriter);
+        }
+        Ok(())
+    }
+
+    async fn checkpoint(
+        client: &impl GenericClient,
+        identity: &LeaseIdentity<'_>,
+        checkpoint: &RekeyCheckpoint,
+        ttl_secs: u64,
+    ) -> Result<(), StoreError> {
+        let ttl_i64 = ttl_secs.min(3600) as i64;
+        let epoch_i64 = identity.epoch as i64;
+        let pass_no = checkpoint.pass_no as i32;
+        let remaining_old = i64::try_from(checkpoint.remaining_old).map_err(|_| StoreError::InvalidInput)?;
+        let failed_count = i64::try_from(checkpoint.failed_count).map_err(|_| StoreError::InvalidInput)?;
+        let sql = format!(
+            "UPDATE {}.aip_rekey_leases
+             SET phase=$1, pass_no=$2, cursor_id=$3, remaining_old=$4, failed_count=$5,
+                 leased_until=clock_timestamp() + ($6 || ' seconds')::interval
+             WHERE target_key=$7 AND holder=$8 AND epoch=$9 AND old_dek_id=$10::uuid AND old_version=$12
+               AND active_dek_id=$11::uuid AND active_version=$13
+               AND leased_until > clock_timestamp()",
+            identity.infra_schema
+        );
+        let changed = client
+            .execute(
+                &sql,
+                &[
+                    &checkpoint.phase,
+                    &pass_no,
+                    &checkpoint.cursor_id,
+                    &remaining_old,
+                    &failed_count,
+                    &ttl_i64.to_string(),
+                    &identity.target_key,
+                    &identity.holder,
+                    &epoch_i64,
+                    &identity.old_dek_id,
+                    &identity.active_dek_id,
+                    &(identity.old_version as i32),
+                    &(identity.active_version as i32),
+                ],
+            )
+            .await?;
+        if changed != 1 {
+            return Err(StoreError::StaleWriter);
+        }
+        Ok(())
+    }
+
+    async fn yield_for_resume(client: &impl GenericClient, identity: &LeaseIdentity<'_>) -> Result<(), StoreError> {
+        let epoch_i64 = identity.epoch as i64;
+        let sql = format!(
+            "UPDATE {}.aip_rekey_leases SET leased_until=clock_timestamp()
+             WHERE target_key=$1 AND holder=$2 AND epoch=$3 AND old_dek_id=$4::uuid AND old_version=$6
+               AND active_dek_id=$5::uuid AND active_version=$7 AND leased_until > clock_timestamp()",
+            identity.infra_schema
+        );
+        let changed = client
+            .execute(
+                &sql,
+                &[
+                    &identity.target_key,
+                    &identity.holder,
+                    &epoch_i64,
+                    &identity.old_dek_id,
+                    &identity.active_dek_id,
+                    &(identity.old_version as i32),
+                    &(identity.active_version as i32),
+                ],
+            )
+            .await?;
+        if changed != 1 {
+            return Err(StoreError::StaleWriter);
+        }
         Ok(())
     }
 }
@@ -125,160 +319,137 @@ pub async fn rekey_target_column(
     target: &RekeyTarget,
 ) -> Result<RekeyTargetReport, StoreError> {
     let mut report = RekeyTargetReport { table: target.table.clone(), column: target.column.clone(), ..Default::default() };
-
     let target_key = target.target_key();
-    let acquired =
-        RekeyLease::acquire(db, ctx.store.infrastructure_schema(), &target_key, ctx.holder_id, ctx.active_dek.epoch(), DEFAULT_LEASE_TTL_SECS)
-            .await?;
+    let infra = ctx.store.infrastructure_schema();
+    let epoch = ctx.active_dek.epoch();
+    let old_dek_id = ctx.old_dek.id();
+    let active_dek_id = ctx.active_dek.dek().id();
+    let identity = LeaseIdentity {
+        infra_schema: infra,
+        target_key: &target_key,
+        holder: ctx.holder_id,
+        epoch,
+        old_dek_id,
+        old_version: ctx.old_dek.version(),
+        active_dek_id,
+        active_version: ctx.active_dek.dek().version(),
+    };
+    let mut checkpoint = RekeyLease::acquire(db, &identity, DEFAULT_LEASE_TTL_SECS).await?.ok_or(StoreError::StaleWriter)?;
 
-    if !acquired {
-        return Err(StoreError::StaleWriter);
-    }
+    let table = quote_ident(&target.table);
+    let column = quote_ident(&target.column);
+    let id_column = quote_ident(&target.id_column);
+    loop {
+        if !RekeyLease::renew(db, &identity, DEFAULT_LEASE_TTL_SECS).await? {
+            return Err(StoreError::StaleWriter);
+        }
 
-    let mut pass = 0;
-    while pass < MAX_REKEY_PASSES {
-        pass += 1;
-        let mut cursor = String::new();
-        let mut pass_raced = 0;
-
-        loop {
-            // Heartbeat lease
-            let renewed = RekeyLease::acquire(
-                db,
-                ctx.store.infrastructure_schema(),
-                &target_key,
-                ctx.holder_id,
-                ctx.active_dek.epoch(),
-                DEFAULT_LEASE_TTL_SECS,
-            )
-            .await?;
-            if !renewed {
-                let _ = RekeyLease::release(db, ctx.store.infrastructure_schema(), &target_key, ctx.holder_id).await;
-                return Err(StoreError::StaleWriter);
-            }
-
-            let select_sql = format!(
-                "SELECT \"{}\"::text, \"{}\" FROM \"{}\" WHERE \"{}\" IS NOT NULL AND \"{}\"::text > $1 ORDER BY \"{}\"::text ASC LIMIT $2",
-                target.id_column, target.column, target.table, target.column, target.id_column, target.id_column
-            );
-
-            let limit = REKEY_BATCH_SIZE as i64;
-            let rows = db.query(&select_sql, &[&cursor, &limit]).await?;
-            if rows.is_empty() {
-                break;
-            }
-
+        let select_sql = format!(
+            "SELECT {id_column}::text, {column} FROM {table} WHERE {column} IS NOT NULL AND {id_column}::text > $1 ORDER BY {id_column}::text ASC LIMIT $2"
+        );
+        let rows = db.query(&select_sql, &[&checkpoint.cursor_id, &(REKEY_BATCH_SIZE as i64)]).await?;
+        if !rows.is_empty() {
             for row in &rows {
+                let id: String = row.try_get(0)?;
+                let frame: String = row.try_get(1)?;
                 report.scanned += 1;
-                let id: String = row.get(0);
-                let stored_frame: String = row.get(1);
-                cursor = id.clone();
+                checkpoint.cursor_id = id.clone();
 
-                let header = match cell::parse_header(&stored_frame) {
-                    Ok(h) => h,
+                if checkpoint.phase == "verify" {
+                    if cell::parse_header(&frame).is_ok_and(|h| h.dek_id == old_dek_id && h.version == ctx.old_dek.version()) {
+                        checkpoint.remaining_old = checkpoint.remaining_old.checked_add(1).ok_or(StoreError::InvalidInput)?;
+                    }
+                    RekeyLease::checkpoint(db, &identity, &checkpoint, DEFAULT_LEASE_TTL_SECS).await?;
+                    continue;
+                }
+
+                let header = match cell::parse_header(&frame) {
+                    Ok(header) => header,
                     Err(_) => {
                         report.failed_ids.push(id);
+                        checkpoint.failed_count = checkpoint.failed_count.checked_add(1).ok_or(StoreError::InvalidInput)?;
+                        RekeyLease::checkpoint(db, &identity, &checkpoint, DEFAULT_LEASE_TTL_SECS).await?;
                         continue;
                     }
                 };
-
-                if header.dek_id == ctx.active_dek.dek().id() && header.version == ctx.active_dek.dek().version() {
+                let is_old = header.dek_id == old_dek_id && header.version == ctx.old_dek.version();
+                let is_active = header.dek_id == active_dek_id && header.version == ctx.active_dek.dek().version();
+                if is_active {
                     report.already_current += 1;
+                    RekeyLease::checkpoint(db, &identity, &checkpoint, DEFAULT_LEASE_TTL_SECS).await?;
+                    continue;
+                }
+                if !is_old {
+                    RekeyLease::checkpoint(db, &identity, &checkpoint, DEFAULT_LEASE_TTL_SECS).await?;
                     continue;
                 }
 
-                if header.dek_id != ctx.old_dek.id() || header.version != ctx.old_dek.version() {
-                    // Belongs to another generation; record and do not mutate
-                    report.failed_ids.push(id);
-                    continue;
-                }
-
-                // Decrypt old cell
                 let location = match CellLocation::new(&target.resource, &target.field, &id) {
-                    Ok(loc) => loc,
+                    Ok(location) => location,
                     Err(_) => {
                         report.failed_ids.push(id);
+                        checkpoint.failed_count = checkpoint.failed_count.checked_add(1).ok_or(StoreError::InvalidInput)?;
+                        RekeyLease::checkpoint(db, &identity, &checkpoint, DEFAULT_LEASE_TTL_SECS).await?;
                         continue;
                     }
                 };
-
-                let plaintext = match ctx.store.open_cell(db, &target.scope, &location, &stored_frame, ctx.provider).await {
-                    Ok(pt) => pt,
+                let plaintext = match ctx.store.open_cell(db, &target.scope, &location, &frame, ctx.provider).await {
+                    Ok(plaintext) => plaintext,
                     Err(_) => {
                         report.failed_ids.push(id);
+                        checkpoint.failed_count = checkpoint.failed_count.checked_add(1).ok_or(StoreError::InvalidInput)?;
+                        RekeyLease::checkpoint(db, &identity, &checkpoint, DEFAULT_LEASE_TTL_SECS).await?;
                         continue;
                     }
                 };
-
-                // Reserve budget on independent budget connection
-                let mut reservation = match ctx.store.reserve_for_write(budget, &target.scope, 1).await {
-                    Ok(res) => res,
-                    Err(e) => {
-                        let _ = RekeyLease::release(db, ctx.store.infrastructure_schema(), &target_key, ctx.holder_id).await;
-                        return Err(e);
-                    }
-                };
-
-                // Seal new cell and CAS update in the same resource transaction
+                let mut reservation = ctx.store.reserve_for_write(budget, &target.scope, 1).await?;
                 let tx = db.transaction().await?;
-                let sealed_frame = match ctx.store.seal_in(&tx, &mut reservation, &location, &plaintext, ctx.provider).await {
-                    Ok(f) => f,
-                    Err(e) => {
-                        let _ = tx.rollback().await;
-                        let _ = RekeyLease::release(db, ctx.store.infrastructure_schema(), &target_key, ctx.holder_id).await;
-                        return Err(e);
-                    }
-                };
-
-                let update_sql = format!(
-                    "UPDATE \"{}\" SET \"{}\" = $1 WHERE \"{}\"::text = $2 AND \"{}\" = $3",
-                    target.table, target.column, target.id_column, target.column
-                );
-
-                let updated = tx.execute(&update_sql, &[&sealed_frame, &id, &stored_frame]).await?;
+                let sealed_frame = ctx.store.seal_in(&tx, &mut reservation, &location, &plaintext, ctx.provider).await?;
+                let update_sql = format!("UPDATE {table} SET {column}=$1 WHERE {id_column}::text=$2 AND {column}=$3");
+                let updated = tx.execute(&update_sql, &[&sealed_frame, &id, &frame]).await?;
+                RekeyLease::checkpoint(&tx, &identity, &checkpoint, DEFAULT_LEASE_TTL_SECS).await?;
+                tx.commit().await?;
                 if updated == 1 {
-                    tx.commit().await?;
                     report.rekeyed += 1;
                 } else {
-                    tx.rollback().await?;
                     report.raced += 1;
-                    pass_raced += 1;
                 }
             }
+            continue;
         }
 
-        if pass_raced == 0 {
-            break;
+        if checkpoint.phase == "sweep" {
+            checkpoint.phase = "verify".to_owned();
+            checkpoint.cursor_id.clear();
+            checkpoint.remaining_old = 0;
+            RekeyLease::checkpoint(db, &identity, &checkpoint, DEFAULT_LEASE_TTL_SECS).await?;
+            continue;
         }
+
+        report.remaining_old = checkpoint.remaining_old;
+        report.failed_count = checkpoint.failed_count;
+        if checkpoint.remaining_old == 0 && checkpoint.failed_count == 0 {
+            RekeyLease::release(db, &identity).await?;
+            return Ok(report);
+        }
+        if checkpoint.pass_no < MAX_REKEY_PASSES {
+            checkpoint.phase = "sweep".to_owned();
+            checkpoint.pass_no += 1;
+            checkpoint.cursor_id.clear();
+            checkpoint.remaining_old = 0;
+            checkpoint.failed_count = 0;
+            RekeyLease::checkpoint(db, &identity, &checkpoint, DEFAULT_LEASE_TTL_SECS).await?;
+            continue;
+        }
+        checkpoint.phase = "sweep".to_owned();
+        checkpoint.pass_no = 1;
+        checkpoint.cursor_id.clear();
+        checkpoint.remaining_old = 0;
+        checkpoint.failed_count = 0;
+        RekeyLease::checkpoint(db, &identity, &checkpoint, DEFAULT_LEASE_TTL_SECS).await?;
+        RekeyLease::yield_for_resume(db, &identity).await?;
+        return Ok(report);
     }
-
-    // Final 0 verification scan: ensure zero cells remain with old_dek.id
-    let mut remaining = 0;
-    let mut check_cursor = String::new();
-    loop {
-        let verify_sql = format!(
-            "SELECT \"{}\"::text, \"{}\" FROM \"{}\" WHERE \"{}\" IS NOT NULL AND \"{}\"::text > $1 ORDER BY \"{}\"::text ASC LIMIT $2",
-            target.id_column, target.column, target.table, target.column, target.id_column, target.id_column
-        );
-        let limit = REKEY_BATCH_SIZE as i64;
-        let rows = db.query(&verify_sql, &[&check_cursor, &limit]).await?;
-        if rows.is_empty() {
-            break;
-        }
-        for row in &rows {
-            let id: String = row.get(0);
-            let frame: String = row.get(1);
-            check_cursor = id;
-
-            if cell::parse_header(&frame).is_ok_and(|h| h.dek_id == ctx.old_dek.id() && h.version == ctx.old_dek.version()) {
-                remaining += 1;
-            }
-        }
-    }
-    report.remaining_old = remaining;
-
-    let _ = RekeyLease::release(db, ctx.store.infrastructure_schema(), &target_key, ctx.holder_id).await;
-    Ok(report)
 }
 
 /// Runs a full rekey cycle for all READABLE DEK generations in `scope`.
@@ -321,7 +492,7 @@ pub async fn rekey_scope(
             }
             let target_rep = rekey_target_column(db, budget, &ctx, target).await?;
 
-            if target_rep.remaining_old > 0 || !target_rep.failed_ids.is_empty() {
+            if target_rep.remaining_old > 0 || target_rep.failed_count > 0 || !target_rep.failed_ids.is_empty() {
                 all_zero = false;
             }
             report.target_reports.push(target_rep);
