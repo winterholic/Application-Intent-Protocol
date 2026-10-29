@@ -84,7 +84,33 @@ fn dek_store_ddl_contains_rekey_leases_table() {
 async fn rekey_resumes_from_the_persisted_cursor_after_worker_restart() {
     let mut db = connect().await;
     let store = DekStore::new(&format!("aip_rekey_{}_{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed))).unwrap();
+    db.batch_execute(&format!(
+        "CREATE SCHEMA {};
+         CREATE TABLE {}.aip_rekey_leases(
+           target_key text PRIMARY KEY, holder text NOT NULL, epoch bigint NOT NULL CHECK(epoch > 0), leased_until timestamptz NOT NULL);
+         INSERT INTO {}.aip_rekey_leases(target_key,holder,epoch,leased_until)
+           VALUES('legacy-target','legacy-worker',1,clock_timestamp()-interval '1 second');",
+        store.infrastructure_schema(),
+        store.infrastructure_schema(),
+        store.infrastructure_schema()
+    ))
+    .await
+    .unwrap();
     db.batch_execute(&store.ddl()).await.unwrap();
+    let legacy_checkpoint = db
+        .query_one(
+            &format!(
+                "SELECT phase,pass_no,cursor_id,failed_count FROM {}.aip_rekey_leases WHERE target_key='legacy-target'",
+                store.infrastructure_schema()
+            ),
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(legacy_checkpoint.get::<_, String>(0), "sweep", "schema upgrade must seed resumable phase defaults");
+    assert_eq!(legacy_checkpoint.get::<_, i32>(1), 1, "schema upgrade must start the pass counter at one");
+    assert_eq!(legacy_checkpoint.get::<_, String>(2), "", "legacy leases must start without a cursor");
+    assert_eq!(legacy_checkpoint.get::<_, i64>(3), 0, "legacy leases must start without recorded failures");
     db.batch_execute(&format!(
         "CREATE SCHEMA {}; CREATE TABLE {}.cells(id bigint PRIMARY KEY, value text NOT NULL); SET search_path TO {},public",
         store.deployment_schema(),

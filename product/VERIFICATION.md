@@ -2,7 +2,7 @@
 
 ## 2026-10-30 rekey 재시작 커서 저장 (코드 구현, 실DB gate 대기)
 
-이전 `aip_rekey_leases`는 worker lease만 저장해 프로세스 재시작 뒤 cursor/pass를 복구하지 못했다. SHA `26de75059c048690abb7d78101d8cbf94dfc4fc3`에서 phase/pass/cursor, old·active DEK 세대, 남은 셀과 실패 수를 보존하고, 행 CAS와 checkpoint를 같은 transaction으로 묶었다. stale lease는 holder·epoch·키 세대를 모두 맞춰 fence한다. `rekey_resumes_from_the_persisted_cursor_after_worker_restart`는 만료된 worker의 cursor 뒤부터 이어가는 live Postgres 통합 테스트다.
+이전 `aip_rekey_leases`는 worker lease만 저장해 프로세스 재시작 뒤 cursor/pass를 복구하지 못했다. SHA `26de75059c048690abb7d78101d8cbf94dfc4fc3`에서 phase/pass/cursor, old·active DEK 세대, 남은 셀과 실패 수를 보존하고, 행 CAS와 checkpoint를 같은 transaction으로 묶었다. stale lease는 holder·epoch·키 세대를 모두 맞춰 fence한다. `rekey_resumes_from_the_persisted_cursor_after_worker_restart`는 legacy 4-column schema에 additive migration을 적용하고 만료 worker의 cursor 뒤부터 이어가는 live Postgres 통합 테스트다. fixture의 KEK 회전 오류는 `b4ccf764f05ed248b443217157199c2f8135ceed`에서 고쳤다.
 
 - 로컬: `cargo fmt --all -- --check`; `cargo test -p aip-execution --test encryption_rekey --locked --offline -- --skip rekey_resumes_from_the_persisted_cursor_after_worker_restart` (3 passed); 같은 test target `--no-run`; `cargo clippy -p aip-execution --all-targets --locked --offline -- -D warnings`; `cargo check --workspace --locked --offline`; `git diff --check` 통과. shape-only DSN이며 DB에는 접속하지 않았다.
 - Live DB 재시작 테스트는 로컬 미실행. `.github/workflows/worker-jobs-linux.yml`의 Postgres 17 암호화 테스트 단계에 추가했으며, 새 SHA 원격 실행 결과 전까지 unverified다.
