@@ -19,8 +19,8 @@ async fn connect() -> Client {
     db
 }
 
-fn provider(id: &str, byte: u8) -> LocalProvider {
-    LocalProvider::from_spec(&format!("{id}:{}", STANDARD.encode([byte; 32])), id).unwrap()
+fn provider(spec: &str, active: &str) -> LocalProvider {
+    LocalProvider::from_spec(spec, active).unwrap()
 }
 
 #[test]
@@ -95,8 +95,9 @@ async fn rekey_resumes_from_the_persisted_cursor_after_worker_restart() {
     .unwrap();
 
     let scope = Scope::service();
-    let old_provider = provider("rekey-old", 7);
-    let new_provider = provider("rekey-new", 8);
+    let keys = format!("rekey-old:{},rekey-new:{}", STANDARD.encode([7; 32]), STANDARD.encode([8; 32]));
+    let old_provider = provider(&keys, "rekey-old");
+    let new_provider = provider(&keys, "rekey-new");
     let init = db.transaction().await.unwrap();
     let old_dek = store.ensure_active_in(&init, &scope, &old_provider).await.unwrap();
     init.commit().await.unwrap();
