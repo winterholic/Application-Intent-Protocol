@@ -1,5 +1,14 @@
 # 제품 통합 검증 (2026-10-17)
 
+## 2026-10-30 rekey 재시작 커서 저장 (코드 구현, 실DB gate 대기)
+
+이전 `aip_rekey_leases`는 worker lease만 저장해 프로세스 재시작 뒤 cursor/pass를 복구하지 못했다. SHA `26de75059c048690abb7d78101d8cbf94dfc4fc3`에서 phase/pass/cursor, old·active DEK 세대, 남은 셀과 실패 수를 보존하고, 행 CAS와 checkpoint를 같은 transaction으로 묶었다. stale lease는 holder·epoch·키 세대를 모두 맞춰 fence한다. `rekey_resumes_from_the_persisted_cursor_after_worker_restart`는 만료된 worker의 cursor 뒤부터 이어가는 live Postgres 통합 테스트다.
+
+- 로컬: `cargo fmt --all -- --check`; `cargo test -p aip-execution --test encryption_rekey --locked --offline -- --skip rekey_resumes_from_the_persisted_cursor_after_worker_restart` (3 passed); 같은 test target `--no-run`; `cargo clippy -p aip-execution --all-targets --locked --offline -- -D warnings`; `cargo check --workspace --locked --offline`; `git diff --check` 통과. shape-only DSN이며 DB에는 접속하지 않았다.
+- Live DB 재시작 테스트는 로컬 미실행. `.github/workflows/worker-jobs-linux.yml`의 Postgres 17 암호화 테스트 단계에 추가했으며, 새 SHA 원격 실행 결과 전까지 unverified다.
+- `design/13-field-encryption.md` Proposed 및 product runtime gate는 닫힌 채 유지한다. 이 검증은 저장 primitive의 재개 경로만 다루며 제품 writer/read 연결·1.0 gate 통과를 뜻하지 않는다.
+- 직전 FaceReview SHA `f37b23bafd959f12e2e484e4de4c072f37e0ccd7`는 push되어 7개 check success, Verify core in progress였다. 이 암호화 변경은 기록 시점에 local-only다.
+
 
 ## 2026-10-28 검증 이관 연결 (구현, 실DB 이관 미검증·출시 미완)
 
