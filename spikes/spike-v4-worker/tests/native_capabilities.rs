@@ -254,7 +254,10 @@ async fn write_driver(collections: &[&str]) -> (MongoDriverCapability, mongodb::
     let direct = mongodb::Client::with_uri_str(&uri).await.expect("dedicated Mongo fixture");
     let database = direct.database(WRITE_DATABASE);
     database.drop().await.expect("drop the run-owned database");
-    let driver = MongoDriverCapability::connect(&uri, WRITE_DATABASE, 2, Duration::from_secs(2))
+    // Index creation runs against the shared CI fixture while the full native-store
+    // integration suite is active; give this setup operation room to finish on a
+    // loaded runner without changing the driver's production timeout policy.
+    let driver = MongoDriverCapability::connect(&uri, WRITE_DATABASE, 2, Duration::from_secs(10))
         .await
         .expect("driver readiness")
         .enable_writes(collections)
