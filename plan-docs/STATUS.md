@@ -1,10 +1,10 @@
 # 최신 재개 지점 (2026-10-30, durable rekey 재시작 커서 진단)
 
-`main` SHA `7697da0926c88a822b49696da9aabb8c83a61d87`은 origin과 일치한다. Durable lease의 phase/pass/cursor, old·active DEK id/version, 남은 old 셀, 실패 수 저장과 세대 fencing, CAS+checkpoint transaction을 추가했다. worker workflow는 앞선 단계가 실패해도 독립 포팅/worker 검증을 계속 수행한다. remote Postgres 17 restart test는 여전히 실패한다: checkpoint `sweep/1/cursor=1/failed=0`, 1행은 active DEK v2, 2행은 old DEK v1, connection은 열려 있었다. 따라서 실패는 cursor 획득 전이 아니라 2행 처리 중이나 그 다음 DB write 경계다. 원격 gate 증거 및 정확 로그는 [제품 검증](../product/VERIFICATION.md)에 기록한다.
+`main` SHA `7697da0926c88a822b49696da9aabb8c83a61d87`은 origin과 일치했다. Durable lease의 phase/pass/cursor, old·active DEK id/version, 남은 old 셀, 실패 수 저장과 세대 fencing, CAS+checkpoint transaction을 추가했다. worker workflow는 앞선 단계가 실패해도 독립 포팅/worker 검증을 계속 수행한다. remote Postgres 17 restart test는 checkpoint `sweep/1/cursor=1/failed=0`, 1행 active DEK v2, 2행 old DEK v1에서 실패했다. 실패는 `lease_acquire`; SQLSTATE가 없어 PostgreSQL server-side error가 아니라 client/transport/query setup 범주다. 세부 client error는 다음 diagnostic run에 기록한다.
 
-후속 로컬 변경(미커밋)은 해당 DB 경계별 SQLSTATE/constraint 또는 store-operation stage를 `AIP_REKEY_DIAGNOSTICS`가 설정된 worker 검사에서만 기록해 다음 CI에서 실패 지점을 특정한다. diagnostic commit 후 DB restart gate를 다시 읽는다. 로컬 fmt, `cargo test ... --no-run`, `clippy -D warnings`, workspace `cargo check`, workflow YAML, harness check, diff check는 통과했다. 로컬 DB test는 실행하지 않았다. Design 13은 Proposed이며 암호화 runtime activation, 전체 포팅/1.0 완료가 아니다.
+`lease_acquire`의 SQLSTATE 없는 오류와 코드의 `&str` DEK id를 `$n::uuid`에 바인딩하는 부분을 대조해 tokio-postgres `ToSql` UUID type mismatch가 원인일 가능성이 높다고 판단했다(코드 기반 추론, 아직 SQLSTATE 없는 상세 오류로 독립 확정되지 않음). 미커밋 수정은 lease identity에서 UUID를 parse해 UUID 타입으로 바인딩한다. `AIP_REKEY_DIAGNOSTICS`의 client error 상세는 다음 원격 worker에서 이 추론을 확인하기 위해 유지했다. 로컬은 fmt/workspace/clippy 및 integration binary compile 직후 shared target이 장부의 10GB 예상 peak보다 48MB 커져, 이 변경 후 추가 빌드는 하지 않는다. DB test는 미실행. Design 13은 Proposed이며 암호화 runtime activation, 전체 포팅/1.0 완료가 아니다.
 
-최신 `7697da0` worker job `40914540577`는 실패했다. 재키 게이트 실패 외에 FlaskBB count/JIT, 실제 pre-trace schema upgrade, Linux sandbox, durable jobs/outbox, Node/Python SDK smoke, FlaskBB Mailpit/fixture/topic/UI, Infisical PostgreSQL, Node/Python trusted ctx deadline, FlaskBB core/CLI/search는 모두 통과했다. Verify 및 다른 workflow의 결과는 각각 별도 확인하며 이 worker gate 통과로 승격하지 않는다.
+`7697da0` worker job `40914540577`는 재키 게이트 실패 외에 FlaskBB count/JIT, 실제 pre-trace schema upgrade, Linux sandbox, durable jobs/outbox, Node/Python SDK smoke, FlaskBB Mailpit/fixture/topic/UI, Infisical PostgreSQL, Node/Python trusted ctx deadline, FlaskBB core/CLI/search가 모두 통과했다. 최신 `18cc48e`도 worker independent gates를 재실행 중이다. Verify 및 다른 workflow 결과는 각각 별도 확인하며 이 worker gate 통과로 승격하지 않는다.
 
 ---
 

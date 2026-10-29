@@ -12,6 +12,7 @@ use crate::encryption::{CellLocation, Dek, DekStore, Error as StoreError, Scope,
 use aip_crypto::cell;
 use aip_crypto::provider::KekProvider;
 use tokio_postgres::{Client, GenericClient};
+use uuid::Uuid;
 
 /// Batch size for keyset cursor pagination.
 pub const REKEY_BATCH_SIZE: u32 = 100;
@@ -99,9 +100,9 @@ struct LeaseIdentity<'a> {
     target_key: &'a str,
     holder: &'a str,
     epoch: u64,
-    old_dek_id: &'a str,
+    old_dek_id: Uuid,
     old_version: u32,
-    active_dek_id: &'a str,
+    active_dek_id: Uuid,
     active_version: u32,
 }
 
@@ -113,7 +114,11 @@ fn rekey_database_error(stage: &'static str, error: tokio_postgres::Error) -> St
     if std::env::var_os("AIP_REKEY_DIAGNOSTICS").is_some() {
         let sqlstate = error.code().map(|code| code.code());
         let constraint = error.as_db_error().and_then(|detail| detail.constraint());
-        eprintln!("AIP_REKEY_DATABASE_FAILURE stage={stage} sqlstate={sqlstate:?} constraint={constraint:?}");
+        if sqlstate.is_none() {
+            eprintln!("AIP_REKEY_DATABASE_FAILURE stage={stage} sqlstate=None constraint={constraint:?} client_error={error:?}");
+        } else {
+            eprintln!("AIP_REKEY_DATABASE_FAILURE stage={stage} sqlstate={sqlstate:?} constraint={constraint:?}");
+        }
     }
     StoreError::from(error)
 }
@@ -345,14 +350,16 @@ pub async fn rekey_target_column(
     let epoch = ctx.active_dek.epoch();
     let old_dek_id = ctx.old_dek.id();
     let active_dek_id = ctx.active_dek.dek().id();
+    let old_dek_uuid = Uuid::parse_str(old_dek_id).map_err(|_| StoreError::InvalidInput)?;
+    let active_dek_uuid = Uuid::parse_str(active_dek_id).map_err(|_| StoreError::InvalidInput)?;
     let identity = LeaseIdentity {
         infra_schema: infra,
         target_key: &target_key,
         holder: ctx.holder_id,
         epoch,
-        old_dek_id,
+        old_dek_id: old_dek_uuid,
         old_version: ctx.old_dek.version(),
-        active_dek_id,
+        active_dek_id: active_dek_uuid,
         active_version: ctx.active_dek.dek().version(),
     };
     let mut checkpoint = RekeyLease::acquire(db, &identity, DEFAULT_LEASE_TTL_SECS).await?.ok_or(StoreError::StaleWriter)?;
