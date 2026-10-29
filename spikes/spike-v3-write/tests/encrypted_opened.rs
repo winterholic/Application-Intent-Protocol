@@ -60,7 +60,7 @@ resource Vault {
     traverse secret { select id, value }
     budget { rows 10; depth 2; deadline 2s; cost 1000 }
   }
-  expose create { allow actor != null; fields secret }
+  expose create { allow actor != null; fields id, secret }
 }
 "#;
 

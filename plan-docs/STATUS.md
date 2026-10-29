@@ -1,8 +1,8 @@
-# 최신 재개 지점 (2026-10-30, rekey 통과·verified adopt 재호출 gate 수정)
+# 최신 재개 지점 (2026-10-30, rekey/adopt 통과·encrypted-opened fixture 보완)
 
 `main` SHA `b4552390c34cceff3f90d52e718263582750acec`는 origin과 일치한다. Durable lease의 phase/pass/cursor, old·active DEK, restart fencing과 CAS/checkpoint transaction이 구현됐고, UUID SQL binding 문제는 `Uuid` 타입으로 바꿔 원격 검증을 통과했다: worker job `40918278091` 전체 success, `rekey_resumes_from_the_persisted_cursor_after_worker_restart ... ok`, `4 passed; 0 failed`. FlaskBB, Infisical PostgreSQL, SDK smoke, deadlines, storage/broker/cgroup, app packages와 DB contracts도 각 독립 workflow에서 success였다.
 
-`b61e31a` core Verify는 첫 verified-adopt 적용에서 `BAD_FACTS`가 났다. apply digest의 `creation(schema,facts)`를 실제 `verified` 모드에 맞춘 `creation_inner(schema,facts,!verified)`로 바꿔 `b455239`에서 재실행했다. 이때 첫 적용은 지나갔으나 같은 테스트의 idempotent 재호출(`adopt_cells.rs:133`)이 다시 `BAD_FACTS`였다. 원인은 `verified_adopt` 재조회가 기본 `verified_marker()` gate를 호출한 것이다. 현재 미커밋 수정은 `verified_adopt_marker()` 내부에서만 검증 모드에 맞춰 marker의 DDL digest를 계산하고, 나머지 migration callers는 기본 gate를 유지한다. 기존 live Postgres 테스트가 첫 적용 및 반복 호출을 검증한다. 다음 원격 CI에서 확인한다.
+`b61e31a` core Verify의 `adopt_cells`가 기본 creation gate 두 곳에서 실패했다. Digest 계산과 idempotent 재조회 둘 다 verified mode-aware helper로 고쳐 `f60f0d6`에서 재검증했고, 원격 log에서 `adopt_cells` 3/3 통과를 확인했다. 이어진 `encrypted_opened` test는 `Vault` create 입력에 `id`를 전달하면서 SOURCE의 expose contract에 `id`를 빼둔 테스트 fixture 불일치로 실패했다. 암호화된 prototype resource의 내부 id 허용과 달리 일반 Vault의 id는 공개 create 필드여야 한다. Fixture를 `fields id, secret`으로 고친 변경을 follow-up 원격 CI에서 검증한다.
 
 shared Cargo target은 harness 기록의 10GB 예상 peak보다 약 48MB 높다. 사용자 지침에 따라 추가 build/target 정리는 하지 않았다. `plan-docs/porting/flaskbb/PRODUCT-GAPS.md`는 저장소에 없다. Design 13은 Proposed이며 runtime encryption activation, 전체 포팅/1.0 완료가 아니다.
 
