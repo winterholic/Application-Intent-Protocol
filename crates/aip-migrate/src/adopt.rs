@@ -132,7 +132,7 @@ async fn apply_selected(
                 let prior_facts: String = row.get(1);
                 let steps: Value = row.get(2);
                 if prior_plan == acknowledgement && steps.get(2).and_then(Value::as_str) == Some("remove prototype marker") {
-                    let marker = verified_marker(&tx, schema).await?;
+                    let marker = verified_adopt_marker(&tx, schema, verified).await?;
                     if let Some(requested)=wire {
                         let bound:Option<String>=tx.query_one(&format!("SELECT runtime_wire FROM {schema}.{META} WHERE singleton=true"),&[]).await
                             .map_err(|_|err("SCHEMA_NOT_READY","이관 wire 조회 실패"))?.get(0);

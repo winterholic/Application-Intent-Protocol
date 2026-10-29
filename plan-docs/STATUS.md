@@ -1,8 +1,10 @@
-# 최신 재개 지점 (2026-10-30, rekey 성공·verified adopt gate 회귀 수정)
+# 최신 재개 지점 (2026-10-30, rekey 통과·verified adopt 재호출 gate 수정)
 
-`main` SHA `b61e31a4ed185480ab95f399a13cedae6aaceb3f`는 origin과 일치한다. Durable lease의 phase/pass/cursor, old·active DEK, restart fencing과 CAS/checkpoint transaction이 구현되어 있고, SQLSTATE 없이 실패하던 UUID bind는 `Uuid` 타입으로 바꿨다. 원격 worker job `40918278091`은 전체 success이며 `rekey_resumes_from_the_persisted_cursor_after_worker_restart ... ok`, `4 passed; 0 failed`가 로그로 확인됐다. Infisical PostgreSQL, FlaskBB core/CLI/search, SDK smoke, deadline, worker jobs/outbox와 나머지 worker gates도 해당 run에서 통과했다. Object storage, broker, cgroup, app packages workflow도 success다.
+`main` SHA `b4552390c34cceff3f90d52e718263582750acec`는 origin과 일치한다. Durable lease의 phase/pass/cursor, old·active DEK, restart fencing과 CAS/checkpoint transaction이 구현됐고, UUID SQL binding 문제는 `Uuid` 타입으로 바꿔 원격 검증을 통과했다: worker job `40918278091` 전체 success, `rekey_resumes_from_the_persisted_cursor_after_worker_restart ... ok`, `4 passed; 0 failed`. FlaskBB, Infisical PostgreSQL, SDK smoke, deadlines, storage/broker/cgroup, app packages와 DB contracts도 각 독립 workflow에서 success였다.
 
-별도 core Verify `40918278041`은 step 11에서 실패했다. `verified_adopt_opens_every_cell_before_removing_the_marker`가 `BAD_FACTS`로 중단했고, 원인은 apply 경로가 verified AEAD 검증 뒤에도 기본 `creation()` 암호화 runtime gate를 재호출한 것이다(`adopt.rs`의 `creation(schema,facts)`). 미커밋 수정은 실제 verified 상태에 따라 `creation_inner(schema,facts,!verified)`를 사용한다. 기존 live Postgres 통합 테스트가 이 회귀를 RED로 확인했으며, fix는 후속 원격 CI에서 검증한다. 로컬 DB 통합 테스트/재컴파일은 실행하지 않는다.
+`b61e31a` core Verify는 첫 verified-adopt 적용에서 `BAD_FACTS`가 났다. apply digest의 `creation(schema,facts)`를 실제 `verified` 모드에 맞춘 `creation_inner(schema,facts,!verified)`로 바꿔 `b455239`에서 재실행했다. 이때 첫 적용은 지나갔으나 같은 테스트의 idempotent 재호출(`adopt_cells.rs:133`)이 다시 `BAD_FACTS`였다. 원인은 `verified_adopt` 재조회가 기본 `verified_marker()` gate를 호출한 것이다. 현재 미커밋 수정은 `verified_adopt_marker()` 내부에서만 검증 모드에 맞춰 marker의 DDL digest를 계산하고, 나머지 migration callers는 기본 gate를 유지한다. 기존 live Postgres 테스트가 첫 적용 및 반복 호출을 검증한다. 다음 원격 CI에서 확인한다.
+
+shared Cargo target은 harness 기록의 10GB 예상 peak보다 약 48MB 높다. 사용자 지침에 따라 추가 build/target 정리는 하지 않았다. `plan-docs/porting/flaskbb/PRODUCT-GAPS.md`는 저장소에 없다. Design 13은 Proposed이며 runtime encryption activation, 전체 포팅/1.0 완료가 아니다.
 
 shared Cargo target은 harness의 기록된 10GB 예상 peak보다 약 48MB 초과한 채 유지되며, 사용자 지침에 따라 추가 빌드나 공유 target 정리는 하지 않는다. `plan-docs/porting/flaskbb/PRODUCT-GAPS.md`는 저장소에 존재하지 않아 FlaskBB는 `porting/README.md`, 실행 증거와 verification 기록으로 대조한다. Design 13은 Proposed이며 runtime encryption activation, 전체 포팅/1.0 완료가 아니다.
 

@@ -499,11 +499,19 @@ async fn marker(db: &impl GenericClient, schema: &str) -> Result<Marker, Value> 
 }
 
 async fn verified_marker(db: &impl GenericClient, schema: &str) -> Result<Marker, Value> {
+    verified_marker_with_gate(db, schema, true).await
+}
+
+async fn verified_adopt_marker(db: &impl GenericClient, schema: &str, verified: bool) -> Result<Marker, Value> {
+    verified_marker_with_gate(db, schema, !verified).await
+}
+
+async fn verified_marker_with_gate(db: &impl GenericClient, schema: &str, fenced: bool) -> Result<Marker, Value> {
     let m = marker(db, schema).await?;
     if m.generator_version != VERSION || m.facts_digest != digest(&m.facts) {
         return Err(err("WIRE.SCHEMA_MISMATCH", "metadata의 facts 또는 생성기 버전 불일치"));
     }
-    if m.ddl_digest != creation(schema, &m.facts)?.1 {
+    if m.ddl_digest != creation_inner(schema, &m.facts, fenced)?.1 {
         // The operator has to act in both cases, but differently: an earlier release's schema is upgraded, anything else is drift.
         let known_earlier_release = parent_job_ddl_digest(schema, &m.facts).is_ok_and(|parent| parent == m.ddl_digest);
         return Err(err(
