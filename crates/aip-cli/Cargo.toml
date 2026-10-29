@@ -122,7 +122,7 @@ workspace = true
 spike-v6-transport = { path = "../../spikes/spike-v6-transport" }
 spike-v1-fixture = { path = "../../spikes/spike-v1-fixture" }
 aip-migrate = { path = "../aip-migrate" }
-jsonwebtoken = { version = "11.1", default-features = false, features = ["rust_crypto"] }
+jsonwebtoken = { version = "11.1", default-features = false, features = ["aws_lc_rs"] }
 rsa = { version = "0.9", features = ["pem", "sha2"] }
 rand = "0.8"
 tempfile = "3"

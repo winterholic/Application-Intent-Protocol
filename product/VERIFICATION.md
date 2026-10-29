@@ -1,5 +1,12 @@
 # 제품 통합 검증 (2026-10-17)
 
+## 2026-10-30 dependency audit 후속 (CI 필요)
+
+- `b97833fe5723149e9bd8e4113e738c44e8bea917` Dependencies run `40937246138`은 advisory 3건으로 실패했다: root `crypto-bigint 0.5.5` (RUSTSEC-2026-0387), `ctutils 0.4.2` (RUSTSEC-2026-0385), `tokio 1.53.1` (RUSTSEC-2026-0386). `ctutils`는 constant-time mask generation, `tokio`는 안전하지 않은 `AsyncFd` 생성자, `crypto-bigint`은 constant-time 연산 관련 공지다.
+- 후속 변경은 auth와 CLI의 RS256 전용 jsonwebtoken backend를 공식 `aws_lc_rs`로 바꿔 root의 미사용 P-256/P-384 RustCrypto 경로와 crypto-bigint을 제거하고, 9개 영향 workspace lockfile을 `ctutils 0.4.4` 및 `tokio 1.53.3`으로 올린다. Crypto backend 교체는 test/runtime behavior 확인이 필요하다.
+- 10개 workspace manifest의 `cargo metadata --locked --offline --no-deps`는 통과했다. 이 명령은 crate build/test를 실행하지 않았다. Dependencies audit와 Verify의 수정 후 결과는 새 exact-SHA CI가 필요하다.
+- `b97833f`의 App packages, Object storage, External brokers, Linux cgroup v2와 Linux worker jobs는 success. Linux worker `40937246005`에서 target identity pure test 및 실제 PostgreSQL persisted-cursor restart test를 포함한 `encryption_rekey` 4/4 통과를 확인했다. Verify는 아직 진행 중이다. 이 변경으로 AIP 1.0 또는 포팅 parity 완료를 주장하지 않는다.
+
 ## 2026-10-30 sealed transition guard와 Mongo fixture timeout 후속
 
 - SHA `45040e88f9f098ce22598d961d5f11523c23be31`의 Verify `40931362469`에서는 기존 암호화 회귀 `encrypted_opened`와 `encrypted_sealed`가 각각 `1 passed; 0 failed`였다. 이후 `spike-v4-worker/tests/native_capabilities.rs::mongo_writes_are_bounded_private_and_undoable`가 `Mongo index timeout`으로 실패했다. 호출부는 테스트용 Mongo 드라이버에 2초 timeout을 지정하고, `ensure_write_indexes`가 여러 collection별 `create_indexes` 호출에 같은 제한을 적용한다. Mongo fixture는 약 10분 전에 ready였고 Mongo server log에는 slice725 인덱스 오류가 보이지 않았다. runner saturation은 직접 측정하지 않아 추론으로 남긴다. 같은 native capability test는 Verify `40065518651`에서 통과한 이력이 있다.

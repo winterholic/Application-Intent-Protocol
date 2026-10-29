@@ -1,4 +1,6 @@
-# 최신 재개 지점 (2026-10-30, prototype lock 및 rekey identity 후속 검증)
+# 최신 재개 지점 (2026-10-30, 보안 advisory 잠금 갱신 CI 대기)
+
+`main`은 `b97833fe5723149e9bd8e4113e738c44e8bea917`이다. 이 SHA의 Linux worker job `40937246005`는 success했고, `encryption_rekey`의 target mapping key와 실제 PostgreSQL persisted-cursor worker restart가 4/4 통과했다. App packages·Object storage·External brokers·Linux cgroup v2도 success다. Verify는 진행 중, Dependencies는 실패했다. Dependencies가 RustSec `crypto-bigint 0.5.5`(0387), `ctutils 0.4.2`(0385), `tokio 1.53.1`(0386)을 검출했다. Root auth와 CLI의 jsonwebtoken은 RS256만 사용하므로 지원되는 AWS-LC backend로 옮겨 P-256/P-384 의존 경로를 제거하고, 관련 9개 workspace lockfile의 `ctutils`/`tokio`를 각각 0.4.4/1.53.3으로 갱신하는 후속이 local worktree에 준비돼 있다. 10개 Cargo manifest의 `--locked --offline --no-deps` metadata는 통과했다. 보안 감사 및 Verify 결과는 후속 exact-SHA CI 전까지 미검증이다.
 
 `main` SHA `223d042ba12e4da01c697a02f3e49445af73c842`이며 원격과 일치한다. `45040e8`에서 봉인된 필드의 transition literal 검사를 `judge_query`보다 앞당겼고, 원격 `encrypted_opened`와 `encrypted_sealed`는 각각 1/1 통과했다. 그 뒤 전체 Verify는 테스트 전용 Mongo index 2초 timeout으로 실패했다. fixture budget만 10초로 바꾼 `223d042`에서는 `native_capabilities` 6/6이 통과했으며, 이어 실패한 `tools/verify.sh:65`는 stale `prototype/Cargo.lock`의 `--locked` drift였다. `spike-v3-write`의 신규 `aip-execution` path dependency를 반영하도록 lock을 한 항목 갱신했고 `cargo metadata --manifest-path prototype/Cargo.toml --format-version 1 --locked --offline`는 통과했다. 이 lock 갱신 후의 `prototype --test cli`와 전체 Verify는 아직 실행되지 않았다. 같은 SHA의 나머지 다섯 독립 workflow는 success다. `223d042` 전체 Verify는 success가 아니다.
 
