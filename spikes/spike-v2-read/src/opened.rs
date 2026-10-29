@@ -134,15 +134,17 @@ fn collect_object(value: &Value, meta: &Map<String, Value>, path: Vec<Seg>, jobs
         return Ok(());
     }
     let row_id = obj.get("__aip_id").and_then(id_string).ok_or_else(|| corrupted("암호화 행의 id 없음"))?;
-    let scope = object_scope(obj, meta)?;
+    ensure_single_ref_scope(meta)?;
     for (field, frame, resource) in sealed {
+        let field_meta = meta.get(field).ok_or_else(|| internal("encrypted field metadata 누락"))?;
+        let scope = field_scope(obj, field_meta)?;
         let mut slot = path.clone();
         slot.push(Seg::Field(field.to_string()));
         jobs.push((
             slot,
             OpenCell {
-                scope_kind: scope.0.clone(),
-                scope_id: scope.1.clone(),
+                scope_kind: scope.0,
+                scope_id: scope.1,
                 resource: resource.to_string(),
                 field: field.to_string(),
                 row_id: row_id.clone(),
@@ -153,31 +155,28 @@ fn collect_object(value: &Value, meta: &Map<String, Value>, path: Vec<Seg>, jobs
     Ok(())
 }
 
-/// Resolves the single scope pair every sealed cell of one object shares. Service cells use
-/// the singleton; ref cells use the planner-projected scope value. Mixed scope references
-/// and owner scope fail closed: the planner projects at most one scope column per object.
-fn object_scope(obj: &Map<String, Value>, meta: &Map<String, Value>) -> Result<(String, String), Reject> {
-    let mut kinds: Vec<(&str, Option<&str>, Option<&str>)> = vec![];
+/// The planner currently projects only one reference scope column per object. Keep rejecting
+/// rows that select multiple distinct ref scopes, while allowing service and ref cells to mix.
+fn ensure_single_ref_scope(meta: &Map<String, Value>) -> Result<(), Reject> {
     for field_meta in meta.values() {
         let Some(enc) = field_meta.get("encrypted") else { continue };
         let scope = enc.get("scope").ok_or_else(|| internal("encrypted scope 누락"))?;
-        kinds.push((
-            scope.get("kind").and_then(Value::as_str).ok_or_else(|| internal("encrypted scope kind 누락"))?,
-            scope.get("field").and_then(Value::as_str),
-            scope.get("target").and_then(Value::as_str),
-        ));
+        let kind = scope.get("kind").and_then(Value::as_str).ok_or_else(|| internal("encrypted scope kind 누락"))?;
+        if kind == "owner" {
+            return Err(Reject { code: "WIRE.ENCRYPTED_FIELD_NOT_QUERYABLE", msg: "owner scope 읽기는 첫 수직 구현 뒤에 지원".into() });
+        }
     }
     let mut refs: Vec<(&str, &str)> = vec![];
-    for (kind, field, target) in &kinds {
-        match *kind {
+    for field_meta in meta.values() {
+        let Some(enc) = field_meta.get("encrypted") else { continue };
+        let scope = &enc["scope"];
+        match scope["kind"].as_str().ok_or_else(|| internal("encrypted scope kind 누락"))? {
             "service" => {}
-            "ref" => refs.push((field.ok_or_else(|| internal("ref scope field 누락"))?, target.ok_or_else(|| internal("ref scope target 누락"))?)),
-            "owner" => {
-                return Err(Reject {
-                    code: "WIRE.ENCRYPTED_FIELD_NOT_QUERYABLE", msg: "owner scope 읽기는 첫 수직 구현 뒤에 지원".into()
-                })
-            }
-            _ => return Err(internal(format!("알 수 없는 scope kind {kind}"))),
+            "ref" => refs.push((
+                scope["field"].as_str().ok_or_else(|| internal("ref scope field 누락"))?,
+                scope["target"].as_str().ok_or_else(|| internal("ref scope target 누락"))?,
+            )),
+            kind => return Err(internal(format!("알 수 없는 scope kind {kind}"))),
         }
     }
     refs.sort();
@@ -188,12 +187,22 @@ fn object_scope(obj: &Map<String, Value>, meta: &Map<String, Value>) -> Result<(
             msg: "한 행의 암호화 필드가 서로 다른 scope 참조를 써서 열 수 없음".into(),
         });
     }
-    match refs.first() {
-        None => Ok(("service".into(), "global".into())),
-        Some((_, target)) => {
+    Ok(())
+}
+
+/// Resolves a cell's declared scope. Service and ref cells may coexist in one row; each
+/// encrypted field must use the key under the scope recorded when that cell was sealed.
+fn field_scope(obj: &Map<String, Value>, field_meta: &Value) -> Result<(String, String), Reject> {
+    let scope = field_meta.get("encrypted").and_then(|enc| enc.get("scope")).ok_or_else(|| internal("encrypted scope 누락"))?;
+    match scope.get("kind").and_then(Value::as_str).ok_or_else(|| internal("encrypted scope kind 누락"))? {
+        "service" => Ok(("service".into(), "global".into())),
+        "ref" => {
+            let target = scope.get("target").and_then(Value::as_str).ok_or_else(|| internal("ref scope target 누락"))?;
             let scope_id = obj.get("__aip_scope").and_then(id_string).ok_or_else(|| corrupted("암호화 행의 scope 참조 없음"))?;
             Ok((format!("ref:{target}"), scope_id))
         }
+        "owner" => Err(Reject { code: "WIRE.ENCRYPTED_FIELD_NOT_QUERYABLE", msg: "owner scope 읽기는 첫 수직 구현 뒤에 지원".into() }),
+        kind => Err(internal(format!("알 수 없는 scope kind {kind}"))),
     }
 }
 
