@@ -8,7 +8,7 @@
 - Live DB 재시작 테스트는 로컬 미실행. `.github/workflows/worker-jobs-linux.yml`의 Postgres 17 암호화 테스트 단계에 추가했으며, 새 SHA 원격 실행 결과 전까지 unverified다.
 - 최초 fixture가 active 새 KEK만 제공해 구 DEK unwrap을 막는 설정 오류를 소스 검토 중 찾았다. `b4ccf764f05ed248b443217157199c2f8135ceed`에서 두 KEK를 모두 보유하고 새 키를 active로 고쳤다. 수정 뒤 DB live test는 여전히 미실행이다.
 - `design/13-field-encryption.md` Proposed 및 product runtime gate는 닫힌 채 유지한다. 이 검증은 저장 primitive의 재개 경로만 다루며 제품 writer/read 연결·1.0 gate 통과를 뜻하지 않는다.
-- 직전 FaceReview SHA `f37b23bafd959f12e2e484e4de4c072f37e0ccd7`는 push되어 7개 check success, Verify core in progress였다. 이 암호화 변경은 기록 시점에 local-only다.
+- 직전 FaceReview SHA `f37b23bafd959f12e2e484e4de4c072f37e0ccd7`는 push되어 7개 check success였고 Verify core는 broad 단계에서 in progress였다. 이 커밋에 이어 rekey 변경을 fast-forward push해 최신 SHA의 Verify 및 Postgres worker test를 실행한다. 새 CI 전까지 remote rekey DB 결과는 unverified다.
 
 
 ## 2026-10-28 검증 이관 연결 (구현, 실DB 이관 미검증·출시 미완)

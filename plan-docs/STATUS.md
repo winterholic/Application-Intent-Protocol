@@ -4,7 +4,7 @@
 
 로컬 증거: `cargo fmt --all -- --check`, 비DB `encryption_rekey` 3건, `--no-run`, `clippy -p aip-execution --all-targets --locked --offline -- -D warnings`, `cargo check --workspace --locked --offline`, `git diff --check` 통과. 후속 SHA `b4ccf76`에서 회전 중 양 KEK 보유가 필요한 fixture를 보완하고, 다음 test-only change에서 legacy 4-column lease schema upgrade/defaults도 live test에 넣었다. 재시작/upgrade DB 테스트는 빌드만 했고 로컬에서 실행하지 않았다. design 13 Proposed/runtime gate 유지.
 
-`f37b23bafd959f12e2e484e4de4c072f37e0ccd7` FaceReview 묶음은 origin/main에 반영됐다. 7개 check success, Verify core는 기록 시점에 in progress였다. rekey 커밋은 아직 origin에 push하지 않았다. 다음 main push는 해당 Verify가 끝난 뒤 진행해 유용한 실행을 취소하지 않는다.
+`f37b23bafd959f12e2e484e4de4c072f37e0ccd7` FaceReview 묶음은 origin/main에 반영됐다. 해당 SHA의 7개 check는 success였고 Verify core는 20분 넘게 broad 단계에서 in progress였다. 현재 rekey 묶음은 로컬 검증을 마쳐 정상 fast-forward push로 통합하고, cancel-in-progress 정책에 따라 최신 SHA의 전체 Verify와 Postgres rekey job을 다시 실행한다. 그 결과 전까지 원격 rekey DB 검증은 미완이다.
 
 ---
 
