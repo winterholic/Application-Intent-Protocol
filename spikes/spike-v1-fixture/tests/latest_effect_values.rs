@@ -104,6 +104,23 @@ fn latest_server_selected_values_are_typed_and_serialized_in_effects() {
 }
 
 #[test]
+fn latest_effect_selection_marks_transition_and_compose_serializable() {
+    let source = SOURCE.replace("\n}\nresource Summary", "\n  expose compose { bulk maxRows 1; transitions refresh }\n}\nresource Summary");
+    let facts = load_str(&source, Form::A).unwrap_or_else(|errors| panic!("{errors:?}")).execution;
+    assert_eq!(facts["resources"]["Order"]["transitions"]["refresh"]["isolation"], "serializable");
+    assert_eq!(facts["resources"]["Order"]["exposeCompose"]["isolation"], "serializable");
+
+    // Literal/reference-only effects retain the ordinary isolation policy.
+    let source = source
+        .replace("      item = latest Item candidate where candidate.order = this.id and candidate.active = true order by candidate.created select candidate.id\n", "")
+        .replace("latest Item candidate where candidate.order = this.id and candidate.active = true order by candidate.created select candidate.label", "\"fixed\"")
+        .replace("latest Item candidate where candidate.order = this.id and candidate.active = true order by candidate.created select candidate.created otherwise this.created", "this.created");
+    let facts = load_str(&source, Form::A).unwrap_or_else(|errors| panic!("{errors:?}")).execution;
+    assert!(facts["resources"]["Order"]["transitions"]["refresh"]["isolation"].is_null());
+    assert!(facts["resources"]["Order"]["exposeCompose"]["isolation"].is_null());
+}
+
+#[test]
 fn update_effect_when_serializes_the_transition_prestate_condition() {
     let source = SOURCE
         .replace("update Summary where order = this.id", "update Summary when this.refreshed = false and this.owner = actor where order = this.id");

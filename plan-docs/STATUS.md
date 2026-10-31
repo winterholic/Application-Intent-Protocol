@@ -1,5 +1,9 @@
 # 최신 재개 지점 (2026-10-31, 원격 G6 후보 CI 후속 교정)
 
+최신 관측: 후보 `c94d909a28047577e7570125e201092808ab9fe4`의 packages `41210863448`·storage `41210863447`·brokers `41210863499`·cgroup `41210863503`는 모두 success다. Verify `41210863511`, job `124565345860`은 V6 `write_extension_atomic.rs:120`의 `emit_id` 오류값(`Reject`, Debug만 제공)을 Display로 출력하려다 E0277로 실패했다. 해당 출력만 Debug로 바꿨고 변경된 오류 변환 호출처를 함께 대조했다. 아직 runtime/PG 성공이 아니다.
+
+같은 후속 묶음에서 `latest` 효과의 최신 후보/빈 결과가 더 높은 순위 행의 부재에 의존하는데도 isolation marker 계산에서 빠진 것을 보완했다. V1 transition·compose marker의 RED(null)→GREEN(serializable), 일반 literal/reference 효과의 unmarked 대조, 전체 V1 `--no-fail-fast`·all-target Clippy를 확인했다. 실제 apply/bundle/compose 트랜잭션 격리를 강제 확인하는 PG trigger 회귀는 추가했으나 실행 전이다. 독립 formatting·Clippy 11명령도 첫 오류에 멈추지 않고 수집하도록 보완했다. 최초 stage/command/exit를 보존하고 실패하면 runtime에 들어가지 않는다. 새 subprocess 회귀 6개와 기존 whole-app runner 회귀 8개, 합계 14개가 통과했다. DB guard의 즉시 거부는 유지한다.
+
 출시 후보 `8e55de95b28b38f30a8ba915286d544735d58b83`를 `release/aip-1.0-resume-20261031`에 push했고 [draft PR #1](https://github.com/winterholic/Application-Intent-Protocol/pull/1)을 열었다. 로컬/원격 후보 SHA 일치·clean tree를 확인했다. 이 후보에서 App packages `41209468416`, Object storage `41209468385`, External brokers `41209468375`, Linux cgroup v2 `41209468452`는 success다. Verify `41209468398`는 `crates/aip-migrate/src/mysql_write.rs:1355`의 `clippy::items_after_test_module` 때문에 broad 단계에서 failure다. Linux worker isolation 14개와 cleanup 4개 검사는 이 job에서 통과했으나 broad 이후 runtime/FaceReview UI·DB 단계는 진행하지 못했다. 상위 단계의 성공을 실제 G6 PG 동등성 통과로 확대하지 않는다.
 
 두 후속 교정을 묶었다. MySQL conditional-effect unit module을 내용 변경 없이 파일 끝으로 이동했다. V3 conditional-update integration fixture의 `to refreshed = true; enabled = false`가 현재 컴파일러에서 `DEF.PARSE_UNKNOWN_KEY enabled`로 실패함을 별도 재현하고, 다중 대입 구분자를 comma로 고쳤다. 변경된 런타임 테스트 안의 독립 DSL 4개는 현재 V1 binary에서 모두 accepted다. guarded V6 DSL fixture와 FlaskBB 전체 `app.aip`도 각각 check exit 0이다. 이는 정의 검사이며 DB assertion의 통과가 아니다. 후속 후보의 Clippy·PG 결과는 새 CI에서 확인한다.

@@ -20,6 +20,7 @@ resource SalesOrder {
     }
   }
   expose apply refresh { target id; bulk maxRows 1 }
+  expose compose { bulk maxRows 1; transitions refresh }
 }
 resource Summary { fields { id: Id; order: SalesOrder; label: Text?; created: Time? } }
 resource Item { fields { id: Id; order: SalesOrder; active: Bool; label: Text; created: Time? } }
@@ -48,7 +49,12 @@ async fn latest_effect_reads_latest_row_and_uses_fallback_in_postgres() {
          (200,100,true,'older','2025-01-01T00:00:00Z'), \
          (201,100,true,'same-time-lower-id','2025-02-01T00:00:00Z'), \
          (202,100,true,'same-time-higher-id','2025-02-01T00:00:00Z'), \
-         (203,100,true,'null-date',NULL)"
+         (203,100,true,'null-date',NULL); \
+         CREATE FUNCTION {schema}.require_selection_isolation() RETURNS trigger LANGUAGE plpgsql AS $$ \
+         BEGIN IF current_setting('transaction_isolation') <> 'serializable' THEN \
+         RAISE EXCEPTION 'latest projection must run serializable'; END IF; RETURN NEW; END $$; \
+         CREATE TRIGGER require_selection_isolation BEFORE UPDATE ON {schema}.summary \
+         FOR EACH ROW EXECUTE FUNCTION {schema}.require_selection_isolation()"
     ))
     .await
     .unwrap();
@@ -65,6 +71,30 @@ async fn latest_effect_reads_latest_row_and_uses_fallback_in_postgres() {
     let fallback = db.query_one(&format!("SELECT label, created::text FROM {schema}.summary WHERE id=301"), &[]).await.unwrap();
     assert!(fallback.get::<_, Option<String>>(0).is_none());
     assert_eq!(fallback.get::<_, String>(1), "2025-03-02 00:00:00+00");
+
+    // The bundle and compose owners must honor the same compiler marker. Reset
+    // only the request/target state; keep the source candidates and expectations.
+    for request in [
+        json!({"atomic":[{"apply":"SalesOrder.refresh","target":{"ids":["100"]}}]}),
+        json!({"compose":"SalesOrder","targets":{"ids":["100"]},"steps":[{"transition":"refresh"}]}),
+    ] {
+        db.batch_execute(&format!(
+            "UPDATE {schema}.sales_order SET refreshed=false WHERE id=100; \
+             DELETE FROM {schema}.summary WHERE id=300; INSERT INTO {schema}.summary(id,order_id) VALUES (300,100)"
+        ))
+        .await
+        .unwrap();
+        let result = if request.get("atomic").is_some() {
+            bundle(&mut db, &facts, &request, &caller, &Knobs::default()).await
+        } else {
+            compose(&mut db, &facts, &request, &caller, &Knobs::default()).await
+        }
+        .unwrap();
+        assert_eq!(result.applied[0].changed, [100]);
+        let selected = db.query_one(&format!("SELECT label, created::text FROM {schema}.summary WHERE id=300"), &[]).await.unwrap();
+        assert_eq!(selected.get::<_, String>(0), "same-time-higher-id");
+        assert_eq!(selected.get::<_, String>(1), "2025-02-01 00:00:00+00");
+    }
 
     db.batch_execute(&format!("DROP SCHEMA {schema} CASCADE")).await.unwrap();
 }

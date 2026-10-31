@@ -4,6 +4,8 @@
 //! that does not exist yet, so two requests that change two different rows can both pass it and both commit
 //! (the double booking). Those writes run in a SERIALIZABLE transaction and the server retries a serialization
 //! failure. Everything else keeps the current isolation level.
+//! A `latest` effect selection also depends on absence: no higher-ranked matching row may appear while its
+//! projection is being committed. Selected-row locks cannot protect that gap, including an empty selection.
 //!
 //! What is deliberately NOT marked: a condition that needs another row to be present (`exists`, a reference hop such
 //! as `this.room.open`, the actor's row). The write path takes `FOR SHARE` on every row an allow/from/effect guard
@@ -23,6 +25,9 @@ pub const SERIALIZABLE: &str = "serializable";
 fn depends_on_absence(cond: &Value, predicates: &Value, neg: bool, seen: &mut BTreeSet<(String, bool)>) -> bool {
     match cond {
         Value::Object(o) => {
+            if o.contains_key("latest") {
+                return true;
+            }
             if let Some(inner) = o.get("not") {
                 return depends_on_absence(inner, predicates, !neg, seen);
             }
@@ -63,11 +68,13 @@ pub fn mark(facts: &mut Value) {
             let targets = std::iter::once(name.as_str()).chain(
                 t["effects"].as_array().into_iter().flatten().flat_map(|e| ["create", "update", "delete"].into_iter().filter_map(|k| e[k].as_str())),
             );
-            let effect_guard_needs_absence =
-                t["effects"].as_array().into_iter().flatten().any(|e| e["update"].is_string() && reads(&e["when"], &predicates));
+            let effect_needs_absence = t["effects"].as_array().into_iter().flatten().any(|e| {
+                e["update"].is_string()
+                    && (reads(&e["when"], &predicates) || e["values"].as_object().into_iter().flatten().any(|(_, value)| reads(value, &predicates)))
+            });
             if reads(&t["allow"], &predicates)
                 || reads(&t["from"], &predicates)
-                || effect_guard_needs_absence
+                || effect_needs_absence
                 || targets.into_iter().any(|x| checked.contains(x))
             {
                 transition_marks.push((name.clone(), tr.clone()));

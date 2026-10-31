@@ -117,7 +117,7 @@ async fn assert_same_key_contention(
     let observer = connect_with_url(aip_test_support::test_database_url!()).await.map_err(|error| format!("connect lock observer: {error}"))?;
     let mut first_db = connect_with_url(aip_test_support::test_database_url!()).await.map_err(|error| format!("connect first request: {error}"))?;
     let mut second_db = connect_with_url(aip_test_support::test_database_url!()).await.map_err(|error| format!("connect second request: {error}"))?;
-    let id = emit_id(11, wire).map_err(|error| format!("encode contention target: {error}"))?;
+    let id = emit_id(11, wire).map_err(|error| format!("encode contention target: {error:?}"))?;
     let body = json!({"key":key,"request":{"extension":"Event.run","input":{"id":id}}});
     let first_caller = Caller { actor_id: caller.actor_id, now: caller.now.clone() };
     let (first_facts, first_body, first_config) = (facts.clone(), body.clone(), config.clone());
