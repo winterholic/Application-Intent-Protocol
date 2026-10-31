@@ -40,6 +40,8 @@ i18n은 기존 STATUS의 열린 항목 그대로다.
 
 ### 저장·생성·이관 계약
 
+2026-11-01 증분: `seed/post_order_manifest.py`의 offline 사전 검사는 아래 3·4항의 명시 mapping·coverage·pair 보존·source high-water/generator floor를 21개 stdlib 회귀로 확인했다. 입력 export의 namespace/revision 일치와 정렬 정규화 digest를 확인할 뿐 실제 원본의 provenance/freshness나 DB 적용을 증명하지 않는다. `activation_authorized=false`; schema/publish/import executor·writer fence·실PG/rollback은 여전히 미완이다. [사용법](README.md#source-order-import-preflight-g-6).
+
 1. `Post.source_order`는 NULL이면 원순서 미입증이며 UUID/date에서 만들지 않는다. `PostOrder.post`는 NOT NULL FK+UNIQUE, Post.source_order는 FK+UNIQUE와 역참조 일치 check(`source_order.post = this`)를 갖는다. 공개 create fields/patch/apply/read에 순서 조작을 노출하지 않는다. `Topic.last_post`는 파생 FK이며 `TopicFirstPost.post`와 구별한다. 기본값을 첫 글로 추측해 채우지 않는다.
 2. 새 source-equivalent 저장 시점은 `Post.publish`다(포팅 draft에는 원본의 저장된 Post 대응물이 없다). 같은 트랜잭션에서 `create PostOrder { post = this }`로 id를 생략하고, 이어 Post.source_order를 `latest PostOrder … where post = this … order by id select id`로 연결한다. 이는 **선택한 구현 방향이며 아직 DSL compile 미실행**이다. UNIQUE로 한 번만 생성하며 `from published=false`, 기존 idempotency/journal/fence를 유지한다. publish·Topic.last_post·Forum projection까지 전부 commit하거나 전부 rollback한다. sequence gap은 허용하고 숫자를 commit 시각·연속 카운터로 해석하지 않는다.
 3. 기존/수입 데이터는 **검증된 source namespace의 원 Post.id ↔ 현재 UUID 일대일 manifest**가 있을 때만 PostOrder.id에 그 정수를 명시 입력한다. 중복 원 ID, 중복 UUID, 소스 불일치, 누락 및 기존 pair 변경은 전체 이관 거부다. `seed/install.py`는 신규 welcome 데이터만 만들며 과거 ID mapping을 보유하지 않는다. 신규 설치 seed도 native 서버 순서를 사용한다. 기존 UUID-only 행·내용·포인터는 보존한다. 원순서가 없는 행을 조용히 후보에서 누락시키지 않는다.

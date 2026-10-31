@@ -1,5 +1,9 @@
 # FlaskBB 전체 포팅 상태
 
+## 2026-11-01 G-6 PostOrder offline 이관 사전 검사
+
+`seed/post_order_manifest.py`가 검증된 원본/대상 export의 namespace·revision·high-water, ID/UUID 일대일 대응·published 전체 범위·기존 pair/역참조·재실행을 검사한다. 21개 stdlib 회귀 통과. 원순서는 입력의 정수 ID만 사용하며 generator floor를 낮추지 않는다. [입력 형식과 실행](README.md#source-order-import-preflight-g-6). 이 도구는 offline plan만 출력하며 실제 provenance/freshness·DB migration·writer fence·sequence 적용·publish 활성화는 검증하지 않는다. `activation_authorized=false`; app.aip는 아직 PostOrder를 사용하지 않는다. G-6와 전체 포팅은 계속 open이다.
+
 ## 2026-10-30 G-6 guard/read-lock 후속 — source 변경, compile·DB 미검증
 
 기준 main `3e7c621d3ccca9e8dec07ed25c03dc5d406a1c0e`. V3 source는 transition pre-state에서 update-effect guard 대상 집합을 계산해 apply/bundle/compose에 전달하고, guard 참조는 `Ctx::lock_reads` 정책을 사용한다. V1 absence marker는 update-effect `when`까지 포함한다. Review 교정으로 target ID 비교를 slice-to-slice로 바꿨다. V4 extension은 allowed transitions의 최강 isolation marker를 자체 transaction 첫 SQL에서 고르고, 이미 SQL을 실행한 caller-owned transaction이 strict level로 전환 불가하면 `WIRE.UNSUPPORTED_ISOLATION`으로 worker 전 거부한다. V6 HTTP extension은 idem SQL 전에, durable apply job은 guard/journal SQL 전에 marker 격리를 선택한다. V4/V6 selection 및 caller-owned 거부 회귀 source를 추가했다. MySQL은 conditional update-effect 전이만 `WIRE.ADAPTER_UNSUPPORTED`로 거부한다. 신규 Rust 코드는 미컴파일·미실행이다. 이전 Cargo cache 접근은 `Operation not permitted`; 이번 standalone rustc check는 `/dev/rmeta…` 생성 거부로 실패했고 우회하지 않았다. DB DSN 미설정/접속 없음. 기존 V1 5/5는 이 수정 전 이력이다. G-6·전체 포팅은 미완이다.

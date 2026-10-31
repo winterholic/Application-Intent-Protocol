@@ -32,10 +32,11 @@ fn latest_scalar_selection_has_stable_null_and_tie_order_in_both_sql_dialects() 
     assert!(pg.ends_with(" ELSE parent.label END)"), "{pg}");
 
     let mysql = Ctx::new(&facts, None, "").with_dialect(Dialect::MySql).value(&latest(), &env).unwrap();
-    assert!(mysql.starts_with("(CASE WHEN EXISTS (SELECT 1 FROM `aip_v2_spike`.`item` `latest1` WHERE "), "{mysql}");
-    assert!(mysql.contains("THEN (SELECT `latest1`.`label` FROM `aip_v2_spike`.`item` `latest1`"), "{mysql}");
-    assert!(mysql.contains("ORDER BY (`latest1`.`created` IS NULL) ASC, `latest1`.`created` DESC, `latest1`.`id` DESC LIMIT 1)"), "{mysql}");
-    assert!(mysql.ends_with(" ELSE `parent`.`label` END)"), "{mysql}");
+    // Ctx generates safe aliases directly; Dialect::qualified quotes the column.
+    assert!(mysql.starts_with("(CASE WHEN EXISTS (SELECT 1 FROM `aip_v2_spike`.`item` latest1 WHERE "), "{mysql}");
+    assert!(mysql.contains("THEN (SELECT latest1.`label` FROM `aip_v2_spike`.`item` latest1"), "{mysql}");
+    assert!(mysql.contains("ORDER BY (latest1.`created` IS NULL) ASC, latest1.`created` DESC, latest1.`id` DESC LIMIT 1)"), "{mysql}");
+    assert!(mysql.ends_with(" ELSE parent.`label` END)"), "{mysql}");
 }
 
 #[test]

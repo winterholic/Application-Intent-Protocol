@@ -1,4 +1,12 @@
-# 최신 재개 지점 (2026-11-01, 원격 G6 후보 CI·nullable projection 후속)
+# 최신 재개 지점 (2026-11-01, V2 SQL 단언·독립 runtime 수집·PostOrder 사전 검사)
+
+후보 `6a08ceddf8d2f18e3c6adcd173644c8cac5525e5`: packages `41212814844`·storage `41212814813`·brokers `41212814783`·cgroup `41212814808` success. Verify `41212814780`, job `124571168053`은 Clippy·workspace/crypto/PoC/V1을 지나 V2 `latest_effect_value`의 MySQL 별칭 백틱 기대값에서 실패했다(2 passed / 1 failed). `Dialect::qualified`는 생성 별칭을 그대로 쓰고 열만 인용한다. 실제 SQL 원출력과 대조해 단언 네 곳을 고쳤다. 생성 SQL/제품 동작은 바꾸지 않았다. broad 종료 때 runner 여유 77GB·target 5.1GB를 관측했으며 이전 용량 고갈은 이 실행에 재발하지 않았다. V3/V4/V6 runtime·PG·FaceReview는 이 실패 뒤 미실행이다.
+
+Rust runtime도 첫 실패 뒤 다른 engine을 관측하지 못하던 경로를 교정했다. DB guard·lint 성공을 전제로 workspace/crypto/PoC/6 engines를 수집하고 각 Cargo에 `--no-fail-fast`를 사용한다. 최초 실패 stage/command/exit를 보존하며 실패 뒤 downstream에 들어가지 않는다. 실패 주입 회귀 RED 5 failed → GREEN 10/10. 실제 9개 runtime 성공을 뜻하지 않는다.
+
+`porting/flaskbb/seed/post_order_manifest.py`는 원본 namespace/revision/high-water와 정수 ID/UUID 대응, 전체 published 대상·기존 역참조·재실행·generator floor를 검사한다. offline 사전 검사 21개와 runtime 수집 10개·기존 독립 여정 8개, 합계 39 tests OK. 실제 import/schema/writer fence/sequence 변경·활성화는 미구현이며 `activation_authorized=false`다. G6·3앱·crypto·SDK·main·upgrade/rollback·1.0은 계속 열린다. 관련 PG 성공 뒤 main 통합·push·원격 SHA를 대조한다.
+
+## 직전 후보의 관측 기록 (위 6a08ced 결과로 후속 갱신)
 
 최신 관측: 후보 `a602155d2b5bf2de90f288528752a77b166c2c82`의 packages `41211635429`·storage `41211635442`·brokers `41211635409`·cgroup `41211635480`는 모두 success다. Verify `41211635389`, job `124567681441`은 11개 Clippy와 workspace·crypto·PoC·V1 테스트를 지나 V2 테스트 binary 링크에서 signal 7(Bus error)로 종료했다. 같은 시각 PostgreSQL은 `No space left on device`, Actions는 여유 85MB를 기록했다. 러너 용량 부족은 관측 사실이며 linker signal과의 인과는 추론이다. CI 전용 incremental/debug 정보 비활성화·build jobs=2와 전후 디스크 계측을 추가했다. 용량 해소와 V2/V3/V4/V6 실제 테스트는 다음 후보에서 확인해야 한다.
 

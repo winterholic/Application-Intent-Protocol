@@ -1,4 +1,4 @@
-"""Independent lint failures are collected while unsafe prerequisites stay fatal."""
+"""Independent Rust failures are collected while unsafe prerequisites stay fatal."""
 import json
 import os
 from pathlib import Path
@@ -14,7 +14,7 @@ ENGINES = [f"spike-v{number}-{name}" for number, name in
 
 
 class RustLintGateTest(unittest.TestCase):
-    def run_gate(self, fail=(), locator_enabled=True):
+    def run_gate(self, fail=(), locator_enabled=True, runtime_stop=True):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             for name in ("tools", "scripts", "bin", "spikes/spike-0-ts/node_modules/.bin"):
@@ -28,7 +28,16 @@ args = sys.argv[1:]
 with open(os.environ["RECEIPT"], "a") as receipt:
     receipt.write(json.dumps(args) + "\\n")
 if args[0] == "test":
-    stage = "runtime" if "--workspace" in args else "guard"
+    if "aip-test-support" in args:
+        stage = "guard"
+    elif "--manifest-path" in args:
+        stage = "runtime-" + args[args.index("--manifest-path") + 1].split("/")[1]
+    elif "aip-crypto" in args:
+        stage = "runtime-crypto"
+    elif "poc-runtime" in args:
+        stage = "runtime-poc"
+    else:
+        stage = "runtime"
 elif args[0] == "fmt":
     stage = "format"
 elif "--manifest-path" in args:
@@ -37,24 +46,28 @@ else:
     stage = "mysql" if "mysql,aip-cli/mysql" in args else "workspace"
 if stage in json.loads(os.environ["FAIL_STAGES"]):
     print("fixture failure: " + stage, file=sys.stderr)
-    sys.exit(19 if stage == "spike-v6-transport" else 7)
-if stage == "runtime":
-    sys.exit(73)  # Stop after proving that lint success permits runtime tests.
+    sys.exit(19 if stage in ("spike-v6-transport", "runtime-spike-v6-transport") else 7)
+if stage == "runtime" and os.environ["RUNTIME_STOP"] == "1":
+    sys.exit(73)  # Prove the first runtime status survives later successful suites.
 ''')
             executable.chmod(0o755)
             for name in ("node", "npm", "psql", "python3", "mypy"):
                 program = root / "bin" / name
                 program.write_text("#!/bin/sh\nexit 0\n")
                 program.chmod(0o755)
+            (root / "bin/npm").write_text('#!/bin/sh\ntouch "$NONCARGO_RECEIPT"\nexit 67\n')
             (root / "spikes/spike-0-ts/node_modules/.bin/tsc").touch(mode=0o755)
             env = {**os.environ, "PATH": str(root / "bin") + os.pathsep + os.environ["PATH"],
                    "FAIL_STAGES": json.dumps(fail), "RECEIPT": str(root / "receipt"),
+                   "RUNTIME_STOP": "1" if runtime_stop else "0", "NONCARGO_RECEIPT": str(root / "noncargo"),
                    "AIP_VERIFY_FAILURE_FILE": str(root / "failure"), "AIP_TEST_DATABASE_URL": "fixture"}
             if not locator_enabled:
                 env.pop("AIP_VERIFY_FAILURE_FILE", None)
             result = subprocess.run(["bash", str(root / "tools/verify.sh")], env=env,
                                     capture_output=True, text=True)
             calls = [json.loads(line) for line in (root / "receipt").read_text().splitlines()]
+            if (root / "noncargo").exists():
+                calls.append(["npm-boundary"])
             return result, calls, (root / "failure").read_text() if locator_enabled else ""
 
     def assert_all_lints_ran(self, calls):
@@ -98,7 +111,46 @@ if stage == "runtime":
         result, calls, _ = self.run_gate()
         self.assertEqual(result.returncode, 73, result.stderr)
         self.assert_all_lints_ran(calls)
-        self.assertEqual(calls[-1], ["test", "--workspace", "--locked"])
+        self.assert_all_runtime_suites_ran(calls)
+        runtime_index = next(index for index, args in enumerate(calls) if args[:2] == ["test", "--workspace"])
+        self.assertTrue(all(index < runtime_index for index, args in enumerate(calls) if args[0] == "clippy"))
+
+    def assert_all_runtime_suites_ran(self, calls):
+        runtime = [args for args in calls if args[0] == "test" and "aip-test-support" not in args]
+        self.assertEqual(len(runtime), 9, runtime)
+        self.assertTrue(all("--no-fail-fast" in args for args in runtime), runtime)
+        self.assertTrue(all("--locked" in args for args in runtime), runtime)
+        self.assertEqual([args[args.index("--manifest-path") + 1].split("/")[1]
+                          for args in runtime if "--manifest-path" in args], ENGINES)
+
+    def test_runtime_failures_collect_all_engines_and_preserve_first_locator(self):
+        result, calls, locator = self.run_gate(("runtime-spike-v2-read", "runtime-spike-v6-transport"), runtime_stop=False)
+        self.assertEqual(result.returncode, 7, result.stderr)
+        self.assert_all_runtime_suites_ran(calls)
+        self.assertNotIn(["npm-boundary"], calls)
+        self.assertIn("stage=rust engine tests: spike-v2-read", locator)
+        self.assertIn("command=cargo test --manifest-path spikes/spike-v2-read/Cargo.toml", locator)
+        self.assertIn("exit_status=7", locator)
+        self.assertIn("spike-v6-transport", result.stderr)
+
+    def test_late_runtime_failure_is_fatal_without_locator(self):
+        result, calls, _ = self.run_gate(("runtime-spike-v6-transport",), locator_enabled=False, runtime_stop=False)
+        self.assertEqual(result.returncode, 19, result.stderr)
+        self.assert_all_runtime_suites_ran(calls)
+        self.assertNotIn(["npm-boundary"], calls)
+
+    def test_crypto_and_poc_runtime_failures_do_not_block_other_engines(self):
+        result, calls, locator = self.run_gate(("runtime-crypto", "runtime-poc"), runtime_stop=False)
+        self.assertEqual(result.returncode, 7, result.stderr)
+        self.assert_all_runtime_suites_ran(calls)
+        self.assertIn("stage=crypto all-feature tests", locator)
+        self.assertNotIn(["npm-boundary"], calls)
+
+    def test_all_runtime_success_continues_to_the_next_gate(self):
+        result, calls, _ = self.run_gate(runtime_stop=False)
+        self.assertEqual(result.returncode, 67, result.stderr)
+        self.assert_all_runtime_suites_ran(calls)
+        self.assertEqual(calls[-1], ["npm-boundary"])
 
     def test_database_guard_failure_still_stops_before_lints(self):
         result, calls, locator = self.run_gate(("guard",))
