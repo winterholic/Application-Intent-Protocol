@@ -90,6 +90,7 @@ async fn settle_worker(handle: &mut tokio::task::JoinHandle<Value>) -> Result<Va
 
 /// Holds the target row so the first worker keeps its claim open. The second request must be
 /// observed waiting on the actual aip_idem INSERT before the row lock is released.
+#[allow(clippy::too_many_arguments)]
 async fn assert_same_key_contention(
     db: &mut tokio_postgres::Client,
     schema: &str,

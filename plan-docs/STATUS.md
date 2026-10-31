@@ -8,6 +8,8 @@
 
 로컬 V3 compile-only는 locked `ctutils 0.4.4` offline index 부재로 컴파일 전에 중단됐다. 보호 cache 거부를 재시도하거나 다른 cache로 우회하지 않는다. 추가 Linux worker-job 수동 dispatch는 GitHub Actions API HTTP 403으로 거부됐으며, repository read/push 성공과 구분한다. `gh run view --log-failed`의 로컬 gh cache archive 생성은 현재 Codex command sandbox에서 거부돼 재시도하지 않았고, 원출력은 지원되는 GitHub job-log read API에서 확보했다.
 
+후속 후보 `6227f9774de9c18586884ab9ef43010a95835fdd`에서도 packages/storage/brokers/cgroup 4개는 success다. Verify `41210085838`의 job `124563056705`는 이전 MySQL lint를 지나 V3 `effects`의 `clippy::too_many_arguments`(8/7)에서 중단됐다. 변경된 standalone Rust 파일의 함수 선언을 함께 점검해 동일한 8인자 V6 contention test helper도 찾았다(이 helper의 lint 실패는 아직 실행 관측 전이다). 기존 `judge`·`update`·durable owner의 per-function 예외 방식에 맞춰 이 두 함수에만 `#[allow(clippy::too_many_arguments)]`를 추가했다. transaction/pre-state mask 전달과 테스트 동작은 바꾸지 않았다. formatting/diff는 통과했고 실제 Clippy·PG 회귀는 다음 후보 CI에서 확인한다.
+
 다음은 후속 후보의 exact-SHA CI를 확인하고 G6 PG guard/owner/idempotency 회귀를 닫은 뒤 main 통합·push·원격 SHA를 대조하는 것이다. 전체 G6 PostOrder/projection 의미 동등성, 3앱 전체 포팅·crypto·SDK·upgrade/rollback·1.0은 미완료다.
 
 # 최신 재개 지점 (2026-10-30, G-6 guard/read-lock source 증분 — compile·DB 미검증)

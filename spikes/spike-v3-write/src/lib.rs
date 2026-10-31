@@ -767,6 +767,8 @@ fn write_err(stage: &str, e: tokio_postgres::Error) -> Reject {
 }
 
 /// 서버가 정의한 전이 효과. 값은 바뀐 대상 행에서 계산한다(W2).
+// Keep the pre-state guard mask with the transaction and transition context.
+#[allow(clippy::too_many_arguments)]
 async fn effects(
     tx: &Transaction<'_>,
     facts: &Value,

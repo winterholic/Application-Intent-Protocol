@@ -1966,3 +1966,7 @@ Evidence in this Run: `cargo fmt --manifest-path spikes/spike-v6-transport/Cargo
 - 현재 V1 binary로 V3 conditional integration source를 검사해 `DEF.PARSE_UNKNOWN_KEY enabled`를 재현했다. `to` 다중 대입의 semicolon을 comma로 교정한 동일 입력은 check exit 0(`exec=d4d708eeda801b55`)이다. 수정 범위의 런타임 raw DSL 4개 전체 accepted, V6 guarded fixture 및 FlaskBB app check도 exit 0. PG assertion은 미실행이다.
 - 추가 worker-jobs workflow_dispatch는 HTTP 403으로 거부됐다. 동일 요청 재시도 없음. run-log CLI는 protected `~/.cache/gh` archive 생성에서 Operation not permitted였고 그 cache 경로는 재시도하지 않았다. 지원 GitHub job-log read API에서 원출력을 읽었다.
 - PostOrder 선택 방향의 최소 DSL은 UUID Post와 numeric companion, nullable 연결·역참조 check·순서 누락 guard까지 accepted이며 guard가 serializable로 표시됐다. 실제 앱/DB migration·high-water·동시 publish·원본 동등성의 완료 증거는 아니다.
+
+### 후보 `6227f97`의 arity 검사 후속
+
+후보의 packages `41210085920`·storage `41210085770`·brokers `41210085851`·cgroup `41210085805`는 completed/success다. Verify `41210085838`, job `124563056705` 원출력에서 V3 `effects`의 `clippy::too_many_arguments` 8/7 실패를 확인했다. 이전 MySQL `items_after_test_module`은 이 실행의 실패가 아니다. 변경된 standalone Rust 파일들의 함수 인자 수를 점검해 V6 `assert_same_key_contention`도 8개임을 확인했다(해당 helper의 실제 lint 결과는 미관측). 두 함수에만 기존 `judge`/`update`/durable 함수들과 같은 per-function allow를 적용했다. 설정 전체나 테스트 기준·runtime 동작은 바꾸지 않았다. `cargo fmt --manifest-path spikes/spike-v6-transport/Cargo.toml --all -- --check`와 `git diff --check` exit 0. 새 후보의 Clippy·DB 검증은 미실행/CI 대기이며 원래 G6·1.0은 계속 미완료다.
