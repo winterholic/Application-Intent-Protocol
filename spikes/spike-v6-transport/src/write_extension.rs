@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 use spike_v2_read::{id_wire::IdWire, plan::Caller};
 use spike_v3_write::{before_commit_rejection, classify_write_error, connection_failed, send_commit, CommitFailure};
 use spike_v4_worker::{
-    write::{prepare_write_in_with_wire, validate_write},
+    write::{prepare_write_in_with_wire_configured_isolation, validate_write, write_needs_serializable},
     Worker,
 };
 use std::time::{Duration, Instant};
@@ -22,6 +22,11 @@ fn before_commit_failure(error: &tokio_postgres::Error) -> Value {
     } else {
         failure("WIRE.INTERNAL")
     }
+}
+
+fn transaction_setup(facts: &Value, name: &str, deadline: Duration) -> String {
+    let isolation = spike_v3_write::isolation_sql(write_needs_serializable(facts, name));
+    format!("{isolation}; SET LOCAL statement_timeout='{}ms'; SET LOCAL TimeZone='UTC'", deadline.as_millis())
 }
 
 pub async fn apply(db: &mut Client, facts: &Value, body: &Value, caller: &Caller, wire: IdWire, config: &ReadExtensions) -> Value {
@@ -52,47 +57,87 @@ pub async fn apply_with_launch(
         Ok(deadline) => deadline,
         Err(error) => return super::err(error),
     };
+    let setup = transaction_setup(facts, name, deadline);
     let expires = Instant::now() + deadline;
     let principal = super::principal_key(caller.actor_id, wire);
     let schema = spike_v2_read::sqlgen::schema();
+    let req_to_store = match crate::encryption::journal_request(facts, request, schema, &principal, key) {
+        Ok(request) => request,
+        Err(e) => return failure(e.code),
+    };
     let mut commit_sent = false;
     let operation = async {
-        let tx = match db.transaction().await {
-            Ok(tx) => tx,
-            Err(error) => return before_commit_failure(&error),
-        };
-        if let Err(error) = tx
-            .batch_execute(&format!(
-                "SET TRANSACTION ISOLATION LEVEL READ COMMITTED; SET LOCAL statement_timeout='{}ms'; SET LOCAL TimeZone='UTC'",
-                deadline.as_millis()
-            ))
-            .await
-        {
-            return before_commit_failure(&error);
-        }
-        if let Err(error) = tx.execute("SELECT pg_advisory_xact_lock(hashtext($1))", &[&format!("{principal}:{key}")]).await {
-            return before_commit_failure(&error);
-        }
-        match tx.query_opt(&format!("SELECT request,result::text FROM {schema}.aip_idem WHERE principal=$1 AND key=$2"), &[&principal, &key]).await {
-            Ok(Some(row)) => {
-                let stored: String = row.get(0);
-                let matches = match crate::encryption::stored_request_matches(facts, &stored, request, schema, &principal, key) {
-                    Ok(matches) => matches,
-                    Err(e) => return failure(e.code),
-                };
-                if !matches {
-                    return failure("WIRE.IDEMPOTENCY_MISMATCH");
-                }
-                let mut result: Value = match serde_json::from_str(&row.get::<_, String>(1)) {
-                    Ok(result) => result,
-                    Err(_) => return failure("WIRE.INTERNAL"),
-                };
-                result["replayed"] = json!(true);
-                return result;
+        let mut claim_retries = 0;
+        let tx = loop {
+            let tx = match db.transaction().await {
+                Ok(tx) => tx,
+                Err(error) => return before_commit_failure(&error),
+            };
+            if let Err(error) = tx.batch_execute(&setup).await {
+                return before_commit_failure(&error);
             }
-            Ok(None) => {}
-            Err(error) => return before_commit_failure(&error),
-        }
+            // The unique index arbitrates same-key ownership before the worker runs. Unlike a
+            // transaction advisory-lock SELECT, a conflicting SERIALIZABLE insert can be
+            // retried with a fresh snapshot without ever replaying external worker effects.
+            let claim = tx
+                .query_opt(
+                    &format!("INSERT INTO {schema}.aip_idem(principal,key,request,result) VALUES($1,$2,$3,'{{}}'::jsonb) ON CONFLICT (principal,key) DO NOTHING RETURNING 1"),
+                    &[&principal, &key, &req_to_store],
+                )
+                .await;
+            match claim {
+                Ok(Some(_)) => break tx,
+                Ok(None) => {
+                    match tx
+                        .query_opt(&format!("SELECT request,result::text FROM {schema}.aip_idem WHERE principal=$1 AND key=$2"), &[&principal, &key])
+                        .await
+                    {
+                        Ok(Some(row)) => {
+                            let stored: String = row.get(0);
+                            let matches = match crate::encryption::stored_request_matches(facts, &stored, request, schema, &principal, key) {
+                                Ok(matches) => matches,
+                                Err(e) => return failure(e.code),
+                            };
+                            if !matches {
+                                return failure("WIRE.IDEMPOTENCY_MISMATCH");
+                            }
+                            let mut result: Value = match serde_json::from_str(&row.get::<_, String>(1)) {
+                                Ok(result) => result,
+                                Err(_) => return failure("WIRE.INTERNAL"),
+                            };
+                            result["replayed"] = json!(true);
+                            return result;
+                        }
+                        Ok(None) if Instant::now() < expires && claim_retries < spike_v3_write::SERIALIZATION_RETRIES => {
+                            drop(tx);
+                            claim_retries += 1;
+                            spike_v3_write::retry_backoff(claim_retries).await;
+                            continue;
+                        }
+                        Ok(None) => return failure("WIRE.CONFLICT"),
+                        Err(error) if error.code().is_some_and(|code| code.code() == "40001") => {
+                            drop(tx);
+                            if Instant::now() >= expires || claim_retries >= spike_v3_write::SERIALIZATION_RETRIES {
+                                return failure("WIRE.CONFLICT");
+                            }
+                            claim_retries += 1;
+                            spike_v3_write::retry_backoff(claim_retries).await;
+                            continue;
+                        }
+                        Err(error) => return before_commit_failure(&error),
+                    }
+                }
+                Err(error) if error.code().is_some_and(|code| code.code() == "40001") => {
+                    drop(tx);
+                    if Instant::now() >= expires || claim_retries >= spike_v3_write::SERIALIZATION_RETRIES {
+                        return failure("WIRE.CONFLICT");
+                    }
+                    claim_retries += 1;
+                    spike_v3_write::retry_backoff(claim_retries).await;
+                }
+                Err(error) => return before_commit_failure(&error),
+            }
+        };
         if Instant::now() >= expires {
             return failure("WIRE.DEADLINE_EXCEEDED");
         }
@@ -107,7 +152,7 @@ pub async fn apply_with_launch(
         // lock 대기·spawn 시간을 남은 실행 budget에서 빼고 commit을 보내기 전에만 취소한다.
         let prepared = tokio::time::timeout(
             expires.saturating_duration_since(Instant::now()),
-            prepare_write_in_with_wire(&tx, &mut worker, facts, name, &request["input"], caller, wire),
+            prepare_write_in_with_wire_configured_isolation(&tx, &mut worker, facts, name, &request["input"], caller, wire),
         )
         .await;
         worker.stop().await;
@@ -131,20 +176,17 @@ pub async fn apply_with_launch(
         if left < Duration::from_millis(300) {
             return failure("WIRE.DEADLINE_EXCEEDED");
         }
-        let req_to_store = match crate::encryption::journal_request(facts, request, schema, &principal, key) {
-            Ok(request) => request,
-            Err(e) => return failure(e.code),
-        };
         let insert = tokio::time::timeout(
             left,
             tx.execute(
-                &format!("INSERT INTO {schema}.aip_idem(principal,key,request,result) VALUES($1,$2,$3,$4::text::jsonb)"),
-                &[&principal, &key, &req_to_store, &result.to_string()],
+                &format!("UPDATE {schema}.aip_idem SET result=$3::text::jsonb WHERE principal=$1 AND key=$2"),
+                &[&principal, &key, &result.to_string()],
             ),
         )
         .await;
         match insert {
-            Ok(Ok(_)) => {}
+            Ok(Ok(1)) => {}
+            Ok(Ok(_)) => return failure("WIRE.INTERNAL"),
             Ok(Err(error)) => return before_commit_failure(&error),
             Err(_) => return failure("WIRE.DEADLINE_EXCEEDED"),
         }
@@ -163,5 +205,30 @@ pub async fn apply_with_launch(
         Ok(result) => result,
         Err(_) if commit_sent => failure("WIRE.COMMIT_UNKNOWN"),
         Err(_) => failure("WIRE.DEADLINE_EXCEEDED"),
+    }
+}
+
+#[cfg(test)]
+mod isolation_selection_tests {
+    use super::transaction_setup;
+    use serde_json::json;
+    use std::time::Duration;
+
+    #[test]
+    fn write_extension_owner_selects_strictest_allowed_transition_before_queries() {
+        let facts = json!({"resources":{"Event":{
+            "transitions":{
+                "plain":{"isolation":null},
+                "guarded":{"isolation":"serializable"}
+            },
+            "extensions":{
+                "plain":{"access":{"Event.plain":{}}},
+                "mixed":{"access":{"Event.plain":{},"Event.guarded":{}}}
+            }
+        }}});
+        let plain = transaction_setup(&facts, "Event.plain", Duration::from_millis(1000));
+        let mixed = transaction_setup(&facts, "Event.mixed", Duration::from_millis(1000));
+        assert!(plain.starts_with("SET TRANSACTION ISOLATION LEVEL READ COMMITTED;"));
+        assert!(mixed.starts_with("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;"));
     }
 }

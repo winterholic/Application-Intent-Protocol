@@ -773,13 +773,18 @@ async fn effects(
     res: &str,
     tr: &str,
     change: &[EntityId],
+    eligible: &[Vec<EntityId>],
     caller: &Caller,
     knobs: &Knobs,
 ) -> Result<(), Reject> {
     if change.is_empty() {
         return Ok(());
     }
-    for e in facts["resources"][res]["transitions"][tr]["effects"].as_array().into_iter().flatten() {
+    for (index, e) in facts["resources"][res]["transitions"][tr]["effects"].as_array().into_iter().flatten().enumerate() {
+        let effect_change = eligible.get(index).ok_or_else(|| internal("전이 효과 조건 대상 누락"))?;
+        if effect_change.is_empty() {
+            continue;
+        }
         let mut cx = Ctx::new(facts, caller.actor_id, &caller.now);
         let env = Env { this: Some(("t".into(), res.to_string())), ..Default::default() };
         if let Some(target) = e["update"].as_str() {
@@ -795,7 +800,7 @@ async fn effects(
             for (f, v) in e["values"].as_object().unwrap() {
                 sets.push(format!("{} = {}", column(facts, target, f).unwrap(), cx.value(v, &env).map_err(internal)?));
             }
-            let ip = cx.params.bind(Some(id_array(change)), id_array_cast(facts, res));
+            let ip = cx.params.bind(Some(id_array(effect_change)), id_array_cast(facts, res));
             let children = if let Some(max) = e.get("maxRows") {
                 let max = max.as_i64().filter(|n| (1..=1000).contains(n)).ok_or_else(|| internal("many update 상한 오류"))?;
                 // 부모 잠금 뒤 새 RC 스냅샷으로 FK 삽입을 관측하고 자식을 ID 순으로 잠근다.
@@ -831,7 +836,7 @@ async fn effects(
             let mut got: Vec<EntityId> =
                 typed_query(tx, sql.as_str(), &params).await.map_err(|e| write_err("전이 효과", e))?.iter().map(|r| r.get(0)).collect();
             got.sort();
-            if children.is_some_and(|count| count != got.len()) || (children.is_none() && got != change) {
+            if children.is_some_and(|count| count != got.len()) || (children.is_none() && got.as_slice() != effect_change.as_slice()) {
                 return rej("WIRE.EFFECT_TARGET_MISSING", format!("`{target}` 갱신 대상이 대상 행마다 하나가 아님"));
             }
             continue;
@@ -841,12 +846,12 @@ async fn effects(
             for (f, v) in e["match"].as_object().unwrap() {
                 conds.push(format!("u.{} = {}", column(facts, target, f).unwrap(), cx.value(v, &env).map_err(internal)?));
             }
-            let ip = cx.params.bind(Some(id_array(change)), id_array_cast(facts, res));
+            let ip = cx.params.bind(Some(id_array(effect_change)), id_array_cast(facts, res));
             let max_rows = e
                 .get("maxRows")
                 .map(|value| value.as_i64().filter(|n| (1..=1000).contains(n)).ok_or_else(|| internal("many delete 상한 오류")))
                 .transpose()?;
-            let limit = max_rows.unwrap_or(change.len() as i64) + 1;
+            let limit = max_rows.unwrap_or(effect_change.len() as i64) + 1;
             let select = format!(
                 "SELECT t.id, u.id FROM {} u JOIN {} t ON {} WHERE t.id = ANY({ip}) ORDER BY u.id LIMIT {limit} FOR UPDATE OF u",
                 table(target),
@@ -861,7 +866,7 @@ async fn effects(
             }
             if max_rows.is_none() {
                 parents_hit.sort();
-                let mut expected = change.to_vec();
+                let mut expected = effect_change.to_vec();
                 expected.sort();
                 if parents_hit != expected {
                     return rej("WIRE.EFFECT_TARGET_MISSING", format!("`{target}` 삭제 대상이 대상 행마다 하나가 아님"));
@@ -968,6 +973,52 @@ async fn effects(
         typed_query(tx, sql.as_str(), &params).await.map_err(|e| write_err("전이 효과", e))?;
     }
     Ok(())
+}
+
+/// Resolve optional effect guards against each transition row while it still has its pre-transition state.
+/// The judge already holds these rows FOR UPDATE; this query also makes the guard read part of the same transaction.
+async fn effect_targets_at_transition_start(
+    tx: &Transaction<'_>,
+    facts: &Value,
+    res: &str,
+    tr: &str,
+    change: &[EntityId],
+    caller: &Caller,
+    knobs: &Knobs,
+) -> Result<Vec<Vec<EntityId>>, Reject> {
+    let effects = facts["resources"][res]["transitions"][tr]["effects"].as_array().into_iter().flatten();
+    let mut eligible = Vec::new();
+    for effect in effects {
+        // `when` is currently a contract only for update effects. Keep other effect kinds on their
+        // existing unconditional path instead of accidentally suppressing them from an unknown guard.
+        if effect.get("update").is_none() {
+            eligible.push(change.to_vec());
+            continue;
+        }
+        let Some(condition) = effect.get("when") else {
+            eligible.push(change.to_vec());
+            continue;
+        };
+        if change.is_empty() {
+            eligible.push(Vec::new());
+            continue;
+        }
+        let mut cx = Ctx::new(facts, caller.actor_id, &caller.now);
+        // Keep the same row-read locking contract as transition policy evaluation. A pre-state guard can
+        // read actor/reference/exists rows; SERIALIZABLE is separately selected for guards that need absence.
+        cx.lock_reads = !knobs.skip_policy_lock;
+        let env = Env { this: Some(("t".into(), res.to_string())), ..Default::default() };
+        let condition = cx.cond(condition, &env).map_err(internal)?;
+        let ids = cx.params.bind(Some(id_array(change)), id_array_cast(facts, res));
+        let sql =
+            format!("SELECT t.id, ({condition}) IS TRUE AS enabled FROM {} t WHERE t.id = ANY({ids}) ORDER BY t.id FOR UPDATE OF t", table(res));
+        let rows = typed_query(tx, &sql, &cx.params.values).await.map_err(|error| write_err("전이 효과 조건", error))?;
+        if rows.len() != change.len() {
+            return rej("WIRE.CONFLICT", format!("전이 효과 조건 판정 {}개와 잠긴 행 {}개가 다름", rows.len(), change.len()));
+        }
+        eligible.push(rows.iter().filter(|row| row.get::<_, bool>(1)).map(|row| row.get(0)).collect());
+    }
+    Ok(eligible)
 }
 
 /// 생성할 행의 값 출처. 호출자 리터럴(W0) 또는 서버가 읽은 대상 행의 경로(W1).
@@ -1376,12 +1427,13 @@ async fn apply_op(
     let j = judge(tx, facts, res, tr, &target, ex["bulkMaxRows"].as_i64().unwrap_or(1), &ex["sameScope"], caller, knobs).await?;
     let decided = Caller { actor_id: caller.actor_id, now: j.now.clone() };
     ensure_refs_readable(tx, facts, res, &input.values, &decided, knobs).await?;
+    let effect_targets = effect_targets_at_transition_start(tx, facts, res, tr, &j.change, &decided, knobs).await?;
     if facts["resources"][res]["transitions"][tr]["delete"] == true {
-        effects(tx, facts, res, tr, &j.change, &decided, knobs).await?;
+        effects(tx, facts, res, tr, &j.change, &effect_targets, &decided, knobs).await?;
         delete_rows(tx, facts, res, tr, &j.change, &decided, knobs).await?;
     } else {
         update(tx, facts, res, tr, &j.change, &decided, knobs, Some(&input)).await?;
-        effects(tx, facts, res, tr, &j.change, &decided, knobs).await?;
+        effects(tx, facts, res, tr, &j.change, &effect_targets, &decided, knobs).await?;
     }
     Ok(Applied { changed: j.change, unchanged: j.unchanged })
 }
@@ -1794,8 +1846,9 @@ async fn compose_exec(
                 {
                     return rej("WIRE.BAD_VALUE", "patch/expect 전이는 values/expect를 제공하는 bundle.apply로 호출해야 함");
                 }
+                let effect_targets = effect_targets_at_transition_start(tx, facts, res, t, &j.change, &decided, knobs).await?;
                 update(tx, facts, res, t, &j.change, &decided, knobs, None).await?;
-                effects(tx, facts, res, t, &j.change, &decided, knobs).await?;
+                effects(tx, facts, res, t, &j.change, &effect_targets, &decided, knobs).await?;
                 out.applied.push(Applied { changed: j.change, unchanged: j.unchanged });
             }
             Step::Create(target, vals) => {

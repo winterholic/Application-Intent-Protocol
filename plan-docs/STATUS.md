@@ -1,4 +1,20 @@
-# 최신 재개 지점 (2026-10-30, G-6 조건부 effect V1 계약 증분)
+# 최신 재개 지점 (2026-10-31, V1 전체 회귀 복구·G6 후보 검증 준비)
+
+`3e7c621`의 기존 미컴파일 G6 변경을 보존하고 출시 준비를 재개했다. 현재 Codex command 환경에서 V1 전체 검사를 `--frozen --offline --no-fail-fast`로 실행해 두 결함을 재현·교정했다. 수동으로 추가된 `latest` 작성 카드 설명을 생성기로 옮겨 명세와 생성 결과를 일치시켰다(생성 명세 내용은 기존 HEAD와 동일). 허용된 괄호 63단계가 1MB stack에서 SIGABRT하던 회귀는 parser의 `latest` 전용 지역 값을 별도 helper로 분리해 교정했다. 기존 small-stack child는 같은 1MB·깊이를 유지하며 각 단계 로그를 남긴다. 수정 후 V1 전체 회귀와 all-target Clippy `-D warnings`가 exit 0이다. 이는 V1 정의/파서/격리 marker 범위이며 런타임 전체 통과가 아니다.
+
+V3 compile-only는 잠긴 `ctutils 0.4.4`가 offline index에 없어 컴파일 전 exit 101이었다. 기존 보호 cache 거부를 재시도하거나 다른 cache로 우회하지 않았다. GitHub API read는 현재 성공했고 repository push permission=true를 관측했다. 기존 G6 runtime/HTTP owner/idempotency 변경은 미컴파일 후보로 보존하며, 후보 브랜치와 draft PR의 exact-SHA CI에서 검증할 예정이다. main 통합·push 성공·실DB 실행·1.0 출시는 아직 주장하지 않는다. 전체 G6 의미 동등성/PostOrder 및 3앱 전체 포팅·crypto·SDK·upgrade/rollback 요구는 열린 상태다.
+
+# 최신 재개 지점 (2026-10-30, G-6 guard/read-lock source 증분 — compile·DB 미검증)
+
+기준 main `3e7c621d3ccca9e8dec07ed25c03dc5d406a1c0e` 위에서 update-effect guard source를 좁게 보완했다. V3는 transition 행의 잠긴 pre-state에서 update `when` 대상만 골라 apply/bundle/compose 효과에 전달하며, false guard는 효과 target 부재 오류를 내지 않고 건너뛰도록 기존 PG integration test source에 혼합 bulk·부모 필드 변경·true missing rollback 사례를 추가했다. guard predicate의 다른 행 참조는 `Ctx::lock_reads = !skip_policy_lock` 정책을 따른다. V1 marker는 update-effect guard의 absence 의존을 transition 및 compose isolation 계산에 포함한다. MySQL 경로는 아직 조건을 평가하지 않으므로 conditional update-effect 전이만 `WIRE.ADAPTER_UNSUPPORTED`로 명시 거부하도록 fail-closed gate를 추가했다. 비 update effect의 기존 경로는 조건 평가 범위에 넣지 않았다.
+
+독립 review 후속 교정: V3 target cardinality 비교는 정렬을 유지하면서 `got.as_slice() != effect_change.as_slice()`로 맞췄다. V4 write extension은 선언된 모든 allowed transition 중 strict marker가 하나라도 있으면 자체 transaction의 첫 SQL에서 SERIALIZABLE을 선택한다. caller-owned V4 entry는 첫 동작으로 필요한 격리를 설정하고, 이미 SQL을 실행해 strict 격리로 바꿀 수 없으면 `WIRE.UNSUPPORTED_ISOLATION`으로 worker 실행 전에 거부한다. V6 HTTP write extension은 idem advisory lock/lookup 전에 access 집합의 가장 엄격한 격리를 설정하고, V4 configured entry가 실제 격리 수준을 확인한다. V6 durable job도 apply request marker를 guard/journal SQL 전에 transaction 첫 SQL로 선택한다. 일반 V6 apply/bundle의 기존 격리 선택·재시도 및 extension의 외부 side-effect 재실행 정책은 바꾸지 않았다. V4/V6 선택 회귀 및 caller-owned strict 거부 회귀 source를 추가했고, 기존 unmarked READ COMMITTED PG 회귀를 보존했다.
+
+위 변경은 source/test 작성만 확인됐다. 컴파일·새 회귀 실행은 미검증이다. 과거 V3 Cargo 시도는 컴파일 전 보호된 `~/.cargo` registry cache의 `ctutils-0.4.4.crate` open에서 `Operation not permitted`로 중단됐다. 이번 narrow standalone rustc stdin metadata check도 rustc가 `/dev/rmeta…` temp directory를 만들 때 `Operation not permitted`로 중단됐고 다른 temp 경로로 재시도하지 않았다. Cargo·PG는 이번 실행에서 시도하지 않았고 PostgreSQL DSN 미설정/접속 없음이다. `cargo fmt`, diff, 하네스 검사 결과는 아래 현재 실행 기록을 본다. 이전 `finish_observation.worktree_status=""`는 당시 clean tree의 역사 기록이며 이번 dirty tree 상태가 아니다. 변경 미컴파일이므로 commit/main 통합/push/CI 완료 주장은 하지 않는다. shared `target` 보존, 새 target/cache 0, 회수 0.
+
+다음에는 보호 cache 접근이 허용된 검증 실행 환경에서 같은 lockfile과 기존 target으로 compile 및 좁은 회귀를 실행해야 한다. 그 뒤 실제 PostgreSQL guard/read-set/isolation 및 caller-owned transaction/HTTP extension/durable job owner 경로, V2 SQL 표현 여부와 제품 실행 경로, row binding/PostOrder projection과 G-6 나머지 요구가 남는다. 전체 G-6·포팅·crypto runtime/adoption/retirement·SDK·게시/CI·실DB·upgrade/rollback·1.0은 열려 있다.
+
+# 이전 재개 지점 (2026-10-30, G-6 조건부 effect V1 계약 증분)
 
 시작 SHA `7a9a0acba7eda09fb6dc6c86422d77d30ced771d`에서 G-6 첫 코어 슬라이스를 진행했다. `spike-v1-fixture`에 update-effect의 optional `when` 조건을 추가해 parser→AST→H mapping→sema facts로 전달하고 Bool 타입을 검사한다. TDD: 유효 DSL의 `when`에서 기존 parser가 `DEF.PARSE_EXPECTED`를 내는 RED 뒤 최소 구현, 코드·TS/Python·H 정의의 동일 facts 및 non-Bool 거부까지 V1 target 5/5 GREEN. 기존 target 재사용.
 
@@ -953,3 +969,13 @@ V13은 큰 Id의 두 후보를 실제 왕복으로 비교했다. 적용은 V6 HT
 ## 최신 변경 이력
 
 - 2026-10-03 창시자 통합 지침의 기준·산출물·미정 범위·실제 협업을 표시하고 이전 기록을 이력으로 전환.
+
+### 2026-10-30 V6 marked write-extension stale-snapshot guard 후속
+
+독립 정적검토의 회귀 후보(source·계약 기반 추론, 실제 PG 재현 아님)를 좁게 교정했다. 원인은 SERIALIZABLE tx가 `pg_advisory_xact_lock` SELECT에서 snapshot을 얻을 수 있고, lock 대기 뒤 idem 조회가 선행 commit을 못 본 채 worker를 실행해 unique 충돌에 도달하는 순서다. `spikes/spike-v6-transport/src/write_extension.rs`는 기존 advisory lock/worker 후 INSERT 대신 같은 tx에서 idem `(principal,key)` 행을 먼저 `INSERT ... ON CONFLICT DO NOTHING RETURNING`으로 선점한다. 충돌 뒤 결과가 보이면 기존 요청 비교·replay를 하고, stale snapshot 또는 SQLSTATE 40001이면 claim tx만 bounded retry한 뒤 worker 전에 다시 확인한다. worker 완료 후 저장 결과를 같은 tx에서 UPDATE하므로 효과+idem 원자성과 COMMIT_UNKNOWN 복구를 유지하며 worker 재실행은 없다. session-level lock은 취소 후 unlock/연결 재사용 수명이 늘고, table lock은 모든 extension 쓰기를 직렬화하므로 선택하지 않았다.
+
+공용 `tests/fixtures/write-extension.aip`는 READ COMMITTED 상태로 복구해 HTTP/lifetime 호출자의 기존 계약을 보존한다. 별도 `write-extension-serializable.aip`는 실제 DSL absence effect guard로 `Event.mark`를 SERIALIZABLE로 만들고, atomic test가 두 fixture의 격리 값을 각각 확인한다. same-key 경쟁 검사는 worker가 대상 행 잠금에서 멈춘 동안 두 번째 SQL 요청이 실제 `aip_idem` INSERT의 lock wait에 들어갔는지 관찰한 다음 잠금을 풀며, READ COMMITTED와 SERIALIZABLE 모두 두 요청 성공·두 번째 replay·worker counter=1 및 단일 DB 효과/idem row를 요구한다. 관찰 대기 1초, 각 request 정리 5초로 제한하고 timeout 때 blocker를 푼 뒤 task를 join/abort한다. PostgreSQL에서 실행하지 않아 이 검사는 작성된 source assertion이며 실제 lock 관찰 결과는 없다.
+
+`write_extension_commit_classification.rs`의 도달 불가능한 advisory-lock fault는 제거했다. claim INSERT connection-cut fault는 worker count 0과 claim/effect rollback 및 안전한 재요청을 확인한다. atomic test의 별도 reject-claim 제약 오류도 worker 미실행과 effect/row 부재를 확인한다. `aip_idem SET result` connection-cut fault는 worker count 1인 상태에서 domain 효과와 placeholder가 함께 rollback되고, 같은 key 재요청은 새 실행으로 성공하는지 확인한다. 기존 COMMIT_UNKNOWN·서버 commit rejection 분류, key/principal/wire scope, atomicity, deadline, mismatch 검사는 유지했다. 새 회귀 source는 미실행이다.
+
+이 Run에서 허용한 확인: `cargo fmt --manifest-path spikes/spike-v6-transport/Cargo.toml --all -- --check`, `git diff --check && git diff --cached --check`, `python3 .aip-harness/check.py`가 각각 exit 0. 이는 형식·whitespace·local harness 검사뿐이며 Cargo 컴파일/테스트, fixture DSL 컴파일, PostgreSQL race/lock wait/cancel 런타임은 미실행이다. HEAD는 `3e7c621d3ccca9e8dec07ed25c03dc5d406a1c0e`; 15개 tracked 수정과 guarded fixture untracked 1개, 최종 누적 tracked diff hash는 internal task ledger에 기록했다. 기존 13개 선행 수정은 유지됐다. compile/runtime 증거 전 commit·push·integration하지 않는다. 원래 필수 9 ID와 전체 G6/3포팅/crypto/SDK/CI/upgrade/rollback/publish/1.0은 계속 미완료다.

@@ -6,7 +6,7 @@
 //! failure. Everything else keeps the current isolation level.
 //!
 //! What is deliberately NOT marked: a condition that needs another row to be present (`exists`, a reference hop such
-//! as `this.room.open`, the actor's row). The write path already takes `FOR SHARE` on every row such a condition
+//! as `this.room.open`, the actor's row). The write path takes `FOR SHARE` on every row an allow/from/effect guard
 //! reads (`Ctx::lock_reads`), so a concurrent change to those rows waits or fails instead of racing. Marking them
 //! would add retries to every ordinary role check (`managerOf`) for no gain. If that ever proves wrong, widening
 //! `depends_on_absence` to "reads another row" is a one-function change.
@@ -63,7 +63,13 @@ pub fn mark(facts: &mut Value) {
             let targets = std::iter::once(name.as_str()).chain(
                 t["effects"].as_array().into_iter().flatten().flat_map(|e| ["create", "update", "delete"].into_iter().filter_map(|k| e[k].as_str())),
             );
-            if reads(&t["allow"], &predicates) || reads(&t["from"], &predicates) || targets.into_iter().any(|x| checked.contains(x)) {
+            let effect_guard_needs_absence =
+                t["effects"].as_array().into_iter().flatten().any(|e| e["update"].is_string() && reads(&e["when"], &predicates));
+            if reads(&t["allow"], &predicates)
+                || reads(&t["from"], &predicates)
+                || effect_guard_needs_absence
+                || targets.into_iter().any(|x| checked.contains(x))
+            {
                 transition_marks.push((name.clone(), tr.clone()));
             }
         }

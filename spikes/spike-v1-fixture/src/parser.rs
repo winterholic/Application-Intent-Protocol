@@ -1016,6 +1016,28 @@ impl Parser {
             l = Expr::Arith(op, Box::new(l), Box::new(r), sp);
         }
     }
+    // Keep latest-specific temporaries out of every recursive unary frame.
+    fn latest(&mut self, sp: Span) -> R<Expr> {
+        self.next();
+        let resource = self.ident()?;
+        let alias = self.ident()?;
+        self.expect_kw("where")?;
+        let where_ = self.expr()?;
+        self.expect_kw("order")?;
+        self.expect_kw("by")?;
+        let order_by = self.unary()?;
+        self.expect_kw("select")?;
+        let select = self.unary()?;
+        let otherwise = if self.is_kw("otherwise") {
+            self.next();
+            Some(Box::new(self.unary()?))
+        } else {
+            None
+        };
+        self.note_expression_node()?;
+        Ok(Expr::Latest { resource, alias, where_: Box::new(where_), order_by: Box::new(order_by), select: Box::new(select), otherwise, span: sp })
+    }
+
     fn unary(&mut self) -> R<Expr> {
         let sp = self.span();
         match self.peek().clone() {
@@ -1058,34 +1080,7 @@ impl Parser {
                 self.note_expression_node()?;
                 Ok(Expr::Exists(r, Box::new(condition), sp))
             }
-            Tok::Ident(s) if s == "latest" => {
-                self.next();
-                let resource = self.ident()?;
-                let alias = self.ident()?;
-                self.expect_kw("where")?;
-                let where_ = self.expr()?;
-                self.expect_kw("order")?;
-                self.expect_kw("by")?;
-                let order_by = self.unary()?;
-                self.expect_kw("select")?;
-                let select = self.unary()?;
-                let otherwise = if self.is_kw("otherwise") {
-                    self.next();
-                    Some(Box::new(self.unary()?))
-                } else {
-                    None
-                };
-                self.note_expression_node()?;
-                Ok(Expr::Latest {
-                    resource,
-                    alias,
-                    where_: Box::new(where_),
-                    order_by: Box::new(order_by),
-                    select: Box::new(select),
-                    otherwise,
-                    span: sp,
-                })
-            }
+            Tok::Ident(s) if s == "latest" => self.latest(sp),
             Tok::Ident(s) => {
                 self.next();
                 if self.is_sym("(") {

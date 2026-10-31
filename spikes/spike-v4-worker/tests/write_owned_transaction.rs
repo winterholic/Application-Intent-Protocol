@@ -84,6 +84,20 @@ async fn write_effects_follow_caller_commit_and_rollback() {
             let partial: bool = tx.query_one(&format!("SELECT checked FROM {schema}.event WHERE id=11"), &[]).await?.get(0);
             if !partial { failures.push(format!("{lang:?} partial-write failure fixture did not execute first ctx write")); }
             tx.rollback().await?;
+
+            // A caller-owned transaction may already have issued SQL. A marked write cannot
+            // change isolation then, and must be rejected before the worker performs any ctx effect.
+            let mut strict_facts = facts.clone();
+            strict_facts["resources"]["Event"]["transitions"]["mark"]["isolation"] = json!("serializable");
+            let tx = db.transaction().await?;
+            tx.query_one("SELECT 1", &[]).await?;
+            let rejected = prepare_write_in(&tx, &mut worker, &strict_facts, "Event.run", &json!({"id":"11"}), &caller).await;
+            if !rejected.is_err_and(|error| error.code == "WIRE.UNSUPPORTED_ISOLATION") {
+                failures.push(format!("{lang:?} strict shared transaction was not rejected before effects"));
+            }
+            tx.rollback().await?;
+            let unchanged: bool = db.query_one(&format!("SELECT checked FROM {schema}.event WHERE id=11"), &[]).await?.get(0);
+            if unchanged { failures.push(format!("{lang:?} strict shared transaction performed an effect before refusal")); }
             worker.stop().await;
             let own: bool = db.query_one(&format!("SELECT checked FROM {schema}.event WHERE id=11"), &[]).await?.get(0);
             if own { failures.push(format!("{lang:?} caller rollback did not undo first ctx write")); }
