@@ -26,12 +26,43 @@ fn latest_scalar_selection_has_stable_null_and_tie_order_in_both_sql_dialects() 
     let facts = facts();
     let env = Env { this: Some(("parent".into(), "Order".into())), ..Default::default() };
     let pg = Ctx::new(&facts, None, "").value(&latest(), &env).unwrap();
-    assert!(pg.contains("COALESCE((SELECT latest1.label FROM aip_v2_spike.item latest1"), "{pg}");
+    assert!(pg.starts_with("(CASE WHEN EXISTS (SELECT 1 FROM aip_v2_spike.item latest1 WHERE "), "{pg}");
+    assert!(pg.contains("THEN (SELECT latest1.label FROM aip_v2_spike.item latest1"), "{pg}");
     assert!(pg.contains("ORDER BY (latest1.created IS NULL) ASC, latest1.created DESC, latest1.id DESC LIMIT 1)"), "{pg}");
-    assert!(pg.ends_with(", parent.label)"), "{pg}");
+    assert!(pg.ends_with(" ELSE parent.label END)"), "{pg}");
 
     let mysql = Ctx::new(&facts, None, "").with_dialect(Dialect::MySql).value(&latest(), &env).unwrap();
-    assert!(mysql.contains("COALESCE((SELECT `latest1`.`label` FROM `aip_v2_spike`.`item` `latest1`"), "{mysql}");
+    assert!(mysql.starts_with("(CASE WHEN EXISTS (SELECT 1 FROM `aip_v2_spike`.`item` `latest1` WHERE "), "{mysql}");
+    assert!(mysql.contains("THEN (SELECT `latest1`.`label` FROM `aip_v2_spike`.`item` `latest1`"), "{mysql}");
     assert!(mysql.contains("ORDER BY (`latest1`.`created` IS NULL) ASC, `latest1`.`created` DESC, `latest1`.`id` DESC LIMIT 1)"), "{mysql}");
-    assert!(mysql.ends_with(", `parent`.`label`)"), "{mysql}");
+    assert!(mysql.ends_with(" ELSE `parent`.`label` END)"), "{mysql}");
+}
+
+#[test]
+fn latest_presence_check_repeats_mysql_bindings_in_sql_order() {
+    let facts = facts();
+    let env = Env { this: Some(("parent".into(), "Order".into())), ..Default::default() };
+    let mut expression = latest();
+    expression["latest"]["otherwise"] = json!({"lit":"missing-row","ty":"Text"});
+    let mut ctx = Ctx::new(&facts, None, "").with_dialect(Dialect::MySql);
+    let sql = ctx.value(&expression, &env).unwrap();
+    let (sql, values) = ctx.params.finish(sql);
+    assert_eq!(sql.matches('?').count(), 3, "{sql}");
+    assert_eq!(values, [Some("1".into()), Some("1".into()), Some("missing-row".into())]);
+    assert!(!sql.contains("COALESCE"), "selected NULL must not activate otherwise: {sql}");
+}
+
+#[test]
+fn latest_without_fallback_keeps_a_single_selection() {
+    let facts = facts();
+    let env = Env { this: Some(("parent".into(), "Order".into())), ..Default::default() };
+    let mut expression = latest();
+    expression["latest"]["otherwise"] = serde_json::Value::Null;
+    for dialect in [Dialect::Postgres, Dialect::MySql] {
+        let mut ctx = Ctx::new(&facts, None, "").with_dialect(dialect);
+        let sql = ctx.value(&expression, &env).unwrap();
+        assert!(sql.starts_with("(SELECT "), "{sql}");
+        assert!(!sql.contains("CASE"), "{sql}");
+        assert_eq!(ctx.params.finish(sql).1.len(), 1);
+    }
 }

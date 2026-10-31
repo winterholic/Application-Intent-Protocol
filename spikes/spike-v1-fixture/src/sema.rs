@@ -693,7 +693,8 @@ impl<'a> Ctx<'a> {
                             span_of(otherwise),
                         ));
                     }
-                    (Some(fallback), fallback_ty.nullable)
+                    // `otherwise` covers row absence, not a NULL field in a selected row.
+                    (Some(fallback), selected_ty.nullable || fallback_ty.nullable)
                 } else {
                     (None, true)
                 };

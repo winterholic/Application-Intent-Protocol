@@ -1,6 +1,10 @@
-# 최신 재개 지점 (2026-10-31, 원격 G6 후보 CI 후속 교정)
+# 최신 재개 지점 (2026-11-01, 원격 G6 후보 CI·nullable projection 후속)
 
-최신 관측: 후보 `c94d909a28047577e7570125e201092808ab9fe4`의 packages `41210863448`·storage `41210863447`·brokers `41210863499`·cgroup `41210863503`는 모두 success다. Verify `41210863511`, job `124565345860`은 V6 `write_extension_atomic.rs:120`의 `emit_id` 오류값(`Reject`, Debug만 제공)을 Display로 출력하려다 E0277로 실패했다. 해당 출력만 Debug로 바꿨고 변경된 오류 변환 호출처를 함께 대조했다. 아직 runtime/PG 성공이 아니다.
+최신 관측: 후보 `a602155d2b5bf2de90f288528752a77b166c2c82`의 packages `41211635429`·storage `41211635442`·brokers `41211635409`·cgroup `41211635480`는 모두 success다. Verify `41211635389`, job `124567681441`은 11개 Clippy와 workspace·crypto·PoC·V1 테스트를 지나 V2 테스트 binary 링크에서 signal 7(Bus error)로 종료했다. 같은 시각 PostgreSQL은 `No space left on device`, Actions는 여유 85MB를 기록했다. 러너 용량 부족은 관측 사실이며 linker signal과의 인과는 추론이다. CI 전용 incremental/debug 정보 비활성화·build jobs=2와 전후 디스크 계측을 추가했다. 용량 해소와 V2/V3/V4/V6 실제 테스트는 다음 후보에서 확인해야 한다.
+
+nullable projection 묶음: V1의 `latest … otherwise`가 nullable 선택값을 non-null로 판정하는 결함을 RED(`Text` != `Text?`)로 재현했다. fallback은 행 부재만 처리하도록 선택값/대체값 nullability의 합집합을 사용하고 V2 SQL은 COALESCE 대신 독립 행 존재 검사와 CASE로 선택된 NULL을 보존한다. latest 회귀 7/7, 전체 V1 `--frozen --offline --no-fail-fast`, all-target Clippy `-D warnings`는 exit 0이다. generated syntax 명세도 함께 갱신했다. V2 SQL/MySQL 반복 바인딩 회귀 및 V3 다섯 projection의 후보 NULL·행 부재 전체 NULL·부재 fallback을 apply/bundle/compose에서 대조하는 PG source를 추가했고 두 DSL 변형 check는 exit 0이다. 이 SQL/PG 회귀는 로컬 protected-cache 제약으로 미실행이다. 기존 conditional-update PG test body는 그대로 별도 integration binary로 옮겨 프로세스당 schema OnceLock과 서로 다른 schema 이름의 충돌을 피한다(분리 전 실패 실행은 미관측).
+
+이전 관측: 후보 `c94d909a28047577e7570125e201092808ab9fe4`의 packages `41210863448`·storage `41210863447`·brokers `41210863499`·cgroup `41210863503`는 모두 success다. Verify `41210863511`, job `124565345860`은 V6 `write_extension_atomic.rs:120`의 `emit_id` 오류값(`Reject`, Debug만 제공)을 Display로 출력하려다 E0277로 실패했다. 해당 출력만 Debug로 바꿨고 변경된 오류 변환 호출처를 함께 대조했다. a602155의 Clippy에서 이 compile 오류는 재발하지 않았다.
 
 같은 후속 묶음에서 `latest` 효과의 최신 후보/빈 결과가 더 높은 순위 행의 부재에 의존하는데도 isolation marker 계산에서 빠진 것을 보완했다. V1 transition·compose marker의 RED(null)→GREEN(serializable), 일반 literal/reference 효과의 unmarked 대조, 전체 V1 `--no-fail-fast`·all-target Clippy를 확인했다. 실제 apply/bundle/compose 트랜잭션 격리를 강제 확인하는 PG trigger 회귀는 추가했으나 실행 전이다. 독립 formatting·Clippy 11명령도 첫 오류에 멈추지 않고 수집하도록 보완했다. 최초 stage/command/exit를 보존하고 실패하면 runtime에 들어가지 않는다. 새 subprocess 회귀 6개와 기존 whole-app runner 회귀 8개, 합계 14개가 통과했다. DB guard의 즉시 거부는 유지한다.
 

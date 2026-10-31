@@ -204,7 +204,7 @@ pub fn render_markdown() -> String {
             out.push_str(&format!("| `{key}` | `{}` | {meaning} |\n", shape.replace('|', "\\|")));
             if block == &"transition effect" && key == &"update" {
                 // `latest` is an update value expression, not another effect/block key.
-                out.push_str("| `latest` | `latest R row where condition order by row.created select row.field [otherwise fallback]` | update 값에서 서버가 고른 최신 행의 필드를 사용한다. 정렬은 Int·Decimal·날짜/시각·참조 필드만 허용하며 NULL 마지막·내림차순이고 동률은 id 내림차순이다. 결과가 없으면 NULL 또는 같은 타입의 `otherwise`를 쓴다. 갱신 대상 resource를 다시 조회할 수 없고 field-read로 가린 값도 사용할 수 없다 |\n");
+                out.push_str("| `latest` | `latest R row where condition order by row.created select row.field [otherwise fallback]` | update 값에서 서버가 고른 최신 행의 필드를 사용한다. 정렬은 Int·Decimal·날짜/시각·참조 필드만 허용하며 NULL 마지막·내림차순이고 동률은 id 내림차순이다. 행이 없으면 NULL 또는 같은 타입의 `otherwise`를 쓰며, 선택한 행의 필드가 NULL이면 그 NULL을 보존한다. 갱신 대상 resource를 다시 조회할 수 없고 field-read로 가린 값도 사용할 수 없다 |\n");
             }
         }
     }

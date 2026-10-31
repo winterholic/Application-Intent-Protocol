@@ -501,7 +501,8 @@ impl<'a> Ctx<'a> {
         let alias = self.alias("latest");
         let mut inner = env.clone();
         inner.vars.insert(source_alias.to_string(), Handle::Row { alias: alias.clone(), res: resource.to_string() });
-        // Bind in the same order as SQL placeholders appear: SELECT, WHERE, ORDER BY.
+        // Numbered PostgreSQL parameters and MySQL markers permit the presence
+        // branch below to reuse this condition without changing its bindings.
         let selected = self.value(&latest["select"], &inner)?;
         let condition = self.cond(&latest["where"], &inner)?;
         let order = self.value(&latest["orderBy"], &inner)?;
@@ -511,7 +512,10 @@ impl<'a> Ctx<'a> {
             format!("(SELECT {selected} FROM {table} {alias} WHERE {condition} ORDER BY ({order} IS NULL) ASC, {order} DESC, {id} DESC LIMIT 1)");
         let sql = if latest.get("otherwise").is_some_and(|value| !value.is_null()) {
             let fallback = self.value(&latest["otherwise"], env)?;
-            format!("COALESCE({selection}, {fallback})")
+            // The selected row may exist while its projected field is NULL.
+            // Check row presence independently so all projections preserve that
+            // row's values. Params::finish expands repeated MySQL markers.
+            format!("(CASE WHEN EXISTS (SELECT 1 FROM {table} {alias} WHERE {condition}) THEN {selection} ELSE {fallback} END)")
         } else {
             selection
         };

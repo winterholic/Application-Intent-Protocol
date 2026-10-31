@@ -121,6 +121,23 @@ fn latest_effect_selection_marks_transition_and_compose_serializable() {
 }
 
 #[test]
+fn latest_preserves_selected_nullability_even_with_a_required_fallback() {
+    let source =
+        SOURCE.replace("label: Text;", "label: Text?;").replace("select candidate.label", "select candidate.label otherwise \"missing-row\"");
+    let facts = load_str(&source, Form::A).unwrap_or_else(|errors| panic!("{errors:?}")).execution;
+    let value = &facts["resources"]["Order"]["transitions"]["refresh"]["effects"][0]["values"]["label"];
+    assert_eq!(value["ty"], "Text?", "a matching row may contain NULL; otherwise only covers an absent row");
+
+    let required_target = source.replace("label: Text?; created: Time? } }\nresource Item", "label: Text; created: Time? } }\nresource Item");
+    let errors = load_str(&required_target, Form::A).err().expect("nullable selection cannot fill a required target");
+    assert!(errors.iter().any(|error| error.code == "DEF.TYPE_MISMATCH"), "{errors:?}");
+
+    let required_source = source.replace("active: Bool; label: Text?;", "active: Bool; label: Text;");
+    let facts = load_str(&required_source, Form::A).unwrap_or_else(|errors| panic!("{errors:?}")).execution;
+    assert_eq!(facts["resources"]["Order"]["transitions"]["refresh"]["effects"][0]["values"]["label"]["ty"], "Text");
+}
+
+#[test]
 fn update_effect_when_serializes_the_transition_prestate_condition() {
     let source = SOURCE
         .replace("update Summary where order = this.id", "update Summary when this.refreshed = false and this.owner = actor where order = this.id");

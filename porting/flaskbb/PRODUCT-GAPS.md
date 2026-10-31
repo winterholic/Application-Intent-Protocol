@@ -63,7 +63,7 @@ i18n은 기존 STATUS의 열린 항목 그대로다.
 
 ### 필요한 generic effect 보완·첫 구현 순서
 
-`latest`는 scalar마다 subquery를 만들고 `COALESCE`로 fallback한다(`spike-v2-read/src/sqlgen.rs:497`). NULL인 선택값과 행 부재를 구별하지 못하며 현재 `id DESC` tie-break는 UUID다. `update` 효과는 match 대상이 없으면 `WIRE.EFFECT_TARGET_MISSING`이므로 `where last_post=this`를 붙이는 것만으로 no-op branch를 구현할 수 없다. `apply_op`는 to 변경 후 effect를 실행한다(physical delete만 effect 선행). 현재 sema는 같은 update target resource를 latest source로 쓰는 것도 거부한다. 이 제약을 SQL 문자열·앱 endpoint로 우회하지 않는다.
+`latest`는 scalar마다 subquery를 만든다(`spike-v2-read/src/sqlgen.rs:497`). 이전 COALESCE는 선택된 NULL과 행 부재를 구별하지 못했다. 2026-10-31 후속 source는 독립 EXISTS/CASE로 행 부재에만 fallback하고 V1 nullability도 선택값을 보존하도록 교정했다(V1 RED→GREEN 7/7·전체/Clippy exit0). 다섯 projection의 nullable 후보·부재 전체 NULL·부재 fallback을 apply/bundle/compose로 대조하는 새 PG source와 V2 MySQL 바인딩 회귀는 추가했으나 아직 실행 전이다. 현재 `id DESC` tie-break는 여전히 UUID다. `update` 효과는 match 대상이 없으면 `WIRE.EFFECT_TARGET_MISSING`이므로 `where last_post=this`를 붙이는 것만으로 no-op branch를 구현할 수 없다. `apply_op`는 to 변경 후 effect를 실행한다(physical delete만 effect 선행). 현재 sema는 같은 update target resource를 latest source로 쓰는 것도 거부한다. 이 제약을 SQL 문자열·앱 endpoint로 우회하지 않는다.
 
 첫 코어 증분에서 V1 update effect optional `when` parser/AST/H mapping/sema 계약을 추가했고 당시 `latest_effect_values` 5/5가 통과했다. 그 뒤의 guard/read-lock source 변경은 현재 검증되지 않았다: V3에서 pre-state update guard 대상 선택 및 apply/bundle/compose 전달, `Ctx::lock_reads` 참조 잠금 정책, V1 absence marker의 update guard coverage, MySQL conditional update 전이의 fail-closed `WIRE.ADAPTER_UNSUPPORTED` gate와 회귀 source를 추가했다. MySQL gate는 조건부 update만 거부하며 일반 transition은 차단하지 않는다. 이 변경은 compile·test 결과가 아니며 과거 V1 5/5를 수정 후 현재 tree의 통과로 재사용하지 않는다.
 
